@@ -1,0 +1,96 @@
+# §20.1 的例子:4 中继 × 3 目标 = 12 条隧道 = 24 个文件。
+# 这份 fixture 刻意覆盖三种合法的 direction 组合,以及一个不参与渲染的
+# 第三方端点。
+
+nodes:
+  # ---- 中继(§8)。持有 relay 能力的节点不能是 reverse_only(§2.2)。----
+  - id: relay-bj
+    city: 北京
+    capabilities: [relay, access]
+    direction: bidirectional
+    public_endpoint: 203.0.113.10
+    wg_public_key: bj0000000000000000000000000000000000000000k=
+
+  - id: relay-sh
+    city: 上海
+    capabilities: [relay]
+    direction: bidirectional
+    public_endpoint: 203.0.113.11
+    wg_public_key: sh0000000000000000000000000000000000000000k=
+
+  - id: relay-gz
+    city: 广州
+    capabilities: [relay]
+    direction: bidirectional
+    public_endpoint: 203.0.113.12
+    wg_public_key: gz0000000000000000000000000000000000000000k=
+
+  - id: relay-cd
+    city: 成都
+    capabilities: [relay]
+    direction: bidirectional
+    public_endpoint: 203.0.113.13
+    wg_public_key: cd0000000000000000000000000000000000000000k=
+
+  # ---- 目标(§9)。三个不同的 direction,推导出三种发起方分配。----
+
+  # reverse_only:必须由它向所有中继扇出反连(§6.3),中继是接受方。
+  - id: target-sg
+    city: 新加坡
+    capabilities: [target]
+    target_kind: landing
+    direction: reverse_only
+    service_tags: [proxy-egress]
+    public_endpoint: 198.51.100.20
+    wg_public_key: sg0000000000000000000000000000000000000000k=
+
+  # direct_only:只能被连,中继是发起方。
+  - id: target-jp
+    city: 东京
+    capabilities: [target]
+    target_kind: landing
+    direction: direct_only
+    service_tags: [proxy-egress]
+    public_endpoint: 198.51.100.21
+    wg_public_key: jp0000000000000000000000000000000000000000k=
+
+  # bidirectional ↔ bidirectional:两端都合法,按 node id 字典序定发起方。
+  # 所有 relay-* 都小于 target-us,因此中继发起。
+  - id: target-us
+    city: 圣何塞
+    capabilities: [target]
+    target_kind: endpoint
+    direction: bidirectional
+    service_tags: ["llm:qwen3-32b-int8@openai-v1"]
+    public_endpoint: 198.51.100.22
+    wg_public_key: us0000000000000000000000000000000000000000k=
+
+  # 第三方端点:没有 Agent,不参与配置渲染,只作为候选集里的一个条目
+  # 存在(§1.3、§9.2)。它不出现在下面任何一条隧道里。
+  - id: target-3p
+    city: 法兰克福
+    capabilities: [target]
+    target_kind: endpoint
+    direction: direct_only
+    managed: false
+    service_tags: ["llm:qwen3-32b-int8@openai-v1"]
+    public_endpoint: api.example.net
+
+tunnels:
+  # ---- 到 target-sg:reverse_only,由它发起,中继监听 51820 ----
+  - {from: relay-bj, to: target-sg, protocol: wg, listen_port: 51820, from_addr: 10.99.0.1/32, to_addr: 10.99.0.2/32}
+  - {from: relay-sh, to: target-sg, protocol: wg, listen_port: 51820, from_addr: 10.99.0.3/32, to_addr: 10.99.0.4/32}
+  - {from: relay-gz, to: target-sg, protocol: wg, listen_port: 51820, from_addr: 10.99.0.5/32, to_addr: 10.99.0.6/32}
+  - {from: relay-cd, to: target-sg, protocol: wg, listen_port: 51820, from_addr: 10.99.0.7/32, to_addr: 10.99.0.8/32}
+
+  # ---- 到 target-jp:direct_only,中继发起,target-jp 上每条隧道一个端口 ----
+  - {from: relay-bj, to: target-jp, protocol: wg, listen_port: 51821, from_addr: 10.99.1.1/32, to_addr: 10.99.1.2/32}
+  - {from: relay-sh, to: target-jp, protocol: wg, listen_port: 51822, from_addr: 10.99.1.3/32, to_addr: 10.99.1.4/32}
+  - {from: relay-gz, to: target-jp, protocol: wg, listen_port: 51823, from_addr: 10.99.1.5/32, to_addr: 10.99.1.6/32}
+  - {from: relay-cd, to: target-jp, protocol: wg, listen_port: 51824, from_addr: 10.99.1.7/32, to_addr: 10.99.1.8/32}
+
+  # ---- 到 target-us:bi ↔ bi,字典序定发起方(中继发起),target-us 监听 ----
+  - {from: relay-bj, to: target-us, protocol: wg, listen_port: 51831, from_addr: 10.99.2.1/32, to_addr: 10.99.2.2/32}
+  - {from: relay-sh, to: target-us, protocol: wg, listen_port: 51832, from_addr: 10.99.2.3/32, to_addr: 10.99.2.4/32}
+  - {from: relay-gz, to: target-us, protocol: wg, listen_port: 51833, from_addr: 10.99.2.5/32, to_addr: 10.99.2.6/32}
+  - {from: relay-cd, to: target-us, protocol: wg, listen_port: 51834, from_addr: 10.99.2.7/32, to_addr: 10.99.2.8/32}
