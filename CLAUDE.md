@@ -42,6 +42,22 @@ go run ./cmd/loom diff    testdata/matrix/ssot.yaml -o /tmp/out
 | `cmd/loom/` | CLI:`validate` / `render` / `diff` |
 | `testdata/matrix/` | §20.1 的 4 中继 × 3 目标 fixture 与 golden |
 
+## 模型:三个词就够了
+
+| 词 | 是什么 | Loom 管吗 |
+|---|---|---|
+| **接入节点** `access` | 你的设备 | ✅ |
+| **服务器节点** `server` | 你的机器,国内云机与境外 VPS 一视同仁 | ✅ |
+| **目标地址** | 网站 / API / 内网服务 | ❌ **只是一个地址** |
+
+**没有"目标节点"这个东西,也没有"出口节点"这个类型。** 一条路径上最后那台
+服务器就是这次的出口 —— 出口是位置,不是类型。详见 design.md §1 与
+[docs/decisions.md](docs/decisions.md) 的 D12。
+
+> ⚠️ **代码目前还在按旧模型工作,尚未追上文档。** 见
+> [docs/status.md](docs/status.md) 顶部的对照表。**理解模型以 design.md 为准,
+> 不要照着 `internal/` 下的结构体反推。**
+
 ## 三条动手前必须知道的约束
 
 **1. 渲染必须是纯函数(§12)。** 不得引入随机数、当前时间、外部查询;
@@ -49,9 +65,9 @@ go run ./cmd/loom diff    testdata/matrix/ssot.yaml -o /tmp/out
 性质上。`TestRenderIsPure` 会拦住违反,但它只能发现你已经写出来的不确定性
 —— 别指望它替你想。
 
-**2. 从 `direction` 推导的字段不进结构体。** `mesh_eligible`、
-`Tunnel.initiator` 这类值由 §2.2 的真值表推导。SSOT 用 `KnownFields(true)`
-严格解码,在 YAML 里写这些键会直接报错。**不要为了方便加回这些字段** ——
+**2. 推导出来的字段不进结构体。** `mesh_eligible`、`Tunnel.initiator`、
+`uses_tun` 这类值都由别的字段推导。SSOT 用 `KnownFields(true)` 严格解码,
+在 YAML 里写这些键会直接报错。**不要为了方便加回这些字段** ——
 可写即可与推导结果矛盾。
 
 **3. 不完整的实现要显式报出,不许静默降级。** 已有两处先例:
@@ -61,9 +77,11 @@ go run ./cmd/loom diff    testdata/matrix/ssot.yaml -o /tmp/out
 
 ## 代码约定
 
-- **项目名不向下渗透**(附录 B)。内部一律用通用词:`node` / `path` /
-  `declaration` / `snapshot` / `agent` / `tunnel` / `credential` /
-  `render` / `apply` / `rollback`。不要出现 `LoomNode` 这类命名。
+- **项目名不向下渗透**(附录 B)。内部一律用通用词:`node` / `server` /
+  `address` / `path` / `declaration` / `snapshot` / `agent` / `tunnel` /
+  `credential` / `render` / `apply` / `rollback`。不要出现 `LoomNode` 这类命名。
+- **不要引入 `target` 作为节点概念。** 它是被 D12 明确删除的东西;
+  再引入会把已经理顺的层次重新搅乱。
 - **注释和错误消息用中文,并带上 design.md 的条款号。** 校验发现的格式是
   `[§2.2 相容性] relay-sh:...`。排障的人需要知道这条规则的理由在哪。
 - **校验返回全部发现,不是第一个错误。** 修一个 24 文件的矩阵时,一次看到
