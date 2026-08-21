@@ -44,18 +44,22 @@ func checkClasses(s *model.SSOT, nodes map[string]*model.Node, fs *findings) map
 		}
 
 		seenMember := map[string]bool{}
-		for _, m := range c.Members {
-			n, ok := nodes[m.Node]
-			if !ok {
-				fs.add("§4.3 等价类", where, "成员引用了不存在的节点 %q", m.Node)
+		for i := range c.Members {
+			m := &c.Members[i]
+			if m.Address == "" {
+				fs.add("§4.3 等价类", where, "成员缺少 address")
 				continue
 			}
-			if seenMember[m.Node] {
-				fs.add("§4.3 等价类", where, "成员 %q 重复", m.Node)
+			if seenMember[m.Address] {
+				fs.add("§4.3 等价类", where, "成员地址 %q 重复", m.Address)
 			}
-			seenMember[m.Node] = true
-			if !n.Has(model.Target) {
-				fs.add("§4.3 等价类", where, "成员 %q 不持有 target 能力", m.Node)
+			seenMember[m.Address] = true
+			// 目标是地址,不是节点(§1)。把节点 id 写进 members 是把模型
+			// 层次搞混的典型症状,单独报出来。
+			if _, isNode := nodes[m.Address]; isNode {
+				fs.add("§1 目标不是节点", where,
+					"成员 %q 是一个节点 id —— members 里应当是**地址**(如 https://…)。"+
+						"目标不是节点,不进拓扑、不参与渲染(§9)", m.Address)
 			}
 		}
 
@@ -70,8 +74,8 @@ func checkClasses(s *model.SSOT, nodes map[string]*model.Node, fs *findings) map
 				if !base.Contract.SameAs(m.Contract) {
 					fs.add("§4.4 契约同构", where,
 						"carrier 是 l4_direct,但成员 %q 与 %q 的 access_contract 不同构 —— "+
-							"L4 换端点会在 TLS 或鉴权层失败,这类成员需要 l7_gateway 承载",
-						m.Node, base.Node)
+							"L4 换地址会在 TLS 或鉴权层失败,这类成员需要 l7_gateway 承载",
+						m.Address, base.Address)
 					break
 				}
 			}
@@ -101,8 +105,14 @@ func checkDeclarations(
 			idx[d.ID] = d
 		}
 
-		if !d.Mode.Valid() {
-			fs.add("§4 mode", where, "未知 mode:%q", d.Mode)
+		addrOK, egressOK := d.AxesValid()
+		if !addrOK {
+			fs.add("§4 地址轴", where,
+				"address_axis 非法:%q —— 只能是 from_request 或 class:<等价类 id>", d.AddressAxis)
+		}
+		if !egressOK {
+			fs.add("§4 出口轴", where,
+				"egress_axis 非法:%q —— 只能是 any 或 pinned:<节点 id>", d.EgressAxis)
 		}
 		if !d.Objective.Valid() {
 			fs.add("§5.3 objective", where, "未知 objective:%q", d.Objective)
@@ -121,18 +131,20 @@ func checkDeclarations(
 				fs.add("§5.1 约束", where, "未知约束类别:%q", c.Kind)
 			}
 		}
-		for _, r := range d.AllowedRelays {
+		allowedSet := map[string]bool{}
+		for _, r := range d.AllowedServers {
+			allowedSet[r] = true
 			n, ok := nodes[r]
 			if !ok {
-				fs.add("§5.1 约束", where, "allowed_relays 引用了不存在的节点 %q", r)
+				fs.add("§5.1 约束", where, "allowed_servers 引用了不存在的节点 %q", r)
 				continue
 			}
-			if !n.Has(model.Relay) {
-				fs.add("§5.1 约束", where, "allowed_relays 中的 %q 不持有 relay 能力", r)
+			if !n.Has(model.Server) {
+				fs.add("§5.1 约束", where, "allowed_servers 中的 %q 不持有 server 能力", r)
 			}
 		}
 
-		checkModeShape(d, where, nodes, classes, fs)
+		checkAxes(d, where, nodes, classes, allowedSet, fs)
 
 		// §19 必拒规则:有合规约束但 fallback ≠ fail_closed。
 		//
@@ -144,14 +156,13 @@ func checkDeclarations(
 					"空候选集时自动回退等于绕过它;必须是 fail_closed", d.Fallback)
 		}
 
-		// §19 必拒规则:模式 A 声明配置了 ranking_period。
+		// §19 必拒规则:地址由请求决定却配置了 ranking_period。
 		//
-		// 模式 A 的候选集里 target 是常量,排序周期无意义。允许它存在
-		// 会让人以为配了就生效。
-		if d.Mode == model.PinnedTarget && d.RankingPeriod != "" {
+		// 那时地址轴是常量,排序周期无意义。允许它存在会让人以为配了就生效。
+		if d.AddressFromRequest() && d.RankingPeriod != "" {
 			fs.add("§5.5 周期", where,
-				"模式 A 配置了 ranking_period=%q,但目标轴已退化为常量,排序周期无意义;"+
-					"只需 tuning_period", d.RankingPeriod)
+				"address_axis 是 from_request 却配置了 ranking_period=%q —— "+
+					"地址轴已是常量,排序周期无意义;只需 tuning_period", d.RankingPeriod)
 		}
 
 		checkObjectiveFeasible(d, where, classes, fs)
@@ -159,38 +170,43 @@ func checkDeclarations(
 	return idx
 }
 
-// checkModeShape 检查模式 A/B 各自该有和不该有的字段。
-func checkModeShape(
+// checkAxes 检查两个轴各自的取值是否自洽(§4)。
+func checkAxes(
 	d *model.AccessDeclaration,
 	where string,
 	nodes map[string]*model.Node,
 	classes map[string]*model.EquivalenceClass,
+	allowed map[string]bool,
 	fs *findings,
 ) {
-	switch d.Mode {
-	case model.PinnedTarget:
-		if d.TargetNode == "" {
-			fs.add("§4.1 模式A", where, "模式 A 缺少 target_node")
-		} else if n, ok := nodes[d.TargetNode]; !ok {
-			fs.add("§4.1 模式A", where, "target_node 引用了不存在的节点 %q", d.TargetNode)
-		} else if !n.Has(model.Target) {
-			fs.add("§4.1 模式A", where, "target_node %q 不持有 target 能力", d.TargetNode)
-		}
-		if d.EquivalenceClass != "" {
-			fs.add("§4 mode", where, "模式 A 不应声明 equivalence_class —— 目标轴已钉死")
-		}
-	case model.ByService:
-		if d.EquivalenceClass == "" {
-			fs.add("§4.2 模式B", where, "模式 B 缺少 equivalence_class")
-		} else if _, ok := classes[d.EquivalenceClass]; !ok {
-			fs.add("§4.2 模式B", where, "equivalence_class 引用了不存在的等价类 %q", d.EquivalenceClass)
-		}
-		if d.TargetNode != "" {
-			fs.add("§4 mode", where, "模式 B 不应声明 target_node —— 目标由度量在候选集内选")
+	if cid := d.ClassID(); cid != "" {
+		if _, ok := classes[cid]; !ok {
+			fs.add("§4 地址轴", where, "address_axis 引用了不存在的等价类 %q", cid)
 		}
 		if d.TopN <= 0 {
-			fs.add("§5.6 top_n", where, "模式 B 需要显式声明 top_n(下发给接入节点的候选数)")
+			fs.add("§5.6 top_n", where,
+				"地址从等价类里选时需要显式声明 top_n(下发给接入节点的候选数)")
 		}
+	}
+
+	pinned := d.PinnedEgress()
+	if pinned == "" {
+		return
+	}
+	n, ok := nodes[pinned]
+	switch {
+	case !ok:
+		fs.add("§4 出口轴", where, "egress_axis 钉死了不存在的节点 %q", pinned)
+	case !n.Has(model.Server):
+		fs.add("§4 出口轴", where, "钉死的出口 %q 不持有 server 能力", pinned)
+	case !n.EgressCapable:
+		fs.add("§4 出口轴", where,
+			"钉死的出口 %q 没有 egress_capable —— 它出不了公网", pinned)
+	}
+	// 钉死一个不在允许集合里的出口,是自相矛盾的声明。
+	if len(allowed) > 0 && !allowed[pinned] {
+		fs.add("§5.1 约束", where,
+			"egress_axis 钉死了 %q,但它不在 allowed_servers 里", pinned)
 	}
 }
 
@@ -204,11 +220,12 @@ func checkObjectiveFeasible(
 	classes map[string]*model.EquivalenceClass,
 	fs *findings,
 ) {
-	if d.Mode != model.ByService || d.EquivalenceClass == "" {
-		// 模式 A 的目标轴是常量,不在目标轴上做应用层选优。
+	cid := d.ClassID()
+	if cid == "" {
+		// 地址由请求决定时地址轴是常量,不在地址轴上做应用层选优。
 		return
 	}
-	c, ok := classes[d.EquivalenceClass]
+	c, ok := classes[cid]
 	if !ok {
 		return // 引用错误已在别处报出
 	}

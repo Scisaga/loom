@@ -38,12 +38,6 @@ func LoadFile(path string) (*SSOT, error) {
 // defaults 填充可省略字段。它必须是幂等的且不含随机性 —— 渲染的纯
 // 函数性质从这里就开始(§12.1)。
 func (s *SSOT) defaults() {
-	managed := true
-	for i := range s.Nodes {
-		if s.Nodes[i].Managed == nil {
-			s.Nodes[i].Managed = &managed
-		}
-	}
 	for i := range s.Tunnels {
 		if s.Tunnels[i].Protocol == "" {
 			s.Tunnels[i].Protocol = WG
@@ -51,6 +45,13 @@ func (s *SSOT) defaults() {
 	}
 	for i := range s.Declarations {
 		d := &s.Declarations[i]
+		// 两个轴的默认值都落在"最少假设"那一侧:地址随请求走、出口不钉死。
+		if d.AddressAxis == "" {
+			d.AddressAxis = FromRequest
+		}
+		if d.EgressAxis == "" {
+			d.EgressAxis = EgressAny
+		}
 		// §5.8:空候选集的默认行为是拒绝并告警。这个默认必须是安全的
 		// 那一侧 —— 任何自动回退都可能绕过合规约束。
 		if d.Fallback == "" {

@@ -3,23 +3,21 @@
 // 命名遵循 design.md 附录 B:项目名不向下渗透,内部一律用通用词。
 package model
 
-// Capability 是节点能力。能力是集合而非枚举 —— 一个节点可以同时是
-// 中继与目标(§1.1)。
+// Capability 是节点能力。能力是集合而非枚举 —— 笔记本既可以是接入节点,
+// 也可以给同网段另一台设备当服务器(§1.3)。
+//
+// 这里**没有 target**。目标不是节点(§1),出口是路径上的位置而非节点类型
+// (§1.1)—— 链上最后一台服务器就是这次的出口。
 type Capability string
 
 const (
+	// Access 是你的设备:接管本机流量,按调度结果送出。
 	Access Capability = "access"
-	Relay  Capability = "relay"
-	Target Capability = "target"
+	// Server 是你的机器:转发流量;排在链末尾时负责出公网。
+	Server Capability = "server"
 )
 
-func (c Capability) Valid() bool {
-	switch c {
-	case Access, Relay, Target:
-		return true
-	}
-	return false
-}
+func (c Capability) Valid() bool { return c == Access || c == Server }
 
 // Protocol 是隧道协议。协议按跳选择,不做全局统一(§6)。
 type Protocol string
@@ -41,75 +39,33 @@ func (p Protocol) Valid() bool {
 	return false
 }
 
-// TargetKind 区分 target 的两种可部署形态(§1.3)。
-type TargetKind string
-
-const (
-	Landing  TargetKind = "landing"
-	Endpoint TargetKind = "endpoint"
-)
-
-// Node 是拓扑中的一个节点。
+// Node 是 Loom 管的一台机器。目标地址不在这里 —— 它不是节点(§1、§9)。
 //
-// 注意这里没有 mesh_eligible,也没有任何"隧道发起方"字段:它们由
-// direction 推导(§2.2)。SSOT 以 KnownFields 严格解码,因此在 YAML 里
-// 手工写出这些键会直接报错 —— 这是 §19"校验器应拒绝矛盾值"的第一道闸。
+// 没有 mesh_eligible,也没有任何"隧道发起方"字段:它们由 direction 推导
+// (§2.2)。SSOT 以 KnownFields 严格解码,在 YAML 里手工写出这些键会直接
+// 报错 —— 这是 §19"校验器应拒绝矛盾值"的第一道闸。
 type Node struct {
 	ID           string       `yaml:"id"`
 	Name         string       `yaml:"name,omitempty"`
 	City         string       `yaml:"city,omitempty"`
 	Provider     string       `yaml:"provider,omitempty"`
 	Capabilities []Capability `yaml:"capabilities"`
-	ServiceTags  []string     `yaml:"service_tags,omitempty"`
 	Direction    Direction    `yaml:"direction"`
 
-	// Managed 为 false 表示第三方端点:没有 Agent、不上报状态、
-	// 不参与配置渲染(§1.3、§9.2)。零值 false 与"未声明"无法区分,
-	// 所以用指针,由 Defaults 填充。
-	Managed *bool `yaml:"managed,omitempty"`
-
-	TargetKind TargetKind `yaml:"target_kind,omitempty"`
-
-	// PublicEndpoint 是入站可达的主机名或 IP,不含端口 —— 端口在
-	// Tunnel.ListenPort 上,一个节点可为不同隧道监听不同端口。
+	// PublicEndpoint 是入站可达的主机名或 IP,不含端口。
 	PublicEndpoint string `yaml:"public_endpoint,omitempty"`
+
+	// InboundPort 是接受上游连接的端口(§8.1)。上游可能是接入节点,
+	// 也可能是链上的前一台服务器。
+	InboundPort int `yaml:"inbound_port,omitempty"`
+
+	// EgressCapable 表示这台机器能否作为出口出公网(ip_forward + MASQUERADE)。
+	// 它不是一种节点类型 —— 同一台机器这次是出口,下次可能只是中间一跳(§1.1)。
+	EgressCapable bool `yaml:"egress_capable,omitempty"`
 
 	// WGPublicKey 由节点上报。平台永不持有私钥(§13.1)。
 	WGPublicKey string `yaml:"wg_public_key,omitempty"`
-
-	// InboundPort 是该节点 sing-box inbound 监听的端口。
-	//
-	// relay 用它接受接入节点连接(§8.1);landing target 用它接受来自中继
-	// 的转发 —— 后者监听在隧道地址上,这样"下一跳"就字面是一个 IP:port,
-	// §8.2 的允许下一跳集合才能表达成准入白名单。
-	InboundPort int `yaml:"inbound_port,omitempty"`
 }
-
-// TunnelAddrOn 返回本节点在与 peer 的隧道中使用的地址(不含掩码)。
-// 找不到对应隧道时返回空串。
-func (s *SSOT) TunnelAddrOn(nodeID, peerID string) string {
-	for i := range s.Tunnels {
-		t := &s.Tunnels[i]
-		switch {
-		case t.From == nodeID && t.To == peerID:
-			return stripMask(t.FromAddr)
-		case t.To == nodeID && t.From == peerID:
-			return stripMask(t.ToAddr)
-		}
-	}
-	return ""
-}
-
-func stripMask(addr string) string {
-	for i := 0; i < len(addr); i++ {
-		if addr[i] == '/' {
-			return addr[:i]
-		}
-	}
-	return addr
-}
-
-func (n *Node) IsManaged() bool { return n.Managed == nil || *n.Managed }
 
 func (n *Node) Has(c Capability) bool {
 	for _, x := range n.Capabilities {
@@ -120,7 +76,24 @@ func (n *Node) Has(c Capability) bool {
 	return false
 }
 
+// MeshEligible 由 direction 推导,不是独立配置项(§2.2)。
+//
+// 能进 mesh 的服务器由 Headscale 自动分发密钥与 peer,**一份隧道配置都不
+// 渲染**(§6.3、§8.3)。这条推导直接决定隧道矩阵有多大。
+func (n *Node) MeshEligible() bool { return n.Direction != ReverseOnly }
+
+// DialableFromAccess 报告接入节点能否直接拨这台服务器。
+//
+// reverse_only 的服务器拨不到 —— 它只能自己连出来。因此它**永远不能是链上
+// 第一跳**,必须由前一跳经反连隧道把流量推给它(§2.2)。
+func (n *Node) DialableFromAccess() bool {
+	return n.Direction != ReverseOnly && n.PublicEndpoint != "" && n.InboundPort > 0
+}
+
 // Tunnel 是隧道矩阵中的一条边(§6.3)。
+//
+// **只有 reverse_only 的服务器才需要它。** 能进 mesh 的由 Headscale 自动
+// 分发,写进这里会被校验器拒绝。
 //
 // 同样没有 initiator 字段 —— 它由两端 direction 推导(§2.2)。
 type Tunnel struct {
@@ -128,8 +101,7 @@ type Tunnel struct {
 	To       string   `yaml:"to"`
 	Protocol Protocol `yaml:"protocol"`
 
-	// ListenPort 是接受方监听的端口。哪一端是接受方由 direction 推导,
-	// 因此这里只需要一个值。
+	// ListenPort 是接受方监听的端口。哪一端是接受方由 direction 推导。
 	ListenPort int `yaml:"listen_port"`
 
 	// FromAddr/ToAddr 是隧道两端的地址,含掩码(如 10.99.0.1/32)。
@@ -137,8 +109,7 @@ type Tunnel struct {
 	FromAddr string `yaml:"from_addr"`
 	ToAddr   string `yaml:"to_addr"`
 
-	// Obfuscation 引用一个 ObfuscationSet(§17)。按隧道而非按节点,
-	// 因为 AmneziaWG 参数是接口级的。
+	// Obfuscation 引用一个 ObfuscationSet(§17)。
 	Obfuscation string `yaml:"obfuscation,omitempty"`
 }
 
@@ -147,18 +118,27 @@ func (t *Tunnel) Pair() string { return t.From + "→" + t.To }
 
 // SSOT 是唯一事实来源的根(§12)。
 type SSOT struct {
-	// 拓扑
+	// 拓扑 —— Loom 管的机器
 	Nodes   []Node   `yaml:"nodes"`
 	Tunnels []Tunnel `yaml:"tunnels"`
 
-	// 服务与调度
+	// 服务与调度 —— 目标地址活在等价类里,不在 Nodes 里
 	EquivalenceClasses []EquivalenceClass  `yaml:"equivalence_classes,omitempty"`
 	Declarations       []AccessDeclaration `yaml:"declarations,omitempty"`
 	Credentials        []Credential        `yaml:"credentials,omitempty"`
 	Profiles           []ClientProfile     `yaml:"profiles,omitempty"`
 }
 
-// DeclarationByID 建立索引。调用方需保证 ID 已去重(validate 会查)。
+// NodeByID 建立索引。调用方需保证 ID 已去重(validate 会查)。
+func (s *SSOT) NodeByID() map[string]*Node {
+	m := make(map[string]*Node, len(s.Nodes))
+	for i := range s.Nodes {
+		m[s.Nodes[i].ID] = &s.Nodes[i]
+	}
+	return m
+}
+
+// DeclarationByID 建立访问声明索引。
 func (s *SSOT) DeclarationByID() map[string]*AccessDeclaration {
 	m := make(map[string]*AccessDeclaration, len(s.Declarations))
 	for i := range s.Declarations {
@@ -185,11 +165,49 @@ func (s *SSOT) CredentialByID() map[string]*Credential {
 	return m
 }
 
-// NodeByID 建立索引。调用方需保证 ID 已去重(validate 会查)。
-func (s *SSOT) NodeByID() map[string]*Node {
-	m := make(map[string]*Node, len(s.Nodes))
-	for i := range s.Nodes {
-		m[s.Nodes[i].ID] = &s.Nodes[i]
+// TunnelAddrOn 返回本节点在与 peer 的隧道中使用的地址(不含掩码)。
+// 找不到对应隧道时返回空串。
+func (s *SSOT) TunnelAddrOn(nodeID, peerID string) string {
+	for i := range s.Tunnels {
+		t := &s.Tunnels[i]
+		switch {
+		case t.From == nodeID && t.To == peerID:
+			return stripMask(t.FromAddr)
+		case t.To == nodeID && t.From == peerID:
+			return stripMask(t.ToAddr)
+		}
 	}
-	return m
+	return ""
+}
+
+// ServerReachable 报告 from 能否把流量交给 to。
+//
+// 两条路子:有点对点隧道,或者两端都能进 mesh(Headscale 组网,§8.3)。
+func (s *SSOT) ServerReachable(from, to *Node) bool {
+	if s.TunnelAddrOn(to.ID, from.ID) != "" {
+		return true
+	}
+	return from.MeshEligible() && to.MeshEligible()
+}
+
+// NextHopAddr 返回 from 该往哪个地址转发给 to。
+//
+// 走隧道时是隧道内地址;走 mesh 时用对方的公网地址(mesh 内亦可达)。
+func (s *SSOT) NextHopAddr(from, to *Node) string {
+	if a := s.TunnelAddrOn(to.ID, from.ID); a != "" {
+		return a
+	}
+	if from.MeshEligible() && to.MeshEligible() {
+		return to.PublicEndpoint
+	}
+	return ""
+}
+
+func stripMask(addr string) string {
+	for i := 0; i < len(addr); i++ {
+		if addr[i] == '/' {
+			return addr[:i]
+		}
+	}
+	return addr
 }

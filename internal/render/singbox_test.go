@@ -22,14 +22,16 @@ type conf struct {
 		} `json:"users"`
 	} `json:"inbounds"`
 	Outbounds []struct {
-		Type       string   `json:"type"`
-		Tag        string   `json:"tag"`
-		Server     string   `json:"server"`
-		ServerPort int      `json:"server_port"`
-		Password   string   `json:"password"`
-		Detour     string   `json:"detour"`
-		Outbounds  []string `json:"outbounds"`
-		Default    string   `json:"default"`
+		Type            string   `json:"type"`
+		Tag             string   `json:"tag"`
+		Server          string   `json:"server"`
+		ServerPort      int      `json:"server_port"`
+		Password        string   `json:"password"`
+		Detour          string   `json:"detour"`
+		Outbounds       []string `json:"outbounds"`
+		Default         string   `json:"default"`
+		OverrideAddress string   `json:"override_address"`
+		OverridePort    int      `json:"override_port"`
 	} `json:"outbounds"`
 	Route struct {
 		Rules []struct {
@@ -162,13 +164,14 @@ func TestSingBoxSecretsArePlaceholders(t *testing.T) {
 // TestSingBoxPathCorrespondence 是这一层的对应性保险,对应 WireGuard 的
 // TestPairCorrespondence。
 //
-// 对每一条 RouteCandidate,断言这条路径上三个节点的配置互相吻合:
-// 接入节点拨的中继地址、中继放行的下一跳、目标监听的地址。任何一处对不上,
-// 结果都是连接建立后被静默阻断,而不是报错。
+// 对每一条 RouteCandidate,断言这条链上每一跳的两端配置互相吻合:接入节点
+// 拨的地址、每台服务器放行的下一跳、末跳的出口权限。任何一处对不上,结果
+// 都是连接建立后被静默阻断,而不是报错。
 func TestSingBoxPathCorrespondence(t *testing.T) {
 	s, cfgs := configs(t)
 	nodes := s.NodeByID()
 	creds := s.CredentialByID()
+	decls := s.DeclarationByID()
 
 	for pi := range s.Profiles {
 		p := &s.Profiles[pi]
@@ -186,103 +189,162 @@ func TestSingBoxPathCorrespondence(t *testing.T) {
 			if cred == nil || cred.Revoked() {
 				continue
 			}
-			d := s.DeclarationByID()[cred.Declaration]
+			d := decls[cred.Declaration]
 			if d == nil {
 				continue
 			}
 			cands, _ := s.EnumerateCandidates(d)
 
-			for _, cand := range cands {
-				name := p.ID + "/" + cand.Tag()
-				t.Run(name, func(t *testing.T) {
-					relayID := cand.RelayChain[0]
-					relay, target := nodes[relayID], nodes[cand.Target]
-					nextHop := s.TunnelAddrOn(cand.Target, relayID)
-
-					// 一 · 接入侧:候选出站存在,且经由到该中继的跳。
-					ci, ok := byTag[cand.Tag()]
-					if !ok {
-						t.Fatalf("接入侧缺少候选出站 %s", cand.Tag())
-					}
-					co := access.Outbounds[ci]
-					if co.Server != nextHop || co.ServerPort != target.InboundPort {
-						t.Errorf("候选拨向 %s:%d,期望目标隧道地址 %s:%d",
-							co.Server, co.ServerPort, nextHop, target.InboundPort)
-					}
-					hop := access.Outbounds[byTag[co.Detour]]
-					if hop.Server != relay.PublicEndpoint || hop.ServerPort != relay.InboundPort {
-						t.Errorf("跳拨向 %s:%d,期望中继 %s:%d",
-							hop.Server, hop.ServerPort, relay.PublicEndpoint, relay.InboundPort)
-					}
-
-					// 二 · 中继侧:该凭据被接纳,且这个下一跳在白名单内。
-					rc := cfgs[relayID]
-					if rc == nil {
-						t.Fatalf("中继 %s 没有渲染出配置", relayID)
-					}
-					var relayPwd string
-					for _, u := range rc.Inbounds[0].Users {
-						if u.Name == cid {
-							relayPwd = u.Password
-						}
-					}
-					if relayPwd == "" {
-						t.Fatalf("中继 %s 的 inbound 里没有凭据 %s", relayID, cid)
-					}
-					// 两端必须引用同一个秘密条目,否则查到的不是同一把钥匙。
-					if relayPwd != hop.Password {
-						t.Errorf("中继侧密码引用 %q ≠ 接入侧 %q", relayPwd, hop.Password)
-					}
-
-					allowed := false
-					for _, r := range rc.Route.Rules {
-						if len(r.AuthUser) != 1 || r.AuthUser[0] != cid {
-							continue
-						}
-						for _, cidr := range r.IPCIDR {
-							if cidr == nextHop+"/32" {
-								allowed = true
-							}
-						}
-					}
-					if !allowed {
-						t.Errorf("中继 %s 未放行凭据 %s 到下一跳 %s —— 准入校验会阻断这条候选",
-							relayID, cid, nextHop)
-					}
-
-					// 三 · 目标侧:确实在这个地址和端口上监听。
-					tc := cfgs[cand.Target]
-					if tc == nil {
-						t.Fatalf("目标 %s 没有渲染出配置", cand.Target)
-					}
-					listening := false
-					for _, in := range tc.Inbounds {
-						if in.Listen == nextHop && in.ListenPort == target.InboundPort {
-							listening = true
-						}
-					}
-					if !listening {
-						t.Errorf("目标 %s 没有在 %s:%d 上监听", cand.Target, nextHop, target.InboundPort)
-					}
+			for ci := range cands {
+				cand := &cands[ci]
+				t.Run(p.ID+"/"+cand.Tag(), func(t *testing.T) {
+					checkCandidate(t, s, nodes, cfgs, access, byTag, cid, cred.SecretRef, cand)
 				})
 			}
 		}
 	}
 }
 
-// TestRelayAdmitsNothingExtra 断言中继的白名单不宽于它该放行的集合。
-// 准入校验的价值全在于"多出来的不放行"。
-func TestRelayAdmitsNothingExtra(t *testing.T) {
+func checkCandidate(
+	t *testing.T,
+	s *model.SSOT,
+	nodes map[string]*model.Node,
+	cfgs map[string]*conf,
+	access *conf,
+	byTag map[string]int,
+	credID, secret string,
+	cand *model.RouteCandidate,
+) {
+	t.Helper()
+
+	// 一 · 接入侧:候选出站存在,并且沿着链一跳一跳对得上。
+	ci, ok := byTag[cand.Tag()]
+	if !ok {
+		t.Fatalf("接入侧缺少候选出站 %s", cand.Tag())
+	}
+
+	// 从候选出站沿 detour 往回走,得到实际的链(顺序与 ServerChain 相反)。
+	var walked []int
+	for i := ci; ; {
+		walked = append([]int{i}, walked...)
+		det := access.Outbounds[i].Detour
+		if det == "" {
+			break
+		}
+		j, ok := byTag[det]
+		if !ok {
+			t.Fatalf("出站 %s 的 detour %q 不存在", access.Outbounds[i].Tag, det)
+		}
+		i = j
+	}
+
+	// 地址随请求走时链长即跳数;从等价类选地址时末尾多一个覆盖目的地的 direct。
+	wantLen := len(cand.ServerChain)
+	if cand.Address != "" {
+		wantLen++
+	}
+	if wantLen == 0 {
+		wantLen = 1 // 零跳直连也是一个出站
+	}
+	if len(walked) != wantLen {
+		t.Fatalf("链长 %d,期望 %d(ServerChain=%v, Address=%q)",
+			len(walked), wantLen, cand.ServerChain, cand.Address)
+	}
+
+	for i, id := range cand.ServerChain {
+		o := access.Outbounds[walked[i]]
+		sv := nodes[id]
+		wantAddr := sv.PublicEndpoint
+		if i > 0 {
+			// 后续跳由前一跳转发,拨的是它在那条链路上的地址。
+			wantAddr = s.NextHopAddr(nodes[cand.ServerChain[i-1]], sv)
+		}
+		if o.Server != wantAddr || o.ServerPort != sv.InboundPort {
+			t.Errorf("第 %d 跳拨向 %s:%d,期望 %s:%d", i, o.Server, o.ServerPort, wantAddr, sv.InboundPort)
+		}
+		if o.Password != "${secret:"+secret+"}" {
+			t.Errorf("第 %d 跳的密码引用是 %q,期望 %q", i, o.Password, "${secret:"+secret+"}")
+		}
+
+		// 二 · 服务器侧:这台机器接纳该凭据,且放行这一跳该去的地方。
+		sc := cfgs[id]
+		if sc == nil {
+			t.Fatalf("服务器 %s 没有渲染出配置", id)
+		}
+		var serverPwd string
+		for _, u := range sc.Inbounds[0].Users {
+			if u.Name == credID {
+				serverPwd = u.Password
+			}
+		}
+		if serverPwd == "" {
+			t.Fatalf("服务器 %s 的 inbound 里没有凭据 %s", id, credID)
+		}
+		// 两端必须引用同一个秘密条目,否则查到的不是同一把钥匙。
+		if serverPwd != o.Password {
+			t.Errorf("服务器 %s 侧密码引用 %q ≠ 接入侧 %q", id, serverPwd, o.Password)
+		}
+
+		if i+1 < len(cand.ServerChain) {
+			next := nodes[cand.ServerChain[i+1]]
+			want := s.NextHopAddr(sv, next) + "/32"
+			if !admits(sc, credID, want) {
+				t.Errorf("服务器 %s 未放行凭据 %s 到下一跳 %s —— 准入校验会阻断这条候选",
+					id, credID, want)
+			}
+		} else if !hasEgressRule(sc, credID) {
+			t.Errorf("服务器 %s 是这条候选的出口,却没有给凭据 %s 的出口规则", id, credID)
+		}
+	}
+
+	// 三 · 从等价类选地址时,末尾那个 direct 要覆盖到选中的地址。
+	if cand.Address != "" {
+		last := access.Outbounds[walked[len(walked)-1]]
+		if last.Type != "direct" {
+			t.Errorf("末尾出站类型是 %s,期望 direct(需要覆盖目的地)", last.Type)
+		}
+		if last.OverrideAddress == "" {
+			t.Error("末尾出站没有 override_address —— 换地址不会生效")
+		}
+	}
+}
+
+func admits(c *conf, user, cidr string) bool {
+	for _, r := range c.Route.Rules {
+		if len(r.AuthUser) != 1 || r.AuthUser[0] != user {
+			continue
+		}
+		for _, x := range r.IPCIDR {
+			if x == cidr {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasEgressRule(c *conf, user string) bool {
+	for _, r := range c.Route.Rules {
+		if len(r.AuthUser) == 1 && r.AuthUser[0] == user && r.Outbound == "egress" {
+			return true
+		}
+	}
+	return false
+}
+
+// TestServerAdmitsNothingExtra 断言服务器的白名单不宽于它该放行的集合。
+// 准入校验的价值全在于"多出来的不放行"(§8.2)。
+func TestServerAdmitsNothingExtra(t *testing.T) {
 	s, cfgs := configs(t)
+	nodes := s.NodeByID()
 	decls := s.DeclarationByID()
 
 	for i := range s.Nodes {
 		n := &s.Nodes[i]
-		rc := cfgs[n.ID]
-		if rc == nil || !n.Has(model.Relay) {
+		sc := cfgs[n.ID]
+		if sc == nil || !n.Has(model.Server) {
 			continue
 		}
-		// 该中继本应放行的 (凭据, 下一跳) 集合。
 		want := map[string]bool{}
 		for j := range s.Credentials {
 			c := &s.Credentials[j]
@@ -294,33 +356,59 @@ func TestRelayAdmitsNothingExtra(t *testing.T) {
 				continue
 			}
 			cands, _ := s.EnumerateCandidates(d)
-			for _, cand := range cands {
-				if cand.RelayChain[0] != n.ID {
-					continue
+			for k := range cands {
+				chain := cands[k].ServerChain
+				for x, id := range chain {
+					if id != n.ID || x+1 >= len(chain) {
+						continue
+					}
+					want[c.ID+"|"+s.NextHopAddr(n, nodes[chain[x+1]])+"/32"] = true
 				}
-				want[c.ID+"|"+s.TunnelAddrOn(cand.Target, n.ID)+"/32"] = true
 			}
 		}
-		for _, r := range rc.Route.Rules {
+		for _, r := range sc.Route.Rules {
+			if r.Outbound == "egress" {
+				continue
+			}
 			for _, u := range r.AuthUser {
 				for _, cidr := range r.IPCIDR {
 					if !want[u+"|"+cidr] {
-						t.Errorf("中继 %s 多放行了 %s → %s", n.ID, u, cidr)
+						t.Errorf("服务器 %s 多放行了 %s → %s", n.ID, u, cidr)
 					}
 				}
 			}
 		}
-		if rc.Route.Final != "block" {
-			t.Errorf("中继 %s 的 route.final 是 %q,应为 block —— 白名单之外必须阻断",
-				n.ID, rc.Route.Final)
+		if sc.Route.Final != "block" {
+			t.Errorf("服务器 %s 的 route.final 是 %q,应为 block —— 白名单之外必须阻断",
+				n.ID, sc.Route.Final)
 		}
 	}
 }
 
-// TestRevokedCredentialNotRendered:吊销后中继上必须不再有这个 user(§18)。
+// TestEgressOnlyWhereCapable:没有 egress_capable 的服务器不该有出口出站。
+func TestEgressOnlyWhereCapable(t *testing.T) {
+	s, cfgs := configs(t)
+	for i := range s.Nodes {
+		n := &s.Nodes[i]
+		sc := cfgs[n.ID]
+		if sc == nil {
+			continue
+		}
+		has := false
+		for _, o := range sc.Outbounds {
+			if o.Tag == "egress" {
+				has = true
+			}
+		}
+		if has && !n.EgressCapable {
+			t.Errorf("服务器 %s 没有 egress_capable 却渲染了出口出站", n.ID)
+		}
+	}
+}
+
+// TestRevokedCredentialNotRendered:吊销后所有服务器上必须不再有这个 user(§18)。
 func TestRevokedCredentialNotRendered(t *testing.T) {
 	s := load(t)
-	// 吊销工作站的出口凭据。
 	found := false
 	for i := range s.Credentials {
 		if s.Credentials[i].ID == "cred-ws-eg" {
@@ -331,7 +419,6 @@ func TestRevokedCredentialNotRendered(t *testing.T) {
 	if !found {
 		t.Fatal("fixture 里没有 cred-ws-eg")
 	}
-
 	res, err := Render(s)
 	if err != nil {
 		t.Fatal(err)

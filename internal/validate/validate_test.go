@@ -20,8 +20,8 @@ func TestRejects(t *testing.T) {
 			want: "无人接受",
 			yaml: `
 nodes:
-  - {id: a, capabilities: [target], direction: reverse_only, public_endpoint: 1.1.1.1, wg_public_key: k1}
-  - {id: b, capabilities: [target], direction: reverse_only, public_endpoint: 1.1.1.2, wg_public_key: k2}
+  - {id: a, capabilities: [server], direction: reverse_only, public_endpoint: 1.1.1.1, wg_public_key: k1}
+  - {id: b, capabilities: [server], direction: reverse_only, public_endpoint: 1.1.1.2, inbound_port: 4433, wg_public_key: k2}
 tunnels:
   - {from: a, to: b, listen_port: 1, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
 		},
@@ -30,32 +30,8 @@ tunnels:
 			want: "无人发起",
 			yaml: `
 nodes:
-  - {id: a, capabilities: [target], direction: direct_only, public_endpoint: 1.1.1.1, wg_public_key: k1}
-  - {id: b, capabilities: [target], direction: direct_only, public_endpoint: 1.1.1.2, wg_public_key: k2}
-tunnels:
-  - {from: a, to: b, listen_port: 1, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
-		},
-		{
-			name: "§2.2 relay 与 reverse_only 不相容",
-			want: "二者不相容",
-			yaml: `
-nodes:
-  - {id: a, capabilities: [relay], direction: reverse_only}`,
-		},
-		{
-			name: "§1.3 第三方端点必须是 direct_only",
-			want: "必须是 direct_only",
-			yaml: `
-nodes:
-  - {id: a, capabilities: [target], direction: bidirectional, managed: false}`,
-		},
-		{
-			name: "§9.2 第三方端点不能作隧道端点",
-			want: "不参与配置渲染",
-			yaml: `
-nodes:
-  - {id: a, capabilities: [relay], direction: bidirectional, public_endpoint: 1.1.1.1, wg_public_key: k1}
-  - {id: b, capabilities: [target], direction: direct_only, managed: false, public_endpoint: 1.1.1.2}
+  - {id: a, capabilities: [server], direction: direct_only, public_endpoint: 1.1.1.1, wg_public_key: k1}
+  - {id: b, capabilities: [server], direction: direct_only, public_endpoint: 1.1.1.2, wg_public_key: k2}
 tunnels:
   - {from: a, to: b, listen_port: 1, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
 		},
@@ -64,9 +40,9 @@ tunnels:
 			want: "已被",
 			yaml: `
 nodes:
-  - {id: acc, capabilities: [relay], direction: bidirectional, public_endpoint: 1.1.1.1, wg_public_key: k0}
-  - {id: t1, capabilities: [target], direction: reverse_only, public_endpoint: 1.1.1.2, wg_public_key: k1}
-  - {id: t2, capabilities: [target], direction: reverse_only, public_endpoint: 1.1.1.3, wg_public_key: k2}
+  - {id: acc, capabilities: [server], direction: bidirectional, public_endpoint: 1.1.1.1, inbound_port: 4433, wg_public_key: k0}
+  - {id: t1, capabilities: [server], direction: reverse_only, public_endpoint: 1.1.1.2, wg_public_key: k1}
+  - {id: t2, capabilities: [server], direction: reverse_only, public_endpoint: 1.1.1.3, inbound_port: 4433, wg_public_key: k2}
 tunnels:
   - {from: acc, to: t1, listen_port: 51820, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}
   - {from: acc, to: t2, listen_port: 51820, from_addr: 10.0.0.3/32, to_addr: 10.0.0.4/32}`,
@@ -76,9 +52,9 @@ tunnels:
 			want: "已被",
 			yaml: `
 nodes:
-  - {id: acc, capabilities: [relay], direction: bidirectional, public_endpoint: 1.1.1.1, wg_public_key: k0}
-  - {id: t1, capabilities: [target], direction: reverse_only, public_endpoint: 1.1.1.2, wg_public_key: k1}
-  - {id: t2, capabilities: [target], direction: reverse_only, public_endpoint: 1.1.1.3, wg_public_key: k2}
+  - {id: acc, capabilities: [server], direction: bidirectional, public_endpoint: 1.1.1.1, inbound_port: 4433, wg_public_key: k0}
+  - {id: t1, capabilities: [server], direction: reverse_only, public_endpoint: 1.1.1.2, wg_public_key: k1}
+  - {id: t2, capabilities: [server], direction: reverse_only, public_endpoint: 1.1.1.3, inbound_port: 4433, wg_public_key: k2}
 tunnels:
   - {from: acc, to: t1, listen_port: 1, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}
   - {from: acc, to: t2, listen_port: 2, from_addr: 10.0.0.1/32, to_addr: 10.0.0.3/32}`,
@@ -88,8 +64,8 @@ tunnels:
 			want: "应为 /32",
 			yaml: `
 nodes:
-  - {id: a, capabilities: [relay], direction: bidirectional, public_endpoint: 1.1.1.1, wg_public_key: k1}
-  - {id: b, capabilities: [target], direction: reverse_only, public_endpoint: 1.1.1.2, wg_public_key: k2}
+  - {id: a, capabilities: [server], direction: bidirectional, public_endpoint: 1.1.1.1, inbound_port: 4433, wg_public_key: k1}
+  - {id: b, capabilities: [server], direction: reverse_only, public_endpoint: 1.1.1.2, inbound_port: 4433, wg_public_key: k2}
 tunnels:
   - {from: a, to: b, listen_port: 1, from_addr: 10.0.0.0/24, to_addr: 10.0.1.2/32}`,
 		},
@@ -98,8 +74,8 @@ tunnels:
 			want: "无处可拨",
 			yaml: `
 nodes:
-  - {id: a, capabilities: [relay], direction: bidirectional, wg_public_key: k1}
-  - {id: b, capabilities: [target], direction: reverse_only, public_endpoint: 1.1.1.2, wg_public_key: k2}
+  - {id: a, capabilities: [server], direction: bidirectional, inbound_port: 4433, wg_public_key: k1}
+  - {id: b, capabilities: [server], direction: reverse_only, public_endpoint: 1.1.1.2, inbound_port: 4433, wg_public_key: k2}
 tunnels:
   - {from: a, to: b, listen_port: 1, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
 		},
@@ -108,8 +84,8 @@ tunnels:
 			want: "缺少 wg_public_key",
 			yaml: `
 nodes:
-  - {id: a, capabilities: [relay], direction: bidirectional, public_endpoint: 1.1.1.1}
-  - {id: b, capabilities: [target], direction: reverse_only, public_endpoint: 1.1.1.2, wg_public_key: k2}
+  - {id: a, capabilities: [server], direction: bidirectional, public_endpoint: 1.1.1.1, inbound_port: 4433}
+  - {id: b, capabilities: [server], direction: reverse_only, public_endpoint: 1.1.1.2, inbound_port: 4433, wg_public_key: k2}
 tunnels:
   - {from: a, to: b, listen_port: 1, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
 		},
@@ -118,8 +94,8 @@ tunnels:
 			want: "重复",
 			yaml: `
 nodes:
-  - {id: a, capabilities: [relay], direction: bidirectional, public_endpoint: 1.1.1.1, wg_public_key: k1}
-  - {id: b, capabilities: [target], direction: reverse_only, public_endpoint: 1.1.1.2, wg_public_key: k2}
+  - {id: a, capabilities: [server], direction: bidirectional, public_endpoint: 1.1.1.1, inbound_port: 4433, wg_public_key: k1}
+  - {id: b, capabilities: [server], direction: reverse_only, public_endpoint: 1.1.1.2, inbound_port: 4433, wg_public_key: k2}
 tunnels:
   - {from: a, to: b, listen_port: 1, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}
   - {from: b, to: a, listen_port: 2, from_addr: 10.0.0.3/32, to_addr: 10.0.0.4/32}`,
@@ -129,34 +105,58 @@ tunnels:
 			want: "超过 15 字符",
 			yaml: `
 nodes:
-  - {id: a, capabilities: [relay], direction: bidirectional, public_endpoint: 1.1.1.1, wg_public_key: k1}
-  - {id: target-in-a-very-long-city, capabilities: [target], direction: reverse_only, public_endpoint: 1.1.1.2, wg_public_key: k2}
+  - {id: a, capabilities: [server], direction: bidirectional, public_endpoint: 1.1.1.1, inbound_port: 4433, wg_public_key: k1}
+  - {id: server-in-a-very-long-city, capabilities: [server], direction: reverse_only, public_endpoint: 1.1.1.2, inbound_port: 4433, wg_public_key: k2}
 tunnels:
-  - {from: a, to: target-in-a-very-long-city, listen_port: 1, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
+  - {from: a, to: server-in-a-very-long-city, listen_port: 1, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
 		},
 		{
-			name: "§1.1 能力集不能为空",
+			name: "§1.3 能力集不能为空",
 			want: "capabilities 为空",
 			yaml: `
 nodes:
-  - {id: a, capabilities: [], direction: bidirectional}`,
+  - {id: a, capabilities: [], direction: bidirectional, inbound_port: 4433}`,
 		},
 		{
 			name: "§19 节点 id 重复",
 			want: "id 重复",
 			yaml: `
 nodes:
-  - {id: a, capabilities: [relay], direction: bidirectional}
-  - {id: a, capabilities: [relay], direction: bidirectional}`,
+  - {id: a, capabilities: [server], direction: bidirectional, inbound_port: 4433}
+  - {id: a, capabilities: [server], direction: bidirectional, inbound_port: 4433}`,
 		},
 		{
 			name: "隧道引用了不存在的节点",
 			want: "不存在的节点",
 			yaml: `
 nodes:
-  - {id: a, capabilities: [relay], direction: bidirectional, public_endpoint: 1.1.1.1, wg_public_key: k1}
+  - {id: a, capabilities: [server], direction: bidirectional, public_endpoint: 1.1.1.1, inbound_port: 4433, wg_public_key: k1}
 tunnels:
   - {from: a, to: ghost, listen_port: 1, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
+		},
+		{
+			name: "§6.3 两端都能进 mesh 就不该手工建隧道",
+			want: "交给 Headscale",
+			yaml: `
+nodes:
+  - {id: a, capabilities: [server], direction: bidirectional, public_endpoint: 1.1.1.1, inbound_port: 4433, wg_public_key: k1}
+  - {id: b, capabilities: [server], direction: direct_only, public_endpoint: 1.1.1.2, inbound_port: 4433, wg_public_key: k2}
+tunnels:
+  - {from: a, to: b, listen_port: 1, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
+		},
+		{
+			name: "§8.1 server 没有 inbound_port 就接不了上游",
+			want: "无法接受上游连接",
+			yaml: `
+nodes:
+  - {id: a, capabilities: [server], direction: bidirectional, public_endpoint: 1.1.1.1}`,
+		},
+		{
+			name: "§1.1 出口能力只对服务器有意义",
+			want: "egress_capable 只对服务器有意义",
+			yaml: `
+nodes:
+  - {id: a, capabilities: [access], direction: bidirectional, egress_capable: true}`,
 		},
 	}
 
@@ -182,8 +182,8 @@ func TestValidateIsDeterministic(t *testing.T) {
 	src := []byte(`
 nodes:
   - {id: z, capabilities: [], direction: bogus}
-  - {id: a, capabilities: [relay], direction: reverse_only}
-  - {id: m, capabilities: [target], direction: bidirectional, managed: false}`)
+  - {id: a, capabilities: [server], direction: reverse_only}
+  - {id: m, capabilities: [server], direction: bidirectional}`)
 	s, err := model.Load(src)
 	if err != nil {
 		t.Fatal(err)

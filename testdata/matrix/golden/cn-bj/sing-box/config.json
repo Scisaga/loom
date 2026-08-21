@@ -1,0 +1,166 @@
+{
+  "log": {
+    "level": "warn"
+  },
+  "inbounds": [
+    {
+      "type": "hysteria2",
+      "tag": "in",
+      "listen": "::",
+      "listen_port": 4433,
+      "users": [
+        {
+          "name": "cred-ci",
+          "password": "${secret:vault:cred/ci}"
+        },
+        {
+          "name": "cred-phone",
+          "password": "${secret:vault:cred/phone}"
+        },
+        {
+          "name": "cred-ws-eg",
+          "password": "${secret:vault:cred/ws-eg}"
+        },
+        {
+          "name": "cred-ws-llm",
+          "password": "${secret:vault:cred/ws-llm}"
+        },
+        {
+          "name": "cred-ws-sg",
+          "password": "${secret:vault:cred/ws-sg}"
+        }
+      ],
+      "tls": {
+        "enabled": true,
+        "certificate_path": "/etc/loom/tls/node.crt",
+        "key_path": "/etc/loom/secrets/node.key",
+        "alpn": [
+          "h3"
+        ]
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "via-cn-gz"
+    },
+    {
+      "type": "direct",
+      "tag": "via-jp-vps",
+      "bind_interface": "wg-jp-vps"
+    },
+    {
+      "type": "direct",
+      "tag": "via-sg-vps",
+      "bind_interface": "wg-sg-vps"
+    },
+    {
+      "type": "direct",
+      "tag": "egress"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "auth_user": [
+          "cred-ci"
+        ],
+        "ip_cidr": [
+          "203.0.113.12/32"
+        ],
+        "outbound": "via-cn-gz"
+      },
+      {
+        "auth_user": [
+          "cred-ci"
+        ],
+        "ip_cidr": [
+          "10.99.1.2/32"
+        ],
+        "outbound": "via-jp-vps"
+      },
+      {
+        "auth_user": [
+          "cred-ci"
+        ],
+        "ip_cidr": [
+          "10.99.0.2/32"
+        ],
+        "outbound": "via-sg-vps"
+      },
+      {
+        "auth_user": [
+          "cred-phone"
+        ],
+        "ip_cidr": [
+          "10.99.0.2/32"
+        ],
+        "outbound": "via-sg-vps"
+      },
+      {
+        "auth_user": [
+          "cred-ws-eg"
+        ],
+        "ip_cidr": [
+          "203.0.113.12/32"
+        ],
+        "outbound": "via-cn-gz"
+      },
+      {
+        "auth_user": [
+          "cred-ws-eg"
+        ],
+        "ip_cidr": [
+          "10.99.1.2/32"
+        ],
+        "outbound": "via-jp-vps"
+      },
+      {
+        "auth_user": [
+          "cred-ws-eg"
+        ],
+        "ip_cidr": [
+          "10.99.0.2/32"
+        ],
+        "outbound": "via-sg-vps"
+      },
+      {
+        "auth_user": [
+          "cred-ws-sg"
+        ],
+        "ip_cidr": [
+          "10.99.0.2/32"
+        ],
+        "outbound": "via-sg-vps"
+      },
+      {
+        "auth_user": [
+          "cred-ci"
+        ],
+        "outbound": "egress"
+      },
+      {
+        "auth_user": [
+          "cred-ws-eg"
+        ],
+        "outbound": "egress"
+      },
+      {
+        "auth_user": [
+          "cred-ws-llm"
+        ],
+        "domain": [
+          "192.0.2.10",
+          "192.0.2.11"
+        ],
+        "outbound": "egress"
+      }
+    ],
+    "final": "block"
+  }
+}

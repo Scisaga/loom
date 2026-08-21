@@ -101,26 +101,18 @@ func Render(s *model.SSOT) (*Result, error) {
 		skipped = append(skipped, sk...)
 		byNode[p.ID] = append(byNode[p.ID], f)
 	}
+	// 服务器只有一种渲染。中继与出口不是两类节点,是同一台机器在不同
+	// 路径上的两种位置(§1.1)。
 	for i := range s.Nodes {
 		n := &s.Nodes[i]
-		if !n.IsManaged() || n.InboundPort == 0 {
+		if !n.Has(model.Server) || n.InboundPort == 0 {
 			continue
 		}
-		if n.Has(model.Relay) {
-			f, err := renderRelay(s, n)
-			if err != nil {
-				return nil, err
-			}
-			byNode[n.ID] = append(byNode[n.ID], f)
-			continue
+		f, err := renderServer(s, n)
+		if err != nil {
+			return nil, err
 		}
-		if n.Has(model.Target) && n.TargetKind == model.Landing {
-			f, err := renderLanding(s, n)
-			if err != nil {
-				return nil, err
-			}
-			byNode[n.ID] = append(byNode[n.ID], f)
-		}
+		byNode[n.ID] = append(byNode[n.ID], f)
 	}
 
 	ids := make([]string, 0, len(byNode))

@@ -10,19 +10,30 @@ import (
 // 最小可用的拓扑前缀,让服务侧的反例只需声明它关心的那部分。
 const topo = `
 nodes:
-  - {id: relay-bj, capabilities: [relay], direction: bidirectional, public_endpoint: 1.1.1.1, wg_public_key: k1}
-  - {id: t-a, capabilities: [target], direction: reverse_only, public_endpoint: 1.1.1.2, wg_public_key: k2}
-  - {id: t-b, capabilities: [target], direction: reverse_only, public_endpoint: 1.1.1.3, wg_public_key: k3}
+  - {id: cn-a, capabilities: [server], direction: bidirectional, public_endpoint: 1.1.1.1, inbound_port: 4433, egress_capable: true, wg_public_key: k1}
+  - {id: cn-b, capabilities: [server], direction: bidirectional, public_endpoint: 1.1.1.2, inbound_port: 4433, wg_public_key: k2}
+  - {id: sg-v, capabilities: [server], direction: reverse_only, public_endpoint: 1.1.1.3, inbound_port: 4433, egress_capable: true, wg_public_key: k3}
 `
 
 // TestRejectsService 覆盖 §19"校验器必须拒绝的矛盾配置"表里依赖等价类与
-// 访问声明的那几条。它们在只有拓扑模型的阶段无法实现,因此曾长期缺失。
+// 访问声明的那几条。
 func TestRejectsService(t *testing.T) {
 	cases := []struct {
 		name string
-		want string
+		want string // 期望出现在某条发现里的子串;空串表示期望通过
 		yaml string
 	}{
+		{
+			name: "§1 把节点 id 写进等价类成员",
+			want: "目标不是节点",
+			yaml: topo + `
+equivalence_classes:
+  - id: c1
+    carrier: l4_direct
+    observation_point: l4_tunnel
+    members:
+      - {address: cn-a, access_contract: {}}`,
+		},
 		{
 			name: "§4.4 l4_direct 但成员契约不同构",
 			want: "l7_gateway 承载",
@@ -32,20 +43,20 @@ equivalence_classes:
     carrier: l4_direct
     observation_point: l4_tunnel
     members:
-      - {node: t-a, access_contract: {domain: a.internal, cert_ca: ca1, credential: v1}}
-      - {node: t-b, access_contract: {domain: b.example.net, cert_ca: webpki, credential: v2}}`,
+      - {address: "https://a.internal/v1", access_contract: {domain: a.internal, cert_ca: ca1, credential: v1}}
+      - {address: "https://b.example.net/v1", access_contract: {domain: b.example.net, cert_ca: webpki, credential: v2}}`,
 		},
 		{
 			name: "§4.4 l7_gateway 允许契约不同构",
-			want: "", // 期望通过
+			want: "",
 			yaml: topo + `
 equivalence_classes:
   - id: c1
     carrier: l7_gateway
     observation_point: l7_gateway
     members:
-      - {node: t-a, access_contract: {domain: a.internal, cert_ca: ca1, credential: v1}}
-      - {node: t-b, access_contract: {domain: b.example.net, cert_ca: webpki, credential: v2}}`,
+      - {address: "https://a.internal/v1", access_contract: {domain: a.internal, cert_ca: ca1, credential: v1}}
+      - {address: "https://b.example.net/v1", access_contract: {domain: b.example.net, cert_ca: webpki, credential: v2}}`,
 		},
 		{
 			name: "§16.2 objective ttft 但只有 L4 观测点",
@@ -55,16 +66,9 @@ equivalence_classes:
   - id: c1
     carrier: l4_direct
     observation_point: l4_tunnel
-    members:
-      - {node: t-a, access_contract: {}}
-      - {node: t-b, access_contract: {}}
+    members: [{address: "https://a.internal/v1", access_contract: {}}]
 declarations:
-  - id: d1
-    mode: by_service
-    equivalence_class: c1
-    objective: ttft
-    top_n: 2
-    tuning_period: 10m`,
+  - {id: d1, address_axis: "class:c1", egress_axis: any, objective: ttft, top_n: 2, tuning_period: 10m}`,
 		},
 		{
 			name: "§5.2 objective cost 但没有价格数据源",
@@ -73,17 +77,10 @@ declarations:
 equivalence_classes:
   - id: c1
     carrier: l4_direct
-    observation_point: l4_tunnel
-    members:
-      - {node: t-a, access_contract: {}}
-      - {node: t-b, access_contract: {}}
+    observation_point: endpoint
+    members: [{address: "https://a.internal/v1", access_contract: {}}]
 declarations:
-  - id: d1
-    mode: by_service
-    equivalence_class: c1
-    objective: cost
-    top_n: 2
-    tuning_period: 10m`,
+  - {id: d1, address_axis: "class:c1", egress_axis: any, objective: cost, top_n: 2, tuning_period: 10m}`,
 		},
 		{
 			name: "§5.8 有合规约束但 fallback 不是 fail_closed",
@@ -91,8 +88,8 @@ declarations:
 			yaml: topo + `
 declarations:
   - id: d1
-    mode: pinned_target
-    target_node: t-a
+    address_axis: from_request
+    egress_axis: any
     objective: stability
     tuning_period: 10m
     fallback: last_known_good
@@ -100,82 +97,94 @@ declarations:
       - {kind: compliance, expr: 数据不出省}`,
 		},
 		{
-			name: "§5.5 模式 A 配置了 ranking_period",
+			name: "§5.5 地址由请求决定却配了 ranking_period",
 			want: "排序周期无意义",
 			yaml: topo + `
 declarations:
-  - id: d1
-    mode: pinned_target
-    target_node: t-a
-    objective: stability
-    tuning_period: 10m
-    ranking_period: 30m`,
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m, ranking_period: 30m}`,
 		},
 		{
-			name: "§4 模式 A 不应声明 equivalence_class",
-			want: "目标轴已钉死",
+			name: "§4 address_axis 取值非法",
+			want: "address_axis 非法",
 			yaml: topo + `
-equivalence_classes:
-  - id: c1
-    carrier: l4_direct
-    observation_point: l4_tunnel
-    members: [{node: t-a, access_contract: {}}]
 declarations:
-  - id: d1
-    mode: pinned_target
-    target_node: t-a
-    equivalence_class: c1
-    objective: stability
-    tuning_period: 10m`,
+  - {id: d1, address_axis: whatever, egress_axis: any, objective: latency, tuning_period: 10m}`,
 		},
 		{
-			name: "§5.6 模式 B 缺 top_n",
+			name: "§4 egress_axis 钉死了不存在的节点",
+			want: "钉死了不存在的节点",
+			yaml: topo + `
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: "pinned:ghost", objective: latency, tuning_period: 10m}`,
+		},
+		{
+			name: "§4 钉死的出口没有 egress_capable",
+			want: "它出不了公网",
+			yaml: topo + `
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: "pinned:cn-b", objective: latency, tuning_period: 10m, allowed_servers: [cn-b]}`,
+		},
+		{
+			name: "§5.1 钉死的出口不在 allowed_servers 里",
+			want: "不在 allowed_servers 里",
+			yaml: topo + `
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: "pinned:sg-v", objective: latency, tuning_period: 10m, allowed_servers: [cn-a]}`,
+		},
+		{
+			name: "§5.6 地址从等价类里选却缺 top_n",
 			want: "显式声明 top_n",
 			yaml: topo + `
 equivalence_classes:
   - id: c1
     carrier: l4_direct
     observation_point: l4_tunnel
-    members: [{node: t-a, access_contract: {}}]
+    members: [{address: "https://a.internal/v1", access_contract: {}}]
 declarations:
-  - id: d1
-    mode: by_service
-    equivalence_class: c1
-    objective: latency
-    tuning_period: 10m`,
+  - {id: d1, address_axis: "class:c1", egress_axis: any, objective: latency, tuning_period: 10m}`,
 		},
 		{
 			name: "§7.2 Android 不应有 mixed_ports",
 			want: "只能走 TUN",
 			yaml: topo + `
 declarations:
-  - {id: d1, mode: pinned_target, target_node: t-a, objective: stability, tuning_period: 10m}
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
 credentials:
   - {id: cr1, declaration: d1, secret_ref: v}
 profiles:
-  - id: p1
-    platform: android
-    credentials: [cr1]
-    mixed_ports: [{port: 1080, declaration: d1}]`,
+  - {id: p1, platform: android, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}`,
 		},
 		{
 			name: "§18 Android 多凭据无法按端口区分",
 			want: "无法按端口区分声明",
 			yaml: topo + `
 declarations:
-  - {id: d1, mode: pinned_target, target_node: t-a, objective: stability, tuning_period: 10m}
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
 credentials:
   - {id: cr1, declaration: d1, secret_ref: v}
   - {id: cr2, declaration: d1, secret_ref: v}
 profiles:
-  - {id: p1, platform: android, credentials: [cr1, cr2]}`,
+  - {id: p1, platform: android, credentials: [cr1, cr2], default_declaration: d1}`,
+		},
+		{
+			name: "§7.2 桌面多凭据必须声明 TUN 兜底走哪条",
+			want: "兜底流量走哪条声明是歧义的",
+			yaml: topo + `
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
+  - {id: d2, address_axis: from_request, egress_axis: any, objective: latency, tuning_period: 10m}
+credentials:
+  - {id: cr1, declaration: d1, secret_ref: v}
+  - {id: cr2, declaration: d2, secret_ref: v}
+profiles:
+  - {id: p1, platform: desktop, credentials: [cr1, cr2], mixed_ports: [{port: 1080, declaration: d1}]}`,
 		},
 		{
 			name: "§7.2 linux-server 没有 mixed 端口就接管不到流量",
 			want: "接管不到任何流量",
 			yaml: topo + `
 declarations:
-  - {id: d1, mode: pinned_target, target_node: t-a, objective: stability, tuning_period: 10m}
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
 credentials:
   - {id: cr1, declaration: d1, secret_ref: v}
 profiles:
@@ -186,11 +195,11 @@ profiles:
 			want: "已吊销",
 			yaml: topo + `
 declarations:
-  - {id: d1, mode: pinned_target, target_node: t-a, objective: stability, tuning_period: 10m}
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
 credentials:
   - {id: cr1, declaration: d1, secret_ref: v, revoked_at: "2026-01-01T00:00:00Z"}
 profiles:
-  - {id: p1, platform: desktop, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}`,
+  - {id: p1, platform: linux-server, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}`,
 		},
 		{
 			name: "§8.2 凭据未绑定访问声明",
@@ -204,43 +213,36 @@ credentials:
 			want: "不存在的访问声明",
 			yaml: topo + `
 declarations:
-  - {id: d1, mode: pinned_target, target_node: t-a, objective: stability, tuning_period: 10m}
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
 credentials:
   - {id: cr1, declaration: d1, secret_ref: v}
 profiles:
-  - id: p1
-    platform: desktop
-    credentials: [cr1]
-    mixed_ports: [{port: 1080, declaration: ghost}]`,
+  - {id: p1, platform: linux-server, credentials: [cr1], mixed_ports: [{port: 1080, declaration: ghost}]}`,
 		},
 		{
-			name: "§4.3 等价类成员不持有 target 能力",
-			want: "不持有 target 能力",
-			yaml: topo + `
-equivalence_classes:
-  - id: c1
-    carrier: l4_direct
-    observation_point: l4_tunnel
-    members: [{node: relay-bj, access_contract: {}}]`,
-		},
-		{
-			name: "§5.1 allowed_relays 里的节点不是中继",
-			want: "不持有 relay 能力",
-			yaml: topo + `
+			name: "§5.1 allowed_servers 里的节点不是服务器",
+			want: "不持有 server 能力",
+			yaml: topo + `  - {id: laptop, capabilities: [access], direction: bidirectional}
 declarations:
-  - id: d1
-    mode: pinned_target
-    target_node: t-a
-    objective: stability
-    tuning_period: 10m
-    allowed_relays: [t-b]`,
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m, allowed_servers: [laptop]}`,
 		},
 		{
 			name: "§5.5 缺少 tuning_period",
 			want: "缺少 tuning_period",
 			yaml: topo + `
 declarations:
-  - {id: d1, mode: pinned_target, target_node: t-a, objective: stability}`,
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability}`,
+		},
+		{
+			name: "§19 档案 id 与节点 id 重名",
+			want: "共用配置包的输出目录名",
+			yaml: topo + `
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
+credentials:
+  - {id: cr1, declaration: d1, secret_ref: v}
+profiles:
+  - {id: cn-a, platform: linux-server, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}`,
 		},
 	}
 
@@ -261,19 +263,6 @@ declarations:
 				t.Errorf("发现里没有 %q:\n%s", tc.want, got)
 			}
 		})
-	}
-}
-
-// TestFallbackDefaultsToFailClosed:§5.8 的默认必须落在安全那一侧。
-func TestFallbackDefaultsToFailClosed(t *testing.T) {
-	s, err := model.Load([]byte(topo + `
-declarations:
-  - {id: d1, mode: pinned_target, target_node: t-a, objective: stability, tuning_period: 10m}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := s.Declarations[0].Fallback; got != model.FailClosed {
-		t.Errorf("fallback 默认值是 %q,应为 fail_closed —— 空候选集需要人介入,不需要自动兜底", got)
 	}
 }
 

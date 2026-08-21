@@ -1,155 +1,132 @@
-# §20.1 的例子:4 中继 × 3 目标 = 12 条隧道 = 24 个文件。
-# 这份 fixture 刻意覆盖三种合法的 direction 组合,以及一个不参与渲染的
-# 第三方端点。
+# 参考 SSOT。所有 IP 取自 RFC 5737 文档保留段,域名取自 RFC 2606,
+# 不指向任何真实主机。
+#
+# 这份 fixture 刻意覆盖:
+#   - 两种 direction 组合(bi↔rev)
+#   - 能进 mesh 的服务器不出现在 tunnels 里(§6.3、D13)
+#   - 两个选择轴的三种组合(§4)
+#   - l4_direct 与 l7_gateway 两种承载(§4.4)
 
 nodes:
-  # ---- 中继(§8)。持有 relay 能力的节点不能是 reverse_only(§2.2)。----
-  - id: relay-bj
+  # ---- 国内云机。有公网 IP,能被主动连,因此能进 mesh(§8.3)----
+  #      它们之间不需要任何隧道条目 —— Headscale 自动分发密钥。
+  - id: cn-bj
     city: 北京
-    capabilities: [relay, access]
+    capabilities: [server]
     direction: bidirectional
     public_endpoint: 203.0.113.10
     inbound_port: 4433
+    egress_capable: true
     wg_public_key: bj0000000000000000000000000000000000000000k=
 
-  - id: relay-sh
+  - id: cn-sh
     city: 上海
-    capabilities: [relay]
+    capabilities: [server]
     direction: bidirectional
     public_endpoint: 203.0.113.11
     inbound_port: 4433
+    egress_capable: true
     wg_public_key: sh0000000000000000000000000000000000000000k=
 
-  - id: relay-gz
+  - id: cn-gz
     city: 广州
-    capabilities: [relay]
+    capabilities: [server]
     direction: bidirectional
     public_endpoint: 203.0.113.12
     inbound_port: 4433
+    egress_capable: true
     wg_public_key: gz0000000000000000000000000000000000000000k=
 
-  - id: relay-cd
+  - id: cn-cd
     city: 成都
-    capabilities: [relay]
+    capabilities: [server]
     direction: bidirectional
     public_endpoint: 203.0.113.13
     inbound_port: 4433
+    egress_capable: true
     wg_public_key: cd0000000000000000000000000000000000000000k=
 
-  # ---- 目标(§9)。三个不同的 direction,推导出三种发起方分配。----
-
-  # reverse_only:必须由它向所有中继扇出反连(§6.3),中继是接受方。
-  - id: target-sg
+  # ---- 境外 VPS。被主动拨号会提高被封概率,所以只能它主动连出来。----
+  #      进不了 mesh(§2.2),因此需要手工建隧道矩阵(§6.3)。
+  #      它也拨不到,所以永远不能是链上第一跳 —— 只能由国内云机推给它。
+  - id: sg-vps
     city: 新加坡
-    capabilities: [target]
-    target_kind: landing
+    capabilities: [server]
     direction: reverse_only
-    service_tags: [proxy-egress]
     public_endpoint: 198.51.100.20
-    inbound_port: 1080
+    inbound_port: 4433
+    egress_capable: true
     wg_public_key: sg0000000000000000000000000000000000000000k=
 
-  # direct_only:只能被连,中继是发起方。
-  - id: target-jp
+  - id: jp-vps
     city: 东京
-    capabilities: [target]
-    target_kind: landing
-    direction: direct_only
-    service_tags: [proxy-egress]
+    capabilities: [server]
+    direction: reverse_only
     public_endpoint: 198.51.100.21
-    inbound_port: 1080
+    inbound_port: 4433
+    egress_capable: true
     wg_public_key: jp0000000000000000000000000000000000000000k=
 
-  # bidirectional ↔ bidirectional:两端都合法,按 node id 字典序定发起方。
-  # 所有 relay-* 都小于 target-us,因此中继发起。
-  - id: target-us
-    city: 圣何塞
-    capabilities: [target]
-    target_kind: endpoint
-    direction: bidirectional
-    service_tags: ["llm:qwen3-32b-int8@openai-v1"]
-    public_endpoint: 198.51.100.22
-    wg_public_key: us0000000000000000000000000000000000000000k=
-
-  # 第三方端点:没有 Agent,不参与配置渲染,只作为候选集里的一个条目
-  # 存在(§1.3、§9.2)。它不出现在下面任何一条隧道里。
-  - id: target-3p
-    city: 法兰克福
-    capabilities: [target]
-    target_kind: endpoint
-    direction: direct_only
-    managed: false
-    service_tags: ["llm:qwen3-32b-int8@openai-v1"]
-    public_endpoint: api.example.net
-
+# 隧道只覆盖 reverse_only 的服务器(§6.3、D13)。
+# 国内云机之间一条都没有 —— 那是 Headscale 的活。
 tunnels:
-  # ---- 到 target-sg:reverse_only,由它发起,中继监听 51820 ----
-  - {from: relay-bj, to: target-sg, protocol: wg, listen_port: 51820, from_addr: 10.99.0.1/32, to_addr: 10.99.0.2/32}
-  - {from: relay-sh, to: target-sg, protocol: wg, listen_port: 51820, from_addr: 10.99.0.3/32, to_addr: 10.99.0.4/32}
-  - {from: relay-gz, to: target-sg, protocol: wg, listen_port: 51820, from_addr: 10.99.0.5/32, to_addr: 10.99.0.6/32}
-  - {from: relay-cd, to: target-sg, protocol: wg, listen_port: 51820, from_addr: 10.99.0.7/32, to_addr: 10.99.0.8/32}
-
-  # ---- 到 target-jp:direct_only,中继发起,target-jp 上每条隧道一个端口 ----
-  - {from: relay-bj, to: target-jp, protocol: wg, listen_port: 51821, from_addr: 10.99.1.1/32, to_addr: 10.99.1.2/32}
-  - {from: relay-sh, to: target-jp, protocol: wg, listen_port: 51822, from_addr: 10.99.1.3/32, to_addr: 10.99.1.4/32}
-  - {from: relay-gz, to: target-jp, protocol: wg, listen_port: 51823, from_addr: 10.99.1.5/32, to_addr: 10.99.1.6/32}
-  - {from: relay-cd, to: target-jp, protocol: wg, listen_port: 51824, from_addr: 10.99.1.7/32, to_addr: 10.99.1.8/32}
-
-  # ---- 到 target-us:bi ↔ bi,字典序定发起方(中继发起),target-us 监听 ----
-  - {from: relay-bj, to: target-us, protocol: wg, listen_port: 51831, from_addr: 10.99.2.1/32, to_addr: 10.99.2.2/32}
-  - {from: relay-sh, to: target-us, protocol: wg, listen_port: 51832, from_addr: 10.99.2.3/32, to_addr: 10.99.2.4/32}
-  - {from: relay-gz, to: target-us, protocol: wg, listen_port: 51833, from_addr: 10.99.2.5/32, to_addr: 10.99.2.6/32}
-  - {from: relay-cd, to: target-us, protocol: wg, listen_port: 51834, from_addr: 10.99.2.7/32, to_addr: 10.99.2.8/32}
+  # 每台境外 VPS 向所有国内云机扇出反连,避免绕行(§6.3)。
+  - {from: cn-bj, to: sg-vps, listen_port: 51820, from_addr: 10.99.0.1/32, to_addr: 10.99.0.2/32}
+  - {from: cn-sh, to: sg-vps, listen_port: 51820, from_addr: 10.99.0.3/32, to_addr: 10.99.0.4/32}
+  - {from: cn-gz, to: sg-vps, listen_port: 51820, from_addr: 10.99.0.5/32, to_addr: 10.99.0.6/32}
+  - {from: cn-cd, to: sg-vps, listen_port: 51820, from_addr: 10.99.0.7/32, to_addr: 10.99.0.8/32}
+  - {from: cn-bj, to: jp-vps, listen_port: 51821, from_addr: 10.99.1.1/32, to_addr: 10.99.1.2/32}
+  - {from: cn-sh, to: jp-vps, listen_port: 51821, from_addr: 10.99.1.3/32, to_addr: 10.99.1.4/32}
+  - {from: cn-gz, to: jp-vps, listen_port: 51821, from_addr: 10.99.1.5/32, to_addr: 10.99.1.6/32}
+  - {from: cn-cd, to: jp-vps, listen_port: 51821, from_addr: 10.99.1.7/32, to_addr: 10.99.1.8/32}
 
 # ---------------------------------------------------------------------------
-# 服务与调度(§4、§5、§7.3、§8.2、§18)
+# 目标地址(§9)。它们不是节点,只活在等价类里。
 # ---------------------------------------------------------------------------
 
 equivalence_classes:
-  # 代理出口是 L4 直选天然成立的情形:没有域名、证书或鉴权要对齐,
-  # 访问契约全空即天然同构(§4.4)。
-  - id: proxy-egress
-    output_contract: 裸 L4 转发,无应用层语义
-    carrier: l4_direct
-    observation_point: l4_tunnel
-    members:
-      - node: target-sg
-        access_contract: {domain: "", cert_ca: "", credential: ""}
-      - node: target-jp
-        access_contract: {domain: "", cert_ca: "", credential: ""}
-
-  # 推理端点:target-us 是自有的,target-3p 是第三方。两者域名、CA 与凭据
-  # 来源都不同,契约不同构,因此 carrier 必须是 l7_gateway —— 由网关改写
-  # Host 与鉴权(§4.4、§9.2)。网关同时是应用层指标的观测点(§16.2)。
+  # 自建推理服务的多机房部署。三个地址共用同一域名、同一 CA、同一套凭据,
+  # 所以契约同构,可以由 L4 直接换(§4.4)。客户端始终请求 llm.internal,
+  # 换的只是它解析到哪个地址;TLS SNI 与证书因此仍然有效。
   - id: llm:qwen3-32b-int8@openai-v1
     output_contract: OpenAI v1 chat/completions,32k 上下文,支持流式
+    carrier: l4_direct
+    observation_point: endpoint
+    price_source: 自建,按机时折算
+    members:
+      - address: https://192.0.2.10:8443/v1
+        region: 华东
+        access_contract: {domain: llm.internal, cert_ca: loom-internal-ca, credential: "vault:llm/shared", protocol_ver: h2}
+      - address: https://192.0.2.11:8443/v1
+        region: 华南
+        access_contract: {domain: llm.internal, cert_ca: loom-internal-ca, credential: "vault:llm/shared", protocol_ver: h2}
+
+  # 第三方 API。域名、CA、凭据来源都不同,契约不同构,所以 L4 换不了 ——
+  # 必须由 L7 网关改写(§4.4、§9.2)。渲染时这条会被显式跳过。
+  - id: llm-3p:qwen3-32b@openai-v1
+    output_contract: OpenAI v1 chat/completions,供应商声明兼容
     carrier: l7_gateway
     observation_point: l7_gateway
     price_source: 供应商合同导入
     members:
-      - node: target-us
-        access_contract:
-          domain: llm-us.internal
-          cert_ca: loom-internal-ca
-          credential: vault:llm/us
-          protocol_ver: h2
-      - node: target-3p
-        access_contract:
-          domain: api.example.net
-          cert_ca: public-webpki
-          credential: vault:llm/3p
-          path_prefix: /v1
-          protocol_ver: http/1.1
+      - address: https://api.example.net/v1
+        provider: 供应商A
+        egress_credential_ref: "vault:llm3p/a"
+        access_contract: {domain: api.example.net, cert_ca: public-webpki, credential: "vault:llm3p/a", path_prefix: /v1, protocol_ver: http/1.1}
+      - address: https://api.example.org/openai/v1
+        provider: 供应商B
+        egress_credential_ref: "vault:llm3p/b"
+        access_contract: {domain: api.example.org, cert_ca: public-webpki, credential: "vault:llm3p/b", path_prefix: /openai/v1, protocol_ver: h2}
 
 declarations:
-  # 模式 A:固定出口 IP。目标轴钉死,中继轴仍全程动态选优(§4.1)。
-  # 没有 ranking_period —— 目标轴是常量,排序周期无意义(§5.5)。
+  # 地址随请求走 + 出口钉死。典型用途是账号绑定了固定出口 IP(§4.1)。
+  # 出口是 sg-vps,但它拨不到 —— 所以链必然是 [国内云机, sg-vps],两跳。
   - id: sg-fixed
     name: 固定新加坡出口
-    mode: pinned_target
-    target_node: target-sg
+    address_axis: from_request
+    egress_axis: pinned:sg-vps
     objective: stability
-    allowed_relays: [relay-bj, relay-sh, relay-gz, relay-cd]
+    allowed_servers: [cn-bj, cn-sh, cn-gz, cn-cd, sg-vps]
     max_hops: 2
     tuning_period: 10m
     switch_threshold: 0.2
@@ -157,34 +134,31 @@ declarations:
     min_samples: 20
     stale_after: 30m
 
-  # 模式 B:在可互换的出口间选最快的。
+  # 地址随请求走 + 出口任选。普通代理上网,让调度挑最快的出口。
   - id: best-egress
-    name: 最优代理出口
-    mode: by_service
-    equivalence_class: proxy-egress
+    name: 最优出口
+    address_axis: from_request
+    egress_axis: any
     objective: latency
-    allowed_relays: [relay-bj, relay-sh, relay-gz, relay-cd]
+    allowed_servers: [cn-bj, cn-gz, sg-vps, jp-vps]
     max_hops: 2
-    top_n: 2
-    ranking_period: 30m
     tuning_period: 5m
     switch_threshold: 0.2
     window: 5m
     min_samples: 20
     stale_after: 15m
 
-  # 模式 B + 合规约束。带合规约束时 fallback 必须是 fail_closed:
-  # 候选集因合规过滤而变空时,任何自动回退都等于绕过约束(§5.8)。
+  # 地址从等价类里选 + 出口任选。带合规约束,因此 fallback 必须是
+  # fail_closed —— 候选集为空时任何自动回退都等于绕过约束(§5.8)。
   - id: llm-ttft
     name: 推理端点按首字延迟调度
-    mode: by_service
-    equivalence_class: llm:qwen3-32b-int8@openai-v1
+    address_axis: class:llm:qwen3-32b-int8@openai-v1
+    egress_axis: any
     objective: ttft
     constraints:
       - {kind: compliance, expr: 数据不出境}
-      - {kind: region, expr: 华东}
       - {kind: sla, expr: p95 < 200ms}
-    allowed_relays: [relay-bj, relay-sh]
+    allowed_servers: [cn-bj, cn-sh]
     max_hops: 1
     top_n: 2
     ranking_period: 1h
@@ -195,32 +169,47 @@ declarations:
     stale_after: 30m
     fallback: fail_closed
 
+  # 第三方 API 调度。carrier 是 l7_gateway,数据平面没有候选 —— 渲染时
+  # 会被显式跳过,并说明它需要网关承载。
+  - id: llm-3p
+    name: 第三方推理端点调度
+    address_axis: class:llm-3p:qwen3-32b@openai-v1
+    egress_axis: any
+    objective: cost
+    allowed_servers: [cn-bj]
+    max_hops: 1
+    top_n: 2
+    ranking_period: 1h
+    tuning_period: 10m
+    switch_threshold: 0.15
+
 credentials:
-  - {id: cred-android, owner: 手机, declaration: sg-fixed,    secret_ref: "vault:cred/android"}
-  - {id: cred-ws-sg,   owner: 工作站, declaration: sg-fixed,   secret_ref: "vault:cred/ws-sg"}
-  - {id: cred-ws-eg,   owner: 工作站, declaration: best-egress, secret_ref: "vault:cred/ws-eg"}
-  - {id: cred-ws-llm,  owner: 工作站, declaration: llm-ttft,   secret_ref: "vault:cred/ws-llm"}
-  - {id: cred-ci,      owner: CI,    declaration: best-egress, secret_ref: "vault:cred/ci"}
+  - {id: cred-phone, owner: 手机,  declaration: sg-fixed,    secret_ref: "vault:cred/phone"}
+  - {id: cred-ws-sg, owner: 工作站, declaration: sg-fixed,    secret_ref: "vault:cred/ws-sg"}
+  - {id: cred-ws-eg, owner: 工作站, declaration: best-egress, secret_ref: "vault:cred/ws-eg"}
+  - {id: cred-ws-llm, owner: 工作站, declaration: llm-ttft,   secret_ref: "vault:cred/ws-llm"}
+  - {id: cred-ws-3p, owner: 工作站, declaration: llm-3p,      secret_ref: "vault:cred/ws-3p"}
+  - {id: cred-ci,    owner: CI,    declaration: best-egress, secret_ref: "vault:cred/ci"}
 
 profiles:
-  # Android:必须 TUN(绝大多数 App 不能单独设代理),因此只带一把凭据,
+  # Android 必须 TUN(绝大多数 App 不能单独设代理),因此只带一把凭据,
   # 没有"按端口选声明"这回事(§7.2、§18)。
   - id: phone
     device_name: Pixel
     platform: android
-    credentials: [cred-android]
+    credentials: [cred-phone]
 
   # 桌面:TUN 兜底 + mixed 精确控制(§7.2)。端口即访问声明(§7.3)。
   - id: workstation
     device_name: 开发机
     platform: desktop
-    credentials: [cred-ws-sg, cred-ws-eg, cred-ws-llm]
-    # TUN 是兜底,mixed 端口是精确控制。兜底走哪条必须显式写出(§7.2)。
+    credentials: [cred-ws-sg, cred-ws-eg, cred-ws-llm, cred-ws-3p]
     default_declaration: best-egress
     mixed_ports:
       - {port: 1080, declaration: sg-fixed}
       - {port: 1081, declaration: best-egress}
       - {port: 1082, declaration: llm-ttft}
+      - {port: 1083, declaration: llm-3p}
 
   # Linux 服务器:只用 mixed,不开 TUN —— 开 TUN 需 root、要改路由表,
   # 配错一次可能把自己的 SSH 锁在外面(§7.2)。

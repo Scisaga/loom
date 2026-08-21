@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"loom/internal/model"
 )
@@ -76,13 +77,16 @@ type sbOutbound struct {
 	Default   string   `json:"default,omitempty"`
 
 	// direct
-	BindInterface string `json:"bind_interface,omitempty"`
+	BindInterface   string `json:"bind_interface,omitempty"`
+	OverrideAddress string `json:"override_address,omitempty"`
+	OverridePort    int    `json:"override_port,omitempty"`
 }
 
 type sbRule struct {
 	Inbound  []string `json:"inbound,omitempty"`
 	AuthUser []string `json:"auth_user,omitempty"`
 	IPCIDR   []string `json:"ip_cidr,omitempty"`
+	Domain   []string `json:"domain,omitempty"`
 	Port     []int    `json:"port,omitempty"`
 	Outbound string   `json:"outbound"`
 }
@@ -107,8 +111,15 @@ func encode(c *sbConfig) (string, error) {
 	return string(b) + "\n", nil
 }
 
-func clientTLS(serverName string) *sbTLS {
-	return &sbTLS{Enabled: true, ServerName: serverName, CertificatePath: tlsCAPath, ALPN: []string{"h3"}}
+// nodeTLSDomain 是节点证书的域名后缀。节点间的 hysteria2 一律用
+// <node-id>.<后缀> 作为 TLS server_name —— 直接用 IP 做 SNI 时证书对不上,
+// 而节点在链路里可能被隧道地址或公网地址两种方式拨到,名字必须统一。
+const nodeTLSDomain = "node.internal"
+
+func serverName(n *model.Node) string { return n.ID + "." + nodeTLSDomain }
+
+func clientTLS(name string) *sbTLS {
+	return &sbTLS{Enabled: true, ServerName: name, CertificatePath: tlsCAPath, ALPN: []string{"h3"}}
 }
 
 func serverTLS() *sbTLS {
@@ -121,13 +132,13 @@ func serverTLS() *sbTLS {
 
 // renderProfile 渲染一个客户端档案的 sing-box 配置(§7)。
 //
-// 每个 mixed 端口绑定一个访问声明(§7.3);每条声明有一个 selector,
-// 成员是它的全部 RouteCandidate(§5.6)。
+// 每个 mixed 端口绑定一个访问声明(§7.3);每条声明有一个 selector,成员是
+// 它的全部 RouteCandidate(§5.6)。
 //
 // 用 selector 而不是 urltest 是刻意的:§5.6 要求选路的决策者只有一个。
-// urltest 会按自己的节奏和判据独立选路,与 Agent 的 §5.5 阻尼规则形成
-// 两个互不知情的决策者。selector 的当前选择由 Agent 设置;Agent 尚未
-// 实现时它停在 default 上,即 §20.2 的"路径静态指定"。
+// urltest 会按自己的节奏和判据独立选路,与 Agent 的 §5.5 阻尼规则形成两个
+// 互不知情的决策者。selector 的当前选择由 Agent 设置;Agent 尚未实现时它
+// 停在 default 上,即 §20.2 的"路径静态指定"。
 func renderProfile(s *model.SSOT, p *model.ClientProfile) (File, []Skip, error) {
 	nodes := s.NodeByID()
 	decls := s.DeclarationByID()
@@ -135,19 +146,22 @@ func renderProfile(s *model.SSOT, p *model.ClientProfile) (File, []Skip, error) 
 
 	cfg := &sbConfig{Log: sbLog{Level: "warn"}}
 	var skips []Skip
+	note := func(where, format string, args ...any) {
+		skips = append(skips, Skip{Where: where, Reason: fmt.Sprintf(format, args...)})
+	}
 
 	// 凭据决定这个档案能用哪些声明。
-	declOf := map[string]*model.Credential{} // declaration id -> credential
+	credOf := map[string]*model.Credential{}
 	var declIDs []string
 	for _, cid := range p.Credentials {
 		c, ok := creds[cid]
 		if !ok || c.Revoked() {
 			continue
 		}
-		if _, dup := declOf[c.Declaration]; !dup {
+		if _, dup := credOf[c.Declaration]; !dup {
 			declIDs = append(declIDs, c.Declaration)
 		}
-		declOf[c.Declaration] = c
+		credOf[c.Declaration] = c
 	}
 	sort.Strings(declIDs)
 
@@ -167,8 +181,8 @@ func renderProfile(s *model.SSOT, p *model.ClientProfile) (File, []Skip, error) 
 		})
 	}
 
-	hops := map[string]bool{}     // 已生成的中继跳,避免重复
-	routable := map[string]bool{} // 实际生成了 selector 的声明
+	hops := map[string]bool{}
+	routable := map[string]bool{}
 	for _, did := range declIDs {
 		d, ok := decls[did]
 		if !ok {
@@ -176,77 +190,46 @@ func renderProfile(s *model.SSOT, p *model.ClientProfile) (File, []Skip, error) 
 		}
 		cands, cskips := s.EnumerateCandidates(d)
 		for _, cs := range cskips {
-			skips = append(skips, Skip{Where: "profile:" + p.ID + "/" + cs.Declaration, Reason: cs.Reason})
+			note("profile:"+p.ID+"/"+cs.Declaration, "%s", cs.Reason)
 		}
 		if len(cands) == 0 {
-			skips = append(skips, Skip{
-				Where:  "profile:" + p.ID + "/" + did,
-				Reason: "该声明没有任何可表达的 L4 候选,已跳过其 outbound 与路由规则",
-			})
+			note("profile:"+p.ID+"/"+did, "该声明没有任何可表达的 L4 候选,已跳过其 outbound 与路由规则")
 			continue
 		}
 
 		var tags []string
-		for _, c := range cands {
-			relay := nodes[c.RelayChain[0]]
-			hopTag := "hop:" + did + ":" + relay.ID
-			if !hops[hopTag] {
-				hops[hopTag] = true
-				cfg.Outbounds = append(cfg.Outbounds, sbOutbound{
-					Type: "hysteria2", Tag: hopTag,
-					Server: relay.PublicEndpoint, ServerPort: relay.InboundPort,
-					Password: secretRef(declOf[did].SecretRef),
-					TLS:      clientTLS(relay.PublicEndpoint),
-				})
-			}
-			// 目标腿:连到目标在该隧道中的地址。下一跳就是一个 IP:port,
-			// 这样 §8.2 的允许下一跳集合才能表达成中继上的准入白名单。
-			cfg.Outbounds = append(cfg.Outbounds, sbOutbound{
-				Type: "socks", Tag: c.Tag(), Version: "5",
-				Server: s.TunnelAddrOn(c.Target, relay.ID), ServerPort: nodes[c.Target].InboundPort,
-				Detour: hopTag,
-			})
+		for i := range cands {
+			c := &cands[i]
 			tags = append(tags, c.Tag())
+			cfg.Outbounds = append(cfg.Outbounds,
+				buildChain(s, nodes, c, credOf[did].SecretRef, hops)...)
 		}
-
 		cfg.Outbounds = append(cfg.Outbounds, sbOutbound{
-			Type: "selector", Tag: "decl:" + did,
-			Outbounds: tags, Default: tags[0],
+			Type: "selector", Tag: "decl:" + did, Outbounds: tags, Default: tags[0],
 		})
 		routable[did] = true
 
-		// §5.8 的 fallback 尚未在数据平面实现。fail_closed 恰好等同于
-		// route.final = block,所以只有其余两个取值需要报出。
 		if d.Fallback != model.FailClosed {
-			skips = append(skips, Skip{
-				Where: "profile:" + p.ID + "/" + did,
-				Reason: fmt.Sprintf("fallback=%s 尚未在数据平面实现,当前行为等同 fail_closed(§5.8)",
-					d.Fallback),
-			})
+			note("profile:"+p.ID+"/"+did,
+				"fallback=%s 尚未在数据平面实现,当前行为等同 fail_closed(§5.8)", d.Fallback)
 		}
 	}
 
-	// 不生成 direct 出站:没有任何规则引用它,留着会让人以为存在一条
-	// 直连兜底。§5.8 的 fallback: direct 尚未实现。
 	cfg.Outbounds = append(cfg.Outbounds, sbOutbound{Type: "block", Tag: "block"})
 
 	for _, mp := range ports {
 		// 引用一个没生成的 selector 会让 sing-box 直接启动失败。宁可不写
 		// 这条规则 —— 流量落到 final: block,与 fail_closed 一致。
 		if !routable[mp.Declaration] {
-			skips = append(skips, Skip{
-				Where: "profile:" + p.ID,
-				Reason: fmt.Sprintf("端口 %d 绑定的声明 %q 没有可用候选,该端口不生成路由规则,"+
-					"流量将被阻断", mp.Port, mp.Declaration),
-			})
+			note("profile:"+p.ID,
+				"端口 %d 绑定的声明 %q 没有可用候选,该端口不生成路由规则,流量将被阻断",
+				mp.Port, mp.Declaration)
 			continue
 		}
 		cfg.Route.Rules = append(cfg.Route.Rules, sbRule{
-			Inbound:  []string{fmt.Sprintf("in-%d", mp.Port)},
-			Outbound: "decl:" + mp.Declaration,
+			Inbound: []string{fmt.Sprintf("in-%d", mp.Port)}, Outbound: "decl:" + mp.Declaration,
 		})
 	}
-	// TUN 兜底走哪条声明由档案显式声明;Android 只有一把凭据时可推导(§7.2)。
 	if p.Platform.UsesTUN() {
 		tunDecl := p.DefaultDeclaration
 		if tunDecl == "" && len(declIDs) == 1 {
@@ -254,23 +237,15 @@ func renderProfile(s *model.SSOT, p *model.ClientProfile) (File, []Skip, error) 
 		}
 		switch {
 		case tunDecl == "":
-			skips = append(skips, Skip{
-				Where:  "profile:" + p.ID,
-				Reason: "未声明 default_declaration,TUN 兜底流量将被阻断",
-			})
+			note("profile:"+p.ID, "未声明 default_declaration,TUN 兜底流量将被阻断")
 		case !routable[tunDecl]:
-			skips = append(skips, Skip{
-				Where:  "profile:" + p.ID,
-				Reason: fmt.Sprintf("default_declaration %q 没有可用候选,TUN 兜底流量将被阻断", tunDecl),
-			})
+			note("profile:"+p.ID, "default_declaration %q 没有可用候选,TUN 兜底流量将被阻断", tunDecl)
 		default:
 			cfg.Route.Rules = append(cfg.Route.Rules, sbRule{
 				Inbound: []string{"tun-in"}, Outbound: "decl:" + tunDecl,
 			})
 		}
 	}
-	// 未匹配的流量一律阻断,而不是回落到 direct:回落会让一条本该受
-	// 声明约束的连接悄悄绕开调度,和 §5.8 的 fail_closed 是同一个道理。
 	cfg.Route.Final = "block"
 
 	content, err := encode(cfg)
@@ -280,30 +255,107 @@ func renderProfile(s *model.SSOT, p *model.ClientProfile) (File, []Skip, error) 
 	return File{Path: "sing-box/config.json", Content: content}, skips, nil
 }
 
+// buildChain 生成一条候选所需的全部出站,最后一个的 tag 就是候选本身。
+//
+// 链上每一跳都是普通的代理连接:先连第一台服务器,再让它连第二台,
+// 最后一跳直接连目标地址(§5.6)。没有额外发明的机制。
+func buildChain(
+	s *model.SSOT,
+	nodes map[string]*model.Node,
+	c *model.RouteCandidate,
+	secret string,
+	hops map[string]bool,
+) []sbOutbound {
+	var out []sbOutbound
+	detour, prefix := "", ""
+	lastIsChainHop := c.Address == ""
+
+	for i, id := range c.ServerChain {
+		sv := nodes[id]
+		if i > 0 {
+			prefix += ">"
+		}
+		prefix += id
+
+		// 去重键必须是**整条前缀**,不能只是 (声明, 序号, 节点):第二跳
+		// 的 detour 与拨的地址都随前一跳变化,只按节点去重会把不同链的
+		// 第二跳当成同一个,结果是后面几条链只剩第一跳。
+		tag := "hop:" + c.Declaration + ":" + prefix
+		if lastIsChainHop && i == len(c.ServerChain)-1 {
+			tag = c.Tag()
+		}
+		if hops[tag] {
+			detour = tag
+			continue
+		}
+		hops[tag] = true
+
+		o := sbOutbound{Type: "hysteria2", Tag: tag, Password: secretRef(secret), Detour: detour}
+		if i == 0 {
+			// 第一跳由接入节点直接拨公网地址。
+			o.Server, o.ServerPort = sv.PublicEndpoint, sv.InboundPort
+		} else {
+			// 后续跳由前一跳转发,拨的是它在那条链路上的地址。
+			o.Server, o.ServerPort = s.NextHopAddr(nodes[c.ServerChain[i-1]], sv), sv.InboundPort
+		}
+		o.TLS = clientTLS(serverName(sv))
+		out = append(out, o)
+		detour = tag
+	}
+
+	if lastIsChainHop {
+		if len(c.ServerChain) > 0 {
+			return out
+		}
+		// 零跳直连(§3.1)。
+		return append(out, sbOutbound{Type: "direct", Tag: c.Tag()})
+	}
+
+	// 地址从等价类里选:用一个覆盖目的地的 direct 收尾。客户端发出的
+	// TLS SNI 与 Host 原样不动 —— 这正是 §4.4 要求成员契约同构的原因。
+	addr := findAddress(s, c)
+	return append(out, sbOutbound{
+		Type: "direct", Tag: c.Tag(), Detour: detour,
+		OverrideAddress: addr.Host(), OverridePort: addr.Port(),
+	})
+}
+
+func findAddress(s *model.SSOT, c *model.RouteCandidate) *model.ServiceAddress {
+	for i := range s.EquivalenceClasses {
+		cl := &s.EquivalenceClasses[i]
+		for j := range cl.Members {
+			if cl.Members[j].Address == c.Address {
+				return &cl.Members[j]
+			}
+		}
+	}
+	return &model.ServiceAddress{Address: c.Address}
+}
+
 // ---------------------------------------------------------------------------
-// 中继
+// 服务器
 // ---------------------------------------------------------------------------
 
-// renderRelay 渲染中继的 sing-box 配置(§8)。
+// renderServer 渲染一台服务器的 sing-box 配置(§8)。
 //
-// 中继做准入校验,不做选路(§5.6):按凭据白名单允许的下一跳集合放行,
-// 其余一律阻断。允许集合是 AccessDeclaration 与候选枚举的渲染产物 ——
-// 拿到一张凭据不等于能经这个中继访问任意地方(§8.2)。
-func renderRelay(s *model.SSOT, relay *model.Node) (File, error) {
+// **中继与出口不是两种节点,是同一台机器在不同路径上的两种位置**(§1.1)。
+// 所以只有这一个渲染函数:同一份配置里既有"转给下一跳"的规则,也有
+// "本机就是出口,直接出去"的规则,按连接的目的地分流。
+//
+// 服务器做准入校验,不做选路(§5.6):白名单之外一律阻断。
+func renderServer(s *model.SSOT, sv *model.Node) (File, error) {
 	nodes := s.NodeByID()
 	decls := s.DeclarationByID()
-
 	cfg := &sbConfig{Log: sbLog{Level: "warn"}}
 
-	// 凭据 → 允许的下一跳集合。
-	type entry struct {
-		user   string
-		secret string // 必须与接入侧引用同一个条目,否则两边查不到同一把密钥
-		hops   []string
-		iface  map[string]string // 下一跳地址 -> 出接口
+	type rule struct {
+		user     string
+		nextHops map[string]string // 下一跳地址 -> 出站 tag
+		egress   bool
+		domains  []string // 出口规则的域名限制;空表示不限(地址随请求走)
 	}
-	var entries []entry
-	seenUser := map[string]bool{}
+	var rules []rule
+	var users []sbUser
 
 	creds := append([]model.Credential(nil), s.Credentials...)
 	sort.Slice(creds, func(i, j int) bool { return creds[i].ID < creds[j].ID })
@@ -311,90 +363,116 @@ func renderRelay(s *model.SSOT, relay *model.Node) (File, error) {
 	for i := range creds {
 		c := &creds[i]
 		if c.Revoked() {
-			continue // §18:吊销后所有中继在下一轮询周期移除该 user
+			continue // §18:吊销后所有服务器在下一轮询周期移除该 user
 		}
 		d, ok := decls[c.Declaration]
 		if !ok {
 			continue
 		}
 		cands, _ := s.EnumerateCandidates(d)
-		e := entry{user: c.ID, secret: c.SecretRef, iface: map[string]string{}}
-		for _, cand := range cands {
-			if cand.RelayChain[0] != relay.ID {
-				continue // 这条候选不经过本中继
+
+		r := rule{user: c.ID, nextHops: map[string]string{}}
+		domains := map[string]bool{}
+		for j := range cands {
+			cand := &cands[j]
+			for k, id := range cand.ServerChain {
+				if id != sv.ID {
+					continue
+				}
+				if k+1 < len(cand.ServerChain) {
+					// 本机是中间一跳:转给下一台服务器。
+					next := nodes[cand.ServerChain[k+1]]
+					if addr := s.NextHopAddr(sv, next); addr != "" {
+						r.nextHops[addr+"/32"] = "via-" + next.ID
+					}
+					continue
+				}
+				// 本机是链末尾 —— 这次它就是出口(§1.1)。
+				r.egress = true
+				if cand.Address != "" {
+					domains[findAddress(s, cand).Host()] = true
+				}
 			}
-			addr := s.TunnelAddrOn(cand.Target, relay.ID)
-			if addr == "" {
-				continue
+		}
+		if len(r.nextHops) == 0 && !r.egress {
+			continue // 这张凭据不经过本机
+		}
+		// 只要有一条候选是"地址随请求走",出口规则就不能限制域名。
+		if r.egress && len(domains) > 0 {
+			for k := range domains {
+				r.domains = append(r.domains, k)
 			}
-			cidr := addr + "/32"
-			if _, dup := e.iface[cidr]; dup {
-				continue
+			sort.Strings(r.domains)
+			for j := range cands {
+				if cands[j].Address == "" && cands[j].Egress() == sv.ID {
+					r.domains = nil
+					break
+				}
 			}
-			e.hops = append(e.hops, cidr)
-			e.iface[cidr] = model.IfaceName(cand.Target)
-			_ = nodes
 		}
-		if len(e.hops) == 0 {
-			continue
-		}
-		sort.Strings(e.hops)
-		if !seenUser[c.ID] {
-			seenUser[c.ID] = true
-			entries = append(entries, e)
-		}
+		rules = append(rules, r)
+		users = append(users, sbUser{Name: c.ID, Password: secretRef(c.SecretRef)})
 	}
 
-	var users []sbUser
-	for _, e := range entries {
-		users = append(users, sbUser{Name: e.user, Password: secretRef(e.secret)})
-	}
 	cfg.Inbounds = append(cfg.Inbounds, sbInbound{
 		Type: "hysteria2", Tag: "in",
-		Listen: "::", ListenPort: relay.InboundPort,
+		Listen: "::", ListenPort: sv.InboundPort,
 		Users: users, TLS: serverTLS(),
 	})
 
-	// 每个下一跳一个绑定到对应隧道接口的出站。绑接口而不是靠路由表,
+	// 每个下一跳一个出站。有隧道时绑到对应网卡 —— 绑接口而不是靠路由表,
 	// 是为了让"这条流量必须走这条隧道"在配置里显式可见。
-	var ifaces []string
-	seenIface := map[string]bool{}
-	for _, e := range entries {
-		for _, cidr := range e.hops {
-			ifn := e.iface[cidr]
-			if seenIface[ifn] {
-				continue
+	var nextIDs []string
+	seen := map[string]bool{}
+	for _, r := range rules {
+		for _, tag := range r.nextHops {
+			id := strings.TrimPrefix(tag, "via-")
+			if !seen[id] {
+				seen[id] = true
+				nextIDs = append(nextIDs, id)
 			}
-			seenIface[ifn] = true
-			ifaces = append(ifaces, ifn)
 		}
 	}
-	sort.Strings(ifaces)
-	for _, ifn := range ifaces {
-		cfg.Outbounds = append(cfg.Outbounds, sbOutbound{
-			Type: "direct", Tag: "via-" + ifn, BindInterface: ifn,
-		})
+	sort.Strings(nextIDs)
+	for _, id := range nextIDs {
+		o := sbOutbound{Type: "direct", Tag: "via-" + id}
+		if s.TunnelAddrOn(id, sv.ID) != "" {
+			o.BindInterface = model.IfaceName(id)
+		}
+		cfg.Outbounds = append(cfg.Outbounds, o)
+	}
+	if sv.EgressCapable {
+		cfg.Outbounds = append(cfg.Outbounds, sbOutbound{Type: "direct", Tag: "egress"})
 	}
 	cfg.Outbounds = append(cfg.Outbounds, sbOutbound{Type: "block", Tag: "block"})
 
-	for _, e := range entries {
-		byIface := map[string][]string{}
-		for _, cidr := range e.hops {
-			ifn := e.iface[cidr]
-			byIface[ifn] = append(byIface[ifn], cidr)
+	// 转发规则在前、出口规则在后:出口是兜底,先匹配具体的下一跳。
+	for _, r := range rules {
+		var cidrs []string
+		byTag := map[string][]string{}
+		for cidr, tag := range r.nextHops {
+			byTag[tag] = append(byTag[tag], cidr)
+			cidrs = append(cidrs, cidr)
 		}
-		var ks []string
-		for k := range byIface {
-			ks = append(ks, k)
+		var tags []string
+		for t := range byTag {
+			tags = append(tags, t)
 		}
-		sort.Strings(ks)
-		for _, ifn := range ks {
+		sort.Strings(tags)
+		for _, t := range tags {
+			sort.Strings(byTag[t])
 			cfg.Route.Rules = append(cfg.Route.Rules, sbRule{
-				AuthUser: []string{e.user},
-				IPCIDR:   byIface[ifn],
-				Outbound: "via-" + ifn,
+				AuthUser: []string{r.user}, IPCIDR: byTag[t], Outbound: t,
 			})
 		}
+	}
+	for _, r := range rules {
+		if !r.egress || !sv.EgressCapable {
+			continue
+		}
+		cfg.Route.Rules = append(cfg.Route.Rules, sbRule{
+			AuthUser: []string{r.user}, Domain: r.domains, Outbound: "egress",
+		})
 	}
 	// 白名单之外一律阻断 —— 这就是"准入校验"的全部含义。
 	cfg.Route.Final = "block"
@@ -404,53 +482,4 @@ func renderRelay(s *model.SSOT, relay *model.Node) (File, error) {
 		return File{}, err
 	}
 	return File{Path: "sing-box/config.json", Content: content}, nil
-}
-
-// ---------------------------------------------------------------------------
-// 落地目标
-// ---------------------------------------------------------------------------
-
-// renderLanding 渲染落地型目标的 sing-box 配置(§9.1)。
-//
-// 它在每条隧道的本端地址上开一个 socks inbound。不做用户认证:该地址只在
-// WireGuard 隧道内可达,隧道本身就是认证边界。
-func renderLanding(s *model.SSOT, target *model.Node) (File, error) {
-	cfg := &sbConfig{Log: sbLog{Level: "warn"}}
-
-	var addrs []string
-	for i := range s.Tunnels {
-		t := &s.Tunnels[i]
-		switch target.ID {
-		case t.From:
-			addrs = append(addrs, stripMaskStr(t.FromAddr))
-		case t.To:
-			addrs = append(addrs, stripMaskStr(t.ToAddr))
-		}
-	}
-	sort.Strings(addrs)
-	for _, a := range addrs {
-		cfg.Inbounds = append(cfg.Inbounds, sbInbound{
-			Type: "socks", Tag: "in-" + a,
-			Listen: a, ListenPort: target.InboundPort,
-		})
-	}
-
-	// 落地出公网。ip_forward 与 MASQUERADE 由系统配置负责,不在 sing-box 里。
-	cfg.Outbounds = append(cfg.Outbounds, sbOutbound{Type: "direct", Tag: "direct"})
-	cfg.Route.Final = "direct"
-
-	content, err := encode(cfg)
-	if err != nil {
-		return File{}, err
-	}
-	return File{Path: "sing-box/config.json", Content: content}, nil
-}
-
-func stripMaskStr(a string) string {
-	for i := 0; i < len(a); i++ {
-		if a[i] == '/' {
-			return a[:i]
-		}
-	}
-	return a
 }

@@ -3,17 +3,20 @@ package model
 // 本文件是 §4、§5、§7.3、§8.2、§18 涉及的服务与调度模型。
 // 拓扑模型在 model.go,两者共用同一份 SSOT。
 
-// Mode 是访问模式(§4)。它决定度量作用在哪个轴上,也决定决策位置(§5.6)。
-type Mode string
+// §4 的两个选择轴。它们互不相干,自由组合出四种情形,所以分成两个字段
+// 而不是一个 mode 枚举 —— 后者只能表达其中两种。
 
 const (
-	// PinnedTarget 是模式 A:目标钉死,只在中继轴上选。
-	PinnedTarget Mode = "pinned_target"
-	// ByService 是模式 B:目标轴与中继轴都要选。
-	ByService Mode = "by_service"
-)
+	// FromRequest:最终地址由客户端的请求决定(你打开的那个网页)。
+	FromRequest = "from_request"
+	// ClassPrefix:最终地址从某个等价类的成员里选,写作 class:<id>。
+	ClassPrefix = "class:"
 
-func (m Mode) Valid() bool { return m == PinnedTarget || m == ByService }
+	// EgressAny:出口不钉死,由调度挑。
+	EgressAny = "any"
+	// PinnedPrefix:出口钉死在某台服务器上,写作 pinned:<node_id>。
+	PinnedPrefix = "pinned:"
+)
 
 // Objective 是单一优化目标(§5.3)。对外表达用约束 + 单一目标,
 // 不用加权求和 —— 客户给不出权重。
@@ -135,7 +138,7 @@ func (p ObservationPoint) Valid() bool {
 func (p ObservationPoint) IsL7() bool { return p != L4Tunnel }
 
 // AccessContract 是 §4.4 的转发前提:客户端已经发出的那一个请求,
-// 原样送到新端点也能被接受。它与输出等价是两件不同的事。
+// 原样送到新地址也能被接受。它与输出等价是两件不同的事。
 type AccessContract struct {
 	Domain      string `yaml:"domain"`                 // 共用域名,TLS SNI 与证书校验依赖它
 	CertCA      string `yaml:"cert_ca"`                // 签发证书的 CA 标识
@@ -145,12 +148,12 @@ type AccessContract struct {
 }
 
 // SameAs 报告两份访问契约是否同构。carrier: l4_direct 要求成员之间
-// 全部同构 —— 否则换端点会在 TLS 或鉴权层直接失败。
+// 全部同构 —— 否则换地址会在 TLS 或鉴权层直接失败。
 func (a AccessContract) SameAs(b AccessContract) bool { return a == b }
 
 // EquivalenceClass 定义可互换性(§4.3、§4.4)。
 //
-// 只有真正可互换的端点才能进同一个候选集。可互换需要两个条件:
+// 只有真正可互换的地址才能进同一个候选集。可互换需要两个条件:
 // 输出等价(算出来的东西一样)与契约同构(请求送过去能被接受)。
 type EquivalenceClass struct {
 	ID string `yaml:"id"` // 如 llm:qwen3-32b-int8@openai-v1
@@ -169,13 +172,77 @@ type EquivalenceClass struct {
 	// 数据源,此时 objective: cost 无法成立。
 	PriceSource string `yaml:"price_source,omitempty"`
 
-	Members []Member `yaml:"members"`
+	// Members 是**地址**,不是节点(§1、§9)。自建的推理服务和买来的
+	// 第三方 API 在这里完全同等 —— 都只是要发请求过去的地址。
+	Members []ServiceAddress `yaml:"members"`
 }
 
-// Member 是等价类的一个成员端点。
-type Member struct {
-	Node     string         `yaml:"node"`
+// ServiceAddress 是一个目标地址(§9.1)。
+//
+// 它没有 direction、没有 capabilities、没有隧道 —— 那些都是节点才有的东西。
+// Loom 对它做的唯一事情是:从某台服务器连过去,并测量这次连接的质量。
+type ServiceAddress struct {
+	Address  string         `yaml:"address"` // 如 https://llm-hz.internal/v1
 	Contract AccessContract `yaml:"access_contract"`
+
+	// EgressCredentialRef 是出口服务器向它鉴权时用的凭据引用(§9.3)。
+	// 这与接入凭据是两类不同的东西,作用域不同,不可混用。
+	EgressCredentialRef string `yaml:"egress_credential_ref,omitempty"`
+
+	Region   string `yaml:"region,omitempty"` // 仅用于策略过滤与排障标注
+	Provider string `yaml:"provider,omitempty"`
+}
+
+// Port 返回地址的端口。未显式写出时按 scheme 取默认值。
+func (a *ServiceAddress) Port() int {
+	rest := a.Address
+	def := 80
+	for pfx, p := range map[string]int{"https://": 443, "http://": 80} {
+		if len(rest) > len(pfx) && rest[:len(pfx)] == pfx {
+			rest, def = rest[len(pfx):], p
+			break
+		}
+	}
+	// 取 host 段里的 :port
+	for i := 0; i < len(rest); i++ {
+		if rest[i] == '/' {
+			rest = rest[:i]
+			break
+		}
+	}
+	for i := 0; i < len(rest); i++ {
+		if rest[i] == ':' {
+			n := 0
+			for _, ch := range rest[i+1:] {
+				if ch < '0' || ch > '9' {
+					return def
+				}
+				n = n*10 + int(ch-'0')
+			}
+			if n > 0 && n <= 65535 {
+				return n
+			}
+			return def
+		}
+	}
+	return def
+}
+
+// Host 返回地址里的主机名,用于在出口服务器上做域名路由。
+func (a *ServiceAddress) Host() string {
+	s := a.Address
+	for _, pfx := range []string{"https://", "http://"} {
+		if len(s) > len(pfx) && s[:len(pfx)] == pfx {
+			s = s[len(pfx):]
+			break
+		}
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] == '/' || s[i] == ':' {
+			return s[:i]
+		}
+	}
+	return s
 }
 
 // AccessDeclaration 是选路的单位(§4)。
@@ -185,20 +252,21 @@ type Member struct {
 type AccessDeclaration struct {
 	ID   string `yaml:"id"`
 	Name string `yaml:"name,omitempty"`
-	Mode Mode   `yaml:"mode"`
 
-	TargetNode       string `yaml:"target_node,omitempty"`       // 模式 A 用
-	EquivalenceClass string `yaml:"equivalence_class,omitempty"` // 模式 B 用
+	// AddressAxis:from_request | class:<等价类 id>(§4)
+	AddressAxis string `yaml:"address_axis"`
+	// EgressAxis:any | pinned:<节点 id>(§4)
+	EgressAxis string `yaml:"egress_axis"`
 
 	Matcher     string       `yaml:"matcher,omitempty"`
 	Objective   Objective    `yaml:"objective"`
 	Constraints []Constraint `yaml:"constraints,omitempty"`
 
-	AllowedRelays []string `yaml:"allowed_relays,omitempty"`
-	MaxHops       int      `yaml:"max_hops"`
+	AllowedServers []string `yaml:"allowed_servers,omitempty"`
+	MaxHops        int      `yaml:"max_hops"`
 
 	// RankingPeriod 是控制平面重算 ranked list 的周期(§5.5)。
-	// 模式 A 的候选集里 target 是常量,这个周期无意义。
+	// 地址由请求决定时地址轴是常量,这个周期无意义。
 	RankingPeriod string `yaml:"ranking_period,omitempty"`
 	// TuningPeriod 是接入节点在 top-N 内本地重选的周期(§5.5)。
 	TuningPeriod string `yaml:"tuning_period"`
@@ -211,6 +279,32 @@ type AccessDeclaration struct {
 	MinSamples int      `yaml:"min_samples,omitempty"`
 	StaleAfter string   `yaml:"stale_after,omitempty"`
 	Fallback   Fallback `yaml:"fallback"`
+}
+
+// ClassID 返回地址轴引用的等价类;地址由请求决定时返回空串。
+func (d *AccessDeclaration) ClassID() string {
+	if len(d.AddressAxis) > len(ClassPrefix) && d.AddressAxis[:len(ClassPrefix)] == ClassPrefix {
+		return d.AddressAxis[len(ClassPrefix):]
+	}
+	return ""
+}
+
+// AddressFromRequest 报告最终地址是否由客户端请求决定。
+func (d *AccessDeclaration) AddressFromRequest() bool { return d.AddressAxis == FromRequest }
+
+// PinnedEgress 返回被钉死的出口服务器 id;出口任选时返回空串。
+func (d *AccessDeclaration) PinnedEgress() string {
+	if len(d.EgressAxis) > len(PinnedPrefix) && d.EgressAxis[:len(PinnedPrefix)] == PinnedPrefix {
+		return d.EgressAxis[len(PinnedPrefix):]
+	}
+	return ""
+}
+
+// AxesValid 报告两个轴的取值是否合法。
+func (d *AccessDeclaration) AxesValid() (addrOK, egressOK bool) {
+	addrOK = d.AddressAxis == FromRequest || d.ClassID() != ""
+	egressOK = d.EgressAxis == EgressAny || d.PinnedEgress() != ""
+	return
 }
 
 // HasCompliance 报告该声明是否带合规约束。合规约束存在时,空候选集

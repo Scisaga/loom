@@ -58,7 +58,11 @@ func TestRenderIsPure(t *testing.T) {
 	}
 }
 
-// TestMatrixShape 断言 §20.1 说的规模:12 条隧道产生 24 个 WireGuard 文件。
+// TestMatrixShape 断言产物的规模。
+//
+// 隧道矩阵只覆盖 reverse_only 的服务器(§6.3、D13)—— 能进 mesh 的由
+// Headscale 自动分发密钥,一份配置都不渲染。这个断言把那条规则钉住:
+// 一旦有人给能进 mesh 的服务器加了隧道,文件数就对不上。
 func TestMatrixShape(t *testing.T) {
 	s := load(t)
 	res, err := Render(s)
@@ -68,10 +72,6 @@ func TestMatrixShape(t *testing.T) {
 
 	wg, sb := 0, 0
 	for _, b := range res.Bundles {
-		// 第三方端点不参与渲染(§9.2)。
-		if b.Owner == "target-3p" {
-			t.Error("managed: false 的第三方端点不应产生配置包")
-		}
 		for _, f := range b.Files {
 			switch {
 			case strings.HasPrefix(f.Path, "wireguard/"):
@@ -86,10 +86,27 @@ func TestMatrixShape(t *testing.T) {
 	if want := len(s.Tunnels) * 2; wg != want {
 		t.Errorf("渲染出 %d 个 WireGuard 文件,期望 %d(每条隧道两端各一个)", wg, want)
 	}
-	// 4 中继 + 2 落地目标 + 3 客户端档案。target-us 是 endpoint 形态,
-	// 不落地,因此不渲染 sing-box。
-	if want := 9; sb != want {
-		t.Errorf("渲染出 %d 份 sing-box 配置,期望 %d", sb, want)
+
+	// 每台服务器一份 sing-box,每个客户端档案一份。目标地址不产生任何
+	// 产物 —— 它不是节点(§1、§9)。
+	servers := 0
+	for i := range s.Nodes {
+		if s.Nodes[i].Has(model.Server) {
+			servers++
+		}
+	}
+	if want := servers + len(s.Profiles); sb != want {
+		t.Errorf("渲染出 %d 份 sing-box 配置,期望 %d(%d 台服务器 + %d 个档案)",
+			sb, want, servers, len(s.Profiles))
+	}
+
+	// 所有隧道两端都必须是进不了 mesh 的那一侧参与。
+	nodes := s.NodeByID()
+	for i := range s.Tunnels {
+		t2 := &s.Tunnels[i]
+		if nodes[t2.From].MeshEligible() && nodes[t2.To].MeshEligible() {
+			t.Errorf("隧道 %s 两端都能进 mesh —— 该交给 Headscale(§6.3)", t2.Pair())
+		}
 	}
 }
 
@@ -103,10 +120,9 @@ func TestSkipsAreExpected(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]int{
-		"两跳链尚未实现":              4, // sg-fixed 与 best-egress 都是 max_hops=2,被三个档案共引用 4 次
-		"carrier 是 l7_gateway": 1, // llm 等价类不由 L4 换端点(§4.4)
+		"carrier 是 l7_gateway": 1, // 第三方等价类不由 L4 换地址(§4.4)
 		"没有任何可表达的 L4 候选":       1,
-		"该端口不生成路由规则":           1, // 1082 绑的声明无候选
+		"该端口不生成路由规则":           1, // 上面那条声明绑的端口
 	}
 	got := map[string]int{}
 	for _, sk := range res.Skipped {
@@ -124,8 +140,9 @@ func TestSkipsAreExpected(t *testing.T) {
 			t.Errorf("跳过原因 %q 出现 %d 次,期望 %d 次", k, got[k], n)
 		}
 	}
-	if len(res.Skipped) != 7 {
-		t.Errorf("共 %d 条跳过,期望 7 条 —— 有新的静默跳过被引入", len(res.Skipped))
+	if len(res.Skipped) != 3 {
+		t.Errorf("共 %d 条跳过,期望 3 条 —— 有新的静默跳过被引入:\n%+v",
+			len(res.Skipped), res.Skipped)
 	}
 }
 

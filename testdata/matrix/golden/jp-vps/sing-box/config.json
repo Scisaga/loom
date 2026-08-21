@@ -1,0 +1,58 @@
+{
+  "log": {
+    "level": "warn"
+  },
+  "inbounds": [
+    {
+      "type": "hysteria2",
+      "tag": "in",
+      "listen": "::",
+      "listen_port": 4433,
+      "users": [
+        {
+          "name": "cred-ci",
+          "password": "${secret:vault:cred/ci}"
+        },
+        {
+          "name": "cred-ws-eg",
+          "password": "${secret:vault:cred/ws-eg}"
+        }
+      ],
+      "tls": {
+        "enabled": true,
+        "certificate_path": "/etc/loom/tls/node.crt",
+        "key_path": "/etc/loom/secrets/node.key",
+        "alpn": [
+          "h3"
+        ]
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "egress"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "auth_user": [
+          "cred-ci"
+        ],
+        "outbound": "egress"
+      },
+      {
+        "auth_user": [
+          "cred-ws-eg"
+        ],
+        "outbound": "egress"
+      }
+    ],
+    "final": "block"
+  }
+}

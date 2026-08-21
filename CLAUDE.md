@@ -38,9 +38,9 @@ go run ./cmd/loom diff    testdata/matrix/ssot.yaml -o /tmp/out
 |---|---|
 | `internal/model/` | SSOT 数据模型、严格 YAML 解码、§2.2 方向真值表、隧道角色解析 |
 | `internal/validate/` | 渲染前的一致性校验 |
-| `internal/render/` | 纯函数渲染、配置包哈希、行级 diff |
+| `internal/render/` | 纯函数渲染(WireGuard + sing-box)、配置包哈希、行级 diff |
 | `cmd/loom/` | CLI:`validate` / `render` / `diff` |
-| `testdata/matrix/` | §20.1 的 4 中继 × 3 目标 fixture 与 golden |
+| `testdata/matrix/` | 参考 SSOT(4 国内云机 + 2 境外 VPS)与 golden |
 
 ## 模型:三个词就够了
 
@@ -53,10 +53,6 @@ go run ./cmd/loom diff    testdata/matrix/ssot.yaml -o /tmp/out
 **没有"目标节点"这个东西,也没有"出口节点"这个类型。** 一条路径上最后那台
 服务器就是这次的出口 —— 出口是位置,不是类型。详见 design.md §1 与
 [docs/decisions.md](docs/decisions.md) 的 D12。
-
-> ⚠️ **代码目前还在按旧模型工作,尚未追上文档。** 见
-> [docs/status.md](docs/status.md) 顶部的对照表。**理解模型以 design.md 为准,
-> 不要照着 `internal/` 下的结构体反推。**
 
 ## 三条动手前必须知道的约束
 

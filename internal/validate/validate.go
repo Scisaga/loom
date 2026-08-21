@@ -65,11 +65,13 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 		}
 
 		if len(n.Capabilities) == 0 {
-			fs.add("§1.1 capabilities", where, "capabilities 为空 —— 能力是集合,但不能是空集")
+			fs.add("§1.3 capabilities", where, "capabilities 为空 —— 能力是集合,但不能是空集")
 		}
 		for _, c := range n.Capabilities {
 			if !c.Valid() {
-				fs.add("§1.1 capabilities", where, "未知能力 %q(只能是 access/relay/target)", c)
+				fs.add("§1.3 capabilities", where,
+					"未知能力 %q —— 只能是 access/server。"+
+						"目标不是节点(§1),出口是路径上的位置而非节点类型(§1.1)", c)
 			}
 		}
 
@@ -78,29 +80,20 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 			continue // 后面的规则都依赖 direction 有效
 		}
 
-		// §2.2:relay 必须接受接入节点连接,reverse_only 禁止被主动连接。
-		if n.Has(model.Relay) && n.Direction == model.ReverseOnly {
+		// §2.2:reverse_only 拨不到,只能由前一跳经反连隧道推给它。
+		// 它可以是出口,但永远不能是链上第一跳。
+		if n.Direction == model.ReverseOnly && n.PublicEndpoint == "" {
 			fs.add("§2.2 相容性", where,
-				"同时持有 relay 能力与 reverse_only —— 中继必须接受入站连接(§8.1),二者不相容")
+				"reverse_only 的服务器仍需 public_endpoint —— 它主动连出去时,"+
+					"对端要写 Endpoint 指回来的是**对端**的地址,而本机地址用于排障与探测标注")
 		}
-
-		// §1.3:第三方端点没有 Agent,只能被观测,方向恒为 direct_only。
-		if !n.IsManaged() && n.Direction != model.DirectOnly {
-			fs.add("§1.3 managed", where,
-				"managed: false 的第三方端点 direction 必须是 direct_only,当前是 %q", n.Direction)
+		if n.Has(model.Server) && n.InboundPort == 0 {
+			fs.add("§8.1 inbound", where,
+				"持有 server 能力但没有 inbound_port —— 无法接受上游连接")
 		}
-		if !n.IsManaged() && n.WGPublicKey != "" {
-			fs.add("§1.3 managed", where,
-				"managed: false 的节点不应有 wg_public_key —— 你无法在别人的服务上装任何东西")
-		}
-
-		if n.TargetKind != "" && !n.Has(model.Target) {
-			fs.add("§1.3 target_kind", where, "声明了 target_kind 但不持有 target 能力")
-		}
-		switch n.TargetKind {
-		case "", model.Landing, model.Endpoint:
-		default:
-			fs.add("§1.3 target_kind", where, "未知 target_kind:%q", n.TargetKind)
+		if !n.Has(model.Server) && n.EgressCapable {
+			fs.add("§1.1 出口", where,
+				"egress_capable 只对服务器有意义 —— 出口是链上最后一台服务器(§1.1)")
 		}
 	}
 	return idx
@@ -149,12 +142,14 @@ func checkTunnels(s *model.SSOT, idx map[string]*model.Node, fs *findings) {
 			continue
 		}
 
-		// §9.2:第三方端点不参与配置渲染,自然也不能是隧道的一端。
-		for _, n := range []*model.Node{r.Initiator, r.Acceptor} {
-			if !n.IsManaged() {
-				fs.add("§9.2 managed", where,
-					"节点 %s 是 managed: false 的第三方端点,不参与配置渲染,不能作为隧道端点", n.ID)
-			}
+		// §6.3 / D13:隧道矩阵只覆盖 reverse_only 的服务器。能进 mesh 的
+		// 由 Headscale 自动分发密钥与 peer,手工建隧道是白做工,而且是
+		// 全系统最容易出错的那种白做工。
+		if r.Initiator.MeshEligible() && r.Acceptor.MeshEligible() {
+			fs.add("§6.3 mesh", where,
+				"两端(%s=%s, %s=%s)都能进 mesh —— 这条隧道该交给 Headscale 自动分发(§8.3),"+
+					"不要手工建",
+				r.Initiator.ID, r.Initiator.Direction, r.Acceptor.ID, r.Acceptor.Direction)
 		}
 
 		checkAddr(where, "from_addr", t.FromAddr, seenAddr, fs)
@@ -185,7 +180,7 @@ func checkTunnels(s *model.SSOT, idx map[string]*model.Node, fs *findings) {
 
 		if t.Protocol == model.WG || t.Protocol == model.AWG {
 			for _, n := range []*model.Node{r.Initiator, r.Acceptor} {
-				if n.IsManaged() && n.WGPublicKey == "" {
+				if n.WGPublicKey == "" {
 					fs.add("§13.1 密钥", where, "节点 %s 缺少 wg_public_key", n.ID)
 				}
 			}
