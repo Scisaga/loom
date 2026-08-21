@@ -94,3 +94,131 @@ tunnels:
   - {from: relay-sh, to: target-us, protocol: wg, listen_port: 51832, from_addr: 10.99.2.3/32, to_addr: 10.99.2.4/32}
   - {from: relay-gz, to: target-us, protocol: wg, listen_port: 51833, from_addr: 10.99.2.5/32, to_addr: 10.99.2.6/32}
   - {from: relay-cd, to: target-us, protocol: wg, listen_port: 51834, from_addr: 10.99.2.7/32, to_addr: 10.99.2.8/32}
+
+# ---------------------------------------------------------------------------
+# 服务与调度(§4、§5、§7.3、§8.2、§18)
+# ---------------------------------------------------------------------------
+
+equivalence_classes:
+  # 代理出口是 L4 直选天然成立的情形:没有域名、证书或鉴权要对齐,
+  # 访问契约全空即天然同构(§4.4)。
+  - id: proxy-egress
+    output_contract: 裸 L4 转发,无应用层语义
+    carrier: l4_direct
+    observation_point: l4_tunnel
+    members:
+      - node: target-sg
+        access_contract: {domain: "", cert_ca: "", credential: ""}
+      - node: target-jp
+        access_contract: {domain: "", cert_ca: "", credential: ""}
+
+  # 推理端点:target-us 是自有的,target-3p 是第三方。两者域名、CA 与凭据
+  # 来源都不同,契约不同构,因此 carrier 必须是 l7_gateway —— 由网关改写
+  # Host 与鉴权(§4.4、§9.2)。网关同时是应用层指标的观测点(§16.2)。
+  - id: llm:qwen3-32b-int8@openai-v1
+    output_contract: OpenAI v1 chat/completions,32k 上下文,支持流式
+    carrier: l7_gateway
+    observation_point: l7_gateway
+    price_source: 供应商合同导入
+    members:
+      - node: target-us
+        access_contract:
+          domain: llm-us.internal
+          cert_ca: loom-internal-ca
+          credential: vault:llm/us
+          protocol_ver: h2
+      - node: target-3p
+        access_contract:
+          domain: api.example.net
+          cert_ca: public-webpki
+          credential: vault:llm/3p
+          path_prefix: /v1
+          protocol_ver: http/1.1
+
+declarations:
+  # 模式 A:固定出口 IP。目标轴钉死,中继轴仍全程动态选优(§4.1)。
+  # 没有 ranking_period —— 目标轴是常量,排序周期无意义(§5.5)。
+  - id: sg-fixed
+    name: 固定新加坡出口
+    mode: pinned_target
+    target_node: target-sg
+    objective: stability
+    allowed_relays: [relay-bj, relay-sh, relay-gz, relay-cd]
+    max_hops: 2
+    tuning_period: 10m
+    switch_threshold: 0.2
+    window: 10m
+    min_samples: 20
+    stale_after: 30m
+
+  # 模式 B:在可互换的出口间选最快的。
+  - id: best-egress
+    name: 最优代理出口
+    mode: by_service
+    equivalence_class: proxy-egress
+    objective: latency
+    allowed_relays: [relay-bj, relay-sh, relay-gz, relay-cd]
+    max_hops: 2
+    top_n: 2
+    ranking_period: 30m
+    tuning_period: 5m
+    switch_threshold: 0.2
+    window: 5m
+    min_samples: 20
+    stale_after: 15m
+
+  # 模式 B + 合规约束。带合规约束时 fallback 必须是 fail_closed:
+  # 候选集因合规过滤而变空时,任何自动回退都等于绕过约束(§5.8)。
+  - id: llm-ttft
+    name: 推理端点按首字延迟调度
+    mode: by_service
+    equivalence_class: llm:qwen3-32b-int8@openai-v1
+    objective: ttft
+    constraints:
+      - {kind: compliance, expr: 数据不出境}
+      - {kind: region, expr: 华东}
+      - {kind: sla, expr: p95 < 200ms}
+    allowed_relays: [relay-bj, relay-sh]
+    max_hops: 1
+    top_n: 2
+    ranking_period: 1h
+    tuning_period: 10m
+    switch_threshold: 0.15
+    window: 10m
+    min_samples: 30
+    stale_after: 30m
+    fallback: fail_closed
+
+credentials:
+  - {id: cred-android, owner: 手机, declaration: sg-fixed,    secret_ref: "vault:cred/android"}
+  - {id: cred-ws-sg,   owner: 工作站, declaration: sg-fixed,   secret_ref: "vault:cred/ws-sg"}
+  - {id: cred-ws-eg,   owner: 工作站, declaration: best-egress, secret_ref: "vault:cred/ws-eg"}
+  - {id: cred-ws-llm,  owner: 工作站, declaration: llm-ttft,   secret_ref: "vault:cred/ws-llm"}
+  - {id: cred-ci,      owner: CI,    declaration: best-egress, secret_ref: "vault:cred/ci"}
+
+profiles:
+  # Android:必须 TUN(绝大多数 App 不能单独设代理),因此只带一把凭据,
+  # 没有"按端口选声明"这回事(§7.2、§18)。
+  - id: phone
+    device_name: Pixel
+    platform: android
+    credentials: [cred-android]
+
+  # 桌面:TUN 兜底 + mixed 精确控制(§7.2)。端口即访问声明(§7.3)。
+  - id: workstation
+    device_name: 开发机
+    platform: desktop
+    credentials: [cred-ws-sg, cred-ws-eg, cred-ws-llm]
+    mixed_ports:
+      - {port: 1080, declaration: sg-fixed}
+      - {port: 1081, declaration: best-egress}
+      - {port: 1082, declaration: llm-ttft}
+
+  # Linux 服务器:只用 mixed,不开 TUN —— 开 TUN 需 root、要改路由表,
+  # 配错一次可能把自己的 SSH 锁在外面(§7.2)。
+  - id: ci-runner
+    device_name: CI 构建机
+    platform: linux-server
+    credentials: [cred-ci]
+    mixed_ports:
+      - {port: 1080, declaration: best-egress}

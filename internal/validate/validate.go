@@ -37,6 +37,7 @@ func Validate(s *model.SSOT) []Finding {
 	var fs findings
 	idx := checkNodes(s, &fs)
 	checkTunnels(s, idx, &fs)
+	checkService(s, idx, &fs)
 
 	sort.SliceStable(fs, func(i, j int) bool {
 		if fs[i].Where != fs[j].Where {

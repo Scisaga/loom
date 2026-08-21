@@ -116,8 +116,42 @@ func (t *Tunnel) Pair() string { return t.From + "→" + t.To }
 
 // SSOT 是唯一事实来源的根(§12)。
 type SSOT struct {
+	// 拓扑
 	Nodes   []Node   `yaml:"nodes"`
 	Tunnels []Tunnel `yaml:"tunnels"`
+
+	// 服务与调度
+	EquivalenceClasses []EquivalenceClass  `yaml:"equivalence_classes,omitempty"`
+	Declarations       []AccessDeclaration `yaml:"declarations,omitempty"`
+	Credentials        []Credential        `yaml:"credentials,omitempty"`
+	Profiles           []ClientProfile     `yaml:"profiles,omitempty"`
+}
+
+// DeclarationByID 建立索引。调用方需保证 ID 已去重(validate 会查)。
+func (s *SSOT) DeclarationByID() map[string]*AccessDeclaration {
+	m := make(map[string]*AccessDeclaration, len(s.Declarations))
+	for i := range s.Declarations {
+		m[s.Declarations[i].ID] = &s.Declarations[i]
+	}
+	return m
+}
+
+// ClassByID 建立等价类索引。
+func (s *SSOT) ClassByID() map[string]*EquivalenceClass {
+	m := make(map[string]*EquivalenceClass, len(s.EquivalenceClasses))
+	for i := range s.EquivalenceClasses {
+		m[s.EquivalenceClasses[i].ID] = &s.EquivalenceClasses[i]
+	}
+	return m
+}
+
+// CredentialByID 建立凭据索引。
+func (s *SSOT) CredentialByID() map[string]*Credential {
+	m := make(map[string]*Credential, len(s.Credentials))
+	for i := range s.Credentials {
+		m[s.Credentials[i].ID] = &s.Credentials[i]
+	}
+	return m
 }
 
 // NodeByID 建立索引。调用方需保证 ID 已去重(validate 会查)。

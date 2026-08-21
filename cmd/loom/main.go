@@ -101,7 +101,12 @@ func cmdValidate(args []string) error {
 	}
 	found := validate.Validate(s)
 	if len(found) == 0 {
-		fmt.Printf("✓ 校验通过:%d 个节点,%d 条隧道\n", len(s.Nodes), len(s.Tunnels))
+		fmt.Printf("✓ 校验通过\n")
+		fmt.Printf("  拓扑    %d 个节点,%d 条隧道\n", len(s.Nodes), len(s.Tunnels))
+		fmt.Printf("  服务    %d 个等价类,%d 条访问声明\n",
+			len(s.EquivalenceClasses), len(s.Declarations))
+		fmt.Printf("  接入    %d 张凭据,%d 个客户端档案\n",
+			len(s.Credentials), len(s.Profiles))
 		return nil
 	}
 	fmt.Print(validate.Format(found))

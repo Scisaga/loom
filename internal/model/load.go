@@ -49,4 +49,18 @@ func (s *SSOT) defaults() {
 			s.Tunnels[i].Protocol = WG
 		}
 	}
+	for i := range s.Declarations {
+		d := &s.Declarations[i]
+		// §5.8:空候选集的默认行为是拒绝并告警。这个默认必须是安全的
+		// 那一侧 —— 任何自动回退都可能绕过合规约束。
+		if d.Fallback == "" {
+			d.Fallback = FailClosed
+		}
+		// §3.2:实践中 ≤2。
+		if d.MaxHops == 0 {
+			d.MaxHops = 2
+		}
+	}
+	// top_n 刻意不设默认:§5.6 没有给出建议值,替使用者猜一个会让
+	// "下发几个候选"这件事变成隐式的。校验器要求模式 B 显式声明。
 }
