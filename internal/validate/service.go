@@ -14,7 +14,7 @@ func checkService(s *model.SSOT, nodes map[string]*model.Node, fs *findings) {
 	classes := checkClasses(s, nodes, fs)
 	decls := checkDeclarations(s, nodes, classes, fs)
 	creds := checkCredentials(s, decls, fs)
-	checkProfiles(s, decls, creds, fs)
+	checkProfiles(s, nodes, decls, creds, fs)
 }
 
 func checkClasses(s *model.SSOT, nodes map[string]*model.Node, fs *findings) map[string]*model.EquivalenceClass {
@@ -261,6 +261,7 @@ func checkCredentials(
 
 func checkProfiles(
 	s *model.SSOT,
+	nodes map[string]*model.Node,
 	decls map[string]*model.AccessDeclaration,
 	creds map[string]*model.Credential,
 	fs *findings,
@@ -277,6 +278,12 @@ func checkProfiles(
 			fs.add("§19 schema", where, "客户端档案 id 重复")
 		}
 		seen[p.ID] = true
+
+		// 配置包的输出目录名取自节点 id 或档案 id,两个命名空间重叠会让
+		// 两份配置写进同一个目录。
+		if _, clash := nodes[p.ID]; clash {
+			fs.add("§19 schema", where, "档案 id 与节点 id 重名 —— 两者共用配置包的输出目录名")
+		}
 
 		if !p.Platform.Valid() {
 			fs.add("§7.2 平台", where, "未知 platform:%q", p.Platform)
@@ -314,6 +321,24 @@ func checkProfiles(
 		if p.Platform == model.LinuxServer && len(p.MixedPorts) == 0 {
 			fs.add("§7.2 平台", where,
 				"linux-server 档案没有 mixed_ports —— 它不开 TUN,没有端口就接管不到任何流量")
+		}
+
+		// §7.2:用 TUN 的平台必须说清兜底流量走哪条声明。
+		if p.Platform.UsesTUN() {
+			switch {
+			case p.DefaultDeclaration == "" && len(p.Credentials) > 1:
+				fs.add("§7.2 平台", where,
+					"用 TUN 但未声明 default_declaration,且持有 %d 把凭据 —— "+
+						"兜底流量走哪条声明是歧义的,必须显式写出", len(p.Credentials))
+			case p.DefaultDeclaration != "":
+				if _, ok := decls[p.DefaultDeclaration]; !ok {
+					fs.add("§7.2 平台", where,
+						"default_declaration 引用了不存在的访问声明 %q", p.DefaultDeclaration)
+				}
+			}
+		} else if p.DefaultDeclaration != "" {
+			fs.add("§7.2 平台", where,
+				"%s 不使用 TUN,声明 default_declaration 不会生效", p.Platform)
 		}
 
 		seenPort := map[int]bool{}

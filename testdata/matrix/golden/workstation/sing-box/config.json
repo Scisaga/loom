@@ -1,0 +1,305 @@
+{
+  "log": {
+    "level": "warn"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "address": [
+        "172.19.0.1/30"
+      ],
+      "auto_route": true,
+      "stack": "system"
+    },
+    {
+      "type": "mixed",
+      "tag": "in-1080",
+      "listen": "127.0.0.1",
+      "listen_port": 1080
+    },
+    {
+      "type": "mixed",
+      "tag": "in-1081",
+      "listen": "127.0.0.1",
+      "listen_port": 1081
+    },
+    {
+      "type": "mixed",
+      "tag": "in-1082",
+      "listen": "127.0.0.1",
+      "listen_port": 1082
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "hysteria2",
+      "tag": "hop:best-egress:relay-bj",
+      "server": "203.0.113.10",
+      "server_port": 4433,
+      "password": "${secret:vault:cred/ws-eg}",
+      "tls": {
+        "enabled": true,
+        "server_name": "203.0.113.10",
+        "certificate_path": "/etc/loom/tls/loom-ca.crt",
+        "alpn": [
+          "h3"
+        ]
+      }
+    },
+    {
+      "type": "socks",
+      "tag": "cand:best-egress:relay-bj\u003etarget-sg",
+      "server": "10.99.0.2",
+      "server_port": 1080,
+      "version": "5",
+      "detour": "hop:best-egress:relay-bj"
+    },
+    {
+      "type": "socks",
+      "tag": "cand:best-egress:relay-bj\u003etarget-jp",
+      "server": "10.99.1.2",
+      "server_port": 1080,
+      "version": "5",
+      "detour": "hop:best-egress:relay-bj"
+    },
+    {
+      "type": "hysteria2",
+      "tag": "hop:best-egress:relay-sh",
+      "server": "203.0.113.11",
+      "server_port": 4433,
+      "password": "${secret:vault:cred/ws-eg}",
+      "tls": {
+        "enabled": true,
+        "server_name": "203.0.113.11",
+        "certificate_path": "/etc/loom/tls/loom-ca.crt",
+        "alpn": [
+          "h3"
+        ]
+      }
+    },
+    {
+      "type": "socks",
+      "tag": "cand:best-egress:relay-sh\u003etarget-sg",
+      "server": "10.99.0.4",
+      "server_port": 1080,
+      "version": "5",
+      "detour": "hop:best-egress:relay-sh"
+    },
+    {
+      "type": "socks",
+      "tag": "cand:best-egress:relay-sh\u003etarget-jp",
+      "server": "10.99.1.4",
+      "server_port": 1080,
+      "version": "5",
+      "detour": "hop:best-egress:relay-sh"
+    },
+    {
+      "type": "hysteria2",
+      "tag": "hop:best-egress:relay-gz",
+      "server": "203.0.113.12",
+      "server_port": 4433,
+      "password": "${secret:vault:cred/ws-eg}",
+      "tls": {
+        "enabled": true,
+        "server_name": "203.0.113.12",
+        "certificate_path": "/etc/loom/tls/loom-ca.crt",
+        "alpn": [
+          "h3"
+        ]
+      }
+    },
+    {
+      "type": "socks",
+      "tag": "cand:best-egress:relay-gz\u003etarget-sg",
+      "server": "10.99.0.6",
+      "server_port": 1080,
+      "version": "5",
+      "detour": "hop:best-egress:relay-gz"
+    },
+    {
+      "type": "socks",
+      "tag": "cand:best-egress:relay-gz\u003etarget-jp",
+      "server": "10.99.1.6",
+      "server_port": 1080,
+      "version": "5",
+      "detour": "hop:best-egress:relay-gz"
+    },
+    {
+      "type": "hysteria2",
+      "tag": "hop:best-egress:relay-cd",
+      "server": "203.0.113.13",
+      "server_port": 4433,
+      "password": "${secret:vault:cred/ws-eg}",
+      "tls": {
+        "enabled": true,
+        "server_name": "203.0.113.13",
+        "certificate_path": "/etc/loom/tls/loom-ca.crt",
+        "alpn": [
+          "h3"
+        ]
+      }
+    },
+    {
+      "type": "socks",
+      "tag": "cand:best-egress:relay-cd\u003etarget-sg",
+      "server": "10.99.0.8",
+      "server_port": 1080,
+      "version": "5",
+      "detour": "hop:best-egress:relay-cd"
+    },
+    {
+      "type": "socks",
+      "tag": "cand:best-egress:relay-cd\u003etarget-jp",
+      "server": "10.99.1.8",
+      "server_port": 1080,
+      "version": "5",
+      "detour": "hop:best-egress:relay-cd"
+    },
+    {
+      "type": "selector",
+      "tag": "decl:best-egress",
+      "outbounds": [
+        "cand:best-egress:relay-bj\u003etarget-sg",
+        "cand:best-egress:relay-bj\u003etarget-jp",
+        "cand:best-egress:relay-sh\u003etarget-sg",
+        "cand:best-egress:relay-sh\u003etarget-jp",
+        "cand:best-egress:relay-gz\u003etarget-sg",
+        "cand:best-egress:relay-gz\u003etarget-jp",
+        "cand:best-egress:relay-cd\u003etarget-sg",
+        "cand:best-egress:relay-cd\u003etarget-jp"
+      ],
+      "default": "cand:best-egress:relay-bj\u003etarget-sg"
+    },
+    {
+      "type": "hysteria2",
+      "tag": "hop:sg-fixed:relay-bj",
+      "server": "203.0.113.10",
+      "server_port": 4433,
+      "password": "${secret:vault:cred/ws-sg}",
+      "tls": {
+        "enabled": true,
+        "server_name": "203.0.113.10",
+        "certificate_path": "/etc/loom/tls/loom-ca.crt",
+        "alpn": [
+          "h3"
+        ]
+      }
+    },
+    {
+      "type": "socks",
+      "tag": "cand:sg-fixed:relay-bj\u003etarget-sg",
+      "server": "10.99.0.2",
+      "server_port": 1080,
+      "version": "5",
+      "detour": "hop:sg-fixed:relay-bj"
+    },
+    {
+      "type": "hysteria2",
+      "tag": "hop:sg-fixed:relay-sh",
+      "server": "203.0.113.11",
+      "server_port": 4433,
+      "password": "${secret:vault:cred/ws-sg}",
+      "tls": {
+        "enabled": true,
+        "server_name": "203.0.113.11",
+        "certificate_path": "/etc/loom/tls/loom-ca.crt",
+        "alpn": [
+          "h3"
+        ]
+      }
+    },
+    {
+      "type": "socks",
+      "tag": "cand:sg-fixed:relay-sh\u003etarget-sg",
+      "server": "10.99.0.4",
+      "server_port": 1080,
+      "version": "5",
+      "detour": "hop:sg-fixed:relay-sh"
+    },
+    {
+      "type": "hysteria2",
+      "tag": "hop:sg-fixed:relay-gz",
+      "server": "203.0.113.12",
+      "server_port": 4433,
+      "password": "${secret:vault:cred/ws-sg}",
+      "tls": {
+        "enabled": true,
+        "server_name": "203.0.113.12",
+        "certificate_path": "/etc/loom/tls/loom-ca.crt",
+        "alpn": [
+          "h3"
+        ]
+      }
+    },
+    {
+      "type": "socks",
+      "tag": "cand:sg-fixed:relay-gz\u003etarget-sg",
+      "server": "10.99.0.6",
+      "server_port": 1080,
+      "version": "5",
+      "detour": "hop:sg-fixed:relay-gz"
+    },
+    {
+      "type": "hysteria2",
+      "tag": "hop:sg-fixed:relay-cd",
+      "server": "203.0.113.13",
+      "server_port": 4433,
+      "password": "${secret:vault:cred/ws-sg}",
+      "tls": {
+        "enabled": true,
+        "server_name": "203.0.113.13",
+        "certificate_path": "/etc/loom/tls/loom-ca.crt",
+        "alpn": [
+          "h3"
+        ]
+      }
+    },
+    {
+      "type": "socks",
+      "tag": "cand:sg-fixed:relay-cd\u003etarget-sg",
+      "server": "10.99.0.8",
+      "server_port": 1080,
+      "version": "5",
+      "detour": "hop:sg-fixed:relay-cd"
+    },
+    {
+      "type": "selector",
+      "tag": "decl:sg-fixed",
+      "outbounds": [
+        "cand:sg-fixed:relay-bj\u003etarget-sg",
+        "cand:sg-fixed:relay-sh\u003etarget-sg",
+        "cand:sg-fixed:relay-gz\u003etarget-sg",
+        "cand:sg-fixed:relay-cd\u003etarget-sg"
+      ],
+      "default": "cand:sg-fixed:relay-bj\u003etarget-sg"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "inbound": [
+          "in-1080"
+        ],
+        "outbound": "decl:sg-fixed"
+      },
+      {
+        "inbound": [
+          "in-1081"
+        ],
+        "outbound": "decl:best-egress"
+      },
+      {
+        "inbound": [
+          "tun-in"
+        ],
+        "outbound": "decl:best-egress"
+      }
+    ],
+    "final": "block"
+  }
+}

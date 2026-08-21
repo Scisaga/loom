@@ -9,6 +9,7 @@ nodes:
     capabilities: [relay, access]
     direction: bidirectional
     public_endpoint: 203.0.113.10
+    inbound_port: 4433
     wg_public_key: bj0000000000000000000000000000000000000000k=
 
   - id: relay-sh
@@ -16,6 +17,7 @@ nodes:
     capabilities: [relay]
     direction: bidirectional
     public_endpoint: 203.0.113.11
+    inbound_port: 4433
     wg_public_key: sh0000000000000000000000000000000000000000k=
 
   - id: relay-gz
@@ -23,6 +25,7 @@ nodes:
     capabilities: [relay]
     direction: bidirectional
     public_endpoint: 203.0.113.12
+    inbound_port: 4433
     wg_public_key: gz0000000000000000000000000000000000000000k=
 
   - id: relay-cd
@@ -30,6 +33,7 @@ nodes:
     capabilities: [relay]
     direction: bidirectional
     public_endpoint: 203.0.113.13
+    inbound_port: 4433
     wg_public_key: cd0000000000000000000000000000000000000000k=
 
   # ---- 目标(§9)。三个不同的 direction,推导出三种发起方分配。----
@@ -42,6 +46,7 @@ nodes:
     direction: reverse_only
     service_tags: [proxy-egress]
     public_endpoint: 198.51.100.20
+    inbound_port: 1080
     wg_public_key: sg0000000000000000000000000000000000000000k=
 
   # direct_only:只能被连,中继是发起方。
@@ -52,6 +57,7 @@ nodes:
     direction: direct_only
     service_tags: [proxy-egress]
     public_endpoint: 198.51.100.21
+    inbound_port: 1080
     wg_public_key: jp0000000000000000000000000000000000000000k=
 
   # bidirectional ↔ bidirectional:两端都合法,按 node id 字典序定发起方。
@@ -209,6 +215,8 @@ profiles:
     device_name: 开发机
     platform: desktop
     credentials: [cred-ws-sg, cred-ws-eg, cred-ws-llm]
+    # TUN 是兜底,mixed 端口是精确控制。兜底走哪条必须显式写出(§7.2)。
+    default_declaration: best-egress
     mixed_ports:
       - {port: 1080, declaration: sg-fixed}
       - {port: 1081, declaration: best-egress}

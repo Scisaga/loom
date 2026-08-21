@@ -23,8 +23,8 @@ type File struct {
 
 // Bundle 是单个节点的完整配置包。Files 按 Path 排序。
 type Bundle struct {
-	NodeID string
-	Files  []File
+	Owner string
+	Files []File
 }
 
 // Hash 是配置包的内容哈希,用于 §15.3 的漂移检测与 §19 的
@@ -48,7 +48,7 @@ type Skip struct {
 
 // Result 是一次渲染的全部产物。
 type Result struct {
-	Bundles []Bundle // 按 NodeID 排序
+	Bundles []Bundle // 按 Owner 排序
 	Skipped []Skip   // 按 Where 排序
 }
 
@@ -91,6 +91,38 @@ func Render(s *model.SSOT) (*Result, error) {
 		byNode[t.Initiator.ID] = append(byNode[t.Initiator.ID], bf)
 	}
 
+	// sing-box:接入档案、中继、落地目标。
+	for i := range s.Profiles {
+		p := &s.Profiles[i]
+		f, sk, err := renderProfile(s, p)
+		if err != nil {
+			return nil, err
+		}
+		skipped = append(skipped, sk...)
+		byNode[p.ID] = append(byNode[p.ID], f)
+	}
+	for i := range s.Nodes {
+		n := &s.Nodes[i]
+		if !n.IsManaged() || n.InboundPort == 0 {
+			continue
+		}
+		if n.Has(model.Relay) {
+			f, err := renderRelay(s, n)
+			if err != nil {
+				return nil, err
+			}
+			byNode[n.ID] = append(byNode[n.ID], f)
+			continue
+		}
+		if n.Has(model.Target) && n.TargetKind == model.Landing {
+			f, err := renderLanding(s, n)
+			if err != nil {
+				return nil, err
+			}
+			byNode[n.ID] = append(byNode[n.ID], f)
+		}
+	}
+
 	ids := make([]string, 0, len(byNode))
 	for id := range byNode {
 		ids = append(ids, id)
@@ -101,7 +133,7 @@ func Render(s *model.SSOT) (*Result, error) {
 	for _, id := range ids {
 		files := byNode[id]
 		sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
-		res.Bundles = append(res.Bundles, Bundle{NodeID: id, Files: files})
+		res.Bundles = append(res.Bundles, Bundle{Owner: id, Files: files})
 	}
 	sort.Slice(res.Skipped, func(i, j int) bool { return res.Skipped[i].Where < res.Skipped[j].Where })
 	return res, nil
@@ -118,7 +150,7 @@ func Diff(old, new *Result) string {
 		}
 		for _, b := range r.Bundles {
 			for _, f := range b.Files {
-				m[key{b.NodeID, f.Path}] = f.Content
+				m[key{b.Owner, f.Path}] = f.Content
 			}
 		}
 		return m

@@ -164,7 +164,7 @@ func cmdRender(args []string, write bool) error {
 	}
 	for _, b := range res.Bundles {
 		for _, f := range b.Files {
-			p := filepath.Join(*out, b.NodeID, f.Path)
+			p := filepath.Join(*out, b.Owner, f.Path)
 			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 				return err
 			}
@@ -176,7 +176,7 @@ func cmdRender(args []string, write bool) error {
 
 	fmt.Printf("\n已渲染 %d 个节点:\n", len(res.Bundles))
 	for _, b := range res.Bundles {
-		fmt.Printf("  %-12s %d 个文件  %s\n", b.NodeID, len(b.Files), b.Hash()[:12])
+		fmt.Printf("  %-12s %d 个文件  %s\n", b.Owner, len(b.Files), b.Hash()[:12])
 	}
 	return nil
 }
@@ -220,7 +220,7 @@ func readDir(dir string) (*render.Result, error) {
 	for _, id := range ids {
 		files := byNode[id]
 		sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
-		res.Bundles = append(res.Bundles, render.Bundle{NodeID: id, Files: files})
+		res.Bundles = append(res.Bundles, render.Bundle{Owner: id, Files: files})
 	}
 	return res, nil
 }

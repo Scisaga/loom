@@ -50,7 +50,7 @@ func TestRenderIsPure(t *testing.T) {
 	}
 	for i := range a.Bundles {
 		if a.Bundles[i].Hash() != b.Bundles[i].Hash() {
-			t.Errorf("节点 %s 两次渲染的哈希不同 —— 渲染函数不是纯的", a.Bundles[i].NodeID)
+			t.Errorf("节点 %s 两次渲染的哈希不同 —— 渲染函数不是纯的", a.Bundles[i].Owner)
 		}
 	}
 	if d := Diff(a, b); d != "" {
@@ -58,30 +58,74 @@ func TestRenderIsPure(t *testing.T) {
 	}
 }
 
-// TestMatrixShape 断言 §20.1 说的规模:12 条隧道产生 24 个文件。
+// TestMatrixShape 断言 §20.1 说的规模:12 条隧道产生 24 个 WireGuard 文件。
 func TestMatrixShape(t *testing.T) {
 	s := load(t)
 	res, err := Render(s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Skipped) != 0 {
-		t.Errorf("有隧道被跳过:%+v", res.Skipped)
-	}
 
-	total := 0
+	wg, sb := 0, 0
 	for _, b := range res.Bundles {
-		total += len(b.Files)
-	}
-	if want := len(s.Tunnels) * 2; total != want {
-		t.Errorf("渲染出 %d 个文件,期望 %d(每条隧道两端各一个)", total, want)
-	}
-
-	// 第三方端点不参与渲染(§9.2)。
-	for _, b := range res.Bundles {
-		if b.NodeID == "target-3p" {
+		// 第三方端点不参与渲染(§9.2)。
+		if b.Owner == "target-3p" {
 			t.Error("managed: false 的第三方端点不应产生配置包")
 		}
+		for _, f := range b.Files {
+			switch {
+			case strings.HasPrefix(f.Path, "wireguard/"):
+				wg++
+			case f.Path == "sing-box/config.json":
+				sb++
+			default:
+				t.Errorf("未预期的产物:%s/%s", b.Owner, f.Path)
+			}
+		}
+	}
+	if want := len(s.Tunnels) * 2; wg != want {
+		t.Errorf("渲染出 %d 个 WireGuard 文件,期望 %d(每条隧道两端各一个)", wg, want)
+	}
+	// 4 中继 + 2 落地目标 + 3 客户端档案。target-us 是 endpoint 形态,
+	// 不落地,因此不渲染 sing-box。
+	if want := 9; sb != want {
+		t.Errorf("渲染出 %d 份 sing-box 配置,期望 %d", sb, want)
+	}
+}
+
+// TestSkipsAreExpected 把"哪些东西没被渲染"钉死。
+//
+// 跳过项是本项目对"静默截断"的防线(见 CLAUDE.md)。不钉住它,新增一个
+// 静默跳过不会让任何测试变红。
+func TestSkipsAreExpected(t *testing.T) {
+	res, err := Render(load(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int{
+		"两跳链尚未实现":              4, // sg-fixed 与 best-egress 都是 max_hops=2,被三个档案共引用 4 次
+		"carrier 是 l7_gateway": 1, // llm 等价类不由 L4 换端点(§4.4)
+		"没有任何可表达的 L4 候选":       1,
+		"该端口不生成路由规则":           1, // 1082 绑的声明无候选
+	}
+	got := map[string]int{}
+	for _, sk := range res.Skipped {
+		if sk.Reason == "" {
+			t.Errorf("跳过项 %s 没有说明原因", sk.Where)
+		}
+		for k := range want {
+			if strings.Contains(sk.Reason, k) {
+				got[k]++
+			}
+		}
+	}
+	for k, n := range want {
+		if got[k] != n {
+			t.Errorf("跳过原因 %q 出现 %d 次,期望 %d 次", k, got[k], n)
+		}
+	}
+	if len(res.Skipped) != 7 {
+		t.Errorf("共 %d 条跳过,期望 7 条 —— 有新的静默跳过被引入", len(res.Skipped))
 	}
 }
 
@@ -98,9 +142,9 @@ func TestPairCorrespondence(t *testing.T) {
 	}
 	files := map[string]map[string]string{} // node -> path -> content
 	for _, b := range res.Bundles {
-		files[b.NodeID] = map[string]string{}
+		files[b.Owner] = map[string]string{}
 		for _, f := range b.Files {
-			files[b.NodeID][f.Path] = f.Content
+			files[b.Owner][f.Path] = f.Content
 		}
 	}
 
@@ -192,7 +236,7 @@ func TestGolden(t *testing.T) {
 		}
 		for _, b := range res.Bundles {
 			for _, f := range b.Files {
-				p := filepath.Join(goldenDir, b.NodeID, f.Path)
+				p := filepath.Join(goldenDir, b.Owner, f.Path)
 				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 					t.Fatal(err)
 				}
@@ -208,7 +252,7 @@ func TestGolden(t *testing.T) {
 	seen := map[string]bool{}
 	for _, b := range res.Bundles {
 		for _, f := range b.Files {
-			p := filepath.Join(goldenDir, b.NodeID, f.Path)
+			p := filepath.Join(goldenDir, b.Owner, f.Path)
 			seen[p] = true
 			want, err := os.ReadFile(p)
 			if err != nil {
@@ -217,7 +261,7 @@ func TestGolden(t *testing.T) {
 			}
 			if string(want) != f.Content {
 				t.Errorf("%s/%s 与 golden 不一致:\n--- golden\n%s\n--- 实际\n%s",
-					b.NodeID, f.Path, want, f.Content)
+					b.Owner, f.Path, want, f.Content)
 			}
 		}
 	}

@@ -111,6 +111,14 @@ func checkTunnels(s *model.SSOT, idx map[string]*model.Node, fs *findings) {
 	seenAddr := map[string]string{} // 隧道内地址 -> 占用者
 	seenPort := map[string]string{} // "节点/端口" -> 占用者
 
+	// sing-box inbound 端口先占位,这样 WG 监听口撞上它时能报出来。
+	// 同一台机器上两个进程抢同一个端口,后起的那个静默失败。
+	for i := range s.Nodes {
+		if n := &s.Nodes[i]; n.InboundPort > 0 {
+			seenPort[fmt.Sprintf("%s/%d", n.ID, n.InboundPort)] = n.ID + " 的 sing-box inbound"
+		}
+	}
+
 	for i := range s.Tunnels {
 		t := &s.Tunnels[i]
 		where := t.Pair()

@@ -76,6 +76,37 @@ type Node struct {
 
 	// WGPublicKey 由节点上报。平台永不持有私钥(§13.1)。
 	WGPublicKey string `yaml:"wg_public_key,omitempty"`
+
+	// InboundPort 是该节点 sing-box inbound 监听的端口。
+	//
+	// relay 用它接受接入节点连接(§8.1);landing target 用它接受来自中继
+	// 的转发 —— 后者监听在隧道地址上,这样"下一跳"就字面是一个 IP:port,
+	// §8.2 的允许下一跳集合才能表达成准入白名单。
+	InboundPort int `yaml:"inbound_port,omitempty"`
+}
+
+// TunnelAddrOn 返回本节点在与 peer 的隧道中使用的地址(不含掩码)。
+// 找不到对应隧道时返回空串。
+func (s *SSOT) TunnelAddrOn(nodeID, peerID string) string {
+	for i := range s.Tunnels {
+		t := &s.Tunnels[i]
+		switch {
+		case t.From == nodeID && t.To == peerID:
+			return stripMask(t.FromAddr)
+		case t.To == nodeID && t.From == peerID:
+			return stripMask(t.ToAddr)
+		}
+	}
+	return ""
+}
+
+func stripMask(addr string) string {
+	for i := 0; i < len(addr); i++ {
+		if addr[i] == '/' {
+			return addr[:i]
+		}
+	}
+	return addr
 }
 
 func (n *Node) IsManaged() bool { return n.Managed == nil || *n.Managed }

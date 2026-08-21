@@ -284,4 +284,12 @@ type ClientProfile struct {
 
 	Credentials []string    `yaml:"credentials"`
 	MixedPorts  []MixedPort `yaml:"mixed_ports,omitempty"`
+
+	// DefaultDeclaration 是 TUN 兜底流量走的声明(§7.2)。
+	//
+	// 桌面同时有 TUN 和 mixed 端口:端口是精确控制,TUN 是兜底。兜底走
+	// 哪条声明必须显式写出 —— 让渲染器"挑一条"会得到一个看起来正常、
+	// 实际把全部未匹配流量送错地方的配置。
+	// Android 只有一把凭据,可省略。
+	DefaultDeclaration string `yaml:"default_declaration,omitempty"`
 }
