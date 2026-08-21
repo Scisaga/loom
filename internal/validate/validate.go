@@ -91,6 +91,24 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 			fs.add("§8.1 inbound", where,
 				"持有 server 能力但没有 inbound_port —— 无法接受上游连接")
 		}
+		// §15.4:版本必须显式钉住,永不使用 latest。自动的是下载,不是
+		// 升级决策 —— 上游一次不兼容发布可在一个轮询周期内打挂全部节点。
+		v := s.VersionsFor(n)
+		// 用切片而不是 map:map 的遍历顺序不确定,会让校验输出在两次运行
+		// 之间抖动,CI 里就是间歇性失败。
+		for _, c := range []struct{ name, got string }{
+			{"sing_box", v.SingBox}, {"wireguard", v.WireGuard}, {"agent", v.Agent},
+		} {
+			name, got := c.name, c.got
+			switch got {
+			case "":
+				fs.add("§15.4 版本", where, "组件 %s 没有钉住版本", name)
+			case "latest":
+				fs.add("§15.4 版本", where,
+					"组件 %s 的版本是 latest —— 自动的是下载,不是升级决策", name)
+			}
+		}
+
 		if !n.Has(model.Server) && n.EgressCapable {
 			fs.add("§1.1 出口", where,
 				"egress_capable 只对服务器有意义 —— 出口是链上最后一台服务器(§1.1)")

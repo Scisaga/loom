@@ -28,8 +28,13 @@ CLI 自测:
 
 ```bash
 go run ./cmd/loom validate testdata/matrix/ssot.yaml
-go run ./cmd/loom render  testdata/matrix/ssot.yaml -o /tmp/out
-go run ./cmd/loom diff    testdata/matrix/ssot.yaml -o /tmp/out
+go run ./cmd/loom render   testdata/matrix/ssot.yaml -o /tmp/out
+go run ./cmd/loom diff     testdata/matrix/ssot.yaml -o /tmp/out
+
+# 快照与签名
+go run ./cmd/loom keygen   -o /tmp/keys
+go run ./cmd/loom snapshot testdata/matrix/ssot.yaml -o /tmp/out -key /tmp/keys/platform-signing.key
+go run ./cmd/loom verify   /tmp/out -pubkey /tmp/keys/platform-signing.pub
 ```
 
 ## 目录
@@ -39,6 +44,7 @@ go run ./cmd/loom diff    testdata/matrix/ssot.yaml -o /tmp/out
 | `internal/model/` | SSOT 数据模型、严格 YAML 解码、§2.2 方向真值表、隧道角色解析 |
 | `internal/validate/` | 渲染前的一致性校验 |
 | `internal/render/` | 纯函数渲染(WireGuard + sing-box)、配置包哈希、行级 diff |
+| `internal/snapshot/` | 冻结成不可变版本、Ed25519 签名、漂移检测比对 |
 | `cmd/loom/` | CLI:`validate` / `render` / `diff` |
 | `testdata/matrix/` | 参考 SSOT(4 国内云机 + 2 境外 VPS)与 golden |
 
@@ -56,10 +62,14 @@ go run ./cmd/loom diff    testdata/matrix/ssot.yaml -o /tmp/out
 
 ## 三条动手前必须知道的约束
 
-**1. 渲染必须是纯函数(§12)。** 不得引入随机数、当前时间、外部查询;
-遍历 map 前一律排序。dry-run diff、漂移检测、回滚三个产物全都建立在这个
-性质上。`TestRenderIsPure` 会拦住违反,但它只能发现你已经写出来的不确定性
-—— 别指望它替你想。
+**1. 渲染与打包必须是纯函数(§12)。** 不得引入随机数、当前时间、外部查询;
+**遍历 map 前一律排序**,或者干脆用切片。dry-run diff、漂移检测、回滚三个
+产物全都建立在这个性质上,签名更是直接针对那串字节。
+
+时间与作者这类外部输入由**调用方注入**(见 `snapshot.Meta`),包内不读时钟。
+
+> 这条最容易在不起眼的地方破:校验器里用 `for k, v := range map[...]` 输出
+> 发现,就足以让 CI 间歇性失败。已经踩过一次。
 
 **2. 推导出来的字段不进结构体。** `mesh_eligible`、`Tunnel.initiator`、
 `uses_tun` 这类值都由别的字段推导。SSOT 用 `KnownFields(true)` 严格解码,

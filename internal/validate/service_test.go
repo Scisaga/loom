@@ -9,6 +9,8 @@ import (
 
 // 最小可用的拓扑前缀,让服务侧的反例只需声明它关心的那部分。
 const topo = `
+defaults:
+  components: {sing_box: 1.11.4, wireguard: 1.0.20250521, agent: 0.1.0}
 nodes:
   - {id: cn-a, capabilities: [server], direction: bidirectional, public_endpoint: 1.1.1.1, inbound_port: 4433, egress_capable: true, wg_public_key: k1}
   - {id: cn-b, capabilities: [server], direction: bidirectional, public_endpoint: 1.1.1.2, inbound_port: 4433, wg_public_key: k2}

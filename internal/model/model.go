@@ -65,6 +65,55 @@ type Node struct {
 
 	// WGPublicKey 由节点上报。平台永不持有私钥(§13.1)。
 	WGPublicKey string `yaml:"wg_public_key,omitempty"`
+
+	// SecretGeneration 是本机秘密层的代次,由节点上报。
+	//
+	// 快照只记这个数字和公钥,不含私钥本身(§12.1)。它的用途是让回滚
+	// 知道"当时那一版配置配的是哪一代密钥" —— 但回滚**不回滚秘密层**,
+	// 代次对不上时应当告警而不是悄悄换密钥。
+	SecretGeneration int `yaml:"secret_generation,omitempty"`
+
+	// Components 是这台机器上该跑哪些版本。为空则用 SSOT 的全局默认。
+	Components *ComponentVersions `yaml:"components,omitempty"`
+}
+
+// ComponentVersions 是节点上各组件的版本(§15.4)。
+//
+// **版本是期望态的一部分,并入同一条收敛回路。** 版本必须显式钉住,
+// 永不使用 latest —— 自动的是下载,不是升级决策;上游一次不兼容发布可以
+// 在一个轮询周期内打挂全部节点。
+type ComponentVersions struct {
+	SingBox   string `yaml:"sing_box,omitempty"`
+	WireGuard string `yaml:"wireguard,omitempty"`
+	Tailscale string `yaml:"tailscale,omitempty"`
+	Agent     string `yaml:"agent,omitempty"`
+}
+
+// VersionsFor 返回某个节点最终生效的组件版本:节点覆盖优先,否则用全局默认。
+func (s *SSOT) VersionsFor(n *Node) ComponentVersions {
+	v := ComponentVersions{}
+	if s.Defaults != nil && s.Defaults.Components != nil {
+		v = *s.Defaults.Components
+	}
+	if n.Components == nil {
+		return v
+	}
+	for _, f := range []struct{ dst, src *string }{
+		{&v.SingBox, &n.Components.SingBox},
+		{&v.WireGuard, &n.Components.WireGuard},
+		{&v.Tailscale, &n.Components.Tailscale},
+		{&v.Agent, &n.Components.Agent},
+	} {
+		if *f.src != "" {
+			*f.dst = *f.src
+		}
+	}
+	return v
+}
+
+// Defaults 是全网默认值,目前只有组件版本。
+type SSOTDefaults struct {
+	Components *ComponentVersions `yaml:"components,omitempty"`
 }
 
 func (n *Node) Has(c Capability) bool {
@@ -118,6 +167,9 @@ func (t *Tunnel) Pair() string { return t.From + "→" + t.To }
 
 // SSOT 是唯一事实来源的根(§12)。
 type SSOT struct {
+	// Defaults 是全网默认值(目前只有组件版本)。
+	Defaults *SSOTDefaults `yaml:"defaults,omitempty"`
+
 	// 拓扑 —— Loom 管的机器
 	Nodes   []Node   `yaml:"nodes"`
 	Tunnels []Tunnel `yaml:"tunnels"`

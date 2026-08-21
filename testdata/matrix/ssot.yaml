@@ -7,6 +7,14 @@
 #   - 两个选择轴的三种组合(§4)
 #   - l4_direct 与 l7_gateway 两种承载(§4.4)
 
+# 组件版本是期望态的一部分,与配置并入同一条收敛回路(§15.4)。
+# 永不使用 latest —— 自动的是下载,不是升级决策。
+defaults:
+  components:
+    sing_box: 1.11.4
+    wireguard: 1.0.20250521
+    agent: 0.1.0
+
 nodes:
   # ---- 国内云机。有公网 IP,能被主动连,因此能进 mesh(§8.3)----
   #      它们之间不需要任何隧道条目 —— Headscale 自动分发密钥。
@@ -18,6 +26,9 @@ nodes:
     inbound_port: 4433
     egress_capable: true
     wg_public_key: bj0000000000000000000000000000000000000000k=
+    secret_generation: 3
+    components:
+      sing_box: 1.11.5      # 这台先行验证新版(§15.4 分批推进)
 
   - id: cn-sh
     city: 上海
