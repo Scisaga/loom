@@ -14,7 +14,7 @@ func checkService(s *model.SSOT, nodes map[string]*model.Node, fs *findings) {
 	classes := checkClasses(s, nodes, fs)
 	decls := checkDeclarations(s, nodes, classes, fs)
 	creds := checkCredentials(s, decls, fs)
-	checkProfiles(s, nodes, decls, creds, fs)
+	checkAccessNodes(s, decls, creds, fs)
 }
 
 func checkClasses(s *model.SSOT, nodes map[string]*model.Node, fs *findings) map[string]*model.EquivalenceClass {
@@ -276,39 +276,23 @@ func checkCredentials(
 	return idx
 }
 
-func checkProfiles(
+// checkAccessNodes 校验接入节点特有的字段(§7、§18)。
+func checkAccessNodes(
 	s *model.SSOT,
-	nodes map[string]*model.Node,
 	decls map[string]*model.AccessDeclaration,
 	creds map[string]*model.Credential,
 	fs *findings,
 ) {
-	seen := map[string]bool{}
-	for i := range s.Profiles {
-		p := &s.Profiles[i]
-		where := "profile:" + p.ID
-		if p.ID == "" {
-			where = fmt.Sprintf("profiles[%d]", i)
-			fs.add("§19 schema", where, "客户端档案缺少 id")
-		}
-		if seen[p.ID] && p.ID != "" {
-			fs.add("§19 schema", where, "客户端档案 id 重复")
-		}
-		seen[p.ID] = true
-
-		// 配置包的输出目录名取自节点 id 或档案 id,两个命名空间重叠会让
-		// 两份配置写进同一个目录。
-		if _, clash := nodes[p.ID]; clash {
-			fs.add("§19 schema", where, "档案 id 与节点 id 重名 —— 两者共用配置包的输出目录名")
-		}
+	for _, p := range s.AccessNodes() {
+		where := p.ID
 
 		if !p.Platform.Valid() {
-			fs.add("§7.2 平台", where, "未知 platform:%q", p.Platform)
+			fs.add("§7.2 平台", where, "接入节点缺少或写错 platform:%q", p.Platform)
 			continue
 		}
 
 		if len(p.Credentials) == 0 {
-			fs.add("§8.2 凭据", where, "档案未持有任何凭据")
+			fs.add("§8.2 凭据", where, "接入节点未持有任何凭据")
 		}
 		for _, id := range p.Credentials {
 			c, ok := creds[id]
@@ -326,18 +310,18 @@ func checkProfiles(
 		if p.Platform == model.Android {
 			if len(p.MixedPorts) > 0 {
 				fs.add("§7.2 平台", where,
-					"Android 档案不应声明 mixed_ports —— 绝大多数 App 不能单独设代理,只能走 TUN")
+					"Android 不应声明 mixed_ports —— 绝大多数 App 不能单独设代理,只能走 TUN")
 			}
 			if len(p.Credentials) > 1 {
 				fs.add("§18 模板", where,
-					"Android 档案持有 %d 把凭据,但只有 TUN 一个出口,无法按端口区分声明",
+					"Android 持有 %d 把凭据,但只有 TUN 一个出口,无法按端口区分声明",
 					len(p.Credentials))
 			}
 		}
 		// §7.2:Linux 服务器不开 TUN,流量全靠 mixed 端口接管。
 		if p.Platform == model.LinuxServer && len(p.MixedPorts) == 0 {
 			fs.add("§7.2 平台", where,
-				"linux-server 档案没有 mixed_ports —— 它不开 TUN,没有端口就接管不到任何流量")
+				"linux-server 没有 mixed_ports —— 它不开 TUN,没有端口就接管不到任何流量")
 		}
 
 		// §7.2:用 TUN 的平台必须说清兜底流量走哪条声明。

@@ -173,11 +173,10 @@ func TestSingBoxPathCorrespondence(t *testing.T) {
 	creds := s.CredentialByID()
 	decls := s.DeclarationByID()
 
-	for pi := range s.Profiles {
-		p := &s.Profiles[pi]
+	for _, p := range s.AccessNodes() {
 		access := cfgs[p.ID]
 		if access == nil {
-			t.Fatalf("档案 %s 没有渲染出配置", p.ID)
+			t.Fatalf("接入节点 %s 没有渲染出配置", p.ID)
 		}
 		byTag := map[string]int{}
 		for i, o := range access.Outbounds {

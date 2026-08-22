@@ -83,8 +83,24 @@ type Node struct {
 	// 代次对不上时应当告警而不是悄悄换密钥。
 	SecretGeneration int `yaml:"secret_generation,omitempty"`
 
+	// SSHPort 是 bootstrap 阶段用的 SSH 端口(§14.1)。留空按 22。
+	SSHPort int `yaml:"ssh_port,omitempty"`
+
 	// Components 是这台机器上该跑哪些版本。为空则用 SSOT 的全局默认。
 	Components *ComponentVersions `yaml:"components,omitempty"`
+
+	// ---- 以下只对持有 access 能力的节点有意义(§7)----
+	//
+	// 这些字段原本在一个独立的 ClientProfile 实体里。那与 §1"只有两类节点"
+	// 矛盾:接入节点本来就是节点,不该另起一张表。合并后也不再需要
+	// "档案 id 不能与节点 id 重名"那条为规避目录冲突而发明的规则。
+
+	Platform    Platform    `yaml:"platform,omitempty"`
+	Credentials []string    `yaml:"credentials,omitempty"`
+	MixedPorts  []MixedPort `yaml:"mixed_ports,omitempty"`
+
+	// DefaultDeclaration 是 TUN 兜底流量走的声明(§7.2)。
+	DefaultDeclaration string `yaml:"default_declaration,omitempty"`
 }
 
 // ComponentVersions 是节点上各组件的版本(§15.4)。
@@ -135,6 +151,12 @@ func (n *Node) Has(c Capability) bool {
 	return false
 }
 
+// TunnelCapable 报告这个节点是否参与隧道矩阵。
+//
+// direction 约束"能不能被连接",只对参与隧道的节点有意义。纯接入节点不建
+// 隧道 —— 它经 Hysteria2 拨出去。
+func (n *Node) TunnelCapable() bool { return n.Has(Server) }
+
 // MeshEligible 由 direction 推导,不是独立配置项(§2.2)。
 //
 // 能进 mesh 的服务器由 Headscale 自动分发密钥与 peer,**一份隧道配置都不
@@ -158,8 +180,8 @@ func (n *Node) DialableFromAccess() bool {
 // 但要清楚这只防端口扫描,**不防 DPI**:WireGuard 包本身的指纹(148/92
 // 字节握手、消息类型 1-4)没有任何变化。真要对付那个得上 §17 的 AmneziaWG。
 const (
-	TunnelPortMin = 61610
-	TunnelPortMax = 61699
+	TunnelPortMin = 61617
+	TunnelPortMax = 61799
 )
 
 // InboundProtocol 是服务器接受上游连接时说的协议。
@@ -226,7 +248,17 @@ type SSOT struct {
 	EquivalenceClasses []EquivalenceClass  `yaml:"equivalence_classes,omitempty"`
 	Declarations       []AccessDeclaration `yaml:"declarations,omitempty"`
 	Credentials        []Credential        `yaml:"credentials,omitempty"`
-	Profiles           []ClientProfile     `yaml:"profiles,omitempty"`
+}
+
+// AccessNodes 返回全部接入节点,按 id 排序。
+func (s *SSOT) AccessNodes() []*Node {
+	var out []*Node
+	for i := range s.Nodes {
+		if s.Nodes[i].Has(Access) {
+			out = append(out, &s.Nodes[i])
+		}
+	}
+	return out
 }
 
 // NodeByID 建立索引。调用方需保证 ID 已去重(validate 会查)。

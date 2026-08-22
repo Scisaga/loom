@@ -91,18 +91,17 @@ func Render(s *model.SSOT) (*Result, error) {
 		byNode[t.Initiator.ID] = append(byNode[t.Initiator.ID], bf)
 	}
 
-	// sing-box:接入档案、中继、落地目标。
-	for i := range s.Profiles {
-		p := &s.Profiles[i]
-		f, sk, err := renderProfile(s, p)
+	// sing-box:接入节点与服务器节点。同一台机器可以两者都是。
+	for _, n := range s.AccessNodes() {
+		f, sk, err := renderAccess(s, n)
 		if err != nil {
 			return nil, err
 		}
 		skipped = append(skipped, sk...)
-		// 客户端档案在 Node 里没有对应条目(见 status.md 记的模型赘余),
-		// 这里合成一个只带 access 能力的临时节点给 unit 渲染用。
-		byNode[p.ID] = append(byNode[p.ID], f,
-			renderSingBoxUnit(s, &model.Node{ID: p.ID, Capabilities: []model.Capability{model.Access}}))
+		byNode[n.ID] = append(byNode[n.ID], f)
+		if !n.Has(model.Server) {
+			byNode[n.ID] = append(byNode[n.ID], renderSingBoxUnit(s, n))
+		}
 	}
 	// 服务器只有一种渲染。中继与出口不是两类节点,是同一台机器在不同
 	// 路径上的两种位置(§1.1)。

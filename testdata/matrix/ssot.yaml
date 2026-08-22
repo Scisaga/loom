@@ -78,6 +78,36 @@ nodes:
     egress_capable: true
     wg_public_key: anAtdnBzLXRlc3Qta2V5AAAAAAAAAAAAAAAAAAAAAAA=
 
+  # ---- 接入节点。它们是节点,不是另起一张表的"客户端档案"(§1)。----
+  - id: phone
+    name: Pixel
+    capabilities: [access]
+    direction: bidirectional
+    platform: android          # 绝大多数 App 不能单独设代理,只能走 TUN(§7.2)
+    credentials: [cred-phone]
+
+  - id: workstation
+    name: 开发机
+    capabilities: [access]
+    direction: bidirectional
+    platform: desktop          # TUN 兜底 + mixed 精确控制
+    credentials: [cred-ws-sg, cred-ws-eg, cred-ws-llm, cred-ws-3p]
+    default_declaration: best-egress
+    mixed_ports:
+      - {port: 1080, declaration: sg-fixed}
+      - {port: 1081, declaration: best-egress}
+      - {port: 1082, declaration: llm-ttft}
+      - {port: 1083, declaration: llm-3p}
+
+  - id: ci-runner
+    name: CI 构建机
+    capabilities: [access]
+    direction: bidirectional
+    platform: linux-server     # 只用 mixed,不开 TUN(§7.2)
+    credentials: [cred-ci]
+    mixed_ports:
+      - {port: 1080, declaration: best-egress}
+
 # 隧道只覆盖 reverse_only 的服务器(§6.3、D13)。
 # 国内云机之间一条都没有 —— 那是 Headscale 的活。
 tunnels:
@@ -202,32 +232,3 @@ credentials:
   - {id: cred-ws-llm, owner: 工作站, declaration: llm-ttft,   secret_ref: "vault:cred/ws-llm"}
   - {id: cred-ws-3p, owner: 工作站, declaration: llm-3p,      secret_ref: "vault:cred/ws-3p"}
   - {id: cred-ci,    owner: CI,    declaration: best-egress, secret_ref: "vault:cred/ci"}
-
-profiles:
-  # Android 必须 TUN(绝大多数 App 不能单独设代理),因此只带一把凭据,
-  # 没有"按端口选声明"这回事(§7.2、§18)。
-  - id: phone
-    device_name: Pixel
-    platform: android
-    credentials: [cred-phone]
-
-  # 桌面:TUN 兜底 + mixed 精确控制(§7.2)。端口即访问声明(§7.3)。
-  - id: workstation
-    device_name: 开发机
-    platform: desktop
-    credentials: [cred-ws-sg, cred-ws-eg, cred-ws-llm, cred-ws-3p]
-    default_declaration: best-egress
-    mixed_ports:
-      - {port: 1080, declaration: sg-fixed}
-      - {port: 1081, declaration: best-egress}
-      - {port: 1082, declaration: llm-ttft}
-      - {port: 1083, declaration: llm-3p}
-
-  # Linux 服务器:只用 mixed,不开 TUN —— 开 TUN 需 root、要改路由表,
-  # 配错一次可能把自己的 SSH 锁在外面(§7.2)。
-  - id: ci-runner
-    device_name: CI 构建机
-    platform: linux-server
-    credentials: [cred-ci]
-    mixed_ports:
-      - {port: 1080, declaration: best-egress}

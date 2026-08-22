@@ -114,6 +114,9 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 			}
 		}
 
+		if n.Platform != "" && !n.Has(model.Access) {
+			fs.add("§7.2 平台", where, "platform 只对接入节点有意义")
+		}
 		if !n.Has(model.Server) && n.EgressCapable {
 			fs.add("§1.1 出口", where,
 				"egress_capable 只对服务器有意义 —— 出口是链上最后一台服务器(§1.1)")

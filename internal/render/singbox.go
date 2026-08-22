@@ -135,7 +135,7 @@ func serverTLS() *sbTLS {
 // 接入节点
 // ---------------------------------------------------------------------------
 
-// renderProfile 渲染一个客户端档案的 sing-box 配置(§7)。
+// renderAccess 渲染一个接入节点的 sing-box 配置(§7)。
 //
 // 每个 mixed 端口绑定一个访问声明(§7.3);每条声明有一个 selector,成员是
 // 它的全部 RouteCandidate(§5.6)。
@@ -144,7 +144,7 @@ func serverTLS() *sbTLS {
 // urltest 会按自己的节奏和判据独立选路,与 Agent 的 §5.5 阻尼规则形成两个
 // 互不知情的决策者。selector 的当前选择由 Agent 设置;Agent 尚未实现时它
 // 停在 default 上,即 §20.2 的"路径静态指定"。
-func renderProfile(s *model.SSOT, p *model.ClientProfile) (File, []Skip, error) {
+func renderAccess(s *model.SSOT, p *model.Node) (File, []Skip, error) {
 	nodes := s.NodeByID()
 	decls := s.DeclarationByID()
 	creds := s.CredentialByID()
@@ -195,10 +195,10 @@ func renderProfile(s *model.SSOT, p *model.ClientProfile) (File, []Skip, error) 
 		}
 		cands, cskips := s.EnumerateCandidates(d)
 		for _, cs := range cskips {
-			note("profile:"+p.ID+"/"+cs.Declaration, "%s", cs.Reason)
+			note("access:"+p.ID+"/"+cs.Declaration, "%s", cs.Reason)
 		}
 		if len(cands) == 0 {
-			note("profile:"+p.ID+"/"+did, "该声明没有任何可表达的 L4 候选,已跳过其 outbound 与路由规则")
+			note("access:"+p.ID+"/"+did, "该声明没有任何可表达的 L4 候选,已跳过其 outbound 与路由规则")
 			continue
 		}
 
@@ -215,7 +215,7 @@ func renderProfile(s *model.SSOT, p *model.ClientProfile) (File, []Skip, error) 
 		routable[did] = true
 
 		if d.Fallback != model.FailClosed {
-			note("profile:"+p.ID+"/"+did,
+			note("access:"+p.ID+"/"+did,
 				"fallback=%s 尚未在数据平面实现,当前行为等同 fail_closed(§5.8)", d.Fallback)
 		}
 	}
@@ -226,7 +226,7 @@ func renderProfile(s *model.SSOT, p *model.ClientProfile) (File, []Skip, error) 
 		// 引用一个没生成的 selector 会让 sing-box 直接启动失败。宁可不写
 		// 这条规则 —— 流量落到 final: block,与 fail_closed 一致。
 		if !routable[mp.Declaration] {
-			note("profile:"+p.ID,
+			note("access:"+p.ID,
 				"端口 %d 绑定的声明 %q 没有可用候选,该端口不生成路由规则,流量将被阻断",
 				mp.Port, mp.Declaration)
 			continue
@@ -242,9 +242,9 @@ func renderProfile(s *model.SSOT, p *model.ClientProfile) (File, []Skip, error) 
 		}
 		switch {
 		case tunDecl == "":
-			note("profile:"+p.ID, "未声明 default_declaration,TUN 兜底流量将被阻断")
+			note("access:"+p.ID, "未声明 default_declaration,TUN 兜底流量将被阻断")
 		case !routable[tunDecl]:
-			note("profile:"+p.ID, "default_declaration %q 没有可用候选,TUN 兜底流量将被阻断", tunDecl)
+			note("access:"+p.ID, "default_declaration %q 没有可用候选,TUN 兜底流量将被阻断", tunDecl)
 		default:
 			cfg.Route.Rules = append(cfg.Route.Rules, sbRule{
 				Inbound: []string{"tun-in"}, Outbound: "decl:" + tunDecl,

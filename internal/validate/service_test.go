@@ -149,60 +149,50 @@ declarations:
 		{
 			name: "§7.2 Android 不应有 mixed_ports",
 			want: "只能走 TUN",
-			yaml: topo + `
+			yaml: topo + `  - {id: p1, capabilities: [access], direction: bidirectional, platform: android, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
 credentials:
-  - {id: cr1, declaration: d1, secret_ref: v}
-profiles:
-  - {id: p1, platform: android, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}`,
+  - {id: cr1, declaration: d1, secret_ref: v}`,
 		},
 		{
 			name: "§18 Android 多凭据无法按端口区分",
 			want: "无法按端口区分声明",
-			yaml: topo + `
+			yaml: topo + `  - {id: p1, capabilities: [access], direction: bidirectional, platform: android, credentials: [cr1, cr2], default_declaration: d1}
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
 credentials:
   - {id: cr1, declaration: d1, secret_ref: v}
-  - {id: cr2, declaration: d1, secret_ref: v}
-profiles:
-  - {id: p1, platform: android, credentials: [cr1, cr2], default_declaration: d1}`,
+  - {id: cr2, declaration: d1, secret_ref: v}`,
 		},
 		{
 			name: "§7.2 桌面多凭据必须声明 TUN 兜底走哪条",
 			want: "兜底流量走哪条声明是歧义的",
-			yaml: topo + `
+			yaml: topo + `  - {id: p1, capabilities: [access], direction: bidirectional, platform: desktop, credentials: [cr1, cr2], mixed_ports: [{port: 1080, declaration: d1}]}
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
   - {id: d2, address_axis: from_request, egress_axis: any, objective: latency, tuning_period: 10m}
 credentials:
   - {id: cr1, declaration: d1, secret_ref: v}
-  - {id: cr2, declaration: d2, secret_ref: v}
-profiles:
-  - {id: p1, platform: desktop, credentials: [cr1, cr2], mixed_ports: [{port: 1080, declaration: d1}]}`,
+  - {id: cr2, declaration: d2, secret_ref: v}`,
 		},
 		{
 			name: "§7.2 linux-server 没有 mixed 端口就接管不到流量",
 			want: "接管不到任何流量",
-			yaml: topo + `
+			yaml: topo + `  - {id: p1, capabilities: [access], direction: bidirectional, platform: linux-server, credentials: [cr1]}
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
 credentials:
-  - {id: cr1, declaration: d1, secret_ref: v}
-profiles:
-  - {id: p1, platform: linux-server, credentials: [cr1]}`,
+  - {id: cr1, declaration: d1, secret_ref: v}`,
 		},
 		{
 			name: "§18 引用已吊销的凭据",
 			want: "已吊销",
-			yaml: topo + `
+			yaml: topo + `  - {id: p1, capabilities: [access], direction: bidirectional, platform: linux-server, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
 credentials:
-  - {id: cr1, declaration: d1, secret_ref: v, revoked_at: "2026-01-01T00:00:00Z"}
-profiles:
-  - {id: p1, platform: linux-server, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}`,
+  - {id: cr1, declaration: d1, secret_ref: v, revoked_at: "2026-01-01T00:00:00Z"}`,
 		},
 		{
 			name: "§8.2 凭据未绑定访问声明",
@@ -214,13 +204,11 @@ credentials:
 		{
 			name: "§7.3 端口绑定了不存在的声明",
 			want: "不存在的访问声明",
-			yaml: topo + `
+			yaml: topo + `  - {id: p1, capabilities: [access], direction: bidirectional, platform: linux-server, credentials: [cr1], mixed_ports: [{port: 1080, declaration: ghost}]}
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
 credentials:
-  - {id: cr1, declaration: d1, secret_ref: v}
-profiles:
-  - {id: p1, platform: linux-server, credentials: [cr1], mixed_ports: [{port: 1080, declaration: ghost}]}`,
+  - {id: cr1, declaration: d1, secret_ref: v}`,
 		},
 		{
 			name: "§5.1 allowed_servers 里的节点不是服务器",
@@ -235,17 +223,6 @@ declarations:
 			yaml: topo + `
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: stability}`,
-		},
-		{
-			name: "§19 档案 id 与节点 id 重名",
-			want: "共用配置包的输出目录名",
-			yaml: topo + `
-declarations:
-  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
-credentials:
-  - {id: cr1, declaration: d1, secret_ref: v}
-profiles:
-  - {id: cn-a, platform: linux-server, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}`,
 		},
 	}
 

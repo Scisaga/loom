@@ -93,7 +93,7 @@ func TestMatrixShape(t *testing.T) {
 		t.Errorf("渲染出 %d 个 WireGuard 文件,期望 %d(每条隧道两端各一个)", wg, want)
 	}
 
-	// 每台服务器一份 sing-box,每个客户端档案一份。目标地址不产生任何
+	// 每台服务器一份 sing-box,每个接入节点一份。目标地址不产生任何
 	// 产物 —— 它不是节点(§1、§9)。
 	servers := 0
 	for i := range s.Nodes {
@@ -101,9 +101,9 @@ func TestMatrixShape(t *testing.T) {
 			servers++
 		}
 	}
-	if want := servers + len(s.Profiles); sb != want {
-		t.Errorf("渲染出 %d 份 sing-box 配置,期望 %d(%d 台服务器 + %d 个档案)",
-			sb, want, servers, len(s.Profiles))
+	if want := servers + len(s.AccessNodes()); sb != want {
+		t.Errorf("渲染出 %d 份 sing-box 配置,期望 %d(%d 台服务器 + %d 个接入节点)",
+			sb, want, servers, len(s.AccessNodes()))
 	}
 
 	// 所有隧道两端都必须是进不了 mesh 的那一侧参与。
