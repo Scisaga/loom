@@ -50,7 +50,14 @@ type Node struct {
 	City         string       `yaml:"city,omitempty"`
 	Provider     string       `yaml:"provider,omitempty"`
 	Capabilities []Capability `yaml:"capabilities"`
-	Direction    Direction    `yaml:"direction"`
+
+	// Direction 约束这个节点在**隧道**里能扮演什么角色(§2.1)。
+	//
+	// 它只对参与隧道的节点有意义 —— 纯接入节点不建隧道,它经 Hysteria2
+	// 拨出去,没有"能不能被连接"这回事。所以这里可以为空,而校验器要求
+	// 它与 server 能力**同时出现或同时不出现**:一个写了却不生效的字段,
+	// 比没有这个字段更糟。
+	Direction Direction `yaml:"direction,omitempty"`
 
 	// PublicEndpoint 是入站可达的主机名或 IP,不含端口。
 	PublicEndpoint string `yaml:"public_endpoint,omitempty"`

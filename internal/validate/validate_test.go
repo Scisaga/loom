@@ -151,13 +151,6 @@ tunnels:
 nodes:
   - {id: a, capabilities: [server], direction: bidirectional, public_endpoint: 1.1.1.1}`,
 		},
-		{
-			name: "§1.1 出口能力只对服务器有意义",
-			want: "egress_capable 只对服务器有意义",
-			yaml: `
-nodes:
-  - {id: a, capabilities: [access], direction: bidirectional, egress_capable: true}`,
-		},
 	}
 
 	for _, tc := range cases {

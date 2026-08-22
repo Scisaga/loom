@@ -289,3 +289,49 @@ func TestDeployConfigOnlyMissingKeys(t *testing.T) {
 		}
 	}
 }
+
+// TestRejectsInertFields:字段与能力必须一一对应。
+//
+// 防的是**惰性字段** —— 写了不报错、也不影响任何产物。它比缺字段更糟:
+// 缺字段会被发现,写了不生效的字段会让人以为配置已经生效。
+func TestRejectsInertFields(t *testing.T) {
+	cases := []struct{ name, want, node string }{
+		{"接入节点写 direction", "只对服务器节点有意义",
+			`{id: n1, capabilities: [access], platform: linux-server, direction: bidirectional, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}`},
+		{"接入节点写 inbound_port", "只对服务器节点有意义",
+			`{id: n1, capabilities: [access], platform: linux-server, inbound_port: 61698, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}`},
+		{"接入节点写 egress_capable", "只对服务器节点有意义",
+			`{id: n1, capabilities: [access], platform: linux-server, egress_capable: true, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}`},
+		{"服务器写 platform", "只对接入节点有意义",
+			`{id: n1, capabilities: [server], direction: bidirectional, inbound_port: 61698, platform: android}`},
+		{"服务器写 mixed_ports", "只对接入节点有意义",
+			`{id: n1, capabilities: [server], direction: bidirectional, inbound_port: 61698, mixed_ports: [{port: 1080, declaration: d1}]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, err := model.Load([]byte(topo + "  - " + tc.node + `
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
+credentials:
+  - {id: cr1, declaration: d1, secret_ref: v}`))
+			if err != nil {
+				t.Fatalf("加载失败:%v", err)
+			}
+			if got := Format(Validate(s)); !strings.Contains(got, tc.want) {
+				t.Errorf("发现里没有 %q:\n%s", tc.want, got)
+			}
+		})
+	}
+}
+
+// TestServerNeedsDirection:反过来,server 缺了 direction 必须报错 ——
+// 那是真正会影响产物的字段。
+func TestServerNeedsDirection(t *testing.T) {
+	s, err := model.Load([]byte(topo + `  - {id: n1, capabilities: [server], inbound_port: 61698}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := Format(Validate(s)); !strings.Contains(got, "direction 缺失或非法") {
+		t.Errorf("server 缺 direction 应报错:\n%s", got)
+	}
+}

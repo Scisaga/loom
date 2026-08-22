@@ -76,26 +76,26 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 			}
 		}
 
-		if !n.Direction.Valid() {
-			fs.add("§2.1 direction", where, "direction 非法:%q", n.Direction)
+		checkRoleFields(n, where, fs)
+
+		isServer := n.Has(model.Server)
+		if isServer && !n.Direction.Valid() {
+			fs.add("§2.1 direction", where, "direction 缺失或非法:%q", n.Direction)
 			continue // 后面的规则都依赖 direction 有效
 		}
 
 		// §2.2:reverse_only 拨不到,只能由前一跳经反连隧道推给它。
 		// 它可以是出口,但永远不能是链上第一跳。
-		if n.Direction == model.ReverseOnly && n.PublicEndpoint == "" {
+		if isServer && n.Direction == model.ReverseOnly && n.PublicEndpoint == "" {
 			fs.add("§2.2 相容性", where,
 				"reverse_only 的服务器仍需 public_endpoint —— 它主动连出去时,"+
 					"对端要写 Endpoint 指回来的是**对端**的地址,而本机地址用于排障与探测标注")
 		}
-		if !n.InboundProtocol.Valid() {
-			fs.add("§6 protocol", where,
-				"未知 inbound_protocol:%q(只能是 hysteria2 或 trojan)", n.InboundProtocol)
-		}
-		if n.Has(model.Server) && n.InboundPort == 0 {
+		if isServer && n.InboundPort == 0 {
 			fs.add("§8.1 inbound", where,
 				"持有 server 能力但没有 inbound_port —— 无法接受上游连接")
 		}
+
 		// §15.4:版本必须显式钉住,永不使用 latest。自动的是下载,不是
 		// 升级决策 —— 上游一次不兼容发布可在一个轮询周期内打挂全部节点。
 		v := s.VersionsFor(n)
@@ -114,15 +114,56 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 			}
 		}
 
-		if n.Platform != "" && !n.Has(model.Access) {
-			fs.add("§7.2 平台", where, "platform 只对接入节点有意义")
-		}
-		if !n.Has(model.Server) && n.EgressCapable {
-			fs.add("§1.1 出口", where,
-				"egress_capable 只对服务器有意义 —— 出口是链上最后一台服务器(§1.1)")
-		}
 	}
 	return idx
+}
+
+// checkRoleFields 要求字段与能力一一对应。
+//
+// 这里防的是**惰性字段**:写了不报错、也不影响任何产物。它比缺字段更糟 ——
+// 缺字段会被发现,写了不生效的字段会让人以为配置已经生效。
+//
+// 与 D4 的"推导字段不可表达"是两回事:那些字段写了会与推导结果**矛盾**,
+// 所以连位置都不给;这些字段只是在错误的角色上**无效**,给一条说清楚的
+// 拒绝就够了。
+func checkRoleFields(n *model.Node, where string, fs *findings) {
+	server, access := n.Has(model.Server), n.Has(model.Access)
+
+	// 只对 server 有意义的字段。
+	for _, f := range []struct {
+		name string
+		set  bool
+	}{
+		{"direction", n.Direction != ""},
+		{"inbound_port", n.InboundPort != 0},
+		{"inbound_protocol", n.InboundProtocol != ""},
+		{"egress_capable", n.EgressCapable},
+		{"wg_public_key", n.WGPublicKey != ""},
+		{"secret_generation", n.SecretGeneration != 0},
+	} {
+		if f.set && !server {
+			fs.add("§1.1 能力", where,
+				"%s 只对服务器节点有意义,而本节点不持有 server 能力 —— "+
+					"写在这里不会生效", f.name)
+		}
+	}
+
+	// 只对 access 有意义的字段。
+	for _, f := range []struct {
+		name string
+		set  bool
+	}{
+		{"platform", n.Platform != ""},
+		{"credentials", len(n.Credentials) > 0},
+		{"mixed_ports", len(n.MixedPorts) > 0},
+		{"default_declaration", n.DefaultDeclaration != ""},
+	} {
+		if f.set && !access {
+			fs.add("§1.1 能力", where,
+				"%s 只对接入节点有意义,而本节点不持有 access 能力 —— "+
+					"写在这里不会生效", f.name)
+		}
+	}
 }
 
 func checkTunnels(s *model.SSOT, idx map[string]*model.Node, fs *findings) {

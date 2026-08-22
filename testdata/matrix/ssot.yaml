@@ -82,14 +82,12 @@ nodes:
   - id: phone
     name: Pixel
     capabilities: [access]
-    direction: bidirectional
     platform: android          # 绝大多数 App 不能单独设代理,只能走 TUN(§7.2)
     credentials: [cred-phone]
 
   - id: workstation
     name: 开发机
     capabilities: [access]
-    direction: bidirectional
     platform: desktop          # TUN 兜底 + mixed 精确控制
     credentials: [cred-ws-sg, cred-ws-eg, cred-ws-llm, cred-ws-3p]
     default_declaration: best-egress
@@ -102,7 +100,6 @@ nodes:
   - id: ci-runner
     name: CI 构建机
     capabilities: [access]
-    direction: bidirectional
     platform: linux-server     # 只用 mixed,不开 TUN(§7.2)
     credentials: [cred-ci]
     mixed_ports:
