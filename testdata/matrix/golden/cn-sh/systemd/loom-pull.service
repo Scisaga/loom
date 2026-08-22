@@ -1,0 +1,12 @@
+# 由 loom render 生成 —— 不要手工编辑(§12)
+[Unit]
+Description=Loom 取配置(cn-sh)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/loom pull -url https://control.example.internal/loom/ -node cn-sh -dns 223.5.5.5
+# 配置落盘时含凭据
+UMask=0077
+StateDirectory=loom

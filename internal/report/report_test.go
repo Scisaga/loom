@@ -46,7 +46,7 @@ func TestOKCoversEveryFailureKind(t *testing.T) {
 		}
 	}
 	good := Status{
-		Tunnels: []Tunnel{{Interface: "a", HandshakeAgeSec: 30}},
+		Tunnels: []Tunnel{{Interface: "a", HandshakeAgeSec: 30, UnitState: "active"}},
 		Drift:   &Drift{Checked: 5},
 	}
 	if !good.OK() {

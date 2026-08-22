@@ -10,6 +10,7 @@
 # 组件版本是期望态的一部分,与配置并入同一条收敛回路(§15.4)。
 # 永不使用 latest —— 自动的是下载,不是升级决策。
 defaults:
+  distribution_url: https://control.example.internal/loom/
   dns: [223.5.5.5, 119.29.29.29]   # 必须显式配 —— 系统解析器坏掉时只有
                                    # 直连候选会失败,极难诊断(§7.4)
   components:

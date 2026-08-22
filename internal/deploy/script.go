@@ -58,9 +58,15 @@ func Script(p *Plan, runID string) string {
 	// wg-quick 不能用 systemctl restart:down 与 up 之间有竞态,失败信息是
 	// "`wg-xxx' already exists",而接口其实还在,于是 unit 留在 failed 状态
 	// 而隧道看起来是好的 —— 最难查的那种。显式停、确认接口没了、再起。
+	// 新装的单元必须 enable,否则重启一次机器就全没了 —— 而且这件事
+	// 只有在真的重启那天才会发现。
 	w("restart_one() {")
 	w("  case \"$1\" in")
+	w("    *.timer)")
+	w("      systemctl enable --now \"$1\"")
+	w("      systemctl restart \"$1\" ;;")
 	w("    wg-quick@*)")
+	w("      systemctl enable \"$1\" 2>/dev/null || true")
 	w("      iface=${1#wg-quick@}")
 	w("      systemctl stop \"$1\" 2>/dev/null || true")
 	w("      ip link del \"$iface\" 2>/dev/null || true")
@@ -126,6 +132,16 @@ func Script(p *Plan, runID string) string {
 		w("fi")
 	}
 	w("echo \"   %d 个文件,其中 $changed 个有变化\"", len(paths))
+	w("")
+	// **enable 是期望状态的一部分,不是文件内容的一部分。**
+	// 只在文件变化时才 enable,会留下"现在能用、重启就没了"的机器 ——
+	// 而这件事只有在真的重启那天才会发现。所以每轮都确认一遍,幂等。
+	w("# 确认该开机自启的都自启(与文件有没有变化无关)")
+	for _, s := range p.Verify {
+		w("systemctl is-enabled %s >/dev/null 2>&1 || { echo '   enable %s'; systemctl enable %s 2>/dev/null || true; }",
+			shq(s), s, shq(s))
+	}
+	w("")
 	w("if [ \"$changed\" = 0 ]; then echo '   无变化,不重启任何服务'; rm -f \"$PREV/.manifest\"; rm -rf \"$STAGE\"; exit 0; fi")
 	w("")
 
@@ -146,7 +162,11 @@ func Script(p *Plan, runID string) string {
 	w("sleep 5")
 	for _, s := range p.Verify {
 		w("[ \"$(systemctl is-active %s)\" = active ] || fail '%s 没起来'", shq(s), s)
-		w("[ \"$(systemctl show -p NRestarts --value %s)\" = 0 ] || fail '%s 在重启循环里'", shq(s), s)
+		// NRestarts 是 Service 的属性,Timer 没有 —— 对 timer 查它会拿到
+		// 空串,而 [ "" = 0 ] 恒假,于是每次部署都"失败并回滚"。
+		if !strings.HasSuffix(s, ".timer") {
+			w("[ \"$(systemctl show -p NRestarts --value %s)\" = 0 ] || fail '%s 在重启循环里'", shq(s), s)
+		}
 	}
 	w("rm -rf \"$STAGE\"")
 	w("echo '   ✅ %s 完成(run %s)'", p.Node, runID)

@@ -41,7 +41,13 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
   loom agent    -c <agent/config.json>   调参回路:周期探测、排序、带阻尼切换(L3)
   loom report   [-serve]                上报者:隧道健康与配置自检。每个节点都跑
   loom status   <ssot.yaml>              把够得到的节点全拉一遍,给人看
-  loom apply    -in <hydrate 输出目录>     推到机器上:暂存 → 预检 → 就位 → 验证,失败回滚
+  loom publish  <ssot.yaml> -o <目录> -key <私钥>
+                                         产出带签名的分发树(全是占位符,不含凭据)
+  loom pull     -url <分发点> -pubkey <公钥>
+                                         节点自己拉:验签 → 本地填秘密 → 安装 → 验证
+  loom secrets  split <ssot.yaml> -secrets <总表> -o <目录>
+                                         把总表拆成每节点一份(只给它用得到的)
+  loom apply    -in <hydrate 输出目录>     从工作站 ssh 推(pull 之外的备用路径)
   loom backup   -o <文件> {-passphrase-file <文件> | -plaintext}
                                          打包秘密层与内部 CA(丢了就得全网重来的那些)
   loom restore  <备份文件> -o <目录>       解开备份到一个目录,不覆盖原位置
@@ -92,6 +98,12 @@ func main() {
 		err = cmdStatus(args)
 	case "apply":
 		err = cmdApply(args)
+	case "secrets":
+		err = cmdSecrets(args)
+	case "publish":
+		err = cmdPublish(args)
+	case "pull":
+		err = cmdPull(args)
 	case "backup":
 		err = cmdBackup(args)
 	case "restore":

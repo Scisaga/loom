@@ -86,6 +86,7 @@ func cmdStatus(args []string) error {
 	// obs 汇总全网观测:自己量的、拉到的、以及**别人转述的** ——
 	// 转述让够不到的节点也进得来(§16.1.2)。
 	obs := map[string]report.Observation{}
+	snap := map[string]string{}
 	keep := func(o *report.Observation) {
 		if o == nil || o.Node == "" {
 			return
@@ -118,9 +119,37 @@ func cmdStatus(args []string) error {
 			mark = "⚠️ "
 			bad++
 		}
+		snap[id] = st.Applied
 		fmt.Printf("  %-7s %s %s\n", id, mark, tunnelLine(st))
 		for _, l := range problemLines(st) {
 			fmt.Printf("          %s\n", l)
+		}
+	}
+
+	// 全网是不是同一版。落后的那台往往正是出问题的那台,而这件事以前
+	// 只能逐台 ssh 去查。
+	vers := map[string][]string{}
+	for id, v := range snap {
+		if v == "" {
+			v = "(未记录)"
+		}
+		vers[v] = append(vers[v], id)
+	}
+	if len(vers) > 1 {
+		fmt.Printf("\n  ⚠️ 全网不是同一个快照:\n")
+		var keys []string
+		for k := range vers {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			sort.Strings(vers[k])
+			fmt.Printf("      %-14s %s\n", short(k), strings.Join(vers[k], " "))
+		}
+		bad++
+	} else if len(vers) == 1 {
+		for k := range vers {
+			fmt.Printf("\n  快照 %s(全网一致)\n", short(k))
 		}
 	}
 

@@ -99,6 +99,13 @@ func Render(s *model.SSOT) (*Result, error) {
 		skipped = append(skipped, sk...)
 	}
 
+	// 节点侧的控制通道:自己去分发点取配置(§14.2)。
+	for i := range s.Nodes {
+		f, sk := renderPull(s, &s.Nodes[i])
+		byNode[s.Nodes[i].ID] = append(byNode[s.Nodes[i].ID], f...)
+		skipped = append(skipped, sk...)
+	}
+
 	// 对端走 DDNS 的发起方需要定时重解析(§12:这也是渲染产物,不该手写)。
 	for i := range s.Nodes {
 		if fs := renderReresolve(s, &s.Nodes[i]); fs != nil {

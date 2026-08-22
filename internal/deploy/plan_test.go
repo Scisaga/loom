@@ -16,6 +16,8 @@ func bundle() map[string]string {
 		"systemd/loom-report.service":       "[Unit]\n",
 		"systemd/loom-wg-reresolve.service": "[Unit]\n",
 		"systemd/loom-wg-reresolve.timer":   "[Timer]\n",
+		"systemd/loom-pull.service":         "[Unit]\n",
+		"systemd/loom-pull.timer":           "[Timer]\n",
 		"wireguard/wg-edge-a.conf":            "[Interface]\n",
 		"某个没有约定位置的东西":                       "x",
 	}
@@ -26,14 +28,15 @@ func bundle() map[string]string {
 func TestOneshotUnitIsNotVerified(t *testing.T) {
 	p, _ := BuildPlan("n", bundle())
 	for _, s := range p.Verify {
-		if s == "loom-wg-reresolve" {
-			t.Error("oneshot 的 loom-wg-reresolve 进了验证名单")
+		if s == "loom-wg-reresolve" || s == "loom-pull" {
+			t.Errorf("oneshot 的 %s 进了验证名单", s)
 		}
 	}
 	want := map[string]bool{
 		"wg-quick@wg-edge-a": true, "sing-box": true,
 		"loom-report": true, "loom-agent": true,
 		"loom-wg-reresolve.timer": true,
+		"loom-pull.timer":         true,
 	}
 	got := map[string]bool{}
 	for _, s := range p.Verify {
@@ -156,5 +159,63 @@ func TestHashIsStable(t *testing.T) {
 	c, _ := BuildPlan("n", m)
 	if a.Hash() == c.Hash() {
 		t.Error("内容变了哈希没变")
+	}
+}
+
+// loom-pull.service 的 ExecStart 就是 `loom pull`。在一次 pull 的安装阶段
+// 重启它,等于在一次安装里再套一次安装 —— 实测的后果是内层那次把外层的
+// 回滚清单清空了,外层失败时"回滚"变成空操作,机器停在装了一半的状态。
+func TestPullServiceIsNeverRestarted(t *testing.T) {
+	p, _ := BuildPlan("n", bundle())
+	if svcs := p.Triggers["/etc/systemd/system/loom-pull.service"]; len(svcs) != 0 {
+		t.Errorf("loom-pull.service 变化会触发 %v —— 它会自己套自己", svcs)
+	}
+	for _, s := range p.Services() {
+		if s == "loom-pull" {
+			t.Error("loom-pull 出现在待重启列表里")
+		}
+	}
+	if strings.Contains(Script(p, "x"), "restart_one 'loom-pull'") {
+		t.Error("脚本里会重启 loom-pull")
+	}
+}
+
+// 新装的单元必须 enable,否则重启一次机器就全没了 ——
+// 而这件事只有在真的重启那天才会发现。
+func TestNewUnitsGetEnabled(t *testing.T) {
+	p, _ := BuildPlan("n", bundle())
+	sc := Script(p, "x")
+	if !strings.Contains(sc, "systemctl enable --now") {
+		t.Error("timer 没有 enable")
+	}
+	if !strings.Contains(sc, `systemctl enable "$1"`) {
+		t.Error("常驻服务没有 enable")
+	}
+}
+
+// enable 是期望状态的一部分,不是文件内容的一部分。只在文件变化时才 enable,
+// 会留下"现在能用、重启就没了"的机器 —— cn-b 的 loom-pull.timer 就这样过。
+// 所以确认 enable 必须在"无变化就早退"**之前**。
+func TestEnableRunsEvenWhenNothingChanged(t *testing.T) {
+	p, _ := BuildPlan("n", bundle())
+	sc := Script(p, "x")
+	ensure := strings.Index(sc, "is-enabled")
+	early := strings.Index(sc, `if [ "$changed" = 0 ]`)
+	if ensure < 0 {
+		t.Fatal("脚本里没有确认 enable 的步骤")
+	}
+	if early < 0 || ensure > early {
+		t.Errorf("确认 enable 在早退之后(ensure@%d early@%d)—— 无变化时就不会执行", ensure, early)
+	}
+}
+
+// NRestarts 是 Service 的属性,Timer 没有。对 timer 查它会拿到空串,
+// 而 [ "" = 0 ] 恒假 —— 于是每次部署都"失败并回滚",实测在 cn-a 上发生过。
+func TestTimersAreNotCheckedForNRestarts(t *testing.T) {
+	p, _ := BuildPlan("n", bundle())
+	for _, line := range strings.Split(Script(p, "x"), "\n") {
+		if strings.Contains(line, "NRestarts") && strings.Contains(line, ".timer") {
+			t.Errorf("对 timer 查了 NRestarts:%s", line)
+		}
 	}
 }

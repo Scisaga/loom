@@ -131,8 +131,13 @@ func unitSelfRestart(bundlePath string) []string {
 	switch name {
 	case "sing-box", "loom-agent", "loom-report":
 		return nil
-	case "loom-wg-reresolve":
-		// oneshot,由 timer 拉起。unit 改了不必现在跑一次。
+	case "loom-wg-reresolve", "loom-pull":
+		// oneshot,由 timer 拉起。**绝不能在这里重启它们。**
+		//
+		// loom-pull 尤其危险:它的 ExecStart 就是 `loom pull`,而 pull 装完
+		// 配置正要重启服务 —— 重启它等于在一次安装里再套一次安装。实测的
+		// 后果是内层那次把外层的回滚清单清空了,于是外层失败时"回滚"变成
+		// 空操作,机器停在装了一半的状态。
 		return nil
 	}
 	return []string{name}
@@ -143,7 +148,14 @@ func unitSelfRestart(bundlePath string) []string {
 // oneshot 跑完就 inactive,拿 is-active 验它必然失败 —— 那会让每次部署都
 // "失败并回滚",而实际上一切正常。
 func verifiable(s string) bool {
-	return !strings.HasPrefix(s, "loom-wg-reresolve") || strings.HasSuffix(s, ".timer")
+	if strings.HasSuffix(s, ".timer") {
+		return true
+	}
+	switch s {
+	case "loom-wg-reresolve", "loom-pull":
+		return false
+	}
+	return true
 }
 
 // Services 返回全部可能被触发的服务,按重启顺序去重排序。

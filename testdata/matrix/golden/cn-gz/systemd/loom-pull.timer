@@ -1,0 +1,16 @@
+# 由 loom render 生成 —— 不要手工编辑(§12)
+[Unit]
+Description=Loom 取配置的节奏(cn-gz)
+
+[Timer]
+# OnActiveSec 相对于**这个 timer 被激活的时刻**,不是开机时刻。
+# 用 OnBootSec 的话,机器已经开了很久时 enable 它会立刻触发一次 ——
+# 而 enable 这个动作本身往往就发生在一次 pull 的安装阶段里,于是
+# pull 套 pull。Persistent 也去掉,同样的理由(它会补跑"错过的"那次)。
+OnActiveSec=2min
+OnUnitActiveSec=10min
+# 五台机器同时去拉会在分发点上撞一起,也会让全网在同一秒重启同一个服务。
+RandomizedDelaySec=60s
+
+[Install]
+WantedBy=timers.target

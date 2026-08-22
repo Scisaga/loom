@@ -28,6 +28,12 @@ type Status struct {
 	Node string `json:"node"`
 	TS   string `json:"ts"`
 
+	// Applied 是本机当前装着的快照 id(§14.2)。
+	//
+	// 有它才能一眼看出全网是不是同一版。没有的话,"某台机器落后了一个版本"
+	// 这件事只能靠逐台 ssh 去查 —— 而落后的那台往往正是出问题的那台。
+	Applied string `json:"applied,omitempty"`
+
 	Tunnels []Tunnel `json:"tunnels"`
 	Drift   *Drift   `json:"drift,omitempty"`
 
@@ -47,6 +53,12 @@ type Tunnel struct {
 	// Down 表示这个接口在 `wg show` 里根本不存在 —— 隧道没起来。
 	// 它和"握手很旧"是两种故障,排障动作也不同,不能合并成一个字段。
 	Down bool `json:"down,omitempty"`
+	// UnitState 是 wg-quick@<iface> 的状态。
+	//
+	// **只看接口在不在会漏掉一整类故障。** wg-quick 的 restart 有 down/up
+	// 竞态,失败后 unit 停在 failed 而接口还在 —— 隧道照常工作,直到下次
+	// 重启机器它不会自己起来。cn-a 和 cn-b 都被这样留过。
+	UnitState string `json:"unit_state,omitempty"`
 	// HandshakeAgeSec 是距上次握手的秒数。-1 表示接口在但从未握手过。
 	HandshakeAgeSec int64 `json:"handshake_age_sec"`
 	// Stale 表示握手年龄超过阈值。发起方设了 PersistentKeepalive=25,
@@ -71,7 +83,12 @@ func (s *Status) OK() bool {
 		return false
 	}
 	for i := range s.Tunnels {
-		if s.Tunnels[i].Down || s.Tunnels[i].Stale || s.Tunnels[i].HandshakeAgeSec < 0 {
+		t := &s.Tunnels[i]
+		if t.Down || t.Stale || t.HandshakeAgeSec < 0 {
+			return false
+		}
+		// 接口在、握手也新,但 unit 不是 active —— 重启机器它就不回来了。
+		if t.UnitState != "" && t.UnitState != "active" {
 			return false
 		}
 	}
@@ -84,6 +101,9 @@ func (s *Status) OK() bool {
 // Collect 采集一次状态。now 由调用方注入,便于测试。
 func Collect(cfg *Config, now time.Time) *Status {
 	st := &Status{Node: cfg.Node, TS: now.UTC().Format(time.RFC3339)}
+	if b, err := os.ReadFile(appliedPath); err == nil {
+		st.Applied = strings.TrimSpace(string(b))
+	}
 	stale, err := cfg.Stale()
 	if err != nil {
 		st.Errors = append(st.Errors, err.Error())
@@ -97,6 +117,7 @@ func Collect(cfg *Config, now time.Time) *Status {
 	sort.Strings(ifaces)
 	for _, i := range ifaces {
 		t := Tunnel{Interface: i, HandshakeAgeSec: -1}
+		t.UnitState = unitState("wg-quick@" + i)
 		h, up := hs[i]
 		if !up {
 			t.Down = true
@@ -204,8 +225,21 @@ func checkDrift(manifestPath string) (*Drift, error) {
 	return d, nil
 }
 
+// appliedPath 是 loom pull 记录当前快照 id 的地方。
+const appliedPath = "/var/lib/loom/applied"
+
 // Manifest 是 loom hydrate 产出的清单:机器上的绝对路径 → 内容哈希。
 type Manifest struct {
 	Node  string            `json:"node"`
 	Files map[string]string `json:"files"`
+}
+
+// unitState 读一个 systemd 单元的状态。读不到时返回空字符串,由调用方当作
+// "不知道"处理 —— 把未知当成故障会在没有 systemd 的环境里全线报警。
+func unitState(name string) string {
+	out, err := exec.Command("systemctl", "is-active", name).Output()
+	if err != nil && len(out) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }

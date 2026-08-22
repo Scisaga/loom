@@ -8,7 +8,6 @@
 *.crt
 *.srl
 measurements.jsonl
-*.bak
 # 真实部署与运维状态只保存在本机
 /deploy/
 /docs/status.md

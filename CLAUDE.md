@@ -49,7 +49,8 @@ go run ./cmd/loom verify   /tmp/out -pubkey /tmp/keys/platform-signing.pub
 | `internal/agent/` | **决策者**:接入节点上的调参回路,探测 → 排序 → 带阻尼切 selector |
 | `internal/report/` | **上报者**:每个节点都跑。隧道健康、配置自检、按段测量与转述。不做任何决定 |
 | `internal/deploy/` | 安装计划与远端脚本:暂存 → 预检 → 就位 → 验证,失败回滚 |
-| `cmd/loom/` | CLI:`validate` / `render` / `diff` / `snapshot` / `verify` / `keygen` / `firewall` / `hydrate` / `probe` / `agent` / `report` / `status` / `apply` / `backup` / `restore` |
+| `internal/secret/` | 秘密层:占位符解析与替换。**合并发生在节点上**,分发树里只有占位符 |
+| `cmd/loom/` | CLI:`validate` / `render` / `diff` / `snapshot` / `verify` / `keygen` / `firewall` / `hydrate` / `probe` / `agent` / `report` / `status` / `apply` / `publish` / `pull` / `secrets` / `backup` / `restore` |
 | `testdata/matrix/` | 参考 SSOT(4 国内云机 + 2 境外 VPS)与 golden |
 
 ## 模型:三个词就够了

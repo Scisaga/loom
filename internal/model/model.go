@@ -128,6 +128,23 @@ type SSOTDefaults struct {
 
 	// DNS 是节点本地解析用的服务器。见 Node.DNS。
 	DNS []string `yaml:"dns,omitempty"`
+
+	// DistributionURL 是节点自取配置的地方(§14.2)。
+	//
+	// **它不需要被信任。** 分发的是带 Ed25519 签名的快照,节点用本地钉住的
+	// 公钥验;改一个字节就装不上去。所以放哪儿、经过谁,都不影响安全性 ——
+	// 一个静态目录足矣。
+	//
+	// 留空则不渲染 pull 的 unit,节点只能被推(loom apply)。
+	DistributionURL string `yaml:"distribution_url,omitempty"`
+}
+
+// DistributionURL 返回分发点地址;没有配置时返回空。
+func (s *SSOT) DistributionURL() string {
+	if s.Defaults != nil {
+		return s.Defaults.DistributionURL
+	}
+	return ""
 }
 
 // DNSFor 返回某个节点最终生效的解析器:节点覆盖优先,否则用全局默认。

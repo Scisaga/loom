@@ -70,7 +70,7 @@ func TestMatrixShape(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wg, sb, units, agents, agentUnits, reports, reportUnits := 0, 0, 0, 0, 0, 0, 0
+	wg, sb, units, agents, agentUnits, reports, reportUnits, pulls := 0, 0, 0, 0, 0, 0, 0, 0
 	for _, b := range res.Bundles {
 		for _, f := range b.Files {
 			switch {
@@ -80,6 +80,8 @@ func TestMatrixShape(t *testing.T) {
 				sb++
 			case f.Path == "systemd/sing-box.service":
 				units++
+			case strings.HasPrefix(f.Path, "systemd/loom-pull."):
+				pulls++
 			case f.Path == "report/config.json":
 				reports++
 			case f.Path == "systemd/loom-report.service":
@@ -98,6 +100,10 @@ func TestMatrixShape(t *testing.T) {
 	// 每份 sing-box 配置都必须配一个 unit —— 否则那份配置没人启动。
 	if units != sb {
 		t.Errorf("%d 份 sing-box 配置却只有 %d 个 systemd unit", sb, units)
+	}
+	// 每个节点都要能自己取配置(§14.2):一个 service + 一个 timer。
+	if want := len(s.Nodes) * 2; pulls != want {
+		t.Errorf("渲染出 %d 个 pull 单元,期望 %d(每节点一个 service + 一个 timer)", pulls, want)
 	}
 	if reportUnits != reports {
 		t.Errorf("%d 份上报者配置却只有 %d 个 systemd unit", reports, reportUnits)
