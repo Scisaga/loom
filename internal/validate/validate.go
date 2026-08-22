@@ -88,6 +88,10 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 				"reverse_only 的服务器仍需 public_endpoint —— 它主动连出去时,"+
 					"对端要写 Endpoint 指回来的是**对端**的地址,而本机地址用于排障与探测标注")
 		}
+		if !n.InboundProtocol.Valid() {
+			fs.add("§6 protocol", where,
+				"未知 inbound_protocol:%q(只能是 hysteria2 或 trojan)", n.InboundProtocol)
+		}
 		if n.Has(model.Server) && n.InboundPort == 0 {
 			fs.add("§8.1 inbound", where,
 				"持有 server 能力但没有 inbound_port —— 无法接受上游连接")

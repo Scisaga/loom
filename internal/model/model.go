@@ -59,6 +59,16 @@ type Node struct {
 	// 也可能是链上的前一台服务器。
 	InboundPort int `yaml:"inbound_port,omitempty"`
 
+	// InboundProtocol 是这个 inbound 说什么协议。
+	//
+	// §6 说"协议按跳选择,不做全局统一"。这里是那条原则在接入侧的落点:
+	// **决定因素是上游的网络放行什么,不是想伪装成什么。** 实测发现有的
+	// 客户端网络只放行 TCP(企业网常见的封 QUIC 策略),那条链路上
+	// Hysteria2 与 WireGuard 都用不了 —— 两者都是 UDP。
+	//
+	// 留空按 Hysteria2 处理。
+	InboundProtocol InboundProtocol `yaml:"inbound_protocol,omitempty"`
+
 	// EgressCapable 表示这台机器能否作为出口出公网(ip_forward + MASQUERADE)。
 	// 它不是一种节点类型 —— 同一台机器这次是出口,下次可能只是中间一跳(§1.1)。
 	EgressCapable bool `yaml:"egress_capable,omitempty"`
@@ -151,6 +161,31 @@ const (
 	TunnelPortMin = 61610
 	TunnelPortMax = 61699
 )
+
+// InboundProtocol 是服务器接受上游连接时说的协议。
+type InboundProtocol string
+
+const (
+	// Hysteria2 走 QUIC,即 UDP。网络放行 UDP 时的首选:丢包链路上更快。
+	Hysteria2 InboundProtocol = "hysteria2"
+	// Trojan 走 TCP + TLS。上游网络封 UDP 时唯一能用的。
+	Trojan InboundProtocol = "trojan"
+)
+
+func (p InboundProtocol) Valid() bool {
+	return p == "" || p == Hysteria2 || p == Trojan
+}
+
+// Or 返回实际生效的协议,留空时取默认。
+func (p InboundProtocol) Or() InboundProtocol {
+	if p == "" {
+		return Hysteria2
+	}
+	return p
+}
+
+// IsUDP 报告该协议是否依赖 UDP 出网。
+func (p InboundProtocol) IsUDP() bool { return p.Or() == Hysteria2 }
 
 // Tunnel 是隧道矩阵中的一条边(§6.3)。
 //

@@ -33,6 +33,8 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
   loom verify   <目录>                    校验快照签名,并比对目录内容是否漂移
   loom keygen   -o <目录>                 生成平台签名密钥对
   loom firewall <ssot.yaml>              列出每台机器需要放行的端口
+  loom hydrate  -in <目录> -o <目录> -secrets <文件>
+                                         把 ${secret:...} 占位符替换成真实值
 
 尚未实现:apply / rollback / probe(分别属于 L4 与 L2)
 `
@@ -68,6 +70,8 @@ func main() {
 		err = cmdKeygen(args)
 	case "firewall":
 		err = cmdFirewall(args)
+	case "hydrate":
+		err = cmdHydrate(args)
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return

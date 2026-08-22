@@ -70,7 +70,7 @@ func TestMatrixShape(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wg, sb := 0, 0
+	wg, sb, units := 0, 0, 0
 	for _, b := range res.Bundles {
 		for _, f := range b.Files {
 			switch {
@@ -78,10 +78,16 @@ func TestMatrixShape(t *testing.T) {
 				wg++
 			case f.Path == "sing-box/config.json":
 				sb++
+			case f.Path == "systemd/sing-box.service":
+				units++
 			default:
 				t.Errorf("未预期的产物:%s/%s", b.Owner, f.Path)
 			}
 		}
+	}
+	// 每份 sing-box 配置都必须配一个 unit —— 否则那份配置没人启动。
+	if units != sb {
+		t.Errorf("%d 份 sing-box 配置却只有 %d 个 systemd unit", sb, units)
 	}
 	if want := len(s.Tunnels) * 2; wg != want {
 		t.Errorf("渲染出 %d 个 WireGuard 文件,期望 %d(每条隧道两端各一个)", wg, want)

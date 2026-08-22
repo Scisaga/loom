@@ -25,7 +25,7 @@
       "tls": {
         "enabled": true,
         "certificate_path": "/etc/loom/tls/node.crt",
-        "key_path": "/etc/loom/secrets/node.key",
+        "key_path": "/etc/loom/tls/node.key",
         "alpn": [
           "h3"
         ]

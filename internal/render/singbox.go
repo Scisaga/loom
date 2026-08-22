@@ -14,11 +14,16 @@ import (
 // 全部用结构体而非 map 序列化 —— 结构体的字段顺序是确定的,map 不是,
 // 而渲染必须是纯函数(§12)。
 
-// TLS 材料的约定路径。与私钥同理,渲染层只写引用,文件本身属于秘密层(§12.1)。
+// TLS 材料的约定路径。与 WireGuard 私钥同理,渲染层只写引用,文件本身属于
+// 秘密层(§12.1)。
+//
+// 注意这里的 node.key 是 **TLS 私钥**,与 WireGuard 的
+// /etc/wireguard/node.key 是两把不同的钥匙 —— 前者给 Hysteria2 的 QUIC
+// 用,后者给隧道用。放在不同目录以免混淆。
 const (
 	tlsCertPath = "/etc/loom/tls/node.crt"
-	tlsKeyPath  = "/etc/loom/secrets/node.key"
-	tlsCAPath   = "/etc/loom/tls/loom-ca.crt"
+	tlsKeyPath  = "/etc/loom/tls/node.key"
+	tlsCAPath   = "/etc/loom/tls/ca.crt"
 )
 
 // secretRef 把秘密层引用渲染成占位符,而不是明文。
@@ -290,7 +295,8 @@ func buildChain(
 		}
 		hops[tag] = true
 
-		o := sbOutbound{Type: "hysteria2", Tag: tag, Password: secretRef(secret), Detour: detour}
+		o := sbOutbound{Type: string(sv.InboundProtocol.Or()), Tag: tag,
+			Password: secretRef(secret), Detour: detour}
 		if i == 0 {
 			// 第一跳由接入节点直接拨公网地址。
 			o.Server, o.ServerPort = sv.PublicEndpoint, sv.InboundPort
@@ -299,6 +305,9 @@ func buildChain(
 			o.Server, o.ServerPort = s.NextHopAddr(nodes[c.ServerChain[i-1]], sv), sv.InboundPort
 		}
 		o.TLS = clientTLS(serverName(sv))
+		if sv.InboundProtocol.Or() == model.Trojan {
+			o.TLS.ALPN = []string{"h2", "http/1.1"}
+		}
 		out = append(out, o)
 		detour = tag
 	}
@@ -414,11 +423,16 @@ func renderServer(s *model.SSOT, sv *model.Node) (File, error) {
 		users = append(users, sbUser{Name: c.ID, Password: secretRef(c.SecretRef)})
 	}
 
-	cfg.Inbounds = append(cfg.Inbounds, sbInbound{
-		Type: "hysteria2", Tag: "in",
-		Listen: "::", ListenPort: sv.InboundPort,
+	in := sbInbound{
+		Tag: "in", Listen: "::", ListenPort: sv.InboundPort,
 		Users: users, TLS: serverTLS(),
-	})
+	}
+	in.Type = string(sv.InboundProtocol.Or())
+	if sv.InboundProtocol.Or() == model.Trojan {
+		// Trojan 走 TCP,ALPN 用 h2/http1.1 才像正常 HTTPS;h3 是 QUIC 的。
+		in.TLS.ALPN = []string{"h2", "http/1.1"}
+	}
+	cfg.Inbounds = append(cfg.Inbounds, in)
 
 	// 每个下一跳一个出站。有隧道时绑到对应网卡 —— 绑接口而不是靠路由表,
 	// 是为了让"这条流量必须走这条隧道"在配置里显式可见。

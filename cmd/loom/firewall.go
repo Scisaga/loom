@@ -99,18 +99,22 @@ func cmdFirewall(args []string) error {
 			viaTunnelOnly = false
 		}
 		if viaTunnelOnly || len(from) == 0 {
+			proto := "UDP"
+			if !n.InboundProtocol.IsUDP() {
+				proto = "TCP"
+			}
 			add(n.ID, fwRule{
-				Port: fmt.Sprint(n.InboundPort), Proto: "UDP",
-				From: nil,
-				Why:  "只经隧道内地址到达,**公网无需放行**",
+				Port: fmt.Sprint(n.InboundPort), Proto: proto, From: nil,
+				Why: "只经隧道内地址到达,**公网无需放行**",
 			})
 			continue
 		}
 		sort.Strings(from)
-		add(n.ID, fwRule{
-			Port: fmt.Sprint(n.InboundPort), Proto: "UDP", From: from,
-			Why: "Hysteria2 入站",
-		})
+		proto, why := "UDP", "Hysteria2 入站(QUIC)"
+		if !n.InboundProtocol.IsUDP() {
+			proto, why = "TCP", string(n.InboundProtocol.Or())+" 入站"
+		}
+		add(n.ID, fwRule{Port: fmt.Sprint(n.InboundPort), Proto: proto, From: from, Why: why})
 	}
 
 	ids := make([]string, 0, len(byNode))

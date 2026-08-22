@@ -1,0 +1,19 @@
+# 由 loom render 生成 —— 不要手工编辑(§12)
+[Unit]
+Description=sing-box (Loom 接入节点)
+After=network-online.target
+Wants=network-online.target
+
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sing-box run -c /etc/loom/sing-box/config.json
+Restart=on-failure
+RestartSec=5s
+# 配置里含凭据,只允许 root 读
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

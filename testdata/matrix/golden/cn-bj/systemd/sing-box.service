@@ -1,0 +1,20 @@
+# 由 loom render 生成 —— 不要手工编辑(§12)
+[Unit]
+Description=sing-box (Loom 服务器节点)
+After=network-online.target
+Wants=network-online.target
+After=wg-quick@wg-sg-vps.service wg-quick@wg-jp-vps.service
+Wants=wg-quick@wg-sg-vps.service wg-quick@wg-jp-vps.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sing-box run -c /etc/loom/sing-box/config.json
+Restart=on-failure
+RestartSec=5s
+# 配置里含凭据,只允许 root 读
+UMask=0077
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

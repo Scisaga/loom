@@ -99,7 +99,10 @@ func Render(s *model.SSOT) (*Result, error) {
 			return nil, err
 		}
 		skipped = append(skipped, sk...)
-		byNode[p.ID] = append(byNode[p.ID], f)
+		// 客户端档案在 Node 里没有对应条目(见 status.md 记的模型赘余),
+		// 这里合成一个只带 access 能力的临时节点给 unit 渲染用。
+		byNode[p.ID] = append(byNode[p.ID], f,
+			renderSingBoxUnit(s, &model.Node{ID: p.ID, Capabilities: []model.Capability{model.Access}}))
 	}
 	// 服务器只有一种渲染。中继与出口不是两类节点,是同一台机器在不同
 	// 路径上的两种位置(§1.1)。
@@ -112,7 +115,7 @@ func Render(s *model.SSOT) (*Result, error) {
 		if err != nil {
 			return nil, err
 		}
-		byNode[n.ID] = append(byNode[n.ID], f)
+		byNode[n.ID] = append(byNode[n.ID], f, renderSingBoxUnit(s, n))
 	}
 
 	ids := make([]string, 0, len(byNode))

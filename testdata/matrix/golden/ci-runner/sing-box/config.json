@@ -24,7 +24,7 @@
       "tls": {
         "enabled": true,
         "server_name": "cn-bj.node.internal",
-        "certificate_path": "/etc/loom/tls/loom-ca.crt",
+        "certificate_path": "/etc/loom/tls/ca.crt",
         "alpn": [
           "h3"
         ]
@@ -39,7 +39,7 @@
       "tls": {
         "enabled": true,
         "server_name": "cn-gz.node.internal",
-        "certificate_path": "/etc/loom/tls/loom-ca.crt",
+        "certificate_path": "/etc/loom/tls/ca.crt",
         "alpn": [
           "h3"
         ]
@@ -54,7 +54,7 @@
       "tls": {
         "enabled": true,
         "server_name": "cn-bj.node.internal",
-        "certificate_path": "/etc/loom/tls/loom-ca.crt",
+        "certificate_path": "/etc/loom/tls/ca.crt",
         "alpn": [
           "h3"
         ]
@@ -69,7 +69,7 @@
       "tls": {
         "enabled": true,
         "server_name": "cn-gz.node.internal",
-        "certificate_path": "/etc/loom/tls/loom-ca.crt",
+        "certificate_path": "/etc/loom/tls/ca.crt",
         "alpn": [
           "h3"
         ]
@@ -85,7 +85,7 @@
       "tls": {
         "enabled": true,
         "server_name": "sg-vps.node.internal",
-        "certificate_path": "/etc/loom/tls/loom-ca.crt",
+        "certificate_path": "/etc/loom/tls/ca.crt",
         "alpn": [
           "h3"
         ]
@@ -101,7 +101,7 @@
       "tls": {
         "enabled": true,
         "server_name": "jp-vps.node.internal",
-        "certificate_path": "/etc/loom/tls/loom-ca.crt",
+        "certificate_path": "/etc/loom/tls/ca.crt",
         "alpn": [
           "h3"
         ]
@@ -117,7 +117,7 @@
       "tls": {
         "enabled": true,
         "server_name": "cn-gz.node.internal",
-        "certificate_path": "/etc/loom/tls/loom-ca.crt",
+        "certificate_path": "/etc/loom/tls/ca.crt",
         "alpn": [
           "h3"
         ]
@@ -132,7 +132,7 @@
       "tls": {
         "enabled": true,
         "server_name": "cn-bj.node.internal",
-        "certificate_path": "/etc/loom/tls/loom-ca.crt",
+        "certificate_path": "/etc/loom/tls/ca.crt",
         "alpn": [
           "h3"
         ]
@@ -148,7 +148,7 @@
       "tls": {
         "enabled": true,
         "server_name": "sg-vps.node.internal",
-        "certificate_path": "/etc/loom/tls/loom-ca.crt",
+        "certificate_path": "/etc/loom/tls/ca.crt",
         "alpn": [
           "h3"
         ]
@@ -164,7 +164,7 @@
       "tls": {
         "enabled": true,
         "server_name": "jp-vps.node.internal",
-        "certificate_path": "/etc/loom/tls/loom-ca.crt",
+        "certificate_path": "/etc/loom/tls/ca.crt",
         "alpn": [
           "h3"
         ]
