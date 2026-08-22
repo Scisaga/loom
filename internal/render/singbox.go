@@ -101,11 +101,30 @@ type sbRoute struct {
 	Final string   `json:"final"`
 }
 
+// APIListen 是 sing-box 本地控制端点。
+//
+// selector 是**手动开关**:它自己不测速也不切换(这是 D11 刻意的选择 ——
+// urltest 会成为第二个互不知情的决策者)。切换由 Agent 通过这个端点做。
+//
+// 没有它,渲染出的 selector 永远停在 default 上 —— 调度层做完了也落不了地。
+// 只监听回环,并且带一把口令:同机的其他进程不该能改你的选路。
+const APIListen = "127.0.0.1:61800"
+
+type sbAPI struct {
+	ExternalController string `json:"external_controller"`
+	Secret             string `json:"secret"`
+}
+
+type sbExperimental struct {
+	ClashAPI *sbAPI `json:"clash_api,omitempty"`
+}
+
 type sbConfig struct {
-	Log       sbLog        `json:"log"`
-	Inbounds  []sbInbound  `json:"inbounds"`
-	Outbounds []sbOutbound `json:"outbounds"`
-	Route     sbRoute      `json:"route"`
+	Log          sbLog           `json:"log"`
+	Inbounds     []sbInbound     `json:"inbounds"`
+	Outbounds    []sbOutbound    `json:"outbounds"`
+	Route        sbRoute         `json:"route"`
+	Experimental *sbExperimental `json:"experimental,omitempty"`
 }
 
 func encode(c *sbConfig) (string, error) {
@@ -480,10 +499,13 @@ func serverInto(cfg *sbConfig, s *model.SSOT, sv *model.Node) {
 
 // renderSingBox 生成一台机器的 sing-box 配置。
 //
-// **一台机器一个 sing-box 进程,因此只有一份配置。** 节点只承担一种角色
-// (校验器拒绝同时有两个块,§1.3),所以这里实际只会走其中一个分支 ——
-// 写成两个都判,是为了让"多出一个角色"这件事在渲染层也不会悄悄产生
-// 第二个文件。Render 里的重复路径检查是同一道保险。
+// **一台机器一个 sing-box 进程,因此只有一份配置。** 同时持有两种角色的
+// 机器(服务器自己也要走代理出去)把两边的 inbound、outbound 与路由规则
+// 合并进同一份 —— 两种角色喂的是不相干的逻辑,只在这里汇合。
+//
+// 配置源只有一个(SSOT → 渲染器),投递也只有一条(该机的 Agent),
+// 所以合并不存在"两个源互相覆盖"的问题。§18 那套一次性链接是给**没有
+// Agent 的设备**用的,而那种设备只可能是纯接入节点。
 func renderSingBox(s *model.SSOT, n *model.Node) (File, []Skip, error) {
 	cfg := &sbConfig{Log: sbLog{Level: "warn"}}
 	var skips []Skip
@@ -494,6 +516,11 @@ func renderSingBox(s *model.SSOT, n *model.Node) (File, []Skip, error) {
 			return File{}, nil, err
 		}
 		skips = sk
+		// 只有接入节点才有 selector 要切,服务器开了这个端点也没用。
+		cfg.Experimental = &sbExperimental{ClashAPI: &sbAPI{
+			ExternalController: APIListen,
+			Secret:             secretRef("api/" + n.ID),
+		}}
 	}
 	if n.IsServer() && n.Server.InboundPort > 0 {
 		serverInto(cfg, s, n)

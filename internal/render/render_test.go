@@ -116,6 +116,82 @@ func TestMatrixShape(t *testing.T) {
 	}
 }
 
+// TestDualRoleNodeMergesIntoOneConfig:一台机器一个 sing-box 进程,
+// 所以只有一份配置。
+//
+// 同时持有两种角色是合法的(服务器自己也要走代理出去)。分两次渲染会让
+// 两份配置抢同一个路径 `sing-box/config.json`,后写的静默覆盖先写的 ——
+// 而渲染报告的文件数仍然对得上,完全看不出来。这个 bug 真实存在过。
+func TestDualRoleNodeMergesIntoOneConfig(t *testing.T) {
+	s, err := model.Load([]byte(`
+defaults:
+  components: {sing_box: 1.11.4, wireguard: 1.0.20250521, agent: 0.1.0}
+nodes:
+  - id: laptop
+    public_endpoint: 10.0.0.9
+    server: {direction: bidirectional, inbound_port: 61698, egress_capable: true, wg_public_key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+    access: {platform: desktop, credentials: [cr1], default_declaration: d1, mixed_ports: [{port: 1080, declaration: d1}]}
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, tuning_period: 10m, allowed_servers: [laptop], max_hops: 1}
+credentials:
+  - {id: cr1, declaration: d1, secret_ref: "cred/x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := Render(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	var cfgFile string
+	for _, f := range res.Bundles[0].Files {
+		if f.Path == "sing-box/config.json" {
+			n++
+			cfgFile = f.Content
+		}
+	}
+	if n != 1 {
+		t.Fatalf("渲染出 %d 份 sing-box 配置,应当只有 1 份", n)
+	}
+	for _, want := range []string{`"type": "mixed"`, `"type": "hysteria2"`, `"type": "selector"`, `"tag": "egress"`} {
+		if !strings.Contains(cfgFile, want) {
+			t.Errorf("合并后丢了 %s", want)
+		}
+	}
+}
+
+// TestAccessNodesGetControlAPI:接入节点必须带本地控制端点。
+//
+// selector 是手动开关,自己不会切(D11)。没有这个端点,渲染出的候选集
+// 永远停在 default 上 —— 调度层做完了也落不了地。
+func TestAccessNodesGetControlAPI(t *testing.T) {
+	s := load(t)
+	res, err := Render(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byOwner := map[string]string{}
+	for _, b := range res.Bundles {
+		for _, f := range b.Files {
+			if f.Path == "sing-box/config.json" {
+				byOwner[b.Owner] = f.Content
+			}
+		}
+	}
+	for _, n := range s.AccessNodes() {
+		c, ok := byOwner[n.ID]
+		if !ok {
+			t.Fatalf("接入节点 %s 没有配置", n.ID)
+		}
+		if !strings.Contains(c, "clash_api") {
+			t.Errorf("接入节点 %s 缺少控制端点 —— selector 将永远停在 default", n.ID)
+		}
+		if !strings.Contains(c, "${secret:api/"+n.ID+"}") {
+			t.Errorf("接入节点 %s 的控制端点没有口令引用", n.ID)
+		}
+	}
+}
+
 // TestSkipsAreExpected 把"哪些东西没被渲染"钉死。
 //
 // 跳过项是本项目对"静默截断"的防线(见 CLAUDE.md)。不钉住它,新增一个

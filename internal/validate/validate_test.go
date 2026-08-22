@@ -191,23 +191,3 @@ nodes:
 		t.Errorf("发现未按节点排序:\n%s", first)
 	}
 }
-
-// TestRejectsDualRole:一个节点只承担一种角色。
-//
-// 两类节点走两个不同的控制面:服务器由 Agent 拉取配置并收敛(§14、§15),
-// 接入节点靠 app 与一次性链接分发(§18)。一台机器同时要两套分发机制,
-// 不是"能力的组合",是把两种管理方式混在了一起。
-func TestRejectsDualRole(t *testing.T) {
-	s, err := model.Load([]byte(`
-nodes:
-  - id: both
-    public_endpoint: 1.1.1.1
-    server: {direction: bidirectional, inbound_port: 61698}
-    access: {platform: desktop, credentials: [c]}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := Format(Validate(s)); !strings.Contains(got, "两个不同的控制面") {
-		t.Errorf("同时有两个角色块应被拒:\n%s", got)
-	}
-}

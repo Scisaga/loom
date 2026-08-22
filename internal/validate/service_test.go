@@ -303,3 +303,21 @@ func TestServerNeedsDirection(t *testing.T) {
 		t.Errorf("server 缺 direction 应报错:\n%s", got)
 	}
 }
+
+// TestRejectsPortClashAcrossRoles:同一台机器上的监听端口必须全局唯一。
+//
+// mixed 端口和 server 的 inbound_port 在同一台机器上,两个进程抢同一个
+// 端口时后起的那个静默失败。原来两者用的是两个独立的桶,查不出来。
+func TestRejectsPortClashAcrossRoles(t *testing.T) {
+	s, err := model.Load([]byte(topo + `  - {id: both, public_endpoint: 1.1.1.9, server: {direction: bidirectional, inbound_port: 1080, egress_capable: true, wg_public_key: k9}, access: {platform: linux-server, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}}
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, tuning_period: 10m}
+credentials:
+  - {id: cr1, declaration: d1, secret_ref: v}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := Format(Validate(s)); !strings.Contains(got, "已被server 的 inbound_port占用") {
+		t.Errorf("同机端口冲突应被检出:\n%s", got)
+	}
+}

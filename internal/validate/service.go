@@ -342,15 +342,21 @@ func checkAccessNodes(
 				"%s 不使用 TUN,声明 default_declaration 不会生效", p.Access.Platform)
 		}
 
-		seenPort := map[int]bool{}
+		// 端口桶要覆盖同一台机器上的全部监听,不只是 mixed 之间。
+		// 一个节点同时有 server 块时,inbound_port 也在这台机器上 ——
+		// 两个进程抢同一个端口,后起的那个静默失败。
+		seenPort := map[int]string{}
+		if p.IsServer() && p.Server.InboundPort > 0 {
+			seenPort[p.Server.InboundPort] = "server 的 inbound_port"
+		}
 		for _, mp := range p.Access.MixedPorts {
 			if mp.Port <= 0 || mp.Port > 65535 {
 				fs.add("§7.3 端口", where, "mixed 端口非法:%d", mp.Port)
 			}
-			if seenPort[mp.Port] {
-				fs.add("§7.3 端口", where, "mixed 端口 %d 重复", mp.Port)
+			if owner, dup := seenPort[mp.Port]; dup {
+				fs.add("§7.3 端口冲突", where, "mixed 端口 %d 已被%s占用", mp.Port, owner)
 			}
-			seenPort[mp.Port] = true
+			seenPort[mp.Port] = "另一个 mixed 端口"
 			if _, ok := decls[mp.Declaration]; !ok {
 				fs.add("§7.3 端口", where,
 					"端口 %d 绑定了不存在的访问声明 %q", mp.Port, mp.Declaration)

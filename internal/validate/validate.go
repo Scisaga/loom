@@ -65,17 +65,11 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 			idx[n.ID] = n
 		}
 
-		// 一个节点只承担一种角色 —— 不多也不少。
-		switch {
-		case !n.IsServer() && !n.IsAccess():
+		// 至少要承担一种角色。两种都有是合法的 —— 一台服务器自己也要
+		// 走代理出去是真实需求(§1.3)。
+		if !n.IsServer() && !n.IsAccess() {
 			fs.add("§1.3 角色", where,
 				"既没有 server 块也没有 access 块 —— 这个节点不承担任何角色")
-		case n.IsServer() && n.IsAccess():
-			fs.add("§1.3 角色", where,
-				"同时有 server 与 access 两个块 —— 两类节点走**两个不同的控制面**:"+
-					"服务器由 Agent 拉取配置并收敛(§14、§15),接入节点靠 app 与一次性"+
-					"链接分发(§18)。一台机器同时要两套分发机制,不是能力的组合,"+
-					"是把两种管理方式混在了一起")
 		}
 
 		isServer := n.IsServer()
