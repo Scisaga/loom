@@ -267,6 +267,22 @@ func checkCredentials(
 		if c.SecretRef == "" {
 			fs.add("§13.1 密钥", where, "缺少 secret_ref")
 		}
+		// 一张凭据只能属于一个接入节点 —— 服务器要按凭据反查候选集,
+		// 共用会让它查到错误的那一份。
+		var owners []string
+		for _, a := range s.AccessNodes() {
+			for _, id := range a.Access.Credentials {
+				if id == c.ID {
+					owners = append(owners, a.ID)
+				}
+			}
+		}
+		if len(owners) > 1 {
+			fs.add("§8.2 凭据", where,
+				"被多个接入节点共用(%v)—— 候选集因接入节点而异,共用会让服务器"+
+					"查到错误的那一份", owners)
+		}
+
 		if c.Declaration == "" {
 			fs.add("§8.2 凭据", where, "凭据未绑定访问声明 —— 凭据即访问声明")
 		} else if _, ok := decls[c.Declaration]; !ok {

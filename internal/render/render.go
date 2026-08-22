@@ -91,6 +91,13 @@ func Render(s *model.SSOT) (*Result, error) {
 		byNode[t.Initiator.ID] = append(byNode[t.Initiator.ID], bf)
 	}
 
+	// 对端走 DDNS 的发起方需要定时重解析(§12:这也是渲染产物,不该手写)。
+	for i := range s.Nodes {
+		if fs := renderReresolve(s, &s.Nodes[i]); fs != nil {
+			byNode[s.Nodes[i].ID] = append(byNode[s.Nodes[i].ID], fs...)
+		}
+	}
+
 	// sing-box:一台机器一份配置。同时持有两种能力的机器合并渲染 ——
 	// 分成两份会让后写的静默覆盖先写的(§1.3)。
 	for i := range s.Nodes {

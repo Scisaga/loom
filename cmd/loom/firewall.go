@@ -62,19 +62,21 @@ func cmdFirewall(args []string) error {
 
 	// inbound_port 的来源:接入节点,加上所有可能把流量转发给它的服务器。
 	upstream := map[string]map[string]bool{}
-	for i := range s.Declarations {
-		cands, _ := s.EnumerateCandidates(&s.Declarations[i])
-		for j := range cands {
-			chain := cands[j].ServerChain
-			for k := range chain {
-				if upstream[chain[k]] == nil {
-					upstream[chain[k]] = map[string]bool{}
+	for _, acc := range s.AccessNodes() {
+		for i := range s.Declarations {
+			cands, _ := s.EnumerateCandidates(acc, &s.Declarations[i])
+			for j := range cands {
+				chain := cands[j].ServerChain
+				for k := range chain {
+					if upstream[chain[k]] == nil {
+						upstream[chain[k]] = map[string]bool{}
+					}
+					if k == 0 {
+						upstream[chain[k]]["access"] = true
+						continue
+					}
+					upstream[chain[k]][chain[k-1]] = true
 				}
-				if k == 0 {
-					upstream[chain[k]]["access"] = true
-					continue
-				}
-				upstream[chain[k]][chain[k-1]] = true
 			}
 		}
 	}

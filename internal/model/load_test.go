@@ -118,15 +118,15 @@ func TestMeshEligibleIsDerived(t *testing.T) {
 	}{
 		{Bidirectional, true, true},
 		{DirectOnly, true, true},
-		{ReverseOnly, false, false}, // 进不了 mesh,也拨不到
+		{ReverseOnly, false, false}, // 进不了 mesh,公网也拨不到
 	} {
 		n := &Node{ID: "n", PublicEndpoint: "1.1.1.1",
 			Server: &ServerRole{Direction: tc.d, InboundPort: 1}}
 		if got := n.MeshEligible(); got != tc.mesh {
 			t.Errorf("%s.MeshEligible() = %v,期望 %v", tc.d, got, tc.mesh)
 		}
-		if got := n.DialableFromAccess(); got != tc.dial {
-			t.Errorf("%s.DialableFromAccess() = %v,期望 %v", tc.d, got, tc.dial)
+		if got := n.PubliclyDialable(); got != tc.dial {
+			t.Errorf("%s.PubliclyDialable() = %v,期望 %v", tc.d, got, tc.dial)
 		}
 	}
 }

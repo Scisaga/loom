@@ -145,13 +145,29 @@ func (s *SSOT) VersionsFor(n *Node) ComponentVersions {
 // 渲染**(§6.3、§8.3)。这条推导直接决定隧道矩阵有多大。
 func (n *Node) MeshEligible() bool { return n.IsServer() && n.Server.Direction != ReverseOnly }
 
-// DialableFromAccess 报告接入节点能否直接拨这台服务器。
+// PubliclyDialable 报告能否从公网直接拨这台服务器。
 //
-// reverse_only 的服务器拨不到 —— 它只能自己连出来。因此它**永远不能是链上
-// 第一跳**,必须由前一跳经反连隧道把流量推给它(§2.2)。
-func (n *Node) DialableFromAccess() bool {
+// reverse_only 的服务器拨不到 —— 它只能自己连出来(§2.2)。
+func (n *Node) PubliclyDialable() bool {
 	return n.IsServer() && n.Server.Direction != ReverseOnly &&
 		n.PublicEndpoint != "" && n.Server.InboundPort > 0
+}
+
+// AccessHopAddr 返回接入节点该拨哪个地址才能到达这台服务器;不可达时返回空。
+//
+// **reverse_only 也可以是第一跳 —— 只要它和这个接入节点之间有隧道。**
+// "拨不到"说的是公网:一旦它主动连过来建起了隧道,接入节点用隧道内地址
+// 就能直接找到它,不需要再往公网拨。这把两跳压成一跳。
+//
+// 公网可达时优先走公网:隧道多一层加密,而 Hysteria2/Trojan 本身已经加密了。
+func (s *SSOT) AccessHopAddr(access, target *Node) string {
+	if !target.IsServer() {
+		return ""
+	}
+	if target.PubliclyDialable() {
+		return target.PublicEndpoint
+	}
+	return s.TunnelAddrOn(target.ID, access.ID)
 }
 
 // 隧道端口的保留范围。
@@ -269,6 +285,21 @@ func (s *SSOT) ClassByID() map[string]*EquivalenceClass {
 		m[s.EquivalenceClasses[i].ID] = &s.EquivalenceClasses[i]
 	}
 	return m
+}
+
+// AccessNodeForCredential 反查一张凭据属于哪个接入节点。
+//
+// 服务器要按凭据决定放行哪些下一跳,而候选集因接入节点而异 —— 所以它必须
+// 先知道这张凭据是谁的。凭据被多个接入节点共用是配置错误,校验器会报。
+func (s *SSOT) AccessNodeForCredential(credID string) *Node {
+	for _, n := range s.AccessNodes() {
+		for _, c := range n.Access.Credentials {
+			if c == credID {
+				return n
+			}
+		}
+	}
+	return nil
 }
 
 // CredentialByID 建立凭据索引。

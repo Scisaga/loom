@@ -50,6 +50,16 @@ func Validate(s *model.SSOT) []Finding {
 }
 
 func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
+	// 哪些服务器真的会被连:出现在某条访问声明的 allowed_servers 里。
+	usedAsHop := map[string]string{}
+	for i := range s.Declarations {
+		for _, id := range s.Declarations[i].AllowedServers {
+			if _, seen := usedAsHop[id]; !seen {
+				usedAsHop[id] = "声明 " + s.Declarations[i].ID
+			}
+		}
+	}
+
 	idx := make(map[string]*model.Node, len(s.Nodes))
 	for i := range s.Nodes {
 		n := &s.Nodes[i]
@@ -85,9 +95,14 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 				"reverse_only 的服务器仍需 public_endpoint —— 它主动连出去时,"+
 					"对端要写 Endpoint 指回来的是**对端**的地址,而本机地址用于排障与探测标注")
 		}
-		if isServer && n.Server.InboundPort == 0 {
+		// inbound_port 只在真有人要连它时才必需。
+		//
+		// 一个节点可以只为了当**隧道端点**而有 server 块 —— 比如接入节点
+		// 与境外机建反连隧道,好把两跳压成一跳(§2.3)。它不接受任何
+		// sing-box 连接,强求 inbound_port 会逼出一个没人用的监听。
+		if by, used := usedAsHop[n.ID]; isServer && n.Server.InboundPort == 0 && used {
 			fs.add("§8.1 inbound", where,
-				"持有 server 能力但没有 inbound_port —— 无法接受上游连接")
+				"被%s的 allowed_servers 引用,却没有 inbound_port —— 无法接受上游连接", by)
 		}
 
 		// §15.4:版本必须显式钉住,永不使用 latest。自动的是下载,不是

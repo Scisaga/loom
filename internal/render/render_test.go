@@ -80,6 +80,8 @@ func TestMatrixShape(t *testing.T) {
 				sb++
 			case f.Path == "systemd/sing-box.service":
 				units++
+			case strings.HasPrefix(f.Path, "systemd/loom-wg-reresolve."):
+				// 只给有 DDNS 对端的节点渲染
 			default:
 				t.Errorf("未预期的产物:%s/%s", b.Owner, f.Path)
 			}

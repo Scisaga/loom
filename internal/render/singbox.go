@@ -211,7 +211,7 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 		if !ok {
 			continue
 		}
-		cands, cskips := s.EnumerateCandidates(d)
+		cands, cskips := s.EnumerateCandidates(p, d)
 		for _, cs := range cskips {
 			note("access:"+p.ID+"/"+cs.Declaration, "%s", cs.Reason)
 		}
@@ -225,7 +225,7 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 			c := &cands[i]
 			tags = append(tags, c.Tag())
 			cfg.Outbounds = append(cfg.Outbounds,
-				buildChain(s, nodes, c, credOf[did].SecretRef, hops)...)
+				buildChain(s, p, nodes, c, credOf[did].SecretRef, hops)...)
 		}
 		cfg.Outbounds = append(cfg.Outbounds, sbOutbound{
 			Type: "selector", Tag: "decl:" + did, Outbounds: tags, Default: tags[0],
@@ -276,6 +276,7 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 // 最后一跳直接连目标地址(§5.6)。没有额外发明的机制。
 func buildChain(
 	s *model.SSOT,
+	access *model.Node,
 	nodes map[string]*model.Node,
 	c *model.RouteCandidate,
 	secret string,
@@ -308,8 +309,8 @@ func buildChain(
 		o := sbOutbound{Type: string(sv.Server.InboundProtocol.Or()), Tag: tag,
 			Password: secretRef(secret), Detour: detour}
 		if i == 0 {
-			// 第一跳由接入节点直接拨公网地址。
-			o.Server, o.ServerPort = sv.PublicEndpoint, sv.Server.InboundPort
+			// 第一跳由接入节点拨:公网地址,或两者之间隧道内的地址。
+			o.Server, o.ServerPort = s.AccessHopAddr(access, sv), sv.Server.InboundPort
 		} else {
 			// 后续跳由前一跳转发,拨的是它在那条链路上的地址。
 			o.Server, o.ServerPort = s.NextHopAddr(nodes[c.ServerChain[i-1]], sv), sv.Server.InboundPort
@@ -387,7 +388,12 @@ func serverInto(cfg *sbConfig, s *model.SSOT, sv *model.Node) {
 		if !ok {
 			continue
 		}
-		cands, _ := s.EnumerateCandidates(d)
+		// 候选集因接入节点而异,所以先找出这张凭据是谁的。
+		owner := s.AccessNodeForCredential(c.ID)
+		if owner == nil {
+			continue
+		}
+		cands, _ := s.EnumerateCandidates(owner, d)
 
 		r := rule{user: c.ID, nextHops: map[string]string{}}
 		domains := map[string]bool{}

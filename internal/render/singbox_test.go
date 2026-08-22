@@ -192,7 +192,7 @@ func TestSingBoxPathCorrespondence(t *testing.T) {
 			if d == nil {
 				continue
 			}
-			cands, _ := s.EnumerateCandidates(d)
+			cands, _ := s.EnumerateCandidates(p, d)
 
 			for ci := range cands {
 				cand := &cands[ci]
@@ -354,7 +354,11 @@ func TestServerAdmitsNothingExtra(t *testing.T) {
 			if d == nil {
 				continue
 			}
-			cands, _ := s.EnumerateCandidates(d)
+			owner := s.AccessNodeForCredential(c.ID)
+			if owner == nil {
+				continue
+			}
+			cands, _ := s.EnumerateCandidates(owner, d)
 			for k := range cands {
 				chain := cands[k].ServerChain
 				for x, id := range chain {

@@ -145,11 +145,13 @@ tunnels:
   - {from: a, to: b, listen_port: 61611, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
 		},
 		{
-			name: "§8.1 server 没有 inbound_port 就接不了上游",
+			name: "§8.1 被声明引用却没有 inbound_port",
 			want: "无法接受上游连接",
 			yaml: `
 nodes:
-  - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional}}`,
+  - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, egress_capable: true}}
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, tuning_period: 10m, allowed_servers: [a]}`,
 		},
 	}
 

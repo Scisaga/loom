@@ -89,7 +89,7 @@ func cmdProbe(args []string) error {
 		if d == nil {
 			continue
 		}
-		cands, _ := s.EnumerateCandidates(d)
+		cands, _ := s.EnumerateCandidates(accessNode, d)
 		for i := range cands {
 			tag := cands[i].Tag()
 			if !seen[tag] {

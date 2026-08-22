@@ -53,11 +53,15 @@ type CandidateSkip struct {
 	Reason      string
 }
 
-// EnumerateCandidates 枚举一条访问声明在 L4 上可表达的全部路径候选。
+// EnumerateCandidates 枚举某个接入节点在一条访问声明下可表达的全部路径候选。
+//
+// **候选集因接入节点而异。** 第一跳能不能到达,取决于这个接入节点与那台
+// 服务器之间有没有隧道 —— access-a 与境外机建了反连隧道,就能一跳直达;
+// 别的接入节点没建,就只能经国内中继中转。
 //
 // 这里只做"能否表达"这一层过滤:出口能力、可达性、方向约束。合规、地域、
 // SLA 属于调度层的过滤(§5.1),不在渲染期生效。
-func (s *SSOT) EnumerateCandidates(d *AccessDeclaration) ([]RouteCandidate, []CandidateSkip) {
+func (s *SSOT) EnumerateCandidates(access *Node, d *AccessDeclaration) ([]RouteCandidate, []CandidateSkip) {
 	nodes := s.NodeByID()
 	var skips []CandidateSkip
 	skip := func(format string, args ...any) {
@@ -68,7 +72,7 @@ func (s *SSOT) EnumerateCandidates(d *AccessDeclaration) ([]RouteCandidate, []Ca
 	if !ok {
 		return nil, dedupSkips(skips)
 	}
-	chains := s.candidateChains(d, nodes, skip)
+	chains := s.candidateChains(access, d, nodes, skip)
 
 	var out []RouteCandidate
 	for _, chain := range chains {
@@ -105,7 +109,7 @@ func (s *SSOT) candidateAddresses(d *AccessDeclaration, skip func(string, ...any
 }
 
 // candidateChains 枚举服务器链。长度 0..max_hops,链末尾即出口。
-func (s *SSOT) candidateChains(d *AccessDeclaration, nodes map[string]*Node, skip func(string, ...any)) [][]string {
+func (s *SSOT) candidateChains(access *Node, d *AccessDeclaration, nodes map[string]*Node, skip func(string, ...any)) [][]string {
 	pinned := d.PinnedEgress()
 	maxHops := d.MaxHops
 	if maxHops > 2 {
@@ -141,11 +145,11 @@ func (s *SSOT) candidateChains(d *AccessDeclaration, nodes map[string]*Node, ski
 		return pinned == "" || n.ID == pinned
 	}
 
-	// 一跳。
+	// 一跳。第一跳必须能被这个接入节点到达 —— 公网可拨,或者两者之间
+	// 已经有隧道(reverse_only 靠后者,见 AccessHopAddr)。
 	if maxHops >= 1 {
 		for _, n := range allowed {
-			// reverse_only 拨不到,必须由前一跳推给它 —— 见两跳分支。
-			if !usableEgress(n) || !n.DialableFromAccess() {
+			if !usableEgress(n) || s.AccessHopAddr(access, n) == "" {
 				continue
 			}
 			chains = append(chains, []string{n.ID})
@@ -153,10 +157,10 @@ func (s *SSOT) candidateChains(d *AccessDeclaration, nodes map[string]*Node, ski
 		}
 	}
 
-	// 两跳。第一跳必须可拨,第二跳必须从第一跳可达且能出公网。
+	// 两跳。第一跳必须能被接入节点到达,第二跳必须从第一跳可达且能出公网。
 	if maxHops >= 2 {
 		for _, a := range allowed {
-			if !a.DialableFromAccess() {
+			if s.AccessHopAddr(access, a) == "" {
 				continue
 			}
 			for _, b := range allowed {
@@ -187,9 +191,10 @@ func (s *SSOT) candidateChains(d *AccessDeclaration, nodes map[string]*Node, ski
 		case !n.Server.EgressCapable && maxHops < 2:
 			skip("服务器 %q 用不上:没有 egress_capable,而 max_hops=%d 不允许它作为中间一跳",
 				n.ID, maxHops)
-		case !n.DialableFromAccess():
-			skip("服务器 %q 用不上:接入节点拨不到它(direction=%s),"+
-				"而也没有任何一台可拨的服务器能转发到它", n.ID, n.Server.Direction)
+		case s.AccessHopAddr(access, n) == "":
+			skip("服务器 %q 用不上:接入节点既拨不到它(direction=%s),"+
+				"与它之间也没有隧道,而且没有任何一台可达的服务器能转发到它",
+				n.ID, n.Server.Direction)
 		default:
 			skip("服务器 %q 在这条声明里产生不了任何候选", n.ID)
 		}
