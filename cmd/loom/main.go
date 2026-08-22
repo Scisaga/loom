@@ -41,8 +41,12 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
   loom agent    -c <agent/config.json>   调参回路:周期探测、排序、带阻尼切换(L3)
   loom report   [-serve]                上报者:隧道健康与配置自检。每个节点都跑
   loom status   <ssot.yaml>              把够得到的节点全拉一遍,给人看
+  loom apply    -in <hydrate 输出目录>     推到机器上:暂存 → 预检 → 就位 → 验证,失败回滚
+  loom backup   -o <文件> {-passphrase-file <文件> | -plaintext}
+                                         打包秘密层与内部 CA(丢了就得全网重来的那些)
+  loom restore  <备份文件> -o <目录>       解开备份到一个目录,不覆盖原位置
 
-尚未实现:apply / rollback(属于 L4)
+尚未实现:rollback(属于 L4)
 `
 
 // 快照产物的文件名。
@@ -86,6 +90,12 @@ func main() {
 		err = cmdReport(args)
 	case "status":
 		err = cmdStatus(args)
+	case "apply":
+		err = cmdApply(args)
+	case "backup":
+		err = cmdBackup(args)
+	case "restore":
+		err = cmdRestore(args)
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return
