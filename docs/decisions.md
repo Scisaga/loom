@@ -305,31 +305,56 @@ apparmor="DENIED" profile="wg" name="/etc/loom/secrets/node.key" denied_mask="r"
 **端口范围** 从 61610-61699 改为 **61617-61799**(与实际放行的一致)。
 现有端口(61619/61637/61654/61682/61698)全都落在新范围内,无需改动。
 
-### D18 · 惰性字段按能力拒绝
+### D18 · ~~惰性字段按能力拒绝~~ 已被 D19 取代
 
-**日期** 2026-08-23 · **状态** 生效 · **相关** §1.1 · 承接 [D17](#d17--clientprofile-并入-nodeports-范围改-61617-61799)
+**日期** 2026-08-23 · **状态** ❌ **已推翻**,当天即被 [D19](#d19--角色字段分块capabilities-由块推导) 取代
 
-合并后 `Node` 上有两组互斥的角色字段。问题不在于混着放,在于**写了不生效**:
-`direction` 写在纯接入节点上不报错、也不影响任何产物。
+原方案:保留扁平字段,加约 30 行校验,拒绝写在错误角色上的字段。
 
-> **惰性字段比缺字段更糟。** 缺字段会被发现;写了不生效的字段会让人以为
-> 配置已经生效。
+**为什么推翻:** 它修的是症状。当你需要运行时校验来保证"这些字段必须一起
+出现"时,**类型本身就是错的**。而且我当时用"D4 针对推导字段、这个只是惰性"
+给自己开脱 —— 恰恰是因为没看出 `capabilities` 与那两组字段是同一事实的两次
+编码,才得出那个结论。
 
-校验器现在要求字段与能力一一对应:
+### D19 · 角色字段分块,`capabilities` 由块推导
 
-| 只对 `server` 有意义 | 只对 `access` 有意义 |
-|---|---|
-| `direction`、`inbound_port`、`inbound_protocol` | `platform`、`credentials` |
-| `egress_capable`、`wg_public_key`、`secret_generation` | `mixed_ports`、`default_declaration` |
+**日期** 2026-08-23 · **状态** 生效 · **相关** §1.1、§1.3 · 取代 [D18](#d18--惰性字段按能力拒绝-已被-d19-取代)
 
-写在错误的角色上直接拒,并说清"写在这里不会生效"。反过来,`server` 缺
-`direction` 或 `inbound_port` 同样报错 —— 那些是真会影响产物的。
+```yaml
+- id: cn-a
+  city: 广州
+  server:                    # 这个块存在 = 持有 server 能力
+    direction: bidirectional
+    inbound_port: 61698
 
-**为什么不改 schema(把字段嵌进 `server:` / `access:` 两个块)。**
-那样结构自解释,更彻底。但 [D4](#d4--推导字段不进结构体靠严格解码拒绝) 那条
-"不可表达优于可校验"针对的是**推导字段** —— 写了会与推导结果**矛盾**,所以
-连位置都不给。`direction` 在接入节点上只是**惰性**,不矛盾。惰性字段用
-"带解释的拒绝"就够了,不值得为它去动正跑在真机上的所有调用点。
+- id: access-a
+  city: 北京
+  access:                    # 这个块存在 = 持有 access 能力
+    platform: linux-server
+    credentials: [...]
+
+- id: laptop                 # 两个块都有 = 两种能力都有(§1.3)
+  access: {...}
+  server: {...}
+```
+
+**`capabilities` 字段删除。** 它与角色块是同一个事实的两次编码 —— 写了
+`capabilities: [server]` 却不给 `server` 块(或反过来)就是自相矛盾,而那
+正是 [D4](#d4--推导字段不进结构体靠严格解码拒绝) 要消灭的东西。
+
+**收益:惰性字段变成不可表达,而不是被拒绝。** 把 `direction` 写进 `access`
+块,严格解码在**加载阶段**就失败,根本到不了校验器:
+
+```
+field direction not found in type model.AccessRole
+```
+
+D18 那 30 行 `checkRoleFields` 随之删除。对应的测试也从"校验器拒绝"下移到
+"解码器拒绝"(`model.TestLoadRejectsDerivedFields`)。
+
+> **判据:需要运行时校验来保证字段共现,就说明类型分错了。** 校验器该管的是
+> 跨实体的一致性(隧道两端对不对得上、引用存不存在),不是同一个实体内部
+> 哪些字段该一起出现 —— 后者是类型的职责。
 
 ---
 

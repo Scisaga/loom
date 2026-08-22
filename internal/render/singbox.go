@@ -158,7 +158,7 @@ func renderAccess(s *model.SSOT, p *model.Node) (File, []Skip, error) {
 	// 凭据决定这个档案能用哪些声明。
 	credOf := map[string]*model.Credential{}
 	var declIDs []string
-	for _, cid := range p.Credentials {
+	for _, cid := range p.Access.Credentials {
 		c, ok := creds[cid]
 		if !ok || c.Revoked() {
 			continue
@@ -170,14 +170,14 @@ func renderAccess(s *model.SSOT, p *model.Node) (File, []Skip, error) {
 	}
 	sort.Strings(declIDs)
 
-	if p.Platform.UsesTUN() {
+	if p.Access.Platform.UsesTUN() {
 		cfg.Inbounds = append(cfg.Inbounds, sbInbound{
 			Type: "tun", Tag: "tun-in",
 			Address:   []string{"172.19.0.1/30"},
 			AutoRoute: true, Stack: "system",
 		})
 	}
-	ports := append([]model.MixedPort(nil), p.MixedPorts...)
+	ports := append([]model.MixedPort(nil), p.Access.MixedPorts...)
 	sort.Slice(ports, func(i, j int) bool { return ports[i].Port < ports[j].Port })
 	for _, mp := range ports {
 		cfg.Inbounds = append(cfg.Inbounds, sbInbound{
@@ -235,8 +235,8 @@ func renderAccess(s *model.SSOT, p *model.Node) (File, []Skip, error) {
 			Inbound: []string{fmt.Sprintf("in-%d", mp.Port)}, Outbound: "decl:" + mp.Declaration,
 		})
 	}
-	if p.Platform.UsesTUN() {
-		tunDecl := p.DefaultDeclaration
+	if p.Access.Platform.UsesTUN() {
+		tunDecl := p.Access.DefaultDeclaration
 		if tunDecl == "" && len(declIDs) == 1 {
 			tunDecl = declIDs[0]
 		}
@@ -295,17 +295,17 @@ func buildChain(
 		}
 		hops[tag] = true
 
-		o := sbOutbound{Type: string(sv.InboundProtocol.Or()), Tag: tag,
+		o := sbOutbound{Type: string(sv.Server.InboundProtocol.Or()), Tag: tag,
 			Password: secretRef(secret), Detour: detour}
 		if i == 0 {
 			// 第一跳由接入节点直接拨公网地址。
-			o.Server, o.ServerPort = sv.PublicEndpoint, sv.InboundPort
+			o.Server, o.ServerPort = sv.PublicEndpoint, sv.Server.InboundPort
 		} else {
 			// 后续跳由前一跳转发,拨的是它在那条链路上的地址。
-			o.Server, o.ServerPort = s.NextHopAddr(nodes[c.ServerChain[i-1]], sv), sv.InboundPort
+			o.Server, o.ServerPort = s.NextHopAddr(nodes[c.ServerChain[i-1]], sv), sv.Server.InboundPort
 		}
 		o.TLS = clientTLS(serverName(sv))
-		if sv.InboundProtocol.Or() == model.Trojan {
+		if sv.Server.InboundProtocol.Or() == model.Trojan {
 			o.TLS.ALPN = []string{"h2", "http/1.1"}
 		}
 		out = append(out, o)
@@ -424,11 +424,11 @@ func renderServer(s *model.SSOT, sv *model.Node) (File, error) {
 	}
 
 	in := sbInbound{
-		Tag: "in", Listen: "::", ListenPort: sv.InboundPort,
+		Tag: "in", Listen: "::", ListenPort: sv.Server.InboundPort,
 		Users: users, TLS: serverTLS(),
 	}
-	in.Type = string(sv.InboundProtocol.Or())
-	if sv.InboundProtocol.Or() == model.Trojan {
+	in.Type = string(sv.Server.InboundProtocol.Or())
+	if sv.Server.InboundProtocol.Or() == model.Trojan {
 		// Trojan 走 TCP,ALPN 用 h2/http1.1 才像正常 HTTPS;h3 是 QUIC 的。
 		in.TLS.ALPN = []string{"h2", "http/1.1"}
 	}
@@ -455,7 +455,7 @@ func renderServer(s *model.SSOT, sv *model.Node) (File, error) {
 		}
 		cfg.Outbounds = append(cfg.Outbounds, o)
 	}
-	if sv.EgressCapable {
+	if sv.Server.EgressCapable {
 		cfg.Outbounds = append(cfg.Outbounds, sbOutbound{Type: "direct", Tag: "egress"})
 	}
 	cfg.Outbounds = append(cfg.Outbounds, sbOutbound{Type: "block", Tag: "block"})
@@ -481,7 +481,7 @@ func renderServer(s *model.SSOT, sv *model.Node) (File, error) {
 		}
 	}
 	for _, r := range rules {
-		if !r.egress || !sv.EgressCapable {
+		if !r.egress || !sv.Server.EgressCapable {
 			continue
 		}
 		cfg.Route.Rules = append(cfg.Route.Rules, sbRule{

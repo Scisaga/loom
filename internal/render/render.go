@@ -99,7 +99,7 @@ func Render(s *model.SSOT) (*Result, error) {
 		}
 		skipped = append(skipped, sk...)
 		byNode[n.ID] = append(byNode[n.ID], f)
-		if !n.Has(model.Server) {
+		if !n.IsServer() {
 			byNode[n.ID] = append(byNode[n.ID], renderSingBoxUnit(s, n))
 		}
 	}
@@ -107,7 +107,7 @@ func Render(s *model.SSOT) (*Result, error) {
 	// 路径上的两种位置(§1.1)。
 	for i := range s.Nodes {
 		n := &s.Nodes[i]
-		if !n.Has(model.Server) || n.InboundPort == 0 {
+		if !n.IsServer() || n.Server.InboundPort == 0 {
 			continue
 		}
 		f, err := renderServer(s, n)

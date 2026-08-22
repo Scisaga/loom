@@ -183,7 +183,7 @@ func TestSingBoxPathCorrespondence(t *testing.T) {
 			byTag[o.Tag] = i
 		}
 
-		for _, cid := range p.Credentials {
+		for _, cid := range p.Access.Credentials {
 			cred := creds[cid]
 			if cred == nil || cred.Revoked() {
 				continue
@@ -258,8 +258,8 @@ func checkCandidate(
 			// 后续跳由前一跳转发,拨的是它在那条链路上的地址。
 			wantAddr = s.NextHopAddr(nodes[cand.ServerChain[i-1]], sv)
 		}
-		if o.Server != wantAddr || o.ServerPort != sv.InboundPort {
-			t.Errorf("第 %d 跳拨向 %s:%d,期望 %s:%d", i, o.Server, o.ServerPort, wantAddr, sv.InboundPort)
+		if o.Server != wantAddr || o.ServerPort != sv.Server.InboundPort {
+			t.Errorf("第 %d 跳拨向 %s:%d,期望 %s:%d", i, o.Server, o.ServerPort, wantAddr, sv.Server.InboundPort)
 		}
 		if o.Password != "${secret:"+secret+"}" {
 			t.Errorf("第 %d 跳的密码引用是 %q,期望 %q", i, o.Password, "${secret:"+secret+"}")
@@ -341,7 +341,7 @@ func TestServerAdmitsNothingExtra(t *testing.T) {
 	for i := range s.Nodes {
 		n := &s.Nodes[i]
 		sc := cfgs[n.ID]
-		if sc == nil || !n.Has(model.Server) {
+		if sc == nil || !n.IsServer() {
 			continue
 		}
 		want := map[string]bool{}
@@ -399,7 +399,7 @@ func TestEgressOnlyWhereCapable(t *testing.T) {
 				has = true
 			}
 		}
-		if has && !n.EgressCapable {
+		if has && !n.Server.EgressCapable {
 			t.Errorf("服务器 %s 没有 egress_capable 却渲染了出口出站", n.ID)
 		}
 	}

@@ -97,7 +97,7 @@ func TestMatrixShape(t *testing.T) {
 	// 产物 —— 它不是节点(§1、§9)。
 	servers := 0
 	for i := range s.Nodes {
-		if s.Nodes[i].Has(model.Server) {
+		if s.Nodes[i].IsServer() {
 			servers++
 		}
 	}
@@ -192,20 +192,20 @@ func TestPairCorrespondence(t *testing.T) {
 			acc, ini := parseConf(accRaw), parseConf(iniRaw)
 
 			// reverse_only 永远不能是接受方 —— 那正是它要避免的事。
-			if tn.Acceptor.Direction == model.ReverseOnly {
+			if tn.Acceptor.Server.Direction == model.ReverseOnly {
 				t.Errorf("reverse_only 节点 %s 被派成了接受方", tn.Acceptor.ID)
 			}
 			// direct_only 永远不能是发起方。
-			if tn.Initiator.Direction == model.DirectOnly {
+			if tn.Initiator.Server.Direction == model.DirectOnly {
 				t.Errorf("direct_only 节点 %s 被派成了发起方", tn.Initiator.ID)
 			}
 
 			// 公钥互指。
-			if got := acc["Peer.PublicKey"]; got != tn.Initiator.WGPublicKey {
-				t.Errorf("接受方记的对端公钥 %q ≠ 发起方公钥 %q", got, tn.Initiator.WGPublicKey)
+			if got := acc["Peer.PublicKey"]; got != tn.Initiator.Server.WGPublicKey {
+				t.Errorf("接受方记的对端公钥 %q ≠ 发起方公钥 %q", got, tn.Initiator.Server.WGPublicKey)
 			}
-			if got := ini["Peer.PublicKey"]; got != tn.Acceptor.WGPublicKey {
-				t.Errorf("发起方记的对端公钥 %q ≠ 接受方公钥 %q", got, tn.Acceptor.WGPublicKey)
+			if got := ini["Peer.PublicKey"]; got != tn.Acceptor.Server.WGPublicKey {
+				t.Errorf("发起方记的对端公钥 %q ≠ 接受方公钥 %q", got, tn.Acceptor.Server.WGPublicKey)
 			}
 
 			// 一端的 Address 必须正好是另一端的 AllowedIPs。

@@ -8,6 +8,11 @@ import "testing"
 //
 // 如果它们被静默忽略,SSOT 里会留下一个看起来生效、实际不生效的声明 ——
 // 这比报错糟得多。
+//
+// 角色字段分块之后,这道闸同时覆盖了"惰性字段":把 direction 写在
+// access 块里、把 platform 写在 server 块里,都在**解码阶段**就失败,
+// 根本到不了校验器。capabilities 也一样 —— 它由哪个块存在推导,
+// 顶层再写一遍就是重复编码(D19)。
 func TestLoadRejectsDerivedFields(t *testing.T) {
 	cases := map[string]string{
 		"mesh_eligible": `
@@ -36,9 +41,33 @@ nodes:
 		"目标写成节点": `
 nodes:
   - id: api
+    server: {direction: direct_only, target_kind: endpoint}
+`,
+		"接入节点写 direction": `
+nodes:
+  - id: laptop
+    access: {platform: linux-server, direction: bidirectional}
+`,
+		"接入节点写 inbound_port": `
+nodes:
+  - id: laptop
+    access: {platform: linux-server, inbound_port: 61698}
+`,
+		"服务器写 platform": `
+nodes:
+  - id: srv
+    server: {direction: bidirectional, platform: android}
+`,
+		"服务器写 mixed_ports": `
+nodes:
+  - id: srv
+    server: {direction: bidirectional, mixed_ports: []}
+`,
+		"顶层还留着 capabilities": `
+nodes:
+  - id: n1
     capabilities: [server]
-    direction: direct_only
-    target_kind: endpoint
+    server: {direction: bidirectional}
 `,
 	}
 	for name, src := range cases {
@@ -53,8 +82,8 @@ nodes:
 func TestLoadDefaults(t *testing.T) {
 	s, err := Load([]byte(`
 nodes:
-  - {id: n1, capabilities: [server], direction: bidirectional}
-  - {id: n2, capabilities: [server], direction: reverse_only}
+  - {id: n1, server: {direction: bidirectional}}
+  - {id: n2, server: {direction: reverse_only}}
 tunnels:
   - {from: n1, to: n2, listen_port: 61611, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}
 declarations:
@@ -91,7 +120,8 @@ func TestMeshEligibleIsDerived(t *testing.T) {
 		{DirectOnly, true, true},
 		{ReverseOnly, false, false}, // 进不了 mesh,也拨不到
 	} {
-		n := &Node{ID: "n", Direction: tc.d, PublicEndpoint: "1.1.1.1", InboundPort: 1}
+		n := &Node{ID: "n", PublicEndpoint: "1.1.1.1",
+			Server: &ServerRole{Direction: tc.d, InboundPort: 1}}
 		if got := n.MeshEligible(); got != tc.mesh {
 			t.Errorf("%s.MeshEligible() = %v,期望 %v", tc.d, got, tc.mesh)
 		}
@@ -129,8 +159,8 @@ func TestLoadIsDeterministic(t *testing.T) {
 	src := []byte(`
 nodes:
   - id: n1
-    capabilities: [server]
-    direction: bidirectional
+    server:
+      direction: bidirectional
 `)
 	a, err := Load(src)
 	if err != nil {
@@ -143,7 +173,7 @@ nodes:
 	if a.Nodes[0].ID != b.Nodes[0].ID || len(a.Nodes) != len(b.Nodes) {
 		t.Error("两次加载结果不同")
 	}
-	if strings.TrimSpace(string(a.Nodes[0].Direction)) == "" {
+	if a.Nodes[0].Server == nil || strings.TrimSpace(string(a.Nodes[0].Server.Direction)) == "" {
 		t.Error("direction 丢失")
 	}
 }

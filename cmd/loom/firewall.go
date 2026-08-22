@@ -40,7 +40,7 @@ func cmdFirewall(args []string) error {
 
 	for i := range s.Nodes {
 		n := &s.Nodes[i]
-		if !n.Has(model.Server) {
+		if !n.IsServer() {
 			continue
 		}
 		add(n.ID, fwRule{Port: "22", Proto: "TCP", From: []string{"<你的运维来源>"}, Why: "SSH"})
@@ -80,7 +80,7 @@ func cmdFirewall(args []string) error {
 	}
 	for i := range s.Nodes {
 		n := &s.Nodes[i]
-		if !n.Has(model.Server) || n.InboundPort == 0 {
+		if !n.IsServer() || n.Server.InboundPort == 0 {
 			continue
 		}
 		var from []string
@@ -100,21 +100,21 @@ func cmdFirewall(args []string) error {
 		}
 		if viaTunnelOnly || len(from) == 0 {
 			proto := "UDP"
-			if !n.InboundProtocol.IsUDP() {
+			if !n.Server.InboundProtocol.IsUDP() {
 				proto = "TCP"
 			}
 			add(n.ID, fwRule{
-				Port: fmt.Sprint(n.InboundPort), Proto: proto, From: nil,
+				Port: fmt.Sprint(n.Server.InboundPort), Proto: proto, From: nil,
 				Why: "只经隧道内地址到达,**公网无需放行**",
 			})
 			continue
 		}
 		sort.Strings(from)
 		proto, why := "UDP", "Hysteria2 入站(QUIC)"
-		if !n.InboundProtocol.IsUDP() {
-			proto, why = "TCP", string(n.InboundProtocol.Or())+" 入站"
+		if !n.Server.InboundProtocol.IsUDP() {
+			proto, why = "TCP", string(n.Server.InboundProtocol.Or())+" 入站"
 		}
-		add(n.ID, fwRule{Port: fmt.Sprint(n.InboundPort), Proto: proto, From: from, Why: why})
+		add(n.ID, fwRule{Port: fmt.Sprint(n.Server.InboundPort), Proto: proto, From: from, Why: why})
 	}
 
 	ids := make([]string, 0, len(byNode))
@@ -136,7 +136,7 @@ func cmdFirewall(args []string) error {
 			}
 			fmt.Printf("  %-8s %-6s %-46s %s\n", r.Port, r.Proto, src, r.Why)
 		}
-		if n.Direction == model.ReverseOnly {
+		if n.Server.Direction == model.ReverseOnly {
 			fmt.Printf("\n  ↑ 这台是 reverse_only:所有连接都由它主动发起,\n")
 			fmt.Printf("    除 SSH 外公网入站可以全关。\n")
 		}

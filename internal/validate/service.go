@@ -139,7 +139,7 @@ func checkDeclarations(
 				fs.add("§5.1 约束", where, "allowed_servers 引用了不存在的节点 %q", r)
 				continue
 			}
-			if !n.Has(model.Server) {
+			if !n.IsServer() {
 				fs.add("§5.1 约束", where, "allowed_servers 中的 %q 不持有 server 能力", r)
 			}
 		}
@@ -197,9 +197,9 @@ func checkAxes(
 	switch {
 	case !ok:
 		fs.add("§4 出口轴", where, "egress_axis 钉死了不存在的节点 %q", pinned)
-	case !n.Has(model.Server):
+	case !n.IsServer():
 		fs.add("§4 出口轴", where, "钉死的出口 %q 不持有 server 能力", pinned)
-	case !n.EgressCapable:
+	case !n.Server.EgressCapable:
 		fs.add("§4 出口轴", where,
 			"钉死的出口 %q 没有 egress_capable —— 它出不了公网", pinned)
 	}
@@ -286,15 +286,15 @@ func checkAccessNodes(
 	for _, p := range s.AccessNodes() {
 		where := p.ID
 
-		if !p.Platform.Valid() {
-			fs.add("§7.2 平台", where, "接入节点缺少或写错 platform:%q", p.Platform)
+		if !p.Access.Platform.Valid() {
+			fs.add("§7.2 平台", where, "接入节点缺少或写错 platform:%q", p.Access.Platform)
 			continue
 		}
 
-		if len(p.Credentials) == 0 {
+		if len(p.Access.Credentials) == 0 {
 			fs.add("§8.2 凭据", where, "接入节点未持有任何凭据")
 		}
-		for _, id := range p.Credentials {
+		for _, id := range p.Access.Credentials {
 			c, ok := creds[id]
 			if !ok {
 				fs.add("§8.2 凭据", where, "引用了不存在的凭据 %q", id)
@@ -307,43 +307,43 @@ func checkAccessNodes(
 
 		// §7.2 / §18:Android 绝大多数 App 不能单独设代理,因此必须 TUN
 		// 且只带一把凭据 —— 没有"按端口选声明"这回事。
-		if p.Platform == model.Android {
-			if len(p.MixedPorts) > 0 {
+		if p.Access.Platform == model.Android {
+			if len(p.Access.MixedPorts) > 0 {
 				fs.add("§7.2 平台", where,
 					"Android 不应声明 mixed_ports —— 绝大多数 App 不能单独设代理,只能走 TUN")
 			}
-			if len(p.Credentials) > 1 {
+			if len(p.Access.Credentials) > 1 {
 				fs.add("§18 模板", where,
 					"Android 持有 %d 把凭据,但只有 TUN 一个出口,无法按端口区分声明",
-					len(p.Credentials))
+					len(p.Access.Credentials))
 			}
 		}
 		// §7.2:Linux 服务器不开 TUN,流量全靠 mixed 端口接管。
-		if p.Platform == model.LinuxServer && len(p.MixedPorts) == 0 {
+		if p.Access.Platform == model.LinuxServer && len(p.Access.MixedPorts) == 0 {
 			fs.add("§7.2 平台", where,
 				"linux-server 没有 mixed_ports —— 它不开 TUN,没有端口就接管不到任何流量")
 		}
 
 		// §7.2:用 TUN 的平台必须说清兜底流量走哪条声明。
-		if p.Platform.UsesTUN() {
+		if p.Access.Platform.UsesTUN() {
 			switch {
-			case p.DefaultDeclaration == "" && len(p.Credentials) > 1:
+			case p.Access.DefaultDeclaration == "" && len(p.Access.Credentials) > 1:
 				fs.add("§7.2 平台", where,
 					"用 TUN 但未声明 default_declaration,且持有 %d 把凭据 —— "+
-						"兜底流量走哪条声明是歧义的,必须显式写出", len(p.Credentials))
-			case p.DefaultDeclaration != "":
-				if _, ok := decls[p.DefaultDeclaration]; !ok {
+						"兜底流量走哪条声明是歧义的,必须显式写出", len(p.Access.Credentials))
+			case p.Access.DefaultDeclaration != "":
+				if _, ok := decls[p.Access.DefaultDeclaration]; !ok {
 					fs.add("§7.2 平台", where,
-						"default_declaration 引用了不存在的访问声明 %q", p.DefaultDeclaration)
+						"default_declaration 引用了不存在的访问声明 %q", p.Access.DefaultDeclaration)
 				}
 			}
-		} else if p.DefaultDeclaration != "" {
+		} else if p.Access.DefaultDeclaration != "" {
 			fs.add("§7.2 平台", where,
-				"%s 不使用 TUN,声明 default_declaration 不会生效", p.Platform)
+				"%s 不使用 TUN,声明 default_declaration 不会生效", p.Access.Platform)
 		}
 
 		seenPort := map[int]bool{}
-		for _, mp := range p.MixedPorts {
+		for _, mp := range p.Access.MixedPorts {
 			if mp.Port <= 0 || mp.Port > 65535 {
 				fs.add("§7.3 端口", where, "mixed 端口非法:%d", mp.Port)
 			}

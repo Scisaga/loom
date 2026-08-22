@@ -116,7 +116,7 @@ func (s *SSOT) candidateChains(d *AccessDeclaration, nodes map[string]*Node, ski
 	allowed := make([]*Node, 0, len(d.AllowedServers))
 	for _, id := range d.AllowedServers {
 		n, ok := nodes[id]
-		if !ok || !n.Has(Server) {
+		if !ok || !n.IsServer() {
 			continue // 引用错误已由校验器报出
 		}
 		allowed = append(allowed, n)
@@ -135,7 +135,7 @@ func (s *SSOT) candidateChains(d *AccessDeclaration, nodes map[string]*Node, ski
 	}
 
 	usableEgress := func(n *Node) bool {
-		if !n.EgressCapable {
+		if !n.Server.EgressCapable {
 			return false
 		}
 		return pinned == "" || n.ID == pinned
@@ -166,7 +166,7 @@ func (s *SSOT) candidateChains(d *AccessDeclaration, nodes map[string]*Node, ski
 				if !s.ServerReachable(a, b) {
 					continue
 				}
-				if b.InboundPort == 0 {
+				if b.Server.InboundPort == 0 {
 					skip("服务器 %q 没有 inbound_port,前一跳无处转发", b.ID)
 					continue
 				}
@@ -184,12 +184,12 @@ func (s *SSOT) candidateChains(d *AccessDeclaration, nodes map[string]*Node, ski
 		case pinned != "" && n.ID != pinned && maxHops < 2:
 			skip("服务器 %q 用不上:出口钉死在 %q,而 max_hops=%d 不允许它作为中间一跳",
 				n.ID, pinned, maxHops)
-		case !n.EgressCapable && maxHops < 2:
+		case !n.Server.EgressCapable && maxHops < 2:
 			skip("服务器 %q 用不上:没有 egress_capable,而 max_hops=%d 不允许它作为中间一跳",
 				n.ID, maxHops)
 		case !n.DialableFromAccess():
 			skip("服务器 %q 用不上:接入节点拨不到它(direction=%s),"+
-				"而也没有任何一台可拨的服务器能转发到它", n.ID, n.Direction)
+				"而也没有任何一台可拨的服务器能转发到它", n.ID, n.Server.Direction)
 		default:
 			skip("服务器 %q 在这条声明里产生不了任何候选", n.ID)
 		}

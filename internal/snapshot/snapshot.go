@@ -101,9 +101,9 @@ func Build(s *model.SSOT, res *render.Result, ssotBytes []byte, meta Meta) *Mani
 			Node: n.ID, SingBox: v.SingBox, WireGuard: v.WireGuard,
 			Tailscale: v.Tailscale, Agent: v.Agent,
 		})
-		if n.SecretGeneration > 0 || n.WGPublicKey != "" {
+		if secretGen(n) > 0 || wgPub(n) != "" {
 			m.SecretGenerations = append(m.SecretGenerations, SecretRef{
-				Node: n.ID, Generation: n.SecretGeneration, PublicKey: n.WGPublicKey,
+				Node: n.ID, Generation: secretGen(n), PublicKey: wgPub(n),
 			})
 		}
 	}
@@ -205,6 +205,21 @@ func VerifyBundles(m *Manifest, res *render.Result) []string {
 	}
 	sort.Strings(problems)
 	return problems
+}
+
+// 秘密层信息只有服务器节点才有 —— 接入节点不参与隧道。
+func secretGen(n *model.Node) int {
+	if n.Server == nil {
+		return 0
+	}
+	return n.Server.SecretGeneration
+}
+
+func wgPub(n *model.Node) string {
+	if n.Server == nil {
+		return ""
+	}
+	return n.Server.WGPublicKey
 }
 
 func hexSum(b []byte) string {

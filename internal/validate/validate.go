@@ -65,33 +65,27 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 			idx[n.ID] = n
 		}
 
-		if len(n.Capabilities) == 0 {
-			fs.add("§1.3 capabilities", where, "capabilities 为空 —— 能力是集合,但不能是空集")
-		}
-		for _, c := range n.Capabilities {
-			if !c.Valid() {
-				fs.add("§1.3 capabilities", where,
-					"未知能力 %q —— 只能是 access/server。"+
-						"目标不是节点(§1),出口是路径上的位置而非节点类型(§1.1)", c)
-			}
+		// 一个块都没有的节点什么也不是。能力由块推导,所以"能力为空"
+		// 现在等价于"两个角色块都缺"。
+		if !n.IsServer() && !n.IsAccess() {
+			fs.add("§1.3 角色", where,
+				"既没有 server 块也没有 access 块 —— 这个节点不承担任何角色")
 		}
 
-		checkRoleFields(n, where, fs)
-
-		isServer := n.Has(model.Server)
-		if isServer && !n.Direction.Valid() {
-			fs.add("§2.1 direction", where, "direction 缺失或非法:%q", n.Direction)
+		isServer := n.IsServer()
+		if isServer && !n.Server.Direction.Valid() {
+			fs.add("§2.1 direction", where, "direction 缺失或非法:%q", n.Server.Direction)
 			continue // 后面的规则都依赖 direction 有效
 		}
 
 		// §2.2:reverse_only 拨不到,只能由前一跳经反连隧道推给它。
 		// 它可以是出口,但永远不能是链上第一跳。
-		if isServer && n.Direction == model.ReverseOnly && n.PublicEndpoint == "" {
+		if isServer && n.Server.Direction == model.ReverseOnly && n.PublicEndpoint == "" {
 			fs.add("§2.2 相容性", where,
 				"reverse_only 的服务器仍需 public_endpoint —— 它主动连出去时,"+
 					"对端要写 Endpoint 指回来的是**对端**的地址,而本机地址用于排障与探测标注")
 		}
-		if isServer && n.InboundPort == 0 {
+		if isServer && n.Server.InboundPort == 0 {
 			fs.add("§8.1 inbound", where,
 				"持有 server 能力但没有 inbound_port —— 无法接受上游连接")
 		}
@@ -118,54 +112,6 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 	return idx
 }
 
-// checkRoleFields 要求字段与能力一一对应。
-//
-// 这里防的是**惰性字段**:写了不报错、也不影响任何产物。它比缺字段更糟 ——
-// 缺字段会被发现,写了不生效的字段会让人以为配置已经生效。
-//
-// 与 D4 的"推导字段不可表达"是两回事:那些字段写了会与推导结果**矛盾**,
-// 所以连位置都不给;这些字段只是在错误的角色上**无效**,给一条说清楚的
-// 拒绝就够了。
-func checkRoleFields(n *model.Node, where string, fs *findings) {
-	server, access := n.Has(model.Server), n.Has(model.Access)
-
-	// 只对 server 有意义的字段。
-	for _, f := range []struct {
-		name string
-		set  bool
-	}{
-		{"direction", n.Direction != ""},
-		{"inbound_port", n.InboundPort != 0},
-		{"inbound_protocol", n.InboundProtocol != ""},
-		{"egress_capable", n.EgressCapable},
-		{"wg_public_key", n.WGPublicKey != ""},
-		{"secret_generation", n.SecretGeneration != 0},
-	} {
-		if f.set && !server {
-			fs.add("§1.1 能力", where,
-				"%s 只对服务器节点有意义,而本节点不持有 server 能力 —— "+
-					"写在这里不会生效", f.name)
-		}
-	}
-
-	// 只对 access 有意义的字段。
-	for _, f := range []struct {
-		name string
-		set  bool
-	}{
-		{"platform", n.Platform != ""},
-		{"credentials", len(n.Credentials) > 0},
-		{"mixed_ports", len(n.MixedPorts) > 0},
-		{"default_declaration", n.DefaultDeclaration != ""},
-	} {
-		if f.set && !access {
-			fs.add("§1.1 能力", where,
-				"%s 只对接入节点有意义,而本节点不持有 access 能力 —— "+
-					"写在这里不会生效", f.name)
-		}
-	}
-}
-
 func checkTunnels(s *model.SSOT, idx map[string]*model.Node, fs *findings) {
 	seenPair := map[string]string{} // 无序节点对 -> 首次出现的 pair
 	seenAddr := map[string]string{} // 隧道内地址 -> 占用者
@@ -174,8 +120,8 @@ func checkTunnels(s *model.SSOT, idx map[string]*model.Node, fs *findings) {
 	// sing-box inbound 端口先占位,这样 WG 监听口撞上它时能报出来。
 	// 同一台机器上两个进程抢同一个端口,后起的那个静默失败。
 	for i := range s.Nodes {
-		if n := &s.Nodes[i]; n.InboundPort > 0 {
-			seenPort[fmt.Sprintf("%s/%d", n.ID, n.InboundPort)] = n.ID + " 的 sing-box inbound"
+		if n := &s.Nodes[i]; n.IsServer() && n.Server.InboundPort > 0 {
+			seenPort[fmt.Sprintf("%s/%d", n.ID, n.Server.InboundPort)] = n.ID + " 的 sing-box inbound"
 		}
 	}
 
@@ -216,7 +162,7 @@ func checkTunnels(s *model.SSOT, idx map[string]*model.Node, fs *findings) {
 			fs.add("§6.3 mesh", where,
 				"两端(%s=%s, %s=%s)都能进 mesh —— 这条隧道该交给 Headscale 自动分发(§8.3),"+
 					"不要手工建",
-				r.Initiator.ID, r.Initiator.Direction, r.Acceptor.ID, r.Acceptor.Direction)
+				r.Initiator.ID, r.Initiator.Server.Direction, r.Acceptor.ID, r.Acceptor.Server.Direction)
 		}
 
 		checkAddr(where, "from_addr", t.FromAddr, seenAddr, fs)
@@ -251,14 +197,14 @@ func checkTunnels(s *model.SSOT, idx map[string]*model.Node, fs *findings) {
 		if t.Protocol == model.WG || t.Protocol == model.AWG {
 			for _, n := range []*model.Node{r.Initiator, r.Acceptor} {
 				switch {
-				case n.WGPublicKey == "":
+				case n.Server.WGPublicKey == "":
 					fs.add("§13.1 密钥", where,
 						"节点 %s 缺少 wg_public_key —— 它由节点本地生成并上报,"+
 							"bootstrap 之前拿不到(§13.1)", n.ID)
-				case !validWGKey(n.WGPublicKey):
+				case !validWGKey(n.Server.WGPublicKey):
 					fs.add("§13.1 密钥", where,
 						"节点 %s 的 wg_public_key 不是合法的 WireGuard 公钥"+
-							"(应为 44 字符 base64,解出 32 字节):%q", n.ID, n.WGPublicKey)
+							"(应为 44 字符 base64,解出 32 字节):%q", n.ID, n.Server.WGPublicKey)
 				}
 			}
 		}

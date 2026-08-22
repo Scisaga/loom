@@ -13,9 +13,9 @@ const topo = `
 defaults:
   components: {sing_box: 1.11.4, wireguard: 1.0.20250521, agent: 0.1.0}
 nodes:
-  - {id: cn-a, capabilities: [server], direction: bidirectional, public_endpoint: 1.1.1.1, inbound_port: 4433, egress_capable: true, wg_public_key: k1}
-  - {id: cn-b, capabilities: [server], direction: bidirectional, public_endpoint: 1.1.1.2, inbound_port: 4433, wg_public_key: k2}
-  - {id: sg-v, capabilities: [server], direction: reverse_only, public_endpoint: 1.1.1.3, inbound_port: 4433, egress_capable: true, wg_public_key: k3}
+  - {id: cn-a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
+  - {id: cn-b, public_endpoint: 1.1.1.2, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k2}}
+  - {id: sg-v, public_endpoint: 1.1.1.3, server: {direction: reverse_only, inbound_port: 4433, egress_capable: true, wg_public_key: k3}}
 `
 
 // TestRejectsService 覆盖 §19"校验器必须拒绝的矛盾配置"表里依赖等价类与
@@ -149,7 +149,7 @@ declarations:
 		{
 			name: "§7.2 Android 不应有 mixed_ports",
 			want: "只能走 TUN",
-			yaml: topo + `  - {id: p1, capabilities: [access], direction: bidirectional, platform: android, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}
+			yaml: topo + `  - {id: p1, access: {platform: android, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}}
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
 credentials:
@@ -158,7 +158,7 @@ credentials:
 		{
 			name: "§18 Android 多凭据无法按端口区分",
 			want: "无法按端口区分声明",
-			yaml: topo + `  - {id: p1, capabilities: [access], direction: bidirectional, platform: android, credentials: [cr1, cr2], default_declaration: d1}
+			yaml: topo + `  - {id: p1, access: {platform: android, credentials: [cr1, cr2], default_declaration: d1}}
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
 credentials:
@@ -168,7 +168,7 @@ credentials:
 		{
 			name: "§7.2 桌面多凭据必须声明 TUN 兜底走哪条",
 			want: "兜底流量走哪条声明是歧义的",
-			yaml: topo + `  - {id: p1, capabilities: [access], direction: bidirectional, platform: desktop, credentials: [cr1, cr2], mixed_ports: [{port: 1080, declaration: d1}]}
+			yaml: topo + `  - {id: p1, access: {platform: desktop, credentials: [cr1, cr2], mixed_ports: [{port: 1080, declaration: d1}]}}
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
   - {id: d2, address_axis: from_request, egress_axis: any, objective: latency, tuning_period: 10m}
@@ -179,7 +179,7 @@ credentials:
 		{
 			name: "§7.2 linux-server 没有 mixed 端口就接管不到流量",
 			want: "接管不到任何流量",
-			yaml: topo + `  - {id: p1, capabilities: [access], direction: bidirectional, platform: linux-server, credentials: [cr1]}
+			yaml: topo + `  - {id: p1, access: {platform: linux-server, credentials: [cr1]}}
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
 credentials:
@@ -188,7 +188,7 @@ credentials:
 		{
 			name: "§18 引用已吊销的凭据",
 			want: "已吊销",
-			yaml: topo + `  - {id: p1, capabilities: [access], direction: bidirectional, platform: linux-server, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}
+			yaml: topo + `  - {id: p1, access: {platform: linux-server, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}}
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
 credentials:
@@ -204,7 +204,7 @@ credentials:
 		{
 			name: "§7.3 端口绑定了不存在的声明",
 			want: "不存在的访问声明",
-			yaml: topo + `  - {id: p1, capabilities: [access], direction: bidirectional, platform: linux-server, credentials: [cr1], mixed_ports: [{port: 1080, declaration: ghost}]}
+			yaml: topo + `  - {id: p1, access: {platform: linux-server, credentials: [cr1], mixed_ports: [{port: 1080, declaration: ghost}]}}
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
 credentials:
@@ -213,7 +213,7 @@ credentials:
 		{
 			name: "§5.1 allowed_servers 里的节点不是服务器",
 			want: "不持有 server 能力",
-			yaml: topo + `  - {id: laptop, capabilities: [access], direction: bidirectional}
+			yaml: topo + `  - {id: laptop, access: {}}
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m, allowed_servers: [laptop]}`,
 		},
@@ -290,44 +290,12 @@ func TestDeployConfigOnlyMissingKeys(t *testing.T) {
 	}
 }
 
-// TestRejectsInertFields:字段与能力必须一一对应。
+// TestServerNeedsDirection:server 块存在但缺 direction 必须报错。
 //
-// 防的是**惰性字段** —— 写了不报错、也不影响任何产物。它比缺字段更糟:
-// 缺字段会被发现,写了不生效的字段会让人以为配置已经生效。
-func TestRejectsInertFields(t *testing.T) {
-	cases := []struct{ name, want, node string }{
-		{"接入节点写 direction", "只对服务器节点有意义",
-			`{id: n1, capabilities: [access], platform: linux-server, direction: bidirectional, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}`},
-		{"接入节点写 inbound_port", "只对服务器节点有意义",
-			`{id: n1, capabilities: [access], platform: linux-server, inbound_port: 61698, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}`},
-		{"接入节点写 egress_capable", "只对服务器节点有意义",
-			`{id: n1, capabilities: [access], platform: linux-server, egress_capable: true, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}`},
-		{"服务器写 platform", "只对接入节点有意义",
-			`{id: n1, capabilities: [server], direction: bidirectional, inbound_port: 61698, platform: android}`},
-		{"服务器写 mixed_ports", "只对接入节点有意义",
-			`{id: n1, capabilities: [server], direction: bidirectional, inbound_port: 61698, mixed_ports: [{port: 1080, declaration: d1}]}`},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			s, err := model.Load([]byte(topo + "  - " + tc.node + `
-declarations:
-  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
-credentials:
-  - {id: cr1, declaration: d1, secret_ref: v}`))
-			if err != nil {
-				t.Fatalf("加载失败:%v", err)
-			}
-			if got := Format(Validate(s)); !strings.Contains(got, tc.want) {
-				t.Errorf("发现里没有 %q:\n%s", tc.want, got)
-			}
-		})
-	}
-}
-
-// TestServerNeedsDirection:反过来,server 缺了 direction 必须报错 ——
-// 那是真正会影响产物的字段。
+// 惰性字段已由解码层挡住(见 model.TestLoadRejectsDerivedFields);
+// 这里管的是反方向 —— 真正会影响产物的字段不能缺。
 func TestServerNeedsDirection(t *testing.T) {
-	s, err := model.Load([]byte(topo + `  - {id: n1, capabilities: [server], inbound_port: 61698}`))
+	s, err := model.Load([]byte(topo + `  - {id: n1, server: {inbound_port: 61698}}`))
 	if err != nil {
 		t.Fatal(err)
 	}

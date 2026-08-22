@@ -32,7 +32,7 @@ func acceptorConf(t *model.ResolvedTunnel) string {
 	b.WriteString(header)
 	fmt.Fprintf(&b, "# 隧道 %s ← %s(%s),本端为接受方\n", t.Acceptor.ID, t.Initiator.ID, t.Protocol)
 	fmt.Fprintf(&b, "# 发起方由两端 direction 推导:%s=%s, %s=%s(§2.2)\n\n",
-		t.Initiator.ID, t.Initiator.Direction, t.Acceptor.ID, t.Acceptor.Direction)
+		t.Initiator.ID, t.Initiator.Server.Direction, t.Acceptor.ID, t.Acceptor.Server.Direction)
 
 	b.WriteString("[Interface]\n")
 	fmt.Fprintf(&b, "Address = %s\n", t.AcceptorAddr)
@@ -42,7 +42,7 @@ func acceptorConf(t *model.ResolvedTunnel) string {
 
 	b.WriteString("\n[Peer]\n")
 	fmt.Fprintf(&b, "# %s\n", t.Initiator.ID)
-	fmt.Fprintf(&b, "PublicKey = %s\n", t.Initiator.WGPublicKey)
+	fmt.Fprintf(&b, "PublicKey = %s\n", t.Initiator.Server.WGPublicKey)
 	fmt.Fprintf(&b, "AllowedIPs = %s\n", t.InitiatorAddr)
 	// 接受方不写 Endpoint:对端可能是 reverse_only,主动拨号会违反其方向约束。
 	return b.String()
@@ -54,7 +54,7 @@ func initiatorConf(t *model.ResolvedTunnel) string {
 	b.WriteString(header)
 	fmt.Fprintf(&b, "# 隧道 %s → %s(%s),本端为发起方\n", t.Initiator.ID, t.Acceptor.ID, t.Protocol)
 	fmt.Fprintf(&b, "# 发起方由两端 direction 推导:%s=%s, %s=%s(§2.2)\n\n",
-		t.Initiator.ID, t.Initiator.Direction, t.Acceptor.ID, t.Acceptor.Direction)
+		t.Initiator.ID, t.Initiator.Server.Direction, t.Acceptor.ID, t.Acceptor.Server.Direction)
 
 	b.WriteString("[Interface]\n")
 	fmt.Fprintf(&b, "Address = %s\n", t.InitiatorAddr)
@@ -62,7 +62,7 @@ func initiatorConf(t *model.ResolvedTunnel) string {
 
 	b.WriteString("\n[Peer]\n")
 	fmt.Fprintf(&b, "# %s\n", t.Acceptor.ID)
-	fmt.Fprintf(&b, "PublicKey = %s\n", t.Acceptor.WGPublicKey)
+	fmt.Fprintf(&b, "PublicKey = %s\n", t.Acceptor.Server.WGPublicKey)
 	fmt.Fprintf(&b, "AllowedIPs = %s\n", t.AcceptorAddr)
 	fmt.Fprintf(&b, "Endpoint = %s:%d\n", t.Acceptor.PublicEndpoint, t.ListenPort)
 	// PersistentKeepalive 由发起方维持。对 reverse_only 这是隧道存活的

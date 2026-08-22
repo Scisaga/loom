@@ -57,7 +57,10 @@ func Resolve(t *Tunnel, idx map[string]*Node) (*ResolvedTunnel, error) {
 		return nil, fmt.Errorf("隧道 %s:to 引用了不存在的节点 %q", t.Pair(), t.To)
 	}
 
-	fromInitiates, err := ResolveInitiator(from.ID, from.Direction, to.ID, to.Direction)
+	if !from.IsServer() || !to.IsServer() {
+		return nil, fmt.Errorf("隧道 %s:两端都必须是服务器节点(有 server 块)", t.Pair())
+	}
+	fromInitiates, err := ResolveInitiator(from.ID, from.Server.Direction, to.ID, to.Server.Direction)
 	if err != nil {
 		return nil, err
 	}

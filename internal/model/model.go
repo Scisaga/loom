@@ -3,21 +3,18 @@
 // 命名遵循 design.md 附录 B:项目名不向下渗透,内部一律用通用词。
 package model
 
-// Capability 是节点能力。能力是集合而非枚举 —— 笔记本既可以是接入节点,
-// 也可以给同网段另一台设备当服务器(§1.3)。
+// 节点能力由**哪个角色块存在**推导,不是一个单独的 capabilities 列表。
+//
+// 两者本是同一个事实的两次编码:写了 capabilities: [server] 却不给 server
+// 块(或反过来)就是自相矛盾,而那正是 D4 说的"推导值不进结构体"要消灭的
+// 东西。改成角色块之后,把 direction 写在接入节点上**根本无处可写** ——
+// 不是被校验拒绝,是不可表达。
+//
+// 能力仍然是集合(§1.3):一台机器可以同时有 access 与 server 两个块,
+// 比如笔记本自己上网、同时给同网段另一台设备当出口。
 //
 // 这里**没有 target**。目标不是节点(§1),出口是路径上的位置而非节点类型
 // (§1.1)—— 链上最后一台服务器就是这次的出口。
-type Capability string
-
-const (
-	// Access 是你的设备:接管本机流量,按调度结果送出。
-	Access Capability = "access"
-	// Server 是你的机器:转发流量;排在链末尾时负责出公网。
-	Server Capability = "server"
-)
-
-func (c Capability) Valid() bool { return c == Access || c == Server }
 
 // Protocol 是隧道协议。协议按跳选择,不做全局统一(§6)。
 type Protocol string
@@ -41,54 +38,18 @@ func (p Protocol) Valid() bool {
 
 // Node 是 Loom 管的一台机器。目标地址不在这里 —— 它不是节点(§1、§9)。
 //
-// 没有 mesh_eligible,也没有任何"隧道发起方"字段:它们由 direction 推导
-// (§2.2)。SSOT 以 KnownFields 严格解码,在 YAML 里手工写出这些键会直接
-// 报错 —— 这是 §19"校验器应拒绝矛盾值"的第一道闸。
+// 角色字段分在 Server / Access 两个块里。哪个块存在,就持有哪种能力;
+// 两个都有也合法(§1.3)。这样"把 direction 写在接入节点上"这件事在
+// schema 层面就不成立。
 type Node struct {
-	ID           string       `yaml:"id"`
-	Name         string       `yaml:"name,omitempty"`
-	City         string       `yaml:"city,omitempty"`
-	Provider     string       `yaml:"provider,omitempty"`
-	Capabilities []Capability `yaml:"capabilities"`
+	ID       string `yaml:"id"`
+	Name     string `yaml:"name,omitempty"`
+	City     string `yaml:"city,omitempty"`
+	Provider string `yaml:"provider,omitempty"`
 
-	// Direction 约束这个节点在**隧道**里能扮演什么角色(§2.1)。
-	//
-	// 它只对参与隧道的节点有意义 —— 纯接入节点不建隧道,它经 Hysteria2
-	// 拨出去,没有"能不能被连接"这回事。所以这里可以为空,而校验器要求
-	// 它与 server 能力**同时出现或同时不出现**:一个写了却不生效的字段,
-	// 比没有这个字段更糟。
-	Direction Direction `yaml:"direction,omitempty"`
-
-	// PublicEndpoint 是入站可达的主机名或 IP,不含端口。
+	// PublicEndpoint 是这台机器对外的主机名或 IP,不含端口。
+	// 服务器用它接受上游连接;接入节点通常只用于 SSH 与排障标注。
 	PublicEndpoint string `yaml:"public_endpoint,omitempty"`
-
-	// InboundPort 是接受上游连接的端口(§8.1)。上游可能是接入节点,
-	// 也可能是链上的前一台服务器。
-	InboundPort int `yaml:"inbound_port,omitempty"`
-
-	// InboundProtocol 是这个 inbound 说什么协议。
-	//
-	// §6 说"协议按跳选择,不做全局统一"。这里是那条原则在接入侧的落点:
-	// **决定因素是上游的网络放行什么,不是想伪装成什么。** 实测发现有的
-	// 客户端网络只放行 TCP(企业网常见的封 QUIC 策略),那条链路上
-	// Hysteria2 与 WireGuard 都用不了 —— 两者都是 UDP。
-	//
-	// 留空按 Hysteria2 处理。
-	InboundProtocol InboundProtocol `yaml:"inbound_protocol,omitempty"`
-
-	// EgressCapable 表示这台机器能否作为出口出公网(ip_forward + MASQUERADE)。
-	// 它不是一种节点类型 —— 同一台机器这次是出口,下次可能只是中间一跳(§1.1)。
-	EgressCapable bool `yaml:"egress_capable,omitempty"`
-
-	// WGPublicKey 由节点上报。平台永不持有私钥(§13.1)。
-	WGPublicKey string `yaml:"wg_public_key,omitempty"`
-
-	// SecretGeneration 是本机秘密层的代次,由节点上报。
-	//
-	// 快照只记这个数字和公钥,不含私钥本身(§12.1)。它的用途是让回滚
-	// 知道"当时那一版配置配的是哪一代密钥" —— 但回滚**不回滚秘密层**,
-	// 代次对不上时应当告警而不是悄悄换密钥。
-	SecretGeneration int `yaml:"secret_generation,omitempty"`
 
 	// SSHPort 是 bootstrap 阶段用的 SSH 端口(§14.1)。留空按 22。
 	SSHPort int `yaml:"ssh_port,omitempty"`
@@ -96,19 +57,48 @@ type Node struct {
 	// Components 是这台机器上该跑哪些版本。为空则用 SSOT 的全局默认。
 	Components *ComponentVersions `yaml:"components,omitempty"`
 
-	// ---- 以下只对持有 access 能力的节点有意义(§7)----
-	//
-	// 这些字段原本在一个独立的 ClientProfile 实体里。那与 §1"只有两类节点"
-	// 矛盾:接入节点本来就是节点,不该另起一张表。合并后也不再需要
-	// "档案 id 不能与节点 id 重名"那条为规避目录冲突而发明的规则。
+	Server *ServerRole `yaml:"server,omitempty"`
+	Access *AccessRole `yaml:"access,omitempty"`
+}
 
-	Platform    Platform    `yaml:"platform,omitempty"`
-	Credentials []string    `yaml:"credentials,omitempty"`
+// ServerRole 是"这台机器转发流量"这件事需要的全部字段(§8)。
+type ServerRole struct {
+	// Direction 约束这个节点在隧道里能扮演什么角色(§2.1)。
+	Direction Direction `yaml:"direction"`
+
+	// InboundPort 是接受上游连接的端口(§8.1)。上游可能是接入节点,
+	// 也可能是链上的前一台服务器。
+	InboundPort int `yaml:"inbound_port"`
+
+	// InboundProtocol 决定这个 inbound 说什么协议(§6.2.1)。
+	// 留空按 Hysteria2 处理。
+	InboundProtocol InboundProtocol `yaml:"inbound_protocol,omitempty"`
+
+	// EgressCapable 表示这台机器能否作为出口出公网。
+	// 它不是一种节点类型 —— 同一台机器这次是出口,下次可能只是中间一跳(§1.1)。
+	EgressCapable bool `yaml:"egress_capable,omitempty"`
+
+	// WGPublicKey 由节点上报。平台永不持有私钥(§13.1)。
+	WGPublicKey string `yaml:"wg_public_key,omitempty"`
+
+	// SecretGeneration 是本机秘密层的代次,由节点上报。
+	// 快照只记这个数字和公钥,不含私钥本身(§12.1)。
+	SecretGeneration int `yaml:"secret_generation,omitempty"`
+}
+
+// AccessRole 是"这台机器接管本机流量"这件事需要的全部字段(§7)。
+type AccessRole struct {
+	Platform    Platform    `yaml:"platform"`
+	Credentials []string    `yaml:"credentials"`
 	MixedPorts  []MixedPort `yaml:"mixed_ports,omitempty"`
 
 	// DefaultDeclaration 是 TUN 兜底流量走的声明(§7.2)。
 	DefaultDeclaration string `yaml:"default_declaration,omitempty"`
 }
+
+// IsServer / IsAccess 就是"能力"本身 —— 由块是否存在推导。
+func (n *Node) IsServer() bool { return n.Server != nil }
+func (n *Node) IsAccess() bool { return n.Access != nil }
 
 // ComponentVersions 是节点上各组件的版本(§15.4)。
 //
@@ -120,6 +110,11 @@ type ComponentVersions struct {
 	WireGuard string `yaml:"wireguard,omitempty"`
 	Tailscale string `yaml:"tailscale,omitempty"`
 	Agent     string `yaml:"agent,omitempty"`
+}
+
+// SSOTDefaults 是全网默认值,目前只有组件版本。
+type SSOTDefaults struct {
+	Components *ComponentVersions `yaml:"components,omitempty"`
 }
 
 // VersionsFor 返回某个节点最终生效的组件版本:节点覆盖优先,否则用全局默认。
@@ -144,38 +139,25 @@ func (s *SSOT) VersionsFor(n *Node) ComponentVersions {
 	return v
 }
 
-// Defaults 是全网默认值,目前只有组件版本。
-type SSOTDefaults struct {
-	Components *ComponentVersions `yaml:"components,omitempty"`
-}
-
-func (n *Node) Has(c Capability) bool {
-	for _, x := range n.Capabilities {
-		if x == c {
-			return true
-		}
-	}
-	return false
-}
-
 // TunnelCapable 报告这个节点是否参与隧道矩阵。
 //
 // direction 约束"能不能被连接",只对参与隧道的节点有意义。纯接入节点不建
 // 隧道 —— 它经 Hysteria2 拨出去。
-func (n *Node) TunnelCapable() bool { return n.Has(Server) }
+func (n *Node) TunnelCapable() bool { return n.IsServer() }
 
 // MeshEligible 由 direction 推导,不是独立配置项(§2.2)。
 //
 // 能进 mesh 的服务器由 Headscale 自动分发密钥与 peer,**一份隧道配置都不
 // 渲染**(§6.3、§8.3)。这条推导直接决定隧道矩阵有多大。
-func (n *Node) MeshEligible() bool { return n.Direction != ReverseOnly }
+func (n *Node) MeshEligible() bool { return n.IsServer() && n.Server.Direction != ReverseOnly }
 
 // DialableFromAccess 报告接入节点能否直接拨这台服务器。
 //
 // reverse_only 的服务器拨不到 —— 它只能自己连出来。因此它**永远不能是链上
 // 第一跳**,必须由前一跳经反连隧道把流量推给它(§2.2)。
 func (n *Node) DialableFromAccess() bool {
-	return n.Direction != ReverseOnly && n.PublicEndpoint != "" && n.InboundPort > 0
+	return n.IsServer() && n.Server.Direction != ReverseOnly &&
+		n.PublicEndpoint != "" && n.Server.InboundPort > 0
 }
 
 // 隧道端口的保留范围。
@@ -261,7 +243,7 @@ type SSOT struct {
 func (s *SSOT) AccessNodes() []*Node {
 	var out []*Node
 	for i := range s.Nodes {
-		if s.Nodes[i].Has(Access) {
+		if s.Nodes[i].IsAccess() {
 			out = append(out, &s.Nodes[i])
 		}
 	}

@@ -20,90 +20,90 @@ nodes:
   #      它们之间不需要任何隧道条目 —— Headscale 自动分发密钥。
   - id: cn-bj
     city: 北京
-    capabilities: [server]
-    direction: bidirectional
     public_endpoint: 203.0.113.10
-    inbound_port: 443
-    egress_capable: true
-    wg_public_key: Y24tYmotdGVzdC1rZXkAAAAAAAAAAAAAAAAAAAAAAAA=
-    secret_generation: 3
     components:
       sing_box: 1.11.5      # 这台先行验证新版(§15.4 分批推进)
+    server:
+      direction: bidirectional
+      inbound_port: 443
+      egress_capable: true
+      wg_public_key: Y24tYmotdGVzdC1rZXkAAAAAAAAAAAAAAAAAAAAAAAA=
+      secret_generation: 3
 
   - id: cn-sh
     city: 上海
-    capabilities: [server]
-    direction: bidirectional
     public_endpoint: 203.0.113.11
-    inbound_port: 443
-    egress_capable: true
-    wg_public_key: Y24tc2gtdGVzdC1rZXkAAAAAAAAAAAAAAAAAAAAAAAA=
+    server:
+      direction: bidirectional
+      inbound_port: 443
+      egress_capable: true
+      wg_public_key: Y24tc2gtdGVzdC1rZXkAAAAAAAAAAAAAAAAAAAAAAAA=
 
   - id: cn-gz
     city: 广州
-    capabilities: [server]
-    direction: bidirectional
     public_endpoint: 203.0.113.12
-    inbound_port: 443
-    egress_capable: true
-    wg_public_key: Y24tZ3otdGVzdC1rZXkAAAAAAAAAAAAAAAAAAAAAAAA=
+    server:
+      direction: bidirectional
+      inbound_port: 443
+      egress_capable: true
+      wg_public_key: Y24tZ3otdGVzdC1rZXkAAAAAAAAAAAAAAAAAAAAAAAA=
 
   - id: cn-cd
     city: 成都
-    capabilities: [server]
-    direction: bidirectional
     public_endpoint: 203.0.113.13
-    inbound_port: 443
-    egress_capable: true
-    wg_public_key: Y24tY2QtdGVzdC1rZXkAAAAAAAAAAAAAAAAAAAAAAAA=
+    server:
+      direction: bidirectional
+      inbound_port: 443
+      egress_capable: true
+      wg_public_key: Y24tY2QtdGVzdC1rZXkAAAAAAAAAAAAAAAAAAAAAAAA=
 
   # ---- 境外 VPS。被主动拨号会提高被封概率,所以只能它主动连出来。----
   #      进不了 mesh(§2.2),因此需要手工建隧道矩阵(§6.3)。
   #      它也拨不到,所以永远不能是链上第一跳 —— 只能由国内云机推给它。
   - id: sg-vps
     city: 新加坡
-    capabilities: [server]
-    direction: reverse_only
     public_endpoint: 198.51.100.20
-    inbound_port: 443
-    egress_capable: true
-    wg_public_key: c2ctdnBzLXRlc3Qta2V5AAAAAAAAAAAAAAAAAAAAAAA=
+    server:
+      direction: reverse_only
+      inbound_port: 443
+      egress_capable: true
+      wg_public_key: c2ctdnBzLXRlc3Qta2V5AAAAAAAAAAAAAAAAAAAAAAA=
 
   - id: jp-vps
     city: 东京
-    capabilities: [server]
-    direction: reverse_only
     public_endpoint: 198.51.100.21
-    inbound_port: 443
-    egress_capable: true
-    wg_public_key: anAtdnBzLXRlc3Qta2V5AAAAAAAAAAAAAAAAAAAAAAA=
+    server:
+      direction: reverse_only
+      inbound_port: 443
+      egress_capable: true
+      wg_public_key: anAtdnBzLXRlc3Qta2V5AAAAAAAAAAAAAAAAAAAAAAA=
 
   # ---- 接入节点。它们是节点,不是另起一张表的"客户端档案"(§1)。----
   - id: phone
     name: Pixel
-    capabilities: [access]
-    platform: android          # 绝大多数 App 不能单独设代理,只能走 TUN(§7.2)
-    credentials: [cred-phone]
+    access:
+      platform: android          # 绝大多数 App 不能单独设代理,只能走 TUN(§7.2)
+      credentials: [cred-phone]
 
   - id: workstation
     name: 开发机
-    capabilities: [access]
-    platform: desktop          # TUN 兜底 + mixed 精确控制
-    credentials: [cred-ws-sg, cred-ws-eg, cred-ws-llm, cred-ws-3p]
-    default_declaration: best-egress
-    mixed_ports:
-      - {port: 1080, declaration: sg-fixed}
-      - {port: 1081, declaration: best-egress}
-      - {port: 1082, declaration: llm-ttft}
-      - {port: 1083, declaration: llm-3p}
+    access:
+      platform: desktop          # TUN 兜底 + mixed 精确控制
+      credentials: [cred-ws-sg, cred-ws-eg, cred-ws-llm, cred-ws-3p]
+      default_declaration: best-egress
+      mixed_ports:
+        - {port: 1080, declaration: sg-fixed}
+        - {port: 1081, declaration: best-egress}
+        - {port: 1082, declaration: llm-ttft}
+        - {port: 1083, declaration: llm-3p}
 
   - id: ci-runner
     name: CI 构建机
-    capabilities: [access]
-    platform: linux-server     # 只用 mixed,不开 TUN(§7.2)
-    credentials: [cred-ci]
-    mixed_ports:
-      - {port: 1080, declaration: best-egress}
+    access:
+      platform: linux-server     # 只用 mixed,不开 TUN(§7.2)
+      credentials: [cred-ci]
+      mixed_ports:
+        - {port: 1080, declaration: best-egress}
 
 # 隧道只覆盖 reverse_only 的服务器(§6.3、D13)。
 # 国内云机之间一条都没有 —— 那是 Headscale 的活。

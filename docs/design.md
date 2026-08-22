@@ -115,7 +115,22 @@ Loom 管两种机器,再加上一类它**根本不管**的东西:
 
 笔记本既是 `access`,也可以是 `server`(给同网段另一台设备当出口)。
 
-> `capabilities` 是集合类型。写成单选枚举会立刻丢掉这个场景。
+**能力由角色块推导,不是一个单独的列表:**
+
+```yaml
+- id: cn-a
+  server: {direction: bidirectional, inbound_port: 61698}   # 只是服务器
+
+- id: laptop
+  access: {platform: desktop, credentials: [...]}           # 两者都是
+  server: {direction: bidirectional, inbound_port: 61698}
+```
+
+> **为什么不写成 `capabilities: [access, server]`。** 那与角色块是同一事实的
+> 两次编码,两边能对不上。更要紧的是:字段扁平放时,把 `direction` 写在纯
+> 接入节点上不报错也不生效 —— 而**能写入却不生效的配置比缺配置更糟**,
+> 缺配置会被发现,惰性配置会让人以为已经生效。分块之后它在 schema 层面
+> 就不成立(§12 的严格解码在加载阶段即拒绝)。
 
 ### 1.4 目标地址带服务类型标签
 
@@ -1136,16 +1151,27 @@ userspace 实现(基于 wireguard-go)**有明显 CPU 开销**,服务器规格需
 ```
 Node                           # §1 —— Loom 管的机器。目标地址不在这里
   id, name, city, provider
-  capabilities[]               # {access, server} 的任意子集(§1.3)
-                               # 没有 target —— 出口是位置不是类型(§1.1)
-  direction                    # bidirectional | reverse_only | direct_only(§2)
-  public_endpoint?, nat_type, arch, os
-  inbound_port?                # 接受上游连接的端口(§8.1)
-  egress_capable               # 能否作为出口出公网(ip_forward + MASQUERADE)
-  wg_public_key                # 节点上报,平台不持有私钥
-  mesh_eligible                # 由 direction 推导,非独立配置(§2.2)
-                               # 为 true 则不产生隧道矩阵条目(§6.3)
+  public_endpoint?, ssh_port?, nat_type, arch, os
+  components?                  # 组件版本,缺省取全局默认(§15.4)
   agent_last_seen, agent_version, status
+
+  server?                      # 这个块存在 = 持有 server 能力(§1.3)
+    direction                  # bidirectional | reverse_only | direct_only(§2)
+    inbound_port               # 接受上游连接的端口(§8.1)
+    inbound_protocol?          # hysteria2 | trojan(§6.2.1)
+    egress_capable             # 能否作为出口出公网
+    wg_public_key              # 节点上报,平台不持有私钥
+    secret_generation          # 秘密层代次,只记代次不记私钥(§12.1)
+
+  access?                      # 这个块存在 = 持有 access 能力(§1.3)
+    platform                   # android | desktop | linux-server(§7.2)
+    credentials[]              # §8.2
+    mixed_ports[]              # 端口 → 访问声明 映射(§7.3)
+    default_declaration?       # TUN 兜底走哪条(§7.2)
+
+  # 没有 capabilities 字段 —— 由哪个块存在推导。
+  # 没有 target 能力 —— 出口是位置不是类型(§1.1)。
+  # 没有 mesh_eligible —— 由 direction 推导(§2.2)。
 
 ServiceAddress                 # §9 —— 目标地址。不是节点,不参与渲染
   address                      # 如 https://llm-hz.internal/v1
@@ -1231,13 +1257,6 @@ Credential                     # §8.2 —— 接入凭据
   issued_at, expires_at, revoked_at
                                # 出口凭据是另一类东西,见 ServiceAddress(§9.3)
 
-ClientProfile                  # §18
-  id, device_name, platform(android|desktop|linux-server)
-  credentials[]
-  mixed_ports[]                # 端口 → 访问声明 映射(§7.3)
-  default_declaration?         # TUN 兜底走哪条声明(§7.2)
-  uses_tun                     # 由 platform 推导,非独立配置(§7.2)
-
 Snapshot                       # 不可变版本
   id, created_at, author, ssot_hash, signature
   rendered_bundles{owner: bundle_hash}          # 只含渲染层,不含秘密层
@@ -1265,7 +1284,8 @@ Snapshot                       # 不可变版本
 |---|---|
 | 两端 `direction` 组合非法(rev↔rev、dir↔dir) | §2.2 |
 | 节点同时持有 `server` 能力与 `reverse_only` 却被要求接受接入连接 | §2.2、§8.1 |
-| 手工指定 `mesh_eligible` / `Tunnel.initiator` / `uses_tun` | §2.2、§7.2 |
+| 手工指定 `mesh_eligible` / `Tunnel.initiator` / `uses_tun` / `capabilities` | §2.2、§7.2、§1.3 |
+| 把角色字段写进错误的块(如 `access: {direction: …}`) | §1.3,严格解码在加载阶段即拒绝 |
 | **`mesh_eligible = true` 的服务器出现在 `Tunnel` 里** | §6.3,该交给 Headscale |
 | **把目标地址写成 `Node`** | §1,目标不是节点 |
 | `carrier: l4_direct` 但成员 `access_contract` 不同构 | §4.4 |

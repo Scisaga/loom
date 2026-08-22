@@ -38,7 +38,7 @@ WantedBy=multi-user.target
 // 比靠 Restart 兜底干净。
 func renderSingBoxUnit(s *model.SSOT, n *model.Node) File {
 	var after, hardening string
-	if n.Has(model.Server) {
+	if n.IsServer() {
 		var units string
 		for i := range s.Tunnels {
 			t := &s.Tunnels[i]
@@ -64,7 +64,7 @@ func renderSingBoxUnit(s *model.SSOT, n *model.Node) File {
 	}
 
 	role := "接入节点"
-	if n.Has(model.Server) {
+	if n.IsServer() {
 		role = "服务器节点"
 	}
 	return File{
