@@ -1,6 +1,10 @@
 /out/
 /dist/
 .ssh_config
+# 证书私钥 —— 绝不进版本库
+*.zip
+*.key
+*.pem
 # 真实部署与运维状态只保存在本机
 /deploy/
 /docs/status.md
