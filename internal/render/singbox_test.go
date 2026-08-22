@@ -25,6 +25,7 @@ type conf struct {
 		ListenPort int    `json:"listen_port"`
 		Users      []struct {
 			Name     string `json:"name"`
+			Username string `json:"username"`
 			Password string `json:"password"`
 		} `json:"users"`
 	} `json:"inbounds"`
@@ -138,9 +139,15 @@ func TestSingBoxReferentialIntegrity(t *testing.T) {
 func TestSingBoxSecretsArePlaceholders(t *testing.T) {
 	s, cfgs := configs(t)
 
+	// 渲染层会引用三类秘密:接入凭据、控制端点口令、探测入口口令。
+	// 前者来自 SSOT,后两者按节点派生 —— 它们不是凭据,不该混进 Credentials。
 	refs := map[string]bool{}
 	for i := range s.Credentials {
 		refs[s.Credentials[i].SecretRef] = true
+	}
+	for _, n := range s.AccessNodes() {
+		refs["api/"+n.ID] = true
+		refs["probe/"+n.ID] = true
 	}
 
 	for owner, c := range cfgs {
@@ -466,6 +473,77 @@ func TestDNSHasEscapeFromBlock(t *testing.T) {
 			}
 			if !tags[srv.Detour] {
 				t.Errorf("%s 的 DNS detour %q 指向不存在的出站", owner, srv.Detour)
+			}
+		}
+	}
+}
+
+// TestProbeInboundRoutesEachCandidate:探测入口必须能精确打到每条候选。
+//
+// sing-box 自带的 delay 接口忽略传入的 url,所有候选都对同一个内置目标测 ——
+// 后果不是数字不准,是**排序被颠倒**:实测它把 direct 排第一(128ms),
+// 而用真实目标探测时 direct 根本不通(超时 10 秒)。
+//
+// 所以渲染一个探测入口:一个回环端口,用户名区分候选,规则把每个用户名
+// 打到同名出站。
+func TestProbeInboundRoutesEachCandidate(t *testing.T) {
+	s, cfgs := configs(t)
+	for _, n := range s.AccessNodes() {
+		c := cfgs[n.ID]
+		if c == nil {
+			continue
+		}
+		pi := -1
+		for i := range c.Inbounds {
+			if c.Inbounds[i].Tag == "probe-in" {
+				pi = i
+			}
+		}
+		if pi < 0 {
+			t.Errorf("接入节点 %s 没有探测入口 —— 无法按候选测量", n.ID)
+			continue
+		}
+		// 必须只监听回环:它按设计绕过访问控制,是测量工具不是数据通路。
+		if c.Inbounds[pi].Listen != "127.0.0.1" {
+			t.Errorf("%s 的探测入口监听在 %s,必须是回环", n.ID, c.Inbounds[pi].Listen)
+		}
+		// mixed 入站的用户字段是 username,不是 name。用错会让 sing-box
+		// 启动即 FATAL: unknown field "name"。
+		for _, u := range c.Inbounds[pi].Users {
+			if u.Username == "" {
+				t.Errorf("%s 探测入口的用户用了 name 而非 username —— sing-box 会拒绝启动", n.ID)
+				break
+			}
+			if strings.Contains(u.Username, ":") {
+				t.Errorf("%s 探测用户名 %q 含冒号 —— SOCKS5 客户端会在第一个冒号处切分",
+					n.ID, u.Username)
+			}
+		}
+
+		// 每条候选都要有一条把它接出去的规则。
+		outs := map[string]bool{}
+		for _, o := range c.Outbounds {
+			outs[o.Tag] = true
+		}
+		users := map[string]bool{}
+		for _, u := range c.Inbounds[pi].Users {
+			users[u.Username] = true
+		}
+		routed := map[string]bool{}
+		for _, r := range c.Route.Rules {
+			if len(r.Inbound) == 1 && r.Inbound[0] == "probe-in" && len(r.AuthUser) == 1 {
+				if !users[r.AuthUser[0]] {
+					t.Errorf("%s 探测规则引用了不存在的用户 %q", n.ID, r.AuthUser[0])
+				}
+				if !outs[r.Outbound] {
+					t.Errorf("%s 探测规则指向不存在的出站 %q", n.ID, r.Outbound)
+				}
+				routed[r.AuthUser[0]] = true
+			}
+		}
+		for u := range users {
+			if !routed[u] {
+				t.Errorf("%s 探测用户 %q 没有对应的路由规则 —— 它的流量会落到 final:block", n.ID, u)
 			}
 		}
 	}

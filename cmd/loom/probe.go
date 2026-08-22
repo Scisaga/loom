@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
@@ -21,19 +20,20 @@ import (
 // 且比合成探测更准确。**主动探测只覆盖没有真实流量的候选,必须限频、限额。**
 // 现在还没有被动观测(那需要 Agent 在数据路径上统计),所以先用主动的。
 //
-// **它测的是路径质量,不是服务质量。**
+// 探测走**渲染出的探测入口**(§7.3.1 的 probe-in):一个回环端口,用户名
+// 区分候选,路由规则把每个用户名打到同名的候选出站上。
 //
-// 目标是 sing-box 内置的一个中立端点,对所有候选都一样 —— 所以候选之间的
-// **相对排序**有效,而这正是服务器轴需要的(§4)。
+// **为什么不用 sing-box 自带的 delay 接口:它忽略传入的 url 参数。** 后果不是
+// 数字不准,是排序被颠倒 —— 实测同一批候选,delay 接口把 direct 排第一
+// (128ms),而用真实目标探测时 direct 根本不通(超时 10 秒)。
 //
-// 它说不了任何关于**地址轴**的事:比较等价类里几个服务地址的好坏,要看
-// TTFT、tokens/s、响应结构,而那些只能从 L7 观测点拿(§16.2)。
+// 它测的仍是 L4 可得的量(建连 + 首字节),不是 TTFT:应用层指标要 L7
+// 观测点(§16.2)。记录里如实标 observation_point=l4_tunnel。
 
 func cmdProbe(args []string) error {
 	fs := flag.NewFlagSet("probe", flag.ExitOnError)
-	api := fs.String("api", "http://"+render.APIListen, "接入节点的 sing-box 控制端点")
-	secret := fs.String("secret", "", "控制端点口令(或用 -secrets 从秘密文件取)")
-	secretsFile := fs.String("secrets", "", "秘密文件,取 api/<node> 这一项")
+	probeAddr := fs.String("probe", render.ProbeListen, "接入节点的探测入口")
+	secretsFile := fs.String("secrets", "", "秘密文件,取 probe/<node> 这一项")
 	node := fs.String("node", "", "接入节点 id(用于给记录打标,并从秘密文件取口令)")
 	out := fs.String("o", "measurements.jsonl", "度量输出文件(追加)")
 	rounds := fs.Int("rounds", 1, "每条候选探测几轮")
@@ -65,23 +65,23 @@ func cmdProbe(args []string) error {
 		return fmt.Errorf("SSOT 里没有叫 %q 的接入节点", *node)
 	}
 
-	sec := *secret
-	if sec == "" && *secretsFile != "" {
-		m, err := readSecrets(*secretsFile)
-		if err != nil {
-			return err
-		}
-		sec = m["api/"+*node]
+	if *secretsFile == "" {
+		return fmt.Errorf("需要 -secrets 指向含 probe/%s 的秘密文件", *node)
 	}
+	secrets, err := readSecrets(*secretsFile)
+	if err != nil {
+		return err
+	}
+	sec := secrets["probe/"+*node]
 	if sec == "" {
-		return fmt.Errorf("需要控制端点口令:用 -secret,或 -secrets 指向含 api/%s 的秘密文件", *node)
+		return fmt.Errorf("秘密文件里没有 probe/%s", *node)
 	}
 
 	// 枚举这个接入节点上的全部候选。探测的单位与调度的单位必须一致 ——
 	// 否则测的东西和选的东西对不上(§5.6)。
 	decls := s.DeclarationByID()
 	creds := s.CredentialByID()
-	type item struct{ decl, cand string }
+	type item struct{ decl, cand, url string }
 	var items []item
 	seen := map[string]bool{}
 	for _, cid := range accessNode.Access.Credentials {
@@ -98,7 +98,9 @@ func cmdProbe(args []string) error {
 			tag := cands[i].Tag()
 			if !seen[tag] {
 				seen[tag] = true
-				items = append(items, item{d.ID, tag})
+				// 每条声明用自己的探测目标 —— 目标的可达性profile不同,
+				// 排序结果会完全不同。
+				items = append(items, item{d.ID, tag, d.ProbeURL})
 			}
 		}
 	}
@@ -111,7 +113,6 @@ func cmdProbe(args []string) error {
 			*budget, len(items), *rounds, want, *budget)
 	}
 
-	client := &http.Client{Timeout: time.Duration(*timeoutMs+2000) * time.Millisecond}
 	var got []measure.Measurement
 	sent := 0
 
@@ -121,7 +122,7 @@ func cmdProbe(args []string) error {
 				break
 			}
 			sent++
-			ms, perr := probeOne(client, *api, sec, it.cand, *timeoutMs)
+			ms, perr := probeOne(*probeAddr, sec, it.cand, it.url, *timeoutMs)
 			m := measure.Measurement{
 				// 时间由调用方注入,与渲染/打包保持同一个原则(D14)。
 				TS:   time.Now().UTC().Format(time.RFC3339),
@@ -156,39 +157,41 @@ func cmdProbe(args []string) error {
 	return nil
 }
 
-// probeOne 问控制端点要一条候选的延迟。
+// probeOne 经探测入口打一条候选,返回首字节时间。
 //
-// 这个接口**不改变 selector 的当前选择**,所以可以在真实流量跑着的时候
-// 逐条测 —— 否则每测一条就要切一次,既慢又会打断连接。
-func probeOne(c *http.Client, api, secret, cand string, timeoutMs int) (int, error) {
-	// **不传 url 参数。** sing-box 1.11.4 的 delay 接口忽略它 —— 实测传
-	// neverbefore.example.org,它照样去连自己的默认目标 www.gstatic.com。
-	// 传一个不生效的参数,只会让人以为测的是自己指定的东西。
-	u := fmt.Sprintf("%s/proxies/%s/delay?timeout=%d", api, url.PathEscape(cand), timeoutMs)
-	req, err := http.NewRequest(http.MethodGet, u, nil)
-	if err != nil {
-		return 0, err
+// 用 HTTP 代理而不是 SOCKS5:mixed 入站两种都说,而 HTTP 代理的凭据由
+// Go 标准库处理,不必引第三方依赖。域名在代理端解析(§7.4 的 socks5h 同理),
+// 所以测到的是**这条候选到目标的真实可达性**,不是本机的。
+func probeOne(probeAddr, secret, cand, target string, timeoutMs int) (int, error) {
+	pu := &url.URL{
+		Scheme: "http",
+		User:   url.UserPassword(render.ProbeUser(cand), secret),
+		Host:   probeAddr,
 	}
-	req.Header.Set("Authorization", "Bearer "+secret)
+	c := &http.Client{
+		Transport: &http.Transport{
+			Proxy:               http.ProxyURL(pu),
+			DisableKeepAlives:   true,
+			TLSHandshakeTimeout: time.Duration(timeoutMs) * time.Millisecond,
+		},
+		Timeout: time.Duration(timeoutMs) * time.Millisecond,
+		// 只测到首字节,不跟随跳转 —— 跳转会把别的目标的延迟算进来。
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 
-	resp, err := c.Do(req)
+	start := time.Now()
+	resp, err := c.Get(target)
 	if err != nil {
 		return 0, err
 	}
 	defer resp.Body.Close()
+	elapsed := int(time.Since(start).Milliseconds())
 
-	var body struct {
-		Delay   int    `json:"delay"`
-		Message string `json:"message"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return 0, fmt.Errorf("解析响应:%w", err)
-	}
-	if resp.StatusCode != http.StatusOK || body.Delay == 0 {
-		if body.Message != "" {
-			return 0, fmt.Errorf("%s", body.Message)
-		}
+	// 代理拒绝时也会返回一个 HTTP 响应,别把它当成功。
+	if resp.StatusCode >= 500 {
 		return 0, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	return body.Delay, nil
+	return elapsed, nil
 }

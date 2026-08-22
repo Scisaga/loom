@@ -123,6 +123,12 @@ func checkDeclarations(
 		if d.MaxHops < 0 {
 			fs.add("§3.2 max_hops", where, "max_hops 不能为负:%d", d.MaxHops)
 		}
+		if d.ProbeURL == "" {
+			fs.add("§16.2 探测", where,
+				"没有 probe_url —— 探测目标不代表这条声明承载的流量时,"+
+					"会把根本不通的候选排在第一位(实测:同一条直连候选到 gstatic "+
+					"55ms、到 Cloudflare 超时 10 秒)")
+		}
 		if d.TuningPeriod == "" {
 			fs.add("§5.5 周期", where, "缺少 tuning_period —— 中继轴始终需要度量(§4)")
 		}

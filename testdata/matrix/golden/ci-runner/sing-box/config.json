@@ -23,6 +23,50 @@
       "tag": "in-1080",
       "listen": "127.0.0.1",
       "listen_port": 1080
+    },
+    {
+      "type": "mixed",
+      "tag": "probe-in",
+      "listen": "127.0.0.1",
+      "listen_port": 61801,
+      "users": [
+        {
+          "username": "probe-02eece9b5b",
+          "password": "${secret:probe/ci-runner}"
+        },
+        {
+          "username": "probe-49c4e69a25",
+          "password": "${secret:probe/ci-runner}"
+        },
+        {
+          "username": "probe-f46520afcd",
+          "password": "${secret:probe/ci-runner}"
+        },
+        {
+          "username": "probe-8a4bfda38e",
+          "password": "${secret:probe/ci-runner}"
+        },
+        {
+          "username": "probe-c9d8b6ed28",
+          "password": "${secret:probe/ci-runner}"
+        },
+        {
+          "username": "probe-b77644fb76",
+          "password": "${secret:probe/ci-runner}"
+        },
+        {
+          "username": "probe-ae1d824ea6",
+          "password": "${secret:probe/ci-runner}"
+        },
+        {
+          "username": "probe-7c91abaccc",
+          "password": "${secret:probe/ci-runner}"
+        },
+        {
+          "username": "probe-876138e797",
+          "password": "${secret:probe/ci-runner}"
+        }
+      ]
     }
   ],
   "outbounds": [
@@ -213,6 +257,87 @@
   ],
   "route": {
     "rules": [
+      {
+        "inbound": [
+          "probe-in"
+        ],
+        "auth_user": [
+          "probe-02eece9b5b"
+        ],
+        "outbound": "cand:best-egress:direct"
+      },
+      {
+        "inbound": [
+          "probe-in"
+        ],
+        "auth_user": [
+          "probe-49c4e69a25"
+        ],
+        "outbound": "cand:best-egress:cn-bj"
+      },
+      {
+        "inbound": [
+          "probe-in"
+        ],
+        "auth_user": [
+          "probe-f46520afcd"
+        ],
+        "outbound": "cand:best-egress:cn-gz"
+      },
+      {
+        "inbound": [
+          "probe-in"
+        ],
+        "auth_user": [
+          "probe-8a4bfda38e"
+        ],
+        "outbound": "cand:best-egress:cn-bj\u003ecn-gz"
+      },
+      {
+        "inbound": [
+          "probe-in"
+        ],
+        "auth_user": [
+          "probe-c9d8b6ed28"
+        ],
+        "outbound": "cand:best-egress:cn-bj\u003esg-vps"
+      },
+      {
+        "inbound": [
+          "probe-in"
+        ],
+        "auth_user": [
+          "probe-b77644fb76"
+        ],
+        "outbound": "cand:best-egress:cn-bj\u003ejp-vps"
+      },
+      {
+        "inbound": [
+          "probe-in"
+        ],
+        "auth_user": [
+          "probe-ae1d824ea6"
+        ],
+        "outbound": "cand:best-egress:cn-gz\u003ecn-bj"
+      },
+      {
+        "inbound": [
+          "probe-in"
+        ],
+        "auth_user": [
+          "probe-7c91abaccc"
+        ],
+        "outbound": "cand:best-egress:cn-gz\u003esg-vps"
+      },
+      {
+        "inbound": [
+          "probe-in"
+        ],
+        "auth_user": [
+          "probe-876138e797"
+        ],
+        "outbound": "cand:best-egress:cn-gz\u003ejp-vps"
+      },
       {
         "inbound": [
           "in-1080"

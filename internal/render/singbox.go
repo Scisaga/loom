@@ -1,6 +1,8 @@
 package render
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -34,12 +36,33 @@ const (
 // 这正是想要的行为,总好过拿着字面量去连。
 func secretRef(ref string) string { return "${secret:" + ref + "}" }
 
+func probeHost() string { h, _, _ := strings.Cut(ProbeListen, ":"); return h }
+
+func probePort() int {
+	_, p, _ := strings.Cut(ProbeListen, ":")
+	n := 0
+	for _, c := range p {
+		n = n*10 + int(c-'0')
+	}
+	return n
+}
+
 type sbLog struct {
 	Level string `json:"level"`
 }
 
+// sbUser 是 hysteria2 / trojan 入站的用户。
 type sbUser struct {
 	Name     string `json:"name"`
+	Password string `json:"password"`
+}
+
+// sbMixedUser 是 mixed(HTTP+SOCKS)入站的用户。
+//
+// **字段名和 sbUser 不一样** —— mixed 用 username,hysteria2/trojan 用 name。
+// 用错的后果是 sing-box 启动即 FATAL:`unknown field "name"`。
+type sbMixedUser struct {
+	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
@@ -62,9 +85,11 @@ type sbInbound struct {
 	AutoRoute bool     `json:"auto_route,omitempty"`
 	Stack     string   `json:"stack,omitempty"`
 
-	// hysteria2
-	Users []sbUser `json:"users,omitempty"`
-	TLS   *sbTLS   `json:"tls,omitempty"`
+	// Users 是 []sbUser(hysteria2/trojan)或 []sbMixedUser(mixed)。
+	// 两者字段名不同(name vs username)且互斥,所以这里用 any 承载 ——
+	// 拆成两个字段会让其中一个的 json tag 冲突。
+	Users any    `json:"users,omitempty"`
+	TLS   *sbTLS `json:"tls,omitempty"`
 }
 
 type sbOutbound struct {
@@ -136,6 +161,32 @@ type sbDNSServer struct {
 // 它不参与选路,也不该被任何访问声明引用 —— 它存在的唯一目的是让解析器
 // 可达。
 const dnsOutbound = "dns-out"
+
+// ProbeListen 是探测专用入口。
+//
+// **一个端口,用用户名区分候选。** 路由规则按 auth_user 把每个用户名映射到
+// 同名的候选出站,于是 Agent 只要用不同用户名连同一个端口,就能把探测流量
+// 精确打到指定候选上 —— 不切 selector、不打断真实流量、目标 URL 任选。
+//
+// 为什么不用 sing-box 自带的 delay 接口:**它忽略传入的 url 参数**(实测传
+// 一个独特域名,它照样连内置的 www.gstatic.com)。而目标选错的后果不是数字
+// 不准,是把不可达的候选排在第一位。
+//
+// 只监听回环。它按设计绕过访问控制 —— 它是测量工具,不是数据通路。
+const ProbeListen = "127.0.0.1:61801"
+
+// ProbeUser 是某条候选在探测入口上的用户名。
+//
+// **不能直接用候选 tag。** tag 里有冒号,而 SOCKS5 客户端普遍在第一个冒号处
+// 切分 user:pass —— curl 就是这样,结果 username 变成 "cand"、密码变成剩下
+// 的一整串,认证必然失败。
+//
+// 用 tag 的哈希前缀:无冒号、稳定、唯一。可读性由紧邻的路由规则补上 ——
+// 规则里写着 auth_user: [probe-xxxx] → outbound: <候选 tag>,一眼能对上。
+func ProbeUser(candidateTag string) string {
+	h := sha256.Sum256([]byte(candidateTag))
+	return "probe-" + hex.EncodeToString(h[:5])
+}
 
 type sbDNS struct {
 	Servers  []sbDNSServer `json:"servers"`
@@ -230,6 +281,8 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 
 	hops := map[string]bool{}
 	routable := map[string]bool{}
+	var probeUsers []sbMixedUser // 每条候选一个用户名(见 ProbeListen)
+	var probeRules []sbRule
 	for _, did := range declIDs {
 		d, ok := decls[did]
 		if !ok {
@@ -250,6 +303,14 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 			tags = append(tags, c.Tag())
 			cfg.Outbounds = append(cfg.Outbounds,
 				buildChain(s, p, nodes, c, credOf[did].SecretRef, hops)...)
+			// 探测入口:用户名 = 候选 tag,规则把它打到同名出站上。
+			probeUsers = append(probeUsers, sbMixedUser{
+				Username: ProbeUser(c.Tag()), Password: secretRef("probe/" + p.ID)})
+			probeRules = append(probeRules, sbRule{
+				Inbound:  []string{"probe-in"},
+				AuthUser: []string{ProbeUser(c.Tag())},
+				Outbound: c.Tag(),
+			})
 		}
 		cfg.Outbounds = append(cfg.Outbounds, sbOutbound{
 			Type: "selector", Tag: "decl:" + did, Outbounds: tags, Default: tags[0],
@@ -275,6 +336,18 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 			Inbound: []string{fmt.Sprintf("in-%d", mp.Port)}, Outbound: "decl:" + mp.Declaration,
 		})
 	}
+	// 探测入口:一个端口,用户名区分候选(见 ProbeListen)。
+	// 规则排在最前 —— 它按 auth_user 匹配,与业务规则不重叠,但放前面能
+	// 保证探测流量永远走它自己那条候选。
+	if len(probeUsers) > 0 {
+		cfg.Inbounds = append(cfg.Inbounds, sbInbound{
+			Type: "mixed", Tag: "probe-in",
+			Listen: probeHost(), ListenPort: probePort(),
+			Users: probeUsers,
+		})
+		cfg.Route.Rules = append(probeRules, cfg.Route.Rules...)
+	}
+
 	if p.Access.Platform.UsesTUN() {
 		tunDecl := p.Access.DefaultDeclaration
 		if tunDecl == "" && len(declIDs) == 1 {

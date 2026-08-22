@@ -26,6 +26,30 @@
       ],
       "auto_route": true,
       "stack": "system"
+    },
+    {
+      "type": "mixed",
+      "tag": "probe-in",
+      "listen": "127.0.0.1",
+      "listen_port": 61801,
+      "users": [
+        {
+          "username": "probe-32a3db7799",
+          "password": "${secret:probe/phone}"
+        },
+        {
+          "username": "probe-c3966d7906",
+          "password": "${secret:probe/phone}"
+        },
+        {
+          "username": "probe-fccf0d597d",
+          "password": "${secret:probe/phone}"
+        },
+        {
+          "username": "probe-8c7e3229d3",
+          "password": "${secret:probe/phone}"
+        }
+      ]
     }
   ],
   "outbounds": [
@@ -175,6 +199,42 @@
   ],
   "route": {
     "rules": [
+      {
+        "inbound": [
+          "probe-in"
+        ],
+        "auth_user": [
+          "probe-32a3db7799"
+        ],
+        "outbound": "cand:sg-fixed:cn-bj\u003esg-vps"
+      },
+      {
+        "inbound": [
+          "probe-in"
+        ],
+        "auth_user": [
+          "probe-c3966d7906"
+        ],
+        "outbound": "cand:sg-fixed:cn-sh\u003esg-vps"
+      },
+      {
+        "inbound": [
+          "probe-in"
+        ],
+        "auth_user": [
+          "probe-fccf0d597d"
+        ],
+        "outbound": "cand:sg-fixed:cn-gz\u003esg-vps"
+      },
+      {
+        "inbound": [
+          "probe-in"
+        ],
+        "auth_user": [
+          "probe-8c7e3229d3"
+        ],
+        "outbound": "cand:sg-fixed:cn-cd\u003esg-vps"
+      },
       {
         "inbound": [
           "tun-in"

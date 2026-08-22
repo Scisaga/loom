@@ -260,6 +260,16 @@ type AccessDeclaration struct {
 
 	Matcher string `yaml:"matcher,omitempty"`
 
+	// ProbeURL 是主动探测这条声明的候选时用的目标。
+	//
+	// **它测的是可达性,不只是快慢。** 同一条直连候选:到 gstatic 55ms、
+	// 到 baidu 34ms、到 Cloudflare **超时 10 秒** —— 用错目标会把一条
+	// 根本不通的候选排在第一位,而延迟数字看着完全正常。
+	//
+	// 这是 §5.3"最优不存在,只有按什么最优"在探测侧的对应物:objective 说
+	// 优化**什么指标**,probe_url 说对**什么流量**。
+	ProbeURL string `yaml:"probe_url"`
+
 	Objective   Objective    `yaml:"objective"`
 	Constraints []Constraint `yaml:"constraints,omitempty"`
 
