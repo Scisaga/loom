@@ -91,29 +91,18 @@ func Render(s *model.SSOT) (*Result, error) {
 		byNode[t.Initiator.ID] = append(byNode[t.Initiator.ID], bf)
 	}
 
-	// sing-box:接入节点与服务器节点。同一台机器可以两者都是。
-	for _, n := range s.AccessNodes() {
-		f, sk, err := renderAccess(s, n)
+	// sing-box:一台机器一份配置。同时持有两种能力的机器合并渲染 ——
+	// 分成两份会让后写的静默覆盖先写的(§1.3)。
+	for i := range s.Nodes {
+		n := &s.Nodes[i]
+		if !n.IsAccess() && !(n.IsServer() && n.Server.InboundPort > 0) {
+			continue
+		}
+		f, sk, err := renderSingBox(s, n)
 		if err != nil {
 			return nil, err
 		}
 		skipped = append(skipped, sk...)
-		byNode[n.ID] = append(byNode[n.ID], f)
-		if !n.IsServer() {
-			byNode[n.ID] = append(byNode[n.ID], renderSingBoxUnit(s, n))
-		}
-	}
-	// 服务器只有一种渲染。中继与出口不是两类节点,是同一台机器在不同
-	// 路径上的两种位置(§1.1)。
-	for i := range s.Nodes {
-		n := &s.Nodes[i]
-		if !n.IsServer() || n.Server.InboundPort == 0 {
-			continue
-		}
-		f, err := renderServer(s, n)
-		if err != nil {
-			return nil, err
-		}
 		byNode[n.ID] = append(byNode[n.ID], f, renderSingBoxUnit(s, n))
 	}
 
@@ -127,6 +116,14 @@ func Render(s *model.SSOT) (*Result, error) {
 	for _, id := range ids {
 		files := byNode[id]
 		sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+		// 同一个包里两个文件抢同一个路径,写盘时后者覆盖前者 —— 而渲染
+		// 报告的文件数仍然对得上,所以完全看不出来。宁可整体失败。
+		for i := 1; i < len(files); i++ {
+			if files[i].Path == files[i-1].Path {
+				return nil, fmt.Errorf("节点 %s 渲染出两个 %s —— 后者会静默覆盖前者",
+					id, files[i].Path)
+			}
+		}
 		res.Bundles = append(res.Bundles, Bundle{Owner: id, Files: files})
 	}
 	sort.Slice(res.Skipped, func(i, j int) bool { return res.Skipped[i].Where < res.Skipped[j].Where })

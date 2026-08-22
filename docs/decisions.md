@@ -333,10 +333,16 @@ apparmor="DENIED" profile="wg" name="/etc/loom/secrets/node.key" denied_mask="r"
     platform: linux-server
     credentials: [...]
 
-- id: laptop                 # 两个块都有 = 两种能力都有(§1.3)
-  access: {...}
-  server: {...}
 ```
+
+**一个节点只承担一种角色。** 两类节点走两个不同的控制面 —— 服务器由 Agent
+拉取配置并收敛(§14、§15),接入节点靠 app 与一次性链接分发(§18)。
+校验器拒绝同时有两个块的节点。
+
+> 这也让 §1.1 原来"能力是集合"的说法失去了依据:它当初的两个例子
+> ——「云机既是 relay 又是 target」与「笔记本兼作出口」——
+> 前者随 [D12](#d12--目标不是节点出口是路径上的位置)(目标不是节点)消失,
+> 后者被上面这条排除。两个例子都没了,节点就是单一角色。
 
 **`capabilities` 字段删除。** 它与角色块是同一个事实的两次编码 —— 写了
 `capabilities: [server]` 却不给 `server` 块(或反过来)就是自相矛盾,而那

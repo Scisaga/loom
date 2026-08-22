@@ -144,12 +144,11 @@ func serverTLS() *sbTLS {
 // urltest 会按自己的节奏和判据独立选路,与 Agent 的 §5.5 阻尼规则形成两个
 // 互不知情的决策者。selector 的当前选择由 Agent 设置;Agent 尚未实现时它
 // 停在 default 上,即 §20.2 的"路径静态指定"。
-func renderAccess(s *model.SSOT, p *model.Node) (File, []Skip, error) {
+func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 	nodes := s.NodeByID()
 	decls := s.DeclarationByID()
 	creds := s.CredentialByID()
 
-	cfg := &sbConfig{Log: sbLog{Level: "warn"}}
 	var skips []Skip
 	note := func(where, format string, args ...any) {
 		skips = append(skips, Skip{Where: where, Reason: fmt.Sprintf(format, args...)})
@@ -220,8 +219,6 @@ func renderAccess(s *model.SSOT, p *model.Node) (File, []Skip, error) {
 		}
 	}
 
-	cfg.Outbounds = append(cfg.Outbounds, sbOutbound{Type: "block", Tag: "block"})
-
 	for _, mp := range ports {
 		// 引用一个没生成的 selector 会让 sing-box 直接启动失败。宁可不写
 		// 这条规则 —— 流量落到 final: block,与 fail_closed 一致。
@@ -251,13 +248,7 @@ func renderAccess(s *model.SSOT, p *model.Node) (File, []Skip, error) {
 			})
 		}
 	}
-	cfg.Route.Final = "block"
-
-	content, err := encode(cfg)
-	if err != nil {
-		return File{}, nil, err
-	}
-	return File{Path: "sing-box/config.json", Content: content}, skips, nil
+	return skips, nil
 }
 
 // buildChain 生成一条候选所需的全部出站,最后一个的 tag 就是候选本身。
@@ -352,10 +343,9 @@ func findAddress(s *model.SSOT, c *model.RouteCandidate) *model.ServiceAddress {
 // "本机就是出口,直接出去"的规则,按连接的目的地分流。
 //
 // 服务器做准入校验,不做选路(§5.6):白名单之外一律阻断。
-func renderServer(s *model.SSOT, sv *model.Node) (File, error) {
+func serverInto(cfg *sbConfig, s *model.SSOT, sv *model.Node) {
 	nodes := s.NodeByID()
 	decls := s.DeclarationByID()
-	cfg := &sbConfig{Log: sbLog{Level: "warn"}}
 
 	type rule struct {
 		user     string
@@ -458,8 +448,6 @@ func renderServer(s *model.SSOT, sv *model.Node) (File, error) {
 	if sv.Server.EgressCapable {
 		cfg.Outbounds = append(cfg.Outbounds, sbOutbound{Type: "direct", Tag: "egress"})
 	}
-	cfg.Outbounds = append(cfg.Outbounds, sbOutbound{Type: "block", Tag: "block"})
-
 	// 转发规则在前、出口规则在后:出口是兜底,先匹配具体的下一跳。
 	for _, r := range rules {
 		var cidrs []string
@@ -488,12 +476,38 @@ func renderServer(s *model.SSOT, sv *model.Node) (File, error) {
 			AuthUser: []string{r.user}, Domain: r.domains, Outbound: "egress",
 		})
 	}
-	// 白名单之外一律阻断 —— 这就是"准入校验"的全部含义。
+}
+
+// renderSingBox 生成一台机器的 sing-box 配置。
+//
+// **一台机器一个 sing-box 进程,因此只有一份配置。** 节点只承担一种角色
+// (校验器拒绝同时有两个块,§1.3),所以这里实际只会走其中一个分支 ——
+// 写成两个都判,是为了让"多出一个角色"这件事在渲染层也不会悄悄产生
+// 第二个文件。Render 里的重复路径检查是同一道保险。
+func renderSingBox(s *model.SSOT, n *model.Node) (File, []Skip, error) {
+	cfg := &sbConfig{Log: sbLog{Level: "warn"}}
+	var skips []Skip
+
+	if n.IsAccess() {
+		sk, err := accessInto(cfg, s, n)
+		if err != nil {
+			return File{}, nil, err
+		}
+		skips = sk
+	}
+	if n.IsServer() && n.Server.InboundPort > 0 {
+		serverInto(cfg, s, n)
+	}
+
+	// block 出站两边都要用,收尾时统一加一次。
+	cfg.Outbounds = append(cfg.Outbounds, sbOutbound{Type: "block", Tag: "block"})
+	// 未匹配一律阻断:回落到 direct 会让一条本该受声明约束的连接悄悄绕开
+	// 调度,和 §5.8 的 fail_closed 是同一个道理。
 	cfg.Route.Final = "block"
 
 	content, err := encode(cfg)
 	if err != nil {
-		return File{}, err
+		return File{}, nil, err
 	}
-	return File{Path: "sing-box/config.json", Content: content}, nil
+	return File{Path: "sing-box/config.json", Content: content}, skips, nil
 }

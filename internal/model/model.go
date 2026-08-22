@@ -139,12 +139,6 @@ func (s *SSOT) VersionsFor(n *Node) ComponentVersions {
 	return v
 }
 
-// TunnelCapable 报告这个节点是否参与隧道矩阵。
-//
-// direction 约束"能不能被连接",只对参与隧道的节点有意义。纯接入节点不建
-// 隧道 —— 它经 Hysteria2 拨出去。
-func (n *Node) TunnelCapable() bool { return n.IsServer() }
-
 // MeshEligible 由 direction 推导,不是独立配置项(§2.2)。
 //
 // 能进 mesh 的服务器由 Headscale 自动分发密钥与 peer,**一份隧道配置都不
