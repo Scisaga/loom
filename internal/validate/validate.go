@@ -184,8 +184,9 @@ func checkTunnels(s *model.SSOT, idx map[string]*model.Node, fs *findings) {
 		// 全系统最容易出错的那种白做工。
 		if r.Initiator.MeshEligible() && r.Acceptor.MeshEligible() {
 			fs.add("§6.3 mesh", where,
-				"两端(%s=%s, %s=%s)都能进 mesh —— 这条隧道该交给 Headscale 自动分发(§8.3),"+
-					"不要手工建",
+				"两端(%s=%s, %s=%s)都能被公网拨到,不需要隧道 —— "+
+					"直接用各自的 inbound_port 互拨即可,手工建隧道是白做工。"+
+					"(启用 mesh 之后由 Headscale 自动分发,§8.3)",
 				r.Initiator.ID, r.Initiator.Server.Direction, r.Acceptor.ID, r.Acceptor.Server.Direction)
 		}
 

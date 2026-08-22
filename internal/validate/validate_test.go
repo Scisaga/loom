@@ -147,8 +147,8 @@ tunnels:
   - {from: a, to: ghost, listen_port: 61611, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
 		},
 		{
-			name: "§6.3 两端都能进 mesh 就不该手工建隧道",
-			want: "交给 Headscale",
+			name: "§6.3 两端都能被公网拨到就不该手工建隧道",
+			want: "不需要隧道",
 			yaml: `
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
