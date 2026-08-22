@@ -11,6 +11,7 @@ import (
 // 最小可用的拓扑前缀,让服务侧的反例只需声明它关心的那部分。
 const topo = `
 defaults:
+  dns: [223.5.5.5]
   components: {sing_box: 1.11.4, wireguard: 1.0.20250521, agent: 0.1.0}
 nodes:
   - {id: cn-a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
@@ -71,7 +72,7 @@ equivalence_classes:
     observation_point: l4_tunnel
     members: [{address: "https://a.internal/v1", access_contract: {}}]
 declarations:
-  - {id: d1, address_axis: "class:c1", egress_axis: any, objective: ttft, top_n: 2, tuning_period: 10m}`,
+  - {id: d1, address_axis: "class:c1", egress_axis: any, objective: ttft, probe_url: "http://x/", top_n: 2, tuning_period: 10m}`,
 		},
 		{
 			name: "§5.2 objective cost 但没有价格数据源",
@@ -83,7 +84,7 @@ equivalence_classes:
     observation_point: endpoint
     members: [{address: "https://a.internal/v1", access_contract: {}}]
 declarations:
-  - {id: d1, address_axis: "class:c1", egress_axis: any, objective: cost, top_n: 2, tuning_period: 10m}`,
+  - {id: d1, address_axis: "class:c1", egress_axis: any, objective: cost, probe_url: "http://x/", top_n: 2, tuning_period: 10m}`,
 		},
 		{
 			name: "§5.8 有合规约束但 fallback 不是 fail_closed",
@@ -104,35 +105,35 @@ declarations:
 			want: "排序周期无意义",
 			yaml: topo + `
 declarations:
-  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m, ranking_period: 30m}`,
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, probe_url: "http://x/", tuning_period: 10m, ranking_period: 30m}`,
 		},
 		{
 			name: "§4 address_axis 取值非法",
 			want: "address_axis 非法",
 			yaml: topo + `
 declarations:
-  - {id: d1, address_axis: whatever, egress_axis: any, objective: latency, tuning_period: 10m}`,
+  - {id: d1, address_axis: whatever, egress_axis: any, objective: latency, probe_url: "http://x/", tuning_period: 10m}`,
 		},
 		{
 			name: "§4 egress_axis 钉死了不存在的节点",
 			want: "钉死了不存在的节点",
 			yaml: topo + `
 declarations:
-  - {id: d1, address_axis: from_request, egress_axis: "pinned:ghost", objective: latency, tuning_period: 10m}`,
+  - {id: d1, address_axis: from_request, egress_axis: "pinned:ghost", objective: latency, probe_url: "http://x/", tuning_period: 10m}`,
 		},
 		{
 			name: "§4 钉死的出口没有 egress_capable",
 			want: "它出不了公网",
 			yaml: topo + `
 declarations:
-  - {id: d1, address_axis: from_request, egress_axis: "pinned:cn-b", objective: latency, tuning_period: 10m, allowed_servers: [cn-b]}`,
+  - {id: d1, address_axis: from_request, egress_axis: "pinned:cn-b", objective: latency, probe_url: "http://x/", tuning_period: 10m, allowed_servers: [cn-b]}`,
 		},
 		{
 			name: "§5.1 钉死的出口不在 allowed_servers 里",
 			want: "不在 allowed_servers 里",
 			yaml: topo + `
 declarations:
-  - {id: d1, address_axis: from_request, egress_axis: "pinned:sg-v", objective: latency, tuning_period: 10m, allowed_servers: [cn-a]}`,
+  - {id: d1, address_axis: from_request, egress_axis: "pinned:sg-v", objective: latency, probe_url: "http://x/", tuning_period: 10m, allowed_servers: [cn-a]}`,
 		},
 		{
 			name: "§5.6 地址从等价类里选却缺 top_n",
@@ -144,14 +145,14 @@ equivalence_classes:
     observation_point: l4_tunnel
     members: [{address: "https://a.internal/v1", access_contract: {}}]
 declarations:
-  - {id: d1, address_axis: "class:c1", egress_axis: any, objective: latency, tuning_period: 10m}`,
+  - {id: d1, address_axis: "class:c1", egress_axis: any, objective: latency, probe_url: "http://x/", tuning_period: 10m}`,
 		},
 		{
 			name: "§7.2 Android 不应有 mixed_ports",
 			want: "只能走 TUN",
 			yaml: topo + `  - {id: p1, access: {platform: android, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}}
 declarations:
-  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, probe_url: "http://x/", tuning_period: 10m}
 credentials:
   - {id: cr1, declaration: d1, secret_ref: v}`,
 		},
@@ -160,7 +161,7 @@ credentials:
 			want: "无法按端口区分声明",
 			yaml: topo + `  - {id: p1, access: {platform: android, credentials: [cr1, cr2], default_declaration: d1}}
 declarations:
-  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, probe_url: "http://x/", tuning_period: 10m}
 credentials:
   - {id: cr1, declaration: d1, secret_ref: v}
   - {id: cr2, declaration: d1, secret_ref: v}`,
@@ -170,8 +171,8 @@ credentials:
 			want: "兜底流量走哪条声明是歧义的",
 			yaml: topo + `  - {id: p1, access: {platform: desktop, credentials: [cr1, cr2], mixed_ports: [{port: 1080, declaration: d1}]}}
 declarations:
-  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
-  - {id: d2, address_axis: from_request, egress_axis: any, objective: latency, tuning_period: 10m}
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, probe_url: "http://x/", tuning_period: 10m}
+  - {id: d2, address_axis: from_request, egress_axis: any, objective: latency, probe_url: "http://x/", tuning_period: 10m}
 credentials:
   - {id: cr1, declaration: d1, secret_ref: v}
   - {id: cr2, declaration: d2, secret_ref: v}`,
@@ -181,7 +182,7 @@ credentials:
 			want: "接管不到任何流量",
 			yaml: topo + `  - {id: p1, access: {platform: linux-server, credentials: [cr1]}}
 declarations:
-  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, probe_url: "http://x/", tuning_period: 10m}
 credentials:
   - {id: cr1, declaration: d1, secret_ref: v}`,
 		},
@@ -190,7 +191,7 @@ credentials:
 			want: "已吊销",
 			yaml: topo + `  - {id: p1, access: {platform: linux-server, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}}
 declarations:
-  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, probe_url: "http://x/", tuning_period: 10m}
 credentials:
   - {id: cr1, declaration: d1, secret_ref: v, revoked_at: "2026-01-01T00:00:00Z"}`,
 		},
@@ -206,7 +207,7 @@ credentials:
 			want: "不存在的访问声明",
 			yaml: topo + `  - {id: p1, access: {platform: linux-server, credentials: [cr1], mixed_ports: [{port: 1080, declaration: ghost}]}}
 declarations:
-  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, probe_url: "http://x/", tuning_period: 10m}
 credentials:
   - {id: cr1, declaration: d1, secret_ref: v}`,
 		},
@@ -215,7 +216,7 @@ credentials:
 			want: "不持有 server 能力",
 			yaml: topo + `  - {id: laptop, access: {}}
 declarations:
-  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m, allowed_servers: [laptop]}`,
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, probe_url: "http://x/", tuning_period: 10m, allowed_servers: [laptop]}`,
 		},
 		{
 			name: "§5.5 缺少 tuning_period",
@@ -311,7 +312,7 @@ func TestServerNeedsDirection(t *testing.T) {
 func TestRejectsPortClashAcrossRoles(t *testing.T) {
 	s, err := model.Load([]byte(topo + `  - {id: both, public_endpoint: 1.1.1.9, server: {direction: bidirectional, inbound_port: 1080, egress_capable: true, wg_public_key: k9}, access: {platform: linux-server, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}}
 declarations:
-  - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, tuning_period: 10m}
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, probe_url: "http://x/", tuning_period: 10m}
 credentials:
   - {id: cr1, declaration: d1, secret_ref: v}`))
 	if err != nil {

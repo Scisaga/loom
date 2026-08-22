@@ -11,6 +11,13 @@ import (
 // conf 是渲染出的 sing-box 配置的松散视图。测试刻意不复用渲染用的结构体
 // —— 那样只能证明"我序列化了我构造的东西",证明不了产物本身自洽。
 type conf struct {
+	DNS *struct {
+		Servers []struct {
+			Tag     string `json:"tag"`
+			Address string `json:"address"`
+			Detour  string `json:"detour"`
+		} `json:"servers"`
+	} `json:"dns"`
 	Inbounds []struct {
 		Type       string `json:"type"`
 		Tag        string `json:"tag"`
@@ -430,6 +437,35 @@ func TestRevokedCredentialNotRendered(t *testing.T) {
 		for _, f := range b.Files {
 			if f.Path == "sing-box/config.json" && strings.Contains(f.Content, "cred-ws-eg") {
 				t.Errorf("%s 的配置里仍有已吊销的凭据 cred-ws-eg", b.Owner)
+			}
+		}
+	}
+}
+
+// TestDNSHasEscapeFromBlock:DNS 查询必须能出去。
+//
+// route.final 是 block(未匹配一律阻断)。如果 DNS 服务器没有 detour,
+// 查询会走 route 规则、落到 block,sing-box 连解析器都问不到 —— 而症状
+// 只有"直连候选失败",因为走代理的域名是交给出口解析的(§7.4),
+// 代理候选一切正常。这个 bug 真实发生过。
+func TestDNSHasEscapeFromBlock(t *testing.T) {
+	_, cfgs := configs(t)
+	for owner, c := range cfgs {
+		if c.DNS == nil || len(c.DNS.Servers) == 0 {
+			continue
+		}
+		tags := map[string]bool{}
+		for _, o := range c.Outbounds {
+			tags[o.Tag] = true
+		}
+		for _, srv := range c.DNS.Servers {
+			if srv.Detour == "" {
+				t.Errorf("%s 的 DNS 服务器 %s 没有 detour —— 查询会落到 route.final=block",
+					owner, srv.Address)
+				continue
+			}
+			if !tags[srv.Detour] {
+				t.Errorf("%s 的 DNS detour %q 指向不存在的出站", owner, srv.Detour)
 			}
 		}
 	}

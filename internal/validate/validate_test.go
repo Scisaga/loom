@@ -19,6 +19,7 @@ func TestRejects(t *testing.T) {
 			name: "§2.2 两端都是 reverse_only",
 			want: "无人接受",
 			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: reverse_only, wg_public_key: k1}}
   - {id: b, public_endpoint: 1.1.1.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
@@ -29,6 +30,7 @@ tunnels:
 			name: "§2.2 两端都是 direct_only",
 			want: "无人发起",
 			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: direct_only, wg_public_key: k1}}
   - {id: b, public_endpoint: 1.1.1.2, server: {direction: direct_only, wg_public_key: k2}}
@@ -39,6 +41,7 @@ tunnels:
 			name: "§15.1 同一接受方端口冲突",
 			want: "已被",
 			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: acc, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k0}}
   - {id: t1, public_endpoint: 1.1.1.2, server: {direction: reverse_only, wg_public_key: k1}}
@@ -51,6 +54,7 @@ tunnels:
 			name: "§20.1 地址撞车",
 			want: "已被",
 			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: acc, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k0}}
   - {id: t1, public_endpoint: 1.1.1.2, server: {direction: reverse_only, wg_public_key: k1}}
@@ -63,6 +67,7 @@ tunnels:
 			name: "§20.1 非 /32 会让 AllowedIPs 越界",
 			want: "应为 /32",
 			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k1}}
   - {id: b, public_endpoint: 1.1.1.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
@@ -73,6 +78,7 @@ tunnels:
 			name: "§20.1 接受方无 public_endpoint 则发起方无处可拨",
 			want: "无处可拨",
 			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k1}}
   - {id: b, public_endpoint: 1.1.1.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
@@ -83,6 +89,7 @@ tunnels:
 			name: "§13.1 缺少公钥",
 			want: "缺少 wg_public_key",
 			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433}}
   - {id: b, public_endpoint: 1.1.1.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
@@ -93,6 +100,7 @@ tunnels:
 			name: "§6.3 同一对节点重复建隧道",
 			want: "重复",
 			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k1}}
   - {id: b, public_endpoint: 1.1.1.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
@@ -104,6 +112,7 @@ tunnels:
 			name: "§20.1 接口名超长",
 			want: "超过 15 字符",
 			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k1}}
   - {id: server-in-a-very-long-city, public_endpoint: 1.1.1.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
@@ -114,6 +123,7 @@ tunnels:
 			name: "§1.3 两个角色块都缺",
 			want: "不承担任何角色",
 			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, city: 北京}`,
 		},
@@ -121,6 +131,7 @@ nodes:
 			name: "§19 节点 id 重复",
 			want: "id 重复",
 			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, server: {direction: bidirectional, inbound_port: 4433}}
   - {id: a, server: {direction: bidirectional, inbound_port: 4433}}`,
@@ -129,6 +140,7 @@ nodes:
 			name: "隧道引用了不存在的节点",
 			want: "不存在的节点",
 			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k1}}
 tunnels:
@@ -138,6 +150,7 @@ tunnels:
 			name: "§6.3 两端都能进 mesh 就不该手工建隧道",
 			want: "交给 Headscale",
 			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k1}}
   - {id: b, public_endpoint: 1.1.1.2, server: {direction: direct_only, inbound_port: 4433, wg_public_key: k2}}
@@ -148,6 +161,7 @@ tunnels:
 			name: "§8.1 被声明引用却没有 inbound_port",
 			want: "无法接受上游连接",
 			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, egress_capable: true}}
 declarations:

@@ -30,7 +30,7 @@ func cmdProbe(args []string) error {
 	secret := fs.String("secret", "", "控制端点口令(或用 -secrets 从秘密文件取)")
 	secretsFile := fs.String("secrets", "", "秘密文件,取 api/<node> 这一项")
 	node := fs.String("node", "", "接入节点 id(用于给记录打标,并从秘密文件取口令)")
-	target := fs.String("url", "http://cp.cloudflare.com/generate_204", "探测用的目标 URL")
+	fallbackURL := fs.String("url", "", "声明未配 probe_url 时的兜底目标")
 	out := fs.String("o", "measurements.jsonl", "度量输出文件(追加)")
 	rounds := fs.Int("rounds", 1, "每条候选探测几轮")
 	budget := fs.Int("budget", 200, "本次最多发多少个探测请求 —— 探测预算是硬上限(§16.2)")
@@ -77,7 +77,7 @@ func cmdProbe(args []string) error {
 	// 否则测的东西和选的东西对不上(§5.6)。
 	decls := s.DeclarationByID()
 	creds := s.CredentialByID()
-	type item struct{ decl, cand string }
+	type item struct{ decl, cand, url string }
 	var items []item
 	seen := map[string]bool{}
 	for _, cid := range accessNode.Access.Credentials {
@@ -94,7 +94,12 @@ func cmdProbe(args []string) error {
 			tag := cands[i].Tag()
 			if !seen[tag] {
 				seen[tag] = true
-				items = append(items, item{d.ID, tag})
+				// 每条声明用自己的探测目标 —— 目标不对,测出来的排序就不对。
+				u := d.ProbeURL
+				if u == "" {
+					u = *fallbackURL
+				}
+				items = append(items, item{d.ID, tag, u})
 			}
 		}
 	}
@@ -117,7 +122,10 @@ func cmdProbe(args []string) error {
 				break
 			}
 			sent++
-			ms, perr := probeOne(client, *api, sec, it.cand, *target, *timeoutMs)
+			if it.url == "" {
+				return fmt.Errorf("声明 %q 没有 probe_url,也没给 -url 兜底", it.decl)
+			}
+			ms, perr := probeOne(client, *api, sec, it.cand, it.url, *timeoutMs)
 			m := measure.Measurement{
 				// 时间由调用方注入,与渲染/打包保持同一个原则(D14)。
 				TS:   time.Now().UTC().Format(time.RFC3339),

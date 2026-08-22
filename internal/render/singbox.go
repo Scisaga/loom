@@ -119,8 +119,32 @@ type sbExperimental struct {
 	ClashAPI *sbAPI `json:"clash_api,omitempty"`
 }
 
+type sbDNSServer struct {
+	Tag     string `json:"tag"`
+	Address string `json:"address"`
+	// Detour 指定这条 DNS 查询走哪个出站。
+	//
+	// **必须显式指定。** 不指定时查询会走 route 规则,而我们的 route.final
+	// 是 block(未匹配一律阻断,§5.8 的 fail_closed) —— 于是 sing-box 连
+	// 解析器都问不到。症状只有"直连候选失败":走代理的域名是交给出口解析
+	// 的(§7.4),根本不用本地 DNS,所以代理候选一切正常。
+	Detour string `json:"detour"`
+}
+
+// dnsOutbound 是 DNS 查询专用的直连出站。
+//
+// 它不参与选路,也不该被任何访问声明引用 —— 它存在的唯一目的是让解析器
+// 可达。
+const dnsOutbound = "dns-out"
+
+type sbDNS struct {
+	Servers  []sbDNSServer `json:"servers"`
+	Strategy string        `json:"strategy,omitempty"`
+}
+
 type sbConfig struct {
 	Log          sbLog           `json:"log"`
+	DNS          *sbDNS          `json:"dns,omitempty"`
 	Inbounds     []sbInbound     `json:"inbounds"`
 	Outbounds    []sbOutbound    `json:"outbounds"`
 	Route        sbRoute         `json:"route"`
@@ -515,6 +539,19 @@ func serverInto(cfg *sbConfig, s *model.SSOT, sv *model.Node) {
 func renderSingBox(s *model.SSOT, n *model.Node) (File, []Skip, error) {
 	cfg := &sbConfig{Log: sbLog{Level: "warn"}}
 	var skips []Skip
+
+	// 显式指定解析器,不依赖系统的。系统解析器坏掉时,表现是"直连候选
+	// 永远失败、代理候选一切正常" —— 因为走代理的域名是交给出口解析的
+	// (§7.4),根本不经过本机。这种不对称极难往 DNS 上想。
+	if dns := s.DNSFor(n); len(dns) > 0 {
+		d := &sbDNS{Strategy: "prefer_ipv4"}
+		for i, addr := range dns {
+			d.Servers = append(d.Servers, sbDNSServer{
+				Tag: fmt.Sprintf("dns%d", i), Address: addr, Detour: dnsOutbound})
+		}
+		cfg.DNS = d
+		cfg.Outbounds = append(cfg.Outbounds, sbOutbound{Type: "direct", Tag: dnsOutbound})
+	}
 
 	if n.IsAccess() {
 		sk, err := accessInto(cfg, s, n)

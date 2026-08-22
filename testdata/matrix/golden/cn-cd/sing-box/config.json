@@ -2,6 +2,21 @@
   "log": {
     "level": "warn"
   },
+  "dns": {
+    "servers": [
+      {
+        "tag": "dns0",
+        "address": "223.5.5.5",
+        "detour": "dns-out"
+      },
+      {
+        "tag": "dns1",
+        "address": "119.29.29.29",
+        "detour": "dns-out"
+      }
+    ],
+    "strategy": "prefer_ipv4"
+  },
   "inbounds": [
     {
       "type": "hysteria2",
@@ -29,6 +44,10 @@
     }
   ],
   "outbounds": [
+    {
+      "type": "direct",
+      "tag": "dns-out"
+    },
     {
       "type": "direct",
       "tag": "via-sg-vps",

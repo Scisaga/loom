@@ -57,6 +57,16 @@ type Node struct {
 	// Components 是这台机器上该跑哪些版本。为空则用 SSOT 的全局默认。
 	Components *ComponentVersions `yaml:"components,omitempty"`
 
+	// DNS 是这台机器本地解析用的服务器,为空则用全局默认。
+	//
+	// **必须显式配,不能依赖系统解析器。** 走代理的流量由出口解析(§7.4 的
+	// socks5h),不经过这里;但**直连**那条候选要本地解析 —— 系统解析器坏掉
+	// 时,表现是"直连候选永远失败",而代理候选一切正常,极难往 DNS 上想。
+	//
+	// 解析器要按机器所在地选:大陆机器用 8.8.8.8 会被污染,境外机器用
+	// 223.5.5.5 又绕远。
+	DNS []string `yaml:"dns,omitempty"`
+
 	Server *ServerRole `yaml:"server,omitempty"`
 	Access *AccessRole `yaml:"access,omitempty"`
 }
@@ -112,9 +122,23 @@ type ComponentVersions struct {
 	Agent     string `yaml:"agent,omitempty"`
 }
 
-// SSOTDefaults 是全网默认值,目前只有组件版本。
+// SSOTDefaults 是全网默认值。
 type SSOTDefaults struct {
 	Components *ComponentVersions `yaml:"components,omitempty"`
+
+	// DNS 是节点本地解析用的服务器。见 Node.DNS。
+	DNS []string `yaml:"dns,omitempty"`
+}
+
+// DNSFor 返回某个节点最终生效的解析器:节点覆盖优先,否则用全局默认。
+func (s *SSOT) DNSFor(n *Node) []string {
+	if len(n.DNS) > 0 {
+		return n.DNS
+	}
+	if s.Defaults != nil {
+		return s.Defaults.DNS
+	}
+	return nil
 }
 
 // VersionsFor 返回某个节点最终生效的组件版本:节点覆盖优先,否则用全局默认。

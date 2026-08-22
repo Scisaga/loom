@@ -105,6 +105,15 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 				"被%s的 allowed_servers 引用,却没有 inbound_port —— 无法接受上游连接", by)
 		}
 
+		// 没有解析器时 sing-box 会退回系统解析器 —— 而它坏掉的表现是
+		// "只有直连候选失败",极难诊断。
+		if len(s.DNSFor(n)) == 0 {
+			fs.add("§7.4 DNS", where,
+				"没有配置 dns —— sing-box 会退回系统解析器。系统解析器坏掉时"+
+					"只有直连候选会失败,代理候选一切正常(域名交给出口解析),"+
+					"这种不对称极难诊断")
+		}
+
 		// §15.4:版本必须显式钉住,永不使用 latest。自动的是下载,不是
 		// 升级决策 —— 上游一次不兼容发布可在一个轮询周期内打挂全部节点。
 		v := s.VersionsFor(n)
