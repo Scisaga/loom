@@ -44,6 +44,12 @@ func cmdReport(args []string) error {
 	}
 
 	st := report.Collect(cfg, time.Now())
+	// 一次性模式下现场量一轮 —— 没有后台循环替它攒数据。
+	if own, learned, err := report.Once(cfg, time.Now); err != nil {
+		st.Errors = append(st.Errors, "观测:"+err.Error())
+	} else {
+		st.Observation, st.Learned = own, learned
+	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(st); err != nil {

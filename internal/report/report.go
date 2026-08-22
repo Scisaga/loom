@@ -31,6 +31,11 @@ type Status struct {
 	Tunnels []Tunnel `json:"tunnels"`
 	Drift   *Drift   `json:"drift,omitempty"`
 
+	// Observation 是本节点自己量到的东西(到邻居的 RTT、到各目标的可达性)。
+	Observation *Observation `json:"observation,omitempty"`
+	// Learned 是从邻居那里听来的别人的观测,原样转述。
+	Learned []Observation `json:"learned,omitempty"`
+
 	// Errors 是采集过程本身的失败。**采集不到与"一切正常"必须分得开** ——
 	// 空的 Tunnels 既可能是没有隧道,也可能是 wg 命令跑不起来。
 	Errors []string `json:"errors,omitempty"`

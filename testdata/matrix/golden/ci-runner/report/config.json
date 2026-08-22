@@ -4,6 +4,11 @@
     "127.0.0.1:61802"
   ],
   "interfaces": null,
+  "targets": [
+    "https://api.ipify.org"
+  ],
+  "gossip_period": "1m",
+  "observation_stale": "10m",
   "manifest": "/etc/loom/report/manifest.json",
   "handshake_stale": "5m"
 }

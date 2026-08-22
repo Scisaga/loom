@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"loom/internal/model"
 	"loom/internal/render"
 	"loom/internal/report"
 )
@@ -82,6 +83,19 @@ func cmdStatus(args []string) error {
 
 	fmt.Printf("从 %s 看到的状态\n\n", vantage)
 	bad := 0
+	// obs 汇总全网观测:自己量的、拉到的、以及**别人转述的** ——
+	// 转述让够不到的节点也进得来(§16.1.2)。
+	obs := map[string]report.Observation{}
+	keep := func(o *report.Observation) {
+		if o == nil || o.Node == "" {
+			return
+		}
+		if old, ok := obs[o.Node]; ok && old.TS >= o.TS {
+			return
+		}
+		obs[o.Node] = *o
+	}
+
 	for _, id := range ids {
 		var st *report.Status
 		var ferr error
@@ -95,6 +109,10 @@ func cmdStatus(args []string) error {
 			fmt.Printf("  %-7s ❌ 拉不到:%v\n", id, ferr)
 			continue
 		}
+		keep(st.Observation)
+		for i := range st.Learned {
+			keep(&st.Learned[i])
+		}
 		mark := "✅"
 		if !st.OK() {
 			mark = "⚠️ "
@@ -106,16 +124,111 @@ func cmdStatus(args []string) error {
 		}
 	}
 
+	printMatrix(obs, s)
+
+	var silent []string
+	for _, id := range unreachable {
+		if _, ok := obs[id]; !ok {
+			silent = append(silent, id)
+		}
+	}
 	if len(unreachable) > 0 {
-		fmt.Printf("\n  够不到(与 %s 之间没有隧道,AllowedIPs 是 /32):%s\n",
+		fmt.Printf("\n  与 %s 没有隧道、只能靠转述听到的:%s\n",
 			vantage, strings.Join(unreachable, " "))
-		fmt.Printf("  它们的隧道健康仍然是覆盖到的 —— 每条隧道的另一端都在上面的节点里。\n")
-		fmt.Printf("  没覆盖到的是它们各自的配置自检:ssh <节点> loom report\n")
+		fmt.Printf("  它们的配置自检仍然要本机跑:ssh <节点> loom report\n")
+	}
+	if len(silent) > 0 {
+		fmt.Printf("  ⚠️ 完全没听到消息的:%s —— 转述链断了,或者它们的上报者没跑\n",
+			strings.Join(silent, " "))
+		bad += len(silent)
 	}
 	if bad > 0 {
 		return fmt.Errorf("%d 个节点有发现", bad)
 	}
 	return nil
+}
+
+// printMatrix 打全网观测:谁能到哪个目标、节点之间多快。
+//
+// 这张表是链路状态测量的产出 —— 每台机器只量自己那几段,合起来就是全网视图。
+// 接入时不必把每条完整路线跑一遍,照着它算就行。
+func printMatrix(obs map[string]report.Observation, s *model.SSOT) {
+	if len(obs) == 0 {
+		fmt.Printf("\n  (还没有任何观测 —— 上报者刚起来?)\n")
+		return
+	}
+	ids := make([]string, 0, len(obs))
+	targets := map[string]bool{}
+	for id, o := range obs {
+		ids = append(ids, id)
+		for _, r := range o.Targets {
+			targets[r.Target] = true
+		}
+	}
+	sort.Strings(ids)
+	ts := make([]string, 0, len(targets))
+	for t := range targets {
+		ts = append(ts, t)
+	}
+	sort.Strings(ts)
+
+	now := time.Now()
+	for _, t := range ts {
+		fmt.Printf("\n  各节点直接访问 %s\n", t)
+		for _, id := range ids {
+			o := obs[id]
+			var line string
+			for _, r := range o.Targets {
+				if r.Target != t {
+					continue
+				}
+				if r.OK() {
+					line = fmt.Sprintf("✅ %dms", r.FirstByteMs)
+				} else {
+					line = "❌ " + shorten(r.Error)
+				}
+			}
+			if line == "" {
+				line = "(没量)"
+			}
+			fmt.Printf("    %-7s %-28s %s\n", id, line, ageNote(&o, now))
+		}
+	}
+
+	fmt.Printf("\n  节点之间(隧道内 RTT)\n")
+	for _, id := range ids {
+		o := obs[id]
+		if len(o.Edges) == 0 {
+			continue
+		}
+		var parts []string
+		for _, e := range o.Edges {
+			if e.Error != "" {
+				parts = append(parts, e.To+"=❌")
+			} else {
+				parts = append(parts, fmt.Sprintf("%s=%dms", e.To, e.RTTMs))
+			}
+		}
+		fmt.Printf("    %-7s %s\n", id, strings.Join(parts, "  "))
+	}
+}
+
+func ageNote(o *report.Observation, now time.Time) string {
+	a := o.Age(now)
+	if a < time.Minute {
+		return ""
+	}
+	return fmt.Sprintf("(%d 分钟前的观测)", int(a.Minutes()))
+}
+
+func shorten(s string) string {
+	if i := strings.LastIndex(s, ": "); i > 0 && len(s) > 30 {
+		s = s[i+2:]
+	}
+	if len(s) > 26 {
+		s = s[:26] + "…"
+	}
+	return s
 }
 
 func localStatus() (*report.Status, error) {

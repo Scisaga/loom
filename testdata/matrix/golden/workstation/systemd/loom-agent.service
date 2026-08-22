@@ -2,8 +2,10 @@
 [Unit]
 Description=Loom Agent (调参回路 workstation)
 # 控制端点和探测入口都在 sing-box 里,它没起来时 Agent 无事可做。
-After=sing-box.service
-Wants=sing-box.service
+# 上报者要先起来:Agent 的第一轮就要问它拿全网观测来剪枝,晚一步就得
+# 等一整个 tuning_period(实测两者同时重启会撞上这个race)。
+After=sing-box.service loom-report.service
+Wants=sing-box.service loom-report.service
 
 [Service]
 Type=simple

@@ -42,6 +42,10 @@ type Config struct {
 	// 它自己的 journal。
 	Peers []Peer `json:"peers,omitempty"`
 
+	// SelfReport 是本机上报者的地址。问它一家就够 —— 它已经把邻居转述的
+	// 观测都收进来了,不必 Agent 自己再跑一遍转述。
+	SelfReport string `json:"self_report,omitempty"`
+
 	// PeerPeriod 是拉取上报的间隔。
 	PeerPeriod string `json:"peer_period,omitempty"`
 }

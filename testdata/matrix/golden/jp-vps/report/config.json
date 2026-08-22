@@ -12,6 +12,29 @@
     "wg-cn-gz",
     "wg-cn-sh"
   ],
+  "neighbors": [
+    {
+      "node": "cn-bj",
+      "addr": "10.99.1.1:61802"
+    },
+    {
+      "node": "cn-cd",
+      "addr": "10.99.1.7:61802"
+    },
+    {
+      "node": "cn-gz",
+      "addr": "10.99.1.5:61802"
+    },
+    {
+      "node": "cn-sh",
+      "addr": "10.99.1.3:61802"
+    }
+  ],
+  "targets": [
+    "https://api.ipify.org"
+  ],
+  "gossip_period": "1m",
+  "observation_stale": "10m",
   "manifest": "/etc/loom/report/manifest.json",
   "handshake_stale": "5m"
 }

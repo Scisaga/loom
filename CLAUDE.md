@@ -47,7 +47,7 @@ go run ./cmd/loom verify   /tmp/out -pubkey /tmp/keys/platform-signing.pub
 | `internal/snapshot/` | 冻结成不可变版本、Ed25519 签名、漂移检测比对 |
 | `internal/measure/` | 度量记录、窗口聚合、分位数 |
 | `internal/agent/` | **决策者**:接入节点上的调参回路,探测 → 排序 → 带阻尼切 selector |
-| `internal/report/` | **上报者**:每个节点都跑,隧道健康与配置自检。不做任何决定 |
+| `internal/report/` | **上报者**:每个节点都跑。隧道健康、配置自检、按段测量与转述。不做任何决定 |
 | `cmd/loom/` | CLI:`validate` / `render` / `diff` / `snapshot` / `verify` / `keygen` / `firewall` / `hydrate` / `probe` / `agent` / `report` / `status` |
 | `testdata/matrix/` | 参考 SSOT(4 国内云机 + 2 境外 VPS)与 golden |
 

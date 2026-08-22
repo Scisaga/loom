@@ -26,12 +26,58 @@ type Config struct {
 	// 这正是最该被看见的状态,而它在"只报看得见的"那种实现里完全隐形。
 	Interfaces []string `json:"interfaces"`
 
+	// Neighbors 是隧道对端的上报地址。两个用途:量到它们的 RTT,以及
+	// 从它们那里收别人的观测(转述)。
+	Neighbors []Neighbor `json:"neighbors,omitempty"`
+
+	// Targets 是本节点要直接试访问的目标地址。
+	//
+	// **这是链路状态测量里最值钱的一项。** "cn-a 到不了 Cloudflare"是关于
+	// cn-a 这台机器的一个事实,量一次就够了 —— 而按整条路线去测的话,
+	// 同一个事实会在 6 条不同的链上各被发现一次,换个接入设备再来一轮。
+	Targets []string `json:"targets,omitempty"`
+
+	// GossipPeriod 是量一轮并与邻居交换的间隔。
+	GossipPeriod string `json:"gossip_period,omitempty"`
+
+	// ObservationStale 是别人的观测多久算过期。过期的直接丢弃 ——
+	// 一份两小时前的"能到"比没有更危险,它看起来是数据,实际是回忆。
+	ObservationStale string `json:"observation_stale,omitempty"`
+
 	// Manifest 是 loom hydrate 产出的清单路径,空则不做配置自检。
 	Manifest string `json:"manifest"`
 
 	// HandshakeStale 是握手年龄的告警阈值。发起方设了
 	// PersistentKeepalive=25,健康隧道的握手年龄不会超过约 180 秒。
 	HandshakeStale string `json:"handshake_stale"`
+}
+
+// Neighbor 是一个隧道对端。
+type Neighbor struct {
+	Node string `json:"node"`
+	Addr string `json:"addr"`
+}
+
+func (c *Config) Gossip() (time.Duration, error) {
+	return optDur(c.GossipPeriod, "gossip_period", time.Minute)
+}
+
+func (c *Config) ObsStale() (time.Duration, error) {
+	return optDur(c.ObservationStale, "observation_stale", 10*time.Minute)
+}
+
+func optDur(v, name string, def time.Duration) (time.Duration, error) {
+	if v == "" {
+		return def, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return 0, fmt.Errorf("%s 无法解析:%q", name, v)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("%s 必须为正:%q", name, v)
+	}
+	return d, nil
 }
 
 func (c *Config) Stale() (time.Duration, error) {
@@ -57,8 +103,10 @@ func Load(b []byte) (*Config, error) {
 	if c.Node == "" {
 		return nil, fmt.Errorf("report 配置缺少 node")
 	}
-	if _, err := c.Stale(); err != nil {
-		return nil, err
+	for _, f := range []func() (time.Duration, error){c.Stale, c.Gossip, c.ObsStale} {
+		if _, err := f(); err != nil {
+			return nil, err
+		}
 	}
 	// 绑到公网地址上,拓扑和隧道健康就成了公开信息。这是硬错误 ——
 	// 一个"只在内网可见"的接口悄悄暴露在外,是最不该靠人记住的事。

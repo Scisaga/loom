@@ -8,6 +8,7 @@ import (
 
 	"loom/internal/agent"
 	"loom/internal/model"
+	"loom/internal/report"
 )
 
 // 本文件渲染接入节点上的 Agent 配置(§5.5 的调参回路)。
@@ -20,8 +21,10 @@ const agentUnit = `# 由 loom render 生成 —— 不要手工编辑(§12)
 [Unit]
 Description=Loom Agent (调参回路 %s)
 # 控制端点和探测入口都在 sing-box 里,它没起来时 Agent 无事可做。
-After=sing-box.service
-Wants=sing-box.service
+# 上报者要先起来:Agent 的第一轮就要问它拿全网观测来剪枝,晚一步就得
+# 等一整个 tuning_period(实测两者同时重启会撞上这个race)。
+After=sing-box.service loom-report.service
+Wants=sing-box.service loom-report.service
 
 [Service]
 Type=simple
@@ -117,6 +120,13 @@ func renderAgent(s *model.SSOT, p *model.Node) ([]File, []Skip) {
 		}
 	}
 	sort.Slice(cfg.Peers, func(i, j int) bool { return cfg.Peers[i].Node < cfg.Peers[j].Node })
+	// 本机上报者:它手里已经有全网转述过来的观测。
+	if rf, _ := renderReport(s, p); len(rf) > 0 {
+		var rc report.Config
+		if json.Unmarshal([]byte(rf[0].Content), &rc) == nil && len(rc.Listen) > 0 {
+			cfg.SelfReport = rc.Listen[0]
+		}
+	}
 	// 拉取节奏跟最短的调参周期走,不另发明一个旋钮:上报阈值是 5 分钟,
 	// 按同样的量级去拉就够了。
 	cfg.PeerPeriod = shortest

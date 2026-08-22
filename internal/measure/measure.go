@@ -38,6 +38,12 @@ const (
 	Passive Kind = "passive"
 	// Active 是主动探测。**计入探测预算** —— 在推理场景下它花的是真金白银。
 	Active Kind = "active"
+	// Derived 是从**别的节点的观测**推出来的结论,本机没有真的发请求。
+	//
+	// 例:cn-a 自己量到"打不到 api.ipify.org",于是所有出口在 cn-a 的候选
+	// 都不必再探(§16.1.2)。这比本机去探更省、也更早,但它是**推论**,
+	// 必须与亲自测到的结果分开标记 —— 否则回放历史时分不清哪些数字是真的。
+	Derived Kind = "derived"
 )
 
 // Measurement 是一条度量记录(§19)。

@@ -23,9 +23,23 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 		return fmt.Errorf("没有监听地址 —— 该节点没有任何隧道内地址,上报接口无处可绑")
 	}
 
+	gp, err := cfg.Gossip()
+	if err != nil {
+		return err
+	}
+	maxAge, err := cfg.ObsStale()
+	if err != nil {
+		return err
+	}
+	tbl := newTable()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		// 隧道健康和配置自检是**当场**算的,便宜。观测不是 —— 量一遍目标
+		// 要好几秒,每次被拉都重量会让拉取方超时,也会把探测流量放大成
+		// 拉取次数的倍数。所以观测走后台节奏,这里只交出最近一份。
 		st := Collect(cfg, now())
+		st.Observation, st.Learned = tbl.view(cfg.Node, now(), maxAge)
 		w.Header().Set("Content-Type", "application/json")
 		// 自检有发现时用 503:拉取方不必解析 JSON 就知道这台机器有问题,
 		// 而 JSON 里仍有全部细节。
@@ -43,6 +57,20 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 	}
 
 	var wg sync.WaitGroup
+	// 后台观测与转述。先跑一轮再进循环,免得刚起来那一分钟交出空表。
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			gossip(cfg, tbl, now, maxAge)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(gp):
+			}
+		}
+	}()
+
 	var mu sync.Mutex
 	var firstErr error
 	started := 0

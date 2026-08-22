@@ -62,6 +62,7 @@ func Run(ctx context.Context, cfg *Config, opts Options) error {
 	}
 
 	k := newClash(cfg.API, cfg.APISecret)
+	obs := newObserved()
 	logf := func(f string, a ...any) {
 		fmt.Fprintf(opts.Log, "%s "+f+"\n",
 			append([]any{opts.Now().Format("15:04:05")}, a...)...)
@@ -70,7 +71,14 @@ func Run(ctx context.Context, cfg *Config, opts Options) error {
 	var wg sync.WaitGroup
 
 	// 拉取对端上报是另一个节奏:它和某一条声明无关,是整台机器的事。
-	if len(cfg.Peers) > 0 && cfg.PeerPeriod != "" {
+	//
+	// **第一轮同步跑完再开始调参。** 并发启动的话,第一次决策会在全网观测
+	// 到手之前做出,剪枝失效 —— 而下一次机会要等一整个 tuning_period。
+	if len(cfg.Peers) > 0 || cfg.SelfReport != "" {
+		pollPeers(cfg, obs, logf)
+		logf("已收到 %d 个节点的观测", obs.len())
+	}
+	if (len(cfg.Peers) > 0 || cfg.SelfReport != "") && cfg.PeerPeriod != "" {
 		pp, err := dur(cfg.PeerPeriod, "peer_period")
 		if err != nil {
 			return err
@@ -79,14 +87,14 @@ func Run(ctx context.Context, cfg *Config, opts Options) error {
 		go func() {
 			defer wg.Done()
 			for {
-				pollPeers(cfg, logf)
-				if opts.Once {
-					return
-				}
 				select {
 				case <-ctx.Done():
 					return
 				case <-time.After(pp):
+				}
+				pollPeers(cfg, obs, logf)
+				if opts.Once {
+					return
 				}
 			}
 		}()
@@ -102,7 +110,7 @@ func Run(ctx context.Context, cfg *Config, opts Options) error {
 		go func() {
 			defer wg.Done()
 			for {
-				if err := tick(cfg, d, k, st, &opts, logf); err != nil {
+				if err := tick(cfg, d, k, st, obs, &opts, logf); err != nil {
 					// 一轮失败不该让回路停掉:控制端点可能只是在重启。
 					logf("[%s] 本轮失败:%v", d.ID, err)
 				}
@@ -126,14 +134,26 @@ func Run(ctx context.Context, cfg *Config, opts Options) error {
 // 它**不做任何处置** —— 隧道断了要人去看,不是 Agent 能自动修的。价值在于
 // 从"完全没有信号"变成"有带时间戳的记录":DDNS 重解析以前是全程静默的,
 // IP 变了、隧道断了、脚本修好了,事后连查都没得查。
-func pollPeers(cfg *Config, logf func(string, ...any)) {
+func pollPeers(cfg *Config, obs *observed, logf func(string, ...any)) {
 	peers := append([]Peer(nil), cfg.Peers...)
 	sort.Slice(peers, func(i, j int) bool { return peers[i].Node < peers[j].Node })
+	// 本机上报者排在最前:它手里已经有转述过来的全网观测,先拿到它,
+	// 后面每条声明剪枝就有依据了。
+	if cfg.SelfReport != "" {
+		peers = append([]Peer{{Node: cfg.Node, Addr: cfg.SelfReport}}, peers...)
+	}
 	for _, p := range peers {
 		st, err := report.Fetch(p.Addr, 5*time.Second)
 		if err != nil {
 			logf("[对端 %s] ❌ 拉不到 %s:%v", p.Node, p.Addr, err)
 			continue
+		}
+		obs.put(st.Observation)
+		for i := range st.Learned {
+			obs.put(&st.Learned[i])
+		}
+		if p.Node == cfg.Node {
+			continue // 自己的隧道健康由自己的日志说,不在这里重复
 		}
 		if st.OK() {
 			continue // 正常就不说话,否则日志里全是噪声
@@ -167,7 +187,7 @@ func pollPeers(cfg *Config, logf func(string, ...any)) {
 }
 
 // tick 是一轮:探测全部候选 → 按窗口聚合 → 决定 → 必要时切。
-func tick(cfg *Config, d *Decl, k *clash, st *store, opts *Options, logf func(string, ...any)) error {
+func tick(cfg *Config, d *Decl, k *clash, st *store, obs *observed, opts *Options, logf func(string, ...any)) error {
 	win, err := d.Win()
 	if err != nil {
 		return err
@@ -182,9 +202,47 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, opts *Options, logf func(st
 	//    这条候选的真实水平。候选按 tag 排序,顺序稳定便于比对日志。
 	cands := append([]Cand(nil), d.Candidates...)
 	sort.Slice(cands, func(i, j int) bool { return cands[i].Tag < cands[j].Tag })
+
+	// 剪枝:出口已知打不到这个目标的候选,不必再探。
+	//
+	// **同一个事实不该被反复发现。** "cn-a 到不了 Cloudflare"是关于 cn-a
+	// 一台机器的事实,由 cn-a 自己量一次(§16.1.2);而按整条路线去探的话,
+	// 它会在每条经过 cn-a 的链上各被发现一次 —— 这里 15 条候选里有 9 条。
+	//
+	// 剪枝依据每轮都从新的观测重取,不是一次性判定:cn-a 什么时候恢复,
+	// 下一轮就自动重新开探。
+	dead := obs.unreachable(d.ProbeURL, opts.Now(), 15*time.Minute)
+	var probe []Cand
+	var pruned []string
+	for _, c := range cands {
+		if why, bad := dead[exitOf(c.Tag, cfg.Node)]; bad {
+			pruned = append(pruned, fmt.Sprintf("%s(出口 %s:%s)",
+				c.Tag, exitOf(c.Tag, cfg.Node), why))
+			continue
+		}
+		probe = append(probe, c)
+	}
+
 	ts := opts.Now().Format(time.RFC3339)
 	var got []measure.Measurement
 	ok := 0
+
+	// 被剪掉的也要如实记一笔失败,而且标成 derived。
+	//
+	// 不记的话有个洞:当前选中的候选如果正好被剪掉,它在窗口里的**旧数据**
+	// 会让 Decide 以为它还健康,于是流量继续停在一条已知不通的路上 ——
+	// 正是 Agent 本来要解决的那个问题。
+	for _, c := range cands {
+		if why, bad := dead[exitOf(c.Tag, cfg.Node)]; bad {
+			got = append(got, measure.Measurement{
+				TS: ts, Node: cfg.Node, CandidateID: c.Tag, Declaration: d.ID,
+				Point: measure.L4Tunnel, Kind: measure.Derived,
+				Error: fmt.Sprintf("出口 %s 自己观测到打不到目标:%s",
+					exitOf(c.Tag, cfg.Node), why),
+			})
+		}
+	}
+	cands = probe
 	for _, c := range cands {
 		ms, perr := ProbeOnce(cfg.Probe, cfg.ProbeSecret, c.ProbeUser, d.ProbeURL, opts.ProbeTimeout)
 		m := measure.Measurement{
@@ -217,7 +275,13 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, opts *Options, logf func(st
 		return fmt.Errorf("读 selector:%w", err)
 	}
 	dec := Decide(d, current, sums)
-	logf("[%s] 探测 %d 条(%d 通)· %s", d.ID, len(got), ok, dec.Reason)
+	// 亲自测的和照别人观测判定的必须分开说 —— 混成一个数字,就看不出
+	// 这一轮到底有多少是真的测过的。
+	line := fmt.Sprintf("探测 %d 条(%d 通)", len(cands), ok)
+	if len(pruned) > 0 {
+		line += fmt.Sprintf(",另按全网观测判定 %d 条出口不可用(未探)", len(pruned))
+	}
+	logf("[%s] %s · %s", d.ID, line, dec.Reason)
 	if !dec.Switch {
 		return nil
 	}

@@ -52,6 +52,7 @@ WantedBy=multi-user.target
 // 没有任何隧道的节点不渲染:上报接口只绑隧道内地址,没有隧道就无处可绑。
 func renderReport(s *model.SSOT, n *model.Node) ([]File, []Skip) {
 	var addrs, ifaces []string
+	var neighbors []report.Neighbor
 	var after string
 	var units string
 	for i := range s.Tunnels {
@@ -69,6 +70,12 @@ func renderReport(s *model.SSOT, n *model.Node) ([]File, []Skip) {
 			addrs = append(addrs, fmt.Sprintf("%s:%d", a, ReportPort))
 		}
 		ifaces = append(ifaces, model.IfaceName(peer))
+		// 邻居的上报地址 = 对端在这条隧道里的地址。写成自己那一头的话,
+		// 它会去连自己、拿回自己的观测,看起来一切正常。
+		if pa := s.TunnelAddrOn(peer, n.ID); pa != "" {
+			neighbors = append(neighbors, report.Neighbor{
+				Node: peer, Addr: fmt.Sprintf("%s:%d", pa, ReportPort)})
+		}
 		units += " wg-quick@" + model.IfaceName(peer) + ".service"
 	}
 	var skips []Skip
@@ -84,6 +91,7 @@ func renderReport(s *model.SSOT, n *model.Node) ([]File, []Skip) {
 	}
 	sort.Strings(addrs)
 	sort.Strings(ifaces)
+	sort.Slice(neighbors, func(i, j int) bool { return neighbors[i].Node < neighbors[j].Node })
 	if units != "" {
 		after = "After=" + trimLead(units) + "\nWants=" + trimLead(units)
 	}
@@ -92,7 +100,16 @@ func renderReport(s *model.SSOT, n *model.Node) ([]File, []Skip) {
 		Node:       n.ID,
 		Listen:     addrs,
 		Interfaces: ifaces,
-		Manifest:   ManifestPath,
+		Neighbors:  neighbors,
+		// 每台机器都试一遍全部目标地址。"某台服务器到不了某个目标"是关于
+		// 那台机器的事实,量一次全网复用 —— 按整条路线去测的话,同一个
+		// 事实会在每条经过它的链上各被发现一次。
+		Targets:      probeTargets(s),
+		GossipPeriod: "1m",
+		// 观测过期得比调参周期(最短 5m)快一点,免得 Agent 拿着上一轮的
+		// 结论做这一轮的决定。
+		ObservationStale: "10m",
+		Manifest:         ManifestPath,
 		// 发起方设了 PersistentKeepalive=25,健康隧道的握手年龄不会超过
 		// 约 180 秒。5 分钟留足余量,又能在一个 Agent 周期内发现真断连。
 		HandshakeStale: "5m",
@@ -105,4 +122,18 @@ func renderReport(s *model.SSOT, n *model.Node) ([]File, []Skip) {
 		{Path: "report/config.json", Content: string(b) + "\n"},
 		{Path: "systemd/loom-report.service", Content: fmt.Sprintf(reportUnit, n.ID, after)},
 	}, skips
+}
+
+// probeTargets 收集 SSOT 里全部去重后的探测目标。
+func probeTargets(s *model.SSOT) []string {
+	seen := map[string]bool{}
+	var out []string
+	for i := range s.Declarations {
+		if u := s.Declarations[i].ProbeURL; u != "" && !seen[u] {
+			seen[u] = true
+			out = append(out, u)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

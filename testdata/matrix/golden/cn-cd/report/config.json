@@ -8,6 +8,21 @@
     "wg-jp-vps",
     "wg-sg-vps"
   ],
+  "neighbors": [
+    {
+      "node": "jp-vps",
+      "addr": "10.99.1.8:61802"
+    },
+    {
+      "node": "sg-vps",
+      "addr": "10.99.0.8:61802"
+    }
+  ],
+  "targets": [
+    "https://api.ipify.org"
+  ],
+  "gossip_period": "1m",
+  "observation_stale": "10m",
   "manifest": "/etc/loom/report/manifest.json",
   "handshake_stale": "5m"
 }
