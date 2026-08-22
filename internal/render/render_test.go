@@ -135,7 +135,7 @@ nodes:
     server: {direction: bidirectional, inbound_port: 61698, egress_capable: true, wg_public_key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
     access: {platform: desktop, credentials: [cr1], default_declaration: d1, mixed_ports: [{port: 1080, declaration: d1}]}
 declarations:
-  - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, probe_url: "http://x/", tuning_period: 10m, allowed_servers: [laptop], max_hops: 1}
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, tuning_period: 10m, allowed_servers: [laptop], max_hops: 1}
 credentials:
   - {id: cr1, declaration: d1, secret_ref: "cred/x"}`))
 	if err != nil {

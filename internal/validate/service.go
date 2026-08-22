@@ -123,12 +123,6 @@ func checkDeclarations(
 		if d.MaxHops < 0 {
 			fs.add("§3.2 max_hops", where, "max_hops 不能为负:%d", d.MaxHops)
 		}
-		if d.ProbeURL == "" {
-			fs.add("§16.2 探测", where,
-				"没有 probe_url —— 主动探测会退回一个全局默认目标,而那个目标"+
-					"未必代表这条声明承载的流量。拿国内站点探测「固定境外出口」"+
-					"测到的是绕出国再绕回来,数字看着正常却把排序引向错误方向")
-		}
 		if d.TuningPeriod == "" {
 			fs.add("§5.5 周期", where, "缺少 tuning_period —— 中继轴始终需要度量(§4)")
 		}

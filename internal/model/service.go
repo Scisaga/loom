@@ -260,15 +260,6 @@ type AccessDeclaration struct {
 
 	Matcher string `yaml:"matcher,omitempty"`
 
-	// ProbeURL 是主动探测这条声明的候选时用的目标。
-	//
-	// **它必须能代表这条声明实际承载的流量。** 拿国内站点去探测一条"固定
-	// 新加坡出口"的声明,测到的是"绕出国再绕回来",数字与真实用途无关 ——
-	// 而它看起来完全正常,只是把排序引向错误的方向。
-	//
-	// 这也是 §5.3"最优不存在,只有按什么最优"在探测侧的对应物:objective
-	// 说的是**优化什么指标**,probe_url 说的是**对什么流量**。
-	ProbeURL    string       `yaml:"probe_url,omitempty"`
 	Objective   Objective    `yaml:"objective"`
 	Constraints []Constraint `yaml:"constraints,omitempty"`
 

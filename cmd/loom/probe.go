@@ -21,8 +21,13 @@ import (
 // 且比合成探测更准确。**主动探测只覆盖没有真实流量的候选,必须限频、限额。**
 // 现在还没有被动观测(那需要 Agent 在数据路径上统计),所以先用主动的。
 //
-// 它测的是**首字节返回时间**,不是 TTFT:L4 隧道拿不到应用层指标(§16.2)。
-// 记录里如实标成 observation_point=l4_tunnel,免得日后和 L7 的真值混在一起排序。
+// **它测的是路径质量,不是服务质量。**
+//
+// 目标是 sing-box 内置的一个中立端点,对所有候选都一样 —— 所以候选之间的
+// **相对排序**有效,而这正是服务器轴需要的(§4)。
+//
+// 它说不了任何关于**地址轴**的事:比较等价类里几个服务地址的好坏,要看
+// TTFT、tokens/s、响应结构,而那些只能从 L7 观测点拿(§16.2)。
 
 func cmdProbe(args []string) error {
 	fs := flag.NewFlagSet("probe", flag.ExitOnError)
@@ -30,7 +35,6 @@ func cmdProbe(args []string) error {
 	secret := fs.String("secret", "", "控制端点口令(或用 -secrets 从秘密文件取)")
 	secretsFile := fs.String("secrets", "", "秘密文件,取 api/<node> 这一项")
 	node := fs.String("node", "", "接入节点 id(用于给记录打标,并从秘密文件取口令)")
-	fallbackURL := fs.String("url", "", "声明未配 probe_url 时的兜底目标")
 	out := fs.String("o", "measurements.jsonl", "度量输出文件(追加)")
 	rounds := fs.Int("rounds", 1, "每条候选探测几轮")
 	budget := fs.Int("budget", 200, "本次最多发多少个探测请求 —— 探测预算是硬上限(§16.2)")
@@ -77,7 +81,7 @@ func cmdProbe(args []string) error {
 	// 否则测的东西和选的东西对不上(§5.6)。
 	decls := s.DeclarationByID()
 	creds := s.CredentialByID()
-	type item struct{ decl, cand, url string }
+	type item struct{ decl, cand string }
 	var items []item
 	seen := map[string]bool{}
 	for _, cid := range accessNode.Access.Credentials {
@@ -94,12 +98,7 @@ func cmdProbe(args []string) error {
 			tag := cands[i].Tag()
 			if !seen[tag] {
 				seen[tag] = true
-				// 每条声明用自己的探测目标 —— 目标不对,测出来的排序就不对。
-				u := d.ProbeURL
-				if u == "" {
-					u = *fallbackURL
-				}
-				items = append(items, item{d.ID, tag, u})
+				items = append(items, item{d.ID, tag})
 			}
 		}
 	}
@@ -122,10 +121,7 @@ func cmdProbe(args []string) error {
 				break
 			}
 			sent++
-			if it.url == "" {
-				return fmt.Errorf("声明 %q 没有 probe_url,也没给 -url 兜底", it.decl)
-			}
-			ms, perr := probeOne(client, *api, sec, it.cand, it.url, *timeoutMs)
+			ms, perr := probeOne(client, *api, sec, it.cand, *timeoutMs)
 			m := measure.Measurement{
 				// 时间由调用方注入,与渲染/打包保持同一个原则(D14)。
 				TS:   time.Now().UTC().Format(time.RFC3339),
@@ -164,9 +160,11 @@ func cmdProbe(args []string) error {
 //
 // 这个接口**不改变 selector 的当前选择**,所以可以在真实流量跑着的时候
 // 逐条测 —— 否则每测一条就要切一次,既慢又会打断连接。
-func probeOne(c *http.Client, api, secret, cand, target string, timeoutMs int) (int, error) {
-	u := fmt.Sprintf("%s/proxies/%s/delay?url=%s&timeout=%d",
-		api, url.PathEscape(cand), url.QueryEscape(target), timeoutMs)
+func probeOne(c *http.Client, api, secret, cand string, timeoutMs int) (int, error) {
+	// **不传 url 参数。** sing-box 1.11.4 的 delay 接口忽略它 —— 实测传
+	// neverbefore.example.org,它照样去连自己的默认目标 www.gstatic.com。
+	// 传一个不生效的参数,只会让人以为测的是自己指定的东西。
+	u := fmt.Sprintf("%s/proxies/%s/delay?timeout=%d", api, url.PathEscape(cand), timeoutMs)
 	req, err := http.NewRequest(http.MethodGet, u, nil)
 	if err != nil {
 		return 0, err

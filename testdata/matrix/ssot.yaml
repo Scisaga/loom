@@ -167,7 +167,6 @@ declarations:
     address_axis: from_request
     egress_axis: pinned:sg-vps
     objective: stability
-    probe_url: http://cp.cloudflare.com/generate_204
     allowed_servers: [cn-bj, cn-sh, cn-gz, cn-cd, sg-vps]
     max_hops: 2
     tuning_period: 10m
@@ -182,7 +181,6 @@ declarations:
     address_axis: from_request
     egress_axis: any
     objective: latency
-    probe_url: http://cp.cloudflare.com/generate_204
     allowed_servers: [cn-bj, cn-gz, sg-vps, jp-vps]
     max_hops: 2
     tuning_period: 5m
@@ -198,7 +196,6 @@ declarations:
     address_axis: class:llm:qwen3-32b-int8@openai-v1
     egress_axis: any
     objective: ttft
-    probe_url: http://cp.cloudflare.com/generate_204
     constraints:
       - {kind: compliance, expr: 数据不出境}
       - {kind: sla, expr: p95 < 200ms}
@@ -220,7 +217,6 @@ declarations:
     address_axis: class:llm-3p:qwen3-32b@openai-v1
     egress_axis: any
     objective: cost
-    probe_url: http://cp.cloudflare.com/generate_204
     allowed_servers: [cn-bj]
     max_hops: 1
     top_n: 2
