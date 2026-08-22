@@ -254,6 +254,41 @@ manifest。
 > §19 的 `Snapshot` 里列了 `signature` 字段,那是概念模型;落到磁盘上它是
 > 旁文件。二者不冲突。
 
+### D16 · 一台机器一把 WireGuard 私钥,放在 `/etc/wireguard/node.key`
+
+**日期** 2026-08-22 · **状态** 生效 · **相关** §13.1、§12.1 · **上真机时才暴露的两个 bug**
+
+原来渲染的是 `/etc/loom/secrets/%i.key` —— 按接口名展开,即**一条隧道一把私钥**。
+两处都错:
+
+**错误一:私钥应当按机器而非按隧道。** SSOT 里每个节点只有一个
+`wg_public_key`。若各接口用不同私钥,对端拿到的公钥就对不上。同一把私钥用在
+多个接口上是合法的 —— 对端靠公钥认身份,而身份本来就该一致。
+
+**错误二:路径必须在 `/etc/wireguard/` 下。** Ubuntu 24.04+ 给 `wg` 上了
+AppArmor profile,只允许:
+
+```
+file rw @{etc_rw}/wireguard/{,**},
+```
+
+放在别处会被拒:
+
+```
+apparmor="DENIED" profile="wg" name="/etc/loom/secrets/node.key" denied_mask="r"
+```
+
+**表现极具迷惑性:** `wg-quick up` 打印一行 `fopen: Permission denied`,
+删掉刚建好的接口,**然后退出码仍是 0**。看起来像成功了。
+
+给每台机器加 AppArmor 例外(profile 里有 `include if exists <local/wg>`)也能解,
+但那是在削弱一个本该存在的防护;换个路径不花任何代价,而且 `/etc/wireguard/`
+本来就是 WireGuard 密钥的惯例位置。
+
+> **"秘密层"是个概念,不是一个目录。** 不同类型的秘密可以放在各自消费者
+> 期望的位置 —— 这不违反 [D2](#d2--私钥用-wg-quick-的-postup-引用本地文件),
+> 渲染层依然只写引用。
+
 ---
 
 ## 二 · 附录 C 的 19 个问题

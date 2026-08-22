@@ -15,8 +15,21 @@ func IfaceName(peerID string) string { return "wg-" + peerID }
 // SecretPath 是节点本地私钥的约定路径。
 //
 // 渲染层只写这个引用,私钥本身属于秘密层,不进 SSOT、不进快照(§12.1)。
-// 用 %i 让 wg-quick 自己展开接口名,避免文件名与接口名在两处各写一遍。
-const SecretPath = "/etc/loom/secrets/%i.key"
+//
+// **一台机器一把私钥,不是一条隧道一把。** SSOT 里每个节点只有一个
+// wg_public_key —— 若各接口用不同私钥,对端拿到的公钥就对不上,而
+// WireGuard 的表现是握手静默失败。同一把私钥用在多个接口上是合法的:
+// 对端靠公钥认身份,身份本来就该一致。
+//
+// **路径必须在 /etc/wireguard/ 下。** Ubuntu 24.04+ 给 wg 上了 AppArmor
+// profile,只允许 `file rw @{etc_rw}/wireguard/{,**}`。放在别处会被拒:
+//
+//	apparmor="DENIED" profile="wg" name="/etc/loom/secrets/node.key" denied_mask="r"
+//
+// 表现是 wg-quick 输出一行 `fopen: Permission denied` 然后删掉接口 ——
+// 而它的退出码仍是 0。给每台机器加 AppArmor 例外也能解,但那是在削弱一个
+// 本该存在的防护;换个路径不花任何代价。
+const SecretPath = "/etc/wireguard/node.key"
 
 // ResolvedTunnel 是一条隧道加上从 direction 推导出的角色分配。
 //
