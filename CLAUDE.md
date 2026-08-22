@@ -45,7 +45,9 @@ go run ./cmd/loom verify   /tmp/out -pubkey /tmp/keys/platform-signing.pub
 | `internal/validate/` | 渲染前的一致性校验 |
 | `internal/render/` | 纯函数渲染(WireGuard + sing-box)、配置包哈希、行级 diff |
 | `internal/snapshot/` | 冻结成不可变版本、Ed25519 签名、漂移检测比对 |
-| `cmd/loom/` | CLI:`validate` / `render` / `diff` |
+| `internal/measure/` | 度量记录、窗口聚合、分位数 |
+| `internal/agent/` | 节点上的调参回路:探测 → 排序 → 带阻尼切 selector |
+| `cmd/loom/` | CLI:`validate` / `render` / `diff` / `snapshot` / `verify` / `keygen` / `firewall` / `hydrate` / `probe` / `agent` |
 | `testdata/matrix/` | 参考 SSOT(4 国内云机 + 2 境外 VPS)与 golden |
 
 ## 模型:三个词就够了
@@ -76,10 +78,17 @@ go run ./cmd/loom verify   /tmp/out -pubkey /tmp/keys/platform-signing.pub
 在 YAML 里写这些键会直接报错。**不要为了方便加回这些字段** ——
 可写即可与推导结果矛盾。
 
-**3. 不完整的实现要显式报出,不许静默降级。** 已有两处先例:
+**3. 不完整的实现要显式报出,不许静默降级。** 已有三处先例:
 未实现的协议进 `render.Result.Skipped` 并由 CLI 打印;设了混淆参数但渲染器
 不支持时**硬报错**,因为 §17.2 说参数全零等于标准 WireGuard —— 静默输出
-无参数配置会让人以为开了混淆而实际没开。新增能力时沿用这个规矩。
+无参数配置会让人以为开了混淆而实际没开;Agent 跑不了的 objective
+(`ttft` / `throughput` / `cost`)在**渲染期**就被挡在 Agent 配置外并报出理由,
+而不是拿 L4 首字节时间冒充。新增能力时沿用这个规矩。
+
+**4. 字段之间有算术关系时,校验器要钉住关系本身。** 光检查每个字段自己合法
+不够 —— `window` 装不下 `min_samples` 个样本时排序永远不会启动,而每个字段
+单看都没毛病。写这条规则时,参考矩阵和真实部署里**每一条声明**都违反它
+(见 D24)。
 
 ## 代码约定
 

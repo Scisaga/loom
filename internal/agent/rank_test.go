@@ -1,0 +1,168 @@
+package agent
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"loom/internal/measure"
+	"loom/internal/model"
+)
+
+func decl(o model.Objective, minS int, thr float64, tags ...string) *Decl {
+	d := &Decl{ID: "d", Selector: "decl:d", Objective: o, MinSamples: minS, SwitchThreshold: thr}
+	for _, t := range tags {
+		d.Candidates = append(d.Candidates, Cand{Tag: t, ProbeUser: "u-" + t})
+	}
+	return d
+}
+
+func sum(tag string, samples, failures, p50, p95 int) measure.Summary {
+	return measure.Summary{CandidateID: tag, Declaration: "d",
+		Samples: samples, Failures: failures, P50: p50, P95: p95}
+}
+
+// 这是 Agent 存在的首要理由:sing-box 每次重启,selector 都回到 default,
+// 而实测 default(直连)对 best-egress 的目标完全不通。停在一条已经证明
+// 打不通的路上,不该被 min_samples 或 switch_threshold 拦住 —— 阻尼是为了
+// 防止在两个能用的候选之间横跳,不是为了守着一具尸体。
+func TestSwitchesAwayFromDeadCandidateImmediately(t *testing.T) {
+	d := decl(model.Latency, 20, 0.2, "direct", "edge-a")
+	got := Decide(d, "direct", []measure.Summary{
+		sum("direct", 3, 3, 0, 0), // 3 次全失败
+		sum("edge-a", 3, 0, 800, 900),
+	})
+	if !got.Switch || got.Choice != "edge-a" {
+		t.Fatalf("当前候选全部失败却没切:%+v", got)
+	}
+	if !strings.Contains(got.Reason, "全部失败") {
+		t.Errorf("理由没说清是因为失败:%q", got.Reason)
+	}
+}
+
+// 反面:两个都能用时,样本不够就不许切 —— 否则头几次探测的噪声会决定路由。
+func TestColdStartDoesNotSwitchBetweenHealthyCandidates(t *testing.T) {
+	d := decl(model.Latency, 20, 0.2, "cn-a", "edge-a")
+	got := Decide(d, "cn-a", []measure.Summary{
+		sum("cn-a", 2, 0, 900, 950),
+		sum("edge-a", 2, 0, 100, 120), // 快得多,但只有 2 个样本
+	})
+	if got.Switch {
+		t.Fatalf("样本不足 min_samples 却切了:%+v", got)
+	}
+	if !strings.Contains(got.Reason, "min_samples") {
+		t.Errorf("理由没说清是样本不够:%q", got.Reason)
+	}
+}
+
+// §5.5 的阻尼:小幅领先不足以切。没有它,两条延迟接近的链路会一直互相顶掉。
+func TestDampingBlocksMarginalImprovement(t *testing.T) {
+	d := decl(model.Latency, 3, 0.2, "a", "b")
+	got := Decide(d, "a", []measure.Summary{
+		sum("a", 5, 0, 100, 120),
+		sum("b", 5, 0, 90, 110), // 好 10%,阈值 20%
+	})
+	if got.Switch {
+		t.Fatalf("仅好 10%% 却切了:%+v", got)
+	}
+	if !strings.Contains(got.Reason, "未过阈值") {
+		t.Errorf("理由没说清是被阈值挡住:%q", got.Reason)
+	}
+	// 好 40% 就该切了。
+	got = Decide(d, "a", []measure.Summary{
+		sum("a", 5, 0, 100, 120),
+		sum("b", 5, 0, 60, 70),
+	})
+	if !got.Switch || got.Choice != "b" {
+		t.Fatalf("好 40%% 却没切:%+v", got)
+	}
+}
+
+// 失败率必须压过目标指标:一条一半请求出错但很快的链路,不该赢过一条
+// 全部成功但慢一点的。把失败折算成"很慢"就会得出相反结论。
+func TestFailureRateOutranksSpeed(t *testing.T) {
+	d := decl(model.Latency, 3, 0.0, "flaky", "solid")
+	got := Decide(d, "solid", []measure.Summary{
+		sum("flaky", 10, 5, 50, 60),   // 快一倍,但一半失败
+		sum("solid", 10, 0, 100, 120), // 慢,但从不失败
+	})
+	if got.Switch {
+		t.Fatalf("切到了半数失败的候选:%+v", got)
+	}
+}
+
+// stability 看 p95 而不是 p50 —— p50 好看、p95 很差的链路正是它要避开的。
+func TestStabilityRanksByTail(t *testing.T) {
+	d := decl(model.Stability, 3, 0.2, "spiky", "even")
+	got := Decide(d, "spiky", []measure.Summary{
+		sum("spiky", 10, 0, 50, 2000), // p50 更好,p95 灾难
+		sum("even", 10, 0, 90, 120),
+	})
+	if !got.Switch || got.Choice != "even" {
+		t.Fatalf("stability 没有按尾部选:%+v", got)
+	}
+}
+
+// 当前选择不在候选集里(配置变了),必须切回来,否则流量停在一个
+// 已经没人维护的出站上。
+func TestSwitchesWhenCurrentNotInCandidateSet(t *testing.T) {
+	d := decl(model.Latency, 20, 0.2, "a", "b")
+	got := Decide(d, "removed", []measure.Summary{sum("a", 1, 0, 300, 300)})
+	if !got.Switch || got.Choice != "a" {
+		t.Fatalf("当前选择已不存在却没切:%+v", got)
+	}
+}
+
+// 全都不通时保持不动:乱切没有意义,而且会掩盖"整条声明都挂了"这件事。
+func TestNoSwitchWhenNothingWorks(t *testing.T) {
+	d := decl(model.Latency, 1, 0.2, "a", "b")
+	got := Decide(d, "a", []measure.Summary{sum("a", 3, 3, 0, 0), sum("b", 3, 3, 0, 0)})
+	if got.Switch {
+		t.Fatalf("全部失败时切了:%+v", got)
+	}
+}
+
+// 不切也必须有理由 —— 否则日志里"没动"和"没跑"分不出来。
+func TestEveryDecisionHasAReason(t *testing.T) {
+	d := decl(model.Latency, 3, 0.2, "a", "b")
+	for _, sums := range [][]measure.Summary{
+		nil,
+		{sum("a", 3, 3, 0, 0)},
+		{sum("a", 5, 0, 100, 100), sum("b", 5, 0, 99, 99)},
+		{sum("a", 5, 0, 100, 100), sum("b", 5, 0, 10, 10)},
+	} {
+		if got := Decide(d, "a", sums); got.Reason == "" {
+			t.Errorf("这组输入没有给出理由:%+v", sums)
+		}
+	}
+}
+
+// 不能执行的 objective 必须显式拒绝,不能拿 L4 首字节时间冒充。
+func TestUnsupportedObjectivesAreRefused(t *testing.T) {
+	for _, o := range []model.Objective{model.TTFT, model.Throughput, model.Cost} {
+		if ok, why := Supported(o); ok || why == "" {
+			t.Errorf("%s 被当成可执行的,或没给理由", o)
+		}
+	}
+	for _, o := range []model.Objective{model.Latency, model.Stability} {
+		if ok, _ := Supported(o); !ok {
+			t.Errorf("%s 应该可执行", o)
+		}
+	}
+}
+
+func TestInWindowDropsOldAndStale(t *testing.T) {
+	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	at := func(d time.Duration) string { return now.Add(-d).Format(time.RFC3339) }
+	ms := []measure.Measurement{
+		{TS: at(90 * time.Minute), Declaration: "d", CandidateID: "old", FirstByteMs: 1},
+		{TS: at(5 * time.Minute), Declaration: "d", CandidateID: "fresh", FirstByteMs: 2},
+		{TS: at(5 * time.Minute), Declaration: "other", CandidateID: "fresh", FirstByteMs: 3},
+		// 窗口内有样本,但这条候选最新的一笔已经超过 stale_after
+		{TS: at(50 * time.Minute), Declaration: "d", CandidateID: "stale", FirstByteMs: 4},
+	}
+	got := inWindow(ms, "d", now, time.Hour, 30*time.Minute)
+	if len(got) != 1 || got[0].CandidateID != "fresh" {
+		t.Fatalf("窗口过滤结果不对:%+v", got)
+	}
+}

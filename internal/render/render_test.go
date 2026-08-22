@@ -70,7 +70,7 @@ func TestMatrixShape(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wg, sb, units := 0, 0, 0
+	wg, sb, units, agents, agentUnits := 0, 0, 0, 0, 0
 	for _, b := range res.Bundles {
 		for _, f := range b.Files {
 			switch {
@@ -80,6 +80,10 @@ func TestMatrixShape(t *testing.T) {
 				sb++
 			case f.Path == "systemd/sing-box.service":
 				units++
+			case f.Path == "agent/config.json":
+				agents++
+			case f.Path == "systemd/loom-agent.service":
+				agentUnits++
 			case strings.HasPrefix(f.Path, "systemd/loom-wg-reresolve."):
 				// 只给有 DDNS 对端的节点渲染
 			default:
@@ -90,6 +94,13 @@ func TestMatrixShape(t *testing.T) {
 	// 每份 sing-box 配置都必须配一个 unit —— 否则那份配置没人启动。
 	if units != sb {
 		t.Errorf("%d 份 sing-box 配置却只有 %d 个 systemd unit", sb, units)
+	}
+	if agentUnits != agents {
+		t.Errorf("%d 份 Agent 配置却只有 %d 个 systemd unit", agents, agentUnits)
+	}
+	// Agent 只跑在接入节点上 —— 服务器上没有 selector 可切(§5.1)。
+	if want := len(s.AccessNodes()); agents != want {
+		t.Errorf("渲染出 %d 份 Agent 配置,期望 %d(每个接入节点一份)", agents, want)
 	}
 	if want := len(s.Tunnels) * 2; wg != want {
 		t.Errorf("渲染出 %d 个 WireGuard 文件,期望 %d(每条隧道两端各一个)", wg, want)
@@ -208,6 +219,10 @@ func TestSkipsAreExpected(t *testing.T) {
 		"carrier 是 l7_gateway": 1, // 第三方等价类不由 L4 换地址(§4.4)
 		"没有任何可表达的 L4 候选":       1,
 		"该端口不生成路由规则":           1, // 上面那条声明绑的端口
+		// Agent 只会 latency / stability;别的 objective 不能拿 L4 首字节
+		// 时间冒充 —— 必须在渲染期就说出来(§16.2)。
+		"ttft 只能由 L7 观测点产出": 1,
+		"cost 需要价格数据源":      1,
 	}
 	got := map[string]int{}
 	for _, sk := range res.Skipped {
@@ -225,8 +240,8 @@ func TestSkipsAreExpected(t *testing.T) {
 			t.Errorf("跳过原因 %q 出现 %d 次,期望 %d 次", k, got[k], n)
 		}
 	}
-	if len(res.Skipped) != 3 {
-		t.Errorf("共 %d 条跳过,期望 3 条 —— 有新的静默跳过被引入:\n%+v",
+	if len(res.Skipped) != 5 {
+		t.Errorf("共 %d 条跳过,期望 5 条 —— 有新的静默跳过被引入:\n%+v",
 			len(res.Skipped), res.Skipped)
 	}
 }

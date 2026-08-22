@@ -3,12 +3,11 @@ package main
 import (
 	"flag"
 	"fmt"
-	"net/http"
-	"net/url"
 	"os"
 	"sort"
 	"time"
 
+	"loom/internal/agent"
 	"loom/internal/measure"
 	"loom/internal/model"
 	"loom/internal/render"
@@ -122,7 +121,8 @@ func cmdProbe(args []string) error {
 				break
 			}
 			sent++
-			ms, perr := probeOne(*probeAddr, sec, it.cand, it.url, *timeoutMs)
+			ms, perr := agent.ProbeOnce(*probeAddr, sec, render.ProbeUser(it.cand), it.url,
+				time.Duration(*timeoutMs)*time.Millisecond)
 			m := measure.Measurement{
 				// 时间由调用方注入,与渲染/打包保持同一个原则(D14)。
 				TS:   time.Now().UTC().Format(time.RFC3339),
@@ -155,43 +155,4 @@ func cmdProbe(args []string) error {
 	}
 	fmt.Print(measure.FormatSummary(measure.Summarize(all)))
 	return nil
-}
-
-// probeOne 经探测入口打一条候选,返回首字节时间。
-//
-// 用 HTTP 代理而不是 SOCKS5:mixed 入站两种都说,而 HTTP 代理的凭据由
-// Go 标准库处理,不必引第三方依赖。域名在代理端解析(§7.4 的 socks5h 同理),
-// 所以测到的是**这条候选到目标的真实可达性**,不是本机的。
-func probeOne(probeAddr, secret, cand, target string, timeoutMs int) (int, error) {
-	pu := &url.URL{
-		Scheme: "http",
-		User:   url.UserPassword(render.ProbeUser(cand), secret),
-		Host:   probeAddr,
-	}
-	c := &http.Client{
-		Transport: &http.Transport{
-			Proxy:               http.ProxyURL(pu),
-			DisableKeepAlives:   true,
-			TLSHandshakeTimeout: time.Duration(timeoutMs) * time.Millisecond,
-		},
-		Timeout: time.Duration(timeoutMs) * time.Millisecond,
-		// 只测到首字节,不跟随跳转 —— 跳转会把别的目标的延迟算进来。
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-
-	start := time.Now()
-	resp, err := c.Get(target)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-	elapsed := int(time.Since(start).Milliseconds())
-
-	// 代理拒绝时也会返回一个 HTTP 响应,别把它当成功。
-	if resp.StatusCode >= 500 {
-		return 0, fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	return elapsed, nil
 }

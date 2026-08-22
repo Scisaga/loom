@@ -241,27 +241,13 @@ func serverTLS() *sbTLS {
 func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 	nodes := s.NodeByID()
 	decls := s.DeclarationByID()
-	creds := s.CredentialByID()
 
 	var skips []Skip
 	note := func(where, format string, args ...any) {
 		skips = append(skips, Skip{Where: where, Reason: fmt.Sprintf(format, args...)})
 	}
 
-	// 凭据决定这个档案能用哪些声明。
-	credOf := map[string]*model.Credential{}
-	var declIDs []string
-	for _, cid := range p.Access.Credentials {
-		c, ok := creds[cid]
-		if !ok || c.Revoked() {
-			continue
-		}
-		if _, dup := credOf[c.Declaration]; !dup {
-			declIDs = append(declIDs, c.Declaration)
-		}
-		credOf[c.Declaration] = c
-	}
-	sort.Strings(declIDs)
+	declIDs, credOf := accessDecls(s, p)
 
 	if p.Access.Platform.UsesTUN() {
 		cfg.Inbounds = append(cfg.Inbounds, sbInbound{
@@ -313,7 +299,7 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 			})
 		}
 		cfg.Outbounds = append(cfg.Outbounds, sbOutbound{
-			Type: "selector", Tag: "decl:" + did, Outbounds: tags, Default: tags[0],
+			Type: "selector", Tag: "decl:" + did, Outbounds: tags, Default: selectorDefault(tags),
 		})
 		routable[did] = true
 
@@ -653,4 +639,46 @@ func renderSingBox(s *model.SSOT, n *model.Node) (File, []Skip, error) {
 		return File{}, nil, err
 	}
 	return File{Path: "sing-box/config.json", Content: content}, skips, nil
+}
+
+// accessDecls 返回一个接入节点凭据允许使用的声明(按 id 排序)与对应凭据。
+//
+// 提取出来是因为 Agent 的配置必须与 sing-box 配置枚举出**同一批**声明和
+// 候选:两边各写一遍,迟早会分叉,而分叉的表现是 Agent 去切一个不存在的
+// selector,或者漏掉某条候选从不探测。
+func accessDecls(s *model.SSOT, p *model.Node) ([]string, map[string]*model.Credential) {
+	creds := s.CredentialByID()
+	credOf := map[string]*model.Credential{}
+	var declIDs []string
+	for _, cid := range p.Access.Credentials {
+		c, ok := creds[cid]
+		if !ok || c.Revoked() {
+			continue
+		}
+		if _, dup := credOf[c.Declaration]; !dup {
+			declIDs = append(declIDs, c.Declaration)
+		}
+		credOf[c.Declaration] = c
+	}
+	sort.Strings(declIDs)
+	return declIDs, credOf
+}
+
+// selectorDefault 挑一个"什么都还不知道时"的默认候选。
+//
+// 原来取 tags[0],那是枚举顺序的副产物 —— 枚举零跳优先,于是默认永远是
+// 直连。对一条存在的意义就是绕道的声明来说,直连是**最不该**盲选的那个:
+// 实测 best-egress 的直连候选对目标超时 10 秒,而 selector 每次 sing-box
+// 重启都回到它,流量就一直打在一条已知不通的路上。
+//
+// 所以默认优先取第一条经过服务器的候选;只有直连一个选项时才用它。这仍是
+// 个静态猜测 —— 真正的选择由 Agent 按实测数据接管(§5.5),这里只保证
+// Agent 没跑起来的那段时间里不至于停在最差的一个上。
+func selectorDefault(tags []string) string {
+	for _, t := range tags {
+		if !strings.HasSuffix(t, ":direct") {
+			return t
+		}
+	}
+	return tags[0]
 }

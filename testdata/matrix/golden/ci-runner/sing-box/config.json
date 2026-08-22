@@ -248,7 +248,7 @@
         "cand:best-egress:cn-gz\u003esg-vps",
         "cand:best-egress:cn-gz\u003ejp-vps"
       ],
-      "default": "cand:best-egress:direct"
+      "default": "cand:best-egress:cn-bj"
     },
     {
       "type": "block",

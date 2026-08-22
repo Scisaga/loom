@@ -1,0 +1,19 @@
+# 由 loom render 生成 —— 不要手工编辑(§12)
+[Unit]
+Description=Loom Agent (调参回路 workstation)
+# 控制端点和探测入口都在 sing-box 里,它没起来时 Agent 无事可做。
+After=sing-box.service
+Wants=sing-box.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/loom agent -c /etc/loom/agent/config.json
+Restart=on-failure
+RestartSec=10s
+# 配置里含控制端点口令,只允许 root 读
+UMask=0077
+NoNewPrivileges=true
+StateDirectory=loom
+
+[Install]
+WantedBy=multi-user.target

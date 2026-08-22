@@ -167,6 +167,36 @@ nodes:
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, tuning_period: 10m, allowed_servers: [a]}`,
 		},
+		{
+			name: "§5.4 window 装不下 min_samples,排序永远不会启动",
+			want: "排序永远不会启动",
+			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
+nodes:
+  - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, probe_url: "https://x/", tuning_period: 5m, window: 5m, min_samples: 20, stale_after: 15m, allowed_servers: [a]}`,
+		},
+		{
+			name: "§5.8 stale_after 比 tuning_period 还短",
+			want: "立刻就过期",
+			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
+nodes:
+  - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, probe_url: "https://x/", tuning_period: 10m, window: 2h, min_samples: 6, stale_after: 1m, allowed_servers: [a]}`,
+		},
+		{
+			name: "§5.5 switch_threshold 不是相对幅度",
+			want: "相对改善幅度",
+			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
+nodes:
+  - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, probe_url: "https://x/", tuning_period: 10m, window: 2h, min_samples: 6, stale_after: 30m, switch_threshold: 20, allowed_servers: [a]}`,
+		},
 	}
 
 	for _, tc := range cases {

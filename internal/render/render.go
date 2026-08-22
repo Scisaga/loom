@@ -111,6 +111,12 @@ func Render(s *model.SSOT) (*Result, error) {
 		}
 		skipped = append(skipped, sk...)
 		byNode[n.ID] = append(byNode[n.ID], f, renderSingBoxUnit(s, n))
+
+		// Agent 的配置与 sing-box 的配置必须同源:两边枚举出的声明和候选
+		// 一旦分叉,Agent 会去切一个不存在的 selector。
+		af, ask := renderAgent(s, n)
+		byNode[n.ID] = append(byNode[n.ID], af...)
+		skipped = append(skipped, ask...)
 	}
 
 	ids := make([]string, 0, len(byNode))

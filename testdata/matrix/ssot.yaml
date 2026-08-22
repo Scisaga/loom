@@ -172,8 +172,10 @@ declarations:
     max_hops: 2
     tuning_period: 10m
     switch_threshold: 0.2
-    window: 10m
-    min_samples: 20
+    # window 必须装得下 min_samples 个样本:主动探测一个 tuning_period 才出
+    # 一个样本,window/tuning_period < min_samples 时排序永远不会启动。
+    window: 2h
+    min_samples: 6
     stale_after: 30m
 
   # 地址随请求走 + 出口任选。普通代理上网,让调度挑最快的出口。
@@ -187,9 +189,11 @@ declarations:
     max_hops: 2
     tuning_period: 5m
     switch_threshold: 0.2
-    window: 5m
-    min_samples: 20
-    stale_after: 15m
+    # window 必须装得下 min_samples 个样本:主动探测一个 tuning_period 才出
+    # 一个样本,window/tuning_period < min_samples 时排序永远不会启动。
+    window: 1h
+    min_samples: 6
+    stale_after: 20m
 
   # 地址从等价类里选 + 出口任选。带合规约束,因此 fallback 必须是
   # fail_closed —— 候选集为空时任何自动回退都等于绕过约束(§5.8)。
@@ -208,8 +212,10 @@ declarations:
     ranking_period: 1h
     tuning_period: 10m
     switch_threshold: 0.15
-    window: 10m
-    min_samples: 30
+    # window 必须装得下 min_samples 个样本:主动探测一个 tuning_period 才出
+    # 一个样本,window/tuning_period < min_samples 时排序永远不会启动。
+    window: 3h
+    min_samples: 12
     stale_after: 30m
     fallback: fail_closed
 

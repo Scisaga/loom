@@ -1,7 +1,7 @@
 // Command loom 是 L0 的命令行入口:校验、渲染、diff。
 //
 // 这一层不含任何自动部署(§20.1)—— 生成完文件,人工 scp 过去。
-// apply / rollback / probe 属于 L4 与 L2,尚未实现。
+// apply / rollback 属于 L4,尚未实现。
 package main
 
 import (
@@ -38,6 +38,7 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
 
   loom probe    <ssot.yaml> -node <id> -secrets <文件>
                                          逐条探测候选,追加度量数据(L2)
+  loom agent    -c <agent/config.json>   调参回路:周期探测、排序、带阻尼切换(L3)
 
 尚未实现:apply / rollback(属于 L4)
 `
@@ -77,6 +78,8 @@ func main() {
 		err = cmdHydrate(args)
 	case "probe":
 		err = cmdProbe(args)
+	case "agent":
+		err = cmdAgent(args)
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return

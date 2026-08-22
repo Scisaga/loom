@@ -2,6 +2,7 @@ package validate
 
 import (
 	"fmt"
+	"time"
 
 	"loom/internal/model"
 )
@@ -132,6 +133,7 @@ func checkDeclarations(
 		if d.TuningPeriod == "" {
 			fs.add("§5.5 周期", where, "缺少 tuning_period —— 中继轴始终需要度量(§4)")
 		}
+		checkTuningLoop(fs, where, d)
 		for _, c := range d.Constraints {
 			if !c.Kind.Valid() {
 				fs.add("§5.1 约束", where, "未知约束类别:%q", c.Kind)
@@ -384,5 +386,55 @@ func checkAccessNodes(
 					"端口 %d 绑定了不存在的访问声明 %q", mp.Port, mp.Declaration)
 			}
 		}
+	}
+}
+
+// checkTuningLoop 检查这条声明描述的调参回路能不能真的转起来。
+//
+// 主动探测的采样率就是 tuning_period(一轮一条候选一个样本),所以窗口里
+// 最多装得下 window/tuning_period 个样本。这个数小于 min_samples 时,**没有
+// 任何候选能达到参选门槛,排序永远不会启动** —— 配置看着完整,回路却是死的,
+// 而且从日志上只能看到"没有候选达到 min_samples",看不出是配置本身不可能满足。
+//
+// 实测踩过:tuning_period=5m、window=5m、min_samples=20 —— 窗口里只装得下
+// 1 个样本,却要求 20 个。
+func checkTuningLoop(fs *findings, where string, d *model.AccessDeclaration) {
+	period, perr := time.ParseDuration(d.TuningPeriod)
+	window, werr := time.ParseDuration(d.Window)
+	if d.TuningPeriod != "" && perr != nil {
+		fs.add("§5.5 周期", where, "tuning_period 无法解析:%q", d.TuningPeriod)
+	}
+	if d.Window != "" && werr != nil {
+		fs.add("§5.4 窗口", where, "window 无法解析:%q", d.Window)
+	}
+	if d.StaleAfter != "" {
+		st, err := time.ParseDuration(d.StaleAfter)
+		if err != nil {
+			fs.add("§5.8 陈旧", where, "stale_after 无法解析:%q", d.StaleAfter)
+		} else if perr == nil && period > 0 && st < period {
+			// 数据比 tuning_period 老就算陈旧的话,每一轮探测完的下一刻
+			// 全部候选都是陈旧的 —— 等于关掉了排序。
+			fs.add("§5.8 陈旧", where,
+				"stale_after=%s 小于 tuning_period=%s —— 每轮探测的结果立刻就过期,排序拿不到任何数据",
+				d.StaleAfter, d.TuningPeriod)
+		}
+	}
+	if d.SwitchThreshold < 0 || d.SwitchThreshold >= 1 {
+		fs.add("§5.5 阻尼", where,
+			"switch_threshold=%v 不在 [0,1) 内 —— 它是相对改善幅度,不是绝对值",
+			d.SwitchThreshold)
+	}
+	if d.MinSamples < 0 {
+		fs.add("§5.4 窗口", where, "min_samples 不能为负:%d", d.MinSamples)
+	}
+	if perr != nil || werr != nil || period <= 0 || window <= 0 {
+		return
+	}
+	if cap := int(window / period); cap < d.MinSamples {
+		fs.add("§5.4 窗口", where,
+			"window=%s 按 tuning_period=%s 采样最多装 %d 个样本,达不到 min_samples=%d —— "+
+				"排序永远不会启动。要么把 window 放大到 %s 以上,要么把 min_samples 调到 %d 以内",
+			d.Window, d.TuningPeriod, cap, d.MinSamples,
+			(time.Duration(d.MinSamples) * period).String(), cap)
 	}
 }
