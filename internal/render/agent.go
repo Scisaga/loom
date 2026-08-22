@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"time"
 
 	"loom/internal/agent"
 	"loom/internal/model"
@@ -91,6 +92,35 @@ func renderAgent(s *model.SSOT, p *model.Node) ([]File, []Skip) {
 		cfg.Declarations = append(cfg.Declarations, ad)
 	}
 
+	// 能顺着隧道直接够到的节点。AllowedIPs 是 /32,所以只有隧道对端 ——
+	// 拉不到"对端的对端"。
+	shortest := ""
+	for i := range cfg.Declarations {
+		if p := cfg.Declarations[i].TuningPeriod; shortest == "" || shorterPeriod(p, shortest) {
+			shortest = p
+		}
+	}
+	for i := range s.Tunnels {
+		t := &s.Tunnels[i]
+		peer := ""
+		switch p.ID {
+		case t.From:
+			peer = t.To
+		case t.To:
+			peer = t.From
+		default:
+			continue
+		}
+		if a := s.TunnelAddrOn(peer, p.ID); a != "" {
+			cfg.Peers = append(cfg.Peers, agent.Peer{
+				Node: peer, Addr: fmt.Sprintf("%s:%d", a, ReportPort)})
+		}
+	}
+	sort.Slice(cfg.Peers, func(i, j int) bool { return cfg.Peers[i].Node < cfg.Peers[j].Node })
+	// 拉取节奏跟最短的调参周期走,不另发明一个旋钮:上报阈值是 5 分钟,
+	// 按同样的量级去拉就够了。
+	cfg.PeerPeriod = shortest
+
 	if len(cfg.Declarations) == 0 {
 		skips = append(skips, Skip{
 			Where:  "agent:" + p.ID,
@@ -108,4 +138,15 @@ func renderAgent(s *model.SSOT, p *model.Node) ([]File, []Skip) {
 		{Path: "agent/config.json", Content: string(b) + "\n"},
 		{Path: "systemd/loom-agent.service", Content: fmt.Sprintf(agentUnit, p.ID)},
 	}, skips
+}
+
+// shorterPeriod 比较两个时长字符串。解析不了的一律当成"不更短",
+// 让校验器去报错,渲染这边不越权。
+func shorterPeriod(a, b string) bool {
+	da, err1 := time.ParseDuration(a)
+	db, err2 := time.ParseDuration(b)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return da < db
 }

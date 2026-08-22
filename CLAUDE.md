@@ -46,8 +46,9 @@ go run ./cmd/loom verify   /tmp/out -pubkey /tmp/keys/platform-signing.pub
 | `internal/render/` | 纯函数渲染(WireGuard + sing-box)、配置包哈希、行级 diff |
 | `internal/snapshot/` | 冻结成不可变版本、Ed25519 签名、漂移检测比对 |
 | `internal/measure/` | 度量记录、窗口聚合、分位数 |
-| `internal/agent/` | 节点上的调参回路:探测 → 排序 → 带阻尼切 selector |
-| `cmd/loom/` | CLI:`validate` / `render` / `diff` / `snapshot` / `verify` / `keygen` / `firewall` / `hydrate` / `probe` / `agent` |
+| `internal/agent/` | **决策者**:接入节点上的调参回路,探测 → 排序 → 带阻尼切 selector |
+| `internal/report/` | **上报者**:每个节点都跑,隧道健康与配置自检。不做任何决定 |
+| `cmd/loom/` | CLI:`validate` / `render` / `diff` / `snapshot` / `verify` / `keygen` / `firewall` / `hydrate` / `probe` / `agent` / `report` / `status` |
 | `testdata/matrix/` | 参考 SSOT(4 国内云机 + 2 境外 VPS)与 golden |
 
 ## 模型:三个词就够了

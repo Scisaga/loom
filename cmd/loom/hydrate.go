@@ -2,6 +2,9 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -9,6 +12,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"loom/internal/render"
+	"loom/internal/report"
 )
 
 // hydrate 把渲染产物里的 ${secret:REF} 占位符替换成真实值。
@@ -40,8 +46,12 @@ func cmdHydrate(args []string) error {
 		return err
 	}
 
-	var missing []string
+	var missing, unmapped []string
 	filled, files := 0, 0
+	// 每个节点一份清单:机器上的绝对路径 → 内容哈希。节点上的 report
+	// 靠它做配置自检 —— 渲染层只有占位符,hydrate 是最后一个知道文件
+	// 最终字节的环节。
+	hashes := map[string]map[string]string{}
 
 	err = filepath.Walk(*in, func(p string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
@@ -76,7 +86,27 @@ func cmdHydrate(args []string) error {
 			mode = 0o600
 		}
 		files++
-		return os.WriteFile(dst, result, mode)
+		if err := os.WriteFile(dst, result, mode); err != nil {
+			return err
+		}
+
+		node, bundlePath, ok := strings.Cut(filepath.ToSlash(rel), "/")
+		if !ok {
+			return nil
+		}
+		abs := render.InstallPath(bundlePath)
+		if abs == "" {
+			// 没有约定安装位置的文件不进清单,而不是猜一个路径写进去 ——
+			// 猜错的后果是自检永远报 missing,人会以为是漂移。
+			unmapped = append(unmapped, rel)
+			return nil
+		}
+		if hashes[node] == nil {
+			hashes[node] = map[string]string{}
+		}
+		h := sha256.Sum256(result)
+		hashes[node][abs] = hex.EncodeToString(h[:])
+		return nil
 	})
 	if err != nil {
 		return err
@@ -92,7 +122,34 @@ func cmdHydrate(args []string) error {
 			strings.Join(missing, "\n  "))
 	}
 
-	fmt.Printf("✓ %d 个文件,填入 %d 处秘密 → %s\n", files, filled, *out)
+	// 清单最后写:它不能包含自己(哈希无法自指),也不该被自己的存在影响。
+	nodes := make([]string, 0, len(hashes))
+	for n := range hashes {
+		nodes = append(nodes, n)
+	}
+	sort.Strings(nodes)
+	for _, n := range nodes {
+		m := report.Manifest{Node: n, Files: hashes[n]}
+		b, err := json.MarshalIndent(&m, "", "  ")
+		if err != nil {
+			return err
+		}
+		dst := filepath.Join(*out, n, "report", "manifest.json")
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(dst, append(b, '\n'), 0o644); err != nil {
+			return err
+		}
+	}
+
+	fmt.Printf("✓ %d 个文件,填入 %d 处秘密,%d 份清单 → %s\n", files, filled, len(nodes), *out)
+	if len(unmapped) > 0 {
+		// 静默漏掉等于自检覆盖不到它,而报告里看不出来。
+		sort.Strings(unmapped)
+		fmt.Fprintf(os.Stderr, "! %d 个文件没有约定的安装位置,不进自检清单:\n  %s\n",
+			len(unmapped), strings.Join(unmapped, "\n  "))
+	}
 	return nil
 }
 

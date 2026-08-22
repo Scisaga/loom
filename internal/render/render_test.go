@@ -70,7 +70,7 @@ func TestMatrixShape(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wg, sb, units, agents, agentUnits := 0, 0, 0, 0, 0
+	wg, sb, units, agents, agentUnits, reports, reportUnits := 0, 0, 0, 0, 0, 0, 0
 	for _, b := range res.Bundles {
 		for _, f := range b.Files {
 			switch {
@@ -80,6 +80,10 @@ func TestMatrixShape(t *testing.T) {
 				sb++
 			case f.Path == "systemd/sing-box.service":
 				units++
+			case f.Path == "report/config.json":
+				reports++
+			case f.Path == "systemd/loom-report.service":
+				reportUnits++
 			case f.Path == "agent/config.json":
 				agents++
 			case f.Path == "systemd/loom-agent.service":
@@ -94,6 +98,13 @@ func TestMatrixShape(t *testing.T) {
 	// 每份 sing-box 配置都必须配一个 unit —— 否则那份配置没人启动。
 	if units != sb {
 		t.Errorf("%d 份 sing-box 配置却只有 %d 个 systemd unit", sb, units)
+	}
+	if reportUnits != reports {
+		t.Errorf("%d 份上报者配置却只有 %d 个 systemd unit", reports, reportUnits)
+	}
+	// 上报者装在每个节点上 —— 服务器也要自检(§16.1)。
+	if reports != len(s.Nodes) {
+		t.Errorf("渲染出 %d 份上报者配置,期望 %d(每个节点一份)", reports, len(s.Nodes))
 	}
 	if agentUnits != agents {
 		t.Errorf("%d 份 Agent 配置却只有 %d 个 systemd unit", agents, agentUnits)
@@ -223,6 +234,8 @@ func TestSkipsAreExpected(t *testing.T) {
 		// 时间冒充 —— 必须在渲染期就说出来(§16.2)。
 		"ttft 只能由 L7 观测点产出": 1,
 		"cost 需要价格数据源":      1,
+		// 没有隧道的纯接入节点只绑回环 —— 自检可用,远端拉不到。
+		"上报接口只绑回环": 3,
 	}
 	got := map[string]int{}
 	for _, sk := range res.Skipped {
@@ -240,8 +253,8 @@ func TestSkipsAreExpected(t *testing.T) {
 			t.Errorf("跳过原因 %q 出现 %d 次,期望 %d 次", k, got[k], n)
 		}
 	}
-	if len(res.Skipped) != 5 {
-		t.Errorf("共 %d 条跳过,期望 5 条 —— 有新的静默跳过被引入:\n%+v",
+	if len(res.Skipped) != 8 {
+		t.Errorf("共 %d 条跳过,期望 8 条 —— 有新的静默跳过被引入:\n%+v",
 			len(res.Skipped), res.Skipped)
 	}
 }

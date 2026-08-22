@@ -32,6 +32,24 @@ type Config struct {
 	ProbeSecret string `json:"probe_secret"`
 
 	Declarations []Decl `json:"declarations"`
+
+	// Peers 是本节点能顺着隧道直接够到的上报接口(§16.1)。
+	//
+	// 覆盖面取决于拓扑:接入节点只和一部分服务器有隧道,而 AllowedIPs 是
+	// /32,拉不到隧道那头以外的地址。好在**握手年龄是对称的** —— 一条隧道
+	// 的健康状况在两端看到的是同一件事,所以只要每条隧道至少有一端在能拉到
+	// 的节点上,隧道健康就是全覆盖的。配置自检不对称,拉不到的节点只能靠
+	// 它自己的 journal。
+	Peers []Peer `json:"peers,omitempty"`
+
+	// PeerPeriod 是拉取上报的间隔。
+	PeerPeriod string `json:"peer_period,omitempty"`
+}
+
+// Peer 是一个能拉到的节点。
+type Peer struct {
+	Node string `json:"node"`
+	Addr string `json:"addr"`
 }
 
 // Decl 是一条访问声明在 Agent 视角下的样子。
@@ -107,6 +125,11 @@ func Load(b []byte) (*Config, error) {
 		}
 		if len(d.Candidates) == 0 {
 			return nil, fmt.Errorf("声明 %s 没有候选 —— 无从探测,也无从选择", d.ID)
+		}
+	}
+	if c.PeerPeriod != "" {
+		if _, err := dur(c.PeerPeriod, "peer_period"); err != nil {
+			return nil, err
 		}
 	}
 	// 秘密占位符没被替换就跑起来,表现是"认证一直失败",排障要绕很久。

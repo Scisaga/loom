@@ -91,6 +91,14 @@ func Render(s *model.SSOT) (*Result, error) {
 		byNode[t.Initiator.ID] = append(byNode[t.Initiator.ID], bf)
 	}
 
+	// 上报者装在**每个**节点上,服务器也要 —— DDNS 重解析、隧道断连、
+	// 有人手工改配置,这些只有节点自己知道(§16.1)。
+	for i := range s.Nodes {
+		f, sk := renderReport(s, &s.Nodes[i])
+		byNode[s.Nodes[i].ID] = append(byNode[s.Nodes[i].ID], f...)
+		skipped = append(skipped, sk...)
+	}
+
 	// 对端走 DDNS 的发起方需要定时重解析(§12:这也是渲染产物,不该手写)。
 	for i := range s.Nodes {
 		if fs := renderReresolve(s, &s.Nodes[i]); fs != nil {

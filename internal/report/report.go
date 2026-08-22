@@ -1,0 +1,206 @@
+// Package report 是节点上的**上报者**。
+//
+// 它和 Agent 是两个角色,别混:
+//
+//	决策者(internal/agent)  排序、切 selector。每个接入节点恰好一个 ——
+//	                         多一个就是两个互不知情的决策者(D11)。
+//	上报者(本包)            观测、自检、如实说。每个节点都该有,服务器也是。
+//
+// 上报者**不做任何决定**,也不碰 selector。它只回答两个问题:隧道还活着吗、
+// 机器上的配置还是渲染出来的那份吗。
+package report
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Status 是一次自检的全部结果。字段顺序即 JSON 顺序 —— 人要直接读它。
+type Status struct {
+	Node string `json:"node"`
+	TS   string `json:"ts"`
+
+	Tunnels []Tunnel `json:"tunnels"`
+	Drift   *Drift   `json:"drift,omitempty"`
+
+	// Errors 是采集过程本身的失败。**采集不到与"一切正常"必须分得开** ——
+	// 空的 Tunnels 既可能是没有隧道,也可能是 wg 命令跑不起来。
+	Errors []string `json:"errors,omitempty"`
+}
+
+// Tunnel 是一条隧道在本节点看到的样子。
+type Tunnel struct {
+	Interface string `json:"interface"`
+	// Down 表示这个接口在 `wg show` 里根本不存在 —— 隧道没起来。
+	// 它和"握手很旧"是两种故障,排障动作也不同,不能合并成一个字段。
+	Down bool `json:"down,omitempty"`
+	// HandshakeAgeSec 是距上次握手的秒数。-1 表示接口在但从未握手过。
+	HandshakeAgeSec int64 `json:"handshake_age_sec"`
+	// Stale 表示握手年龄超过阈值。发起方设了 PersistentKeepalive=25,
+	// 健康的隧道握手年龄不会超过约 180 秒。
+	Stale bool  `json:"stale"`
+	RxByt int64 `json:"rx_bytes"`
+	TxByt int64 `json:"tx_bytes"`
+}
+
+// Drift 是配置自检的结果。
+type Drift struct {
+	Checked  int      `json:"checked"`
+	Modified []string `json:"modified,omitempty"`
+	Missing  []string `json:"missing,omitempty"`
+	// Unreadable 与 Modified 分开:读不到不等于被改了,但同样不能当作没事。
+	Unreadable []string `json:"unreadable,omitempty"`
+}
+
+// OK 报告这次自检有没有发现问题。
+func (s *Status) OK() bool {
+	if len(s.Errors) > 0 {
+		return false
+	}
+	for i := range s.Tunnels {
+		if s.Tunnels[i].Down || s.Tunnels[i].Stale || s.Tunnels[i].HandshakeAgeSec < 0 {
+			return false
+		}
+	}
+	if d := s.Drift; d != nil && (len(d.Modified) > 0 || len(d.Missing) > 0 || len(d.Unreadable) > 0) {
+		return false
+	}
+	return true
+}
+
+// Collect 采集一次状态。now 由调用方注入,便于测试。
+func Collect(cfg *Config, now time.Time) *Status {
+	st := &Status{Node: cfg.Node, TS: now.UTC().Format(time.RFC3339)}
+	stale, err := cfg.Stale()
+	if err != nil {
+		st.Errors = append(st.Errors, err.Error())
+		stale = 5 * time.Minute
+	}
+
+	hs, tr, errs := wgStats()
+	st.Errors = append(st.Errors, errs...)
+	// 只看配置里列出的接口 —— 机器上别的 WireGuard 接口不归 Loom 管。
+	ifaces := append([]string(nil), cfg.Interfaces...)
+	sort.Strings(ifaces)
+	for _, i := range ifaces {
+		t := Tunnel{Interface: i, HandshakeAgeSec: -1}
+		h, up := hs[i]
+		if !up {
+			t.Down = true
+			st.Tunnels = append(st.Tunnels, t)
+			continue
+		}
+		if h > 0 {
+			t.HandshakeAgeSec = now.Unix() - h
+			t.Stale = time.Duration(t.HandshakeAgeSec)*time.Second > stale
+		}
+		t.RxByt, t.TxByt = tr[i][0], tr[i][1]
+		st.Tunnels = append(st.Tunnels, t)
+	}
+
+	if cfg.Manifest != "" {
+		d, err := checkDrift(cfg.Manifest)
+		if err != nil {
+			st.Errors = append(st.Errors, "配置自检:"+err.Error())
+		} else {
+			st.Drift = d
+		}
+	}
+	return st
+}
+
+// wgStats 读 wg 的握手时间与收发字节。
+//
+// 用 `wg show all dump` 而不是逐个 interface 查:一次调用拿全,不会在两次
+// 调用之间因为接口起落而拿到自相矛盾的快照。
+func wgStats() (map[string]int64, map[string][2]int64, []string) {
+	hs := map[string]int64{}
+	tr := map[string][2]int64{}
+	out, err := exec.Command("wg", "show", "all", "dump").Output()
+	if err != nil {
+		return hs, tr, []string{"wg show all dump 失败:" + errText(err)}
+	}
+	var errs []string
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Split(line, "\t")
+		// dump 格式:接口自身一行 5 列,之后每个 peer 一行 9 列。
+		// peer 行:iface pubkey psk endpoint allowed-ips handshake rx tx keepalive
+		if len(f) < 9 {
+			continue
+		}
+		iface := f[0]
+		h, err1 := strconv.ParseInt(f[5], 10, 64)
+		rx, err2 := strconv.ParseInt(f[6], 10, 64)
+		tx, err3 := strconv.ParseInt(f[7], 10, 64)
+		if err1 != nil || err2 != nil || err3 != nil {
+			errs = append(errs, "无法解析 wg dump 的一行:"+iface)
+			continue
+		}
+		// 一条隧道一个接口(D1),但接口理论上可以有多个 peer:取最近的握手,
+		// 收发字节相加。
+		if h > hs[iface] {
+			hs[iface] = h
+		}
+		v := tr[iface]
+		tr[iface] = [2]int64{v[0] + rx, v[1] + tx}
+	}
+	return hs, tr, errs
+}
+
+func errText(err error) string {
+	if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
+		return strings.TrimSpace(string(ee.Stderr))
+	}
+	return err.Error()
+}
+
+// checkDrift 按清单逐个文件比对哈希。
+//
+// 清单由 loom hydrate 产出 —— 它是最后一个知道文件最终字节的环节(渲染层
+// 只有占位符)。清单里只有哈希,不含秘密。
+func checkDrift(manifestPath string) (*Drift, error) {
+	b, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return nil, err
+	}
+	var m Manifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	d := &Drift{}
+	paths := make([]string, 0, len(m.Files))
+	for p := range m.Files {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		d.Checked++
+		body, err := os.ReadFile(p)
+		switch {
+		case os.IsNotExist(err):
+			d.Missing = append(d.Missing, p)
+		case err != nil:
+			d.Unreadable = append(d.Unreadable, fmt.Sprintf("%s(%v)", p, err))
+		default:
+			h := sha256.Sum256(body)
+			if hex.EncodeToString(h[:]) != m.Files[p] {
+				d.Modified = append(d.Modified, p)
+			}
+		}
+	}
+	return d, nil
+}
+
+// Manifest 是 loom hydrate 产出的清单:机器上的绝对路径 → 内容哈希。
+type Manifest struct {
+	Node  string            `json:"node"`
+	Files map[string]string `json:"files"`
+}

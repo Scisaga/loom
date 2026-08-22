@@ -1,0 +1,21 @@
+# 由 loom render 生成 —— 不要手工编辑(§12)
+[Unit]
+Description=Loom 上报者(隧道健康与配置自检 sg-vps)
+# 隧道接口不在时没有地址可绑。
+After=network-online.target
+Wants=network-online.target
+After=wg-quick@wg-cn-bj.service wg-quick@wg-cn-sh.service wg-quick@wg-cn-gz.service wg-quick@wg-cn-cd.service
+Wants=wg-quick@wg-cn-bj.service wg-quick@wg-cn-sh.service wg-quick@wg-cn-gz.service wg-quick@wg-cn-cd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/loom report -c /etc/loom/report/config.json -serve
+Restart=on-failure
+RestartSec=10s
+# 要跑 wg show,但不需要别的特权。
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+{
+  "node": "phone",
+  "listen": [
+    "127.0.0.1:61802"
+  ],
+  "interfaces": null,
+  "manifest": "/etc/loom/report/manifest.json",
+  "handshake_stale": "5m"
+}

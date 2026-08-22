@@ -1,0 +1,13 @@
+{
+  "node": "cn-bj",
+  "listen": [
+    "10.99.0.1:61802",
+    "10.99.1.1:61802"
+  ],
+  "interfaces": [
+    "wg-jp-vps",
+    "wg-sg-vps"
+  ],
+  "manifest": "/etc/loom/report/manifest.json",
+  "handshake_stale": "5m"
+}

@@ -39,6 +39,8 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
   loom probe    <ssot.yaml> -node <id> -secrets <文件>
                                          逐条探测候选,追加度量数据(L2)
   loom agent    -c <agent/config.json>   调参回路:周期探测、排序、带阻尼切换(L3)
+  loom report   [-serve]                上报者:隧道健康与配置自检。每个节点都跑
+  loom status   <ssot.yaml>              把够得到的节点全拉一遍,给人看
 
 尚未实现:apply / rollback(属于 L4)
 `
@@ -80,6 +82,10 @@ func main() {
 		err = cmdProbe(args)
 	case "agent":
 		err = cmdAgent(args)
+	case "report":
+		err = cmdReport(args)
+	case "status":
+		err = cmdStatus(args)
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return

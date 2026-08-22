@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"loom/internal/measure"
+	"loom/internal/report"
 )
 
 // Options 是 Agent 的运行期参数。它们不进 SSOT —— 都是本机的事(文件放哪、
@@ -67,6 +68,30 @@ func Run(ctx context.Context, cfg *Config, opts Options) error {
 	}
 
 	var wg sync.WaitGroup
+
+	// 拉取对端上报是另一个节奏:它和某一条声明无关,是整台机器的事。
+	if len(cfg.Peers) > 0 && cfg.PeerPeriod != "" {
+		pp, err := dur(cfg.PeerPeriod, "peer_period")
+		if err != nil {
+			return err
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				pollPeers(cfg, logf)
+				if opts.Once {
+					return
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(pp):
+				}
+			}
+		}()
+	}
+
 	for i := range cfg.Declarations {
 		d := &cfg.Declarations[i]
 		period, err := d.Period()
@@ -94,6 +119,51 @@ func Run(ctx context.Context, cfg *Config, opts Options) error {
 	}
 	wg.Wait()
 	return nil
+}
+
+// pollPeers 拉一遍能够到的节点的自检结果。
+//
+// 它**不做任何处置** —— 隧道断了要人去看,不是 Agent 能自动修的。价值在于
+// 从"完全没有信号"变成"有带时间戳的记录":DDNS 重解析以前是全程静默的,
+// IP 变了、隧道断了、脚本修好了,事后连查都没得查。
+func pollPeers(cfg *Config, logf func(string, ...any)) {
+	peers := append([]Peer(nil), cfg.Peers...)
+	sort.Slice(peers, func(i, j int) bool { return peers[i].Node < peers[j].Node })
+	for _, p := range peers {
+		st, err := report.Fetch(p.Addr, 5*time.Second)
+		if err != nil {
+			logf("[对端 %s] ❌ 拉不到 %s:%v", p.Node, p.Addr, err)
+			continue
+		}
+		if st.OK() {
+			continue // 正常就不说话,否则日志里全是噪声
+		}
+		for i := range st.Tunnels {
+			t := &st.Tunnels[i]
+			switch {
+			case t.Down:
+				logf("[对端 %s] ❌ 隧道 %s 没起来", p.Node, t.Interface)
+			case t.HandshakeAgeSec < 0:
+				logf("[对端 %s] ❌ 隧道 %s 从未握手", p.Node, t.Interface)
+			case t.Stale:
+				logf("[对端 %s] ⚠️ 隧道 %s 握手已 %d 秒前", p.Node, t.Interface, t.HandshakeAgeSec)
+			}
+		}
+		if d := st.Drift; d != nil {
+			for _, f := range d.Modified {
+				logf("[对端 %s] ⚠️ 配置被改过:%s", p.Node, f)
+			}
+			for _, f := range d.Missing {
+				logf("[对端 %s] ⚠️ 配置缺失:%s", p.Node, f)
+			}
+			for _, f := range d.Unreadable {
+				logf("[对端 %s] ⚠️ 配置读不到:%s", p.Node, f)
+			}
+		}
+		for _, e := range st.Errors {
+			logf("[对端 %s] ⚠️ 采集错误:%s", p.Node, e)
+		}
+	}
 }
 
 // tick 是一轮:探测全部候选 → 按窗口聚合 → 决定 → 必要时切。

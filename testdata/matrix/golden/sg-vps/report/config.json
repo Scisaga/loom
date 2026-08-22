@@ -1,0 +1,17 @@
+{
+  "node": "sg-vps",
+  "listen": [
+    "10.99.0.2:61802",
+    "10.99.0.4:61802",
+    "10.99.0.6:61802",
+    "10.99.0.8:61802"
+  ],
+  "interfaces": [
+    "wg-cn-bj",
+    "wg-cn-cd",
+    "wg-cn-gz",
+    "wg-cn-sh"
+  ],
+  "manifest": "/etc/loom/report/manifest.json",
+  "handshake_stale": "5m"
+}
