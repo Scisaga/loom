@@ -9,6 +9,7 @@
 package validate
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/netip"
 	"sort"
@@ -178,8 +179,11 @@ func checkTunnels(s *model.SSOT, idx map[string]*model.Node, fs *findings) {
 
 		// 端口只在接受方生效。发起方不监听。
 		switch {
-		case t.ListenPort <= 0 || t.ListenPort > 65535:
-			fs.add("§15.1 端口", where, "listen_port 非法:%d", t.ListenPort)
+		case t.ListenPort < model.TunnelPortMin || t.ListenPort > model.TunnelPortMax:
+			fs.add("§15.1 端口", where,
+				"listen_port=%d 不在保留范围 %d-%d 内 —— 低于 61000 会和内核分配给"+
+					"出站连接的临时端口冲突,而 51820 是公认的 WireGuard 端口",
+				t.ListenPort, model.TunnelPortMin, model.TunnelPortMax)
 		default:
 			pk := fmt.Sprintf("%s/%d", r.Acceptor.ID, t.ListenPort)
 			if first, dup := seenPort[pk]; dup {
@@ -198,8 +202,15 @@ func checkTunnels(s *model.SSOT, idx map[string]*model.Node, fs *findings) {
 
 		if t.Protocol == model.WG || t.Protocol == model.AWG {
 			for _, n := range []*model.Node{r.Initiator, r.Acceptor} {
-				if n.WGPublicKey == "" {
-					fs.add("§13.1 密钥", where, "节点 %s 缺少 wg_public_key", n.ID)
+				switch {
+				case n.WGPublicKey == "":
+					fs.add("§13.1 密钥", where,
+						"节点 %s 缺少 wg_public_key —— 它由节点本地生成并上报,"+
+							"bootstrap 之前拿不到(§13.1)", n.ID)
+				case !validWGKey(n.WGPublicKey):
+					fs.add("§13.1 密钥", where,
+						"节点 %s 的 wg_public_key 不是合法的 WireGuard 公钥"+
+							"(应为 44 字符 base64,解出 32 字节):%q", n.ID, n.WGPublicKey)
 				}
 			}
 		}
@@ -217,6 +228,18 @@ func checkTunnels(s *model.SSOT, idx map[string]*model.Node, fs *findings) {
 			}
 		}
 	}
+}
+
+// validWGKey 报告是否是一把形状正确的 WireGuard 公钥。
+//
+// 这条不是洁癖:占位符("待填""TODO"之类)混进 SSOT 会被渲染进配置文件,
+// 而 WireGuard 拿到无效公钥的表现是**握手静默失败** —— 不报错,只是不通。
+func validWGKey(s string) bool {
+	if len(s) != 44 {
+		return false
+	}
+	b, err := base64.StdEncoding.DecodeString(s)
+	return err == nil && len(b) == 32
 }
 
 func checkAddr(where, field, addr string, seen map[string]string, fs *findings) {

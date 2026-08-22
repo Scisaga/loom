@@ -1,6 +1,7 @@
 package validate
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -284,6 +285,30 @@ func TestPlatformDerivesTUN(t *testing.T) {
 		}
 		if got := tc.p.UsesMixed(); got != tc.mixed {
 			t.Errorf("%s.UsesMixed() = %v,期望 %v", tc.p, got, tc.mixed)
+		}
+	}
+}
+
+// TestDeployConfigOnlyMissingKeys 钉住真机配置"还差什么"。
+//
+// deploy/ssot.yaml 是真实部署的 SSOT,`wg_public_key` 现在是空的 —— 公钥由
+// 节点本地生成并上报,bootstrap 之前拿不到(§13.1)。这个测试断言**除此之外
+// 没有别的问题**:一旦 bootstrap 完成、公钥填上,它就应当直接可用。
+//
+// 它同时是个反向保险:改了模型或校验规则后,真机配置如果因为别的原因失效,
+// 这里会立刻变红,而不是等到部署时才发现。
+func TestDeployConfigOnlyMissingKeys(t *testing.T) {
+	raw, err := os.ReadFile("../../deploy/ssot.yaml")
+	if err != nil {
+		t.Skipf("没有真机配置,跳过:%v", err)
+	}
+	s, err := model.Load(raw)
+	if err != nil {
+		t.Fatalf("真机配置解析失败:%v", err)
+	}
+	for _, f := range Validate(s) {
+		if !strings.Contains(f.Msg, "缺少 wg_public_key") {
+			t.Errorf("真机配置有公钥之外的问题:%s", f)
 		}
 	}
 }

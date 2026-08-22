@@ -139,6 +139,19 @@ func (n *Node) DialableFromAccess() bool {
 	return n.Direction != ReverseOnly && n.PublicEndpoint != "" && n.InboundPort > 0
 }
 
+// 隧道端口的保留范围。
+//
+// 挑在这里有两个理由:一是它**高于 Linux 默认的临时端口范围**
+// (32768-60999),不会被内核分配给出站连接的源端口;二是避开 51820 ——
+// 那是公认的 WireGuard 端口,扫描器直接对着它扫。
+//
+// 但要清楚这只防端口扫描,**不防 DPI**:WireGuard 包本身的指纹(148/92
+// 字节握手、消息类型 1-4)没有任何变化。真要对付那个得上 §17 的 AmneziaWG。
+const (
+	TunnelPortMin = 61610
+	TunnelPortMax = 61699
+)
+
 // Tunnel 是隧道矩阵中的一条边(§6.3)。
 //
 // **只有 reverse_only 的服务器才需要它。** 能进 mesh 的由 Headscale 自动

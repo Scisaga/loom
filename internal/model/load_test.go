@@ -56,7 +56,7 @@ nodes:
   - {id: n1, capabilities: [server], direction: bidirectional}
   - {id: n2, capabilities: [server], direction: reverse_only}
 tunnels:
-  - {from: n1, to: n2, listen_port: 1, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}
+  - {from: n1, to: n2, listen_port: 61611, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}
 declarations:
   - {id: d1, objective: latency, tuning_period: 10m}
 `))

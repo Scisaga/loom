@@ -23,7 +23,7 @@ nodes:
   - {id: a, capabilities: [server], direction: reverse_only, public_endpoint: 1.1.1.1, wg_public_key: k1}
   - {id: b, capabilities: [server], direction: reverse_only, public_endpoint: 1.1.1.2, inbound_port: 4433, wg_public_key: k2}
 tunnels:
-  - {from: a, to: b, listen_port: 1, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
+  - {from: a, to: b, listen_port: 61611, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
 		},
 		{
 			name: "§2.2 两端都是 direct_only",
@@ -33,7 +33,7 @@ nodes:
   - {id: a, capabilities: [server], direction: direct_only, public_endpoint: 1.1.1.1, wg_public_key: k1}
   - {id: b, capabilities: [server], direction: direct_only, public_endpoint: 1.1.1.2, wg_public_key: k2}
 tunnels:
-  - {from: a, to: b, listen_port: 1, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
+  - {from: a, to: b, listen_port: 61611, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
 		},
 		{
 			name: "§15.1 同一接受方端口冲突",
@@ -44,8 +44,8 @@ nodes:
   - {id: t1, capabilities: [server], direction: reverse_only, public_endpoint: 1.1.1.2, wg_public_key: k1}
   - {id: t2, capabilities: [server], direction: reverse_only, public_endpoint: 1.1.1.3, inbound_port: 4433, wg_public_key: k2}
 tunnels:
-  - {from: acc, to: t1, listen_port: 51820, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}
-  - {from: acc, to: t2, listen_port: 51820, from_addr: 10.0.0.3/32, to_addr: 10.0.0.4/32}`,
+  - {from: acc, to: t1, listen_port: 61637, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}
+  - {from: acc, to: t2, listen_port: 61637, from_addr: 10.0.0.3/32, to_addr: 10.0.0.4/32}`,
 		},
 		{
 			name: "§20.1 地址撞车",
@@ -56,8 +56,8 @@ nodes:
   - {id: t1, capabilities: [server], direction: reverse_only, public_endpoint: 1.1.1.2, wg_public_key: k1}
   - {id: t2, capabilities: [server], direction: reverse_only, public_endpoint: 1.1.1.3, inbound_port: 4433, wg_public_key: k2}
 tunnels:
-  - {from: acc, to: t1, listen_port: 1, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}
-  - {from: acc, to: t2, listen_port: 2, from_addr: 10.0.0.1/32, to_addr: 10.0.0.3/32}`,
+  - {from: acc, to: t1, listen_port: 61611, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}
+  - {from: acc, to: t2, listen_port: 61612, from_addr: 10.0.0.1/32, to_addr: 10.0.0.3/32}`,
 		},
 		{
 			name: "§20.1 非 /32 会让 AllowedIPs 越界",
@@ -67,7 +67,7 @@ nodes:
   - {id: a, capabilities: [server], direction: bidirectional, public_endpoint: 1.1.1.1, inbound_port: 4433, wg_public_key: k1}
   - {id: b, capabilities: [server], direction: reverse_only, public_endpoint: 1.1.1.2, inbound_port: 4433, wg_public_key: k2}
 tunnels:
-  - {from: a, to: b, listen_port: 1, from_addr: 10.0.0.0/24, to_addr: 10.0.1.2/32}`,
+  - {from: a, to: b, listen_port: 61611, from_addr: 10.0.0.0/24, to_addr: 10.0.1.2/32}`,
 		},
 		{
 			name: "§20.1 接受方无 public_endpoint 则发起方无处可拨",
@@ -77,7 +77,7 @@ nodes:
   - {id: a, capabilities: [server], direction: bidirectional, inbound_port: 4433, wg_public_key: k1}
   - {id: b, capabilities: [server], direction: reverse_only, public_endpoint: 1.1.1.2, inbound_port: 4433, wg_public_key: k2}
 tunnels:
-  - {from: a, to: b, listen_port: 1, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
+  - {from: a, to: b, listen_port: 61611, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
 		},
 		{
 			name: "§13.1 缺少公钥",
@@ -87,7 +87,7 @@ nodes:
   - {id: a, capabilities: [server], direction: bidirectional, public_endpoint: 1.1.1.1, inbound_port: 4433}
   - {id: b, capabilities: [server], direction: reverse_only, public_endpoint: 1.1.1.2, inbound_port: 4433, wg_public_key: k2}
 tunnels:
-  - {from: a, to: b, listen_port: 1, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
+  - {from: a, to: b, listen_port: 61611, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
 		},
 		{
 			name: "§6.3 同一对节点重复建隧道",
@@ -97,8 +97,8 @@ nodes:
   - {id: a, capabilities: [server], direction: bidirectional, public_endpoint: 1.1.1.1, inbound_port: 4433, wg_public_key: k1}
   - {id: b, capabilities: [server], direction: reverse_only, public_endpoint: 1.1.1.2, inbound_port: 4433, wg_public_key: k2}
 tunnels:
-  - {from: a, to: b, listen_port: 1, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}
-  - {from: b, to: a, listen_port: 2, from_addr: 10.0.0.3/32, to_addr: 10.0.0.4/32}`,
+  - {from: a, to: b, listen_port: 61611, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}
+  - {from: b, to: a, listen_port: 61612, from_addr: 10.0.0.3/32, to_addr: 10.0.0.4/32}`,
 		},
 		{
 			name: "§20.1 接口名超长",
@@ -108,7 +108,7 @@ nodes:
   - {id: a, capabilities: [server], direction: bidirectional, public_endpoint: 1.1.1.1, inbound_port: 4433, wg_public_key: k1}
   - {id: server-in-a-very-long-city, capabilities: [server], direction: reverse_only, public_endpoint: 1.1.1.2, inbound_port: 4433, wg_public_key: k2}
 tunnels:
-  - {from: a, to: server-in-a-very-long-city, listen_port: 1, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
+  - {from: a, to: server-in-a-very-long-city, listen_port: 61611, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
 		},
 		{
 			name: "§1.3 能力集不能为空",
@@ -132,7 +132,7 @@ nodes:
 nodes:
   - {id: a, capabilities: [server], direction: bidirectional, public_endpoint: 1.1.1.1, inbound_port: 4433, wg_public_key: k1}
 tunnels:
-  - {from: a, to: ghost, listen_port: 1, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
+  - {from: a, to: ghost, listen_port: 61611, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
 		},
 		{
 			name: "§6.3 两端都能进 mesh 就不该手工建隧道",
@@ -142,7 +142,7 @@ nodes:
   - {id: a, capabilities: [server], direction: bidirectional, public_endpoint: 1.1.1.1, inbound_port: 4433, wg_public_key: k1}
   - {id: b, capabilities: [server], direction: direct_only, public_endpoint: 1.1.1.2, inbound_port: 4433, wg_public_key: k2}
 tunnels:
-  - {from: a, to: b, listen_port: 1, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
+  - {from: a, to: b, listen_port: 61611, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
 		},
 		{
 			name: "§8.1 server 没有 inbound_port 就接不了上游",

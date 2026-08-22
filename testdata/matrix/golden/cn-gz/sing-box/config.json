@@ -7,7 +7,7 @@
       "type": "hysteria2",
       "tag": "in",
       "listen": "::",
-      "listen_port": 4433,
+      "listen_port": 443,
       "users": [
         {
           "name": "cred-ci",

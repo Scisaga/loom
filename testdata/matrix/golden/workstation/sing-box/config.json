@@ -46,7 +46,7 @@
       "type": "hysteria2",
       "tag": "cand:best-egress:cn-bj",
       "server": "203.0.113.10",
-      "server_port": 4433,
+      "server_port": 443,
       "password": "${secret:vault:cred/ws-eg}",
       "tls": {
         "enabled": true,
@@ -61,7 +61,7 @@
       "type": "hysteria2",
       "tag": "cand:best-egress:cn-gz",
       "server": "203.0.113.12",
-      "server_port": 4433,
+      "server_port": 443,
       "password": "${secret:vault:cred/ws-eg}",
       "tls": {
         "enabled": true,
@@ -76,7 +76,7 @@
       "type": "hysteria2",
       "tag": "hop:best-egress:cn-bj",
       "server": "203.0.113.10",
-      "server_port": 4433,
+      "server_port": 443,
       "password": "${secret:vault:cred/ws-eg}",
       "tls": {
         "enabled": true,
@@ -91,7 +91,7 @@
       "type": "hysteria2",
       "tag": "cand:best-egress:cn-bj\u003ecn-gz",
       "server": "203.0.113.12",
-      "server_port": 4433,
+      "server_port": 443,
       "password": "${secret:vault:cred/ws-eg}",
       "tls": {
         "enabled": true,
@@ -107,7 +107,7 @@
       "type": "hysteria2",
       "tag": "cand:best-egress:cn-bj\u003esg-vps",
       "server": "10.99.0.2",
-      "server_port": 4433,
+      "server_port": 443,
       "password": "${secret:vault:cred/ws-eg}",
       "tls": {
         "enabled": true,
@@ -123,7 +123,7 @@
       "type": "hysteria2",
       "tag": "cand:best-egress:cn-bj\u003ejp-vps",
       "server": "10.99.1.2",
-      "server_port": 4433,
+      "server_port": 443,
       "password": "${secret:vault:cred/ws-eg}",
       "tls": {
         "enabled": true,
@@ -139,7 +139,7 @@
       "type": "hysteria2",
       "tag": "hop:best-egress:cn-gz",
       "server": "203.0.113.12",
-      "server_port": 4433,
+      "server_port": 443,
       "password": "${secret:vault:cred/ws-eg}",
       "tls": {
         "enabled": true,
@@ -154,7 +154,7 @@
       "type": "hysteria2",
       "tag": "cand:best-egress:cn-gz\u003ecn-bj",
       "server": "203.0.113.10",
-      "server_port": 4433,
+      "server_port": 443,
       "password": "${secret:vault:cred/ws-eg}",
       "tls": {
         "enabled": true,
@@ -170,7 +170,7 @@
       "type": "hysteria2",
       "tag": "cand:best-egress:cn-gz\u003esg-vps",
       "server": "10.99.0.6",
-      "server_port": 4433,
+      "server_port": 443,
       "password": "${secret:vault:cred/ws-eg}",
       "tls": {
         "enabled": true,
@@ -186,7 +186,7 @@
       "type": "hysteria2",
       "tag": "cand:best-egress:cn-gz\u003ejp-vps",
       "server": "10.99.1.6",
-      "server_port": 4433,
+      "server_port": 443,
       "password": "${secret:vault:cred/ws-eg}",
       "tls": {
         "enabled": true,
@@ -230,7 +230,7 @@
       "type": "hysteria2",
       "tag": "hop:llm-ttft:cn-bj",
       "server": "203.0.113.10",
-      "server_port": 4433,
+      "server_port": 443,
       "password": "${secret:vault:cred/ws-llm}",
       "tls": {
         "enabled": true,
@@ -259,7 +259,7 @@
       "type": "hysteria2",
       "tag": "hop:llm-ttft:cn-sh",
       "server": "203.0.113.11",
-      "server_port": 4433,
+      "server_port": 443,
       "password": "${secret:vault:cred/ws-llm}",
       "tls": {
         "enabled": true,
@@ -301,7 +301,7 @@
       "type": "hysteria2",
       "tag": "hop:sg-fixed:cn-bj",
       "server": "203.0.113.10",
-      "server_port": 4433,
+      "server_port": 443,
       "password": "${secret:vault:cred/ws-sg}",
       "tls": {
         "enabled": true,
@@ -316,7 +316,7 @@
       "type": "hysteria2",
       "tag": "cand:sg-fixed:cn-bj\u003esg-vps",
       "server": "10.99.0.2",
-      "server_port": 4433,
+      "server_port": 443,
       "password": "${secret:vault:cred/ws-sg}",
       "tls": {
         "enabled": true,
@@ -332,7 +332,7 @@
       "type": "hysteria2",
       "tag": "hop:sg-fixed:cn-sh",
       "server": "203.0.113.11",
-      "server_port": 4433,
+      "server_port": 443,
       "password": "${secret:vault:cred/ws-sg}",
       "tls": {
         "enabled": true,
@@ -347,7 +347,7 @@
       "type": "hysteria2",
       "tag": "cand:sg-fixed:cn-sh\u003esg-vps",
       "server": "10.99.0.4",
-      "server_port": 4433,
+      "server_port": 443,
       "password": "${secret:vault:cred/ws-sg}",
       "tls": {
         "enabled": true,
@@ -363,7 +363,7 @@
       "type": "hysteria2",
       "tag": "hop:sg-fixed:cn-gz",
       "server": "203.0.113.12",
-      "server_port": 4433,
+      "server_port": 443,
       "password": "${secret:vault:cred/ws-sg}",
       "tls": {
         "enabled": true,
@@ -378,7 +378,7 @@
       "type": "hysteria2",
       "tag": "cand:sg-fixed:cn-gz\u003esg-vps",
       "server": "10.99.0.6",
-      "server_port": 4433,
+      "server_port": 443,
       "password": "${secret:vault:cred/ws-sg}",
       "tls": {
         "enabled": true,
@@ -394,7 +394,7 @@
       "type": "hysteria2",
       "tag": "hop:sg-fixed:cn-cd",
       "server": "203.0.113.13",
-      "server_port": 4433,
+      "server_port": 443,
       "password": "${secret:vault:cred/ws-sg}",
       "tls": {
         "enabled": true,
@@ -409,7 +409,7 @@
       "type": "hysteria2",
       "tag": "cand:sg-fixed:cn-cd\u003esg-vps",
       "server": "10.99.0.8",
-      "server_port": 4433,
+      "server_port": 443,
       "password": "${secret:vault:cred/ws-sg}",
       "tls": {
         "enabled": true,
