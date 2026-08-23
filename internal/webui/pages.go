@@ -39,9 +39,14 @@ func shell(d Deps, title, body string, isAuthed bool) string {
 	if d.Publisher != nil {
 		role = "节点 · 签发者"
 	}
-	auth := `<a href="/login">登录以操作</a>`
-	if isAuthed {
+	// 这台机器上没有任何写操作时不显示登录入口 —— 一个点进去只会说
+	// "没配口令"的链接,只会让人以为自己配错了。
+	auth := `<span class=dim>只读</span>`
+	switch {
+	case isAuthed:
 		auth = `已登录 · <a href="/logout">退出</a>`
+	case d.Operator != "" && (len(d.Actions) > 0 || d.Publisher != nil):
+		auth = `<a href="/login">登录以操作</a>`
 	}
 	return fmt.Sprintf(`<!doctype html><meta charset=utf-8><title>%s · Loom</title>
 <meta name=viewport content="width=device-width,initial-scale=1">%s
@@ -220,7 +225,7 @@ func pageOverview(d Deps, isAuthed bool) string {
 				if r.Err == "" {
 					cell = fmt.Sprintf(`<span class=ok>✅ %dms</span>`, r.MS)
 				} else {
-					cell = fmt.Sprintf(`<span class=bad>❌ %s</span>`, esc(r.Err))
+					cell = fmt.Sprintf(`<span class=bad>❌ %s</span>`, esc(brief(r.Err)))
 				}
 			}
 			fmt.Fprintf(&b, `<tr><td>%s<td class=w>%s</tr>`, esc(n.ID), cell)
@@ -245,6 +250,9 @@ func pageOverview(d Deps, isAuthed bool) string {
 	}
 	b.WriteString(`</table>`)
 
+	if d.Operator == "" && len(d.Actions) == 0 && d.Publisher == nil {
+		return shell(d, "总览", b.String(), isAuthed)
+	}
 	b.WriteString(`<h2>本机操作</h2>`)
 	if !isAuthed {
 		b.WriteString(`<p class=dim>需要<a href="/login">登录</a>。</p>`)
@@ -272,6 +280,20 @@ func short(s string) string {
 	}
 	if s == "" {
 		return "—"
+	}
+	return s
+}
+
+// brief 把网络错误压成一行能看的。
+//
+// Go 的网络错误带着完整的拨号上下文(`Get "https://…": dial tcp 1.2.3.4:443: …`),
+// 在表格里会把整行撑爆,而真正有信息量的是最后那一小截。
+func brief(s string) string {
+	if i := strings.LastIndex(s, ": "); i > 0 {
+		s = s[i+2:]
+	}
+	if len(s) > 44 {
+		s = s[:44] + "…"
 	}
 	return s
 }

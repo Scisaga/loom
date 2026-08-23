@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -19,8 +21,15 @@ import (
 // Node 字段是**观测者**,不是被观测者 —— 转述时必须原样保留,否则合并的
 // 时候分不清这条数据是谁量的。
 type Observation struct {
-	Node    string  `json:"node"`
-	TS      string  `json:"ts"`
+	Node string `json:"node"`
+	TS   string `json:"ts"`
+	// Applied 是这台机器当时装着的快照 id。
+	//
+	// **它必须挂在观测上,不能只挂在 Status 上** —— 转述传的是观测,
+	// 而"全网是不是同一版"恰恰要靠转述才能对够不到的节点回答。挂错地方的
+	// 表现是:界面上够得到的那台显示版本号,其余全是"(未记录)",于是
+	// 每次都报"全网不是同一个快照"。
+	Applied string  `json:"applied,omitempty"`
 	Edges   []Edge  `json:"edges,omitempty"`
 	Targets []Reach `json:"targets,omitempty"`
 }
@@ -58,6 +67,9 @@ func (o *Observation) Age(now time.Time) time.Duration {
 // observe 量一遍本节点能量的东西:到每个邻居的 RTT、到每个目标的可达性。
 func observe(cfg *Config, now time.Time) *Observation {
 	o := &Observation{Node: cfg.Node, TS: now.UTC().Format(time.RFC3339)}
+	if b, err := os.ReadFile(appliedPath); err == nil {
+		o.Applied = strings.TrimSpace(string(b))
+	}
 
 	nb := append([]Neighbor(nil), cfg.Neighbors...)
 	sort.Slice(nb, func(i, j int) bool { return nb[i].Node < nb[j].Node })

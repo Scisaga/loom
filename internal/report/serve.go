@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"loom/internal/webui"
 )
 
 // Serve 在每个配置的地址上提供 GET /status。
@@ -34,6 +36,24 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 	tbl := newTable()
 
 	mux := http.NewServeMux()
+
+	// 界面挂在根路径,/status 仍然是同一份数据的 JSON 形式。
+	//
+	// **它们必须同源** —— 界面自己去采一遍的话,"页面上说的"和"接口返回的"
+	// 会在某个时刻不一致,而那种不一致极难查。
+	ui := webui.Handler(webui.Deps{
+		Node: cfg.Node,
+		Now:  now,
+		Snapshot: func() webui.View {
+			st := Collect(cfg, now())
+			// 和 /status 走完全同一条路 —— 界面自己再采一遍的话,
+			// "页面上说的"和"接口返回的"会在某个时刻不一致。
+			st.Observation, st.Learned = tbl.view(cfg.Node, now(), maxAge)
+			return buildView(cfg, st, now())
+		},
+	})
+	mux.Handle("/", ui)
+
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		// 隧道健康和配置自检是**当场**算的,便宜。观测不是 —— 量一遍目标
 		// 要好几秒,每次被拉都重量会让拉取方超时,也会把探测流量放大成
