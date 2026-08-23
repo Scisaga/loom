@@ -41,8 +41,10 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
   loom agent    -c <agent/config.json>   调参回路:周期探测、排序、带阻尼切换(L3)
   loom report   [-serve]                上报者:隧道健康与配置自检。每个节点都跑
   loom status   <ssot.yaml>              把够得到的节点全拉一遍,给人看
-  loom publish  <ssot.yaml> -o <目录> -key <私钥>
-                                         产出带签名的分发树(全是占位符,不含凭据)
+  loom publisher -ssot <文件> -key <私钥> -target <目标>
+                                         中控守护进程:盯 SSOT,变了就发布
+  loom publish  <ssot.yaml> -o <目标> -key <私钥>
+                                         手动发一次(目标可以是本地目录或 ssh://)
   loom pull     -url <分发点> -pubkey <公钥>
                                          节点自己拉:验签 → 本地填秘密 → 安装 → 验证
   loom secrets  split <ssot.yaml> -secrets <总表> -o <目录>
@@ -102,6 +104,8 @@ func main() {
 		err = cmdSecrets(args)
 	case "publish":
 		err = cmdPublish(args)
+	case "publisher":
+		err = cmdPublisher(args)
 	case "pull":
 		err = cmdPull(args)
 	case "backup":

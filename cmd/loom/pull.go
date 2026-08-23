@@ -1,13 +1,13 @@
 package main
 
 import (
-	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -18,7 +18,10 @@ import (
 	"time"
 
 	"loom/internal/deploy"
+	"loom/internal/netx"
+	"loom/internal/publish"
 	"loom/internal/render"
+	"loom/internal/report"
 	"loom/internal/secret"
 	"loom/internal/snapshot"
 )
@@ -77,10 +80,10 @@ func cmdPull(args []string) error {
 	defer unlock()
 
 	base := strings.TrimRight(*url, "/")
-	c := newPullClient(*dnsSrv, *timeout)
+	c := netx.Client(*dnsSrv, *timeout)
 
 	// 1. 当前快照
-	var cur currentDoc
+	var cur publish.Current
 	if err := getJSON(c, base+"/current.json", &cur); err != nil {
 		return err
 	}
@@ -143,7 +146,7 @@ func cmdPull(args []string) error {
 	}
 
 	// 4. 取自己那份,与签名覆盖到的哈希比对
-	var d distBundle
+	var d publish.Bundle
 	if err := getJSON(c, root+"/nodes/"+id+".json", &d); err != nil {
 		return fmt.Errorf("取 %s 的配置包:%w", id, err)
 	}
@@ -187,6 +190,16 @@ func cmdPull(args []string) error {
 		return fmt.Errorf("本机秘密层缺这些引用,放弃安装:%s", strings.Join(dedupe(allMissing), " "))
 	}
 	fmt.Printf("  ✅ 本机填入 %d 处秘密\n", filled)
+
+	// 5.5 自检清单。**必须由装文件的这一步产出。**
+	//
+	// 清单原本只有 `loom hydrate` 会写,而节点自取根本不经过它 —— 于是
+	// 每次 pull 之后,机器上的文件更新了而清单没有,配置自检永远误报
+	// "被改过"。实测踩过:五台机器同时报 report/config.json 漂移,
+	// 而它们装的恰恰是刚发下来的正确版本。
+	//
+	// 清单不能包含它自己(哈希无法自指),所以最后算、单独塞进去。
+	hydrated[manifestBundlePath] = buildManifest(id, hydrated)
 
 	// 6. 安装
 	plan, unmapped := deploy.BuildPlan(id, hydrated)
@@ -275,33 +288,6 @@ func (w prefixWriter) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 
-// newPullClient 造一个**不依赖机器全局设置**的 HTTP 客户端。
-//
-// 两处显式覆盖,都是被真实故障逼出来的:
-//
-//   - Proxy 置空:节点上设了 HTTP_PROXY 时,取配置会经过那个代理。
-//   - 自带 DNS:access-a 上有个与 Loom 无关的 WireGuard 接口声明了
-//     `DNS Domain: ~.`,把**所有**域名都劫到 8.8.8.8 —— 在境内等于解析
-//     不了任何国内域名。那是别人的配置,Loom 不该去改它,但也不该依赖它。
-//     每个节点该用哪个解析器,SSOT 里本来就声明了(§7.3.2)。
-func newPullClient(dnsServer string, timeout time.Duration) *http.Client {
-	tr := &http.Transport{Proxy: nil, DisableKeepAlives: true}
-	if dnsServer != "" {
-		if !strings.Contains(dnsServer, ":") {
-			dnsServer += ":53"
-		}
-		d := &net.Dialer{Timeout: 10 * time.Second}
-		r := &net.Resolver{
-			PreferGo: true,
-			Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
-				return d.DialContext(ctx, network, dnsServer)
-			},
-		}
-		tr.DialContext = (&net.Dialer{Timeout: 15 * time.Second, Resolver: r}).DialContext
-	}
-	return &http.Client{Transport: tr, Timeout: timeout}
-}
-
 // lockPull 取一把排他锁。拿不到时返回 nil(不是错误)—— 另一个 pull 正在
 // 干这件事,本次跳过是正确行为,不该让定时器记一次失败。
 func lockPull(statePath string) (func(), error) {
@@ -361,4 +347,30 @@ func decommission(node, statePath string) error {
 	fmt.Printf("    /etc/wireguard/node.key      ← 对端已不再配它,实际已失效\n")
 	fmt.Printf("    /etc/loom/tls/node.key       ← 应当从内部 CA 吊销\n")
 	return nil
+}
+
+// manifestBundlePath 是自检清单在配置包里的位置。它映射到
+// render.ManifestPath,由 render.InstallPath 决定实际落点。
+const manifestBundlePath = "report/manifest.json"
+
+// buildManifest 按将要安装的内容算出自检清单。
+func buildManifest(node string, files map[string]string) string {
+	m := report.Manifest{Node: node, Files: map[string]string{}}
+	for bundlePath, content := range files {
+		if bundlePath == manifestBundlePath {
+			continue // 不能包含自己
+		}
+		abs := render.InstallPath(bundlePath)
+		if abs == "" {
+			continue // 没有约定安装位置的不进清单(它也不会被安装)
+		}
+		h := sha256.Sum256([]byte(content))
+		m.Files[abs] = hex.EncodeToString(h[:])
+	}
+	b, err := json.MarshalIndent(&m, "", "  ")
+	if err != nil {
+		// Manifest 全是具体类型,序列化不会失败。
+		return "{}"
+	}
+	return string(b) + "\n"
 }
