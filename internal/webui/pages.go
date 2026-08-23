@@ -130,15 +130,17 @@ func pageEvents(d Deps, isAuthed bool) string {
 	b.WriteString(`<table><tr><th>时间<th>节点<th>什么<th>变化<th>持续</tr>`)
 	for _, e := range evs {
 		cls := ""
-		switch {
-		case e.Bad:
+		switch e.Level {
+		case "problem":
 			cls = " class=bad"
-		case e.Recovered:
+		case "ok":
 			cls = " class=ok"
+		case "pending":
+			cls = " class=warn"
 		}
 		last := esc(e.Lasted)
 		switch {
-		case e.Ongoing && e.Bad:
+		case e.Ongoing && e.Level == "problem":
 			// 还在持续的**问题**必须一眼看出来 —— 它需要人现在就管。
 			last = `<b class=bad>` + last + ` 至今</b>`
 		case e.Ongoing:
@@ -203,20 +205,36 @@ func pageOverview(d Deps, isAuthed bool) string {
 	}
 
 	if d.Events != nil {
-		// 还在持续的问题放最前面 —— 它们需要人现在就管。
-		var live []EventView
+		// 待处理放最前面。**"没有"也要说出来** —— 一个空白的面板分不出
+		// "一切正常"和"这功能坏了"。
+		var live, pending []EventView
 		for _, e := range d.Events(200) {
-			if e.Bad && e.Ongoing {
+			if !e.Ongoing {
+				continue
+			}
+			switch e.Level {
+			case "problem":
 				live = append(live, e)
+			case "pending":
+				pending = append(pending, e)
 			}
 		}
-		if len(live) > 0 {
-			b.WriteString(`<div class=card><span class=bad>⚠️ 还在持续的问题</span><table>`)
+		switch {
+		case len(live) > 0:
+			b.WriteString(`<div class=card><span class=bad>⚠️ 未解决(` +
+				fmt.Sprint(len(live)) + `)</span><table>`)
 			for _, e := range live {
-				fmt.Fprintf(&b, `<tr><td>%s<td class=w>%s %s<td class=bad>%s<td>已 %s</tr>`,
+				fmt.Fprintf(&b, `<tr><td>%s<td class=w>%s %s<td class=bad>%s<td><b>已 %s</b></tr>`,
 					esc(e.Node), esc(e.Kind), esc(e.Subject), esc(e.To), esc(e.Lasted))
 			}
 			b.WriteString(`</table></div>`)
+		default:
+			b.WriteString(`<div class=card><span class=ok>✅ 没有未解决的问题</span></div>`)
+		}
+		for _, e := range pending {
+			fmt.Fprintf(&b, `<div class=card><span class=warn>⏳ %s %s %s —— 已 %s</span><br>
+<span class=dim>%s</span></div>`,
+				esc(e.Node), esc(e.Kind), esc(e.Subject), esc(e.Lasted), esc(e.Detail))
 		}
 	}
 

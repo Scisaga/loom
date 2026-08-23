@@ -43,16 +43,62 @@ type Event struct {
 // 才产生事件。
 func (e *Event) Key() string { return e.Node + "|" + e.Kind + "|" + e.Subject }
 
-// Bad 报告这个状态是不是"有问题"。用来在界面上区分"出事了"和"恢复了"。
-func (e *Event) Bad() bool { return !okState(e.To) }
+// Level 是一条事件的性质。
+//
+// **不是所有变化都是问题。** 快照号变了、选路切换了,都是系统正常工作的
+// 表现 —— 把它们混进"待处理"里,真的问题就被淹没了。实测踩过:面板上
+// 列了 7 条"还在持续的问题",7 条全是快照号和选路结果,而这正是我建这个
+// 面板要防的那种"狼来了"。
+type Level string
+
+const (
+	// LevelInfo 是正常运转的记录:发布了新快照、Agent 换了条路。
+	LevelInfo Level = "info"
+	// LevelProblem 需要人看一眼。
+	LevelProblem Level = "problem"
+	// LevelOK 是从问题状态恢复。
+	LevelOK Level = "ok"
+	// LevelPending 是过渡态 —— 现在正常,但它不该一直是这样(如凭据轮换
+	// 的两代并存窗口)。开太久就是忘了收尾。
+	LevelPending Level = "pending"
+)
+
+// Level 由**类别**决定,不靠猜 To 的字符串。
+//
+// 靠猜的版本把任何不在白名单里的值都当成问题,于是每个快照号都成了故障。
+func (e *Event) Level() Level {
+	switch e.Kind {
+	case "snapshot", "route":
+		return LevelInfo
+	case "rotation":
+		return LevelPending
+	}
+	if problemState(e.Kind, e.To) {
+		return LevelProblem
+	}
+	if problemState(e.Kind, e.From) {
+		return LevelOK
+	}
+	return LevelInfo
+}
+
+// Bad 报告这条事件是不是把系统带进了需要人看的状态。
+func (e *Event) Bad() bool { return e.Level() == LevelProblem }
 
 // Recovered 报告这是不是一次恢复。
-func (e *Event) Recovered() bool { return okState(e.To) && !okState(e.From) }
+func (e *Event) Recovered() bool { return e.Level() == LevelOK }
 
-func okState(s string) bool {
-	switch s {
-	case "ok", "active", "clean", "reachable", "":
-		return true
+// problemState 说某个类别的某个取值算不算有问题。
+func problemState(kind, state string) bool {
+	switch kind {
+	case "tunnel":
+		return state != "active"
+	case "drift":
+		return state != "clean"
+	case "target":
+		return state != "ok"
+	case "reach":
+		return state != "reachable"
 	}
 	return false
 }
@@ -139,11 +185,16 @@ func Compact(path string, now time.Time, retention time.Duration) error {
 
 // Duration 算某个状态持续了多久:从这条事件到同 Key 的下一条。
 //
-// 没有下一条表示还在持续中,返回到 now 为止的时长和 ongoing=true。
-// **"还在持续"和"持续了 X 之后恢复了"必须分得开** —— 前者需要人现在就管。
-func Duration(evs []Event, i int, now time.Time) (time.Duration, bool) {
+// **"没有下一条"不等于"还在持续"。** 上报者重启时是静默播种的(否则每次
+// 重启都像全网同时变化),所以日志的最后一条可能早就不是当前状态了。
+// 实测踩过:一条 2.4 小时前的快照事件被显示成"还在持续",而那台机器
+// 早就换了两个版本。
+//
+// 所以 ongoing 要**和当前状态核对**:调用方给出 cur(该 Key 现在是什么),
+// 只有对得上才算还在持续。cur 为空表示不知道,那时退回旧行为。
+func Duration(evs []Event, i int, now time.Time, cur string) (time.Duration, bool) {
 	// evs 是倒序的(最新在前),所以"下一条"在索引更小的方向。
-	cur, err := time.Parse(time.RFC3339, evs[i].TS)
+	t, err := time.Parse(time.RFC3339, evs[i].TS)
 	if err != nil {
 		return 0, false
 	}
@@ -155,9 +206,14 @@ func Duration(evs []Event, i int, now time.Time) (time.Duration, bool) {
 		if err != nil {
 			return 0, false
 		}
-		return next.Sub(cur), false
+		return next.Sub(t), false
 	}
-	return now.Sub(cur), true
+	if cur != "" && cur != evs[i].To {
+		// 日志里没有后续,但当前状态已经不是它了 —— 中间的变化发生在
+		// 上报者重启的播种期,没被记下来。不能当成"还在持续"。
+		return now.Sub(t), false
+	}
+	return now.Sub(t), true
 }
 
 // Human 把时长写成人能读的。

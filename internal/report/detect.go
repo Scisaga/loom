@@ -26,6 +26,10 @@ type detector struct {
 	seeded bool
 }
 
+// current 返回某个受跟踪状态的当前值。事件日志的最后一条不一定是现状
+// (重启时静默播种),所以判断"还在持续"要跟它核对。
+func (d *detector) current(key string) string { return d.prev[key] }
+
 func newDetector(path string, retention time.Duration) *detector {
 	return &detector{path: path, retention: retention, prev: map[string]string{}}
 }

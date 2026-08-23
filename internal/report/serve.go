@@ -66,7 +66,7 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 		// 事件只在中控记。每个节点都有同样的视图(靠转述),记 N 份只会
 		// 让人不知道该看哪份 —— 但代价是**中控停了就不记事件**。
 		det = newDetector(EventsPath, 30*24*time.Hour)
-		deps.Events = func(limit int) []webui.EventView { return recentEvents(EventsPath, now(), limit) }
+		deps.Events = func(limit int) []webui.EventView { return recentEvents(EventsPath, now(), limit, det.current) }
 		fmt.Fprintf(logw, "中控角色:%s(事件记到 %s)\n", ctl.SSOTPath, EventsPath)
 	} else if err != nil {
 		fmt.Fprintf(logw, "! 读 %s 失败:%v\n", ControlPath, err)

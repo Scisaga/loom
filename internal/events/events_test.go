@@ -34,12 +34,12 @@ func TestDurationPairsTransitions(t *testing.T) {
 	now := time.Date(2026, 8, 23, 9, 35, 0, 0, time.UTC)
 
 	// 那次断连持续了 20 分钟,已经结束。
-	d, ongoing := Duration(evs, 1, now)
+	d, ongoing := Duration(evs, 1, now, "active")
 	if ongoing || d != 20*time.Minute {
 		t.Errorf("断连时长 %v ongoing=%v,期望 20m 且已结束", d, ongoing)
 	}
 	// 当前状态还在持续。
-	d, ongoing = Duration(evs, 0, now)
+	d, ongoing = Duration(evs, 0, now, "active")
 	if !ongoing || d != 15*time.Minute {
 		t.Errorf("当前状态 %v ongoing=%v,期望 15m 且持续中", d, ongoing)
 	}
@@ -59,7 +59,7 @@ func TestDurationDoesNotCrossKeys(t *testing.T) {
 		if evs[i].Subject != "wg-a" {
 			continue
 		}
-		if _, ongoing := Duration(evs, i, now); !ongoing {
+		if _, ongoing := Duration(evs, i, now, "down"); !ongoing {
 			t.Error("wg-a 被 wg-b 的事件错误地配对了")
 		}
 	}
@@ -68,21 +68,64 @@ func TestDurationDoesNotCrossKeys(t *testing.T) {
 // "从坏变好"和"一直是好的"必须分得开 —— 所以 From 和 To 都要记。
 func TestBadAndRecovered(t *testing.T) {
 	cases := []struct {
-		from, to string
-		bad, rec bool
+		kind, from, to string
+		bad, rec       bool
 	}{
-		{"active", "down", true, false},
-		{"down", "active", false, true},
-		{"clean", "2 处", true, false},
-		{"ok", "unreachable", true, false},
-		{"unreachable", "ok", false, true},
-		{"active", "active", false, false}, // 不该出现,但也不该被当成事故
+		{"tunnel", "active", "down", true, false},
+		{"tunnel", "down", "active", false, true},
+		{"drift", "clean", "2 处", true, false},
+		{"target", "ok", "unreachable", true, false},
+		{"target", "unreachable", "ok", false, true},
+		{"tunnel", "active", "active", false, false}, // 不该出现,但也不该被当成事故
 	}
 	for _, c := range cases {
-		e := Event{From: c.from, To: c.to}
+		e := Event{Kind: c.kind, From: c.from, To: c.to}
 		if e.Bad() != c.bad || e.Recovered() != c.rec {
-			t.Errorf("%s → %s:bad=%v rec=%v,期望 %v/%v", c.from, c.to, e.Bad(), e.Recovered(), c.bad, c.rec)
+			t.Errorf("%s %s → %s:bad=%v rec=%v,期望 %v/%v",
+				c.kind, c.from, c.to, e.Bad(), e.Recovered(), c.bad, c.rec)
 		}
+	}
+}
+
+// **发布新快照、Agent 换路都不是问题。** 把它们当成问题的后果实测过:
+// "还在持续的问题"面板列了 7 条,7 条全是快照号和选路结果 —— 而这正是
+// 这个面板要防的那种"狼来了"。
+func TestNormalOperationIsNotAProblem(t *testing.T) {
+	for _, e := range []Event{
+		{Kind: "snapshot", From: "abc123", To: "def456"},
+		{Kind: "route", Subject: "cn-web", From: "edge-b", To: "direct"},
+	} {
+		if e.Bad() {
+			t.Errorf("%s 被当成问题:%+v", e.Kind, e)
+		}
+		if e.Level() != LevelInfo {
+			t.Errorf("%s 的 level 是 %s,期望 info", e.Kind, e.Level())
+		}
+	}
+	// 轮换窗口是过渡态:不是故障,但也不该一直开着。
+	r := Event{Kind: "rotation", Subject: "cred-x", To: "两代并存"}
+	if r.Level() != LevelPending {
+		t.Errorf("轮换窗口的 level 是 %s,期望 pending", r.Level())
+	}
+}
+
+// 上报者重启时静默播种,所以日志的最后一条不一定是现状。
+// 实测踩过:一条 2.4 小时前的快照事件被显示成"还在持续",而那台机器
+// 早就换了两个版本。
+func TestOngoingChecksAgainstCurrentState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "e.jsonl")
+	_ = Append(path, []Event{{TS: at(0), Node: "n", Kind: "tunnel", Subject: "wg-a", To: "down"}})
+	evs, _ := Load(path)
+	now := time.Date(2026, 8, 23, 9, 30, 0, 0, time.UTC)
+
+	if _, ongoing := Duration(evs, 0, now, "down"); !ongoing {
+		t.Error("当前状态就是它,却说不在持续")
+	}
+	if _, ongoing := Duration(evs, 0, now, "active"); ongoing {
+		t.Error("当前状态已经变了,却还说在持续 —— 播种期的变化没被记下来")
+	}
+	if _, ongoing := Duration(evs, 0, now, ""); !ongoing {
+		t.Error("不知道当前状态时应当退回旧行为")
 	}
 }
 

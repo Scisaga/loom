@@ -56,6 +56,9 @@ type EventView struct {
 	From, To, Detail        string
 	// Bad 表示变成了有问题的状态,Recovered 表示从有问题变回正常。
 	Bad, Recovered bool
+	// Level 是 info / problem / ok / pending。**发布新快照、Agent 换路
+	// 都是 info** —— 把它们混进"待处理"里,真的问题就被淹没了。
+	Level string
 	// Lasted / Ongoing:这个状态持续了多久,以及是不是还在持续。
 	// **"断了 20 分钟后恢复"和"断了 20 分钟还没好"是两件事。**
 	Lasted  string

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"loom/internal/events"
 	"loom/internal/model"
 	"loom/internal/render"
 	"loom/internal/report"
@@ -82,6 +83,9 @@ func cmdStatus(args []string) error {
 	sort.Strings(ids)
 
 	fmt.Printf("从 %s 看到的状态\n\n", vantage)
+	// 先说有没有未解决的、多久了。**"没有"也要说出来** —— 一片安静
+	// 分不出"一切正常"和"这功能没在跑"。
+	unresolved := printUnresolved(report.EventsPath, time.Now())
 	bad := 0
 	// obs 汇总全网观测:自己量的、拉到的、以及**别人转述的** ——
 	// 转述让够不到的节点也进得来(§16.1.2)。
@@ -171,10 +175,62 @@ func cmdStatus(args []string) error {
 			strings.Join(silent, " "))
 		bad += len(silent)
 	}
-	if bad > 0 {
-		return fmt.Errorf("%d 个节点有发现", bad)
+	if bad > 0 || unresolved > 0 {
+		return fmt.Errorf("%d 个节点有发现,%d 个未解决的问题", bad, unresolved)
 	}
 	return nil
+}
+
+// printUnresolved 打出还没恢复的问题,以及各自持续了多久。
+//
+// **时长是这里唯一真正新增的信息。** "隧道断了"看一眼节点表也知道;
+// "断了两天了"只有事件历史能回答 —— 而那正是会让人立刻动手的那个数字。
+// 四台机器的 wg-quick 全 failed 存在了多久,至今不知道,就是因为当时
+// 没有这个。
+func printUnresolved(path string, now time.Time) int {
+	evs, err := events.Load(path)
+	if err != nil {
+		fmt.Printf("  (读不到事件历史:%v)\n\n", err)
+		return 0
+	}
+	if len(evs) == 0 {
+		// 中控之外的节点没有事件历史,这不是问题,只是这台机器不记。
+		return 0
+	}
+	var live, pending []events.Event
+	var lasted []string
+	for i := range evs {
+		// 这里拿不到检测器的内存状态,所以只能用"有没有后续"来判断 ——
+		// 界面上那份会额外跟当前状态核对,更准。
+		d, ongoing := events.Duration(evs, i, now, "")
+		if !ongoing {
+			continue
+		}
+		switch evs[i].Level() {
+		case events.LevelProblem:
+			live = append(live, evs[i])
+			lasted = append(lasted, events.Human(d))
+		case events.LevelPending:
+			pending = append(pending, evs[i])
+			lasted = append(lasted, events.Human(d))
+		}
+	}
+	if len(live) == 0 && len(pending) == 0 {
+		fmt.Printf("  ✅ 没有未解决的问题\n\n")
+		return 0
+	}
+	for i, e := range live {
+		if i == 0 {
+			fmt.Printf("  ⚠️ 未解决(%d)\n", len(live))
+		}
+		fmt.Printf("     %-7s %-9s %-14s %-14s 已 %s\n",
+			e.Node, e.Kind, e.Subject, e.To, lasted[i])
+	}
+	for _, e := range pending {
+		fmt.Printf("  ⏳ %s %s %s —— %s\n", e.Node, e.Kind, e.Subject, e.Detail)
+	}
+	fmt.Println()
+	return len(live)
 }
 
 // printMatrix 打全网观测:谁能到哪个目标、节点之间多快。
