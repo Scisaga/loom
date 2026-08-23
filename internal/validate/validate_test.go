@@ -239,6 +239,115 @@ nodes:
     drain: true
     access: {platform: linux-server, credentials: []}`,
 		},
+		{
+			name: "§4.5 两个服务抢同一个地址",
+			want: "已被服务",
+			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
+nodes:
+  - id: acc
+    public_endpoint: 1.1.1.9
+    server: {direction: bidirectional, wg_public_key: k0}
+    access: {platform: linux-server, credentials: [c1], mixed_ports: [{port: 1082, services: true}]}
+  - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, probe_url: "https://t/", tuning_period: 5m, window: 1h, min_samples: 6, stale_after: 20m, allowed_servers: [a]}
+credentials:
+  - {id: c1, declaration: d1, secret_ref: "cred/c1"}
+services:
+  - {id: s1, declaration: d1, addresses: [a.example.com]}
+  - {id: s2, declaration: d1, addresses: [a.example.com]}`,
+		},
+		{
+			name: "§4.5 服务没有地址",
+			want: "永远匹配不到任何流量",
+			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
+nodes:
+  - id: acc
+    public_endpoint: 1.1.1.9
+    server: {direction: bidirectional, wg_public_key: k0}
+    access: {platform: linux-server, credentials: [c1], mixed_ports: [{port: 1082, services: true}]}
+  - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, probe_url: "https://t/", tuning_period: 5m, window: 1h, min_samples: 6, stale_after: 20m, allowed_servers: [a]}
+credentials:
+  - {id: c1, declaration: d1, secret_ref: "cred/c1"}
+services:
+  - {id: s1, declaration: d1, addresses: []}`,
+		},
+		{
+			name: "§4.5 服务只有后缀地址",
+			want: "探测无从下手",
+			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
+nodes:
+  - id: acc
+    public_endpoint: 1.1.1.9
+    server: {direction: bidirectional, wg_public_key: k0}
+    access: {platform: linux-server, credentials: [c1], mixed_ports: [{port: 1082, services: true}]}
+  - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, probe_url: "https://t/", tuning_period: 5m, window: 1h, min_samples: 6, stale_after: 20m, allowed_servers: [a]}
+credentials:
+  - {id: c1, declaration: d1, secret_ref: "cred/c1"}
+services:
+  - {id: s1, declaration: d1, addresses: [.example.com]}`,
+		},
+		{
+			name: "§4.5 地址写成了 URL",
+			want: "这里要的是 host",
+			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
+nodes:
+  - id: acc
+    public_endpoint: 1.1.1.9
+    server: {direction: bidirectional, wg_public_key: k0}
+    access: {platform: linux-server, credentials: [c1], mixed_ports: [{port: 1082, services: true}]}
+  - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, probe_url: "https://t/", tuning_period: 5m, window: 1h, min_samples: 6, stale_after: 20m, allowed_servers: [a]}
+credentials:
+  - {id: c1, declaration: d1, secret_ref: "cred/c1"}
+services:
+  - {id: s1, declaration: d1, addresses: ["https://a.example.com/x"]}`,
+		},
+		{
+			name: "§4.5 端口既绑声明又开 services",
+			want: "不能既是又是",
+			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
+nodes:
+  - id: acc
+    public_endpoint: 1.1.1.9
+    server: {direction: bidirectional, wg_public_key: k0}
+    access: {platform: linux-server, credentials: [c1], mixed_ports: [{port: 1082, services: true, declaration: d1}]}
+  - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, probe_url: "https://t/", tuning_period: 5m, window: 1h, min_samples: 6, stale_after: 20m, allowed_servers: [a]}
+credentials:
+  - {id: c1, declaration: d1, secret_ref: "cred/c1"}
+services:
+  - {id: s1, declaration: d1, addresses: [a.example.com]}`,
+		},
+		{
+			name: "§4.5 服务引用了不存在的声明",
+			want: "引用了不存在的声明",
+			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
+nodes:
+  - id: acc
+    public_endpoint: 1.1.1.9
+    server: {direction: bidirectional, wg_public_key: k0}
+    access: {platform: linux-server, credentials: [c1], mixed_ports: [{port: 1082, services: true}]}
+  - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, probe_url: "https://t/", tuning_period: 5m, window: 1h, min_samples: 6, stale_after: 20m, allowed_servers: [a]}
+credentials:
+  - {id: c1, declaration: d1, secret_ref: "cred/c1"}
+services:
+  - {id: s1, declaration: 不存在, addresses: [a.example.com]}`,
+		},
 	}
 
 	for _, tc := range cases {

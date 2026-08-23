@@ -55,6 +55,12 @@ type Measurement struct {
 	Node        string `json:"node"`
 	CandidateID string `json:"candidate_id"`
 	Declaration string `json:"declaration_id"`
+	// Target 是这次测的目标地址。
+	//
+	// **一条候选对不同目标的表现可以天差地别** —— 实测同一条候选到 baidu
+	// 0.058s、到 Cloudflare 完全不通(D43)。不记目标的话,聚合出来的数字
+	// 是几个互不相干的量混在一起,而且回放时无从拆分。
+	Target string `json:"target,omitempty"`
 
 	// L4 观测点能拿到的(§16.2)。
 	FirstByteMs int `json:"first_byte_ms,omitempty"`

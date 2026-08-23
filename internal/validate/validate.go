@@ -40,6 +40,8 @@ func Validate(s *model.SSOT) []Finding {
 	checkTunnels(s, idx, &fs)
 	checkService(s, idx, &fs)
 	checkDrain(&fs, s)
+	checkServices(&fs, s)
+	checkServicePorts(&fs, s)
 
 	sort.SliceStable(fs, func(i, j int) bool {
 		if fs[i].Where != fs[j].Where {

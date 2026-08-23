@@ -310,9 +310,13 @@ type SSOT struct {
 	Tunnels []Tunnel `yaml:"tunnels"`
 
 	// 服务与调度 —— 目标地址活在等价类里,不在 Nodes 里
-	EquivalenceClasses []EquivalenceClass  `yaml:"equivalence_classes,omitempty"`
-	Declarations       []AccessDeclaration `yaml:"declarations,omitempty"`
-	Credentials        []Credential        `yaml:"credentials,omitempty"`
+	EquivalenceClasses []EquivalenceClass `yaml:"equivalence_classes,omitempty"`
+
+	// Services 是接入端能选择的单位(§4.5)。数据平面按请求的 host 反查
+	// 服务,接入端因此不需要知道任何拓扑。
+	Services     []Service           `yaml:"services,omitempty"`
+	Declarations []AccessDeclaration `yaml:"declarations,omitempty"`
+	Credentials  []Credential        `yaml:"credentials,omitempty"`
 }
 
 // AccessNodes 返回全部接入节点,按 id 排序。

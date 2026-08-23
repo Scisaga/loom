@@ -117,8 +117,11 @@ type sbRule struct {
 	AuthUser []string `json:"auth_user,omitempty"`
 	IPCIDR   []string `json:"ip_cidr,omitempty"`
 	Domain   []string `json:"domain,omitempty"`
-	Port     []int    `json:"port,omitempty"`
-	Outbound string   `json:"outbound"`
+	// DomainSuffix 让服务的地址清单能用后缀兜住子域 —— 清单几乎一定不全,
+	// 这是最省事的补救(§4.5)。
+	DomainSuffix []string `json:"domain_suffix,omitempty"`
+	Port         []int    `json:"port,omitempty"`
+	Outbound     string   `json:"outbound"`
 }
 
 type sbRoute struct {
@@ -265,6 +268,16 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 		})
 	}
 
+	// 被端口钉住的声明才需要声明级 selector。只治理服务的声明不需要 ——
+	// 那些流量按 host 反查服务,走服务自己的 selector(§4.5)。
+	pinned, tunDecl := pinnedDecls(p, declIDs)
+	byService := false
+	for _, mp := range ports {
+		if mp.ByService() {
+			byService = true
+		}
+	}
+
 	hops := map[string]bool{}
 	routable := map[string]bool{}
 	var probeUsers []sbMixedUser // 每条候选一个用户名(见 ProbeListen)
@@ -273,6 +286,9 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 		d, ok := decls[did]
 		if !ok {
 			continue
+		}
+		if !pinned[did] {
+			continue // 只治理服务,没有端口钉着它
 		}
 		cands, cskips := s.EnumerateCandidates(p, d)
 		for _, cs := range cskips {
@@ -309,7 +325,51 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 		}
 	}
 
+	// 服务:每个服务一个 selector,按 host 反查(§4.5)。
+	//
+	// 同一条声明治理的多个服务**各自独立选路** —— 这正是 D43 修正的那点:
+	// 一个候选服务所有目标,而实测没有任何候选对所有目标都好。
+	var svcRules []sbRule
+	if byService {
+		for _, svc := range s.Services {
+			d, ok := decls[svc.Declaration]
+			if !ok || credOf[svc.Declaration] == nil {
+				continue // 这个接入节点的凭据没覆盖这条声明
+			}
+			cands, cskips := s.EnumerateServiceCandidates(p, d, &svc)
+			for _, cs := range cskips {
+				note("access:"+p.ID+"/svc:"+svc.ID, "%s", cs.Reason)
+			}
+			if len(cands) == 0 {
+				note("access:"+p.ID+"/svc:"+svc.ID,
+					"该服务没有任何可表达的 L4 候选,它的流量将落到兜底")
+				continue
+			}
+			var tags []string
+			for i := range cands {
+				c := &cands[i]
+				tags = append(tags, c.Tag())
+				cfg.Outbounds = append(cfg.Outbounds,
+					buildChain(s, p, nodes, c, credOf[svc.Declaration].SecretRef, hops)...)
+				probeUsers = append(probeUsers, sbMixedUser{
+					Username: ProbeUser(c.Tag()), Password: secretRef("probe/" + p.ID)})
+				probeRules = append(probeRules, sbRule{
+					Inbound:  []string{"probe-in"},
+					AuthUser: []string{ProbeUser(c.Tag())},
+					Outbound: c.Tag(),
+				})
+			}
+			cfg.Outbounds = append(cfg.Outbounds, sbOutbound{
+				Type: "selector", Tag: svc.Tag(), Outbounds: tags, Default: selectorDefault(tags),
+			})
+			svcRules = append(svcRules, serviceRule(&svc, ports))
+		}
+	}
+
 	for _, mp := range ports {
+		if mp.ByService() {
+			continue // 规则由 serviceRule 生成,按 host 匹配而不是按端口
+		}
 		// 引用一个没生成的 selector 会让 sing-box 直接启动失败。宁可不写
 		// 这条规则 —— 流量落到 final: block,与 fail_closed 一致。
 		if !routable[mp.Declaration] {
@@ -322,6 +382,9 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 			Inbound: []string{fmt.Sprintf("in-%d", mp.Port)}, Outbound: "decl:" + mp.Declaration,
 		})
 	}
+	// 服务规则排在端口规则之后:钉死出口的端口是接入端的显式意图,
+	// 它压过按 host 的自动判断。
+	cfg.Route.Rules = append(cfg.Route.Rules, svcRules...)
 	// 探测入口:一个端口,用户名区分候选(见 ProbeListen)。
 	// 规则排在最前 —— 它按 auth_user 匹配,与业务规则不重叠,但放前面能
 	// 保证探测流量永远走它自己那条候选。
@@ -335,10 +398,6 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 	}
 
 	if p.Access.Platform.UsesTUN() {
-		tunDecl := p.Access.DefaultDeclaration
-		if tunDecl == "" && len(declIDs) == 1 {
-			tunDecl = declIDs[0]
-		}
 		switch {
 		case tunDecl == "":
 			note("access:"+p.ID, "未声明 default_declaration,TUN 兜底流量将被阻断")
@@ -681,4 +740,53 @@ func selectorDefault(tags []string) string {
 		}
 	}
 	return tags[0]
+}
+
+// serviceRule 生成"这些 host 走这个服务的 selector"的路由规则。
+//
+// 只绑到按服务分流的那些端口上 —— 钉死出口的端口是接入端的显式意图,
+// 不该被 host 匹配抢走。
+func serviceRule(svc *model.Service, ports []model.MixedPort) sbRule {
+	r := sbRule{Outbound: svc.Tag()}
+	for _, mp := range ports {
+		if mp.ByService() {
+			r.Inbound = append(r.Inbound, fmt.Sprintf("in-%d", mp.Port))
+		}
+	}
+	for _, a := range svc.SortedAddresses() {
+		if model.IsSuffix(a) {
+			// `.openai.com` → 匹配 api.openai.com,也匹配 openai.com 本身。
+			r.DomainSuffix = append(r.DomainSuffix, a)
+			r.Domain = append(r.Domain, strings.TrimPrefix(a, "."))
+			continue
+		}
+		r.Domain = append(r.Domain, a)
+	}
+	return r
+}
+
+// pinnedDecls 返回被端口或 TUN 兜底钉住的声明,以及 TUN 兜底用的那条。
+//
+// **这是唯一的推导来源。** 渲染 sing-box 和渲染 Agent 配置都要用它 ——
+// 两边各写一遍的结果是 Agent 去切一个没渲染出来的 selector,而这个错误
+// 只有在跑起来之后才看得见。
+func pinnedDecls(p *model.Node, declIDs []string) (map[string]bool, string) {
+	out := map[string]bool{}
+	for _, mp := range p.Access.MixedPorts {
+		if !mp.ByService() && mp.Declaration != "" {
+			out[mp.Declaration] = true
+		}
+	}
+	tunDecl := ""
+	if p.Access.Platform.UsesTUN() {
+		tunDecl = p.Access.DefaultDeclaration
+		// 只有一条声明时不必显式写 default_declaration。
+		if tunDecl == "" && len(declIDs) == 1 {
+			tunDecl = declIDs[0]
+		}
+		if tunDecl != "" {
+			out[tunDecl] = true
+		}
+	}
+	return out, tunDecl
 }

@@ -50,6 +50,9 @@ func renderAgent(s *model.SSOT, p *model.Node) ([]File, []Skip) {
 	}
 	declIDs, _ := accessDecls(s, p)
 	decls := s.DeclarationByID()
+	// 与 singbox.go 用**同一个**推导 —— 两边各写一遍的话,Agent 会去切一个
+	// 没渲染出来的 selector。刚才就是这么错的。
+	pinned, _ := pinnedDecls(p, declIDs)
 
 	var skips []Skip
 	cfg := agent.Config{
@@ -74,25 +77,43 @@ func renderAgent(s *model.SSOT, p *model.Node) ([]File, []Skip) {
 			})
 			continue
 		}
-		cands, _ := s.EnumerateCandidates(p, d)
-		if len(cands) == 0 {
-			// 没有候选就没有 selector,Agent 去读会直接报错。
-			continue
+		// 被端口钉住的声明才有声明级 selector;只治理服务的声明,
+		// 调参落在各个服务上(§4.5)。
+		if pinned[did] {
+			cands, _ := s.EnumerateCandidates(p, d)
+			if len(cands) == 0 {
+				continue // 没有候选就没有 selector,Agent 去读会直接报错
+			}
+			ad := newDecl(did, "decl:"+did, d, []string{d.ProbeURL})
+			for i := range cands {
+				tag := cands[i].Tag()
+				ad.Candidates = append(ad.Candidates, agent.Cand{Tag: tag, ProbeUser: ProbeUser(tag)})
+			}
+			cfg.Declarations = append(cfg.Declarations, ad)
 		}
-		ad := agent.Decl{
-			ID: did, Selector: "decl:" + did,
-			Objective: d.Objective, ProbeURL: d.ProbeURL,
-			TuningPeriod: d.TuningPeriod, SwitchThreshold: d.SwitchThreshold,
-			Window: d.Window, MinSamples: d.MinSamples, StaleAfter: d.StaleAfter,
+
+		// 每个服务独立调参 —— 这正是 D43 修正的那点。
+		for _, svc := range s.ServicesFor(did) {
+			cands, _ := s.EnumerateServiceCandidates(p, d, svc)
+			if len(cands) == 0 {
+				continue
+			}
+			targets := probeURLsFor(svc)
+			if len(targets) == 0 {
+				skips = append(skips, Skip{
+					Where: "agent:" + p.ID + "/svc:" + svc.ID,
+					Reason: "服务只有后缀地址,没有可探测的具体地址 —— " +
+						"它进不了 Agent 配置,selector 会停在默认候选上",
+				})
+				continue
+			}
+			ad := newDecl(svc.ID, svc.Tag(), d, targets)
+			for i := range cands {
+				tag := cands[i].Tag()
+				ad.Candidates = append(ad.Candidates, agent.Cand{Tag: tag, ProbeUser: ProbeUser(tag)})
+			}
+			cfg.Declarations = append(cfg.Declarations, ad)
 		}
-		for i := range cands {
-			tag := cands[i].Tag()
-			ad.Candidates = append(ad.Candidates, agent.Cand{Tag: tag, ProbeUser: ProbeUser(tag)})
-		}
-		sort.Slice(ad.Candidates, func(i, j int) bool {
-			return ad.Candidates[i].Tag < ad.Candidates[j].Tag
-		})
-		cfg.Declarations = append(cfg.Declarations, ad)
 	}
 
 	// 能顺着隧道直接够到的节点。AllowedIPs 是 /32,所以只有隧道对端 ——
@@ -159,4 +180,32 @@ func shorterPeriod(a, b string) bool {
 		return false
 	}
 	return da < db
+}
+
+// newDecl 造一个调参目标:一个 selector + 一组候选 + 一组探测目标 + 策略。
+//
+// 策略(objective、周期、阻尼)来自访问声明;服务只是把它套用在自己那组
+// 地址上。多个服务共用一条声明是常见的 —— 同样的策略,各自选路。
+func newDecl(id, selector string, d *model.AccessDeclaration, targets []string) agent.Decl {
+	return agent.Decl{
+		ID: id, Selector: selector,
+		Objective: d.Objective, Targets: targets,
+		TuningPeriod: d.TuningPeriod, SwitchThreshold: d.SwitchThreshold,
+		Window: d.Window, MinSamples: d.MinSamples, StaleAfter: d.StaleAfter,
+	}
+}
+
+// probeURLsFor 把服务的地址变成可探测的 URL。
+//
+// 后缀地址(`.baidu.com`)探不了 —— 它不是一个具体主机。所以服务至少要有
+// 一个具体地址,否则它没法被度量,只能停在默认候选上。
+func probeURLsFor(svc *model.Service) []string {
+	var out []string
+	for _, a := range svc.SortedAddresses() {
+		if model.IsSuffix(a) {
+			continue
+		}
+		out = append(out, "https://"+a+"/")
+	}
+	return out
 }

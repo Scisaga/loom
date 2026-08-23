@@ -358,9 +358,24 @@ func (p Platform) UsesMixed() bool { return p == Desktop || p == LinuxServer }
 
 // MixedPort 是"端口即访问声明"(§7.3):端口号本身编码了模式与参数。
 type MixedPort struct {
-	Port        int    `yaml:"port"`
-	Declaration string `yaml:"declaration"`
+	Port int `yaml:"port"`
+
+	// Declaration 把这个端口钉在一条声明上 —— 接入端通过"连哪个端口"
+	// 显式表达策略。这是 §4.5 说的第一种模式:**指定出口**。
+	Declaration string `yaml:"declaration,omitempty"`
+
+	// Services 为真时,这个端口按请求的 host 反查服务(§4.5)。
+	//
+	// 这是第二种模式:**接入端什么都不说**。它不需要知道有哪些服务、
+	// 更不需要知道拓扑 —— 正常发请求,Loom 按 host 决定走哪。
+	//
+	// 没匹配上任何服务的请求落到兜底(默认 fail_closed),并由上报者
+	// 记下来供补全服务清单。
+	Services bool `yaml:"services,omitempty"`
 }
+
+// ByService 报告这个端口是不是按服务分流。
+func (m *MixedPort) ByService() bool { return m.Services }
 
 // Credential 是接入节点表达"它要什么"的方式(§8.2)。
 //

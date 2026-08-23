@@ -173,8 +173,8 @@ func cmdValidate(args []string) error {
 	if len(found) == 0 {
 		fmt.Printf("✓ 校验通过\n")
 		fmt.Printf("  拓扑    %d 个节点,%d 条隧道\n", len(s.Nodes), len(s.Tunnels))
-		fmt.Printf("  服务    %d 个等价类,%d 条访问声明\n",
-			len(s.EquivalenceClasses), len(s.Declarations))
+		fmt.Printf("  服务    %d 个等价类,%d 个服务,%d 条访问声明\n",
+			len(s.EquivalenceClasses), len(s.Services), len(s.Declarations))
 		fmt.Printf("  接入    %d 张凭据,%d 个接入节点\n",
 			len(s.Credentials), len(s.AccessNodes()))
 		return nil

@@ -42,8 +42,8 @@ func cmdAgent(args []string) error {
 	fmt.Printf("Loom Agent · 节点 %s · %d 条声明\n", cfg.Node, len(cfg.Declarations))
 	for i := range cfg.Declarations {
 		d := &cfg.Declarations[i]
-		fmt.Printf("  %-14s %-9s 每 %-5s 探测 %2d 条候选 → %s\n",
-			d.ID, d.Objective, d.TuningPeriod, len(d.Candidates), d.ProbeURL)
+		fmt.Printf("  %-14s %-9s 每 %-5s  %2d 条候选 × %d 个目标\n",
+			d.ID, d.Objective, d.TuningPeriod, len(d.Candidates), len(d.Targets))
 	}
 	if *dry {
 		fmt.Println("  (dry-run:只探测和判断,不切)")

@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -11,6 +12,12 @@ import (
 // 单位是完整路径,因此这里把两者绑在一起。
 type RouteCandidate struct {
 	Declaration string
+
+	// Service 非空时,这条候选属于某个服务(§4.5)。
+	//
+	// **服务是选择的单位,不是选择的对象**:服务把一组地址归到一起走同一
+	// 条路,而不是从中挑一个。挑一个是等价类的事(§4.3),那时用 Address。
+	Service string
 
 	// ServerChain 有序。**最后一台就是这次的出口**(§1.1)。
 	// 长度为 0 表示直连 —— 零跳是一等公民(§3.1)。
@@ -31,7 +38,14 @@ func (c *RouteCandidate) Egress() string {
 
 // Tag 是候选在 sing-box 配置与上报中的稳定标识。
 func (c *RouteCandidate) Tag() string {
-	t := "cand:" + c.Declaration + ":"
+	key := c.Declaration
+	if c.Service != "" {
+		// 同一条声明治理的多个服务**各自独立选路**(D43),所以 tag 必须
+		// 带上服务 —— 否则它们会共用一个 selector,又回到"一个候选服务
+		// 所有目标"的老问题。
+		key = c.Service
+	}
+	t := "cand:" + key + ":"
 	if len(c.ServerChain) == 0 {
 		t += "direct"
 	}
@@ -229,4 +243,25 @@ func dedupSkips(in []CandidateSkip) []CandidateSkip {
 		out = append(out, s)
 	}
 	return out
+}
+
+// EnumerateServiceCandidates 枚举一个服务的候选。
+//
+// 与按声明枚举的区别只有一处:**地址不是选择的维度**。服务把它的地址集合
+// 归到一起走同一条路,所以候选就是服务器链本身。
+func (s *SSOT) EnumerateServiceCandidates(access *Node, d *AccessDeclaration, svc *Service) ([]RouteCandidate, []CandidateSkip) {
+	var skips []CandidateSkip
+	skip := func(f string, a ...any) {
+		skips = append(skips, CandidateSkip{Declaration: d.ID, Reason: fmt.Sprintf(f, a...)})
+	}
+	nodes := s.NodeByID()
+	var out []RouteCandidate
+	for _, chain := range s.candidateChains(access, d, nodes, skip) {
+		out = append(out, RouteCandidate{
+			Declaration: d.ID, Service: svc.ID,
+			ServerChain: append([]string(nil), chain...),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Tag() < out[j].Tag() })
+	return out, dedupSkips(skips)
 }

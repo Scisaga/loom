@@ -211,13 +211,34 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, obs *observed, opts *Option
 	//
 	// 剪枝依据每轮都从新的观测重取,不是一次性判定:cn-a 什么时候恢复,
 	// 下一轮就自动重新开探。
-	dead := obs.unreachable(d.ProbeURL, opts.Now(), 15*time.Minute)
+	// 剪枝按**每个目标**分别算:出口对目标 A 不可达、对目标 B 可达时,
+	// 它仍然要为 B 参与竞争。一刀切会把一条对一半目标有效的候选整个砍掉。
+	deadFor := map[string]map[string]string{}
+	dead := map[string]bool{}
+	for _, t := range d.Targets {
+		m := obs.unreachable(t, opts.Now(), 15*time.Minute)
+		deadFor[t] = m
+		if len(m) == 0 {
+			continue
+		}
+	}
+	// 对**全部**目标都不可达的出口才整条剪掉。
+	for exit := range deadFor[d.Targets[0]] {
+		all := true
+		for _, t := range d.Targets {
+			if _, bad := deadFor[t][exit]; !bad {
+				all = false
+			}
+		}
+		if all {
+			dead[exit] = true
+		}
+	}
 	var probe []Cand
 	var pruned []string
 	for _, c := range cands {
-		if why, bad := dead[exitOf(c.Tag, cfg.Node)]; bad {
-			pruned = append(pruned, fmt.Sprintf("%s(出口 %s:%s)",
-				c.Tag, exitOf(c.Tag, cfg.Node), why))
+		if dead[exitOf(c.Tag, cfg.Node)] {
+			pruned = append(pruned, c.Tag)
 			continue
 		}
 		probe = append(probe, c)
@@ -233,29 +254,34 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, obs *observed, opts *Option
 	// 会让 Decide 以为它还健康,于是流量继续停在一条已知不通的路上 ——
 	// 正是 Agent 本来要解决的那个问题。
 	for _, c := range cands {
-		if why, bad := dead[exitOf(c.Tag, cfg.Node)]; bad {
+		exit := exitOf(c.Tag, cfg.Node)
+		if !dead[exit] {
+			continue
+		}
+		for _, t := range d.Targets {
 			got = append(got, measure.Measurement{
-				TS: ts, Node: cfg.Node, CandidateID: c.Tag, Declaration: d.ID,
+				TS: ts, Node: cfg.Node, CandidateID: c.Tag, Declaration: d.ID, Target: t,
 				Point: measure.L4Tunnel, Kind: measure.Derived,
-				Error: fmt.Sprintf("出口 %s 自己观测到打不到目标:%s",
-					exitOf(c.Tag, cfg.Node), why),
+				Error: fmt.Sprintf("出口 %s 自己观测到打不到 %s:%s", exit, t, deadFor[t][exit]),
 			})
 		}
 	}
 	cands = probe
 	for _, c := range cands {
-		ms, perr := ProbeOnce(cfg.Probe, cfg.ProbeSecret, c.ProbeUser, d.ProbeURL, opts.ProbeTimeout)
-		m := measure.Measurement{
-			TS: ts, Node: cfg.Node, CandidateID: c.Tag, Declaration: d.ID,
-			Point: measure.L4Tunnel, Kind: measure.Active,
+		for _, t := range d.Targets {
+			ms, perr := ProbeOnce(cfg.Probe, cfg.ProbeSecret, c.ProbeUser, t, opts.ProbeTimeout)
+			m := measure.Measurement{
+				TS: ts, Node: cfg.Node, CandidateID: c.Tag, Declaration: d.ID, Target: t,
+				Point: measure.L4Tunnel, Kind: measure.Active,
+			}
+			if perr != nil {
+				m.Error = perr.Error()
+			} else {
+				m.FirstByteMs = ms
+				ok++
+			}
+			got = append(got, m)
 		}
-		if perr != nil {
-			m.Error = perr.Error()
-		} else {
-			m.FirstByteMs = ms
-			ok++
-		}
-		got = append(got, m)
 	}
 	if err := st.append(got); err != nil {
 		return fmt.Errorf("写度量:%w", err)
@@ -277,7 +303,7 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, obs *observed, opts *Option
 	dec := Decide(d, current, sums)
 	// 亲自测的和照别人观测判定的必须分开说 —— 混成一个数字,就看不出
 	// 这一轮到底有多少是真的测过的。
-	line := fmt.Sprintf("探测 %d 条(%d 通)", len(cands), ok)
+	line := fmt.Sprintf("探测 %d 条 × %d 个目标(%d 通)", len(cands), len(d.Targets), ok)
 	if len(pruned) > 0 {
 		line += fmt.Sprintf(",另按全网观测判定 %d 条出口不可用(未探)", len(pruned))
 	}

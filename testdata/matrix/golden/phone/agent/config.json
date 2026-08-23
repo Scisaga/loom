@@ -9,7 +9,9 @@
       "id": "sg-fixed",
       "selector": "decl:sg-fixed",
       "objective": "stability",
-      "probe_url": "https://api.ipify.org",
+      "targets": [
+        "https://api.ipify.org"
+      ],
       "tuning_period": "10m",
       "switch_threshold": 0.2,
       "window": "2h",
@@ -21,16 +23,16 @@
           "probe_user": "probe-32a3db7799"
         },
         {
-          "tag": "cand:sg-fixed:cn-cd\u003esg-vps",
-          "probe_user": "probe-8c7e3229d3"
+          "tag": "cand:sg-fixed:cn-sh\u003esg-vps",
+          "probe_user": "probe-c3966d7906"
         },
         {
           "tag": "cand:sg-fixed:cn-gz\u003esg-vps",
           "probe_user": "probe-fccf0d597d"
         },
         {
-          "tag": "cand:sg-fixed:cn-sh\u003esg-vps",
-          "probe_user": "probe-c3966d7906"
+          "tag": "cand:sg-fixed:cn-cd\u003esg-vps",
+          "probe_user": "probe-8c7e3229d3"
         }
       ]
     }

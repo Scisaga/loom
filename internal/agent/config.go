@@ -63,7 +63,17 @@ type Decl struct {
 	Selector string `json:"selector"`
 
 	Objective model.Objective `json:"objective"`
-	ProbeURL  string          `json:"probe_url"`
+
+	// Targets 是要探测的目标。**每条候选对每个目标各测一遍。**
+	//
+	// 服务的目标就是它自己的地址(§4.5)—— 不再需要"代表性目标"这种东西,
+	// 因为真实目标本身就是被测对象。钉死出口的声明仍然用一个代表性目标,
+	// 因为那时候目标确实是未知的。
+	//
+	// 多目标不需要特殊的合并逻辑:失败会进失败率,而排序键本来就是
+	// (失败率分档, 目标指标)。某个目标全网都挂时,所有候选同等受罚,
+	// 相对次序不变 —— 这正是想要的。
+	Targets []string `json:"targets"`
 
 	// 以下四个字段定义调参回路的节奏与阻尼(§5.5)。
 	TuningPeriod    string  `json:"tuning_period"`
@@ -128,7 +138,10 @@ func Load(b []byte) (*Config, error) {
 			return nil, fmt.Errorf("声明 %s 的 stale_after:%w", d.ID, err)
 		}
 		if len(d.Candidates) == 0 {
-			return nil, fmt.Errorf("声明 %s 没有候选 —— 无从探测,也无从选择", d.ID)
+			return nil, fmt.Errorf("%s 没有候选 —— 无从探测,也无从选择", d.ID)
+		}
+		if len(d.Targets) == 0 {
+			return nil, fmt.Errorf("%s 没有探测目标 —— 排序无从谈起", d.ID)
 		}
 	}
 	if c.PeerPeriod != "" {
