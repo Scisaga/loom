@@ -68,6 +68,9 @@ func Run(ctx context.Context, cfg *Config, opts Options) error {
 
 	k := newClash(cfg.API, cfg.APISecret)
 	obs := newObserved()
+	// 每条声明各自的轮换游标。有界探测靠它保证"每条候选迟早都被试到"。
+	rot := map[string]int{}
+	var rotMu sync.Mutex
 	logf := func(f string, a ...any) {
 		fmt.Fprintf(opts.Log, "%s "+f+"\n",
 			append([]any{opts.Now().Format("15:04:05")}, a...)...)
@@ -115,7 +118,7 @@ func Run(ctx context.Context, cfg *Config, opts Options) error {
 		go func() {
 			defer wg.Done()
 			for {
-				if err := tick(cfg, d, k, st, obs, &opts, logf); err != nil {
+				if err := tick(cfg, d, k, st, obs, rot, &rotMu, &opts, logf); err != nil {
 					// 一轮失败不该让回路停掉:控制端点可能只是在重启。
 					logf("[%s] 本轮失败:%v", d.ID, err)
 				}
@@ -192,7 +195,7 @@ func pollPeers(cfg *Config, obs *observed, logf func(string, ...any)) {
 }
 
 // tick 是一轮:探测全部候选 → 按窗口聚合 → 决定 → 必要时切。
-func tick(cfg *Config, d *Decl, k *clash, st *store, obs *observed, opts *Options, logf func(string, ...any)) error {
+func tick(cfg *Config, d *Decl, k *clash, st *store, obs *observed, rot map[string]int, rotMu *sync.Mutex, opts *Options, logf func(string, ...any)) error {
 	win, err := d.Win()
 	if err != nil {
 		return err
@@ -249,6 +252,39 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, obs *observed, opts *Option
 		probe = append(probe, c)
 	}
 
+	// 当前选中的那条**每轮必探**。它变坏了要立刻知道 —— 这正是 D23
+	// (停在死候选上不受阻尼保护)依赖的信号。
+	current, cerr := k.Now(d.Selector)
+	if cerr != nil {
+		return fmt.Errorf("读 selector:%w", cerr)
+	}
+	var skippedByBudget int
+	if d.ProbeBudget > 0 && len(probe) > d.ProbeBudget {
+		rotMu.Lock()
+		start := rot[d.ID]
+		rot[d.ID] = (start + d.ProbeBudget) % len(probe)
+		rotMu.Unlock()
+
+		picked := map[string]bool{}
+		var sel []Cand
+		for i := range probe {
+			if probe[i].Tag == current {
+				sel = append(sel, probe[i])
+				picked[probe[i].Tag] = true
+			}
+		}
+		// 其余按游标轮换,保证每条迟早轮到。
+		for i := 0; len(sel) < d.ProbeBudget && i < len(probe); i++ {
+			c := probe[(start+i)%len(probe)]
+			if !picked[c.Tag] {
+				sel = append(sel, c)
+				picked[c.Tag] = true
+			}
+		}
+		skippedByBudget = len(probe) - len(sel)
+		probe = sel
+	}
+
 	ts := opts.Now().Format(time.RFC3339)
 	var got []measure.Measurement
 	ok := 0
@@ -274,7 +310,7 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, obs *observed, opts *Option
 	cands = probe
 	for _, c := range cands {
 		for _, t := range d.Targets {
-			ms, perr := ProbeOnce(cfg.Probe, cfg.ProbeSecret, c.ProbeUser, t, opts.ProbeTimeout)
+			r, perr := ProbeOnce(cfg.Probe, cfg.ProbeSecret, c.ProbeUser, t, opts.ProbeTimeout)
 			m := measure.Measurement{
 				TS: ts, Node: cfg.Node, CandidateID: c.Tag, Declaration: d.ID, Target: t,
 				Point: measure.L4Tunnel, Kind: measure.Active,
@@ -282,7 +318,8 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, obs *observed, opts *Option
 			if perr != nil {
 				m.Error = perr.Error()
 			} else {
-				m.FirstByteMs = ms
+				m.FirstByteMs = r.FirstByteMs
+				m.KBps = r.KBps()
 				ok++
 			}
 			got = append(got, m)
@@ -301,14 +338,15 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, obs *observed, opts *Option
 	sums := measure.Summarize(inWindow(all, d.ID, opts.Now(), win, stale))
 
 	// 3. 决定。
-	current, err := k.Now(d.Selector)
-	if err != nil {
-		return fmt.Errorf("读 selector:%w", err)
-	}
 	dec := Decide(d, current, sums)
 	// 亲自测的和照别人观测判定的必须分开说 —— 混成一个数字,就看不出
 	// 这一轮到底有多少是真的测过的。
 	line := fmt.Sprintf("探测 %d 条 × %d 个目标(%d 通)", len(cands), len(d.Targets), ok)
+	if skippedByBudget > 0 {
+		// 少探了多少必须说出来 —— 静默截断会让"这一轮没试到"看起来像
+		// "试过了但不行"。
+		line += fmt.Sprintf(",预算内轮候 %d 条", skippedByBudget)
+	}
 	if len(pruned) > 0 {
 		line += fmt.Sprintf(",另按全网观测判定 %d 条出口不可用(未探)", len(pruned))
 	}

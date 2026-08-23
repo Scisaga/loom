@@ -192,6 +192,7 @@ func newDecl(id, selector string, d *model.AccessDeclaration, targets []string) 
 		Objective: d.Objective, Targets: targets,
 		TuningPeriod: d.TuningPeriod, SwitchThreshold: d.SwitchThreshold,
 		Window: d.Window, MinSamples: d.MinSamples, StaleAfter: d.StaleAfter,
+		ProbeBudget: d.ProbeBudget,
 	}
 }
 

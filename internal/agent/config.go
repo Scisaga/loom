@@ -82,6 +82,16 @@ type Decl struct {
 	MinSamples      int     `json:"min_samples"`
 	StaleAfter      string  `json:"stale_after"`
 
+	// ProbeBudget 是每轮最多探几条候选。0 表示全探。
+	//
+	// **全探不可持续。** 候选数是 `1 + N + N(N-1)`,而现在每次探测还要读
+	// 正文才能算出吞吐(§16.2)—— 两个都涨的话,探测本身会变成网络上
+	// 最大的一股流量。
+	//
+	// 有界之后:当前选中的那条**每轮必探**(它变坏了要立刻知道),其余
+	// 轮换。代价是新候选要几轮才被试到,换来的是开销与候选数无关。
+	ProbeBudget int `json:"probe_budget,omitempty"`
+
 	Candidates []Cand `json:"candidates"`
 }
 
@@ -100,12 +110,10 @@ type Cand struct {
 // 这三个中的任何一个,产出的排序看着完全正常,却在优化另一件事。
 func Supported(o model.Objective) (bool, string) {
 	switch o {
-	case model.Latency, model.Stability:
+	case model.Latency, model.Stability, model.Throughput:
 		return true, ""
 	case model.TTFT:
 		return false, "ttft 只能由 L7 观测点产出(§16.2),Agent 现在只有 L4 首字节时间"
-	case model.Throughput:
-		return false, "throughput 需要批量传输探测,Agent 现在只测首字节"
 	case model.Cost:
 		return false, "cost 需要价格数据源(§5.2),Agent 拿不到"
 	}

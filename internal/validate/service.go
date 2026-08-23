@@ -134,7 +134,7 @@ func checkDeclarations(
 		if d.TuningPeriod == "" {
 			fs.add("§5.5 周期", where, "缺少 tuning_period —— 中继轴始终需要度量(§4)")
 		}
-		checkTuningLoop(fs, where, d)
+		checkTuningLoop(fs, where, d, maxCandidates(s, d))
 		// 把声明钉死的出口排空了,这条声明就一个候选都没有 —— 流量直接
 		// 被阻断。排空的本意是"迁移期间先别用它",而不是"把这条声明关掉";
 		// 真要关,该改 egress_axis 或者删掉声明。
@@ -415,7 +415,7 @@ func checkAccessNodes(
 //
 // 实测踩过:tuning_period=5m、window=5m、min_samples=20 —— 窗口里只装得下
 // 1 个样本,却要求 20 个。
-func checkTuningLoop(fs *findings, where string, d *model.AccessDeclaration) {
+func checkTuningLoop(fs *findings, where string, d *model.AccessDeclaration, maxCands int) {
 	period, perr := time.ParseDuration(d.TuningPeriod)
 	window, werr := time.ParseDuration(d.Window)
 	if d.TuningPeriod != "" && perr != nil {
@@ -444,9 +444,40 @@ func checkTuningLoop(fs *findings, where string, d *model.AccessDeclaration) {
 	if d.MinSamples < 0 {
 		fs.add("§5.4 窗口", where, "min_samples 不能为负:%d", d.MinSamples)
 	}
+	if d.ProbeBudget < 0 {
+		fs.add("§16.2 探测预算", where, "probe_budget 不能为负:%d", d.ProbeBudget)
+	}
+	if d.ProbeBudget == 1 {
+		// 预算 1 意味着只探当前选中的那条,别的永远轮不到 —— 那不是
+		// "有界探测",那是"关掉了探测"。
+		fs.add("§16.2 探测预算", where,
+			"probe_budget=1 只够探当前选中的那条,其余候选永远轮不到 —— "+
+				"这等于关掉了选优。要关就把 tuning_period 拉长,别用预算 1 假装还在调")
+	}
 	if perr != nil || werr != nil || period <= 0 || window <= 0 {
 		return
 	}
+	// 有探测预算时,一条候选**不是每轮都被探到**。轮换让它平均每
+	// `候选数/预算` 轮才轮到一次,窗口里能攒到的样本数因此要打折。
+	// 不算这一折的话,min_samples 会变成一个永远达不到的门槛 ——
+	// 和 D24 是同一类错误,只是原因从"窗口太短"换成了"预算太小"。
+	if d.ProbeBudget > 1 && maxCands > d.ProbeBudget {
+		rounds := int(window / period)
+		// 当前选中的那条每轮必探,其余 budget-1 个名额在 cands-1 条里轮换。
+		perCand := rounds * (d.ProbeBudget - 1) / (maxCands - 1)
+		if perCand < d.MinSamples {
+			need := d.MinSamples * (maxCands - 1) / (d.ProbeBudget - 1)
+			fs.add("§16.2 探测预算", where,
+				"probe_budget=%d、候选最多 %d 条:一条候选平均每 %d 轮才轮到一次,"+
+					"window=%s 里只攒得到约 %d 个样本,达不到 min_samples=%d —— "+
+					"排序永远不会启动。要么把 window 放大到 %s 以上,要么把 "+
+					"min_samples 降到 %d 以内,要么加大预算",
+				d.ProbeBudget, maxCands, (maxCands-1)/(d.ProbeBudget-1), d.Window,
+				perCand, d.MinSamples,
+				(time.Duration(need) * period).String(), perCand)
+		}
+	}
+
 	if cap := int(window / period); cap < d.MinSamples {
 		fs.add("§5.4 窗口", where,
 			"window=%s 按 tuning_period=%s 采样最多装 %d 个样本,达不到 min_samples=%d —— "+
@@ -499,4 +530,30 @@ func checkDrain(fs *findings, s *model.SSOT) {
 			"所有能当出口的服务器都被排空了(%s)—— 全网没有任何可用候选",
 			strings.Join(drained, " "))
 	}
+}
+
+// maxCandidates 是这条声明在任何接入节点上能枚举出的最多候选数。
+//
+// 探测预算是按候选数打折的,而候选数因接入节点而异(可达性不同)。
+// 取最大值 —— 校验要挡住最坏的那个接入节点。
+func maxCandidates(s *model.SSOT, d *model.AccessDeclaration) int {
+	max := 0
+	for _, p := range s.AccessNodes() {
+		n := 0
+		if svcs := s.ServicesFor(d.ID); len(svcs) > 0 {
+			for _, svc := range svcs {
+				c, _ := s.EnumerateServiceCandidates(p, d, svc)
+				if len(c) > n {
+					n = len(c)
+				}
+			}
+		} else {
+			c, _ := s.EnumerateCandidates(p, d)
+			n = len(c)
+		}
+		if n > max {
+			max = n
+		}
+	}
+	return max
 }

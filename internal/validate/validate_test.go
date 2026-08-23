@@ -348,6 +348,34 @@ credentials:
 services:
   - {id: s1, declaration: 不存在, addresses: [a.example.com]}`,
 		},
+		{
+			name: "§16.2 预算太小,轮换攒不够样本",
+			want: "才轮到一次",
+			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
+nodes:
+  - id: acc
+    public_endpoint: 1.1.1.9
+    server: {direction: bidirectional, wg_public_key: k0}
+    access: {platform: linux-server, credentials: [c1], mixed_ports: [{port: 1080, declaration: d1}]}
+  - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
+  - {id: b, public_endpoint: 1.1.1.2, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k2}}
+  - {id: c, public_endpoint: 1.1.1.3, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k3}}
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, probe_url: "https://t/", tuning_period: 10m, window: 2h, min_samples: 6, stale_after: 30m, max_hops: 2, probe_budget: 2, allowed_servers: [a, b, c]}
+credentials:
+  - {id: c1, declaration: d1, secret_ref: "cred/c1"}`,
+		},
+		{
+			name: "§16.2 预算 1 等于关掉选优",
+			want: "等于关掉了选优",
+			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
+nodes:
+  - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, probe_url: "https://t/", tuning_period: 10m, window: 2h, min_samples: 6, stale_after: 30m, probe_budget: 1, allowed_servers: [a]}`,
+		},
 	}
 
 	for _, tc := range cases {

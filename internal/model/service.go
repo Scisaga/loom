@@ -270,6 +270,13 @@ type AccessDeclaration struct {
 	// 优化**什么指标**,probe_url 说对**什么流量**。
 	ProbeURL string `yaml:"probe_url"`
 
+	// ProbeBudget 是每轮最多探几条候选(§16.2)。0 表示全探。
+	//
+	// 候选数是 `1 + N + N(N-1)`,而每次探测现在还要读正文才算得出吞吐 ——
+	// 两个都涨的话,探测本身会变成网络上最大的一股流量。有界之后开销与
+	// 候选数无关:当前选中的每轮必探,其余轮换。
+	ProbeBudget int `yaml:"probe_budget,omitempty"`
+
 	Objective   Objective    `yaml:"objective"`
 	Constraints []Constraint `yaml:"constraints,omitempty"`
 

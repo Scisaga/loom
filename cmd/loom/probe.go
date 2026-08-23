@@ -121,7 +121,7 @@ func cmdProbe(args []string) error {
 				break
 			}
 			sent++
-			ms, perr := agent.ProbeOnce(*probeAddr, sec, render.ProbeUser(it.cand), it.url,
+			r, perr := agent.ProbeOnce(*probeAddr, sec, render.ProbeUser(it.cand), it.url,
 				time.Duration(*timeoutMs)*time.Millisecond)
 			m := measure.Measurement{
 				// 时间由调用方注入,与渲染/打包保持同一个原则(D14)。
@@ -132,7 +132,8 @@ func cmdProbe(args []string) error {
 			if perr != nil {
 				m.Error = perr.Error()
 			} else {
-				m.FirstByteMs = ms
+				m.FirstByteMs = r.FirstByteMs
+				m.KBps = r.KBps()
 			}
 			got = append(got, m)
 		}

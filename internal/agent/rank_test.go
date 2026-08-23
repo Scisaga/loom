@@ -22,6 +22,8 @@ func sum(tag string, samples, failures, p50, p95 int) measure.Summary {
 		Samples: samples, Failures: failures, P50: p50, P95: p95}
 }
 
+func withKBps(s measure.Summary, kbps int) measure.Summary { s.KBps = kbps; return s }
+
 // 这是 Agent 存在的首要理由:sing-box 每次重启,selector 都回到 default,
 // 而实测 default(直连)对 best-egress 的目标完全不通。停在一条已经证明
 // 打不通的路上,不该被 min_samples 或 switch_threshold 拦住 —— 阻尼是为了
@@ -139,12 +141,12 @@ func TestEveryDecisionHasAReason(t *testing.T) {
 
 // 不能执行的 objective 必须显式拒绝,不能拿 L4 首字节时间冒充。
 func TestUnsupportedObjectivesAreRefused(t *testing.T) {
-	for _, o := range []model.Objective{model.TTFT, model.Throughput, model.Cost} {
+	for _, o := range []model.Objective{model.TTFT, model.Cost} {
 		if ok, why := Supported(o); ok || why == "" {
 			t.Errorf("%s 被当成可执行的,或没给理由", o)
 		}
 	}
-	for _, o := range []model.Objective{model.Latency, model.Stability} {
+	for _, o := range []model.Objective{model.Latency, model.Stability, model.Throughput} {
 		if ok, _ := Supported(o); !ok {
 			t.Errorf("%s 应该可执行", o)
 		}
@@ -164,5 +166,59 @@ func TestInWindowDropsOldAndStale(t *testing.T) {
 	got := inWindow(ms, "d", now, time.Hour, 30*time.Minute)
 	if len(got) != 1 || got[0].CandidateID != "fresh" {
 		t.Fatalf("窗口过滤结果不对:%+v", got)
+	}
+}
+
+// 首字节和吞吐会给出**相反**的排序。实测:edge-a 首字节排第 4(956ms),
+// 按拉完 2MB 的真实耗时排第 2 —— 因为它的吞吐是排它前面那条的 3 倍。
+// 每多一跳吞吐掉到四分之一,而首字节完全看不出这件事。
+func TestThroughputRanksBySpeedNotLatency(t *testing.T) {
+	d := decl(model.Throughput, 3, 0.2, "fast-connect", "fast-transfer")
+	got := Decide(d, "fast-connect", []measure.Summary{
+		withKBps(sum("fast-connect", 10, 0, 400, 500), 250),    // 连得快,传得慢(两跳)
+		withKBps(sum("fast-transfer", 10, 0, 900, 1000), 2000), // 连得慢,传得快(一跳)
+	})
+	if !got.Switch || got.Choice != "fast-transfer" {
+		t.Fatalf("按吞吐排序却选了连得快的那条:%+v", got)
+	}
+	if !strings.Contains(got.Reason, "KB/s") {
+		t.Errorf("理由里没有吞吐数字:%q", got.Reason)
+	}
+	// 同一批数据按 latency 排,应当选另一条 —— 两个 objective 本来就该分道扬镳。
+	dl := decl(model.Latency, 3, 0.2, "fast-connect", "fast-transfer")
+	if g := Decide(dl, "fast-connect", []measure.Summary{
+		withKBps(sum("fast-connect", 10, 0, 400, 500), 250),
+		withKBps(sum("fast-transfer", 10, 0, 900, 1000), 2000),
+	}); g.Switch {
+		t.Errorf("按延迟排序不该切到传得快但连得慢的那条:%+v", g)
+	}
+}
+
+// 没有吞吐数据的候选不能因为"没数据"而赢下一个按吞吐排序的声明。
+// 探测目标只返回几百字节时就是这种情况。
+func TestNoThroughputDataDoesNotWin(t *testing.T) {
+	d := decl(model.Throughput, 3, 0.2, "measured", "unmeasured")
+	got := Decide(d, "measured", []measure.Summary{
+		withKBps(sum("measured", 10, 0, 500, 600), 300),
+		sum("unmeasured", 10, 0, 100, 120), // 连得快,但没吞吐数据
+	})
+	if got.Switch {
+		t.Fatalf("切到了没有吞吐数据的候选:%+v", got)
+	}
+}
+
+// 按吞吐排序却一条都测不出吞吐:这不是"大家一样好",是测不出来。
+// 让它们并列最差的话,排序会退化成按候选名字排 —— 看起来在工作,实际在乱选。
+func TestThroughputWithNoDataRefusesToRank(t *testing.T) {
+	d := decl(model.Throughput, 3, 0.2, "a", "b")
+	got := Decide(d, "a", []measure.Summary{
+		sum("a", 10, 0, 500, 600), // 都成功,但都没有吞吐数据
+		sum("b", 10, 0, 100, 120),
+	})
+	if got.Switch {
+		t.Fatalf("没有吞吐数据却切了:%+v", got)
+	}
+	if !strings.Contains(got.Reason, "32KB") {
+		t.Errorf("理由没说清是目标返回内容太少:%q", got.Reason)
 	}
 }

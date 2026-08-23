@@ -65,6 +65,13 @@ type Measurement struct {
 	// L4 观测点能拿到的(§16.2)。
 	FirstByteMs int `json:"first_byte_ms,omitempty"`
 
+	// KBps 是这次探测的下载速度。0 表示样本太小、算不出吞吐。
+	//
+	// **它和首字节会给出相反的排序。** 实测:每多一跳吞吐掉到四分之一
+	// (一跳 860–2018 KB/s,两跳 244–273 KB/s),而首字节看不出这件事。
+	// 按首字节挑出来的路,拉任何有体积的东西都可能是错的。
+	KBps int `json:"kbps,omitempty"`
+
 	// 探测失败本身就是数据 —— 一条连不上的候选和一条慢的候选,
 	// 对调度是完全不同的信号。
 	Error string `json:"error,omitempty"`
@@ -126,6 +133,8 @@ type Summary struct {
 	Failures    int
 	P50         int
 	P95         int
+	// KBps 是有吞吐数据的样本的中位数;0 表示这批样本都太小,算不出。
+	KBps int
 }
 
 // Summarize 按候选聚合,只统计成功样本的分位数,失败单独计数。
@@ -134,9 +143,10 @@ type Summary struct {
 // "延迟很高",排序时它仍会排在某些候选之前;记成失败才能被过滤掉。
 func Summarize(ms []Measurement) []Summary {
 	type acc struct {
-		decl string
-		ok   []int
-		fail int
+		decl  string
+		ok    []int
+		speed []int
+		fail  int
 	}
 	byCand := map[string]*acc{}
 	for i := range ms {
@@ -148,6 +158,9 @@ func Summarize(ms []Measurement) []Summary {
 		}
 		if m.OK() {
 			a.ok = append(a.ok, m.FirstByteMs)
+			if m.KBps > 0 {
+				a.speed = append(a.speed, m.KBps)
+			}
 		} else {
 			a.fail++
 		}
@@ -161,6 +174,10 @@ func Summarize(ms []Measurement) []Summary {
 			sort.Ints(a.ok)
 			s.P50 = percentile(a.ok, 50)
 			s.P95 = percentile(a.ok, 95)
+		}
+		if len(a.speed) > 0 {
+			sort.Ints(a.speed)
+			s.KBps = a.speed[len(a.speed)/2]
 		}
 		out = append(out, s)
 	}
