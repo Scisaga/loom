@@ -117,6 +117,57 @@ func pageSSOT(d Deps, content, findings string, err error, saved bool) string {
 	return shell(d, "改 SSOT", b.String(), true)
 }
 
+func pageEvents(d Deps, isAuthed bool) string {
+	evs := d.Events(200)
+	var b strings.Builder
+	b.WriteString(`<p class=dim>只记<b>状态变化</b>,不记状态 —— "每分钟一条 cn-a 正常"没有价值,
+有价值的是什么时候坏的、什么时候好的、坏了多久。</p>`)
+	if len(evs) == 0 {
+		b.WriteString(`<div class=card>还没有记录到任何变化。<br>
+<span class=dim>中控刚起来时只播种不产生事件 —— 否则每次重启都会看起来像全网同时变了一次。</span></div>`)
+		return shell(d, "事件", b.String()+`<p><a href="/">← 回到总览</a></p>`, isAuthed)
+	}
+	b.WriteString(`<table><tr><th>时间<th>节点<th>什么<th>变化<th>持续</tr>`)
+	for _, e := range evs {
+		cls := ""
+		switch {
+		case e.Bad:
+			cls = " class=bad"
+		case e.Recovered:
+			cls = " class=ok"
+		}
+		last := esc(e.Lasted)
+		switch {
+		case e.Ongoing && e.Bad:
+			// 还在持续的**问题**必须一眼看出来 —— 它需要人现在就管。
+			last = `<b class=bad>` + last + ` 至今</b>`
+		case e.Ongoing:
+			last += ` <span class=dim>至今</span>`
+		}
+		subj := e.Subject
+		if subj == "" {
+			subj = e.Kind
+		} else {
+			subj = e.Kind + " " + subj
+		}
+		fmt.Fprintf(&b, `<tr><td class=dim>%s<td>%s<td class=w>%s<td class=w%s>%s → %s<td>%s</tr>`,
+			esc(shortTS(e.TS)), esc(e.Node), esc(subj), cls, esc(e.From), esc(e.To), last)
+		if e.Detail != "" {
+			fmt.Fprintf(&b, `<tr><td><td><td class="w dim" colspan=3>%s</tr>`, esc(brief(e.Detail)))
+		}
+	}
+	b.WriteString(`</table><p><a href="/">← 回到总览</a></p>`)
+	return shell(d, "事件", b.String(), isAuthed)
+}
+
+// shortTS 去掉日期里没信息量的部分,表格窄一些。
+func shortTS(ts string) string {
+	if len(ts) >= 19 {
+		return ts[5:19]
+	}
+	return ts
+}
+
 func pageOverview(d Deps, isAuthed bool) string {
 	v := d.Snapshot()
 	var b strings.Builder
@@ -149,6 +200,24 @@ func pageOverview(d Deps, isAuthed bool) string {
 	}
 	for _, w := range v.Warnings {
 		fmt.Fprintf(&b, `<div class=card><span class=warn>⚠️ %s</span></div>`, esc(w))
+	}
+
+	if d.Events != nil {
+		// 还在持续的问题放最前面 —— 它们需要人现在就管。
+		var live []EventView
+		for _, e := range d.Events(200) {
+			if e.Bad && e.Ongoing {
+				live = append(live, e)
+			}
+		}
+		if len(live) > 0 {
+			b.WriteString(`<div class=card><span class=bad>⚠️ 还在持续的问题</span><table>`)
+			for _, e := range live {
+				fmt.Fprintf(&b, `<tr><td>%s<td class=w>%s %s<td class=bad>%s<td>已 %s</tr>`,
+					esc(e.Node), esc(e.Kind), esc(e.Subject), esc(e.To), esc(e.Lasted))
+			}
+			b.WriteString(`</table></div>`)
+		}
 	}
 
 	b.WriteString(`<h2>节点</h2><table><tr><th>节点<th>隧道<th>快照<th>观测</tr>`)
@@ -236,6 +305,9 @@ func pageOverview(d Deps, isAuthed bool) string {
 	}
 	b.WriteString(`</table>`)
 
+	if d.Events != nil {
+		b.WriteString(`<h2>事件</h2><p><a href="/events">看状态变化历史 →</a></p>`)
+	}
 	if d.Operator == "" && len(d.Actions) == 0 && d.Control == nil {
 		return shell(d, "总览", b.String(), isAuthed)
 	}

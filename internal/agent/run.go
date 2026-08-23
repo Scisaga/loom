@@ -6,9 +6,11 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
+	"loom/internal/events"
 	"loom/internal/measure"
 	"loom/internal/report"
 )
@@ -21,6 +23,9 @@ type Options struct {
 	// Retention 是度量文件的保留时长。超出的记录在压实时丢弃 ——
 	// 追加日志不压实会无限长大。
 	Retention time.Duration
+	// EventsPath 非空时,选路切换会记进事件历史。
+	EventsPath string
+
 	// Once 为真时,每条声明只跑一轮就返回。给人工执行和自检用。
 	Once bool
 	// DryRun 为真时照常探测和判断、照常记度量,但不真的切 selector。
@@ -319,7 +324,24 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, obs *observed, opts *Option
 		return fmt.Errorf("切 selector:%w", err)
 	}
 	logf("[%s] ✅ %s → %s", d.ID, current, dec.Choice)
+	// 切换是状态变化,该进事件历史 —— 只写 journald 的话,"这条路是什么
+	// 时候、因为什么切过去的"事后查不到。
+	if opts.EventsPath != "" {
+		_ = events.Append(opts.EventsPath, []events.Event{{
+			TS: opts.Now().UTC().Format(time.RFC3339), Node: cfg.Node,
+			Kind: "route", Subject: d.ID, From: shortCand(current), To: shortCand(dec.Choice),
+			Detail: dec.Reason,
+		}})
+	}
 	return nil
+}
+
+// shortCand 去掉候选 tag 里重复的前缀,事件表里窄一些。
+func shortCand(tag string) string {
+	if i := strings.LastIndex(tag, ":"); i >= 0 {
+		return tag[i+1:]
+	}
+	return tag
 }
 
 // inWindow 过滤出这条声明在窗口内的样本。

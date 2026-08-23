@@ -21,6 +21,7 @@ func cmdAgent(args []string) error {
 	fs := flag.NewFlagSet("agent", flag.ExitOnError)
 	cfgPath := fs.String("c", "/etc/loom/agent/config.json", "Agent 配置(loom render 的产物)")
 	mPath := fs.String("m", "/var/lib/loom/measurements.jsonl", "度量文件")
+	ePath := fs.String("events", "/var/lib/loom/events.jsonl", "事件历史(选路切换会记进去)")
 	once := fs.Bool("once", false, "每条声明只跑一轮就退出")
 	dry := fs.Bool("dry-run", false, "照常探测和判断,但不真的切 selector")
 	timeout := fs.Duration("timeout", 8*time.Second, "单次探测超时")
@@ -56,6 +57,7 @@ func cmdAgent(args []string) error {
 
 	return agent.Run(ctx, cfg, agent.Options{
 		MeasurementPath: *mPath,
+		EventsPath:      *ePath,
 		ProbeTimeout:    *timeout,
 		Retention:       *retention,
 		Once:            *once,

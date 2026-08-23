@@ -44,6 +44,22 @@ type Deps struct {
 
 	// Control 非 nil 时,这台机器是中控,界面多出改 SSOT 的能力。
 	Control *ControlDeps
+
+	// Events 非 nil 时,界面多一页事件历史。只有中控有 —— 事件记在
+	// 中控上,因为那是人会去看的地方。
+	Events func(limit int) []EventView
+}
+
+// EventView 是一次状态变化在界面上的样子。
+type EventView struct {
+	TS, Node, Kind, Subject string
+	From, To, Detail        string
+	// Bad 表示变成了有问题的状态,Recovered 表示从有问题变回正常。
+	Bad, Recovered bool
+	// Lasted / Ongoing:这个状态持续了多久,以及是不是还在持续。
+	// **"断了 20 分钟后恢复"和"断了 20 分钟还没好"是两件事。**
+	Lasted  string
+	Ongoing bool
 }
 
 // ControlDeps 只有中控需要(§14.2.3、D36)。
@@ -164,6 +180,12 @@ func Handler(d Deps) http.Handler {
 		writeHTML(w, pageResult(d, name, out, err))
 	})
 
+	if d.Events != nil {
+		mux.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
+			// 事件是只读的,和总览一样不需要登录。
+			writeHTML(w, pageEvents(d, authed(d, r)))
+		})
+	}
 	if d.Control != nil {
 		mux.HandleFunc("/ssot", func(w http.ResponseWriter, r *http.Request) {
 			if !authed(d, r) {

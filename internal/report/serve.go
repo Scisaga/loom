@@ -52,6 +52,8 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 			return buildView(cfg, st, now())
 		},
 	}
+	var det *detector
+
 	// 中控角色是本机 bootstrap 配置,不是渲染产物 —— 绝大多数节点没有它。
 	if ctl, pw, err := LoadControl(ControlPath); ctl != nil {
 		if err != nil {
@@ -61,7 +63,11 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 		}
 		deps.Operator = pw
 		deps.Control = controlDeps(ctl)
-		fmt.Fprintf(logw, "中控角色:%s\n", ctl.SSOTPath)
+		// 事件只在中控记。每个节点都有同样的视图(靠转述),记 N 份只会
+		// 让人不知道该看哪份 —— 但代价是**中控停了就不记事件**。
+		det = newDetector(EventsPath, 30*24*time.Hour)
+		deps.Events = func(limit int) []webui.EventView { return recentEvents(EventsPath, now(), limit) }
+		fmt.Fprintf(logw, "中控角色:%s(事件记到 %s)\n", ctl.SSOTPath, EventsPath)
 	} else if err != nil {
 		fmt.Fprintf(logw, "! 读 %s 失败:%v\n", ControlPath, err)
 	}
@@ -96,6 +102,20 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 		defer wg.Done()
 		for {
 			gossip(cfg, tbl, now, maxAge)
+			// 每轮转述之后比一次:这一轮和上一轮有什么不同。
+			// **只有变化才写下来** —— 状态本身已经在 /status 里了。
+			if det != nil {
+				st := Collect(cfg, now())
+				st.Observation, st.Learned = tbl.view(cfg.Node, now(), maxAge)
+				evs, err := det.observe(buildView(cfg, st, now()), now())
+				if err != nil {
+					fmt.Fprintf(logw, "! 记事件失败:%v\n", err)
+				}
+				for i := range evs {
+					fmt.Fprintf(logw, "· %s %s %s:%s → %s\n",
+						evs[i].Node, evs[i].Kind, evs[i].Subject, evs[i].From, evs[i].To)
+				}
+			}
 			select {
 			case <-ctx.Done():
 				return
