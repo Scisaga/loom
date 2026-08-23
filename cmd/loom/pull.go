@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
@@ -262,6 +263,69 @@ func getBytes(c *http.Client, url string) ([]byte, error) {
 	}
 	// 上限防止分发点(或中间人)用一个无限流把节点的内存吃光。
 	return io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+}
+
+// blobStall 不是"总共能下多久",而是"多久没有新字节到"。
+//
+// 原来二进制走的是跟 manifest 同一个客户端 —— 一个 60 秒的**总时长**上限。
+// 12.3 MB 配 60 秒等于要求全程持续 205 KB/s,而本次实测二跳吞吐只有
+// 244–273 KB/s,贴着线跑。edge-a 就是这么失败的:
+//
+//	错误:下载二进制:context deadline exceeded ... while reading body
+//
+// 而失败的后果不是"这次没升上",是**这台机器停在半路**:配置留给下一轮的
+// 两段式意味着它既没换成新的,也不确定下一轮能不能换成。
+//
+// 慢不是故障,卡住才是。所以对大块内容只检测停顿:一直在走就一直等,
+// 连续这么久没有新字节才放弃。
+const blobStall = 45 * time.Second
+
+// getBlob 取大块内容(二进制)。与 getBytes 的区别只在超时的形状。
+// stall 由调用方给,是为了测试能把它调短。
+func getBlob(c *http.Client, url string, max int64, stall time.Duration) ([]byte, error) {
+	nc := *c       // 复用 Transport —— 里面有不读 HTTP_PROXY、自带 DNS 的设置
+	nc.Timeout = 0 // 总时长不设限,交给下面的停顿检测
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := nc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET %s → HTTP %d", url, resp.StatusCode)
+	}
+
+	stalled := false
+	t := time.AfterFunc(stall, func() { stalled = true; cancel() })
+	defer t.Stop()
+
+	b, err := io.ReadAll(&stallReader{r: io.LimitReader(resp.Body, max), t: t, d: stall})
+	if stalled {
+		return nil, fmt.Errorf("下了 %.1f MB 之后卡住,%s 没有新字节", float64(len(b))/(1<<20), stall)
+	}
+	return b, err
+}
+
+// stallReader 每读到字节就把停顿计时器续上。读不到就不续 —— 计时器到点
+// 取消掉整个请求。
+type stallReader struct {
+	r io.Reader
+	t *time.Timer
+	d time.Duration
+}
+
+func (s *stallReader) Read(p []byte) (int, error) {
+	n, err := s.r.Read(p)
+	if n > 0 {
+		s.t.Reset(s.d)
+	}
+	return n, err
 }
 
 func getJSON(c *http.Client, url string, into any) error {

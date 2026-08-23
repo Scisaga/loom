@@ -59,7 +59,8 @@ func upgradeBinary(c *http.Client, base string, man *snapshot.Manifest, binPath 
 		return true, nil
 	}
 
-	body, err := getBytes(c, base+"/"+want.Path())
+	// 二进制走 getBlob,不走 getBytes —— 后者那个 60 秒总超时装不下 12 MB。
+	body, err := getBlob(c, base+"/"+want.Path(), int64(want.Size)+1<<20, blobStall)
 	if err != nil {
 		return false, fmt.Errorf("下载二进制:%w", err)
 	}
