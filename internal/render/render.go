@@ -65,7 +65,25 @@ func Render(s *model.SSOT) (*Result, error) {
 	byNode := map[string][]File{}
 	var skipped []Skip
 
+	// 被下线的节点不产出任何配置 —— 给一台正在停机的机器发新配置没有意义,
+	// 而且会让"它到底该不该跑"变得含糊。停机指令走签名过的 manifest。
+	decommissioned := map[string]bool{}
+	for i := range s.Nodes {
+		if s.Nodes[i].Decommission {
+			decommissioned[s.Nodes[i].ID] = true
+			skipped = append(skipped, Skip{
+				Where:  "node:" + s.Nodes[i].ID,
+				Reason: "已标记下线(decommission),不渲染任何配置;停机指令在签名过的快照里",
+			})
+		}
+	}
+
 	for _, t := range tunnels {
+		// 一端下线,两端都不再渲染这条隧道 —— 对端不该继续配一个正在停机的
+		// 邻居。下线节点靠公网 HTTPS 取快照,不依赖隧道,所以断得起。
+		if decommissioned[t.Initiator.ID] || decommissioned[t.Acceptor.ID] {
+			continue
+		}
 		switch t.Protocol {
 		case model.WG, model.AWG:
 			// 继续
@@ -94,6 +112,9 @@ func Render(s *model.SSOT) (*Result, error) {
 	// 上报者装在**每个**节点上,服务器也要 —— DDNS 重解析、隧道断连、
 	// 有人手工改配置,这些只有节点自己知道(§16.1)。
 	for i := range s.Nodes {
+		if decommissioned[s.Nodes[i].ID] {
+			continue
+		}
 		f, sk := renderReport(s, &s.Nodes[i])
 		byNode[s.Nodes[i].ID] = append(byNode[s.Nodes[i].ID], f...)
 		skipped = append(skipped, sk...)
@@ -101,6 +122,9 @@ func Render(s *model.SSOT) (*Result, error) {
 
 	// 节点侧的控制通道:自己去分发点取配置(§14.2)。
 	for i := range s.Nodes {
+		if decommissioned[s.Nodes[i].ID] {
+			continue
+		}
 		f, sk := renderPull(s, &s.Nodes[i])
 		byNode[s.Nodes[i].ID] = append(byNode[s.Nodes[i].ID], f...)
 		skipped = append(skipped, sk...)
@@ -108,6 +132,9 @@ func Render(s *model.SSOT) (*Result, error) {
 
 	// 对端走 DDNS 的发起方需要定时重解析(§12:这也是渲染产物,不该手写)。
 	for i := range s.Nodes {
+		if decommissioned[s.Nodes[i].ID] {
+			continue
+		}
 		if fs := renderReresolve(s, &s.Nodes[i]); fs != nil {
 			byNode[s.Nodes[i].ID] = append(byNode[s.Nodes[i].ID], fs...)
 		}
@@ -117,6 +144,9 @@ func Render(s *model.SSOT) (*Result, error) {
 	// 分成两份会让后写的静默覆盖先写的(§1.3)。
 	for i := range s.Nodes {
 		n := &s.Nodes[i]
+		if decommissioned[n.ID] {
+			continue
+		}
 		if !n.IsAccess() && !(n.IsServer() && n.Server.InboundPort > 0) {
 			continue
 		}

@@ -60,6 +60,10 @@ type Manifest struct {
 	// SSOTHash 是源头文件的哈希:这份成品是从哪一版源头生成的。
 	SSOTHash string `json:"ssot_hash"`
 
+	// Decommissioned 是被明确下线的节点。**签名覆盖它**,所以节点读到
+	// 自己在这个名单里时,那是一条经过认证的停机指令,不是猜测。
+	Decommissioned []string `json:"decommissioned,omitempty"`
+
 	Bundles           []BundleRef    `json:"bundles"`
 	Components        []ComponentRef `json:"components,omitempty"`
 	SecretGenerations []SecretRef    `json:"secret_generations,omitempty"`
@@ -81,11 +85,20 @@ type Meta struct {
 // ID 是内容哈希(不含时间与作者):同样的 SSOT 渲染两次得到同一个 id,
 // 于是"没改动"这件事可以被直接看出来,而不需要逐文件比对。
 func Build(s *model.SSOT, res *render.Result, ssotBytes []byte, meta Meta) *Manifest {
+	var decom []string
+	for i := range s.Nodes {
+		if s.Nodes[i].Decommission {
+			decom = append(decom, s.Nodes[i].ID)
+		}
+	}
+	sort.Strings(decom)
+
 	m := &Manifest{
-		CreatedAt: meta.CreatedAt,
-		Author:    meta.Author,
-		SSOTHash:  "sha256:" + hexSum(ssotBytes),
-		Skipped:   append([]render.Skip(nil), res.Skipped...),
+		Decommissioned: decom,
+		CreatedAt:      meta.CreatedAt,
+		Author:         meta.Author,
+		SSOTHash:       "sha256:" + hexSum(ssotBytes),
+		Skipped:        append([]render.Skip(nil), res.Skipped...),
 	}
 
 	for i := range res.Bundles {

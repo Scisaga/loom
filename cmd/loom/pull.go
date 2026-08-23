@@ -129,6 +129,19 @@ func cmdPull(args []string) error {
 	}
 	fmt.Printf("  ✅ 验签通过(%d 个节点的包)\n", len(man.Bundles))
 
+	// 3.5 停机指令。**它必须在取配置之前处理** —— 一台正在下线的机器不该
+	//     再去装任何东西。
+	for _, dead := range man.Decommissioned {
+		if dead != id {
+			continue
+		}
+		fmt.Printf("  ⛔ 本节点已被标记下线(指令来自签名过的快照)\n")
+		if *dry {
+			return nil
+		}
+		return decommission(id, *statePath)
+	}
+
 	// 4. 取自己那份,与签名覆盖到的哈希比对
 	var d distBundle
 	if err := getJSON(c, root+"/nodes/"+id+".json", &d); err != nil {
@@ -141,7 +154,12 @@ func cmdPull(args []string) error {
 		}
 	}
 	if want == "" {
-		return fmt.Errorf("manifest 里没有 %s 的配置包 —— 这个快照不包含本节点", id)
+		// **缺席是歧义的**:可能是被删了,也可能是有人渲染时漏了一个节点。
+		// 对歧义信号采取不可逆动作是危险的 —— 所以这里只报错、只告警,
+		// 停机要靠 manifest 里那条明确的 decommission(§14.4)。
+		return fmt.Errorf("这个签名过的快照里没有 %s 的配置包。"+
+			"如果是有意下线,应当先标 decommission 让本机自己停;"+
+			"缺席只当作异常处理,本机维持现状不动", id)
 	}
 	got := bundleHash(d.Files)
 	if got != want {
@@ -302,4 +320,45 @@ func lockPull(statePath string) (func(), error) {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 		_ = f.Close()
 	}, nil
+}
+
+// decommission 执行一条经过认证的停机指令(§14.4)。
+//
+// 停服务、禁自启,**不销毁任何秘密**。销毁不可逆,而误签一次就全没了 ——
+// 它要停,不要自毁。凭据的轮换是人的事,而且必须做:一台下线的服务器手上
+// 那些 `cred/...` 是**跨节点共享**的,不轮换就等于留了一把配好的钥匙。
+func decommission(node, statePath string) error {
+	units := []string{"loom-pull.timer", "loom-agent", "loom-report", "sing-box", "loom-wg-reresolve.timer"}
+	// 隧道接口也停:对端已经不再配它了,留着只是徒劳重试。
+	if ents, err := os.ReadDir("/etc/wireguard"); err == nil {
+		for _, e := range ents {
+			if n := strings.TrimSuffix(e.Name(), ".conf"); n != e.Name() && strings.HasPrefix(n, "wg-") {
+				units = append(units, "wg-quick@"+n)
+			}
+		}
+	}
+	var script strings.Builder
+	script.WriteString("set -u\n")
+	for _, u := range units {
+		fmt.Fprintf(&script, "systemctl disable --now %q 2>/dev/null || true\n", u)
+	}
+	// 留一份痕迹:下次有人登上来,一眼看得出这台机器是被下线的,
+	// 而不是"不知道为什么什么都没跑"。
+	fmt.Fprintf(&script, "mkdir -p %q\n", filepath.Dir(statePath))
+	fmt.Fprintf(&script, "printf '%%s\\n' '本节点已下线(decommission),服务已停并禁用自启。' > %q\n",
+		filepath.Dir(statePath)+"/DECOMMISSIONED")
+	fmt.Fprintf(&script, "rm -f %q\n", statePath)
+
+	cmd := exec.Command("sh", "-s")
+	cmd.Stdin = strings.NewReader(script.String())
+	cmd.Stdout, cmd.Stderr = prefixWriter{"  "}, prefixWriter{"  "}
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("停机过程出错:%w", err)
+	}
+	fmt.Printf("  已停止并禁用:%s\n", strings.Join(units, " "))
+	fmt.Printf("  **秘密未销毁**(不可逆的事不自动做)。这台机器上还有:\n")
+	fmt.Printf("    /etc/loom/secrets/node.env   ← 里面的凭据是跨节点共享的,必须轮换\n")
+	fmt.Printf("    /etc/wireguard/node.key      ← 对端已不再配它,实际已失效\n")
+	fmt.Printf("    /etc/loom/tls/node.key       ← 应当从内部 CA 吊销\n")
+	return nil
 }

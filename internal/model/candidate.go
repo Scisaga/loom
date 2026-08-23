@@ -1,6 +1,9 @@
 package model
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // RouteCandidate 是排序、选择与归因的唯一单位(§5.6)。
 //
@@ -118,12 +121,23 @@ func (s *SSOT) candidateChains(access *Node, d *AccessDeclaration, nodes map[str
 	}
 
 	allowed := make([]*Node, 0, len(d.AllowedServers))
+	var drained []string
 	for _, id := range d.AllowedServers {
 		n, ok := nodes[id]
 		if !ok || !n.IsServer() {
 			continue // 引用错误已由校验器报出
 		}
+		// 排空的机器不进候选(隧道和配置照旧,迁移期间还要观测它);
+		// 下线的更不进 —— 它正在停机。
+		if n.Drain || n.Decommission {
+			drained = append(drained, id)
+			continue
+		}
 		allowed = append(allowed, n)
+	}
+	if len(drained) > 0 {
+		// 说出来:一条声明的候选突然少了几个,不该让人去猜。
+		skip("已排空(drain)的服务器不参与候选:%s", strings.Join(drained, " "))
 	}
 
 	var chains [][]string

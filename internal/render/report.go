@@ -80,15 +80,15 @@ func renderReport(s *model.SSOT, n *model.Node) ([]File, []Skip) {
 	}
 	var skips []Skip
 	if len(addrs) == 0 {
-		// 没有隧道的节点(纯接入,走 hysteria2 / trojan)没有隧道内地址可绑。
-		// 但**配置自检不该因此消失** —— 那是每台机器都要做的事。绑回环:
-		// 远端拉不到,本机 `loom report` 仍然能用。
-		addrs = []string{fmt.Sprintf("127.0.0.1:%d", ReportPort)}
 		skips = append(skips, Skip{
 			Where:  "report:" + n.ID,
 			Reason: "该节点没有隧道,上报接口只绑回环 —— 配置自检可用,但远端拉不到隧道健康",
 		})
 	}
+	// **回环永远绑上。** 进入路径只有两条:在 loom 网里(隧道地址),
+	// 或者 ssh 端口转发到回环。后者是隧道断掉时唯一还能用的那条 ——
+	// 而那正是最需要看它的时候。不开任何公网面。
+	addrs = append(addrs, fmt.Sprintf("127.0.0.1:%d", ReportPort))
 	sort.Strings(addrs)
 	sort.Strings(ifaces)
 	sort.Slice(neighbors, func(i, j int) bool { return neighbors[i].Node < neighbors[j].Node })

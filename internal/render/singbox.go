@@ -236,8 +236,8 @@ func serverTLS() *sbTLS {
 //
 // 用 selector 而不是 urltest 是刻意的:§5.6 要求选路的决策者只有一个。
 // urltest 会按自己的节奏和判据独立选路,与 Agent 的 §5.5 阻尼规则形成两个
-// 互不知情的决策者。selector 的当前选择由 Agent 设置;Agent 尚未实现时它
-// 停在 default 上,即 §20.2 的"路径静态指定"。
+// 互不知情的决策者。selector 的当前选择由 Agent 设置(§5.5.1);Agent 没跑
+// 起来时它停在 default 上,而 default 刻意不取直连(D22)。
 func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 	nodes := s.NodeByID()
 	decls := s.DeclarationByID()

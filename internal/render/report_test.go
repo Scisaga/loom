@@ -85,7 +85,8 @@ func TestReporterListensOnlyOnTunnelAddresses(t *testing.T) {
 				t.Errorf("%s 的上报者监听 %s —— 既不是隧道内地址也不是回环", owner, a)
 			}
 		}
-		// 有隧道时:监听地址数等于隧道数。没有隧道时:一个回环地址、零个接口。
+		// 隧道地址一条不少,外加**永远有**的回环 —— ssh 端口转发是隧道
+		// 断掉时唯一还能进的路,而那正是最需要看它的时候。
 		want := 0
 		for i := range s.Tunnels {
 			if s.Tunnels[i].From == owner || s.Tunnels[i].To == owner {
@@ -95,11 +96,18 @@ func TestReporterListensOnlyOnTunnelAddresses(t *testing.T) {
 		if len(c.Interfaces) != want {
 			t.Errorf("%s 有 %d 条隧道,却列了 %d 个接口", owner, want, len(c.Interfaces))
 		}
-		switch {
-		case want > 0 && len(c.Listen) != want:
-			t.Errorf("%s 有 %d 条隧道,却监听 %d 个地址", owner, want, len(c.Listen))
-		case want == 0 && (len(c.Listen) != 1 || !strings.HasPrefix(c.Listen[0], "127.0.0.1:")):
-			t.Errorf("%s 没有隧道,监听地址应当只有回环,实际 %v", owner, c.Listen)
+		if len(c.Listen) != want+1 {
+			t.Errorf("%s 有 %d 条隧道,应当监听 %d 个地址(含回环),实际 %d 个:%v",
+				owner, want, want+1, len(c.Listen), c.Listen)
+		}
+		loop := false
+		for _, a := range c.Listen {
+			if strings.HasPrefix(a, "127.0.0.1:") {
+				loop = true
+			}
+		}
+		if !loop {
+			t.Errorf("%s 没有绑回环 —— 隧道断掉时就进不去了:%v", owner, c.Listen)
 		}
 	}
 }

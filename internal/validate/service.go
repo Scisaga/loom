@@ -2,6 +2,7 @@ package validate
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"loom/internal/model"
@@ -134,6 +135,21 @@ func checkDeclarations(
 			fs.add("§5.5 周期", where, "缺少 tuning_period —— 中继轴始终需要度量(§4)")
 		}
 		checkTuningLoop(fs, where, d)
+		// 把声明钉死的出口排空了,这条声明就一个候选都没有 —— 流量直接
+		// 被阻断。排空的本意是"迁移期间先别用它",而不是"把这条声明关掉";
+		// 真要关,该改 egress_axis 或者删掉声明。
+		if p := d.PinnedEgress(); p != "" {
+			if n, ok := nodes[p]; ok && n.Decommission {
+				fs.add("§14.4 下线", where,
+					"egress_axis 钉死在 %q,而 %q 已标记下线 —— 这条声明将没有任何候选。"+
+						"下线一台机器之前,先把指向它的声明改掉", p, p)
+			}
+			if n, ok := nodes[p]; ok && n.Drain {
+				fs.add("§5.8 排空", where,
+					"egress_axis 钉死在 %q,而 %q 已排空(drain)—— 这条声明将没有任何候选,"+
+						"流量会被阻断。迁移时应当先把 egress_axis 改指向新节点,再排空旧的", p, p)
+			}
+		}
 		for _, c := range d.Constraints {
 			if !c.Kind.Valid() {
 				fs.add("§5.1 约束", where, "未知约束类别:%q", c.Kind)
@@ -436,5 +452,50 @@ func checkTuningLoop(fs *findings, where string, d *model.AccessDeclaration) {
 				"排序永远不会启动。要么把 window 放大到 %s 以上,要么把 min_samples 调到 %d 以内",
 			d.Window, d.TuningPeriod, cap, d.MinSamples,
 			(time.Duration(d.MinSamples) * period).String(), cap)
+	}
+}
+
+// checkDrain 检查排空是否把系统推到了不可用的状态。
+//
+// 排空是"先别用它",不是"把它关掉"。区别在于:排空之后应当**还有别的路**。
+// 一台机器被排空而它是某条声明唯一的出口,那不是排空,是断服。
+func checkDrain(fs *findings, s *model.SSOT) {
+	// 下线的节点还挂着隧道,说明删除只做了一半 —— 对端会继续尝试连一台
+	// 正在停机的机器,而 `loom status` 上会一直挂着一条查不出原因的告警。
+	for i := range s.Tunnels {
+		t := &s.Tunnels[i]
+		for _, id := range []string{t.From, t.To} {
+			if n, ok := s.NodeByID()[id]; ok && n.Decommission {
+				fs.add("§14.4 下线", "tunnel:"+t.Pair(),
+					"%q 已标记下线,却仍有隧道引用它 —— 下线之后应当把相关隧道一并删掉", id)
+			}
+		}
+	}
+
+	var drained []string
+	for i := range s.Nodes {
+		if s.Nodes[i].Drain {
+			drained = append(drained, s.Nodes[i].ID)
+			if !s.Nodes[i].IsServer() {
+				fs.add("§5.8 排空", "node:"+s.Nodes[i].ID,
+					"drain 只对服务器有意义 —— 接入节点不出现在候选里,排空它什么也不改变")
+			}
+		}
+	}
+	if len(drained) == 0 {
+		return
+	}
+	// 全部服务器都排空了,等于全网停服。这大概率是手误(比如复制粘贴时
+	// 多带了一行),值得单独喊一声。
+	live := 0
+	for i := range s.Nodes {
+		if s.Nodes[i].IsServer() && s.Nodes[i].Server.EgressCapable && !s.Nodes[i].Drain {
+			live++
+		}
+	}
+	if live == 0 {
+		fs.add("§5.8 排空", "全局",
+			"所有能当出口的服务器都被排空了(%s)—— 全网没有任何可用候选",
+			strings.Join(drained, " "))
 	}
 }

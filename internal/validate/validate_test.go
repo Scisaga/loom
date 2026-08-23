@@ -197,6 +197,48 @@ nodes:
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, probe_url: "https://x/", tuning_period: 10m, window: 2h, min_samples: 6, stale_after: 30m, switch_threshold: 20, allowed_servers: [a]}`,
 		},
+		{
+			name: "§5.8 把声明钉死的出口排空了",
+			want: "已排空",
+			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
+nodes:
+  - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1, }, drain: true}
+  - {id: b, public_endpoint: 1.1.1.2, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k2}}
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: "pinned:a", objective: latency, probe_url: "https://x/", tuning_period: 10m, window: 2h, min_samples: 6, stale_after: 30m, allowed_servers: [a, b]}`,
+		},
+		{
+			name: "§5.8 所有出口都被排空",
+			want: "全网没有任何可用候选",
+			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
+nodes:
+  - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}, drain: true}
+  - {id: b, public_endpoint: 1.1.1.2, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k2}, drain: true}`,
+		},
+		{
+			name: "§14.4 已下线的节点还挂着隧道",
+			want: "已标记下线,却仍有隧道引用它",
+			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
+nodes:
+  - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
+  - {id: b, public_endpoint: 1.1.1.2, server: {direction: reverse_only, inbound_port: 4433, egress_capable: true, wg_public_key: k2}, decommission: true}
+tunnels:
+  - {from: a, to: b, listen_port: 61611, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
+		},
+		{
+			name: "§5.8 排空一个接入节点没有意义",
+			want: "drain 只对服务器有意义",
+			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
+nodes:
+  - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
+  - id: p
+    drain: true
+    access: {platform: linux-server, credentials: []}`,
+		},
 	}
 
 	for _, tc := range cases {
