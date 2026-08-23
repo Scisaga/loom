@@ -25,6 +25,10 @@ type Options struct {
 	VerifyURL string
 	// DNS 是解析 VerifyURL 用的服务器。留空则用系统解析器。
 	DNS string
+	// PinDir 是钉住状态所在目录。非空且钉住了的话,发的是钉住的那个
+	// 二进制,而不是 BinaryPath 指的那个。
+	PinDir string
+
 	// BinaryPath 是要一起发的 Agent 二进制。
 	//
 	// 存路径而不是内容:**每轮重新读**。重新编译之后不重启发布器就发不出去,
@@ -69,6 +73,8 @@ func Run(ctx context.Context, opts Options) error {
 	lastSSOT := ""
 	lastBuilt := ""
 	lastBin := ""
+	lastPin := ""
+	lastLive := ""
 
 	for {
 		body, err := os.ReadFile(opts.SSOTPath)
@@ -79,9 +85,36 @@ func Run(ctx context.Context, opts Options) error {
 			cur := hex.EncodeToString(h[:8])
 
 			// 二进制也算输入的一部分:它变了,快照就该变(§15.4 绑定回滚)。
-			bins, binSum, berr := readBinary(opts.BinaryPath)
+			binPath := opts.BinaryPath
+			pin, pinBin, perr := ReadPin(opts.PinDir)
+			if perr != nil {
+				logf("读钉住状态失败:%v", perr)
+			} else if pin != nil {
+				binPath = pinBin
+				if pin.Snapshot != lastPin {
+					logf("⚠️ 二进制钉在 %s(%s)—— 重新编译不会发出去", short(pin.Snapshot), pin.Reason)
+					lastPin = pin.Snapshot
+				}
+			} else if lastPin != "" {
+				logf("钉住已解除,恢复发本机二进制")
+				lastPin = ""
+			}
+
+			bins, binSum, berr := readBinary(binPath)
 			if berr != nil {
 				logf("读二进制失败:%v", berr)
+			}
+
+			// 钉住期间本机二进制变了 —— **正是"我重新编译了但没发出去"
+			// 那一刻**。只在这时说一次,不刷屏。
+			if pin != nil && opts.BinaryPath != "" {
+				if _, liveSum, err := readBinary(opts.BinaryPath); err == nil && liveSum != lastLive {
+					if lastLive != "" {
+						logf("⚠️ 本机二进制变了(%s),但钉住生效中,发出去的仍是 %s",
+							short(liveSum), short(binSum))
+					}
+					lastLive = liveSum
+				}
 			}
 
 			served, serr := opts.Target.Current()

@@ -54,7 +54,7 @@ go run ./cmd/loom verify   /tmp/out -pubkey /tmp/keys/platform-signing.pub
 | `internal/events/` | 状态变化历史。**只记变化,不记状态** —— 记在中控一处 |
 | `internal/webui/` | 节点上的操作界面:读在每台机器上,写只在中控 |
 | `internal/secret/` | 秘密层:占位符解析与替换、两步轮换。**合并发生在节点上**,分发树里只有占位符 |
-| `cmd/loom/` | CLI:`validate` / `render` / `diff` / `snapshot` / `verify` / `keygen` / `firewall` / `hydrate` / `probe` / `agent` / `report` / `selfcheck` / `status` / `apply` / `publish` / `publisher` / `pull` / `secrets` / `backup` / `restore` / `addnode` |
+| `cmd/loom/` | CLI:`validate` / `render` / `diff` / `snapshot` / `verify` / `keygen` / `firewall` / `hydrate` / `probe` / `agent` / `report` / `selfcheck` / `status` / `apply` / `publish` / `publisher` / `pull` / `secrets` / `backup` / `restore` / `addnode` / `pin` |
 | `testdata/matrix/` | 参考 SSOT(4 国内云机 + 2 境外 VPS)与 golden |
 
 ## 模型:三个词就够了
@@ -94,7 +94,7 @@ go run ./cmd/loom verify   /tmp/out -pubkey /tmp/keys/platform-signing.pub
 
 **4. 字段之间有算术关系时,校验器要钉住关系本身。** 光检查每个字段自己合法
 不够 —— `window` 装不下 `min_samples` 个样本时排序永远不会启动,而每个字段
-单看都没毛病。写这条规则时,参考矩阵和真实部署里**每一条声明**都违反它
+单看都没毛病。写这条规则时,参考矩阵和本地部署样例里**每一条声明**都违反它
 (见 D24)。
 
 ## 代码约定

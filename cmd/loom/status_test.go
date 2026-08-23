@@ -116,7 +116,7 @@ func TestSnapshotSpreadIncludesRelayed(t *testing.T) {
 	direct := map[string]string{"edge-a": "aaa", "access-a": "aaa"}
 
 	got := snapshotSpread(obs, direct)
-	want := map[string][]string{"aaa": {"cn-a", "access-a", "edge-a"}, "bbb": {"cn-b"}}
+	want := map[string][]string{"aaa": {"access-a", "cn-a", "edge-a"}, "bbb": {"cn-b"}}
 	for k := range want {
 		slices.Sort(got[k])
 	}

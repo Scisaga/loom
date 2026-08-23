@@ -50,6 +50,8 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
   loom report   [-serve]                上报者:隧道健康与配置自检。每个节点都跑
   loom selfcheck                         这个二进制在本机能不能用、读不读得懂现有配置
   loom status   <ssot.yaml>              把够得到的节点全拉一遍,给人看
+  loom pin      <快照 id> -reason <理由>    把发布用的二进制钉在历史版本上
+  loom pin      -clear                     解除钉住
   loom publisher -ssot <文件> -key <私钥> -target <目标>
                                          中控守护进程:盯 SSOT,变了就发布
   loom publish  <ssot.yaml> -o <目标> -key <私钥>
@@ -67,7 +69,8 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
                                          打包秘密层与内部 CA(丢了就得全网重来的那些)
   loom restore  <备份文件> -o <目录>       解开备份到一个目录,不覆盖原位置
 
-尚未实现:rollback(回到某个历史快照 —— 当前只能回滚"上一次 apply")
+尚未实现:rollback(整份快照回到历史版本)。二进制那一半已经有了:loom pin。
+          配置那一半仍只能回滚"上一次 apply"
 `
 
 // 快照产物的文件名。
@@ -117,6 +120,8 @@ func main() {
 		err = cmdApply(args)
 	case "addnode":
 		err = cmdAddNode(args)
+	case "pin":
+		err = cmdPin(args)
 	case "secrets":
 		err = cmdSecrets(args)
 	case "publish":
