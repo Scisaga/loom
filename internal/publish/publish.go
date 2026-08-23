@@ -9,6 +9,8 @@ package publish
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -28,6 +30,13 @@ import (
 type Tree struct {
 	Snapshot string
 	Files    map[string][]byte
+
+	// Blobs 是**内容寻址**的大文件(当前只有 Agent 二进制)。
+	//
+	// 和 Files 分开,是因为它们的推送语义不同:路径就是内容哈希,所以
+	// 分发点上已经存在就不必再传 —— 12MB 的东西每次发布都重推是白费。
+	// 回滚到旧快照时,旧二进制也还在,不用重新下载。
+	Blobs map[string][]byte
 }
 
 // Bundle 是分发树里每个节点那一份的结构。
@@ -47,6 +56,8 @@ type Current struct {
 type Meta struct {
 	CreatedAt string
 	Author    string
+	// Binaries 是要一起发的 Agent 二进制,键是 "<os>/<arch>"。
+	Binaries map[string][]byte
 }
 
 // Build 校验 → 渲染 → 打快照 → 签名 → 组装成树。
@@ -66,8 +77,31 @@ func Build(ssotBytes []byte, priv ed25519.PrivateKey, meta Meta) (*Tree, error) 
 		return nil, fmt.Errorf("渲染:%w", err)
 	}
 
+	// 二进制进 manifest,于是它和配置在同一个签名之下、同一个快照 id 之内。
+	blobs := map[string][]byte{}
+	var refs []snapshot.BinaryRef
+	for plat, body := range meta.Binaries {
+		goos, goarch, ok := strings.Cut(plat, "/")
+		if !ok {
+			return nil, fmt.Errorf("二进制平台要写成 <os>/<arch>,收到 %q", plat)
+		}
+		sum := sha256.Sum256(body)
+		ref := snapshot.BinaryRef{
+			OS: goos, Arch: goarch,
+			SHA256: hex.EncodeToString(sum[:]), Size: len(body),
+		}
+		refs = append(refs, ref)
+		blobs[ref.Path()] = body
+	}
+	sort.Slice(refs, func(i, j int) bool {
+		if refs[i].OS != refs[j].OS {
+			return refs[i].OS < refs[j].OS
+		}
+		return refs[i].Arch < refs[j].Arch
+	})
+
 	man := snapshot.Build(s, res, ssotBytes, snapshot.Meta{
-		CreatedAt: meta.CreatedAt, Author: meta.Author,
+		CreatedAt: meta.CreatedAt, Author: meta.Author, Binaries: refs,
 	})
 	manBytes, err := man.Bytes()
 	if err != nil {
@@ -78,7 +112,7 @@ func Build(ssotBytes []byte, priv ed25519.PrivateKey, meta Meta) (*Tree, error) 
 		return nil, err
 	}
 
-	t := &Tree{Snapshot: man.ID, Files: map[string][]byte{}}
+	t := &Tree{Snapshot: man.ID, Files: map[string][]byte{}, Blobs: blobs}
 	t.Files[man.ID+"/snapshot.json"] = manBytes
 	t.Files[man.ID+"/snapshot.sig"] = sig
 

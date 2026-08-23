@@ -22,6 +22,9 @@ import (
 // 不由传输保证。
 type Target interface {
 	Push(t *Tree) error
+	// HasBlob 报告内容寻址的大文件在不在。路径即内容哈希,所以"在"就等于
+	// "内容对" —— 不必重传。
+	HasBlob(path string) (bool, error)
 	// Current 返回分发点上 current.json 指向的快照 id。
 	Current() (string, error)
 	String() string
@@ -55,7 +58,28 @@ func (l *localTarget) String() string { return l.dir }
 //
 // 顺序反了会有一个窗口:current.json 已经指向新快照,而那个快照的文件还没
 // 写全 —— 正好来取的节点会拿到 404 或者半截文件。
+func (l *localTarget) HasBlob(p string) (bool, error) {
+	_, err := os.Stat(filepath.Join(l.dir, p))
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 func (l *localTarget) Push(t *Tree) error {
+	// 大文件先推:manifest 引用它们,而 current.json 最后才指过来。
+	for p, body := range t.Blobs {
+		if has, err := l.HasBlob(p); err == nil && has {
+			continue
+		}
+		dst := filepath.Join(l.dir, p)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(dst, body, 0o644); err != nil {
+			return err
+		}
+	}
 	for _, p := range t.Paths() {
 		if p == "current.json" {
 			continue
@@ -97,7 +121,34 @@ func (s *sshTarget) String() string { return "ssh://" + s.host + s.dir }
 // 写入完成,不跟在 tar 里,免得解包顺序决定了那个窗口有多长。
 //
 // 旧快照不删:节点可能正拿着旧 id 在取,而且留着才有回滚的余地。
+func (s *sshTarget) HasBlob(p string) (bool, error) {
+	var out bytes.Buffer
+	cmd := s.cmd(fmt.Sprintf("test -s %q && echo yes || true", filepath.Join(s.dir, p)))
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out.String()) == "yes", nil
+}
+
 func (s *sshTarget) Push(t *Tree) error {
+	// 大文件单独推,而且**已经在的不重传** —— 12MB 每次发布都推是白费,
+	// 而路径就是内容哈希,在即是对。
+	for p, body := range t.Blobs {
+		has, err := s.HasBlob(p)
+		if err != nil {
+			return fmt.Errorf("查 %s:%w", p, err)
+		}
+		if has {
+			continue
+		}
+		dst := filepath.Join(s.dir, p)
+		if err := s.run(fmt.Sprintf("set -eu; mkdir -p %q; cat > %q; chmod a+r %q",
+			filepath.Dir(dst), dst, dst), bytes.NewReader(body)); err != nil {
+			return fmt.Errorf("推送 %s:%w", p, err)
+		}
+	}
+
 	var buf bytes.Buffer
 	tw := newTar(&buf)
 	for _, p := range t.Paths() {

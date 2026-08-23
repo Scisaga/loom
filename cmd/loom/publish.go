@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ func cmdPublish(args []string) error {
 	dns := fs.String("dns", "", "解析 verify-url 用的 DNS(不依赖机器全局设置)")
 	sshConf := fs.String("ssh-config", "", "ssh 配置文件")
 	author := fs.String("author", "", "记进 manifest 的作者")
+	binary := fs.String("binary", "", "把这个 Agent 二进制一起发(与配置绑定回滚,§15.4)")
 
 	rest, err := parseInterspersed(fs, args)
 	if err != nil {
@@ -59,8 +61,16 @@ func cmdPublish(args []string) error {
 		return err
 	}
 
+	bins := map[string][]byte{}
+	if *binary != "" {
+		b, err := os.ReadFile(*binary)
+		if err != nil {
+			return err
+		}
+		bins[runtime.GOOS+"/"+runtime.GOARCH] = b
+	}
 	t, err := publish.Build(body, ed25519.PrivateKey(privBytes), publish.Meta{
-		CreatedAt: time.Now().UTC().Format(time.RFC3339), Author: *author,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339), Author: *author, Binaries: bins,
 	})
 	if err != nil {
 		return err

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -24,6 +25,11 @@ type Options struct {
 	VerifyURL string
 	// DNS 是解析 VerifyURL 用的服务器。留空则用系统解析器。
 	DNS string
+	// BinaryPath 是要一起发的 Agent 二进制。
+	//
+	// 存路径而不是内容:**每轮重新读**。重新编译之后不重启发布器就发不出去,
+	// 那又是一个"改了没生效"的隐蔽故障。代价是每轮多读 12MB,可忽略。
+	BinaryPath string
 
 	Interval time.Duration
 	Once     bool
@@ -62,6 +68,7 @@ func Run(ctx context.Context, opts Options) error {
 
 	lastSSOT := ""
 	lastBuilt := ""
+	lastBin := ""
 
 	for {
 		body, err := os.ReadFile(opts.SSOTPath)
@@ -71,13 +78,19 @@ func Run(ctx context.Context, opts Options) error {
 			h := sha256.Sum256(body)
 			cur := hex.EncodeToString(h[:8])
 
+			// 二进制也算输入的一部分:它变了,快照就该变(§15.4 绑定回滚)。
+			bins, binSum, berr := readBinary(opts.BinaryPath)
+			if berr != nil {
+				logf("读二进制失败:%v", berr)
+			}
+
 			served, serr := opts.Target.Current()
 			if serr != nil {
 				logf("问不到分发点当前指向哪个快照:%v", serr)
 			}
 
 			first := lastSSOT == ""
-			changed := cur != lastSSOT
+			changed := cur != lastSSOT || (lastBin != "" && binSum != lastBin)
 			// 分发点和本地算出来的不一致就重推,与 SSOT 有没有变无关。
 			diverged := serr == nil && lastBuilt != "" && served != lastBuilt
 
@@ -85,6 +98,8 @@ func Run(ctx context.Context, opts Options) error {
 			case first:
 				// 刚起来时不知道自己处在什么状态,先核对一遍。
 				logf("启动,核对分发点(SSOT %s)", cur[:8])
+			case changed && binSum != lastBin && lastBin != "":
+				logf("二进制变了(%s → %s)", short(lastBin), short(binSum))
 			case changed:
 				logf("SSOT 变了(%s)", cur[:8])
 			case diverged:
@@ -92,11 +107,11 @@ func Run(ctx context.Context, opts Options) error {
 			}
 
 			if changed || diverged {
-				id, err := publishOnce(&opts, body, logf)
+				id, err := publishOnce(&opts, body, bins, logf)
 				// **校验不过时不更新 lastSSOT**:下一轮还要再试一次,
 				// 否则改坏了再改回来的中间态会被当成"已经处理过"。
 				if err == nil {
-					lastSSOT, lastBuilt = cur, id
+					lastSSOT, lastBuilt, lastBin = cur, id, binSum
 				} else {
 					logf("未发布:%v", err)
 					if changed {
@@ -117,9 +132,10 @@ func Run(ctx context.Context, opts Options) error {
 	}
 }
 
-func publishOnce(opts *Options, body []byte, logf func(string, ...any)) (string, error) {
+func publishOnce(opts *Options, body []byte, bins map[string][]byte, logf func(string, ...any)) (string, error) {
 	t, err := Build(body, opts.Key, Meta{
 		CreatedAt: opts.Now().Format(time.RFC3339), Author: opts.Author,
+		Binaries: bins,
 	})
 	if err != nil {
 		return "", err
@@ -143,4 +159,20 @@ func publishOnce(opts *Options, body []byte, logf func(string, ...any)) (string,
 		logf("  ✅ 节点视角已确认(%s)", opts.VerifyURL)
 	}
 	return t.Snapshot, nil
+}
+
+// readBinary 读要一起发的二进制,并返回它的内容哈希。
+//
+// 每轮都读:重新编译之后不重启发布器就发不出去,那是"改了没生效"里最难
+// 想到的一种。
+func readBinary(path string) (map[string][]byte, string, error) {
+	if path == "" {
+		return nil, "", nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, "", err
+	}
+	sum := sha256.Sum256(b)
+	return map[string][]byte{runtime.GOOS + "/" + runtime.GOARCH: b}, hex.EncodeToString(sum[:]), nil
 }

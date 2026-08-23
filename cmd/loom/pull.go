@@ -49,6 +49,7 @@ func cmdPull(args []string) error {
 	secretsPath := fs.String("secrets", "/etc/loom/secrets/node.env", "本机秘密层")
 	statePath := fs.String("state", "/var/lib/loom/applied", "记录已安装的快照 id")
 	dnsSrv := fs.String("dns", "", "解析分发点用的 DNS 服务器(留空则用系统解析器)")
+	binPath := fs.String("bin", "/usr/local/bin/loom", "本机 Agent 二进制的位置")
 	dry := fs.Bool("dry-run", false, "只取和验,不安装")
 	timeout := fs.Duration("timeout", 60*time.Second, "取配置的超时")
 
@@ -143,6 +144,19 @@ func cmdPull(args []string) error {
 			return nil
 		}
 		return decommission(id, *statePath)
+	}
+
+	// 3.6 二进制。**在配置之前** —— 新版读得懂旧配置,旧版读不懂新配置
+	//     (§15.4、D46)。
+	// 用 base 不是 root:二进制是**内容寻址**的,放在树的顶层跨快照共享。
+	// 回滚到旧快照时旧二进制还在,不用重新下载。
+	if swapped, err := upgradeBinary(c, base, &man, *binPath, *dry); err != nil {
+		return err
+	} else if swapped && !*dry {
+		// 换过二进制之后就此结束这一轮:配置交给下一次(几分钟后)。
+		// 继续用**当前进程里的旧代码**去装新配置,正是要避免的那种配对。
+		fmt.Println("  二进制已更新,配置留给下一轮(几分钟后)")
+		return nil
 	}
 
 	// 4. 取自己那份,与签名覆盖到的哈希比对

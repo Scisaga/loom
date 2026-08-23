@@ -60,6 +60,13 @@ type Manifest struct {
 	// SSOTHash 是源头文件的哈希:这份成品是从哪一版源头生成的。
 	SSOTHash string `json:"ssot_hash"`
 
+	// Binaries 是这个快照配套的 Agent 二进制。
+	//
+	// **它必须和配置在同一个签名之下**(§15.4)。分开发的话,回滚配置会
+	// 得到一个跑着不匹配二进制的节点 —— 新版可能不认旧配置,旧版也可能
+	// 不认新配置,而"回滚"最不该产生的就是起不来的节点。
+	Binaries []BinaryRef `json:"binaries,omitempty"`
+
 	// Decommissioned 是被明确下线的节点。**签名覆盖它**,所以节点读到
 	// 自己在这个名单里时,那是一条经过认证的停机指令,不是猜测。
 	Decommissioned []string `json:"decommissioned,omitempty"`
@@ -73,11 +80,28 @@ type Manifest struct {
 	Skipped []render.Skip `json:"skipped,omitempty"`
 }
 
+// BinaryRef 是一个平台的 Agent 二进制。
+//
+// 内容寻址:分发树里的路径就是 `bin/<sha256>`,于是同一个二进制跨快照复用,
+// 回滚时也不用重新下载。
+type BinaryRef struct {
+	OS     string `json:"os"`
+	Arch   string `json:"arch"`
+	SHA256 string `json:"sha256"`
+	Size   int    `json:"size"`
+}
+
+// Path 是这个二进制在分发树里的位置。
+func (b *BinaryRef) Path() string { return "bin/" + b.SHA256 }
+
 // Meta 是快照的外部输入。时间与作者由调用方给出,**不从包内读取** ——
 // 渲染与打包都必须是纯函数,否则 §12.1 的三个产物全都靠不住。
 type Meta struct {
 	CreatedAt string
 	Author    string
+	// Binaries 由调用方给出 —— 和时间、作者一样是外部输入,包内不去
+	// 文件系统上找二进制(§12 纯函数)。
+	Binaries []BinaryRef
 }
 
 // Build 把一次渲染结果冻成 manifest。
@@ -94,6 +118,7 @@ func Build(s *model.SSOT, res *render.Result, ssotBytes []byte, meta Meta) *Mani
 	sort.Strings(decom)
 
 	m := &Manifest{
+		Binaries:       append([]BinaryRef(nil), meta.Binaries...),
 		Decommissioned: decom,
 		CreatedAt:      meta.CreatedAt,
 		Author:         meta.Author,

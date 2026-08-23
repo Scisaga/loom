@@ -23,6 +23,12 @@ import (
 	"loom/internal/validate"
 )
 
+// buildTag 由 -ldflags 注入,用来区分同一份源码的不同构建。
+//
+// 二进制的身份是它的内容哈希(§15.4),而不是这个字符串 —— 这里只是让
+// 人在日志和界面上看得出"是不是同一个"。
+var buildTag = "dev"
+
 const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L0)
 
 用法:
@@ -40,6 +46,7 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
                                          逐条探测候选,追加度量数据(L2)
   loom agent    -c <agent/config.json>   调参回路:周期探测、排序、带阻尼切换(L3)
   loom report   [-serve]                上报者:隧道健康与配置自检。每个节点都跑
+  loom selfcheck                         这个二进制在本机能不能用、读不读得懂现有配置
   loom status   <ssot.yaml>              把够得到的节点全拉一遍,给人看
   loom publisher -ssot <文件> -key <私钥> -target <目标>
                                          中控守护进程:盯 SSOT,变了就发布
@@ -94,6 +101,8 @@ func main() {
 		err = cmdProbe(args)
 	case "agent":
 		err = cmdAgent(args)
+	case "selfcheck":
+		err = cmdSelfcheck(args)
 	case "report":
 		err = cmdReport(args)
 	case "status":

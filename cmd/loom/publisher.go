@@ -29,6 +29,7 @@ func cmdPublisher(args []string) error {
 	sshConf := fs.String("ssh-config", "", "ssh 配置文件(target 是 ssh:// 时用)")
 	dns := fs.String("dns", "", "解析 verify-url 用的 DNS(不依赖机器全局设置)")
 	author := fs.String("author", "", "记进 manifest 的作者")
+	binary := fs.String("binary", "", "把这个 Agent 二进制一起发(与配置绑定回滚,§15.4)")
 	interval := fs.Duration("interval", 30*time.Second, "多久看一次")
 	once := fs.Bool("once", false, "只跑一轮就退出")
 
@@ -56,9 +57,15 @@ func cmdPublisher(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	if *binary == "" {
+		// 不带二进制不是错误,但值得说一声 —— 那意味着改了 Go 代码之后
+		// 仍然要手工分发,而 §15.4 的绑定回滚也就不成立。
+		fmt.Fprintln(os.Stderr, "! 没有 -binary:只发配置。改了代码仍要手工分发到每台机器")
+	}
+
 	return publish.Run(ctx, publish.Options{
 		SSOTPath: *ssot, Key: ed25519.PrivateKey(privBytes), Target: tgt,
-		Author: *author, VerifyURL: *verify, DNS: *dns,
+		Author: *author, VerifyURL: *verify, DNS: *dns, BinaryPath: *binary,
 		Interval: *interval, Once: *once, Log: os.Stdout,
 	})
 }
