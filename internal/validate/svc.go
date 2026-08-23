@@ -127,3 +127,29 @@ func checkServicePorts(fs *findings, s *model.SSOT) {
 		}
 	}
 }
+
+// checkCredentialRotation 检查凭据轮换的两步(§13.4)。
+//
+// 轮换最容易出的错不是配错,是**忘了第二步** —— 过渡窗口一直开着,旧凭据
+// 永远有效,而轮换的全部意义就是让旧的失效。校验器挡不住"忘了"(那要看
+// 时间,是事件历史的活),但能挡住几种一看就不对的配法。
+func checkCredentialRotation(fs *findings, s *model.SSOT) {
+	for i := range s.Credentials {
+		c := &s.Credentials[i]
+		where := "credential:" + c.ID
+		if c.Generation < 0 {
+			fs.add("§13.4 轮换", where, "generation 不能为负:%d", c.Generation)
+		}
+		if c.AcceptPrevious && c.Gen() <= 1 {
+			fs.add("§13.4 轮换", where,
+				"accept_previous 为真,但 generation=%d 是第一代,没有上一代可接受 —— "+
+					"轮换要先把 generation 加一", c.Generation)
+		}
+		if c.Revoked() && c.AcceptPrevious {
+			// 已吊销还开着过渡窗口,等于把吊销掉的那一代继续放行。
+			fs.add("§13.4 轮换", where,
+				"已吊销(revoked_at=%s)却还开着 accept_previous —— "+
+					"这会让旧凭据继续可用,吊销就白做了", c.RevokedAt)
+		}
+	}
+}

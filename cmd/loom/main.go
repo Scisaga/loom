@@ -54,8 +54,12 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
                                          手动发一次(目标可以是本地目录或 ssh://)
   loom pull     -url <分发点> -pubkey <公钥>
                                          节点自己拉:验签 → 本地填秘密 → 安装 → 验证
-  loom secrets  split <ssot.yaml> -secrets <总表> -o <目录>
+  loom secrets  split  <ssot.yaml> -secrets <总表> -o <目录>
                                          把总表拆成每节点一份(只给它用得到的)
+  loom secrets  rotate <ssot.yaml> -cred <id> -secrets <总表>
+                                         生成下一代凭据(轮换第一步)
+  loom secrets  retire <ssot.yaml> -cred <id> -secrets <总表>
+                                         删掉已经没人引用的旧代(第二步之后)
   loom apply    -in <hydrate 输出目录>     从工作站 ssh 推(pull 之外的备用路径)
   loom backup   -o <文件> {-passphrase-file <文件> | -plaintext}
                                          打包秘密层与内部 CA(丢了就得全网重来的那些)

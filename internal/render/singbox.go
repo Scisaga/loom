@@ -304,7 +304,7 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 			c := &cands[i]
 			tags = append(tags, c.Tag())
 			cfg.Outbounds = append(cfg.Outbounds,
-				buildChain(s, p, nodes, c, credOf[did].SecretRef, hops)...)
+				buildChain(s, p, nodes, c, credOf[did].Ref(), hops)...)
 			// 探测入口:用户名 = 候选 tag,规则把它打到同名出站上。
 			probeUsers = append(probeUsers, sbMixedUser{
 				Username: ProbeUser(c.Tag()), Password: secretRef("probe/" + p.ID)})
@@ -350,7 +350,7 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 				c := &cands[i]
 				tags = append(tags, c.Tag())
 				cfg.Outbounds = append(cfg.Outbounds,
-					buildChain(s, p, nodes, c, credOf[svc.Declaration].SecretRef, hops)...)
+					buildChain(s, p, nodes, c, credOf[svc.Declaration].Ref(), hops)...)
 				probeUsers = append(probeUsers, sbMixedUser{
 					Username: ProbeUser(c.Tag()), Password: secretRef("probe/" + p.ID)})
 				probeRules = append(probeRules, sbRule{
@@ -510,7 +510,11 @@ func serverInto(cfg *sbConfig, s *model.SSOT, sv *model.Node) {
 	decls := s.DeclarationByID()
 
 	type rule struct {
-		user     string
+		user string
+		// prevUser 非空表示这份凭据正在轮换的过渡窗口里 —— 路由规则要
+		// 同时匹配两代的用户名,否则用旧凭据连上来的流量认证过了却没有
+		// 规则接,落到 final: block。
+		prevUser string
 		nextHops map[string]string // 下一跳地址 -> 出站 tag
 		egress   bool
 		domains  []string // 出口规则的域名限制;空表示不限(地址随请求走)
@@ -576,8 +580,19 @@ func serverInto(cfg *sbConfig, s *model.SSOT, sv *model.Node) {
 				}
 			}
 		}
+		users = append(users, sbUser{Name: c.ID, Password: secretRef(c.Ref())})
+		// 轮换的过渡窗口:同时收上一代(§13.4)。
+		//
+		// 分发是最终一致的 —— 节点各自按自己的节奏取配置,顺序还带抖动。
+		// 客户端和服务器不可能在同一刻切换,所以必须有一段两代都收的时间,
+		// 否则轮换的瞬间连接全断。
+		if c.RotationPending() {
+			users = append(users, sbUser{Name: c.PrevUser(), Password: secretRef(c.PrevRef())})
+			// **必须在 append 之前赋值** —— rules 存的是值,append 之后再改
+			// 局部变量不会写回切片。
+			r.prevUser = c.PrevUser()
+		}
 		rules = append(rules, r)
-		users = append(users, sbUser{Name: c.ID, Password: secretRef(c.SecretRef)})
 	}
 
 	in := sbInbound{
@@ -631,7 +646,7 @@ func serverInto(cfg *sbConfig, s *model.SSOT, sv *model.Node) {
 		for _, t := range tags {
 			sort.Strings(byTag[t])
 			cfg.Route.Rules = append(cfg.Route.Rules, sbRule{
-				AuthUser: []string{r.user}, IPCIDR: byTag[t], Outbound: t,
+				AuthUser: authUsers(r.user, r.prevUser), IPCIDR: byTag[t], Outbound: t,
 			})
 		}
 	}
@@ -640,7 +655,7 @@ func serverInto(cfg *sbConfig, s *model.SSOT, sv *model.Node) {
 			continue
 		}
 		cfg.Route.Rules = append(cfg.Route.Rules, sbRule{
-			AuthUser: []string{r.user}, Domain: r.domains, Outbound: "egress",
+			AuthUser: authUsers(r.user, r.prevUser), Domain: r.domains, Outbound: "egress",
 		})
 	}
 }
@@ -789,4 +804,16 @@ func pinnedDecls(p *model.Node, declIDs []string) (map[string]bool, string) {
 		}
 	}
 	return out, tunDecl
+}
+
+// authUsers 是一条规则要匹配的用户名。
+//
+// 轮换的过渡窗口里有两个:当前代和上一代。**两个都要匹配** —— 只匹配当前代
+// 的话,用旧凭据连上来的流量认证过了却没有规则接,落到 `final: block`。
+// 那种失败比"认证失败"难查得多:客户端看到的是连上了然后没反应。
+func authUsers(cur, prev string) []string {
+	if prev == "" {
+		return []string{cur}
+	}
+	return []string{cur, prev}
 }

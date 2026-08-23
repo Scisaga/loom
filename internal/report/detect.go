@@ -75,6 +75,11 @@ func (d *detector) observe(v webui.View, now time.Time) ([]events.Event, error) 
 		}
 		add(n.ID, "drift", "", drift, joinFirst(n.Problems, 3))
 
+		// 轮换窗口:开着是过渡态,开太久就是忘了收尾。
+		for _, c := range n.Rotating {
+			add(n.ID, "rotation", c, "两代并存", "过渡窗口开着 —— 全网取到之后要把 accept_previous 改回 false")
+		}
+
 		for _, r := range n.Targets {
 			state := "ok"
 			if r.Err != "" {

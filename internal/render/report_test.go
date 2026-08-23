@@ -235,3 +235,145 @@ func TestReporterUnitRunsTheRightCommand(t *testing.T) {
 		}
 	}
 }
+
+// 过渡窗口里服务器必须**同时**接受两代,而且路由规则要匹配两个用户名。
+//
+// 只匹配当前代的话,用旧凭据连上来的流量认证过了却没有规则接,落到
+// `final: block` —— 客户端看到的是"连上了然后没反应",比认证失败难查得多。
+func TestRotationWindowAcceptsBothGenerations(t *testing.T) {
+	s := load(t)
+	// 挑一份被服务器接受的凭据,把它推进到第二代并开着过渡窗口。
+	if len(s.Credentials) == 0 {
+		t.Skip("fixture 里没有凭据")
+	}
+	target := &s.Credentials[0]
+	target.Generation = 2
+	target.AcceptPrevious = true
+
+	res, err := Render(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := 0
+	for _, b := range res.Bundles {
+		for _, f := range b.Files {
+			if f.Path != "sing-box/config.json" {
+				continue
+			}
+			var c struct {
+				Inbounds []struct {
+					Tag   string `json:"tag"`
+					Users []struct {
+						Name     string `json:"name"`
+						Password string `json:"password"`
+					} `json:"users"`
+				} `json:"inbounds"`
+				Route struct {
+					Rules []struct {
+						AuthUser []string `json:"auth_user"`
+					} `json:"rules"`
+				} `json:"route"`
+			}
+			if err := json.Unmarshal([]byte(f.Content), &c); err != nil {
+				t.Fatal(err)
+			}
+			var names []string
+			for _, in := range c.Inbounds {
+				if in.Tag != "in" {
+					continue // 只看服务器的入站,不看探测入口
+				}
+				for _, u := range in.Users {
+					names = append(names, u.Name)
+				}
+			}
+			if len(names) == 0 {
+				continue
+			}
+			checked++
+			cur, prev := target.ID, target.PrevUser()
+			has := func(x string) bool {
+				for _, n := range names {
+					if n == x {
+						return true
+					}
+				}
+				return false
+			}
+			if !has(cur) {
+				continue // 这台服务器不接受这份凭据
+			}
+			if !has(prev) {
+				t.Errorf("%s 只接受当前代,没有上一代 %s —— 轮换会断连", b.Owner, prev)
+			}
+			// 规则必须匹配两个名字。
+			matched := false
+			for _, r := range c.Route.Rules {
+				var seenCur, seenPrev bool
+				for _, u := range r.AuthUser {
+					if u == cur {
+						seenCur = true
+					}
+					if u == prev {
+						seenPrev = true
+					}
+				}
+				if seenCur {
+					matched = true
+					if !seenPrev {
+						t.Errorf("%s 有一条规则只匹配当前代 %v —— 旧凭据的流量会落到 final: block",
+							b.Owner, r.AuthUser)
+					}
+				}
+			}
+			if !matched {
+				t.Errorf("%s 接受 %s 但没有任何规则匹配它", b.Owner, cur)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("没有检查到任何服务器入站")
+	}
+}
+
+// 客户端只用当前代 —— 它要是也发旧的,过渡窗口就永远关不掉。
+func TestClientUsesCurrentGenerationOnly(t *testing.T) {
+	s := load(t)
+	if len(s.Credentials) == 0 {
+		t.Skip("fixture 里没有凭据")
+	}
+	target := &s.Credentials[0]
+	target.Generation = 2
+	target.AcceptPrevious = true
+	prevPlaceholder := "${secret:" + target.PrevRef() + "}"
+
+	res, err := Render(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range res.Bundles {
+		if s.NodeByID()[b.Owner] == nil || !s.NodeByID()[b.Owner].IsAccess() {
+			continue
+		}
+		for _, f := range b.Files {
+			if f.Path != "sing-box/config.json" {
+				continue
+			}
+			// 接入节点上出现上一代的引用,就说明客户端也在用旧的。
+			// (双角色机器的服务器入站会有,所以只看 outbound 段之外的
+			// 精确匹配不可靠 —— 这里用出站里是否出现来判断。)
+			var c struct {
+				Outbounds []struct {
+					Password string `json:"password"`
+				} `json:"outbounds"`
+			}
+			if err := json.Unmarshal([]byte(f.Content), &c); err != nil {
+				t.Fatal(err)
+			}
+			for _, o := range c.Outbounds {
+				if o.Password == prevPlaceholder {
+					t.Errorf("%s 的出站还在用上一代凭据 %s", b.Owner, target.PrevRef())
+				}
+			}
+		}
+	}
+}

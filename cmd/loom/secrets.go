@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"os"
@@ -20,8 +22,17 @@ import (
 //
 // 哪些 ref 属于哪个节点不用人去分:扫一遍那个节点的渲染产物就知道了。
 func cmdSecrets(args []string) error {
-	if len(args) == 0 || args[0] != "split" {
-		return fmt.Errorf("用法:loom secrets split <ssot.yaml> -secrets <总表> -o <目录>")
+	if len(args) == 0 {
+		return secretsUsage()
+	}
+	switch args[0] {
+	case "split":
+	case "rotate":
+		return cmdSecretsRotate(args[1:])
+	case "retire":
+		return cmdSecretsRetire(args[1:])
+	default:
+		return secretsUsage()
 	}
 	fs := flag.NewFlagSet("secrets split", flag.ExitOnError)
 	master := fs.String("secrets", "", "总表(必需)")
@@ -111,4 +122,135 @@ func cmdSecrets(args []string) error {
 	}
 	fmt.Printf("\n→ %s\n每份只含该机器自己的凭据 —— 分发点和别的节点都看不到。\n", *out)
 	return nil
+}
+
+func secretsUsage() error {
+	return fmt.Errorf(`用法:
+  loom secrets split  <ssot.yaml> -secrets <总表> -o <目录>   拆成每节点一份
+  loom secrets rotate <ssot.yaml> -cred <id> -secrets <总表>  生成下一代凭据
+  loom secrets retire <ssot.yaml> -cred <id> -secrets <总表>  删掉已经没人引用的旧代`)
+}
+
+// cmdSecretsRotate 生成一份凭据的下一代(§13.4 第一步)。
+//
+// 它只动秘密层,**不改 SSOT** —— 因为改 SSOT 会触发发布,而新值必须先在
+// 总表里就位,否则 hydrate 会因为"缺引用"整体失败。顺序反了的话,全网会
+// 卡在一个装不上的快照上。
+func cmdSecretsRotate(args []string) error {
+	fs := flag.NewFlagSet("secrets rotate", flag.ExitOnError)
+	master := fs.String("secrets", "", "总表(必需)")
+	credID := fs.String("cred", "", "要轮换的凭据 id(必需)")
+
+	rest, err := parseInterspersed(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(rest) != 1 || *master == "" || *credID == "" {
+		return secretsUsage()
+	}
+	s, err := loadAndValidate(rest[0])
+	if err != nil {
+		return err
+	}
+	c := s.CredentialByID()[*credID]
+	if c == nil {
+		return fmt.Errorf("SSOT 里没有叫 %q 的凭据", *credID)
+	}
+	all, err := secret.Load(*master)
+	if err != nil {
+		return err
+	}
+
+	next := c.Gen() + 1
+	nextRef := c.SecretRef + fmt.Sprintf("@%d", next)
+	if _, exists := all[nextRef]; exists {
+		return fmt.Errorf("%s 已经在总表里了 —— 上一次轮换没做完?", nextRef)
+	}
+	if _, ok := all[c.Ref()]; !ok {
+		return fmt.Errorf("总表里没有当前代 %s —— 先把它补上再轮换", c.Ref())
+	}
+
+	val, err := newSecretValue()
+	if err != nil {
+		return err
+	}
+	all[nextRef] = val
+	if err := secret.Write(*master, all,
+		"# Loom 秘密层。渲染产物里的 ${secret:REF} 由 loom hydrate 从这里取值。\n"+
+			"# 绝不进版本库(.gitignore 已排除)。0600。\n\n"); err != nil {
+		return err
+	}
+
+	fmt.Printf("✓ 已生成 %s\n\n", nextRef)
+	fmt.Printf("接下来两步,**必须分开发布**(§13.4):\n\n")
+	fmt.Printf("  第一步 —— 在 SSOT 里把这份凭据改成:\n")
+	fmt.Printf("      generation: %d\n      accept_previous: true\n\n", next)
+	fmt.Printf("    服务器两代都收,客户端换成新的。等全网都取到这一版\n")
+	fmt.Printf("    (loom status 看快照一致),再做第二步。\n\n")
+	fmt.Printf("  第二步 —— 把 accept_previous 改回 false,发布;然后:\n")
+	fmt.Printf("      loom secrets retire %s -cred %s -secrets %s\n\n", rest[0], *credID, *master)
+	fmt.Printf("**别跳过第一步。** 分发是最终一致的,客户端和服务器不可能在\n")
+	fmt.Printf("同一刻切换 —— 没有过渡窗口,轮换的瞬间连接全断。\n")
+	return nil
+}
+
+// cmdSecretsRetire 删掉已经没人引用的旧代(§13.4 第二步)。
+func cmdSecretsRetire(args []string) error {
+	fs := flag.NewFlagSet("secrets retire", flag.ExitOnError)
+	master := fs.String("secrets", "", "总表(必需)")
+	credID := fs.String("cred", "", "凭据 id(必需)")
+
+	rest, err := parseInterspersed(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(rest) != 1 || *master == "" || *credID == "" {
+		return secretsUsage()
+	}
+	s, err := loadAndValidate(rest[0])
+	if err != nil {
+		return err
+	}
+	c := s.CredentialByID()[*credID]
+	if c == nil {
+		return fmt.Errorf("SSOT 里没有叫 %q 的凭据", *credID)
+	}
+	prev := c.PrevRef()
+	if prev == "" {
+		return fmt.Errorf("%s 还是第一代,没有旧代可退役", *credID)
+	}
+	// **还在过渡窗口里就删,服务器会因为缺引用而装不上配置。**
+	// 先改 SSOT 关掉窗口、等全网取到,再退役。
+	if c.AcceptPrevious {
+		return fmt.Errorf("%s 的 accept_previous 还是 true —— 服务器仍在引用 %s。"+
+			"先把它改成 false、发布、等全网取到(loom status 看快照一致),再退役",
+			*credID, prev)
+	}
+	all, err := secret.Load(*master)
+	if err != nil {
+		return err
+	}
+	if _, ok := all[prev]; !ok {
+		fmt.Printf("总表里已经没有 %s,无事可做\n", prev)
+		return nil
+	}
+	delete(all, prev)
+	if err := secret.Write(*master, all,
+		"# Loom 秘密层。渲染产物里的 ${secret:REF} 由 loom hydrate 从这里取值。\n"+
+			"# 绝不进版本库(.gitignore 已排除)。0600。\n\n"); err != nil {
+		return err
+	}
+	fmt.Printf("✓ 已删除 %s\n", prev)
+	fmt.Printf("\n**各节点上的旧值要等它们下一次取配置才消失** —— hydrate 是在\n")
+	fmt.Printf("节点上做的,而节点的 node.env 由 loom secrets split 重新分发。\n")
+	return nil
+}
+
+// newSecretValue 生成一个新的凭据值。
+func newSecretValue() (string, error) {
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }

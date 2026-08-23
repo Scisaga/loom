@@ -1,5 +1,7 @@
 package model
 
+import "fmt"
+
 // 本文件是 §4、§5、§7.3、§8.2、§18 涉及的服务与调度模型。
 // 拓扑模型在 model.go,两者共用同一份 SSOT。
 
@@ -396,9 +398,73 @@ type Credential struct {
 	// SecretRef 指向秘密层中的条目,渲染时展开成占位符而非明文。
 	SecretRef string `yaml:"secret_ref"`
 
+	// Generation 是这份凭据的代次,轮换时 +1(§13.4)。
+	//
+	// **为什么需要它:** `cred/*` 是**跨节点共享**的 —— 一台服务器下线之后,
+	// 它硬盘上还留着明文。不能轮换,"删除节点"就是不安全的(§14.4)。
+	//
+	// 0 与 1 都表示第一代,引用是不带后缀的 `cred/<id>`。这是为了让已经
+	// 部署好的秘密层不必因为引入这个字段而全网重发。
+	Generation int `yaml:"generation,omitempty"`
+
+	// AcceptPrevious 让服务器在**同时**接受上一代凭据。
+	//
+	// 轮换必须分两步,因为分发是最终一致的:节点各自按 10 分钟的节奏取
+	// 配置,顺序还带抖动。客户端和服务器不可能在同一刻切换 —— 中间那段
+	// 时间里,一边用新的、另一边只认旧的,连接全断。
+	//
+	//	第一步  generation+1,accept_previous: true   两代都收,客户端换新的
+	//	第二步  accept_previous: false                 旧的失效
+	//
+	// **这是过渡态,不是稳态。** 忘了做第二步,旧凭据就永远有效 —— 而轮换
+	// 的全部意义就是让旧的失效。所以渲染出的配置里它是显式的(服务器上
+	// 会多出一个 `<id>@<上一代>` 的 user),上报者据此把"轮换未完成"报成
+	// 一个持续中的问题。
+	AcceptPrevious bool `yaml:"accept_previous,omitempty"`
+
 	ExpiresAt string `yaml:"expires_at,omitempty"` // RFC3339,空 = 不过期
 	// RevokedAt 非空即已吊销。所有中继在下一轮询周期移除该 user(§18)。
 	RevokedAt string `yaml:"revoked_at,omitempty"`
 }
 
 func (c *Credential) Revoked() bool { return c.RevokedAt != "" }
+
+// Gen 返回规范化的代次:0 和 1 都算第一代。
+func (c *Credential) Gen() int {
+	if c.Generation < 1 {
+		return 1
+	}
+	return c.Generation
+}
+
+// Ref 是当前代次在秘密层里的引用。
+func (c *Credential) Ref() string { return genRef(c.SecretRef, c.Gen()) }
+
+// PrevRef 是上一代的引用。第一代没有上一代,返回空。
+func (c *Credential) PrevRef() string {
+	if c.Gen() <= 1 {
+		return ""
+	}
+	return genRef(c.SecretRef, c.Gen()-1)
+}
+
+// PrevUser 是上一代在服务器 inbound 里的用户名。
+//
+// **不能和当前代同名。** 同名两条 user 的行为取决于 sing-box 的实现细节,
+// 而且路由规则按名字匹配 —— 分不开就没法确认过渡窗口真的生效了。
+func (c *Credential) PrevUser() string {
+	if c.Gen() <= 1 {
+		return ""
+	}
+	return fmt.Sprintf("%s@%d", c.ID, c.Gen()-1)
+}
+
+// RotationPending 报告这份凭据是否处在过渡窗口里。
+func (c *Credential) RotationPending() bool { return c.AcceptPrevious && c.Gen() > 1 }
+
+func genRef(ref string, gen int) string {
+	if gen <= 1 {
+		return ref
+	}
+	return fmt.Sprintf("%s@%d", ref, gen)
+}

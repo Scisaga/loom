@@ -53,7 +53,7 @@ go run ./cmd/loom verify   /tmp/out -pubkey /tmp/keys/platform-signing.pub
 | `internal/netx/` | 不依赖机器全局设置的 HTTP 客户端(不读 HTTP_PROXY、自带 DNS) |
 | `internal/events/` | 状态变化历史。**只记变化,不记状态** —— 记在中控一处 |
 | `internal/webui/` | 节点上的操作界面:读在每台机器上,写只在中控 |
-| `internal/secret/` | 秘密层:占位符解析与替换。**合并发生在节点上**,分发树里只有占位符 |
+| `internal/secret/` | 秘密层:占位符解析与替换、两步轮换。**合并发生在节点上**,分发树里只有占位符 |
 | `cmd/loom/` | CLI:`validate` / `render` / `diff` / `snapshot` / `verify` / `keygen` / `firewall` / `hydrate` / `probe` / `agent` / `report` / `selfcheck` / `status` / `apply` / `publish` / `publisher` / `pull` / `secrets` / `backup` / `restore` |
 | `testdata/matrix/` | 参考 SSOT(4 国内云机 + 2 境外 VPS)与 golden |
 

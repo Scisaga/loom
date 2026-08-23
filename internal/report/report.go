@@ -42,6 +42,13 @@ type Status struct {
 	// Learned 是从邻居那里听来的别人的观测,原样转述。
 	Learned []Observation `json:"learned,omitempty"`
 
+	// Rotating 是本机正在同时接受两代的凭据(§13.4)。
+	//
+	// **过渡窗口是过渡态,不是稳态。** 忘了做第二步的话旧凭据永远有效,
+	// 而轮换的全部意义就是让旧的失效。这个状态会进事件历史,于是"开了
+	// 三天还没关"变成一条持续中的记录,而不是没人知道的事。
+	Rotating []string `json:"rotating,omitempty"`
+
 	// Errors 是采集过程本身的失败。**采集不到与"一切正常"必须分得开** ——
 	// 空的 Tunnels 既可能是没有隧道,也可能是 wg 命令跑不起来。
 	Errors []string `json:"errors,omitempty"`
@@ -131,6 +138,8 @@ func Collect(cfg *Config, now time.Time) *Status {
 		t.RxByt, t.TxByt = tr[i][0], tr[i][1]
 		st.Tunnels = append(st.Tunnels, t)
 	}
+
+	st.Rotating = rotatingCreds(singBoxConfigPath)
 
 	if cfg.Manifest != "" {
 		d, err := checkDrift(cfg.Manifest)
@@ -242,4 +251,43 @@ func unitState(name string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// singBoxConfigPath 是本机 sing-box 配置的位置(与 render.InstallPath 一致)。
+const singBoxConfigPath = "/etc/loom/sing-box/config.json"
+
+// rotatingCreds 从本机 sing-box 配置里找出正在过渡窗口里的凭据。
+//
+// 判据是 inbound 里出现了 `<id>@<代次>` 形式的 user —— 那是上一代,只有
+// 开着过渡窗口才会渲染出来。读本机配置而不是 SSOT:节点上没有 SSOT,
+// 也不该有。
+func rotatingCreds(path string) []string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil // 不是每台机器都有 inbound
+	}
+	var cfg struct {
+		Inbounds []struct {
+			Users []struct {
+				Name string `json:"name"`
+			} `json:"users"`
+		} `json:"inbounds"`
+	}
+	if json.Unmarshal(b, &cfg) != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, in := range cfg.Inbounds {
+		for _, u := range in.Users {
+			id, _, ok := strings.Cut(u.Name, "@")
+			if !ok || id == "" || seen[id] {
+				continue
+			}
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

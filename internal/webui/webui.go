@@ -91,13 +91,15 @@ type View struct {
 
 // NodeView 是一个节点在界面上的样子。
 type NodeView struct {
-	ID       string
-	Self     bool
-	Reached  bool // 直接拉到的,还是听别人转述的
-	Applied  string
-	AgeSec   int
-	Tunnels  []TunnelView
-	Targets  []TargetView
+	ID      string
+	Self    bool
+	Reached bool // 直接拉到的,还是听别人转述的
+	Applied string
+	AgeSec  int
+	Tunnels []TunnelView
+	Targets []TargetView
+	// Rotating 是正在过渡窗口里的凭据。开着是正常的,开太久不是。
+	Rotating []string
 	Edges    []EdgeView
 	Problems []string
 }

@@ -41,6 +41,7 @@ func Validate(s *model.SSOT) []Finding {
 	checkService(s, idx, &fs)
 	checkDrain(&fs, s)
 	checkServices(&fs, s)
+	checkCredentialRotation(&fs, s)
 	checkServicePorts(&fs, s)
 
 	sort.SliceStable(fs, func(i, j int) bool {

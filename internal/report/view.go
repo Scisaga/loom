@@ -50,6 +50,7 @@ func nodeView(id string, self, reached bool, st *Status, o *Observation, now tim
 	}
 	if st.Applied != "" {
 		n.Applied = st.Applied
+		n.Rotating = append(n.Rotating, st.Rotating...)
 	}
 	for i := range st.Tunnels {
 		t := &st.Tunnels[i]
