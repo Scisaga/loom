@@ -64,6 +64,15 @@ func cmdSecrets(args []string) error {
 				refs[r] = true
 			}
 		}
+		// 形如 `<什么>/<节点 id>` 的引用归这个节点,**即使没有任何渲染产物
+		// 引用它**。中控界面的运维口令 `ui/access-a` 就是这种:它由本机 bootstrap
+		// 配置读取,不出现在任何渲染文件里。不认这条规则的话,每次重新拆分
+		// 都会把它丢掉,而症状是"界面突然登不进去了"。
+		for r := range all {
+			if _, node, ok := strings.Cut(r, "/"); ok && node == b.Owner {
+				refs[r] = true
+			}
+		}
 		mine := map[string]string{}
 		var names []string
 		for r := range refs {

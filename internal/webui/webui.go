@@ -42,18 +42,25 @@ type Deps struct {
 	// 只列白名单里的 —— 让界面能跑任意命令,等于把 root 挂到网上。
 	Actions map[string]func() (string, error)
 
-	// Publisher 非 nil 时,这台机器是签发者,界面多出发布相关的页面。
-	Publisher *PublisherDeps
+	// Control 非 nil 时,这台机器是中控,界面多出改 SSOT 的能力。
+	Control *ControlDeps
 }
 
-// PublisherDeps 只有签发者需要。
-type PublisherDeps struct {
+// ControlDeps 只有中控需要(§14.2.3、D36)。
+//
+// **界面上没有"发布"按钮。** 发布是自动的:改完存盘,发布器 30 秒内校验、
+// 渲染、签名、分发。界面能做的只有改 SSOT —— 于是不存在"对某台机器执行
+// 某某"这种旁路,而那正是 §12 想要的。
+type ControlDeps struct {
 	SSOTPath string
-	// Current 返回当前 SSOT 内容与校验结果。
-	Current func() (content string, findings string, err error)
-	// Publish 渲染、签名、分发。返回人可读的过程说明。
-	Publish func() (string, error)
-	// Distributed 返回分发点当前指向的快照 id。
+	// Read 返回当前 SSOT 原文。
+	Read func() (string, error)
+	// Validate 校验一段内容,返回人可读的发现(空表示通过)。
+	Validate func(content string) (string, error)
+	// Save 写回。**实现方必须自己再校验一次** —— 界面上的校验按钮只是
+	// 给人看的,不能当成守卫。
+	Save func(content string) error
+	// Distributed 返回分发点当前指向的快照 id,用来看发布器跟上没有。
 	Distributed func() (string, error)
 }
 
@@ -157,18 +164,28 @@ func Handler(d Deps) http.Handler {
 		writeHTML(w, pageResult(d, name, out, err))
 	})
 
-	if d.Publisher != nil {
-		mux.HandleFunc("/publish", func(w http.ResponseWriter, r *http.Request) {
+	if d.Control != nil {
+		mux.HandleFunc("/ssot", func(w http.ResponseWriter, r *http.Request) {
 			if !authed(d, r) {
 				http.Redirect(w, r, "/login", http.StatusSeeOther)
 				return
 			}
 			if r.Method != http.MethodPost {
-				writeHTML(w, pagePublish(d, "", nil))
+				body, err := d.Control.Read()
+				writeHTML(w, pageSSOT(d, body, "", err, false))
 				return
 			}
-			out, err := d.Publisher.Publish()
-			writeHTML(w, pagePublish(d, out, err))
+			body := r.FormValue("content")
+			findings, err := d.Control.Validate(body)
+			// 只校验不保存:让人先看清楚改动会带来什么。
+			if r.FormValue("action") != "save" {
+				writeHTML(w, pageSSOT(d, body, findings, err, false))
+				return
+			}
+			if err == nil && findings == "" {
+				err = d.Control.Save(body)
+			}
+			writeHTML(w, pageSSOT(d, body, findings, err, err == nil && findings == ""))
 		})
 	}
 	return mux

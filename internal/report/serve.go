@@ -41,7 +41,7 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 	//
 	// **它们必须同源** —— 界面自己去采一遍的话,"页面上说的"和"接口返回的"
 	// 会在某个时刻不一致,而那种不一致极难查。
-	ui := webui.Handler(webui.Deps{
+	deps := webui.Deps{
 		Node: cfg.Node,
 		Now:  now,
 		Snapshot: func() webui.View {
@@ -51,8 +51,21 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 			st.Observation, st.Learned = tbl.view(cfg.Node, now(), maxAge)
 			return buildView(cfg, st, now())
 		},
-	})
-	mux.Handle("/", ui)
+	}
+	// 中控角色是本机 bootstrap 配置,不是渲染产物 —— 绝大多数节点没有它。
+	if ctl, pw, err := LoadControl(ControlPath); ctl != nil {
+		if err != nil {
+			// 声明了中控角色却配不全,必须看得见。悄悄退化成只读的话,
+			// 人会以为是自己没登录。
+			fmt.Fprintf(logw, "! 中控配置有问题,写操作关闭:%v\n", err)
+		}
+		deps.Operator = pw
+		deps.Control = controlDeps(ctl)
+		fmt.Fprintf(logw, "中控角色:%s\n", ctl.SSOTPath)
+	} else if err != nil {
+		fmt.Fprintf(logw, "! 读 %s 失败:%v\n", ControlPath, err)
+	}
+	mux.Handle("/", webui.Handler(deps))
 
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		// 隧道健康和配置自检是**当场**算的,便宜。观测不是 —— 量一遍目标

@@ -31,13 +31,14 @@ button{font:inherit;padding:.3rem .8rem;border:1px solid var(--line);background:
 button:hover{border-color:var(--fg)}
 input{font:inherit;padding:.35rem .6rem;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
 pre{background:var(--card);border:1px solid var(--line);padding:.8rem;overflow-x:auto;white-space:pre-wrap;margin:.5rem 0}
+textarea{width:100%;height:60vh;font:inherit;padding:.6rem;border:1px solid var(--line);background:var(--card);color:var(--fg);white-space:pre;overflow-wrap:normal;overflow-x:auto}
 .sp{margin-left:auto}
 </style>`
 
 func shell(d Deps, title, body string, isAuthed bool) string {
 	role := "节点"
-	if d.Publisher != nil {
-		role = "节点 · 签发者"
+	if d.Control != nil {
+		role = "节点 · 中控"
 	}
 	// 这台机器上没有任何写操作时不显示登录入口 —— 一个点进去只会说
 	// "没配口令"的链接,只会让人以为自己配错了。
@@ -45,7 +46,7 @@ func shell(d Deps, title, body string, isAuthed bool) string {
 	switch {
 	case isAuthed:
 		auth = `已登录 · <a href="/logout">退出</a>`
-	case d.Operator != "" && (len(d.Actions) > 0 || d.Publisher != nil):
+	case d.Operator != "" && (len(d.Actions) > 0 || d.Control != nil):
 		auth = `<a href="/login">登录以操作</a>`
 	}
 	return fmt.Sprintf(`<!doctype html><meta charset=utf-8><title>%s · Loom</title>
@@ -82,53 +83,38 @@ func pageResult(d Deps, name, out string, err error) string {
 	return shell(d, name, body+`<p><a href="/">← 回到总览</a></p>`, true)
 }
 
-func pagePublish(d Deps, out string, err error) string {
-	content, findings, cerr := d.Publisher.Current()
-	dist, derr := d.Publisher.Distributed()
-
+func pageSSOT(d Deps, content, findings string, err error, saved bool) string {
 	var b strings.Builder
-	b.WriteString(`<h2>分发点</h2><div class=card>`)
-	switch {
-	case derr != nil:
-		fmt.Fprintf(&b, `<span class=bad>取不到:%s</span>`, esc(derr.Error()))
-	default:
-		fmt.Fprintf(&b, `当前指向 <b>%s</b>`, esc(short(dist)))
-	}
-	b.WriteString(`</div>`)
 
-	b.WriteString(`<h2>校验</h2><div class=card>`)
-	switch {
-	case cerr != nil:
-		fmt.Fprintf(&b, `<span class=bad>%s</span>`, esc(cerr.Error()))
-	case findings != "":
-		fmt.Fprintf(&b, `<span class=bad>不通过:</span><pre>%s</pre>`, esc(findings))
-	default:
-		b.WriteString(`<span class=ok>✅ 通过</span>`)
-	}
-	b.WriteString(`</div>`)
-
-	if cerr == nil && findings == "" {
-		b.WriteString(`<form method=post action=/publish><button>渲染 · 签名 · 分发</button></form>
-<p class=dim>签名私钥只在这一步用到,不上任何服务器。分发出去的全是占位符,凭据在各节点本地。</p>`)
+	dist, derr := d.Control.Distributed()
+	b.WriteString(`<div class=card>`)
+	if derr != nil {
+		fmt.Fprintf(&b, `<span class=bad>问不到分发点:%s</span>`, esc(brief(derr.Error())))
 	} else {
-		b.WriteString(`<p class=dim>校验不通过,不给发布 —— 渲染一份自相矛盾的配置出去,
-比不发布糟得多。</p>`)
+		fmt.Fprintf(&b, `分发点当前指向 <b>%s</b>`, esc(short(dist)))
+	}
+	b.WriteString(`<br><span class=dim>发布是自动的:存盘之后发布器会校验、渲染、签名、分发。
+这里没有"发布"按钮 —— 唯一的写操作就是改 SSOT。</span></div>`)
+
+	switch {
+	case saved:
+		b.WriteString(`<div class=card><span class=ok>✅ 已保存。发布器会在下一轮接管(约 30 秒)。</span></div>`)
+	case err != nil:
+		fmt.Fprintf(&b, `<div class=card><span class=bad>❌ %s</span></div>`, esc(err.Error()))
+	case findings != "":
+		fmt.Fprintf(&b, `<div class=card><span class=bad>校验不通过,未保存:</span><pre>%s</pre></div>`, esc(findings))
 	}
 
-	if out != "" || err != nil {
-		b.WriteString(`<h2>本次发布</h2>`)
-		if err != nil {
-			fmt.Fprintf(&b, `<p class=bad>❌ %s</p>`, esc(err.Error()))
-		}
-		if out != "" {
-			fmt.Fprintf(&b, `<pre>%s</pre>`, esc(out))
-		}
-	}
-
-	fmt.Fprintf(&b, `<h2>SSOT <span class=dim>%s</span></h2><pre>%s</pre>`,
-		esc(d.Publisher.SSOTPath), esc(content))
-	b.WriteString(`<p><a href="/">← 回到总览</a></p>`)
-	return shell(d, "发布", b.String(), true)
+	fmt.Fprintf(&b, `<h2>%s</h2>
+<form method=post action=/ssot>
+<textarea name=content spellcheck=false>%s</textarea><br>
+<button name=action value=check>只校验</button>
+<button name=action value=save>校验并保存</button>
+</form>
+<p class=dim>校验不过就不会保存 —— 存一份自相矛盾的 SSOT 进去,发布器会拒绝发布,
+而线上停在旧快照。宁可在这里挡住。</p>
+<p><a href="/">← 回到总览</a></p>`, esc(d.Control.SSOTPath), esc(content))
+	return shell(d, "改 SSOT", b.String(), true)
 }
 
 func pageOverview(d Deps, isAuthed bool) string {
@@ -250,7 +236,7 @@ func pageOverview(d Deps, isAuthed bool) string {
 	}
 	b.WriteString(`</table>`)
 
-	if d.Operator == "" && len(d.Actions) == 0 && d.Publisher == nil {
+	if d.Operator == "" && len(d.Actions) == 0 && d.Control == nil {
 		return shell(d, "总览", b.String(), isAuthed)
 	}
 	b.WriteString(`<h2>本机操作</h2>`)
@@ -265,8 +251,8 @@ func pageOverview(d Deps, isAuthed bool) string {
 		for _, k := range names {
 			fmt.Fprintf(&b, `<form method=post action="/act/%s"><button>%s</button></form> `, esc(k), esc(k))
 		}
-		if d.Publisher != nil {
-			b.WriteString(` <a href="/publish"><button>发布…</button></a>`)
+		if d.Control != nil {
+			b.WriteString(` <a href="/ssot"><button>改 SSOT…</button></a>`)
 		}
 	}
 	return shell(d, "总览", b.String(), isAuthed)
