@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -86,6 +87,7 @@ func cmdStatus(args []string) error {
 	// 先说有没有未解决的、多久了。**"没有"也要说出来** —— 一片安静
 	// 分不出"一切正常"和"这功能没在跑"。
 	unresolved := printUnresolved(report.EventsPath, time.Now())
+	printLifecycle(s)
 	bad := 0
 	// obs 汇总全网观测:自己量的、拉到的、以及**别人转述的** ——
 	// 转述让够不到的节点也进得来(§16.1.2)。
@@ -132,13 +134,7 @@ func cmdStatus(args []string) error {
 
 	// 全网是不是同一版。落后的那台往往正是出问题的那台,而这件事以前
 	// 只能逐台 ssh 去查。
-	vers := map[string][]string{}
-	for id, v := range snap {
-		if v == "" {
-			v = "(未记录)"
-		}
-		vers[v] = append(vers[v], id)
-	}
+	vers := snapshotSpread(obs, snap)
 	if len(vers) > 1 {
 		fmt.Printf("\n  ⚠️ 全网不是同一个快照:\n")
 		var keys []string
@@ -369,4 +365,115 @@ func problemLines(st *report.Status) []string {
 		out = append(out, "⚠️ 采集错误:"+e)
 	}
 	return out
+}
+
+// printLifecycle 打出不在"正常"状态的节点,以及各自的下一步(§14.4)。
+//
+// 四个状态里有两个是**过渡态** —— 排空和下线都不该长期停在那儿。而"停在
+// 那儿"没有任何症状:机器还在跑、隧道还通、校验也过。只有把"下一步是什么"
+// 摆在眼前,才不会忘。
+func printLifecycle(s *model.SSOT) {
+	var drained, decom []*model.Node
+	for i := range s.Nodes {
+		n := &s.Nodes[i]
+		switch {
+		case n.Decommission:
+			decom = append(decom, n)
+		case n.Drain:
+			drained = append(drained, n)
+		}
+	}
+	if len(drained) == 0 && len(decom) == 0 {
+		return
+	}
+	fmt.Printf("  ⏳ 生命周期\n")
+	for _, n := range drained {
+		fmt.Printf("     %-7s 已排空 —— 不再参与选路,但配置和隧道都还在(还能观测它)\n", n.ID)
+		fmt.Printf("             下一步:确认替代节点在承载流量,再**同时**标 decommission、\n")
+		fmt.Printf("                     删掉引用它的隧道(校验器要求这两件一起做)\n")
+	}
+	for _, n := range decom {
+		fmt.Printf("     %-7s 已标记下线 —— 它读到停机指令后会自己停服务、禁自启\n", n.ID)
+		fmt.Printf("             下一步:确认它停了,把节点本身从 SSOT 删掉;\n")
+		held := credentialsHeldBy(s, n)
+		if len(held) == 0 {
+			fmt.Printf("                     它没配过任何凭据,不用轮换\n")
+			continue
+		}
+		fmt.Printf("                     然后轮换它硬盘上留过明文的这几张凭据:\n")
+		for _, c := range held {
+			fmt.Printf("                     loom secrets rotate <ssot> -cred %s -secrets <总表>\n", c)
+		}
+	}
+	fmt.Println()
+}
+
+// credentialsHeldBy 列出一台服务器硬盘上留过哪些凭据的明文。
+//
+// **这是移除节点之后必须轮换的清单**(§14.4)。忘了轮换不会有任何症状,
+// 直到有人拿捡到的凭据连进来。
+//
+// 判据跟渲染器一致:一张凭据配在哪台机器上,取决于**候选链是否经过它**,
+// 不是声明的 allowed_servers —— 后者只是"允许",经过才会真配上 user。
+//
+// 排空和下线的机器已经不进候选了,所以要按"假如它还在服役"来枚举 ——
+// 问的是它硬盘上曾经有什么,不是现在还路由什么。
+func credentialsHeldBy(s *model.SSOT, n *model.Node) []string {
+	if !n.IsServer() {
+		return nil
+	}
+	drain, decom := n.Drain, n.Decommission
+	n.Drain, n.Decommission = false, false
+	defer func() { n.Drain, n.Decommission = drain, decom }()
+
+	decls := s.DeclarationByID()
+	var out []string
+	for i := range s.Credentials {
+		c := &s.Credentials[i]
+		if c.Revoked() {
+			continue
+		}
+		d, ok := decls[c.Declaration]
+		if !ok {
+			continue
+		}
+		owner := s.AccessNodeForCredential(c.ID)
+		if owner == nil {
+			continue
+		}
+		cands, _ := s.EnumerateCandidates(owner, d)
+		for j := range cands {
+			if slices.Contains(cands[j].ServerChain, n.ID) {
+				out = append(out, c.ID)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return slices.Compact(out)
+}
+
+// snapshotSpread 把"哪台机器在哪个快照上"归并成 快照 -> 节点列表。
+//
+// **转述来的节点也要算进去。** 它们的 applied 就在观测里,以前却只统计了
+// 直接拉到的那几台 —— 于是这张表少列了几行,而少列的方式是**静默的**:
+// 落后的那台如果恰好够不到,你在这张表上根本看不见它,只会以为全网一致。
+//
+// direct 覆盖 obs:直接问到的比转听来的权威。
+func snapshotSpread(obs map[string]report.Observation, direct map[string]string) map[string][]string {
+	all := map[string]string{}
+	for id, o := range obs {
+		all[id] = o.Applied
+	}
+	for id, v := range direct {
+		all[id] = v
+	}
+	vers := map[string][]string{}
+	for id, v := range all {
+		if v == "" {
+			v = "(未记录)"
+		}
+		vers[v] = append(vers[v], id)
+	}
+	return vers
 }

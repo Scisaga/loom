@@ -1,0 +1,143 @@
+package model
+
+import (
+	"strings"
+	"testing"
+)
+
+func allocSSOT(t *testing.T) *SSOT {
+	t.Helper()
+	s, err := Load([]byte(`
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
+nodes:
+  - {id: cn1, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k1}}
+  - {id: cn2, public_endpoint: 1.1.1.2, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k2}}
+  - {id: v1,  public_endpoint: 2.2.2.1, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k3}}
+  - {id: v2,  public_endpoint: 2.2.2.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k4}}
+tunnels:
+  - {from: cn1, to: v1, listen_port: 61637, from_addr: 10.99.0.1/32, to_addr: 10.99.0.2/32}
+  - {from: cn2, to: v1, listen_port: 61619, from_addr: 10.99.0.3/32, to_addr: 10.99.0.4/32}
+  - {from: cn1, to: v2, listen_port: 61682, from_addr: 10.99.1.1/32, to_addr: 10.99.1.2/32}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// 恰好一端是 reverse_only 时才需要隧道。两端都能被公网拨到的直接互拨(D29),
+// 两端都是 reverse_only 的建不起来(§2.2 真值表)。
+func TestNeedsTunnel(t *testing.T) {
+	s := allocSSOT(t)
+	n := s.NodeByID()
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"cn1", "v1", true},
+		{"v1", "cn1", true},
+		{"cn1", "cn2", false},
+		{"v1", "v2", false},
+	}
+	for _, c := range cases {
+		if got := NeedsTunnel(n[c.a], n[c.b]); got != c.want {
+			t.Errorf("NeedsTunnel(%s,%s)=%v,期望 %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+// 新的 reverse_only 节点要和每台 bidirectional 建隧道,反之亦然。
+func TestTunnelPeersFor(t *testing.T) {
+	s := allocSSOT(t)
+	newVPS := &Node{ID: "v3", Server: &ServerRole{Direction: ReverseOnly}}
+	peers := s.TunnelPeersFor(newVPS)
+	var ids []string
+	for _, p := range peers {
+		ids = append(ids, p.ID)
+	}
+	if strings.Join(ids, ",") != "cn1,cn2" {
+		t.Errorf("新 VPS 的对端是 %v,期望 cn1,cn2", ids)
+	}
+}
+
+// /24 归 reverse_only 那一端 —— 现有部署就是这么排的(edge-a 占 10.99.0.x,
+// edge-b 占 10.99.1.x)。新节点要落进对端已有的那个段,不能另起一个。
+func TestAllocationReusesOwnersSubnet(t *testing.T) {
+	s := allocSSOT(t)
+	n := s.NodeByID()
+	from, to, port, err := s.AllocateTunnel(n["cn2"], n["v2"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	// v2 已经占了 10.99.1.x,新的一对必须也在那儿,而且接着 .1/.2 往后。
+	if from != "10.99.1.3/32" || to != "10.99.1.4/32" {
+		t.Errorf("分到 %s / %s,期望 10.99.1.3 / 10.99.1.4", from, to)
+	}
+	if port < TunnelPortMin || port > TunnelPortMax {
+		t.Errorf("端口 %d 不在保留段内", port)
+	}
+	for i := range s.Tunnels {
+		if s.Tunnels[i].ListenPort == port {
+			t.Errorf("端口 %d 和已有隧道撞了", port)
+		}
+	}
+}
+
+// 全新的 reverse_only 节点拿一个空闲 /24。
+func TestNewReverseOnlyGetsFreshSubnet(t *testing.T) {
+	s := allocSSOT(t)
+	n := s.NodeByID()
+	v3 := &Node{ID: "v3", Server: &ServerRole{Direction: ReverseOnly}}
+	from, _, _, err := s.AllocateTunnel(n["cn1"], v3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(from, "10.99.2.") {
+		t.Errorf("新 VPS 分到 %s,期望 10.99.2.x(0 和 1 已被占)", from)
+	}
+}
+
+// **端口刻意不连号** —— 连号本身是个特征(deploy/README)。
+// 所以不能是"上一个 +1"。
+func TestPortsAreNotSequential(t *testing.T) {
+	s := allocSSOT(t)
+	n := s.NodeByID()
+	_, _, p1, _ := s.AllocateTunnel(n["cn2"], n["v2"])
+	max := 0
+	for i := range s.Tunnels {
+		if s.Tunnels[i].ListenPort > max {
+			max = s.Tunnels[i].ListenPort
+		}
+	}
+	if p1 == max+1 {
+		t.Errorf("端口 %d 正好是已有最大值 +1 —— 连号是个特征", p1)
+	}
+}
+
+// 确定性:跑两遍结果一样,而且与参数顺序无关。
+func TestAllocationIsDeterministic(t *testing.T) {
+	s := allocSSOT(t)
+	n := s.NodeByID()
+	f1, t1, p1, _ := s.AllocateTunnel(n["cn2"], n["v2"])
+	f2, t2, p2, _ := s.AllocateTunnel(n["cn2"], n["v2"])
+	if f1 != f2 || t1 != t2 || p1 != p2 {
+		t.Error("跑两遍分到不同的东西")
+	}
+	// 换个参数顺序,端口应当不变(免得 A→B 和 B→A 算出两个)。
+	_, _, p3, _ := s.AllocateTunnel(n["v2"], n["cn2"])
+	if p1 != p3 {
+		t.Errorf("换参数顺序端口变了:%d vs %d", p1, p3)
+	}
+}
+
+// 不需要隧道的组合要明确拒绝,而不是分一对地址出来。
+func TestRefusesUnneededTunnel(t *testing.T) {
+	s := allocSSOT(t)
+	n := s.NodeByID()
+	if _, _, _, err := s.AllocateTunnel(n["cn1"], n["cn2"]); err == nil {
+		t.Error("给两台公网可拨的机器分了隧道")
+	}
+	if _, _, _, err := s.AllocateTunnel(n["v1"], n["v2"]); err == nil {
+		t.Error("给两台 reverse_only 分了隧道 —— 那建不起来")
+	}
+}
