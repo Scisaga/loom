@@ -17,9 +17,10 @@ import (
 type table struct {
 	mu sync.Mutex
 	by map[string]*Observation
+	h  *history
 }
 
-func newTable() *table { return &table{by: map[string]*Observation{}} }
+func newTable() *table { return &table{by: map[string]*Observation{}, h: newHistory()} }
 
 // put 收下一份观测。**同一个观测者只保留最新的一份** —— 转述会让同一份数据
 // 从多条路径回来,不去重的话表会无限长大,而且新旧混在一起。
@@ -59,7 +60,7 @@ func (t *table) snapshot(self string, now time.Time, maxAge time.Duration) []Obs
 // 只向直接邻居拉,不做全网泛洪 —— 邻居返回的内容里已经包含了**它**听来的
 // 那些,所以一跳一跳自然传开。代价是传播延迟随跳数增加,对这个规模无所谓。
 func gossip(cfg *Config, t *table, now func() time.Time, maxAge time.Duration) {
-	own := observe(cfg, now())
+	own := observe(cfg, t.h, now())
 	t.put(own)
 
 	for _, n := range cfg.Neighbors {

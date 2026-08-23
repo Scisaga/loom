@@ -38,6 +38,20 @@ func upgradeBinary(c *http.Client, base string, man *snapshot.Manifest, binPath 
 		return false, fmt.Errorf("算不出本机二进制的哈希:%w", err)
 	}
 	if have == want.SHA256 {
+		// 文件对了,但**跑着的进程可能还是旧的**。
+		//
+		// 实测踩到:中控上二进制是 `go build` 直接换的,升级流程看哈希
+		// "没变化"就什么都不做,而 loom-report 用旧 inode 跑了几个小时 ——
+		// 它上报的数据结构比别人少字段,而这在任何检查里都看不出来。
+		if stale := staleUnits(); len(stale) > 0 {
+			fmt.Printf("  %s 还跑着被替换掉的旧二进制,重启\n", strings.Join(stale, " "))
+			if dry {
+				return false, nil
+			}
+			for _, u := range stale {
+				_ = exec.Command("systemctl", "restart", u).Run()
+			}
+		}
 		return false, nil
 	}
 	fmt.Printf("  二进制要换:%s → %s(%.1f MB)\n", short(have), short(want.SHA256), float64(want.Size)/(1<<20))
@@ -137,4 +151,34 @@ func unitExists(u string) bool {
 func activeState(u string) string {
 	out, _ := exec.Command("systemctl", "is-active", u).Output()
 	return strings.TrimSpace(string(out))
+}
+
+// staleUnits 找出"跑着的二进制已经不是磁盘上那个"的服务。
+//
+// 判据是 /proc/<pid>/exe:替换文件时旧 inode 还被进程持有,内核在这个
+// 符号链接后面加 " (deleted)"。这比比对哈希可靠 —— 进程内存里的代码
+// 无从哈希。
+func staleUnits() []string {
+	var out []string
+	for _, u := range []string{"loom-report", "loom-agent", "loom-publisher"} {
+		if !unitExists(u) || activeState(u) != "active" {
+			continue
+		}
+		pid, err := exec.Command("systemctl", "show", "-p", "MainPID", "--value", u).Output()
+		if err != nil {
+			continue
+		}
+		p := strings.TrimSpace(string(pid))
+		if p == "" || p == "0" {
+			continue
+		}
+		link, err := os.Readlink("/proc/" + p + "/exe")
+		if err != nil {
+			continue
+		}
+		if strings.HasSuffix(link, " (deleted)") {
+			out = append(out, u)
+		}
+	}
+	return out
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -35,10 +36,17 @@ type Observation struct {
 }
 
 // Edge 是本节点到另一个节点的往返时间。
+//
+// **RTTMs 是最近若干次的中位数,不是最后一次。** 单次 TCP 建连是个很差的
+// 估计:实测同一条隧道连 12 次,11 次 287ms、1 次 1316ms —— 丢一个 SYN 就
+// 差出 4 倍。而上报出去的如果是最后一次,谁拿它算路径谁倒霉。
 type Edge struct {
 	To    string `json:"to"`
 	RTTMs int    `json:"rtt_ms,omitempty"`
-	Error string `json:"error,omitempty"`
+	// Samples / Failures 让下游知道这个数字有多少依据。
+	Samples  int    `json:"samples,omitempty"`
+	Failures int    `json:"failures,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
 // Reach 是本节点**直接**访问某个目标地址的结果。
@@ -46,9 +54,14 @@ type Edge struct {
 // 它回答的是"这台机器出去能不能到那儿",与任何链路无关 —— 正因为无关,
 // 它才能被所有接入节点复用。
 type Reach struct {
-	Target      string `json:"target"`
-	FirstByteMs int    `json:"first_byte_ms,omitempty"`
-	Error       string `json:"error,omitempty"`
+	Target string `json:"target"`
+	// FirstByteMs 同样是中位数,不是最后一次。
+	FirstByteMs int `json:"first_byte_ms,omitempty"`
+	Samples     int `json:"samples,omitempty"`
+	Failures    int `json:"failures,omitempty"`
+	// Error 是最近一次失败的原因。**只有全部失败时才该据此判定不可达** ——
+	// 一次抖动不该让一个出口被剪掉 15 分钟。
+	Error string `json:"error,omitempty"`
 }
 
 // OK 报告这个目标可达。
@@ -64,8 +77,58 @@ func (o *Observation) Age(now time.Time) time.Duration {
 	return now.Sub(t)
 }
 
+// history 保留每个被测对象最近若干次的结果。
+//
+// 中位数需要历史,而上报者本来是无状态的 —— 这是它唯一持有的状态,
+// 而且只在内存里:重启之后重新攒,几分钟就回来了。
+type history struct {
+	mu sync.Mutex
+	by map[string][]sample
+}
+
+type sample struct {
+	ms  int
+	err string
+}
+
+// keep 是保留多少次。1 分钟一轮,5 次约等于 5 分钟的窗口;
+// 中位数因此能顶住两次离群。
+const keep = 5
+
+func newHistory() *history { return &history{by: map[string][]sample{}} }
+
+func (h *history) add(key string, ms int, err error) (median, samples, failures int, lastErr string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	s := sample{ms: ms}
+	if err != nil {
+		s.err = err.Error()
+	}
+	xs := append(h.by[key], s)
+	if len(xs) > keep {
+		xs = xs[len(xs)-keep:]
+	}
+	h.by[key] = xs
+
+	var ok []int
+	for _, x := range xs {
+		if x.err == "" {
+			ok = append(ok, x.ms)
+		} else {
+			failures++
+			lastErr = x.err
+		}
+	}
+	samples = len(xs)
+	if len(ok) == 0 {
+		return 0, samples, failures, lastErr
+	}
+	sort.Ints(ok)
+	return ok[len(ok)/2], samples, failures, lastErr
+}
+
 // observe 量一遍本节点能量的东西:到每个邻居的 RTT、到每个目标的可达性。
-func observe(cfg *Config, now time.Time) *Observation {
+func observe(cfg *Config, h *history, now time.Time) *Observation {
 	o := &Observation{Node: cfg.Node, TS: now.UTC().Format(time.RFC3339)}
 	if b, err := os.ReadFile(appliedPath); err == nil {
 		o.Applied = strings.TrimSpace(string(b))
@@ -74,11 +137,13 @@ func observe(cfg *Config, now time.Time) *Observation {
 	nb := append([]Neighbor(nil), cfg.Neighbors...)
 	sort.Slice(nb, func(i, j int) bool { return nb[i].Node < nb[j].Node })
 	for _, n := range nb {
-		e := Edge{To: n.Node}
-		if ms, err := tcpRTT(n.Addr, 5*time.Second); err != nil {
-			e.Error = err.Error()
-		} else {
-			e.RTTMs = ms
+		ms, err := tcpRTT(n.Addr, 5*time.Second)
+		med, samples, fails, lastErr := h.add("edge/"+n.Node, ms, err)
+		e := Edge{To: n.Node, RTTMs: med, Samples: samples, Failures: fails}
+		// **只有全部失败才算不可达。** 一次抖动不该让一条边消失。
+		if fails == samples {
+			e.Error = lastErr
+			e.RTTMs = 0
 		}
 		o.Edges = append(o.Edges, e)
 	}
@@ -86,11 +151,12 @@ func observe(cfg *Config, now time.Time) *Observation {
 	targets := append([]string(nil), cfg.Targets...)
 	sort.Strings(targets)
 	for _, t := range targets {
-		r := Reach{Target: t}
-		if ms, err := reachTarget(t, 8*time.Second); err != nil {
-			r.Error = err.Error()
-		} else {
-			r.FirstByteMs = ms
+		ms, err := reachTarget(t, 8*time.Second)
+		med, samples, fails, lastErr := h.add("target/"+t, ms, err)
+		r := Reach{Target: t, FirstByteMs: med, Samples: samples, Failures: fails}
+		if fails == samples {
+			r.Error = lastErr
+			r.FirstByteMs = 0
 		}
 		o.Targets = append(o.Targets, r)
 	}
