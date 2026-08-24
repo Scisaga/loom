@@ -25,6 +25,13 @@ import (
 // 备份只针对不可再生的:凭据是随机生成的,CA 私钥签过的证书全网都在信任。
 //
 // **它只写文件,不往任何地方发。** 送到哪儿去由人决定。
+// backupSrc 是一条备份来源。optional 的意思是"它可以合法地还不存在",
+// 不是"丢了没关系"。
+type backupSrc struct {
+	path     string
+	optional bool
+}
+
 func cmdBackup(args []string) error {
 	fs := flag.NewFlagSet("backup", flag.ExitOnError)
 	out := fs.String("o", "", "输出文件(必需)")
@@ -45,25 +52,41 @@ func cmdBackup(args []string) error {
 		return fmt.Errorf("要么给 -passphrase-file 加密,要么显式 -plaintext;两者必选其一")
 	}
 
-	srcs := rest
+	// 显式点名的路径一律当作必须存在 —— 人写出来就是指望它在。
+	srcs := make([]backupSrc, 0, len(rest))
+	for _, r := range rest {
+		srcs = append(srcs, backupSrc{path: r})
+	}
 	if len(srcs) == 0 {
-		// 源头存档也进备份:SSOT 是全系统唯一不可再生的输入,而它没有
-		// 别的版本历史(不在 git,中控界面覆盖式保存)。存档只在中控本地,
-		// 那台机器没了就没了 —— 而中控没了本来就是"从备份恢复"事件。
-		srcs = []string{"deploy/secrets.env", "deploy/pki", "deploy/ssot-history"}
+		srcs = []backupSrc{
+			{path: "deploy/secrets.env"},
+			{path: "deploy/pki"},
+			// 源头存档:SSOT 是全系统唯一不可再生的输入,而它没有别的版本
+			// 历史(不在 git,中控界面覆盖式保存)。存档只在中控本地,
+			// 那台机器没了就没了 —— 而中控没了本来就是"从备份恢复"事件。
+			//
+			// **它可以合法地还不存在**:发布器第一次成功发布才会建它。
+			// 拿它当必需项的话,一台刚起来的中控连备份都做不了 ——
+			// 而"做危险变更之前先备份"恰恰是最需要它能跑的时候。
+			{path: "deploy/ssot-history", optional: true},
+		}
 	}
 
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	var included []string
-	var missing []string
+	var missing, skipped []string
 	for _, src := range srcs {
-		n, err := addPath(tw, src, &included)
+		n, err := addPath(tw, src.path, &included)
 		if err != nil {
 			return err
 		}
 		if n == 0 {
-			missing = append(missing, src)
+			if src.optional {
+				skipped = append(skipped, src.path)
+			} else {
+				missing = append(missing, src.path)
+			}
 		}
 	}
 	if err := tw.Close(); err != nil {
@@ -89,6 +112,14 @@ func cmdBackup(args []string) error {
 	}
 	if err := os.WriteFile(*out, body, 0o600); err != nil {
 		return err
+	}
+
+	// 可选项没打进去也要说 —— 静默省略就是把"你以为备份了"制造出来,
+	// 与上面那条硬失败是同一个理由,只是这里不该拦住整次备份。
+	if len(skipped) > 0 {
+		sort.Strings(skipped)
+		fmt.Printf("ⓘ 没有打包(还不存在):%s\n", strings.Join(skipped, " "))
+		fmt.Printf("   源头存档要发布器成功发布过一次才会建。在那之前没有版本历史可备份。\n\n")
 	}
 
 	sort.Strings(included)
