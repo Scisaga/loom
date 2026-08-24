@@ -141,3 +141,102 @@ func TestRefusesUnneededTunnel(t *testing.T) {
 		t.Error("给两台 reverse_only 分了隧道 —— 那建不起来")
 	}
 }
+
+// **轮换必须记住换掉了什么。**
+//
+// 起因是实测:hz01 ↔ ber01 在某个端口上被单向丢包丢了 15.8 小时,换个端口
+// 七分钟就通。而如果分配器不记退役端口,轮换两次就会转回那个已知不通的
+// 端口 —— 症状是"换了端口还是不通",跟真实原因毫不相干。
+func TestRotationNeverRevisitsARetiredPort(t *testing.T) {
+	s := allocSSOT(t)
+	seen := map[int]bool{}
+	for i := range s.Tunnels {
+		if s.Tunnels[i].From == "cn1" && s.Tunnels[i].To == "v1" {
+			seen[s.Tunnels[i].ListenPort] = true
+		}
+	}
+
+	// 连着轮换 20 次,每次都把结果写回去,模拟真实用法。
+	for i := 0; i < 20; i++ {
+		port, retired, err := s.RotateTunnelPort("cn1", "v1")
+		if err != nil {
+			t.Fatalf("第 %d 次轮换失败:%v", i+1, err)
+		}
+		if seen[port] {
+			t.Fatalf("第 %d 次轮换转回了用过的端口 %d", i+1, port)
+		}
+		seen[port] = true
+		for j := range s.Tunnels {
+			if s.Tunnels[j].From == "cn1" && s.Tunnels[j].To == "v1" {
+				s.Tunnels[j].ListenPort = port
+				s.Tunnels[j].RetiredPorts = retired
+			}
+		}
+	}
+}
+
+// **退役端口不只是被跳过,还要改变哈希起点。**
+//
+// 只跳不换起点的话,线性探测会挑中退役端口的紧邻位(61654 → 61655)——
+// 而如果丢弃是按范围或邻近特征做的,那等于没换。
+func TestRotationDoesNotLandNextToTheRetiredPort(t *testing.T) {
+	s := allocSSOT(t)
+	var old int
+	for i := range s.Tunnels {
+		if s.Tunnels[i].From == "cn1" && s.Tunnels[i].To == "v1" {
+			old = s.Tunnels[i].ListenPort
+		}
+	}
+	port, _, err := s.RotateTunnelPort("cn1", "v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if port == old+1 || port == old-1 {
+		t.Errorf("换到了退役端口的紧邻位:%d → %d", old, port)
+	}
+}
+
+// **既有分配不能因为加了轮换而改变。** 没有退役端口时哈希输入与从前一致,
+// 所以 `loom addnode` 对同一份 SSOT 给出的端口必须还是原来那个。
+func TestNewAllocationUnchangedByRotationSupport(t *testing.T) {
+	s := allocSSOT(t)
+	n := s.NodeByID()
+	_, _, got, err := s.AllocateTunnel(n["cn2"], n["v2"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 直接问分配器要"没有退役端口"的结果,两者必须一致。
+	want, err := s.allocPort("cn2", "v2", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("新建隧道的端口变了:%d ≠ %d", got, want)
+	}
+}
+
+// 轮换本身也要确定性:同样的输入跑两遍给同一个端口。
+func TestRotationIsDeterministic(t *testing.T) {
+	s := allocSSOT(t)
+	p1, r1, err := s.RotateTunnelPort("cn1", "v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, r2, err := s.RotateTunnelPort("v1", "cn1") // 顺序无关
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p1 != p2 || len(r1) != len(r2) {
+		t.Errorf("跑两遍(且换了参数顺序)结果不同:%d/%v vs %d/%v", p1, r1, p2, r2)
+	}
+}
+
+// 没有那条隧道时要明确报错,而不是分一个端口出来。
+func TestRotateRefusesUnknownTunnel(t *testing.T) {
+	s := allocSSOT(t)
+	if _, _, err := s.RotateTunnelPort("cn1", "cn2"); err == nil {
+		t.Fatal("两个节点之间没有隧道,却轮换成功了")
+	} else if !strings.Contains(err.Error(), "没有隧道") {
+		t.Errorf("报错没说清:%v", err)
+	}
+}

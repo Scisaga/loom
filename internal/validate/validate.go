@@ -174,6 +174,22 @@ func checkTunnels(s *model.SSOT, idx map[string]*model.Node, fs *findings) {
 			continue
 		}
 
+		// **当前端口不能在退役名单里。** 退役的意思就是"这个端口不通,
+		// 别再回去" —— 两者矛盾时,症状是"换了端口还是不通",而人会去查
+		// 网络,查不到原因。这条关系不检查就没有任何东西会发现它。
+		for _, rp := range t.RetiredPorts {
+			if rp == t.ListenPort {
+				fs.add("§6 端口", where,
+					"listen_port %d 同时在 retired_ports 里 —— 退役的端口不该再用回来",
+					rp)
+			}
+			if rp < model.TunnelPortMin || rp > model.TunnelPortMax {
+				fs.add("§6 端口", where,
+					"retired_ports 里的 %d 不在保留段 %d-%d 内",
+					rp, model.TunnelPortMin, model.TunnelPortMax)
+			}
+		}
+
 		// 无序对去重:relay-bj→target-sg 与 target-sg→relay-bj 是同一条边。
 		key := t.From + "\x00" + t.To
 		if t.To < t.From {

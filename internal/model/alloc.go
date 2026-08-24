@@ -69,7 +69,7 @@ func (s *SSOT) AllocateTunnel(a, b *Node) (fromAddr, toAddr string, port int, er
 	if err != nil {
 		return "", "", 0, err
 	}
-	port, err = s.allocPort(a.ID, b.ID)
+	port, err = s.allocPort(a.ID, b.ID, nil)
 	if err != nil {
 		return "", "", 0, err
 	}
@@ -122,29 +122,76 @@ func (s *SSOT) nextPair(octet int) (int, error) {
 	return 0, fmt.Errorf("%s%d.0/24 里没有空闲地址对了", tunnelBase, octet)
 }
 
-// allocPort 在保留段里挑一个端口。
+// allocPort 在保留段里挑一个端口,跳过已用的和已退役的。
 //
 // **刻意不连号。** 连号本身是个特征(见 deploy/README)。所以从节点对的
 // 哈希起步,而不是从上一个端口 +1;撞了就线性向后探,保持确定性。
-func (s *SSOT) allocPort(a, b string) (int, error) {
-	used := map[int]bool{}
+//
+// **退役端口既被跳过,也改变哈希起点。** 只跳不换起点的话,线性探测会挑中
+// 退役端口的紧邻位(61654 → 61655)—— 而如果丢弃是按范围或邻近特征做的,
+// 那等于没换。退役个数进哈希,每轮换一次就得到一个全新的、分布均匀的起点。
+//
+// 没有退役端口时哈希输入与从前完全一致,所以既有分配不会因为这个改动而变。
+func (s *SSOT) allocPort(a, b string, retired []int) (int, error) {
+	blocked := map[int]bool{}
 	for i := range s.Tunnels {
-		used[s.Tunnels[i].ListenPort] = true
+		blocked[s.Tunnels[i].ListenPort] = true
+	}
+	for _, p := range retired {
+		blocked[p] = true
 	}
 	span := TunnelPortMax - TunnelPortMin + 1
 	pair := a + "|" + b
 	if b < a {
 		pair = b + "|" + a // 与顺序无关,免得 A→B 和 B→A 算出两个端口
 	}
+	if len(retired) > 0 {
+		pair = fmt.Sprintf("%s|%d", pair, len(retired))
+	}
 	h := sha256.Sum256([]byte(pair))
 	start := int(binary.BigEndian.Uint32(h[:4]) % uint32(span))
 	for i := 0; i < span; i++ {
 		p := TunnelPortMin + (start+i)%span
-		if !used[p] {
+		if !blocked[p] {
 			return p, nil
 		}
 	}
-	return 0, fmt.Errorf("保留段 %d-%d 里没有空闲端口了", TunnelPortMin, TunnelPortMax)
+	return 0, fmt.Errorf("保留段 %d-%d 里没有空闲端口了(已退役 %d 个)",
+		TunnelPortMin, TunnelPortMax, len(retired))
+}
+
+// RotateTunnelPort 给一条已有隧道换一个端口,并把旧端口记进退役名单。
+//
+// **换端口是修复也是诊断。** 实测过一次:hz01 ↔ ber01 在原端口上被单向
+// 丢包 15.8 小时,配置、IP 可达性、UDP 封锁、包内容全都排除了,换端口
+// 七分钟就通。但"这条流被标记了"和"某处状态坏了"两个假设对换端口的反应
+// 一样 —— 判据是能撑多久,所以每次换都值得记下时间和理由。
+//
+// 它**只算不写**:返回新端口与新的退役名单,由调用方决定怎么落进 SSOT。
+// 与 `AllocateTunnel` 同一个道理 —— SSOT 是人的声明,工具给料,不代笔。
+func (s *SSOT) RotateTunnelPort(a, b string) (port int, retired []int, err error) {
+	t := s.tunnelBetween(a, b)
+	if t == nil {
+		return 0, nil, fmt.Errorf("%s 与 %s 之间没有隧道", a, b)
+	}
+	retired = append(append([]int(nil), t.RetiredPorts...), t.ListenPort)
+	sort.Ints(retired)
+	port, err = s.allocPort(t.From, t.To, retired)
+	if err != nil {
+		return 0, nil, err
+	}
+	return port, retired, nil
+}
+
+// tunnelBetween 找两个节点之间的隧道,与写的顺序无关。
+func (s *SSOT) tunnelBetween(a, b string) *Tunnel {
+	for i := range s.Tunnels {
+		t := &s.Tunnels[i]
+		if (t.From == a && t.To == b) || (t.From == b && t.To == a) {
+			return t
+		}
+	}
+	return nil
 }
 
 func octetOf(cidr string) (int, bool) {

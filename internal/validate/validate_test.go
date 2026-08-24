@@ -16,6 +16,32 @@ func TestRejects(t *testing.T) {
 		yaml string
 	}{
 		{
+			// 退役的意思就是"这个端口不通,别再回去"。两者矛盾时症状是
+			// "换了端口还是不通",而人会去查网络,查不到原因。
+			name: "§6 当前端口在退役名单里",
+			want: "退役的端口不该再用回来",
+			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
+nodes:
+  - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k1}}
+  - {id: b, public_endpoint: 2.2.2.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
+tunnels:
+  - {from: a, to: b, listen_port: 61637, retired_ports: [61637], from_addr: 10.99.0.1/32, to_addr: 10.99.0.2/32}
+`,
+		},
+		{
+			name: "§6 退役端口不在保留段内",
+			want: "不在保留段",
+			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
+nodes:
+  - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k1}}
+  - {id: b, public_endpoint: 2.2.2.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
+tunnels:
+  - {from: a, to: b, listen_port: 61637, retired_ports: [8080], from_addr: 10.99.0.1/32, to_addr: 10.99.0.2/32}
+`,
+		},
+		{
 			name: "§2.2 两端都是 reverse_only",
 			want: "无人接受",
 			yaml: `

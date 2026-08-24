@@ -41,6 +41,8 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
   loom firewall <ssot.yaml>              列出每台机器需要放行的端口
   loom addnode  <ssot.yaml> -id <id> -direction <方向> [-pubkey <公钥>]
                                          加节点:自动分配隧道地址与端口,生成片段与 bootstrap
+  loom rotate-tunnel <ssot.yaml> <节点A> <节点B> -reason <理由>
+                                         给一条隧道换端口,旧端口进退役名单(不再回去)
   loom hydrate  -in <目录> -o <目录> -secrets <文件>
                                          把 ${secret:...} 占位符替换成真实值
 
@@ -127,6 +129,8 @@ func main() {
 		err = cmdRollback(args)
 	case "snapshots":
 		err = cmdSnapshots(args)
+	case "rotate-tunnel":
+		err = cmdRotateTunnel(args)
 	case "secrets":
 		err = cmdSecrets(args)
 	case "publish":
