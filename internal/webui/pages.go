@@ -204,14 +204,11 @@ func pageOverview(d Deps, isAuthed bool) string {
 		fmt.Fprintf(&b, `<div class=card><span class=warn>⚠️ %s</span></div>`, esc(w))
 	}
 
-	if d.Events != nil {
+	if d.Unresolved != nil {
 		// 待处理放最前面。**"没有"也要说出来** —— 一个空白的面板分不出
 		// "一切正常"和"这功能坏了"。
-		var live, pending []EventView
-		for _, e := range d.Events(200) {
-			if !e.Ongoing {
-				continue
-			}
+		var live, pending []UnresolvedView
+		for _, e := range d.Unresolved() {
 			switch e.Level {
 			case "problem":
 				live = append(live, e)
@@ -224,17 +221,17 @@ func pageOverview(d Deps, isAuthed bool) string {
 			b.WriteString(`<div class=card><span class=bad>⚠️ 未解决(` +
 				fmt.Sprint(len(live)) + `)</span><table>`)
 			for _, e := range live {
-				fmt.Fprintf(&b, `<tr><td>%s<td class=w>%s %s<td class=bad>%s<td><b>已 %s</b></tr>`,
-					esc(e.Node), esc(e.Kind), esc(e.Subject), esc(e.To), esc(e.Lasted))
+				fmt.Fprintf(&b, `<tr><td>%s<td class=w>%s %s<td class=bad>%s<td><b>%s</b></tr>`,
+					esc(e.Node), esc(e.Kind), esc(e.Subject), esc(e.State), esc(e.LastedText()))
 			}
 			b.WriteString(`</table></div>`)
 		default:
 			b.WriteString(`<div class=card><span class=ok>✅ 没有未解决的问题</span></div>`)
 		}
 		for _, e := range pending {
-			fmt.Fprintf(&b, `<div class=card><span class=warn>⏳ %s %s %s —— 已 %s</span><br>
+			fmt.Fprintf(&b, `<div class=card><span class=warn>⏳ %s %s %s —— %s</span><br>
 <span class=dim>%s</span></div>`,
-				esc(e.Node), esc(e.Kind), esc(e.Subject), esc(e.Lasted), esc(e.Detail))
+				esc(e.Node), esc(e.Kind), esc(e.Subject), esc(e.LastedText()), esc(e.Detail))
 		}
 	}
 

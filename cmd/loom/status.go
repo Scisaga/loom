@@ -86,7 +86,7 @@ func cmdStatus(args []string) error {
 	fmt.Printf("从 %s 看到的状态\n\n", vantage)
 	// 先说有没有未解决的、多久了。**"没有"也要说出来** —— 一片安静
 	// 分不出"一切正常"和"这功能没在跑"。
-	unresolved := printUnresolved(report.EventsPath, time.Now())
+	unresolved := printUnresolved(report.StatePath, report.EventsPath, time.Now())
 	printLifecycle(s)
 	bad := 0
 	// obs 汇总全网观测:自己量的、拉到的、以及**别人转述的** ——
@@ -177,56 +177,67 @@ func cmdStatus(args []string) error {
 	return nil
 }
 
-// printUnresolved 打出还没恢复的问题,以及各自持续了多久。
+// printUnresolved 打出**现在**还没解决的问题,以及各自持续了多久。
 //
-// **时长是这里唯一真正新增的信息。** "隧道断了"看一眼节点表也知道;
+// **问题清单来自当前状态,时长来自事件历史。** 两个问题各问各的来源 ——
+// 这是这一版与上一版的全部区别,而上一版两个都问事件历史,于是第一个
+// 答错了:事件按定义只有变化,而上报者重启是静默播种的,所以**播种那一刻
+// 已经坏掉的东西永远不会产生事件**,面板也就永远看不见它。
+//
+// **时长仍然是这里最有价值的信息。** "链路断了"看一眼节点表也知道;
 // "断了两天了"只有事件历史能回答 —— 而那正是会让人立刻动手的那个数字。
-// 四台机器的 wg-quick 全 failed 存在了多久,至今不知道,就是因为当时
-// 没有这个。
-func printUnresolved(path string, now time.Time) int {
-	evs, err := events.Load(path)
+// 事件历史里查不到起点时,给出下界并明确标成下界:"至少 9 小时"远比
+// "未知"有用,而假装精确才是说谎。
+func printUnresolved(statePath, eventsPath string, now time.Time) int {
+	st, err := report.LoadTrackedState(statePath)
 	if err != nil {
-		fmt.Printf("  (读不到事件历史:%v)\n\n", err)
+		fmt.Printf("  (读不到当前状态:%v)\n\n", err)
 		return 0
 	}
-	if len(evs) == 0 {
-		// 中控之外的节点没有事件历史,这不是问题,只是这台机器不记。
+	if st == nil {
+		// 中控之外的节点不记这些,这不是问题,只是这台机器不记。
 		return 0
 	}
-	var live, pending []events.Event
-	var lasted []string
-	for i := range evs {
-		// 这里拿不到检测器的内存状态,所以只能用"有没有后续"来判断 ——
-		// 界面上那份会额外跟当前状态核对,更准。
-		d, ongoing := events.Duration(evs, i, now, "")
-		if !ongoing {
-			continue
-		}
-		switch evs[i].Level() {
-		case events.LevelProblem:
-			live = append(live, evs[i])
-			lasted = append(lasted, events.Human(d))
-		case events.LevelPending:
-			pending = append(pending, evs[i])
-			lasted = append(lasted, events.Human(d))
+	evs, err := events.Load(eventsPath)
+	if err != nil {
+		// 事件历史读不到只影响时长,不影响"有什么问题"。
+		fmt.Printf("  (读不到事件历史,时长只能给下界:%v)\n", err)
+	}
+
+	all := report.UnresolvedNow(st, evs, now)
+	var live, pending []report.Unresolved
+	for _, u := range all {
+		if u.Level == string(events.LevelPending) {
+			pending = append(pending, u)
+		} else {
+			live = append(live, u)
 		}
 	}
 	if len(live) == 0 && len(pending) == 0 {
 		fmt.Printf("  ✅ 没有未解决的问题\n\n")
 		return 0
 	}
-	for i, e := range live {
+	for i, u := range live {
 		if i == 0 {
 			fmt.Printf("  ⚠️ 未解决(%d)\n", len(live))
 		}
-		fmt.Printf("     %-7s %-9s %-14s %-14s 已 %s\n",
-			e.Node, e.Kind, e.Subject, e.To, lasted[i])
+		fmt.Printf("     %-7s %-9s %-14s %-14s %s\n",
+			u.Node, u.Kind, u.Subject, u.State, lastedText(u))
 	}
-	for _, e := range pending {
-		fmt.Printf("  ⏳ %s %s %s —— %s\n", e.Node, e.Kind, e.Subject, e.Detail)
+	for _, u := range pending {
+		fmt.Printf("  ⏳ %s %s %s —— %s\n", u.Node, u.Kind, u.Subject, u.Detail)
 	}
 	fmt.Println()
 	return len(live)
+}
+
+// lastedText 把时长写成一句话。**下界必须标出来** —— 把"至少 9 小时"
+// 写成"已 9 小时"就是在假装知道起点,而那正是面板说谎的方式。
+func lastedText(u report.Unresolved) string {
+	if u.AtLeast {
+		return "至少 " + u.Lasted + "(上报者启动时已如此)"
+	}
+	return "已 " + u.Lasted
 }
 
 // printMatrix 打全网观测:谁能到哪个目标、节点之间多快。

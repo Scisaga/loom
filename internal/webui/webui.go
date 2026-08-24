@@ -48,9 +48,33 @@ type Deps struct {
 	// Events 非 nil 时,界面多一页事件历史。只有中控有 —— 事件记在
 	// 中控上,因为那是人会去看的地方。
 	Events func(limit int) []EventView
+	// Unresolved 是"现在有什么问题"。
+	//
+	// **它和 Events 是两个不同的问题,别用前者筛出后者。** 事件按定义只有
+	// 变化,而上报者重启是静默播种的 —— 播种那一刻已经坏掉的东西不会产生
+	// 任何事件。旧版面板从事件里筛,于是对这类问题完全瞎。
+	Unresolved func() []UnresolvedView
 }
 
 // EventView 是一次状态变化在界面上的样子。
+// UnresolvedView 是面板上"现在还没解决"的一行。
+type UnresolvedView struct {
+	Node, Kind, Subject string
+	State, Detail       string
+	Level, Lasted       string
+	// AtLeast 为真时 Lasted 只是下界:这个问题在上报者开始记之前就存在。
+	AtLeast bool
+}
+
+// LastedText 把时长写成一句话。**下界必须标出来** —— 把"至少 9 小时"
+// 写成"已 9 小时"就是在假装知道起点,而那正是面板说谎的方式。
+func (u *UnresolvedView) LastedText() string {
+	if u.AtLeast {
+		return "至少 " + u.Lasted + "(上报者启动时已如此)"
+	}
+	return "已 " + u.Lasted
+}
+
 type EventView struct {
 	TS, Node, Kind, Subject string
 	From, To, Detail        string

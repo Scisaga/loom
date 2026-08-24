@@ -99,6 +99,8 @@ func problemState(kind, state string) bool {
 		return state != "ok"
 	case "reach":
 		return state != "reachable"
+	case "edge":
+		return state != "ok"
 	}
 	return false
 }
