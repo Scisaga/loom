@@ -8,6 +8,9 @@
 *.crt
 *.srl
 measurements.jsonl
-# 真实部署与运维状态只保存在本机
+# 真实部署与运维状态只保存在本机(含真实地址,不进版本库)
+#
+# 只忽略内容,不忽略规矩 —— 这个目录怎么写在 CLAUDE.md 里,那个是提交的。
 /deploy/
 /docs/status.md
+/docs/status/

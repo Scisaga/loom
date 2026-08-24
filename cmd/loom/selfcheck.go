@@ -4,10 +4,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"runtime"
 
 	"loom/internal/agent"
 	"loom/internal/report"
+	"loom/internal/version"
 )
 
 // selfcheck 是二进制自我验证:**这个二进制在这台机器上能不能用**。
@@ -34,7 +34,13 @@ func cmdSelfcheck(args []string) error {
 			fmt.Printf(f+"\n", a...)
 		}
 	}
-	say("loom %s · %s/%s · %s", buildTag, runtime.GOOS, runtime.GOARCH, runtime.Version())
+	vc := version.Self()
+	say("%s", vc.Line())
+	// 认不出 commit、或者构建自脏工作区,都要在升级前的这一步就说出来 ——
+	// 装上去之后再想追溯"这台跑的是哪一版"就晚了。
+	for _, w := range vc.Warnings() {
+		say("  ⚠️ %s", w)
+	}
 
 	checked := 0
 	for _, c := range []struct {

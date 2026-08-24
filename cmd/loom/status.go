@@ -13,6 +13,7 @@ import (
 	"loom/internal/model"
 	"loom/internal/render"
 	"loom/internal/report"
+	"loom/internal/version"
 )
 
 // status 是上报者的人看入口:从某个节点出发,把够得到的节点全拉一遍。
@@ -93,6 +94,9 @@ func cmdStatus(args []string) error {
 	// 转述让够不到的节点也进得来(§16.1.2)。
 	obs := map[string]report.Observation{}
 	snap := map[string]string{}
+	// vcs 只装**直接问到的**节点。转述里没有版本坐标 —— 转述的是观测,
+	// 不是身份。谁没问到下面会明说,不靠这张表的沉默去暗示。
+	vcs := map[string]*version.Coordinate{}
 	keep := func(o *report.Observation) {
 		if o == nil || o.Node == "" {
 			return
@@ -126,6 +130,9 @@ func cmdStatus(args []string) error {
 			bad++
 		}
 		snap[id] = st.Applied
+		if st.Version != nil {
+			vcs[id] = st.Version
+		}
 		fmt.Printf("  %-7s %s %s\n", id, mark, tunnelLine(st))
 		for _, l := range problemLines(st) {
 			fmt.Printf("          %s\n", l)
@@ -152,6 +159,10 @@ func cmdStatus(args []string) error {
 			fmt.Printf("\n  快照 %s(全网一致)\n", short(k))
 		}
 	}
+
+	// 快照一致不等于版本一致。**旧二进制配新配置正是发布器崩掉的那类
+	// 故障**(§15.4),而它在只看快照的表上完全看不出来。
+	bad += printVersionSpread(vcs, ids)
 
 	printMatrix(obs, s)
 
@@ -487,4 +498,73 @@ func snapshotSpread(obs map[string]report.Observation, direct map[string]string)
 		vers[v] = append(vers[v], id)
 	}
 	return vers
+}
+
+// printVersionSpread 报告全网跑的是不是同一版二进制,返回要计入 bad 的条数。
+//
+// 它和 snapshotSpread 是一对,但**不能合并**:快照说配置是哪一版,版本说
+// 读这份配置的程序是哪一版。二者错配(旧程序 + 新配置)是已经发生过两次
+// 的故障 —— services 字段一次,retired_ports 字段一次 —— 而只看快照的表
+// 对这类故障完全是盲的。
+//
+// missing 单独列出来,因为**问不到与"一致"必须分得开**:如果把没答上的
+// 节点当成沉默的同意,一台跑着老二进制却够不到的机器会以为它没问题。
+func printVersionSpread(vcs map[string]*version.Coordinate, ids []string) int {
+	if len(vcs) == 0 {
+		return 0
+	}
+	byCommit := map[string][]string{}
+	var dirty, unknown []string
+	for id, c := range vcs {
+		k := c.Commit
+		if k == "" {
+			k = "(认不出 commit)"
+			unknown = append(unknown, id)
+		}
+		byCommit[k] = append(byCommit[k], id)
+		if c.Dirty {
+			dirty = append(dirty, id)
+		}
+	}
+
+	bad := 0
+	keys := make([]string, 0, len(byCommit))
+	for k := range byCommit {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	if len(keys) > 1 {
+		fmt.Printf("\n  ⚠️ 全网不是同一个 commit:\n")
+		for _, k := range keys {
+			sort.Strings(byCommit[k])
+			fmt.Printf("      %-14s %s\n", version.Short(k), strings.Join(byCommit[k], " "))
+		}
+		bad++
+	} else {
+		fmt.Printf("\n  commit %s(问到的都一致)\n", version.Short(keys[0]))
+	}
+
+	if len(dirty) > 0 {
+		sort.Strings(dirty)
+		fmt.Printf("  ⚠️ 构建自脏工作区,对不上任何 commit:%s\n", strings.Join(dirty, " "))
+		bad++
+	}
+	if len(unknown) > 0 {
+		sort.Strings(unknown)
+		fmt.Printf("  ⚠️ 认不出自己 commit 的节点:%s —— 追溯不回 git\n", strings.Join(unknown, " "))
+	}
+
+	var missing []string
+	for _, id := range ids {
+		if _, ok := vcs[id]; !ok {
+			missing = append(missing, id)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		fmt.Printf("  (没问到版本的:%s —— 拉不到,或者它跑的上报者还不带版本坐标)\n",
+			strings.Join(slices.Compact(missing), " "))
+	}
+	return bad
 }

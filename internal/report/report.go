@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"loom/internal/version"
 )
 
 // Status 是一次自检的全部结果。字段顺序即 JSON 顺序 —— 人要直接读它。
@@ -33,6 +35,14 @@ type Status struct {
 	// 有它才能一眼看出全网是不是同一版。没有的话,"某台机器落后了一个版本"
 	// 这件事只能靠逐台 ssh 去查 —— 而落后的那台往往正是出问题的那台。
 	Applied string `json:"applied,omitempty"`
+
+	// Version 是这台机器上二进制的坐标(commit + 二进制哈希)。
+	//
+	// 有它,"远端跑的是哪一版源码"才答得上来 —— 以前只能报一串二进制
+	// 哈希,而哈希对不回 git。它和 Applied 是一对:Applied 说配置是哪
+	// 一版,Version 说读这份配置的程序是哪一版。**两者错配正是发布器
+	// 崩掉的那类故障**(旧二进制读不懂新字段,§15.4)。
+	Version *version.Coordinate `json:"version,omitempty"`
 
 	Tunnels []Tunnel `json:"tunnels"`
 	Drift   *Drift   `json:"drift,omitempty"`
@@ -108,6 +118,8 @@ func (s *Status) OK() bool {
 // Collect 采集一次状态。now 由调用方注入,便于测试。
 func Collect(cfg *Config, now time.Time) *Status {
 	st := &Status{Node: cfg.Node, TS: now.UTC().Format(time.RFC3339)}
+	vc := version.Self()
+	st.Version = &vc
 	if b, err := os.ReadFile(appliedPath); err == nil {
 		st.Applied = strings.TrimSpace(string(b))
 	}

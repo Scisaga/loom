@@ -3,8 +3,17 @@
 Loom 是一个基于加密隧道的链路与服务调度基础设施。**设计的唯一事实来源是
 [docs/design.md](docs/design.md)** —— 动手前先读它,尤其是六条不变量和 §20 的依赖拓扑。
 
-当前实现进度与已知缺口见 [docs/status.md](docs/status.md);
+当前实现进度与已知缺口见 **[docs/status/current.md](docs/status/current.md)**;
 已定的决定与未决问题见 [docs/decisions.md](docs/decisions.md)。
+
+`docs/status/` 含真实地址,**不进版本库**,但它的写法规矩在这里,这条进:
+
+- **`current.md` 是"现在是什么样"的唯一出处。有变化就改它,不要往下追加。**
+  它必须短到能整个读完 —— 读不完的当前状态等于没有当前状态。
+- **`history/` 是归档,一件事一个文件,写完不再改。** 想知道现在怎么样,
+  别从历史往回推。
+- 上一版把两者混成一份 1361 行的追加文档,后果是每次都要从流水账里现推
+  当前状态,推出来还互相矛盾。这个分法就是为了堵住那个。
 
 ## 构建与测试
 
@@ -50,11 +59,12 @@ go run ./cmd/loom verify   /tmp/out -pubkey /tmp/keys/platform-signing.pub
 | `internal/report/` | **上报者**:每个节点都跑。隧道健康、配置自检、按段测量与转述。不做任何决定 |
 | `internal/deploy/` | 安装计划与远端脚本:暂存 → 预检 → 就位 → 验证,失败回滚 |
 | `internal/publish/` | 中控侧:校验 → 渲染 → 签名 → 推到分发点;发布器守护进程 |
+| `internal/version/` | 版本坐标:commit(Go 的 VCS 戳自动带入)+ 二进制 sha256 |
 | `internal/netx/` | 不依赖机器全局设置的 HTTP 客户端(不读 HTTP_PROXY、自带 DNS) |
 | `internal/events/` | 状态变化历史。**只记变化,不记状态** —— 记在中控一处 |
 | `internal/webui/` | 节点上的操作界面:读在每台机器上,写只在中控 |
 | `internal/secret/` | 秘密层:占位符解析与替换、两步轮换。**合并发生在节点上**,分发树里只有占位符 |
-| `cmd/loom/` | CLI:`validate` / `render` / `diff` / `snapshot` / `verify` / `keygen` / `firewall` / `hydrate` / `probe` / `agent` / `report` / `selfcheck` / `status` / `apply` / `publish` / `publisher` / `pull` / `secrets` / `backup` / `restore` / `addnode` / `pin` / `rollback` / `snapshots` / `rotate-tunnel` |
+| `cmd/loom/` | CLI:`validate` / `render` / `diff` / `snapshot` / `verify` / `keygen` / `firewall` / `hydrate` / `probe` / `agent` / `report` / `selfcheck` / `status` / `apply` / `publish` / `publisher` / `pull` / `secrets` / `backup` / `restore` / `addnode` / `pin` / `rollback` / `snapshots` / `rotate-tunnel` / `version` |
 | `testdata/matrix/` | 参考 SSOT(4 国内云机 + 2 境外 VPS)与 golden |
 
 ## 模型:三个词就够了
