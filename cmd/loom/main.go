@@ -54,6 +54,7 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
   loom pin      -clear                     解除钉住
   loom rollback <快照 id> -reason <理由>    整份退回历史快照:源头与二进制一起
   loom rollback                            现在处在不处在回滚状态
+  loom snapshots                           发过哪些快照,以及还能退回哪些
   loom publisher -ssot <文件> -key <私钥> -target <目标>
                                          中控守护进程:盯 SSOT,变了就发布
   loom publish  <ssot.yaml> -o <目标> -key <私钥>
@@ -124,6 +125,8 @@ func main() {
 		err = cmdPin(args)
 	case "rollback":
 		err = cmdRollback(args)
+	case "snapshots":
+		err = cmdSnapshots(args)
 	case "secrets":
 		err = cmdSecrets(args)
 	case "publish":

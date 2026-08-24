@@ -63,12 +63,14 @@ func cmdPublish(args []string) error {
 	}
 
 	bins := map[string][]byte{}
+	binSum := ""
 	if *binary != "" {
 		b, err := os.ReadFile(*binary)
 		if err != nil {
 			return err
 		}
 		bins[runtime.GOOS+"/"+runtime.GOARCH] = b
+		binSum = hexOf(b)
 	}
 	t, err := publish.Build(body, ed25519.PrivateKey(privBytes), publish.Meta{
 		CreatedAt: time.Now().UTC().Format(time.RFC3339), Author: *author, Binaries: bins,
@@ -86,10 +88,17 @@ func cmdPublish(args []string) error {
 
 	// 存档在发布之后,存的是"确实发出去过的那一版"。手工发布也要存 ——
 	// 漏了的话这一版将来回滚不了,而症状要到需要回滚时才出现。
-	if sum, aerr := publish.ArchiveSSOT(*archive, body); aerr != nil {
+	sum, aerr := publish.ArchiveSSOT(*archive, body)
+	if aerr != nil {
 		fmt.Printf("\n⚠️ 源头存档失败:%v\n   这个快照将来回滚不了。\n", aerr)
 	} else if sum != "" {
 		fmt.Printf("  源头已存档 → %s\n", publish.ArchivePath(*archive, sum))
+	}
+	if _, herr := publish.AppendPublished(*archive, publish.Published{
+		At: time.Now().UTC().Format(time.RFC3339), Snapshot: t.Snapshot,
+		SSOTSum: sum, Binary: binSum, Author: *author,
+	}); herr != nil {
+		fmt.Printf("⚠️ 记发布历史失败:%v —— `loom snapshots` 会少这一条\n", herr)
 	}
 
 	if *verify != "" {

@@ -153,8 +153,19 @@ func Run(ctx context.Context, opts Options) error {
 				if err == nil {
 					// 存档在发布**之后** —— 存的是"确实发出去过的那一版",
 					// 而不是"试过但没发成的那一版"。回滚只该退到前者。
-					if _, aerr := ArchiveSSOT(opts.ArchiveDir, body); aerr != nil {
+					sum, aerr := ArchiveSSOT(opts.ArchiveDir, body)
+					if aerr != nil {
 						logf("⚠️ 源头存档失败:%v —— 快照 %s 将来回滚不了", aerr, short(id))
+					}
+					// 记进发布历史。只在快照 id 变了时才写一行 ——
+					// 收敛每 30 秒确认一次同一个快照,逐轮记就是一天 2880 行。
+					if wrote, herr := AppendPublished(opts.ArchiveDir, Published{
+						At: opts.Now().Format(time.RFC3339), Snapshot: id,
+						SSOTSum: sum, Binary: binSum, Author: opts.Author,
+					}); herr != nil {
+						logf("⚠️ 记发布历史失败:%v —— `loom snapshots` 会少这一条", herr)
+					} else if wrote {
+						logf("  已记进发布历史(%s)", HistoryPath(opts.ArchiveDir))
 					}
 					// 钉住的是快照 X 的二进制,而源头已经算出别的快照 ——
 					// 发出去的就是"X 的二进制 + 当前源头的配置",正是
