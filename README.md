@@ -118,10 +118,10 @@ go build -o out/loom ./cmd/loom
 
 | 阶段 | 命令 | 作用 |
 |---|---|---|
-| 建模 | `validate`, `firewall`, `addnode` | 校验 SSOT、计算防火墙规则、分配新节点地址与端口 |
+| 建模 | `validate`, `firewall`, `addnode`, `rotate-tunnel` | 校验 SSOT、计算防火墙规则、分配新节点地址与端口、给隧道换端口 |
 | 渲染 | `render`, `diff`, `hydrate` | 生成配置、查看差异、在节点本地填充秘密 |
 | 发布 | `snapshot`, `verify`, `publish`, `publisher` | 创建验签快照并发布到静态分发点 |
-| 收敛 | `pull`, `apply`, `selfcheck`, `pin` | 拉取或推送配置、安装验证、钉住二进制版本 |
+| 收敛 | `pull`, `apply`, `selfcheck`, `pin`, `rollback`, `snapshots` | 拉取或推送配置、安装验证、钉住二进制、整份退回历史快照、列出还能退到哪 |
 | 调度 | `probe`, `agent` | 探测候选并带阻尼地切换 selector |
 | 观测 | `report`, `status` | 上报节点健康、配置漂移与全网快照分布 |
 | 凭据 | `secrets`, `backup`, `restore` | 按节点拆分、两步轮换和备份秘密层 |
