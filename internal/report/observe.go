@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+
+	"loom/internal/netx"
 	"os"
 	"sort"
 	"strings"
@@ -167,7 +169,7 @@ func observe(cfg *Config, h *history, now time.Time) *Observation {
 	}
 	sort.Strings(targets)
 	for _, t := range targets {
-		ms, err := reachTarget(t, 8*time.Second)
+		ms, err := reachTarget(t, firstDNS(cfg.DNS), 8*time.Second)
 		med, samples, fails, lastErr := h.add("target/"+t, ms, err)
 		r := Reach{Target: t, FirstByteMs: med, Samples: samples, Failures: fails, Uplink: uplink[t]}
 		if fails == samples {
@@ -198,14 +200,16 @@ func tcpRTT(addr string, timeout time.Duration) (int, error) {
 //
 // 不走任何代理:这里要量的就是"这台机器自己出去行不行"。节点上如果设了
 // HTTP_PROXY,默认 Transport 会把请求交给它,量到的就成了那个代理的能力。
-func reachTarget(url string, timeout time.Duration) (int, error) {
-	c := &http.Client{
-		Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true,
-			TLSHandshakeTimeout: timeout},
-		Timeout: timeout,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+func reachTarget(url, dns string, timeout time.Duration) (int, error) {
+	// **走 netx,不用系统解析器。** 这个函数量的是"这台机器够不够得到
+	// 那个地址",而系统解析器坏掉时它会报"够不到" —— 长得像出网故障,
+	// 实际只是解析故障,真实流量(sing-box 自带 DNS)一直好着。
+	//
+	// 实测:jm24 的 systemd-resolved 上游是 8.8.8.8(大陆被污染),
+	// 上报者报 baidu 不可达,而换 223.5.5.5 解析后直连是 200/59ms。
+	c := netx.Client(dns, timeout)
+	c.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
 	}
 	start := time.Now()
 	resp, err := c.Get(url)
@@ -227,4 +231,13 @@ func contains(xs []string, x string) bool {
 		}
 	}
 	return false
+}
+
+// firstDNS 取第一个解析器。netx 只收一个 —— 备用解析器的价值在这里很小,
+// 而"用哪个解析器测的"含糊掉之后,一个不一致的结果就无从解释了。
+func firstDNS(dns []string) string {
+	if len(dns) == 0 {
+		return ""
+	}
+	return dns[0]
 }

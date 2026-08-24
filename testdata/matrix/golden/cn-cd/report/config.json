@@ -22,6 +22,10 @@
   "targets": [
     "https://api.ipify.org"
   ],
+  "dns": [
+    "223.5.5.5",
+    "119.29.29.29"
+  ],
   "gossip_period": "1m",
   "observation_stale": "10m",
   "manifest": "/etc/loom/report/manifest.json",

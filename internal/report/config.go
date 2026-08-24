@@ -45,6 +45,17 @@ type Config struct {
 	// 要么对真正的直连故障装瞎 —— 实测两个都踩过。
 	UplinkTargets []string `json:"uplink_targets,omitempty"`
 
+	// DNS 是本节点解析探测目标用的服务器,来自 SSOT 里这个节点的 dns。
+	//
+	// **必须显式配,不能用系统解析器。** 与 model.Node.DNS 同一个理由:
+	// 大陆机器的系统解析器可能指向被污染的上游。实测踩过 —— jm24 的
+	// systemd-resolved 上游是 8.8.8.8,于是上报者报"够不到 baidu",
+	// 而同一台机器换 223.5.5.5 解析后直连是 200/59ms。
+	//
+	// 症状特别误导:它长得像"这台机器出网坏了",而实际只是解析坏了,
+	// 真实流量(sing-box 自己配了 DNS)一直好着。
+	DNS []string `json:"dns,omitempty"`
+
 	// GossipPeriod 是量一轮并与邻居交换的间隔。
 	GossipPeriod string `json:"gossip_period,omitempty"`
 

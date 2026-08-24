@@ -106,6 +106,7 @@ func renderReport(s *model.SSOT, n *model.Node) ([]File, []Skip) {
 		// 事实会在每条经过它的链上各被发现一次。
 		Targets:       probeTargets(s),
 		UplinkTargets: append([]string(nil), n.ProbeTargets...),
+		DNS:           append([]string(nil), s.DNSFor(n)...),
 		GossipPeriod:  "1m",
 		// 观测过期得比调参周期(最短 5m)快一点,免得 Agent 拿着上一轮的
 		// 结论做这一轮的决定。

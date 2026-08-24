@@ -95,3 +95,40 @@ func TestLoadRequiresNode(t *testing.T) {
 		t.Errorf("缺 node 时的报错不对:%v", err)
 	}
 }
+
+// **可达性检查必须走自带 DNS,不能用系统解析器。**
+//
+// 这是上线之后当场踩到的:jm24 的 systemd-resolved 上游是 8.8.8.8(大陆
+// 被污染),于是上报者报"够不到 baidu",而同一台机器换 223.5.5.5 解析后
+// 直连是 200/59ms。
+//
+// 症状特别误导 —— 它长得像"这台机器出网坏了",而真实流量一直好着
+// (sing-box 自己配了 DNS)。`internal/netx` 存在的全部理由就是不依赖
+// 机器全局设置,而量可达性的这个函数偏偏没用它。
+func TestReachTargetUsesConfiguredDNS(t *testing.T) {
+	// 给一个只有本机才解析得出的名字,配一个不存在的解析器:
+	// 走系统解析器可能歪打正着,走配置的解析器必然失败。
+	_, err := reachTarget("https://nx.invalid.example/", "203.0.113.253:53", 2*time.Second)
+	if err == nil {
+		t.Fatal("配了一个不可用的解析器,却仍然解析成功了 —— 说明没走配置的 DNS")
+	}
+}
+
+// 没配解析器时退回系统的 —— 不是每个节点都必须配,而空字符串不该让
+// netx 崩掉。
+func TestReachTargetToleratesEmptyDNS(t *testing.T) {
+	if _, err := reachTarget("https://nx.invalid.example/", "", 2*time.Second); err == nil {
+		t.Error("不存在的名字竟然解析成功了")
+	}
+}
+
+// 只取第一个解析器:netx 只收一个,而"用哪个解析器测的"含糊掉之后,
+// 一个不一致的结果就无从解释。
+func TestFirstDNS(t *testing.T) {
+	if got := firstDNS([]string{"223.5.5.5", "119.29.29.29"}); got != "223.5.5.5" {
+		t.Errorf("取了 %q", got)
+	}
+	if got := firstDNS(nil); got != "" {
+		t.Errorf("空列表该返回空,得到 %q", got)
+	}
+}
