@@ -92,6 +92,22 @@ type Node struct {
 	// 223.5.5.5 又绕远。
 	DNS []string `yaml:"dns,omitempty"`
 
+	// ProbeTargets 是这台机器**本该**够得到的地址,上报者拿它自检直连出网。
+	//
+	// **它和声明里的 `probe_url` 是两件事,不要合并。** 两者都由上报者测,
+	// 但回答的问题相反:
+	//
+	//	probe_url      "这台机器够不够得到那个目标" —— 给 Agent 剪枝用的**数据**
+	//	probe_targets  "这台机器的直连还好吗"       —— 给人看的**健康**
+	//
+	// 混在一起的后果实测过:国内机器够不到 Cloudflare 目标是结构性的正常
+	// 状态,却被当成未解决问题在面板上挂了 14 小时;而与此同时,国内机器
+	// **没有任何一个够得到的目标**,所以它的直连真断了反而看不出来 ——
+	// 两件事恰好反着。
+	//
+	// 为空则不做直连自检。选目标要按机器所在地选,与 DNS 同一个道理。
+	ProbeTargets []string `yaml:"probe_targets,omitempty"`
+
 	Server *ServerRole `yaml:"server,omitempty"`
 	Access *AccessRole `yaml:"access,omitempty"`
 }

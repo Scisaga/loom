@@ -70,6 +70,11 @@ func (e *Event) Level() Level {
 	switch e.Kind {
 	case "snapshot", "route":
 		return LevelInfo
+	case "target":
+		// **target 是数据,不是告警。** 它回答"这台机器够不够得到那个目标",
+		// 而 Agent 拿它剪枝 —— 国内机器够不到 Cloudflare 正是要的答案,
+		// 不是故障。需要人管的那种够不到走 uplink(见 model.Node.ProbeTargets)。
+		return LevelInfo
 	case "rotation":
 		return LevelPending
 	}
@@ -95,7 +100,8 @@ func problemState(kind, state string) bool {
 		return state != "active"
 	case "drift":
 		return state != "clean"
-	case "target":
+	case "uplink":
+		// "这台机器本该够得到却够不到" —— 直连坏了,需要人管。
 		return state != "ok"
 	case "reach":
 		return state != "reachable"

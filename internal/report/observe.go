@@ -62,6 +62,13 @@ type Reach struct {
 	// Error 是最近一次失败的原因。**只有全部失败时才该据此判定不可达** ——
 	// 一次抖动不该让一个出口被剪掉 15 分钟。
 	Error string `json:"error,omitempty"`
+
+	// Uplink 表示这是"这台机器本该够得到"的地址。
+	//
+	// **它决定失败算数据还是算问题。** 不带这个标记的失败是喂 Agent 剪枝
+	// 的有用数据(国内机器够不到 Cloudflare 是结构性的正常状态);带这个
+	// 标记的失败是这台机器的直连坏了,需要人管。
+	Uplink bool `json:"uplink,omitempty"`
 }
 
 // OK 报告这个目标可达。
@@ -148,12 +155,21 @@ func observe(cfg *Config, h *history, now time.Time) *Observation {
 		o.Edges = append(o.Edges, e)
 	}
 
+	// 两类目标测法完全一样,只是失败的含义不同 —— 所以只多一个标记,
+	// 不多一条链路上的列表(转述的线格式越简单越好)。
+	uplink := map[string]bool{}
 	targets := append([]string(nil), cfg.Targets...)
+	for _, t := range cfg.UplinkTargets {
+		uplink[t] = true
+		if !contains(targets, t) {
+			targets = append(targets, t)
+		}
+	}
 	sort.Strings(targets)
 	for _, t := range targets {
 		ms, err := reachTarget(t, 8*time.Second)
 		med, samples, fails, lastErr := h.add("target/"+t, ms, err)
-		r := Reach{Target: t, FirstByteMs: med, Samples: samples, Failures: fails}
+		r := Reach{Target: t, FirstByteMs: med, Samples: samples, Failures: fails, Uplink: uplink[t]}
 		if fails == samples {
 			r.Error = lastErr
 			r.FirstByteMs = 0
@@ -202,4 +218,13 @@ func reachTarget(url string, timeout time.Duration) (int, error) {
 		return 0, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	return ms, nil
+}
+
+func contains(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }

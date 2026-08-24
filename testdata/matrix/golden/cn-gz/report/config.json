@@ -22,6 +22,9 @@
   "targets": [
     "https://api.ipify.org"
   ],
+  "uplink_targets": [
+    "https://www.example.net/"
+  ],
   "gossip_period": "1m",
   "observation_stale": "10m",
   "manifest": "/etc/loom/report/manifest.json",

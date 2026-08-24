@@ -320,3 +320,56 @@ func TestChangedWhileDownIsNotBackdated(t *testing.T) {
 		t.Errorf("不该把停机那 10 小时算进去 —— 它可能一直是好的:%q", got[0].Lasted)
 	}
 }
+
+// **同一个测量,两种含义 —— 分级必须跟着含义走。**
+//
+// 声明里的 probe_url 由上报者测,结果喂 Agent 剪枝:"gz02 够不到 Cloudflare"
+// 正是要的答案,它把 15 条候选砍到 6 条。把它当成待处理问题的后果实测过 ——
+// 在面板上挂了 14 小时,而与此同时国内机器**没有任何一个够得到的目标**,
+// 所以它的直连真断了反而看不出来。两件事恰好反着。
+func TestTargetIsDataAndUplinkIsAlarm(t *testing.T) {
+	d := newTestDetector(t)
+	now := time.Date(2026, 8, 24, 14, 0, 0, 0, time.UTC)
+	view := func(targetErr, uplinkErr string) webui.View {
+		return webui.View{Nodes: []webui.NodeView{{ID: "gz02", Targets: []webui.TargetView{
+			{Target: "https://api.ipify.org", Err: targetErr},
+			{Target: "https://www.baidu.com", Err: uplinkErr, Uplink: true},
+		}}}}
+	}
+
+	// 结构性够不到的那个:是数据,不是告警。
+	d.observe(view("", ""), now)
+	evs, err := d.observe(view("i/o timeout", ""), now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 {
+		t.Fatalf("期望 1 条事件:%v", evs)
+	}
+	if evs[0].Kind != "target" {
+		t.Errorf("没打上 target 类:%+v", evs[0])
+	}
+	if evs[0].Bad() {
+		t.Error("声明目标够不到被当成了故障 —— 那是喂剪枝的数据")
+	}
+	if got := UnresolvedNow(d.trackedState(now.Add(time.Minute)), nil, now.Add(time.Minute)); len(got) != 0 {
+		t.Errorf("它不该上未解决面板:%v", got)
+	}
+
+	// 本该够得到却够不到:这才是要人管的。
+	evs, err = d.observe(view("i/o timeout", "connection refused"), now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 || evs[0].Kind != "uplink" {
+		t.Fatalf("期望一条 uplink 事件:%v", evs)
+	}
+	if !evs[0].Bad() {
+		t.Error("直连坏了却不是 problem 级 —— 上不了面板")
+	}
+	at := now.Add(2 * time.Minute)
+	got := UnresolvedNow(d.trackedState(at), evs, at)
+	if len(got) != 1 || got[0].Kind != "uplink" {
+		t.Fatalf("直连故障没上面板:%v", got)
+	}
+}

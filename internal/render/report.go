@@ -104,8 +104,9 @@ func renderReport(s *model.SSOT, n *model.Node) ([]File, []Skip) {
 		// 每台机器都试一遍全部目标地址。"某台服务器到不了某个目标"是关于
 		// 那台机器的事实,量一次全网复用 —— 按整条路线去测的话,同一个
 		// 事实会在每条经过它的链上各被发现一次。
-		Targets:      probeTargets(s),
-		GossipPeriod: "1m",
+		Targets:       probeTargets(s),
+		UplinkTargets: append([]string(nil), n.ProbeTargets...),
+		GossipPeriod:  "1m",
 		// 观测过期得比调参周期(最短 5m)快一点,免得 Agent 拿着上一轮的
 		// 结论做这一轮的决定。
 		ObservationStale: "10m",

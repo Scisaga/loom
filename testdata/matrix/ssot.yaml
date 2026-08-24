@@ -43,6 +43,7 @@ nodes:
       wg_public_key: Y24tc2gtdGVzdC1rZXkAAAAAAAAAAAAAAAAAAAAAAAA=
 
   - id: cn-gz
+    probe_targets: [https://www.example.net/]
     city: 广州
     public_endpoint: 203.0.113.12
     server:
@@ -73,6 +74,7 @@ nodes:
       wg_public_key: c2ctdnBzLXRlc3Qta2V5AAAAAAAAAAAAAAAAAAAAAAA=
 
   - id: jp-vps
+    probe_targets: [https://target.example.org/]
     city: 东京
     public_endpoint: 198.51.100.21
     server:

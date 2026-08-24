@@ -131,7 +131,15 @@ func (d *detector) observe(v webui.View, now time.Time) ([]events.Event, error) 
 			if r.Err != "" {
 				state = "unreachable"
 			}
-			add(n.ID, "target", r.Target, state, r.Err)
+			// **同一个测量,两种含义。** 不带 uplink 标记的失败是喂 Agent
+			// 剪枝的数据 —— 国内机器够不到 Cloudflare 目标是结构性的正常
+			// 状态,把它当成待处理问题,实测在面板上挂了 14 小时。
+			// 带标记的才是"这台机器本该够得到却够不到",需要人管。
+			kind := "target"
+			if r.Uplink {
+				kind = "uplink"
+			}
+			add(n.ID, kind, r.Target, state, r.Err)
 		}
 
 		// 节点之间的链路。

@@ -86,6 +86,15 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 				"既没有 server 块也没有 access 块 —— 这个节点不承担任何角色")
 		}
 
+		// 直连自检目标要能被当成 URL 用 —— 写成裸主机名的话,上报者每轮
+		// 都会失败一次,而症状是"这台机器直连坏了",跟真实原因毫不相干。
+		for _, t := range n.ProbeTargets {
+			if !strings.HasPrefix(t, "http://") && !strings.HasPrefix(t, "https://") {
+				fs.add("§16.1 自检", where,
+					"probe_targets 要写成完整 URL(http:// 或 https://),收到 %q", t)
+			}
+		}
+
 		isServer := n.IsServer()
 		if isServer && !n.Server.Direction.Valid() {
 			fs.add("§2.1 direction", where, "direction 缺失或非法:%q", n.Server.Direction)

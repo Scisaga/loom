@@ -40,7 +40,8 @@ func nodeView(id string, self, reached bool, st *Status, o *Observation, now tim
 			n.Edges = append(n.Edges, webui.EdgeView{To: e.To, MS: e.RTTMs, Err: e.Error})
 		}
 		for _, r := range o.Targets {
-			n.Targets = append(n.Targets, webui.TargetView{Target: r.Target, MS: r.FirstByteMs, Err: r.Error})
+			n.Targets = append(n.Targets, webui.TargetView{
+				Target: r.Target, MS: r.FirstByteMs, Err: r.Error, Uplink: r.Uplink})
 		}
 	}
 	if st == nil {

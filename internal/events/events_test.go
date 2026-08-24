@@ -74,8 +74,10 @@ func TestBadAndRecovered(t *testing.T) {
 		{"tunnel", "active", "down", true, false},
 		{"tunnel", "down", "active", false, true},
 		{"drift", "clean", "2 处", true, false},
-		{"target", "ok", "unreachable", true, false},
-		{"target", "unreachable", "ok", false, true},
+		{"uplink", "ok", "unreachable", true, false},
+		{"uplink", "unreachable", "ok", false, true},
+		{"edge", "ok", "unreachable", true, false},
+		{"edge", "unreachable", "ok", false, true},
 		{"tunnel", "active", "active", false, false}, // 不该出现,但也不该被当成事故
 	}
 	for _, c := range cases {
@@ -83,6 +85,28 @@ func TestBadAndRecovered(t *testing.T) {
 		if e.Bad() != c.bad || e.Recovered() != c.rec {
 			t.Errorf("%s %s → %s:bad=%v rec=%v,期望 %v/%v",
 				c.kind, c.from, c.to, e.Bad(), e.Recovered(), c.bad, c.rec)
+		}
+	}
+}
+
+// **target 是数据,不是告警。**
+//
+// 它回答"这台机器够不够得到那个目标",而 Agent 拿它剪枝 —— "gz02 够不到
+// Cloudflare"正是要的答案(15 条候选砍到 6 条),不是故障。
+//
+// 当成故障的后果实测过:在未解决面板上挂了 14 小时,而与此同时国内机器
+// **没有任何一个够得到的目标**,所以它的直连真断了反而看不出来。两件事
+// 恰好反着。需要人管的那种够不到走 uplink(model.Node.ProbeTargets)。
+func TestTargetIsDataNotAlarm(t *testing.T) {
+	for _, e := range []Event{
+		{Kind: "target", Subject: "https://api.ipify.org", From: "ok", To: "unreachable"},
+		{Kind: "target", Subject: "https://api.ipify.org", From: "unreachable", To: "ok"},
+	} {
+		if e.Bad() {
+			t.Errorf("%s %s → %s 被当成了故障", e.Kind, e.From, e.To)
+		}
+		if e.Level() != LevelInfo {
+			t.Errorf("%s 的级别是 %s,期望 info", e.Kind, e.Level())
 		}
 	}
 }

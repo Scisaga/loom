@@ -142,6 +142,8 @@ type TargetView struct {
 	Target string
 	MS     int
 	Err    string
+	// Uplink 表示这是"这台机器本该够得到"的地址 —— 它够不到才算问题。
+	Uplink bool
 }
 
 type EdgeView struct {

@@ -37,6 +37,14 @@ type Config struct {
 	// 同一个事实会在 6 条不同的链上各被发现一次,换个接入设备再来一轮。
 	Targets []string `json:"targets,omitempty"`
 
+	// UplinkTargets 是本节点**本该**够得到的地址,用来自检直连出网。
+	//
+	// **和 Targets 分开,因为它们的失败含义相反。** Targets 里的失败是
+	// 有用的数据(喂 Agent 剪枝),UplinkTargets 里的失败是需要人管的问题。
+	// 合成一个列表的话,面板只能二选一:要么对结构性的"够不到"刷屏,
+	// 要么对真正的直连故障装瞎 —— 实测两个都踩过。
+	UplinkTargets []string `json:"uplink_targets,omitempty"`
+
 	// GossipPeriod 是量一轮并与邻居交换的间隔。
 	GossipPeriod string `json:"gossip_period,omitempty"`
 
