@@ -17,9 +17,11 @@ import (
 	"strings"
 )
 
-// backup 打包那些**丢了就得全网重来**的东西:秘密层与内部 CA。
+// backup 打包那些**丢了就得全网重来**的东西:秘密层、内部 CA、源头存档。
 //
 // 渲染产物不备份 —— 它们能从 SSOT 再生成一份,字节完全一样(§12 纯函数)。
+// **但 SSOT 自己要备份。** 那句"能从 SSOT 再生成"一度默认了 SSOT 一直在,
+// 而它恰恰是唯一不可再生的输入(D61)。
 // 备份只针对不可再生的:凭据是随机生成的,CA 私钥签过的证书全网都在信任。
 //
 // **它只写文件,不往任何地方发。** 送到哪儿去由人决定。
@@ -45,7 +47,10 @@ func cmdBackup(args []string) error {
 
 	srcs := rest
 	if len(srcs) == 0 {
-		srcs = []string{"deploy/secrets.env", "deploy/pki"}
+		// 源头存档也进备份:SSOT 是全系统唯一不可再生的输入,而它没有
+		// 别的版本历史(不在 git,中控界面覆盖式保存)。存档只在中控本地,
+		// 那台机器没了就没了 —— 而中控没了本来就是"从备份恢复"事件。
+		srcs = []string{"deploy/secrets.env", "deploy/pki", "deploy/ssot-history"}
 	}
 
 	var buf bytes.Buffer

@@ -29,6 +29,13 @@ type Options struct {
 	// 二进制,而不是 BinaryPath 指的那个。
 	PinDir string
 
+	// ArchiveDir 是源头存档目录(中控本地,不进分发树)。
+	//
+	// 每次成功发布都把当时那版 SSOT 存一份,`loom rollback` 靠它把快照 id
+	// 换算回源头。**留空就等于这些版本将来回滚不了** —— SSOT 没有别的
+	// 版本历史:不在 git,中控界面是覆盖式保存。
+	ArchiveDir string
+
 	// BinaryPath 是要一起发的 Agent 二进制。
 	//
 	// 存路径而不是内容:**每轮重新读**。重新编译之后不重启发布器就发不出去,
@@ -144,6 +151,20 @@ func Run(ctx context.Context, opts Options) error {
 				// **校验不过时不更新 lastSSOT**:下一轮还要再试一次,
 				// 否则改坏了再改回来的中间态会被当成"已经处理过"。
 				if err == nil {
+					// 存档在发布**之后** —— 存的是"确实发出去过的那一版",
+					// 而不是"试过但没发成的那一版"。回滚只该退到前者。
+					if _, aerr := ArchiveSSOT(opts.ArchiveDir, body); aerr != nil {
+						logf("⚠️ 源头存档失败:%v —— 快照 %s 将来回滚不了", aerr, short(id))
+					}
+					// 钉住的是快照 X 的二进制,而源头已经算出别的快照 ——
+					// 发出去的就是"X 的二进制 + 当前源头的配置",正是
+					// §15.4 要防的组合。D60 记下了这个洞但没让工具拦,
+					// 这里补上:每次发布都说,直到两者对上或钉住解除。
+					if pin != nil && id != pin.Snapshot {
+						logf("⚠️ 危险组合:二进制钉在 %s,而这次发的配置是 %s —— "+
+							"旧二进制配新配置(§15.4)。要么 `loom rollback %s` 把源头也退回去,"+
+							"要么 `loom pin -clear`", short(pin.Snapshot), short(id), short(pin.Snapshot))
+					}
 					lastSSOT, lastBuilt, lastBin = cur, id, binSum
 				} else {
 					logf("未发布:%v", err)

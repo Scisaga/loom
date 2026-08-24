@@ -9,8 +9,8 @@ import (
 
 func TestExitOfPicksTheLastHop(t *testing.T) {
 	cases := map[string]string{
-		"cand:best-egress:direct":            "SELF",
-		"cand:best-egress:cn-a":              "cn-a",
+		"cand:best-egress:direct":              "SELF",
+		"cand:best-egress:cn-a":                "cn-a",
 		"cand:best-egress:cn-a>edge-a":         "edge-a",
 		"cand:sg-fixed:cn-b>cn-a>edge-a":       "edge-a",
 		"cand:llm:cn-a>edge-a@api.example.com": "edge-a",

@@ -18,7 +18,7 @@ func bundle() map[string]string {
 		"systemd/loom-wg-reresolve.timer":   "[Timer]\n",
 		"systemd/loom-pull.service":         "[Unit]\n",
 		"systemd/loom-pull.timer":           "[Timer]\n",
-		"wireguard/wg-edge-a.conf":            "[Interface]\n",
+		"wireguard/wg-edge-a.conf":          "[Interface]\n",
 		"某个没有约定位置的东西":                       "x",
 	}
 }
@@ -56,7 +56,7 @@ func TestTriggersArePerFile(t *testing.T) {
 		"/etc/loom/sing-box/config.json": {"sing-box"},
 		"/etc/loom/agent/config.json":    {"loom-agent"},
 		"/etc/loom/report/config.json":   {"loom-report"},
-		"/etc/wireguard/wg-edge-a.conf":    {"wg-quick@wg-edge-a"},
+		"/etc/wireguard/wg-edge-a.conf":  {"wg-quick@wg-edge-a"},
 	}
 	for path, want := range cases {
 		got := p.Triggers[path]

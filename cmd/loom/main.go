@@ -1,7 +1,7 @@
 // Command loom 是 L0 的命令行入口:校验、渲染、diff。
 //
 // 这一层不含任何自动部署(§20.1)—— 生成完文件,人工 scp 过去。
-// 节点自取见 §14.2.2;rollback(回到某个历史快照)尚未实现。
+// 节点自取见 §14.2.2;整份回滚见 rollback(§12.1)。
 package main
 
 import (
@@ -52,6 +52,8 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
   loom status   <ssot.yaml>              把够得到的节点全拉一遍,给人看
   loom pin      <快照 id> -reason <理由>    把发布用的二进制钉在历史版本上
   loom pin      -clear                     解除钉住
+  loom rollback <快照 id> -reason <理由>    整份退回历史快照:源头与二进制一起
+  loom rollback                            现在处在不处在回滚状态
   loom publisher -ssot <文件> -key <私钥> -target <目标>
                                          中控守护进程:盯 SSOT,变了就发布
   loom publish  <ssot.yaml> -o <目标> -key <私钥>
@@ -69,8 +71,6 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
                                          打包秘密层与内部 CA(丢了就得全网重来的那些)
   loom restore  <备份文件> -o <目录>       解开备份到一个目录,不覆盖原位置
 
-尚未实现:rollback(整份快照回到历史版本)。二进制那一半已经有了:loom pin。
-          配置那一半仍只能回滚"上一次 apply"
 `
 
 // 快照产物的文件名。
@@ -122,6 +122,8 @@ func main() {
 		err = cmdAddNode(args)
 	case "pin":
 		err = cmdPin(args)
+	case "rollback":
+		err = cmdRollback(args)
 	case "secrets":
 		err = cmdSecrets(args)
 	case "publish":

@@ -28,6 +28,7 @@ func cmdPublish(args []string) error {
 	sshConf := fs.String("ssh-config", "", "ssh 配置文件")
 	author := fs.String("author", "", "记进 manifest 的作者")
 	binary := fs.String("binary", "", "把这个 Agent 二进制一起发(与配置绑定回滚,§15.4)")
+	archive := fs.String("ssot-history", "deploy/ssot-history", "源头存档目录(中控本地,不进分发树;loom rollback 从这里取)")
 
 	rest, err := parseInterspersed(fs, args)
 	if err != nil {
@@ -82,6 +83,14 @@ func cmdPublish(args []string) error {
 		t.Snapshot, len(t.Owners()), t.Owners(), tgt)
 	fmt.Printf("\n树里全是占位符,没有任何凭据;manifest 已签名。\n")
 	fmt.Printf("分发点不需要被信任 —— 改一个字节,节点验签就过不了。\n")
+
+	// 存档在发布之后,存的是"确实发出去过的那一版"。手工发布也要存 ——
+	// 漏了的话这一版将来回滚不了,而症状要到需要回滚时才出现。
+	if sum, aerr := publish.ArchiveSSOT(*archive, body); aerr != nil {
+		fmt.Printf("\n⚠️ 源头存档失败:%v\n   这个快照将来回滚不了。\n", aerr)
+	} else if sum != "" {
+		fmt.Printf("  源头已存档 → %s\n", publish.ArchivePath(*archive, sum))
+	}
 
 	if *verify != "" {
 		if err := publish.VerifyServed(*verify, t.Snapshot, *dns, 20*time.Second); err != nil {

@@ -65,44 +65,10 @@ type Meta struct {
 // **校验不过就不发布。** 渲染一份自相矛盾的配置出去,比什么都不做糟得多:
 // 节点会照单全收,而问题要等到流量打不通才暴露。
 func Build(ssotBytes []byte, priv ed25519.PrivateKey, meta Meta) (*Tree, error) {
-	s, err := model.Load(ssotBytes)
+	man, res, blobs, err := buildManifest(ssotBytes, meta)
 	if err != nil {
-		return nil, fmt.Errorf("解析 SSOT:%w", err)
+		return nil, err
 	}
-	if fs := validate.Validate(s); len(fs) > 0 {
-		return nil, fmt.Errorf("SSOT 校验不通过,不发布:\n%s", validate.Format(fs))
-	}
-	res, err := render.Render(s)
-	if err != nil {
-		return nil, fmt.Errorf("渲染:%w", err)
-	}
-
-	// 二进制进 manifest,于是它和配置在同一个签名之下、同一个快照 id 之内。
-	blobs := map[string][]byte{}
-	var refs []snapshot.BinaryRef
-	for plat, body := range meta.Binaries {
-		goos, goarch, ok := strings.Cut(plat, "/")
-		if !ok {
-			return nil, fmt.Errorf("二进制平台要写成 <os>/<arch>,收到 %q", plat)
-		}
-		sum := sha256.Sum256(body)
-		ref := snapshot.BinaryRef{
-			OS: goos, Arch: goarch,
-			SHA256: hex.EncodeToString(sum[:]), Size: len(body),
-		}
-		refs = append(refs, ref)
-		blobs[ref.Path()] = body
-	}
-	sort.Slice(refs, func(i, j int) bool {
-		if refs[i].OS != refs[j].OS {
-			return refs[i].OS < refs[j].OS
-		}
-		return refs[i].Arch < refs[j].Arch
-	})
-
-	man := snapshot.Build(s, res, ssotBytes, snapshot.Meta{
-		CreatedAt: meta.CreatedAt, Author: meta.Author, Binaries: refs,
-	})
 	manBytes, err := man.Bytes()
 	if err != nil {
 		return nil, err
@@ -144,6 +110,72 @@ func Build(ssotBytes []byte, priv ed25519.PrivateKey, meta Meta) (*Tree, error) 
 	}
 	t.Files["current.json"] = append(cur, '\n')
 	return t, nil
+}
+
+// SnapshotID 算出这份 SSOT 加这些二进制会得到哪个快照 id,不签名、不组树。
+//
+// 回滚靠它**自证**:把快照 X 的源头与二进制取回本地之后重算一遍,算出来
+// 必须还是 X。不是的话,说明这个快照里还有别的东西没跟着回去 ——
+// 与其发一份"看起来回滚了"的配置,不如当场报出来(§12 纯函数正是让这条
+// 自证成立的前提)。
+func SnapshotID(ssotBytes []byte, bins map[string][]byte) (string, error) {
+	man, _, _, err := buildManifest(ssotBytes, Meta{Binaries: bins})
+	if err != nil {
+		return "", err
+	}
+	return man.ID, nil
+}
+
+// buildManifest 走到"算出 manifest"为止。时间与作者不进内容哈希,
+// 所以自证路径可以不给它们(§12、D14)。
+func buildManifest(ssotBytes []byte, meta Meta) (*snapshot.Manifest, *render.Result, map[string][]byte, error) {
+	s, err := model.Load(ssotBytes)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("解析 SSOT:%w", err)
+	}
+	if fs := validate.Validate(s); len(fs) > 0 {
+		return nil, nil, nil, fmt.Errorf("SSOT 校验不通过,不发布:\n%s", validate.Format(fs))
+	}
+	res, err := render.Render(s)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("渲染:%w", err)
+	}
+
+	// 二进制进 manifest,于是它和配置在同一个签名之下、同一个快照 id 之内。
+	blobs := map[string][]byte{}
+	var refs []snapshot.BinaryRef
+	for plat, body := range meta.Binaries {
+		goos, goarch, ok := strings.Cut(plat, "/")
+		if !ok {
+			return nil, nil, nil, fmt.Errorf("二进制平台要写成 <os>/<arch>,收到 %q", plat)
+		}
+		sum := sha256.Sum256(body)
+		ref := snapshot.BinaryRef{
+			OS: goos, Arch: goarch,
+			SHA256: hex.EncodeToString(sum[:]), Size: len(body),
+		}
+		refs = append(refs, ref)
+		blobs[ref.Path()] = body
+	}
+	sort.Slice(refs, func(i, j int) bool {
+		if refs[i].OS != refs[j].OS {
+			return refs[i].OS < refs[j].OS
+		}
+		return refs[i].Arch < refs[j].Arch
+	})
+
+	man := snapshot.Build(s, res, ssotBytes, snapshot.Meta{
+		CreatedAt: meta.CreatedAt, Author: meta.Author, Binaries: refs,
+	})
+
+	// **源头不进分发树。** 回滚确实需要它(成品退回去而源头不退,发布器
+	// 下一轮就把线上带回新版本了),但它归中控本地存档管 —— 见 archive.go
+	// 里的理由:源头带着 `ssh_port` 这类不下发的管理平面字段,而分发点在
+	// 设计上是当作已被攻陷来对待的。
+	//
+	// manifest 里的 SSOTHash 仍然是那份源头的权威哈希,回滚靠它在本地
+	// 存档里定位,所以完整性一点没少 —— 少的只是把它送出去这一步。
+	return man, res, blobs, nil
 }
 
 // Owners 列出树里包含哪些节点的配置包。

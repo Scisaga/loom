@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"loom/internal/model"
 	"loom/internal/render"
@@ -263,4 +264,24 @@ func wgPub(n *model.Node) string {
 func hexSum(b []byte) string {
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:])
+}
+
+// SSOTSum 是源头文件内容哈希的裸十六进制形式。
+//
+// 中控用它在**本地**源头存档里定位"这个快照是从哪一版源头生成的",
+// 回滚靠它把快照 id 换算成一份具体的源头。
+//
+// **源头存档不进分发树。** 源头里有 `ssh_port` 这类字段 —— SSOT 自己的
+// 注释写着它们"记在这里是为了 bootstrap 与排障,不是为了被连" —— 而这些
+// 值不出现在任何渲染产物里。分发点在设计上是当作已被攻陷来对待的(D32),
+// 把管理平面的信息主动送上去,签名是拦不住的那一类风险。
+//
+// 完整性不受影响:manifest 说了正确的哈希是多少,而 manifest 是签了名的。
+// 换成本地读只改变耐久性,不改变可信度。
+func (m *Manifest) SSOTSum() string {
+	h, ok := strings.CutPrefix(m.SSOTHash, "sha256:")
+	if !ok || h == "" {
+		return ""
+	}
+	return h
 }

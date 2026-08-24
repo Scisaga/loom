@@ -109,8 +109,8 @@ func TestCredentialsHeldByIgnoresLifecycle(t *testing.T) {
 // 落后的那台如果恰好直接够不到,表上就看不见,只会以为全网一致。
 func TestSnapshotSpreadIncludesRelayed(t *testing.T) {
 	obs := map[string]report.Observation{
-		"cn-a": {Node: "cn-a", Applied: "aaa"},
-		"cn-b": {Node: "cn-b", Applied: "bbb"}, // 落后的那台,只够得到转述
+		"cn-a":   {Node: "cn-a", Applied: "aaa"},
+		"cn-b":   {Node: "cn-b", Applied: "bbb"}, // 落后的那台,只够得到转述
 		"edge-a": {Node: "edge-a", Applied: "aaa"},
 	}
 	direct := map[string]string{"edge-a": "aaa", "access-a": "aaa"}
