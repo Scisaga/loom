@@ -101,6 +101,12 @@ func cmdPull(args []string) (retErr error) {
 	//
 	// 用 defer 收失败,是因为下面有二十来个 return 分支 —— 逐个记必然
 	// 漏掉几个,而漏掉的那几个恰好是最少走到、也最需要看见的路径。
+	// **dry-run 不留痕迹。** 它会在 activating 那一步返回,记录就永远停在
+	// 那里 —— 而 loom status 会把它报成"卡住"。跑一次演练就制造一个假
+	// 告警,而演练的全部意义就是没有副作用。
+	if *dry {
+		*rolloutPath = ""
+	}
 	prevRec, rerr := rollout.Read(*rolloutPath)
 	if rerr != nil {
 		fmt.Printf("  ! 读 rollout 状态失败:%v(不影响安装)\n", rerr)

@@ -91,6 +91,11 @@ type Step struct {
 // Read 读当前状态。文件不存在返回 (nil, nil) —— 那是"这台机器还没做过
 // 任何 rollout",不是错误。
 func Read(path string) (*Record, error) {
+	// 空路径 = 明确关掉记录(dry-run 就是这么用的)。与 Write 对称,
+	// **不要靠 os.ReadFile("") 恰好返回 ENOENT** —— 那是巧合不是契约。
+	if path == "" {
+		return nil, nil
+	}
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil

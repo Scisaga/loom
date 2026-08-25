@@ -121,3 +121,16 @@ func TestStuckMeasuresCurrentStageNotTotal(t *testing.T) {
 		t.Error("终态不该算卡住")
 	}
 }
+
+// 空路径 = 明确关掉记录。dry-run 靠它做到"没有副作用" ——
+// 否则演练会留下一条停在 activating 的记录,而面板会把它报成卡住。
+func TestEmptyPathDisablesRecording(t *testing.T) {
+	r, err := Read("")
+	if err != nil || r != nil {
+		t.Fatalf("空路径应安静地返回 (nil, nil),得到 (%v, %v)", r, err)
+	}
+	rec := Begin(nil, "aaa", "", at("2026-08-25T09:00:00Z"))
+	if err := rec.Write(""); err != nil {
+		t.Fatalf("空路径写入应是 no-op,得到 %v", err)
+	}
+}
