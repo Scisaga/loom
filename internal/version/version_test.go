@@ -1,6 +1,8 @@
 package version
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -76,5 +78,57 @@ func TestWarnings(t *testing.T) {
 	}
 	if w := (Coordinate{Commit: "abc", Dirty: true, BinaryErr: "x"}).Warnings(); len(w) != 2 {
 		t.Fatalf("脏 + 读不到二进制应有 2 条警告,得到 %v", w)
+	}
+}
+
+// Traceable 是发布前的闸门:发出去的东西将来出问题,能不能用 git 复现。
+func TestTraceable(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		c    Coordinate
+		want bool
+	}{
+		{"有 commit 且干净", Coordinate{Commit: "abc"}, true},
+		{"认不出 commit", Coordinate{}, false},
+		{"脏工作区", Coordinate{Commit: "abc", Dirty: true}, false},
+		{"两样都缺", Coordinate{Dirty: true}, false},
+	} {
+		if got := c.c.Traceable(); got != c.want {
+			t.Errorf("%s:Traceable()=%v,想要 %v", c.name, got, c.want)
+		}
+	}
+}
+
+// OfFile 读的是**文件**不是本进程 —— 发布器钉住时发的是历史二进制,
+// 它的 commit 只有那个文件自己知道。
+func TestOfFileReadsTheFileNotOurselves(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Skip("拿不到自己的路径")
+	}
+	c, err := OfFile(self)
+	if err != nil {
+		t.Fatalf("读测试二进制的构建信息失败:%v", err)
+	}
+	if c.Go == "" {
+		t.Error("应能读出 Go 版本")
+	}
+	if c.Platform == "" || !strings.Contains(c.Platform, "/") {
+		t.Errorf("Platform 应形如 os/arch,得到 %q", c.Platform)
+	}
+}
+
+// 读不出来要报错,**不能返回一个空坐标当作"没问题"** ——
+// 那正好会让闸门把不可追溯的二进制放过去。
+func TestOfFileFailsLoudly(t *testing.T) {
+	if _, err := OfFile(filepath.Join(t.TempDir(), "nope")); err == nil {
+		t.Error("文件不存在应报错")
+	}
+	notGo := filepath.Join(t.TempDir(), "plain.txt")
+	if err := os.WriteFile(notGo, []byte("我不是 Go 二进制"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OfFile(notGo); err == nil {
+		t.Error("非 Go 二进制应报错,而不是返回空坐标")
 	}
 }

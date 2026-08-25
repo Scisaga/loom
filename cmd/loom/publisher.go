@@ -33,6 +33,8 @@ func cmdPublisher(args []string) error {
 	pinDir := fs.String("pin-dir", "deploy/pinned", "钉住状态目录(loom pin 写在这儿)")
 	health := fs.String("health", publish.HealthPath,
 		"发布器写自己状态的地方 —— 让 loom status 看得出\"进程活着但发不出去\"")
+	allowDirty := fs.Bool("allow-dirty", false,
+		"放行追溯不回 git 的二进制(认不出 commit,或构建自脏工作区)")
 	archive := fs.String("ssot-history", "deploy/ssot-history", "源头存档目录(中控本地,不进分发树;loom rollback 从这里取)")
 	interval := fs.Duration("interval", 30*time.Second, "多久看一次")
 	once := fs.Bool("once", false, "只跑一轮就退出")
@@ -70,9 +72,10 @@ func cmdPublisher(args []string) error {
 	return publish.Run(ctx, publish.Options{
 		SSOTPath: *ssot, Key: ed25519.PrivateKey(privBytes), Target: tgt,
 		Author: *author, VerifyURL: *verify, DNS: *dns, BinaryPath: *binary,
-		ArchiveDir: *archive,
-		PinDir:     *pinDir,
-		HealthPath: *health,
-		Interval:   *interval, Once: *once, Log: os.Stdout,
+		ArchiveDir:       *archive,
+		PinDir:           *pinDir,
+		HealthPath:       *health,
+		AllowUntraceable: *allowDirty,
+		Interval:         *interval, Once: *once, Log: os.Stdout,
 	})
 }

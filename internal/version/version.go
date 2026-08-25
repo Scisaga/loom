@@ -22,6 +22,7 @@ package version
 
 import (
 	"crypto/sha256"
+	"debug/buildinfo"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -166,3 +167,36 @@ func (c Coordinate) Warnings() []string {
 	}
 	return w
 }
+
+// OfFile 读**另一个二进制文件**的坐标,不执行它。
+//
+// 发布器要在分发之前知道自己发的是什么。Self() 回答不了这个问题:
+// 发的可能是钉住的历史二进制,也可能是别人放在那儿的文件,而它们的
+// commit 只有文件自己知道。
+func OfFile(path string) (Coordinate, error) {
+	c := Coordinate{}
+	bi, err := buildinfo.ReadFile(path)
+	if err != nil {
+		return c, fmt.Errorf("读 %s 的构建信息:%w", path, err)
+	}
+	c.Go = bi.GoVersion
+	for _, s := range bi.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			c.Commit = s.Value
+		case "vcs.modified":
+			c.Dirty = s.Value == "true"
+		case "GOOS":
+			c.Platform = s.Value + c.Platform
+		case "GOARCH":
+			c.Platform = c.Platform + "/" + s.Value
+		}
+	}
+	return c, nil
+}
+
+// Traceable 说这个坐标能不能追溯回一个 git commit。
+//
+// 发布之前要问的就是这个:发出去的东西将来出了问题,能不能用 git 复现。
+// 认不出 commit 和脏工作区都不能 —— 前者压根没有坐标,后者的坐标是假的。
+func (c Coordinate) Traceable() bool { return c.Commit != "" && !c.Dirty }

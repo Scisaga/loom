@@ -44,6 +44,16 @@ type Options struct {
 	// 那又是一个"改了没生效"的隐蔽故障。代价是每轮多读 12MB,可忽略。
 	BinaryPath string
 
+	// AllowUntraceable 放行"追溯不回 git 的二进制"。
+	//
+	// 默认**不放行**:认不出 commit 或构建自脏工作区的二进制一旦发到全网,
+	// 出了问题就没法用 git 复现,而 5 台机器同时中招。这与 backup 里
+	// "要么加密要么显式 -plaintext"是同一个规矩 —— **风险选项要显式选,
+	// 不能默认帮人做主**。
+	//
+	// 救火时确实可能要发一个没提交的修复,所以留了这个出口,而不是硬堵死。
+	AllowUntraceable bool
+
 	// HealthPath 是发布器写自己状态的地方(见 health.go)。留空则不写。
 	//
 	// 没有它的话,"进程活着但发不出去"只能靠翻 journal 发现 —— 而没人
@@ -134,6 +144,22 @@ func Run(ctx context.Context, opts Options) error {
 			if berr != nil {
 				logf("读二进制失败:%v", berr)
 			}
+			// 发出去之前先问:这份二进制追溯得回 git 吗。
+			// 问的是**文件**不是本进程 —— 钉住时发的是历史二进制,
+			// 而它的 commit 只有文件自己知道。
+			blocked := ""
+			if berr == nil && binPath != "" {
+				if vc, verr := version.OfFile(binPath); verr != nil {
+					logf("⚠️ 读不出 %s 的构建信息:%v", binPath, verr)
+				} else if !vc.Traceable() && !opts.AllowUntraceable {
+					why := "认不出 commit"
+					if vc.Dirty {
+						why = "构建自脏工作区(" + version.Short(vc.Commit) + "+dirty)"
+					}
+					blocked = "二进制" + why + ",追溯不回 git —— 拒绝发到全网。" +
+						"提交后重新编译,或者明知故犯时加 -allow-dirty"
+				}
+			}
 
 			// 钉住期间本机二进制变了 —— **正是"我重新编译了但没发出去"
 			// 那一刻**。只在这时说一次,不刷屏。
@@ -169,7 +195,18 @@ func Run(ctx context.Context, opts Options) error {
 				logf("分发点指向 %s,本地算出来是 %s —— 重推", short(served), short(lastBuilt))
 			}
 
-			if changed || diverged {
+			if blocked != "" && (changed || diverged) {
+				// **拦下来也要记进 Health。** 只打日志的话,这又变成一个
+				// "systemd 说 active 但发不出去"的静默故障 —— 正是 D72
+				// 要根治的形状。
+				logf("未发布:%s", blocked)
+				health.LastError = blocked
+				health.LastErrorAt = opts.Now().Format(time.RFC3339)
+				saveHealth()
+				if changed {
+					lastSSOT = cur // 不重复刷屏;二进制换了会再试
+				}
+			} else if changed || diverged {
 				id, err := publishOnce(&opts, body, bins, logf)
 				// **校验不过时不更新 lastSSOT**:下一轮还要再试一次,
 				// 否则改坏了再改回来的中间态会被当成"已经处理过"。
