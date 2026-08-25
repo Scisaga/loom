@@ -224,7 +224,16 @@ func Run(ctx context.Context, opts Options) error {
 			}
 
 			first := lastSSOT == ""
-			changed := cur != lastSSOT || (lastBin != "" && binSum != lastBin)
+			// 二进制变了也算变 —— 包括**从"没有"变成"有"**。
+			//
+			// 原先写的是 `lastBin != "" && binSum != lastBin`,那个守卫在
+			// D77 之前无害:binPath 总是有值,binSum 永远非空。D77 让
+			// "没放行 = 不发二进制"成为合法状态之后,`"" → sha` 这个转换
+			// 就被守卫吞掉了 —— 发布器认了放行,却不重推。实测踩到。
+			//
+			// 用 !first 代替:首轮本来就走 cur != lastSSOT 那一支,
+			// 第二个条件在首轮不需要出力。
+			changed := inputsChanged(first, cur, lastSSOT, binSum, lastBin)
 			// 分发点和本地算出来的不一致就重推,与 SSOT 有没有变无关。
 			diverged := serr == nil && lastBuilt != "" && served != lastBuilt
 
@@ -356,4 +365,14 @@ func readBinary(path string) (map[string][]byte, string, error) {
 	}
 	sum := sha256.Sum256(b)
 	return map[string][]byte{runtime.GOOS + "/" + runtime.GOARCH: b}, hex.EncodeToString(sum[:]), nil
+}
+
+// inputsChanged 说这一轮的输入(SSOT 或二进制)和上一轮比变了没有。
+//
+// 拆出来是为了能测 `"" → sha` 那个转换 —— 它只在跨轮之间发生,
+// 而 -once 跑不出跨轮。实测踩到过一次:发布器认了放行却不重推。
+func inputsChanged(first bool, cur, lastSSOT, binSum, lastBin string) bool {
+	// 首轮本来就走 cur != lastSSOT 那一支(lastSSOT 是空串),
+	// 第二个条件在首轮不需要出力,也不该出力。
+	return cur != lastSSOT || (!first && binSum != lastBin)
 }
