@@ -183,3 +183,13 @@ func staleUnits() []string {
 	}
 	return out
 }
+
+// binarySHA 取快照里本平台那个二进制的 sha。没有就返回空串。
+func binarySHA(man *snapshot.Manifest) string {
+	for i := range man.Binaries {
+		if man.Binaries[i].OS == runtime.GOOS && man.Binaries[i].Arch == runtime.GOARCH {
+			return man.Binaries[i].SHA256
+		}
+	}
+	return ""
+}

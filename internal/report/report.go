@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"loom/internal/rollout"
 	"loom/internal/version"
 )
 
@@ -43,6 +44,13 @@ type Status struct {
 	// 一版,Version 说读这份配置的程序是哪一版。**两者错配正是发布器
 	// 崩掉的那类故障**(旧二进制读不懂新字段,§15.4)。
 	Version *version.Coordinate `json:"version,omitempty"`
+
+	// Rollout 是这台机器**正在往哪个快照走、走到哪一步了**(D78)。
+	//
+	// 和 Applied 是一对:Applied 说现在装着哪个(结果),Rollout 说过程。
+	// 一台卡在 activating 的机器 Applied 仍是旧值 —— 只看 Applied 会
+	// 以为它一切正常,只是"还没轮到它"。
+	Rollout *RolloutState `json:"rollout,omitempty"`
 
 	Tunnels []Tunnel `json:"tunnels"`
 	Drift   *Drift   `json:"drift,omitempty"`
@@ -116,12 +124,48 @@ func (s *Status) OK() bool {
 }
 
 // Collect 采集一次状态。now 由调用方注入,便于测试。
+// RolloutState 是 rollout 记录的**转述用形式**:够回答"它卡住了吗、
+// 卡在哪一步",但不带 Steps —— 那是本机排障用的,转述出去只是噪音。
+type RolloutState struct {
+	Snapshot  string `json:"snapshot"`
+	Stage     string `json:"stage"`
+	EnteredAt string `json:"entered_at"`
+	LastGood  string `json:"last_good,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+// InFlight 说这次 rollout 还没走完。Verified / Failed 是终态。
+func (r *RolloutState) InFlight() bool {
+	return r != nil && r.Stage != string(rollout.Verified) && r.Stage != string(rollout.Failed)
+}
+
+// StuckFor 返回它在当前阶段待了多久。解析不出时间返回 0 ——
+// **不要猜**,算不出来就说算不出来,别拿 0 冒充"刚进来"。
+func (r *RolloutState) StuckFor(now time.Time) (time.Duration, bool) {
+	if r == nil {
+		return 0, false
+	}
+	t, err := time.Parse(time.RFC3339, r.EnteredAt)
+	if err != nil {
+		return 0, false
+	}
+	return now.UTC().Sub(t), true
+}
+
 func Collect(cfg *Config, now time.Time) *Status {
 	st := &Status{Node: cfg.Node, TS: now.UTC().Format(time.RFC3339)}
 	vc := version.Self()
 	st.Version = &vc
 	if b, err := os.ReadFile(appliedPath); err == nil {
 		st.Applied = strings.TrimSpace(string(b))
+	}
+	if r, err := rollout.Read(rollout.Path); err != nil {
+		st.Errors = append(st.Errors, "读 rollout 状态:"+err.Error())
+	} else if r != nil {
+		st.Rollout = &RolloutState{
+			Snapshot: r.Snapshot, Stage: string(r.Stage),
+			EnteredAt: r.EnteredAt, LastGood: r.LastGood, Error: r.Error,
+		}
 	}
 	stale, err := cfg.Stale()
 	if err != nil {

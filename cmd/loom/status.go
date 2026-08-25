@@ -14,6 +14,7 @@ import (
 	"loom/internal/publish"
 	"loom/internal/render"
 	"loom/internal/report"
+	"loom/internal/rollout"
 	"loom/internal/version"
 )
 
@@ -100,6 +101,7 @@ func cmdStatus(args []string) error {
 	// 不是身份,而身份不能听别人转述。够不到的节点因此永远核对不了版本,
 	// 这件事必须**明说**(见 printVersionSpread),不能靠表的沉默去暗示。
 	vcs := map[string]*version.Coordinate{}
+	rolls := map[string]*report.RolloutState{}
 	// answered 是**真的把状态拉回来了**的节点,不是"拓扑上该够得到"的。
 	// 两者混同会把一次超时误诊成"它跑的是旧二进制"—— 而那台机器刚刚
 	// 已经被报过一次"拉不到"了,同一件事不该报两遍、更不该报成两回事。
@@ -141,6 +143,9 @@ func cmdStatus(args []string) error {
 		if st.Version != nil {
 			vcs[id] = st.Version
 		}
+		if st.Rollout != nil {
+			rolls[id] = st.Rollout
+		}
 		fmt.Printf("  %-7s %s %s\n", id, mark, tunnelLine(st))
 		for _, l := range problemLines(st) {
 			fmt.Printf("          %s\n", l)
@@ -174,6 +179,7 @@ func cmdStatus(args []string) error {
 	// 分母取 SSOT 里的节点数,不取"听到过的"—— 一台彻底失联的机器必须
 	// 让分母变大,否则它会从统计里整个消失,而消失的样子和一切正常一样。
 	bad += printVersionSpread(vcs, answered, unreachable, s)
+	bad += printRollouts(rolls, time.Now().UTC())
 
 	printMatrix(obs, s)
 
@@ -650,4 +656,91 @@ func printPublisherHealth(path string, now time.Time) int {
 		return 1
 	}
 	return 0
+}
+
+// stuckLimit 是"在同一个 rollout 阶段待多久算卡住"。
+//
+// 30 分钟看着很宽,是因为**现在的两段式升级本来就要等下一个定时器**:
+// 换完二进制主动 return,配置留给 10 分钟后那一轮。所以一台机器合法地
+// 在 activating 待上十几分钟。
+//
+// 这个阈值就是那笔债的度量 —— 等续跑机制换掉"等定时器"之后(见 D78 的
+// 后续计划),它应该降到分钟级。**在那之前把它调小只会制造误报**,
+// 而误报的面板等于没有面板(D64–D67)。
+const stuckLimit = 30 * time.Minute
+
+// printRollouts 报告谁正在装、谁卡住了,返回要计入 bad 的条数。
+//
+// 它回答的是 Applied 回答不了的问题:一台卡在 activating 的机器,
+// Applied 仍是旧值 —— 只看快照表会以为它"还没轮到",而实际上它可能
+// 已经半装着躺了半小时。
+func printRollouts(rolls map[string]*report.RolloutState, now time.Time) int {
+	lines, bad := rolloutFindings(rolls, now)
+	if len(lines) == 0 {
+		return 0
+	}
+	fmt.Println()
+	for _, l := range lines {
+		fmt.Println(l)
+	}
+	return bad
+}
+
+// rolloutFindings 是上面那个的**纯函数内核**,拆出来是为了能测。
+//
+// 三种情况的分类是这里唯一的实质逻辑,而分错的代价不对称:把"正在装"
+// 报成卡住是误报,把"卡了半小时"报成正在装是漏报。两种都要喂用例才
+// 看得出来 —— printVersionSpread 就是这么漏掉超时误诊的(D73)。
+func rolloutFindings(rolls map[string]*report.RolloutState, now time.Time) ([]string, int) {
+	if len(rolls) == 0 {
+		return nil, 0
+	}
+	ids := make([]string, 0, len(rolls))
+	for id := range rolls {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	bad := 0
+	var lines []string
+	for _, id := range ids {
+		r := rolls[id]
+		switch {
+		case r.Stage == string(rollout.Failed):
+			lines = append(lines, fmt.Sprintf("  ⚠️ %-7s rollout 失败(目标 %s):%s",
+				id, short(r.Snapshot), r.Error))
+			if r.LastGood != "" {
+				lines = append(lines, fmt.Sprintf("          还能退回 %s", short(r.LastGood)))
+			}
+			bad++
+		case r.InFlight():
+			d, ok := r.StuckFor(now)
+			switch {
+			case !ok:
+				lines = append(lines, fmt.Sprintf("  ⚠️ %-7s 停在 %s,但时间戳读不出来 —— 卡多久算不出",
+					id, r.Stage))
+				bad++
+			case d > stuckLimit:
+				lines = append(lines, fmt.Sprintf("  ⚠️ %-7s 卡在 %s 已 %s(目标 %s)",
+					id, r.Stage, roughAge(d), short(r.Snapshot)))
+				bad++
+			default:
+				// 正在装是正常的,说一声但不报警。
+				lines = append(lines, fmt.Sprintf("  ⏳ %-7s 正在 %s(%s,目标 %s)",
+					id, r.Stage, roughAge(d), short(r.Snapshot)))
+			}
+		}
+	}
+	return lines, bad
+}
+
+func roughAge(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%d 秒", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%d 分钟", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%d 小时 %d 分", int(d.Hours()), int(d.Minutes())%60)
+	}
 }

@@ -23,6 +23,7 @@ import (
 	"loom/internal/publish"
 	"loom/internal/render"
 	"loom/internal/report"
+	"loom/internal/rollout"
 	"loom/internal/secret"
 	"loom/internal/snapshot"
 )
@@ -42,8 +43,10 @@ import (
 // 就通不过。所以分发点可以是任意一台机器上的一个静态目录。
 //
 // 第 5 步在节点上做,是这套设计里最关键的一条:**凭据从不离开它该在的机器**。
-func cmdPull(args []string) error {
+func cmdPull(args []string) (retErr error) {
 	fs := flag.NewFlagSet("pull", flag.ExitOnError)
+	rolloutPath := fs.String("rollout", rollout.Path,
+		"记 rollout 阶段的地方 —— 只记录,不改变行为(D78)")
 	url := fs.String("url", "", "分发点根地址(必需)")
 	pubPath := fs.String("pubkey", "/etc/loom/trust/platform.pub", "钉住的平台公钥")
 	node := fs.String("node", "", "本节点 id(默认取 /etc/loom/node-id)")
@@ -92,6 +95,29 @@ func cmdPull(args []string) error {
 	if cur.Snapshot == "" {
 		return fmt.Errorf("current.json 里没有快照 id")
 	}
+
+	// rollout 记录:**只观察,不接管**(D78)。它现在不改变任何控制流,
+	// 只是把本来就存在、却没有名字也不落盘的阶段写下来。
+	//
+	// 用 defer 收失败,是因为下面有二十来个 return 分支 —— 逐个记必然
+	// 漏掉几个,而漏掉的那几个恰好是最少走到、也最需要看见的路径。
+	prevRec, rerr := rollout.Read(*rolloutPath)
+	if rerr != nil {
+		fmt.Printf("  ! 读 rollout 状态失败:%v(不影响安装)\n", rerr)
+	}
+	rec := rollout.Begin(prevRec, cur.Snapshot, "", time.Now())
+	saveRec := func() {
+		if err := rec.Write(*rolloutPath); err != nil {
+			fmt.Printf("  ! 写 rollout 状态失败:%v(不影响安装)\n", err)
+		}
+	}
+	defer func() {
+		if retErr != nil {
+			rec.Fail(retErr, time.Now())
+		}
+		saveRec()
+	}()
+	saveRec()
 
 	// 2. 记下之前装的是哪个,但**不因为一样就跳过**。
 	//
@@ -151,9 +177,15 @@ func cmdPull(args []string) error {
 	//     (§15.4、D46)。
 	// 用 base 不是 root:二进制是**内容寻址**的,放在树的顶层跨快照共享。
 	// 回滚到旧快照时旧二进制还在,不用重新下载。
+	rec.Enter(rollout.Activating, time.Now())
+	saveRec()
 	if swapped, err := upgradeBinary(c, base, &man, *binPath, *dry); err != nil {
 		return err
 	} else if swapped && !*dry {
+		// 换完二进制就此结束 —— 记录停在 activating,**这正是那 10 分钟
+		// 空档的形状**:一台机器新二进制、旧配置,而以前没人看得见它。
+		rec.Binary = binarySHA(&man)
+		saveRec()
 		// 换过二进制之后就此结束这一轮:配置交给下一次(几分钟后)。
 		// 继续用**当前进程里的旧代码**去装新配置,正是要避免的那种配对。
 		fmt.Println("  二进制已更新,配置留给下一轮(几分钟后)")
@@ -232,10 +264,20 @@ func cmdPull(args []string) error {
 		return fmt.Errorf("安装失败(已回滚):%w", err)
 	}
 
+	// 安装脚本自己带验证(plan.Verify),跑到这里说明那一步过了。
+	rec.Enter(rollout.Verifying, time.Now())
+	saveRec()
+
 	if err := os.MkdirAll(filepath.Dir(*statePath), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(*statePath, []byte(cur.Snapshot+"\n"), 0o644)
+	if err := os.WriteFile(*statePath, []byte(cur.Snapshot+"\n"), 0o644); err != nil {
+		return err
+	}
+	// **写完 applied 才算 Verified。** 装上了不算,记下来了才算 ——
+	// 否则回退目标会指向一份 applied 里根本没有的快照。
+	rec.Enter(rollout.Verified, time.Now())
+	return nil
 }
 
 // bundleHash 必须与 render.Bundle.Hash 完全一致,否则永远对不上。
