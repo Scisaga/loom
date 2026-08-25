@@ -4,13 +4,15 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-
-	"loom/internal/netx"
 	"os"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"loom/internal/attest"
+	"loom/internal/netx"
+	"loom/internal/version"
 )
 
 // Observation 是**一个节点在某一刻对外界的观测**,可以被别的节点原样转述。
@@ -35,6 +37,20 @@ type Observation struct {
 	Applied string  `json:"applied,omitempty"`
 	Edges   []Edge  `json:"edges,omitempty"`
 	Targets []Reach `json:"targets,omitempty"`
+
+	// Attest 是这台机器**关于自己身份**的签名陈述(D81)。
+	//
+	// 观测可以转述:RTT、可达性是尽力而为的数字,B 转述 C 的观测,
+	// 可信度就是 B 的可信度,而这够用了。**身份不行** —— "C 跑的是
+	// commit X"如果只由 B 说,排障时恰恰不能假设 B 可信,因为出问题的
+	// 往往就是链路上某一环。
+	//
+	// 签了名之后,转述的是密文不是信任:改一个字就验不过,伪造要 C 的
+	// 私钥。这条正是 D71/D73 那个"版本核不了转述来的节点"的解法。
+	//
+	// 没有私钥的机器(比如只有 ca.crt 的中控)这里是空的,而空**不等于
+	// 可信**:验不了就是验不了,调用方要当作"没核对过"。
+	Attest *attest.Signed `json:"attest,omitempty"`
 }
 
 // Edge 是本节点到另一个节点的往返时间。
@@ -142,6 +158,9 @@ func observe(cfg *Config, h *history, now time.Time) *Observation {
 	if b, err := os.ReadFile(appliedPath); err == nil {
 		o.Applied = strings.TrimSpace(string(b))
 	}
+	// 给身份签名,好让够不到这台机器的人也能核对它的版本(D81)。
+	// 签不了不是错误 —— 中控只有 ca.crt,没有自己的私钥。
+	o.Attest = signSelf(o, now)
 
 	nb := append([]Neighbor(nil), cfg.Neighbors...)
 	sort.Slice(nb, func(i, j int) bool { return nb[i].Node < nb[j].Node })
@@ -240,4 +259,35 @@ func firstDNS(dns []string) string {
 		return ""
 	}
 	return dns[0]
+}
+
+// 节点签名材料的约定位置(§13.3)。
+const (
+	nodeKeyPath  = "/etc/loom/tls/node.key"
+	nodeCertPath = "/etc/loom/tls/node.crt"
+)
+
+// signSelf 给"我是谁、我跑的是哪一版"签个名。
+//
+// **签不了就返回 nil,不报错也不猜。** 没有私钥是合法状态(中控就没有),
+// 而一个签不出名字的机器和一个签名验不过的机器,在调用方眼里是同一件事:
+// 没核对过。把它们区分开只会让判断变复杂,而结论一样。
+func signSelf(o *Observation, now time.Time) *attest.Signed {
+	key, err := os.ReadFile(nodeKeyPath)
+	if err != nil {
+		return nil
+	}
+	crt, err := os.ReadFile(nodeCertPath)
+	if err != nil {
+		return nil
+	}
+	vc := version.Self()
+	s, err := attest.Sign(attest.Claim{
+		Node: o.Node, TS: o.TS,
+		Commit: vc.Commit, Binary: vc.Binary, Applied: o.Applied,
+	}, key, crt)
+	if err != nil {
+		return nil
+	}
+	return s
 }

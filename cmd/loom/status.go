@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"loom/internal/attest"
 	"loom/internal/events"
 	"loom/internal/model"
 	"loom/internal/publish"
@@ -178,7 +179,10 @@ func cmdStatus(args []string) error {
 	//
 	// 分母取 SSOT 里的节点数,不取"听到过的"—— 一台彻底失联的机器必须
 	// 让分母变大,否则它会从统计里整个消失,而消失的样子和一切正常一样。
-	bad += printVersionSpread(vcs, answered, unreachable, s)
+	// 转述来的节点如果带了签名陈述,就地核对 —— 核过了它们就不再是
+	// "够不到所以不知道",而是和直接问到的一样可信(D81)。
+	unverified := foldAttested(obs, vcs, answered, unreachable)
+	bad += printVersionSpread(vcs, answered, unverified, s)
 	bad += printRollouts(rolls, time.Now().UTC())
 
 	printMatrix(obs, s)
@@ -743,4 +747,45 @@ func roughAge(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%d 小时 %d 分", int(d.Hours()), int(d.Minutes())%60)
 	}
+}
+
+// caPath 是校验节点签名陈述用的内部 CA(§13.3)。
+const caPath = "/etc/loom/tls/ca.crt"
+
+// foldAttested 把**验过签的**转述节点并进版本表,返回仍然核不了的那些。
+//
+// 这是 D81 相对 D73 的全部变化:够不到不再等于核不了。够不到的节点只要
+// 带着自己签的陈述,链路上谁转的都无所谓 —— 改一个字就验不过。
+//
+// **验不过和没签名一样,都算没核对过。** 不把它们分开是有意的:调用方
+// 要做的事一样(去 ssh 那台机器),分开只会让判断变复杂而结论不变。
+func foldAttested(obs map[string]report.Observation, vcs map[string]*version.Coordinate,
+	answered map[string]bool, unreachable []string) []string {
+
+	ca, err := os.ReadFile(caPath)
+	if err != nil {
+		// 没有 CA 就核不了任何签名。**说一次**,否则"为什么还是 3/5"
+		// 会变成一个查不出来的怪事。
+		fmt.Printf("  (读不到 %s,转述来的节点核不了版本:%v)\n", caPath, err)
+		return unreachable
+	}
+	var still []string
+	for _, id := range unreachable {
+		o, ok := obs[id]
+		if !ok || o.Attest == nil {
+			still = append(still, id)
+			continue
+		}
+		c, err := attest.Verify(o.Attest, ca)
+		if err != nil {
+			// 验不过是**故障**,不是"没消息" —— 要么有人改了转述内容,
+			// 要么证书过期了。两种都得让人看见。
+			fmt.Printf("  ⚠️ %s 的签名陈述验不过:%v\n", id, err)
+			still = append(still, id)
+			continue
+		}
+		vcs[id] = &version.Coordinate{Commit: c.Commit, Binary: c.Binary}
+		answered[id] = true
+	}
+	return still
 }

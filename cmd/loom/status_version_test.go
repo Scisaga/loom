@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"loom/internal/report"
 	"loom/internal/version"
 )
 
@@ -109,5 +110,21 @@ func TestNoCoordinatesPrintsNothing(t *testing.T) {
 	lines, bad := versionFindings(nil, nil, []string{"gz02"}, 5)
 	if len(lines) != 0 || bad != 0 {
 		t.Fatalf("没有任何版本坐标时不该输出,得到 bad=%d:\n%s", bad, joined(lines))
+	}
+}
+
+// D81 之后,"够不到"不再等于"核不了":带签名的转述节点要被并进版本表。
+// 这里只验分流逻辑 —— 签名本身的正确性由 internal/attest 的测试守着。
+func TestFoldAttestedSplitsVerifiableFromNot(t *testing.T) {
+	// 没有 CA 时必须原样返回,不能假装核过了。
+	vcs := map[string]*version.Coordinate{}
+	answered := map[string]bool{}
+	obs := map[string]report.Observation{"gz02": {Node: "gz02"}}
+	still := foldAttested(obs, vcs, answered, []string{"gz02", "hz01"})
+	if len(still) != 2 {
+		t.Fatalf("核不了的应原样返回 2 个,得到 %v", still)
+	}
+	if len(vcs) != 0 {
+		t.Errorf("没核过的不该进版本表,得到 %v", vcs)
 	}
 }

@@ -63,6 +63,7 @@ go run ./cmd/loom verify   /tmp/out -pubkey /tmp/keys/platform-signing.pub
 | `internal/report/` | **上报者**:每个节点都跑。隧道健康、配置自检、按段测量与转述。不做任何决定 |
 | `internal/deploy/` | 安装计划与远端脚本:暂存 → 预检 → 就位 → 验证,失败回滚 |
 | `internal/publish/` | 中控侧:校验 → 渲染 → 签名 → 推到分发点;发布器守护进程 |
+| `internal/attest/` | 节点给自己的身份陈述签名,好让转述过来的版本也能核对(D81) |
 | `internal/rollout/` | 节点装一份新快照走到哪一步了。**现在只记录,不接管控制流**(D78) |
 | `internal/version/` | 版本坐标:commit(Go 的 VCS 戳自动带入)+ 二进制 sha256 |
 | `internal/netx/` | 不依赖机器全局设置的 HTTP 客户端(不读 HTTP_PROXY、自带 DNS) |
