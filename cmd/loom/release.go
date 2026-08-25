@@ -25,7 +25,7 @@ import (
 //  3. 理由填了吗 —— 几天后翻到这条记录的人需要知道为什么
 func cmdRelease(args []string) error {
 	fs := flag.NewFlagSet("release", flag.ExitOnError)
-	binPath := fs.String("binary", "/usr/local/bin/loom", "要放行的二进制")
+	binPath := fs.String("binary", stagedBinary, "要放行的二进制(默认是构建产物,不是正在跑的那份)")
 	dir := fs.String("dir", "deploy/released", "放行记录与副本存放目录")
 	reason := fs.String("reason", "", "为什么发这一版(必填)")
 	by := fs.String("by", "", "谁批的")
@@ -49,6 +49,20 @@ func cmdRelease(args []string) error {
 	}
 	if *reason == "" {
 		return fmt.Errorf("需要 -reason 说明为什么发这一版")
+	}
+
+	// 0. 别放行那个**会被退回去**的文件。
+	//
+	// 中控同时也是一个被管理的节点:它自己的 pull 每 10 分钟把
+	// /usr/local/bin/loom 收敛到**已发布快照里的那份**。所以手工装完
+	// 再 release 是有竞态的,窗口就是一个 pull 周期 —— 实测输过一次:
+	// 慢了 2 分钟,pull 先把二进制退回旧版,release 于是记下了旧版。
+	//
+	// 放行**构建产物**没有这个问题:那个路径不归 pull 管。
+	if *binPath == managedBinary {
+		fmt.Printf("! %s 由本机 pull 管着,随时会被退回已发布的版本。\n", managedBinary)
+		fmt.Printf("  刚手工装上去的东西可能在 release 之前就没了(踩过一次)。\n")
+		fmt.Printf("  建议:go build -o %s ./cmd/loom 然后直接放行构建产物。\n\n", stagedBinary)
 	}
 
 	// 1. 追溯得回 git 吗。
@@ -91,7 +105,8 @@ func cmdRelease(args []string) error {
 		fmt.Printf("  ⚠️ 这是脏构建 —— 出了问题没法用 git 复现\n")
 	}
 	fmt.Printf("  理由:%s\n", cur.Reason)
-	fmt.Printf("\n发布器会在下一轮(最多 30 秒)带上它。节点按各自的 pull 周期取。\n")
+	fmt.Printf("\n发布器会在下一轮(最多 30 秒)带上它。节点按各自的 pull 周期取 ——\n")
+	fmt.Printf("**包括中控自己**,所以不用手工装到 %s。\n", managedBinary)
 	fmt.Printf("反悔:`loom release -clear` 停发,或 `loom pin <快照 id>` 退回历史版本。\n")
 	return nil
 }
@@ -135,3 +150,12 @@ func sha256Hex(b []byte) string {
 	s := sha256.Sum256(b)
 	return hex.EncodeToString(s[:])
 }
+
+const (
+	// stagedBinary 是构建产物的约定位置。**不归 pull 管**,所以放在这里
+	// 的东西不会被收敛掉。
+	stagedBinary = "deploy/staging/loom"
+	// managedBinary 是节点上跑着的那份。pull 会把它收敛到已发布快照里
+	// 的版本 —— 手工往这儿装的东西活不过一个 pull 周期。
+	managedBinary = "/usr/local/bin/loom"
+)
