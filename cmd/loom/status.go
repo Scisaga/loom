@@ -11,6 +11,7 @@ import (
 
 	"loom/internal/events"
 	"loom/internal/model"
+	"loom/internal/publish"
 	"loom/internal/render"
 	"loom/internal/report"
 	"loom/internal/version"
@@ -90,6 +91,7 @@ func cmdStatus(args []string) error {
 	unresolved := printUnresolved(report.StatePath, report.EventsPath, time.Now())
 	printLifecycle(s)
 	bad := 0
+	bad += printPublisherHealth(publish.HealthPath, time.Now().UTC())
 	// obs 汇总全网观测:自己量的、拉到的、以及**别人转述的** ——
 	// 转述让够不到的节点也进得来(§16.1.2)。
 	obs := map[string]report.Observation{}
@@ -98,6 +100,10 @@ func cmdStatus(args []string) error {
 	// 不是身份,而身份不能听别人转述。够不到的节点因此永远核对不了版本,
 	// 这件事必须**明说**(见 printVersionSpread),不能靠表的沉默去暗示。
 	vcs := map[string]*version.Coordinate{}
+	// answered 是**真的把状态拉回来了**的节点,不是"拓扑上该够得到"的。
+	// 两者混同会把一次超时误诊成"它跑的是旧二进制"—— 而那台机器刚刚
+	// 已经被报过一次"拉不到"了,同一件事不该报两遍、更不该报成两回事。
+	answered := map[string]bool{}
 	keep := func(o *report.Observation) {
 		if o == nil || o.Node == "" {
 			return
@@ -121,6 +127,7 @@ func cmdStatus(args []string) error {
 			fmt.Printf("  %-7s ❌ 拉不到:%v\n", id, ferr)
 			continue
 		}
+		answered[id] = true
 		keep(st.Observation)
 		for i := range st.Learned {
 			keep(&st.Learned[i])
@@ -163,11 +170,10 @@ func cmdStatus(args []string) error {
 
 	// 快照一致不等于版本一致。**旧二进制配新配置正是发布器崩掉的那类
 	// 故障**(§15.4),而它在只看快照的表上完全看不出来。
-	// 传 vers 而不是 ids:ids 只有**够得到的**节点,转述来的根本进不了这张表
-	// —— 于是它们的版本既没核对,也不会被列进"没问到的"。
-	// 传两份名单:ids 是**够得到的**,vers 摊开是**全网的**(含转述来的)。
-	// 两者之差性质完全不同 —— 够得到却没报版本是故障,够不到是拓扑。
-	bad += printVersionSpread(vcs, ids, allNodes(vers))
+	//
+	// 分母取 SSOT 里的节点数,不取"听到过的"—— 一台彻底失联的机器必须
+	// 让分母变大,否则它会从统计里整个消失,而消失的样子和一切正常一样。
+	bad += printVersionSpread(vcs, answered, unreachable, s)
 
 	printMatrix(obs, s)
 
@@ -505,17 +511,6 @@ func snapshotSpread(obs map[string]report.Observation, direct map[string]string)
 	return vers
 }
 
-// allNodes 把 snapshotSpread 的结果摊回一个节点名列表 —— 它已经含了转述
-// 来的那些,是目前"全网有哪些节点"最全的一份。
-func allNodes(vers map[string][]string) []string {
-	var out []string
-	for _, ns := range vers {
-		out = append(out, ns...)
-	}
-	sort.Strings(out)
-	return slices.Compact(out)
-}
-
 // printVersionSpread 报告全网跑的是不是同一版二进制,返回要计入 bad 的条数。
 //
 // 它和 snapshotSpread 是一对,但**不能合并**:快照说配置是哪一版,版本说
@@ -523,15 +518,43 @@ func allNodes(vers map[string][]string) []string {
 // 的故障 —— services 字段一次,retired_ports 字段一次 —— 而只看快照的表
 // 对这类故障完全是盲的。
 //
-// **和快照表的关键差别:版本核对不了转述来的节点。** 快照 id 在观测里带着,
-// 转述过来还是事实;版本坐标不在,而且**身份本来就不该听别人转述**。所以
-// 够不到的节点这里永远是空白 —— 空白必须印出来,否则一台跑着老二进制、
-// 又恰好够不到的机器会被这张表的沉默算成同意。这个坑 snapshotSpread 踩过
-// 一次(它当时少列了几行,而少列的方式是静默的),不该再踩第二次。
-func printVersionSpread(vcs map[string]*version.Coordinate, reachable, all []string) int {
-	if len(vcs) == 0 {
-		return 0
+// # 三种"没版本"性质完全不同,不能混
+//
+//	答上来了但没版本   它跑的是不带版本坐标的旧二进制。**故障**,计入 bad
+//	根本没答上来       上面已经报过"拉不到"了。这里**不再报**,更不能
+//	                   说成"跑的是旧二进制"—— 超时和旧版本是两回事
+//	够不到、只能转述   拓扑事实。印出来但**不是告警**,否则每次都响
+//
+// 中间那条是第一版踩的坑:`reach` 来自 SSOT 拓扑而不是成功拉取,于是一次
+// 超时会被指认成"旧二进制",而且 bad 加两次。答上来没有的判断必须用
+// **真的收到了回复**这个集合,不能用"理论上够得到"。
+//
+// # 分母取 SSOT,不取"听到过的"
+//
+// 一台彻底失联的机器(没隧道又没人转述)如果不进分母,就会从统计里整个
+// 消失 —— 而消失的样子和一切正常一模一样。这正是 snapshotSpread 当年
+// 踩过的那种静默漏报。
+func printVersionSpread(vcs map[string]*version.Coordinate, answered map[string]bool,
+	unreachable []string, s *model.SSOT) int {
+
+	lines, bad := versionFindings(vcs, answered, unreachable, len(s.Nodes))
+	for _, l := range lines {
+		fmt.Println(l)
 	}
+	return bad
+}
+
+// versionFindings 是上面那个的**纯函数内核**:同样的输入永远给同样的行。
+// 拆出来是为了能测 —— 判断逻辑踩过一次坑(把超时误诊成旧二进制),
+// 而那种坑只有喂进"拉不到的节点"才看得出来。
+func versionFindings(vcs map[string]*version.Coordinate, answered map[string]bool,
+	unreachable []string, totalNodes int) ([]string, int) {
+
+	if len(vcs) == 0 {
+		return nil, 0
+	}
+	var out []string
+	add := func(f string, a ...any) { out = append(out, fmt.Sprintf(f, a...)) }
 	byCommit := map[string][]string{}
 	var dirty, unknown []string
 	for id, c := range vcs {
@@ -546,28 +569,13 @@ func printVersionSpread(vcs map[string]*version.Coordinate, reachable, all []str
 		}
 	}
 
-	// 够得到却没报版本 = 它跑的是不带版本坐标的旧二进制。**这是故障。**
-	var stale []string
-	for _, id := range reachable {
+	// 答上来了却没带版本坐标 —— 只有这种才是"旧二进制"。
+	var oldBinary []string
+	for id := range answered {
 		if _, ok := vcs[id]; !ok {
-			stale = append(stale, id)
+			oldBinary = append(oldBinary, id)
 		}
 	}
-	// 够不到的只能靠转述,而转述不带版本。**这是拓扑,不是故障** ——
-	// 报成告警就成了每次都响的常驻误报(D67)。
-	inReach := map[string]bool{}
-	for _, id := range reachable {
-		inReach[id] = true
-	}
-	var offReach []string
-	for _, id := range all {
-		if !inReach[id] {
-			offReach = append(offReach, id)
-		}
-	}
-	// 分母是**已知存在的节点总数**:够得到的 + 够不到但听说过的。
-	// all 里可能缺掉"够得到但这次没拉到"的那些,所以按并集算。
-	total := len(reachable) + len(offReach)
 
 	bad := 0
 	keys := make([]string, 0, len(byCommit))
@@ -577,39 +585,69 @@ func printVersionSpread(vcs map[string]*version.Coordinate, reachable, all []str
 	sort.Strings(keys)
 
 	if len(keys) > 1 {
-		fmt.Printf("\n  ⚠️ 全网不是同一个 commit:\n")
+		add("")
+		add("  ⚠️ 全网不是同一个 commit:")
 		for _, k := range keys {
 			sort.Strings(byCommit[k])
-			fmt.Printf("      %-14s %s\n", version.Short(k), strings.Join(byCommit[k], " "))
+			add("      %-14s %s", version.Short(k), strings.Join(byCommit[k], " "))
 		}
 		bad++
 	} else {
-		// **印分母。** 只写"都一致"时,5 台里问到 1 台和问到 5 台看起来
-		// 一模一样,而前者几乎没有说服力。
-		fmt.Printf("\n  commit %s(问到的 %d/%d 一致)\n", version.Short(keys[0]), len(vcs), total)
+		// **印分母。** 只写"都一致"时,5 台里核对了 1 台和核对了 5 台
+		// 看起来一模一样,而前者几乎没有说服力。
+		add("")
+		add("  commit %s(%d/%d 台核对过)",
+			version.Short(keys[0]), len(vcs), totalNodes)
 	}
 
 	if len(dirty) > 0 {
 		sort.Strings(dirty)
-		fmt.Printf("  ⚠️ 构建自脏工作区,对不上任何 commit:%s\n", strings.Join(dirty, " "))
+		add("  ⚠️ 构建自脏工作区,对不上任何 commit:%s", strings.Join(dirty, " "))
 		bad++
 	}
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
-		fmt.Printf("  ⚠️ 认不出自己 commit 的节点:%s —— 追溯不回 git\n", strings.Join(unknown, " "))
+		add("  ⚠️ 认不出自己 commit 的节点:%s —— 追溯不回 git", strings.Join(unknown, " "))
 	}
-	if len(stale) > 0 {
-		sort.Strings(stale)
-		fmt.Printf("  ⚠️ 够得到却没报版本的:%s —— 跑的是不带版本坐标的旧二进制\n",
-			strings.Join(stale, " "))
+	if len(oldBinary) > 0 {
+		sort.Strings(oldBinary)
+		add("  ⚠️ 答上来却没报版本的:%s —— 跑的是不带版本坐标的旧二进制",
+			strings.Join(oldBinary, " "))
 		bad++
 	}
-	if len(offReach) > 0 {
-		sort.Strings(offReach)
+	if len(unreachable) > 0 {
 		// 不是告警,是这张表覆盖不到的范围。说出来才不会把空白当成一致。
-		fmt.Printf("  (够不到、只能靠转述的:%s —— 版本核不了,身份不能听转述)\n",
-			strings.Join(offReach, " "))
-		fmt.Printf("     要确认:ssh <节点> loom version\n")
+		add("  (够不到、只能靠转述的:%s —— 版本核不了,身份不能听转述)",
+			strings.Join(unreachable, " "))
+		add("     要确认:ssh <节点> loom version")
 	}
-	return bad
+	return out, bad
+}
+
+// printPublisherHealth 报告**发布器自己**的死活,返回要计入 bad 的条数。
+//
+// 版本坐标(D69)覆盖不到它:`loom report` 报的是跑 report 那个二进制的
+// commit,而发布器是另一个进程 —— 它可能还持着被换掉的旧 inode,
+// 一边显示 active 一边什么都发不出去。2026-08-24 就是这样过了 2 小时 17 分。
+func printPublisherHealth(path string, now time.Time) int {
+	h, err := publish.ReadHealth(path)
+	if err != nil {
+		fmt.Printf("  ⚠️ 读发布器状态失败:%v\n\n", err)
+		return 1
+	}
+	if h == nil {
+		// 分不出"这台不是中控"和"发布器是不写状态的旧版",所以两个都说。
+		// **不报警**,但也不能一声不吭 —— 空白会被当成正常。
+		fmt.Printf("  (没有发布器状态 —— 这台不是中控,或者发布器还是不写状态的旧版)\n\n")
+		return 0
+	}
+	lines, bad := h.Findings(now)
+	for _, l := range lines {
+		fmt.Println(l)
+	}
+	fmt.Println()
+	if bad {
+		return 1
+	}
+	return 0
 }

@@ -31,6 +31,8 @@ func cmdPublisher(args []string) error {
 	author := fs.String("author", "", "记进 manifest 的作者")
 	binary := fs.String("binary", "", "把这个 Agent 二进制一起发(与配置绑定回滚,§15.4)")
 	pinDir := fs.String("pin-dir", "deploy/pinned", "钉住状态目录(loom pin 写在这儿)")
+	health := fs.String("health", publish.HealthPath,
+		"发布器写自己状态的地方 —— 让 loom status 看得出\"进程活着但发不出去\"")
 	archive := fs.String("ssot-history", "deploy/ssot-history", "源头存档目录(中控本地,不进分发树;loom rollback 从这里取)")
 	interval := fs.Duration("interval", 30*time.Second, "多久看一次")
 	once := fs.Bool("once", false, "只跑一轮就退出")
@@ -70,6 +72,7 @@ func cmdPublisher(args []string) error {
 		Author: *author, VerifyURL: *verify, DNS: *dns, BinaryPath: *binary,
 		ArchiveDir: *archive,
 		PinDir:     *pinDir,
+		HealthPath: *health,
 		Interval:   *interval, Once: *once, Log: os.Stdout,
 	})
 }

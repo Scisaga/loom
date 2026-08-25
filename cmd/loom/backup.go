@@ -58,18 +58,7 @@ func cmdBackup(args []string) error {
 		srcs = append(srcs, backupSrc{path: r})
 	}
 	if len(srcs) == 0 {
-		srcs = []backupSrc{
-			{path: "deploy/secrets.env"},
-			{path: "deploy/pki"},
-			// 源头存档:SSOT 是全系统唯一不可再生的输入,而它没有别的版本
-			// 历史(不在 git,中控界面覆盖式保存)。存档只在中控本地,
-			// 那台机器没了就没了 —— 而中控没了本来就是"从备份恢复"事件。
-			//
-			// **它可以合法地还不存在**:发布器第一次成功发布才会建它。
-			// 拿它当必需项的话,一台刚起来的中控连备份都做不了 ——
-			// 而"做危险变更之前先备份"恰恰是最需要它能跑的时候。
-			{path: "deploy/ssot-history", optional: true},
-		}
+		srcs = defaultBackupSrcs()
 	}
 
 	var buf bytes.Buffer
@@ -296,4 +285,33 @@ func cmdRestore(args []string) error {
 	}
 	fmt.Printf("✓ %d 个文件 → %s\n", n, *out)
 	return nil
+}
+
+// defaultBackupSrcs 是"不备份就再也拿不回来"的那些东西。
+//
+// 拆成函数是为了能测:这份清单漏一项的后果**只有在需要它的那天才会发现**,
+// 而那天恰恰是没法补救的一天。deploy/keys 就漏过 —— 文档两处都写着签名
+// 私钥靠 loom backup 保存,清单里却没有它。
+func defaultBackupSrcs() []backupSrc {
+	return []backupSrc{
+		// 平台签名私钥。**丢了它,全网就再也收不到任何新配置** ——
+		// 节点只认这把钥匙签出来的快照,换钥要逐台手工改 control.json。
+		// D38 和附录 C #15 都写着它"靠 loom backup 保存",而在此之前
+		// 这句话是假的:清单里只有 secrets.env / pki / ssot-history,
+		// 而 pki 是 CA 与节点证书,**是另一样东西**。
+		//
+		// 默认备份于是能"成功"却恢复不了签名能力,而这件事只有在
+		// 需要它的那天才会被发现 —— 正是本文件开头那句话说的情形。
+		{path: "deploy/keys"},
+		{path: "deploy/secrets.env"},
+		{path: "deploy/pki"},
+		// 源头存档:SSOT 是全系统唯一不可再生的输入,而它没有别的版本
+		// 历史(不在 git,中控界面覆盖式保存)。存档只在中控本地,
+		// 那台机器没了就没了 —— 而中控没了本来就是"从备份恢复"事件。
+		//
+		// **它可以合法地还不存在**:发布器第一次成功发布才会建它。
+		// 拿它当必需项的话,一台刚起来的中控连备份都做不了 ——
+		// 而"做危险变更之前先备份"恰恰是最需要它能跑的时候。
+		{path: "deploy/ssot-history", optional: true},
+	}
 }

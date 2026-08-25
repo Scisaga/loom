@@ -109,3 +109,31 @@ func TestBackupOptionalPresentIsIncluded(t *testing.T) {
 		t.Errorf("打进去的不对:%v", included)
 	}
 }
+
+// 默认清单漏一项的后果只有在需要备份的那天才会发现,而那天没法补救。
+// 所以每一项都钉住,不靠"看一眼觉得齐了"。
+func TestDefaultBackupSrcsCoverTheIrreplaceable(t *testing.T) {
+	got := map[string]bool{}
+	optional := map[string]bool{}
+	for _, s := range defaultBackupSrcs() {
+		got[s.path] = true
+		optional[s.path] = s.optional
+	}
+
+	// 签名私钥丢了,全网再也收不到任何新配置 —— 换钥要逐台手工改
+	// control.json。D38 与附录 C #15 都写着它靠 loom backup 保存。
+	// **deploy/pki 不顶替它**:那是 CA 与节点证书,是另一样东西。
+	for _, must := range []string{"deploy/keys", "deploy/secrets.env", "deploy/pki"} {
+		if !got[must] {
+			t.Errorf("默认备份清单缺少 %s —— 丢了就不可再生", must)
+		}
+		if optional[must] {
+			t.Errorf("%s 不能是可选的:静默跳过会制造出\"你以为备份了\"", must)
+		}
+	}
+
+	// 源头存档要发布器成功发布过一次才会建,所以它可以合法地还不存在。
+	if !got["deploy/ssot-history"] || !optional["deploy/ssot-history"] {
+		t.Error("deploy/ssot-history 应在清单里,且必须是可选的")
+	}
+}

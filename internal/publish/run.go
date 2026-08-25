@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"loom/internal/version"
 )
 
 // Options 是发布器的运行期参数。
@@ -41,6 +43,12 @@ type Options struct {
 	// 存路径而不是内容:**每轮重新读**。重新编译之后不重启发布器就发不出去,
 	// 那又是一个"改了没生效"的隐蔽故障。代价是每轮多读 12MB,可忽略。
 	BinaryPath string
+
+	// HealthPath 是发布器写自己状态的地方(见 health.go)。留空则不写。
+	//
+	// 没有它的话,"进程活着但发不出去"只能靠翻 journal 发现 —— 而没人
+	// 会去翻一个 systemd 显示 active 的服务的日志。
+	HealthPath string
 
 	Interval time.Duration
 	Once     bool
@@ -76,6 +84,21 @@ func Run(ctx context.Context, opts Options) error {
 	logf := func(f string, a ...any) {
 		fmt.Fprintf(opts.Log, "%s "+f+"\n", append([]any{opts.Now().Format("15:04:05")}, a...)...)
 	}
+
+	health := &Health{
+		Version:   version.Self(),
+		PID:       os.Getpid(),
+		StartedAt: opts.Now().Format(time.RFC3339),
+	}
+	// 写不出状态文件不该拦住发布 —— 发布是主职,自报是附加。
+	// 但要说一次,否则"状态文件一直是旧的"会变成新的静默故障。
+	saveHealth := func() {
+		health.UpdatedAt = opts.Now().Format(time.RFC3339)
+		if err := health.Write(opts.HealthPath); err != nil {
+			logf("⚠️ 写发布器状态失败:%v —— loom status 看到的会是旧的", err)
+		}
+	}
+	saveHealth()
 
 	lastSSOT := ""
 	lastBuilt := ""
@@ -177,8 +200,16 @@ func Run(ctx context.Context, opts Options) error {
 							"要么 `loom pin -clear`", short(pin.Snapshot), short(id), short(pin.Snapshot))
 					}
 					lastSSOT, lastBuilt, lastBin = cur, id, binSum
+					health.LastSuccess = opts.Now().Format(time.RFC3339)
+					health.LastSnapshot, health.LastSSOT = id, cur
+					// **LastError 刻意不清空。** 清了的话一次成功就把
+					// "刚才卡了两小时"抹掉了,而那正是要留住的信息。
+					saveHealth()
 				} else {
 					logf("未发布:%v", err)
+					health.LastError = err.Error()
+					health.LastErrorAt = opts.Now().Format(time.RFC3339)
+					saveHealth()
 					if changed {
 						lastSSOT = cur // 同一份坏内容不重复刷屏,改动了会再试
 					}
@@ -189,6 +220,9 @@ func Run(ctx context.Context, opts Options) error {
 		if opts.Once {
 			return nil
 		}
+		// 每轮都刷一次 UpdatedAt:它是心跳。**和 LastSuccess 分开** ——
+		// 昨天那次故障里心跳一直正常,停住的是 LastSuccess。
+		saveHealth()
 		select {
 		case <-ctx.Done():
 			return nil
