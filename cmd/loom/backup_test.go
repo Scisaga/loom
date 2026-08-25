@@ -28,13 +28,13 @@ func TestBackupOptionalMissingDoesNotBlock(t *testing.T) {
 
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
-	var included, missing, skipped []string
+	var included, missing, skipped, oddities []string
 	srcs := []backupSrc{
 		{path: must},
 		{path: filepath.Join(dir, "还不存在"), optional: true},
 	}
 	for _, src := range srcs {
-		n, err := addPath(tw, src.path, &included)
+		n, err := addPath(tw, src.path, &included, &oddities)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -66,9 +66,9 @@ func TestBackupRequiredMissingIsCaught(t *testing.T) {
 	dir := t.TempDir()
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
-	var included, missing []string
+	var included, missing, oddities []string
 	for _, src := range []backupSrc{{path: filepath.Join(dir, "缺的")}} {
-		n, err := addPath(tw, src.path, &included)
+		n, err := addPath(tw, src.path, &included, &oddities)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -95,8 +95,8 @@ func TestBackupOptionalPresentIsIncluded(t *testing.T) {
 
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
-	var included []string
-	n, err := addPath(tw, hist, &included)
+	var included, oddities []string
+	n, err := addPath(tw, hist, &included, &oddities)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,5 +135,72 @@ func TestDefaultBackupSrcsCoverTheIrreplaceable(t *testing.T) {
 	// 源头存档要发布器成功发布过一次才会建,所以它可以合法地还不存在。
 	if !got["deploy/ssot-history"] || !optional["deploy/ssot-history"] {
 		t.Error("deploy/ssot-history 应在清单里,且必须是可选的")
+	}
+}
+
+// 子目录必须递归进去。早先的版本遇到子目录直接跳过,而且**不报告** ——
+// 备份"成功"但内容不全,只有在需要它的那天才会发现。
+func TestAddPathRecursesIntoSubdirectories(t *testing.T) {
+	dir := t.TempDir()
+	deep := filepath.Join(dir, "a", "b", "c")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{
+		filepath.Join(dir, "顶层.txt"),
+		filepath.Join(dir, "a", "一层.txt"),
+		filepath.Join(deep, "三层.txt"),
+	} {
+		if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	var included, oddities []string
+	n, err := addPath(tw, dir, &included, &oddities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if n != 3 {
+		t.Fatalf("三层目录里共 3 个文件,只打了 %d 个:%v", n, included)
+	}
+	joined := strings.Join(included, " ")
+	for _, want := range []string{"顶层.txt", "一层.txt", "三层.txt"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("漏了 %s:%v", want, included)
+		}
+	}
+}
+
+// 非普通文件不打包,但**要报出来** —— 静默跳过和"这里本来就没东西"
+// 在结果上分不开。
+func TestAddPathReportsNonRegularFiles(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real.txt")
+	if err := os.WriteFile(real, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(dir, "link.txt")); err != nil {
+		t.Skip("这个文件系统建不了符号链接")
+	}
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	var included, oddities []string
+	n, err := addPath(tw, dir, &included, &oddities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = tw.Close()
+	if n != 1 {
+		t.Errorf("只该打包那个普通文件,打了 %d 个:%v", n, included)
+	}
+	if len(oddities) != 1 || !strings.Contains(oddities[0], "link.txt") {
+		t.Errorf("符号链接必须被报出来,得到 %v", oddities)
 	}
 }

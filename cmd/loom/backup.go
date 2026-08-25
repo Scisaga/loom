@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -64,9 +65,9 @@ func cmdBackup(args []string) error {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	var included []string
-	var missing, skipped []string
+	var missing, skipped, oddities []string
 	for _, src := range srcs {
-		n, err := addPath(tw, src.path, &included)
+		n, err := addPath(tw, src.path, &included, &oddities)
 		if err != nil {
 			return err
 		}
@@ -105,6 +106,11 @@ func cmdBackup(args []string) error {
 
 	// 可选项没打进去也要说 —— 静默省略就是把"你以为备份了"制造出来,
 	// 与上面那条硬失败是同一个理由,只是这里不该拦住整次备份。
+	if len(oddities) > 0 {
+		sort.Strings(oddities)
+		fmt.Printf("ⓘ 不是普通文件,没打包:%s\n", strings.Join(oddities, " "))
+		fmt.Printf("   符号链接和设备节点还原不回去,得手工处理。\n\n")
+	}
 	if len(skipped) > 0 {
 		sort.Strings(skipped)
 		fmt.Printf("ⓘ 没有打包(还不存在):%s\n", strings.Join(skipped, " "))
@@ -126,7 +132,16 @@ func cmdBackup(args []string) error {
 	return nil
 }
 
-func addPath(tw *tar.Writer, src string, included *[]string) (int, error) {
+// addPath 把一个文件或**整棵目录树**打进 tar,返回打了几个文件。
+//
+// **递归。** 早先的版本遇到子目录直接 `continue` —— 静默跳过,不计数也不
+// 报告。默认清单碰巧全是平铺目录所以没暴露,但 `loom backup deploy/` 会
+// 丢掉一整棵子树,而丢的方式正是本文件开头警告的那种:备份"成功"了,
+// 内容不全,只有在需要它的那天才会发现。
+//
+// 非普通文件(符号链接、设备、socket)**不打包但要报出来**,理由同上 ——
+// 静默跳过和"这里本来就没东西"在结果上分不开。
+func addPath(tw *tar.Writer, src string, included, oddities *[]string) (int, error) {
 	st, err := os.Stat(src)
 	if os.IsNotExist(err) {
 		return 0, nil
@@ -155,19 +170,20 @@ func addPath(tw *tar.Writer, src string, included *[]string) (int, error) {
 	if !st.IsDir() {
 		return n, add(src)
 	}
-	ents, err := os.ReadDir(src)
-	if err != nil {
-		return 0, err
-	}
-	for _, e := range ents {
-		if e.IsDir() {
-			continue
+	err = filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
-		if err := add(filepath.Join(src, e.Name())); err != nil {
-			return n, err
+		if d.IsDir() {
+			return nil
 		}
-	}
-	return n, nil
+		if !d.Type().IsRegular() {
+			*oddities = append(*oddities, p+"("+d.Type().String()+")")
+			return nil
+		}
+		return add(p)
+	})
+	return n, err
 }
 
 // encrypt 用 PBKDF2-SHA256 派生密钥,AES-256-GCM 封装。
