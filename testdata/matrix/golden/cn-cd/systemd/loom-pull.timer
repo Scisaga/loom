@@ -8,9 +8,10 @@ Description=Loom 取配置的节奏(cn-cd)
 # 而 enable 这个动作本身往往就发生在一次 pull 的安装阶段里,于是
 # pull 套 pull。Persistent 也去掉,同样的理由(它会补跑"错过的"那次)。
 OnActiveSec=2min
-OnUnitActiveSec=10min
+OnUnitActiveSec=45s
 # 五台机器同时去拉会在分发点上撞一起,也会让全网在同一秒重启同一个服务。
-RandomizedDelaySec=60s
+# **抖动必须小于周期**,否则它不是错峰而是把周期变得没有意义。
+RandomizedDelaySec=15s
 
 [Install]
 WantedBy=timers.target

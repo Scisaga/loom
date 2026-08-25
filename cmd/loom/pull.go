@@ -188,13 +188,20 @@ func cmdPull(args []string) (retErr error) {
 	if swapped, err := upgradeBinary(c, base, &man, *binPath, *dry); err != nil {
 		return err
 	} else if swapped && !*dry {
-		// 换完二进制就此结束 —— 记录停在 activating,**这正是那 10 分钟
-		// 空档的形状**:一台机器新二进制、旧配置,而以前没人看得见它。
 		rec.Binary = binarySHA(&man)
 		saveRec()
-		// 换过二进制之后就此结束这一轮:配置交给下一次(几分钟后)。
-		// 继续用**当前进程里的旧代码**去装新配置,正是要避免的那种配对。
-		fmt.Println("  二进制已更新,配置留给下一轮(几分钟后)")
+		// **用新二进制续跑同一个快照,不等下一个定时器**(D80)。
+		//
+		// 安全原则没变:继续用当前进程里的**旧代码**去装新配置,正是要
+		// 避免的那种配对。变的只是怎么实现它 —— 以前靠"就此 return,
+		// 10 分钟后 timer 再来一次",实测那个空档是 10 分 11 秒。
+		// 现在把剩下的活交给刚装好的那个二进制,立刻。
+		if err := continuePull(*binPath, args); err != nil {
+			return fmt.Errorf("换完二进制之后续跑失败:%w", err)
+		}
+		// 子进程已经把记录写到 verified 了。父进程别拿自己那份停在
+		// activating 的旧记录覆盖回去 —— 清空路径让 defer 变成 no-op。
+		*rolloutPath = ""
 		return nil
 	}
 

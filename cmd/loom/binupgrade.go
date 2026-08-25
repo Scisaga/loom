@@ -193,3 +193,30 @@ func binarySHA(man *snapshot.Manifest) string {
 	}
 	return ""
 }
+
+// contEnv 标记"我是被续跑起来的子进程"。
+//
+// 防的是无限套娃:正常情况下子进程看到二进制哈希已经对上,不会再换,
+// 于是深度天然是 1。但**"正常情况"是个假设**,而这个假设错了的话
+// 代价是 fork 炸弹。所以显式挡一道。
+const contEnv = "LOOM_PULL_CONTINUATION"
+
+// continuePull 用**刚装好的那个二进制**跑完这一轮剩下的活。
+//
+// # 为什么是子进程,不是 exec
+//
+// exec 把当前进程替换掉,而当前进程是唯一还知道"旧二进制在 .prev、
+// 出事了怎么退回去"的东西。子进程留住了这个能力,代价只是一个进程。
+//
+// 父进程在这里等着,不做别的 —— 它存在的意义就是看着子进程的结果。
+func continuePull(binPath string, args []string) error {
+	if os.Getenv(contEnv) != "" {
+		return fmt.Errorf("续跑的子进程又要换二进制 —— 这不该发生,停下来免得套娃")
+	}
+	fmt.Printf("  用新二进制续跑同一个快照(不等下一轮)\n")
+
+	cmd := exec.Command(binPath, append([]string{"pull"}, args...)...)
+	cmd.Env = append(os.Environ(), contEnv+"=1")
+	cmd.Stdout, cmd.Stderr = prefixWriter{"  "}, prefixWriter{"  "}
+	return cmd.Run()
+}

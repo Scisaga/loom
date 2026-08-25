@@ -45,7 +45,8 @@ Description=Loom 取配置的节奏(%s)
 OnActiveSec=2min
 OnUnitActiveSec=%s
 # 五台机器同时去拉会在分发点上撞一起,也会让全网在同一秒重启同一个服务。
-RandomizedDelaySec=60s
+# **抖动必须小于周期**,否则它不是错峰而是把周期变得没有意义。
+RandomizedDelaySec=15s
 
 [Install]
 WantedBy=timers.target
@@ -81,6 +82,15 @@ func renderPull(s *model.SSOT, n *model.Node) ([]File, []Skip) {
 
 // pullPeriod 是取配置的间隔。
 //
-// 比调参周期慢一个量级:配置变更是人发起的,不像链路质量那样一直在动。
-// 太频繁只是在分发点上刷日志。
-const pullPeriod = "10min"
+// **原来是 10min,理由是"配置变更是人发起的,太频繁只是刷日志"。**
+// 那个理由把成本估高了、把代价估低了:
+//
+//	成本 —— 一次无变化的 pull 实测约 1 秒,只有几个小 JSON 请求。
+//	        二进制哈希对上就不下载,所以没有 12.5 MB 那回事。
+//	        5 台 × 45 秒 ≈ 7 次/分钟,分发点是台 nginx,这不叫负载。
+//	代价 —— 全网收敛要等一个周期。实测 jm24 卡在 activating 10 分 11 秒,
+//	        而那 10 分钟里它是"新二进制 + 旧配置"。
+//
+// 45 秒 + 15 秒抖动 → 最坏 60 秒发现变化。加上发布器那 30 秒,
+// 纯配置变更端到端 90 秒以内(D80)。
+const pullPeriod = "45s"
