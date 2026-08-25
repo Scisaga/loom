@@ -69,6 +69,11 @@ type Record struct {
 	StartedAt string `json:"started_at"`
 	// EnteredAt 是**进入当前阶段**的时刻。卡住多久要靠它算 ——
 	// StartedAt 算的是整次 rollout,分不出卡在哪一步。
+	//
+	// **用 RFC3339Nano 而不是 RFC3339。** 秒级精度下,Steps 里的耗时是
+	// 从"那一秒的开头"算起的,不是真的步长 —— 实测过一次:真实 482ms
+	// 的两步被记成一模一样的 482ms,因为两次都从同一个被截断的秒起算。
+	// 解析侧仍用 RFC3339 layout,它认得带小数秒的串,所以旧记录照样读。
 	EnteredAt string `json:"entered_at"`
 
 	// LastGood 是最近一次 Verified 的快照,也就是**回退目标**。
@@ -132,7 +137,7 @@ func (r *Record) Write(path string) error {
 // Begin 开一次新的 rollout。**LastGood 从上一条记录继承** ——
 // 它是跨越多次 rollout 的东西,不能因为开了新的一轮就丢掉回退目标。
 func Begin(prev *Record, snapshot, binary string, now time.Time) *Record {
-	ts := now.UTC().Format(time.RFC3339)
+	ts := now.UTC().Format(time.RFC3339Nano)
 	r := &Record{
 		Snapshot: snapshot, Binary: binary,
 		Stage: Staging, StartedAt: ts, EnteredAt: ts,
@@ -150,7 +155,7 @@ func (r *Record) Enter(s Stage, now time.Time) {
 		r.Steps = append(r.Steps, Step{Stage: r.Stage, At: r.EnteredAt, MS: t.Sub(prev).Milliseconds()})
 	}
 	r.Stage = s
-	r.EnteredAt = t.Format(time.RFC3339)
+	r.EnteredAt = t.Format(time.RFC3339Nano)
 	if s == Verified {
 		// **只有 Verified 推进 LastGood。** 装上了不算,跑起来了才算 ——
 		// 否则回退目标会指向一份装得上但跑不了的快照。

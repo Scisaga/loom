@@ -134,3 +134,31 @@ func TestEmptyPathDisablesRecording(t *testing.T) {
 		t.Fatalf("空路径写入应是 no-op,得到 %v", err)
 	}
 }
+
+// 亚秒级的步长必须记准。秒级时间戳下,两个 482ms 的步会被记成一模一样
+// 的数 —— 因为都是从同一个被截断的秒起算的。实测在真机上撞到过。
+func TestSubSecondStepsAreMeasuredCorrectly(t *testing.T) {
+	base := at("2026-08-25T10:51:15Z")
+	r := Begin(nil, "aaa", "", base.Add(800*time.Millisecond))
+	r.Enter(Activating, base.Add(920*time.Millisecond)) // 真实 120ms
+	r.Enter(Verifying, base.Add(1400*time.Millisecond)) // 真实 480ms
+
+	if len(r.Steps) != 2 {
+		t.Fatalf("应有 2 步,得到 %d", len(r.Steps))
+	}
+	if r.Steps[0].MS != 120 {
+		t.Errorf("staging 真实 120ms,记成了 %dms", r.Steps[0].MS)
+	}
+	if r.Steps[1].MS != 480 {
+		t.Errorf("activating 真实 480ms,记成了 %dms", r.Steps[1].MS)
+	}
+}
+
+// 旧记录是秒级的,新代码必须照样读得懂 —— 解析侧用 RFC3339 layout,
+// 它同时认得带小数秒和不带的。
+func TestSecondGranularityRecordsStillParse(t *testing.T) {
+	r := &Record{Stage: Activating, EnteredAt: "2026-08-25T10:51:15Z"}
+	if !r.Stuck(at("2026-08-25T11:30:00Z"), 5*time.Minute) {
+		t.Error("秒级旧记录应该照样能算出卡了多久")
+	}
+}
