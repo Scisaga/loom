@@ -44,6 +44,13 @@ type Options struct {
 	// 那又是一个"改了没生效"的隐蔽故障。代价是每轮多读 12MB,可忽略。
 	BinaryPath string
 
+	// ReleaseDir 是放行记录所在目录(见 release.go)。
+	//
+	// **非空时,只发被 `loom release` 显式批准过的二进制。** 留空则回到
+	// 旧行为(发 BinaryPath 指的那份,一变就发)—— 那正是"一次 go build
+	// 武装全网升级"的来源,只为不把既有部署一刀切断而保留。
+	ReleaseDir string
+
 	// AllowUntraceable 放行"追溯不回 git 的二进制"。
 	//
 	// 默认**不放行**:认不出 commit 或构建自脏工作区的二进制一旦发到全网,
@@ -115,6 +122,7 @@ func Run(ctx context.Context, opts Options) error {
 	lastBin := ""
 	lastPin := ""
 	lastLive := ""
+	lastRel := ""
 
 	for {
 		body, err := os.ReadFile(opts.SSOTPath)
@@ -125,7 +133,14 @@ func Run(ctx context.Context, opts Options) error {
 			cur := hex.EncodeToString(h[:8])
 
 			// 二进制也算输入的一部分:它变了,快照就该变(§15.4 绑定回滚)。
-			binPath := opts.BinaryPath
+			//
+			// 发哪一份,优先级是 **钉住 > 放行 > (什么都不发)**:
+			//
+			//	钉住  救火状态,粘性覆盖。救火期间不该被一次 release 悄悄解开
+			//	放行  loom release 显式批准过的那一份(D77)
+			//	都没有  只发配置。**不回落到本机二进制** —— 那正是要根治的
+			//	        "一次 go build 武装全网升级"
+			binPath := ""
 			pin, pinBin, perr := ReadPin(opts.PinDir)
 			if perr != nil {
 				logf("读钉住状态失败:%v", perr)
@@ -135,9 +150,30 @@ func Run(ctx context.Context, opts Options) error {
 					logf("⚠️ 二进制钉在 %s(%s)—— 重新编译不会发出去", short(pin.Snapshot), pin.Reason)
 					lastPin = pin.Snapshot
 				}
-			} else if lastPin != "" {
-				logf("钉住已解除,恢复发本机二进制")
-				lastPin = ""
+			} else {
+				if lastPin != "" {
+					logf("钉住已解除,恢复发放行的二进制")
+					lastPin = ""
+				}
+				if opts.ReleaseDir == "" {
+					// 显式关掉 release 机制:回到"发 -binary 指的那份"。
+					// 留这条路是为了不把既有部署和测试一刀切断。
+					binPath = opts.BinaryPath
+				} else if rel, relBin, rerr := ReadRelease(opts.ReleaseDir); rerr != nil {
+					logf("读放行状态失败:%v", rerr)
+				} else if rel != nil {
+					binPath = relBin
+					if rel.SHA256 != lastRel {
+						logf("放行的二进制:%s(commit %s)—— %s",
+							short(rel.SHA256), version.Short(rel.Commit), rel.Reason)
+						lastRel = rel.SHA256
+					}
+				} else if lastRel != "-" {
+					// **说一次就够,但必须说。** 沉默的话,"节点为什么不升级"
+					// 会变成一个查不出来的怪事。
+					logf("还没放行过任何二进制:只发配置。要发二进制:loom release -reason <理由>")
+					lastRel = "-"
+				}
 			}
 
 			bins, binSum, berr := readBinary(binPath)
@@ -161,8 +197,17 @@ func Run(ctx context.Context, opts Options) error {
 				}
 			}
 
-			// 钉住期间本机二进制变了 —— **正是"我重新编译了但没发出去"
-			// 那一刻**。只在这时说一次,不刷屏。
+			// 本机二进制变了但没 release —— **正是"我重新编译了但没发出去"
+			// 那一刻**。钉住和放行两种情形都要说,只说一次,不刷屏。
+			if pin == nil && opts.ReleaseDir != "" && opts.BinaryPath != "" {
+				if _, liveSum, err := readBinary(opts.BinaryPath); err == nil && liveSum != lastLive {
+					if lastLive != "" && liveSum != binSum {
+						logf("ⓘ 本机二进制变了(%s),但没放行 —— 不会发出去。要发:loom release -reason <理由>",
+							short(liveSum))
+					}
+					lastLive = liveSum
+				}
+			}
 			if pin != nil && opts.BinaryPath != "" {
 				if _, liveSum, err := readBinary(opts.BinaryPath); err == nil && liveSum != lastLive {
 					if lastLive != "" {

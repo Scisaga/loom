@@ -35,6 +35,8 @@ func cmdPublisher(args []string) error {
 		"发布器写自己状态的地方 —— 让 loom status 看得出\"进程活着但发不出去\"")
 	allowDirty := fs.Bool("allow-dirty", false,
 		"放行追溯不回 git 的二进制(认不出 commit,或构建自脏工作区)")
+	releaseDir := fs.String("release-dir", "deploy/released",
+		"放行记录目录 —— 只发 loom release 批准过的二进制;留空则回到\"本机二进制一变就发\"")
 	archive := fs.String("ssot-history", "deploy/ssot-history", "源头存档目录(中控本地,不进分发树;loom rollback 从这里取)")
 	interval := fs.Duration("interval", 30*time.Second, "多久看一次")
 	once := fs.Bool("once", false, "只跑一轮就退出")
@@ -76,6 +78,7 @@ func cmdPublisher(args []string) error {
 		PinDir:           *pinDir,
 		HealthPath:       *health,
 		AllowUntraceable: *allowDirty,
+		ReleaseDir:       *releaseDir,
 		Interval:         *interval, Once: *once, Log: os.Stdout,
 	})
 }

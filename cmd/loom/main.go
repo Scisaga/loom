@@ -47,6 +47,8 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
   loom selfcheck                         这个二进制在本机能不能用、读不读得懂现有配置
   loom version  [-short|-json]           这个二进制是哪个 commit、哪个二进制哈希
   loom status   <ssot.yaml>              把够得到的节点全拉一遍,给人看
+  loom release  -reason <理由>            把当前二进制批准为可发到全网的那一份
+  loom release  -show | -clear           看当前放行哪个 / 停止分发二进制
   loom pin      <快照 id> -reason <理由>    把发布用的二进制钉在历史版本上
   loom pin      -clear                     解除钉住
   loom rollback <快照 id> -reason <理由>    整份退回历史快照:源头与二进制一起
@@ -120,6 +122,8 @@ func main() {
 		err = cmdApply(args)
 	case "addnode":
 		err = cmdAddNode(args)
+	case "release":
+		err = cmdRelease(args)
 	case "pin":
 		err = cmdPin(args)
 	case "rollback":
