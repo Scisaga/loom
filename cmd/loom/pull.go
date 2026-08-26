@@ -74,15 +74,24 @@ func cmdPull(args []string) (retErr error) {
 	// 互斥:定时器触发的那次和手工跑的那次撞在一起,会互相清掉对方的
 	// 回滚清单,机器停在装了一半的状态。实测踩过(通过重启 loom-pull
 	// 自己套自己),那个具体路径已经堵上了,但用锁把整类问题一并挡住。
-	unlock, err := lockPull(*statePath)
-	if err != nil {
-		return err
+	//
+	// **续跑的子进程不抢这把锁。** 它不是"另一次 pull",而是同一次的
+	// 后半段 —— 父进程正拿着锁在 wait,互斥对外仍然成立。
+	//
+	// 不豁免的话,子进程会被自己的父进程挡在门外、打印"另一个 pull
+	// 正在跑"然后退出,于是续跑变成一句空话:提示印了,活没干。
+	// D80 第一次上真机就是这样,而单测用 /bin/true 假扮子进程,测不出来。
+	if needsLock() {
+		unlock, err := lockPull(*statePath)
+		if err != nil {
+			return err
+		}
+		if unlock == nil {
+			fmt.Println("另一个 loom pull 正在跑,本次跳过")
+			return nil
+		}
+		defer unlock()
 	}
-	if unlock == nil {
-		fmt.Println("另一个 loom pull 正在跑,本次跳过")
-		return nil
-	}
-	defer unlock()
 
 	base := strings.TrimRight(*url, "/")
 	c := netx.Client(*dnsSrv, *timeout)

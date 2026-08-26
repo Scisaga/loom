@@ -46,3 +46,16 @@ func TestContinuePullMarksTheChild(t *testing.T) {
 		t.Fatalf("子进程看到的 %s = %q,应该是 \"1\"", contEnv, got)
 	}
 }
+
+// 续跑的子进程必须绕开互斥锁 —— 否则它会被自己的父进程挡住,
+// 而症状是**沉默的**:那句"用新二进制续跑"照印,活却没干。
+// 真机上就是这么过去的,而当时的单测用 /bin/true 假扮子进程,测不出来。
+func TestContinuationSkipsTheLock(t *testing.T) {
+	if !needsLock() {
+		t.Fatal("普通 pull 必须抢锁")
+	}
+	t.Setenv(contEnv, "1")
+	if needsLock() {
+		t.Fatal("续跑的子进程不该抢锁 —— 父进程正拿着它")
+	}
+}

@@ -220,3 +220,10 @@ func continuePull(binPath string, args []string) error {
 	cmd.Stdout, cmd.Stderr = prefixWriter{"  "}, prefixWriter{"  "}
 	return cmd.Run()
 }
+
+// needsLock 说这一次 pull 要不要抢互斥锁。
+//
+// 续跑的子进程不抢:它不是"另一次 pull",而是同一次的后半段,父进程
+// 正拿着锁在 wait。**抢的话会被自己的父进程挡在门外** —— D80 第一次
+// 上真机就是这样,续跑变成一句空话:提示印了,活没干。
+func needsLock() bool { return os.Getenv(contEnv) == "" }
