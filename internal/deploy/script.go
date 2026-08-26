@@ -77,7 +77,9 @@ func Script(p *Plan, runID string) string {
 	w("  esac")
 	w("}")
 	w("")
-	w("fail() { echo \"!! $*\" >&2; restore; exit 1; }")
+	// fail 只负责报错和退出,**回滚交给 EXIT trap** —— 否则装了 trap
+	// 之后这里会回滚一次、trap 再回滚一次。
+	w("fail() { echo \"!! $*\" >&2; exit 1; }")
 	w("")
 	// 恢复只碰这次真的换过的文件。previous 里有什么就恢复什么;这次新增的
 	// 文件在 previous 里没有对应项,恢复时删掉。
@@ -85,6 +87,7 @@ func Script(p *Plan, runID string) string {
 	// 这时"回滚"必须是彻底的空操作 —— 否则它会去重启一堆本来好好的服务,
 	// 把一次干净的拒绝变成一次真实的扰动。
 	w("restore() {")
+	w("  trap - EXIT")
 	w("  [ -s \"$PREV/.manifest\" ] || { echo '   (什么都没改,无需回滚)' >&2; return 0; }")
 	w("  echo '   回滚中…' >&2")
 	w("  while IFS='|' read -r tgt saved; do")
@@ -95,6 +98,19 @@ func Script(p *Plan, runID string) string {
 		w("  if marked %s; then restart_one %s || true; fi", shq(s), shq(s))
 	}
 	w("}")
+	w("")
+	// **回滚必须挂在 EXIT 上,不能只靠 fail。**
+	//
+	// 脚本是 `set -eu` 的,于是 install / daemon-reload / systemctl restart
+	// 这些命令失败时 shell **立刻退出**,fail 根本没被调用 —— 而那恰好就是
+	// "装到一半"的核心路径:磁盘满、unit 语法错、服务起不来。
+	//
+	// 以前只有验证阶段(is-active / NRestarts)走 `|| fail`,所以能回滚的
+	// 只有最后那一小段,前面全裸奔。
+	//
+	// restore 自己第一件事就是撤掉 trap:回滚过程里再失败一次的话,
+	// 不该套娃再回滚一遍。
+	w("trap restore EXIT")
 	w("")
 
 	w("# 1. 写暂存")
@@ -142,7 +158,7 @@ func Script(p *Plan, runID string) string {
 			shq(s), s, shq(s))
 	}
 	w("")
-	w("if [ \"$changed\" = 0 ]; then echo '   无变化,不重启任何服务'; rm -f \"$PREV/.manifest\"; rm -rf \"$STAGE\"; exit 0; fi")
+	w("if [ \"$changed\" = 0 ]; then echo '   无变化,不重启任何服务'; rm -f \"$PREV/.manifest\"; rm -rf \"$STAGE\"; trap - EXIT; exit 0; fi")
 	w("")
 
 	w("# 4. 就位")
@@ -169,6 +185,8 @@ func Script(p *Plan, runID string) string {
 		}
 	}
 	w("rm -rf \"$STAGE\"")
+	// 走到这里才算成功,撤掉 trap,免得正常退出也去回滚。
+	w("trap - EXIT")
 	w("echo '   ✅ %s 完成(run %s)'", p.Node, runID)
 	return b.String()
 }
