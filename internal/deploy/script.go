@@ -147,6 +147,18 @@ func Script(p *Plan, runID string) string {
 		}
 		w("fi")
 	}
+	// 要删的也走同一套备份 —— **删除是一种变更**,回滚时要能放回去。
+	// $PREV/.manifest 里存的是原文件,restore 会 cp 回原位。
+	for i, abs := range p.Remove {
+		saved := fmt.Sprintf("d%03d", i)
+		w("if [ -e %s ]; then", shq(abs))
+		w("  changed=$((changed+1))")
+		w("  cp -p %s \"$PREV/%s\"; echo '%s|%s' >> \"$PREV/.manifest\"", shq(abs), saved, abs, saved)
+		if u := UnitFor(abs); u != "" {
+			w("  mark %s", shq(u))
+		}
+		w("fi")
+	}
 	w("echo \"   %d 个文件,其中 $changed 个有变化\"", len(paths))
 	w("")
 	// **enable 是期望状态的一部分,不是文件内容的一部分。**
@@ -160,6 +172,29 @@ func Script(p *Plan, runID string) string {
 	w("")
 	w("if [ \"$changed\" = 0 ]; then echo '   无变化,不重启任何服务'; rm -f \"$PREV/.manifest\"; rm -rf \"$STAGE\"; trap - EXIT; exit 0; fi")
 	w("")
+
+	if len(p.Remove) > 0 {
+		w("# 3.5 清掉不再声明的东西")
+		w("#")
+		w("# dpkg 的模型:包的文件清单存在机器上,卸载时按清单删。这里的清单")
+		w("# 是节点本地的自检清单,**只删自己装过的** —— 清单里没有的一律不碰。")
+		w("#")
+		w("# 顺序是先停服务再删文件:反过来的话 wg-quick stop 找不到配置,")
+		w("# 接口会留在内核里,而那正是\"以为删了其实还连着\"的形状。")
+		for _, abs := range p.Remove {
+			if u := UnitFor(abs); u != "" {
+				w("if [ -e %s ]; then", shq(abs))
+				w("  echo '   停用 %s'", u)
+				w("  systemctl disable --now %s 2>/dev/null || true", shq(u))
+				w("  rm -f %s", shq(abs))
+				w("fi")
+			} else {
+				w("[ -e %s ] && { echo '   删除 %s'; rm -f %s; } || true", shq(abs), abs, shq(abs))
+			}
+		}
+		w("systemctl daemon-reload")
+		w("")
+	}
 
 	w("# 4. 就位")
 	for _, abs := range paths {

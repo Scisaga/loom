@@ -32,6 +32,17 @@ type Plan struct {
 	// **不是所有被重启的都该验证**:loom-wg-reresolve 是 oneshot,跑完就
 	// inactive,拿 is-active 去验它必然失败。
 	Verify []string
+	// Remove 是**这次要从机器上删掉**的绝对路径。
+	//
+	// SSOT 里删掉一条隧道之后,渲染输出里就没有那个 wg-xxx.conf 了 ——
+	// 但节点上的文件和 wg-quick@xxx 服务都还在跑。你以为删了,实际它
+	// 还连着,这是安全问题不只是洁癖。
+	//
+	// 来源是**上一次装了什么**(节点本地的自检清单)减去这次要装什么。
+	// 这是 dpkg 的模型:包的文件清单存在机器上,卸载时按清单删。
+	// **只删自己装过的** —— 清单里没有的文件一律不碰。
+	Remove []string
+
 	// PreCheck 是安装**之前**在暂存目录上跑的检查命令。
 	//
 	// 上一轮就是漏了这步:配置非法 → sing-box 崩溃重启循环,而我只测了
@@ -206,4 +217,39 @@ func (p *Plan) Hash() string {
 		fmt.Fprintf(h, "%s\x00%d\x00%s\x00", k, len(p.Files[k]), p.Files[k])
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// StaleFiles 算出"上次装了、这次不装了"的那些文件。
+//
+// installed 是节点本地自检清单里的绝对路径集合(上一次装了什么),
+// 返回值按字典序,好让脚本输出稳定(§12 纯函数)。
+func (p *Plan) StaleFiles(installed []string) []string {
+	var out []string
+	for _, abs := range installed {
+		if _, still := p.Files[abs]; !still {
+			out = append(out, abs)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// UnitFor 从绝对路径反推"删它之前要先停哪个服务"。
+//
+// 反推而不是查表,是因为要删的文件**已经不在这次的渲染输出里**了 ——
+// BuildPlan 那套 bundlePath → 服务的映射对它无能为力。
+//
+// 认不出来的返回空串:那只是个普通配置文件,删掉即可,没有服务要停。
+func UnitFor(abs string) string {
+	switch {
+	case strings.HasPrefix(abs, "/etc/wireguard/") && strings.HasSuffix(abs, ".conf"):
+		iface := strings.TrimSuffix(strings.TrimPrefix(abs, "/etc/wireguard/"), ".conf")
+		return "wg-quick@" + iface
+	case strings.HasPrefix(abs, "/etc/systemd/system/"):
+		name := strings.TrimPrefix(abs, "/etc/systemd/system/")
+		if strings.HasSuffix(name, ".service") || strings.HasSuffix(name, ".timer") {
+			return name
+		}
+	}
+	return ""
 }

@@ -275,6 +275,20 @@ func cmdPull(args []string) (retErr error) {
 	for _, u := range unmapped {
 		fmt.Printf("  ! %s 没有约定的安装位置,不安装\n", u)
 	}
+	// 删除收敛(dpkg 模型):上次装了、这次不装了的,清掉。
+	//
+	// SSOT 里删掉一条隧道之后,渲染输出里就没那个 wg-xxx.conf 了,但节点
+	// 上的文件和 wg-quick@xxx 服务都还在跑 —— 以为删了,实际还连着。
+	if installed, err := installedFiles(); err != nil {
+		// **读不到清单绝不能当成"该删光"。** 那是"不知道上次装了什么",
+		// 而不知道的时候正确的动作是什么都不删。第一次安装就是这种情况。
+		fmt.Printf("  ! 读不到自检清单,这次不做删除收敛:%v\n", err)
+	} else {
+		plan.Remove = plan.StaleFiles(installed)
+		for _, r := range plan.Remove {
+			fmt.Printf("  - 不再声明,将清掉:%s\n", r)
+		}
+	}
 	if *dry {
 		fmt.Printf("  (dry-run:%d 个文件,涉及 %s)\n", len(plan.Files), strings.Join(plan.Verify, " "))
 		return nil
@@ -515,4 +529,27 @@ func buildManifest(node string, files map[string]string) string {
 		return "{}"
 	}
 	return string(b) + "\n"
+}
+
+// installedFiles 读节点本地的自检清单,返回上一次装了哪些绝对路径。
+//
+// 这是 dpkg 那份 `<pkg>.list` 的对应物:**记录活在机器上**,而不是从
+// 中控推算。中控不知道这台机器上一次实际装成了什么样(可能装到一半失败
+// 过),只有机器自己知道。
+func installedFiles() ([]string, error) {
+	path := render.InstallPath(manifestBundlePath)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var m report.Manifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, fmt.Errorf("解析 %s:%w", path, err)
+	}
+	out := make([]string, 0, len(m.Files))
+	for abs := range m.Files {
+		out = append(out, abs)
+	}
+	sort.Strings(out) // 遍历 map 前排序(§12)
+	return out, nil
 }

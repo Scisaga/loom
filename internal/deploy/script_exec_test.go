@@ -114,3 +114,101 @@ func TestUnchangedIsAQuietNoop(t *testing.T) {
 		t.Errorf("无变化时回滚是错的:\n%s", out)
 	}
 }
+
+// 不再声明的文件要被真的删掉 —— 而且**先停服务再删文件**。
+//
+// SSOT 里删掉一条隧道之后,渲染输出里就没那个 conf 了,但节点上的文件和
+// wg-quick@ 服务都还在跑。以为删了、实际还连着,这是安全问题。
+func TestStaleFileIsRemovedAndItsUnitStopped(t *testing.T) {
+	dir := t.TempDir()
+	keep := filepath.Join(dir, "keep.conf")
+	stale := filepath.Join(dir, "stale.conf")
+	for _, f := range []string{keep, stale} {
+		if err := os.WriteFile(f, []byte("内容\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := &Plan{
+		Node:     "n1",
+		Files:    map[string]string{keep: "新内容\n"},
+		Triggers: map[string][]string{keep: {"app.service"}},
+		Remove:   []string{stale},
+	}
+	out, err := runScript(t, p, 0)
+	if err != nil {
+		t.Fatalf("不该失败:%v\n%s", err, out)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("不再声明的文件应被删掉,它还在:\n%s", out)
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Errorf("仍在声明里的文件不该被碰:%v", err)
+	}
+}
+
+// 删除是一种变更:只有删除、没有文件改动时,也不能走"无变化"早退。
+func TestRemovalAloneCountsAsAChange(t *testing.T) {
+	dir := t.TempDir()
+	same := filepath.Join(dir, "same.conf")
+	stale := filepath.Join(dir, "stale.conf")
+	if err := os.WriteFile(same, []byte("一样\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stale, []byte("要删\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := &Plan{
+		Node:   "n1",
+		Files:  map[string]string{same: "一样\n"}, // 内容没变
+		Remove: []string{stale},
+	}
+	out, err := runScript(t, p, 0)
+	if err != nil {
+		t.Fatalf("不该失败:%v\n%s", err, out)
+	}
+	if strings.Contains(out, "无变化") {
+		t.Errorf("有东西要删就不算无变化:\n%s", out)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("该删的没删:\n%s", out)
+	}
+}
+
+// **删除也要能回滚。** 删完之后验证失败的话,文件必须放回去 ——
+// 否则一次失败的部署会永久毁掉一条还在用的隧道配置。
+func TestRemovalIsRolledBackOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	tgt := filepath.Join(dir, "app.conf")
+	stale := filepath.Join(dir, "stale.conf")
+	if err := os.WriteFile(tgt, []byte("旧内容\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stale, []byte("被删的内容\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := &Plan{
+		Node:     "n1",
+		Files:    map[string]string{tgt: "新内容\n"},
+		Triggers: map[string][]string{tgt: {"app.service"}},
+		Remove:   []string{stale},
+	}
+	out, err := runScript(t, p, 1) // systemctl 一律失败
+	if err == nil {
+		t.Fatalf("应该失败:\n%s", out)
+	}
+	got, rerr := os.ReadFile(stale)
+	if rerr != nil {
+		t.Fatalf("回滚应把删掉的文件放回来,它不在了:%v\n%s", rerr, out)
+	}
+	if string(got) != "被删的内容\n" {
+		t.Errorf("放回来的内容不对:%q", got)
+	}
+}
+
+// 没有 Remove 时脚本里不该出现清理段 —— 免得每次部署都 daemon-reload。
+func TestNoRemovalSectionWhenNothingToRemove(t *testing.T) {
+	p := &Plan{Node: "n1", Files: map[string]string{"/tmp/x": "y"}}
+	if strings.Contains(Script(p, "r"), "清掉不再声明的东西") {
+		t.Error("没东西要删时不该生成清理段")
+	}
+}

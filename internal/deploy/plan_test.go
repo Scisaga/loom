@@ -219,3 +219,55 @@ func TestTimersAreNotCheckedForNRestarts(t *testing.T) {
 		}
 	}
 }
+
+// 差集就是 dpkg 的模型:上次装了、这次不装了的才删。
+func TestStaleFilesIsTheDifference(t *testing.T) {
+	p := &Plan{Files: map[string]string{
+		"/etc/wireguard/wg-a.conf":    "x",
+		"/etc/loom/agent/config.json": "y",
+	}}
+	got := p.StaleFiles([]string{
+		"/etc/wireguard/wg-a.conf",                  // 还在,不删
+		"/etc/wireguard/wg-b.conf",                  // 不在了,删
+		"/etc/systemd/system/wg-quick@wg-b.service", // 不在了,删
+		"/etc/loom/agent/config.json",               // 还在,不删
+	})
+	want := []string{
+		"/etc/systemd/system/wg-quick@wg-b.service",
+		"/etc/wireguard/wg-b.conf",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("该删 %v,得到 %v", want, got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("顺序或内容不对:%v vs %v", got, want)
+		}
+	}
+}
+
+// **清单为空 = 什么都不删。** "不知道上次装了什么"和"上次什么都没装"
+// 在结果上必须一样 —— 猜错的代价是把一台正常机器清空。
+func TestEmptyManifestRemovesNothing(t *testing.T) {
+	p := &Plan{Files: map[string]string{"/etc/loom/agent/config.json": "y"}}
+	if got := p.StaleFiles(nil); len(got) != 0 {
+		t.Fatalf("清单为空时不该删任何东西,得到 %v", got)
+	}
+}
+
+// 从绝对路径反推该停哪个服务 —— 要删的文件已经不在渲染输出里了,
+// BuildPlan 那套 bundlePath → 服务的映射对它无能为力。
+func TestUnitFor(t *testing.T) {
+	for _, c := range []struct{ path, want string }{
+		{"/etc/wireguard/wg-ber01.conf", "wg-quick@wg-ber01"},
+		{"/etc/systemd/system/loom-agent.service", "loom-agent.service"},
+		{"/etc/systemd/system/loom-pull.timer", "loom-pull.timer"},
+		{"/etc/loom/sing-box/config.json", ""}, // 普通配置,没有服务要停
+		{"/etc/systemd/system/some.conf", ""},  // 不是 unit
+		{"/random/path", ""},
+	} {
+		if got := UnitFor(c.path); got != c.want {
+			t.Errorf("UnitFor(%q) = %q,想要 %q", c.path, got, c.want)
+		}
+	}
+}
