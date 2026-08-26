@@ -104,3 +104,21 @@ func TestStuckThresholdBoundary(t *testing.T) {
 		t.Errorf("超过上限该算卡住,得到 bad=%d", bad)
 	}
 }
+
+// 一次正常的二进制升级不能被报成卡住。
+//
+// 下载落在 activating 里,实测最坏 2 分 42 秒(sg02,13.4 MB)。
+// 阈值调到分钟以内的话,每次升级都会误报 —— 而误报的面板等于没有面板。
+func TestNormalBinaryUpgradeIsNotReportedAsStuck(t *testing.T) {
+	// 按实测最坏的那台造:进入 activating 已经 3 分钟,还在下载。
+	entered := now().Add(-3 * time.Minute).UTC().Format(time.RFC3339Nano)
+	lines, bad := rolloutFindings(map[string]*report.RolloutState{
+		"sg02": rs(rollout.Activating, entered),
+	}, now())
+	if bad != 0 {
+		t.Fatalf("正常的二进制升级不该报警:\n%s", strings.Join(lines, "\n"))
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "正在") {
+		t.Errorf("但要说它在进行中:\n%s", strings.Join(lines, "\n"))
+	}
+}
