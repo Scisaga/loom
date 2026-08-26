@@ -8,7 +8,6 @@ import (
 
 	"loom/internal/agent"
 	"loom/internal/model"
-	"loom/internal/report"
 )
 
 // 本文件渲染接入节点上的 Agent 配置(§5.5 的调参回路)。
@@ -48,72 +47,16 @@ func renderAgent(s *model.SSOT, p *model.Node) ([]File, []Skip) {
 	if !p.IsAccess() {
 		return nil, nil
 	}
-	declIDs, _ := accessDecls(s, p)
-	decls := s.DeclarationByID()
-	// 与 singbox.go 用**同一个**推导 —— 两边各写一遍的话,Agent 会去切一个
-	// 没渲染出来的 selector。刚才就是这么错的。
-	pinned, _ := pinnedDecls(p, declIDs)
-
-	var skips []Skip
+	declarations, skips := renderAgentDeclarations(s, p)
 	cfg := agent.Config{
-		Node:        p.ID,
-		API:         APIListen,
-		APISecret:   secretRef("api/" + p.ID),
-		Probe:       ProbeListen,
-		ProbeSecret: secretRef("probe/" + p.ID),
-	}
-
-	for _, did := range declIDs {
-		d, ok := decls[did]
-		if !ok {
-			continue
-		}
-		// 跑不了的 objective 必须在渲染期就说出来,而不是让 Agent 在节点上
-		// 启动失败 —— 那时候人已经不在终端前面了(§12 的"不静默降级")。
-		if ok, why := agent.Supported(d.Objective); !ok {
-			skips = append(skips, Skip{
-				Where:  "agent:" + p.ID + "/" + did,
-				Reason: "该声明不进 Agent 配置:" + why,
-			})
-			continue
-		}
-		// 被端口钉住的声明才有声明级 selector;只治理服务的声明,
-		// 调参落在各个服务上(§4.5)。
-		if pinned[did] {
-			cands, _ := s.EnumerateCandidates(p, d)
-			if len(cands) == 0 {
-				continue // 没有候选就没有 selector,Agent 去读会直接报错
-			}
-			ad := newDecl(did, "decl:"+did, d, []string{d.ProbeURL})
-			for i := range cands {
-				tag := cands[i].Tag()
-				ad.Candidates = append(ad.Candidates, agent.Cand{Tag: tag, ProbeUser: ProbeUser(tag)})
-			}
-			cfg.Declarations = append(cfg.Declarations, ad)
-		}
-
-		// 每个服务独立调参 —— 这正是 D43 修正的那点。
-		for _, svc := range s.ServicesFor(did) {
-			cands, _ := s.EnumerateServiceCandidates(p, d, svc)
-			if len(cands) == 0 {
-				continue
-			}
-			targets := probeURLsFor(svc)
-			if len(targets) == 0 {
-				skips = append(skips, Skip{
-					Where: "agent:" + p.ID + "/svc:" + svc.ID,
-					Reason: "服务只有后缀地址,没有可探测的具体地址 —— " +
-						"它进不了 Agent 配置,selector 会停在默认候选上",
-				})
-				continue
-			}
-			ad := newDecl(svc.ID, svc.Tag(), d, targets)
-			for i := range cands {
-				tag := cands[i].Tag()
-				ad.Candidates = append(ad.Candidates, agent.Cand{Tag: tag, ProbeUser: ProbeUser(tag)})
-			}
-			cfg.Declarations = append(cfg.Declarations, ad)
-		}
+		Node:             p.ID,
+		API:              APIListen,
+		APISecret:        secretRef("api/" + p.ID),
+		Probe:            ProbeListen,
+		ProbeSecret:      secretRef("probe/" + p.ID),
+		Declarations:     declarations,
+		ObservationStale: observationStale,
+		AttestationCA:    tlsCAPath,
 	}
 
 	// 能顺着隧道直接够到的节点。AllowedIPs 是 /32,所以只有隧道对端 ——
@@ -141,13 +84,9 @@ func renderAgent(s *model.SSOT, p *model.Node) ([]File, []Skip) {
 		}
 	}
 	sort.Slice(cfg.Peers, func(i, j int) bool { return cfg.Peers[i].Node < cfg.Peers[j].Node })
-	// 本机上报者:它手里已经有全网转述过来的观测。
-	if rf, _ := renderReport(s, p); len(rf) > 0 {
-		var rc report.Config
-		if json.Unmarshal([]byte(rf[0].Content), &rc) == nil && len(rc.Listen) > 0 {
-			cfg.SelfReport = rc.Listen[0]
-		}
-	}
+	// 本机上报者必须明确走 loopback。Listen 排序后第一个常常是 10.99.*，
+	// 从 report 配置反取会把“本机”错误地绑到 WG 是否在线。
+	cfg.SelfReport = fmt.Sprintf("127.0.0.1:%d", ReportPort)
 	// 拉取节奏跟最短的调参周期走,不另发明一个旋钮:上报阈值是 5 分钟,
 	// 按同样的量级去拉就够了。
 	cfg.PeerPeriod = shortest
@@ -169,6 +108,75 @@ func renderAgent(s *model.SSOT, p *model.Node) ([]File, []Skip) {
 		{Path: "agent/config.json", Content: string(b) + "\n"},
 		{Path: "systemd/loom-agent.service", Content: fmt.Sprintf(agentUnit, p.ID)},
 	}, skips
+}
+
+// renderAgentDeclarations 是 Agent 配置与 report.expected_routes 的唯一候选
+// 推导。两份消费者各枚举一次迟早会让“可选路径”和“Agent 真能选的路径”漂移。
+func renderAgentDeclarations(s *model.SSOT, p *model.Node) ([]agent.Decl, []Skip) {
+	declIDs, _ := accessDecls(s, p)
+	decls := s.DeclarationByID()
+	pinned, _ := pinnedDecls(p, declIDs)
+	var out []agent.Decl
+	var skips []Skip
+	for _, did := range declIDs {
+		d, ok := decls[did]
+		if !ok {
+			continue
+		}
+		// 跑不了的 objective 必须在渲染期就说出来,而不是让 Agent 在节点上
+		// 启动失败 —— 那时候人已经不在终端前面了(§12 的"不静默降级")。
+		if ok, why := agent.Supported(d.Objective); !ok {
+			skips = append(skips, Skip{
+				Where:  "agent:" + p.ID + "/" + did,
+				Reason: "该声明不进 Agent 配置:" + why,
+			})
+			continue
+		}
+		// 被端口钉住的声明才有声明级 selector;只治理服务的声明,
+		// 调参落在各个服务上(§4.5)。
+		if pinned[did] {
+			cands, _ := s.EnumerateCandidates(p, d)
+			if len(cands) == 0 {
+				continue // 没有候选就没有 selector,Agent 去读会直接报错
+			}
+			ad := newDecl(did, "decl:"+did, d, []string{d.ProbeURL})
+			for i := range cands {
+				tag := cands[i].Tag()
+				ad.Candidates = append(ad.Candidates, agent.Cand{
+					Tag: tag, Chain: append([]string(nil), cands[i].ServerChain...),
+					ProbeUser: ProbeUser(tag),
+				})
+			}
+			out = append(out, ad)
+		}
+
+		// 每个服务独立调参 —— 这正是 D43 修正的那点。
+		for _, svc := range s.ServicesFor(did) {
+			cands, _ := s.EnumerateServiceCandidates(p, d, svc)
+			if len(cands) == 0 {
+				continue
+			}
+			targets := probeURLsFor(svc)
+			if len(targets) == 0 {
+				skips = append(skips, Skip{
+					Where: "agent:" + p.ID + "/svc:" + svc.ID,
+					Reason: "服务只有后缀地址,没有可探测的具体地址 —— " +
+						"它进不了 Agent 配置,selector 会停在默认候选上",
+				})
+				continue
+			}
+			ad := newDecl(svc.ID, svc.Tag(), d, targets)
+			for i := range cands {
+				tag := cands[i].Tag()
+				ad.Candidates = append(ad.Candidates, agent.Cand{
+					Tag: tag, Chain: append([]string(nil), cands[i].ServerChain...),
+					ProbeUser: ProbeUser(tag),
+				})
+			}
+			out = append(out, ad)
+		}
+	}
+	return out, skips
 }
 
 // shorterPeriod 比较两个时长字符串。解析不了的一律当成"不更短",

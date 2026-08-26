@@ -8,16 +8,18 @@ import (
 )
 
 func TestExitOfPicksTheLastHop(t *testing.T) {
-	cases := map[string]string{
-		"cand:best-egress:direct":              "SELF",
-		"cand:best-egress:cn-a":                "cn-a",
-		"cand:best-egress:cn-a>edge-a":         "edge-a",
-		"cand:sg-fixed:cn-b>cn-a>edge-a":       "edge-a",
-		"cand:llm:cn-a>edge-a@api.example.com": "edge-a",
+	cases := map[string]struct {
+		cand Cand
+		want string
+	}{
+		"direct":                    {Cand{Tag: "opaque:direct"}, "SELF"},
+		"one hop":                   {Cand{Tag: "opaque@address", Chain: []string{"cn-a"}}, "cn-a"},
+		"multi hop":                 {Cand{Tag: "opaque", Chain: []string{"cn-b", "cn-a", "edge-a"}}, "edge-a"},
+		"ambiguous service key/tag": {Cand{Tag: "cand:llm:qwen3@v1:anything", Chain: []string{"edge-a"}}, "edge-a"},
 	}
-	for tag, want := range cases {
-		if got := exitOf(tag, "SELF"); got != want {
-			t.Errorf("%s 的出口算成 %q,期望 %q", tag, got, want)
+	for name, tc := range cases {
+		if got := candidateExit(tc.cand, "SELF"); got != tc.want {
+			t.Errorf("%s 的出口算成 %q,期望 %q", name, got, tc.want)
 		}
 	}
 }
@@ -61,6 +63,30 @@ func TestStaleObservationsAreIgnored(t *testing.T) {
 	})
 	if len(o.unreachable("https://t/", now, 15*time.Minute)) != 0 {
 		t.Error("一小时前的观测还被用来剪枝")
+	}
+}
+
+func TestUnsignedRelayedTargetsCannotDrivePruning(t *testing.T) {
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	o := newObserved()
+	forged := &report.Observation{
+		Node: "gz02", TS: now.Format(time.RFC3339),
+		Targets: []report.Reach{{Target: "https://t/", Samples: 5, Failures: 5, Error: "forged"}},
+	}
+	if err := ingestObservation(o, forged, "jm24", false, nil, now, 10*time.Minute); err == nil {
+		t.Fatal("unsigned relay observation was accepted as decision input")
+	}
+	if dead := o.unreachable("https://t/", now, 10*time.Minute); len(dead) != 0 {
+		t.Fatalf("forged Targets changed candidate pruning: %v", dead)
+	}
+	// The exact same payload is valid when it comes from the loopback report
+	// and names this node; local node-owned input does not need relay proof.
+	forged.Node = "jm24"
+	if err := ingestObservation(o, forged, "jm24", true, nil, now, 10*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := o.unreachable("https://t/", now, 10*time.Minute)["jm24"]; !ok {
+		t.Fatal("local self observation stopped driving direct-candidate pruning")
 	}
 }
 

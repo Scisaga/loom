@@ -84,6 +84,12 @@ func Build(ssotBytes []byte, priv ed25519.PrivateKey, meta Meta) (*Tree, error) 
 
 	var leaked []string
 	for _, b := range res.Bundles {
+		// Validate 是主安全门；在真正把 owner 拼进分发路径的
+		// 边界再用同一统一 grammar 复核，防止未来某个非标准
+		// 构建入口跳过 Validate 后把 owner 当成目录片段。
+		if !model.ValidNodeID(b.Owner) {
+			return nil, fmt.Errorf("节点 owner %q 不能用作分发路径", b.Owner)
+		}
 		d := Bundle{Owner: b.Owner, Files: map[string]string{}}
 		for _, f := range b.Files {
 			// 渲染层本来就只写占位符。真漏了明文,发出去就收不回来了 ——
@@ -109,6 +115,12 @@ func Build(ssotBytes []byte, priv ed25519.PrivateKey, meta Meta) (*Tree, error) 
 		return nil, err
 	}
 	t.Files["current.json"] = append(cur, '\n')
+	// model.Validate 会限制 node id，但分发边界不能把路径安全
+	// 寄托在上游永远不回归。owner 最终会进入文件名；整棵 Tree
+	// 在离开 Build 前再做一次独立的路径预检。
+	if err := validateTreePaths(t); err != nil {
+		return nil, fmt.Errorf("构建的分发树不安全:%w", err)
+	}
 	return t, nil
 }
 

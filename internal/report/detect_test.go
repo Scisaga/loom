@@ -139,6 +139,62 @@ func TestEdgeLevelIsClassifiedByKind(t *testing.T) {
 	}
 }
 
+func TestRolloutAndIdentityFailuresBecomeEvents(t *testing.T) {
+	d := newTestDetector(t)
+	now := time.Date(2026, 8, 26, 10, 0, 0, 0, time.UTC)
+	base := webui.View{Nodes: []webui.NodeView{{ID: "gz02",
+		Rollout: &webui.RolloutView{Snapshot: "snap", Stage: "verified"}}}}
+	if _, err := d.observe(base, now); err != nil {
+		t.Fatal(err)
+	}
+	bad := base
+	bad.Nodes = []webui.NodeView{{ID: "gz02", IdentityError: "outer node mismatch",
+		Rollout: &webui.RolloutView{Snapshot: "snap", Stage: "activating", Stuck: true, Problem: true}}}
+	evs, err := d.observe(bad, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	levels := map[string]bool{}
+	for i := range evs {
+		if evs[i].Bad() {
+			levels[evs[i].Kind] = true
+		}
+	}
+	if !levels["identity"] || !levels["rollout"] {
+		t.Fatalf("签名与 rollout 故障都应成为 problem 事件:%+v", evs)
+	}
+}
+
+func TestDecommissionedRolloutEventIsInformational(t *testing.T) {
+	d := newTestDetector(t)
+	now := time.Date(2026, 8, 26, 10, 0, 0, 0, time.UTC)
+	verified := webui.View{Nodes: []webui.NodeView{{ID: "old01",
+		Rollout: &webui.RolloutView{Snapshot: "before", Stage: "verified"}}}}
+	if _, err := d.observe(verified, now); err != nil {
+		t.Fatal(err)
+	}
+	decommissioned := webui.View{Nodes: []webui.NodeView{{ID: "old01",
+		Rollout: &webui.RolloutView{Snapshot: "signed-stop", Stage: "decommissioned"}}}}
+	evs, err := d.observe(decommissioned, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for i := range evs {
+		if evs[i].Kind == "rollout" {
+			if evs[i].Bad() {
+				t.Fatalf("下线事件应是 info，不是 problem:%+v", evs[i])
+			}
+			if evs[i].To == "decommissioned" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("没有记录 verified→decommissioned 事件:%+v", evs)
+	}
+}
+
 // **播种时就已经坏掉的东西,必须上得了面板。**
 //
 // 这是这一轮要修的那个盲区。detector 第一轮静默播种(否则每次重启都像

@@ -9,7 +9,6 @@ import (
 
 	"loom/internal/model"
 	"loom/internal/render"
-	"loom/internal/report"
 )
 
 // inboundUsers 从渲染出来的 sing-box 配置里读出这台机器实际配了哪些 user。
@@ -105,17 +104,15 @@ func TestCredentialsHeldByIgnoresLifecycle(t *testing.T) {
 	}
 }
 
-// 转述来的节点必须出现在快照分布里 —— 漏掉它们的方式是静默的:
-// 落后的那台如果恰好直接够不到,表上就看不见,只会以为全网一致。
-func TestSnapshotSpreadIncludesRelayed(t *testing.T) {
-	obs := map[string]report.Observation{
-		"cn-a":   {Node: "cn-a", Applied: "aaa"},
-		"cn-b":   {Node: "cn-b", Applied: "bbb"}, // 落后的那台,只够得到转述
-		"edge-a": {Node: "edge-a", Applied: "aaa"},
+// 转述来的节点必须出现在快照分布里,但只能显示验过签的值。
+func TestSnapshotSpreadIncludesVerifiedRelayed(t *testing.T) {
+	expected := []string{"access-a", "cn-a", "cn-b", "edge-a"}
+	verified := map[string]string{
+		"cn-a": "aaa", "cn-b": "bbb", // 已由 foldAttested 验签
+		"edge-a": "aaa", "access-a": "aaa", // 直接问到
 	}
-	direct := map[string]string{"edge-a": "aaa", "access-a": "aaa"}
 
-	got := snapshotSpread(obs, direct)
+	got := snapshotSpread(expected, verified)
 	want := map[string][]string{"aaa": {"access-a", "cn-a", "edge-a"}, "bbb": {"cn-b"}}
 	for k := range want {
 		slices.Sort(got[k])
@@ -125,11 +122,35 @@ func TestSnapshotSpreadIncludesRelayed(t *testing.T) {
 	}
 }
 
-// 直接问到的比转听来的权威 —— 转述可能是几分钟前的。
-func TestSnapshotSpreadDirectWins(t *testing.T) {
-	obs := map[string]report.Observation{"cn-a": {Node: "cn-a", Applied: "旧"}}
-	got := snapshotSpread(obs, map[string]string{"cn-a": "新"})
-	if !slices.Equal(got["新"], []string{"cn-a"}) || len(got) != 1 {
-		t.Fatalf("直接问到的应当覆盖转述,得到 %v", got)
+// 未签名的 Applied 可以伪造,只能证明"听说过这台节点"。
+func TestSnapshotSpreadRejectsUnsignedApplied(t *testing.T) {
+	got := snapshotSpread([]string{"cn-a"}, nil)
+	if !slices.Equal(got[snapshotUnverified], []string{"cn-a"}) || len(got) != 1 {
+		t.Fatalf("未签名 Applied 不得进入快照分布,得到 %v", got)
+	}
+	if snapshotKeyVerified(snapshotUnverified) {
+		t.Fatal("全部未核验时不得宣称全网快照一致")
+	}
+}
+
+// 直接拉取超时或转述链也完全静默时，SSOT 节点仍在“全网”分母里。
+// 否则其余机器恰好同版时，会产生一条自相矛盾的“全网一致”结论。
+func TestSnapshotSpreadIncludesSilentExpectedNodes(t *testing.T) {
+	got := snapshotSpread([]string{"jm24", "gz02", "hz01"}, map[string]string{"jm24": "aaa"})
+	slices.Sort(got[snapshotUnverified])
+	if !slices.Equal(got["aaa"], []string{"jm24"}) ||
+		!slices.Equal(got[snapshotUnverified], []string{"gz02", "hz01"}) || len(got) != 2 {
+		t.Fatalf("静默/超时节点不得从快照分母消失,得到 %v", got)
+	}
+}
+
+func TestSnapshotSpreadAllUnknownOrUnrecordedIsNotConsistent(t *testing.T) {
+	allSilent := snapshotSpread([]string{"jm24", "gz02"}, nil)
+	if len(allSilent) != 1 || snapshotKeyVerified(snapshotUnverified) {
+		t.Fatalf("全静默不得宣称快照一致:%v", allSilent)
+	}
+	allEmpty := snapshotSpread([]string{"jm24", "gz02"}, map[string]string{"jm24": "", "gz02": ""})
+	if len(allEmpty) != 1 || snapshotKeyVerified(snapshotUnrecorded) {
+		t.Fatalf("全未记录 Applied 不得宣称快照一致:%v", allEmpty)
 	}
 }

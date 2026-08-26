@@ -20,23 +20,41 @@
       "candidates": [
         {
           "tag": "cand:sg-fixed:cn-bj\u003esg-vps",
+          "chain": [
+            "cn-bj",
+            "sg-vps"
+          ],
           "probe_user": "probe-32a3db7799"
         },
         {
           "tag": "cand:sg-fixed:cn-sh\u003esg-vps",
+          "chain": [
+            "cn-sh",
+            "sg-vps"
+          ],
           "probe_user": "probe-c3966d7906"
         },
         {
           "tag": "cand:sg-fixed:cn-gz\u003esg-vps",
+          "chain": [
+            "cn-gz",
+            "sg-vps"
+          ],
           "probe_user": "probe-fccf0d597d"
         },
         {
           "tag": "cand:sg-fixed:cn-cd\u003esg-vps",
+          "chain": [
+            "cn-cd",
+            "sg-vps"
+          ],
           "probe_user": "probe-8c7e3229d3"
         }
       ]
     }
   ],
   "self_report": "127.0.0.1:61802",
-  "peer_period": "10m"
+  "peer_period": "10m",
+  "observation_stale": "10m",
+  "attestation_ca": "/etc/loom/tls/ca.crt"
 }

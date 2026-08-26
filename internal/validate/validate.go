@@ -71,6 +71,9 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 		if where == "" {
 			where = fmt.Sprintf("nodes[%d]", i)
 			fs.add("§19 schema", where, "节点缺少 id")
+		} else if !model.ValidNodeID(n.ID) {
+			fs.add("§19 schema", where,
+				"节点 id %q 格式非法 —— 只能使用 1–63 个小写 ASCII 字母、数字或内连字符，且首尾必须是字母或数字", n.ID)
 		}
 		if _, dup := idx[n.ID]; dup && n.ID != "" {
 			fs.add("§19 schema", where, "节点 id 重复")
@@ -208,9 +211,9 @@ func checkTunnels(s *model.SSOT, idx map[string]*model.Node, fs *findings) {
 			continue
 		}
 
-		// §6.3 / D13:隧道矩阵只覆盖 reverse_only 的服务器。能进 mesh 的
-		// 由 Headscale 自动分发密钥与 peer,手工建隧道是白做工,而且是
-		// 全系统最容易出错的那种白做工。
+		// §6.3 / D13 / D29:隧道矩阵只覆盖包含 reverse_only 端点的关系。
+		// 两端都能被公网拨到时，当前直接用 Hysteria2；Headscale 是未来
+		// 可选项，不是拒绝这条隧道所依赖的现有组件。
 		if r.Initiator.MeshEligible() && r.Acceptor.MeshEligible() {
 			fs.add("§6.3 mesh", where,
 				"两端(%s=%s, %s=%s)都能被公网拨到,不需要隧道 —— "+

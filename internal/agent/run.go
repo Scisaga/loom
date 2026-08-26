@@ -19,7 +19,9 @@ import (
 // 单次探测等多久),换一台机器可以不同,不该让全局声明去描述。
 type Options struct {
 	MeasurementPath string
-	ProbeTimeout    time.Duration
+	// StatePath 是 selector 当前实际选择的原子快照。
+	StatePath    string
+	ProbeTimeout time.Duration
 	// Retention 是度量文件的保留时长。超出的记录在压实时丢弃 ——
 	// 追加日志不压实会无限长大。
 	Retention time.Duration
@@ -40,6 +42,9 @@ type Options struct {
 func (o *Options) fill() {
 	if o.MeasurementPath == "" {
 		o.MeasurementPath = "/var/lib/loom/measurements.jsonl"
+	}
+	if o.StatePath == "" {
+		o.StatePath = StatePath
 	}
 	if o.ProbeTimeout == 0 {
 		o.ProbeTimeout = 8 * time.Second
@@ -62,8 +67,23 @@ func (o *Options) fill() {
 func Run(ctx context.Context, cfg *Config, opts Options) error {
 	opts.fill()
 	st := &store{path: opts.MeasurementPath, retention: opts.Retention, now: opts.Now}
+	selections, err := newStateStore(opts.StatePath, cfg.Node, cfg.Declarations, opts.Now())
+	if err != nil {
+		return fmt.Errorf("初始化 Agent 当前选择:%w", err)
+	}
+	observationMaxAge, err := cfg.ObsStale()
+	if err != nil {
+		return err
+	}
 	if err := st.compact(); err != nil {
 		return fmt.Errorf("压实度量文件:%w", err)
+	}
+	var attestationCA []byte
+	if len(cfg.Peers) > 0 || cfg.SelfReport != "" {
+		attestationCA, err = os.ReadFile(cfg.AttestationCA)
+		if err != nil {
+			return fmt.Errorf("读取观测签名 CA %s:%w", cfg.AttestationCA, err)
+		}
 	}
 
 	k := newClash(cfg.API, cfg.APISecret)
@@ -83,7 +103,7 @@ func Run(ctx context.Context, cfg *Config, opts Options) error {
 	// **第一轮同步跑完再开始调参。** 并发启动的话,第一次决策会在全网观测
 	// 到手之前做出,剪枝失效 —— 而下一次机会要等一整个 tuning_period。
 	if len(cfg.Peers) > 0 || cfg.SelfReport != "" {
-		pollPeers(cfg, obs, logf)
+		pollPeers(cfg, obs, attestationCA, opts.Now(), observationMaxAge, logf)
 		logf("已收到 %d 个节点的观测", obs.len())
 	}
 	if (len(cfg.Peers) > 0 || cfg.SelfReport != "") && cfg.PeerPeriod != "" {
@@ -100,7 +120,7 @@ func Run(ctx context.Context, cfg *Config, opts Options) error {
 					return
 				case <-time.After(pp):
 				}
-				pollPeers(cfg, obs, logf)
+				pollPeers(cfg, obs, attestationCA, opts.Now(), observationMaxAge, logf)
 				if opts.Once {
 					return
 				}
@@ -118,7 +138,7 @@ func Run(ctx context.Context, cfg *Config, opts Options) error {
 		go func() {
 			defer wg.Done()
 			for {
-				if err := tick(cfg, d, k, st, obs, rot, &rotMu, &opts, logf); err != nil {
+				if err := tick(cfg, d, k, st, selections, obs, observationMaxAge, rot, &rotMu, &opts, logf); err != nil {
 					// 一轮失败不该让回路停掉:控制端点可能只是在重启。
 					logf("[%s] 本轮失败:%v", d.ID, err)
 				}
@@ -142,7 +162,8 @@ func Run(ctx context.Context, cfg *Config, opts Options) error {
 // 它**不做任何处置** —— 隧道断了要人去看,不是 Agent 能自动修的。价值在于
 // 从"完全没有信号"变成"有带时间戳的记录":DDNS 重解析以前是全程静默的,
 // IP 变了、隧道断了、脚本修好了,事后连查都没得查。
-func pollPeers(cfg *Config, obs *observed, logf func(string, ...any)) {
+func pollPeers(cfg *Config, obs *observed, ca []byte, now time.Time,
+	maxAge time.Duration, logf func(string, ...any)) {
 	peers := append([]Peer(nil), cfg.Peers...)
 	sort.Slice(peers, func(i, j int) bool { return peers[i].Node < peers[j].Node })
 	// 本机上报者排在最前:它手里已经有转述过来的全网观测,先拿到它,
@@ -156,9 +177,17 @@ func pollPeers(cfg *Config, obs *observed, logf func(string, ...any)) {
 			logf("[对端 %s] ❌ 拉不到 %s:%v", p.Node, p.Addr, err)
 			continue
 		}
-		obs.put(st.Observation)
+		// The loopback report's own observation is local node-owned input. Every
+		// other measurement, including Learned returned by loopback and a direct
+		// WG peer's Observation, must carry a v3 claim binding Edges/Targets.
+		local := p.Node == cfg.Node && p.Addr == cfg.SelfReport
+		if err := ingestObservation(obs, st.Observation, cfg.Node, local, ca, now, maxAge); err != nil {
+			logf("[对端 %s] ⚠️ 拒绝观测:%v", p.Node, err)
+		}
 		for i := range st.Learned {
-			obs.put(&st.Learned[i])
+			if err := ingestObservation(obs, &st.Learned[i], cfg.Node, false, ca, now, maxAge); err != nil {
+				logf("[对端 %s] ⚠️ 拒绝转述观测:%v", p.Node, err)
+			}
 		}
 		if p.Node == cfg.Node {
 			continue // 自己的隧道健康由自己的日志说,不在这里重复
@@ -194,8 +223,36 @@ func pollPeers(cfg *Config, obs *observed, logf func(string, ...any)) {
 	}
 }
 
+// ingestObservation is the decision boundary between display data and control
+// input. Only loopback self-observation or a fresh node-owned v3 measurement
+// claim may enter observed and affect candidate pruning.
+func ingestObservation(dst *observed, o *report.Observation, self string, local bool,
+	ca []byte, now time.Time, maxAge time.Duration) error {
+	if o == nil {
+		return nil
+	}
+	if local {
+		if o.Node != self {
+			return fmt.Errorf("loopback 上报声称自己是 %q，不是 %q", o.Node, self)
+		}
+		dst.put(o)
+		return nil
+	}
+	trusted, err := report.VerifyObservation(o, ca, now, maxAge)
+	if err != nil {
+		return err
+	}
+	if !trusted.MeasurementsVerified {
+		return fmt.Errorf("节点 %s 的 legacy 签名未覆盖 Edges/Targets", o.Node)
+	}
+	dst.put(o)
+	return nil
+}
+
 // tick 是一轮:探测全部候选 → 按窗口聚合 → 决定 → 必要时切。
-func tick(cfg *Config, d *Decl, k *clash, st *store, obs *observed, rot map[string]int, rotMu *sync.Mutex, opts *Options, logf func(string, ...any)) error {
+func tick(cfg *Config, d *Decl, k *clash, st *store, selections *stateStore,
+	obs *observed, observationMaxAge time.Duration, rot map[string]int,
+	rotMu *sync.Mutex, opts *Options, logf func(string, ...any)) error {
 	win, err := d.Win()
 	if err != nil {
 		return err
@@ -224,7 +281,7 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, obs *observed, rot map[stri
 	deadFor := map[string]map[string]string{}
 	dead := map[string]bool{}
 	for _, t := range d.Targets {
-		m := obs.unreachable(t, opts.Now(), 15*time.Minute)
+		m := obs.unreachable(t, opts.Now(), observationMaxAge)
 		deadFor[t] = m
 		if len(m) == 0 {
 			continue
@@ -245,7 +302,7 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, obs *observed, rot map[stri
 	var probe []Cand
 	var pruned []string
 	for _, c := range cands {
-		if dead[exitOf(c.Tag, cfg.Node)] {
+		if dead[candidateExit(c, cfg.Node)] {
 			pruned = append(pruned, c.Tag)
 			continue
 		}
@@ -257,6 +314,16 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, obs *observed, rot map[stri
 	current, cerr := k.Now(d.Selector)
 	if cerr != nil {
 		return fmt.Errorf("读 selector:%w", cerr)
+	}
+	currentChain, found := configuredChain(d, current)
+	if !found {
+		return fmt.Errorf("selector %s 当前值 %q 不在渲染候选中", d.Selector, current)
+	}
+	if err := selections.observe(Selection{
+		Declaration: d.ID, Selector: d.Selector, Candidate: current, Chain: currentChain,
+		Reason: "sing-box selector 当前值",
+	}, opts.Now()); err != nil {
+		logf("[%s] 写 Agent 当前状态失败:%v", d.ID, err)
 	}
 	var skippedByBudget int
 	if d.ProbeBudget > 0 && len(probe) > d.ProbeBudget {
@@ -295,7 +362,7 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, obs *observed, rot map[stri
 	// 会让 Decide 以为它还健康,于是流量继续停在一条已知不通的路上 ——
 	// 正是 Agent 本来要解决的那个问题。
 	for _, c := range cands {
-		exit := exitOf(c.Tag, cfg.Node)
+		exit := candidateExit(c, cfg.Node)
 		if !dead[exit] {
 			continue
 		}
@@ -339,6 +406,8 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, obs *observed, rot map[stri
 
 	// 3. 决定。
 	dec := Decide(d, current, sums)
+	selected := current
+	reason := dec.Reason
 	// 亲自测的和照别人观测判定的必须分开说 —— 混成一个数字,就看不出
 	// 这一轮到底有多少是真的测过的。
 	line := fmt.Sprintf("探测 %d 条 × %d 个目标(%d 通)", len(cands), len(d.Targets), ok)
@@ -352,34 +421,73 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, obs *observed, rot map[stri
 	}
 	logf("[%s] %s · %s", d.ID, line, dec.Reason)
 	if !dec.Switch {
+		if err := selections.observe(Selection{
+			Declaration: d.ID, Selector: d.Selector, Candidate: selected,
+			Chain: currentChain, Reason: reason,
+		}, opts.Now()); err != nil {
+			logf("[%s] 写 Agent 当前状态失败:%v", d.ID, err)
+		}
 		return nil
 	}
 	if opts.DryRun {
 		logf("[%s] (dry-run)本应切 %s → %s", d.ID, current, dec.Choice)
+		if err := selections.observe(Selection{
+			Declaration: d.ID, Selector: d.Selector, Candidate: current,
+			Chain: currentChain, Reason: "dry-run，实际未切；" + reason,
+		}, opts.Now()); err != nil {
+			logf("[%s] 写 Agent 当前状态失败:%v", d.ID, err)
+		}
 		return nil
 	}
 	if err := k.Select(d.Selector, dec.Choice); err != nil {
 		return fmt.Errorf("切 selector:%w", err)
 	}
-	logf("[%s] ✅ %s → %s", d.ID, current, dec.Choice)
+	actual, err := k.Now(d.Selector)
+	if err != nil {
+		return fmt.Errorf("切 selector 后读回实际选择:%w", err)
+	}
+	if actual != dec.Choice {
+		return fmt.Errorf("selector 写入 %s 后读回 %s，拒绝把控制意图冒充实际状态", dec.Choice, actual)
+	}
+	actualChain, found := configuredChain(d, actual)
+	if !found {
+		return fmt.Errorf("selector %s 读回值 %q 不在渲染候选中", d.Selector, actual)
+	}
+	logf("[%s] ✅ %s → %s", d.ID, current, actual)
+	if err := selections.observe(Selection{
+		Declaration: d.ID, Selector: d.Selector, Candidate: actual,
+		Chain: actualChain, Reason: reason,
+	}, opts.Now()); err != nil {
+		logf("[%s] 写 Agent 当前状态失败:%v", d.ID, err)
+	}
 	// 切换是状态变化,该进事件历史 —— 只写 journald 的话,"这条路是什么
 	// 时候、因为什么切过去的"事后查不到。
 	if opts.EventsPath != "" {
 		_ = events.Append(opts.EventsPath, []events.Event{{
 			TS: opts.Now().UTC().Format(time.RFC3339), Node: cfg.Node,
-			Kind: "route", Subject: d.ID, From: shortCand(current), To: shortCand(dec.Choice),
+			Kind: "route", Subject: d.ID, From: shortChain(currentChain), To: shortChain(actualChain),
 			Detail: dec.Reason,
 		}})
 	}
 	return nil
 }
 
-// shortCand 去掉候选 tag 里重复的前缀,事件表里窄一些。
-func shortCand(tag string) string {
-	if i := strings.LastIndex(tag, ":"); i >= 0 {
-		return tag[i+1:]
+// configuredChain 按 opaque tag 找 renderer 显式携带的节点链。拓扑不能从
+// tag 猜：声明/服务 key 和地址本身都可能含 ':' 或 '@'。
+func configuredChain(d *Decl, tag string) ([]string, bool) {
+	for _, c := range d.Candidates {
+		if c.Tag == tag {
+			return append([]string(nil), c.Chain...), true
+		}
 	}
-	return tag
+	return nil, false
+}
+
+func shortChain(chain []string) string {
+	if len(chain) == 0 {
+		return "direct"
+	}
+	return strings.Join(chain, ">")
 }
 
 // inWindow 过滤出这条声明在窗口内的样本。

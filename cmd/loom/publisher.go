@@ -29,13 +29,13 @@ func cmdPublisher(args []string) error {
 	sshConf := fs.String("ssh-config", "", "ssh 配置文件(target 是 ssh:// 时用)")
 	dns := fs.String("dns", "", "解析 verify-url 用的 DNS(不依赖机器全局设置)")
 	author := fs.String("author", "", "记进 manifest 的作者")
-	binary := fs.String("binary", "", "把这个 Agent 二进制一起发(与配置绑定回滚,§15.4)")
-	pinDir := fs.String("pin-dir", "deploy/pinned", "钉住状态目录(loom pin 写在这儿)")
+	binary := fs.String("binary", "", "本机二进制路径(只用于提示未 release 的新构建；实际发布读 release-dir)")
+	pinDir := fs.String("pin-dir", publish.DefaultPinDir, "钉住状态目录(loom pin 写在这儿)")
 	health := fs.String("health", publish.HealthPath,
 		"发布器写自己状态的地方 —— 让 loom status 看得出\"进程活着但发不出去\"")
 	allowDirty := fs.Bool("allow-dirty", false,
 		"放行追溯不回 git 的二进制(认不出 commit,或构建自脏工作区)")
-	releaseDir := fs.String("release-dir", "deploy/released",
+	releaseDir := fs.String("release-dir", publish.DefaultReleaseDir,
 		"放行记录目录 —— 只发 loom release 批准过的二进制;留空则回到\"本机二进制一变就发\"")
 	archive := fs.String("ssot-history", "deploy/ssot-history", "源头存档目录(中控本地,不进分发树;loom rollback 从这里取)")
 	interval := fs.Duration("interval", 30*time.Second, "多久看一次")
@@ -46,6 +46,9 @@ func cmdPublisher(args []string) error {
 	}
 	if *keyPath == "" || *target == "" {
 		return fmt.Errorf("需要 -key 和 -target")
+	}
+	if *archive == "" {
+		return fmt.Errorf("publisher 不允许关闭 -ssot-history：没有源头存档的快照无法回滚")
 	}
 	privBytes, err := readKey(*keyPath, ed25519.PrivateKeySize)
 	if err != nil {
@@ -65,9 +68,8 @@ func cmdPublisher(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if *binary == "" {
-		// 不带二进制不是错误,但值得说一声 —— 那意味着改了 Go 代码之后
-		// 仍然要手工分发,而 §15.4 的绑定回滚也就不成立。
+	if *releaseDir == "" && *binary == "" {
+		// 只有显式关闭 release 机制的兼容模式才靠 -binary 选发布内容。
 		fmt.Fprintln(os.Stderr, "! 没有 -binary:只发配置。改了代码仍要手工分发到每台机器")
 	}
 
@@ -77,6 +79,7 @@ func cmdPublisher(args []string) error {
 		ArchiveDir:       *archive,
 		PinDir:           *pinDir,
 		HealthPath:       *health,
+		LockPath:         publishTransactionLockPath,
 		AllowUntraceable: *allowDirty,
 		ReleaseDir:       *releaseDir,
 		Interval:         *interval, Once: *once, Log: os.Stdout,

@@ -32,5 +32,248 @@
   "gossip_period": "1m",
   "observation_stale": "10m",
   "manifest": "/etc/loom/report/manifest.json",
-  "handshake_stale": "5m"
+  "handshake_stale": "5m",
+  "expected_nodes": [
+    "ci-runner",
+    "cn-bj",
+    "cn-cd",
+    "cn-gz",
+    "cn-sh",
+    "jp-vps",
+    "phone",
+    "sg-vps",
+    "workstation"
+  ],
+  "expected_tunnels": [
+    {
+      "from": "cn-bj",
+      "to": "jp-vps"
+    },
+    {
+      "from": "cn-bj",
+      "to": "sg-vps"
+    },
+    {
+      "from": "cn-cd",
+      "to": "jp-vps"
+    },
+    {
+      "from": "cn-cd",
+      "to": "sg-vps"
+    },
+    {
+      "from": "cn-gz",
+      "to": "jp-vps"
+    },
+    {
+      "from": "cn-gz",
+      "to": "sg-vps"
+    },
+    {
+      "from": "cn-sh",
+      "to": "jp-vps"
+    },
+    {
+      "from": "cn-sh",
+      "to": "sg-vps"
+    }
+  ],
+  "expected_routes": [
+    {
+      "access": "ci-runner",
+      "declaration": "best-egress"
+    },
+    {
+      "access": "ci-runner",
+      "declaration": "best-egress",
+      "chain": [
+        "cn-bj"
+      ]
+    },
+    {
+      "access": "ci-runner",
+      "declaration": "best-egress",
+      "chain": [
+        "cn-bj",
+        "cn-gz"
+      ]
+    },
+    {
+      "access": "ci-runner",
+      "declaration": "best-egress",
+      "chain": [
+        "cn-bj",
+        "jp-vps"
+      ]
+    },
+    {
+      "access": "ci-runner",
+      "declaration": "best-egress",
+      "chain": [
+        "cn-bj",
+        "sg-vps"
+      ]
+    },
+    {
+      "access": "ci-runner",
+      "declaration": "best-egress",
+      "chain": [
+        "cn-gz"
+      ]
+    },
+    {
+      "access": "ci-runner",
+      "declaration": "best-egress",
+      "chain": [
+        "cn-gz",
+        "cn-bj"
+      ]
+    },
+    {
+      "access": "ci-runner",
+      "declaration": "best-egress",
+      "chain": [
+        "cn-gz",
+        "jp-vps"
+      ]
+    },
+    {
+      "access": "ci-runner",
+      "declaration": "best-egress",
+      "chain": [
+        "cn-gz",
+        "sg-vps"
+      ]
+    },
+    {
+      "access": "phone",
+      "declaration": "sg-fixed",
+      "chain": [
+        "cn-bj",
+        "sg-vps"
+      ]
+    },
+    {
+      "access": "phone",
+      "declaration": "sg-fixed",
+      "chain": [
+        "cn-cd",
+        "sg-vps"
+      ]
+    },
+    {
+      "access": "phone",
+      "declaration": "sg-fixed",
+      "chain": [
+        "cn-gz",
+        "sg-vps"
+      ]
+    },
+    {
+      "access": "phone",
+      "declaration": "sg-fixed",
+      "chain": [
+        "cn-sh",
+        "sg-vps"
+      ]
+    },
+    {
+      "access": "workstation",
+      "declaration": "best-egress"
+    },
+    {
+      "access": "workstation",
+      "declaration": "best-egress",
+      "chain": [
+        "cn-bj"
+      ]
+    },
+    {
+      "access": "workstation",
+      "declaration": "best-egress",
+      "chain": [
+        "cn-bj",
+        "cn-gz"
+      ]
+    },
+    {
+      "access": "workstation",
+      "declaration": "best-egress",
+      "chain": [
+        "cn-bj",
+        "jp-vps"
+      ]
+    },
+    {
+      "access": "workstation",
+      "declaration": "best-egress",
+      "chain": [
+        "cn-bj",
+        "sg-vps"
+      ]
+    },
+    {
+      "access": "workstation",
+      "declaration": "best-egress",
+      "chain": [
+        "cn-gz"
+      ]
+    },
+    {
+      "access": "workstation",
+      "declaration": "best-egress",
+      "chain": [
+        "cn-gz",
+        "cn-bj"
+      ]
+    },
+    {
+      "access": "workstation",
+      "declaration": "best-egress",
+      "chain": [
+        "cn-gz",
+        "jp-vps"
+      ]
+    },
+    {
+      "access": "workstation",
+      "declaration": "best-egress",
+      "chain": [
+        "cn-gz",
+        "sg-vps"
+      ]
+    },
+    {
+      "access": "workstation",
+      "declaration": "sg-fixed",
+      "chain": [
+        "cn-bj",
+        "sg-vps"
+      ]
+    },
+    {
+      "access": "workstation",
+      "declaration": "sg-fixed",
+      "chain": [
+        "cn-cd",
+        "sg-vps"
+      ]
+    },
+    {
+      "access": "workstation",
+      "declaration": "sg-fixed",
+      "chain": [
+        "cn-gz",
+        "sg-vps"
+      ]
+    },
+    {
+      "access": "workstation",
+      "declaration": "sg-fixed",
+      "chain": [
+        "cn-sh",
+        "sg-vps"
+      ]
+    }
+  ]
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"loom/internal/publish"
@@ -26,7 +27,7 @@ import (
 func cmdRelease(args []string) error {
 	fs := flag.NewFlagSet("release", flag.ExitOnError)
 	binPath := fs.String("binary", stagedBinary, "要放行的二进制(默认是构建产物,不是正在跑的那份)")
-	dir := fs.String("dir", "deploy/released", "放行记录与副本存放目录")
+	dir := fs.String("dir", publish.DefaultReleaseDir, "放行记录与副本存放目录")
 	reason := fs.String("reason", "", "为什么发这一版(必填)")
 	by := fs.String("by", "", "谁批的")
 	show := fs.Bool("show", false, "只看当前放行的是哪个")
@@ -40,21 +41,22 @@ func cmdRelease(args []string) error {
 		return showRelease(*dir)
 	}
 	if *clear {
-		if err := publish.ClearRelease(*dir); err != nil {
+		if err := withPublishTransactionLock(func() error { return publish.ClearRelease(*dir) }); err != nil {
 			return err
 		}
 		fmt.Println("✓ 已停止分发二进制。配置照发,节点保持现有版本。")
 		fmt.Println("  本地副本没删 —— 它们是回滚缓存,删了就得回网络取。")
 		return nil
 	}
-	if *reason == "" {
+	if strings.TrimSpace(*reason) == "" {
 		return fmt.Errorf("需要 -reason 说明为什么发这一版")
 	}
 
 	// 0. 别放行那个**会被退回去**的文件。
 	//
-	// 中控同时也是一个被管理的节点:它自己的 pull 每 10 分钟把
-	// /usr/local/bin/loom 收敛到**已发布快照里的那份**。所以手工装完
+	// 中控同时也是一个被管理的节点:它自己的 pull 当前每 45 秒运行，
+	// 并带最多 15 秒抖动，把 /usr/local/bin/loom 收敛到**已发布快照里的
+	// 那份**。所以手工装完
 	// 再 release 是有竞态的,窗口就是一个 pull 周期 —— 实测输过一次:
 	// 慢了 2 分钟,pull 先把二进制退回旧版,release 于是记下了旧版。
 	//
@@ -65,8 +67,15 @@ func cmdRelease(args []string) error {
 		fmt.Printf("  建议:go build -o %s ./cmd/loom 然后直接放行构建产物。\n\n", stagedBinary)
 	}
 
-	// 1. 追溯得回 git 吗。
-	vc, err := version.OfFile(*binPath)
+	// 从这里起不再按路径重读候选。源文件可能被构建任务或本机 pull 在检查
+	// 与复制之间替换；追溯检查、自检、最终入库必须严格面对同一组字节。
+	candidate, err := publish.ReadBinaryCandidate(*binPath)
+	if err != nil {
+		return err
+	}
+
+	// 1. 追溯得回 git 吗。直接从稳定候选读构建信息,不再重开源路径。
+	vc, err := publish.InspectBinary(candidate)
 	if err != nil {
 		return fmt.Errorf("读不出 %s 的构建信息:%w —— 它是 Go 二进制吗", *binPath, err)
 	}
@@ -82,22 +91,32 @@ func cmdRelease(args []string) error {
 	//
 	// 这一步是 §15.4 的冒烟测试。配对失败的方向不对称:新版通常读得懂
 	// 旧配置,旧版读不懂新配置 —— 而发布器就是这么崩过两次的。
-	out, err := exec.Command(*binPath, "selfcheck", "-q").CombinedOutput()
+	checkPath, cleanup, err := stageReleaseCheck(*dir, candidate)
 	if err != nil {
-		return fmt.Errorf("%s 的 selfcheck 没过,不放行:%v\n%s", *binPath, err, out)
+		return err
+	}
+	defer cleanup()
+	out, err := exec.Command(checkPath, "selfcheck", "-q").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s 的稳定候选 %s selfcheck 没过,不放行:%v\n%s",
+			*binPath, version.Short(candidate.SHA256), err, out)
 	}
 
 	r := publish.Release{
+		SHA256: candidate.SHA256,
 		Commit: vc.Commit, Dirty: vc.Dirty,
 		ReleasedAt: time.Now().UTC().Format(time.RFC3339),
 		By:         *by, Reason: *reason,
 	}
-	if err := publish.WriteRelease(*dir, *binPath, r); err != nil {
+	var cur *publish.Release
+	if err := withPublishTransactionLock(func() error {
+		if err := publish.WriteReleaseCandidate(*dir, candidate, r); err != nil {
+			return err
+		}
+		var err error
+		cur, _, err = publish.ReadRelease(*dir)
 		return err
-	}
-
-	cur, _, err := publish.ReadRelease(*dir)
-	if err != nil {
+	}); err != nil {
 		return err
 	}
 	fmt.Printf("✓ 已放行 %s(commit %s)\n", version.Short(cur.SHA256), version.Short(cur.Commit))
@@ -105,10 +124,44 @@ func cmdRelease(args []string) error {
 		fmt.Printf("  ⚠️ 这是脏构建 —— 出了问题没法用 git 复现\n")
 	}
 	fmt.Printf("  理由:%s\n", cur.Reason)
-	fmt.Printf("\n发布器会在下一轮(最多 30 秒)带上它。节点按各自的 pull 周期取 ——\n")
+	fmt.Printf("\n发布器会在下一轮(最多 30 秒)带上它；节点 pull 为 45 秒+最多 15 秒抖动，正常 90 秒内收敛。\n")
 	fmt.Printf("**包括中控自己**,所以不用手工装到 %s。\n", managedBinary)
 	fmt.Printf("反悔:`loom release -clear` 停发,或 `loom pin <快照 id>` 退回历史版本。\n")
 	return nil
+}
+
+// stageReleaseCheck 把稳定候选落在 release 目录后执行。用 os.TempDir 可能
+// 碰到 noexec 挂载；release 目录本来就要保存并提供可执行副本,而且不受
+// 源路径随后变化影响。
+func stageReleaseCheck(dir string, c publish.BinaryCandidate) (string, func(), error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", nil, fmt.Errorf("创建放行目录:%w", err)
+	}
+	f, err := os.CreateTemp(dir, ".loom-release-check-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("暂存放行自检:%w", err)
+	}
+	p := f.Name()
+	cleanup := func() { _ = os.Remove(p) }
+	fail := func(err error) (string, func(), error) {
+		_ = f.Close()
+		cleanup()
+		return "", nil, err
+	}
+	if err := f.Chmod(0o755); err != nil {
+		return fail(err)
+	}
+	if _, err := f.Write(c.Body); err != nil {
+		return fail(err)
+	}
+	if err := f.Sync(); err != nil {
+		return fail(err)
+	}
+	if err := f.Close(); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	return p, cleanup, nil
 }
 
 func showRelease(dir string) error {

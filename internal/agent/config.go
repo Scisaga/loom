@@ -14,6 +14,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"time"
 
 	"loom/internal/model"
@@ -48,6 +49,16 @@ type Config struct {
 
 	// PeerPeriod 是拉取上报的间隔。
 	PeerPeriod string `json:"peer_period,omitempty"`
+
+	// ObservationStale 与 report 的 observation_stale 是同一份真值。
+	// Agent 不能另写一个更长的隐藏常量，否则 report 已淘汰的失败观测还会
+	// 继续剪枝候选，恢复后往往要再等一整个 tuning period。
+	ObservationStale string `json:"observation_stale,omitempty"`
+
+	// AttestationCA verifies node-owned v3 measurement claims before relayed
+	// Targets are allowed to prune candidates. Display-only legacy observations
+	// may be useful to people, but must never drive selector decisions.
+	AttestationCA string `json:"attestation_ca,omitempty"`
 }
 
 // Peer 是一个能拉到的节点。
@@ -98,6 +109,10 @@ type Decl struct {
 // Cand 是一条候选:tag 用于上报与切换,ProbeUser 用于把探测流量打到它上面。
 type Cand struct {
 	Tag string `json:"tag"`
+	// Chain 是 renderer 从 RouteCandidate.ServerChain 原样带下来的实际节点链。
+	// Tag 是 sing-box 的 opaque selector ID；服务 key 和地址都允许含 ':'/'@'，
+	// 不能再从 tag 反解析拓扑。空链明确表示 direct。
+	Chain []string `json:"chain,omitempty"`
 	// ProbeUser 是探测入口的用户名。**不是候选 tag** —— tag 含冒号,
 	// SOCKS5 客户端会在第一个冒号处切分 user:pass(§7.3.3)。
 	ProbeUser string `json:"probe_user"`
@@ -157,6 +172,18 @@ func Load(b []byte) (*Config, error) {
 			return nil, err
 		}
 	}
+	if _, err := c.ObsStale(); err != nil {
+		return nil, err
+	}
+	if (len(c.Peers) > 0 || c.SelfReport != "") && c.AttestationCA == "" {
+		return nil, fmt.Errorf("agent 有观测来源但缺少 attestation_ca —— 未验签 Targets 不能驱动选路")
+	}
+	if c.SelfReport != "" {
+		host, _, err := net.SplitHostPort(c.SelfReport)
+		if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
+			return nil, fmt.Errorf("self_report=%q 必须是带端口的 loopback IP —— 只有本机观测可以免验签", c.SelfReport)
+		}
+	}
 	// 秘密占位符没被替换就跑起来,表现是"认证一直失败",排障要绕很久。
 	// 宁可启动就说清楚(与 sing-box 拿到非法密码即拒绝启动同理)。
 	for _, p := range []struct{ name, v string }{
@@ -172,6 +199,13 @@ func Load(b []byte) (*Config, error) {
 func (d *Decl) Period() (time.Duration, error) { return dur(d.TuningPeriod, "tuning_period") }
 func (d *Decl) Win() (time.Duration, error)    { return dur(d.Window, "window") }
 func (d *Decl) Stale() (time.Duration, error)  { return dur(d.StaleAfter, "stale_after") }
+
+func (c *Config) ObsStale() (time.Duration, error) {
+	if c.ObservationStale == "" {
+		return 10 * time.Minute, nil
+	}
+	return dur(c.ObservationStale, "observation_stale")
+}
 
 func dur(s, name string) (time.Duration, error) {
 	if s == "" {

@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 Loom 是一个基于加密隧道的链路与服务调度基础设施。**设计的唯一事实来源是
-[docs/design.md](docs/design.md)** —— 动手前先读它,尤其是六条不变量和 §20 的依赖拓扑。
+[docs/design.md](docs/design.md)** —— 动手前先读它,尤其是七条不变量和 §20 的依赖拓扑。
 
 当前实现进度与已知缺口见 **[docs/status/current.md](docs/status/current.md)**;
 已定的决定与未决问题见 [docs/decisions.md](docs/decisions.md)。
@@ -85,7 +85,7 @@ go run ./cmd/loom verify   /tmp/out -pubkey /tmp/keys/platform-signing.pub
 服务器就是这次的出口 —— 出口是位置,不是类型。详见 design.md §1 与
 [docs/decisions.md](docs/decisions.md) 的 D12。
 
-## 三条动手前必须知道的约束
+## 四条动手前必须知道的约束
 
 **1. 渲染与打包必须是纯函数(§12)。** 不得引入随机数、当前时间、外部查询;
 **遍历 map 前一律排序**,或者干脆用切片。dry-run diff、漂移检测、回滚三个
@@ -105,7 +105,8 @@ go run ./cmd/loom verify   /tmp/out -pubkey /tmp/keys/platform-signing.pub
 未实现的协议进 `render.Result.Skipped` 并由 CLI 打印;设了混淆参数但渲染器
 不支持时**硬报错**,因为 §17.2 说参数全零等于标准 WireGuard —— 静默输出
 无参数配置会让人以为开了混淆而实际没开;Agent 跑不了的 objective
-(`ttft` / `throughput` / `cost`)在**渲染期**就被挡在 Agent 配置外并报出理由,
+(`ttft` / `cost`)在**渲染期**就被挡在 Agent 配置外并报出理由；`throughput`
+已经支持,但探测响应体太小时会明确报告样本不足,
 而不是拿 L4 首字节时间冒充。新增能力时沿用这个规矩。
 
 **4. 字段之间有算术关系时,校验器要钉住关系本身。** 光检查每个字段自己合法

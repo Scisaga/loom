@@ -59,40 +59,11 @@ func (o *observed) len() int {
 	return len(o.by)
 }
 
-// exitOf 取候选链的最后一跳 —— 那台机器就是这次的出口(D12:出口是位置,
-// 不是类型)。链为空表示直连,出口就是本机。
-func exitOf(tag, self string) string {
-	// tag 形如 cand:<声明>:<a>>>b>...[@地址]
-	rest := tag
-	for i := 0; i < 2; i++ {
-		j := indexByte(rest, ':')
-		if j < 0 {
-			return ""
-		}
-		rest = rest[j+1:]
-	}
-	if k := indexByte(rest, '@'); k >= 0 {
-		rest = rest[:k]
-	}
-	last := rest
-	for {
-		j := indexByte(last, '>')
-		if j < 0 {
-			break
-		}
-		last = last[j+1:]
-	}
-	if last == "direct" {
+// candidateExit 取 renderer 显式携带的最后一跳。Tag 是 opaque ID，服务 key
+// 与地址都允许 ':'/'@'，不能再从它反解析出口。
+func candidateExit(c Cand, self string) string {
+	if len(c.Chain) == 0 {
 		return self
 	}
-	return last
-}
-
-func indexByte(s string, b byte) int {
-	for i := 0; i < len(s); i++ {
-		if s[i] == b {
-			return i
-		}
-	}
-	return -1
+	return c.Chain[len(c.Chain)-1]
 }

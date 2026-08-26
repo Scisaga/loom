@@ -1,13 +1,18 @@
 package publish
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"debug/buildinfo"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"loom/internal/version"
 )
@@ -58,9 +63,70 @@ type Release struct {
 }
 
 const (
-	releaseFile = "current.json"
-	releaseBins = "bin"
+	// DefaultReleaseDir 是所有发布入口共用的显式二进制放行状态。
+	DefaultReleaseDir = "deploy/released"
+	releaseFile       = "current.json"
+	releaseBins       = "bin"
 )
+
+// BinaryCandidate 是一次稳定读取到内存里的放行候选。
+//
+// release 的追溯检查、自检和最终入库必须面对**同一组字节**。如果三个步骤
+// 都各自按路径重读,另一个进程可以在它们之间替换文件,最终放行的就不是人
+// 刚刚检查过的那份。候选把这次决定所依据的字节钉在内存里,直到 current.json
+// 原子落盘。
+type BinaryCandidate struct {
+	Body   []byte
+	SHA256 string
+	Size   int
+}
+
+// ReadBinaryCandidate 只读源文件一次。后续检查和入库都应携带返回值,不要再
+// 回头按路径读。
+func ReadBinaryCandidate(path string) (BinaryCandidate, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return BinaryCandidate{}, fmt.Errorf("读 %s:%w", path, err)
+	}
+	if len(b) == 0 {
+		return BinaryCandidate{}, fmt.Errorf("%s 是空文件,不能放行", path)
+	}
+	return newBinaryCandidate(b), nil
+}
+
+func newBinaryCandidate(b []byte) BinaryCandidate {
+	s := sha256.Sum256(b)
+	return BinaryCandidate{Body: b, SHA256: hex.EncodeToString(s[:]), Size: len(b)}
+}
+
+// InspectBinary 从候选字节本身读 Go 构建坐标,不再按路径重读。它与
+// version.OfFile 的区别正是这个稳定性保证。
+func InspectBinary(c BinaryCandidate) (version.Coordinate, error) {
+	var out version.Coordinate
+	if got := newBinaryCandidate(c.Body); got.SHA256 != c.SHA256 || got.Size != c.Size {
+		return out, fmt.Errorf("放行候选在检查期间发生变化(%s → %s)",
+			version.Short(c.SHA256), version.Short(got.SHA256))
+	}
+	bi, err := buildinfo.Read(bytes.NewReader(c.Body))
+	if err != nil {
+		return out, fmt.Errorf("读候选二进制的构建信息:%w", err)
+	}
+	out.Binary = c.SHA256
+	out.Go = bi.GoVersion
+	for _, s := range bi.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			out.Commit = s.Value
+		case "vcs.modified":
+			out.Dirty = s.Value == "true"
+		case "GOOS":
+			out.Platform = s.Value + out.Platform
+		case "GOARCH":
+			out.Platform += "/" + s.Value
+		}
+	}
+	return out, nil
+}
 
 // ReleaseBinPath 是某个 sha 对应的本地副本路径。
 func ReleaseBinPath(dir, sha string) string {
@@ -70,33 +136,61 @@ func ReleaseBinPath(dir, sha string) string {
 // ReadRelease 读当前放行的二进制。没有 release 时返回 (nil, "", nil) ——
 // 那是"还没批准过任何二进制",不是错误。
 func ReadRelease(dir string) (*Release, string, error) {
+	r, bin, _, err := ReadReleaseCandidate(dir)
+	return r, bin, err
+}
+
+// ReadReleaseCandidate 给发布器返回已经校验过的**同一份字节**,避免先为
+// ReadRelease 哈希 14MB、紧接着又为打包重读 14MB。没有 release 时候选
+// 为零值。
+func ReadReleaseCandidate(dir string) (*Release, string, BinaryCandidate, error) {
 	if dir == "" {
-		return nil, "", nil
+		return nil, "", BinaryCandidate{}, nil
 	}
 	b, err := os.ReadFile(filepath.Join(dir, releaseFile))
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, "", nil
+		return nil, "", BinaryCandidate{}, nil
 	}
 	if err != nil {
-		return nil, "", err
+		return nil, "", BinaryCandidate{}, err
 	}
 	var r Release
 	if err := json.Unmarshal(b, &r); err != nil {
-		return nil, "", fmt.Errorf("解析 %s:%w", filepath.Join(dir, releaseFile), err)
+		return nil, "", BinaryCandidate{}, fmt.Errorf("解析 %s:%w", filepath.Join(dir, releaseFile), err)
+	}
+	if !validSHA256(r.SHA256) {
+		return nil, "", BinaryCandidate{}, fmt.Errorf("放行记录里的 sha256 %q 无效", r.SHA256)
+	}
+	if r.Size <= 0 {
+		return nil, "", BinaryCandidate{}, fmt.Errorf("放行记录里的大小 %d 无效", r.Size)
+	}
+	if err := validateReleaseFields(&r); err != nil {
+		return nil, "", BinaryCandidate{}, fmt.Errorf("放行记录无效:%w", err)
 	}
 	bin := ReleaseBinPath(dir, r.SHA256)
-	st, err := os.Stat(bin)
+	body, err := os.ReadFile(bin)
 	if err != nil {
 		// 记录在、二进制副本不在 —— 半个状态。**不要默默回落到
 		// 当前二进制**:那正好是 release 要防的事(见类型注释)。
-		return nil, "", fmt.Errorf("放行了 %s,但副本 %s 不见了 —— 重新 `loom release` 一次",
-			version.Short(r.SHA256), bin)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, "", BinaryCandidate{}, fmt.Errorf("放行了 %s,但副本 %s 不见了 —— 重新 `loom release` 一次",
+				version.Short(r.SHA256), bin)
+		}
+		return nil, "", BinaryCandidate{}, fmt.Errorf("读放行副本 %s 失败:%w", bin, err)
 	}
-	if int(st.Size()) != r.Size {
-		return nil, "", fmt.Errorf("副本 %s 大小对不上(记的 %d,实际 %d)—— 重新 `loom release` 一次",
-			bin, r.Size, st.Size())
+	c := newBinaryCandidate(body)
+	if c.Size != r.Size {
+		return nil, "", BinaryCandidate{}, fmt.Errorf("副本 %s 大小对不上(记的 %d,实际 %d)—— 重新 `loom release` 一次",
+			bin, r.Size, c.Size)
 	}
-	return &r, bin, nil
+	if c.SHA256 != r.SHA256 {
+		return nil, "", BinaryCandidate{}, fmt.Errorf("副本 %s 内容哈希对不上(记的 %s,实际 %s)—— 重新 `loom release` 一次",
+			bin, version.Short(r.SHA256), version.Short(c.SHA256))
+	}
+	if err := bindReleaseBuildInfo(&r, c); err != nil {
+		return nil, "", BinaryCandidate{}, fmt.Errorf("放行记录与副本不一致:%w", err)
+	}
+	return &r, bin, c, nil
 }
 
 // WriteRelease 把 src 那份二进制按内容寻址存下来,并记成当前放行版本。
@@ -104,29 +198,54 @@ func ReadRelease(dir string) (*Release, string, error) {
 // **先落副本再落记录。** 反过来的话,中途失败会留下"记录指向不存在的
 // 副本"这种半状态 —— 而 ReadRelease 只能把它当错误处理,等于发布器停摆。
 func WriteRelease(dir, src string, r Release) error {
-	b, err := os.ReadFile(src)
+	c, err := ReadBinaryCandidate(src)
 	if err != nil {
-		return fmt.Errorf("读 %s:%w", src, err)
+		return err
 	}
-	sum := sha256.Sum256(b)
-	got := hex.EncodeToString(sum[:])
-	if r.SHA256 != "" && r.SHA256 != got {
-		return fmt.Errorf("%s 的内容在算完哈希之后变了(%s → %s)", src, version.Short(r.SHA256), version.Short(got))
+	return WriteReleaseCandidate(dir, c, r)
+}
+
+// WriteReleaseCandidate 入库并放行**已经检查过的那一个候选**。
+//
+// 先原子落内容寻址副本,再原子更新 current.json。已有同名副本也不能因为
+// “路径就是哈希”就盲信:磁盘内容仍可能被误改,所以会先核 SHA,不对就用这份
+// 已验证候选修复。
+func WriteReleaseCandidate(dir string, c BinaryCandidate, r Release) error {
+	got := newBinaryCandidate(c.Body)
+	if got.SHA256 != c.SHA256 || got.Size != c.Size {
+		return fmt.Errorf("放行候选在检查之后发生变化(%s → %s)",
+			version.Short(c.SHA256), version.Short(got.SHA256))
 	}
-	r.SHA256, r.Size = got, len(b)
+	if r.SHA256 != "" && r.SHA256 != c.SHA256 {
+		return fmt.Errorf("放行记录期待 %s,候选实际是 %s",
+			version.Short(r.SHA256), version.Short(c.SHA256))
+	}
+	if err := validateReleaseFields(&r); err != nil {
+		return fmt.Errorf("放行记录无效:%w", err)
+	}
+	if err := bindReleaseBuildInfo(&r, c); err != nil {
+		return fmt.Errorf("放行记录与候选不一致:%w", err)
+	}
+	r.SHA256, r.Size = c.SHA256, c.Size
 
 	binDir := filepath.Join(dir, releaseBins)
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		return err
 	}
-	dst := ReleaseBinPath(dir, got)
-	if _, err := os.Stat(dst); errors.Is(err, os.ErrNotExist) {
-		tmp := dst + ".tmp"
-		if err := os.WriteFile(tmp, b, 0o755); err != nil {
-			return err
+	dst := ReleaseBinPath(dir, c.SHA256)
+	storedSHA, storedSize, serr := hashFile(dst)
+	validStored := serr == nil && storedSHA == c.SHA256 && storedSize == int64(c.Size)
+	if serr != nil && !errors.Is(serr, os.ErrNotExist) {
+		return fmt.Errorf("检查已有放行副本 %s:%w", dst, serr)
+	}
+	if !validStored {
+		if err := writeFileAtomic(dst, c.Body, 0o755); err != nil {
+			return fmt.Errorf("写放行副本 %s:%w", dst, err)
 		}
-		if err := os.Rename(tmp, dst); err != nil {
-			return err
+		storedSHA, storedSize, serr = hashFile(dst)
+		if serr != nil || storedSHA != c.SHA256 || storedSize != int64(c.Size) {
+			return fmt.Errorf("放行副本 %s 原子入库后校验失败(sha=%s,size=%d,err=%v)",
+				dst, version.Short(storedSHA), storedSize, serr)
 		}
 	}
 
@@ -134,20 +253,140 @@ func WriteRelease(dir, src string, r Release) error {
 	if err != nil {
 		return err
 	}
-	tmp := filepath.Join(dir, releaseFile+".tmp")
-	if err := os.WriteFile(tmp, append(rb, '\n'), 0o644); err != nil {
+	return writeFileAtomic(filepath.Join(dir, releaseFile), append(rb, '\n'), 0o644)
+}
+
+func validateReleaseFields(r *Release) error {
+	if strings.TrimSpace(r.Reason) == "" {
+		return fmt.Errorf("reason 必填")
+	}
+	if strings.ContainsRune(r.Reason, '\x00') {
+		return fmt.Errorf("reason 含 NUL")
+	}
+	if r.ReleasedAt == "" {
+		return fmt.Errorf("released_at 必填")
+	}
+	if _, err := time.Parse(time.RFC3339, r.ReleasedAt); err != nil {
+		return fmt.Errorf("released_at %q 不是 RFC3339:%w", r.ReleasedAt, err)
+	}
+	return nil
+}
+
+// bindReleaseBuildInfo 让展示用坐标也来自候选本身，而不是盲信 JSON。
+//
+// 兼容规则：早期记录可能完全没有 Commit/Dirty（两个字段都是零值），读取
+// 时用实际 buildinfo 补齐；只要记录声称过任一坐标，就必须与二进制逐项
+// 相等。新写入调用方省略坐标时也自动补齐，因此以后落盘的记录都是完整的。
+func bindReleaseBuildInfo(r *Release, c BinaryCandidate) error {
+	vc, err := InspectBinary(c)
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, filepath.Join(dir, releaseFile))
+	if r.Commit == "" && !r.Dirty {
+		r.Commit, r.Dirty = vc.Commit, vc.Dirty
+		return nil
+	}
+	if r.Commit != vc.Commit || r.Dirty != vc.Dirty {
+		return fmt.Errorf("构建坐标不符(记录 commit=%s dirty=%t,实际 commit=%s dirty=%t)",
+			version.Short(r.Commit), r.Dirty, version.Short(vc.Commit), vc.Dirty)
+	}
+	return nil
+}
+
+func validSHA256(s string) bool {
+	if len(s) != sha256.Size*2 {
+		return false
+	}
+	b, err := hex.DecodeString(s)
+	return err == nil && len(b) == sha256.Size && s == hex.EncodeToString(b)
+}
+
+func hashFile(path string) (string, int64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", 0, err
+	}
+	defer f.Close()
+	h := sha256.New()
+	n, err := io.Copy(h, f)
+	if err != nil {
+		return "", n, err
+	}
+	return hex.EncodeToString(h.Sum(nil)), n, nil
+}
+
+// writeFileAtomic 用目标同目录里的唯一临时文件 + rename。唯一名避免两个
+// publisher/release 进程互相踩固定的 .tmp；同目录保证 rename 不会跨设备
+// 退化成 copy+unlink。
+func writeFileAtomic(path string, b []byte, mode os.FileMode) (retErr error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer func() {
+		if retErr != nil {
+			_ = os.Remove(tmp)
+		}
+	}()
+	if err := f.Chmod(mode); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err := f.Write(b); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	// 文件 Sync 只保证临时文件的内容；rename 这个目录项本身还可能在掉电
+	// 后丢失。release/current.json 是安全门，必须把父目录也刷稳。
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	if err := dir.Sync(); err != nil {
+		_ = dir.Close()
+		return err
+	}
+	return dir.Close()
 }
 
 // ClearRelease 停止分发二进制。配置照发。
 //
 // **不删 bin/ 下的副本** —— 那些是回滚的本地缓存,删了就得回网络取。
 func ClearRelease(dir string) error {
-	err := os.Remove(filepath.Join(dir, releaseFile))
+	return removeFileDurable(filepath.Join(dir, releaseFile))
+}
+
+// removeFileDurable 不只删除目录项，还把父目录刷稳。pin/release 是发布授权：
+// 如果只相信 os.Remove，掉电后文件系统可能把已撤销的授权重新带回来。
+func removeFileDurable(path string) error {
+	err := os.Remove(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return fmt.Errorf("打开已删除文件的父目录 %s:%w", filepath.Dir(path), err)
+	}
+	if err := dir.Sync(); err != nil {
+		_ = dir.Close()
+		return fmt.Errorf("刷稳已删除文件的父目录 %s:%w", filepath.Dir(path), err)
+	}
+	return dir.Close()
 }

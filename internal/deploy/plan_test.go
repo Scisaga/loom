@@ -1,6 +1,8 @@
 package deploy
 
 import (
+	"bytes"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -68,10 +70,12 @@ func TestTriggersArePerFile(t *testing.T) {
 	if len(p.Triggers["/etc/loom/report/manifest.json"]) != 0 {
 		t.Error("改清单竟然会触发重启")
 	}
-	// unit 文件本身只需要 daemon-reload:改一行 Description 不该断线。
+	// 常驻 unit 的 ExecStart/Capability/Sandbox 只有 restart 才生效；仅
+	// daemon-reload 会让旧进程 is-active 假绿。
 	for _, u := range []string{"sing-box", "loom-agent", "loom-report"} {
-		if len(p.Triggers["/etc/systemd/system/"+u+".service"]) != 0 {
-			t.Errorf("%s.service 变化触发了重启,应当只 daemon-reload", u)
+		got := p.Triggers["/etc/systemd/system/"+u+".service"]
+		if len(got) != 1 || got[0] != u {
+			t.Errorf("%s.service 变化没有触发自身重启:%v", u, got)
 		}
 	}
 }
@@ -123,11 +127,46 @@ func TestPreCheckRunsBeforeInstall(t *testing.T) {
 func TestRestoreIsNoopWhenNothingChanged(t *testing.T) {
 	p, _ := BuildPlan("n", bundle())
 	sc := Script(p, "test")
-	if !strings.Contains(sc, `[ -s "$PREV/.manifest" ]`) {
-		t.Error("回滚没有检查清单是否为空")
+	if !strings.Contains(sc, `case "$state" in`) || !strings.Contains(sc, `active)`) {
+		t.Error("回滚没有只认持久化的 active 事务标记")
 	}
-	if !strings.Contains(sc, "if marked ") {
-		t.Error("回滚会无差别重启服务,而不是只重启标记过的")
+	if !strings.Contains(sc, `'') rm -rf "$STAGE" "$PREV"`) {
+		t.Error("没有 active 标记时回滚不是空操作")
+	}
+}
+
+func TestNodeLockPrecedesTransactionCleanup(t *testing.T) {
+	p := &Plan{Node: "n", Files: map[string]string{"/tmp/x": "y"}}
+	sc := Script(p, "test")
+	lock := strings.Index(sc, "flock -n 9")
+	recover := strings.Index(sc, "\nrecover_pending\n")
+	trap := strings.Index(sc, "trap on_exit EXIT")
+	init := strings.Index(sc, `: > "$PREV/.manifest"`)
+	if lock < 0 || recover < 0 || init < 0 || trap < 0 {
+		t.Fatalf("脚本缺部署锁或事务恢复/初始化：lock=%d recover=%d init=%d trap=%d", lock, recover, init, trap)
+	}
+	if !(lock < recover && recover < init && init < trap) {
+		t.Fatalf("必须先拿锁、恢复旧事务、初始化空清单，最后才挂回滚 trap：lock=%d recover=%d init=%d trap=%d", lock, recover, init, trap)
+	}
+	if !strings.Contains(sc, "write_txn_state active") || !strings.Contains(sc, "write_txn_state committed") {
+		t.Fatal("脚本没有完整的 active/committed 持久事务协议")
+	}
+}
+
+func TestScriptRejectsBroadOrRelativeTransactionRoots(t *testing.T) {
+	for _, layout := range []scriptPaths{
+		{stageRoot: "/", previousRoot: "/tmp/previous", lockPath: "/tmp/lock"},
+		{stageRoot: "relative", previousRoot: "/tmp/previous", lockPath: "/tmp/lock"},
+		{stageRoot: "/tmp/stage", previousRoot: "/tmp/previous", lockPath: "/"},
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("危险事务路径没有在生成 shell 前被拒绝：%+v", layout)
+				}
+			}()
+			script(&Plan{Node: "n", Files: map[string]string{}}, "test", layout)
+		}()
 	}
 }
 
@@ -145,6 +184,22 @@ func TestWgQuickRestartAvoidsTheRace(t *testing.T) {
 func TestShellQuoting(t *testing.T) {
 	if got := shq(`a'b`); got != `'a'"'"'b'` {
 		t.Errorf("单引号转义不对:%s", got)
+	}
+}
+
+func TestGeneratedScriptHasValidShellSyntax(t *testing.T) {
+	p, _ := BuildPlan("n", bundle())
+	sc := Script(p, "syntax-test")
+	cmd := exec.Command("sh", "-n")
+	cmd.Stdin = strings.NewReader(sc)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		lines := strings.Split(sc, "\n")
+		if len(lines) > 235 {
+			lines = lines[220:235]
+		}
+		t.Fatalf("生成脚本 shell 语法错误:%v\n%s\n附近脚本:\n%s", err, stderr.String(), strings.Join(lines, "\n"))
 	}
 }
 
@@ -185,11 +240,14 @@ func TestPullServiceIsNeverRestarted(t *testing.T) {
 func TestNewUnitsGetEnabled(t *testing.T) {
 	p, _ := BuildPlan("n", bundle())
 	sc := Script(p, "x")
-	if !strings.Contains(sc, "systemctl enable --now") {
-		t.Error("timer 没有 enable")
+	if !strings.Contains(sc, "ensure_enabled 'loom-pull.timer'") {
+		t.Error("timer 没有经过可验证的 enable 收敛")
 	}
 	if !strings.Contains(sc, `systemctl enable "$1"`) {
 		t.Error("常驻服务没有 enable")
+	}
+	if strings.Contains(sc, "systemctl enable \"$1\" 2>/dev/null || true") {
+		t.Error("enable 失败仍被吞掉")
 	}
 }
 
@@ -260,10 +318,12 @@ func TestEmptyManifestRemovesNothing(t *testing.T) {
 func TestUnitFor(t *testing.T) {
 	for _, c := range []struct{ path, want string }{
 		{"/etc/wireguard/wg-ber01.conf", "wg-quick@wg-ber01"},
-		{"/etc/systemd/system/loom-agent.service", "loom-agent.service"},
+		{"/etc/systemd/system/loom-agent.service", "loom-agent"},
 		{"/etc/systemd/system/loom-pull.timer", "loom-pull.timer"},
-		{"/etc/loom/sing-box/config.json", ""}, // 普通配置,没有服务要停
-		{"/etc/systemd/system/some.conf", ""},  // 不是 unit
+		{"/etc/loom/sing-box/config.json", "sing-box"},
+		{"/etc/loom/agent/config.json", "loom-agent"},
+		{"/etc/loom/report/config.json", "loom-report"},
+		{"/etc/systemd/system/some.conf", ""}, // 不是 unit
 		{"/random/path", ""},
 	} {
 		if got := UnitFor(c.path); got != c.want {

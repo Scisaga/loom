@@ -37,17 +37,18 @@ func ArchiveSSOT(dir string, ssotBytes []byte) (string, error) {
 		return "", err
 	}
 	dst := filepath.Join(dir, name+archiveExt)
-	if _, err := os.Stat(dst); err == nil {
+	if got, size, err := hashFile(dst); err == nil && got == name && size == int64(len(ssotBytes)) {
 		return name, nil
+	} else if err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("核对已有源头存档 %s:%w", dst, err)
 	}
-	// 先写临时文件再改名:回滚可能正好在读,而半截 YAML 会让它报一个
-	// 跟真实原因无关的解析错误。
-	tmp := dst + ".tmp"
-	if err := os.WriteFile(tmp, ssotBytes, 0o644); err != nil {
+	// 已有的内容寻址存档也要核哈希：文件名是声明，不是
+	// 事实。缺失或损坏都用本轮内存里的可信字节原子修复。
+	if err := writeFileAtomic(dst, ssotBytes, 0o644); err != nil {
 		return "", err
 	}
-	if err := os.Rename(tmp, dst); err != nil {
-		return "", err
+	if got, size, err := hashFile(dst); err != nil || got != name || size != int64(len(ssotBytes)) {
+		return "", fmt.Errorf("源头存档 %s 入库后核对失败(sha=%s,size=%d,err=%v)", dst, got, size, err)
 	}
 	return name, nil
 }

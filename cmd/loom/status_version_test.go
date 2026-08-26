@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"loom/internal/report"
 	"loom/internal/version"
@@ -118,13 +119,21 @@ func TestNoCoordinatesPrintsNothing(t *testing.T) {
 func TestFoldAttestedSplitsVerifiableFromNot(t *testing.T) {
 	// 没有 CA 时必须原样返回,不能假装核过了。
 	vcs := map[string]*version.Coordinate{}
+	snaps := map[string]string{}
 	answered := map[string]bool{}
-	obs := map[string]report.Observation{"gz02": {Node: "gz02"}}
-	still := foldAttested(obs, vcs, answered, []string{"gz02", "hz01"})
+	obs := map[string]report.Observation{"gz02": {Node: "gz02", Applied: "伪造快照"}}
+	still, bad := foldAttested(obs, snaps, vcs, map[string]*report.RolloutState{}, answered,
+		[]string{"gz02", "hz01"}, time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC))
 	if len(still) != 2 {
 		t.Fatalf("核不了的应原样返回 2 个,得到 %v", still)
 	}
 	if len(vcs) != 0 {
 		t.Errorf("没核过的不该进版本表,得到 %v", vcs)
+	}
+	if len(snaps) != 0 {
+		t.Errorf("未签名 Applied 不该进快照表,得到 %v", snaps)
+	}
+	if bad != 0 {
+		t.Fatalf("没有签名只是尚未核对，不应报坏:bad=%d", bad)
 	}
 }

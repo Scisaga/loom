@@ -3,8 +3,10 @@ package webui
 import (
 	"fmt"
 	"html"
+	"math"
 	"sort"
 	"strings"
+	"time"
 )
 
 // 页面是服务端渲染的纯 HTML,**没有任何外部资源、没有 JavaScript**。
@@ -13,26 +15,38 @@ import (
 // 一个依赖 CDN 的界面在最需要它的时候(隧道断了、机器出问题了)恰好打不开。
 
 const style = `<style>
-:root{--fg:#1a1a1a;--dim:#666;--line:#ddd;--ok:#0a7;--bad:#c33;--warn:#c80;--bg:#fff;--card:#fafafa}
-@media(prefers-color-scheme:dark){:root{--fg:#e8e8e8;--dim:#999;--line:#333;--ok:#3c9;--bad:#f66;--warn:#fa4;--bg:#151515;--card:#1e1e1e}}
+:root{--fg:#eef4f2;--dim:#94a3a1;--line:#465153;--ok:#4ed3b0;--bad:#ff727c;--warn:#f6c76b;--info:#72b7ff;--route:#ffd166;--bg:#22292b;--side:#293133;--card:#30393b;--card2:#354043;--ink:#13191a}
 *{box-sizing:border-box}
-body{margin:0;padding:1.5rem;font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--fg);background:var(--bg)}
-h1{font-size:1.1rem;margin:0 0 .3rem}h2{font-size:.95rem;margin:1.6rem 0 .5rem;color:var(--dim);font-weight:600}
-a{color:inherit}
-.bar{display:flex;gap:1rem;align-items:baseline;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:.8rem;margin-bottom:1rem}
-.dim{color:var(--dim)}.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}
-table{border-collapse:collapse;width:100%;margin:.3rem 0}
-td,th{text-align:left;padding:.3rem .8rem .3rem 0;border-bottom:1px solid var(--line);vertical-align:top;white-space:nowrap}
-th{color:var(--dim);font-weight:600;font-size:.85rem}
-td.w{white-space:normal}
-.card{background:var(--card);border:1px solid var(--line);padding:.8rem 1rem;margin:.5rem 0}
+body{margin:0;font:14px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--fg);background:var(--bg)}
+a{color:inherit;text-decoration:none}a:hover{color:var(--ok)}
+.app{min-height:100vh;display:grid;grid-template-columns:230px minmax(0,1fr)}
+.side{background:var(--side);border-right:1px solid var(--line);padding:24px 18px;position:sticky;top:0;height:100vh}
+.brand{display:flex;align-items:center;gap:11px;font-size:18px;font-weight:750;letter-spacing:.04em;margin-bottom:28px}.mark{display:grid;place-items:center;width:31px;height:31px;border:2px solid var(--ok);border-radius:7px;color:var(--ok);font-weight:850;line-height:1}
+.role{font-size:11px;color:var(--dim);font-weight:500;letter-spacing:.08em;text-transform:uppercase}
+.nav{display:grid;gap:6px}.nav a{padding:9px 11px;border-radius:8px;color:var(--dim)}.nav a:first-child,.nav a:hover{background:var(--card);color:var(--fg)}
+.sidefoot{position:absolute;left:18px;right:18px;bottom:22px;color:var(--dim);font-size:12px}
+.main{min-width:0;padding:26px 30px 50px}.top{display:flex;align-items:flex-start;gap:16px;margin-bottom:22px}.top h1{font-size:22px;line-height:1.25;margin:0 0 4px}.sp{margin-left:auto}
+h2{font-size:13px;margin:0 0 12px;color:var(--dim);font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+.dim{color:var(--dim)}.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}.info{color:var(--info)}
+.badge{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:4px 9px;font-size:12px}.dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:14px;margin-bottom:14px}.span3{grid-column:span 3}.span4{grid-column:span 4}.span5{grid-column:span 5}.span6{grid-column:span 6}.span7{grid-column:span 7}.span8{grid-column:span 8}.span12{grid-column:1/-1}
+.card{background:linear-gradient(145deg,var(--card),#2d3537);border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0;box-shadow:0 8px 24px rgba(0,0,0,.08)}
+.metric{font-size:25px;font-weight:760;line-height:1.15;margin:5px 0}.metric small{font-size:13px;color:var(--dim);font-weight:500}.label{font-size:12px;color:var(--dim)}
+.section{margin-top:18px}.sectionhead{display:flex;align-items:center;gap:12px;margin:0 0 10px}.sectionhead h2{margin:0}
+table{border-collapse:collapse;width:100%;margin:0}
+td,th{text-align:left;padding:9px 10px 9px 0;border-bottom:1px solid rgba(148,163,161,.19);vertical-align:top;white-space:nowrap}
+tr:last-child td{border-bottom:0}th{color:var(--dim);font-weight:650;font-size:11px;letter-spacing:.04em;text-transform:uppercase}td.w{white-space:normal}
+.topology{width:100%;min-height:330px;display:block;background:rgba(18,24,25,.27);border-radius:9px;border:1px solid rgba(148,163,161,.14)}
+.topology .tunnel{stroke:var(--ok);stroke-width:2.2;opacity:.78}.topology .candidate{stroke:var(--dim);stroke-width:1.8;stroke-dasharray:2 7;opacity:.72}.topology .degraded{stroke:var(--warn)}.topology .failed{stroke:var(--bad)}.topology .unknown{stroke:var(--dim);stroke-dasharray:3 7;opacity:.58}.topology .route{stroke:var(--route);stroke-width:5;opacity:.78}.topology .node{fill:var(--card2);stroke:var(--ok);stroke-width:1.5}.topology .node.problem{stroke:var(--bad)}.topology .node.unknown{stroke:var(--dim);stroke-dasharray:3 3}.topology .selected{stroke:var(--route);stroke-width:3}.topology text{fill:var(--fg);font:600 13px ui-sans-serif,system-ui}.topology .sub{fill:var(--dim);font-size:10px;font-weight:500}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;color:var(--dim);font-size:11px}.key{display:inline-block;width:26px;border-top:2px solid var(--ok);vertical-align:middle;margin-right:6px}.key.candidate{border-color:var(--dim);border-top-style:dotted}.key.route{border-color:var(--route);border-width:4px}.key.degraded{border-color:var(--warn)}.key.failed{border-color:var(--bad)}
+.nodegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(205px,1fr));gap:10px}.nodecard{border:1px solid rgba(148,163,161,.22);background:rgba(21,28,29,.24);border-radius:9px;padding:12px}.nodehead{display:flex;align-items:center;gap:7px;margin-bottom:8px}.nodehead b{font-size:15px}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.tiny{font-size:11px}.clip{overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.notice{border-left:3px solid var(--warn)}.notice.badline{border-left-color:var(--bad)}.empty{padding:18px;text-align:center;color:var(--dim);border:1px dashed var(--line);border-radius:9px}
 form{display:inline}
-button{font:inherit;padding:.3rem .8rem;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
-button:hover{border-color:var(--fg)}
-input{font:inherit;padding:.35rem .6rem;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
-pre{background:var(--card);border:1px solid var(--line);padding:.8rem;overflow-x:auto;white-space:pre-wrap;margin:.5rem 0}
-textarea{width:100%;height:60vh;font:inherit;padding:.6rem;border:1px solid var(--line);background:var(--card);color:var(--fg);white-space:pre;overflow-wrap:normal;overflow-x:auto}
-.sp{margin-left:auto}
+button{font:inherit;padding:7px 11px;border:1px solid var(--line);border-radius:7px;background:var(--card2);color:var(--fg);cursor:pointer}button:hover{border-color:var(--ok)}
+input{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--fg)}
+pre{background:rgba(17,23,24,.45);border:1px solid var(--line);border-radius:8px;padding:12px;overflow-x:auto;white-space:pre-wrap;margin:8px 0}
+textarea{width:100%;height:60vh;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;padding:12px;border:1px solid var(--line);border-radius:8px;background:#1d2425;color:var(--fg);white-space:pre;overflow-wrap:normal;overflow-x:auto}
+@media(max-width:950px){.app{grid-template-columns:1fr}.side{position:static;height:auto;padding:14px 18px}.brand{margin-bottom:12px}.nav{display:flex;overflow-x:auto}.sidefoot{position:static;margin-top:10px}.main{padding:20px 16px}.span3,.span4,.span5,.span6,.span7,.span8{grid-column:1/-1}}
 </style>`
 
 func shell(d Deps, title, body string, isAuthed bool) string {
@@ -49,10 +63,30 @@ func shell(d Deps, title, body string, isAuthed bool) string {
 	case d.Operator != "" && (len(d.Actions) > 0 || d.Control != nil):
 		auth = `<a href="/login">登录以操作</a>`
 	}
+	eventsLink := ""
+	if d.Events != nil {
+		eventsLink = `<a href="/events">事件</a>`
+	}
+	configLink := ""
+	if d.Control != nil {
+		configLink = `<a href="/ssot">配置与密钥</a>`
+	}
+	refresh := ""
+	if title == "总览" {
+		// 纯 SSR 不靠 JavaScript；只让实时总览定时重取。编辑、登录和结果页
+		// 不能自动刷新，否则会丢表单或重复操作。
+		refresh = `<meta http-equiv=refresh content=30>`
+	}
 	return fmt.Sprintf(`<!doctype html><meta charset=utf-8><title>%s · Loom</title>
-<meta name=viewport content="width=device-width,initial-scale=1">%s
-<div class=bar><h1>%s</h1><span class=dim>%s</span><span class="dim sp">%s</span></div>%s`,
-		esc(title), style, esc(d.Node), esc(role), auth, body)
+<meta name=viewport content="width=device-width,initial-scale=1">%s%s
+<div class=app><aside class=side><div class=brand>
+<span class=mark aria-hidden=true>L</span>
+<span>Loom<div class=role>%s</div></span></div><nav class=nav>
+<a href="/#overview">总览</a><a href="/#topology">隧道与路径</a><a href="/#nodes">节点</a><a href="/#routes">Agent 路由</a><a href="/#release">发布与收敛</a>%s%s
+</nav><div class=sidefoot>%s · %s</div></aside><main class=main>
+<div class=top><div><h1>%s</h1><div class=dim>节点 %s</div></div><div class=sp>%s</div></div>%s</main></div>`,
+		esc(title), refresh, style, esc(role), eventsLink, configLink, esc(d.Node), esc(role),
+		esc(title), esc(d.Node), auth, body)
 }
 
 func pageLogin(d Deps, errMsg string) string {
@@ -172,19 +206,63 @@ func shortTS(ts string) string {
 
 func pageOverview(d Deps, isAuthed bool) string {
 	v := d.Snapshot()
+	now := d.Now().UTC()
 	var b strings.Builder
 
-	// 全网是不是同一版。落后的那台往往正是出问题的那台。
+	// 顶部坐标与健康摘要。
 	vers := map[string][]string{}
+	unknownApplied := 0
 	for _, n := range v.Nodes {
 		k := n.Applied
 		if k == "" {
-			k = "(未记录)"
+			unknownApplied++
+			continue
 		}
 		vers[k] = append(vers[k], n.ID)
 	}
+	healthyNodes, problemNodes, unknownNodes := 0, 0, 0
+	for _, n := range v.Nodes {
+		switch n.Health {
+		case "healthy":
+			healthyNodes++
+		case "problem":
+			problemNodes++
+		default:
+			unknownNodes++
+		}
+	}
+	activeLinks, tunnelLinks := 0, 0
+	for _, l := range v.Links {
+		if l.Kind != "tunnel" {
+			continue
+		}
+		tunnelLinks++
+		if l.State == "active" {
+			activeLinks++
+		}
+	}
+	freshRoutes := 0
+	for _, r := range v.Routes {
+		if !r.Stale {
+			freshRoutes++
+		}
+	}
+	healthClass, healthText := "warn", fmt.Sprintf("%d 故障 · %d 未知", problemNodes, unknownNodes)
+	if problemNodes > 0 {
+		healthClass = "bad"
+	} else if unknownNodes == 0 {
+		healthClass, healthText = "ok", "全部节点已核验健康"
+	}
+	fmt.Fprintf(&b, `<div id=overview class=grid>
+<div class="card span3"><div class=label>节点健康</div><div class=metric>%d <small>/ %d</small></div><div class=%s>%s</div></div>
+<div class="card span3"><div class=label>常驻 WG 链路</div><div class=metric>%d <small>/ %d</small></div><div class=dim>SSOT 底图 + 承载可达性观测</div></div>
+<div class="card span3"><div class=label>Agent 当前选择</div><div class=metric>%d <small>/ %d 新鲜</small></div><div class=dim>来自 selector 实读</div></div>
+<div class="card span3"><div class=label>当前快照</div><div class="metric mono">%s</div><div class=dim>页面观测 %s</div></div>
+</div>`, healthyNodes, len(v.Nodes), healthClass, healthText,
+		activeLinks, tunnelLinks, freshRoutes, len(v.Routes), esc(short(v.Applied)), esc(ageText(v.ObservedAt, now)))
+
 	if len(vers) > 1 {
-		b.WriteString(`<div class=card><span class=warn>⚠️ 全网不是同一个快照</span><table>`)
+		b.WriteString(`<div class="card notice"><span class=warn>全网不是同一个快照</span><table>`)
 		var keys []string
 		for k := range vers {
 			keys = append(keys, k)
@@ -195,55 +273,93 @@ func pageOverview(d Deps, isAuthed bool) string {
 			fmt.Fprintf(&b, `<tr><td>%s</td><td class=w>%s</td></tr>`, esc(short(k)), esc(strings.Join(vers[k], " ")))
 		}
 		b.WriteString(`</table></div>`)
+	} else if len(vers) == 1 && unknownApplied == 0 {
+		for k := range vers {
+			fmt.Fprintf(&b, `<div class="badge ok"><span class=dot></span>快照 %s · 全网一致</div>`, esc(short(k)))
+		}
 	} else if len(vers) == 1 {
 		for k := range vers {
-			fmt.Fprintf(&b, `<div class=card>快照 <b>%s</b> <span class=dim>(全网一致)</span></div>`, esc(short(k)))
+			fmt.Fprintf(&b, `<div class="badge warn"><span class=dot></span>已观测节点为快照 %s · %d 个节点未核验</div>`, esc(short(k)), unknownApplied)
 		}
+	} else if unknownApplied > 0 {
+		fmt.Fprintf(&b, `<div class="badge warn"><span class=dot></span>%d 个节点没有快照观测</div>`, unknownApplied)
 	}
 	for _, w := range v.Warnings {
-		fmt.Fprintf(&b, `<div class=card><span class=warn>⚠️ %s</span></div>`, esc(w))
+		fmt.Fprintf(&b, `<div class="card notice"><span class=warn>%s</span></div>`, esc(w))
 	}
 
+	var unresolved []UnresolvedView
 	if d.Unresolved != nil {
-		// 待处理放最前面。**"没有"也要说出来** —— 一个空白的面板分不出
-		// "一切正常"和"这功能坏了"。
-		var live, pending []UnresolvedView
-		for _, e := range d.Unresolved() {
-			switch e.Level {
-			case "problem":
-				live = append(live, e)
-			case "pending":
-				pending = append(pending, e)
-			}
-		}
-		switch {
-		case len(live) > 0:
-			b.WriteString(`<div class=card><span class=bad>⚠️ 未解决(` +
-				fmt.Sprint(len(live)) + `)</span><table>`)
-			for _, e := range live {
-				fmt.Fprintf(&b, `<tr><td>%s<td class=w>%s %s<td class=bad>%s<td><b>%s</b></tr>`,
-					esc(e.Node), esc(e.Kind), esc(e.Subject), esc(e.State), esc(e.LastedText()))
-			}
-			b.WriteString(`</table></div>`)
-		default:
-			b.WriteString(`<div class=card><span class=ok>✅ 没有未解决的问题</span></div>`)
-		}
-		for _, e := range pending {
-			fmt.Fprintf(&b, `<div class=card><span class=warn>⏳ %s %s %s —— %s</span><br>
-<span class=dim>%s</span></div>`,
-				esc(e.Node), esc(e.Kind), esc(e.Subject), esc(e.LastedText()), esc(e.Detail))
-		}
+		unresolved = d.Unresolved()
 	}
 
-	b.WriteString(`<h2>节点</h2><table><tr><th>节点<th>隧道<th>快照<th>观测</tr>`)
-	for _, n := range v.Nodes {
-		self := ""
-		if n.Self {
-			self = ` <span class=dim>(本机)</span>`
+	// 实时拓扑：底图和 route overlay 都由 View 数据生成，不写死节点或边。
+	b.WriteString(`<div id=topology class=section><div class=sectionhead><h2>实时拓扑</h2><span class=dim>边类型、来源与更新时间分开呈现</span></div><div class=grid>`)
+	b.WriteString(`<div class="card span8">` + topologySVG(v) + `<div class=legend>
+	<span><i class=key></i>常驻 WG</span><span><i class="key candidate"></i>候选跳（未核验）</span>
+	<span><i class="key route"></i>Agent 当前 RouteCandidate</span><span><i class="key degraded"></i>部分失败</span><span><i class="key failed"></i>故障</span>
+</div><div class="tiny dim">候选跳只表示 SSOT 可选，不表示在线；黄色路径只采用 sing-box selector 实读状态。</div>`)
+	if len(v.Links) > 0 {
+		b.WriteString(`<table><tr><th>边<th>类型 / 状态<th>观测时间<th>来源</tr>`)
+		for _, l := range v.Links {
+			fmt.Fprintf(&b, `<tr><td class=mono>%s ↔ %s<td>%s / %s<td>%s<td class="w tiny dim">%s</tr>`,
+				esc(l.From), esc(l.To), esc(l.Kind), esc(l.State), esc(ageText(l.ObservedAt, now)), esc(l.Source))
 		}
-		src := `<span class=dim>转述</span>`
-		if n.Reached {
-			src = `<span class=dim>直连</span>`
+		b.WriteString(`</table>`)
+	}
+	b.WriteString(`</div>`)
+	b.WriteString(`<div class="card span4"><h2>待处理</h2>`)
+	if len(unresolved) == 0 {
+		if unknownNodes > 0 {
+			fmt.Fprintf(&b, `<div class=empty><span class=warn>没有已确认故障，但 %d 个节点状态未知</span><br><span class=tiny>unknown 不等于 healthy</span></div>`, unknownNodes)
+		} else {
+			b.WriteString(`<div class=empty><span class=ok>没有未解决的问题</span><br><span class=tiny>现状来自 state.json，非事件历史倒推</span></div>`)
+		}
+	} else {
+		for _, e := range unresolved {
+			cls := "notice"
+			if e.Level == "problem" {
+				cls += " badline"
+			}
+			fmt.Fprintf(&b, `<div class="card %s"><b>%s · %s %s</b><br><span class=%s>%s · %s</span><br><span class="tiny dim">%s</span></div>`,
+				cls, esc(e.Node), esc(e.Kind), esc(e.Subject),
+				map[bool]string{true: "bad", false: "warn"}[e.Level == "problem"],
+				esc(e.State), esc(e.LastedText()), esc(e.Detail))
+		}
+	}
+	b.WriteString(`</div></div></div>`)
+
+	// 节点卡片保留所有已有目标、隧道和错误细节。
+	b.WriteString(`<div id=nodes class=section><div class=sectionhead><h2>节点</h2><span class=dim>版本、快照、rollout 与数据来源</span></div><div class=nodegrid>`)
+	for _, n := range v.Nodes {
+		dotClass := "warn"
+		if n.Health == "healthy" {
+			dotClass = "ok"
+		} else if n.Health == "problem" {
+			dotClass = "bad"
+		}
+		fmt.Fprintf(&b, `<div class=nodecard><div class=nodehead><span class="%s dot"></span><b>%s</b>`,
+			dotClass, esc(n.ID))
+		if n.Self {
+			b.WriteString(`<span class="tiny dim">本机</span>`)
+		}
+		b.WriteString(`</div>`)
+		healthLabel := "状态未知"
+		if n.Health == "healthy" {
+			healthLabel = "已核验健康"
+		} else if n.Health == "problem" {
+			healthLabel = "已确认有问题"
+		}
+		fmt.Fprintf(&b, `<div class="tiny %s">%s</div>`, dotClass, healthLabel)
+		fmt.Fprintf(&b, `<div class="tiny dim">%s · %s</div><div>快照 <span class=mono>%s</span></div>`,
+			esc(n.Source), esc(ageText(n.ObservedAt, now)), esc(short(n.Applied)))
+		if n.Version != nil {
+			fmt.Fprintf(&b, `<div class="tiny clip">commit <span class=mono>%s</span> · bin <span class=mono>%s</span></div>`,
+				esc(short(n.Version.Commit)), esc(short(n.Version.Binary)))
+		}
+		if n.Rollout != nil {
+			cls := rolloutCSS(n.Rollout)
+			fmt.Fprintf(&b, `<div class="tiny %s">rollout %s · %s</div>`, cls, esc(n.Rollout.Stage), esc(short(n.Rollout.Snapshot)))
 		}
 		var tl []string
 		for _, t := range n.Tunnels {
@@ -255,78 +371,136 @@ func pageOverview(d Deps, isAuthed bool) string {
 			if t.State != "" && t.State != "active" {
 				label = fmt.Sprintf("%s=%s", t.Interface, t.State)
 			}
-			tl = append(tl, fmt.Sprintf(`<span class=%s>%s</span>`, cls, esc(label)))
+			tl = append(tl, fmt.Sprintf(`<span class="tiny %s">%s</span>`, cls, esc(label)))
 		}
-		if len(tl) == 0 {
-			tl = []string{`<span class=dim>—</span>`}
+		if len(tl) > 0 {
+			b.WriteString(`<div>` + strings.Join(tl, ` · `) + `</div>`)
 		}
-		age := ""
-		if n.AgeSec > 90 {
-			age = fmt.Sprintf(` <span class=warn>%d 分钟前</span>`, n.AgeSec/60)
-		}
-		fmt.Fprintf(&b, `<tr><td><b>%s</b>%s<td class=w>%s<td>%s<td>%s%s</tr>`,
-			esc(n.ID), self, strings.Join(tl, "  "), esc(short(n.Applied)), src, age)
-		for _, p := range n.Problems {
-			fmt.Fprintf(&b, `<tr><td><td class="w bad" colspan=3>%s</tr>`, esc(p))
-		}
-	}
-	b.WriteString(`</table>`)
-
-	// 各节点直接访问每个目标 —— 这张表是按段测量的产出(§16.1.2)。
-	targets := map[string]bool{}
-	for _, n := range v.Nodes {
-		for _, t := range n.Targets {
-			targets[t.Target] = true
-		}
-	}
-	var ts []string
-	for t := range targets {
-		ts = append(ts, t)
-	}
-	sort.Strings(ts)
-	for _, t := range ts {
-		fmt.Fprintf(&b, `<h2>各节点直接访问 %s</h2><table>`, esc(t))
-		for _, n := range v.Nodes {
-			cell := `<span class=dim>(没量)</span>`
-			for _, r := range n.Targets {
-				if r.Target != t {
-					continue
+		for _, r := range n.Targets {
+			observed := ageText(r.ObservedAt, now)
+			if r.Err == "" {
+				kind := "target"
+				if r.Uplink {
+					kind = "uplink"
 				}
-				if r.Err == "" {
-					cell = fmt.Sprintf(`<span class=ok>✅ %dms</span>`, r.MS)
-				} else {
-					cell = fmt.Sprintf(`<span class=bad>❌ %s</span>`, esc(brief(r.Err)))
-				}
+				fmt.Fprintf(&b, `<div class="tiny ok clip">%s · %s · %dms · %s</div>`,
+					esc(kind), esc(r.Target), r.MS, esc(observed))
+			} else if r.Uplink {
+				fmt.Fprintf(&b, `<div class="tiny bad clip">uplink · %s · %s · %s</div>`,
+					esc(r.Target), esc(brief(r.Err)), esc(observed))
+			} else {
+				fmt.Fprintf(&b, `<div class="tiny info clip">target · %s · 不可达（剪枝数据） · %s · %s</div>`,
+					esc(r.Target), esc(brief(r.Err)), esc(observed))
 			}
-			fmt.Fprintf(&b, `<tr><td>%s<td class=w>%s</tr>`, esc(n.ID), cell)
+		}
+		for _, p := range n.Problems {
+			fmt.Fprintf(&b, `<div class="tiny bad clip">%s</div>`, esc(p))
+		}
+		b.WriteString(`</div>`)
+	}
+	b.WriteString(`</div></div>`)
+
+	// 业务候选路径来自 SSOT RouteCandidate.ServerChain。它与 WG 承载边是两层：
+	// 没有直连 WG 不等于没有业务路径；声明存在也不等于路径已实时在线。
+	b.WriteString(`<div class=section><div class=sectionhead><h2>业务候选路径</h2><span class=dim>无直边 ≠ 无路径；未选中的候选不冒充在线</span></div><div class=card>`)
+	if len(v.Candidates) == 0 {
+		b.WriteString(`<div class=empty>本节点没有可展示的 RouteCandidate.ServerChain。</div>`)
+	} else {
+		b.WriteString(`<table><tr><th>接入节点<th>声明 / 服务<th>候选路径<th>状态<th>更新时间 / 来源</tr>`)
+		for _, p := range v.Candidates {
+			path := strings.Join(p.Chain, " → ")
+			if len(p.Chain) <= 1 {
+				path = p.Node + " → direct"
+			}
+			cls, label := "warn", "候选（未核验）"
+			if p.State == "selected" {
+				cls, label = "ok", "当前选中"
+			}
+			observed := "未实时核验"
+			if p.ObservedAt != "" {
+				observed = ageText(p.ObservedAt, now)
+			}
+			fmt.Fprintf(&b, `<tr><td>%s<td>%s<td class="w mono %s">%s<td class=%s>%s<td class="w tiny">%s<br><span class=dim>%s</span></tr>`,
+				esc(p.Node), esc(p.Declaration), cls, esc(path), cls, label,
+				esc(observed), esc(p.Source))
 		}
 		b.WriteString(`</table>`)
 	}
+	b.WriteString(`</div></div>`)
 
-	b.WriteString(`<h2>节点之间(隧道内 RTT)</h2><table>`)
+	// 当前 Agent 选择来自 selector 实读文件，按每条 declaration 独立标时间。
+	b.WriteString(`<div id=routes class=section><div class=sectionhead><h2>Agent 路由</h2><span class=dim>当前实际 RouteCandidate</span></div><div class=card>`)
+	if len(v.Routes) == 0 {
+		b.WriteString(`<div class=empty>没有可验证的 Agent 当前选路数据；不会用历史事件冒充现状。</div>`)
+	} else {
+		b.WriteString(`<table><tr><th>节点<th>声明<th>当前路径<th>更新时间 / 来源<th>理由</tr>`)
+		for _, r := range v.Routes {
+			path := strings.Join(r.Chain, " → ")
+			if len(r.Chain) <= 1 {
+				path = r.Node + " → direct"
+			}
+			cls := "ok"
+			if r.Stale {
+				cls = "warn"
+			}
+			fmt.Fprintf(&b, `<tr><td>%s<td>%s<td class="w mono %s">%s<td class=w>%s<br><span class="tiny dim">%s</span><td class=w>%s</tr>`,
+				esc(r.Node), esc(r.Declaration), cls, esc(path), esc(ageText(r.ObservedAt, now)), esc(r.Source), esc(r.Reason))
+		}
+		b.WriteString(`</table>`)
+	}
+	b.WriteString(`</div></div>`)
+
+	// 发布器与各节点 rollout 使用和 /status 相同的 View 字段。
+	b.WriteString(`<div id=release class=section><div class=sectionhead><h2>发布与收敛</h2></div><div class=grid><div class="card span5">`)
+	if v.Publisher == nil {
+		b.WriteString(`<h2>发布器</h2><div class=empty>本节点不是中控，或 /status 未提供发布器状态。</div>`)
+	} else {
+		cls, label := "ok", "心跳正常"
+		if !v.Publisher.Healthy {
+			cls, label = "bad", "发布器不健康"
+		}
+		fmt.Fprintf(&b, `<h2>发布器</h2><div class="badge %s"><span class=dot></span>%s</div>
+<div class=metric>PID %d</div><div class="tiny dim">heartbeat %s · %s · interval %ds</div>
+<table><tr><td>commit<td class=mono>%s<tr><td>binary<td class=mono>%s<tr><td>上次成功<td>%s<tr><td>快照<td class=mono>%s</table>`,
+			cls, label, v.Publisher.PID, esc(v.Publisher.UpdatedAt), esc(ageText(v.Publisher.UpdatedAt, now)), v.Publisher.IntervalSeconds,
+			esc(short(v.Publisher.Commit)), esc(short(v.Publisher.Binary)), esc(v.Publisher.LastSuccess), esc(short(v.Publisher.LastSnapshot)))
+		if v.Publisher.LastError != "" {
+			fmt.Fprintf(&b, `<div class="tiny %s">最近错误 %s · %s</div>`,
+				map[bool]string{true: "bad", false: "dim"}[!v.Publisher.Healthy], esc(v.Publisher.LastErrorAt), esc(v.Publisher.LastError))
+		}
+	}
+	b.WriteString(`</div><div class="card span7"><h2>节点 rollout</h2><table><tr><th>节点<th>目标快照<th>阶段<th>进入时间<th>回退点</tr>`)
 	for _, n := range v.Nodes {
-		if len(n.Edges) == 0 {
+		if n.Rollout == nil {
 			continue
 		}
-		var parts []string
-		for _, e := range n.Edges {
-			if e.Err != "" {
-				parts = append(parts, fmt.Sprintf(`<span class=bad>%s=❌</span>`, esc(e.To)))
-			} else {
-				parts = append(parts, fmt.Sprintf("%s=%dms", esc(e.To), e.MS))
-			}
+		cls := rolloutCSS(n.Rollout)
+		fmt.Fprintf(&b, `<tr><td>%s<td class=mono>%s<td class=%s>%s<td>%s<td class=mono>%s</tr>`,
+			esc(n.ID), esc(short(n.Rollout.Snapshot)), cls, esc(n.Rollout.Stage), esc(n.Rollout.EnteredAt), esc(short(n.Rollout.LastGood)))
+		if n.Rollout.Error != "" {
+			fmt.Fprintf(&b, `<tr><td><td class="bad w" colspan=4>%s</tr>`, esc(n.Rollout.Error))
 		}
-		fmt.Fprintf(&b, `<tr><td>%s<td class=w>%s</tr>`, esc(n.ID), strings.Join(parts, "  "))
 	}
-	b.WriteString(`</table>`)
+	b.WriteString(`</table></div></div></div>`)
 
 	if d.Events != nil {
-		b.WriteString(`<h2>事件</h2><p><a href="/events">看状态变化历史 →</a></p>`)
+		b.WriteString(`<div class=section><div class=sectionhead><h2>最近事件</h2><a class="sp tiny" href="/events">全部事件 →</a></div><div class=card><table>`)
+		for _, e := range d.Events(8) {
+			cls := "dim"
+			if e.Level == "problem" {
+				cls = "bad"
+			} else if e.Level == "ok" {
+				cls = "ok"
+			}
+			fmt.Fprintf(&b, `<tr><td class=dim>%s<td>%s<td class=w>%s %s<td class=%s>%s → %s</tr>`,
+				esc(shortTS(e.TS)), esc(e.Node), esc(e.Kind), esc(e.Subject), cls, esc(e.From), esc(e.To))
+		}
+		b.WriteString(`</table></div></div>`)
 	}
 	if d.Operator == "" && len(d.Actions) == 0 && d.Control == nil {
 		return shell(d, "总览", b.String(), isAuthed)
 	}
-	b.WriteString(`<h2>本机操作</h2>`)
+	b.WriteString(`<div class=section><div class=sectionhead><h2>本机操作</h2></div><div class=card>`)
 	if !isAuthed {
 		b.WriteString(`<p class=dim>需要<a href="/login">登录</a>。</p>`)
 	} else {
@@ -342,7 +516,134 @@ func pageOverview(d Deps, isAuthed bool) string {
 			b.WriteString(` <a href="/ssot"><button>改 SSOT…</button></a>`)
 		}
 	}
+	b.WriteString(`</div></div>`)
 	return shell(d, "总览", b.String(), isAuthed)
+}
+
+func rolloutCSS(r *RolloutView) string {
+	if r == nil {
+		return "warn"
+	}
+	if r.Problem {
+		return "bad"
+	}
+	switch r.Stage {
+	case "verified", "decommissioned":
+		return "ok"
+	default:
+		return "warn"
+	}
+}
+
+func ageText(ts string, now time.Time) string {
+	t, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		if ts == "" {
+			return "时间未记录"
+		}
+		return ts
+	}
+	d := now.Sub(t)
+	if d < 0 {
+		d = 0
+	}
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%d 秒前", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%d 分钟前", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%.1f 小时前", d.Hours())
+	}
+}
+
+type svgPoint struct{ x, y float64 }
+
+func topologySVG(v View) string {
+	ids := make([]string, 0, len(v.Nodes))
+	for _, n := range v.Nodes {
+		ids = append(ids, n.ID)
+	}
+	sort.Strings(ids)
+	pos := map[string]svgPoint{}
+	for i, id := range ids {
+		angle := -math.Pi/2 + 2*math.Pi*float64(i)/float64(maxInt(1, len(ids)))
+		pos[id] = svgPoint{x: 380 + 270*math.Cos(angle), y: 190 + 135*math.Sin(angle)}
+	}
+	selected := map[string]bool{}
+	for _, r := range v.Routes {
+		if r.Stale {
+			continue
+		}
+		for _, id := range r.Chain {
+			selected[id] = true
+		}
+	}
+	var b strings.Builder
+	b.WriteString(`<svg class=topology viewBox="0 0 760 380" role=img aria-label="实时网络拓扑"><defs><marker id=arrow viewBox="0 0 10 10" refX=8 refY=5 markerWidth=5 markerHeight=5 orient=auto-start-reverse><path d="M 0 0 L 10 5 L 0 10 z" fill="#ffd166"/></marker></defs>`)
+	for _, l := range v.Links {
+		a, aok := pos[l.From]
+		z, zok := pos[l.To]
+		if !aok || !zok {
+			continue
+		}
+		cls := l.Kind
+		if cls != "candidate" {
+			cls = "tunnel"
+		}
+		if l.State == "failed" {
+			cls += " failed"
+		} else if l.State == "degraded" {
+			cls += " degraded"
+		} else if l.State == "unknown" {
+			cls += " unknown"
+		}
+		fmt.Fprintf(&b, `<line class="%s" x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f"/>`, cls, a.x, a.y, z.x, z.y)
+		if l.MS > 0 {
+			fmt.Fprintf(&b, `<text class=sub x="%.1f" y="%.1f">%dms</text>`, (a.x+z.x)/2, (a.y+z.y)/2-4, l.MS)
+		}
+	}
+	for _, r := range v.Routes {
+		if r.Stale {
+			continue
+		}
+		for i := 0; i+1 < len(r.Chain); i++ {
+			a, aok := pos[r.Chain[i]]
+			z, zok := pos[r.Chain[i+1]]
+			if aok && zok {
+				fmt.Fprintf(&b, `<line class=route marker-end="url(#arrow)" x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f"/>`, a.x, a.y, z.x, z.y)
+			}
+		}
+	}
+	health := map[string]string{}
+	for _, n := range v.Nodes {
+		health[n.ID] = n.Health
+	}
+	for _, id := range ids {
+		p := pos[id]
+		cls := "node"
+		if health[id] == "problem" {
+			cls += " problem"
+		} else if health[id] != "healthy" {
+			cls += " unknown"
+		}
+		if selected[id] {
+			cls += " selected"
+		}
+		fmt.Fprintf(&b, `<circle class="%s" cx="%.1f" cy="%.1f" r="31"/><text text-anchor=middle x="%.1f" y="%.1f">%s</text>`, cls, p.x, p.y, p.x, p.y+5, esc(id))
+	}
+	if len(ids) == 0 {
+		b.WriteString(`<text class=sub text-anchor=middle x=380 y=190>暂无拓扑观测</text>`)
+	}
+	b.WriteString(`</svg>`)
+	return b.String()
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func esc(s string) string { return html.EscapeString(s) }

@@ -2,9 +2,11 @@ package publish
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,6 +50,16 @@ func AppendPublished(dir string, rec Published) (bool, error) {
 	if dir == "" || rec.Snapshot == "" {
 		return false, nil
 	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return false, err
+	}
+	path := filepath.Join(dir, historyFile)
+	// 断电可能留下一行没有 LF 的半截 JSON。直接 O_APPEND
+	// 会把新记录粘在它后面：Write+Sync 都成功，但读时整行
+	// 仍是坏的，发布器却会假绿。先截回最后一个完整 LF。
+	if err := truncatePartialHistoryTail(path); err != nil {
+		return false, err
+	}
 	prev, err := ReadPublished(dir)
 	if err != nil {
 		return false, err
@@ -55,23 +67,83 @@ func AppendPublished(dir string, rec Published) (bool, error) {
 	if n := len(prev); n > 0 && prev[n-1].Snapshot == rec.Snapshot {
 		return false, nil
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return false, err
-	}
 	body, err := json.Marshal(&rec)
 	if err != nil {
 		return false, err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, historyFile),
+	f, err := os.OpenFile(path,
 		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return false, err
 	}
-	defer f.Close()
 	if _, err := f.Write(append(body, '\n')); err != nil {
+		_ = f.Close()
 		return false, err
 	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return false, err
+	}
+	if err := f.Close(); err != nil {
+		return false, err
+	}
+	// 不只相信 Write/Sync 返回值：按真实读取路径回读，确认
+	// 刚追加的记录真的是一条可见 JSON，而不是粘在半行后。
+	confirmed, err := ReadPublished(dir)
+	if err != nil {
+		return false, fmt.Errorf("回读发布历史:%w", err)
+	}
+	if len(confirmed) == 0 || confirmed[len(confirmed)-1] != rec {
+		return false, fmt.Errorf("发布历史已写入但回读不到目标记录")
+	}
 	return true, nil
+}
+
+func truncatePartialHistoryTail(path string) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if info.Size() == 0 {
+		return nil
+	}
+	var last [1]byte
+	if _, err := f.ReadAt(last[:], info.Size()-1); err != nil {
+		return err
+	}
+	if last[0] == '\n' {
+		return nil
+	}
+
+	const chunkSize = int64(64 << 10)
+	end := info.Size()
+	for end > 0 {
+		start := end - chunkSize
+		if start < 0 {
+			start = 0
+		}
+		buf := make([]byte, end-start)
+		n, err := f.ReadAt(buf, start)
+		if err != nil && err != io.EOF {
+			return err
+		}
+		if i := bytes.LastIndexByte(buf[:n], '\n'); i >= 0 {
+			if err := f.Truncate(start + int64(i) + 1); err != nil {
+				return err
+			}
+			return f.Sync()
+		}
+		end = start
+	}
+	if err := f.Truncate(0); err != nil {
+		return err
+	}
+	return f.Sync()
 }
 
 // ReadPublished 按时间顺序读回全部记录。文件不存在不是错误 ——

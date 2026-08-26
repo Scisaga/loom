@@ -150,6 +150,40 @@ func TestOverviewShowsWholeNetwork(t *testing.T) {
 	}
 }
 
+func TestTargetShowsMeasurementAgeNotNodeStatusAge(t *testing.T) {
+	d := deps("", nil)
+	d.Snapshot = func() View {
+		return View{Nodes: []NodeView{{
+			ID: "n1", ObservedAt: at.Format(time.RFC3339),
+			Targets: []TargetView{{
+				Target: "https://old-measurement.test/", MS: 12,
+				ObservedAt: at.Add(-5 * time.Minute).Format(time.RFC3339),
+			}},
+		}}}
+	}
+	body := get(t, Handler(d), "/", nil).Body.String()
+	if !strings.Contains(body, "old-measurement.test") || !strings.Contains(body, "5 分钟前") {
+		t.Fatalf("目标测量没有显示自己的旧时间:%s", body)
+	}
+}
+
+func TestTargetFailureIsDataButUplinkFailureIsProblem(t *testing.T) {
+	d := deps("", nil)
+	d.Snapshot = func() View {
+		return View{Nodes: []NodeView{{ID: "n1", Targets: []TargetView{
+			{Target: "https://ordinary.test/", Err: "blocked"},
+			{Target: "https://uplink.test/", Err: "timeout", Uplink: true},
+		}}}}
+	}
+	body := get(t, Handler(d), "/", nil).Body.String()
+	if !strings.Contains(body, `class="tiny info clip">target · https://ordinary.test/ · 不可达（剪枝数据）`) {
+		t.Fatalf("ordinary Target failure was not rendered as pruning data: %s", body)
+	}
+	if !strings.Contains(body, `class="tiny bad clip">uplink · https://uplink.test/`) {
+		t.Fatalf("uplink failure was not rendered as a problem: %s", body)
+	}
+}
+
 // 节点 id 和错误信息都来自别的机器,必须转义 —— 一台被拿下的机器不该能
 // 往别人的界面里注入脚本。
 func TestUntrustedStringsAreEscaped(t *testing.T) {
@@ -181,5 +215,65 @@ func TestNoInlineScriptSlipsIn(t *testing.T) {
 	// 前面要求空白,否则 content= 里的 "ontent=" 会被当成事件处理器。
 	if regexp.MustCompile(`(?i)<script|\son[a-z]+\s*=`).MatchString(body) {
 		t.Error("页面里有脚本或内联事件处理器")
+	}
+}
+
+func TestOnlyOverviewAutoRefreshes(t *testing.T) {
+	h := Handler(deps("pw", nil))
+	if body := get(t, h, "/", nil).Body.String(); !strings.Contains(body, `http-equiv=refresh content=30`) {
+		t.Fatal("总览没有 30 秒 SSR 刷新")
+	}
+	if body := get(t, h, "/login", nil).Body.String(); strings.Contains(body, `http-equiv=refresh`) {
+		t.Fatal("登录页不应自动刷新")
+	}
+}
+
+func TestUnknownNodesAreNotCountedHealthy(t *testing.T) {
+	d := deps("", nil)
+	d.Snapshot = func() View {
+		return View{Nodes: []NodeView{
+			{ID: "silent", Health: "unknown"},
+			{ID: "relay", Health: "unknown", Source: "未签名转述"},
+		}}
+	}
+	body := get(t, Handler(d), "/", nil).Body.String()
+	for _, want := range []string{"0 <small>/ 2", "0 故障 · 2 未知", "unknown 不等于 healthy", "状态未知"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("三态健康摘要缺少 %q", want)
+		}
+	}
+	if strings.Contains(body, "全网无已知故障") {
+		t.Fatal("unknown 被写成全网健康")
+	}
+}
+
+func TestTopologyShowsKindsSourceAndObservationAge(t *testing.T) {
+	d := deps("", nil)
+	d.Snapshot = func() View {
+		return View{ObservedAt: at.Format(time.RFC3339), Nodes: []NodeView{
+			{ID: "a", Health: "healthy"}, {ID: "b", Health: "unknown"}, {ID: "c", Health: "unknown"},
+		}, Links: []LinkView{
+			{From: "a", To: "b", Kind: "tunnel", State: "unknown", Source: "SSOT 常驻 WG"},
+			{From: "b", To: "c", Kind: "tunnel", State: "degraded", Source: "5 样本/4 失败"},
+			{From: "a", To: "c", Kind: "candidate", State: "unverified", Source: "SSOT RouteCandidate.ServerChain · 候选跳，未核验"},
+		}, Candidates: []CandidatePathView{
+			{Node: "a", Declaration: "svc", Chain: []string{"a", "b", "c"}, State: "unverified", Source: "SSOT RouteCandidate.ServerChain"},
+			{Node: "a", Declaration: "svc", Chain: []string{"a", "c"}, State: "selected", ObservedAt: at.Format(time.RFC3339), Source: "selector 实读"},
+		}}
+	}
+	body := get(t, Handler(d), "/", nil).Body.String()
+	for _, want := range []string{"候选跳（未核验）", "tunnel / unknown", "tunnel / degraded", "部分失败", "承载可达性观测", "candidate / unverified", "SSOT 常驻 WG", "selector 实读", "无直边 ≠ 无路径", "a → b → c", "候选（未核验）", "当前选中"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("拓扑来源表缺少 %q", want)
+		}
+	}
+	if strings.Contains(body, `M16 2c4`) {
+		t.Fatal("未批准的临时花形 logo 仍在页面")
+	}
+}
+
+func TestDecommissionedRolloutIsSuccessfulTerminalState(t *testing.T) {
+	if got := rolloutCSS(&RolloutView{Stage: "decommissioned"}); got != "ok" {
+		t.Fatalf("decommissioned rollout rendered as %q, want ok", got)
 	}
 }

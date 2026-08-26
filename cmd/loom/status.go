@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"loom/internal/attest"
 	"loom/internal/events"
 	"loom/internal/model"
 	"loom/internal/publish"
@@ -98,9 +97,7 @@ func cmdStatus(args []string) error {
 	// 转述让够不到的节点也进得来(§16.1.2)。
 	obs := map[string]report.Observation{}
 	snap := map[string]string{}
-	// vcs 只装**直接问到的**节点。转述里没有版本坐标 —— 转述的是观测,
-	// 不是身份,而身份不能听别人转述。够不到的节点因此永远核对不了版本,
-	// 这件事必须**明说**(见 printVersionSpread),不能靠表的沉默去暗示。
+	// vcs / rolls 先装直接问到的节点，随后把验过签的转述状态并进来。
 	vcs := map[string]*version.Coordinate{}
 	rolls := map[string]*report.RolloutState{}
 	// answered 是**真的把状态拉回来了**的节点,不是"拓扑上该够得到"的。
@@ -153,9 +150,18 @@ func cmdStatus(args []string) error {
 		}
 	}
 
+	// 先验签并绑定转述身份。后面的快照、版本与 rollout 汇总不再使用
+	// 验不过的包装；这类错误是明确故障，不只是“尚未核对”。
+	unverified, attestBad := foldAttested(obs, snap, vcs, rolls, answered, unreachable, time.Now().UTC())
+	bad += attestBad
+
 	// 全网是不是同一版。落后的那台往往正是出问题的那台,而这件事以前
 	// 只能逐台 ssh 去查。
-	vers := snapshotSpread(obs, snap)
+	expectedNodes := make([]string, 0, len(s.Nodes))
+	for i := range s.Nodes {
+		expectedNodes = append(expectedNodes, s.Nodes[i].ID)
+	}
+	vers := snapshotSpread(expectedNodes, snap)
 	if len(vers) > 1 {
 		fmt.Printf("\n  ⚠️ 全网不是同一个快照:\n")
 		var keys []string
@@ -170,7 +176,12 @@ func cmdStatus(args []string) error {
 		bad++
 	} else if len(vers) == 1 {
 		for k := range vers {
-			fmt.Printf("\n  快照 %s(全网一致)\n", short(k))
+			if snapshotKeyVerified(k) {
+				fmt.Printf("\n  快照 %s(全网一致)\n", short(k))
+				continue
+			}
+			fmt.Printf("\n  ⚠️ 全网快照%s，不能判定一致\n", k)
+			bad++
 		}
 	}
 
@@ -181,7 +192,6 @@ func cmdStatus(args []string) error {
 	// 让分母变大,否则它会从统计里整个消失,而消失的样子和一切正常一样。
 	// 转述来的节点如果带了签名陈述,就地核对 —— 核过了它们就不再是
 	// "够不到所以不知道",而是和直接问到的一样可信(D81)。
-	unverified := foldAttested(obs, vcs, answered, unreachable)
 	bad += printVersionSpread(vcs, answered, unverified, s)
 	bad += printRollouts(rolls, time.Now().UTC())
 
@@ -498,24 +508,37 @@ func credentialsHeldBy(s *model.SSOT, n *model.Node) []string {
 
 // snapshotSpread 把"哪台机器在哪个快照上"归并成 快照 -> 节点列表。
 //
-// **转述来的节点也要算进去。** 它们的 applied 就在观测里,以前却只统计了
-// 直接拉到的那几台 —— 于是这张表少列了几行,而少列的方式是**静默的**:
-// 落后的那台如果恰好够不到,你在这张表上根本看不见它,只会以为全网一致。
-//
-// direct 覆盖 obs:直接问到的比转听来的权威。
-func snapshotSpread(obs map[string]report.Observation, direct map[string]string) map[string][]string {
+// expected 定义"全网"的分母；完全静默或直接拉取超时的 SSOT 节点
+// 也不能从表里消失。快照值必须来自 verified:直接问到的 Status,
+// 或 foldAttested 验过签的转述。未签名观测里的 Applied 是攻击者可控
+// 字段,绝不能被当成全网一致的证据。
+const (
+	snapshotUnverified = "(未核验)"
+	snapshotUnrecorded = "(未记录)"
+)
+
+func snapshotKeyVerified(k string) bool {
+	return k != snapshotUnverified && k != snapshotUnrecorded
+}
+
+func snapshotSpread(expected []string, verified map[string]string) map[string][]string {
 	all := map[string]string{}
-	for id, o := range obs {
-		all[id] = o.Applied
+	for _, id := range expected {
+		all[id] = snapshotUnverified
 	}
-	for id, v := range direct {
+	for id, v := range verified {
+		if _, ok := all[id]; !ok {
+			// verified 理论上只能来自 SSOT 节点。若调用方把额外身份
+			// 传进来,不要让它扩大"全网"或制造伪告警。
+			continue
+		}
+		if v == "" {
+			v = snapshotUnrecorded
+		}
 		all[id] = v
 	}
 	vers := map[string][]string{}
 	for id, v := range all {
-		if v == "" {
-			v = "(未记录)"
-		}
 		vers[v] = append(vers[v], id)
 	}
 	return vers
@@ -672,12 +695,15 @@ func printPublisherHealth(path string, now time.Time) int {
 // 最坏 2 分 42 秒,取约 3.7 倍余量。**别把它调到分钟以内** —— 无变化的
 // 轮次确实是毫秒级,但那不是最坏情况,拿它定阈值会让每次二进制升级都
 // 误报,而误报的面板等于没有面板(D64–D67)。
+// 这是阈值来源的历史测量；现在大二进制已在 deploy.lock/rollout 记录外
+// 预取，Activating 主要覆盖本地激活、配置事务与 continuation。先保留已有
+// 安全余量，等新阶段分布有实测数据后再收紧，不能靠代码路径变短来猜数字。
 //
 // 原来是 30 分钟,因为旧的两段式升级本来就要等一个 10 分钟的定时器。
 // 续跑落地之后(D80)那笔债还清了,阈值跟着还。
 //
 // 这里要抓的其实是**进程死在半路**留下的陈旧记录(OOM、被 kill、重启)。
-// 下载卡住有自己的停顿检测(blobStall),不靠这个数。
+// 下载卡住有自己的停顿检测和按签名 size 算出的硬总时限,不靠这个数。
 const stuckLimit = 10 * time.Minute
 
 // printRollouts 报告谁正在装、谁卡住了,返回要计入 bad 的条数。
@@ -717,6 +743,8 @@ func rolloutFindings(rolls map[string]*report.RolloutState, now time.Time) ([]st
 	for _, id := range ids {
 		r := rolls[id]
 		switch {
+		case r.Stage == string(rollout.Decommissioned):
+			lines = append(lines, fmt.Sprintf("  ⛔ %-7s 已按签名快照 %s 下线", id, short(r.Snapshot)))
 		case r.Stage == string(rollout.Failed):
 			lines = append(lines, fmt.Sprintf("  ⚠️ %-7s rollout 失败(目标 %s):%s",
 				id, short(r.Snapshot), r.Error))
@@ -759,40 +787,59 @@ func roughAge(d time.Duration) string {
 // caPath 是校验节点签名陈述用的内部 CA(§13.3)。
 const caPath = "/etc/loom/tls/ca.crt"
 
-// foldAttested 把**验过签的**转述节点并进版本表,返回仍然核不了的那些。
+// foldAttested 把**验过签的**转述节点并进快照、版本与 rollout
+// 表,返回仍然核不了的那些。
 //
 // 这是 D81 相对 D73 的全部变化:够不到不再等于核不了。够不到的节点只要
 // 带着自己签的陈述,链路上谁转的都无所谓 —— 改一个字就验不过。
 //
 // **验不过和没签名一样,都算没核对过。** 不把它们分开是有意的:调用方
 // 要做的事一样(去 ssh 那台机器),分开只会让判断变复杂而结论不变。
-func foldAttested(obs map[string]report.Observation, vcs map[string]*version.Coordinate,
-	answered map[string]bool, unreachable []string) []string {
+func foldAttested(obs map[string]report.Observation, snaps map[string]string,
+	vcs map[string]*version.Coordinate,
+	rolls map[string]*report.RolloutState, answered map[string]bool,
+	unreachable []string, now time.Time) ([]string, int) {
 
+	// 没有签名时不读宿主机 CA：旧节点兼容路径和单测都不该依赖 /etc/loom。
+	hasSigned := false
+	for _, id := range unreachable {
+		if o, ok := obs[id]; ok && o.Attest != nil {
+			hasSigned = true
+			break
+		}
+	}
+	if !hasSigned {
+		return append([]string(nil), unreachable...), 0
+	}
 	ca, err := os.ReadFile(caPath)
 	if err != nil {
-		// 没有 CA 就核不了任何签名。**说一次**,否则"为什么还是 3/5"
-		// 会变成一个查不出来的怪事。
-		fmt.Printf("  (读不到 %s,转述来的节点核不了版本:%v)\n", caPath, err)
-		return unreachable
+		fmt.Printf("  ⚠️ 读不到 %s,签名转述无法验证:%v\n", caPath, err)
+		return append([]string(nil), unreachable...), 1
 	}
 	var still []string
+	bad := 0
 	for _, id := range unreachable {
 		o, ok := obs[id]
 		if !ok || o.Attest == nil {
 			still = append(still, id)
 			continue
 		}
-		c, err := attest.Verify(o.Attest, ca)
+		trusted, err := report.VerifyObservation(&o, ca, now, report.AttestationMaxAge)
 		if err != nil {
 			// 验不过是**故障**,不是"没消息" —— 要么有人改了转述内容,
 			// 要么证书过期了。两种都得让人看见。
 			fmt.Printf("  ⚠️ %s 的签名陈述验不过:%v\n", id, err)
 			still = append(still, id)
+			delete(obs, id)
+			bad++
 			continue
 		}
-		vcs[id] = &version.Coordinate{Commit: c.Commit, Binary: c.Binary}
+		snaps[id] = trusted.Applied
+		vcs[id] = trusted.Version
+		if trusted.Rollout != nil {
+			rolls[id] = trusted.Rollout
+		}
 		answered[id] = true
 	}
-	return still
+	return still, bad
 }

@@ -1,17 +1,29 @@
 package main
 
 import (
+	"context"
 	"crypto/ed25519"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"time"
 
 	"loom/internal/publish"
 )
+
+// 手工入口与 daemon 必须指向同一把锁。变量只为包内测试
+// 放到临时目录；生产命令没有可覆盖该路径的 flag。
+var publishTransactionLockPath = publish.LockPath
+
+func withPublishTransactionLock(fn func() error) error {
+	unlock, err := publish.AcquireLock(publishTransactionLockPath)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return fn()
+}
 
 // publish 手动发一次。日常由发布器守护进程自动做(`loom publisher`),
 // 这个命令留给首次发布、排障、以及不想跑守护进程的场合。
@@ -27,7 +39,10 @@ func cmdPublish(args []string) error {
 	dns := fs.String("dns", "", "解析 verify-url 用的 DNS(不依赖机器全局设置)")
 	sshConf := fs.String("ssh-config", "", "ssh 配置文件")
 	author := fs.String("author", "", "记进 manifest 的作者")
-	binary := fs.String("binary", "", "把这个 Agent 二进制一起发(与配置绑定回滚,§15.4)")
+	binary := fs.String("binary", "", "已禁用；二进制必须先 loom release，再由 publisher 发布")
+	pinDir := fs.String("pin-dir", publish.DefaultPinDir, "钉住状态目录(必须与 publisher 一致)")
+	releaseDir := fs.String("release-dir", publish.DefaultReleaseDir, "放行状态目录(必须与 publisher 一致)")
+	allowDirty := fs.Bool("allow-dirty", false, "允许发布追溯不回 git 的已 release 二进制(高风险)")
 	archive := fs.String("ssot-history", "deploy/ssot-history", "源头存档目录(中控本地,不进分发树;loom rollback 从这里取)")
 
 	rest, err := parseInterspersed(fs, args)
@@ -37,9 +52,14 @@ func cmdPublish(args []string) error {
 	if len(rest) != 1 || *out == "" || *keyPath == "" {
 		return fmt.Errorf("用法:loom publish <ssot.yaml> -o <目标> -key <私钥>")
 	}
-	body, err := os.ReadFile(rest[0])
-	if err != nil {
-		return err
+	if *binary != "" {
+		return fmt.Errorf("loom publish -binary 已禁用：它会绕过 reason、buildinfo 与 selfcheck 安全门；请先 `loom release -binary %s -reason <理由>`，再重跑本命令或等 publisher", *binary)
+	}
+	if *releaseDir == "" {
+		return fmt.Errorf("手工 publish 不允许关闭 release 安全门；请使用与 publisher 一致的 -release-dir")
+	}
+	if *archive == "" {
+		return fmt.Errorf("手工 publish 不允许关闭 -ssot-history：没有源头存档的快照无法回滚")
 	}
 	privBytes, err := readKey(*keyPath, ed25519.PrivateKeySize)
 	if err != nil {
@@ -62,50 +82,16 @@ func cmdPublish(args []string) error {
 		return err
 	}
 
-	bins := map[string][]byte{}
-	binSum := ""
-	if *binary != "" {
-		b, err := os.ReadFile(*binary)
-		if err != nil {
-			return err
-		}
-		bins[runtime.GOOS+"/"+runtime.GOARCH] = b
-		binSum = hexOf(b)
-	}
-	t, err := publish.Build(body, ed25519.PrivateKey(privBytes), publish.Meta{
-		CreatedAt: time.Now().UTC().Format(time.RFC3339), Author: *author, Binaries: bins,
+	// 手工命令不再维护第二套 Build/Push/Verify 实现。Once 仍走守护发布器
+	// 的完整收敛路径：运行产物等价判定、整树自愈、节点视角验签、存档和
+	// 每事务 publish.lock 都完全一致。PinDir/ReleaseDir 也与 daemon
+	// 同源：已放行或已钉住的二进制仍进 manifest，手工发配置不能
+	// 偷偷把 §15.4 的版本绑定清空。
+	return publish.Run(context.Background(), publish.Options{
+		SSOTPath: rest[0], Key: ed25519.PrivateKey(privBytes), Target: tgt,
+		Author: *author, VerifyURL: *verify, DNS: *dns,
+		ArchiveDir: *archive, PinDir: *pinDir, ReleaseDir: *releaseDir,
+		AllowUntraceable: *allowDirty, LockPath: publishTransactionLockPath,
+		Once: true, Log: os.Stdout,
 	})
-	if err != nil {
-		return err
-	}
-	if err := tgt.Push(t); err != nil {
-		return err
-	}
-	fmt.Printf("✓ 快照 %s\n  %d 个节点:%v\n  → %s\n",
-		t.Snapshot, len(t.Owners()), t.Owners(), tgt)
-	fmt.Printf("\n树里全是占位符,没有任何凭据;manifest 已签名。\n")
-	fmt.Printf("分发点不需要被信任 —— 改一个字节,节点验签就过不了。\n")
-
-	// 存档在发布之后,存的是"确实发出去过的那一版"。手工发布也要存 ——
-	// 漏了的话这一版将来回滚不了,而症状要到需要回滚时才出现。
-	sum, aerr := publish.ArchiveSSOT(*archive, body)
-	if aerr != nil {
-		fmt.Printf("\n⚠️ 源头存档失败:%v\n   这个快照将来回滚不了。\n", aerr)
-	} else if sum != "" {
-		fmt.Printf("  源头已存档 → %s\n", publish.ArchivePath(*archive, sum))
-	}
-	if _, herr := publish.AppendPublished(*archive, publish.Published{
-		At: time.Now().UTC().Format(time.RFC3339), Snapshot: t.Snapshot,
-		SSOTSum: sum, Binary: binSum, Author: *author,
-	}); herr != nil {
-		fmt.Printf("⚠️ 记发布历史失败:%v —— `loom snapshots` 会少这一条\n", herr)
-	}
-
-	if *verify != "" {
-		if err := publish.VerifyServed(*verify, t.Snapshot, *dns, 20*time.Second); err != nil {
-			return fmt.Errorf("推完了,但从节点视角取不到:%w", err)
-		}
-		fmt.Printf("✅ 节点视角已确认(%s)\n", *verify)
-	}
-	return nil
 }

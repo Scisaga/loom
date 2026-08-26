@@ -28,6 +28,16 @@ func TestVerifiedIsSilent(t *testing.T) {
 	}
 }
 
+func TestDecommissionedIsShownWithoutAlarm(t *testing.T) {
+	lines, bad := rolloutFindings(map[string]*report.RolloutState{
+		"old01": rs(rollout.Decommissioned, "2026-08-24T09:00:00Z"),
+	}, now())
+	got := strings.Join(lines, "\n")
+	if bad != 0 || !strings.Contains(got, "已按签名快照") || !strings.Contains(got, "old01") {
+		t.Fatalf("有意下线应明确展示但不报警,bad=%d:\n%s", bad, got)
+	}
+}
+
 // 正在装是正常的,说一声但**不报警** —— 否则每次发布都会响一片。
 func TestInFlightIsShownButNotAnAlarm(t *testing.T) {
 	lines, bad := rolloutFindings(map[string]*report.RolloutState{

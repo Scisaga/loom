@@ -223,8 +223,9 @@ func (s *SSOT) VersionsFor(n *Node) ComponentVersions {
 
 // MeshEligible 由 direction 推导,不是独立配置项(§2.2)。
 //
-// 能进 mesh 的服务器由 Headscale 自动分发密钥与 peer,**一份隧道配置都不
-// 渲染**(§6.3、§8.3)。这条推导直接决定隧道矩阵有多大。
+// 这只是“目标态可加入 mesh”的资格，不表示生产已经部署 Headscale。
+// 当前两个具备该资格的节点之间走公网 Hysteria2 直拨，不生成常驻 WG；
+// 真正的 mesh 仍是独立可选项(§6.3、§8.3、D29)。
 func (n *Node) MeshEligible() bool { return n.IsServer() && n.Server.Direction != ReverseOnly }
 
 // PubliclyDialable 报告能否从公网直接拨这台服务器。
@@ -292,8 +293,9 @@ func (p InboundProtocol) IsUDP() bool { return p.Or() == Hysteria2 }
 
 // Tunnel 是隧道矩阵中的一条边(§6.3)。
 //
-// **只有 reverse_only 的服务器才需要它。** 能进 mesh 的由 Headscale 自动
-// 分发,写进这里会被校验器拒绝。
+// **只有关系中包含 reverse_only 服务器才需要它。** 两端都能被公网拨号时
+// 当前直接走 Hysteria2，写进这里会被校验器拒绝；Headscale 是未部署的
+// 目标增强项，不能拿来解释当前连通性。
 //
 // 同样没有 initiator 字段 —— 它由两端 direction 推导(§2.2)。
 type Tunnel struct {
@@ -428,7 +430,8 @@ func (s *SSOT) TunnelAddrOn(nodeID, peerID string) string {
 
 // ServerReachable 报告 from 能否把流量交给 to。
 //
-// 两条路子:有点对点隧道,或者两端都能进 mesh(Headscale 组网,§8.3)。
+// 两条路子:有点对点隧道，或者两端都能按当前公网 Hysteria2 关系互拨。
+// `MeshEligible` 在这里沿用的是既有方向判据，不表示 Headscale 已运行。
 func (s *SSOT) ServerReachable(from, to *Node) bool {
 	if s.TunnelAddrOn(to.ID, from.ID) != "" {
 		return true
@@ -438,7 +441,7 @@ func (s *SSOT) ServerReachable(from, to *Node) bool {
 
 // NextHopAddr 返回 from 该往哪个地址转发给 to。
 //
-// 走隧道时是隧道内地址;走 mesh 时用对方的公网地址(mesh 内亦可达)。
+// 走隧道时是隧道内地址；没有隧道而两端可直拨时用对方公网地址。
 func (s *SSOT) NextHopAddr(from, to *Node) string {
 	if a := s.TunnelAddrOn(to.ID, from.ID); a != "" {
 		return a

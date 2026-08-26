@@ -12,6 +12,7 @@ import (
 
 	"loom/internal/attest"
 	"loom/internal/netx"
+	"loom/internal/rollout"
 	"loom/internal/version"
 )
 
@@ -34,11 +35,15 @@ type Observation struct {
 	// 而"全网是不是同一版"恰恰要靠转述才能对够不到的节点回答。挂错地方的
 	// 表现是:界面上够得到的那台显示版本号,其余全是"(未记录)",于是
 	// 每次都报"全网不是同一个快照"。
-	Applied string  `json:"applied,omitempty"`
-	Edges   []Edge  `json:"edges,omitempty"`
-	Targets []Reach `json:"targets,omitempty"`
+	Applied string              `json:"applied,omitempty"`
+	Version *version.Coordinate `json:"version,omitempty"`
+	Rollout *RolloutState       `json:"rollout,omitempty"`
+	Agent   *AgentState         `json:"agent,omitempty"`
+	Edges   []Edge              `json:"edges,omitempty"`
+	Targets []Reach             `json:"targets,omitempty"`
 
-	// Attest 是这台机器**关于自己身份**的签名陈述(D81)。
+	// Attest 是这台机器对 node-owned state（身份、版本、Applied、rollout、
+	// Agent 实选）的签名陈述(D81)。
 	//
 	// 观测可以转述:RTT、可达性是尽力而为的数字,B 转述 C 的观测,
 	// 可信度就是 B 的可信度,而这够用了。**身份不行** —— "C 跑的是
@@ -99,7 +104,13 @@ func (o *Observation) Age(now time.Time) time.Duration {
 	if err != nil {
 		return 100 * 365 * 24 * time.Hour
 	}
-	return now.Sub(t)
+	age := now.Sub(t)
+	// 过远的未来时间会让这条观测长期“永远最新”。它与解析失败一样，
+	// 宁可当作过期，也不能让它占住 Node 索引。
+	if age < -2*time.Minute {
+		return 100 * 365 * 24 * time.Hour
+	}
+	return age
 }
 
 // history 保留每个被测对象最近若干次的结果。
@@ -158,10 +169,17 @@ func observe(cfg *Config, h *history, now time.Time) *Observation {
 	if b, err := os.ReadFile(appliedPath); err == nil {
 		o.Applied = strings.TrimSpace(string(b))
 	}
-	// 给身份签名,好让够不到这台机器的人也能核对它的版本(D81)。
-	// 签不了不是错误 —— 中控只有 ca.crt,没有自己的私钥。
-	o.Attest = signSelf(o, now)
-
+	vc := version.Self()
+	o.Version = &vc
+	if r, err := rollout.Read(rollout.Path); err == nil && r != nil {
+		o.Rollout = &RolloutState{
+			Snapshot: r.Snapshot, Stage: string(r.Stage), EnteredAt: r.EnteredAt,
+			LastGood: r.LastGood, Error: r.Error,
+		}
+	}
+	if a, err := readAgentState(cfg.AgentState); err == nil && len(validateAgentState(a, cfg.Node, now)) == 0 {
+		o.Agent = a
+	}
 	nb := append([]Neighbor(nil), cfg.Neighbors...)
 	sort.Slice(nb, func(i, j int) bool { return nb[i].Node < nb[j].Node })
 	for _, n := range nb {
@@ -197,6 +215,10 @@ func observe(cfg *Config, h *history, now time.Time) *Observation {
 		}
 		o.Targets = append(o.Targets, r)
 	}
+	// 必须在 Edges/Targets 全部采完之后签。v3 同时绑定测量 payload；在
+	// 采集前签会留下一个 relay 可改写、却看似有合法身份签名的缺口。
+	// 签不了不是错误 —— 中控只有 ca.crt,没有自己的私钥。
+	o.Attest = signSelf(o)
 	return o
 }
 
@@ -267,12 +289,13 @@ const (
 	nodeCertPath = "/etc/loom/tls/node.crt"
 )
 
-// signSelf 给"我是谁、我跑的是哪一版"签个名。
+// signSelf 给本节点拥有的运行态签名：身份、版本坐标、已应用快照、
+// rollout 阶段、Agent 从 selector 实读的当前选择，以及本轮链路观测摘要。
 //
 // **签不了就返回 nil,不报错也不猜。** 没有私钥是合法状态(中控就没有),
 // 而一个签不出名字的机器和一个签名验不过的机器,在调用方眼里是同一件事:
 // 没核对过。把它们区分开只会让判断变复杂,而结论一样。
-func signSelf(o *Observation, now time.Time) *attest.Signed {
+func signSelf(o *Observation) *attest.Signed {
 	key, err := os.ReadFile(nodeKeyPath)
 	if err != nil {
 		return nil
@@ -281,11 +304,32 @@ func signSelf(o *Observation, now time.Time) *attest.Signed {
 	if err != nil {
 		return nil
 	}
-	vc := version.Self()
-	s, err := attest.Sign(attest.Claim{
-		Node: o.Node, TS: o.TS,
-		Commit: vc.Commit, Binary: vc.Binary, Applied: o.Applied,
-	}, key, crt)
+	c := attest.Claim{Node: o.Node, TS: o.TS, Applied: o.Applied}
+	c.MeasurementsSHA256 = measurementDigest(o)
+	if o.Version != nil {
+		c.Commit, c.Dirty, c.Tag = o.Version.Commit, o.Version.Dirty, o.Version.Tag
+		c.Binary, c.BinaryErr = o.Version.Binary, o.Version.BinaryErr
+		c.Go, c.Platform = o.Version.Go, o.Version.Platform
+	}
+	if o.Rollout != nil {
+		c.Rollout = &attest.RolloutClaim{
+			Snapshot: o.Rollout.Snapshot, Stage: o.Rollout.Stage,
+			EnteredAt: o.Rollout.EnteredAt, LastGood: o.Rollout.LastGood,
+			Error: o.Rollout.Error,
+		}
+	}
+	if o.Agent != nil {
+		ac := &attest.AgentClaim{Node: o.Agent.Node, TS: o.Agent.TS}
+		for _, sel := range o.Agent.Selections {
+			ac.Selections = append(ac.Selections, attest.SelectionClaim{
+				Declaration: sel.Declaration, Selector: sel.Selector,
+				Candidate: sel.Candidate, Chain: append([]string(nil), sel.Chain...),
+				Reason: sel.Reason, UpdatedAt: sel.UpdatedAt,
+			})
+		}
+		c.Agent = ac
+	}
+	s, err := attest.Sign(c, key, crt)
 	if err != nil {
 		return nil
 	}

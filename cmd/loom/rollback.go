@@ -37,7 +37,7 @@ import (
 func cmdRollback(args []string) error {
 	fs := flag.NewFlagSet("rollback", flag.ExitOnError)
 	ssotPath := fs.String("ssot", "", "要写回的 SSOT 路径(默认从 /etc/loom/control.json 读)")
-	dir := fs.String("dir", "deploy/pinned", "钉住状态放哪(与 loom pin 同一处)")
+	dir := fs.String("dir", publish.DefaultPinDir, "钉住状态放哪(与 loom pin 同一处)")
 	history := fs.String("ssot-history", "deploy/ssot-history", "源头存档目录(中控本地;发布器写在这儿)")
 	url := fs.String("url", "", "分发点地址(默认从 control.json 读)")
 	pubPath := fs.String("pubkey", "/etc/loom/trust/platform.pub", "验签用的平台公钥")
@@ -78,6 +78,9 @@ func cmdRollback(args []string) error {
 		return fmt.Errorf("只能回滚到一个快照,收到 %d 个", len(rest))
 	}
 	id := rest[0]
+	if !validSnapshotID(id) {
+		return fmt.Errorf("快照 id %q 必须是 12 位小写十六进制", id)
+	}
 	if strings.TrimSpace(*reason) == "" && !*dryRun {
 		return fmt.Errorf("要 -reason:回滚会覆盖当前 SSOT,几天后翻到它的人需要知道为什么")
 	}
@@ -98,12 +101,9 @@ func cmdRollback(args []string) error {
 	if err != nil {
 		return fmt.Errorf("取签名:%w", err)
 	}
-	if err := snapshot.VerifySignature(manBytes, sig, ed25519.PublicKey(pub)); err != nil {
-		return fmt.Errorf("快照 %s 验签不过:%w", short(id), err)
-	}
-	var man snapshot.Manifest
-	if err := json.Unmarshal(manBytes, &man); err != nil {
-		return err
+	man, err := verifyRequestedSnapshotManifest(id, manBytes, sig, ed25519.PublicKey(pub))
+	if err != nil {
+		return fmt.Errorf("快照 %s 不可信:%w", short(id), err)
 	}
 	fmt.Printf("快照 %s(%s,%s)\n", short(id), man.CreatedAt, man.Author)
 
@@ -156,11 +156,11 @@ func cmdRollback(args []string) error {
 		return fmt.Errorf("二进制哈希对不上(签名说 %s,实际 %s)", short(want.SHA256), short(got))
 	}
 	// 真跑一遍。回滚到一个跑不起来的二进制,等于把退路也堵死(同 D60)。
-	stage := filepath.Join(os.TempDir(), "loom-rollback-check")
-	if err := os.WriteFile(stage, binBody, 0o755); err != nil {
+	stage, cleanup, err := stageSelfcheckBinary(*dir, "rollback", binBody)
+	if err != nil {
 		return err
 	}
-	defer os.Remove(stage)
+	defer cleanup()
 	if out, err := exec.Command(stage, "selfcheck").CombinedOutput(); err != nil {
 		return fmt.Errorf("这个二进制没通过自检,不回滚:%w\n%s", err, strings.TrimSpace(string(out)))
 	}
@@ -192,56 +192,72 @@ func cmdRollback(args []string) error {
 		return nil
 	}
 
-	// --- 落地 -------------------------------------------------------------
-	//
-	// 先存当前源头再覆盖。**这是本次回滚唯一不可再生的东西** ——
-	// SSOT 是事实来源,它没有版本历史(不在 git,也不在 loom backup 里),
-	// 覆盖掉就找不回来了。
-	prev, err := os.ReadFile(*ssotPath)
-	if err != nil {
-		return fmt.Errorf("读当前 SSOT:%w", err)
-	}
-	if err := os.MkdirAll(*dir, 0o755); err != nil {
-		return err
-	}
-	prevPath := filepath.Join(*dir, "ssot.prev.yaml")
-	if err := os.WriteFile(prevPath, prev, 0o644); err != nil {
-		return fmt.Errorf("存当前 SSOT:%w", err)
-	}
-	fmt.Printf("\n  当前源头已存到 %s(%d 字节)\n", prevPath, len(prev))
-
-	if hexOf(prev) == hexOf(ssotBytes) {
-		fmt.Printf("  源头本来就是这一版,不改动\n")
-	} else {
-		// 同目录临时文件再改名:发布器可能正好在读,半截 YAML 会让它报一个
-		// 跟真实原因无关的解析错误(同 D41 那处保存)。
-		tmp := filepath.Join(filepath.Dir(*ssotPath), ".ssot.rollback.tmp")
-		if err := os.WriteFile(tmp, ssotBytes, 0o644); err != nil {
-			return err
-		}
-		if err := os.Rename(tmp, *ssotPath); err != nil {
-			return err
-		}
-		fmt.Printf("  源头已退回 %s\n", *ssotPath)
-	}
-
 	p := &publish.Pin{
 		Snapshot: id, SHA256: want.SHA256,
 		PinnedAt: time.Now().Format(time.RFC3339),
 		By:       os.Getenv("SUDO_USER") + os.Getenv("USER"),
 		Reason:   "回滚:" + *reason,
 	}
-	if err := publish.WritePin(*dir, p, binBody); err != nil {
+	prevPath, prevSize, sourceChanged, err := commitRollbackState(
+		*ssotPath, *dir, p, binBody, ssotBytes, writeFileAtomicDurable)
+	if err != nil {
 		return err
 	}
+	fmt.Printf("\n  当前源头已存到 %s(%d 字节)\n", prevPath, prevSize)
 	fmt.Printf("  二进制已钉到 %s\n", short(id))
+	if sourceChanged {
+		fmt.Printf("  源头已退回 %s\n", *ssotPath)
+	} else {
+		fmt.Printf("  源头本来就是这一版,不改动\n")
+	}
 
 	fmt.Printf("\n✅ 已回滚到 %s。发布器下一轮(约 30 秒)会自己收敛过去,不用手工发布。\n", short(id))
-	fmt.Printf("   节点在各自的下一个轮询周期取到,二进制与配置分两轮落地(D46),约 20 分钟。\n")
+	fmt.Printf("   节点每 45 秒检查、最多 15 秒抖动；二进制升级会在同一轮 continuation 完成,正常目标 90 秒内。\n")
 	fmt.Printf("\n   往前走的时候两件事都要做,只做一件会留下半截状态:\n")
 	fmt.Printf("     1. 改 SSOT(%s;回滚前那一版存在 %s)\n", *ssotPath, prevPath)
 	fmt.Printf("     2. loom pin -clear -dir %s\n", *dir)
 	return nil
+}
+
+type atomicFileWriter func(string, []byte, os.FileMode) error
+
+// commitRollbackState 把 rollback 的两个授权输入放在同一把
+// publish.lock 下提交。顺序必须是 pin → SSOT：中间失败时，
+// publisher 会因 pin/snapshot 不匹配而 fail-closed；反过来则可能把
+// 目标源头与当前新二进制真正发出去。
+func commitRollbackState(ssotPath, pinDir string, pin *publish.Pin, binBody, targetSSOT []byte, writeAtomic atomicFileWriter) (prevPath string, prevSize int, sourceChanged bool, retErr error) {
+	err := withPublishTransactionLock(func() error {
+		prev, err := os.ReadFile(ssotPath)
+		if err != nil {
+			return fmt.Errorf("读当前 SSOT:%w", err)
+		}
+		if err := os.MkdirAll(pinDir, 0o755); err != nil {
+			return err
+		}
+		prevPath = filepath.Join(pinDir, "ssot.prev.yaml")
+		if err := writeAtomic(prevPath, prev, 0o644); err != nil {
+			return fmt.Errorf("存当前 SSOT:%w", err)
+		}
+		prevSize = len(prev)
+
+		// 先安装粘性安全门。即使随后 SSOT 写失败，发布器
+		// 也只会报“钉住快照与当前源头不匹配”，不会混发。
+		if err := publish.WritePin(pinDir, pin, binBody); err != nil {
+			return fmt.Errorf("安装回滚 pin:%w", err)
+		}
+		if hexOf(prev) == hexOf(targetSSOT) {
+			return nil
+		}
+		sourceChanged = true
+		if err := writeAtomic(ssotPath, targetSSOT, 0o644); err != nil {
+			return fmt.Errorf("目标二进制已安全钉住，但 SSOT 原子替换失败；publisher 会保持阻断:%w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return prevPath, prevSize, sourceChanged, err
+	}
+	return prevPath, prevSize, sourceChanged, nil
 }
 
 // reportRollbackState 说清楚现在处在不处在回滚状态。

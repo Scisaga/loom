@@ -1,6 +1,7 @@
 package publish
 
 import (
+	"bytes"
 	"os"
 	"strings"
 	"testing"
@@ -98,6 +99,33 @@ func TestPublishedSkipsBadLines(t *testing.T) {
 	}
 }
 
+func TestAppendPublishedTruncatesCrashTailBeforeAppending(t *testing.T) {
+	dir := t.TempDir()
+	path := HistoryPath(dir)
+	if err := os.WriteFile(path, []byte(
+		"{\"at\":\"t\",\"snapshot\":\"old\"}\n{\"snapshot\":\"truncated"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want := Published{At: "t2", Snapshot: "new", SSOTSum: "source", Binary: "binary"}
+	if wrote, err := AppendPublished(dir, want); err != nil || !wrote {
+		t.Fatalf("断电半行后应修复并追加:wrote=%v err=%v", wrote, err)
+	}
+	recs, err := ReadPublished(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 || recs[0].Snapshot != "old" || recs[1] != want {
+		t.Fatalf("新记录仍被半行吞掉:%+v", recs)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte("truncated")) || len(raw) == 0 || raw[len(raw)-1] != '\n' {
+		t.Fatalf("历史尾部没有修成完整 LF 记录:%q", raw)
+	}
+}
+
 // 发布历史和源头存档放在同一个目录,但互不干扰:
 // 存档按 *.yaml 数版本,历史是单独一个文件。
 func TestHistoryDoesNotDisturbArchive(t *testing.T) {
@@ -113,5 +141,24 @@ func TestHistoryDoesNotDisturbArchive(t *testing.T) {
 	}
 	if !strings.HasSuffix(HistoryPath(dir), ".jsonl") {
 		t.Errorf("历史文件名不该是 .yaml,否则会被当成一版源头:%s", HistoryPath(dir))
+	}
+}
+
+func TestArchiveRepairsCorruptContentAddressedCopy(t *testing.T) {
+	dir := t.TempDir()
+	body := []byte(goodSSOT)
+	sum, err := ArchiveSSOT(dir, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ArchivePath(dir, sum), []byte("corrupt"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ArchiveSSOT(dir, body); err != nil || got != sum {
+		t.Fatalf("内容寻址存档损坏后应原子修复:sum=%s err=%v", got, err)
+	}
+	got, err := ReadArchivedSSOT(dir, sum)
+	if err != nil || string(got) != string(body) {
+		t.Fatalf("修复后存档仍不可回滚:%q err=%v", got, err)
 	}
 }

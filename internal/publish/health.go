@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
+	"syscall"
 	"time"
 
 	"loom/internal/version"
@@ -39,6 +39,9 @@ type Health struct {
 
 	StartedAt string `json:"started_at"`
 	UpdatedAt string `json:"updated_at"`
+	// IntervalSeconds 让读者按发布器自己的循环周期判断心跳是否过期。
+	// 老状态没有这个字段时使用保守的两分钟阈值。
+	IntervalSeconds int64 `json:"interval_seconds,omitempty"`
 
 	// LastSuccess 是最近一次**真的发出去**的时刻。
 	LastSuccess  string `json:"last_success,omitempty"`
@@ -56,18 +59,11 @@ func (h *Health) Write(path string) error {
 	if path == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
 	b, err := json.MarshalIndent(h, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(b, '\n'), 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return writeFileAtomic(path, append(b, '\n'), 0o644)
 }
 
 // ReadHealth 读回发布器状态。文件不存在返回 (nil, nil) —— 那是"发布器
@@ -103,6 +99,41 @@ func (h *Health) Findings(now time.Time) (lines []string, bad bool) {
 
 	add("  发布器 %s · pid %d", h.Version.Line(), h.PID)
 
+	// UpdatedAt 是活性信号,LastSuccess 是功能结果。只看后者会把“一周没改
+	// 配置”误报；只看前者则会让进程死亡后遗留的 JSON 永久假绿。阈值取
+	// max(2 分钟,3 个循环),既容得下调度抖动,又能及时发现默认 30 秒发布器。
+	staleAfter := 2 * time.Minute
+	if h.IntervalSeconds > 0 {
+		if d := 3 * time.Duration(h.IntervalSeconds) * time.Second; d > staleAfter {
+			staleAfter = d
+		}
+	}
+	if h.UpdatedAt == "" {
+		add("  ⚠️ 发布器没有心跳时间(UpdatedAt),无法证明进程仍在工作")
+		bad = true
+	} else if t, err := time.Parse(time.RFC3339, h.UpdatedAt); err != nil {
+		add("  ⚠️ 发布器心跳时间无效:%q", h.UpdatedAt)
+		bad = true
+	} else if age := now.Sub(t); age > staleAfter {
+		add("  ⚠️ 发布器心跳已过期:%s(%s 前;阈值 %s)", h.UpdatedAt, roughAge(age), staleAfter)
+		bad = true
+	} else if age < -time.Minute {
+		add("  ⚠️ 发布器心跳来自未来:%s(本机时钟可能漂移)", h.UpdatedAt)
+		bad = true
+	}
+
+	// 心跳最长要等阈值才暴露；PID 已经消失时可以立即报。kill(pid, 0) 不
+	// 发送信号,EPERM 也表示进程存在。PID 复用无法单靠数字解决,所以它只是
+	// 心跳的补充,不是替代。
+	switch {
+	case h.PID <= 0:
+		add("  ⚠️ 发布器 PID 无效:%d", h.PID)
+		bad = true
+	case syscall.Kill(h.PID, 0) == syscall.ESRCH:
+		add("  ⚠️ 发布器进程 pid %d 已不存在(状态文件是遗留物)", h.PID)
+		bad = true
+	}
+
 	if h.LastSuccess == "" {
 		add("  ⚠️ 启动以来**一次都没发布成功过**")
 		if h.LastError != "" {
@@ -118,9 +149,22 @@ func (h *Health) Findings(now time.Time) (lines []string, bad bool) {
 		add("  上次成功 %s,快照 %s", h.LastSuccess, version.Short(h.LastSnapshot))
 	}
 
-	// 字符串比较对 RFC3339 是可行的:同一时区、定长、字典序即时间序。
-	// 发布器写这两个字段时都用 UTC。
-	if h.LastError != "" && h.LastErrorAt > h.LastSuccess {
+	// 不做字符串比较:RFC3339Nano 的小数秒是变长的,"...00.1Z" 与
+	// "...00Z" 的字典序不等于时间序。解析后比较也避免“同一秒先成功后
+	// 失败”被秒级时间戳吞掉而假绿。
+	failureIsCurrent := false
+	if h.LastError != "" {
+		failedAt, ferr := time.Parse(time.RFC3339, h.LastErrorAt)
+		succeededAt, serr := time.Parse(time.RFC3339, h.LastSuccess)
+		if ferr != nil || serr != nil {
+			add("  ⚠️ 发布器成功/失败时间无效(last_success=%q,last_error_at=%q)",
+				h.LastSuccess, h.LastErrorAt)
+			bad = true
+		} else {
+			failureIsCurrent = failedAt.After(succeededAt)
+		}
+	}
+	if h.LastError != "" && failureIsCurrent {
 		add("  ⚠️ 自那之后一直发不出去(最近 %s):%s", h.LastErrorAt, h.LastError)
 		add("     **进程 active 不代表功能活着** —— 后续每一次 SSOT 改动都不会生效")
 		return lines, true
@@ -129,7 +173,7 @@ func (h *Health) Findings(now time.Time) (lines []string, bad bool) {
 		// 已经恢复了,但历史留着:知道它出过什么事有价值,只是别报成告警。
 		add("  (曾经失败过 %s:%s —— 之后已恢复)", h.LastErrorAt, h.LastError)
 	}
-	return lines, false
+	return lines, bad
 }
 
 func roughAge(d time.Duration) string {

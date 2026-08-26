@@ -1,6 +1,8 @@
 package publish
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,33 +31,54 @@ type Pin struct {
 }
 
 const (
-	pinFile = "pin.json"
-	pinBin  = "binary"
+	// DefaultPinDir 是手工 publish、publisher、pin 与 rollback 必须共用的
+	// 默认授权坐标；任一入口另起默认值都会绕过粘性 pin。
+	DefaultPinDir = "deploy/pinned"
+	pinFile       = "pin.json"
+	pinBin        = "binary"
 )
 
 // ReadPin 读钉住状态。没钉住时返回 (nil, "", nil) —— 不是错误。
 func ReadPin(dir string) (*Pin, string, error) {
+	p, bin, _, err := ReadPinCandidate(dir)
+	return p, bin, err
+}
+
+// ReadPinCandidate 与 ReadReleaseCandidate 同理:校验与发布复用一次稳定读取。
+func ReadPinCandidate(dir string) (*Pin, string, BinaryCandidate, error) {
 	if dir == "" {
-		return nil, "", nil
+		return nil, "", BinaryCandidate{}, nil
 	}
 	b, err := os.ReadFile(filepath.Join(dir, pinFile))
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, "", nil
+		return nil, "", BinaryCandidate{}, nil
 	}
 	if err != nil {
-		return nil, "", err
+		return nil, "", BinaryCandidate{}, err
 	}
 	var p Pin
 	if err := json.Unmarshal(b, &p); err != nil {
-		return nil, "", fmt.Errorf("解析 %s:%w", filepath.Join(dir, pinFile), err)
+		return nil, "", BinaryCandidate{}, fmt.Errorf("解析 %s:%w", filepath.Join(dir, pinFile), err)
+	}
+	if !validSHA256(p.SHA256) {
+		return nil, "", BinaryCandidate{}, fmt.Errorf("钉住记录里的 sha256 %q 无效", p.SHA256)
 	}
 	bin := filepath.Join(dir, pinBin)
-	if _, err := os.Stat(bin); err != nil {
+	body, err := os.ReadFile(bin)
+	if err != nil {
 		// 钉住记录在、二进制不在 —— 这是半个状态,发不出去也退不回来。
 		// 说清楚,不要默默回落到当前二进制:那正好是钉住要防的事。
-		return nil, "", fmt.Errorf("钉住了 %s,但 %s 不见了 —— 用 `loom pin -clear` 解除,或重新钉一次", short(p.Snapshot), bin)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, "", BinaryCandidate{}, fmt.Errorf("钉住了 %s,但 %s 不见了 —— 用 `loom pin -clear` 解除,或重新钉一次", short(p.Snapshot), bin)
+		}
+		return nil, "", BinaryCandidate{}, fmt.Errorf("读钉住副本 %s 失败:%w", bin, err)
 	}
-	return &p, bin, nil
+	c := newBinaryCandidate(body)
+	if c.SHA256 != p.SHA256 {
+		return nil, "", BinaryCandidate{}, fmt.Errorf("钉住副本 %s 哈希对不上(记的 %s,实际 %s)—— 用 `loom pin -clear` 解除,或重新钉一次",
+			bin, short(p.SHA256), short(c.SHA256))
+	}
+	return &p, bin, c, nil
 }
 
 // WritePin 落盘。二进制先写临时文件再改名,避免读到写了一半的。
@@ -63,26 +86,36 @@ func WritePin(dir string, p *Pin, bin []byte) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	tmp := filepath.Join(dir, pinBin+".tmp")
-	if err := os.WriteFile(tmp, bin, 0o755); err != nil {
+	if len(bin) == 0 {
+		return fmt.Errorf("不能钉住空二进制")
+	}
+	s := sha256.Sum256(bin)
+	got := hex.EncodeToString(s[:])
+	if p.SHA256 != "" && p.SHA256 != got {
+		return fmt.Errorf("钉住记录期待二进制 %s,实际得到 %s", short(p.SHA256), short(got))
+	}
+	p.SHA256 = got
+	binPath := filepath.Join(dir, pinBin)
+	if err := writeFileAtomic(binPath, bin, 0o755); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, filepath.Join(dir, pinBin)); err != nil {
-		return err
+	if diskSHA, diskSize, err := hashFile(binPath); err != nil || diskSHA != got || diskSize != int64(len(bin)) {
+		return fmt.Errorf("钉住副本原子入库后校验失败(sha=%s,size=%d,err=%v)",
+			short(diskSHA), diskSize, err)
 	}
 	b, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, pinFile), append(b, '\n'), 0o644)
+	return writeFileAtomic(filepath.Join(dir, pinFile), append(b, '\n'), 0o644)
 }
 
 // ClearPin 解除钉住。二进制一并删掉 —— 留着只会让人以为还钉着。
 func ClearPin(dir string) error {
-	if err := os.Remove(filepath.Join(dir, pinFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := removeFileDurable(filepath.Join(dir, pinFile)); err != nil {
 		return err
 	}
-	if err := os.Remove(filepath.Join(dir, pinBin)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := removeFileDurable(filepath.Join(dir, pinBin)); err != nil {
 		return err
 	}
 	return nil

@@ -114,7 +114,7 @@ func cmdBackup(args []string) error {
 	if len(skipped) > 0 {
 		sort.Strings(skipped)
 		fmt.Printf("ⓘ 没有打包(还不存在):%s\n", strings.Join(skipped, " "))
-		fmt.Printf("   源头存档要发布器成功发布过一次才会建。在那之前没有版本历史可备份。\n\n")
+		fmt.Printf("   这些是允许尚未建立的本机状态；一旦存在，默认备份会递归收集。\n\n")
 	}
 
 	sort.Strings(included)
@@ -329,5 +329,9 @@ func defaultBackupSrcs() []backupSrc {
 		// 拿它当必需项的话,一台刚起来的中控连备份都做不了 ——
 		// 而"做危险变更之前先备份"恰恰是最需要它能跑的时候。
 		{path: "deploy/ssot-history", optional: true},
+		// 当前状态与历史含真实地址,按约定不进 Git；因此它和 SSOT 源头
+		// 一样只能从原控制机或备份恢复。干净 clone 上允许还不存在,
+		// 但只要存在就必须把整棵 history 一起收进去。
+		{path: "docs/status", optional: true},
 	}
 }

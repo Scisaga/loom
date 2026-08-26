@@ -4,10 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"loom/internal/model"
 	"loom/internal/report"
 )
+
+// report 与 Agent 必须用同一观测过期上限：前者停止转述时，后者也应停止
+// 用那条旧事实剪枝。不要在两个渲染器里各写一个时长。
+const observationStale = "10m"
 
 // 本文件渲染**上报者**的配置(§16.1)。它和 Agent 是两个角色:
 // Agent 做决策、只在接入节点上;上报者只观测和自检、**每个节点都有**。
@@ -108,14 +113,38 @@ func renderReport(s *model.SSOT, n *model.Node) ([]File, []Skip) {
 		UplinkTargets: append([]string(nil), n.ProbeTargets...),
 		DNS:           append([]string(nil), s.DNSFor(n)...),
 		GossipPeriod:  "1m",
-		// 观测过期得比调参周期(最短 5m)快一点,免得 Agent 拿着上一轮的
-		// 结论做这一轮的决定。
-		ObservationStale: "10m",
+		// 超过这段时间的尽力观测不再转述；Agent 使用同一个值做剪枝。
+		ObservationStale: observationStale,
 		Manifest:         ManifestPath,
 		// 发起方设了 PersistentKeepalive=25,健康隧道的握手年龄不会超过
 		// 约 180 秒。5 分钟留足余量,又能在一个 Agent 周期内发现真断连。
 		HandshakeStale: "5m",
 	}
+	for i := range s.Nodes {
+		cfg.ExpectedNodes = append(cfg.ExpectedNodes, s.Nodes[i].ID)
+	}
+	for i := range s.Tunnels {
+		cfg.ExpectedTunnels = append(cfg.ExpectedTunnels, report.ExpectedTunnel{
+			From: s.Tunnels[i].From, To: s.Tunnels[i].To,
+		})
+	}
+	sort.Strings(cfg.ExpectedNodes)
+	sort.Slice(cfg.ExpectedTunnels, func(i, j int) bool {
+		a := cfg.ExpectedTunnels[i].From + "\x00" + cfg.ExpectedTunnels[i].To
+		b := cfg.ExpectedTunnels[j].From + "\x00" + cfg.ExpectedTunnels[j].To
+		return a < b
+	})
+	if n.IsAccess() {
+		cfg.AgentState = "/var/lib/loom/agent-state.json"
+	}
+	for _, access := range s.AccessNodes() {
+		cfg.ExpectedRoutes = append(cfg.ExpectedRoutes, expectedReportRoutes(s, access)...)
+	}
+	sort.Slice(cfg.ExpectedRoutes, func(i, j int) bool {
+		a := cfg.ExpectedRoutes[i].Access + "\x00" + cfg.ExpectedRoutes[i].Declaration + "\x00" + strings.Join(cfg.ExpectedRoutes[i].Chain, "\x00")
+		b := cfg.ExpectedRoutes[j].Access + "\x00" + cfg.ExpectedRoutes[j].Declaration + "\x00" + strings.Join(cfg.ExpectedRoutes[j].Chain, "\x00")
+		return a < b
+	})
 	b, err := json.MarshalIndent(&cfg, "", "  ")
 	if err != nil {
 		return nil, append(skips, Skip{Where: "report:" + n.ID, Reason: err.Error()})
@@ -124,6 +153,34 @@ func renderReport(s *model.SSOT, n *model.Node) ([]File, []Skip) {
 		{Path: "report/config.json", Content: string(b) + "\n"},
 		{Path: "systemd/loom-report.service", Content: fmt.Sprintf(reportUnit, n.ID, after)},
 	}, skips
+}
+
+// expectedReportRoutes 把真实的 RouteCandidate.ServerChain 降成不含地址和
+// secret 的候选路径。按 declaration/service + chain 去重；地址轴的多个候选
+// 可能共享一条链，拓扑层不应重复画。
+func expectedReportRoutes(s *model.SSOT, n *model.Node) []report.ExpectedRoute {
+	decls, _ := renderAgentDeclarations(s, n)
+	seen := map[string]bool{}
+	var out []report.ExpectedRoute
+	for _, d := range decls {
+		for _, cand := range d.Candidates {
+			key := d.ID + "\x00" + strings.Join(cand.Chain, "\x00")
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, report.ExpectedRoute{
+				Access: n.ID, Declaration: d.ID, Chain: append([]string(nil), cand.Chain...),
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Declaration != out[j].Declaration {
+			return out[i].Declaration < out[j].Declaration
+		}
+		return strings.Join(out[i].Chain, "\x00") < strings.Join(out[j].Chain, "\x00")
+	})
+	return out
 }
 
 // probeTargets 收集 SSOT 里全部去重后的探测目标。

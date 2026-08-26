@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"loom/internal/rollout"
 )
 
 // 上报接口没有自己的认证 —— 它靠 WireGuard 兜住。绑到公网地址上就等于
@@ -32,16 +34,19 @@ func TestRefusesPublicListenAddress(t *testing.T) {
 // down / 陈旧 / 漂移都必须让自检不通过。漏掉任何一个,退出码就会说"没事"。
 func TestOKCoversEveryFailureKind(t *testing.T) {
 	cases := map[string]Status{
-		"隧道没起来":  {Tunnels: []Tunnel{{Interface: "a", Down: true}}},
-		"从未握手":   {Tunnels: []Tunnel{{Interface: "a", HandshakeAgeSec: -1}}},
-		"握手陈旧":   {Tunnels: []Tunnel{{Interface: "a", HandshakeAgeSec: 900, Stale: true}}},
-		"配置被改":   {Drift: &Drift{Checked: 1, Modified: []string{"/x"}}},
-		"配置缺失":   {Drift: &Drift{Checked: 1, Missing: []string{"/x"}}},
-		"配置读不到":  {Drift: &Drift{Checked: 1, Unreadable: []string{"/x"}}},
-		"采集本身失败": {Errors: []string{"wg 跑不起来"}},
+		"隧道没起来":        {Tunnels: []Tunnel{{Interface: "a", Down: true}}},
+		"从未握手":         {Tunnels: []Tunnel{{Interface: "a", HandshakeAgeSec: -1}}},
+		"握手陈旧":         {Tunnels: []Tunnel{{Interface: "a", HandshakeAgeSec: 900, Stale: true}}},
+		"配置被改":         {Drift: &Drift{Checked: 1, Modified: []string{"/x"}}},
+		"配置缺失":         {Drift: &Drift{Checked: 1, Missing: []string{"/x"}}},
+		"配置读不到":        {Drift: &Drift{Checked: 1, Unreadable: []string{"/x"}}},
+		"采集本身失败":       {Errors: []string{"wg 跑不起来"}},
+		"rollout 失败":   {Rollout: &RolloutState{Stage: string(rollout.Failed)}},
+		"rollout 卡住":   {Rollout: &RolloutState{Stage: string(rollout.Activating), EnteredAt: "2026-08-26T10:00:00Z"}},
+		"rollout 时间损坏": {Rollout: &RolloutState{Stage: string(rollout.Activating), EnteredAt: "坏时间"}},
 	}
 	for name, st := range cases {
-		if st.OK() {
+		if st.OKAt(time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)) {
 			t.Errorf("%s 竟然算通过", name)
 		}
 	}
@@ -51,6 +56,50 @@ func TestOKCoversEveryFailureKind(t *testing.T) {
 	}
 	if !good.OK() {
 		t.Error("一切正常却算不通过")
+	}
+}
+
+func TestRecentInFlightRolloutIsHealthy(t *testing.T) {
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	st := Status{Rollout: &RolloutState{
+		Stage: string(rollout.Activating), EnteredAt: now.Add(-time.Minute).Format(time.RFC3339),
+	}}
+	if !st.OKAt(now) {
+		t.Error("刚进入 activating 是正常过渡态，不应误报")
+	}
+}
+
+func TestOnlyFailedUplinkTargetAffectsHealth(t *testing.T) {
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	normalFailure := Status{Observation: &Observation{Targets: []Reach{{
+		Target: "https://blocked.example/", Error: "timeout", Samples: 5, Failures: 5,
+	}}}}
+	if !normalFailure.OKAt(now) {
+		t.Fatal("普通 Target 失败是给 Agent 的路径数据，不应把节点判成不健康")
+	}
+	uplinkFailure := normalFailure
+	uplinkFailure.Observation = &Observation{Targets: []Reach{{
+		Target: "https://uplink.example/", Error: "timeout", Samples: 5, Failures: 5, Uplink: true,
+	}}}
+	if uplinkFailure.OKAt(now) {
+		t.Fatal("本机 Uplink 全部失败却仍被判成健康")
+	}
+	uplinkOK := Status{Observation: &Observation{Targets: []Reach{{
+		Target: "https://uplink.example/", FirstByteMs: 12, Samples: 5, Uplink: true,
+	}}}}
+	if !uplinkOK.OKAt(now) {
+		t.Fatal("可达的 Uplink 被误判成不健康")
+	}
+}
+
+func TestDecommissionedRolloutIsTerminalAndNotAHealthFailure(t *testing.T) {
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	r := &RolloutState{Stage: string(rollout.Decommissioned), EnteredAt: now.Add(-24 * time.Hour).Format(time.RFC3339)}
+	if r.InFlight() {
+		t.Fatal("decommissioned 不应按卡住处理")
+	}
+	if !(&Status{Rollout: r}).OKAt(now) {
+		t.Fatal("有意下线终态本身不是 rollout 故障")
 	}
 }
 

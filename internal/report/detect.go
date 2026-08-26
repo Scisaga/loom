@@ -97,6 +97,27 @@ func (d *detector) observe(v webui.View, now time.Time) ([]events.Event, error) 
 
 		add(n.ID, "snapshot", "", nonEmpty(n.Applied, "未记录"), "")
 
+		identity := "ok"
+		if n.IdentityError != "" {
+			identity = "invalid"
+		}
+		add(n.ID, "identity", "signed observation", identity, n.IdentityError)
+
+		if r := n.Rollout; r != nil {
+			state := r.Stage
+			switch {
+			case r.Stuck:
+				state = "stuck"
+			case r.Problem:
+				state = "failed"
+			}
+			detail := r.Error
+			if detail == "" && r.Stuck {
+				detail = fmt.Sprintf("停在 %s 已 %d 秒", r.Stage, r.AgeSec)
+			}
+			add(n.ID, "rollout", r.Snapshot, state, detail)
+		}
+
 		for _, t := range n.Tunnels {
 			state := "active"
 			switch {
@@ -163,6 +184,14 @@ func (d *detector) observe(v webui.View, now time.Time) ([]events.Event, error) 
 			}
 			add(n.ID, "edge", e.To, state, e.Err)
 		}
+	}
+	if v.Publisher != nil {
+		state := "healthy"
+		if !v.Publisher.Healthy {
+			state = "unhealthy"
+		}
+		detail := v.Publisher.LastError
+		add(v.Self, "publisher", "", state, detail)
 	}
 
 	// 第一轮只播种。重启不该看起来像全网同时变化了一次。

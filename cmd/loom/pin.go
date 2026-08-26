@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -29,7 +28,7 @@ import (
 // **一个跑不起来的二进制钉上去,等于把退路也堵死。**
 func cmdPin(args []string) error {
 	fs := flag.NewFlagSet("pin", flag.ExitOnError)
-	dir := fs.String("dir", "deploy/pinned", "钉住状态放哪")
+	dir := fs.String("dir", publish.DefaultPinDir, "钉住状态放哪")
 	url := fs.String("url", "", "分发点地址(默认从 /etc/loom/control.json 读)")
 	pubPath := fs.String("pubkey", "/etc/loom/trust/platform.pub", "验签用的平台公钥")
 	dns := fs.String("dns", "", "解析分发点用的 DNS(默认从 control.json 读)")
@@ -41,7 +40,7 @@ func cmdPin(args []string) error {
 	}
 
 	if *clear {
-		if err := publish.ClearPin(*dir); err != nil {
+		if err := withPublishTransactionLock(func() error { return publish.ClearPin(*dir) }); err != nil {
 			return err
 		}
 		fmt.Println("✅ 已解除钉住。下一轮发布起,发的是本机二进制")
@@ -73,6 +72,9 @@ func cmdPin(args []string) error {
 		return fmt.Errorf("只能钉一个快照,收到 %d 个", len(rest))
 	}
 	id := rest[0]
+	if !validSnapshotID(id) {
+		return fmt.Errorf("快照 id %q 必须是 12 位小写十六进制", id)
+	}
 
 	// 中控自己的配置里就有分发点和 DNS,不该让人每次手打 —— 尤其 DNS:
 	// 机器自带的解析器在这台上是超时的,忘了带就是一条看不懂的报错。
@@ -106,12 +108,9 @@ func cmdPin(args []string) error {
 	if err != nil {
 		return fmt.Errorf("取签名:%w", err)
 	}
-	if err := snapshot.VerifySignature(manBytes, sig, ed25519.PublicKey(pub)); err != nil {
-		return fmt.Errorf("快照 %s 验签不过:%w", short(id), err)
-	}
-	var man snapshot.Manifest
-	if err := json.Unmarshal(manBytes, &man); err != nil {
-		return err
+	man, err := verifyRequestedSnapshotManifest(id, manBytes, sig, ed25519.PublicKey(pub))
+	if err != nil {
+		return fmt.Errorf("快照 %s 不可信:%w", short(id), err)
 	}
 
 	var want *snapshot.BinaryRef
@@ -136,11 +135,11 @@ func cmdPin(args []string) error {
 	}
 
 	// 真跑一遍。钉一个跑不起来的二进制上去,等于把退路也堵死。
-	stage := filepath.Join(os.TempDir(), "loom-pin-check")
-	if err := os.WriteFile(stage, body, 0o755); err != nil {
+	stage, cleanup, err := stageSelfcheckBinary(*dir, "pin", body)
+	if err != nil {
 		return err
 	}
-	defer os.Remove(stage)
+	defer cleanup()
 	if out, err := exec.Command(stage, "selfcheck").CombinedOutput(); err != nil {
 		return fmt.Errorf("这个二进制没通过自检,不钉:%w\n%s", err, strings.TrimSpace(string(out)))
 	}
@@ -152,12 +151,69 @@ func cmdPin(args []string) error {
 		By:       os.Getenv("SUDO_USER") + os.Getenv("USER"),
 		Reason:   *reason,
 	}
-	if err := publish.WritePin(*dir, p, body); err != nil {
+	if err := withPublishTransactionLock(func() error { return publish.WritePin(*dir, p, body) }); err != nil {
 		return err
 	}
 	fmt.Printf("\n⚠️ 已钉住。发布器下一轮起改发这个二进制,**重新编译不会发出去**。\n")
 	fmt.Printf("   解除:loom pin -clear -dir %s\n", *dir)
 	return nil
+}
+
+func validSnapshotID(id string) bool {
+	if len(id) != 12 || strings.ToLower(id) != id {
+		return false
+	}
+	_, err := hex.DecodeString(id)
+	return err == nil
+}
+
+func verifyRequestedSnapshotManifest(id string, manBytes, sig []byte, pub ed25519.PublicKey) (*snapshot.Manifest, error) {
+	if err := snapshot.VerifySignature(manBytes, sig, pub); err != nil {
+		return nil, fmt.Errorf("验签不过:%w", err)
+	}
+	var man snapshot.Manifest
+	if err := json.Unmarshal(manBytes, &man); err != nil {
+		return nil, fmt.Errorf("解析 manifest:%w", err)
+	}
+	if man.ID != id {
+		return nil, fmt.Errorf("请求路径是 %s，但已验签 manifest 自称 %s；拒绝把合法的其他快照冒充目标",
+			short(id), short(man.ID))
+	}
+	return &man, nil
+}
+
+// stageSelfcheckBinary 用 O_EXCL 的唯一临时文件执行已下载二进制。
+// 固定 /tmp/loom-*-check 会跟随低权限用户预置的 symlink，让 root
+// 运维命令覆写任意文件。放在状态目录还避开 /tmp noexec。
+func stageSelfcheckBinary(dir, purpose string, body []byte) (string, func(), error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", nil, err
+	}
+	f, err := os.CreateTemp(dir, ".loom-"+purpose+"-check-*")
+	if err != nil {
+		return "", nil, err
+	}
+	name := f.Name()
+	cleanup := func() { _ = os.Remove(name) }
+	fail := func(err error) (string, func(), error) {
+		_ = f.Close()
+		cleanup()
+		return "", nil, err
+	}
+	if err := f.Chmod(0o755); err != nil {
+		return fail(err)
+	}
+	if _, err := f.Write(body); err != nil {
+		return fail(err)
+	}
+	if err := f.Sync(); err != nil {
+		return fail(err)
+	}
+	if err := f.Close(); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	return name, cleanup, nil
 }
 
 // controlDefaults 从中控自己的配置里读分发点地址和 DNS,省得每次手打。

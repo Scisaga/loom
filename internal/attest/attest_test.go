@@ -135,12 +135,65 @@ func TestTamperedClaimFailsVerification(t *testing.T) {
 		{"改 applied", func(s *Signed) { s.Applied = "0000000000ff" }},
 		{"改时间", func(s *Signed) { s.TS = "2026-08-25T13:00:00Z" }},
 		{"改二进制", func(s *Signed) { s.Binary = "ffffffffffff" }},
+		{"改平台", func(s *Signed) { s.Platform = "plan9/amd64" }},
+		{"改 rollout", func(s *Signed) {
+			s.Rollout = &RolloutClaim{Snapshot: "other", Stage: "failed"}
+		}},
+		{"改 Agent 选择", func(s *Signed) {
+			s.Agent = &AgentClaim{Node: "gz02", TS: s.TS,
+				Selections: []SelectionClaim{{Declaration: "d", Candidate: "cand:d:evil"}}}
+		}},
+		{"改测量摘要", func(s *Signed) { s.MeasurementsSHA256 = strings.Repeat("0", 64) }},
 	} {
 		bad := *s
 		tc.mut(&bad)
 		if _, err := Verify(&bad, ca.certPEM); err == nil {
 			t.Errorf("%s 之后仍然验过了", tc.name)
 		}
+	}
+}
+
+func TestVerifyFreshRejectsReplayAndFuture(t *testing.T) {
+	ca := newCA(t)
+	key, crt := ca.issue(t, "gz02")
+	now := time.Date(2026, 8, 25, 12, 10, 0, 0, time.UTC)
+
+	s, err := Sign(claim("gz02"), key, crt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyFresh(s, ca.certPEM, now, 15*time.Minute); err != nil {
+		t.Fatalf("十分钟前的陈述应仍然新鲜:%v", err)
+	}
+	if _, err := VerifyFresh(s, ca.certPEM, now, 5*time.Minute); err == nil || !strings.Contains(err.Error(), "过期") {
+		t.Fatalf("旧陈述应被当作重放拒绝,得到:%v", err)
+	}
+
+	future := claim("gz02")
+	future.TS = now.Add(3 * time.Minute).Format(time.RFC3339)
+	fs, err := Sign(future, key, crt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyFresh(fs, ca.certPEM, now, 15*time.Minute); err == nil || !strings.Contains(err.Error(), "未来") {
+		t.Fatalf("过远的未来时间应被拒绝,得到:%v", err)
+	}
+}
+
+// 升级期间仍会收到旧二进制签的 v1 陈述；没有扩展字段时必须继续可验。
+func TestV1ClaimRemainsCompatible(t *testing.T) {
+	ca := newCA(t)
+	key, crt := ca.issue(t, "gz02")
+	c := claim("gz02")
+	if c.extended() {
+		t.Fatal("基础陈述应走 v1 canonical")
+	}
+	s, err := Sign(c, key, crt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Verify(s, ca.certPEM); err != nil {
+		t.Fatalf("v1 陈述升级后验不过:%v", err)
 	}
 }
 
@@ -154,6 +207,38 @@ func TestCanonicalIsUnambiguous(t *testing.T) {
 	}
 	if string(a.canonical()) != string(a.canonical()) {
 		t.Fatal("同样的输入两次算出不同字节")
+	}
+}
+
+func TestV2CanonicalCannotCollideOnSeparatorsOrChain(t *testing.T) {
+	base := Claim{Node: "n", TS: "t", Commit: "c", Rollout: &RolloutClaim{Stage: "failed"}}
+	a, b := base, base
+	a.Rollout = &RolloutClaim{Stage: "failed", LastGood: "left\x1fright", Error: "tail"}
+	b.Rollout = &RolloutClaim{Stage: "failed", LastGood: "left", Error: "right\x1ftail"}
+	if string(a.canonical()) == string(b.canonical()) {
+		t.Fatal("错误文本里的 unit separator 造成 v2 canonical 碰撞")
+	}
+
+	a = base
+	b = base
+	a.Agent = &AgentClaim{Node: "n", TS: "t", Selections: []SelectionClaim{{
+		Declaration: "d", Selector: "s", Candidate: "c", Chain: []string{"a>b"},
+	}}}
+	b.Agent = &AgentClaim{Node: "n", TS: "t", Selections: []SelectionClaim{{
+		Declaration: "d", Selector: "s", Candidate: "c", Chain: []string{"a", "b"},
+	}}}
+	if string(a.canonical()) == string(b.canonical()) {
+		t.Fatal("包含 > 的节点 ID 与多跳 chain 造成 v2 canonical 碰撞")
+	}
+}
+
+func TestV2CanonicalSortsSelectionsByAllFields(t *testing.T) {
+	a := SelectionClaim{Declaration: "d", Selector: "s", Candidate: "c", Chain: []string{"x"}, Reason: "z"}
+	b := SelectionClaim{Declaration: "d", Selector: "s", Candidate: "c", Chain: []string{"y"}, Reason: "a"}
+	left := Claim{Node: "n", TS: "t", Agent: &AgentClaim{Node: "n", TS: "t", Selections: []SelectionClaim{a, b}}}
+	right := Claim{Node: "n", TS: "t", Agent: &AgentClaim{Node: "n", TS: "t", Selections: []SelectionClaim{b, a}}}
+	if string(left.canonical()) != string(right.canonical()) {
+		t.Fatal("同内容的 selection 输入排列改变了 canonical")
 	}
 }
 

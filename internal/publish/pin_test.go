@@ -14,7 +14,7 @@ func TestPinRoundTrip(t *testing.T) {
 		t.Fatalf("没钉住时应当是 (nil, nil),得到 (%v, %v)", p, err)
 	}
 
-	want := &Pin{Snapshot: "abc123", SHA256: "deadbeef", Reason: "新版起得来但选路是错的"}
+	want := &Pin{Snapshot: "abc123", Reason: "新版起得来但选路是错的"}
 	if err := WritePin(dir, want, []byte("#!/bin/true\n")); err != nil {
 		t.Fatal(err)
 	}
@@ -63,5 +63,23 @@ func TestPinHalfStateIsAnError(t *testing.T) {
 func TestPinEmptyDir(t *testing.T) {
 	if p, _, err := ReadPin(""); err != nil || p != nil {
 		t.Fatalf("空目录应当是 (nil, nil),得到 (%v, %v)", p, err)
+	}
+}
+
+func TestClearPinDurablyRemovesBothAuthorizationFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := WritePin(dir, &Pin{Snapshot: "abc123", Reason: "test"}, []byte("binary")); err != nil {
+		t.Fatal(err)
+	}
+	if err := ClearPin(dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{pinFile, pinBin} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Fatalf("clear 后 %s 仍存在:%v", name, err)
+		}
+	}
+	if err := ClearPin(dir); err != nil {
+		t.Fatalf("durable clear 必须保持幂等:%v", err)
 	}
 }

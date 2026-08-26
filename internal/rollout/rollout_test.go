@@ -91,11 +91,23 @@ func TestInFlightAndTerminal(t *testing.T) {
 		want bool
 	}{
 		{Staging, true}, {Activating, true}, {Verifying, true},
-		{Verified, false}, {Failed, false},
+		{Verified, false}, {Decommissioned, false}, {Failed, false},
 	} {
 		if got := (&Record{Stage: c.s}).InFlight(); got != c.want {
 			t.Errorf("%s 的 InFlight 应为 %v", c.s, c.want)
 		}
+	}
+}
+
+func TestDecommissionedIsSuccessfulTerminalWithoutAdvancingLastGood(t *testing.T) {
+	prev := &Record{Snapshot: "old", Stage: Verified, LastGood: "old"}
+	r := Begin(prev, "signed-decommission", "", at("2026-08-25T09:00:00Z"))
+	r.Enter(Decommissioned, at("2026-08-25T09:00:01Z"))
+	if r.InFlight() || r.Stage != Decommissioned {
+		t.Fatalf("decommission 应是终态:%+v", r)
+	}
+	if r.LastGood != "old" {
+		t.Fatalf("下线不应把无 applied 的快照推进为 LastGood:%q", r.LastGood)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 
 	"loom/internal/agent"
 	"loom/internal/model"
+	"loom/internal/report"
 )
 
 func agentConfigs(t *testing.T, s *model.SSOT) map[string]*agent.Config {
@@ -118,6 +119,90 @@ func TestAgentAndSingBoxAgreeOnCandidates(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestAgentSelfReportAlwaysUsesLoopback(t *testing.T) {
+	for node, cfg := range agentConfigs(t, load(t)) {
+		if cfg.SelfReport != "127.0.0.1:61802" {
+			t.Errorf("%s 的本机上报者依赖隧道地址:%q", node, cfg.SelfReport)
+		}
+	}
+}
+
+func TestAgentAndReportShareObservationStale(t *testing.T) {
+	s := load(t)
+	agents := agentConfigs(t, s)
+	res, err := Render(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range res.Bundles {
+		for _, f := range b.Files {
+			if f.Path != "report/config.json" {
+				continue
+			}
+			var rc report.Config
+			if err := json.Unmarshal([]byte(f.Content), &rc); err != nil {
+				t.Fatal(err)
+			}
+			if rc.ObservationStale != observationStale {
+				t.Errorf("%s report observation_stale=%q, want %q", b.Owner, rc.ObservationStale, observationStale)
+			}
+		}
+	}
+	for node, ac := range agents {
+		if ac.ObservationStale != observationStale {
+			t.Errorf("%s Agent observation_stale=%q, want %q", node, ac.ObservationStale, observationStale)
+		}
+	}
+}
+
+func TestEveryReportConfigCarriesWholeNetworkCandidatePaths(t *testing.T) {
+	s := load(t)
+	agents := agentConfigs(t, s)
+	want := map[string]bool{}
+	for access, cfg := range agents {
+		for _, d := range cfg.Declarations {
+			for _, c := range d.Candidates {
+				want[access+"\x00"+d.ID+"\x00"+strings.Join(c.Chain, "\x00")] = true
+			}
+		}
+	}
+	res, err := Render(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reports, serverWithPaths := 0, false
+	for _, b := range res.Bundles {
+		for _, f := range b.Files {
+			if f.Path != "report/config.json" {
+				continue
+			}
+			reports++
+			var cfg report.Config
+			if err := json.Unmarshal([]byte(f.Content), &cfg); err != nil {
+				t.Fatal(err)
+			}
+			got := map[string]bool{}
+			for _, r := range cfg.ExpectedRoutes {
+				got[r.Access+"\x00"+r.Declaration+"\x00"+strings.Join(r.Chain, "\x00")] = true
+			}
+			if len(got) != len(want) {
+				t.Errorf("%s 只拿到 %d/%d 条全网候选路径", b.Owner, len(got), len(want))
+			}
+			for key := range want {
+				if !got[key] {
+					t.Errorf("%s 的 report 配置缺候选 %q", b.Owner, key)
+				}
+			}
+			if agents[b.Owner] == nil && len(got) > 0 {
+				serverWithPaths = true
+			}
+		}
+	}
+	if reports == 0 || !serverWithPaths {
+		t.Fatal("没有证明服务器 UI 也能拿到接入节点的候选路径")
 	}
 }
 

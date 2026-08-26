@@ -107,6 +107,12 @@ func problemState(kind, state string) bool {
 		return state != "reachable"
 	case "edge":
 		return state != "ok"
+	case "rollout":
+		return state == "failed" || state == "stuck"
+	case "identity":
+		return state == "invalid"
+	case "publisher":
+		return state != "healthy"
 	}
 	return false
 }

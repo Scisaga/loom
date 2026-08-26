@@ -52,6 +52,13 @@ type Status struct {
 	// 以为它一切正常,只是"还没轮到它"。
 	Rollout *RolloutState `json:"rollout,omitempty"`
 
+	// Agent 是本机 Agent 从 sing-box selector 读到的实际选择。服务器节点
+	// 没有 Agent，字段为空是正常形态。
+	Agent *AgentState `json:"agent,omitempty"`
+
+	// Publisher 只在中控节点出现，与 /status 和 HTML 同源。
+	Publisher *PublisherState `json:"publisher,omitempty"`
+
 	Tunnels []Tunnel `json:"tunnels"`
 	Drift   *Drift   `json:"drift,omitempty"`
 
@@ -104,8 +111,34 @@ type Drift struct {
 
 // OK 报告这次自检有没有发现问题。
 func (s *Status) OK() bool {
+	return s.OKAt(time.Now().UTC())
+}
+
+// RolloutStuckAfter 是 rollout 在同一阶段停留多久后影响健康状态。
+// 它与 status 汇总、事件和 HTML 共用，避免三个入口各自发明阈值。
+const RolloutStuckAfter = 10 * time.Minute
+
+// OKAt 是可测试的健康判定。Failed、时间戳损坏和阶段超时都必须失败；
+// 否则 /status 会在 rollout 已经躺住时仍返回 200。
+func (s *Status) OKAt(now time.Time) bool {
 	if len(s.Errors) > 0 {
 		return false
+	}
+	if s.Rollout != nil {
+		if s.Rollout.Stage == string(rollout.Failed) {
+			return false
+		}
+		if s.Rollout.InFlight() {
+			d, ok := s.Rollout.StuckFor(now)
+			if !ok || d > RolloutStuckAfter {
+				return false
+			}
+		}
+	}
+	if s.Publisher != nil {
+		if s.Publisher.Unhealthy(now) {
+			return false
+		}
 	}
 	for i := range s.Tunnels {
 		t := &s.Tunnels[i]
@@ -119,6 +152,17 @@ func (s *Status) OK() bool {
 	}
 	if d := s.Drift; d != nil && (len(d.Modified) > 0 || len(d.Missing) > 0 || len(d.Unreadable) > 0) {
 		return false
+	}
+	if s.Observation != nil {
+		for i := range s.Observation.Targets {
+			r := &s.Observation.Targets[i]
+			// 普通 Target 是给 Agent 剪枝的测量数据：某个出口按设计可能
+			// 到不了它。只有 Uplink 才表达“本机本该够得到”，其失败必须
+			// 影响 /status 与界面的节点健康，不能只躺在明细里。
+			if r.Uplink && !r.OK() {
+				return false
+			}
+		}
 	}
 	return true
 }
@@ -134,9 +178,28 @@ type RolloutState struct {
 	Error     string `json:"error,omitempty"`
 }
 
-// InFlight 说这次 rollout 还没走完。Verified / Failed 是终态。
+// AgentState / AgentSelection 是转述用的实际选路状态。TS 是 Agent 最后一次
+// 成功读取 selector 的时间，不是 report 转述它的时间。
+type AgentState struct {
+	Node       string           `json:"node"`
+	TS         string           `json:"ts"`
+	Selections []AgentSelection `json:"selections"`
+}
+
+type AgentSelection struct {
+	Declaration string   `json:"declaration"`
+	Selector    string   `json:"selector"`
+	Candidate   string   `json:"candidate"`
+	Chain       []string `json:"chain,omitempty"`
+	Reason      string   `json:"reason,omitempty"`
+	UpdatedAt   string   `json:"updated_at"`
+}
+
+// InFlight 说这次 rollout 还没走完。Verified / Decommissioned / Failed
+// 都是终态；下线成功不能被报成永远卡在 staging。
 func (r *RolloutState) InFlight() bool {
-	return r != nil && r.Stage != string(rollout.Verified) && r.Stage != string(rollout.Failed)
+	return r != nil && r.Stage != string(rollout.Verified) &&
+		r.Stage != string(rollout.Decommissioned) && r.Stage != string(rollout.Failed)
 }
 
 // StuckFor 返回它在当前阶段待了多久。解析不出时间返回 0 ——
@@ -165,6 +228,23 @@ func Collect(cfg *Config, now time.Time) *Status {
 		st.Rollout = &RolloutState{
 			Snapshot: r.Snapshot, Stage: string(r.Stage),
 			EnteredAt: r.EnteredAt, LastGood: r.LastGood, Error: r.Error,
+		}
+	}
+	if a, err := readAgentState(cfg.AgentState); err != nil {
+		st.Errors = append(st.Errors, "读 Agent 当前选择:"+err.Error())
+	} else if cfg.AgentState != "" && a == nil {
+		st.Errors = append(st.Errors, "Agent 当前选择状态不存在")
+	} else {
+		st.Agent = a
+		st.Errors = append(st.Errors, validateAgentState(a, cfg.Node, now)...)
+	}
+	if cfg.PublisherHealth != "" {
+		if h, err := readPublisherState(cfg.PublisherHealth); err != nil {
+			st.Errors = append(st.Errors, "读发布器状态:"+err.Error())
+		} else if h == nil {
+			st.Errors = append(st.Errors, "发布器状态不存在")
+		} else {
+			st.Publisher = h
 		}
 	}
 	stale, err := cfg.Stale()

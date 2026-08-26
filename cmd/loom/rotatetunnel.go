@@ -71,7 +71,7 @@ func cmdRotateTunnel(args []string) error {
 	fmt.Printf("\n换完之后:\n")
 	fmt.Printf("  1. loom validate %s          确认还过得了校验\n", path)
 	fmt.Printf("  2. loom diff %s -o <目录>     应当**正好两行**:一端的 ListenPort、另一端的 Endpoint\n", path)
-	fmt.Printf("  3. 存盘,发布器 30 秒内接管;两端各自 pull(一个周期,约 10 分钟)\n")
+	fmt.Printf("  3. 存盘,发布器约 30 秒内接管;两端每 45 秒 pull、最多 15 秒抖动(正常目标 90 秒内)\n")
 	fmt.Printf("     急的话 loom apply 直接推,几秒到两端\n")
 	fmt.Printf("\n  两端错开更新的那个窗口里隧道是断的 —— 而它本来就断着的话,没有额外代价。\n")
 	return nil

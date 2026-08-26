@@ -163,6 +163,14 @@ nodes:
   - {id: a, server: {direction: bidirectional, inbound_port: 4433}}`,
 		},
 		{
+			name: "§19 节点 id 不能越出分发目录",
+			want: "id \"../escape\" 格式非法",
+			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
+nodes:
+  - {id: ../escape, server: {direction: bidirectional, inbound_port: 4433}}`,
+		},
+		{
 			name: "隧道引用了不存在的节点",
 			want: "不存在的节点",
 			yaml: `

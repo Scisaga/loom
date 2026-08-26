@@ -110,25 +110,97 @@ type ControlDeps struct {
 // View 是界面要展示的全网状态。它由调用方从转述表里组装 —— webui 不自己
 // 采集任何东西,只负责显示。
 type View struct {
-	Self     string
-	Applied  string
-	Nodes    []NodeView
-	Warnings []string
+	Self       string
+	Applied    string
+	ObservedAt string
+	Nodes      []NodeView
+	// Links 明确区分常驻 WG 与 SSOT 候选跳；当前 route 是单独的实读 overlay。
+	// 候选边只说明可选，不冒充在线。
+	Links      []LinkView
+	Routes     []RouteView
+	Candidates []CandidatePathView
+	Publisher  *PublisherView
+	Warnings   []string
 }
 
 // NodeView 是一个节点在界面上的样子。
 type NodeView struct {
-	ID      string
-	Self    bool
-	Reached bool // 直接拉到的,还是听别人转述的
-	Applied string
-	AgeSec  int
-	Tunnels []TunnelView
-	Targets []TargetView
+	ID string
+	// Health 是 healthy / problem / unknown。空值也按 unknown 处理；
+	// 未签名转述和静默节点不能因为“没看到错误”就被冒充成健康。
+	Health        string
+	Self          bool
+	Reached       bool // 直接拉到的,还是听别人转述的
+	Applied       string
+	AgeSec        int
+	ObservedAt    string
+	Source        string
+	Version       *VersionView
+	Rollout       *RolloutView
+	Agent         *AgentView
+	IdentityError string
+	Tunnels       []TunnelView
+	Targets       []TargetView
 	// Rotating 是正在过渡窗口里的凭据。开着是正常的,开太久不是。
 	Rotating []string
 	Edges    []EdgeView
 	Problems []string
+}
+
+type VersionView struct {
+	Commit, Binary, Tag, Platform, Go, Error string
+	Dirty                                    bool
+}
+
+type RolloutView struct {
+	Snapshot, Stage, EnteredAt, LastGood, Error string
+	AgeSec                                      int
+	Problem                                     bool
+	Stuck                                       bool
+}
+
+type AgentView struct {
+	Node, UpdatedAt, Source string
+	Selections              []RouteView
+}
+
+// LinkView 是拓扑底图中的边。Kind=tunnel 是 SSOT 派生 report.neighbors 的
+// 常驻 WG；candidate 是 RouteCandidate 的非 WG hop（未核验）；route 只作为
+// 当前选择覆盖层。
+type LinkView struct {
+	From, To   string
+	Kind       string
+	State      string
+	MS         int
+	ObservedAt string
+	Source     string
+}
+
+type RouteView struct {
+	Node, Declaration, Selector, Candidate, Reason string
+	Chain                                          []string
+	ObservedAt                                     string
+	Source                                         string
+	Stale                                          bool
+}
+
+// CandidatePathView 是 SSOT 业务候选路径，不是常驻隧道健康。State 为
+// unverified 或 selected；只有后者来自 selector 实读。
+type CandidatePathView struct {
+	Node, Declaration string
+	Chain             []string
+	State             string
+	ObservedAt        string
+	Source            string
+}
+
+type PublisherView struct {
+	PID                                                       int
+	IntervalSeconds                                           int64
+	Commit, Binary                                            string
+	StartedAt, UpdatedAt, LastSuccess, LastSnapshot, LastSSOT string
+	LastError, LastErrorAt                                    string
+	Healthy                                                   bool
 }
 
 type TunnelView struct {
@@ -139,17 +211,21 @@ type TunnelView struct {
 }
 
 type TargetView struct {
-	Target string
-	MS     int
-	Err    string
+	Target     string
+	MS         int
+	Err        string
+	ObservedAt string
 	// Uplink 表示这是"这台机器本该够得到"的地址 —— 它够不到才算问题。
 	Uplink bool
 }
 
 type EdgeView struct {
-	To  string
-	MS  int
-	Err string
+	To         string
+	MS         int
+	Samples    int
+	Failures   int
+	Err        string
+	ObservedAt string
 }
 
 // Handler 返回整个界面的 http.Handler。

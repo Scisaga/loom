@@ -24,34 +24,64 @@
         },
         {
           "tag": "cand:best-egress:cn-bj",
+          "chain": [
+            "cn-bj"
+          ],
           "probe_user": "probe-49c4e69a25"
         },
         {
           "tag": "cand:best-egress:cn-gz",
+          "chain": [
+            "cn-gz"
+          ],
           "probe_user": "probe-f46520afcd"
         },
         {
           "tag": "cand:best-egress:cn-bj\u003ecn-gz",
+          "chain": [
+            "cn-bj",
+            "cn-gz"
+          ],
           "probe_user": "probe-8a4bfda38e"
         },
         {
           "tag": "cand:best-egress:cn-bj\u003esg-vps",
+          "chain": [
+            "cn-bj",
+            "sg-vps"
+          ],
           "probe_user": "probe-c9d8b6ed28"
         },
         {
           "tag": "cand:best-egress:cn-bj\u003ejp-vps",
+          "chain": [
+            "cn-bj",
+            "jp-vps"
+          ],
           "probe_user": "probe-b77644fb76"
         },
         {
           "tag": "cand:best-egress:cn-gz\u003ecn-bj",
+          "chain": [
+            "cn-gz",
+            "cn-bj"
+          ],
           "probe_user": "probe-ae1d824ea6"
         },
         {
           "tag": "cand:best-egress:cn-gz\u003esg-vps",
+          "chain": [
+            "cn-gz",
+            "sg-vps"
+          ],
           "probe_user": "probe-7c91abaccc"
         },
         {
           "tag": "cand:best-egress:cn-gz\u003ejp-vps",
+          "chain": [
+            "cn-gz",
+            "jp-vps"
+          ],
           "probe_user": "probe-876138e797"
         }
       ]
@@ -71,23 +101,41 @@
       "candidates": [
         {
           "tag": "cand:sg-fixed:cn-bj\u003esg-vps",
+          "chain": [
+            "cn-bj",
+            "sg-vps"
+          ],
           "probe_user": "probe-32a3db7799"
         },
         {
           "tag": "cand:sg-fixed:cn-sh\u003esg-vps",
+          "chain": [
+            "cn-sh",
+            "sg-vps"
+          ],
           "probe_user": "probe-c3966d7906"
         },
         {
           "tag": "cand:sg-fixed:cn-gz\u003esg-vps",
+          "chain": [
+            "cn-gz",
+            "sg-vps"
+          ],
           "probe_user": "probe-fccf0d597d"
         },
         {
           "tag": "cand:sg-fixed:cn-cd\u003esg-vps",
+          "chain": [
+            "cn-cd",
+            "sg-vps"
+          ],
           "probe_user": "probe-8c7e3229d3"
         }
       ]
     }
   ],
   "self_report": "127.0.0.1:61802",
-  "peer_period": "5m"
+  "peer_period": "5m",
+  "observation_stale": "10m",
+  "attestation_ca": "/etc/loom/tls/ca.crt"
 }

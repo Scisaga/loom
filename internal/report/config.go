@@ -69,6 +69,34 @@ type Config struct {
 	// HandshakeStale 是握手年龄的告警阈值。发起方设了
 	// PersistentKeepalive=25,健康隧道的握手年龄不会超过约 180 秒。
 	HandshakeStale string `json:"handshake_stale"`
+
+	// AgentState 只在有 Agent 的接入节点设置。空表示本节点没有 Agent，
+	// Collect 不得去读进程机器上的默认路径（测试和服务器都靠这条隔离）。
+	AgentState string `json:"agent_state,omitempty"`
+
+	// ExpectedNodes / ExpectedTunnels 是不含地址和秘密的 SSOT 拓扑底图。
+	// 完全失联的节点不会出现在 gossip 里，但仍必须在中控图上以 unknown
+	// 留着，不能把“没听见”画成“已不存在”。
+	ExpectedNodes   []string         `json:"expected_nodes,omitempty"`
+	ExpectedTunnels []ExpectedTunnel `json:"expected_tunnels,omitempty"`
+	// ExpectedRoutes 是接入节点从 RouteCandidate.ServerChain 派生的业务
+	// 候选路径。它只含节点 ID，不含候选地址或秘密；声明存在不等于在线。
+	ExpectedRoutes []ExpectedRoute `json:"expected_routes,omitempty"`
+
+	// PublisherHealth 由 Serve 在确认本机是中控后注入，不来自渲染配置。
+	// 这样服务器节点和测试不会误读控制机的 /var/lib/loom。
+	PublisherHealth string `json:"-"`
+}
+
+type ExpectedTunnel struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+type ExpectedRoute struct {
+	Access      string   `json:"access"`
+	Declaration string   `json:"declaration"`
+	Chain       []string `json:"chain,omitempty"`
 }
 
 // Neighbor 是一个隧道对端。

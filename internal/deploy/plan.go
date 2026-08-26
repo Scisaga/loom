@@ -42,12 +42,32 @@ type Plan struct {
 	// 这是 dpkg 的模型:包的文件清单存在机器上,卸载时按清单删。
 	// **只删自己装过的** —— 清单里没有的文件一律不碰。
 	Remove []string
+	// InventoryGuard 把 apply 在目标机上读到的“上次安装清单”与真正执行
+	// 删除的事务绑定起来。apply 读清单和执行脚本之间可能撞上一轮 pull；
+	// 若清单已变化，脚本在持有节点部署锁后、碰线上文件前失败，让操作者
+	// 重试，而不是按过期差集留下或误删文件。
+	//
+	// apply 与 pull 都设置这道 guard：两者读 inventory 时持有的上层锁不同，
+	// 真正共享的 deploy.lock 要到脚本里才取得，必须在那之后再核对一次。
+	InventoryGuard *InventoryGuard
+	// InvalidateOnChange 是只在这次 desired/installed 文件集合真的有变化时，
+	// 与配置同事务备份并删除的本机坐标。备用 apply 用它清掉 applied 与
+	// rollout：失败恢复旧坐标，成功后节点不会拿旧快照号冒充当前配置。
+	// 它不参与 changed 计算，否则仅坐标文件存在就会把真正的 no-op 变成
+	// 每次都失效状态的部署。
+	InvalidateOnChange []string
 
 	// PreCheck 是安装**之前**在暂存目录上跑的检查命令。
 	//
 	// 上一轮就是漏了这步:配置非法 → sing-box 崩溃重启循环,而我只测了
 	// 新功能没看服务起没起来。检查必须在覆盖线上文件之前做。
 	PreCheck []string
+}
+
+type InventoryGuard struct {
+	Path   string
+	SHA256 string
+	Absent bool
 }
 
 // Unmapped 是配置包里没有约定安装位置的文件。
@@ -104,10 +124,9 @@ func BuildPlan(node string, files map[string]string) (*Plan, Unmapped) {
 		case strings.HasSuffix(bundlePath, ".timer"):
 			svcs = []string{strings.TrimPrefix(bundlePath, "systemd/")}
 		case strings.HasSuffix(bundlePath, ".service"):
-			// unit 文件本身只需要 daemon-reload。真正要重启的那个服务,
-			// 由它的**配置文件**触发 —— 换句话说 unit 变了而配置没变时,
-			// 新 unit 会在下次重启时生效。这是有意的:改一行 Description
-			// 不该断一次线。
+			// ExecStart、Capability、Sandbox 等都只在下一次启动时生效。
+			// unit-only 变化若只 daemon-reload，旧进程仍会让 is-active 假绿，
+			// applied 却推进到新快照；因此常驻服务必须重启。
 			svcs = unitSelfRestart(bundlePath)
 		}
 		if len(svcs) > 0 {
@@ -136,13 +155,11 @@ func BuildPlan(node string, files map[string]string) (*Plan, Unmapped) {
 
 // unitSelfRestart 决定一个 unit 文件变化时要不要顺带重启它自己。
 //
-// 有配置文件的服务由配置触发,这里返回空。没有配置文件的(reresolve 的
-// service 与 timer)只能由 unit 自己触发。
+// 常驻服务的 unit 自己就能改变运行语义，必须触发自己；明确的 oneshot 与
+// pull 自身例外，前者由 timer 拉起，后者在当前 pull 内绝不能递归重启。
 func unitSelfRestart(bundlePath string) []string {
 	name := strings.TrimSuffix(strings.TrimPrefix(bundlePath, "systemd/"), ".service")
 	switch name {
-	case "sing-box", "loom-agent", "loom-report":
-		return nil
 	case "loom-wg-reresolve", "loom-pull":
 		// oneshot,由 timer 拉起。**绝不能在这里重启它们。**
 		//
@@ -203,6 +220,13 @@ const (
 	// StagingRoot 放待安装的文件,PreviousRoot 放被替换掉的那一份。
 	StagingRoot  = "/var/lib/loom/staging/"
 	PreviousRoot = "/var/lib/loom/previous/"
+	// DeployLockPath 串行化节点上的 apply 与 pull。只给 pull 加锁不够:
+	// 控制端推送与节点自取仍可能同时进入同一套回滚目录。
+	DeployLockPath = "/var/lib/loom/deploy.lock"
+	// RollbackIncompleteExitCode 让 Go 调用方能在不解析本地化错误文本的
+	// 前提下区分“命令失败但完整恢复”和“恢复本身不完整”。后者绝不能对外
+	// 宣称已经回滚。
+	RollbackIncompleteExitCode = 76
 )
 
 // Hash 是计划的内容哈希,用来判断这个节点需不需要重装。
@@ -242,12 +266,23 @@ func (p *Plan) StaleFiles(installed []string) []string {
 // 认不出来的返回空串:那只是个普通配置文件,删掉即可,没有服务要停。
 func UnitFor(abs string) string {
 	switch {
+	case abs == "/etc/loom/sing-box/config.json":
+		return "sing-box"
+	case abs == "/etc/loom/agent/config.json":
+		return "loom-agent"
+	case abs == "/etc/loom/report/config.json":
+		return "loom-report"
 	case strings.HasPrefix(abs, "/etc/wireguard/") && strings.HasSuffix(abs, ".conf"):
 		iface := strings.TrimSuffix(strings.TrimPrefix(abs, "/etc/wireguard/"), ".conf")
 		return "wg-quick@" + iface
 	case strings.HasPrefix(abs, "/etc/systemd/system/"):
 		name := strings.TrimPrefix(abs, "/etc/systemd/system/")
-		if strings.HasSuffix(name, ".service") || strings.HasSuffix(name, ".timer") {
+		if strings.HasSuffix(name, ".service") {
+			// systemctl 把 foo 与 foo.service 视为同一个 unit；事务清单也必须
+			// canonicalize，否则 config+unit 同删会备份两份相互冲突的状态。
+			return strings.TrimSuffix(name, ".service")
+		}
+		if strings.HasSuffix(name, ".timer") {
 			return name
 		}
 	}

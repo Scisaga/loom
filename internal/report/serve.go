@@ -49,6 +49,8 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 			// 和 /status 走完全同一条路 —— 界面自己再采一遍的话,
 			// "页面上说的"和"接口返回的"会在某个时刻不一致。
 			st.Observation, st.Learned = tbl.view(cfg.Node, now(), maxAge)
+			st.Errors = append(st.Errors, tbl.roundErrors()...)
+			st.Errors = append(st.Errors, AttestationErrors(st, now(), maxAge)...)
 			return buildView(cfg, st, now())
 		},
 	}
@@ -56,6 +58,7 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 
 	// 中控角色是本机 bootstrap 配置,不是渲染产物 —— 绝大多数节点没有它。
 	if ctl, pw, err := LoadControl(ControlPath); ctl != nil {
+		cfg.PublisherHealth = PublisherHealthPath
 		if err != nil {
 			// 声明了中控角色却配不全,必须看得见。悄悄退化成只读的话,
 			// 人会以为是自己没登录。
@@ -88,6 +91,8 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 		// 拉取次数的倍数。所以观测走后台节奏,这里只交出最近一份。
 		st := Collect(cfg, now())
 		st.Observation, st.Learned = tbl.view(cfg.Node, now(), maxAge)
+		st.Errors = append(st.Errors, tbl.roundErrors()...)
+		st.Errors = append(st.Errors, AttestationErrors(st, now(), maxAge)...)
 		w.Header().Set("Content-Type", "application/json")
 		// 自检有发现时用 503:拉取方不必解析 JSON 就知道这台机器有问题,
 		// 而 JSON 里仍有全部细节。
@@ -116,6 +121,8 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 			if det != nil {
 				st := Collect(cfg, now())
 				st.Observation, st.Learned = tbl.view(cfg.Node, now(), maxAge)
+				st.Errors = append(st.Errors, tbl.roundErrors()...)
+				st.Errors = append(st.Errors, AttestationErrors(st, now(), maxAge)...)
 				evs, err := det.observe(buildView(cfg, st, now()), now())
 				if err != nil {
 					fmt.Fprintf(logw, "! 记事件失败:%v\n", err)

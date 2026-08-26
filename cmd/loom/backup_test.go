@@ -136,6 +136,11 @@ func TestDefaultBackupSrcsCoverTheIrreplaceable(t *testing.T) {
 	if !got["deploy/ssot-history"] || !optional["deploy/ssot-history"] {
 		t.Error("deploy/ssot-history 应在清单里,且必须是可选的")
 	}
+	// docs/status 含真实部署坐标,有意不进 Git；没有这份本机状态,
+	// clean clone 无法恢复 current/history 这条运维事实链。
+	if !got["docs/status"] || !optional["docs/status"] {
+		t.Error("docs/status 应在清单里,且必须是可选的")
+	}
 }
 
 // 子目录必须递归进去。早先的版本遇到子目录直接跳过,而且**不报告** ——

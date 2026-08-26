@@ -54,6 +54,11 @@ const (
 	// Verified:这一份确实在跑。LastGood 会被推进到它。
 	Verified Stage = "verified"
 
+	// Decommissioned:签名快照明确要求本节点下线，服务已停、applied 已清。
+	// 这是成功终态，不是卡在 Staging，也不推进 LastGood（它仍是最近一份
+	// 可运行配置，供审计/人工恢复参考）。
+	Decommissioned Stage = "decommissioned"
+
 	// Failed:失败,Error 说为什么。LastGood 保持不动 —— 它是回退目标。
 	Failed Stage = "failed"
 )
@@ -178,7 +183,7 @@ func (r *Record) Fail(err error, now time.Time) {
 // 而 Activating 那种停法会留下半装的机器。
 func (r *Record) InFlight() bool {
 	switch r.Stage {
-	case Verified, Failed:
+	case Verified, Decommissioned, Failed:
 		return false
 	}
 	return true

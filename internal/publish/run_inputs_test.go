@@ -16,6 +16,10 @@ func TestInputsChanged(t *testing.T) {
 		{"首轮:有二进制也一样", true, "aaa", "", "bin1", "", true},
 		{"什么都没变", false, "aaa", "aaa", "bin1", "bin1", false},
 		{"SSOT 变了", false, "bbb", "aaa", "bin1", "bin1", true},
+		{"同 64-bit 前缀但完整 SHA 不同", false,
+			"0123456789abcdefffffffffffffffffffffffffffffffffffffffffffffffff",
+			"0123456789abcdef000000000000000000000000000000000000000000000000",
+			"bin1", "bin1", true},
 		{"二进制变了", false, "aaa", "aaa", "bin2", "bin1", true},
 
 		// 这两条是本测试存在的理由。
