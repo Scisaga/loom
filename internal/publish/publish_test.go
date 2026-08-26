@@ -154,3 +154,28 @@ func TestCurrentOnEmptyTarget(t *testing.T) {
 		t.Errorf("空目录返回 %q, %v,期望空", got, err)
 	}
 }
+
+// current.json 是节点看世界的入口,写它必须原子 —— 半个文件会让每台机器
+// 解析失败、卡一轮。rename 之后不该留下临时文件。
+func TestCurrentJSONIsWrittenAtomically(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "current.json")
+	if err := writeAtomic(p, []byte(`{"snapshot":"abc"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(p + ".tmp"); !os.IsNotExist(err) {
+		t.Error("临时文件没被 rename 掉")
+	}
+	b, err := os.ReadFile(p)
+	if err != nil || string(b) != `{"snapshot":"abc"}` {
+		t.Fatalf("内容不对:%q(err=%v)", b, err)
+	}
+	// 覆写同一个路径要能成功(rename 覆盖已存在的文件)。
+	if err := writeAtomic(p, []byte(`{"snapshot":"def"}`), 0o644); err != nil {
+		t.Fatalf("覆写失败:%v", err)
+	}
+	b, _ = os.ReadFile(p)
+	if string(b) != `{"snapshot":"def"}` {
+		t.Fatalf("覆写后内容不对:%q", b)
+	}
+}

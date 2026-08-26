@@ -92,7 +92,21 @@ func (l *localTarget) Push(t *Tree) error {
 			return err
 		}
 	}
-	return os.WriteFile(filepath.Join(l.dir, "current.json"), t.Files["current.json"], 0o644)
+	return writeAtomic(filepath.Join(l.dir, "current.json"), t.Files["current.json"], 0o644)
+}
+
+// writeAtomic 先写临时文件再 rename。
+//
+// **current.json 是节点看世界的入口**:它指向哪个快照,节点就装哪个。
+// 直接覆写的话,写到一半断掉会留下一个截断的文件 —— 节点解析失败、报错、
+// 这一轮什么都不做。不是灾难(它失败得很响),但每台机器都会卡一轮,
+// 而 rename 是原子的,这一整类问题不用存在。
+func writeAtomic(path string, b []byte, mode os.FileMode) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, mode); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func (l *localTarget) Current() (string, error) {
@@ -171,8 +185,11 @@ func (s *sshTarget) Push(t *Tree) error {
 		s.dir, s.dir, s.dir), &buf); err != nil {
 		return fmt.Errorf("推送快照层:%w", err)
 	}
-	if err := s.run(fmt.Sprintf("set -eu; cat > %q; chmod a+r %q", cur, cur),
-		bytes.NewReader(t.Files["current.json"])); err != nil {
+	// 同样先落临时文件再 mv。**mv 在同一个文件系统上是原子的**,
+	// 所以临时文件必须和目标同目录 —— 放 /tmp 的话跨设备,mv 退化成
+	// copy+unlink,原子性就没了。
+	if err := s.run(fmt.Sprintf("set -eu; cat > %q.tmp; chmod a+r %q.tmp; mv %q.tmp %q",
+		cur, cur, cur, cur), bytes.NewReader(t.Files["current.json"])); err != nil {
 		return fmt.Errorf("更新 current.json:%w", err)
 	}
 	return nil
