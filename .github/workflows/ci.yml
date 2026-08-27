@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test, vet, and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build loom
+        run: go build ./cmd/loom
+
+  race:
+    name: Race detector (CGO and GCC)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      CGO_ENABLED: "1"
+      CC: gcc
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Confirm C compiler
+        run: |
+          test "$(go env CGO_ENABLED)" = "1"
+          gcc --version
+
+      - name: Test with race detector
+        run: go test -race ./...

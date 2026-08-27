@@ -20,15 +20,16 @@ const AttestationMaxAge = 10 * time.Minute
 // AttestedState 是从已验签 Claim 重建出来的可信状态。调用方不得继续使用
 // 外层 Observation 里可被 relay 改写的 Version/Rollout/Agent 值。
 type AttestedState struct {
-	Version *version.Coordinate
-	Rollout *RolloutState
-	Agent   *AgentState
+	Version    *version.Coordinate
+	Rollout    *RolloutState
+	Agent      *AgentState
+	Components []ComponentStatus
 	// Applied is node-owned state covered by every attestation version.  It is
 	// kept here so callers never have to fall back to the mutable outer field
 	// after verification.
 	Applied string
 	// MeasurementsVerified means Edges/Targets are covered by the node-owned
-	// v3 claim. Legacy v1/v2 claims still authenticate identity state, but their
+	// v3/v4 claim. Legacy v1/v2 claims still authenticate identity state, but their
 	// measurements must remain unknown in topology views.
 	MeasurementsVerified bool
 }
@@ -77,7 +78,14 @@ func VerifyObservation(o *Observation, ca []byte, now time.Time, maxAge time.Dur
 	if err := bindClaim(o, c); err != nil {
 		return nil, err
 	}
-	return stateFromClaim(c), nil
+	st := stateFromClaim(c)
+	if problems := validateAgentState(st.Agent, o.Node, now); len(problems) > 0 {
+		return nil, fmt.Errorf("签名 Agent 状态非法:%s", problems[0])
+	}
+	if problems := validateComponentStatuses(st.Components); len(problems) > 0 {
+		return nil, fmt.Errorf("签名组件状态非法:%s", problems[0])
+	}
+	return st, nil
 }
 
 func bindClaim(o *Observation, c *attest.Claim) error {
@@ -105,6 +113,9 @@ func bindClaim(o *Observation, c *attest.Claim) error {
 	if o.Agent != nil && !reflect.DeepEqual(o.Agent, trusted.Agent) {
 		return fmt.Errorf("外层 Agent 选择与签名陈述不一致")
 	}
+	if !componentStatusesEqual(o.Components, trusted.Components) {
+		return fmt.Errorf("外层组件版本与签名陈述不一致")
+	}
 	if c.MeasurementsSHA256 != "" && c.MeasurementsSHA256 != measurementDigest(o) {
 		return fmt.Errorf("外层链路观测与签名陈述不一致")
 	}
@@ -124,16 +135,73 @@ func stateFromClaim(c *attest.Claim) *AttestedState {
 		}
 	}
 	if c.Agent != nil {
-		st.Agent = &AgentState{Node: c.Agent.Node, TS: c.Agent.TS}
+		st.Agent = &AgentState{
+			Node: c.Agent.Node, TS: c.Agent.TS,
+			ComponentVersion: c.Agent.ComponentVersion,
+		}
 		for _, s := range c.Agent.Selections {
 			st.Agent.Selections = append(st.Agent.Selections, AgentSelection{
 				Declaration: s.Declaration, Selector: s.Selector,
 				Candidate: s.Candidate, Chain: append([]string(nil), s.Chain...),
 				Reason: s.Reason, UpdatedAt: s.UpdatedAt,
+				Health: agentCandidateHealth(s.Health),
 			})
 		}
 	}
+	for _, component := range c.Components {
+		st.Components = append(st.Components, ComponentStatus{
+			Name: component.Name, Expected: component.Expected,
+			Actual: component.Actual, Error: component.Error,
+		})
+	}
+	sortComponentStatuses(st.Components)
 	return st
+}
+
+func componentStatusesEqual(a, b []ComponentStatus) bool {
+	aa := append([]ComponentStatus(nil), a...)
+	bb := append([]ComponentStatus(nil), b...)
+	sortComponentStatuses(aa)
+	sortComponentStatuses(bb)
+	return reflect.DeepEqual(aa, bb)
+}
+
+func candidateHealthClaim(h *AgentCandidateHealth) *attest.CandidateHealthClaim {
+	if h == nil {
+		return nil
+	}
+	return &attest.CandidateHealthClaim{
+		Candidates: h.Candidates, RecentSuccess: h.RecentSuccess,
+		RecentDegraded: h.RecentDegraded, RecentFailed: h.RecentFailed,
+		Stale: h.Stale, Unknown: h.Unknown, SelectedState: h.SelectedState,
+		SelectedSamples: h.SelectedSamples, SelectedFailures: h.SelectedFailures,
+		SelectedP50MS: cloneInt(h.SelectedP50MS), SelectedP95MS: cloneInt(h.SelectedP95MS),
+		BestP50MS: cloneInt(h.BestP50MS), SelectedKBps: cloneInt(h.SelectedKBps),
+		BestKBps: cloneInt(h.BestKBps),
+	}
+}
+
+func agentCandidateHealth(h *attest.CandidateHealthClaim) *AgentCandidateHealth {
+	if h == nil {
+		return nil
+	}
+	return &AgentCandidateHealth{
+		Candidates: h.Candidates, RecentSuccess: h.RecentSuccess,
+		RecentDegraded: h.RecentDegraded, RecentFailed: h.RecentFailed,
+		Stale: h.Stale, Unknown: h.Unknown, SelectedState: h.SelectedState,
+		SelectedSamples: h.SelectedSamples, SelectedFailures: h.SelectedFailures,
+		SelectedP50MS: cloneInt(h.SelectedP50MS), SelectedP95MS: cloneInt(h.SelectedP95MS),
+		BestP50MS: cloneInt(h.BestP50MS), SelectedKBps: cloneInt(h.SelectedKBps),
+		BestKBps: cloneInt(h.BestKBps),
+	}
+}
+
+func cloneInt(v *int) *int {
+	if v == nil {
+		return nil
+	}
+	x := *v
+	return &x
 }
 
 // AttestationErrors 校验 Status 里所有带签名的观测。没有签名仍按旧节点兼容

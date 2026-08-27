@@ -403,6 +403,9 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, selections *stateStore,
 		return fmt.Errorf("读度量:%w", err)
 	}
 	sums := measure.Summarize(inWindow(all, d.ID, opts.Now(), win, stale))
+	healthFor := func(selected string) *CandidateHealth {
+		return summarizeCandidateHealth(d, selected, sums, all)
+	}
 
 	// 3. 决定。
 	dec := Decide(d, current, sums)
@@ -423,7 +426,7 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, selections *stateStore,
 	if !dec.Switch {
 		if err := selections.observe(Selection{
 			Declaration: d.ID, Selector: d.Selector, Candidate: selected,
-			Chain: currentChain, Reason: reason,
+			Chain: currentChain, Reason: reason, Health: healthFor(selected),
 		}, opts.Now()); err != nil {
 			logf("[%s] 写 Agent 当前状态失败:%v", d.ID, err)
 		}
@@ -434,6 +437,7 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, selections *stateStore,
 		if err := selections.observe(Selection{
 			Declaration: d.ID, Selector: d.Selector, Candidate: current,
 			Chain: currentChain, Reason: "dry-run，实际未切；" + reason,
+			Health: healthFor(current),
 		}, opts.Now()); err != nil {
 			logf("[%s] 写 Agent 当前状态失败:%v", d.ID, err)
 		}
@@ -456,7 +460,7 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, selections *stateStore,
 	logf("[%s] ✅ %s → %s", d.ID, current, actual)
 	if err := selections.observe(Selection{
 		Declaration: d.ID, Selector: d.Selector, Candidate: actual,
-		Chain: actualChain, Reason: reason,
+		Chain: actualChain, Reason: reason, Health: healthFor(actual),
 	}, opts.Now()); err != nil {
 		logf("[%s] 写 Agent 当前状态失败:%v", d.ID, err)
 	}

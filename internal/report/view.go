@@ -200,6 +200,7 @@ func nodeView(id string, self, reached bool, st *Status, o *Observation,
 		n.Version = versionView(trusted.Version)
 		n.Rollout = rolloutView(trusted.Rollout, now)
 		n.Agent = agentView(trusted.Agent, "签名转述", now)
+		n.Components = componentViews(trusted.Components)
 	}
 	if st == nil {
 		if n.Rollout != nil && n.Rollout.Problem {
@@ -213,6 +214,18 @@ func nodeView(id string, self, reached bool, st *Status, o *Observation,
 				n.Health = "problem"
 				n.Problems = append(n.Problems,
 					fmt.Sprintf("直连探测失败:%s:%s", r.Target, r.Err))
+			}
+		}
+		for _, component := range trustedComponents(n.Components) {
+			if !component.OK() {
+				n.Health = "problem"
+				n.Problems = append(n.Problems, componentProblem(component))
+			}
+		}
+		if trusted != nil {
+			for _, problem := range agentHealthProblems(trusted.Agent) {
+				n.Health = "problem"
+				n.Problems = append(n.Problems, problem)
 			}
 		}
 		return n
@@ -232,6 +245,7 @@ func nodeView(id string, self, reached bool, st *Status, o *Observation,
 	n.Version = versionView(st.Version)
 	n.Rollout = rolloutView(st.Rollout, now)
 	n.Agent = agentView(st.Agent, "直连 /status", now)
+	n.Components = componentViews(st.Components)
 	n.Rotating = append(n.Rotating, st.Rotating...)
 	for i := range st.Tunnels {
 		t := &st.Tunnels[i]
@@ -261,8 +275,41 @@ func nodeView(id string, self, reached bool, st *Status, o *Observation,
 			n.Problems = append(n.Problems, "配置读不到:"+f)
 		}
 	}
+	for _, component := range st.Components {
+		if !component.OK() {
+			n.Problems = append(n.Problems, componentProblem(component))
+		}
+	}
+	n.Problems = append(n.Problems, agentHealthProblems(st.Agent)...)
 	n.Problems = append(n.Problems, st.Errors...)
 	return n
+}
+
+func componentViews(xs []ComponentStatus) []webui.ComponentView {
+	out := make([]webui.ComponentView, 0, len(xs))
+	for _, c := range xs {
+		out = append(out, webui.ComponentView{
+			Name: c.Name, Expected: c.Expected, Actual: c.Actual, Error: c.Error, OK: c.OK(),
+		})
+	}
+	return out
+}
+
+func trustedComponents(xs []webui.ComponentView) []ComponentStatus {
+	out := make([]ComponentStatus, 0, len(xs))
+	for _, c := range xs {
+		out = append(out, ComponentStatus{
+			Name: c.Name, Expected: c.Expected, Actual: c.Actual, Error: c.Error,
+		})
+	}
+	return out
+}
+
+func componentProblem(c ComponentStatus) string {
+	if c.Error != "" {
+		return fmt.Sprintf("组件 %s 无法核对:%s（期望 %s）", c.Name, c.Error, c.Expected)
+	}
+	return fmt.Sprintf("组件 %s 版本漂移:实际 %s，期望 %s", c.Name, c.Actual, c.Expected)
 }
 
 func versionView(c *version.Coordinate) *webui.VersionView {
@@ -310,6 +357,7 @@ func agentView(a *AgentState, source string, now time.Time) *webui.AgentView {
 			Node: a.Node, Declaration: s.Declaration, Selector: s.Selector,
 			Candidate: s.Candidate, Chain: chain, Reason: s.Reason,
 			ObservedAt: s.UpdatedAt, Source: source + " · sing-box selector",
+			Health: agentHealthView(s.Health),
 		}
 		if t, err := time.Parse(time.RFC3339, s.UpdatedAt); err != nil ||
 			now.Sub(t) > AgentStateStaleAfter || now.Sub(t) < -2*time.Minute {
@@ -318,6 +366,47 @@ func agentView(a *AgentState, source string, now time.Time) *webui.AgentView {
 		v.Selections = append(v.Selections, r)
 	}
 	return v
+}
+
+func agentHealthProblems(a *AgentState) []string {
+	if a == nil {
+		return nil
+	}
+	var out []string
+	for _, selection := range a.Selections {
+		h := selection.Health
+		if h != nil && h.Candidates > 0 && h.RecentFailed == h.Candidates {
+			out = append(out, fmt.Sprintf("Agent %s 的 %d 个候选近期全部失败",
+				selection.Declaration, h.Candidates))
+		}
+	}
+	return out
+}
+
+func agentHealthView(h *AgentCandidateHealth) *webui.CandidateHealthView {
+	if h == nil {
+		return nil
+	}
+	metric := func(p50, p95, kbps *int) string {
+		var parts []string
+		if p50 != nil {
+			parts = append(parts, fmt.Sprintf("p50 %dms", *p50))
+		}
+		if p95 != nil {
+			parts = append(parts, fmt.Sprintf("p95 %dms", *p95))
+		}
+		if kbps != nil {
+			parts = append(parts, fmt.Sprintf("%d KB/s", *kbps))
+		}
+		return strings.Join(parts, " · ")
+	}
+	return &webui.CandidateHealthView{
+		Candidates: h.Candidates, RecentSuccess: h.RecentSuccess,
+		RecentDegraded: h.RecentDegraded, RecentFailed: h.RecentFailed,
+		Stale: h.Stale, Unknown: h.Unknown, SelectedState: h.SelectedState,
+		SelectedMetrics: metric(h.SelectedP50MS, h.SelectedP95MS, h.SelectedKBps),
+		BestMetrics:     metric(h.BestP50MS, nil, h.BestKBps),
+	}
 }
 
 // topologyLinks 先放 SSOT 常驻 WG 底图，再叠真实观测；没有观测的边保持

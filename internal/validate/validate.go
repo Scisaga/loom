@@ -99,6 +99,17 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 		}
 
 		isServer := n.IsServer()
+		if isServer {
+			switch {
+			case n.Server.SecretGeneration < 0:
+				fs.add("§13.4 秘密层", where,
+					"secret_generation 不能为负:%d", n.Server.SecretGeneration)
+			case n.Server.SecretGeneration > 1:
+				fs.add("§13.4 秘密层", where,
+					"secret_generation=%d 声明了秘密层轮换，但当前运行时未实现对应代次的部署或核验；"+
+						"拒绝假生效，只能省略(0)或使用第一代(1)", n.Server.SecretGeneration)
+			}
+		}
 		if isServer && !n.Server.Direction.Valid() {
 			fs.add("§2.1 direction", where, "direction 缺失或非法:%q", n.Server.Direction)
 			continue // 后面的规则都依赖 direction 有效
@@ -133,6 +144,11 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 		// §15.4:版本必须显式钉住,永不使用 latest。自动的是下载,不是
 		// 升级决策 —— 上游一次不兼容发布可在一个轮询周期内打挂全部节点。
 		v := s.VersionsFor(n)
+		if v.Tailscale != "" {
+			fs.add("§15.4 版本", where,
+				"components.tailscale=%q 只有版本坐标，但当前模型没有启用 Tailscale 的 workload 真值，"+
+					"运行时也不会安装或启动它；拒绝用版本字段冒充已启用能力", v.Tailscale)
+		}
 		// 用切片而不是 map:map 的遍历顺序不确定,会让校验输出在两次运行
 		// 之间抖动,CI 里就是间歇性失败。
 		for _, c := range []struct{ name, got string }{

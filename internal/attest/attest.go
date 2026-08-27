@@ -47,18 +47,25 @@ import (
 // MeasurementsSHA256 绑定其完整 payload；这里直接携带的是 relay 不能代节点
 // 改写的 node-owned state。
 type Claim struct {
-	Node      string        `json:"node"`
-	TS        string        `json:"ts"`
-	Commit    string        `json:"commit,omitempty"`
-	Dirty     bool          `json:"dirty,omitempty"`
-	Tag       string        `json:"tag,omitempty"`
-	Binary    string        `json:"binary,omitempty"`
-	BinaryErr string        `json:"binary_err,omitempty"`
-	Go        string        `json:"go,omitempty"`
-	Platform  string        `json:"platform,omitempty"`
-	Applied   string        `json:"applied,omitempty"`
-	Rollout   *RolloutClaim `json:"rollout,omitempty"`
-	Agent     *AgentClaim   `json:"agent,omitempty"`
+	// CanonicalVersion is zero for legacy v1/v2/v3 claims. New extension
+	// families set an explicit version so future node-owned fields can add a
+	// new canonical layout without changing the bytes of already deployed
+	// signatures. Version 4 adds per-declaration candidate health; version 5
+	// adds node-observed component versions.
+	CanonicalVersion int              `json:"canonical_version,omitempty"`
+	Node             string           `json:"node"`
+	TS               string           `json:"ts"`
+	Commit           string           `json:"commit,omitempty"`
+	Dirty            bool             `json:"dirty,omitempty"`
+	Tag              string           `json:"tag,omitempty"`
+	Binary           string           `json:"binary,omitempty"`
+	BinaryErr        string           `json:"binary_err,omitempty"`
+	Go               string           `json:"go,omitempty"`
+	Platform         string           `json:"platform,omitempty"`
+	Applied          string           `json:"applied,omitempty"`
+	Rollout          *RolloutClaim    `json:"rollout,omitempty"`
+	Agent            *AgentClaim      `json:"agent,omitempty"`
+	Components       []ComponentClaim `json:"components,omitempty"`
 
 	// MeasurementsSHA256 binds the outer Observation.Edges/Targets payload.
 	// Keeping the measurements outside Claim avoids duplicating report's wire
@@ -67,6 +74,17 @@ type Claim struct {
 	// Empty means a legacy v1/v2 claim: identity state is still trustworthy,
 	// measurements are not.
 	MeasurementsSHA256 string `json:"measurements_sha256,omitempty"`
+}
+
+// ComponentClaim binds the installed version observation to the node that ran
+// the version command. Expected is included so a relay cannot rewrite a
+// mismatch into a match; the snapshot coordinate still tells callers whether
+// that node's expectation is the current generation.
+type ComponentClaim struct {
+	Name     string `json:"name"`
+	Expected string `json:"expected"`
+	Actual   string `json:"actual,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
 // RolloutClaim 是随节点运行态一起签名的 rollout 摘要。它只带跨节点判断需要的
@@ -82,29 +100,54 @@ type RolloutClaim struct {
 // SelectionClaim 是 Agent 从 sing-box selector 读到的实际选择。它跟随节点
 // 节点运行态签名，转述方不能把候选或路径换成另一条。
 type SelectionClaim struct {
-	Declaration string   `json:"declaration"`
-	Selector    string   `json:"selector"`
-	Candidate   string   `json:"candidate"`
-	Chain       []string `json:"chain,omitempty"`
-	Reason      string   `json:"reason,omitempty"`
-	UpdatedAt   string   `json:"updated_at"`
+	Declaration string                `json:"declaration"`
+	Selector    string                `json:"selector"`
+	Candidate   string                `json:"candidate"`
+	Chain       []string              `json:"chain,omitempty"`
+	Reason      string                `json:"reason,omitempty"`
+	UpdatedAt   string                `json:"updated_at"`
+	Health      *CandidateHealthClaim `json:"health,omitempty"`
+}
+
+// CandidateHealthClaim mirrors the compact Agent state summary. It is kept in
+// attest rather than importing agent/report so the trust boundary remains
+// acyclic; report performs the explicit mapping in both directions.
+type CandidateHealthClaim struct {
+	Candidates       int    `json:"candidates"`
+	RecentSuccess    int    `json:"recent_success"`
+	RecentDegraded   int    `json:"recent_degraded,omitempty"`
+	RecentFailed     int    `json:"recent_failed"`
+	Stale            int    `json:"stale"`
+	Unknown          int    `json:"unknown"`
+	SelectedState    string `json:"selected_state"`
+	SelectedSamples  int    `json:"selected_samples,omitempty"`
+	SelectedFailures int    `json:"selected_failures,omitempty"`
+	SelectedP50MS    *int   `json:"selected_p50_ms,omitempty"`
+	SelectedP95MS    *int   `json:"selected_p95_ms,omitempty"`
+	BestP50MS        *int   `json:"best_p50_ms,omitempty"`
+	SelectedKBps     *int   `json:"selected_kbps,omitempty"`
+	BestKBps         *int   `json:"best_kbps,omitempty"`
 }
 
 type AgentClaim struct {
-	Node       string           `json:"node"`
-	TS         string           `json:"ts"`
-	Selections []SelectionClaim `json:"selections"`
+	Node string `json:"node"`
+	TS   string `json:"ts"`
+	// ComponentVersion preserves the deployed JSON field name but carries the
+	// Agent wire-protocol version, not a binary build coordinate.
+	ComponentVersion string           `json:"component_version,omitempty"`
+	Selections       []SelectionClaim `json:"selections"`
 }
 
 // canonical 是签名覆盖的字节。
 //
 // **固定顺序、长度前缀,不走 JSON。** JSON 的字段顺序、空白、转义都
 // 可能因库版本而变,而签名是针对字节的。任意错误文本、reason 和服务 key
-// 都可能含分隔符，所以 v2/v3 的每个字符串和数组元素都必须有无歧义边界。
+// 都可能含分隔符，所以 v2/v3/v4 的每个字符串和数组元素都必须有无歧义边界。
 func (c *Claim) canonical() []byte {
 	// 没有扩展字段时仍按 v1 算，让升级期间旧节点已经签出的陈述继续可验。
 	// 新版不能简单在旧格式后面追加却沿用版本号：否则空字段与旧格式的
-	// 边界含糊。v3 只比 v2 多一个测量摘要字段。
+	// 边界含糊。v3 只比 v2 多一个测量摘要字段；v4 再加入显式版本、
+	// Agent component_version 与候选健康字段族；v5 再加入组件实际版本。
 	if !c.extended() {
 		return []byte(strings.Join([]string{
 			"loom-attest-v1", c.Node, c.TS, c.Commit, c.Binary, c.Applied,
@@ -134,9 +177,26 @@ func (c *Claim) canonical() []byte {
 			if n := cmp.Compare(a.Reason, b.Reason); n != 0 {
 				return n < 0
 			}
-			return a.UpdatedAt < b.UpdatedAt
+			if n := cmp.Compare(a.UpdatedAt, b.UpdatedAt); n != 0 {
+				return n < 0
+			}
+			return slices.Compare(candidateHealthFields(a.Health), candidateHealthFields(b.Health)) < 0
 		})
 	}
+	components := append([]ComponentClaim(nil), c.Components...)
+	sort.Slice(components, func(i, j int) bool {
+		a, b := components[i], components[j]
+		if a.Name != b.Name {
+			return a.Name < b.Name
+		}
+		if a.Expected != b.Expected {
+			return a.Expected < b.Expected
+		}
+		if a.Actual != b.Actual {
+			return a.Actual < b.Actual
+		}
+		return a.Error < b.Error
+	})
 	var b bytes.Buffer
 	field := func(s string) {
 		var size [8]byte
@@ -145,7 +205,13 @@ func (c *Claim) canonical() []byte {
 		b.WriteString(s)
 	}
 	version := "loom-attest-v2"
-	if c.MeasurementsSHA256 != "" {
+	v5 := c.CanonicalVersion == 5 || len(components) > 0
+	v4 := v5 || c.CanonicalVersion == 4 || claimNeedsV4(&agent)
+	if v5 {
+		version = "loom-attest-v5"
+	} else if v4 {
+		version = "loom-attest-v4"
+	} else if c.MeasurementsSHA256 != "" {
 		version = "loom-attest-v3"
 	}
 	fields := []string{version, c.Node, c.TS, c.Commit,
@@ -160,6 +226,9 @@ func (c *Claim) canonical() []byte {
 	field(fmt.Sprint(c.Agent != nil))
 	field(agent.Node)
 	field(agent.TS)
+	if v4 {
+		field(agent.ComponentVersion)
+	}
 	field(fmt.Sprint(len(agent.Selections)))
 	for _, s := range agent.Selections {
 		field(s.Declaration)
@@ -171,17 +240,78 @@ func (c *Claim) canonical() []byte {
 		}
 		field(s.Reason)
 		field(s.UpdatedAt)
+		if v4 {
+			for _, v := range candidateHealthFields(s.Health) {
+				field(v)
+			}
+		}
 	}
-	if c.MeasurementsSHA256 != "" {
+	if v5 {
+		field(fmt.Sprint(len(components)))
+		for _, component := range components {
+			field(component.Name)
+			field(component.Expected)
+			field(component.Actual)
+			field(component.Error)
+		}
+	}
+	if v4 || c.MeasurementsSHA256 != "" {
 		field(c.MeasurementsSHA256)
 	}
 	return b.Bytes()
 }
 
 func (c *Claim) extended() bool {
-	return c.Dirty || c.Tag != "" || c.BinaryErr != "" || c.Go != "" ||
-		c.Platform != "" || c.Rollout != nil || c.Agent != nil ||
+	return c.CanonicalVersion != 0 || c.Dirty || c.Tag != "" || c.BinaryErr != "" || c.Go != "" ||
+		c.Platform != "" || c.Rollout != nil || c.Agent != nil || len(c.Components) > 0 ||
 		c.MeasurementsSHA256 != ""
+}
+
+func claimNeedsV4(a *AgentClaim) bool {
+	if a == nil {
+		return false
+	}
+	if a.ComponentVersion != "" {
+		return true
+	}
+	for i := range a.Selections {
+		if a.Selections[i].Health != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// candidateHealthFields returns a fixed-width, length-prefixed field family.
+// Keeping presence bits separate from values preserves nil-vs-0 latency and
+// leaves the v4 layout straightforward to extend with a later canonical
+// version instead of mutating these bytes in place.
+func candidateHealthFields(h *CandidateHealthClaim) []string {
+	if h == nil {
+		return []string{
+			"false", "", "", "", "", "", "", "", "", "",
+			"false", "", "false", "", "false", "", "false", "", "false", "",
+		}
+	}
+	ptr := func(v *int) (string, string) {
+		if v == nil {
+			return "false", ""
+		}
+		return "true", fmt.Sprint(*v)
+	}
+	p50p, p50 := ptr(h.SelectedP50MS)
+	p95p, p95 := ptr(h.SelectedP95MS)
+	bestp, best := ptr(h.BestP50MS)
+	selKBpsP, selKBps := ptr(h.SelectedKBps)
+	bestKBpsP, bestKBps := ptr(h.BestKBps)
+	return []string{
+		"true", fmt.Sprint(h.Candidates), fmt.Sprint(h.RecentSuccess),
+		fmt.Sprint(h.RecentDegraded), fmt.Sprint(h.RecentFailed),
+		fmt.Sprint(h.Stale), fmt.Sprint(h.Unknown), h.SelectedState,
+		fmt.Sprint(h.SelectedSamples), fmt.Sprint(h.SelectedFailures),
+		p50p, p50, p95p, p95, bestp, best,
+		selKBpsP, selKBps, bestKBpsP, bestKBps,
+	}
 }
 
 // Signed 是 Claim 加上"它确实来自那台机器"的证明。
@@ -196,6 +326,20 @@ type Signed struct {
 
 // Sign 用本机私钥给陈述签名。
 func Sign(c Claim, keyPEM, certPEM []byte) (*Signed, error) {
+	if c.CanonicalVersion == 0 {
+		switch {
+		case len(c.Components) > 0:
+			c.CanonicalVersion = 5
+		case claimNeedsV4(c.Agent):
+			c.CanonicalVersion = 4
+		}
+	}
+	if c.CanonicalVersion != 0 && c.CanonicalVersion != 4 && c.CanonicalVersion != 5 {
+		return nil, fmt.Errorf("不支持 canonical_version=%d", c.CanonicalVersion)
+	}
+	if len(c.Components) > 0 && c.CanonicalVersion != 5 {
+		return nil, fmt.Errorf("组件陈述必须使用 canonical_version=5")
+	}
 	key, err := parseKey(keyPEM)
 	if err != nil {
 		return nil, err
@@ -223,6 +367,12 @@ func Sign(c Claim, keyPEM, certPEM []byte) (*Signed, error) {
 func Verify(s *Signed, caPEM []byte) (*Claim, error) {
 	if s == nil {
 		return nil, fmt.Errorf("签名陈述为空")
+	}
+	if s.CanonicalVersion != 0 && s.CanonicalVersion != 4 && s.CanonicalVersion != 5 {
+		return nil, fmt.Errorf("不支持 canonical_version=%d", s.CanonicalVersion)
+	}
+	if len(s.Components) > 0 && s.CanonicalVersion != 5 {
+		return nil, fmt.Errorf("组件陈述没有使用 canonical_version=5")
 	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(caPEM) {

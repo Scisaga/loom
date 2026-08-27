@@ -121,6 +121,10 @@ func checkDeclarations(
 		}
 		if !d.Fallback.Valid() {
 			fs.add("§5.8 fallback", where, "未知 fallback:%q", d.Fallback)
+		} else if d.Fallback != model.FailClosed {
+			fs.add("§5.8 fallback", where,
+				"fallback=%q 当前运行时未实现，实际行为仍是 fail_closed；"+
+					"拒绝假生效，只能使用 fail_closed", d.Fallback)
 		}
 		if d.MaxHops < 0 {
 			fs.add("§3.2 max_hops", where, "max_hops 不能为负:%d", d.MaxHops)
@@ -150,6 +154,11 @@ func checkDeclarations(
 						"流量会被阻断。迁移时应当先把 egress_axis 改指向新节点,再排空旧的", p, p)
 			}
 		}
+		if len(d.Constraints) > 0 {
+			fs.add("§5.1 约束", where,
+				"声明了 %d 条 constraints，但当前运行时未实现候选过滤；"+
+					"拒绝假生效", len(d.Constraints))
+		}
 		for _, c := range d.Constraints {
 			if !c.Kind.Valid() {
 				fs.add("§5.1 约束", where, "未知约束类别:%q", c.Kind)
@@ -169,16 +178,6 @@ func checkDeclarations(
 		}
 
 		checkAxes(d, where, nodes, classes, allowedSet, fs)
-
-		// §19 必拒规则:有合规约束但 fallback ≠ fail_closed。
-		//
-		// §5.1 规定合规是约束不是评分项。候选集若因合规过滤而变空,
-		// 任何"退而求其次"的自动回退都等于绕过约束。
-		if d.HasCompliance() && d.Fallback != model.FailClosed {
-			fs.add("§5.8 fallback", where,
-				"带合规约束却把 fallback 设成 %q —— 合规是约束不是评分项(§5.1),"+
-					"空候选集时自动回退等于绕过它;必须是 fail_closed", d.Fallback)
-		}
 
 		// §19 必拒规则:地址由请求决定却配置了 ranking_period。
 		//
@@ -290,6 +289,11 @@ func checkCredentials(
 
 		if c.SecretRef == "" {
 			fs.add("§13.1 密钥", where, "缺少 secret_ref")
+		}
+		if c.ExpiresAt != "" {
+			fs.add("§18 凭据", where,
+				"expires_at=%q 已声明，但当前运行时未实现按时移除凭据；"+
+					"拒绝假生效", c.ExpiresAt)
 		}
 		// 一张凭据只能属于一个接入节点 —— 服务器要按凭据反查候选集,
 		// 共用会让它查到错误的那一份。

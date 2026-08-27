@@ -37,6 +37,14 @@ import (
 // 标签。留空是正常情况。
 var Tag string
 
+// AgentProtocolVersion 是 Agent 配置、agent-state 与 attestation 之间的
+// 线协议版本。它不是 Loom 二进制的构建版本，也不回答正在运行哪个 commit；
+// 后者仍由 Coordinate 的 commit/binary 自证。
+//
+// JSON 为兼容既有消费者仍把它放在 component_version 字段；协议发生不兼容
+// 变化时必须同时提升这个常量和 SSOT 钉住值。
+const AgentProtocolVersion = "0.1.0"
+
 // Coordinate 是"这份二进制到底是哪一版"的完整答案。
 //
 // 字段顺序即 JSON 顺序,人要直接读它。

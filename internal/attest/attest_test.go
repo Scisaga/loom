@@ -4,8 +4,10 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
 	"math/big"
 	"strings"
@@ -194,6 +196,117 @@ func TestV1ClaimRemainsCompatible(t *testing.T) {
 	}
 	if _, err := Verify(s, ca.certPEM); err != nil {
 		t.Fatalf("v1 陈述升级后验不过:%v", err)
+	}
+}
+
+// v4 只能在新增 node-owned 字段出现时启用；没有健康/Agent 版本的历史
+// v2/v3 claim 必须保持逐字节 canonical，才能验证升级前已经签出的陈述。
+func TestV2V3CanonicalBytesRemainCompatible(t *testing.T) {
+	base := Claim{
+		Node: "n", TS: "t", Commit: "c", Dirty: true, Tag: "tag",
+		Binary: "b", BinaryErr: "e", Go: "go", Platform: "linux", Applied: "snap",
+		Rollout: &RolloutClaim{Snapshot: "snap", Stage: "verified", EnteredAt: "at", LastGood: "old"},
+		Agent: &AgentClaim{Node: "n", TS: "t", Selections: []SelectionClaim{{
+			Declaration: "d", Selector: "s", Candidate: "cand", Chain: []string{"a", "b"},
+			Reason: "why", UpdatedAt: "u",
+		}},
+		},
+	}
+	for _, tc := range []struct {
+		name, digest, want string
+	}{
+		{"v2", "", "a881274816058fa687133e1fe4b2043e0085fee3b34e7ad843a01f87d5a05424"},
+		{"v3", "abc", "1501dd9510106441a009f46ed0319dacde8f7ae6696607108fbe1995467d3df7"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := base
+			c.MeasurementsSHA256 = tc.digest
+			sum := sha256.Sum256(c.canonical())
+			if got := hex.EncodeToString(sum[:]); got != tc.want {
+				t.Fatalf("legacy %s canonical 漂移:%s != %s", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestV4BindsCandidateHealthAndAgentProtocolVersion(t *testing.T) {
+	ca := newCA(t)
+	key, crt := ca.issue(t, "gz02")
+	p50, p95, best, selectedKBps, bestKBps := 120, 190, 80, 300, 500
+	c := claim("gz02")
+	c.MeasurementsSHA256 = strings.Repeat("a", 64)
+	c.Agent = &AgentClaim{
+		Node: "gz02", TS: c.TS, ComponentVersion: "0.1.0",
+		Selections: []SelectionClaim{{
+			Declaration: "d", Selector: "svc:d", Candidate: "cand:d:gz02", UpdatedAt: c.TS,
+			Health: &CandidateHealthClaim{
+				Candidates: 3, RecentSuccess: 1, RecentDegraded: 1, RecentFailed: 1,
+				SelectedState: "degraded", SelectedSamples: 5, SelectedFailures: 2,
+				SelectedP50MS: &p50, SelectedP95MS: &p95, BestP50MS: &best,
+				SelectedKBps: &selectedKBps, BestKBps: &bestKBps,
+			},
+		}},
+	}
+	s, err := Sign(c, key, crt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.CanonicalVersion != 4 {
+		t.Fatalf("新扩展没有显式选择 v4:%d", s.CanonicalVersion)
+	}
+	if _, err := Verify(s, ca.certPEM); err != nil {
+		t.Fatalf("v4 自签名验不过:%v", err)
+	}
+
+	mutate := func(change func(*SelectionClaim, *AgentClaim)) *Signed {
+		bad := *s
+		a := *s.Agent
+		a.Selections = append([]SelectionClaim(nil), s.Agent.Selections...)
+		sel := a.Selections[0]
+		h := *sel.Health
+		sel.Health = &h
+		a.Selections[0] = sel
+		change(&a.Selections[0], &a)
+		bad.Agent = &a
+		return &bad
+	}
+	for _, tc := range []struct {
+		name string
+		mut  func(*SelectionClaim, *AgentClaim)
+	}{
+		{"候选计数", func(s *SelectionClaim, _ *AgentClaim) { s.Health.RecentFailed++ }},
+		{"候选延迟", func(s *SelectionClaim, _ *AgentClaim) { v := 1; s.Health.BestP50MS = &v }},
+		{"候选吞吐", func(s *SelectionClaim, _ *AgentClaim) { v := 1; s.Health.BestKBps = &v }},
+		{"Agent 组件版本", func(_ *SelectionClaim, a *AgentClaim) { a.ComponentVersion = "forged" }},
+	} {
+		if _, err := Verify(mutate(tc.mut), ca.certPEM); err == nil {
+			t.Errorf("relay 改写%s后仍验签成功", tc.name)
+		}
+	}
+}
+
+func TestV5BindsComponentVersions(t *testing.T) {
+	ca := newCA(t)
+	key, crt := ca.issue(t, "gz02")
+	c := claim("gz02")
+	c.MeasurementsSHA256 = strings.Repeat("b", 64)
+	c.Components = []ComponentClaim{
+		{Name: "wireguard", Expected: "1.0.20250521", Actual: "1.0.20210914"},
+		{Name: "sing-box", Expected: "1.11.4", Actual: "1.11.4"},
+	}
+	s, err := Sign(c, key, crt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.CanonicalVersion != 5 {
+		t.Fatalf("component claim canonical_version=%d, want 5", s.CanonicalVersion)
+	}
+	if _, err := Verify(s, ca.certPEM); err != nil {
+		t.Fatal(err)
+	}
+	s.Components[0].Actual = "1.0.20250521"
+	if _, err := Verify(s, ca.certPEM); err == nil || !strings.Contains(err.Error(), "签名对不上") {
+		t.Fatalf("component tamper still verified: %v", err)
 	}
 }
 

@@ -147,7 +147,7 @@ func Render(s *model.SSOT) (*Result, error) {
 		if decommissioned[n.ID] {
 			continue
 		}
-		if !n.IsAccess() && !(n.IsServer() && n.Server.InboundPort > 0) {
+		if !runsSingBox(n) {
 			continue
 		}
 		f, sk, err := renderSingBox(s, n)
@@ -186,6 +186,13 @@ func Render(s *model.SSOT) (*Result, error) {
 	}
 	sort.Slice(res.Skipped, func(i, j int) bool { return res.Skipped[i].Where < res.Skipped[j].Where })
 	return res, nil
+}
+
+// runsSingBox 是“这个节点是否实际得到 sing-box workload”的唯一判据。
+// report 的组件版本期望必须复用它；仅有 server 角色但 inbound_port=0 的
+// 隧道端点不会安装 sing-box，不能被版本检查误报为缺组件。
+func runsSingBox(n *model.Node) bool {
+	return n != nil && (n.IsAccess() || (n.IsServer() && n.Server.InboundPort > 0))
 }
 
 // Diff 逐文件比较两次渲染,返回人可读的变更摘要。

@@ -16,6 +16,10 @@
   "manifest": "/etc/loom/report/manifest.json",
   "handshake_stale": "5m",
   "agent_state": "/var/lib/loom/agent-state.json",
+  "expected_components": {
+    "sing_box": "1.11.4",
+    "agent": "0.1.0"
+  },
   "expected_nodes": [
     "ci-runner",
     "cn-bj",

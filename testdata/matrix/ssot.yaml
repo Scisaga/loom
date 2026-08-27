@@ -31,7 +31,7 @@ nodes:
       inbound_port: 443
       egress_capable: true
       wg_public_key: Y24tYmotdGVzdC1rZXkAAAAAAAAAAAAAAAAAAAAAAAA=
-      secret_generation: 3
+      secret_generation: 1
 
   - id: cn-sh
     city: 上海
@@ -198,17 +198,14 @@ declarations:
     min_samples: 6
     stale_after: 20m
 
-  # 地址从等价类里选 + 出口任选。带合规约束,因此 fallback 必须是
-  # fail_closed —— 候选集为空时任何自动回退都等于绕过约束(§5.8)。
+  # 地址从等价类里选 + 出口任选。当前上线形态只允许 fail_closed；
+  # constraints 尚未进入运行时，因此夹具不声明它。
   - id: llm-ttft
     name: 推理端点按首字延迟调度
     address_axis: class:llm:qwen3-32b-int8@openai-v1
     egress_axis: any
     objective: ttft
     probe_url: https://api.ipify.org
-    constraints:
-      - {kind: compliance, expr: 数据不出境}
-      - {kind: sla, expr: p95 < 200ms}
     allowed_servers: [cn-bj, cn-sh]
     max_hops: 1
     top_n: 2

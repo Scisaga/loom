@@ -272,6 +272,56 @@ func TestTopologyShowsKindsSourceAndObservationAge(t *testing.T) {
 	}
 }
 
+func TestOverviewShowsComponentDriftAndAgentCandidateHealth(t *testing.T) {
+	d := deps("", nil)
+	d.Snapshot = func() View {
+		return View{
+			Nodes: []NodeView{{
+				ID: "gz02", Health: "problem",
+				Components: []ComponentView{{
+					Name: "wireguard", Expected: "1.0.20250521", Actual: "1.0.20210914", OK: false,
+				}},
+			}},
+			Routes: []RouteView{{
+				Node: "jm24", Declaration: "best-egress", Chain: []string{"jm24", "gz02"},
+				ObservedAt: at.Format(time.RFC3339), Source: "签名转述",
+				Health: &CandidateHealthView{
+					Candidates: 4, RecentSuccess: 1, RecentDegraded: 1, RecentFailed: 1, Unknown: 1,
+					SelectedState: "degraded", SelectedMetrics: "p50 80ms · p95 190ms · 300 KB/s",
+					BestMetrics: "p50 60ms · 500 KB/s",
+				},
+			}},
+		}
+	}
+	body := get(t, Handler(d), "/", nil).Body.String()
+	for _, want := range []string{
+		"wireguard 1.0.20210914 / 期望 1.0.20250521",
+		"1 正常 · 1 波动 · 1 失败 · 0 过期 · 1 未知",
+		"当前候选 波动 · p50 80ms · p95 190ms · 300 KB/s",
+		"窗口最佳 p50 60ms · 500 KB/s",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("overview missing %q", want)
+		}
+	}
+}
+
+func TestOverviewShowsSelectedFailureWithoutMetrics(t *testing.T) {
+	d := deps("", nil)
+	d.Snapshot = func() View {
+		return View{Routes: []RouteView{{
+			Node: "jm24", Declaration: "d", Chain: []string{"jm24", "gz02"},
+			Health: &CandidateHealthView{
+				Candidates: 2, RecentFailed: 2, SelectedState: "failed",
+			},
+		}}}
+	}
+	body := get(t, Handler(d), "/", nil).Body.String()
+	if !strings.Contains(body, "当前候选 失败") {
+		t.Fatalf("没有指标的失败候选状态被隐藏:\n%s", body)
+	}
+}
+
 func TestDecommissionedRolloutIsSuccessfulTerminalState(t *testing.T) {
 	if got := rolloutCSS(&RolloutView{Stage: "decommissioned"}); got != "ok" {
 		t.Fatalf("decommissioned rollout rendered as %q, want ok", got)

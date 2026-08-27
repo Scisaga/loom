@@ -35,12 +35,13 @@ type Observation struct {
 	// 而"全网是不是同一版"恰恰要靠转述才能对够不到的节点回答。挂错地方的
 	// 表现是:界面上够得到的那台显示版本号,其余全是"(未记录)",于是
 	// 每次都报"全网不是同一个快照"。
-	Applied string              `json:"applied,omitempty"`
-	Version *version.Coordinate `json:"version,omitempty"`
-	Rollout *RolloutState       `json:"rollout,omitempty"`
-	Agent   *AgentState         `json:"agent,omitempty"`
-	Edges   []Edge              `json:"edges,omitempty"`
-	Targets []Reach             `json:"targets,omitempty"`
+	Applied    string              `json:"applied,omitempty"`
+	Version    *version.Coordinate `json:"version,omitempty"`
+	Rollout    *RolloutState       `json:"rollout,omitempty"`
+	Agent      *AgentState         `json:"agent,omitempty"`
+	Components []ComponentStatus   `json:"components,omitempty"`
+	Edges      []Edge              `json:"edges,omitempty"`
+	Targets    []Reach             `json:"targets,omitempty"`
 
 	// Attest 是这台机器对 node-owned state（身份、版本、Applied、rollout、
 	// Agent 实选）的签名陈述(D81)。
@@ -180,6 +181,7 @@ func observe(cfg *Config, h *history, now time.Time) *Observation {
 	if a, err := readAgentState(cfg.AgentState); err == nil && len(validateAgentState(a, cfg.Node, now)) == 0 {
 		o.Agent = a
 	}
+	o.Components = componentStatuses(cfg, o.Agent, now)
 	nb := append([]Neighbor(nil), cfg.Neighbors...)
 	sort.Slice(nb, func(i, j int) bool { return nb[i].Node < nb[j].Node })
 	for _, n := range nb {
@@ -319,15 +321,25 @@ func signSelf(o *Observation) *attest.Signed {
 		}
 	}
 	if o.Agent != nil {
-		ac := &attest.AgentClaim{Node: o.Agent.Node, TS: o.Agent.TS}
+		ac := &attest.AgentClaim{
+			Node: o.Agent.Node, TS: o.Agent.TS,
+			ComponentVersion: o.Agent.ComponentVersion,
+		}
 		for _, sel := range o.Agent.Selections {
 			ac.Selections = append(ac.Selections, attest.SelectionClaim{
 				Declaration: sel.Declaration, Selector: sel.Selector,
 				Candidate: sel.Candidate, Chain: append([]string(nil), sel.Chain...),
 				Reason: sel.Reason, UpdatedAt: sel.UpdatedAt,
+				Health: candidateHealthClaim(sel.Health),
 			})
 		}
 		c.Agent = ac
+	}
+	for _, component := range o.Components {
+		c.Components = append(c.Components, attest.ComponentClaim{
+			Name: component.Name, Expected: component.Expected,
+			Actual: component.Actual, Error: component.Error,
+		})
 	}
 	s, err := attest.Sign(c, key, crt)
 	if err != nil {

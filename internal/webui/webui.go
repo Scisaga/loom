@@ -138,6 +138,7 @@ type NodeView struct {
 	Version       *VersionView
 	Rollout       *RolloutView
 	Agent         *AgentView
+	Components    []ComponentView
 	IdentityError string
 	Tunnels       []TunnelView
 	Targets       []TargetView
@@ -145,6 +146,11 @@ type NodeView struct {
 	Rotating []string
 	Edges    []EdgeView
 	Problems []string
+}
+
+type ComponentView struct {
+	Name, Expected, Actual, Error string
+	OK                            bool
 }
 
 type VersionView struct {
@@ -182,6 +188,12 @@ type RouteView struct {
 	ObservedAt                                     string
 	Source                                         string
 	Stale                                          bool
+	Health                                         *CandidateHealthView
+}
+
+type CandidateHealthView struct {
+	Candidates, RecentSuccess, RecentDegraded, RecentFailed, Stale, Unknown int
+	SelectedState, SelectedMetrics, BestMetrics                             string
 }
 
 // CandidatePathView 是 SSOT 业务候选路径，不是常驻隧道健康。State 为

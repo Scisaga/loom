@@ -153,14 +153,16 @@ func (n *Node) IsAccess() bool { return n.Access != nil }
 
 // ComponentVersions 是节点上各组件的版本(§15.4)。
 //
-// **版本是期望态的一部分,并入同一条收敛回路。** 版本必须显式钉住,
-// 永不使用 latest —— 自动的是下载,不是升级决策;上游一次不兼容发布可以
-// 在一个轮询周期内打挂全部节点。
+// **版本是期望态的一部分。** 版本必须显式钉住,永不使用 latest。
+// 当前 renderer/report 会把期望值下发并核对实际安装值；除 Loom 自身二进制
+// 外，系统尚不负责下载这些组件。这里不能声称“写了版本就会自动升级”。
 type ComponentVersions struct {
 	SingBox   string `yaml:"sing_box,omitempty"`
 	WireGuard string `yaml:"wireguard,omitempty"`
 	Tailscale string `yaml:"tailscale,omitempty"`
-	Agent     string `yaml:"agent,omitempty"`
+	// Agent 是 Agent 状态/控制回路协议版本；Agent 与 CLI 共用 Loom 二进制，
+	// 后者的制品身份另由 commit + binary SHA-256 核对。
+	Agent string `yaml:"agent,omitempty"`
 }
 
 // SSOTDefaults 是全网默认值。
@@ -351,7 +353,8 @@ type SSOT struct {
 	Credentials  []Credential        `yaml:"credentials,omitempty"`
 }
 
-// AccessNodes 返回全部接入节点,按 id 排序。
+// AccessNodes 返回全部接入节点，保持 SSOT 中的声明顺序。需要稳定 id 顺序的
+// renderer 应在自己的输出边界排序，不能依赖这里悄悄重排源数据。
 func (s *SSOT) AccessNodes() []*Node {
 	var out []*Node
 	for i := range s.Nodes {

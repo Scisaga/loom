@@ -120,6 +120,19 @@ func renderReport(s *model.SSOT, n *model.Node) ([]File, []Skip) {
 		// 约 180 秒。5 分钟留足余量,又能在一个 Agent 周期内发现真断连。
 		HandshakeStale: "5m",
 	}
+	versions := s.VersionsFor(n)
+	if runsSingBox(n) {
+		cfg.ExpectedComponents.SingBox = versions.SingBox
+	}
+	if len(ifaces) > 0 {
+		cfg.ExpectedComponents.WireGuard = versions.WireGuard
+	}
+	// components.tailscale 只有版本坐标，没有“该节点启用 Tailscale”的真值；
+	// 版本字段不能冒充 workload activation。校验器会拒绝非空值，直到模型
+	// 有明确启用语义。
+	if runsAgent(s, n) {
+		cfg.ExpectedComponents.Agent = versions.Agent
+	}
 	for i := range s.Nodes {
 		cfg.ExpectedNodes = append(cfg.ExpectedNodes, s.Nodes[i].ID)
 	}
@@ -134,7 +147,7 @@ func renderReport(s *model.SSOT, n *model.Node) ([]File, []Skip) {
 		b := cfg.ExpectedTunnels[j].From + "\x00" + cfg.ExpectedTunnels[j].To
 		return a < b
 	})
-	if n.IsAccess() {
+	if runsAgent(s, n) {
 		cfg.AgentState = "/var/lib/loom/agent-state.json"
 	}
 	for _, access := range s.AccessNodes() {
@@ -153,6 +166,14 @@ func renderReport(s *model.SSOT, n *model.Node) ([]File, []Skip) {
 		{Path: "report/config.json", Content: string(b) + "\n"},
 		{Path: "systemd/loom-report.service", Content: fmt.Sprintf(reportUnit, n.ID, after)},
 	}, skips
+}
+
+func runsAgent(s *model.SSOT, n *model.Node) bool {
+	if n == nil || !n.IsAccess() {
+		return false
+	}
+	decls, _ := renderAgentDeclarations(s, n)
+	return len(decls) > 0
 }
 
 // expectedReportRoutes 把真实的 RouteCandidate.ServerChain 降成不含地址和

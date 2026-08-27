@@ -63,6 +63,42 @@ func TestEveryTunneledNodeGetsAReporter(t *testing.T) {
 	}
 }
 
+func TestReporterCarriesRoleScopedComponentExpectations(t *testing.T) {
+	s := load(t)
+	res, err := Render(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for owner, cfg := range reportConfigs(t, res) {
+		n := s.NodeByID()[owner]
+		want := s.VersionsFor(n)
+		if runsSingBox(n) && cfg.ExpectedComponents.SingBox != want.SingBox {
+			t.Errorf("%s sing-box expectation=%q, want %q", owner, cfg.ExpectedComponents.SingBox, want.SingBox)
+		}
+		if len(cfg.Interfaces) > 0 && cfg.ExpectedComponents.WireGuard != want.WireGuard {
+			t.Errorf("%s wireguard expectation=%q, want %q", owner, cfg.ExpectedComponents.WireGuard, want.WireGuard)
+		}
+		if runsAgent(s, n) {
+			if cfg.ExpectedComponents.Agent != want.Agent {
+				t.Errorf("%s agent expectation=%q, want %q", owner, cfg.ExpectedComponents.Agent, want.Agent)
+			}
+		} else if cfg.ExpectedComponents.Agent != "" {
+			t.Errorf("server-only %s unexpectedly probes agent version %q", owner, cfg.ExpectedComponents.Agent)
+		}
+	}
+}
+
+func TestWorkloadPredicatesDoNotTreatRolesAsRunningProcesses(t *testing.T) {
+	tunnelOnly := &model.Node{Server: &model.ServerRole{}}
+	if runsSingBox(tunnelOnly) {
+		t.Fatal("server role without inbound_port was treated as a sing-box workload")
+	}
+	accessWithoutDeclarations := &model.Node{ID: "access", Access: &model.AccessRole{}}
+	if runsAgent(&model.SSOT{Nodes: []model.Node{*accessWithoutDeclarations}}, accessWithoutDeclarations) {
+		t.Fatal("access role without tunable declarations was treated as a running Agent")
+	}
+}
+
 // 监听地址必须全是隧道内地址。渲染出一个公网地址不会有任何症状 ——
 // 拓扑就那么静静地暴露着。
 func TestReporterListensOnlyOnTunnelAddresses(t *testing.T) {

@@ -1,6 +1,7 @@
 package validate
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -448,5 +449,54 @@ nodes:
 	}
 	if !strings.Contains(first, "a:") || !strings.Contains(first, "z:") {
 		t.Errorf("发现未按节点排序:\n%s", first)
+	}
+}
+
+// TestSecretGenerationFailClosed 钉住秘密层代次的最小可兑现边界。
+// 0 是未声明的旧配置，1 是首代基线；轮换代次还没有部署/核验链，不能假生效。
+func TestSecretGenerationFailClosed(t *testing.T) {
+	for _, tc := range []struct {
+		generation int
+		wantReject bool
+	}{
+		{generation: 0},
+		{generation: 1},
+		{generation: -1, wantReject: true},
+		{generation: 2, wantReject: true},
+	} {
+		t.Run(fmt.Sprintf("generation_%d", tc.generation), func(t *testing.T) {
+			src := fmt.Sprintf(`
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
+nodes:
+  - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k1, secret_generation: %d}}
+`, tc.generation)
+			s, err := model.Load([]byte(src))
+			if err != nil {
+				t.Fatal(err)
+			}
+			gotReject := strings.Contains(Format(Validate(s)), "secret_generation")
+			if gotReject != tc.wantReject {
+				t.Errorf("secret_generation=%d: reject=%v, 期望 %v\n%s",
+					tc.generation, gotReject, tc.wantReject, Format(Validate(s)))
+			}
+		})
+	}
+}
+
+func TestTailscaleVersionCannotActivateAnUnimplementedWorkload(t *testing.T) {
+	src := `
+defaults:
+  dns: [223.5.5.5]
+  components: {sing_box: 1, wireguard: 1, tailscale: 1.80.0, agent: 1}
+nodes:
+  - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k1}}
+`
+	s, err := model.Load([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := Format(Validate(s))
+	if !strings.Contains(got, "版本字段冒充已启用能力") {
+		t.Fatalf("components.tailscale 未被 fail-closed 拒绝:\n%s", got)
 	}
 }

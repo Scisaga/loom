@@ -414,6 +414,24 @@ func problemLines(st *report.Status) []string {
 			out = append(out, "⚠️ 配置读不到:"+f)
 		}
 	}
+	for _, c := range st.Components {
+		if c.OK() {
+			continue
+		}
+		if c.Error != "" {
+			out = append(out, fmt.Sprintf("⚠️ 组件 %s 无法核对:%s（期望 %s）", c.Name, c.Error, c.Expected))
+			continue
+		}
+		out = append(out, fmt.Sprintf("⚠️ 组件 %s 版本漂移:实际 %s，期望 %s", c.Name, c.Actual, c.Expected))
+	}
+	if st.Agent != nil {
+		for _, sel := range st.Agent.Selections {
+			h := sel.Health
+			if h != nil && h.Candidates > 0 && h.RecentFailed == h.Candidates {
+				out = append(out, fmt.Sprintf("⚠️ Agent %s 的 %d 个候选近期全部失败", sel.Declaration, h.Candidates))
+			}
+		}
+	}
 	for _, e := range st.Errors {
 		out = append(out, "⚠️ 采集错误:"+e)
 	}
@@ -838,6 +856,29 @@ func foldAttested(obs map[string]report.Observation, snaps map[string]string,
 		vcs[id] = trusted.Version
 		if trusted.Rollout != nil {
 			rolls[id] = trusted.Rollout
+		}
+		for _, c := range trusted.Components {
+			if c.OK() {
+				continue
+			}
+			if c.Error != "" {
+				fmt.Printf("  ⚠️ %s 组件 %s 无法核对:%s（期望 %s）\n",
+					id, c.Name, c.Error, c.Expected)
+			} else {
+				fmt.Printf("  ⚠️ %s 组件 %s 版本漂移:实际 %s，期望 %s\n",
+					id, c.Name, c.Actual, c.Expected)
+			}
+			bad++
+		}
+		if trusted.Agent != nil {
+			for _, selection := range trusted.Agent.Selections {
+				h := selection.Health
+				if h != nil && h.Candidates > 0 && h.RecentFailed == h.Candidates {
+					fmt.Printf("  ⚠️ %s Agent %s 的 %d 个候选近期全部失败\n",
+						id, selection.Declaration, h.Candidates)
+					bad++
+				}
+			}
 		}
 		answered[id] = true
 	}

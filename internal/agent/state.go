@@ -8,6 +8,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"loom/internal/version"
 )
 
 // StatePath 是 Agent 对外留下“selector 现在实际选了谁”的地方。
@@ -17,9 +19,12 @@ const StatePath = "/var/lib/loom/agent-state.json"
 // State 是一次完整的 Agent 选择快照。整份原子覆盖，读取方不会看到五条声明
 // 只写到一半的状态。
 type State struct {
-	Node       string      `json:"node"`
-	TS         string      `json:"ts"`
-	Selections []Selection `json:"selections"`
+	Node string `json:"node"`
+	TS   string `json:"ts"`
+	// ComponentVersion 是历史线格式名，值实际表示 agent-state 协议版本；
+	// 运行中二进制的构建身份必须另看 node-owned version.Coordinate。
+	ComponentVersion string      `json:"component_version,omitempty"`
+	Selections       []Selection `json:"selections"`
 }
 
 // Selection 来自 sing-box selector 的 GET 结果，不是 Agent 根据事件推断的值。
@@ -30,6 +35,39 @@ type Selection struct {
 	Chain       []string `json:"chain,omitempty"`
 	Reason      string   `json:"reason,omitempty"`
 	UpdatedAt   string   `json:"updated_at"`
+
+	// Health 是与本次 selector 实读同一轮得到的候选集摘要。它是可选字段，
+	// 让旧版 agent-state.json 在滚动升级期间仍可读取；缺失只表示旧格式或
+	// 尚未完成第一轮探测，绝不能被解释成健康。
+	Health *CandidateHealth `json:"health,omitempty"`
+}
+
+// CandidateHealth 按 declaration 汇总当前窗口内的候选健康。
+//
+// 五个分类互斥且之和必须等于 Candidates：
+//
+//   - recent_success：窗口内有成功样本且没有失败；
+//   - recent_degraded：窗口内既有成功也有失败；
+//   - recent_failed：窗口内只有失败；
+//   - stale：以前量过，但当前窗口/新鲜度规则已不再接受；
+//   - unknown：在本机保留的度量里从未见过。
+//
+// 延迟使用指针区分“真实的 0ms”与“没有可用样本”。
+type CandidateHealth struct {
+	Candidates       int    `json:"candidates"`
+	RecentSuccess    int    `json:"recent_success"`
+	RecentDegraded   int    `json:"recent_degraded,omitempty"`
+	RecentFailed     int    `json:"recent_failed"`
+	Stale            int    `json:"stale"`
+	Unknown          int    `json:"unknown"`
+	SelectedState    string `json:"selected_state"`
+	SelectedSamples  int    `json:"selected_samples,omitempty"`
+	SelectedFailures int    `json:"selected_failures,omitempty"`
+	SelectedP50MS    *int   `json:"selected_p50_ms,omitempty"`
+	SelectedP95MS    *int   `json:"selected_p95_ms,omitempty"`
+	BestP50MS        *int   `json:"best_p50_ms,omitempty"`
+	SelectedKBps     *int   `json:"selected_kbps,omitempty"`
+	BestKBps         *int   `json:"best_kbps,omitempty"`
 }
 
 // ReadState 读取 Agent 状态；不存在表示这台机器没有 Agent（服务器节点的
@@ -92,16 +130,42 @@ func (s *stateStore) observe(v Selection, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	v.Chain = append([]string(nil), v.Chain...)
+	v.Health = cloneCandidateHealth(v.Health)
 	v.UpdatedAt = now.UTC().Format(time.RFC3339)
 	s.byID[v.Declaration] = v
 	return s.writeLocked(now)
+}
+
+func cloneCandidateHealth(h *CandidateHealth) *CandidateHealth {
+	if h == nil {
+		return nil
+	}
+	cp := *h
+	cloneInt := func(v *int) *int {
+		if v == nil {
+			return nil
+		}
+		x := *v
+		return &x
+	}
+	cp.SelectedP50MS = cloneInt(h.SelectedP50MS)
+	cp.SelectedP95MS = cloneInt(h.SelectedP95MS)
+	cp.BestP50MS = cloneInt(h.BestP50MS)
+	cp.SelectedKBps = cloneInt(h.SelectedKBps)
+	cp.BestKBps = cloneInt(h.BestKBps)
+	return &cp
 }
 
 func (s *stateStore) writeLocked(now time.Time) error {
 	if s == nil || s.path == "" {
 		return nil
 	}
-	st := State{Node: s.node, TS: now.UTC().Format(time.RFC3339)}
+	// 必须由 Agent 进程自己写。report 与 Agent 虽共用同一二进制，但让 report
+	// 用自己的常量代填，会把“report 是新版”冒充成“Agent 正在跑新版”。
+	st := State{
+		Node: s.node, TS: now.UTC().Format(time.RFC3339),
+		ComponentVersion: version.AgentProtocolVersion,
+	}
 	for _, x := range s.byID {
 		st.Selections = append(st.Selections, x)
 	}

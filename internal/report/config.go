@@ -74,6 +74,11 @@ type Config struct {
 	// Collect 不得去读进程机器上的默认路径（测试和服务器都靠这条隔离）。
 	AgentState string `json:"agent_state,omitempty"`
 
+	// ExpectedComponents 是 renderer 从 SSOT 按本节点实际角色裁出的版本期望。
+	// 上报者必须读取机器上的真实版本并并排上报，不能把 manifest 里写了版本
+	// 当成机器已经安装了该版本。
+	ExpectedComponents ComponentVersions `json:"expected_components,omitempty"`
+
 	// ExpectedNodes / ExpectedTunnels 是不含地址和秘密的 SSOT 拓扑底图。
 	// 完全失联的节点不会出现在 gossip 里，但仍必须在中控图上以 unknown
 	// 留着，不能把“没听见”画成“已不存在”。

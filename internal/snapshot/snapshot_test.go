@@ -221,7 +221,7 @@ func TestFreezesVersionsAndSecrets(t *testing.T) {
 	}
 	found := false
 	for _, sr := range m.SecretGenerations {
-		if sr.Node == "cn-bj" && sr.Generation == 3 {
+		if sr.Node == "cn-bj" && sr.Generation == 1 {
 			found = true
 		}
 	}

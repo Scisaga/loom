@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"loom/internal/version"
 )
 
 func TestConfiguredChainTreatsTagAsOpaque(t *testing.T) {
@@ -35,7 +37,14 @@ func TestStateStoreWritesCompleteSortedSnapshot(t *testing.T) {
 	if err := s.observe(Selection{Declaration: "z", Selector: "svc:z", Candidate: "opaque-z", Chain: []string{"gz02", "sg02"}}, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.observe(Selection{Declaration: "a", Selector: "svc:a", Candidate: "opaque-a"}, now.Add(time.Second)); err != nil {
+	p50, p95 := 17, 31
+	if err := s.observe(Selection{
+		Declaration: "a", Selector: "svc:a", Candidate: "opaque-a",
+		Health: &CandidateHealth{
+			Candidates: 1, RecentSuccess: 1, SelectedState: healthSuccess,
+			SelectedSamples: 4, SelectedP50MS: &p50, SelectedP95MS: &p95, BestP50MS: &p50,
+		},
+	}, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	st, err := ReadState(p)
@@ -45,11 +54,18 @@ func TestStateStoreWritesCompleteSortedSnapshot(t *testing.T) {
 	if st.Node != "jm24" || st.TS != "2026-08-26T12:00:01Z" || len(st.Selections) != 2 {
 		t.Fatalf("状态不完整:%+v", st)
 	}
+	if st.ComponentVersion != version.AgentProtocolVersion {
+		t.Fatalf("Agent 没有自证 component_version:%q", st.ComponentVersion)
+	}
 	if st.Selections[0].Declaration != "a" || !reflect.DeepEqual(st.Selections[1].Chain, []string{"gz02", "sg02"}) {
 		t.Fatalf("声明未稳定排序或路径没解析:%+v", st.Selections)
 	}
 	if st.Selections[0].UpdatedAt != "2026-08-26T12:00:01Z" || st.Selections[1].UpdatedAt != "2026-08-26T12:00:00Z" {
 		t.Fatalf("每条选择没有自己的观测时间:%+v", st.Selections)
+	}
+	if h := st.Selections[0].Health; h == nil || h.Candidates != 1 ||
+		intValue(h.SelectedP50MS) != 17 || intValue(h.SelectedP95MS) != 31 {
+		t.Fatalf("候选健康没有写入 agent-state:%+v", h)
 	}
 	if _, err := os.Stat(p + ".tmp"); !os.IsNotExist(err) {
 		t.Error("临时文件未被 rename")

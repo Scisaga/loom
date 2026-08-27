@@ -87,8 +87,8 @@ declarations:
   - {id: d1, address_axis: "class:c1", egress_axis: any, objective: cost, top_n: 2, tuning_period: 10m}`,
 		},
 		{
-			name: "§5.8 有合规约束但 fallback 不是 fail_closed",
-			want: "等于绕过它",
+			name: "§5.8 非 fail_closed fallback 当前不会执行",
+			want: "fallback=\"last_known_good\" 当前运行时未实现",
 			yaml: topo + `
 declarations:
   - id: d1
@@ -96,7 +96,19 @@ declarations:
     egress_axis: any
     objective: stability
     tuning_period: 10m
-    fallback: last_known_good
+    fallback: last_known_good`,
+		},
+		{
+			name: "§5.1 constraints 当前不会执行",
+			want: "当前运行时未实现候选过滤",
+			yaml: topo + `
+declarations:
+  - id: d1
+    address_axis: from_request
+    egress_axis: any
+    objective: stability
+    tuning_period: 10m
+    fallback: fail_closed
     constraints:
       - {kind: compliance, expr: 数据不出省}`,
 		},
@@ -194,6 +206,15 @@ declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
 credentials:
   - {id: cr1, declaration: d1, secret_ref: v, revoked_at: "2026-01-01T00:00:00Z"}`,
+		},
+		{
+			name: "§18 expires_at 当前不会执行",
+			want: "当前运行时未实现按时移除凭据",
+			yaml: topo + `
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
+credentials:
+  - {id: cr1, declaration: d1, secret_ref: v, expires_at: "2026-09-01T00:00:00Z"}`,
 		},
 		{
 			name: "§8.2 凭据未绑定访问声明",

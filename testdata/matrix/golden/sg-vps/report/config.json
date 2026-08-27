@@ -42,6 +42,10 @@
   "observation_stale": "10m",
   "manifest": "/etc/loom/report/manifest.json",
   "handshake_stale": "5m",
+  "expected_components": {
+    "sing_box": "1.11.4",
+    "wireguard": "1.0.20250521"
+  },
   "expected_nodes": [
     "ci-runner",
     "cn-bj",

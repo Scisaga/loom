@@ -361,6 +361,18 @@ func pageOverview(d Deps, isAuthed bool) string {
 			cls := rolloutCSS(n.Rollout)
 			fmt.Fprintf(&b, `<div class="tiny %s">rollout %s · %s</div>`, cls, esc(n.Rollout.Stage), esc(short(n.Rollout.Snapshot)))
 		}
+		for _, c := range n.Components {
+			cls := "ok"
+			actual := c.Actual
+			if !c.OK {
+				cls = "bad"
+				if c.Error != "" {
+					actual = "无法核对"
+				}
+			}
+			fmt.Fprintf(&b, `<div class="tiny %s clip">%s %s / 期望 %s</div>`,
+				cls, esc(c.Name), esc(actual), esc(c.Expected))
+		}
 		var tl []string
 		for _, t := range n.Tunnels {
 			cls := "ok"
@@ -433,7 +445,7 @@ func pageOverview(d Deps, isAuthed bool) string {
 	if len(v.Routes) == 0 {
 		b.WriteString(`<div class=empty>没有可验证的 Agent 当前选路数据；不会用历史事件冒充现状。</div>`)
 	} else {
-		b.WriteString(`<table><tr><th>节点<th>声明<th>当前路径<th>更新时间 / 来源<th>理由</tr>`)
+		b.WriteString(`<table><tr><th>节点<th>声明<th>当前路径<th>候选健康<th>更新时间 / 来源<th>理由</tr>`)
 		for _, r := range v.Routes {
 			path := strings.Join(r.Chain, " → ")
 			if len(r.Chain) <= 1 {
@@ -443,8 +455,44 @@ func pageOverview(d Deps, isAuthed bool) string {
 			if r.Stale {
 				cls = "warn"
 			}
-			fmt.Fprintf(&b, `<tr><td>%s<td>%s<td class="w mono %s">%s<td class=w>%s<br><span class="tiny dim">%s</span><td class=w>%s</tr>`,
-				esc(r.Node), esc(r.Declaration), cls, esc(path), esc(ageText(r.ObservedAt, now)), esc(r.Source), esc(r.Reason))
+			health := `<span class=warn>未上报（旧 Agent）</span>`
+			if h := r.Health; h != nil {
+				hcls := "ok"
+				if h.RecentSuccess+h.RecentDegraded == 0 {
+					hcls = "warn"
+				}
+				if h.Candidates > 0 && h.RecentFailed == h.Candidates {
+					hcls = "bad"
+				}
+				health = fmt.Sprintf(`<span class=%s>%d 正常 · %d 波动 · %d 失败 · %d 过期 · %d 未知</span>`,
+					hcls, h.RecentSuccess, h.RecentDegraded, h.RecentFailed, h.Stale, h.Unknown)
+				if h.SelectedState != "" {
+					stateClass, stateLabel := "warn", h.SelectedState
+					switch h.SelectedState {
+					case "success":
+						stateClass, stateLabel = "ok", "正常"
+					case "degraded":
+						stateLabel = "波动"
+					case "failed":
+						stateClass, stateLabel = "bad", "失败"
+					case "stale":
+						stateLabel = "过期"
+					case "unknown":
+						stateLabel = "未知"
+					}
+					detail := "当前候选 " + stateLabel
+					if h.SelectedMetrics != "" {
+						detail += " · " + h.SelectedMetrics
+					}
+					health += `<br><span class="tiny ` + stateClass + `">` + esc(detail) + `</span>`
+				}
+				if h.BestMetrics != "" {
+					health += `<br><span class="tiny dim">窗口最佳 ` + esc(h.BestMetrics) + `</span>`
+				}
+			}
+			fmt.Fprintf(&b, `<tr><td>%s<td>%s<td class="w mono %s">%s<td class=w>%s<td class=w>%s<br><span class="tiny dim">%s</span><td class=w>%s</tr>`,
+				esc(r.Node), esc(r.Declaration), cls, esc(path), health,
+				esc(ageText(r.ObservedAt, now)), esc(r.Source), esc(r.Reason))
 		}
 		b.WriteString(`</table>`)
 	}

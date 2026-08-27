@@ -28,3 +28,52 @@ func TestAgentStateValidationAcceptsFreshSelectorRead(t *testing.T) {
 		t.Fatalf("新鲜状态被误拒:%v", got)
 	}
 }
+
+func TestAgentStateValidationAcceptsCandidateHealthAndOldFormat(t *testing.T) {
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	p50, p95, best, selectedKBps, bestKBps := 120, 190, 80, 300, 500
+	st := &AgentState{
+		Node: "jm24", TS: now.Format(time.RFC3339), ComponentVersion: "0.1.0",
+		Selections: []AgentSelection{{
+			Declaration: "d", Selector: "svc:d", Candidate: "cand:d:gz02",
+			UpdatedAt: now.Format(time.RFC3339), Health: &AgentCandidateHealth{
+				Candidates: 4, RecentSuccess: 1, RecentDegraded: 1,
+				RecentFailed: 1, Stale: 1, SelectedState: "degraded",
+				SelectedSamples: 5, SelectedFailures: 2,
+				SelectedP50MS: &p50, SelectedP95MS: &p95, BestP50MS: &best,
+				SelectedKBps: &selectedKBps, BestKBps: &bestKBps,
+			},
+		}},
+	}
+	if got := validateAgentState(st, "jm24", now); len(got) != 0 {
+		t.Fatalf("合法候选健康被误拒:%v", got)
+	}
+
+	// Health/component_version 都是新增可选字段；旧 Agent 状态不能在滚动升级
+	// 期间被当成格式损坏，但调用方也不能把缺失解释为健康。
+	st.ComponentVersion = ""
+	st.Selections[0].Health = nil
+	if got := validateAgentState(st, "jm24", now); len(got) != 0 {
+		t.Fatalf("旧格式状态不再兼容:%v", got)
+	}
+}
+
+func TestAgentStateValidationRejectsImpossibleCandidateHealth(t *testing.T) {
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	p50, p95, selectedKBps, bestKBps := 200, 100, 300, 200
+	st := &AgentState{Node: "jm24", TS: now.Format(time.RFC3339), Selections: []AgentSelection{{
+		Declaration: "d", Selector: "svc:d", Candidate: "cand:d:gz02",
+		UpdatedAt: now.Format(time.RFC3339), Health: &AgentCandidateHealth{
+			Candidates: 2, RecentSuccess: 2, RecentFailed: 1,
+			SelectedState: "success", SelectedSamples: 1, SelectedFailures: 1,
+			SelectedP50MS: &p50, SelectedP95MS: &p95,
+			SelectedKBps: &selectedKBps, BestKBps: &bestKBps,
+		},
+	}}}
+	got := strings.Join(validateAgentState(st, "jm24", now), "\n")
+	for _, want := range []string{"五类计数", "p95", "best_p50", "best_kbps", "selected_state=success"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("没有拒绝 %s 矛盾:%s", want, got)
+		}
+	}
+}

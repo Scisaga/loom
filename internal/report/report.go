@@ -56,6 +56,10 @@ type Status struct {
 	// 没有 Agent，字段为空是正常形态。
 	Agent *AgentState `json:"agent,omitempty"`
 
+	// Components 是节点实际执行版本命令得到的结果，并与渲染配置中的期望
+	// 并排保存。manifest 里的期望值本身不能证明机器已经安装了该版本。
+	Components []ComponentStatus `json:"components,omitempty"`
+
 	// Publisher 只在中控节点出现，与 /status 和 HTML 同源。
 	Publisher *PublisherState `json:"publisher,omitempty"`
 
@@ -140,6 +144,21 @@ func (s *Status) OKAt(now time.Time) bool {
 			return false
 		}
 	}
+	for i := range s.Components {
+		if !s.Components[i].OK() {
+			return false
+		}
+	}
+	if s.Agent != nil {
+		for i := range s.Agent.Selections {
+			h := s.Agent.Selections[i].Health
+			// 只有“所有候选近期都明确失败”才把节点判红。全 unknown/stale
+			// 表示证据不足，由界面显示未知，不能冒充已确认故障。
+			if h != nil && h.Candidates > 0 && h.RecentFailed == h.Candidates {
+				return false
+			}
+		}
+	}
 	for i := range s.Tunnels {
 		t := &s.Tunnels[i]
 		if t.Down || t.Stale || t.HandshakeAgeSec < 0 {
@@ -181,18 +200,42 @@ type RolloutState struct {
 // AgentState / AgentSelection 是转述用的实际选路状态。TS 是 Agent 最后一次
 // 成功读取 selector 的时间，不是 report 转述它的时间。
 type AgentState struct {
-	Node       string           `json:"node"`
-	TS         string           `json:"ts"`
-	Selections []AgentSelection `json:"selections"`
+	Node string `json:"node"`
+	TS   string `json:"ts"`
+	// ComponentVersion 保留既有 JSON 名称，承载的是 Agent 线协议版本；
+	// 它不能替代运行中 Agent 进程的 commit/binary 构建坐标。
+	ComponentVersion string           `json:"component_version,omitempty"`
+	Selections       []AgentSelection `json:"selections"`
 }
 
 type AgentSelection struct {
-	Declaration string   `json:"declaration"`
-	Selector    string   `json:"selector"`
-	Candidate   string   `json:"candidate"`
-	Chain       []string `json:"chain,omitempty"`
-	Reason      string   `json:"reason,omitempty"`
-	UpdatedAt   string   `json:"updated_at"`
+	Declaration string                `json:"declaration"`
+	Selector    string                `json:"selector"`
+	Candidate   string                `json:"candidate"`
+	Chain       []string              `json:"chain,omitempty"`
+	Reason      string                `json:"reason,omitempty"`
+	UpdatedAt   string                `json:"updated_at"`
+	Health      *AgentCandidateHealth `json:"health,omitempty"`
+}
+
+// AgentCandidateHealth 与 internal/agent.CandidateHealth 共用线格式。
+// report 不能 import agent（agent 已经依赖 report），因此在边界处显式镜像。
+// 字段可选以兼容尚未完成滚动升级的旧 Agent。
+type AgentCandidateHealth struct {
+	Candidates       int    `json:"candidates"`
+	RecentSuccess    int    `json:"recent_success"`
+	RecentDegraded   int    `json:"recent_degraded,omitempty"`
+	RecentFailed     int    `json:"recent_failed"`
+	Stale            int    `json:"stale"`
+	Unknown          int    `json:"unknown"`
+	SelectedState    string `json:"selected_state"`
+	SelectedSamples  int    `json:"selected_samples,omitempty"`
+	SelectedFailures int    `json:"selected_failures,omitempty"`
+	SelectedP50MS    *int   `json:"selected_p50_ms,omitempty"`
+	SelectedP95MS    *int   `json:"selected_p95_ms,omitempty"`
+	BestP50MS        *int   `json:"best_p50_ms,omitempty"`
+	SelectedKBps     *int   `json:"selected_kbps,omitempty"`
+	BestKBps         *int   `json:"best_kbps,omitempty"`
 }
 
 // InFlight 说这次 rollout 还没走完。Verified / Decommissioned / Failed
@@ -238,6 +281,7 @@ func Collect(cfg *Config, now time.Time) *Status {
 		st.Agent = a
 		st.Errors = append(st.Errors, validateAgentState(a, cfg.Node, now)...)
 	}
+	st.Components = componentStatuses(cfg, st.Agent, now)
 	if cfg.PublisherHealth != "" {
 		if h, err := readPublisherState(cfg.PublisherHealth); err != nil {
 			st.Errors = append(st.Errors, "读发布器状态:"+err.Error())

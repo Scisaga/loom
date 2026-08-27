@@ -44,6 +44,11 @@ func TestOKCoversEveryFailureKind(t *testing.T) {
 		"rollout 失败":   {Rollout: &RolloutState{Stage: string(rollout.Failed)}},
 		"rollout 卡住":   {Rollout: &RolloutState{Stage: string(rollout.Activating), EnteredAt: "2026-08-26T10:00:00Z"}},
 		"rollout 时间损坏": {Rollout: &RolloutState{Stage: string(rollout.Activating), EnteredAt: "坏时间"}},
+		"组件版本漂移":       {Components: []ComponentStatus{{Name: "wireguard", Expected: "2", Actual: "1"}}},
+		"组件版本无法读取":     {Components: []ComponentStatus{{Name: "wireguard", Expected: "2", Error: "命令不存在"}}},
+		"Agent 所有候选失败": {Agent: &AgentState{Selections: []AgentSelection{{
+			Declaration: "d", Health: &AgentCandidateHealth{Candidates: 2, RecentFailed: 2, SelectedState: "failed"},
+		}}}},
 	}
 	for name, st := range cases {
 		if st.OKAt(time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)) {
