@@ -24,6 +24,15 @@ func TestObservationSourcesRequireAttestationCA(t *testing.T) {
 	}
 }
 
+func TestAttestationUpgradeGateRejectsUnknownVersion(t *testing.T) {
+	if _, err := Load([]byte(`{"node":"n","attestation_min_version":4}`)); err == nil {
+		t.Fatal("未知 attestation_min_version 被 Agent 接受")
+	}
+	if cfg, err := Load([]byte(`{"node":"n","attestation_min_version":5}`)); err != nil || cfg.AttestationMinVersion != 5 {
+		t.Fatalf("phase-B attestation 门禁无法加载:cfg=%+v err=%v", cfg, err)
+	}
+}
+
 func TestSelfReportMustBeLiteralLoopback(t *testing.T) {
 	base := `{"node":"n","api":"a","api_secret":"s","probe":"p","probe_secret":"s","attestation_ca":"/ca","self_report":"%s","declarations":[{"id":"d","selector":"s","objective":"latency","targets":["https://t/"],"tuning_period":"1m","switch_threshold":0.2,"window":"5m","min_samples":1,"stale_after":"5m","candidates":[{"tag":"c","probe_user":"u"}]}]}`
 	for _, addr := range []string{"10.0.0.1:61802", "localhost:61802", "127.0.0.1", "example.test:61802"} {

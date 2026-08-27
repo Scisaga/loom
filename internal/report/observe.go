@@ -225,7 +225,7 @@ func observe(cfg *Config, h *history, now time.Time) *Observation {
 	// 必须在 Edges/Targets 全部采完之后签。v3 同时绑定测量 payload；在
 	// 采集前签会留下一个 relay 可改写、却看似有合法身份签名的缺口。
 	// 签不了不是错误 —— 中控只有 ca.crt,没有自己的私钥。
-	o.Attest, o.AttestExtended = signSelf(o)
+	o.Attest, o.AttestExtended = signSelf(o, cfg.AttestationMinVersion)
 	return o
 }
 
@@ -299,10 +299,10 @@ const (
 // signSelf 给本节点拥有的运行态签名：身份、版本坐标、已应用快照、
 // rollout 阶段、Agent 从 selector 实读的当前选择，以及本轮链路观测摘要。
 //
-// **签不了就返回 nil,不报错也不猜。** 没有私钥是合法状态(中控就没有),
-// 而一个签不出名字的机器和一个签名验不过的机器,在调用方眼里是同一件事:
-// 没核对过。把它们区分开只会让判断变复杂,而结论一样。
-func signSelf(o *Observation) (*attest.Signed, *attest.Signed) {
+// **签不了就返回 nil,不报错也不猜。** phase A 允许旧节点在证书补齐前继续
+// 发兼容观测；phase B 的 table/HTTP/Agent 边界会把缺签名明确判为 not-ready，
+// 因此这里不能用临时身份或中控密钥代签。
+func signSelf(o *Observation, minVersion int) (*attest.Signed, *attest.Signed) {
 	key, err := os.ReadFile(nodeKeyPath)
 	if err != nil {
 		return nil, nil
@@ -311,7 +311,7 @@ func signSelf(o *Observation) (*attest.Signed, *attest.Signed) {
 	if err != nil {
 		return nil, nil
 	}
-	legacy, current := claimsForObservation(o)
+	legacy, current := claimsForObservation(o, minVersion)
 	legacySigned, err := attest.Sign(legacy, key, crt)
 	if err != nil {
 		return nil, nil
@@ -327,7 +327,7 @@ func signSelf(o *Observation) (*attest.Signed, *attest.Signed) {
 	return legacySigned, currentSigned
 }
 
-func claimsForObservation(o *Observation) (attest.Claim, attest.Claim) {
+func claimsForObservation(o *Observation, minVersion int) (attest.Claim, attest.Claim) {
 	c := attest.Claim{Node: o.Node, TS: o.TS, Applied: o.Applied}
 	c.MeasurementsSHA256 = measurementDigest(o)
 	if o.Version != nil {
@@ -362,6 +362,9 @@ func claimsForObservation(o *Observation) (attest.Claim, attest.Claim) {
 			Name: component.Name, Expected: component.Expected,
 			Actual: component.Actual, Error: component.Error,
 		})
+	}
+	if minVersion >= 5 {
+		c.CanonicalVersion = 5
 	}
 	legacy := c
 	legacy.CanonicalVersion = 0

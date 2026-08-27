@@ -91,8 +91,9 @@ func cmdRollback(args []string) error {
 	}
 	c := netx.Client(*dns, 60*time.Second)
 
-	// 先验签再信里面的任何内容 —— 分发点不需要被信任(D32),而我们接下来
-	// 要拿它给出的字节覆盖本机的事实来源。
+	// 先验签再信 manifest 内容 —— 分发点不能替平台伪造目标快照；目标 ID
+	// 来自操作者参数而不是 current 指针，因此这里不依赖尚未闭合的 freshness。
+	// 接下来要拿这些字节覆盖本机事实来源，任何内容都必须先绑定目标 ID。
 	manBytes, err := getBytes(c, base+"/"+id+"/"+manifestFile)
 	if err != nil {
 		return fmt.Errorf("取快照 %s:%w", short(id), err)

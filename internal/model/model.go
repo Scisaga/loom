@@ -157,7 +157,10 @@ func (n *Node) IsAccess() bool { return n.Access != nil }
 // 当前 renderer/report 会把期望值下发并核对实际安装值；除 Loom 自身二进制
 // 外，系统尚不负责下载这些组件。这里不能声称“写了版本就会自动升级”。
 type ComponentVersions struct {
-	SingBox   string `yaml:"sing_box,omitempty"`
+	SingBox string `yaml:"sing_box,omitempty"`
+	// WireGuard 当前钉住的是 wireguard-tools 用户态 CLI 版本；内核实现与
+	// 数据面是否工作另由接口、握手和收发观测证明，不能拿 `wg --version`
+	// 冒充内核版本。
 	WireGuard string `yaml:"wireguard,omitempty"`
 	Tailscale string `yaml:"tailscale,omitempty"`
 	// Agent 是 Agent 状态/控制回路协议版本；Agent 与 CLI 共用 Loom 二进制，
@@ -168,6 +171,11 @@ type ComponentVersions struct {
 // SSOTDefaults 是全网默认值。
 type SSOTDefaults struct {
 	Components *ComponentVersions `yaml:"components,omitempty"`
+
+	// AttestationMinVersion 是滚动升级的第二阶段闸门。0 表示兼容阶段：新版
+	// reader 能读 v5，但 writer 同时保留 v3；确认全网 reader 升级后改成 5，
+	// 才强制拒绝 relay 剥掉扩展签名的降级观测。
+	AttestationMinVersion int `yaml:"attestation_min_version,omitempty"`
 
 	// DNS 是节点本地解析用的服务器。见 Node.DNS。
 	DNS []string `yaml:"dns,omitempty"`
@@ -180,6 +188,13 @@ type SSOTDefaults struct {
 	//
 	// 留空则不渲染 pull 的 unit,节点只能被推(loom apply)。
 	DistributionURL string `yaml:"distribution_url,omitempty"`
+}
+
+func (s *SSOT) AttestationMinVersion() int {
+	if s != nil && s.Defaults != nil {
+		return s.Defaults.AttestationMinVersion
+	}
+	return 0
 }
 
 // DistributionURL 返回分发点地址;没有配置时返回空。

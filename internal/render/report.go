@@ -114,8 +114,9 @@ func renderReport(s *model.SSOT, n *model.Node) ([]File, []Skip) {
 		DNS:           append([]string(nil), s.DNSFor(n)...),
 		GossipPeriod:  "1m",
 		// 超过这段时间的尽力观测不再转述；Agent 使用同一个值做剪枝。
-		ObservationStale: observationStale,
-		Manifest:         ManifestPath,
+		ObservationStale:      observationStale,
+		AttestationMinVersion: s.AttestationMinVersion(),
+		Manifest:              ManifestPath,
 		// 发起方设了 PersistentKeepalive=25,健康隧道的握手年龄不会超过
 		// 约 180 秒。5 分钟留足余量,又能在一个 Agent 周期内发现真断连。
 		HandshakeStale: "5m",

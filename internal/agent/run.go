@@ -177,15 +177,17 @@ func pollPeers(cfg *Config, obs *observed, ca []byte, now time.Time,
 			logf("[对端 %s] ❌ 拉不到 %s:%v", p.Node, p.Addr, err)
 			continue
 		}
-		// The loopback report's own observation is local node-owned input. Every
-		// other measurement, including Learned returned by loopback and a direct
-		// WG peer's Observation, must carry a v3 claim binding Edges/Targets.
+		// The loopback report's own observation is local node-owned input, so phase A
+		// may accept it unsigned. Phase B closes that exception; every measurement
+		// must then carry the configured v5 claim binding Edges/Targets.
 		local := p.Node == cfg.Node && p.Addr == cfg.SelfReport
-		if err := ingestObservation(obs, st.Observation, cfg.Node, local, ca, now, maxAge); err != nil {
+		if err := ingestObservation(obs, st.Observation, cfg.Node, local, ca, now, maxAge,
+			cfg.AttestationMinVersion); err != nil {
 			logf("[对端 %s] ⚠️ 拒绝观测:%v", p.Node, err)
 		}
 		for i := range st.Learned {
-			if err := ingestObservation(obs, &st.Learned[i], cfg.Node, false, ca, now, maxAge); err != nil {
+			if err := ingestObservation(obs, &st.Learned[i], cfg.Node, false, ca, now, maxAge,
+				cfg.AttestationMinVersion); err != nil {
 				logf("[对端 %s] ⚠️ 拒绝转述观测:%v", p.Node, err)
 			}
 		}
@@ -224,21 +226,27 @@ func pollPeers(cfg *Config, obs *observed, ca []byte, now time.Time,
 }
 
 // ingestObservation is the decision boundary between display data and control
-// input. Only loopback self-observation or a fresh node-owned v3 measurement
-// claim may enter observed and affect candidate pruning.
+// input. Phase A allows an unsigned loopback self-observation because it never
+// crossed a relay boundary; phase B deliberately closes that exception so the
+// selector cannot keep consuming unsigned measurements after the v5 gate closes.
 func ingestObservation(dst *observed, o *report.Observation, self string, local bool,
-	ca []byte, now time.Time, maxAge time.Duration) error {
+	ca []byte, now time.Time, maxAge time.Duration, minAttestationVersion int) error {
 	if o == nil {
+		if local && minAttestationVersion >= 5 {
+			return fmt.Errorf("phase-B loopback 上报缺少本机观测")
+		}
 		return nil
 	}
 	if local {
 		if o.Node != self {
 			return fmt.Errorf("loopback 上报声称自己是 %q，不是 %q", o.Node, self)
 		}
-		dst.put(o)
-		return nil
+		if minAttestationVersion < 5 {
+			dst.put(o)
+			return nil
+		}
 	}
-	trusted, err := report.VerifyObservation(o, ca, now, maxAge)
+	trusted, err := report.VerifyObservationAtLeast(o, ca, now, maxAge, minAttestationVersion)
 	if err != nil {
 		return err
 	}
@@ -502,12 +510,16 @@ func shortChain(chain []string) string {
 func inWindow(ms []measure.Measurement, decl string, now time.Time, window, stale time.Duration) []measure.Measurement {
 	cut := now.Add(-window)
 	staleCut := now.Add(-stale)
+	// 节点之间允许少量时钟偏差，但不能让一条来自“未来”的记录在 VM
+	// 恢复或时钟回拨后长期占据最新样本。超过两分钟的样本直接丢弃，且
+	// 不能参与 newest 计算。
+	futureCut := now.Add(2 * time.Minute)
 
 	newest := map[string]time.Time{}
 	parsed := make([]time.Time, len(ms))
 	for i := range ms {
 		t, err := time.Parse(time.RFC3339, ms[i].TS)
-		if err != nil {
+		if err != nil || t.After(futureCut) {
 			continue
 		}
 		parsed[i] = t

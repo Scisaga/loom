@@ -220,8 +220,14 @@ func TestNoInlineScriptSlipsIn(t *testing.T) {
 
 func TestOnlyOverviewAutoRefreshes(t *testing.T) {
 	h := Handler(deps("pw", nil))
-	if body := get(t, h, "/", nil).Body.String(); !strings.Contains(body, `http-equiv=refresh content=30`) {
+	body := get(t, h, "/", nil).Body.String()
+	if !strings.Contains(body, `http-equiv=refresh content=30`) {
 		t.Fatal("总览没有 30 秒 SSR 刷新")
+	}
+	for _, want := range []string{"近实时拓扑", "采样约 1 分钟", "页面每 30 秒刷新"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("总览没有诚实说明近实时节奏:%q", want)
+		}
 	}
 	if body := get(t, h, "/login", nil).Body.String(); strings.Contains(body, `http-equiv=refresh`) {
 		t.Fatal("登录页不应自动刷新")

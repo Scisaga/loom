@@ -500,3 +500,14 @@ nodes:
 		t.Fatalf("components.tailscale 未被 fail-closed 拒绝:\n%s", got)
 	}
 }
+
+func TestAttestationUpgradeGateOnlyAllowsCompatibilityOrV5(t *testing.T) {
+	s := &model.SSOT{Defaults: &model.SSOTDefaults{AttestationMinVersion: 6}}
+	if got := Format(Validate(s)); !strings.Contains(got, "attestation_min_version") {
+		t.Fatalf("未知 attestation 门禁没有被 SSOT 校验拒绝:%s", got)
+	}
+	s.Defaults.AttestationMinVersion = 5
+	if got := Format(Validate(s)); strings.Contains(got, "attestation_min_version") {
+		t.Fatalf("合法 phase-B 门禁被误拒:%s", got)
+	}
+}

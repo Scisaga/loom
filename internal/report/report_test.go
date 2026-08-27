@@ -2,6 +2,7 @@ package report
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -147,6 +148,21 @@ func TestStaleThresholdParsing(t *testing.T) {
 func TestLoadRequiresNode(t *testing.T) {
 	if _, err := Load([]byte(`{}`)); err == nil || !strings.Contains(err.Error(), "node") {
 		t.Errorf("缺 node 时的报错不对:%v", err)
+	}
+}
+
+func TestLoadPinsAttestationUpgradeGateToKnownPhases(t *testing.T) {
+	for _, version := range []int{0, 5} {
+		body := []byte(fmt.Sprintf(`{"node":"n","attestation_min_version":%d}`, version))
+		if _, err := Load(body); err != nil {
+			t.Errorf("合法 attestation_min_version=%d 被拒绝:%v", version, err)
+		}
+	}
+	for _, version := range []int{-1, 1, 4, 6} {
+		body := []byte(fmt.Sprintf(`{"node":"n","attestation_min_version":%d}`, version))
+		if _, err := Load(body); err == nil || !strings.Contains(err.Error(), "attestation_min_version") {
+			t.Errorf("非法 attestation_min_version=%d 没有被明确拒绝:%v", version, err)
+		}
 	}
 }
 

@@ -63,6 +63,10 @@ type Config struct {
 	// 一份两小时前的"能到"比没有更危险,它看起来是数据,实际是回忆。
 	ObservationStale string `json:"observation_stale,omitempty"`
 
+	// AttestationMinVersion=5 是双阶段升级的收口闸门。为 0 时兼容旧 v3；
+	// 全网 reader 已升级后由 SSOT 改成 5，防止 relay 通过剥离扩展字段降级。
+	AttestationMinVersion int `json:"attestation_min_version,omitempty"`
+
 	// Manifest 是 loom hydrate 产出的清单路径,空则不做配置自检。
 	Manifest string `json:"manifest"`
 
@@ -75,8 +79,8 @@ type Config struct {
 	AgentState string `json:"agent_state,omitempty"`
 
 	// ExpectedComponents 是 renderer 从 SSOT 按本节点实际角色裁出的版本期望。
-	// 上报者必须读取机器上的真实版本并并排上报，不能把 manifest 里写了版本
-	// 当成机器已经安装了该版本。
+	// 上报者必须读取真实运行版本并并排上报：sing-box 同时核 MainPID 对应
+	// inode 与磁盘文件；WireGuard 字段明确核 wireguard-tools，数据面另看握手。
 	ExpectedComponents ComponentVersions `json:"expected_components,omitempty"`
 
 	// ExpectedNodes / ExpectedTunnels 是不含地址和秘密的 SSOT 拓扑底图。
@@ -91,6 +95,11 @@ type Config struct {
 	// PublisherHealth 由 Serve 在确认本机是中控后注入，不来自渲染配置。
 	// 这样服务器节点和测试不会误读控制机的 /var/lib/loom。
 	PublisherHealth string `json:"-"`
+
+	// componentProbe 是进程内短缓存。页面、/status、gossip 和事件检测共享
+	// 同一个 Config；把它留在这里才能做真正的 singleflight，而不是每个入口
+	// 各自缓存一份、仍然同时 fork 外部命令。
+	componentProbe componentProbeCache
 }
 
 type ExpectedTunnel struct {
@@ -154,6 +163,9 @@ func Load(b []byte) (*Config, error) {
 	}
 	if c.Node == "" {
 		return nil, fmt.Errorf("report 配置缺少 node")
+	}
+	if c.AttestationMinVersion != 0 && c.AttestationMinVersion != 5 {
+		return nil, fmt.Errorf("attestation_min_version 只能是 0 或 5，收到 %d", c.AttestationMinVersion)
 	}
 	for _, f := range []func() (time.Duration, error){c.Stale, c.Gossip, c.ObsStale} {
 		if _, err := f(); err != nil {

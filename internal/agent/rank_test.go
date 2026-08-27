@@ -159,6 +159,7 @@ func TestInWindowDropsOldAndStale(t *testing.T) {
 	ms := []measure.Measurement{
 		{TS: at(90 * time.Minute), Declaration: "d", CandidateID: "old", FirstByteMs: 1},
 		{TS: at(5 * time.Minute), Declaration: "d", CandidateID: "fresh", FirstByteMs: 2},
+		{TS: now.Add(time.Hour).Format(time.RFC3339), Declaration: "d", CandidateID: "future", FirstByteMs: 99},
 		{TS: at(5 * time.Minute), Declaration: "other", CandidateID: "fresh", FirstByteMs: 3},
 		// 窗口内有样本,但这条候选最新的一笔已经超过 stale_after
 		{TS: at(50 * time.Minute), Declaration: "d", CandidateID: "stale", FirstByteMs: 4},

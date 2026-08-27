@@ -32,14 +32,15 @@ func buildView(cfg *Config, self *Status, now time.Time) webui.View {
 		o := &self.Learned[i]
 		var trusted *AttestedState
 		identityErr := ""
-		if o.Attest != nil {
+		if observationNeedsVerification(o, cfg.AttestationMinVersion) {
 			if !caLoaded {
 				ca, caErr = os.ReadFile(caPath)
 				caLoaded = true
 			}
 			if caErr != nil {
 				identityErr = "读签名 CA:" + caErr.Error()
-			} else if got, err := VerifyObservation(o, ca, now, attestationAge); err != nil {
+			} else if got, err := VerifyObservationAtLeast(o, ca, now, attestationAge,
+				cfg.AttestationMinVersion); err != nil {
 				identityErr = err.Error()
 			} else {
 				trusted = got

@@ -25,6 +25,22 @@ func TestTableRejectsFuturePoisonBeforeIndexing(t *testing.T) {
 	}
 }
 
+func TestTablePhaseBRejectsUnsignedDowngrade(t *testing.T) {
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	tbl := newTable(5)
+	tbl.verify = func(o *Observation, at time.Time, maxAge time.Duration) error {
+		_, err := VerifyObservationAtLeast(o, nil, at, maxAge, 5)
+		return err
+	}
+	unsigned := &Observation{Node: "n1", TS: now.Format(time.RFC3339), Applied: "downgraded"}
+	if err := tbl.put(unsigned, now, 10*time.Minute); err == nil || !strings.Contains(err.Error(), "没有签名") {
+		t.Fatalf("phase B 接受了被剥掉签名的观测:%v", err)
+	}
+	if got := tbl.snapshot("", now, 10*time.Minute); len(got) != 0 {
+		t.Fatalf("被降级的观测仍进入 gossip 表:%+v", got)
+	}
+}
+
 func TestTablePrefersSignedObservationForSameNode(t *testing.T) {
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
 	tbl := newTable()

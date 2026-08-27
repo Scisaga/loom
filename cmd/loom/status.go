@@ -27,6 +27,8 @@ func cmdStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	from := fs.String("from", "", "从哪个节点出发(默认取唯一的接入节点)")
 	timeout := fs.Duration("timeout", 5*time.Second, "单个节点的拉取超时")
+	requireAttestation := fs.Int("require-attestation", 0,
+		"发布闸门预检：要求每台节点的观测至少使用指定 canonical 版本（当前只支持 5）")
 
 	rest, err := parseInterspersed(fs, args)
 	if err != nil {
@@ -38,6 +40,16 @@ func cmdStatus(args []string) error {
 	s, err := loadAndValidate(rest[0])
 	if err != nil {
 		return err
+	}
+	if *requireAttestation != 0 && *requireAttestation != 5 {
+		return fmt.Errorf("-require-attestation 只能是 0 或 5，收到 %d", *requireAttestation)
+	}
+	if *timeout <= 0 {
+		return fmt.Errorf("-timeout 必须为正，收到 %s", *timeout)
+	}
+	attestationFloor := s.AttestationMinVersion()
+	if *requireAttestation > attestationFloor {
+		attestationFloor = *requireAttestation
 	}
 
 	vantage := *from
@@ -96,6 +108,10 @@ func cmdStatus(args []string) error {
 	// obs 汇总全网观测:自己量的、拉到的、以及**别人转述的** ——
 	// 转述让够不到的节点也进得来(§16.1.2)。
 	obs := map[string]report.Observation{}
+	// heard 记录“确实收到过”，与后续是否通过签名门禁分开。phase B 会从
+	// obs 删除不可信记录；若随后又把它报成“完全没听到”，同一故障会被
+	// 机械地重复计算成两次。
+	heard := map[string]bool{}
 	snap := map[string]string{}
 	// vcs / rolls 先装直接问到的节点，随后把验过签的转述状态并进来。
 	vcs := map[string]*version.Coordinate{}
@@ -112,13 +128,14 @@ func cmdStatus(args []string) error {
 			return
 		}
 		obs[o.Node] = *o
+		heard[o.Node] = true
 	}
 
 	for _, id := range ids {
 		var st *report.Status
 		var ferr error
 		if id == vantage {
-			st, ferr = localStatus()
+			st, ferr = localStatus(*timeout)
 		} else {
 			st, ferr = report.Fetch(reach[id], *timeout)
 		}
@@ -152,15 +169,27 @@ func cmdStatus(args []string) error {
 
 	// 先验签并绑定转述身份。后面的快照、版本与 rollout 汇总不再使用
 	// 验不过的包装；这类错误是明确故障，不只是“尚未核对”。
-	unverified, attestBad := foldAttested(obs, snap, vcs, rolls, answered, unreachable, time.Now().UTC())
-	bad += attestBad
-
-	// 全网是不是同一版。落后的那台往往正是出问题的那台,而这件事以前
-	// 只能逐台 ssh 去查。
 	expectedNodes := make([]string, 0, len(s.Nodes))
 	for i := range s.Nodes {
 		expectedNodes = append(expectedNodes, s.Nodes[i].ID)
 	}
+	sort.Strings(expectedNodes)
+
+	unverified, attestBad := foldAttested(obs, snap, vcs, rolls, answered, unreachable,
+		time.Now().UTC(), attestationFloor)
+	bad += attestBad
+	if attestationFloor >= 5 {
+		ready, missing := attestationReadiness(expectedNodes, answered)
+		fmt.Printf("\n  canonical v5 readiness: %d/%d", ready, len(expectedNodes))
+		if len(missing) > 0 {
+			fmt.Printf("（未就绪:%s）\n", strings.Join(missing, " "))
+		} else {
+			fmt.Printf("（可以进入 phase B）\n")
+		}
+	}
+
+	// 全网是不是同一版。落后的那台往往正是出问题的那台,而这件事以前
+	// 只能逐台 ssh 去查。
 	vers := snapshotSpread(expectedNodes, snap)
 	if len(vers) > 1 {
 		fmt.Printf("\n  ⚠️ 全网不是同一个快照:\n")
@@ -199,7 +228,7 @@ func cmdStatus(args []string) error {
 
 	var silent []string
 	for _, id := range unreachable {
-		if _, ok := obs[id]; !ok {
+		if !heard[id] {
 			silent = append(silent, id)
 		}
 	}
@@ -214,9 +243,22 @@ func cmdStatus(args []string) error {
 		bad += len(silent)
 	}
 	if bad > 0 || unresolved > 0 {
-		return fmt.Errorf("%d 个节点有发现,%d 个未解决的问题", bad, unresolved)
+		return fmt.Errorf("%d 项检查未通过,%d 个未解决的问题", bad, unresolved)
 	}
 	return nil
+}
+
+func attestationReadiness(expected []string, verified map[string]bool) (int, []string) {
+	ready := 0
+	var missing []string
+	for _, id := range expected {
+		if verified[id] {
+			ready++
+		} else {
+			missing = append(missing, id)
+		}
+	}
+	return ready, missing
 }
 
 // printUnresolved 打出**现在**还没解决的问题,以及各自持续了多久。
@@ -365,16 +407,19 @@ func shorten(s string) string {
 	return s
 }
 
-func localStatus() (*report.Status, error) {
-	b, err := os.ReadFile("/etc/loom/report/config.json")
+func localStatus(timeout time.Duration) (*report.Status, error) {
+	// 本机与远端走同一个常驻 report 数据源。Collect 只有即时自检，没有后台
+	// table 里的签名 Observation；绕过回环接口会让 phase-B 永远把中控自己
+	// 判成“没有本机观测”。回环不可达本身也是 report 服务故障，不能静默退化。
+	return localStatusFrom(fmt.Sprintf("127.0.0.1:%d", render.ReportPort), timeout)
+}
+
+func localStatusFrom(addr string, timeout time.Duration) (*report.Status, error) {
+	st, err := report.Fetch(addr, timeout)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("本机 report 回环接口:%w", err)
 	}
-	cfg, err := report.Load(b)
-	if err != nil {
-		return nil, err
-	}
-	return report.Collect(cfg, time.Now()), nil
+	return st, nil
 }
 
 func tunnelLine(st *report.Status) string {
@@ -806,7 +851,8 @@ func roughAge(d time.Duration) string {
 const caPath = "/etc/loom/tls/ca.crt"
 
 // foldAttested 把**验过签的**转述节点并进快照、版本与 rollout
-// 表,返回仍然核不了的那些。
+// 表,返回仍然核不了的那些；phase B 还会剔除矩阵里所有未通过 v5 门禁的
+// observation。
 //
 // 这是 D81 相对 D73 的全部变化:够不到不再等于核不了。够不到的节点只要
 // 带着自己签的陈述,链路上谁转的都无所谓 —— 改一个字就验不过。
@@ -816,40 +862,117 @@ const caPath = "/etc/loom/tls/ca.crt"
 func foldAttested(obs map[string]report.Observation, snaps map[string]string,
 	vcs map[string]*version.Coordinate,
 	rolls map[string]*report.RolloutState, answered map[string]bool,
-	unreachable []string, now time.Time) ([]string, int) {
+	unreachable []string, now time.Time, minAttestationVersion int) ([]string, int) {
+	return foldAttestedWithCALoader(obs, snaps, vcs, rolls, answered, unreachable, now,
+		minAttestationVersion, func() ([]byte, error) { return os.ReadFile(caPath) })
+}
 
-	// 没有签名时不读宿主机 CA：旧节点兼容路径和单测都不该依赖 /etc/loom。
-	hasSigned := false
+// foldAttestedWithCALoader 把 CA 读取边界注入进来，测试可以精确覆盖“CA 可读、
+// 但签名无效”，而不碰宿主机 /etc/loom。phase A 只要求核验要用于身份汇总的
+// 不可达节点；phase B 则要求矩阵里的每一份 observation 都是完整 v5。
+func foldAttestedWithCALoader(obs map[string]report.Observation, snaps map[string]string,
+	vcs map[string]*version.Coordinate,
+	rolls map[string]*report.RolloutState, answered map[string]bool,
+	unreachable []string, now time.Time, minAttestationVersion int,
+	loadCA func() ([]byte, error)) ([]string, int) {
+
+	unreachableSet := make(map[string]bool, len(unreachable))
 	for _, id := range unreachable {
-		if o, ok := obs[id]; ok && o.Attest != nil {
-			hasSigned = true
-			break
+		unreachableSet[id] = true
+	}
+
+	// phase B 不只保护版本汇总，也保护下面的实时矩阵。先从 obs 剔除缺少
+	// 主签名的记录；否则即使版本表报了“未核验”，Targets/Edges 仍会画成绿。
+	// 直接拉回来的 Status 外层字段同样不可信：只有 Observation 的 Claim
+	// 是节点签过的。因此 phase B 先清掉直接响应塞入的身份状态，验过后再
+	// 从 Claim 重建；没有 Observation 的旧/畸形响应也必须明确失败。
+	bad := 0
+	if minAttestationVersion >= 5 {
+		for id := range answered {
+			delete(snaps, id)
+			delete(vcs, id)
+			delete(rolls, id)
+			if _, ok := obs[id]; !ok {
+				fmt.Printf("  ⚠️ %s 的 phase-B 响应没有本机观测，身份状态已拒绝\n", id)
+				delete(answered, id)
+				bad++
+			}
 		}
 	}
-	if !hasSigned {
-		return append([]string(nil), unreachable...), 0
-	}
-	ca, err := os.ReadFile(caPath)
-	if err != nil {
-		fmt.Printf("  ⚠️ 读不到 %s,签名转述无法验证:%v\n", caPath, err)
-		return append([]string(nil), unreachable...), 1
-	}
-	var still []string
-	bad := 0
-	for _, id := range unreachable {
-		o, ok := obs[id]
-		if !ok || o.Attest == nil {
-			still = append(still, id)
+	var verifyIDs []string
+	for id, o := range obs {
+		required := minAttestationVersion >= 5 || unreachableSet[id]
+		if !required {
 			continue
 		}
-		trusted, err := report.VerifyObservation(&o, ca, now, report.AttestationMaxAge)
+		if o.Attest == nil {
+			if minAttestationVersion >= 5 {
+				fmt.Printf("  ⚠️ %s 的 phase-B 观测缺少主签名，已从实时矩阵剔除\n", id)
+				delete(obs, id)
+				delete(answered, id)
+				bad++
+				continue
+			}
+			// phase A 的完全 unsigned 转述保持旧兼容语义：身份不能汇总，
+			// 但这里不额外读取 CA。带 extended 却没主签名则是畸形输入，
+			// 必须走 verifier 并被明确拒绝。
+			if o.AttestExtended == nil {
+				continue
+			}
+		}
+		verifyIDs = append(verifyIDs, id)
+	}
+	sort.Strings(verifyIDs)
+
+	// 没有需要核验的记录时不读宿主机 CA：旧节点兼容路径和单测都不该
+	// 依赖 /etc/loom。
+	if len(verifyIDs) == 0 {
+		return append([]string(nil), unreachable...), bad
+	}
+	ca, err := loadCA()
+	if err != nil {
+		fmt.Printf("  ⚠️ 读不到 %s,签名转述无法验证:%v\n", caPath, err)
+		// phase B 中“CA 读不到”不能退化成继续展示未经验证的矩阵；phase A
+		// 也不保留本来声称有签名、却无法核验的不可达节点观测。
+		for _, id := range verifyIDs {
+			delete(obs, id)
+			delete(answered, id)
+		}
+		return append([]string(nil), unreachable...), bad + 1
+	}
+	trustedByNode := make(map[string]*report.AttestedState, len(verifyIDs))
+	for _, id := range verifyIDs {
+		o := obs[id]
+		trusted, err := report.VerifyObservationAtLeast(&o, ca, now,
+			report.AttestationMaxAge, minAttestationVersion)
 		if err != nil {
 			// 验不过是**故障**,不是"没消息" —— 要么有人改了转述内容,
 			// 要么证书过期了。两种都得让人看见。
 			fmt.Printf("  ⚠️ %s 的签名陈述验不过:%v\n", id, err)
-			still = append(still, id)
 			delete(obs, id)
+			delete(answered, id)
 			bad++
+			continue
+		}
+		trustedByNode[id] = trusted
+	}
+	if minAttestationVersion >= 5 {
+		for id, trusted := range trustedByNode {
+			snaps[id] = trusted.Applied
+			vcs[id] = trusted.Version
+			if trusted.Rollout != nil {
+				rolls[id] = trusted.Rollout
+			}
+			// 直接拉到和转述验过的节点都算已核对；失败项在上面已移除。
+			answered[id] = true
+		}
+	}
+
+	var still []string
+	for _, id := range unreachable {
+		trusted := trustedByNode[id]
+		if trusted == nil {
+			still = append(still, id)
 			continue
 		}
 		snaps[id] = trusted.Applied

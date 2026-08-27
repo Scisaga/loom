@@ -177,17 +177,23 @@ func TestExtendedClaimKeepsOldReaderProjectionBound(t *testing.T) {
 			Name: "sing-box", Expected: "1.11.4", Actual: "1.11.4",
 		}},
 	}
-	legacy, current := claimsForObservation(o)
+	legacy, current := claimsForObservation(o, 5)
 	if legacy.CanonicalVersion != 0 || len(legacy.Components) != 0 ||
 		legacy.Agent.ComponentVersion != "" || legacy.Agent.Selections[0].Health != nil {
 		t.Fatalf("兼容 claim 泄漏了新字段:%+v", legacy)
 	}
 	if len(current.Components) != 1 || current.Agent.ComponentVersion != "0.1.0" ||
-		current.Agent.Selections[0].Health == nil {
+		current.Agent.Selections[0].Health == nil || current.CanonicalVersion != 5 {
 		t.Fatalf("扩展 claim 丢字段:%+v", current)
 	}
 	if err := bindClaim(legacyObservation(o), &legacy); err != nil {
 		t.Fatalf("旧 reader 投影无法绑定兼容 claim:%v", err)
+	}
+	if err := requireAttestationVersion(&legacy, 5); err == nil {
+		t.Fatal("relay 剥掉扩展签名和新外层字段后仍通过 phase-B 闸门")
+	}
+	if err := requireAttestationVersion(&current, 5); err != nil {
+		t.Fatalf("完整 v5 被 phase-B 闸门误拒:%v", err)
 	}
 	if err := bindClaim(o, &current); err != nil {
 		t.Fatalf("新版外层无法绑定扩展 claim:%v", err)

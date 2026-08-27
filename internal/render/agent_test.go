@@ -158,6 +158,26 @@ func TestAgentAndReportShareObservationStale(t *testing.T) {
 	}
 }
 
+func TestAttestationUpgradeGateReachesEveryReader(t *testing.T) {
+	s := load(t)
+	s.Defaults.AttestationMinVersion = 5
+	agents := agentConfigs(t, s)
+	for node, cfg := range agents {
+		if cfg.AttestationMinVersion != 5 {
+			t.Errorf("%s Agent 没收到 phase-B 门禁:%d", node, cfg.AttestationMinVersion)
+		}
+	}
+	res, err := Render(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for node, cfg := range reportConfigs(t, res) {
+		if cfg.AttestationMinVersion != 5 {
+			t.Errorf("%s report 没收到 phase-B 门禁:%d", node, cfg.AttestationMinVersion)
+		}
+	}
+}
+
 func TestEveryReportConfigCarriesWholeNetworkCandidatePaths(t *testing.T) {
 	s := load(t)
 	agents := agentConfigs(t, s)

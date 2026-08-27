@@ -22,14 +22,21 @@ type table struct {
 
 	// errors 是最近一轮拒收的观测。签名/时间异常不能只写 journal：它们
 	// 必须进入 /status，影响 OK，并被事件检测器看见。
-	errors []string
-	caOnce sync.Once
-	ca     []byte
-	caErr  error
-	verify func(*Observation, time.Time, time.Duration) error
+	errors                []string
+	caOnce                sync.Once
+	ca                    []byte
+	caErr                 error
+	verify                func(*Observation, time.Time, time.Duration) error
+	minAttestationVersion int
 }
 
-func newTable() *table { return &table{by: map[string]*Observation{}, h: newHistory()} }
+func newTable(minVersion ...int) *table {
+	t := &table{by: map[string]*Observation{}, h: newHistory()}
+	if len(minVersion) > 0 {
+		t.minAttestationVersion = minVersion[0]
+	}
+	return t
+}
 
 // put 收下一份观测。先校验时间边界与签名，再允许它参与 Node 最新值竞争。
 // 否则一个未来时间的伪观测能占住索引，让随后所有合法观测永远进不来。
@@ -53,7 +60,7 @@ func (t *table) put(o *Observation, now time.Time, maxAge time.Duration) error {
 		// 正常老化应静默丢弃；只有格式、未来时间和签名错误才是健康问题。
 		return nil
 	}
-	if o.Attest != nil {
+	if observationNeedsVerification(o, t.minAttestationVersion) {
 		if t.verify != nil {
 			if err := t.verify(o, now, maxAge); err != nil {
 				return fmt.Errorf("校验观测 %s:%w", o.Node, err)
@@ -63,7 +70,8 @@ func (t *table) put(o *Observation, now time.Time, maxAge time.Duration) error {
 			if t.caErr != nil {
 				return fmt.Errorf("校验观测 %s:读签名 CA:%w", o.Node, t.caErr)
 			}
-			if _, err := VerifyObservation(o, t.ca, now, maxAge); err != nil {
+			if _, err := VerifyObservationAtLeast(o, t.ca, now, maxAge,
+				t.minAttestationVersion); err != nil {
 				return fmt.Errorf("校验观测 %s:%w", o.Node, err)
 			}
 		}
@@ -73,14 +81,14 @@ func (t *table) put(o *Observation, now time.Time, maxAge time.Duration) error {
 	if old, ok := t.by[o.Node]; ok {
 		// 已验签观测的身份强度高于 legacy unsigned。较新的 unsigned relay
 		// 不能靠刷新 TS 持续把可信状态降级掉；反过来 signed 可替换 unsigned。
-		if old.Attest != nil && o.Attest == nil {
+		if observationNeedsVerification(old, 0) && !observationNeedsVerification(o, 0) {
 			if old.Age(now) <= maxAge {
 				return nil
 			}
 			// 已签名旧值过期后本来就不会再展示；此时允许 fresh legacy
 			// 观测恢复 unknown 可见性，不让索引被一条历史 signed 永久占住。
 		}
-		if old.Attest == nil && o.Attest != nil {
+		if !observationNeedsVerification(old, 0) && observationNeedsVerification(o, 0) {
 			cp := *o
 			t.by[o.Node] = &cp
 			return nil
@@ -189,7 +197,7 @@ func Once(cfg *Config, now func() time.Time) (*Observation, []Observation, error
 	if err != nil {
 		return nil, nil, err
 	}
-	t := newTable()
+	t := newTable(cfg.AttestationMinVersion)
 	gossip(cfg, t, now, maxAge)
 	own, learned := t.view(cfg.Node, now(), maxAge)
 	if errs := t.roundErrors(); len(errs) > 0 {

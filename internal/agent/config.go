@@ -55,6 +55,10 @@ type Config struct {
 	// 继续剪枝候选，恢复后往往要再等一整个 tuning period。
 	ObservationStale string `json:"observation_stale,omitempty"`
 
+	// 与 report 同一份两阶段验签闸门；否则页面已经拒绝降级观测，Agent
+	// 却仍让它进入候选剪枝，会形成两个互相矛盾的信任边界。
+	AttestationMinVersion int `json:"attestation_min_version,omitempty"`
+
 	// AttestationCA verifies node-owned v3 measurement claims before relayed
 	// Targets are allowed to prune candidates. Display-only legacy observations
 	// may be useful to people, but must never drive selector decisions.
@@ -145,6 +149,9 @@ func Load(b []byte) (*Config, error) {
 	}
 	if c.Node == "" {
 		return nil, fmt.Errorf("agent 配置缺少 node")
+	}
+	if c.AttestationMinVersion != 0 && c.AttestationMinVersion != 5 {
+		return nil, fmt.Errorf("attestation_min_version 只能是 0 或 5，收到 %d", c.AttestationMinVersion)
 	}
 	for i := range c.Declarations {
 		d := &c.Declarations[i]

@@ -36,6 +36,10 @@ func (fs *findings) add(rule, where, format string, args ...any) {
 // Validate 检查整份 SSOT,返回按 (Where, Rule) 排序的稳定结果。
 func Validate(s *model.SSOT) []Finding {
 	var fs findings
+	if v := s.AttestationMinVersion(); v != 0 && v != 5 {
+		fs.add("§13.3 签名", "defaults",
+			"attestation_min_version 只能是 0（兼容阶段）或 5（全网 reader 升级后的强制阶段），收到 %d", v)
+	}
 	idx := checkNodes(s, &fs)
 	checkTunnels(s, idx, &fs)
 	checkService(s, idx, &fs)

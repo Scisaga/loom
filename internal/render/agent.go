@@ -49,14 +49,15 @@ func renderAgent(s *model.SSOT, p *model.Node) ([]File, []Skip) {
 	}
 	declarations, skips := renderAgentDeclarations(s, p)
 	cfg := agent.Config{
-		Node:             p.ID,
-		API:              APIListen,
-		APISecret:        secretRef("api/" + p.ID),
-		Probe:            ProbeListen,
-		ProbeSecret:      secretRef("probe/" + p.ID),
-		Declarations:     declarations,
-		ObservationStale: observationStale,
-		AttestationCA:    tlsCAPath,
+		Node:                  p.ID,
+		API:                   APIListen,
+		APISecret:             secretRef("api/" + p.ID),
+		Probe:                 ProbeListen,
+		ProbeSecret:           secretRef("probe/" + p.ID),
+		Declarations:          declarations,
+		ObservationStale:      observationStale,
+		AttestationMinVersion: s.AttestationMinVersion(),
+		AttestationCA:         tlsCAPath,
 	}
 
 	// 能顺着隧道直接够到的节点。AllowedIPs 是 /32,所以只有隧道对端 ——

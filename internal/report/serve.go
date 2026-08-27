@@ -33,7 +33,7 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 	if err != nil {
 		return err
 	}
-	tbl := newTable()
+	tbl := newTable(cfg.AttestationMinVersion)
 
 	mux := http.NewServeMux()
 
@@ -45,13 +45,12 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 		Node: cfg.Node,
 		Now:  now,
 		Snapshot: func() webui.View {
-			st := Collect(cfg, now())
+			at := now()
+			st := Collect(cfg, at)
 			// 和 /status 走完全同一条路 —— 界面自己再采一遍的话,
 			// "页面上说的"和"接口返回的"会在某个时刻不一致。
-			st.Observation, st.Learned = tbl.view(cfg.Node, now(), maxAge)
-			st.Errors = append(st.Errors, tbl.roundErrors()...)
-			st.Errors = append(st.Errors, AttestationErrors(st, now(), maxAge)...)
-			return buildView(cfg, st, now())
+			attachObservationState(cfg, tbl, st, at, maxAge)
+			return buildView(cfg, st, at)
 		},
 	}
 	var det *detector
@@ -89,19 +88,10 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 		// 隧道健康和配置自检是**当场**算的,便宜。观测不是 —— 量一遍目标
 		// 要好几秒,每次被拉都重量会让拉取方超时,也会把探测流量放大成
 		// 拉取次数的倍数。所以观测走后台节奏,这里只交出最近一份。
-		st := Collect(cfg, now())
-		st.Observation, st.Learned = tbl.view(cfg.Node, now(), maxAge)
-		st.Errors = append(st.Errors, tbl.roundErrors()...)
-		st.Errors = append(st.Errors, AttestationErrors(st, now(), maxAge)...)
-		w.Header().Set("Content-Type", "application/json")
-		// 自检有发现时用 503:拉取方不必解析 JSON 就知道这台机器有问题,
-		// 而 JSON 里仍有全部细节。
-		if !st.OK() {
-			w.WriteHeader(http.StatusServiceUnavailable)
-		}
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(st)
+		at := now()
+		st := Collect(cfg, at)
+		attachObservationState(cfg, tbl, st, at, maxAge)
+		writeStatus(w, st, at)
 	})
 
 	srv := &http.Server{
@@ -119,11 +109,10 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 			// 每轮转述之后比一次:这一轮和上一轮有什么不同。
 			// **只有变化才写下来** —— 状态本身已经在 /status 里了。
 			if det != nil {
-				st := Collect(cfg, now())
-				st.Observation, st.Learned = tbl.view(cfg.Node, now(), maxAge)
-				st.Errors = append(st.Errors, tbl.roundErrors()...)
-				st.Errors = append(st.Errors, AttestationErrors(st, now(), maxAge)...)
-				evs, err := det.observe(buildView(cfg, st, now()), now())
+				at := now()
+				st := Collect(cfg, at)
+				attachObservationState(cfg, tbl, st, at, maxAge)
+				evs, err := det.observe(buildView(cfg, st, at), at)
 				if err != nil {
 					fmt.Fprintf(logw, "! 记事件失败:%v\n", err)
 				}
@@ -178,6 +167,33 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 	mu.Lock()
 	defer mu.Unlock()
 	return firstErr
+}
+
+const phaseBAttestationNotReady = "phase-B 尚未产生有效 canonical_version=5 本机观测"
+
+// attachObservationState 是 HTML、/status 与事件检测共用的观测边界。phase B
+// 中 table.put 已经保证入表前验过 v5；因此本机观测为空表示启动首轮尚未完成、
+// 签名材料缺失或签名失败。三种情况都不能对外返回健康/ready。
+func attachObservationState(cfg *Config, tbl *table, st *Status, at time.Time, maxAge time.Duration) {
+	st.Observation, st.Learned = tbl.view(cfg.Node, at, maxAge)
+	st.Errors = append(st.Errors, tbl.roundErrors()...)
+	if cfg.AttestationMinVersion >= 5 && st.Observation == nil {
+		st.Errors = append(st.Errors, phaseBAttestationNotReady)
+	}
+	st.Errors = append(st.Errors,
+		AttestationErrors(st, at, maxAge, cfg.AttestationMinVersion)...)
+}
+
+func writeStatus(w http.ResponseWriter, st *Status, at time.Time) {
+	w.Header().Set("Content-Type", "application/json")
+	// 自检有发现时用 503:拉取方不必解析 JSON 就知道这台机器有问题,
+	// 而 JSON 里仍有全部细节。
+	if !st.OKAt(at) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(st)
 }
 
 // Fetch 从一个节点的上报接口拉一次状态。

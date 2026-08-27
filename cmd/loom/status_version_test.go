@@ -1,13 +1,47 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"loom/internal/attest"
 	"loom/internal/report"
 	"loom/internal/version"
 )
+
+func TestLocalStatusUsesReportServiceObservation(t *testing.T) {
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	want := &report.Status{Node: "jm24", Observation: &report.Observation{
+		Node: "jm24", TS: now.Format(time.RFC3339), Attest: &attest.Signed{},
+	}}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(want)
+	}))
+	defer srv.Close()
+
+	got, err := localStatusFrom(strings.TrimPrefix(srv.URL, "http://"), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Observation == nil || got.Observation.Node != "jm24" || got.Observation.Attest == nil {
+		t.Fatalf("本机路径丢失 report 后台签名观测:%+v", got)
+	}
+}
+
+func TestAttestationReadinessUsesSSOTDenominator(t *testing.T) {
+	ready, missing := attestationReadiness(
+		[]string{"ber01", "gz02", "hz01", "jm24", "sg02"},
+		map[string]bool{"ber01": true, "jm24": true, "sg02": true, "ghost": true},
+	)
+	if ready != 3 || !reflect.DeepEqual(missing, []string{"gz02", "hz01"}) {
+		t.Fatalf("readiness=%d missing=%v", ready, missing)
+	}
+}
 
 func coord(commit string) *version.Coordinate {
 	return &version.Coordinate{Commit: commit, Platform: "linux/amd64", Go: "go1.27"}
@@ -123,7 +157,7 @@ func TestFoldAttestedSplitsVerifiableFromNot(t *testing.T) {
 	answered := map[string]bool{}
 	obs := map[string]report.Observation{"gz02": {Node: "gz02", Applied: "伪造快照"}}
 	still, bad := foldAttested(obs, snaps, vcs, map[string]*report.RolloutState{}, answered,
-		[]string{"gz02", "hz01"}, time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC))
+		[]string{"gz02", "hz01"}, time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC), 0)
 	if len(still) != 2 {
 		t.Fatalf("核不了的应原样返回 2 个,得到 %v", still)
 	}
@@ -135,5 +169,92 @@ func TestFoldAttestedSplitsVerifiableFromNot(t *testing.T) {
 	}
 	if bad != 0 {
 		t.Fatalf("没有签名只是尚未核对，不应报坏:bad=%d", bad)
+	}
+}
+
+func TestFoldAttestedPhaseBRemovesUnsignedObservationFromMatrixInput(t *testing.T) {
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	obs := map[string]report.Observation{"jm24": {
+		Node: "jm24", TS: now.Format(time.RFC3339),
+		Targets: []report.Reach{{Target: "https://example.test", FirstByteMs: 1}},
+	}}
+	loadedCA := false
+	_, bad := foldAttestedWithCALoader(obs, map[string]string{},
+		map[string]*version.Coordinate{}, map[string]*report.RolloutState{},
+		map[string]bool{"jm24": true}, nil, now, 5, func() ([]byte, error) {
+			loadedCA = true
+			return nil, nil
+		})
+	if loadedCA {
+		t.Fatal("完全没有主签名时不应读取 CA")
+	}
+	if bad != 1 {
+		t.Fatalf("phase-B unsigned observation 应明确计坏，得到 %d", bad)
+	}
+	if _, ok := obs["jm24"]; ok {
+		t.Fatal("phase-B unsigned observation 仍留在 printMatrix 的输入中")
+	}
+}
+
+func TestFoldAttestedPhaseBRemovesFailedSignatureFromMatrixInput(t *testing.T) {
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	obs := map[string]report.Observation{"jm24": {
+		Node: "jm24", TS: now.Format(time.RFC3339), Attest: &attest.Signed{},
+		Targets: []report.Reach{{Target: "https://example.test", FirstByteMs: 1}},
+	}}
+	_, bad := foldAttestedWithCALoader(obs, map[string]string{},
+		map[string]*version.Coordinate{}, map[string]*report.RolloutState{},
+		map[string]bool{"jm24": true}, nil, now, 5,
+		func() ([]byte, error) { return []byte("不是 CA"), nil })
+	if bad != 1 {
+		t.Fatalf("phase-B 验签失败应明确计坏，得到 %d", bad)
+	}
+	if _, ok := obs["jm24"]; ok {
+		t.Fatal("phase-B 验签失败 observation 仍留在 printMatrix 的输入中")
+	}
+}
+
+func TestFoldAttestedPhaseBRemovesUnsignedDirectIdentityState(t *testing.T) {
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	obs := map[string]report.Observation{"jm24": {
+		Node: "jm24", TS: now.Format(time.RFC3339),
+	}}
+	snaps := map[string]string{"jm24": "外层伪造快照"}
+	vcs := map[string]*version.Coordinate{"jm24": {Commit: "外层伪造 commit"}}
+	rolls := map[string]*report.RolloutState{"jm24": {Stage: "verified"}}
+	answered := map[string]bool{"jm24": true}
+
+	_, bad := foldAttestedWithCALoader(obs, snaps, vcs, rolls, answered, nil, now, 5,
+		func() ([]byte, error) { return nil, nil })
+	if bad != 1 {
+		t.Fatalf("phase-B unsigned direct status 应明确计坏，得到 %d", bad)
+	}
+	if _, ok := snaps["jm24"]; ok {
+		t.Fatal("未经签名的 Applied 仍进入快照汇总")
+	}
+	if _, ok := vcs["jm24"]; ok {
+		t.Fatal("未经签名的 Version 仍进入版本汇总")
+	}
+	if _, ok := rolls["jm24"]; ok {
+		t.Fatal("未经签名的 Rollout 仍进入 rollout 汇总")
+	}
+	if answered["jm24"] {
+		t.Fatal("未经签名的 direct status 仍被标成已核对")
+	}
+}
+
+func TestFoldAttestedPhaseBRejectsDirectStatusWithoutObservation(t *testing.T) {
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	snaps := map[string]string{"jm24": "外层伪造快照"}
+	answered := map[string]bool{"jm24": true}
+
+	_, bad := foldAttestedWithCALoader(map[string]report.Observation{}, snaps,
+		map[string]*version.Coordinate{}, map[string]*report.RolloutState{}, answered,
+		nil, now, 5, func() ([]byte, error) { return nil, nil })
+	if bad != 1 {
+		t.Fatalf("phase-B 缺少 observation 的 direct status 应明确计坏，得到 %d", bad)
+	}
+	if _, ok := snaps["jm24"]; ok || answered["jm24"] {
+		t.Fatal("缺少 observation 的 direct status 身份状态没有被清除")
 	}
 }

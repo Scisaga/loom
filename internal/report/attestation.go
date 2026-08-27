@@ -29,7 +29,7 @@ type AttestedState struct {
 	// after verification.
 	Applied string
 	// MeasurementsVerified means Edges/Targets are covered by the node-owned
-	// v3/v4 claim. Legacy v1/v2 claims still authenticate identity state, but their
+	// v3+ claim. Legacy v1/v2 claims still authenticate identity state, but their
 	// measurements must remain unknown in topology views.
 	MeasurementsVerified bool
 }
@@ -68,6 +68,17 @@ func measurementDigest(o *Observation) string {
 // 外层 Node 决定索引、TS 决定去重、Applied 参与版本汇总；三者任意一个不绑，
 // relay 都能把一条合法陈述包装成另一台机器或永不过期的新观测。
 func VerifyObservation(o *Observation, ca []byte, now time.Time, maxAge time.Duration) (*AttestedState, error) {
+	return VerifyObservationAtLeast(o, ca, now, maxAge, 0)
+}
+
+// VerifyObservationAtLeast 在验签之外执行配置下发的最小 canonical 版本闸门。
+// minVersion=0 是滚动兼容阶段；=5 表示全网 reader 已升级，legacy 只能作为
+// 旧 reader 的旁路副本，不能再被新版信任为完整状态。
+func VerifyObservationAtLeast(o *Observation, ca []byte, now time.Time, maxAge time.Duration,
+	minVersion int) (*AttestedState, error) {
+	if minVersion != 0 && minVersion != 5 {
+		return nil, fmt.Errorf("不支持 attestation 最小版本 %d", minVersion)
+	}
 	if o == nil || o.Attest == nil {
 		return nil, fmt.Errorf("没有签名陈述")
 	}
@@ -95,6 +106,9 @@ func VerifyObservation(o *Observation, ca []byte, now time.Time, maxAge time.Dur
 			return nil, fmt.Errorf("扩展签名:%w", err)
 		}
 	}
+	if err := requireAttestationVersion(c, minVersion); err != nil {
+		return nil, err
+	}
 	if err := bindClaim(o, c); err != nil {
 		return nil, err
 	}
@@ -106,6 +120,20 @@ func VerifyObservation(o *Observation, ca []byte, now time.Time, maxAge time.Dur
 		return nil, fmt.Errorf("签名组件状态非法:%s", problems[0])
 	}
 	return st, nil
+}
+
+func requireAttestationVersion(c *attest.Claim, minVersion int) error {
+	if minVersion == 0 {
+		return nil
+	}
+	if c == nil || c.CanonicalVersion != 5 {
+		got := 0
+		if c != nil {
+			got = c.CanonicalVersion
+		}
+		return fmt.Errorf("需要 canonical_version=5，收到 %d（扩展签名可能被剥离）", got)
+	}
+	return nil
 }
 
 // legacyObservation 模拟旧 Go 结构对新 JSON 的解码结果：未知的 components、
@@ -245,18 +273,22 @@ func cloneInt(v *int) *int {
 	return &x
 }
 
-// AttestationErrors 校验 Status 里所有带签名的观测。没有签名仍按旧节点兼容
-// 处理；出现签名却验不过是明确故障，必须进入 Status.Errors/OK。
-func AttestationErrors(st *Status, now time.Time, maxAge time.Duration) []string {
+func observationNeedsVerification(o *Observation, minVersion int) bool {
+	return o != nil && (minVersion > 0 || o.Attest != nil || o.AttestExtended != nil)
+}
+
+// AttestationErrors 校验 Status 里所有带签名的观测。兼容阶段允许完全无签名
+// 的旧节点保持 unknown；一旦进入 phase B，缺失签名本身就是明确故障。
+func AttestationErrors(st *Status, now time.Time, maxAge time.Duration, minVersion int) []string {
 	if st == nil {
 		return nil
 	}
 	var signed []*Observation
-	if st.Observation != nil && st.Observation.Attest != nil {
+	if observationNeedsVerification(st.Observation, minVersion) {
 		signed = append(signed, st.Observation)
 	}
 	for i := range st.Learned {
-		if st.Learned[i].Attest != nil {
+		if observationNeedsVerification(&st.Learned[i], minVersion) {
 			signed = append(signed, &st.Learned[i])
 		}
 	}
@@ -269,7 +301,7 @@ func AttestationErrors(st *Status, now time.Time, maxAge time.Duration) []string
 	}
 	var out []string
 	for _, o := range signed {
-		if _, err := VerifyObservation(o, ca, now, maxAge); err != nil {
+		if _, err := VerifyObservationAtLeast(o, ca, now, maxAge, minVersion); err != nil {
 			out = append(out, fmt.Sprintf("观测 %s 的签名陈述无效:%v", o.Node, err))
 		}
 	}

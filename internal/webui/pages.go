@@ -293,8 +293,10 @@ func pageOverview(d Deps, isAuthed bool) string {
 		unresolved = d.Unresolved()
 	}
 
-	// 实时拓扑：底图和 route overlay 都由 View 数据生成，不写死节点或边。
-	b.WriteString(`<div id=topology class=section><div class=sectionhead><h2>实时拓扑</h2><span class=dim>边类型、来源与更新时间分开呈现</span></div><div class=grid>`)
+	// 近实时拓扑：底图和 route overlay 都由 View 数据生成，不写死节点或边。
+	// 观测本来就是分钟级 gossip，页面是 30 秒 SSR 刷新；直接写清采样节奏，
+	// 不把周期数据包装成流式实时。
+	b.WriteString(`<div id=topology class=section><div class=sectionhead><h2>近实时拓扑</h2><span class=dim>采样约 1 分钟 · 页面每 30 秒刷新 · 每条数据保留观测年龄</span></div><div class=grid>`)
 	b.WriteString(`<div class="card span8">` + topologySVG(v) + `<div class=legend>
 	<span><i class=key></i>常驻 WG</span><span><i class="key candidate"></i>候选跳（未核验）</span>
 	<span><i class="key route"></i>Agent 当前 RouteCandidate</span><span><i class="key degraded"></i>部分失败</span><span><i class="key failed"></i>故障</span>
@@ -628,7 +630,7 @@ func topologySVG(v View) string {
 		}
 	}
 	var b strings.Builder
-	b.WriteString(`<svg class=topology viewBox="0 0 760 380" role=img aria-label="实时网络拓扑"><defs><marker id=arrow viewBox="0 0 10 10" refX=8 refY=5 markerWidth=5 markerHeight=5 orient=auto-start-reverse><path d="M 0 0 L 10 5 L 0 10 z" fill="#ffd166"/></marker></defs>`)
+	b.WriteString(`<svg class=topology viewBox="0 0 760 380" role=img aria-label="近实时网络拓扑"><defs><marker id=arrow viewBox="0 0 10 10" refX=8 refY=5 markerWidth=5 markerHeight=5 orient=auto-start-reverse><path d="M 0 0 L 10 5 L 0 10 z" fill="#ffd166"/></marker></defs>`)
 	for _, l := range v.Links {
 		a, aok := pos[l.From]
 		z, zok := pos[l.To]
