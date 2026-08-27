@@ -71,16 +71,21 @@ func VerifyObservation(o *Observation, ca []byte, now time.Time, maxAge time.Dur
 	if o == nil || o.Attest == nil {
 		return nil, fmt.Errorf("没有签名陈述")
 	}
-	legacy, err := attest.VerifyFresh(o.Attest, ca, now, maxAge)
+	primary, err := attest.VerifyFresh(o.Attest, ca, now, maxAge)
 	if err != nil {
-		return nil, fmt.Errorf("兼容签名:%w", err)
+		return nil, fmt.Errorf("签名:%w", err)
 	}
-	// 用旧 reader 反序列化后能看见的投影再绑定一次。这样双签不是“多放了
-	// 一个没人检查的字段”，而是每个新节点都会持续验证旧节点能消费的 v3。
-	if err := bindClaim(legacyObservation(o), legacy); err != nil {
-		return nil, fmt.Errorf("兼容签名绑定:%w", err)
+	c := primary
+	if primary.CanonicalVersion == 0 {
+		// 用旧 reader 反序列化后能看见的投影再绑定一次。这样双签不是
+		// “多放了一个没人检查的字段”，而是每个新节点都会持续验证旧节点
+		// 能消费的 v3。
+		if err := bindClaim(legacyObservation(o), primary); err != nil {
+			return nil, fmt.Errorf("兼容签名绑定:%w", err)
+		}
+	} else if o.AttestExtended != nil {
+		return nil, fmt.Errorf("主签名已经是 v4/v5，不能再携带第二份扩展签名")
 	}
-	c := legacy
 	if o.AttestExtended != nil {
 		if o.AttestExtended.CanonicalVersion != 4 && o.AttestExtended.CanonicalVersion != 5 {
 			return nil, fmt.Errorf("扩展签名必须使用 canonical_version=4/5")
