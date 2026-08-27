@@ -43,8 +43,9 @@ type Observation struct {
 	Edges      []Edge              `json:"edges,omitempty"`
 	Targets    []Reach             `json:"targets,omitempty"`
 
-	// Attest 是这台机器对 node-owned state（身份、版本、Applied、rollout、
-	// Agent 实选）的签名陈述(D81)。
+	// Attest 是给旧版 reader 的 v1-v3 兼容签名；AttestExtended 是新版对
+	// Agent 候选健康与组件版本的完整签名。滚动升级期间必须双签：旧 reader
+	// 会忽略新 JSON 字段，但无法验证 v4/v5 canonical。
 	//
 	// 观测可以转述:RTT、可达性是尽力而为的数字,B 转述 C 的观测,
 	// 可信度就是 B 的可信度,而这够用了。**身份不行** —— "C 跑的是
@@ -56,7 +57,8 @@ type Observation struct {
 	//
 	// 没有私钥的机器(比如只有 ca.crt 的中控)这里是空的,而空**不等于
 	// 可信**:验不了就是验不了,调用方要当作"没核对过"。
-	Attest *attest.Signed `json:"attest,omitempty"`
+	Attest         *attest.Signed `json:"attest,omitempty"`
+	AttestExtended *attest.Signed `json:"attest_extended,omitempty"`
 }
 
 // Edge 是本节点到另一个节点的往返时间。
@@ -178,10 +180,13 @@ func observe(cfg *Config, h *history, now time.Time) *Observation {
 			LastGood: r.LastGood, Error: r.Error,
 		}
 	}
-	if a, err := readAgentState(cfg.AgentState); err == nil && len(validateAgentState(a, cfg.Node, now)) == 0 {
+	a, agentErr := readAgentState(cfg.AgentState)
+	if agentErr == nil && len(validateAgentStateForConfig(a, cfg, now)) == 0 {
 		o.Agent = a
 	}
-	o.Components = componentStatuses(cfg, o.Agent, now)
+	// 即使状态不完整，也把原值交给组件核验生成一条签名错误；只是不把这份
+	// 不可信/缺 declaration 的状态本身作为 Agent 当前选择转述。
+	o.Components = componentStatuses(cfg, a, now)
 	nb := append([]Neighbor(nil), cfg.Neighbors...)
 	sort.Slice(nb, func(i, j int) bool { return nb[i].Node < nb[j].Node })
 	for _, n := range nb {
@@ -220,7 +225,7 @@ func observe(cfg *Config, h *history, now time.Time) *Observation {
 	// 必须在 Edges/Targets 全部采完之后签。v3 同时绑定测量 payload；在
 	// 采集前签会留下一个 relay 可改写、却看似有合法身份签名的缺口。
 	// 签不了不是错误 —— 中控只有 ca.crt,没有自己的私钥。
-	o.Attest = signSelf(o)
+	o.Attest, o.AttestExtended = signSelf(o)
 	return o
 }
 
@@ -297,15 +302,32 @@ const (
 // **签不了就返回 nil,不报错也不猜。** 没有私钥是合法状态(中控就没有),
 // 而一个签不出名字的机器和一个签名验不过的机器,在调用方眼里是同一件事:
 // 没核对过。把它们区分开只会让判断变复杂,而结论一样。
-func signSelf(o *Observation) *attest.Signed {
+func signSelf(o *Observation) (*attest.Signed, *attest.Signed) {
 	key, err := os.ReadFile(nodeKeyPath)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	crt, err := os.ReadFile(nodeCertPath)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
+	legacy, current := claimsForObservation(o)
+	legacySigned, err := attest.Sign(legacy, key, crt)
+	if err != nil {
+		return nil, nil
+	}
+	currentSigned, err := attest.Sign(current, key, crt)
+	if err != nil {
+		return nil, nil
+	}
+	// 没有新字段时 current 仍是同一份 v3 陈述，不重复携带证书和签名。
+	if currentSigned.CanonicalVersion == 0 {
+		return legacySigned, nil
+	}
+	return legacySigned, currentSigned
+}
+
+func claimsForObservation(o *Observation) (attest.Claim, attest.Claim) {
 	c := attest.Claim{Node: o.Node, TS: o.TS, Applied: o.Applied}
 	c.MeasurementsSHA256 = measurementDigest(o)
 	if o.Version != nil {
@@ -341,9 +363,17 @@ func signSelf(o *Observation) *attest.Signed {
 			Actual: component.Actual, Error: component.Error,
 		})
 	}
-	s, err := attest.Sign(c, key, crt)
-	if err != nil {
-		return nil
+	legacy := c
+	legacy.CanonicalVersion = 0
+	legacy.Components = nil
+	if c.Agent != nil {
+		a := *c.Agent
+		a.ComponentVersion = ""
+		a.Selections = append([]attest.SelectionClaim(nil), c.Agent.Selections...)
+		for i := range a.Selections {
+			a.Selections[i].Health = nil
+		}
+		legacy.Agent = &a
 	}
-	return s
+	return legacy, c
 }

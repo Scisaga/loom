@@ -71,9 +71,24 @@ func VerifyObservation(o *Observation, ca []byte, now time.Time, maxAge time.Dur
 	if o == nil || o.Attest == nil {
 		return nil, fmt.Errorf("没有签名陈述")
 	}
-	c, err := attest.VerifyFresh(o.Attest, ca, now, maxAge)
+	legacy, err := attest.VerifyFresh(o.Attest, ca, now, maxAge)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("兼容签名:%w", err)
+	}
+	// 用旧 reader 反序列化后能看见的投影再绑定一次。这样双签不是“多放了
+	// 一个没人检查的字段”，而是每个新节点都会持续验证旧节点能消费的 v3。
+	if err := bindClaim(legacyObservation(o), legacy); err != nil {
+		return nil, fmt.Errorf("兼容签名绑定:%w", err)
+	}
+	c := legacy
+	if o.AttestExtended != nil {
+		if o.AttestExtended.CanonicalVersion != 4 && o.AttestExtended.CanonicalVersion != 5 {
+			return nil, fmt.Errorf("扩展签名必须使用 canonical_version=4/5")
+		}
+		c, err = attest.VerifyFresh(o.AttestExtended, ca, now, maxAge)
+		if err != nil {
+			return nil, fmt.Errorf("扩展签名:%w", err)
+		}
 	}
 	if err := bindClaim(o, c); err != nil {
 		return nil, err
@@ -86,6 +101,27 @@ func VerifyObservation(o *Observation, ca []byte, now time.Time, maxAge time.Dur
 		return nil, fmt.Errorf("签名组件状态非法:%s", problems[0])
 	}
 	return st, nil
+}
+
+// legacyObservation 模拟旧 Go 结构对新 JSON 的解码结果：未知的 components、
+// component_version、health 与 attest_extended 会被忽略，其余字段保持原样。
+func legacyObservation(o *Observation) *Observation {
+	if o == nil {
+		return nil
+	}
+	legacy := *o
+	legacy.Components = nil
+	legacy.AttestExtended = nil
+	if o.Agent != nil {
+		a := *o.Agent
+		a.ComponentVersion = ""
+		a.Selections = append([]AgentSelection(nil), o.Agent.Selections...)
+		for i := range a.Selections {
+			a.Selections[i].Health = nil
+		}
+		legacy.Agent = &a
+	}
+	return &legacy
 }
 
 func bindClaim(o *Observation, c *attest.Claim) error {

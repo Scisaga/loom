@@ -157,6 +157,7 @@ func TestAgentProtocolComesFromFreshAgentState(t *testing.T) {
 		Node: "access", TS: now.Format(time.RFC3339), ComponentVersion: "0.0.9",
 		Selections: []AgentSelection{{
 			Declaration: "d", Selector: "s", Candidate: "c", UpdatedAt: now.Format(time.RFC3339),
+			Health: &AgentCandidateHealth{Candidates: 1, Unknown: 1, SelectedState: "unknown"},
 		}},
 	}
 	got := componentStatuses(cfg, state, now)

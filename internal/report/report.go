@@ -279,7 +279,7 @@ func Collect(cfg *Config, now time.Time) *Status {
 		st.Errors = append(st.Errors, "Agent 当前选择状态不存在")
 	} else {
 		st.Agent = a
-		st.Errors = append(st.Errors, validateAgentState(a, cfg.Node, now)...)
+		st.Errors = append(st.Errors, validateAgentStateForConfig(a, cfg, now)...)
 	}
 	st.Components = componentStatuses(cfg, st.Agent, now)
 	if cfg.PublisherHealth != "" {

@@ -78,6 +78,56 @@ func validateAgentState(st *AgentState, node string, now time.Time) []string {
 	return out
 }
 
+// validateAgentStateForConfig 在通用线格式检查之外，核对“这份配置要求 Agent
+// 管哪些 declaration”。只遍历实际状态会产生一个危险真空：某个 tick 永久
+// 失败后，该 declaration 会从状态和界面一起消失，却没人报错。
+func validateAgentStateForConfig(st *AgentState, cfg *Config, now time.Time) []string {
+	if cfg == nil {
+		return validateAgentState(st, "", now)
+	}
+	out := validateAgentState(st, cfg.Node, now)
+	expected := map[string]bool{}
+	for _, route := range cfg.ExpectedRoutes {
+		if route.Access == cfg.Node && route.Declaration != "" {
+			expected[route.Declaration] = true
+		}
+	}
+	// 没有本机 Agent workload 的服务器节点不需要 selections；ExpectedRoutes
+	// 同时携带全网其他接入节点的候选，必须按 Access 过滤。
+	if len(expected) == 0 && cfg.AgentState == "" && cfg.ExpectedComponents.Agent == "" {
+		return out
+	}
+	if st == nil {
+		if len(expected) > 0 || cfg.AgentState != "" || cfg.ExpectedComponents.Agent != "" {
+			out = append(out, "Agent 状态不存在，缺少全部期望 declaration")
+		}
+		return out
+	}
+	actual := map[string]bool{}
+	for _, selection := range st.Selections {
+		id := selection.Declaration
+		if actual[id] {
+			out = append(out, "Agent 状态重复 declaration:"+id)
+		}
+		actual[id] = true
+		if len(expected) > 0 && !expected[id] {
+			out = append(out, "Agent 状态含非期望 declaration:"+id)
+		}
+		// component_version 非空表示写状态的 Agent 已声明支持新版协议；这时
+		// Health=nil 不再是“旧版兼容”，而是探测半途失败留下的假绿窗口。
+		if st.ComponentVersion != "" && selection.Health == nil {
+			out = append(out, "Agent declaration "+id+" 未上报候选健康")
+		}
+	}
+	for id := range expected {
+		if !actual[id] {
+			out = append(out, "Agent 状态缺少期望 declaration:"+id)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func validateAgentCandidateHealth(h *AgentCandidateHealth) []string {
 	if h == nil { // 旧 agent-state 兼容；缺失不等于健康。
 		return nil

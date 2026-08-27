@@ -157,3 +157,39 @@ func TestClaimBindsAgentHealthAndComponentVersion(t *testing.T) {
 		t.Fatalf("relay 改写 Agent component_version 后仍绑定成功:%v", err)
 	}
 }
+
+func TestExtendedClaimKeepsOldReaderProjectionBound(t *testing.T) {
+	p50, p95, best := 80, 120, 70
+	o := &Observation{
+		Node: "gz02", TS: "2026-08-26T12:00:00Z", Applied: "snap",
+		Agent: &AgentState{
+			Node: "gz02", TS: "2026-08-26T12:00:00Z", ComponentVersion: "0.1.0",
+			Selections: []AgentSelection{{
+				Declaration: "d", Selector: "svc:d", Candidate: "cand:d:gz02",
+				UpdatedAt: "2026-08-26T12:00:00Z", Health: &AgentCandidateHealth{
+					Candidates: 1, RecentSuccess: 1, SelectedState: "success",
+					SelectedSamples: 3, SelectedP50MS: &p50, SelectedP95MS: &p95,
+					BestP50MS: &best,
+				},
+			}},
+		},
+		Components: []ComponentStatus{{
+			Name: "sing-box", Expected: "1.11.4", Actual: "1.11.4",
+		}},
+	}
+	legacy, current := claimsForObservation(o)
+	if legacy.CanonicalVersion != 0 || len(legacy.Components) != 0 ||
+		legacy.Agent.ComponentVersion != "" || legacy.Agent.Selections[0].Health != nil {
+		t.Fatalf("兼容 claim 泄漏了新字段:%+v", legacy)
+	}
+	if len(current.Components) != 1 || current.Agent.ComponentVersion != "0.1.0" ||
+		current.Agent.Selections[0].Health == nil {
+		t.Fatalf("扩展 claim 丢字段:%+v", current)
+	}
+	if err := bindClaim(legacyObservation(o), &legacy); err != nil {
+		t.Fatalf("旧 reader 投影无法绑定兼容 claim:%v", err)
+	}
+	if err := bindClaim(o, &current); err != nil {
+		t.Fatalf("新版外层无法绑定扩展 claim:%v", err)
+	}
+}
