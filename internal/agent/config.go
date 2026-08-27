@@ -20,9 +20,15 @@ import (
 	"loom/internal/model"
 )
 
+// ConfigSchema distinguishes newly rendered configs from the deployed legacy
+// shape that predates authenticated observations.  Schema 0 is accepted only
+// as a narrow binary-before-config upgrade bridge; every new render writes 1.
+const ConfigSchema = 1
+
 // Config 是 Agent 在节点上读到的全部输入。
 type Config struct {
-	Node string `json:"node"`
+	Schema int    `json:"schema,omitempty"`
+	Node   string `json:"node"`
 
 	// API 是 sing-box 的控制端点(§7.3.1)。selector 的当前选择由它设置。
 	API       string `json:"api"`
@@ -63,6 +69,13 @@ type Config struct {
 	// Targets are allowed to prune candidates. Display-only legacy observations
 	// may be useful to people, but must never drive selector decisions.
 	AttestationCA string `json:"attestation_ca,omitempty"`
+
+	// ObservationDisabledReason is set only while loading a legacy on-disk
+	// config that predates attestation_ca.  The new binary must be able to start
+	// long enough for pull to install the paired new config, but unverified
+	// observations must not influence routing during that bridge.  Load therefore
+	// removes those sources and Run reports the reason loudly.
+	ObservationDisabledReason string `json:"-"`
 }
 
 // Peer 是一个能拉到的节点。
@@ -150,6 +163,10 @@ func Load(b []byte) (*Config, error) {
 	if c.Node == "" {
 		return nil, fmt.Errorf("agent 配置缺少 node")
 	}
+	if c.Schema != 0 && c.Schema != ConfigSchema {
+		return nil, fmt.Errorf("agent config schema 只能是 legacy(0) 或 %d，收到 %d",
+			ConfigSchema, c.Schema)
+	}
 	if c.AttestationMinVersion != 0 && c.AttestationMinVersion != 5 {
 		return nil, fmt.Errorf("attestation_min_version 只能是 0 或 5，收到 %d", c.AttestationMinVersion)
 	}
@@ -183,7 +200,18 @@ func Load(b []byte) (*Config, error) {
 		return nil, err
 	}
 	if (len(c.Peers) > 0 || c.SelfReport != "") && c.AttestationCA == "" {
-		return nil, fmt.Errorf("agent 有观测来源但缺少 attestation_ca —— 未验签 Targets 不能驱动选路")
+		if c.Schema != 0 || c.AttestationMinVersion != 0 {
+			return nil, fmt.Errorf("agent 要求 attestation v%d 但缺少 attestation_ca",
+				c.AttestationMinVersion)
+		}
+		// Upgrade bridge for the deployed pre-attestation config.  Accepting its
+		// remote/self report addresses would be fail-open; rejecting the whole
+		// config would deadlock the binary-before-config rollout.  Disable only
+		// the untrusted input until the paired rendered config is installed.
+		c.ObservationDisabledReason = "旧配置缺少 attestation_ca；已临时禁用观测剪枝，等待同一快照的新配置"
+		c.Peers = nil
+		c.SelfReport = ""
+		c.PeerPeriod = ""
 	}
 	if c.SelfReport != "" {
 		host, _, err := net.SplitHostPort(c.SelfReport)

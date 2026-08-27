@@ -635,7 +635,7 @@ Headscale 因此仍然是**独立可选项**,不在主线上。
 
 ### D32 · 控制面是一棵签了名的静态树,不需要被信任
 
-**日期** 2026-08-22 · **状态** 内容完整性部分生效；freshness 结论被 [D88](#d88--用签名-deployment-envelope-同时闭合反重放与真实-canary) 修正
+**日期** 2026-08-22 · **状态** 内容签名已生效；D88 freshness 阶段一已实现、待部署
 
 附录 C #14"控制平面放在哪"一直未定,于是我先做了 ssh 推。被问到"我为什么
 要自己部署"才想清楚:**这个问题之所以难,是因为默认假设了控制面必须可信。**
@@ -650,10 +650,13 @@ Headscale 因此仍然是**独立可选项**,不在主线上。
 三种篡改都实测过并被拒:改配置包(哈希对不上)、改 manifest(验签失败)、
 `current.json` 指向别的快照(id 对不上)。
 
-2026-08-27 复审修正：最后一项只覆盖“指针与所取 manifest ID 不一致”，没有
+2026-08-27 复审修正：旧实现的最后一项只覆盖“指针与所取 manifest ID 不一致”，没有
 覆盖“指针改指另一份合法旧快照”。签名证明内容来源，不证明当前授权；旧快照
-又必须保留，故分发点仍可重放。完整反重放与 canary 由 D88 的签名 deployment
-envelope 闭合，不能再把本决策概括成分发点在所有维度都不需要信任。
+又必须保留，故分发点仍可重放。D88 阶段一用签名 deployment envelope 与节点
+单调 floor 闭合首次可信接受后的反重放；首次 bootstrap 和自动 canary 仍是明确
+边界。无 floor 首见高代现可用中控 authority + `-expected-current` 带外锚定，
+但控制端/分发点协调回滚仍需节点 floor 或外部 witness 发现；不能把本决策概括成
+“任何状态下、所有维度都不需要信任”。
 
 **签名私钥只在 `loom publish` 用到,不上任何服务器。**
 
@@ -1796,7 +1799,7 @@ jm24 那两条隧道(61711、61763)本来就在注释说的范围之外。手工
 
 | # | 问题 | 状态 | 答案 |
 |---|---|---|---|
-| 14 | 控制平面放在哪 | **已定，反重放待实现** | 一棵签了名的静态树 + 一台中控([D32](#d32--控制面是一棵签了名的静态树不需要被信任)、[D35](#d35--中控只在改变系统时需要不在运行系统时需要)、[D88](#d88--用签名-deployment-envelope-同时闭合反重放与真实-canary))。快照内容不信任分发点；当前授权的新鲜度仍需 D88 闭合。 |
+| 14 | 控制平面放在哪 | **已定，阶段一待部署** | 一棵签了名的静态树 + 一台中控([D32](#d32--控制面是一棵签了名的静态树不需要被信任)、[D35](#d35--中控只在改变系统时需要不在运行系统时需要)、[D88](#d88--用签名-deployment-envelope-同时闭合反重放与真实-canary))。snapshot 内容签名 + signed current + 节点 floor 与高代 bootstrap 的带外 authority 锚定已实现；外部单调 witness 和自动 canary controller 尚未闭合。 |
 | 15 | CA 私钥怎么保管 | **有意降级** | 5 台机器的规模上,§13.3 那套离线根 + 中间 CA + 人工解锁的成本远大于收益。当前:CA 与平台签名私钥都在中控上,0600,靠 `loom backup` 保存。**这是明知的取舍,不是遗漏**([D38](#d38--离线根密钥当前有意不做)) |
 | 16 | 秘密层怎么放 | **已定** | 每节点一份,只含它自己引用到的项(`loom secrets split`)。合并发生在节点上,分发树里只有占位符([D32](#d32--控制面是一棵签了名的静态树不需要被信任))；两步轮换已实现(§13.4) |
 | 17 | Android 客户端做到什么程度 | **未定** | |
@@ -2417,19 +2420,48 @@ v3，把组件漂移或候选全失败降级成“没有数据”。所以 SSOT 
 
 ### D88 · 用签名 deployment envelope 同时闭合反重放与真实 canary
 
-**日期** 2026-08-27 · **状态** 已决策，待实现 · **相关** [D85](#d85--发布的原子单位包含输入时刻放行记录与可取回字节)、§14.2.2、§15.4
+**日期** 2026-08-27 · **状态** 阶段一已实现、待部署；自动 canary controller 待实现 · **相关** [D85](#d85--发布的原子单位包含输入时刻放行记录与可取回字节)、§14.2.2、§15.4
 
 签名 manifest 只能证明“这份快照由平台签过”，不能证明“平台现在仍授权部署
-这份快照”。`current.json` 未签名、旧快照永久保留且节点没有单调代次，因此被
+这份快照”。修复前的 `current.json` 未签名、旧快照永久保留且节点没有单调代次，因此被
 攻陷的分发点可以把所有节点重放到任意真实旧快照；当前全网共用一个指针，也无法
 做到一台验证后才推进其余节点。
 
-两件事使用同一个最小控制对象解决，而不是分别增加裸 per-node 指针：平台签名的
-deployment envelope 携带单调 `generation`、`node → snapshot` 目标映射、上一代、
-签发时间与变更原因。节点持久化已经接受的最高 generation，拒绝更低代次；合法
-回滚也签发更高代次，不能靠重放旧 current 实现。发布 controller 先把目标只赋给
-canary，收到节点签名的配置/服务稳定、承载与代表路径验证后再签发下一代扩大批次。
+两件事使用同一个最小控制对象解决，而不是分别增加裸 per-node 指针。阶段一的
+`current.json` 保留旧 reader 已认识的顶层 `snapshot` / `published_at`，并增加：
 
-落地前不能再声称“分发点不需要被信任”或“上线观察就是 canary”。兼容迁移必须
-先发布能读取 envelope 的节点，再由一个明确的 bootstrap generation 启用强制校验；
-不能让新 reader 在旧全局指针仍是唯一入口时直接 fail closed。
+- `schema`、单调 `generation` 与 Ed25519 域分隔签名；
+- 可选的 `assignments: node → snapshot`。空映射表示全局目标；映射一旦非空，
+  新 reader 找不到自己的节点就失败关闭，不静默回落到全局值；
+- 节点本地 `/var/lib/loom/release-floor.json`，记录最高已接受 generation、签名
+  payload 哈希与本节点实际选择的 snapshot。同代异内容、低代重放，以及 floor
+  激活后的 unsigned current 全部拒绝；合法回滚必须签发更高 generation 指回旧快照。
+
+发布端把精确签名 envelope 耐久保存在
+`deploy/ssot-history/release-authority.json`，并用 `release-authority.enabled` 防止文件
+丢失后悄悄从 generation 1 重开。同一逻辑目标的失败重试复用完全相同的代次、时间
+和签名；目标变化才递增。authority 在 Push 前落稳；分发点出现有效高代或同代异
+payload 时拒绝覆盖，低代、legacy 或无效签名才按本地 authority 修复。节点在取得并
+验签 envelope 后、下载 manifest/blob 前短暂持有 deploy.lock 落稳 floor，因此分发点
+不能靠“先给高代但扣住正文，再给可下载的低代”绕过记忆。
+
+二进制回退也进入同一边界：`release`、`pin`、`rollback` 和节点激活候选都要求
+`selfcheck -require signed-current-v1`，floor 启用后不能再装回会忘记它的旧 Agent。
+首次分配 generation 1 前，publisher 还会从稳定候选重新执行同一能力检查，并要求
+该 Agent 就在 generation 1 快照中；旧/空 release 不会先写 authority。旧 Agent 会
+忽略 envelope 的新增字段，便于滚动获得新 reader；新 Agent 只对 schema=0 的旧配置
+临时禁用缺少 CA 的观测剪枝，新 renderer 明确写 schema=1，漏 CA 必须失败关闭。
+
+continuation 也有单独的提交屏障：子进程若看见已验签高代，会先把结构化状态推进到
+不可恢复旧 reader 的阶段，再持继承 deploy.lock 落稳 floor，最后才核对父进程目标
+快照。这样即使发布恰好在续跑中换代，也不会留下“高 floor + 已恢复旧 Agent”。
+
+阶段一只闭合“首次可信接受之后”的重放，不能凭空给一台全新/丢失 floor 的机器
+证明全网当前最高代次。generation 1 是一次性自动迁移锚点；无 floor 首见更高代
+必须用受信通道带来的 authority 文件和 `pull -expected-current` 精确核对，不能把
+一般 first-seen 说成 freshness。控制端 authority 与分发点若被协调恢复到同一份
+自洽旧备份，本机文件仍无法发现；恢复前必须与节点 floor 对账，外部单调 witness
+仍是后续加固项。阶段二仍未实现：publisher 目前签发空 assignments 的全局目标；
+节点视角 verifier 已会核完 assignment 指向的所有不可变表面，但 controller 仍须
+在收到节点签名的配置/服务稳定、承载与代表路径验证后签发更高代扩大批次。因此
+“上线观察”仍不是真实 canary，四级业务数据面确认也仍是发布门的缺口。

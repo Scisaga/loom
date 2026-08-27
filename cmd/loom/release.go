@@ -96,10 +96,10 @@ func cmdRelease(args []string) error {
 		return err
 	}
 	defer cleanup()
-	out, err := exec.Command(checkPath, "selfcheck", "-q").CombinedOutput()
+	out, err := selfcheckBinaryCandidate(checkPath, true)
 	if err != nil {
-		return fmt.Errorf("%s 的稳定候选 %s selfcheck 没过,不放行:%v\n%s",
-			*binPath, version.Short(candidate.SHA256), err, out)
+		return fmt.Errorf("%s 的稳定候选 %s selfcheck 没过（必须支持 %s）,不放行:%v\n%s",
+			*binPath, version.Short(candidate.SHA256), signedCurrentCapability, err, out)
 	}
 
 	r := publish.Release{
@@ -128,6 +128,21 @@ func cmdRelease(args []string) error {
 	fmt.Printf("**包括中控自己**,所以不用手工装到 %s。\n", managedBinary)
 	fmt.Printf("反悔:`loom release -clear` 停发,或 `loom pin <快照 id>` 退回历史版本。\n")
 	return nil
+}
+
+// selfcheckBinaryCandidate 是所有“选一份 Agent 二进制供未来分发”路径的
+// 共用防退化门。release / pin / rollback 都跑在中控；中控本地的
+// release floor 不能证明远端节点还没有激活 floor。因此不能按本地
+// floor 有无条件降级成旧 selfcheck：任何被这三条路径选中的候选都
+// 必须明确证明它读得懂 signed current，否则会让已激活反重放地板的
+// 节点在下一次升级/回滚后失去这道保护。
+func selfcheckBinaryCandidate(path string, quiet bool) ([]byte, error) {
+	args := []string{"selfcheck"}
+	if quiet {
+		args = append(args, "-q")
+	}
+	args = append(args, "-require", signedCurrentCapability)
+	return exec.Command(path, args...).CombinedOutput()
 }
 
 // stageReleaseCheck 把稳定候选落在 release 目录后执行。用 os.TempDir 可能

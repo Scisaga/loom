@@ -2,6 +2,7 @@ package publish
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"debug/buildinfo"
 	"encoding/hex"
@@ -10,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -126,6 +128,59 @@ func InspectBinary(c BinaryCandidate) (version.Coordinate, error) {
 		}
 	}
 	return out, nil
+}
+
+// checkBinaryCapability reruns the candidate itself from a stable byte copy.
+// Release/pin already checked it when authorization was written, but the first
+// signed-current publication is a one-way fleet protocol transition: stale or
+// manually restored authorization state must not smuggle an old reader into
+// generation 1.
+func checkBinaryCapability(c BinaryCandidate, stageDir, capability string) error {
+	got := newBinaryCandidate(c.Body)
+	if got.SHA256 != c.SHA256 || got.Size != c.Size || got.Size == 0 {
+		return fmt.Errorf("能力检查候选在读取后发生变化(%s → %s)",
+			version.Short(c.SHA256), version.Short(got.SHA256))
+	}
+	if stageDir == "" {
+		return fmt.Errorf("能力检查缺少可执行暂存目录")
+	}
+	if err := os.MkdirAll(stageDir, 0o700); err != nil {
+		return fmt.Errorf("创建能力检查目录:%w", err)
+	}
+	f, err := os.CreateTemp(stageDir, ".loom-capability-check-*")
+	if err != nil {
+		return fmt.Errorf("暂存能力检查候选:%w", err)
+	}
+	path := f.Name()
+	defer os.Remove(path)
+	fail := func(err error) error {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Chmod(0o700); err != nil {
+		return fail(err)
+	}
+	if _, err := f.Write(c.Body); err != nil {
+		return fail(err)
+	}
+	if err := f.Sync(); err != nil {
+		return fail(err)
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, path, "selfcheck", "-q", "-require", capability).CombinedOutput()
+	if err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("候选 Agent capability %s 自检超过 30s:%w", capability, ctx.Err())
+		}
+		return fmt.Errorf("候选 Agent 不具备 capability %s:%w\n%s",
+			capability, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // ReleaseBinPath 是某个 sha 对应的本地副本路径。

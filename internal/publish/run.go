@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -308,6 +309,12 @@ func Run(ctx context.Context, opts Options) error {
 			changed := inputsChanged(first, cur, lastSSOT, binSum, lastBin)
 			// 分发点和本地算出来的不一致就重推,与 SSOT 有没有变无关。
 			diverged := serr != nil || (lastBuilt != "" && served != lastBuilt)
+			if known, converged, err := releasePointerConverged(&opts); known {
+				diverged = err != nil || !converged
+				if err != nil {
+					logf("核对 signed current 与本地 authority 失败:%v —— 进入发布事务 fail closed/自愈", err)
+				}
+			}
 
 			switch {
 			case first:
@@ -318,7 +325,7 @@ func Run(ctx context.Context, opts Options) error {
 			case changed:
 				logf("SSOT 变了(%s)", cur[:8])
 			case diverged:
-				logf("分发点指向 %s,本地算出来是 %s —— 重推", short(served), short(lastBuilt))
+				logf("分发点 current 与本地 authority/快照不一致 —— 重推")
 			}
 
 			if blocked != "" {
@@ -374,6 +381,9 @@ func Run(ctx context.Context, opts Options) error {
 					if err != nil {
 						return "", fmt.Errorf("源头存档失败，拒绝发布:%w", err)
 					}
+					if err := requireInitialSignedCurrentAgent(&opts, bins); err != nil {
+						return "", err
+					}
 					id, err := publishOnce(&opts, body, bins, logf)
 					if err != nil {
 						return "", err
@@ -426,6 +436,69 @@ func Run(ctx context.Context, opts Options) error {
 	}
 }
 
+// requireInitialSignedCurrentAgent is deliberately inside the publish lock and
+// immediately before publishOnce can allocate generation 1.  Old readers can
+// parse the additive envelope fields, but generation 1 must carry the new
+// reader so every node can establish a durable floor in that same rollout.
+func requireInitialSignedCurrentAgent(opts *Options, bins map[string][]byte) error {
+	if opts == nil || opts.ArchiveDir == "" {
+		return nil
+	}
+	if len(opts.Key) != ed25519.PrivateKeySize {
+		return fmt.Errorf("release authority 私钥长度不对:%d", len(opts.Key))
+	}
+	authority, err := ReadReleaseAuthority(opts.ArchiveDir,
+		opts.Key.Public().(ed25519.PublicKey))
+	if err != nil {
+		return err
+	}
+	if authority != nil {
+		return nil
+	}
+	platform := runtime.GOOS + "/" + runtime.GOARCH
+	body, ok := bins[platform]
+	if !ok || len(body) == 0 {
+		return fmt.Errorf("首次启用 signed current 必须在 generation 1 快照中携带支持 %s 的 %s Agent；请先用新二进制执行 loom release",
+			SignedCurrentCapability, platform)
+	}
+	if err := checkBinaryCapability(newBinaryCandidate(body), opts.ArchiveDir,
+		SignedCurrentCapability); err != nil {
+		return fmt.Errorf("首次启用 signed current 的 Agent 能力门禁失败:%w", err)
+	}
+	return nil
+}
+
+// releasePointerConverged lets the daemon notice a same-snapshot current.json
+// tamper on an otherwise unchanged input.  Comparing Target.Current() alone is
+// insufficient: an attacker can keep snapshot intact while changing or
+// stripping generation/signature.  Once authority exists, its exact bytes are
+// the reconciliation target.
+func releasePointerConverged(opts *Options) (known, converged bool, retErr error) {
+	if opts == nil || opts.ArchiveDir == "" {
+		return false, false, nil
+	}
+	if len(opts.Key) != ed25519.PrivateKeySize {
+		return true, false, fmt.Errorf("release authority 私钥长度不对:%d", len(opts.Key))
+	}
+	authority, err := ReadReleaseAuthority(opts.ArchiveDir,
+		opts.Key.Public().(ed25519.PublicKey))
+	if err != nil {
+		return true, false, err
+	}
+	if authority == nil {
+		return false, false, nil
+	}
+	want, err := authority.Bytes()
+	if err != nil {
+		return true, false, err
+	}
+	got, found, err := opts.Target.ReadFile("current.json")
+	if err != nil {
+		return true, false, err
+	}
+	return true, found && bytes.Equal(got, want), nil
+}
+
 func publishOnce(opts *Options, body []byte, bins map[string][]byte, logf func(string, ...any)) (string, error) {
 	t, err := Build(body, opts.Key, Meta{
 		CreatedAt: opts.Now().Format(time.RFC3339), Author: opts.Author,
@@ -434,40 +507,96 @@ func publishOnce(opts *Options, body []byte, bins map[string][]byte, logf func(s
 	if err != nil {
 		return "", err
 	}
-	// 分发点已经指向这个快照时可以不重传,但**不能跳过节点视角校验**。
-	// 上一轮可能是 Push 成功、VerifyServed 失败；如果这里直接报成功,健康
-	// 状态会在节点仍取不到时假绿。
 	pub := opts.Key.Public().(ed25519.PublicKey)
+	authority, err := ReadReleaseAuthority(opts.ArchiveDir, pub)
+	if err != nil {
+		return "", err
+	}
+	served, servedErr := readTargetDeploymentCurrent(opts.Target, pub)
+	if errors.Is(servedErr, errFutureDeploymentCurrentSchema) {
+		return "", servedErr
+	}
+	if authority == nil && servedErr == nil && served.Signed != nil && opts.ArchiveDir != "" {
+		// A valid signed pointer proves this key has already issued a generation.
+		// Reconstructing the local maximum from an untrusted distribution point
+		// would let replay choose our next number, so recovery must use backup.
+		return "", fmt.Errorf("分发点已有 signed current generation=%d，但本地 release authority 缺失；拒绝自动接管，请恢复 %s",
+			served.Signed.Generation, ReleaseAuthorityPath(opts.ArchiveDir))
+	}
+	if authority != nil && servedErr == nil && served.Signed != nil {
+		if err := compareServedReleaseAuthority(served.Signed, authority); err != nil {
+			return "", err
+		}
+	}
+	if servedErr != nil {
+		logf("current.json 不可信或损坏(%v)，将从本地 authority 自愈", servedErr)
+	}
+
+	// Decide the effective snapshot before allocating a generation.  A
+	// formatting-only SSOT change may retain a complete, rollbackable old
+	// snapshot; that is the same logical release and must not burn a generation.
 	resultSnapshot := t.Snapshot
-	needsPush := true
-	served, currentErr := opts.Target.Current()
-	if currentErr == nil && served == t.Snapshot {
-		logf("快照 %s,分发点已是最新", short(t.Snapshot))
-		complete, why, err := releaseSurfaceComplete(opts.Target, t, pub)
-		if err != nil {
-			return "", fmt.Errorf("核对已发布快照 %s:%w", short(t.Snapshot), err)
-		}
-		if complete {
-			needsPush = false
-		} else {
-			logf("  已发布快照不完整(%s),从本地可信产物重铺", why)
-		}
-	} else if currentErr == nil && served != "" {
+	previousSnapshot := ""
+	if authority != nil {
+		previousSnapshot = authority.Snapshot
+	} else if servedErr == nil {
+		previousSnapshot = served.Snapshot
+	}
+	equivalentSurface := false
+	if previousSnapshot != "" && previousSnapshot != t.Snapshot {
 		// snapshot ID 仍含 raw SSOT hash。仅改注释/排版时，新 ID 会变化，
 		// 但运行配置、组件、秘密代次、下线集合和二进制可能逐项相同。
 		// 当前 manifest 是可信签名且整棵旧树完整时，保留它；不要为了源头
 		// 的非运行差异让全网 rollout 一次。
-		equivalent, why, err := equivalentCurrentRelease(opts.Target, t, served, pub, opts.ArchiveDir)
+		equivalent, why, err := equivalentCurrentRelease(opts.Target, t, previousSnapshot, pub, opts.ArchiveDir)
 		if err != nil {
-			return "", fmt.Errorf("核对当前快照 %s:%w", short(served), err)
+			return "", fmt.Errorf("核对当前快照 %s:%w", short(previousSnapshot), err)
 		}
 		if equivalent {
-			needsPush = false
-			resultSnapshot = served
-			logf("运行产物未变,保留 current 快照 %s", short(served))
+			equivalentSurface = true
+			resultSnapshot = previousSnapshot
+			logf("运行产物未变,保留 current 快照 %s", short(previousSnapshot))
 		} else if why != "" {
 			logf("当前快照不能复用(%s),发布新快照 %s", why, short(t.Snapshot))
 		}
+	}
+
+	current, allocated, err := ensureReleaseAuthority(opts.ArchiveDir, resultSnapshot, nil,
+		opts.Now().Format(time.RFC3339), opts.Key)
+	if err != nil {
+		return "", err
+	}
+	currentBody, err := current.Bytes()
+	if err != nil {
+		return "", err
+	}
+	// Build deliberately remains a pure snapshot-tree helper with the legacy
+	// pointer for existing callers.  The production transaction replaces that
+	// provisional file with the durable, signed authority immediately before
+	// checking or pushing the release surface.
+	t.Files["current.json"] = currentBody
+
+	pointerExact := servedErr == nil && bytes.Equal(served.Body, currentBody)
+	needsPush := !pointerExact
+	if pointerExact {
+		if resultSnapshot == t.Snapshot {
+			logf("快照 %s,分发点 signed current 已是 generation %d", short(t.Snapshot), current.Generation)
+			complete, why, err := releaseSurfaceComplete(opts.Target, t, pub)
+			if err != nil {
+				return "", fmt.Errorf("核对已发布快照 %s:%w", short(t.Snapshot), err)
+			}
+			needsPush = !complete
+			if !complete {
+				logf("  已发布快照不完整(%s),从本地可信产物重铺", why)
+			}
+		} else {
+			// The old surface was checked above before authority allocation.  It
+			// need not contain the newly-built metadata-only snapshot.
+			needsPush = !equivalentSurface
+		}
+	}
+	if allocated {
+		logf("  已耐久分配 release generation %d → %s", current.Generation, short(resultSnapshot))
 	}
 	if needsPush {
 		if err := opts.Target.Push(t); err != nil {
@@ -483,8 +612,17 @@ func publishOnce(opts *Options, body []byte, bins map[string][]byte, logf func(s
 		if !complete {
 			return "", fmt.Errorf("推送后快照 %s 仍不完整:%s", short(t.Snapshot), why)
 		}
+		if resultSnapshot != t.Snapshot {
+			equivalent, why, err := equivalentCurrentRelease(opts.Target, t, resultSnapshot, pub, opts.ArchiveDir)
+			if err != nil {
+				return "", fmt.Errorf("推送后复核保留快照 %s:%w", short(resultSnapshot), err)
+			}
+			if !equivalent {
+				return "", fmt.Errorf("推送后保留快照 %s 不再完整等价:%s", short(resultSnapshot), why)
+			}
+		}
 		logf("已发布 %s(%d 个节点:%s)→ %s",
-			short(t.Snapshot), len(t.Owners()), strings.Join(t.Owners(), " "), opts.Target)
+			short(resultSnapshot), len(t.Owners()), strings.Join(t.Owners(), " "), opts.Target)
 	}
 
 	if opts.VerifyURL != "" {
@@ -495,6 +633,78 @@ func publishOnce(opts *Options, body []byte, bins map[string][]byte, logf func(s
 		logf("  ✅ 节点视角已确认(%s)", opts.VerifyURL)
 	}
 	return resultSnapshot, nil
+}
+
+type targetDeploymentCurrent struct {
+	Body     []byte
+	Snapshot string
+	Signed   *DeploymentCurrent
+}
+
+var errFutureDeploymentCurrentSchema = errors.New("分发点 current.json 使用未来 schema")
+
+func readTargetDeploymentCurrent(target Target, pub ed25519.PublicKey) (targetDeploymentCurrent, error) {
+	body, found, err := target.ReadFile("current.json")
+	if err != nil {
+		return targetDeploymentCurrent{}, err
+	}
+	if !found {
+		return targetDeploymentCurrent{}, nil
+	}
+	if current, signedErr := DecodeDeploymentCurrent(body); signedErr == nil {
+		if err := current.Verify(pub); err != nil {
+			return targetDeploymentCurrent{Body: body}, err
+		}
+		return targetDeploymentCurrent{Body: body, Snapshot: current.Snapshot, Signed: current}, nil
+	}
+	// A publisher that only understands v1 cannot decide whether a future
+	// schema is authentic or how to preserve its semantics.  Overwriting it as
+	// mere corruption could roll a newer controller back, so stop instead.
+	if schema, ok := advertisedDeploymentCurrentSchema(body); ok && schema > DeploymentCurrentSchema {
+		return targetDeploymentCurrent{Body: body}, fmt.Errorf("%w=%d；当前 publisher 只支持 schema=%d，拒绝覆盖",
+			errFutureDeploymentCurrentSchema, schema, DeploymentCurrentSchema)
+	}
+	legacy, legacyErr := DecodeLegacyCurrent(body)
+	if legacyErr != nil {
+		return targetDeploymentCurrent{Body: body}, legacyErr
+	}
+	return targetDeploymentCurrent{Body: body, Snapshot: legacy.Snapshot}, nil
+}
+
+func advertisedDeploymentCurrentSchema(body []byte) (int, bool) {
+	if rejectDuplicateJSONKeys(body) != nil {
+		return 0, false
+	}
+	var header struct {
+		Schema *int `json:"schema"`
+	}
+	if err := json.Unmarshal(body, &header); err != nil || header.Schema == nil {
+		return 0, false
+	}
+	return *header.Schema, true
+}
+
+func compareServedReleaseAuthority(served, authority *DeploymentCurrent) error {
+	if served.Generation > authority.Generation {
+		return fmt.Errorf("分发点 signed current generation=%d 高于本地 authority=%d；本地状态可能从旧备份恢复，拒绝签发分叉",
+			served.Generation, authority.Generation)
+	}
+	if served.Generation != authority.Generation {
+		return nil
+	}
+	servedSHA, err := served.PayloadSHA256()
+	if err != nil {
+		return err
+	}
+	authoritySHA, err := authority.PayloadSHA256()
+	if err != nil {
+		return err
+	}
+	if servedSHA != authoritySHA {
+		return fmt.Errorf("分发点与本地 authority 在同一 generation=%d 出现不同 payload；拒绝同代分叉",
+			authority.Generation)
+	}
+	return nil
 }
 
 // equivalentCurrentRelease 判断 current 指向的**已有签名快照**是否与新树
@@ -599,6 +809,21 @@ func sameRuntimeContent(a, b *snapshot.Manifest) bool {
 // 验目标上的 manifest/signature 配对，而不是逐字节强迫它等于本轮新签的
 // metadata；节点正文则应当完全一致。
 func releaseSurfaceComplete(target Target, t *Tree, pub ed25519.PublicKey) (bool, string, error) {
+	wantCurrent, ok := t.Files["current.json"]
+	if !ok {
+		return false, "本地产物缺 current.json", fmt.Errorf("Tree %s 没有 current.json", short(t.Snapshot))
+	}
+	gotCurrent, found, err := target.ReadFile("current.json")
+	if err != nil {
+		return false, "", fmt.Errorf("读取 current.json:%w", err)
+	}
+	if !found {
+		return false, "current.json 缺失", nil
+	}
+	if !bytes.Equal(gotCurrent, wantCurrent) {
+		return false, "current.json 与本地 signed authority 不一致", nil
+	}
+
 	manifestPath := t.Snapshot + "/snapshot.json"
 	signaturePath := t.Snapshot + "/snapshot.sig"
 

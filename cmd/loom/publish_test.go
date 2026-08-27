@@ -72,6 +72,34 @@ func TestManualPublishConsumesReleasedBinaryInsteadOfStrippingManifest(t *testin
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// This test is about manual publish preserving an already-authorized binary,
+	// not about the one-time generation-1 capability transition.  Seed a valid
+	// existing authority for the exact target so executing the Go test binary as
+	// `selfcheck` cannot recursively start this test suite.
+	archiveDir := t.TempDir()
+	id, err := publish.SnapshotID(ssot, map[string][]byte{
+		runtime.GOOS + "/" + runtime.GOARCH: candidate.Body,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority := &publish.DeploymentCurrent{
+		Schema: publish.DeploymentCurrentSchema, Generation: 1, Snapshot: id,
+		PublishedAt: "2026-08-26T00:00:00Z",
+	}
+	if err := authority.Sign(priv); err != nil {
+		t.Fatal(err)
+	}
+	authorityBody, err := authority.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(publish.ReleaseAuthorityPath(archiveDir), authorityBody, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archiveDir, "release-authority.enabled"), []byte("loom-current-v1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	oldLock := publishTransactionLockPath
 	publishTransactionLockPath = filepath.Join(t.TempDir(), "publisher.lock")
@@ -80,7 +108,7 @@ func TestManualPublishConsumesReleasedBinaryInsteadOfStrippingManifest(t *testin
 	if err := cmdPublish([]string{
 		ssotPath, "-o", target, "-key", keyPath,
 		"-pin-dir", t.TempDir(), "-release-dir", releaseDir,
-		"-ssot-history", t.TempDir(), "-allow-dirty",
+		"-ssot-history", archiveDir, "-allow-dirty",
 	}); err != nil {
 		t.Fatal(err)
 	}

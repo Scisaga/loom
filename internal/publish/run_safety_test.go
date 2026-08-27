@@ -39,10 +39,24 @@ func (t *safetyTarget) Push(tree *Tree) error {
 	if t.pushes <= t.failPushes {
 		return errors.New("injected push failure")
 	}
-	t.current = tree.Snapshot
+	var current Current
+	if err := json.Unmarshal(tree.Files["current.json"], &current); err != nil {
+		return err
+	}
+	t.current = current.Snapshot
 	t.currentErr = nil
-	t.files = cloneBytesMap(tree.Files)
-	t.blobs = cloneBytesMap(tree.Blobs)
+	if t.files == nil {
+		t.files = make(map[string][]byte)
+	}
+	for path, body := range tree.Files {
+		t.files[path] = append([]byte(nil), body...)
+	}
+	if t.blobs == nil {
+		t.blobs = make(map[string][]byte)
+	}
+	for path, body := range tree.Blobs {
+		t.blobs[path] = append([]byte(nil), body...)
+	}
 	if t.onPush != nil {
 		t.onPush()
 	}
@@ -75,6 +89,24 @@ func cloneBytesMap(src map[string][]byte) map[string][]byte {
 	return dst
 }
 
+func attachSignedDeploymentCurrent(t *testing.T, tree *Tree, priv ed25519.PrivateKey,
+	generation uint64, publishedAt string) *DeploymentCurrent {
+	t.Helper()
+	current := &DeploymentCurrent{
+		Schema: DeploymentCurrentSchema, Generation: generation,
+		Snapshot: tree.Snapshot, PublishedAt: publishedAt,
+	}
+	if err := current.Sign(priv); err != nil {
+		t.Fatal(err)
+	}
+	body, err := current.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree.Files["current.json"] = body
+	return current
+}
+
 func writeSafetySSOT(t *testing.T) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "ssot.yaml")
@@ -82,6 +114,24 @@ func writeSafetySSOT(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return p
+}
+
+// Most Run tests exercise behavior after the signed-current transition.  Seed
+// that durable era explicitly so the separate generation-1 capability gate
+// cannot mask the failure path each test is meant to pin down.
+func seedSignedEraForSSOT(t *testing.T, dir string, priv ed25519.PrivateKey,
+	body []byte, bins map[string][]byte) *DeploymentCurrent {
+	t.Helper()
+	id, err := SnapshotID(body, bins)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, _, err := ensureReleaseAuthority(dir, id, nil,
+		"2026-08-25T00:00:00Z", priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return current
 }
 
 func TestPublisherSafetyGatesFailClosedAndWriteHealth(t *testing.T) {
@@ -203,14 +253,17 @@ func TestPublisherSSHCommandDeadlineReleasesPublishLock(t *testing.T) {
 	t.Setenv("PATH", tools+":"+os.Getenv("PATH"))
 
 	lockPath := filepath.Join(t.TempDir(), "publisher.lock")
+	priv := key(t)
+	archiveDir := t.TempDir()
+	seedSignedEraForSSOT(t, archiveDir, priv, []byte(goodSSOT), nil)
 	tgt := &sshTarget{
 		host: "fake", dir: t.TempDir(),
 		commandTimeout: 40 * time.Millisecond,
 	}
 	started := time.Now()
 	err := Run(context.Background(), Options{
-		SSOTPath: writeSafetySSOT(t), Key: key(t), Target: tgt, Once: true,
-		ReleaseDir: t.TempDir(), ArchiveDir: t.TempDir(),
+		SSOTPath: writeSafetySSOT(t), Key: priv, Target: tgt, Once: true,
+		ReleaseDir: t.TempDir(), ArchiveDir: archiveDir,
 		HealthPath: filepath.Join(t.TempDir(), "publisher.json"), LockPath: lockPath,
 	})
 	if err == nil || !strings.Contains(err.Error(), "总期限") {
@@ -295,10 +348,13 @@ func TestPublisherRetriesWithFreshInputsAfterFreshnessAbort(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	tgt := &safetyTarget{onPush: cancel}
+	priv := key(t)
+	archiveDir := t.TempDir()
+	seedSignedEraForSSOT(t, archiveDir, priv, oldBody, nil)
 	var once sync.Once
 	opts := Options{
-		SSOTPath: ssotPath, Key: key(t), Target: tgt,
-		ReleaseDir: t.TempDir(), ArchiveDir: t.TempDir(),
+		SSOTPath: ssotPath, Key: priv, Target: tgt,
+		ReleaseDir: t.TempDir(), ArchiveDir: archiveDir,
 		LockPath: filepath.Join(t.TempDir(), "publisher.lock"), Interval: time.Millisecond,
 	}
 	opts.beforeLock = func() {
@@ -389,11 +445,15 @@ func TestArchiveAndHistoryFailuresCannotProduceGreenPublish(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			base := t.TempDir()
 			archiveDir := filepath.Join(base, "history")
+			priv := key(t)
+			if tc.name == "history-after-push" {
+				seedSignedEraForSSOT(t, archiveDir, priv, []byte(goodSSOT), nil)
+			}
 			tc.breakState(t, archiveDir)
 			tgt := &safetyTarget{}
 			healthPath := filepath.Join(t.TempDir(), "publisher.json")
 			err := Run(context.Background(), Options{
-				SSOTPath: writeSafetySSOT(t), Key: key(t), Target: tgt, Once: true,
+				SSOTPath: writeSafetySSOT(t), Key: priv, Target: tgt, Once: true,
 				ReleaseDir: t.TempDir(), ArchiveDir: archiveDir,
 				HealthPath: healthPath, LockPath: filepath.Join(t.TempDir(), "publisher.lock"),
 			})
@@ -436,6 +496,7 @@ func TestPublishOnceVerifiesEvenWhenTargetAlreadyCurrent(t *testing.T) {
 				t.Fatal(err)
 			}
 			id := tree.Snapshot
+			tgt := &safetyTarget{current: id, files: cloneBytesMap(tree.Files), blobs: cloneBytesMap(tree.Blobs)}
 			requests := 0
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests++
@@ -443,7 +504,7 @@ func TestPublishOnceVerifiesEvenWhenTargetAlreadyCurrent(t *testing.T) {
 					w.WriteHeader(code)
 					return
 				}
-				if body, ok := tree.Files[strings.TrimPrefix(r.URL.Path, "/")]; ok {
+				if body, ok, _ := tgt.ReadFile(strings.TrimPrefix(r.URL.Path, "/")); ok {
 					_, _ = w.Write(body)
 					return
 				}
@@ -451,7 +512,6 @@ func TestPublishOnceVerifiesEvenWhenTargetAlreadyCurrent(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			tgt := &safetyTarget{current: id, files: cloneBytesMap(tree.Files), blobs: cloneBytesMap(tree.Blobs)}
 			_, err = publishOnce(&Options{
 				Key: priv, Target: tgt, VerifyURL: srv.URL, Now: now,
 			}, body, nil, func(string, ...any) {})
@@ -464,8 +524,8 @@ func TestPublishOnceVerifiesEvenWhenTargetAlreadyCurrent(t *testing.T) {
 			if code != http.StatusOK && err == nil {
 				t.Fatal("节点视角取不到时不能因为 current 相同而假成功")
 			}
-			if tgt.pushes != 0 {
-				t.Fatalf("current 相同无需重传,却 Push 了 %d 次", tgt.pushes)
+			if tgt.pushes != 1 {
+				t.Fatalf("legacy current 首次迁移应只 Push 一次,实际 %d 次", tgt.pushes)
 			}
 		})
 	}
@@ -558,6 +618,7 @@ func TestPublishOnceAcceptsOlderValidMetadataForSameSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	attachSignedDeploymentCurrent(t, oldTree, priv, 1, "2026-08-26T20:00:00Z")
 	tgt := &safetyTarget{
 		current: oldTree.Snapshot,
 		files:   cloneBytesMap(oldTree.Files),
@@ -603,8 +664,8 @@ func TestPublishOnceKeepsCurrentSnapshotForCommentOnlySSOTChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != oldTree.Snapshot || tgt.pushes != 0 {
-		t.Fatalf("注释变化应保留旧 current:got=%s pushes=%d", got, tgt.pushes)
+	if got != oldTree.Snapshot || tgt.pushes != 1 {
+		t.Fatalf("注释变化应保留旧 current 并完成 signed 迁移:got=%s pushes=%d", got, tgt.pushes)
 	}
 	if !strings.Contains(log.String(), "运行产物未变") {
 		t.Fatalf("日志必须明确解释为何不发布:%q", log.String())
@@ -624,6 +685,7 @@ func TestEquivalentOldSnapshotWithoutItsSSOTArchivePublishesNewSnapshot(t *testi
 		t.Fatal(err)
 	}
 	archiveDir := t.TempDir() // 故意没有 oldTree 的 SSOTHash 存档。
+	seedSignedEraForSSOT(t, archiveDir, priv, oldBody, nil)
 	ssotPath := filepath.Join(t.TempDir(), "ssot.yaml")
 	if err := os.WriteFile(ssotPath, newBody, 0o644); err != nil {
 		t.Fatal(err)
@@ -679,8 +741,8 @@ func TestPublisherRestartFirstLoopKeepsEquivalentCurrentAndUpdatesHealth(t *test
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if tgt.pushes != 0 || tgt.current != oldTree.Snapshot {
-		t.Fatalf("发布器重启首轮不应把注释变更扩散成 rollout:pushes=%d current=%s", tgt.pushes, tgt.current)
+	if tgt.pushes != 1 || tgt.current != oldTree.Snapshot {
+		t.Fatalf("发布器重启首轮应只迁移 signed current，不把注释变更扩散成 rollout:pushes=%d current=%s", tgt.pushes, tgt.current)
 	}
 	h, err := ReadHealth(healthPath)
 	if err != nil || h == nil {
@@ -725,6 +787,7 @@ func TestVerifyServedChecksManifestSignatureAndEveryNodeBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	attachSignedDeploymentCurrent(t, tree, priv, 1, "2026-08-26T20:00:00Z")
 	manifestPath := tree.Snapshot + "/snapshot.json"
 	signaturePath := tree.Snapshot + "/snapshot.sig"
 	var nodePath string
@@ -780,6 +843,90 @@ func TestVerifyServedChecksManifestSignatureAndEveryNodeBody(t *testing.T) {
 				priv.Public().(ed25519.PublicKey))
 			if tc.bad && err == nil {
 				t.Fatal("节点视角缺失/损坏不能通过")
+			}
+			if !tc.bad && err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestVerifyServedChecksEveryAssignedSnapshotSurface(t *testing.T) {
+	priv := key(t)
+	oldBody := []byte(goodSSOT)
+	newBody := []byte(strings.Replace(goodSSOT, "https://x/loom/", "https://assignment.example/loom/", 1))
+	oldTree, err := Build(oldBody, priv, Meta{CreatedAt: "2026-08-25T20:00:00Z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newTree, err := Build(newBody, priv, Meta{CreatedAt: "2026-08-26T20:00:00Z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := &DeploymentCurrent{
+		Schema: DeploymentCurrentSchema, Generation: 9, Snapshot: newTree.Snapshot,
+		Assignments: []DeploymentAssignment{{Node: "a", Snapshot: oldTree.Snapshot}},
+		PublishedAt: "2026-08-26T20:00:00Z",
+	}
+	if err := current.Sign(priv); err != nil {
+		t.Fatal(err)
+	}
+	currentBody, err := current.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	newTree.Files["current.json"] = currentBody
+
+	var oldNodePath string
+	for _, p := range oldTree.Paths() {
+		if strings.Contains(p, "/nodes/") {
+			oldNodePath = p
+			break
+		}
+	}
+	if oldNodePath == "" {
+		t.Fatal("assignment 测试快照没有节点正文")
+	}
+	for _, tc := range []struct {
+		name string
+		edit func(map[string][]byte)
+		bad  bool
+	}{
+		{name: "complete", edit: func(map[string][]byte) {}},
+		{name: "missing-assigned-manifest", bad: true, edit: func(f map[string][]byte) {
+			delete(f, oldTree.Snapshot+"/snapshot.json")
+		}},
+		{name: "missing-assigned-node-body", bad: true, edit: func(f map[string][]byte) {
+			delete(f, oldNodePath)
+		}},
+		{name: "corrupt-assigned-node-body", bad: true, edit: func(f map[string][]byte) {
+			f[oldNodePath] = []byte(`{"owner":"a","files":{}}`)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			served := cloneBytesMap(oldTree.Files)
+			for p, b := range newTree.Files {
+				served[p] = append([]byte(nil), b...)
+			}
+			for p, b := range oldTree.Blobs {
+				served[p] = append([]byte(nil), b...)
+			}
+			for p, b := range newTree.Blobs {
+				served[p] = append([]byte(nil), b...)
+			}
+			tc.edit(served)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if b, ok := served[strings.TrimPrefix(r.URL.Path, "/")]; ok {
+					_, _ = w.Write(b)
+					return
+				}
+				http.NotFound(w, r)
+			}))
+			defer srv.Close()
+			err := VerifyServed(srv.URL, newTree.Snapshot, "", time.Second, newTree,
+				priv.Public().(ed25519.PublicKey))
+			if tc.bad && err == nil {
+				t.Fatal("assignment 指向的不可变表面缺失/损坏仍显示绿色")
 			}
 			if !tc.bad && err != nil {
 				t.Fatal(err)

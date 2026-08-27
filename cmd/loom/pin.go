@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
 	"time"
@@ -140,8 +139,9 @@ func cmdPin(args []string) error {
 		return err
 	}
 	defer cleanup()
-	if out, err := exec.Command(stage, "selfcheck").CombinedOutput(); err != nil {
-		return fmt.Errorf("这个二进制没通过自检,不钉:%w\n%s", err, strings.TrimSpace(string(out)))
+	if out, err := selfcheckBinaryCandidate(stage, false); err != nil {
+		return fmt.Errorf("这个二进制没通过自检（必须支持 %s）,不钉:%w\n%s",
+			signedCurrentCapability, err, strings.TrimSpace(string(out)))
 	}
 	fmt.Printf("  ✅ 验签通过,哈希相符,自检通过\n")
 

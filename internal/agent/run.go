@@ -66,6 +66,13 @@ func (o *Options) fill() {
 // 本来就不同,合并成一个全局节拍会让快的那条被慢的拖住。
 func Run(ctx context.Context, cfg *Config, opts Options) error {
 	opts.fill()
+	logf := func(f string, a ...any) {
+		fmt.Fprintf(opts.Log, "%s "+f+"\n",
+			append([]any{opts.Now().Format("15:04:05")}, a...)...)
+	}
+	if cfg.ObservationDisabledReason != "" {
+		logf("⚠️ %s", cfg.ObservationDisabledReason)
+	}
 	st := &store{path: opts.MeasurementPath, retention: opts.Retention, now: opts.Now}
 	selections, err := newStateStore(opts.StatePath, cfg.Node, cfg.Declarations, opts.Now())
 	if err != nil {
@@ -91,11 +98,6 @@ func Run(ctx context.Context, cfg *Config, opts Options) error {
 	// 每条声明各自的轮换游标。有界探测靠它保证"每条候选迟早都被试到"。
 	rot := map[string]int{}
 	var rotMu sync.Mutex
-	logf := func(f string, a ...any) {
-		fmt.Fprintf(opts.Log, "%s "+f+"\n",
-			append([]any{opts.Now().Format("15:04:05")}, a...)...)
-	}
-
 	var wg sync.WaitGroup
 
 	// 拉取对端上报是另一个节奏:它和某一条声明无关,是整台机器的事。

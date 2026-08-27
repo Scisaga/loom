@@ -49,6 +49,7 @@ func renderAgent(s *model.SSOT, p *model.Node) ([]File, []Skip) {
 	}
 	declarations, skips := renderAgentDeclarations(s, p)
 	cfg := agent.Config{
+		Schema:                agent.ConfigSchema,
 		Node:                  p.ID,
 		API:                   APIListen,
 		APISecret:             secretRef("api/" + p.ID),

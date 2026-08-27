@@ -1335,18 +1335,17 @@ systemctl stop wg-quick@X; ip link del X 2>/dev/null; systemctl start wg-quick@X
 
 ### 14.2.2 控制面:一棵签了名的静态树
 
-节点自己去取配置,而不是等人来推。签名快照保证内容完整性，但当前裸
-`current.json` **没有签名，也没有单调代次**：分发点不能伪造新内容，却仍能
-重放一份真实旧快照。完整的“不信任分发点”还需要 D88 的 deployment envelope；
-在它落地前，分发点仍处在 freshness/rollout 授权的信任边界内。
+节点自己去取配置,而不是等人来推。不可变快照的 manifest 证明内容真实性；
+D88 的 signed deployment envelope 证明平台当前授权，并以节点本地单调 floor
+记住已经接受到哪一代。两层签名解决的是不同问题，不能只留其中一层。
 
 ```
-签发端(有私钥,离线)          分发点(静态目录,不可信)        节点
-  loom publish  ──────────────►  current.json                    loom pull
-    渲染 → 打快照 → 签名          <id>/snapshot.json + .sig    ──►  1 验签(本地钉住的公钥)
-    产物全是 ${secret:...}        <id>/nodes/<node>.json           2 比对配置包哈希
-                                                                  3 用**本机**秘密层填占位符
-                                                                  4 走 §14.2.1 的五步安装
+签发端(有私钥)               分发点(静态目录,不可信)          节点
+  loom publish  ──────────────► current.json (signed, generation) loom pull
+    渲染 → 快照签名              <id>/snapshot.json + .sig      ──► 1 验 current 签名/单调 floor
+    耐久 release authority       <id>/nodes/<node>.json             2 验 manifest 与配置包哈希
+    产物全是 ${secret:...}                                           3 用本机秘密层填占位符
+                                                                      4 事务安装并记录 applied
 ```
 
 三件事因此成立:
@@ -1354,10 +1353,17 @@ systemctl stop wg-quick@X; ip link del X 2>/dev/null; systemctl start wg-quick@X
 **分发点看不到任何凭据。** 树里全是占位符,合并发生在节点上(D9)。实测把
 每一个凭据值拿去搜整棵树,一个都搜不到。
 
-**分发点改不了快照内容。** 改配置包会哈希不符，改 manifest 会验签失败，
-`current.json` 指向不存在或与 manifest ID 不同的目录也会被拒绝。但若它指向
-目录中仍保留的一份**合法旧快照**，当前节点会接受；这是重放，不是内容伪造。
-旧快照又必须保留给并发下载和回滚，所以不能靠删除历史掩盖这个缺口。
+**分发点既改不了快照内容，也不能让已 latch 的节点倒退授权。** 改配置包会哈希
+不符，改 manifest 或 current payload 会验签失败；重放低 generation、同代换
+payload、以及 floor 已存在后剥掉 envelope 变回 legacy 都会失败关闭。旧快照仍可
+永久保留，合法回滚用更高 generation 指回旧 snapshot，不靠删除历史或重放旧指针。
+
+这个结论有一条明确边界：没有 floor 的新装/状态丢失节点只能验证签名，无法仅凭
+一个不可信镜像知道“最高代是多少”。干净迁移只允许首次 generation 1 自动 latch；
+无 floor 首见更高代必须用 `pull -expected-current <中控 authority 文件>` 做带外
+钉住：该文件先验签，公开分发点还必须逐字节一致。新版 standalone pull 永久拒绝
+unsigned legacy；legacy 只留给旧版父进程持有继承 deploy.lock 发起的同快照
+continuation。首次见到有效签名仍不是一般意义上的全局 freshness 证明。
 
 **每台机器只拿自己那份秘密。** `loom secrets split` 扫一遍各节点的渲染产物,
 按实际引用拆分总表:cn-a 拿 3 项,edge-b 拿 2 项,只有 access-a 有控制端点与
@@ -1392,7 +1398,9 @@ id 只说明"配置来自哪一版",不说明机器现在是不是那个样子�
 `loom pull` 已能按快照安装 Loom 二进制，随后由新二进制子进程继续安装同一
 快照的配置；旧进程不解析新 schema。代码变更不会因编译自动武装全网，必须先
 把构建产物写到 `deploy/staging/loom`，再由人执行 `loom release -reason ...`
-显式放行。配置变更仍由发布器自动收敛。
+显式放行。首次分配 signed generation 1 之前，publisher 会从稳定候选重新执行
+`selfcheck -q -require signed-current-v1`，并要求该候选进入同一快照；旧 release
+或空 release 都会在 authority 分配之前失败关闭。配置变更仍由发布器自动收敛。
 
 ### 14.2.3 发布器:把人从环里拿出去
 
@@ -1417,27 +1425,36 @@ pull 周期 45 秒并带最多 15 秒抖动，正常纯配置收敛目标在 90 
 第二件是收敛,和 §14.2.2 里"pull 不按快照 id 早退"是同一个道理
 ([D33](decisions.md))。分发点被清空、推到一半断线、有人手工动过,都会让它
 和真相分叉;只在"文件变了"时才动作的发布器修不了这些。实测把分发点的
-`current.json` 改成一个假 id,发布器下一轮就把它拽回来了。
+`current.json` 改成假 id、旧 generation、坏签名或剥成 legacy，发布器下一轮都会
+按中控本地耐久 authority 对账并修复。若分发点出现平台有效签名的更高 generation，
+或同 generation 的另一份 payload，发布器不会“自愈”掩盖分叉，而是失败关闭并要求
+恢复中控 authority。
 
 #### 三条硬规矩
 
 **校验不过就不发。** 发一份自相矛盾的配置出去,比什么都不做糟得多 —— 节点
 会照单全收,而问题要等到流量打不通才暴露。上一个快照留在原地继续服务。
 
-**`current.json` 最后写。** 顺序反了会有一个窗口:它已经指向新快照,而那个
-快照的文件还没铺全,正好来取的节点拿到 404 或半截文件。旧快照不删 —— 节点
-可能正拿着旧 id 在取,而且留着才有回滚的余地。
+**authority 先耐久，`current.json` 最后写。** authority 若晚于 Push，网络失败会让
+签发端忘记已经用过的 generation；current 若早于不可变正文，节点会拿到 404 或半截
+文件。旧快照不删 —— 节点可能正拿着旧 id 在取,而且留着才有回滚的余地。
 
 **推成功不等于取得到。** nginx 的 `alias` 写错、权限不对、路径多一层,推送
 这一侧全都完全正常。所以推完要**从节点视角**再取一次确认。这条不是假设 ——
 `-verify-url` 加上去的第一次运行就抓到了中控自己的 DNS 问题。
+若 signed current 带 assignments，验证还会逐个拉取每个被选快照的 manifest、
+签名、节点正文与 binary；只验证全局 snapshot 会让缺失的 canary 表面假绿。
 
 ### 14.3 拉取通道的保护
 
 - 现状是服务器节点上的公开 HTTPS 静态只读目录，不提供管理 API；尚未启用
   拉取端 mTLS，不能把目标设计写成现有安全边界；
-- **配置包由平台签名**，节点校验签名后才应用；这保证内容真实性，但在 D88
-  落地前不保证 `current.json` 的新鲜度；
+- **配置包与 deployment current 都由平台签名**。前者保证内容真实性，后者配合
+  `/var/lib/loom/release-floor.json` 保证节点首次可信接受之后不倒退；
+- 旧 reader 可忽略 envelope 新字段完成滚动升级；新版 reader 的 standalone 路径
+  永久拒绝 unsigned legacy，只有旧父进程持锁的同快照 continuation 可走一次桥。
+  新装/丢 floor 且首见 generation > 1 的节点须用 `-expected-current` 从受信
+  bootstrap 获得新鲜度锚点；
 - 若未来需要隐藏拓扑或限制下载方，再给静态端点增加平台 CA 签发、可吊销的
   mTLS 客户端证书；它是访问控制，不替代签名 envelope 的反重放。
 

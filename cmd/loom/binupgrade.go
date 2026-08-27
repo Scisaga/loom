@@ -112,6 +112,27 @@ func prepareBinaryUpgrade(c *http.Client, base string, man *snapshot.Manifest, b
 	return candidate, nil
 }
 
+// requireSignedCurrentBinary prevents a signed-current-aware node from
+// activating (or continuing to run) a binary that can no longer enforce its
+// release floor. Prefer the staged candidate because that is the code about to
+// take over; when no replacement is staged, the installed binary is the one
+// that must prove it.
+func requireSignedCurrentBinary(candidate *binaryUpgradeCandidate, binPath string) error {
+	path := binPath
+	if candidate != nil && candidate.staged != "" {
+		path = candidate.staged
+	}
+	if path == "" {
+		return fmt.Errorf("没有可检查 capability %s 的 Agent 二进制", signedCurrentCapability)
+	}
+	out, err := selfcheckBinaryCandidate(path, true)
+	if err != nil {
+		return fmt.Errorf("Agent 二进制 %s 不具备必须的 capability %s:%w\n%s",
+			path, signedCurrentCapability, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // activateBinary 只做本机 mutation，调用方必须持有 deploy.lock。
 func activateBinary(candidate *binaryUpgradeCandidate, binPath string, dry bool) (bool, error) {
 	if candidate == nil {

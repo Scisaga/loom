@@ -115,7 +115,11 @@ func TestBackupOptionalPresentIsIncluded(t *testing.T) {
 func TestDefaultBackupSrcsCoverTheIrreplaceable(t *testing.T) {
 	got := map[string]bool{}
 	optional := map[string]bool{}
-	for _, s := range defaultBackupSrcs() {
+	srcs, err := defaultBackupSrcs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range srcs {
 		got[s.path] = true
 		optional[s.path] = s.optional
 	}

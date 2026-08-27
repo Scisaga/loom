@@ -124,6 +124,9 @@ func TestAgentAndSingBoxAgreeOnCandidates(t *testing.T) {
 
 func TestAgentSelfReportAlwaysUsesLoopback(t *testing.T) {
 	for node, cfg := range agentConfigs(t, load(t)) {
+		if cfg.Schema != agent.ConfigSchema {
+			t.Errorf("%s 的新渲染 Agent 配置缺少 schema=%d，得到 %d", node, agent.ConfigSchema, cfg.Schema)
+		}
 		if cfg.SelfReport != "127.0.0.1:61802" {
 			t.Errorf("%s 的本机上报者依赖隧道地址:%q", node, cfg.SelfReport)
 		}

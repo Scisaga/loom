@@ -16,19 +16,22 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
 
 	"loom/internal/netx"
+	"loom/internal/render"
 	"loom/internal/snapshot"
 )
 
 // Target 是分发点。
 //
 // **它不需要被信任**(D32),所以这个接口刻意很窄:能放文件、能说出自己
-// 现在指向哪个快照,就够了。没有认证、没有回执 —— 内容的完整性由签名保证,
-// 不由传输保证。
+// 现在指向哪个快照,就够了。没有认证、没有回执 —— 快照内容真实性由
+// snapshot 签名保证；current 的发布授权由 signed envelope 和节点持久化
+// generation floor 共同保证，不由传输保证。
 type Target interface {
 	Push(t *Tree) error
 	// ReadFile 读取分发树里的一个小文件。found=false 表示路径不存在；
@@ -862,9 +865,32 @@ func VerifyServed(url, want, dns string, timeout time.Duration, expected *Tree, 
 	if err != nil {
 		return err
 	}
-	var cur Current
-	if err := json.Unmarshal(b, &cur); err != nil {
-		return err
+	wantCurrentBody, ok := expected.Files["current.json"]
+	if !ok {
+		return fmt.Errorf("本地可信 Tree 缺少 current.json")
+	}
+	wantCurrent, err := DecodeDeploymentCurrent(wantCurrentBody)
+	if err != nil {
+		return fmt.Errorf("本地可信 Tree 的 current.json 不是 signed deployment current:%w", err)
+	}
+	if err := wantCurrent.Verify(pub); err != nil {
+		return fmt.Errorf("本地可信 Tree 的 current.json 签名无效:%w", err)
+	}
+	if wantCurrent.Snapshot != want {
+		return fmt.Errorf("本地 signed current 指向 %s,调用方期望 %s",
+			short(wantCurrent.Snapshot), short(want))
+	}
+	// Exact bytes matter here, not only snapshot.  A replayed/lowered
+	// generation can legitimately point at the same immutable snapshot.
+	if !bytes.Equal(b, wantCurrentBody) {
+		return fmt.Errorf("节点视角 current.json 与本地 signed authority 不完全一致")
+	}
+	cur, err := DecodeDeploymentCurrent(b)
+	if err != nil {
+		return fmt.Errorf("节点视角 current.json 不是严格 signed envelope:%w", err)
+	}
+	if err := cur.Verify(pub); err != nil {
+		return fmt.Errorf("节点视角 current.json 验签失败:%w", err)
 	}
 	if cur.Snapshot != want {
 		return fmt.Errorf("分发点在提供 %s,期望 %s", short(cur.Snapshot), short(want))
@@ -902,6 +928,35 @@ func VerifyServed(url, want, dns string, timeout time.Duration, expected *Tree, 
 		return fmt.Errorf("保留的 current 快照与本轮运行产物不符")
 	}
 
+	// Phase 2 may assign older immutable snapshots to a canary subset.  The
+	// envelope signature authenticates those IDs, but a green publish must also
+	// prove every selected tree is actually reachable, internally complete, and
+	// contains an actionable bundle/decommission instruction for that node.
+	assignedManifests := map[string]*snapshot.Manifest{want: &gotManifest}
+	for _, assignment := range cur.Assignments {
+		selected, err := cur.Select(assignment.Node)
+		if err != nil {
+			return fmt.Errorf("核对节点 %s 的 assignment:%w", assignment.Node, err)
+		}
+		if selected != assignment.Snapshot {
+			return fmt.Errorf("节点 %s assignment 选择 %s，记录却是 %s",
+				assignment.Node, selected, assignment.Snapshot)
+		}
+		manifest := assignedManifests[selected]
+		if manifest == nil {
+			manifest, err = verifyServedAssignedSnapshot(c, base, selected, pub)
+			if err != nil {
+				return fmt.Errorf("assignment %s → %s 的节点视角表面不完整:%w",
+					assignment.Node, short(selected), err)
+			}
+			assignedManifests[selected] = manifest
+		}
+		if !manifestAddressesNode(manifest, assignment.Node) {
+			return fmt.Errorf("assignment %s → %s，但该快照既没有节点正文也没有 decommission 指令",
+				assignment.Node, short(selected))
+		}
+	}
+
 	// manifest 与签名完整仍不等于节点正文/二进制可取。逐个核所有小配置包；
 	// 二进制也必须从节点实际使用的 HTTP 路径流式读取并核 size+SHA。
 	// Target.HasBlob 只能证明落盘侧有文件，不能证明 nginx/CDN 的 bin 路由、
@@ -934,6 +989,117 @@ func VerifyServed(url, want, dns string, timeout time.Duration, expected *Tree, 
 		}
 	}
 	return nil
+}
+
+// verifyServedAssignedSnapshot verifies an immutable snapshot without needing
+// its local Tree.  Both current and manifest are signed by the platform key;
+// manifest hashes then bind every node body and binary blob.
+func verifyServedAssignedSnapshot(c *http.Client, base, id string, pub ed25519.PublicKey) (*snapshot.Manifest, error) {
+	manifestPath := id + "/snapshot.json"
+	manifestBytes, err := getServedFile(c, base+"/"+manifestPath, manifestPath, 4<<20)
+	if err != nil {
+		return nil, err
+	}
+	signaturePath := id + "/snapshot.sig"
+	sig, err := getServedFile(c, base+"/"+signaturePath, signaturePath, 1<<10)
+	if err != nil {
+		return nil, err
+	}
+	if err := snapshot.VerifySignature(manifestBytes, sig, pub); err != nil {
+		return nil, fmt.Errorf("manifest/signature 校验失败:%w", err)
+	}
+	var manifest snapshot.Manifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		return nil, fmt.Errorf("解析 %s:%w", manifestPath, err)
+	}
+	if manifest.ID != id {
+		return nil, fmt.Errorf("manifest 自称 %s，assignment 期望 %s", short(manifest.ID), short(id))
+	}
+
+	owners := make(map[string]struct{}, len(manifest.Bundles))
+	for _, ref := range manifest.Bundles {
+		if _, duplicate := owners[ref.Owner]; duplicate {
+			return nil, fmt.Errorf("manifest 重复声明节点正文 %s", ref.Owner)
+		}
+		owners[ref.Owner] = struct{}{}
+		bundlePath := id + "/nodes/" + ref.Owner + ".json"
+		if err := validateTreePath(bundlePath); err != nil {
+			return nil, fmt.Errorf("节点正文路径无效:%w", err)
+		}
+		body, err := getServedFile(c, base+"/"+bundlePath, bundlePath, 8<<20)
+		if err != nil {
+			return nil, err
+		}
+		bundle, err := decodeServedBundle(body)
+		if err != nil {
+			return nil, fmt.Errorf("解析节点正文 %s:%w", bundlePath, err)
+		}
+		if bundle.Owner != ref.Owner {
+			return nil, fmt.Errorf("节点正文路径属于 %s，正文却自称 %s", ref.Owner, bundle.Owner)
+		}
+		if got := servedBundleHash(bundle.Files); got != ref.Hash {
+			return nil, fmt.Errorf("节点正文 %s hash=%s，manifest 期望 %s",
+				ref.Owner, short(got), short(ref.Hash))
+		}
+	}
+	seenBlobs := make(map[string]struct{}, len(manifest.Binaries))
+	for i := range manifest.Binaries {
+		ref := &manifest.Binaries[i]
+		if _, seen := seenBlobs[ref.Path()]; seen {
+			continue
+		}
+		seenBlobs[ref.Path()] = struct{}{}
+		if err := verifyServedBlob(c, base, ref); err != nil {
+			return nil, err
+		}
+	}
+	return &manifest, nil
+}
+
+func manifestAddressesNode(manifest *snapshot.Manifest, node string) bool {
+	if manifest == nil {
+		return false
+	}
+	for _, ref := range manifest.Bundles {
+		if ref.Owner == node {
+			return true
+		}
+	}
+	for _, dead := range manifest.Decommissioned {
+		if dead == node {
+			return true
+		}
+	}
+	return false
+}
+
+func decodeServedBundle(body []byte) (*Bundle, error) {
+	if err := rejectDuplicateJSONKeys(body); err != nil {
+		return nil, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.DisallowUnknownFields()
+	var bundle Bundle
+	if err := dec.Decode(&bundle); err != nil {
+		return nil, err
+	}
+	if err := requireJSONEOF(dec); err != nil {
+		return nil, err
+	}
+	return &bundle, nil
+}
+
+func servedBundleHash(files map[string]string) string {
+	paths := make([]string, 0, len(files))
+	for p := range files {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	bundle := render.Bundle{}
+	for _, p := range paths {
+		bundle.Files = append(bundle.Files, render.File{Path: p, Content: files[p]})
+	}
+	return bundle.Hash()
 }
 
 func verifyServedBlob(c *http.Client, base string, ref *snapshot.BinaryRef) error {

@@ -1,4 +1,5 @@
 {
+  "schema": 1,
   "node": "phone",
   "api": "127.0.0.1:61800",
   "api_secret": "${secret:api/phone}",

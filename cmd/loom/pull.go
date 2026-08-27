@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
@@ -25,12 +26,19 @@ import (
 	"loom/internal/model"
 	"loom/internal/netx"
 	"loom/internal/publish"
+	"loom/internal/releasefloor"
 	"loom/internal/render"
 	"loom/internal/report"
 	"loom/internal/rollout"
 	"loom/internal/secret"
 	"loom/internal/snapshot"
 )
+
+type pullCurrent struct {
+	snapshot string
+	signed   *publish.DeploymentCurrent
+	digest   string
+}
 
 // pull 是节点侧的控制通道(§14.2):自己去分发点取配置,而不是等人来推。
 //
@@ -56,6 +64,10 @@ func cmdPull(args []string) (retErr error) {
 	node := fs.String("node", "", "本节点 id(默认取 /etc/loom/node-id)")
 	secretsPath := fs.String("secrets", "/etc/loom/secrets/node.env", "本机秘密层")
 	statePath := fs.String("state", "/var/lib/loom/applied", "记录已安装的快照 id")
+	releaseFloorPath := fs.String("release-floor", releasefloor.Path,
+		"记住已接受 signed current generation 的防重放下限")
+	expectedCurrentPath := fs.String("expected-current", "",
+		"首次/灾后接入时由可信通道带来的 signed current 文件；分发点必须逐字节一致")
 	deployLockPath := fs.String("deploy-lock", deploy.DeployLockPath,
 		"串行化本机 apply/pull 的部署锁")
 	dnsSrv := fs.String("dns", "", "解析分发点用的 DNS 服务器(留空则用系统解析器)")
@@ -68,6 +80,12 @@ func cmdPull(args []string) (retErr error) {
 	}
 	if *url == "" {
 		return fmt.Errorf("需要 -url 指向分发点")
+	}
+	if *timeout <= 0 {
+		return fmt.Errorf("-timeout 必须大于 0")
+	}
+	if *releaseFloorPath == "" || !filepath.IsAbs(*releaseFloorPath) {
+		return fmt.Errorf("-release-floor 必须是绝对路径:%q", *releaseFloorPath)
 	}
 	id := *node
 	if id == "" {
@@ -84,26 +102,107 @@ func cmdPull(args []string) (retErr error) {
 	if err != nil {
 		return err
 	}
+	// continuation 从父进程继承的 deploy.lock 也是它的授权凭据。尽早验证
+	// 并复用同一个 fd：否则仅伪造几个环境变量就能重新打开 legacy 迁移口。
+	var transactionLock *nodeDeployLock
+	if continuation != nil && !*dry {
+		transactionLock, err = inheritNodeDeployLock(*deployLockPath)
+		if err != nil {
+			return fmt.Errorf("续跑没有继承有效的部署锁:%w", err)
+		}
+		defer transactionLock.Close()
+	}
 	base := strings.TrimRight(*url, "/")
 	c := netx.Client(*dnsSrv, *timeout)
 
-	// 1. 当前快照
-	var cur publish.Current
-	if err := getJSON(c, base+"/current.json", &cur); err != nil {
+	// 1. 先把 mutable current 当原始字节取回，再用本地钉住的公钥判断它究竟
+	//    是 signed current，还是尚在迁移期的严格 legacy current。不能先用
+	//    宽松 struct 解码，否则坏签名/未知字段可能意外降级成 unsigned。
+	currentBytes, err := getBytes(c, base+"/current.json")
+	if err != nil {
 		return err
 	}
-	if cur.Snapshot == "" {
-		return fmt.Errorf("current.json 里没有快照 id")
+	pubBytes, err := readKey(*pubPath, ed25519.PublicKeySize)
+	if err != nil {
+		return fmt.Errorf("读不到钉住的公钥 %s:%w", *pubPath, err)
 	}
-	if err := continuation.requireSnapshot(cur.Snapshot); err != nil {
+	if *expectedCurrentPath != "" {
+		if !filepath.IsAbs(*expectedCurrentPath) {
+			return fmt.Errorf("-expected-current 必须是绝对路径:%q", *expectedCurrentPath)
+		}
+		expectedBody, err := os.ReadFile(*expectedCurrentPath)
+		if err != nil {
+			return fmt.Errorf("读取带外钉住的 signed current:%w", err)
+		}
+		expected, err := publish.DecodeDeploymentCurrent(expectedBody)
+		if err != nil {
+			return fmt.Errorf("-expected-current 不是严格 signed envelope:%w", err)
+		}
+		if err := expected.Verify(ed25519.PublicKey(pubBytes)); err != nil {
+			return fmt.Errorf("-expected-current 验签失败:%w", err)
+		}
+		if !bytes.Equal(currentBytes, expectedBody) {
+			return fmt.Errorf("分发点 current.json 与带外钉住的 %s 不完全一致，拒绝首次接入",
+				*expectedCurrentPath)
+		}
+	}
+	floorBefore, err := releasefloor.Read(*releaseFloorPath)
+	if err != nil {
 		return err
+	}
+	cur, err := decodePullCurrent(currentBytes, id, ed25519.PublicKey(pubBytes), floorBefore,
+		continuation != nil)
+	if err != nil {
+		return err
+	}
+	selected := cur.snapshot
+	if cur.signed != nil && floorBefore == nil && continuation == nil &&
+		*expectedCurrentPath == "" && cur.signed.Generation != 1 {
+		return fmt.Errorf("本机没有 release floor，却首次看见 generation %d；请先通过可信通道复制中控的 release-authority.json，再用 -expected-current 钉住后拉取",
+			cur.signed.Generation)
+	}
+	if cur.signed != nil && !*dry && continuation != nil {
+		if err := requireSignedCurrentBinary(nil, *binPath); err != nil {
+			return fmt.Errorf("续跑写 release floor 前检查当前 Agent:%w", err)
+		}
+		// floor 一旦落盘，父进程就绝不能再把 .prev（可能是不认识 floor 的
+		// 历史 Agent）恢复回来。先越过结构化回退屏障，再做 durable Advance；
+		// 即便随后 current 换代或 payload 下载失败，也只保留当前新二进制重试。
+		if err := continuation.mark(continuationConfiguring); err != nil {
+			return fmt.Errorf("记录 signed-current 续跑回退屏障:%w", err)
+		}
+		if err := advanceSignedPullFloor(*releaseFloorPath, cur); err != nil {
+			return err
+		}
+	}
+	if err := continuation.requireSnapshot(selected); err != nil {
+		return err
+	}
+	// signed release decision 一经本地验签就先记住，不能等后面的 manifest/blob
+	// 下载成功：恶意分发点可以给出合法高 generation 后扣住 payload，再重放
+	// 一份仍可下载的低 generation。短暂取锁只写 floor，马上释放，不拿部署锁
+	// 做任何网络下载。continuation 的父进程已经做过这一步且仍持有继承锁。
+	if cur.signed != nil && !*dry && continuation == nil {
+		busy, err := advancePullFloorEarly(*releaseFloorPath, *deployLockPath, *binPath, cur)
+		if err != nil {
+			return err
+		}
+		if busy {
+			fmt.Println("另一个 apply/pull 正持有部署锁,本次跳过")
+			return nil
+		}
 	}
 
-	fmt.Printf("节点 %s · 分发点给出快照 %s\n", id, short(cur.Snapshot))
+	if cur.signed != nil {
+		fmt.Printf("节点 %s · signed current generation %d 选择快照 %s\n",
+			id, cur.signed.Generation, short(selected))
+	} else {
+		fmt.Printf("节点 %s · legacy current 给出快照 %s（迁移模式）\n", id, short(selected))
+	}
 
 	// 3. 验签。**先验签再看内容** —— 顺序反了的话,恶意 manifest 里的
 	//    路径和哈希已经影响了后面的行为。
-	root := base + "/" + cur.Snapshot
+	root := base + "/" + selected
 	manBytes, err := getBytes(c, root+"/"+manifestFile)
 	if err != nil {
 		return err
@@ -112,20 +211,16 @@ func cmdPull(args []string) (retErr error) {
 	if err != nil {
 		return err
 	}
-	pub, err := readKey(*pubPath, ed25519.PublicKeySize)
-	if err != nil {
-		return fmt.Errorf("读不到钉住的公钥 %s:%w", *pubPath, err)
-	}
-	if err := snapshot.VerifySignature(manBytes, sig, ed25519.PublicKey(pub)); err != nil {
+	if err := snapshot.VerifySignature(manBytes, sig, ed25519.PublicKey(pubBytes)); err != nil {
 		return fmt.Errorf("验签失败,拒绝安装:%w", err)
 	}
 	var man snapshot.Manifest
 	if err := json.Unmarshal(manBytes, &man); err != nil {
 		return err
 	}
-	if man.ID != cur.Snapshot {
+	if man.ID != selected {
 		return fmt.Errorf("current.json 说 %s,manifest 里却是 %s —— 分发点在乱指",
-			short(cur.Snapshot), short(man.ID))
+			short(selected), short(man.ID))
 	}
 	fmt.Printf("  ✅ 验签通过(%d 个节点的包)\n", len(man.Bundles))
 	decommissioned := false
@@ -148,18 +243,19 @@ func cmdPull(args []string) (retErr error) {
 		}
 		defer binaryCandidate.cleanup()
 	}
+	// 一旦看到 signed current（或本机已有 floor），就不能再激活一个会忘掉
+	// 防重放规则的旧 Agent。decommission 节点没有候选，也要检查当前二进制。
+	if cur.signed != nil || floorBefore != nil {
+		if err := requireSignedCurrentBinary(binaryCandidate, *binPath); err != nil {
+			return err
+		}
+	}
 
 	// 从这一刻开始，后面的每一步都会改变本机状态：decommission、二进制、
 	// 配置和 applied 必须处在同一把 deploy.lock 里。网络下载、验签与二进制
 	// 候选自检在锁外；进入锁后不再让不可信大流量阻塞人工 apply。
-	var transactionLock *nodeDeployLock
 	if !*dry {
-		if continuation != nil {
-			transactionLock, err = inheritNodeDeployLock(*deployLockPath)
-			if err != nil {
-				return fmt.Errorf("续跑没有继承有效的部署锁:%w", err)
-			}
-		} else {
+		if transactionLock == nil {
 			var busy bool
 			transactionLock, busy, err = acquireNodeDeployLock(*deployLockPath)
 			if err != nil {
@@ -171,8 +267,26 @@ func cmdPull(args []string) (retErr error) {
 				fmt.Println("另一个 apply/pull 正持有部署锁,本次跳过")
 				return nil
 			}
+			defer transactionLock.Close()
 		}
-		defer transactionLock.Close()
+	}
+
+	// floor 是本次部署事务的第一笔 durable mutation。持锁后必须重读，防止
+	// 另一个 pull 在锁外下载期间已经接受了更高 generation。写好 floor 之后
+	// 才允许 decommission、换二进制、写 rollout 或安装配置。continuation
+	// 对同 generation/payload 的 Advance 是幂等的。
+	if !*dry {
+		floorLocked, err := releasefloor.Read(*releaseFloorPath)
+		if err != nil {
+			return err
+		}
+		if cur.signed == nil {
+			if floorLocked != nil {
+				return fmt.Errorf("本机 release floor 已激活，拒绝 unsigned legacy current")
+			}
+		} else if err := advanceSignedPullFloor(*releaseFloorPath, cur); err != nil {
+			return err
+		}
 	}
 
 	// applied 与 rollout 是部署事务坐标，必须在 deploy.lock 之后读取。
@@ -188,8 +302,8 @@ func cmdPull(args []string) (retErr error) {
 		if err != nil {
 			return err
 		}
-		if shouldTrackRollout(prevRec, cur.Snapshot, applied) {
-			rec = rollout.Begin(prevRec, cur.Snapshot, "", time.Now())
+		if shouldTrackRollout(prevRec, selected, applied) {
+			rec = rollout.Begin(prevRec, selected, "", time.Now())
 		}
 	}
 	saveRec := func() {
@@ -209,7 +323,7 @@ func cmdPull(args []string) (retErr error) {
 	defer func() {
 		if retErr != nil && !*dry && *rolloutPath != "" {
 			// 同快照 no-op 失败也必须懒开 Failed，不能留下旧 Verified 假绿。
-			rec = failRollout(rec, prevRec, cur.Snapshot, retErr, time.Now())
+			rec = failRollout(rec, prevRec, selected, retErr, time.Now())
 			saveRec()
 		}
 	}()
@@ -218,7 +332,7 @@ func cmdPull(args []string) (retErr error) {
 	// 快照 id 只说明配置来自哪一版，不说明机器现在是不是那个样子。即使
 	// applied 相同也继续核对 enabled/active/NRestarts；可安全恢复的漂移
 	// 会收敛，failed/过渡态等无法精确回退的状态则失败关闭并落 Failed。
-	same := applied == cur.Snapshot
+	same := applied == selected
 	if same {
 		fmt.Println("  本机记录相同，仍核对文件与服务状态")
 	}
@@ -255,7 +369,7 @@ func cmdPull(args []string) (retErr error) {
 		// 避免的那种配对。变的只是怎么实现它 —— 以前靠"就此 return,
 		// 10 分钟后 timer 再来一次",实测那个空档是 10 分 11 秒。
 		// 现在把剩下的活交给刚装好的那个二进制,立刻。
-		status, err := continuePull(*binPath, args, cur.Snapshot, transactionLock)
+		status, err := continuePull(*binPath, args, selected, transactionLock)
 		if err != nil {
 			return handleContinuationFailure(*binPath, status, err, restorePreviousBinary)
 		}
@@ -356,7 +470,7 @@ func cmdPull(args []string) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("把部署锁传给安装 shell:%w", err)
 	}
-	cmd.Stdin = strings.NewReader(deploy.ScriptWithInheritedLock(plan, cur.Snapshot, lockFD))
+	cmd.Stdin = strings.NewReader(deploy.ScriptWithInheritedLock(plan, selected, lockFD))
 	cmd.Stdout, cmd.Stderr = prefixWriter{"  "}, prefixWriter{"  "}
 	if err := cmd.Run(); err != nil {
 		if exitCode(err) == deploy.RollbackIncompleteExitCode {
@@ -376,12 +490,108 @@ func cmdPull(args []string) (retErr error) {
 	if err := os.MkdirAll(filepath.Dir(*statePath), 0o755); err != nil {
 		return err
 	}
-	if err := writeStateAtomic(*statePath, []byte(cur.Snapshot+"\n"), 0o644); err != nil {
+	if err := writeStateAtomic(*statePath, []byte(selected+"\n"), 0o644); err != nil {
 		return err
 	}
 	// **写完 applied 才算 Verified。** 装上了不算,记下来了才算 ——
 	// 否则回退目标会指向一份 applied 里根本没有的快照。
 	enterRec(rollout.Verified)
+	return nil
+}
+
+// decodePullCurrent 把 signed 与 legacy 的迁移边界收在一个地方。只要 signed
+// envelope 能严格解码，就绝不允许在验签失败后再降级；只有精确符合旧
+// Current 结构的 JSON 才能走迁移通道，而且 floor 一旦存在便永久关闭它。
+func decodePullCurrent(body []byte, node string, pub ed25519.PublicKey, floor *releasefloor.Record,
+	allowLegacyContinuation bool) (*pullCurrent, error) {
+	signed, signedErr := publish.DecodeDeploymentCurrent(body)
+	if signedErr == nil {
+		if err := signed.Verify(pub); err != nil {
+			return nil, fmt.Errorf("signed current 验签失败:%w", err)
+		}
+		selected, err := signed.Select(node)
+		if err != nil {
+			return nil, fmt.Errorf("signed current 选择节点目标:%w", err)
+		}
+		digest, err := signed.PayloadSHA256()
+		if err != nil {
+			return nil, fmt.Errorf("计算 signed current payload 哈希:%w", err)
+		}
+		if err := checkPullFloor(floor, signed.Generation, digest, selected); err != nil {
+			return nil, fmt.Errorf("signed current 未通过防重放检查:%w", err)
+		}
+		return &pullCurrent{snapshot: selected, signed: signed, digest: digest}, nil
+	}
+
+	legacy, legacyErr := publish.DecodeLegacyCurrent(body)
+	if legacyErr != nil {
+		return nil, fmt.Errorf("current.json 既不是有效 signed envelope，也不是严格 legacy current: signed=%v; legacy=%w",
+			signedErr, legacyErr)
+	}
+	if floor != nil {
+		return nil, fmt.Errorf("本机 release floor 已激活，拒绝 unsigned legacy current")
+	}
+	if !allowLegacyContinuation {
+		return nil, fmt.Errorf("新版 Agent 拒绝 standalone unsigned legacy current；legacy 只允许旧版父进程持锁发起的同快照续跑")
+	}
+	return &pullCurrent{snapshot: legacy.Snapshot}, nil
+}
+
+func checkPullFloor(floor *releasefloor.Record, generation uint64, digest, selected string) error {
+	if err := floor.Check(generation, digest); err != nil {
+		return err
+	}
+	if floor != nil && floor.Generation == generation && floor.PayloadSHA256 == digest && floor.SelectedSnapshot != selected {
+		return fmt.Errorf("generation %d 和 payload %s 已记录选择快照 %s，当前却选择 %s",
+			generation, short(digest), floor.SelectedSnapshot, selected)
+	}
+	return nil
+}
+
+// advancePullFloorEarly holds deploy.lock only for the small durable floor
+// transaction. It intentionally returns before the caller starts any manifest
+// or blob request.
+func advancePullFloorEarly(floorPath, lockPath, binPath string, current *pullCurrent) (bool, error) {
+	lock, busy, err := acquireNodeDeployLock(lockPath)
+	if err != nil {
+		return false, fmt.Errorf("提前取得部署锁并记录 release floor:%w", err)
+	}
+	if busy {
+		return true, nil
+	}
+	defer lock.Close()
+	// The durable floor must never outlive the only reader that understands it.
+	// Check the installed Agent while holding the same deployment lock before
+	// making the one-way write; a later staged candidate is checked separately.
+	if err := requireSignedCurrentBinary(nil, binPath); err != nil {
+		return false, fmt.Errorf("写 release floor 前检查当前 Agent:%w", err)
+	}
+	if err := advanceSignedPullFloor(floorPath, current); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+// advanceSignedPullFloor must be called while deploy.lock is held. Read and
+// Check are repeated even if the caller checked outside the lock.
+func advanceSignedPullFloor(path string, current *pullCurrent) error {
+	if current == nil || current.signed == nil {
+		return fmt.Errorf("不能用 unsigned current 推进 release floor")
+	}
+	floor, err := releasefloor.Read(path)
+	if err != nil {
+		return err
+	}
+	if err := checkPullFloor(floor, current.signed.Generation, current.digest, current.snapshot); err != nil {
+		return fmt.Errorf("signed current 未通过持锁防重放检查:%w", err)
+	}
+	next := releasefloor.Record{
+		Schema: releasefloor.CurrentSchema, Generation: current.signed.Generation,
+		PayloadSHA256: current.digest, SelectedSnapshot: current.snapshot,
+	}
+	if err := releasefloor.Advance(path, next); err != nil {
+		return fmt.Errorf("持久化 release floor:%w", err)
+	}
 	return nil
 }
 

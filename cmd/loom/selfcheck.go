@@ -6,9 +6,12 @@ import (
 	"os"
 
 	"loom/internal/agent"
+	"loom/internal/publish"
 	"loom/internal/report"
 	"loom/internal/version"
 )
+
+const signedCurrentCapability = publish.SignedCurrentCapability
 
 // selfcheck 是二进制自我验证:**这个二进制在这台机器上能不能用**。
 //
@@ -25,7 +28,11 @@ import (
 func cmdSelfcheck(args []string) error {
 	fs := flag.NewFlagSet("selfcheck", flag.ExitOnError)
 	quiet := fs.Bool("q", false, "只用退出码说话")
+	require := fs.String("require", "", "要求二进制具备指定安全能力")
 	if _, err := parseInterspersed(fs, args); err != nil {
+		return err
+	}
+	if err := requireSelfcheckCapability(*require); err != nil {
 		return err
 	}
 
@@ -65,5 +72,17 @@ func cmdSelfcheck(args []string) error {
 		say("  ✅ %s", c.path)
 	}
 	say("读懂了 %d 份现有配置", checked)
+	if *require != "" {
+		say("  ✅ capability %s", *require)
+	}
 	return nil
+}
+
+func requireSelfcheckCapability(name string) error {
+	switch name {
+	case "", signedCurrentCapability:
+		return nil
+	default:
+		return fmt.Errorf("这个二进制不具备要求的 capability %q", name)
+	}
 }

@@ -58,6 +58,26 @@ func TestPrepareBinaryUpgradeStagesVerifiedCandidateWithoutChangingLiveBinary(t 
 	}
 }
 
+func TestRequireSignedCurrentBinaryChecksStagedBeforeLive(t *testing.T) {
+	dir := t.TempDir()
+	live := filepath.Join(dir, "loom")
+	staged := filepath.Join(dir, "loom-staged")
+	old := []byte("#!/bin/sh\nexit 42\n")
+	capable := []byte("#!/bin/sh\n[ \"$*\" = 'selfcheck -q -require signed-current-v1' ]\n")
+	if err := os.WriteFile(live, old, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(staged, capable, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireSignedCurrentBinary(&binaryUpgradeCandidate{staged: staged}, live); err != nil {
+		t.Fatalf("应优先检查即将激活的 staged binary:%v", err)
+	}
+	if err := requireSignedCurrentBinary(nil, live); err == nil {
+		t.Fatal("没有 staged candidate 时，缺 capability 的 live binary 应拒绝")
+	}
+}
+
 func TestStaleUnitsUsesExecutableIdentityAndFailsClosed(t *testing.T) {
 	dir := t.TempDir()
 	live := filepath.Join(dir, "loom")

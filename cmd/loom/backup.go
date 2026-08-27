@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ed25519"
 	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
@@ -16,6 +17,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"loom/internal/publish"
 )
 
 // backup 打包那些**丢了就得全网重来**的东西:秘密层、内部 CA、源头存档。
@@ -59,7 +62,10 @@ func cmdBackup(args []string) error {
 		srcs = append(srcs, backupSrc{path: r})
 	}
 	if len(srcs) == 0 {
-		srcs = defaultBackupSrcs()
+		srcs, err = defaultBackupSrcs()
+		if err != nil {
+			return err
+		}
 	}
 
 	var buf bytes.Buffer
@@ -308,7 +314,20 @@ func cmdRestore(args []string) error {
 // 拆成函数是为了能测:这份清单漏一项的后果**只有在需要它的那天才会发现**,
 // 而那天恰恰是没法补救的一天。deploy/keys 就漏过 —— 文档两处都写着签名
 // 私钥靠 loom backup 保存,清单里却没有它。
-func defaultBackupSrcs() []backupSrc {
+func defaultBackupSrcs() ([]backupSrc, error) {
+	signedEra, err := publish.ReleaseAuthorityBackupState("deploy/ssot-history")
+	if err != nil {
+		return nil, fmt.Errorf("检查 signed-current 备份边界:%w", err)
+	}
+	if signedEra {
+		pub, err := readKey("deploy/keys/platform-signing.pub", ed25519.PublicKeySize)
+		if err != nil {
+			return nil, fmt.Errorf("signed era 备份前读取平台公钥:%w", err)
+		}
+		if _, err := publish.ReadReleaseAuthority("deploy/ssot-history", ed25519.PublicKey(pub)); err != nil {
+			return nil, fmt.Errorf("signed era 备份前验证 release authority:%w", err)
+		}
+	}
 	return []backupSrc{
 		// 平台签名私钥。**丢了它,全网就再也收不到任何新配置** ——
 		// 节点只认这把钥匙签出来的快照,换钥要逐台手工改 control.json。
@@ -325,13 +344,15 @@ func defaultBackupSrcs() []backupSrc {
 		// 历史(不在 git,中控界面覆盖式保存)。存档只在中控本地,
 		// 那台机器没了就没了 —— 而中控没了本来就是"从备份恢复"事件。
 		//
-		// **它可以合法地还不存在**:发布器第一次成功发布才会建它。
+		// **它只在 legacy 控制面可以合法地还不存在**。signed-era marker
+		// 一旦出现，目录里的 release-authority.json 就是防 generation
+		// 回绕的安全状态，默认备份必须把整个目录当作必需项。
 		// 拿它当必需项的话,一台刚起来的中控连备份都做不了 ——
 		// 而"做危险变更之前先备份"恰恰是最需要它能跑的时候。
-		{path: "deploy/ssot-history", optional: true},
+		{path: "deploy/ssot-history", optional: !signedEra},
 		// 当前状态与历史含真实地址,按约定不进 Git；因此它和 SSOT 源头
 		// 一样只能从原控制机或备份恢复。干净 clone 上允许还不存在,
 		// 但只要存在就必须把整棵 history 一起收进去。
 		{path: "docs/status", optional: true},
-	}
+	}, nil
 }
