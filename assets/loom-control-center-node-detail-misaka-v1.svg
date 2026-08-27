@@ -1,0 +1,253 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="1586" height="992" viewBox="0 0 1586 992"
+     role="img" aria-labelledby="title description">
+  <title id="title">jm24 — Loom control center prototype</title>
+  <desc id="description">A node detail view for jm24 showing trusted identity, runtime services, component versions, WireGuard interfaces, rollout state, drift, and measurements.</desc>
+  <defs>
+    <marker id="arrow-selected" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0L7 3.5L0 7Z" fill="#2AA875"/>
+    </marker>
+    <symbol id="icon-overview" viewBox="0 0 16 16">
+      <rect x="1.5" y="1.5" width="5" height="5" rx="1"/><rect x="9.5" y="1.5" width="5" height="5" rx="1"/>
+      <rect x="1.5" y="9.5" width="5" height="5" rx="1"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/>
+    </symbol>
+    <symbol id="icon-topology" viewBox="0 0 16 16">
+      <path d="M4.2 4.2L8 8m3.8-3.8L8 8m0 0v4.4"/><circle cx="3" cy="3" r="1.8"/><circle cx="13" cy="3" r="1.8"/><circle cx="8" cy="13.5" r="1.8"/>
+    </symbol>
+    <symbol id="icon-services" viewBox="0 0 16 16">
+      <rect x="2" y="2" width="12" height="12" rx="2"/><path d="M5 5h6M5 8h6M5 11h4"/>
+    </symbol>
+    <symbol id="icon-traffic" viewBox="0 0 16 16">
+      <path d="M2 4h4.2C9 4 8.2 12 11 12h2.5M2 12h3.5C8.4 12 7.7 4 10.7 4h2.8"/><path d="M11.5 2l2 2-2 2m0 4l2 2-2 2"/>
+    </symbol>
+    <symbol id="icon-deployments" viewBox="0 0 16 16">
+      <rect x="2" y="3" width="12" height="10.5" rx="2"/><path d="M5 3V1.5h6V3M8 6v4m-2-2 2 2 2-2"/>
+    </symbol>
+    <symbol id="icon-events" viewBox="0 0 16 16">
+      <circle cx="8" cy="8" r="6.2"/><path d="M8 4.5V8l2.5 1.5"/>
+    </symbol>
+    <symbol id="icon-settings" viewBox="0 0 16 16">
+      <path d="M2 4h5m3 0h4M2 8h2m3 0h7M2 12h7m3 0h2"/><circle cx="8.5" cy="4" r="1.5"/><circle cx="5.5" cy="8" r="1.5"/><circle cx="10.5" cy="12" r="1.5"/>
+    </symbol>
+    <symbol id="icon-status-ok" viewBox="0 0 16 16">
+      <circle cx="8" cy="8" r="6.2"/><path d="M5 8.1l2 2 4-4.2"/>
+    </symbol>
+    <symbol id="icon-lock" viewBox="0 0 16 16">
+      <rect x="3" y="7" width="10" height="7" rx="1.8"/><path d="M5.2 7V5a2.8 2.8 0 0 1 5.6 0v2"/>
+    </symbol>
+    <symbol id="icon-refresh" viewBox="0 0 16 16">
+      <path d="M13.6 5.8A6 6 0 1 0 14 9"/><path d="M10.8 2.7h3v3"/>
+    </symbol>
+    <symbol id="icon-filter" viewBox="0 0 16 16">
+      <path d="M2 3h12L9.5 8v4.2L6.5 14V8Z"/>
+    </symbol>
+    <symbol id="icon-download" viewBox="0 0 16 16">
+      <path d="M8 2v8m-3-3 3 3 3-3M2.5 13.5h11"/>
+    </symbol>
+    <symbol id="icon-check" viewBox="0 0 16 16">
+      <circle cx="8" cy="8" r="6"/><path d="M5 8l2 2 4-4"/>
+    </symbol>
+    <symbol id="icon-save" viewBox="0 0 16 16">
+      <path d="M2.5 2.5h9l2 2v9h-11Z"/><path d="M5 2.5v4h6v-4M5 13v-4h6v4"/>
+    </symbol>
+    <symbol id="icon-plus" viewBox="0 0 16 16">
+      <path d="M8 3v10M3 8h10"/>
+    </symbol>
+    <symbol id="icon-search" viewBox="0 0 16 16">
+      <circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/>
+    </symbol>
+    <symbol id="icon-arrow-right" viewBox="0 0 16 16">
+      <path d="M2.5 8h10M9 4.5 12.5 8 9 11.5"/>
+    </symbol>
+    <symbol id="icon-edit" viewBox="0 0 16 16">
+      <path d="M3 11.8 2.5 14l2.2-.5 8.2-8.2-1.7-1.7Z"/><path d="m10.3 4.5 1.7 1.7"/>
+    </symbol>
+    <symbol id="icon-trash" viewBox="0 0 16 16">
+      <path d="M3.5 4.5h9M6 4.5V2.7h4v1.8m1.5 0-.6 9h-5.8l-.6-9M6.8 7v4m2.4-4v4"/>
+    </symbol>
+    <style><![CDATA[
+
+      .ui { font-family: Inter, "Atkinson Hyperlegible Next", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; fill: #181B1A; }
+      .mono { font-family: "Intel One Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+      .muted { fill: #717674; }
+      .faint { fill: #9BA09E; }
+      .green { fill: #239B68; }
+      .amber { fill: #A66A14; }
+      .red { fill: #B84C4C; }
+      .blue { fill: #477D9C; }
+      .heading { font-size: 28px; font-weight: 700; letter-spacing: -0.45px; }
+      .eyebrow { font-size: 12px; font-weight: 600; letter-spacing: 1.35px; }
+      .section { font-size: 16px; font-weight: 650; letter-spacing: -0.15px; }
+      .subsection { font-size: 13px; font-weight: 650; }
+      .label { font-size: 13px; font-weight: 500; }
+      .body { font-size: 13px; font-weight: 400; }
+      .small { font-size: 12px; font-weight: 400; }
+      .tiny { font-size: 11px; font-weight: 400; }
+      .metric { font-size: 17px; font-weight: 650; }
+      .wordmark { font-size: 20px; font-weight: 700; letter-spacing: 0.8px; }
+      .nav { font-size: 13px; font-weight: 450; }
+      .nav-icon { fill: none; stroke: #7D8280; stroke-width: 1.35; stroke-linecap: round; stroke-linejoin: round; }
+      .nav-icon-active { fill: none; stroke: #181B1A; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+      .status-icon { fill: none; stroke: #2AA875; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+      .action-icon { fill: none; stroke: #5B6166; stroke-width: 1.45; stroke-linecap: round; stroke-linejoin: round; }
+      .panel { fill: #FFFFFF; stroke: #E4E7E5; stroke-width: 1; }
+      .panel-soft { fill: #F8F9F8; stroke: #E4E7E5; stroke-width: 1; }
+      .rule { stroke: #E6E9E7; stroke-width: 1; }
+      .rule-dark { stroke: #CBD0CD; stroke-width: 1; }
+      .status-dot { fill: #2AA875; }
+      .quiet-dot { fill: #72C69F; }
+      .warn-dot { fill: #D79B3B; }
+      .bad-dot { fill: #C65A5A; }
+      .neutral-dot { fill: #A5AAA8; }
+      .wg { fill: none; stroke: #A5AAA8; stroke-width: 1.25; stroke-linecap: round; }
+      .candidate { fill: none; stroke: #B9BEBC; stroke-width: 1.35; stroke-dasharray: 5 6; stroke-linecap: round; }
+      .selected { fill: none; stroke: #2AA875; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow-selected); }
+      .chip { fill: #F4F6F5; stroke: #DEE2DF; stroke-width: 1; }
+      .chip-green { fill: #EEF8F3; stroke: #B9DEC9; stroke-width: 1; }
+      .chip-amber { fill: #FFF8EB; stroke: #E7D3AB; stroke-width: 1; }
+      .button { fill: #181B1A; }
+      .button-green { fill: #239B68; }
+      .button-disabled { fill: #EFF1F0; stroke: #DDE1DF; stroke-width: 1; }
+      .code-bg { fill: #F7F8F7; stroke: #E4E7E5; stroke-width: 1; }
+      .timeline { fill: none; stroke: #CBD0CD; stroke-width: 1.3; }
+      .timeline-ok { fill: none; stroke: #2AA875; stroke-width: 1.7; }
+      .stage-line { stroke: #2AA875; stroke-width: 1.5; }
+      .route-dot { fill: #239B68; }
+      .node-name { font-size: 14px; font-weight: 650; }
+
+    ]]></style>
+  </defs>
+
+  <rect width="1586" height="992" fill="#FCFCFB"/>
+
+  <!-- Shared horizontal header. -->
+  <rect x="0" y="0" width="1586" height="50" fill="#FFFFFF"/>
+  <line class="rule" x1="0" y1="49.5" x2="1586" y2="49.5"/>
+  <svg x="18" y="7" width="36" height="36"
+       viewBox="127 112 1000 1000" preserveAspectRatio="xMidYMid meet"
+       aria-label="Loom">
+    <g transform="translate(0.000000,1254.000000) scale(1.000000,-1.000000)">
+      <path d="M616 1108 c-67 -49 -118 -133 -129 -209 0 -6 0 -6 -14 -1 -75 27 -166 24 -239 -6 -13 -5 -14 -7 -11 -29 12 -80 53 -155 115 -211 l9 -8 -6 -5 c-61 -53 -100 -121 -114 -200 -5 -31 -5 -38 4 -42 57 -26 138 -34 203 -20 13 2 22 5 39 10 14 5 14 5 15 -2 9 -70 60 -155 121 -204 17 -15 18 -15 34 -2 47 37 87 93 107 151 7 20 16 52 16 60 0 4 1 4 12 0 72 -28 158 -27 236 3 17 6 17 7 15 27 -8 79 -49 159 -111 215 l-9 9 10 9 c61 53 105 139 114 219 2 15 1 16 -28 26 -75 25 -156 25 -227 -2 -4 -1 -8 -2 -8 -2 -1 0 -2 7 -3 15 -15 81 -60 152 -126 198 -12 9 -14 9 -25 1z M639 1084 c105 -82 142 -225 92 -356 -7 -18 -7 -17 -16 -17 -4 0 -8 1 -8 1 -1 1 1 7 4 15 32 78 30 170 -5 243 -16 35 -40 66 -68 88 -9 8 -11 8 -20 0 -47 -39 -82 -103 -93 -169 -1 -7 -2 -12 -2 -13 -1 0 -17 8 -17 9 -1 1 4 27 7 40 13 44 37 89 68 124 15 16 44 43 47 43 0 0 5 -3 11 -8z M638 1031 c77 -72 98 -200 50 -307 -3 -8 -5 -11 -7 -12 -2 -1 -17 -1 -18 0 -1 0 2 6 5 12 44 94 31 213 -31 278 -10 11 -12 10 -29 -12 -26 -36 -44 -83 -47 -128 0 -6 -1 -11 -1 -11 -1 0 -6 4 -16 11 -4 3 2 39 12 67 13 41 41 84 68 108 4 4 3 4 14 -6z M635 973 c24 -33 37 -74 40 -124 l0 -15 -10 -10 c-11 -11 -23 -25 -32 -38 -6 -8 -5 -9 -13 3 -9 13 -19 24 -30 36 l-10 10 0 13 c3 48 18 94 42 128 6 7 6 7 13 -3z M413 893 c79 -13 148 -56 193 -118 12 -17 11 -15 6 -26 -3 -6 -5 -10 -5 -10 0 0 -4 6 -9 13 -66 103 -190 147 -314 114 -20 -6 -21 -6 -14 -34 15 -60 54 -120 102 -158 9 -8 9 -7 0 -12 -9 -6 -8 -6 -18 2 -57 48 -97 120 -110 196 -2 14 -3 13 7 16 22 9 53 16 85 19 13 2 61 0 77 -2z M923 895 c30 -3 83 -16 89 -22 2 -2 -7 -43 -14 -64 -34 -100 -109 -176 -200 -203 -23 -7 -59 -13 -61 -11 -2 2 -8 16 -8 16 0 1 7 2 16 2 74 9 136 45 185 108 27 35 49 81 57 120 4 17 3 19 -13 24 -62 19 -135 15 -193 -9 -9 -4 -9 -5 -9 7 l0 10 9 3 c25 10 56 17 83 19 9 1 50 1 59 0z M400 854 c70 -9 134 -47 176 -104 7 -11 21 -34 21 -36 0 -2 -6 -24 -7 -25 0 -1 -4 5 -8 13 -38 76 -106 124 -190 134 -14 2 -49 1 -62 -1 -16 -3 -18 -5 -12 -21 14 -42 48 -88 87 -117 7 -5 13 -10 13 -10 0 -1 -17 -9 -18 -9 -5 0 -42 35 -56 52 -24 29 -46 72 -54 105 -3 11 -3 10 11 14 30 8 67 10 99 5z M926 854 c13 -1 39 -7 40 -9 2 -2 -8 -34 -17 -55 -43 -93 -125 -152 -220 -158 l-11 0 -6 9 c-3 5 -5 9 -5 9 0 1 8 1 18 1 56 0 107 23 153 69 29 29 59 79 63 104 1 10 -11 13 -53 12 -42 0 -71 -6 -107 -24 -12 -6 -11 -6 -10 5 1 4 1 9 1 10 0 3 1 3 13 8 45 19 93 26 141 19z M391 816 c30 -3 68 -16 91 -32 l6 -3 4 -15 c4 -16 10 -34 16 -47 4 -11 4 -11 -3 -11 -12 -2 -37 -6 -48 -9 -16 -4 -14 -4 -26 4 -38 25 -67 57 -86 96 -7 15 -7 16 0 17 10 1 36 1 46 0z M914 816 c3 -2 2 -5 -4 -18 -19 -39 -53 -75 -89 -97 l-8 -5 -11 3 c-15 4 -33 8 -45 9 -6 1 -11 2 -11 2 -1 0 1 7 4 14 6 17 12 36 15 48 l1 9 9 5 c27 15 55 25 85 30 10 1 51 1 54 0z M669 789 c-4 -19 -7 -27 -14 -39 -10 -18 -20 -39 -29 -64 -1 -4 -2 -5 -10 -9 -9 -5 -9 -5 -5 11 10 40 28 75 51 103 10 12 10 12 7 -2z M529 746 c14 -16 17 -20 25 -37 8 -17 22 -42 30 -54 5 -9 6 -24 1 -26 -7 -2 -13 5 -35 46 -15 28 -35 75 -35 83 0 2 7 -4 14 -12z M721 691 c25 -1 43 -3 61 -8 4 0 2 -2 -8 -5 -19 -6 -28 -7 -48 -6 -12 1 -29 1 -46 1 -36 -1 -37 -1 -33 11 2 7 1 6 24 7 12 0 23 1 26 1 2 0 13 0 24 -1z M525 681 c5 -10 5 -10 -7 -10 -120 -9 -223 -101 -248 -221 -4 -22 -4 -23 11 -28 61 -19 132 -16 192 7 5 2 9 3 10 3 0 0 0 -5 0 -10 l1 -9 -9 -4 c-62 -24 -145 -25 -216 -1 -17 5 -16 4 -14 15 15 104 74 190 160 235 34 17 63 25 108 30 8 1 7 2 12 -7z M638 655 l9 -4 0 -10 c1 -13 2 -12 -10 -19 l-9 -6 -10 6 -9 6 -1 11 0 11 9 5 c12 6 11 6 21 0z M683 651 c0 -1 6 -10 12 -21 18 -30 29 -54 39 -82 6 -19 6 -19 -4 -9 -16 16 -22 25 -30 42 -7 14 -25 48 -30 54 -2 3 -3 15 -1 16 1 2 13 1 14 0z M546 642 c3 -5 5 -9 5 -9 0 -1 -7 -1 -16 -1 -94 0 -185 -66 -216 -155 -7 -22 -6 -23 23 -27 44 -5 89 3 131 21 7 3 13 6 13 6 0 -1 -1 -5 -1 -11 l-1 -11 -11 -5 c-53 -22 -115 -26 -174 -12 -11 3 -10 3 -9 10 8 39 30 82 58 115 44 53 119 88 184 88 l9 0 5 -9z M902 622 c45 -39 79 -92 96 -151 5 -19 10 -43 10 -51 l1 -7 -14 -5 c-89 -30 -180 -22 -253 22 -40 25 -68 49 -93 83 l-7 10 4 7 c7 13 6 12 12 3 73 -104 198 -148 317 -110 12 4 13 4 8 27 -9 42 -31 88 -59 123 -8 10 -33 35 -42 41 -6 5 -6 5 2 11 9 6 8 6 18 -3z M542 610 c10 -1 27 -1 38 -1 l20 0 8 -5 c4 -2 8 -4 8 -5 0 0 -1 -2 -2 -4 l-1 -4 -43 0 c-45 1 -55 2 -81 7 -8 1 -14 3 -15 3 0 1 15 6 27 8 15 3 15 3 20 2 2 0 11 0 21 -1z M661 609 c5 -9 -53 -107 -73 -125 -3 -3 -3 0 1 14 4 17 8 26 14 37 12 18 31 52 34 60 1 2 4 5 11 10 11 7 11 7 13 4z M863 604 c48 -36 83 -90 98 -148 2 -7 3 -14 3 -14 -1 -1 -5 -3 -11 -4 -90 -23 -180 3 -247 69 -17 18 -42 51 -42 56 0 2 9 20 10 20 0 0 3 -4 5 -8 36 -66 102 -112 177 -124 12 -2 51 -2 64 0 19 4 21 5 17 17 -15 50 -55 103 -97 128 -1 1 -2 2 -2 2 0 1 17 10 19 10 0 0 3 -2 6 -4z M458 585 c12 -4 37 -9 48 -11 8 0 7 0 3 -10 -5 -13 -13 -36 -16 -49 -3 -13 -2 -12 -19 -21 -38 -19 -72 -26 -112 -25 -22 1 -23 1 -23 5 3 13 23 45 41 67 16 18 58 49 64 48 1 -1 7 -2 14 -4z M824 583 c35 -22 63 -53 81 -89 6 -12 11 -22 10 -23 -4 -3 -47 -2 -68 2 -26 5 -69 24 -82 35 0 1 -2 8 -4 17 -2 9 -6 23 -10 32 -6 19 -6 18 1 19 14 1 57 11 59 13 1 1 4 0 13 -6z M553 570 c1 -1 1 -2 -2 -7 -11 -21 -21 -55 -26 -82 -15 -86 17 -180 82 -245 20 -20 19 -20 40 0 44 45 71 101 82 165 1 6 2 11 2 11 0 1 4 -1 9 -4 l8 -4 0 -5 c-11 -74 -51 -146 -110 -198 -12 -10 -10 -10 -21 -1 -77 65 -122 167 -113 259 3 34 14 74 26 103 l4 9 9 0 c5 0 9 0 10 -1z M597 570 c0 -1 -4 -9 -8 -18 -43 -88 -35 -184 20 -258 15 -20 17 -21 27 -10 30 33 52 90 57 145 0 11 0 11 10 3 10 -7 9 -6 7 -19 -7 -62 -34 -117 -76 -161 l-7 -7 -8 8 c-51 50 -82 131 -77 200 3 35 12 70 28 103 l7 14 10 0 c5 0 10 0 10 0z M639 493 c5 -6 14 -17 22 -24 l13 -14 0 -8 c0 -44 -14 -93 -38 -130 -9 -14 -9 -14 -13 -8 -26 35 -42 84 -42 127 l0 11 12 12 c11 12 22 25 31 38 3 4 6 7 6 7 0 0 4 -5 9 -11z" fill="#252927" fill-rule="evenodd" clip-rule="evenodd"/>
+    </g>
+  </svg>
+  <text class="ui wordmark" x="65" y="33">LOOM</text>
+  <g class="ui nav">
+    <use href="#icon-overview" x="360" y="18" width="14" height="14" class="nav-icon"/>
+    <text x="381" y="31">Overview</text>
+    <use href="#icon-topology" x="462" y="18" width="14" height="14" class="nav-icon-active"/>
+    <text x="483" y="31" font-weight="600">Topology</text>
+    <use href="#icon-services" x="565" y="18" width="14" height="14" class="nav-icon"/>
+    <text x="586" y="31">Services</text>
+    <use href="#icon-traffic" x="665" y="18" width="14" height="14" class="nav-icon"/>
+    <text x="686" y="31">Routing</text>
+    <use href="#icon-deployments" x="765" y="18" width="14" height="14" class="nav-icon"/>
+    <text x="786" y="31">Deployments</text>
+    <use href="#icon-events" x="908" y="18" width="14" height="14" class="nav-icon"/>
+    <text x="929" y="31">Events</text>
+    <use href="#icon-settings" x="1002" y="18" width="14" height="14" class="nav-icon"/>
+    <text x="1023" y="31">Settings</text>
+  </g>
+  <line x1="460" y1="49.5" x2="550" y2="49.5" stroke="#2AA875" stroke-width="2"/>
+  <g class="ui nav">
+    <text x="1210" y="31">Production</text>
+    <circle class="status-dot" cx="1322" cy="26" r="4"/>
+    <text x="1335" y="31">Operational</text>
+    <use href="#icon-lock" x="1428" y="18" width="14" height="14" class="nav-icon"/>
+    <text x="1538" y="31" text-anchor="end">Read only</text>
+  </g>
+
+  <g class="ui">
+    <text class="eyebrow" x="21" y="91">TOPOLOGY / NODE</text>
+    <text class="heading" x="21" y="124">jm24</text>
+    <text class="body muted" x="21" y="151">Beijing · control + access + tunnel endpoint · direct /status observed 10s ago</text>
+    <use href="#icon-status-ok" x="20" y="168" width="15" height="15" class="status-icon"/>
+    <text class="small" x="43" y="181">No confirmed issues · egress capable: no</text>
+  </g>
+
+
+  <!-- Identity and compact status strip -->
+  <text class="ui tiny green" x="1538" y="181" text-anchor="end">Topology / Nodes / jm24</text>
+  <rect class="panel" x="21" y="202" width="1538" height="86" rx="7"/>
+  <g class="ui">
+    <text class="label" x="51" y="234">Snapshot</text><text class="metric mono" x="51" y="261">4f09f6f5716d</text>
+    <text class="label" x="415" y="234">Commit</text><text class="metric mono" x="415" y="261">28224ed</text>
+    <text class="label" x="745" y="234">Binary</text><text class="metric mono" x="745" y="261">449597b5…</text>
+    <text class="label" x="1064" y="234">WireGuard tools</text><text class="metric mono" x="1064" y="261">1.0.20250521</text>
+    <text class="label" x="1390" y="234">Rollout</text><text class="metric green" x="1390" y="261">Verified</text>
+  </g>
+  <line class="rule" x1="376" y1="222" x2="376" y2="269"/><line class="rule" x1="706" y1="222" x2="706" y2="269"/><line class="rule" x1="1025" y1="222" x2="1025" y2="269"/><line class="rule" x1="1351" y1="222" x2="1351" y2="269"/>
+
+  <!-- Services and components -->
+  <rect class="panel" x="21" y="304" width="807" height="397" rx="7"/>
+  <g class="ui">
+    <text class="section" x="41" y="334">Runtime</text>
+    <text class="tiny muted" x="41" y="356">Expected components and observed process state</text>
+
+    <text class="small muted" x="47" y="390">UNIT</text><text class="small muted" x="276" y="390">ROLE</text><text class="small muted" x="512" y="390">STATE</text><text class="small muted" x="651" y="390">RESTARTS</text>
+    <line class="rule" x1="41" y1="398" x2="808" y2="398"/>
+    <text class="body mono" x="47" y="428">loom-report</text><text class="body" x="276" y="428">status + signed relay</text><circle class="quiet-dot" cx="516" cy="423" r="4"/><text class="body" x="529" y="428">Active</text><text class="body mono" x="681" y="428">0</text>
+    <text class="body mono" x="47" y="463">loom-agent</text><text class="body" x="276" y="463">selector control loop</text><circle class="quiet-dot" cx="516" cy="458" r="4"/><text class="body" x="529" y="463">Active</text><text class="body mono" x="681" y="463">0</text>
+    <text class="body mono" x="47" y="498">loom-publisher</text><text class="body" x="276" y="498">automatic release</text><circle class="quiet-dot" cx="516" cy="493" r="4"/><text class="body" x="529" y="498">Active</text><text class="body mono" x="681" y="498">0</text>
+    <text class="body mono" x="47" y="533">loom-pull.timer</text><text class="body" x="276" y="533">snapshot convergence</text><circle class="quiet-dot" cx="516" cy="528" r="4"/><text class="body" x="529" y="533">Waiting</text><text class="body mono" x="681" y="533">—</text>
+    <line class="rule" x1="41" y1="446" x2="808" y2="446"/><line class="rule" x1="41" y1="481" x2="808" y2="481"/><line class="rule" x1="41" y1="516" x2="808" y2="516"/><line class="rule" x1="41" y1="551" x2="808" y2="551"/>
+
+    <text class="subsection" x="41" y="584">Component parity <tspan class="tiny muted" font-weight="400">· host audit, not yet reported centrally</tspan></text>
+    <text class="small muted" x="47" y="613">COMPONENT</text><text class="small muted" x="276" y="613">EXPECTED</text><text class="small muted" x="512" y="613">ACTUAL</text><text class="small muted" x="691" y="613">RESULT</text>
+    <line class="rule" x1="41" y1="621" x2="808" y2="621"/>
+    <text class="body" x="47" y="649">sing-box</text><text class="body mono" x="276" y="649">managed</text><text class="body mono" x="512" y="649">managed</text><text class="body green" x="691" y="649">Match</text>
+    <text class="body" x="47" y="680">wireguard-tools</text><text class="body mono" x="276" y="680">1.0.20250521</text><text class="body mono" x="512" y="680">1.0.20250521</text><text class="body green" x="691" y="680">Match</text>
+  </g>
+
+  <!-- Observation trust -->
+  <rect class="panel" x="844" y="304" width="715" height="171" rx="7"/>
+  <g class="ui">
+    <text class="section" x="864" y="334">Observation</text>
+    <circle class="status-dot" cx="869" cy="361" r="4"/><text class="body" x="882" y="366">Verified healthy</text>
+    <text class="small muted" x="864" y="394">SOURCE</text><text class="body" x="1054" y="394">Direct /status · signed local statement</text>
+    <text class="small muted" x="864" y="422">ROLE</text><text class="body" x="1054" y="422">Access + tunnel endpoint · runtime control</text>
+    <text class="small muted" x="864" y="450">EGRESS CAPABLE</text><text class="body" x="1054" y="450">No · local direct remains a zero-hop candidate</text>
+  </g>
+
+  <!-- WireGuard interfaces -->
+  <rect class="panel" x="844" y="491" width="715" height="210" rx="7"/>
+  <g class="ui">
+    <text class="section" x="864" y="521">WireGuard interfaces</text>
+    <text class="small muted" x="870" y="554">INTERFACE</text><text class="small muted" x="1060" y="554">PEER</text><text class="small muted" x="1240" y="554">HANDSHAKE</text><text class="small muted" x="1422" y="554">STATE</text>
+    <line class="rule" x1="864" y1="562" x2="1539" y2="562"/>
+    <text class="body mono" x="870" y="593">wg-sg02</text><text class="body mono" x="1060" y="593">sg02</text><text class="body" x="1240" y="593">37s · 277 ms RTT</text><circle class="quiet-dot" cx="1426" cy="588" r="4"/><text class="body" x="1439" y="593">Active</text>
+    <text class="body mono" x="870" y="631">wg-ber01</text><text class="body mono" x="1060" y="631">ber01</text><text class="body" x="1240" y="631">57s · 150 ms RTT</text><circle class="quiet-dot" cx="1426" cy="626" r="4"/><text class="body" x="1439" y="631">Active</text>
+    <line class="rule" x1="864" y1="609" x2="1539" y2="609"/><line class="rule" x1="864" y1="647" x2="1539" y2="647"/>
+    <text class="tiny muted" x="864" y="678">Handshake age is local tunnel state; RTT is a separate edge observation.</text>
+  </g>
+
+  <!-- Current path read-back is local audit evidence until the AgentState upgrade lands. -->
+  <rect class="panel" x="21" y="717" width="758" height="256" rx="7"/>
+  <g class="ui">
+    <text class="section" x="41" y="747">Agent route decisions</text>
+    <text class="tiny amber" x="274" y="747">Locally verified · health evidence not published by legacy Agent</text>
+    <text class="small muted" x="47" y="778">ROUTING ENTRY</text><text class="small muted" x="223" y="778">CURRENT PATH</text><text class="small muted" x="588" y="778">EVIDENCE</text>
+    <line class="rule" x1="41" y1="786" x2="759" y2="786"/>
+    <text class="body mono" x="47" y="812">cn-web</text><text class="body mono" x="223" y="812">jm24 → direct</text><text class="tiny muted" x="588" y="812">runtime selector</text>
+    <text class="body mono" x="47" y="844">intl-api</text><text class="body mono" x="223" y="844">jm24 → ber01</text><text class="tiny muted" x="588" y="844">runtime selector</text>
+    <text class="body mono" x="47" y="876">sg-fixed</text><text class="body mono green" x="223" y="876">jm24 → gz02 → sg02</text><text class="tiny muted" x="588" y="876">runtime selector</text>
+    <text class="body mono" x="47" y="908">de-fixed</text><text class="body mono" x="223" y="908">jm24 → ber01</text><text class="tiny muted" x="588" y="908">runtime selector</text>
+    <text class="body mono" x="47" y="940">best-egress</text><text class="body mono" x="223" y="940">jm24 → ber01</text><text class="tiny muted" x="588" y="940">runtime selector</text>
+    <line class="rule" x1="41" y1="820" x2="759" y2="820"/><line class="rule" x1="41" y1="852" x2="759" y2="852"/><line class="rule" x1="41" y1="884" x2="759" y2="884"/><line class="rule" x1="41" y1="916" x2="759" y2="916"/><line class="rule" x1="41" y1="948" x2="759" y2="948"/>
+  </g>
+
+  <!-- Measurements: explicit distinction between alarm-bearing uplinks and pruning data. -->
+  <rect class="panel" x="795" y="717" width="764" height="256" rx="7"/>
+  <g class="ui">
+    <text class="section" x="815" y="747">Measurements</text>
+    <text class="tiny muted" x="815" y="769">Uplink failures are actionable. Target failures are route-pruning data.</text>
+    <text class="small muted" x="821" y="803">TYPE</text><text class="small muted" x="955" y="803">TARGET</text><text class="small muted" x="1218" y="803">OBSERVATION</text><text class="small muted" x="1442" y="803">MEANING</text>
+    <line class="rule" x1="815" y1="811" x2="1539" y2="811"/>
+    <text class="body" x="821" y="843">uplink</text><text class="body" x="955" y="843">www.baidu.com</text><text class="body green" x="1218" y="843">63 ms · reachable</text><text class="body" x="1442" y="843">Healthy</text>
+    <text class="body" x="821" y="883">target</text><text class="body" x="955" y="883">api.ipify.org</text><text class="body blue" x="1218" y="883">5 / 5 timeout</text><text class="body blue" x="1442" y="883">Pruning data</text>
+    <text class="body" x="821" y="923">edge</text><text class="body mono" x="955" y="923">jm24 ↔ sg02</text><text class="body green" x="1218" y="923">277 ms · 4/4</text><text class="body" x="1442" y="923">Carrier</text>
+    <line class="rule" x1="815" y1="859" x2="1539" y2="859"/><line class="rule" x1="815" y1="899" x2="1539" y2="899"/><line class="rule" x1="815" y1="939" x2="1539" y2="939"/>
+  </g>
+
+</svg>
