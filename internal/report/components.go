@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"debug/buildinfo"
 	"fmt"
 	"os/exec"
 	"sort"
@@ -39,6 +40,7 @@ func (c ComponentStatus) OK() bool {
 }
 
 type componentCommand func(name string, args ...string) ([]byte, error)
+type componentBuildVersion func(path string) (string, error)
 
 type componentProbeCache struct {
 	mu       sync.Mutex
@@ -116,6 +118,11 @@ func componentStatuses(cfg *Config, agent *AgentState, now time.Time) []Componen
 // collectComponentsWith 把命令执行作为参数注入，避免测试通过改全局 PATH 或
 // package 变量影响并行用例。
 func collectComponentsWith(expected ComponentVersions, run componentCommand) []ComponentStatus {
+	return collectComponentsWithReaders(expected, run, readSingBoxBuildVersion)
+}
+
+func collectComponentsWithReaders(expected ComponentVersions, run componentCommand,
+	readBuildVersion componentBuildVersion) []ComponentStatus {
 	type spec struct {
 		name, expected string
 	}
@@ -141,7 +148,7 @@ func collectComponentsWith(expected ComponentVersions, run componentCommand) []C
 		go func() {
 			defer wg.Done()
 			st := ComponentStatus{Name: s.name, Expected: s.expected}
-			actual, err := probeComponentVersion(s.name, run)
+			actual, err := probeComponentVersion(s.name, run, readBuildVersion)
 			st.Actual = actual
 			if err != nil {
 				st.Error = err.Error()
@@ -153,10 +160,10 @@ func collectComponentsWith(expected ComponentVersions, run componentCommand) []C
 	return out
 }
 
-func probeComponentVersion(name string, run componentCommand) (string, error) {
+func probeComponentVersion(name string, run componentCommand, readBuildVersion componentBuildVersion) (string, error) {
 	switch name {
 	case "sing-box":
-		return probeRunningSingBox(run)
+		return probeRunningSingBox(run, readBuildVersion)
 	case wireGuardComponentName:
 		return probeWireGuardTools(run)
 	case "tailscale":
@@ -283,7 +290,7 @@ func debianUpstreamVersion(version string) string {
 	return version
 }
 
-func probeRunningSingBox(run componentCommand) (string, error) {
+func probeRunningSingBox(run componentCommand, readBuildVersion componentBuildVersion) (string, error) {
 	b, err := run("systemctl", "show", "--property=MainPID", "--value", "sing-box.service")
 	if err != nil {
 		return "", commandVersionError("读取 sing-box MainPID", b, err)
@@ -302,11 +309,11 @@ func probeRunningSingBox(run componentCommand) (string, error) {
 	}
 	runningCh, installedCh := make(chan result, 1), make(chan result, 1)
 	go func() {
-		v, e := readVersionCommand("sing-box", run, "/proc/"+pidText+"/exe", "version")
+		v, e := readBuildVersion("/proc/" + pidText + "/exe")
 		runningCh <- result{v, e}
 	}()
 	go func() {
-		v, e := readVersionCommand("sing-box", run, singBoxExecutablePath, "version")
+		v, e := readBuildVersion(singBoxExecutablePath)
 		installedCh <- result{v, e}
 	}()
 	running, installed := <-runningCh, <-installedCh
@@ -323,16 +330,20 @@ func probeRunningSingBox(run componentCommand) (string, error) {
 	return running.version, nil
 }
 
-func readVersionCommand(component string, run componentCommand, command string, args ...string) (string, error) {
-	b, err := run(command, args...)
+func readSingBoxBuildVersion(path string) (string, error) {
+	info, err := buildinfo.ReadFile(path)
 	if err != nil {
-		return "", commandVersionError("读取 "+component+" 版本", b, err)
+		return "", fmt.Errorf("读取 Go build info %s:%w", path, err)
 	}
-	v := componentVersionFromOutput(component, string(b))
-	if v == "" {
-		return "", fmt.Errorf("无法从 %s 版本命令首行识别版本", component)
+	const module = "github.com/sagernet/sing-box"
+	if info.Main.Path != module {
+		return "", fmt.Errorf("%s 主模块=%q,期望 %q", path, info.Main.Path, module)
 	}
-	return v, nil
+	version := cleanVersionToken(info.Main.Version)
+	if version == "" {
+		return "", fmt.Errorf("%s 的 %s build version=%q 无法识别", path, module, info.Main.Version)
+	}
+	return version, nil
 }
 
 func commandVersionError(prefix string, output []byte, err error) error {

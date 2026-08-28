@@ -32,15 +32,21 @@ func successfulWireGuardProbe(name string, args ...string) ([]byte, error) {
 	}
 }
 
+func fakeSingBoxBuildVersions(versions map[string]string) componentBuildVersion {
+	return func(path string) (string, error) {
+		version, ok := versions[path]
+		if !ok {
+			return "", errors.New("unexpected sing-box path: " + path)
+		}
+		return version, nil
+	}
+}
+
 func TestCollectComponentsParsesKnownCommands(t *testing.T) {
 	run := func(name string, args ...string) ([]byte, error) {
 		switch name {
 		case "systemctl":
 			return []byte("4242\n"), nil
-		case "/proc/4242/exe":
-			return []byte("sing-box version 1.11.4\nEnvironment: running\n"), nil
-		case singBoxExecutablePath:
-			return []byte("sing-box version 1.11.4\nEnvironment: installed\n"), nil
 		case wireGuardExecutable, "dpkg-query", "dpkg":
 			return successfulWireGuardProbe(name, args...)
 		default:
@@ -48,9 +54,12 @@ func TestCollectComponentsParsesKnownCommands(t *testing.T) {
 			return nil, nil
 		}
 	}
-	got := collectComponentsWith(ComponentVersions{
+	got := collectComponentsWithReaders(ComponentVersions{
 		SingBox: "1.11.4", WireGuard: "1.0.20250521",
-	}, run)
+	}, run, fakeSingBoxBuildVersions(map[string]string{
+		"/proc/4242/exe":      "1.11.4",
+		singBoxExecutablePath: "1.11.4",
+	}))
 	wantNames := []string{"sing-box", wireGuardComponentName}
 	var names []string
 	for _, c := range got {
@@ -69,8 +78,6 @@ func TestCollectComponentsKeepsMismatchAndReadFailureDistinct(t *testing.T) {
 		switch name {
 		case "systemctl":
 			return []byte("42\n"), nil
-		case "/proc/42/exe", singBoxExecutablePath:
-			return []byte("sing-box version 1.11.3\n"), nil
 		case wireGuardExecutable:
 			return []byte("permission denied\n"), errors.New("exit status 1")
 		case "dpkg-query", "dpkg":
@@ -78,9 +85,12 @@ func TestCollectComponentsKeepsMismatchAndReadFailureDistinct(t *testing.T) {
 		}
 		return nil, errors.New("unexpected command")
 	}
-	got := collectComponentsWith(ComponentVersions{
+	got := collectComponentsWithReaders(ComponentVersions{
 		SingBox: "1.11.4", WireGuard: "1.0.20250521",
-	}, run)
+	}, run, fakeSingBoxBuildVersions(map[string]string{
+		"/proc/42/exe":        "1.11.3",
+		singBoxExecutablePath: "1.11.3",
+	}))
 	if len(got) != 2 {
 		t.Fatalf("got %d components: %+v", len(got), got)
 	}
@@ -124,19 +134,18 @@ func TestCollectComponentsRunsIndependentProbesConcurrently(t *testing.T) {
 		switch name {
 		case "systemctl":
 			return []byte("99\n"), nil
-		case "/proc/99/exe":
-			return []byte("sing-box version 1.11.4\n"), nil
-		case singBoxExecutablePath:
-			return []byte("sing-box version 1.11.4\n"), nil
 		case wireGuardExecutable, "dpkg-query", "dpkg":
 			return successfulWireGuardProbe(name, args...)
 		}
 		return nil, errors.New("unexpected command")
 	}
 	startedAt := time.Now()
-	got := collectComponentsWith(ComponentVersions{
+	got := collectComponentsWithReaders(ComponentVersions{
 		SingBox: "1.11.4", WireGuard: "1.0.20250521",
-	}, run)
+	}, run, fakeSingBoxBuildVersions(map[string]string{
+		"/proc/99/exe":        "1.11.4",
+		singBoxExecutablePath: "1.11.4",
+	}))
 	if elapsed := time.Since(startedAt); elapsed >= time.Second {
 		t.Fatalf("探测疑似串行执行，耗时 %s: %+v", elapsed, got)
 	}
@@ -188,15 +197,15 @@ func TestRunningSingBoxCannotBeHiddenByNewDiskBinary(t *testing.T) {
 		switch name {
 		case "systemctl":
 			return []byte("77\n"), nil
-		case "/proc/77/exe":
-			return []byte("sing-box version 1.11.3\n"), nil
-		case singBoxExecutablePath:
-			return []byte("sing-box version 1.11.4\n"), nil
 		default:
 			return nil, errors.New("unexpected command")
 		}
 	}
-	got := collectComponentsWith(ComponentVersions{SingBox: "1.11.4"}, run)
+	got := collectComponentsWithReaders(ComponentVersions{SingBox: "1.11.4"}, run,
+		fakeSingBoxBuildVersions(map[string]string{
+			"/proc/77/exe":        "1.11.3",
+			singBoxExecutablePath: "1.11.4",
+		}))
 	if len(got) != 1 || got[0].Actual != "1.11.3" || got[0].Error == "" || got[0].OK() {
 		t.Fatalf("新磁盘文件遮住了旧运行 inode:%+v", got)
 	}
