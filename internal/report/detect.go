@@ -119,6 +119,15 @@ func (d *detector) observe(v webui.View, now time.Time) ([]events.Event, error) 
 		}
 
 		for _, t := range n.Tunnels {
+			// A signed traffic claim can arrive before (or without) carrier
+			// inventory for the same interface.  applyTrafficClaim deliberately
+			// preserves that evidence as a counter-only row, but it is not a
+			// persistent tunnel and therefore cannot be classified as a carrier
+			// failure.  The node/detail pages already keep this boundary; the
+			// current-state detector must keep it too.
+			if t.State == "counter-only" {
+				continue
+			}
 			state := "active"
 			switch {
 			case t.State == "down":

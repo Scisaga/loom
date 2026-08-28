@@ -139,6 +139,33 @@ func TestEdgeLevelIsClassifiedByKind(t *testing.T) {
 	}
 }
 
+func TestTrafficOnlyCounterDoesNotBecomeUnresolvedTunnel(t *testing.T) {
+	d := newTestDetector(t)
+	now := time.Date(2026, 8, 28, 20, 0, 0, 0, time.UTC)
+	v := webui.View{Nodes: []webui.NodeView{{
+		ID: "sg02",
+		Tunnels: []webui.TunnelView{
+			{Interface: "wg-gz02", State: "active", OK: true},
+			{
+				Interface: "wg-signed-only", State: "counter-only",
+				CounterPresent: true, TrafficTrusted: true, TrafficVerified: true,
+			},
+		},
+	}}}
+
+	if evs, err := d.observe(v, now); err != nil {
+		t.Fatal(err)
+	} else if len(evs) != 0 {
+		t.Fatalf("seed round produced events: %v", evs)
+	}
+	if got := UnresolvedNow(d.trackedState(now), nil, now); len(got) != 0 {
+		t.Fatalf("traffic-only evidence became a carrier problem: %v", got)
+	}
+	if _, ok := d.trackedState(now).States["sg02/tunnel/wg-signed-only"]; ok {
+		t.Fatal("traffic-only evidence entered the persistent tunnel state tracker")
+	}
+}
+
 func TestRolloutAndIdentityFailuresBecomeEvents(t *testing.T) {
 	d := newTestDetector(t)
 	now := time.Date(2026, 8, 26, 10, 0, 0, 0, time.UTC)
