@@ -51,8 +51,9 @@ func TestPageIsSelfContained(t *testing.T) {
 			t.Errorf("页面里有外部资源或脚本:%s", bad)
 		}
 	}
-	if !strings.Contains(get(t, Handler(deps("", nil)), "/", nil).Header().Get("Content-Security-Policy"), "default-src 'none'") {
-		t.Error("没有设 CSP")
+	csp := get(t, Handler(deps("", nil)), "/", nil).Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "img-src data:") {
+		t.Errorf("没有为内嵌导航图标设置自包含 CSP:%q", csp)
 	}
 }
 

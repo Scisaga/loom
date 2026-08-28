@@ -288,7 +288,7 @@ func TestMisakaRoutesAndNavigationContract(t *testing.T) {
 			t.Errorf("self-contained navigation contains forbidden %q", forbidden)
 		}
 	}
-	if csp := misakaRequest(t, d, http.MethodGet, "/nodes", nil, false).Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'none'") {
+	if csp := misakaRequest(t, d, http.MethodGet, "/nodes", nil, false).Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "img-src data:") {
 		t.Fatalf("CSP no longer enforces self-contained pages: %q", csp)
 	}
 }
