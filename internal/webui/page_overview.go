@@ -62,12 +62,17 @@ func pageOverview(d Deps, isAuthed bool) string {
 	} else if unknown == 0 {
 		healthClass, healthText = "ok", "All active declared nodes are healthy"
 	}
+	fmt.Fprintf(&b, `<div class="overview-health %s"><span class="status-check %s">✓</span><span>%s</span></div>`, healthClass, healthClass, esc(healthText))
+	snapshotMeta := "observed " + ageText(v.ObservedAt, now)
+	if overviewFleetConverged(v) && v.Publisher != nil && v.Publisher.Commit != "" {
+		snapshotMeta = "fleet converged · publisher code " + short(v.Publisher.Commit)
+	}
 	fmt.Fprintf(&b, `<div id=overview class=steps>
-<div class=step><span class=label>Active nodes</span><b>%d <small>/ %d healthy</small></b><span class="tiny %s">%s</span></div>
-<div class=step><span class=label>Persistent WireGuard</span><b>%d <small>/ %d observed active</small></b><span class="tiny dim">%s carrier layer</span></div>
-<div class=step><span class=label>Current traffic paths</span><b>%d <small>/ %d fresh</small></b><span class="tiny dim">reported Agent decisions</span></div>
-<div class=step><span class=label>Snapshot</span><b class=mono>%s</b><span class="tiny dim">observed %s</span></div>
-	</div>`, healthy, activeDeclared, healthClass, esc(healthText), tunnelActive, tunnelTotal, esc(intentSource), freshRoutes, len(v.Routes), esc(short(v.Applied)), esc(ageText(v.ObservedAt, now)))
+<div class=step><span class=label>Nodes</span><b>%d <small>/ %d healthy</small></b></div>
+<div class=step><span class=label>WireGuard</span><b>%d / %d <small>observed</small></b></div>
+<div class=step><span class=label>Current traffic paths</span><b>%d / %d <small>reported</small></b></div>
+<div class=step><span class=label>Snapshot</span><b class=mono>%s</b><span class="tiny dim">%s</span></div>
+	</div>`, healthy, activeDeclared, tunnelActive, tunnelTotal, freshRoutes, len(v.Routes), esc(short(v.Applied)), esc(snapshotMeta))
 
 	writeSnapshotVerdict(&b, v)
 
@@ -75,18 +80,29 @@ func pageOverview(d Deps, isAuthed bool) string {
 	if d.Unresolved != nil {
 		unresolved = d.Unresolved()
 	}
-	b.WriteString(`<div class=section><div class=grid><div class="card span8"><div class=sectionhead><h2>近实时拓扑</h2><span class=dim>采样约 1 分钟 · 页面每 30 秒刷新</span><a class="sp tiny" href="/topology">Full topology →</a></div>`)
-	b.WriteString(topologySVG(v))
-	fmt.Fprintf(&b, `<div class=legend><span><i class=key></i>常驻 WG</span><span><i class="key candidate"></i>候选跳（未核验）</span><span><i class="key degraded"></i>部分失败</span><span><i class="key failed"></i>故障</span></div><div class="tiny dim">候选只表示 %s 意图；总览不叠加业务路径，避免多条 Agent 决策互相覆盖。每条承载可达性观测保留来源和时间。</div></div>`, esc(intentSource))
+	overlay := overviewRouteOverlay(v)
+	b.WriteString(`<div class=overview-primary><section class="card overview-topology-card"><div class=overview-card-head><h2>Network topology</h2><span class="small dim" title="近实时拓扑 · 采样约 1 分钟 · 页面每 30 秒刷新">Agent decisions · newest trusted observation</span><span class=sr-only>近实时拓扑 · 候选跳（未核验） · 部分失败 · 故障</span><div class=legend><span><i class=key></i>WireGuard</span><span><i class="key candidate"></i>Candidate</span>`)
+	if len(overlay) > 0 {
+		fmt.Fprintf(&b, `<span><i class="key route"></i>%s</span>`, esc(overviewRouteName(v, overlay[0])))
+	}
+	b.WriteString(`</div></div>`)
+	b.WriteString(topologySVG(v, overlay...))
+	b.WriteString(`</section><aside class=overview-side>`)
+	writeOverviewTrafficCompact(&b, v)
+	writeOverviewRolloutCompact(&b, d, v, activeDeclared, now)
+	b.WriteString(`</aside></div>`)
 
-	b.WriteString(`<div class="card span4"><div class=sectionhead><h2>Current attention</h2><span class=dim>present state</span></div>`)
-	if len(unresolved) == 0 {
-		if unknown > 0 {
-			fmt.Fprintf(&b, `<div class="callout warnline"><b class=warn>没有已确认故障，但 %d 个节点状态未知</b><br><span class=small>unknown 不等于 healthy</span></div>`, unknown)
-		} else {
-			b.WriteString(`<div class=callout><b class=ok>No unresolved problems</b><br><span class=small>Read from current state, not reconstructed from event history.</span></div>`)
+	b.WriteString(`<div class=overview-secondary>`)
+	writeOverviewNodesCompact(&b, v, now)
+	writeOverviewRoutesCompact(&b, v)
+	b.WriteString(`</div>`)
+	writeOverviewEventsCompact(&b, d)
+
+	if len(unresolved) > 0 || unknown > 0 {
+		b.WriteString(`<section class="card overview-attention"><div class=sectionhead><h2>Current attention</h2><span class=dim>present state, not reconstructed from event history</span></div>`)
+		if len(unresolved) == 0 {
+			fmt.Fprintf(&b, `<div class="callout warnline"><b class=warn>No confirmed fault, but %d node(s) are unknown / 状态未知</b><br><span class=small>unknown 不等于 healthy</span></div>`, unknown)
 		}
-	} else {
 		for _, issue := range unresolved {
 			cls := "issue"
 			if issue.Level == "problem" {
@@ -94,12 +110,31 @@ func pageOverview(d Deps, isAuthed bool) string {
 			}
 			fmt.Fprintf(&b, `<div class="%s"><b>%s · %s %s</b><br><span class=bad>%s · %s</span><br><span class="tiny dim">%s</span></div>`, cls, esc(issue.Node), esc(issue.Kind), esc(issue.Subject), esc(issue.State), esc(issue.LastedText()), esc(issue.Detail))
 		}
+		b.WriteString(`</section>`)
 	}
-	b.WriteString(`</div></div></div>`)
+
 	writeOverviewTraffic(&b, v)
-	writeOverviewReleaseAndEvents(&b, d, v, now)
 	writeOverviewDiagnostics(&b, v, now)
 	return shell(d, "总览", b.String(), isAuthed, v)
+}
+
+func overviewFleetConverged(v View) bool {
+	want, count := "", 0
+	for _, node := range v.Nodes {
+		if !node.Declared || node.Decommission {
+			continue
+		}
+		if node.Applied == "" {
+			return false
+		}
+		if want == "" {
+			want = node.Applied
+		} else if node.Applied != want {
+			return false
+		}
+		count++
+	}
+	return count > 0
 }
 
 func writeSnapshotVerdict(b *strings.Builder, v View) {
@@ -129,7 +164,7 @@ func writeSnapshotVerdict(b *strings.Builder, v View) {
 		b.WriteString(`</table></div>`)
 	} else if len(versions) == 1 && unknown == 0 {
 		for key := range versions {
-			fmt.Fprintf(b, `<div class="badge ok"><span class=dot></span>快照 %s · 全网一致</div>`, esc(short(key)))
+			fmt.Fprintf(b, `<div class="badge ok snapshot-verdict converged"><span class=dot></span>快照 %s · 全网一致</div>`, esc(short(key)))
 		}
 	} else if len(versions) == 1 {
 		for key := range versions {
@@ -137,6 +172,310 @@ func writeSnapshotVerdict(b *strings.Builder, v View) {
 		}
 	} else if unknown > 0 {
 		fmt.Fprintf(b, `<div class="badge warn"><span class=dot></span>%d 个节点没有快照观测</div>`, unknown)
+	}
+}
+
+// overviewRouteOverlay chooses one fresh routing entry for the overview. A
+// single attributed overlay stays readable; drawing every Agent decision at
+// once would turn the carrier topology into an unauditable green tangle.
+func overviewRouteOverlay(v View) []RouteView {
+	best := -1
+	for i, route := range v.Routes {
+		if route.Stale || len(route.Chain) < 2 {
+			continue
+		}
+		if best == -1 || len(route.Chain) > len(v.Routes[best].Chain) {
+			best = i
+		}
+	}
+	if best == -1 {
+		return nil
+	}
+	return []RouteView{v.Routes[best]}
+}
+
+func writeOverviewTrafficCompact(b *strings.Builder, v View) {
+	b.WriteString(`<section class="card overview-compact-card"><div class=sectionhead><h2>WireGuard traffic</h2><span class="sp tiny ok">Retained centrally · last 24h</span></div>`)
+	history := v.TrafficHistory
+	if history == nil || len(history.Buckets) == 0 {
+		b.WriteString(`<div class=traffic-compact-body><div><div class=label>Last 24h</div><div class=metric>Unavailable</div><div class="tiny dim">No retained delta window</div></div><div class="empty tiny">Current counters are kept separate.</div></div></section>`)
+		return
+	}
+	points := make([]trafficBucketPoint, 0, len(history.Buckets))
+	var total, maxValue int64
+	covered, resets, gaps := 0, 0, 0
+	for _, bucket := range history.Buckets {
+		point := trafficBucketPoint{Start: bucket.Start, End: bucket.End, Samples: bucket.Samples, Resets: bucket.Resets, Gaps: bucket.Gaps}
+		for _, node := range bucket.Nodes {
+			point.RXBytes = saturatingCounterAdd(point.RXBytes, node.RXBytes)
+			point.TXBytes = saturatingCounterAdd(point.TXBytes, node.TXBytes)
+			if node.Samples > 0 {
+				point.Present = true
+			}
+		}
+		if bucket.Samples > 0 {
+			point.Present = true
+		}
+		value := saturatingCounterAdd(point.RXBytes, point.TXBytes)
+		if point.Present {
+			covered++
+			total = saturatingCounterAdd(total, value)
+			if value > maxValue {
+				maxValue = value
+			}
+		}
+		resets += bucket.Resets
+		gaps += bucket.Gaps
+		points = append(points, point)
+	}
+	if maxValue == 0 {
+		maxValue = 1
+	}
+	fmt.Fprintf(b, `<div class=traffic-compact-body><div><div class=label>Last 24h</div><div class=metric>%s</div><div class="tiny dim">%d / %d buckets · %d reset · %d gap</div></div><div><div class=traffic-spark role=img aria-label="Retained WireGuard forwarding deltas">`, esc(byteSize(total)), covered, len(points), resets, gaps)
+	start := 0
+	if len(points) > 16 {
+		start = len(points) - 16
+	}
+	for _, point := range points[start:] {
+		if !point.Present {
+			b.WriteString(`<span class=missing title="Missing accepted delta"></span>`)
+			continue
+		}
+		class, flag := "", ""
+		if point.Resets > 0 || point.Gaps > 0 {
+			class = " class=flagged"
+			switch {
+			case point.Resets > 0 && point.Gaps > 0:
+				flag = ` data-flag="R/G"`
+			case point.Resets > 0:
+				flag = ` data-flag="R"`
+			default:
+				flag = ` data-flag="G"`
+			}
+		}
+		value := saturatingCounterAdd(point.RXBytes, point.TXBytes)
+		fmt.Fprintf(b, `<span%s%s style="--height:%d%%" title="%s"></span>`, class, flag, trafficBarHeight(value, maxValue), esc(byteSize(value)))
+	}
+	fmt.Fprintf(b, `</div><div class=traffic-compact-scale><span>%s</span><span>now</span></div></div></div></section>`, esc(historyTimeLabel(history.WindowStart)))
+}
+
+func writeOverviewRolloutCompact(b *strings.Builder, d Deps, v View, activeDeclared int, now time.Time) {
+	b.WriteString(`<section class="card overview-compact-card"><div class=sectionhead><h2>Latest fleet rollout</h2>`)
+	if d.Control != nil {
+		b.WriteString(`<a class="sp tiny" href="/deployments">Deployments →</a>`)
+	}
+	b.WriteString(`</div>`)
+	if v.Publisher == nil {
+		b.WriteString(`<div class=empty>Publisher state is not available in this view.</div></section>`)
+		return
+	}
+	verified := 0
+	for _, node := range v.Nodes {
+		if !node.Declared || node.Decommission || node.Rollout == nil {
+			continue
+		}
+		if node.Rollout.Stage == "verified" || node.Rollout.Stage == "decommissioned" {
+			verified++
+		}
+	}
+	fmt.Fprintf(b, `<div class=rollout-summary>Snapshot <b class=mono>%s</b><br><span class=dim>%d / %d verified</span></div><div class=rollout-stages aria-label="Signed, distributed, applied and verified"><span class=rollout-stage>Signed</span><span class=rollout-stage>Distributed</span><span class=rollout-stage>Applied</span><span class=rollout-stage>Verified</span></div><div class="tiny dim">publisher code <span class=mono>%s</span> · last success %s</div></section>`, esc(short(v.Publisher.LastSnapshot)), verified, activeDeclared, esc(short(v.Publisher.Commit)), esc(compactAge(v.Publisher.LastSuccess, now)))
+}
+
+type overviewNodeTraffic struct{ rx, tx int64 }
+
+func overviewNodeTrafficTotals(v View) map[string]overviewNodeTraffic {
+	totals := map[string]overviewNodeTraffic{}
+	if v.TrafficHistory == nil {
+		return totals
+	}
+	for _, bucket := range v.TrafficHistory.Buckets {
+		for _, node := range bucket.Nodes {
+			if node.Samples == 0 && node.RXBytes == 0 && node.TXBytes == 0 {
+				continue
+			}
+			total := totals[node.Node]
+			total.rx = saturatingCounterAdd(total.rx, node.RXBytes)
+			total.tx = saturatingCounterAdd(total.tx, node.TXBytes)
+			totals[node.Node] = total
+		}
+	}
+	return totals
+}
+
+func writeOverviewNodesCompact(b *strings.Builder, v View, now time.Time) {
+	totals := overviewNodeTrafficTotals(v)
+	b.WriteString(`<section class="card overview-list-card"><div class=sectionhead><h2>Nodes</h2><span class="tiny ok">24h trusted adjacent-sample deltas</span><a class="sp tiny" href="/nodes">All nodes →</a></div><table><thead><tr><th>Name<th>Location<th>Status<th>WG RX / TX · 24h<th>Last seen</tr></thead><tbody>`)
+	shown := 0
+	for _, node := range overviewOrderedNodes(v) {
+		if shown == 5 {
+			break
+		}
+		stateClass, stateLabel := healthVisual(node.Health)
+		place := strings.TrimSpace(node.City)
+		if place == "" {
+			place = strings.TrimSpace(node.Name)
+		}
+		if place == "" {
+			place = "—"
+		}
+		traffic := "—"
+		if total, ok := totals[node.ID]; ok {
+			traffic = byteSize(total.rx) + " / " + byteSize(total.tx)
+		}
+		fmt.Fprintf(b, `<tr><td><span class=dot></span><span class=mono>%s</span><td>%s<td class=%s>%s<td class=mono>%s<td>%s</tr>`, esc(node.ID), esc(place), stateClass, esc(stateLabel), esc(traffic), esc(compactAge(node.ObservedAt, now)))
+		shown++
+	}
+	if shown == 0 {
+		b.WriteString(`<tr><td colspan=5 class=dim>No nodes in this view.</tr>`)
+	}
+	b.WriteString(`</tbody></table></section>`)
+}
+
+func overviewOrderedNodes(v View) []NodeView {
+	nodes := append([]NodeView(nil), v.Nodes...)
+	selected := map[string]bool{}
+	for _, route := range overviewRouteOverlay(v) {
+		for _, id := range route.Chain {
+			selected[id] = true
+		}
+	}
+	priority := func(node NodeView) int {
+		switch {
+		case node.Self:
+			return 0
+		case node.Direction != "reverse_only":
+			return 1
+		case selected[node.ID]:
+			return 2
+		default:
+			return 3
+		}
+	}
+	sort.SliceStable(nodes, func(i, j int) bool {
+		pi, pj := priority(nodes[i]), priority(nodes[j])
+		if pi != pj {
+			return pi < pj
+		}
+		return nodes[i].ID < nodes[j].ID
+	})
+	return nodes
+}
+
+func writeOverviewRoutesCompact(b *strings.Builder, v View) {
+	b.WriteString(`<section class="card overview-list-card"><div class=sectionhead><h2>Current traffic paths</h2><span class="tiny ok">Reported · signed Agent state</span><a class="sp tiny" href="/routing">All paths →</a></div><table><thead><tr><th>Name<th>Type<th>Current path<th>Status</tr></thead><tbody>`)
+	routes := append([]RouteView(nil), v.Routes...)
+	sort.SliceStable(routes, func(i, j int) bool {
+		rank := func(route RouteView) int {
+			if route.ScopeKind == ScopeService {
+				return 0
+			}
+			return 1
+		}
+		return rank(routes[i]) < rank(routes[j])
+	})
+	shown := 0
+	for _, route := range routes {
+		if shown == 5 {
+			break
+		}
+		path := strings.Join(route.Chain, " → ")
+		if len(route.Chain) <= 1 {
+			path = route.Node + " → direct"
+		}
+		kind := "Access policy"
+		if route.ScopeKind == ScopeService {
+			kind = "Service"
+		}
+		statusClass, status := "ok", "Reported"
+		if route.Stale {
+			statusClass, status = "warn", "Stale"
+		}
+		fmt.Fprintf(b, `<tr><td>%s<td class=dim>%s<td class=mono>%s<td class=%s><span class=dot></span>%s</tr>`, esc(overviewRouteName(v, route)), esc(kind), esc(path), statusClass, esc(status))
+		shown++
+	}
+	if shown == 0 {
+		b.WriteString(`<tr><td colspan=4 class=dim>No current Agent paths reported.</tr>`)
+	}
+	b.WriteString(`</tbody></table></section>`)
+}
+
+func overviewRouteName(v View, route RouteView) string {
+	if route.ScopeID != "" {
+		switch route.ScopeKind {
+		case ScopeService:
+			for _, service := range v.Services {
+				if service.ID == route.ScopeID {
+					if service.Name != "" {
+						return service.Name
+					}
+					return service.ID
+				}
+			}
+		case ScopePolicy:
+			for _, policy := range v.Policies {
+				if policy.ID == route.ScopeID {
+					if policy.Name != "" {
+						return policy.Name
+					}
+					return policy.ID
+				}
+			}
+		}
+		return route.ScopeID
+	}
+	return routeEntryLabel(route)
+}
+
+func writeOverviewEventsCompact(b *strings.Builder, d Deps) {
+	if d.Control == nil {
+		return
+	}
+	b.WriteString(`<section class="card overview-events"><div class=sectionhead><h2>Recent events</h2><a class="sp tiny" href="/events">View all events →</a></div>`)
+	if d.Events == nil {
+		b.WriteString(`<div class="tiny dim">Event history is unavailable.</div></section>`)
+		return
+	}
+	events := d.Events(3)
+	if len(events) == 0 {
+		b.WriteString(`<div class="tiny dim">No recent transitions. A quiet system produces no events.</div></section>`)
+		return
+	}
+	for _, event := range events {
+		text := event.Detail
+		if text == "" {
+			text = event.Node + " · " + event.Kind + " " + event.Subject + " · " + event.From + " → " + event.To
+		}
+		fmt.Fprintf(b, `<div class=overview-event-row><time>%s</time><span class=dot></span><span class=clip>%s</span></div>`, esc(compactEventTime(event.TS)), esc(text))
+	}
+	b.WriteString(`</section>`)
+}
+
+func compactEventTime(ts string) string {
+	if parsed, err := time.Parse(time.RFC3339, ts); err == nil {
+		return parsed.Format("15:04")
+	}
+	return shortTS(ts)
+}
+
+func compactAge(ts string, now time.Time) string {
+	parsed, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		if ts == "" {
+			return "—"
+		}
+		return ts
+	}
+	age := now.Sub(parsed)
+	if age < 0 {
+		age = 0
+	}
+	switch {
+	case age < time.Minute:
+		return fmt.Sprintf("%ds", int(age.Seconds()))
+	case age < time.Hour:
+		return fmt.Sprintf("%dm", int(age.Minutes()))
+	default:
+		return fmt.Sprintf("%.0fh", age.Hours())
 	}
 }
 
@@ -182,51 +521,6 @@ func writeOverviewTraffic(b *strings.Builder, v View) {
 		summary = `Idle · 0 B sampled`
 	}
 	b.WriteString(`</div><div class=barlabel><span>current interface totals</span><span>` + esc(summary) + `</span></div><p class="tiny dim">Direct self /status only · cumulative WireGuard peer counters · not a time series. A reboot, interface-index or peer-key change, or a counter decrease starts a new retained epoch; non-WireGuard traffic is excluded.</p></div></section></div>`)
-}
-
-func writeOverviewReleaseAndEvents(b *strings.Builder, d Deps, v View, now time.Time) {
-	// Deployment and event-journal pages are control capabilities. A regular
-	// node may receive rollout observations through the shared View, but that
-	// does not make it a deployment console or an event archive. Keep those
-	// entry points out of the local diagnostic UI.
-	if d.Control == nil {
-		return
-	}
-	// The injected clock is already reflected in View ages above; this compact
-	// section intentionally keeps raw publisher timestamps for auditability.
-	_ = now
-	b.WriteString(`<div class=section><div class=grid><div class="card span5"><div class=sectionhead><h2>Latest fleet rollout</h2><a class="sp tiny" href="/deployments">Deployments →</a></div>`)
-	if v.Publisher == nil {
-		b.WriteString(`<div class=empty>Publisher state is not available in this view.</div>`)
-	} else {
-		cls, label := "bad", "Publisher unhealthy"
-		if v.Publisher.Healthy {
-			cls, label = "ok", "Publisher healthy"
-		}
-		fmt.Fprintf(b, `<div class="badge %s"><span class=dot></span>%s</div><div class=metric>Snapshot <span class=mono>%s</span></div><div class="tiny dim">last success %s · interval %ds · publisher code %s</div>`, cls, label, esc(short(v.Publisher.LastSnapshot)), esc(v.Publisher.LastSuccess), v.Publisher.IntervalSeconds, esc(short(v.Publisher.Commit)))
-	}
-	b.WriteString(`</div><div class="card span7"><div class=sectionhead><h2>Recent events</h2><a class="sp tiny" href="/events">View all events →</a></div>`)
-	if d.Events == nil {
-		b.WriteString(`<div class=empty>Event history is retained on the control node only.</div>`)
-	} else {
-		events := d.Events(5)
-		if len(events) == 0 {
-			b.WriteString(`<div class=empty>No recent transitions. A quiet system produces no events.</div>`)
-		} else {
-			b.WriteString(`<table>`)
-			for _, e := range events {
-				cls := "dim"
-				if e.Level == "problem" {
-					cls = "bad"
-				} else if e.Level == "ok" {
-					cls = "ok"
-				}
-				fmt.Fprintf(b, `<tr><td class=mono>%s<td>%s<td class=w>%s · %s<td class=%s>%s → %s</tr>`, esc(shortTS(e.TS)), esc(e.Node), esc(e.Kind), esc(e.Subject), cls, esc(e.From), esc(e.To))
-			}
-			b.WriteString(`</table>`)
-		}
-	}
-	b.WriteString(`</div></div></div>`)
 }
 
 func writeOverviewDiagnostics(b *strings.Builder, v View, nowTime time.Time) {
