@@ -214,6 +214,29 @@ func TestRunningSingBoxCannotBeHiddenByNewDiskBinary(t *testing.T) {
 	}
 }
 
+func TestRunningSingBoxPermissionDenialDoesNotRequirePtraceCapability(t *testing.T) {
+	run := func(name string, _ ...string) ([]byte, error) {
+		if name == "systemctl" {
+			return []byte("88\n"), nil
+		}
+		return nil, errors.New("unexpected command")
+	}
+	read := func(path string) (string, error) {
+		switch path {
+		case "/proc/88/exe":
+			return "", os.ErrPermission
+		case singBoxExecutablePath:
+			return "1.11.4", nil
+		default:
+			return "", errors.New("unexpected path")
+		}
+	}
+	got := collectComponentsWithReaders(ComponentVersions{SingBox: "1.11.4"}, run, read)
+	if len(got) != 1 || !got[0].OK() || got[0].Actual != "1.11.4" {
+		t.Fatalf("受限 /proc 不应迫使 report 获得 CAP_SYS_PTRACE:%+v", got)
+	}
+}
+
 func TestTailscaleClientVersionCannotPretendToBeDaemonVersion(t *testing.T) {
 	calls := 0
 	got := collectComponentsWith(ComponentVersions{Tailscale: "1.82.5"}, func(string, ...string) ([]byte, error) {

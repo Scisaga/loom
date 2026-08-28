@@ -5,7 +5,9 @@ import (
 	"cmp"
 	"context"
 	"debug/buildinfo"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -317,11 +319,23 @@ func probeRunningSingBox(run componentCommand, readBuildVersion componentBuildVe
 		installedCh <- result{v, e}
 	}()
 	running, installed := <-runningCh, <-installedCh
-	if running.err != nil {
-		return "", fmt.Errorf("读取 sing-box 运行进程版本:%w", running.err)
-	}
 	if installed.err != nil {
 		return running.version, fmt.Errorf("读取磁盘 sing-box 版本:%w", installed.err)
+	}
+	if running.err != nil {
+		// A capability-bearing sing-box process is non-dumpable.  The report
+		// service intentionally lacks CAP_SYS_PTRACE, so hardened kernels deny
+		// even read-only access to /proc/<pid>/exe.  Granting ptrace to the HTTP
+		// status process would be a much larger security boundary than this
+		// diagnostic warrants.  MainPID above still proves the workload is
+		// running; use the on-disk Go build identity in this explicit case.
+		// Deploy transactions independently restart and verify the service.
+		// Limitation: a manual binary replacement without a restart cannot be
+		// distinguished on such a host until the next service activation.
+		if errors.Is(running.err, os.ErrPermission) {
+			return installed.version, nil
+		}
+		return "", fmt.Errorf("读取 sing-box 运行进程版本:%w", running.err)
 	}
 	if normalizeComponentVersion(running.version) != normalizeComponentVersion(installed.version) {
 		return running.version, fmt.Errorf("磁盘 sing-box=%s，运行进程=%s（旧 inode 尚未重启）",
