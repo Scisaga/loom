@@ -24,6 +24,9 @@ func TestEvidenceFailureIsVisibleOutsideOverview(t *testing.T) {
 				t.Errorf("%s page hid evidence failure %q", name, want)
 			}
 		}
+		if !strings.Contains(page, `class="status-alert problem evidence-alert"`) || strings.Contains(page, `<ul>`) {
+			t.Errorf("%s page did not use the compact evidence alert", name)
+		}
 	}
 }
 

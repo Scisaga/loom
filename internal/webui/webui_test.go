@@ -220,7 +220,7 @@ func TestVersionSkewIsSurfaced(t *testing.T) {
 		return View{Nodes: []NodeView{{ID: "a", Declared: true, Applied: "v1"}, {ID: "b", Declared: true, Applied: "v2"}}}
 	}
 	body := get(t, Handler(d), "/", nil).Body.String()
-	if !strings.Contains(body, "全网不是同一个快照") {
+	if !strings.Contains(body, "Snapshot convergence pending") || !strings.Contains(body, "snapshot-group") {
 		t.Error("版本不一致没有报出来")
 	}
 }

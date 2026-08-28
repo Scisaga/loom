@@ -151,27 +151,52 @@ func writeSnapshotVerdict(b *strings.Builder, v View) {
 		versions[n.Applied] = append(versions[n.Applied], n.ID)
 	}
 	if len(versions) > 1 {
-		b.WriteString(`<div class="card notice"><b class=warn>全网不是同一个快照</b><table>`)
 		keys := make([]string, 0, len(versions))
 		for key := range versions {
 			keys = append(keys, key)
 		}
-		sort.Strings(keys)
+		sort.Slice(keys, func(i, j int) bool {
+			if keys[i] == v.Applied {
+				return true
+			}
+			if keys[j] == v.Applied {
+				return false
+			}
+			return keys[i] < keys[j]
+		})
+		total, current := 0, 0
+		for key, nodes := range versions {
+			total += len(nodes)
+			if key == v.Applied {
+				current = len(nodes)
+			}
+		}
+		fmt.Fprintf(b, `<aside class="status-alert warning snapshot-alert snapshot-verdict" role=status><span class=status-alert-icon aria-hidden=true>↻</span><div class=status-alert-body><div class=status-alert-title><strong>Snapshot convergence pending</strong><span>%d snapshots observed</span></div><div class=snapshot-groups>`, len(keys))
 		for _, key := range keys {
 			sort.Strings(versions[key])
-			fmt.Fprintf(b, `<tr><td class=mono>%s<td class=w>%s</tr>`, esc(short(key)), esc(strings.Join(versions[key], " · ")))
+			className := "snapshot-group"
+			if key == v.Applied {
+				className += " current"
+			}
+			fmt.Fprintf(b, `<span class="%s"><span class=mono>%s</span><span class=snapshot-group-nodes>%s</span></span>`, className, esc(short(key)), esc(strings.Join(versions[key], " · ")))
 		}
-		b.WriteString(`</table></div>`)
+		b.WriteString(`</div></div>`)
+		if current > 0 {
+			fmt.Fprintf(b, `<span class=status-alert-note>%d / %d nodes on the control-plane snapshot</span>`, current, total)
+		} else {
+			fmt.Fprintf(b, `<span class=status-alert-note>%d declared nodes reported a snapshot</span>`, total)
+		}
+		b.WriteString(`</aside>`)
 	} else if len(versions) == 1 && unknown == 0 {
 		for key := range versions {
 			fmt.Fprintf(b, `<div class="badge ok snapshot-verdict converged"><span class=dot></span>快照 %s · 全网一致</div>`, esc(short(key)))
 		}
 	} else if len(versions) == 1 {
 		for key := range versions {
-			fmt.Fprintf(b, `<div class="badge warn"><span class=dot></span>已观测节点为快照 %s · %d 个节点未核验</div>`, esc(short(key)), unknown)
+			fmt.Fprintf(b, `<aside class="status-alert warning snapshot-alert snapshot-verdict" role=status><span class=status-alert-icon aria-hidden=true>?</span><div class=status-alert-body><div class=status-alert-title><strong>Snapshot evidence incomplete</strong><span>%d nodes unverified</span></div><div class=snapshot-groups><span class="snapshot-group current"><span class=mono>%s</span><span class=snapshot-group-nodes>observed nodes</span></span></div></div><span class=status-alert-note>Waiting for signed node evidence</span></aside>`, unknown, esc(short(key)))
 		}
 	} else if unknown > 0 {
-		fmt.Fprintf(b, `<div class="badge warn"><span class=dot></span>%d 个节点没有快照观测</div>`, unknown)
+		fmt.Fprintf(b, `<aside class="status-alert warning snapshot-alert snapshot-verdict" role=status><span class=status-alert-icon aria-hidden=true>?</span><div class=status-alert-body><div class=status-alert-title><strong>Snapshot evidence unavailable</strong><span>%d nodes unverified</span></div></div><span class=status-alert-note>Waiting for signed node evidence</span></aside>`, unknown)
 	}
 }
 

@@ -162,7 +162,7 @@ func TestDeclaredCountersExcludeRetainedUndeclaredObservation(t *testing.T) {
 			t.Errorf("Overview missing declaration-aware output %q", want)
 		}
 	}
-	if strings.Contains(overview, "全网不是同一个快照") {
+	if strings.Contains(overview, "Snapshot convergence pending") {
 		t.Fatal("removed runtime node polluted the current declared snapshot verdict")
 	}
 	if topology := topologySVG(view); !strings.Contains(topology, "undeclared observed") ||
