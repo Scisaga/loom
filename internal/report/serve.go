@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	trafficstore "loom/internal/traffic"
 	"loom/internal/webui"
 )
 
@@ -34,6 +35,9 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 		return err
 	}
 	tbl := newTable(cfg.AttestationMinVersion)
+	var trafficStore *trafficstore.Store
+	trafficHistoryStatus := "not_supported"
+	trafficHistoryError := ""
 
 	mux := http.NewServeMux()
 
@@ -41,22 +45,60 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 	//
 	// **它们必须同源** —— 界面自己去采一遍的话,"页面上说的"和"接口返回的"
 	// 会在某个时刻不一致,而那种不一致极难查。
-	deps := webui.Deps{
-		Node: cfg.Node,
-		Now:  now,
-		Snapshot: func() webui.View {
-			at := now()
-			st := Collect(cfg, at)
-			// 和 /status 走完全同一条路 —— 界面自己再采一遍的话,
-			// "页面上说的"和"接口返回的"会在某个时刻不一致。
-			attachObservationState(cfg, tbl, st, at, maxAge)
-			return buildView(cfg, st, at)
-		},
+	deps := webui.Deps{Node: cfg.Node, Now: now}
+	decorateView := func(v *webui.View, at time.Time) {
+		if v == nil {
+			return
+		}
+		if deps.Control != nil && deps.Control.Enrich != nil {
+			if err := deps.Control.Enrich(v); err != nil {
+				v.Warnings = append(v.Warnings, "中控 SSOT 元数据不可用:"+err.Error())
+			}
+		}
+		v.TrafficHistoryStatus = trafficHistoryStatus
+		v.TrafficHistoryError = trafficHistoryError
+		if trafficStore != nil {
+			history, err := trafficHistoryFromStore(trafficStore, at)
+			if err != nil {
+				v.TrafficHistoryStatus = "unavailable"
+				v.TrafficHistoryError = err.Error()
+				v.Warnings = append(v.Warnings, "中控流量历史不可用:"+err.Error())
+			} else {
+				v.TrafficHistoryStatus = "available"
+				v.TrafficHistory = history
+			}
+		}
+	}
+	buildSnapshot := func() webui.View {
+		at := now()
+		st := Collect(cfg, at)
+		// 和 /status 走完全同一条路 —— 界面自己再采一遍的话,
+		// "页面上说的"和"接口返回的"会在某个时刻不一致。
+		attachObservationState(cfg, tbl, st, at, maxAge)
+		v := buildView(cfg, st, at)
+		decorateView(&v, at)
+		return v
+	}
+	deps.Snapshot = buildSnapshot
+	var trafficCacheMu sync.RWMutex
+	var trafficCache webui.View
+	trafficCacheReady := false
+	deps.TrafficSnapshot = func() webui.View {
+		trafficCacheMu.RLock()
+		ready, cached := trafficCacheReady, trafficCache
+		trafficCacheMu.RUnlock()
+		if ready {
+			return cached
+		}
+		// Only startup can reach this path. The first gossip round immediately
+		// installs the immutable cache used by subsequent scraper requests.
+		return buildSnapshot()
 	}
 	var det *detector
 
 	// 中控角色是本机 bootstrap 配置,不是渲染产物 —— 绝大多数节点没有它。
 	if ctl, pw, err := LoadControl(ControlPath); ctl != nil {
+		trafficHistoryStatus = "unavailable"
 		cfg.PublisherHealth = PublisherHealthPath
 		if err != nil {
 			// 声明了中控角色却配不全,必须看得见。悄悄退化成只读的话,
@@ -78,9 +120,27 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 		deps.Unresolved = func() []webui.UnresolvedView {
 			return unresolvedNow(EventsPath, now(), det.trackedState(now()))
 		}
-		fmt.Fprintf(logw, "中控角色:%s(事件记到 %s,现状记到 %s)\n", ctl.SSOTPath, EventsPath, StatePath)
+		trafficStore, err = trafficstore.NewStore(TrafficPath, trafficRetention, trafficMaximumGap)
+		if err != nil {
+			trafficHistoryError = err.Error()
+			fmt.Fprintf(logw, "! 初始化中控流量历史失败:%v\n", err)
+		} else if err := trafficStore.Compact(now()); err != nil {
+			// A corrupt or unsafe existing history must not be appended to. Current
+			// status remains available while the operator repairs the local file.
+			fmt.Fprintf(logw, "! 读取中控流量历史失败，历史记录关闭:%v\n", err)
+			trafficHistoryError = err.Error()
+			_ = trafficStore.Close()
+			trafficStore = nil
+		} else {
+			trafficHistoryStatus = "available"
+			trafficHistoryError = ""
+		}
+		fmt.Fprintf(logw, "中控角色:%s(事件 %s,现状 %s,流量历史 %s)\n", ctl.SSOTPath, EventsPath, StatePath, TrafficPath)
 	} else if err != nil {
 		fmt.Fprintf(logw, "! 读 %s 失败:%v\n", ControlPath, err)
+	}
+	if trafficStore != nil {
+		defer trafficStore.Close()
 	}
 	mux.Handle("/", webui.Handler(deps))
 
@@ -104,27 +164,52 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		ticker := time.NewTicker(gp)
+		defer ticker.Stop()
+		lastTrafficCompact := now().UTC()
 		for {
-			gossip(cfg, tbl, now, maxAge)
+			st := gossip(cfg, tbl, now, maxAge)
 			// 每轮转述之后比一次:这一轮和上一轮有什么不同。
 			// **只有变化才写下来** —— 状态本身已经在 /status 里了。
-			if det != nil {
+			{
 				at := now()
-				st := Collect(cfg, at)
 				attachObservationState(cfg, tbl, st, at, maxAge)
-				evs, err := det.observe(buildView(cfg, st, at), at)
-				if err != nil {
-					fmt.Fprintf(logw, "! 记事件失败:%v\n", err)
+				view := buildView(cfg, st, at)
+				if trafficStore != nil {
+					frame := trafficFrameFromView(view, at)
+					if len(frame.Counters) > 0 {
+						if err := trafficStore.Append(frame); err != nil {
+							fmt.Fprintf(logw, "! 记流量历史失败:%v\n", err)
+						}
+					}
+					if at.UTC().Sub(lastTrafficCompact) >= 6*time.Hour {
+						if err := trafficStore.Compact(at); err != nil {
+							fmt.Fprintf(logw, "! 压缩流量历史失败:%v\n", err)
+						} else {
+							lastTrafficCompact = at.UTC()
+						}
+					}
 				}
-				for i := range evs {
-					fmt.Fprintf(logw, "· %s %s %s:%s → %s\n",
-						evs[i].Node, evs[i].Kind, evs[i].Subject, evs[i].From, evs[i].To)
+				decorateView(&view, at)
+				trafficCacheMu.Lock()
+				trafficCache = view
+				trafficCacheReady = true
+				trafficCacheMu.Unlock()
+				if det != nil {
+					evs, err := det.observe(view, at)
+					if err != nil {
+						fmt.Fprintf(logw, "! 记事件失败:%v\n", err)
+					}
+					for i := range evs {
+						fmt.Fprintf(logw, "· %s %s %s:%s → %s\n",
+							evs[i].Node, evs[i].Kind, evs[i].Subject, evs[i].From, evs[i].To)
+					}
 				}
 			}
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(gp):
+			case <-ticker.C:
 			}
 		}
 	}()

@@ -4,7 +4,7 @@
      width="1586" height="992" viewBox="0 0 1586 992"
      role="img" aria-labelledby="title description">
   <title id="title">Network overview — Loom control center prototype</title>
-  <desc id="description">A restrained infrastructure overview showing five nodes, six WireGuard links, current traffic paths, deployment state, and a clearly marked target preview of retained WireGuard traffic telemetry that excludes direct traffic.</desc>
+  <desc id="description">A restrained infrastructure overview showing five nodes, six WireGuard links, current traffic paths, deployment state, and retained WireGuard counter-delta bars with explicit reset and gap boundaries.</desc>
   <defs>
     <marker id="arrow-selected" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
       <path d="M0 0L7 3.5L0 7Z" fill="#2AA875"/>
@@ -154,21 +154,21 @@
     <use href="#icon-services" x="584" y="18" width="14" height="14" class="nav-icon"/>
     <text x="605" y="31">Services</text>
     <use href="#icon-traffic" x="682" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="703" y="31">Routing</text>
+    <text x="703" y="31">Live paths</text>
     <use href="#icon-deployments" x="780" y="18" width="14" height="14" class="nav-icon"/>
     <text x="801" y="31">Deployments</text>
     <use href="#icon-events" x="919" y="18" width="14" height="14" class="nav-icon"/>
     <text x="940" y="31">Events</text>
     <use href="#icon-settings" x="1008" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="1029" y="31">Settings</text>
+    <text x="1029" y="31">SSOT</text>
   </g>
   <line x1="293" y1="49.5" x2="382" y2="49.5" stroke="#2AA875" stroke-width="2"/>
   <g class="ui nav">
-    <text x="1210" y="31">Production</text>
+    <text class="amber" x="1160" y="31">Prototype · sample data</text>
     <circle class="status-dot" cx="1322" cy="26" r="4"/>
     <text x="1335" y="31">Operational</text>
     <use href="#icon-lock" x="1428" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="1538" y="31" text-anchor="end">Authenticated</text>
+    <text x="1538" y="31" text-anchor="end">Read-only view</text>
   </g>
 
   <g class="ui">
@@ -176,24 +176,24 @@
     <text class="heading" x="21" y="124">Network overview</text>
     <text class="body muted" x="21" y="151">jm24 control plane · observed 8s ago</text>
     <use href="#icon-status-ok" x="20" y="168" width="15" height="15" class="status-icon"/>
-    <text class="small" x="43" y="181">All systems operational</text>
+    <text class="small" x="43" y="181">All declared nodes are healthy</text>
   </g>
 
   <!-- Compact status strip -->
   <rect class="panel" x="21" y="205" width="1538" height="82" rx="7"/>
   <g class="ui">
     <text class="label" x="53" y="239">Nodes</text>
-    <text class="metric" x="53" y="263">5 / 5 <tspan class="body" font-weight="400">online</tspan></text>
+    <text class="metric" x="53" y="263">5 / 5 <tspan class="body" font-weight="400">healthy</tspan></text>
 
     <text class="label" x="455" y="239">WireGuard</text>
-    <text class="metric" x="455" y="263">6 / 6 <tspan class="body" font-weight="400">active</tspan></text>
+    <text class="metric" x="455" y="263">6 / 6 <tspan class="body" font-weight="400">observed</tspan></text>
 
     <text class="label" x="835" y="239">Current traffic paths</text>
     <text class="metric" x="835" y="263">5 / 5 <tspan class="body" font-weight="400">reported</tspan></text>
 
     <text class="label" x="1210" y="234">Snapshot</text>
     <text class="metric mono" x="1210" y="255">4f09f6f5716d</text>
-    <text class="small muted" x="1210" y="274">commit <tspan class="mono">28224ed</tspan> · converged</text>
+    <text class="small muted" x="1210" y="274">fleet converged · publisher code <tspan class="mono">28224ed</tspan></text>
   </g>
   <line class="rule" x1="413" y1="225" x2="413" y2="268"/>
   <line class="rule" x1="793" y1="225" x2="793" y2="268"/>
@@ -264,41 +264,43 @@
     <text class="small muted" x="790" y="559">Berlin · reverse-only + egress</text>
   </g>
 
-  <!-- WireGuard traffic preview. This is a design target until counters are retained centrally. -->
+  <!-- Retained control-node history derived only from adjacent trusted counter samples. -->
   <rect class="panel" x="1028" y="305" width="531" height="143" rx="7"/>
   <g class="ui">
     <text class="section" x="1046" y="334">WireGuard traffic</text>
-    <text class="tiny amber" x="1539" y="334" text-anchor="end">Planned · not collected centrally</text>
-    <text class="small muted" x="1046" y="363">NOW</text>
-    <text class="metric" x="1046" y="388">34.8 Mbps</text>
-    <text class="small muted" x="1046" y="414">1.84 TB · last 24h</text>
-    <text class="tiny muted" x="1046" y="435">Link TX deltas · direct excluded</text>
+    <text class="tiny green" x="1539" y="334" text-anchor="end">Retained centrally · 30 days · fixed 60s samples / 3m gap</text>
+    <text class="small muted" x="1046" y="363">LAST 24H</text>
+    <text class="metric" x="1046" y="388">1.30 TB</text>
+    <text class="small muted" x="1046" y="414">10 / 12 buckets · 1 reset · 1 gap</text>
+    <text class="tiny muted" x="1046" y="435">WG RX+TX deltas · hop-weighted</text>
 
     <line class="rule" x1="1232" y1="354" x2="1539" y2="354"/>
     <line class="rule" x1="1232" y1="383" x2="1539" y2="383"/>
     <line class="rule" x1="1232" y1="412" x2="1539" y2="412"/>
-    <g fill="#72C69F" aria-label="Twelve two-hour traffic buckets">
+    <g fill="#72C69F" aria-label="Ten accepted two-hour traffic buckets and two explicit missing buckets">
       <rect x="1235" y="396" width="17" height="16" rx="1.5"/>
       <rect x="1260" y="388" width="17" height="24" rx="1.5"/>
       <rect x="1285" y="381" width="17" height="31" rx="1.5"/>
       <rect x="1310" y="394" width="17" height="18" rx="1.5"/>
-      <rect x="1335" y="400" width="17" height="12" rx="1.5"/>
       <rect x="1360" y="385" width="17" height="27" rx="1.5"/>
       <rect x="1385" y="369" width="17" height="43" rx="1.5"/>
       <rect x="1410" y="361" width="17" height="51" rx="1.5"/>
       <rect x="1435" y="374" width="17" height="38" rx="1.5"/>
-      <rect x="1460" y="384" width="17" height="28" rx="1.5"/>
       <rect x="1485" y="377" width="17" height="35" rx="1.5"/>
       <rect x="1510" y="361" width="17" height="51" rx="1.5" fill="#2AA875"/>
     </g>
-    <text class="tiny muted" x="1232" y="435">24h ago</text>
+    <rect x="1335" y="363" width="17" height="49" rx="1.5" fill="none" stroke="#D79B3B" stroke-dasharray="3 3"/>
+    <rect x="1460" y="363" width="17" height="49" rx="1.5" fill="none" stroke="#A5AAA8" stroke-dasharray="3 3"/>
+    <text class="tiny amber" x="1343.5" y="379" text-anchor="middle">R</text>
+    <text class="tiny muted" x="1468.5" y="379" text-anchor="middle">G</text>
+    <text class="tiny muted" x="1288" y="435">24h ago</text>
     <text class="tiny muted" x="1539" y="435" text-anchor="end">now</text>
   </g>
 
-  <!-- Latest deployment -->
+  <!-- Latest fleet rollout -->
   <rect class="panel" x="1028" y="462" width="531" height="173" rx="7"/>
   <g class="ui">
-    <text class="section" x="1046" y="490">Latest deployment</text>
+    <text class="section" x="1046" y="490">Latest fleet rollout</text>
     <text class="body" x="1046" y="520">Snapshot <tspan class="mono" font-weight="600">4f09f6f5716d</tspan></text>
     <text class="body muted" x="1046" y="543">5 / 5 verified</text>
 
@@ -311,14 +313,14 @@
     <text class="small muted" x="1209" y="591" text-anchor="middle">Distributed</text>
     <text class="small muted" x="1343" y="591" text-anchor="middle">Applied</text>
     <text class="small muted" x="1477" y="591" text-anchor="middle">Verified</text>
-    <text class="small muted" x="1046" y="619">snapshot manifest signed · commit <tspan class="mono">28224ed</tspan> · 19h ago</text>
+    <text class="small muted" x="1046" y="619">fleet snapshot · publisher code <tspan class="mono">28224ed</tspan> · 19h ago</text>
   </g>
 
   <!-- Nodes table -->
   <rect class="panel" x="21" y="647" width="825" height="203" rx="7"/>
   <g class="ui">
     <text class="section" x="39" y="675">Nodes</text>
-    <text class="tiny amber" x="103" y="675">24h columns are planned telemetry</text>
+    <text class="tiny green" x="103" y="675">24h trusted adjacent-sample deltas</text>
     <text class="small muted" x="65" y="699">Name</text>
     <text class="small muted" x="207" y="699">Location</text>
     <text class="small muted" x="396" y="699">Status</text>
@@ -331,18 +333,18 @@
   <line class="rule" x1="39" y1="790" x2="828" y2="790"/>
   <line class="rule" x1="39" y1="818" x2="828" y2="818"/>
   <g class="ui body">
-    <circle class="quiet-dot" cx="43" cy="721" r="4"/><text class="mono" x="65" y="726">jm24</text><text x="207" y="726">Beijing</text><text class="green" x="396" y="726">Online</text><text class="mono" x="515" y="726">336 / 302 GB</text><text x="745" y="726">8s</text>
-    <circle class="quiet-dot" cx="43" cy="749" r="4"/><text class="mono" x="65" y="754">gz02</text><text x="207" y="754">Guangzhou</text><text class="green" x="396" y="754">Online</text><text class="mono" x="515" y="754">401 / 344 GB</text><text x="745" y="754">11s</text>
-    <circle class="quiet-dot" cx="43" cy="777" r="4"/><text class="mono" x="65" y="782">hz01</text><text x="207" y="782">Hangzhou</text><text class="green" x="396" y="782">Online</text><text class="mono" x="515" y="782">229 / 228 GB</text><text x="745" y="782">13s</text>
-    <circle class="quiet-dot" cx="43" cy="805" r="4"/><text class="mono" x="65" y="810">sg02</text><text x="207" y="810">Singapore</text><text class="green" x="396" y="810">Online</text><text class="mono" x="515" y="810">495 / 487 GB</text><text x="745" y="810">9s</text>
-    <circle class="quiet-dot" cx="43" cy="833" r="4"/><text class="mono" x="65" y="838">ber01</text><text x="207" y="838">Berlin</text><text class="green" x="396" y="838">Online</text><text class="mono" x="515" y="838">379 / 479 GB</text><text x="745" y="838">12s</text>
+    <circle class="quiet-dot" cx="43" cy="721" r="4"/><text class="mono" x="65" y="726">jm24</text><text x="207" y="726">Beijing</text><text class="green" x="396" y="726">Healthy</text><text class="mono" x="515" y="726">184 / 96 GB</text><text x="745" y="726">8s</text>
+    <circle class="quiet-dot" cx="43" cy="749" r="4"/><text class="mono" x="65" y="754">gz02</text><text x="207" y="754">Guangzhou</text><text class="green" x="396" y="754">Healthy</text><text class="mono" x="515" y="754">142 / 91 GB</text><text x="745" y="754">11s</text>
+    <circle class="quiet-dot" cx="43" cy="777" r="4"/><text class="mono" x="65" y="782">hz01</text><text x="207" y="782">Hangzhou</text><text class="green" x="396" y="782">Healthy</text><text class="mono" x="515" y="782">98 / 61 GB</text><text x="745" y="782">13s</text>
+    <circle class="quiet-dot" cx="43" cy="805" r="4"/><text class="mono" x="65" y="810">sg02</text><text x="207" y="810">Singapore</text><text class="green" x="396" y="810">Healthy</text><text class="mono" x="515" y="810">204 / 139 GB</text><text x="745" y="810">9s</text>
+    <circle class="quiet-dot" cx="43" cy="833" r="4"/><text class="mono" x="65" y="838">ber01</text><text x="207" y="838">Berlin</text><text class="green" x="396" y="838">Healthy</text><text class="mono" x="515" y="838">176 / 112 GB</text><text x="745" y="838">12s</text>
   </g>
 
-  <!-- Current traffic paths: one per service or routing policy. -->
+  <!-- Current traffic paths: one per service or access policy. -->
   <rect class="panel" x="863" y="647" width="696" height="203" rx="7"/>
   <g class="ui">
     <text class="section" x="881" y="675">Current traffic paths</text>
-    <text class="small" x="1107" y="675" font-size="11" style="fill:#A66A14">Target state after Agent reporting upgrade</text>
+    <text class="small" x="1107" y="675" font-size="11" style="fill:#239B68">Reported · signed Agent state</text>
     <text class="small muted" x="887" y="699">Name</text>
     <text class="small muted" x="1040" y="699">Type</text>
     <text class="small muted" x="1172" y="699">Current path</text>
@@ -356,9 +358,9 @@
   <g class="ui body">
     <text x="887" y="726">CN web</text><text class="muted" x="1040" y="726">Service</text><text class="mono" x="1172" y="726">jm24 → direct</text><circle class="route-dot" cx="1398" cy="721" r="4"/><text x="1411" y="726">Reported</text>
     <text x="887" y="754">International API</text><text class="muted" x="1040" y="754">Service</text><text class="mono" x="1172" y="754">jm24 → ber01</text><circle class="route-dot" cx="1398" cy="749" r="4"/><text x="1411" y="754">Reported</text>
-    <text x="887" y="782">Singapore fixed</text><text class="muted" x="1040" y="782">Routing policy</text><text class="mono" x="1172" y="782">jm24 → gz02 → sg02</text><circle class="route-dot" cx="1398" cy="777" r="4"/><text x="1411" y="782">Reported</text>
-    <text x="887" y="810">Germany fixed</text><text class="muted" x="1040" y="810">Routing policy</text><text class="mono" x="1172" y="810">jm24 → ber01</text><circle class="route-dot" cx="1398" cy="805" r="4"/><text x="1411" y="810">Reported</text>
-    <text x="887" y="838">Best egress</text><text class="muted" x="1040" y="838">Routing policy</text><text class="mono" x="1172" y="838">jm24 → ber01</text><circle class="route-dot" cx="1398" cy="833" r="4"/><text x="1411" y="838">Reported</text>
+    <text x="887" y="782">Singapore fixed</text><text class="muted" x="1040" y="782">Access policy</text><text class="mono" x="1172" y="782">jm24 → gz02 → sg02</text><circle class="route-dot" cx="1398" cy="777" r="4"/><text x="1411" y="782">Reported</text>
+    <text x="887" y="810">Germany fixed</text><text class="muted" x="1040" y="810">Access policy</text><text class="mono" x="1172" y="810">jm24 → ber01</text><circle class="route-dot" cx="1398" cy="805" r="4"/><text x="1411" y="810">Reported</text>
+    <text x="887" y="838">Best egress</text><text class="muted" x="1040" y="838">Access policy</text><text class="mono" x="1172" y="838">jm24 → ber01</text><circle class="route-dot" cx="1398" cy="833" r="4"/><text x="1411" y="838">Reported</text>
   </g>
 
   <!-- Recent events -->
@@ -369,14 +371,14 @@
 
     <text class="small mono muted" x="40" y="917">17:10</text>
     <circle class="quiet-dot" cx="89" cy="912" r="3.5"/>
-    <text class="body" x="104" y="917">Network snapshot verified across 5 nodes</text>
+    <text class="body" x="104" y="917">Fleet snapshot changed across 5 nodes</text>
 
     <text class="small mono muted" x="40" y="940">17:09</text>
     <circle class="quiet-dot" cx="89" cy="935" r="3.5"/>
-    <text class="body" x="104" y="940">Agent traffic paths remain unchanged</text>
+    <text class="body" x="104" y="940">Agent route sg-fixed changed</text>
 
     <text class="small mono muted" x="40" y="963">17:08</text>
     <circle class="quiet-dot" cx="89" cy="958" r="3.5"/>
-    <text class="body" x="104" y="963">Node observations refreshed</text>
+    <text class="body" x="104" y="963">Carrier edge gz02 ↔ sg02 recovered</text>
   </g>
 </svg>

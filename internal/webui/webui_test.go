@@ -16,11 +16,11 @@ func deps(op string, acts map[string]func() (string, error)) Deps {
 		Node: "n1", Operator: op, Actions: acts,
 		Now: func() time.Time { return at },
 		Snapshot: func() View {
-			return View{Self: "n1", Nodes: []NodeView{
-				{ID: "n1", Self: true, Reached: true, Applied: "abc123",
-					Tunnels: []TunnelView{{Interface: "wg-a", State: "active", AgeSec: 30, OK: true}},
+			return View{Self: "n1", IntentSource: "serving node applied inventory", Nodes: []NodeView{
+				{ID: "n1", Declared: true, Self: true, Reached: true, Applied: "abc123",
+					Tunnels: []TunnelView{{Interface: "wg-a", CarrierPresent: true, State: "active", AgeSec: 30, CounterPresent: true, OK: true}},
 					Targets: []TargetView{{Target: "https://t/", MS: 100}}},
-				{ID: "n2", Applied: "abc123",
+				{ID: "n2", Declared: true, Applied: "abc123",
 					Targets: []TargetView{{Target: "https://t/", Err: `Get "https://t/": dial tcp 1.2.3.4:443: connect: connection refused`}}},
 			}}
 		},
@@ -202,7 +202,7 @@ func TestUntrustedStringsAreEscaped(t *testing.T) {
 func TestVersionSkewIsSurfaced(t *testing.T) {
 	d := deps("", nil)
 	d.Snapshot = func() View {
-		return View{Nodes: []NodeView{{ID: "a", Applied: "v1"}, {ID: "b", Applied: "v2"}}}
+		return View{Nodes: []NodeView{{ID: "a", Declared: true, Applied: "v1"}, {ID: "b", Declared: true, Applied: "v2"}}}
 	}
 	body := get(t, Handler(d), "/", nil).Body.String()
 	if !strings.Contains(body, "全网不是同一个快照") {
@@ -238,8 +238,8 @@ func TestUnknownNodesAreNotCountedHealthy(t *testing.T) {
 	d := deps("", nil)
 	d.Snapshot = func() View {
 		return View{Nodes: []NodeView{
-			{ID: "silent", Health: "unknown"},
-			{ID: "relay", Health: "unknown", Source: "未签名转述"},
+			{ID: "silent", Declared: true, Health: "unknown"},
+			{ID: "relay", Declared: true, Health: "unknown", Source: "未签名转述"},
 		}}
 	}
 	body := get(t, Handler(d), "/", nil).Body.String()
@@ -275,6 +275,9 @@ func TestTopologyShowsKindsSourceAndObservationAge(t *testing.T) {
 	}
 	if strings.Contains(body, `M16 2c4`) {
 		t.Fatal("未批准的临时花形 logo 仍在页面")
+	}
+	if !strings.Contains(body, `fill="#239b68"`) || strings.Contains(body, `fill="#ffd166"`) {
+		t.Fatal("当前路径箭头没有与绿色路径线保持一致")
 	}
 }
 

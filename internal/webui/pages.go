@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html"
 	"math"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -15,44 +16,41 @@ import (
 // 一个依赖 CDN 的界面在最需要它的时候(隧道断了、机器出问题了)恰好打不开。
 
 const style = `<style>
-:root{--fg:#eef4f2;--dim:#94a3a1;--line:#465153;--ok:#4ed3b0;--bad:#ff727c;--warn:#f6c76b;--info:#72b7ff;--route:#ffd166;--bg:#22292b;--side:#293133;--card:#30393b;--card2:#354043;--ink:#13191a}
+:root{--fg:#181b1a;--dim:#717674;--faint:#9ba09e;--line:#e2e6e3;--line2:#ccd2ce;--ok:#239b68;--oksoft:#eef8f3;--bad:#b84c4c;--badsoft:#fff3f2;--warn:#a66a14;--warnsoft:#fff8eb;--info:#477d9c;--route:#239b68;--bg:#fcfcfb;--card:#fff;--card2:#f7f8f7;--ink:#181b1a}
 *{box-sizing:border-box}
-body{margin:0;font:14px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--fg);background:var(--bg)}
-a{color:inherit;text-decoration:none}a:hover{color:var(--ok)}
-.app{min-height:100vh;display:grid;grid-template-columns:230px minmax(0,1fr)}
-.side{background:var(--side);border-right:1px solid var(--line);padding:24px 18px;position:sticky;top:0;height:100vh}
-.brand{display:flex;align-items:center;gap:11px;font-size:18px;font-weight:750;letter-spacing:.04em;margin-bottom:28px}.mark{display:grid;place-items:center;width:31px;height:31px;border:2px solid var(--ok);border-radius:7px;color:var(--ok);font-weight:850;line-height:1}
-.role{font-size:11px;color:var(--dim);font-weight:500;letter-spacing:.08em;text-transform:uppercase}
-.nav{display:grid;gap:6px}.nav a{padding:9px 11px;border-radius:8px;color:var(--dim)}.nav a:first-child,.nav a:hover{background:var(--card);color:var(--fg)}
-.sidefoot{position:absolute;left:18px;right:18px;bottom:22px;color:var(--dim);font-size:12px}
-.main{min-width:0;padding:26px 30px 50px}.top{display:flex;align-items:flex-start;gap:16px;margin-bottom:22px}.top h1{font-size:22px;line-height:1.25;margin:0 0 4px}.sp{margin-left:auto}
-h2{font-size:13px;margin:0 0 12px;color:var(--dim);font-weight:700;letter-spacing:.08em;text-transform:uppercase}
-.dim{color:var(--dim)}.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}.info{color:var(--info)}
-.badge{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:4px 9px;font-size:12px}.dot{width:7px;height:7px;border-radius:50%;background:currentColor}
-.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:14px;margin-bottom:14px}.span3{grid-column:span 3}.span4{grid-column:span 4}.span5{grid-column:span 5}.span6{grid-column:span 6}.span7{grid-column:span 7}.span8{grid-column:span 8}.span12{grid-column:1/-1}
-.card{background:linear-gradient(145deg,var(--card),#2d3537);border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0;box-shadow:0 8px 24px rgba(0,0,0,.08)}
-.metric{font-size:25px;font-weight:760;line-height:1.15;margin:5px 0}.metric small{font-size:13px;color:var(--dim);font-weight:500}.label{font-size:12px;color:var(--dim)}
-.section{margin-top:18px}.sectionhead{display:flex;align-items:center;gap:12px;margin:0 0 10px}.sectionhead h2{margin:0}
-table{border-collapse:collapse;width:100%;margin:0}
-td,th{text-align:left;padding:9px 10px 9px 0;border-bottom:1px solid rgba(148,163,161,.19);vertical-align:top;white-space:nowrap}
-tr:last-child td{border-bottom:0}th{color:var(--dim);font-weight:650;font-size:11px;letter-spacing:.04em;text-transform:uppercase}td.w{white-space:normal}
-.topology{width:100%;min-height:330px;display:block;background:rgba(18,24,25,.27);border-radius:9px;border:1px solid rgba(148,163,161,.14)}
-.topology .tunnel{stroke:var(--ok);stroke-width:2.2;opacity:.78}.topology .candidate{stroke:var(--dim);stroke-width:1.8;stroke-dasharray:2 7;opacity:.72}.topology .degraded{stroke:var(--warn)}.topology .failed{stroke:var(--bad)}.topology .unknown{stroke:var(--dim);stroke-dasharray:3 7;opacity:.58}.topology .route{stroke:var(--route);stroke-width:5;opacity:.78}.topology .node{fill:var(--card2);stroke:var(--ok);stroke-width:1.5}.topology .node.problem{stroke:var(--bad)}.topology .node.unknown{stroke:var(--dim);stroke-dasharray:3 3}.topology .selected{stroke:var(--route);stroke-width:3}.topology text{fill:var(--fg);font:600 13px ui-sans-serif,system-ui}.topology .sub{fill:var(--dim);font-size:10px;font-weight:500}
-.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;color:var(--dim);font-size:11px}.key{display:inline-block;width:26px;border-top:2px solid var(--ok);vertical-align:middle;margin-right:6px}.key.candidate{border-color:var(--dim);border-top-style:dotted}.key.route{border-color:var(--route);border-width:4px}.key.degraded{border-color:var(--warn)}.key.failed{border-color:var(--bad)}
-.nodegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(205px,1fr));gap:10px}.nodecard{border:1px solid rgba(148,163,161,.22);background:rgba(21,28,29,.24);border-radius:9px;padding:12px}.nodehead{display:flex;align-items:center;gap:7px;margin-bottom:8px}.nodehead b{font-size:15px}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.tiny{font-size:11px}.clip{overflow:hidden;text-overflow:ellipsis;max-width:100%}
-.notice{border-left:3px solid var(--warn)}.notice.badline{border-left-color:var(--bad)}.empty{padding:18px;text-align:center;color:var(--dim);border:1px dashed var(--line);border-radius:9px}
-form{display:inline}
-button{font:inherit;padding:7px 11px;border:1px solid var(--line);border-radius:7px;background:var(--card2);color:var(--fg);cursor:pointer}button:hover{border-color:var(--ok)}
-input{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--fg)}
-pre{background:rgba(17,23,24,.45);border:1px solid var(--line);border-radius:8px;padding:12px;overflow-x:auto;white-space:pre-wrap;margin:8px 0}
-textarea{width:100%;height:60vh;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;padding:12px;border:1px solid var(--line);border-radius:8px;background:#1d2425;color:var(--fg);white-space:pre;overflow-wrap:normal;overflow-x:auto}
-@media(max-width:950px){.app{grid-template-columns:1fr}.side{position:static;height:auto;padding:14px 18px}.brand{margin-bottom:12px}.nav{display:flex;overflow-x:auto}.sidefoot{position:static;margin-top:10px}.main{padding:20px 16px}.span3,.span4,.span5,.span6,.span7,.span8{grid-column:1/-1}}
+html{background:var(--bg)}body{margin:0;font:14px/1.55 Inter,"Atkinson Hyperlegible Next",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--fg);background:var(--bg)}
+a{color:inherit;text-decoration:none}a:hover{color:var(--ok)}code,.mono{font-family:"Intel One Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+.app{min-height:100vh}.header{height:58px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:stretch;padding:0 20px;gap:24px;position:sticky;top:0;z-index:4}
+.brand{display:flex;align-items:center;gap:9px;font-size:17px;font-weight:760;letter-spacing:.09em;white-space:nowrap}.brandmark{width:34px;height:34px;color:#252927}.brandmark path{fill:currentColor}
+.role{font-size:10px;color:var(--dim);font-weight:550;letter-spacing:.08em;text-transform:uppercase}.nav{display:flex;align-items:stretch;gap:2px;min-width:0;overflow-x:auto}.nav a{display:flex;align-items:center;padding:0 10px;color:var(--dim);white-space:nowrap;border-bottom:2px solid transparent}.nav a:hover,.nav a.active{color:var(--fg);border-bottom-color:var(--ok)}.navgroup{display:flex;align-items:stretch;position:relative;padding:13px 3px 0;margin-left:5px;border-left:1px solid var(--line)}.navgroup:before{content:attr(data-label);position:absolute;top:2px;left:10px;font-size:8px;line-height:1;color:var(--faint);letter-spacing:.09em;text-transform:uppercase}.navgroup a{padding:0 7px}
+.headmeta{margin-left:auto;display:flex;align-items:center;gap:18px;white-space:nowrap;font-size:12px}.headmeta .env{display:flex;align-items:center;gap:7px}.headmeta .dot{width:7px;height:7px}.main{min-width:0;max-width:1580px;margin:0 auto;padding:32px 22px 56px}
+.top{display:flex;align-items:flex-start;gap:18px;margin-bottom:22px}.eyebrow{font-size:11px;letter-spacing:.13em;font-weight:700;text-transform:uppercase;margin-bottom:3px}.top h1{font-size:28px;letter-spacing:-.025em;line-height:1.2;margin:0 0 5px}.subtitle{color:var(--dim);font-size:13px}.sp{margin-left:auto}
+h2{font-size:13px;margin:0 0 12px;color:var(--dim);font-weight:700;letter-spacing:.08em;text-transform:uppercase}h3{font-size:15px;margin:0 0 5px}
+.dim{color:var(--dim)}.faint{color:var(--faint)}.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}.info{color:var(--info)}
+.badge{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;padding:4px 9px;font-size:12px}.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:currentColor;flex:0 0 auto}
+.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:14px;margin-bottom:14px}.span3{grid-column:span 3}.span4{grid-column:span 4}.span5{grid-column:span 5}.span6{grid-column:span 6}.span7{grid-column:span 7}.span8{grid-column:span 8}.span9{grid-column:span 9}.span12{grid-column:1/-1}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px;min-width:0}.card.soft{background:var(--card2)}.metric{font-size:24px;font-weight:720;line-height:1.15;margin:5px 0}.metric small{font-size:13px;color:var(--dim);font-weight:500}.label{font-size:11px;color:var(--dim);letter-spacing:.04em;text-transform:uppercase}
+.section{margin-top:22px}.sectionhead{display:flex;align-items:center;gap:12px;margin:0 0 10px}.sectionhead h2{margin:0}.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.split{display:grid;grid-template-columns:minmax(280px,1fr) minmax(0,2fr);gap:14px}.stack{display:grid;gap:14px}
+table{border-collapse:collapse;width:100%;margin:0}td,th{text-align:left;padding:10px 10px 10px 0;border-bottom:1px solid var(--line);vertical-align:top;white-space:nowrap}tr:last-child td{border-bottom:0}th{color:var(--dim);font-weight:650;font-size:10px;letter-spacing:.06em;text-transform:uppercase}td.w{white-space:normal}.rowlink:hover{background:#fafcfb}
+.topology{width:100%;min-height:330px;display:block;background:transparent}.topology .tunnel{stroke:#a5aaa8;stroke-width:1.6;opacity:.95}.topology .candidate{stroke:#b9bebc;stroke-width:1.4;stroke-dasharray:5 6;opacity:.9}.topology .degraded{stroke:#d79b3b}.topology .failed{stroke:#c65a5a}.topology .unknown{stroke:#a5aaa8;stroke-dasharray:3 7;opacity:.7}.topology .route{stroke:var(--route);stroke-width:3;opacity:.9}.topology .node{fill:#fff;stroke:var(--ok);stroke-width:1.8}.topology .node.problem{stroke:var(--bad)}.topology .node.unknown{stroke:#a5aaa8;stroke-dasharray:3 3}.topology .node.undeclared{fill:var(--warnsoft);stroke:var(--warn);stroke-dasharray:2 4}.topology .selected{stroke:var(--route);stroke-width:3}.topology text{fill:var(--fg);font:600 13px ui-sans-serif,system-ui}.topology .sub{fill:var(--dim);font-size:10px;font-weight:500}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;color:var(--dim);font-size:11px}.key{display:inline-block;width:26px;border-top:2px solid #a5aaa8;vertical-align:middle;margin-right:6px}.key.candidate{border-color:#b9bebc;border-top-style:dashed}.key.route{border-color:var(--route);border-width:3px}.key.degraded{border-color:#d79b3b}.key.failed{border-color:#c65a5a}
+.nodegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.nodecard{border:1px solid var(--line);background:#fff;border-radius:7px;padding:13px}.nodehead{display:flex;align-items:center;gap:7px;margin-bottom:8px}.nodehead b{font-size:15px}.catalogrow{display:block;padding:13px 11px;border-bottom:1px solid var(--line);border-left:3px solid transparent}.catalogrow:last-child{border-bottom:0}.catalogrow.selected{background:var(--oksoft);border-left-color:var(--ok)}.issue{padding:10px 0;border-bottom:1px solid var(--line)}.issue:last-child{border-bottom:0}.issue.problem{border-left:3px solid var(--bad);padding-left:10px}.tiny{font-size:11px}.small{font-size:12px}.clip{overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.notice{border-left:3px solid var(--warn);background:var(--warnsoft)}.notice.badline{border-left-color:var(--bad);background:var(--badsoft)}.empty{padding:20px;text-align:center;color:var(--dim);border:1px dashed var(--line2);border-radius:7px}.callout{padding:12px 14px;border-radius:7px;background:var(--oksoft);border:1px solid #cce7d8}.callout.warnline{background:var(--warnsoft);border-color:#ead7b2}
+form{display:inline}.blockform{display:block}.checkline{display:flex;align-items:flex-start;gap:9px}.checkline input{margin-top:3px}button,.button{font:inherit;padding:8px 12px;border:1px solid var(--line2);border-radius:6px;background:#fff;color:var(--fg);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:7px}button:hover,.button:hover{border-color:var(--ok);color:var(--fg)}button.primary,.button.primary{background:var(--fg);border-color:var(--fg);color:#fff}button.green,.button.green{background:var(--ok);border-color:var(--ok);color:#fff}button[disabled]{cursor:not-allowed;color:var(--faint);background:#f1f3f2;border-color:var(--line)}
+input,select{font:inherit;padding:9px 10px;border:1px solid var(--line2);border-radius:6px;background:#fff;color:var(--fg)}input:focus,select:focus,textarea:focus{outline:2px solid #cce7d8;outline-offset:1px}.field{display:grid;gap:5px}.field label{font-size:11px;color:var(--dim);text-transform:uppercase}.fields{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px}.field.span2{grid-column:span 2}.field.span3{grid-column:span 3}.field.span4{grid-column:span 4}.field.span6{grid-column:span 6}.field.span8{grid-column:span 8}.field.span12{grid-column:1/-1}
+pre{background:var(--card2);border:1px solid var(--line);border-radius:7px;padding:12px;overflow-x:auto;white-space:pre-wrap;margin:8px 0}textarea{width:100%;height:58vh;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;padding:12px;border:1px solid var(--line2);border-radius:7px;background:#fff;color:var(--fg);white-space:pre;overflow-wrap:normal;overflow-x:auto}
+textarea.compact{height:118px;white-space:pre-wrap}
+.bars{height:112px;display:flex;align-items:end;gap:5px;padding:9px 0 20px;border-bottom:1px solid var(--line);position:relative}.bar{flex:1;min-width:4px;background:#73c39d;border-radius:2px 2px 0 0}.bar.alt{background:#6f96ad}.bar.idle{background:#cbd0cd}.barlabel{display:flex;justify-content:space-between;font-size:10px;color:var(--dim);margin-top:5px}.kv{display:grid;grid-template-columns:minmax(110px,.6fr) minmax(0,1.5fr);gap:8px 15px}.kv dt{color:var(--dim);font-size:11px;text-transform:uppercase}.kv dd{margin:0;min-width:0}.steps{display:flex;border:1px solid var(--line);border-radius:7px;background:#fff}.step{flex:1;padding:14px 17px;border-right:1px solid var(--line)}.step:last-child{border-right:0}.step b{display:block;margin-top:3px}
+.counterchart{height:150px;display:flex;align-items:stretch;gap:12px;padding:12px 6px 0;border-bottom:1px solid var(--line);background:linear-gradient(to top,transparent 32%,var(--line) 33%,transparent 34%,transparent 65%,var(--line) 66%,transparent 67%)}.countergroup{flex:1;min-width:58px;display:grid;grid-template-rows:1fr 25px;gap:5px;text-align:center}.counterbars{display:flex;align-items:end;justify-content:center;gap:4px}.counterbars i{display:block;width:min(22px,38%);min-height:2px;border-radius:2px 2px 0 0}.counterrx{background:#73c39d}.countertx{background:#6f96ad}.counterbars i.idle{background:#cbd0cd}.counterkey{display:inline-block;width:10px;height:8px;border-radius:1px;margin-right:5px}.counterkey.rx{background:#73c39d}.counterkey.tx{background:#6f96ad}
+.historychart{height:176px;display:flex;align-items:stretch;gap:4px;overflow-x:auto;padding:10px 4px 0;border-bottom:1px solid var(--line);background:linear-gradient(to top,transparent 32%,var(--line) 33%,transparent 34%,transparent 65%,var(--line) 66%,transparent 67%)}.historybucket{flex:1;min-width:12px;display:grid;grid-template-rows:1fr 19px;gap:3px;text-align:center}.historybars{display:flex;align-items:end;justify-content:center;gap:2px;min-height:0}.historybars i{display:block;min-height:1px;border-radius:2px 2px 0 0}.historytotal{width:min(24px,72%);background:#4ba477}.historyrx,.historytx{width:min(13px,42%)}.historyrx{background:#73c39d}.historytx{background:#6f96ad}.historymissing{height:100%!important;width:1px;border-radius:0!important;background:repeating-linear-gradient(to bottom,var(--line2) 0 3px,transparent 3px 7px)}.historyflag{font-size:8px;color:var(--warn);white-space:nowrap}.linkchart{display:grid;gap:0;border-top:1px solid var(--line);margin-top:8px}.linkcharthead,.linkchartrow{display:grid;grid-template-columns:minmax(170px,.8fr) minmax(220px,1.4fr) minmax(190px,.8fr);gap:18px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line)}.linkcharthead{color:var(--dim);font-size:10px;font-weight:650;letter-spacing:.06em;text-transform:uppercase}.linkbartrack{display:block;height:12px;background:var(--card2);border:1px solid var(--line);border-radius:2px;margin-bottom:3px}.linkbarfill{display:block;height:100%;min-width:1px;background:#4ba477;border-radius:1px}
+@media(max-width:1180px){.nav a{padding:0 7px}.headmeta .env{display:none}.span3{grid-column:span 6}.split{grid-template-columns:1fr}}
+@media(max-width:760px){.header{height:auto;min-height:51px;flex-wrap:wrap;padding:8px 12px;gap:5px 14px}.nav{order:3;width:100%;height:46px}.navgroup{padding-top:12px}.headmeta{margin-left:auto}.main{padding:22px 13px 44px}.top{display:block}.top .sp{margin:12px 0 0}.span3,.span4,.span5,.span6,.span7,.span8,.span9{grid-column:1/-1}.fields{grid-template-columns:1fr}.field.span2,.field.span3,.field.span4,.field.span6,.field.span8,.field.span12{grid-column:auto}.steps{display:grid}.step{border-right:0;border-bottom:1px solid var(--line)}td,th{white-space:normal}.hide-mobile{display:none}.linkcharthead{display:none}.linkchartrow{grid-template-columns:1fr;gap:5px}.historybucket{min-width:10px}}
 </style>`
 
-func shell(d Deps, title, body string, isAuthed bool) string {
-	role := "节点"
+func shell(d Deps, title, body string, isAuthed bool, evidence ...View) string {
+	role := "Local node"
 	if d.Control != nil {
-		role = "节点 · 中控"
+		role = "Control plane"
 	}
 	// 这台机器上没有任何写操作时不显示登录入口 —— 一个点进去只会说
 	// "没配口令"的链接,只会让人以为自己配错了。
@@ -63,13 +61,28 @@ func shell(d Deps, title, body string, isAuthed bool) string {
 	case d.Operator != "" && (len(d.Actions) > 0 || d.Control != nil):
 		auth = `<a href="/login">登录以操作</a>`
 	}
-	eventsLink := ""
-	if d.Events != nil {
-		eventsLink = `<a href="/events">事件</a>`
+	active := navActive(title)
+	nav := primaryNavigation(d)
+	var navHTML strings.Builder
+	group := ""
+	for _, item := range nav {
+		if item.group != group {
+			if group != "" {
+				navHTML.WriteString(`</span>`)
+			}
+			group = item.group
+			if group != "" {
+				fmt.Fprintf(&navHTML, `<span class=navgroup data-label="%s">`, esc(group))
+			}
+		}
+		cls := ""
+		if item.key == active {
+			cls = ` class=active`
+		}
+		fmt.Fprintf(&navHTML, `<a%s href="%s">%s</a>`, cls, esc(item.href), esc(item.label))
 	}
-	configLink := ""
-	if d.Control != nil {
-		configLink = `<a href="/ssot">配置与密钥</a>`
+	if group != "" {
+		navHTML.WriteString(`</span>`)
 	}
 	refresh := ""
 	if title == "总览" {
@@ -77,16 +90,142 @@ func shell(d Deps, title, body string, isAuthed bool) string {
 		// 不能自动刷新，否则会丢表单或重复操作。
 		refresh = `<meta http-equiv=refresh content=30>`
 	}
-	return fmt.Sprintf(`<!doctype html><meta charset=utf-8><title>%s · Loom</title>
+	eyebrow, heading, subtitle := pageHeading(d, title)
+	if len(evidence) > 0 {
+		body = evidenceBanner(evidence[0]) + body
+	}
+	return fmt.Sprintf(`<!doctype html><meta charset=utf-8><title>%s · LOOM</title>
 <meta name=viewport content="width=device-width,initial-scale=1">%s%s
-<div class=app><aside class=side><div class=brand>
-<span class=mark aria-hidden=true>L</span>
-<span>Loom<div class=role>%s</div></span></div><nav class=nav>
-<a href="/#overview">总览</a><a href="/#topology">隧道与路径</a><a href="/#nodes">节点</a><a href="/#routes">Agent 路由</a><a href="/#release">发布与收敛</a>%s%s
-</nav><div class=sidefoot>%s · %s</div></aside><main class=main>
-<div class=top><div><h1>%s</h1><div class=dim>节点 %s</div></div><div class=sp>%s</div></div>%s</main></div>`,
-		esc(title), refresh, style, esc(role), eventsLink, configLink, esc(d.Node), esc(role),
-		esc(title), esc(d.Node), auth, body)
+<div class=app><header class=header><a class=brand href="/" aria-label="LOOM overview">%s<span>LOOM</span></a>
+<nav class=nav aria-label="Primary">%s</nav><div class=headmeta><span class="env dim"><span class=dot></span>Live evidence</span><span>%s</span></div></header>
+<main class=main><div class=top><div><div class=eyebrow>%s</div><h1>%s</h1><div class=subtitle>%s</div></div><div class=sp>%s</div></div>%s</main></div>`,
+		esc(heading), refresh, style, logoSVG(), navHTML.String(), auth,
+		esc(eyebrow), esc(heading), esc(subtitle), esc(d.Node)+` · `+esc(role), body)
+}
+
+// evidenceBanner keeps control-plane read failures visible on every page that
+// renders a View. Otherwise an SSOT enrichment failure can look like a valid
+// empty catalog on Services/Nodes/Topology even though Overview contains the
+// warning. The caller passes the View it already rendered, so this does not
+// trigger a second collection with a different timestamp.
+func evidenceBanner(v View) string {
+	seen := map[string]bool{}
+	var warnings []string
+	for _, warning := range v.Warnings {
+		warning = strings.TrimSpace(warning)
+		if warning == "" || seen[warning] {
+			continue
+		}
+		seen[warning] = true
+		warnings = append(warnings, warning)
+	}
+	if v.TrafficHistoryStatus == "unavailable" && v.TrafficHistoryError != "" {
+		warning := "中控流量历史不可用:" + v.TrafficHistoryError
+		if !seen[warning] {
+			warnings = append(warnings, warning)
+		}
+	}
+	if len(warnings) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(`<div class="card notice badline"><b>Evidence is incomplete</b><ul>`)
+	for _, warning := range warnings {
+		fmt.Fprintf(&b, `<li>%s</li>`, esc(warning))
+	}
+	b.WriteString(`</ul><span class="small dim">Unavailable evidence stays unavailable; this page does not turn it into an empty or healthy state.</span></div><div class=section></div>`)
+	return b.String()
+}
+
+type navigationItem struct {
+	label, href, key, group string
+}
+
+// primaryNavigation follows capabilities, not deployment convention. Every
+// node serves the UI, but only a node with ControlDeps owns desired-state,
+// enrollment, deployment and event-journal surfaces. A regular node keeps a
+// deliberately small diagnostic navigation and links "This node" directly to
+// its own detail page instead of presenting the fleet inventory as a local
+// management capability.
+func primaryNavigation(d Deps) []navigationItem {
+	if d.Control == nil {
+		return []navigationItem{
+			{label: "Local overview", href: "/", key: "overview"},
+			{label: "This node", href: "/nodes/" + url.PathEscape(d.Node), key: "nodes"},
+			{label: "Topology", href: "/topology", key: "topology"},
+			{label: "Live paths", href: "/routing", key: "routing"},
+		}
+	}
+	return []navigationItem{
+		{label: "Overview", href: "/", key: "overview"},
+		{label: "Nodes", href: "/nodes", key: "nodes", group: "Network"},
+		{label: "Topology", href: "/topology", key: "topology", group: "Network"},
+		{label: "Services", href: "/services", key: "services", group: "Traffic"},
+		{label: "Live paths", href: "/routing", key: "routing", group: "Traffic"},
+		{label: "Deployments", href: "/deployments", key: "deployments", group: "Operations"},
+		{label: "Events", href: "/events", key: "events", group: "Operations"},
+		{label: "SSOT", href: "/settings", key: "settings", group: "Advanced"},
+	}
+}
+
+func navActive(title string) string {
+	t := strings.ToLower(title)
+	switch {
+	case title == "总览" || strings.Contains(t, "overview"):
+		return "overview"
+	case strings.Contains(t, "node") || strings.Contains(title, "节点"):
+		return "nodes"
+	case strings.Contains(t, "topology") || strings.Contains(title, "拓扑"):
+		return "topology"
+	case strings.Contains(t, "service") || strings.Contains(title, "服务"):
+		return "services"
+	case strings.Contains(t, "routing") || strings.Contains(t, "live path") || strings.Contains(title, "路由"):
+		return "routing"
+	case strings.Contains(t, "deployment") || strings.Contains(title, "发布"):
+		return "deployments"
+	case strings.Contains(t, "event") || strings.Contains(title, "事件"):
+		return "events"
+	case strings.Contains(t, "setting") || strings.Contains(title, "ssot") || strings.Contains(title, "配置"):
+		return "settings"
+	default:
+		return ""
+	}
+}
+
+func pageHeading(d Deps, title string) (string, string, string) {
+	if d.Control == nil {
+		switch title {
+		case "总览":
+			return "LOCAL NODE / STATUS", "Local overview", d.Node + " · direct local status with newest trusted network observations"
+		case "登录":
+			return "LOCAL NODE / ACCESS", "Operator sign in", "Local maintenance actions require an authenticated node session"
+		case "事件":
+			return "LOCAL NODE / UNAVAILABLE", "Events unavailable", "The event journal is retained on the control node"
+		case "改 SSOT", "Settings":
+			return "LOCAL NODE / READ ONLY", "Settings unavailable", "This node has no desired-state write capability"
+		default:
+			return strings.ToUpper(strings.ReplaceAll(title, " ", " / ")), title, d.Node + " · local diagnostic view"
+		}
+	}
+	switch title {
+	case "总览":
+		return "LIVE NETWORK", "Network overview", d.Node + " control plane · newest trusted observations"
+	case "事件":
+		return "OPERATIONS / EVENTS", "Events", "State transitions recorded by the control plane"
+	case "改 SSOT":
+		return "ADVANCED / SSOT", "Advanced / SSOT", "Validate and atomically save the declarative source of truth"
+	case "登录":
+		return "CONTROL / ACCESS", "Operator sign in", "Write operations require a local control-plane session"
+	default:
+		return strings.ToUpper(strings.ReplaceAll(title, " ", " / ")), title, d.Node + " control plane"
+	}
+}
+
+// logoSVG embeds the same approved compound geometry used by the SVG prototypes.
+// It stays transparent and uses currentColor so the white header always gets a
+// visible graphite mark without masks or external assets.
+func logoSVG() string {
+	return `<svg class=brandmark viewBox="127 112 1000 1000" role=img aria-label="Loom mark"><g transform="translate(0 1254) scale(1 -1)"><path fill=currentColor fill-rule=evenodd clip-rule=evenodd d="` + approvedLogoPath + `"/></g></svg>`
 }
 
 func pageLogin(d Deps, errMsg string) string {
@@ -117,10 +256,15 @@ func pageResult(d Deps, name, out string, err error) string {
 	return shell(d, name, body+`<p><a href="/">← 回到总览</a></p>`, true)
 }
 
-func pageSSOT(d Deps, content, findings string, err error, saved bool) string {
+func pageSSOT(d Deps, content, revision, findings string, err error, saved bool) string {
 	var b strings.Builder
 
-	dist, derr := d.Control.Distributed()
+	dist, derr := "", error(nil)
+	if d.Control.Distributed == nil {
+		derr = fmt.Errorf("distribution status callback is unavailable")
+	} else {
+		dist, derr = d.Control.Distributed()
+	}
 	b.WriteString(`<div class=card>`)
 	if derr != nil {
 		fmt.Fprintf(&b, `<span class=bad>问不到分发点:%s</span>`, esc(brief(derr.Error())))
@@ -139,23 +283,89 @@ func pageSSOT(d Deps, content, findings string, err error, saved bool) string {
 		fmt.Fprintf(&b, `<div class=card><span class=bad>校验不通过,未保存:</span><pre>%s</pre></div>`, esc(findings))
 	}
 
-	fmt.Fprintf(&b, `<h2>%s</h2>
+	fmt.Fprintf(&b, `<div class=section><div class=sectionhead><h2>Source of truth</h2><span class="mono tiny dim">%s</span></div>
 <form method=post action=/ssot>
+<input type=hidden name=revision value="%s">
 <textarea name=content spellcheck=false>%s</textarea><br>
 <button name=action value=check>只校验</button>
-<button name=action value=save>校验并保存</button>
+<button class=green name=action value=save>校验并保存</button>
 </form>
 <p class=dim>校验不过就不会保存 —— 存一份自相矛盾的 SSOT 进去,发布器会拒绝发布,
-而线上停在旧快照。宁可在这里挡住。</p>
-<p><a href="/">← 回到总览</a></p>`, esc(d.Control.SSOTPath), esc(content))
+而线上停在旧快照。revision 变化也会拒绝旧表单覆盖新内容。</p></div>
+<p><a href="/">← 回到总览</a></p>`, esc(d.Control.SSOTPath), esc(revision), esc(content))
 	return shell(d, "改 SSOT", b.String(), true)
 }
 
-func pageEvents(d Deps, isAuthed bool) string {
-	evs := d.Events(200)
+type eventFilter struct {
+	Node, Kind, Level, Query string
+}
+
+func (f eventFilter) values() string {
+	v := url.Values{}
+	if f.Node != "" {
+		v.Set("node", f.Node)
+	}
+	if f.Kind != "" {
+		v.Set("kind", f.Kind)
+	}
+	if f.Level != "" {
+		v.Set("level", f.Level)
+	}
+	if f.Query != "" {
+		v.Set("q", f.Query)
+	}
+	return v.Encode()
+}
+
+func filterEvents(evs []EventView, f eventFilter) []EventView {
+	out := make([]EventView, 0, len(evs))
+	needle := strings.ToLower(f.Query)
+	for _, e := range evs {
+		if f.Node != "" && e.Node != f.Node || f.Kind != "" && e.Kind != f.Kind || f.Level != "" && e.Level != f.Level {
+			continue
+		}
+		if needle != "" && !strings.Contains(strings.ToLower(strings.Join([]string{e.Node, e.Kind, e.Subject, e.From, e.To, e.Detail}, " ")), needle) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+func pageEvents(d Deps, filter eventFilter, isAuthed bool) string {
+	if d.Events == nil {
+		return shell(d, "事件", `<div class=empty>This node does not retain the control-plane event journal. Open Events on the control node.</div>`, isAuthed)
+	}
+	all := d.Events(200)
+	evs := filterEvents(all, filter)
 	var b strings.Builder
-	b.WriteString(`<p class=dim>只记<b>状态变化</b>,不记状态 —— "每分钟一条 cn-a 正常"没有价值,
-有价值的是什么时候坏的、什么时候好的、坏了多久。</p>`)
+	var unresolved []UnresolvedView
+	if d.Unresolved != nil {
+		unresolved = d.Unresolved()
+	}
+	b.WriteString(`<div class=card><div class=sectionhead><h2>Current unresolved state</h2><span class=dim>Current truth · not reconstructed from transition history</span></div>`)
+	if len(unresolved) == 0 {
+		b.WriteString(`<div class=callout><b class=ok>No unresolved problems</b><br><span class=small>A quiet history is not used as proof; this comes from the current state tracker.</span></div>`)
+	} else {
+		b.WriteString(`<table><tr><th>Node<th>Kind / subject<th>State<th>Duration<th>Detail</tr>`)
+		for i := range unresolved {
+			issue := &unresolved[i]
+			cls := "warn"
+			if issue.Level == "problem" {
+				cls = "bad"
+			}
+			fmt.Fprintf(&b, `<tr><td class=mono>%s<td class=w>%s · %s<td class=%s>%s<td>%s<td class=w>%s</tr>`, esc(issue.Node), esc(issue.Kind), esc(issue.Subject), cls, esc(issue.State), esc(issue.LastedText()), esc(issue.Detail))
+		}
+		b.WriteString(`</table>`)
+	}
+	b.WriteString(`</div><div class=section></div>`)
+	export := "/events.csv"
+	if values := filter.values(); values != "" {
+		export += "?" + values
+	}
+	fmt.Fprintf(&b, `<div class=card><form method=get action=/events><div class=fields><div class="field span3"><label>Node</label><input name=node value="%s" placeholder="all nodes"></div><div class="field span3"><label>Kind</label><input name=kind value="%s" placeholder="all kinds"></div><div class="field span2"><label>Level</label><select name=level><option value="">All</option>%s</select></div><div class="field span3"><label>Search</label><input name=q value="%s" placeholder="subject or detail"></div><div class="field"><label>&nbsp;</label><button>Filter</button></div></div></form></div>
+<div class=sectionhead><span class=dim>Showing %d of the newest %d transitions. Current state remains in Overview and Nodes.</span><span class=sp><a class=button href="%s">Export filtered CSV</a></span></div>`,
+		esc(filter.Node), esc(filter.Kind), eventLevelOptions(filter.Level), esc(filter.Query), len(evs), len(all), esc(export))
 	if len(evs) == 0 {
 		b.WriteString(`<div class=card>还没有记录到任何变化。<br>
 <span class=dim>中控刚起来时只播种不产生事件 —— 否则每次重启都会看起来像全网同时变了一次。</span></div>`)
@@ -196,378 +406,24 @@ func pageEvents(d Deps, isAuthed bool) string {
 	return shell(d, "事件", b.String(), isAuthed)
 }
 
+func eventLevelOptions(selected string) string {
+	var b strings.Builder
+	for _, level := range []string{"problem", "ok", "pending", "info"} {
+		attr := ""
+		if selected == level {
+			attr = " selected"
+		}
+		fmt.Fprintf(&b, `<option value="%s"%s>%s</option>`, level, attr, level)
+	}
+	return b.String()
+}
+
 // shortTS 去掉日期里没信息量的部分,表格窄一些。
 func shortTS(ts string) string {
 	if len(ts) >= 19 {
 		return ts[5:19]
 	}
 	return ts
-}
-
-func pageOverview(d Deps, isAuthed bool) string {
-	v := d.Snapshot()
-	now := d.Now().UTC()
-	var b strings.Builder
-
-	// 顶部坐标与健康摘要。
-	vers := map[string][]string{}
-	unknownApplied := 0
-	for _, n := range v.Nodes {
-		k := n.Applied
-		if k == "" {
-			unknownApplied++
-			continue
-		}
-		vers[k] = append(vers[k], n.ID)
-	}
-	healthyNodes, problemNodes, unknownNodes := 0, 0, 0
-	for _, n := range v.Nodes {
-		switch n.Health {
-		case "healthy":
-			healthyNodes++
-		case "problem":
-			problemNodes++
-		default:
-			unknownNodes++
-		}
-	}
-	activeLinks, tunnelLinks := 0, 0
-	for _, l := range v.Links {
-		if l.Kind != "tunnel" {
-			continue
-		}
-		tunnelLinks++
-		if l.State == "active" {
-			activeLinks++
-		}
-	}
-	freshRoutes := 0
-	for _, r := range v.Routes {
-		if !r.Stale {
-			freshRoutes++
-		}
-	}
-	healthClass, healthText := "warn", fmt.Sprintf("%d 故障 · %d 未知", problemNodes, unknownNodes)
-	if problemNodes > 0 {
-		healthClass = "bad"
-	} else if unknownNodes == 0 {
-		healthClass, healthText = "ok", "全部节点已核验健康"
-	}
-	fmt.Fprintf(&b, `<div id=overview class=grid>
-<div class="card span3"><div class=label>节点健康</div><div class=metric>%d <small>/ %d</small></div><div class=%s>%s</div></div>
-<div class="card span3"><div class=label>常驻 WG 链路</div><div class=metric>%d <small>/ %d</small></div><div class=dim>SSOT 底图 + 承载可达性观测</div></div>
-<div class="card span3"><div class=label>Agent 当前选择</div><div class=metric>%d <small>/ %d 新鲜</small></div><div class=dim>来自 selector 实读</div></div>
-<div class="card span3"><div class=label>当前快照</div><div class="metric mono">%s</div><div class=dim>页面观测 %s</div></div>
-</div>`, healthyNodes, len(v.Nodes), healthClass, healthText,
-		activeLinks, tunnelLinks, freshRoutes, len(v.Routes), esc(short(v.Applied)), esc(ageText(v.ObservedAt, now)))
-
-	if len(vers) > 1 {
-		b.WriteString(`<div class="card notice"><span class=warn>全网不是同一个快照</span><table>`)
-		var keys []string
-		for k := range vers {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			sort.Strings(vers[k])
-			fmt.Fprintf(&b, `<tr><td>%s</td><td class=w>%s</td></tr>`, esc(short(k)), esc(strings.Join(vers[k], " ")))
-		}
-		b.WriteString(`</table></div>`)
-	} else if len(vers) == 1 && unknownApplied == 0 {
-		for k := range vers {
-			fmt.Fprintf(&b, `<div class="badge ok"><span class=dot></span>快照 %s · 全网一致</div>`, esc(short(k)))
-		}
-	} else if len(vers) == 1 {
-		for k := range vers {
-			fmt.Fprintf(&b, `<div class="badge warn"><span class=dot></span>已观测节点为快照 %s · %d 个节点未核验</div>`, esc(short(k)), unknownApplied)
-		}
-	} else if unknownApplied > 0 {
-		fmt.Fprintf(&b, `<div class="badge warn"><span class=dot></span>%d 个节点没有快照观测</div>`, unknownApplied)
-	}
-	for _, w := range v.Warnings {
-		fmt.Fprintf(&b, `<div class="card notice"><span class=warn>%s</span></div>`, esc(w))
-	}
-
-	var unresolved []UnresolvedView
-	if d.Unresolved != nil {
-		unresolved = d.Unresolved()
-	}
-
-	// 近实时拓扑：底图和 route overlay 都由 View 数据生成，不写死节点或边。
-	// 观测本来就是分钟级 gossip，页面是 30 秒 SSR 刷新；直接写清采样节奏，
-	// 不把周期数据包装成流式实时。
-	b.WriteString(`<div id=topology class=section><div class=sectionhead><h2>近实时拓扑</h2><span class=dim>采样约 1 分钟 · 页面每 30 秒刷新 · 每条数据保留观测年龄</span></div><div class=grid>`)
-	b.WriteString(`<div class="card span8">` + topologySVG(v) + `<div class=legend>
-	<span><i class=key></i>常驻 WG</span><span><i class="key candidate"></i>候选跳（未核验）</span>
-	<span><i class="key route"></i>Agent 当前 RouteCandidate</span><span><i class="key degraded"></i>部分失败</span><span><i class="key failed"></i>故障</span>
-</div><div class="tiny dim">候选跳只表示 SSOT 可选，不表示在线；黄色路径只采用 sing-box selector 实读状态。</div>`)
-	if len(v.Links) > 0 {
-		b.WriteString(`<table><tr><th>边<th>类型 / 状态<th>观测时间<th>来源</tr>`)
-		for _, l := range v.Links {
-			fmt.Fprintf(&b, `<tr><td class=mono>%s ↔ %s<td>%s / %s<td>%s<td class="w tiny dim">%s</tr>`,
-				esc(l.From), esc(l.To), esc(l.Kind), esc(l.State), esc(ageText(l.ObservedAt, now)), esc(l.Source))
-		}
-		b.WriteString(`</table>`)
-	}
-	b.WriteString(`</div>`)
-	b.WriteString(`<div class="card span4"><h2>待处理</h2>`)
-	if len(unresolved) == 0 {
-		if unknownNodes > 0 {
-			fmt.Fprintf(&b, `<div class=empty><span class=warn>没有已确认故障，但 %d 个节点状态未知</span><br><span class=tiny>unknown 不等于 healthy</span></div>`, unknownNodes)
-		} else {
-			b.WriteString(`<div class=empty><span class=ok>没有未解决的问题</span><br><span class=tiny>现状来自 state.json，非事件历史倒推</span></div>`)
-		}
-	} else {
-		for _, e := range unresolved {
-			cls := "notice"
-			if e.Level == "problem" {
-				cls += " badline"
-			}
-			fmt.Fprintf(&b, `<div class="card %s"><b>%s · %s %s</b><br><span class=%s>%s · %s</span><br><span class="tiny dim">%s</span></div>`,
-				cls, esc(e.Node), esc(e.Kind), esc(e.Subject),
-				map[bool]string{true: "bad", false: "warn"}[e.Level == "problem"],
-				esc(e.State), esc(e.LastedText()), esc(e.Detail))
-		}
-	}
-	b.WriteString(`</div></div></div>`)
-
-	// 节点卡片保留所有已有目标、隧道和错误细节。
-	b.WriteString(`<div id=nodes class=section><div class=sectionhead><h2>节点</h2><span class=dim>版本、快照、rollout 与数据来源</span></div><div class=nodegrid>`)
-	for _, n := range v.Nodes {
-		dotClass := "warn"
-		if n.Health == "healthy" {
-			dotClass = "ok"
-		} else if n.Health == "problem" {
-			dotClass = "bad"
-		}
-		fmt.Fprintf(&b, `<div class=nodecard><div class=nodehead><span class="%s dot"></span><b>%s</b>`,
-			dotClass, esc(n.ID))
-		if n.Self {
-			b.WriteString(`<span class="tiny dim">本机</span>`)
-		}
-		b.WriteString(`</div>`)
-		healthLabel := "状态未知"
-		if n.Health == "healthy" {
-			healthLabel = "已核验健康"
-		} else if n.Health == "problem" {
-			healthLabel = "已确认有问题"
-		}
-		fmt.Fprintf(&b, `<div class="tiny %s">%s</div>`, dotClass, healthLabel)
-		fmt.Fprintf(&b, `<div class="tiny dim">%s · %s</div><div>快照 <span class=mono>%s</span></div>`,
-			esc(n.Source), esc(ageText(n.ObservedAt, now)), esc(short(n.Applied)))
-		if n.Version != nil {
-			fmt.Fprintf(&b, `<div class="tiny clip">commit <span class=mono>%s</span> · bin <span class=mono>%s</span></div>`,
-				esc(short(n.Version.Commit)), esc(short(n.Version.Binary)))
-		}
-		if n.Rollout != nil {
-			cls := rolloutCSS(n.Rollout)
-			fmt.Fprintf(&b, `<div class="tiny %s">rollout %s · %s</div>`, cls, esc(n.Rollout.Stage), esc(short(n.Rollout.Snapshot)))
-		}
-		for _, c := range n.Components {
-			cls := "ok"
-			actual := c.Actual
-			if !c.OK {
-				cls = "bad"
-				if c.Error != "" {
-					actual = "无法核对"
-				}
-			}
-			fmt.Fprintf(&b, `<div class="tiny %s clip">%s %s / 期望 %s</div>`,
-				cls, esc(c.Name), esc(actual), esc(c.Expected))
-		}
-		var tl []string
-		for _, t := range n.Tunnels {
-			cls := "ok"
-			if !t.OK {
-				cls = "bad"
-			}
-			label := fmt.Sprintf("%s=%ds", t.Interface, t.AgeSec)
-			if t.State != "" && t.State != "active" {
-				label = fmt.Sprintf("%s=%s", t.Interface, t.State)
-			}
-			tl = append(tl, fmt.Sprintf(`<span class="tiny %s">%s</span>`, cls, esc(label)))
-		}
-		if len(tl) > 0 {
-			b.WriteString(`<div>` + strings.Join(tl, ` · `) + `</div>`)
-		}
-		for _, r := range n.Targets {
-			observed := ageText(r.ObservedAt, now)
-			if r.Err == "" {
-				kind := "target"
-				if r.Uplink {
-					kind = "uplink"
-				}
-				fmt.Fprintf(&b, `<div class="tiny ok clip">%s · %s · %dms · %s</div>`,
-					esc(kind), esc(r.Target), r.MS, esc(observed))
-			} else if r.Uplink {
-				fmt.Fprintf(&b, `<div class="tiny bad clip">uplink · %s · %s · %s</div>`,
-					esc(r.Target), esc(brief(r.Err)), esc(observed))
-			} else {
-				fmt.Fprintf(&b, `<div class="tiny info clip">target · %s · 不可达（剪枝数据） · %s · %s</div>`,
-					esc(r.Target), esc(brief(r.Err)), esc(observed))
-			}
-		}
-		for _, p := range n.Problems {
-			fmt.Fprintf(&b, `<div class="tiny bad clip">%s</div>`, esc(p))
-		}
-		b.WriteString(`</div>`)
-	}
-	b.WriteString(`</div></div>`)
-
-	// 业务候选路径来自 SSOT RouteCandidate.ServerChain。它与 WG 承载边是两层：
-	// 没有直连 WG 不等于没有业务路径；声明存在也不等于路径已实时在线。
-	b.WriteString(`<div class=section><div class=sectionhead><h2>业务候选路径</h2><span class=dim>无直边 ≠ 无路径；未选中的候选不冒充在线</span></div><div class=card>`)
-	if len(v.Candidates) == 0 {
-		b.WriteString(`<div class=empty>本节点没有可展示的 RouteCandidate.ServerChain。</div>`)
-	} else {
-		b.WriteString(`<table><tr><th>接入节点<th>声明 / 服务<th>候选路径<th>状态<th>更新时间 / 来源</tr>`)
-		for _, p := range v.Candidates {
-			path := strings.Join(p.Chain, " → ")
-			if len(p.Chain) <= 1 {
-				path = p.Node + " → direct"
-			}
-			cls, label := "warn", "候选（未核验）"
-			if p.State == "selected" {
-				cls, label = "ok", "当前选中"
-			}
-			observed := "未实时核验"
-			if p.ObservedAt != "" {
-				observed = ageText(p.ObservedAt, now)
-			}
-			fmt.Fprintf(&b, `<tr><td>%s<td>%s<td class="w mono %s">%s<td class=%s>%s<td class="w tiny">%s<br><span class=dim>%s</span></tr>`,
-				esc(p.Node), esc(p.Declaration), cls, esc(path), cls, label,
-				esc(observed), esc(p.Source))
-		}
-		b.WriteString(`</table>`)
-	}
-	b.WriteString(`</div></div>`)
-
-	// 当前 Agent 选择来自 selector 实读文件，按每条 declaration 独立标时间。
-	b.WriteString(`<div id=routes class=section><div class=sectionhead><h2>Agent 路由</h2><span class=dim>当前实际 RouteCandidate</span></div><div class=card>`)
-	if len(v.Routes) == 0 {
-		b.WriteString(`<div class=empty>没有可验证的 Agent 当前选路数据；不会用历史事件冒充现状。</div>`)
-	} else {
-		b.WriteString(`<table><tr><th>节点<th>声明<th>当前路径<th>候选健康<th>更新时间 / 来源<th>理由</tr>`)
-		for _, r := range v.Routes {
-			path := strings.Join(r.Chain, " → ")
-			if len(r.Chain) <= 1 {
-				path = r.Node + " → direct"
-			}
-			cls := "ok"
-			if r.Stale {
-				cls = "warn"
-			}
-			health := `<span class=warn>未上报（旧 Agent）</span>`
-			if h := r.Health; h != nil {
-				hcls := "ok"
-				if h.RecentSuccess+h.RecentDegraded == 0 {
-					hcls = "warn"
-				}
-				if h.Candidates > 0 && h.RecentFailed == h.Candidates {
-					hcls = "bad"
-				}
-				health = fmt.Sprintf(`<span class=%s>%d 正常 · %d 波动 · %d 失败 · %d 过期 · %d 未知</span>`,
-					hcls, h.RecentSuccess, h.RecentDegraded, h.RecentFailed, h.Stale, h.Unknown)
-				if h.SelectedState != "" {
-					stateClass, stateLabel := "warn", h.SelectedState
-					switch h.SelectedState {
-					case "success":
-						stateClass, stateLabel = "ok", "正常"
-					case "degraded":
-						stateLabel = "波动"
-					case "failed":
-						stateClass, stateLabel = "bad", "失败"
-					case "stale":
-						stateLabel = "过期"
-					case "unknown":
-						stateLabel = "未知"
-					}
-					detail := "当前候选 " + stateLabel
-					if h.SelectedMetrics != "" {
-						detail += " · " + h.SelectedMetrics
-					}
-					health += `<br><span class="tiny ` + stateClass + `">` + esc(detail) + `</span>`
-				}
-				if h.BestMetrics != "" {
-					health += `<br><span class="tiny dim">窗口最佳 ` + esc(h.BestMetrics) + `</span>`
-				}
-			}
-			fmt.Fprintf(&b, `<tr><td>%s<td>%s<td class="w mono %s">%s<td class=w>%s<td class=w>%s<br><span class="tiny dim">%s</span><td class=w>%s</tr>`,
-				esc(r.Node), esc(r.Declaration), cls, esc(path), health,
-				esc(ageText(r.ObservedAt, now)), esc(r.Source), esc(r.Reason))
-		}
-		b.WriteString(`</table>`)
-	}
-	b.WriteString(`</div></div>`)
-
-	// 发布器与各节点 rollout 使用和 /status 相同的 View 字段。
-	b.WriteString(`<div id=release class=section><div class=sectionhead><h2>发布与收敛</h2></div><div class=grid><div class="card span5">`)
-	if v.Publisher == nil {
-		b.WriteString(`<h2>发布器</h2><div class=empty>本节点不是中控，或 /status 未提供发布器状态。</div>`)
-	} else {
-		cls, label := "ok", "心跳正常"
-		if !v.Publisher.Healthy {
-			cls, label = "bad", "发布器不健康"
-		}
-		fmt.Fprintf(&b, `<h2>发布器</h2><div class="badge %s"><span class=dot></span>%s</div>
-<div class=metric>PID %d</div><div class="tiny dim">heartbeat %s · %s · interval %ds</div>
-<table><tr><td>commit<td class=mono>%s<tr><td>binary<td class=mono>%s<tr><td>上次成功<td>%s<tr><td>快照<td class=mono>%s</table>`,
-			cls, label, v.Publisher.PID, esc(v.Publisher.UpdatedAt), esc(ageText(v.Publisher.UpdatedAt, now)), v.Publisher.IntervalSeconds,
-			esc(short(v.Publisher.Commit)), esc(short(v.Publisher.Binary)), esc(v.Publisher.LastSuccess), esc(short(v.Publisher.LastSnapshot)))
-		if v.Publisher.LastError != "" {
-			fmt.Fprintf(&b, `<div class="tiny %s">最近错误 %s · %s</div>`,
-				map[bool]string{true: "bad", false: "dim"}[!v.Publisher.Healthy], esc(v.Publisher.LastErrorAt), esc(v.Publisher.LastError))
-		}
-	}
-	b.WriteString(`</div><div class="card span7"><h2>节点 rollout</h2><table><tr><th>节点<th>目标快照<th>阶段<th>进入时间<th>回退点</tr>`)
-	for _, n := range v.Nodes {
-		if n.Rollout == nil {
-			continue
-		}
-		cls := rolloutCSS(n.Rollout)
-		fmt.Fprintf(&b, `<tr><td>%s<td class=mono>%s<td class=%s>%s<td>%s<td class=mono>%s</tr>`,
-			esc(n.ID), esc(short(n.Rollout.Snapshot)), cls, esc(n.Rollout.Stage), esc(n.Rollout.EnteredAt), esc(short(n.Rollout.LastGood)))
-		if n.Rollout.Error != "" {
-			fmt.Fprintf(&b, `<tr><td><td class="bad w" colspan=4>%s</tr>`, esc(n.Rollout.Error))
-		}
-	}
-	b.WriteString(`</table></div></div></div>`)
-
-	if d.Events != nil {
-		b.WriteString(`<div class=section><div class=sectionhead><h2>最近事件</h2><a class="sp tiny" href="/events">全部事件 →</a></div><div class=card><table>`)
-		for _, e := range d.Events(8) {
-			cls := "dim"
-			if e.Level == "problem" {
-				cls = "bad"
-			} else if e.Level == "ok" {
-				cls = "ok"
-			}
-			fmt.Fprintf(&b, `<tr><td class=dim>%s<td>%s<td class=w>%s %s<td class=%s>%s → %s</tr>`,
-				esc(shortTS(e.TS)), esc(e.Node), esc(e.Kind), esc(e.Subject), cls, esc(e.From), esc(e.To))
-		}
-		b.WriteString(`</table></div></div>`)
-	}
-	if d.Operator == "" && len(d.Actions) == 0 && d.Control == nil {
-		return shell(d, "总览", b.String(), isAuthed)
-	}
-	b.WriteString(`<div class=section><div class=sectionhead><h2>本机操作</h2></div><div class=card>`)
-	if !isAuthed {
-		b.WriteString(`<p class=dim>需要<a href="/login">登录</a>。</p>`)
-	} else {
-		var names []string
-		for k := range d.Actions {
-			names = append(names, k)
-		}
-		sort.Strings(names)
-		for _, k := range names {
-			fmt.Fprintf(&b, `<form method=post action="/act/%s"><button>%s</button></form> `, esc(k), esc(k))
-		}
-		if d.Control != nil {
-			b.WriteString(` <a href="/ssot"><button>改 SSOT…</button></a>`)
-		}
-	}
-	b.WriteString(`</div></div>`)
-	return shell(d, "总览", b.String(), isAuthed)
 }
 
 func rolloutCSS(r *RolloutView) string {
@@ -609,7 +465,7 @@ func ageText(ts string, now time.Time) string {
 
 type svgPoint struct{ x, y float64 }
 
-func topologySVG(v View) string {
+func topologySVG(v View, routeOverlay ...RouteView) string {
 	ids := make([]string, 0, len(v.Nodes))
 	for _, n := range v.Nodes {
 		ids = append(ids, n.ID)
@@ -621,7 +477,7 @@ func topologySVG(v View) string {
 		pos[id] = svgPoint{x: 380 + 270*math.Cos(angle), y: 190 + 135*math.Sin(angle)}
 	}
 	selected := map[string]bool{}
-	for _, r := range v.Routes {
+	for _, r := range routeOverlay {
 		if r.Stale {
 			continue
 		}
@@ -630,7 +486,7 @@ func topologySVG(v View) string {
 		}
 	}
 	var b strings.Builder
-	b.WriteString(`<svg class=topology viewBox="0 0 760 380" role=img aria-label="近实时网络拓扑"><defs><marker id=arrow viewBox="0 0 10 10" refX=8 refY=5 markerWidth=5 markerHeight=5 orient=auto-start-reverse><path d="M 0 0 L 10 5 L 0 10 z" fill="#ffd166"/></marker></defs>`)
+	b.WriteString(`<svg class=topology viewBox="0 0 760 380" role=img aria-label="近实时网络拓扑"><defs><marker id=arrow viewBox="0 0 10 10" refX=8 refY=5 markerWidth=5 markerHeight=5 orient=auto-start-reverse><path d="M 0 0 L 10 5 L 0 10 z" fill="#239b68"/></marker></defs>`)
 	for _, l := range v.Links {
 		a, aok := pos[l.From]
 		z, zok := pos[l.To]
@@ -653,7 +509,7 @@ func topologySVG(v View) string {
 			fmt.Fprintf(&b, `<text class=sub x="%.1f" y="%.1f">%dms</text>`, (a.x+z.x)/2, (a.y+z.y)/2-4, l.MS)
 		}
 	}
-	for _, r := range v.Routes {
+	for _, r := range routeOverlay {
 		if r.Stale {
 			continue
 		}
@@ -666,8 +522,10 @@ func topologySVG(v View) string {
 		}
 	}
 	health := map[string]string{}
+	declared := map[string]bool{}
 	for _, n := range v.Nodes {
 		health[n.ID] = n.Health
+		declared[n.ID] = n.Declared
 	}
 	for _, id := range ids {
 		p := pos[id]
@@ -677,16 +535,60 @@ func topologySVG(v View) string {
 		} else if health[id] != "healthy" {
 			cls += " unknown"
 		}
+		if !declared[id] {
+			cls += " undeclared"
+		}
 		if selected[id] {
 			cls += " selected"
 		}
 		fmt.Fprintf(&b, `<circle class="%s" cx="%.1f" cy="%.1f" r="31"/><text text-anchor=middle x="%.1f" y="%.1f">%s</text>`, cls, p.x, p.y, p.x, p.y+5, esc(id))
+		if !declared[id] {
+			fmt.Fprintf(&b, `<text class=sub text-anchor=middle x="%.1f" y="%.1f">undeclared observed</text>`, p.x, p.y+47)
+		}
 	}
 	if len(ids) == 0 {
 		b.WriteString(`<text class=sub text-anchor=middle x=380 y=190>暂无拓扑观测</text>`)
 	}
 	b.WriteString(`</svg>`)
 	return b.String()
+}
+
+// intentSourceLabel prevents a regular node from presenting its last-applied
+// report inventory as the control node's current SSOT. The source is attached
+// by the report adapter and deliberately remains visible in operator copy.
+func intentSourceLabel(v View) string {
+	switch strings.TrimSpace(v.IntentSource) {
+	case "current SSOT":
+		return "current SSOT"
+	case "serving node applied inventory":
+		return "serving node applied inventory"
+	case "":
+		return "attached inventory"
+	default:
+		return strings.TrimSpace(v.IntentSource)
+	}
+}
+
+func carrierTunnelCount(tunnels []TunnelView) (total, active int) {
+	for _, tunnel := range tunnels {
+		if !tunnel.CarrierPresent {
+			continue
+		}
+		total++
+		if tunnel.OK {
+			active++
+		}
+	}
+	return total, active
+}
+
+func hasCarrierTunnel(tunnels []TunnelView) bool {
+	for _, tunnel := range tunnels {
+		if tunnel.CarrierPresent {
+			return true
+		}
+	}
+	return false
 }
 
 func maxInt(a, b int) int {

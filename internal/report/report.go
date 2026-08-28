@@ -86,6 +86,11 @@ type Status struct {
 // Tunnel 是一条隧道在本节点看到的样子。
 type Tunnel struct {
 	Interface string `json:"interface"`
+	// InterfacePresent / PeerPresent record what the single `wg dump` snapshot
+	// actually contained. In particular, a peer whose latest-handshake field is
+	// zero still exists; zero means "never handshook", not "interface down".
+	InterfacePresent bool `json:"interface_present,omitempty"`
+	PeerPresent      bool `json:"peer_present,omitempty"`
 	// Down 表示这个接口在 `wg show` 里根本不存在 —— 隧道没起来。
 	// 它和"握手很旧"是两种故障,排障动作也不同,不能合并成一个字段。
 	Down bool `json:"down,omitempty"`
@@ -259,6 +264,15 @@ func (r *RolloutState) StuckFor(now time.Time) (time.Duration, bool) {
 }
 
 func Collect(cfg *Config, now time.Time) *Status {
+	_, stats, errs := readWGSnapshot()
+	return collectWithWGStats(cfg, now, stats, errs)
+}
+
+// collectWithWGStats lets one observation round reuse a single WireGuard dump
+// for both carrier health and the separately signed traffic attachment. Two
+// back-to-back commands can otherwise describe different interface lifetimes
+// and double the most frequent privileged subprocess work.
+func collectWithWGStats(cfg *Config, now time.Time, stats map[string]wgInterfaceStats, wgErrors []string) *Status {
 	st := &Status{Node: cfg.Node, TS: now.UTC().Format(time.RFC3339)}
 	vc := version.Self()
 	st.Version = &vc
@@ -297,25 +311,26 @@ func Collect(cfg *Config, now time.Time) *Status {
 		stale = 5 * time.Minute
 	}
 
-	hs, tr, errs := wgStats()
-	st.Errors = append(st.Errors, errs...)
+	st.Errors = append(st.Errors, wgErrors...)
 	// 只看配置里列出的接口 —— 机器上别的 WireGuard 接口不归 Loom 管。
 	ifaces := append([]string(nil), cfg.Interfaces...)
 	sort.Strings(ifaces)
 	for _, i := range ifaces {
 		t := Tunnel{Interface: i, HandshakeAgeSec: -1}
 		t.UnitState = unitState("wg-quick@" + i)
-		h, up := hs[i]
-		if !up {
+		stat := stats[i]
+		t.InterfacePresent = stat.InterfacePresent
+		t.PeerPresent = stat.PeerPresent
+		if !stat.InterfacePresent {
 			t.Down = true
 			st.Tunnels = append(st.Tunnels, t)
 			continue
 		}
-		if h > 0 {
-			t.HandshakeAgeSec = now.Unix() - h
+		if stat.LatestHandshake > 0 {
+			t.HandshakeAgeSec = now.Unix() - stat.LatestHandshake
 			t.Stale = time.Duration(t.HandshakeAgeSec)*time.Second > stale
 		}
-		t.RxByt, t.TxByt = tr[i][0], tr[i][1]
+		t.RxByt, t.TxByt = stat.RXBytes, stat.TXBytes
 		st.Tunnels = append(st.Tunnels, t)
 	}
 
@@ -336,38 +351,78 @@ func Collect(cfg *Config, now time.Time) *Status {
 //
 // 用 `wg show all dump` 而不是逐个 interface 查:一次调用拿全,不会在两次
 // 调用之间因为接口起落而拿到自相矛盾的快照。
-func wgStats() (map[string]int64, map[string][2]int64, []string) {
-	hs := map[string]int64{}
-	tr := map[string][2]int64{}
+type wgInterfaceStats struct {
+	InterfacePresent bool
+	PeerPresent      bool
+	LatestHandshake  int64
+	RXBytes          int64
+	TXBytes          int64
+}
+
+func readWGSnapshot() ([]byte, map[string]wgInterfaceStats, []string) {
 	out, err := exec.Command("wg", "show", "all", "dump").Output()
 	if err != nil {
-		return hs, tr, []string{"wg show all dump 失败:" + errText(err)}
+		return nil, map[string]wgInterfaceStats{}, []string{"wg show all dump 失败:" + errText(err)}
 	}
+	stats, errs := parseWGStats(out)
+	return out, stats, errs
+}
+
+func parseWGStats(out []byte) (map[string]wgInterfaceStats, []string) {
+	stats := map[string]wgInterfaceStats{}
 	var errs []string
 	for _, line := range strings.Split(string(out), "\n") {
 		f := strings.Split(line, "\t")
 		// dump 格式:接口自身一行 5 列,之后每个 peer 一行 9 列。
 		// peer 行:iface pubkey psk endpoint allowed-ips handshake rx tx keepalive
+		if len(f) == 5 && f[0] != "" {
+			stat := stats[f[0]]
+			stat.InterfacePresent = true
+			stats[f[0]] = stat
+			continue
+		}
 		if len(f) < 9 {
 			continue
 		}
 		iface := f[0]
+		stat := stats[iface]
+		// A peer row is also positive interface evidence. Keeping these booleans
+		// independent from LatestHandshake is what preserves handshake=0.
+		stat.InterfacePresent = true
+		stat.PeerPresent = true
 		h, err1 := strconv.ParseInt(f[5], 10, 64)
 		rx, err2 := strconv.ParseInt(f[6], 10, 64)
 		tx, err3 := strconv.ParseInt(f[7], 10, 64)
-		if err1 != nil || err2 != nil || err3 != nil {
+		if err1 != nil || err2 != nil || err3 != nil || h < 0 || rx < 0 || tx < 0 {
 			errs = append(errs, "无法解析 wg dump 的一行:"+iface)
+			stats[iface] = stat
 			continue
 		}
 		// 一条隧道一个接口(D1),但接口理论上可以有多个 peer:取最近的握手,
 		// 收发字节相加。
-		if h > hs[iface] {
-			hs[iface] = h
+		if h > stat.LatestHandshake {
+			stat.LatestHandshake = h
 		}
-		v := tr[iface]
-		tr[iface] = [2]int64{v[0] + rx, v[1] + tx}
+		stat.RXBytes = saturatingCounterAdd(stat.RXBytes, rx)
+		stat.TXBytes = saturatingCounterAdd(stat.TXBytes, tx)
+		stats[iface] = stat
 	}
-	return hs, tr, errs
+	return stats, errs
+}
+
+const maxCounterValue int64 = 1<<63 - 1
+
+func saturatingCounterAdd(total, value int64) int64 {
+	if total < 0 {
+		total = 0
+	}
+	if value < 0 {
+		value = 0
+	}
+	if value > maxCounterValue-total {
+		return maxCounterValue
+	}
+	return total + value
 }
 
 func errText(err error) string {

@@ -134,14 +134,15 @@ NAV_ITEMS = {
 def shell(*, active: str, eyebrow: str, title: str, subtitle: str,
           status: str, description: str, body: str,
           environment_status: str = "Operational",
-          session_status: str = "Authenticated") -> str:
+          session_status: str = "Read-only view") -> str:
     _, active_left, active_right, _ = NAV_ITEMS[active]
     nav = []
     for label, (x, _, _, icon_id) in NAV_ITEMS.items():
+        display_label = {"Routing": "Live paths", "Settings": "SSOT"}.get(label, label)
         weight = ' font-weight="600"' if label == active else ""
         icon_class = "nav-icon-active" if label == active else "nav-icon"
         nav.append(f'    <use href="#{icon_id}" x="{x}" y="18" width="14" height="14" class="{icon_class}"/>')
-        nav.append(f'    <text x="{x + 21}" y="31"{weight}>{label}</text>')
+        nav.append(f'    <text x="{x + 21}" y="31"{weight}>{display_label}</text>')
     nav_text = "\n".join(nav)
     return f'''<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg"
@@ -240,7 +241,7 @@ def shell(*, active: str, eyebrow: str, title: str, subtitle: str,
   </g>
   <line x1="{active_left}" y1="49.5" x2="{active_right}" y2="49.5" stroke="#2AA875" stroke-width="2"/>
   <g class="ui nav">
-    <text x="1210" y="31">Production</text>
+    <text class="amber" x="1160" y="31">Prototype · sample data</text>
     <circle class="status-dot" cx="1322" cy="26" r="4"/>
     <text x="1335" y="31">{environment_status}</text>
     <use href="#icon-lock" x="1428" y="18" width="14" height="14" class="nav-icon"/>
@@ -273,13 +274,30 @@ def overview_page() -> str:
     if marker not in text:
         raise RuntimeError(f"{source} is missing the overview body marker")
     body = (marker + text.split(marker, 1)[1].rsplit("</svg>", 1)[0]).rstrip()
+    # The asset is the overview body's visual source. Fail fast if its contract
+    # labels drift instead of silently rewriting copy by string substitution.
+    required_copy = (
+        '5 / 5 <tspan class="body" font-weight="400">healthy</tspan>',
+        '6 / 6 <tspan class="body" font-weight="400">observed</tspan>',
+        ">Healthy<",
+        "Reported · signed Agent state",
+        "Latest fleet rollout",
+        "Access policy",
+        "24h trusted adjacent-sample deltas",
+        "Retained centrally · 30 days · fixed 60s samples / 3m gap",
+        "10 / 12 buckets · 1 reset · 1 gap",
+        "Carrier edge gz02 ↔ sg02 recovered",
+    )
+    missing = [expected for expected in required_copy if expected not in body]
+    if missing:
+        raise RuntimeError(f"{source} overview contract labels drifted: {missing}")
     return shell(
         active="Overview",
         eyebrow="LIVE NETWORK",
         title="Network overview",
         subtitle="jm24 control plane · observed 8s ago",
-        status="All systems operational",
-        description="A restrained infrastructure overview showing five nodes, six WireGuard links, current traffic paths, deployment state, and a clearly marked target preview of retained WireGuard traffic telemetry that excludes direct traffic.",
+        status="All declared nodes are healthy",
+        description="A restrained infrastructure overview showing five nodes, six WireGuard links, current traffic paths, deployment state, and retained WireGuard counter-delta bars with explicit reset and gap boundaries.",
         body=body,
     )
 
@@ -290,13 +308,13 @@ def nodes_page() -> str:
   <rect class="panel" x="21" y="202" width="1538" height="82" rx="7"/>
   <g class="ui">
     <text class="small muted" x="46" y="232">DECLARED</text><text class="metric" x="46" y="258">5 nodes</text>
-    <text class="small muted" x="300" y="232">ONLINE</text><text class="metric green" x="300" y="258">5 fresh</text>
-    <text class="small muted" x="554" y="232">JOINING</text><text class="metric" x="554" y="258">0 nodes</text>
+    <text class="small muted" x="300" y="232">HEALTH</text><text class="metric green" x="300" y="258">5 healthy</text>
+    <text class="small muted" x="554" y="232">ENROLLMENT</text><text class="metric green" x="554" y="258">Available</text>
     <text class="small muted" x="808" y="232">SNAPSHOT</text><text class="metric" x="808" y="258">5 verified</text>
     <text class="small muted" x="1062" y="232">ISSUES</text><text class="metric green" x="1062" y="258">None</text>
     <rect class="button" x="1390" y="221" width="143" height="40" rx="6"/>
     <use href="#icon-plus" x="1411" y="233" width="15" height="15" stroke="#FFFFFF" fill="none" stroke-width="1.5" stroke-linecap="round"/>
-    <text class="small" x="1437" y="246" fill="#FFFFFF">Add node</text>
+    <text class="small" x="1437" y="246" fill="#FFFFFF">Add node</text><text class="tiny green" x="1457" y="278" text-anchor="middle">SSH guarded</text>
   </g>
   <line class="rule" x1="272" y1="222" x2="272" y2="265"/><line class="rule" x1="526" y1="222" x2="526" y2="265"/>
   <line class="rule" x1="780" y1="222" x2="780" y2="265"/><line class="rule" x1="1034" y1="222" x2="1034" y2="265"/>
@@ -307,57 +325,57 @@ def nodes_page() -> str:
   <g class="ui">
     <text class="section" x="41" y="332">Node inventory</text>
     <text class="tiny muted" x="196" y="332">Declared hosts and their newest trusted observation</text>
-    <rect class="chip-green" x="1334" y="313" width="55" height="28" rx="14"/><text class="tiny green" x="1361" y="332" text-anchor="middle">All · 5</text>
-    <text class="tiny muted" x="1411" y="332">Attention · 0</text><text class="tiny muted" x="1539" y="332" text-anchor="end">Joining · 0</text>
+    <rect class="chip-green" x="1270" y="313" width="55" height="28" rx="14"/><text class="tiny green" x="1297" y="332" text-anchor="middle">All · 5</text>
+    <text class="tiny muted" x="1348" y="332">Attention · 0</text><text class="tiny green" x="1539" y="332" text-anchor="end">Enroll · Available</text>
 
-    <text class="small muted" x="47" y="379">NODE</text><text class="small muted" x="180" y="379">MANAGEMENT / PUBLIC</text><text class="small muted" x="465" y="379">LOCATION</text>
+    <text class="small muted" x="47" y="379">NODE / LIFECYCLE</text><text class="small muted" x="180" y="379">DECLARED ENDPOINT / SSH PORT</text><text class="small muted" x="465" y="379">LOCATION</text>
     <text class="small muted" x="560" y="379">ROLE</text><text class="small muted" x="770" y="379">OBSERVATION</text><text class="small muted" x="970" y="379">SNAPSHOT</text>
-    <text class="small muted" x="1140" y="379">TUNNELS</text><text class="small muted" x="1300" y="379">LAST SEEN</text>
+    <text class="small muted" x="1140" y="379">CARRIER</text><text class="small muted" x="1300" y="379">LAST SEEN</text>
     <line class="rule" x1="41" y1="389" x2="1539" y2="389"/>
 
     <text class="subsection mono" x="47" y="421">jm24</text><text class="tiny muted" x="47" y="442">control · Active</text>
-    <text class="body mono" x="180" y="421">SSH sfab.cc:61222</text><text class="tiny muted" x="180" y="442">Public sfab.cc</text><text class="body" x="465" y="421">Beijing</text>
+    <text class="body mono" x="180" y="421">sfab.cc</text><text class="tiny muted" x="180" y="442">SSH port 61222 · host/user not retained</text><text class="body" x="465" y="421">Beijing</text>
     <text class="body" x="560" y="421">control + access</text><text class="tiny muted" x="560" y="442">tunnel endpoint</text>
-    <circle class="quiet-dot" cx="775" cy="416" r="4"/><text class="body" x="788" y="421">Online</text><text class="tiny muted" x="788" y="442">direct /status</text>
-    <text class="body mono" x="970" y="421">4f09f6f5716d</text><text class="tiny green" x="970" y="442">Verified</text><text class="body" x="1140" y="421">2 / 2 active</text><text class="body mono" x="1300" y="421">10s</text>
+    <circle class="quiet-dot" cx="775" cy="416" r="4"/><text class="body" x="788" y="421">Healthy</text><text class="tiny muted" x="788" y="442">local /status</text>
+    <text class="body mono" x="970" y="421">4f09f6f5716d</text><text class="tiny green" x="970" y="442">Verified</text><text class="body" x="1140" y="421">2 / 2 observed</text><text class="body mono" x="1300" y="421">10s</text>
     <use href="#icon-arrow-right" x="1518" y="411" width="14" height="14" class="action-icon"/><line class="rule" x1="41" y1="459" x2="1539" y2="459"/>
 
     <text class="subsection mono" x="47" y="488">gz02</text><text class="tiny muted" x="47" y="509">remote · Active</text>
-    <text class="body mono" x="180" y="488">SSH 8.163.70.120:22</text><text class="tiny muted" x="180" y="509">Public 8.163.70.120</text><text class="body" x="465" y="488">Guangzhou</text>
+    <text class="body mono" x="180" y="488">8.163.70.120</text><text class="tiny muted" x="180" y="509">SSH port 22 · host/user not retained</text><text class="body" x="465" y="488">Guangzhou</text>
     <text class="body" x="560" y="488">domestic + egress</text><text class="tiny muted" x="560" y="509">tunnel endpoint</text>
-    <circle class="quiet-dot" cx="775" cy="483" r="4"/><text class="body" x="788" y="488">Online</text><text class="tiny muted" x="788" y="509">relayed by jm24</text>
-    <text class="body mono" x="970" y="488">4f09f6f5716d</text><text class="tiny green" x="970" y="509">Verified</text><text class="body" x="1140" y="488">2 / 2 active</text><text class="body mono" x="1300" y="488">11s</text>
+    <circle class="quiet-dot" cx="775" cy="483" r="4"/><text class="body" x="788" y="488">Healthy</text><text class="tiny muted" x="788" y="509">trusted learned state</text>
+    <text class="body mono" x="970" y="488">4f09f6f5716d</text><text class="tiny green" x="970" y="509">Verified</text><text class="body" x="1140" y="488">2 / 2 observed</text><text class="body mono" x="1300" y="488">11s</text>
     <use href="#icon-arrow-right" x="1518" y="478" width="14" height="14" class="action-icon"/><line class="rule" x1="41" y1="526" x2="1539" y2="526"/>
 
     <text class="subsection mono" x="47" y="555">hz01</text><text class="tiny muted" x="47" y="576">remote · Active</text>
-    <text class="body mono" x="180" y="555">SSH 47.97.127.101:22</text><text class="tiny muted" x="180" y="576">Public 47.97.127.101</text><text class="body" x="465" y="555">Hangzhou</text>
+    <text class="body mono" x="180" y="555">47.97.127.101</text><text class="tiny muted" x="180" y="576">SSH port 22 · host/user not retained</text><text class="body" x="465" y="555">Hangzhou</text>
     <text class="body" x="560" y="555">domestic + egress</text><text class="tiny muted" x="560" y="576">tunnel endpoint</text>
-    <circle class="quiet-dot" cx="775" cy="550" r="4"/><text class="body" x="788" y="555">Online</text><text class="tiny muted" x="788" y="576">relayed by jm24</text>
-    <text class="body mono" x="970" y="555">4f09f6f5716d</text><text class="tiny green" x="970" y="576">Verified</text><text class="body" x="1140" y="555">2 / 2 active</text><text class="body mono" x="1300" y="555">13s</text>
+    <circle class="quiet-dot" cx="775" cy="550" r="4"/><text class="body" x="788" y="555">Healthy</text><text class="tiny muted" x="788" y="576">trusted learned state</text>
+    <text class="body mono" x="970" y="555">4f09f6f5716d</text><text class="tiny green" x="970" y="576">Verified</text><text class="body" x="1140" y="555">2 / 2 observed</text><text class="body mono" x="1300" y="555">13s</text>
     <use href="#icon-arrow-right" x="1518" y="545" width="14" height="14" class="action-icon"/><line class="rule" x1="41" y1="593" x2="1539" y2="593"/>
 
     <text class="subsection mono" x="47" y="622">sg02</text><text class="tiny muted" x="47" y="643">remote · Active</text>
-    <text class="body mono" x="180" y="622">SSH 194.156.163.227:22</text><text class="tiny muted" x="180" y="643">Public 194.156.163.227</text><text class="body" x="465" y="622">Singapore</text>
+    <text class="body mono" x="180" y="622">194.156.163.227</text><text class="tiny muted" x="180" y="643">SSH port 22 · host/user not retained</text><text class="body" x="465" y="622">Singapore</text>
     <text class="body" x="560" y="622">reverse-only + egress</text><text class="tiny muted" x="560" y="643">tunnel endpoint</text>
-    <circle class="quiet-dot" cx="775" cy="617" r="4"/><text class="body" x="788" y="622">Online</text><text class="tiny muted" x="788" y="643">direct /status</text>
-    <text class="body mono" x="970" y="622">4f09f6f5716d</text><text class="tiny green" x="970" y="643">Verified</text><text class="body" x="1140" y="622">3 / 3 active</text><text class="body mono" x="1300" y="622">8s</text>
+    <circle class="quiet-dot" cx="775" cy="617" r="4"/><text class="body" x="788" y="622">Healthy</text><text class="tiny muted" x="788" y="643">trusted learned state</text>
+    <text class="body mono" x="970" y="622">4f09f6f5716d</text><text class="tiny green" x="970" y="643">Verified</text><text class="body" x="1140" y="622">3 / 3 observed</text><text class="body mono" x="1300" y="622">8s</text>
     <use href="#icon-arrow-right" x="1518" y="612" width="14" height="14" class="action-icon"/><line class="rule" x1="41" y1="660" x2="1539" y2="660"/>
 
     <text class="subsection mono" x="47" y="689">ber01</text><text class="tiny muted" x="47" y="710">remote · Active</text>
-    <text class="body mono" x="180" y="689">SSH 194.156.154.254:22</text><text class="tiny muted" x="180" y="710">Public 194.156.154.254</text><text class="body" x="465" y="689">Berlin</text>
+    <text class="body mono" x="180" y="689">194.156.154.254</text><text class="tiny muted" x="180" y="710">SSH port 22 · host/user not retained</text><text class="body" x="465" y="689">Berlin</text>
     <text class="body" x="560" y="689">reverse-only + egress</text><text class="tiny muted" x="560" y="710">tunnel endpoint</text>
-    <circle class="quiet-dot" cx="775" cy="684" r="4"/><text class="body" x="788" y="689">Online</text><text class="tiny muted" x="788" y="710">direct /status</text>
-    <text class="body mono" x="970" y="689">4f09f6f5716d</text><text class="tiny green" x="970" y="710">Verified</text><text class="body" x="1140" y="689">3 / 3 active</text><text class="body mono" x="1300" y="689">8s</text>
+    <circle class="quiet-dot" cx="775" cy="684" r="4"/><text class="body" x="788" y="689">Healthy</text><text class="tiny muted" x="788" y="710">trusted learned state</text>
+    <text class="body mono" x="970" y="689">4f09f6f5716d</text><text class="tiny green" x="970" y="710">Verified</text><text class="body" x="1140" y="689">3 / 3 observed</text><text class="body mono" x="1300" y="689">8s</text>
     <use href="#icon-arrow-right" x="1518" y="679" width="14" height="14" class="action-icon"/><line class="rule" x1="41" y1="727" x2="1539" y2="727"/>
 
-    <text class="tiny muted" x="41" y="753">SSH is control-local management data; Public is the control-verified network endpoint. They may differ and are never derived from each other.</text>
+    <text class="tiny muted" x="41" y="753">Declared endpoint is SSOT intent; UDP ingress remains unverified. Durable management host/user remain a control-inventory gap.</text>
     <text class="small green" x="1430" y="753">View topology</text><use href="#icon-arrow-right" x="1518" y="741" width="14" height="14" class="action-icon"/>
   </g>
 
-  <!-- One control-wide key pair is reused; it is never created per node. -->
+  <!-- Enrollment reuses one implemented control-wide key pair. -->
   <rect class="panel" x="21" y="789" width="1538" height="184" rx="7"/>
   <g class="ui">
-    <text class="section" x="41" y="821">Control bootstrap identity</text><circle class="quiet-dot" cx="365" cy="816" r="4"/><text class="tiny green" x="378" y="821">Ready · one control-wide key pair</text>
+    <text class="section" x="41" y="821">Control bootstrap identity</text><circle class="quiet-dot" cx="365" cy="816" r="4"/><text class="tiny green" x="378" y="821">Implemented · one control-wide key</text>
     <text class="tiny muted" x="41" y="844">Fingerprint SHA256:yAaQ7u7vY2qJ…r9cW · generated once and reused by every enrollment.</text>
     <rect class="code-bg" x="41" y="860" width="602" height="45" rx="5"/><use href="#icon-key" x="56" y="875" width="14" height="14" class="action-icon"/>
     <text class="tiny mono" x="81" y="888">ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA… loom-control-bootstrap</text>
@@ -372,24 +390,24 @@ def nodes_page() -> str:
     <text class="body" x="1140" y="853">One control-wide ED25519 identity</text>
     <text class="body" x="1140" y="881">The same public key authorizes every bootstrap</text>
     <text class="body" x="1140" y="909">Private material is never exported</text>
-    <text class="body" x="1140" y="937">Authorization is removed after first trusted report</text>
+    <text class="body" x="1140" y="937">Revoke separately after Agent/TLS bootstrap, if desired</text>
   </g>
 '''
     return shell(
         active="Nodes",
         eyebrow="NETWORK / NODES",
         title="Nodes",
-        subtitle="Enroll managed hosts and monitor their newest trusted state",
-        status="5 declared · 5 online · 0 joining",
+        subtitle="Monitor trusted node state · host-key-guarded enrollment on the control node",
+        status="5 declared · 5 healthy · enrollment available",
         description="A full-width node inventory with one control-wide bootstrap SSH identity and a clear entry point to a separate onboarding page, distinct from platform signing trust and node-local WireGuard identity.",
         body=body,
-        session_status="Authenticated",
+        session_status="Control workflow",
     )
 
 
 def node_add_page() -> str:
     body = r'''
-  <!-- A task-oriented stepper; implementation statuses stay inside each step. -->
+  <!-- Implemented task-oriented SSH trust and guarded SSOT workflow. -->
   <rect class="panel" x="21" y="202" width="1538" height="82" rx="7"/>
   <g class="ui">
     <use href="#icon-status-ok" x="46" y="228" width="20" height="20" class="status-icon"/>
@@ -397,7 +415,7 @@ def node_add_page() -> str:
     <circle cx="558" cy="238" r="10" fill="#EEF8F3" stroke="#2AA875"/><text class="tiny green" x="558" y="242" text-anchor="middle" font-weight="650">2</text>
     <text class="tiny green" x="586" y="231">CURRENT</text><text class="section" x="586" y="256">Review identity &amp; policy</text>
     <circle cx="1086" cy="238" r="10" fill="#F4F6F5" stroke="#CBD0CD"/><text class="tiny muted" x="1086" y="242" text-anchor="middle" font-weight="650">3</text>
-    <text class="tiny muted" x="1114" y="231">NEXT</text><text class="section" x="1114" y="256">Add hk01 to network</text>
+    <text class="tiny muted" x="1114" y="231">NEXT</text><text class="section" x="1114" y="256">Save reviewed declaration</text>
   </g>
   <line class="rule" x1="509" y1="222" x2="509" y2="265"/><line class="rule" x1="1037" y1="222" x2="1037" y2="265"/>
 
@@ -412,10 +430,10 @@ def node_add_page() -> str:
     <text class="tiny mono" x="82" y="430">ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA…</text><use href="#icon-copy" x="489" y="417" width="14" height="14" class="action-icon" aria-label="Copy shared control public key"/>
 
     <text class="small muted" x="41" y="480">HOST OR IP ADDRESS</text><text class="small muted" x="263" y="480">SSH USER</text><text class="small muted" x="441" y="480">PORT</text>
-    <rect class="panel-soft" x="41" y="492" width="210" height="50" rx="6"/><text class="body mono" x="57" y="523">10.24.0.18</text>
+    <rect class="panel-soft" x="41" y="492" width="210" height="50" rx="6"/><text class="body mono" x="57" y="523">hk01.edge.example.net</text>
     <rect class="panel-soft" x="263" y="492" width="166" height="50" rx="6"/><text class="small mono" x="279" y="523">loom-bootstrap</text>
     <rect class="panel-soft" x="441" y="492" width="80" height="50" rx="6"/><text class="body mono" x="457" y="523">22</text>
-    <text class="tiny muted" x="41" y="562">SSH enrollment only · not the public endpoint</text><text class="tiny green" x="521" y="562" text-anchor="end">Advanced →</text>
+    <text class="tiny muted" x="41" y="562">Input once · eligible only as a control-resolved candidate</text><text class="tiny green" x="521" y="562" text-anchor="end">Advanced →</text>
 
     <rect class="panel" x="41" y="584" width="202" height="41" rx="6"/><use href="#icon-refresh" x="58" y="597" width="14" height="14" class="action-icon"/><text class="small" x="83" y="610">Run preflight again</text>
 
@@ -429,24 +447,24 @@ def node_add_page() -> str:
 
     <line class="rule" x1="41" y1="865" x2="521" y2="865"/>
     <text class="tiny muted" x="41" y="892">Node ID comes from the verified remote hostname.</text>
-    <text class="tiny muted" x="41" y="916">The control plane determines endpoint and reachability.</text>
+    <text class="tiny muted" x="41" y="916">Control resolves and dials a global endpoint candidate.</text>
     <text class="tiny muted" x="41" y="940">Connection policy is reviewed separately after preflight.</text>
-    <text class="tiny amber" x="41" y="960">Example values only · bootstrap target and public endpoint are independent.</text>
+    <text class="tiny amber" x="41" y="960">Separate semantics · this version promotes only a trusted global SSH target as candidate.</text>
   </g>
 
   <!-- Discovery and the concrete SSOT diff have enough room to be reviewed. -->
   <rect class="panel" x="557" y="300" width="1002" height="673" rx="7"/>
   <g class="ui">
     <text class="section" x="577" y="332">Review discovered node</text>
-    <text class="tiny muted" x="577" y="354">Identity and endpoint are observed; Automatic recommends direction, but exposure policy still requires operator confirmation.</text>
+    <text class="tiny muted" x="577" y="354">Identity is SSH-observed; endpoint is a control-dialed candidate. UDP exposure is not inferred.</text>
 
     <text class="small muted" x="577" y="390">NODE ID</text><text class="metric mono" x="577" y="418">hk01</text><text class="tiny muted" x="577" y="438">From remote hostname · locked</text>
-    <text class="small muted" x="802" y="390">PUBLIC ENDPOINT</text><text class="metric mono" x="802" y="418">hk01.edge.example.net</text><text class="tiny muted" x="802" y="438">Stable dial address · control-verified</text>
-    <text class="small muted" x="1097" y="390">CONNECTION POLICY</text><text class="tiny green" x="1322" y="390" text-anchor="end">Review →</text>
+    <text class="small muted" x="802" y="390">ENDPOINT CANDIDATE</text><text class="metric mono" x="802" y="418">hk01.edge.example.net</text><text class="tiny amber" x="802" y="438">Global SSH dial succeeded · UDP unverified</text>
+    <text class="small muted" x="1097" y="390">CONNECTION DIRECTION</text><text class="tiny green" x="1322" y="390" text-anchor="end">Review →</text>
     <rect class="panel-soft" x="1097" y="398" width="225" height="36" rx="5" aria-label="Change connection policy"/>
-    <text class="body" x="1112" y="421">Automatic</text><text class="tiny green mono" x="1201" y="421">→ bidirectional</text>
+    <text class="body" x="1112" y="421">Automatic</text><text class="tiny green mono" x="1201" y="421">→ reverse_only</text>
     <path d="M1302 411l5 5 5-5" fill="none" stroke="#717674" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-    <text class="tiny muted" x="1097" y="450">UDP ingress + callback egress · 12s ago</text>
+    <text class="tiny muted" x="1097" y="450">Recompute, review, then commit a locked direction</text>
     <text class="small muted" x="1378" y="390">EGRESS</text><text class="metric green" x="1378" y="418">Enabled</text><text class="tiny muted" x="1378" y="438">New-node default</text>
     <line class="rule" x1="772" y1="378" x2="772" y2="454"/><line class="rule" x1="1067" y1="378" x2="1067" y2="454"/><line class="rule" x1="1348" y1="378" x2="1348" y2="454"/>
 
@@ -454,26 +472,27 @@ def node_add_page() -> str:
     <text class="section" x="577" y="493">Proposed network changes</text><text class="tiny green" x="1539" y="493" text-anchor="end">Recomputed with policy · no conflicts</text>
     <text class="small muted" x="583" y="523">EDGE</text><text class="small muted" x="765" y="523">TUNNEL ADDRESSES</text><text class="small muted" x="1048" y="523">ACCEPTOR / LISTEN</text><text class="small muted" x="1240" y="523">INITIATOR</text><text class="small muted" x="1360" y="523">FIREWALL</text>
     <line class="rule" x1="577" y1="531" x2="1539" y2="531"/>
-    <text class="body mono" x="583" y="559">hk01 ↔ sg02</text><text class="body mono" x="765" y="559">10.99.0.7/32 ↔ 10.99.0.8/32</text><text class="body mono" x="1048" y="559">hk01 · 61775/udp</text><text class="body mono" x="1240" y="559">sg02</text><text class="body" x="1360" y="559">Allow UDP on hk01</text>
-    <text class="body mono" x="583" y="595">hk01 ↔ ber01</text><text class="body mono" x="765" y="595">10.99.1.7/32 ↔ 10.99.1.8/32</text><text class="body mono" x="1048" y="595">hk01 · 61683/udp</text><text class="body mono" x="1240" y="595">ber01</text><text class="body" x="1360" y="595">Allow UDP on hk01</text>
-    <line class="rule" x1="577" y1="571" x2="1539" y2="571"/><line class="rule" x1="577" y1="607" x2="1539" y2="607"/>
+    <text class="body mono" x="583" y="552">hk01 ↔ jm24</text><text class="body mono" x="765" y="552">10.99.2.1/32 ↔ 10.99.2.2/32</text><text class="body mono" x="1048" y="552">jm24 · 61775/udp</text><text class="body mono" x="1240" y="552">hk01</text><text class="body" x="1360" y="552">Allow UDP on jm24</text>
+    <text class="body mono" x="583" y="579">hk01 ↔ gz02</text><text class="body mono" x="765" y="579">10.99.2.3/32 ↔ 10.99.2.4/32</text><text class="body mono" x="1048" y="579">gz02 · 61683/udp</text><text class="body mono" x="1240" y="579">hk01</text><text class="body" x="1360" y="579">Allow UDP on gz02</text>
+    <text class="body mono" x="583" y="606">hk01 ↔ hz01</text><text class="body mono" x="765" y="606">10.99.2.5/32 ↔ 10.99.2.6/32</text><text class="body mono" x="1048" y="606">hz01 · 61719/udp</text><text class="body mono" x="1240" y="606">hk01</text><text class="body" x="1360" y="606">Allow UDP on hz01</text>
+    <line class="rule" x1="577" y1="560" x2="1539" y2="560"/><line class="rule" x1="577" y1="587" x2="1539" y2="587"/><line class="rule" x1="577" y1="614" x2="1539" y2="614"/>
 
-    <text class="small muted" x="577" y="637">WIREGUARD IDENTITY</text><text class="body amber" x="755" y="637">Prepared on hk01 when enrollment starts</text>
+    <text class="small muted" x="577" y="637">WIREGUARD IDENTITY</text><text class="body amber" x="755" y="637">Prepared on hk01 at commit</text>
     <text class="tiny muted" x="1098" y="637">Reuse existing key or generate locally · private key never leaves hk01</text>
     <line class="rule" x1="577" y1="657" x2="1539" y2="657"/>
 
     <text class="section" x="577" y="687">SSOT change summary</text>
     <circle class="quiet-dot" cx="583" cy="713" r="3.5"/><text class="body" x="596" y="718">Add node <tspan class="mono">hk01</tspan> using its verified hostname</text>
-    <circle class="quiet-dot" cx="583" cy="743" r="3.5"/><text class="body" x="596" y="748">Record the stable dial endpoint independently verified by control</text>
-    <circle class="quiet-dot" cx="583" cy="773" r="3.5"/><text class="body" x="596" y="778">Save direction <tspan class="mono">bidirectional</tspan> · enable egress · add 2 persistent tunnels</text>
-    <circle class="neutral-dot" cx="583" cy="803" r="3.5"/><text class="body" x="596" y="808">No service or routing policy changes</text>
-    <text class="tiny amber" x="577" y="838">The node will not carry application traffic until a routing policy allows it.</text>
+    <circle class="quiet-dot" cx="583" cy="743" r="3.5"/><text class="body" x="596" y="748">Record the global endpoint candidate successfully dialed by control</text>
+    <circle class="quiet-dot" cx="583" cy="773" r="3.5"/><text class="body" x="596" y="778">Save direction <tspan class="mono">reverse_only</tspan> · enable egress · add derived persistent tunnels</text>
+    <circle class="neutral-dot" cx="583" cy="803" r="3.5"/><text class="body" x="596" y="808">No service or access policy changes</text>
+    <text class="tiny amber" x="577" y="838">Declaration only · Agent, platform trust, node secrets and TLS identity are not installed by this action.</text>
 
     <line class="rule" x1="577" y1="858" x2="1539" y2="858"/>
     <circle class="quiet-dot" cx="583" cy="887" r="4"/><text class="small green" x="596" y="892">Discovery and allocation plan are valid</text>
     <rect class="panel" x="1193" y="875" width="118" height="42" rx="6"/><text class="small" x="1252" y="901" text-anchor="middle">Cancel</text>
-    <rect class="button-green" x="1325" y="875" width="214" height="42" rx="6"/><use href="#icon-check" x="1344" y="889" width="14" height="14" stroke="#FFFFFF" fill="none" stroke-width="1.5"/><text class="small" x="1369" y="901" fill="#FFFFFF">Add hk01 to network</text>
-    <text class="tiny muted" x="577" y="947"><tspan font-weight="600" fill="#181B1A">On confirm:</tspan> prepare hk01 WireGuard identity → commit node and tunnels atomically → publish → verify its first trusted report.</text>
+    <rect class="button-green" x="1325" y="875" width="214" height="42" rx="6"/><use href="#icon-check" x="1338" y="889" width="14" height="14" stroke="#FFFFFF" fill="none" stroke-width="1.5"/><text class="tiny" x="1359" y="900" fill="#FFFFFF">Prepare WG + save declaration</text>
+    <text class="tiny muted" x="577" y="947"><tspan font-weight="600" fill="#181B1A">On confirm:</tspan> prepare hk01 WG identity → revision-guarded SSOT save → remain joining until separate Agent/TLS bootstrap and trusted report.</text>
   </g>
 '''
     return shell(
@@ -481,10 +500,10 @@ def node_add_page() -> str:
         eyebrow="NODES / ADD",
         title="Add node",
         subtitle="Connect once; the control plane discovers identity, endpoint and the resulting network changes",
-        status="Only SSH connection details are entered manually",
-        description="A dedicated node onboarding page where the operator enters SSH bootstrap coordinates, reviews an automatic but editable connection-direction policy, and confirms a concrete control-discovered identity, endpoint, SSOT diff, and tunnel plan.",
+        status="Authenticated workflow · host key and SSOT revision guarded",
+        description="A dedicated declaration-bootstrap page where the operator enters SSH coordinates, confirms an Ed25519 host fingerprint, reviews a direction-bound tunnel plan, and prepares the remote WireGuard identity before an SSOT revision-guarded save. It explicitly does not claim to install or start the Loom Agent.",
         body=body,
-        session_status="Authenticated",
+        session_status="Write session",
     )
 
 
@@ -560,50 +579,54 @@ def topology_page() -> str:
 
     <text class="small muted" x="1132" y="266">CONFIG INTENT</text>
     <text class="metric" x="1132" y="290">6 persistent links</text>
-    <text class="tiny muted" x="1132" y="309">Source · signed snapshot / SSOT</text>
+    <text class="tiny muted" x="1132" y="309">Source · current validated SSOT · desired state</text>
 
     <line class="rule" x1="1132" y1="327" x2="1539" y2="327"/>
     <text class="small muted" x="1132" y="352">TRUSTED OBSERVATION</text>
     <circle class="status-dot" cx="1137" cy="376" r="4"/>
-    <text class="metric" x="1150" y="381">6 / 6 active</text>
+    <text class="metric" x="1150" y="381">6 / 6 reachable</text>
     <text class="tiny muted" x="1132" y="401">report.neighbors · newest 8s · oldest 16s</text>
 
     <line class="rule" x1="1132" y1="419" x2="1539" y2="419"/>
     <text class="small muted" x="1132" y="444">AGENT DECISION</text>
-    <text class="body" x="1260" y="444">Routing-entry overlay</text>
-    <text class="tiny amber" x="1132" y="462">Design target · requires upgraded Agent reporting</text>
+    <text class="body" x="1260" y="444">Single-entry path overlay</text>
+    <text class="tiny green" x="1132" y="462">Reported · signed Agent path decision</text>
   </g>
 
-  <!-- Focused-link traffic preview; history is not collected centrally yet. -->
+  <!-- Focused-link history: each endpoint contributes TX only. -->
   <rect class="panel" x="1112" y="488" width="447" height="192" rx="7"/>
   <g class="ui">
     <text class="section" x="1132" y="518">Link traffic</text>
-    <text class="tiny amber" x="1539" y="518" text-anchor="end">Planned · not collected centrally</text>
+    <text class="tiny green" x="1539" y="518" text-anchor="end">Retained · endpoint TX only</text>
     <text class="body mono" x="1132" y="545">Inspecting · gz02 ↔ sg02</text>
 
-    <text class="tiny green" x="1132" y="568">gz02 → sg02</text>
-    <text class="metric" x="1132" y="590">4.8 Mbps</text>
-    <text class="tiny blue" x="1132" y="615">sg02 → gz02</text>
-    <text class="metric" x="1132" y="637">2.2 Mbps</text>
-    <text class="small muted" x="1132" y="662">24h · 205 / 198 GB</text>
+    <text class="tiny green" x="1132" y="568">Endpoint TX total</text>
+    <text class="metric" x="1132" y="590">403 GB</text>
+    <text class="tiny blue" x="1132" y="615">Reporting endpoints</text>
+    <text class="metric" x="1132" y="637">2</text>
+    <text class="small muted" x="1132" y="662">Undirected link · no RX double-count</text>
 
     <line class="rule" x1="1288" y1="546" x2="1539" y2="546"/>
     <line class="rule" x1="1288" y1="579" x2="1539" y2="579"/>
     <line class="rule" x1="1288" y1="612" x2="1539" y2="612"/>
     <line class="rule" x1="1288" y1="645" x2="1539" y2="645"/>
-    <g aria-label="Eight directional traffic buckets">
+    <g aria-label="Accepted undirected link TX buckets plus one reset and one long gap">
       <g fill="#2AA875">
         <rect x="1293" y="627" width="8" height="18" rx="1"/><rect x="1323" y="613" width="8" height="32" rx="1"/>
-        <rect x="1353" y="620" width="8" height="25" rx="1"/><rect x="1383" y="629" width="8" height="16" rx="1"/>
+        <rect x="1353" y="620" width="8" height="25" rx="1"/>
         <rect x="1413" y="603" width="8" height="42" rx="1"/><rect x="1443" y="589" width="8" height="56" rx="1"/>
-        <rect x="1473" y="610" width="8" height="35" rx="1"/><rect x="1503" y="595" width="8" height="50" rx="1"/>
+        <rect x="1503" y="595" width="8" height="50" rx="1"/>
       </g>
       <g fill="#477D9C" fill-opacity="0.82">
         <rect x="1303" y="633" width="8" height="12" rx="1"/><rect x="1333" y="625" width="8" height="20" rx="1"/>
-        <rect x="1363" y="627" width="8" height="18" rx="1"/><rect x="1393" y="635" width="8" height="10" rx="1"/>
+        <rect x="1363" y="627" width="8" height="18" rx="1"/>
         <rect x="1423" y="617" width="8" height="28" rx="1"/><rect x="1453" y="610" width="8" height="35" rx="1"/>
-        <rect x="1483" y="623" width="8" height="22" rx="1"/><rect x="1513" y="616" width="8" height="29" rx="1"/>
+        <rect x="1513" y="616" width="8" height="29" rx="1"/>
       </g>
+      <rect x="1381" y="584" width="20" height="61" rx="1" fill="none" stroke="#D79B3B" stroke-dasharray="3 3"/>
+      <rect x="1471" y="584" width="20" height="61" rx="1" fill="none" stroke="#A5AAA8" stroke-dasharray="3 3"/>
+      <text class="tiny amber" x="1391" y="599" text-anchor="middle">R</text>
+      <text class="tiny muted" x="1481" y="599" text-anchor="middle">G</text>
     </g>
     <text class="tiny muted" x="1288" y="663">1h ago</text>
     <text class="tiny muted" x="1539" y="663" text-anchor="end">now</text>
@@ -614,24 +637,23 @@ def topology_page() -> str:
   <rect x="31" y="835" width="1518" height="31" rx="4" fill="#F1F8F4"/>
   <g class="ui">
     <text class="section" x="40" y="726">Persistent WireGuard edges</text>
-    <text class="tiny muted" x="318" y="726">RTT/state observed · traffic values illustrate A→B / B→A</text>
-    <text class="tiny amber" x="1539" y="726" text-anchor="end">Planned · not collected centrally</text>
+    <text class="tiny muted" x="318" y="726">24h link bytes = TX deltas from each endpoint; receiver RX is not added again</text>
+    <text class="tiny green" x="1539" y="726" text-anchor="end">Control retention · 30 days</text>
     <text class="small muted" x="46" y="758">EDGE</text>
-    <text class="small muted" x="300" y="758">NOW · PLANNED</text>
-    <text class="small muted" x="520" y="758">24H · PLANNED</text>
-    <text class="small muted" x="735" y="758">SINCE COUNTER RESET · PLANNED</text>
+    <text class="small muted" x="300" y="758">24H TX TOTAL / BAR</text>
+    <text class="small muted" x="735" y="758">BUCKETS WITH SAMPLES</text>
     <text class="small muted" x="965" y="758">RTT</text>
     <text class="small muted" x="1080" y="758">STATE</text>
-    <text class="small muted" x="1270" y="758">CARRIER OBSERVED</text>
+    <text class="small muted" x="1270" y="758">LATEST TRUSTED SAMPLE</text>
   </g>
   <line class="rule" x1="40" y1="766" x2="1540" y2="766"/>
   <g class="ui body">
-    <text class="mono" x="46" y="794">jm24 ↔ sg02</text><text class="mono" x="300" y="794">5.8 / 4.6 Mbps</text><text class="mono" x="520" y="794">190 / 210 GB</text><text class="mono" x="735" y="794">2.91 / 3.84 TB</text><text class="mono" x="965" y="794">277 ms</text><circle class="quiet-dot" cx="1084" cy="789" r="4"/><text x="1097" y="794">Active</text><text class="muted" x="1270" y="794">8s ago</text>
-    <text class="mono" x="46" y="826">jm24 ↔ ber01</text><text class="mono" x="300" y="826">4.9 / 3.3 Mbps</text><text class="mono" x="520" y="826">112 / 126 GB</text><text class="mono" x="735" y="826">1.11 / 2.10 TB</text><text class="mono" x="965" y="826">150 ms</text><circle class="quiet-dot" cx="1084" cy="821" r="4"/><text x="1097" y="826">Active</text><text class="muted" x="1270" y="826">8s ago</text>
-    <text class="mono" x="46" y="858">gz02 ↔ sg02</text><text class="mono green" x="300" y="858">4.8 / 2.2 Mbps</text><text class="mono" x="520" y="858">205 / 198 GB</text><text class="mono" x="735" y="858">4.31 / 3.02 TB</text><text class="mono" x="965" y="858">190 ms</text><circle class="quiet-dot" cx="1084" cy="853" r="4"/><text x="1097" y="858">Active</text><text class="muted" x="1270" y="858">11s ago</text>
-    <text class="mono" x="46" y="890">gz02 ↔ ber01</text><text class="mono" x="300" y="890">2.3 / 1.6 Mbps</text><text class="mono" x="520" y="890">139 / 203 GB</text><text class="mono" x="735" y="890">0.88 / 0.63 TB</text><text class="mono" x="965" y="890">226 ms</text><circle class="quiet-dot" cx="1084" cy="885" r="4"/><text x="1097" y="890">Active</text><text class="muted" x="1270" y="890">11s ago</text>
-    <text class="mono" x="46" y="922">hz01 ↔ sg02</text><text class="mono" x="300" y="922">2.1 / 1.4 Mbps</text><text class="mono" x="520" y="922">100 / 79 GB</text><text class="mono" x="735" y="922">1.02 / 0.71 TB</text><text class="mono" x="965" y="922">350 ms</text><circle class="quiet-dot" cx="1084" cy="917" r="4"/><text x="1097" y="922">Active</text><text class="muted" x="1270" y="922">13s ago</text>
-    <text class="mono" x="46" y="954">hz01 ↔ ber01</text><text class="mono" x="300" y="954">1.0 / 0.8 Mbps</text><text class="mono" x="520" y="954">128 / 150 GB</text><text class="mono" x="735" y="954">0.54 / 0.39 TB</text><text class="mono" x="965" y="954">240 ms</text><circle class="quiet-dot" cx="1084" cy="949" r="4"/><text x="1097" y="954">Active</text><text class="muted" x="1270" y="954">13s ago</text>
+    <text class="mono" x="46" y="794">jm24 ↔ sg02</text><text class="mono" x="300" y="794">400 GB</text><rect x="415" y="784" width="245" height="10" rx="2" fill="#EEF1EF"/><rect x="415" y="784" width="243" height="10" rx="2" fill="#72C69F"/><text class="mono" x="735" y="794">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="794">277 ms</text><circle class="quiet-dot" cx="1084" cy="789" r="4"/><text x="1097" y="794">Active</text><text class="muted" x="1270" y="794">8s ago</text>
+    <text class="mono" x="46" y="826">jm24 ↔ ber01</text><text class="mono" x="300" y="826">238 GB</text><rect x="415" y="816" width="245" height="10" rx="2" fill="#EEF1EF"/><rect x="415" y="816" width="145" height="10" rx="2" fill="#72C69F"/><text class="mono" x="735" y="826">23 / 24 · G1</text><text class="mono" x="965" y="826">150 ms</text><circle class="quiet-dot" cx="1084" cy="821" r="4"/><text x="1097" y="826">Active</text><text class="muted" x="1270" y="826">8s ago</text>
+    <text class="mono" x="46" y="858">gz02 ↔ sg02</text><text class="mono green" x="300" y="858">403 GB</text><rect x="415" y="848" width="245" height="10" rx="2" fill="#DDEFE6"/><rect x="415" y="848" width="245" height="10" rx="2" fill="#239B68"/><text class="mono green" x="735" y="858">22 / 24 · R1 G1</text><text class="mono" x="965" y="858">190 ms</text><circle class="quiet-dot" cx="1084" cy="853" r="4"/><text x="1097" y="858">Active</text><text class="muted" x="1270" y="858">11s ago</text>
+    <text class="mono" x="46" y="890">gz02 ↔ ber01</text><text class="mono" x="300" y="890">342 GB</text><rect x="415" y="880" width="245" height="10" rx="2" fill="#EEF1EF"/><rect x="415" y="880" width="208" height="10" rx="2" fill="#72C69F"/><text class="mono" x="735" y="890">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="890">226 ms</text><circle class="quiet-dot" cx="1084" cy="885" r="4"/><text x="1097" y="890">Active</text><text class="muted" x="1270" y="890">11s ago</text>
+    <text class="mono" x="46" y="922">hz01 ↔ sg02</text><text class="mono" x="300" y="922">179 GB</text><rect x="415" y="912" width="245" height="10" rx="2" fill="#EEF1EF"/><rect x="415" y="912" width="109" height="10" rx="2" fill="#72C69F"/><text class="mono" x="735" y="922">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="922">350 ms</text><circle class="quiet-dot" cx="1084" cy="917" r="4"/><text x="1097" y="922">Active</text><text class="muted" x="1270" y="922">13s ago</text>
+    <text class="mono" x="46" y="954">hz01 ↔ ber01</text><text class="mono" x="300" y="954">278 GB</text><rect x="415" y="944" width="245" height="10" rx="2" fill="#EEF1EF"/><rect x="415" y="944" width="169" height="10" rx="2" fill="#72C69F"/><text class="mono" x="735" y="954">23 / 24 · G1</text><text class="mono" x="965" y="954">240 ms</text><circle class="quiet-dot" cx="1084" cy="949" r="4"/><text x="1097" y="954">Active</text><text class="muted" x="1270" y="954">13s ago</text>
   </g>
   <line class="rule" x1="40" y1="802" x2="1540" y2="802"/><line class="rule" x1="40" y1="834" x2="1540" y2="834"/><line class="rule" x1="40" y1="866" x2="1540" y2="866"/><line class="rule" x1="40" y1="898" x2="1540" y2="898"/><line class="rule" x1="40" y1="930" x2="1540" y2="930"/>
 '''
@@ -641,7 +663,7 @@ def topology_page() -> str:
         title="Network topology",
         subtitle="Intent, trusted observations and routing-entry Agent decisions · observed 2026-08-27 17:54 UTC",
         status="5 nodes · 6 persistent WireGuard links · 51 configured candidate paths",
-        description="A layered network topology view distinguishing SSOT intent, persistent WireGuard observations, configured candidate paths, Agent route decisions, and clearly marked target link-traffic telemetry.",
+        description="A layered network topology view distinguishing SSOT intent, persistent WireGuard observations, configured candidate paths, Agent route decisions, and centrally retained TX-only link-delta bars with explicit missing-sample gaps.",
         body=body,
     )
 
@@ -655,7 +677,7 @@ def node_detail_page() -> str:
   <rect class="panel" x="21" y="202" width="1538" height="78" rx="7"/>
   <g class="ui">
     <text class="label" x="51" y="228">Snapshot</text><text class="metric mono" x="51" y="255">4f09f6f5716d</text>
-    <text class="label" x="415" y="228">Commit</text><text class="metric mono" x="415" y="255">28224ed</text>
+    <text class="label" x="415" y="228">Loom code</text><text class="metric mono" x="415" y="255">28224ed</text>
     <text class="label" x="745" y="228">Binary</text><text class="metric mono" x="745" y="255">449597b5…</text>
     <text class="label" x="1064" y="228">WireGuard tools</text><text class="metric mono" x="1064" y="255">1.0.20250521</text>
     <text class="label" x="1390" y="228">Rollout</text><text class="metric green" x="1390" y="255">Verified</text>
@@ -673,7 +695,7 @@ def node_detail_page() -> str:
     <text class="body mono" x="47" y="458">loom-publisher</text><text class="body" x="270" y="458">automatic release</text><circle class="quiet-dot" cx="504" cy="453" r="4"/><text class="body" x="517" y="458">Active</text><text class="body mono" x="680" y="458">0</text>
     <text class="body mono" x="47" y="485">loom-pull.timer</text><text class="body" x="270" y="485">snapshot convergence</text><circle class="quiet-dot" cx="504" cy="480" r="4"/><text class="body" x="517" y="485">Waiting</text><text class="body mono" x="680" y="485">—</text>
     <line class="rule" x1="41" y1="412" x2="759" y2="412"/><line class="rule" x1="41" y1="439" x2="759" y2="439"/><line class="rule" x1="41" y1="466" x2="759" y2="466"/><line class="rule" x1="41" y1="493" x2="759" y2="493"/>
-    <text class="subsection" x="41" y="521">Component parity <tspan class="tiny muted" font-weight="400">· host audit, not yet reported centrally</tspan></text>
+    <text class="subsection" x="41" y="521">Component parity <tspan class="tiny muted" font-weight="400">· signed expected / actual report</tspan></text>
     <text class="small muted" x="47" y="546">COMPONENT</text><text class="small muted" x="260" y="546">EXPECTED</text><text class="small muted" x="475" y="546">ACTUAL</text><text class="small muted" x="670" y="546">RESULT</text>
     <line class="rule" x1="41" y1="554" x2="759" y2="554"/>
     <text class="body" x="47" y="576">sing-box</text><text class="body mono" x="260" y="576">managed</text><text class="body mono" x="475" y="576">managed</text><text class="body green" x="670" y="576">Match</text>
@@ -683,40 +705,45 @@ def node_detail_page() -> str:
   <rect class="panel" x="795" y="296" width="764" height="320" rx="7"/>
   <g class="ui">
     <text class="section" x="815" y="325">Observation</text><circle class="status-dot" cx="1444" cy="321" r="4"/><text class="tiny green" x="1539" y="325" text-anchor="end">Verified healthy</text>
-    <text class="small muted" x="815" y="358">SOURCE</text><text class="body" x="1015" y="358">Direct /status · signed local statement</text>
+    <text class="small muted" x="815" y="358">SOURCE</text><text class="body" x="1015" y="358">Direct /status · local evidence</text>
     <text class="small muted" x="815" y="388">ROLE</text><text class="body" x="1015" y="388">Access + tunnel endpoint · runtime control</text>
     <text class="small muted" x="815" y="418">EGRESS CAPABLE</text><text class="body" x="1015" y="418">No · local direct remains a zero-hop candidate</text>
     <line class="rule" x1="815" y1="443" x2="1539" y2="443"/>
 
-    <text class="section" x="815" y="473">WireGuard interface I/O</text><text class="tiny muted" x="1539" y="473" text-anchor="end">Direct payload · not attested</text>
+    <text class="section" x="815" y="473">WireGuard interface I/O</text><text class="tiny green" x="1539" y="473" text-anchor="end">Current cumulative · direct-self evidence</text>
     <text class="small muted" x="833" y="501">INTERFACE</text><text class="small muted" x="992" y="501">PEER</text><text class="small muted" x="1115" y="501">RX TOTAL</text><text class="small muted" x="1248" y="501">TX TOTAL</text><text class="small muted" x="1400" y="501">HANDSHAKE</text>
     <line class="rule" x1="815" y1="509" x2="1539" y2="509"/>
     <circle class="quiet-dot" cx="821" cy="532" r="4"/><text class="body mono" x="833" y="537">wg-sg02</text><text class="body mono" x="992" y="537">sg02</text><text class="body mono" x="1115" y="537">3.84 TB</text><text class="body mono" x="1248" y="537">2.91 TB</text><text class="body" x="1400" y="537">37s</text>
     <circle class="quiet-dot" cx="821" cy="562" r="4"/><text class="body mono" x="833" y="567">wg-ber01</text><text class="body mono" x="992" y="567">ber01</text><text class="body mono" x="1115" y="567">2.10 TB</text><text class="body mono" x="1248" y="567">1.11 TB</text><text class="body" x="1400" y="567">57s</text>
     <line class="rule" x1="815" y1="547" x2="1539" y2="547"/>
-    <text class="tiny muted" x="815" y="598">Raw counters since peer or interface recreation.</text>
+    <text class="tiny muted" x="815" y="598">/status: diagnostic + learned attachments · /traffic.json: latest report-round cache, schema v1 · fixed 60s samples / 3m gap.</text>
   </g>
 
   <!-- Traffic receives a full-width row instead of being squeezed into the right column. -->
   <rect class="panel" x="21" y="632" width="1538" height="128" rx="7"/>
   <g class="ui">
     <text class="section" x="41" y="660">Forwarding traffic · last 24h</text>
-    <text class="tiny amber" x="1539" y="660" text-anchor="end">Planned · history not retained</text>
-    <text class="small muted" x="41" y="686">NOW · RX+TX</text><text class="metric" x="41" y="713">18.6 Mbps</text>
-    <text class="small muted" x="212" y="686">TRANSFER · 24H</text><text class="metric" x="212" y="713">638 GB</text>
-    <text class="small muted" x="383" y="686">SINCE RESET</text><text class="metric" x="383" y="713">9.96 TB</text>
-    <text class="tiny muted" x="41" y="746">WireGuard only · direct traffic excluded · counters and planned history have different trust levels.</text>
+    <text class="tiny green" x="1539" y="660" text-anchor="end">Control retention · 30 days</text>
+    <text class="small muted" x="41" y="686">HISTORICAL RX</text><text class="metric" x="41" y="713">356 GB</text>
+    <text class="small muted" x="212" y="686">HISTORICAL TX</text><text class="metric" x="212" y="713">282 GB</text>
+    <text class="small muted" x="383" y="686">BUCKETS WITH SAMPLES</text><text class="metric" x="383" y="713">16 / 18</text>
+    <text class="tiny muted" x="41" y="746">WG only · direct, service/sing-box and Hysteria2 excluded.</text>
+    <text class="tiny muted" x="383" y="746">R/G = missing, not zero.</text>
 
     <rect x="620" y="674" width="10" height="8" rx="1" fill="#2AA875"/><text class="tiny green" x="637" y="682">RX</text>
     <rect x="671" y="674" width="10" height="8" rx="1" fill="#477D9C" fill-opacity=".82"/><text class="tiny blue" x="688" y="682">TX</text>
     <line class="rule" x1="620" y1="691" x2="1539" y2="691"/><line class="rule" x1="620" y1="711" x2="1539" y2="711"/><line class="rule" x1="620" y1="731" x2="1539" y2="731"/>
-    <g aria-label="Eighteen RX and TX time buckets across the last 24 hours">
+    <g aria-label="Sixteen accepted RX and TX buckets plus one counter reset and one long gap">
       <g fill="#2AA875">
-        <rect x="632" y="715" width="13" height="16" rx="1"/><rect x="681" y="705" width="13" height="26" rx="1"/><rect x="730" y="699" width="13" height="32" rx="1"/><rect x="779" y="709" width="13" height="22" rx="1"/><rect x="828" y="716" width="13" height="15" rx="1"/><rect x="877" y="695" width="13" height="36" rx="1"/><rect x="926" y="688" width="13" height="43" rx="1"/><rect x="975" y="697" width="13" height="34" rx="1"/><rect x="1024" y="708" width="13" height="23" rx="1"/><rect x="1073" y="712" width="13" height="19" rx="1"/><rect x="1122" y="702" width="13" height="29" rx="1"/><rect x="1171" y="691" width="13" height="40" rx="1"/><rect x="1220" y="686" width="13" height="45" rx="1"/><rect x="1269" y="700" width="13" height="31" rx="1"/><rect x="1318" y="706" width="13" height="25" rx="1"/><rect x="1367" y="694" width="13" height="37" rx="1"/><rect x="1416" y="703" width="13" height="28" rx="1"/><rect x="1465" y="689" width="13" height="42" rx="1"/>
+        <rect x="632" y="715" width="13" height="16" rx="1"/><rect x="681" y="705" width="13" height="26" rx="1"/><rect x="730" y="699" width="13" height="32" rx="1"/><rect x="779" y="709" width="13" height="22" rx="1"/><rect x="877" y="695" width="13" height="36" rx="1"/><rect x="926" y="688" width="13" height="43" rx="1"/><rect x="975" y="697" width="13" height="34" rx="1"/><rect x="1024" y="708" width="13" height="23" rx="1"/><rect x="1122" y="702" width="13" height="29" rx="1"/><rect x="1171" y="691" width="13" height="40" rx="1"/><rect x="1220" y="686" width="13" height="45" rx="1"/><rect x="1269" y="700" width="13" height="31" rx="1"/><rect x="1318" y="706" width="13" height="25" rx="1"/><rect x="1367" y="694" width="13" height="37" rx="1"/><rect x="1416" y="703" width="13" height="28" rx="1"/><rect x="1465" y="689" width="13" height="42" rx="1"/>
       </g>
       <g fill="#477D9C" fill-opacity=".82">
-        <rect x="647" y="723" width="13" height="8" rx="1"/><rect x="696" y="716" width="13" height="15" rx="1"/><rect x="745" y="712" width="13" height="19" rx="1"/><rect x="794" y="719" width="13" height="12" rx="1"/><rect x="843" y="724" width="13" height="7" rx="1"/><rect x="892" y="711" width="13" height="20" rx="1"/><rect x="941" y="705" width="13" height="26" rx="1"/><rect x="990" y="711" width="13" height="20" rx="1"/><rect x="1039" y="718" width="13" height="13" rx="1"/><rect x="1088" y="720" width="13" height="11" rx="1"/><rect x="1137" y="714" width="13" height="17" rx="1"/><rect x="1186" y="707" width="13" height="24" rx="1"/><rect x="1235" y="704" width="13" height="27" rx="1"/><rect x="1284" y="713" width="13" height="18" rx="1"/><rect x="1333" y="717" width="13" height="14" rx="1"/><rect x="1382" y="709" width="13" height="22" rx="1"/><rect x="1431" y="715" width="13" height="16" rx="1"/><rect x="1480" y="706" width="13" height="25" rx="1"/>
+        <rect x="647" y="723" width="13" height="8" rx="1"/><rect x="696" y="716" width="13" height="15" rx="1"/><rect x="745" y="712" width="13" height="19" rx="1"/><rect x="794" y="719" width="13" height="12" rx="1"/><rect x="892" y="711" width="13" height="20" rx="1"/><rect x="941" y="705" width="13" height="26" rx="1"/><rect x="990" y="711" width="13" height="20" rx="1"/><rect x="1039" y="718" width="13" height="13" rx="1"/><rect x="1137" y="714" width="13" height="17" rx="1"/><rect x="1186" y="707" width="13" height="24" rx="1"/><rect x="1235" y="704" width="13" height="27" rx="1"/><rect x="1284" y="713" width="13" height="18" rx="1"/><rect x="1333" y="717" width="13" height="14" rx="1"/><rect x="1382" y="709" width="13" height="22" rx="1"/><rect x="1431" y="715" width="13" height="16" rx="1"/><rect x="1480" y="706" width="13" height="25" rx="1"/>
       </g>
+      <rect x="826" y="686" width="32" height="45" rx="1" fill="none" stroke="#D79B3B" stroke-dasharray="3 3"/>
+      <rect x="1071" y="686" width="32" height="45" rx="1" fill="none" stroke="#A5AAA8" stroke-dasharray="3 3"/>
+      <text class="tiny amber" x="842" y="700" text-anchor="middle">R</text>
+      <text class="tiny muted" x="1087" y="700" text-anchor="middle">G</text>
     </g>
     <text class="tiny muted" x="620" y="748">24h ago</text><text class="tiny muted" x="1539" y="748" text-anchor="end">now</text>
   </g>
@@ -724,7 +751,7 @@ def node_detail_page() -> str:
   <!-- Existing detail is preserved in equal bottom columns. -->
   <rect class="panel" x="21" y="776" width="758" height="197" rx="7"/>
   <g class="ui">
-    <text class="section" x="41" y="806">Agent route decisions</text><text class="tiny amber" x="274" y="806">Locally verified · health evidence not published by legacy Agent</text>
+    <text class="section" x="41" y="806">Agent route decisions</text><text class="tiny green" x="274" y="806">Signed Agent report · selector and health summary available</text>
     <text class="small muted" x="47" y="834">ROUTING ENTRY</text><text class="small muted" x="223" y="834">CURRENT PATH</text><text class="small muted" x="588" y="834">EVIDENCE</text>
     <line class="rule" x1="41" y1="842" x2="759" y2="842"/>
     <text class="body mono" x="47" y="860">cn-web</text><text class="body mono" x="223" y="860">jm24 → direct</text><text class="tiny muted" x="588" y="860">runtime selector</text>
@@ -740,8 +767,8 @@ def node_detail_page() -> str:
     <text class="section" x="815" y="806">Measurements</text><text class="tiny muted" x="815" y="827">Uplink failures are actionable. Target failures are route-pruning data.</text>
     <text class="small muted" x="821" y="852">TYPE</text><text class="small muted" x="955" y="852">TARGET</text><text class="small muted" x="1218" y="852">OBSERVATION</text><text class="small muted" x="1442" y="852">MEANING</text>
     <line class="rule" x1="815" y1="860" x2="1539" y2="860"/>
-    <text class="body" x="821" y="884">uplink</text><text class="body" x="955" y="884">www.baidu.com</text><text class="body green" x="1218" y="884">63 ms · reachable</text><text class="body" x="1442" y="884">Healthy</text>
-    <text class="body" x="821" y="919">target</text><text class="body" x="955" y="919">api.ipify.org</text><text class="body blue" x="1218" y="919">5 / 5 timeout</text><text class="body blue" x="1442" y="919">Pruning data</text>
+    <text class="body" x="821" y="884">uplink</text><text class="body" x="955" y="884">uplink.example.net</text><text class="body green" x="1218" y="884">63 ms · reachable</text><text class="body" x="1442" y="884">Healthy</text>
+    <text class="body" x="821" y="919">target</text><text class="body" x="955" y="919">api.ipify.org</text><text class="body blue" x="1218" y="919">5 / 5 timeout</text><text class="body blue" x="1442" y="919">Mainland classification</text>
     <text class="body" x="821" y="954">edge</text><text class="body mono" x="955" y="954">jm24 ↔ sg02</text><text class="body green" x="1218" y="954">277 ms · 4/4</text><text class="body" x="1442" y="954">Carrier</text>
     <line class="rule" x1="815" y1="895" x2="1539" y2="895"/><line class="rule" x1="815" y1="930" x2="1539" y2="930"/>
   </g>
@@ -763,9 +790,9 @@ def services_page() -> str:
   <g class="ui">
     <rect class="chip-green" x="21" y="202" width="122" height="34" rx="17"/>
     <text class="small green" x="82" y="224" text-anchor="middle">Services · 2</text>
-    <text class="small muted" x="169" y="224">Routing policies · 3</text>
+    <text class="small muted" x="169" y="224">Access policies · 3</text>
     <circle class="quiet-dot" cx="326" cy="219" r="4"/><text class="small green" x="339" y="224">All definitions valid</text>
-    <rect class="chip-amber" x="486" y="202" width="225" height="34" rx="17"/><text class="tiny amber" x="599" y="223" text-anchor="middle">Target state · write API pending</text>
+    <rect class="chip-green" x="486" y="202" width="225" height="34" rx="17"/><text class="tiny green" x="599" y="223" text-anchor="middle">Structured save · implemented</text>
     <rect class="button" x="1390" y="198" width="169" height="40" rx="6"/>
     <use href="#icon-plus" x="1413" y="210" width="15" height="15" stroke="#FFFFFF" fill="none" stroke-width="1.5" stroke-linecap="round"/>
     <text class="small" x="1439" y="223" fill="#FFFFFF">Add service</text>
@@ -809,7 +836,7 @@ def services_page() -> str:
     <text class="subsection" x="467" y="373">Identity</text>
     <text class="small muted" x="467" y="401">SERVICE ID</text><text class="small muted" x="821" y="401">DISPLAY NAME</text>
     <rect class="button-disabled" x="467" y="412" width="330" height="54" rx="6"/>
-    <text class="body mono" x="483" y="436">intl-api</text><text class="tiny muted" x="483" y="455">Stable after first publish</text>
+    <text class="body mono" x="483" y="436">intl-api</text><text class="tiny muted" x="483" y="455">Stable ID · read-only while editing</text>
     <use href="#icon-lock" x="765" y="424" width="14" height="14" class="nav-icon"/>
     <rect class="panel-soft" x="821" y="412" width="738" height="54" rx="6"/>
     <text class="body" x="837" y="445">International APIs</text>
@@ -819,19 +846,19 @@ def services_page() -> str:
     <text class="tiny muted" x="561" y="522">Requests matching either rule are treated as this service.</text>
     <text class="small muted" x="467" y="558">HOSTNAME</text><text class="small muted" x="1280" y="558">MATCH TYPE</text><text class="small muted" x="1458" y="558">ACTIONS</text>
     <line class="rule" x1="467" y1="570" x2="1559" y2="570"/>
-    <text class="body mono" x="483" y="601">api.ipify.org</text><rect class="chip" x="1280" y="579" width="78" height="28" rx="14"/><text class="tiny muted" x="1319" y="598" text-anchor="middle">Exact</text>
-    <use href="#icon-edit" x="1467" y="587" width="14" height="14" class="action-icon" aria-label="Edit api.ipify.org"/><use href="#icon-trash" x="1510" y="587" width="14" height="14" class="action-icon" aria-label="Remove api.ipify.org"/>
+    <text class="body mono" x="483" y="601">api.vendor.example</text><rect class="chip" x="1280" y="579" width="78" height="28" rx="14"/><text class="tiny muted" x="1319" y="598" text-anchor="middle">Exact</text>
+    <use href="#icon-edit" x="1467" y="587" width="14" height="14" class="action-icon" aria-label="Edit api.vendor.example"/><use href="#icon-trash" x="1510" y="587" width="14" height="14" class="action-icon" aria-label="Remove api.vendor.example"/>
     <line class="rule" x1="467" y1="614" x2="1559" y2="614"/>
-    <text class="body mono" x="483" y="645">.githubusercontent.com</text><rect class="chip" x="1280" y="623" width="78" height="28" rx="14"/><text class="tiny muted" x="1319" y="642" text-anchor="middle">Suffix</text>
-    <use href="#icon-edit" x="1467" y="631" width="14" height="14" class="action-icon" aria-label="Edit .githubusercontent.com"/><use href="#icon-trash" x="1510" y="631" width="14" height="14" class="action-icon" aria-label="Remove .githubusercontent.com"/>
+    <text class="body mono" x="483" y="645">.cdn.vendor.example</text><rect class="chip" x="1280" y="623" width="78" height="28" rx="14"/><text class="tiny muted" x="1319" y="642" text-anchor="middle">Suffix</text>
+    <use href="#icon-edit" x="1467" y="631" width="14" height="14" class="action-icon" aria-label="Edit .cdn.vendor.example"/><use href="#icon-trash" x="1510" y="631" width="14" height="14" class="action-icon" aria-label="Remove .cdn.vendor.example"/>
     <line class="rule" x1="467" y1="659" x2="1559" y2="659"/>
     <rect class="panel" x="467" y="677" width="151" height="36" rx="5"/>
     <use href="#icon-plus" x="484" y="688" width="14" height="14" class="action-icon"/><text class="small" x="509" y="701">Add hostname</text>
     <text class="tiny muted" x="644" y="694">Leading dot = domain suffix. At least one exact hostname is required for probing.</text>
-    <text class="tiny muted" x="644" y="713">URLs, paths, host:port values and wildcards are rejected.</text>
+    <text class="tiny muted" x="644" y="713">URLs, paths, host:port, IP addresses and wildcard * are rejected.</text>
     <line class="rule" x1="467" y1="735" x2="1559" y2="735"/>
 
-    <text class="subsection" x="467" y="768">Routing policy</text>
+    <text class="subsection" x="467" y="768">Access policy</text>
     <text class="tiny muted" x="467" y="791">Determines permitted paths; services sharing it still choose independently.</text>
     <rect class="panel-soft" x="467" y="805" width="520" height="54" rx="6"/>
     <text class="body" x="483" y="829">Best egress</text><text class="tiny muted mono" x="483" y="848">best-egress</text>
@@ -840,12 +867,12 @@ def services_page() -> str:
     <text class="subsection" x="1037" y="768">Configured ingress</text>
     <text class="tiny muted" x="1037" y="791">Where applications send hostnames to Loom.</text>
     <text class="body mono" x="1037" y="824">jm24 · 127.0.0.1:1083</text>
-    <text class="tiny muted" x="1037" y="848">Use remote DNS / socks5h · configuration only, not listener health</text>
+    <text class="tiny muted" x="1037" y="848">scope · services · configuration only, not listener health</text>
     <line class="rule" x1="467" y1="879" x2="1559" y2="879"/>
 
-    <text class="small muted" x="467" y="906">RUNTIME</text><text class="body" x="555" y="906">Current path and health are observed in Routing.</text>
-    <text class="tiny muted" x="1168" y="906">Unmatched-host telemetry unavailable</text>
-    <text class="small green" x="1431" y="906">View routing</text><use href="#icon-arrow-right" x="1526" y="894" width="14" height="14" class="action-icon"/>
+    <text class="small muted" x="467" y="906">RUNTIME</text><text class="body" x="555" y="906">Current path and health are observed in Live paths.</text>
+    <text class="tiny amber" x="1080" y="906">Unmatched telemetry · Planned</text>
+    <text class="small green" x="1431" y="906">View live path</text><use href="#icon-arrow-right" x="1526" y="894" width="14" height="14" class="action-icon"/>
     <line class="rule" x1="467" y1="921" x2="1559" y2="921"/>
 
     <circle class="quiet-dot" cx="472" cy="951" r="4"/><text class="small green" x="485" y="956">All fields valid</text>
@@ -864,7 +891,7 @@ def services_page() -> str:
         status="2 services configured · unmatched hosts fail closed",
         description="A flat service catalog and editor separating desired host and policy configuration from runtime routing observations.",
         body=body,
-        session_status="Authenticated",
+        session_status="Design target",
     )
 
 
@@ -874,9 +901,9 @@ def routes_page() -> str:
   <rect class="panel" x="21" y="202" width="1538" height="82" rx="7"/>
   <g class="ui">
     <text class="small muted" x="46" y="232">SERVICES</text><text class="metric" x="46" y="258">2 configured</text>
-    <text class="small muted" x="329" y="232">ROUTING POLICIES</text><text class="metric" x="329" y="258">3 configured</text>
+    <text class="small muted" x="329" y="232">ACCESS POLICIES</text><text class="metric" x="329" y="258">3 configured</text>
     <text class="small muted" x="646" y="232">CURRENT PATHS</text><text class="metric" x="646" y="258">5 / 5 reported</text>
-    <text class="small muted" x="972" y="232">CANDIDATE PATHS</text><text class="metric" x="972" y="258">51 available</text>
+    <text class="small muted" x="972" y="232">CANDIDATE PATHS</text><text class="metric" x="972" y="258">51 configured</text>
     <rect class="panel-soft" x="1304" y="221" width="228" height="39" rx="6"/>
     <use href="#icon-services" x="1343" y="233" width="15" height="15" class="action-icon"/>
     <text class="small" x="1370" y="246">Manage services</text>
@@ -891,7 +918,7 @@ def routes_page() -> str:
 
     <rect x="31" y="351" width="517" height="78" rx="6" fill="#F1F8F4"/>
     <rect x="31" y="351" width="3" height="78" rx="1.5" fill="#2AA875"/>
-    <text class="subsection mono" x="49" y="375">sg-fixed</text><text class="tiny muted" x="49" y="394">routing policy · stability · egress sg02</text>
+    <text class="subsection mono" x="49" y="375">sg-fixed</text><text class="tiny muted" x="49" y="394">access policy · stability · egress sg02</text>
     <text class="body mono" x="49" y="417">jm24 → gz02 → sg02</text><circle class="quiet-dot" cx="480" cy="390" r="4"/><text class="tiny green" x="493" y="394">Fresh</text><text class="tiny muted" x="528" y="414" text-anchor="end">3 candidate paths</text>
 
     <text class="subsection mono" x="49" y="461">cn-web</text><text class="tiny muted" x="49" y="480">service · latency policy</text><text class="body mono" x="49" y="503">jm24 → direct</text><circle class="quiet-dot" cx="480" cy="476" r="4"/><text class="tiny" x="493" y="480">Fresh</text><text class="tiny muted" x="528" y="500" text-anchor="end">15 candidate paths</text>
@@ -900,16 +927,16 @@ def routes_page() -> str:
     <text class="subsection mono" x="49" y="546">intl-api</text><text class="tiny muted" x="49" y="565">service · latency policy</text><text class="body mono" x="49" y="588">jm24 → ber01</text><circle class="quiet-dot" cx="480" cy="561" r="4"/><text class="tiny" x="493" y="565">Fresh</text><text class="tiny muted" x="528" y="585" text-anchor="end">15 candidate paths</text>
     <line class="rule" x1="41" y1="523" x2="538" y2="523"/>
 
-    <text class="subsection mono" x="49" y="631">best-egress</text><text class="tiny muted" x="49" y="650">routing policy · latency · any egress</text><text class="body mono" x="49" y="673">jm24 → ber01</text><circle class="quiet-dot" cx="480" cy="646" r="4"/><text class="tiny" x="493" y="650">Fresh</text><text class="tiny muted" x="528" y="670" text-anchor="end">15 candidate paths</text>
+    <text class="subsection mono" x="49" y="631">best-egress</text><text class="tiny muted" x="49" y="650">access policy · latency · any egress</text><text class="body mono" x="49" y="673">jm24 → ber01</text><circle class="quiet-dot" cx="480" cy="646" r="4"/><text class="tiny" x="493" y="650">Fresh</text><text class="tiny muted" x="528" y="670" text-anchor="end">15 candidate paths</text>
     <line class="rule" x1="41" y1="608" x2="538" y2="608"/>
 
-    <text class="subsection mono" x="49" y="716">de-fixed</text><text class="tiny muted" x="49" y="735">routing policy · stability · egress ber01</text><text class="body mono" x="49" y="758">jm24 → ber01</text><circle class="quiet-dot" cx="480" cy="731" r="4"/><text class="tiny" x="493" y="735">Fresh</text><text class="tiny muted" x="528" y="755" text-anchor="end">3 candidate paths</text>
+    <text class="subsection mono" x="49" y="716">de-fixed</text><text class="tiny muted" x="49" y="735">access policy · stability · egress ber01</text><text class="body mono" x="49" y="758">jm24 → ber01</text><circle class="quiet-dot" cx="480" cy="731" r="4"/><text class="tiny" x="493" y="735">Fresh</text><text class="tiny muted" x="528" y="755" text-anchor="end">3 candidate paths</text>
     <line class="rule" x1="41" y1="693" x2="538" y2="693"/>
   </g>
 
   <!-- Focused routing-entry detail. -->
   <g class="ui">
-    <text class="section" x="594" y="330">sg-fixed</text><text class="tiny muted" x="684" y="330">routing policy · current traffic path</text>
+    <text class="section" x="594" y="330">sg-fixed</text><text class="tiny muted" x="684" y="330">access policy · current traffic path</text>
     <rect class="chip-green" x="1401" y="313" width="136" height="27" rx="13.5"/><circle class="quiet-dot" cx="1418" cy="326" r="3.5"/><text class="tiny green" x="1429" y="330">Current on jm24</text>
 
     <line x1="694" y1="405" x2="991" y2="405" stroke="#2AA875" stroke-width="2"/>
@@ -923,7 +950,7 @@ def routes_page() -> str:
     <text class="small muted" x="594" y="554">EVIDENCE</text><text class="body" x="756" y="554">Current value read back from sing-box</text>
     <line class="rule" x1="594" y1="576" x2="1539" y2="576"/>
 
-    <text class="subsection" x="594" y="606">Routing policy</text>
+    <text class="subsection" x="594" y="606">Access policy</text>
     <text class="small muted" x="594" y="635">Objective</text><text class="body" x="704" y="635">stability</text>
     <text class="small muted" x="886" y="635">Egress</text><text class="body mono" x="962" y="635">pinned:sg02</text>
     <text class="small muted" x="1162" y="635">Cadence</text><text class="body" x="1247" y="635">10 minutes</text>
@@ -934,7 +961,7 @@ def routes_page() -> str:
 
     <text class="subsection" x="594" y="716">Agent evaluation summary</text>
     <text class="body green" x="594" y="747">1 success</text><text class="body" x="713" y="747">· 0 degraded · 0 failed · 1 stale · 1 unknown</text>
-    <text class="tiny muted" x="594" y="772">Source · jm24 Agent · reported 8s ago · no per-path realtime metrics.</text>
+    <text class="tiny muted" x="594" y="772">Source · signed jm24 Agent report · per-candidate detail is not reported centrally.</text>
   </g>
 
   <!-- Candidate paths for the focused routing entry. -->
@@ -953,10 +980,10 @@ def routes_page() -> str:
     return shell(
         active="Routing",
         eyebrow="AGENT / TRAFFIC",
-        title="Traffic routing",
-        subtitle="Current traffic path for each service or routing policy · reported by the access Agent",
-        status="Agent applies paths; control center observes",
-        description="A runtime traffic-routing view showing five service or routing-policy scopes, one focused Agent decision, and a direct link to service configuration.",
+        title="Live paths",
+        subtitle="Current Agent path for one focused service or access policy",
+        status="Agent applies paths; control center observes one entry at a time",
+        description="A runtime path-decision view showing five service or policy entries, one focused Agent decision, and its allowed alternatives.",
         body=body,
     )
 
@@ -967,9 +994,9 @@ def deployments_page() -> str:
   <rect class="panel" x="21" y="202" width="1538" height="86" rx="7"/>
   <g class="ui">
     <text class="small muted" x="47" y="234">PUBLISHER</text><circle class="status-dot" cx="51" cy="257" r="4"/><text class="metric" x="64" y="262">Heartbeat healthy</text>
-    <text class="small muted" x="421" y="234">CURRENT SNAPSHOT</text><text class="metric mono" x="421" y="262">4f09f6f5716d</text>
+    <text class="small muted" x="421" y="234">FLEET SNAPSHOT</text><text class="metric mono" x="421" y="262">4f09f6f5716d</text>
     <text class="small muted" x="786" y="234">ROLLOUT</text><text class="metric" x="786" y="262">5 / 5 verified</text>
-    <text class="small muted" x="1106" y="234">DISTRIBUTION POINTER</text><circle class="warn-dot" cx="1110" cy="257" r="4"/><text class="metric amber" x="1123" y="262">Legacy current</text><text class="tiny muted" x="1293" y="261">floor 0 / 5 · signed current not deployed</text>
+    <text class="small muted" x="1106" y="234">DISTRIBUTION POINTER</text><circle class="warn-dot" cx="1110" cy="257" r="4"/><text class="metric amber" x="1123" y="262">Legacy current</text><text class="tiny muted" x="1293" y="261">floor not reported · signed current planned</text>
   </g>
   <line class="rule" x1="386" y1="222" x2="386" y2="269"/><line class="rule" x1="751" y1="222" x2="751" y2="269"/><line class="rule" x1="1071" y1="222" x2="1071" y2="269"/>
 
@@ -981,7 +1008,7 @@ def deployments_page() -> str:
     <text class="tiny muted" x="41" y="357">Automatic release worker on jm24</text>
     <text class="small muted" x="41" y="395">HEARTBEAT</text><text class="body" x="218" y="395">8s ago</text>
     <text class="small muted" x="41" y="427">INTERVAL</text><text class="body" x="218" y="427">30 seconds</text>
-    <text class="small muted" x="41" y="459">COMMIT</text><text class="body mono" x="218" y="459">28224ed</text>
+    <text class="small muted" x="41" y="459">LOOM CODE</text><text class="body mono" x="218" y="459">28224ed</text>
     <text class="small muted" x="41" y="491">BINARY</text><text class="body mono" x="218" y="491">449597b5…</text>
     <text class="small muted" x="41" y="523">LAST SUCCESS</text><text class="body" x="218" y="523">19h ago</text>
     <text class="small muted" x="41" y="555">LAST SNAPSHOT</text><text class="body mono" x="218" y="555">4f09f6f5716d</text>
@@ -989,19 +1016,20 @@ def deployments_page() -> str:
     <text class="tiny muted" x="41" y="607">No new publish is expected while SSOT and renderer output are unchanged.</text>
     <text class="tiny muted" x="41" y="629">Heartbeat freshness, not release age, determines publisher health.</text>
     <rect class="chip" x="41" y="650" width="168" height="27" rx="6"/><text class="tiny" x="125" y="668" text-anchor="middle">No manual Publish action</text>
+    <text class="tiny muted" x="225" y="668">Fleet rollout · not code deployment history</text>
   </g>
 
   <!-- Node convergence -->
   <rect class="panel" x="548" y="304" width="1011" height="392" rx="7"/>
   <g class="ui">
-    <text class="section" x="568" y="334">Node convergence</text><text class="tiny muted" x="742" y="334">target snapshot <tspan class="mono">4f09f6f5716d</tspan></text>
-    <text class="small muted" x="574" y="369">NODE</text><text class="small muted" x="743" y="369">TARGET</text><text class="small muted" x="928" y="369">STAGE</text><text class="small muted" x="1098" y="369">ENTERED</text><text class="small muted" x="1281" y="369">LAST GOOD</text><text class="small muted" x="1452" y="369">DRIFT</text>
+    <text class="section" x="568" y="334">Fleet convergence</text><text class="tiny muted" x="742" y="334">target snapshot <tspan class="mono">4f09f6f5716d</tspan></text>
+    <text class="small muted" x="574" y="369">NODE</text><text class="small muted" x="743" y="369">TARGET</text><text class="small muted" x="928" y="369">STAGE</text><text class="small muted" x="1098" y="369">ENTERED</text><text class="small muted" x="1281" y="369">LAST GOOD</text><text class="small muted" x="1438" y="369">DRIFT</text>
     <line class="rule" x1="568" y1="377" x2="1539" y2="377"/>
-    <text class="body mono" x="574" y="412">jm24</text><text class="body mono" x="743" y="412">4f09f6f</text><circle class="quiet-dot" cx="932" cy="407" r="4"/><text class="body" x="945" y="412">Verified</text><text class="body" x="1098" y="412">19h ago</text><text class="body mono" x="1281" y="412">3e8d7c2a</text><text class="body green" x="1452" y="412">Clean</text>
-    <text class="body mono" x="574" y="463">gz02</text><text class="body mono" x="743" y="463">4f09f6f</text><circle class="quiet-dot" cx="932" cy="458" r="4"/><text class="body" x="945" y="463">Verified</text><text class="body" x="1098" y="463">19h ago</text><text class="body mono" x="1281" y="463">3e8d7c2a</text><text class="body green" x="1452" y="463">Clean</text>
-    <text class="body mono" x="574" y="514">hz01</text><text class="body mono" x="743" y="514">4f09f6f</text><circle class="quiet-dot" cx="932" cy="509" r="4"/><text class="body" x="945" y="514">Verified</text><text class="body" x="1098" y="514">19h ago</text><text class="body mono" x="1281" y="514">3e8d7c2a</text><text class="body green" x="1452" y="514">Clean</text>
-    <text class="body mono" x="574" y="565">sg02</text><text class="body mono" x="743" y="565">4f09f6f</text><circle class="quiet-dot" cx="932" cy="560" r="4"/><text class="body" x="945" y="565">Verified</text><text class="body" x="1098" y="565">19h ago</text><text class="body mono" x="1281" y="565">3e8d7c2a</text><text class="body green" x="1452" y="565">Clean</text>
-    <text class="body mono" x="574" y="616">ber01</text><text class="body mono" x="743" y="616">4f09f6f</text><circle class="quiet-dot" cx="932" cy="611" r="4"/><text class="body" x="945" y="616">Verified</text><text class="body" x="1098" y="616">19h ago</text><text class="body mono" x="1281" y="616">3e8d7c2a</text><text class="body green" x="1452" y="616">Clean</text>
+    <text class="body mono" x="574" y="412">jm24</text><text class="body mono" x="743" y="412">4f09f6f</text><circle class="quiet-dot" cx="932" cy="407" r="4"/><text class="body" x="945" y="412">Verified</text><text class="body" x="1098" y="412">19h ago</text><text class="body mono" x="1281" y="412">3e8d7c2a</text><text class="tiny muted" x="1438" y="412">Not reported</text>
+    <text class="body mono" x="574" y="463">gz02</text><text class="body mono" x="743" y="463">4f09f6f</text><circle class="quiet-dot" cx="932" cy="458" r="4"/><text class="body" x="945" y="463">Verified</text><text class="body" x="1098" y="463">19h ago</text><text class="body mono" x="1281" y="463">3e8d7c2a</text><text class="tiny muted" x="1438" y="463">Not reported</text>
+    <text class="body mono" x="574" y="514">hz01</text><text class="body mono" x="743" y="514">4f09f6f</text><circle class="quiet-dot" cx="932" cy="509" r="4"/><text class="body" x="945" y="514">Verified</text><text class="body" x="1098" y="514">19h ago</text><text class="body mono" x="1281" y="514">3e8d7c2a</text><text class="tiny muted" x="1438" y="514">Not reported</text>
+    <text class="body mono" x="574" y="565">sg02</text><text class="body mono" x="743" y="565">4f09f6f</text><circle class="quiet-dot" cx="932" cy="560" r="4"/><text class="body" x="945" y="565">Verified</text><text class="body" x="1098" y="565">19h ago</text><text class="body mono" x="1281" y="565">3e8d7c2a</text><text class="tiny muted" x="1438" y="565">Not reported</text>
+    <text class="body mono" x="574" y="616">ber01</text><text class="body mono" x="743" y="616">4f09f6f</text><circle class="quiet-dot" cx="932" cy="611" r="4"/><text class="body" x="945" y="616">Verified</text><text class="body" x="1098" y="616">19h ago</text><text class="body mono" x="1281" y="616">3e8d7c2a</text><text class="tiny muted" x="1438" y="616">Not reported</text>
     <line class="rule" x1="568" y1="431" x2="1539" y2="431"/><line class="rule" x1="568" y1="482" x2="1539" y2="482"/><line class="rule" x1="568" y1="533" x2="1539" y2="533"/><line class="rule" x1="568" y1="584" x2="1539" y2="584"/><line class="rule" x1="568" y1="635" x2="1539" y2="635"/>
     <text class="tiny muted" x="568" y="668">A node is converged only after its local verifier records the target snapshot as verified.</text>
   </g>
@@ -1009,14 +1037,14 @@ def deployments_page() -> str:
   <!-- Release pipeline -->
   <rect class="panel" x="21" y="712" width="1004" height="261" rx="7"/>
   <g class="ui">
-    <text class="section" x="41" y="742">Automatic release pipeline</text>
+    <text class="section" x="41" y="742">Automatic release workflow</text><text class="tiny amber" x="315" y="742">Stage history is not reported</text>
     <text class="tiny muted" x="41" y="764">Saving a valid SSOT change is the only write; the publisher owns every downstream stage.</text>
-    <line class="timeline-ok" x1="87" y1="830" x2="955" y2="830"/>
-    <circle class="status-dot" cx="87" cy="830" r="5"/><circle class="status-dot" cx="232" cy="830" r="5"/><circle class="status-dot" cx="377" cy="830" r="5"/><circle class="status-dot" cx="522" cy="830" r="5"/><circle class="status-dot" cx="667" cy="830" r="5"/><circle class="status-dot" cx="812" cy="830" r="5"/><circle class="status-dot" cx="955" cy="830" r="5"/>
+    <line class="timeline" x1="87" y1="830" x2="955" y2="830"/>
+    <circle class="neutral-dot" cx="87" cy="830" r="5"/><circle class="neutral-dot" cx="232" cy="830" r="5"/><circle class="neutral-dot" cx="377" cy="830" r="5"/><circle class="neutral-dot" cx="522" cy="830" r="5"/><circle class="neutral-dot" cx="667" cy="830" r="5"/><circle class="neutral-dot" cx="812" cy="830" r="5"/><circle class="neutral-dot" cx="955" cy="830" r="5"/>
     <text class="small" x="87" y="860" text-anchor="middle">Validate</text><text class="small" x="232" y="860" text-anchor="middle">Render</text><text class="small" x="377" y="860" text-anchor="middle">Sign</text><text class="small" x="522" y="860" text-anchor="middle">Distribute</text><text class="small" x="667" y="860" text-anchor="middle">Pull</text><text class="small" x="812" y="860" text-anchor="middle">Apply</text><text class="small" x="955" y="860" text-anchor="middle">Verify</text>
     <text class="tiny muted" x="87" y="882" text-anchor="middle">SSOT</text><text class="tiny muted" x="232" y="882" text-anchor="middle">per node</text><text class="tiny muted" x="377" y="882" text-anchor="middle">manifest</text><text class="tiny muted" x="522" y="882" text-anchor="middle">snapshot</text><text class="tiny muted" x="667" y="882" text-anchor="middle">timer</text><text class="tiny muted" x="812" y="882" text-anchor="middle">atomic</text><text class="tiny muted" x="955" y="882" text-anchor="middle">local</text>
     <line class="rule" x1="41" y1="909" x2="1005" y2="909"/>
-    <text class="small muted" x="41" y="938">Latest</text><text class="body" x="126" y="938">Snapshot manifest signed · distributed · verified by 5 nodes</text><text class="body mono" x="870" y="938">28224ed</text>
+    <text class="small muted" x="41" y="938">LATEST FLEET</text><text class="body" x="153" y="938">Snapshot manifest signed · distributed · verified by 5 nodes</text><text class="tiny muted mono" x="870" y="938">publisher code 28224ed</text>
   </g>
 
   <!-- Distribution contract -->
@@ -1037,10 +1065,10 @@ def deployments_page() -> str:
     return shell(
         active="Deployments",
         eyebrow="CONTROL PLANE / RELEASE",
-        title="Deployments",
+        title="Fleet deployments",
         subtitle="jm24 publisher · heartbeat 8s ago · reconciliation interval 30s",
-        status="Latest snapshot locally verified across 5 nodes · business-path canary not implemented",
-        description="A deployment view showing publisher heartbeat, node rollout state, the automatic release pipeline, and the pending signed-current pointer migration.",
+        status="Latest fleet snapshot verified across 5 nodes · business-path canary planned",
+        description="A fleet-configuration deployment view showing publisher heartbeat, node rollout state, the declared automatic release workflow, and the pending signed-current pointer migration; it is not source-code deployment history.",
         body=body,
     )
 
@@ -1050,9 +1078,9 @@ def events_page() -> str:
   <!-- Current unresolved state summary -->
   <rect class="panel" x="21" y="202" width="1538" height="86" rx="7"/>
   <g class="ui">
-    <text class="small muted" x="47" y="234">CONFIRMED ISSUES</text><text class="metric green" x="47" y="262">0 unresolved</text>
-    <text class="small muted" x="393" y="234">PENDING</text><text class="metric" x="393" y="262">0 transitions</text>
-    <text class="small muted" x="706" y="234">CURRENT STATE BASIS</text><text class="metric" x="706" y="262">state.json tracker</text>
+    <text class="small muted" x="47" y="234">CURRENT ISSUES</text><text class="metric green" x="47" y="262">0 unresolved</text>
+    <text class="small muted" x="393" y="234">PENDING WINDOWS</text><text class="metric" x="393" y="262">0 current</text>
+    <text class="small muted" x="706" y="234">HISTORY TOTAL</text><text class="metric muted" x="706" y="262">Not reported</text>
     <text class="small muted" x="1112" y="234">RETENTION</text><text class="metric" x="1112" y="262">30 days</text>
     <text class="tiny muted" x="1272" y="261">change events only</text>
   </g>
@@ -1091,13 +1119,13 @@ def events_page() -> str:
     <text class="tiny muted" x="303" y="898">Recorded independently for each node observation.</text>
 
     <line class="rule" x1="41" y1="474" x2="1070" y2="474"/><line class="rule" x1="41" y1="537" x2="1070" y2="537"/><line class="rule" x1="41" y1="600" x2="1070" y2="600"/><line class="rule" x1="41" y1="663" x2="1070" y2="663"/><line class="rule" x1="41" y1="726" x2="1070" y2="726"/><line class="rule" x1="41" y1="789" x2="1070" y2="789"/><line class="rule" x1="41" y1="852" x2="1070" y2="852"/><line class="rule" x1="41" y1="915" x2="1070" y2="915"/>
-    <text class="tiny muted" x="41" y="950">Showing 8 of 200 recent transitions</text><use href="#icon-download" x="985" y="939" width="14" height="14" class="action-icon"/><text class="tiny green" x="1006" y="950">Export JSONL</text>
+    <text class="tiny muted" x="41" y="950">8 example transitions · total count and pagination are not reported</text><use href="#icon-download" x="965" y="939" width="14" height="14" class="action-icon"/><text class="tiny green" x="986" y="950">Filtered CSV export</text>
   </g>
 
   <!-- Filters -->
   <rect class="panel" x="1106" y="304" width="453" height="242" rx="7"/>
   <g class="ui">
-    <use href="#icon-filter" x="1126" y="321" width="16" height="16" class="action-icon"/><text class="section" x="1150" y="334">Filter</text>
+    <use href="#icon-filter" x="1126" y="321" width="16" height="16" class="action-icon"/><text class="section" x="1150" y="334">Filter</text><text class="tiny green" x="1202" y="334">SSR query · implemented</text>
     <rect class="chip-green" x="1126" y="357" width="75" height="30" rx="5"/><text class="small green" x="1163" y="377" text-anchor="middle">All</text>
     <rect class="chip" x="1209" y="357" width="97" height="30" rx="5"/><text class="small" x="1257" y="377" text-anchor="middle">Problems</text>
     <rect class="chip" x="1314" y="357" width="105" height="30" rx="5"/><text class="small" x="1366" y="377" text-anchor="middle">Recoveries</text>
@@ -1106,7 +1134,7 @@ def events_page() -> str:
     <text class="small muted" x="1126" y="456">KIND</text><text class="body" x="1262" y="456">All event kinds</text><text class="tiny green" x="1503" y="456">Change</text>
     <text class="small muted" x="1126" y="488">RANGE</text><text class="body" x="1262" y="488">Last 24 hours</text><text class="tiny green" x="1503" y="488">Change</text>
     <line class="rule" x1="1126" y1="504" x2="1539" y2="504"/>
-    <text class="tiny muted" x="1126" y="520">Target interaction · current SSR has no event filters.</text>
+    <text class="tiny muted" x="1126" y="520">Node, kind, level and text filters use SSR query parameters.</text>
     <text class="tiny muted" x="1126" y="536">Filters affect history only, never the current issue count.</text>
   </g>
 
@@ -1137,7 +1165,7 @@ def events_page() -> str:
         eyebrow="OPERATIONS / HISTORY",
         title="Events",
         subtitle="State transitions only · current truth comes from the separate state tracker",
-        status="No confirmed unresolved issues",
+        status="No current unresolved issues · history total is not reported",
         description="An operations event history that separates current state from transition history and classifies problems, recoveries, informational changes, and pending windows.",
         body=body,
     )
@@ -1150,7 +1178,7 @@ def settings_page() -> str:
   <g class="ui">
     <text class="small muted" x="45" y="232">CONTROL NODE</text><text class="body mono" x="45" y="256">jm24</text>
     <text class="small muted" x="384" y="232">WRITE AUTHORITY</text><text class="body" x="384" y="256">Single control node</text>
-    <text class="small muted" x="800" y="232">DISTRIBUTION REPORTS</text><text class="body mono" x="800" y="256">4f09f6f5716d</text>
+    <text class="small muted" x="800" y="232">DISTRIBUTED SNAPSHOT</text><text class="body mono" x="800" y="256">4f09f6f5716d</text>
     <text class="small muted" x="1125" y="232">PUBLISH CADENCE</text><text class="body" x="1125" y="256">≤ 30s</text>
     <text class="tiny muted" x="1231" y="256">fleet target ≤ 90s · no publish button</text>
   </g>
@@ -1158,51 +1186,51 @@ def settings_page() -> str:
 
   <!-- Tabs -->
   <g class="ui nav">
-    <text x="21" y="311" font-weight="600">SSOT</text><text class="muted" x="88" y="311">Secret references</text><text class="muted" x="226" y="311">Release policy</text>
+    <text x="21" y="311" font-weight="600">Raw SSOT</text><text class="muted" x="110" y="311">Secret references · Planned</text><text class="muted" x="320" y="311">Release policy · Planned</text>
   </g>
-  <line x1="21" y1="325" x2="56" y2="325" stroke="#2AA875" stroke-width="2"/>
+  <line x1="21" y1="325" x2="78" y2="325" stroke="#2AA875" stroke-width="2"/>
   <line class="rule" x1="21" y1="325" x2="1559" y2="325"/>
 
-  <!-- Sanitized editor -->
+  <!-- The implemented surface is the authenticated raw /ssot YAML editor. -->
   <rect class="panel" x="21" y="341" width="1005" height="632" rx="7"/>
   <g class="ui">
-    <text class="section" x="41" y="373">Single source of truth</text>
-    <text class="tiny muted" x="276" y="373">Redacted prototype · sensitive values hidden</text>
+    <text class="section" x="41" y="373">Raw SSOT editor</text>
+    <text class="tiny muted" x="218" y="373">Full YAML buffer · viewport shown below</text>
     <rect class="chip" x="735" y="354" width="116" height="30" rx="5"/><use href="#icon-check" x="750" y="362" width="14" height="14" class="action-icon"/><text class="small" x="812" y="374" text-anchor="middle">Validate</text>
     <rect class="button-green" x="860" y="354" width="144" height="30" rx="5"/><use href="#icon-save" x="875" y="362" width="14" height="14" class="action-icon" style="stroke:#FFFFFF"/><text class="small" x="945" y="374" text-anchor="middle" fill="#FFFFFF">Validate &amp; save</text>
-    <text class="tiny muted" x="41" y="404">/opt/loom/deploy/ssot.yaml</text><text class="tiny green" x="1004" y="404" text-anchor="end">Authenticated operator</text>
+    <text class="tiny muted" x="41" y="404">GET /ssot · POST /ssot · viewport lines 11–33</text><text class="tiny green" x="1004" y="404" text-anchor="end">Write session · node-local operator_ref</text>
   </g>
 
   <rect class="code-bg" x="41" y="419" width="965" height="532" rx="5"/>
   <rect x="41" y="419" width="46" height="532" rx="5" fill="#F1F3F2"/>
   <line class="rule" x1="87" y1="419" x2="87" y2="951"/>
   <g class="ui tiny mono muted" text-anchor="end">
-    <text x="76" y="447">1</text><text x="76" y="469">2</text><text x="76" y="491">3</text><text x="76" y="513">4</text><text x="76" y="535">5</text><text x="76" y="557">6</text><text x="76" y="579">7</text><text x="76" y="601">8</text><text x="76" y="623">9</text><text x="76" y="645">10</text><text x="76" y="667">11</text><text x="76" y="689">12</text><text x="76" y="711">13</text><text x="76" y="733">14</text><text x="76" y="755">15</text><text x="76" y="777">16</text><text x="76" y="799">17</text><text x="76" y="821">18</text><text x="76" y="843">19</text><text x="76" y="865">20</text><text x="76" y="887">21</text><text x="76" y="909">22</text><text x="76" y="931">23</text>
+    <text x="76" y="447">11</text><text x="76" y="469">12</text><text x="76" y="491">13</text><text x="76" y="513">14</text><text x="76" y="535">15</text><text x="76" y="557">16</text><text x="76" y="579">17</text><text x="76" y="601">18</text><text x="76" y="623">19</text><text x="76" y="645">20</text><text x="76" y="667">21</text><text x="76" y="689">22</text><text x="76" y="711">23</text><text x="76" y="733">24</text><text x="76" y="755">25</text><text x="76" y="777">26</text><text x="76" y="799">27</text><text x="76" y="821">28</text><text x="76" y="843">29</text><text x="76" y="865">30</text><text x="76" y="887">31</text><text x="76" y="909">32</text><text x="76" y="931">33</text>
   </g>
   <g class="ui body mono">
     <text x="101" y="447"><tspan class="blue">defaults</tspan>:</text>
-    <text x="101" y="469">  <tspan class="blue">components</tspan>:</text>
-    <text x="101" y="491">    <tspan class="blue">wireguard</tspan>: <tspan class="green">1.0.20250521</tspan></text>
-    <text x="101" y="513">    <tspan class="blue">agent</tspan>: <tspan class="green">0.1.0</tspan></text>
+    <text x="101" y="469">  <tspan class="faint"># Control, signing and publishing live on jm24.</tspan></text>
+    <text x="101" y="491">  <tspan class="faint"># Forwarding continues if that writer is unavailable.</tspan></text>
+    <text x="101" y="513">  <tspan class="faint"># Writer state can be moved with SSOT and signing material.</tspan></text>
     <text x="101" y="535"> </text>
-    <text x="101" y="557"><tspan class="blue">nodes</tspan>:</text>
-    <text x="101" y="579">  - <tspan class="blue">id</tspan>: <tspan class="green">jm24</tspan></text>
-    <text x="101" y="601">    <tspan class="blue">city</tspan>: Beijing</text>
-    <text x="101" y="623">    <tspan class="blue">server</tspan>: { <tspan class="blue">direction</tspan>: bidirectional, <tspan class="blue">egress_capable</tspan>: false }</text>
-    <text x="101" y="645">  - <tspan class="blue">id</tspan>: <tspan class="green">gz02</tspan></text>
-    <text x="101" y="667">    <tspan class="blue">server</tspan>: { <tspan class="blue">direction</tspan>: bidirectional, <tspan class="blue">egress_capable</tspan>: true }</text>
-    <text x="101" y="689">  <tspan class="faint"># … 3 more nodes</tspan></text>
-    <text x="101" y="711"> </text>
-    <text x="101" y="733"><tspan class="blue">tunnels</tspan>:</text>
-    <text x="101" y="755">  - { <tspan class="blue">from</tspan>: jm24, <tspan class="blue">to</tspan>: sg02, <tspan class="faint"># addresses hidden</tspan> }</text>
-    <text x="101" y="777">  - { <tspan class="blue">from</tspan>: gz02, <tspan class="blue">to</tspan>: sg02, <tspan class="faint"># addresses hidden</tspan> }</text>
-    <text x="101" y="799">  <tspan class="faint"># … 4 more persistent links</tspan></text>
-    <text x="101" y="821"> </text>
-    <text x="101" y="843"><tspan class="blue">declarations</tspan>:</text>
-    <text x="101" y="865">  - { <tspan class="blue">id</tspan>: <tspan class="green">best-egress</tspan>, <tspan class="blue">egress_axis</tspan>: any, <tspan class="blue">objective</tspan>: latency, <tspan class="blue">max_hops</tspan>: 2 }</text>
-    <text x="101" y="887"> </text>
-    <text x="101" y="909"><tspan class="blue">services</tspan>:</text>
-    <text x="101" y="931">  - { <tspan class="blue">id</tspan>: <tspan class="green">intl-api</tspan>, <tspan class="blue">declaration</tspan>: best-egress, <tspan class="blue">addresses</tspan>: [api.ipify.org, .githubusercontent.com] }</text>
+    <text x="101" y="557">  <tspan class="faint"># Nodes fetch signed immutable snapshots from this origin.</tspan></text>
+    <text x="101" y="579">  <tspan class="faint"># Distribution transport itself is not trusted.</tspan></text>
+    <text x="101" y="601">  <tspan class="faint"># Node-local pinned trust verifies the manifest.</tspan></text>
+    <text x="101" y="623">  <tspan class="blue">distribution_url</tspan>: <tspan class="green">https://psi-ai.cn/loom/</tspan></text>
+    <text x="101" y="645">  <tspan class="faint"># Resolver defaults are selected for the deployed region.</tspan></text>
+    <text x="101" y="667">  <tspan class="faint"># Request-derived destinations still resolve at the selected egress.</tspan></text>
+    <text x="101" y="689">  <tspan class="faint"># The raw buffer continues; this is only the visible viewport.</tspan></text>
+    <text x="101" y="711">  <tspan class="blue">dns</tspan>: [<tspan class="green">223.5.5.5</tspan>, <tspan class="green">119.29.29.29</tspan>]</text>
+    <text x="101" y="733"> </text>
+    <text x="101" y="755">  <tspan class="blue">components</tspan>:</text>
+    <text x="101" y="777">    <tspan class="blue">sing_box</tspan>: <tspan class="green">1.11.4</tspan></text>
+    <text x="101" y="799">    <tspan class="blue">wireguard</tspan>: <tspan class="green">1.0.20250521</tspan></text>
+    <text x="101" y="821">    <tspan class="blue">agent</tspan>: <tspan class="green">0.1.0</tspan></text>
+    <text x="101" y="843"> </text>
+    <text x="101" y="865"><tspan class="blue">nodes</tspan>:</text>
+    <text x="101" y="887">  <tspan class="faint"># Domestic nodes have public endpoints; no mesh is deployed.</tspan></text>
+    <text x="101" y="909">  <tspan class="faint"># Candidate paths are distinct from persistent WireGuard edges.</tspan></text>
+    <text x="101" y="931">  <tspan class="faint"># Scroll for complete node, tunnel, declaration and service entries.</tspan></text>
   </g>
 
   <!-- Validation and automatic publication contract -->
@@ -1230,24 +1258,25 @@ def settings_page() -> str:
   <line class="rule" x1="1062" y1="772" x2="1539" y2="772"/>
   <g class="ui">
     <text class="section" x="1062" y="812">Security boundary &amp; gaps</text>
-    <text class="small muted" x="1062" y="845">PRIVATE KEYS</text><text class="body" x="1238" y="845">Never shown or stored here</text>
-    <text class="small muted" x="1062" y="876">CREDENTIALS</text><text class="body" x="1238" y="876">References only</text>
-    <line class="rule" x1="1062" y1="895" x2="1539" y2="895"/>
-    <text class="tiny amber" x="1062" y="918">Known web-editing gaps</text>
-    <text class="tiny muted" x="1062" y="938">No dry-run diff, source revision guard, or approval audit.</text>
-    <text class="tiny muted" x="1062" y="957">Concurrent saves are last-writer-wins; live snapshot stays old on failure.</text>
+    <text class="small muted" x="1062" y="841">AUTH SOURCE</text><text class="body" x="1238" y="841">Node-local secrets · operator_ref</text>
+    <text class="small muted" x="1062" y="869">CONTROL BOOTSTRAP</text><text class="body" x="1238" y="869">/etc/loom/control.json · not editable here</text>
+    <text class="small muted" x="1062" y="897">PRIVATE KEYS</text><text class="body" x="1238" y="897">Never shown or stored in SSOT</text>
+    <line class="rule" x1="1062" y1="912" x2="1539" y2="912"/>
+    <text class="tiny amber" x="1062" y="932">Known web-editing gaps</text>
+    <text class="tiny muted" x="1062" y="950">Web writers share a process lock + revision guard.</text>
+    <text class="tiny muted" x="1062" y="967">External Git/editor is not locked; stop or reload before saving.</text>
   </g>
 '''
     return shell(
         active="Settings",
-        eyebrow="SINGLE WRITER",
+        eyebrow="CONTROL / SSOT",
         title="Settings / SSOT",
         subtitle="Declarative source of truth · saves are validated and published automatically",
-        status="Authenticated operator session · secrets remain node-local",
-        description="An authenticated SSOT configuration editor showing validation, automatic publication behavior, known concurrency gaps, and the security boundary around secrets.",
+        status="Raw SSOT write session · authenticated by node-local operator_ref",
+        description="The authenticated raw SSOT YAML editor with whole-buffer validation, a lock shared by cooperating web writers, revision-guarded atomic saves, automatic publication, and an explicit single-writer boundary for external editors.",
         body=body,
         environment_status="Control node",
-        session_status="Authenticated",
+        session_status="Write session",
     )
 
 

@@ -4,7 +4,7 @@
      width="1586" height="992" viewBox="0 0 1586 992"
      role="img" aria-labelledby="title description">
   <title id="title">Settings / SSOT — Loom control center prototype</title>
-  <desc id="description">An authenticated SSOT configuration editor showing validation, automatic publication behavior, known concurrency gaps, and the security boundary around secrets.</desc>
+  <desc id="description">The authenticated raw SSOT YAML editor with whole-buffer validation, a lock shared by cooperating web writers, revision-guarded atomic saves, automatic publication, and an explicit single-writer boundary for external editors.</desc>
   <defs>
     <marker id="arrow-selected" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
       <path d="M0 0L7 3.5L0 7Z" fill="#2AA875"/>
@@ -154,29 +154,29 @@
     <use href="#icon-services" x="584" y="18" width="14" height="14" class="nav-icon"/>
     <text x="605" y="31">Services</text>
     <use href="#icon-traffic" x="682" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="703" y="31">Routing</text>
+    <text x="703" y="31">Live paths</text>
     <use href="#icon-deployments" x="780" y="18" width="14" height="14" class="nav-icon"/>
     <text x="801" y="31">Deployments</text>
     <use href="#icon-events" x="919" y="18" width="14" height="14" class="nav-icon"/>
     <text x="940" y="31">Events</text>
     <use href="#icon-settings" x="1008" y="18" width="14" height="14" class="nav-icon-active"/>
-    <text x="1029" y="31" font-weight="600">Settings</text>
+    <text x="1029" y="31" font-weight="600">SSOT</text>
   </g>
   <line x1="1006" y1="49.5" x2="1094" y2="49.5" stroke="#2AA875" stroke-width="2"/>
   <g class="ui nav">
-    <text x="1210" y="31">Production</text>
+    <text class="amber" x="1160" y="31">Prototype · sample data</text>
     <circle class="status-dot" cx="1322" cy="26" r="4"/>
     <text x="1335" y="31">Control node</text>
     <use href="#icon-lock" x="1428" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="1538" y="31" text-anchor="end">Authenticated</text>
+    <text x="1538" y="31" text-anchor="end">Write session</text>
   </g>
 
   <g class="ui">
-    <text class="eyebrow" x="21" y="91">SINGLE WRITER</text>
+    <text class="eyebrow" x="21" y="91">CONTROL / SSOT</text>
     <text class="heading" x="21" y="124">Settings / SSOT</text>
     <text class="body muted" x="21" y="151">Declarative source of truth · saves are validated and published automatically</text>
     <use href="#icon-status-ok" x="20" y="168" width="15" height="15" class="status-icon"/>
-    <text class="small" x="43" y="181">Authenticated operator session · secrets remain node-local</text>
+    <text class="small" x="43" y="181">Raw SSOT write session · authenticated by node-local operator_ref</text>
   </g>
 
 
@@ -185,7 +185,7 @@
   <g class="ui">
     <text class="small muted" x="45" y="232">CONTROL NODE</text><text class="body mono" x="45" y="256">jm24</text>
     <text class="small muted" x="384" y="232">WRITE AUTHORITY</text><text class="body" x="384" y="256">Single control node</text>
-    <text class="small muted" x="800" y="232">DISTRIBUTION REPORTS</text><text class="body mono" x="800" y="256">4f09f6f5716d</text>
+    <text class="small muted" x="800" y="232">DISTRIBUTED SNAPSHOT</text><text class="body mono" x="800" y="256">4f09f6f5716d</text>
     <text class="small muted" x="1125" y="232">PUBLISH CADENCE</text><text class="body" x="1125" y="256">≤ 30s</text>
     <text class="tiny muted" x="1231" y="256">fleet target ≤ 90s · no publish button</text>
   </g>
@@ -193,51 +193,51 @@
 
   <!-- Tabs -->
   <g class="ui nav">
-    <text x="21" y="311" font-weight="600">SSOT</text><text class="muted" x="88" y="311">Secret references</text><text class="muted" x="226" y="311">Release policy</text>
+    <text x="21" y="311" font-weight="600">Raw SSOT</text><text class="muted" x="110" y="311">Secret references · Planned</text><text class="muted" x="320" y="311">Release policy · Planned</text>
   </g>
-  <line x1="21" y1="325" x2="56" y2="325" stroke="#2AA875" stroke-width="2"/>
+  <line x1="21" y1="325" x2="78" y2="325" stroke="#2AA875" stroke-width="2"/>
   <line class="rule" x1="21" y1="325" x2="1559" y2="325"/>
 
-  <!-- Sanitized editor -->
+  <!-- The implemented surface is the authenticated raw /ssot YAML editor. -->
   <rect class="panel" x="21" y="341" width="1005" height="632" rx="7"/>
   <g class="ui">
-    <text class="section" x="41" y="373">Single source of truth</text>
-    <text class="tiny muted" x="276" y="373">Redacted prototype · sensitive values hidden</text>
+    <text class="section" x="41" y="373">Raw SSOT editor</text>
+    <text class="tiny muted" x="218" y="373">Full YAML buffer · viewport shown below</text>
     <rect class="chip" x="735" y="354" width="116" height="30" rx="5"/><use href="#icon-check" x="750" y="362" width="14" height="14" class="action-icon"/><text class="small" x="812" y="374" text-anchor="middle">Validate</text>
     <rect class="button-green" x="860" y="354" width="144" height="30" rx="5"/><use href="#icon-save" x="875" y="362" width="14" height="14" class="action-icon" style="stroke:#FFFFFF"/><text class="small" x="945" y="374" text-anchor="middle" fill="#FFFFFF">Validate &amp; save</text>
-    <text class="tiny muted" x="41" y="404">/opt/loom/deploy/ssot.yaml</text><text class="tiny green" x="1004" y="404" text-anchor="end">Authenticated operator</text>
+    <text class="tiny muted" x="41" y="404">GET /ssot · POST /ssot · viewport lines 11–33</text><text class="tiny green" x="1004" y="404" text-anchor="end">Write session · node-local operator_ref</text>
   </g>
 
   <rect class="code-bg" x="41" y="419" width="965" height="532" rx="5"/>
   <rect x="41" y="419" width="46" height="532" rx="5" fill="#F1F3F2"/>
   <line class="rule" x1="87" y1="419" x2="87" y2="951"/>
   <g class="ui tiny mono muted" text-anchor="end">
-    <text x="76" y="447">1</text><text x="76" y="469">2</text><text x="76" y="491">3</text><text x="76" y="513">4</text><text x="76" y="535">5</text><text x="76" y="557">6</text><text x="76" y="579">7</text><text x="76" y="601">8</text><text x="76" y="623">9</text><text x="76" y="645">10</text><text x="76" y="667">11</text><text x="76" y="689">12</text><text x="76" y="711">13</text><text x="76" y="733">14</text><text x="76" y="755">15</text><text x="76" y="777">16</text><text x="76" y="799">17</text><text x="76" y="821">18</text><text x="76" y="843">19</text><text x="76" y="865">20</text><text x="76" y="887">21</text><text x="76" y="909">22</text><text x="76" y="931">23</text>
+    <text x="76" y="447">11</text><text x="76" y="469">12</text><text x="76" y="491">13</text><text x="76" y="513">14</text><text x="76" y="535">15</text><text x="76" y="557">16</text><text x="76" y="579">17</text><text x="76" y="601">18</text><text x="76" y="623">19</text><text x="76" y="645">20</text><text x="76" y="667">21</text><text x="76" y="689">22</text><text x="76" y="711">23</text><text x="76" y="733">24</text><text x="76" y="755">25</text><text x="76" y="777">26</text><text x="76" y="799">27</text><text x="76" y="821">28</text><text x="76" y="843">29</text><text x="76" y="865">30</text><text x="76" y="887">31</text><text x="76" y="909">32</text><text x="76" y="931">33</text>
   </g>
   <g class="ui body mono">
     <text x="101" y="447"><tspan class="blue">defaults</tspan>:</text>
-    <text x="101" y="469">  <tspan class="blue">components</tspan>:</text>
-    <text x="101" y="491">    <tspan class="blue">wireguard</tspan>: <tspan class="green">1.0.20250521</tspan></text>
-    <text x="101" y="513">    <tspan class="blue">agent</tspan>: <tspan class="green">0.1.0</tspan></text>
+    <text x="101" y="469">  <tspan class="faint"># Control, signing and publishing live on jm24.</tspan></text>
+    <text x="101" y="491">  <tspan class="faint"># Forwarding continues if that writer is unavailable.</tspan></text>
+    <text x="101" y="513">  <tspan class="faint"># Writer state can be moved with SSOT and signing material.</tspan></text>
     <text x="101" y="535"> </text>
-    <text x="101" y="557"><tspan class="blue">nodes</tspan>:</text>
-    <text x="101" y="579">  - <tspan class="blue">id</tspan>: <tspan class="green">jm24</tspan></text>
-    <text x="101" y="601">    <tspan class="blue">city</tspan>: Beijing</text>
-    <text x="101" y="623">    <tspan class="blue">server</tspan>: { <tspan class="blue">direction</tspan>: bidirectional, <tspan class="blue">egress_capable</tspan>: false }</text>
-    <text x="101" y="645">  - <tspan class="blue">id</tspan>: <tspan class="green">gz02</tspan></text>
-    <text x="101" y="667">    <tspan class="blue">server</tspan>: { <tspan class="blue">direction</tspan>: bidirectional, <tspan class="blue">egress_capable</tspan>: true }</text>
-    <text x="101" y="689">  <tspan class="faint"># … 3 more nodes</tspan></text>
-    <text x="101" y="711"> </text>
-    <text x="101" y="733"><tspan class="blue">tunnels</tspan>:</text>
-    <text x="101" y="755">  - { <tspan class="blue">from</tspan>: jm24, <tspan class="blue">to</tspan>: sg02, <tspan class="faint"># addresses hidden</tspan> }</text>
-    <text x="101" y="777">  - { <tspan class="blue">from</tspan>: gz02, <tspan class="blue">to</tspan>: sg02, <tspan class="faint"># addresses hidden</tspan> }</text>
-    <text x="101" y="799">  <tspan class="faint"># … 4 more persistent links</tspan></text>
-    <text x="101" y="821"> </text>
-    <text x="101" y="843"><tspan class="blue">declarations</tspan>:</text>
-    <text x="101" y="865">  - { <tspan class="blue">id</tspan>: <tspan class="green">best-egress</tspan>, <tspan class="blue">egress_axis</tspan>: any, <tspan class="blue">objective</tspan>: latency, <tspan class="blue">max_hops</tspan>: 2 }</text>
-    <text x="101" y="887"> </text>
-    <text x="101" y="909"><tspan class="blue">services</tspan>:</text>
-    <text x="101" y="931">  - { <tspan class="blue">id</tspan>: <tspan class="green">intl-api</tspan>, <tspan class="blue">declaration</tspan>: best-egress, <tspan class="blue">addresses</tspan>: [api.ipify.org, .githubusercontent.com] }</text>
+    <text x="101" y="557">  <tspan class="faint"># Nodes fetch signed immutable snapshots from this origin.</tspan></text>
+    <text x="101" y="579">  <tspan class="faint"># Distribution transport itself is not trusted.</tspan></text>
+    <text x="101" y="601">  <tspan class="faint"># Node-local pinned trust verifies the manifest.</tspan></text>
+    <text x="101" y="623">  <tspan class="blue">distribution_url</tspan>: <tspan class="green">https://psi-ai.cn/loom/</tspan></text>
+    <text x="101" y="645">  <tspan class="faint"># Resolver defaults are selected for the deployed region.</tspan></text>
+    <text x="101" y="667">  <tspan class="faint"># Request-derived destinations still resolve at the selected egress.</tspan></text>
+    <text x="101" y="689">  <tspan class="faint"># The raw buffer continues; this is only the visible viewport.</tspan></text>
+    <text x="101" y="711">  <tspan class="blue">dns</tspan>: [<tspan class="green">223.5.5.5</tspan>, <tspan class="green">119.29.29.29</tspan>]</text>
+    <text x="101" y="733"> </text>
+    <text x="101" y="755">  <tspan class="blue">components</tspan>:</text>
+    <text x="101" y="777">    <tspan class="blue">sing_box</tspan>: <tspan class="green">1.11.4</tspan></text>
+    <text x="101" y="799">    <tspan class="blue">wireguard</tspan>: <tspan class="green">1.0.20250521</tspan></text>
+    <text x="101" y="821">    <tspan class="blue">agent</tspan>: <tspan class="green">0.1.0</tspan></text>
+    <text x="101" y="843"> </text>
+    <text x="101" y="865"><tspan class="blue">nodes</tspan>:</text>
+    <text x="101" y="887">  <tspan class="faint"># Domestic nodes have public endpoints; no mesh is deployed.</tspan></text>
+    <text x="101" y="909">  <tspan class="faint"># Candidate paths are distinct from persistent WireGuard edges.</tspan></text>
+    <text x="101" y="931">  <tspan class="faint"># Scroll for complete node, tunnel, declaration and service entries.</tspan></text>
   </g>
 
   <!-- Validation and automatic publication contract -->
@@ -265,12 +265,13 @@
   <line class="rule" x1="1062" y1="772" x2="1539" y2="772"/>
   <g class="ui">
     <text class="section" x="1062" y="812">Security boundary &amp; gaps</text>
-    <text class="small muted" x="1062" y="845">PRIVATE KEYS</text><text class="body" x="1238" y="845">Never shown or stored here</text>
-    <text class="small muted" x="1062" y="876">CREDENTIALS</text><text class="body" x="1238" y="876">References only</text>
-    <line class="rule" x1="1062" y1="895" x2="1539" y2="895"/>
-    <text class="tiny amber" x="1062" y="918">Known web-editing gaps</text>
-    <text class="tiny muted" x="1062" y="938">No dry-run diff, source revision guard, or approval audit.</text>
-    <text class="tiny muted" x="1062" y="957">Concurrent saves are last-writer-wins; live snapshot stays old on failure.</text>
+    <text class="small muted" x="1062" y="841">AUTH SOURCE</text><text class="body" x="1238" y="841">Node-local secrets · operator_ref</text>
+    <text class="small muted" x="1062" y="869">CONTROL BOOTSTRAP</text><text class="body" x="1238" y="869">/etc/loom/control.json · not editable here</text>
+    <text class="small muted" x="1062" y="897">PRIVATE KEYS</text><text class="body" x="1238" y="897">Never shown or stored in SSOT</text>
+    <line class="rule" x1="1062" y1="912" x2="1539" y2="912"/>
+    <text class="tiny amber" x="1062" y="932">Known web-editing gaps</text>
+    <text class="tiny muted" x="1062" y="950">Web writers share a process lock + revision guard.</text>
+    <text class="tiny muted" x="1062" y="967">External Git/editor is not locked; stop or reload before saving.</text>
   </g>
 
 </svg>

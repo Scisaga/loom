@@ -154,21 +154,21 @@
     <use href="#icon-services" x="584" y="18" width="14" height="14" class="nav-icon"/>
     <text x="605" y="31">Services</text>
     <use href="#icon-traffic" x="682" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="703" y="31">Routing</text>
+    <text x="703" y="31">Live paths</text>
     <use href="#icon-deployments" x="780" y="18" width="14" height="14" class="nav-icon"/>
     <text x="801" y="31">Deployments</text>
     <use href="#icon-events" x="919" y="18" width="14" height="14" class="nav-icon"/>
     <text x="940" y="31">Events</text>
     <use href="#icon-settings" x="1008" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="1029" y="31">Settings</text>
+    <text x="1029" y="31">SSOT</text>
   </g>
   <line x1="395" y1="49.5" x2="466" y2="49.5" stroke="#2AA875" stroke-width="2"/>
   <g class="ui nav">
-    <text x="1210" y="31">Production</text>
+    <text class="amber" x="1160" y="31">Prototype · sample data</text>
     <circle class="status-dot" cx="1322" cy="26" r="4"/>
     <text x="1335" y="31">Operational</text>
     <use href="#icon-lock" x="1428" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="1538" y="31" text-anchor="end">Authenticated</text>
+    <text x="1538" y="31" text-anchor="end">Read-only view</text>
   </g>
 
   <g class="ui">
@@ -187,7 +187,7 @@
   <rect class="panel" x="21" y="202" width="1538" height="78" rx="7"/>
   <g class="ui">
     <text class="label" x="51" y="228">Snapshot</text><text class="metric mono" x="51" y="255">4f09f6f5716d</text>
-    <text class="label" x="415" y="228">Commit</text><text class="metric mono" x="415" y="255">28224ed</text>
+    <text class="label" x="415" y="228">Loom code</text><text class="metric mono" x="415" y="255">28224ed</text>
     <text class="label" x="745" y="228">Binary</text><text class="metric mono" x="745" y="255">449597b5…</text>
     <text class="label" x="1064" y="228">WireGuard tools</text><text class="metric mono" x="1064" y="255">1.0.20250521</text>
     <text class="label" x="1390" y="228">Rollout</text><text class="metric green" x="1390" y="255">Verified</text>
@@ -205,7 +205,7 @@
     <text class="body mono" x="47" y="458">loom-publisher</text><text class="body" x="270" y="458">automatic release</text><circle class="quiet-dot" cx="504" cy="453" r="4"/><text class="body" x="517" y="458">Active</text><text class="body mono" x="680" y="458">0</text>
     <text class="body mono" x="47" y="485">loom-pull.timer</text><text class="body" x="270" y="485">snapshot convergence</text><circle class="quiet-dot" cx="504" cy="480" r="4"/><text class="body" x="517" y="485">Waiting</text><text class="body mono" x="680" y="485">—</text>
     <line class="rule" x1="41" y1="412" x2="759" y2="412"/><line class="rule" x1="41" y1="439" x2="759" y2="439"/><line class="rule" x1="41" y1="466" x2="759" y2="466"/><line class="rule" x1="41" y1="493" x2="759" y2="493"/>
-    <text class="subsection" x="41" y="521">Component parity <tspan class="tiny muted" font-weight="400">· host audit, not yet reported centrally</tspan></text>
+    <text class="subsection" x="41" y="521">Component parity <tspan class="tiny muted" font-weight="400">· signed expected / actual report</tspan></text>
     <text class="small muted" x="47" y="546">COMPONENT</text><text class="small muted" x="260" y="546">EXPECTED</text><text class="small muted" x="475" y="546">ACTUAL</text><text class="small muted" x="670" y="546">RESULT</text>
     <line class="rule" x1="41" y1="554" x2="759" y2="554"/>
     <text class="body" x="47" y="576">sing-box</text><text class="body mono" x="260" y="576">managed</text><text class="body mono" x="475" y="576">managed</text><text class="body green" x="670" y="576">Match</text>
@@ -215,40 +215,45 @@
   <rect class="panel" x="795" y="296" width="764" height="320" rx="7"/>
   <g class="ui">
     <text class="section" x="815" y="325">Observation</text><circle class="status-dot" cx="1444" cy="321" r="4"/><text class="tiny green" x="1539" y="325" text-anchor="end">Verified healthy</text>
-    <text class="small muted" x="815" y="358">SOURCE</text><text class="body" x="1015" y="358">Direct /status · signed local statement</text>
+    <text class="small muted" x="815" y="358">SOURCE</text><text class="body" x="1015" y="358">Direct /status · local evidence</text>
     <text class="small muted" x="815" y="388">ROLE</text><text class="body" x="1015" y="388">Access + tunnel endpoint · runtime control</text>
     <text class="small muted" x="815" y="418">EGRESS CAPABLE</text><text class="body" x="1015" y="418">No · local direct remains a zero-hop candidate</text>
     <line class="rule" x1="815" y1="443" x2="1539" y2="443"/>
 
-    <text class="section" x="815" y="473">WireGuard interface I/O</text><text class="tiny muted" x="1539" y="473" text-anchor="end">Direct payload · not attested</text>
+    <text class="section" x="815" y="473">WireGuard interface I/O</text><text class="tiny green" x="1539" y="473" text-anchor="end">Current cumulative · direct-self evidence</text>
     <text class="small muted" x="833" y="501">INTERFACE</text><text class="small muted" x="992" y="501">PEER</text><text class="small muted" x="1115" y="501">RX TOTAL</text><text class="small muted" x="1248" y="501">TX TOTAL</text><text class="small muted" x="1400" y="501">HANDSHAKE</text>
     <line class="rule" x1="815" y1="509" x2="1539" y2="509"/>
     <circle class="quiet-dot" cx="821" cy="532" r="4"/><text class="body mono" x="833" y="537">wg-sg02</text><text class="body mono" x="992" y="537">sg02</text><text class="body mono" x="1115" y="537">3.84 TB</text><text class="body mono" x="1248" y="537">2.91 TB</text><text class="body" x="1400" y="537">37s</text>
     <circle class="quiet-dot" cx="821" cy="562" r="4"/><text class="body mono" x="833" y="567">wg-ber01</text><text class="body mono" x="992" y="567">ber01</text><text class="body mono" x="1115" y="567">2.10 TB</text><text class="body mono" x="1248" y="567">1.11 TB</text><text class="body" x="1400" y="567">57s</text>
     <line class="rule" x1="815" y1="547" x2="1539" y2="547"/>
-    <text class="tiny muted" x="815" y="598">Raw counters since peer or interface recreation.</text>
+    <text class="tiny muted" x="815" y="598">/status: diagnostic + learned attachments · /traffic.json: latest report-round cache, schema v1 · fixed 60s samples / 3m gap.</text>
   </g>
 
   <!-- Traffic receives a full-width row instead of being squeezed into the right column. -->
   <rect class="panel" x="21" y="632" width="1538" height="128" rx="7"/>
   <g class="ui">
     <text class="section" x="41" y="660">Forwarding traffic · last 24h</text>
-    <text class="tiny amber" x="1539" y="660" text-anchor="end">Planned · history not retained</text>
-    <text class="small muted" x="41" y="686">NOW · RX+TX</text><text class="metric" x="41" y="713">18.6 Mbps</text>
-    <text class="small muted" x="212" y="686">TRANSFER · 24H</text><text class="metric" x="212" y="713">638 GB</text>
-    <text class="small muted" x="383" y="686">SINCE RESET</text><text class="metric" x="383" y="713">9.96 TB</text>
-    <text class="tiny muted" x="41" y="746">WireGuard only · direct traffic excluded · counters and planned history have different trust levels.</text>
+    <text class="tiny green" x="1539" y="660" text-anchor="end">Control retention · 30 days</text>
+    <text class="small muted" x="41" y="686">HISTORICAL RX</text><text class="metric" x="41" y="713">356 GB</text>
+    <text class="small muted" x="212" y="686">HISTORICAL TX</text><text class="metric" x="212" y="713">282 GB</text>
+    <text class="small muted" x="383" y="686">BUCKETS WITH SAMPLES</text><text class="metric" x="383" y="713">16 / 18</text>
+    <text class="tiny muted" x="41" y="746">WG only · direct, service/sing-box and Hysteria2 excluded.</text>
+    <text class="tiny muted" x="383" y="746">R/G = missing, not zero.</text>
 
     <rect x="620" y="674" width="10" height="8" rx="1" fill="#2AA875"/><text class="tiny green" x="637" y="682">RX</text>
     <rect x="671" y="674" width="10" height="8" rx="1" fill="#477D9C" fill-opacity=".82"/><text class="tiny blue" x="688" y="682">TX</text>
     <line class="rule" x1="620" y1="691" x2="1539" y2="691"/><line class="rule" x1="620" y1="711" x2="1539" y2="711"/><line class="rule" x1="620" y1="731" x2="1539" y2="731"/>
-    <g aria-label="Eighteen RX and TX time buckets across the last 24 hours">
+    <g aria-label="Sixteen accepted RX and TX buckets plus one counter reset and one long gap">
       <g fill="#2AA875">
-        <rect x="632" y="715" width="13" height="16" rx="1"/><rect x="681" y="705" width="13" height="26" rx="1"/><rect x="730" y="699" width="13" height="32" rx="1"/><rect x="779" y="709" width="13" height="22" rx="1"/><rect x="828" y="716" width="13" height="15" rx="1"/><rect x="877" y="695" width="13" height="36" rx="1"/><rect x="926" y="688" width="13" height="43" rx="1"/><rect x="975" y="697" width="13" height="34" rx="1"/><rect x="1024" y="708" width="13" height="23" rx="1"/><rect x="1073" y="712" width="13" height="19" rx="1"/><rect x="1122" y="702" width="13" height="29" rx="1"/><rect x="1171" y="691" width="13" height="40" rx="1"/><rect x="1220" y="686" width="13" height="45" rx="1"/><rect x="1269" y="700" width="13" height="31" rx="1"/><rect x="1318" y="706" width="13" height="25" rx="1"/><rect x="1367" y="694" width="13" height="37" rx="1"/><rect x="1416" y="703" width="13" height="28" rx="1"/><rect x="1465" y="689" width="13" height="42" rx="1"/>
+        <rect x="632" y="715" width="13" height="16" rx="1"/><rect x="681" y="705" width="13" height="26" rx="1"/><rect x="730" y="699" width="13" height="32" rx="1"/><rect x="779" y="709" width="13" height="22" rx="1"/><rect x="877" y="695" width="13" height="36" rx="1"/><rect x="926" y="688" width="13" height="43" rx="1"/><rect x="975" y="697" width="13" height="34" rx="1"/><rect x="1024" y="708" width="13" height="23" rx="1"/><rect x="1122" y="702" width="13" height="29" rx="1"/><rect x="1171" y="691" width="13" height="40" rx="1"/><rect x="1220" y="686" width="13" height="45" rx="1"/><rect x="1269" y="700" width="13" height="31" rx="1"/><rect x="1318" y="706" width="13" height="25" rx="1"/><rect x="1367" y="694" width="13" height="37" rx="1"/><rect x="1416" y="703" width="13" height="28" rx="1"/><rect x="1465" y="689" width="13" height="42" rx="1"/>
       </g>
       <g fill="#477D9C" fill-opacity=".82">
-        <rect x="647" y="723" width="13" height="8" rx="1"/><rect x="696" y="716" width="13" height="15" rx="1"/><rect x="745" y="712" width="13" height="19" rx="1"/><rect x="794" y="719" width="13" height="12" rx="1"/><rect x="843" y="724" width="13" height="7" rx="1"/><rect x="892" y="711" width="13" height="20" rx="1"/><rect x="941" y="705" width="13" height="26" rx="1"/><rect x="990" y="711" width="13" height="20" rx="1"/><rect x="1039" y="718" width="13" height="13" rx="1"/><rect x="1088" y="720" width="13" height="11" rx="1"/><rect x="1137" y="714" width="13" height="17" rx="1"/><rect x="1186" y="707" width="13" height="24" rx="1"/><rect x="1235" y="704" width="13" height="27" rx="1"/><rect x="1284" y="713" width="13" height="18" rx="1"/><rect x="1333" y="717" width="13" height="14" rx="1"/><rect x="1382" y="709" width="13" height="22" rx="1"/><rect x="1431" y="715" width="13" height="16" rx="1"/><rect x="1480" y="706" width="13" height="25" rx="1"/>
+        <rect x="647" y="723" width="13" height="8" rx="1"/><rect x="696" y="716" width="13" height="15" rx="1"/><rect x="745" y="712" width="13" height="19" rx="1"/><rect x="794" y="719" width="13" height="12" rx="1"/><rect x="892" y="711" width="13" height="20" rx="1"/><rect x="941" y="705" width="13" height="26" rx="1"/><rect x="990" y="711" width="13" height="20" rx="1"/><rect x="1039" y="718" width="13" height="13" rx="1"/><rect x="1137" y="714" width="13" height="17" rx="1"/><rect x="1186" y="707" width="13" height="24" rx="1"/><rect x="1235" y="704" width="13" height="27" rx="1"/><rect x="1284" y="713" width="13" height="18" rx="1"/><rect x="1333" y="717" width="13" height="14" rx="1"/><rect x="1382" y="709" width="13" height="22" rx="1"/><rect x="1431" y="715" width="13" height="16" rx="1"/><rect x="1480" y="706" width="13" height="25" rx="1"/>
       </g>
+      <rect x="826" y="686" width="32" height="45" rx="1" fill="none" stroke="#D79B3B" stroke-dasharray="3 3"/>
+      <rect x="1071" y="686" width="32" height="45" rx="1" fill="none" stroke="#A5AAA8" stroke-dasharray="3 3"/>
+      <text class="tiny amber" x="842" y="700" text-anchor="middle">R</text>
+      <text class="tiny muted" x="1087" y="700" text-anchor="middle">G</text>
     </g>
     <text class="tiny muted" x="620" y="748">24h ago</text><text class="tiny muted" x="1539" y="748" text-anchor="end">now</text>
   </g>
@@ -256,7 +261,7 @@
   <!-- Existing detail is preserved in equal bottom columns. -->
   <rect class="panel" x="21" y="776" width="758" height="197" rx="7"/>
   <g class="ui">
-    <text class="section" x="41" y="806">Agent route decisions</text><text class="tiny amber" x="274" y="806">Locally verified · health evidence not published by legacy Agent</text>
+    <text class="section" x="41" y="806">Agent route decisions</text><text class="tiny green" x="274" y="806">Signed Agent report · selector and health summary available</text>
     <text class="small muted" x="47" y="834">ROUTING ENTRY</text><text class="small muted" x="223" y="834">CURRENT PATH</text><text class="small muted" x="588" y="834">EVIDENCE</text>
     <line class="rule" x1="41" y1="842" x2="759" y2="842"/>
     <text class="body mono" x="47" y="860">cn-web</text><text class="body mono" x="223" y="860">jm24 → direct</text><text class="tiny muted" x="588" y="860">runtime selector</text>
@@ -272,8 +277,8 @@
     <text class="section" x="815" y="806">Measurements</text><text class="tiny muted" x="815" y="827">Uplink failures are actionable. Target failures are route-pruning data.</text>
     <text class="small muted" x="821" y="852">TYPE</text><text class="small muted" x="955" y="852">TARGET</text><text class="small muted" x="1218" y="852">OBSERVATION</text><text class="small muted" x="1442" y="852">MEANING</text>
     <line class="rule" x1="815" y1="860" x2="1539" y2="860"/>
-    <text class="body" x="821" y="884">uplink</text><text class="body" x="955" y="884">www.baidu.com</text><text class="body green" x="1218" y="884">63 ms · reachable</text><text class="body" x="1442" y="884">Healthy</text>
-    <text class="body" x="821" y="919">target</text><text class="body" x="955" y="919">api.ipify.org</text><text class="body blue" x="1218" y="919">5 / 5 timeout</text><text class="body blue" x="1442" y="919">Pruning data</text>
+    <text class="body" x="821" y="884">uplink</text><text class="body" x="955" y="884">uplink.example.net</text><text class="body green" x="1218" y="884">63 ms · reachable</text><text class="body" x="1442" y="884">Healthy</text>
+    <text class="body" x="821" y="919">target</text><text class="body" x="955" y="919">api.ipify.org</text><text class="body blue" x="1218" y="919">5 / 5 timeout</text><text class="body blue" x="1442" y="919">Mainland classification</text>
     <text class="body" x="821" y="954">edge</text><text class="body mono" x="955" y="954">jm24 ↔ sg02</text><text class="body green" x="1218" y="954">277 ms · 4/4</text><text class="body" x="1442" y="954">Carrier</text>
     <line class="rule" x1="815" y1="895" x2="1539" y2="895"/><line class="rule" x1="815" y1="930" x2="1539" y2="930"/>
   </g>

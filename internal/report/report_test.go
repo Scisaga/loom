@@ -10,6 +10,34 @@ import (
 	"loom/internal/rollout"
 )
 
+func TestParseWGStatsKeepsZeroHandshakePeerPresentAndSaturatesCounters(t *testing.T) {
+	dump := strings.Join([]string{
+		"wg-a\tprivate\tpublic\t51820\toff",
+		"wg-a\tpeer-a\t(none)\t(none)\t10.0.0.2/32\t0\t9223372036854775807\t7\t25",
+		"wg-a\tpeer-b\t(none)\t(none)\t10.0.0.3/32\t1700000000\t9\t9223372036854775807\t25",
+		"wg-empty\tprivate\tpublic\t51821\toff",
+	}, "\n")
+
+	stats, errs := parseWGStats([]byte(dump))
+	if len(errs) != 0 {
+		t.Fatalf("parseWGStats returned errors: %v", errs)
+	}
+	got := stats["wg-a"]
+	if !got.InterfacePresent || !got.PeerPresent {
+		t.Fatalf("zero-handshake peer lost presence: %+v", got)
+	}
+	if got.LatestHandshake != 1700000000 {
+		t.Fatalf("latest handshake = %d", got.LatestHandshake)
+	}
+	if got.RXBytes != maxCounterValue || got.TXBytes != maxCounterValue {
+		t.Fatalf("peer counters did not saturate: %+v", got)
+	}
+	empty := stats["wg-empty"]
+	if !empty.InterfacePresent || empty.PeerPresent {
+		t.Fatalf("interface-only dump row presence wrong: %+v", empty)
+	}
+}
+
 // 上报接口没有自己的认证 —— 它靠 WireGuard 兜住。绑到公网地址上就等于
 // 把拓扑和隧道健康白送,而且这种错误一旦发生不会有任何症状。
 func TestRefusesPublicListenAddress(t *testing.T) {

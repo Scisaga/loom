@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"loom/internal/attest"
 	"loom/internal/version"
 	"loom/internal/webui"
 )
@@ -15,28 +16,79 @@ import (
 // 也不从事件历史猜当前路径；版本、rollout、Agent 选择都来自 Status 或已验签
 // 的 Observation。
 func buildView(cfg *Config, self *Status, now time.Time) webui.View {
+	return buildViewWithCA(cfg, self, now, os.ReadFile)
+}
+
+// buildViewWithCA keeps CA loading injectable for end-to-end trust tests. The
+// production wrapper always supplies os.ReadFile.
+func buildViewWithCA(cfg *Config, self *Status, now time.Time,
+	readCA func(string) ([]byte, error)) webui.View {
 	now = now.UTC()
-	v := webui.View{Self: cfg.Node, Applied: self.Applied, ObservedAt: now.Format(time.RFC3339)}
+	v := webui.View{
+		Self: cfg.Node, Applied: self.Applied, ObservedAt: now.Format(time.RFC3339),
+		IntentSource: "serving node applied inventory",
+	}
 	attestationAge, err := cfg.ObsStale()
 	if err != nil {
 		attestationAge = AttestationMaxAge
 		v.Warnings = append(v.Warnings, "observation_stale 无法解析，验签新鲜度回退到 "+AttestationMaxAge.String()+":"+err.Error())
 	}
-	byNode := map[string]webui.NodeView{}
-	byNode[cfg.Node] = nodeView(cfg.Node, true, true, self, self.Observation, nil, "", now)
-
 	var ca []byte
 	var caErr error
 	caLoaded := false
+	loadCA := func() {
+		if !caLoaded {
+			ca, caErr = readCA(caPath)
+			caLoaded = true
+		}
+	}
+	verifyTraffic := func(o *Observation) (*attest.TrafficClaim, string) {
+		if o == nil || o.Traffic == nil {
+			return nil, ""
+		}
+		loadCA()
+		if caErr != nil {
+			return nil, "读签名 CA:" + caErr.Error()
+		}
+		claim, err := verifyTrafficAttachment(o, ca, now, attestationAge)
+		if err != nil {
+			return nil, err.Error()
+		}
+		return claim, ""
+	}
+	verifySelfCheck := func(o *Observation) (*attest.SelfCheckClaim, string) {
+		if o == nil || o.SelfCheck == nil {
+			return nil, ""
+		}
+		loadCA()
+		if caErr != nil {
+			return nil, "读签名 CA:" + caErr.Error()
+		}
+		claim, err := verifySelfCheckAttachment(o, ca, now, attestationAge)
+		if err != nil {
+			return nil, err.Error()
+		}
+		return claim, ""
+	}
+	declared := make(map[string]bool, len(cfg.ExpectedNodes))
+	for _, id := range cfg.ExpectedNodes {
+		if id != "" {
+			declared[id] = true
+		}
+	}
+	byNode := map[string]webui.NodeView{}
+	local := nodeView(cfg.Node, true, true, self, self.Observation, nil, "", now)
+	local.Declared = declared[cfg.Node]
+	localTraffic, localTrafficErr := verifyTraffic(self.Observation)
+	applyTrafficClaim(&local, localTraffic, localTrafficErr, now, false)
+	byNode[cfg.Node] = local
+
 	for i := range self.Learned {
 		o := &self.Learned[i]
 		var trusted *AttestedState
 		identityErr := ""
 		if observationNeedsVerification(o, cfg.AttestationMinVersion) {
-			if !caLoaded {
-				ca, caErr = os.ReadFile(caPath)
-				caLoaded = true
-			}
+			loadCA()
 			if caErr != nil {
 				identityErr = "读签名 CA:" + caErr.Error()
 			} else if got, err := VerifyObservationAtLeast(o, ca, now, attestationAge,
@@ -49,7 +101,13 @@ func buildView(cfg *Config, self *Status, now time.Time) webui.View {
 		if o.Node == "" || o.Node == cfg.Node {
 			continue
 		}
-		byNode[o.Node] = nodeView(o.Node, false, false, nil, o, trusted, identityErr, now)
+		node := nodeView(o.Node, false, false, nil, o, trusted, identityErr, now)
+		node.Declared = declared[o.Node]
+		selfCheck, selfCheckErr := verifySelfCheck(o)
+		applySelfCheckClaim(&node, selfCheck, selfCheckErr)
+		traffic, trafficErr := verifyTraffic(o)
+		applyTrafficClaim(&node, traffic, trafficErr, now, true)
+		byNode[o.Node] = node
 	}
 	for _, id := range cfg.ExpectedNodes {
 		if id == "" {
@@ -57,7 +115,7 @@ func buildView(cfg *Config, self *Status, now time.Time) webui.View {
 		}
 		if _, ok := byNode[id]; !ok {
 			byNode[id] = webui.NodeView{
-				ID: id, Health: "unknown", Source: "SSOT 期望 · 未收到观测",
+				ID: id, Declared: true, Health: "unknown", Source: "SSOT 期望 · 未收到观测",
 			}
 		}
 	}
@@ -126,6 +184,7 @@ func candidatePaths(cfg *Config, routes []webui.RouteView) []webui.CandidatePath
 		if r, ok := selected[key]; ok {
 			p.State, p.ObservedAt = "selected", r.ObservedAt
 			p.Source = r.Source + " · 当前选中"
+			p.ScopeKind, p.ScopeID, p.PolicyID = r.ScopeKind, r.ScopeID, r.PolicyID
 		}
 		seen[key] = true
 		out = append(out, p)
@@ -138,6 +197,7 @@ func candidatePaths(cfg *Config, routes []webui.RouteView) []webui.CandidatePath
 		}
 		out = append(out, webui.CandidatePathView{
 			Node: r.Node, Declaration: r.Declaration, Chain: append([]string(nil), r.Chain...),
+			ScopeKind: r.ScopeKind, ScopeID: r.ScopeID, PolicyID: r.PolicyID,
 			State: "selected", ObservedAt: r.ObservedAt,
 			Source: r.Source + " · 当前选中（不在本机 expected_routes）",
 		})
@@ -204,31 +264,9 @@ func nodeView(id string, self, reached bool, st *Status, o *Observation,
 		n.Components = componentViews(trusted.Components)
 	}
 	if st == nil {
-		if n.Rollout != nil && n.Rollout.Problem {
-			n.Health = "problem"
-		}
-		// A trusted v3 uplink failure is a positive fault signal even though a
-		// relayed Observation cannot prove the rest of the remote Status healthy.
-		// Ordinary Targets are pruning data and must leave node health unknown.
-		for _, r := range n.Targets {
-			if r.Uplink && r.Err != "" {
-				n.Health = "problem"
-				n.Problems = append(n.Problems,
-					fmt.Sprintf("直连探测失败:%s:%s", r.Target, r.Err))
-			}
-		}
-		for _, component := range trustedComponents(n.Components) {
-			if !component.OK() {
-				n.Health = "problem"
-				n.Problems = append(n.Problems, componentProblem(component))
-			}
-		}
-		if trusted != nil {
-			for _, problem := range agentHealthProblems(trusted.Agent) {
-				n.Health = "problem"
-				n.Problems = append(n.Problems, problem)
-			}
-		}
+		// A remote Observation, even with signed individual fields, is not a
+		// complete Status verdict. Health remains unknown until the independent
+		// self-check attachment is verified and applied by buildView.
 		return n
 	}
 	if st.OKAt(now) {
@@ -250,9 +288,17 @@ func nodeView(id string, self, reached bool, st *Status, o *Observation,
 	n.Rotating = append(n.Rotating, st.Rotating...)
 	for i := range st.Tunnels {
 		t := &st.Tunnels[i]
+		peerNode := trafficPeerNode(t.Interface)
 		tv := webui.TunnelView{
-			Interface: t.Interface, State: t.UnitState,
-			AgeSec: int(t.HandshakeAgeSec), OK: !t.Down && !t.Stale && t.HandshakeAgeSec >= 0,
+			Interface: t.Interface, CarrierPresent: true, State: t.UnitState,
+			AgeSec: int(t.HandshakeAgeSec), RxBytes: t.RxByt, TxBytes: t.TxByt,
+			PeerNode: peerNode, CounterObservedAt: st.TS,
+			CounterSource: "direct /status", CounterPresent: t.PeerPresent,
+			TrafficTrusted: t.PeerPresent,
+			OK:             !t.Down && !t.Stale && t.HandshakeAgeSec >= 0,
+		}
+		if peerNode != "" {
+			tv.LinkID = attest.CanonicalTrafficLinkID(id, peerNode)
 		}
 		switch {
 		case t.Down:
@@ -264,6 +310,13 @@ func nodeView(id string, self, reached bool, st *Status, o *Observation,
 			tv.OK = false
 		}
 		n.Tunnels = append(n.Tunnels, tv)
+	}
+	for i := range n.Tunnels {
+		if n.Tunnels[i].CounterPresent {
+			n.TrafficTrusted = true
+			n.TrafficObservedAt = st.TS
+			break
+		}
 	}
 	if d := st.Drift; d != nil {
 		for _, f := range d.Modified {
@@ -284,6 +337,113 @@ func nodeView(id string, self, reached bool, st *Status, o *Observation,
 	n.Problems = append(n.Problems, agentHealthProblems(st.Agent)...)
 	n.Problems = append(n.Problems, st.Errors...)
 	return n
+}
+
+// applySelfCheckClaim is the only remote-health mapping boundary. Missing
+// attachments intentionally leave health unknown. Explicit signed healthy is
+// accepted only with an empty problem list (also enforced by attest); explicit
+// unhealthy always produces problem with the node-owned explanations.
+func applySelfCheckClaim(n *webui.NodeView, claim *attest.SelfCheckClaim,
+	verificationError string) {
+	if n == nil {
+		return
+	}
+	if verificationError != "" {
+		n.Health = "problem"
+		n.Problems = append(n.Problems, "自检签名陈述无效:"+verificationError)
+		return
+	}
+	if claim == nil {
+		return
+	}
+	if claim.Healthy && len(claim.Problems) == 0 {
+		if n.Health != "problem" {
+			n.Health = "healthy"
+		}
+		if n.Source == "未签名转述" {
+			n.Source = "签名健康转述"
+		}
+		return
+	}
+	n.Health = "problem"
+	n.Problems = append(n.Problems, claim.Problems...)
+	if n.Source == "未签名转述" {
+		n.Source = "签名健康转述"
+	}
+}
+
+// applyTrafficClaim is the only remote-counter mapping boundary. Callers pass
+// a claim only after verifying the independent traffic signature and binding
+// its Node/TS to the outer Observation. Invalid or unsigned data never reaches
+// TunnelView, so later storage/UI code can trust TrafficTrusted rather than
+// reinterpreting raw gossip JSON.
+func applyTrafficClaim(n *webui.NodeView, claim *attest.TrafficClaim,
+	verificationError string, now time.Time, mapAsCurrent bool) {
+	if n == nil {
+		return
+	}
+	if verificationError != "" {
+		n.Health = "problem"
+		n.Problems = append(n.Problems, "流量签名陈述无效:"+verificationError)
+		return
+	}
+	if claim == nil {
+		return
+	}
+	n.TrafficVerified = true
+	if mapAsCurrent {
+		n.TrafficTrusted = true
+		n.TrafficObservedAt = claim.TS
+	}
+	age := 0
+	if observed, err := time.Parse(time.RFC3339, claim.TS); err == nil {
+		age = int(now.UTC().Sub(observed.UTC()).Seconds())
+		if age < 0 {
+			age = 0
+		}
+	}
+	for _, counter := range claim.Counters {
+		n.VerifiedTraffic = append(n.VerifiedTraffic, webui.VerifiedTrafficCounterView{
+			Interface: counter.Interface, PeerNode: counter.PeerNode,
+			LinkID: counter.LinkID, PeerPublicKey: counter.PeerPublicKey,
+			CounterEpoch: counter.CounterEpoch, ObservedAt: claim.TS,
+			RXBytes: counter.RXBytes, TXBytes: counter.TXBytes,
+		})
+		if !mapAsCurrent {
+			continue
+		}
+		idx := -1
+		for i := range n.Tunnels {
+			if n.Tunnels[i].Interface == counter.Interface &&
+				(n.Tunnels[i].PeerNode == "" || n.Tunnels[i].PeerNode == counter.PeerNode) {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			n.Tunnels = append(n.Tunnels, webui.TunnelView{
+				Interface: counter.Interface, PeerNode: counter.PeerNode,
+				LinkID: counter.LinkID, State: "counter-only", AgeSec: age,
+			})
+			idx = len(n.Tunnels) - 1
+		}
+		tunnel := &n.Tunnels[idx]
+		tunnel.PeerNode = counter.PeerNode
+		tunnel.LinkID = counter.LinkID
+		tunnel.PeerPublicKey = counter.PeerPublicKey
+		tunnel.CounterEpoch = counter.CounterEpoch
+		tunnel.CounterObservedAt = claim.TS
+		tunnel.CounterPresent = true
+		if n.Self {
+			tunnel.CounterSource = "signed self observation"
+		} else {
+			tunnel.CounterSource = "independently signed relay"
+		}
+		tunnel.RxBytes = counter.RXBytes
+		tunnel.TxBytes = counter.TXBytes
+		tunnel.TrafficTrusted = true
+		tunnel.TrafficVerified = true
+	}
 }
 
 func componentViews(xs []ComponentStatus) []webui.ComponentView {
@@ -354,8 +514,10 @@ func agentView(a *AgentState, source string, now time.Time) *webui.AgentView {
 	for _, s := range a.Selections {
 		chain := []string{a.Node}
 		chain = append(chain, s.Chain...)
+		scopeKind, scopeID, policyID := routeScope(s.Selector)
 		r := webui.RouteView{
 			Node: a.Node, Declaration: s.Declaration, Selector: s.Selector,
+			ScopeKind: scopeKind, ScopeID: scopeID, PolicyID: policyID,
 			Candidate: s.Candidate, Chain: chain, Reason: s.Reason,
 			ObservedAt: s.UpdatedAt, Source: source + " · sing-box selector",
 			Health: agentHealthView(s.Health),
@@ -367,6 +529,21 @@ func agentView(a *AgentState, source string, now time.Time) *webui.AgentView {
 		v.Selections = append(v.Selections, r)
 	}
 	return v
+}
+
+// routeScope 从真实 selector tag 识别选路作用域。AgentState.Declaration 是
+// 历史兼容字段：服务 selector 写服务 ID，声明 selector 写策略 ID，单看它
+// 无法区分两个命名空间，所以这里绝不猜。
+func routeScope(selector string) (kind, id, policyID string) {
+	switch {
+	case strings.HasPrefix(selector, "svc:") && len(selector) > len("svc:"):
+		return webui.ScopeService, strings.TrimPrefix(selector, "svc:"), ""
+	case strings.HasPrefix(selector, "decl:") && len(selector) > len("decl:"):
+		id = strings.TrimPrefix(selector, "decl:")
+		return webui.ScopePolicy, id, id
+	default:
+		return "", "", ""
+	}
 }
 
 func agentHealthProblems(a *AgentState) []string {

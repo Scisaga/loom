@@ -3,8 +3,8 @@
      xmlns:xlink="http://www.w3.org/1999/xlink"
      width="1586" height="992" viewBox="0 0 1586 992"
      role="img" aria-labelledby="title description">
-  <title id="title">Deployments — Loom control center prototype</title>
-  <desc id="description">A deployment view showing publisher heartbeat, node rollout state, the automatic release pipeline, and the pending signed-current pointer migration.</desc>
+  <title id="title">Fleet deployments — Loom control center prototype</title>
+  <desc id="description">A fleet-configuration deployment view showing publisher heartbeat, node rollout state, the declared automatic release workflow, and the pending signed-current pointer migration; it is not source-code deployment history.</desc>
   <defs>
     <marker id="arrow-selected" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
       <path d="M0 0L7 3.5L0 7Z" fill="#2AA875"/>
@@ -154,29 +154,29 @@
     <use href="#icon-services" x="584" y="18" width="14" height="14" class="nav-icon"/>
     <text x="605" y="31">Services</text>
     <use href="#icon-traffic" x="682" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="703" y="31">Routing</text>
+    <text x="703" y="31">Live paths</text>
     <use href="#icon-deployments" x="780" y="18" width="14" height="14" class="nav-icon-active"/>
     <text x="801" y="31" font-weight="600">Deployments</text>
     <use href="#icon-events" x="919" y="18" width="14" height="14" class="nav-icon"/>
     <text x="940" y="31">Events</text>
     <use href="#icon-settings" x="1008" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="1029" y="31">Settings</text>
+    <text x="1029" y="31">SSOT</text>
   </g>
   <line x1="778" y1="49.5" x2="906" y2="49.5" stroke="#2AA875" stroke-width="2"/>
   <g class="ui nav">
-    <text x="1210" y="31">Production</text>
+    <text class="amber" x="1160" y="31">Prototype · sample data</text>
     <circle class="status-dot" cx="1322" cy="26" r="4"/>
     <text x="1335" y="31">Operational</text>
     <use href="#icon-lock" x="1428" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="1538" y="31" text-anchor="end">Authenticated</text>
+    <text x="1538" y="31" text-anchor="end">Read-only view</text>
   </g>
 
   <g class="ui">
     <text class="eyebrow" x="21" y="91">CONTROL PLANE / RELEASE</text>
-    <text class="heading" x="21" y="124">Deployments</text>
+    <text class="heading" x="21" y="124">Fleet deployments</text>
     <text class="body muted" x="21" y="151">jm24 publisher · heartbeat 8s ago · reconciliation interval 30s</text>
     <use href="#icon-status-ok" x="20" y="168" width="15" height="15" class="status-icon"/>
-    <text class="small" x="43" y="181">Latest snapshot locally verified across 5 nodes · business-path canary not implemented</text>
+    <text class="small" x="43" y="181">Latest fleet snapshot verified across 5 nodes · business-path canary planned</text>
   </g>
 
 
@@ -184,9 +184,9 @@
   <rect class="panel" x="21" y="202" width="1538" height="86" rx="7"/>
   <g class="ui">
     <text class="small muted" x="47" y="234">PUBLISHER</text><circle class="status-dot" cx="51" cy="257" r="4"/><text class="metric" x="64" y="262">Heartbeat healthy</text>
-    <text class="small muted" x="421" y="234">CURRENT SNAPSHOT</text><text class="metric mono" x="421" y="262">4f09f6f5716d</text>
+    <text class="small muted" x="421" y="234">FLEET SNAPSHOT</text><text class="metric mono" x="421" y="262">4f09f6f5716d</text>
     <text class="small muted" x="786" y="234">ROLLOUT</text><text class="metric" x="786" y="262">5 / 5 verified</text>
-    <text class="small muted" x="1106" y="234">DISTRIBUTION POINTER</text><circle class="warn-dot" cx="1110" cy="257" r="4"/><text class="metric amber" x="1123" y="262">Legacy current</text><text class="tiny muted" x="1293" y="261">floor 0 / 5 · signed current not deployed</text>
+    <text class="small muted" x="1106" y="234">DISTRIBUTION POINTER</text><circle class="warn-dot" cx="1110" cy="257" r="4"/><text class="metric amber" x="1123" y="262">Legacy current</text><text class="tiny muted" x="1293" y="261">floor not reported · signed current planned</text>
   </g>
   <line class="rule" x1="386" y1="222" x2="386" y2="269"/><line class="rule" x1="751" y1="222" x2="751" y2="269"/><line class="rule" x1="1071" y1="222" x2="1071" y2="269"/>
 
@@ -198,7 +198,7 @@
     <text class="tiny muted" x="41" y="357">Automatic release worker on jm24</text>
     <text class="small muted" x="41" y="395">HEARTBEAT</text><text class="body" x="218" y="395">8s ago</text>
     <text class="small muted" x="41" y="427">INTERVAL</text><text class="body" x="218" y="427">30 seconds</text>
-    <text class="small muted" x="41" y="459">COMMIT</text><text class="body mono" x="218" y="459">28224ed</text>
+    <text class="small muted" x="41" y="459">LOOM CODE</text><text class="body mono" x="218" y="459">28224ed</text>
     <text class="small muted" x="41" y="491">BINARY</text><text class="body mono" x="218" y="491">449597b5…</text>
     <text class="small muted" x="41" y="523">LAST SUCCESS</text><text class="body" x="218" y="523">19h ago</text>
     <text class="small muted" x="41" y="555">LAST SNAPSHOT</text><text class="body mono" x="218" y="555">4f09f6f5716d</text>
@@ -206,19 +206,20 @@
     <text class="tiny muted" x="41" y="607">No new publish is expected while SSOT and renderer output are unchanged.</text>
     <text class="tiny muted" x="41" y="629">Heartbeat freshness, not release age, determines publisher health.</text>
     <rect class="chip" x="41" y="650" width="168" height="27" rx="6"/><text class="tiny" x="125" y="668" text-anchor="middle">No manual Publish action</text>
+    <text class="tiny muted" x="225" y="668">Fleet rollout · not code deployment history</text>
   </g>
 
   <!-- Node convergence -->
   <rect class="panel" x="548" y="304" width="1011" height="392" rx="7"/>
   <g class="ui">
-    <text class="section" x="568" y="334">Node convergence</text><text class="tiny muted" x="742" y="334">target snapshot <tspan class="mono">4f09f6f5716d</tspan></text>
-    <text class="small muted" x="574" y="369">NODE</text><text class="small muted" x="743" y="369">TARGET</text><text class="small muted" x="928" y="369">STAGE</text><text class="small muted" x="1098" y="369">ENTERED</text><text class="small muted" x="1281" y="369">LAST GOOD</text><text class="small muted" x="1452" y="369">DRIFT</text>
+    <text class="section" x="568" y="334">Fleet convergence</text><text class="tiny muted" x="742" y="334">target snapshot <tspan class="mono">4f09f6f5716d</tspan></text>
+    <text class="small muted" x="574" y="369">NODE</text><text class="small muted" x="743" y="369">TARGET</text><text class="small muted" x="928" y="369">STAGE</text><text class="small muted" x="1098" y="369">ENTERED</text><text class="small muted" x="1281" y="369">LAST GOOD</text><text class="small muted" x="1438" y="369">DRIFT</text>
     <line class="rule" x1="568" y1="377" x2="1539" y2="377"/>
-    <text class="body mono" x="574" y="412">jm24</text><text class="body mono" x="743" y="412">4f09f6f</text><circle class="quiet-dot" cx="932" cy="407" r="4"/><text class="body" x="945" y="412">Verified</text><text class="body" x="1098" y="412">19h ago</text><text class="body mono" x="1281" y="412">3e8d7c2a</text><text class="body green" x="1452" y="412">Clean</text>
-    <text class="body mono" x="574" y="463">gz02</text><text class="body mono" x="743" y="463">4f09f6f</text><circle class="quiet-dot" cx="932" cy="458" r="4"/><text class="body" x="945" y="463">Verified</text><text class="body" x="1098" y="463">19h ago</text><text class="body mono" x="1281" y="463">3e8d7c2a</text><text class="body green" x="1452" y="463">Clean</text>
-    <text class="body mono" x="574" y="514">hz01</text><text class="body mono" x="743" y="514">4f09f6f</text><circle class="quiet-dot" cx="932" cy="509" r="4"/><text class="body" x="945" y="514">Verified</text><text class="body" x="1098" y="514">19h ago</text><text class="body mono" x="1281" y="514">3e8d7c2a</text><text class="body green" x="1452" y="514">Clean</text>
-    <text class="body mono" x="574" y="565">sg02</text><text class="body mono" x="743" y="565">4f09f6f</text><circle class="quiet-dot" cx="932" cy="560" r="4"/><text class="body" x="945" y="565">Verified</text><text class="body" x="1098" y="565">19h ago</text><text class="body mono" x="1281" y="565">3e8d7c2a</text><text class="body green" x="1452" y="565">Clean</text>
-    <text class="body mono" x="574" y="616">ber01</text><text class="body mono" x="743" y="616">4f09f6f</text><circle class="quiet-dot" cx="932" cy="611" r="4"/><text class="body" x="945" y="616">Verified</text><text class="body" x="1098" y="616">19h ago</text><text class="body mono" x="1281" y="616">3e8d7c2a</text><text class="body green" x="1452" y="616">Clean</text>
+    <text class="body mono" x="574" y="412">jm24</text><text class="body mono" x="743" y="412">4f09f6f</text><circle class="quiet-dot" cx="932" cy="407" r="4"/><text class="body" x="945" y="412">Verified</text><text class="body" x="1098" y="412">19h ago</text><text class="body mono" x="1281" y="412">3e8d7c2a</text><text class="tiny muted" x="1438" y="412">Not reported</text>
+    <text class="body mono" x="574" y="463">gz02</text><text class="body mono" x="743" y="463">4f09f6f</text><circle class="quiet-dot" cx="932" cy="458" r="4"/><text class="body" x="945" y="463">Verified</text><text class="body" x="1098" y="463">19h ago</text><text class="body mono" x="1281" y="463">3e8d7c2a</text><text class="tiny muted" x="1438" y="463">Not reported</text>
+    <text class="body mono" x="574" y="514">hz01</text><text class="body mono" x="743" y="514">4f09f6f</text><circle class="quiet-dot" cx="932" cy="509" r="4"/><text class="body" x="945" y="514">Verified</text><text class="body" x="1098" y="514">19h ago</text><text class="body mono" x="1281" y="514">3e8d7c2a</text><text class="tiny muted" x="1438" y="514">Not reported</text>
+    <text class="body mono" x="574" y="565">sg02</text><text class="body mono" x="743" y="565">4f09f6f</text><circle class="quiet-dot" cx="932" cy="560" r="4"/><text class="body" x="945" y="565">Verified</text><text class="body" x="1098" y="565">19h ago</text><text class="body mono" x="1281" y="565">3e8d7c2a</text><text class="tiny muted" x="1438" y="565">Not reported</text>
+    <text class="body mono" x="574" y="616">ber01</text><text class="body mono" x="743" y="616">4f09f6f</text><circle class="quiet-dot" cx="932" cy="611" r="4"/><text class="body" x="945" y="616">Verified</text><text class="body" x="1098" y="616">19h ago</text><text class="body mono" x="1281" y="616">3e8d7c2a</text><text class="tiny muted" x="1438" y="616">Not reported</text>
     <line class="rule" x1="568" y1="431" x2="1539" y2="431"/><line class="rule" x1="568" y1="482" x2="1539" y2="482"/><line class="rule" x1="568" y1="533" x2="1539" y2="533"/><line class="rule" x1="568" y1="584" x2="1539" y2="584"/><line class="rule" x1="568" y1="635" x2="1539" y2="635"/>
     <text class="tiny muted" x="568" y="668">A node is converged only after its local verifier records the target snapshot as verified.</text>
   </g>
@@ -226,14 +227,14 @@
   <!-- Release pipeline -->
   <rect class="panel" x="21" y="712" width="1004" height="261" rx="7"/>
   <g class="ui">
-    <text class="section" x="41" y="742">Automatic release pipeline</text>
+    <text class="section" x="41" y="742">Automatic release workflow</text><text class="tiny amber" x="315" y="742">Stage history is not reported</text>
     <text class="tiny muted" x="41" y="764">Saving a valid SSOT change is the only write; the publisher owns every downstream stage.</text>
-    <line class="timeline-ok" x1="87" y1="830" x2="955" y2="830"/>
-    <circle class="status-dot" cx="87" cy="830" r="5"/><circle class="status-dot" cx="232" cy="830" r="5"/><circle class="status-dot" cx="377" cy="830" r="5"/><circle class="status-dot" cx="522" cy="830" r="5"/><circle class="status-dot" cx="667" cy="830" r="5"/><circle class="status-dot" cx="812" cy="830" r="5"/><circle class="status-dot" cx="955" cy="830" r="5"/>
+    <line class="timeline" x1="87" y1="830" x2="955" y2="830"/>
+    <circle class="neutral-dot" cx="87" cy="830" r="5"/><circle class="neutral-dot" cx="232" cy="830" r="5"/><circle class="neutral-dot" cx="377" cy="830" r="5"/><circle class="neutral-dot" cx="522" cy="830" r="5"/><circle class="neutral-dot" cx="667" cy="830" r="5"/><circle class="neutral-dot" cx="812" cy="830" r="5"/><circle class="neutral-dot" cx="955" cy="830" r="5"/>
     <text class="small" x="87" y="860" text-anchor="middle">Validate</text><text class="small" x="232" y="860" text-anchor="middle">Render</text><text class="small" x="377" y="860" text-anchor="middle">Sign</text><text class="small" x="522" y="860" text-anchor="middle">Distribute</text><text class="small" x="667" y="860" text-anchor="middle">Pull</text><text class="small" x="812" y="860" text-anchor="middle">Apply</text><text class="small" x="955" y="860" text-anchor="middle">Verify</text>
     <text class="tiny muted" x="87" y="882" text-anchor="middle">SSOT</text><text class="tiny muted" x="232" y="882" text-anchor="middle">per node</text><text class="tiny muted" x="377" y="882" text-anchor="middle">manifest</text><text class="tiny muted" x="522" y="882" text-anchor="middle">snapshot</text><text class="tiny muted" x="667" y="882" text-anchor="middle">timer</text><text class="tiny muted" x="812" y="882" text-anchor="middle">atomic</text><text class="tiny muted" x="955" y="882" text-anchor="middle">local</text>
     <line class="rule" x1="41" y1="909" x2="1005" y2="909"/>
-    <text class="small muted" x="41" y="938">Latest</text><text class="body" x="126" y="938">Snapshot manifest signed · distributed · verified by 5 nodes</text><text class="body mono" x="870" y="938">28224ed</text>
+    <text class="small muted" x="41" y="938">LATEST FLEET</text><text class="body" x="153" y="938">Snapshot manifest signed · distributed · verified by 5 nodes</text><text class="tiny muted mono" x="870" y="938">publisher code 28224ed</text>
   </g>
 
   <!-- Distribution contract -->

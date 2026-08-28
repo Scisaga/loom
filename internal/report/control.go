@@ -28,6 +28,13 @@ type Control struct {
 	// 不新增一套凭据机制。
 	Secrets     string `json:"secrets"`
 	OperatorRef string `json:"operator_ref"`
+	// BootstrapSSHKey 是中控范围唯一的 SSH bootstrap 私钥路径。它不在
+	// SSOT，也不下发给节点；UI 只能导出相邻的 .pub。
+	BootstrapSSHKey string `json:"bootstrap_ssh_key,omitempty"`
+	// KnownHostsPath 是节点接入专用的 host-key 信任库。它不复用
+	// 运行用户的 ~/.ssh/known_hosts，避免网页接入流程暗中继承
+	// 中控主机上无关的 TOFU 记录。
+	KnownHostsPath string `json:"known_hosts_path,omitempty"`
 
 	// DistributionURL / DNS 用来回答"发布器跟上我这次改动了吗"。
 	//
@@ -54,7 +61,13 @@ func LoadControl(path string) (*Control, string, error) {
 	if c.SSOTPath == "" {
 		return nil, "", fmt.Errorf("%s 缺 ssot_path", path)
 	}
-	if _, err := os.Stat(c.SSOTPath); err != nil {
+	if c.BootstrapSSHKey == "" {
+		c.BootstrapSSHKey = "/etc/loom/control-bootstrap"
+	}
+	if c.KnownHostsPath == "" {
+		c.KnownHostsPath = "/etc/loom/control-known_hosts"
+	}
+	if _, err := readSSOTSnapshot(c.SSOTPath); err != nil {
 		return nil, "", fmt.Errorf("ssot_path 指向 %s,但读不到:%w", c.SSOTPath, err)
 	}
 

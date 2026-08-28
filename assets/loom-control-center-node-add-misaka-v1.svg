@@ -4,7 +4,7 @@
      width="1586" height="992" viewBox="0 0 1586 992"
      role="img" aria-labelledby="title description">
   <title id="title">Add node — Loom control center prototype</title>
-  <desc id="description">A dedicated node onboarding page where the operator enters SSH bootstrap coordinates, reviews an automatic but editable connection-direction policy, and confirms a concrete control-discovered identity, endpoint, SSOT diff, and tunnel plan.</desc>
+  <desc id="description">A dedicated declaration-bootstrap page where the operator enters SSH coordinates, confirms an Ed25519 host fingerprint, reviews a direction-bound tunnel plan, and prepares the remote WireGuard identity before an SSOT revision-guarded save. It explicitly does not claim to install or start the Loom Agent.</desc>
   <defs>
     <marker id="arrow-selected" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
       <path d="M0 0L7 3.5L0 7Z" fill="#2AA875"/>
@@ -154,21 +154,21 @@
     <use href="#icon-services" x="584" y="18" width="14" height="14" class="nav-icon"/>
     <text x="605" y="31">Services</text>
     <use href="#icon-traffic" x="682" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="703" y="31">Routing</text>
+    <text x="703" y="31">Live paths</text>
     <use href="#icon-deployments" x="780" y="18" width="14" height="14" class="nav-icon"/>
     <text x="801" y="31">Deployments</text>
     <use href="#icon-events" x="919" y="18" width="14" height="14" class="nav-icon"/>
     <text x="940" y="31">Events</text>
     <use href="#icon-settings" x="1008" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="1029" y="31">Settings</text>
+    <text x="1029" y="31">SSOT</text>
   </g>
   <line x1="395" y1="49.5" x2="466" y2="49.5" stroke="#2AA875" stroke-width="2"/>
   <g class="ui nav">
-    <text x="1210" y="31">Production</text>
+    <text class="amber" x="1160" y="31">Prototype · sample data</text>
     <circle class="status-dot" cx="1322" cy="26" r="4"/>
     <text x="1335" y="31">Operational</text>
     <use href="#icon-lock" x="1428" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="1538" y="31" text-anchor="end">Authenticated</text>
+    <text x="1538" y="31" text-anchor="end">Write session</text>
   </g>
 
   <g class="ui">
@@ -176,11 +176,11 @@
     <text class="heading" x="21" y="124">Add node</text>
     <text class="body muted" x="21" y="151">Connect once; the control plane discovers identity, endpoint and the resulting network changes</text>
     <use href="#icon-status-ok" x="20" y="168" width="15" height="15" class="status-icon"/>
-    <text class="small" x="43" y="181">Only SSH connection details are entered manually</text>
+    <text class="small" x="43" y="181">Authenticated workflow · host key and SSOT revision guarded</text>
   </g>
 
 
-  <!-- A task-oriented stepper; implementation statuses stay inside each step. -->
+  <!-- Implemented task-oriented SSH trust and guarded SSOT workflow. -->
   <rect class="panel" x="21" y="202" width="1538" height="82" rx="7"/>
   <g class="ui">
     <use href="#icon-status-ok" x="46" y="228" width="20" height="20" class="status-icon"/>
@@ -188,7 +188,7 @@
     <circle cx="558" cy="238" r="10" fill="#EEF8F3" stroke="#2AA875"/><text class="tiny green" x="558" y="242" text-anchor="middle" font-weight="650">2</text>
     <text class="tiny green" x="586" y="231">CURRENT</text><text class="section" x="586" y="256">Review identity &amp; policy</text>
     <circle cx="1086" cy="238" r="10" fill="#F4F6F5" stroke="#CBD0CD"/><text class="tiny muted" x="1086" y="242" text-anchor="middle" font-weight="650">3</text>
-    <text class="tiny muted" x="1114" y="231">NEXT</text><text class="section" x="1114" y="256">Add hk01 to network</text>
+    <text class="tiny muted" x="1114" y="231">NEXT</text><text class="section" x="1114" y="256">Save reviewed declaration</text>
   </g>
   <line class="rule" x1="509" y1="222" x2="509" y2="265"/><line class="rule" x1="1037" y1="222" x2="1037" y2="265"/>
 
@@ -203,10 +203,10 @@
     <text class="tiny mono" x="82" y="430">ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA…</text><use href="#icon-copy" x="489" y="417" width="14" height="14" class="action-icon" aria-label="Copy shared control public key"/>
 
     <text class="small muted" x="41" y="480">HOST OR IP ADDRESS</text><text class="small muted" x="263" y="480">SSH USER</text><text class="small muted" x="441" y="480">PORT</text>
-    <rect class="panel-soft" x="41" y="492" width="210" height="50" rx="6"/><text class="body mono" x="57" y="523">10.24.0.18</text>
+    <rect class="panel-soft" x="41" y="492" width="210" height="50" rx="6"/><text class="body mono" x="57" y="523">hk01.edge.example.net</text>
     <rect class="panel-soft" x="263" y="492" width="166" height="50" rx="6"/><text class="small mono" x="279" y="523">loom-bootstrap</text>
     <rect class="panel-soft" x="441" y="492" width="80" height="50" rx="6"/><text class="body mono" x="457" y="523">22</text>
-    <text class="tiny muted" x="41" y="562">SSH enrollment only · not the public endpoint</text><text class="tiny green" x="521" y="562" text-anchor="end">Advanced →</text>
+    <text class="tiny muted" x="41" y="562">Input once · eligible only as a control-resolved candidate</text><text class="tiny green" x="521" y="562" text-anchor="end">Advanced →</text>
 
     <rect class="panel" x="41" y="584" width="202" height="41" rx="6"/><use href="#icon-refresh" x="58" y="597" width="14" height="14" class="action-icon"/><text class="small" x="83" y="610">Run preflight again</text>
 
@@ -220,24 +220,24 @@
 
     <line class="rule" x1="41" y1="865" x2="521" y2="865"/>
     <text class="tiny muted" x="41" y="892">Node ID comes from the verified remote hostname.</text>
-    <text class="tiny muted" x="41" y="916">The control plane determines endpoint and reachability.</text>
+    <text class="tiny muted" x="41" y="916">Control resolves and dials a global endpoint candidate.</text>
     <text class="tiny muted" x="41" y="940">Connection policy is reviewed separately after preflight.</text>
-    <text class="tiny amber" x="41" y="960">Example values only · bootstrap target and public endpoint are independent.</text>
+    <text class="tiny amber" x="41" y="960">Separate semantics · this version promotes only a trusted global SSH target as candidate.</text>
   </g>
 
   <!-- Discovery and the concrete SSOT diff have enough room to be reviewed. -->
   <rect class="panel" x="557" y="300" width="1002" height="673" rx="7"/>
   <g class="ui">
     <text class="section" x="577" y="332">Review discovered node</text>
-    <text class="tiny muted" x="577" y="354">Identity and endpoint are observed; Automatic recommends direction, but exposure policy still requires operator confirmation.</text>
+    <text class="tiny muted" x="577" y="354">Identity is SSH-observed; endpoint is a control-dialed candidate. UDP exposure is not inferred.</text>
 
     <text class="small muted" x="577" y="390">NODE ID</text><text class="metric mono" x="577" y="418">hk01</text><text class="tiny muted" x="577" y="438">From remote hostname · locked</text>
-    <text class="small muted" x="802" y="390">PUBLIC ENDPOINT</text><text class="metric mono" x="802" y="418">hk01.edge.example.net</text><text class="tiny muted" x="802" y="438">Stable dial address · control-verified</text>
-    <text class="small muted" x="1097" y="390">CONNECTION POLICY</text><text class="tiny green" x="1322" y="390" text-anchor="end">Review →</text>
+    <text class="small muted" x="802" y="390">ENDPOINT CANDIDATE</text><text class="metric mono" x="802" y="418">hk01.edge.example.net</text><text class="tiny amber" x="802" y="438">Global SSH dial succeeded · UDP unverified</text>
+    <text class="small muted" x="1097" y="390">CONNECTION DIRECTION</text><text class="tiny green" x="1322" y="390" text-anchor="end">Review →</text>
     <rect class="panel-soft" x="1097" y="398" width="225" height="36" rx="5" aria-label="Change connection policy"/>
-    <text class="body" x="1112" y="421">Automatic</text><text class="tiny green mono" x="1201" y="421">→ bidirectional</text>
+    <text class="body" x="1112" y="421">Automatic</text><text class="tiny green mono" x="1201" y="421">→ reverse_only</text>
     <path d="M1302 411l5 5 5-5" fill="none" stroke="#717674" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-    <text class="tiny muted" x="1097" y="450">UDP ingress + callback egress · 12s ago</text>
+    <text class="tiny muted" x="1097" y="450">Recompute, review, then commit a locked direction</text>
     <text class="small muted" x="1378" y="390">EGRESS</text><text class="metric green" x="1378" y="418">Enabled</text><text class="tiny muted" x="1378" y="438">New-node default</text>
     <line class="rule" x1="772" y1="378" x2="772" y2="454"/><line class="rule" x1="1067" y1="378" x2="1067" y2="454"/><line class="rule" x1="1348" y1="378" x2="1348" y2="454"/>
 
@@ -245,26 +245,27 @@
     <text class="section" x="577" y="493">Proposed network changes</text><text class="tiny green" x="1539" y="493" text-anchor="end">Recomputed with policy · no conflicts</text>
     <text class="small muted" x="583" y="523">EDGE</text><text class="small muted" x="765" y="523">TUNNEL ADDRESSES</text><text class="small muted" x="1048" y="523">ACCEPTOR / LISTEN</text><text class="small muted" x="1240" y="523">INITIATOR</text><text class="small muted" x="1360" y="523">FIREWALL</text>
     <line class="rule" x1="577" y1="531" x2="1539" y2="531"/>
-    <text class="body mono" x="583" y="559">hk01 ↔ sg02</text><text class="body mono" x="765" y="559">10.99.0.7/32 ↔ 10.99.0.8/32</text><text class="body mono" x="1048" y="559">hk01 · 61775/udp</text><text class="body mono" x="1240" y="559">sg02</text><text class="body" x="1360" y="559">Allow UDP on hk01</text>
-    <text class="body mono" x="583" y="595">hk01 ↔ ber01</text><text class="body mono" x="765" y="595">10.99.1.7/32 ↔ 10.99.1.8/32</text><text class="body mono" x="1048" y="595">hk01 · 61683/udp</text><text class="body mono" x="1240" y="595">ber01</text><text class="body" x="1360" y="595">Allow UDP on hk01</text>
-    <line class="rule" x1="577" y1="571" x2="1539" y2="571"/><line class="rule" x1="577" y1="607" x2="1539" y2="607"/>
+    <text class="body mono" x="583" y="552">hk01 ↔ jm24</text><text class="body mono" x="765" y="552">10.99.2.1/32 ↔ 10.99.2.2/32</text><text class="body mono" x="1048" y="552">jm24 · 61775/udp</text><text class="body mono" x="1240" y="552">hk01</text><text class="body" x="1360" y="552">Allow UDP on jm24</text>
+    <text class="body mono" x="583" y="579">hk01 ↔ gz02</text><text class="body mono" x="765" y="579">10.99.2.3/32 ↔ 10.99.2.4/32</text><text class="body mono" x="1048" y="579">gz02 · 61683/udp</text><text class="body mono" x="1240" y="579">hk01</text><text class="body" x="1360" y="579">Allow UDP on gz02</text>
+    <text class="body mono" x="583" y="606">hk01 ↔ hz01</text><text class="body mono" x="765" y="606">10.99.2.5/32 ↔ 10.99.2.6/32</text><text class="body mono" x="1048" y="606">hz01 · 61719/udp</text><text class="body mono" x="1240" y="606">hk01</text><text class="body" x="1360" y="606">Allow UDP on hz01</text>
+    <line class="rule" x1="577" y1="560" x2="1539" y2="560"/><line class="rule" x1="577" y1="587" x2="1539" y2="587"/><line class="rule" x1="577" y1="614" x2="1539" y2="614"/>
 
-    <text class="small muted" x="577" y="637">WIREGUARD IDENTITY</text><text class="body amber" x="755" y="637">Prepared on hk01 when enrollment starts</text>
+    <text class="small muted" x="577" y="637">WIREGUARD IDENTITY</text><text class="body amber" x="755" y="637">Prepared on hk01 at commit</text>
     <text class="tiny muted" x="1098" y="637">Reuse existing key or generate locally · private key never leaves hk01</text>
     <line class="rule" x1="577" y1="657" x2="1539" y2="657"/>
 
     <text class="section" x="577" y="687">SSOT change summary</text>
     <circle class="quiet-dot" cx="583" cy="713" r="3.5"/><text class="body" x="596" y="718">Add node <tspan class="mono">hk01</tspan> using its verified hostname</text>
-    <circle class="quiet-dot" cx="583" cy="743" r="3.5"/><text class="body" x="596" y="748">Record the stable dial endpoint independently verified by control</text>
-    <circle class="quiet-dot" cx="583" cy="773" r="3.5"/><text class="body" x="596" y="778">Save direction <tspan class="mono">bidirectional</tspan> · enable egress · add 2 persistent tunnels</text>
-    <circle class="neutral-dot" cx="583" cy="803" r="3.5"/><text class="body" x="596" y="808">No service or routing policy changes</text>
-    <text class="tiny amber" x="577" y="838">The node will not carry application traffic until a routing policy allows it.</text>
+    <circle class="quiet-dot" cx="583" cy="743" r="3.5"/><text class="body" x="596" y="748">Record the global endpoint candidate successfully dialed by control</text>
+    <circle class="quiet-dot" cx="583" cy="773" r="3.5"/><text class="body" x="596" y="778">Save direction <tspan class="mono">reverse_only</tspan> · enable egress · add derived persistent tunnels</text>
+    <circle class="neutral-dot" cx="583" cy="803" r="3.5"/><text class="body" x="596" y="808">No service or access policy changes</text>
+    <text class="tiny amber" x="577" y="838">Declaration only · Agent, platform trust, node secrets and TLS identity are not installed by this action.</text>
 
     <line class="rule" x1="577" y1="858" x2="1539" y2="858"/>
     <circle class="quiet-dot" cx="583" cy="887" r="4"/><text class="small green" x="596" y="892">Discovery and allocation plan are valid</text>
     <rect class="panel" x="1193" y="875" width="118" height="42" rx="6"/><text class="small" x="1252" y="901" text-anchor="middle">Cancel</text>
-    <rect class="button-green" x="1325" y="875" width="214" height="42" rx="6"/><use href="#icon-check" x="1344" y="889" width="14" height="14" stroke="#FFFFFF" fill="none" stroke-width="1.5"/><text class="small" x="1369" y="901" fill="#FFFFFF">Add hk01 to network</text>
-    <text class="tiny muted" x="577" y="947"><tspan font-weight="600" fill="#181B1A">On confirm:</tspan> prepare hk01 WireGuard identity → commit node and tunnels atomically → publish → verify its first trusted report.</text>
+    <rect class="button-green" x="1325" y="875" width="214" height="42" rx="6"/><use href="#icon-check" x="1338" y="889" width="14" height="14" stroke="#FFFFFF" fill="none" stroke-width="1.5"/><text class="tiny" x="1359" y="900" fill="#FFFFFF">Prepare WG + save declaration</text>
+    <text class="tiny muted" x="577" y="947"><tspan font-weight="600" fill="#181B1A">On confirm:</tspan> prepare hk01 WG identity → revision-guarded SSOT save → remain joining until separate Agent/TLS bootstrap and trusted report.</text>
   </g>
 
 </svg>

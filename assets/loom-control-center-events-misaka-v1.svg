@@ -154,21 +154,21 @@
     <use href="#icon-services" x="584" y="18" width="14" height="14" class="nav-icon"/>
     <text x="605" y="31">Services</text>
     <use href="#icon-traffic" x="682" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="703" y="31">Routing</text>
+    <text x="703" y="31">Live paths</text>
     <use href="#icon-deployments" x="780" y="18" width="14" height="14" class="nav-icon"/>
     <text x="801" y="31">Deployments</text>
     <use href="#icon-events" x="919" y="18" width="14" height="14" class="nav-icon-active"/>
     <text x="940" y="31" font-weight="600">Events</text>
     <use href="#icon-settings" x="1008" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="1029" y="31">Settings</text>
+    <text x="1029" y="31">SSOT</text>
   </g>
   <line x1="917" y1="49.5" x2="995" y2="49.5" stroke="#2AA875" stroke-width="2"/>
   <g class="ui nav">
-    <text x="1210" y="31">Production</text>
+    <text class="amber" x="1160" y="31">Prototype · sample data</text>
     <circle class="status-dot" cx="1322" cy="26" r="4"/>
     <text x="1335" y="31">Operational</text>
     <use href="#icon-lock" x="1428" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="1538" y="31" text-anchor="end">Authenticated</text>
+    <text x="1538" y="31" text-anchor="end">Read-only view</text>
   </g>
 
   <g class="ui">
@@ -176,16 +176,16 @@
     <text class="heading" x="21" y="124">Events</text>
     <text class="body muted" x="21" y="151">State transitions only · current truth comes from the separate state tracker</text>
     <use href="#icon-status-ok" x="20" y="168" width="15" height="15" class="status-icon"/>
-    <text class="small" x="43" y="181">No confirmed unresolved issues</text>
+    <text class="small" x="43" y="181">No current unresolved issues · history total is not reported</text>
   </g>
 
 
   <!-- Current unresolved state summary -->
   <rect class="panel" x="21" y="202" width="1538" height="86" rx="7"/>
   <g class="ui">
-    <text class="small muted" x="47" y="234">CONFIRMED ISSUES</text><text class="metric green" x="47" y="262">0 unresolved</text>
-    <text class="small muted" x="393" y="234">PENDING</text><text class="metric" x="393" y="262">0 transitions</text>
-    <text class="small muted" x="706" y="234">CURRENT STATE BASIS</text><text class="metric" x="706" y="262">state.json tracker</text>
+    <text class="small muted" x="47" y="234">CURRENT ISSUES</text><text class="metric green" x="47" y="262">0 unresolved</text>
+    <text class="small muted" x="393" y="234">PENDING WINDOWS</text><text class="metric" x="393" y="262">0 current</text>
+    <text class="small muted" x="706" y="234">HISTORY TOTAL</text><text class="metric muted" x="706" y="262">Not reported</text>
     <text class="small muted" x="1112" y="234">RETENTION</text><text class="metric" x="1112" y="262">30 days</text>
     <text class="tiny muted" x="1272" y="261">change events only</text>
   </g>
@@ -224,13 +224,13 @@
     <text class="tiny muted" x="303" y="898">Recorded independently for each node observation.</text>
 
     <line class="rule" x1="41" y1="474" x2="1070" y2="474"/><line class="rule" x1="41" y1="537" x2="1070" y2="537"/><line class="rule" x1="41" y1="600" x2="1070" y2="600"/><line class="rule" x1="41" y1="663" x2="1070" y2="663"/><line class="rule" x1="41" y1="726" x2="1070" y2="726"/><line class="rule" x1="41" y1="789" x2="1070" y2="789"/><line class="rule" x1="41" y1="852" x2="1070" y2="852"/><line class="rule" x1="41" y1="915" x2="1070" y2="915"/>
-    <text class="tiny muted" x="41" y="950">Showing 8 of 200 recent transitions</text><use href="#icon-download" x="985" y="939" width="14" height="14" class="action-icon"/><text class="tiny green" x="1006" y="950">Export JSONL</text>
+    <text class="tiny muted" x="41" y="950">8 example transitions · total count and pagination are not reported</text><use href="#icon-download" x="965" y="939" width="14" height="14" class="action-icon"/><text class="tiny green" x="986" y="950">Filtered CSV export</text>
   </g>
 
   <!-- Filters -->
   <rect class="panel" x="1106" y="304" width="453" height="242" rx="7"/>
   <g class="ui">
-    <use href="#icon-filter" x="1126" y="321" width="16" height="16" class="action-icon"/><text class="section" x="1150" y="334">Filter</text>
+    <use href="#icon-filter" x="1126" y="321" width="16" height="16" class="action-icon"/><text class="section" x="1150" y="334">Filter</text><text class="tiny green" x="1202" y="334">SSR query · implemented</text>
     <rect class="chip-green" x="1126" y="357" width="75" height="30" rx="5"/><text class="small green" x="1163" y="377" text-anchor="middle">All</text>
     <rect class="chip" x="1209" y="357" width="97" height="30" rx="5"/><text class="small" x="1257" y="377" text-anchor="middle">Problems</text>
     <rect class="chip" x="1314" y="357" width="105" height="30" rx="5"/><text class="small" x="1366" y="377" text-anchor="middle">Recoveries</text>
@@ -239,7 +239,7 @@
     <text class="small muted" x="1126" y="456">KIND</text><text class="body" x="1262" y="456">All event kinds</text><text class="tiny green" x="1503" y="456">Change</text>
     <text class="small muted" x="1126" y="488">RANGE</text><text class="body" x="1262" y="488">Last 24 hours</text><text class="tiny green" x="1503" y="488">Change</text>
     <line class="rule" x1="1126" y1="504" x2="1539" y2="504"/>
-    <text class="tiny muted" x="1126" y="520">Target interaction · current SSR has no event filters.</text>
+    <text class="tiny muted" x="1126" y="520">Node, kind, level and text filters use SSR query parameters.</text>
     <text class="tiny muted" x="1126" y="536">Filters affect history only, never the current issue count.</text>
   </g>
 

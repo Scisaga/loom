@@ -154,29 +154,29 @@
     <use href="#icon-services" x="584" y="18" width="14" height="14" class="nav-icon"/>
     <text x="605" y="31">Services</text>
     <use href="#icon-traffic" x="682" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="703" y="31">Routing</text>
+    <text x="703" y="31">Live paths</text>
     <use href="#icon-deployments" x="780" y="18" width="14" height="14" class="nav-icon"/>
     <text x="801" y="31">Deployments</text>
     <use href="#icon-events" x="919" y="18" width="14" height="14" class="nav-icon"/>
     <text x="940" y="31">Events</text>
     <use href="#icon-settings" x="1008" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="1029" y="31">Settings</text>
+    <text x="1029" y="31">SSOT</text>
   </g>
   <line x1="395" y1="49.5" x2="466" y2="49.5" stroke="#2AA875" stroke-width="2"/>
   <g class="ui nav">
-    <text x="1210" y="31">Production</text>
+    <text class="amber" x="1160" y="31">Prototype · sample data</text>
     <circle class="status-dot" cx="1322" cy="26" r="4"/>
     <text x="1335" y="31">Operational</text>
     <use href="#icon-lock" x="1428" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="1538" y="31" text-anchor="end">Authenticated</text>
+    <text x="1538" y="31" text-anchor="end">Control workflow</text>
   </g>
 
   <g class="ui">
     <text class="eyebrow" x="21" y="91">NETWORK / NODES</text>
     <text class="heading" x="21" y="124">Nodes</text>
-    <text class="body muted" x="21" y="151">Enroll managed hosts and monitor their newest trusted state</text>
+    <text class="body muted" x="21" y="151">Monitor trusted node state · host-key-guarded enrollment on the control node</text>
     <use href="#icon-status-ok" x="20" y="168" width="15" height="15" class="status-icon"/>
-    <text class="small" x="43" y="181">5 declared · 5 online · 0 joining</text>
+    <text class="small" x="43" y="181">5 declared · 5 healthy · enrollment available</text>
   </g>
 
 
@@ -184,13 +184,13 @@
   <rect class="panel" x="21" y="202" width="1538" height="82" rx="7"/>
   <g class="ui">
     <text class="small muted" x="46" y="232">DECLARED</text><text class="metric" x="46" y="258">5 nodes</text>
-    <text class="small muted" x="300" y="232">ONLINE</text><text class="metric green" x="300" y="258">5 fresh</text>
-    <text class="small muted" x="554" y="232">JOINING</text><text class="metric" x="554" y="258">0 nodes</text>
+    <text class="small muted" x="300" y="232">HEALTH</text><text class="metric green" x="300" y="258">5 healthy</text>
+    <text class="small muted" x="554" y="232">ENROLLMENT</text><text class="metric green" x="554" y="258">Available</text>
     <text class="small muted" x="808" y="232">SNAPSHOT</text><text class="metric" x="808" y="258">5 verified</text>
     <text class="small muted" x="1062" y="232">ISSUES</text><text class="metric green" x="1062" y="258">None</text>
     <rect class="button" x="1390" y="221" width="143" height="40" rx="6"/>
     <use href="#icon-plus" x="1411" y="233" width="15" height="15" stroke="#FFFFFF" fill="none" stroke-width="1.5" stroke-linecap="round"/>
-    <text class="small" x="1437" y="246" fill="#FFFFFF">Add node</text>
+    <text class="small" x="1437" y="246" fill="#FFFFFF">Add node</text><text class="tiny green" x="1457" y="278" text-anchor="middle">SSH guarded</text>
   </g>
   <line class="rule" x1="272" y1="222" x2="272" y2="265"/><line class="rule" x1="526" y1="222" x2="526" y2="265"/>
   <line class="rule" x1="780" y1="222" x2="780" y2="265"/><line class="rule" x1="1034" y1="222" x2="1034" y2="265"/>
@@ -201,57 +201,57 @@
   <g class="ui">
     <text class="section" x="41" y="332">Node inventory</text>
     <text class="tiny muted" x="196" y="332">Declared hosts and their newest trusted observation</text>
-    <rect class="chip-green" x="1334" y="313" width="55" height="28" rx="14"/><text class="tiny green" x="1361" y="332" text-anchor="middle">All · 5</text>
-    <text class="tiny muted" x="1411" y="332">Attention · 0</text><text class="tiny muted" x="1539" y="332" text-anchor="end">Joining · 0</text>
+    <rect class="chip-green" x="1270" y="313" width="55" height="28" rx="14"/><text class="tiny green" x="1297" y="332" text-anchor="middle">All · 5</text>
+    <text class="tiny muted" x="1348" y="332">Attention · 0</text><text class="tiny green" x="1539" y="332" text-anchor="end">Enroll · Available</text>
 
-    <text class="small muted" x="47" y="379">NODE</text><text class="small muted" x="180" y="379">MANAGEMENT / PUBLIC</text><text class="small muted" x="465" y="379">LOCATION</text>
+    <text class="small muted" x="47" y="379">NODE / LIFECYCLE</text><text class="small muted" x="180" y="379">DECLARED ENDPOINT / SSH PORT</text><text class="small muted" x="465" y="379">LOCATION</text>
     <text class="small muted" x="560" y="379">ROLE</text><text class="small muted" x="770" y="379">OBSERVATION</text><text class="small muted" x="970" y="379">SNAPSHOT</text>
-    <text class="small muted" x="1140" y="379">TUNNELS</text><text class="small muted" x="1300" y="379">LAST SEEN</text>
+    <text class="small muted" x="1140" y="379">CARRIER</text><text class="small muted" x="1300" y="379">LAST SEEN</text>
     <line class="rule" x1="41" y1="389" x2="1539" y2="389"/>
 
     <text class="subsection mono" x="47" y="421">jm24</text><text class="tiny muted" x="47" y="442">control · Active</text>
-    <text class="body mono" x="180" y="421">SSH sfab.cc:61222</text><text class="tiny muted" x="180" y="442">Public sfab.cc</text><text class="body" x="465" y="421">Beijing</text>
+    <text class="body mono" x="180" y="421">sfab.cc</text><text class="tiny muted" x="180" y="442">SSH port 61222 · host/user not retained</text><text class="body" x="465" y="421">Beijing</text>
     <text class="body" x="560" y="421">control + access</text><text class="tiny muted" x="560" y="442">tunnel endpoint</text>
-    <circle class="quiet-dot" cx="775" cy="416" r="4"/><text class="body" x="788" y="421">Online</text><text class="tiny muted" x="788" y="442">direct /status</text>
-    <text class="body mono" x="970" y="421">4f09f6f5716d</text><text class="tiny green" x="970" y="442">Verified</text><text class="body" x="1140" y="421">2 / 2 active</text><text class="body mono" x="1300" y="421">10s</text>
+    <circle class="quiet-dot" cx="775" cy="416" r="4"/><text class="body" x="788" y="421">Healthy</text><text class="tiny muted" x="788" y="442">local /status</text>
+    <text class="body mono" x="970" y="421">4f09f6f5716d</text><text class="tiny green" x="970" y="442">Verified</text><text class="body" x="1140" y="421">2 / 2 observed</text><text class="body mono" x="1300" y="421">10s</text>
     <use href="#icon-arrow-right" x="1518" y="411" width="14" height="14" class="action-icon"/><line class="rule" x1="41" y1="459" x2="1539" y2="459"/>
 
     <text class="subsection mono" x="47" y="488">gz02</text><text class="tiny muted" x="47" y="509">remote · Active</text>
-    <text class="body mono" x="180" y="488">SSH 8.163.70.120:22</text><text class="tiny muted" x="180" y="509">Public 8.163.70.120</text><text class="body" x="465" y="488">Guangzhou</text>
+    <text class="body mono" x="180" y="488">8.163.70.120</text><text class="tiny muted" x="180" y="509">SSH port 22 · host/user not retained</text><text class="body" x="465" y="488">Guangzhou</text>
     <text class="body" x="560" y="488">domestic + egress</text><text class="tiny muted" x="560" y="509">tunnel endpoint</text>
-    <circle class="quiet-dot" cx="775" cy="483" r="4"/><text class="body" x="788" y="488">Online</text><text class="tiny muted" x="788" y="509">relayed by jm24</text>
-    <text class="body mono" x="970" y="488">4f09f6f5716d</text><text class="tiny green" x="970" y="509">Verified</text><text class="body" x="1140" y="488">2 / 2 active</text><text class="body mono" x="1300" y="488">11s</text>
+    <circle class="quiet-dot" cx="775" cy="483" r="4"/><text class="body" x="788" y="488">Healthy</text><text class="tiny muted" x="788" y="509">trusted learned state</text>
+    <text class="body mono" x="970" y="488">4f09f6f5716d</text><text class="tiny green" x="970" y="509">Verified</text><text class="body" x="1140" y="488">2 / 2 observed</text><text class="body mono" x="1300" y="488">11s</text>
     <use href="#icon-arrow-right" x="1518" y="478" width="14" height="14" class="action-icon"/><line class="rule" x1="41" y1="526" x2="1539" y2="526"/>
 
     <text class="subsection mono" x="47" y="555">hz01</text><text class="tiny muted" x="47" y="576">remote · Active</text>
-    <text class="body mono" x="180" y="555">SSH 47.97.127.101:22</text><text class="tiny muted" x="180" y="576">Public 47.97.127.101</text><text class="body" x="465" y="555">Hangzhou</text>
+    <text class="body mono" x="180" y="555">47.97.127.101</text><text class="tiny muted" x="180" y="576">SSH port 22 · host/user not retained</text><text class="body" x="465" y="555">Hangzhou</text>
     <text class="body" x="560" y="555">domestic + egress</text><text class="tiny muted" x="560" y="576">tunnel endpoint</text>
-    <circle class="quiet-dot" cx="775" cy="550" r="4"/><text class="body" x="788" y="555">Online</text><text class="tiny muted" x="788" y="576">relayed by jm24</text>
-    <text class="body mono" x="970" y="555">4f09f6f5716d</text><text class="tiny green" x="970" y="576">Verified</text><text class="body" x="1140" y="555">2 / 2 active</text><text class="body mono" x="1300" y="555">13s</text>
+    <circle class="quiet-dot" cx="775" cy="550" r="4"/><text class="body" x="788" y="555">Healthy</text><text class="tiny muted" x="788" y="576">trusted learned state</text>
+    <text class="body mono" x="970" y="555">4f09f6f5716d</text><text class="tiny green" x="970" y="576">Verified</text><text class="body" x="1140" y="555">2 / 2 observed</text><text class="body mono" x="1300" y="555">13s</text>
     <use href="#icon-arrow-right" x="1518" y="545" width="14" height="14" class="action-icon"/><line class="rule" x1="41" y1="593" x2="1539" y2="593"/>
 
     <text class="subsection mono" x="47" y="622">sg02</text><text class="tiny muted" x="47" y="643">remote · Active</text>
-    <text class="body mono" x="180" y="622">SSH 194.156.163.227:22</text><text class="tiny muted" x="180" y="643">Public 194.156.163.227</text><text class="body" x="465" y="622">Singapore</text>
+    <text class="body mono" x="180" y="622">194.156.163.227</text><text class="tiny muted" x="180" y="643">SSH port 22 · host/user not retained</text><text class="body" x="465" y="622">Singapore</text>
     <text class="body" x="560" y="622">reverse-only + egress</text><text class="tiny muted" x="560" y="643">tunnel endpoint</text>
-    <circle class="quiet-dot" cx="775" cy="617" r="4"/><text class="body" x="788" y="622">Online</text><text class="tiny muted" x="788" y="643">direct /status</text>
-    <text class="body mono" x="970" y="622">4f09f6f5716d</text><text class="tiny green" x="970" y="643">Verified</text><text class="body" x="1140" y="622">3 / 3 active</text><text class="body mono" x="1300" y="622">8s</text>
+    <circle class="quiet-dot" cx="775" cy="617" r="4"/><text class="body" x="788" y="622">Healthy</text><text class="tiny muted" x="788" y="643">trusted learned state</text>
+    <text class="body mono" x="970" y="622">4f09f6f5716d</text><text class="tiny green" x="970" y="643">Verified</text><text class="body" x="1140" y="622">3 / 3 observed</text><text class="body mono" x="1300" y="622">8s</text>
     <use href="#icon-arrow-right" x="1518" y="612" width="14" height="14" class="action-icon"/><line class="rule" x1="41" y1="660" x2="1539" y2="660"/>
 
     <text class="subsection mono" x="47" y="689">ber01</text><text class="tiny muted" x="47" y="710">remote · Active</text>
-    <text class="body mono" x="180" y="689">SSH 194.156.154.254:22</text><text class="tiny muted" x="180" y="710">Public 194.156.154.254</text><text class="body" x="465" y="689">Berlin</text>
+    <text class="body mono" x="180" y="689">194.156.154.254</text><text class="tiny muted" x="180" y="710">SSH port 22 · host/user not retained</text><text class="body" x="465" y="689">Berlin</text>
     <text class="body" x="560" y="689">reverse-only + egress</text><text class="tiny muted" x="560" y="710">tunnel endpoint</text>
-    <circle class="quiet-dot" cx="775" cy="684" r="4"/><text class="body" x="788" y="689">Online</text><text class="tiny muted" x="788" y="710">direct /status</text>
-    <text class="body mono" x="970" y="689">4f09f6f5716d</text><text class="tiny green" x="970" y="710">Verified</text><text class="body" x="1140" y="689">3 / 3 active</text><text class="body mono" x="1300" y="689">8s</text>
+    <circle class="quiet-dot" cx="775" cy="684" r="4"/><text class="body" x="788" y="689">Healthy</text><text class="tiny muted" x="788" y="710">trusted learned state</text>
+    <text class="body mono" x="970" y="689">4f09f6f5716d</text><text class="tiny green" x="970" y="710">Verified</text><text class="body" x="1140" y="689">3 / 3 observed</text><text class="body mono" x="1300" y="689">8s</text>
     <use href="#icon-arrow-right" x="1518" y="679" width="14" height="14" class="action-icon"/><line class="rule" x1="41" y1="727" x2="1539" y2="727"/>
 
-    <text class="tiny muted" x="41" y="753">SSH is control-local management data; Public is the control-verified network endpoint. They may differ and are never derived from each other.</text>
+    <text class="tiny muted" x="41" y="753">Declared endpoint is SSOT intent; UDP ingress remains unverified. Durable management host/user remain a control-inventory gap.</text>
     <text class="small green" x="1430" y="753">View topology</text><use href="#icon-arrow-right" x="1518" y="741" width="14" height="14" class="action-icon"/>
   </g>
 
-  <!-- One control-wide key pair is reused; it is never created per node. -->
+  <!-- Enrollment reuses one implemented control-wide key pair. -->
   <rect class="panel" x="21" y="789" width="1538" height="184" rx="7"/>
   <g class="ui">
-    <text class="section" x="41" y="821">Control bootstrap identity</text><circle class="quiet-dot" cx="365" cy="816" r="4"/><text class="tiny green" x="378" y="821">Ready · one control-wide key pair</text>
+    <text class="section" x="41" y="821">Control bootstrap identity</text><circle class="quiet-dot" cx="365" cy="816" r="4"/><text class="tiny green" x="378" y="821">Implemented · one control-wide key</text>
     <text class="tiny muted" x="41" y="844">Fingerprint SHA256:yAaQ7u7vY2qJ…r9cW · generated once and reused by every enrollment.</text>
     <rect class="code-bg" x="41" y="860" width="602" height="45" rx="5"/><use href="#icon-key" x="56" y="875" width="14" height="14" class="action-icon"/>
     <text class="tiny mono" x="81" y="888">ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA… loom-control-bootstrap</text>
@@ -266,7 +266,7 @@
     <text class="body" x="1140" y="853">One control-wide ED25519 identity</text>
     <text class="body" x="1140" y="881">The same public key authorizes every bootstrap</text>
     <text class="body" x="1140" y="909">Private material is never exported</text>
-    <text class="body" x="1140" y="937">Authorization is removed after first trusted report</text>
+    <text class="body" x="1140" y="937">Revoke separately after Agent/TLS bootstrap, if desired</text>
   </g>
 
 </svg>

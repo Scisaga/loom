@@ -152,7 +152,7 @@ func renderReport(s *model.SSOT, n *model.Node) ([]File, []Skip) {
 		cfg.AgentState = "/var/lib/loom/agent-state.json"
 	}
 	for _, access := range s.AccessNodes() {
-		cfg.ExpectedRoutes = append(cfg.ExpectedRoutes, expectedReportRoutes(s, access)...)
+		cfg.ExpectedRoutes = append(cfg.ExpectedRoutes, report.ExpectedRoutesForAccess(s, access)...)
 	}
 	sort.Slice(cfg.ExpectedRoutes, func(i, j int) bool {
 		a := cfg.ExpectedRoutes[i].Access + "\x00" + cfg.ExpectedRoutes[i].Declaration + "\x00" + strings.Join(cfg.ExpectedRoutes[i].Chain, "\x00")
@@ -181,28 +181,7 @@ func runsAgent(s *model.SSOT, n *model.Node) bool {
 // secret 的候选路径。按 declaration/service + chain 去重；地址轴的多个候选
 // 可能共享一条链，拓扑层不应重复画。
 func expectedReportRoutes(s *model.SSOT, n *model.Node) []report.ExpectedRoute {
-	decls, _ := renderAgentDeclarations(s, n)
-	seen := map[string]bool{}
-	var out []report.ExpectedRoute
-	for _, d := range decls {
-		for _, cand := range d.Candidates {
-			key := d.ID + "\x00" + strings.Join(cand.Chain, "\x00")
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			out = append(out, report.ExpectedRoute{
-				Access: n.ID, Declaration: d.ID, Chain: append([]string(nil), cand.Chain...),
-			})
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Declaration != out[j].Declaration {
-			return out[i].Declaration < out[j].Declaration
-		}
-		return strings.Join(out[i].Chain, "\x00") < strings.Join(out[j].Chain, "\x00")
-	})
-	return out
+	return report.ExpectedRoutesForAccess(s, n)
 }
 
 // probeTargets 收集 SSOT 里全部去重后的探测目标。

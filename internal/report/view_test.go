@@ -103,7 +103,7 @@ func TestLegacySignedAppliedIsTrustedButMeasurementsAreNot(t *testing.T) {
 	}
 }
 
-func TestTrustedRelayedUplinkFailureMarksNodeProblem(t *testing.T) {
+func TestTrustedRelayedMeasurementsWithoutSelfCheckRemainUnknown(t *testing.T) {
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
 	view := func(uplink bool) webui.NodeView {
 		o := &Observation{Node: "b", TS: now.Format(time.RFC3339), Targets: []Reach{{
@@ -112,8 +112,8 @@ func TestTrustedRelayedUplinkFailureMarksNodeProblem(t *testing.T) {
 		return nodeView("b", false, false, nil, o,
 			&AttestedState{MeasurementsVerified: true}, "", now)
 	}
-	if n := view(true); n.Health != "problem" || len(n.Problems) == 0 {
-		t.Fatalf("trusted remote uplink failure did not affect node health: %+v", n)
+	if n := view(true); n.Health != "unknown" || len(n.Problems) != 0 {
+		t.Fatalf("partial signed measurements were mistaken for a complete health verdict: %+v", n)
 	}
 	if n := view(false); n.Health != "unknown" || len(n.Problems) != 0 {
 		t.Fatalf("ordinary pruning Target was promoted to node fault: %+v", n)

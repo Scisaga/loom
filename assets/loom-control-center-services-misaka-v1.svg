@@ -154,21 +154,21 @@
     <use href="#icon-services" x="584" y="18" width="14" height="14" class="nav-icon-active"/>
     <text x="605" y="31" font-weight="600">Services</text>
     <use href="#icon-traffic" x="682" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="703" y="31">Routing</text>
+    <text x="703" y="31">Live paths</text>
     <use href="#icon-deployments" x="780" y="18" width="14" height="14" class="nav-icon"/>
     <text x="801" y="31">Deployments</text>
     <use href="#icon-events" x="919" y="18" width="14" height="14" class="nav-icon"/>
     <text x="940" y="31">Events</text>
     <use href="#icon-settings" x="1008" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="1029" y="31">Settings</text>
+    <text x="1029" y="31">SSOT</text>
   </g>
   <line x1="582" y1="49.5" x2="669" y2="49.5" stroke="#2AA875" stroke-width="2"/>
   <g class="ui nav">
-    <text x="1210" y="31">Production</text>
+    <text class="amber" x="1160" y="31">Prototype · sample data</text>
     <circle class="status-dot" cx="1322" cy="26" r="4"/>
     <text x="1335" y="31">Operational</text>
     <use href="#icon-lock" x="1428" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="1538" y="31" text-anchor="end">Authenticated</text>
+    <text x="1538" y="31" text-anchor="end">Design target</text>
   </g>
 
   <g class="ui">
@@ -184,9 +184,9 @@
   <g class="ui">
     <rect class="chip-green" x="21" y="202" width="122" height="34" rx="17"/>
     <text class="small green" x="82" y="224" text-anchor="middle">Services · 2</text>
-    <text class="small muted" x="169" y="224">Routing policies · 3</text>
+    <text class="small muted" x="169" y="224">Access policies · 3</text>
     <circle class="quiet-dot" cx="326" cy="219" r="4"/><text class="small green" x="339" y="224">All definitions valid</text>
-    <rect class="chip-amber" x="486" y="202" width="225" height="34" rx="17"/><text class="tiny amber" x="599" y="223" text-anchor="middle">Target state · write API pending</text>
+    <rect class="chip-green" x="486" y="202" width="225" height="34" rx="17"/><text class="tiny green" x="599" y="223" text-anchor="middle">Structured save · implemented</text>
     <rect class="button" x="1390" y="198" width="169" height="40" rx="6"/>
     <use href="#icon-plus" x="1413" y="210" width="15" height="15" stroke="#FFFFFF" fill="none" stroke-width="1.5" stroke-linecap="round"/>
     <text class="small" x="1439" y="223" fill="#FFFFFF">Add service</text>
@@ -230,7 +230,7 @@
     <text class="subsection" x="467" y="373">Identity</text>
     <text class="small muted" x="467" y="401">SERVICE ID</text><text class="small muted" x="821" y="401">DISPLAY NAME</text>
     <rect class="button-disabled" x="467" y="412" width="330" height="54" rx="6"/>
-    <text class="body mono" x="483" y="436">intl-api</text><text class="tiny muted" x="483" y="455">Stable after first publish</text>
+    <text class="body mono" x="483" y="436">intl-api</text><text class="tiny muted" x="483" y="455">Stable ID · read-only while editing</text>
     <use href="#icon-lock" x="765" y="424" width="14" height="14" class="nav-icon"/>
     <rect class="panel-soft" x="821" y="412" width="738" height="54" rx="6"/>
     <text class="body" x="837" y="445">International APIs</text>
@@ -240,19 +240,19 @@
     <text class="tiny muted" x="561" y="522">Requests matching either rule are treated as this service.</text>
     <text class="small muted" x="467" y="558">HOSTNAME</text><text class="small muted" x="1280" y="558">MATCH TYPE</text><text class="small muted" x="1458" y="558">ACTIONS</text>
     <line class="rule" x1="467" y1="570" x2="1559" y2="570"/>
-    <text class="body mono" x="483" y="601">api.ipify.org</text><rect class="chip" x="1280" y="579" width="78" height="28" rx="14"/><text class="tiny muted" x="1319" y="598" text-anchor="middle">Exact</text>
-    <use href="#icon-edit" x="1467" y="587" width="14" height="14" class="action-icon" aria-label="Edit api.ipify.org"/><use href="#icon-trash" x="1510" y="587" width="14" height="14" class="action-icon" aria-label="Remove api.ipify.org"/>
+    <text class="body mono" x="483" y="601">api.vendor.example</text><rect class="chip" x="1280" y="579" width="78" height="28" rx="14"/><text class="tiny muted" x="1319" y="598" text-anchor="middle">Exact</text>
+    <use href="#icon-edit" x="1467" y="587" width="14" height="14" class="action-icon" aria-label="Edit api.vendor.example"/><use href="#icon-trash" x="1510" y="587" width="14" height="14" class="action-icon" aria-label="Remove api.vendor.example"/>
     <line class="rule" x1="467" y1="614" x2="1559" y2="614"/>
-    <text class="body mono" x="483" y="645">.githubusercontent.com</text><rect class="chip" x="1280" y="623" width="78" height="28" rx="14"/><text class="tiny muted" x="1319" y="642" text-anchor="middle">Suffix</text>
-    <use href="#icon-edit" x="1467" y="631" width="14" height="14" class="action-icon" aria-label="Edit .githubusercontent.com"/><use href="#icon-trash" x="1510" y="631" width="14" height="14" class="action-icon" aria-label="Remove .githubusercontent.com"/>
+    <text class="body mono" x="483" y="645">.cdn.vendor.example</text><rect class="chip" x="1280" y="623" width="78" height="28" rx="14"/><text class="tiny muted" x="1319" y="642" text-anchor="middle">Suffix</text>
+    <use href="#icon-edit" x="1467" y="631" width="14" height="14" class="action-icon" aria-label="Edit .cdn.vendor.example"/><use href="#icon-trash" x="1510" y="631" width="14" height="14" class="action-icon" aria-label="Remove .cdn.vendor.example"/>
     <line class="rule" x1="467" y1="659" x2="1559" y2="659"/>
     <rect class="panel" x="467" y="677" width="151" height="36" rx="5"/>
     <use href="#icon-plus" x="484" y="688" width="14" height="14" class="action-icon"/><text class="small" x="509" y="701">Add hostname</text>
     <text class="tiny muted" x="644" y="694">Leading dot = domain suffix. At least one exact hostname is required for probing.</text>
-    <text class="tiny muted" x="644" y="713">URLs, paths, host:port values and wildcards are rejected.</text>
+    <text class="tiny muted" x="644" y="713">URLs, paths, host:port, IP addresses and wildcard * are rejected.</text>
     <line class="rule" x1="467" y1="735" x2="1559" y2="735"/>
 
-    <text class="subsection" x="467" y="768">Routing policy</text>
+    <text class="subsection" x="467" y="768">Access policy</text>
     <text class="tiny muted" x="467" y="791">Determines permitted paths; services sharing it still choose independently.</text>
     <rect class="panel-soft" x="467" y="805" width="520" height="54" rx="6"/>
     <text class="body" x="483" y="829">Best egress</text><text class="tiny muted mono" x="483" y="848">best-egress</text>
@@ -261,12 +261,12 @@
     <text class="subsection" x="1037" y="768">Configured ingress</text>
     <text class="tiny muted" x="1037" y="791">Where applications send hostnames to Loom.</text>
     <text class="body mono" x="1037" y="824">jm24 · 127.0.0.1:1083</text>
-    <text class="tiny muted" x="1037" y="848">Use remote DNS / socks5h · configuration only, not listener health</text>
+    <text class="tiny muted" x="1037" y="848">scope · services · configuration only, not listener health</text>
     <line class="rule" x1="467" y1="879" x2="1559" y2="879"/>
 
-    <text class="small muted" x="467" y="906">RUNTIME</text><text class="body" x="555" y="906">Current path and health are observed in Routing.</text>
-    <text class="tiny muted" x="1168" y="906">Unmatched-host telemetry unavailable</text>
-    <text class="small green" x="1431" y="906">View routing</text><use href="#icon-arrow-right" x="1526" y="894" width="14" height="14" class="action-icon"/>
+    <text class="small muted" x="467" y="906">RUNTIME</text><text class="body" x="555" y="906">Current path and health are observed in Live paths.</text>
+    <text class="tiny amber" x="1080" y="906">Unmatched telemetry · Planned</text>
+    <text class="small green" x="1431" y="906">View live path</text><use href="#icon-arrow-right" x="1526" y="894" width="14" height="14" class="action-icon"/>
     <line class="rule" x1="467" y1="921" x2="1559" y2="921"/>
 
     <circle class="quiet-dot" cx="472" cy="951" r="4"/><text class="small green" x="485" y="956">All fields valid</text>

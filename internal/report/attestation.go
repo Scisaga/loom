@@ -7,7 +7,11 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sort"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"loom/internal/attest"
 	"loom/internal/version"
@@ -144,6 +148,8 @@ func legacyObservation(o *Observation) *Observation {
 	}
 	legacy := *o
 	legacy.Components = nil
+	legacy.Traffic = nil
+	legacy.SelfCheck = nil
 	legacy.AttestExtended = nil
 	if o.Agent != nil {
 		a := *o.Agent
@@ -277,6 +283,177 @@ func observationNeedsVerification(o *Observation, minVersion int) bool {
 	return o != nil && (minVersion > 0 || o.Attest != nil || o.AttestExtended != nil)
 }
 
+// collectSelfCheckAttestation turns the complete local Status verdict into a
+// compact, independently signed attachment. Failure to read signing material
+// remains an absent attachment (unknown to remote readers), never an unsigned
+// green fallback.
+func collectSelfCheckAttestation(st *Status, now time.Time) *attest.SelfCheckAttest {
+	if st == nil || st.Node == "" || st.TS == "" {
+		return nil
+	}
+	claim := selfCheckClaimFromStatus(st, now)
+	key, err := os.ReadFile(nodeKeyPath)
+	if err != nil {
+		return nil
+	}
+	crt, err := os.ReadFile(nodeCertPath)
+	if err != nil {
+		return nil
+	}
+	signed, err := attest.SignSelfCheck(claim, key, crt)
+	if err != nil {
+		return nil
+	}
+	return signed
+}
+
+// selfCheckClaimFromStatus is intentionally based on Status.OKAt rather than
+// re-inventing a second health verdict. The problem list explains every field
+// family that contributes to that verdict; a generic fail-closed entry covers
+// future Status fields until their detailed formatter is added here.
+func selfCheckClaimFromStatus(st *Status, now time.Time) attest.SelfCheckClaim {
+	claim := attest.SelfCheckClaim{
+		Version: attest.SelfCheckClaimVersion,
+		Node:    st.Node,
+		TS:      st.TS,
+	}
+	claim.Healthy = st.OKAt(now)
+	if claim.Healthy {
+		return claim
+	}
+
+	problems := append([]string(nil), st.Errors...)
+	if r := st.Rollout; r != nil {
+		switch {
+		case r.Stage == "failed":
+			problem := "rollout 失败"
+			if r.Error != "" {
+				problem += ":" + r.Error
+			}
+			problems = append(problems, problem)
+		case r.InFlight():
+			if d, ok := r.StuckFor(now); !ok {
+				problems = append(problems, "rollout 阶段时间无效:"+r.Stage)
+			} else if d > RolloutStuckAfter {
+				problems = append(problems,
+					fmt.Sprintf("rollout 卡在 %s:%s", r.Stage, d.Round(time.Second)))
+			}
+		}
+	}
+	if st.Publisher != nil && st.Publisher.Unhealthy(now) {
+		problem := "发布器状态异常"
+		if st.Publisher.LastError != "" {
+			problem += ":" + st.Publisher.LastError
+		}
+		problems = append(problems, problem)
+	}
+	for _, component := range st.Components {
+		if !component.OK() {
+			problems = append(problems, componentProblem(component))
+		}
+	}
+	problems = append(problems, agentHealthProblems(st.Agent)...)
+	for _, tunnel := range st.Tunnels {
+		switch {
+		case tunnel.Down:
+			problems = append(problems, "隧道不存在:"+tunnel.Interface)
+		case tunnel.HandshakeAgeSec < 0:
+			problems = append(problems, "隧道从未握手:"+tunnel.Interface)
+		case tunnel.Stale:
+			problems = append(problems,
+				fmt.Sprintf("隧道握手陈旧:%s:%ds", tunnel.Interface, tunnel.HandshakeAgeSec))
+		}
+		if tunnel.UnitState != "" && tunnel.UnitState != "active" {
+			problems = append(problems,
+				fmt.Sprintf("隧道单元异常:%s:%s", tunnel.Interface, tunnel.UnitState))
+		}
+	}
+	if d := st.Drift; d != nil {
+		for _, path := range d.Modified {
+			problems = append(problems, "配置被改过:"+path)
+		}
+		for _, path := range d.Missing {
+			problems = append(problems, "配置缺失:"+path)
+		}
+		for _, path := range d.Unreadable {
+			problems = append(problems, "配置读不到:"+path)
+		}
+	}
+	if st.Observation != nil {
+		for _, reach := range st.Observation.Targets {
+			if reach.Uplink && !reach.OK() {
+				problems = append(problems,
+					fmt.Sprintf("直连探测失败:%s:%s", reach.Target, reach.Error))
+			}
+		}
+	}
+	claim.Problems = compactSelfCheckProblems(problems)
+	if len(claim.Problems) == 0 {
+		claim.Problems = []string{"本机自检未通过（暂无结构化原因）"}
+	}
+	return claim
+}
+
+func compactSelfCheckProblems(problems []string) []string {
+	// Keep every locally produced claim below the aggregate attestation limit
+	// even at the maximum item count. The verifier permits a larger individual
+	// diagnostic only so future producers remain wire-compatible.
+	const derivedProblemLimit = attest.SelfCheckMaxTotalSize / attest.SelfCheckMaxProblems
+	set := make(map[string]struct{}, len(problems))
+	for _, problem := range problems {
+		problem = strings.Map(func(r rune) rune {
+			if unicode.IsControl(r) {
+				return ' '
+			}
+			return r
+		}, problem)
+		problem = strings.Join(strings.Fields(problem), " ")
+		if len(problem) > derivedProblemLimit {
+			problem = problem[:derivedProblemLimit]
+			for !utf8.ValidString(problem) {
+				problem = problem[:len(problem)-1]
+			}
+			problem = strings.TrimSpace(problem)
+		}
+		if problem != "" {
+			set[problem] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for problem := range set {
+		out = append(out, problem)
+	}
+	sort.Strings(out)
+	if len(out) > attest.SelfCheckMaxProblems {
+		omitted := len(out) - (attest.SelfCheckMaxProblems - 1)
+		out = append(append([]string(nil), out[:attest.SelfCheckMaxProblems-1]...),
+			fmt.Sprintf("问题列表已截断:另有 %d 项", omitted))
+		sort.Strings(out)
+	}
+	return out
+}
+
+// verifySelfCheckAttachment binds the independently verified verdict back to
+// its containing Observation. A relay cannot move a green claim to another
+// node or refresh its timestamp through the mutable outer envelope.
+func verifySelfCheckAttachment(o *Observation, ca []byte, now time.Time,
+	maxAge time.Duration) (*attest.SelfCheckClaim, error) {
+	if o == nil || o.SelfCheck == nil {
+		return nil, nil
+	}
+	claim, err := attest.VerifySelfCheckFresh(o.SelfCheck, ca, now, maxAge)
+	if err != nil {
+		return nil, err
+	}
+	if claim.Node != o.Node {
+		return nil, fmt.Errorf("自检签名节点 %q 与外层观测节点 %q 不一致", claim.Node, o.Node)
+	}
+	if claim.TS != o.TS {
+		return nil, fmt.Errorf("自检签名时间 %q 与外层观测时间 %q 不一致", claim.TS, o.TS)
+	}
+	return claim, nil
+}
+
 // AttestationErrors 校验 Status 里所有带签名的观测。兼容阶段允许完全无签名
 // 的旧节点保持 unknown；一旦进入 phase B，缺失签名本身就是明确故障。
 func AttestationErrors(st *Status, now time.Time, maxAge time.Duration, minVersion int) []string {
@@ -292,7 +469,19 @@ func AttestationErrors(st *Status, now time.Time, maxAge time.Duration, minVersi
 			signed = append(signed, &st.Learned[i])
 		}
 	}
-	if len(signed) == 0 {
+	hasTraffic := st.Observation != nil && st.Observation.Traffic != nil
+	hasSelfCheck := st.Observation != nil && st.Observation.SelfCheck != nil
+	if !hasTraffic || !hasSelfCheck {
+		for i := range st.Learned {
+			if st.Learned[i].Traffic != nil {
+				hasTraffic = true
+			}
+			if st.Learned[i].SelfCheck != nil {
+				hasSelfCheck = true
+			}
+		}
+	}
+	if len(signed) == 0 && !hasTraffic && !hasSelfCheck {
 		return nil
 	}
 	ca, err := os.ReadFile(caPath)
@@ -304,6 +493,30 @@ func AttestationErrors(st *Status, now time.Time, maxAge time.Duration, minVersi
 		if _, err := VerifyObservationAtLeast(o, ca, now, maxAge, minVersion); err != nil {
 			out = append(out, fmt.Sprintf("观测 %s 的签名陈述无效:%v", o.Node, err))
 		}
+	}
+	traffic := func(o *Observation) {
+		if o == nil || o.Traffic == nil {
+			return
+		}
+		if _, err := verifyTrafficAttachment(o, ca, now, maxAge); err != nil {
+			out = append(out, fmt.Sprintf("观测 %s 的流量签名陈述无效:%v", o.Node, err))
+		}
+	}
+	traffic(st.Observation)
+	for i := range st.Learned {
+		traffic(&st.Learned[i])
+	}
+	selfCheck := func(o *Observation) {
+		if o == nil || o.SelfCheck == nil {
+			return
+		}
+		if _, err := verifySelfCheckAttachment(o, ca, now, maxAge); err != nil {
+			out = append(out, fmt.Sprintf("观测 %s 的自检签名陈述无效:%v", o.Node, err))
+		}
+	}
+	selfCheck(st.Observation)
+	for i := range st.Learned {
+		selfCheck(&st.Learned[i])
 	}
 	return out
 }

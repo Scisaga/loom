@@ -1,6 +1,7 @@
 package validate
 
 import (
+	"net"
 	"sort"
 	"strings"
 
@@ -25,6 +26,8 @@ func checkServices(fs *findings, s *model.SSOT) {
 	for i := range svcs {
 		svc := &svcs[i]
 		where := "service:" + svc.ID
+		concrete := 0
+		validAddresses := 0
 		if svc.ID == "" {
 			fs.add("§4.5 服务", "service:(无 id)", "服务缺少 id")
 			continue
@@ -40,36 +43,32 @@ func checkServices(fs *findings, s *model.SSOT) {
 				"没有地址 —— 这个服务永远匹配不到任何流量,而不会有任何报错")
 		}
 		for _, a := range svc.Addresses {
-			if a == "" || a == "." {
-				fs.add("§4.5 服务", where, "地址为空")
-				continue
-			}
-			if strings.ContainsAny(a, "/: ") {
+			canonical, suffix, reason := canonicalServiceHost(a)
+			if reason != "" {
 				fs.add("§4.5 服务", where,
-					"地址 %q 看起来不是主机名 —— 这里要的是 host,不是 URL 也不是 host:port", a)
+					"地址 %q 不是合法 hostname/suffix(%s) —— 这里要的是 host,"+
+						"不是 wildcard、URL/path 或 host:port", a, reason)
 				continue
 			}
+			if !suffix {
+				concrete++
+			}
+			validAddresses++
 			// 同一个地址被两个服务认领,路由结果就取决于规则顺序 ——
 			// 而规则顺序是渲染细节,不该决定流量走哪。
-			if prev, dup := owner[a]; dup {
+			if prev, dup := owner[canonical]; dup {
 				fs.add("§4.5 服务", where,
 					"地址 %q 已被服务 %q 认领 —— 两个服务抢同一个地址时,"+
 						"走哪条路取决于渲染出的规则顺序,那不该是策略", a, prev)
 				continue
 			}
-			owner[a] = svc.ID
+			owner[canonical] = svc.ID
 		}
 
 		// 后缀地址探不了 —— `.baidu.com` 不是一个具体主机。一个服务如果
 		// 全是后缀,它就无法被度量,selector 只能停在默认候选上,而这在
 		// 渲染产物里看不出任何异常。
-		concrete := 0
-		for _, a := range svc.Addresses {
-			if !model.IsSuffix(a) {
-				concrete++
-			}
-		}
-		if len(svc.Addresses) > 0 && concrete == 0 {
+		if validAddresses > 0 && concrete == 0 {
 			fs.add("§4.5 服务", where,
 				"只有后缀地址,没有一个具体主机 —— 探测无从下手,这个服务的 selector "+
 					"会一直停在默认候选上。至少给一个具体地址(它同时充当探测目标)")
@@ -98,13 +97,76 @@ func checkServices(fs *findings, s *model.SSOT) {
 			continue
 		}
 		for suf, so := range owner {
-			if model.IsSuffix(suf) && so != o && strings.HasSuffix(addr, suf) {
+			if model.IsSuffix(suf) && so != o &&
+				(addr == strings.TrimPrefix(suf, ".") || strings.HasSuffix(addr, suf)) {
 				fs.add("§4.5 服务", "service:"+o,
 					"地址 %q 落在服务 %q 的后缀 %q 之内 —— 渲染时具体地址优先,"+
 						"但这需要是有意的安排", addr, so, suf)
 			}
 		}
 	}
+}
+
+// canonicalServiceHost 把服务地址收敛到两种语法:
+//
+//	example.com   精确 hostname
+//	.example.com  hostname suffix
+//
+// DNS 不区分大小写,因此返回的 key 统一为小写,用于检测重复和重叠。
+// 这里故意不接受 IP。Service 的数据面是按 HTTP hostname 分流,
+// IP 规则不应该偷偷落入 sing-box 的 domain 规则。
+func canonicalServiceHost(addr string) (key string, suffix bool, reason string) {
+	if addr == "" || addr == "." {
+		return "", false, "地址为空"
+	}
+	if strings.Contains(addr, "*") {
+		return "", false, "不接受 wildcard *"
+	}
+	if strings.Contains(addr, "://") || strings.ContainsAny(addr, "/?#") {
+		return "", false, "不接受 URL 或 path"
+	}
+	if strings.Contains(addr, ":") {
+		return "", false, "不接受 host:port"
+	}
+
+	host := addr
+	if strings.HasPrefix(host, ".") {
+		suffix = true
+		host = host[1:]
+	}
+	if len(host) > 253 {
+		return "", false, "hostname 超过 253 字节"
+	}
+	if net.ParseIP(host) != nil {
+		return "", false, "不接受 IP 地址"
+	}
+
+	for _, label := range strings.Split(host, ".") {
+		if label == "" {
+			return "", false, "hostname 包含空 label"
+		}
+		if len(label) > 63 {
+			return "", false, "hostname label 超过 63 字节"
+		}
+		if !asciiAlphaNum(label[0]) || !asciiAlphaNum(label[len(label)-1]) {
+			return "", false, "hostname label 必须以字母或数字开头和结尾"
+		}
+		for i := 1; i < len(label)-1; i++ {
+			if !asciiAlphaNum(label[i]) && label[i] != '-' {
+				return "", false, "hostname label 只能包含 ASCII 字母、数字和连字号"
+			}
+		}
+	}
+
+	key = strings.ToLower(host)
+	if suffix {
+		key = "." + key
+	}
+	return key, suffix, ""
+}
+
+func asciiAlphaNum(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
 }
 
 // checkServicePorts 校验接入节点的端口模式(§4.5)。

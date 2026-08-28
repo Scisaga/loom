@@ -1,0 +1,304 @@
+package report
+
+import (
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"loom/internal/model"
+	"loom/internal/webui"
+)
+
+func TestEnrichControlViewPreservesSSOTContractAndRouteScope(t *testing.T) {
+	s := &model.SSOT{
+		Nodes: []model.Node{
+			{
+				ID: "jm24", Name: "Control", City: "Nanjing", Provider: "Example",
+				PublicEndpoint: "control.example", Drain: true,
+				Server: &model.ServerRole{Direction: model.Bidirectional, EgressCapable: true},
+				Access: &model.AccessRole{
+					Platform: model.LinuxServer, Credentials: []string{"c-best", "c-fixed"},
+					MixedPorts: []model.MixedPort{
+						{Port: 1080, Declaration: "fixed"},
+						{Port: 1083, Services: true},
+					},
+				},
+			},
+			{
+				ID: "desk01", PublicEndpoint: "desk.example", SSHPort: 2222,
+				Access: &model.AccessRole{Platform: model.Desktop, Credentials: []string{"c-best"}},
+			},
+		},
+		Services: []model.Service{{
+			ID: "intl-api", Name: "International APIs",
+			Addresses: []string{"api.example", ".example.net"}, Declaration: "best",
+		}},
+		Declarations: []model.AccessDeclaration{
+			{
+				ID: "best", Name: "Best egress", AddressAxis: model.FromRequest,
+				EgressAxis: model.EgressAny, Matcher: "host", ProbeURL: "https://probe.example/",
+				ProbeBudget: 7, Objective: model.Latency,
+				Constraints:    []model.Constraint{{Kind: model.Region, Expr: "country != CN"}},
+				AllowedServers: []string{"sg02", "ber01"}, MaxHops: 2,
+				RankingPeriod: "10m", TuningPeriod: "30s", SwitchThreshold: 0.15,
+				TopN: 3, Window: "1h", MinSamples: 6, StaleAfter: "20m",
+				Fallback: model.LastKnownGood,
+			},
+			{ID: "fixed", AddressAxis: model.FromRequest, EgressAxis: "pinned:sg02"},
+		},
+		Credentials: []model.Credential{
+			{ID: "c-best", Declaration: "best"},
+			{ID: "c-fixed", Declaration: "fixed"},
+		},
+	}
+	v := webui.View{
+		Self:  "jm24",
+		Nodes: []webui.NodeView{{ID: "jm24", Health: "healthy", Source: "直连 /status"}},
+		Routes: []webui.RouteView{
+			{Node: "jm24", Declaration: "intl-api", Selector: "svc:intl-api", ScopeKind: webui.ScopeService, ScopeID: "intl-api"},
+			{Node: "jm24", Declaration: "fixed", Selector: "decl:fixed", ScopeKind: webui.ScopePolicy, ScopeID: "fixed"},
+		},
+		Candidates: []webui.CandidatePathView{
+			{Node: "jm24", Declaration: "intl-api"},
+			{Node: "jm24", Declaration: "fixed"},
+		},
+	}
+
+	enrichControlView(&v, s, "jm24")
+
+	if len(v.Nodes) != 2 || v.Nodes[0].ID != "desk01" || v.Nodes[0].Health != "unknown" {
+		t.Fatalf("SSOT-only node was not retained as unknown: %+v", v.Nodes)
+	}
+	jm := nodeByID(t, v.Nodes, "jm24")
+	if jm.Name != "Control" || jm.City != "Nanjing" || jm.Provider != "Example" ||
+		jm.PublicEndpoint != "control.example" || jm.SSHPort != 22 || !jm.Drain ||
+		!jm.EgressCapable || jm.Direction != "bidirectional" ||
+		!slices.Equal(jm.Roles, []string{"control", "access", "server"}) {
+		t.Fatalf("node SSOT metadata was lost or misderived: %+v", jm)
+	}
+	if jm.Health != "healthy" || jm.Source != "直连 /status" {
+		t.Fatalf("desired metadata overwrote observed state: %+v", jm)
+	}
+	if got := nodeByID(t, v.Nodes, "desk01"); got.SSHPort != 2222 || !slices.Equal(got.Roles, []string{"access"}) {
+		t.Fatalf("access-only node metadata wrong: %+v", got)
+	}
+
+	if len(v.Services) != 1 || v.Services[0].PolicyID != "best" ||
+		!slices.Equal(v.Services[0].Addresses, []string{"api.example", ".example.net"}) ||
+		len(v.Services[0].Hosts) != 2 || v.Services[0].Hosts[1].Match != "suffix" {
+		t.Fatalf("service form fields were not preserved: %+v", v.Services)
+	}
+	best := policyByID(t, v.Policies, "best")
+	if best.ProbeBudget != 7 || best.Objective != "latency" || best.SwitchThreshold != 0.15 ||
+		best.Fallback != "last_known_good" || !slices.Equal(best.AllowedServers, []string{"sg02", "ber01"}) ||
+		len(best.Constraints) != 1 || best.Constraints[0].Kind != "region" {
+		t.Fatalf("policy form fields were not preserved: %+v", best)
+	}
+
+	if got := ingressBy(t, v.Ingresses, "desk01", "tun", 0); got.PolicyID != "best" ||
+		got.Declaration != "" || !got.Default {
+		t.Fatalf("implicit single-policy TUN default diverged from renderer: %+v", got)
+	}
+	if got := ingressBy(t, v.Ingresses, "jm24", "mixed", 1083); !got.Services ||
+		got.ScopeKind != webui.ScopeServices || got.Listen != "127.0.0.1:1083" {
+		t.Fatalf("service-aware mixed ingress wrong: %+v", got)
+	}
+	if got := ingressBy(t, v.Ingresses, "jm24", "mixed", 1080); got.PolicyID != "fixed" ||
+		got.Declaration != "fixed" || got.ScopeKind != webui.ScopePolicy {
+		t.Fatalf("policy mixed ingress wrong: %+v", got)
+	}
+
+	for _, route := range v.Routes {
+		want := "best"
+		if route.ScopeKind == webui.ScopePolicy {
+			want = "fixed"
+		}
+		if route.PolicyID != want {
+			t.Fatalf("route policy resolution wrong: %+v", route)
+		}
+	}
+	intl := candidateBy(t, v.Candidates, "jm24", "intl-api")
+	if intl.ScopeKind != webui.ScopeService || intl.PolicyID != "best" || intl.State != "selected" {
+		t.Fatalf("current-SSOT service candidate scope wrong: %+v", intl)
+	}
+	fixed := candidateBy(t, v.Candidates, "jm24", "fixed")
+	if fixed.ScopeKind != webui.ScopePolicy || fixed.PolicyID != "fixed" || fixed.State != "selected" {
+		t.Fatalf("runtime-only policy selection was lost: %+v", fixed)
+	}
+	if got := candidateBy(t, v.Candidates, "desk01", "best"); got.ScopeKind != webui.ScopePolicy {
+		t.Fatalf("current-SSOT TUN policy candidate scope wrong: %+v", got)
+	}
+}
+
+func TestLegacyRouteScopeRefusesServicePolicyIDCollision(t *testing.T) {
+	s := &model.SSOT{
+		Nodes: []model.Node{{ID: "access", Access: &model.AccessRole{
+			Platform: model.LinuxServer, Credentials: []string{"for-service", "for-policy"},
+			MixedPorts: []model.MixedPort{{Port: 1080, Declaration: "same"}},
+		}}},
+		Services:     []model.Service{{ID: "same", Declaration: "service-policy"}},
+		Declarations: []model.AccessDeclaration{{ID: "same"}, {ID: "service-policy"}},
+		Credentials: []model.Credential{
+			{ID: "for-service", Declaration: "service-policy"},
+			{ID: "for-policy", Declaration: "same"},
+		},
+	}
+	kind, id := legacyRouteScope(s, &s.Nodes[0], "same")
+	if kind != "" || id != "" {
+		t.Fatalf("colliding legacy id was guessed as %s/%s", kind, id)
+	}
+}
+
+func TestEnrichControlViewRebuildsIntentFromCurrentSSOT(t *testing.T) {
+	s := &model.SSOT{
+		Nodes:   []model.Node{{ID: "a"}, {ID: "b"}},
+		Tunnels: []model.Tunnel{{From: "a", To: "b"}},
+	}
+	v := webui.View{
+		Nodes: []webui.NodeView{{ID: "a", Edges: []webui.EdgeView{{
+			To: "b", MS: 12, Samples: 3, ObservedAt: "2026-08-28T12:00:00Z",
+		}}}},
+		Links:      []webui.LinkView{{From: "old", To: "intent", Kind: "tunnel"}},
+		Candidates: []webui.CandidatePathView{{Node: "old", Declaration: "intent"}},
+	}
+
+	enrichControlView(&v, s, "a")
+	if len(v.Links) != 1 || v.Links[0].From != "a" || v.Links[0].To != "b" ||
+		v.Links[0].State != "active" || v.Links[0].MS != 12 {
+		t.Fatalf("desired SSOT edge and observed overlay were not rebuilt together: %+v", v.Links)
+	}
+	if len(v.Candidates) != 0 {
+		t.Fatalf("stale applied-config candidate survived current SSOT enrichment: %+v", v.Candidates)
+	}
+}
+
+func TestEnrichControlViewKeepsRemovedRuntimeNodeButMarksItUndeclared(t *testing.T) {
+	s := &model.SSOT{Nodes: []model.Node{{ID: "current"}}}
+	v := webui.View{Nodes: []webui.NodeView{
+		{ID: "current", Declared: true, Health: "healthy", Source: "直连 /status"},
+		{
+			ID: "removed", Declared: true, Name: "Old declaration", PublicEndpoint: "old.example",
+			Roles: []string{"server"}, Direction: "bidirectional", EgressCapable: true,
+			Health: "healthy", Applied: "old-snapshot",
+			ObservedAt: "2026-08-28T12:00:00Z", Source: "签名转述",
+		},
+	}}
+
+	enrichControlView(&v, s, "current")
+
+	current := nodeByID(t, v.Nodes, "current")
+	if !current.Declared {
+		t.Fatalf("current SSOT node was not marked declared: %+v", current)
+	}
+	removed := nodeByID(t, v.Nodes, "removed")
+	if removed.Declared {
+		t.Fatalf("removed runtime node retained stale declaration membership: %+v", removed)
+	}
+	if removed.Health != "healthy" || removed.Applied != "old-snapshot" || removed.Source != "签名转述" {
+		t.Fatalf("removed runtime node lost diagnostic evidence: %+v", removed)
+	}
+	if removed.Name != "" || removed.PublicEndpoint != "" || len(removed.Roles) != 0 ||
+		removed.Direction != "" || removed.EgressCapable {
+		t.Fatalf("removed runtime node retained stale desired metadata: %+v", removed)
+	}
+}
+
+func TestRouteScopeComesFromSelectorNotLegacyDeclaration(t *testing.T) {
+	if kind, id, policy := routeScope("svc:intl-api"); kind != webui.ScopeService || id != "intl-api" || policy != "" {
+		t.Fatalf("service selector scope = %q/%q/%q", kind, id, policy)
+	}
+	if kind, id, policy := routeScope("decl:best"); kind != webui.ScopePolicy || id != "best" || policy != "best" {
+		t.Fatalf("policy selector scope = %q/%q/%q", kind, id, policy)
+	}
+	if kind, id, policy := routeScope("best"); kind != "" || id != "" || policy != "" {
+		t.Fatalf("unknown selector was guessed = %q/%q/%q", kind, id, policy)
+	}
+}
+
+func TestEnrichRouteScopeDoesNotGuessUnknownAgentSelector(t *testing.T) {
+	s := &model.SSOT{
+		Nodes: []model.Node{{ID: "access", Access: &model.AccessRole{
+			Platform: model.LinuxServer, Credentials: []string{"c"},
+		}}},
+		Services:    []model.Service{{ID: "svc", Declaration: "p"}},
+		Credentials: []model.Credential{{ID: "c", Declaration: "p"}},
+	}
+	v := webui.View{Routes: []webui.RouteView{{
+		Node: "access", Declaration: "svc", Selector: "opaque-selector",
+	}}}
+	enrichRouteScopes(&v, s)
+	if got := v.Routes[0]; got.ScopeKind != "" || got.ScopeID != "" || got.PolicyID != "" {
+		t.Fatalf("unknown runtime selector was guessed from legacy declaration: %+v", got)
+	}
+	if len(v.Warnings) != 1 || !strings.Contains(v.Warnings[0], "Agent selector") {
+		t.Fatalf("unknown selector was not made visible: %+v", v.Warnings)
+	}
+}
+
+func TestControlDepsEnrichReadsValidatedSSOT(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ssot.yaml")
+	if err := os.WriteFile(path, []byte(validControlSSOT), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v := webui.View{Self: "acc"}
+	if err := controlDeps(&Control{SSOTPath: path}).Enrich(&v); err != nil {
+		t.Fatalf("valid SSOT enrichment failed: %v", err)
+	}
+	if len(v.Nodes) != 3 || len(v.Policies) != 1 || len(v.Ingresses) != 1 {
+		t.Fatalf("validated SSOT was not exposed: nodes=%d policies=%d ingresses=%d", len(v.Nodes), len(v.Policies), len(v.Ingresses))
+	}
+
+	if err := os.WriteFile(path, []byte("nodes: ["), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := controlDeps(&Control{SSOTPath: path}).Enrich(&v); err == nil || !strings.Contains(err.Error(), "解析 SSOT") {
+		t.Fatalf("invalid SSOT enrichment error = %v", err)
+	}
+}
+
+func nodeByID(t *testing.T, nodes []webui.NodeView, id string) webui.NodeView {
+	t.Helper()
+	for _, node := range nodes {
+		if node.ID == id {
+			return node
+		}
+	}
+	t.Fatalf("node %q not found", id)
+	return webui.NodeView{}
+}
+
+func policyByID(t *testing.T, policies []webui.PolicyView, id string) webui.PolicyView {
+	t.Helper()
+	for _, policy := range policies {
+		if policy.ID == id {
+			return policy
+		}
+	}
+	t.Fatalf("policy %q not found", id)
+	return webui.PolicyView{}
+}
+
+func ingressBy(t *testing.T, ingresses []webui.IngressView, node, kind string, port int) webui.IngressView {
+	t.Helper()
+	for _, ingress := range ingresses {
+		if ingress.Node == node && ingress.Kind == kind && ingress.Port == port {
+			return ingress
+		}
+	}
+	t.Fatalf("ingress %s/%s/%d not found", node, kind, port)
+	return webui.IngressView{}
+}
+
+func candidateBy(t *testing.T, candidates []webui.CandidatePathView, node, declaration string) webui.CandidatePathView {
+	t.Helper()
+	for _, candidate := range candidates {
+		if candidate.Node == node && candidate.Declaration == declaration {
+			return candidate
+		}
+	}
+	t.Fatalf("candidate %s/%s not found in %+v", node, declaration, candidates)
+	return webui.CandidatePathView{}
+}

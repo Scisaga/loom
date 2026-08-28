@@ -1642,6 +1642,10 @@ D65 做完之后那条链路**仍然上不了面板**。
 
 **日期** 2026-08-24 · **状态** 生效
 
+`api.ipify.org` 由 SSOT 显式选择，不是程序默认值或硬编码依赖。这里选择它不是
+为了泛化的 HTTP 健康检查，而是为了区分大陆直连与境外出口可达性；这个语义不能
+被一个普通的自有健康页替代。仓库夹具保留同一目标，锁住这条分类契约。
+
 面板上"gz02 到不了 api.ipify.org"挂了 14 小时。被问到"国内机器的 target
 换一换,为啥非要卡在这里"。
 
@@ -2465,3 +2469,123 @@ continuation 也有单独的提交屏障：子进程若看见已验签高代，�
 节点视角 verifier 已会核完 assignment 指向的所有不可变表面，但 controller 仍须
 在收到节点签名的配置/服务稳定、承载与代表路径验证后签发更高代扩大批次。因此
 “上线观察”仍不是真实 canary，四级业务数据面确认也仍是发布门的缺口。
+
+### D89 · 控制中心是 SSOT 的事务视图，不是第二套网络模型
+
+**日期** 2026-08-28 · **状态** 生效；UDP 入站探测待实现 · **相关** [D36](#d36--发布自动化之后界面就没有命令台)、[D41](#d41--界面上的校验按钮不是守卫)、[D90](#d90--流量历史只由可信相邻-counter-样本推导)、§16.1.3、§16.4
+
+Misaka 原型落成服务端渲染页面时，最危险的不是少一个按钮，而是让示意数据悄悄
+变成第二套事实来源。决定把界面约束为：运行态只投影受信观测，期望态只通过
+SSOT 事务改变，尚无数据契约的能力明确显示缺口。
+
+因此 Service 的结构化新增、修改和删除已经接到真实 SSOT；每次提交都带内容
+revision，在服务端重新读取、核对、完整校验并原子替换。结构化表单只覆盖它能
+完整表达的 Service 字段，Policy 继续走完整 SSOT 编辑器。保存后仍由 publisher
+下一轮自动发布，界面不增加发布按钮，也不把“已保存”写成“节点已应用”。Events
+的查询与 CSV 同样只筛选既有变化日志，不推导当前状态或补造中控停机时的历史。
+
+节点接入有三套不能混用的身份：中控范围唯一、可导出公钥的 SSH bootstrap
+身份；远端自己的 SSH host identity；远端本地生成、只回传公钥的 WireGuard
+identity。接入新节点复用第一套，绝不按节点新建控制密钥。当前 Add node handler
+只让操作者输入 SSH host/IP/user/port；先独立扫描 Ed25519 host key，由操作者从
+带外来源确认，再次扫描一致后才写专用 `known_hosts` 并运行 StrictHostKeyChecking
+预检。短 hostname 决定 Node ID；WG 私钥在远端幂等生成或复用，只取回公钥。
+
+SSH 坐标仍不是 UDP 证据。当前只接受操作者输入的公网 global-unicast IP，或在
+中控解析出至少一个公网地址的 DNS 名，作为 control-observed endpoint candidate；
+非公网 literal，以及滤除非公网答案后为空的 DNS 失败关闭。远端
+`SSH_CONNECTION` 地址绝不用于提升证据等级。没有独立 WireGuard UDP 入站探测，
+因此 `Automatic` 固定保守解析为 `reverse_only`；显式 direction 是策略覆盖，
+不伪装成探测结果。提交时重新核对 host key、hostname 与 endpoint candidate，
+DNS 名还要核对预览时绑定的完整公网解析集合；最终 hostname 与 SSH server address
+由准备 WireGuard identity 的同一条受信 SSH 会话返回，并与 preflight 对照。随后
+复算完整隧道计划，再在精确 revision
+上原子替换 SSOT。远端 key 准备在锁外且幂等，所以本地提交失败可能留下一个
+未被 SSOT 引用的本地 key，但不能留下半份节点/隧道声明。SSH host/user 暂不
+持久化；若要长期运维，还需独立的 control-local management inventory。
+
+Direction 的“重算”和“提交”必须是两个表单。提交表单只带已经展示过的固定
+direction；中控以独立 HMAC domain 绑定 SSH 坐标、完整 host key、direction、
+Node ID、endpoint 与 SSOT revision，常量时间验证通过才进入后端。仅比较两个
+客户端 hidden 字段不足以证明复核，二者可一起被改写。任何绑定变化都会回到新的
+Review，不能提交一个操作者没看到的隧道计划。
+
+共享 SSH 私钥与专用 `known_hosts` 都是中控长期管理凭据，不是每节点临时 key。
+私钥要求当前进程所有、权限精确为 `0600`，路径全程拒绝 symlink 与不安全父目录；
+`known_hosts` 只接受 exact Ed25519 记录，跨进程更新使用 no-follow lock。加入节点
+不会自动从远端 `authorized_keys` 撤销这组共享凭据，界面不能暗示“一次性自动回收”。
+
+这次事务的完成语义仅为“远端 WG identity 已准备、节点和隧道已声明”。它没有
+足够的输入去安装 Loom binary、平台信任、节点秘密或 TLS 身份，也没有启动
+report / pull / Agent；因此按钮和成功页必须写“提交已复核声明”，节点随后保持
+joining/unknown，直到单独 bootstrap 后出现首份可信报告。完整自动 bootstrap
+需要显式配置制品、秘密拆分、证书签发、远端 staging 与失败回滚边界，不能依据
+中控工作副本的偶然目录结构推断，更不能在页面上先声称已经实现。
+
+控制页面的期望拓扑必须从当前请求读取并完整校验的 SSOT 派生；不能把刚保存的
+Nodes/Services 与中控本机上一次应用快照里的 `expected_tunnels/expected_routes`
+拼在一起。后者会制造一整个 pull 周期的 UI 漂移。节点实际 applied snapshot 与
+可信观测仍是单独的运行态，不能因为期望图立即更新就标成已经收敛。SSOT 删除的
+节点若仍有可信运行态证据，可以作为 `undeclared observed` 保留排障，但不得继续
+进入 Declared、Healthy、Joining 或全网快照一致性计数。
+
+普通节点没有 current SSOT 读取能力，期望库存来自其已应用 snapshot 中的 expected
+inventory，合法地可能滞后；只有中控 enrich 成功后才以 current validated SSOT
+替换期望层。两个页面可以复用布局，但不能把来源标签也强行统一。
+
+流量展示遵守同一原则。原始 `/status` counter、可信历史 delta 与业务 payload 是
+三个不同事实，不能仅因为都以 byte 表示就混成一个指标；具体采集和聚合边界由
+D90 固定。缺数据时留白仍比生成一条平滑但虚假的历史曲线更正确。
+
+### D90 · 流量历史只由可信相邻 counter 样本推导
+
+**日期** 2026-08-28 · **状态** 仓库已实现、待部署 · **相关** [D87](#d87--签名协议升级必须双轨兼容再提高最低版本)、[D89](#d89--控制中心是-ssot-的事务视图不是第二套网络模型)、§16.2、§16.4
+
+WireGuard 只给接口/peer 从创建以来的累计 RX/TX。单个累计值既不是速率，也不是
+某个时间窗口的流量；把页面刷新时看到的 counter 当成 24 小时数据，会把接口年龄
+误当成流量。因此决定只在中控保存可信样本，并从相邻样本的单调差值生成时间桶。
+
+流量变化频率远高于部署、组件和健康陈述。把 counter 直接加入
+`loom-attest-v5` 会改变 v5 canonical bytes，使旧 reader 在滚动升级期间无法验证
+新 writer。counter 因此使用独立的 `loom-traffic-v1` 签名域，作为 Observation 的
+可选附件转述。旧 JSON reader 可以忽略整个附件；新 reader 使用现有节点证书，
+独立验证 CA、节点名、签名和新鲜度，并要求内外层 node/TS 完全一致。流量附件失败
+不能被外层健康签名“带过”。只采集 Loom 配置里的 `wg-<peer>` 接口；一条受管接口
+出现多个 peer 时拒绝整份样本。稳定聚合键来自 node/peer/link identity，peer 公钥
+只作诊断，轮换密钥不能平白创建一条新逻辑链路。
+
+每条 counter 都带 reset epoch，由本机 boot ID、接口 ifindex 与 peer public-key
+指纹构成；peer-key 变化也单独判定为 reset。中控只接受
+node/interface/peer/epoch 相同、时间递增且间隔不超过上限的相邻样本；epoch 改变、
+同 epoch counter 回退或长 gap 都记录为质量边界，但不贡献任何 byte。缺失桶和一个
+被真实采样的零流量桶必须分开表示，不能跨 reset/gap 插值。中控以每轮一个完整
+fleet frame 的 JSONL 文件追加，权限收紧为 0600，原子压缩并保留 30 天；普通节点
+不复制这份历史，自己的网页与 `/traffic.json` 只暴露本机直接观测的当前累计
+counter；`/status` 可能同时携带 learned 签名附件。中控的 `/traffic.json` 在相同
+current 字段之外附带历史时间桶，并明确区分 available、unavailable 与普通节点的
+not_supported。所有 byte 字段使用十进制字符串，避免 JSON consumer 丢失 int64
+精度；HTTP 路径复用 gossip-cycle cache，不因 scraper 刷新重复 Collect 和扫描历史。
+
+生成配置固定 60 秒采样，中控固定 3 分钟最大 gap，不把它们做成控制台调参项。
+每个 frame 持久化当时的 gap 判据，重启或未来默认值变化不能重写旧历史语义。
+history 文件由单个 report 进程持有 no-follow 锁，追加和压缩不允许多 writer 竞态。
+采样循环以固定 ticker 为基准，不在一轮结束后再机械睡满 60 秒；邻居 RTT、目标
+可达性和邻居拉取分别做有上限的并发，避免 N 个超时把一分钟节奏线性拖长。同一轮
+carrier 状态与 traffic 陈述复用一次 `wg show all dump`，不能为两个消费者连续读出
+两份可能跨越接口重建边界的快照。
+
+三个页面的聚合语义不同且必须写在界面上：
+
+- **Overview** 把所有节点的受管 WG 接口 RX+TX delta 相加，显示时间桶柱状图。
+  同一 payload 可能在两端、也可能跨多个 hop 出现，所以这是 hop-weighted
+  infrastructure load，不是去重后的应用流量。
+- **Node detail** 只聚合所选节点，RX 与 TX 分开画柱；上方当前累计值仍保留，
+  但不能与 24h delta 混算。
+- **Topology** 按无向 link 归并两个端点，但每个端点只贡献自己的 TX delta。
+  这样 sender TX 不会再以 receiver RX 重复一次；单端样本仍可用，双端均有可信
+  delta 时显示两个 reporting endpoints。现有陈述没有签名的预期接口 roster，
+  因此界面只说“有样本的桶”，不冒充完整 coverage。
+
+这个决定只覆盖 Loom WireGuard carrier。`direct` 没有 WG hop，Service/sing-box
+与 Hysteria2 也没有进入这个 counter 契约；在各自的数据平面/L7 collector 落地前，
+不得把这些流量塞进当前图表，也不得把 WG hop-weighted 总量命名为 service traffic。

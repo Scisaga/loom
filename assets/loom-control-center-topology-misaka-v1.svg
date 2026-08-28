@@ -4,7 +4,7 @@
      width="1586" height="992" viewBox="0 0 1586 992"
      role="img" aria-labelledby="title description">
   <title id="title">Network topology — Loom control center prototype</title>
-  <desc id="description">A layered network topology view distinguishing SSOT intent, persistent WireGuard observations, configured candidate paths, Agent route decisions, and clearly marked target link-traffic telemetry.</desc>
+  <desc id="description">A layered network topology view distinguishing SSOT intent, persistent WireGuard observations, configured candidate paths, Agent route decisions, and centrally retained TX-only link-delta bars with explicit missing-sample gaps.</desc>
   <defs>
     <marker id="arrow-selected" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
       <path d="M0 0L7 3.5L0 7Z" fill="#2AA875"/>
@@ -154,21 +154,21 @@
     <use href="#icon-services" x="584" y="18" width="14" height="14" class="nav-icon"/>
     <text x="605" y="31">Services</text>
     <use href="#icon-traffic" x="682" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="703" y="31">Routing</text>
+    <text x="703" y="31">Live paths</text>
     <use href="#icon-deployments" x="780" y="18" width="14" height="14" class="nav-icon"/>
     <text x="801" y="31">Deployments</text>
     <use href="#icon-events" x="919" y="18" width="14" height="14" class="nav-icon"/>
     <text x="940" y="31">Events</text>
     <use href="#icon-settings" x="1008" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="1029" y="31">Settings</text>
+    <text x="1029" y="31">SSOT</text>
   </g>
   <line x1="479" y1="49.5" x2="569" y2="49.5" stroke="#2AA875" stroke-width="2"/>
   <g class="ui nav">
-    <text x="1210" y="31">Production</text>
+    <text class="amber" x="1160" y="31">Prototype · sample data</text>
     <circle class="status-dot" cx="1322" cy="26" r="4"/>
     <text x="1335" y="31">Operational</text>
     <use href="#icon-lock" x="1428" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="1538" y="31" text-anchor="end">Authenticated</text>
+    <text x="1538" y="31" text-anchor="end">Read-only view</text>
   </g>
 
   <g class="ui">
@@ -250,50 +250,54 @@
 
     <text class="small muted" x="1132" y="266">CONFIG INTENT</text>
     <text class="metric" x="1132" y="290">6 persistent links</text>
-    <text class="tiny muted" x="1132" y="309">Source · signed snapshot / SSOT</text>
+    <text class="tiny muted" x="1132" y="309">Source · current validated SSOT · desired state</text>
 
     <line class="rule" x1="1132" y1="327" x2="1539" y2="327"/>
     <text class="small muted" x="1132" y="352">TRUSTED OBSERVATION</text>
     <circle class="status-dot" cx="1137" cy="376" r="4"/>
-    <text class="metric" x="1150" y="381">6 / 6 active</text>
+    <text class="metric" x="1150" y="381">6 / 6 reachable</text>
     <text class="tiny muted" x="1132" y="401">report.neighbors · newest 8s · oldest 16s</text>
 
     <line class="rule" x1="1132" y1="419" x2="1539" y2="419"/>
     <text class="small muted" x="1132" y="444">AGENT DECISION</text>
-    <text class="body" x="1260" y="444">Routing-entry overlay</text>
-    <text class="tiny amber" x="1132" y="462">Design target · requires upgraded Agent reporting</text>
+    <text class="body" x="1260" y="444">Single-entry path overlay</text>
+    <text class="tiny green" x="1132" y="462">Reported · signed Agent path decision</text>
   </g>
 
-  <!-- Focused-link traffic preview; history is not collected centrally yet. -->
+  <!-- Focused-link history: each endpoint contributes TX only. -->
   <rect class="panel" x="1112" y="488" width="447" height="192" rx="7"/>
   <g class="ui">
     <text class="section" x="1132" y="518">Link traffic</text>
-    <text class="tiny amber" x="1539" y="518" text-anchor="end">Planned · not collected centrally</text>
+    <text class="tiny green" x="1539" y="518" text-anchor="end">Retained · endpoint TX only</text>
     <text class="body mono" x="1132" y="545">Inspecting · gz02 ↔ sg02</text>
 
-    <text class="tiny green" x="1132" y="568">gz02 → sg02</text>
-    <text class="metric" x="1132" y="590">4.8 Mbps</text>
-    <text class="tiny blue" x="1132" y="615">sg02 → gz02</text>
-    <text class="metric" x="1132" y="637">2.2 Mbps</text>
-    <text class="small muted" x="1132" y="662">24h · 205 / 198 GB</text>
+    <text class="tiny green" x="1132" y="568">Endpoint TX total</text>
+    <text class="metric" x="1132" y="590">403 GB</text>
+    <text class="tiny blue" x="1132" y="615">Reporting endpoints</text>
+    <text class="metric" x="1132" y="637">2</text>
+    <text class="small muted" x="1132" y="662">Undirected link · no RX double-count</text>
 
     <line class="rule" x1="1288" y1="546" x2="1539" y2="546"/>
     <line class="rule" x1="1288" y1="579" x2="1539" y2="579"/>
     <line class="rule" x1="1288" y1="612" x2="1539" y2="612"/>
     <line class="rule" x1="1288" y1="645" x2="1539" y2="645"/>
-    <g aria-label="Eight directional traffic buckets">
+    <g aria-label="Accepted undirected link TX buckets plus one reset and one long gap">
       <g fill="#2AA875">
         <rect x="1293" y="627" width="8" height="18" rx="1"/><rect x="1323" y="613" width="8" height="32" rx="1"/>
-        <rect x="1353" y="620" width="8" height="25" rx="1"/><rect x="1383" y="629" width="8" height="16" rx="1"/>
+        <rect x="1353" y="620" width="8" height="25" rx="1"/>
         <rect x="1413" y="603" width="8" height="42" rx="1"/><rect x="1443" y="589" width="8" height="56" rx="1"/>
-        <rect x="1473" y="610" width="8" height="35" rx="1"/><rect x="1503" y="595" width="8" height="50" rx="1"/>
+        <rect x="1503" y="595" width="8" height="50" rx="1"/>
       </g>
       <g fill="#477D9C" fill-opacity="0.82">
         <rect x="1303" y="633" width="8" height="12" rx="1"/><rect x="1333" y="625" width="8" height="20" rx="1"/>
-        <rect x="1363" y="627" width="8" height="18" rx="1"/><rect x="1393" y="635" width="8" height="10" rx="1"/>
+        <rect x="1363" y="627" width="8" height="18" rx="1"/>
         <rect x="1423" y="617" width="8" height="28" rx="1"/><rect x="1453" y="610" width="8" height="35" rx="1"/>
-        <rect x="1483" y="623" width="8" height="22" rx="1"/><rect x="1513" y="616" width="8" height="29" rx="1"/>
+        <rect x="1513" y="616" width="8" height="29" rx="1"/>
       </g>
+      <rect x="1381" y="584" width="20" height="61" rx="1" fill="none" stroke="#D79B3B" stroke-dasharray="3 3"/>
+      <rect x="1471" y="584" width="20" height="61" rx="1" fill="none" stroke="#A5AAA8" stroke-dasharray="3 3"/>
+      <text class="tiny amber" x="1391" y="599" text-anchor="middle">R</text>
+      <text class="tiny muted" x="1481" y="599" text-anchor="middle">G</text>
     </g>
     <text class="tiny muted" x="1288" y="663">1h ago</text>
     <text class="tiny muted" x="1539" y="663" text-anchor="end">now</text>
@@ -304,24 +308,23 @@
   <rect x="31" y="835" width="1518" height="31" rx="4" fill="#F1F8F4"/>
   <g class="ui">
     <text class="section" x="40" y="726">Persistent WireGuard edges</text>
-    <text class="tiny muted" x="318" y="726">RTT/state observed · traffic values illustrate A→B / B→A</text>
-    <text class="tiny amber" x="1539" y="726" text-anchor="end">Planned · not collected centrally</text>
+    <text class="tiny muted" x="318" y="726">24h link bytes = TX deltas from each endpoint; receiver RX is not added again</text>
+    <text class="tiny green" x="1539" y="726" text-anchor="end">Control retention · 30 days</text>
     <text class="small muted" x="46" y="758">EDGE</text>
-    <text class="small muted" x="300" y="758">NOW · PLANNED</text>
-    <text class="small muted" x="520" y="758">24H · PLANNED</text>
-    <text class="small muted" x="735" y="758">SINCE COUNTER RESET · PLANNED</text>
+    <text class="small muted" x="300" y="758">24H TX TOTAL / BAR</text>
+    <text class="small muted" x="735" y="758">BUCKETS WITH SAMPLES</text>
     <text class="small muted" x="965" y="758">RTT</text>
     <text class="small muted" x="1080" y="758">STATE</text>
-    <text class="small muted" x="1270" y="758">CARRIER OBSERVED</text>
+    <text class="small muted" x="1270" y="758">LATEST TRUSTED SAMPLE</text>
   </g>
   <line class="rule" x1="40" y1="766" x2="1540" y2="766"/>
   <g class="ui body">
-    <text class="mono" x="46" y="794">jm24 ↔ sg02</text><text class="mono" x="300" y="794">5.8 / 4.6 Mbps</text><text class="mono" x="520" y="794">190 / 210 GB</text><text class="mono" x="735" y="794">2.91 / 3.84 TB</text><text class="mono" x="965" y="794">277 ms</text><circle class="quiet-dot" cx="1084" cy="789" r="4"/><text x="1097" y="794">Active</text><text class="muted" x="1270" y="794">8s ago</text>
-    <text class="mono" x="46" y="826">jm24 ↔ ber01</text><text class="mono" x="300" y="826">4.9 / 3.3 Mbps</text><text class="mono" x="520" y="826">112 / 126 GB</text><text class="mono" x="735" y="826">1.11 / 2.10 TB</text><text class="mono" x="965" y="826">150 ms</text><circle class="quiet-dot" cx="1084" cy="821" r="4"/><text x="1097" y="826">Active</text><text class="muted" x="1270" y="826">8s ago</text>
-    <text class="mono" x="46" y="858">gz02 ↔ sg02</text><text class="mono green" x="300" y="858">4.8 / 2.2 Mbps</text><text class="mono" x="520" y="858">205 / 198 GB</text><text class="mono" x="735" y="858">4.31 / 3.02 TB</text><text class="mono" x="965" y="858">190 ms</text><circle class="quiet-dot" cx="1084" cy="853" r="4"/><text x="1097" y="858">Active</text><text class="muted" x="1270" y="858">11s ago</text>
-    <text class="mono" x="46" y="890">gz02 ↔ ber01</text><text class="mono" x="300" y="890">2.3 / 1.6 Mbps</text><text class="mono" x="520" y="890">139 / 203 GB</text><text class="mono" x="735" y="890">0.88 / 0.63 TB</text><text class="mono" x="965" y="890">226 ms</text><circle class="quiet-dot" cx="1084" cy="885" r="4"/><text x="1097" y="890">Active</text><text class="muted" x="1270" y="890">11s ago</text>
-    <text class="mono" x="46" y="922">hz01 ↔ sg02</text><text class="mono" x="300" y="922">2.1 / 1.4 Mbps</text><text class="mono" x="520" y="922">100 / 79 GB</text><text class="mono" x="735" y="922">1.02 / 0.71 TB</text><text class="mono" x="965" y="922">350 ms</text><circle class="quiet-dot" cx="1084" cy="917" r="4"/><text x="1097" y="922">Active</text><text class="muted" x="1270" y="922">13s ago</text>
-    <text class="mono" x="46" y="954">hz01 ↔ ber01</text><text class="mono" x="300" y="954">1.0 / 0.8 Mbps</text><text class="mono" x="520" y="954">128 / 150 GB</text><text class="mono" x="735" y="954">0.54 / 0.39 TB</text><text class="mono" x="965" y="954">240 ms</text><circle class="quiet-dot" cx="1084" cy="949" r="4"/><text x="1097" y="954">Active</text><text class="muted" x="1270" y="954">13s ago</text>
+    <text class="mono" x="46" y="794">jm24 ↔ sg02</text><text class="mono" x="300" y="794">400 GB</text><rect x="415" y="784" width="245" height="10" rx="2" fill="#EEF1EF"/><rect x="415" y="784" width="243" height="10" rx="2" fill="#72C69F"/><text class="mono" x="735" y="794">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="794">277 ms</text><circle class="quiet-dot" cx="1084" cy="789" r="4"/><text x="1097" y="794">Active</text><text class="muted" x="1270" y="794">8s ago</text>
+    <text class="mono" x="46" y="826">jm24 ↔ ber01</text><text class="mono" x="300" y="826">238 GB</text><rect x="415" y="816" width="245" height="10" rx="2" fill="#EEF1EF"/><rect x="415" y="816" width="145" height="10" rx="2" fill="#72C69F"/><text class="mono" x="735" y="826">23 / 24 · G1</text><text class="mono" x="965" y="826">150 ms</text><circle class="quiet-dot" cx="1084" cy="821" r="4"/><text x="1097" y="826">Active</text><text class="muted" x="1270" y="826">8s ago</text>
+    <text class="mono" x="46" y="858">gz02 ↔ sg02</text><text class="mono green" x="300" y="858">403 GB</text><rect x="415" y="848" width="245" height="10" rx="2" fill="#DDEFE6"/><rect x="415" y="848" width="245" height="10" rx="2" fill="#239B68"/><text class="mono green" x="735" y="858">22 / 24 · R1 G1</text><text class="mono" x="965" y="858">190 ms</text><circle class="quiet-dot" cx="1084" cy="853" r="4"/><text x="1097" y="858">Active</text><text class="muted" x="1270" y="858">11s ago</text>
+    <text class="mono" x="46" y="890">gz02 ↔ ber01</text><text class="mono" x="300" y="890">342 GB</text><rect x="415" y="880" width="245" height="10" rx="2" fill="#EEF1EF"/><rect x="415" y="880" width="208" height="10" rx="2" fill="#72C69F"/><text class="mono" x="735" y="890">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="890">226 ms</text><circle class="quiet-dot" cx="1084" cy="885" r="4"/><text x="1097" y="890">Active</text><text class="muted" x="1270" y="890">11s ago</text>
+    <text class="mono" x="46" y="922">hz01 ↔ sg02</text><text class="mono" x="300" y="922">179 GB</text><rect x="415" y="912" width="245" height="10" rx="2" fill="#EEF1EF"/><rect x="415" y="912" width="109" height="10" rx="2" fill="#72C69F"/><text class="mono" x="735" y="922">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="922">350 ms</text><circle class="quiet-dot" cx="1084" cy="917" r="4"/><text x="1097" y="922">Active</text><text class="muted" x="1270" y="922">13s ago</text>
+    <text class="mono" x="46" y="954">hz01 ↔ ber01</text><text class="mono" x="300" y="954">278 GB</text><rect x="415" y="944" width="245" height="10" rx="2" fill="#EEF1EF"/><rect x="415" y="944" width="169" height="10" rx="2" fill="#72C69F"/><text class="mono" x="735" y="954">23 / 24 · G1</text><text class="mono" x="965" y="954">240 ms</text><circle class="quiet-dot" cx="1084" cy="949" r="4"/><text x="1097" y="954">Active</text><text class="muted" x="1270" y="954">13s ago</text>
   </g>
   <line class="rule" x1="40" y1="802" x2="1540" y2="802"/><line class="rule" x1="40" y1="834" x2="1540" y2="834"/><line class="rule" x1="40" y1="866" x2="1540" y2="866"/><line class="rule" x1="40" y1="898" x2="1540" y2="898"/><line class="rule" x1="40" y1="930" x2="1540" y2="930"/>
 

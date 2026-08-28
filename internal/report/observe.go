@@ -6,13 +6,11 @@ import (
 	"net/http"
 	"os"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
 	"loom/internal/attest"
 	"loom/internal/netx"
-	"loom/internal/rollout"
 	"loom/internal/version"
 )
 
@@ -42,6 +40,18 @@ type Observation struct {
 	Components []ComponentStatus   `json:"components,omitempty"`
 	Edges      []Edge              `json:"edges,omitempty"`
 	Targets    []Reach             `json:"targets,omitempty"`
+
+	// Traffic is a separately signed, node-owned WireGuard counter snapshot.
+	// It is deliberately outside the v5 attestation and measurement digest:
+	// old readers ignore this optional field, while new readers verify the
+	// loom-traffic-v1 domain before mapping any remote counter.
+	Traffic *attest.TrafficAttest `json:"traffic,omitempty"`
+
+	// SelfCheck is a separately signed verdict derived from this node's full
+	// local Status. It is outside loom-attest-v5 so old readers can ignore it
+	// during a rolling upgrade without changing v5 canonical bytes. A relay's
+	// outer HTTP status is never accepted as remote health evidence.
+	SelfCheck *attest.SelfCheckAttest `json:"self_check,omitempty"`
 
 	// Attest 是给旧版 reader 的 v1-v3 兼容签名；AttestExtended 是新版对
 	// Agent 候选健康与组件版本的完整签名。滚动升级期间必须双签：旧 reader
@@ -134,6 +144,34 @@ type sample struct {
 // 中位数因此能顶住两次离群。
 const keep = 5
 
+// Probes are independent network reads. Serial execution makes a nominal
+// one-minute round grow by every timeout (N×5s + M×8s). Keep concurrency
+// bounded so a larger SSOT cannot create an unbounded burst, while allowing a
+// small fleet to finish within the configured cadence.
+const probeConcurrency = 8
+
+func parallelProbe(count int, fn func(int)) {
+	if count <= 0 {
+		return
+	}
+	limit := probeConcurrency
+	if count < limit {
+		limit = count
+	}
+	sem := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+	for i := 0; i < count; i++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			fn(index)
+		}(i)
+	}
+	wg.Wait()
+}
+
 func newHistory() *history { return &history{by: map[string][]sample{}} }
 
 func (h *history) add(key string, ms int, err error) (median, samples, failures int, lastErr string) {
@@ -167,29 +205,30 @@ func (h *history) add(key string, ms int, err error) (median, samples, failures 
 }
 
 // observe 量一遍本节点能量的东西:到每个邻居的 RTT、到每个目标的可达性。
-func observe(cfg *Config, h *history, now time.Time) *Observation {
-	o := &Observation{Node: cfg.Node, TS: now.UTC().Format(time.RFC3339)}
-	if b, err := os.ReadFile(appliedPath); err == nil {
-		o.Applied = strings.TrimSpace(string(b))
+// 返回同一轮开始时采集的完整 Status，供事件、流量历史和 Web 快照复用；
+// 否则 gossip 刚做完签名自检，调用方又会机械地执行一遍完整 Collect。
+func observe(cfg *Config, h *history, now time.Time) (*Observation, *Status) {
+	// Take one complete local Status snapshot first. Observation identity fields
+	// and the independent self-check verdict must describe the same collection,
+	// rather than racing two separate rollout/Agent/component reads.
+	dump, stats, wgErrors := readWGSnapshot()
+	localStatus := collectWithWGStats(cfg, now, stats, wgErrors)
+	o := &Observation{
+		Node: localStatus.Node, TS: localStatus.TS, Applied: localStatus.Applied,
+		Version: localStatus.Version, Rollout: localStatus.Rollout,
+		Components: append([]ComponentStatus(nil), localStatus.Components...),
 	}
-	vc := version.Self()
-	o.Version = &vc
-	if r, err := rollout.Read(rollout.Path); err == nil && r != nil {
-		o.Rollout = &RolloutState{
-			Snapshot: r.Snapshot, Stage: string(r.Stage), EnteredAt: r.EnteredAt,
-			LastGood: r.LastGood, Error: r.Error,
-		}
+	// Collect retains a parsed Agent state alongside validation errors for local
+	// diagnosis. Only a state that satisfies the signed wire contract may enter
+	// Observation; the errors themselves remain in the signed self-check.
+	if len(validateAgentStateForConfig(localStatus.Agent, cfg, now)) == 0 {
+		o.Agent = localStatus.Agent
 	}
-	a, agentErr := readAgentState(cfg.AgentState)
-	if agentErr == nil && len(validateAgentStateForConfig(a, cfg, now)) == 0 {
-		o.Agent = a
-	}
-	// 即使状态不完整，也把原值交给组件核验生成一条签名错误；只是不把这份
-	// 不可信/缺 declaration 的状态本身作为 Agent 当前选择转述。
-	o.Components = componentStatuses(cfg, a, now)
 	nb := append([]Neighbor(nil), cfg.Neighbors...)
 	sort.Slice(nb, func(i, j int) bool { return nb[i].Node < nb[j].Node })
-	for _, n := range nb {
+	edges := make([]Edge, len(nb))
+	parallelProbe(len(nb), func(i int) {
+		n := nb[i]
 		ms, err := tcpRTT(n.Addr, 5*time.Second)
 		med, samples, fails, lastErr := h.add("edge/"+n.Node, ms, err)
 		e := Edge{To: n.Node, RTTMs: med, Samples: samples, Failures: fails}
@@ -198,8 +237,9 @@ func observe(cfg *Config, h *history, now time.Time) *Observation {
 			e.Error = lastErr
 			e.RTTMs = 0
 		}
-		o.Edges = append(o.Edges, e)
-	}
+		edges[i] = e
+	})
+	o.Edges = edges
 
 	// 两类目标测法完全一样,只是失败的含义不同 —— 所以只多一个标记,
 	// 不多一条链路上的列表(转述的线格式越简单越好)。
@@ -212,7 +252,9 @@ func observe(cfg *Config, h *history, now time.Time) *Observation {
 		}
 	}
 	sort.Strings(targets)
-	for _, t := range targets {
+	reaches := make([]Reach, len(targets))
+	parallelProbe(len(targets), func(i int) {
+		t := targets[i]
 		ms, err := reachTarget(t, firstDNS(cfg.DNS), 8*time.Second)
 		med, samples, fails, lastErr := h.add("target/"+t, ms, err)
 		r := Reach{Target: t, FirstByteMs: med, Samples: samples, Failures: fails, Uplink: uplink[t]}
@@ -220,13 +262,22 @@ func observe(cfg *Config, h *history, now time.Time) *Observation {
 			r.Error = lastErr
 			r.FirstByteMs = 0
 		}
-		o.Targets = append(o.Targets, r)
-	}
+		reaches[i] = r
+	})
+	o.Targets = reaches
 	// 必须在 Edges/Targets 全部采完之后签。v3 同时绑定测量 payload；在
 	// 采集前签会留下一个 relay 可改写、却看似有合法身份签名的缺口。
 	// 签不了不是错误 —— 中控只有 ca.crt,没有自己的私钥。
 	o.Attest, o.AttestExtended = signSelf(o, cfg.AttestationMinVersion)
-	return o
+	// This uses the same node TLS identity but an independent signature domain,
+	// so adding counters does not mutate the deployed v5 canonical bytes.
+	o.Traffic = collectTrafficAttestationFromDump(cfg, now, dump)
+	// Health must come from the real local collector, not from an outer relay's
+	// HTTP status or from an incomplete subset of Observation fields. Include
+	// the just-collected uplink measurements before deriving the final verdict.
+	localStatus.Observation = o
+	o.SelfCheck = collectSelfCheckAttestation(localStatus, now)
+	return o, localStatus
 }
 
 // tcpRTT 用一次 TCP 建连测到邻居的往返时间。

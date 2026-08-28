@@ -13,12 +13,16 @@
 package webui
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -37,6 +41,11 @@ type Deps struct {
 
 	// Snapshot 返回当前的全网视图。
 	Snapshot func() View
+	// TrafficSnapshot returns a gossip-cycle cache for /traffic.json. Scrapers
+	// must not trigger Collect, signature verification and a retention query on
+	// every request. When nil, the handler falls back to Snapshot for backwards
+	// compatibility with small tests/embedders.
+	TrafficSnapshot func() View
 
 	// Actions 是本机能执行的动作。键是动作名,值是执行函数。
 	// 只列白名单里的 —— 让界面能跑任意命令,等于把 root 挂到网上。
@@ -96,15 +105,105 @@ type EventView struct {
 // 某某"这种旁路,而那正是 §12 想要的。
 type ControlDeps struct {
 	SSOTPath string
+	// Enrich 用中控本地的 SSOT 给同一份运行态 View 补期望态元数据。
+	// 它只读，不改变采集结果；普通节点没有这项能力，也不会收到这些元数据。
+	Enrich func(*View) error
 	// Read 返回当前 SSOT 原文。
 	Read func() (string, error)
+	// Revision 返回 SSOT 原文的内容摘要。结构化编辑和原文编辑都用它做
+	// 乐观并发控制，避免浏览器里的旧表单覆盖刚被 git/editor 改过的文件。
+	Revision func() (string, error)
 	// Validate 校验一段内容,返回人可读的发现(空表示通过)。
 	Validate func(content string) (string, error)
 	// Save 写回。**实现方必须自己再校验一次** —— 界面上的校验按钮只是
 	// 给人看的,不能当成守卫。
 	Save func(content string) error
+	// SaveIfRevision 在校验之外还要求磁盘内容仍是 expectedRevision。
+	// 老调用方可以只提供 Save；中控 UI 有这项时必须优先使用。
+	SaveIfRevision func(content, expectedRevision string) error
+	// Services 是保留 YAML 注释/顺序的结构化 Service 事务。Policy 仍通过
+	// 完整 SSOT 编辑器修改，避免用一个不完整表单悄悄丢约束字段。
+	Services *ServiceControlDeps
+	// BootstrapIdentity 是中控范围唯一的 SSH bootstrap 身份。节点接入只
+	// 复用其公钥；私钥永不通过这个接口返回。
+	BootstrapIdentity *BootstrapIdentityDeps
+	// Enrollment 把节点接入限制在一条可审计的事务路径：先独立扫描并人工
+	// 确认 SSH host key，再从受信会话发现 hostname/能力，最后在同一份
+	// revision 上准备节点本地 WG 身份并原子写入节点与隧道。webui 不执行
+	// shell，也不接受操作者手填 Node ID、public_endpoint 或 egress。
+	Enrollment *NodeEnrollmentDeps
 	// Distributed 返回分发点当前指向的快照 id,用来看发布器跟上没有。
 	Distributed func() (string, error)
+}
+
+type ServiceControlDeps struct {
+	Upsert func(ServiceInput, string) error
+	Delete func(id, expectedRevision string) error
+}
+
+type ServiceInput struct {
+	ID, Name, Declaration string
+	Addresses             []string
+}
+
+type BootstrapIdentityDeps struct {
+	Status func() (BootstrapIdentityView, error)
+	Ensure func() (BootstrapIdentityView, error)
+}
+
+type BootstrapIdentityView struct {
+	Ready                              bool
+	PublicKey, Fingerprint, PublicPath string
+}
+
+// NodeEnrollmentDeps 是 webui 与中控节点接入执行器之间的窄契约。Review
+// 可以重复调用来重新计算 direction 对应的隧道方案；Commit 必须重新做
+// 受信预检，并拒绝 hostname、endpoint 或 SSOT revision 在复核后变化。
+type NodeEnrollmentDeps struct {
+	Scan   func(context.Context, EnrollmentConnection) (EnrollmentHostKey, error)
+	Review func(context.Context, EnrollmentReviewInput) (EnrollmentReview, error)
+	Commit func(context.Context, EnrollmentCommitInput) (string, error)
+}
+
+type EnrollmentConnection struct {
+	Host, User string
+	Port       int
+}
+
+type EnrollmentHostKey struct {
+	Algorithm, PublicKey, Fingerprint string
+}
+
+type EnrollmentReviewInput struct {
+	Connection EnrollmentConnection
+	HostKey    EnrollmentHostKey
+	// RequestedDirection 是 automatic 或三个 SSOT direction 之一。
+	RequestedDirection string
+}
+
+type EnrollmentCommitInput struct {
+	EnrollmentReviewInput
+	ExpectedNodeID, ExpectedEndpoint, ExpectedEndpointResolution, ExpectedRevision string
+}
+
+type EnrollmentReview struct {
+	Connection                           EnrollmentConnection
+	HostKey                              EnrollmentHostKey
+	NodeID, PublicEndpoint               string
+	EndpointEvidence, EndpointResolution string
+	System, Privilege                    string
+	KernelWireGuard, WGCommand           bool
+	RequestedDirection                   string
+	ResolvedDirection                    string
+	DirectionEvidence, Revision          string
+	EgressEnabled                        bool
+	Tunnels                              []EnrollmentTunnel
+}
+
+type EnrollmentTunnel struct {
+	From, To, FromAddress, ToAddress string
+	Initiator, Acceptor              string
+	ListenPort                       int
 }
 
 // View 是界面要展示的全网状态。它由调用方从转述表里组装 —— webui 不自己
@@ -113,19 +212,170 @@ type View struct {
 	Self       string
 	Applied    string
 	ObservedAt string
-	Nodes      []NodeView
+	// IntentSource names the inventory generation used by this view. A regular
+	// node only knows the inventory in its applied report config; the control
+	// node replaces it with the just-read current SSOT during enrichment.
+	IntentSource string
+	Nodes        []NodeView
+	// TrafficHistory 是中控从相邻可信 WireGuard 计数器样本推导出的可选
+	// 时间桶。nil 明确表示当前 View 没有历史数据能力；webui 不会把当前
+	// 累计 counter 猜成曲线或时间桶。普通节点仍可只提供 Nodes.Tunnels
+	// 中的当前本机 counter。
+	TrafficHistory *TrafficHistoryView
+	// TrafficHistoryStatus is available, unavailable, or not_supported. The
+	// explicit state lets /traffic.json distinguish an ordinary node from a
+	// control node whose retained history failed to open/query.
+	TrafficHistoryStatus string
+	TrafficHistoryError  string
 	// Links 明确区分常驻 WG 与 SSOT 候选跳；当前 route 是单独的实读 overlay。
 	// 候选边只说明可选，不冒充在线。
 	Links      []LinkView
 	Routes     []RouteView
 	Candidates []CandidatePathView
-	Publisher  *PublisherView
-	Warnings   []string
+	// Services / Policies / Ingresses 都来自中控本地经校验的 SSOT。它们是
+	// 期望态，不冒充节点已经应用；运行态仍由 Nodes / Routes 表达。
+	Services  []ServiceView
+	Policies  []PolicyView
+	Ingresses []IngressView
+	Publisher *PublisherView
+	Warnings  []string
+}
+
+// TrafficHistoryView 是历史流量展示的窄契约。它有意不暴露持久化实现；
+// 每个 Bucket 只包含由相邻可信样本实际算出的 delta。WindowStart/End 是
+// 半开区间，BucketWidth 是供人审计的采样桶宽（例如 "1h"）。
+type TrafficHistoryView struct {
+	WindowStart string              `json:"window_start"`
+	WindowEnd   string              `json:"window_end"`
+	BucketWidth string              `json:"bucket_width"`
+	Source      string              `json:"source"`
+	Buckets     []TrafficBucketView `json:"buckets"`
+}
+
+// TrafficBucketView 表示半开区间 [Start, End)。Samples 是该桶中被接受的
+// counter transition 数；Resets/Gaps 是没有被计入字节数的拒绝 transition。
+// 它们保留在桶上，缺数据和零流量因此不会被混为一谈。
+type TrafficBucketView struct {
+	Start   string                  `json:"start"`
+	End     string                  `json:"end"`
+	Samples int                     `json:"samples"`
+	Resets  int                     `json:"resets,omitempty"`
+	Gaps    int                     `json:"gaps,omitempty"`
+	Nodes   []TrafficNodeTotalsView `json:"nodes,omitempty"`
+	Links   []TrafficLinkTotalsView `json:"links,omitempty"`
+}
+
+// TrafficNodeTotalsView 是一个节点在一个桶内所有 Loom WireGuard 接口的
+// delta 合计。Bytes 应等于 RXBytes+TXBytes；分字段保留方向，Bytes 让调用方
+// 能原样传递已经校验的聚合值。Samples/Resets/Gaps 若非零，是可归属到该
+// 节点的质量证据；桶级质量仍保留在 TrafficBucketView。
+type TrafficNodeTotalsView struct {
+	Node    string `json:"node"`
+	RXBytes int64  `json:"rx_bytes"`
+	TXBytes int64  `json:"tx_bytes"`
+	Bytes   int64  `json:"bytes"`
+	Samples int    `json:"samples"`
+	Resets  int    `json:"resets,omitempty"`
+	Gaps    int    `json:"gaps,omitempty"`
+}
+
+// TrafficLinkTotalsView 按规范化的无向 WG edge 聚合，但字节只加各端 TX
+// delta：同一份 payload 不再把 sender TX 和 receiver RX 重复相加。
+// ReportingEndpoints 通常为 0..2，用于把部分覆盖明确显示出来。
+type TrafficLinkTotalsView struct {
+	From               string `json:"from"`
+	To                 string `json:"to"`
+	TXBytes            int64  `json:"tx_bytes"`
+	ReportingEndpoints int    `json:"reporting_endpoints"`
+	Samples            int    `json:"samples"`
+	Resets             int    `json:"resets,omitempty"`
+	Gaps               int    `json:"gaps,omitempty"`
+}
+
+// TrafficExportView is the stable read-only payload returned by /traffic.json.
+// Every node exports its own current cumulative Loom WireGuard counters. Only
+// the control node attaches centrally retained delta history.
+type TrafficExportView struct {
+	SchemaVersion     int                         `json:"schema_version"`
+	Scope             string                      `json:"scope"`
+	Node              string                      `json:"node"`
+	GeneratedAt       string                      `json:"generated_at"`
+	CurrentObservedAt string                      `json:"current_observed_at,omitempty"`
+	Current           []TrafficCurrentCounterView `json:"current"`
+	HistoryStatus     string                      `json:"history_status"`
+	HistoryError      string                      `json:"history_error,omitempty"`
+	History           *TrafficHistoryExportView   `json:"history,omitempty"`
+}
+
+type TrafficCurrentCounterView struct {
+	Interface string `json:"interface"`
+	PeerNode  string `json:"peer_node,omitempty"`
+	LinkID    string `json:"link_id,omitempty"`
+	// Decimal strings preserve exact uint63 cumulative counters for JavaScript
+	// and other JSON consumers whose number type cannot represent int64.
+	RXBytes    string `json:"rx_bytes"`
+	TXBytes    string `json:"tx_bytes"`
+	Epoch      string `json:"counter_epoch,omitempty"`
+	ObservedAt string `json:"observed_at,omitempty"`
+	Source     string `json:"source,omitempty"`
+	Trusted    bool   `json:"trusted"`
+	Verified   bool   `json:"verified"`
+}
+
+type TrafficHistoryExportView struct {
+	WindowStart string                    `json:"window_start"`
+	WindowEnd   string                    `json:"window_end"`
+	BucketWidth string                    `json:"bucket_width"`
+	Source      string                    `json:"source"`
+	Buckets     []TrafficBucketExportView `json:"buckets"`
+}
+
+type TrafficBucketExportView struct {
+	Start   string                        `json:"start"`
+	End     string                        `json:"end"`
+	Samples int                           `json:"samples"`
+	Resets  int                           `json:"resets,omitempty"`
+	Gaps    int                           `json:"gaps,omitempty"`
+	Nodes   []TrafficNodeTotalsExportView `json:"nodes,omitempty"`
+	Links   []TrafficLinkTotalsExportView `json:"links,omitempty"`
+}
+
+type TrafficNodeTotalsExportView struct {
+	Node    string `json:"node"`
+	RXBytes string `json:"rx_bytes"`
+	TXBytes string `json:"tx_bytes"`
+	Bytes   string `json:"bytes"`
+	Samples int    `json:"samples"`
+	Resets  int    `json:"resets,omitempty"`
+	Gaps    int    `json:"gaps,omitempty"`
+}
+
+type TrafficLinkTotalsExportView struct {
+	From               string `json:"from"`
+	To                 string `json:"to"`
+	TXBytes            string `json:"tx_bytes"`
+	ReportingEndpoints int    `json:"reporting_endpoints"`
+	Samples            int    `json:"samples"`
+	Resets             int    `json:"resets,omitempty"`
+	Gaps               int    `json:"gaps,omitempty"`
 }
 
 // NodeView 是一个节点在界面上的样子。
 type NodeView struct {
 	ID string
+	// Declared means the node exists in the desired inventory used for this
+	// view. Runtime observations can outlive an SSOT removal; those nodes remain
+	// visible for diagnosis with Declared=false instead of being counted as
+	// current intent.
+	Declared bool
+	// 以下字段是中控从 SSOT 补入的声明元数据。SSHPort 已展开默认值 22；
+	// Roles 由角色块推导，不在 SSOT 重复存一份 capabilities。
+	Name, City, Provider, PublicEndpoint string
+	SSHPort                              int
+	Roles                                []string
+	Direction                            string
+	EgressCapable                        bool
+	Drain, Decommission                  bool
 	// Health 是 healthy / problem / unknown。空值也按 unknown 处理；
 	// 未签名转述和静默节点不能因为“没看到错误”就被冒充成健康。
 	Health        string
@@ -140,12 +390,30 @@ type NodeView struct {
 	Agent         *AgentView
 	Components    []ComponentView
 	IdentityError string
-	Tunnels       []TunnelView
-	Targets       []TargetView
+	// TrafficVerified means an independently verified traffic attachment was
+	// received for this node. VerifiedTraffic retains that signed point-in-time
+	// evidence for history. It is deliberately separate from Tunnels: on the
+	// local node, direct /status counters can be newer than the signed gossip
+	// round and must not be overwritten by that older sample.
+	TrafficTrusted    bool // direct local sample or independently verified relay
+	TrafficVerified   bool // specifically verified loom-traffic-v1 relay/sample
+	TrafficObservedAt string
+	VerifiedTraffic   []VerifiedTrafficCounterView
+	Tunnels           []TunnelView
+	Targets           []TargetView
 	// Rotating 是正在过渡窗口里的凭据。开着是正常的,开太久不是。
 	Rotating []string
 	Edges    []EdgeView
 	Problems []string
+}
+
+// VerifiedTrafficCounterView is signed cumulative evidence retained for
+// adjacent-sample history. It is not automatically the node's current value;
+// the current-value contract remains TunnelView.CounterPresent.
+type VerifiedTrafficCounterView struct {
+	Interface, PeerNode, LinkID, PeerPublicKey string
+	CounterEpoch, ObservedAt                   string
+	RXBytes, TXBytes                           int64
 }
 
 type ComponentView struct {
@@ -182,13 +450,22 @@ type LinkView struct {
 	Source     string
 }
 
+const (
+	ScopeService  = "service"
+	ScopePolicy   = "policy"
+	ScopeServices = "services"
+)
+
 type RouteView struct {
 	Node, Declaration, Selector, Candidate, Reason string
-	Chain                                          []string
-	ObservedAt                                     string
-	Source                                         string
-	Stale                                          bool
-	Health                                         *CandidateHealthView
+	// ScopeKind/ScopeID 明确当前 selector 是按 service 还是 policy 选路；
+	// PolicyID 是最终治理它的访问策略。Declaration 保留给旧消费者兼容。
+	ScopeKind, ScopeID, PolicyID string
+	Chain                        []string
+	ObservedAt                   string
+	Source                       string
+	Stale                        bool
+	Health                       *CandidateHealthView
 }
 
 type CandidateHealthView struct {
@@ -199,11 +476,47 @@ type CandidateHealthView struct {
 // CandidatePathView 是 SSOT 业务候选路径，不是常驻隧道健康。State 为
 // unverified 或 selected；只有后者来自 selector 实读。
 type CandidatePathView struct {
-	Node, Declaration string
-	Chain             []string
-	State             string
-	ObservedAt        string
-	Source            string
+	Node, Declaration            string
+	ScopeKind, ScopeID, PolicyID string
+	Chain                        []string
+	State                        string
+	ObservedAt                   string
+	Source                       string
+}
+
+// ServiceView / PolicyView 保留 SSOT 的真实字段，既可做只读目录，也足以在
+// 后续结构化编辑器中回显，而不需要从展示文案反解析配置。
+type ServiceView struct {
+	ID, Name, PolicyID string
+	Addresses          []string
+	Hosts              []HostRuleView
+}
+
+type HostRuleView struct {
+	Host, Match string
+}
+
+type PolicyView struct {
+	ID, Name, AddressAxis, EgressAxis, Matcher, ProbeURL string
+	Objective, RankingPeriod, TuningPeriod               string
+	Window, StaleAfter, Fallback                         string
+	ProbeBudget, MaxHops, TopN, MinSamples               int
+	SwitchThreshold                                      float64
+	AllowedServers                                       []string
+	Constraints                                          []ConstraintView
+}
+
+type ConstraintView struct {
+	Kind, Expr string
+}
+
+// IngressView 是接入节点在 SSOT 中声明的本地入口。Declaration 保存原始
+// 表单值；PolicyID 可包含按唯一 credential 推导出的 TUN 有效默认策略。
+type IngressView struct {
+	Node, Platform, Kind, Listen, Mode        string
+	ScopeKind, ScopeID, PolicyID, Declaration string
+	Port                                      int
+	Services, Default                         bool
 }
 
 type PublisherView struct {
@@ -217,9 +530,24 @@ type PublisherView struct {
 
 type TunnelView struct {
 	Interface string
-	State     string // active / failed / down / 未握手
-	AgeSec    int
-	OK        bool
+	// CarrierPresent means this row came from direct interface/handshake state.
+	// A relayed signed traffic counter can create a traffic-only row without
+	// claiming that the remote carrier is active or failed.
+	CarrierPresent bool
+	// PeerNode/LinkID are the logical identity used for aggregation. The peer
+	// public key is diagnostic only and may change during key rotation.
+	PeerNode, LinkID, PeerPublicKey string
+	State                           string // active / failed / down / 未握手
+	AgeSec                          int
+	// RxBytes/TxBytes are current cumulative counters, never time buckets.
+	// CounterPresent distinguishes a sampled idle 0/0 counter from a tunnel row
+	// whose interface is down or whose current counter attachment is absent.
+	// CounterEpoch is the reset boundary; CounterObservedAt is sampling time.
+	RxBytes, TxBytes                               int64
+	CounterEpoch, CounterObservedAt, CounterSource string
+	CounterPresent                                 bool
+	TrafficTrusted, TrafficVerified                bool
+	OK                                             bool
 }
 
 type TargetView struct {
@@ -246,6 +574,276 @@ func Handler(d Deps) http.Handler {
 		d.Now = time.Now
 	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("/traffic.json", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
+			return
+		}
+		if d.Snapshot == nil {
+			http.NotFound(w, r)
+			return
+		}
+		snapshot := d.Snapshot
+		if d.TrafficSnapshot != nil {
+			snapshot = d.TrafficSnapshot
+		}
+		view := snapshot()
+		exported := trafficExport(view)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(exported)
+	})
+	readPage := func(fn func(bool) string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
+				return
+			}
+			writeHTML(w, fn(authed(d, r)))
+		}
+	}
+	mux.HandleFunc("/nodes", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
+			return
+		}
+		writeHTML(w, pageNodes(d, authed(d, r), strings.TrimSpace(r.URL.Query().Get("added"))))
+	})
+	mux.HandleFunc("/nodes/add", readPage(func(ok bool) string {
+		return pageNodeAdd(d, nodeAddPageState{}, ok)
+	}))
+	mux.HandleFunc("/nodes/add/scan", func(w http.ResponseWriter, r *http.Request) {
+		if !requireEnrollmentWrite(d, w, r) {
+			return
+		}
+		connection, _, err := parseEnrollmentForm(w, r, false)
+		state := nodeAddPageState{Phase: "connect", Connection: connection}
+		if err == nil {
+			state.HostKey, err = d.Control.Enrollment.Scan(r.Context(), connection)
+			state.Phase = "confirm"
+		}
+		if err != nil {
+			state.Error = err.Error()
+		}
+		writeHTML(w, pageNodeAdd(d, state, true))
+	})
+	mux.HandleFunc("/nodes/add/review", func(w http.ResponseWriter, r *http.Request) {
+		if !requireEnrollmentWrite(d, w, r) {
+			return
+		}
+		connection, hostKey, err := parseEnrollmentForm(w, r, true)
+		state := nodeAddPageState{Phase: "confirm", Connection: connection, HostKey: hostKey}
+		if err == nil && r.Form.Get("confirm_host_key") != "yes" {
+			err = fmt.Errorf("confirm the SSH host fingerprint before preflight")
+		}
+		if err == nil {
+			review, reviewErr := d.Control.Enrollment.Review(r.Context(), EnrollmentReviewInput{
+				Connection: connection, HostKey: hostKey, RequestedDirection: "automatic",
+			})
+			err = reviewErr
+			if err == nil {
+				state.Phase, state.Review = "review", &review
+			}
+		}
+		if err != nil {
+			state.Error = err.Error()
+		}
+		writeHTML(w, pageNodeAdd(d, state, true))
+	})
+	mux.HandleFunc("/nodes/add/commit", func(w http.ResponseWriter, r *http.Request) {
+		if !requireEnrollmentWrite(d, w, r) {
+			return
+		}
+		connection, hostKey, err := parseEnrollmentForm(w, r, true)
+		requested := strings.TrimSpace(r.Form.Get("direction"))
+		input := EnrollmentReviewInput{
+			Connection: connection, HostKey: hostKey, RequestedDirection: requested,
+		}
+		state := nodeAddPageState{Phase: "review", Connection: connection, HostKey: hostKey}
+		if err == nil && r.Form.Get("action") == "preview" {
+			var review EnrollmentReview
+			review, err = d.Control.Enrollment.Review(r.Context(), input)
+			if err == nil {
+				state.Review = &review
+			}
+		} else if err == nil && r.Form.Get("action") == "commit" {
+			reviewedDirection := strings.TrimSpace(r.Form.Get("reviewed_direction"))
+			commitInput := EnrollmentCommitInput{
+				EnrollmentReviewInput:      input,
+				ExpectedNodeID:             strings.TrimSpace(r.Form.Get("expected_node")),
+				ExpectedEndpoint:           strings.TrimSpace(r.Form.Get("expected_endpoint")),
+				ExpectedEndpointResolution: strings.TrimSpace(r.Form.Get("expected_endpoint_resolution")),
+				ExpectedRevision:           strings.TrimSpace(r.Form.Get("revision")),
+			}
+			switch {
+			case reviewedDirection == "":
+				err = fmt.Errorf("reviewed direction is missing; recompute and review the direction plan before committing")
+			case requested != reviewedDirection:
+				err = fmt.Errorf("direction changed after review; recompute and review the direction plan before committing")
+			case !validEnrollmentReviewToken(d, commitInput, r.Form.Get("review_token")):
+				err = fmt.Errorf("review binding is invalid; recompute and review the direction plan before committing")
+			default:
+				var nodeID string
+				nodeID, err = d.Control.Enrollment.Commit(r.Context(), commitInput)
+				if err == nil {
+					http.Redirect(w, r, "/nodes?added="+url.QueryEscape(nodeID), http.StatusSeeOther)
+					return
+				}
+			}
+		} else if err == nil {
+			err = fmt.Errorf("unknown enrollment action")
+		}
+		if err != nil {
+			state.Error = err.Error()
+			if committed, ok := err.(interface{ Committed() bool }); ok {
+				state.Committed = committed.Committed()
+			}
+			// A failed commit is deliberately re-reviewed from trusted state instead
+			// of echoing hidden plan fields back as if they were observations.
+			if review, reviewErr := d.Control.Enrollment.Review(r.Context(), input); reviewErr == nil {
+				state.Review = &review
+			}
+		}
+		writeHTML(w, pageNodeAdd(d, state, true))
+	})
+	mux.HandleFunc("/nodes/bootstrap-key/generate", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "只接受 POST", http.StatusMethodNotAllowed)
+			return
+		}
+		if !authed(d, r) {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		if d.Control == nil || d.Control.BootstrapIdentity == nil {
+			http.Error(w, "这台机器没有 bootstrap identity 能力", http.StatusNotImplemented)
+			return
+		}
+		if _, err := d.Control.BootstrapIdentity.Ensure(); err != nil {
+			writeHTML(w, pageResult(d, "Generate bootstrap identity", "", err))
+			return
+		}
+		http.Redirect(w, r, "/nodes", http.StatusSeeOther)
+	})
+	mux.HandleFunc("/nodes/bootstrap-key.pub", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
+			return
+		}
+		if !authed(d, r) {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		if d.Control == nil || d.Control.BootstrapIdentity == nil {
+			http.NotFound(w, r)
+			return
+		}
+		key, err := d.Control.BootstrapIdentity.Status()
+		if err != nil || !key.Ready {
+			http.Error(w, "bootstrap public key is not ready", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="loom-control-bootstrap.pub"`)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		fmt.Fprintln(w, key.PublicKey)
+	})
+	mux.HandleFunc("/nodes/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
+			return
+		}
+		raw := strings.TrimPrefix(r.URL.Path, "/nodes/")
+		if raw == "" || strings.Contains(raw, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		id, err := url.PathUnescape(raw)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		body, found := pageNodeDetail(d, id, authed(d, r))
+		if !found {
+			http.NotFound(w, r)
+			return
+		}
+		writeHTML(w, body)
+	})
+	mux.HandleFunc("/topology", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
+			return
+		}
+		writeHTML(w, pageTopology(d, authed(d, r), strings.TrimSpace(r.URL.Query().Get("entry"))))
+	})
+	mux.HandleFunc("/services", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
+			return
+		}
+		message := ""
+		if r.URL.Query().Get("saved") == "1" {
+			message = "Service saved to SSOT. Publishing remains automatic."
+		} else if r.URL.Query().Get("deleted") == "1" {
+			message = "Service removed from SSOT. Publishing remains automatic."
+		}
+		writeHTML(w, pageServices(d, r.URL.Query().Get("service"), r.URL.Query().Get("new") == "1", message, false, nil, authed(d, r)))
+	})
+	serviceWrite := func(w http.ResponseWriter, r *http.Request, deleting bool) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "只接受 POST", http.StatusMethodNotAllowed)
+			return
+		}
+		if !authed(d, r) {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		if d.Control == nil || d.Control.Services == nil {
+			http.Error(w, "这台机器没有结构化 Service 写能力", http.StatusNotImplemented)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "表单过大或无法解析", http.StatusBadRequest)
+			return
+		}
+		id := strings.TrimSpace(r.Form.Get("id"))
+		revision := r.Form.Get("revision")
+		submitted := ServiceInput{
+			ID: id, Name: strings.TrimSpace(r.Form.Get("name")),
+			Declaration: strings.TrimSpace(r.Form.Get("declaration")),
+			Addresses:   serviceAddresses(r.Form.Get("addresses")),
+		}
+		var err error
+		if deleting {
+			err = d.Control.Services.Delete(id, revision)
+		} else {
+			err = d.Control.Services.Upsert(submitted, revision)
+		}
+		if err != nil {
+			writeHTML(w, pageServices(d, id, !deleting && !serviceExists(d.Snapshot(), id), err.Error(), true, &submitted, true))
+			return
+		}
+		if deleting {
+			http.Redirect(w, r, "/services?deleted=1", http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/services?service="+url.QueryEscape(id)+"&saved=1", http.StatusSeeOther)
+	}
+	mux.HandleFunc("/services/save", func(w http.ResponseWriter, r *http.Request) { serviceWrite(w, r, false) })
+	mux.HandleFunc("/services/delete", func(w http.ResponseWriter, r *http.Request) { serviceWrite(w, r, true) })
+	mux.HandleFunc("/routing", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
+			return
+		}
+		writeHTML(w, pageRouting(d, authed(d, r), strings.TrimSpace(r.URL.Query().Get("entry"))))
+	})
+	mux.HandleFunc("/deployments", readPage(func(ok bool) string { return pageDeployments(d, ok) }))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -299,37 +897,206 @@ func Handler(d Deps) http.Handler {
 		writeHTML(w, pageResult(d, name, out, err))
 	})
 
+	mux.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
+			return
+		}
+		writeHTML(w, pageEvents(d, eventFilterFromRequest(r), authed(d, r)))
+	})
 	if d.Events != nil {
-		mux.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
-			// 事件是只读的,和总览一样不需要登录。
-			writeHTML(w, pageEvents(d, authed(d, r)))
+		mux.HandleFunc("/events.csv", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
+				return
+			}
+			w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+			w.Header().Set("Content-Disposition", `attachment; filename="loom-events.csv"`)
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			cw := csv.NewWriter(w)
+			_ = cw.Write([]string{"timestamp", "node", "kind", "subject", "from", "to", "level", "duration", "ongoing", "detail"})
+			for _, e := range filterEvents(d.Events(10000), eventFilterFromRequest(r)) {
+				_ = cw.Write([]string{e.TS, e.Node, e.Kind, e.Subject, e.From, e.To, e.Level, e.Lasted, strconv.FormatBool(e.Ongoing), e.Detail})
+			}
+			cw.Flush()
 		})
 	}
 	if d.Control != nil {
-		mux.HandleFunc("/ssot", func(w http.ResponseWriter, r *http.Request) {
+		serveSSOT := func(w http.ResponseWriter, r *http.Request) {
 			if !authed(d, r) {
 				http.Redirect(w, r, "/login", http.StatusSeeOther)
 				return
 			}
 			if r.Method != http.MethodPost {
 				body, err := d.Control.Read()
-				writeHTML(w, pageSSOT(d, body, "", err, false))
+				revision := ""
+				if err == nil && d.Control.Revision != nil {
+					revision, err = d.Control.Revision()
+				}
+				writeHTML(w, pageSSOT(d, body, revision, "", err, false))
 				return
 			}
 			body := r.FormValue("content")
+			revision := r.FormValue("revision")
 			findings, err := d.Control.Validate(body)
 			// 只校验不保存:让人先看清楚改动会带来什么。
 			if r.FormValue("action") != "save" {
-				writeHTML(w, pageSSOT(d, body, findings, err, false))
+				writeHTML(w, pageSSOT(d, body, revision, findings, err, false))
 				return
 			}
 			if err == nil && findings == "" {
-				err = d.Control.Save(body)
+				if d.Control.SaveIfRevision != nil {
+					err = d.Control.SaveIfRevision(body, revision)
+				} else {
+					err = d.Control.Save(body)
+				}
 			}
-			writeHTML(w, pageSSOT(d, body, findings, err, err == nil && findings == ""))
-		})
+			saved := err == nil && findings == ""
+			if saved && d.Control.Revision != nil {
+				revision, err = d.Control.Revision()
+				saved = err == nil
+			}
+			writeHTML(w, pageSSOT(d, body, revision, findings, err, saved))
+		}
+		mux.HandleFunc("/ssot", serveSSOT)
+		mux.HandleFunc("/settings", serveSSOT)
+	} else {
+		mux.HandleFunc("/settings", readPage(func(ok bool) string {
+			return shell(d, "Settings", `<div class=empty>This node has no control role. SSOT writes and control keys are intentionally unavailable here.</div>`, ok)
+		}))
 	}
 	return mux
+}
+
+const enrollmentReviewTokenDomain = "loom:webui:node-enrollment-review:v1"
+
+// enrollmentReviewMAC signs the complete client-visible boundary between a
+// reviewed plan and its commit. Length-prefixing keeps the encoding
+// unambiguous even when a host key or endpoint contains punctuation.
+func enrollmentReviewMAC(operator string, input EnrollmentCommitInput) []byte {
+	mac := hmac.New(sha256.New, []byte(operator))
+	mac.Write([]byte(enrollmentReviewTokenDomain))
+	fields := []string{
+		input.Connection.Host,
+		input.Connection.User,
+		strconv.Itoa(input.Connection.Port),
+		input.HostKey.Algorithm,
+		input.HostKey.PublicKey,
+		input.HostKey.Fingerprint,
+		input.RequestedDirection,
+		input.ExpectedNodeID,
+		input.ExpectedEndpoint,
+		input.ExpectedEndpointResolution,
+		input.ExpectedRevision,
+	}
+	for _, field := range fields {
+		mac.Write([]byte(strconv.Itoa(len(field))))
+		mac.Write([]byte{':'})
+		mac.Write([]byte(field))
+	}
+	return mac.Sum(nil)
+}
+
+func mintEnrollmentReviewToken(d Deps, input EnrollmentCommitInput) string {
+	if d.Operator == "" {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(enrollmentReviewMAC(d.Operator, input))
+}
+
+func validEnrollmentReviewToken(d Deps, input EnrollmentCommitInput, token string) bool {
+	if d.Operator == "" {
+		return false
+	}
+	got, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(token))
+	if err != nil {
+		return false
+	}
+	want := enrollmentReviewMAC(d.Operator, input)
+	return subtle.ConstantTimeCompare(got, want) == 1
+}
+
+func requireEnrollmentWrite(d Deps, w http.ResponseWriter, r *http.Request) bool {
+	if r.Method != http.MethodPost {
+		http.Error(w, "只接受 POST", http.StatusMethodNotAllowed)
+		return false
+	}
+	if !authed(d, r) {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return false
+	}
+	if d.Control == nil || d.Control.Enrollment == nil {
+		http.Error(w, "这台机器没有受信节点接入能力", http.StatusNotImplemented)
+		return false
+	}
+	return true
+}
+
+func parseEnrollmentForm(w http.ResponseWriter, r *http.Request, withHostKey bool) (EnrollmentConnection, EnrollmentHostKey, error) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	if err := r.ParseForm(); err != nil {
+		return EnrollmentConnection{}, EnrollmentHostKey{}, fmt.Errorf("enrollment form is too large or malformed")
+	}
+	read := func(name string, limit int) (string, error) {
+		value := strings.TrimSpace(r.Form.Get(name))
+		if value == "" {
+			return "", fmt.Errorf("%s is required", name)
+		}
+		if len(value) > limit {
+			return "", fmt.Errorf("%s exceeds %d bytes", name, limit)
+		}
+		return value, nil
+	}
+	host, err := read("host", 253)
+	if err != nil {
+		return EnrollmentConnection{}, EnrollmentHostKey{}, err
+	}
+	user, err := read("user", 64)
+	if err != nil {
+		return EnrollmentConnection{}, EnrollmentHostKey{}, err
+	}
+	portText, err := read("port", 5)
+	if err != nil {
+		return EnrollmentConnection{}, EnrollmentHostKey{}, err
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return EnrollmentConnection{}, EnrollmentHostKey{}, fmt.Errorf("SSH port must be an integer from 1 to 65535")
+	}
+	connection := EnrollmentConnection{Host: host, User: user, Port: port}
+	if !withHostKey {
+		return connection, EnrollmentHostKey{}, nil
+	}
+	algorithm, err := read("host_key_algorithm", 32)
+	if err != nil {
+		return connection, EnrollmentHostKey{}, err
+	}
+	publicKey, err := read("host_key_public", 2048)
+	if err != nil {
+		return connection, EnrollmentHostKey{}, err
+	}
+	fingerprint, err := read("host_key_fingerprint", 256)
+	if err != nil {
+		return connection, EnrollmentHostKey{}, err
+	}
+	return connection, EnrollmentHostKey{
+		Algorithm: algorithm, PublicKey: publicKey, Fingerprint: fingerprint,
+	}, nil
+}
+
+func eventFilterFromRequest(r *http.Request) eventFilter {
+	q := r.URL.Query()
+	trim := func(value string) string {
+		value = strings.TrimSpace(value)
+		if len(value) > 128 {
+			value = value[:128]
+		}
+		return value
+	}
+	return eventFilter{
+		Node: trim(q.Get("node")), Kind: trim(q.Get("kind")),
+		Level: trim(q.Get("level")), Query: trim(q.Get("q")),
+	}
 }
 
 const (

@@ -27,6 +27,8 @@ type table struct {
 	ca                    []byte
 	caErr                 error
 	verify                func(*Observation, time.Time, time.Duration) error
+	verifyTraffic         func(*Observation, time.Time, time.Duration) error
+	verifySelfCheck       func(*Observation, time.Time, time.Duration) error
 	minAttestationVersion int
 }
 
@@ -73,6 +75,42 @@ func (t *table) put(o *Observation, now time.Time, maxAge time.Duration) error {
 			if _, err := VerifyObservationAtLeast(o, t.ca, now, maxAge,
 				t.minAttestationVersion); err != nil {
 				return fmt.Errorf("校验观测 %s:%w", o.Node, err)
+			}
+		}
+	}
+	// Traffic is a separate signature domain. Do not let the existing v5
+	// verifier implicitly authorize it, and do not gossip a counter attachment
+	// that this reader could not verify.
+	if o.Traffic != nil {
+		if t.verifyTraffic != nil {
+			if err := t.verifyTraffic(o, now, maxAge); err != nil {
+				return fmt.Errorf("校验观测 %s 的流量陈述:%w", o.Node, err)
+			}
+		} else {
+			t.caOnce.Do(func() { t.ca, t.caErr = os.ReadFile(caPath) })
+			if t.caErr != nil {
+				return fmt.Errorf("校验观测 %s 的流量陈述:读签名 CA:%w", o.Node, t.caErr)
+			}
+			if _, err := verifyTrafficAttachment(o, t.ca, now, maxAge); err != nil {
+				return fmt.Errorf("校验观测 %s 的流量陈述:%w", o.Node, err)
+			}
+		}
+	}
+	// Remote health is a second independent signature domain. Never retain or
+	// relay an attachment that this reader could not verify; the outer HTTP
+	// status and Observation fields are not substitutes for this verdict.
+	if o.SelfCheck != nil {
+		if t.verifySelfCheck != nil {
+			if err := t.verifySelfCheck(o, now, maxAge); err != nil {
+				return fmt.Errorf("校验观测 %s 的自检陈述:%w", o.Node, err)
+			}
+		} else {
+			t.caOnce.Do(func() { t.ca, t.caErr = os.ReadFile(caPath) })
+			if t.caErr != nil {
+				return fmt.Errorf("校验观测 %s 的自检陈述:读签名 CA:%w", o.Node, t.caErr)
+			}
+			if _, err := verifySelfCheckAttachment(o, t.ca, now, maxAge); err != nil {
+				return fmt.Errorf("校验观测 %s 的自检陈述:%w", o.Node, err)
 			}
 		}
 	}
@@ -145,11 +183,12 @@ func (t *table) snapshot(self string, now time.Time, maxAge time.Duration) []Obs
 	return out
 }
 
-// gossip 跑一轮:量自己的,再把邻居知道的收进来。
+// gossip 跑一轮:量自己的,再把邻居知道的收进来，并返回这一轮与本机
+// 自检同源的完整 Status，供后续视图/事件/历史复用。
 //
 // 只向直接邻居拉,不做全网泛洪 —— 邻居返回的内容里已经包含了**它**听来的
 // 那些,所以一跳一跳自然传开。代价是传播延迟随跳数增加,对这个规模无所谓。
-func gossip(cfg *Config, t *table, now func() time.Time, maxAge time.Duration) {
+func gossip(cfg *Config, t *table, now func() time.Time, maxAge time.Duration) *Status {
 	var roundErrors []string
 	reject := func(err error) {
 		if err != nil && len(roundErrors) < 64 {
@@ -157,11 +196,19 @@ func gossip(cfg *Config, t *table, now func() time.Time, maxAge time.Duration) {
 		}
 	}
 	roundNow := now()
-	own := observe(cfg, t.h, roundNow)
+	own, localStatus := observe(cfg, t.h, roundNow)
 	reject(t.put(own, roundNow, maxAge))
 
-	for _, n := range cfg.Neighbors {
-		st, err := Fetch(n.Addr, 5*time.Second)
+	type fetchedNeighbor struct {
+		status *Status
+		err    error
+	}
+	fetched := make([]fetchedNeighbor, len(cfg.Neighbors))
+	parallelProbe(len(cfg.Neighbors), func(i int) {
+		fetched[i].status, fetched[i].err = Fetch(cfg.Neighbors[i].Addr, 5*time.Second)
+	})
+	for i := range cfg.Neighbors {
+		st, err := fetched[i].status, fetched[i].err
 		if err != nil {
 			continue // 邻居不可达本身会由隧道健康报出来,这里不重复喊
 		}
@@ -174,6 +221,7 @@ func gossip(cfg *Config, t *table, now func() time.Time, maxAge time.Duration) {
 	// 整轮完成后再原子替换。抓邻居的几秒里继续保留上一轮错误，避免页面
 	// 在 beginRound 与再次遇到同一坏签名之间短暂假绿。
 	t.setRoundErrors(roundErrors)
+	return localStatus
 }
 
 // view 返回本节点自己的观测,以及听来的别人的观测。
@@ -198,7 +246,7 @@ func Once(cfg *Config, now func() time.Time) (*Observation, []Observation, error
 		return nil, nil, err
 	}
 	t := newTable(cfg.AttestationMinVersion)
-	gossip(cfg, t, now, maxAge)
+	_ = gossip(cfg, t, now, maxAge)
 	own, learned := t.view(cfg.Node, now(), maxAge)
 	if errs := t.roundErrors(); len(errs) > 0 {
 		return own, learned, fmt.Errorf("拒收观测:%s", strings.Join(errs, "; "))

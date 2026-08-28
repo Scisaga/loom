@@ -2,7 +2,8 @@
 
 > **文档边界:** 本文定义不变量、目标设计与依赖关系；实际已经运行到哪里只看
 > [status/current.md](status/current.md)。目标机制尚未落地时必须明确标成“目标态”，
-> 不能用将来时能力解释当前生产行为。
+> 不能用将来时能力解释当前生产行为。控制中心的仓库实现边界另见
+> [README](../README.md#控制中心当前边界)。
 
 > **Loom 是一个基于加密隧道的链路与服务调度基础设施。**
 > 它持续测量网络中所有可用路径的质量,结合成本、容量与合规约束,为每个服务选择当下最优的接入路径。
@@ -571,6 +572,10 @@ RouteCandidate = (服务器链, 目标地址)
 | **从等价类里选** | **控制平面算 RouteCandidate 排序 → 下发 ranked list;接入节点在 top-N 内按本地实测微调** | 价格、配额、容量、跨客户观测客户端拿不到;此刻链路的实际表现控制平面来不及感知 |
 
 > ### 修正:这里曾经写着"地址是常量,只在服务器链上选"
+>
+> 下表是历史实测记录；其中的公网域名不是 Loom 默认值或硬编码依赖，probe 完全
+> 由 SSOT 指定。生产和仓库夹具保留 `api.ipify.org`，因为它在这里承担大陆直连
+> 分类与境外出口可达性信号，不是可随意互换的普通健康检查地址。
 >
 > 那句话把**"地址不由我们选"**和**"地址不影响该选哪条链"**混为一谈了。
 > 前者对,后者错得离谱。实测同一批候选:
@@ -1175,6 +1180,11 @@ SSOT(拓扑 + 服务定义 + 策略)
 ---
 
 ## 13. 密钥与信任
+
+> **实现状态:** §13.2 的 SSH User/Host CA 是目标设计，当前声明接入尚未实现证书
+> 签发。现有控制中心使用一组共享 Ed25519 enrollment/management identity，操作者
+> 人工放入远端 `authorized_keys`，并在中控专用 `known_hosts` 中钉住精确主机密钥；
+> 它不会在声明提交后自动轮换或撤销。
 
 ### 13.1 私钥不集中生成
 
@@ -1876,11 +1886,12 @@ edge-a,就拿到了 cn-a 的观测。实测 access-a 能听到全部 5 个节点
 任何节点的隧道地址,五个写入口意味着一台被拿下就能去动其他四台。收敛到一台
 之后,那台**本来就持有签名私钥**,写界面不扩大信任边界(D36)。
 
-#### 中控多出来的那一页:改 SSOT
+#### 中控多出来的写入口:只改变 SSOT
 
 界面上**没有"发布"按钮**。发布是自动的(§14.2.3),存盘之后 30 秒内发布器
-接管。于是中控界面唯一的写操作就是改 SSOT —— 加节点、管测试地址、挪窝,
-全都是改那一个文件。
+接管。于是中控界面对**网络期望态**的唯一写操作就是改 SSOT —— 加节点、
+管服务地址、挪窝,最终都必须落到那一个文件。生成中控本机的 bootstrap SSH
+身份是一次性本机信任材料初始化,不是另一条网络配置通道。
 
 不存在"对某台机器执行某某"这种旁路,而这正是 §12 想要的:节点上的所有配置
 都是 SSOT 的渲染输出。开一条临时通道,等于在系统里造一个官方认可的漂移来源。
@@ -1892,12 +1903,32 @@ edge-a,就拿到了 cn-a 的观测。实测 access-a 能听到全部 5 个节点
 写盘用同目录临时文件加改名。发布器可能正好在读,而半截 YAML 会让它报一个
 跟真实原因毫不相干的解析错误。
 
+当前实现把写入口分成两层:
+
+| 入口 | 已实现的语义 | 有意不做的事 |
+|---|---|---|
+| **Services** | 结构化新增、修改、删除服务；严格校验 exact host 与 `.suffix`；保留无关 YAML 内容、顺序和注释 | 不用不完整表单修改 Policy，也不从当前 route 反推期望态 |
+| **Settings / SSOT** | 查看、校验并保存完整原文 | 不提供绕过完整校验的“强制保存” |
+
+两条保存路径都带当前 SSOT 内容摘要作为 revision。服务端在同一个串行事务内
+重新读取、核对 revision、完整解析与校验，再以唯一临时文件、`fsync`、rename
+和目录同步替换；旧浏览器页面不能静默覆盖 git、编辑器或另一个会话的新修改。
+保存成功只表示**期望态已经耐久写入**，随后由发布器自动收敛；它不等于节点
+已经拉取、应用并通过验证。
+
+所有网页写入口还共用 SSOT 同目录的稳定进程锁；锁与目标都拒绝 symlink，目标
+也拒绝多 hardlink，并在 rename 前再次核对打开时的 inode 与逐字节内容。这个锁
+只能串行化 Loom 自己的协作写者，不能让任意 Git 命令或文本编辑器自动获得文件
+系统级 CAS。直接编辑 SSOT 时必须保持单写者，并让网页重新加载最新 revision；
+否则只能得到“发现冲突并拒绝”，不能承诺替外部编辑器合并变更。
+
 #### 中控角色是本机 bootstrap 配置,不是渲染产物
 
-`/etc/loom/control.json` 指出 SSOT 在哪、运维口令从哪个引用取。它引用的路径
-(git 工作副本、秘密层)是**这台机器上的事实**,不是平台约定 —— 写进 SSOT
-会变成自我引用(SSOT 里记着 SSOT 在哪)。它和发布器的 unit、信任根、本机
-秘密层属于同一类。
+`/etc/loom/control.json` 指出 SSOT 在哪、运维口令从哪个引用取，并可指定共享
+bootstrap SSH 私钥与接入专用 `known_hosts` 的本机路径。它引用的路径(git 工作
+副本、秘密层、本机信任库)是**这台机器上的事实**,不是平台约定 —— 写进 SSOT
+会变成自我引用(SSOT 里记着 SSOT 在哪)。它和发布器的 unit、信任根、本机秘密层
+属于同一类。
 
 口令走已有的秘密层(`ui/<节点>`),不新增凭据机制。取不到口令时**写操作
 全部关闭**,而不是退化成"不需要认证" —— 后者是那种没有任何症状、直到出事
@@ -1911,6 +1942,12 @@ edge-a,就拿到了 cn-a 的观测。实测 access-a 能听到全部 5 个节点
 
 同理,节点 id 和错误信息都来自**别的机器**,一律转义 —— 一台被拿下的机器
 不该能往别人的界面里注入脚本。
+
+当前界面使用统一的 Misaka 风格服务端渲染壳层，页面不依赖客户端脚本、头像、
+CDN 或外部字体。Overview 只放全网摘要和可折叠证据；顶层语义分为 Network
+（Nodes / Topology）、Traffic（Services / Live paths）、Operations
+（Deployments / Events）与 Advanced（SSOT）。URL 和后端领域边界保持独立，
+不把期望态 Service、运行态 Agent 决策、节点实体和拓扑关系揉成一张万能表。
 
 ### 16.2 被动观测优先,但被动能看到什么由观测点决定
 
@@ -1929,6 +1966,36 @@ edge-a,就拿到了 cn-a 的观测。实测 access-a 能听到全部 5 个节点
 | **L7 网关**(§4.4) | 全部应用层指标 | — | 引入网关组件 |
 | **调用方 SDK / OpenTelemetry** | 全部应用层指标 + 端到端体感 | — | 调用方代码可改 |
 | **主动契约请求**(§4.3) | 全部应用层指标 | — | 花钱,须限频限额 |
+
+> **仓库流量统计边界(2026-08-28；不等于线上部署 revision):** report 把 Loom
+> 管理的 WireGuard 接口累计 RX/TX 放进独立的 `loom-traffic-v1` 签名域。它作为
+> Observation 的可选附件转述，因此不改变既有 `loom-attest-v5` canonical bytes；
+> 新节点必须独立验证 CA、节点身份、签名、新鲜度以及外层 node/TS 绑定后才能使用。
+> 中控只对同一 node/interface/peer/counter-epoch 的**相邻可信样本**计算 delta。
+> renderer 固定每 60 秒采样，中控固定把超过 3 分钟的间隔视作 gap，并保留 30 天；
+> 这个阈值随写入 frame 固化，重启或以后修改实现不会重新解释旧历史。epoch 变化、
+> counter 回退和超过上限的采样 gap 都是拒绝的 transition：
+> 不产生字节，也不被画成零流量。Overview 展示所有节点 WG 接口 RX+TX delta 的
+> 时间桶，因此是按隧道 hop 加权的基础设施负载，不是唯一应用 payload；Node detail
+> 分开显示该节点 RX/TX；Topology 对每条无向链路只累加两端各自的 TX delta，避免
+> sender TX 又以 receiver RX 重复计数，并显示实际收到的单端/双端样本；“桶里有
+> 样本”不证明所有预期接口都上报。普通节点网页与 `/traffic.json` 只把本机直接
+> 观测映射成 current counter，本地不保留 30 天历史；中控额外附带同一历史桶。
+> `/traffic.json` 是版本化抓取契约，64 位 byte 值编码为十进制字符串，并按一次
+> gossip 轮次缓存；`/status` 是诊断状态，可能同时含转述的签名附件，不能当作稳定
+> 的本机流量 API。该闭环不观测 direct、
+> Service/sing-box 或 Hysteria2 流量；没有对应 L7/数据平面采集器时不得把它们归入
+> WireGuard 柱状图。
+
+> **远端健康转述边界(2026-08-28):** `healthy` 不能由 relay 的 HTTP 503/200、
+> 外层 Observation 或若干局部字段推断。每个节点在观测轮次用真实 `Collect`
+> 结果汇总 Tunnels、Drift、Errors、Components、Rollout 与 Agent 等完整
+> `Status.OKAt` 判定，生成有严格限长、排序和去重的问题列表，再以现有节点 TLS
+> ECDSA 身份签入独立的 `loom-selfcheck-v1` 域。它是 Observation 的可选附件，
+> 不改变 `loom-attest-v5` canonical bytes。reader 只有在 CA、证书节点名、签名、
+> 新鲜度以及外层 node/TS 绑定全部通过后才使用：显式 `healthy=true` 且 problems
+> 为空才标绿，显式失败标红；附件缺失（包括滚动升级中的旧 reader/producer）保持
+> unknown。这样转述路径可以带回远端最终健康，同时不能替远端伪造绿灯。
 
 > ### 不变量
 > **`tokens/s` 与响应结构不是 L4 能被动观测的量。**
@@ -2101,6 +2168,10 @@ min_samples"是同一类错误,只是原因从"窗口太短"换成了"预算太�
 第二层还没做。做之前值得先看一段时间的事件日志 —— 那时你会知道**多久发生
 一次值得被吵醒的事**,而这个问题在有历史之前只能猜。
 
+当前中控 Events 页已经支持按节点、类型、级别与文本筛选，并用标准 CSV 编码
+导出相同筛选结果。它读取的仍是中控单点的变化日志；筛选与导出没有把事件历史
+升级成告警，也不能补回中控停机期间未记录的变化。
+
 ### 16.4 可视化
 
 “拓扑”必须分层，不能把“没有常驻 WireGuard 直边”画成“两个拓扑节点之间
@@ -2120,28 +2191,89 @@ min_samples"是同一类错误,只是原因从"窗口太短"换成了"预算太�
 决策器必须共用这条可信度边界，不能出现“页面不信、selector 却已经照做”。
 **静态拓扑图价值有限，带观测与决策的实时候选集视图才是排障入口。**
 
+流量历史只使用柱状表达离散时间桶，不画暗示连续插值的曲线。Overview 的柱高是
+fleet node-interface RX+TX delta，Node detail 用并列 RX/TX 柱，Topology 用链路
+TX-only 总量比较条；reset 与长 gap 位置保留空槽并标出质量原因。柱高为零只有在
+该桶确实存在可信相邻样本且 delta 为零时成立，缺样本不能画成零高度柱。
+
 布局与视觉层次原型见可编辑 SVG：
 [Overview](../assets/loom-control-center-overview-misaka-v1.svg)、
 [Nodes](../assets/loom-control-center-nodes-misaka-v1.svg)、
 [Add node](../assets/loom-control-center-node-add-misaka-v1.svg)、
-[Topology](../assets/loom-control-center-topology-misaka-v1.svg) 与
-[Node detail](../assets/loom-control-center-node-detail-misaka-v1.svg)。
+[Node detail](../assets/loom-control-center-node-detail-misaka-v1.svg)、
+[Topology](../assets/loom-control-center-topology-misaka-v1.svg)、
+[Services](../assets/loom-control-center-services-misaka-v1.svg)、
+[Routing](../assets/loom-control-center-routes-misaka-v1.svg)、
+[Deployments](../assets/loom-control-center-deployments-misaka-v1.svg)、
+[Events](../assets/loom-control-center-events-misaka-v1.svg) 与
+[Settings](../assets/loom-control-center-settings-misaka-v1.svg)。
 `Nodes` 原型里的 `Control bootstrap identity` 是中控范围的单一身份，不按节点
 重复生成；每次接入只复用它的公钥。平台签名信任和节点本地 WireGuard 身份仍是
 两套独立密钥边界。
-接入页只接收 SSH 的主机名或 IP、用户和端口；这组管理坐标只用于接入，不等于
-公网端点。`Node ID` 来自已验证远端主机的短 hostname，公网端点和可达性由中控
-探测，`egress_capable` 对新节点默认为 `true`。用户确认“加入网络”
-后，接入流程在远端复用或生成节点 WireGuard 密钥、只取回公钥，再把完整节点与
-隧道作为一个事务写入 SSOT；这些是加入流程的内部步骤，不应伪装成另一个主操作。
-`direction` 在复核阶段可调整，但不与 SSH 坐标混在基础表单中。默认界面模式是
-`Automatic`：中控依据入站/出站探测给出建议，提交前必须解析成
-`bidirectional`、`reverse_only` 或 `direct_only` 之一。探测只能证明当下可达性；
-封锁面、暴露面等策略约束仍须由操作者确认。选择改变后，initiator、acceptor、
-监听端、地址、端口和隧道计划全部重新推导，不能逐项手填。
+接入页只接收 SSH 的主机名或 IP、用户和端口；这组管理坐标只用于接入，不自动
+等于已验证的 WireGuard 公网端点。`Node ID` 来自受信 SSH 会话里的短 hostname。
+中控只在操作者输入的是公网 global-unicast IP，或 DNS 名在中控解析出至少一个
+公网地址时，才把该 host 作为 `public_endpoint` candidate；远端回报的
+`SSH_CONNECTION` 地址只作诊断，不能提升成端点证据。literal 是私网、本地、
+共享或保留地址时直接失败；DNS 的非公网答案被忽略，没有公网答案才失败关闭。
+这个判据证明 SSH 目标可分类，不证明 WireGuard UDP 入站可达。
+
+`egress_capable` 对新节点默认为 `true`。用户确认“加入网络”后，接入流程在
+远端复用或生成节点 WireGuard 密钥、只取回公钥，再把完整节点与隧道作为一个
+revision-guarded 事务写入 SSOT；这些是加入流程的内部步骤，不应伪装成另一个
+主操作。`direction` 在复核阶段可调整，但不与 SSH 坐标混在基础表单中。当前
+`Automatic` 因没有受信 UDP 入站证据而保守解析为 `reverse_only`；显式选择
+`bidirectional`、`reverse_only` 或 `direct_only` 是操作者的策略覆盖，不是探测
+结论。选择改变后，initiator、acceptor、监听端、地址、端口和隧道计划全部重新
+推导，不能逐项手填。
+
+DNS 名的预览会绑定排序后的完整公网解析集合，而不是只绑定最终显示的一个地址；
+提交时重新解析，集合漂移就回到 Review。最终准备 WireGuard identity 的 hostname
+与 SSH server address 从同一条受信 SSH 会话返回，并与预检结果核对，避免 DNS、
+跳板或 SSH 目标在 Review 与 commit 之间换成另一台主机。
+Direction 重算表单本身没有提交能力；提交表单锁定刚刚展示的 direction，并用
+中控 HMAC 把 SSH 坐标、host key、Node ID、endpoint、direction 与 SSOT revision
+绑定。任一字段变化都必须重新预览，不能让两个可同时篡改的 hidden 字段冒充
+“已经复核”。
 若后续部署和排障需要长期 SSH，管理 host/user/port 应保存在只属于中控的
 inventory 中，不能从 `public_endpoint` 推导，也不能进入下发给节点的快照。
-当前模型只有 `public_endpoint + ssh_port`，还需补独立管理坐标才能实现该界面。
+当前 SSOT 只有 `public_endpoint + ssh_port`；接入表单里的 SSH host/user 不会
+持久化，长期运维所需的 control-local management inventory 仍未实现。
+
+这里的“提交”当前只完成**声明 bootstrap**，不是完整主机 bootstrap。它不会把
+Loom binary、平台签名公钥、按节点拆分的秘密层或 TLS CA/证书/私钥装到远端，也
+不会启动 report / pull / Agent。提交成功后，控制中心必须把节点显示为
+`declared / joining / no trusted report`，不能写成“已接入”或“在线”。只有单独的
+bootstrap 流程完成、节点应用新快照并交出首份可信报告，运行态才成立。把这些
+材料纳入网页自动化之前，必须先为它们增加显式的 control-local 路径、证书签发与
+失败回滚契约；不能从仓库目录布局猜路径后直接复制生产密钥。
+
+截至 2026-08-28，中控范围共享 bootstrap SSH 身份及公钥导出、专用
+`known_hosts`、host-key 二次扫描确认、严格 SSH preflight、节点/隧道真实预览和
+revision 原子提交已经接通。远端必须先人工授权共享公钥，首次连接必须由操作者
+从独立来源核对 SSH host key；提交前再次确认 host key、hostname 与 endpoint
+candidate 没有漂移。节点 WireGuard 私钥只在远端幂等生成或复用，SSOT 只接收
+公钥。远端 WG 身份准备是 SSOT 锁外的一次幂等 bootstrap 副作用；若随后本地
+提交失败，可能留下尚未被网络引用的本地 key，但不会留下半份 SSOT 变更。
+完整 Agent/信任/秘密/TLS bootstrap 尚未接入该事务，界面不得把这次提交描述为
+远端已经安装、发布完成或开始承载业务流量。
+
+共享 bootstrap 私钥要求当前进程所有且权限精确为 `0600`，所有父目录都经过
+no-symlink 与可写权限检查；专用 `known_hosts` 只接受精确 host:port 的 Ed25519
+记录，拒绝 wildcard、hashed host、marker、host list 与其他算法。网页只表示这组
+长期共享管理凭据已准备好，不暗示接入后会自动从远端 `authorized_keys` 删除它。
+
+中控刚保存 SSOT 后，Nodes、Services、常驻边与候选路径都从同一次当前 SSOT
+读取派生，因此期望态应立即更新；各节点实际 applied snapshot、握手和 Agent
+选择继续来自可信运行态。已从 SSOT 删除但仍有最新观测的节点可暂留为
+`undeclared observed`，用于识别未清理进程或配置漂移，但它不进入声明库存、健康
+比例、joining 数或快照一致性结论。
+普通节点没有 current SSOT 视图，其声明库存只来自本机已应用 report config 的
+expected inventory，可以合法落后一个或多个 pull 周期；页面必须标为 applied
+inventory。只有中控 enrich 成功后才把期望层标为 current validated SSOT，运行态
+仍然只能来自可信观测。
+独立 WireGuard UDP 入站探测仍未实现，界面必须把 candidate 与 verified endpoint
+分开表述，不能把 `Automatic → reverse_only` 说成主动探测结论。
 原型只定义信息结构与视觉语言；线上颜色、边和状态必须由上述四层真实数据生成，
 不能把原型里的示意状态硬编码进页面。
 
