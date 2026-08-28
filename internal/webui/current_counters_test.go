@@ -22,8 +22,10 @@ func TestZeroCurrentCountersAreSampledIdleNotMissing(t *testing.T) {
 	for _, want := range []string{
 		"Current cumulative counters by local interface",
 		"Idle · 0 B sampled",
-		`class="bar idle"`,
+		`class="current-counter-row idle"`,
 		`title="wg-loom-sg02 0 B · idle"`,
+		`<small>RX</small><b class=mono>0 B</b>`,
+		`<small>TX</small><b class=mono>0 B</b>`,
 	} {
 		if !strings.Contains(overview, want) {
 			t.Errorf("Overview sampled-zero state is missing %q", want)
@@ -106,18 +108,18 @@ func TestNodeDetailLabelsIndependentlySignedRelayCounterEvidence(t *testing.T) {
 	}
 }
 
-func TestCurrentCounterBarScalingDoesNotOverflow(t *testing.T) {
+func TestCurrentCounterScalingDoesNotOverflow(t *testing.T) {
 	if got := counterHeight(maxCounterValue, maxCounterValue); got != 100 {
 		t.Fatalf("counterHeight(MaxInt64) = %d, want 100", got)
 	}
 	if got := counterHeight(maxCounterValue/2, maxCounterValue); got < 49 || got > 50 {
 		t.Fatalf("counterHeight(MaxInt64/2) = %d, want about 50", got)
 	}
-	if got := overviewCounterHeight(maxCounterValue, maxCounterValue); got != 90 {
-		t.Fatalf("overviewCounterHeight(MaxInt64) = %d, want 90", got)
+	if got := overviewCounterWidth(maxCounterValue, maxCounterValue); got != 100 {
+		t.Fatalf("overviewCounterWidth(MaxInt64) = %d, want 100", got)
 	}
-	if got := overviewCounterHeight(maxCounterValue/2, maxCounterValue); got < 48 || got > 49 {
-		t.Fatalf("overviewCounterHeight(MaxInt64/2) = %d, want about 49", got)
+	if got := overviewCounterWidth(maxCounterValue/2, maxCounterValue); got < 49 || got > 50 {
+		t.Fatalf("overviewCounterWidth(MaxInt64/2) = %d, want about 50", got)
 	}
 	if got := tunnelCounterBytes(TunnelView{RxBytes: maxCounterValue, TxBytes: maxCounterValue}); got != maxCounterValue {
 		t.Fatalf("saturated tunnel total = %d, want MaxInt64", got)
@@ -131,11 +133,19 @@ func TestCurrentCounterBarScalingDoesNotOverflow(t *testing.T) {
 	}
 	d.Snapshot = func() View { return view }
 	body := misakaRequest(t, d, http.MethodGet, "/", nil, false).Body.String()
-	if !strings.Contains(body, `style="height:90%"`) {
-		t.Fatal("Overview did not render the maximum counter at its bounded height")
+	if !strings.Contains(body, `style="width:100%"`) {
+		t.Fatal("Overview did not render the maximum counter at its bounded width")
 	}
-	if strings.Contains(body, `height:-`) {
-		t.Fatal("Overview emitted a negative CSS height after large-counter scaling")
+	if strings.Contains(body, `width:-`) {
+		t.Fatal("Overview emitted a negative CSS width after large-counter scaling")
+	}
+	if strings.Contains(body, `<div class=bars aria-label="Current cumulative counters by local interface">`) {
+		t.Fatal("Overview regressed to the oversized current-counter bar chart")
+	}
+	for _, want := range []string{"wg-max", "wg-half", "RX", "TX", "Combined"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("Overview current-counter detail is missing %q", want)
+		}
 	}
 }
 

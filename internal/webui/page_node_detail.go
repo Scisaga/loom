@@ -265,11 +265,15 @@ func counterHeight(value, maxValue int64) int {
 	return height
 }
 
-func overviewCounterHeight(value, maxValue int64) int {
+func overviewCounterWidth(value, maxValue int64) int {
 	if value <= 0 || maxValue <= 0 {
-		return 2
+		return 0
 	}
-	return 8 + scaledCounterValue(value, maxValue, 82)
+	width := scaledCounterValue(value, maxValue, 100)
+	if width < 3 {
+		return 3
+	}
+	return width
 }
 
 // scaledCounterValue computes a presentation ratio without multiplying int64
