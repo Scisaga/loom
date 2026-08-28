@@ -272,6 +272,9 @@ func TestMisakaRoutesAndNavigationContract(t *testing.T) {
 		`<header class=header>`, `<nav class=nav`, `<span>LOOM</span>`,
 		`href="/"`, `href="/nodes"`, `href="/topology"`, `href="/services"`,
 		`href="/routing"`, `href="/deployments"`, `href="/events"`, `href="/settings"`,
+		`--font-mono:"Cascadia Mono"`, `.navgroup{display:contents}`,
+		`.nav a.active:after{transform:scaleX(1)}`, `@keyframes loom-page-in`,
+		`@media(prefers-reduced-motion:reduce)`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("horizontal LOOM navigation is missing %q", want)
@@ -279,6 +282,7 @@ func TestMisakaRoutesAndNavigationContract(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		"avatar", "profile-photo", "<img", "<script", "</script", `href="http`, `src="http`, "@import",
+		`"Intel One Mono"`,
 	} {
 		if strings.Contains(strings.ToLower(body), strings.ToLower(forbidden)) {
 			t.Errorf("self-contained navigation contains forbidden %q", forbidden)
