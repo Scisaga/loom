@@ -231,6 +231,26 @@ func TestLoadedActiveUnitWithoutUnitFileStillUsesInodeGateAndRestarts(t *testing
 	}
 }
 
+func TestMissingUnitIsNotASystemctlFailure(t *testing.T) {
+	ctl := func(args ...string) (string, error) {
+		switch args[0] {
+		case "list-units":
+			return "", nil
+		case "list-unit-files":
+			// The catalog query succeeds and may contain unrelated units.  An
+			// absent loom-agent is a valid server-node topology, not a failed
+			// systemctl query.
+			return "loom-report.service enabled enabled\nssh.service enabled enabled", nil
+		default:
+			return "", errors.New("unexpected systemctl: " + strings.Join(args, " "))
+		}
+	}
+	exists, err := unitExistsStrict("loom-agent", ctl)
+	if err != nil || exists {
+		t.Fatalf("不存在的可选 unit 应返回 false,nil，得到 exists=%v err=%v", exists, err)
+	}
+}
+
 func fakeBinarySystemctl(pid int, states map[string]string) binarySystemctl {
 	return func(args ...string) (string, error) {
 		unit := ""
@@ -241,7 +261,9 @@ func fakeBinarySystemctl(pid int, states map[string]string) binarySystemctl {
 		case "list-units":
 			return unit + " loaded active running test", nil
 		case "list-unit-files":
-			return unit + " enabled enabled", nil
+			return "loom-report.service enabled enabled\n" +
+				"loom-agent.service enabled enabled\n" +
+				"loom-publisher.service enabled enabled", nil
 		case "is-active":
 			if state := states[unit]; state != "" {
 				return state, nil

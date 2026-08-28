@@ -290,15 +290,28 @@ func unitExistsStrict(u string, ctl binarySystemctl) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	installedOut, err := ctl("list-unit-files", "--no-legend", "--no-pager", unitFile)
+	// systemd 257 returns exit status 1 when list-unit-files is given an exact
+	// unit name that does not exist.  That is a normal "not installed" answer,
+	// but an empty stderr is not a sufficiently strong signal to distinguish it
+	// from a broken systemctl query.  Read the complete service catalog instead:
+	// the unfiltered command must succeed, and absence can then be established
+	// from its output without weakening the fail-closed query rule.
+	installedOut, err := ctl("list-unit-files", "--type=service", "--no-legend", "--no-pager")
 	if err != nil {
 		return false, fmt.Errorf("查询 %s 是否安装:%w(%s)", unitFile, err, installedOut)
 	}
-	installed, err := listingContainsExactUnit(installedOut, unitFile, "list-unit-files")
-	if err != nil {
-		return false, err
-	}
+	installed := listingContainsUnit(installedOut, unitFile)
 	return loaded || installed, nil
+}
+
+func listingContainsUnit(out, unitFile string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[0] == unitFile {
+			return true
+		}
+	}
+	return false
 }
 
 func listingContainsExactUnit(out, unitFile, source string) (bool, error) {
