@@ -52,8 +52,22 @@ func TestPageIsSelfContained(t *testing.T) {
 		}
 	}
 	csp := get(t, Handler(deps("", nil)), "/", nil).Header().Get("Content-Security-Policy")
-	if !strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "img-src data:") {
+	if !strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "img-src 'self' data:") {
 		t.Errorf("没有为内嵌导航图标设置自包含 CSP:%q", csp)
+	}
+}
+
+func TestFaviconUsesApprovedLoomMark(t *testing.T) {
+	w := get(t, Handler(deps("", nil)), "/favicon.svg", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("favicon status=%d", w.Code)
+	}
+	if got := w.Header().Get("Content-Type"); got != "image/svg+xml" {
+		t.Fatalf("favicon content type=%q", got)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `<svg xmlns="http://www.w3.org/2000/svg"`) || !strings.Contains(body, approvedLogoPath) {
+		t.Fatal("favicon does not contain the approved Loom mark")
 	}
 }
 

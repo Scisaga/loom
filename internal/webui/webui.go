@@ -574,6 +574,19 @@ func Handler(d Deps) http.Handler {
 		d.Now = time.Now
 	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("/favicon.svg", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "image/svg+xml")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if r.Method == http.MethodGet {
+			fmt.Fprint(w, faviconSVG())
+		}
+	})
 	mux.HandleFunc("/traffic.json", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
@@ -1143,7 +1156,7 @@ func writeHTML(w http.ResponseWriter, body string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// 界面里没有任何外部资源,也不该有 —— 这些机器不一定能出网,而且
 	// ssh 端口转发进来时更没有。img-src 只允许静态样式里自带的导航 SVG。
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	fmt.Fprint(w, body)
 }

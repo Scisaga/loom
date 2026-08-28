@@ -270,9 +270,10 @@ func TestMisakaRoutesAndNavigationContract(t *testing.T) {
 	body := misakaRequest(t, d, http.MethodGet, "/nodes", nil, false).Body.String()
 	for _, want := range []string{
 		`<header class=header>`, `<nav class=nav`, `<span>LOOM</span>`,
+		`<link rel=icon href="/favicon.svg" type="image/svg+xml">`,
 		`href="/"`, `href="/nodes"`, `href="/topology"`, `href="/services"`,
 		`href="/routing"`, `href="/deployments"`, `href="/events"`, `href="/settings"`,
-		`--font-mono:"Cascadia Mono"`, `.navgroup{display:contents}`,
+		`--font-mono:"SFMono-Regular"`, `font-weight:400;font-synthesis:none`, `.navgroup{display:contents}`,
 		`.nav a.active:after{transform:scaleX(1)}`, `@keyframes loom-page-in`,
 		`@media(prefers-reduced-motion:reduce)`,
 	} {
@@ -288,7 +289,7 @@ func TestMisakaRoutesAndNavigationContract(t *testing.T) {
 			t.Errorf("self-contained navigation contains forbidden %q", forbidden)
 		}
 	}
-	if csp := misakaRequest(t, d, http.MethodGet, "/nodes", nil, false).Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "img-src data:") {
+	if csp := misakaRequest(t, d, http.MethodGet, "/nodes", nil, false).Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "img-src 'self' data:") {
 		t.Fatalf("CSP no longer enforces self-contained pages: %q", csp)
 	}
 }
