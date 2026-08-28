@@ -281,6 +281,9 @@ func TestMisakaRoutesAndNavigationContract(t *testing.T) {
 			t.Errorf("horizontal LOOM navigation is missing %q", want)
 		}
 	}
+	if strings.Contains(body, "translateY(") {
+		t.Error("page entry animation must not shift content during refresh")
+	}
 	for _, forbidden := range []string{
 		"avatar", "profile-photo", "<img", "<script", "</script", `href="http`, `src="http`, "@import",
 		`"Intel One Mono"`,
