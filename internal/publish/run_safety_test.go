@@ -851,6 +851,35 @@ func TestVerifyServedChecksManifestSignatureAndEveryNodeBody(t *testing.T) {
 	}
 }
 
+func TestVerifyServedBlobUsesBoundedRangeChecks(t *testing.T) {
+	body := bytes.Repeat([]byte("range-check"), 1<<17)
+	sum := sha256.Sum256(body)
+	ref := &snapshot.BinaryRef{
+		OS: "linux", Arch: "amd64", SHA256: fmt.Sprintf("%x", sum[:]), Size: len(body),
+	}
+	requests, served := 0, 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var start, end int64
+		if _, err := fmt.Sscanf(r.Header.Get("Range"), "bytes=%d-%d", &start, &end); err != nil || start != end || start < 0 || start >= int64(len(body)) {
+			http.Error(w, "bad range", http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(body)))
+		w.WriteHeader(http.StatusPartialContent)
+		served++
+		_, _ = w.Write(body[start : start+1])
+	}))
+	defer srv.Close()
+
+	if err := verifyServedBlob(srv.Client(), srv.URL, ref, body); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 3 || served != 3 {
+		t.Fatalf("大 blob 应只做 3 个单字节 Range 样本，requests=%d served=%d", requests, served)
+	}
+}
+
 func TestVerifyServedChecksEveryAssignedSnapshotSurface(t *testing.T) {
 	priv := key(t)
 	oldBody := []byte(goodSSOT)

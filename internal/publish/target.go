@@ -984,7 +984,7 @@ func VerifyServed(url, want, dns string, timeout time.Duration, expected *Tree, 
 			continue
 		}
 		seenBlobs[ref.Path()] = struct{}{}
-		if err := verifyServedBlob(c, base, ref); err != nil {
+		if err := verifyServedBlob(c, base, ref, expected.Blobs[ref.Path()]); err != nil {
 			return err
 		}
 	}
@@ -1049,7 +1049,7 @@ func verifyServedAssignedSnapshot(c *http.Client, base, id string, pub ed25519.P
 			continue
 		}
 		seenBlobs[ref.Path()] = struct{}{}
-		if err := verifyServedBlob(c, base, ref); err != nil {
+		if err := verifyServedBlob(c, base, ref, nil); err != nil {
 			return nil, err
 		}
 	}
@@ -1102,7 +1102,7 @@ func servedBundleHash(files map[string]string) string {
 	return bundle.Hash()
 }
 
-func verifyServedBlob(c *http.Client, base string, ref *snapshot.BinaryRef) error {
+func verifyServedBlob(c *http.Client, base string, ref *snapshot.BinaryRef, expected []byte) error {
 	p := ref.Path()
 	if _, err := expectedBlobSHA(p); err != nil {
 		return fmt.Errorf("节点视角 manifest 的二进制引用无效:%w", err)
@@ -1111,10 +1111,77 @@ func verifyServedBlob(c *http.Client, base string, ref *snapshot.BinaryRef) erro
 		return fmt.Errorf("节点视角 manifest 的二进制 %s size=%d 无效", p, ref.Size)
 	}
 
-	resp, err := c.Get(base + "/" + p)
-	if err != nil {
-		return fmt.Errorf("GET %s:%w", p, err)
+	wantSize := int64(ref.Size)
+	if expected != nil && int64(len(expected)) != wantSize {
+		return fmt.Errorf("本地可信 blob %s 长度=%d,manifest 期望 %d", p, len(expected), wantSize)
 	}
+	if wantSize == 0 {
+		resp, err := c.Get(base + "/" + p)
+		if err != nil {
+			return fmt.Errorf("GET %s:%w", p, err)
+		}
+		return verifyFullServedBlobResponse(resp, p, ref)
+	}
+
+	// Push/HasBlob already computes the complete SHA256 at the distribution
+	// origin, and every node computes it again before activation.  Re-downloading
+	// a multi-megabyte immutable blob through the public route on every 30-second
+	// publisher reconciliation adds no new trust boundary: on a slow route it
+	// only holds publish.lock until the HTTP client times out.  Range probes here
+	// verify the node-facing route, declared total size, and deterministic content
+	// samples.  A server without Range support falls back to the old full-body
+	// verification, preserving compatibility.
+	offsets := []int64{0, wantSize / 2, wantSize - 1}
+	seen := map[int64]bool{}
+	for _, offset := range offsets {
+		if seen[offset] {
+			continue
+		}
+		seen[offset] = true
+		req, err := http.NewRequest(http.MethodGet, base+"/"+p, nil)
+		if err != nil {
+			return fmt.Errorf("创建 Range GET %s:%w", p, err)
+		}
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, offset))
+		resp, err := c.Do(req)
+		if err != nil {
+			return fmt.Errorf("Range GET %s@%d:%w", p, offset, err)
+		}
+		if resp.StatusCode == http.StatusOK {
+			if offset != 0 {
+				_ = resp.Body.Close()
+				return fmt.Errorf("Range GET %s@%d 意外退化成完整响应", p, offset)
+			}
+			return verifyFullServedBlobResponse(resp, p, ref)
+		}
+		if resp.StatusCode != http.StatusPartialContent {
+			_ = resp.Body.Close()
+			return fmt.Errorf("Range GET %s@%d → HTTP %d", p, offset, resp.StatusCode)
+		}
+		wantRange := fmt.Sprintf("bytes %d-%d/%d", offset, offset, wantSize)
+		if got := resp.Header.Get("Content-Range"); got != wantRange {
+			_ = resp.Body.Close()
+			return fmt.Errorf("Range GET %s@%d Content-Range=%q,期望 %q", p, offset, got, wantRange)
+		}
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 2))
+		closeErr := resp.Body.Close()
+		if readErr != nil {
+			return fmt.Errorf("Range GET %s@%d 读取:%w", p, offset, readErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("Range GET %s@%d 关闭:%w", p, offset, closeErr)
+		}
+		if len(body) != 1 {
+			return fmt.Errorf("Range GET %s@%d 返回 %d 字节,期望 1", p, offset, len(body))
+		}
+		if expected != nil && body[0] != expected[offset] {
+			return fmt.Errorf("Range GET %s@%d 内容与本地产物不符", p, offset)
+		}
+	}
+	return nil
+}
+
+func verifyFullServedBlobResponse(resp *http.Response, p string, ref *snapshot.BinaryRef) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("GET %s → HTTP %d", p, resp.StatusCode)
