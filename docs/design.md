@@ -2120,7 +2120,28 @@ min_samples"是同一类错误,只是原因从"窗口太短"换成了"预算太�
 决策器必须共用这条可信度边界，不能出现“页面不信、selector 却已经照做”。
 **静态拓扑图价值有限，带观测与决策的实时候选集视图才是排障入口。**
 
-布局与视觉层次原型见 [中控界面原型 v2](../assets/loom-control-center-prototype-v2.png)。
+布局与视觉层次原型见可编辑 SVG：
+[Overview](../assets/loom-control-center-overview-misaka-v1.svg)、
+[Nodes](../assets/loom-control-center-nodes-misaka-v1.svg)、
+[Add node](../assets/loom-control-center-node-add-misaka-v1.svg)、
+[Topology](../assets/loom-control-center-topology-misaka-v1.svg) 与
+[Node detail](../assets/loom-control-center-node-detail-misaka-v1.svg)。
+`Nodes` 原型里的 `Control bootstrap identity` 是中控范围的单一身份，不按节点
+重复生成；每次接入只复用它的公钥。平台签名信任和节点本地 WireGuard 身份仍是
+两套独立密钥边界。
+接入页只接收 SSH 的主机名或 IP、用户和端口；这组管理坐标只用于接入，不等于
+公网端点。`Node ID` 来自已验证远端主机的短 hostname，公网端点和可达性由中控
+探测，`egress_capable` 对新节点默认为 `true`。用户确认“加入网络”
+后，接入流程在远端复用或生成节点 WireGuard 密钥、只取回公钥，再把完整节点与
+隧道作为一个事务写入 SSOT；这些是加入流程的内部步骤，不应伪装成另一个主操作。
+`direction` 在复核阶段可调整，但不与 SSH 坐标混在基础表单中。默认界面模式是
+`Automatic`：中控依据入站/出站探测给出建议，提交前必须解析成
+`bidirectional`、`reverse_only` 或 `direct_only` 之一。探测只能证明当下可达性；
+封锁面、暴露面等策略约束仍须由操作者确认。选择改变后，initiator、acceptor、
+监听端、地址、端口和隧道计划全部重新推导，不能逐项手填。
+若后续部署和排障需要长期 SSH，管理 host/user/port 应保存在只属于中控的
+inventory 中，不能从 `public_endpoint` 推导，也不能进入下发给节点的快照。
+当前模型只有 `public_endpoint + ssh_port`，还需补独立管理坐标才能实现该界面。
 原型只定义信息结构与视觉语言；线上颜色、边和状态必须由上述四层真实数据生成，
 不能把原型里的示意状态硬编码进页面。
 

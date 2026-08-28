@@ -3,8 +3,8 @@
      xmlns:xlink="http://www.w3.org/1999/xlink"
      width="1586" height="992" viewBox="0 0 1586 992"
      role="img" aria-labelledby="title description">
-  <title id="title">Network overview — Loom control center prototype</title>
-  <desc id="description">A restrained infrastructure overview showing five nodes, six WireGuard links, current traffic paths, deployment state, and a clearly marked target preview of retained WireGuard traffic telemetry that excludes direct traffic.</desc>
+  <title id="title">Nodes — Loom control center prototype</title>
+  <desc id="description">A full-width node inventory with one control-wide bootstrap SSH identity and a clear entry point to a separate onboarding page, distinct from platform signing trust and node-local WireGuard identity.</desc>
   <defs>
     <marker id="arrow-selected" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
       <path d="M0 0L7 3.5L0 7Z" fill="#2AA875"/>
@@ -145,10 +145,10 @@
   </svg>
   <text class="ui wordmark" x="65" y="33">LOOM</text>
   <g class="ui nav">
-    <use href="#icon-overview" x="295" y="18" width="14" height="14" class="nav-icon-active"/>
-    <text x="316" y="31" font-weight="600">Overview</text>
-    <use href="#icon-nodes" x="397" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="418" y="31">Nodes</text>
+    <use href="#icon-overview" x="295" y="18" width="14" height="14" class="nav-icon"/>
+    <text x="316" y="31">Overview</text>
+    <use href="#icon-nodes" x="397" y="18" width="14" height="14" class="nav-icon-active"/>
+    <text x="418" y="31" font-weight="600">Nodes</text>
     <use href="#icon-topology" x="481" y="18" width="14" height="14" class="nav-icon"/>
     <text x="502" y="31">Topology</text>
     <use href="#icon-services" x="584" y="18" width="14" height="14" class="nav-icon"/>
@@ -162,7 +162,7 @@
     <use href="#icon-settings" x="1008" y="18" width="14" height="14" class="nav-icon"/>
     <text x="1029" y="31">Settings</text>
   </g>
-  <line x1="293" y1="49.5" x2="382" y2="49.5" stroke="#2AA875" stroke-width="2"/>
+  <line x1="395" y1="49.5" x2="466" y2="49.5" stroke="#2AA875" stroke-width="2"/>
   <g class="ui nav">
     <text x="1210" y="31">Production</text>
     <circle class="status-dot" cx="1322" cy="26" r="4"/>
@@ -172,211 +172,101 @@
   </g>
 
   <g class="ui">
-    <text class="eyebrow" x="21" y="91">LIVE NETWORK</text>
-    <text class="heading" x="21" y="124">Network overview</text>
-    <text class="body muted" x="21" y="151">jm24 control plane · observed 8s ago</text>
+    <text class="eyebrow" x="21" y="91">NETWORK / NODES</text>
+    <text class="heading" x="21" y="124">Nodes</text>
+    <text class="body muted" x="21" y="151">Enroll managed hosts and monitor their newest trusted state</text>
     <use href="#icon-status-ok" x="20" y="168" width="15" height="15" class="status-icon"/>
-    <text class="small" x="43" y="181">All systems operational</text>
+    <text class="small" x="43" y="181">5 declared · 5 online · 0 joining</text>
   </g>
 
-  <!-- Compact status strip -->
-  <rect class="panel" x="21" y="205" width="1538" height="82" rx="7"/>
+
+  <!-- Fleet state and the only primary action. -->
+  <rect class="panel" x="21" y="202" width="1538" height="82" rx="7"/>
   <g class="ui">
-    <text class="label" x="53" y="239">Nodes</text>
-    <text class="metric" x="53" y="263">5 / 5 <tspan class="body" font-weight="400">online</tspan></text>
-
-    <text class="label" x="455" y="239">WireGuard</text>
-    <text class="metric" x="455" y="263">6 / 6 <tspan class="body" font-weight="400">active</tspan></text>
-
-    <text class="label" x="835" y="239">Current traffic paths</text>
-    <text class="metric" x="835" y="263">5 / 5 <tspan class="body" font-weight="400">reported</tspan></text>
-
-    <text class="label" x="1210" y="234">Snapshot</text>
-    <text class="metric mono" x="1210" y="255">4f09f6f5716d</text>
-    <text class="small muted" x="1210" y="274">commit <tspan class="mono">28224ed</tspan> · converged</text>
+    <text class="small muted" x="46" y="232">DECLARED</text><text class="metric" x="46" y="258">5 nodes</text>
+    <text class="small muted" x="300" y="232">ONLINE</text><text class="metric green" x="300" y="258">5 fresh</text>
+    <text class="small muted" x="554" y="232">JOINING</text><text class="metric" x="554" y="258">0 nodes</text>
+    <text class="small muted" x="808" y="232">SNAPSHOT</text><text class="metric" x="808" y="258">5 verified</text>
+    <text class="small muted" x="1062" y="232">ISSUES</text><text class="metric green" x="1062" y="258">None</text>
+    <rect class="button" x="1390" y="221" width="143" height="40" rx="6"/>
+    <use href="#icon-plus" x="1411" y="233" width="15" height="15" stroke="#FFFFFF" fill="none" stroke-width="1.5" stroke-linecap="round"/>
+    <text class="small" x="1437" y="246" fill="#FFFFFF">Add node</text>
   </g>
-  <line class="rule" x1="413" y1="225" x2="413" y2="268"/>
-  <line class="rule" x1="793" y1="225" x2="793" y2="268"/>
-  <line class="rule" x1="1170" y1="225" x2="1170" y2="268"/>
+  <line class="rule" x1="272" y1="222" x2="272" y2="265"/><line class="rule" x1="526" y1="222" x2="526" y2="265"/>
+  <line class="rule" x1="780" y1="222" x2="780" y2="265"/><line class="rule" x1="1034" y1="222" x2="1034" y2="265"/>
+  <line class="rule" x1="1350" y1="222" x2="1350" y2="265"/>
 
-  <!-- Topology panel -->
-  <rect class="panel" x="20" y="305" width="992" height="330" rx="7"/>
+  <!-- Nodes are an inventory, not an onboarding form. -->
+  <rect class="panel" x="21" y="300" width="1538" height="473" rx="7"/>
   <g class="ui">
-    <text class="section" x="35" y="334">Network topology</text>
-    <text class="small muted" x="214" y="334">Agent decisions · observed 12s ago</text>
+    <text class="section" x="41" y="332">Node inventory</text>
+    <text class="tiny muted" x="196" y="332">Declared hosts and their newest trusted observation</text>
+    <rect class="chip-green" x="1334" y="313" width="55" height="28" rx="14"/><text class="tiny green" x="1361" y="332" text-anchor="middle">All · 5</text>
+    <text class="tiny muted" x="1411" y="332">Attention · 0</text><text class="tiny muted" x="1539" y="332" text-anchor="end">Joining · 0</text>
 
-    <line class="wg" x1="614" y1="328" x2="642" y2="328"/>
-    <text class="small muted" x="650" y="333">WireGuard</text>
-    <line class="candidate" x1="738" y1="328" x2="766" y2="328"/>
-    <text class="small muted" x="774" y="333">Candidate</text>
-    <line x1="859" y1="328" x2="887" y2="328" stroke="#2AA875" stroke-width="1.7"/>
-    <path d="M883 324L889 328L883 332" fill="none" stroke="#2AA875" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-    <text class="small muted" x="897" y="333">Current path</text>
+    <text class="small muted" x="47" y="379">NODE</text><text class="small muted" x="180" y="379">MANAGEMENT / PUBLIC</text><text class="small muted" x="465" y="379">LOCATION</text>
+    <text class="small muted" x="560" y="379">ROLE</text><text class="small muted" x="770" y="379">OBSERVATION</text><text class="small muted" x="970" y="379">SNAPSHOT</text>
+    <text class="small muted" x="1140" y="379">TUNNELS</text><text class="small muted" x="1300" y="379">LAST SEEN</text>
+    <line class="rule" x1="41" y1="389" x2="1539" y2="389"/>
+
+    <text class="subsection mono" x="47" y="421">jm24</text><text class="tiny muted" x="47" y="442">control · Active</text>
+    <text class="body mono" x="180" y="421">SSH sfab.cc:61222</text><text class="tiny muted" x="180" y="442">Public sfab.cc</text><text class="body" x="465" y="421">Beijing</text>
+    <text class="body" x="560" y="421">control + access</text><text class="tiny muted" x="560" y="442">tunnel endpoint</text>
+    <circle class="quiet-dot" cx="775" cy="416" r="4"/><text class="body" x="788" y="421">Online</text><text class="tiny muted" x="788" y="442">direct /status</text>
+    <text class="body mono" x="970" y="421">4f09f6f5716d</text><text class="tiny green" x="970" y="442">Verified</text><text class="body" x="1140" y="421">2 / 2 active</text><text class="body mono" x="1300" y="421">10s</text>
+    <use href="#icon-arrow-right" x="1518" y="411" width="14" height="14" class="action-icon"/><line class="rule" x1="41" y1="459" x2="1539" y2="459"/>
+
+    <text class="subsection mono" x="47" y="488">gz02</text><text class="tiny muted" x="47" y="509">remote · Active</text>
+    <text class="body mono" x="180" y="488">SSH 8.163.70.120:22</text><text class="tiny muted" x="180" y="509">Public 8.163.70.120</text><text class="body" x="465" y="488">Guangzhou</text>
+    <text class="body" x="560" y="488">domestic + egress</text><text class="tiny muted" x="560" y="509">tunnel endpoint</text>
+    <circle class="quiet-dot" cx="775" cy="483" r="4"/><text class="body" x="788" y="488">Online</text><text class="tiny muted" x="788" y="509">relayed by jm24</text>
+    <text class="body mono" x="970" y="488">4f09f6f5716d</text><text class="tiny green" x="970" y="509">Verified</text><text class="body" x="1140" y="488">2 / 2 active</text><text class="body mono" x="1300" y="488">11s</text>
+    <use href="#icon-arrow-right" x="1518" y="478" width="14" height="14" class="action-icon"/><line class="rule" x1="41" y1="526" x2="1539" y2="526"/>
+
+    <text class="subsection mono" x="47" y="555">hz01</text><text class="tiny muted" x="47" y="576">remote · Active</text>
+    <text class="body mono" x="180" y="555">SSH 47.97.127.101:22</text><text class="tiny muted" x="180" y="576">Public 47.97.127.101</text><text class="body" x="465" y="555">Hangzhou</text>
+    <text class="body" x="560" y="555">domestic + egress</text><text class="tiny muted" x="560" y="576">tunnel endpoint</text>
+    <circle class="quiet-dot" cx="775" cy="550" r="4"/><text class="body" x="788" y="555">Online</text><text class="tiny muted" x="788" y="576">relayed by jm24</text>
+    <text class="body mono" x="970" y="555">4f09f6f5716d</text><text class="tiny green" x="970" y="576">Verified</text><text class="body" x="1140" y="555">2 / 2 active</text><text class="body mono" x="1300" y="555">13s</text>
+    <use href="#icon-arrow-right" x="1518" y="545" width="14" height="14" class="action-icon"/><line class="rule" x1="41" y1="593" x2="1539" y2="593"/>
+
+    <text class="subsection mono" x="47" y="622">sg02</text><text class="tiny muted" x="47" y="643">remote · Active</text>
+    <text class="body mono" x="180" y="622">SSH 194.156.163.227:22</text><text class="tiny muted" x="180" y="643">Public 194.156.163.227</text><text class="body" x="465" y="622">Singapore</text>
+    <text class="body" x="560" y="622">reverse-only + egress</text><text class="tiny muted" x="560" y="643">tunnel endpoint</text>
+    <circle class="quiet-dot" cx="775" cy="617" r="4"/><text class="body" x="788" y="622">Online</text><text class="tiny muted" x="788" y="643">direct /status</text>
+    <text class="body mono" x="970" y="622">4f09f6f5716d</text><text class="tiny green" x="970" y="643">Verified</text><text class="body" x="1140" y="622">3 / 3 active</text><text class="body mono" x="1300" y="622">8s</text>
+    <use href="#icon-arrow-right" x="1518" y="612" width="14" height="14" class="action-icon"/><line class="rule" x1="41" y1="660" x2="1539" y2="660"/>
+
+    <text class="subsection mono" x="47" y="689">ber01</text><text class="tiny muted" x="47" y="710">remote · Active</text>
+    <text class="body mono" x="180" y="689">SSH 194.156.154.254:22</text><text class="tiny muted" x="180" y="710">Public 194.156.154.254</text><text class="body" x="465" y="689">Berlin</text>
+    <text class="body" x="560" y="689">reverse-only + egress</text><text class="tiny muted" x="560" y="710">tunnel endpoint</text>
+    <circle class="quiet-dot" cx="775" cy="684" r="4"/><text class="body" x="788" y="689">Online</text><text class="tiny muted" x="788" y="710">direct /status</text>
+    <text class="body mono" x="970" y="689">4f09f6f5716d</text><text class="tiny green" x="970" y="710">Verified</text><text class="body" x="1140" y="689">3 / 3 active</text><text class="body mono" x="1300" y="689">8s</text>
+    <use href="#icon-arrow-right" x="1518" y="679" width="14" height="14" class="action-icon"/><line class="rule" x1="41" y1="727" x2="1539" y2="727"/>
+
+    <text class="tiny muted" x="41" y="753">SSH is control-local management data; Public is the control-verified network endpoint. They may differ and are never derived from each other.</text>
+    <text class="small green" x="1430" y="753">View topology</text><use href="#icon-arrow-right" x="1518" y="741" width="14" height="14" class="action-icon"/>
   </g>
 
-  <!-- Six persistent WireGuard edges: each domestic node to each overseas node -->
-  <g aria-label="Six persistent WireGuard links">
-    <line class="wg" x1="333" y1="378" x2="770" y2="417"/>
-    <line class="wg" x1="333" y1="378" x2="770" y2="536"/>
-    <line class="wg" x1="333" y1="468" x2="770" y2="417"/>
-    <line class="wg" x1="333" y1="468" x2="770" y2="536"/>
-    <line class="wg" x1="333" y1="570" x2="770" y2="417"/>
-    <line class="wg" x1="333" y1="570" x2="770" y2="536"/>
-  </g>
-
-  <!-- Candidate paths within the domestic topology layer -->
-  <g aria-label="Domestic candidate paths">
-    <line class="candidate" x1="333" y1="388" x2="333" y2="456"/>
-    <line class="candidate" x1="333" y1="480" x2="333" y2="558"/>
-    <path class="candidate" d="M326 386C292 435 293 520 326 562"/>
-  </g>
-
-  <!-- One routing-entry overlay: sg-fixed, jm24 to gz02 to sg02. -->
-  <path class="selected" d="M333 388L333 455"/>
-  <path class="selected" d="M344 467L758 418"/>
-  <text class="ui small green mono" x="568" y="438">sg-fixed</text>
-
-  <!-- Nodes -->
+  <!-- One control-wide key pair is reused; it is never created per node. -->
+  <rect class="panel" x="21" y="789" width="1538" height="184" rx="7"/>
   <g class="ui">
-    <circle cx="333" cy="378" r="7" fill="#FFFFFF"/>
-    <circle class="status-dot" cx="333" cy="378" r="5"/>
-    <text class="node-name mono" x="287" y="379" text-anchor="end">jm24</text>
-    <text class="small muted" x="316" y="399" text-anchor="end">Beijing · control + access</text>
+    <text class="section" x="41" y="821">Control bootstrap identity</text><circle class="quiet-dot" cx="365" cy="816" r="4"/><text class="tiny green" x="378" y="821">Ready · one control-wide key pair</text>
+    <text class="tiny muted" x="41" y="844">Fingerprint SHA256:yAaQ7u7vY2qJ…r9cW · generated once and reused by every enrollment.</text>
+    <rect class="code-bg" x="41" y="860" width="602" height="45" rx="5"/><use href="#icon-key" x="56" y="875" width="14" height="14" class="action-icon"/>
+    <text class="tiny mono" x="81" y="888">ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA… loom-control-bootstrap</text>
+    <rect class="panel" x="659" y="860" width="170" height="45" rx="5"/><use href="#icon-copy" x="674" y="875" width="14" height="14" class="action-icon"/><text class="tiny" x="699" y="888">Copy public key</text>
+    <rect class="panel" x="843" y="860" width="145" height="45" rx="5"/><use href="#icon-download" x="858" y="875" width="14" height="14" class="action-icon"/><text class="tiny" x="883" y="888">Download .pub</text>
+    <text class="small green" x="1090" y="888" text-anchor="end">Key settings →</text>
+    <line class="rule" x1="41" y1="922" x2="1090" y2="922"/>
+    <text class="tiny muted" x="41" y="949">Private key stays on the control node · separate from platform signing trust and node WG identity.</text>
 
-    <circle cx="333" cy="468" r="7" fill="#FFFFFF"/>
-    <circle class="status-dot" cx="333" cy="468" r="5"/>
-    <text class="node-name mono" x="287" y="467" text-anchor="end">gz02</text>
-    <text class="small muted" x="316" y="489" text-anchor="end">Guangzhou · domestic + egress</text>
-
-    <circle cx="333" cy="570" r="7" fill="#FFFFFF"/>
-    <circle class="status-dot" cx="333" cy="570" r="5"/>
-    <text class="node-name mono" x="287" y="569" text-anchor="end">hz01</text>
-    <text class="small muted" x="316" y="591" text-anchor="end">Hangzhou · domestic + egress</text>
-
-    <circle cx="770" cy="417" r="7" fill="#FFFFFF"/>
-    <circle class="status-dot" cx="770" cy="417" r="5"/>
-    <text class="node-name mono" x="790" y="420">sg02</text>
-    <text class="small muted" x="790" y="440">Singapore · reverse-only + egress</text>
-
-    <circle cx="770" cy="536" r="7" fill="#FFFFFF"/>
-    <circle class="status-dot" cx="770" cy="536" r="5"/>
-    <text class="node-name mono" x="790" y="539">ber01</text>
-    <text class="small muted" x="790" y="559">Berlin · reverse-only + egress</text>
+    <line class="rule" x1="1115" y1="811" x2="1115" y2="951"/>
+    <text class="subsection" x="1140" y="821">Enrollment key policy</text>
+    <text class="body" x="1140" y="853">One control-wide ED25519 identity</text>
+    <text class="body" x="1140" y="881">The same public key authorizes every bootstrap</text>
+    <text class="body" x="1140" y="909">Private material is never exported</text>
+    <text class="body" x="1140" y="937">Authorization is removed after first trusted report</text>
   </g>
 
-  <!-- WireGuard traffic preview. This is a design target until counters are retained centrally. -->
-  <rect class="panel" x="1028" y="305" width="531" height="143" rx="7"/>
-  <g class="ui">
-    <text class="section" x="1046" y="334">WireGuard traffic</text>
-    <text class="tiny amber" x="1539" y="334" text-anchor="end">Planned · not collected centrally</text>
-    <text class="small muted" x="1046" y="363">NOW</text>
-    <text class="metric" x="1046" y="388">34.8 Mbps</text>
-    <text class="small muted" x="1046" y="414">1.84 TB · last 24h</text>
-    <text class="tiny muted" x="1046" y="435">Link TX deltas · direct excluded</text>
-
-    <line class="rule" x1="1232" y1="354" x2="1539" y2="354"/>
-    <line class="rule" x1="1232" y1="383" x2="1539" y2="383"/>
-    <line class="rule" x1="1232" y1="412" x2="1539" y2="412"/>
-    <g fill="#72C69F" aria-label="Twelve two-hour traffic buckets">
-      <rect x="1235" y="396" width="17" height="16" rx="1.5"/>
-      <rect x="1260" y="388" width="17" height="24" rx="1.5"/>
-      <rect x="1285" y="381" width="17" height="31" rx="1.5"/>
-      <rect x="1310" y="394" width="17" height="18" rx="1.5"/>
-      <rect x="1335" y="400" width="17" height="12" rx="1.5"/>
-      <rect x="1360" y="385" width="17" height="27" rx="1.5"/>
-      <rect x="1385" y="369" width="17" height="43" rx="1.5"/>
-      <rect x="1410" y="361" width="17" height="51" rx="1.5"/>
-      <rect x="1435" y="374" width="17" height="38" rx="1.5"/>
-      <rect x="1460" y="384" width="17" height="28" rx="1.5"/>
-      <rect x="1485" y="377" width="17" height="35" rx="1.5"/>
-      <rect x="1510" y="361" width="17" height="51" rx="1.5" fill="#2AA875"/>
-    </g>
-    <text class="tiny muted" x="1232" y="435">24h ago</text>
-    <text class="tiny muted" x="1539" y="435" text-anchor="end">now</text>
-  </g>
-
-  <!-- Latest deployment -->
-  <rect class="panel" x="1028" y="462" width="531" height="173" rx="7"/>
-  <g class="ui">
-    <text class="section" x="1046" y="490">Latest deployment</text>
-    <text class="body" x="1046" y="520">Snapshot <tspan class="mono" font-weight="600">4f09f6f5716d</tspan></text>
-    <text class="body muted" x="1046" y="543">5 / 5 verified</text>
-
-    <line class="stage-line" x1="1076" y1="566" x2="1477" y2="566"/>
-    <circle class="status-dot" cx="1076" cy="566" r="4"/>
-    <circle class="status-dot" cx="1209" cy="566" r="4"/>
-    <circle class="status-dot" cx="1343" cy="566" r="4"/>
-    <circle class="status-dot" cx="1477" cy="566" r="4"/>
-    <text class="small muted" x="1076" y="591" text-anchor="middle">Signed</text>
-    <text class="small muted" x="1209" y="591" text-anchor="middle">Distributed</text>
-    <text class="small muted" x="1343" y="591" text-anchor="middle">Applied</text>
-    <text class="small muted" x="1477" y="591" text-anchor="middle">Verified</text>
-    <text class="small muted" x="1046" y="619">snapshot manifest signed · commit <tspan class="mono">28224ed</tspan> · 19h ago</text>
-  </g>
-
-  <!-- Nodes table -->
-  <rect class="panel" x="21" y="647" width="825" height="203" rx="7"/>
-  <g class="ui">
-    <text class="section" x="39" y="675">Nodes</text>
-    <text class="tiny amber" x="103" y="675">24h columns are planned telemetry</text>
-    <text class="small muted" x="65" y="699">Name</text>
-    <text class="small muted" x="207" y="699">Location</text>
-    <text class="small muted" x="396" y="699">Status</text>
-    <text class="small muted" x="515" y="699">WG RX / TX · 24H</text>
-    <text class="small muted" x="745" y="699">Last seen</text>
-  </g>
-  <line class="rule" x1="39" y1="706" x2="828" y2="706"/>
-  <line class="rule" x1="39" y1="734" x2="828" y2="734"/>
-  <line class="rule" x1="39" y1="762" x2="828" y2="762"/>
-  <line class="rule" x1="39" y1="790" x2="828" y2="790"/>
-  <line class="rule" x1="39" y1="818" x2="828" y2="818"/>
-  <g class="ui body">
-    <circle class="quiet-dot" cx="43" cy="721" r="4"/><text class="mono" x="65" y="726">jm24</text><text x="207" y="726">Beijing</text><text class="green" x="396" y="726">Online</text><text class="mono" x="515" y="726">336 / 302 GB</text><text x="745" y="726">8s</text>
-    <circle class="quiet-dot" cx="43" cy="749" r="4"/><text class="mono" x="65" y="754">gz02</text><text x="207" y="754">Guangzhou</text><text class="green" x="396" y="754">Online</text><text class="mono" x="515" y="754">401 / 344 GB</text><text x="745" y="754">11s</text>
-    <circle class="quiet-dot" cx="43" cy="777" r="4"/><text class="mono" x="65" y="782">hz01</text><text x="207" y="782">Hangzhou</text><text class="green" x="396" y="782">Online</text><text class="mono" x="515" y="782">229 / 228 GB</text><text x="745" y="782">13s</text>
-    <circle class="quiet-dot" cx="43" cy="805" r="4"/><text class="mono" x="65" y="810">sg02</text><text x="207" y="810">Singapore</text><text class="green" x="396" y="810">Online</text><text class="mono" x="515" y="810">495 / 487 GB</text><text x="745" y="810">9s</text>
-    <circle class="quiet-dot" cx="43" cy="833" r="4"/><text class="mono" x="65" y="838">ber01</text><text x="207" y="838">Berlin</text><text class="green" x="396" y="838">Online</text><text class="mono" x="515" y="838">379 / 479 GB</text><text x="745" y="838">12s</text>
-  </g>
-
-  <!-- Current traffic paths: one per service or routing policy. -->
-  <rect class="panel" x="863" y="647" width="696" height="203" rx="7"/>
-  <g class="ui">
-    <text class="section" x="881" y="675">Current traffic paths</text>
-    <text class="small" x="1107" y="675" font-size="11" style="fill:#A66A14">Target state after Agent reporting upgrade</text>
-    <text class="small muted" x="887" y="699">Name</text>
-    <text class="small muted" x="1040" y="699">Type</text>
-    <text class="small muted" x="1172" y="699">Current path</text>
-    <text class="small muted" x="1400" y="699">Status</text>
-  </g>
-  <line class="rule" x1="881" y1="706" x2="1541" y2="706"/>
-  <line class="rule" x1="881" y1="734" x2="1541" y2="734"/>
-  <line class="rule" x1="881" y1="762" x2="1541" y2="762"/>
-  <line class="rule" x1="881" y1="790" x2="1541" y2="790"/>
-  <line class="rule" x1="881" y1="818" x2="1541" y2="818"/>
-  <g class="ui body">
-    <text x="887" y="726">CN web</text><text class="muted" x="1040" y="726">Service</text><text class="mono" x="1172" y="726">jm24 → direct</text><circle class="route-dot" cx="1398" cy="721" r="4"/><text x="1411" y="726">Reported</text>
-    <text x="887" y="754">International API</text><text class="muted" x="1040" y="754">Service</text><text class="mono" x="1172" y="754">jm24 → ber01</text><circle class="route-dot" cx="1398" cy="749" r="4"/><text x="1411" y="754">Reported</text>
-    <text x="887" y="782">Singapore fixed</text><text class="muted" x="1040" y="782">Routing policy</text><text class="mono" x="1172" y="782">jm24 → gz02 → sg02</text><circle class="route-dot" cx="1398" cy="777" r="4"/><text x="1411" y="782">Reported</text>
-    <text x="887" y="810">Germany fixed</text><text class="muted" x="1040" y="810">Routing policy</text><text class="mono" x="1172" y="810">jm24 → ber01</text><circle class="route-dot" cx="1398" cy="805" r="4"/><text x="1411" y="810">Reported</text>
-    <text x="887" y="838">Best egress</text><text class="muted" x="1040" y="838">Routing policy</text><text class="mono" x="1172" y="838">jm24 → ber01</text><circle class="route-dot" cx="1398" cy="833" r="4"/><text x="1411" y="838">Reported</text>
-  </g>
-
-  <!-- Recent events -->
-  <rect class="panel" x="21" y="862" width="1538" height="111" rx="7"/>
-  <g class="ui">
-    <text class="section" x="40" y="889">Recent events</text>
-    <text class="body green" x="1422" y="889">View all events</text><use href="#icon-arrow-right" x="1524" y="877" width="14" height="14" class="action-icon"/>
-
-    <text class="small mono muted" x="40" y="917">17:10</text>
-    <circle class="quiet-dot" cx="89" cy="912" r="3.5"/>
-    <text class="body" x="104" y="917">Network snapshot verified across 5 nodes</text>
-
-    <text class="small mono muted" x="40" y="940">17:09</text>
-    <circle class="quiet-dot" cx="89" cy="935" r="3.5"/>
-    <text class="body" x="104" y="940">Agent traffic paths remain unchanged</text>
-
-    <text class="small mono muted" x="40" y="963">17:08</text>
-    <circle class="quiet-dot" cx="89" cy="958" r="3.5"/>
-    <text class="body" x="104" y="963">Node observations refreshed</text>
-  </g>
 </svg>

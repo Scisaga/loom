@@ -4,7 +4,7 @@
      width="1586" height="992" viewBox="0 0 1586 992"
      role="img" aria-labelledby="title description">
   <title id="title">Network topology — Loom control center prototype</title>
-  <desc id="description">A layered network topology view distinguishing SSOT intent, persistent WireGuard observations, configured candidate paths, and Agent route decisions.</desc>
+  <desc id="description">A layered network topology view distinguishing SSOT intent, persistent WireGuard observations, configured candidate paths, Agent route decisions, and clearly marked target link-traffic telemetry.</desc>
   <defs>
     <marker id="arrow-selected" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
       <path d="M0 0L7 3.5L0 7Z" fill="#2AA875"/>
@@ -12,6 +12,11 @@
     <symbol id="icon-overview" viewBox="0 0 16 16">
       <rect x="1.5" y="1.5" width="5" height="5" rx="1"/><rect x="9.5" y="1.5" width="5" height="5" rx="1"/>
       <rect x="1.5" y="9.5" width="5" height="5" rx="1"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/>
+    </symbol>
+    <symbol id="icon-nodes" viewBox="0 0 16 16">
+      <rect x="2" y="2" width="12" height="5" rx="1.4"/><rect x="2" y="9" width="12" height="5" rx="1.4"/>
+      <circle cx="4.5" cy="4.5" r=".7"/><circle cx="4.5" cy="11.5" r=".7"/>
+      <path d="M7 4.5h4.5M7 11.5h4.5"/>
     </symbol>
     <symbol id="icon-topology" viewBox="0 0 16 16">
       <path d="M4.2 4.2L8 8m3.8-3.8L8 8m0 0v4.4"/><circle cx="3" cy="3" r="1.8"/><circle cx="13" cy="3" r="1.8"/><circle cx="8" cy="13.5" r="1.8"/>
@@ -66,6 +71,12 @@
     </symbol>
     <symbol id="icon-trash" viewBox="0 0 16 16">
       <path d="M3.5 4.5h9M6 4.5V2.7h4v1.8m1.5 0-.6 9h-5.8l-.6-9M6.8 7v4m2.4-4v4"/>
+    </symbol>
+    <symbol id="icon-key" viewBox="0 0 16 16">
+      <circle cx="5" cy="8" r="3"/><path d="M8 8h6m-2 0v2m-2-2v2"/>
+    </symbol>
+    <symbol id="icon-copy" viewBox="0 0 16 16">
+      <rect x="5" y="5" width="8" height="8" rx="1.5"/><path d="M3 10.5H2.5V3.5a1 1 0 0 1 1-1h7V3"/>
     </symbol>
     <style><![CDATA[
 
@@ -134,28 +145,30 @@
   </svg>
   <text class="ui wordmark" x="65" y="33">LOOM</text>
   <g class="ui nav">
-    <use href="#icon-overview" x="360" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="381" y="31">Overview</text>
-    <use href="#icon-topology" x="462" y="18" width="14" height="14" class="nav-icon-active"/>
-    <text x="483" y="31" font-weight="600">Topology</text>
-    <use href="#icon-services" x="565" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="586" y="31">Services</text>
-    <use href="#icon-traffic" x="665" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="686" y="31">Routing</text>
-    <use href="#icon-deployments" x="765" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="786" y="31">Deployments</text>
-    <use href="#icon-events" x="908" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="929" y="31">Events</text>
-    <use href="#icon-settings" x="1002" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="1023" y="31">Settings</text>
+    <use href="#icon-overview" x="295" y="18" width="14" height="14" class="nav-icon"/>
+    <text x="316" y="31">Overview</text>
+    <use href="#icon-nodes" x="397" y="18" width="14" height="14" class="nav-icon"/>
+    <text x="418" y="31">Nodes</text>
+    <use href="#icon-topology" x="481" y="18" width="14" height="14" class="nav-icon-active"/>
+    <text x="502" y="31" font-weight="600">Topology</text>
+    <use href="#icon-services" x="584" y="18" width="14" height="14" class="nav-icon"/>
+    <text x="605" y="31">Services</text>
+    <use href="#icon-traffic" x="682" y="18" width="14" height="14" class="nav-icon"/>
+    <text x="703" y="31">Routing</text>
+    <use href="#icon-deployments" x="780" y="18" width="14" height="14" class="nav-icon"/>
+    <text x="801" y="31">Deployments</text>
+    <use href="#icon-events" x="919" y="18" width="14" height="14" class="nav-icon"/>
+    <text x="940" y="31">Events</text>
+    <use href="#icon-settings" x="1008" y="18" width="14" height="14" class="nav-icon"/>
+    <text x="1029" y="31">Settings</text>
   </g>
-  <line x1="460" y1="49.5" x2="550" y2="49.5" stroke="#2AA875" stroke-width="2"/>
+  <line x1="479" y1="49.5" x2="569" y2="49.5" stroke="#2AA875" stroke-width="2"/>
   <g class="ui nav">
     <text x="1210" y="31">Production</text>
     <circle class="status-dot" cx="1322" cy="26" r="4"/>
     <text x="1335" y="31">Operational</text>
     <use href="#icon-lock" x="1428" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="1538" y="31" text-anchor="end">Read only</text>
+    <text x="1538" y="31" text-anchor="end">Authenticated</text>
   </g>
 
   <g class="ui">
@@ -251,36 +264,64 @@
     <text class="tiny amber" x="1132" y="462">Design target · requires upgraded Agent reporting</text>
   </g>
 
+  <!-- Focused-link traffic preview; history is not collected centrally yet. -->
   <rect class="panel" x="1112" y="488" width="447" height="192" rx="7"/>
   <g class="ui">
-    <text class="section" x="1132" y="518">Observation contract</text>
-    <text class="small muted" x="1132" y="546">Sampling cadence</text><text class="body" x="1519" y="546" text-anchor="end">about 1 minute</text>
-    <text class="small muted" x="1132" y="576">Page refresh</text><text class="body" x="1519" y="576" text-anchor="end">30 seconds</text>
-    <text class="small muted" x="1132" y="606">Freshness</text><text class="body" x="1519" y="606" text-anchor="end">shown per datum</text>
-    <line class="rule" x1="1132" y1="624" x2="1539" y2="624"/>
-    <text class="tiny muted" x="1132" y="650">Unknown remains unknown; it is never promoted to healthy.</text>
+    <text class="section" x="1132" y="518">Link traffic</text>
+    <text class="tiny amber" x="1539" y="518" text-anchor="end">Planned · not collected centrally</text>
+    <text class="body mono" x="1132" y="545">Inspecting · gz02 ↔ sg02</text>
+
+    <text class="tiny green" x="1132" y="568">gz02 → sg02</text>
+    <text class="metric" x="1132" y="590">4.8 Mbps</text>
+    <text class="tiny blue" x="1132" y="615">sg02 → gz02</text>
+    <text class="metric" x="1132" y="637">2.2 Mbps</text>
+    <text class="small muted" x="1132" y="662">24h · 205 / 198 GB</text>
+
+    <line class="rule" x1="1288" y1="546" x2="1539" y2="546"/>
+    <line class="rule" x1="1288" y1="579" x2="1539" y2="579"/>
+    <line class="rule" x1="1288" y1="612" x2="1539" y2="612"/>
+    <line class="rule" x1="1288" y1="645" x2="1539" y2="645"/>
+    <g aria-label="Eight directional traffic buckets">
+      <g fill="#2AA875">
+        <rect x="1293" y="627" width="8" height="18" rx="1"/><rect x="1323" y="613" width="8" height="32" rx="1"/>
+        <rect x="1353" y="620" width="8" height="25" rx="1"/><rect x="1383" y="629" width="8" height="16" rx="1"/>
+        <rect x="1413" y="603" width="8" height="42" rx="1"/><rect x="1443" y="589" width="8" height="56" rx="1"/>
+        <rect x="1473" y="610" width="8" height="35" rx="1"/><rect x="1503" y="595" width="8" height="50" rx="1"/>
+      </g>
+      <g fill="#477D9C" fill-opacity="0.82">
+        <rect x="1303" y="633" width="8" height="12" rx="1"/><rect x="1333" y="625" width="8" height="20" rx="1"/>
+        <rect x="1363" y="627" width="8" height="18" rx="1"/><rect x="1393" y="635" width="8" height="10" rx="1"/>
+        <rect x="1423" y="617" width="8" height="28" rx="1"/><rect x="1453" y="610" width="8" height="35" rx="1"/>
+        <rect x="1483" y="623" width="8" height="22" rx="1"/><rect x="1513" y="616" width="8" height="29" rx="1"/>
+      </g>
+    </g>
+    <text class="tiny muted" x="1288" y="663">1h ago</text>
+    <text class="tiny muted" x="1539" y="663" text-anchor="end">now</text>
   </g>
 
   <!-- Edge inventory -->
   <rect class="panel" x="21" y="696" width="1538" height="277" rx="7"/>
+  <rect x="31" y="835" width="1518" height="31" rx="4" fill="#F1F8F4"/>
   <g class="ui">
     <text class="section" x="40" y="726">Persistent WireGuard edges</text>
-    <text class="tiny muted" x="318" y="726">SSOT declaration + trusted carrier observation</text>
+    <text class="tiny muted" x="318" y="726">RTT/state observed · traffic values illustrate A→B / B→A</text>
+    <text class="tiny amber" x="1539" y="726" text-anchor="end">Planned · not collected centrally</text>
     <text class="small muted" x="46" y="758">EDGE</text>
-    <text class="small muted" x="328" y="758">DECLARATION</text>
-    <text class="small muted" x="574" y="758">OBSERVED</text>
-    <text class="small muted" x="775" y="758">RTT</text>
-    <text class="small muted" x="915" y="758">STATE</text>
-    <text class="small muted" x="1083" y="758">SOURCE</text>
+    <text class="small muted" x="300" y="758">NOW · PLANNED</text>
+    <text class="small muted" x="520" y="758">24H · PLANNED</text>
+    <text class="small muted" x="735" y="758">SINCE COUNTER RESET · PLANNED</text>
+    <text class="small muted" x="965" y="758">RTT</text>
+    <text class="small muted" x="1080" y="758">STATE</text>
+    <text class="small muted" x="1270" y="758">CARRIER OBSERVED</text>
   </g>
   <line class="rule" x1="40" y1="766" x2="1540" y2="766"/>
   <g class="ui body">
-    <text class="mono" x="46" y="794">jm24 ↔ sg02</text><text x="328" y="794">Persistent WG</text><text x="574" y="794">8s ago</text><text class="mono" x="775" y="794">277 ms</text><circle class="quiet-dot" cx="919" cy="789" r="4"/><text x="932" y="794">Active</text><text class="muted" x="1083" y="794">trusted report.neighbors</text>
-    <text class="mono" x="46" y="826">jm24 ↔ ber01</text><text x="328" y="826">Persistent WG</text><text x="574" y="826">8s ago</text><text class="mono" x="775" y="826">150 ms</text><circle class="quiet-dot" cx="919" cy="821" r="4"/><text x="932" y="826">Active</text><text class="muted" x="1083" y="826">trusted report.neighbors</text>
-    <text class="mono" x="46" y="858">gz02 ↔ sg02</text><text x="328" y="858">Persistent WG</text><text x="574" y="858">11s ago</text><text class="mono" x="775" y="858">190 ms</text><circle class="quiet-dot" cx="919" cy="853" r="4"/><text x="932" y="858">Active</text><text class="muted" x="1083" y="858">trusted report.neighbors</text>
-    <text class="mono" x="46" y="890">gz02 ↔ ber01</text><text x="328" y="890">Persistent WG</text><text x="574" y="890">11s ago</text><text class="mono" x="775" y="890">226 ms</text><circle class="quiet-dot" cx="919" cy="885" r="4"/><text x="932" y="890">Active</text><text class="muted" x="1083" y="890">trusted report.neighbors</text>
-    <text class="mono" x="46" y="922">hz01 ↔ sg02</text><text x="328" y="922">Persistent WG</text><text x="574" y="922">13s ago</text><text class="mono" x="775" y="922">350 ms</text><circle class="quiet-dot" cx="919" cy="917" r="4"/><text x="932" y="922">Active</text><text class="muted" x="1083" y="922">trusted report.neighbors</text>
-    <text class="mono" x="46" y="954">hz01 ↔ ber01</text><text x="328" y="954">Persistent WG</text><text x="574" y="954">13s ago</text><text class="mono" x="775" y="954">240 ms</text><circle class="quiet-dot" cx="919" cy="949" r="4"/><text x="932" y="954">Active</text><text class="muted" x="1083" y="954">trusted report.neighbors</text>
+    <text class="mono" x="46" y="794">jm24 ↔ sg02</text><text class="mono" x="300" y="794">5.8 / 4.6 Mbps</text><text class="mono" x="520" y="794">190 / 210 GB</text><text class="mono" x="735" y="794">2.91 / 3.84 TB</text><text class="mono" x="965" y="794">277 ms</text><circle class="quiet-dot" cx="1084" cy="789" r="4"/><text x="1097" y="794">Active</text><text class="muted" x="1270" y="794">8s ago</text>
+    <text class="mono" x="46" y="826">jm24 ↔ ber01</text><text class="mono" x="300" y="826">4.9 / 3.3 Mbps</text><text class="mono" x="520" y="826">112 / 126 GB</text><text class="mono" x="735" y="826">1.11 / 2.10 TB</text><text class="mono" x="965" y="826">150 ms</text><circle class="quiet-dot" cx="1084" cy="821" r="4"/><text x="1097" y="826">Active</text><text class="muted" x="1270" y="826">8s ago</text>
+    <text class="mono" x="46" y="858">gz02 ↔ sg02</text><text class="mono green" x="300" y="858">4.8 / 2.2 Mbps</text><text class="mono" x="520" y="858">205 / 198 GB</text><text class="mono" x="735" y="858">4.31 / 3.02 TB</text><text class="mono" x="965" y="858">190 ms</text><circle class="quiet-dot" cx="1084" cy="853" r="4"/><text x="1097" y="858">Active</text><text class="muted" x="1270" y="858">11s ago</text>
+    <text class="mono" x="46" y="890">gz02 ↔ ber01</text><text class="mono" x="300" y="890">2.3 / 1.6 Mbps</text><text class="mono" x="520" y="890">139 / 203 GB</text><text class="mono" x="735" y="890">0.88 / 0.63 TB</text><text class="mono" x="965" y="890">226 ms</text><circle class="quiet-dot" cx="1084" cy="885" r="4"/><text x="1097" y="890">Active</text><text class="muted" x="1270" y="890">11s ago</text>
+    <text class="mono" x="46" y="922">hz01 ↔ sg02</text><text class="mono" x="300" y="922">2.1 / 1.4 Mbps</text><text class="mono" x="520" y="922">100 / 79 GB</text><text class="mono" x="735" y="922">1.02 / 0.71 TB</text><text class="mono" x="965" y="922">350 ms</text><circle class="quiet-dot" cx="1084" cy="917" r="4"/><text x="1097" y="922">Active</text><text class="muted" x="1270" y="922">13s ago</text>
+    <text class="mono" x="46" y="954">hz01 ↔ ber01</text><text class="mono" x="300" y="954">1.0 / 0.8 Mbps</text><text class="mono" x="520" y="954">128 / 150 GB</text><text class="mono" x="735" y="954">0.54 / 0.39 TB</text><text class="mono" x="965" y="954">240 ms</text><circle class="quiet-dot" cx="1084" cy="949" r="4"/><text x="1097" y="954">Active</text><text class="muted" x="1270" y="954">13s ago</text>
   </g>
   <line class="rule" x1="40" y1="802" x2="1540" y2="802"/><line class="rule" x1="40" y1="834" x2="1540" y2="834"/><line class="rule" x1="40" y1="866" x2="1540" y2="866"/><line class="rule" x1="40" y1="898" x2="1540" y2="898"/><line class="rule" x1="40" y1="930" x2="1540" y2="930"/>
 

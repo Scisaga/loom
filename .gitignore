@@ -1,5 +1,7 @@
 /out/
 /dist/
+__pycache__/
+*.py[cod]
 .ssh_config
 # 秘密材料 —— 绝不进版本库
 *.zip
