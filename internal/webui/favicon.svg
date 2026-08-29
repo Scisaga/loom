@@ -1,14 +1,30 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" fill="#fff"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="127 112 1000 1000">
+  <rect x="127" y="112" width="1000" height="1000" fill="#fff"/>
   <defs>
-    <path id="petal" d="M28.5 25.9C22 20 24 10 32 5C40 10 42 20 35.5 25.9"/>
+    <!-- Exact outer silhouette of the approved Loom mark. -->
+    <path id="loom-outline" d="M616 1108c-67-49-118-133-129-209 0-6 0-6-14-1-75 27-166 24-239-6-13-5-14-7-11-29 12-80 53-155 115-211l9-8-6-5c-61-53-100-121-114-200-5-31-5-38 4-42 57-26 138-34 203-20 13 2 22 5 39 10 14 5 14 5 15-2 9-70 60-155 121-204 17-15 18-15 34-2 47 37 87 93 107 151 7 20 16 52 16 60 0 4 1 4 12 0 72-28 158-27 236 3 17 6 17 7 15 27-8 79-49 159-111 215l-9 9 10 9c61 53 105 139 114 219 2 15 1 16-28 26-75 25-156 25-227-2-4-1-8-2-8-2-1 0-2 7-3 15-15 81-60 152-126 198-12 9-14 9-25 1z"/>
+    <!-- One clean opening replaces the original three nested weave contours. -->
+    <path id="petal-opening" d="M628 1040C520 945 535 790 628 660C721 790 736 945 628 1040Z"/>
+    <!-- A single quiet echo of the original nested thread. -->
+    <path id="weave-detail" d="M628 990C566 918 575 820 628 708C681 820 690 918 628 990"/>
   </defs>
-  <g fill="none" stroke="#111" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round">
-    <use href="#petal"/>
-    <use href="#petal" transform="rotate(60 32 32)"/>
-    <use href="#petal" transform="rotate(120 32 32)"/>
-    <use href="#petal" transform="rotate(180 32 32)"/>
-    <use href="#petal" transform="rotate(240 32 32)"/>
-    <use href="#petal" transform="rotate(300 32 32)"/>
+  <g transform="translate(0 1254) scale(1 -1)">
+    <use href="#loom-outline" fill="#111"/>
+    <g fill="#fff">
+      <use href="#petal-opening"/>
+      <use href="#petal-opening" transform="rotate(60 628 644)"/>
+      <use href="#petal-opening" transform="rotate(120 628 644)"/>
+      <use href="#petal-opening" transform="rotate(180 628 644)"/>
+      <use href="#petal-opening" transform="rotate(240 628 644)"/>
+      <use href="#petal-opening" transform="rotate(300 628 644)"/>
+    </g>
+    <g fill="none" stroke="#111" stroke-width="18" stroke-linecap="round" opacity=".72">
+      <use href="#weave-detail"/>
+      <use href="#weave-detail" transform="rotate(60 628 644)"/>
+      <use href="#weave-detail" transform="rotate(120 628 644)"/>
+      <use href="#weave-detail" transform="rotate(180 628 644)"/>
+      <use href="#weave-detail" transform="rotate(240 628 644)"/>
+      <use href="#weave-detail" transform="rotate(300 628 644)"/>
+    </g>
   </g>
 </svg>

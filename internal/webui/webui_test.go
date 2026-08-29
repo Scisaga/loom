@@ -91,16 +91,22 @@ func TestFaviconUsesSimplifiedLoomMark(t *testing.T) {
 	}
 	body := w.Body.String()
 	if !strings.Contains(body, `<svg xmlns="http://www.w3.org/2000/svg"`) ||
-		!strings.Contains(body, `<path id="petal" d="M28.5 25.9C22 20 24 10 32 5C40 10 42 20 35.5 25.9"/>`) {
-		t.Fatal("favicon does not contain the simplified Loom petal")
+		!strings.Contains(body, `<path id="loom-outline"`) ||
+		!strings.Contains(body, `<path id="petal-opening" d="M628 1040C520 945 535 790 628 660C721 790 736 945 628 1040Z"/>`) {
+		t.Fatal("favicon does not contain the simplified Loom silhouette")
 	}
-	if strings.Contains(body, approvedLogoPath) || strings.Count(body, `<use href="#petal"`) != 6 {
-		t.Fatal("favicon must use exactly six simple petals instead of the full mark")
+	if strings.Contains(body, approvedLogoPath) || strings.Count(body, `<use href="#petal-opening"`) != 6 {
+		t.Fatal("favicon must use one simple opening for each of its six petals")
 	}
-	if !strings.Contains(body, `<rect width="64" height="64" fill="#fff"/>`) ||
-		!strings.Contains(body, `<g fill="none" stroke="#111" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round">`) ||
-		strings.Contains(body, `<circle`) {
-		t.Fatal("favicon must use a white background and white petals with black outlines")
+	if !strings.Contains(body, `<path id="weave-detail"`) ||
+		strings.Count(body, `<use href="#weave-detail"`) != 6 ||
+		!strings.Contains(body, `stroke-width="18" stroke-linecap="round" opacity=".72"`) {
+		t.Fatal("favicon must use one subtle nested thread in each petal")
+	}
+	if !strings.Contains(body, `<rect x="127" y="112" width="1000" height="1000" fill="#fff"/>`) ||
+		!strings.Contains(body, `<use href="#loom-outline" fill="#111"/>`) ||
+		!strings.Contains(body, `<g fill="#fff">`) {
+		t.Fatal("favicon must use a white background and a black single-band mark")
 	}
 }
 
@@ -118,6 +124,9 @@ func TestTopologyUsesConcentricRingsAndObservedLinkMetrics(t *testing.T) {
 	}}
 
 	topology := topologySVG(view)
+	if strings.Contains(topology, `ry=130/>`) || strings.Contains(topology, `r=3/>`) || strings.Contains(topology, `rx=5/>`) {
+		t.Fatal("self-closing SVG element left its final attribute unquoted; HTML would absorb the slash into the value")
+	}
 	if strings.Count(topology, `data-ring="inner"`) != 3 || strings.Count(topology, `data-ring="outer"`) != 3 {
 		t.Fatalf("topology did not divide the six nodes into two equal rings: %s", topology)
 	}

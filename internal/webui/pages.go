@@ -116,7 +116,7 @@ func shell(d Deps, title, body string, isAuthed bool, evidence ...View) string {
 		progressScript = `<script>` + progressSubmitScript + `</script>`
 	}
 	pageClass := "page-" + active
-	return fmt.Sprintf(`<!doctype html><meta charset=utf-8><title>%s · LOOM</title><link rel=icon href="/favicon.svg?v=5" type="image/svg+xml">
+	return fmt.Sprintf(`<!doctype html><meta charset=utf-8><title>%s · LOOM</title><link rel=icon href="/favicon.svg?v=7" type="image/svg+xml">
 <meta name=viewport content="width=device-width,initial-scale=1">%s%s
 <div class=app><header class=header><a class=brand href="/" aria-label="LOOM overview">%s<span>LOOM</span></a>
 <nav class=nav aria-label="Primary">%s</nav><div class=headmeta><span class="env dim"><span class=dot></span>Live evidence</span><span>%s</span></div></header>
@@ -571,8 +571,8 @@ func topologySVG(v View, routeOverlay ...RouteView) string {
 
 	var b strings.Builder
 	b.WriteString(`<svg class=topology viewBox="0 0 960 360" role=img aria-label="Near-real-time concentric network topology"><defs><marker id=arrow viewBox="0 0 10 10" refX=8 refY=5 markerWidth=5 markerHeight=5 orient=auto-start-reverse><path d="M 0 0 L 10 5 L 0 10 z" fill="#239b68"/></marker></defs>`)
-	b.WriteString(`<ellipse class="topology-ring outer" cx=480 cy=180 rx=310 ry=130/><ellipse class="topology-ring inner" cx=480 cy=180 rx=170 ry=75/>`)
-	b.WriteString(`<circle class=ring-dot cx=18 cy=18 r=3/><text class=ring-key x=28 y=21>内圈：可接受反向建连的锚点</text><circle class=ring-dot cx=18 cy=35 r=3/><text class=ring-key x=28 y=38>外圈：反向接入的出口节点</text>`)
+	b.WriteString(`<ellipse class="topology-ring outer" cx=480 cy=180 rx=310 ry="130"/><ellipse class="topology-ring inner" cx=480 cy=180 rx=170 ry="75"/>`)
+	b.WriteString(`<circle class=ring-dot cx=18 cy=18 r="3"/><text class=ring-key x=28 y=21>内圈：可接受反向建连的锚点</text><circle class=ring-dot cx=18 cy=35 r="3"/><text class=ring-key x=28 y=38>外圈：反向接入的出口节点</text>`)
 	curves := map[string]topologyCurve{}
 	curveStarts := map[string]string{}
 	var metricLabels strings.Builder
@@ -604,7 +604,7 @@ func topologySVG(v View, routeOverlay ...RouteView) string {
 		metric, detail := topologyLinkMetric(l)
 		width := math.Max(82, math.Min(132, 14+float64(len([]rune(metric)))*5.1))
 		fmt.Fprintf(&b, `<g class="topology-edge edge-tunnel" data-from="%s" data-to="%s"><title>%s</title><path class="%s" d="%s"/><path class=edge-hit d="%s"/></g>`, esc(l.From), esc(l.To), esc(detail), cls, curve.d, curve.d)
-		fmt.Fprintf(&metricLabels, `<g class=edge-metric transform="translate(%.1f %.1f)"><title>%s</title><rect x="%.1f" y=-9 width="%.1f" height=18 rx=5/><text text-anchor=middle y=3>%s</text></g>`, curve.label.x, curve.label.y, esc(detail), -width/2, width, esc(metric))
+		fmt.Fprintf(&metricLabels, `<g class=edge-metric transform="translate(%.1f %.1f)"><title>%s</title><rect x="%.1f" y=-9 width="%.1f" height=18 rx="5"/><text text-anchor=middle y=3>%s</text></g>`, curve.label.x, curve.label.y, esc(detail), -width/2, width, esc(metric))
 	}
 	for _, r := range routeOverlay {
 		if r.Stale {
