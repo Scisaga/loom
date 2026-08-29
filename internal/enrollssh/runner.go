@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"syscall"
 	"time"
 )
 
@@ -127,9 +128,24 @@ func commandError(operation string, ctx context.Context, result Result, err erro
 	if err == nil {
 		return nil
 	}
+	if stoppedByLocalSignal(err) {
+		return fmt.Errorf("%s was interrupted because the local control service stopped or restarted; retry after it is running again", operation)
+	}
 	stderr := string(bytes.TrimSpace(result.Stderr))
 	if stderr == "" {
 		return fmt.Errorf("%s failed: %w", operation, err)
 	}
 	return fmt.Errorf("%s failed: %w (stderr: %s)", operation, err, stderr)
+}
+
+func stoppedByLocalSignal(err error) bool {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ProcessState == nil {
+		return false
+	}
+	status, ok := exitErr.ProcessState.Sys().(syscall.WaitStatus)
+	if !ok || !status.Signaled() {
+		return false
+	}
+	return status.Signal() == syscall.SIGTERM || status.Signal() == syscall.SIGINT
 }

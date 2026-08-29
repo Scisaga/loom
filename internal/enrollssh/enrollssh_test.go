@@ -52,6 +52,22 @@ func TestConnectionValidation(t *testing.T) {
 	}
 }
 
+func TestCommandErrorExplainsLocalServiceInterruption(t *testing.T) {
+	err := exec.Command("sh", "-c", "kill -TERM $$").Run()
+	if err == nil {
+		t.Fatal("self-terminated child unexpectedly succeeded")
+	}
+	got := commandError("SSH preflight", context.Background(), Result{}, err)
+	for _, want := range []string{"SSH preflight", "local control service stopped or restarted", "retry"} {
+		if got == nil || !strings.Contains(got.Error(), want) {
+			t.Fatalf("interruption error %q is missing %q", got, want)
+		}
+	}
+	if strings.Contains(got.Error(), "signal: terminated") {
+		t.Fatalf("raw process signal leaked into operator copy: %v", got)
+	}
+}
+
 func TestScannerUsesFixedArgvAndComputesOpenSSHFingerprint(t *testing.T) {
 	encoded := testHostBlob(7)
 	wantFingerprint := testFingerprint(encoded)

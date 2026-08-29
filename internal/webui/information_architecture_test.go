@@ -84,6 +84,56 @@ func TestEnrollmentAccessUsesCompactIdentityAndBoundaryLayout(t *testing.T) {
 	}
 }
 
+func TestEnrollmentPreflightShowsProgressAndRetryableLocalInterruption(t *testing.T) {
+	d := misakaDeps()
+	d.Control.Enrollment = &NodeEnrollmentDeps{}
+	body := pageNodeAdd(d, nodeAddPageState{
+		Phase:      "confirm",
+		Connection: EnrollmentConnection{Host: "203.0.113.42", User: "root", Port: 22},
+		HostKey: EnrollmentHostKey{
+			Algorithm: "ssh-ed25519", PublicKey: "AAAAC3Nza", Fingerprint: "SHA256:test",
+		},
+		Error: "trusted SSH preflight: SSH preflight was interrupted because the local control service stopped or restarted; retry after it is running again",
+	}, true)
+	for _, want := range []string{
+		`class="green progress-submit"`, `class=button-spinner`, "Running SSH preflight…",
+		"Enrollment was interrupted locally — safe to retry",
+		"The remote host did not reject enrollment", "@keyframes loom-spin",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Enrollment preflight feedback is missing %q", want)
+		}
+	}
+}
+
+func TestEnrollmentPreflightExplainsMissingWireGuardTools(t *testing.T) {
+	d := misakaDeps()
+	d.Control.Enrollment = &NodeEnrollmentDeps{}
+	body := pageNodeAdd(d, nodeAddPageState{
+		Phase: "confirm",
+		Error: "remote preflight did not find the wg command",
+	}, true)
+	for _, want := range []string{"Remote host is missing WireGuard tools", "wireguard-tools", "SSOT was not changed"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Missing WireGuard tools guidance is missing %q", want)
+		}
+	}
+}
+
+func TestEnrollmentPreflightExplainsInvalidRemoteNodeID(t *testing.T) {
+	d := misakaDeps()
+	d.Control.Enrollment = &NodeEnrollmentDeps{}
+	body := pageNodeAdd(d, nodeAddPageState{
+		Phase: "confirm",
+		Error: `remote hostname "VM-0-3-ubuntu" is not a valid Node ID; hostname -s must use 1-63 lowercase letters, digits, or internal hyphens`,
+	}, true)
+	for _, want := range []string{"Remote hostname cannot be used as a Node ID", "hostname -s", "lowercase", "SSOT was not changed"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Invalid remote Node ID guidance is missing %q", want)
+		}
+	}
+}
+
 func TestTopologyOverlaysOnlyExplicitRoutingEntry(t *testing.T) {
 	d := misakaDeps()
 	v := d.Snapshot()

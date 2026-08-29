@@ -195,10 +195,20 @@ func pageNodeAdd(d Deps, state nodeAddPageState, isAuthed bool) string {
 
 	if state.Error != "" {
 		title := "Enrollment stopped without changing SSOT"
+		note := ""
 		if state.Committed {
 			title = "SSOT content changed, but durability confirmation failed"
+		} else if strings.Contains(state.Error, "local control service stopped or restarted") {
+			title = "Enrollment was interrupted locally — safe to retry"
+			note = `<br><span class="small dim">The remote host did not reject enrollment. Submit the preflight again after the control service is stable.</span>`
+		} else if strings.Contains(state.Error, "remote preflight did not find the wg command") {
+			title = "Remote host is missing WireGuard tools"
+			note = `<br><span class="small dim">Install the distribution's <code>wireguard-tools</code> package on the remote host, then run preflight again. SSOT was not changed.</span>`
+		} else if strings.Contains(state.Error, "is not a valid Node ID") {
+			title = "Remote hostname cannot be used as a Node ID"
+			note = `<br><span class="small dim">Set the remote short hostname (<code>hostname -s</code>) to 1–63 lowercase letters, digits or internal hyphens, then run preflight again. SSOT was not changed.</span>`
 		}
-		fmt.Fprintf(&b, `<div class="card notice badline section"><b>%s</b><br><span class=small>%s</span></div>`, esc(title), esc(state.Error))
+		fmt.Fprintf(&b, `<div class="card notice badline section"><b>%s</b><br><span class=small>%s</span>%s</div>`, esc(title), esc(state.Error), note)
 	}
 	if d.Control == nil {
 		b.WriteString(`<div class="card notice section"><span class=warn>This machine is not the control node; enrollment is intentionally unavailable here.</span></div>`)
@@ -256,7 +266,7 @@ func writeNodeAddConnect(b *strings.Builder, connection EnrollmentConnection, ke
 <div class="field span6"><label>Host or IP address</label><input name=host value="%s" placeholder="203.0.113.42" required></div>
 <div class="field span4"><label>SSH user</label><input name=user value="%s" placeholder="loom-bootstrap" required></div>
 <div class="field span2"><label>Port</label><input name=port type=number min=1 max=65535 value="%d" required></div>
-</div><div class="toolbar section"><button class=primary>Scan SSH host key</button><a class=button href="/nodes">Cancel</a></div></form></div></div>
+</div><div class="toolbar section"><button class="primary progress-submit"><span class=button-idle>Scan SSH host key</span><span class=button-busy><i class=button-spinner aria-hidden=true></i>Scanning SSH key…</span></button><a class=button href="/nodes">Cancel</a></div></form></div></div>
 <div class="card span7"><h2>What the control plane will and will not infer</h2>
 <div class=kv><dt>Manual input<dd>SSH host or IP, user and port only<dt>Node ID<dd>Verified remote <code>hostname -s</code>; not editable<dt>Egress<dd>Enabled for every new server node<dt>Direction<dd>Reviewed after preflight; Automatic is conservative without UDP evidence<dt>WG identity<dd>Generated or reused on the remote host; only its public key returns</div>
 <div class="callout warnline section"><b>SSH reachability is not UDP reachability</b><br><span class=small>A successfully authenticated SSH host that resolves to a global address may become a control-observed endpoint candidate. Private/local-only addresses stop the workflow, and no page labels an untested UDP endpoint as verified.</span></div>
@@ -273,7 +283,7 @@ func writeNodeAddConfirm(b *strings.Builder, state nodeAddPageState, key Bootstr
 <div class=callout><div class=label>Ed25519 fingerprint</div><div class="metric mono">%s</div><div class="tiny mono clip">%s %s</div></div>
 <form class=blockform method=post action="/nodes/add/review">%s
 <label class="checkline section"><input type=checkbox name=confirm_host_key value=yes required> I independently confirmed this host fingerprint</label>
-<div class="toolbar section"><button class=green>Trust key &amp; run preflight</button><a class=button href="/nodes/add">Cancel</a></div></form>
+<div class="toolbar section"><button class="green progress-submit"><span class=button-idle>Trust key &amp; run preflight</span><span class=button-busy><i class=button-spinner aria-hidden=true></i>Running SSH preflight…</span></button><a class=button href="/nodes/add">Cancel</a></div></form>
 </div></div></div>`, esc(c.User), esc(c.Host), c.Port, esc(key.Fingerprint), esc(h.Fingerprint), esc(h.Algorithm), esc(h.PublicKey), enrollmentHidden(c, h))
 }
 
@@ -311,14 +321,14 @@ func writeNodeAddReview(b *strings.Builder, d Deps, review EnrollmentReview, key
 <form class=blockform method=post action="/nodes/add/commit">%s
 <div class=fields><div class="field span6"><label>Try a different direction policy</label><select name=direction>%s</select></div><div class="field span6"><label>Effect</label><div class=callout>Recomputes the entire tunnel plan; it cannot save SSOT.</div></div></div>
 <p class="tiny dim">Changing direction does not edit individual edges. Review the newly derived initiator, acceptor, address and port plan before it can be committed.</p>
-<div class=toolbar><button name=action value=preview>Recompute &amp; review direction</button></div></form>
+<div class=toolbar><button class=progress-submit name=action value=preview><span class=button-idle>Recompute &amp; review direction</span><span class=button-busy><i class=button-spinner aria-hidden=true></i>Rechecking remote host…</span></button></div></form>
 </div><div class=section><div class=callout><b>Reviewed direction is locked for commit</b><br><span class=small><code>%s</code> resolved to <code>%s</code>. To use another direction, recompute and review it above first.</span></div>
 <form class=blockform method=post action="/nodes/add/commit">%s
 <input type=hidden name=direction value="%s"><input type=hidden name=reviewed_direction value="%s">
 <input type=hidden name=review_token value="%s">
 <input type=hidden name=expected_node value="%s"><input type=hidden name=expected_endpoint value="%s"><input type=hidden name=expected_endpoint_resolution value="%s"><input type=hidden name=revision value="%s">
 <div class=fields><div class="field span6"><label>Reviewed direction</label><input class=mono value="%s → %s" readonly></div><div class="field span6"><label>SSOT revision</label><input class=mono value="%s" readonly></div></div>
-<div class="toolbar section"><button class=green name=action value=commit>Prepare WG identity &amp; save SSOT declaration</button><a class=button href="/nodes/add">Cancel</a></div></form></div>
+<div class="toolbar section"><button class="green progress-submit" name=action value=commit><span class=button-idle>Prepare WG identity &amp; save SSOT declaration</span><span class=button-busy><i class=button-spinner aria-hidden=true></i>Preparing node safely…</span></button><a class=button href="/nodes/add">Cancel</a></div></form></div>
 <div class="callout warnline section"><b>This is declaration bootstrap, not Agent installation</b><br><span class=small>On commit, the control plane re-checks the host key and hostname, prepares or reuses <code>/etc/wireguard/node.key</code> remotely, validates the complete node and tunnel edit, and revision-guards the SSOT save. It does not install or start the Loom Agent, start application services, or claim the node is online.</span></div>
 </div></div></div>`, enrollmentHidden(c, h), directionOptions(reviewedDirection), esc(reviewedDirection), esc(review.ResolvedDirection), enrollmentHidden(c, h), esc(reviewedDirection), esc(reviewedDirection), esc(reviewToken), esc(review.NodeID), esc(review.PublicEndpoint), esc(review.EndpointResolution), esc(review.Revision), esc(reviewedDirection), esc(review.ResolvedDirection), esc(short(review.Revision)))
 }
