@@ -81,6 +81,30 @@ func TestTopologyOverlaysOnlyExplicitRoutingEntry(t *testing.T) {
 	}
 }
 
+func TestTopologySeparatesCarrierEvidenceFromOnDemandIntent(t *testing.T) {
+	d := misakaDeps()
+	v := d.Snapshot()
+	v.Nodes = append(v.Nodes, NodeView{ID: "gz02", Declared: true, Health: "healthy", Direction: "bidirectional"})
+	v.Links = append(v.Links, LinkView{
+		From: "gz02", To: "jm24", Kind: "candidate", State: "unverified",
+		Source: "SSOT RouteCandidate.ServerChain · 候选跳，未核验",
+	})
+	d.Snapshot = func() View { return v }
+
+	body := pageTopology(d, false)
+	for _, want := range []string{
+		"Persistent WireGuard carriers", "On-demand route hops", "Available by intent",
+		"not broken tunnels", "no continuous RTT or heartbeat", "SSOT RouteCandidate.ServerChain",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Topology page lost the carrier/intent boundary %q", want)
+		}
+	}
+	if strings.Contains(body, "candidate</td>") || strings.Contains(body, "unverified</td>") || strings.Contains(body, "时间未记录") {
+		t.Fatal("Topology page exposed internal candidate state as a failed or missing carrier observation")
+	}
+}
+
 func TestEventsShowsCurrentStateSeparatelyFromHistory(t *testing.T) {
 	d := misakaDeps()
 	d.Unresolved = func() []UnresolvedView {

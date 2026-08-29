@@ -140,9 +140,23 @@ func pageTopology(d Deps, isAuthed bool, selectedEntry ...string) string {
 			fresh++
 		}
 	}
+	links := append([]LinkView(nil), v.Links...)
+	sort.Slice(links, func(i, j int) bool {
+		return links[i].Kind+links[i].From+links[i].To < links[j].Kind+links[j].From+links[j].To
+	})
+	carrierLinks := make([]LinkView, 0, tunnels)
+	candidateLinks := make([]LinkView, 0, candidates)
+	for _, link := range links {
+		switch link.Kind {
+		case "tunnel":
+			carrierLinks = append(carrierLinks, link)
+		case "candidate":
+			candidateLinks = append(candidateLinks, link)
+		}
+	}
 
 	var b strings.Builder
-	b.WriteString(`<div class=sectionhead><h2>Network layers</h2><span class=dim>Carrier and observation are always shown; one Agent path may be overlaid for attribution.</span><span class=sp><form method=get action="/topology"><select name=entry aria-label="Agent path overlay"><option value="">No Agent path overlay</option>`)
+	b.WriteString(`<div class=sectionhead><h2>Network layers</h2><span class=dim>Persistent carriers and on-demand route hops are shown as separate layers.</span><span class=sp><form method=get action="/topology"><select name=entry aria-label="Agent path overlay"><option value="">No Agent path overlay</option>`)
 	for _, entry := range entries {
 		attr := ""
 		if entry.Key == selected {
@@ -151,40 +165,55 @@ func pageTopology(d Deps, isAuthed bool, selectedEntry ...string) string {
 		fmt.Fprintf(&b, `<option value="%s"%s>%s</option>`, esc(entry.Key), attr, esc(entry.Label))
 	}
 	b.WriteString(`</select> <button>Apply</button></form></span></div>`)
-	fmt.Fprintf(&b, `<div class=grid><div class="card span9">%s<div class=legend><span><i class=key></i>Persistent WG</span><span><i class="key candidate"></i>Inventory candidate</span><span><i class="key route"></i>Selected Agent path only</span><span><i class="key degraded"></i>Degraded observation</span><span><i class="key failed"></i>Failed observation</span></div><p class="tiny dim">Layers do not collapse into one another: a candidate comes from %s, a WireGuard edge is carrier structure, and an Agent path is shown only when one routing entry is selected above.</p></div>`, topologySVG(v, overlay...), esc(intentSource))
+	fmt.Fprintf(&b, `<div class=grid><div class="card span9">%s<div class=legend><span><i class=key></i>Persistent WireGuard</span><span><i class="key candidate"></i>On-demand route hop</span><span><i class="key route"></i>Selected Agent path</span><span><i class="key degraded"></i>Degraded carrier</span><span><i class="key failed"></i>Failed carrier</span></div><div class=topology-layer-note>Solid lines are persistent carriers with runtime evidence. Dashed lines are route relationships allowed by %s; they are created on demand and are not broken tunnels.</div></div>`, topologySVG(v, overlay...), esc(intentSource))
 	fmt.Fprintf(&b, `<div class="card span3"><h2>Layer status</h2><div class=stack>
-<div><div class=label>Inventory intent</div><div class=metric>%d <small>WG edges</small></div><div class=dim>%d candidate hops · %s</div></div>
-<div><div class=label>Trusted observation</div><div class="metric %s">%d <small>/ %d active</small></div><div class=dim>unknown remains unknown</div></div>
+<div><div class=label>Persistent carriers</div><div class=metric>%d <small>WG edges</small></div><div class=dim>%s declared inventory</div></div>
+<div><div class=label>Carrier observation</div><div class="metric %s">%d <small>/ %d active</small></div><div class=dim>signed runtime evidence</div></div>
+<div><div class=label>On-demand routing</div><div class=metric>%d <small>possible hops</small></div><div class=dim>intent, not tunnel health</div></div>
 <div><div class=label>Agent decisions</div><div class=metric>%d <small>fresh</small></div><div class=dim>%d current entries · %d overlaid</div></div>
-</div></div></div>`, tunnels, candidates, esc(intentSource), map[bool]string{true: "ok", false: "warn"}[active == tunnels && tunnels > 0], active, tunnels, fresh, len(v.Routes), len(overlay))
+</div></div></div>`, tunnels, esc(intentSource), map[bool]string{true: "ok", false: "warn"}[active == tunnels && tunnels > 0], active, tunnels, candidates, fresh, len(v.Routes), len(overlay))
 
 	writeTopologyTraffic(&b, v)
 
-	b.WriteString(`<div class=section><div class=sectionhead><h2>Persistent and candidate edges</h2><span class=dim>Observation state, timestamp and source stay together</span></div><div class=card><table><tr><th>Edge<th>Layer<th>State<th>RTT<th>Observed<th>Source</tr>`)
-	links := append([]LinkView(nil), v.Links...)
-	sort.Slice(links, func(i, j int) bool {
-		return links[i].Kind+links[i].From+links[i].To < links[j].Kind+links[j].From+links[j].To
-	})
-	for _, l := range links {
+	b.WriteString(`<div class=section><div class=sectionhead><h2>Connectivity details</h2><span class=dim>Runtime carrier evidence stays separate from configured route intent.</span></div><div class=topology-edge-grid><section class="card topology-edge-card"><div class=edge-panel-head><div><h3>Persistent WireGuard carriers</h3><p>Always-on interfaces declared in inventory, with signed health evidence.</p></div>`)
+	carrierBadgeClass, carrierBadgeLabel := "warn", fmt.Sprintf("%d / %d active", active, tunnels)
+	if active == tunnels && tunnels > 0 {
+		carrierBadgeClass, carrierBadgeLabel = "ok", fmt.Sprintf("%d / %d active", active, tunnels)
+	}
+	fmt.Fprintf(&b, `<span class="badge %s"><span class=dot></span>%s</span></div><table><thead><tr><th>Carrier edge<th>Health<th>RTT<th>Last observed<th>Evidence</tr></thead><tbody>`, carrierBadgeClass, carrierBadgeLabel)
+	for _, l := range carrierLinks {
 		cls := "dim"
+		state := "Awaiting evidence"
 		switch l.State {
 		case "active":
-			cls = "ok"
+			cls, state = "ok", "Active"
 		case "degraded":
-			cls = "warn"
+			cls, state = "warn", "Degraded"
 		case "failed":
-			cls = "bad"
+			cls, state = "bad", "Failed"
 		}
 		rtt := "—"
 		if l.MS > 0 {
 			rtt = fmt.Sprintf("%dms", l.MS)
 		}
-		fmt.Fprintf(&b, `<tr><td class=mono>%s ↔ %s<td>%s<td class=%s>%s<td>%s<td>%s<td class="w tiny">%s</tr>`, esc(l.From), esc(l.To), esc(l.Kind), cls, esc(l.State), rtt, esc(ageText(l.ObservedAt, now)), esc(l.Source))
+		fmt.Fprintf(&b, `<tr><td class=mono>%s ↔ %s<td><span class="edge-status %s"><span class=dot></span>%s</span><td class=mono>%s<td>%s<td class=edge-source>%s</tr>`, esc(l.From), esc(l.To), cls, state, rtt, esc(ageText(l.ObservedAt, now)), esc(l.Source))
 	}
-	if len(links) == 0 {
-		b.WriteString(`<tr><td colspan=6><div class=empty>No topology edges are present in the current view.</div></tr>`)
+	if len(carrierLinks) == 0 {
+		b.WriteString(`<tr><td colspan=5><div class=empty>No persistent carrier edges are declared in this view.</div></tr>`)
 	}
-	b.WriteString(`</table></div></div>`)
+	b.WriteString(`</tbody></table></section><section class="card topology-edge-card"><div class=edge-panel-head><div><h3>On-demand route hops</h3><p>Possible public hops derived from configured candidate paths.</p></div>`)
+	fmt.Fprintf(&b, `<span class="badge intent"><span class=dot></span>%d configured</span></div><div class=route-hop-list>`, len(candidateLinks))
+	for _, l := range candidateLinks {
+		source := l.Source
+		if i := strings.Index(source, " · "); i >= 0 {
+			source = source[:i]
+		}
+		fmt.Fprintf(&b, `<div class=route-hop><span class="route-hop-pair mono">%s ↔ %s</span><span class=route-hop-state><span class=dot></span>Available by intent</span><span class=route-hop-meta>Created only when a route uses this hop · no continuous RTT or heartbeat · %s</span></div>`, esc(l.From), esc(l.To), esc(source))
+	}
+	if len(candidateLinks) == 0 {
+		b.WriteString(`<div class=empty>No on-demand route hops are present in this view.</div>`)
+	}
+	b.WriteString(`</div><p class=route-hop-note>These dashed relationships are not failed WireGuard links. Their availability is declared by routing intent; actual use appears as the selected Agent path overlay.</p></section></div></div>`)
 	return shell(d, "Topology", b.String(), isAuthed, v)
 }
 
