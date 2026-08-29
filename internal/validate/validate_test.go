@@ -452,6 +452,43 @@ nodes:
 	}
 }
 
+func TestLocalEgressDoesNotRequireAnInboundPort(t *testing.T) {
+	const localOnly = `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
+nodes:
+  - id: access
+    server: {direction: bidirectional, egress_capable: true}
+    access: {platform: linux-server, credentials: [c1], mixed_ports: [{port: 1080, declaration: d1}]}
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, probe_url: "https://x/", tuning_period: 10m, window: 2h, min_samples: 2, stale_after: 30m, allowed_servers: [access]}
+credentials:
+  - {id: c1, owner: access, declaration: d1, secret_ref: "cred/c1"}
+`
+	s, err := model.Load([]byte(localOnly))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := Format(Validate(s)); strings.Contains(got, "inbound_port") {
+		t.Fatalf("zero-hop local egress was treated as an upstream hop:\n%s", got)
+	}
+
+	shared := strings.Replace(localOnly,
+		"declarations:\n",
+		`  - id: other
+    access: {platform: linux-server, credentials: [c2], mixed_ports: [{port: 1080, declaration: d1}]}
+declarations:
+`, 1)
+	shared += `  - {id: c2, owner: other, declaration: d1, secret_ref: "cred/c2"}
+`
+	s, err = model.Load([]byte(shared))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := Format(Validate(s)); !strings.Contains(got, "inbound_port") {
+		t.Fatalf("shared egress stopped requiring an inbound for the other access node:\n%s", got)
+	}
+}
+
 // TestSecretGenerationFailClosed 钉住秘密层代次的最小可兑现边界。
 // 0 是未声明的旧配置，1 是首代基线；轮换代次还没有部署/核验链，不能假生效。
 func TestSecretGenerationFailClosed(t *testing.T) {

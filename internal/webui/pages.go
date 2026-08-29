@@ -33,7 +33,7 @@ h2{font-size:13px;margin:0 0 12px;color:var(--dim);font-weight:700;letter-spacin
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px;min-width:0}.card.soft{background:var(--card2)}.metric{font-size:24px;font-weight:720;line-height:1.15;margin:5px 0}.metric small{font-size:13px;color:var(--dim);font-weight:500}.label{font-size:11px;color:var(--dim);letter-spacing:.04em;text-transform:uppercase}
 .section{margin-top:22px}.sectionhead{display:flex;align-items:center;gap:12px;margin:0 0 10px}.sectionhead h2{margin:0}.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.split{display:grid;grid-template-columns:minmax(280px,1fr) minmax(0,2fr);gap:14px}.stack{display:grid;gap:14px}
 table{border-collapse:collapse;width:100%;margin:0}td,th{text-align:left;padding:10px 10px 10px 0;border-bottom:1px solid var(--line);vertical-align:top;white-space:nowrap}tr:last-child td{border-bottom:0}th{color:var(--dim);font-weight:650;font-size:10px;letter-spacing:.06em;text-transform:uppercase}td.w{white-space:normal}.rowlink:hover{background:#fafcfb}
-.topology{width:100%;min-height:330px;display:block;background:transparent}.topology .tunnel{stroke:#a5aaa8;stroke-width:1.25;opacity:.95}.topology .candidate{stroke:#b9bebc;stroke-width:1.35;stroke-dasharray:5 6;opacity:.9}.topology .degraded{stroke:#d79b3b}.topology .failed{stroke:#c65a5a}.topology .unknown{stroke:#a5aaa8;stroke-dasharray:3 7;opacity:.7}.topology .route{stroke:var(--route);stroke-width:2;opacity:.95}.topology .node{fill:var(--ok);stroke:#fff;stroke-width:3}.topology .node.problem{fill:var(--bad)}.topology .node.unknown{fill:#a5aaa8;stroke:#fff;stroke-dasharray:none}.topology .node.undeclared{fill:var(--warn);stroke:#fff}.topology .node.selected{fill:var(--ok);stroke:#fff;stroke-width:3}.topology text{fill:var(--fg);font:500 13px var(--font-mono)}.topology .sub{fill:var(--dim);font:400 11px/1.4 Inter,ui-sans-serif,system-ui}
+.topology{width:100%;min-height:330px;display:block;background:transparent}.topology .tunnel{stroke:#a5aaa8;stroke-width:1.25;opacity:.95}.topology .candidate{stroke:#b9bebc;stroke-width:1.35;stroke-dasharray:5 6;opacity:.9}.topology .degraded{stroke:#d79b3b}.topology .failed{stroke:#c65a5a}.topology .unknown{stroke:#a5aaa8;stroke-dasharray:3 7;opacity:.7}.topology .route{stroke:var(--route);stroke-width:2;opacity:.95}.topology .route-ring{fill:none;stroke:var(--route);stroke-width:2;opacity:.3}.topology .node{fill:var(--ok);stroke:#fff;stroke-width:3}.topology .node.problem{fill:var(--bad)}.topology .node.unknown{fill:#a5aaa8;stroke:#fff;stroke-dasharray:none}.topology .node.undeclared{fill:var(--warn);stroke:#fff}.topology .node.selected{fill:var(--ok);stroke:#fff;stroke-width:3}.topology text{fill:var(--fg);font:500 13px var(--font-mono)}.topology .sub{fill:var(--dim);font:400 11px/1.4 Inter,ui-sans-serif,system-ui}
 .legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;color:var(--dim);font-size:11px}.key{display:inline-block;width:26px;border-top:2px solid #a5aaa8;vertical-align:middle;margin-right:6px}.key.candidate{border-color:#b9bebc;border-top-style:dashed}.key.route{border-color:var(--route);border-width:3px}.key.degraded{border-color:#d79b3b}.key.failed{border-color:#c65a5a}
 .nodegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.nodecard{border:1px solid var(--line);background:#fff;border-radius:7px;padding:13px}.nodehead{display:flex;align-items:center;gap:7px;margin-bottom:8px}.nodehead b{font-size:15px}.catalogrow{display:block;padding:13px 11px;border-bottom:1px solid var(--line);border-left:3px solid transparent}.catalogrow:last-child{border-bottom:0}.catalogrow.selected{background:var(--oksoft);border-left-color:var(--ok)}.issue{padding:10px 0;border-bottom:1px solid var(--line)}.issue:last-child{border-bottom:0}.issue.problem{border-left:3px solid var(--bad);padding-left:10px}.tiny{font-size:11px}.small{font-size:12px}.clip{overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .notice{border-left:3px solid var(--warn);background:var(--warnsoft)}.notice.badline{border-left-color:var(--bad);background:var(--badsoft)}.empty{padding:20px;text-align:center;color:var(--dim);border:1px dashed var(--line2);border-radius:7px}.callout{padding:12px 14px;border-radius:7px;background:var(--oksoft);border:1px solid #cce7d8}.callout.warnline{background:var(--warnsoft);border-color:#ead7b2}
@@ -496,6 +496,12 @@ func topologySVG(v View, routeOverlay ...RouteView) string {
 		if route.Stale {
 			continue
 		}
+		// A direct route has no server-to-server edge, but it still selects the
+		// access node as the local egress. Highlight that node instead of making
+		// the overlay appear to do nothing.
+		if len(route.Chain) == 0 && route.Node != "" {
+			selected[route.Node] = true
+		}
 		for _, id := range route.Chain {
 			selected[id] = true
 		}
@@ -587,6 +593,7 @@ func topologySVG(v View, routeOverlay ...RouteView) string {
 		}
 		if selected[id] {
 			cls += " selected"
+			fmt.Fprintf(&b, `<circle class=route-ring cx="%.1f" cy="%.1f" r="11"/>`, p.x, p.y)
 		}
 		fmt.Fprintf(&b, `<circle class="%s" cx="%.1f" cy="%.1f" r="6"/>`, cls, p.x, p.y)
 		if p.x < 500 {

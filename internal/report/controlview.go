@@ -78,6 +78,9 @@ func enrichNodes(v *webui.View, s *model.SSOT, controlNode string) {
 			got.Roles = append(got.Roles, "server")
 			got.Direction = string(declared.Server.Direction)
 			got.EgressCapable = declared.Server.EgressCapable
+			if got.EgressCapable {
+				got.Roles = append(got.Roles, "egress")
+			}
 		} else {
 			got.Direction = ""
 			got.EgressCapable = false

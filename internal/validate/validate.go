@@ -62,6 +62,13 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 	usedAsHop := map[string]string{}
 	for i := range s.Declarations {
 		for _, id := range s.Declarations[i].AllowedServers {
+			// A hybrid access/server node may list itself as the declaration's
+			// local egress. That candidate is zero-hop and needs no inbound. Keep
+			// requiring inbound as soon as any other access node uses the same
+			// declaration, because that would be a real upstream connection.
+			if declarationUsedOnlyByLocalAccess(s, s.Declarations[i].ID, id) {
+				continue
+			}
 			if _, seen := usedAsHop[id]; !seen {
 				usedAsHop[id] = "声明 " + s.Declarations[i].ID
 			}
@@ -170,6 +177,28 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 
 	}
 	return idx
+}
+
+func declarationUsedOnlyByLocalAccess(s *model.SSOT, declaration, serverID string) bool {
+	credentials := s.CredentialByID()
+	usedLocally := false
+	for _, access := range s.AccessNodes() {
+		uses := false
+		for _, credentialID := range access.Access.Credentials {
+			if credential := credentials[credentialID]; credential != nil && credential.Declaration == declaration {
+				uses = true
+				break
+			}
+		}
+		if !uses {
+			continue
+		}
+		if access.ID != serverID {
+			return false
+		}
+		usedLocally = true
+	}
+	return usedLocally
 }
 
 func checkTunnels(s *model.SSOT, idx map[string]*model.Node, fs *findings) {

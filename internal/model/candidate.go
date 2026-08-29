@@ -160,12 +160,6 @@ func (s *SSOT) candidateChains(access *Node, d *AccessDeclaration, nodes map[str
 	// 第二跳,每次都报会淹没真正的问题。
 	used := map[string]bool{}
 
-	// 零跳:接入节点直接连目标地址。§3.1 —— 直连是一等公民,与多跳同台竞争。
-	// 出口钉死时不适用,因为直连没有出口服务器。
-	if pinned == "" {
-		chains = append(chains, nil)
-	}
-
 	usableEgress := func(n *Node) bool {
 		if !n.Server.EgressCapable {
 			return false
@@ -173,10 +167,31 @@ func (s *SSOT) candidateChains(access *Node, d *AccessDeclaration, nodes map[str
 		return pinned == "" || n.ID == pinned
 	}
 
+	// 零跳:接入节点直接连目标地址。§3.1 —— 直连是一等公民,与多跳同台竞争。
+	// ServerChain 仍保持为空,因为把 access 自己塞进链里会让渲染器真的建立
+	// 一次“连回自己”的 Hysteria/Trojan 连接。若策略把这个混合角色节点列入
+	// allowed_servers,则空链就是它作为本地出口的表达,并非一个漏用的服务器。
+	localEgress := false
+	for _, n := range allowed {
+		if n.ID == access.ID && usableEgress(n) {
+			localEgress = true
+			used[n.ID] = true
+			break
+		}
+	}
+	// 未钉死出口时保留既有的隐式直连语义；显式钉在本机时,只有声明了
+	// 本机出口能力并把它列入允许集合才生成零跳候选。
+	if pinned == "" || localEgress {
+		chains = append(chains, nil)
+	}
+
 	// 一跳。第一跳必须能被这个接入节点到达 —— 公网可拨,或者两者之间
 	// 已经有隧道(reverse_only 靠后者,见 AccessHopAddr)。
 	if maxHops >= 1 {
 		for _, n := range allowed {
+			if n.ID == access.ID {
+				continue // 本机出口已经由零跳表达,不能把接入点连回自己。
+			}
 			if !usableEgress(n) || s.AccessHopAddr(access, n) == "" {
 				continue
 			}
@@ -188,11 +203,14 @@ func (s *SSOT) candidateChains(access *Node, d *AccessDeclaration, nodes map[str
 	// 两跳。第一跳必须能被接入节点到达,第二跳必须从第一跳可达且能出公网。
 	if maxHops >= 2 {
 		for _, a := range allowed {
+			if a.ID == access.ID {
+				continue
+			}
 			if s.AccessHopAddr(access, a) == "" {
 				continue
 			}
 			for _, b := range allowed {
-				if a.ID == b.ID || !usableEgress(b) {
+				if b.ID == access.ID || a.ID == b.ID || !usableEgress(b) {
 					continue
 				}
 				if !s.ServerReachable(a, b) {

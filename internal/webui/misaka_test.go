@@ -171,6 +171,25 @@ func TestDeclaredCountersExcludeRetainedUndeclaredObservation(t *testing.T) {
 	}
 }
 
+func TestDirectRouteOverlayHighlightsItsLocalEgressNode(t *testing.T) {
+	d := misakaDeps()
+	view := d.Snapshot()
+	view.Nodes[0].Roles = []string{"control", "access", "server", "egress"}
+	direct := RouteView{Node: "jm24", Chain: nil}
+
+	topology := topologySVG(view, direct)
+	if !strings.Contains(topology, `class=route-ring`) ||
+		!strings.Contains(topology, `class="node selected"`) {
+		t.Fatalf("direct route did not highlight jm24 as its local egress: %s", topology)
+	}
+	if strings.Contains(topology, `<line class=route`) {
+		t.Fatalf("direct route invented a node-to-node path: %s", topology)
+	}
+	if !strings.Contains(topology, "control + access + server + egress") {
+		t.Fatalf("topology hid the hybrid node's egress role: %s", topology)
+	}
+}
+
 func misakaRequest(t *testing.T, d Deps, method, target string, form url.Values, authenticated bool) *httptest.ResponseRecorder {
 	t.Helper()
 	var body io.Reader

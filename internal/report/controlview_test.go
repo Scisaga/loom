@@ -75,7 +75,7 @@ func TestEnrichControlViewPreservesSSOTContractAndRouteScope(t *testing.T) {
 	if jm.Name != "Control" || jm.City != "Nanjing" || jm.Provider != "Example" ||
 		jm.PublicEndpoint != "control.example" || jm.SSHPort != 22 || !jm.Drain ||
 		!jm.EgressCapable || jm.Direction != "bidirectional" ||
-		!slices.Equal(jm.Roles, []string{"control", "access", "server"}) {
+		!slices.Equal(jm.Roles, []string{"control", "access", "server", "egress"}) {
 		t.Fatalf("node SSOT metadata was lost or misderived: %+v", jm)
 	}
 	if jm.Health != "healthy" || jm.Source != "直连 /status" {

@@ -369,7 +369,8 @@ type NodeView struct {
 	// current intent.
 	Declared bool
 	// 以下字段是中控从 SSOT 补入的声明元数据。SSHPort 已展开默认值 22；
-	// Roles 由角色块推导，不在 SSOT 重复存一份 capabilities。
+	// Roles 由角色块和 server.egress_capable 推导，不在 SSOT 重复存一份
+	// capabilities。
 	Name, City, Provider, PublicEndpoint string
 	SSHPort                              int
 	Roles                                []string
