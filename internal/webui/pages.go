@@ -115,7 +115,7 @@ func shell(d Deps, title, body string, isAuthed bool, evidence ...View) string {
 		progressScript = `<script>` + progressSubmitScript + `</script>`
 	}
 	pageClass := "page-" + active
-	return fmt.Sprintf(`<!doctype html><meta charset=utf-8><title>%s · LOOM</title><link rel=icon href="/favicon.svg" type="image/svg+xml">
+	return fmt.Sprintf(`<!doctype html><meta charset=utf-8><title>%s · LOOM</title><link rel=icon href="/favicon.svg?v=2" type="image/svg+xml">
 <meta name=viewport content="width=device-width,initial-scale=1">%s%s
 <div class=app><header class=header><a class=brand href="/" aria-label="LOOM overview">%s<span>LOOM</span></a>
 <nav class=nav aria-label="Primary">%s</nav><div class=headmeta><span class="env dim"><span class=dot></span>Live evidence</span><span>%s</span></div></header>
@@ -254,7 +254,7 @@ func logoSVG() string {
 }
 
 func faviconSVG() string {
-	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="127 112 1000 1000"><g transform="translate(0 1254) scale(1 -1)"><path fill="#252927" fill-rule="evenodd" clip-rule="evenodd" d="` + approvedLogoPath + `"/></g></svg>`
+	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="127 112 1000 1000"><rect x="127" y="112" width="1000" height="1000" fill="#fff"/><g transform="translate(0 1254) scale(1 -1)"><path fill="#111" fill-rule="evenodd" clip-rule="evenodd" d="` + approvedLogoPath + `"/></g></svg>`
 }
 
 func pageLogin(d Deps, errMsg string) string {

@@ -93,6 +93,10 @@ func TestFaviconUsesApprovedLoomMark(t *testing.T) {
 	if !strings.Contains(body, `<svg xmlns="http://www.w3.org/2000/svg"`) || !strings.Contains(body, approvedLogoPath) {
 		t.Fatal("favicon does not contain the approved Loom mark")
 	}
+	if !strings.Contains(body, `<rect x="127" y="112" width="1000" height="1000" fill="#fff"/>`) ||
+		!strings.Contains(body, `<path fill="#111"`) {
+		t.Fatal("favicon must use a white background and black mark")
+	}
 }
 
 // 没登录不许写。任何节点都能到任何节点的隧道地址,一台被拿下就能去动别人。
