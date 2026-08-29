@@ -187,13 +187,15 @@ direction:
 
 ### 2.2 由方向属性推导出的行为
 
-| 属性 | 该节点在隧道中的角色 | 可否加入 mesh | bootstrap 通道 |
+| 属性 | 该节点在隧道中的角色 | 可否加入 mesh | 管理 SSH |
 |---|---|---|---|
-| `bidirectional` | 可发起、可接受 | ✅ | SSH push 或人工 |
-| `reverse_only` | **只能发起**,`PersistentKeepalive` 维持 | ❌ 会诱发主动直连,与约束冲突 | **只能人工**(§14.2) |
-| `direct_only` | 只能接受 | ✅ | SSH push |
+| `bidirectional` | 可发起、可接受 | ✅ | 由独立管理面事实决定 |
+| `reverse_only` | **只能发起**,`PersistentKeepalive` 维持 | ❌ 会诱发主动直连,与约束冲突 | 由独立管理面事实决定 |
+| `direct_only` | 只能接受 | ✅ | 由独立管理面事实决定 |
 
-> **稳态控制通道对所有节点都是 Agent pull(§14.2)。** 上表最后一列只描述 bootstrap 阶段 —— 那是 SSH push 唯一适用的阶段。
+> `direction` 只描述 Loom 数据面 / WireGuard 建连职责，不是 SSH ACL。生产管理
+> SSH 是中控本地的独立事实；已登记且可达时可用于 bootstrap 和代码快速发布。
+> signed pull 仍是所有节点的持久收敛与离线恢复通道(§14.2)。
 
 **隧道建立方由一条边的两端共同决定,不由单端决定。** 六种组合的完整真值表:
 
@@ -1291,18 +1293,20 @@ user),报成一条状态,进事件历史。于是"开了三天还没关"是一�
 
 控制平面不一定能直连所有节点。BFS 求最短路径 → 生成 `ProxyJump` 链:`ssh -J bj-cloud,cd-local target`。
 
-**这个图只在 bootstrap 阶段需要。** 节点装上之后走 pull 通道(§14.2.2,已实现)。
+这个图用于 bootstrap，也可用于操作者显式触发的管理面快速发布。节点稳态配置与
+离线后的补齐仍走 signed pull(§14.2.2,已实现)。
 
-### 14.2 双通道由方向属性决定
+### 14.2 signed pull 与管理面快速发布并存
 
 | 通道 | 用途 | 方向 | 适用 |
 |---|---|---|---|
-| **SSH push** | **仅 bootstrap** | 平台 → 节点(经 ProxyJump) | `bidirectional` / `direct_only` |
-| **Agent pull** | **稳态**:配置下发、状态与度量上报、排序下发 | **节点 → 平台**(主动轮询) | 所有节点,`reverse_only` **只能**用这个 |
+| **SSH + SCP** | bootstrap；操作者触发的代码快速发布 | 平台 → 节点(可经 ProxyJump) | 所有已登记管理 SSH 的节点 |
+| **Agent pull** | 持久收敛、离线补齐、配置下发、状态与度量上报、排序下发 | **节点 → 平台**(主动轮询) | 所有节点；与 WireGuard `direction` 无关 |
 
-Agent pull 解决四件事:方向合规、NAT 穿透、控制平面可离线、漂移自动收敛。
+Agent pull 解决四件事:节点主动取回、NAT 场景、控制平面可离线、漂移自动收敛。
+管理 SSH 可达的生产节点则不必为了交互式代码发布等待下一次轮询。
 
-> `reverse_only` 节点的 bootstrap 是唯一躲不掉的人工步骤,每台一次。
+> 管理 SSH 的可达性来自中控本地 inventory，不能从 `direction` 推断。
 
 ### 14.2.1 apply:五步,顺序不能换
 
