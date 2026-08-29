@@ -1,5 +1,10 @@
 package webui
 
+import _ "embed"
+
+//go:embed favicon.svg
+var faviconAsset string
+
 // approvedLogoPath is copied from assets/loom-logo-transparent-titanium.svg.
 // Keeping the actual compound geometry here makes the self-contained SSR UI
 // render the same mark as the editable prototypes without an external request.

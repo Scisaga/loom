@@ -644,6 +644,8 @@ func topologyLinks(cfg *Config, nodes []webui.NodeView) []webui.LinkView {
 				l.Source = fmt.Sprintf("%s→%s report.neighbors 承载可达性 · %d 样本/%d 失败 · SSOT 常驻 WG",
 					n.ID, e.To, e.Samples, e.Failures)
 				l.MS = e.MS
+				l.Samples = e.Samples
+				l.Failures = e.Failures
 				l.ObservedAt = e.ObservedAt
 			}
 			by[key] = l

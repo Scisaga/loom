@@ -17,6 +17,8 @@ const (
 	trafficRetention   = 30 * 24 * time.Hour
 	trafficViewWindow  = 24 * time.Hour
 	trafficBucketWidth = time.Hour
+	topologyRateWindow = 5 * time.Minute
+	topologyRTTWindow  = 15 * time.Minute
 	// Traffic sampling is a protocol cadence, not an operator-tunable policy.
 	// Report renders one-minute gossip rounds; three missed rounds are the fixed
 	// conservative transition boundary persisted with every new frame.
@@ -31,6 +33,18 @@ const (
 func trafficFrameFromView(v webui.View, collectedAt time.Time) trafficstore.Frame {
 	frame := trafficstore.Frame{CollectedAt: collectedAt.UTC().Format(time.RFC3339)}
 	for _, node := range v.Nodes {
+		// Node.Edges reaches this point only after buildView has accepted direct
+		// local evidence or verified the relayed measurement digest. Retaining the
+		// signed summary locally avoids a new cross-version observation field.
+		for _, edge := range node.Edges {
+			if node.ID == "" || edge.To == "" || edge.ObservedAt == "" || edge.Samples <= 0 {
+				continue
+			}
+			frame.Edges = append(frame.Edges, trafficstore.EdgeSample{
+				Node: node.ID, Peer: edge.To, TS: edge.ObservedAt, RTTMS: edge.MS,
+				Samples: edge.Samples, Failures: edge.Failures,
+			})
+		}
 		if node.ID == "" || !node.TrafficVerified {
 			continue
 		}
@@ -47,6 +61,60 @@ func trafficFrameFromView(v webui.View, collectedAt time.Time) trafficstore.Fram
 		}
 	}
 	return frame
+}
+
+// enrichTopologyLinkMetrics attaches two deliberately different windows:
+// five-minute observed WG throughput and fifteen-minute variation of signed
+// one-minute RTT medians. Missing samples remain missing rather than becoming
+// zero traffic or zero jitter.
+func enrichTopologyLinkMetrics(store *trafficstore.Store, at time.Time, links []webui.LinkView) error {
+	if store == nil || len(links) == 0 {
+		return nil
+	}
+	rateStart := at.UTC().Add(-topologyRateWindow)
+	buckets, err := store.Query(rateStart, at.UTC(), topologyRateWindow)
+	if err != nil {
+		return err
+	}
+	quality, err := store.QueryLinkQuality(at.UTC().Add(-topologyRTTWindow), at.UTC())
+	if err != nil {
+		return err
+	}
+	byKey := map[string]*webui.LinkView{}
+	for i := range links {
+		if links[i].Kind != "tunnel" {
+			continue
+		}
+		byKey[trafficstore.LinkID(links[i].From, links[i].To)] = &links[i]
+	}
+	for _, bucket := range buckets {
+		for _, totals := range bucket.Links {
+			link := byKey[trafficstore.LinkID(totals.From, totals.To)]
+			if link == nil {
+				continue
+			}
+			link.RecentTXBytes = totals.TXBytes
+			link.RateWindowSeconds = int64(topologyRateWindow / time.Second)
+			link.RateSamples = totals.Samples
+			link.RateReportingEndpoints = totals.ReportingEndpoints
+		}
+	}
+	for _, item := range quality {
+		link := byKey[trafficstore.LinkID(item.From, item.To)]
+		if link == nil {
+			continue
+		}
+		link.QualityP50MS = item.P50MS
+		link.QualityP95MS = item.P95MS
+		link.QualityObservations = item.Observations
+		link.QualityFailed = item.FailedObservations
+		link.MetricsObservedAt = item.LastObservedAt
+	}
+	for _, link := range byKey {
+		link.MetricsWindow = "WG 5m throughput · RTT 15m variation"
+		link.MetricsSource = "signed report.neighbors + independently signed loom-traffic-v1"
+	}
+	return nil
 }
 
 func trafficHistoryFromStore(store *trafficstore.Store, at time.Time) (*webui.TrafficHistoryView, error) {

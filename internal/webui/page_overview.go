@@ -87,7 +87,7 @@ func pageOverview(d Deps, isAuthed bool) string {
 		unresolved = d.Unresolved()
 	}
 	overlay := overviewRouteOverlay(v)
-	b.WriteString(`<div class=overview-primary><section class="card overview-topology-card"><div class=overview-card-head><h2>Network topology</h2><span class="small dim" title="近实时拓扑 · 采样约 1 分钟 · 页面每 30 秒刷新">Agent decisions · newest trusted observation</span><span class=sr-only>近实时拓扑 · 候选跳（未核验） · 部分失败 · 故障</span><div class=legend><span><i class=key></i>WireGuard</span><span><i class="key candidate"></i>Candidate</span>`)
+	b.WriteString(`<div class=overview-primary><section class="card overview-topology-card"><div class=overview-card-head><h2>Network topology</h2><span class="small dim" title="近实时拓扑 · 采样约 1 分钟 · 页面每 30 秒刷新；实线标签：当前 RTT · 近 5 分钟实际速率 · 近 15 分钟 RTT 波动">RTT · 5m 实际速率 · ±15m 波动</span><span class=sr-only>近实时拓扑 · 候选跳（未核验） · 部分失败 · 故障</span><div class=legend><span><i class=key></i>WireGuard</span><span><i class="key candidate"></i>Candidate</span>`)
 	if len(overlay) > 0 {
 		fmt.Fprintf(&b, `<span><i class="key route"></i>%s</span>`, esc(overviewRouteName(v, overlay[0])))
 	}

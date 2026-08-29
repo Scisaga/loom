@@ -40,12 +40,37 @@ type Counter struct {
 	TXBytes       int64  `json:"tx_bytes"`
 }
 
+// EdgeSample is one already-verified report.neighbors summary retained by the
+// control node. RTTMS is itself the reporting node's five-sample median; the
+// store keeps successive signed summaries so UI consumers can describe
+// rolling variation without changing the deployed observation wire format.
+type EdgeSample struct {
+	Node     string `json:"node"`
+	Peer     string `json:"peer"`
+	TS       string `json:"ts"`
+	RTTMS    int    `json:"rtt_ms"`
+	Samples  int    `json:"samples"`
+	Failures int    `json:"failures,omitempty"`
+}
+
 // Frame is one control collection round. Counters retain their node-owned TS;
 // CollectedAt says when the control node accepted the frame.
 type Frame struct {
-	CollectedAt  string    `json:"collected_at"`
-	MaxGapMillis int64     `json:"max_gap_ms,omitempty"`
-	Counters     []Counter `json:"counters"`
+	CollectedAt  string       `json:"collected_at"`
+	MaxGapMillis int64        `json:"max_gap_ms,omitempty"`
+	Counters     []Counter    `json:"counters"`
+	Edges        []EdgeSample `json:"edges,omitempty"`
+}
+
+// LinkQuality summarizes unique directional observations for one undirected
+// carrier. P50/P95 are computed from the retained one-minute median RTTs; they
+// are not packet-level jitter and callers must label the window explicitly.
+type LinkQuality struct {
+	From, To           string
+	P50MS, P95MS       int
+	Observations       int
+	FailedObservations int
+	LastObservedAt     string
 }
 
 // Totals is a byte delta. For node totals RXBytes and TXBytes are populated.
@@ -531,11 +556,39 @@ func canonicalFrame(frame Frame) (Frame, error) {
 	sort.Slice(frame.Counters, func(i, j int) bool {
 		return counterKey(frame.Counters[i]) < counterKey(frame.Counters[j])
 	})
+	frame.Edges = append([]EdgeSample(nil), frame.Edges...)
+	seenEdges := map[string]bool{}
+	for i := range frame.Edges {
+		edge := &frame.Edges[i]
+		if edge.Node == "" || edge.Peer == "" || edge.Node == edge.Peer {
+			return Frame{}, errors.New("traffic edge sample requires distinct node and peer")
+		}
+		if edge.RTTMS < 0 || edge.Samples <= 0 || edge.Failures < 0 || edge.Failures > edge.Samples {
+			return Frame{}, fmt.Errorf("traffic edge sample %s/%s has invalid metrics", edge.Node, edge.Peer)
+		}
+		ts, err := time.Parse(time.RFC3339, edge.TS)
+		if err != nil {
+			return Frame{}, fmt.Errorf("invalid traffic edge timestamp: %w", err)
+		}
+		edge.TS = ts.UTC().Format(time.RFC3339)
+		key := edgeSampleKey(*edge)
+		if seenEdges[key] {
+			return Frame{}, fmt.Errorf("duplicate traffic edge sample %s/%s", edge.Node, edge.Peer)
+		}
+		seenEdges[key] = true
+	}
+	sort.Slice(frame.Edges, func(i, j int) bool {
+		return edgeSampleKey(frame.Edges[i]) < edgeSampleKey(frame.Edges[j])
+	})
 	return frame, nil
 }
 
 func counterKey(c Counter) string {
 	return c.Node + "\x00" + c.Peer + "\x00" + c.Interface
+}
+
+func edgeSampleKey(edge EdgeSample) string {
+	return edge.Node + "\x00" + edge.Peer + "\x00" + edge.TS
 }
 
 func loadFrames(path string) ([]Frame, error) {

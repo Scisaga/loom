@@ -155,7 +155,7 @@ func pageTopology(d Deps, isAuthed bool, selectedEntry ...string) string {
 	}
 
 	var b strings.Builder
-	b.WriteString(`<div class=sectionhead><h2>Network layers</h2><span class=dim>Persistent carriers and on-demand route hops are shown as separate layers.</span><span class=sp><form method=get action="/topology"><select name=entry aria-label="Agent path overlay"><option value="">No Agent path overlay</option>`)
+	b.WriteString(`<div class=sectionhead><h2>Network layers</h2><span class=dim>内圈是可接受反向建连的锚点，外圈是主动接入的出口节点；节点在各自环上等距排列。</span><span class=sp><form method=get action="/topology"><select name=entry aria-label="Agent path overlay"><option value="">No Agent path overlay</option>`)
 	for _, entry := range entries {
 		attr := ""
 		if entry.Key == selected {
@@ -164,7 +164,7 @@ func pageTopology(d Deps, isAuthed bool, selectedEntry ...string) string {
 		fmt.Fprintf(&b, `<option value="%s"%s>%s</option>`, esc(entry.Key), attr, esc(entry.Label))
 	}
 	b.WriteString(`</select> <button>Apply</button></form></span></div>`)
-	fmt.Fprintf(&b, `<div class=grid><div class="card span9">%s<div class=legend><span><i class=key></i>Persistent WireGuard</span><span><i class="key candidate"></i>On-demand route hop</span><span><i class="key route"></i>Selected Agent path</span><span><i class="key degraded"></i>Degraded carrier</span><span><i class="key failed"></i>Failed carrier</span></div><div class=topology-layer-note>Solid lines are persistent carriers with runtime evidence. Dashed lines are route relationships allowed by %s; they are created on demand and are not broken tunnels.</div></div>`, topologySVG(v, overlay...), esc(intentSource))
+	fmt.Fprintf(&b, `<div class=grid><div class="card span9">%s<div class=legend><span><i class=key></i>Persistent WireGuard</span><span><i class="key candidate"></i>On-demand route hop</span><span><i class="key route"></i>Selected Agent path</span><span><i class="key degraded"></i>Degraded carrier</span><span><i class="key failed"></i>Failed carrier</span></div><div class=topology-layer-note>实线标签依次为当前 RTT、近 5 分钟实际传输速率、近 15 分钟 RTT 波动（P95−P50）。速率来自相邻可信 WireGuard 计数器差值，不代表链路容量；虚线仅是 %s 允许的按需路径，不伪装成在线隧道（not broken tunnels）。</div></div>`, topologySVG(v, overlay...), esc(intentSource))
 	fmt.Fprintf(&b, `<div class="card span3"><h2>Layer status</h2><div class=stack>
 <div><div class=label>Persistent carriers</div><div class=metric>%d <small>WG edges</small></div><div class=dim>%s declared inventory</div></div>
 <div><div class=label>Carrier observation</div><div class="metric %s">%d <small>/ %d active</small></div><div class=dim>signed runtime evidence</div></div>
@@ -179,7 +179,7 @@ func pageTopology(d Deps, isAuthed bool, selectedEntry ...string) string {
 	if active == tunnels && tunnels > 0 {
 		carrierBadgeClass, carrierBadgeLabel = "ok", fmt.Sprintf("%d / %d active", active, tunnels)
 	}
-	fmt.Fprintf(&b, `<span class="badge %s"><span class=dot></span>%s</span></div><table><thead><tr><th>Carrier edge<th>Health<th>RTT<th>Last observed<th>Evidence</tr></thead><tbody>`, carrierBadgeClass, carrierBadgeLabel)
+	fmt.Fprintf(&b, `<span class="badge %s"><span class=dot></span>%s</span></div><table><thead><tr><th>Carrier edge<th>Health<th>Current RTT<th>5m actual rate<th>15m RTT variation<th>Last observed<th>Evidence</tr></thead><tbody>`, carrierBadgeClass, carrierBadgeLabel)
 	for _, l := range carrierLinks {
 		cls := "dim"
 		state := "Awaiting evidence"
@@ -192,13 +192,21 @@ func pageTopology(d Deps, isAuthed bool, selectedEntry ...string) string {
 			cls, state = "bad", "Failed"
 		}
 		rtt := "—"
-		if l.MS > 0 {
+		if l.Samples > l.Failures && l.ObservedAt != "" {
 			rtt = fmt.Sprintf("%dms", l.MS)
 		}
-		fmt.Fprintf(&b, `<tr><td class=mono>%s ↔ %s<td><span class="edge-status %s"><span class=dot></span>%s</span><td class=mono>%s<td>%s<td class=edge-source>%s</tr>`, esc(l.From), esc(l.To), cls, state, rtt, esc(ageText(l.ObservedAt, now)), esc(l.Source))
+		rate := "—"
+		if l.RateSamples > 0 && l.RateWindowSeconds > 0 {
+			rate = topologyBitRate(l.RecentTXBytes, l.RateWindowSeconds)
+		}
+		variation := "—"
+		if l.QualityObservations-l.QualityFailed >= 2 && l.QualityP95MS >= l.QualityP50MS {
+			variation = fmt.Sprintf("±%dms", l.QualityP95MS-l.QualityP50MS)
+		}
+		fmt.Fprintf(&b, `<tr><td class=mono>%s ↔ %s<td><span class="edge-status %s"><span class=dot></span>%s</span><td class=mono>%s<td class=mono>%s<td class=mono>%s<td>%s<td class=edge-source>%s</tr>`, esc(l.From), esc(l.To), cls, state, rtt, rate, variation, esc(ageText(l.ObservedAt, now)), esc(l.Source))
 	}
 	if len(carrierLinks) == 0 {
-		b.WriteString(`<tr><td colspan=5><div class=empty>No persistent carrier edges are declared in this view.</div></tr>`)
+		b.WriteString(`<tr><td colspan=7><div class=empty>No persistent carrier edges are declared in this view.</div></tr>`)
 	}
 	b.WriteString(`</tbody></table></section><section class="card topology-edge-card"><div class=edge-panel-head><div><h3>On-demand route hops</h3><p>Possible public hops derived from configured candidate paths.</p></div>`)
 	fmt.Fprintf(&b, `<span class="badge intent"><span class=dot></span>%d configured</span></div><div class=route-hop-list>`, len(candidateLinks))

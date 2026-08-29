@@ -67,6 +67,9 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 				v.TrafficHistoryStatus = "available"
 				v.TrafficHistory = history
 			}
+			if err := enrichTopologyLinkMetrics(trafficStore, at, v.Links); err != nil {
+				v.Warnings = append(v.Warnings, "中控拓扑链路指标不可用:"+err.Error())
+			}
 		}
 	}
 	buildSnapshot := func() webui.View {
@@ -177,7 +180,7 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 				view := buildView(cfg, st, at)
 				if trafficStore != nil {
 					frame := trafficFrameFromView(view, at)
-					if len(frame.Counters) > 0 {
+					if len(frame.Counters) > 0 || len(frame.Edges) > 0 {
 						if err := trafficStore.Append(frame); err != nil {
 							fmt.Fprintf(logw, "! 记流量历史失败:%v\n", err)
 						}

@@ -317,6 +317,58 @@ func TestStoredGapPolicyDoesNotChangeAcrossRestart(t *testing.T) {
 	}
 }
 
+func TestQueryLinkQualityDeduplicatesRelayedObservationAndComputesSpread(t *testing.T) {
+	start := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
+	store := testStore(t)
+	first := EdgeSample{Node: "a", Peer: "b", TS: start.Format(time.RFC3339), RTTMS: 10, Samples: 5}
+	// The control loop can retain the same signed observation in consecutive
+	// collection frames. It must not overweight that value.
+	if err := store.Append(Frame{CollectedAt: start.Format(time.RFC3339), Edges: []EdgeSample{first}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Append(Frame{CollectedAt: start.Add(time.Minute).Format(time.RFC3339), Edges: []EdgeSample{first}}); err != nil {
+		t.Fatal(err)
+	}
+	for minute, rtt := range []int{20, 30, 90} {
+		at := start.Add(time.Duration(minute+2) * time.Minute)
+		edge := EdgeSample{Node: "b", Peer: "a", TS: at.Format(time.RFC3339), RTTMS: rtt, Samples: 5}
+		if err := store.Append(Frame{CollectedAt: at.Format(time.RFC3339), Edges: []EdgeSample{edge}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	failedAt := start.Add(6 * time.Minute)
+	failed := EdgeSample{Node: "a", Peer: "b", TS: failedAt.Format(time.RFC3339), Samples: 5, Failures: 5}
+	if err := store.Append(Frame{CollectedAt: failedAt.Format(time.RFC3339), Edges: []EdgeSample{failed}}); err != nil {
+		t.Fatal(err)
+	}
+
+	quality, err := store.QueryLinkQuality(start, start.Add(10*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(quality) != 1 {
+		t.Fatalf("quality = %+v", quality)
+	}
+	got := quality[0]
+	if got.From != "a" || got.To != "b" || got.Observations != 5 || got.FailedObservations != 1 ||
+		got.P50MS != 20 || got.P95MS != 90 || got.LastObservedAt != failed.TS {
+		t.Fatalf("quality = %+v", got)
+	}
+}
+
+func TestAppendRejectsInvalidAndDuplicateEdgeSamples(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	store := testStore(t)
+	edge := EdgeSample{Node: "a", Peer: "b", TS: now.Format(time.RFC3339), RTTMS: 10, Samples: 5}
+	if err := store.Append(Frame{CollectedAt: now.Format(time.RFC3339), Edges: []EdgeSample{edge, edge}}); err == nil {
+		t.Fatal("duplicate edge sample accepted")
+	}
+	edge.Failures = 6
+	if err := store.Append(Frame{CollectedAt: now.Format(time.RFC3339), Edges: []EdgeSample{edge}}); err == nil {
+		t.Fatal("edge sample with failures above samples accepted")
+	}
+}
+
 func TestStoreRejectsSecondProcessOwner(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "traffic.jsonl")
 	first, err := NewStore(path, time.Hour, time.Minute)

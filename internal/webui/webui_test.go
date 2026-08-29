@@ -81,7 +81,7 @@ func TestEnrollmentProgressScriptIsInlineAndCSPHashLocked(t *testing.T) {
 	}
 }
 
-func TestFaviconUsesApprovedLoomMark(t *testing.T) {
+func TestFaviconUsesSimplifiedLoomMark(t *testing.T) {
 	w := get(t, Handler(deps("", nil)), "/favicon.svg", nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("favicon status=%d", w.Code)
@@ -90,12 +90,50 @@ func TestFaviconUsesApprovedLoomMark(t *testing.T) {
 		t.Fatalf("favicon content type=%q", got)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, `<svg xmlns="http://www.w3.org/2000/svg"`) || !strings.Contains(body, approvedLogoPath) {
-		t.Fatal("favicon does not contain the approved Loom mark")
+	if !strings.Contains(body, `<svg xmlns="http://www.w3.org/2000/svg"`) ||
+		!strings.Contains(body, `<path id="petal" d="M28.5 25.9C22 20 24 10 32 5C40 10 42 20 35.5 25.9"/>`) {
+		t.Fatal("favicon does not contain the simplified Loom petal")
 	}
-	if !strings.Contains(body, `<rect x="127" y="112" width="1000" height="1000" fill="#fff"/>`) ||
-		!strings.Contains(body, `<path fill="#111"`) {
-		t.Fatal("favicon must use a white background and black mark")
+	if strings.Contains(body, approvedLogoPath) || strings.Count(body, `<use href="#petal"`) != 6 {
+		t.Fatal("favicon must use exactly six simple petals instead of the full mark")
+	}
+	if !strings.Contains(body, `<rect width="64" height="64" fill="#fff"/>`) ||
+		!strings.Contains(body, `<g fill="none" stroke="#111" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round">`) ||
+		strings.Contains(body, `<circle`) {
+		t.Fatal("favicon must use a white background and white petals with black outlines")
+	}
+}
+
+func TestTopologyUsesConcentricRingsAndObservedLinkMetrics(t *testing.T) {
+	view := View{Nodes: []NodeView{
+		{ID: "jm24", Self: true, Declared: true, Health: "healthy", Direction: "bidirectional", Roles: []string{"control", "access", "server", "egress"}, City: "北京"},
+		{ID: "gz02", Declared: true, Health: "healthy", Direction: "bidirectional", Roles: []string{"server", "egress"}, City: "广州"},
+		{ID: "hz01", Declared: true, Health: "healthy", Direction: "bidirectional", Roles: []string{"server", "egress"}, City: "杭州"},
+		{ID: "ber01", Declared: true, Health: "healthy", Direction: "reverse_only", Roles: []string{"server", "egress"}, City: "柏林"},
+		{ID: "sg02", Declared: true, Health: "healthy", Direction: "reverse_only", Roles: []string{"server", "egress"}, City: "新加坡"},
+		{ID: "sv01", Declared: true, Health: "healthy", Direction: "reverse_only", Roles: []string{"server", "egress"}, City: "硅谷"},
+	}, Links: []LinkView{
+		{From: "jm24", To: "sv01", Kind: "tunnel", State: "active", MS: 18, Samples: 5, ObservedAt: "2026-08-29T12:00:00Z", RecentTXBytes: 75_000, RateWindowSeconds: 300, RateSamples: 4, RateReportingEndpoints: 2, QualityP50MS: 40, QualityP95MS: 75, QualityObservations: 8, MetricsSource: "trusted test evidence"},
+		{From: "gz02", To: "jm24", Kind: "candidate", State: "unverified", Source: "test intent"},
+	}}
+
+	topology := topologySVG(view)
+	if strings.Count(topology, `data-ring="inner"`) != 3 || strings.Count(topology, `data-ring="outer"`) != 3 {
+		t.Fatalf("topology did not divide the six nodes into two equal rings: %s", topology)
+	}
+	for _, want := range []string{
+		`class="topology-ring outer"`, `class="topology-ring inner"`,
+		`data-node="jm24" data-ring="inner" data-angle="-90.0"`,
+		`data-node="ber01" data-ring="outer" data-angle="-30.0"`,
+		`A 170.0 75.0`, `18ms · 2.0kb/s · ±35ms`, `硅谷 · server + egress`,
+		`近 5 分钟实际传输速率 2.0kb/s`,
+	} {
+		if !strings.Contains(topology, want) {
+			t.Errorf("concentric topology missing %q", want)
+		}
+	}
+	if strings.Contains(topology, `test intent</text>`) {
+		t.Fatal("candidate intent incorrectly received an observed metric label")
 	}
 }
 

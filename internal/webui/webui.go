@@ -448,8 +448,18 @@ type LinkView struct {
 	Kind       string
 	State      string
 	MS         int
+	Samples    int
+	Failures   int
 	ObservedAt string
 	Source     string
+	// Rolling quality is derived centrally from successive independently
+	// verified report.neighbors summaries. RecentTXBytes is the sum of endpoint
+	// WireGuard TX deltas, so each direction is counted once.
+	QualityP50MS, QualityP95MS                      int
+	QualityObservations, QualityFailed              int
+	RecentTXBytes, RateWindowSeconds                int64
+	RateSamples, RateReportingEndpoints             int
+	MetricsWindow, MetricsObservedAt, MetricsSource string
 }
 
 const (
