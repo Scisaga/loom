@@ -123,7 +123,7 @@ func shell(d Deps, title, body string, isAuthed bool, evidence ...View) string {
 		pageScripts += `<script>` + topologyInteractionScript + `</script>`
 	}
 	pageClass := "page-" + active
-	return fmt.Sprintf(`<!doctype html><meta charset=utf-8><title>%s · LOOM</title><link rel=icon href="/favicon.svg?v=7" type="image/svg+xml">
+	return fmt.Sprintf(`<!doctype html><meta charset=utf-8><title>%s · LOOM</title><link rel=icon href="/favicon.svg?v=9" type="image/svg+xml">
 <meta name=viewport content="width=device-width,initial-scale=1">%s%s
 <div class=app><header class=header><a class=brand href="/" aria-label="LOOM overview">%s<span>LOOM</span></a>
 <nav class=nav aria-label="Primary">%s</nav><div class=headmeta><span class="env dim"><span class=dot></span>Live evidence</span><span>%s</span></div></header>

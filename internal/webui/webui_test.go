@@ -107,15 +107,10 @@ func TestFaviconUsesSimplifiedLoomMark(t *testing.T) {
 	if strings.Contains(body, approvedLogoPath) || strings.Count(body, `<use href="#petal-opening"`) != 6 {
 		t.Fatal("favicon must use one simple opening for each of its six petals")
 	}
-	if !strings.Contains(body, `<path id="weave-detail"`) ||
-		strings.Count(body, `<use href="#weave-detail"`) != 6 ||
-		!strings.Contains(body, `stroke-width="18" stroke-linecap="round" opacity=".72"`) {
-		t.Fatal("favicon must use one subtle nested thread in each petal")
-	}
-	if !strings.Contains(body, `<rect x="127" y="112" width="1000" height="1000" fill="#fff"/>`) ||
+	if strings.Contains(body, `<rect`) ||
 		!strings.Contains(body, `<use href="#loom-outline" fill="#111"/>`) ||
 		!strings.Contains(body, `<g fill="#fff">`) {
-		t.Fatal("favicon must use a white background and a black single-band mark")
+		t.Fatal("favicon must use a transparent canvas with white petals and a black single-band mark")
 	}
 }
 
