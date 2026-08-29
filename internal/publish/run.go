@@ -29,6 +29,8 @@ type Options struct {
 	// VerifyURL 非空时,推完之后从**节点视角**确认真的取得到。
 	// 推成功不等于取得到 —— nginx 的路径写错时,推送这一侧完全正常。
 	VerifyURL string
+	// VerifyURLs 是多镜像入口。VerifyURL 保留给旧调用方；两者会去重合并。
+	VerifyURLs []string
 	// DNS 是解析 VerifyURL 用的服务器。留空则用系统解析器。
 	DNS string
 	// PinDir 是钉住状态所在目录。非空且钉住了的话,发的是钉住的那个
@@ -625,14 +627,31 @@ func publishOnce(opts *Options, body []byte, bins map[string][]byte, logf func(s
 			short(resultSnapshot), len(t.Owners()), strings.Join(t.Owners(), " "), opts.Target)
 	}
 
-	if opts.VerifyURL != "" {
-		if err := VerifyServed(opts.VerifyURL, resultSnapshot, opts.DNS, 20*time.Second, t, pub); err != nil {
+	for _, verifyURL := range configuredVerifyURLs(opts) {
+		if err := VerifyServed(verifyURL, resultSnapshot, opts.DNS, 20*time.Second, t, pub); err != nil {
 			// 推成功了但节点取不到,等于没发布。必须当成失败。
-			return "", fmt.Errorf("推完了,但从节点视角取不到:%w", err)
+			return "", fmt.Errorf("推完了,但从节点视角取不到 %s:%w", verifyURL, err)
 		}
-		logf("  ✅ 节点视角已确认(%s)", opts.VerifyURL)
+		logf("  ✅ 节点视角已确认(%s)", verifyURL)
 	}
 	return resultSnapshot, nil
+}
+
+func configuredVerifyURLs(opts *Options) []string {
+	if opts == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	urls := make([]string, 0, len(opts.VerifyURLs)+1)
+	for _, value := range append([]string{opts.VerifyURL}, opts.VerifyURLs...) {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		urls = append(urls, value)
+	}
+	return urls
 }
 
 type targetDeploymentCurrent struct {

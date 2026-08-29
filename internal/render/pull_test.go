@@ -57,6 +57,23 @@ func TestNodeDistributionURLOverridesFleetDefault(t *testing.T) {
 	}
 }
 
+func TestPullRendersOrderedMirrorFlags(t *testing.T) {
+	s := &model.SSOT{
+		Defaults: &model.SSOTDefaults{DistributionURLs: []string{
+			"http://10.99.0.1/loom/", "http://10.99.0.3/loom/",
+		}},
+		Nodes: []model.Node{{ID: "sg02"}},
+	}
+	files, skips := renderPull(s, &s.Nodes[0])
+	if len(skips) != 0 || len(files) != 2 {
+		t.Fatalf("renderPull() files=%d skips=%v", len(files), skips)
+	}
+	want := "pull -url http://10.99.0.1/loom/ -url http://10.99.0.3/loom/ -node sg02"
+	if !strings.Contains(files[0].Content, want) {
+		t.Fatalf("镜像顺序或重复 -url 丢失:\n%s", files[0].Content)
+	}
+}
+
 // pull 必须用**本节点声明的** DNS,不能用机器的全局解析器 —— access-a 上有个
 // 与 Loom 无关的接口把所有域名劫到 8.8.8.8,在境内解析不了任何国内域名。
 func TestPullUsesDeclaredDNS(t *testing.T) {

@@ -92,9 +92,12 @@ type Node struct {
 	// 223.5.5.5 又绕远。
 	DNS []string `yaml:"dns,omitempty"`
 
-	// DistributionURL 覆盖全网默认分发地址。它用于公网分发域名在某条线路上
-	// 被 SNI/备案策略拦截、但节点能经已建立的 WireGuard 邻接读取同一份签名
-	// 静态树的场景。传输点不受信；pull 仍须验证平台签名与单调 generation。
+	// DistributionURLs 覆盖全网默认分发镜像。按优先级排列；节点会并行读取
+	// mutable current、选择最高合法 generation，再从任一镜像取得哈希绑定的
+	// 不可变正文。传输点不受信；pull 仍须验证平台签名与单调 generation。
+	DistributionURLs []string `yaml:"distribution_urls,omitempty"`
+	// DistributionURL 是旧单地址写法，只为已有 SSOT/历史快照兼容保留。
+	// 新配置应使用 DistributionURLs；同一层级不能同时声明两者。
 	DistributionURL string `yaml:"distribution_url,omitempty"`
 
 	// ProbeTargets 是这台机器**本该**够得到的地址,上报者拿它自检直连出网。
@@ -185,13 +188,15 @@ type SSOTDefaults struct {
 	// DNS 是节点本地解析用的服务器。见 Node.DNS。
 	DNS []string `yaml:"dns,omitempty"`
 
-	// DistributionURL 是节点自取配置的地方(§14.2)。
+	// DistributionURLs 是节点自取配置的镜像列表(§14.2)，按优先级排列。
 	//
 	// **它不需要被信任。** 分发的是带 Ed25519 签名的快照,节点用本地钉住的
 	// 公钥验;改一个字节就装不上去。所以放哪儿、经过谁,都不影响安全性 ——
-	// 一个静态目录足矣。
+	// 静态目录足矣；多个相同的静态目录消除单点可用性故障。
 	//
 	// 留空则不渲染 pull 的 unit,节点只能被推(loom apply)。
+	DistributionURLs []string `yaml:"distribution_urls,omitempty"`
+	// DistributionURL 是旧单地址写法，只为兼容已有 SSOT/历史快照保留。
 	DistributionURL string `yaml:"distribution_url,omitempty"`
 }
 
@@ -202,20 +207,48 @@ func (s *SSOT) AttestationMinVersion() int {
 	return 0
 }
 
-// DistributionURL 返回分发点地址;没有配置时返回空。
+// DistributionURLs 返回全网默认镜像，保留旧 distribution_url 的兼容语义。
+func (s *SSOT) DistributionURLs() []string {
+	if s == nil || s.Defaults == nil {
+		return nil
+	}
+	if len(s.Defaults.DistributionURLs) > 0 {
+		return append([]string(nil), s.Defaults.DistributionURLs...)
+	}
+	if s.Defaults.DistributionURL != "" {
+		return []string{s.Defaults.DistributionURL}
+	}
+	return nil
+}
+
+// DistributionURL 返回首选分发点地址;没有配置时返回空。旧调用方只需要
+// 一个运维读取坐标，节点 pull 应使用 DistributionURLsFor。
 func (s *SSOT) DistributionURL() string {
-	if s.Defaults != nil {
-		return s.Defaults.DistributionURL
+	if urls := s.DistributionURLs(); len(urls) > 0 {
+		return urls[0]
 	}
 	return ""
 }
 
-// DistributionURLFor 返回节点使用的分发地址；节点覆盖优先于全网默认值。
-func (s *SSOT) DistributionURLFor(n *Node) string {
-	if n != nil && n.DistributionURL != "" {
-		return n.DistributionURL
+// DistributionURLsFor 返回节点使用的有序镜像；节点覆盖优先于全网默认值。
+func (s *SSOT) DistributionURLsFor(n *Node) []string {
+	if n != nil {
+		if len(n.DistributionURLs) > 0 {
+			return append([]string(nil), n.DistributionURLs...)
+		}
+		if n.DistributionURL != "" {
+			return []string{n.DistributionURL}
+		}
 	}
-	return s.DistributionURL()
+	return s.DistributionURLs()
+}
+
+// DistributionURLFor 返回节点首选分发地址，供旧的人类提示调用。
+func (s *SSOT) DistributionURLFor(n *Node) string {
+	if urls := s.DistributionURLsFor(n); len(urls) > 0 {
+		return urls[0]
+	}
+	return ""
 }
 
 // DNSFor 返回某个节点最终生效的解析器:节点覆盖优先,否则用全局默认。

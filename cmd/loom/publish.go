@@ -33,9 +33,10 @@ func withPublishTransactionLock(fn func() error) error {
 
 func cmdPublish(args []string) error {
 	fs := flag.NewFlagSet("publish", flag.ExitOnError)
-	out := fs.String("o", "", "分发目标:/绝对路径 或 ssh://主机/绝对路径(必需)")
+	var outSpecs, verifyURLs repeatedFlag
+	fs.Var(&outSpecs, "o", "分发目标，可重复:/绝对路径 或 ssh://主机/绝对路径(至少一个)")
 	keyPath := fs.String("key", "", "平台签名私钥(必需)")
-	verify := fs.String("verify-url", "", "推完后从这个地址确认节点取得到")
+	fs.Var(&verifyURLs, "verify-url", "推完后从这个地址确认节点取得到，可重复")
 	dns := fs.String("dns", "", "解析 verify-url 用的 DNS(不依赖机器全局设置)")
 	sshConf := fs.String("ssh-config", "", "ssh 配置文件")
 	author := fs.String("author", "", "记进 manifest 的作者")
@@ -49,8 +50,8 @@ func cmdPublish(args []string) error {
 	if err != nil {
 		return err
 	}
-	if len(rest) != 1 || *out == "" || *keyPath == "" {
-		return fmt.Errorf("用法:loom publish <ssot.yaml> -o <目标> -key <私钥>")
+	if len(rest) != 1 || len(outSpecs) == 0 || *keyPath == "" {
+		return fmt.Errorf("用法:loom publish <ssot.yaml> -o <目标> [-o <镜像>] -key <私钥>")
 	}
 	if *binary != "" {
 		return fmt.Errorf("loom publish -binary 已禁用：它会绕过 reason、buildinfo 与 selfcheck 安全门；请先 `loom release -binary %s -reason <理由>`，再重跑本命令或等 publisher", *binary)
@@ -66,18 +67,26 @@ func cmdPublish(args []string) error {
 		return err
 	}
 	// -o 给相对路径时当本地目录用,省得每次都写绝对路径。
-	spec := *out
-	if !strings.HasPrefix(spec, "ssh://") && !strings.HasPrefix(spec, "/") {
-		abs, err := filepath.Abs(spec)
+	targets := make([]publish.Target, 0, len(outSpecs))
+	for _, raw := range outSpecs {
+		spec := raw
+		if !strings.HasPrefix(spec, "ssh://") && !strings.HasPrefix(spec, "/") {
+			abs, err := filepath.Abs(spec)
+			if err != nil {
+				return err
+			}
+			if err := os.MkdirAll(abs, 0o755); err != nil {
+				return err
+			}
+			spec = abs
+		}
+		target, err := publish.ParseTarget(spec, *sshConf)
 		if err != nil {
 			return err
 		}
-		if err := os.MkdirAll(abs, 0o755); err != nil {
-			return err
-		}
-		spec = abs
+		targets = append(targets, target)
 	}
-	tgt, err := publish.ParseTarget(spec, *sshConf)
+	tgt, err := publish.NewMirrorSet(targets...)
 	if err != nil {
 		return err
 	}
@@ -89,7 +98,7 @@ func cmdPublish(args []string) error {
 	// 偷偷把 §15.4 的版本绑定清空。
 	return publish.Run(context.Background(), publish.Options{
 		SSOTPath: rest[0], Key: ed25519.PrivateKey(privBytes), Target: tgt,
-		Author: *author, VerifyURL: *verify, DNS: *dns,
+		Author: *author, VerifyURLs: verifyURLs, DNS: *dns,
 		ArchiveDir: *archive, PinDir: *pinDir, ReleaseDir: *releaseDir,
 		AllowUntraceable: *allowDirty, LockPath: publishTransactionLockPath,
 		Once: true, Log: os.Stdout,

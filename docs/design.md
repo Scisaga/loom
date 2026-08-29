@@ -1356,12 +1356,12 @@ D88 的 signed deployment envelope 证明平台当前授权，并以节点本地
 记住已经接受到哪一代。两层签名解决的是不同问题，不能只留其中一层。
 
 ```
-签发端(有私钥)               分发点(静态目录,不可信)          节点
-  loom publish  ──────────────► current.json (signed, generation) loom pull
-    渲染 → 快照签名              <id>/snapshot.json + .sig      ──► 1 验 current 签名/单调 floor
-    耐久 release authority       <id>/nodes/<node>.json             2 验 manifest 与配置包哈希
-    产物全是 ${secret:...}                                           3 用本机秘密层填占位符
-                                                                      4 事务安装并记录 applied
+签发端(有私钥)               多个静态镜像(不可信)                节点
+  loom publish  ──────────────► gz02 / hz01 / 外部镜像             loom pull
+    渲染 → 快照签名              current.json(signed,generation)  ──► 1 并行验 current,选最高合法代
+    耐久 release authority       <id>/snapshot.json + .sig          2 从任一镜像验 manifest/正文哈希
+    产物全是 ${secret:...}        <id>/nodes/<node>.json             3 用本机秘密层填占位符
+                                                                        4 事务安装并记录 applied
 ```
 
 三件事因此成立:
@@ -1381,11 +1381,19 @@ payload、以及 floor 已存在后剥掉 envelope 变回 legacy 都会失败关
 unsigned legacy；legacy 只留给旧版父进程持有继承 deploy.lock 发起的同快照
 continuation。首次见到有效签名仍不是一般意义上的全局 freshness 证明。
 
-**分发坐标可以按节点覆盖，但接受边界不能覆盖。** 公网分发域名在某条线路上
-可能被 SNI/备案策略拦截；节点已经建立 WireGuard 邻接时，可以从邻居的隧道地址
-读取同一份静态树。该覆盖只改变字节从哪里取得，平台签名、manifest 哈希、本机
-秘密合并和单调 generation floor 仍完全相同。因为传输点本来就不受信，隧道内
-HTTP 也不能绕过任何一层验签。
+**分发坐标可以按节点覆盖或列出多个，但接受边界不能覆盖。** 公网分发域名在某条
+线路上可能被 SNI/备案策略拦截；节点已经建立 WireGuard 邻接时，可以优先从两个
+邻居的隧道地址读取同一份静态树，再以公网镜像兜底。`loom pull` 并行读取全部
+`current.json`，逐份验签和核对本地 floor，选择最高合法 generation；同 generation
+出现不同 payload 是签发端分叉，必须失败关闭，不能按 URL 顺序任选一个。mutable
+指针选定后，manifest、节点正文和内容寻址二进制可从任一镜像取得，每一层仍单独
+验签/验哈希。该覆盖只改变字节从哪里取得，平台签名、本机秘密合并和单调 floor
+完全相同；隧道内 HTTP 也不能绕过任何接受检查。
+
+镜像的缓存语义必须与可变性一致：`current.json` 使用 `no-store`；snapshot、节点
+正文和 `bin/<sha256>` 都由签名或内容哈希绑定，使用长效 `immutable` 缓存。publisher
+把同一棵树收敛到所有声明镜像，并逐个从 HTTP 读取验证；某个目标部分成功不会破坏
+安全，但本轮保持失败状态并在下一轮修复落后的镜像，不能把“至少写进一台”报告为绿。
 
 **每台机器只拿自己那份秘密。** `loom secrets split` 扫一遍各节点的渲染产物,
 按实际引用拆分总表:cn-a 拿 3 项,edge-b 拿 2 项,只有 access-a 有控制端点与
@@ -1432,7 +1440,7 @@ id 只说明"配置来自哪一版",不说明机器现在是不是那个样子�
 发布器是中控上的守护进程，盯着 SSOT 与显式放行记录:
 
 ```
-SSOT/放行记录变了 → 校验 → 渲染 → 签名 → 推到分发点 → 从节点视角确认取得到
+SSOT/放行记录变了 → 校验 → 渲染 → 签名 → 推到全部镜像 → 逐镜像确认取得到
 ```
 
 **只有 SSOT 是保存后自动发布。** Go 代码必须显式 `loom release`；把“编译”

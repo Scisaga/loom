@@ -139,7 +139,14 @@ func cmdAddNode(args []string) error {
 	fmt.Printf("      install -m 0600 /tmp/node.env %s\n", render.NodeSecretsPath)
 	fmt.Printf("      echo %s > /etc/loom/node-id\n", *id)
 	fmt.Printf("      rm -f /tmp/loom.new /tmp/platform-signing.pub /tmp/node.env\n")
-	fmt.Printf("      loom pull -url %s -dns %s'\n\n", nonEmptyOr(s.DistributionURL(), "<分发点>"), firstDNS(s, n))
+	urlFlags := ""
+	for _, mirror := range s.DistributionURLsFor(n) {
+		urlFlags += " -url " + mirror
+	}
+	if urlFlags == "" {
+		urlFlags = " -url <分发点>"
+	}
+	fmt.Printf("      loom pull%s -dns %s'\n\n", urlFlags, firstDNS(s, n))
 	fmt.Printf("最后那次 pull 会把其余全部装好,包括它自己的定时器。\n")
 	fmt.Printf("还要在新机器上放 TLS 材料(%s / node.crt / node.key,见 deploy/README)。\n", "ca.crt")
 	return nil
@@ -150,13 +157,6 @@ func optFlag(name, v string) string {
 		return ""
 	}
 	return " " + name + " " + v
-}
-
-func nonEmptyOr(v, alt string) string {
-	if v == "" {
-		return alt
-	}
-	return v
 }
 
 func firstDNS(s *model.SSOT, n *model.Node) string {

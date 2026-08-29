@@ -108,6 +108,21 @@ declarations:
 	}
 }
 
+func TestDistributionMirrorsKeepLegacyCompatibilityAndNodeOverride(t *testing.T) {
+	legacy := &SSOT{Defaults: &SSOTDefaults{DistributionURL: "https://legacy.example/loom/"}}
+	if got := legacy.DistributionURLs(); len(got) != 1 || got[0] != "https://legacy.example/loom/" {
+		t.Fatalf("旧 distribution_url 没有提升为单镜像:%v", got)
+	}
+	s := &SSOT{
+		Defaults: &SSOTDefaults{DistributionURLs: []string{"https://a.example/loom/", "https://b.example/loom/"}},
+		Nodes:    []Node{{ID: "sv01", DistributionURLs: []string{"http://10.99.2.2/loom/", "http://10.99.2.4/loom/"}}},
+	}
+	got := s.DistributionURLsFor(&s.Nodes[0])
+	if len(got) != 2 || got[0] != "http://10.99.2.2/loom/" || got[1] != "http://10.99.2.4/loom/" {
+		t.Fatalf("节点多镜像覆盖不对:%v", got)
+	}
+}
+
 // TestMeshEligibleIsDerived:能否进 mesh 由 direction 推导,直接决定
 // 隧道矩阵有多大(§6.3、D13)。
 func TestMeshEligibleIsDerived(t *testing.T) {

@@ -37,7 +37,9 @@ func (fs *findings) add(rule, where, format string, args ...any) {
 // Validate 检查整份 SSOT,返回按 (Where, Rule) 排序的稳定结果。
 func Validate(s *model.SSOT) []Finding {
 	var fs findings
-	checkDistributionURL(&fs, "defaults", s.DistributionURL())
+	if s.Defaults != nil {
+		checkDistributionURLs(&fs, "defaults", s.Defaults.DistributionURL, s.Defaults.DistributionURLs)
+	}
 	if v := s.AttestationMinVersion(); v != 0 && v != 5 {
 		fs.add("§13.3 签名", "defaults",
 			"attestation_min_version 只能是 0（兼容阶段）或 5（全网 reader 升级后的强制阶段），收到 %d", v)
@@ -67,7 +69,31 @@ func checkDistributionURL(fs *findings, where, raw string) {
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") ||
 		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		fs.add("§14.2 分发", where,
-			"distribution_url 必须是无凭据、query 和 fragment 的完整 http(s) URL，收到 %q", raw)
+			"distribution_url(s) 分发镜像必须是无凭据、query 和 fragment 的完整 http(s) URL，收到 %q", raw)
+	}
+}
+
+func checkDistributionURLs(fs *findings, where, legacy string, mirrors []string) {
+	if legacy != "" && len(mirrors) > 0 {
+		fs.add("§14.2 分发", where,
+			"distribution_url 与 distribution_urls 不能同时声明；请把全部镜像放进 distribution_urls")
+	}
+	if legacy != "" {
+		checkDistributionURL(fs, where, legacy)
+	}
+	seen := map[string]bool{}
+	for i, raw := range mirrors {
+		itemWhere := fmt.Sprintf("%s.distribution_urls[%d]", where, i)
+		if raw == "" {
+			fs.add("§14.2 分发", itemWhere, "镜像地址不能为空")
+			continue
+		}
+		checkDistributionURL(fs, itemWhere, raw)
+		canonical := strings.TrimRight(raw, "/")
+		if seen[canonical] {
+			fs.add("§14.2 分发", itemWhere, "镜像地址重复:%q", raw)
+		}
+		seen[canonical] = true
 	}
 }
 
@@ -106,9 +132,7 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 		if n.ID != "" {
 			idx[n.ID] = n
 		}
-		if n.DistributionURL != "" {
-			checkDistributionURL(fs, where, n.DistributionURL)
-		}
+		checkDistributionURLs(fs, where, n.DistributionURL, n.DistributionURLs)
 
 		// 至少要承担一种角色。两种都有是合法的 —— 一台服务器自己也要
 		// 走代理出去是真实需求(§1.3)。

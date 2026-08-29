@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
@@ -31,7 +30,6 @@ import (
 	"loom/internal/report"
 	"loom/internal/rollout"
 	"loom/internal/secret"
-	"loom/internal/snapshot"
 )
 
 type pullCurrent struct {
@@ -59,7 +57,8 @@ func cmdPull(args []string) (retErr error) {
 	fs := flag.NewFlagSet("pull", flag.ExitOnError)
 	rolloutPath := fs.String("rollout", rollout.Path,
 		"记 rollout 阶段的地方 —— 只记录,不改变行为(D78)")
-	url := fs.String("url", "", "分发点根地址(必需)")
+	var mirrorURLs repeatedFlag
+	fs.Var(&mirrorURLs, "url", "分发镜像根地址，可按优先级重复(至少一个)")
 	pubPath := fs.String("pubkey", "/etc/loom/trust/platform.pub", "钉住的平台公钥")
 	node := fs.String("node", "", "本节点 id(默认取 /etc/loom/node-id)")
 	secretsPath := fs.String("secrets", "/etc/loom/secrets/node.env", "本机秘密层")
@@ -78,8 +77,9 @@ func cmdPull(args []string) (retErr error) {
 	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
-	if *url == "" {
-		return fmt.Errorf("需要 -url 指向分发点")
+	bases, err := normalizePullMirrors(mirrorURLs)
+	if err != nil {
+		return err
 	}
 	if *timeout <= 0 {
 		return fmt.Errorf("-timeout 必须大于 0")
@@ -112,25 +112,18 @@ func cmdPull(args []string) (retErr error) {
 		}
 		defer transactionLock.Close()
 	}
-	base := strings.TrimRight(*url, "/")
 	c := netx.Client(*dnsSrv, *timeout)
 
-	// 1. 先把 mutable current 当原始字节取回，再用本地钉住的公钥判断它究竟
-	//    是 signed current，还是尚在迁移期的严格 legacy current。不能先用
-	//    宽松 struct 解码，否则坏签名/未知字段可能意外降级成 unsigned。
-	currentBytes, err := getBytes(c, base+"/current.json")
-	if err != nil {
-		return err
-	}
 	pubBytes, err := readKey(*pubPath, ed25519.PublicKeySize)
 	if err != nil {
 		return fmt.Errorf("读不到钉住的公钥 %s:%w", *pubPath, err)
 	}
+	var expectedBody []byte
 	if *expectedCurrentPath != "" {
 		if !filepath.IsAbs(*expectedCurrentPath) {
 			return fmt.Errorf("-expected-current 必须是绝对路径:%q", *expectedCurrentPath)
 		}
-		expectedBody, err := os.ReadFile(*expectedCurrentPath)
+		expectedBody, err = os.ReadFile(*expectedCurrentPath)
 		if err != nil {
 			return fmt.Errorf("读取带外钉住的 signed current:%w", err)
 		}
@@ -141,20 +134,24 @@ func cmdPull(args []string) (retErr error) {
 		if err := expected.Verify(ed25519.PublicKey(pubBytes)); err != nil {
 			return fmt.Errorf("-expected-current 验签失败:%w", err)
 		}
-		if !bytes.Equal(currentBytes, expectedBody) {
-			return fmt.Errorf("分发点 current.json 与带外钉住的 %s 不完全一致，拒绝首次接入",
-				*expectedCurrentPath)
-		}
 	}
 	floorBefore, err := releasefloor.Read(*releaseFloorPath)
 	if err != nil {
 		return err
 	}
-	cur, err := decodePullCurrent(currentBytes, id, ed25519.PublicKey(pubBytes), floorBefore,
-		continuation != nil)
+	// 1. 并行读取所有 mutable current，逐份验签和核对本地 floor，再选择
+	//    最高合法 generation。URL 顺序只决定同一决策下的正文读取优先级，
+	//    不能让一个靠前但陈旧的镜像把节点压在旧代。
+	selection, err := selectPullCurrentFromMirrors(c, bases, id, ed25519.PublicKey(pubBytes),
+		floorBefore, continuation != nil, expectedBody)
 	if err != nil {
 		return err
 	}
+	for _, warning := range selection.warnings {
+		fmt.Printf("  ! 镜像不可用:%v\n", warning)
+	}
+	cur := selection.current
+	contentBases := selection.contentBases
 	selected := cur.snapshot
 	if cur.signed != nil && floorBefore == nil && continuation == nil &&
 		*expectedCurrentPath == "" && cur.signed.Generation != 1 {
@@ -202,25 +199,12 @@ func cmdPull(args []string) (retErr error) {
 
 	// 3. 验签。**先验签再看内容** —— 顺序反了的话,恶意 manifest 里的
 	//    路径和哈希已经影响了后面的行为。
-	root := base + "/" + selected
-	manBytes, err := getBytes(c, root+"/"+manifestFile)
+	man, manifestBase, err := fetchManifestFromMirrors(c, contentBases, selected, ed25519.PublicKey(pubBytes))
 	if err != nil {
 		return err
 	}
-	sig, err := getBytes(c, root+"/"+sigFile)
-	if err != nil {
-		return err
-	}
-	if err := snapshot.VerifySignature(manBytes, sig, ed25519.PublicKey(pubBytes)); err != nil {
-		return fmt.Errorf("验签失败,拒绝安装:%w", err)
-	}
-	var man snapshot.Manifest
-	if err := json.Unmarshal(manBytes, &man); err != nil {
-		return err
-	}
-	if man.ID != selected {
-		return fmt.Errorf("current.json 说 %s,manifest 里却是 %s —— 分发点在乱指",
-			short(selected), short(man.ID))
+	if manifestBase != selection.currentBase {
+		fmt.Printf("  ↪ current 来自 %s，manifest 从镜像 %s 回退取得\n", selection.currentBase, manifestBase)
 	}
 	fmt.Printf("  ✅ 验签通过(%d 个节点的包)\n", len(man.Bundles))
 	decommissioned := false
@@ -237,9 +221,13 @@ func cmdPull(args []string) (retErr error) {
 	// 下线节点完全不需要预取，必须优先执行签名过的 decommission 指令。
 	var binaryCandidate *binaryUpgradeCandidate
 	if !decommissioned {
-		binaryCandidate, err = prepareBinaryUpgrade(c, base, &man, *binPath, *dry)
+		var binaryBase string
+		binaryCandidate, binaryBase, err = prepareBinaryUpgradeFromMirrors(c, contentBases, man, *binPath, *dry)
 		if err != nil {
 			return err
+		}
+		if binaryBase != "" && binaryBase != manifestBase {
+			fmt.Printf("  ↪ 二进制从镜像 %s 取得\n", binaryBase)
 		}
 		defer binaryCandidate.cleanup()
 	}
@@ -353,14 +341,14 @@ func cmdPull(args []string) (retErr error) {
 
 	// 3.6 二进制。**在配置之前** —— 新版读得懂旧配置,旧版读不懂新配置
 	//     (§15.4、D46)。
-	// 用 base 不是 root:二进制是**内容寻址**的,放在树的顶层跨快照共享。
+	// 二进制是**内容寻址**的,放在树的顶层跨快照共享。
 	// 回滚到旧快照时旧二进制还在,不用重新下载。
 	enterRec(rollout.Activating)
 	if swapped, err := activateBinary(binaryCandidate, *binPath, *dry); err != nil {
 		return err
 	} else if swapped && !*dry {
 		if rec != nil {
-			rec.Binary = binarySHA(&man)
+			rec.Binary = binarySHA(man)
 			saveRec()
 		}
 		// **用新二进制续跑同一个快照,不等下一个定时器**(D80)。
@@ -380,10 +368,6 @@ func cmdPull(args []string) (retErr error) {
 	}
 
 	// 4. 取自己那份,与签名覆盖到的哈希比对
-	var d publish.Bundle
-	if err := getJSON(c, root+"/nodes/"+id+".json", &d); err != nil {
-		return fmt.Errorf("取 %s 的配置包:%w", id, err)
-	}
 	want := ""
 	for _, b := range man.Bundles {
 		if b.Owner == id {
@@ -398,10 +382,12 @@ func cmdPull(args []string) (retErr error) {
 			"如果是有意下线,应当先标 decommission 让本机自己停;"+
 			"缺席只当作异常处理,本机维持现状不动", id)
 	}
-	got := bundleHash(d.Files)
-	if got != want {
-		return fmt.Errorf("配置包哈希对不上(签名说 %s,取到的是 %s),拒绝安装",
-			short(want), short(got))
+	d, bundleBase, err := fetchBundleFromMirrors(c, contentBases, selected, id, want)
+	if err != nil {
+		return fmt.Errorf("取 %s 的配置包:%w", id, err)
+	}
+	if bundleBase != manifestBase {
+		fmt.Printf("  ↪ 节点配置从镜像 %s 取得\n", bundleBase)
 	}
 	fmt.Printf("  ✅ 配置包哈希与签名一致(%d 个文件)\n", len(d.Files))
 

@@ -2601,3 +2601,29 @@ carrier 状态与 traffic 陈述复用一次 `wg show all dump`，不能为两�
 这个决定只覆盖 Loom WireGuard carrier。`direct` 没有 WG hop，Service/sing-box
 与 Hysteria2 也没有进入这个 counter 契约；在各自的数据平面/L7 collector 落地前，
 不得把这些流量塞进当前图表，也不得把 WG hop-weighted 总量命名为 service traffic。
+
+### D91 · 保留 signed pull，用多镜像消除分发可用性单点
+
+**日期** 2026-08-29 · **状态** 已实现、生产迁移中 · **相关** [D32](#d32--控制面是一棵签了名的静态树不需要被信任)、[D88](#d88--用签名-deployment-envelope-同时闭合反重放与真实-canary)、§14.2.2
+
+单个 gz02 静态目录没有破坏真实性边界，但它把更新可用性绑在一台机器和一条公网
+SNI 路径上。实际接入 `sv01` 时该线路在 nginx 之前被重置，证明“分发点不必可信”
+不等于“一个分发点就足够可靠”。解决方式不是恢复长期 SSH push，也不是引入一套
+有状态共识控制面，而是让同一棵签名静态树存在于多个可替换镜像。
+
+SSOT 使用有序 `distribution_urls`；旧 `distribution_url` 继续作为单元素兼容输入，
+同一层级同时声明新旧字段则拒绝。节点并行读取所有 mutable current，逐份验证签名、
+assignment 与本地 release floor，然后选择最高合法 generation。URL 顺序只决定同一
+release 的正文优先级，不能让靠前的旧镜像压住新代；同 generation 的不同签名 payload
+视为签发端分叉并失败关闭。manifest、节点 bundle 和 content-addressed binary 都可从
+任一镜像回退取得，但必须分别通过原有签名、ID、hash 与 size 检查。
+
+publisher 接受多个 target 和 verify URL。同一轮会尝试推送全部镜像；任何一个失败，
+即使其他镜像已安全更新，本轮也不写绿色健康状态，下一轮继续收敛。这里不声称跨主机
+原子提交：镜像可以短暂处于不同 generation，节点的最高合法代选择与本地 floor 正是
+这个异步复制模型的安全边界。`current.json` 不缓存；不可变 snapshot 与 binary 使用
+长效 immutable 缓存。
+
+这一步只消除传输可用性单点，不冒充真实 canary。批次推进仍须由 D88 的 assignments、
+节点签名回执和尚未实现的 controller 完成；外部 monotonic witness 也仍是更强灾难恢复
+模型的后续加固项。

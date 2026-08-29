@@ -24,8 +24,9 @@ func cmdPublisher(args []string) error {
 	fs := flag.NewFlagSet("publisher", flag.ExitOnError)
 	ssot := fs.String("ssot", "deploy/ssot.yaml", "盯着哪个 SSOT")
 	keyPath := fs.String("key", "", "平台签名私钥(必需)")
-	target := fs.String("target", "", "分发目标:/绝对路径 或 ssh://主机/绝对路径(必需)")
-	verify := fs.String("verify-url", "", "推完后从这个地址确认节点取得到(强烈建议)")
+	var targetSpecs, verifyURLs repeatedFlag
+	fs.Var(&targetSpecs, "target", "分发目标，可重复:/绝对路径 或 ssh://主机/绝对路径(至少一个)")
+	fs.Var(&verifyURLs, "verify-url", "推完后从这个地址确认节点取得到，可重复(强烈建议)")
 	sshConf := fs.String("ssh-config", "", "ssh 配置文件(target 是 ssh:// 时用)")
 	dns := fs.String("dns", "", "解析 verify-url 用的 DNS(不依赖机器全局设置)")
 	author := fs.String("author", "", "记进 manifest 的作者")
@@ -44,8 +45,8 @@ func cmdPublisher(args []string) error {
 	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
-	if *keyPath == "" || *target == "" {
-		return fmt.Errorf("需要 -key 和 -target")
+	if *keyPath == "" || len(targetSpecs) == 0 {
+		return fmt.Errorf("需要 -key 和至少一个 -target")
 	}
 	if *archive == "" {
 		return fmt.Errorf("publisher 不允许关闭 -ssot-history：没有源头存档的快照无法回滚")
@@ -54,13 +55,21 @@ func cmdPublisher(args []string) error {
 	if err != nil {
 		return err
 	}
-	tgt, err := publish.ParseTarget(*target, *sshConf)
+	targets := make([]publish.Target, 0, len(targetSpecs))
+	for _, spec := range targetSpecs {
+		target, err := publish.ParseTarget(spec, *sshConf)
+		if err != nil {
+			return err
+		}
+		targets = append(targets, target)
+	}
+	tgt, err := publish.NewMirrorSet(targets...)
 	if err != nil {
 		return err
 	}
 
 	fmt.Printf("Loom 发布器 · %s → %s\n", *ssot, tgt)
-	if *verify == "" {
+	if len(verifyURLs) == 0 {
 		// 推成功不等于取得到。不验证就跑,等于把一类静默故障留在系统里。
 		fmt.Fprintln(os.Stderr, "! 没有 -verify-url:推送成功不代表节点取得到(nginx 路径写错时推送侧完全正常)")
 	}
@@ -75,7 +84,7 @@ func cmdPublisher(args []string) error {
 
 	return publish.Run(ctx, publish.Options{
 		SSOTPath: *ssot, Key: ed25519.PrivateKey(privBytes), Target: tgt,
-		Author: *author, VerifyURL: *verify, DNS: *dns, BinaryPath: *binary,
+		Author: *author, VerifyURLs: verifyURLs, DNS: *dns, BinaryPath: *binary,
 		ArchiveDir:       *archive,
 		PinDir:           *pinDir,
 		HealthPath:       *health,

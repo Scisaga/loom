@@ -27,7 +27,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/loom pull -url %s -node %s%s
+ExecStart=/usr/local/bin/loom pull%s -node %s%s
 # 配置落盘时含凭据
 UMask=0077
 StateDirectory=loom
@@ -54,12 +54,16 @@ WantedBy=timers.target
 
 // renderPull 生成节点的取配置 unit 与定时器。
 func renderPull(s *model.SSOT, n *model.Node) ([]File, []Skip) {
-	url := s.DistributionURLFor(n)
-	if url == "" {
+	urls := s.DistributionURLsFor(n)
+	if len(urls) == 0 {
 		return nil, []Skip{{
 			Where:  "pull:" + n.ID,
-			Reason: "没有配置 distribution_url,不渲染取配置的 unit —— 该节点只能被 loom apply 推",
+			Reason: "没有配置 distribution_urls,不渲染取配置的 unit —— 该节点只能被 loom apply 推",
 		}}
+	}
+	urlFlags := ""
+	for _, url := range urls {
+		urlFlags += " -url " + url
 	}
 
 	// 解析分发点用**本节点声明的** DNS,不用机器的全局解析器。
@@ -74,7 +78,7 @@ func renderPull(s *model.SSOT, n *model.Node) ([]File, []Skip) {
 
 	return []File{
 		{Path: "systemd/loom-pull.service",
-			Content: fmt.Sprintf(pullUnit, n.ID, url, n.ID, extra)},
+			Content: fmt.Sprintf(pullUnit, n.ID, urlFlags, n.ID, extra)},
 		{Path: "systemd/loom-pull.timer",
 			Content: fmt.Sprintf(pullTimer, n.ID, pullPeriod)},
 	}, nil

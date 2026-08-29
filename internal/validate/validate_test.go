@@ -564,3 +564,19 @@ func TestDistributionURLMustBeAnUncredentialedHTTPURL(t *testing.T) {
 		t.Fatalf("safe node distribution override was rejected: %s", got)
 	}
 }
+
+func TestDistributionMirrorListRejectsAmbiguityAndDuplicates(t *testing.T) {
+	s := &model.SSOT{Defaults: &model.SSOTDefaults{
+		DistributionURL:  "https://one.example/loom/",
+		DistributionURLs: []string{"https://two.example/loom/"},
+	}}
+	if got := Format(Validate(s)); !strings.Contains(got, "不能同时声明") {
+		t.Fatalf("新旧字段并存未被拒绝:%s", got)
+	}
+	s = &model.SSOT{Defaults: &model.SSOTDefaults{DistributionURLs: []string{
+		"https://one.example/loom", "https://one.example/loom/",
+	}}}
+	if got := Format(Validate(s)); !strings.Contains(got, "镜像地址重复") {
+		t.Fatalf("等价镜像重复未被拒绝:%s", got)
+	}
+}

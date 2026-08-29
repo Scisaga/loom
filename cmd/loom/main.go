@@ -55,11 +55,11 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
   loom rollback                            现在处在不处在回滚状态
   loom snapshots                           发过哪些快照,以及还能退回哪些
   loom current   -file <signed-current>    验签并打印 generation / payload digest
-  loom publisher -ssot <文件> -key <私钥> -target <目标>
+  loom publisher -ssot <文件> -key <私钥> -target <目标> [-target <镜像>]
                                          中控守护进程:盯 SSOT,变了就发布
-  loom publish  <ssot.yaml> -o <目标> -key <私钥>
+  loom publish  <ssot.yaml> -o <目标> [-o <镜像>] -key <私钥>
                                          手动发一次(目标可以是本地目录或 ssh://)
-  loom pull     -url <分发点> -pubkey <公钥>
+  loom pull     -url <分发点> [-url <镜像>] -pubkey <公钥>
                                          节点自己拉:验签 → 本地填秘密 → 安装 → 验证
   loom secrets  split  <ssot.yaml> -secrets <总表> -o <目录>
                                          把总表拆成每节点一份(只给它用得到的)
@@ -189,6 +189,20 @@ func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
 		args = fs.Args()[1:]
 	}
 	return positional, nil
+}
+
+// repeatedFlag 让 -url/-target/-verify-url 可以按优先级重复声明，同时保持
+// 单值旧命令完全兼容。flag.Value 的 String 只用于 usage，不参与解析。
+type repeatedFlag []string
+
+func (f *repeatedFlag) String() string { return strings.Join(*f, ",") }
+
+func (f *repeatedFlag) Set(value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("值不能为空")
+	}
+	*f = append(*f, value)
+	return nil
 }
 
 func cmdValidate(args []string) error {
