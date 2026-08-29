@@ -575,6 +575,7 @@ func topologySVG(v View, routeOverlay ...RouteView) string {
 	b.WriteString(`<circle class=ring-dot cx=18 cy=18 r="3"/><text class=ring-key x=28 y=21>内圈：可接受反向建连的锚点</text><circle class=ring-dot cx=18 cy=35 r="3"/><text class=ring-key x=28 y=38>外圈：反向接入的出口节点</text>`)
 	curves := map[string]topologyCurve{}
 	curveStarts := map[string]string{}
+	metricPositions := topologyMetricPositions(v.Links, pos)
 	var metricLabels strings.Builder
 	for _, l := range v.Links {
 		a, aok := pos[l.From]
@@ -595,6 +596,9 @@ func topologySVG(v View, routeOverlay ...RouteView) string {
 		}
 		key := topologyLinkKey(l.From, l.To)
 		curve := topologyEdgeCurve(a, z, key, l.Kind)
+		if metricPosition, ok := metricPositions[key]; ok && l.Kind != "candidate" {
+			curve = topologyEdgeViaMetric(a, z, metricPosition)
+		}
 		curves[key] = curve
 		curveStarts[key] = l.From
 		if l.Kind == "candidate" {
@@ -725,6 +729,84 @@ func topologyEdgeCurve(a, z topologyPoint, key, kind string) topologyCurve {
 	return topologyCurve{
 		d:     fmt.Sprintf("M %.1f %.1f Q %.1f %.1f %.1f %.1f", a.x, a.y, cx, cy, z.x, z.y),
 		label: svgPoint{x: x, y: y},
+	}
+}
+
+// topologyMetricPositions allocates one visible lane per carrier around its
+// outer-ring endpoint. The lane order follows the inner nodes' projection on
+// the ring tangent, so lines fan out without the nine labels collapsing in the
+// center. Current six-node K3,3 therefore becomes three small three-label
+// groups rather than one unreadable pile.
+func topologyMetricPositions(links []LinkView, positions map[string]topologyPoint) map[string]svgPoint {
+	type lane struct {
+		key   string
+		other topologyPoint
+	}
+	groups := map[string][]lane{}
+	for _, link := range links {
+		if link.Kind != "tunnel" {
+			continue
+		}
+		from, fromOK := positions[link.From]
+		to, toOK := positions[link.To]
+		if !fromOK || !toOK {
+			continue
+		}
+		outerID, other := "", topologyPoint{}
+		switch {
+		case from.ring == "outer" && to.ring != "outer":
+			outerID, other = link.From, to
+		case to.ring == "outer" && from.ring != "outer":
+			outerID, other = link.To, from
+		default:
+			continue
+		}
+		groups[outerID] = append(groups[outerID], lane{key: topologyLinkKey(link.From, link.To), other: other})
+	}
+
+	out := map[string]svgPoint{}
+	for outerID, lanes := range groups {
+		outer := positions[outerID]
+		radians := outer.angle * math.Pi / 180
+		// Tangent of x=cx+rx*cos(a), y=cy+ry*sin(a).
+		tx, ty := -310*math.Sin(radians), 130*math.Cos(radians)
+		tangentLength := math.Hypot(tx, ty)
+		if tangentLength > 0 {
+			tx, ty = tx/tangentLength, ty/tangentLength
+		}
+		radialX, radialY := outer.x-480, outer.y-180
+		radialLength := math.Hypot(radialX, radialY)
+		if radialLength > 0 {
+			radialX, radialY = radialX/radialLength, radialY/radialLength
+		}
+		sort.Slice(lanes, func(i, j int) bool {
+			a := (lanes[i].other.x-outer.x)*tx + (lanes[i].other.y-outer.y)*ty
+			z := (lanes[j].other.x-outer.x)*tx + (lanes[j].other.y-outer.y)*ty
+			if a == z {
+				return lanes[i].key < lanes[j].key
+			}
+			return a < z
+		})
+		spacing := 140.0
+		if len(lanes) > 3 {
+			spacing = 280 / float64(len(lanes)-1)
+		}
+		baseX, baseY := outer.x-radialX*52, outer.y-radialY*52
+		for i, item := range lanes {
+			offset := (float64(i) - float64(len(lanes)-1)/2) * spacing
+			x, y := baseX+tx*offset, baseY+ty*offset
+			x = math.Max(72, math.Min(888, x))
+			y = math.Max(14, math.Min(338, y))
+			out[item.key] = svgPoint{x: x, y: y}
+		}
+	}
+	return out
+}
+
+func topologyEdgeViaMetric(a, z topologyPoint, metric svgPoint) topologyCurve {
+	return topologyCurve{
+		d:     fmt.Sprintf("M %.1f %.1f L %.1f %.1f L %.1f %.1f", a.x, a.y, metric.x, metric.y, z.x, z.y),
+		label: metric,
 	}
 }
 

@@ -3,9 +3,11 @@ package webui
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -143,6 +145,35 @@ func TestTopologyUsesConcentricRingsAndObservedLinkMetrics(t *testing.T) {
 	}
 	if strings.Contains(topology, `test intent</text>`) {
 		t.Fatal("candidate intent incorrectly received an observed metric label")
+	}
+}
+
+func TestTopologyCarrierMetricLanesDoNotOverlapForSixNodeMesh(t *testing.T) {
+	positions := map[string]topologyPoint{}
+	topologyRingPositions(positions, []string{"jm24", "gz02", "hz01"}, "inner", -90, 170, 75)
+	topologyRingPositions(positions, []string{"ber01", "sg02", "sv01"}, "outer", -30, 310, 130)
+	links := []LinkView{}
+	for _, inner := range []string{"jm24", "gz02", "hz01"} {
+		for _, outer := range []string{"ber01", "sg02", "sv01"} {
+			links = append(links, LinkView{From: inner, To: outer, Kind: "tunnel"})
+		}
+	}
+	lanes := topologyMetricPositions(links, positions)
+	if len(lanes) != 9 {
+		t.Fatalf("metric lanes=%d, want 9", len(lanes))
+	}
+	keys := make([]string, 0, len(lanes))
+	for key := range lanes {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for i := range keys {
+		for j := i + 1; j < len(keys); j++ {
+			a, z := lanes[keys[i]], lanes[keys[j]]
+			if math.Abs(a.x-z.x) < 132 && math.Abs(a.y-z.y) < 18 {
+				t.Fatalf("metric lanes %q and %q overlap at %+v and %+v", keys[i], keys[j], a, z)
+			}
+		}
 	}
 }
 
