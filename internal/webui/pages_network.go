@@ -85,13 +85,13 @@ func pageNodes(d Deps, isAuthed bool, added string) string {
 	// the learned fleet inventory when reached directly, but must not advertise
 	// a dead /nodes/add workflow or control key management.
 	if d.Control != nil {
-		b.WriteString(`<div class=section><details class=card><summary><b>Enrollment SSH access</b> <span class=dim>shared control identity and trust boundary</span></summary><div class="grid section"><div class=span8><h2>Control bootstrap identity</h2><h3>One identity for the control plane</h3><p class=dim>A node enrollment reuses the same control SSH public key. It does not create a per-node control key, replace platform signing trust, or export a node WireGuard private key.</p>`)
+		b.WriteString(`<div class=section><details class="card enrollment-access"><summary class=enrollment-summary><span class=enrollment-summary-copy><b>Enrollment SSH access</b><span>Shared control identity and trust boundary</span></span><span class=enrollment-summary-hint>Access setup</span></summary><div class=enrollment-access-body><div class=enrollment-access-grid><section class=enrollment-identity-panel><div class=enrollment-panel-head><div><div class=label>Control bootstrap identity</div><h3>One reusable control identity</h3></div></div><p class=enrollment-intro>Every enrollment reuses this SSH public key. Platform signing trust and each node's WireGuard identity remain separate.</p>`)
 		if d.Control.BootstrapIdentity == nil {
 			b.WriteString(`<div class="callout warnline"><b>Unavailable on this node</b><br><span class=small>The shared bootstrap identity is a control-local capability.</span></div>`)
 		} else if key, err := d.Control.BootstrapIdentity.Status(); err != nil {
-			fmt.Fprintf(&b, `<div class="card notice badline"><b>Bootstrap identity cannot be read</b><br><span class=small>%s</span></div>`, esc(err.Error()))
+			fmt.Fprintf(&b, `<div class="notice badline enrollment-state"><b>Bootstrap identity cannot be read</b><br><span class=small>%s</span></div>`, esc(err.Error()))
 		} else if !key.Ready {
-			b.WriteString(`<div class="callout warnline"><b>Not generated</b><br><span class=small>Generate this once, then manually authorize the exported public key on every host that may be enrolled.</span></div><div class=section>`)
+			b.WriteString(`<div class="callout warnline enrollment-state"><b>Not generated</b><br><span class=small>Generate this once, then authorize the exported public key on every host that may be enrolled.</span></div><div class=enrollment-state-action>`)
 			if isAuthed {
 				b.WriteString(`<form method=post action="/nodes/bootstrap-key/generate"><button class=primary>Generate shared key pair</button></form>`)
 			} else {
@@ -99,10 +99,9 @@ func pageNodes(d Deps, isAuthed bool, added string) string {
 			}
 			b.WriteString(`</div>`)
 		} else {
-			fmt.Fprintf(&b, `<div class=kv><dt>Status<dd class=ok>Ready · reused by every enrollment<dt>Fingerprint<dd class=mono>%s<dt>Public file<dd class=mono>%s</div><textarea class=compact readonly aria-label="Shared control public key">%s</textarea><div class=toolbar><a class=button href="/nodes/bootstrap-key.pub">Download public key</a></div>`, esc(key.Fingerprint), esc(key.PublicPath), esc(key.PublicKey))
+			fmt.Fprintf(&b, `<div class=enrollment-identity-meta><div><span class=label>Status</span><span class="edge-status ok"><span class=dot></span>Ready · shared by every enrollment</span></div><div><span class=label>Fingerprint</span><span class=mono>%s</span></div><div><span class=label>Public file</span><span class=mono>%s</span></div></div><div class=enrollment-public-key><div class=enrollment-public-key-head><div><span class=label>Shared public key</span><span class="tiny dim">Safe to distribute to enrollment targets</span></div><a class=button href="/nodes/bootstrap-key.pub">Download .pub</a></div><code aria-label="Shared control public key">%s</code></div>`, esc(key.Fingerprint), esc(key.PublicPath), esc(key.PublicKey))
 		}
-		b.WriteString(`<div class=callout><b>Key boundary</b><br><span class=small>The private half stays on the control node. A new node creates or reuses its own WireGuard identity during bootstrap; only that public key may enter SSOT.</span></div></div>
-<div class=span4><h2>Enrollment boundary</h2><div class=kv><dt>Manual input<dd>SSH host or IP, user, port<dt>Discovered<dd>Hostname, host key, system, reachability<dt>Reviewed<dd>Direction policy<dt>Default<dd>Egress enabled</div><div class=section><a class=button href="/nodes/add">Open enrollment workflow →</a></div></div></div></details></div>`)
+		b.WriteString(`</section><aside class=enrollment-boundary-panel><div class=label>Enrollment boundary</div><h3>What the workflow may decide</h3><div class=enrollment-boundary-list><div><span>Manual input</span><b>SSH host or IP, user, port</b></div><div><span>Discovered</span><b>Hostname, host key, system, reachability</b></div><div><span>Reviewed</span><b>Direction policy</b></div><div><span>Default</span><b>Egress enabled</b></div></div><a class="button primary enrollment-workflow" href="/nodes/add">Open enrollment workflow <span aria-hidden=true>→</span></a></aside></div><div class=enrollment-key-note><span class=enrollment-key-note-icon aria-hidden=true>◆</span><div><b>Private key boundary</b><span>The control private key never leaves this node. Each enrolled node creates or reuses its own WireGuard identity; only its public key may enter SSOT.</span></div></div></div></details></div>`)
 	}
 
 	return shell(d, "Nodes", b.String(), isAuthed, v)

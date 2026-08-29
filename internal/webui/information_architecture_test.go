@@ -67,6 +67,23 @@ func TestNodeLifecycleAndEndpointEvidenceStayExplicit(t *testing.T) {
 	}
 }
 
+func TestEnrollmentAccessUsesCompactIdentityAndBoundaryLayout(t *testing.T) {
+	body := pageNodes(misakaDeps(), false, "")
+	for _, want := range []string{
+		`class="card enrollment-access"`, `class=enrollment-identity-meta`,
+		`class=enrollment-public-key`, `class=enrollment-boundary-list`,
+		`class=enrollment-key-note`, "Ready · shared by every enrollment",
+		"Open enrollment workflow", "Download .pub",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Enrollment access layout is missing %q", want)
+		}
+	}
+	if strings.Contains(body, `<textarea class=compact readonly aria-label="Shared control public key">`) {
+		t.Fatal("Enrollment public key still uses the oversized textarea layout")
+	}
+}
+
 func TestTopologyOverlaysOnlyExplicitRoutingEntry(t *testing.T) {
 	d := misakaDeps()
 	v := d.Snapshot()
