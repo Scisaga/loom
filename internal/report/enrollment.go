@@ -2,6 +2,7 @@ package report
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net"
@@ -22,11 +23,12 @@ import (
 const previewWGPublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
 type enrollmentBackend struct {
-	scan      func(context.Context, enrollssh.Connection) (enrollssh.HostKey, error)
-	confirm   func(context.Context, enrollssh.Connection, enrollssh.HostKey) (enrollssh.HostKey, error)
-	preflight func(context.Context, enrollssh.Connection) (enrollssh.PreflightResult, error)
-	prepareWG func(context.Context, enrollssh.Connection) (enrollssh.PrepareWGResult, error)
-	lookupIP  func(context.Context, string) ([]net.IPAddr, error)
+	scan           func(context.Context, enrollssh.Connection) (enrollssh.HostKey, error)
+	confirm        func(context.Context, enrollssh.Connection, enrollssh.HostKey) (enrollssh.HostKey, error)
+	preflight      func(context.Context, enrollssh.Connection) (enrollssh.PreflightResult, error)
+	installWGTools func(context.Context, enrollssh.Connection) (bool, error)
+	prepareWG      func(context.Context, enrollssh.Connection) (enrollssh.PrepareWGResult, error)
+	lookupIP       func(context.Context, string) ([]net.IPAddr, error)
 
 	read          func() ([]byte, error)
 	revision      func([]byte) string
@@ -53,16 +55,17 @@ func newNodeEnrollmentDeps(
 		KnownHostsPath: c.KnownHostsPath,
 	}
 	b := enrollmentBackend{
-		scan:          scanner.Scan,
-		confirm:       knownHosts.ConfirmKnownHost,
-		preflight:     client.Preflight,
-		prepareWG:     client.PrepareWG,
-		lookupIP:      net.DefaultResolver.LookupIPAddr,
-		read:          read,
-		revision:      revision,
-		guardRevision: guardRevision,
-		saveMu:        saveMu,
-		ssotPath:      c.SSOTPath,
+		scan:           scanner.Scan,
+		confirm:        knownHosts.ConfirmKnownHost,
+		preflight:      client.Preflight,
+		installWGTools: client.EnsureWireGuardTools,
+		prepareWG:      client.PrepareWG,
+		lookupIP:       net.DefaultResolver.LookupIPAddr,
+		read:           read,
+		revision:       revision,
+		guardRevision:  guardRevision,
+		saveMu:         saveMu,
+		ssotPath:       c.SSOTPath,
 	}
 	return b.dependencies()
 }
@@ -91,6 +94,8 @@ type enrollmentDiscovery struct {
 	connection         enrollssh.Connection
 	hostKey            enrollssh.HostKey
 	preflight          enrollssh.PreflightResult
+	nodeID             string
+	wgToolsInstalled   bool
 	endpoint           string
 	endpointEvidence   string
 	endpointResolution string
@@ -116,7 +121,11 @@ func (b enrollmentBackend) discover(ctx context.Context, input webui.EnrollmentR
 	if err != nil {
 		return enrollmentDiscovery{}, fmt.Errorf("trusted SSH preflight: %w", err)
 	}
-	if err := validateEnrollmentPreflight(preflight); err != nil {
+	nodeID, err := enrollmentNodeID(preflight.Hostname)
+	if err != nil {
+		return enrollmentDiscovery{}, err
+	}
+	if err := validateEnrollmentPreflightPrerequisites(preflight); err != nil {
 		return enrollmentDiscovery{}, err
 	}
 	endpoint, endpointEvidence, endpointResolution, err := determinePublicEndpoint(ctx, connection.Host, preflight.ObservedSSHServerAddress, b.lookupIP)
@@ -127,9 +136,36 @@ func (b enrollmentBackend) discover(ctx context.Context, input webui.EnrollmentR
 	if err != nil {
 		return enrollmentDiscovery{}, err
 	}
+	wgToolsInstalled := false
+	if !preflight.WGCommand {
+		if b.installWGTools == nil {
+			return enrollmentDiscovery{}, errors.New("automatic wireguard-tools installer is unavailable")
+		}
+		beforeInstall := preflight
+		wgToolsInstalled, err = b.installWGTools(ctx, connection)
+		if err != nil {
+			return enrollmentDiscovery{}, fmt.Errorf("install wireguard-tools during trusted SSH preflight: %w", err)
+		}
+		preflight, err = b.preflight(ctx, connection)
+		if err != nil {
+			return enrollmentDiscovery{}, fmt.Errorf("verify wireguard-tools after installation: %w", err)
+		}
+		afterNodeID, normalizeErr := enrollmentNodeID(preflight.Hostname)
+		if normalizeErr != nil {
+			return enrollmentDiscovery{}, normalizeErr
+		}
+		if preflight.Hostname != beforeInstall.Hostname || afterNodeID != nodeID || !sameIPAddress(preflight.ObservedSSHServerAddress, beforeInstall.ObservedSSHServerAddress) {
+			return enrollmentDiscovery{}, fmt.Errorf("remote identity changed while installing wireguard-tools: hostname %q → %q, SSH address %q → %q",
+				beforeInstall.Hostname, preflight.Hostname, beforeInstall.ObservedSSHServerAddress, preflight.ObservedSSHServerAddress)
+		}
+	}
+	if err := validateEnrollmentPreflight(preflight); err != nil {
+		return enrollmentDiscovery{}, err
+	}
 	return enrollmentDiscovery{
-		connection: connection, hostKey: confirmed, preflight: preflight,
-		endpoint: endpoint, endpointEvidence: endpointEvidence, endpointResolution: endpointResolution,
+		connection: connection, hostKey: confirmed, preflight: preflight, nodeID: nodeID,
+		wgToolsInstalled: wgToolsInstalled,
+		endpoint:         endpoint, endpointEvidence: endpointEvidence, endpointResolution: endpointResolution,
 		requestedDirection: input.RequestedDirection,
 		direction:          direction, directionEvidence: directionEvidence,
 	}, nil
@@ -153,22 +189,24 @@ func (b enrollmentBackend) review(ctx context.Context, input webui.EnrollmentRev
 		return webui.EnrollmentReview{}, err
 	}
 	return webui.EnrollmentReview{
-		Connection:         input.Connection,
-		HostKey:            enrollmentHostKey(discovered.hostKey),
-		NodeID:             discovered.preflight.Hostname,
-		PublicEndpoint:     discovered.endpoint,
-		EndpointEvidence:   discovered.endpointEvidence,
-		EndpointResolution: discovered.endpointResolution,
-		System:             discovered.preflight.Uname,
-		Privilege:          string(discovered.preflight.Privilege),
-		KernelWireGuard:    discovered.preflight.KernelWireGuard,
-		WGCommand:          discovered.preflight.WGCommand,
-		RequestedDirection: discovered.requestedDirection,
-		ResolvedDirection:  string(discovered.direction),
-		DirectionEvidence:  discovered.directionEvidence,
-		Revision:           b.revision(current),
-		EgressEnabled:      true,
-		Tunnels:            tunnels,
+		Connection:              input.Connection,
+		HostKey:                 enrollmentHostKey(discovered.hostKey),
+		NodeID:                  discovered.nodeID,
+		ObservedHostname:        discovered.preflight.Hostname,
+		PublicEndpoint:          discovered.endpoint,
+		EndpointEvidence:        discovered.endpointEvidence,
+		EndpointResolution:      discovered.endpointResolution,
+		System:                  discovered.preflight.Uname,
+		Privilege:               string(discovered.preflight.Privilege),
+		KernelWireGuard:         discovered.preflight.KernelWireGuard,
+		WGCommand:               discovered.preflight.WGCommand,
+		WireGuardToolsInstalled: discovered.wgToolsInstalled,
+		RequestedDirection:      discovered.requestedDirection,
+		ResolvedDirection:       string(discovered.direction),
+		DirectionEvidence:       discovered.directionEvidence,
+		Revision:                b.revision(current),
+		EgressEnabled:           true,
+		Tunnels:                 tunnels,
 	}, nil
 }
 
@@ -177,8 +215,8 @@ func (b enrollmentBackend) commit(ctx context.Context, input webui.EnrollmentCom
 	if err != nil {
 		return "", err
 	}
-	if input.ExpectedNodeID == "" || discovered.preflight.Hostname != input.ExpectedNodeID {
-		return "", fmt.Errorf("remote node identity drifted after review: expected %q, observed %q", input.ExpectedNodeID, discovered.preflight.Hostname)
+	if input.ExpectedNodeID == "" || discovered.nodeID != input.ExpectedNodeID {
+		return "", fmt.Errorf("remote node identity drifted after review: expected %q, derived %q from hostname %q", input.ExpectedNodeID, discovered.nodeID, discovered.preflight.Hostname)
 	}
 	if input.ExpectedEndpoint == "" || discovered.endpoint != input.ExpectedEndpoint {
 		return "", fmt.Errorf("control-determined public endpoint drifted after review: expected %q, observed %q", input.ExpectedEndpoint, discovered.endpoint)
@@ -191,7 +229,11 @@ func (b enrollmentBackend) commit(ctx context.Context, input webui.EnrollmentCom
 	if err != nil {
 		return "", fmt.Errorf("prepare node WireGuard identity: %w", err)
 	}
-	if prepared.Hostname != discovered.preflight.Hostname || prepared.Hostname != input.ExpectedNodeID {
+	preparedNodeID, err := enrollmentNodeID(prepared.Hostname)
+	if err != nil {
+		return "", err
+	}
+	if prepared.Hostname != discovered.preflight.Hostname || preparedNodeID != input.ExpectedNodeID {
 		return "", fmt.Errorf("remote node identity changed between trusted SSH sessions: preflight %q, key preparation %q",
 			discovered.preflight.Hostname, prepared.Hostname)
 	}
@@ -221,13 +263,13 @@ func (b enrollmentBackend) commit(ctx context.Context, input webui.EnrollmentCom
 	}); err != nil {
 		return "", err
 	}
-	return discovered.preflight.Hostname, nil
+	return discovered.nodeID, nil
 }
 
 func (d enrollmentDiscovery) nodeInput(publicKey string) enrollplan.NodeInput {
 	egress := true
 	return enrollplan.NodeInput{
-		ID:             d.preflight.Hostname,
+		ID:             d.nodeID,
 		PublicEndpoint: d.endpoint,
 		SSHPort:        d.connection.Port,
 		Direction:      d.direction,
@@ -250,20 +292,64 @@ func enrollmentHostKey(key enrollssh.HostKey) webui.EnrollmentHostKey {
 	}
 }
 
-func validateEnrollmentPreflight(p enrollssh.PreflightResult) error {
-	if !model.ValidNodeID(p.Hostname) {
-		return fmt.Errorf("remote hostname %q is not a valid Node ID; hostname -s must use 1-63 lowercase letters, digits, or internal hyphens", p.Hostname)
-	}
+func validateEnrollmentPreflightPrerequisites(p enrollssh.PreflightResult) error {
 	if !p.KernelWireGuard {
 		return errors.New("remote preflight did not prove WireGuard kernel support")
-	}
-	if !p.WGCommand {
-		return errors.New("remote preflight did not find the wg command")
 	}
 	if p.Privilege != enrollssh.PrivilegeRoot && p.Privilege != enrollssh.PrivilegeSudo {
 		return errors.New("remote preflight requires root or passwordless sudo for bootstrap")
 	}
 	return nil
+}
+
+func validateEnrollmentPreflight(p enrollssh.PreflightResult) error {
+	if err := validateEnrollmentPreflightPrerequisites(p); err != nil {
+		return err
+	}
+	if !p.WGCommand {
+		return errors.New("remote preflight did not find the wg command after automatic installation")
+	}
+	return nil
+}
+
+// enrollmentNodeID keeps the remote hostname as evidence while deriving the
+// canonical identity used across DNS, paths and routing tags. ASCII case and
+// separator differences are harmless; an empty or still-invalid result fails
+// closed instead of inventing an unrelated identity.
+func enrollmentNodeID(hostname string) (string, error) {
+	var b strings.Builder
+	separator := false
+	for i := 0; i < len(hostname); i++ {
+		c := hostname[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			if separator && b.Len() > 0 {
+				b.WriteByte('-')
+			}
+			separator = false
+			b.WriteByte(c)
+			continue
+		}
+		if c == '-' || c == '_' {
+			separator = true
+			continue
+		}
+		return "", fmt.Errorf("remote hostname %q contains a character that cannot be normalized into a Node ID", hostname)
+	}
+	nodeID := b.String()
+	if !model.ValidNodeID(nodeID) {
+		return "", fmt.Errorf("remote hostname %q cannot be normalized into a valid Node ID; require at least one ASCII letter or digit and at most 63 characters", hostname)
+	}
+	maxPeerIDLen := model.LinuxIfnameMax - len("wg-")
+	if len(nodeID) > maxPeerIDLen {
+		digest := sha256.Sum256([]byte(nodeID))
+		suffix := fmt.Sprintf("%x", digest[:2])
+		prefix := strings.TrimRight(nodeID[:maxPeerIDLen-len(suffix)-1], "-")
+		nodeID = prefix + "-" + suffix
+	}
+	return nodeID, nil
 }
 
 func resolveEnrollmentDirection(requested string) (model.Direction, string, error) {

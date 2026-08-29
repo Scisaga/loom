@@ -245,7 +245,7 @@ func misakaEnrollmentDeps() (*NodeEnrollmentDeps, *[]EnrollmentConnection, *[]En
 			}
 			return EnrollmentReview{
 				Connection: input.Connection, HostKey: input.HostKey,
-				NodeID: "hk01", PublicEndpoint: "203.0.113.42",
+				NodeID: "hk01", ObservedHostname: "HK01", PublicEndpoint: "203.0.113.42",
 				EndpointEvidence: "global SSH target resolved by control; WireGuard UDP unverified",
 				System:           "Ubuntu 24.04 · x86_64", Privilege: "bootstrap permitted",
 				KernelWireGuard: true, WGCommand: true,
@@ -669,7 +669,7 @@ func TestMisakaNodeEnrollmentTrustReviewPreviewAndCommitContract(t *testing.T) {
 	}
 	reviewBody := reviewed.Body.String()
 	for _, want := range []string{
-		"Trusted remote observation", "hk01", "remote hostname · locked",
+		"Trusted remote observation", "hk01", "derived from remote hostname",
 		"Public endpoint candidate", "203.0.113.42",
 		"global SSH target resolved by control; WireGuard UDP unverified",
 		"Egress", "Enabled", `select name=direction`, "Automatic · conservative",

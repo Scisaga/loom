@@ -1949,8 +1949,10 @@ bootstrap SSH 私钥与接入专用 `known_hosts` 的本机路径。它引用的
 同理,节点 id 和错误信息都来自**别的机器**,一律转义 —— 一台被拿下的机器
 不该能往别人的界面里注入脚本。
 
-当前界面使用统一的 Misaka 风格服务端渲染壳层，页面不依赖客户端脚本、头像、
-CDN 或外部字体。Overview 只放全网摘要和可折叠证据；顶层语义分为 Network
+当前界面使用统一的 Misaka 风格服务端渲染壳层，页面不依赖头像、CDN、外部字体
+或外部脚本。只有 Add node 的同步 SSH 表单带一段 CSP hash 精确锁定的内联脚本：
+提交后保留 submitter 值、禁用重复操作并显示等待状态；所有接入语义和校验仍在
+服务端，脚本关闭时表单仍可提交。Overview 只放全网摘要和可折叠证据；顶层语义分为 Network
 （Nodes / Topology）、Traffic（Services / Live paths）、Operations
 （Deployments / Events）与 Advanced（SSOT）。URL 和后端领域边界保持独立，
 不把期望态 Service、运行态 Agent 决策、节点实体和拓扑关系揉成一张万能表。
@@ -2217,7 +2219,10 @@ TX-only 总量比较条；reset 与长 gap 位置保留空槽并标出质量原�
 重复生成；每次接入只复用它的公钥。平台签名信任和节点本地 WireGuard 身份仍是
 两套独立密钥边界。
 接入页只接收 SSH 的主机名或 IP、用户和端口；这组管理坐标只用于接入，不自动
-等于已验证的 WireGuard 公网端点。`Node ID` 来自受信 SSH 会话里的短 hostname。
+等于已验证的 WireGuard 公网端点。`Node ID` 从受信 SSH 会话里的短 hostname
+规范化派生：ASCII 大写转小写，`-`/`_` 分隔符折叠为单个 `-`；超过 Linux
+WireGuard 接口名可承载长度时保留可读前缀并追加确定性短摘要。原始 hostname
+作为证据展示，不修改远端系统 hostname；规范化后的冲突仍由完整 SSOT 预览拒绝。
 中控只在操作者输入的是公网 global-unicast IP，或 DNS 名在中控解析出至少一个
 公网地址时，才把该 host 作为 `public_endpoint` candidate；远端回报的
 `SSH_CONNECTION` 地址只作诊断，不能提升成端点证据。literal 是私网、本地、
@@ -2232,6 +2237,12 @@ revision-guarded 事务写入 SSOT；这些是加入流程的内部步骤，不�
 `bidirectional`、`reverse_only` 或 `direct_only` 是操作者的策略覆盖，不是探测
 结论。选择改变后，initiator、acceptor、监听端、地址、端口和隧道计划全部重新
 推导，不能逐项手填。
+
+受信 preflight 若已证明 WireGuard 内核支持且具备 root 或免密 sudo，但
+`/usr/bin/wg` 缺失，会通过固定、无操作者插值的脚本调用受支持的系统包管理器
+安装 `wireguard-tools`，随后重新预检并核对 hostname 与 SSH server address 未漂移。
+已存在的 `wg` 不升级；安装失败不修改 SSOT。这是新主机声明 bootstrap 的前置条件
+修复，不是稳态组件升级器，也不放宽 D86 对 fleet upgrade/canary/rollback 的要求。
 
 DNS 名的预览会绑定排序后的完整公网解析集合，而不是只绑定最终显示的一个地址；
 提交时重新解析，集合漂移就回到 Review。最终准备 WireGuard identity 的 hostname
@@ -2254,7 +2265,7 @@ bootstrap 流程完成、节点应用新快照并交出首份可信报告，运�
 材料纳入网页自动化之前，必须先为它们增加显式的 control-local 路径、证书签发与
 失败回滚契约；不能从仓库目录布局猜路径后直接复制生产密钥。
 
-截至 2026-08-28，中控范围共享 bootstrap SSH 身份及公钥导出、专用
+截至 2026-08-29，中控范围共享 bootstrap SSH 身份及公钥导出、专用
 `known_hosts`、host-key 二次扫描确认、严格 SSH preflight、节点/隧道真实预览和
 revision 原子提交已经接通。远端必须先人工授权共享公钥，首次连接必须由操作者
 从独立来源核对 SSH host key；提交前再次确认 host key、hostname 与 endpoint

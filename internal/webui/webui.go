@@ -187,17 +187,18 @@ type EnrollmentCommitInput struct {
 }
 
 type EnrollmentReview struct {
-	Connection                           EnrollmentConnection
-	HostKey                              EnrollmentHostKey
-	NodeID, PublicEndpoint               string
-	EndpointEvidence, EndpointResolution string
-	System, Privilege                    string
-	KernelWireGuard, WGCommand           bool
-	RequestedDirection                   string
-	ResolvedDirection                    string
-	DirectionEvidence, Revision          string
-	EgressEnabled                        bool
-	Tunnels                              []EnrollmentTunnel
+	Connection                               EnrollmentConnection
+	HostKey                                  EnrollmentHostKey
+	NodeID, ObservedHostname, PublicEndpoint string
+	EndpointEvidence, EndpointResolution     string
+	System, Privilege                        string
+	KernelWireGuard, WGCommand               bool
+	WireGuardToolsInstalled                  bool
+	RequestedDirection                       string
+	ResolvedDirection                        string
+	DirectionEvidence, Revision              string
+	EgressEnabled                            bool
+	Tunnels                                  []EnrollmentTunnel
 }
 
 type EnrollmentTunnel struct {
@@ -1157,7 +1158,9 @@ func writeHTML(w http.ResponseWriter, body string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// 界面里没有任何外部资源,也不该有 —— 这些机器不一定能出网,而且
 	// ssh 端口转发进来时更没有。img-src 只允许静态样式里自带的导航 SVG。
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'")
+	scriptDigest := sha256.Sum256([]byte(progressSubmitScript))
+	scriptHash := base64.StdEncoding.EncodeToString(scriptDigest[:])
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'sha256-"+scriptHash+"'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	fmt.Fprint(w, body)
 }

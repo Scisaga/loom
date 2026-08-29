@@ -9,10 +9,13 @@ import (
 	"time"
 )
 
-// 页面是服务端渲染的纯 HTML,**没有任何外部资源、没有 JavaScript**。
+// 页面是服务端渲染的纯 HTML,不依赖任何外部资源。节点接入页只有一段
+// CSP hash 锁定的本地脚本，用来在同步 SSH 提交期间禁止重复操作并反馈进度。
 //
 // 不是极简主义:这些机器不一定能出网,而通过 ssh 端口转发进来时更不能。
 // 一个依赖 CDN 的界面在最需要它的时候(隧道断了、机器出问题了)恰好打不开。
+
+const progressSubmitScript = `document.querySelectorAll("form[data-submit-progress]").forEach(function(form){form.addEventListener("submit",function(event){if(!form.checkValidity())return;if(form.dataset.submitting==="true"){event.preventDefault();return}form.dataset.submitting="true";form.setAttribute("aria-busy","true");var submitter=event.submitter;if(submitter&&submitter.name){var preserved=document.createElement("input");preserved.type="hidden";preserved.name=submitter.name;preserved.value=submitter.value;form.appendChild(preserved)}form.classList.add("is-submitting");form.querySelectorAll("button").forEach(function(button){button.disabled=true})})});`
 
 const style = `<style>
 :root{--fg:#181b1a;--dim:#717674;--faint:#9ba09e;--line:#e2e6e3;--line2:#ccd2ce;--ok:#239b68;--oksoft:#eef8f3;--bad:#b84c4c;--badsoft:#fff3f2;--warn:#a66a14;--warnsoft:#fff8eb;--info:#477d9c;--route:#239b68;--bg:#fcfcfb;--card:#fff;--card2:#f7f8f7;--ink:#181b1a;--font-mono:"SFMono-Regular","Roboto Mono","IBM Plex Mono",Consolas,"Liberation Mono",ui-monospace,monospace}
@@ -41,7 +44,7 @@ table{border-collapse:collapse;width:100%;margin:0}td,th{text-align:left;padding
 .notice{border-left:3px solid var(--warn);background:var(--warnsoft)}.notice.badline{border-left-color:var(--bad);background:var(--badsoft)}.empty{padding:20px;text-align:center;color:var(--dim);border:1px dashed var(--line2);border-radius:7px}.callout{padding:12px 14px;border-radius:7px;background:var(--oksoft);border:1px solid #cce7d8}.callout.warnline{background:var(--warnsoft);border-color:#ead7b2}
 .status-alert{display:grid;grid-template-columns:26px minmax(0,1fr) auto;gap:11px;align-items:center;min-height:58px;padding:9px 13px;border:1px solid var(--line);border-radius:8px;background:#fff}.status-alert.problem{border-color:#efd9d7;background:#fff9f8}.status-alert.warning{border-color:#eadfc9;background:#fffbf4}.status-alert-icon{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;font-size:13px;font-weight:750}.status-alert.problem .status-alert-icon{color:var(--bad);background:#f8e7e5}.status-alert.warning .status-alert-icon{color:var(--warn);background:#f7ead3}.status-alert-body{min-width:0}.status-alert-title{display:flex;align-items:baseline;gap:9px;line-height:1.3}.status-alert-title strong{font-size:13px}.status-alert-title span{color:var(--dim);font-size:11px}.status-alert-items{display:flex;flex-wrap:wrap;gap:2px 15px;margin-top:2px;color:var(--fg);font-size:12px}.status-alert-items>span{min-width:0}.status-alert-items>span:before{content:"";display:inline-block;width:4px;height:4px;margin:0 7px 2px 0;border-radius:50%;background:currentColor;opacity:.45}.status-alert-note{max-width:330px;color:var(--dim);font-size:11px;line-height:1.4;text-align:right}.evidence-alert{margin-bottom:18px}.snapshot-alert{margin-top:10px}.snapshot-groups{display:flex;flex-wrap:wrap;gap:5px 8px;margin-top:4px}.snapshot-group{display:inline-flex;align-items:center;gap:8px;min-width:0;padding:3px 8px;border:1px solid #e5dccb;border-radius:5px;background:rgba(255,255,255,.68);font-size:11px}.snapshot-group.current{border-color:#cce3d7;background:#f6fbf8}.snapshot-group .mono{color:var(--fg)}.snapshot-group-nodes{color:var(--dim)}
 form{display:inline}.blockform{display:block}.checkline{display:flex;align-items:flex-start;gap:9px}.checkline input{margin-top:3px}button,.button{font:inherit;padding:8px 12px;border:1px solid var(--line2);border-radius:6px;background:#fff;color:var(--fg);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:7px}button:hover,.button:hover{border-color:var(--ok);color:var(--fg)}button.primary,.button.primary{background:var(--fg);border-color:var(--fg);color:#fff}button.green,.button.green{background:var(--ok);border-color:var(--ok);color:#fff}button[disabled]{cursor:not-allowed;color:var(--faint);background:#f1f3f2;border-color:var(--line)}
-.progress-submit{min-width:188px}.button-busy{display:none;align-items:center;gap:8px}.button-spinner{width:13px;height:13px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:loom-spin .7s linear infinite}.blockform:valid .progress-submit:focus{cursor:wait}.blockform:valid .progress-submit:focus .button-idle{display:none}.blockform:valid .progress-submit:focus .button-busy{display:inline-flex}
+.progress-submit{min-width:188px}.button-busy{display:none;align-items:center;gap:8px}.button-spinner{width:13px;height:13px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:loom-spin .7s linear infinite}.blockform:valid .progress-submit:focus{cursor:wait}.blockform:valid .progress-submit:focus .button-idle,.blockform.is-submitting .progress-submit .button-idle{display:none}.blockform:valid .progress-submit:focus .button-busy,.blockform.is-submitting .progress-submit .button-busy{display:inline-flex}.blockform.is-submitting .progress-submit,.blockform.is-submitting .progress-submit[disabled]{cursor:wait;background:#8a918d;border-color:#8a918d;color:#fff;opacity:.82}.blockform.is-submitting a.button{pointer-events:none;opacity:.45}
 input,select{font:inherit;padding:9px 10px;border:1px solid var(--line2);border-radius:6px;background:#fff;color:var(--fg)}input:focus,select:focus,textarea:focus{outline:2px solid #cce7d8;outline-offset:1px}.field{display:grid;gap:5px}.field label{font-size:11px;color:var(--dim);text-transform:uppercase}.fields{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px}.field.span2{grid-column:span 2}.field.span3{grid-column:span 3}.field.span4{grid-column:span 4}.field.span6{grid-column:span 6}.field.span8{grid-column:span 8}.field.span12{grid-column:1/-1}
 pre{background:var(--card2);border:1px solid var(--line);border-radius:7px;padding:12px;overflow-x:auto;white-space:pre-wrap;margin:8px 0}textarea{width:100%;height:58vh;font:13px/1.5 var(--font-mono);padding:12px;border:1px solid var(--line2);border-radius:7px;background:#fff;color:var(--fg);white-space:pre;overflow-wrap:normal;overflow-x:auto}
 textarea.compact{height:118px;white-space:pre-wrap}
@@ -106,14 +109,18 @@ func shell(d Deps, title, body string, isAuthed bool, evidence ...View) string {
 	if len(evidence) > 0 {
 		body = evidenceBanner(evidence[0]) + body
 	}
+	progressScript := ""
+	if strings.Contains(body, "data-submit-progress") {
+		progressScript = `<script>` + progressSubmitScript + `</script>`
+	}
 	pageClass := "page-" + active
 	return fmt.Sprintf(`<!doctype html><meta charset=utf-8><title>%s · LOOM</title><link rel=icon href="/favicon.svg" type="image/svg+xml">
 <meta name=viewport content="width=device-width,initial-scale=1">%s%s
 <div class=app><header class=header><a class=brand href="/" aria-label="LOOM overview">%s<span>LOOM</span></a>
 <nav class=nav aria-label="Primary">%s</nav><div class=headmeta><span class="env dim"><span class=dot></span>Live evidence</span><span>%s</span></div></header>
-<main class="main %s"><div class=top><div><div class=eyebrow>%s</div><h1>%s</h1><div class=subtitle>%s</div></div><div class=sp>%s</div></div>%s</main></div>`,
+<main class="main %s"><div class=top><div><div class=eyebrow>%s</div><h1>%s</h1><div class=subtitle>%s</div></div><div class=sp>%s</div></div>%s</main></div>%s`,
 		esc(heading), refresh, style, logoSVG(), navHTML.String(), auth,
-		esc(pageClass), esc(eyebrow), esc(heading), esc(subtitle), esc(d.Node)+` · `+esc(role), body)
+		esc(pageClass), esc(eyebrow), esc(heading), esc(subtitle), esc(d.Node)+` · `+esc(role), body, progressScript)
 }
 
 // evidenceBanner keeps control-plane read failures visible on every page that

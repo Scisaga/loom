@@ -19,6 +19,7 @@ import (
 const (
 	defaultScanTimeout    = 10 * time.Second
 	defaultSSHTimeout     = 30 * time.Second
+	defaultInstallTimeout = 5 * time.Minute
 	defaultConnectTimeout = 10 * time.Second
 	defaultOutputLimit    = 64 << 10
 	maxConfiguredOutput   = 1 << 20

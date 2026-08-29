@@ -2401,6 +2401,11 @@ constraints、非 fail-closed fallback、凭据 expires_at 和多代秘密层也
 fail closed。后续实现自动升级时，必须与真实 canary 和配置回滚一起进入事务，
 不能先加一个“下载安装”按钮再补安全边界。
 
+新节点声明 bootstrap 有一个刻意收窄的例外：SSH host key 已由操作者带外确认、
+受信 preflight 已证明内核支持和 root/免密 sudo、且 `/usr/bin/wg` 缺失时，固定
+脚本可通过受支持的系统包管理器安装 `wireguard-tools` 并立即复检。它不升级已安装
+版本、不作用于现有 fleet，也不声称具备 canary 或包级回滚；失败时 SSOT 不变。
+
 ### D87 · Attestation 扩展必须两阶段启用，兼容不是永久降级口
 
 **日期** 2026-08-27 · **状态** 生效 · **相关** [D81](#d81--身份签名之后转述来的节点也能核对版本收窄-d73)、[D86](#d86--组件版本先闭合观测再增加自动升级)
@@ -2489,7 +2494,14 @@ revision，在服务端重新读取、核对、完整校验并原子替换。结
 identity。接入新节点复用第一套，绝不按节点新建控制密钥。当前 Add node handler
 只让操作者输入 SSH host/IP/user/port；先独立扫描 Ed25519 host key，由操作者从
 带外来源确认，再次扫描一致后才写专用 `known_hosts` 并运行 StrictHostKeyChecking
-预检。短 hostname 决定 Node ID；WG 私钥在远端幂等生成或复用，只取回公钥。
+预检。短 hostname 经确定性规范化后决定 Node ID：大写转小写、分隔符折叠，过长
+时追加短摘要以满足 Linux WireGuard 接口名上限；原始 hostname 仍作为受信证据。
+WG 私钥在远端幂等生成或复用，只取回公钥。
+
+预检确认内核 WireGuard 和提权边界后，若 `/usr/bin/wg` 缺失，会用固定脚本通过
+apt/dnf/yum/apk/zypper 安装 `wireguard-tools`，随后再次预检并核对 hostname 与
+SSH server address 没有漂移。该动作只补齐新节点 bootstrap 前置条件，不是 D86
+所述的稳态 fleet 组件升级器；安装失败或复检失败均不进入 SSOT 写事务。
 
 SSH 坐标仍不是 UDP 证据。当前只接受操作者输入的公网 global-unicast IP，或在
 中控解析出至少一个公网地址的 DNS 名，作为 control-observed endpoint candidate；

@@ -441,6 +441,67 @@ func TestPreflightUsesHardenedSSHArgvAndParsesOutput(t *testing.T) {
 	}
 }
 
+func TestEnsureWireGuardToolsUsesFixedIdempotentInstaller(t *testing.T) {
+	syntax := exec.Command("/bin/sh", "-n")
+	syntax.Stdin = strings.NewReader(InstallWireGuardToolsScript)
+	if output, err := syntax.CombinedOutput(); err != nil {
+		t.Fatalf("fixed installer shell syntax: %v: %s", err, output)
+	}
+	privateKey, knownHosts := secureTestFiles(t)
+	connection := Connection{Host: "203.0.113.42", User: "loom-bootstrap", Port: 2222}
+	var invocation Invocation
+	runner := RunnerFunc(func(_ context.Context, got Invocation) (Result, error) {
+		invocation = got
+		return Result{Stdout: []byte("LOOM_WG_TOOLS_V1\ninstalled=1\n")}, nil
+	})
+	client := Client{
+		Runner: runner, PrivateKeyPath: privateKey, KnownHostsPath: knownHosts,
+		InstallTimeout: 2 * time.Second, ConnectTimeout: 7 * time.Second,
+	}
+	installed, err := client.EnsureWireGuardTools(context.Background(), connection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !installed {
+		t.Fatal("EnsureWireGuardTools did not report the performed installation")
+	}
+	assertSSHInvocation(t, invocation, client, connection, InstallWireGuardToolsScript, "7")
+	for _, want := range []string{"/usr/bin/wg", "wireguard-tools", "apt-get", "dnf", "apk", "sudo -n"} {
+		if !strings.Contains(InstallWireGuardToolsScript, want) {
+			t.Errorf("fixed installer is missing %q", want)
+		}
+	}
+	if strings.Contains(InstallWireGuardToolsScript, connection.Host) || strings.Contains(InstallWireGuardToolsScript, connection.User) {
+		t.Fatal("operator value was copied into the fixed package installer")
+	}
+}
+
+func TestWireGuardToolsInstallOutputIsStrict(t *testing.T) {
+	for name, output := range map[string]string{
+		"already present": "LOOM_WG_TOOLS_V1\ninstalled=0\n",
+		"installed":       "LOOM_WG_TOOLS_V1\ninstalled=1\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := parseWireGuardToolsInstall([]byte(output))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != (name == "installed") {
+				t.Fatalf("parsed installed=%v", got)
+			}
+		})
+	}
+	for _, output := range []string{
+		"LOOM_WG_TOOLS_V1\ninstalled=1\nwarning\n",
+		"LOOM_WG_TOOLS_V1\ninstalled=yes\n",
+		"package output\nLOOM_WG_TOOLS_V1\ninstalled=1\n",
+	} {
+		if _, err := parseWireGuardToolsInstall([]byte(output)); err == nil {
+			t.Fatalf("accepted invalid installer output %q", output)
+		}
+	}
+}
+
 func TestPrepareWGUsesFixedScriptAndReturnsOnlyAuthenticatedFacts(t *testing.T) {
 	privateKey, knownHosts := secureTestFiles(t)
 	connection := Connection{Host: "node.example", User: "loom", Port: 22}

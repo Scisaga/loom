@@ -201,12 +201,12 @@ func pageNodeAdd(d Deps, state nodeAddPageState, isAuthed bool) string {
 		} else if strings.Contains(state.Error, "local control service stopped or restarted") {
 			title = "Enrollment was interrupted locally — safe to retry"
 			note = `<br><span class="small dim">The remote host did not reject enrollment. Submit the preflight again after the control service is stable.</span>`
-		} else if strings.Contains(state.Error, "remote preflight did not find the wg command") {
-			title = "Remote host is missing WireGuard tools"
-			note = `<br><span class="small dim">Install the distribution's <code>wireguard-tools</code> package on the remote host, then run preflight again. SSOT was not changed.</span>`
-		} else if strings.Contains(state.Error, "is not a valid Node ID") {
-			title = "Remote hostname cannot be used as a Node ID"
-			note = `<br><span class="small dim">Set the remote short hostname (<code>hostname -s</code>) to 1–63 lowercase letters, digits or internal hyphens, then run preflight again. SSOT was not changed.</span>`
+		} else if strings.Contains(state.Error, "install wireguard-tools") || strings.Contains(state.Error, "did not find the wg command after automatic installation") {
+			title = "Automatic WireGuard tools installation failed"
+			note = `<br><span class="small dim">The trusted preflight installs <code>wireguard-tools</code> through a supported package manager when root or passwordless sudo is available. Review the package-manager error and retry; SSOT was not changed.</span>`
+		} else if strings.Contains(state.Error, "cannot be normalized into a valid Node ID") {
+			title = "Remote hostname cannot be converted to a Node ID"
+			note = `<br><span class="small dim">Loom automatically lowercases the remote short hostname and converts separator runs to hyphens. This hostname still has no safe canonical result, so SSOT was not changed.</span>`
 		}
 		fmt.Fprintf(&b, `<div class="card notice badline section"><b>%s</b><br><span class=small>%s</span>%s</div>`, esc(title), esc(state.Error), note)
 	}
@@ -262,13 +262,13 @@ func writeNodeAddConnect(b *strings.Builder, connection EnrollmentConnection, ke
 <div class="card span5"><div class=sectionhead><h2>Connect to the remote host</h2><span class="sp badge ok"><span class=dot></span>Shared key ready</span></div>
 <p class=small>The public key below must already be present in the remote account's <code>authorized_keys</code>.</p>
 <textarea class=compact readonly aria-label="Shared control public key">%s</textarea><div class="tiny dim mono">%s</div>
-<div class=section><form class=blockform method=post action="/nodes/add/scan"><div class=fields>
+<div class=section><form class=blockform data-submit-progress method=post action="/nodes/add/scan"><div class=fields>
 <div class="field span6"><label>Host or IP address</label><input name=host value="%s" placeholder="203.0.113.42" required></div>
 <div class="field span4"><label>SSH user</label><input name=user value="%s" placeholder="loom-bootstrap" required></div>
 <div class="field span2"><label>Port</label><input name=port type=number min=1 max=65535 value="%d" required></div>
 </div><div class="toolbar section"><button class="primary progress-submit"><span class=button-idle>Scan SSH host key</span><span class=button-busy><i class=button-spinner aria-hidden=true></i>Scanning SSH key…</span></button><a class=button href="/nodes">Cancel</a></div></form></div></div>
 <div class="card span7"><h2>What the control plane will and will not infer</h2>
-<div class=kv><dt>Manual input<dd>SSH host or IP, user and port only<dt>Node ID<dd>Verified remote <code>hostname -s</code>; not editable<dt>Egress<dd>Enabled for every new server node<dt>Direction<dd>Reviewed after preflight; Automatic is conservative without UDP evidence<dt>WG identity<dd>Generated or reused on the remote host; only its public key returns</div>
+<div class=kv><dt>Manual input<dd>SSH host or IP, user and port only<dt>Node ID<dd>Derived from verified remote <code>hostname -s</code>; case and separators are normalized<dt>Prerequisite<dd>Missing <code>wireguard-tools</code> is installed automatically through root or passwordless sudo<dt>Egress<dd>Enabled for every new server node<dt>Direction<dd>Reviewed after preflight; Automatic is conservative without UDP evidence<dt>WG identity<dd>Generated or reused on the remote host; only its public key returns</div>
 <div class="callout warnline section"><b>SSH reachability is not UDP reachability</b><br><span class=small>A successfully authenticated SSH host that resolves to a global address may become a control-observed endpoint candidate. Private/local-only addresses stop the workflow, and no page labels an untested UDP endpoint as verified.</span></div>
 </div></div></div>`, esc(key.PublicKey), esc(key.Fingerprint), esc(connection.Host), esc(connection.User), connection.Port)
 }
@@ -281,14 +281,18 @@ func writeNodeAddConfirm(b *strings.Builder, state nodeAddPageState, key Bootstr
 <div class="card span7"><div class=sectionhead><h2>Confirm SSH host identity</h2><span class="sp badge warn"><span class=dot></span>Operator decision</span></div>
 <p>Compare this fingerprint with an independent source for the remote host. The control plane re-scans immediately before trusting it; a changed key fails closed.</p>
 <div class=callout><div class=label>Ed25519 fingerprint</div><div class="metric mono">%s</div><div class="tiny mono clip">%s %s</div></div>
-<form class=blockform method=post action="/nodes/add/review">%s
+<form class=blockform data-submit-progress method=post action="/nodes/add/review">%s
 <label class="checkline section"><input type=checkbox name=confirm_host_key value=yes required> I independently confirmed this host fingerprint</label>
-<div class="toolbar section"><button class="green progress-submit"><span class=button-idle>Trust key &amp; run preflight</span><span class=button-busy><i class=button-spinner aria-hidden=true></i>Running SSH preflight…</span></button><a class=button href="/nodes/add">Cancel</a></div></form>
+<div class="toolbar section"><button class="green progress-submit"><span class=button-idle>Trust key &amp; run preflight</span><span class=button-busy role=status aria-live=polite><i class=button-spinner aria-hidden=true></i>Checking and installing prerequisites…</span></button><a class=button href="/nodes/add">Cancel</a></div></form>
 </div></div></div>`, esc(c.User), esc(c.Host), c.Port, esc(key.Fingerprint), esc(h.Fingerprint), esc(h.Algorithm), esc(h.PublicKey), enrollmentHidden(c, h))
 }
 
 func writeNodeAddReview(b *strings.Builder, d Deps, review EnrollmentReview, key BootstrapIdentityView) {
 	c, h := review.Connection, review.HostKey
+	wgToolsNote := ""
+	if review.WireGuardToolsInstalled {
+		wgToolsNote = `<br><span class="tiny ok">wireguard-tools installed automatically during this preflight</span>`
+	}
 	reviewedDirection := strings.TrimSpace(review.RequestedDirection)
 	if reviewedDirection == "" {
 		reviewedDirection = "automatic"
@@ -302,12 +306,12 @@ func writeNodeAddReview(b *strings.Builder, d Deps, review EnrollmentReview, key
 	})
 	fmt.Fprintf(b, `<div class=section><div class=grid>
 <div class="card span5"><div class=sectionhead><h2>Trusted remote observation</h2><span class="sp badge ok"><span class=dot></span>Preflight passed</span></div>
-<div class=kv><dt>SSH destination<dd class=mono>%s@%s:%d<dt>Host key<dd class=mono>%s<dt>Node ID<dd><b class=mono>%s</b><br><span class="tiny dim">remote hostname · locked</span><dt>System<dd>%s<dt>Privilege<dd>%s<dt>WireGuard<dd>kernel %s · tools %s</div>
+<div class=kv><dt>SSH destination<dd class=mono>%s@%s:%d<dt>Host key<dd class=mono>%s<dt>Node ID<dd><b class=mono>%s</b><br><span class="tiny dim">derived from remote hostname <code>%s</code></span><dt>System<dd>%s<dt>Privilege<dd>%s<dt>WireGuard<dd>kernel %s · tools %s%s</div>
 <div class="callout section"><b>Shared control key</b><br><span class="small mono">%s</span><br><span class="tiny dim">Reused for SSH bootstrap only; not a node WG or platform signing key.</span></div></div>
 <div class="card span7"><div class=sectionhead><h2>Review network declaration</h2><span class="sp badge warn"><span class=dot></span>Not committed</span></div>
 <div class=grid><div class="span6"><div class=label>Public endpoint candidate</div><div class="metric mono">%s</div><div class="tiny dim">%s</div></div><div class="span3"><div class=label>Direction</div><div class=metric>%s</div><div class="tiny dim">%s</div></div><div class="span3"><div class=label>Egress</div><div class="metric ok">Enabled</div><div class="tiny dim">new-node default</div></div></div>
 <div class="callout warnline"><b>Endpoint evidence boundary</b><br><span class=small>The authenticated SSH target resolves to a globally routable endpoint candidate, but the control plane has not verified WireGuard UDP ingress. Automatic therefore resolves to <code>reverse_only</code>; choose a more exposed direction only when that policy is independently justified.</span></div>
-<div class=section><div class=sectionhead><h2>Proposed persistent tunnels</h2><span class=dim>Recomputed from direction and current SSOT</span></div>`, esc(c.User), esc(c.Host), c.Port, esc(h.Fingerprint), esc(review.NodeID), esc(review.System), esc(review.Privilege), yesNo(review.KernelWireGuard), yesNo(review.WGCommand), esc(key.Fingerprint), esc(review.PublicEndpoint), esc(review.EndpointEvidence), esc(review.ResolvedDirection), esc(review.DirectionEvidence))
+<div class=section><div class=sectionhead><h2>Proposed persistent tunnels</h2><span class=dim>Recomputed from direction and current SSOT</span></div>`, esc(c.User), esc(c.Host), c.Port, esc(h.Fingerprint), esc(review.NodeID), esc(review.ObservedHostname), esc(review.System), esc(review.Privilege), yesNo(review.KernelWireGuard), yesNo(review.WGCommand), wgToolsNote, esc(key.Fingerprint), esc(review.PublicEndpoint), esc(review.EndpointEvidence), esc(review.ResolvedDirection), esc(review.DirectionEvidence))
 	if len(review.Tunnels) == 0 {
 		b.WriteString(`<div class=empty>No persistent WireGuard tunnel is required by the current direction matrix. Dynamic public paths remain separate routing candidates.</div>`)
 	} else {
@@ -318,12 +322,12 @@ func writeNodeAddReview(b *strings.Builder, d Deps, review EnrollmentReview, key
 		b.WriteString(`</table>`)
 	}
 	fmt.Fprintf(b, `</div><div class=section>
-<form class=blockform method=post action="/nodes/add/commit">%s
+<form class=blockform data-submit-progress method=post action="/nodes/add/commit">%s
 <div class=fields><div class="field span6"><label>Try a different direction policy</label><select name=direction>%s</select></div><div class="field span6"><label>Effect</label><div class=callout>Recomputes the entire tunnel plan; it cannot save SSOT.</div></div></div>
 <p class="tiny dim">Changing direction does not edit individual edges. Review the newly derived initiator, acceptor, address and port plan before it can be committed.</p>
 <div class=toolbar><button class=progress-submit name=action value=preview><span class=button-idle>Recompute &amp; review direction</span><span class=button-busy><i class=button-spinner aria-hidden=true></i>Rechecking remote host…</span></button></div></form>
 </div><div class=section><div class=callout><b>Reviewed direction is locked for commit</b><br><span class=small><code>%s</code> resolved to <code>%s</code>. To use another direction, recompute and review it above first.</span></div>
-<form class=blockform method=post action="/nodes/add/commit">%s
+<form class=blockform data-submit-progress method=post action="/nodes/add/commit">%s
 <input type=hidden name=direction value="%s"><input type=hidden name=reviewed_direction value="%s">
 <input type=hidden name=review_token value="%s">
 <input type=hidden name=expected_node value="%s"><input type=hidden name=expected_endpoint value="%s"><input type=hidden name=expected_endpoint_resolution value="%s"><input type=hidden name=revision value="%s">

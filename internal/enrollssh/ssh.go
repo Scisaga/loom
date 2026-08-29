@@ -27,7 +27,7 @@ if [ -d /sys/module/wireguard ] || grep -qw wireguard /proc/modules 2>/dev/null 
 fi
 
 wg_command=0
-if command -v wg >/dev/null 2>&1; then
+if [ -x /usr/bin/wg ]; then
     wg_command=1
 fi
 
@@ -53,6 +53,54 @@ printf 'kernel_wireguard=%s\n' "$kernel_wireguard"
 printf 'wg_command=%s\n' "$wg_command"
 printf 'privilege=%s\n' "$privilege"
 printf 'ssh_server=%s\n' "$ssh_server"
+`
+
+// InstallWireGuardToolsScript is the fixed, idempotent package bootstrap used
+// only after an authenticated preflight proves both kernel support and root or
+// passwordless-sudo authority. It never upgrades an already present wg binary.
+const InstallWireGuardToolsScript = `set -eu
+set -f
+
+installed=0
+if [ ! -x /usr/bin/wg ]; then
+    if [ "$(id -u)" = 0 ]; then
+        privilege=root
+    elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+        privilege=sudo-nopasswd
+    else
+        echo 'root or passwordless sudo is required to install wireguard-tools' >&2
+        exit 43
+    fi
+
+    run_privileged() {
+        if [ "$privilege" = root ]; then
+            "$@"
+        else
+            sudo -n "$@"
+        fi
+    }
+
+    if command -v apt-get >/dev/null 2>&1; then
+        run_privileged env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 -o Acquire::Retries=2 update >/dev/null
+        run_privileged env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 -y --no-install-recommends install wireguard-tools >/dev/null
+    elif command -v dnf >/dev/null 2>&1; then
+        run_privileged dnf -y install wireguard-tools >/dev/null
+    elif command -v yum >/dev/null 2>&1; then
+        run_privileged yum -y install wireguard-tools >/dev/null
+    elif command -v apk >/dev/null 2>&1; then
+        run_privileged apk add --no-cache wireguard-tools >/dev/null
+    elif command -v zypper >/dev/null 2>&1; then
+        run_privileged zypper --non-interactive install wireguard-tools >/dev/null
+    else
+        echo 'no supported package manager found (apt-get, dnf, yum, apk or zypper)' >&2
+        exit 44
+    fi
+    [ -x /usr/bin/wg ] || { echo 'wireguard-tools installation completed without providing /usr/bin/wg' >&2; exit 45; }
+    installed=1
+fi
+
+printf '%s\n' 'LOOM_WG_TOOLS_V1'
+printf 'installed=%s\n' "$installed"
 `
 
 // PrepareWGScript is a fixed privileged program. It reuses an existing
@@ -94,7 +142,7 @@ fi
 if [ ! -e "$key" ]; then
     temporary=$(mktemp "$directory/.node.key.XXXXXX")
     trap 'rm -f "$temporary"' EXIT HUP INT TERM
-    wg genkey >"$temporary"
+    /usr/bin/wg genkey >"$temporary"
     chmod 600 "$temporary"
     if ! ln "$temporary" "$key" 2>/dev/null; then
         if [ -L "$key" ] || [ ! -f "$key" ]; then
@@ -107,7 +155,7 @@ if [ ! -e "$key" ]; then
 fi
 
 chmod 600 "$key"
-wg pubkey <"$key"
+/usr/bin/wg pubkey <"$key"
 LOOM_WG_PRIVILEGED
 )
 printf '%s\n' 'LOOM_WG_PREPARE_V1'
@@ -151,6 +199,7 @@ type Client struct {
 	PrivateKeyPath string
 	KnownHostsPath string
 	Timeout        time.Duration
+	InstallTimeout time.Duration
 	ConnectTimeout time.Duration
 	OutputLimit    int
 }
@@ -167,6 +216,21 @@ func (c Client) Preflight(ctx context.Context, connection Connection) (Preflight
 		return PreflightResult{}, fmt.Errorf("invalid SSH preflight output: %w", err)
 	}
 	return parsed, nil
+}
+
+// EnsureWireGuardTools installs the distribution package only when wg is
+// absent. The caller must first establish authenticated host identity and
+// preflight privilege; the script repeats that privilege check fail-closed.
+func (c Client) EnsureWireGuardTools(ctx context.Context, connection Connection) (bool, error) {
+	result, err := c.runScriptWithTimeout(ctx, connection, "install remote wireguard-tools", InstallWireGuardToolsScript, c.InstallTimeout, defaultInstallTimeout)
+	if err != nil {
+		return false, err
+	}
+	installed, err := parseWireGuardToolsInstall(result.Stdout)
+	if err != nil {
+		return false, fmt.Errorf("invalid wireguard-tools installation output: %w", err)
+	}
+	return installed, nil
 }
 
 // PrepareWG idempotently creates /etc/wireguard/node.key through sudo and
@@ -214,7 +278,23 @@ func parsePrepareWG(output []byte) (PrepareWGResult, error) {
 	}, nil
 }
 
+func parseWireGuardToolsInstall(output []byte) (bool, error) {
+	lines := strings.Split(strings.TrimSuffix(string(output), "\n"), "\n")
+	if len(lines) != 2 || lines[0] != "LOOM_WG_TOOLS_V1" {
+		return false, errors.New("expected LOOM_WG_TOOLS_V1 and exactly one field")
+	}
+	key, value, ok := strings.Cut(lines[1], "=")
+	if !ok || key != "installed" {
+		return false, fmt.Errorf("unexpected field %q", lines[1])
+	}
+	return parseScriptBool(value)
+}
+
 func (c Client) runScript(ctx context.Context, connection Connection, operation, script string) (Result, error) {
+	return c.runScriptWithTimeout(ctx, connection, operation, script, c.Timeout, defaultSSHTimeout)
+}
+
+func (c Client) runScriptWithTimeout(ctx context.Context, connection Connection, operation, script string, configuredTimeout, fallbackTimeout time.Duration) (Result, error) {
 	if err := connection.Validate(); err != nil {
 		return Result{}, err
 	}
@@ -228,7 +308,7 @@ func (c Client) runScript(ctx context.Context, connection Connection, operation,
 	if !snapshot.exists {
 		return Result{}, errors.New("control known_hosts does not exist")
 	}
-	timeoutDuration, err := timeout(c.Timeout, defaultSSHTimeout)
+	timeoutDuration, err := timeout(configuredTimeout, fallbackTimeout)
 	if err != nil {
 		return Result{}, fmt.Errorf("invalid SSH timeout: %w", err)
 	}

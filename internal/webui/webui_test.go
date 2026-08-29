@@ -1,6 +1,8 @@
 package webui
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -54,6 +56,28 @@ func TestPageIsSelfContained(t *testing.T) {
 	csp := get(t, Handler(deps("", nil)), "/", nil).Header().Get("Content-Security-Policy")
 	if !strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "img-src 'self' data:") {
 		t.Errorf("没有为内嵌导航图标设置自包含 CSP:%q", csp)
+	}
+}
+
+func TestEnrollmentProgressScriptIsInlineAndCSPHashLocked(t *testing.T) {
+	d := misakaDeps()
+	d.Control.Enrollment = &NodeEnrollmentDeps{}
+	body := pageNodeAdd(d, nodeAddPageState{
+		Phase:      "confirm",
+		Connection: EnrollmentConnection{Host: "203.0.113.42", User: "root", Port: 22},
+		HostKey: EnrollmentHostKey{
+			Algorithm: "ssh-ed25519", PublicKey: "AAAAC3Nza", Fingerprint: "SHA256:test",
+		},
+	}, true)
+	if strings.Count(body, "<script>") != 1 || !strings.Contains(body, progressSubmitScript) || strings.Contains(body, "<script src=") {
+		t.Fatalf("enrollment progress script is not the single approved inline script")
+	}
+	w := httptest.NewRecorder()
+	writeHTML(w, body)
+	digest := sha256.Sum256([]byte(progressSubmitScript))
+	want := "script-src 'sha256-" + base64.StdEncoding.EncodeToString(digest[:]) + "'"
+	if csp := w.Header().Get("Content-Security-Policy"); !strings.Contains(csp, want) || strings.Contains(csp, "'unsafe-inline'") && strings.Contains(strings.Split(csp, "style-src")[0], "'unsafe-inline'") {
+		t.Fatalf("progress script CSP = %q, want exact hash %q", csp, want)
 	}
 }
 

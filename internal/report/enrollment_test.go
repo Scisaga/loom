@@ -142,6 +142,29 @@ func TestResolveEnrollmentDirectionIsConservative(t *testing.T) {
 	}
 }
 
+func TestEnrollmentNodeIDNormalizesRemoteHostname(t *testing.T) {
+	for input, want := range map[string]string{
+		"VM-0-3":       "vm-0-3",
+		"EDGE__Berlin": "edge-berlin",
+		"_SG---02_":    "sg-02",
+		"hk01":         "hk01",
+	} {
+		got, err := enrollmentNodeID(input)
+		if err != nil || got != want {
+			t.Errorf("enrollmentNodeID(%q) = %q, %v; want %q", input, got, err, want)
+		}
+	}
+	long, err := enrollmentNodeID("VM-0-3-ubuntu")
+	if err != nil || !strings.HasPrefix(long, "vm-0-3-") || len(long) > model.LinuxIfnameMax-len("wg-") || !model.ValidNodeID(long) {
+		t.Fatalf("long normalized Node ID = %q, %v", long, err)
+	}
+	for _, input := range []string{"---", "___", "node.example"} {
+		if got, err := enrollmentNodeID(input); err == nil {
+			t.Errorf("enrollmentNodeID(%q) accepted as %q", input, got)
+		}
+	}
+}
+
 func TestEnrollmentScanValidatesCoordinatesAndReturnsOnlyPublicHostKey(t *testing.T) {
 	called := 0
 	backend := enrollmentBackend{
@@ -239,6 +262,76 @@ func TestEnrollmentReviewAndCommitAreOneRevisionGuardedPlan(t *testing.T) {
 		!node.Server.EgressCapable || node.Server.WGPublicKey != testWGPublicKey ||
 		node.PublicEndpoint != "edge.example.net" || node.SSHPort != 22 {
 		t.Fatalf("committed node = %#v", node)
+	}
+}
+
+func TestEnrollmentAutomaticallyInstallsToolsAndUsesNormalizedNodeID(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ssot.yaml")
+	initial, err := os.ReadFile("../../testdata/matrix/ssot.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	backend, counters := fakeEnrollmentBackend(t, path)
+	toolsAvailable := false
+	backend.preflight = func(context.Context, enrollssh.Connection) (enrollssh.PreflightResult, error) {
+		counters.preflight++
+		return enrollssh.PreflightResult{
+			Hostname: "VM-0-3-ubuntu", Uname: "Linux 6.8.0 x86_64 GNU/Linux",
+			KernelWireGuard: true, WGCommand: toolsAvailable, Privilege: enrollssh.PrivilegeRoot,
+			ObservedSSHServerAddress: "10.24.0.18",
+		}, nil
+	}
+	backend.installWGTools = func(context.Context, enrollssh.Connection) (bool, error) {
+		counters.install++
+		toolsAvailable = true
+		return true, nil
+	}
+	backend.prepareWG = func(context.Context, enrollssh.Connection) (enrollssh.PrepareWGResult, error) {
+		counters.prepare++
+		return enrollssh.PrepareWGResult{
+			Hostname: "VM-0-3-ubuntu", ObservedSSHServerAddress: "10.24.0.18", PublicKey: testWGPublicKey,
+		}, nil
+	}
+
+	deps := backend.dependencies()
+	input := enrollmentReviewInput()
+	review, err := deps.Review(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(review.NodeID, "vm-0-3-") || review.ObservedHostname != "VM-0-3-ubuntu" || !review.WireGuardToolsInstalled || !review.WGCommand {
+		t.Fatalf("automatic bootstrap review = %#v", review)
+	}
+	if counters.install != 1 || counters.preflight != 2 {
+		t.Fatalf("review calls = %#v", counters)
+	}
+
+	added, err := deps.Commit(context.Background(), webui.EnrollmentCommitInput{
+		EnrollmentReviewInput: input,
+		ExpectedNodeID:        review.NodeID, ExpectedEndpoint: review.PublicEndpoint,
+		ExpectedEndpointResolution: review.EndpointResolution, ExpectedRevision: review.Revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added != review.NodeID || counters.install != 1 || counters.preflight != 3 || counters.prepare != 1 {
+		t.Fatalf("commit result=%q calls=%#v", added, counters)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ssot, err := model.Load(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node := ssot.NodeByID()[review.NodeID]; node == nil || node.Server == nil || node.Server.WGPublicKey != testWGPublicKey {
+		t.Fatalf("normalized node was not committed: %#v", node)
 	}
 }
 
@@ -355,7 +448,7 @@ func TestEnrollmentCommitBindsDNSAnswersAndPreparedHostSession(t *testing.T) {
 }
 
 type enrollmentCallCounters struct {
-	confirm, preflight, prepare int
+	confirm, preflight, install, prepare int
 }
 
 const testWGPublicKey = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
@@ -380,6 +473,10 @@ func fakeEnrollmentBackend(t *testing.T, path string) (enrollmentBackend, *enrol
 				KernelWireGuard: true, WGCommand: true, Privilege: enrollssh.PrivilegeSudo,
 				ObservedSSHServerAddress: "10.24.0.18",
 			}, nil
+		},
+		installWGTools: func(context.Context, enrollssh.Connection) (bool, error) {
+			counters.install++
+			return true, nil
 		},
 		prepareWG: func(context.Context, enrollssh.Connection) (enrollssh.PrepareWGResult, error) {
 			counters.prepare++
