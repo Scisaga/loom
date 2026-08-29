@@ -56,7 +56,7 @@ func TestNodeLifecycleAndEndpointEvidenceStayExplicit(t *testing.T) {
 	d.Snapshot = func() View { return v }
 
 	nodes := pageNodes(d, false, "")
-	for _, want := range []string{"1 <small>trusted</small>", "1 decommissioned", "Decommissioned", "Declared endpoint / SSH port", "UDP ingress unverified"} {
+	for _, want := range []string{"1 <small>trusted</small>", "1 decommissioned", "Decommissioned", "声明地址 / SSH 端口", "UDP ingress unverified"} {
 		if !strings.Contains(nodes, want) {
 			t.Errorf("Nodes page is missing lifecycle/endpoint boundary %q", want)
 		}
@@ -64,6 +64,55 @@ func TestNodeLifecycleAndEndpointEvidenceStayExplicit(t *testing.T) {
 	detail, found := pageNodeDetail(d, v.Nodes[0].ID, false)
 	if !found || !strings.Contains(detail, "Declared endpoint") || !strings.Contains(detail, "UDP ingress unverified") {
 		t.Fatalf("Node detail treats declared endpoint as verified: found=%v", found)
+	}
+}
+
+func TestNodeInventoryExplainsRolesDirectionAndStableIdentity(t *testing.T) {
+	d := misakaDeps()
+	v := d.Snapshot()
+	v.Nodes[0].Roles = []string{"control", "access", "server", "egress"}
+	v.Nodes[0].Direction = "bidirectional"
+	v.Nodes[1].Roles = []string{"server", "egress"}
+	v.Nodes[1].Direction = "reverse_only"
+	d.Snapshot = func() View { return v }
+
+	body := pageNodes(d, false, "")
+	for _, want := range []string{
+		"<b>接入</b> 承接本机或客户端流量并执行选路",
+		"<b>可作出口</b> 可作为路径末端访问公网",
+		"节点 ID</b> 加入时确定，不随系统 hostname 自动变化",
+		"中控 + 接入 + 转发 + 可作出口",
+		"只主动连接，不接受入站",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Nodes role explanation is missing %q", want)
+		}
+	}
+}
+
+func TestOverviewAttentionNamesProblemAndUnknownNodesWithoutContradiction(t *testing.T) {
+	d := misakaDeps()
+	v := d.Snapshot()
+	v.Nodes = []NodeView{
+		{ID: "jm24", Declared: true, Health: "problem"},
+		{ID: "vm-0-3-ed43", Declared: true, Health: "unknown"},
+	}
+	d.Snapshot = func() View { return v }
+	d.Unresolved = nil
+
+	body := pageOverview(d, false)
+	for _, want := range []string{
+		"1 个节点存在异常，另有 1 个等待状态上报",
+		"异常：<span class=mono>jm24",
+		"等待上报：<span class=mono>vm-0-3-ed43",
+		"尚未上线时，与它相连的预期隧道也可能让相邻节点暂时显示异常",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Overview attention summary is missing %q", want)
+		}
+	}
+	if strings.Contains(body, "No confirmed fault") {
+		t.Fatal("Overview contradicted the node problem state")
 	}
 }
 

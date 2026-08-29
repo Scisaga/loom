@@ -10,8 +10,8 @@ import (
 func pageOverview(d Deps, isAuthed bool) string {
 	v := d.Snapshot()
 	now := d.Now().UTC()
-	intentSource := intentSourceLabel(v)
 	declared, decommissioned, healthy, problems, unknown := 0, 0, 0, 0, 0
+	var problemNodes, unknownNodes []string
 	for _, n := range v.Nodes {
 		if !n.Declared {
 			continue
@@ -26,10 +26,14 @@ func pageOverview(d Deps, isAuthed bool) string {
 			healthy++
 		case "problem":
 			problems++
+			problemNodes = append(problemNodes, n.ID)
 		default:
 			unknown++
+			unknownNodes = append(unknownNodes, n.ID)
 		}
 	}
+	sort.Strings(problemNodes)
+	sort.Strings(unknownNodes)
 	activeDeclared := declared - decommissioned
 	tunnelTotal, tunnelActive := 0, 0
 	for _, link := range v.Links {
@@ -49,30 +53,32 @@ func pageOverview(d Deps, isAuthed bool) string {
 	}
 
 	var b strings.Builder
-	healthClass := "warn"
-	healthText := fmt.Sprintf("%d 故障 · %d 未知", problems, unknown)
+	healthClass, healthIcon := "warn", "?"
+	healthText := fmt.Sprintf("%d 个节点正常 · %d 个异常 · %d 个等待上报", healthy, problems, unknown)
 	if activeDeclared == 0 {
 		if declared > 0 {
-			healthText = fmt.Sprintf("%d decommissioned · no active nodes", decommissioned)
+			healthText = fmt.Sprintf("没有运行中的节点 · %d 个已下线", decommissioned)
 		} else {
-			healthText = "No nodes declared in " + intentSource
+			healthText = "当前配置中还没有声明节点"
 		}
 	} else if problems > 0 {
-		healthClass = "bad"
+		healthClass, healthIcon = "bad", "!"
+	} else if unknown > 0 {
+		healthText = fmt.Sprintf("%d 个节点正常 · %d 个等待可信状态上报", healthy, unknown)
 	} else if unknown == 0 {
-		healthClass, healthText = "ok", "All active declared nodes are healthy"
+		healthClass, healthIcon, healthText = "ok", "✓", fmt.Sprintf("%d 个运行中节点均正常", healthy)
 	}
-	fmt.Fprintf(&b, `<div class="overview-health %s"><span class="status-check %s">✓</span><span>%s</span></div>`, healthClass, healthClass, esc(healthText))
-	snapshotMeta := "observed " + ageText(v.ObservedAt, now)
+	fmt.Fprintf(&b, `<div class="overview-health %s"><span class="status-check %s">%s</span><span>%s</span></div>`, healthClass, healthClass, healthIcon, esc(healthText))
+	snapshotMeta := "控制面当前版本 · 观测于 " + ageText(v.ObservedAt, now)
 	if overviewFleetConverged(v) && v.Publisher != nil && v.Publisher.Commit != "" {
-		snapshotMeta = "fleet converged · publisher code " + short(v.Publisher.Commit)
+		snapshotMeta = "全网已应用 · 发布版本 " + short(v.Publisher.Commit)
 	}
 	fmt.Fprintf(&b, `<div id=overview class=steps>
-<div class=step><span class=label>Nodes</span><b>%d <small>/ %d healthy</small></b></div>
-<div class=step><span class=label>WireGuard</span><b>%d / %d <small>observed</small></b></div>
-<div class=step><span class=label>Current traffic paths</span><b>%d / %d <small>reported</small></b></div>
-<div class=step><span class=label>Snapshot</span><b class=mono>%s</b><span class="tiny dim">%s</span></div>
-	</div>`, healthy, activeDeclared, tunnelActive, tunnelTotal, freshRoutes, len(v.Routes), esc(short(v.Applied)), esc(snapshotMeta))
+<div class=step><span class=label>节点状态</span><b>%d <small>/ %d 正常</small></b><span class="tiny dim">%d 个异常 · %d 个等待上报</span></div>
+<div class=step><span class=label>WireGuard 常驻隧道</span><b>%d / %d <small>已连通</small></b><span class="tiny dim">仅统计配置中声明的隧道</span></div>
+<div class=step><span class=label>当前流量路径</span><b>%d / %d <small>已上报</small></b><span class="tiny dim">来自接入节点 Agent 的签名状态</span></div>
+<div class=step><span class=label>配置快照</span><b class=mono>%s</b><span class="tiny dim">%s</span></div>
+	</div>`, healthy, activeDeclared, problems, unknown, tunnelActive, tunnelTotal, freshRoutes, len(v.Routes), esc(short(v.Applied)), esc(snapshotMeta))
 
 	writeSnapshotVerdict(&b, v)
 
@@ -98,11 +104,9 @@ func pageOverview(d Deps, isAuthed bool) string {
 	b.WriteString(`</div>`)
 	writeOverviewEventsCompact(&b, d)
 
-	if len(unresolved) > 0 || unknown > 0 {
-		b.WriteString(`<section class="card overview-attention"><div class=sectionhead><h2>Current attention</h2><span class=dim>present state, not reconstructed from event history</span></div>`)
-		if len(unresolved) == 0 {
-			fmt.Fprintf(&b, `<div class="callout warnline"><b class=warn>No confirmed fault, but %d node(s) are unknown / 状态未知</b><br><span class=small>unknown 不等于 healthy</span></div>`, unknown)
-		}
+	if len(unresolved) > 0 || problems > 0 || unknown > 0 {
+		b.WriteString(`<section class="card overview-attention"><div class=sectionhead><h2>需要关注</h2><span class=dim>当前状态，不根据历史事件推测</span></div>`)
+		writeOverviewAttentionSummary(&b, problems, unknown, problemNodes, unknownNodes, unresolved)
 		for _, issue := range unresolved {
 			cls := "issue"
 			if issue.Level == "problem" {
@@ -116,6 +120,32 @@ func pageOverview(d Deps, isAuthed bool) string {
 	writeOverviewTraffic(&b, v)
 	writeOverviewDiagnostics(&b, v, now)
 	return shell(d, "总览", b.String(), isAuthed, v)
+}
+
+func writeOverviewAttentionSummary(b *strings.Builder, problems, unknown int, problemNodes, unknownNodes []string, unresolved []UnresolvedView) {
+	className, icon := "warning", "?"
+	title := fmt.Sprintf("%d 个节点尚无可信状态上报", unknown)
+	note := "常见于节点刚加入但 Agent 尚未安装或启动；没有故障证据不等于健康。"
+	if problems > 0 {
+		className, icon = "problem", "!"
+		title = fmt.Sprintf("%d 个节点存在异常", problems)
+		if unknown > 0 {
+			title += fmt.Sprintf("，另有 %d 个等待状态上报", unknown)
+		}
+		note = "刚加入的节点尚未上线时，与它相连的预期隧道也可能让相邻节点暂时显示异常。"
+	} else if unknown == 0 && len(unresolved) > 0 {
+		className, icon = "problem", "!"
+		title = "存在尚未解决的运行异常"
+		note = "下方列出的是当前仍成立的证据，不是历史事件回放。"
+	}
+	fmt.Fprintf(b, `<aside class="status-alert %s attention-summary" role=status><span class=status-alert-icon aria-hidden=true>%s</span><div class=status-alert-body><div class=status-alert-title><strong>%s</strong></div><div class=status-alert-items>`, className, icon, esc(title))
+	if len(problemNodes) > 0 {
+		fmt.Fprintf(b, `<span>异常：<span class=mono>%s</span></span>`, esc(strings.Join(problemNodes, " · ")))
+	}
+	if len(unknownNodes) > 0 {
+		fmt.Fprintf(b, `<span>等待上报：<span class=mono>%s</span></span>`, esc(strings.Join(unknownNodes, " · ")))
+	}
+	b.WriteString(`</div></div><span class=status-alert-note>` + esc(note) + ` <a href="/nodes">查看节点详情 →</a></span></aside>`)
 }
 
 func overviewFleetConverged(v View) bool {
@@ -171,7 +201,7 @@ func writeSnapshotVerdict(b *strings.Builder, v View) {
 				current = len(nodes)
 			}
 		}
-		fmt.Fprintf(b, `<aside class="status-alert warning snapshot-alert snapshot-verdict" role=status><span class=status-alert-icon aria-hidden=true>↻</span><div class=status-alert-body><div class=status-alert-title><strong>Snapshot convergence pending</strong><span>%d snapshots observed</span></div><div class=snapshot-groups>`, len(keys))
+		fmt.Fprintf(b, `<aside class="status-alert warning snapshot-alert snapshot-verdict" role=status><span class=status-alert-icon aria-hidden=true>↻</span><div class=status-alert-body><div class=status-alert-title><strong>配置仍在同步</strong><span>节点上报了 %d 个不同版本</span></div><div class=snapshot-groups>`, len(keys))
 		for _, key := range keys {
 			sort.Strings(versions[key])
 			className := "snapshot-group"
@@ -182,9 +212,9 @@ func writeSnapshotVerdict(b *strings.Builder, v View) {
 		}
 		b.WriteString(`</div></div>`)
 		if current > 0 {
-			fmt.Fprintf(b, `<span class=status-alert-note>%d / %d nodes on the control-plane snapshot</span>`, current, total)
+			fmt.Fprintf(b, `<span class=status-alert-note>%d / %d 个节点已应用控制面当前版本</span>`, current, total)
 		} else {
-			fmt.Fprintf(b, `<span class=status-alert-note>%d declared nodes reported a snapshot</span>`, total)
+			fmt.Fprintf(b, `<span class=status-alert-note>%d 个已声明节点上报了配置版本</span>`, total)
 		}
 		b.WriteString(`</aside>`)
 	} else if len(versions) == 1 && unknown == 0 {
@@ -193,10 +223,10 @@ func writeSnapshotVerdict(b *strings.Builder, v View) {
 		}
 	} else if len(versions) == 1 {
 		for key := range versions {
-			fmt.Fprintf(b, `<aside class="status-alert warning snapshot-alert snapshot-verdict" role=status><span class=status-alert-icon aria-hidden=true>?</span><div class=status-alert-body><div class=status-alert-title><strong>Snapshot evidence incomplete</strong><span>%d nodes unverified</span></div><div class=snapshot-groups><span class="snapshot-group current"><span class=mono>%s</span><span class=snapshot-group-nodes>observed nodes</span></span></div></div><span class=status-alert-note>Waiting for signed node evidence</span></aside>`, unknown, esc(short(key)))
+			fmt.Fprintf(b, `<aside class="status-alert warning snapshot-alert snapshot-verdict" role=status><span class=status-alert-icon aria-hidden=true>?</span><div class=status-alert-body><div class=status-alert-title><strong>配置版本证据不完整</strong><span>%d 个节点尚未验证</span></div><div class=snapshot-groups><span class="snapshot-group current"><span class=mono>%s</span><span class=snapshot-group-nodes>已观测节点</span></span></div></div><span class=status-alert-note>等待节点签名上报，不能据此判断全网一致</span></aside>`, unknown, esc(short(key)))
 		}
 	} else if unknown > 0 {
-		fmt.Fprintf(b, `<aside class="status-alert warning snapshot-alert snapshot-verdict" role=status><span class=status-alert-icon aria-hidden=true>?</span><div class=status-alert-body><div class=status-alert-title><strong>Snapshot evidence unavailable</strong><span>%d nodes unverified</span></div></div><span class=status-alert-note>Waiting for signed node evidence</span></aside>`, unknown)
+		fmt.Fprintf(b, `<aside class="status-alert warning snapshot-alert snapshot-verdict" role=status><span class=status-alert-icon aria-hidden=true>?</span><div class=status-alert-body><div class=status-alert-title><strong>暂无配置版本证据</strong><span>%d 个节点尚未验证</span></div></div><span class=status-alert-note>等待节点首次签名上报</span></aside>`, unknown)
 	}
 }
 

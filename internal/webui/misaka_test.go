@@ -154,7 +154,7 @@ func TestDeclaredCountersExcludeRetainedUndeclaredObservation(t *testing.T) {
 
 	overview := pageOverview(d, false)
 	for _, want := range []string{
-		`<b>1 <small>/ 2 healthy</small></b>`,
+		`<b>1 <small>/ 2 正常</small></b>`,
 		`快照 snapshot-new · 全网一致`,
 		`Undeclared observed`,
 	} {
@@ -162,7 +162,7 @@ func TestDeclaredCountersExcludeRetainedUndeclaredObservation(t *testing.T) {
 			t.Errorf("Overview missing declaration-aware output %q", want)
 		}
 	}
-	if strings.Contains(overview, "Snapshot convergence pending") {
+	if strings.Contains(overview, "配置仍在同步") {
 		t.Fatal("removed runtime node polluted the current declared snapshot verdict")
 	}
 	if topology := topologySVG(view); !strings.Contains(topology, "undeclared observed") ||

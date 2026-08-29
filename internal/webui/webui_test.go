@@ -244,7 +244,7 @@ func TestVersionSkewIsSurfaced(t *testing.T) {
 		return View{Nodes: []NodeView{{ID: "a", Declared: true, Applied: "v1"}, {ID: "b", Declared: true, Applied: "v2"}}}
 	}
 	body := get(t, Handler(d), "/", nil).Body.String()
-	if !strings.Contains(body, "Snapshot convergence pending") || !strings.Contains(body, "snapshot-group") {
+	if !strings.Contains(body, "配置仍在同步") || !strings.Contains(body, "snapshot-group") {
 		t.Error("版本不一致没有报出来")
 	}
 }
@@ -282,7 +282,7 @@ func TestUnknownNodesAreNotCountedHealthy(t *testing.T) {
 		}}
 	}
 	body := get(t, Handler(d), "/", nil).Body.String()
-	for _, want := range []string{"0 <small>/ 2", "0 故障 · 2 未知", "unknown 不等于 healthy", "状态未知"} {
+	for _, want := range []string{"0 <small>/ 2 正常", "0 个节点正常 · 2 个等待可信状态上报", "2 个节点尚无可信状态上报", "等待上报：", "silent", "relay", "没有故障证据不等于健康"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("三态健康摘要缺少 %q", want)
 		}

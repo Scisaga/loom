@@ -55,13 +55,13 @@ func pageNodes(d Deps, isAuthed bool, added string) string {
 	} else {
 		b.WriteString(`<span class="button" aria-disabled=true>Read-only node</span>`)
 	}
-	b.WriteString(`</span></div><div class=card><table><thead><tr><th>Node / lifecycle<th>Declared endpoint / SSH port<th>Role / direction<th>Observation<th>Snapshot<th>Tunnels<th>Last seen<th></thead><tbody>`)
+	b.WriteString(`</span></div><div class=node-inventory-help><span><b>接入</b> 承接本机或客户端流量并执行选路</span><span><b>转发</b> 参与隧道和代理链路</span><span><b>可作出口</b> 可作为路径末端访问公网</span><span><b>节点 ID</b> 加入时确定，不随系统 hostname 自动变化</span></div><div class=card><table><thead><tr><th>节点 / 生命周期<th>声明地址 / SSH 端口<th>用途 / 建连方式<th>观测来源<th>配置版本<th>常驻隧道<th>最后上报<th></thead><tbody>`)
 	for _, n := range v.Nodes {
 		stateClass, stateLabel := healthVisual(n.Health)
 		lifecycleClass, lifecycleLabel := nodeLifecycleVisual(n)
 		carrierTotal, active := carrierTunnelCount(n.Tunnels)
 		role := nodeRoleLabel(n)
-		direction := n.Direction
+		direction := nodeDirectionLabel(n.Direction)
 		if direction == "" {
 			direction = "—"
 		}
@@ -384,7 +384,22 @@ func nodeLifecycleVisual(n NodeView) (class, label string) {
 
 func nodeRoleLabel(n NodeView) string {
 	if len(n.Roles) > 0 {
-		return strings.Join(n.Roles, " + ")
+		labels := make([]string, 0, len(n.Roles))
+		for _, role := range n.Roles {
+			switch role {
+			case "control":
+				labels = append(labels, "中控")
+			case "access":
+				labels = append(labels, "接入")
+			case "server":
+				labels = append(labels, "转发")
+			case "egress":
+				labels = append(labels, "可作出口")
+			default:
+				labels = append(labels, role)
+			}
+		}
+		return strings.Join(labels, " + ")
 	}
 	if n.Agent != nil && hasCarrierTunnel(n.Tunnels) {
 		return "access + topology"
@@ -396,6 +411,21 @@ func nodeRoleLabel(n NodeView) string {
 		return "topology"
 	}
 	return "not reported"
+}
+
+func nodeDirectionLabel(direction string) string {
+	switch direction {
+	case "bidirectional":
+		return "可主动连接，也可接受入站"
+	case "reverse_only":
+		return "只主动连接，不接受入站"
+	case "direct_only":
+		return "只接受入站，不主动连接"
+	case "":
+		return "—"
+	default:
+		return direction
+	}
 }
 
 func nodeLocationLabel(n NodeView) string {
