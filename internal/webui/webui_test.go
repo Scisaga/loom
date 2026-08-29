@@ -3,7 +3,6 @@ package webui
 import (
 	"crypto/sha256"
 	"encoding/base64"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -200,23 +199,69 @@ func TestFocusedTopologyMetricsDoNotOverlapForSixNodeMesh(t *testing.T) {
 	positions := map[string]topologyPoint{}
 	topologyRingPositions(positions, []string{"jm24", "gz02", "hz01"}, "inner", -90, 170, 75)
 	topologyRingPositions(positions, []string{"ber01", "sg02", "sv01"}, "outer", -30, 310, 130)
+	nodes := map[string]NodeView{
+		"jm24":  {ID: "jm24", City: "北京", Roles: []string{"control", "access", "server", "egress"}},
+		"gz02":  {ID: "gz02", City: "广州", Roles: []string{"server", "egress"}},
+		"hz01":  {ID: "hz01", City: "杭州", Roles: []string{"server", "egress"}},
+		"ber01": {ID: "ber01", City: "柏林", Roles: []string{"server", "egress"}},
+		"sg02":  {ID: "sg02", City: "新加坡", Roles: []string{"server", "egress"}},
+		"sv01":  {ID: "sv01", City: "硅谷", Roles: []string{"server", "egress"}},
+	}
+	measuredLink := func(from, to string) LinkView {
+		return LinkView{
+			From: from, To: to, Kind: "tunnel", MS: 207, Samples: 5, ObservedAt: "2026-08-29T12:00:00Z",
+			RecentTXBytes: 671_250, RateWindowSeconds: 300, RateSamples: 4,
+			QualityP50MS: 203, QualityP95MS: 207, QualityObservations: 8,
+		}
+	}
 	var links []LinkView
 	for _, inner := range []string{"jm24", "gz02", "hz01"} {
 		for _, outer := range []string{"ber01", "sg02", "sv01"} {
-			links = append(links, LinkView{From: inner, To: outer, Kind: "tunnel"})
+			links = append(links, measuredLink(inner, outer))
 		}
 	}
-	labels := topologyMetricPositions(links, positions)
+	// Same-ring persistent tunnels must use the same measured-label placement
+	// path. (Candidate arcs deliberately remain unmeasured.)
+	links = append(links,
+		measuredLink("jm24", "gz02"),
+		measuredLink("gz02", "hz01"),
+		measuredLink("hz01", "jm24"),
+	)
+	labels := topologyMetricPositions(links, positions, nodes)
+	if len(labels) != len(links) {
+		t.Fatalf("metric positions = %d, want all %d persistent tunnels including inner-ring links", len(labels), len(links))
+	}
+	obstacles := topologyNodeObstacles(positions, nodes)
+	metricBounds := map[string]svgRect{}
+	for _, link := range links {
+		key := topologyLinkKey(link.From, link.To)
+		metric, _ := topologyLinkMetric(link)
+		bounds := topologyMetricBounds(labels[key], topologyMetricHalfWidth(metric))
+		metricBounds[key] = bounds
+		for _, obstacle := range obstacles {
+			if topologyRectsOverlap(bounds, obstacle.bounds) {
+				t.Fatalf("metric %s overlaps marker or label for %s: metric=%+v obstacle=%+v", key, obstacle.node, bounds, obstacle.bounds)
+			}
+		}
+	}
+	// Regression: this was the top-left label hidden behind sv01 and its
+	// subtitle when its outer-ring fan used a position only 14%% from the node.
+	svKey := topologyLinkKey("sv01", "jm24")
+	for _, obstacle := range obstacles {
+		if obstacle.node == "sv01" && topologyRectsOverlap(metricBounds[svKey], obstacle.bounds) {
+			t.Fatalf("sv01↔jm24 metric still overlaps sv01: metric=%+v obstacle=%+v", metricBounds[svKey], obstacle.bounds)
+		}
+	}
 	for _, node := range []string{"jm24", "gz02", "hz01", "ber01", "sg02", "sv01"} {
-		var incident []svgPoint
+		var incident []svgRect
 		for _, link := range links {
 			if link.From == node || link.To == node {
-				incident = append(incident, labels[topologyLinkKey(link.From, link.To)])
+				incident = append(incident, metricBounds[topologyLinkKey(link.From, link.To)])
 			}
 		}
 		for i := range incident {
 			for j := i + 1; j < len(incident); j++ {
-				if math.Abs(incident[i].x-incident[j].x) < 140 && math.Abs(incident[i].y-incident[j].y) < 22 {
+				if topologyRectsOverlap(incident[i], incident[j]) {
 					t.Fatalf("focused metrics overlap for %s at %+v and %+v", node, incident[i], incident[j])
 				}
 			}

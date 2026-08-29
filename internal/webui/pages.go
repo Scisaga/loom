@@ -502,6 +502,15 @@ func ageText(ts string, now time.Time) string {
 
 type svgPoint struct{ x, y float64 }
 
+type svgRect struct {
+	minX, minY, maxX, maxY float64
+}
+
+type topologyObstacle struct {
+	node   string
+	bounds svgRect
+}
+
 type topologyPoint struct {
 	x, y, angle float64
 	ring        string
@@ -582,7 +591,7 @@ func topologySVG(v View, routeOverlay ...RouteView) string {
 	b.WriteString(`<circle class=ring-dot cx=18 cy=18 r="3"/><text class=ring-key x=28 y=21>内圈：可接受反向建连的锚点</text><circle class=ring-dot cx=18 cy=35 r="3"/><text class=ring-key x=28 y=38>外圈：反向接入的出口节点</text><text class=ring-key text-anchor=end x=942 y=21>悬停预览 · 点击锁定 · Esc 取消</text>`)
 	curves := map[string]topologyCurve{}
 	curveStarts := map[string]string{}
-	metricPositions := topologyMetricPositions(v.Links, pos)
+	metricPositions := topologyMetricPositions(v.Links, pos, nodes)
 	var metricLabels strings.Builder
 	for _, l := range v.Links {
 		a, aok := pos[l.From]
@@ -741,17 +750,17 @@ func topologyEdgeCurve(a, z topologyPoint, key, kind string) topologyCurve {
 }
 
 // topologyMetricPositions keeps labels close to their continuous carrier
-// curves without turning labels into routing vertices. Around each outer-ring
-// node, its incident labels use different distances from that node; selecting
-// either endpoint therefore reveals a small, readable fan rather than a pile
-// at the shared endpoint.
-func topologyMetricPositions(links []LinkView, positions map[string]topologyPoint) map[string]svgPoint {
+// curves without turning labels into routing vertices. It treats node markers,
+// node labels and already placed metrics as obstacles, then tries several
+// positions on both sides of the carrier. Same-ring tunnels use the same
+// placement path as cross-ring tunnels; candidate edges still have no metric.
+func topologyMetricPositions(links []LinkView, positions map[string]topologyPoint, nodes map[string]NodeView) map[string]svgPoint {
 	type lane struct {
-		key          string
-		a, z         topologyPoint
-		other        topologyPoint
-		otherID      string
-		outerAtStart bool
+		key, hubID string
+		a, z       topologyPoint
+		other      topologyPoint
+		hubAtStart bool
+		halfWidth  float64
 	}
 	groups := map[string][]lane{}
 	for _, link := range links {
@@ -763,32 +772,40 @@ func topologyMetricPositions(links []LinkView, positions map[string]topologyPoin
 		if !aok || !zok {
 			continue
 		}
-		item := lane{key: topologyLinkKey(link.From, link.To), a: a, z: z}
-		outerID := ""
+		metric, _ := topologyLinkMetric(link)
+		item := lane{
+			key: topologyLinkKey(link.From, link.To), a: a, z: z,
+			halfWidth: topologyMetricHalfWidth(metric),
+		}
 		switch {
 		case a.ring == "outer" && z.ring != "outer":
-			outerID, item.otherID, item.other, item.outerAtStart = link.From, link.To, z, true
+			item.hubID, item.other, item.hubAtStart = link.From, z, true
 		case z.ring == "outer" && a.ring != "outer":
-			outerID, item.otherID, item.other = link.To, link.From, a
+			item.hubID, item.other = link.To, a
 		default:
-			continue
+			// A same-ring persistent tunnel is still measured. Pick a stable hub
+			// only for arranging its labels; this does not change edge direction.
+			if link.From < link.To {
+				item.hubID, item.other, item.hubAtStart = link.From, z, true
+			} else {
+				item.hubID, item.other = link.To, a
+			}
 		}
-		groups[outerID] = append(groups[outerID], item)
+		groups[item.hubID] = append(groups[item.hubID], item)
 	}
-	outerIDs := make([]string, 0, len(groups))
-	for outerID := range groups {
-		outerIDs = append(outerIDs, outerID)
+	hubIDs := make([]string, 0, len(groups))
+	for hubID := range groups {
+		hubIDs = append(hubIDs, hubID)
 	}
-	sort.Strings(outerIDs)
+	sort.Strings(hubIDs)
 	out := map[string]svgPoint{}
-	placed := map[string][]svgPoint{}
-	overlaps := func(a, z svgPoint) bool {
-		// Compact metrics currently stay below 140×22 SVG units. Keep a little
-		// air around that envelope so labels remain readable after scaling.
-		return math.Abs(a.x-z.x) < 140 && math.Abs(a.y-z.y) < 22
+	type placedMetric struct {
+		bounds svgRect
 	}
-	for _, outerID := range outerIDs {
-		lanes := groups[outerID]
+	placed := []placedMetric{}
+	obstacles := topologyNodeObstacles(positions, nodes)
+	for _, hubID := range hubIDs {
+		lanes := groups[hubID]
 		sort.Slice(lanes, func(i, j int) bool {
 			if lanes[i].other.angle == lanes[j].other.angle {
 				return lanes[i].key < lanes[j].key
@@ -797,59 +814,86 @@ func topologyMetricPositions(links []LinkView, positions map[string]topologyPoin
 		})
 		fractions := make([]float64, len(lanes))
 		for i := range fractions {
-			fractions[i] = .44
+			fractions[i] = .5
 			if len(fractions) > 1 {
-				fractions[i] = .14 + .60*float64(i)/float64(len(fractions)-1)
+				// Keep the label centre away from both endpoint markers. Normal
+				// offsets provide the remaining separation for a dense fan.
+				fractions[i] = .32 + .36*float64(i)/float64(len(fractions)-1)
 			}
 		}
-		bestScore, bestPenalty := int(^uint(0)>>1), int(^uint(0)>>1)
+		maxInt := int(^uint(0) >> 1)
+		bestNodeScore, bestMetricScore, bestPenalty := maxInt, maxInt, maxInt
 		best := make([]svgPoint, len(lanes))
+		normalOffsets := [...]float64{14, -14, 26, -26}
+		normalVariants := 1
+		for range lanes {
+			if normalVariants > 1024/len(normalOffsets) {
+				normalVariants = 1024
+				break
+			}
+			normalVariants *= len(normalOffsets)
+		}
 		// Rotations in both directions cover all six permutations for the
 		// current three-link fan while remaining bounded for larger degrees.
 		for reverse := 0; reverse < 2; reverse++ {
 			for shift := 0; shift < len(lanes); shift++ {
-				candidate := make([]svgPoint, len(lanes))
-				score, penalty := 0, 0
-				for i, item := range lanes {
-					fractionIndex := (i + shift) % len(lanes)
-					if reverse == 1 {
-						fractionIndex = len(lanes) - 1 - fractionIndex
-					}
-					penalty += int(math.Abs(float64(fractionIndex - i)))
-					t := 1 - fractions[fractionIndex]
-					if item.outerAtStart {
-						t = fractions[fractionIndex]
-					}
-					candidate[i] = topologyMetricPoint(item.a, item.z, item.key, t)
-					for _, prior := range placed[item.otherID] {
-						if overlaps(candidate[i], prior) {
-							score++
+				for normalVariant := 0; normalVariant < normalVariants; normalVariant++ {
+					candidate := make([]svgPoint, len(lanes))
+					bounds := make([]svgRect, len(lanes))
+					nodeScore, metricScore, penalty := 0, 0, 0
+					normalCode := normalVariant
+					for i, item := range lanes {
+						fractionIndex := (i + shift) % len(lanes)
+						if reverse == 1 {
+							fractionIndex = len(lanes) - 1 - fractionIndex
+						}
+						penalty += int(math.Abs(float64(fractionIndex-i))) * 10
+						t := 1 - fractions[fractionIndex]
+						if item.hubAtStart {
+							t = fractions[fractionIndex]
+						}
+						offsetIndex := normalCode % len(normalOffsets)
+						normalCode /= len(normalOffsets)
+						offset := normalOffsets[offsetIndex]
+						penalty += int(math.Abs(offset))
+						candidate[i] = topologyMetricPoint(item.a, item.z, item.key, t, offset)
+						bounds[i] = topologyMetricBounds(candidate[i], item.halfWidth)
+						for _, obstacle := range obstacles {
+							if topologyRectsOverlap(bounds[i], obstacle.bounds) {
+								nodeScore++
+							}
+						}
+						for _, prior := range placed {
+							if topologyRectsOverlap(bounds[i], prior.bounds) {
+								metricScore++
+							}
 						}
 					}
-				}
-				for i := range candidate {
-					for j := i + 1; j < len(candidate); j++ {
-						if overlaps(candidate[i], candidate[j]) {
-							score++
+					for i := range candidate {
+						for j := i + 1; j < len(candidate); j++ {
+							if topologyRectsOverlap(bounds[i], bounds[j]) {
+								metricScore++
+							}
 						}
 					}
-				}
-				if score < bestScore || score == bestScore && penalty < bestPenalty {
-					bestScore, bestPenalty = score, penalty
-					copy(best, candidate)
+					if nodeScore < bestNodeScore ||
+						nodeScore == bestNodeScore && metricScore < bestMetricScore ||
+						nodeScore == bestNodeScore && metricScore == bestMetricScore && penalty < bestPenalty {
+						bestNodeScore, bestMetricScore, bestPenalty = nodeScore, metricScore, penalty
+						copy(best, candidate)
+					}
 				}
 			}
 		}
 		for i, item := range lanes {
 			out[item.key] = best[i]
-			placed[outerID] = append(placed[outerID], best[i])
-			placed[item.otherID] = append(placed[item.otherID], best[i])
+			placed = append(placed, placedMetric{bounds: topologyMetricBounds(best[i], item.halfWidth)})
 		}
 	}
 	return out
 }
 
-func topologyMetricPoint(a, z topologyPoint, key string, t float64) svgPoint {
+func topologyMetricPoint(a, z topologyPoint, key string, t, offset float64) svgPoint {
 	dx, dy := z.x-a.x, z.y-a.y
 	distance := math.Hypot(dx, dy)
 	if distance == 0 {
@@ -867,15 +911,74 @@ func topologyMetricPoint(a, z topologyPoint, key string, t float64) svgPoint {
 	tx := 2*(1-t)*(cx-a.x) + 2*t*(z.x-cx)
 	ty := 2*(1-t)*(cy-a.y) + 2*t*(z.y-cy)
 	tangent := math.Hypot(tx, ty)
-	offset := 8.0
-	if (hash/21)%2 == 0 {
-		offset = -offset
-	}
 	if tangent > 0 {
 		x += -ty / tangent * offset
 		y += tx / tangent * offset
 	}
 	return svgPoint{x: x, y: y}
+}
+
+func topologyMetricHalfWidth(metric string) float64 {
+	return topologyApproxTextWidth(metric, 8.8, true)/2 + 4
+}
+
+func topologyMetricBounds(point svgPoint, halfWidth float64) svgRect {
+	// The text baseline is y=3 inside the translated group. This includes its
+	// four-pixel white paint-order halo and a small scaling allowance.
+	return svgRect{minX: point.x - halfWidth, minY: point.y - 9, maxX: point.x + halfWidth, maxY: point.y + 10}
+}
+
+func topologyNodeObstacles(positions map[string]topologyPoint, nodes map[string]NodeView) []topologyObstacle {
+	obstacles := make([]topologyObstacle, 0, len(positions)*3)
+	for id, point := range positions {
+		obstacles = append(obstacles, topologyObstacle{node: id, bounds: svgRect{
+			minX: point.x - 17, minY: point.y - 17, maxX: point.x + 17, maxY: point.y + 17,
+		}})
+		node, ok := nodes[id]
+		if !ok {
+			continue
+		}
+		x, titleY, subY, anchor := topologyLabelPosition(point)
+		obstacles = append(obstacles,
+			topologyObstacle{node: id, bounds: topologyTextBounds(x, titleY, topologyApproxTextWidth(id, 12, true), 12, anchor)},
+			topologyObstacle{node: id, bounds: topologyTextBounds(x, subY, topologyApproxTextWidth(topologyNodeSubtitle(node), 10, false), 10, anchor)},
+		)
+	}
+	return obstacles
+}
+
+func topologyTextBounds(x, baseline, width, fontSize float64, anchor string) svgRect {
+	minX, maxX := x, x+width
+	switch anchor {
+	case "middle":
+		minX, maxX = x-width/2, x+width/2
+	case "end":
+		minX, maxX = x-width, x
+	}
+	return svgRect{minX: minX - 3, minY: baseline - fontSize - 3, maxX: maxX + 3, maxY: baseline + 4}
+}
+
+func topologyApproxTextWidth(value string, fontSize float64, mono bool) float64 {
+	width := 0.0
+	for _, r := range value {
+		if mono {
+			width += fontSize * .61
+			continue
+		}
+		switch {
+		case r > 127:
+			width += fontSize
+		case r == ' ':
+			width += fontSize * .34
+		default:
+			width += fontSize * .56
+		}
+	}
+	return width
+}
+
+func topologyRectsOverlap(a, z svgRect) bool {
+	return a.minX < z.maxX && a.maxX > z.minX && a.minY < z.maxY && a.maxY > z.minY
 }
 
 func topologyStringHash(value string) uint32 {
