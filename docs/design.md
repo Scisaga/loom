@@ -1381,6 +1381,12 @@ payload、以及 floor 已存在后剥掉 envelope 变回 legacy 都会失败关
 unsigned legacy；legacy 只留给旧版父进程持有继承 deploy.lock 发起的同快照
 continuation。首次见到有效签名仍不是一般意义上的全局 freshness 证明。
 
+**分发坐标可以按节点覆盖，但接受边界不能覆盖。** 公网分发域名在某条线路上
+可能被 SNI/备案策略拦截；节点已经建立 WireGuard 邻接时，可以从邻居的隧道地址
+读取同一份静态树。该覆盖只改变字节从哪里取得，平台签名、manifest 哈希、本机
+秘密合并和单调 generation floor 仍完全相同。因为传输点本来就不受信，隧道内
+HTTP 也不能绕过任何一层验签。
+
 **每台机器只拿自己那份秘密。** `loom secrets split` 扫一遍各节点的渲染产物,
 按实际引用拆分总表:cn-a 拿 3 项,edge-b 拿 2 项,只有 access-a 有控制端点与
 探测入口的口令。

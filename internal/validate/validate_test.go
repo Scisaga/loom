@@ -548,3 +548,19 @@ func TestAttestationUpgradeGateOnlyAllowsCompatibilityOrV5(t *testing.T) {
 		t.Fatalf("合法 phase-B 门禁被误拒:%s", got)
 	}
 }
+
+func TestDistributionURLMustBeAnUncredentialedHTTPURL(t *testing.T) {
+	for _, raw := range []string{"ssh://mirror/loom/", "https://user:pass@mirror/loom/", "https://mirror/loom/?token=x"} {
+		s := &model.SSOT{Defaults: &model.SSOTDefaults{DistributionURL: raw}}
+		if got := Format(Validate(s)); !strings.Contains(got, "distribution_url") {
+			t.Errorf("unsafe distribution URL %q was accepted: %s", raw, got)
+		}
+	}
+	s := &model.SSOT{
+		Defaults: &model.SSOTDefaults{DistributionURL: "https://public.example/loom/"},
+		Nodes:    []model.Node{{ID: "sv01", DistributionURL: "http://10.99.2.2/loom/"}},
+	}
+	if got := Format(Validate(s)); strings.Contains(got, "distribution_url") {
+		t.Fatalf("safe node distribution override was rejected: %s", got)
+	}
+}

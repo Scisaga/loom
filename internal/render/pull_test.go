@@ -43,6 +43,20 @@ tunnels:
 	}
 }
 
+func TestNodeDistributionURLOverridesFleetDefault(t *testing.T) {
+	s := &model.SSOT{
+		Defaults: &model.SSOTDefaults{DistributionURL: "https://public.example/loom/", DNS: []string{"223.5.5.5"}},
+		Nodes:    []model.Node{{ID: "sv01", DistributionURL: "http://10.99.2.2/loom/"}},
+	}
+	files, skips := renderPull(s, &s.Nodes[0])
+	if len(skips) != 0 || len(files) != 2 {
+		t.Fatalf("renderPull() files=%d skips=%v", len(files), skips)
+	}
+	if !strings.Contains(files[0].Content, "pull -url http://10.99.2.2/loom/ -node sv01 -dns 223.5.5.5") {
+		t.Fatalf("node distribution override was not rendered:\n%s", files[0].Content)
+	}
+}
+
 // pull 必须用**本节点声明的** DNS,不能用机器的全局解析器 —— access-a 上有个
 // 与 Loom 无关的接口把所有域名劫到 8.8.8.8,在境内解析不了任何国内域名。
 func TestPullUsesDeclaredDNS(t *testing.T) {

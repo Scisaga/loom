@@ -92,6 +92,11 @@ type Node struct {
 	// 223.5.5.5 又绕远。
 	DNS []string `yaml:"dns,omitempty"`
 
+	// DistributionURL 覆盖全网默认分发地址。它用于公网分发域名在某条线路上
+	// 被 SNI/备案策略拦截、但节点能经已建立的 WireGuard 邻接读取同一份签名
+	// 静态树的场景。传输点不受信；pull 仍须验证平台签名与单调 generation。
+	DistributionURL string `yaml:"distribution_url,omitempty"`
+
 	// ProbeTargets 是这台机器**本该**够得到的地址,上报者拿它自检直连出网。
 	//
 	// **它和声明里的 `probe_url` 是两件事,不要合并。** 两者都由上报者测,
@@ -203,6 +208,14 @@ func (s *SSOT) DistributionURL() string {
 		return s.Defaults.DistributionURL
 	}
 	return ""
+}
+
+// DistributionURLFor 返回节点使用的分发地址；节点覆盖优先于全网默认值。
+func (s *SSOT) DistributionURLFor(n *Node) string {
+	if n != nil && n.DistributionURL != "" {
+		return n.DistributionURL
+	}
+	return s.DistributionURL()
 }
 
 // DNSFor 返回某个节点最终生效的解析器:节点覆盖优先,否则用全局默认。

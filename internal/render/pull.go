@@ -54,7 +54,7 @@ WantedBy=timers.target
 
 // renderPull 生成节点的取配置 unit 与定时器。
 func renderPull(s *model.SSOT, n *model.Node) ([]File, []Skip) {
-	url := s.DistributionURL()
+	url := s.DistributionURLFor(n)
 	if url == "" {
 		return nil, []Skip{{
 			Where:  "pull:" + n.ID,

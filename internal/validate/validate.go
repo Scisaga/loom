@@ -12,6 +12,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/netip"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -36,6 +37,7 @@ func (fs *findings) add(rule, where, format string, args ...any) {
 // Validate 检查整份 SSOT,返回按 (Where, Rule) 排序的稳定结果。
 func Validate(s *model.SSOT) []Finding {
 	var fs findings
+	checkDistributionURL(&fs, "defaults", s.DistributionURL())
 	if v := s.AttestationMinVersion(); v != 0 && v != 5 {
 		fs.add("§13.3 签名", "defaults",
 			"attestation_min_version 只能是 0（兼容阶段）或 5（全网 reader 升级后的强制阶段），收到 %d", v)
@@ -55,6 +57,18 @@ func Validate(s *model.SSOT) []Finding {
 		return fs[i].Rule < fs[j].Rule
 	})
 	return fs
+}
+
+func checkDistributionURL(fs *findings, where, raw string) {
+	if raw == "" {
+		return
+	}
+	parsed, err := url.ParseRequestURI(raw)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") ||
+		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		fs.add("§14.2 分发", where,
+			"distribution_url 必须是无凭据、query 和 fragment 的完整 http(s) URL，收到 %q", raw)
+	}
 }
 
 func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
@@ -91,6 +105,9 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 		}
 		if n.ID != "" {
 			idx[n.ID] = n
+		}
+		if n.DistributionURL != "" {
+			checkDistributionURL(fs, where, n.DistributionURL)
 		}
 
 		// 至少要承担一种角色。两种都有是合法的 —— 一台服务器自己也要
