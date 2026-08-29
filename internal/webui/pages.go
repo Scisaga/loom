@@ -18,6 +18,8 @@ import (
 
 const progressSubmitScript = `document.querySelectorAll("form[data-submit-progress]").forEach(function(form){form.addEventListener("submit",function(event){if(!form.checkValidity())return;if(form.dataset.submitting==="true"){event.preventDefault();return}form.dataset.submitting="true";form.setAttribute("aria-busy","true");var submitter=event.submitter;if(submitter&&submitter.name){var preserved=document.createElement("input");preserved.type="hidden";preserved.name=submitter.name;preserved.value=submitter.value;form.appendChild(preserved)}form.classList.add("is-submitting");form.querySelectorAll("button").forEach(function(button){button.disabled=true})})});`
 
+const topologyInteractionScript = `document.querySelectorAll("svg.topology").forEach(function(svg){var lockedNode="";function apply(nodeID,edgeFocus,locked){var active=Boolean(nodeID||edgeFocus),visibleNodes={};if(nodeID)visibleNodes[nodeID]=true;svg.classList.toggle("has-focus",active);svg.querySelectorAll(".topology-edge").forEach(function(edge){var related=edgeFocus?edge===edgeFocus:Boolean(nodeID&&(edge.dataset.from===nodeID||edge.dataset.to===nodeID));edge.classList.toggle("is-related",related);edge.classList.toggle("is-muted",active&&!related);if(related){visibleNodes[edge.dataset.from]=true;visibleNodes[edge.dataset.to]=true}});svg.querySelectorAll(".edge-metric").forEach(function(metric){var related=edgeFocus?metric.dataset.from===edgeFocus.dataset.from&&metric.dataset.to===edgeFocus.dataset.to:Boolean(nodeID&&(metric.dataset.from===nodeID||metric.dataset.to===nodeID));metric.classList.toggle("is-related",related)});svg.querySelectorAll(".topology-node").forEach(function(node){var id=node.dataset.node,same=id===nodeID;node.classList.toggle("is-selected",same&&locked);node.classList.toggle("is-preview",same&&!locked);node.classList.toggle("is-muted",active&&!visibleNodes[id]);node.setAttribute("aria-pressed",String(same&&locked))})}function clearTransient(){if(!lockedNode)apply("",null,false)}svg.querySelectorAll(".topology-node").forEach(function(node){var id=node.dataset.node;node.addEventListener("pointerenter",function(){if(!lockedNode)apply(id,null,false)});node.addEventListener("pointerleave",clearTransient);node.addEventListener("focus",function(){if(!lockedNode)apply(id,null,false)});node.addEventListener("blur",clearTransient);node.addEventListener("click",function(event){event.stopPropagation();lockedNode=lockedNode===id?"":id;apply(lockedNode,null,Boolean(lockedNode))});node.addEventListener("keydown",function(event){if(event.key==="Enter"||event.key===" "){event.preventDefault();lockedNode=lockedNode===id?"":id;apply(lockedNode,null,Boolean(lockedNode))}})});svg.querySelectorAll(".topology-edge").forEach(function(edge){edge.addEventListener("pointerenter",function(){if(!lockedNode)apply("",edge,false)});edge.addEventListener("pointerleave",clearTransient)});svg.addEventListener("click",function(event){if(event.target.closest(".topology-node"))return;if(lockedNode){lockedNode="";apply("",null,false)}});svg.addEventListener("keydown",function(event){if(event.key==="Escape"&&lockedNode){event.preventDefault();lockedNode="";apply("",null,false)}});apply("",null,false)});`
+
 const style = `<style>
 :root{--fg:#181b1a;--dim:#717674;--faint:#9ba09e;--line:#e2e6e3;--line2:#ccd2ce;--ok:#239b68;--oksoft:#eef8f3;--bad:#b84c4c;--badsoft:#fff3f2;--warn:#a66a14;--warnsoft:#fff8eb;--info:#477d9c;--route:#239b68;--bg:#fcfcfb;--card:#fff;--card2:#f7f8f7;--ink:#181b1a;--font-mono:"SFMono-Regular","Roboto Mono","IBM Plex Mono",Consolas,"Liberation Mono",ui-monospace,monospace}
 *{box-sizing:border-box}
@@ -37,7 +39,9 @@ h2{font-size:13px;margin:0 0 12px;color:var(--dim);font-weight:700;letter-spacin
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px;min-width:0}.card.soft{background:var(--card2)}.metric{font-size:24px;font-weight:720;line-height:1.15;margin:5px 0}.metric small{font-size:13px;color:var(--dim);font-weight:500}.label{font-size:11px;color:var(--dim);letter-spacing:.04em;text-transform:uppercase}
 .section{margin-top:22px}.sectionhead{display:flex;align-items:center;gap:12px;margin:0 0 10px}.sectionhead h2{margin:0}.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.split{display:grid;grid-template-columns:minmax(280px,1fr) minmax(0,2fr);gap:14px}.stack{display:grid;gap:14px}
 table{border-collapse:collapse;width:100%;margin:0}td,th{text-align:left;padding:10px 10px 10px 0;border-bottom:1px solid var(--line);vertical-align:top;white-space:nowrap}tr:last-child td{border-bottom:0}th{color:var(--dim);font-weight:650;font-size:10px;letter-spacing:.06em;text-transform:uppercase}td.w{white-space:normal}.rowlink:hover{background:#fafcfb}
-.topology{width:100%;min-height:390px;display:block;background:transparent;overflow:visible}.topology path,.topology ellipse{vector-effect:non-scaling-stroke}.topology .topology-ring{fill:none;stroke:#edf0ee;stroke-width:1}.topology .topology-ring.inner{stroke-dasharray:3 5}.topology .ring-key{fill:var(--dim);font:500 9px Inter,ui-sans-serif,system-ui;letter-spacing:.035em}.topology .ring-dot{fill:#dfe5e1}.topology .topology-edge path{fill:none}.topology .tunnel{stroke:#a5aaa8;stroke-width:1.25;opacity:.88;transition:stroke .14s ease,stroke-width .14s ease,opacity .14s ease}.topology .candidate{stroke:#b9bebc;stroke-width:1.25;stroke-dasharray:5 6;opacity:.82}.topology .degraded{stroke:#d79b3b}.topology .failed{stroke:#c65a5a}.topology .unknown{stroke:#a5aaa8;stroke-dasharray:3 7;opacity:.62}.topology .edge-hit{stroke:transparent;stroke-width:13;pointer-events:stroke}.topology .topology-edge:hover .tunnel{stroke:#59615d;stroke-width:2;opacity:1}.topology .topology-edge:hover .edge-metric rect{stroke:#bbc4bf}.topology .edge-metric rect{fill:rgba(255,255,255,.92);stroke:#e0e5e2;stroke-width:1}.topology .edge-metric text{fill:#555c58;font:500 8.5px var(--font-mono);font-variant-numeric:tabular-nums}.topology .route{fill:none;stroke:var(--route);stroke-width:2.5;opacity:.96}.topology .route-ring{fill:none;stroke:var(--route);stroke-width:2;opacity:.3}.topology .node{fill:var(--ok);stroke:#fff;stroke-width:3}.topology .node.problem{fill:var(--bad)}.topology .node.unknown{fill:#a5aaa8;stroke:#fff;stroke-dasharray:none}.topology .node.undeclared{fill:var(--warn);stroke:#fff}.topology .node.selected{fill:var(--ok);stroke:#fff;stroke-width:3}.topology .node-label{paint-order:stroke;stroke:#fff;stroke-width:4px;stroke-linejoin:round}.topology text{fill:var(--fg);font:500 12px var(--font-mono)}.topology .sub{fill:var(--dim);font:400 10px/1.4 Inter,ui-sans-serif,system-ui}
+.topology{width:100%;min-height:390px;display:block;background:transparent;overflow:visible}.topology path,.topology ellipse{vector-effect:non-scaling-stroke}.topology .topology-ring{fill:none;stroke:#edf0ee;stroke-width:1}.topology .topology-ring.inner{stroke-dasharray:3 5}.topology .ring-key{fill:var(--dim);font:500 9px Inter,ui-sans-serif,system-ui;letter-spacing:.035em}.topology .ring-dot{fill:#dfe5e1}.topology .topology-edge path{fill:none}.topology .topology-edge,.topology .topology-node,.topology .edge-metric{transition:opacity .16s ease}.topology .tunnel{stroke:#a5aaa8;stroke-width:1.25;opacity:.88;transition:stroke .16s ease,stroke-width .16s ease,opacity .16s ease}.topology .candidate{stroke:#b9bebc;stroke-width:1.25;stroke-dasharray:5 6;opacity:.82;transition:stroke .16s ease,stroke-width .16s ease,opacity .16s ease}.topology .degraded{stroke:#d79b3b}.topology .failed{stroke:#c65a5a}.topology .unknown{stroke:#a5aaa8;stroke-dasharray:3 7;opacity:.62}.topology .edge-hit{stroke:transparent;stroke-width:13;pointer-events:stroke}.topology .topology-edge:hover .tunnel,.topology .topology-edge.is-related .tunnel{stroke:#3f8062;stroke-width:2.35;opacity:1}.topology .topology-edge.is-related .candidate{stroke:#69716d;stroke-width:1.8;opacity:1}.topology.has-focus .topology-edge.is-muted{opacity:.1}.topology.has-focus .topology-node.is-muted{opacity:.2}.topology .edge-metric{opacity:0;pointer-events:none}.topology .edge-metric.is-related{opacity:1}.topology .edge-metric text{fill:#4e5652;stroke:rgba(255,255,255,.96);stroke-width:4px;stroke-linejoin:round;paint-order:stroke;display:block;font:500 8.8px var(--font-mono);font-variant-numeric:tabular-nums}.topology .route{fill:none;stroke:var(--route);stroke-width:2.5;opacity:.96}.topology .route-ring{fill:none;stroke:var(--route);stroke-width:2;opacity:.3}.topology .topology-node{cursor:pointer;outline:none}.topology .node-focus{fill:none;stroke:var(--ok);stroke-width:2;opacity:0;transform-box:fill-box;transform-origin:center;transform:scale(.72);transition:opacity .16s ease,transform .16s ease}.topology .topology-node:hover .node-focus,.topology .topology-node:focus .node-focus,.topology .topology-node.is-preview .node-focus,.topology .topology-node.is-selected .node-focus{opacity:.28;transform:scale(1)}.topology .topology-node.is-selected .node-focus{opacity:.48}.topology .node{fill:var(--ok);stroke:#fff;stroke-width:3}.topology .node.problem{fill:var(--bad)}.topology .node.unknown{fill:#a5aaa8;stroke:#fff;stroke-dasharray:none}.topology .node.undeclared{fill:var(--warn);stroke:#fff}.topology .node.selected{fill:var(--ok);stroke:#fff;stroke-width:3}.topology .node-label{paint-order:stroke;stroke:#fff;stroke-width:4px;stroke-linejoin:round}.topology text{fill:var(--fg);font:500 12px var(--font-mono)}.topology .sub{fill:var(--dim);font:400 10px/1.4 Inter,ui-sans-serif,system-ui}
+.topology .node-hit{fill:transparent;stroke:none;pointer-events:all}
+.topology .topology-edge.is-related .tunnel.degraded{stroke:#d79b3b}.topology .topology-edge.is-related .tunnel.failed{stroke:#c65a5a}.topology.has-focus .route{opacity:.14}.topology.has-focus .route-ring{opacity:.08}
 .legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;color:var(--dim);font-size:11px}.key{display:inline-block;width:26px;border-top:2px solid #a5aaa8;vertical-align:middle;margin-right:6px}.key.candidate{border-color:#b9bebc;border-top-style:dashed}.key.route{border-color:var(--route);border-width:3px}.key.degraded{border-color:#d79b3b}.key.failed{border-color:#c65a5a}
 .topology-layer-note{display:flex;align-items:flex-start;gap:8px;margin:11px 0 0;padding:9px 11px;border:1px solid var(--line);border-radius:6px;background:var(--card2);color:var(--dim);font-size:11px}.topology-layer-note:before{content:"i";display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:16px;height:16px;border:1px solid var(--line2);border-radius:50%;color:var(--fg);font-size:10px;font-weight:700}.topology-edge-grid{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(340px,.85fr);gap:14px}.topology-edge-card{padding:0;overflow:hidden}.edge-panel-head{display:flex;align-items:flex-start;gap:14px;min-height:72px;padding:14px 16px 12px}.edge-panel-head h3{margin:0;font-size:15px}.edge-panel-head p{margin:2px 0 0;color:var(--dim);font-size:11px}.edge-panel-head .badge{margin-left:auto;white-space:nowrap}.badge.intent{border-color:#d6e1e7;background:#f5f9fb;color:var(--info)}.topology-edge-card table{border-top:1px solid var(--line)}.topology-edge-card th:first-child,.topology-edge-card td:first-child{padding-left:16px}.topology-edge-card th:last-child,.topology-edge-card td:last-child{padding-right:16px}.edge-status{display:inline-flex;align-items:center;gap:7px;white-space:nowrap}.edge-status .dot{width:6px;height:6px}.edge-source{max-width:380px;white-space:normal;color:var(--dim);font-size:11px;line-height:1.45}.route-hop-list{border-top:1px solid var(--line)}.route-hop{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;padding:12px 16px;border-bottom:1px solid var(--line)}.route-hop:last-child{border-bottom:0}.route-hop-pair{font-size:13px}.route-hop-state{display:inline-flex;align-items:center;gap:6px;color:var(--info);font-size:11px;white-space:nowrap}.route-hop-state .dot{width:6px;height:6px}.route-hop-meta{grid-column:1/-1;color:var(--dim);font-size:11px;line-height:1.45}.route-hop-note{margin:0 16px 14px;padding:9px 10px;border-radius:6px;background:var(--card2);color:var(--dim);font-size:11px;line-height:1.45}
 .enrollment-access{padding:0;overflow:hidden}.enrollment-summary{display:flex;align-items:center;gap:12px;min-height:54px;padding:13px 17px;cursor:pointer;list-style:none}.enrollment-summary::-webkit-details-marker{display:none}.enrollment-summary:before{content:"›";display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:5px;background:var(--card2);color:var(--dim);font-size:18px;line-height:1;transition:transform .16s ease}.enrollment-access[open]>.enrollment-summary:before{transform:rotate(90deg)}.enrollment-summary-copy{display:flex;align-items:baseline;gap:9px;min-width:0}.enrollment-summary-copy b{font-size:14px}.enrollment-summary-copy span{overflow:hidden;color:var(--dim);font-size:12px;text-overflow:ellipsis;white-space:nowrap}.enrollment-summary-hint{margin-left:auto;color:var(--dim);font-size:11px}.enrollment-access[open]>.enrollment-summary{border-bottom:1px solid var(--line)}.enrollment-access-body{padding:17px}.enrollment-access-grid{display:grid;grid-template-columns:minmax(0,1.72fr) minmax(320px,.78fr);gap:18px}.enrollment-identity-panel{min-width:0}.enrollment-panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.enrollment-panel-head h3,.enrollment-boundary-panel h3{margin:3px 0 0;font-size:16px}.enrollment-intro{max-width:850px;margin:9px 0 15px;color:var(--dim);font-size:12px}.enrollment-identity-meta{display:grid;grid-template-columns:minmax(190px,.8fr) minmax(260px,1.25fr) minmax(220px,1fr);gap:10px;margin-bottom:12px}.enrollment-identity-meta>div{display:grid;align-content:start;gap:5px;min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:7px;background:var(--card2)}.enrollment-identity-meta .mono{overflow:hidden;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.enrollment-public-key{overflow:hidden;border:1px solid var(--line);border-radius:7px;background:#fff}.enrollment-public-key-head{display:flex;align-items:center;gap:12px;min-height:46px;padding:8px 10px 8px 12px;border-bottom:1px solid var(--line);background:var(--card2)}.enrollment-public-key-head>div{display:flex;align-items:baseline;gap:9px}.enrollment-public-key-head .button{margin-left:auto;padding:6px 10px;background:#fff;font-size:11px}.enrollment-public-key code{display:block;overflow-x:auto;padding:12px;font-size:11px;line-height:1.5;white-space:nowrap}.enrollment-state{margin:12px 0 0;padding:12px 14px}.enrollment-state-action{margin-top:10px}.enrollment-boundary-panel{padding-left:18px;border-left:1px solid var(--line)}.enrollment-boundary-list{display:grid;gap:0;margin:12px 0 15px}.enrollment-boundary-list>div{display:grid;grid-template-columns:105px minmax(0,1fr);gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}.enrollment-boundary-list>div:last-child{border-bottom:0}.enrollment-boundary-list span{color:var(--dim);font-size:10px;letter-spacing:.04em;text-transform:uppercase}.enrollment-boundary-list b{font-size:12px;font-weight:500}.enrollment-workflow{width:100%;justify-content:space-between}.enrollment-key-note{display:flex;align-items:flex-start;gap:10px;margin-top:16px;padding:10px 12px;border:1px solid #cce7d8;border-radius:7px;background:var(--oksoft)}.enrollment-key-note-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:22px;height:22px;border-radius:50%;background:#dcefe5;color:var(--ok);font-size:9px}.enrollment-key-note div{display:grid;gap:1px}.enrollment-key-note b{font-size:12px}.enrollment-key-note span:last-child{color:var(--dim);font-size:11px}
@@ -111,9 +115,12 @@ func shell(d Deps, title, body string, isAuthed bool, evidence ...View) string {
 	if len(evidence) > 0 {
 		body = evidenceBanner(evidence[0]) + body
 	}
-	progressScript := ""
+	pageScripts := ""
 	if strings.Contains(body, "data-submit-progress") {
-		progressScript = `<script>` + progressSubmitScript + `</script>`
+		pageScripts += `<script>` + progressSubmitScript + `</script>`
+	}
+	if strings.Contains(body, `<svg class=topology`) {
+		pageScripts += `<script>` + topologyInteractionScript + `</script>`
 	}
 	pageClass := "page-" + active
 	return fmt.Sprintf(`<!doctype html><meta charset=utf-8><title>%s · LOOM</title><link rel=icon href="/favicon.svg?v=7" type="image/svg+xml">
@@ -122,7 +129,7 @@ func shell(d Deps, title, body string, isAuthed bool, evidence ...View) string {
 <nav class=nav aria-label="Primary">%s</nav><div class=headmeta><span class="env dim"><span class=dot></span>Live evidence</span><span>%s</span></div></header>
 <main class="main %s"><div class=top><div><div class=eyebrow>%s</div><h1>%s</h1><div class=subtitle>%s</div></div><div class=sp>%s</div></div>%s</main></div>%s`,
 		esc(heading), refresh, style, logoSVG(), navHTML.String(), auth,
-		esc(pageClass), esc(eyebrow), esc(heading), esc(subtitle), esc(d.Node)+` · `+esc(role), body, progressScript)
+		esc(pageClass), esc(eyebrow), esc(heading), esc(subtitle), esc(d.Node)+` · `+esc(role), body, pageScripts)
 }
 
 // evidenceBanner keeps control-plane read failures visible on every page that
@@ -570,9 +577,9 @@ func topologySVG(v View, routeOverlay ...RouteView) string {
 	topologyRingPositions(pos, outer, "outer", outerOffset, 310, 130)
 
 	var b strings.Builder
-	b.WriteString(`<svg class=topology viewBox="0 0 960 360" role=img aria-label="Near-real-time concentric network topology"><defs><marker id=arrow viewBox="0 0 10 10" refX=8 refY=5 markerWidth=5 markerHeight=5 orient=auto-start-reverse><path d="M 0 0 L 10 5 L 0 10 z" fill="#239b68"/></marker></defs>`)
+	b.WriteString(`<svg class=topology viewBox="0 0 960 360" role=group aria-label="Near-real-time interactive concentric network topology"><defs><marker id=arrow viewBox="0 0 10 10" refX=8 refY=5 markerWidth=5 markerHeight=5 orient=auto-start-reverse><path d="M 0 0 L 10 5 L 0 10 z" fill="#239b68"/></marker></defs>`)
 	b.WriteString(`<ellipse class="topology-ring outer" cx=480 cy=180 rx=310 ry="130"/><ellipse class="topology-ring inner" cx=480 cy=180 rx=170 ry="75"/>`)
-	b.WriteString(`<circle class=ring-dot cx=18 cy=18 r="3"/><text class=ring-key x=28 y=21>内圈：可接受反向建连的锚点</text><circle class=ring-dot cx=18 cy=35 r="3"/><text class=ring-key x=28 y=38>外圈：反向接入的出口节点</text>`)
+	b.WriteString(`<circle class=ring-dot cx=18 cy=18 r="3"/><text class=ring-key x=28 y=21>内圈：可接受反向建连的锚点</text><circle class=ring-dot cx=18 cy=35 r="3"/><text class=ring-key x=28 y=38>外圈：反向接入的出口节点</text><text class=ring-key text-anchor=end x=942 y=21>悬停预览 · 点击锁定 · Esc 取消</text>`)
 	curves := map[string]topologyCurve{}
 	curveStarts := map[string]string{}
 	metricPositions := topologyMetricPositions(v.Links, pos)
@@ -596,8 +603,9 @@ func topologySVG(v View, routeOverlay ...RouteView) string {
 		}
 		key := topologyLinkKey(l.From, l.To)
 		curve := topologyEdgeCurve(a, z, key, l.Kind)
+		labelPosition := curve.label
 		if metricPosition, ok := metricPositions[key]; ok && l.Kind != "candidate" {
-			curve = topologyEdgeViaMetric(a, z, metricPosition)
+			labelPosition = metricPosition
 		}
 		curves[key] = curve
 		curveStarts[key] = l.From
@@ -606,9 +614,8 @@ func topologySVG(v View, routeOverlay ...RouteView) string {
 			continue
 		}
 		metric, detail := topologyLinkMetric(l)
-		width := math.Max(82, math.Min(132, 14+float64(len([]rune(metric)))*5.1))
 		fmt.Fprintf(&b, `<g class="topology-edge edge-tunnel" data-from="%s" data-to="%s"><title>%s</title><path class="%s" d="%s"/><path class=edge-hit d="%s"/></g>`, esc(l.From), esc(l.To), esc(detail), cls, curve.d, curve.d)
-		fmt.Fprintf(&metricLabels, `<g class=edge-metric transform="translate(%.1f %.1f)"><title>%s</title><rect x="%.1f" y=-9 width="%.1f" height=18 rx="5"/><text text-anchor=middle y=3>%s</text></g>`, curve.label.x, curve.label.y, esc(detail), -width/2, width, esc(metric))
+		fmt.Fprintf(&metricLabels, `<g class=edge-metric data-from="%s" data-to="%s" transform="translate(%.1f %.1f)"><title>%s</title><text text-anchor=middle y=3>%s</text></g>`, esc(l.From), esc(l.To), labelPosition.x, labelPosition.y, esc(detail), esc(metric))
 	}
 	for _, r := range routeOverlay {
 		if r.Stale {
@@ -649,7 +656,8 @@ func topologySVG(v View, routeOverlay ...RouteView) string {
 			cls += " selected"
 			fmt.Fprintf(&b, `<circle class=route-ring cx="%.1f" cy="%.1f" r="11"/>`, p.x, p.y)
 		}
-		fmt.Fprintf(&b, `<g class=topology-node data-node="%s" data-ring="%s" data-angle="%.1f"><title>%s · %s</title><circle class="%s" cx="%.1f" cy="%.1f" r="6"/>`, esc(id), p.ring, p.angle, esc(id), esc(topologyNodeSubtitle(n)), cls, p.x, p.y)
+		nodeLabel := id + " · " + topologyNodeSubtitle(n)
+		fmt.Fprintf(&b, `<g class=topology-node data-node="%s" data-ring="%s" data-angle="%.1f" role=button tabindex="0" aria-pressed="false" aria-label="%s，点击聚焦相邻链路"><title>%s</title><circle class=node-hit cx="%.1f" cy="%.1f" r="16"/><circle class=node-focus cx="%.1f" cy="%.1f" r="11"/><circle class="%s" cx="%.1f" cy="%.1f" r="6"/>`, esc(id), p.ring, p.angle, esc(nodeLabel), esc(nodeLabel), p.x, p.y, p.x, p.y, cls, p.x, p.y)
 		x, titleY, subY, anchor := topologyLabelPosition(p)
 		fmt.Fprintf(&b, `<text class=node-label text-anchor=%s x="%.1f" y="%.1f">%s</text><text class="sub node-label" text-anchor=%s x="%.1f" y="%.1f">%s</text></g>`, anchor, x, titleY, esc(id), anchor, x, subY, esc(topologyNodeSubtitle(n)))
 	}
@@ -732,82 +740,142 @@ func topologyEdgeCurve(a, z topologyPoint, key, kind string) topologyCurve {
 	}
 }
 
-// topologyMetricPositions allocates one visible lane per carrier around its
-// outer-ring endpoint. The lane order follows the inner nodes' projection on
-// the ring tangent, so lines fan out without the nine labels collapsing in the
-// center. Current six-node K3,3 therefore becomes three small three-label
-// groups rather than one unreadable pile.
+// topologyMetricPositions keeps labels close to their continuous carrier
+// curves without turning labels into routing vertices. Around each outer-ring
+// node, its incident labels use different distances from that node; selecting
+// either endpoint therefore reveals a small, readable fan rather than a pile
+// at the shared endpoint.
 func topologyMetricPositions(links []LinkView, positions map[string]topologyPoint) map[string]svgPoint {
 	type lane struct {
-		key   string
-		other topologyPoint
+		key          string
+		a, z         topologyPoint
+		other        topologyPoint
+		otherID      string
+		outerAtStart bool
 	}
 	groups := map[string][]lane{}
 	for _, link := range links {
 		if link.Kind != "tunnel" {
 			continue
 		}
-		from, fromOK := positions[link.From]
-		to, toOK := positions[link.To]
-		if !fromOK || !toOK {
+		a, aok := positions[link.From]
+		z, zok := positions[link.To]
+		if !aok || !zok {
 			continue
 		}
-		outerID, other := "", topologyPoint{}
+		item := lane{key: topologyLinkKey(link.From, link.To), a: a, z: z}
+		outerID := ""
 		switch {
-		case from.ring == "outer" && to.ring != "outer":
-			outerID, other = link.From, to
-		case to.ring == "outer" && from.ring != "outer":
-			outerID, other = link.To, from
+		case a.ring == "outer" && z.ring != "outer":
+			outerID, item.otherID, item.other, item.outerAtStart = link.From, link.To, z, true
+		case z.ring == "outer" && a.ring != "outer":
+			outerID, item.otherID, item.other = link.To, link.From, a
 		default:
 			continue
 		}
-		groups[outerID] = append(groups[outerID], lane{key: topologyLinkKey(link.From, link.To), other: other})
+		groups[outerID] = append(groups[outerID], item)
 	}
-
+	outerIDs := make([]string, 0, len(groups))
+	for outerID := range groups {
+		outerIDs = append(outerIDs, outerID)
+	}
+	sort.Strings(outerIDs)
 	out := map[string]svgPoint{}
-	for outerID, lanes := range groups {
-		outer := positions[outerID]
-		radians := outer.angle * math.Pi / 180
-		// Tangent of x=cx+rx*cos(a), y=cy+ry*sin(a).
-		tx, ty := -310*math.Sin(radians), 130*math.Cos(radians)
-		tangentLength := math.Hypot(tx, ty)
-		if tangentLength > 0 {
-			tx, ty = tx/tangentLength, ty/tangentLength
-		}
-		radialX, radialY := outer.x-480, outer.y-180
-		radialLength := math.Hypot(radialX, radialY)
-		if radialLength > 0 {
-			radialX, radialY = radialX/radialLength, radialY/radialLength
-		}
+	placed := map[string][]svgPoint{}
+	overlaps := func(a, z svgPoint) bool {
+		// Compact metrics currently stay below 140×22 SVG units. Keep a little
+		// air around that envelope so labels remain readable after scaling.
+		return math.Abs(a.x-z.x) < 140 && math.Abs(a.y-z.y) < 22
+	}
+	for _, outerID := range outerIDs {
+		lanes := groups[outerID]
 		sort.Slice(lanes, func(i, j int) bool {
-			a := (lanes[i].other.x-outer.x)*tx + (lanes[i].other.y-outer.y)*ty
-			z := (lanes[j].other.x-outer.x)*tx + (lanes[j].other.y-outer.y)*ty
-			if a == z {
+			if lanes[i].other.angle == lanes[j].other.angle {
 				return lanes[i].key < lanes[j].key
 			}
-			return a < z
+			return lanes[i].other.angle < lanes[j].other.angle
 		})
-		spacing := 140.0
-		if len(lanes) > 3 {
-			spacing = 280 / float64(len(lanes)-1)
+		fractions := make([]float64, len(lanes))
+		for i := range fractions {
+			fractions[i] = .44
+			if len(fractions) > 1 {
+				fractions[i] = .14 + .60*float64(i)/float64(len(fractions)-1)
+			}
 		}
-		baseX, baseY := outer.x-radialX*52, outer.y-radialY*52
+		bestScore, bestPenalty := int(^uint(0)>>1), int(^uint(0)>>1)
+		best := make([]svgPoint, len(lanes))
+		// Rotations in both directions cover all six permutations for the
+		// current three-link fan while remaining bounded for larger degrees.
+		for reverse := 0; reverse < 2; reverse++ {
+			for shift := 0; shift < len(lanes); shift++ {
+				candidate := make([]svgPoint, len(lanes))
+				score, penalty := 0, 0
+				for i, item := range lanes {
+					fractionIndex := (i + shift) % len(lanes)
+					if reverse == 1 {
+						fractionIndex = len(lanes) - 1 - fractionIndex
+					}
+					penalty += int(math.Abs(float64(fractionIndex - i)))
+					t := 1 - fractions[fractionIndex]
+					if item.outerAtStart {
+						t = fractions[fractionIndex]
+					}
+					candidate[i] = topologyMetricPoint(item.a, item.z, item.key, t)
+					for _, prior := range placed[item.otherID] {
+						if overlaps(candidate[i], prior) {
+							score++
+						}
+					}
+				}
+				for i := range candidate {
+					for j := i + 1; j < len(candidate); j++ {
+						if overlaps(candidate[i], candidate[j]) {
+							score++
+						}
+					}
+				}
+				if score < bestScore || score == bestScore && penalty < bestPenalty {
+					bestScore, bestPenalty = score, penalty
+					copy(best, candidate)
+				}
+			}
+		}
 		for i, item := range lanes {
-			offset := (float64(i) - float64(len(lanes)-1)/2) * spacing
-			x, y := baseX+tx*offset, baseY+ty*offset
-			x = math.Max(72, math.Min(888, x))
-			y = math.Max(14, math.Min(338, y))
-			out[item.key] = svgPoint{x: x, y: y}
+			out[item.key] = best[i]
+			placed[outerID] = append(placed[outerID], best[i])
+			placed[item.otherID] = append(placed[item.otherID], best[i])
 		}
 	}
 	return out
 }
 
-func topologyEdgeViaMetric(a, z topologyPoint, metric svgPoint) topologyCurve {
-	return topologyCurve{
-		d:     fmt.Sprintf("M %.1f %.1f L %.1f %.1f L %.1f %.1f", a.x, a.y, metric.x, metric.y, z.x, z.y),
-		label: metric,
+func topologyMetricPoint(a, z topologyPoint, key string, t float64) svgPoint {
+	dx, dy := z.x-a.x, z.y-a.y
+	distance := math.Hypot(dx, dy)
+	if distance == 0 {
+		return svgPoint{x: a.x, y: a.y}
 	}
+	hash := topologyStringHash(key)
+	bend := float64(int(hash%7)-3) * 7
+	if bend == 0 {
+		bend = 4
+	}
+	cx := (a.x+z.x)/2 - dy/distance*bend
+	cy := (a.y+z.y)/2 + dx/distance*bend
+	x := (1-t)*(1-t)*a.x + 2*(1-t)*t*cx + t*t*z.x
+	y := (1-t)*(1-t)*a.y + 2*(1-t)*t*cy + t*t*z.y
+	tx := 2*(1-t)*(cx-a.x) + 2*t*(z.x-cx)
+	ty := 2*(1-t)*(cy-a.y) + 2*t*(z.y-cy)
+	tangent := math.Hypot(tx, ty)
+	offset := 8.0
+	if (hash/21)%2 == 0 {
+		offset = -offset
+	}
+	if tangent > 0 {
+		x += -ty / tangent * offset
+		y += tx / tangent * offset
+	}
+	return svgPoint{x: x, y: y}
 }
 
 func topologyStringHash(value string) uint32 {
@@ -844,15 +912,16 @@ func topologyLinkMetric(l LinkView) (string, string) {
 	if l.RateSamples > 0 && l.RateWindowSeconds > 0 {
 		rate = topologyBitRate(l.RecentTXBytes, l.RateWindowSeconds)
 	}
-	variation := "±—"
+	variation := "Δ—"
 	successfulQuality := l.QualityObservations - l.QualityFailed
 	if successfulQuality >= 2 && l.QualityP95MS >= l.QualityP50MS {
-		variation = fmt.Sprintf("±%dms", l.QualityP95MS-l.QualityP50MS)
+		variation = fmt.Sprintf("Δ%dms", l.QualityP95MS-l.QualityP50MS)
 	}
-	compact := latency + " · " + rate + " · " + variation
-	detail := fmt.Sprintf("%s ↔ %s；当前 RTT %s；近 5 分钟实际传输速率 %s（%d 个相邻样本，%d/2 端点上报）；近 15 分钟 RTT 波动 %s（P50 %dms / P95 %dms，%d 次观测，%d 次完全失败）；%s；%s",
-		l.From, l.To, latency, rate, l.RateSamples, l.RateReportingEndpoints, variation,
-		l.QualityP50MS, l.QualityP95MS, l.QualityObservations, l.QualityFailed, l.Source, l.MetricsSource)
+	compact := latency + " · " + variation + " · " + rate
+	detail := fmt.Sprintf("%s ↔ %s；当前 RTT %s；近 15 分钟 RTT 波动 %s（P95−P50；P50 %dms / P95 %dms，%d 次观测，%d 次完全失败）；近 5 分钟实际传输速率 %s（%d 个相邻样本，%d/2 端点上报）；%s；%s",
+		l.From, l.To, latency, variation,
+		l.QualityP50MS, l.QualityP95MS, l.QualityObservations, l.QualityFailed,
+		rate, l.RateSamples, l.RateReportingEndpoints, l.Source, l.MetricsSource)
 	return compact, detail
 }
 

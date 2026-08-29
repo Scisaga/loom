@@ -164,7 +164,7 @@ func pageTopology(d Deps, isAuthed bool, selectedEntry ...string) string {
 		fmt.Fprintf(&b, `<option value="%s"%s>%s</option>`, esc(entry.Key), attr, esc(entry.Label))
 	}
 	b.WriteString(`</select> <button>Apply</button></form></span></div>`)
-	fmt.Fprintf(&b, `<div class=grid><div class="card span9">%s<div class=legend><span><i class=key></i>Persistent WireGuard</span><span><i class="key candidate"></i>On-demand route hop</span><span><i class="key route"></i>Selected Agent path</span><span><i class="key degraded"></i>Degraded carrier</span><span><i class="key failed"></i>Failed carrier</span></div><div class=topology-layer-note>实线标签依次为当前 RTT、近 5 分钟实际传输速率、近 15 分钟 RTT 波动（P95−P50）。速率来自相邻可信 WireGuard 计数器差值，不代表链路容量；虚线仅是 %s 允许的按需路径，不伪装成在线隧道（not broken tunnels）。</div></div>`, topologySVG(v, overlay...), esc(intentSource))
+	fmt.Fprintf(&b, `<div class=grid><div class="card span9">%s<div class=legend><span><i class=key></i>Persistent WireGuard</span><span><i class="key candidate"></i>On-demand route hop</span><span><i class="key route"></i>Selected Agent path</span><span><i class="key degraded"></i>Degraded carrier</span><span><i class="key failed"></i>Failed carrier</span></div><div class=topology-layer-note>悬停节点可预览，点击后锁定相邻链路；标签格式为 RTT · Δ波动 · 近 5 分钟实际传输速率，其中 Δ 是近 15 分钟 RTT 的 P95−P50。速率来自相邻可信 WireGuard 计数器差值，不代表链路容量；虚线仅是 %s 允许的按需路径，不伪装成在线隧道（not broken tunnels）。</div></div>`, topologySVG(v, overlay...), esc(intentSource))
 	fmt.Fprintf(&b, `<div class="card span3"><h2>Layer status</h2><div class=stack>
 <div><div class=label>Persistent carriers</div><div class=metric>%d <small>WG edges</small></div><div class=dim>%s declared inventory</div></div>
 <div><div class=label>Carrier observation</div><div class="metric %s">%d <small>/ %d active</small></div><div class=dim>signed runtime evidence</div></div>
@@ -201,7 +201,7 @@ func pageTopology(d Deps, isAuthed bool, selectedEntry ...string) string {
 		}
 		variation := "—"
 		if l.QualityObservations-l.QualityFailed >= 2 && l.QualityP95MS >= l.QualityP50MS {
-			variation = fmt.Sprintf("±%dms", l.QualityP95MS-l.QualityP50MS)
+			variation = fmt.Sprintf("Δ%dms", l.QualityP95MS-l.QualityP50MS)
 		}
 		fmt.Fprintf(&b, `<tr><td class=mono>%s ↔ %s<td><span class="edge-status %s"><span class=dot></span>%s</span><td class=mono>%s<td class=mono>%s<td class=mono>%s<td>%s<td class=edge-source>%s</tr>`, esc(l.From), esc(l.To), cls, state, rtt, rate, variation, esc(ageText(l.ObservedAt, now)), esc(l.Source))
 	}

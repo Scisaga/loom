@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -45,8 +44,12 @@ func get(t *testing.T, h http.Handler, path string, cookie *http.Cookie) *httpte
 // 页面里不能有任何外部资源。这些机器不一定能出网,通过 ssh 端口转发进来时
 // 更不能 —— 一个依赖 CDN 的界面在最需要它的时候恰好打不开。
 func TestPageIsSelfContained(t *testing.T) {
-	body := get(t, Handler(deps("", nil)), "/", nil).Body.String()
-	for _, bad := range []string{"http://", "https://cdn", "<script", "src="} {
+	w := get(t, Handler(deps("", nil)), "/", nil)
+	body := w.Body.String()
+	if strings.Count(body, "<script>") != 1 || !strings.Contains(body, `<script>`+topologyInteractionScript+`</script>`) {
+		t.Fatal("overview must contain exactly the approved self-contained topology interaction script")
+	}
+	for _, bad := range []string{"http://", "https://cdn", "<script src=", "src="} {
 		// 目标地址本身会以 https:// 出现在表格里,那是内容不是资源引用。
 		if bad == "http://" {
 			continue
@@ -55,9 +58,14 @@ func TestPageIsSelfContained(t *testing.T) {
 			t.Errorf("页面里有外部资源或脚本:%s", bad)
 		}
 	}
-	csp := get(t, Handler(deps("", nil)), "/", nil).Header().Get("Content-Security-Policy")
+	csp := w.Header().Get("Content-Security-Policy")
 	if !strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "img-src 'self' data:") {
 		t.Errorf("没有为内嵌导航图标设置自包含 CSP:%q", csp)
+	}
+	digest := sha256.Sum256([]byte(topologyInteractionScript))
+	want := "'sha256-" + base64.StdEncoding.EncodeToString(digest[:]) + "'"
+	if !strings.Contains(csp, want) || strings.Contains(strings.Split(csp, "style-src")[0], "'unsafe-inline'") {
+		t.Fatalf("topology script CSP = %q, want exact hash %q and no script unsafe-inline", csp, want)
 	}
 }
 
@@ -136,7 +144,9 @@ func TestTopologyUsesConcentricRingsAndObservedLinkMetrics(t *testing.T) {
 		`class="topology-ring outer"`, `class="topology-ring inner"`,
 		`data-node="jm24" data-ring="inner" data-angle="-90.0"`,
 		`data-node="ber01" data-ring="outer" data-angle="-30.0"`,
-		`A 170.0 75.0`, `18ms · 2.0kb/s · ±35ms`, `硅谷 · server + egress`,
+		`role=button tabindex="0" aria-pressed="false"`,
+		`A 170.0 75.0`, `18ms · Δ35ms · 2.0kb/s`, `硅谷 · server + egress`,
+		`class=edge-metric data-from="jm24" data-to="sv01"`,
 		`近 5 分钟实际传输速率 2.0kb/s`,
 	} {
 		if !strings.Contains(topology, want) {
@@ -146,32 +156,69 @@ func TestTopologyUsesConcentricRingsAndObservedLinkMetrics(t *testing.T) {
 	if strings.Contains(topology, `test intent</text>`) {
 		t.Fatal("candidate intent incorrectly received an observed metric label")
 	}
+	carrier := regexp.MustCompile(`<path class="tunnel" d="([^"]+)"/><path class=edge-hit d="([^"]+)"/>`).FindStringSubmatch(topology)
+	if len(carrier) != 3 || carrier[1] != carrier[2] || !strings.Contains(carrier[1], " Q ") || strings.Contains(carrier[1], " L ") {
+		t.Fatalf("visible and hit carrier paths must share one continuous curve, got %q", carrier)
+	}
+	if strings.Contains(topology, "±") {
+		t.Fatal("topology variation must use Δ rather than imply a symmetric ± error")
+	}
 }
 
-func TestTopologyCarrierMetricLanesDoNotOverlapForSixNodeMesh(t *testing.T) {
+func TestTopologyLinkMetricUsesCompactDeltaOrder(t *testing.T) {
+	compact, detail := topologyLinkMetric(LinkView{
+		From: "jm24", To: "sv01", MS: 207, Samples: 5, ObservedAt: "2026-08-29T12:00:00Z",
+		RecentTXBytes: 671_250, RateWindowSeconds: 300, RateSamples: 4, RateReportingEndpoints: 2,
+		QualityP50MS: 203, QualityP95MS: 207, QualityObservations: 8,
+	})
+	if compact != "207ms · Δ4ms · 17.9kb/s" {
+		t.Fatalf("compact topology metric = %q", compact)
+	}
+	for _, want := range []string{"P95−P50", "P50 203ms / P95 207ms", "近 5 分钟实际传输速率 17.9kb/s"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("topology metric detail missing %q: %s", want, detail)
+		}
+	}
+}
+
+func TestTopologyInteractionContract(t *testing.T) {
+	for _, want := range []string{
+		`pointerenter`, `addEventListener("click"`, `event.key==="Enter"`,
+		`event.key===" "`, `event.key==="Escape"`, `aria-pressed`,
+		`is-related`, `is-muted`, `edge-metric`,
+	} {
+		if !strings.Contains(topologyInteractionScript, want) {
+			t.Errorf("topology interaction script missing %q", want)
+		}
+	}
+	if strings.Contains(topologyInteractionScript, `innerHTML`) || strings.Contains(topologyInteractionScript, `eval(`) {
+		t.Fatal("topology interaction must not parse node data as HTML or code")
+	}
+}
+
+func TestFocusedTopologyMetricsDoNotOverlapForSixNodeMesh(t *testing.T) {
 	positions := map[string]topologyPoint{}
 	topologyRingPositions(positions, []string{"jm24", "gz02", "hz01"}, "inner", -90, 170, 75)
 	topologyRingPositions(positions, []string{"ber01", "sg02", "sv01"}, "outer", -30, 310, 130)
-	links := []LinkView{}
+	var links []LinkView
 	for _, inner := range []string{"jm24", "gz02", "hz01"} {
 		for _, outer := range []string{"ber01", "sg02", "sv01"} {
 			links = append(links, LinkView{From: inner, To: outer, Kind: "tunnel"})
 		}
 	}
-	lanes := topologyMetricPositions(links, positions)
-	if len(lanes) != 9 {
-		t.Fatalf("metric lanes=%d, want 9", len(lanes))
-	}
-	keys := make([]string, 0, len(lanes))
-	for key := range lanes {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for i := range keys {
-		for j := i + 1; j < len(keys); j++ {
-			a, z := lanes[keys[i]], lanes[keys[j]]
-			if math.Abs(a.x-z.x) < 132 && math.Abs(a.y-z.y) < 18 {
-				t.Fatalf("metric lanes %q and %q overlap at %+v and %+v", keys[i], keys[j], a, z)
+	labels := topologyMetricPositions(links, positions)
+	for _, node := range []string{"jm24", "gz02", "hz01", "ber01", "sg02", "sv01"} {
+		var incident []svgPoint
+		for _, link := range links {
+			if link.From == node || link.To == node {
+				incident = append(incident, labels[topologyLinkKey(link.From, link.To)])
+			}
+		}
+		for i := range incident {
+			for j := i + 1; j < len(incident); j++ {
+				if math.Abs(incident[i].x-incident[j].x) < 140 && math.Abs(incident[i].y-incident[j].y) < 22 {
+					t.Fatalf("focused metrics overlap for %s at %+v and %+v", node, incident[i], incident[j])
+				}
 			}
 		}
 	}
@@ -333,6 +380,11 @@ func TestVersionSkewIsSurfaced(t *testing.T) {
 
 func TestNoInlineScriptSlipsIn(t *testing.T) {
 	body := get(t, Handler(deps("", nil)), "/", nil).Body.String()
+	approved := `<script>` + topologyInteractionScript + `</script>`
+	if strings.Count(body, approved) != 1 {
+		t.Fatal("overview topology script is missing or duplicated")
+	}
+	body = strings.Replace(body, approved, "", 1)
 	// 前面要求空白,否则 content= 里的 "ontent=" 会被当成事件处理器。
 	if regexp.MustCompile(`(?i)<script|\son[a-z]+\s*=`).MatchString(body) {
 		t.Error("页面里有脚本或内联事件处理器")
