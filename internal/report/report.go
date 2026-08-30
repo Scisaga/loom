@@ -289,8 +289,6 @@ func collectWithWGStats(cfg *Config, now time.Time, stats map[string]wgInterface
 	}
 	if a, err := readAgentState(cfg.AgentState); err != nil {
 		st.Errors = append(st.Errors, "读 Agent 当前选择:"+err.Error())
-	} else if cfg.AgentState != "" && a == nil {
-		st.Errors = append(st.Errors, "Agent 当前选择状态不存在")
 	} else {
 		st.Agent = a
 		st.Errors = append(st.Errors, validateAgentStateForConfig(a, cfg, now)...)

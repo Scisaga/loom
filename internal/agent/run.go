@@ -329,12 +329,10 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, selections *stateStore,
 	if !found {
 		return fmt.Errorf("selector %s 当前值 %q 不在渲染候选中", d.Selector, current)
 	}
-	if err := selections.observe(Selection{
-		Declaration: d.ID, Selector: d.Selector, Candidate: current, Chain: currentChain,
-		Reason: "sing-box selector 当前值",
-	}, opts.Now()); err != nil {
-		logf("[%s] 写 Agent 当前状态失败:%v", d.ID, err)
-	}
+	// §5.6 此时只有探测前读到的 selector，还没有本轮健康摘要；若先发布，
+	// 每轮探测期间都会用 Health=nil 覆盖上一份完整状态，让 report 正确但
+	// 反复地产生“证据不完整”漂移。下方各成功路径会把 selector 与本轮健康
+	// 一起原子发布。
 	var skippedByBudget int
 	if d.ProbeBudget > 0 && len(probe) > d.ProbeBudget {
 		rotMu.Lock()

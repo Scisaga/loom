@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -370,9 +371,12 @@ func TestCappedBufferBoundsMemoryWithoutShortWrite(t *testing.T) {
 	}
 }
 
-func TestAgentProtocolComesFromFreshAgentState(t *testing.T) {
+func TestAgentProtocolVersionDoesNotDuplicateDeclarationHealth(t *testing.T) {
 	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
-	cfg := &Config{Node: "access", ExpectedComponents: ComponentVersions{Agent: "0.1.0"}}
+	cfg := &Config{
+		Node: "access", ExpectedComponents: ComponentVersions{Agent: "0.1.0"},
+		ExpectedRoutes: []ExpectedRoute{{Access: "access", Declaration: "d"}},
+	}
 	state := &AgentState{
 		Node: "access", TS: now.Format(time.RFC3339), ComponentVersion: "0.0.9",
 		Selections: []AgentSelection{{
@@ -384,10 +388,54 @@ func TestAgentProtocolComesFromFreshAgentState(t *testing.T) {
 	if len(got) != 1 || got[0].Name != "agent-protocol" || got[0].Actual != "0.0.9" || got[0].OK() {
 		t.Fatalf("did not use agent-owned protocol version: %+v", got)
 	}
+	state.ComponentVersion = "0.1.0"
+	state.Selections[0].Health = nil
+	got = componentStatuses(cfg, state, now)
+	if len(got) != 1 || !got[0].OK() || got[0].Error != "" {
+		t.Fatalf("declaration health was duplicated as protocol drift: %+v", got)
+	}
+	problems := validateAgentStateForConfig(state, cfg, now)
+	if len(problems) != 1 || !strings.Contains(problems[0], "未上报候选健康") {
+		t.Fatalf("declaration health should remain one config problem: %v", problems)
+	}
 	state.ComponentVersion = ""
 	got = componentStatuses(cfg, state, now)
 	if len(got) != 1 || got[0].Error == "" || got[0].OK() {
 		t.Fatalf("legacy agent state was treated as verified: %+v", got)
+	}
+}
+
+func TestCollectCountsMissingAgentHealthOnce(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "agent-state.json")
+	body, err := json.Marshal(AgentState{
+		Node: "jm24", TS: now.Format(time.RFC3339), ComponentVersion: "0.1.0",
+		Selections: []AgentSelection{{
+			Declaration: "intl-api", Selector: "svc:intl-api", Candidate: "cand:intl-api:direct",
+			UpdatedAt: now.Format(time.RFC3339),
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{
+		Node: "jm24", AgentState: path,
+		ExpectedComponents: ComponentVersions{Agent: "0.1.0"},
+		ExpectedRoutes:     []ExpectedRoute{{Access: "jm24", Declaration: "intl-api"}},
+	}
+	st := collectWithWGStats(cfg, now, nil, nil)
+	if len(st.Errors) != 1 || !strings.Contains(st.Errors[0], "未上报候选健康") {
+		t.Fatalf("Agent health errors = %v", st.Errors)
+	}
+	if len(st.Components) != 1 || !st.Components[0].OK() {
+		t.Fatalf("Agent protocol should remain independently healthy: %+v", st.Components)
+	}
+	node := nodeView("jm24", true, true, st, nil, nil, "", now)
+	if len(node.Problems) != 1 || !strings.Contains(node.Problems[0], "未上报候选健康") {
+		t.Fatalf("one logical Agent problem became %d drift findings: %v", len(node.Problems), node.Problems)
 	}
 }
 

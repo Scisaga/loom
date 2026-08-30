@@ -2,6 +2,7 @@ package webui
 
 import (
 	"fmt"
+	"math"
 	"net/url"
 	"strings"
 )
@@ -340,6 +341,29 @@ func overviewCounterWidth(value, maxValue int64) int {
 		return 3
 	}
 	return width
+}
+
+// overviewCounterSegmentWidths 按 §16.1.3 保留总量宽度尺度，再把内部拆成
+// 可见的 RX/TX 比例。这里有意用浮点加法：两个计数接近 MaxInt64 时，int64
+// 求和会饱和并扭曲比例。
+func overviewCounterSegmentWidths(rx, tx int64) (int, int) {
+	rx, tx = nonNegative(rx), nonNegative(tx)
+	switch {
+	case rx == 0 && tx == 0:
+		return 0, 0
+	case rx == 0:
+		return 0, 100
+	case tx == 0:
+		return 100, 0
+	}
+	rxWidth := int(math.Round(float64(rx) / (float64(rx) + float64(tx)) * 100))
+	if rxWidth < 1 {
+		rxWidth = 1
+	}
+	if rxWidth > 99 {
+		rxWidth = 99
+	}
+	return rxWidth, 100 - rxWidth
 }
 
 // scaledCounterValue computes a presentation ratio without multiplying int64

@@ -565,19 +565,20 @@ func writeOverviewTraffic(b *strings.Builder, v View) {
 	b.WriteString(`<div class=current-counters role=table aria-label="Current cumulative counters by local interface"><div class=current-counter-head role=row><span role=columnheader>Interface</span><span role=columnheader>RX</span><span role=columnheader>TX</span><span role=columnheader>Combined</span></div>`)
 	for _, tunnel := range tunnels {
 		value := tunnelCounterBytes(tunnel)
+		rxWidth, txWidth := overviewCounterSegmentWidths(tunnel.RxBytes, tunnel.TxBytes)
 		class, state := "current-counter-row", "Sampled"
 		titleState := ""
 		if value == 0 {
 			class, state = "current-counter-row idle", "Idle · sampled"
 			titleState = " · idle"
 		}
-		fmt.Fprintf(b, `<div class="%s" role=row title="%s %s%s"><div class=current-counter-interface role=cell><span class=mono>%s</span><span class="tiny dim">%s</span></div><span class=current-counter-value role=cell><small>RX</small><b class=mono>%s</b></span><span class=current-counter-value role=cell><small>TX</small><b class=mono>%s</b></span><span class="current-counter-value total" role=cell><small>Total</small><b class=mono>%s</b></span><span class=current-counter-track aria-hidden=true><i style="width:%d%%"></i></span></div>`, class, esc(tunnel.Interface), esc(byteSize(value)), titleState, esc(tunnel.Interface), state, esc(byteSize(nonNegative(tunnel.RxBytes))), esc(byteSize(nonNegative(tunnel.TxBytes))), esc(byteSize(value)), overviewCounterWidth(value, max))
+		fmt.Fprintf(b, `<div class="%s" role=row title="%s %s%s"><div class=current-counter-interface role=cell><span class=mono>%s</span><span class="tiny dim">%s</span></div><span class=current-counter-value role=cell><small>RX</small><b class=mono>%s</b></span><span class=current-counter-value role=cell><small>TX</small><b class=mono>%s</b></span><span class="current-counter-value total" role=cell><small>Total</small><b class=mono>%s</b></span><span class=current-counter-track aria-hidden=true><span class=current-counter-fill style="width:%d%%"><i class=current-counter-rx style="width:%d%%"></i><i class=current-counter-tx style="width:%d%%"></i></span></span></div>`, class, esc(tunnel.Interface), esc(byteSize(value)), titleState, esc(tunnel.Interface), state, esc(byteSize(nonNegative(tunnel.RxBytes))), esc(byteSize(nonNegative(tunnel.TxBytes))), esc(byteSize(value)), overviewCounterWidth(value, max), rxWidth, txWidth)
 	}
 	summary := byteSize(total) + ` combined`
 	if total == 0 {
 		summary = `Idle · 0 B sampled`
 	}
-	fmt.Fprintf(b, `</div><div class=current-counter-summary><span>Thin lines compare each interface with the busiest interface.</span><strong class=mono>%s</strong></div><p class="tiny dim">Direct self /status only · cumulative WireGuard peer counters · not a time series. A reboot, interface-index or peer-key change, or a counter decrease starts a new retained epoch; non-WireGuard traffic is excluded.</p></div></section></div>`, esc(summary))
+	fmt.Fprintf(b, `</div><div class=current-counter-summary><span class=current-counter-legend><span><i class="counterkey rx"></i>RX</span><span><i class="counterkey tx"></i>TX</span><span>Stacked segments compare each interface with the busiest interface.</span></span><strong class=mono>%s</strong></div><p class="tiny dim">Direct self /status only · cumulative WireGuard peer counters · not a time series. A reboot, interface-index or peer-key change, or a counter decrease starts a new retained epoch; non-WireGuard traffic is excluded.</p></div></section></div>`, esc(summary))
 }
 
 func writeOverviewDiagnostics(b *strings.Builder, v View, nowTime time.Time) {

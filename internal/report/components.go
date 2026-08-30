@@ -102,11 +102,9 @@ func componentStatuses(cfg *Config, agent *AgentState, now time.Time) []Componen
 	out := collectComponentsCached(cfg, now)
 	if expected := cfg.ExpectedComponents.Agent; expected != "" {
 		st := ComponentStatus{Name: "agent-protocol", Expected: expected}
-		switch problems := validateAgentStateForConfig(agent, cfg, now); {
+		switch {
 		case agent == nil:
 			st.Error = "Agent 状态不存在，无法核对正在运行的协议版本"
-		case len(problems) > 0:
-			st.Error = "Agent 状态不可信或已过期:" + problems[0]
 		case agent.ComponentVersion == "":
 			st.Error = "Agent 未上报协议版本（旧版或尚未完成首轮状态写入）"
 		default:

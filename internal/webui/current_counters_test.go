@@ -121,6 +121,15 @@ func TestCurrentCounterScalingDoesNotOverflow(t *testing.T) {
 	if got := overviewCounterWidth(maxCounterValue/2, maxCounterValue); got < 49 || got > 50 {
 		t.Fatalf("overviewCounterWidth(MaxInt64/2) = %d, want about 50", got)
 	}
+	if rx, tx := overviewCounterSegmentWidths(maxCounterValue, maxCounterValue); rx != 50 || tx != 50 {
+		t.Fatalf("overviewCounterSegmentWidths(MaxInt64, MaxInt64) = %d/%d, want 50/50", rx, tx)
+	}
+	if rx, tx := overviewCounterSegmentWidths(1, maxCounterValue); rx != 1 || tx != 99 {
+		t.Fatalf("overviewCounterSegmentWidths(1, MaxInt64) = %d/%d, want visible 1/99 split", rx, tx)
+	}
+	if rx, tx := overviewCounterSegmentWidths(0, 0); rx != 0 || tx != 0 {
+		t.Fatalf("overviewCounterSegmentWidths(0, 0) = %d/%d, want 0/0", rx, tx)
+	}
 	if got := tunnelCounterBytes(TunnelView{RxBytes: maxCounterValue, TxBytes: maxCounterValue}); got != maxCounterValue {
 		t.Fatalf("saturated tunnel total = %d, want MaxInt64", got)
 	}
@@ -145,6 +154,18 @@ func TestCurrentCounterScalingDoesNotOverflow(t *testing.T) {
 	for _, want := range []string{"wg-max", "wg-half", "RX", "TX", "Combined"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("Overview current-counter detail is missing %q", want)
+		}
+	}
+	for _, want := range []string{
+		`class=current-counter-fill`,
+		`class=current-counter-rx`,
+		`class=current-counter-tx`,
+		`<i class="counterkey rx"></i>RX`,
+		`<i class="counterkey tx"></i>TX`,
+		`Stacked segments compare each interface with the busiest interface.`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("Overview current-counter color split is missing %q", want)
 		}
 	}
 }
