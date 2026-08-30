@@ -199,19 +199,22 @@ func TestTopologyProjectsAutomaticRoutingWithoutPathControls(t *testing.T) {
 	for _, want := range []string{
 		`class=route marker-end`, "Automatic routing", "Read-only · automatic Agent decisions",
 		"Host → Service → Policy", "International APIs", "jm24 → sg02",
-		"Domestic web", "jm24 → local exit", ">local exit</text>",
+		"Domestic web", "jm24 → local exit", ">LOCAL EXIT</text>",
 		"Automatic Agent route · read-only", "View decision evidence",
 		"新增节点按 direction 自动进入对应环", "不参与节点排序或改变布局",
+		"topology-layout", "topology-status-grid", "Intent matched with signed evidence",
+		"动态双环 · 自动路径只读叠加", "指标与交互口径",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("Topology automatic routing projection is missing %q", want)
 		}
 	}
-	if got := strings.Count(body, `marker-end="url(#arrow)"`); got < 2 {
-		t.Fatalf("Topology drew %d automatic route segment(s), want both fresh decisions", got)
+	if got := strings.Count(body, `marker-end="url(#arrow)"`); got != 1 {
+		t.Fatalf("Topology drew %d automatic route segment(s), want only the remote-hop decision", got)
 	}
 	for _, unwanted := range []string{
 		`<select name=entry`, "No Agent path overlay", ">Apply</button>", "overlaid",
+		"Persistent carriers", "Carrier observation",
 	} {
 		if strings.Contains(body, unwanted) {
 			t.Errorf("Topology still presents automatic routes as a client choice %q", unwanted)

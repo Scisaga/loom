@@ -557,8 +557,11 @@ def topology_page() -> str:
 
   <!-- Current Agent decisions are projected automatically; this is not a path picker. -->
   <path class="selected" style="stroke:#466FC2;stroke-width:2.4;marker-end:url(#arrow-automatic)" d="M571 320L807 349"/>
-  <path class="selected" style="stroke:#466FC2;stroke-width:2.4;marker-end:url(#arrow-automatic)" d="M560 310L592 284"/>
-  <text class="ui tiny blue mono" x="603" y="285">cn-web · local exit</text>
+  <g class="ui" aria-label="cn-web uses the local exit">
+    <rect x="445" y="268" width="94" height="22" rx="11" fill="#F5F7FC" stroke="#B9C9E9"/>
+    <circle cx="457" cy="279" r="3" fill="#466FC2"/>
+    <text class="tiny blue" x="466" y="283" font-weight="650">LOCAL EXIT</text>
+  </g>
   <text class="ui tiny blue mono" x="660" y="325">intl-api · jm24 → ber01</text>
 
   <g class="ui">
@@ -593,20 +596,21 @@ def topology_page() -> str:
   <rect class="panel" x="1112" y="202" width="447" height="270" rx="7"/>
   <g class="ui">
     <text class="section" x="1132" y="232">Layer status</text>
+    <circle class="status-dot" cx="1453" cy="227" r="4"/>
+    <text class="tiny green" x="1539" y="231" text-anchor="end">ALL OBSERVED</text>
 
-    <text class="small muted" x="1132" y="266">CONFIG INTENT</text>
-    <text class="metric" x="1132" y="290">9 persistent links</text>
-    <text class="tiny muted" x="1132" y="309">Source · current validated SSOT · desired state</text>
+    <text class="small muted" x="1132" y="266">WIREGUARD CARRIERS</text>
+    <text class="metric green" x="1132" y="290">9 / 9 active</text>
+    <text class="tiny muted" x="1132" y="309">9 declared · current validated SSOT · signed evidence</text>
 
     <line class="rule" x1="1132" y1="327" x2="1539" y2="327"/>
-    <text class="small muted" x="1132" y="352">TRUSTED OBSERVATION</text>
-    <circle class="status-dot" cx="1137" cy="376" r="4"/>
-    <text class="metric" x="1150" y="381">9 / 9 reachable</text>
-    <text class="tiny muted" x="1132" y="401">report.neighbors · newest 8s · oldest 16s</text>
+    <text class="small muted" x="1132" y="352">HY2 DIRECT</text><text class="small muted" x="1330" y="352">ON-DEMAND</text>
+    <text class="metric green" x="1132" y="376">3 / 3 sampled</text><text class="metric" x="1330" y="376">0 possible hops</text>
+    <text class="tiny muted" x="1132" y="397">signed public single-hop</text><text class="tiny muted" x="1330" y="397">intent only · no tunnel health</text>
 
-    <line class="rule" x1="1132" y1="419" x2="1539" y2="419"/>
-    <text class="small muted" x="1132" y="444">HY2 DIRECT</text><text class="small muted" x="1330" y="444">AUTOMATIC ROUTING</text>
-    <text class="body green" x="1132" y="463">3 / 3 sampled</text><text class="body blue" x="1330" y="463">2 / 2 fresh · read-only</text>
+    <line class="rule" x1="1132" y1="415" x2="1539" y2="415"/>
+    <text class="small muted" x="1132" y="440">AUTOMATIC ROUTING</text>
+    <text class="body blue" x="1132" y="462">2 / 2 fresh · Agent-selected · read-only</text>
   </g>
 
   <!-- Focused-link history: each endpoint contributes TX only. -->

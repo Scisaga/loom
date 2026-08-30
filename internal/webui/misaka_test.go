@@ -180,11 +180,11 @@ func TestDirectRouteOverlayHighlightsItsLocalEgressNode(t *testing.T) {
 	topology := topologySVG(view, direct)
 	if !strings.Contains(topology, `class=route-ring`) ||
 		!strings.Contains(topology, `class="node selected"`) ||
-		!strings.Contains(topology, `class="route route-direct"`) ||
-		!strings.Contains(topology, `>local exit</text>`) {
+		!strings.Contains(topology, `class=route-local-exit`) ||
+		!strings.Contains(topology, `>LOCAL EXIT</text>`) {
 		t.Fatalf("direct route did not highlight jm24 as its local egress: %s", topology)
 	}
-	if strings.Contains(topology, `<line class=route`) || strings.Contains(topology, `class="topology-edge edge-route"`) {
+	if strings.Contains(topology, `class="route route-direct"`) || strings.Contains(topology, `<line class=route`) || strings.Contains(topology, `class="topology-edge edge-route"`) {
 		t.Fatalf("direct route invented a node-to-node path: %s", topology)
 	}
 	if !strings.Contains(topology, "control + access + server + egress") {

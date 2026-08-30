@@ -183,10 +183,17 @@ func pageTopology(d Deps, isAuthed bool, selectedEntry ...string) string {
 			directHint = "signed public single-hop evidence"
 		}
 	}
+	carrierMetricClass, carrierState := "dim", "No carriers"
+	if tunnels > 0 {
+		carrierMetricClass, carrierState = "warn", "Partial evidence"
+		if active == tunnels {
+			carrierMetricClass, carrierState = "ok", "All observed"
+		}
+	}
 
 	var b strings.Builder
 	b.WriteString(`<div class=sectionhead><h2>Network layers</h2><span class=dim>内圈是可接受反向建连的锚点，外圈是主动接入的出口节点；节点在各自环上等距排列。</span><span class=sp><span class="badge intent">Read-only · automatic Agent decisions</span></span></div>`)
-	b.WriteString(`<div class=grid><div class="card span9">`)
+	b.WriteString(`<div class="grid topology-layout"><div class="card span9 topology-stage">`)
 	if focusedRoute != nil {
 		stateClass, state := "ok", "Fresh signed observation"
 		if focusedRoute.Stale {
@@ -194,14 +201,13 @@ func pageTopology(d Deps, isAuthed bool, selectedEntry ...string) string {
 		}
 		fmt.Fprintf(&b, `<div class=topology-route-focus><div><span class=label>Focused automatic decision</span><b>%s</b><span class=mono>%s</span><span class="tiny %s">%s · %s</span></div><a class="button" href="/topology">Show all current decisions</a></div>`, esc(overviewRouteName(v, *focusedRoute)), esc(automaticRoutePath(*focusedRoute)), stateClass, esc(state), esc(ageText(focusedRoute.ObservedAt, now)))
 	}
-	fmt.Fprintf(&b, `%s<div class=legend><span><i class=key></i>Persistent WireGuard</span><span><i class="key direct-hy2"></i>Hy2 direct · 主动探测</span><span><i class="key candidate"></i>On-demand route hop</span><span><i class="key route"></i>Automatic Agent route · read-only</span><span><i class="key degraded"></i>Degraded carrier</span><span><i class="key failed"></i>Failed carrier</span></div><div class=topology-layer-note>双环底图由当前节点和链路动态生成；新增节点按 direction 自动进入对应环，Agent 选中路径只叠加颜色，不参与节点排序或改变布局。路径由 Host → Service → Policy 规则和接入节点探测自动产生；本页只展示，不改变客户端偏好、selector 或 SSOT。悬停节点可预览，点击后锁定相邻链路；标签统一为延迟 · Δ波动 · 速率。WireGuard 速率来自近 5 分钟相邻可信计数器差值；Hy2 direct 显示公网 Hysteria2 单跳响应延迟和主动探测速率，其速率是固定响应的 achieved probe throughput，不是业务流量或链路容量。虚线仅是 %s 允许的未测量按需路径，不伪装成在线隧道（not broken tunnels）。</div></div>`, topologySVG(v, overlay...), esc(intentSource))
-	b.WriteString(`<aside class="span3 topology-side"><div class=card><h2>Layer status</h2><div class=stack>`)
+	fmt.Fprintf(&b, `%s<div class=legend><span><i class=key></i>Persistent WireGuard</span><span><i class="key direct-hy2"></i>Hy2 direct · 主动探测</span><span><i class="key candidate"></i>On-demand route hop</span><span><i class="key route"></i>Automatic Agent route · read-only</span><span><i class="key degraded"></i>Degraded carrier</span><span><i class="key failed"></i>Failed carrier</span></div><div class=topology-layer-note><div class=topology-layer-summary><b>动态双环 · 自动路径只读叠加</b><span>新增节点按 direction 自动进入对应环；Agent 选中路径只叠加颜色，不参与节点排序或改变布局。</span></div><details class=topology-evidence-details><summary>指标与交互口径</summary><p>路径由 Host → Service → Policy 规则和接入节点探测自动产生；本页只展示，不改变客户端偏好、selector 或 SSOT。悬停节点可预览，点击后锁定相邻链路；标签统一为延迟 · Δ波动 · 速率。WireGuard 速率来自近 5 分钟相邻可信计数器差值；Hy2 direct 显示公网 Hysteria2 单跳响应延迟和主动探测速率，其速率是固定响应的 achieved probe throughput，不是业务流量或链路容量。虚线仅是 %s 允许的未测量按需路径，不伪装成在线隧道（not broken tunnels）。</p></details></div></div>`, topologySVG(v, overlay...), esc(intentSource))
+	b.WriteString(`<aside class="span3 topology-side"><section class="card topology-status-card">`)
 	fmt.Fprintf(&b, `
-<div><div class=label>Persistent carriers</div><div class=metric>%d <small>WG edges</small></div><div class=dim>%s declared inventory</div></div>
-<div><div class=label>Carrier observation</div><div class="metric %s">%d <small>/ %d active</small></div><div class=dim>signed runtime evidence</div></div>
-<div><div class=label>Hy2 direct probes</div><div class="metric %s">%d <small>/ %d sampled</small></div><div class=dim>%s</div></div>
-<div><div class=label>On-demand routing</div><div class=metric>%d <small>possible hops</small></div><div class=dim>intent, not tunnel health</div></div>
-</div></div>`, tunnels, esc(intentSource), map[bool]string{true: "ok", false: "warn"}[active == tunnels && tunnels > 0], active, tunnels, directClass, directSampled, directDeclared, esc(directHint), candidates)
+<div class=topology-status-head><div><h2>Layer status</h2><span>Intent matched with signed evidence</span></div><span class="badge %s"><span class=dot></span>%s</span></div>
+<div class=topology-carrier-status><div><div class=label>WireGuard carriers</div><div class="metric %s">%d <small>/ %d active</small></div></div><div class=topology-status-source><b>%d declared</b><span>%s inventory</span></div></div>
+<div class=topology-status-grid><div class=topology-status-item><div class=label>Hy2 direct</div><div class="metric %s">%d <small>/ %d sampled</small></div><div class=dim>%s</div></div><div class=topology-status-item><div class=label>On-demand</div><div class=metric>%d <small>possible hops</small></div><div class=dim>intent only · no tunnel health</div></div></div>
+</section>`, carrierMetricClass, esc(carrierState), carrierMetricClass, active, tunnels, tunnels, esc(intentSource), directClass, directSampled, directDeclared, esc(directHint), candidates)
 	writeAutomaticRoutingCard(&b, v, focused, fresh, now)
 	b.WriteString(`</aside></div>`)
 
@@ -516,7 +522,7 @@ func tunnelAge(t TunnelView) string {
 }
 
 func writeAutomaticRoutingCard(b *strings.Builder, v View, focused string, fresh int, now time.Time) {
-	fmt.Fprintf(b, `<div class="card automatic-routing-card"><div class=automatic-routing-head><h2>Automatic routing</h2><span class="tiny ok">%d / %d fresh</span></div><p>Read-only Agent decisions generated from Host → Service → Policy rules. They do not prove that application traffic is currently active.</p>`, fresh, len(v.Routes))
+	fmt.Fprintf(b, `<div class="card automatic-routing-card"><div class=automatic-routing-head><h2>Automatic routing</h2><span class="tiny ok">%d / %d fresh</span></div><p>Agent-selected state from Host → Service → Policy. Read-only; not proof of active application traffic.</p>`, fresh, len(v.Routes))
 	routes := append([]RouteView(nil), v.Routes...)
 	sort.SliceStable(routes, func(i, j int) bool {
 		a, z := routingRouteKey(routes[i]), routingRouteKey(routes[j])
