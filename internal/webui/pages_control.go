@@ -34,9 +34,16 @@ func pageServices(d Deps, selected string, create bool, message string, failed b
 		hostRules += len(svc.Hosts)
 	}
 	validIngress := 0
+	serviceIngress := 0
+	policyIngress := 0
 	for _, in := range v.Ingresses {
 		if in.ScopeKind != "" {
 			validIngress++
+		}
+		if in.Services || in.ScopeKind == ScopeServices || in.Mode == "services" || in.Mode == "host-based" {
+			serviceIngress++
+		} else {
+			policyIngress++
 		}
 	}
 
@@ -51,38 +58,41 @@ func pageServices(d Deps, selected string, create bool, message string, failed b
 	if revisionErr != nil {
 		fmt.Fprintf(&b, `<div class="card notice badline"><b>Structured writes unavailable</b><br><span class=small>%s</span></div>`, esc(revisionErr.Error()))
 	}
-	fmt.Fprintf(&b, `<div class=grid>
-<div class="card span3"><div class=label>Services</div><div class=metric>%d <small>configured</small></div><div class=dim>request-derived destination groups</div></div>
-<div class="card span3"><div class=label>Host rules</div><div class=metric>%d</div><div class=dim>exact or suffix only</div></div>
-<div class="card span3"><div class=label>Access policies</div><div class=metric>%d</div><div class=dim>govern path selection</div></div>
-<div class="card span3"><div class=label>Service-aware ingress</div><div class=metric>%d <small>/ %d valid</small></div><div class=dim>derived from SSOT access roles</div></div>
-</div>`, len(v.Services), hostRules, len(v.Policies), validIngress, len(v.Ingresses))
+	fmt.Fprintf(&b, `<div class=services-summary>
+<div class=services-summary-item><div class=label>Services</div><div class=metric>%d <small>configured</small></div><div class=dim>request destination groups</div></div>
+<div class=services-summary-item><div class=label>Host rules</div><div class=metric>%d</div><div class=dim>exact host or DNS suffix</div></div>
+<div class=services-summary-item><div class=label>Access policies</div><div class=metric>%d</div><div class=dim>govern path selection</div></div>
+<div class=services-summary-item><div class=label>Configured ingress</div><div class=metric>%d <small>/ %d valid</small></div><div class=dim>%d service matching · %d fixed policy</div></div>
+</div>
+<div class=services-flow><span class=services-flow-label>Request routing</span><b>Ingress</b><span aria-hidden=true>→</span> Host <span aria-hidden=true>→</span> Service <span aria-hidden=true>→</span> Policy <span aria-hidden=true>→</span> live path</div>`, len(v.Services), hostRules, len(v.Policies), validIngress, len(v.Ingresses), serviceIngress, policyIngress)
 
-	b.WriteString(`<div class=split><aside class=card><div class=sectionhead><h2>Catalog</h2><span class=dim>Services</span>`)
+	b.WriteString(`<div class=services-workspace><aside class="card service-catalog"><div class=service-catalog-head><div><h2>Service catalog</h2><span class=dim>Destination groups</span></div>`)
 	if d.Control != nil {
 		b.WriteString(`<span class=sp><a class=button href="/services?new=1">＋ Add</a></span>`)
 	}
-	b.WriteString(`</div>`)
+	b.WriteString(`</div><div class=service-catalog-list>`)
 	if len(v.Services) == 0 {
 		b.WriteString(`<div class=empty>No services are configured. Unmatched request hosts remain fail-closed.</div>`)
 	} else {
 		for _, svc := range v.Services {
 			cls := "catalogrow"
+			ariaCurrent := ""
 			if svc.ID == selected {
 				cls += " selected"
+				ariaCurrent = ` aria-current=page`
 			}
 			name := svc.Name
 			if name == "" {
 				name = svc.ID
 			}
-			fmt.Fprintf(&b, `<a href="/services?service=%s"><div class="%s"><div class=nodehead><b class=mono>%s</b><span class=sp><span class="dot ok"></span></span></div><div>%s</div><div class="tiny dim">%d host rules · policy %s</div></div></a>`, queryEscape(svc.ID), cls, esc(svc.ID), esc(name), len(svc.Hosts), esc(svc.PolicyID))
+			fmt.Fprintf(&b, `<a href="/services?service=%s"%s><div class="%s"><div class=service-catalog-name>%s</div><div class=service-catalog-id><span class=mono>%s</span><span class="badge intent">%s</span></div><div class="tiny dim">%d host rules</div></div></a>`, queryEscape(svc.ID), ariaCurrent, cls, esc(name), esc(svc.ID), esc(svc.PolicyID), len(svc.Hosts))
 		}
 	}
-	b.WriteString(`<div class=section><h2>Safety boundary</h2><p class=small>Requests not matching any service fail closed. A catch-all must be explicit.</p><p class="small dim">URLs, paths, ports, IPs and wildcard <code>*</code> are rejected; a single leading dot means a DNS suffix.</p></div></aside>`)
+	b.WriteString(`</div></aside>`)
 
-	b.WriteString(`<section class=stack>`)
+	b.WriteString(`<section class="card service-editor">`)
 	if current == nil && !create && submitted == nil {
-		b.WriteString(`<div class=card><div class=empty>Select a service to inspect its real SSOT definition.</div></div>`)
+		b.WriteString(`<div class=service-editor-empty><div class=empty>Select a service to inspect its SSOT definition.</div></div>`)
 	} else {
 		svc := ServiceView{}
 		if current != nil {
@@ -94,71 +104,77 @@ func pageServices(d Deps, selected string, create bool, message string, failed b
 			svc.PolicyID = submitted.Declaration
 			svc.Addresses = append([]string(nil), submitted.Addresses...)
 		}
-		title, status := "Service definition", `<span class="sp badge ok"><span class=dot></span>Configured intent</span>`
+		title, status := "Edit service", `<span class="badge ok"><span class=dot></span>In SSOT</span>`
 		if create {
-			title, status = "Add service", `<span class="sp badge warn"><span class=dot></span>Not saved</span>`
+			title, status = "Add service", `<span class="badge warn"><span class=dot></span>Not saved</span>`
 		} else if failed && submitted != nil {
-			status = `<span class="sp badge warn"><span class=dot></span>Submitted values · not saved</span>`
+			status = `<span class="badge warn"><span class=dot></span>Submitted values · not saved</span>`
 		}
-		fmt.Fprintf(&b, `<div class=card><div class=sectionhead><h2>%s</h2>%s</div>`, title, status)
+		fmt.Fprintf(&b, `<div class=service-editor-head><div><h2>%s</h2><span class=dim>Host group and routing governance</span></div><span class=sp>%s</span></div><div class=service-editor-body>`, title, status)
 		canWrite := d.Control != nil && d.Control.Services != nil && isAuthed && revisionErr == nil
 		if canWrite {
-			fmt.Fprintf(&b, `<form method=post action="/services/save"><input type=hidden name=revision value="%s"><div class=fields><div class="field span4"><label>Service ID</label><input name=id value="%s" %s required></div><div class="field span4"><label>Display name</label><input name=name value="%s"></div><div class="field span4"><label>Access policy</label><select name=declaration required>%s</select></div><div class="field span12"><label>Host matching · one exact hostname or .suffix per line</label><textarea class=compact name=addresses spellcheck=false required>%s</textarea></div></div><div class=toolbar><button class=green name=action value=save>Validate &amp; save</button><a class=button href="/services">Discard</a></div></form>`,
-				esc(revision), esc(svc.ID), map[bool]string{true: "", false: "readonly"}[create], esc(svc.Name), policyOptions(v.Policies, svc.PolicyID), esc(strings.Join(svc.Addresses, "\n")))
+			fmt.Fprintf(&b, `<form class="blockform service-form" data-submit-progress method=post action="/services/save"><input type=hidden name=revision value="%s"><div class=service-primary-fields><div class=field><label>Service ID</label><input class=mono name=id value="%s" %s required><span class=field-hint>Stable ID · cannot be renamed after creation</span></div><div class=field><label>Display name</label><input name=name value="%s" placeholder="Human-readable name"></div><div class=field><label>Access policy</label><select name=declaration required>%s</select><span class=field-hint>Controls eligible paths and ranking objective</span></div></div><div class=service-host-rules><div class=service-subhead><div><label>Host rules</label><span>One exact hostname or <code>.suffix</code> per line</span></div><span class="badge dim">%d rules</span></div><textarea class=compact name=addresses spellcheck=false required aria-label="Host rules">%s</textarea><div class=service-rule-help><span><code>api.example.com</code> exact host</span><span><code>.example.com</code> DNS suffix</span><span>Unmatched hosts on Service matching ingress are rejected</span></div></div><div class=service-form-actions><span class="small dim">Saving validates SSOT and triggers signed distribution.</span><div class=toolbar><a class=button href="/services?service=%s">Discard changes</a><button class="green progress-submit" name=action value=save><span class=button-idle>Validate &amp; save</span><span class=button-busy><i class=button-spinner aria-hidden=true></i>Saving…</span></button></div></div></form>`,
+				esc(revision), esc(svc.ID), map[bool]string{true: "", false: "readonly"}[create], esc(svc.Name), policyOptions(v.Policies, svc.PolicyID), len(svc.Addresses), esc(strings.Join(svc.Addresses, "\n")), queryEscape(svc.ID))
 			if !create {
-				fmt.Fprintf(&b, `<div class=section><form method=post action="/services/delete"><input type=hidden name=revision value="%s"><input type=hidden name=id value="%s"><input type=hidden name=name value="%s"><input type=hidden name=declaration value="%s"><textarea hidden name=addresses>%s</textarea><button name=action value=delete>Delete service</button></form><span class="small dim"> POST only; revision guard prevents deleting a changed definition.</span></div>`, esc(revision), esc(svc.ID), esc(svc.Name), esc(svc.PolicyID), esc(strings.Join(svc.Addresses, "\n")))
+				fmt.Fprintf(&b, `<div class=service-danger><div><b>Danger zone</b><span>Delete this destination group from the next SSOT revision.</span></div><form method=post action="/services/delete"><input type=hidden name=revision value="%s"><input type=hidden name=id value="%s"><input type=hidden name=name value="%s"><input type=hidden name=declaration value="%s"><textarea hidden name=addresses>%s</textarea><button class=danger-button name=action value=delete>Delete service</button></form></div>`, esc(revision), esc(svc.ID), esc(svc.Name), esc(svc.PolicyID), esc(strings.Join(svc.Addresses, "\n")))
 			}
 		} else {
-			fmt.Fprintf(&b, `<div class=fields><div class="field span4"><label>Service ID</label><input value="%s" readonly></div><div class="field span4"><label>Display name</label><input value="%s" readonly></div><div class="field span4"><label>Access policy</label><input value="%s" readonly></div></div><div class=section><div class=sectionhead><h2>Host matching</h2><span class=dim>Every matching hostname is carried as this service</span></div><table><tr><th>Host<th>Match<th>Validation</tr>`, esc(svc.ID), esc(svc.Name), esc(svc.PolicyID))
+			fmt.Fprintf(&b, `<div class=service-primary-fields><div class=field><label>Service ID</label><div class="readonly-value mono">%s</div></div><div class=field><label>Display name</label><div class=readonly-value>%s</div></div><div class=field><label>Access policy</label><div class="readonly-value mono">%s</div></div></div><div class=service-host-rules><div class=service-subhead><div><label>Host rules</label><span>Every matching hostname is carried as this Service</span></div><span class="badge dim">%d rules</span></div><div class=service-rule-list>`, esc(svc.ID), esc(svc.Name), esc(svc.PolicyID), len(svc.Hosts))
 			for _, h := range svc.Hosts {
-				fmt.Fprintf(&b, `<tr><td class=mono>%s<td>%s<td class=ok>Valid hostname rule</tr>`, esc(h.Host), esc(h.Match))
+				fmt.Fprintf(&b, `<div><code>%s</code><span class=badge>%s</span></div>`, esc(h.Host), esc(h.Match))
 			}
-			b.WriteString(`</table></div>`)
+			b.WriteString(`</div><div class=service-rule-help><span>Unmatched hosts on Service matching ingress are rejected</span></div></div>`)
 		}
-		b.WriteString(`<div class=callout><b>Desired state</b><br><span class=small>Saving a service changes SSOT; the publisher validates, signs and distributes automatically. Current path and health remain observations in Routing.</span></div>`)
+		b.WriteString(`<div class=service-state-note><span class=service-state-icon>i</span><span>This page edits desired state. Current path and health remain observations in <a href="/routing">Live paths</a>.</span></div>`)
 		if d.Control == nil {
-			b.WriteString(`<p class="small warn">Structured writes are available only on the control node.</p>`)
+			b.WriteString(`<p class="small warn service-editor-access">Structured writes are available only on the control node.</p>`)
 		} else if !isAuthed {
-			b.WriteString(`<p class=small><a class="button primary" href="/login">Sign in to edit</a></p>`)
+			b.WriteString(`<p class="small service-editor-access"><a class="button primary" href="/login">Sign in to edit</a></p>`)
 		} else if d.Control.Services == nil {
-			b.WriteString(`<p class=small><a class=button href="/settings">Open validated SSOT editor</a> <span class=dim>Structured Service transactions are unavailable in this build.</span></p>`)
+			b.WriteString(`<p class="small service-editor-access"><a class=button href="/settings">Open validated SSOT editor</a> <span class=dim>Structured Service transactions are unavailable in this build.</span></p>`)
 		}
 		b.WriteString(`</div>`)
 	}
+	b.WriteString(`</section></div>`)
 
-	b.WriteString(`<div class=card><div class=sectionhead><h2>Configured ingress inventory</h2><span class=dim>Global SSOT inventory · not filtered by the selected service · configuration is not listener health</span></div>`)
+	b.WriteString(`<section class="section services-ingress"><div class=sectionhead><div><h2>Traffic ingress</h2><span class=dim>Global SSOT configuration · where applications enter routing</span></div><span class="sp badge intent">Configuration only · not listener health</span></div>`)
 	if len(v.Ingresses) == 0 {
 		b.WriteString(`<div class=empty>No service-aware or policy ingress is present in the validated SSOT view.</div>`)
 	} else {
-		b.WriteString(`<table><tr><th>Access node<th>Listen<th>Kind / mode<th>Scope<th>Policy</tr>`)
+		b.WriteString(`<div class=ingress-grid>`)
 		for _, in := range v.Ingresses {
 			listen := in.Listen
 			if listen == "" && in.Kind == "tun" {
 				listen = "TUN"
 			}
-			scope := in.ScopeKind
-			if in.ScopeID != "" {
-				scope += " · " + in.ScopeID
+			mode, badgeClass, target, route := "Fixed policy", "badge", in.PolicyID, "Every request uses this policy directly"
+			if target == "" {
+				target = in.ScopeID
 			}
-			fmt.Fprintf(&b, `<tr><td class=mono>%s<td class=mono>%s<td>%s · %s<td>%s<td class=mono>%s</tr>`, esc(in.Node), esc(listen), esc(in.Kind), esc(in.Mode), esc(scope), esc(in.PolicyID))
+			if in.Services || in.ScopeKind == ScopeServices || in.Mode == "services" || in.Mode == "host-based" {
+				mode, badgeClass, target, route = "Service matching", "badge ok", "Service catalog", "Host → Service → Policy"
+			}
+			boundary := "Declared listener"
+			if strings.HasPrefix(listen, "127.0.0.1:") {
+				boundary = "Loopback only"
+			}
+			fmt.Fprintf(&b, `<article class=ingress-card><div class=ingress-card-head><code>%s</code><span class="%s">%s</span></div><div class=ingress-route>%s</div><div class=ingress-target><span>Routes to</span><b class=mono>%s</b></div><div class=ingress-card-foot><span>%s</span><span>Local applications on %s only</span></div></article>`, esc(listen), badgeClass, mode, esc(route), esc(target), boundary, esc(in.Node))
 		}
-		b.WriteString(`</table>`)
+		b.WriteString(`</div>`)
 	}
-	b.WriteString(`</div></section></div>`)
+	b.WriteString(`</section>`)
 
-	b.WriteString(`<div class=section><div class=sectionhead><h2>Access policies</h2><span class=dim>Policy is governance; service is the request-derived routing unit</span></div><div class=card>`)
+	fmt.Fprintf(&b, `<details class="card services-policy-library"><summary><span><b>Access policies</b><small>Policy is governance; Service is the request-derived routing unit</small></span><span class="sp">%d available · View all</span></summary><div class=policy-grid>`, len(v.Policies))
 	if len(v.Policies) == 0 {
 		b.WriteString(`<div class=empty>No access policies are available in the validated control view.</div>`)
 	} else {
 		policies := append([]PolicyView(nil), v.Policies...)
 		sort.Slice(policies, func(i, j int) bool { return policies[i].ID < policies[j].ID })
-		b.WriteString(`<table><tr><th>Policy<th>Objective<th>Allowed servers<th>Max hops<th>Cadence / window<th>Fallback</tr>`)
 		for _, p := range policies {
-			fmt.Fprintf(&b, `<tr><td><b class=mono>%s</b><br><span class="tiny dim">%s</span><td>%s<td class="w mono">%s<td>%d<td class=w>%s / %s<br><span class="tiny dim">%s · %d samples</span><td>%s</tr>`, esc(p.ID), esc(p.Name), esc(p.Objective), esc(strings.Join(p.AllowedServers, " · ")), p.MaxHops, esc(p.RankingPeriod), esc(p.TuningPeriod), esc(p.Window), p.MinSamples, esc(p.Fallback))
+			fmt.Fprintf(&b, `<article class=policy-card><div class=policy-card-head><div><b class=mono>%s</b><span>%s</span></div><span class="badge intent">%s</span></div><div class=policy-card-servers><span>Eligible nodes</span><code>%s</code></div><div class=policy-card-meta><span><b>%d</b> max hops</span><span><b>%s</b> tuning</span><span><b>%s</b> window · %d samples</span><span><b>%s</b> fallback</span></div></article>`, esc(p.ID), esc(p.Name), esc(p.Objective), esc(strings.Join(p.AllowedServers, " · ")), p.MaxHops, esc(p.TuningPeriod), esc(p.Window), p.MinSamples, esc(p.Fallback))
 		}
-		b.WriteString(`</table>`)
 	}
-	b.WriteString(`</div></div>`)
+	b.WriteString(`</div></details>`)
 	return shell(d, "Services", b.String(), isAuthed, v)
 }
 
