@@ -231,7 +231,7 @@
   <g class="ui" aria-label="cn-web uses the local exit">
     <rect x="445" y="268" width="94" height="22" rx="11" fill="#F5F7FC" stroke="#B9C9E9"/>
     <circle cx="457" cy="279" r="3" fill="#466FC2"/>
-    <text class="tiny blue" x="466" y="283" font-weight="650">LOCAL EXIT</text>
+    <text class="tiny blue" x="466" y="283" font-size="10" font-weight="650">LOCAL EXIT</text>
   </g>
   <text class="ui tiny blue mono" x="660" y="325">intl-api · jm24 → ber01</text>
 
