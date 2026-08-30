@@ -4,7 +4,7 @@
      width="1586" height="992" viewBox="0 0 1586 992"
      role="img" aria-labelledby="title description">
   <title id="title">Network overview — Loom control center prototype</title>
-  <desc id="description">A restrained infrastructure overview showing five nodes, six WireGuard links, current traffic paths, deployment state, and retained WireGuard counter-delta bars with explicit reset and gap boundaries.</desc>
+  <desc id="description">A restrained infrastructure overview showing five nodes, six WireGuard links, read-only automatic routing decisions, deployment state, and retained WireGuard counter-delta bars with explicit reset and gap boundaries.</desc>
   <defs>
     <marker id="arrow-selected" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
       <path d="M0 0L7 3.5L0 7Z" fill="#2AA875"/>
@@ -188,8 +188,8 @@
     <text class="label" x="455" y="239">WireGuard</text>
     <text class="metric" x="455" y="263">6 / 6 <tspan class="body" font-weight="400">observed</tspan></text>
 
-    <text class="label" x="835" y="239">Current traffic paths</text>
-    <text class="metric" x="835" y="263">5 / 5 <tspan class="body" font-weight="400">reported</tspan></text>
+    <text class="label" x="835" y="239">Automatic decisions</text>
+    <text class="metric" x="835" y="263">2 / 2 <tspan class="body" font-weight="400">fresh</tspan></text>
 
     <text class="label" x="1210" y="234">Snapshot</text>
     <text class="metric mono" x="1210" y="255">4f09f6f5716d</text>
@@ -203,15 +203,15 @@
   <rect class="panel" x="20" y="305" width="992" height="330" rx="7"/>
   <g class="ui">
     <text class="section" x="35" y="334">Network topology</text>
-    <text class="small muted" x="214" y="334">Agent decisions · observed 12s ago</text>
+    <text class="small muted" x="214" y="334">Automatic Agent decisions · observed 12s ago</text>
 
     <line class="wg" x1="614" y1="328" x2="642" y2="328"/>
     <text class="small muted" x="650" y="333">WireGuard</text>
     <line class="candidate" x1="738" y1="328" x2="766" y2="328"/>
     <text class="small muted" x="774" y="333">Candidate</text>
-    <line x1="859" y1="328" x2="887" y2="328" stroke="#2AA875" stroke-width="1.7"/>
-    <path d="M883 324L889 328L883 332" fill="none" stroke="#2AA875" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-    <text class="small muted" x="897" y="333">Current path</text>
+    <line x1="859" y1="328" x2="887" y2="328" stroke="#466FC2" stroke-width="1.7"/>
+    <path d="M883 324L889 328L883 332" fill="none" stroke="#466FC2" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <text class="small muted" x="897" y="333">Automatic route</text>
   </g>
 
   <!-- Six persistent WireGuard edges: each domestic node to each overseas node -->
@@ -231,10 +231,12 @@
     <path class="candidate" d="M326 386C292 435 293 520 326 562"/>
   </g>
 
-  <!-- One routing-entry overlay: sg-fixed, jm24 to gz02 to sg02. -->
-  <path class="selected" d="M333 388L333 455"/>
-  <path class="selected" d="M344 467L758 418"/>
-  <text class="ui small green mono" x="568" y="438">sg-fixed</text>
+  <!-- Read-only automatic decisions: local exit for cn-web and ber01 for intl-api. -->
+  <defs><marker id="arrow-overview-automatic" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth"><path d="M0 0L7 3.5L0 7Z" fill="#466FC2"/></marker></defs>
+  <path class="selected" style="stroke:#466FC2;marker-end:url(#arrow-overview-automatic)" d="M342 372L381 348"/>
+  <path class="selected" style="stroke:#466FC2;marker-end:url(#arrow-overview-automatic)" d="M344 382L758 532"/>
+  <text class="ui tiny blue mono" x="390" y="350">cn-web · local exit</text>
+  <text class="ui tiny blue mono" x="562" y="474">intl-api · ber01</text>
 
   <!-- Nodes -->
   <g class="ui">
@@ -340,28 +342,26 @@
     <circle class="quiet-dot" cx="43" cy="833" r="4"/><text class="mono" x="65" y="838">ber01</text><text x="207" y="838">Berlin</text><text class="green" x="396" y="838">Healthy</text><text class="mono" x="515" y="838">176 / 112 GB</text><text x="745" y="838">12s</text>
   </g>
 
-  <!-- Current traffic paths: one per service or access policy. -->
+  <!-- Automatic Service-scoped Agent decisions. -->
   <rect class="panel" x="863" y="647" width="696" height="203" rx="7"/>
   <g class="ui">
-    <text class="section" x="881" y="675">Current traffic paths</text>
-    <text class="small" x="1107" y="675" font-size="11" style="fill:#239B68">Reported · signed Agent state</text>
+    <text class="section" x="881" y="675">Automatic routing</text>
+    <text class="small muted" x="1053" y="675" font-size="11">Read-only · signed Agent decisions</text>
     <text class="small muted" x="887" y="699">Name</text>
     <text class="small muted" x="1040" y="699">Type</text>
-    <text class="small muted" x="1172" y="699">Current path</text>
+    <text class="small muted" x="1172" y="699">Agent-selected path</text>
     <text class="small muted" x="1400" y="699">Status</text>
   </g>
   <line class="rule" x1="881" y1="706" x2="1541" y2="706"/>
   <line class="rule" x1="881" y1="734" x2="1541" y2="734"/>
   <line class="rule" x1="881" y1="762" x2="1541" y2="762"/>
-  <line class="rule" x1="881" y1="790" x2="1541" y2="790"/>
-  <line class="rule" x1="881" y1="818" x2="1541" y2="818"/>
   <g class="ui body">
-    <text x="887" y="726">CN web</text><text class="muted" x="1040" y="726">Service</text><text class="mono" x="1172" y="726">jm24 → direct</text><circle class="route-dot" cx="1398" cy="721" r="4"/><text x="1411" y="726">Reported</text>
-    <text x="887" y="754">International API</text><text class="muted" x="1040" y="754">Service</text><text class="mono" x="1172" y="754">jm24 → ber01</text><circle class="route-dot" cx="1398" cy="749" r="4"/><text x="1411" y="754">Reported</text>
-    <text x="887" y="782">Singapore fixed</text><text class="muted" x="1040" y="782">Access policy</text><text class="mono" x="1172" y="782">jm24 → gz02 → sg02</text><circle class="route-dot" cx="1398" cy="777" r="4"/><text x="1411" y="782">Reported</text>
-    <text x="887" y="810">Germany fixed</text><text class="muted" x="1040" y="810">Access policy</text><text class="mono" x="1172" y="810">jm24 → ber01</text><circle class="route-dot" cx="1398" cy="805" r="4"/><text x="1411" y="810">Reported</text>
-    <text x="887" y="838">Best egress</text><text class="muted" x="1040" y="838">Access policy</text><text class="mono" x="1172" y="838">jm24 → ber01</text><circle class="route-dot" cx="1398" cy="833" r="4"/><text x="1411" y="838">Reported</text>
+    <text x="887" y="726">Domestic web</text><text class="muted" x="1040" y="726">Service rule</text><text class="mono blue" x="1172" y="726">jm24 → local exit</text><circle class="quiet-dot" cx="1398" cy="721" r="4"/><text x="1411" y="726">Fresh</text>
+    <text x="887" y="754">International API</text><text class="muted" x="1040" y="754">Service rule</text><text class="mono blue" x="1172" y="754">jm24 → ber01</text><circle class="quiet-dot" cx="1398" cy="749" r="4"/><text x="1411" y="754">Fresh</text>
   </g>
+  <rect class="panel-soft" x="881" y="782" width="660" height="48" rx="5"/>
+  <text class="ui tiny muted" x="897" y="803">Host → Service → Policy → Agent · clients use one automatic ingress.</text>
+  <text class="ui tiny muted" x="897" y="820">These decisions describe applied routing state, not proof of active traffic.</text>
 
   <!-- Recent events -->
   <rect class="panel" x="21" y="862" width="1538" height="111" rx="7"/>
@@ -375,7 +375,7 @@
 
     <text class="small mono muted" x="40" y="940">17:09</text>
     <circle class="quiet-dot" cx="89" cy="935" r="3.5"/>
-    <text class="body" x="104" y="940">Agent route sg-fixed changed</text>
+    <text class="body" x="104" y="940">Automatic route intl-api changed</text>
 
     <text class="small mono muted" x="40" y="963">17:08</text>
     <circle class="quiet-dot" cx="89" cy="958" r="3.5"/>

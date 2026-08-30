@@ -147,21 +147,19 @@ func pageNodeDetail(d Deps, nodeID string, isAuthed bool) (string, bool) {
 	writeNodeTrafficHistory(&b, v, n.ID)
 	b.WriteString(`</section></div>`)
 
-	b.WriteString(`<div class=section><div class=grid><section class="card span6"><div class=sectionhead><h2>Agent route decisions</h2><span class=dim>Current selector state on this access node</span></div>`)
+	b.WriteString(`<div class=section><div class=grid><section class="card span6"><div class=sectionhead><h2>Automatic Agent decisions</h2><span class=dim>Read-only selector state generated from managed Service and Access policy rules</span></div>`)
 	if n.Agent == nil || len(n.Agent.Selections) == 0 {
-		b.WriteString(`<div class=empty>No Agent route decision was reported for this node.</div>`)
+		b.WriteString(`<div class=empty>No automatic Agent decision was reported for this node.</div>`)
 	} else {
-		b.WriteString(`<table><tr><th>Entry<th>Current path<th>Observed<th>Reason</tr>`)
+		b.WriteString(`<table><tr><th>Managed rule<th>Agent-selected path<th>Observed<th>Reason</tr>`)
 		for _, route := range n.Agent.Selections {
-			path := strings.Join(route.Chain, " → ")
-			if len(route.Chain) <= 1 {
-				path = route.Node + " → direct"
-			}
+			path := automaticRoutePath(route)
 			cls := "ok"
 			if route.Stale {
 				cls = "warn"
 			}
-			fmt.Fprintf(&b, `<tr><td class=w>%s<td class="mono w %s">%s<td>%s<td class=w>%s</tr>`, esc(routeEntryLabel(route)), cls, esc(path), esc(ageText(route.ObservedAt, now)), esc(route.Reason))
+			entry := overviewRouteName(v, route) + " · " + automaticRouteMeta(route)
+			fmt.Fprintf(&b, `<tr><td class=w>%s<td class="mono w %s">%s<td>%s<td class=w>%s</tr>`, esc(entry), cls, esc(path), esc(ageText(route.ObservedAt, now)), esc(route.Reason))
 		}
 		b.WriteString(`</table>`)
 	}

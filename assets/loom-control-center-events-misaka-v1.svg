@@ -199,13 +199,13 @@
     <text class="small muted" x="47" y="392">TIME</text><text class="small muted" x="173" y="392">NODE</text><text class="small muted" x="303" y="392">KIND / SUBJECT</text><text class="small muted" x="574" y="392">TRANSITION</text><text class="small muted" x="866" y="392">DURATION</text>
     <line class="rule" x1="41" y1="400" x2="1070" y2="400"/>
 
-    <text class="body mono muted" x="47" y="438">12:08:36</text><text class="body mono" x="173" y="438">jm24</text><text class="body" x="303" y="438">route · sg-fixed</text><circle class="neutral-dot" cx="578" cy="433" r="4"/><text class="body" x="591" y="438">sg02 → gz02&gt;sg02</text><text class="body muted" x="866" y="438">5.8h · ongoing</text>
+    <text class="body mono muted" x="47" y="438">12:08:36</text><text class="body mono" x="173" y="438">jm24</text><text class="body" x="303" y="438">route · intl-api</text><circle class="neutral-dot" cx="578" cy="433" r="4"/><text class="body" x="591" y="438">sg02 → ber01</text><text class="body muted" x="866" y="438">5.8h · ongoing</text>
     <text class="tiny muted" x="303" y="457">Candidate p95 1249 ms · 34% better · threshold 20%.</text>
 
-    <text class="body mono muted" x="47" y="501">07:06:46</text><text class="body mono" x="173" y="501">jm24</text><text class="body" x="303" y="501">route · sg-fixed</text><circle class="neutral-dot" cx="578" cy="496" r="4"/><text class="body" x="591" y="501">gz02&gt;sg02 → sg02</text><text class="body muted" x="866" y="501">5.0h</text>
+    <text class="body mono muted" x="47" y="501">07:06:46</text><text class="body mono" x="173" y="501">jm24</text><text class="body" x="303" y="501">route · intl-api</text><circle class="neutral-dot" cx="578" cy="496" r="4"/><text class="body" x="591" y="501">ber01 → sg02</text><text class="body muted" x="866" y="501">5.0h</text>
     <text class="tiny muted" x="303" y="520">Candidate p95 1523 ms · 57% better · threshold 20%.</text>
 
-    <text class="body mono muted" x="47" y="564">00:14:31</text><text class="body mono" x="173" y="564">jm24</text><text class="body" x="303" y="564">route · sg-fixed</text><circle class="neutral-dot" cx="578" cy="559" r="4"/><text class="body" x="591" y="564">sg02 → gz02&gt;sg02</text><text class="body muted" x="866" y="564">6.9h</text>
+    <text class="body mono muted" x="47" y="564">00:14:31</text><text class="body mono" x="173" y="564">jm24</text><text class="body" x="303" y="564">route · intl-api</text><circle class="neutral-dot" cx="578" cy="559" r="4"/><text class="body" x="591" y="564">sg02 → ber01</text><text class="body muted" x="866" y="564">6.9h</text>
     <text class="tiny muted" x="303" y="583">Candidate p95 780 ms · 43% better · threshold 20%.</text>
 
     <text class="body mono muted" x="47" y="627">08-26 22:11</text><text class="body mono" x="173" y="627">jm24</text><text class="body" x="303" y="627">snapshot</text><circle class="neutral-dot" cx="578" cy="622" r="4"/><text class="body" x="591" y="627">ad7d33b8 → 4f09f6f</text><text class="body muted" x="866" y="627">—</text>

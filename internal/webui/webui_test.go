@@ -164,6 +164,39 @@ func TestTopologyUsesConcentricRingsAndObservedLinkMetrics(t *testing.T) {
 	}
 }
 
+func TestTopologyIsDataDrivenAndRouteOverlayDoesNotReorderRings(t *testing.T) {
+	view := View{Nodes: []NodeView{
+		{ID: "jm24", Self: true, Direction: "bidirectional"},
+		{ID: "hz01", Direction: "bidirectional"},
+		{ID: "ber01", Direction: "reverse_only"},
+		{ID: "sg02", Direction: "reverse_only"},
+	}}
+	base := topologySVG(view)
+	overlaid := topologySVG(view, RouteView{Node: "jm24", Chain: []string{"jm24", "sg02"}})
+	for _, nodeID := range []string{"jm24", "hz01", "ber01", "sg02"} {
+		pattern := regexp.MustCompile(`data-node="` + nodeID + `" data-ring="[^"]+" data-angle="[^"]+"`)
+		before, after := pattern.FindString(base), pattern.FindString(overlaid)
+		if before == "" || after == "" || before != after {
+			t.Fatalf("automatic route overlay moved base topology node %s: before=%q after=%q", nodeID, before, after)
+		}
+	}
+	if !strings.Contains(overlaid, `class=route marker-end="url(#arrow)"`) {
+		t.Fatal("automatic route was not layered over the stable base topology")
+	}
+
+	view.Nodes = append(view.Nodes,
+		NodeView{ID: "new-cn", Direction: "bidirectional"},
+		NodeView{ID: "new-us", Direction: "reverse_only"},
+	)
+	view.Links = append(view.Links, LinkView{From: "new-cn", To: "new-us", Kind: "tunnel", State: "active"})
+	expanded := topologySVG(view)
+	if strings.Count(expanded, `data-ring="inner"`) != 3 || strings.Count(expanded, `data-ring="outer"`) != 3 ||
+		!strings.Contains(expanded, `data-node="new-cn"`) || !strings.Contains(expanded, `data-node="new-us"`) ||
+		!strings.Contains(expanded, `data-from="new-cn" data-to="new-us"`) {
+		t.Fatalf("new nodes and their declared link were not placed from runtime data: %s", expanded)
+	}
+}
+
 func TestTopologyLinkMetricUsesCompactDeltaOrder(t *testing.T) {
 	compact, detail := topologyLinkMetric(LinkView{
 		From: "jm24", To: "sv01", MS: 207, Samples: 5, ObservedAt: "2026-08-29T12:00:00Z",
@@ -531,8 +564,8 @@ func TestTopologyShowsKindsSourceAndObservationAge(t *testing.T) {
 	if strings.Contains(body, `M16 2c4`) {
 		t.Fatal("未批准的临时花形 logo 仍在页面")
 	}
-	if !strings.Contains(body, `fill="#239b68"`) || strings.Contains(body, `fill="#ffd166"`) {
-		t.Fatal("当前路径箭头没有与绿色路径线保持一致")
+	if !strings.Contains(body, `fill="#466fc2"`) || strings.Contains(body, `fill="#ffd166"`) {
+		t.Fatal("自动选路箭头没有使用区别于健康状态的只读决策颜色")
 	}
 }
 

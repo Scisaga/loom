@@ -76,7 +76,7 @@ func pageOverview(d Deps, isAuthed bool) string {
 	fmt.Fprintf(&b, `<div id=overview class=steps>
 <div class=step><span class=label>节点状态</span><b>%d <small>/ %d 正常</small></b><span class="tiny dim">%d 个异常 · %d 个等待上报</span></div>
 <div class=step><span class=label>WireGuard 常驻隧道</span><b>%d / %d <small>已连通</small></b><span class="tiny dim">仅统计配置中声明的隧道</span></div>
-<div class=step><span class=label>当前流量路径</span><b>%d / %d <small>已上报</small></b><span class="tiny dim">来自接入节点 Agent 的签名状态</span></div>
+<div class=step><span class=label>自动选路决策</span><b>%d / %d <small>已上报</small></b><span class="tiny dim">规则生成 · 接入节点 Agent 自动选择</span></div>
 <div class=step><span class=label>配置快照</span><b class=mono>%s</b><span class="tiny dim">%s</span></div>
 	</div>`, healthy, activeDeclared, problems, unknown, tunnelActive, tunnelTotal, freshRoutes, len(v.Routes), esc(short(v.Applied)), esc(snapshotMeta))
 
@@ -89,7 +89,7 @@ func pageOverview(d Deps, isAuthed bool) string {
 	overlay := overviewRouteOverlay(v)
 	b.WriteString(`<div class=overview-primary><section class="card overview-topology-card"><div class=overview-card-head><h2>Network topology</h2><span class="small dim" title="近实时拓扑 · 采样约 1 分钟 · 页面每 30 秒刷新；悬停节点预览，点击锁定相邻链路；WireGuard 显示 RTT、近 15 分钟波动和近 5 分钟实际速率；Hy2 direct 显示单跳响应延迟、波动和固定响应主动探测速率，不是业务流量或容量">点击节点查看 延迟 · Δ波动 · 速率</span><span class=sr-only>近实时拓扑 · Hy2 主动探测 · 候选跳（未核验） · 部分失败 · 故障</span><div class=legend><span><i class=key></i>WireGuard</span><span><i class="key direct-hy2"></i>Hy2 direct · 主动探测</span><span><i class="key candidate"></i>Candidate</span>`)
 	if len(overlay) > 0 {
-		fmt.Fprintf(&b, `<span><i class="key route"></i>%s</span>`, esc(overviewRouteName(v, overlay[0])))
+		fmt.Fprintf(&b, `<span><i class="key route"></i>%d automatic route decisions</span>`, len(overlay))
 	}
 	b.WriteString(`</div></div>`)
 	b.WriteString(topologySVG(v, overlay...))
@@ -230,23 +230,17 @@ func writeSnapshotVerdict(b *strings.Builder, v View) {
 	}
 }
 
-// overviewRouteOverlay chooses one fresh routing entry for the overview. A
-// single attributed overlay stays readable; drawing every Agent decision at
-// once would turn the carrier topology into an unauditable green tangle.
+// overviewRouteOverlay returns the complete fresh Agent projection. The
+// topology deduplicates shared edges, so this is an automatic read-only view
+// of the routing model rather than an arbitrary path picked by the UI.
 func overviewRouteOverlay(v View) []RouteView {
-	best := -1
-	for i, route := range v.Routes {
-		if route.Stale || len(route.Chain) < 2 {
-			continue
-		}
-		if best == -1 || len(route.Chain) > len(v.Routes[best].Chain) {
-			best = i
+	overlay := make([]RouteView, 0, len(v.Routes))
+	for _, route := range v.Routes {
+		if !route.Stale {
+			overlay = append(overlay, route)
 		}
 	}
-	if best == -1 {
-		return nil
-	}
-	return []RouteView{v.Routes[best]}
+	return overlay
 }
 
 func writeOverviewTrafficCompact(b *strings.Builder, v View) {
@@ -417,7 +411,7 @@ func overviewOrderedNodes(v View) []NodeView {
 }
 
 func writeOverviewRoutesCompact(b *strings.Builder, v View) {
-	b.WriteString(`<section class="card overview-list-card"><div class=sectionhead><h2>Current traffic paths</h2><span class="tiny ok">Reported · signed Agent state</span><a class="sp tiny" href="/routing">All paths →</a></div><table><thead><tr><th>Name<th>Type<th>Current path<th>Status</tr></thead><tbody>`)
+	b.WriteString(`<section class="card overview-list-card"><div class=sectionhead><h2>Automatic routing</h2><span class="tiny ok">Read-only · signed Agent decisions</span><a class="sp tiny" href="/routing">Decision evidence →</a></div><table><thead><tr><th>Managed rule<th>Scope<th>Agent-selected path<th>Status</tr></thead><tbody>`)
 	routes := append([]RouteView(nil), v.Routes...)
 	sort.SliceStable(routes, func(i, j int) bool {
 		rank := func(route RouteView) int {
@@ -433,23 +427,20 @@ func writeOverviewRoutesCompact(b *strings.Builder, v View) {
 		if shown == 5 {
 			break
 		}
-		path := strings.Join(route.Chain, " → ")
-		if len(route.Chain) <= 1 {
-			path = route.Node + " → direct"
-		}
+		path := automaticRoutePath(route)
 		kind := "Access policy"
 		if route.ScopeKind == ScopeService {
 			kind = "Service"
 		}
-		statusClass, status := "ok", "Reported"
+		statusClass, status := "ok", "Automatic · fresh"
 		if route.Stale {
-			statusClass, status = "warn", "Stale"
+			statusClass, status = "warn", "Automatic · stale"
 		}
 		fmt.Fprintf(b, `<tr><td>%s<td class=dim>%s<td class=mono>%s<td class=%s><span class=dot></span>%s</tr>`, esc(overviewRouteName(v, route)), esc(kind), esc(path), statusClass, esc(status))
 		shown++
 	}
 	if shown == 0 {
-		b.WriteString(`<tr><td colspan=4 class=dim>No current Agent paths reported.</tr>`)
+		b.WriteString(`<tr><td colspan=4 class=dim>No automatic Agent decisions reported.</tr>`)
 	}
 	b.WriteString(`</tbody></table></section>`)
 }

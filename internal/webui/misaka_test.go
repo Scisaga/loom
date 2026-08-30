@@ -69,8 +69,8 @@ func misakaDeps() Deps {
 			Window: "10m", MinSamples: 3, Fallback: "direct",
 		}},
 		Ingresses: []IngressView{{
-			Node: "jm24", Kind: "mixed", Listen: "127.0.0.1:1083", Mode: "host-based",
-			ScopeKind: ScopeServices, PolicyID: "best-egress", Port: 1083, Services: true,
+			Node: "jm24", Kind: "mixed", Listen: "127.0.0.1:1080", Mode: "host-based",
+			ScopeKind: ScopeServices, PolicyID: "best-egress", Port: 1080, Services: true,
 		}},
 		Publisher: &PublisherView{
 			PID: 42, IntervalSeconds: 30, Commit: "abcdef0123456789", Binary: "fedcba9876543210",
@@ -179,10 +179,12 @@ func TestDirectRouteOverlayHighlightsItsLocalEgressNode(t *testing.T) {
 
 	topology := topologySVG(view, direct)
 	if !strings.Contains(topology, `class=route-ring`) ||
-		!strings.Contains(topology, `class="node selected"`) {
+		!strings.Contains(topology, `class="node selected"`) ||
+		!strings.Contains(topology, `class="route route-direct"`) ||
+		!strings.Contains(topology, `>local exit</text>`) {
 		t.Fatalf("direct route did not highlight jm24 as its local egress: %s", topology)
 	}
-	if strings.Contains(topology, `<line class=route`) {
+	if strings.Contains(topology, `<line class=route`) || strings.Contains(topology, `class="topology-edge edge-route"`) {
 		t.Fatalf("direct route invented a node-to-node path: %s", topology)
 	}
 	if !strings.Contains(topology, "control + access + server + egress") {

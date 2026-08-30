@@ -21,7 +21,7 @@ const progressSubmitScript = `document.querySelectorAll("form[data-submit-progre
 const topologyInteractionScript = `document.querySelectorAll("svg.topology").forEach(function(svg){var lockedNode="";function apply(nodeID,edgeFocus,locked){var active=Boolean(nodeID||edgeFocus),visibleNodes={};if(nodeID)visibleNodes[nodeID]=true;svg.classList.toggle("has-focus",active);svg.querySelectorAll(".topology-edge").forEach(function(edge){var related=edgeFocus?edge===edgeFocus:Boolean(nodeID&&(edge.dataset.from===nodeID||edge.dataset.to===nodeID));edge.classList.toggle("is-related",related);edge.classList.toggle("is-muted",active&&!related);if(related){visibleNodes[edge.dataset.from]=true;visibleNodes[edge.dataset.to]=true}});svg.querySelectorAll(".edge-metric").forEach(function(metric){var related=edgeFocus?metric.dataset.from===edgeFocus.dataset.from&&metric.dataset.to===edgeFocus.dataset.to:Boolean(nodeID&&(metric.dataset.from===nodeID||metric.dataset.to===nodeID));metric.classList.toggle("is-related",related)});svg.querySelectorAll(".topology-node").forEach(function(node){var id=node.dataset.node,same=id===nodeID;node.classList.toggle("is-selected",same&&locked);node.classList.toggle("is-preview",same&&!locked);node.classList.toggle("is-muted",active&&!visibleNodes[id]);node.setAttribute("aria-pressed",String(same&&locked))})}function clearTransient(){if(!lockedNode)apply("",null,false)}svg.querySelectorAll(".topology-node").forEach(function(node){var id=node.dataset.node;node.addEventListener("pointerenter",function(){if(!lockedNode)apply(id,null,false)});node.addEventListener("pointerleave",clearTransient);node.addEventListener("focus",function(){if(!lockedNode)apply(id,null,false)});node.addEventListener("blur",clearTransient);node.addEventListener("click",function(event){event.stopPropagation();lockedNode=lockedNode===id?"":id;apply(lockedNode,null,Boolean(lockedNode))});node.addEventListener("keydown",function(event){if(event.key==="Enter"||event.key===" "){event.preventDefault();lockedNode=lockedNode===id?"":id;apply(lockedNode,null,Boolean(lockedNode))}})});svg.querySelectorAll(".topology-edge").forEach(function(edge){edge.addEventListener("pointerenter",function(){if(!lockedNode)apply("",edge,false)});edge.addEventListener("pointerleave",clearTransient)});svg.addEventListener("click",function(event){if(event.target.closest(".topology-node"))return;if(lockedNode){lockedNode="";apply("",null,false)}});svg.addEventListener("keydown",function(event){if(event.key==="Escape"&&lockedNode){event.preventDefault();lockedNode="";apply("",null,false)}});apply("",null,false)});`
 
 const style = `<style>
-:root{--fg:#181b1a;--dim:#717674;--faint:#9ba09e;--line:#e2e6e3;--line2:#ccd2ce;--ok:#239b68;--oksoft:#eef8f3;--bad:#b84c4c;--badsoft:#fff3f2;--warn:#a66a14;--warnsoft:#fff8eb;--info:#477d9c;--route:#239b68;--traffic-rx:#73c39d;--traffic-tx:#6f96ad;--bg:#fcfcfb;--card:#fff;--card2:#f7f8f7;--ink:#181b1a;--font-mono:"SFMono-Regular","Roboto Mono","IBM Plex Mono",Consolas,"Liberation Mono",ui-monospace,monospace}
+:root{--fg:#181b1a;--dim:#717674;--faint:#9ba09e;--line:#e2e6e3;--line2:#ccd2ce;--ok:#239b68;--oksoft:#eef8f3;--bad:#b84c4c;--badsoft:#fff3f2;--warn:#a66a14;--warnsoft:#fff8eb;--info:#477d9c;--route:#466fc2;--traffic-rx:#73c39d;--traffic-tx:#6f96ad;--bg:#fcfcfb;--card:#fff;--card2:#f7f8f7;--ink:#181b1a;--font-mono:"SFMono-Regular","Roboto Mono","IBM Plex Mono",Consolas,"Liberation Mono",ui-monospace,monospace}
 *{box-sizing:border-box}
 html{background:var(--bg)}body{margin:0;font:14px/1.55 Inter,"Atkinson Hyperlegible Next",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--fg);background:var(--bg)}
 a{color:inherit;text-decoration:none;transition:color .14s ease}a:hover{color:var(--ok)}code,.mono{font-family:var(--font-mono);font-weight:400;font-synthesis:none;font-variant-ligatures:none;font-variant-numeric:tabular-nums;font-feature-settings:"zero" 1}
@@ -44,6 +44,7 @@ table{border-collapse:collapse;width:100%;margin:0}td,th{text-align:left;padding
 .topology .topology-edge.is-related .tunnel.degraded,.topology .topology-edge.is-related .direct-hy2.degraded{stroke:#d79b3b}.topology .topology-edge.is-related .tunnel.failed,.topology .topology-edge.is-related .direct-hy2.failed{stroke:#c65a5a}.topology.has-focus .route{opacity:.14}.topology.has-focus .route-ring{opacity:.08}
 .legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;color:var(--dim);font-size:11px}.key{display:inline-block;width:26px;border-top:2px solid #a5aaa8;vertical-align:middle;margin-right:6px}.key.direct-hy2{border-color:#4f9b74}.key.candidate{border-color:#b9bebc;border-top-style:dashed}.key.route{border-color:var(--route);border-width:3px}.key.degraded{border-color:#d79b3b}.key.failed{border-color:#c65a5a}
 .topology-layer-note{display:flex;align-items:flex-start;gap:8px;margin:11px 0 0;padding:9px 11px;border:1px solid var(--line);border-radius:6px;background:var(--card2);color:var(--dim);font-size:11px}.topology-layer-note:before{content:"i";display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:16px;height:16px;border:1px solid var(--line2);border-radius:50%;color:var(--fg);font-size:10px;font-weight:700}.topology-edge-grid{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(340px,.85fr);gap:14px}.topology-edge-card{padding:0;overflow:hidden}.edge-panel-head{display:flex;align-items:flex-start;gap:14px;min-height:72px;padding:14px 16px 12px}.edge-panel-head h3{margin:0;font-size:15px}.edge-panel-head p{margin:2px 0 0;color:var(--dim);font-size:11px}.edge-panel-head .badge{margin-left:auto;white-space:nowrap}.badge.intent{border-color:#d6e1e7;background:#f5f9fb;color:var(--info)}.topology-edge-card table{border-top:1px solid var(--line)}.topology-edge-card th:first-child,.topology-edge-card td:first-child{padding-left:16px}.topology-edge-card th:last-child,.topology-edge-card td:last-child{padding-right:16px}.edge-status{display:inline-flex;align-items:center;gap:7px;white-space:nowrap}.edge-status .dot{width:6px;height:6px}.edge-source{max-width:380px;white-space:normal;color:var(--dim);font-size:11px;line-height:1.45}.route-hop-list{border-top:1px solid var(--line)}.route-hop{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;padding:12px 16px;border-bottom:1px solid var(--line)}.route-hop:last-child{border-bottom:0}.route-hop-pair{font-size:13px}.route-hop-state{display:inline-flex;align-items:center;gap:6px;color:var(--info);font-size:11px;white-space:nowrap}.route-hop-state .dot{width:6px;height:6px}.route-hop-meta{grid-column:1/-1;color:var(--dim);font-size:11px;line-height:1.45}.route-hop-note{margin:0 16px 14px;padding:9px 10px;border-radius:6px;background:var(--card2);color:var(--dim);font-size:11px;line-height:1.45}
+.topology .route{stroke-width:3;opacity:.94}.topology .route-ring{stroke-width:2.4;opacity:.72}.topology .node.selected{stroke:var(--route);stroke-width:3.5}.topology .node.problem.selected{fill:var(--bad)}.topology .node.unknown.selected{fill:#a5aaa8}.topology .route-direct-label{fill:var(--route);stroke:#fff;stroke-width:3px;paint-order:stroke;font:650 9px Inter,ui-sans-serif,system-ui}.topology-side{display:grid;align-content:start;gap:14px}.topology-route-focus{display:flex;align-items:center;gap:16px;margin:-3px -3px 10px;padding:10px 12px;border:1px solid #d8e1f4;border-radius:7px;background:#f5f7fc}.topology-route-focus>div{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:baseline;gap:1px 12px;min-width:0}.topology-route-focus .label{grid-column:1/-1;color:var(--route)}.topology-route-focus b{font-size:13px}.topology-route-focus .mono{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.topology-route-focus .tiny{grid-column:1/-1}.topology-route-focus .button{margin-left:auto;white-space:nowrap}.automatic-routing-card{padding:14px}.automatic-routing-head{display:flex;align-items:center;gap:10px}.automatic-routing-head h2{margin:0}.automatic-routing-head .tiny{margin-left:auto}.automatic-routing-card>p{margin:5px 0 10px;color:var(--dim);font-size:10px;line-height:1.45}.automatic-route-list{display:grid;border-top:1px solid var(--line)}.automatic-route-row{display:grid;gap:3px;padding:10px 0;border-bottom:1px solid var(--line)}.automatic-route-row.active{margin:0 -8px;padding:10px 8px;border-radius:6px;background:#f5f7fc}.automatic-route-heading,.automatic-route-meta{display:flex;align-items:center;gap:8px}.automatic-route-heading b{min-width:0;overflow:hidden;font-size:12px;text-overflow:ellipsis;white-space:nowrap}.automatic-route-heading .tiny{margin-left:auto}.automatic-route-row>.mono{overflow:hidden;color:var(--route);font-size:11px;text-overflow:ellipsis;white-space:nowrap}.automatic-route-meta{flex-wrap:wrap;color:var(--dim);font-size:9px}.automatic-route-meta span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.automatic-route-meta a,.automatic-route-meta .info{margin-left:auto}.automatic-routing-all{display:block;margin-top:10px;color:var(--info);font-size:10px}.routing-entry-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(245px,1fr));gap:9px}.routing-entry-card{display:grid;gap:5px;min-width:0;padding:11px 12px;border:1px solid var(--line);border-radius:7px;background:#fff}.routing-entry-card:hover{border-color:var(--line2);background:var(--card2);color:inherit}.routing-entry-card.active{border-color:#b9c9e9;background:#f5f7fc;box-shadow:inset 3px 0 0 var(--route)}.routing-entry-card>span:first-child{display:grid;min-width:0}.routing-entry-card b,.routing-entry-card small,.routing-entry-card>.mono{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.routing-entry-card b{font-size:13px}.routing-entry-card small{color:var(--dim);font-size:9px}.routing-entry-card>.mono{color:var(--route);font-size:11px}
 .enrollment-access{padding:0;overflow:hidden}.enrollment-summary{display:flex;align-items:center;gap:12px;min-height:54px;padding:13px 17px;cursor:pointer;list-style:none}.enrollment-summary::-webkit-details-marker{display:none}.enrollment-summary:before{content:"›";display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:5px;background:var(--card2);color:var(--dim);font-size:18px;line-height:1;transition:transform .16s ease}.enrollment-access[open]>.enrollment-summary:before{transform:rotate(90deg)}.enrollment-summary-copy{display:flex;align-items:baseline;gap:9px;min-width:0}.enrollment-summary-copy b{font-size:14px}.enrollment-summary-copy span{overflow:hidden;color:var(--dim);font-size:12px;text-overflow:ellipsis;white-space:nowrap}.enrollment-summary-hint{margin-left:auto;color:var(--dim);font-size:11px}.enrollment-access[open]>.enrollment-summary{border-bottom:1px solid var(--line)}.enrollment-access-body{padding:17px}.enrollment-access-grid{display:grid;grid-template-columns:minmax(0,1.72fr) minmax(320px,.78fr);gap:18px}.enrollment-identity-panel{min-width:0}.enrollment-panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.enrollment-panel-head h3,.enrollment-boundary-panel h3{margin:3px 0 0;font-size:16px}.enrollment-intro{max-width:850px;margin:9px 0 15px;color:var(--dim);font-size:12px}.enrollment-identity-meta{display:grid;grid-template-columns:minmax(190px,.8fr) minmax(260px,1.25fr) minmax(220px,1fr);gap:10px;margin-bottom:12px}.enrollment-identity-meta>div{display:grid;align-content:start;gap:5px;min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:7px;background:var(--card2)}.enrollment-identity-meta .mono{overflow:hidden;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.enrollment-public-key{overflow:hidden;border:1px solid var(--line);border-radius:7px;background:#fff}.enrollment-public-key-head{display:flex;align-items:center;gap:12px;min-height:46px;padding:8px 10px 8px 12px;border-bottom:1px solid var(--line);background:var(--card2)}.enrollment-public-key-head>div{display:flex;align-items:baseline;gap:9px}.enrollment-public-key-head .button{margin-left:auto;padding:6px 10px;background:#fff;font-size:11px}.enrollment-public-key code{display:block;overflow-x:auto;padding:12px;font-size:11px;line-height:1.5;white-space:nowrap}.enrollment-state{margin:12px 0 0;padding:12px 14px}.enrollment-state-action{margin-top:10px}.enrollment-boundary-panel{padding-left:18px;border-left:1px solid var(--line)}.enrollment-boundary-list{display:grid;gap:0;margin:12px 0 15px}.enrollment-boundary-list>div{display:grid;grid-template-columns:105px minmax(0,1fr);gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}.enrollment-boundary-list>div:last-child{border-bottom:0}.enrollment-boundary-list span{color:var(--dim);font-size:10px;letter-spacing:.04em;text-transform:uppercase}.enrollment-boundary-list b{font-size:12px;font-weight:500}.enrollment-workflow{width:100%;justify-content:space-between}.enrollment-key-note{display:flex;align-items:flex-start;gap:10px;margin-top:16px;padding:10px 12px;border:1px solid #cce7d8;border-radius:7px;background:var(--oksoft)}.enrollment-key-note-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:22px;height:22px;border-radius:50%;background:#dcefe5;color:var(--ok);font-size:9px}.enrollment-key-note div{display:grid;gap:1px}.enrollment-key-note b{font-size:12px}.enrollment-key-note span:last-child{color:var(--dim);font-size:11px}
 /* Services keeps Service controls and policy context together. Local ingress
    inventory belongs to the access-node detail where that configuration runs. */
@@ -567,15 +568,9 @@ func topologySVG(v View, routeOverlay ...RouteView) string {
 		if a.Self != z.Self {
 			return a.Self
 		}
-		if selected[a.ID] != selected[z.ID] {
-			return selected[a.ID]
-		}
 		return a.ID < z.ID
 	})
 	sort.SliceStable(outer, func(i, j int) bool {
-		if selected[outer[i]] != selected[outer[j]] {
-			return selected[outer[i]]
-		}
 		return outer[i] < outer[j]
 	})
 	if len(outer) == 0 && len(inner) > 1 {
@@ -592,7 +587,7 @@ func topologySVG(v View, routeOverlay ...RouteView) string {
 	topologyRingPositions(pos, outer, "outer", outerOffset, 310, 130)
 
 	var b strings.Builder
-	b.WriteString(`<svg class=topology viewBox="0 0 960 360" role=group aria-label="Near-real-time interactive concentric network topology"><defs><marker id=arrow viewBox="0 0 10 10" refX=8 refY=5 markerWidth=5 markerHeight=5 orient=auto-start-reverse><path d="M 0 0 L 10 5 L 0 10 z" fill="#239b68"/></marker></defs>`)
+	b.WriteString(`<svg class=topology viewBox="0 0 960 360" role=group aria-label="Near-real-time interactive concentric network topology"><defs><marker id=arrow viewBox="0 0 10 10" refX=8 refY=5 markerWidth=5 markerHeight=5 orient=auto-start-reverse><path d="M 0 0 L 10 5 L 0 10 z" fill="#466fc2"/></marker></defs>`)
 	b.WriteString(`<ellipse class="topology-ring outer" cx=480 cy=180 rx=310 ry="130"/><ellipse class="topology-ring inner" cx=480 cy=180 rx=170 ry="75"/>`)
 	b.WriteString(`<circle class=ring-dot cx=18 cy=18 r="3"/><text class=ring-key x=28 y=21>内圈：可接受反向建连的锚点</text><circle class=ring-dot cx=18 cy=35 r="3"/><text class=ring-key x=28 y=38>外圈：反向接入的出口节点</text><text class=ring-key text-anchor=end x=942 y=21>悬停预览 · 点击锁定 · Esc 取消</text>`)
 	curves := map[string]topologyCurve{}
@@ -634,12 +629,23 @@ func topologySVG(v View, routeOverlay ...RouteView) string {
 		fmt.Fprintf(&b, `<g class="topology-edge edge-%s" data-from="%s" data-to="%s"><title>%s</title><path class="%s" d="%s"/><path class=edge-hit d="%s"/></g>`, esc(edgeKind), esc(l.From), esc(l.To), esc(detail), cls, curve.d, curve.d)
 		fmt.Fprintf(&metricLabels, `<g class=edge-metric data-from="%s" data-to="%s" transform="translate(%.1f %.1f)"><title>%s</title><text text-anchor=middle y=3>%s</text></g>`, esc(l.From), esc(l.To), labelPosition.x, labelPosition.y, esc(detail), esc(metric))
 	}
+	seenRouteEdges := map[string]bool{}
+	directNodes := map[string]bool{}
 	for _, r := range routeOverlay {
 		if r.Stale {
 			continue
 		}
+		if len(r.Chain) <= 1 && r.Node != "" {
+			directNodes[r.Node] = true
+			continue
+		}
 		for i := 0; i+1 < len(r.Chain); i++ {
 			from, to := r.Chain[i], r.Chain[i+1]
+			directedKey := from + "\x00" + to
+			if seenRouteEdges[directedKey] {
+				continue
+			}
+			seenRouteEdges[directedKey] = true
 			a, aok := pos[from]
 			z, zok := pos[to]
 			if aok && zok {
@@ -655,6 +661,21 @@ func topologySVG(v View, routeOverlay ...RouteView) string {
 				fmt.Fprintf(&b, `<path class=route %s d="%s"/>`, marker, curve.d)
 			}
 		}
+	}
+	directIDs := make([]string, 0, len(directNodes))
+	for id := range directNodes {
+		directIDs = append(directIDs, id)
+	}
+	sort.Strings(directIDs)
+	for _, id := range directIDs {
+		p, ok := pos[id]
+		if !ok {
+			continue
+		}
+		// A zero-hop decision has no topology edge. Give it an explicit egress
+		// marker so an automatically selected local exit cannot look like a
+		// missing or ignored overlay. The marker is not a synthetic target node.
+		fmt.Fprintf(&b, `<path class="route route-direct" marker-end="url(#arrow)" d="M %.1f %.1f L %.1f %.1f"/><text class=route-direct-label x="%.1f" y="%.1f">local exit</text>`, p.x+8, p.y+8, p.x+34, p.y+8, p.x+39, p.y+11)
 	}
 	b.WriteString(metricLabels.String())
 	for _, id := range ids {

@@ -4,7 +4,7 @@
      width="1586" height="992" viewBox="0 0 1586 992"
      role="img" aria-labelledby="title description">
   <title id="title">Live paths — Loom control center prototype</title>
-  <desc id="description">A runtime path-decision view showing five service or policy entries, one focused Agent decision, and its allowed alternatives.</desc>
+  <desc id="description">A read-only runtime view showing the two Service-scoped Agent decisions, one diagnostic focus, and its automatically generated alternatives.</desc>
   <defs>
     <marker id="arrow-selected" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
       <path d="M0 0L7 3.5L0 7Z" fill="#2AA875"/>
@@ -174,9 +174,9 @@
   <g class="ui">
     <text class="eyebrow" x="21" y="91">AGENT / TRAFFIC</text>
     <text class="heading" x="21" y="124">Live paths</text>
-    <text class="body muted" x="21" y="151">Current Agent path for one focused service or access policy</text>
+    <text class="body muted" x="21" y="151">Read-only automatic decisions generated from Service rules and Access policies</text>
     <use href="#icon-status-ok" x="20" y="168" width="15" height="15" class="status-icon"/>
-    <text class="small" x="43" y="181">Agent applies paths; control center observes one entry at a time</text>
+    <text class="small" x="43" y="181">Agent applies paths automatically; control center observes signed state</text>
   </g>
 
 
@@ -185,8 +185,8 @@
   <g class="ui">
     <text class="small muted" x="46" y="232">SERVICES</text><text class="metric" x="46" y="258">2 configured</text>
     <text class="small muted" x="329" y="232">ACCESS POLICIES</text><text class="metric" x="329" y="258">3 configured</text>
-    <text class="small muted" x="646" y="232">CURRENT PATHS</text><text class="metric" x="646" y="258">5 / 5 reported</text>
-    <text class="small muted" x="972" y="232">CANDIDATE PATHS</text><text class="metric" x="972" y="258">51 configured</text>
+    <text class="small muted" x="646" y="232">AUTOMATIC DECISIONS</text><text class="metric" x="646" y="258">2 / 2 fresh</text>
+    <text class="small muted" x="972" y="232">ELIGIBLE CANDIDATES</text><text class="metric" x="972" y="258">30 evaluated</text>
     <rect class="panel-soft" x="1304" y="221" width="228" height="39" rx="6"/>
     <use href="#icon-services" x="1343" y="233" width="15" height="15" class="action-icon"/>
     <text class="small" x="1370" y="246">Manage services</text>
@@ -197,45 +197,44 @@
   <!-- Observed paths, not a configuration surface. -->
   <rect class="panel" x="21" y="300" width="537" height="500" rx="7"/>
   <g class="ui">
-    <text class="section" x="41" y="330">Current paths</text><text class="tiny muted" x="538" y="330" text-anchor="end">one per routing scope</text>
+    <text class="section" x="41" y="330">Automatic routing scopes</text><text class="tiny muted" x="538" y="330" text-anchor="end">read-only</text>
 
-    <rect x="31" y="351" width="517" height="78" rx="6" fill="#F1F8F4"/>
-    <rect x="31" y="351" width="3" height="78" rx="1.5" fill="#2AA875"/>
-    <text class="subsection mono" x="49" y="375">sg-fixed</text><text class="tiny muted" x="49" y="394">access policy · stability · egress sg02</text>
-    <text class="body mono" x="49" y="417">jm24 → gz02 → sg02</text><circle class="quiet-dot" cx="480" cy="390" r="4"/><text class="tiny green" x="493" y="394">Fresh</text><text class="tiny muted" x="528" y="414" text-anchor="end">3 candidate paths</text>
-
-    <text class="subsection mono" x="49" y="461">cn-web</text><text class="tiny muted" x="49" y="480">service · latency policy</text><text class="body mono" x="49" y="503">jm24 → direct</text><circle class="quiet-dot" cx="480" cy="476" r="4"/><text class="tiny" x="493" y="480">Fresh</text><text class="tiny muted" x="528" y="500" text-anchor="end">15 candidate paths</text>
+    <text class="subsection" x="49" y="375">Domestic web <tspan class="mono muted">· cn-web</tspan></text><text class="tiny muted" x="49" y="394">Service rule · latency policy</text>
+    <text class="body mono blue" x="49" y="417">jm24 → local exit</text><circle class="quiet-dot" cx="480" cy="390" r="4"/><text class="tiny green" x="493" y="394">Fresh</text><text class="tiny muted" x="528" y="414" text-anchor="end">15 candidates</text>
     <line class="rule" x1="41" y1="438" x2="538" y2="438"/>
 
-    <text class="subsection mono" x="49" y="546">intl-api</text><text class="tiny muted" x="49" y="565">service · latency policy</text><text class="body mono" x="49" y="588">jm24 → ber01</text><circle class="quiet-dot" cx="480" cy="561" r="4"/><text class="tiny" x="493" y="565">Fresh</text><text class="tiny muted" x="528" y="585" text-anchor="end">15 candidate paths</text>
-    <line class="rule" x1="41" y1="523" x2="538" y2="523"/>
+    <rect x="31" y="448" width="517" height="78" rx="6" fill="#EEF3FB"/>
+    <rect x="31" y="448" width="3" height="78" rx="1.5" fill="#466FC2"/>
+    <text class="subsection" x="49" y="472">International API <tspan class="mono muted">· intl-api</tspan></text><text class="tiny muted" x="49" y="491">Service rule · best-egress policy</text>
+    <text class="body mono blue" x="49" y="514">jm24 → ber01</text><circle class="quiet-dot" cx="480" cy="487" r="4"/><text class="tiny green" x="493" y="491">Fresh</text><text class="tiny muted" x="528" y="511" text-anchor="end">15 candidates</text>
 
-    <text class="subsection mono" x="49" y="631">best-egress</text><text class="tiny muted" x="49" y="650">access policy · latency · any egress</text><text class="body mono" x="49" y="673">jm24 → ber01</text><circle class="quiet-dot" cx="480" cy="646" r="4"/><text class="tiny" x="493" y="650">Fresh</text><text class="tiny muted" x="528" y="670" text-anchor="end">15 candidate paths</text>
-    <line class="rule" x1="41" y1="608" x2="538" y2="608"/>
-
-    <text class="subsection mono" x="49" y="716">de-fixed</text><text class="tiny muted" x="49" y="735">access policy · stability · egress ber01</text><text class="body mono" x="49" y="758">jm24 → ber01</text><circle class="quiet-dot" cx="480" cy="731" r="4"/><text class="tiny" x="493" y="735">Fresh</text><text class="tiny muted" x="528" y="755" text-anchor="end">3 candidate paths</text>
-    <line class="rule" x1="41" y1="693" x2="538" y2="693"/>
+    <rect class="panel-soft" x="41" y="552" width="497" height="190" rx="6"/>
+    <text class="subsection" x="59" y="582">How a decision is produced</text>
+    <circle cx="65" cy="612" r="9" fill="#FFFFFF" stroke="#CBD0CD"/><text class="tiny muted" x="65" y="616" text-anchor="middle">1</text><text class="body" x="85" y="617">Host matches a managed Service rule.</text>
+    <circle cx="65" cy="650" r="9" fill="#FFFFFF" stroke="#CBD0CD"/><text class="tiny muted" x="65" y="654" text-anchor="middle">2</text><text class="body" x="85" y="655">The Service references an Access policy.</text>
+    <circle cx="65" cy="688" r="9" fill="#FFFFFF" stroke="#CBD0CD"/><text class="tiny muted" x="65" y="692" text-anchor="middle">3</text><text class="body" x="85" y="693">The Agent evaluates candidates and applies one.</text>
+    <text class="tiny muted" x="59" y="723">Clients use the single automatic ingress; this page does not set a path.</text>
   </g>
 
   <!-- Focused routing-entry detail. -->
   <g class="ui">
-    <text class="section" x="594" y="330">sg-fixed</text><text class="tiny muted" x="684" y="330">access policy · current traffic path</text>
-    <rect class="chip-green" x="1401" y="313" width="136" height="27" rx="13.5"/><circle class="quiet-dot" cx="1418" cy="326" r="3.5"/><text class="tiny green" x="1429" y="330">Current on jm24</text>
+    <text class="section" x="594" y="330">International API <tspan class="mono muted">· intl-api</tspan></text><text class="tiny muted" x="940" y="330">Service rule · automatic decision</text>
+    <rect class="chip-green" x="1401" y="313" width="136" height="27" rx="13.5"/><circle class="quiet-dot" cx="1418" cy="326" r="3.5"/><text class="tiny green" x="1429" y="330">Fresh on jm24</text>
 
-    <line x1="694" y1="405" x2="991" y2="405" stroke="#2AA875" stroke-width="2"/>
-    <line x1="1013" y1="405" x2="1310" y2="405" stroke="#2AA875" stroke-width="2"/>
-    <circle cx="683" cy="405" r="10" fill="#FFFFFF" stroke="#2AA875" stroke-width="2"/><circle cx="1002" cy="405" r="10" fill="#FFFFFF" stroke="#2AA875" stroke-width="2"/><circle cx="1321" cy="405" r="10" fill="#FFFFFF" stroke="#2AA875" stroke-width="2"/>
-    <text class="body mono" x="683" y="438" text-anchor="middle">jm24</text><text class="body mono" x="1002" y="438" text-anchor="middle">gz02</text><text class="body mono" x="1321" y="438" text-anchor="middle">sg02</text>
-    <text class="tiny muted" x="683" y="458" text-anchor="middle">access</text><text class="tiny muted" x="1002" y="458" text-anchor="middle">domestic hop</text><text class="tiny muted" x="1321" y="458" text-anchor="middle">pinned egress</text>
+    <line x1="770" y1="405" x2="1260" y2="405" stroke="#466FC2" stroke-width="2.4"/>
+    <path d="M1252 400L1261 405L1252 410" fill="none" stroke="#466FC2" stroke-width="2"/>
+    <circle cx="759" cy="405" r="10" fill="#FFFFFF" stroke="#466FC2" stroke-width="2"/><circle cx="1272" cy="405" r="10" fill="#FFFFFF" stroke="#466FC2" stroke-width="2"/>
+    <text class="body mono" x="759" y="438" text-anchor="middle">jm24</text><text class="body mono" x="1272" y="438" text-anchor="middle">ber01</text>
+    <text class="tiny muted" x="759" y="458" text-anchor="middle">access node</text><text class="tiny muted" x="1272" y="458" text-anchor="middle">Agent-selected egress</text>
 
-    <text class="small muted" x="594" y="498">SOURCE</text><text class="body" x="756" y="498">jm24 /status · sing-box read-back</text>
-    <text class="small muted" x="594" y="526">UPDATED</text><text class="body mono" x="756" y="526">2026-08-27 17:50:52 UTC</text><text class="tiny muted" x="1012" y="526">each routing entry is reported independently</text>
-    <text class="small muted" x="594" y="554">EVIDENCE</text><text class="body" x="756" y="554">Current value read back from sing-box</text>
+    <text class="small muted" x="594" y="498">SOURCE</text><text class="body" x="756" y="498">jm24 /status · signed selector read-back</text>
+    <text class="small muted" x="594" y="526">UPDATED</text><text class="body mono" x="756" y="526">2026-08-27 17:50:52 UTC</text><text class="tiny muted" x="1012" y="526">each Service decision is reported independently</text>
+    <text class="small muted" x="594" y="554">MEANING</text><text class="body" x="756" y="554">Applied routing state · not proof that traffic is active</text>
     <line class="rule" x1="594" y1="576" x2="1539" y2="576"/>
 
     <text class="subsection" x="594" y="606">Access policy</text>
-    <text class="small muted" x="594" y="635">Objective</text><text class="body" x="704" y="635">stability</text>
-    <text class="small muted" x="886" y="635">Egress</text><text class="body mono" x="962" y="635">pinned:sg02</text>
+    <text class="small muted" x="594" y="635">Objective</text><text class="body" x="704" y="635">latency</text>
+    <text class="small muted" x="886" y="635">Egress</text><text class="body mono" x="962" y="635">best eligible</text>
     <text class="small muted" x="1162" y="635">Cadence</text><text class="body" x="1247" y="635">10 minutes</text>
     <text class="small muted" x="594" y="665">Window</text><text class="body" x="704" y="665">2 hours</text>
     <text class="small muted" x="886" y="665">Min samples</text><text class="body" x="1002" y="665">6</text>
@@ -243,20 +242,20 @@
     <line class="rule" x1="594" y1="686" x2="1539" y2="686"/>
 
     <text class="subsection" x="594" y="716">Agent evaluation summary</text>
-    <text class="body green" x="594" y="747">1 success</text><text class="body" x="713" y="747">· 0 degraded · 0 failed · 1 stale · 1 unknown</text>
+    <text class="body green" x="594" y="747">5 healthy</text><text class="body" x="713" y="747">· 0 degraded · 0 failed · 5 stale · 5 unknown</text>
     <text class="tiny muted" x="594" y="772">Source · signed jm24 Agent report · per-candidate detail is not reported centrally.</text>
   </g>
 
   <!-- Candidate paths for the focused routing entry. -->
   <rect class="panel" x="21" y="816" width="1538" height="157" rx="7"/>
   <g class="ui">
-    <text class="section" x="41" y="846">Candidate paths for <tspan class="mono">sg-fixed</tspan></text>
-    <text class="tiny muted" x="430" y="846">SSOT allows these paths. Only the green row is current; other rows imply no health.</text>
+    <text class="section" x="41" y="846">Eligible paths for <tspan class="mono">intl-api</tspan></text>
+    <text class="tiny muted" x="390" y="846">Generated from SSOT. The blue row is Agent-selected; eligibility alone does not imply health.</text>
     <text class="small muted" x="47" y="877">PATH</text><text class="small muted" x="633" y="877">STATUS</text><text class="small muted" x="972" y="877">SOURCE</text><text class="small muted" x="1347" y="877">EGRESS</text>
     <line class="rule" x1="41" y1="885" x2="1539" y2="885"/>
-    <text class="body mono" x="47" y="910">jm24 → sg02</text><text class="body muted" x="633" y="910">Allowed by SSOT · health not reported</text><text class="body muted" x="972" y="910">SSOT RouteCandidate.ServerChain</text><text class="body mono" x="1347" y="910">sg02</text>
-    <text class="body mono green" x="47" y="938">jm24 → gz02 → sg02</text><circle class="quiet-dot" cx="637" cy="933" r="4"/><text class="body green" x="650" y="938">Current path</text><text class="body" x="972" y="938">jm24 /status · sing-box read-back</text><text class="body mono" x="1347" y="938">sg02</text>
-    <text class="body mono" x="47" y="966">jm24 → hz01 → sg02</text><text class="body muted" x="633" y="966">Allowed by SSOT · health not reported</text><text class="body muted" x="972" y="966">SSOT RouteCandidate.ServerChain</text><text class="body mono" x="1347" y="966">sg02</text>
+    <text class="body mono" x="47" y="910">jm24 → local exit</text><text class="body muted" x="633" y="910">Eligible · not selected</text><text class="body muted" x="972" y="910">generated from SSOT</text><text class="body mono" x="1347" y="910">jm24</text>
+    <text class="body mono blue" x="47" y="938">jm24 → ber01</text><circle cx="637" cy="933" r="4" fill="#466FC2"/><text class="body blue" x="650" y="938">Agent-selected path</text><text class="body" x="972" y="938">jm24 /status · signed selector</text><text class="body mono" x="1347" y="938">ber01</text>
+    <text class="body mono" x="47" y="966">jm24 → sg02</text><text class="body muted" x="633" y="966">Eligible · not selected</text><text class="body muted" x="972" y="966">generated from SSOT</text><text class="body mono" x="1347" y="966">sg02</text>
   </g>
   <line class="rule" x1="41" y1="918" x2="1539" y2="918"/><line class="rule" x1="41" y1="946" x2="1539" y2="946"/>
 

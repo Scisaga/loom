@@ -184,17 +184,64 @@ func TestEnrollmentPreflightExplainsUnnormalizableRemoteNodeID(t *testing.T) {
 	}
 }
 
-func TestTopologyOverlaysOnlyExplicitRoutingEntry(t *testing.T) {
+func TestTopologyProjectsAutomaticRoutingWithoutPathControls(t *testing.T) {
 	d := misakaDeps()
 	v := d.Snapshot()
+	v.Routes = append(v.Routes, RouteView{
+		Node: "jm24", Declaration: "cn-web", Selector: "svc:cn-web",
+		ScopeKind: ScopeService, ScopeID: "cn-web", PolicyID: "local",
+		Chain: []string{"jm24"}, ObservedAt: v.ObservedAt, Source: "agent/jm24",
+	})
+	v.Services = append(v.Services, ServiceView{ID: "cn-web", Name: "Domestic web", PolicyID: "local"})
 	d.Snapshot = func() View { return v }
 
-	if body := pageTopology(d, false); strings.Contains(body, `class=route marker-end`) {
-		t.Fatal("Topology overlaid all fresh Agent paths by default")
+	body := pageTopology(d, false)
+	for _, want := range []string{
+		`class=route marker-end`, "Automatic routing", "Read-only · automatic Agent decisions",
+		"Host → Service → Policy", "International APIs", "jm24 → sg02",
+		"Domestic web", "jm24 → local exit", ">local exit</text>",
+		"Automatic Agent route · read-only", "View decision evidence",
+		"新增节点按 direction 自动进入对应环", "不参与节点排序或改变布局",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Topology automatic routing projection is missing %q", want)
+		}
 	}
+	if got := strings.Count(body, `marker-end="url(#arrow)"`); got < 2 {
+		t.Fatalf("Topology drew %d automatic route segment(s), want both fresh decisions", got)
+	}
+	for _, unwanted := range []string{
+		`<select name=entry`, "No Agent path overlay", ">Apply</button>", "overlaid",
+	} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("Topology still presents automatic routes as a client choice %q", unwanted)
+		}
+	}
+
 	key := routingRouteKey(v.Routes[0])
-	if body := pageTopology(d, false, key); !strings.Contains(body, `class=route marker-end`) || !strings.Contains(body, `1 overlaid`) {
-		t.Fatal("Topology did not overlay the explicitly selected Agent path")
+	focused := pageTopology(d, false, key)
+	for _, want := range []string{"Focused automatic decision", "Show all current decisions", "Focused on map"} {
+		if !strings.Contains(focused, want) {
+			t.Errorf("Topology diagnostic focus is missing %q", want)
+		}
+	}
+}
+
+func TestLivePathsPresentsRulesAsAutomaticReadOnlyDecisions(t *testing.T) {
+	body := pageRouting(misakaDeps(), false)
+	for _, want := range []string{
+		"Automatic routing scopes", "Current automatic decision",
+		"not a client path choice", "not client-selectable paths",
+		"International APIs", "jm24 → sg02", "Inspect in topology",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Live paths automatic routing semantics are missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{`<select name=entry`, ">View</button>", "Overlay in topology"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("Live paths still presents a routing decision as a picker %q", unwanted)
+		}
 	}
 }
 

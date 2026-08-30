@@ -4,7 +4,7 @@
      width="1586" height="992" viewBox="0 0 1586 992"
      role="img" aria-labelledby="title description">
   <title id="title">Network topology — Loom control center prototype</title>
-  <desc id="description">A layered network topology view distinguishing SSOT intent, persistent WireGuard observations, configured candidate paths, Agent route decisions, and centrally retained TX-only link-delta bars with explicit missing-sample gaps.</desc>
+  <desc id="description">A layered network topology view distinguishing SSOT intent, persistent WireGuard observations, configured candidate paths, automatically projected read-only Agent decisions, and centrally retained TX-only link-delta bars with explicit missing-sample gaps.</desc>
   <defs>
     <marker id="arrow-selected" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
       <path d="M0 0L7 3.5L0 7Z" fill="#2AA875"/>
@@ -174,12 +174,17 @@
   <g class="ui">
     <text class="eyebrow" x="21" y="91">NETWORK / TOPOLOGY</text>
     <text class="heading" x="21" y="124">Network topology</text>
-    <text class="body muted" x="21" y="151">Intent, trusted observations and routing-entry Agent decisions · observed 2026-08-27 17:54 UTC</text>
+    <text class="body muted" x="21" y="151">Intent, trusted observations and read-only automatic Agent decisions · observed 2026-08-27 17:54 UTC</text>
     <use href="#icon-status-ok" x="20" y="168" width="15" height="15" class="status-icon"/>
-    <text class="small" x="43" y="181">5 nodes · 6 persistent WireGuard links · 51 configured candidate paths</text>
+    <text class="small" x="43" y="181">6 nodes · 9 persistent WireGuard links · 2 fresh automatic decisions</text>
   </g>
 
 
+  <defs>
+    <marker id="arrow-automatic" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0L7 3.5L0 7Z" fill="#466FC2"/>
+    </marker>
+  </defs>
   <!-- Layered topology -->
   <rect class="panel" x="21" y="202" width="1075" height="478" rx="7"/>
   <g class="ui">
@@ -188,57 +193,69 @@
 
     <line class="wg" x1="654" y1="226" x2="684" y2="226"/>
     <text class="tiny muted" x="691" y="230">Persistent WG</text>
-    <line class="candidate" x1="798" y1="226" x2="828" y2="226"/>
-    <text class="tiny muted" x="835" y="230">Candidate</text>
-    <line x1="922" y1="226" x2="952" y2="226" stroke="#2AA875" stroke-width="1.8"/>
-    <path d="M948 222L954 226L948 230" fill="none" stroke="#2AA875" stroke-width="1.4"/>
-    <text class="tiny muted" x="961" y="230">Agent decision</text>
+    <line x1="798" y1="226" x2="828" y2="226" stroke="#4F9B74" stroke-width="1.6"/>
+    <text class="tiny muted" x="835" y="230">Hy2 direct</text>
+    <line x1="922" y1="226" x2="952" y2="226" stroke="#466FC2" stroke-width="2.4"/>
+    <path d="M948 222L954 226L948 230" fill="none" stroke="#466FC2" stroke-width="1.6"/>
+    <text class="tiny muted" x="961" y="230">Auto · read-only</text>
     <rect class="panel-soft" x="1054" y="213" width="28" height="26" rx="5"/>
     <use href="#icon-refresh" x="1061" y="219" width="14" height="14" class="action-icon" aria-label="Refresh observations"/>
   </g>
 
-  <!-- Six SSOT-declared persistent WireGuard links. -->
-  <g aria-label="Six persistent WireGuard links">
-    <line class="wg" x1="342" y1="309" x2="806" y2="361"/>
-    <line class="wg" x1="342" y1="309" x2="806" y2="525"/>
-    <line class="wg" x1="342" y1="417" x2="806" y2="361"/>
-    <line class="wg" x1="342" y1="417" x2="806" y2="525"/>
-    <line class="wg" x1="342" y1="548" x2="806" y2="361"/>
-    <line class="wg" x1="342" y1="548" x2="806" y2="525"/>
+  <!-- Current double-ring layout: three dialable anchors and three reverse-only servers. -->
+  <ellipse cx="560" cy="430" rx="300" ry="160" fill="none" stroke="#EDF0EE"/>
+  <ellipse cx="560" cy="420" rx="175" ry="95" fill="none" stroke="#EDF0EE" stroke-dasharray="3 5"/>
+
+  <!-- Nine SSOT-declared persistent WireGuard links (3 × 3). -->
+  <g aria-label="Nine persistent WireGuard links">
+    <line class="wg" x1="560" y1="320" x2="300" y2="350"/>
+    <line class="wg" x1="560" y1="320" x2="820" y2="350"/>
+    <line class="wg" x1="560" y1="320" x2="560" y2="590"/>
+    <line class="wg" x1="410" y1="475" x2="300" y2="350"/>
+    <line class="wg" x1="410" y1="475" x2="820" y2="350"/>
+    <line class="wg" x1="410" y1="475" x2="560" y2="590"/>
+    <line class="wg" x1="710" y1="475" x2="300" y2="350"/>
+    <line class="wg" x1="710" y1="475" x2="820" y2="350"/>
+    <line class="wg" x1="710" y1="475" x2="560" y2="590"/>
   </g>
 
-  <!-- Candidate hops are intent only, not health claims. -->
-  <g aria-label="Configured candidate hops">
-    <line class="candidate" x1="342" y1="321" x2="342" y2="405"/>
-    <line class="candidate" x1="342" y1="429" x2="342" y2="536"/>
-    <path class="candidate" d="M332 320C283 378 286 493 332 540"/>
+  <!-- Three observed public Hysteria2 single-hop probes between inner anchors. -->
+  <g aria-label="Three observed Hysteria2 direct links" fill="none" stroke="#4F9B74" stroke-width="1.6">
+    <line x1="554" y1="331" x2="418" y2="466"/>
+    <line x1="566" y1="331" x2="702" y2="466"/>
+    <path d="M422 482Q560 525 698 482"/>
   </g>
 
-  <!-- One routing-entry Agent overlay. -->
-  <path class="selected" d="M342 321L342 404"/>
-  <path class="selected" d="M354 416L793 363"/>
-  <text class="ui tiny green mono" x="579" y="388">sg-fixed</text>
+  <!-- Current Agent decisions are projected automatically; this is not a path picker. -->
+  <path class="selected" style="stroke:#466FC2;stroke-width:2.4;marker-end:url(#arrow-automatic)" d="M571 320L807 349"/>
+  <path class="selected" style="stroke:#466FC2;stroke-width:2.4;marker-end:url(#arrow-automatic)" d="M560 310L592 284"/>
+  <text class="ui tiny blue mono" x="603" y="285">cn-web · local exit</text>
+  <text class="ui tiny blue mono" x="660" y="325">intl-api · jm24 → ber01</text>
 
   <g class="ui">
-    <circle cx="342" cy="309" r="8" fill="#FFFFFF"/><circle class="status-dot" cx="342" cy="309" r="5"/>
-    <text class="mono" x="297" y="310" text-anchor="end" font-size="14" font-weight="650">jm24</text>
-    <text class="tiny muted" x="325" y="330" text-anchor="end">control + access</text>
+    <circle cx="560" cy="320" r="8" fill="#FFFFFF"/><circle class="status-dot" cx="560" cy="320" r="5"/>
+    <text class="mono" x="560" y="301" text-anchor="middle" font-size="14" font-weight="650">jm24</text>
+    <text class="tiny muted" x="560" y="343" text-anchor="middle">control + access + server + egress</text>
 
-    <circle cx="342" cy="417" r="8" fill="#FFFFFF"/><circle class="status-dot" cx="342" cy="417" r="5"/>
-    <text class="mono" x="297" y="418" text-anchor="end" font-size="14" font-weight="650">gz02</text>
-    <text class="tiny muted" x="325" y="438" text-anchor="end">domestic + egress</text>
+    <circle cx="410" cy="475" r="8" fill="#FFFFFF"/><circle class="status-dot" cx="410" cy="475" r="5"/>
+    <text class="mono" x="390" y="474" text-anchor="end" font-size="14" font-weight="650">hz01</text>
+    <text class="tiny muted" x="390" y="494" text-anchor="end">server + egress</text>
 
-    <circle cx="342" cy="548" r="8" fill="#FFFFFF"/><circle class="status-dot" cx="342" cy="548" r="5"/>
-    <text class="mono" x="297" y="549" text-anchor="end" font-size="14" font-weight="650">hz01</text>
-    <text class="tiny muted" x="325" y="569" text-anchor="end">domestic + egress</text>
+    <circle cx="710" cy="475" r="8" fill="#FFFFFF"/><circle class="status-dot" cx="710" cy="475" r="5"/>
+    <text class="mono" x="730" y="474" font-size="14" font-weight="650">gz02</text>
+    <text class="tiny muted" x="730" y="494">server + egress</text>
 
-    <circle cx="806" cy="361" r="8" fill="#FFFFFF"/><circle class="status-dot" cx="806" cy="361" r="5"/>
-    <text class="mono" x="825" y="365" font-size="14" font-weight="650">sg02</text>
-    <text class="tiny muted" x="825" y="385">reverse-only + egress</text>
+    <circle cx="300" cy="350" r="8" fill="#FFFFFF"/><circle class="status-dot" cx="300" cy="350" r="5"/>
+    <text class="mono" x="280" y="349" text-anchor="end" font-size="14" font-weight="650">sv01</text>
+    <text class="tiny muted" x="280" y="369" text-anchor="end">reverse-only + server + egress</text>
 
-    <circle cx="806" cy="525" r="8" fill="#FFFFFF"/><circle class="status-dot" cx="806" cy="525" r="5"/>
-    <text class="mono" x="825" y="529" font-size="14" font-weight="650">ber01</text>
-    <text class="tiny muted" x="825" y="549">reverse-only + egress</text>
+    <circle cx="820" cy="350" r="8" fill="#FFFFFF"/><circle class="status-dot" cx="820" cy="350" r="5"/>
+    <text class="mono" x="840" y="349" font-size="14" font-weight="650">ber01</text>
+    <text class="tiny muted" x="840" y="369">reverse-only + server + egress</text>
+
+    <circle cx="560" cy="590" r="8" fill="#FFFFFF"/><circle class="status-dot" cx="560" cy="590" r="5"/>
+    <text class="mono" x="560" y="615" text-anchor="middle" font-size="14" font-weight="650">sg02</text>
+    <text class="tiny muted" x="560" y="634" text-anchor="middle">reverse-only + server + egress</text>
 
     <text class="tiny muted" x="40" y="649">Candidate edges describe allowable business paths. Missing a direct WG edge does not mean there is no path.</text>
   </g>
@@ -249,19 +266,18 @@
     <text class="section" x="1132" y="232">Layer status</text>
 
     <text class="small muted" x="1132" y="266">CONFIG INTENT</text>
-    <text class="metric" x="1132" y="290">6 persistent links</text>
+    <text class="metric" x="1132" y="290">9 persistent links</text>
     <text class="tiny muted" x="1132" y="309">Source · current validated SSOT · desired state</text>
 
     <line class="rule" x1="1132" y1="327" x2="1539" y2="327"/>
     <text class="small muted" x="1132" y="352">TRUSTED OBSERVATION</text>
     <circle class="status-dot" cx="1137" cy="376" r="4"/>
-    <text class="metric" x="1150" y="381">6 / 6 reachable</text>
+    <text class="metric" x="1150" y="381">9 / 9 reachable</text>
     <text class="tiny muted" x="1132" y="401">report.neighbors · newest 8s · oldest 16s</text>
 
     <line class="rule" x1="1132" y1="419" x2="1539" y2="419"/>
-    <text class="small muted" x="1132" y="444">AGENT DECISION</text>
-    <text class="body" x="1260" y="444">Single-entry path overlay</text>
-    <text class="tiny green" x="1132" y="462">Reported · signed Agent path decision</text>
+    <text class="small muted" x="1132" y="444">HY2 DIRECT</text><text class="small muted" x="1330" y="444">AUTOMATIC ROUTING</text>
+    <text class="body green" x="1132" y="463">3 / 3 sampled</text><text class="body blue" x="1330" y="463">2 / 2 fresh · read-only</text>
   </g>
 
   <!-- Focused-link history: each endpoint contributes TX only. -->
@@ -305,7 +321,7 @@
 
   <!-- Edge inventory -->
   <rect class="panel" x="21" y="696" width="1538" height="277" rx="7"/>
-  <rect x="31" y="835" width="1518" height="31" rx="4" fill="#F1F8F4"/>
+  <rect x="31" y="934" width="1518" height="28" rx="4" fill="#F1F8F4"/>
   <g class="ui">
     <text class="section" x="40" y="726">Persistent WireGuard edges</text>
     <text class="tiny muted" x="318" y="726">24h link bytes = TX deltas from each endpoint; receiver RX is not added again</text>
@@ -319,13 +335,16 @@
   </g>
   <line class="rule" x1="40" y1="766" x2="1540" y2="766"/>
   <g class="ui body">
-    <text class="mono" x="46" y="794">jm24 ↔ sg02</text><text class="mono" x="300" y="794">400 GB</text><rect x="415" y="784" width="245" height="10" rx="2" fill="#EEF1EF"/><rect x="415" y="784" width="243" height="10" rx="2" fill="#72C69F"/><text class="mono" x="735" y="794">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="794">277 ms</text><circle class="quiet-dot" cx="1084" cy="789" r="4"/><text x="1097" y="794">Active</text><text class="muted" x="1270" y="794">8s ago</text>
-    <text class="mono" x="46" y="826">jm24 ↔ ber01</text><text class="mono" x="300" y="826">238 GB</text><rect x="415" y="816" width="245" height="10" rx="2" fill="#EEF1EF"/><rect x="415" y="816" width="145" height="10" rx="2" fill="#72C69F"/><text class="mono" x="735" y="826">23 / 24 · G1</text><text class="mono" x="965" y="826">150 ms</text><circle class="quiet-dot" cx="1084" cy="821" r="4"/><text x="1097" y="826">Active</text><text class="muted" x="1270" y="826">8s ago</text>
-    <text class="mono" x="46" y="858">gz02 ↔ sg02</text><text class="mono green" x="300" y="858">403 GB</text><rect x="415" y="848" width="245" height="10" rx="2" fill="#DDEFE6"/><rect x="415" y="848" width="245" height="10" rx="2" fill="#239B68"/><text class="mono green" x="735" y="858">22 / 24 · R1 G1</text><text class="mono" x="965" y="858">190 ms</text><circle class="quiet-dot" cx="1084" cy="853" r="4"/><text x="1097" y="858">Active</text><text class="muted" x="1270" y="858">11s ago</text>
-    <text class="mono" x="46" y="890">gz02 ↔ ber01</text><text class="mono" x="300" y="890">342 GB</text><rect x="415" y="880" width="245" height="10" rx="2" fill="#EEF1EF"/><rect x="415" y="880" width="208" height="10" rx="2" fill="#72C69F"/><text class="mono" x="735" y="890">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="890">226 ms</text><circle class="quiet-dot" cx="1084" cy="885" r="4"/><text x="1097" y="890">Active</text><text class="muted" x="1270" y="890">11s ago</text>
-    <text class="mono" x="46" y="922">hz01 ↔ sg02</text><text class="mono" x="300" y="922">179 GB</text><rect x="415" y="912" width="245" height="10" rx="2" fill="#EEF1EF"/><rect x="415" y="912" width="109" height="10" rx="2" fill="#72C69F"/><text class="mono" x="735" y="922">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="922">350 ms</text><circle class="quiet-dot" cx="1084" cy="917" r="4"/><text x="1097" y="922">Active</text><text class="muted" x="1270" y="922">13s ago</text>
-    <text class="mono" x="46" y="954">hz01 ↔ ber01</text><text class="mono" x="300" y="954">278 GB</text><rect x="415" y="944" width="245" height="10" rx="2" fill="#EEF1EF"/><rect x="415" y="944" width="169" height="10" rx="2" fill="#72C69F"/><text class="mono" x="735" y="954">23 / 24 · G1</text><text class="mono" x="965" y="954">240 ms</text><circle class="quiet-dot" cx="1084" cy="949" r="4"/><text x="1097" y="954">Active</text><text class="muted" x="1270" y="954">13s ago</text>
+    <text class="mono" x="46" y="788">jm24 ↔ sv01</text><text class="mono" x="300" y="788">312 GB</text><rect x="415" y="780" width="245" height="8" rx="2" fill="#EEF1EF"/><rect x="415" y="780" width="190" height="8" rx="2" fill="#72C69F"/><text class="mono" x="735" y="788">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="788">32 ms</text><circle class="quiet-dot" cx="1084" cy="783" r="4"/><text x="1097" y="788">Active</text><text class="muted" x="1270" y="788">8s ago</text>
+    <text class="mono" x="46" y="808">jm24 ↔ ber01</text><text class="mono" x="300" y="808">238 GB</text><rect x="415" y="800" width="245" height="8" rx="2" fill="#EEF1EF"/><rect x="415" y="800" width="145" height="8" rx="2" fill="#72C69F"/><text class="mono" x="735" y="808">23 / 24 · G1</text><text class="mono" x="965" y="808">150 ms</text><circle class="quiet-dot" cx="1084" cy="803" r="4"/><text x="1097" y="808">Active</text><text class="muted" x="1270" y="808">8s ago</text>
+    <text class="mono" x="46" y="828">jm24 ↔ sg02</text><text class="mono" x="300" y="828">400 GB</text><rect x="415" y="820" width="245" height="8" rx="2" fill="#EEF1EF"/><rect x="415" y="820" width="243" height="8" rx="2" fill="#72C69F"/><text class="mono" x="735" y="828">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="828">277 ms</text><circle class="quiet-dot" cx="1084" cy="823" r="4"/><text x="1097" y="828">Active</text><text class="muted" x="1270" y="828">8s ago</text>
+    <text class="mono" x="46" y="848">hz01 ↔ sv01</text><text class="mono" x="300" y="848">285 GB</text><rect x="415" y="840" width="245" height="8" rx="2" fill="#EEF1EF"/><rect x="415" y="840" width="173" height="8" rx="2" fill="#72C69F"/><text class="mono" x="735" y="848">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="848">28 ms</text><circle class="quiet-dot" cx="1084" cy="843" r="4"/><text x="1097" y="848">Active</text><text class="muted" x="1270" y="848">13s ago</text>
+    <text class="mono" x="46" y="868">hz01 ↔ ber01</text><text class="mono" x="300" y="868">278 GB</text><rect x="415" y="860" width="245" height="8" rx="2" fill="#EEF1EF"/><rect x="415" y="860" width="169" height="8" rx="2" fill="#72C69F"/><text class="mono" x="735" y="868">23 / 24 · G1</text><text class="mono" x="965" y="868">240 ms</text><circle class="quiet-dot" cx="1084" cy="863" r="4"/><text x="1097" y="868">Active</text><text class="muted" x="1270" y="868">13s ago</text>
+    <text class="mono" x="46" y="888">hz01 ↔ sg02</text><text class="mono" x="300" y="888">179 GB</text><rect x="415" y="880" width="245" height="8" rx="2" fill="#EEF1EF"/><rect x="415" y="880" width="109" height="8" rx="2" fill="#72C69F"/><text class="mono" x="735" y="888">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="888">350 ms</text><circle class="quiet-dot" cx="1084" cy="883" r="4"/><text x="1097" y="888">Active</text><text class="muted" x="1270" y="888">13s ago</text>
+    <text class="mono" x="46" y="908">gz02 ↔ sv01</text><text class="mono" x="300" y="908">365 GB</text><rect x="415" y="900" width="245" height="8" rx="2" fill="#EEF1EF"/><rect x="415" y="900" width="222" height="8" rx="2" fill="#72C69F"/><text class="mono" x="735" y="908">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="908">35 ms</text><circle class="quiet-dot" cx="1084" cy="903" r="4"/><text x="1097" y="908">Active</text><text class="muted" x="1270" y="908">11s ago</text>
+    <text class="mono" x="46" y="928">gz02 ↔ ber01</text><text class="mono" x="300" y="928">342 GB</text><rect x="415" y="920" width="245" height="8" rx="2" fill="#EEF1EF"/><rect x="415" y="920" width="208" height="8" rx="2" fill="#72C69F"/><text class="mono" x="735" y="928">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="928">226 ms</text><circle class="quiet-dot" cx="1084" cy="923" r="4"/><text x="1097" y="928">Active</text><text class="muted" x="1270" y="928">11s ago</text>
+    <text class="mono" x="46" y="952">gz02 ↔ sg02</text><text class="mono green" x="300" y="952">403 GB</text><rect x="415" y="944" width="245" height="8" rx="2" fill="#DDEFE6"/><rect x="415" y="944" width="245" height="8" rx="2" fill="#239B68"/><text class="mono green" x="735" y="952">22 / 24 · R1 G1</text><text class="mono" x="965" y="952">190 ms</text><circle class="quiet-dot" cx="1084" cy="947" r="4"/><text x="1097" y="952">Active</text><text class="muted" x="1270" y="952">11s ago</text>
   </g>
-  <line class="rule" x1="40" y1="802" x2="1540" y2="802"/><line class="rule" x1="40" y1="834" x2="1540" y2="834"/><line class="rule" x1="40" y1="866" x2="1540" y2="866"/><line class="rule" x1="40" y1="898" x2="1540" y2="898"/><line class="rule" x1="40" y1="930" x2="1540" y2="930"/>
+  <line class="rule" x1="40" y1="796" x2="1540" y2="796"/><line class="rule" x1="40" y1="816" x2="1540" y2="816"/><line class="rule" x1="40" y1="836" x2="1540" y2="836"/><line class="rule" x1="40" y1="856" x2="1540" y2="856"/><line class="rule" x1="40" y1="876" x2="1540" y2="876"/><line class="rule" x1="40" y1="896" x2="1540" y2="896"/><line class="rule" x1="40" y1="916" x2="1540" y2="916"/><line class="rule" x1="40" y1="936" x2="1540" y2="936"/>
 
 </svg>

@@ -111,14 +111,29 @@ func pageTopology(d Deps, isAuthed bool, selectedEntry ...string) string {
 	v := d.Snapshot()
 	now := d.Now().UTC()
 	intentSource := intentSourceLabel(v)
-	selected := ""
+	requested := ""
 	if len(selectedEntry) > 0 {
-		selected = selectedEntry[0]
+		requested = selectedEntry[0]
 	}
-	entries := routingEntryOptions(v)
+	focused := ""
+	var focusedRoute *RouteView
+	for i := range v.Routes {
+		if routingRouteKey(v.Routes[i]) == requested {
+			focused = requested
+			focusedRoute = &v.Routes[i]
+			break
+		}
+	}
 	var overlay []RouteView
 	for _, route := range v.Routes {
-		if routingRouteKey(route) == selected && !route.Stale {
+		if route.Stale {
+			continue
+		}
+		// The map is an observation surface, not a route picker. By default it
+		// shows every fresh Agent decision generated from the managed Service
+		// rules. A deep link may isolate one decision for diagnosis, but never
+		// changes the selector or desired state.
+		if focused == "" || routingRouteKey(route) == focused {
 			overlay = append(overlay, route)
 		}
 	}
@@ -170,23 +185,25 @@ func pageTopology(d Deps, isAuthed bool, selectedEntry ...string) string {
 	}
 
 	var b strings.Builder
-	b.WriteString(`<div class=sectionhead><h2>Network layers</h2><span class=dim>内圈是可接受反向建连的锚点，外圈是主动接入的出口节点；节点在各自环上等距排列。</span><span class=sp><form method=get action="/topology"><select name=entry aria-label="Agent path overlay"><option value="">No Agent path overlay</option>`)
-	for _, entry := range entries {
-		attr := ""
-		if entry.Key == selected {
-			attr = " selected"
+	b.WriteString(`<div class=sectionhead><h2>Network layers</h2><span class=dim>内圈是可接受反向建连的锚点，外圈是主动接入的出口节点；节点在各自环上等距排列。</span><span class=sp><span class="badge intent">Read-only · automatic Agent decisions</span></span></div>`)
+	b.WriteString(`<div class=grid><div class="card span9">`)
+	if focusedRoute != nil {
+		stateClass, state := "ok", "Fresh signed observation"
+		if focusedRoute.Stale {
+			stateClass, state = "warn", "Stale observation · not drawn as current"
 		}
-		fmt.Fprintf(&b, `<option value="%s"%s>%s</option>`, esc(entry.Key), attr, esc(entry.Label))
+		fmt.Fprintf(&b, `<div class=topology-route-focus><div><span class=label>Focused automatic decision</span><b>%s</b><span class=mono>%s</span><span class="tiny %s">%s · %s</span></div><a class="button" href="/topology">Show all current decisions</a></div>`, esc(overviewRouteName(v, *focusedRoute)), esc(automaticRoutePath(*focusedRoute)), stateClass, esc(state), esc(ageText(focusedRoute.ObservedAt, now)))
 	}
-	b.WriteString(`</select> <button>Apply</button></form></span></div>`)
-	fmt.Fprintf(&b, `<div class=grid><div class="card span9">%s<div class=legend><span><i class=key></i>Persistent WireGuard</span><span><i class="key direct-hy2"></i>Hy2 direct · 主动探测</span><span><i class="key candidate"></i>On-demand route hop</span><span><i class="key route"></i>Selected Agent path</span><span><i class="key degraded"></i>Degraded carrier</span><span><i class="key failed"></i>Failed carrier</span></div><div class=topology-layer-note>悬停节点可预览，点击后锁定相邻链路；标签统一为延迟 · Δ波动 · 速率。WireGuard 速率来自近 5 分钟相邻可信计数器差值；Hy2 direct 显示公网 Hysteria2 单跳响应延迟和主动探测速率，其速率是固定响应的 achieved probe throughput，不是业务流量或链路容量。虚线仅是 %s 允许的未测量按需路径，不伪装成在线隧道（not broken tunnels）。</div></div>`, topologySVG(v, overlay...), esc(intentSource))
-	fmt.Fprintf(&b, `<div class="card span3"><h2>Layer status</h2><div class=stack>
+	fmt.Fprintf(&b, `%s<div class=legend><span><i class=key></i>Persistent WireGuard</span><span><i class="key direct-hy2"></i>Hy2 direct · 主动探测</span><span><i class="key candidate"></i>On-demand route hop</span><span><i class="key route"></i>Automatic Agent route · read-only</span><span><i class="key degraded"></i>Degraded carrier</span><span><i class="key failed"></i>Failed carrier</span></div><div class=topology-layer-note>双环底图由当前节点和链路动态生成；新增节点按 direction 自动进入对应环，Agent 选中路径只叠加颜色，不参与节点排序或改变布局。路径由 Host → Service → Policy 规则和接入节点探测自动产生；本页只展示，不改变客户端偏好、selector 或 SSOT。悬停节点可预览，点击后锁定相邻链路；标签统一为延迟 · Δ波动 · 速率。WireGuard 速率来自近 5 分钟相邻可信计数器差值；Hy2 direct 显示公网 Hysteria2 单跳响应延迟和主动探测速率，其速率是固定响应的 achieved probe throughput，不是业务流量或链路容量。虚线仅是 %s 允许的未测量按需路径，不伪装成在线隧道（not broken tunnels）。</div></div>`, topologySVG(v, overlay...), esc(intentSource))
+	b.WriteString(`<aside class="span3 topology-side"><div class=card><h2>Layer status</h2><div class=stack>`)
+	fmt.Fprintf(&b, `
 <div><div class=label>Persistent carriers</div><div class=metric>%d <small>WG edges</small></div><div class=dim>%s declared inventory</div></div>
 <div><div class=label>Carrier observation</div><div class="metric %s">%d <small>/ %d active</small></div><div class=dim>signed runtime evidence</div></div>
 <div><div class=label>Hy2 direct probes</div><div class="metric %s">%d <small>/ %d sampled</small></div><div class=dim>%s</div></div>
 <div><div class=label>On-demand routing</div><div class=metric>%d <small>possible hops</small></div><div class=dim>intent, not tunnel health</div></div>
-<div><div class=label>Agent decisions</div><div class=metric>%d <small>fresh</small></div><div class=dim>%d current entries · %d overlaid</div></div>
-</div></div></div>`, tunnels, esc(intentSource), map[bool]string{true: "ok", false: "warn"}[active == tunnels && tunnels > 0], active, tunnels, directClass, directSampled, directDeclared, esc(directHint), candidates, fresh, len(v.Routes), len(overlay))
+</div></div>`, tunnels, esc(intentSource), map[bool]string{true: "ok", false: "warn"}[active == tunnels && tunnels > 0], active, tunnels, directClass, directSampled, directDeclared, esc(directHint), candidates)
+	writeAutomaticRoutingCard(&b, v, focused, fresh, now)
+	b.WriteString(`</aside></div>`)
 
 	writeTopologyTraffic(&b, v)
 
@@ -236,7 +253,7 @@ func pageTopology(d Deps, isAuthed bool, selectedEntry ...string) string {
 	if len(candidateLinks) == 0 {
 		b.WriteString(`<div class=empty>No on-demand route hops are present in this view.</div>`)
 	}
-	b.WriteString(`</div><p class=route-hop-note>These dashed relationships are not failed WireGuard links. Their availability is declared by routing intent; actual use appears as the selected Agent path overlay.</p></section></div></div>`)
+	b.WriteString(`</div><p class=route-hop-note>These dashed relationships are not failed WireGuard links. Their availability is declared by routing intent; actual automatic use appears in the read-only Agent route projection.</p></section></div></div>`)
 	return shell(d, "Topology", b.String(), isAuthed, v)
 }
 
@@ -271,27 +288,43 @@ func pageRouting(d Deps, isAuthed bool, selectedEntry ...string) string {
 		}
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, `<div class=grid><div class="card span4"><div class=label>Agent path decisions</div><div class=metric>%d</div><div class=dim>runtime observations · not desired state</div></div><div class="card span4"><div class=label>Fresh</div><div class="metric ok">%d <small>/ %d</small></div><div class=dim>each entry has its own timestamp</div></div><div class="card span4"><div class=label>Inventory candidates</div><div class=metric>%d</div><div class=dim>%s · intent, not health claims</div></div></div>`, len(v.Routes), fresh, len(v.Routes), len(v.Candidates), esc(intentSource))
-	b.WriteString(`<div class=section><div class=sectionhead><h2>Routing entry</h2><span class=dim>Focus one service or access policy; alternatives below belong to the same entry.</span><span class=sp><form method=get action="/routing"><select name=entry aria-label="Routing entry">`)
+	fmt.Fprintf(&b, `<div class=grid><div class="card span4"><div class=label>Automatic Agent decisions</div><div class=metric>%d</div><div class=dim>read-only runtime observations · generated from managed rules</div></div><div class="card span4"><div class=label>Fresh</div><div class="metric ok">%d <small>/ %d</small></div><div class=dim>each decision has its own signed timestamp</div></div><div class="card span4"><div class=label>Inventory candidates</div><div class=metric>%d</div><div class=dim>%s · evaluated by Agent, not selected by clients</div></div></div>`, len(v.Routes), fresh, len(v.Routes), len(v.Candidates), esc(intentSource))
+	b.WriteString(`<div class=section><div class=sectionhead><h2>Automatic routing scopes</h2><span class=dim>Host → Service → Policy creates each scope; the access Agent continuously chooses its current route.</span></div><nav class=routing-entry-grid aria-label="Automatic routing scopes">`)
 	for _, entry := range entries {
-		attr := ""
+		className, current := "routing-entry-card", ""
 		if entry.Key == selected {
-			attr = " selected"
+			className += " active"
+			current = ` aria-current="page"`
 		}
-		fmt.Fprintf(&b, `<option value="%s"%s>%s</option>`, esc(entry.Key), attr, esc(entry.Label))
+		name, meta, path, stateClass, state := entry.Label, "Managed routing rule", "Awaiting Agent observation", "warn", "No current decision"
+		for _, route := range v.Routes {
+			if routingRouteKey(route) != entry.Key {
+				continue
+			}
+			name = overviewRouteName(v, route)
+			meta = automaticRouteMeta(route)
+			path = automaticRoutePath(route)
+			stateClass, state = "ok", "Fresh"
+			if route.Stale {
+				stateClass, state = "warn", "Stale"
+			}
+			break
+		}
+		fmt.Fprintf(&b, `<a class="%s" href="/routing?entry=%s"%s><span><b>%s</b><small>%s</small></span><span class=mono>%s</span><span class="tiny %s">%s · View evidence</span></a>`, className, queryEscape(entry.Key), current, esc(name), esc(meta), esc(path), stateClass, esc(state))
 	}
-	b.WriteString(`</select> <button>View</button></form></span></div>`)
-	b.WriteString(`<div class=card><div class=sectionhead><h2>Current Agent path</h2><span class=dim>Reported by the access Agent; historical events are not current state.</span><span class=sp><a class=tiny href="/topology?entry=` + queryEscape(selected) + `">Overlay in topology →</a></span></div>`)
+	b.WriteString(`</nav></div>`)
+	b.WriteString(`<div class=card><div class=sectionhead><h2>Current automatic decision</h2><span class=dim>Read-only selector state reported by the access Agent; it is not a client path choice.</span>`)
+	if len(routes) > 0 {
+		b.WriteString(`<span class=sp><a class=tiny href="/topology?entry=` + queryEscape(selected) + `">Inspect in topology →</a></span>`)
+	}
+	b.WriteString(`</div>`)
 	if len(routes) == 0 {
 		b.WriteString(`<div class=empty>No verifiable current Agent decisions are available. Historical events are not used as current state.</div>`)
 	} else {
-		b.WriteString(`<table><tr><th>Access node<th>Entry<th>Current path<th>Candidate health<th>Observed / source<th>Reason</tr>`)
+		b.WriteString(`<table><tr><th>Access node<th>Managed rule<th>Agent-selected path<th>Candidate health<th>Observed / source<th>Reason</tr>`)
 		for _, r := range routes {
-			path := strings.Join(r.Chain, " → ")
-			if len(r.Chain) <= 1 {
-				path = r.Node + " → direct"
-			}
-			entry := routeEntryLabel(r)
+			path := automaticRoutePath(r)
+			entry := overviewRouteName(v, r) + " · " + automaticRouteMeta(r)
 			cls := "ok"
 			if r.Stale {
 				cls = "warn"
@@ -303,7 +336,7 @@ func pageRouting(d Deps, isAuthed bool, selectedEntry ...string) string {
 	}
 	b.WriteString(`</div></div>`)
 
-	b.WriteString(`<div class=section><div class=sectionhead><h2>Allowed alternatives for this entry</h2><span class=dim>A missing persistent edge does not mean two topology nodes have no candidate path</span></div><div class=card>`)
+	b.WriteString(`<div class=section><div class=sectionhead><h2>Agent candidate set for this rule</h2><span class=dim>Generated from SSOT and evaluated automatically; these are not client-selectable paths.</span></div><div class=card>`)
 	if len(candidatesForEntry) == 0 {
 		b.WriteString(`<div class=empty>No configured candidate paths are available for this routing entry.</div>`)
 	} else {
@@ -313,9 +346,9 @@ func pageRouting(d Deps, isAuthed bool, selectedEntry ...string) string {
 			if len(p.Chain) <= 1 {
 				path = p.Node + " → direct"
 			}
-			cls, label := "warn", "Configured · unverified"
+			cls, label := "warn", "Configured candidate"
 			if p.State == "selected" {
-				cls, label = "ok", "Current Agent decision"
+				cls, label = "ok", "Current automatic decision"
 			}
 			fmt.Fprintf(&b, `<tr><td class=mono>%s<td>%s<td class="w mono">%s<td class=%s>%s<td class="w tiny">%s</tr>`, esc(p.Node), esc(candidateEntryLabel(p)), esc(path), cls, label, esc(p.Source))
 		}
@@ -480,6 +513,63 @@ func tunnelAge(t TunnelView) string {
 		return "never handshook"
 	}
 	return fmt.Sprintf("%ds", t.AgeSec)
+}
+
+func writeAutomaticRoutingCard(b *strings.Builder, v View, focused string, fresh int, now time.Time) {
+	fmt.Fprintf(b, `<div class="card automatic-routing-card"><div class=automatic-routing-head><h2>Automatic routing</h2><span class="tiny ok">%d / %d fresh</span></div><p>Read-only Agent decisions generated from Host → Service → Policy rules. They do not prove that application traffic is currently active.</p>`, fresh, len(v.Routes))
+	routes := append([]RouteView(nil), v.Routes...)
+	sort.SliceStable(routes, func(i, j int) bool {
+		a, z := routingRouteKey(routes[i]), routingRouteKey(routes[j])
+		return a < z
+	})
+	if len(routes) == 0 {
+		b.WriteString(`<div class="empty tiny">No Agent routing decisions have been reported.</div>`)
+	} else {
+		b.WriteString(`<div class=automatic-route-list>`)
+		for _, route := range routes {
+			key := routingRouteKey(route)
+			className, stateClass, state := "automatic-route-row", "ok", "Fresh"
+			if key == focused {
+				className += " active"
+			}
+			if route.Stale {
+				stateClass, state = "warn", "Stale"
+			}
+			fmt.Fprintf(b, `<div class="%s"><div class=automatic-route-heading><b>%s</b><span class="tiny %s">%s</span></div><div class=mono>%s</div><div class=automatic-route-meta><span>%s · %s</span>`, className, esc(overviewRouteName(v, route)), stateClass, esc(state), esc(automaticRoutePath(route)), esc(automaticRouteMeta(route)), esc(ageText(route.ObservedAt, now)))
+			if !route.Stale {
+				if key == focused {
+					b.WriteString(`<span class=info>Focused on map</span>`)
+				} else {
+					fmt.Fprintf(b, `<a href="/topology?entry=%s">Isolate on map</a>`, queryEscape(key))
+				}
+			}
+			b.WriteString(`</div></div>`)
+		}
+		b.WriteString(`</div>`)
+	}
+	b.WriteString(`<a class=automatic-routing-all href="/routing">View decision evidence →</a></div>`)
+}
+
+func automaticRoutePath(r RouteView) string {
+	if len(r.Chain) <= 1 {
+		return r.Node + " → local exit"
+	}
+	return strings.Join(r.Chain, " → ")
+}
+
+func automaticRouteMeta(r RouteView) string {
+	scope := "Managed rule"
+	switch r.ScopeKind {
+	case ScopeService:
+		scope = "Service rule"
+	case ScopePolicy:
+		scope = "Access policy"
+	}
+	parts := []string{r.Node, scope}
+	if r.PolicyID != "" {
+		parts = append(parts, r.PolicyID)
+	}
+	return strings.Join(parts, " · ")
 }
 
 func routeEntryLabel(r RouteView) string {
