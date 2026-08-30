@@ -110,6 +110,7 @@ func pageNodeDetail(d Deps, nodeID string, isAuthed bool) (string, bool) {
 		fmt.Fprintf(&b, `<div class="callout warnline section"><b>Identity claim rejected</b><br><span class=small>%s</span></div>`, esc(n.IdentityError))
 	}
 	b.WriteString(`</section></div></div>`)
+	writeNodeIngresses(&b, v.Ingresses, n.ID)
 
 	historyLabel := `current cumulative counters · retained history attached`
 	historyClass := "dim"
@@ -189,6 +190,71 @@ func pageNodeDetail(d Deps, nodeID string, isAuthed bool) (string, bool) {
 
 	fmt.Fprintf(&b, `<div class=toolbar><a class=button href="/nodes">← Nodes</a><a class=button href="/topology">View in topology →</a><a class=button href="/nodes/%s">Refresh observation</a></div>`, url.PathEscape(n.ID))
 	return shell(d, "Node · "+n.ID, b.String(), isAuthed, v), true
+}
+
+func writeNodeIngresses(b *strings.Builder, ingresses []IngressView, nodeID string) {
+	managed := make([]IngressView, 0, len(ingresses))
+	primaryTUN := make([]IngressView, 0, 1)
+	legacy := make([]IngressView, 0, len(ingresses))
+	for _, ingress := range ingresses {
+		if ingress.Node != nodeID {
+			continue
+		}
+		switch {
+		case serviceAwareIngress(ingress):
+			managed = append(managed, ingress)
+		case ingress.Kind == "tun":
+			primaryTUN = append(primaryTUN, ingress)
+		default:
+			legacy = append(legacy, ingress)
+		}
+	}
+	if len(managed) == 0 && len(primaryTUN) == 0 && len(legacy) == 0 {
+		return
+	}
+
+	b.WriteString(`<div class=section><section class="card node-ingress"><div class=sectionhead><h2>Application entry points</h2><span class=dim>SSOT configuration · not runtime listener health</span></div>`)
+	if len(managed) > 0 {
+		b.WriteString(`<div class=node-ingress-managed><div class=node-ingress-heading><div><span class="badge ok">Recommended / Managed</span><h3>Automatic entry point</h3></div><span class="small dim">Host → Service → Policy → live path</span></div>`)
+		writeNodeIngressTable(b, managed)
+		b.WriteString(`</div>`)
+	}
+	if len(primaryTUN) > 0 {
+		b.WriteString(`<div class=node-ingress-primary><div class=node-ingress-heading><div><span class="badge intent">Primary capture</span><h3>System TUN</h3></div><span class="small dim">Current configuration uses one default policy · central Service matching not enabled</span></div>`)
+		writeNodeIngressTable(b, primaryTUN)
+		b.WriteString(`</div>`)
+	} else if len(managed) == 0 {
+		b.WriteString(`<div class="callout warnline"><b>No Recommended / Managed automatic entry point is configured.</b><br><span class=small>Only explicit fixed-policy entry points are declared on this node.</span></div>`)
+	}
+	if len(legacy) > 0 {
+		fmt.Fprintf(b, `<details class=node-ingress-legacy><summary><span><b>Legacy / Advanced</b><small>Fixed-policy entry points remain available for compatibility</small></span><span class="sp badge">%d configured</span></summary><div class=node-ingress-legacy-body>`, len(legacy))
+		writeNodeIngressTable(b, legacy)
+		b.WriteString(`</div></details>`)
+	}
+	b.WriteString(`</section></div>`)
+}
+
+func serviceAwareIngress(ingress IngressView) bool {
+	return ingress.Services || ingress.ScopeKind == ScopeServices || ingress.Mode == "services" || ingress.Mode == "host-based"
+}
+
+func writeNodeIngressTable(b *strings.Builder, ingresses []IngressView) {
+	b.WriteString(`<table><tr><th>Listen<th>Kind / mode<th>Declared scope<th>Effective policy</tr>`)
+	for _, ingress := range ingresses {
+		listen := ingress.Listen
+		if listen == "" && ingress.Kind == "tun" {
+			listen = "TUN"
+		} else if listen == "" && ingress.Port > 0 {
+			listen = fmt.Sprintf(":%d", ingress.Port)
+		}
+		kindMode := strings.Trim(strings.Join([]string{ingress.Kind, ingress.Mode}, " · "), " ·")
+		scope := strings.Trim(strings.Join([]string{ingress.ScopeKind, ingress.ScopeID}, " · "), " ·")
+		if scope == "" && ingress.Declaration != "" {
+			scope = "declaration · " + ingress.Declaration
+		}
+		fmt.Fprintf(b, `<tr><td class=mono>%s<td>%s<td class=mono>%s<td class=mono>%s</tr>`, esc(orDash(listen)), esc(orDash(kindMode)), esc(orDash(scope)), esc(orDash(ingress.PolicyID)))
+	}
+	b.WriteString(`</table>`)
 }
 
 func writeNodeComponents(b *strings.Builder, components []ComponentView) {

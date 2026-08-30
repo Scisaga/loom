@@ -258,10 +258,10 @@
     <text class="body" x="483" y="829">Best egress</text><text class="tiny muted mono" x="483" y="848">best-egress</text>
     <path d="M959 825l5 5 5-5" fill="none" stroke="#717674" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
 
-    <text class="subsection" x="1037" y="768">Configured ingress</text>
-    <text class="tiny muted" x="1037" y="791">Where applications send hostnames to Loom.</text>
-    <text class="body mono" x="1037" y="824">jm24 · 127.0.0.1:1083</text>
-    <text class="tiny muted" x="1037" y="848">scope · services · configuration only, not listener health</text>
+    <text class="subsection" x="1037" y="768">Routing ownership</text>
+    <text class="tiny muted" x="1037" y="791">This service is applied by the centrally managed rule set.</text>
+    <circle class="quiet-dot" cx="1042" cy="824" r="4"/><text class="body green" x="1055" y="829">Centrally managed</text>
+    <text class="tiny muted" x="1037" y="848">Clients do not select a port, policy or exit for this service.</text>
     <line class="rule" x1="467" y1="879" x2="1559" y2="879"/>
 
     <text class="small muted" x="467" y="906">RUNTIME</text><text class="body" x="555" y="906">Current path and health are observed in Live paths.</text>

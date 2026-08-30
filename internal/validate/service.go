@@ -401,7 +401,7 @@ func checkAccessNodes(
 				fs.add("§7.3 端口冲突", where, "mixed 端口 %d 已被%s占用", mp.Port, owner)
 			}
 			seenPort[mp.Port] = "另一个 mixed 端口"
-			if _, ok := decls[mp.Declaration]; !ok && !mp.ByService() {
+			if _, ok := decls[mp.Declaration]; !ok && !mp.ManagedAutomatic() {
 				// 按服务分流的端口不绑声明,由 checkServicePorts 管(§4.5)。
 				fs.add("§7.3 端口", where,
 					"端口 %d 绑定了不存在的访问声明 %q", mp.Port, mp.Declaration)

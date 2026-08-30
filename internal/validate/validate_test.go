@@ -366,6 +366,29 @@ services:
   - {id: s1, declaration: d1, addresses: [a.example.com]}`,
 		},
 		{
+			name: "§4.5 只能有一个中控托管主入口",
+			want: "service-aware mixed 主入口只能有一个",
+			yaml: `
+defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
+nodes:
+  - id: acc
+    public_endpoint: 1.1.1.9
+    server: {direction: bidirectional, wg_public_key: k0}
+    access:
+      platform: linux-server
+      credentials: [c1]
+      mixed_ports:
+        - {port: 1083, services: true}
+        - {port: 1080, services: true}
+  - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, probe_url: "https://t/", tuning_period: 5m, window: 1h, min_samples: 6, stale_after: 20m, allowed_servers: [a]}
+credentials:
+  - {id: c1, declaration: d1, secret_ref: "cred/c1"}
+services:
+  - {id: s1, declaration: d1, addresses: [a.example.com]}`,
+		},
+		{
 			name: "§4.5 服务引用了不存在的声明",
 			want: "引用了不存在的声明",
 			yaml: `

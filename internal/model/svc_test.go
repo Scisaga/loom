@@ -99,11 +99,22 @@ func TestSuffixDetection(t *testing.T) {
 	}
 }
 
-// 端口两种模式互斥,而且各自的语义要清楚。
+// 入口语义从已有字段推导,不再额外存一份可能矛盾的 mode。
 func TestPortModes(t *testing.T) {
 	s := loadSvc(t)
 	mp := s.NodeByID()["acc"].Access.MixedPorts[0]
-	if !mp.ByService() || mp.Declaration != "" {
-		t.Errorf("按服务分流的端口不该绑声明:%+v", mp)
+	if !mp.ManagedAutomatic() || mp.ExplicitOverride() || !mp.ByService() {
+		t.Errorf("services:true 应派生为 managed automatic,且不是 override:%+v", mp)
+	}
+
+	override := MixedPort{Port: 1080, Declaration: "d1"}
+	if override.ManagedAutomatic() || !override.ExplicitOverride() || override.ByService() {
+		t.Errorf("declaration 应派生为 explicit override,且不按服务分流:%+v", override)
+	}
+
+	// 两个事实都保留下来,让校验器拒绝矛盾;helper 不可静默替配置选一边。
+	invalid := MixedPort{Port: 1081, Services: true, Declaration: "d1"}
+	if !invalid.ManagedAutomatic() || !invalid.ExplicitOverride() {
+		t.Errorf("矛盾配置被 helper 静默归类:%+v", invalid)
 	}
 }

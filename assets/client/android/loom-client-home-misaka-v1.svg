@@ -2,7 +2,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="430" height="932" viewBox="0 0 430 932"
      role="img" aria-labelledby="title description">
   <title id="title">Loom Android client home — self-contained SVG prototype</title>
-  <desc id="description">An Android VpnService client proposal showing one administrator-bound access policy, distinct host, traffic capture, data plane and control sync states, a read-only current path, signed profile information, and sample session traffic.</desc>
+  <desc id="description">An Android VpnService client proposal showing centrally delivered rules, distinct host, traffic capture, data plane and control sync states, and a read-only current app and domain to Service to Policy match with no local policy selection.</desc>
 
   <defs>
     <clipPath id="screen-clip"><rect x="12" y="12" width="406" height="908" rx="38"/></clipPath>
@@ -114,7 +114,7 @@
       <text class="body muted" x="48" y="248">End-to-end reachable · checked 14s ago</text>
       <rect x="48" y="263" width="166" height="25" rx="12.5" class="chip-green"/>
       <use href="#icon-shield" x="58" y="268" width="15" height="15" class="icon-green"/>
-      <text class="tiny green" x="80" y="279">Singapore fixed · managed</text>
+      <text class="tiny green" x="80" y="279">Central rules applied</text>
 
       <line class="rule" x1="48" y1="303" x2="382" y2="303"/>
       <text class="tiny muted" x="48" y="326">HOST</text>
@@ -131,29 +131,25 @@
     <rect x="28" y="410" width="374" height="184" rx="12" class="panel"/>
     <g class="ui">
       <text class="section" x="48" y="439">Current access</text>
-      <rect x="319" y="423" width="63" height="24" rx="12" class="chip-green"/>
-      <circle cx="334" cy="435" r="3" class="status-dot"/>
-      <text class="tiny green" x="344" y="439">AUTO</text>
-      <text class="small muted" x="48" y="462">Read-only path · selected from signed candidates</text>
+      <rect x="301" y="423" width="81" height="24" rx="12" class="chip-green"/>
+      <circle cx="315" cy="435" r="3" class="status-dot"/>
+      <text class="tiny green" x="325" y="439">READ ONLY</text>
+      <text class="small muted" x="48" y="462">Central rule matched · no local policy selection</text>
 
-      <path d="M65 519H366" class="route-line"/>
-      <circle cx="65" cy="519" r="19" class="node-ring"/>
-      <use href="#icon-phone" x="55" y="509" width="20" height="20" class="icon-green"/>
-      <circle cx="164" cy="519" r="19" class="node-ring"/>
-      <use href="#icon-server" x="154" y="509" width="20" height="20" class="icon-green"/>
-      <circle cx="264" cy="519" r="19" class="node-ring"/>
-      <use href="#icon-server" x="254" y="509" width="20" height="20" class="icon-green"/>
-      <circle cx="366" cy="519" r="19" class="node-ring"/>
-      <use href="#icon-globe" x="356" y="509" width="20" height="20" class="icon-green"/>
-
-      <text class="tiny" x="65" y="553" text-anchor="middle">Phone</text>
-      <text class="tiny muted" x="164" y="553" text-anchor="middle">gz02</text>
-      <text class="tiny muted" x="264" y="553" text-anchor="middle">sg02</text>
-      <text class="tiny" x="366" y="553" text-anchor="middle">Internet</text>
-      <text class="tiny green" x="114" y="508" text-anchor="middle">34ms</text>
-      <text class="tiny green" x="214" y="508" text-anchor="middle">46ms</text>
-      <text class="tiny green" x="315" y="508" text-anchor="middle">12ms</text>
-      <text class="tiny muted" x="48" y="580">Ranking observed 18s ago · switch threshold respected</text>
+      <line class="rule" x1="48" y1="477" x2="382" y2="477"/>
+      <text class="tiny muted" x="48" y="499">APP / DOMAIN</text>
+      <text class="tiny muted" x="202" y="499">SERVICE</text>
+      <text class="tiny muted" x="310" y="499">POLICY</text>
+      <text class="subsection" x="48" y="522">ChatGPT</text>
+      <text class="tiny mono muted" x="48" y="540">api.openai.com</text>
+      <text class="subsection" x="202" y="522">llm-api</text>
+      <text class="subsection mono" x="310" y="522">llm-ttft</text>
+      <text class="body green" x="177" y="523" text-anchor="middle">→</text>
+      <text class="body green" x="286" y="523" text-anchor="middle">→</text>
+      <line class="rule" x1="48" y1="552" x2="382" y2="552"/>
+      <text class="tiny muted" x="48" y="573">LIVE PATH</text>
+      <text class="small mono" x="124" y="573">gz02 → sg02</text>
+      <text class="small green" x="382" y="573" text-anchor="end">92 ms · healthy</text>
     </g>
 
     <!-- Signed profile. -->

@@ -2,7 +2,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900"
      role="img" aria-labelledby="title description">
   <title id="title">Loom Windows client home — interface prototype</title>
-  <desc id="description">A Windows desktop client proposal showing the system tunnel, signed profile state, current server path, application-specific proxy routes, and runtime diagnostics using sample data.</desc>
+  <desc id="description">A Windows desktop client proposal showing a system tunnel, signed profile state, current server path, and control-plane-delivered read-only domain or IP to Service to Policy rules shared by TUN and one developer mixed entry point.</desc>
 
   <defs>
     <symbol id="loom-mark" viewBox="127 112 1000 1000">
@@ -118,7 +118,7 @@
     <text x="99" y="133" font-weight="650">Connection</text>
 
     <use href="#icon-routes" x="65" y="172" width="19" height="19" class="icon"/>
-    <text x="99" y="188">Access routes</text>
+    <text x="99" y="188">Central rules</text>
     <use href="#icon-activity" x="65" y="227" width="19" height="19" class="icon"/>
     <text x="99" y="243">Activity</text>
     <use href="#icon-device" x="65" y="282" width="19" height="19" class="icon"/>
@@ -152,7 +152,7 @@
     <use href="#icon-shield" x="337" y="213" width="34" height="34" class="icon-green"/>
     <text class="eyebrow green" x="407" y="211">SYSTEM TUNNEL</text>
     <text class="hero" x="407" y="242">System traffic routed</text>
-    <text class="body muted" x="407" y="267">TUN active · policy Best egress</text>
+    <text class="body muted" x="407" y="267">TUN active · central rules applied</text>
 
     <rect x="856" y="206" width="94" height="42" rx="21" fill="#239B68"/>
     <circle cx="928" cy="227" r="16" fill="#FFFFFF"/>
@@ -223,38 +223,33 @@
     <text class="tiny green" x="1115" y="535" text-anchor="middle">11 ms</text>
   </g>
 
-  <!-- Access routes. -->
+  <!-- Centrally managed access rules. -->
   <rect x="294" y="622" width="700" height="218" rx="8" class="panel"/>
   <g class="ui">
-    <text class="section" x="322" y="657">Access routes</text>
-    <text class="tiny muted" x="449" y="656">TUN default + explicit local mixed ports</text>
-    <text class="tiny muted" x="322" y="686">ENTRY</text>
-    <text class="tiny muted" x="508" y="686">ACCESS POLICY</text>
-    <text class="tiny muted" x="717" y="686">CURRENT PATH</text>
+    <text class="section" x="322" y="657">Central access rules</text>
+    <text class="tiny muted" x="966" y="656" text-anchor="end">CONTROL-PLANE SIGNED · READ-ONLY</text>
+    <text class="tiny muted" x="322" y="686">DOMAIN / IP</text>
+    <text class="tiny muted" x="535" y="686">SERVICE</text>
+    <text class="tiny muted" x="717" y="686">POLICY</text>
     <text class="tiny muted" x="936" y="686" text-anchor="end">STATUS</text>
     <line class="rule" x1="322" y1="697" x2="966" y2="697"/>
 
     <circle cx="329" cy="720" r="3.5" class="status-dot"/>
-    <text class="body" x="343" y="724">System TUN</text>
-    <text class="body" x="508" y="724">Best egress</text>
-    <text class="body mono" x="717" y="724">gz02 → sg02</text>
-    <text class="small green" x="936" y="724" text-anchor="end">Active</text>
+    <text class="body mono" x="343" y="724">api.openai.com</text>
+    <text class="body" x="535" y="724">OpenAI API</text>
+    <text class="body mono" x="717" y="724">llm-ttft</text>
+    <text class="small green" x="936" y="724" text-anchor="end">Applied</text>
     <line class="rule" x1="322" y1="736" x2="966" y2="736"/>
 
-    <circle cx="329" cy="759" r="3.5" class="quiet-dot"/>
-    <text class="body mono" x="343" y="763">127.0.0.1:1080</text>
-    <text class="body" x="508" y="763">Singapore fixed</text>
-    <text class="body mono" x="717" y="763">gz02 → sg02</text>
-    <text class="small muted" x="936" y="763" text-anchor="end">Listening</text>
+    <circle cx="329" cy="759" r="3.5" class="status-dot"/>
+    <text class="body mono" x="343" y="763">140.82.112.0/20</text>
+    <text class="body" x="535" y="763">GitHub</text>
+    <text class="body mono" x="717" y="763">best-egress</text>
+    <text class="small green" x="936" y="763" text-anchor="end">Applied</text>
     <line class="rule" x1="322" y1="775" x2="966" y2="775"/>
 
-    <circle cx="329" cy="798" r="3.5" class="quiet-dot"/>
-    <text class="body mono" x="343" y="802">127.0.0.1:1082</text>
-    <text class="body" x="508" y="802">LLM service</text>
-    <text class="body mono" x="717" y="802">hz01 → sg02</text>
-    <text class="small muted" x="936" y="802" text-anchor="end">Listening</text>
-    <text class="tiny green" x="322" y="826">Manage access routes</text>
-    <use href="#icon-chevron" x="455" y="816" width="15" height="15" class="icon-green"/>
+    <use href="#icon-lock" x="322" y="794" width="16" height="16" class="icon"/>
+    <text class="tiny muted" x="346" y="806">System TUN + one developer mixed apply the same rules · no local policy controls</text>
   </g>
 
   <!-- Runtime. -->

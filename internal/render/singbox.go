@@ -234,8 +234,9 @@ func serverTLS() *sbTLS {
 
 // renderAccess 渲染一个接入节点的 sing-box 配置(§7)。
 //
-// 每个 mixed 端口绑定一个访问声明(§7.3);每条声明有一个 selector,成员是
-// 它的全部 RouteCandidate(§5.6)。
+// 正常的 mixed 主入口按 host 反查 Service;只有显式 override/兼容入口才
+// 直接绑定访问声明(§7.3)。每条声明有一个 selector,成员是它的全部
+// RouteCandidate(§5.6)。
 //
 // 用 selector 而不是 urltest 是刻意的:§5.6 要求选路的决策者只有一个。
 // urltest 会按自己的节奏和判据独立选路,与 Agent 的 §5.5 阻尼规则形成两个
@@ -273,7 +274,7 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 	pinned, tunDecl := pinnedDecls(p, declIDs)
 	byService := false
 	for _, mp := range ports {
-		if mp.ByService() {
+		if mp.ManagedAutomatic() {
 			byService = true
 		}
 	}
@@ -367,7 +368,7 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 	}
 
 	for _, mp := range ports {
-		if mp.ByService() {
+		if mp.ManagedAutomatic() {
 			continue // 规则由 serviceRule 生成,按 host 匹配而不是按端口
 		}
 		// 引用一个没生成的 selector 会让 sing-box 直接启动失败。宁可不写
@@ -812,12 +813,12 @@ func selectorDefault(tags []string) string {
 
 // serviceRule 生成"这些 host 走这个服务的 selector"的路由规则。
 //
-// 只绑到按服务分流的那些端口上 —— 钉死出口的端口是接入端的显式意图,
-// 不该被 host 匹配抢走。
+// 只绑到 managed automatic 主入口 —— 钉死策略的端口是显式 override,
+// 不参与 Service 匹配。
 func serviceRule(svc *model.Service, ports []model.MixedPort) sbRule {
 	r := sbRule{Outbound: svc.Tag()}
 	for _, mp := range ports {
-		if mp.ByService() {
+		if mp.ManagedAutomatic() {
 			r.Inbound = append(r.Inbound, fmt.Sprintf("in-%d", mp.Port))
 		}
 	}
@@ -833,7 +834,8 @@ func serviceRule(svc *model.Service, ports []model.MixedPort) sbRule {
 	return r
 }
 
-// pinnedDecls 返回被端口或 TUN 兜底钉住的声明,以及 TUN 兜底用的那条。
+// pinnedDecls 返回被显式 override 入口或 TUN 兜底钉住的声明,以及 TUN
+// 兜底用的那条。managed automatic 主入口不在这里;它按 Service 各自选路。
 //
 // **这是唯一的推导来源。** 渲染 sing-box 和渲染 Agent 配置都要用它 ——
 // 两边各写一遍的结果是 Agent 去切一个没渲染出来的 selector,而这个错误
@@ -841,7 +843,7 @@ func serviceRule(svc *model.Service, ports []model.MixedPort) sbRule {
 func pinnedDecls(p *model.Node, declIDs []string) (map[string]bool, string) {
 	out := map[string]bool{}
 	for _, mp := range p.Access.MixedPorts {
-		if !mp.ByService() && mp.Declaration != "" {
+		if !mp.ManagedAutomatic() && mp.ExplicitOverride() {
 			out[mp.Declaration] = true
 		}
 	}

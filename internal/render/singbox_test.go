@@ -43,14 +43,122 @@ type conf struct {
 	} `json:"outbounds"`
 	Route struct {
 		Rules []struct {
-			Inbound  []string `json:"inbound"`
-			AuthUser []string `json:"auth_user"`
-			IPCIDR   []string `json:"ip_cidr"`
-			Port     []int    `json:"port"`
-			Outbound string   `json:"outbound"`
+			Inbound      []string `json:"inbound"`
+			AuthUser     []string `json:"auth_user"`
+			IPCIDR       []string `json:"ip_cidr"`
+			Domain       []string `json:"domain"`
+			DomainSuffix []string `json:"domain_suffix"`
+			Port         []int    `json:"port"`
+			Outbound     string   `json:"outbound"`
 		} `json:"rules"`
 		Final string `json:"final"`
 	} `json:"route"`
+}
+
+// TestManagedAutomaticAndExplicitOverrideRouting 把 mixed 入口的两种派生语义
+// 钉在最终数据平面上:正常入口只按 Service 分流;声明绑定端口只是显式
+// override;自动入口未匹配到 Service 时必须 fail closed。
+func TestManagedAutomaticAndExplicitOverrideRouting(t *testing.T) {
+	s, err := model.Load([]byte(`
+defaults:
+  dns: [223.5.5.5]
+  components: {sing_box: 1.11.4, wireguard: 1.0.20250521, agent: 0.1.0}
+nodes:
+  - id: access
+    access:
+      platform: linux-server
+      credentials: [cred-fixed, cred-auto]
+      mixed_ports:
+        - {port: 1080, declaration: fixed}
+        - {port: 1083, services: true}
+  - id: egress
+    public_endpoint: 192.0.2.10
+    server:
+      direction: bidirectional
+      inbound_port: 4433
+      egress_capable: true
+      wg_public_key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+declarations:
+  - id: fixed
+    address_axis: from_request
+    egress_axis: pinned:egress
+    objective: latency
+    probe_url: https://managed.example/
+    tuning_period: 5m
+    allowed_servers: [egress]
+    max_hops: 1
+  - id: automatic
+    address_axis: from_request
+    egress_axis: any
+    objective: latency
+    probe_url: https://managed.example/
+    tuning_period: 5m
+    allowed_servers: [egress]
+    max_hops: 1
+credentials:
+  - {id: cred-fixed, declaration: fixed, secret_ref: cred/fixed}
+  - {id: cred-auto, declaration: automatic, secret_ref: cred/automatic}
+services:
+  - {id: web, declaration: automatic, addresses: [managed.example]}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := Render(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var c conf
+	found := false
+	for _, b := range res.Bundles {
+		if b.Owner != "access" {
+			continue
+		}
+		for _, f := range b.Files {
+			if f.Path != "sing-box/config.json" {
+				continue
+			}
+			if err := json.Unmarshal([]byte(f.Content), &c); err != nil {
+				t.Fatal(err)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("接入节点没有 sing-box 配置")
+	}
+
+	overrideRule, automaticRule := -1, -1
+	for i, r := range c.Route.Rules {
+		hasOverride, hasAutomatic := false, false
+		for _, in := range r.Inbound {
+			hasOverride = hasOverride || in == "in-1080"
+			hasAutomatic = hasAutomatic || in == "in-1083"
+		}
+		if hasOverride {
+			if r.Outbound != "decl:fixed" || len(r.Domain) != 0 || len(r.DomainSuffix) != 0 {
+				t.Errorf("显式 override 入口被 Service 规则接管:%+v", r)
+			}
+			overrideRule = i
+		}
+		if hasAutomatic {
+			if r.Outbound != "svc:web" || len(r.Domain) != 1 || r.Domain[0] != "managed.example" {
+				t.Errorf("managed automatic 入口没有按 Service 分流:%+v", r)
+			}
+			automaticRule = i
+		}
+	}
+	if overrideRule < 0 || automaticRule < 0 {
+		t.Fatalf("缺少入口路由规则:override=%d automatic=%d", overrideRule, automaticRule)
+	}
+	if overrideRule >= automaticRule {
+		t.Errorf("显式 override 规则应先于自动 Service 规则:override=%d automatic=%d",
+			overrideRule, automaticRule)
+	}
+	if c.Route.Final != "block" {
+		t.Errorf("自动入口未匹配 Service 时必须阻断,route.final=%q", c.Route.Final)
+	}
 }
 
 func TestLinkMetricReflectorAdmissionIsLoopbackPortOnly(t *testing.T) {

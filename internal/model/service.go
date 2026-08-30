@@ -365,26 +365,39 @@ func (p Platform) UsesTUN() bool { return p == Android || p == Desktop }
 // UsesMixed 报告该平台是否使用本地 mixed 端口。
 func (p Platform) UsesMixed() bool { return p == Desktop || p == LinuxServer }
 
-// MixedPort 是"端口即访问声明"(§7.3):端口号本身编码了模式与参数。
+// MixedPort 是本机应用进入 Loom 的 mixed 入口(§7.3)。
+//
+// 正常入口由 Services=true 派生为“中控托管的自动分流”:应用只需要知道
+// 一个本地代理地址,Loom 再按请求 host 找 Service。Declaration 非空则派生为
+// “显式策略覆盖”:调用方通过选择这个兼容入口绕过 Service 匹配。这两种语义
+// 由已有字段推导,不另存一个容易与它们矛盾的 mode。
 type MixedPort struct {
 	Port int `yaml:"port"`
 
-	// Declaration 把这个端口钉在一条声明上 —— 接入端通过"连哪个端口"
-	// 显式表达策略。这是 §4.5 说的第一种模式:**指定出口**。
+	// Declaration 把这个兼容入口钉在一条声明上。它是显式 override,
+	// 适合遗留调用方或诊断,不是普通应用选择出口的主交互。
 	Declaration string `yaml:"declaration,omitempty"`
 
-	// Services 为真时,这个端口按请求的 host 反查服务(§4.5)。
+	// Services 为真时,这个入口按请求的 host 反查服务(§4.5)。这是正常的
+	// managed automatic 入口;同一接入节点最多只能有一个。
 	//
-	// 这是第二种模式:**接入端什么都不说**。它不需要知道有哪些服务、
-	// 更不需要知道拓扑 —— 正常发请求,Loom 按 host 决定走哪。
+	// 应用不需要知道有哪些服务、更不需要知道拓扑 —— 正常发请求,Loom
+	// 按中控下发的 Service 规则决定策略。
 	//
 	// 没匹配上任何服务的请求落到兜底(默认 fail_closed),并由上报者
 	// 记下来供补全服务清单。
 	Services bool `yaml:"services,omitempty"`
 }
 
-// ByService 报告这个端口是不是按服务分流。
-func (m *MixedPort) ByService() bool { return m.Services }
+// ManagedAutomatic 报告这个入口是不是中控托管的按服务自动分流主入口。
+func (m *MixedPort) ManagedAutomatic() bool { return m.Services }
+
+// ExplicitOverride 报告这个入口是否显式绑定了一条策略。校验器保证它不会
+// 同时也是 ManagedAutomatic;这里保留独立事实,避免把无效配置静默归到一边。
+func (m *MixedPort) ExplicitOverride() bool { return m.Declaration != "" }
+
+// ByService 是旧调用方使用的名字;语义等同 ManagedAutomatic。
+func (m *MixedPort) ByService() bool { return m.ManagedAutomatic() }
 
 // Credential 是接入节点表达"它要什么"的方式(§8.2)。
 //

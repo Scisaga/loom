@@ -169,23 +169,34 @@ func asciiAlphaNum(c byte) bool {
 	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
 }
 
-// checkServicePorts 校验接入节点的端口模式(§4.5)。
+// checkServicePorts 校验接入节点的入口语义(§4.5)。正常形态是一条中控托管
+// 的 service-aware mixed 主入口;声明绑定端口只是显式 override/兼容入口。
 func checkServicePorts(fs *findings, s *model.SSOT) {
 	for _, n := range s.AccessNodes() {
+		var automaticPorts []int
 		for _, mp := range n.Access.MixedPorts {
 			where := "access:" + n.ID
+			if mp.ManagedAutomatic() {
+				automaticPorts = append(automaticPorts, mp.Port)
+			}
 			switch {
-			case mp.ByService() && mp.Declaration != "":
+			case mp.ManagedAutomatic() && mp.ExplicitOverride():
 				fs.add("§4.5 服务", where,
 					"端口 %d 同时设了 services 和 declaration —— 一个端口要么按 host "+
 						"反查服务,要么钉在一条声明上,不能既是又是", mp.Port)
-			case !mp.ByService() && mp.Declaration == "":
+			case !mp.ManagedAutomatic() && !mp.ExplicitOverride():
 				fs.add("§4.5 服务", where,
 					"端口 %d 既没绑声明也没开 services —— 它不会路由任何流量", mp.Port)
-			case mp.ByService() && len(s.Services) == 0:
+			case mp.ManagedAutomatic() && len(s.Services) == 0:
 				fs.add("§4.5 服务", where,
 					"端口 %d 按服务分流,但一个服务都没声明 —— 所有流量都会落到兜底", mp.Port)
 			}
+		}
+		if len(automaticPorts) > 1 {
+			sort.Ints(automaticPorts)
+			fs.add("§4.5 服务", "access:"+n.ID,
+				"中控托管的 service-aware mixed 主入口只能有一个,当前声明了端口 %v —— "+
+					"多个入口语义相同,会迫使应用做无意义的端口选择", automaticPorts)
 		}
 	}
 }
