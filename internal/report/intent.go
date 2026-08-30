@@ -25,6 +25,7 @@ func expectedConfigFromSSOT(s *model.SSOT) *Config {
 			From: s.Tunnels[i].From, To: s.Tunnels[i].To,
 		})
 	}
+	cfg.ExpectedDirectLinks = ExpectedDirectLinksForSSOT(s)
 	for _, access := range s.AccessNodes() {
 		cfg.ExpectedRoutes = append(cfg.ExpectedRoutes, ExpectedRoutesForAccess(s, access)...)
 	}
@@ -40,6 +41,49 @@ func expectedConfigFromSSOT(s *model.SSOT) *Config {
 		return a < b
 	})
 	return cfg
+}
+
+// ExpectedDirectLinksForSSOT derives the no-secret inventory shared by the
+// renderer and the control UI's live SSOT projection. Keeping it here prevents
+// a just-saved/current SSOT view from dropping links that are present in the
+// applied report config.
+func ExpectedDirectLinksForSSOT(s *model.SSOT) []ExpectedDirectLink {
+	if s == nil {
+		return nil
+	}
+	var inner []*model.Node
+	for i := range s.Nodes {
+		n := &s.Nodes[i]
+		runsSingBox := n.IsAccess() || (n.IsServer() && n.Server.InboundPort > 0)
+		if n.Decommission || !n.MeshEligible() || !runsSingBox {
+			continue
+		}
+		inner = append(inner, n)
+	}
+	sort.Slice(inner, func(i, j int) bool { return inner[i].ID < inner[j].ID })
+
+	var out []ExpectedDirectLink
+	for i := 0; i < len(inner); i++ {
+		for j := i + 1; j < len(inner); j++ {
+			a, b := inner[i], inner[j]
+			from, to := a, b
+			switch {
+			case b.PubliclyDialable() && b.Server.InboundProtocol.Or() == model.Hysteria2:
+				// Stable default: lexical a -> b.
+			case a.PubliclyDialable() && a.Server.InboundProtocol.Or() == model.Hysteria2:
+				from, to = b, a
+			default:
+				continue
+			}
+			out = append(out, ExpectedDirectLink{
+				From: from.ID, To: to.ID, Transport: "hysteria2", Carrier: "public",
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].From+"\x00"+out[i].To < out[j].From+"\x00"+out[j].To
+	})
+	return out
 }
 
 // ExpectedRoutesForAccess mirrors the selectors the current L4 Agent can

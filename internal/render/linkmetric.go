@@ -2,9 +2,9 @@ package render
 
 import (
 	"fmt"
-	"sort"
 
 	"loom/internal/model"
+	"loom/internal/report"
 )
 
 // LinkMetricReflectorPort is the isolated report reflector.  Unlike 61802 it
@@ -35,38 +35,11 @@ func (p hy2LinkProbePlan) proxyAddr() string {
 // direction; the UI renders the pair as one undirected curve and discloses the
 // measured direction in its detail text.
 func hy2LinkProbePlans(s *model.SSOT) []hy2LinkProbePlan {
-	if s == nil {
-		return nil
+	expected := report.ExpectedDirectLinksForSSOT(s)
+	out := make([]hy2LinkProbePlan, 0, len(expected))
+	for _, link := range expected {
+		out = append(out, hy2LinkProbePlan{From: link.From, To: link.To})
 	}
-	var inner []*model.Node
-	for i := range s.Nodes {
-		n := &s.Nodes[i]
-		if n.Decommission || !n.MeshEligible() || !runsSingBox(n) {
-			continue
-		}
-		inner = append(inner, n)
-	}
-	sort.Slice(inner, func(i, j int) bool { return inner[i].ID < inner[j].ID })
-
-	var out []hy2LinkProbePlan
-	for i := 0; i < len(inner); i++ {
-		for j := i + 1; j < len(inner); j++ {
-			a, b := inner[i], inner[j]
-			from, to := a, b
-			switch {
-			case b.PubliclyDialable() && b.Server.InboundProtocol.Or() == model.Hysteria2:
-				// Stable default: lexical a -> b.
-			case a.PubliclyDialable() && a.Server.InboundProtocol.Or() == model.Hysteria2:
-				from, to = b, a
-			default:
-				continue
-			}
-			out = append(out, hy2LinkProbePlan{From: from.ID, To: to.ID})
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].From+"\x00"+out[i].To < out[j].From+"\x00"+out[j].To
-	})
 	for i := range out {
 		out[i].Port = Hy2LinkProbePortBase + i
 	}

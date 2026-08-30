@@ -174,6 +174,42 @@ func TestEnrichControlViewRebuildsIntentFromCurrentSSOT(t *testing.T) {
 	}
 }
 
+func TestEnrichControlViewKeepsCurrentSSOTDirectHy2Metrics(t *testing.T) {
+	s := &model.SSOT{Nodes: []model.Node{
+		{ID: "gz02", PublicEndpoint: "gz.example", Server: &model.ServerRole{
+			Direction: model.Bidirectional, InboundPort: 61698,
+		}},
+		{ID: "hz01", PublicEndpoint: "hz.example", Server: &model.ServerRole{
+			Direction: model.Bidirectional, InboundPort: 61698,
+		}},
+		{ID: "jm24", Server: &model.ServerRole{Direction: model.Bidirectional},
+			Access: &model.AccessRole{Platform: model.LinuxServer}},
+	}}
+	v := webui.View{Nodes: []webui.NodeView{
+		{ID: "gz02", VerifiedLinkMetrics: []webui.VerifiedLinkMetricView{{
+			PeerNode: "hz01", Transport: "hysteria2", Carrier: "public",
+			RTTMS: 32, P50MS: 30, P95MS: 34, Samples: 3,
+		}}},
+		{ID: "hz01"},
+		{ID: "jm24", VerifiedLinkMetrics: []webui.VerifiedLinkMetricView{
+			{PeerNode: "gz02", Transport: "hysteria2", Carrier: "public", RTTMS: 43, Samples: 2},
+			{PeerNode: "hz01", Transport: "hysteria2", Carrier: "public", RTTMS: 34, Samples: 2},
+		}},
+	}}
+
+	enrichControlView(&v, s, "jm24")
+	got := map[string]webui.LinkView{}
+	for _, link := range v.Links {
+		if link.Kind == "direct-hy2" {
+			got[link.ObservedFrom+"→"+link.ObservedTo] = link
+		}
+	}
+	if len(got) != 3 || got["gz02→hz01"].MS != 32 ||
+		got["jm24→gz02"].MS != 43 || got["jm24→hz01"].MS != 34 {
+		t.Fatalf("current SSOT projection dropped direct Hy2 inventory or metrics: %+v", v.Links)
+	}
+}
+
 func TestEnrichControlViewKeepsRemovedRuntimeNodeButMarksItUndeclared(t *testing.T) {
 	s := &model.SSOT{Nodes: []model.Node{{ID: "current"}}}
 	v := webui.View{Nodes: []webui.NodeView{
