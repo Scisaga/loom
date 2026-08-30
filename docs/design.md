@@ -413,8 +413,9 @@ Path = 接入节点 → [服务器₁ → 服务器₂ → …] → 目标地址
 > 真机验证(2026-08-23)，实测同一个入口的三个目标可以走三条路，baidu 从
 > 1.464s 降到 0.066s。生产 Linux 已于 2026-08-30 收敛为 1080 一个中控托管
 > 入口，1081–1083 不再监听；固定 SG/DE 也由 Service 在中控选择，不再由
-> 客户端端口选择。底层已支持 managed mixed/TUN 复用 `default_declaration`，但
-> 现网 SSOT 未设置设备默认出口，客户端写 API 与 Windows/Android 宿主也未完成。
+> 客户端端口选择。底层已支持 managed mixed/TUN 复用 `default_declaration`，中控
+> 运维 API 已实现授权选项查询与 revision 写入；现网 SSOT 未设置设备默认出口，
+> 设备身份 API 与 Windows/Android 宿主仍未完成。
 
 #### 应用照常请求 URL，Loom UI 不重复选择每个请求的目标
 
@@ -839,8 +840,9 @@ Linux Server 没有 TUN，所以用只监听回环的 `1080` mixed 承载日常�
 已明确指定的请求仍按 Service 走，不会被设备默认覆盖。
 
 当前代码已经实现这条优先级的模型、严格校验、sing-box 渲染与中控只读投影。
-尚未实现的是客户端可写 API、设备授权选项查询以及 Windows/Android UI；因此当前
-只能由 SSOT 管理员设置 `default_declaration`，不能宣称客户端选择流程已经交付。
+中控运维 API 也已实现授权选项查询、revision 冲突保护和 SSOT 原子写入；它只接受
+运维会话。尚未实现的是设备公钥认证 API 以及 Windows/Android UI，因此不能宣称
+客户端选择流程已经交付，也不能让客户端保存运维口令。
 
 v1 matcher 只使用接管层真实可见且能稳定渲染的事实：Windows 使用 domain/IP，
 Android 可再用 package 缩小范围；Linux mixed 使用代理请求可见的 domain/IP。
@@ -2514,7 +2516,7 @@ Node                           # §1 —— Loom 管的机器。目标地址不�
     platform                   # android | desktop | linux-server(§7.2)
     credentials[]              # §8.2
     mixed_ports[]              # managed 1080；固定声明端口仅限 Linux 兼容/高级覆盖
-    default_declaration?       # 设备默认出口；Service 优先，managed mixed/TUN 未命中时使用
+    default_declaration?       # 设备默认出口；必须 from_request，Service 优先，未命中时使用
 
   # 没有 capabilities 字段 —— 由哪个块存在推导;两个都有也合法(§1.3)。
   # 没有 target 能力 —— 出口是位置不是类型(§1.1)。

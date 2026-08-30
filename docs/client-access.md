@@ -1,6 +1,6 @@
 # Loom · 客户端接入设计
 
-> **状态:** 设计生效；底层模型/校验/渲染已实现，客户端设置 API 与宿主待实现
+> **状态:** 设计生效；底层路由与中控运维 API 已实现，设备认证 API 与客户端宿主待实现
 >
 > **日期:** 2026-08-30
 >
@@ -68,8 +68,9 @@
 Service 的流量仍然阻断。
 Windows/Android 客户端与对应渲染迁移尚未完成；后续迁移仍必须保留旧端口原语义
 或显式下线，不能把既有端口静默改成另一条规则。
-客户端提交默认出口的控制面 API、设备授权列表和 Windows/Android 选择界面仍未
-实现；不能把底层字段可渲染误写成客户端功能已经交付。
+中控已经提供需要运维会话的默认出口查询/写入 API：它返回设备授权选项，以 revision
+保护 SSOT 原子更新。它不是设备 API；设备身份、注册和重放防护完成前，Windows/
+Android 客户端不能携带运维口令调用它。客户端选择界面也仍未实现。
 当前结构化 Service 与数据面只实现 exact hostname 和 `.suffix`；本文后续的 Windows
 IP/CIDR 与 Android package matcher 是 v1 目标，尚未进入 SSOT 模型、校验或渲染，
 不能把界面原型当成已交付能力。
@@ -169,6 +170,29 @@ unrestricted direct 或开放代理。
 且 revision 未过期 → 写入设备 `access.default_declaration` → 常规发布器生成新的签名
 快照 → 客户端 pull 并原子应用。提交失败或离线时继续使用最后一份已验证配置，不能
 先在本地生效、以后再补记中控。
+
+### 4.7 当前服务端接口与设备接口边界
+
+当前中控实现的是运维端点：
+
+```text
+GET /api/control/default-exit?node=<node_id>
+PUT /api/control/default-exit
+Content-Type: application/json
+
+{"node":"win01","declaration":"de-fixed","revision":"<sha256>"}
+```
+
+GET 返回 `node`、当前 SSOT `revision`、当前默认策略和授权选项。每个选项只有
+`id/name/mode/available`，不返回凭据、候选链、节点 IP 或完整拓扑；`id=""`、
+`mode="none"` 表示未匹配即阻断。PUT 只接受 GET 返回且 `available=true` 的策略，
+旧 revision 返回 HTTP 409，未知字段、任意节点/IP 或无权策略均被拒绝。成功写入
+`access.default_declaration` 后，仍由现有发布器生成签名快照。
+
+端点只接受中控的 SameSite 运维会话，并要求 JSON PUT；当前没有 CORS，也不接受
+数据面凭据充当控制面身份。这足够先完成和测试服务端事务，但 Windows 客户端不能
+把运维 cookie 当正式认证。设备 API 将复用相同的状态/校验模型，另加设备公钥认证、
+请求 nonce/时间窗、节点绑定和审计。
 
 ---
 
@@ -304,6 +328,16 @@ v1 产品形态是 Windows Service + TUN + 一个同规则 mixed；托盘 UI 可
 Windows 睡眠或网络切换后应重新探测，但沿用切换阻尼，不能把一次 Wi-Fi 重连当作
 配置失效。服务升级与配置更新是两条流程：配置走 Loom 签名快照；程序升级走签名
 安装包并保留可恢复版本。
+
+**当前 Linux 开发环境的边界：** 可以开发共享 Go 核心、默认出口 API 客户端、
+签名 pull/回滚状态机和本地控制协议，也可以为这些纯 Go 组件做 Windows 交叉编译。
+现有 `cmd/loom` 是包含接入、发布和 Linux Agent 的全量控制程序，仍依赖 `flock`、
+`O_NOFOLLOW`、`Stat_t` 等 Unix 接口，不能直接作为 Windows 客户端交叉编译；Windows
+实现应新增依赖收敛的独立程序入口，而不是把全量控制端搬过去。本机目前没有 .NET
+SDK、MinGW、Wine、NSIS 或代码签名工具，因此不能在这里完成 WinUI/WPF 托盘界面、
+Windows Service 实机注册、TUN/WinTun 权限、睡眠恢复、安装器和 Authenticode
+验证。合理流程是 Linux 完成共享核心、独立 Windows 程序入口和单元测试，再由
+Windows VM/实体机跑集成测试与签名打包。
 
 ### 8.3 Android
 
@@ -595,7 +629,8 @@ Android 签名密钥是应用升级身份，必须备份和严格控制；丢失
 3. mTLS 何时进入客户端稳态通道，以及设备证书的签发和吊销格式；
 4. 客户端规模是否仍是少量自建固定设备；若面向多用户，设备库存和授权关系不能
    继续全部塞进拓扑 SSOT，需要独立的设备/租户模型。
-5. 客户端默认出口写 API 的设备认证、CSRF/重放防护与 revision 冲突响应格式。
+5. 客户端默认出口设备 API 的公钥认证、nonce/时间窗与审计格式；运维 API 已用
+   SameSite 会话、JSON PUT 和 revision 冲突保护固定服务端事务语义。
 
 v1 已明确只提供设备默认出口这一项受控偏好，不提供 matcher、Service、声明定义、
 fallback 或同域名多账号 profile 的本地编辑。若后续要引入这些能力，必须新增模型、

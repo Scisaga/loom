@@ -207,6 +207,22 @@ services:
   - {id: known, declaration: d1, addresses: [known.example]}`,
 		},
 		{
+			name: "§4.5 设备默认出口不能改写到等价类地址",
+			want: "address_axis 不是 from_request",
+			yaml: topo + `  - {id: p1, access: {platform: linux-server, credentials: [cr1], default_declaration: d1, mixed_ports: [{port: 1080, services: true}]}}
+equivalence_classes:
+  - id: eq1
+    output_contract: same
+    carrier: l4_direct
+    observation_point: endpoint
+    members:
+      - {address: "https://192.0.2.10", access_contract: {domain: managed.example}}
+declarations:
+  - {id: d1, address_axis: "class:eq1", egress_axis: any, objective: stability, probe_url: "https://probe.example/", tuning_period: 10m}
+credentials:
+  - {id: cr1, declaration: d1, secret_ref: v1}`,
+		},
+		{
 			name: "§7.2 桌面多凭据可以显式选择无默认出口",
 			want: "",
 			yaml: topo + `  - {id: p1, access: {platform: desktop, credentials: [cr1, cr2], mixed_ports: [{port: 1080, declaration: d1}]}}

@@ -2711,7 +2711,7 @@ profile、SDK 或 L7 代理可以解决，但会新增身份、凭据和选择�
 
 ### D95 · 设备默认出口是唯一客户端偏好并复用现有入口
 
-**日期** 2026-08-30 · **状态** 设计与底层渲染生效，客户端写 API/UI 待实现 · **相关** D94、§4.5、§7.3、§8.2、[客户端接入设计](client-access.md)
+**日期** 2026-08-30 · **状态** 底层与中控运维 API 已实现，设备身份 API/UI 待实现 · **相关** D94、§4.5、§7.3、§8.2、[客户端接入设计](client-access.md)
 
 D94 的一个中控托管入口保持不变，但“客户端完全不能选择出口”过于严格。实际场景
 同时需要两层意图：明确 URL/domain/package 命中 Service 时由中控规则决定；没有
@@ -2734,3 +2734,9 @@ Service 的 catch-all 出站。
 matcher、Service、声明定义、fallback 与候选集仍只由中控管理，客户端只读展示。
 同域名多账号 profile 仍不在 v1。v1 客户端范围是 Windows、Linux Server 与
 Android；Linux Desktop 暂不设计或交付。
+
+服务端先实现 `/api/control/default-exit`：只接受中控运维会话，返回最小授权选项，
+并用 SSOT 内容 revision、进程锁、跨进程文件锁、完整校验和原子替换完成写入。它
+刻意不是客户端认证端点；Windows/Android 不得保存运维口令，设备公钥认证、重放
+防护和节点绑定将在注册模型落地后包住同一个事务层。默认声明还必须使用
+`address_axis: from_request`，否则会把任意未匹配请求错误改写到等价类地址。

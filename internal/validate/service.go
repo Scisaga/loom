@@ -376,9 +376,15 @@ func checkAccessNodes(
 			hasManagedInbound = hasManagedInbound || mp.ManagedAutomatic()
 		}
 		if p.Access.DefaultDeclaration != "" {
-			if _, ok := decls[p.Access.DefaultDeclaration]; !ok {
+			defaultDecl, ok := decls[p.Access.DefaultDeclaration]
+			if !ok {
 				fs.add("§7.2 默认出口", where,
 					"default_declaration 引用了不存在的访问声明 %q", p.Access.DefaultDeclaration)
+			} else if !defaultDecl.AddressFromRequest() {
+				fs.add("§4.5 默认出口", where,
+					"default_declaration=%q 的 address_axis 不是 from_request —— "+
+						"设备默认出口只能转发原请求，不能把未匹配流量改写到等价类地址",
+					p.Access.DefaultDeclaration)
 			}
 			if !authorizedDeclarations[p.Access.DefaultDeclaration] {
 				fs.add("§8.2 默认出口", where,

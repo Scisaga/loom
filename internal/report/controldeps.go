@@ -104,6 +104,42 @@ func controlDeps(c *Control) *webui.ControlDeps {
 			return saveSSOTAtomicFromSnapshot(c.SSOTPath, next, snapshot)
 		})
 	}
+	mutateDefaultExit := func(nodeID, declaration, expected string) (webui.DefaultExitState, error) {
+		saveMu.Lock()
+		defer saveMu.Unlock()
+		var state webui.DefaultExitState
+		err := withSSOTLock(c.SSOTPath, func() error {
+			snapshot, err := readSSOTSnapshot(c.SSOTPath)
+			if err != nil {
+				return fmt.Errorf("读取 SSOT:%w", err)
+			}
+			if err := guardRevision(snapshot.body, expected); err != nil {
+				return err
+			}
+			current, err := defaultExitStateFromContent(snapshot.body, nodeID, revision(snapshot.body))
+			if err != nil {
+				return err
+			}
+			declaration = strings.TrimSpace(declaration)
+			if err := selectableDefaultExit(current, declaration); err != nil {
+				return err
+			}
+			if current.Current == declaration {
+				state = current
+				return nil
+			}
+			next, err := ssotedit.SetAccessDefaultDeclaration(snapshot.body, nodeID, declaration)
+			if err != nil {
+				return err
+			}
+			if err := saveSSOTAtomicFromSnapshot(c.SSOTPath, next, snapshot); err != nil {
+				return err
+			}
+			state, err = defaultExitStateFromContent(next, nodeID, revision(next))
+			return err
+		})
+		return state, err
+	}
 	bootstrap := enrollkey.Manager{PrivatePath: c.BootstrapSSHKey}
 	bootstrapView := func(ensure bool) (webui.BootstrapIdentityView, error) {
 		var status enrollkey.Status
@@ -176,6 +212,16 @@ func controlDeps(c *Control) *webui.ControlDeps {
 			Delete: func(id, expected string) error {
 				return mutateService(nil, id, expected)
 			},
+		},
+		DefaultExits: &webui.DefaultExitControlDeps{
+			Get: func(nodeID string) (webui.DefaultExitState, error) {
+				content, err := read()
+				if err != nil {
+					return webui.DefaultExitState{}, err
+				}
+				return defaultExitStateFromContent(content, nodeID, revision(content))
+			},
+			Set: mutateDefaultExit,
 		},
 		BootstrapIdentity: &webui.BootstrapIdentityDeps{
 			Status: func() (webui.BootstrapIdentityView, error) { return bootstrapView(false) },

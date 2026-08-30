@@ -21,6 +21,8 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -126,6 +128,9 @@ type ControlDeps struct {
 	// Services 是保留 YAML 注释/顺序的结构化 Service 事务。Policy 仍通过
 	// 完整 SSOT 编辑器修改，避免用一个不完整表单悄悄丢约束字段。
 	Services *ServiceControlDeps
+	// DefaultExits 是设备默认出口的中控事务。当前 HTTP 边界只接受运维会话；
+	// Windows/Android 设备身份尚未落地前，不能把它直接暴露成客户端写接口。
+	DefaultExits *DefaultExitControlDeps
 	// BootstrapIdentity 是中控范围唯一的 SSH bootstrap 身份。节点接入只
 	// 复用其公钥；私钥永不通过这个接口返回。
 	BootstrapIdentity *BootstrapIdentityDeps
@@ -146,6 +151,27 @@ type ServiceControlDeps struct {
 type ServiceInput struct {
 	ID, Name, Declaration string
 	Addresses             []string
+}
+
+type DefaultExitControlDeps struct {
+	Get func(nodeID string) (DefaultExitState, error)
+	Set func(nodeID, declaration, expectedRevision string) (DefaultExitState, error)
+}
+
+// DefaultExitState 是控制端点给管理 UI/未来设备 API 的最小视图。它不暴露完整
+// 拓扑或凭据；固定策略指向哪个节点仍由中控声明定义。
+type DefaultExitState struct {
+	Node     string              `json:"node"`
+	Revision string              `json:"revision"`
+	Current  string              `json:"current"`
+	Options  []DefaultExitOption `json:"options"`
+}
+
+type DefaultExitOption struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Mode      string `json:"mode"`
+	Available bool   `json:"available"`
 }
 
 type BootstrapIdentityDeps struct {
@@ -849,6 +875,74 @@ func Handler(d Deps) http.Handler {
 		}
 		writeHTML(w, pageTopology(d, authed(d, r), strings.TrimSpace(r.URL.Query().Get("entry"))))
 	})
+	mux.HandleFunc("/api/control/default-exit", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if !authed(d, r) {
+			writeJSONError(w, http.StatusUnauthorized, "需要中控运维会话")
+			return
+		}
+		if d.Control == nil || d.Control.DefaultExits == nil {
+			writeJSONError(w, http.StatusNotImplemented, "这台机器没有设备默认出口管理能力")
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			nodeID := strings.TrimSpace(r.URL.Query().Get("node"))
+			if nodeID == "" || len(nodeID) > 128 {
+				writeJSONError(w, http.StatusBadRequest, "node 必填且不能超过 128 字节")
+				return
+			}
+			state, err := d.Control.DefaultExits.Get(nodeID)
+			if err != nil {
+				writeJSONError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, state)
+		case http.MethodPut:
+			mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+			if err != nil || mediaType != "application/json" {
+				writeJSONError(w, http.StatusUnsupportedMediaType, "Content-Type 必须是 application/json")
+				return
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+			dec := json.NewDecoder(r.Body)
+			dec.DisallowUnknownFields()
+			var input struct {
+				Node        string `json:"node"`
+				Declaration string `json:"declaration"`
+				Revision    string `json:"revision"`
+			}
+			if err := dec.Decode(&input); err != nil {
+				writeJSONError(w, http.StatusBadRequest, "JSON 无法解析:"+err.Error())
+				return
+			}
+			if err := dec.Decode(&struct{}{}); err != io.EOF {
+				writeJSONError(w, http.StatusBadRequest, "请求体只能包含一个 JSON 对象")
+				return
+			}
+			input.Node = strings.TrimSpace(input.Node)
+			input.Declaration = strings.TrimSpace(input.Declaration)
+			input.Revision = strings.TrimSpace(input.Revision)
+			if input.Node == "" || len(input.Node) > 128 || len(input.Declaration) > 128 || input.Revision == "" {
+				writeJSONError(w, http.StatusBadRequest, "node、revision 必填，字段不能超过 128 字节")
+				return
+			}
+			state, err := d.Control.DefaultExits.Set(input.Node, input.Declaration, input.Revision)
+			if err != nil {
+				status := http.StatusBadRequest
+				if strings.Contains(err.Error(), "SSOT 已被其他操作修改") {
+					status = http.StatusConflict
+				}
+				writeJSONError(w, status, err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, state)
+		default:
+			w.Header().Set("Allow", "GET, PUT")
+			writeJSONError(w, http.StatusMethodNotAllowed, "只接受 GET 或 PUT")
+		}
+	})
 	mux.HandleFunc("/services", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
@@ -1237,6 +1331,18 @@ func authed(d Deps, r *http.Request) bool {
 	}
 	exp, err := strconv.ParseInt(body, 10, 64)
 	return err == nil && d.Now().Unix() < exp
+}
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func writeJSONError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, struct {
+		Error string `json:"error"`
+	}{Error: message})
 }
 
 func writeHTML(w http.ResponseWriter, body string) {
