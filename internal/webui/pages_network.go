@@ -294,8 +294,8 @@ func pageRouting(d Deps, isAuthed bool, selectedEntry ...string) string {
 		}
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, `<div class=grid><div class="card span4"><div class=label>Automatic Agent decisions</div><div class=metric>%d</div><div class=dim>read-only runtime observations · generated from managed rules</div></div><div class="card span4"><div class=label>Fresh</div><div class="metric ok">%d <small>/ %d</small></div><div class=dim>each decision has its own signed timestamp</div></div><div class="card span4"><div class=label>Inventory candidates</div><div class=metric>%d</div><div class=dim>%s · evaluated by Agent, not selected by clients</div></div></div>`, len(v.Routes), fresh, len(v.Routes), len(v.Candidates), esc(intentSource))
-	b.WriteString(`<div class=section><div class=sectionhead><h2>Automatic routing scopes</h2><span class=dim>Host → Service → Policy creates each scope; the access Agent continuously chooses its current route.</span></div><nav class=routing-entry-grid aria-label="Automatic routing scopes">`)
+	fmt.Fprintf(&b, `<div class="grid routing-summary"><div class="card span4"><div class=label>Automatic Agent decisions</div><div class=metric>%d</div><div class=dim>read-only runtime observations · generated from managed rules</div></div><div class="card span4"><div class=label>Fresh</div><div class="metric ok">%d <small>/ %d</small></div><div class=dim>each decision has its own signed timestamp</div></div><div class="card span4"><div class=label>Inventory candidates</div><div class=metric>%d</div><div class=dim>%s · evaluated by Agent, not selected by clients</div></div></div>`, len(v.Routes), fresh, len(v.Routes), len(v.Candidates), esc(intentSource))
+	b.WriteString(`<div class="section routing-scopes"><div class=sectionhead><h2>Automatic routing scopes</h2><span class=dim>Host → Service → Policy creates each scope; the access Agent continuously chooses its current route.</span></div><nav class=routing-entry-grid aria-label="Automatic routing scopes">`)
 	for _, entry := range entries {
 		className, current := "routing-entry-card", ""
 		if entry.Key == selected {
@@ -319,7 +319,7 @@ func pageRouting(d Deps, isAuthed bool, selectedEntry ...string) string {
 		fmt.Fprintf(&b, `<a class="%s" href="/routing?entry=%s"%s><span><b>%s</b><small>%s</small></span><span class=mono>%s</span><span class="tiny %s">%s · View evidence</span></a>`, className, queryEscape(entry.Key), current, esc(name), esc(meta), esc(path), stateClass, esc(state))
 	}
 	b.WriteString(`</nav></div>`)
-	b.WriteString(`<div class=card><div class=sectionhead><h2>Current automatic decision</h2><span class=dim>Read-only selector state reported by the access Agent; it is not a client path choice.</span>`)
+	b.WriteString(`<div class="card routing-decision-card"><div class="sectionhead routing-decision-head"><h2>Current automatic decision</h2><span class=dim>Read-only selector state reported by the access Agent; it is not a client path choice.</span>`)
 	if len(routes) > 0 {
 		b.WriteString(`<span class=sp><a class=tiny href="/topology?entry=` + queryEscape(selected) + `">Inspect in topology →</a></span>`)
 	}
@@ -327,11 +327,11 @@ func pageRouting(d Deps, isAuthed bool, selectedEntry ...string) string {
 	if len(routes) == 0 {
 		b.WriteString(`<div class=empty>No verifiable current Agent decisions are available. Historical events are not used as current state.</div>`)
 	} else {
-		b.WriteString(`<table><tr><th>Access node<th>Managed rule<th>Agent-selected path<th>Candidate health<th>Observed / source<th>Reason</tr>`)
+		b.WriteString(`<table class=routing-decision-table><tr><th>Access node<th>Managed rule<th>Agent-selected path<th>Candidate health<th>Observed / source<th>Reason</tr>`)
 		for _, r := range routes {
 			path := automaticRoutePath(r)
 			entry := overviewRouteName(v, r) + " · " + automaticRouteMeta(r)
-			cls := "ok"
+			cls := "route-text"
 			if r.Stale {
 				cls = "warn"
 			}
@@ -340,9 +340,9 @@ func pageRouting(d Deps, isAuthed bool, selectedEntry ...string) string {
 		}
 		b.WriteString(`</table>`)
 	}
-	b.WriteString(`</div></div>`)
+	b.WriteString(`</div>`)
 
-	b.WriteString(`<div class=section><div class=sectionhead><h2>Agent candidate set for this rule</h2><span class=dim>Generated from SSOT and evaluated automatically; these are not client-selectable paths.</span></div><div class=card>`)
+	b.WriteString(`<div class="section routing-candidates"><div class=sectionhead><h2>Agent candidate set for this rule</h2><span class=dim>Generated from SSOT and evaluated automatically; these are not client-selectable paths.</span></div><div class="card routing-candidate-card">`)
 	if len(candidatesForEntry) == 0 {
 		b.WriteString(`<div class=empty>No configured candidate paths are available for this routing entry.</div>`)
 	} else {

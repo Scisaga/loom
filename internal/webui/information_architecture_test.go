@@ -236,6 +236,7 @@ func TestLivePathsPresentsRulesAsAutomaticReadOnlyDecisions(t *testing.T) {
 		"Automatic routing scopes", "Current automatic decision",
 		"not a client path choice", "not client-selectable paths",
 		"International APIs", "jm24 → sg02", "Inspect in topology",
+		"routing-summary", "routing-decision-card", "routing-decision-table", "route-text",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("Live paths automatic routing semantics are missing %q", want)
@@ -245,6 +246,9 @@ func TestLivePathsPresentsRulesAsAutomaticReadOnlyDecisions(t *testing.T) {
 		if strings.Contains(body, unwanted) {
 			t.Errorf("Live paths still presents a routing decision as a picker %q", unwanted)
 		}
+	}
+	if strings.Contains(body, `</table></div></div><div class="section routing-candidates">`) {
+		t.Fatal("Live paths closes the main content container before the candidate section")
 	}
 }
 
