@@ -679,7 +679,7 @@ func topologySVG(v View, routeOverlay ...RouteView) string {
 		// A zero-hop decision has no topology edge. Mark the access node with a
 		// compact endpoint badge instead of drawing a synthetic short arrow: a
 		// local exit is a terminal state, not another hop or hidden target node.
-		fmt.Fprintf(&b, `<g class=route-local-exit transform="translate(%.1f %.1f)"><title>%s exits locally</title><rect width=70 height=19 rx=9.5 fill="#f5f7fc" stroke="#b9c9e9"/><circle cx=10 cy=9.5 r=3 fill="#466fc2"/><text x=18 y=13 fill="#466fc2" font-family="Inter,ui-sans-serif,system-ui" font-size=8.5 font-weight=700>LOCAL EXIT</text></g>`, p.x+14, p.y+10, esc(id))
+		fmt.Fprintf(&b, `<g class=route-local-exit transform="translate(%.1f %.1f)"><title>%s exits locally</title><rect width=82 height=19 rx=9.5 fill="#f5f7fc" stroke="#b9c9e9"/><circle cx=10 cy=9.5 r=3 fill="#466fc2"/><text x=18 y=13 fill="#466fc2" font-family="Inter,ui-sans-serif,system-ui" font-size=8.5 font-weight=700>LOCAL EXIT</text></g>`, p.x+14, p.y+10, esc(id))
 	}
 	b.WriteString(metricLabels.String())
 	for _, id := range ids {

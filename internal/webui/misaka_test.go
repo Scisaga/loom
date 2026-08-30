@@ -181,6 +181,7 @@ func TestDirectRouteOverlayHighlightsItsLocalEgressNode(t *testing.T) {
 	if !strings.Contains(topology, `class=route-ring`) ||
 		!strings.Contains(topology, `class="node selected"`) ||
 		!strings.Contains(topology, `class=route-local-exit`) ||
+		!strings.Contains(topology, `width=82 height=19`) ||
 		!strings.Contains(topology, `>LOCAL EXIT</text>`) {
 		t.Fatalf("direct route did not highlight jm24 as its local egress: %s", topology)
 	}
