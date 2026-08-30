@@ -580,3 +580,16 @@ func TestDistributionMirrorListRejectsAmbiguityAndDuplicates(t *testing.T) {
 		t.Fatalf("等价镜像重复未被拒绝:%s", got)
 	}
 }
+
+func TestCountryUsesCanonicalAlpha2Representation(t *testing.T) {
+	s := &model.SSOT{Nodes: []model.Node{{
+		ID: "edge", Country: "hk", Server: &model.ServerRole{Direction: model.Bidirectional},
+	}}}
+	if got := Format(Validate(s)); !strings.Contains(got, "country") || !strings.Contains(got, "ISO 3166-1") {
+		t.Fatalf("non-canonical country was not rejected: %s", got)
+	}
+	s.Nodes[0].Country = "HK"
+	if got := Format(Validate(s)); strings.Contains(got, "country") {
+		t.Fatalf("canonical country was rejected: %s", got)
+	}
+}

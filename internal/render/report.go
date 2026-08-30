@@ -121,6 +121,20 @@ func renderReport(s *model.SSOT, n *model.Node) ([]File, []Skip) {
 		// 约 180 秒。5 分钟留足余量,又能在一个 Agent 周期内发现真断连。
 		HandshakeStale: "5m",
 	}
+	for _, plan := range hy2LinkProbePlans(s) {
+		cfg.ExpectedDirectLinks = append(cfg.ExpectedDirectLinks, report.ExpectedDirectLink{
+			From: plan.From, To: plan.To, Transport: "hysteria2", Carrier: "public",
+		})
+		if plan.From == n.ID {
+			cfg.LinkProbes = append(cfg.LinkProbes, report.LinkProbe{
+				Peer: plan.To, ProxyAddr: plan.proxyAddr(),
+				Transport: "hysteria2", Carrier: "public",
+			})
+		}
+		if plan.To == n.ID {
+			cfg.LinkReflector = true
+		}
+	}
 	versions := s.VersionsFor(n)
 	if runsSingBox(n) {
 		cfg.ExpectedComponents.SingBox = versions.SingBox

@@ -39,10 +39,10 @@ h2{font-size:13px;margin:0 0 12px;color:var(--dim);font-weight:700;letter-spacin
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px;min-width:0}.card.soft{background:var(--card2)}.metric{font-size:24px;font-weight:720;line-height:1.15;margin:5px 0}.metric small{font-size:13px;color:var(--dim);font-weight:500}.label{font-size:11px;color:var(--dim);letter-spacing:.04em;text-transform:uppercase}
 .section{margin-top:22px}.sectionhead{display:flex;align-items:center;gap:12px;margin:0 0 10px}.sectionhead h2{margin:0}.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.split{display:grid;grid-template-columns:minmax(280px,1fr) minmax(0,2fr);gap:14px}.stack{display:grid;gap:14px}
 table{border-collapse:collapse;width:100%;margin:0}td,th{text-align:left;padding:10px 10px 10px 0;border-bottom:1px solid var(--line);vertical-align:top;white-space:nowrap}tr:last-child td{border-bottom:0}th{color:var(--dim);font-weight:650;font-size:10px;letter-spacing:.06em;text-transform:uppercase}td.w{white-space:normal}.rowlink:hover{background:#fafcfb}
-.topology{width:100%;min-height:390px;display:block;background:transparent;overflow:visible}.topology path,.topology ellipse{vector-effect:non-scaling-stroke}.topology .topology-ring{fill:none;stroke:#edf0ee;stroke-width:1}.topology .topology-ring.inner{stroke-dasharray:3 5}.topology .ring-key{fill:var(--dim);font:500 9px Inter,ui-sans-serif,system-ui;letter-spacing:.035em}.topology .ring-dot{fill:#dfe5e1}.topology .topology-edge path{fill:none}.topology .topology-edge,.topology .topology-node,.topology .edge-metric{transition:opacity .16s ease}.topology .tunnel{stroke:#a5aaa8;stroke-width:1.25;opacity:.88;transition:stroke .16s ease,stroke-width .16s ease,opacity .16s ease}.topology .candidate{stroke:#b9bebc;stroke-width:1.25;stroke-dasharray:5 6;opacity:.82;transition:stroke .16s ease,stroke-width .16s ease,opacity .16s ease}.topology .degraded{stroke:#d79b3b}.topology .failed{stroke:#c65a5a}.topology .unknown{stroke:#a5aaa8;stroke-dasharray:3 7;opacity:.62}.topology .edge-hit{stroke:transparent;stroke-width:13;pointer-events:stroke}.topology .topology-edge:hover .tunnel,.topology .topology-edge.is-related .tunnel{stroke:#3f8062;stroke-width:2.35;opacity:1}.topology .topology-edge.is-related .candidate{stroke:#69716d;stroke-width:1.8;opacity:1}.topology.has-focus .topology-edge.is-muted{opacity:.1}.topology.has-focus .topology-node.is-muted{opacity:.2}.topology .edge-metric{opacity:0;pointer-events:none}.topology .edge-metric.is-related{opacity:1}.topology .edge-metric text{fill:#4e5652;stroke:rgba(255,255,255,.96);stroke-width:4px;stroke-linejoin:round;paint-order:stroke;display:block;font:500 8.8px var(--font-mono);font-variant-numeric:tabular-nums}.topology .route{fill:none;stroke:var(--route);stroke-width:2.5;opacity:.96}.topology .route-ring{fill:none;stroke:var(--route);stroke-width:2;opacity:.3}.topology .topology-node{cursor:pointer;outline:none}.topology .node-focus{fill:none;stroke:var(--ok);stroke-width:2;opacity:0;transform-box:fill-box;transform-origin:center;transform:scale(.72);transition:opacity .16s ease,transform .16s ease}.topology .topology-node:hover .node-focus,.topology .topology-node:focus .node-focus,.topology .topology-node.is-preview .node-focus,.topology .topology-node.is-selected .node-focus{opacity:.28;transform:scale(1)}.topology .topology-node.is-selected .node-focus{opacity:.48}.topology .node{fill:var(--ok);stroke:#fff;stroke-width:3}.topology .node.problem{fill:var(--bad)}.topology .node.unknown{fill:#a5aaa8;stroke:#fff;stroke-dasharray:none}.topology .node.undeclared{fill:var(--warn);stroke:#fff}.topology .node.selected{fill:var(--ok);stroke:#fff;stroke-width:3}.topology .node-label{paint-order:stroke;stroke:#fff;stroke-width:4px;stroke-linejoin:round}.topology text{fill:var(--fg);font:500 12px var(--font-mono)}.topology .sub{fill:var(--dim);font:400 10px/1.4 Inter,ui-sans-serif,system-ui}
+.topology{width:100%;min-height:390px;display:block;background:transparent;overflow:visible}.topology path,.topology ellipse{vector-effect:non-scaling-stroke}.topology .topology-ring{fill:none;stroke:#edf0ee;stroke-width:1}.topology .topology-ring.inner{stroke-dasharray:3 5}.topology .ring-key{fill:var(--dim);font:500 9px Inter,ui-sans-serif,system-ui;letter-spacing:.035em}.topology .ring-dot{fill:#dfe5e1}.topology .topology-edge path{fill:none}.topology .topology-edge,.topology .topology-node,.topology .edge-metric{transition:opacity .16s ease}.topology .tunnel{stroke:#a5aaa8;stroke-width:1.25;opacity:.88;transition:stroke .16s ease,stroke-width .16s ease,opacity .16s ease}.topology .direct-hy2{stroke:#4f9b74;stroke-width:1.45;opacity:.9;transition:stroke .16s ease,stroke-width .16s ease,opacity .16s ease}.topology .candidate{stroke:#b9bebc;stroke-width:1.25;stroke-dasharray:5 6;opacity:.82;transition:stroke .16s ease,stroke-width .16s ease,opacity .16s ease}.topology .degraded{stroke:#d79b3b}.topology .failed{stroke:#c65a5a}.topology .unknown{stroke:#a5aaa8;stroke-dasharray:3 7;opacity:.62}.topology .edge-hit{stroke:transparent;stroke-width:13;pointer-events:stroke}.topology .topology-edge:hover .tunnel,.topology .topology-edge.is-related .tunnel,.topology .topology-edge:hover .direct-hy2,.topology .topology-edge.is-related .direct-hy2{stroke:#247b53;stroke-width:2.35;opacity:1}.topology .topology-edge.is-related .candidate{stroke:#69716d;stroke-width:1.8;opacity:1}.topology.has-focus .topology-edge.is-muted{opacity:.1}.topology.has-focus .topology-node.is-muted{opacity:.2}.topology .edge-metric{opacity:0;pointer-events:none}.topology .edge-metric.is-related{opacity:1}.topology .edge-metric text{fill:#4e5652;stroke:rgba(255,255,255,.96);stroke-width:4px;stroke-linejoin:round;paint-order:stroke;display:block;font:500 8.8px var(--font-mono);font-variant-numeric:tabular-nums}.topology .route{fill:none;stroke:var(--route);stroke-width:2.5;opacity:.96}.topology .route-ring{fill:none;stroke:var(--route);stroke-width:2;opacity:.3}.topology .topology-node{cursor:pointer;outline:none}.topology .node-focus{fill:none;stroke:var(--ok);stroke-width:2;opacity:0;transform-box:fill-box;transform-origin:center;transform:scale(.72);transition:opacity .16s ease,transform .16s ease}.topology .topology-node:hover .node-focus,.topology .topology-node:focus .node-focus,.topology .topology-node.is-preview .node-focus,.topology .topology-node.is-selected .node-focus{opacity:.28;transform:scale(1)}.topology .topology-node.is-selected .node-focus{opacity:.48}.topology .node{fill:var(--ok);stroke:#fff;stroke-width:3}.topology .node.problem{fill:var(--bad)}.topology .node.unknown{fill:#a5aaa8;stroke:#fff;stroke-dasharray:none}.topology .node.undeclared{fill:var(--warn);stroke:#fff}.topology .node.selected{fill:var(--ok);stroke:#fff;stroke-width:3}.topology .node-label{paint-order:stroke;stroke:#fff;stroke-width:4px;stroke-linejoin:round}.topology text{fill:var(--fg);font:500 12px var(--font-mono)}.topology .sub{fill:var(--dim);font:400 10px/1.4 Inter,ui-sans-serif,system-ui}
 .topology .node-hit{fill:transparent;stroke:none;pointer-events:all}
-.topology .topology-edge.is-related .tunnel.degraded{stroke:#d79b3b}.topology .topology-edge.is-related .tunnel.failed{stroke:#c65a5a}.topology.has-focus .route{opacity:.14}.topology.has-focus .route-ring{opacity:.08}
-.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;color:var(--dim);font-size:11px}.key{display:inline-block;width:26px;border-top:2px solid #a5aaa8;vertical-align:middle;margin-right:6px}.key.candidate{border-color:#b9bebc;border-top-style:dashed}.key.route{border-color:var(--route);border-width:3px}.key.degraded{border-color:#d79b3b}.key.failed{border-color:#c65a5a}
+.topology .topology-edge.is-related .tunnel.degraded,.topology .topology-edge.is-related .direct-hy2.degraded{stroke:#d79b3b}.topology .topology-edge.is-related .tunnel.failed,.topology .topology-edge.is-related .direct-hy2.failed{stroke:#c65a5a}.topology.has-focus .route{opacity:.14}.topology.has-focus .route-ring{opacity:.08}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;color:var(--dim);font-size:11px}.key{display:inline-block;width:26px;border-top:2px solid #a5aaa8;vertical-align:middle;margin-right:6px}.key.direct-hy2{border-color:#4f9b74}.key.candidate{border-color:#b9bebc;border-top-style:dashed}.key.route{border-color:var(--route);border-width:3px}.key.degraded{border-color:#d79b3b}.key.failed{border-color:#c65a5a}
 .topology-layer-note{display:flex;align-items:flex-start;gap:8px;margin:11px 0 0;padding:9px 11px;border:1px solid var(--line);border-radius:6px;background:var(--card2);color:var(--dim);font-size:11px}.topology-layer-note:before{content:"i";display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:16px;height:16px;border:1px solid var(--line2);border-radius:50%;color:var(--fg);font-size:10px;font-weight:700}.topology-edge-grid{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(340px,.85fr);gap:14px}.topology-edge-card{padding:0;overflow:hidden}.edge-panel-head{display:flex;align-items:flex-start;gap:14px;min-height:72px;padding:14px 16px 12px}.edge-panel-head h3{margin:0;font-size:15px}.edge-panel-head p{margin:2px 0 0;color:var(--dim);font-size:11px}.edge-panel-head .badge{margin-left:auto;white-space:nowrap}.badge.intent{border-color:#d6e1e7;background:#f5f9fb;color:var(--info)}.topology-edge-card table{border-top:1px solid var(--line)}.topology-edge-card th:first-child,.topology-edge-card td:first-child{padding-left:16px}.topology-edge-card th:last-child,.topology-edge-card td:last-child{padding-right:16px}.edge-status{display:inline-flex;align-items:center;gap:7px;white-space:nowrap}.edge-status .dot{width:6px;height:6px}.edge-source{max-width:380px;white-space:normal;color:var(--dim);font-size:11px;line-height:1.45}.route-hop-list{border-top:1px solid var(--line)}.route-hop{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;padding:12px 16px;border-bottom:1px solid var(--line)}.route-hop:last-child{border-bottom:0}.route-hop-pair{font-size:13px}.route-hop-state{display:inline-flex;align-items:center;gap:6px;color:var(--info);font-size:11px;white-space:nowrap}.route-hop-state .dot{width:6px;height:6px}.route-hop-meta{grid-column:1/-1;color:var(--dim);font-size:11px;line-height:1.45}.route-hop-note{margin:0 16px 14px;padding:9px 10px;border-radius:6px;background:var(--card2);color:var(--dim);font-size:11px;line-height:1.45}
 .enrollment-access{padding:0;overflow:hidden}.enrollment-summary{display:flex;align-items:center;gap:12px;min-height:54px;padding:13px 17px;cursor:pointer;list-style:none}.enrollment-summary::-webkit-details-marker{display:none}.enrollment-summary:before{content:"›";display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:5px;background:var(--card2);color:var(--dim);font-size:18px;line-height:1;transition:transform .16s ease}.enrollment-access[open]>.enrollment-summary:before{transform:rotate(90deg)}.enrollment-summary-copy{display:flex;align-items:baseline;gap:9px;min-width:0}.enrollment-summary-copy b{font-size:14px}.enrollment-summary-copy span{overflow:hidden;color:var(--dim);font-size:12px;text-overflow:ellipsis;white-space:nowrap}.enrollment-summary-hint{margin-left:auto;color:var(--dim);font-size:11px}.enrollment-access[open]>.enrollment-summary{border-bottom:1px solid var(--line)}.enrollment-access-body{padding:17px}.enrollment-access-grid{display:grid;grid-template-columns:minmax(0,1.72fr) minmax(320px,.78fr);gap:18px}.enrollment-identity-panel{min-width:0}.enrollment-panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.enrollment-panel-head h3,.enrollment-boundary-panel h3{margin:3px 0 0;font-size:16px}.enrollment-intro{max-width:850px;margin:9px 0 15px;color:var(--dim);font-size:12px}.enrollment-identity-meta{display:grid;grid-template-columns:minmax(190px,.8fr) minmax(260px,1.25fr) minmax(220px,1fr);gap:10px;margin-bottom:12px}.enrollment-identity-meta>div{display:grid;align-content:start;gap:5px;min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:7px;background:var(--card2)}.enrollment-identity-meta .mono{overflow:hidden;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.enrollment-public-key{overflow:hidden;border:1px solid var(--line);border-radius:7px;background:#fff}.enrollment-public-key-head{display:flex;align-items:center;gap:12px;min-height:46px;padding:8px 10px 8px 12px;border-bottom:1px solid var(--line);background:var(--card2)}.enrollment-public-key-head>div{display:flex;align-items:baseline;gap:9px}.enrollment-public-key-head .button{margin-left:auto;padding:6px 10px;background:#fff;font-size:11px}.enrollment-public-key code{display:block;overflow-x:auto;padding:12px;font-size:11px;line-height:1.5;white-space:nowrap}.enrollment-state{margin:12px 0 0;padding:12px 14px}.enrollment-state-action{margin-top:10px}.enrollment-boundary-panel{padding-left:18px;border-left:1px solid var(--line)}.enrollment-boundary-list{display:grid;gap:0;margin:12px 0 15px}.enrollment-boundary-list>div{display:grid;grid-template-columns:105px minmax(0,1fr);gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}.enrollment-boundary-list>div:last-child{border-bottom:0}.enrollment-boundary-list span{color:var(--dim);font-size:10px;letter-spacing:.04em;text-transform:uppercase}.enrollment-boundary-list b{font-size:12px;font-weight:500}.enrollment-workflow{width:100%;justify-content:space-between}.enrollment-key-note{display:flex;align-items:flex-start;gap:10px;margin-top:16px;padding:10px 12px;border:1px solid #cce7d8;border-radius:7px;background:var(--oksoft)}.enrollment-key-note-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:22px;height:22px;border-radius:50%;background:#dcefe5;color:var(--ok);font-size:9px}.enrollment-key-note div{display:grid;gap:1px}.enrollment-key-note b{font-size:12px}.enrollment-key-note span:last-child{color:var(--dim);font-size:11px}
 .nodegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.nodecard{border:1px solid var(--line);background:#fff;border-radius:7px;padding:13px}.nodehead{display:flex;align-items:center;gap:7px;margin-bottom:8px}.nodehead b{font-size:15px}.catalogrow{display:block;padding:13px 11px;border-bottom:1px solid var(--line);border-left:3px solid transparent}.catalogrow:last-child{border-bottom:0}.catalogrow.selected{background:var(--oksoft);border-left-color:var(--ok)}.issue{padding:10px 0;border-bottom:1px solid var(--line)}.issue:last-child{border-bottom:0}.issue.problem{border-left:3px solid var(--bad);padding-left:10px}.tiny{font-size:11px}.small{font-size:12px}.clip{overflow:hidden;text-overflow:ellipsis;max-width:100%}
@@ -599,10 +599,12 @@ func topologySVG(v View, routeOverlay ...RouteView) string {
 		if !aok || !zok {
 			continue
 		}
-		cls := l.Kind
-		if cls != "candidate" {
-			cls = "tunnel"
+		edgeKind := "tunnel"
+		switch l.Kind {
+		case "candidate", "direct-hy2":
+			edgeKind = l.Kind
 		}
+		cls := edgeKind
 		if l.State == "failed" {
 			cls += " failed"
 		} else if l.State == "degraded" {
@@ -613,17 +615,17 @@ func topologySVG(v View, routeOverlay ...RouteView) string {
 		key := topologyLinkKey(l.From, l.To)
 		curve := topologyEdgeCurve(a, z, key, l.Kind)
 		labelPosition := curve.label
-		if metricPosition, ok := metricPositions[key]; ok && l.Kind != "candidate" {
+		if metricPosition, ok := metricPositions[key]; ok && edgeKind != "candidate" {
 			labelPosition = metricPosition
 		}
 		curves[key] = curve
 		curveStarts[key] = l.From
-		if l.Kind == "candidate" {
+		if edgeKind == "candidate" {
 			fmt.Fprintf(&b, `<g class="topology-edge edge-candidate" data-from="%s" data-to="%s"><title>%s ↔ %s；按需候选关系，不做连续 RTT 或流量观测；%s</title><path class="%s" d="%s"/><path class=edge-hit d="%s"/></g>`, esc(l.From), esc(l.To), esc(l.From), esc(l.To), esc(l.Source), cls, curve.d, curve.d)
 			continue
 		}
 		metric, detail := topologyLinkMetric(l)
-		fmt.Fprintf(&b, `<g class="topology-edge edge-tunnel" data-from="%s" data-to="%s"><title>%s</title><path class="%s" d="%s"/><path class=edge-hit d="%s"/></g>`, esc(l.From), esc(l.To), esc(detail), cls, curve.d, curve.d)
+		fmt.Fprintf(&b, `<g class="topology-edge edge-%s" data-from="%s" data-to="%s"><title>%s</title><path class="%s" d="%s"/><path class=edge-hit d="%s"/></g>`, esc(edgeKind), esc(l.From), esc(l.To), esc(detail), cls, curve.d, curve.d)
 		fmt.Fprintf(&metricLabels, `<g class=edge-metric data-from="%s" data-to="%s" transform="translate(%.1f %.1f)"><title>%s</title><text text-anchor=middle y=3>%s</text></g>`, esc(l.From), esc(l.To), labelPosition.x, labelPosition.y, esc(detail), esc(metric))
 	}
 	for _, r := range routeOverlay {
@@ -752,8 +754,9 @@ func topologyEdgeCurve(a, z topologyPoint, key, kind string) topologyCurve {
 // topologyMetricPositions keeps labels close to their continuous carrier
 // curves without turning labels into routing vertices. It treats node markers,
 // node labels and already placed metrics as obstacles, then tries several
-// positions on both sides of the carrier. Same-ring tunnels use the same
-// placement path as cross-ring tunnels; candidate edges still have no metric.
+// positions on both sides of the carrier. Verified direct Hy2 probes take the
+// same collision-avoidance path as WG tunnels; candidate edges still have no
+// metric.
 func topologyMetricPositions(links []LinkView, positions map[string]topologyPoint, nodes map[string]NodeView) map[string]svgPoint {
 	type lane struct {
 		key, hubID string
@@ -764,7 +767,7 @@ func topologyMetricPositions(links []LinkView, positions map[string]topologyPoin
 	}
 	groups := map[string][]lane{}
 	for _, link := range links {
-		if link.Kind != "tunnel" {
+		if link.Kind != "tunnel" && link.Kind != "direct-hy2" {
 			continue
 		}
 		a, aok := positions[link.From]
@@ -783,8 +786,8 @@ func topologyMetricPositions(links []LinkView, positions map[string]topologyPoin
 		case z.ring == "outer" && a.ring != "outer":
 			item.hubID, item.other = link.To, a
 		default:
-			// A same-ring persistent tunnel is still measured. Pick a stable hub
-			// only for arranging its labels; this does not change edge direction.
+			// A same-ring measured link still needs a stable hub for arranging its
+			// labels. This does not change the probe or carrier direction.
 			if link.From < link.To {
 				item.hubID, item.other, item.hubAtStart = link.From, z, true
 			} else {
@@ -1011,14 +1014,33 @@ func topologyLinkMetric(l LinkView) (string, string) {
 	if l.Samples > l.Failures && l.ObservedAt != "" {
 		latency = fmt.Sprintf("%dms", l.MS)
 	}
-	rate := "—"
-	if l.RateSamples > 0 && l.RateWindowSeconds > 0 {
-		rate = topologyBitRate(l.RecentTXBytes, l.RateWindowSeconds)
-	}
 	variation := "Δ—"
 	successfulQuality := l.QualityObservations - l.QualityFailed
 	if successfulQuality >= 2 && l.QualityP95MS >= l.QualityP50MS {
 		variation = fmt.Sprintf("Δ%dms", l.QualityP95MS-l.QualityP50MS)
+	}
+	if l.Kind == "direct-hy2" {
+		rate := "—"
+		if l.ProbeSamples > 0 && l.ProbeBytes > 0 && l.ProbeDurationMS > 0 {
+			rate = topologyProbeBitRate(l.ProbeBytes, l.ProbeDurationMS)
+		}
+		from, to := strings.TrimSpace(l.ObservedFrom), strings.TrimSpace(l.ObservedTo)
+		if from == "" {
+			from = l.From
+		}
+		if to == "" {
+			to = l.To
+		}
+		compact := latency + " · " + variation + " · " + rate
+		detail := fmt.Sprintf("方向 %s→%s；公网 Hysteria2 单跳主动探测；Hy2 单跳响应延迟 %s；近 15 分钟探测延迟波动 %s（P95−P50；P50 %dms / P95 %dms，%d 次观测，%d 次失败）；主动探测速率 %s（固定响应 %d bytes / %dms，%d 个探测样本）；速率为固定响应的 achieved probe throughput，不是业务流量/容量；%s；%s",
+			from, to, latency, variation,
+			l.QualityP50MS, l.QualityP95MS, l.QualityObservations, l.QualityFailed,
+			rate, l.ProbeBytes, l.ProbeDurationMS, l.ProbeSamples, l.Source, l.MetricsSource)
+		return compact, detail
+	}
+	rate := "—"
+	if l.RateSamples > 0 && l.RateWindowSeconds > 0 {
+		rate = topologyBitRate(l.RecentTXBytes, l.RateWindowSeconds)
 	}
 	compact := latency + " · " + variation + " · " + rate
 	detail := fmt.Sprintf("%s ↔ %s；当前 RTT %s；近 15 分钟 RTT 波动 %s（P95−P50；P50 %dms / P95 %dms，%d 次观测，%d 次完全失败）；近 5 分钟实际传输速率 %s（%d 个相邻样本，%d/2 端点上报）；%s；%s",
@@ -1032,7 +1054,19 @@ func topologyBitRate(bytes, seconds int64) string {
 	if bytes <= 0 || seconds <= 0 {
 		return "0bit/s"
 	}
-	rate := float64(bytes*8) / float64(seconds)
+	rate := float64(bytes) * 8 / float64(seconds)
+	return topologyFormattedBitRate(rate)
+}
+
+func topologyProbeBitRate(bytes, durationMS int64) string {
+	if bytes <= 0 || durationMS <= 0 {
+		return "0bit/s"
+	}
+	rate := float64(bytes) * 8 * 1000 / float64(durationMS)
+	return topologyFormattedBitRate(rate)
+}
+
+func topologyFormattedBitRate(rate float64) string {
 	switch {
 	case rate >= 1_000_000_000:
 		return fmt.Sprintf("%.1fGb/s", rate/1_000_000_000)
@@ -1046,7 +1080,7 @@ func topologyBitRate(bytes, seconds int64) string {
 }
 
 func topologyNodeSubtitle(n NodeView) string {
-	place := strings.TrimSpace(n.City)
+	place := nodeCountryCityLabel(n)
 	if place == "" {
 		place = strings.TrimSpace(n.Name)
 	}
@@ -1076,6 +1110,18 @@ func topologyNodeSubtitle(n NodeView) string {
 		return place
 	}
 	return place + " · " + detail
+}
+
+func nodeCountryCityLabel(n NodeView) string {
+	city, country := strings.TrimSpace(n.City), strings.TrimSpace(n.Country)
+	switch {
+	case city == "":
+		return country
+	case country == "":
+		return city
+	default:
+		return city + " · " + country
+	}
 }
 
 func containsString(items []string, want string) bool {

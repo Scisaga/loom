@@ -124,6 +124,7 @@ func TestTopologyUsesConcentricRingsAndObservedLinkMetrics(t *testing.T) {
 		{ID: "sv01", Declared: true, Health: "healthy", Direction: "reverse_only", Roles: []string{"server", "egress"}, City: "硅谷"},
 	}, Links: []LinkView{
 		{From: "jm24", To: "sv01", Kind: "tunnel", State: "active", MS: 18, Samples: 5, ObservedAt: "2026-08-29T12:00:00Z", RecentTXBytes: 75_000, RateWindowSeconds: 300, RateSamples: 4, RateReportingEndpoints: 2, QualityP50MS: 40, QualityP95MS: 75, QualityObservations: 8, MetricsSource: "trusted test evidence"},
+		{From: "gz02", To: "hz01", Kind: "direct-hy2", State: "active", MS: 31, Samples: 5, ObservedAt: "2026-08-29T12:00:00Z", ObservedFrom: "gz02", ObservedTo: "hz01", ProbeBytes: 67_125, ProbeDurationMS: 30_000, ProbeSamples: 4, QualityP50MS: 27, QualityP95MS: 31, QualityObservations: 8, Source: "active single-hop probe", MetricsSource: "signed loom-link-metric-v1"},
 		{From: "gz02", To: "jm24", Kind: "candidate", State: "unverified", Source: "test intent"},
 	}}
 
@@ -139,8 +140,12 @@ func TestTopologyUsesConcentricRingsAndObservedLinkMetrics(t *testing.T) {
 		`data-node="jm24" data-ring="inner" data-angle="-90.0"`,
 		`data-node="ber01" data-ring="outer" data-angle="-30.0"`,
 		`role=button tabindex="0" aria-pressed="false"`,
-		`A 170.0 75.0`, `18ms · Δ35ms · 2.0kb/s`, `硅谷 · server + egress`,
+		`A 170.0 75.0`, `18ms · Δ35ms · 2.0kb/s`, `31ms · Δ4ms · 17.9kb/s`, `硅谷 · server + egress`,
 		`class=edge-metric data-from="jm24" data-to="sv01"`,
+		`class="topology-edge edge-direct-hy2" data-from="gz02" data-to="hz01"`,
+		`class="direct-hy2"`,
+		`class=edge-metric data-from="gz02" data-to="hz01"`,
+		`方向 gz02→hz01`, `公网 Hysteria2 单跳主动探测`,
 		`近 5 分钟实际传输速率 2.0kb/s`,
 	} {
 		if !strings.Contains(topology, want) {
@@ -172,6 +177,36 @@ func TestTopologyLinkMetricUsesCompactDeltaOrder(t *testing.T) {
 		if !strings.Contains(detail, want) {
 			t.Errorf("topology metric detail missing %q: %s", want, detail)
 		}
+	}
+}
+
+func TestTopologyDirectHy2MetricUsesDirectedProbeSemantics(t *testing.T) {
+	compact, detail := topologyLinkMetric(LinkView{
+		From: "gz02", To: "hz01", Kind: "direct-hy2",
+		ObservedFrom: "gz02", ObservedTo: "hz01", MS: 207, Samples: 5, ObservedAt: "2026-08-29T12:00:00Z",
+		ProbeBytes: 67_125, ProbeDurationMS: 30_000, ProbeSamples: 4,
+		QualityP50MS: 203, QualityP95MS: 207, QualityObservations: 8,
+	})
+	if compact != "207ms · Δ4ms · 17.9kb/s" {
+		t.Fatalf("compact direct Hy2 metric = %q", compact)
+	}
+	for _, want := range []string{
+		"方向 gz02→hz01", "公网 Hysteria2 单跳主动探测", "Hy2 单跳响应延迟 207ms",
+		"固定响应 67125 bytes / 30000ms", "4 个探测样本",
+		"速率为固定响应的 achieved probe throughput，不是业务流量/容量",
+	} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("direct Hy2 metric detail missing %q: %s", want, detail)
+		}
+	}
+
+	compact, _ = topologyLinkMetric(LinkView{
+		From: "gz02", To: "hz01", Kind: "direct-hy2",
+		MS: 207, Samples: 5, ObservedAt: "2026-08-29T12:00:00Z",
+		ProbeBytes: 67_125, ProbeSamples: 4,
+	})
+	if compact != "207ms · Δ— · —" {
+		t.Fatalf("direct Hy2 metric with no probe duration must stay unavailable, got %q", compact)
 	}
 }
 
@@ -209,22 +244,29 @@ func TestFocusedTopologyMetricsDoNotOverlapForSixNodeMesh(t *testing.T) {
 			QualityP50MS: 203, QualityP95MS: 207, QualityObservations: 8,
 		}
 	}
+	measuredDirect := func(from, to string) LinkView {
+		return LinkView{
+			From: from, To: to, Kind: "direct-hy2", MS: 207, Samples: 5, ObservedAt: "2026-08-29T12:00:00Z",
+			ObservedFrom: from, ObservedTo: to, ProbeBytes: 671_250, ProbeDurationMS: 300_000, ProbeSamples: 4,
+			QualityP50MS: 203, QualityP95MS: 207, QualityObservations: 8,
+		}
+	}
 	var links []LinkView
 	for _, inner := range []string{"jm24", "gz02", "hz01"} {
 		for _, outer := range []string{"ber01", "sg02", "sv01"} {
 			links = append(links, measuredLink(inner, outer))
 		}
 	}
-	// Same-ring persistent tunnels must use the same measured-label placement
+	// Same-ring Hy2 direct probes must use the same measured-label placement
 	// path. (Candidate arcs deliberately remain unmeasured.)
 	links = append(links,
-		measuredLink("jm24", "gz02"),
-		measuredLink("gz02", "hz01"),
-		measuredLink("hz01", "jm24"),
+		measuredDirect("jm24", "gz02"),
+		measuredDirect("gz02", "hz01"),
+		measuredDirect("hz01", "jm24"),
 	)
 	labels := topologyMetricPositions(links, positions, nodes)
 	if len(labels) != len(links) {
-		t.Fatalf("metric positions = %d, want all %d persistent tunnels including inner-ring links", len(labels), len(links))
+		t.Fatalf("metric positions = %d, want all %d WG and direct Hy2 measured links", len(labels), len(links))
 	}
 	obstacles := topologyNodeObstacles(positions, nodes)
 	metricBounds := map[string]svgRect{}

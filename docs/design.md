@@ -1950,7 +1950,12 @@ edge-a,就拿到了 cn-a 的观测。实测 access-a 能听到全部 5 个节点
 #### 中控角色是本机 bootstrap 配置,不是渲染产物
 
 `/etc/loom/control.json` 指出 SSOT 在哪、运维口令从哪个引用取，并可指定共享
-bootstrap SSH 私钥与接入专用 `known_hosts` 的本机路径。它引用的路径(git 工作
+bootstrap SSH 私钥与接入专用 `known_hosts` 的本机路径。节点声明 Review 默认
+会从中控经 HTTPS 把确定后的一个公网 endpoint IP 交给 `ipwho.is`，只取国家代码
+与城市作为**可编辑建议**；失败不阻断接入，`geoip_disabled: true` 可完全关闭。
+操作者也可在确认 SSH host key 时对单次接入先行关闭，保证首次 Review 前不会发送。
+这个结果不是端点可达性、机房位置或合规证明，提交前仍由操作者复核并与 revision
+一起锁定。它引用的路径(git 工作
 副本、秘密层、本机信任库)是**这台机器上的事实**,不是平台约定 —— 写进 SSOT
 会变成自我引用(SSOT 里记着 SSOT 在哪)。它和发布器的 unit、信任根、本机秘密层
 属于同一类。
@@ -2230,6 +2235,11 @@ Topology 的持久边可附带紧凑滚动标签：当前可信 RTT、近五分�
 RTT 变化也不是逐包 jitter；窗口和来源必须可见。RTT 摘要在中控 traffic store 中按
 节点、邻居和观测时间去重后计算，候选边因没有连续观测而保持空白。
 
+内圈之间的动态 Hysteria2 直达关系不能复用或拆分 Agent 的端到端候选路径数字。
+每个可拨无向对选择一个明确方向，通过专用凭据访问对端 loopback 固定响应，生成独立
+签名的单跳探测陈述。界面可显示响应延迟、十五分钟变化和固定响应主动探测速率，并须
+披露实际探测方向；主动探测速率不是业务 throughput 或容量，尚无样本时保持 unknown。
+
 布局与视觉层次原型见可编辑 SVG：
 [Overview](../assets/loom-control-center-overview-misaka-v1.svg)、
 [Nodes](../assets/loom-control-center-nodes-misaka-v1.svg)、
@@ -2418,7 +2428,7 @@ userspace 实现(基于 wireguard-go)**有明显 CPU 开销**,服务器规格需
 
 ```
 Node                           # §1 —— Loom 管的机器。目标地址不在这里
-  id, name, city, provider
+  id, name, country, city, provider
   public_endpoint?, ssh_port?, nat_type, arch, os
   components?                  # 组件版本,缺省取全局默认(§15.4)
   agent_last_seen, agent_version, status

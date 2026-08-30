@@ -163,12 +163,13 @@ func pageServices(d Deps, selected string, create bool, message string, failed b
 }
 
 type nodeAddPageState struct {
-	Phase      string
-	Connection EnrollmentConnection
-	HostKey    EnrollmentHostKey
-	Review     *EnrollmentReview
-	Error      string
-	Committed  bool
+	Phase        string
+	Connection   EnrollmentConnection
+	HostKey      EnrollmentHostKey
+	DisableGeoIP bool
+	Review       *EnrollmentReview
+	Error        string
+	Committed    bool
 }
 
 func pageNodeAdd(d Deps, state nodeAddPageState, isAuthed bool) string {
@@ -268,7 +269,7 @@ func writeNodeAddConnect(b *strings.Builder, connection EnrollmentConnection, ke
 <div class="field span2"><label>Port</label><input name=port type=number min=1 max=65535 value="%d" required></div>
 </div><div class="toolbar section"><button class="primary progress-submit"><span class=button-idle>Scan SSH host key</span><span class=button-busy><i class=button-spinner aria-hidden=true></i>Scanning SSH key…</span></button><a class=button href="/nodes">Cancel</a></div></form></div></div>
 <div class="card span7"><h2>What the control plane will and will not infer</h2>
-<div class=kv><dt>Manual input<dd>SSH host or IP, user and port only<dt>Node ID<dd>Derived from verified remote <code>hostname -s</code>; case and separators are normalized<dt>Prerequisite<dd>Missing <code>wireguard-tools</code> is installed automatically through root or passwordless sudo<dt>Egress<dd>Enabled for every new server node<dt>Direction<dd>Reviewed after preflight; Automatic is conservative without UDP evidence<dt>WG identity<dd>Generated or reused on the remote host; only its public key returns</div>
+<div class=kv><dt>Initial input<dd>SSH host or IP, user and port only<dt>Node ID<dd>Derived from verified remote <code>hostname -s</code>; case and separators are normalized<dt>Location<dd>Country and city are suggested from the public endpoint IP, then remain editable and require declaration review; the lookup can be disabled before preflight<dt>Prerequisite<dd>Missing <code>wireguard-tools</code> is installed automatically through root or passwordless sudo<dt>Egress<dd>Enabled for every new server node<dt>Direction<dd>Reviewed after preflight; Automatic is conservative without UDP evidence<dt>WG identity<dd>Generated or reused on the remote host; only its public key returns</div>
 <div class="callout warnline section"><b>SSH reachability is not UDP reachability</b><br><span class=small>A successfully authenticated SSH host that resolves to a global address may become a control-observed endpoint candidate. Private/local-only addresses stop the workflow, and no page labels an untested UDP endpoint as verified.</span></div>
 </div></div></div>`, esc(key.PublicKey), esc(key.Fingerprint), esc(connection.Host), esc(connection.User), connection.Port)
 }
@@ -276,6 +277,10 @@ func writeNodeAddConnect(b *strings.Builder, connection EnrollmentConnection, ke
 func writeNodeAddConfirm(b *strings.Builder, state nodeAddPageState, key BootstrapIdentityView) {
 	c := state.Connection
 	h := state.HostKey
+	disableGeoIPChecked := ""
+	if state.DisableGeoIP {
+		disableGeoIPChecked = " checked"
+	}
 	fmt.Fprintf(b, `<div class=section><div class=grid>
 <div class="card span5"><h2>Connection request</h2><div class=kv><dt>Destination<dd class=mono>%s@%s:%d<dt>Control identity<dd class=mono>%s<dt>Use<dd>Shared bootstrap management credential</div><p class="small dim">Changing any coordinate requires a new scan. Loom does not remove this key from remote <code>authorized_keys</code>; rotate or revoke it through the host's management process.</p><a class=button href="/nodes/add">Use different coordinates</a></div>
 <div class="card span7"><div class=sectionhead><h2>Confirm SSH host identity</h2><span class="sp badge warn"><span class=dot></span>Operator decision</span></div>
@@ -283,12 +288,38 @@ func writeNodeAddConfirm(b *strings.Builder, state nodeAddPageState, key Bootstr
 <div class=callout><div class=label>Ed25519 fingerprint</div><div class="metric mono">%s</div><div class="tiny mono clip">%s %s</div></div>
 <form class=blockform data-submit-progress method=post action="/nodes/add/review">%s
 <label class="checkline section"><input type=checkbox name=confirm_host_key value=yes required> I independently confirmed this host fingerprint</label>
+<label class=checkline><input type=checkbox name=disable_geoip value=yes%s> Do not send the public endpoint IP to the advisory GeoIP service</label>
 <div class="toolbar section"><button class="green progress-submit"><span class=button-idle>Trust key &amp; run preflight</span><span class=button-busy role=status aria-live=polite><i class=button-spinner aria-hidden=true></i>Checking and installing prerequisites…</span></button><a class=button href="/nodes/add">Cancel</a></div></form>
-</div></div></div>`, esc(c.User), esc(c.Host), c.Port, esc(key.Fingerprint), esc(h.Fingerprint), esc(h.Algorithm), esc(h.PublicKey), enrollmentHidden(c, h))
+</div></div></div>`, esc(c.User), esc(c.Host), c.Port, esc(key.Fingerprint), esc(h.Fingerprint), esc(h.Algorithm), esc(h.PublicKey), enrollmentHidden(c, h), disableGeoIPChecked)
 }
 
 func writeNodeAddReview(b *strings.Builder, d Deps, review EnrollmentReview, key BootstrapIdentityView) {
 	c, h := review.Connection, review.HostKey
+	country := strings.ToUpper(strings.TrimSpace(review.Country))
+	city := strings.TrimSpace(review.City)
+	locationParts := make([]string, 0, 2)
+	if city != "" {
+		locationParts = append(locationParts, city)
+	}
+	if country != "" {
+		locationParts = append(locationParts, country)
+	}
+	locationDisplay, locationMetricClass := strings.Join(locationParts, " · "), "metric"
+	if locationDisplay == "" {
+		locationDisplay, locationMetricClass = "Not set", "metric dim"
+	}
+	geoIPEvidence := strings.TrimSpace(review.GeoIPEvidence)
+	if geoIPEvidence == "" {
+		geoIPEvidence = "GeoIP suggestion status is unavailable; country and city remain operator-editable."
+	}
+	geoIPClass := "callout"
+	if strings.Contains(strings.ToLower(geoIPEvidence), "unavailable") {
+		geoIPClass += " warnline"
+	}
+	disableGeoIPChecked := ""
+	if review.DisableGeoIP {
+		disableGeoIPChecked = " checked"
+	}
 	wgToolsNote := ""
 	if review.WireGuardToolsInstalled {
 		wgToolsNote = `<br><span class="tiny ok">wireguard-tools installed automatically during this preflight</span>`
@@ -299,7 +330,8 @@ func writeNodeAddReview(b *strings.Builder, d Deps, review EnrollmentReview, key
 	}
 	reviewToken := mintEnrollmentReviewToken(d, EnrollmentCommitInput{
 		EnrollmentReviewInput: EnrollmentReviewInput{
-			Connection: c, HostKey: h, RequestedDirection: reviewedDirection,
+			Connection: c, HostKey: h, Country: country, City: city,
+			DisableGeoIP: review.DisableGeoIP, RequestedDirection: reviewedDirection,
 		},
 		ExpectedNodeID: review.NodeID, ExpectedEndpoint: review.PublicEndpoint,
 		ExpectedEndpointResolution: review.EndpointResolution, ExpectedRevision: review.Revision,
@@ -309,9 +341,10 @@ func writeNodeAddReview(b *strings.Builder, d Deps, review EnrollmentReview, key
 <div class=kv><dt>SSH destination<dd class=mono>%s@%s:%d<dt>Host key<dd class=mono>%s<dt>Node ID<dd><b class=mono>%s</b><br><span class="tiny dim">derived from remote hostname <code>%s</code></span><dt>System<dd>%s<dt>Privilege<dd>%s<dt>WireGuard<dd>kernel %s · tools %s%s</div>
 <div class="callout section"><b>Shared control key</b><br><span class="small mono">%s</span><br><span class="tiny dim">Reused for SSH bootstrap only; not a node WG or platform signing key.</span></div></div>
 <div class="card span7"><div class=sectionhead><h2>Review network declaration</h2><span class="sp badge warn"><span class=dot></span>Not committed</span></div>
-<div class=grid><div class="span6"><div class=label>Public endpoint candidate</div><div class="metric mono">%s</div><div class="tiny dim">%s</div></div><div class="span3"><div class=label>Direction</div><div class=metric>%s</div><div class="tiny dim">%s</div></div><div class="span3"><div class=label>Egress</div><div class="metric ok">Enabled</div><div class="tiny dim">new-node default</div></div></div>
+<div class=grid><div class="span4"><div class=label>Public endpoint candidate</div><div class="metric mono">%s</div><div class="tiny dim">%s</div></div><div class="span4"><div class=label>Country / city</div><div class="%s">%s</div><div class="tiny dim">operator-reviewed declaration metadata</div></div><div class="span2"><div class=label>Direction</div><div class=metric>%s</div><div class="tiny dim">%s</div></div><div class="span2"><div class=label>Egress</div><div class="metric ok">Enabled</div><div class="tiny dim">new-node default</div></div></div>
+<div class="%s section"><b>GeoIP is an editable suggestion, not proof</b><br><span class=small>%s The control node sends the selected public endpoint IP to <code>ipwho.is</code>; lookup failure never blocks enrollment.</span></div>
 <div class="callout warnline"><b>Endpoint evidence boundary</b><br><span class=small>The authenticated SSH target resolves to a globally routable endpoint candidate, but the control plane has not verified WireGuard UDP ingress. Automatic therefore resolves to <code>reverse_only</code>; choose a more exposed direction only when that policy is independently justified.</span></div>
-<div class=section><div class=sectionhead><h2>Proposed persistent tunnels</h2><span class=dim>Recomputed from direction and current SSOT</span></div>`, esc(c.User), esc(c.Host), c.Port, esc(h.Fingerprint), esc(review.NodeID), esc(review.ObservedHostname), esc(review.System), esc(review.Privilege), yesNo(review.KernelWireGuard), yesNo(review.WGCommand), wgToolsNote, esc(key.Fingerprint), esc(review.PublicEndpoint), esc(review.EndpointEvidence), esc(review.ResolvedDirection), esc(review.DirectionEvidence))
+<div class=section><div class=sectionhead><h2>Proposed persistent tunnels</h2><span class=dim>Recomputed from direction and current SSOT</span></div>`, esc(c.User), esc(c.Host), c.Port, esc(h.Fingerprint), esc(review.NodeID), esc(review.ObservedHostname), esc(review.System), esc(review.Privilege), yesNo(review.KernelWireGuard), yesNo(review.WGCommand), wgToolsNote, esc(key.Fingerprint), esc(review.PublicEndpoint), esc(review.EndpointEvidence), locationMetricClass, esc(locationDisplay), esc(review.ResolvedDirection), esc(review.DirectionEvidence), geoIPClass, esc(geoIPEvidence))
 	if len(review.Tunnels) == 0 {
 		b.WriteString(`<div class=empty>No persistent WireGuard tunnel is required by the current direction matrix. Dynamic public paths remain separate routing candidates.</div>`)
 	} else {
@@ -323,18 +356,27 @@ func writeNodeAddReview(b *strings.Builder, d Deps, review EnrollmentReview, key
 	}
 	fmt.Fprintf(b, `</div><div class=section>
 <form class=blockform data-submit-progress method=post action="/nodes/add/commit">%s
-<div class=fields><div class="field span6"><label>Try a different direction policy</label><select name=direction>%s</select></div><div class="field span6"><label>Effect</label><div class=callout>Recomputes the entire tunnel plan; it cannot save SSOT.</div></div></div>
-<p class="tiny dim">Changing direction does not edit individual edges. Review the newly derived initiator, acceptor, address and port plan before it can be committed.</p>
-<div class=toolbar><button class=progress-submit name=action value=preview><span class=button-idle>Recompute &amp; review direction</span><span class=button-busy><i class=button-spinner aria-hidden=true></i>Rechecking remote host…</span></button></div></form>
+<div class=fields><div class="field span2"><label>Country</label><input class=mono name=country maxlength=2 pattern="[A-Za-z]{2}" value="%s" placeholder="HK"></div><div class="field span4"><label>City <span class=dim>(optional)</span></label><input name=city maxlength=80 value="%s" placeholder="e.g. Hong Kong"></div><div class="field span3"><label>Direction policy</label><select name=direction>%s</select></div><div class="field span3"><label>Effect</label><div class=callout>Recomputes the declaration; it cannot save SSOT.</div></div></div>
+<label class=checkline><input type=checkbox name=disable_geoip value=yes%s> Do not use GeoIP suggestions for empty country or city fields</label>
+<p class="tiny dim">Country is stored as an uppercase ISO 3166-1 alpha-2 code. Edit either suggestion and recompute so the exact country, city and direction are locked for commit.</p>
+<div class=toolbar><button class=progress-submit name=action value=preview><span class=button-idle>Recompute &amp; review declaration</span><span class=button-busy><i class=button-spinner aria-hidden=true></i>Rechecking remote host…</span></button></div></form>
 </div><div class=section><div class=callout><b>Reviewed direction is locked for commit</b><br><span class=small><code>%s</code> resolved to <code>%s</code>. To use another direction, recompute and review it above first.</span></div>
 <form class=blockform data-submit-progress method=post action="/nodes/add/commit">%s
 <input type=hidden name=direction value="%s"><input type=hidden name=reviewed_direction value="%s">
+<input type=hidden name=country value="%s"><input type=hidden name=city value="%s"><input type=hidden name=disable_geoip value="%s">
 <input type=hidden name=review_token value="%s">
 <input type=hidden name=expected_node value="%s"><input type=hidden name=expected_endpoint value="%s"><input type=hidden name=expected_endpoint_resolution value="%s"><input type=hidden name=revision value="%s">
-<div class=fields><div class="field span6"><label>Reviewed direction</label><input class=mono value="%s → %s" readonly></div><div class="field span6"><label>SSOT revision</label><input class=mono value="%s" readonly></div></div>
+<div class=fields><div class="field span4"><label>Reviewed country / city</label><input value="%s" readonly></div><div class="field span4"><label>Reviewed direction</label><input class=mono value="%s → %s" readonly></div><div class="field span4"><label>SSOT revision</label><input class=mono value="%s" readonly></div></div>
 <div class="toolbar section"><button class="green progress-submit" name=action value=commit><span class=button-idle>Prepare WG identity &amp; save SSOT declaration</span><span class=button-busy><i class=button-spinner aria-hidden=true></i>Preparing node safely…</span></button><a class=button href="/nodes/add">Cancel</a></div></form></div>
 <div class="callout warnline section"><b>This is declaration bootstrap, not Agent installation</b><br><span class=small>On commit, the control plane re-checks the host key and hostname, prepares or reuses <code>/etc/wireguard/node.key</code> remotely, validates the complete node and tunnel edit, and revision-guards the SSOT save. It does not install or start the Loom Agent, start application services, or claim the node is online.</span></div>
-</div></div></div>`, enrollmentHidden(c, h), directionOptions(reviewedDirection), esc(reviewedDirection), esc(review.ResolvedDirection), enrollmentHidden(c, h), esc(reviewedDirection), esc(reviewedDirection), esc(reviewToken), esc(review.NodeID), esc(review.PublicEndpoint), esc(review.EndpointResolution), esc(review.Revision), esc(reviewedDirection), esc(review.ResolvedDirection), esc(short(review.Revision)))
+</div></div></div>`, enrollmentHidden(c, h), esc(country), esc(city), directionOptions(reviewedDirection), disableGeoIPChecked, esc(reviewedDirection), esc(review.ResolvedDirection), enrollmentHidden(c, h), esc(reviewedDirection), esc(reviewedDirection), esc(country), esc(city), yesNoValue(review.DisableGeoIP), esc(reviewToken), esc(review.NodeID), esc(review.PublicEndpoint), esc(review.EndpointResolution), esc(review.Revision), esc(locationDisplay), esc(reviewedDirection), esc(review.ResolvedDirection), esc(short(review.Revision)))
+}
+
+func yesNoValue(value bool) string {
+	if value {
+		return "yes"
+	}
+	return "no"
 }
 
 func enrollmentHidden(c EnrollmentConnection, h EnrollmentHostKey) string {

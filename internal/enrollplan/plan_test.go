@@ -23,6 +23,7 @@ func TestPreviewAllocatesCompleteConflictFreePlan(t *testing.T) {
 	plan, err := Preview(content, NodeInput{
 		ID:             "edge-b",
 		Name:           "Edge B",
+		Country:        "jp",
 		City:           "Tokyo",
 		Provider:       "example",
 		PublicEndpoint: "edge-b.example.net",
@@ -67,6 +68,7 @@ func TestPreviewAllocatesCompleteConflictFreePlan(t *testing.T) {
 	result, err := Apply(content, NodeInput{
 		ID:             "edge-b",
 		Name:           "Edge B",
+		Country:        "jp",
 		City:           "Tokyo",
 		Provider:       "example",
 		PublicEndpoint: "edge-b.example.net",
@@ -83,7 +85,7 @@ func TestPreviewAllocatesCompleteConflictFreePlan(t *testing.T) {
 		t.Fatalf("load result: %v", err)
 	}
 	got := ssot.NodeByID()["edge-b"]
-	if got == nil || got.Name != "Edge B" || got.City != "Tokyo" ||
+	if got == nil || got.Name != "Edge B" || got.Country != "JP" || got.City != "Tokyo" ||
 		got.Provider != "example" || got.SSHPort != 2222 {
 		t.Fatalf("applied node = %#v", got)
 	}
@@ -241,6 +243,11 @@ func TestInvalidInputAndDuplicateFailWithoutOutput(t *testing.T) {
 			name:  "invalid ssh port",
 			input: NodeInput{ID: "new-node", PublicEndpoint: "new.example.net", SSHPort: -1, Direction: model.Bidirectional, WGPublicKey: keyZero},
 			want:  "SSH port",
+		},
+		{
+			name:  "invalid country",
+			input: NodeInput{ID: "new-node", Country: "HKG", PublicEndpoint: "new.example.net", Direction: model.Bidirectional, WGPublicKey: keyZero},
+			want:  "country",
 		},
 	}
 

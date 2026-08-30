@@ -26,6 +26,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Deps 是界面需要外界提供的东西。用接口而不是具体类型,是为了让 report
@@ -177,6 +179,12 @@ type EnrollmentHostKey struct {
 type EnrollmentReviewInput struct {
 	Connection EnrollmentConnection
 	HostKey    EnrollmentHostKey
+	// Country / City 是操作者在 declaration review 中确认的人读标注。
+	// GeoIP 只可预填建议，不能把它冒充成远端身份或位置证明。
+	Country, City string
+	// DisableGeoIP lets the operator keep missing fields empty instead of
+	// accepting another advisory lookup during a recomputed review.
+	DisableGeoIP bool
 	// RequestedDirection 是 automatic 或三个 SSOT direction 之一。
 	RequestedDirection string
 }
@@ -190,6 +198,9 @@ type EnrollmentReview struct {
 	Connection                               EnrollmentConnection
 	HostKey                                  EnrollmentHostKey
 	NodeID, ObservedHostname, PublicEndpoint string
+	Country, City                            string
+	DisableGeoIP, GeoIPSuggested             bool
+	GeoIPEvidence                            string
 	EndpointEvidence, EndpointResolution     string
 	System, Privilege                        string
 	KernelWireGuard, WGCommand               bool
@@ -372,12 +383,12 @@ type NodeView struct {
 	// 以下字段是中控从 SSOT 补入的声明元数据。SSHPort 已展开默认值 22；
 	// Roles 由角色块和 server.egress_capable 推导，不在 SSOT 重复存一份
 	// capabilities。
-	Name, City, Provider, PublicEndpoint string
-	SSHPort                              int
-	Roles                                []string
-	Direction                            string
-	EgressCapable                        bool
-	Drain, Decommission                  bool
+	Name, Country, City, Provider, PublicEndpoint string
+	SSHPort                                       int
+	Roles                                         []string
+	Direction                                     string
+	EgressCapable                                 bool
+	Drain, Decommission                           bool
 	// Health 是 healthy / problem / unknown。空值也按 unknown 处理；
 	// 未签名转述和静默节点不能因为“没看到错误”就被冒充成健康。
 	Health        string
@@ -401,8 +412,12 @@ type NodeView struct {
 	TrafficVerified   bool // specifically verified loom-traffic-v1 relay/sample
 	TrafficObservedAt string
 	VerifiedTraffic   []VerifiedTrafficCounterView
-	Tunnels           []TunnelView
-	Targets           []TargetView
+	// VerifiedLinkMetrics contains independently verified, node-owned
+	// single-hop measurements. It stays separate from Edges (the existing
+	// report.neighbors/WireGuard contract) and from cumulative WG counters.
+	VerifiedLinkMetrics []VerifiedLinkMetricView
+	Tunnels             []TunnelView
+	Targets             []TargetView
 	// Rotating 是正在过渡窗口里的凭据。开着是正常的,开太久不是。
 	Rotating []string
 	Edges    []EdgeView
@@ -416,6 +431,16 @@ type VerifiedTrafficCounterView struct {
 	Interface, PeerNode, LinkID, PeerPublicKey string
 	CounterEpoch, ObservedAt                   string
 	RXBytes, TXBytes                           int64
+}
+
+// VerifiedLinkMetricView is one directed single-hop observation. Transfer
+// bytes and duration are retained as raw signed values; presentation code
+// derives achieved probe throughput without calling it business traffic or
+// link capacity.
+type VerifiedLinkMetricView struct {
+	PeerNode, ObservedAt, Transport, Carrier string
+	RTTMS, P50MS, P95MS, Samples, Failures   int
+	TransferBytes, DurationMS                int64
 }
 
 type ComponentView struct {
@@ -441,8 +466,8 @@ type AgentView struct {
 }
 
 // LinkView 是拓扑底图中的边。Kind=tunnel 是 SSOT 派生 report.neighbors 的
-// 常驻 WG；candidate 是 RouteCandidate 的非 WG hop（未核验）；route 只作为
-// 当前选择覆盖层。
+// 常驻 WG；direct-hy2 是独立签名的 Hysteria2 单跳主动探测；
+// candidate 是 RouteCandidate 的非 WG hop（未核验）；route 只作为当前选择覆盖层。
 type LinkView struct {
 	From, To   string
 	Kind       string
@@ -452,6 +477,11 @@ type LinkView struct {
 	Failures   int
 	ObservedAt string
 	Source     string
+	// ObservedFrom/ObservedTo preserve the direction of an active direct-link
+	// probe even though the topology draws one relationship for the node pair.
+	ObservedFrom, ObservedTo    string
+	ProbeBytes, ProbeDurationMS int64
+	ProbeSamples                int
 	// Rolling quality is derived centrally from successive independently
 	// verified report.neighbors summaries. RecentTXBytes is the sum of endpoint
 	// WireGuard TX deltas, so each direction is counted once.
@@ -660,13 +690,14 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		connection, hostKey, err := parseEnrollmentForm(w, r, true)
-		state := nodeAddPageState{Phase: "confirm", Connection: connection, HostKey: hostKey}
+		disableGeoIP := r.Form.Get("disable_geoip") == "yes"
+		state := nodeAddPageState{Phase: "confirm", Connection: connection, HostKey: hostKey, DisableGeoIP: disableGeoIP}
 		if err == nil && r.Form.Get("confirm_host_key") != "yes" {
 			err = fmt.Errorf("confirm the SSH host fingerprint before preflight")
 		}
 		if err == nil {
 			review, reviewErr := d.Control.Enrollment.Review(r.Context(), EnrollmentReviewInput{
-				Connection: connection, HostKey: hostKey, RequestedDirection: "automatic",
+				Connection: connection, HostKey: hostKey, DisableGeoIP: disableGeoIP, RequestedDirection: "automatic",
 			})
 			err = reviewErr
 			if err == nil {
@@ -683,10 +714,21 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		connection, hostKey, err := parseEnrollmentForm(w, r, true)
+		country, countryErr := parseEnrollmentCountry(r)
+		city, cityErr := parseEnrollmentCity(r)
+		if err == nil {
+			err = countryErr
+		}
+		if err == nil {
+			err = cityErr
+		}
 		requested := strings.TrimSpace(r.Form.Get("direction"))
 		input := EnrollmentReviewInput{
-			Connection: connection, HostKey: hostKey, RequestedDirection: requested,
+			Connection: connection, HostKey: hostKey,
+			Country: country, City: city, DisableGeoIP: r.Form.Get("disable_geoip") == "yes",
+			RequestedDirection: requested,
 		}
+		validReviewInput := err == nil
 		state := nodeAddPageState{Phase: "review", Connection: connection, HostKey: hostKey}
 		if err == nil && r.Form.Get("action") == "preview" {
 			var review EnrollmentReview
@@ -728,8 +770,10 @@ func Handler(d Deps) http.Handler {
 			}
 			// A failed commit is deliberately re-reviewed from trusted state instead
 			// of echoing hidden plan fields back as if they were observations.
-			if review, reviewErr := d.Control.Enrollment.Review(r.Context(), input); reviewErr == nil {
-				state.Review = &review
+			if validReviewInput {
+				if review, reviewErr := d.Control.Enrollment.Review(r.Context(), input); reviewErr == nil {
+					state.Review = &review
+				}
 			}
 		}
 		writeHTML(w, pageNodeAdd(d, state, true))
@@ -993,7 +1037,7 @@ func Handler(d Deps) http.Handler {
 	return mux
 }
 
-const enrollmentReviewTokenDomain = "loom:webui:node-enrollment-review:v1"
+const enrollmentReviewTokenDomain = "loom:webui:node-enrollment-review:v3"
 
 // enrollmentReviewMAC signs the complete client-visible boundary between a
 // reviewed plan and its commit. Length-prefixing keeps the encoding
@@ -1008,6 +1052,9 @@ func enrollmentReviewMAC(operator string, input EnrollmentCommitInput) []byte {
 		input.HostKey.Algorithm,
 		input.HostKey.PublicKey,
 		input.HostKey.Fingerprint,
+		input.Country,
+		input.City,
+		strconv.FormatBool(input.DisableGeoIP),
 		input.RequestedDirection,
 		input.ExpectedNodeID,
 		input.ExpectedEndpoint,
@@ -1107,6 +1154,34 @@ func parseEnrollmentForm(w http.ResponseWriter, r *http.Request, withHostKey boo
 	return connection, EnrollmentHostKey{
 		Algorithm: algorithm, PublicKey: publicKey, Fingerprint: fingerprint,
 	}, nil
+}
+
+func parseEnrollmentCity(r *http.Request) (string, error) {
+	city := strings.TrimSpace(r.Form.Get("city"))
+	if city == "" {
+		return "", nil
+	}
+	if !utf8.ValidString(city) {
+		return "", fmt.Errorf("city must be valid UTF-8")
+	}
+	if len(city) > 256 {
+		return "", fmt.Errorf("city exceeds 256 bytes")
+	}
+	if strings.IndexFunc(city, func(r rune) bool { return unicode.IsControl(r) }) >= 0 {
+		return "", fmt.Errorf("city contains a control character")
+	}
+	return city, nil
+}
+
+func parseEnrollmentCountry(r *http.Request) (string, error) {
+	country := strings.ToUpper(strings.TrimSpace(r.Form.Get("country")))
+	if country == "" {
+		return "", nil
+	}
+	if len(country) != 2 || country[0] < 'A' || country[0] > 'Z' || country[1] < 'A' || country[1] > 'Z' {
+		return "", fmt.Errorf("country must be a two-letter ISO 3166-1 alpha-2 code")
+	}
+	return country, nil
 }
 
 func eventFilterFromRequest(r *http.Request) eventFilter {

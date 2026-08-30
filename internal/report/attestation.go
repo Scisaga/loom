@@ -149,6 +149,7 @@ func legacyObservation(o *Observation) *Observation {
 	legacy := *o
 	legacy.Components = nil
 	legacy.Traffic = nil
+	legacy.LinkMetrics = nil
 	legacy.SelfCheck = nil
 	legacy.AttestExtended = nil
 	if o.Agent != nil {

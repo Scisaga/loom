@@ -26,7 +26,7 @@ func TestLoadControlDefaultsEnrollmentPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	configPath := filepath.Join(dir, "control.json")
-	config, err := json.Marshal(Control{SSOTPath: ssotPath})
+	config, err := json.Marshal(Control{SSOTPath: ssotPath, GeoIPDisabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestLoadControlDefaultsEnrollmentPaths(t *testing.T) {
 		t.Fatalf("LoadControl = %#v, %v; want control plus credential error", control, err)
 	}
 	if control.BootstrapSSHKey != "/etc/loom/control-bootstrap" ||
-		control.KnownHostsPath != "/etc/loom/control-known_hosts" {
+		control.KnownHostsPath != "/etc/loom/control-known_hosts" || !control.GeoIPDisabled {
 		t.Fatalf("enrollment path defaults = %#v", control)
 	}
 }
@@ -209,11 +209,13 @@ func TestEnrollmentReviewAndCommitAreOneRevisionGuardedPlan(t *testing.T) {
 	backend, counters := fakeEnrollmentBackend(t, path)
 	deps := backend.dependencies()
 	input := enrollmentReviewInput()
+	input.Country = "HK"
+	input.City = "Hong Kong"
 	review, err := deps.Review(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Review: %v", err)
 	}
-	if review.NodeID != "hk01" || review.PublicEndpoint != "edge.example.net" ||
+	if review.NodeID != "hk01" || review.PublicEndpoint != "edge.example.net" || review.Country != "HK" || review.City != "Hong Kong" ||
 		review.RequestedDirection != "automatic" || review.ResolvedDirection != string(model.ReverseOnly) ||
 		!review.EgressEnabled || len(review.Tunnels) != 4 {
 		t.Fatalf("unexpected review: %#v", review)
@@ -260,8 +262,65 @@ func TestEnrollmentReviewAndCommitAreOneRevisionGuardedPlan(t *testing.T) {
 	node := ssot.NodeByID()["hk01"]
 	if node == nil || node.Server == nil || node.Server.Direction != model.ReverseOnly ||
 		!node.Server.EgressCapable || node.Server.WGPublicKey != testWGPublicKey ||
-		node.PublicEndpoint != "edge.example.net" || node.SSHPort != 22 {
+		node.PublicEndpoint != "edge.example.net" || node.SSHPort != 22 || node.Country != "HK" || node.City != "Hong Kong" {
 		t.Fatalf("committed node = %#v", node)
+	}
+}
+
+func TestEnrollmentGeoIPSuggestionIsAdvisoryAndNonBlocking(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ssot.yaml")
+	initial, err := os.ReadFile("../../testdata/matrix/ssot.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	backend, _ := fakeEnrollmentBackend(t, path)
+	lookups := 0
+	backend.lookupGeoIP = func(_ context.Context, ip string) (geoIPLocation, error) {
+		lookups++
+		if ip != "8.8.8.8" {
+			t.Fatalf("GeoIP address = %q", ip)
+		}
+		return geoIPLocation{Country: "HK", City: "Hong Kong", Evidence: "advisory GeoIP result"}, nil
+	}
+	input := enrollmentReviewInput()
+	review, err := backend.review(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if review.Country != "HK" || review.City != "Hong Kong" || !review.GeoIPSuggested ||
+		review.GeoIPEvidence != "advisory GeoIP result" || lookups != 1 {
+		t.Fatalf("suggested review = %#v; lookups=%d", review, lookups)
+	}
+
+	input.Country, input.City = "DE", "Berlin"
+	review, err = backend.review(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if review.Country != "DE" || review.City != "Berlin" || review.GeoIPSuggested || lookups != 1 ||
+		!strings.Contains(review.GeoIPEvidence, "operator") {
+		t.Fatalf("operator review = %#v; lookups=%d", review, lookups)
+	}
+
+	input.Country, input.City, input.DisableGeoIP = "", "", true
+	review, err = backend.review(context.Background(), input)
+	if err != nil || review.Country != "" || review.City != "" || lookups != 1 ||
+		!strings.Contains(review.GeoIPEvidence, "disabled") {
+		t.Fatalf("disabled review = %#v, %v; lookups=%d", review, err, lookups)
+	}
+
+	input.DisableGeoIP = false
+	backend.lookupGeoIP = func(context.Context, string) (geoIPLocation, error) {
+		return geoIPLocation{}, fmt.Errorf("temporary quota failure")
+	}
+	review, err = backend.review(context.Background(), input)
+	if err != nil || review.Country != "" || review.City != "" ||
+		!strings.Contains(review.GeoIPEvidence, "unavailable") || !strings.Contains(review.GeoIPEvidence, "quota") {
+		t.Fatalf("failed lookup review = %#v, %v", review, err)
 	}
 }
 

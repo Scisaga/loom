@@ -39,6 +39,14 @@
         {
           "name": "cred-ws-sg",
           "password": "${secret:vault:cred/ws-sg}"
+        },
+        {
+          "name": "telemetry-cn-bj",
+          "password": "${secret:telemetry/cn-bj}"
+        },
+        {
+          "name": "telemetry-cn-cd",
+          "password": "${secret:telemetry/cn-cd}"
         }
       ],
       "tls": {
@@ -49,6 +57,12 @@
           "h3"
         ]
       }
+    },
+    {
+      "type": "mixed",
+      "tag": "hy2-link-in-cn-sh",
+      "listen": "127.0.0.1",
+      "listen_port": 61825
     }
   ],
   "outbounds": [
@@ -73,6 +87,25 @@
     {
       "type": "direct",
       "tag": "egress"
+    },
+    {
+      "type": "direct",
+      "tag": "hy2-link-reflector"
+    },
+    {
+      "type": "hysteria2",
+      "tag": "hy2-link-cn-sh",
+      "server": "203.0.113.11",
+      "server_port": 443,
+      "password": "${secret:telemetry/cn-gz}",
+      "tls": {
+        "enabled": true,
+        "server_name": "cn-sh.node.internal",
+        "certificate_path": "/etc/loom/tls/ca.crt",
+        "alpn": [
+          "h3"
+        ]
+      }
     },
     {
       "type": "block",
@@ -164,6 +197,36 @@
           "cred-ws-eg"
         ],
         "outbound": "egress"
+      },
+      {
+        "auth_user": [
+          "telemetry-cn-bj"
+        ],
+        "ip_cidr": [
+          "127.0.0.1/32"
+        ],
+        "port": [
+          61804
+        ],
+        "outbound": "hy2-link-reflector"
+      },
+      {
+        "auth_user": [
+          "telemetry-cn-cd"
+        ],
+        "ip_cidr": [
+          "127.0.0.1/32"
+        ],
+        "port": [
+          61804
+        ],
+        "outbound": "hy2-link-reflector"
+      },
+      {
+        "inbound": [
+          "hy2-link-in-cn-sh"
+        ],
+        "outbound": "hy2-link-cn-sh"
       }
     ],
     "final": "block"

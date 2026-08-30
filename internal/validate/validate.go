@@ -133,6 +133,10 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 			idx[n.ID] = n
 		}
 		checkDistributionURLs(fs, where, n.DistributionURL, n.DistributionURLs)
+		if country := n.Country; country != "" && !model.ValidCountryCode(country) {
+			fs.add("§19 schema", where,
+				"country %q 格式非法 —— 必须是两个大写 ASCII 字母组成的 ISO 3166-1 alpha-2 代码", country)
+		}
 
 		// 至少要承担一种角色。两种都有是合法的 —— 一台服务器自己也要
 		// 走代理出去是真实需求(§1.3)。

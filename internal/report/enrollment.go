@@ -6,14 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/netip"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"loom/internal/enrollplan"
 	"loom/internal/enrollssh"
 	"loom/internal/model"
+	"loom/internal/netx"
 	"loom/internal/webui"
 )
 
@@ -29,6 +32,7 @@ type enrollmentBackend struct {
 	installWGTools func(context.Context, enrollssh.Connection) (bool, error)
 	prepareWG      func(context.Context, enrollssh.Connection) (enrollssh.PrepareWGResult, error)
 	lookupIP       func(context.Context, string) ([]net.IPAddr, error)
+	lookupGeoIP    func(context.Context, string) (geoIPLocation, error)
 
 	read          func() ([]byte, error)
 	revision      func([]byte) string
@@ -66,6 +70,18 @@ func newNodeEnrollmentDeps(
 		guardRevision:  guardRevision,
 		saveMu:         saveMu,
 		ssotPath:       c.SSOTPath,
+	}
+	if !c.GeoIPDisabled {
+		geoClient := netx.Client("", 3*time.Second)
+		geoClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 3 || req.URL.Scheme != "https" || req.URL.Hostname() != defaultGeoIPProvider {
+				return http.ErrUseLastResponse
+			}
+			return nil
+		}
+		b.lookupGeoIP = func(ctx context.Context, ip string) (geoIPLocation, error) {
+			return lookupIPWhoIs(ctx, geoClient, ip)
+		}
 	}
 	return b.dependencies()
 }
@@ -180,7 +196,33 @@ func (b enrollmentBackend) review(ctx context.Context, input webui.EnrollmentRev
 	if err != nil {
 		return webui.EnrollmentReview{}, fmt.Errorf("read SSOT for enrollment review: %w", err)
 	}
-	plan, err := enrollplan.Preview(current, discovered.nodeInput(previewWGPublicKey))
+	country, city := strings.ToUpper(strings.TrimSpace(input.Country)), strings.TrimSpace(input.City)
+	geoIPEvidence := "GeoIP suggestion was disabled for this declaration review."
+	geoIPSuggested := false
+	if !input.DisableGeoIP {
+		geoIPEvidence = "Country and city were supplied by the operator; GeoIP was not queried again."
+		if (country == "" || city == "") && b.lookupGeoIP != nil {
+			address, addressErr := firstEndpointAddress(discovered.endpointResolution)
+			if addressErr != nil {
+				geoIPEvidence = "GeoIP suggestion unavailable: " + addressErr.Error()
+			} else if location, lookupErr := b.lookupGeoIP(ctx, address); lookupErr != nil {
+				geoIPEvidence = "GeoIP suggestion unavailable: " + lookupErr.Error()
+			} else {
+				if country == "" {
+					country = location.Country
+					geoIPSuggested = country != ""
+				}
+				if city == "" {
+					city = location.City
+					geoIPSuggested = geoIPSuggested || city != ""
+				}
+				geoIPEvidence = location.Evidence
+			}
+		} else if country == "" || city == "" {
+			geoIPEvidence = "GeoIP suggestion is unavailable on this control node; empty location fields remain optional."
+		}
+	}
+	plan, err := enrollplan.Preview(current, discovered.nodeInput(previewWGPublicKey, country, city))
 	if err != nil {
 		return webui.EnrollmentReview{}, fmt.Errorf("preview node enrollment: %w", err)
 	}
@@ -194,6 +236,11 @@ func (b enrollmentBackend) review(ctx context.Context, input webui.EnrollmentRev
 		NodeID:                  discovered.nodeID,
 		ObservedHostname:        discovered.preflight.Hostname,
 		PublicEndpoint:          discovered.endpoint,
+		Country:                 plan.Node.Country,
+		City:                    plan.Node.City,
+		DisableGeoIP:            input.DisableGeoIP,
+		GeoIPSuggested:          geoIPSuggested,
+		GeoIPEvidence:           geoIPEvidence,
 		EndpointEvidence:        discovered.endpointEvidence,
 		EndpointResolution:      discovered.endpointResolution,
 		System:                  discovered.preflight.Uname,
@@ -255,7 +302,7 @@ func (b enrollmentBackend) commit(ctx context.Context, input webui.EnrollmentCom
 		if err := b.guardRevision(snapshot.body, input.ExpectedRevision); err != nil {
 			return err
 		}
-		next, err := enrollplan.Apply(snapshot.body, discovered.nodeInput(prepared.PublicKey))
+		next, err := enrollplan.Apply(snapshot.body, discovered.nodeInput(prepared.PublicKey, input.Country, input.City))
 		if err != nil {
 			return fmt.Errorf("apply node enrollment: %w", err)
 		}
@@ -266,10 +313,12 @@ func (b enrollmentBackend) commit(ctx context.Context, input webui.EnrollmentCom
 	return discovered.nodeID, nil
 }
 
-func (d enrollmentDiscovery) nodeInput(publicKey string) enrollplan.NodeInput {
+func (d enrollmentDiscovery) nodeInput(publicKey, country, city string) enrollplan.NodeInput {
 	egress := true
 	return enrollplan.NodeInput{
 		ID:             d.nodeID,
+		Country:        country,
+		City:           city,
 		PublicEndpoint: d.endpoint,
 		SSHPort:        d.connection.Port,
 		Direction:      d.direction,

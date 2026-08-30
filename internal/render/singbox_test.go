@@ -46,10 +46,51 @@ type conf struct {
 			Inbound  []string `json:"inbound"`
 			AuthUser []string `json:"auth_user"`
 			IPCIDR   []string `json:"ip_cidr"`
+			Port     []int    `json:"port"`
 			Outbound string   `json:"outbound"`
 		} `json:"rules"`
 		Final string `json:"final"`
 	} `json:"route"`
+}
+
+func TestLinkMetricReflectorAdmissionIsLoopbackPortOnly(t *testing.T) {
+	_, cfgs := configs(t)
+	telemetryUsers := map[string]string{} // user -> target owner
+	for owner, c := range cfgs {
+		for _, in := range c.Inbounds {
+			for _, user := range in.Users {
+				if strings.HasPrefix(user.Name, "telemetry-") {
+					telemetryUsers[user.Name] = owner
+				}
+			}
+		}
+	}
+	if len(telemetryUsers) == 0 {
+		t.Fatal("fixture 没有渲染链路探测 telemetry 用户")
+	}
+	for user, owner := range telemetryUsers {
+		c := cfgs[owner]
+		matched := 0
+		for _, rule := range c.Route.Rules {
+			contains := false
+			for _, got := range rule.AuthUser {
+				contains = contains || got == user
+			}
+			if !contains {
+				continue
+			}
+			matched++
+			if len(rule.IPCIDR) != 1 || rule.IPCIDR[0] != "127.0.0.1/32" ||
+				len(rule.Port) != 1 || rule.Port[0] != LinkMetricReflectorPort ||
+				rule.Outbound != "hy2-link-reflector" {
+				t.Errorf("%s 在 %s 的准入超出 127.0.0.1:%d: %+v",
+					user, owner, LinkMetricReflectorPort, rule)
+			}
+		}
+		if matched != 1 {
+			t.Errorf("%s 在 %s 命中 %d 条 route，want exactly 1", user, owner, matched)
+		}
+	}
 }
 
 // configs 渲染 fixture 并返回 owner -> 解析后的 sing-box 配置。
@@ -148,6 +189,9 @@ func TestSingBoxSecretsArePlaceholders(t *testing.T) {
 	for _, n := range s.AccessNodes() {
 		refs["api/"+n.ID] = true
 		refs["probe/"+n.ID] = true
+	}
+	for _, plan := range hy2LinkProbePlans(s) {
+		refs[plan.secretRef()] = true
 	}
 
 	for owner, c := range cfgs {
@@ -381,6 +425,11 @@ func TestServerAdmitsNothingExtra(t *testing.T) {
 					}
 					want[c.ID+"|"+s.NextHopAddr(n, nodes[chain[x+1]])+"/32"] = true
 				}
+			}
+		}
+		for _, plan := range hy2LinkProbePlans(s) {
+			if plan.To == n.ID {
+				want[plan.user()+"|127.0.0.1/32"] = true
 			}
 		}
 		for _, r := range sc.Route.Rules {

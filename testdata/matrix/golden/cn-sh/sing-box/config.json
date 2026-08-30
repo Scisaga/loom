@@ -35,6 +35,18 @@
         {
           "name": "cred-ws-sg",
           "password": "${secret:vault:cred/ws-sg}"
+        },
+        {
+          "name": "telemetry-cn-bj",
+          "password": "${secret:telemetry/cn-bj}"
+        },
+        {
+          "name": "telemetry-cn-cd",
+          "password": "${secret:telemetry/cn-cd}"
+        },
+        {
+          "name": "telemetry-cn-gz",
+          "password": "${secret:telemetry/cn-gz}"
         }
       ],
       "tls": {
@@ -60,6 +72,10 @@
     {
       "type": "direct",
       "tag": "egress"
+    },
+    {
+      "type": "direct",
+      "tag": "hy2-link-reflector"
     },
     {
       "type": "block",
@@ -95,6 +111,42 @@
           "192.0.2.11"
         ],
         "outbound": "egress"
+      },
+      {
+        "auth_user": [
+          "telemetry-cn-bj"
+        ],
+        "ip_cidr": [
+          "127.0.0.1/32"
+        ],
+        "port": [
+          61804
+        ],
+        "outbound": "hy2-link-reflector"
+      },
+      {
+        "auth_user": [
+          "telemetry-cn-cd"
+        ],
+        "ip_cidr": [
+          "127.0.0.1/32"
+        ],
+        "port": [
+          61804
+        ],
+        "outbound": "hy2-link-reflector"
+      },
+      {
+        "auth_user": [
+          "telemetry-cn-gz"
+        ],
+        "ip_cidr": [
+          "127.0.0.1/32"
+        ],
+        "port": [
+          61804
+        ],
+        "outbound": "hy2-link-reflector"
       }
     ],
     "final": "block"

@@ -87,7 +87,7 @@ func pageOverview(d Deps, isAuthed bool) string {
 		unresolved = d.Unresolved()
 	}
 	overlay := overviewRouteOverlay(v)
-	b.WriteString(`<div class=overview-primary><section class="card overview-topology-card"><div class=overview-card-head><h2>Network topology</h2><span class="small dim" title="近实时拓扑 · 采样约 1 分钟 · 页面每 30 秒刷新；悬停节点预览，点击锁定相邻链路；指标依次为当前 RTT、近 15 分钟 RTT 波动 Δ（P95−P50）、近 5 分钟实际速率">点击节点查看 RTT · Δ波动 · 实际速率</span><span class=sr-only>近实时拓扑 · 候选跳（未核验） · 部分失败 · 故障</span><div class=legend><span><i class=key></i>WireGuard</span><span><i class="key candidate"></i>Candidate</span>`)
+	b.WriteString(`<div class=overview-primary><section class="card overview-topology-card"><div class=overview-card-head><h2>Network topology</h2><span class="small dim" title="近实时拓扑 · 采样约 1 分钟 · 页面每 30 秒刷新；悬停节点预览，点击锁定相邻链路；WireGuard 显示 RTT、近 15 分钟波动和近 5 分钟实际速率；Hy2 direct 显示单跳响应延迟、波动和固定响应主动探测速率，不是业务流量或容量">点击节点查看 延迟 · Δ波动 · 速率</span><span class=sr-only>近实时拓扑 · Hy2 主动探测 · 候选跳（未核验） · 部分失败 · 故障</span><div class=legend><span><i class=key></i>WireGuard</span><span><i class="key direct-hy2"></i>Hy2 direct · 主动探测</span><span><i class="key candidate"></i>Candidate</span>`)
 	if len(overlay) > 0 {
 		fmt.Fprintf(&b, `<span><i class="key route"></i>%s</span>`, esc(overviewRouteName(v, overlay[0])))
 	}
@@ -366,7 +366,7 @@ func writeOverviewNodesCompact(b *strings.Builder, v View, now time.Time) {
 			break
 		}
 		stateClass, stateLabel := healthVisual(node.Health)
-		place := strings.TrimSpace(node.City)
+		place := nodeCountryCityLabel(node)
 		if place == "" {
 			place = strings.TrimSpace(node.Name)
 		}

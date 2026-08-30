@@ -521,6 +521,7 @@ func serverInto(cfg *sbConfig, s *model.SSOT, sv *model.Node) {
 	}
 	var rules []rule
 	var users []sbUser
+	var telemetry []hy2LinkProbePlan
 
 	creds := append([]model.Credential(nil), s.Credentials...)
 	sort.Slice(creds, func(i, j int) bool { return creds[i].ID < creds[j].ID })
@@ -594,6 +595,15 @@ func serverInto(cfg *sbConfig, s *model.SSOT, sv *model.Node) {
 		}
 		rules = append(rules, r)
 	}
+	for _, plan := range hy2LinkProbePlans(s) {
+		if plan.To != sv.ID {
+			continue
+		}
+		telemetry = append(telemetry, plan)
+		users = append(users, sbUser{
+			Name: plan.user(), Password: secretRef(plan.secretRef()),
+		})
+	}
 
 	in := sbInbound{
 		Tag: "in", Listen: "::", ListenPort: sv.Server.InboundPort,
@@ -630,6 +640,9 @@ func serverInto(cfg *sbConfig, s *model.SSOT, sv *model.Node) {
 	if sv.Server.EgressCapable {
 		cfg.Outbounds = append(cfg.Outbounds, sbOutbound{Type: "direct", Tag: "egress"})
 	}
+	if len(telemetry) > 0 {
+		cfg.Outbounds = append(cfg.Outbounds, sbOutbound{Type: "direct", Tag: "hy2-link-reflector"})
+	}
 	// 转发规则在前、出口规则在后:出口是兜底,先匹配具体的下一跳。
 	for _, r := range rules {
 		var cidrs []string
@@ -656,6 +669,45 @@ func serverInto(cfg *sbConfig, s *model.SSOT, sv *model.Node) {
 		}
 		cfg.Route.Rules = append(cfg.Route.Rules, sbRule{
 			AuthUser: authUsers(r.user, r.prevUser), Domain: r.domains, Outbound: "egress",
+		})
+	}
+	// Telemetry credentials are intentionally unable to use the ordinary
+	// egress path.  They can reach only the report reflector on target loopback;
+	// /status and arbitrary destinations stay outside this trust boundary.
+	for _, plan := range telemetry {
+		cfg.Route.Rules = append(cfg.Route.Rules, sbRule{
+			AuthUser: []string{plan.user()}, IPCIDR: []string{"127.0.0.1/32"},
+			Port: []int{LinkMetricReflectorPort}, Outbound: "hy2-link-reflector",
+		})
+	}
+}
+
+// linkMetricInto adds the source half of each direct inner-ring measurement:
+// one loopback-only mixed listener and one dedicated public Hysteria2 outbound.
+// No selector or business route participates, so the sample cannot silently
+// turn into an end-to-end candidate measurement.
+func linkMetricInto(cfg *sbConfig, s *model.SSOT, n *model.Node) {
+	nodes := s.NodeByID()
+	for _, plan := range hy2LinkProbePlans(s) {
+		if plan.From != n.ID {
+			continue
+		}
+		peer := nodes[plan.To]
+		if peer == nil || !peer.PubliclyDialable() ||
+			peer.Server.InboundProtocol.Or() != model.Hysteria2 {
+			continue
+		}
+		cfg.Inbounds = append(cfg.Inbounds, sbInbound{
+			Type: "mixed", Tag: plan.inboundTag(),
+			Listen: "127.0.0.1", ListenPort: plan.Port,
+		})
+		cfg.Outbounds = append(cfg.Outbounds, sbOutbound{
+			Type: string(model.Hysteria2), Tag: plan.outboundTag(),
+			Server: peer.PublicEndpoint, ServerPort: peer.Server.InboundPort,
+			Password: secretRef(plan.secretRef()), TLS: clientTLS(serverName(peer)),
+		})
+		cfg.Route.Rules = append(cfg.Route.Rules, sbRule{
+			Inbound: []string{plan.inboundTag()}, Outbound: plan.outboundTag(),
 		})
 	}
 }
@@ -701,6 +753,7 @@ func renderSingBox(s *model.SSOT, n *model.Node) (File, []Skip, error) {
 	if n.IsServer() && n.Server.InboundPort > 0 {
 		serverInto(cfg, s, n)
 	}
+	linkMetricInto(cfg, s, n)
 
 	// block 出站两边都要用,收尾时统一加一次。
 	cfg.Outbounds = append(cfg.Outbounds, sbOutbound{Type: "block", Tag: "block"})

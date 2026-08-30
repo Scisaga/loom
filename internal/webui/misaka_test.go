@@ -237,6 +237,22 @@ func misakaEnrollmentDeps() (*NodeEnrollmentDeps, *[]EnrollmentConnection, *[]En
 		},
 		Review: func(_ context.Context, input EnrollmentReviewInput) (EnrollmentReview, error) {
 			reviews = append(reviews, input)
+			country := strings.ToUpper(strings.TrimSpace(input.Country))
+			city := strings.TrimSpace(input.City)
+			geoEvidence := "Country and city were supplied by the operator; GeoIP was not queried again."
+			geoSuggested := false
+			if input.DisableGeoIP {
+				geoEvidence = "GeoIP suggestion was disabled for this declaration review."
+			} else if country == "" || city == "" {
+				if country == "" {
+					country = "HK"
+				}
+				if city == "" {
+					city = "Hong Kong"
+				}
+				geoSuggested = true
+				geoEvidence = "GeoIP suggestion from ipwho.is for public endpoint address 203.0.113.42; approximate and not trusted endpoint or location evidence."
+			}
 			resolved := input.RequestedDirection
 			evidence := "operator-selected after trusted preflight"
 			if resolved == "" || resolved == "automatic" {
@@ -246,6 +262,8 @@ func misakaEnrollmentDeps() (*NodeEnrollmentDeps, *[]EnrollmentConnection, *[]En
 			return EnrollmentReview{
 				Connection: input.Connection, HostKey: input.HostKey,
 				NodeID: "hk01", ObservedHostname: "HK01", PublicEndpoint: "203.0.113.42",
+				Country: country, City: city, DisableGeoIP: input.DisableGeoIP,
+				GeoIPSuggested: geoSuggested, GeoIPEvidence: geoEvidence,
 				EndpointEvidence: "global SSH target resolved by control; WireGuard UDP unverified",
 				System:           "Ubuntu 24.04 · x86_64", Privilege: "bootstrap permitted",
 				KernelWireGuard: true, WGCommand: true,
@@ -289,7 +307,7 @@ func TestMisakaRoutesAndNavigationContract(t *testing.T) {
 	body := misakaRequest(t, d, http.MethodGet, "/nodes", nil, false).Body.String()
 	for _, want := range []string{
 		`<header class=header>`, `<nav class=nav`, `<span>LOOM</span>`,
-		`<link rel=icon href="/favicon.svg?v=7" type="image/svg+xml">`,
+		`<link rel=icon href="/favicon.svg?v=9" type="image/svg+xml">`,
 		`href="/"`, `href="/nodes"`, `href="/topology"`, `href="/services"`,
 		`href="/routing"`, `href="/deployments"`, `href="/events"`, `href="/settings"`,
 		`--font-mono:"SFMono-Regular"`, `font-weight:400;font-synthesis:none`, `.navgroup{display:contents}`,
@@ -545,7 +563,8 @@ func TestMisakaNodeEnrollmentStartsWithOnlySSHCoordinates(t *testing.T) {
 	body := w.Body.String()
 	for _, want := range []string{
 		"Host or IP address", "SSH user", "Port", `action="/nodes/add/scan"`,
-		"Manual input", "SSH host or IP, user and port only",
+		"Initial input", "SSH host or IP, user and port only",
+		"Country and city are suggested from the public endpoint IP",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("initial enrollment page is missing %q", want)
@@ -558,6 +577,7 @@ func TestMisakaNodeEnrollmentStartsWithOnlySSHCoordinates(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		"node", "node_id", "nodeid", "public_endpoint", "endpoint", "egress", "direction",
+		"country", "city",
 	} {
 		if misakaHasNamedControl(body, forbidden) {
 			t.Errorf("initial enrollment page lets the operator submit inferred field %q", forbidden)
@@ -565,6 +585,51 @@ func TestMisakaNodeEnrollmentStartsWithOnlySSHCoordinates(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(body), "generate key &amp; add") || strings.Contains(strings.ToLower(body), "generate key & add") {
 		t.Fatal("enrollment still presents the misleading per-node key-generation action")
+	}
+}
+
+func TestEnrollmentLocationInputIsOptionalNormalizedAndBounded(t *testing.T) {
+	for _, tc := range []struct {
+		name, input, want, wantErr string
+	}{
+		{name: "omitted"},
+		{name: "unicode and surrounding space", input: "  香港  ", want: "香港"},
+		{name: "too long", input: strings.Repeat("a", 257), wantErr: "exceeds 256 bytes"},
+		{name: "control character", input: "Hong\nKong", wantErr: "control character"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &http.Request{Form: url.Values{"city": {tc.input}}}
+			got, err := parseEnrollmentCity(r)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("parseEnrollmentCity error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("parseEnrollmentCity = %q, %v; want %q", got, err, tc.want)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		input, want, wantErr string
+	}{
+		{input: "  hk ", want: "HK"},
+		{input: "", want: ""},
+		{input: "HKG", wantErr: "two-letter ISO"},
+		{input: "H1", wantErr: "two-letter ISO"},
+	} {
+		r := &http.Request{Form: url.Values{"country": {tc.input}}}
+		got, err := parseEnrollmentCountry(r)
+		if tc.wantErr != "" {
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("parseEnrollmentCountry(%q) error = %v, want %q", tc.input, err, tc.wantErr)
+			}
+			continue
+		}
+		if err != nil || got != tc.want {
+			t.Errorf("parseEnrollmentCountry(%q) = %q, %v; want %q", tc.input, got, err, tc.want)
+		}
 	}
 }
 
@@ -626,7 +691,8 @@ func TestMisakaNodeEnrollmentTrustReviewPreviewAndCommitContract(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Confirm SSH host identity", "Operator decision", "SHA256:W1f2Qe-test-host-key",
-		"I independently confirmed this host fingerprint", "Trust key &amp; run preflight",
+		"I independently confirmed this host fingerprint", "Do not send the public endpoint IP",
+		"Trust key &amp; run preflight",
 	} {
 		if !strings.Contains(scanned.Body.String(), want) {
 			t.Errorf("host-key confirmation is missing %q", want)
@@ -668,10 +734,15 @@ func TestMisakaNodeEnrollmentTrustReviewPreviewAndCommitContract(t *testing.T) {
 		t.Fatalf("confirmed Review inputs = %#v, want %#v", *reviews, wantReviewInput)
 	}
 	reviewBody := reviewed.Body.String()
+	if regexp.MustCompile(`%![A-Za-z]\(`).MatchString(reviewBody) {
+		t.Fatalf("review page contains a fmt placeholder failure:\n%s", reviewBody)
+	}
 	for _, want := range []string{
 		"Trusted remote observation", "hk01", "derived from remote hostname",
 		"Public endpoint candidate", "203.0.113.42",
 		"global SSH target resolved by control; WireGuard UDP unverified",
+		"Country / city", "Hong Kong", "HK", `name=country`, `name=city`,
+		"GeoIP is an editable suggestion, not proof", "ipwho.is", `name=disable_geoip`,
 		"Egress", "Enabled", `select name=direction`, "Automatic · conservative",
 		"reverse_only", "10.99.0.7/32", "10.99.0.8/32", "sg02", "61775/udp",
 		"Reviewed direction is locked for commit", `name=direction value="automatic"`,
@@ -711,17 +782,19 @@ func TestMisakaNodeEnrollmentTrustReviewPreviewAndCommitContract(t *testing.T) {
 	}
 	transactionForm.Set("action", "preview")
 	transactionForm.Set("direction", "bidirectional")
+	transactionForm.Set("country", "HK")
+	transactionForm.Set("city", "Hong Kong")
 	previewed := misakaRequest(t, d, http.MethodPost, "/nodes/add/commit", transactionForm, true)
 	if previewed.Code != http.StatusOK {
 		t.Fatalf("direction preview = %d; body=%s", previewed.Code, previewed.Body.String())
 	}
-	if len(*reviews) != 2 || (*reviews)[1].RequestedDirection != "bidirectional" {
+	if len(*reviews) != 2 || (*reviews)[1].RequestedDirection != "bidirectional" || (*reviews)[1].Country != "HK" || (*reviews)[1].City != "Hong Kong" {
 		t.Fatalf("preview did not recompute through Review: %#v", *reviews)
 	}
 	if len(*commits) != 0 {
 		t.Fatal("preview committed the network plan")
 	}
-	if body := previewed.Body.String(); !strings.Contains(body, `name=direction value="bidirectional"`) || !strings.Contains(body, `name=reviewed_direction value="bidirectional"`) {
+	if body := previewed.Body.String(); !strings.Contains(body, `name=direction value="bidirectional"`) || !strings.Contains(body, `name=reviewed_direction value="bidirectional"`) || !strings.Contains(body, `name=country value="HK"`) || !strings.Contains(body, `name=city value="Hong Kong"`) {
 		t.Fatalf("recomputed page did not bind commit to reviewed bidirectional plan:\n%s", body)
 	}
 
@@ -740,7 +813,7 @@ func TestMisakaNodeEnrollmentTrustReviewPreviewAndCommitContract(t *testing.T) {
 				Algorithm: "ssh-ed25519", PublicKey: "AAAAC3NzaC1lZDI1NTE5AAAAIhost-key",
 				Fingerprint: "SHA256:W1f2Qe-test-host-key",
 			},
-			RequestedDirection: "bidirectional",
+			Country: "HK", City: "Hong Kong", RequestedDirection: "bidirectional",
 		},
 		ExpectedNodeID: "hk01", ExpectedEndpoint: "203.0.113.42", ExpectedRevision: "revision-enroll-9",
 	}
@@ -756,6 +829,26 @@ func TestMisakaNodeEnrollmentTrustReviewPreviewAndCommitContract(t *testing.T) {
 		if !strings.Contains(nodes.Body.String(), want) {
 			t.Errorf("post-commit Nodes page is missing scope boundary %q", want)
 		}
+	}
+}
+
+func TestMisakaNodeEnrollmentCanDisableGeoIPBeforeFirstLookup(t *testing.T) {
+	d := misakaDeps()
+	enrollment, _, reviews, _ := misakaEnrollmentDeps()
+	d.Control.Enrollment = enrollment
+	form := url.Values{
+		"host": {"203.0.113.42"}, "user": {"loom-bootstrap"}, "port": {"22"},
+		"host_key_algorithm": {"ssh-ed25519"}, "host_key_public": {"AAAAC3Nza-test"},
+		"host_key_fingerprint": {"SHA256:test"}, "confirm_host_key": {"yes"},
+		"disable_geoip": {"yes"},
+	}
+	w := misakaRequest(t, d, http.MethodPost, "/nodes/add/review", form, true)
+	if w.Code != http.StatusOK || len(*reviews) != 1 || !(*reviews)[0].DisableGeoIP {
+		t.Fatalf("GeoIP opt-out did not reach first review: status=%d reviews=%#v", w.Code, *reviews)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "GeoIP suggestion was disabled") || !strings.Contains(body, `name=disable_geoip value="yes"`) {
+		t.Fatalf("GeoIP opt-out was not preserved in review:\n%s", body)
 	}
 }
 
@@ -838,6 +931,9 @@ func TestMisakaEnrollmentReviewTokenBindsEveryCommitBoundary(t *testing.T) {
 		{"host key algorithm", func(v *EnrollmentCommitInput) { v.HostKey.Algorithm = "ssh-rsa" }},
 		{"host public key", func(v *EnrollmentCommitInput) { v.HostKey.PublicKey += "tampered" }},
 		{"host fingerprint", func(v *EnrollmentCommitInput) { v.HostKey.Fingerprint += "tampered" }},
+		{"country", func(v *EnrollmentCommitInput) { v.Country = "SG" }},
+		{"city", func(v *EnrollmentCommitInput) { v.City = "Singapore" }},
+		{"geoip opt-out", func(v *EnrollmentCommitInput) { v.DisableGeoIP = true }},
 		{"direction", func(v *EnrollmentCommitInput) { v.RequestedDirection = "direct_only" }},
 		{"node id", func(v *EnrollmentCommitInput) { v.ExpectedNodeID = "hk02" }},
 		{"endpoint", func(v *EnrollmentCommitInput) { v.ExpectedEndpoint = "203.0.113.43" }},

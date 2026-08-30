@@ -29,6 +29,99 @@ func reportConfigs(t *testing.T, res *Result) map[string]*report.Config {
 	return out
 }
 
+func TestEveryInnerPairHasExactlyOneDialableLinkMetricDirection(t *testing.T) {
+	for name, path := range map[string]string{
+		"fixture":    fixture,
+		"production": "../../deploy/ssot.yaml",
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, err := model.LoadFile(path)
+			if err != nil {
+				t.Fatalf("加载 %s: %v", path, err)
+			}
+			res, err := Render(s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfgs := reportConfigs(t, res)
+			var inner []*model.Node
+			for i := range s.Nodes {
+				n := &s.Nodes[i]
+				if !n.Decommission && n.MeshEligible() && runsSingBox(n) {
+					inner = append(inner, n)
+				}
+			}
+			wantPairs := map[string]bool{}
+			for i := 0; i < len(inner); i++ {
+				for j := i + 1; j < len(inner); j++ {
+					a, b := inner[i].ID, inner[j].ID
+					if b < a {
+						a, b = b, a
+					}
+					wantPairs[a+"\x00"+b] = true
+				}
+			}
+			if len(wantPairs) == 0 {
+				t.Fatal("fixture/production 没有可检查的内圈无向对")
+			}
+
+			// ExpectedDirectLinks is the no-secret global inventory repeated in
+			// every reporter config. Check one copy and then require all copies to
+			// be identical, so a node cannot render a different topology contract.
+			var baseline []report.ExpectedDirectLink
+			for _, n := range s.Nodes {
+				cfg := cfgs[n.ID]
+				if cfg == nil {
+					t.Fatalf("%s 没有 report config", n.ID)
+				}
+				if baseline == nil {
+					baseline = cfg.ExpectedDirectLinks
+				} else if !sameExpectedDirectLinks(baseline, cfg.ExpectedDirectLinks) {
+					t.Fatalf("%s 的 ExpectedDirectLinks 与其他节点不一致: %+v vs %+v",
+						n.ID, cfg.ExpectedDirectLinks, baseline)
+				}
+			}
+			counts := map[string]int{}
+			nodes := s.NodeByID()
+			for _, link := range baseline {
+				a, b := link.From, link.To
+				if b < a {
+					a, b = b, a
+				}
+				pair := a + "\x00" + b
+				counts[pair]++
+				target := nodes[link.To]
+				if target == nil || !target.PubliclyDialable() || target.Server == nil ||
+					target.Server.InboundProtocol.Or() != model.Hysteria2 {
+					t.Errorf("%s→%s 的目标不是可拨 Hysteria2 inbound", link.From, link.To)
+				}
+			}
+			for pair := range wantPairs {
+				if counts[pair] != 1 {
+					t.Errorf("内圈无向对 %q 有 %d 个可拨方向，want exactly 1", pair, counts[pair])
+				}
+			}
+			for pair, count := range counts {
+				if !wantPairs[pair] {
+					t.Errorf("渲染了不属于内圈的 direct link %q (%d)", pair, count)
+				}
+			}
+		})
+	}
+}
+
+func sameExpectedDirectLinks(a, b []report.ExpectedDirectLink) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // 上报者装在**每个**有隧道的节点上,服务器也要 —— DDNS 重解析、隧道断连、
 // 有人手工改配置,这些只有节点自己知道。
 func TestEveryTunneledNodeGetsAReporter(t *testing.T) {

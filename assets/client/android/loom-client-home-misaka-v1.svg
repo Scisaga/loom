@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="430" height="932" viewBox="0 0 430 932"
+     role="img" aria-labelledby="title description">
+  <title id="title">Loom Android client home — self-contained SVG prototype</title>
+  <desc id="description">An Android VpnService client proposal showing one administrator-bound access policy, distinct host, traffic capture, data plane and control sync states, a read-only current path, signed profile information, and sample session traffic.</desc>
+
+  <defs>
+    <clipPath id="screen-clip"><rect x="12" y="12" width="406" height="908" rx="38"/></clipPath>
+    <symbol id="loom-mark" viewBox="127 112 1000 1000">
+      <g transform="translate(0.000000,1254.000000) scale(1.000000,-1.000000)">
+        <path d="M616 1108 c-67 -49 -118 -133 -129 -209 0 -6 0 -6 -14 -1 -75 27 -166 24 -239 -6 -13 -5 -14 -7 -11 -29 12 -80 53 -155 115 -211 l9 -8 -6 -5 c-61 -53 -100 -121 -114 -200 -5 -31 -5 -38 4 -42 57 -26 138 -34 203 -20 13 2 22 5 39 10 14 5 14 5 15 -2 9 -70 60 -155 121 -204 17 -15 18 -15 34 -2 47 37 87 93 107 151 7 20 16 52 16 60 0 4 1 4 12 0 72 -28 158 -27 236 3 17 6 17 7 15 27 -8 79 -49 159 -111 215 l-9 9 10 9 c61 53 105 139 114 219 2 15 1 16 -28 26 -75 25 -156 25 -227 -2 -4 -1 -8 -2 -8 -2 -1 0 -2 7 -3 15 -15 81 -60 152 -126 198 -12 9 -14 9 -25 1z M639 1084 c105 -82 142 -225 92 -356 -7 -18 -7 -17 -16 -17 -4 0 -8 1 -8 1 -1 1 1 7 4 15 32 78 30 170 -5 243 -16 35 -40 66 -68 88 -9 8 -11 8 -20 0 -47 -39 -82 -103 -93 -169 -1 -7 -2 -12 -2 -13 -1 0 -17 8 -17 9 -1 1 4 27 7 40 13 44 37 89 68 124 15 16 44 43 47 43 0 0 5 -3 11 -8z M638 1031 c77 -72 98 -200 50 -307 -3 -8 -5 -11 -7 -12 -2 -1 -17 -1 -18 0 -1 0 2 6 5 12 44 94 31 213 -31 278 -10 11 -12 10 -29 -12 -26 -36 -44 -83 -47 -128 0 -6 -1 -11 -1 -11 -1 0 -6 4 -16 11 -4 3 2 39 12 67 13 41 41 84 68 108 4 4 3 4 14 -6z M635 973 c24 -33 37 -74 40 -124 l0 -15 -10 -10 c-11 -11 -23 -25 -32 -38 -6 -8 -5 -9 -13 3 -9 13 -19 24 -30 36 l-10 10 0 13 c3 48 18 94 42 128 6 7 6 7 13 -3z M413 893 c79 -13 148 -56 193 -118 12 -17 11 -15 6 -26 -3 -6 -5 -10 -5 -10 0 0 -4 6 -9 13 -66 103 -190 147 -314 114 -20 -6 -21 -6 -14 -34 15 -60 54 -120 102 -158 9 -8 9 -7 0 -12 -9 -6 -8 -6 -18 2 -57 48 -97 120 -110 196 -2 14 -3 13 7 16 22 9 53 16 85 19 13 2 61 0 77 -2z M923 895 c30 -3 83 -16 89 -22 2 -2 -7 -43 -14 -64 -34 -100 -109 -176 -200 -203 -23 -7 -59 -13 -61 -11 -2 2 -8 16 -8 16 0 1 7 2 16 2 74 9 136 45 185 108 27 35 49 81 57 120 4 17 3 19 -13 24 -62 19 -135 15 -193 -9 -9 -4 -9 -5 -9 7 l0 10 9 3 c25 10 56 17 83 19 9 1 50 1 59 0z M400 854 c70 -9 134 -47 176 -104 7 -11 21 -34 21 -36 0 -2 -6 -24 -7 -25 0 -1 -4 5 -8 13 -38 76 -106 124 -190 134 -14 2 -49 1 -62 -1 -16 -3 -18 -5 -12 -21 14 -42 48 -88 87 -117 7 -5 13 -10 13 -10 0 -1 -17 -9 -18 -9 -5 0 -42 35 -56 52 -24 29 -46 72 -54 105 -3 11 -3 10 11 14 30 8 67 10 99 5z M926 854 c13 -1 39 -7 40 -9 2 -2 -8 -34 -17 -55 -43 -93 -125 -152 -220 -158 l-11 0 -6 9 c-3 5 -5 9 -5 9 0 1 8 1 18 1 56 0 107 23 153 69 29 29 59 79 63 104 1 10 -11 13 -53 12 -42 0 -71 -6 -107 -24 -12 -6 -11 -6 -10 5 1 4 1 9 1 10 0 3 1 3 13 8 45 19 93 26 141 19z M391 816 c30 -3 68 -16 91 -32 l6 -3 4 -15 c4 -16 10 -34 16 -47 4 -11 4 -11 -3 -11 -12 -2 -37 -6 -48 -9 -16 -4 -14 -4 -26 4 -38 25 -67 57 -86 96 -7 15 -7 16 0 17 10 1 36 1 46 0z M914 816 c3 -2 2 -5 -4 -18 -19 -39 -53 -75 -89 -97 l-8 -5 -11 3 c-15 4 -33 8 -45 9 -6 1 -11 2 -11 2 -1 0 1 7 4 14 6 17 12 36 15 48 l1 9 9 5 c27 15 55 25 85 30 10 1 51 1 54 0z M669 789 c-4 -19 -7 -27 -14 -39 -10 -18 -20 -39 -29 -64 -1 -4 -2 -5 -10 -9 -9 -5 -9 -5 -5 11 10 40 28 75 51 103 10 12 10 12 7 -2z M529 746 c14 -16 17 -20 25 -37 8 -17 22 -42 30 -54 5 -9 6 -24 1 -26 -7 -2 -13 5 -35 46 -15 28 -35 75 -35 83 0 2 7 -4 14 -12z M721 691 c25 -1 43 -3 61 -8 4 0 2 -2 -8 -5 -19 -6 -28 -7 -48 -6 -12 1 -29 1 -46 1 -36 -1 -37 -1 -33 11 2 7 1 6 24 7 12 0 23 1 26 1 2 0 13 0 24 -1z M525 681 c5 -10 5 -10 -7 -10 -120 -9 -223 -101 -248 -221 -4 -22 -4 -23 11 -28 61 -19 132 -16 192 7 5 2 9 3 10 3 0 0 0 -5 0 -10 l1 -9 -9 -4 c-62 -24 -145 -25 -216 -1 -17 5 -16 4 -14 15 15 104 74 190 160 235 34 17 63 25 108 30 8 1 7 2 12 -7z M638 655 l9 -4 0 -10 c1 -13 2 -12 -10 -19 l-9 -6 -10 6 -9 6 -1 11 0 11 9 5 c12 6 11 6 21 0z M683 651 c0 -1 6 -10 12 -21 18 -30 29 -54 39 -82 6 -19 6 -19 -4 -9 -16 16 -22 25 -30 42 -7 14 -25 48 -30 54 -2 3 -3 15 -1 16 1 2 13 1 14 0z M546 642 c3 -5 5 -9 5 -9 0 -1 -7 -1 -16 -1 -94 0 -185 -66 -216 -155 -7 -22 -6 -23 23 -27 44 -5 89 3 131 21 7 3 13 6 13 6 0 -1 -1 -5 -1 -11 l-1 -11 -11 -5 c-53 -22 -115 -26 -174 -12 -11 3 -10 3 -9 10 8 39 30 82 58 115 44 53 119 88 184 88 l9 0 5 -9z M902 622 c45 -39 79 -92 96 -151 5 -19 10 -43 10 -51 l1 -7 -14 -5 c-89 -30 -180 -22 -253 22 -40 25 -68 49 -93 83 l-7 10 4 7 c7 13 6 12 12 3 73 -104 198 -148 317 -110 12 4 13 4 8 27 -9 42 -31 88 -59 123 -8 10 -33 35 -42 41 -6 5 -6 5 2 11 9 6 8 6 18 -3z M542 610 c10 -1 27 -1 38 -1 l20 0 8 -5 c4 -2 8 -4 8 -5 0 0 -1 -2 -2 -4 l-1 -4 -43 0 c-45 1 -55 2 -81 7 -8 1 -14 3 -15 3 0 1 15 6 27 8 15 3 15 3 20 2 2 0 11 0 21 -1z M661 609 c5 -9 -53 -107 -73 -125 -3 -3 -3 0 1 14 4 17 8 26 14 37 12 18 31 52 34 60 1 2 4 5 11 10 11 7 11 7 13 4z M863 604 c48 -36 83 -90 98 -148 2 -7 3 -14 3 -14 -1 -1 -5 -3 -11 -4 -90 -23 -180 3 -247 69 -17 18 -42 51 -42 56 0 2 9 20 10 20 0 0 3 -4 5 -8 36 -66 102 -112 177 -124 12 -2 51 -2 64 0 19 4 21 5 17 17 -15 50 -55 103 -97 128 -1 1 -2 2 -2 2 0 1 17 10 19 10 0 0 3 -2 6 -4z M458 585 c12 -4 37 -9 48 -11 8 0 7 0 3 -10 -5 -13 -13 -36 -16 -49 -3 -13 -2 -12 -19 -21 -38 -19 -72 -26 -112 -25 -22 1 -23 1 -23 5 3 13 23 45 41 67 16 18 58 49 64 48 1 -1 7 -2 14 -4z M824 583 c35 -22 63 -53 81 -89 6 -12 11 -22 10 -23 -4 -3 -47 -2 -68 2 -26 5 -69 24 -82 35 0 1 -2 8 -4 17 -2 9 -6 23 -10 32 -6 19 -6 18 1 19 14 1 57 11 59 13 1 1 4 0 13 -6z M553 570 c1 -1 1 -2 -2 -7 -11 -21 -21 -55 -26 -82 -15 -86 17 -180 82 -245 20 -20 19 -20 40 0 44 45 71 101 82 165 1 6 2 11 2 11 0 1 4 -1 9 -4 l8 -4 0 -5 c-11 -74 -51 -146 -110 -198 -12 -10 -10 -10 -21 -1 -77 65 -122 167 -113 259 3 34 14 74 26 103 l4 9 9 0 c5 0 9 0 10 -1z M597 570 c0 -1 -4 -9 -8 -18 -43 -88 -35 -184 20 -258 15 -20 17 -21 27 -10 30 33 52 90 57 145 0 11 0 11 10 3 10 -7 9 -6 7 -19 -7 -62 -34 -117 -76 -161 l-7 -7 -8 8 c-51 50 -82 131 -77 200 3 35 12 70 28 103 l7 14 10 0 c5 0 10 0 10 0z M639 493 c5 -6 14 -17 22 -24 l13 -14 0 -8 c0 -44 -14 -93 -38 -130 -9 -14 -9 -14 -13 -8 -26 35 -42 84 -42 127 l0 11 12 12 c11 12 22 25 31 38 3 4 6 7 6 7 0 0 4 -5 9 -11z" fill="#252927" fill-rule="evenodd" clip-rule="evenodd"/>
+      </g>
+    </symbol>
+    <symbol id="icon-settings" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="3.5"/><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6"/>
+    </symbol>
+    <symbol id="icon-shield" viewBox="0 0 24 24">
+      <path d="m12 2.5 7 3v5.6c0 4.1-2.5 7.3-7 9.2-4.5-1.9-7-5.1-7-9.2V5.5Z"/><path d="m8.5 11.5 2.2 2.2 4.8-5"/>
+    </symbol>
+    <symbol id="icon-power" viewBox="0 0 24 24">
+      <path d="M12 2.5v9M6.2 5.8a8.5 8.5 0 1 0 11.6 0"/>
+    </symbol>
+    <symbol id="icon-check" viewBox="0 0 20 20">
+      <circle cx="10" cy="10" r="7.5"/><path d="m6.5 10 2.3 2.3 4.8-5"/>
+    </symbol>
+    <symbol id="icon-phone" viewBox="0 0 24 24">
+      <rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10 5h4M10 19h4"/>
+    </symbol>
+    <symbol id="icon-server" viewBox="0 0 24 24">
+      <rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><circle cx="7" cy="6.5" r="1"/><circle cx="7" cy="17.5" r="1"/><path d="M11 6.5h6M11 17.5h6"/>
+    </symbol>
+    <symbol id="icon-globe" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.5 4 5.5 4 9s-1.4 6.5-4 9M12 3c-2.6 2.5-4 5.5-4 9s1.4 6.5 4 9"/>
+    </symbol>
+    <symbol id="icon-home" viewBox="0 0 24 24">
+      <path d="m3.5 11 8.5-7 8.5 7v9H7v-8M9.5 20v-6h5v6"/>
+    </symbol>
+    <symbol id="icon-activity" viewBox="0 0 24 24">
+      <path d="M3 12h3.5l2.5-6 3.8 12 3-8 2 2H21"/>
+    </symbol>
+    <symbol id="icon-chevron" viewBox="0 0 20 20">
+      <path d="m7 4 6 6-6 6"/>
+    </symbol>
+
+    <style><![CDATA[
+      .ui { font-family: Inter, "Atkinson Hyperlegible Next", Roboto, system-ui, sans-serif; fill: #181B1A; }
+      .mono { font-family: "Intel One Mono", "Roboto Mono", ui-monospace, monospace; }
+      .muted { fill: #717674; }
+      .faint { fill: #9BA09E; }
+      .green { fill: #239B68; }
+      .amber { fill: #A66A14; }
+      .heading { font-size: 24px; font-weight: 700; letter-spacing: -.35px; }
+      .section { font-size: 15px; font-weight: 650; }
+      .subsection { font-size: 13px; font-weight: 650; }
+      .body { font-size: 13px; font-weight: 400; }
+      .small { font-size: 12px; font-weight: 400; }
+      .tiny { font-size: 10.5px; font-weight: 400; }
+      .eyebrow { font-size: 10px; font-weight: 650; letter-spacing: 1.05px; }
+      .metric { font-size: 17px; font-weight: 680; }
+      .wordmark { font-size: 18px; font-weight: 700; letter-spacing: .8px; }
+      .panel { fill: #FFFFFF; stroke: #E4E7E5; stroke-width: 1; }
+      .panel-soft { fill: #F8F9F8; stroke: #E4E7E5; stroke-width: 1; }
+      .chip-green { fill: #EEF8F3; stroke: #B9DEC9; stroke-width: 1; }
+      .chip-amber { fill: #FFF8EB; stroke: #E7D3AB; stroke-width: 1; }
+      .rule { stroke: #E6E9E7; stroke-width: 1; }
+      .icon { fill: none; stroke: #747A77; stroke-width: 1.55; stroke-linecap: round; stroke-linejoin: round; }
+      .icon-active { fill: none; stroke: #181B1A; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+      .icon-green { fill: none; stroke: #239B68; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+      .status-dot { fill: #2AA875; }
+      .route-line { fill: none; stroke: #2AA875; stroke-width: 1.8; stroke-linecap: round; }
+      .node-ring { fill: #FFFFFF; stroke: #B9DEC9; stroke-width: 1.35; }
+    ]]></style>
+  </defs>
+
+  <rect width="430" height="932" fill="#E3E7E4"/>
+  <rect x="5" y="5" width="420" height="922" rx="46" fill="#161918"/>
+  <rect x="12" y="12" width="406" height="908" rx="38" fill="#FCFCFB"/>
+
+  <g clip-path="url(#screen-clip)">
+    <!-- Android status bar. -->
+    <rect x="12" y="12" width="406" height="38" fill="#FFFFFF"/>
+    <g class="ui tiny">
+      <text x="31" y="36" font-weight="650">9:41</text>
+      <path d="M354 33v-3M359 33v-5M364 33v-7M369 33v-9" fill="none" stroke="#181B1A" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M377 29c4-4 9-4 13 0M380 32c2.3-2.2 5-2.2 7.2 0" fill="none" stroke="#181B1A" stroke-width="1.4" stroke-linecap="round"/>
+      <rect x="397" y="25" width="15" height="9" rx="2" fill="none" stroke="#181B1A" stroke-width="1.3"/>
+      <rect x="412" y="28" width="2" height="3" rx="1" fill="#181B1A"/>
+      <rect x="399" y="27" width="10" height="5" rx="1" fill="#181B1A"/>
+    </g>
+
+    <!-- App bar. -->
+    <rect x="12" y="50" width="406" height="60" fill="#FFFFFF"/>
+    <line class="rule" x1="12" y1="109.5" x2="418" y2="109.5"/>
+    <use href="#loom-mark" x="28" y="63" width="32" height="32"/>
+    <text class="ui wordmark" x="70" y="86">LOOM</text>
+    <text class="ui tiny muted" x="143" y="85">ANDROID</text>
+    <use href="#icon-settings" x="375" y="67" width="24" height="24" class="icon"/>
+
+    <!-- Prototype banner. -->
+    <rect x="28" y="122" width="374" height="28" rx="14" class="chip-amber"/>
+    <circle cx="45" cy="136" r="3.5" fill="#D79B3B"/>
+    <text class="ui tiny amber" x="57" y="140">DESIGN PROPOSAL · SAMPLE DATA · NOT IMPLEMENTED</text>
+
+    <!-- VPN state. -->
+    <rect x="28" y="164" width="374" height="230" rx="12" class="panel"/>
+    <g class="ui">
+      <text class="eyebrow green" x="48" y="191">ANDROID VPN SERVICE</text>
+      <circle cx="335" cy="187" r="4" class="status-dot"/>
+      <text class="tiny green" x="347" y="191">Running</text>
+
+      <circle cx="349" cy="230" r="30" fill="#EEF8F3" stroke="#B9DEC9"/>
+      <use href="#icon-power" x="337" y="218" width="24" height="24" class="icon-green"/>
+      <text class="heading" x="48" y="224">System tunnel active</text>
+      <text class="body muted" x="48" y="248">End-to-end reachable · checked 14s ago</text>
+      <rect x="48" y="263" width="166" height="25" rx="12.5" class="chip-green"/>
+      <use href="#icon-shield" x="58" y="268" width="15" height="15" class="icon-green"/>
+      <text class="tiny green" x="80" y="279">Singapore fixed · managed</text>
+
+      <line class="rule" x1="48" y1="303" x2="382" y2="303"/>
+      <text class="tiny muted" x="48" y="326">HOST</text>
+      <text class="subsection" x="48" y="345">App running</text>
+      <text class="tiny muted" x="211" y="326">TRAFFIC CAPTURE</text>
+      <text class="subsection" x="211" y="345">TUN active</text>
+      <text class="tiny muted" x="48" y="369">DATA PLANE</text>
+      <text class="subsection green" x="48" y="386">92 ms · healthy</text>
+      <text class="tiny muted" x="211" y="369">CONTROL SYNC</text>
+      <text class="subsection" x="211" y="386">22s ago</text>
+    </g>
+
+    <!-- Current access. -->
+    <rect x="28" y="410" width="374" height="184" rx="12" class="panel"/>
+    <g class="ui">
+      <text class="section" x="48" y="439">Current access</text>
+      <rect x="319" y="423" width="63" height="24" rx="12" class="chip-green"/>
+      <circle cx="334" cy="435" r="3" class="status-dot"/>
+      <text class="tiny green" x="344" y="439">AUTO</text>
+      <text class="small muted" x="48" y="462">Read-only path · selected from signed candidates</text>
+
+      <path d="M65 519H366" class="route-line"/>
+      <circle cx="65" cy="519" r="19" class="node-ring"/>
+      <use href="#icon-phone" x="55" y="509" width="20" height="20" class="icon-green"/>
+      <circle cx="164" cy="519" r="19" class="node-ring"/>
+      <use href="#icon-server" x="154" y="509" width="20" height="20" class="icon-green"/>
+      <circle cx="264" cy="519" r="19" class="node-ring"/>
+      <use href="#icon-server" x="254" y="509" width="20" height="20" class="icon-green"/>
+      <circle cx="366" cy="519" r="19" class="node-ring"/>
+      <use href="#icon-globe" x="356" y="509" width="20" height="20" class="icon-green"/>
+
+      <text class="tiny" x="65" y="553" text-anchor="middle">Phone</text>
+      <text class="tiny muted" x="164" y="553" text-anchor="middle">gz02</text>
+      <text class="tiny muted" x="264" y="553" text-anchor="middle">sg02</text>
+      <text class="tiny" x="366" y="553" text-anchor="middle">Internet</text>
+      <text class="tiny green" x="114" y="508" text-anchor="middle">34ms</text>
+      <text class="tiny green" x="214" y="508" text-anchor="middle">46ms</text>
+      <text class="tiny green" x="315" y="508" text-anchor="middle">12ms</text>
+      <text class="tiny muted" x="48" y="580">Ranking observed 18s ago · switch threshold respected</text>
+    </g>
+
+    <!-- Signed profile. -->
+    <rect x="28" y="610" width="374" height="108" rx="12" class="panel"/>
+    <g class="ui">
+      <use href="#icon-check" x="48" y="627" width="20" height="20" class="icon-green"/>
+      <text class="section" x="79" y="643">Signed profile verified</text>
+      <text class="tiny green" x="382" y="642" text-anchor="end">CURRENT</text>
+      <text class="tiny muted" x="48" y="670">SNAPSHOT</text>
+      <text class="small mono" x="48" y="691" font-weight="650">8cbf3e6a4d92</text>
+      <text class="tiny muted" x="199" y="670">GENERATION</text>
+      <text class="small" x="199" y="691" font-weight="650">184</text>
+      <text class="tiny muted" x="287" y="670">OFFLINE</text>
+      <text class="small" x="287" y="691" font-weight="650">Ready</text>
+      <text class="tiny muted" x="48" y="708">HTTPS transport · content independently signed</text>
+    </g>
+
+    <!-- Session traffic. -->
+    <rect x="28" y="734" width="374" height="82" rx="12" class="panel"/>
+    <g class="ui">
+      <text class="section" x="48" y="762">This session</text>
+      <text class="tiny muted" x="48" y="786">DOWNLOADED</text>
+      <text class="metric" x="48" y="808">684 MB</text>
+      <line class="rule" x1="199" y1="771" x2="199" y2="803"/>
+      <text class="tiny muted" x="222" y="786">UPLOADED</text>
+      <text class="metric" x="222" y="808">46 MB</text>
+      <use href="#icon-chevron" x="367" y="771" width="17" height="17" class="icon"/>
+    </g>
+
+    <!-- Bottom navigation. -->
+    <rect x="12" y="834" width="406" height="86" fill="#FFFFFF"/>
+    <line class="rule" x1="12" y1="834.5" x2="418" y2="834.5"/>
+    <g class="ui">
+      <use href="#icon-home" x="71" y="849" width="25" height="25" class="icon-active"/>
+      <text class="tiny" x="83.5" y="891" text-anchor="middle" font-weight="650">Home</text>
+      <circle cx="83.5" cy="908" r="2.5" class="status-dot"/>
+
+      <use href="#icon-activity" x="202" y="849" width="25" height="25" class="icon"/>
+      <text class="tiny muted" x="214.5" y="891" text-anchor="middle">Activity</text>
+
+      <use href="#icon-settings" x="334" y="849" width="25" height="25" class="icon"/>
+      <text class="tiny muted" x="346.5" y="891" text-anchor="middle">Settings</text>
+    </g>
+  </g>
+
+  <!-- Speaker slot and frame highlight. -->
+  <rect x="177" y="18" width="76" height="5" rx="2.5" fill="#282C2A"/>
+  <rect x="12.5" y="12.5" width="405" height="907" rx="37.5" fill="none" stroke="#343936"/>
+</svg>

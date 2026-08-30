@@ -27,6 +27,7 @@ const defaultInboundPort = 61698
 type NodeInput struct {
 	ID             string
 	Name           string
+	Country        string
 	City           string
 	Provider       string
 	PublicEndpoint string
@@ -156,6 +157,10 @@ func nodeFromInput(input NodeInput) (model.Node, error) {
 	if input.SSHPort < 0 || input.SSHPort > 65535 {
 		return model.Node{}, fmt.Errorf("SSH port %d is outside 1-65535 (or 0 for the default 22)", input.SSHPort)
 	}
+	country := strings.ToUpper(strings.TrimSpace(input.Country))
+	if country != "" && !model.ValidCountryCode(country) {
+		return model.Node{}, fmt.Errorf("country %q is invalid: use a two-letter ISO 3166-1 alpha-2 code", input.Country)
+	}
 
 	egress := true
 	if input.EgressCapable != nil {
@@ -164,6 +169,7 @@ func nodeFromInput(input NodeInput) (model.Node, error) {
 	return model.Node{
 		ID:             input.ID,
 		Name:           strings.TrimSpace(input.Name),
+		Country:        country,
 		City:           strings.TrimSpace(input.City),
 		Provider:       strings.TrimSpace(input.Provider),
 		PublicEndpoint: endpoint,
@@ -283,6 +289,7 @@ func nodeYAML(node model.Node) *yaml.Node {
 		key, value string
 	}{
 		{"name", node.Name},
+		{"country", node.Country},
 		{"city", node.City},
 		{"provider", node.Provider},
 		{"public_endpoint", node.PublicEndpoint},

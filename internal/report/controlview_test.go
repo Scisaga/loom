@@ -15,7 +15,7 @@ func TestEnrichControlViewPreservesSSOTContractAndRouteScope(t *testing.T) {
 	s := &model.SSOT{
 		Nodes: []model.Node{
 			{
-				ID: "jm24", Name: "Control", City: "Nanjing", Provider: "Example",
+				ID: "jm24", Name: "Control", Country: "CN", City: "Nanjing", Provider: "Example",
 				PublicEndpoint: "control.example", Drain: true,
 				Server: &model.ServerRole{Direction: model.Bidirectional, EgressCapable: true},
 				Access: &model.AccessRole{
@@ -72,7 +72,7 @@ func TestEnrichControlViewPreservesSSOTContractAndRouteScope(t *testing.T) {
 		t.Fatalf("SSOT-only node was not retained as unknown: %+v", v.Nodes)
 	}
 	jm := nodeByID(t, v.Nodes, "jm24")
-	if jm.Name != "Control" || jm.City != "Nanjing" || jm.Provider != "Example" ||
+	if jm.Name != "Control" || jm.Country != "CN" || jm.City != "Nanjing" || jm.Provider != "Example" ||
 		jm.PublicEndpoint != "control.example" || jm.SSHPort != 22 || !jm.Drain ||
 		!jm.EgressCapable || jm.Direction != "bidirectional" ||
 		!slices.Equal(jm.Roles, []string{"control", "access", "server", "egress"}) {

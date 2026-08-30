@@ -143,6 +143,40 @@ func TestUnexpectedObservationCannotCreateWGCarrierEdge(t *testing.T) {
 	}
 }
 
+func TestSignedDirectMetricOnlyUpgradesExactExpectedDirection(t *testing.T) {
+	cfg := &Config{
+		ExpectedDirectLinks: []ExpectedDirectLink{{
+			From: "a", To: "b", Transport: "hysteria2", Carrier: "public",
+		}},
+	}
+	metric := func(peer string) webui.VerifiedLinkMetricView {
+		return webui.VerifiedLinkMetricView{
+			PeerNode: peer, Transport: "hysteria2", Carrier: "public",
+			ObservedAt: "2026-08-29T12:00:00Z", RTTMS: 21, P50MS: 21, P95MS: 25,
+			Samples: 3, TransferBytes: 64 << 10, DurationMS: 20,
+		}
+	}
+
+	// These values have already crossed the signature verification boundary,
+	// but a valid signature still must not grant topology authority.
+	links := topologyLinks(cfg, []webui.NodeView{
+		{ID: "b", VerifiedLinkMetrics: []webui.VerifiedLinkMetricView{metric("a")}}, // reverse direction
+		{ID: "a", VerifiedLinkMetrics: []webui.VerifiedLinkMetricView{metric("c")}}, // undeclared peer
+	})
+	if len(links) != 1 || links[0].From != "a" || links[0].To != "b" ||
+		links[0].Kind != "direct-hy2" || links[0].State != "unknown" {
+		t.Fatalf("反向或陌生的已验签度量改写/创建了拓扑边: %+v", links)
+	}
+
+	links = topologyLinks(cfg, []webui.NodeView{{
+		ID: "a", VerifiedLinkMetrics: []webui.VerifiedLinkMetricView{metric("b")},
+	}})
+	if len(links) != 1 || links[0].State != "active" ||
+		links[0].ObservedFrom != "a" || links[0].ObservedTo != "b" || links[0].MS != 21 {
+		t.Fatalf("精确匹配 ExpectedDirectLinks 的方向没有升级底图: %+v", links)
+	}
+}
+
 func TestDomesticTopologyLayerKeepsCandidatePathsWithoutDirectWG(t *testing.T) {
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
 	cfg := &Config{

@@ -30,6 +30,17 @@ type Config struct {
 	// 从它们那里收别人的观测(转述)。
 	Neighbors []Neighbor `json:"neighbors,omitempty"`
 
+	// LinkProbes are local loopback proxy entries generated for independently
+	// measured public Hysteria2 hops.  They are intentionally separate from
+	// Neighbors: Neighbors are persistent WireGuard carriers and gossip peers,
+	// while these probes are active, directional and never carry gossip.
+	LinkProbes []LinkProbe `json:"link_probes,omitempty"`
+
+	// LinkReflector enables the isolated fixed-size HTTP reflector used by a
+	// remote Hysteria2 probe.  It is bound to loopback on its own port and does
+	// not expose /status or the control UI through the telemetry credential.
+	LinkReflector bool `json:"link_reflector,omitempty"`
+
 	// Targets 是本节点要直接试访问的目标地址。
 	//
 	// **这是链路状态测量里最值钱的一项。** "cn-a 到不了 Cloudflare"是关于
@@ -86,8 +97,9 @@ type Config struct {
 	// ExpectedNodes / ExpectedTunnels 是不含地址和秘密的 SSOT 拓扑底图。
 	// 完全失联的节点不会出现在 gossip 里，但仍必须在中控图上以 unknown
 	// 留着，不能把“没听见”画成“已不存在”。
-	ExpectedNodes   []string         `json:"expected_nodes,omitempty"`
-	ExpectedTunnels []ExpectedTunnel `json:"expected_tunnels,omitempty"`
+	ExpectedNodes       []string             `json:"expected_nodes,omitempty"`
+	ExpectedTunnels     []ExpectedTunnel     `json:"expected_tunnels,omitempty"`
+	ExpectedDirectLinks []ExpectedDirectLink `json:"expected_direct_links,omitempty"`
 	// ExpectedRoutes 是接入节点从 RouteCandidate.ServerChain 派生的业务
 	// 候选路径。它只含节点 ID，不含候选地址或秘密；声明存在不等于在线。
 	ExpectedRoutes []ExpectedRoute `json:"expected_routes,omitempty"`
@@ -105,6 +117,26 @@ type Config struct {
 type ExpectedTunnel struct {
 	From string `json:"from"`
 	To   string `json:"to"`
+}
+
+// ExpectedDirectLink is the no-secret SSOT inventory for one measurable,
+// directional application-layer hop.  From/To preserve the direction that is
+// actually dialled; the topology may still render the pair as one curve.
+type ExpectedDirectLink struct {
+	From      string `json:"from"`
+	To        string `json:"to"`
+	Transport string `json:"transport"`
+	Carrier   string `json:"carrier"`
+}
+
+// LinkProbe names one local sing-box mixed proxy.  Requests sent through it
+// have exactly one dedicated Hysteria2 outbound, making the measurement a
+// single hop instead of an Agent candidate/path measurement.
+type LinkProbe struct {
+	Peer      string `json:"peer"`
+	ProxyAddr string `json:"proxy_addr"`
+	Transport string `json:"transport"`
+	Carrier   string `json:"carrier"`
 }
 
 type ExpectedRoute struct {
@@ -185,6 +217,20 @@ func Load(b []byte) (*Config, error) {
 		}
 		if !ip.IsPrivate() && !ip.IsLoopback() {
 			return nil, fmt.Errorf("监听地址 %q 不是私有地址 —— 上报接口只能绑隧道内地址", a)
+		}
+	}
+	seenProbe := map[string]bool{}
+	for _, probe := range c.LinkProbes {
+		if probe.Peer == "" || probe.Peer == c.Node || seenProbe[probe.Peer] {
+			return nil, fmt.Errorf("link probe peer 无效或重复:%q", probe.Peer)
+		}
+		seenProbe[probe.Peer] = true
+		if probe.Transport != "hysteria2" || probe.Carrier != "public" {
+			return nil, fmt.Errorf("link probe %s 只支持 hysteria2/public", probe.Peer)
+		}
+		host, _, err := net.SplitHostPort(probe.ProxyAddr)
+		if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
+			return nil, fmt.Errorf("link probe %s proxy_addr 必须是回环 host:port", probe.Peer)
 		}
 	}
 	return &c, nil

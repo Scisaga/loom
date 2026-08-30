@@ -122,14 +122,20 @@ func pageTopology(d Deps, isAuthed bool, selectedEntry ...string) string {
 			overlay = append(overlay, route)
 		}
 	}
-	tunnels, active, candidates := 0, 0, 0
+	tunnels, active, directDeclared, directSampled, candidates := 0, 0, 0, 0, 0
 	for _, l := range v.Links {
-		if l.Kind == "tunnel" {
+		switch l.Kind {
+		case "tunnel":
 			tunnels++
 			if l.State == "active" {
 				active++
 			}
-		} else if l.Kind == "candidate" {
+		case "direct-hy2":
+			directDeclared++
+			if l.Samples > 0 {
+				directSampled++
+			}
+		case "candidate":
 			candidates++
 		}
 	}
@@ -153,6 +159,15 @@ func pageTopology(d Deps, isAuthed bool, selectedEntry ...string) string {
 			candidateLinks = append(candidateLinks, link)
 		}
 	}
+	directClass, directHint := "dim", "no direct links declared"
+	if directDeclared > 0 {
+		directClass = "warn"
+		directHint = fmt.Sprintf("%d warming up / unknown", directDeclared-directSampled)
+		if directSampled == directDeclared {
+			directClass = "ok"
+			directHint = "signed public single-hop evidence"
+		}
+	}
 
 	var b strings.Builder
 	b.WriteString(`<div class=sectionhead><h2>Network layers</h2><span class=dim>内圈是可接受反向建连的锚点，外圈是主动接入的出口节点；节点在各自环上等距排列。</span><span class=sp><form method=get action="/topology"><select name=entry aria-label="Agent path overlay"><option value="">No Agent path overlay</option>`)
@@ -164,13 +179,14 @@ func pageTopology(d Deps, isAuthed bool, selectedEntry ...string) string {
 		fmt.Fprintf(&b, `<option value="%s"%s>%s</option>`, esc(entry.Key), attr, esc(entry.Label))
 	}
 	b.WriteString(`</select> <button>Apply</button></form></span></div>`)
-	fmt.Fprintf(&b, `<div class=grid><div class="card span9">%s<div class=legend><span><i class=key></i>Persistent WireGuard</span><span><i class="key candidate"></i>On-demand route hop</span><span><i class="key route"></i>Selected Agent path</span><span><i class="key degraded"></i>Degraded carrier</span><span><i class="key failed"></i>Failed carrier</span></div><div class=topology-layer-note>悬停节点可预览，点击后锁定相邻链路；标签格式为 RTT · Δ波动 · 近 5 分钟实际传输速率，其中 Δ 是近 15 分钟 RTT 的 P95−P50。速率来自相邻可信 WireGuard 计数器差值，不代表链路容量；虚线仅是 %s 允许的按需路径，不伪装成在线隧道（not broken tunnels）。</div></div>`, topologySVG(v, overlay...), esc(intentSource))
+	fmt.Fprintf(&b, `<div class=grid><div class="card span9">%s<div class=legend><span><i class=key></i>Persistent WireGuard</span><span><i class="key direct-hy2"></i>Hy2 direct · 主动探测</span><span><i class="key candidate"></i>On-demand route hop</span><span><i class="key route"></i>Selected Agent path</span><span><i class="key degraded"></i>Degraded carrier</span><span><i class="key failed"></i>Failed carrier</span></div><div class=topology-layer-note>悬停节点可预览，点击后锁定相邻链路；标签统一为延迟 · Δ波动 · 速率。WireGuard 速率来自近 5 分钟相邻可信计数器差值；Hy2 direct 显示公网 Hysteria2 单跳响应延迟和主动探测速率，其速率是固定响应的 achieved probe throughput，不是业务流量或链路容量。虚线仅是 %s 允许的未测量按需路径，不伪装成在线隧道（not broken tunnels）。</div></div>`, topologySVG(v, overlay...), esc(intentSource))
 	fmt.Fprintf(&b, `<div class="card span3"><h2>Layer status</h2><div class=stack>
 <div><div class=label>Persistent carriers</div><div class=metric>%d <small>WG edges</small></div><div class=dim>%s declared inventory</div></div>
 <div><div class=label>Carrier observation</div><div class="metric %s">%d <small>/ %d active</small></div><div class=dim>signed runtime evidence</div></div>
+<div><div class=label>Hy2 direct probes</div><div class="metric %s">%d <small>/ %d sampled</small></div><div class=dim>%s</div></div>
 <div><div class=label>On-demand routing</div><div class=metric>%d <small>possible hops</small></div><div class=dim>intent, not tunnel health</div></div>
 <div><div class=label>Agent decisions</div><div class=metric>%d <small>fresh</small></div><div class=dim>%d current entries · %d overlaid</div></div>
-</div></div></div>`, tunnels, esc(intentSource), map[bool]string{true: "ok", false: "warn"}[active == tunnels && tunnels > 0], active, tunnels, candidates, fresh, len(v.Routes), len(overlay))
+</div></div></div>`, tunnels, esc(intentSource), map[bool]string{true: "ok", false: "warn"}[active == tunnels && tunnels > 0], active, tunnels, directClass, directSampled, directDeclared, esc(directHint), candidates, fresh, len(v.Routes), len(overlay))
 
 	writeTopologyTraffic(&b, v)
 
@@ -438,7 +454,7 @@ func nodeDirectionLabel(direction string) string {
 
 func nodeLocationLabel(n NodeView) string {
 	parts := []string{}
-	for _, value := range []string{n.Name, n.City, n.Provider} {
+	for _, value := range []string{n.Name, n.City, n.Country, n.Provider} {
 		if value != "" {
 			parts = append(parts, value)
 		}

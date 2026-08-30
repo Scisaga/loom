@@ -27,6 +27,8 @@ func cmdSecrets(args []string) error {
 	}
 	switch args[0] {
 	case "split":
+	case "ensure-derived":
+		return cmdSecretsEnsureDerived(args[1:])
 	case "rotate":
 		return cmdSecretsRotate(args[1:])
 	case "retire":
@@ -127,8 +129,71 @@ func cmdSecrets(args []string) error {
 func secretsUsage() error {
 	return fmt.Errorf(`用法:
   loom secrets split  <ssot.yaml> -secrets <总表> -o <目录>   拆成每节点一份
+  loom secrets ensure-derived <ssot.yaml> -secrets <总表>     补齐派生遥测口令
   loom secrets rotate <ssot.yaml> -cred <id> -secrets <总表>  生成下一代凭据
   loom secrets retire <ssot.yaml> -cred <id> -secrets <总表>  删掉已经没人引用的旧代`)
+}
+
+// cmdSecretsEnsureDerived creates only renderer-derived telemetry secrets.
+// Their references are deterministic SSOT output, but their values must remain
+// random and outside snapshots.  Keeping this explicit avoids printing or
+// hand-editing secret values during a deployment.
+func cmdSecretsEnsureDerived(args []string) error {
+	fs := flag.NewFlagSet("secrets ensure-derived", flag.ExitOnError)
+	master := fs.String("secrets", "", "总表(必需)")
+	rest, err := parseInterspersed(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(rest) != 1 || *master == "" {
+		return secretsUsage()
+	}
+	s, err := loadAndValidate(rest[0])
+	if err != nil {
+		return err
+	}
+	res, err := render.Render(s)
+	if err != nil {
+		return err
+	}
+	all, err := secret.Load(*master)
+	if err != nil {
+		return err
+	}
+	wanted := map[string]bool{}
+	for _, bundle := range res.Bundles {
+		for _, file := range bundle.Files {
+			for _, ref := range secret.Refs(file.Content) {
+				if strings.HasPrefix(ref, "telemetry/") {
+					wanted[ref] = true
+				}
+			}
+		}
+	}
+	var added []string
+	for ref := range wanted {
+		if _, ok := all[ref]; ok {
+			continue
+		}
+		value, err := newSecretValue()
+		if err != nil {
+			return err
+		}
+		all[ref] = value
+		added = append(added, ref)
+	}
+	if len(added) == 0 {
+		fmt.Println("派生遥测口令已齐全")
+		return nil
+	}
+	sort.Strings(added)
+	if err := secret.Write(*master, all,
+		"# Loom 秘密层。渲染产物里的 ${secret:REF} 由 loom hydrate 从这里取值。\n"+
+			"# 绝不进版本库(.gitignore 已排除)。0600。\n\n"); err != nil {
+		return err
+	}
+	fmt.Printf("✓ 已生成派生遥测口令:%s\n", strings.Join(added, " "))
+	return nil
 }
 
 // cmdSecretsRotate 生成一份凭据的下一代(§13.4 第一步)。

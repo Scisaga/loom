@@ -53,6 +53,24 @@
           "h3"
         ]
       }
+    },
+    {
+      "type": "mixed",
+      "tag": "hy2-link-in-cn-cd",
+      "listen": "127.0.0.1",
+      "listen_port": 61820
+    },
+    {
+      "type": "mixed",
+      "tag": "hy2-link-in-cn-gz",
+      "listen": "127.0.0.1",
+      "listen_port": 61821
+    },
+    {
+      "type": "mixed",
+      "tag": "hy2-link-in-cn-sh",
+      "listen": "127.0.0.1",
+      "listen_port": 61822
     }
   ],
   "outbounds": [
@@ -77,6 +95,51 @@
     {
       "type": "direct",
       "tag": "egress"
+    },
+    {
+      "type": "hysteria2",
+      "tag": "hy2-link-cn-cd",
+      "server": "203.0.113.13",
+      "server_port": 443,
+      "password": "${secret:telemetry/cn-bj}",
+      "tls": {
+        "enabled": true,
+        "server_name": "cn-cd.node.internal",
+        "certificate_path": "/etc/loom/tls/ca.crt",
+        "alpn": [
+          "h3"
+        ]
+      }
+    },
+    {
+      "type": "hysteria2",
+      "tag": "hy2-link-cn-gz",
+      "server": "203.0.113.12",
+      "server_port": 443,
+      "password": "${secret:telemetry/cn-bj}",
+      "tls": {
+        "enabled": true,
+        "server_name": "cn-gz.node.internal",
+        "certificate_path": "/etc/loom/tls/ca.crt",
+        "alpn": [
+          "h3"
+        ]
+      }
+    },
+    {
+      "type": "hysteria2",
+      "tag": "hy2-link-cn-sh",
+      "server": "203.0.113.11",
+      "server_port": 443,
+      "password": "${secret:telemetry/cn-bj}",
+      "tls": {
+        "enabled": true,
+        "server_name": "cn-sh.node.internal",
+        "certificate_path": "/etc/loom/tls/ca.crt",
+        "alpn": [
+          "h3"
+        ]
+      }
     },
     {
       "type": "block",
@@ -178,6 +241,24 @@
           "192.0.2.11"
         ],
         "outbound": "egress"
+      },
+      {
+        "inbound": [
+          "hy2-link-in-cn-cd"
+        ],
+        "outbound": "hy2-link-cn-cd"
+      },
+      {
+        "inbound": [
+          "hy2-link-in-cn-gz"
+        ],
+        "outbound": "hy2-link-cn-gz"
+      },
+      {
+        "inbound": [
+          "hy2-link-in-cn-sh"
+        ],
+        "outbound": "hy2-link-cn-sh"
       }
     ],
     "final": "block"

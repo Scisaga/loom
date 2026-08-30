@@ -35,6 +35,10 @@ type Control struct {
 	// 运行用户的 ~/.ssh/known_hosts，避免网页接入流程暗中继承
 	// 中控主机上无关的 TOFU 记录。
 	KnownHostsPath string `json:"known_hosts_path,omitempty"`
+	// GeoIPDisabled disables the optional ipwho.is lookup used only to prefill
+	// operator-editable Country / City during node declaration review. Lookup
+	// failure is non-fatal even when this remains enabled.
+	GeoIPDisabled bool `json:"geoip_disabled,omitempty"`
 
 	// DistributionURL / DNS 用来回答"发布器跟上我这次改动了吗"。
 	//

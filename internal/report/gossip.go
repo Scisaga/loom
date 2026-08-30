@@ -28,6 +28,7 @@ type table struct {
 	caErr                 error
 	verify                func(*Observation, time.Time, time.Duration) error
 	verifyTraffic         func(*Observation, time.Time, time.Duration) error
+	verifyLinkMetrics     func(*Observation, time.Time, time.Duration) error
 	verifySelfCheck       func(*Observation, time.Time, time.Duration) error
 	minAttestationVersion int
 }
@@ -93,6 +94,23 @@ func (t *table) put(o *Observation, now time.Time, maxAge time.Duration) error {
 			}
 			if _, err := verifyTrafficAttachment(o, t.ca, now, maxAge); err != nil {
 				return fmt.Errorf("校验观测 %s 的流量陈述:%w", o.Node, err)
+			}
+		}
+	}
+	// Direct Hysteria2 metrics are a third independent signature domain.  A
+	// relay may carry them but may not create, edit or refresh them.
+	if o.LinkMetrics != nil {
+		if t.verifyLinkMetrics != nil {
+			if err := t.verifyLinkMetrics(o, now, maxAge); err != nil {
+				return fmt.Errorf("校验观测 %s 的 Hy2 链路度量:%w", o.Node, err)
+			}
+		} else {
+			t.caOnce.Do(func() { t.ca, t.caErr = os.ReadFile(caPath) })
+			if t.caErr != nil {
+				return fmt.Errorf("校验观测 %s 的 Hy2 链路度量:读签名 CA:%w", o.Node, t.caErr)
+			}
+			if _, err := verifyLinkMetricAttachment(o, t.ca, now, maxAge); err != nil {
+				return fmt.Errorf("校验观测 %s 的 Hy2 链路度量:%w", o.Node, err)
 			}
 		}
 	}

@@ -14,6 +14,14 @@ import (
 	"loom/internal/webui"
 )
 
+const (
+	linkMetricReflectorAddr = "127.0.0.1:61804"
+	linkMetricProbePath     = "/loom-link-probe"
+	linkMetricProbeBytes    = 64 << 10
+)
+
+var linkMetricReflectorBody = make([]byte, linkMetricProbeBytes)
+
 // Serve 在每个配置的地址上提供 GET /status。
 //
 // 一个地址一个 listener:节点在每条隧道里有各自的地址,而绑 0.0.0.0 会把
@@ -247,10 +255,49 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 		return fmt.Errorf("%d 个地址一个都没绑上 —— 隧道接口起来了吗", len(cfg.Listen))
 	}
 
+	var reflectorSrv *http.Server
+	if cfg.LinkReflector {
+		reflectorMux := http.NewServeMux()
+		reflectorMux.HandleFunc(linkMetricProbePath, func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			w.Header().Set("Content-Type", "application/octet-stream")
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("X-Loom-Node", cfg.Node)
+			w.Header().Set("X-Loom-Probe-Bytes", fmt.Sprint(len(linkMetricReflectorBody)))
+			_, _ = w.Write(linkMetricReflectorBody)
+		})
+		ln, err := net.Listen("tcp", linkMetricReflectorAddr)
+		if err != nil {
+			fmt.Fprintf(logw, "! 无法监听 Hy2 链路探测反射器 %s:%v\n", linkMetricReflectorAddr, err)
+		} else {
+			reflectorSrv = &http.Server{
+				Handler: reflectorMux, ReadHeaderTimeout: 5 * time.Second,
+			}
+			fmt.Fprintf(logw, "监听 Hy2 链路探测反射器 %s\n", linkMetricReflectorAddr)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := reflectorSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = err
+					}
+					mu.Unlock()
+				}
+			}()
+		}
+	}
+
 	<-ctx.Done()
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutCtx)
+	if reflectorSrv != nil {
+		_ = reflectorSrv.Shutdown(shutCtx)
+	}
 	wg.Wait()
 	mu.Lock()
 	defer mu.Unlock()

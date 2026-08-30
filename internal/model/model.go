@@ -67,8 +67,11 @@ type Node struct {
 	// **秘密不自动销毁。** 销毁不可逆,而误签一次就全没了。它要停,不要自毁。
 	Decommission bool `yaml:"decommission,omitempty"`
 
-	ID       string `yaml:"id"`
-	Name     string `yaml:"name,omitempty"`
+	ID   string `yaml:"id"`
+	Name string `yaml:"name,omitempty"`
+	// Country 是 ISO 3166-1 alpha-2 大写代码。它与 City 都是声明元数据；
+	// 自动 GeoIP 只能给操作者建议，不能把它升级成可信位置证明。
+	Country  string `yaml:"country,omitempty"`
 	City     string `yaml:"city,omitempty"`
 	Provider string `yaml:"provider,omitempty"`
 
@@ -118,6 +121,15 @@ type Node struct {
 
 	Server *ServerRole `yaml:"server,omitempty"`
 	Access *AccessRole `yaml:"access,omitempty"`
+}
+
+// ValidCountryCode accepts the canonical SSOT representation: an uppercase
+// ISO 3166-1 alpha-2-shaped code. Registry membership remains the declaration
+// source/operator's responsibility; the model validates representation without
+// embedding a second, eventually stale copy of the ISO registry.
+func ValidCountryCode(country string) bool {
+	return len(country) == 2 && country[0] >= 'A' && country[0] <= 'Z' &&
+		country[1] >= 'A' && country[1] <= 'Z'
 }
 
 // ServerRole 是"这台机器转发流量"这件事需要的全部字段(§8)。

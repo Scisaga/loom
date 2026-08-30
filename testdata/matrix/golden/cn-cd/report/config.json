@@ -19,6 +19,21 @@
       "addr": "10.99.0.8:61802"
     }
   ],
+  "link_probes": [
+    {
+      "peer": "cn-gz",
+      "proxy_addr": "127.0.0.1:61823",
+      "transport": "hysteria2",
+      "carrier": "public"
+    },
+    {
+      "peer": "cn-sh",
+      "proxy_addr": "127.0.0.1:61824",
+      "transport": "hysteria2",
+      "carrier": "public"
+    }
+  ],
+  "link_reflector": true,
   "targets": [
     "https://api.ipify.org"
   ],
@@ -77,6 +92,44 @@
     {
       "from": "cn-sh",
       "to": "sg-vps"
+    }
+  ],
+  "expected_direct_links": [
+    {
+      "from": "cn-bj",
+      "to": "cn-cd",
+      "transport": "hysteria2",
+      "carrier": "public"
+    },
+    {
+      "from": "cn-bj",
+      "to": "cn-gz",
+      "transport": "hysteria2",
+      "carrier": "public"
+    },
+    {
+      "from": "cn-bj",
+      "to": "cn-sh",
+      "transport": "hysteria2",
+      "carrier": "public"
+    },
+    {
+      "from": "cn-cd",
+      "to": "cn-gz",
+      "transport": "hysteria2",
+      "carrier": "public"
+    },
+    {
+      "from": "cn-cd",
+      "to": "cn-sh",
+      "transport": "hysteria2",
+      "carrier": "public"
+    },
+    {
+      "from": "cn-gz",
+      "to": "cn-sh",
+      "transport": "hysteria2",
+      "carrier": "public"
     }
   ],
   "expected_routes": [

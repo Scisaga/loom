@@ -37,7 +37,7 @@ func enrichNodes(v *webui.View, s *model.SSOT, controlNode string) {
 		// These fields are desired-state metadata, not node-owned observation. Clear
 		// the previous enrichment before applying the current SSOT so a caller that
 		// reuses a View cannot show a removed declaration's old endpoint or role.
-		node.Name, node.City, node.Provider, node.PublicEndpoint = "", "", "", ""
+		node.Name, node.Country, node.City, node.Provider, node.PublicEndpoint = "", "", "", "", ""
 		node.SSHPort = 0
 		node.Roles = nil
 		node.Direction = ""
@@ -58,6 +58,7 @@ func enrichNodes(v *webui.View, s *model.SSOT, controlNode string) {
 		got := &v.Nodes[idx]
 		got.Declared = true
 		got.Name = declared.Name
+		got.Country = declared.Country
 		got.City = declared.City
 		got.Provider = declared.Provider
 		got.PublicEndpoint = declared.PublicEndpoint

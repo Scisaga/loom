@@ -63,6 +63,8 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
                                          节点自己拉:验签 → 本地填秘密 → 安装 → 验证
   loom secrets  split  <ssot.yaml> -secrets <总表> -o <目录>
                                          把总表拆成每节点一份(只给它用得到的)
+  loom secrets  ensure-derived <ssot.yaml> -secrets <总表>
+                                         补齐渲染器派生的遥测口令
   loom secrets  rotate <ssot.yaml> -cred <id> -secrets <总表>
                                          生成下一代凭据(轮换第一步)
   loom secrets  retire <ssot.yaml> -cred <id> -secrets <总表>

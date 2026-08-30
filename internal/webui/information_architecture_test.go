@@ -211,7 +211,8 @@ func TestTopologySeparatesCarrierEvidenceFromOnDemandIntent(t *testing.T) {
 	body := pageTopology(d, false)
 	for _, want := range []string{
 		"Persistent WireGuard carriers", "On-demand route hops", "Available by intent",
-		"not broken tunnels", "no continuous RTT or heartbeat", "SSOT RouteCandidate.ServerChain",
+		"Hy2 direct · 主动探测", "achieved probe throughput", "not broken tunnels",
+		"no continuous RTT or heartbeat", "SSOT RouteCandidate.ServerChain",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("Topology page lost the carrier/intent boundary %q", want)
@@ -219,6 +220,26 @@ func TestTopologySeparatesCarrierEvidenceFromOnDemandIntent(t *testing.T) {
 	}
 	if strings.Contains(body, "candidate</td>") || strings.Contains(body, "unverified</td>") || strings.Contains(body, "时间未记录") {
 		t.Fatal("Topology page exposed internal candidate state as a failed or missing carrier observation")
+	}
+}
+
+func TestTopologyDirectProbeStatusSeparatesDeclaredFromSampled(t *testing.T) {
+	d := misakaDeps()
+	v := d.Snapshot()
+	v.Links = append(v.Links,
+		LinkView{From: "jm24", To: "gz02", Kind: "direct-hy2", Samples: 3},
+		LinkView{From: "gz02", To: "hz01", Kind: "direct-hy2"},
+	)
+	d.Snapshot = func() View { return v }
+
+	body := pageTopology(d, false)
+	for _, want := range []string{`1 <small>/ 2 sampled</small>`, `1 warming up / unknown`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Topology direct-probe status missing %q", want)
+		}
+	}
+	if strings.Contains(body, `2 <small>measured hops</small>`) {
+		t.Fatal("Topology counted an expected direct edge with no samples as measured")
 	}
 }
 

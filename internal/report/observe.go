@@ -47,6 +47,11 @@ type Observation struct {
 	// loom-traffic-v1 domain before mapping any remote counter.
 	Traffic *attest.TrafficAttest `json:"traffic,omitempty"`
 
+	// LinkMetrics is an independently signed public Hysteria2 single-hop probe
+	// snapshot.  Keeping it outside loom-attest-v5 and loom-traffic-v1 preserves
+	// both deployed canonical contracts during rolling upgrades.
+	LinkMetrics *attest.LinkMetricAttest `json:"link_metrics,omitempty"`
+
 	// SelfCheck is a separately signed verdict derived from this node's full
 	// local Status. It is outside loom-attest-v5 so old readers can ignore it
 	// during a rolling upgrade without changing v5 canonical bytes. A relay's
@@ -133,6 +138,11 @@ func (o *Observation) Age(now time.Time) time.Duration {
 type history struct {
 	mu sync.Mutex
 	by map[string][]sample
+	// linkBy is a separate rolling window for public Hysteria2 single-hop
+	// probes.  It must not share Edge history: Edge is the persistent WG carrier
+	// contract and uses a different cadence and meaning.
+	linkBy   map[string][]linkProbeSample
+	linkLast map[string]time.Time
 }
 
 type sample struct {
@@ -172,7 +182,12 @@ func parallelProbe(count int, fn func(int)) {
 	wg.Wait()
 }
 
-func newHistory() *history { return &history{by: map[string][]sample{}} }
+func newHistory() *history {
+	return &history{
+		by: map[string][]sample{}, linkBy: map[string][]linkProbeSample{},
+		linkLast: map[string]time.Time{},
+	}
+}
 
 func (h *history) add(key string, ms int, err error) (median, samples, failures int, lastErr string) {
 	h.mu.Lock()
@@ -272,6 +287,10 @@ func observe(cfg *Config, h *history, now time.Time) (*Observation, *Status) {
 	// This uses the same node TLS identity but an independent signature domain,
 	// so adding counters does not mutate the deployed v5 canonical bytes.
 	o.Traffic = collectTrafficAttestationFromDump(cfg, now, dump)
+	// Public Hysteria2 single-hop metrics have their own signature domain.  They
+	// cannot enter MeasurementsSHA256 (rolling compatibility) or WG traffic
+	// counters (different semantics).
+	o.LinkMetrics = collectLinkMetricAttestation(cfg, h, now)
 	// Health must come from the real local collector, not from an outer relay's
 	// HTTP status or from an incomplete subset of Observation fields. Include
 	// the just-collected uplink measurements before deriving the final verdict.

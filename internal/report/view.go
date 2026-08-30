@@ -56,6 +56,20 @@ func buildViewWithCA(cfg *Config, self *Status, now time.Time,
 		}
 		return claim, ""
 	}
+	verifyLinkMetrics := func(o *Observation) (*attest.LinkMetricClaim, string) {
+		if o == nil || o.LinkMetrics == nil {
+			return nil, ""
+		}
+		loadCA()
+		if caErr != nil {
+			return nil, "读签名 CA:" + caErr.Error()
+		}
+		claim, err := verifyLinkMetricAttachment(o, ca, now, attestationAge)
+		if err != nil {
+			return nil, err.Error()
+		}
+		return claim, ""
+	}
 	verifySelfCheck := func(o *Observation) (*attest.SelfCheckClaim, string) {
 		if o == nil || o.SelfCheck == nil {
 			return nil, ""
@@ -81,6 +95,8 @@ func buildViewWithCA(cfg *Config, self *Status, now time.Time,
 	local.Declared = declared[cfg.Node]
 	localTraffic, localTrafficErr := verifyTraffic(self.Observation)
 	applyTrafficClaim(&local, localTraffic, localTrafficErr, now, false)
+	localLinkMetrics, localLinkMetricsErr := verifyLinkMetrics(self.Observation)
+	applyLinkMetricClaim(&local, localLinkMetrics, localLinkMetricsErr)
 	byNode[cfg.Node] = local
 
 	for i := range self.Learned {
@@ -107,6 +123,8 @@ func buildViewWithCA(cfg *Config, self *Status, now time.Time,
 		applySelfCheckClaim(&node, selfCheck, selfCheckErr)
 		traffic, trafficErr := verifyTraffic(o)
 		applyTrafficClaim(&node, traffic, trafficErr, now, true)
+		linkMetrics, linkMetricsErr := verifyLinkMetrics(o)
+		applyLinkMetricClaim(&node, linkMetrics, linkMetricsErr)
 		byNode[o.Node] = node
 	}
 	for _, id := range cfg.ExpectedNodes {
@@ -446,6 +464,34 @@ func applyTrafficClaim(n *webui.NodeView, claim *attest.TrafficClaim,
 	}
 }
 
+// applyLinkMetricClaim is the only mapping boundary for public Hysteria2
+// single-hop probes.  The claim has already been independently verified and
+// bound to the outer observation; topologyLinks still cross-checks each
+// direction against ExpectedDirectLinks before drawing it.
+func applyLinkMetricClaim(n *webui.NodeView, claim *attest.LinkMetricClaim,
+	verificationError string) {
+	if n == nil {
+		return
+	}
+	if verificationError != "" {
+		n.Health = "problem"
+		n.Problems = append(n.Problems, "Hy2 链路度量签名陈述无效:"+verificationError)
+		return
+	}
+	if claim == nil {
+		return
+	}
+	for _, metric := range claim.Metrics {
+		n.VerifiedLinkMetrics = append(n.VerifiedLinkMetrics, webui.VerifiedLinkMetricView{
+			PeerNode: metric.PeerNode, ObservedAt: metric.ObservedAt,
+			Transport: metric.Transport, Carrier: metric.Carrier,
+			RTTMS: int(metric.RTTMS), P50MS: int(metric.P50MS), P95MS: int(metric.P95MS),
+			Samples: int(metric.Samples), Failures: int(metric.Failures),
+			TransferBytes: metric.TransferBytes, DurationMS: metric.TransferDurationMS,
+		})
+	}
+}
+
 func componentViews(xs []ComponentStatus) []webui.ComponentView {
 	out := make([]webui.ComponentView, 0, len(xs))
 	for _, c := range xs {
@@ -592,6 +638,7 @@ func agentHealthView(h *AgentCandidateHealth) *webui.CandidateHealthView {
 // selector 实读的黄色 overlay 表示。
 func topologyLinks(cfg *Config, nodes []webui.NodeView) []webui.LinkView {
 	by := map[string]webui.LinkView{}
+	directByDirection := map[string]string{}
 	keyFor := func(from, to string) (string, string, string) {
 		a, b := from, to
 		if b < a {
@@ -607,6 +654,22 @@ func topologyLinks(cfg *Config, nodes []webui.NodeView) []webui.LinkView {
 		by[key] = webui.LinkView{From: a, To: b, Kind: "tunnel", State: "unknown",
 			Source: "SSOT 常驻 WG · 尚无可信承载可达性观测"}
 	}
+	for _, e := range cfg.ExpectedDirectLinks {
+		if e.From == "" || e.To == "" || e.From == e.To ||
+			e.Transport != "hysteria2" || e.Carrier != "public" {
+			continue
+		}
+		key, a, b := keyFor(e.From, e.To)
+		if existing, ok := by[key]; ok && existing.Kind == "tunnel" {
+			continue
+		}
+		by[key] = webui.LinkView{
+			From: a, To: b, Kind: "direct-hy2", State: "unknown",
+			ObservedFrom: e.From, ObservedTo: e.To,
+			Source: "SSOT 公网 Hysteria2 单跳 · 尚无可信主动探测",
+		}
+		directByDirection[e.From+"\x00"+e.To] = key
+	}
 	stateRank := map[string]int{"unknown": 0, "active": 1, "degraded": 2, "failed": 3}
 	for _, n := range nodes {
 		for _, e := range n.Edges {
@@ -615,7 +678,7 @@ func topologyLinks(cfg *Config, nodes []webui.NodeView) []webui.LinkView {
 			}
 			key, _, _ := keyFor(n.ID, e.To)
 			l, ok := by[key]
-			if !ok {
+			if !ok || l.Kind != "tunnel" {
 				// Observation.Edges 是运行时测量，不是拓扑声明。即使 v3
 				// attestation 已证明来源，允许它创建 carrier 仍会把任意陌生
 				// 测量边冒充成“SSOT 常驻 WG”。观测只能升级声明过的底图。
@@ -651,13 +714,51 @@ func topologyLinks(cfg *Config, nodes []webui.NodeView) []webui.LinkView {
 			by[key] = l
 		}
 	}
+	// A signed attachment may only upgrade the exact directional direct-hop
+	// inventory that renderer derived from SSOT.  It cannot create a new edge or
+	// turn an end-to-end Agent candidate measurement into a physical hop.
+	for _, n := range nodes {
+		for _, metric := range n.VerifiedLinkMetrics {
+			key, ok := directByDirection[n.ID+"\x00"+metric.PeerNode]
+			if !ok || metric.Transport != "hysteria2" || metric.Carrier != "public" {
+				continue
+			}
+			link := by[key]
+			link.ObservedFrom, link.ObservedTo = n.ID, metric.PeerNode
+			link.MS, link.Samples, link.Failures = metric.RTTMS, metric.Samples, metric.Failures
+			link.ObservedAt = metric.ObservedAt
+			link.QualityP50MS, link.QualityP95MS = metric.P50MS, metric.P95MS
+			link.QualityObservations, link.QualityFailed = metric.Samples, metric.Failures
+			link.ProbeBytes, link.ProbeDurationMS = metric.TransferBytes, metric.DurationMS
+			link.ProbeSamples = metric.Samples - metric.Failures
+			link.MetricsObservedAt = metric.ObservedAt
+			link.MetricsWindow = "Hy2 active probe · response latency 15m · 64KiB achieved rate 5m"
+			link.MetricsSource = "independently signed loom-linkmetric-v1"
+			switch {
+			case metric.Failures >= metric.Samples:
+				link.State = "failed"
+				link.Source = fmt.Sprintf("%s→%s 公网 Hysteria2 单跳主动探测 · %d/%d 失败",
+					n.ID, metric.PeerNode, metric.Failures, metric.Samples)
+			case metric.Failures > 0:
+				link.State = "degraded"
+				link.Source = fmt.Sprintf("%s→%s 公网 Hysteria2 单跳主动探测 · %d 样本/%d 失败",
+					n.ID, metric.PeerNode, metric.Samples, metric.Failures)
+			default:
+				link.State = "active"
+				link.Source = fmt.Sprintf("%s→%s 公网 Hysteria2 单跳主动探测 · %d 样本",
+					n.ID, metric.PeerNode, metric.Samples)
+			}
+			by[key] = link
+		}
+	}
 	// 候选链让没有直连 WG 的节点在业务层仍有路径关系，但 ExpectedRoute 只
 	// 是声明，不证明在线。只聚合非 WG hop；当前实际选择由黄色 overlay 表示。
 	for _, r := range cfg.ExpectedRoutes {
 		chain := append([]string{r.Access}, r.Chain...)
 		for i := 0; i+1 < len(chain); i++ {
 			key, a, b := keyFor(chain[i], chain[i+1])
-			if existing, ok := by[key]; ok && existing.Kind == "tunnel" {
+			if existing, ok := by[key]; ok &&
+				(existing.Kind == "tunnel" || existing.Kind == "direct-hy2") {
 				continue
 			}
 			by[key] = webui.LinkView{
