@@ -28,7 +28,9 @@ func TestEnrichControlViewPreservesSSOTContractAndRouteScope(t *testing.T) {
 			},
 			{
 				ID: "desk01", PublicEndpoint: "desk.example", SSHPort: 2222,
-				Access: &model.AccessRole{Platform: model.Desktop, Credentials: []string{"c-best"}},
+				Access: &model.AccessRole{
+					Platform: model.Desktop, Credentials: []string{"c-best"}, DefaultDeclaration: "best",
+				},
 			},
 		},
 		Services: []model.Service{{
@@ -98,8 +100,9 @@ func TestEnrichControlViewPreservesSSOTContractAndRouteScope(t *testing.T) {
 	}
 
 	if got := ingressBy(t, v.Ingresses, "desk01", "tun", 0); got.PolicyID != "best" ||
-		got.Declaration != "" || !got.Default {
-		t.Fatalf("implicit single-policy TUN default diverged from renderer: %+v", got)
+		got.Declaration != "best" || !got.Default || !got.Services ||
+		got.ScopeKind != webui.ScopeServices || got.Mode != "services" {
+		t.Fatalf("TUN 没有同时表达 Service 路由和显式设备默认策略: %+v", got)
 	}
 	if got := ingressBy(t, v.Ingresses, "jm24", "mixed", 1083); !got.Services ||
 		got.ScopeKind != webui.ScopeServices || got.Listen != "127.0.0.1:1083" {
@@ -148,6 +151,36 @@ func TestLegacyRouteScopeRefusesServicePolicyIDCollision(t *testing.T) {
 	kind, id := legacyRouteScope(s, &s.Nodes[0], "same")
 	if kind != "" || id != "" {
 		t.Fatalf("colliding legacy id was guessed as %s/%s", kind, id)
+	}
+}
+
+func TestIngressViewShowsManagedMixedDeviceDefault(t *testing.T) {
+	s := &model.SSOT{
+		Nodes: []model.Node{
+			{ID: "server", Access: &model.AccessRole{
+				Platform: model.LinuxServer, Credentials: []string{"c-de"},
+				DefaultDeclaration: "de-fixed",
+				MixedPorts:         []model.MixedPort{{Port: 1080, Services: true}},
+			}},
+			{ID: "phone", Access: &model.AccessRole{
+				Platform: model.Android, Credentials: []string{"c-auto"},
+			}},
+		},
+		Credentials: []model.Credential{
+			{ID: "c-de", Declaration: "de-fixed"},
+			{ID: "c-auto", Declaration: "automatic"},
+		},
+	}
+
+	views := ingressViews(s)
+	got := ingressBy(t, views, "server", "mixed", 1080)
+	if !got.Services || !got.Default || got.PolicyID != "de-fixed" ||
+		got.ScopeKind != webui.ScopeServices || got.Mode != "services" {
+		t.Fatalf("managed mixed 没有展示共用的设备默认策略: %+v", got)
+	}
+	phone := ingressBy(t, views, "phone", "tun", 0)
+	if phone.Default || phone.PolicyID != "" {
+		t.Fatalf("单凭据 TUN 不应被隐式推导出设备默认策略: %+v", phone)
 	}
 }
 

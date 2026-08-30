@@ -2,6 +2,8 @@ package render
 
 import (
 	"encoding/json"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -158,6 +160,117 @@ services:
 	}
 	if c.Route.Final != "block" {
 		t.Errorf("自动入口未匹配 Service 时必须阻断,route.final=%q", c.Route.Final)
+	}
+}
+
+// 设备默认策略复用现有入口：Linux 只复用 managed mixed；Windows 的配置
+// 形状(TUN + services:true mixed)则让两种接管方式共享 Service 与默认规则。
+func TestDeviceDefaultReusesManagedInbounds(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		platform model.Platform
+		inbounds []string
+	}{
+		{name: "linux-server", platform: model.LinuxServer, inbounds: []string{"in-1080"}},
+		{name: "windows-shape", platform: model.Desktop, inbounds: []string{"tun-in", "in-1080"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, err := model.Load([]byte(fmt.Sprintf(`
+defaults:
+  dns: [223.5.5.5]
+  components: {sing_box: 1.11.4, wireguard: 1.0.20250521, agent: 0.1.0}
+nodes:
+  - id: access
+    access:
+      platform: %s
+      credentials: [cred-service, cred-default]
+      default_declaration: fixed
+      mixed_ports: [{port: 1080, services: true}]
+  - id: egress
+    public_endpoint: 192.0.2.10
+    server:
+      direction: bidirectional
+      inbound_port: 4433
+      egress_capable: true
+      wg_public_key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+declarations:
+  - id: automatic
+    address_axis: from_request
+    egress_axis: any
+    objective: latency
+    probe_url: https://managed.example/
+    tuning_period: 5m
+    allowed_servers: [egress]
+    max_hops: 1
+  - id: fixed
+    address_axis: from_request
+    egress_axis: pinned:egress
+    objective: stability
+    probe_url: https://fallback.example/
+    tuning_period: 5m
+    allowed_servers: [egress]
+    max_hops: 1
+credentials:
+  - {id: cred-service, declaration: automatic, secret_ref: cred/service}
+  - {id: cred-default, declaration: fixed, secret_ref: cred/default}
+services:
+  - {id: web, declaration: automatic, addresses: [managed.example]}
+`, tc.platform)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			res, err := Render(s)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var c conf
+			for _, bundle := range res.Bundles {
+				if bundle.Owner != "access" {
+					continue
+				}
+				for _, file := range bundle.Files {
+					if file.Path == "sing-box/config.json" {
+						if err := json.Unmarshal([]byte(file.Content), &c); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+			}
+			var trafficInbounds []string
+			for _, inbound := range c.Inbounds {
+				if inbound.Tag == "tun-in" || strings.HasPrefix(inbound.Tag, "in-") {
+					trafficInbounds = append(trafficInbounds, inbound.Tag)
+				}
+			}
+			if !slices.Equal(trafficInbounds, tc.inbounds) {
+				t.Fatalf("设备默认策略不应创建额外入口:got=%v want=%v", trafficInbounds, tc.inbounds)
+			}
+			serviceAt, defaultAt := -1, -1
+			for i, rule := range c.Route.Rules {
+				switch rule.Outbound {
+				case "svc:web":
+					serviceAt = i
+					if !slices.Equal(rule.Inbound, tc.inbounds) || !slices.Equal(rule.Domain, []string{"managed.example"}) {
+						t.Errorf("Service 规则没有复用全部入口:%+v", rule)
+					}
+				case "decl:fixed":
+					if len(rule.Domain) != 0 || len(rule.DomainSuffix) != 0 {
+						continue
+					}
+					defaultAt = i
+					if !slices.Equal(rule.Inbound, tc.inbounds) {
+						t.Errorf("设备默认规则没有复用全部入口:%+v", rule)
+					}
+				}
+			}
+			if serviceAt < 0 || defaultAt < 0 || serviceAt >= defaultAt {
+				t.Fatalf("规则优先级错误:service=%d default=%d", serviceAt, defaultAt)
+			}
+			if c.Route.Final != "block" {
+				t.Fatalf("设备默认之外仍必须 fail closed,final=%q", c.Route.Final)
+			}
+		})
 	}
 }
 

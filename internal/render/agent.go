@@ -117,7 +117,7 @@ func renderAgent(s *model.SSOT, p *model.Node) ([]File, []Skip) {
 func renderAgentDeclarations(s *model.SSOT, p *model.Node) ([]agent.Decl, []Skip) {
 	declIDs, _ := accessDecls(s, p)
 	decls := s.DeclarationByID()
-	pinned, _ := pinnedDecls(p, declIDs)
+	pinned, _ := pinnedDecls(p)
 	var out []agent.Decl
 	var skips []Skip
 	for _, did := range declIDs {

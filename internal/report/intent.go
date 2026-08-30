@@ -113,14 +113,8 @@ func ExpectedRoutesForAccess(s *model.SSOT, access *model.Node) []ExpectedRoute 
 			pinned[mixed.Declaration] = true
 		}
 	}
-	if access.Access.Platform.UsesTUN() {
-		policy := access.Access.DefaultDeclaration
-		if policy == "" && len(declarationIDs) == 1 {
-			policy = declarationIDs[0]
-		}
-		if policy != "" {
-			pinned[policy] = true
-		}
+	if policy := access.Access.EffectiveDefaultDeclaration(); policy != "" {
+		pinned[policy] = true
 	}
 
 	declarations := s.DeclarationByID()

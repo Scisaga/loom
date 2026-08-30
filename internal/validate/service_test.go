@@ -169,22 +169,50 @@ credentials:
   - {id: cr1, declaration: d1, secret_ref: v}`,
 		},
 		{
-			name: "§18 Android 多凭据无法按端口区分",
-			want: "无法按端口区分声明",
+			name: "§18 Android 多策略由 Service 匹配而非端口区分",
+			want: "",
 			yaml: topo + `  - {id: p1, access: {platform: android, credentials: [cr1, cr2], default_declaration: d1}}
 declarations:
-  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, probe_url: "https://probe.example/", tuning_period: 10m}
+  - {id: d2, address_axis: from_request, egress_axis: any, objective: latency, probe_url: "https://probe.example/", tuning_period: 10m}
 credentials:
   - {id: cr1, declaration: d1, secret_ref: v}
-  - {id: cr2, declaration: d1, secret_ref: v}`,
+  - {id: cr2, declaration: d2, secret_ref: v2}
+services:
+  - {id: known, declaration: d2, addresses: [known.example]}`,
 		},
 		{
-			name: "§7.2 桌面多凭据必须声明 TUN 兜底走哪条",
-			want: "兜底流量走哪条声明是歧义的",
-			yaml: topo + `  - {id: p1, access: {platform: desktop, credentials: [cr1, cr2], mixed_ports: [{port: 1080, declaration: d1}]}}
+			name: "§7.3 Linux managed mixed 可以声明设备默认出口",
+			want: "",
+			yaml: topo + `  - {id: p1, access: {platform: linux-server, credentials: [cr1, cr2], default_declaration: d2, mixed_ports: [{port: 1080, services: true}]}}
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, probe_url: "https://probe.example/", tuning_period: 10m}
+  - {id: d2, address_axis: from_request, egress_axis: "pinned:sg-v", objective: latency, probe_url: "https://probe.example/", tuning_period: 10m, allowed_servers: [sg-v]}
+credentials:
+  - {id: cr1, declaration: d1, secret_ref: v1}
+  - {id: cr2, declaration: d2, secret_ref: v2}
+services:
+  - {id: known, declaration: d1, addresses: [known.example]}`,
+		},
+		{
+			name: "§8.2 默认出口必须有本设备凭据",
+			want: "没有持有它的有效凭据",
+			yaml: topo + `  - {id: p1, access: {platform: linux-server, credentials: [cr1], default_declaration: d2, mixed_ports: [{port: 1080, services: true}]}}
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m}
-  - {id: d2, address_axis: from_request, egress_axis: any, objective: latency, tuning_period: 10m}
+  - {id: d2, address_axis: from_request, egress_axis: "pinned:sg-v", objective: latency, tuning_period: 10m, allowed_servers: [sg-v]}
+credentials:
+  - {id: cr1, declaration: d1, secret_ref: v1}
+services:
+  - {id: known, declaration: d1, addresses: [known.example]}`,
+		},
+		{
+			name: "§7.2 桌面多凭据可以显式选择无默认出口",
+			want: "",
+			yaml: topo + `  - {id: p1, access: {platform: desktop, credentials: [cr1, cr2], mixed_ports: [{port: 1080, declaration: d1}]}}
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, probe_url: "https://probe.example/", tuning_period: 10m}
+  - {id: d2, address_axis: from_request, egress_axis: any, objective: latency, probe_url: "https://probe.example/", tuning_period: 10m}
 credentials:
   - {id: cr1, declaration: d1, secret_ref: v}
   - {id: cr2, declaration: d2, secret_ref: v}`,

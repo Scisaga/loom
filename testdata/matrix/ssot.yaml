@@ -89,6 +89,7 @@ nodes:
     access:
       platform: android          # 绝大多数 App 不能单独设代理,只能走 TUN(§7.2)
       credentials: [cred-phone]
+      default_declaration: sg-fixed
 
   - id: workstation
     name: 开发机

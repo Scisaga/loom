@@ -67,3 +67,12 @@ func (s *SSOT) ServicesFor(declID string) []*Service {
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
+
+// EffectiveDefaultDeclaration 返回接入端显式声明的设备默认策略。这里刻意不从
+// 凭据数量推断：即使设备只有一条声明，“未匹配即放行”也必须是中控的明确决定。
+func (a *AccessRole) EffectiveDefaultDeclaration() string {
+	if a == nil {
+		return ""
+	}
+	return a.DefaultDeclaration
+}

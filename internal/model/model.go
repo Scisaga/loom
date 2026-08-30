@@ -163,7 +163,9 @@ type AccessRole struct {
 	Credentials []string    `yaml:"credentials"`
 	MixedPorts  []MixedPort `yaml:"mixed_ports,omitempty"`
 
-	// DefaultDeclaration 是 TUN 兜底流量走的声明(§7.2)。
+	// DefaultDeclaration 是设备级默认出口策略。明确的 Service 规则优先；
+	// managed mixed 或 TUN 上未命中 Service 的流量才使用它。留空继续
+	// fail closed。客户端选择也必须由中控授权并签名，不能本地改写(§7.2)。
 	DefaultDeclaration string `yaml:"default_declaration,omitempty"`
 }
 

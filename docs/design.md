@@ -3,8 +3,9 @@
 > **文档边界:** 本文定义不变量、目标设计与依赖关系；实际已经运行到哪里只看
 > [status/current.md](status/current.md)。目标机制尚未落地时必须明确标成“目标态”，
 > 不能用将来时能力解释当前生产行为。控制中心的仓库实现边界另见
-> [README](../README.md#控制中心当前边界)。Windows、Linux 与 Android 的客户端
-> 交付提案另见[客户端接入设计](client-access.md)。
+> [README](../README.md#控制中心当前边界)。v1 Windows、Linux Server 与 Android
+> 的客户端交付设计另见[客户端接入设计](client-access.md)；Linux Desktop 不在 v1
+> 范围内。
 
 > **Loom 是一个基于加密隧道的链路与服务调度基础设施。**
 > 它持续测量网络中所有可用路径的质量,结合成本、容量与合规约束,为每个服务选择当下最优的接入路径。
@@ -412,12 +413,14 @@ Path = 接入节点 → [服务器₁ → 服务器₂ → …] → 目标地址
 > 真机验证(2026-08-23)，实测同一个入口的三个目标可以走三条路，baidu 从
 > 1.464s 降到 0.066s。生产 Linux 已于 2026-08-30 收敛为 1080 一个中控托管
 > 入口，1081–1083 不再监听；固定 SG/DE 也由 Service 在中控选择，不再由
-> 客户端端口选择。Windows/Android 客户端迁移仍未完成。
+> 客户端端口选择。底层已支持 managed mixed/TUN 复用 `default_declaration`，但
+> 现网 SSOT 未设置设备默认出口，客户端写 API 与 Windows/Android 宿主也未完成。
 
-#### 应用照常请求 URL，Loom UI 不另选目标或策略
+#### 应用照常请求 URL，Loom UI 不重复选择每个请求的目标
 
 应用本来就会正常请求 URL。问题在于让用户再到 Loom UI 填一遍任意目标 URL，
-或通过本地端口、声明、固定出口控件另选一套策略；这样做有三个问题,一个比一个重:
+或通过本地端口为每次请求另选一套策略；这样做有三个问题,一个比一个重。设备默认
+出口是持久的 catch-all 偏好，不是按请求选 URL 或端口：
 
 **它把策略推给了接入端。** "连 1080 还是 1082"就是在选策略 —— 而接入端
 恰恰是最不该知道拓扑的地方。
@@ -430,7 +433,7 @@ Path = 接入节点 → [服务器₁ → 服务器₂ → …] → 目标地址
 都能用的出口。§8.2 说服务器上的规则是准入校验 —— 只校验"允许走哪"而不
 校验"允许去哪",这个准入是漏的。
 
-#### 接入端什么都不说
+#### 每个请求不需要额外携带选择
 
 所以:**中控声明服务,服务声明它的地址集合;数据平面按请求的 host 反查服务。**
 
@@ -438,10 +441,11 @@ Path = 接入节点 → [服务器₁ → 服务器₂ → …] → 目标地址
 中控声明     服务 → 一组地址 → 访问声明(objective、约束、允许的出口)
 数据平面     请求的 host → 匹配到服务 → 走该服务当前选中的候选
 接入端       一个端口(或 TUN),正常发请求,不知道任何事情
-没匹配上     按声明的兜底策略,默认 fail_closed(§5.8)
+没匹配上     有设备 default_declaration 就走它；没有就 fail_closed(§5.8)
 ```
 
-接入端连"我要哪个服务"都不用说 —— host 本身就是答案。
+接入端连"我要哪个服务"都不用说 —— host 本身就是答案。设备默认出口只在未命中
+Service 时参与，不改变这条按请求规则。
 
 #### 两种地址集合,别混
 
@@ -464,10 +468,11 @@ Path = 接入节点 → [服务器₁ → 服务器₂ → …] → 目标地址
 注意这里观测的用途变小了:它**不是路由决策的依据**,只是补全清单的辅助。
 决策仍然只依赖声明出来的东西 —— 于是"推断错了导致路由错"这类故障不存在。
 
-#### 任意 URL 要用,就显式声明成一个服务
+#### 任意 URL 默认放行也必须显式声明
 
-catch-all 不该是默认假设。把它写成一个服务("我不知道里面有什么"),配一个
-明确的兜底策略。区别在于:**显式声明的时候,你知道自己在放弃什么。**
+catch-all 不该是隐含假设。若设备确实需要“其余请求都能走”，必须显式配置设备
+`default_declaration`；它是中控授权、审计和签名发布的 catch-all 策略，不是
+unrestricted direct。区别在于:**显式声明的时候,你知道自己在放弃什么。**
 
 
 ## 5. 调度
@@ -784,8 +789,8 @@ VPS —— 它不能被主动拨号，只能向每个需要到达它的节点反
 
 | 平台 | 程序能否单独设代理 | 该用什么 |
 |---|---|---|
-| **Android** | ❌ 绝大多数 App 不能 | **必须 TUN**；规则由中控下发，客户端只读 |
-| **Linux 服务器** | ✅ 能 | **只用一个日常 mixed 入口**，不开 TUN |
+| **Android** | ❌ 绝大多数 App 不能 | **必须 TUN**；规则由中控下发 |
+| **Linux Server** | ✅ 能 | **只用 `127.0.0.1:1080`**，不开 TUN |
 | **桌面（v1 Windows）** | ✅ 能 | TUN 为主 + 一个遵循同一规则的 mixed 入口 |
 
 > **Android 必须 TUN 是因为程序不能设代理;Linux 应该优先用代理,恰恰因为它能设。**
@@ -799,22 +804,43 @@ mixed 是纯用户态监听,配崩了最多代理不通。
 
 ```text
 中控       matcher → Service → AccessDeclaration → 候选与授权
-Linux      一个本地 mixed 日常入口 ─┐
-Windows    TUN + 一个开发者 mixed ───┼→ 同一份中控规则
+Linux      127.0.0.1:1080 mixed ─────┐
+Windows    TUN + 127.0.0.1:1080 ─────┼→ 同一份中控规则与设备默认出口
 Android    VpnService TUN ────────────┘
-Loom UI    只显示生效规则和当前路径，不提供“选 URL / 声明 / 固定出口”控件
+Loom UI    规则只读；只允许从设备获授权列表选择默认出口
 ```
 
 Service 页面管理的是“哪些请求属于哪个 Service，以及它由哪条访问声明治理”，
 不是给每条策略分配一个端口。一个 Service 的多个 host 仍各自进入正确的服务范围；
 同一条声明治理的多个 Service 仍然各自独立选路，不能退回“一个候选服务所有目标”。
 应用仍照常发起 URL 请求；Loom 使用请求的 host 匹配中控规则，不要求用户先在
-Loom UI 里选择 URL 或出口。
+Loom UI 里选择 URL。客户端也不编辑这些规则，只能为未命中规则的流量选择一条
+设备默认出口。
 
-Linux 服务器没有 TUN，所以用一个只监听回环的 mixed 端口承载日常流量。Windows
-的 TUN 与可选 mixed 只是两种接管方式，必须读取同一份中控规则；Android 只有
-TUN。Windows 与 Android 客户端都只读，不提供本地编辑 matcher、切换声明或选择
-出口的入口。启停、重连和诊断属于生命周期操作，不改变规则。
+Linux Server 没有 TUN，所以用只监听回环的 `1080` mixed 承载日常流量，应用使用
+`socks5h://127.0.0.1:1080`。Windows 的 TUN 与 `1080` mixed 只是两种接管方式，
+必须读取同一份中控规则；Android 只有 TUN。启停、重连和诊断属于生命周期操作，
+不改变规则。
+
+设备默认出口是唯一允许客户端请求修改的偏好。客户端只能选择中控已授权给本设备
+的 `AccessDeclaration`，例如自动 `best-egress` 或固定 `de-fixed`；固定策略可钉到
+任意 `egress_capable` 的内圈或外圈节点。客户端提交选择，中控校验凭据和 revision，
+持久化到 `access.default_declaration`，再经常规签名快照下发。客户端不能写本地
+配置抢先生效，也不能提交任意节点、IP 或国家名。规则优先级固定为：
+
+```text
+显式入口覆盖（仅 Linux 高级兼容）
+  > matcher 命中的 Service 策略
+  > 设备 default_declaration
+  > block
+```
+
+所以“默认选择德国”复用现有 TUN/`1080`，不需要 `1081` 或其他新端口；Service
+已明确指定的请求仍按 Service 走，不会被设备默认覆盖。
+
+当前代码已经实现这条优先级的模型、严格校验、sing-box 渲染与中控只读投影。
+尚未实现的是客户端可写 API、设备授权选项查询以及 Windows/Android UI；因此当前
+只能由 SSOT 管理员设置 `default_declaration`，不能宣称客户端选择流程已经交付。
 
 v1 matcher 只使用接管层真实可见且能稳定渲染的事实：Windows 使用 domain/IP，
 Android 可再用 package 缩小范围；Linux mixed 使用代理请求可见的 domain/IP。
@@ -1039,8 +1065,9 @@ Agent 只决定哪些地址落进哪个桶 —— 这样"节点上的配置是 S
 Android 没有 Agent(§15.4),但 §5.6 要求接入节点承担四件事:接收 ranked list、本地测量、执行切换阈值、离线沿用上次排序。**这些能力必须由 Android 客户端自身内嵌**,否则 Android 只能退化成静态选路。
 
 v1 Android 的 matcher、Service 与声明映射全部来自中控签名配置。应用只能显示
-哪些规则已经生效、当前走哪条路径以及规则是否陈旧；用户不能在客户端新增规则、
-选择声明或切换出口。同一 package 内多账号也不引入本地 profile。
+哪些规则已经生效、当前走哪条路径以及规则是否陈旧；用户不能新增规则或修改声明
+定义，只能从中控授权列表选择设备默认出口。同一 package 内多账号也不引入本地
+profile。
 
 | 能力 | 承载方式 |
 |---|---|
@@ -1076,7 +1103,7 @@ v1 Android 的 matcher、Service 与声明映射全部来自中控签名配置�
 
 | 接入节点 | 持有凭据 | 效果 |
 |---|---|---|
-| Windows / Android / Linux 日常入口 | 一把或多把，仅限本设备获授权的声明 | 中控 matcher 命中 Service，再使用其声明对应的凭据；客户端不选择 |
+| Windows / Android / Linux 日常入口 | 一把或多把，仅限本设备获授权的声明 | 中控 matcher 命中 Service；未命中时可使用经中控确认的设备默认声明 |
 | Linux 兼容/高级覆盖 | 多把 | 端口或临时 CLI 只可强制使用已经授权的声明，不得扩权 |
 
 **服务器侧零改动,差别只在发几把钥匙。**
@@ -1967,9 +1994,11 @@ edge-a,就拿到了 cn-a 的观测。实测 access-a 能听到全部 5 个节点
 | **Settings / SSOT** | 查看、校验并保存完整原文 | 不提供绕过完整校验的“强制保存” |
 
 v1 的 Services 页面只编辑中控事实。Windows 与 Android 上如何把规则落到 TUN、
-Windows 的开发者 mixed 如何复用同一规则，都是渲染结果，不是页面里可为某台
-客户端单独切换的状态。Linux 的兼容覆盖端口若需要展示，只能放在节点详情的
-Advanced/Compatibility 区，并明确它不是另一套 Service 配置。
+Windows 的开发者 mixed 如何复用同一规则，都是渲染结果。设备页可以写入唯一的
+设备偏好 `default_declaration`，但必须从本设备已授权策略中选择并走同一 SSOT
+校验、发布和审计链；它不属于 Services 页面，也不允许改 matcher、Service 或声明
+定义。Linux 的兼容覆盖端口若需要展示，只能放在节点详情的 Advanced/Compatibility
+区，并明确它不是另一套 Service 配置。
 
 两条保存路径都带当前 SSOT 内容摘要作为 revision。服务端在同一个串行事务内
 重新读取、核对 revision、完整解析与校验，再以唯一临时文件、`fsync`、rename
@@ -2456,10 +2485,11 @@ userspace 实现(基于 wireguard-go)**有明显 CPU 开销**,服务器规格需
 | **可吊销** | 独立吊销,所有服务器下一轮询周期移除该 user |
 | **有效期** | 自带过期时间 |
 
-**配置模板化**：Android 是 TUN；v1 Windows 是 TUN + 一个遵循相同中控规则的
-开发者 mixed；Linux 服务器是一个日常 mixed，另可带显式的兼容/高级覆盖端口。
-Windows 与 Android 客户端只读，所有 matcher、Service 与 AccessDeclaration 映射
-都由中控下发。平台应提供**下发前预览**，但预览不能变成客户端侧策略编辑器。
+**配置模板化**：Android 是 TUN；v1 Windows 是 TUN + `127.0.0.1:1080`；Linux
+Server 是 `127.0.0.1:1080`，另可带显式的兼容/高级覆盖端口。所有 matcher、Service
+与 AccessDeclaration 定义都由中控下发；客户端只可请求切换本设备已授权的
+`default_declaration`。平台应提供**下发前预览**，但预览不能变成客户端侧规则
+编辑器。
 
 ---
 
@@ -2483,8 +2513,8 @@ Node                           # §1 —— Loom 管的机器。目标地址不�
   access?                      # 这个块存在 = 持有 access 能力(§1.3)
     platform                   # android | desktop | linux-server(§7.2)
     credentials[]              # §8.2
-    mixed_ports[]              # 当前实现字段；v1 仅 Linux 兼容/高级覆盖(§7.3)
-    default_declaration?       # 当前 TUN 兜底字段；v1 日常规则改由中控 matcher 渲染
+    mixed_ports[]              # managed 1080；固定声明端口仅限 Linux 兼容/高级覆盖
+    default_declaration?       # 设备默认出口；Service 优先，managed mixed/TUN 未命中时使用
 
   # 没有 capabilities 字段 —— 由哪个块存在推导;两个都有也合法(§1.3)。
   # 没有 target 能力 —— 出口是位置不是类型(§1.1)。

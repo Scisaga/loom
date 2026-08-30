@@ -1,10 +1,10 @@
 # Loom · 客户端接入设计
 
-> **状态:** 提案
+> **状态:** 设计生效；底层模型/校验/渲染已实现，客户端设置 API 与宿主待实现
 >
 > **日期:** 2026-08-30
 >
-> **适用范围:** Windows、Linux 与 Android 接入设备
+> **适用范围:** Windows、Linux Server 与 Android 接入设备；v1 不考虑 Linux Desktop
 >
 > **上位约束:** [设计文档](design.md)中的模型、安全边界与控制平面不变量仍是
 > 唯一事实来源；本文只展开客户端交付。若两者冲突，以设计文档为准。
@@ -18,15 +18,20 @@
 
 | 平台 | 流量接管 | 客户端形态 | 结论 |
 |---|---|---|---|
-| Windows 桌面 | TUN 主接管 + 一个同规则的开发者 mixed | Windows Service + 托盘界面 | 需要薄客户端；策略由中控下发、客户端只读 |
-| Linux 桌面 | TUN 主接管 + 一个日常 mixed | Loom + sing-box 二进制分发包 | 不开发独立客户端 UI |
-| Linux 服务器 | 一个日常 mixed，由进程显式使用 | Loom + sing-box 二进制分发包 | 不开发独立客户端程序 |
-| Android | `VpnService` TUN | Android App，内嵌 sing-box | 必须开发 App；策略由中控下发、客户端只读 |
+| Windows 桌面 | TUN 主接管 + 同规则的本地 `1080` mixed | Windows Service + 托盘界面 | 需要薄客户端；规则由中控下发 |
+| Linux Server | 本地 `1080` mixed，由进程显式使用 | Loom + sing-box 二进制分发包 | 不开发独立 GUI |
+| Android | `VpnService` TUN | Android App，内嵌 sing-box | 必须开发 App；规则由中控下发 |
 
 这里的“一个入口”是一个**逻辑策略入口**：请求先由中控 matcher 映射到 Service，
-再映射到既有 `AccessDeclaration`。Windows 同时暴露 TUN 与一个 mixed 是为了适配
-不同应用，并不形成两套策略；两者必须使用同一份中控规则。Linux 为迁移旧部署而
-保留的端口覆盖属于兼容/高级能力，不是日常入口或 Service 页面的产品模型。
+再映射到既有 `AccessDeclaration`。Windows 同时暴露 TUN 与 `1080` 是为了适配不同
+应用，并不形成两套策略；两者必须使用同一份中控规则。选择“默认德国”也复用
+这个入口，不新增德国端口。Linux 为迁移旧部署而保留的端口覆盖属于兼容/高级
+能力，不是日常入口或 Service 页面的产品模型。
+
+客户端只允许修改一个受控偏好：**设备默认出口**。它只能从中控已经授权给该设备
+的策略中选择，例如 `Automatic / Singapore / Germany`。客户端提交选择，中控校验、
+持久化为 `default_declaration` 并签名发布；客户端不能直接修改本地路由配置。
+明确的 Service 规则始终优先于设备默认出口。
 
 静态导入现成 sing-box 兼容客户端可用于验证链路，但它不提供完整的签名 pull、
 设备吊销、Loom 调度、离线排名与可信观测，不能作为最终托管方案。
@@ -56,10 +61,15 @@
 配置形状的 golden，不是可安装的 Android 制品。客户端实现前必须先拆开平台无关
 配置与平台安装产物。
 
-当前生产 Linux 已收敛为 1080 一个中控托管的 mixed 入口，1081–1083 不再监听。
-固定 SG/DE 由中控的 Service 选择对应声明，不再由客户端选端口。
+当前生产 Linux 已收敛为 `127.0.0.1:1080` 一个中控托管的 mixed 入口，1081–1083
+不再监听。固定 SG/DE 由中控的 Service 选择对应声明，不再由客户端选端口。
+底层模型、校验、sing-box 渲染和中控只读视图已经支持在同一 managed mixed/TUN
+上复用设备 `default_declaration`；现网 SSOT 尚未配置设备默认出口，因此未命中
+Service 的流量仍然阻断。
 Windows/Android 客户端与对应渲染迁移尚未完成；后续迁移仍必须保留旧端口原语义
 或显式下线，不能把既有端口静默改成另一条规则。
+客户端提交默认出口的控制面 API、设备授权列表和 Windows/Android 选择界面仍未
+实现；不能把底层字段可渲染误写成客户端功能已经交付。
 当前结构化 Service 与数据面只实现 exact hostname 和 `.suffix`；本文后续的 Windows
 IP/CIDR 与 Android package matcher 是 v1 目标，尚未进入 SSOT 模型、校验或渲染，
 不能把界面原型当成已交付能力。
@@ -78,6 +88,7 @@ IP/CIDR 与 Android package matcher 是 v1 目标，尚未进入 SSOT 模型、�
 6. 平台适配失败时显式阻断安装，不把 Linux 产物伪装成 Windows/Android 包。
 7. v1 日常流量统一经过中控 matcher → Service → `AccessDeclaration`，各平台只按
    系统能力呈现接入面，不另建本地策略模型。
+8. 设备可以在中控授权范围内选择一条默认出口；选择必须回写中控并进入签名快照。
 
 ### 3.2 非目标
 
@@ -87,8 +98,8 @@ IP/CIDR 与 Android package matcher 是 v1 目标，尚未进入 SSOT 模型、�
 - 不让移动端加入常驻 WireGuard/Headscale mesh。
 - 不依赖控制中心在线参与数据转发。
 - 不承诺连接建立后的无损路径迁移；切换只影响新连接。
-- 不允许 Windows/Android 客户端本地新增或修改 matcher、声明、固定出口或
-  fallback；客户端只展示生效结果。
+- 不允许 Windows/Android 客户端本地新增或修改 matcher、Service、声明定义或
+  fallback；客户端只能请求切换中控已授权的设备默认出口。
 - v1 不提供同一域名按账号选择不同固定出口的 profile。L4/TUN 看不到账号身份，
   该能力需要显式 profile、SDK 或 L7 代理，留待后续版本另行决策。
 
@@ -100,8 +111,9 @@ IP/CIDR 与 Android package matcher 是 v1 目标，尚未进入 SSOT 模型、�
 
 所有平台都使用受版本约束的 sing-box 核心。Loom 负责生成候选、授权和路由规则，
 客户端宿主负责启动、停止与观察核心。平台 UI 不能自己维护第二份路由判断。
-Windows 与 Android UI 中的规则、Service、声明和当前出口均为只读；连接、断开、
-重连和诊断属于生命周期操作，不得改变中控策略。
+Windows 与 Android UI 中的规则、Service、声明定义和当前路径均为只读；连接、
+断开、重连和诊断属于生命周期操作。唯一的策略偏好是设备默认出口，它也必须通过
+中控校验、存储和签名下发，不能形成第二份本地期望态。
 
 ### 4.2 配置与秘密分离
 
@@ -128,8 +140,35 @@ HTTPS 保护传输，平台签名证明内容。客户端必须验证：
 
 ### 4.5 fail closed
 
-未知 schema、无匹配服务、凭据缺失、签名失败和声明候选集为空都必须明确失败。
-不得自动落到 unrestricted direct 或开放代理。
+未知 schema、凭据缺失、签名失败和声明候选集为空都必须明确失败。未匹配 Service
+时，仅在中控明确配置了设备默认出口后走该策略；否则阻断。任何情况都不得自动落到
+unrestricted direct 或开放代理。
+
+### 4.6 设备默认出口是唯一可写偏好
+
+设备默认出口不是一条本地规则，也不是一个新监听端口。它引用一条设备已有凭据的
+`AccessDeclaration`：
+
+```text
+请求命中 Service  → 使用 Service 的 AccessDeclaration
+请求未命中 Service → 使用设备 default_declaration
+设备没有默认策略   → block
+```
+
+中控可以把下列策略作为候选展示给设备：
+
+- `best-egress`：出口自动选择；
+- `sg-fixed` / `de-fixed`：固定到中控预先定义的出口节点；
+- `none`：不设置默认出口，未匹配请求继续阻断。
+
+固定策略可以指向内圈或外圈节点，只要该节点在模型中具备 `egress_capable`，并且
+策略、候选和设备凭据都通过中控校验。客户端选择的是中控发布的策略 ID，不是任意
+节点 ID、IP 或国家字符串，所以客户端无法把自己扩权成开放代理。
+
+写入流程必须是：客户端用设备身份提交选择与当前 revision → 中控检查候选仍获授权
+且 revision 未过期 → 写入设备 `access.default_declaration` → 常规发布器生成新的签名
+快照 → 客户端 pull 并原子应用。提交失败或离线时继续使用最后一份已验证配置，不能
+先在本地生效、以后再补记中控。
 
 ---
 
@@ -170,7 +209,7 @@ HTTPS 保护传输，平台签名证明内容。客户端必须验证：
 | 组件 | 职责 | 不负责 |
 |---|---|---|
 | 平台宿主 | 权限申请、前后台生命周期、服务启停、通知 | 候选生成、授权判断与本地策略编辑 |
-| 配置客户端 | current 获取、快照下载、验签、防回退、原子安装 | 数据转发 |
+| 配置客户端 | current 获取、快照下载、验签、防回退、原子安装；提交设备默认出口偏好 | 数据转发、直接改本地规则 |
 | 安全存储 | 设备私钥、客户端证书、凭据、API secret | SSOT 存储 |
 | sing-box 核心 | TUN/mixed、DNS、出站协议、selector | 设备注册和应用更新 |
 | 调度适配 | 使用已下发候选、测量、阻尼切换、保存最后排名 | 扩大候选集 |
@@ -198,12 +237,13 @@ TUN 适合无法逐个配置代理的应用，承担系统流量兜底。它需�
 ### 7.2 mixed
 
 mixed 同时提供本地 HTTP 与 SOCKS5 入口，适合浏览器、开发工具、CI、容器和
-systemd 服务显式接入。v1 日常只提供一个遵循中控规则的 mixed 入口；Windows 的
-mixed 与 TUN 使用同一份 matcher → Service → `AccessDeclaration` 映射，Android
-不提供 mixed。
+systemd 服务显式接入。v1 日常只提供 `127.0.0.1:1080` 一个遵循中控规则的 mixed
+入口；Windows 的 mixed 与 TUN 使用同一份 matcher → Service → `AccessDeclaration`
+映射，Android 不提供 mixed。
 
-Linux 服务器默认只使用 mixed，避免改默认路由后锁死 SSH。SOCKS 客户端应优先
-使用远端解析语义，例如 `socks5h`，避免本地 DNS 结果使出口判断失真。
+Linux Server 默认只使用 mixed，避免改默认路由后锁死 SSH。应用使用
+`socks5h://127.0.0.1:1080`，让代理端解析域名，避免本地 DNS 结果使出口判断失真。
+HTTP 代理仍可复用同一个 mixed 监听。
 
 旧“端口绑定声明”只在 Linux 作为命名明确、默认仅回环监听的兼容/高级覆盖保留，
 用于迁移已有脚本或临时 CLI 强制出口。它仍受目标授权、候选集与 fail-closed 约束，
@@ -214,7 +254,7 @@ Linux 服务器默认只使用 mixed，避免改默认路由后锁死 SSH。SOCK
 
 ## 8. 平台设计
 
-### 8.1 Linux 服务器
+### 8.1 Linux Server
 
 Linux 服务器是第一优先级，也是当前实现最接近完整的客户端形态。
 
@@ -223,7 +263,7 @@ Linux 服务器是第一优先级，也是当前实现最接近完整的客户�
 - `loom` 静态二进制；
 - sing-box 固定版本；
 - `loom-pull.timer`、`loom-agent.service`、`loom-report.service`；
-- 一个中控托管的本地 mixed 日常入口，不创建 TUN；
+- 一个中控托管的 `127.0.0.1:1080` mixed 日常入口，不创建 TUN；
 - 可选的 Linux 兼容/高级覆盖入口，仅用于既有脚本迁移或显式 CLI 强制出口；
 - 配置位于 `/etc/loom`，运行状态位于 `/var/lib/loom`；
 - 秘密文件 root 所有、0600。
@@ -231,21 +271,15 @@ Linux 服务器是第一优先级，也是当前实现最接近完整的客户�
 应用通过环境变量、显式 SOCKS/HTTP 参数、容器环境或 systemd drop-in 接入。安装
 工具不应自动修改全局 `HTTP_PROXY`，因为这会影响包管理、控制通道和无关服务。
 
+设备默认出口可以由管理员在中控设置，未来也可由受控 CLI 请求切换。无论选择
+自动、内圈固定节点还是外圈固定节点，应用地址始终是
+`socks5h://127.0.0.1:1080`，不新增端口。
+
 **交付物：** Linux 统一交付可校验的二进制分发包，包含 Loom、钉住版本的
 sing-box、systemd unit 模板与安装/卸载命令；可同时提供 `tar.gz` 和 deb/rpm
 封装。Linux 不开发独立客户端 GUI。
 
-### 8.2 Linux 桌面
-
-Linux 桌面复用服务器组件，以 TUN 接管不支持代理的程序，并提供一个同规则的
-日常 mixed 入口。需要迁移旧脚本时，可显式启用 Linux 兼容/高级覆盖；它不进入
-普通用户流程。
-
-TUN 只把必要能力授予负责创建接口的进程。Linux 桌面仍使用与服务器相同的
-二进制分发包，通过 CLI 查看状态和控制启停，不另做托盘或桌面客户端；用户退出
-桌面会话后，systemd 服务继续运行。
-
-### 8.3 Windows
+### 8.2 Windows
 
 Windows 不需要新的网络核心，但需要平台宿主：
 
@@ -254,10 +288,10 @@ Windows 不需要新的网络核心，但需要平台宿主：
 - Windows Service 以受控权限运行配置客户端和 sing-box；
 - 托盘程序只调用本机受限控制接口，显示状态、启停和当前路径；
 - `This PC` 页面只展示本机注册身份、操作系统与证书/配置状态，不是远端节点管理；
-- TUN 用于系统流量主接管，一个 mixed 用于明确设置代理的开发工具；两者使用
-  同一份中控规则；
-- matcher、Service、声明、固定出口和 fallback 只读展示，客户端不能新增、选择或
-  覆盖；
+- TUN 用于系统流量主接管，`127.0.0.1:1080` mixed 用于明确设置代理的开发工具；
+  两者使用同一份中控规则和同一个设备默认出口；
+- matcher、Service、声明定义和 fallback 只读展示；用户只可在中控给出的列表中
+  选择设备默认出口，选择经中控确认并签名下发后生效；
 - 设备密钥和凭据使用 DPAPI/CNG 保护；
 - 配置与状态放入 ProgramData，不写入用户下载目录；
 - 安装器负责服务注册、TUN 驱动依赖、卸载与恢复；
@@ -271,7 +305,7 @@ Windows 睡眠或网络切换后应重新探测，但沿用切换阻尼，不能
 配置失效。服务升级与配置更新是两条流程：配置走 Loom 签名快照；程序升级走签名
 安装包并保留可恢复版本。
 
-### 8.4 Android
+### 8.3 Android
 
 Android 必须提供应用宿主，因为只有应用可以通过 `VpnService` 接管其他 App
 流量并满足前台服务生命周期要求。
@@ -288,7 +322,7 @@ Android App 包含：
 - 当前路径、连接状态、有限诊断与手动重连；
 - 最小调度适配：读取候选/排名、执行切换、离线沿用、回传 L4 观测。
 - 中控下发的 package/domain/IP matcher、Service 与声明关系；界面只读展示生效
-  结果，不提供本地策略、声明或出口选择。
+  结果；用户只能选择中控授权的设备默认出口。
 
 Android 不安装 Linux 版 Loom Agent、systemd unit、`/etc/loom` 路径或 Loom
 二进制自更新器。应用更新通过应用商店、企业 MDM 或签名 APK 渠道完成；Loom 只
@@ -296,9 +330,8 @@ Android 不安装 Linux 版 Loom Agent、systemd unit、`/etc/loom` 路径或 Lo
 
 Android 同时只能有一个活动 `VpnService`。因此它不加入 Tailscale/Headscale
 mesh；需要访问 mesh 内网时，由被授权的 Loom 服务器代为转发。v1 由中控规则按
-package、domain 或 IP 匹配 Service，不把 Android 绑定成“单一默认声明”，也不让
-用户切换声明。相同 package 内同一域名的多账号无法由 L4/TUN 可靠区分，profile
-能力不进入 v1。
+package、domain 或 IP 匹配 Service；未命中的流量才使用设备默认出口。相同 package
+内同一域名的多账号无法由 L4/TUN 可靠区分，profile 能力不进入 v1。
 
 ---
 
@@ -306,8 +339,9 @@ package、domain 或 IP 匹配 Service，不把 Android 绑定成“单一默认
 
 ### 9.1 注册邀请
 
-管理员在控制中心为明确的平台、设备和获授权中控规则范围创建注册邀请；邀请不让
-用户在客户端挑选某条访问声明。邀请包含：
+管理员在控制中心为明确的平台、设备和获授权中控规则范围创建注册邀请。注册邀请
+本身不携带任意出口参数；注册完成后，客户端只能从设备获授权的默认策略列表选择。
+邀请包含：
 
 - 控制中心地址；
 - 短 TTL、单次使用的随机 token；
@@ -440,6 +474,7 @@ Android 签名密钥是应用升级身份，必须备份和严格控制；丢失
 - TUN 或 mixed 是否已接管流量；
 - 当前配置 snapshot 与 generation；
 - 当前命中的只读规则、Service、声明和候选路径；
+- 当前设备默认出口、允许选择的默认策略及尚未同步状态；
 - 数据平面最近是否成功；
 - 控制面最近是否成功 pull；
 - 当前是否使用 previous/离线配置；
@@ -486,9 +521,8 @@ Android 签名密钥是应用升级身份，必须备份和严格控制；丢失
 
 ### 阶段 C1：固化 Linux 接入
 
-- Linux server 的注册、pull、一个日常 mixed、Agent、report、回滚形成安装流程；
+- Linux Server 的注册、pull、一个 `1080` 日常 mixed、Agent、report、回滚形成安装流程；
 - 将旧端口入口迁到命名明确的 Linux 兼容/高级覆盖，并验证不会扩权；
-- 增加 Linux desktop TUN profile；
 - 生成统一二进制分发包，并提供可重复安装和卸载路径；
 - 不建设 Linux GUI 或托盘客户端。
 
@@ -508,7 +542,7 @@ Android 签名密钥是应用升级身份，必须备份和严格控制；丢失
 
 - Windows Service、路径和安全存储；
 - 一个 mixed 首通，再完成 TUN；两种接入面渲染同一份中控规则；
-- 客户端只读展示 matcher、Service、声明与路径，不提供本地策略或出口选择；
+- 客户端只读展示 matcher、Service、声明与路径，只提供受控的设备默认出口选择；
 - 签名安装器与 previous 恢复；
 - 可选托盘 UI。
 
@@ -520,7 +554,7 @@ Android 签名密钥是应用升级身份，必须备份和严格控制；丢失
 - `VpnService` 宿主与 sing-box 集成；
 - 二维码注册、Keystore、签名 pull；
 - 最小排名/selector/离线能力；
-- 按中控 package/domain/IP matcher 渲染规则，并保持策略界面只读；
+- 按中控 package/domain/IP matcher 渲染规则，并提供受控的设备默认出口选择；
 - 前后台、网络切换与省电策略验证；
 - 签名 APK 发布和升级演练。
 
@@ -543,10 +577,12 @@ Android 签名密钥是应用升级身份，必须备份和严格控制；丢失
 8. 客户端旧版本配新配置、客户端新版本配旧配置；
 9. 日志、诊断包、UI 和崩溃报告不含秘密；
 10. 代表性真实目标端到端验证，而非只检查进程存活。
-11. Windows 的 TUN 与 mixed 对相同请求命中相同 Service/声明，Android matcher 与
-    中控预览一致；客户端本地策略修改请求被拒绝。
+11. Windows 的 TUN 与 mixed 对相同请求命中相同 Service/声明和设备默认出口，
+    Android matcher 与中控预览一致；绕过中控直接修改本地规则必须被拒绝。
 12. 多端口声明覆盖只在 Linux 兼容/高级模式出现，默认回环监听，且不能扩大目标
     授权或绕过 fail-closed。
+13. `Automatic / SG / DE / none` 切换只复用现有入口；未授权、过期 revision 和
+    离线提交均不能先在本地生效。
 
 ---
 
@@ -559,9 +595,10 @@ Android 签名密钥是应用升级身份，必须备份和严格控制；丢失
 3. mTLS 何时进入客户端稳态通道，以及设备证书的签发和吊销格式；
 4. 客户端规模是否仍是少量自建固定设备；若面向多用户，设备库存和授权关系不能
    继续全部塞进拓扑 SSOT，需要独立的设备/租户模型。
+5. 客户端默认出口写 API 的设备认证、CSRF/重放防护与 revision 冲突响应格式。
 
-v1 已明确不提供 Windows/Android 本地策略或出口切换，也不提供同域名多账号
-profile。若后续要引入这些能力，必须新增模型、安全边界和决策记录，不能借用旧
-端口覆盖隐式实现。
+v1 已明确只提供设备默认出口这一项受控偏好，不提供 matcher、Service、声明定义、
+fallback 或同域名多账号 profile 的本地编辑。若后续要引入这些能力，必须新增模型、
+安全边界和决策记录，不能借用旧端口覆盖隐式实现。
 
 在这些问题确定前，不启用会强迫所有平台 fork 客户端的自定义协议参数。

@@ -118,3 +118,16 @@ func TestPortModes(t *testing.T) {
 		t.Errorf("矛盾配置被 helper 静默归类:%+v", invalid)
 	}
 }
+
+func TestEffectiveDefaultDeclaration(t *testing.T) {
+	explicit := &AccessRole{Platform: LinuxServer, DefaultDeclaration: "de-fixed"}
+	if got := explicit.EffectiveDefaultDeclaration(); got != "de-fixed" {
+		t.Fatalf("显式设备默认策略=%q,期望 de-fixed", got)
+	}
+
+	for _, access := range []*AccessRole{{Platform: Desktop}, {Platform: LinuxServer}, nil} {
+		if got := access.EffectiveDefaultDeclaration(); got != "" {
+			t.Fatalf("未显式配置默认策略却推导出 %q", got)
+		}
+	}
+}

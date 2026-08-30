@@ -145,12 +145,19 @@ func ingressViews(s *model.SSOT) []webui.IngressView {
 		}
 		platform := string(n.Access.Platform)
 		if n.Access.Platform.UsesTUN() {
-			policyID := effectiveTUNPolicy(s, n)
-			out = append(out, webui.IngressView{
+			policyID := effectiveDefaultPolicy(n)
+			v := webui.IngressView{
 				Node: n.ID, Platform: platform, Kind: "tun", Mode: "default_policy",
 				ScopeKind: webui.ScopePolicy, ScopeID: policyID, PolicyID: policyID,
-				Declaration: n.Access.DefaultDeclaration, Default: true,
-			})
+				Declaration: n.Access.DefaultDeclaration, Default: policyID != "",
+			}
+			if accessUsesServiceRouting(s, n) {
+				v.Mode = "services"
+				v.ScopeKind = webui.ScopeServices
+				v.ScopeID = ""
+				v.Services = true
+			}
+			out = append(out, v)
 		}
 		for _, mp := range n.Access.MixedPorts {
 			v := webui.IngressView{
@@ -162,6 +169,8 @@ func ingressViews(s *model.SSOT) []webui.IngressView {
 				v.Mode = "services"
 				v.ScopeKind = webui.ScopeServices
 				v.Services = true
+				v.PolicyID = effectiveDefaultPolicy(n)
+				v.Default = v.PolicyID != ""
 			} else {
 				v.Mode = "policy"
 				v.ScopeKind = webui.ScopePolicy
@@ -197,24 +206,35 @@ func accessPolicySet(s *model.SSOT, n *model.Node) map[string]bool {
 	return out
 }
 
-func effectiveTUNPolicy(s *model.SSOT, n *model.Node) string {
-	if n == nil || !n.IsAccess() || !n.Access.Platform.UsesTUN() {
+func effectiveDefaultPolicy(n *model.Node) string {
+	if n == nil || !n.IsAccess() {
 		return ""
 	}
-	if n.Access.DefaultDeclaration != "" {
-		return n.Access.DefaultDeclaration
-	}
-	policies := accessPolicySet(s, n)
-	if len(policies) != 1 {
-		return ""
-	}
-	for id := range policies {
-		return id
-	}
-	return ""
+	return n.Access.EffectiveDefaultDeclaration()
 }
 
-func policyPinnedAtIngress(s *model.SSOT, n *model.Node, policyID string) bool {
+func accessUsesServiceRouting(s *model.SSOT, n *model.Node) bool {
+	if n == nil || !n.IsAccess() {
+		return false
+	}
+	for _, mp := range n.Access.MixedPorts {
+		if mp.ManagedAutomatic() {
+			return true
+		}
+	}
+	if !n.Access.Platform.UsesTUN() {
+		return false
+	}
+	allowed := accessPolicySet(s, n)
+	for i := range s.Services {
+		if allowed[s.Services[i].Declaration] {
+			return true
+		}
+	}
+	return false
+}
+
+func policyPinnedAtIngress(n *model.Node, policyID string) bool {
 	if n == nil || !n.IsAccess() {
 		return false
 	}
@@ -223,7 +243,7 @@ func policyPinnedAtIngress(s *model.SSOT, n *model.Node, policyID string) bool {
 			return true
 		}
 	}
-	return effectiveTUNPolicy(s, n) == policyID
+	return effectiveDefaultPolicy(n) == policyID
 }
 
 func enrichRouteScopes(v *webui.View, s *model.SSOT) {
@@ -293,7 +313,7 @@ func legacyRouteScope(s *model.SSOT, access *model.Node, id string) (kind, scope
 	allowed := accessPolicySet(s, access)
 	service := s.ServiceByID()[id]
 	servicePossible := service != nil && allowed[service.Declaration]
-	policyPossible := s.DeclarationByID()[id] != nil && allowed[id] && policyPinnedAtIngress(s, access, id)
+	policyPossible := s.DeclarationByID()[id] != nil && allowed[id] && policyPinnedAtIngress(access, id)
 	switch {
 	case servicePossible && !policyPossible:
 		return webui.ScopeService, id

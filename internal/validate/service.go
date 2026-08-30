@@ -338,6 +338,7 @@ func checkAccessNodes(
 		if len(p.Access.Credentials) == 0 {
 			fs.add("§8.2 凭据", where, "接入节点未持有任何凭据")
 		}
+		authorizedDeclarations := map[string]bool{}
 		for _, id := range p.Access.Credentials {
 			c, ok := creds[id]
 			if !ok {
@@ -346,20 +347,19 @@ func checkAccessNodes(
 			}
 			if c.Revoked() {
 				fs.add("§18 凭据", where, "引用了已吊销的凭据 %q(revoked_at=%s)", id, c.RevokedAt)
+				continue
+			}
+			if c.Declaration != "" {
+				authorizedDeclarations[c.Declaration] = true
 			}
 		}
 
-		// §7.2 / §18:Android 绝大多数 App 不能单独设代理,因此必须 TUN
-		// 且只带一把凭据 —— 没有"按端口选声明"这回事。
+		// §7.2:Android 绝大多数 App 不能单独设代理,因此必须 TUN。
+		// 多条声明由中控 Service 匹配,不再要求用端口区分。
 		if p.Access.Platform == model.Android {
 			if len(p.Access.MixedPorts) > 0 {
 				fs.add("§7.2 平台", where,
 					"Android 不应声明 mixed_ports —— 绝大多数 App 不能单独设代理,只能走 TUN")
-			}
-			if len(p.Access.Credentials) > 1 {
-				fs.add("§18 模板", where,
-					"Android 持有 %d 把凭据,但只有 TUN 一个出口,无法按端口区分声明",
-					len(p.Access.Credentials))
 			}
 		}
 		// §7.2:Linux 服务器不开 TUN,流量全靠 mixed 端口接管。
@@ -368,22 +368,26 @@ func checkAccessNodes(
 				"linux-server 没有 mixed_ports —— 它不开 TUN,没有端口就接管不到任何流量")
 		}
 
-		// §7.2:用 TUN 的平台必须说清兜底流量走哪条声明。
-		if p.Access.Platform.UsesTUN() {
-			switch {
-			case p.Access.DefaultDeclaration == "" && len(p.Access.Credentials) > 1:
-				fs.add("§7.2 平台", where,
-					"用 TUN 但未声明 default_declaration,且持有 %d 把凭据 —— "+
-						"兜底流量走哪条声明是歧义的,必须显式写出", len(p.Access.Credentials))
-			case p.Access.DefaultDeclaration != "":
-				if _, ok := decls[p.Access.DefaultDeclaration]; !ok {
-					fs.add("§7.2 平台", where,
-						"default_declaration 引用了不存在的访问声明 %q", p.Access.DefaultDeclaration)
-				}
+		// §7.2 / §7.3:设备默认策略复用于 TUN 与 managed mixed,且必须是
+		// 本设备已经持有凭据的声明。没有默认值时,managed mixed 与 TUN
+		// 都继续 fail closed，不从凭据数量推断隐含默认值。
+		hasManagedInbound := p.Access.Platform.UsesTUN()
+		for _, mp := range p.Access.MixedPorts {
+			hasManagedInbound = hasManagedInbound || mp.ManagedAutomatic()
+		}
+		if p.Access.DefaultDeclaration != "" {
+			if _, ok := decls[p.Access.DefaultDeclaration]; !ok {
+				fs.add("§7.2 默认出口", where,
+					"default_declaration 引用了不存在的访问声明 %q", p.Access.DefaultDeclaration)
 			}
-		} else if p.Access.DefaultDeclaration != "" {
-			fs.add("§7.2 平台", where,
-				"%s 不使用 TUN,声明 default_declaration 不会生效", p.Access.Platform)
+			if !authorizedDeclarations[p.Access.DefaultDeclaration] {
+				fs.add("§8.2 默认出口", where,
+					"default_declaration=%q,但接入节点没有持有它的有效凭据", p.Access.DefaultDeclaration)
+			}
+			if !hasManagedInbound {
+				fs.add("§7.3 默认出口", where,
+					"声明了 default_declaration,但没有 TUN 或 services:true mixed 承载未匹配流量")
+			}
 		}
 
 		// 端口桶要覆盖同一台机器上的全部监听,不只是 mixed 之间。

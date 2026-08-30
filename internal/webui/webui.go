@@ -553,7 +553,7 @@ type ConstraintView struct {
 }
 
 // IngressView 是接入节点在 SSOT 中声明的本地入口。Declaration 保存原始
-// 表单值；PolicyID 可包含按唯一 credential 推导出的 TUN 有效默认策略。
+// 表单值；PolicyID 可包含 managed mixed/TUN 共用的有效设备默认策略。
 type IngressView struct {
 	Node, Platform, Kind, Listen, Mode        string
 	ScopeKind, ScopeID, PolicyID, Declaration string

@@ -2708,3 +2708,29 @@ Windows/Android 不渲染或编辑这类覆盖。生产环境确认没有遗留�
 profile、SDK 或 L7 代理可以解决，但会新增身份、凭据和选择边界，因此不进入 v1；
 也不得用重复同域名规则、规则顺序或代理用户名暗中模拟。以后若引入 profile，必须
 另作数据模型、安全审查与决策记录。
+
+### D95 · 设备默认出口是唯一客户端偏好并复用现有入口
+
+**日期** 2026-08-30 · **状态** 设计与底层渲染生效，客户端写 API/UI 待实现 · **相关** D94、§4.5、§7.3、§8.2、[客户端接入设计](client-access.md)
+
+D94 的一个中控托管入口保持不变，但“客户端完全不能选择出口”过于严格。实际场景
+同时需要两层意图：明确 URL/domain/package 命中 Service 时由中控规则决定；没有
+命中 Service 时，设备可能希望全部走自动、新加坡或德国。为此 v1 只增加一个受控
+偏好 `access.default_declaration`，并以本决策取代 D94 中禁止客户端选择默认出口的
+部分。
+
+优先级固定为：Linux 显式兼容覆盖 > 命中的 Service > 设备默认声明 > block。
+Windows 的 TUN 与 `127.0.0.1:1080` mixed、Linux Server 的
+`socks5h://127.0.0.1:1080`、Android 的 `VpnService` TUN 都复用这条规则。选择
+“默认德国”不创建德国端口，1081–1083 也不恢复；它只改变同一入口上未命中
+Service 的 catch-all 出站。
+
+客户端不能提交任意节点、IP 或国家名，只能从中控已经授权给该设备的
+`AccessDeclaration` 中选择。固定声明可以钉到内圈或外圈节点，但目标节点必须是
+`egress_capable`，且声明、候选与设备凭据必须通过完整校验。选择必须携带设备身份
+和当前 revision 交给中控，持久化到 SSOT 后再由常规发布器签名下发；禁止先修改
+本地配置再异步补记。没有默认声明时，未匹配流量继续 fail closed。
+
+matcher、Service、声明定义、fallback 与候选集仍只由中控管理，客户端只读展示。
+同域名多账号 profile 仍不在 v1。v1 客户端范围是 Windows、Linux Server 与
+Android；Linux Desktop 暂不设计或交付。

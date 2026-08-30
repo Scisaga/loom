@@ -269,15 +269,11 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 		})
 	}
 
-	// 被端口钉住的声明才需要声明级 selector。只治理服务的声明不需要 ——
+	// 显式覆盖或设备默认策略需要声明级 selector。只治理服务的声明不需要 ——
 	// 那些流量按 host 反查服务,走服务自己的 selector(§4.5)。
-	pinned, tunDecl := pinnedDecls(p, declIDs)
-	byService := false
-	for _, mp := range ports {
-		if mp.ManagedAutomatic() {
-			byService = true
-		}
-	}
+	pinned, defaultDecl := pinnedDecls(p)
+	managedInbounds := managedAutomaticInbounds(p, ports)
+	byService := len(managedInbounds) > 0
 
 	hops := map[string]bool{}
 	routable := map[string]bool{}
@@ -363,7 +359,7 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 			cfg.Outbounds = append(cfg.Outbounds, sbOutbound{
 				Type: "selector", Tag: svc.Tag(), Outbounds: tags, Default: selectorDefault(tags),
 			})
-			svcRules = append(svcRules, serviceRule(&svc, ports))
+			svcRules = append(svcRules, serviceRule(&svc, managedInbounds))
 		}
 	}
 
@@ -386,6 +382,19 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 	// 服务规则排在端口规则之后:钉死出口的端口是接入端的显式意图,
 	// 它压过按 host 的自动判断。
 	cfg.Route.Rules = append(cfg.Route.Rules, svcRules...)
+
+	// 设备默认策略只接未命中 Service 的流量，所以必须排在 Service 规则之后。
+	// managed mixed 与 TUN 复用同一条规则，不需要为“默认德国”再开一个端口。
+	if len(managedInbounds) > 0 && defaultDecl != "" {
+		if !routable[defaultDecl] {
+			note("access:"+p.ID,
+				"default_declaration %q 没有可用候选,未匹配 Service 的流量将被阻断", defaultDecl)
+		} else {
+			cfg.Route.Rules = append(cfg.Route.Rules, sbRule{
+				Inbound: append([]string(nil), managedInbounds...), Outbound: "decl:" + defaultDecl,
+			})
+		}
+	}
 	// 探测入口:一个端口,用户名区分候选(见 ProbeListen)。
 	// 规则排在最前 —— 它按 auth_user 匹配,与业务规则不重叠,但放前面能
 	// 保证探测流量永远走它自己那条候选。
@@ -398,18 +407,6 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 		cfg.Route.Rules = append(probeRules, cfg.Route.Rules...)
 	}
 
-	if p.Access.Platform.UsesTUN() {
-		switch {
-		case tunDecl == "":
-			note("access:"+p.ID, "未声明 default_declaration,TUN 兜底流量将被阻断")
-		case !routable[tunDecl]:
-			note("access:"+p.ID, "default_declaration %q 没有可用候选,TUN 兜底流量将被阻断", tunDecl)
-		default:
-			cfg.Route.Rules = append(cfg.Route.Rules, sbRule{
-				Inbound: []string{"tun-in"}, Outbound: "decl:" + tunDecl,
-			})
-		}
-	}
 	return skips, nil
 }
 
@@ -811,17 +808,24 @@ func selectorDefault(tags []string) string {
 	return tags[0]
 }
 
-// serviceRule 生成"这些 host 走这个服务的 selector"的路由规则。
-//
-// 只绑到 managed automatic 主入口 —— 钉死策略的端口是显式 override,
-// 不参与 Service 匹配。
-func serviceRule(svc *model.Service, ports []model.MixedPort) sbRule {
-	r := sbRule{Outbound: svc.Tag()}
+// managedAutomaticInbounds 返回共享中控规则的全部入口。TUN 与 services:true
+// mixed 必须看到同一组 Service 与设备默认策略；显式 override 端口不在这里。
+func managedAutomaticInbounds(p *model.Node, ports []model.MixedPort) []string {
+	var out []string
+	if p.Access.Platform.UsesTUN() {
+		out = append(out, "tun-in")
+	}
 	for _, mp := range ports {
 		if mp.ManagedAutomatic() {
-			r.Inbound = append(r.Inbound, fmt.Sprintf("in-%d", mp.Port))
+			out = append(out, fmt.Sprintf("in-%d", mp.Port))
 		}
 	}
+	return out
+}
+
+// serviceRule 生成"这些 host 走这个服务的 selector"的路由规则。
+func serviceRule(svc *model.Service, inbounds []string) sbRule {
+	r := sbRule{Inbound: append([]string(nil), inbounds...), Outbound: svc.Tag()}
 	for _, a := range svc.SortedAddresses() {
 		if model.IsSuffix(a) {
 			// `.openai.com` → 匹配 api.openai.com,也匹配 openai.com 本身。
@@ -834,31 +838,24 @@ func serviceRule(svc *model.Service, ports []model.MixedPort) sbRule {
 	return r
 }
 
-// pinnedDecls 返回被显式 override 入口或 TUN 兜底钉住的声明,以及 TUN
-// 兜底用的那条。managed automatic 主入口不在这里;它按 Service 各自选路。
+// pinnedDecls 返回被显式 override 或设备默认策略钉住的声明,以及生效的默认
+// 声明。managed automatic 的已匹配流量不在这里;它按 Service 各自选路。
 //
 // **这是唯一的推导来源。** 渲染 sing-box 和渲染 Agent 配置都要用它 ——
 // 两边各写一遍的结果是 Agent 去切一个没渲染出来的 selector,而这个错误
 // 只有在跑起来之后才看得见。
-func pinnedDecls(p *model.Node, declIDs []string) (map[string]bool, string) {
+func pinnedDecls(p *model.Node) (map[string]bool, string) {
 	out := map[string]bool{}
 	for _, mp := range p.Access.MixedPorts {
 		if !mp.ManagedAutomatic() && mp.ExplicitOverride() {
 			out[mp.Declaration] = true
 		}
 	}
-	tunDecl := ""
-	if p.Access.Platform.UsesTUN() {
-		tunDecl = p.Access.DefaultDeclaration
-		// 只有一条声明时不必显式写 default_declaration。
-		if tunDecl == "" && len(declIDs) == 1 {
-			tunDecl = declIDs[0]
-		}
-		if tunDecl != "" {
-			out[tunDecl] = true
-		}
+	defaultDecl := p.Access.EffectiveDefaultDeclaration()
+	if defaultDecl != "" {
+		out[defaultDecl] = true
 	}
-	return out, tunDecl
+	return out, defaultDecl
 }
 
 // authUsers 是一条规则要匹配的用户名。
