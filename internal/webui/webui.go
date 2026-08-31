@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"net/url"
@@ -30,6 +31,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	qrcode "github.com/skip2/go-qrcode"
 )
 
 // Deps 是界面需要外界提供的东西。用接口而不是具体类型,是为了让 report
@@ -139,6 +142,10 @@ type ControlDeps struct {
 	// revision 上准备节点本地 WG 身份并原子写入节点与隧道。webui 不执行
 	// shell，也不接受操作者手填 Node ID、public_endpoint 或 egress。
 	Enrollment *NodeEnrollmentDeps
+	// Clients is the control-local device identity registry. It is deliberately
+	// separate from topology Nodes: routes, credentials and generated configs
+	// still come only from SSOT and the publisher.
+	Clients *ClientControlDeps
 	// Distributed 返回分发点当前指向的快照 id,用来看发布器跟上没有。
 	Distributed func() (string, error)
 }
@@ -191,6 +198,86 @@ type NodeEnrollmentDeps struct {
 	Scan   func(context.Context, EnrollmentConnection) (EnrollmentHostKey, error)
 	Review func(context.Context, EnrollmentReviewInput) (EnrollmentReview, error)
 	Commit func(context.Context, EnrollmentCommitInput) (string, error)
+}
+
+type ClientControlDeps struct {
+	List                 func() (ClientInventory, error)
+	CreateInvite         func(ClientInviteInput) (ClientInviteView, error)
+	Claim                func(ClientClaimInput) (ClientClaimResult, error)
+	InviteArtifact       func(inviteID string) (ClientInviteArtifact, error)
+	LinuxPackage         func() (LinuxClientPackageView, error)
+	DownloadLinuxPackage func() (LinuxClientPackageView, []byte, error)
+}
+
+type ClientInventory struct {
+	Clients       []ClientView `json:"clients"`
+	ActiveInvites int          `json:"active_invites"`
+}
+
+type ClientView struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Platform        string `json:"platform,omitempty"`
+	Status          string `json:"status"`
+	KeyFingerprint  string `json:"key_fingerprint,omitempty"`
+	CreatedAt       string `json:"created_at,omitempty"`
+	EnrolledAt      string `json:"claimed_at,omitempty"`
+	LastSeenAt      string `json:"last_seen_at,omitempty"`
+	DataPlaneStatus string `json:"data_plane_status"`
+	ConfigState     string `json:"config_state"`
+}
+
+type ClientInviteInput struct {
+	Name string `json:"name"`
+}
+
+type ClientInviteView struct {
+	InviteID      string `json:"invite_id"`
+	ClientID      string `json:"client_id"`
+	ClientName    string `json:"client_name"`
+	InviteURI     string `json:"invite_uri"`
+	EnrollmentURL string `json:"enrollment_url"`
+	ExpiresAt     string `json:"expires_at"`
+}
+
+type ClientInviteArtifact struct {
+	InviteURI string `json:"invite_uri"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+type ClientClaimInput struct {
+	Token, Platform, CSRPEM, RequestID string
+}
+
+type ClientClaimResult struct {
+	Schema        int              `json:"schema"`
+	ClientID      string           `json:"client_id"`
+	Status        string           `json:"status"`
+	EnrolledAt    string           `json:"claimed_at"`
+	Replay        bool             `json:"replay"`
+	Next          string           `json:"next"`
+	Configuration string           `json:"configuration"`
+	Bootstrap     *ClientBootstrap `json:"bootstrap,omitempty"`
+}
+
+type ClientBootstrap struct {
+	NodeID            string   `json:"node_id"`
+	DistributionURLs  []string `json:"distribution_urls"`
+	DNS               []string `json:"dns,omitempty"`
+	SecretsEnv        string   `json:"secrets_env"`
+	PlatformPublicKey string   `json:"platform_public_key"`
+	ReleaseAuthority  string   `json:"release_authority"`
+	CACertPEM         string   `json:"ca_cert_pem"`
+	NodeCertPEM       string   `json:"node_cert_pem"`
+}
+
+type LinuxClientPackageView struct {
+	Filename string `json:"filename"`
+	URL      string `json:"url"`
+	SHA256   string `json:"sha256"`
+	Version  string `json:"version"`
+	Arch     string `json:"arch"`
+	Size     int64  `json:"size"`
 }
 
 type EnrollmentConnection struct {
@@ -702,6 +789,214 @@ func Handler(d Deps) http.Handler {
 			writeHTML(w, fn(authed(d, r)))
 		}
 	}
+	mux.HandleFunc("/clients", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
+			return
+		}
+		writeHTML(w, pageClients(d, clientPageState{Create: r.URL.Query().Get("new") == "1"}, authed(d, r)))
+	})
+	mux.HandleFunc("/clients/create", func(w http.ResponseWriter, r *http.Request) {
+		// A successful response contains the short-lived bearer invitation URI.
+		// Keep it out of shared/intermediary caches even on validation errors.
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		if r.Method != http.MethodPost {
+			http.Error(w, "只接受 POST", http.StatusMethodNotAllowed)
+			return
+		}
+		if !authed(d, r) {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		if d.Control == nil || d.Control.Clients == nil || d.Control.Clients.CreateInvite == nil {
+			http.Error(w, "这台机器没有客户端注册能力", http.StatusNotImplemented)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+		if err := r.ParseForm(); err != nil {
+			writeHTML(w, pageClients(d, clientPageState{Create: true, Error: "表单无法解析"}, true))
+			return
+		}
+		name := strings.TrimSpace(r.Form.Get("name"))
+		invite, err := d.Control.Clients.CreateInvite(ClientInviteInput{Name: name})
+		if err != nil {
+			writeHTML(w, pageClients(d, clientPageState{Create: true, SubmittedName: name, Error: err.Error()}, true))
+			return
+		}
+		writeHTML(w, pageClients(d, clientPageState{Invite: &invite}, true))
+	})
+	mux.HandleFunc("/clients/download/linux-amd64", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", "GET")
+			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
+			return
+		}
+		if !authed(d, r) {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		if d.Control == nil || d.Control.Clients == nil || d.Control.Clients.DownloadLinuxPackage == nil {
+			http.Error(w, "Linux 客户端包尚未发布", http.StatusServiceUnavailable)
+			return
+		}
+		view, body, err := d.Control.Clients.DownloadLinuxPackage()
+		if err != nil {
+			// 本机绝对路径与验签细节不暴露给下载响应。
+			http.Error(w, "Linux 客户端包不可用", http.StatusServiceUnavailable)
+			return
+		}
+		hash := sha256.Sum256(body)
+		if view.Filename != "loom-client-linux-amd64.tar.gz" ||
+			view.URL != "/clients/download/linux-amd64" || view.Arch != "linux/amd64" ||
+			view.Size != int64(len(body)) || view.SHA256 != fmt.Sprintf("%x", hash[:]) {
+			http.Error(w, "Linux 客户端包验证结果不一致", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Cache-Control", "private, no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+		w.Header().Set("Content-Type", "application/gzip")
+		w.Header().Set("Content-Disposition", `attachment; filename="loom-client-linux-amd64.tar.gz"`)
+		w.Header().Set("Content-Length", strconv.FormatInt(int64(len(body)), 10))
+		_, _ = w.Write(body)
+	})
+	mux.HandleFunc("/api/control/clients", func(w http.ResponseWriter, r *http.Request) {
+		clientJSONHeaders(w)
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", "GET")
+			writeJSONError(w, http.StatusMethodNotAllowed, "只接受 GET")
+			return
+		}
+		if !authed(d, r) {
+			writeJSONError(w, http.StatusUnauthorized, "需要中控运维会话")
+			return
+		}
+		if d.Control == nil || d.Control.Clients == nil || d.Control.Clients.List == nil {
+			writeJSONError(w, http.StatusNotImplemented, "这台机器没有客户端注册能力")
+			return
+		}
+		inventory, err := loadClientInventory(d)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, inventory)
+	})
+	mux.HandleFunc("/api/control/client-invites", func(w http.ResponseWriter, r *http.Request) {
+		clientJSONHeaders(w)
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", "POST")
+			writeJSONError(w, http.StatusMethodNotAllowed, "只接受 POST")
+			return
+		}
+		if !authed(d, r) {
+			writeJSONError(w, http.StatusUnauthorized, "需要中控运维会话")
+			return
+		}
+		if d.Control == nil || d.Control.Clients == nil || d.Control.Clients.CreateInvite == nil {
+			writeJSONError(w, http.StatusNotImplemented, "这台机器没有客户端注册能力")
+			return
+		}
+		var input ClientInviteInput
+		if err := decodeClientJSON(w, r, &input); err != nil {
+			writeJSONError(w, clientDecodeStatus(err), err.Error())
+			return
+		}
+		invite, err := d.Control.Clients.CreateInvite(input)
+		if err != nil {
+			writeJSONError(w, clientProtocolStatus(err), err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, invite)
+	})
+	mux.HandleFunc("/api/control/client-invites/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", "GET")
+			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
+			return
+		}
+		if !authed(d, r) {
+			http.Error(w, "需要中控运维会话", http.StatusUnauthorized)
+			return
+		}
+		if d.Control == nil || d.Control.Clients == nil || d.Control.Clients.InviteArtifact == nil {
+			http.NotFound(w, r)
+			return
+		}
+		relative := strings.TrimPrefix(r.URL.Path, "/api/control/client-invites/")
+		inviteID, action, ok := strings.Cut(relative, "/")
+		if !ok || inviteID == "" || strings.Contains(action, "/") ||
+			(action != "qr.png" && action != "download") {
+			http.NotFound(w, r)
+			return
+		}
+		artifact, err := d.Control.Clients.InviteArtifact(inviteID)
+		if err != nil {
+			http.Error(w, err.Error(), clientProtocolStatus(err))
+			return
+		}
+		if action == "download" {
+			w.Header().Set("Content-Type", "application/vnd.loom.invite; charset=utf-8")
+			w.Header().Set("Content-Disposition", `attachment; filename="client.loom-invite"`)
+			fmt.Fprintln(w, artifact.InviteURI)
+			return
+		}
+		png, err := qrcode.Encode(artifact.InviteURI, qrcode.Medium, 320)
+		if err != nil {
+			http.Error(w, "二维码生成失败", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+		_, _ = w.Write(png)
+	})
+	mux.HandleFunc("/api/client/enroll", func(w http.ResponseWriter, r *http.Request) {
+		clientJSONHeaders(w)
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", "POST")
+			writeJSONError(w, http.StatusMethodNotAllowed, "只接受 POST")
+			return
+		}
+		if d.Control == nil || d.Control.Clients == nil || d.Control.Clients.Claim == nil {
+			// Do not reveal whether an invite exists when this node is not the issuer.
+			writeJSONError(w, http.StatusNotFound, "client enrollment is unavailable")
+			return
+		}
+		var wire struct {
+			Token     string `json:"token"`
+			Platform  string `json:"platform"`
+			CSRPEM    string `json:"csr_pem"`
+			RequestID string `json:"request_id"`
+		}
+		if err := decodeClientJSON(w, r, &wire); err != nil {
+			writeJSONError(w, clientDecodeStatus(err), err.Error())
+			return
+		}
+		result, err := d.Control.Clients.Claim(ClientClaimInput{
+			Token: wire.Token, Platform: wire.Platform, CSRPEM: wire.CSRPEM, RequestID: wire.RequestID,
+		})
+		if err != nil {
+			status := clientProtocolStatus(err)
+			message := err.Error()
+			if status == http.StatusInternalServerError {
+				// Provisioning errors can contain local paths, SSH targets or other
+				// operator-only diagnostics. The public invitation endpoint exposes
+				// only a retryable boundary, never those internals.
+				message = "client provisioning is temporarily unavailable"
+				log.Printf("client provisioning failed: %v", err)
+			}
+			writeJSONError(w, status, message)
+			return
+		}
+		status := http.StatusOK
+		if result.Configuration == "pending" {
+			status = http.StatusAccepted
+		}
+		writeJSON(w, status, result)
+	})
 	mux.HandleFunc("/nodes", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
@@ -1347,6 +1642,62 @@ func authed(d Deps, r *http.Request) bool {
 	}
 	exp, err := strconv.ParseInt(body, 10, 64)
 	return err == nil && d.Now().Unix() < exp
+}
+
+func clientJSONHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+}
+
+type clientDecodeError struct {
+	status int
+	msg    string
+}
+
+func (e *clientDecodeError) Error() string { return e.msg }
+
+func decodeClientJSON(w http.ResponseWriter, r *http.Request, value any) error {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		return &clientDecodeError{status: http.StatusUnsupportedMediaType, msg: "Content-Type 必须是 application/json"}
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(value); err != nil {
+		return fmt.Errorf("JSON 无法解析: %w", err)
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("请求体只能包含一个 JSON 对象")
+	}
+	return nil
+}
+
+func clientDecodeStatus(err error) int {
+	if requestErr, ok := err.(*clientDecodeError); ok {
+		return requestErr.status
+	}
+	return http.StatusBadRequest
+}
+
+func clientProtocolStatus(err error) int {
+	withCode, ok := err.(interface{ ProtocolCode() string })
+	if !ok {
+		return http.StatusInternalServerError
+	}
+	switch withCode.ProtocolCode() {
+	case "invalid_request":
+		return http.StatusBadRequest
+	case "invite_not_found":
+		return http.StatusNotFound
+	case "invite_expired":
+		return http.StatusGone
+	case "invite_already_used":
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

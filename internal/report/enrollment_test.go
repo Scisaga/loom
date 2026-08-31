@@ -40,7 +40,10 @@ func TestLoadControlDefaultsEnrollmentPaths(t *testing.T) {
 		t.Fatalf("LoadControl = %#v, %v; want control plus credential error", control, err)
 	}
 	if control.BootstrapSSHKey != "/etc/loom/control-bootstrap" ||
-		control.KnownHostsPath != "/etc/loom/control-known_hosts" || !control.GeoIPDisabled {
+		control.KnownHostsPath != "/etc/loom/control-known_hosts" ||
+		control.ClientRegistryPath != "/var/lib/loom/client-enrollment/registry.json" ||
+		control.ClientLinuxPackagePath != "/var/lib/loom/client-dist/loom-client-linux-amd64.tar.gz" ||
+		!control.GeoIPDisabled {
 		t.Fatalf("enrollment path defaults = %#v", control)
 	}
 }

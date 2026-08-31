@@ -39,6 +39,16 @@ type Control struct {
 	// operator-editable Country / City during node declaration review. Lookup
 	// failure is non-fatal even when this remains enabled.
 	GeoIPDisabled bool `json:"geoip_disabled,omitempty"`
+	// ClientRegistryPath stores only control-local invitation/device identity
+	// lifecycle. Route authorization and generated configs remain in SSOT.
+	ClientRegistryPath string `json:"client_registry_path,omitempty"`
+	// ClientEnrollmentURL is the externally reachable HTTPS claim endpoint
+	// encoded into the invitation. It is explicit because the static
+	// distribution URL and the control HTTP listener need not share an origin.
+	ClientEnrollmentURL string `json:"client_enrollment_url,omitempty"`
+	// ClientLinuxPackagePath is the locally published, signed Linux bootstrap
+	// archive exposed by the authenticated Clients page.
+	ClientLinuxPackagePath string `json:"client_linux_package_path,omitempty"`
 
 	// DistributionURL / DNS 用来回答"发布器跟上我这次改动了吗"。
 	//
@@ -71,8 +81,19 @@ func LoadControl(path string) (*Control, string, error) {
 	if c.KnownHostsPath == "" {
 		c.KnownHostsPath = "/etc/loom/control-known_hosts"
 	}
+	if c.ClientRegistryPath == "" {
+		c.ClientRegistryPath = "/var/lib/loom/client-enrollment/registry.json"
+	}
+	if c.ClientLinuxPackagePath == "" {
+		c.ClientLinuxPackagePath = "/var/lib/loom/client-dist/loom-client-linux-amd64.tar.gz"
+	}
 	if _, err := readSSOTSnapshot(c.SSOTPath); err != nil {
 		return nil, "", fmt.Errorf("ssot_path 指向 %s,但读不到:%w", c.SSOTPath, err)
+	}
+	if c.ClientEnrollmentURL != "" {
+		if _, err := validClientEnrollmentURL(c.ClientEnrollmentURL); err != nil {
+			return &c, "", fmt.Errorf("%s client_enrollment_url 无效:%w", path, err)
+		}
 	}
 
 	// 口令拿不到就**不给写权限**,而不是退化成"不需要认证"。

@@ -154,5 +154,5 @@ go run ./cmd/loom verify   /tmp/out -pubkey /tmp/keys/platform-signing.pub
 
 ## 环境
 
-Go 1.27 装在 `/usr/local/go`,已软链到 `/usr/local/bin`。唯一的第三方依赖是
-`gopkg.in/yaml.v3`。
+Go 1.27 装在 `/usr/local/go`,已软链到 `/usr/local/bin`。第三方依赖保持最小：
+`gopkg.in/yaml.v3` 用于 SSOT，`github.com/skip2/go-qrcode` 只用于中控邀请二维码。

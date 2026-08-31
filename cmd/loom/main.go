@@ -73,6 +73,7 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
   loom backup   -o <文件> {-passphrase-file <文件> | -plaintext}
                                          打包秘密层与内部 CA(丢了就得全网重来的那些)
   loom restore  <备份文件> -o <目录>       解开备份到一个目录,不覆盖原位置
+  loom client   <enroll|package|verify>     客户端注册与 Linux 交付
 
 `
 
@@ -149,6 +150,8 @@ func main() {
 		err = cmdBackup(args)
 	case "restore":
 		err = cmdRestore(args)
+	case "client":
+		err = cmdClient(args)
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return

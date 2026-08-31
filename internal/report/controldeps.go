@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"loom/internal/clientregistry"
 	"loom/internal/enrollkey"
 	"loom/internal/enrollssh"
 	"loom/internal/model"
@@ -164,6 +165,21 @@ func controlDeps(c *Control) *webui.ControlDeps {
 	if enrollmentPathsUsable(c) {
 		enrollment = newNodeEnrollmentDeps(c, &saveMu, read, revision, guardRevision)
 	}
+	clientProvisioner := newClientProvisioner(c, &saveMu)
+	clientProvision := func(client clientregistry.Client, csrPEM string) (*webui.ClientBootstrap, error) {
+		result, err := clientProvisioner.provision(client, csrPEM)
+		if err != nil || !result.Ready {
+			return nil, err
+		}
+		bootstrap := result.Bootstrap
+		return &webui.ClientBootstrap{
+			NodeID: bootstrap.NodeID, DistributionURLs: bootstrap.DistributionURLs,
+			DNS: bootstrap.DNS, SecretsEnv: bootstrap.SecretsEnv,
+			PlatformPublicKey: bootstrap.PlatformPublicKey,
+			ReleaseAuthority:  bootstrap.ReleaseAuthority,
+			CACertPEM:         bootstrap.CACertPEM, NodeCertPEM: bootstrap.NodeCertPEM,
+		}, nil
+	}
 	return &webui.ControlDeps{
 		SSOTPath: c.SSOTPath,
 		Enrich: func(v *webui.View) error {
@@ -228,6 +244,7 @@ func controlDeps(c *Control) *webui.ControlDeps {
 			Ensure: func() (webui.BootstrapIdentityView, error) { return bootstrapView(true) },
 		},
 		Enrollment: enrollment,
+		Clients:    newClientControlDeps(c, clientProvision),
 		Distributed: func() (string, error) {
 			if c.DistributionURL == "" {
 				return "", fmt.Errorf("中控配置里没有 distribution_url")

@@ -1358,6 +1358,45 @@ user),报成一条状态,进事件历史。于是"开了三天还没关"是一�
 而不是没人知道的事。
 
 
+### 13.5 客户端注册复用现有 SSOT 与发布链
+
+客户端注册不是第二套组网或选路模型。它只是把一台新 Linux 接入设备安全地加入
+现有 SSOT，并把该节点首次运行所需的身份、秘密和签名发布坐标交到设备手中。唯一
+允许的链路是：
+
+```text
+中控创建短时、一次性邀请
+    ↓
+设备本地生成 P-256 私钥与 PKCS#10 CSR（私钥不离机）
+    ↓
+中控原子消费邀请并绑定 CSR 的 canonical SPKI 指纹
+    ↓
+先生成并预置新旧节点所需秘密，再提交同一份 SSOT
+    ↓
+现有 publisher 校验、渲染、签名并自动发布该 SSOT
+    ↓
+publisher 确认精确 SSOT 后，注册响应才返回 ready bootstrap
+    ↓
+设备落盘节点证书、CA、平台公钥、release authority 与本机秘密
+    ↓
+设备执行现有 signed pull；验签、hydrate、预检、原子安装后才进入运行态
+```
+
+邀请绑定成功只表示 `claimed/provisioning`，不表示隧道健康、业务流量已经通过或
+客户端在线。中控在 SSOT 和必要秘密耐久写入、且 publisher 确认对应版本之前只能
+返回 pending；不允许用假配置跳过这段等待。相同邀请、相同 CSR 身份和 request ID
+的网络重试必须幂等，换一把密钥重复消费则失败。邀请 token 只放在
+`loom://enroll#<base64url payload>` 的 fragment 中，由客户端在 POST body 提交，
+不得进入 HTTPS query、日志或列表接口；列表也不能重新取回已消费 token。
+注册表中的 `ready` 只表示服务端 bootstrap 已准备好，不是客户端已经收到、安装或
+在线；页面必须写成 “Bootstrap ready”，数据面在线仍只能来自后续可信运行态报告。
+
+注册成功后，设备仍从签名 SSOT 获得 Service、Policy、候选和授权。Direct / Auto /
+指定出口只是客户端本机的三个顶层偏好：Auto 继续使用
+`Host → Service → Policy → Agent`，指定出口只固定最后一跳且前置中继仍由 Agent
+择优，Direct 才是本地直连。三种模式不创建新隧道模型、不把 Current Paths 变成可写
+选择器，也不通过邀请携带出口或路径参数。
+
 ## 14. 控制通道
 
 ### 14.1 可达性是图,不是列表

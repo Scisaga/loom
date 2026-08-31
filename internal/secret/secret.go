@@ -88,6 +88,14 @@ func Load(path string) (map[string]string, error) {
 
 // Write 按 ref 排序写出一个秘密文件。用于把总表拆成每节点一份。
 func Write(path string, secrets map[string]string, header string) error {
+	return os.WriteFile(path, Encode(secrets, header), 0o600)
+}
+
+// Encode returns the deterministic ref=value representation used by Write.
+// Callers that need a durable atomic replacement or a remote bootstrap can
+// carry these exact bytes without first exposing them through a temporary
+// world-readable file.
+func Encode(secrets map[string]string, header string) []byte {
 	refs := make([]string, 0, len(secrets))
 	for k := range secrets {
 		refs = append(refs, k)
@@ -99,5 +107,5 @@ func Write(path string, secrets map[string]string, header string) error {
 	for _, r := range refs {
 		fmt.Fprintf(&b, "%s=%s\n", r, secrets[r])
 	}
-	return os.WriteFile(path, []byte(b.String()), 0o600)
+	return []byte(b.String())
 }
