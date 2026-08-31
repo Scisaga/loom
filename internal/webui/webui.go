@@ -235,6 +235,7 @@ type EnrollmentReview struct {
 	ResolvedDirection                        string
 	DirectionEvidence, Revision              string
 	EgressEnabled                            bool
+	ExpandedPolicies                         []EnrollmentPolicy
 	FixedPolicies                            []EnrollmentPolicy
 	Tunnels                                  []EnrollmentTunnel
 }

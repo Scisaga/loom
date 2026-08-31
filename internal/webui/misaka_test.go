@@ -273,7 +273,9 @@ func misakaEnrollmentDeps() (*NodeEnrollmentDeps, *[]EnrollmentConnection, *[]En
 				KernelWireGuard: true, WGCommand: true,
 				RequestedDirection: input.RequestedDirection, ResolvedDirection: resolved,
 				DirectionEvidence: evidence, Revision: "revision-enroll-9",
-				EgressEnabled: true, FixedPolicies: []EnrollmentPolicy{{ID: "hk01-fixed", Name: "固定Hong Kong出口"}},
+				EgressEnabled:    true,
+				ExpandedPolicies: []EnrollmentPolicy{{ID: "best-egress", Name: "最优出口"}},
+				FixedPolicies:    []EnrollmentPolicy{{ID: "hk01-fixed", Name: "固定Hong Kong出口"}},
 				Tunnels: []EnrollmentTunnel{{
 					From: "hk01", To: "sg02", FromAddress: "10.99.0.7/32", ToAddress: "10.99.0.8/32",
 					Initiator: "sg02", Acceptor: "hk01", ListenPort: 61775,
@@ -750,6 +752,7 @@ func TestMisakaNodeEnrollmentTrustReviewPreviewAndCommitContract(t *testing.T) {
 		"Egress", "Enabled", `select name=direction`, "Automatic · conservative",
 		"reverse_only", "10.99.0.7/32", "10.99.0.8/32", "sg02", "61775/udp",
 		"Fixed exit policies added automatically", "hk01-fixed", "lowest latency (P50)",
+		"Automatic route pools expanded", "best-egress", "Restricted policies keep their existing allowlist",
 		"Reviewed direction is locked for commit", `name=direction value="automatic"`,
 		`name=reviewed_direction value="automatic"`, `name=review_token value="`,
 		`name=expected_node value="hk01"`, `name=expected_endpoint value="203.0.113.42"`,

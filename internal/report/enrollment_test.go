@@ -202,6 +202,12 @@ func TestEnrollmentReviewAndCommitAreOneRevisionGuardedPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Make best-egress an explicit full-pool policy for this transaction test.
+	// The base matrix intentionally omits two egress nodes to exercise a
+	// restricted allowlist elsewhere.
+	initial = bytes.Replace(initial,
+		[]byte("allowed_servers: [cn-bj, cn-gz, sg-vps, jp-vps]"),
+		[]byte("allowed_servers: [cn-bj, cn-sh, cn-gz, cn-cd, sg-vps, jp-vps]"), 1)
 	if err := os.WriteFile(path, initial, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -218,6 +224,7 @@ func TestEnrollmentReviewAndCommitAreOneRevisionGuardedPlan(t *testing.T) {
 	if review.NodeID != "hk01" || review.PublicEndpoint != "edge.example.net" || review.Country != "HK" || review.City != "Hong Kong" ||
 		review.RequestedDirection != "automatic" || review.ResolvedDirection != string(model.ReverseOnly) ||
 		!review.EgressEnabled || !hasEnrollmentPolicy(review.FixedPolicies, "hk01-fixed", "固定Hong Kong出口") ||
+		!hasEnrollmentPolicy(review.ExpandedPolicies, "best-egress", "最优出口") ||
 		len(review.Tunnels) != 4 {
 		t.Fatalf("unexpected review: %#v", review)
 	}
@@ -270,6 +277,19 @@ func TestEnrollmentReviewAndCommitAreOneRevisionGuardedPlan(t *testing.T) {
 	if fixed == nil || fixed.PinnedEgress() != "hk01" || fixed.Objective != model.Latency {
 		t.Fatalf("committed fixed policy = %#v", fixed)
 	}
+	best := ssot.DeclarationByID()["best-egress"]
+	if best == nil || !containsString(best.AllowedServers, "hk01") {
+		t.Fatalf("committed best-egress did not include hk01: %#v", best)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func hasEnrollmentPolicy(policies []webui.EnrollmentPolicy, id, name string) bool {

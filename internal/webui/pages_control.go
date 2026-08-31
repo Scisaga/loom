@@ -338,6 +338,16 @@ func writeNodeAddReview(b *strings.Builder, d Deps, review EnrollmentReview, key
 		}
 		b.WriteString(`. Secure credential provisioning activates them for access nodes.</span></div>`)
 	}
+	if len(review.ExpandedPolicies) > 0 {
+		b.WriteString(`<div class="callout section"><b>Automatic route pools expanded</b><br><span class=small>The new egress is added to every policy that already covered all active egress nodes: `)
+		for i, policy := range review.ExpandedPolicies {
+			if i > 0 {
+				b.WriteString(` · `)
+			}
+			fmt.Fprintf(b, `<code>%s</code> + <code>%s</code>`, esc(policy.ID), esc(review.NodeID))
+		}
+		b.WriteString(`. Restricted policies keep their existing allowlist.</span></div>`)
+	}
 	fmt.Fprintf(b, `</div><div class=section>
 <form class=blockform data-submit-progress method=post action="/nodes/add/commit">%s
 <div class=fields><div class="field span2"><label>Country</label><input class=mono name=country maxlength=2 pattern="[A-Za-z]{2}" value="%s" placeholder="HK"></div><div class="field span4"><label>City <span class=dim>(optional)</span></label><input name=city maxlength=80 value="%s" placeholder="e.g. Hong Kong"></div><div class="field span3"><label>Direction policy</label><select name=direction>%s</select></div><div class="field span3"><label>Effect</label><div class=callout>Recomputes the declaration; it cannot save SSOT.</div></div></div>

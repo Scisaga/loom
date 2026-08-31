@@ -255,6 +255,11 @@ func (b enrollmentBackend) review(ctx context.Context, input webui.EnrollmentRev
 		EgressEnabled:           true,
 		Tunnels:                 tunnels,
 	}
+	for _, policy := range plan.ExpandedPolicies {
+		review.ExpandedPolicies = append(review.ExpandedPolicies, webui.EnrollmentPolicy{
+			ID: policy.ID, Name: policy.Name,
+		})
+	}
 	for _, policy := range plan.FixedPolicies {
 		review.FixedPolicies = append(review.FixedPolicies, webui.EnrollmentPolicy{
 			ID: policy.ID, Name: policy.Name,

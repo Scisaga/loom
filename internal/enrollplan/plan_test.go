@@ -50,6 +50,10 @@ func TestPreviewAllocatesCompleteConflictFreePlan(t *testing.T) {
 	if len(plan.FixedPolicies) != 4 {
 		t.Fatalf("fixed policies = %#v, want one per egress-capable node", plan.FixedPolicies)
 	}
+	if len(plan.ExpandedPolicies) != 1 || plan.ExpandedPolicies[0].ID != "example-policy" ||
+		!slices.Equal(plan.ExpandedPolicies[0].AllowedServers, []string{"core-a", "core-b", "edge-a", "edge-b"}) {
+		t.Fatalf("expanded policies = %#v, want example-policy to include the new egress", plan.ExpandedPolicies)
+	}
 	fixedPolicy := planPolicyByID(t, plan, "edge-b-fixed")
 	if fixedPolicy.EgressAxis != "pinned:edge-b" || fixedPolicy.Name != "固定Tokyo出口" ||
 		fixedPolicy.Objective != model.Latency ||
@@ -89,6 +93,9 @@ func TestPreviewAllocatesCompleteConflictFreePlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
+	if !bytes.Contains(result, []byte("allowed_servers: [core-a, core-b, edge-a, edge-b]")) {
+		t.Fatalf("automatic pool edit did not preserve the existing YAML sequence style:\n%s", result)
+	}
 	assertValid(t, result)
 	ssot, err := model.Load(result)
 	if err != nil {
@@ -102,6 +109,40 @@ func TestPreviewAllocatesCompleteConflictFreePlan(t *testing.T) {
 	fixed := ssot.DeclarationByID()["edge-b-fixed"]
 	if fixed == nil || fixed.PinnedEgress() != "edge-b" {
 		t.Fatalf("applied fixed policy = %#v", fixed)
+	}
+	automatic := ssot.DeclarationByID()["example-policy"]
+	if automatic == nil || !slices.Equal(automatic.AllowedServers, []string{"core-a", "core-b", "edge-a", "edge-b"}) {
+		t.Fatalf("applied automatic policy = %#v", automatic)
+	}
+}
+
+func TestPreviewPreservesRestrictedAutomaticPools(t *testing.T) {
+	content := bytes.Replace(fixtureSSOT(),
+		[]byte("allowed_servers: [core-a, core-b, edge-a]"),
+		[]byte("allowed_servers: [core-a, edge-a]"), 1)
+	plan, err := Preview(content, NodeInput{
+		ID: "edge-b", PublicEndpoint: "edge-b.example.net",
+		Direction: model.ReverseOnly, WGPublicKey: keyZero,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.ExpandedPolicies) != 0 {
+		t.Fatalf("restricted policy was expanded: %#v", plan.ExpandedPolicies)
+	}
+	result, err := Apply(content, NodeInput{
+		ID: "edge-b", PublicEndpoint: "edge-b.example.net",
+		Direction: model.ReverseOnly, WGPublicKey: keyZero,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ssot, err := model.Load(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ssot.DeclarationByID()["example-policy"].AllowedServers; !slices.Equal(got, []string{"core-a", "edge-a"}) {
+		t.Fatalf("restricted allowed_servers = %#v", got)
 	}
 }
 
@@ -211,6 +252,9 @@ func TestExplicitEgressFalseIsPreserved(t *testing.T) {
 	}
 	if plan.Node.Server.EgressCapable {
 		t.Fatal("explicit false egress was changed to true")
+	}
+	if len(plan.ExpandedPolicies) != 0 {
+		t.Fatalf("non-egress node expanded automatic pools: %#v", plan.ExpandedPolicies)
 	}
 	result, err := Apply(fixtureSSOT(), input)
 	if err != nil {
@@ -430,6 +474,12 @@ func mustPlanBytes(t *testing.T, plan Plan) []byte {
 		b.WriteString(policy.ID)
 		b.WriteString("|")
 		b.WriteString(policy.EgressAxis)
+	}
+	for _, policy := range plan.ExpandedPolicies {
+		b.WriteString("|")
+		b.WriteString(policy.ID)
+		b.WriteString("|")
+		b.WriteString(strings.Join(policy.AllowedServers, ","))
 	}
 	return []byte(b.String())
 }

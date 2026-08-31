@@ -2364,7 +2364,10 @@ WireGuard 接口名可承载长度时保留可读前缀并追加确定性短摘�
 `egress_capable` 对新节点默认为 `true`。用户确认“加入网络”后，接入流程在
 远端复用或生成节点 WireGuard 密钥、只取回公钥，再把完整节点与隧道作为一个
 revision-guarded 事务写入 SSOT；这些是加入流程的内部步骤，不应伪装成另一个
-主操作。`direction` 在复核阶段可调整，但不与 SSH 坐标混在基础表单中。当前
+主操作。同一事务还会对账缺失的固定出口声明，并把新出口加入此前已覆盖全部在役
+出口的 `egress_axis:any` 自动池；显式漏掉某些既有出口的地域池或人工 allowlist
+保持原样，Review 必须展示本次规则变化。`direction` 在复核阶段可调整，但不与
+SSH 坐标混在基础表单中。当前
 `Automatic` 因没有受信 UDP 入站证据而保守解析为 `reverse_only`；显式选择
 `bidirectional`、`reverse_only` 或 `direct_only` 是操作者的策略覆盖，不是探测
 结论。选择改变后，initiator、acceptor、监听端、地址、端口和隧道计划全部重新

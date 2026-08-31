@@ -38,14 +38,17 @@ type NodeInput struct {
 	EgressCapable  *bool
 }
 
-// Plan is the complete SSOT change produced by Preview. Tunnels contains every
-// persistent tunnel required between Node and the nodes already in the SSOT.
+// Plan 是 Preview 产生的完整 SSOT 变更。Tunnels 包含 Node 与现有节点之间
+// 按方向矩阵所需的全部持久隧道。
+// ExpandedPolicies 是原本覆盖全部在役出口的自动策略池；新增出口会在同一
+// SSOT 事务中加入这些池。有意限制出口集合的策略不会被扩展。
 // FixedPolicies 是出口能力的声明式配套项；凭据值属于秘密层，不能由纯 SSOT
 // 规划器伪造，须在安全分发后才会成为接入节点的可选项。
 type Plan struct {
-	Node          model.Node
-	Tunnels       []model.Tunnel
-	FixedPolicies []model.AccessDeclaration
+	Node             model.Node
+	Tunnels          []model.Tunnel
+	ExpandedPolicies []model.AccessDeclaration
+	FixedPolicies    []model.AccessDeclaration
 }
 
 // ValidationError reports findings from validating the complete current or
@@ -97,8 +100,10 @@ func Preview(content []byte, input NodeInput) (Plan, error) {
 	candidate.Nodes = append([]model.Node(nil), ssot.Nodes...)
 	candidate.Nodes = append(candidate.Nodes, plan.Node)
 	candidate.Tunnels = append(append([]model.Tunnel(nil), ssot.Tunnels...), plan.Tunnels...)
+	candidate.Declarations = append([]model.AccessDeclaration(nil), ssot.Declarations...)
+	applyExpandedPolicies(candidate.Declarations, plan.ExpandedPolicies)
 	if len(plan.FixedPolicies) > 0 {
-		candidate.Declarations = append(append([]model.AccessDeclaration(nil), ssot.Declarations...), plan.FixedPolicies...)
+		candidate.Declarations = append(candidate.Declarations, plan.FixedPolicies...)
 	}
 	if findings := validate.Validate(&candidate); len(findings) > 0 {
 		return Plan{}, &ValidationError{Findings: findings}
@@ -133,10 +138,15 @@ func Apply(content []byte, input NodeInput) ([]byte, error) {
 	for _, tunnel := range plan.Tunnels {
 		tunnels.Content = append(tunnels.Content, tunnelYAML(tunnel))
 	}
-	if len(plan.FixedPolicies) > 0 {
+	if len(plan.ExpandedPolicies) > 0 || len(plan.FixedPolicies) > 0 {
 		declarations, err := sequenceAt(root, "declarations", true)
 		if err != nil {
 			return nil, err
+		}
+		for _, policy := range plan.ExpandedPolicies {
+			if err := updateDeclarationAllowedServers(declarations, policy); err != nil {
+				return nil, err
+			}
 		}
 		for _, policy := range plan.FixedPolicies {
 			declarations.Content = append(declarations.Content, declarationYAML(policy))
@@ -251,14 +261,75 @@ func allocate(ssot *model.SSOT, node model.Node) (Plan, error) {
 		// ports; otherwise a multi-peer enrollment can allocate duplicates.
 		work.Tunnels = append(work.Tunnels, tunnel)
 	}
+	plan.ExpandedPolicies = expandedAutomaticEgressPolicies(ssot, node)
 	policySSOT := *ssot
 	policySSOT.Nodes = append(append([]model.Node(nil), ssot.Nodes...), node)
+	policySSOT.Declarations = append([]model.AccessDeclaration(nil), ssot.Declarations...)
+	applyExpandedPolicies(policySSOT.Declarations, plan.ExpandedPolicies)
 	policies, err := missingFixedEgressPolicies(&policySSOT)
 	if err != nil {
 		return Plan{}, err
 	}
 	plan.FixedPolicies = policies
 	return plan, nil
+}
+
+// expandedAutomaticEgressPolicies 按行为识别自动池，不依赖 best-egress 这类
+// 历史名字。只有已经包含当前全部在役出口的 egress_axis:any 声明才是全量池；
+// 新增出口会让它收敛，而有意限制的地域池或 allowlist 保持不变。
+func expandedAutomaticEgressPolicies(ssot *model.SSOT, node model.Node) []model.AccessDeclaration {
+	if !node.IsServer() || !node.Server.EgressCapable || node.Drain || node.Decommission {
+		return nil
+	}
+	activeEgress := make([]string, 0, len(ssot.Nodes))
+	for i := range ssot.Nodes {
+		candidate := &ssot.Nodes[i]
+		if candidate.IsServer() && candidate.Server.EgressCapable && !candidate.Drain && !candidate.Decommission {
+			activeEgress = append(activeEgress, candidate.ID)
+		}
+	}
+	if len(activeEgress) == 0 {
+		return nil // 没有既有池成员，无法从空集合推断操作者意图。
+	}
+
+	var out []model.AccessDeclaration
+	for i := range ssot.Declarations {
+		declaration := &ssot.Declarations[i]
+		if declaration.EgressAxis != model.EgressAny || len(declaration.AllowedServers) == 0 ||
+			!containsAll(declaration.AllowedServers, activeEgress) {
+			continue
+		}
+		updated := *declaration
+		updated.AllowedServers = append(append([]string(nil), declaration.AllowedServers...), node.ID)
+		out = append(out, updated)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+func containsAll(values, required []string) bool {
+	set := make(map[string]bool, len(values))
+	for _, value := range values {
+		set[value] = true
+	}
+	for _, value := range required {
+		if !set[value] {
+			return false
+		}
+	}
+	return true
+}
+
+func applyExpandedPolicies(declarations, updates []model.AccessDeclaration) {
+	byID := make(map[string]model.AccessDeclaration, len(updates))
+	for _, update := range updates {
+		byID[update.ID] = update
+	}
+	for i := range declarations {
+		if update, ok := byID[declarations[i].ID]; ok {
+			declarations[i] = update
+		}
+	}
 }
 
 // missingFixedEgressPolicies 对完整候选 SSOT 做声明式对账：每个仍在服役的
@@ -401,6 +472,42 @@ func sequenceAt(root *yaml.Node, key string, create bool) (*yaml.Node, error) {
 	seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
 	root.Content = append(root.Content, keyNode, seq)
 	return seq, nil
+}
+
+func updateDeclarationAllowedServers(declarations *yaml.Node, update model.AccessDeclaration) error {
+	for _, item := range declarations.Content {
+		if item.Kind != yaml.MappingNode {
+			continue
+		}
+		id := mappingValue(item, "id")
+		if id == nil || id.Kind != yaml.ScalarNode || id.Value != update.ID {
+			continue
+		}
+		allowed := mappingValue(item, "allowed_servers")
+		if allowed == nil {
+			allowed = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+			appendValue(item, "allowed_servers", allowed)
+		}
+		if allowed.Kind != yaml.SequenceNode {
+			return fmt.Errorf("declaration %q allowed_servers must be a sequence", update.ID)
+		}
+		allowed.Value = ""
+		allowed.Content = nil
+		for _, server := range update.AllowedServers {
+			allowed.Content = append(allowed.Content, stringScalar(server))
+		}
+		return nil
+	}
+	return fmt.Errorf("declaration %q disappeared while applying enrollment plan", update.ID)
+}
+
+func mappingValue(mapping *yaml.Node, key string) *yaml.Node {
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == key {
+			return mapping.Content[i+1]
+		}
+	}
+	return nil
 }
 
 func nodeYAML(node model.Node) *yaml.Node {
