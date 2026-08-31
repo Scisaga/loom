@@ -38,7 +38,10 @@ func enrichNodes(v *webui.View, s *model.SSOT, controlNode string) {
 		// the previous enrichment before applying the current SSOT so a caller that
 		// reuses a View cannot show a removed declaration's old endpoint or role.
 		node.Name, node.Country, node.City, node.Provider, node.PublicEndpoint = "", "", "", "", ""
-		node.SSHPort = 0
+		node.SSHPort, node.InboundPort = 0, 0
+		node.InboundProtocol = ""
+		node.IngressKnown = false
+		node.PublicDialable = false
 		node.Roles = nil
 		node.Direction = ""
 		node.EgressCapable = false
@@ -68,6 +71,7 @@ func enrichNodes(v *webui.View, s *model.SSOT, controlNode string) {
 		}
 		got.Drain = declared.Drain
 		got.Decommission = declared.Decommission
+		got.IngressKnown = true
 		got.Roles = got.Roles[:0]
 		if declared.ID == controlNode {
 			got.Roles = append(got.Roles, "control")
@@ -78,12 +82,20 @@ func enrichNodes(v *webui.View, s *model.SSOT, controlNode string) {
 		if declared.IsServer() {
 			got.Roles = append(got.Roles, "server")
 			got.Direction = string(declared.Server.Direction)
+			got.InboundPort = declared.Server.InboundPort
+			if got.InboundPort > 0 {
+				got.InboundProtocol = string(declared.Server.InboundProtocol.Or())
+			}
+			got.PublicDialable = declared.PubliclyDialable()
 			got.EgressCapable = declared.Server.EgressCapable
 			if got.EgressCapable {
 				got.Roles = append(got.Roles, "egress")
 			}
 		} else {
 			got.Direction = ""
+			got.InboundPort = 0
+			got.InboundProtocol = ""
+			got.PublicDialable = false
 			got.EgressCapable = false
 		}
 	}

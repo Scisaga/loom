@@ -21,6 +21,9 @@ func TestBuildViewKeepsSilentExpectedTopologyUnknown(t *testing.T) {
 	byID := map[string]string{}
 	for _, n := range v.Nodes {
 		byID[n.ID] = n.Health
+		if n.IngressKnown {
+			t.Fatalf("reduced node report invented current-SSOT ingress metadata for %s", n.ID)
+		}
 	}
 	if byID["a"] != "healthy" || byID["b"] != "unknown" || byID["c"] != "unknown" {
 		t.Fatalf("节点三态不真实:%v", byID)

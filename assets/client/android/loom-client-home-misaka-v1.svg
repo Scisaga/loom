@@ -2,7 +2,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="430" height="932" viewBox="0 0 430 932"
      role="img" aria-labelledby="title description">
   <title id="title">Loom Android client home — self-contained SVG prototype</title>
-  <desc id="description">An Android VpnService client proposal showing centrally delivered rules, distinct host, traffic capture, data plane and control sync states, and a read-only current app and domain to Service to Policy match with no local policy selection.</desc>
+  <desc id="description">An Android VpnService client proposal showing device-local Direct, Auto, and specific-exit routing modes, centrally delivered rules, and an Agent-selected read-only current path.</desc>
 
   <defs>
     <clipPath id="screen-clip"><rect x="12" y="12" width="406" height="908" rx="38"/></clipPath>
@@ -134,7 +134,7 @@
       <rect x="301" y="423" width="81" height="24" rx="12" class="chip-green"/>
       <circle cx="315" cy="435" r="3" class="status-dot"/>
       <text class="tiny green" x="325" y="439">READ ONLY</text>
-      <text class="small muted" x="48" y="462">Central rule matched · no local policy selection</text>
+      <text class="small muted" x="48" y="462">Auto mode · central rule matched · path read-only</text>
 
       <line class="rule" x1="48" y1="477" x2="382" y2="477"/>
       <text class="tiny muted" x="48" y="499">APP / DOMAIN</text>
@@ -167,16 +167,18 @@
       <text class="tiny muted" x="48" y="708">HTTPS transport · content independently signed</text>
     </g>
 
-    <!-- Session traffic. -->
+    <!-- Top-level routing mode. -->
     <rect x="28" y="734" width="374" height="82" rx="12" class="panel"/>
     <g class="ui">
-      <text class="section" x="48" y="762">This session</text>
-      <text class="tiny muted" x="48" y="786">DOWNLOADED</text>
-      <text class="metric" x="48" y="808">684 MB</text>
-      <line class="rule" x1="199" y1="771" x2="199" y2="803"/>
-      <text class="tiny muted" x="222" y="786">UPLOADED</text>
-      <text class="metric" x="222" y="808">46 MB</text>
-      <use href="#icon-chevron" x="367" y="771" width="17" height="17" class="icon"/>
+      <text class="section" x="48" y="760">Routing mode</text>
+      <text class="tiny green" x="382" y="759" text-anchor="end">ON DEVICE</text>
+      <rect x="48" y="773" width="334" height="31" rx="7" class="panel-soft"/>
+      <rect x="159" y="773" width="112" height="31" fill="#EEF8F3" stroke="#B9DEC9"/>
+      <line class="rule" x1="159" y1="773" x2="159" y2="804"/>
+      <line class="rule" x1="271" y1="773" x2="271" y2="804"/>
+      <text class="small muted" x="103.5" y="794" text-anchor="middle">Direct</text>
+      <text class="small green" x="215" y="794" text-anchor="middle" font-weight="650">Auto</text>
+      <text class="small muted" x="326.5" y="794" text-anchor="middle">Exit node</text>
     </g>
 
     <!-- Bottom navigation. -->

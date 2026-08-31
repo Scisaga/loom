@@ -414,8 +414,9 @@ Path = 接入节点 → [服务器₁ → 服务器₂ → …] → 目标地址
 > 1.464s 降到 0.066s。生产 Linux 已于 2026-08-30 收敛为 1080 一个中控托管
 > 入口，1081–1083 不再监听；固定 SG/DE 也由 Service 在中控选择，不再由
 > 客户端端口选择。底层已支持 managed mixed/TUN 复用 `default_declaration`，中控
-> 运维 API 已实现授权选项查询与 revision 写入；现网 SSOT 未设置设备默认出口，
-> 设备身份 API 与 Windows/Android 宿主仍未完成。
+> 运维 API 已实现该 catch-all 的 revision 写入；但它只处理未命中 Service 的流量，
+> 不能表达客户端顶层 Direct / Auto / 指定出口三模式。三模式是客户端本地偏好，
+> 不新增 SSOT 写 API；本地 selector、状态展示与 Windows/Android 宿主仍未完成。
 
 #### 应用照常请求 URL，Loom UI 不重复选择每个请求的目标
 
@@ -442,11 +443,11 @@ Path = 接入节点 → [服务器₁ → 服务器₂ → …] → 目标地址
 中控声明     服务 → 一组地址 → 访问声明(objective、约束、允许的出口)
 数据平面     请求的 host → 匹配到服务 → 走该服务当前选中的候选
 接入端       一个端口(或 TUN),正常发请求,不知道任何事情
-没匹配上     有设备 default_declaration 就走它；没有就 fail_closed(§5.8)
+没匹配上     Auto 按中控 default_declaration；没有就 fail_closed(§5.8)
 ```
 
-接入端连"我要哪个服务"都不用说 —— host 本身就是答案。设备默认出口只在未命中
-Service 时参与，不改变这条按请求规则。
+Auto 模式下接入端连"我要哪个服务"都不用说 —— host 本身就是答案。这里的
+`default_declaration` 是中控规则的 catch-all，不是客户端顶层模式。
 
 #### 两种地址集合,别混
 
@@ -471,9 +472,9 @@ Service 时参与，不改变这条按请求规则。
 
 #### 任意 URL 默认放行也必须显式声明
 
-catch-all 不该是隐含假设。若设备确实需要“其余请求都能走”，必须显式配置设备
-`default_declaration`；它是中控授权、审计和签名发布的 catch-all 策略，不是
-unrestricted direct。区别在于:**显式声明的时候,你知道自己在放弃什么。**
+catch-all 不该是隐含假设。若 Auto 模式确实需要“其余请求都能走”，必须由中控
+显式配置 `default_declaration`；它是中控授权、审计和签名发布的 catch-all 策略，
+不是客户端 Direct 模式。区别在于:**显式声明的时候,你知道自己在放弃什么。**
 
 
 ## 5. 调度
@@ -804,30 +805,37 @@ mixed 是纯用户态监听,配崩了最多代理不通。
 “一个入口”是**一个产品与规则入口**，不是要求三个操作系统使用同一种系统 API：
 
 ```text
-中控       matcher → Service → AccessDeclaration → 候选与授权
+中控       Auto: matcher → Service → AccessDeclaration → 候选与授权
 Linux      127.0.0.1:1080 mixed ─────┐
-Windows    TUN + 127.0.0.1:1080 ─────┼→ 同一份中控规则与设备默认出口
+Windows    TUN + 127.0.0.1:1080 ─────┼→ 同一份签名配置与顶层路由模式
 Android    VpnService TUN ────────────┘
-Loom UI    规则只读；只允许从设备获授权列表选择默认出口
+Loom UI    只允许 Direct / Auto / 指定出口；Current Paths 只读
 ```
 
 Service 页面管理的是“哪些请求属于哪个 Service，以及它由哪条访问声明治理”，
 不是给每条策略分配一个端口。一个 Service 的多个 host 仍各自进入正确的服务范围；
 同一条声明治理的多个 Service 仍然各自独立选路，不能退回“一个候选服务所有目标”。
-应用仍照常发起 URL 请求；Loom 使用请求的 host 匹配中控规则，不要求用户先在
-Loom UI 里选择 URL。客户端也不编辑这些规则，只能为未命中规则的流量选择一条
-设备默认出口。
+应用仍照常发起 URL 请求；Auto 模式使用请求的 host 匹配中控规则，不要求用户先在
+Loom UI 里选择 URL。客户端不编辑 matcher、Service、Policy 或候选路径。
 
 Linux Server 没有 TUN，所以用只监听回环的 `1080` mixed 承载日常流量，应用使用
 `socks5h://127.0.0.1:1080`。Windows 的 TUN 与 `1080` mixed 只是两种接管方式，
-必须读取同一份中控规则；Android 只有 TUN。启停、重连和诊断属于生命周期操作，
-不改变规则。
+必须读取同一份签名配置；Android 只有 TUN。启停、重连和诊断属于生命周期操作，
+不改变路由模式。
 
-设备默认出口是唯一允许客户端请求修改的偏好。客户端只能选择中控已授权给本设备
-的 `AccessDeclaration`，例如自动 `best-egress` 或固定 `de-fixed`；固定策略可钉到
-任意 `egress_capable` 的内圈或外圈节点。客户端提交选择，中控校验凭据和 revision，
-持久化到 `access.default_declaration`，再经常规签名快照下发。客户端不能写本地
-配置抢先生效，也不能提交任意节点、IP 或国家名。规则优先级固定为：
+客户端只有一个顶层路由模式控件：
+
+| 模式 | 语义 |
+|---|---|
+| **Direct** | 全部接管的业务流量从设备本地直连，不使用 Loom 服务器路径 |
+| **Auto** | 完整使用中控 `Host → Service → Policy`，Agent 自动选择完整路径 |
+| **指定出口** | 全部接管的业务流量固定由所选最终节点出网；前置中继仍由 Agent 自动择优 |
+
+指定出口列表来自当前全部在役 `egress_capable` 节点，可包含内圈或外圈节点；客户端
+选择节点 ID，不接受任意 IP 输入。指定出口是顶层全局模式，不是只处理未命中
+Service 的“默认出口”。Current Paths 在三种模式下都只读，不能出现路径下拉框或
+`Apply`。模式偏好属于客户端本机：它只在最后一份已验证配置允许的范围内切换并
+持久化，控制面离线时仍可工作；当前模式可以作为状态观测上报，但不写入 SSOT。
 
 接入规划器必须对完整候选 SSOT 中的全部在役 `egress_capable` 节点做固定策略对账：
 若某节点没有任何 `from_request + pinned:<node-id>` 声明，就生成
@@ -839,20 +847,12 @@ ID。最终出口钉到该节点，探测与调参边界从已有 `from_request`
 但接入凭据的值属于秘密层，必须完成显式安全分发后才可在客户端或 Service 表单中
 启用；未授权策略只能显示为待激活，不得伪装成可用选项。
 
-```text
-显式入口覆盖（仅 Linux 高级兼容）
-  > matcher 命中的 Service 策略
-  > 设备 default_declaration
-  > block
-```
-
-所以“默认选择德国”复用现有 TUN/`1080`，不需要 `1081` 或其他新端口；Service
-已明确指定的请求仍按 Service 走，不会被设备默认覆盖。
-
-当前代码已经实现这条优先级的模型、严格校验、sing-box 渲染与中控只读投影。
-中控运维 API 也已实现授权选项查询、revision 冲突保护和 SSOT 原子写入；它只接受
-运维会话。尚未实现的是设备公钥认证 API 以及 Windows/Android UI，因此不能宣称
-客户端选择流程已经交付，也不能让客户端保存运维口令。
+三个模式复用现有 TUN/`1080`，不需要模式专用端口。当前代码实现的
+`access.default_declaration` 仍只是 Auto 模式下未命中 Service 的 catch-all；现有
+中控运维 API 也只编辑该字段。它们没有 Direct 状态，不能表达“全部接管业务流量固定最终
+出口”，因此不能冒充客户端三模式已经交付。三态由客户端依据最后一份签名配置在
+本机原子切换并持久化，不新增顶层 SSOT 模型或设备写 API；尚需补齐本地 selector、
+状态展示及 Windows/Android UI。
 
 v1 matcher 只使用接管层真实可见且能稳定渲染的事实：Windows 使用 domain/IP，
 Android 可再用 package 缩小范围；Linux mixed 使用代理请求可见的 domain/IP。
@@ -1078,8 +1078,9 @@ Android 没有 Agent(§15.4),但 §5.6 要求接入节点承担四件事:接收 
 
 v1 Android 的 matcher、Service 与声明映射全部来自中控签名配置。应用只能显示
 哪些规则已经生效、当前走哪条路径以及规则是否陈旧；用户不能新增规则或修改声明
-定义，只能从中控授权列表选择设备默认出口。同一 package 内多账号也不引入本地
-profile。
+定义，只能切换 Direct / Auto / 指定出口；指定出口列表来自全部在役
+`egress_capable` 节点，Current Paths 始终只读。同一 package 内多账号也不引入
+本地 profile。
 
 | 能力 | 承载方式 |
 |---|---|
@@ -1115,7 +1116,7 @@ profile。
 
 | 接入节点 | 持有凭据 | 效果 |
 |---|---|---|
-| Windows / Android / Linux 日常入口 | 一把或多把，仅限本设备获授权的声明 | 中控 matcher 命中 Service；未命中时可使用经中控确认的设备默认声明 |
+| Windows / Android / Linux 日常入口 | 一把或多把，仅限本设备获授权的声明 | Direct 本地直连；Auto 使用中控规则；指定出口固定最后一跳，前置路径仍由 Agent 选择 |
 | Linux 兼容/高级覆盖 | 多把 | 端口或临时 CLI 只可强制使用已经授权的声明，不得扩权 |
 
 **服务器侧零改动,差别只在发几把钥匙。**
@@ -1965,9 +1966,10 @@ edge-a,就拿到了 cn-a 的观测。实测 access-a 能听到全部 5 个节点
 `Apply`；那会把只读观测伪装成写操作，等于向操作者暴露一套已经不存在的模型。
 
 运行时 Agent 决策一律自动展示并明确标成只读观测。诊断时可以聚焦、过滤或跳转到
-证据详情，但这些查看动作不得使用“应用”“切换”“保存”等期望态词汇。设备默认
-出口是唯一客户端偏好，并且只作用于未命中 Service 的流量；它必须放在设备偏好
-界面，与 Topology、Service 当前路径和 Agent 候选检查严格分开。
+证据详情，但这些查看动作不得使用“应用”“切换”“保存”等期望态词汇。客户端唯一
+可写的本地路由偏好是 Direct / Auto / 指定出口三模式；它必须放在客户端偏好界面，与
+Topology、Service 当前路径和 Agent 候选检查严格分开。指定出口只选择最终节点，
+不能借此把 Current Paths 变成手选路径。
 
 因为有转述(§16.1.2),**随便打开哪一台看到的都是整张网**。没有单点,也没有
 "控制面所在的机器挂了就看不见它挂了"这种循环。
@@ -2018,11 +2020,11 @@ edge-a,就拿到了 cn-a 的观测。实测 access-a 能听到全部 5 个节点
 | **Settings / SSOT** | 查看、校验并保存完整原文 | 不提供绕过完整校验的“强制保存” |
 
 v1 的 Services 页面只编辑中控事实。Windows 与 Android 上如何把规则落到 TUN、
-Windows 的开发者 mixed 如何复用同一规则，都是渲染结果。设备页可以写入唯一的
-设备偏好 `default_declaration`，但必须从本设备已授权策略中选择并走同一 SSOT
-校验、发布和审计链；它不属于 Services 页面，也不允许改 matcher、Service 或声明
-定义。Linux 的兼容覆盖端口若需要展示，只能放在节点详情的 Advanced/Compatibility
-区，并明确它不是另一套 Service 配置。
+Windows 的开发者 mixed 如何复用同一规则，都是渲染结果。客户端只在本机保存
+Direct / Auto / 指定出口三态偏好；它不属于中控 Services 或设备期望态页面，也不允许
+改 matcher、Service、Policy 或 Current Paths。现有 `default_declaration` 写入口只编辑 Auto
+模式下的 catch-all，不能作为三模式 UI 的后端。Linux 的兼容覆盖端口若需要展示，
+只能放在节点详情的 Advanced/Compatibility 区，并明确它不是另一套 Service 配置。
 
 两条保存路径都带当前 SSOT 内容摘要作为 revision。服务端在同一个串行事务内
 重新读取、核对 revision、完整解析与校验，再以唯一临时文件、`fsync`、rename
@@ -2521,8 +2523,8 @@ userspace 实现(基于 wireguard-go)**有明显 CPU 开销**,服务器规格需
 
 **配置模板化**：Android 是 TUN；v1 Windows 是 TUN + `127.0.0.1:1080`；Linux
 Server 是 `127.0.0.1:1080`，另可带显式的兼容/高级覆盖端口。所有 matcher、Service
-与 AccessDeclaration 定义都由中控下发；客户端只可请求切换本设备已授权的
-`default_declaration`。平台应提供**下发前预览**，但预览不能变成客户端侧规则
+与 AccessDeclaration 定义都由中控下发；客户端本地只可切换 Direct / Auto /
+指定出口三模式。平台应提供**下发前预览**，但预览不能变成客户端侧规则或路径
 编辑器。
 
 ---
@@ -2548,7 +2550,7 @@ Node                           # §1 —— Loom 管的机器。目标地址不�
     platform                   # android | desktop | linux-server(§7.2)
     credentials[]              # §8.2
     mixed_ports[]              # managed 1080；固定声明端口仅限 Linux 兼容/高级覆盖
-    default_declaration?       # 设备默认出口；必须 from_request，Service 优先，未命中时使用
+    default_declaration?       # Auto 的中控 catch-all；客户端本地三态偏好不进入 SSOT
 
   # 没有 capabilities 字段 —— 由哪个块存在推导;两个都有也合法(§1.3)。
   # 没有 target 能力 —— 出口是位置不是类型(§1.1)。

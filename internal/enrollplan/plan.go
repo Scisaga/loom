@@ -227,21 +227,6 @@ func allocate(ssot *model.SSOT, node model.Node) (Plan, error) {
 	work.Nodes = append([]model.Node(nil), ssot.Nodes...)
 	work.Tunnels = append([]model.Tunnel(nil), ssot.Tunnels...)
 
-	// If the new node accepts a persistent tunnel, its WireGuard listener must
-	// not be allocated the same port as its sing-box inbound. AllocateTunnel
-	// intentionally sees occupied tunnel ports; this private sentinel extends
-	// that occupied set while planning without ever entering the returned plan.
-	for _, peer := range peers {
-		newInitiates, err := model.ResolveInitiator(node.ID, node.Server.Direction, peer.ID, peer.Server.Direction)
-		if err != nil {
-			return Plan{}, err
-		}
-		if !newInitiates {
-			work.Tunnels = append(work.Tunnels, model.Tunnel{ListenPort: defaultInboundPort})
-			break
-		}
-	}
-
 	plan := Plan{Node: node}
 	for _, peer := range peers {
 		fromAddr, toAddr, port, err := work.AllocateTunnel(&node, peer)

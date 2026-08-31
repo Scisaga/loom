@@ -70,8 +70,9 @@ func pageNodeDetail(d Deps, nodeID string, isAuthed bool) (string, bool) {
 		identityScope = "Runtime evidence only · no current declaration"
 	}
 	fmt.Fprintf(&b, `<div class=section><div class=grid><section class="card span6"><div class=sectionhead><h2>Identity &amp; runtime</h2><span class=dim>%s</span></div><div class=grid>`, esc(identityScope))
-	fmt.Fprintf(&b, `<div class=span6><dl class=kv><dt>Node ID<dd class=mono>%s<dt>Lifecycle<dd class=%s>%s<dt>Name / location<dd>%s<dt>Role<dd>%s<dt>Direction<dd class=mono>%s<dt>Egress<dd>%s<dt>Declared endpoint<dd class=mono>%s<br><span class="tiny warn">UDP ingress unverified</span><dt>SSH port<dd class=mono>%s</dl></div>`,
-		esc(n.ID), lifecycleClass, esc(lifecycleLabel), esc(nodeLocationLabel(n)), esc(nodeRoleLabel(n)), esc(orDash(n.Direction)), enabledText(n.EgressCapable), esc(orDash(n.PublicEndpoint)), esc(sshPort))
+	publicIngress := nodePublicIngressVisual(n)
+	fmt.Fprintf(&b, `<div class=span6><dl class=kv><dt>Node ID<dd class=mono>%s<dt>Lifecycle<dd class=%s>%s<dt>Name / location<dd>%s<dt>用途<dd>%s<dt>隧道方向<dd>%s<dt>Egress<dd>%s<dt>声明地址<dd class=mono>%s<dt>公网数据入口<dd><span class=mono>%s</span><br><span class="tiny %s">%s</span><dt>SSH port<dd class=mono>%s</dl></div>`,
+		esc(n.ID), lifecycleClass, esc(lifecycleLabel), esc(nodeLocationLabel(n)), esc(nodeRoleLabel(n)), esc(nodeDirectionLabel(n.Direction)), enabledText(n.EgressCapable), esc(orDash(n.PublicEndpoint)), esc(publicIngress.Value), publicIngress.DetailClass, esc(publicIngress.Detail), esc(sshPort))
 	fmt.Fprintf(&b, `<div class=span6><dl class=kv><dt>Observation<dd>%s<dt>Source<dd>%s<dt>Observed at<dd>%s<dt>Rollout<dd class=%s>%s`, esc(ageText(n.ObservedAt, now)), esc(n.Source), esc(orDash(n.ObservedAt)), rolloutClass, esc(rollout))
 	if n.Version != nil {
 		fmt.Fprintf(&b, `<dt>Platform<dd>%s<dt>Go<dd>%s`, esc(orDash(n.Version.Platform)), esc(orDash(n.Version.Go)))

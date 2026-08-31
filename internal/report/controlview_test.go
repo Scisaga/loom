@@ -17,7 +17,10 @@ func TestEnrichControlViewPreservesSSOTContractAndRouteScope(t *testing.T) {
 			{
 				ID: "jm24", Name: "Control", Country: "CN", City: "Nanjing", Provider: "Example",
 				PublicEndpoint: "control.example", Drain: true,
-				Server: &model.ServerRole{Direction: model.Bidirectional, EgressCapable: true},
+				Server: &model.ServerRole{
+					Direction: model.Bidirectional, InboundPort: 443,
+					InboundProtocol: model.Trojan, EgressCapable: true,
+				},
 				Access: &model.AccessRole{
 					Platform: model.LinuxServer, Credentials: []string{"c-best", "c-fixed"},
 					MixedPorts: []model.MixedPort{
@@ -76,6 +79,7 @@ func TestEnrichControlViewPreservesSSOTContractAndRouteScope(t *testing.T) {
 	jm := nodeByID(t, v.Nodes, "jm24")
 	if jm.Name != "Control" || jm.Country != "CN" || jm.City != "Nanjing" || jm.Provider != "Example" ||
 		jm.PublicEndpoint != "control.example" || jm.SSHPort != 22 || !jm.Drain ||
+		jm.InboundPort != 443 || jm.InboundProtocol != "trojan" || !jm.IngressKnown || !jm.PublicDialable ||
 		!jm.EgressCapable || jm.Direction != "bidirectional" ||
 		!slices.Equal(jm.Roles, []string{"control", "access", "server", "egress"}) {
 		t.Fatalf("node SSOT metadata was lost or misderived: %+v", jm)
@@ -83,7 +87,7 @@ func TestEnrichControlViewPreservesSSOTContractAndRouteScope(t *testing.T) {
 	if jm.Health != "healthy" || jm.Source != "直连 /status" {
 		t.Fatalf("desired metadata overwrote observed state: %+v", jm)
 	}
-	if got := nodeByID(t, v.Nodes, "desk01"); got.SSHPort != 2222 || !slices.Equal(got.Roles, []string{"access"}) {
+	if got := nodeByID(t, v.Nodes, "desk01"); got.SSHPort != 2222 || !got.IngressKnown || !slices.Equal(got.Roles, []string{"access"}) {
 		t.Fatalf("access-only node metadata wrong: %+v", got)
 	}
 
@@ -251,6 +255,7 @@ func TestEnrichControlViewKeepsRemovedRuntimeNodeButMarksItUndeclared(t *testing
 		{
 			ID: "removed", Declared: true, Name: "Old declaration", PublicEndpoint: "old.example",
 			Roles: []string{"server"}, Direction: "bidirectional", EgressCapable: true,
+			InboundPort: 61698, InboundProtocol: "hysteria2", IngressKnown: true, PublicDialable: true,
 			Health: "healthy", Applied: "old-snapshot",
 			ObservedAt: "2026-08-28T12:00:00Z", Source: "签名转述",
 		},
@@ -270,7 +275,8 @@ func TestEnrichControlViewKeepsRemovedRuntimeNodeButMarksItUndeclared(t *testing
 		t.Fatalf("removed runtime node lost diagnostic evidence: %+v", removed)
 	}
 	if removed.Name != "" || removed.PublicEndpoint != "" || len(removed.Roles) != 0 ||
-		removed.Direction != "" || removed.EgressCapable {
+		removed.Direction != "" || removed.InboundPort != 0 || removed.InboundProtocol != "" || removed.IngressKnown ||
+		removed.PublicDialable || removed.EgressCapable {
 		t.Fatalf("removed runtime node retained stale desired metadata: %+v", removed)
 	}
 }

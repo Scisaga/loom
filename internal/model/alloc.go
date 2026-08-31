@@ -69,7 +69,11 @@ func (s *SSOT) AllocateTunnel(a, b *Node) (fromAddr, toAddr string, port int, er
 	if err != nil {
 		return "", "", 0, err
 	}
-	port, err = s.allocPort(a.ID, b.ID, nil)
+	acceptor, err := tunnelAcceptor(a, b)
+	if err != nil {
+		return "", "", 0, err
+	}
+	port, err = s.allocPort(a.ID, b.ID, acceptor, nil)
 	if err != nil {
 		return "", "", 0, err
 	}
@@ -132,10 +136,18 @@ func (s *SSOT) nextPair(octet int) (int, error) {
 // 那等于没换。退役个数进哈希,每轮换一次就得到一个全新的、分布均匀的起点。
 //
 // 没有退役端口时哈希输入与从前完全一致,所以既有分配不会因为这个改动而变。
-func (s *SSOT) allocPort(a, b string, retired []int) (int, error) {
+func (s *SSOT) allocPort(a, b string, acceptor *Node, retired []int) (int, error) {
 	blocked := map[int]bool{}
 	for i := range s.Tunnels {
 		blocked[s.Tunnels[i].ListenPort] = true
+	}
+	// The validator reserves server.inbound_port against a tunnel listen_port on
+	// the same accepting node (including a TCP/Trojan inbound), so the allocator
+	// must not deterministically propose a plan that can never be saved. Only the
+	// acceptor's inbound is relevant: the same numeric port on another host (or
+	// on the initiating peer) does not collide locally.
+	if acceptor != nil && acceptor.IsServer() && acceptor.Server.InboundPort > 0 {
+		blocked[acceptor.Server.InboundPort] = true
 	}
 	for _, p := range retired {
 		blocked[p] = true
@@ -176,11 +188,26 @@ func (s *SSOT) RotateTunnelPort(a, b string) (port int, retired []int, err error
 	}
 	retired = append(append([]int(nil), t.RetiredPorts...), t.ListenPort)
 	sort.Ints(retired)
-	port, err = s.allocPort(t.From, t.To, retired)
+	r, err := Resolve(t, s.NodeByID())
+	if err != nil {
+		return 0, nil, err
+	}
+	port, err = s.allocPort(t.From, t.To, r.Acceptor, retired)
 	if err != nil {
 		return 0, nil, err
 	}
 	return port, retired, nil
+}
+
+func tunnelAcceptor(a, b *Node) (*Node, error) {
+	aInitiates, err := ResolveInitiator(a.ID, a.Server.Direction, b.ID, b.Server.Direction)
+	if err != nil {
+		return nil, err
+	}
+	if aInitiates {
+		return b, nil
+	}
+	return a, nil
 }
 
 // tunnelBetween 找两个节点之间的隧道,与写的顺序无关。

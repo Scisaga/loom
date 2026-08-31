@@ -2,6 +2,7 @@ package webui
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"sort"
 	"strings"
@@ -55,7 +56,7 @@ func pageNodes(d Deps, isAuthed bool, added string) string {
 	} else {
 		b.WriteString(`<span class="button" aria-disabled=true>Read-only node</span>`)
 	}
-	b.WriteString(`</span></div><div class=node-inventory-help><span><b>接入</b> 承接本机或客户端流量并执行选路</span><span><b>转发</b> 参与隧道和代理链路</span><span><b>可作出口</b> 可作为路径末端访问公网</span><span><b>节点 ID</b> 加入时确定，不随系统 hostname 自动变化</span></div><div class=card><table><thead><tr><th>节点 / 生命周期<th>声明地址 / SSH 端口<th>用途 / 建连方式<th>观测来源<th>配置版本<th>常驻隧道<th>最后上报<th></thead><tbody>`)
+	b.WriteString(`</span></div><div class=node-inventory-help><span><b>本机接管</b> 接管本机流量并执行选路</span><span><b>转发</b> 参与隧道和代理链路</span><span><b>可作出口</b> 可作为路径末端访问公网</span><span><b>隧道方向</b> 只描述 WireGuard 建连职责</span><span><b>公网数据入口</b> 是 SSOT 声明，不代表监听或公网路径已经验证</span><span><b>节点 ID</b> 加入时确定，不随系统 hostname 自动变化</span></div><div class="card node-inventory-card"><table><thead><tr><th>节点 / 生命周期<th>节点地址 / SSH 端口<th>用途 / 隧道方向<th>公网数据入口<th>观测来源<th>配置版本<th>常驻隧道<th>最后上报<th></thead><tbody>`)
 	for _, n := range v.Nodes {
 		stateClass, stateLabel := healthVisual(n.Health)
 		lifecycleClass, lifecycleLabel := nodeLifecycleVisual(n)
@@ -66,18 +67,19 @@ func pageNodes(d Deps, isAuthed bool, added string) string {
 			direction = "—"
 		}
 		declarationMark := ""
-		endpointMeta := fmt.Sprintf("UDP ingress unverified · SSH port %d · host/user not retained", n.SSHPort)
+		endpointMeta := fmt.Sprintf("SSH port %d · host/user not retained", n.SSHPort)
+		publicIngress := nodePublicIngressVisual(n)
 		if !n.Declared {
 			declarationMark = `<br><span class="tiny warn">◇ Undeclared observed</span>`
 			endpointMeta = "Not in " + intentSource + " · observation retained"
 			role = "undeclared observed"
 			direction = "runtime evidence only"
 		}
-		fmt.Fprintf(&b, `<tr class=rowlink><td><a href="/nodes/%s"><b class=mono>%s</b></a><br><span class="tiny %s">● %s</span> · <span class="tiny %s">%s</span>%s<td class=w><span class=mono>%s</span><br><span class="tiny dim">%s</span><td class=w>%s<br><span class="tiny dim">%s</span><td class=w>%s<td class=mono>%s<td>%d / %d active<td>%s<td><a href="/nodes/%s">→</a></tr>`,
-			url.PathEscape(n.ID), esc(n.ID), stateClass, esc(stateLabel), lifecycleClass, esc(lifecycleLabel), declarationMark, esc(orDash(n.PublicEndpoint)), esc(endpointMeta), esc(role), esc(direction), esc(n.Source), esc(short(n.Applied)), active, carrierTotal, esc(ageText(n.ObservedAt, now)), url.PathEscape(n.ID))
+		fmt.Fprintf(&b, `<tr class=rowlink><td><a href="/nodes/%s"><b class=mono>%s</b></a><br><span class="tiny %s">● %s</span> · <span class="tiny %s">%s</span>%s<td class=w><span class=mono>%s</span><br><span class="tiny dim">%s</span><td class=w>%s<br><span class="tiny dim">%s</span><td class=w><span class=mono>%s</span><br><span class="tiny %s">%s</span><td class=w>%s<td class=mono>%s<td>%d / %d active<td>%s<td><a href="/nodes/%s">→</a></tr>`,
+			url.PathEscape(n.ID), esc(n.ID), stateClass, esc(stateLabel), lifecycleClass, esc(lifecycleLabel), declarationMark, esc(orDash(n.PublicEndpoint)), esc(endpointMeta), esc(role), esc(direction), esc(publicIngress.Value), publicIngress.DetailClass, esc(publicIngress.Detail), esc(n.Source), esc(short(n.Applied)), active, carrierTotal, esc(ageText(n.ObservedAt, now)), url.PathEscape(n.ID))
 	}
 	if len(v.Nodes) == 0 {
-		b.WriteString(`<tr><td colspan=8><div class=empty>No declared nodes are available in this view.</div></tr>`)
+		b.WriteString(`<tr><td colspan=9><div class=empty>No declared nodes are available in this view.</div></tr>`)
 	}
 	b.WriteString(`</tbody></table></div></div>`)
 
@@ -453,7 +455,7 @@ func nodeRoleLabel(n NodeView) string {
 			case "control":
 				labels = append(labels, "中控")
 			case "access":
-				labels = append(labels, "接入")
+				labels = append(labels, "本机接管")
 			case "server":
 				labels = append(labels, "转发")
 			case "egress":
@@ -465,15 +467,72 @@ func nodeRoleLabel(n NodeView) string {
 		return strings.Join(labels, " + ")
 	}
 	if n.Agent != nil && hasCarrierTunnel(n.Tunnels) {
-		return "access + topology"
+		return "本机接管 + topology"
 	}
 	if n.Agent != nil {
-		return "access"
+		return "本机接管"
 	}
 	if hasCarrierTunnel(n.Tunnels) {
 		return "topology"
 	}
 	return "not reported"
+}
+
+type nodePublicIngressPresentation struct {
+	Value, Detail, DetailClass string
+}
+
+// nodePublicIngressVisual presents desired-state reachability without turning
+// a declared endpoint into runtime listener evidence. The control view derives
+// PublicDialable from model.Node.PubliclyDialable; this helper only explains
+// that result.
+func nodePublicIngressVisual(n NodeView) nodePublicIngressPresentation {
+	if !n.Declared {
+		return nodePublicIngressPresentation{
+			Value: "无当前声明", Detail: "运行态观测未携带入口声明", DetailClass: "dim",
+		}
+	}
+	if !n.IngressKnown {
+		return nodePublicIngressPresentation{
+			Value: "未知", Detail: "当前视图无入口声明信息 · 请在中控查看", DetailClass: "dim",
+		}
+	}
+	if n.InboundPort <= 0 {
+		return nodePublicIngressPresentation{
+			Value: "未开放", Detail: "SSOT 未声明 server inbound", DetailClass: "dim",
+		}
+	}
+
+	protocol := nodeInboundProtocolLabel(n.InboundProtocol)
+	if n.PublicDialable {
+		detail, detailClass := protocol+" · SSOT 已声明 · 公网入站未验证", "warn"
+		switch {
+		case n.Decommission:
+			detail, detailClass = protocol+" · 已下线 · 不用于新客户端接入", "bad"
+		case n.Drain:
+			detail = protocol + " · 正在排空 · 不用于新客户端接入"
+		}
+		return nodePublicIngressPresentation{
+			Value:  net.JoinHostPort(n.PublicEndpoint, fmt.Sprintf("%d", n.InboundPort)),
+			Detail: detail, DetailClass: detailClass,
+		}
+	}
+	return nodePublicIngressPresentation{
+		Value:       "仅隧道内",
+		Detail:      fmt.Sprintf("%s · 端口 %d · SSOT 已声明 · 隧道入站未验证", protocol, n.InboundPort),
+		DetailClass: "warn",
+	}
+}
+
+func nodeInboundProtocolLabel(protocol string) string {
+	switch protocol {
+	case "", "hysteria2":
+		return "Hysteria2 / UDP"
+	case "trojan":
+		return "Trojan / TCP+TLS"
+	default:
+		return protocol
+	}
 }
 
 func nodeDirectionLabel(direction string) string {

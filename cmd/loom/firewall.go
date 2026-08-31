@@ -87,10 +87,12 @@ func cmdFirewall(args []string) error {
 		}
 		var from []string
 		viaTunnelOnly := true
+		hasAccessSource := false
 		for src := range upstream[n.ID] {
 			if src == "access" {
 				from = append(from, *access)
 				viaTunnelOnly = false
+				hasAccessSource = true
 				continue
 			}
 			// 经隧道到达的不需要公网放行 —— 它走的是隧道内地址。
@@ -98,6 +100,14 @@ func cmdFirewall(args []string) error {
 				continue
 			}
 			from = append(from, fmt.Sprintf("%s(%s)", nodes[src].PublicEndpoint, src))
+			viaTunnelOnly = false
+		}
+		// A publicly dialable inbound is also the bootstrap/data-plane entry for
+		// access devices that are not in the current SSOT yet.  Deriving sources
+		// only from today's RouteCandidates incorrectly labels a newly enabled
+		// public listener as tunnel-only until the first client has enrolled.
+		if n.PubliclyDialable() && !hasAccessSource {
+			from = append(from, *access)
 			viaTunnelOnly = false
 		}
 		if viaTunnelOnly || len(from) == 0 {

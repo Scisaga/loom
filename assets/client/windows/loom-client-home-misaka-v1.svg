@@ -2,7 +2,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900"
      role="img" aria-labelledby="title description">
   <title id="title">Loom Windows client home — interface prototype</title>
-  <desc id="description">A Windows desktop client proposal showing a system tunnel, signed profile state, current server path, and control-plane-delivered read-only domain or IP to Service to Policy rules shared by TUN and one developer mixed entry point.</desc>
+  <desc id="description">A Windows desktop client proposal showing device-local Direct, Auto, and specific-exit routing modes, plus an Agent-selected read-only current path and control-plane-delivered read-only Host to Service to Policy rules.</desc>
 
   <defs>
     <symbol id="loom-mark" viewBox="127 112 1000 1000">
@@ -175,31 +175,33 @@
     <text class="tiny muted" x="769" y="374">threshold respected</text>
   </g>
 
-  <!-- Signed profile. -->
+  <!-- Top-level routing mode. -->
   <rect x="1014" y="170" width="362" height="240" rx="8" class="panel"/>
   <g class="ui">
-    <text class="section" x="1042" y="204">Signed profile</text>
-    <text class="tiny green" x="1262" y="203">CURRENT</text>
-    <use href="#icon-lock" x="1042" y="228" width="20" height="20" class="icon-green"/>
-    <text class="tiny muted" x="1074" y="235">SNAPSHOT</text>
-    <text class="body mono" x="1074" y="255" font-weight="650">8cbf3e6a4d92</text>
-    <line class="rule" x1="1042" y1="277" x2="1348" y2="277"/>
-    <text class="small muted" x="1042" y="305">Signature</text>
-    <use href="#icon-check" x="1260" y="292" width="16" height="16" class="icon-green"/>
-    <text class="small green" x="1284" y="305">Verified</text>
-    <text class="small muted" x="1042" y="333">Last synchronized</text>
-    <text class="small" x="1348" y="333" text-anchor="end">22s ago</text>
-    <text class="small muted" x="1042" y="361">Offline profile</text>
-    <text class="small" x="1348" y="361" text-anchor="end">Ready</text>
-    <rect x="1042" y="376" width="306" height="19" rx="9.5" fill="#EEF8F3"/>
-    <text class="tiny green" x="1195" y="389" text-anchor="middle">generation 184 · rollback protected</text>
+    <text class="section" x="1042" y="204">Routing mode</text>
+    <text class="tiny green" x="1348" y="203" text-anchor="end">ON DEVICE</text>
+    <text class="tiny muted" x="1042" y="224">Applies to all captured traffic</text>
+
+    <rect x="1042" y="239" width="306" height="40" rx="7" class="panel-soft"/>
+    <rect x="1144" y="239" width="102" height="40" fill="#EEF8F3" stroke="#B9DEC9"/>
+    <line class="rule" x1="1144" y1="239" x2="1144" y2="279"/>
+    <line class="rule" x1="1246" y1="239" x2="1246" y2="279"/>
+    <text class="small muted" x="1093" y="264" text-anchor="middle">Direct</text>
+    <text class="small green" x="1195" y="264" text-anchor="middle" font-weight="650">Auto</text>
+    <text class="small muted" x="1297" y="264" text-anchor="middle">Exit node</text>
+
+    <line class="rule" x1="1042" y1="299" x2="1348" y2="299"/>
+    <text class="tiny muted" x="1042" y="324">AUTO</text>
+    <text class="body" x="1042" y="346">Host → Service → Policy</text>
+    <text class="small muted" x="1042" y="367">Agent selects the complete path</text>
+    <text class="tiny muted" x="1042" y="390">Current Paths remain read-only</text>
   </g>
 
   <!-- Current path. -->
   <rect x="294" y="430" width="1082" height="172" rx="8" class="panel"/>
   <g class="ui">
     <text class="section" x="322" y="465">Current system path</text>
-    <text class="tiny muted" x="322" y="486">Selected locally from signed candidates · new connections only</text>
+    <text class="tiny muted" x="322" y="486">Agent-selected in Auto mode · read-only · new connections only</text>
     <rect x="1256" y="448" width="92" height="25" rx="12.5" class="chip-green"/>
     <circle cx="1272" cy="460.5" r="3.5" class="status-dot"/>
     <text class="tiny green" x="1283" y="464">Reported</text>
@@ -249,7 +251,7 @@
     <line class="rule" x1="322" y1="775" x2="966" y2="775"/>
 
     <use href="#icon-lock" x="322" y="794" width="16" height="16" class="icon"/>
-    <text class="tiny muted" x="346" y="806">System TUN + one developer mixed apply the same rules · no local policy controls</text>
+    <text class="tiny muted" x="346" y="806">Rules are signed and read-only · routing mode is the only preference</text>
   </g>
 
   <!-- Runtime. -->

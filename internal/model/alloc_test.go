@@ -206,12 +206,76 @@ func TestNewAllocationUnchangedByRotationSupport(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 直接问分配器要"没有退役端口"的结果,两者必须一致。
-	want, err := s.allocPort("cn2", "v2", nil)
+	want, err := s.allocPort("cn2", "v2", n["cn2"], nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != want {
 		t.Errorf("新建隧道的端口变了:%d ≠ %d", got, want)
+	}
+}
+
+// 新隧道的 listen_port 和接受节点的 sing-box inbound 都会在同一台机器
+// 上监听；分配器必须直接避开，而不是生成一份永远过不了 validate 的片段。
+// 新节点尚未写进 SSOT，所以测试也要保证使用调用方传入的节点事实。
+func TestAllocationAvoidsNewAcceptorInboundPort(t *testing.T) {
+	s := allocSSOT(t)
+	peer := s.NodeByID()["v1"]
+	acceptor := &Node{ID: "cn3", Server: &ServerRole{Direction: Bidirectional}}
+
+	_, _, baseline, err := s.AllocateTunnel(acceptor, peer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acceptor.Server.InboundPort = baseline
+	_, _, got, err := s.AllocateTunnel(acceptor, peer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == acceptor.Server.InboundPort {
+		t.Fatalf("新隧道端口 %d 与接受节点 inbound_port 冲突", got)
+	}
+}
+
+// jm24 这一类既有 bidirectional 节点会接受新 reverse_only 节点发起的
+// 隧道。即使新节点尚未加入 SSOT，分配也必须避开既有接受方的公网 inbound。
+func TestAllocationForNewReverseOnlyAvoidsExistingAcceptorInboundPort(t *testing.T) {
+	s := allocSSOT(t)
+	acceptor := s.NodeByID()["cn2"]
+	initiator := &Node{ID: "v3", Server: &ServerRole{Direction: ReverseOnly}}
+
+	acceptor.Server.InboundPort = 0
+	_, _, baseline, err := s.AllocateTunnel(initiator, acceptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acceptor.Server.InboundPort = baseline
+	_, _, got, err := s.AllocateTunnel(initiator, acceptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == acceptor.Server.InboundPort {
+		t.Fatalf("新 reverse_only 隧道端口 %d 与既有接受节点 inbound_port 冲突", got)
+	}
+}
+
+// rotate 使用同一个确定性起点；若新配置的 inbound_port 正好落在那里，
+// 它也必须向后寻找下一个端口，否则每次重试都会得到同一份无效建议。
+func TestRotationAvoidsAcceptorInboundPort(t *testing.T) {
+	s := allocSSOT(t)
+	acceptor := s.NodeByID()["cn1"]
+	acceptor.Server.InboundPort = 0
+	baseline, _, err := s.RotateTunnelPort("cn1", "v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	acceptor.Server.InboundPort = baseline
+	got, _, err := s.RotateTunnelPort("v1", "cn1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == acceptor.Server.InboundPort {
+		t.Fatalf("轮换端口 %d 与接受节点 inbound_port 冲突", got)
 	}
 }
 

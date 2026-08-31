@@ -416,11 +416,20 @@ type NodeView struct {
 	// Roles 由角色块和 server.egress_capable 推导，不在 SSOT 重复存一份
 	// capabilities。
 	Name, Country, City, Provider, PublicEndpoint string
-	SSHPort                                       int
-	Roles                                         []string
-	Direction                                     string
-	EgressCapable                                 bool
-	Drain, Decommission                           bool
+	SSHPort, InboundPort                          int
+	InboundProtocol                               string
+	// IngressKnown means this view was enriched from a current SSOT read and can
+	// distinguish an absent server inbound from metadata that this node's
+	// reduced report view simply does not carry.
+	IngressKnown bool
+	// PublicDialable is derived from the existing server direction, declared
+	// public endpoint and inbound port. It is desired-state capability, not
+	// evidence that the listener or its network path is healthy.
+	PublicDialable      bool
+	Roles               []string
+	Direction           string
+	EgressCapable       bool
+	Drain, Decommission bool
 	// Health 是 healthy / problem / unknown。空值也按 unknown 处理；
 	// 未签名转述和静默节点不能因为“没看到错误”就被冒充成健康。
 	Health        string

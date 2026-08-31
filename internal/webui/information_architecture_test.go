@@ -52,18 +52,104 @@ func TestNodeLifecycleAndEndpointEvidenceStayExplicit(t *testing.T) {
 	v := d.Snapshot()
 	v.Nodes[0].PublicEndpoint = "edge.example.net"
 	v.Nodes[0].SSHPort = 22
+	v.Nodes[0].InboundPort = 61698
+	v.Nodes[0].InboundProtocol = "hysteria2"
+	v.Nodes[0].IngressKnown = true
+	v.Nodes[0].PublicDialable = true
 	v.Nodes[1].Decommission = true
 	d.Snapshot = func() View { return v }
 
 	nodes := pageNodes(d, false, "")
-	for _, want := range []string{"1 <small>trusted</small>", "1 decommissioned", "Decommissioned", "声明地址 / SSH 端口", "UDP ingress unverified"} {
+	for _, want := range []string{"1 <small>trusted</small>", "1 decommissioned", "Decommissioned", "节点地址 / SSH 端口", "公网数据入口", "edge.example.net:61698", "SSOT 已声明 · 公网入站未验证"} {
 		if !strings.Contains(nodes, want) {
 			t.Errorf("Nodes page is missing lifecycle/endpoint boundary %q", want)
 		}
 	}
 	detail, found := pageNodeDetail(d, v.Nodes[0].ID, false)
-	if !found || !strings.Contains(detail, "Declared endpoint") || !strings.Contains(detail, "UDP ingress unverified") {
+	if !found || !strings.Contains(detail, "声明地址") || !strings.Contains(detail, "公网数据入口") || !strings.Contains(detail, "edge.example.net:61698") || !strings.Contains(detail, "公网入站未验证") {
 		t.Fatalf("Node detail treats declared endpoint as verified: found=%v", found)
+	}
+}
+
+func TestNodePublicIngressDistinguishesPublicTunnelOnlyAndClosed(t *testing.T) {
+	d := misakaDeps()
+	v := d.Snapshot()
+	v.Nodes = []NodeView{
+		{
+			ID: "public", Declared: true, PublicEndpoint: "edge.example.net",
+			Direction: "bidirectional", InboundPort: 61698, InboundProtocol: "hysteria2", IngressKnown: true, PublicDialable: true,
+		},
+		{
+			ID: "tunnel", Declared: true, PublicEndpoint: "reverse.example.net",
+			Direction: "reverse_only", InboundPort: 443, InboundProtocol: "trojan", IngressKnown: true,
+		},
+		{ID: "closed", Declared: true, PublicEndpoint: "control.example.net", Direction: "bidirectional", IngressKnown: true},
+	}
+	d.Snapshot = func() View { return v }
+
+	list := pageNodes(d, false, "")
+	for _, want := range []string{
+		"edge.example.net:61698", "Hysteria2 / UDP", "公网入站未验证",
+		"仅隧道内", "Trojan / TCP+TLS · 端口 443", "隧道入站未验证",
+		"未开放", "SSOT 未声明 server inbound",
+	} {
+		if !strings.Contains(list, want) {
+			t.Errorf("Nodes page is missing public ingress state %q", want)
+		}
+	}
+
+	closed, found := pageNodeDetail(d, "closed", false)
+	if !found {
+		t.Fatal("closed node detail was not rendered")
+	}
+	if !strings.Contains(closed, "未开放") || !strings.Contains(closed, "SSOT 未声明 server inbound") {
+		t.Fatalf("closed node did not explain absent inbound: %s", closed)
+	}
+	if strings.Contains(closed, "ingress unverified") || strings.Contains(closed, "入站未验证") {
+		t.Fatal("node without inbound was mislabeled as an unverified listener")
+	}
+}
+
+func TestNodePublicIngressDoesNotTurnMissingMetadataIntoClosedIntent(t *testing.T) {
+	d := misakaDeps()
+	d.Control = nil
+	v := d.Snapshot()
+	v.Nodes = []NodeView{{ID: "remote", Declared: true, Health: "unknown"}}
+	d.Snapshot = func() View { return v }
+
+	list := pageNodes(d, false, "")
+	for _, want := range []string{"未知", "当前视图无入口声明信息", "请在中控查看"} {
+		if !strings.Contains(list, want) {
+			t.Errorf("ordinary node view is missing unknown ingress boundary %q", want)
+		}
+	}
+	if strings.Contains(list, "SSOT 未声明 server inbound") {
+		t.Fatal("ordinary node view turned absent metadata into closed desired state")
+	}
+
+	detail, found := pageNodeDetail(d, "remote", false)
+	if !found || !strings.Contains(detail, "当前视图无入口声明信息") || strings.Contains(detail, "SSOT 未声明 server inbound") {
+		t.Fatalf("ordinary node detail misrepresented unknown ingress metadata: found=%v body=%s", found, detail)
+	}
+}
+
+func TestNodePublicIngressKeepsEndpointButDisablesNewAccessDuringLifecycle(t *testing.T) {
+	d := misakaDeps()
+	v := d.Snapshot()
+	v.Nodes = []NodeView{
+		{ID: "draining", Declared: true, PublicEndpoint: "drain.example.net", InboundPort: 61698, InboundProtocol: "hysteria2", IngressKnown: true, PublicDialable: true, Drain: true},
+		{ID: "gone", Declared: true, PublicEndpoint: "gone.example.net", InboundPort: 443, InboundProtocol: "trojan", IngressKnown: true, PublicDialable: true, Decommission: true},
+	}
+	d.Snapshot = func() View { return v }
+
+	body := pageNodes(d, false, "")
+	for _, want := range []string{
+		"drain.example.net:61698", "正在排空 · 不用于新客户端接入",
+		"gone.example.net:443", "已下线 · 不用于新客户端接入",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("lifecycle-aware ingress view is missing %q", want)
+		}
 	}
 }
 
@@ -78,15 +164,26 @@ func TestNodeInventoryExplainsRolesDirectionAndStableIdentity(t *testing.T) {
 
 	body := pageNodes(d, false, "")
 	for _, want := range []string{
-		"<b>接入</b> 承接本机或客户端流量并执行选路",
+		"<b>本机接管</b> 接管本机流量并执行选路",
 		"<b>可作出口</b> 可作为路径末端访问公网",
+		"<b>隧道方向</b> 只描述 WireGuard 建连职责",
 		"节点 ID</b> 加入时确定，不随系统 hostname 自动变化",
-		"中控 + 接入 + 转发 + 可作出口",
+		"中控 + 本机接管 + 转发 + 可作出口",
 		"只主动连接，不接受入站",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("Nodes role explanation is missing %q", want)
 		}
+	}
+}
+
+func TestNodeInventoryContainsItsWideTableOverflow(t *testing.T) {
+	body := pageNodes(misakaDeps(), false, "")
+	if !strings.Contains(body, `class="card node-inventory-card"`) {
+		t.Fatal("Nodes inventory table is missing its scoped overflow container")
+	}
+	if !strings.Contains(style, `.node-inventory-card{overflow-x:auto}`) {
+		t.Fatal("Nodes inventory overflow rule is missing from the scoped card class")
 	}
 }
 
