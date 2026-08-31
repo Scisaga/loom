@@ -47,11 +47,14 @@ func TestPreviewAllocatesCompleteConflictFreePlan(t *testing.T) {
 	if len(plan.Tunnels) != 2 {
 		t.Fatalf("tunnels = %#v, want one for each bidirectional peer", plan.Tunnels)
 	}
-	if plan.FixedPolicy == nil || plan.FixedPolicy.ID != "edge-b-fixed" ||
-		plan.FixedPolicy.EgressAxis != "pinned:edge-b" || plan.FixedPolicy.Name != "固定Tokyo出口" ||
-		plan.FixedPolicy.Objective != model.Latency ||
-		!slices.Equal(plan.FixedPolicy.AllowedServers, []string{"core-a", "core-b", "edge-b"}) {
-		t.Fatalf("fixed policy = %#v", plan.FixedPolicy)
+	if len(plan.FixedPolicies) != 4 {
+		t.Fatalf("fixed policies = %#v, want one per egress-capable node", plan.FixedPolicies)
+	}
+	fixedPolicy := planPolicyByID(t, plan, "edge-b-fixed")
+	if fixedPolicy.EgressAxis != "pinned:edge-b" || fixedPolicy.Name != "固定Tokyo出口" ||
+		fixedPolicy.Objective != model.Latency ||
+		!slices.Equal(fixedPolicy.AllowedServers, []string{"core-a", "core-b", "edge-b"}) {
+		t.Fatalf("fixed policy = %#v", fixedPolicy)
 	}
 
 	seenPorts := map[int]bool{61637: true}
@@ -99,6 +102,38 @@ func TestPreviewAllocatesCompleteConflictFreePlan(t *testing.T) {
 	fixed := ssot.DeclarationByID()["edge-b-fixed"]
 	if fixed == nil || fixed.PinnedEgress() != "edge-b" {
 		t.Fatalf("applied fixed policy = %#v", fixed)
+	}
+}
+
+func TestPreviewReconcilesByPinnedNodeAndKeepsLegacyPolicyIDs(t *testing.T) {
+	content := bytes.Replace(fixtureSSOT(), []byte("declarations:\n"), []byte(`declarations:
+  - id: legacy-edge
+    address_axis: from_request
+    egress_axis: pinned:edge-a
+    objective: latency
+    probe_url: https://probe.example.net/
+    allowed_servers: [core-a, core-b, edge-a]
+    max_hops: 2
+    tuning_period: 5m
+    switch_threshold: 0.2
+    window: 1h
+    min_samples: 6
+    stale_after: 20m
+`), 1)
+	plan, err := Preview(content, NodeInput{
+		ID: "edge-b", City: "Tokyo", PublicEndpoint: "edge-b.example.net",
+		Direction: model.ReverseOnly, WGPublicKey: keyZero,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.FixedPolicies) != 3 {
+		t.Fatalf("fixed policies = %#v, want missing core-a/core-b/edge-b only", plan.FixedPolicies)
+	}
+	for _, policy := range plan.FixedPolicies {
+		if policy.PinnedEgress() == "edge-a" {
+			t.Fatalf("legacy pinned declaration was duplicated: %#v", plan.FixedPolicies)
+		}
 	}
 }
 
@@ -390,5 +425,22 @@ func mustPlanBytes(t *testing.T, plan Plan) []byte {
 		b.WriteString("|")
 		b.WriteString(tunnel.ToAddr)
 	}
+	for _, policy := range plan.FixedPolicies {
+		b.WriteString("|")
+		b.WriteString(policy.ID)
+		b.WriteString("|")
+		b.WriteString(policy.EgressAxis)
+	}
 	return []byte(b.String())
+}
+
+func planPolicyByID(t *testing.T, plan Plan, id string) *model.AccessDeclaration {
+	t.Helper()
+	for i := range plan.FixedPolicies {
+		if plan.FixedPolicies[i].ID == id {
+			return &plan.FixedPolicies[i]
+		}
+	}
+	t.Fatalf("policy %q absent from %#v", id, plan.FixedPolicies)
+	return nil
 }

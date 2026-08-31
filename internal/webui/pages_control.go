@@ -328,8 +328,15 @@ func writeNodeAddReview(b *strings.Builder, d Deps, review EnrollmentReview, key
 		}
 		b.WriteString(`</table>`)
 	}
-	if review.FixedPolicyID != "" {
-		fmt.Fprintf(b, `<div class="callout section"><b>Fixed exit policy added automatically</b><br><span class=small><code>%s</code> · %s · lowest latency (P50). The final egress is pinned to this node; secure credential provisioning activates it for access nodes.</span></div>`, esc(review.FixedPolicyID), esc(review.FixedPolicyName))
+	if len(review.FixedPolicies) > 0 {
+		b.WriteString(`<div class="callout section"><b>Fixed exit policies added automatically</b><br><span class=small>Every active egress-capable node is reconciled to a fixed policy using lowest latency (P50): `)
+		for i, policy := range review.FixedPolicies {
+			if i > 0 {
+				b.WriteString(` · `)
+			}
+			fmt.Fprintf(b, `<code>%s</code> %s`, esc(policy.ID), esc(policy.Name))
+		}
+		b.WriteString(`. Secure credential provisioning activates them for access nodes.</span></div>`)
 	}
 	fmt.Fprintf(b, `</div><div class=section>
 <form class=blockform data-submit-progress method=post action="/nodes/add/commit">%s

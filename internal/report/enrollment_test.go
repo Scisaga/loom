@@ -217,8 +217,8 @@ func TestEnrollmentReviewAndCommitAreOneRevisionGuardedPlan(t *testing.T) {
 	}
 	if review.NodeID != "hk01" || review.PublicEndpoint != "edge.example.net" || review.Country != "HK" || review.City != "Hong Kong" ||
 		review.RequestedDirection != "automatic" || review.ResolvedDirection != string(model.ReverseOnly) ||
-		!review.EgressEnabled || review.FixedPolicyID != "hk01-fixed" ||
-		review.FixedPolicyName != "固定Hong Kong出口" || len(review.Tunnels) != 4 {
+		!review.EgressEnabled || !hasEnrollmentPolicy(review.FixedPolicies, "hk01-fixed", "固定Hong Kong出口") ||
+		len(review.Tunnels) != 4 {
 		t.Fatalf("unexpected review: %#v", review)
 	}
 	initialSum := sha256.Sum256(initial)
@@ -270,6 +270,15 @@ func TestEnrollmentReviewAndCommitAreOneRevisionGuardedPlan(t *testing.T) {
 	if fixed == nil || fixed.PinnedEgress() != "hk01" || fixed.Objective != model.Latency {
 		t.Fatalf("committed fixed policy = %#v", fixed)
 	}
+}
+
+func hasEnrollmentPolicy(policies []webui.EnrollmentPolicy, id, name string) bool {
+	for _, policy := range policies {
+		if policy.ID == id && policy.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func TestEnrollmentGeoIPSuggestionIsAdvisoryAndNonBlocking(t *testing.T) {

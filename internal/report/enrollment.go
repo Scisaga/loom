@@ -255,9 +255,10 @@ func (b enrollmentBackend) review(ctx context.Context, input webui.EnrollmentRev
 		EgressEnabled:           true,
 		Tunnels:                 tunnels,
 	}
-	if plan.FixedPolicy != nil {
-		review.FixedPolicyID = plan.FixedPolicy.ID
-		review.FixedPolicyName = plan.FixedPolicy.Name
+	for _, policy := range plan.FixedPolicies {
+		review.FixedPolicies = append(review.FixedPolicies, webui.EnrollmentPolicy{
+			ID: policy.ID, Name: policy.Name,
+		})
 	}
 	return review, nil
 }

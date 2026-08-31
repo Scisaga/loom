@@ -235,8 +235,12 @@ type EnrollmentReview struct {
 	ResolvedDirection                        string
 	DirectionEvidence, Revision              string
 	EgressEnabled                            bool
-	FixedPolicyID, FixedPolicyName           string
+	FixedPolicies                            []EnrollmentPolicy
 	Tunnels                                  []EnrollmentTunnel
+}
+
+type EnrollmentPolicy struct {
+	ID, Name string
 }
 
 type EnrollmentTunnel struct {

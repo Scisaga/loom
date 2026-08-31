@@ -829,8 +829,10 @@ Linux Server 没有 TUN，所以用只监听回环的 `1080` mixed 承载日常�
 持久化到 `access.default_declaration`，再经常规签名快照下发。客户端不能写本地
 配置抢先生效，也不能提交任意节点、IP 或国家名。规则优先级固定为：
 
-新增 `egress_capable` 节点时，接入规划器必须同时生成 `<node-id>-fixed` 声明，
-最终出口钉到该节点，并从已有 `from_request` 声明继承探测与调参边界。固定出口只
+接入规划器必须对完整候选 SSOT 中的全部在役 `egress_capable` 节点做固定策略对账：
+若某节点没有任何 `from_request + pinned:<node-id>` 声明，就生成
+`<node-id>-fixed`，因此既覆盖新节点，也能补齐升级前已存在的节点，并兼容历史策略
+ID。最终出口钉到该节点，探测与调参边界从已有 `from_request` 声明继承。固定出口只
 固定最后一跳，不等于停止优化前面的中继：日常固定出口策略使用 `latency`（p50）
 排序，切换抑制由独立的 `switch_threshold` 承担；`stability` 表示按 p95 尾延迟
 排序，不能在 UI 中解释成“固定”或“少切换”。策略声明可以随节点事务自动生成，

@@ -40,12 +40,12 @@ type NodeInput struct {
 
 // Plan is the complete SSOT change produced by Preview. Tunnels contains every
 // persistent tunnel required between Node and the nodes already in the SSOT.
-// FixedPolicy 是出口能力的声明式配套项；凭据值属于秘密层，不能由纯 SSOT
+// FixedPolicies 是出口能力的声明式配套项；凭据值属于秘密层，不能由纯 SSOT
 // 规划器伪造，须在安全分发后才会成为接入节点的可选项。
 type Plan struct {
-	Node        model.Node
-	Tunnels     []model.Tunnel
-	FixedPolicy *model.AccessDeclaration
+	Node          model.Node
+	Tunnels       []model.Tunnel
+	FixedPolicies []model.AccessDeclaration
 }
 
 // ValidationError reports findings from validating the complete current or
@@ -97,8 +97,8 @@ func Preview(content []byte, input NodeInput) (Plan, error) {
 	candidate.Nodes = append([]model.Node(nil), ssot.Nodes...)
 	candidate.Nodes = append(candidate.Nodes, plan.Node)
 	candidate.Tunnels = append(append([]model.Tunnel(nil), ssot.Tunnels...), plan.Tunnels...)
-	if plan.FixedPolicy != nil {
-		candidate.Declarations = append(append([]model.AccessDeclaration(nil), ssot.Declarations...), *plan.FixedPolicy)
+	if len(plan.FixedPolicies) > 0 {
+		candidate.Declarations = append(append([]model.AccessDeclaration(nil), ssot.Declarations...), plan.FixedPolicies...)
 	}
 	if findings := validate.Validate(&candidate); len(findings) > 0 {
 		return Plan{}, &ValidationError{Findings: findings}
@@ -133,12 +133,14 @@ func Apply(content []byte, input NodeInput) ([]byte, error) {
 	for _, tunnel := range plan.Tunnels {
 		tunnels.Content = append(tunnels.Content, tunnelYAML(tunnel))
 	}
-	if plan.FixedPolicy != nil {
+	if len(plan.FixedPolicies) > 0 {
 		declarations, err := sequenceAt(root, "declarations", true)
 		if err != nil {
 			return nil, err
 		}
-		declarations.Content = append(declarations.Content, declarationYAML(*plan.FixedPolicy))
+		for _, policy := range plan.FixedPolicies {
+			declarations.Content = append(declarations.Content, declarationYAML(policy))
+		}
 	}
 
 	result, err := encodeDocument(doc)
@@ -249,14 +251,42 @@ func allocate(ssot *model.SSOT, node model.Node) (Plan, error) {
 		// ports; otherwise a multi-peer enrollment can allocate duplicates.
 		work.Tunnels = append(work.Tunnels, tunnel)
 	}
-	if node.Server.EgressCapable {
-		policy, err := fixedEgressPolicy(ssot, node)
-		if err != nil {
-			return Plan{}, err
-		}
-		plan.FixedPolicy = &policy
+	policySSOT := *ssot
+	policySSOT.Nodes = append(append([]model.Node(nil), ssot.Nodes...), node)
+	policies, err := missingFixedEgressPolicies(&policySSOT)
+	if err != nil {
+		return Plan{}, err
 	}
+	plan.FixedPolicies = policies
 	return plan, nil
+}
+
+// missingFixedEgressPolicies 对完整候选 SSOT 做声明式对账：每个仍在服役的
+// egress_capable 节点都应有一条 from_request 固定出口声明。按 pinned 节点
+// 判断而不是按历史 id 判断，因而兼容 sg-fixed / de-fixed 这类旧命名。
+func missingFixedEgressPolicies(ssot *model.SSOT) ([]model.AccessDeclaration, error) {
+	covered := map[string]bool{}
+	for i := range ssot.Declarations {
+		declaration := &ssot.Declarations[i]
+		if declaration.AddressFromRequest() && declaration.PinnedEgress() != "" {
+			covered[declaration.PinnedEgress()] = true
+		}
+	}
+	nodes := append([]model.Node(nil), ssot.Nodes...)
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
+	var out []model.AccessDeclaration
+	for i := range nodes {
+		node := &nodes[i]
+		if !node.IsServer() || !node.Server.EgressCapable || node.Drain || node.Decommission || covered[node.ID] {
+			continue
+		}
+		policy, err := fixedEgressPolicy(ssot, *node)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, policy)
+	}
+	return out, nil
 }
 
 func fixedEgressPolicy(ssot *model.SSOT, node model.Node) (model.AccessDeclaration, error) {
@@ -305,6 +335,9 @@ func fixedEgressPolicy(ssot *model.SSOT, node model.Node) (model.AccessDeclarati
 		TuningPeriod: template.TuningPeriod, SwitchThreshold: template.SwitchThreshold,
 		TopN: template.TopN, Window: template.Window, MinSamples: template.MinSamples,
 		StaleAfter: template.StaleAfter, Fallback: template.Fallback,
+	}
+	if len(node.ProbeTargets) > 0 {
+		policy.ProbeURL = node.ProbeTargets[0]
 	}
 	if policy.MaxHops == 0 {
 		policy.MaxHops = 2
