@@ -109,7 +109,7 @@
   </g>
 
   <!-- Sidebar. -->
-  <rect x="32" y="76" width="230" height="800" fill="#F7F8F7"/>
+  <path d="M32 76H262V876H46A14 14 0 0 1 32 862Z" fill="#F7F8F7"/>
   <line class="rule" x1="261.5" y1="76" x2="261.5" y2="876"/>
   <g class="ui nav">
     <rect x="48" y="106" width="198" height="42" rx="7" fill="#EDEFEF"/>
@@ -270,4 +270,6 @@
   </g>
 
   <text class="ui tiny muted" x="294" y="861">Interface proposal · values are illustrative and do not represent a deployed Windows client.</text>
+  <!-- Keep the window perimeter above edge-to-edge interior fills. -->
+  <rect x="32" y="24" width="1376" height="852" rx="14" fill="none" stroke="#D9DDDA"/>
 </svg>
