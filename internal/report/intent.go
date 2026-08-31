@@ -61,6 +61,19 @@ func ExpectedDirectLinksForSSOT(s *model.SSOT) []ExpectedDirectLink {
 		inner = append(inner, n)
 	}
 	sort.Slice(inner, func(i, j int) bool { return inner[i].ID < inner[j].ID })
+	// When every inner-ring node exposes a public Hysteria2 inbound, the old
+	// lexical orientation made the first node only a probe source and the last
+	// node only a target. Reverse the single outer pair so every node is dialled
+	// at least once, without adding another probe. With two nodes one directed
+	// observation cannot cover both inbounds, so the stable lexical direction is
+	// retained and the unobserved side remains explicitly unverified.
+	allPublicHy2 := len(inner) >= 3
+	for _, n := range inner {
+		if !n.PubliclyDialable() || n.Server.InboundProtocol.Or() != model.Hysteria2 {
+			allPublicHy2 = false
+			break
+		}
+	}
 
 	var out []ExpectedDirectLink
 	for i := 0; i < len(inner); i++ {
@@ -68,6 +81,8 @@ func ExpectedDirectLinksForSSOT(s *model.SSOT) []ExpectedDirectLink {
 			a, b := inner[i], inner[j]
 			from, to := a, b
 			switch {
+			case allPublicHy2 && i == 0 && j == len(inner)-1:
+				from, to = b, a
 			case b.PubliclyDialable() && b.Server.InboundProtocol.Or() == model.Hysteria2:
 				// Stable default: lexical a -> b.
 			case a.PubliclyDialable() && a.Server.InboundProtocol.Or() == model.Hysteria2:
@@ -80,8 +95,15 @@ func ExpectedDirectLinksForSSOT(s *model.SSOT) []ExpectedDirectLink {
 			})
 		}
 	}
+	pairKey := func(link ExpectedDirectLink) string {
+		a, b := link.From, link.To
+		if b < a {
+			a, b = b, a
+		}
+		return a + "\x00" + b
+	}
 	sort.Slice(out, func(i, j int) bool {
-		return out[i].From+"\x00"+out[i].To < out[j].From+"\x00"+out[j].To
+		return pairKey(out[i]) < pairKey(out[j])
 	})
 	return out
 }

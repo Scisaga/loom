@@ -56,7 +56,7 @@ func pageNodes(d Deps, isAuthed bool, added string) string {
 	} else {
 		b.WriteString(`<span class="button" aria-disabled=true>Read-only node</span>`)
 	}
-	b.WriteString(`</span></div><div class=node-inventory-help><span><b>本机接管</b> 接管本机流量并执行选路</span><span><b>转发</b> 参与隧道和代理链路</span><span><b>可作出口</b> 可作为路径末端访问公网</span><span><b>隧道方向</b> 只描述 WireGuard 建连职责</span><span><b>公网数据入口</b> 是 SSOT 声明，不代表监听或公网路径已经验证</span><span><b>节点 ID</b> 加入时确定，不随系统 hostname 自动变化</span></div><div class="card node-inventory-card"><table><thead><tr><th>节点 / 生命周期<th>节点地址 / SSH 端口<th>用途 / 隧道方向<th>公网数据入口<th>观测来源<th>配置版本<th>常驻隧道<th>最后上报<th></thead><tbody>`)
+	b.WriteString(`</span></div><div class=node-inventory-help><span><b>本机接管</b> 接管本机流量并执行选路</span><span><b>转发</b> 参与隧道和代理链路</span><span><b>可作出口</b> 可作为路径末端访问公网</span><span><b>隧道方向</b> 只描述 WireGuard 建连职责</span><span><b>公网数据入口</b> 并排显示 SSOT 声明与现有主动探测证据</span><span><b>节点 ID</b> 加入时确定，不随系统 hostname 自动变化</span></div><div class="card node-inventory-card"><table><thead><tr><th>节点 / 生命周期<th>节点地址 / SSH 端口<th>用途 / 隧道方向<th>公网数据入口<th>观测来源<th>配置版本<th>常驻隧道<th>最后上报<th></thead><tbody>`)
 	for _, n := range v.Nodes {
 		stateClass, stateLabel := healthVisual(n.Health)
 		lifecycleClass, lifecycleLabel := nodeLifecycleVisual(n)
@@ -68,7 +68,7 @@ func pageNodes(d Deps, isAuthed bool, added string) string {
 		}
 		declarationMark := ""
 		endpointMeta := fmt.Sprintf("SSH port %d · host/user not retained", n.SSHPort)
-		publicIngress := nodePublicIngressVisual(n)
+		publicIngress := nodePublicIngressVisual(n, v.Links, now)
 		if !n.Declared {
 			declarationMark = `<br><span class="tiny warn">◇ Undeclared observed</span>`
 			endpointMeta = "Not in " + intentSource + " · observation retained"
@@ -486,7 +486,7 @@ type nodePublicIngressPresentation struct {
 // a declared endpoint into runtime listener evidence. The control view derives
 // PublicDialable from model.Node.PubliclyDialable; this helper only explains
 // that result.
-func nodePublicIngressVisual(n NodeView) nodePublicIngressPresentation {
+func nodePublicIngressVisual(n NodeView, links []LinkView, now time.Time) nodePublicIngressPresentation {
 	if !n.Declared {
 		return nodePublicIngressPresentation{
 			Value: "无当前声明", Detail: "运行态观测未携带入口声明", DetailClass: "dim",
@@ -505,12 +505,16 @@ func nodePublicIngressVisual(n NodeView) nodePublicIngressPresentation {
 
 	protocol := nodeInboundProtocolLabel(n.InboundProtocol)
 	if n.PublicDialable {
-		detail, detailClass := protocol+" · SSOT 已声明 · 公网入站未验证", "warn"
+		detail, detailClass := protocol+" · SSOT 已声明 · 当前快照尚无签名单跳证据", "warn"
 		switch {
 		case n.Decommission:
 			detail, detailClass = protocol+" · 已下线 · 不用于新客户端接入", "bad"
 		case n.Drain:
 			detail = protocol + " · 正在排空 · 不用于新客户端接入"
+		default:
+			if summary, ok := summarizePublicIngressEvidence(n.ID, links, now); ok {
+				detail, detailClass = publicIngressEvidenceText(protocol, summary, now)
+			}
 		}
 		return nodePublicIngressPresentation{
 			Value:  net.JoinHostPort(n.PublicEndpoint, fmt.Sprintf("%d", n.InboundPort)),
@@ -519,8 +523,95 @@ func nodePublicIngressVisual(n NodeView) nodePublicIngressPresentation {
 	}
 	return nodePublicIngressPresentation{
 		Value:       "仅隧道内",
-		Detail:      fmt.Sprintf("%s · 端口 %d · SSOT 已声明 · 隧道入站未验证", protocol, n.InboundPort),
-		DetailClass: "warn",
+		Detail:      fmt.Sprintf("%s · 端口 %d · SSOT 已声明 · 不提供公网接入", protocol, n.InboundPort),
+		DetailClass: "dim",
+	}
+}
+
+type publicIngressEvidenceSummary struct {
+	Sources           []string
+	Target, Latest    string
+	Samples, Failures int
+}
+
+func summarizePublicIngressEvidence(target string, links []LinkView,
+	now time.Time) (publicIngressEvidenceSummary, bool) {
+	var summary publicIngressEvidenceSummary
+	sources := map[string]bool{}
+	var latest time.Time
+	for _, item := range links {
+		if item.Kind != "direct-hy2" || item.ObservedFrom == "" ||
+			item.ObservedTo != target || item.Samples <= 0 || item.Failures < 0 ||
+			item.Failures > item.Samples {
+			continue
+		}
+		switch item.State {
+		case "active":
+			if item.Failures != 0 {
+				continue
+			}
+		case "degraded":
+			if item.Failures == 0 || item.Failures == item.Samples {
+				continue
+			}
+		case "failed":
+			if item.Failures != item.Samples {
+				continue
+			}
+		default:
+			continue
+		}
+		observedAt, err := time.Parse(time.RFC3339, item.ObservedAt)
+		if err != nil || observedAt.After(now.Add(2*time.Minute)) {
+			continue
+		}
+		if summary.Target == "" {
+			summary.Target = item.ObservedTo
+		}
+		sources[item.ObservedFrom] = true
+		summary.Samples += item.Samples
+		summary.Failures += item.Failures
+		if latest.IsZero() || observedAt.After(latest) {
+			latest = observedAt
+			summary.Latest = item.ObservedAt
+		}
+	}
+	if summary.Samples == 0 {
+		return publicIngressEvidenceSummary{}, false
+	}
+	for source := range sources {
+		summary.Sources = append(summary.Sources, source)
+	}
+	sort.Strings(summary.Sources)
+	return summary, true
+}
+
+func publicIngressEvidenceText(protocol string, evidence publicIngressEvidenceSummary,
+	now time.Time) (string, string) {
+	age := ageText(evidence.Latest, now)
+	direction := publicIngressDirection(evidence.Sources, evidence.Target)
+	success := evidence.Samples - evidence.Failures
+	switch {
+	case success == 0:
+		return fmt.Sprintf("%s · 当前入口签名单跳探测未通过 · %s · 0/%d 成功 · %s · 不能仅凭此定位故障点",
+			protocol, direction, evidence.Samples, age), "bad"
+	case evidence.Failures > 0:
+		return fmt.Sprintf("%s · 当前入口部分可达 · %s 签名单跳 · %d/%d 成功 · %s",
+			protocol, direction, success, evidence.Samples, age), "warn"
+	default:
+		return fmt.Sprintf("%s · 当前入口已验证 · %s 签名单跳 · %d/%d 成功 · %s",
+			protocol, direction, success, evidence.Samples, age), "ok"
+	}
+}
+
+func publicIngressDirection(sources []string, target string) string {
+	switch len(sources) {
+	case 0:
+		return target
+	case 1, 2:
+		return strings.Join(sources, "、") + "→" + target
+	default:
+		return fmt.Sprintf("%d 个探测源→%s", len(sources), target)
 	}
 }
 

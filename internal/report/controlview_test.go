@@ -213,6 +213,7 @@ func TestEnrichControlViewRebuildsIntentFromCurrentSSOT(t *testing.T) {
 }
 
 func TestEnrichControlViewKeepsCurrentSSOTDirectHy2Metrics(t *testing.T) {
+	const snapshot, revision, observedAt = "snapshot-current", "ssot-current", "2026-08-31T20:00:00Z"
 	s := &model.SSOT{Nodes: []model.Node{
 		{ID: "gz02", PublicEndpoint: "gz.example", Server: &model.ServerRole{
 			Direction: model.Bidirectional, InboundPort: 61698,
@@ -223,19 +224,20 @@ func TestEnrichControlViewKeepsCurrentSSOTDirectHy2Metrics(t *testing.T) {
 		{ID: "jm24", Server: &model.ServerRole{Direction: model.Bidirectional},
 			Access: &model.AccessRole{Platform: model.LinuxServer}},
 	}}
-	v := webui.View{Nodes: []webui.NodeView{
-		{ID: "gz02", VerifiedLinkMetrics: []webui.VerifiedLinkMetricView{{
+	v := webui.View{Publisher: &webui.PublisherView{LastSnapshot: snapshot, LastSSOT: revision}, Nodes: []webui.NodeView{
+		{ID: "gz02", Applied: snapshot, VerifiedLinkMetrics: []webui.VerifiedLinkMetricView{{
 			PeerNode: "hz01", Transport: "hysteria2", Carrier: "public",
-			RTTMS: 32, P50MS: 30, P95MS: 34, Samples: 3,
+			ObservedAt: observedAt, RTTMS: 32, P50MS: 30, P95MS: 34, Samples: 3,
 		}}},
-		{ID: "hz01"},
-		{ID: "jm24", VerifiedLinkMetrics: []webui.VerifiedLinkMetricView{
-			{PeerNode: "gz02", Transport: "hysteria2", Carrier: "public", RTTMS: 43, Samples: 2},
-			{PeerNode: "hz01", Transport: "hysteria2", Carrier: "public", RTTMS: 34, Samples: 2},
+		{ID: "hz01", Applied: snapshot},
+		{ID: "jm24", Applied: snapshot, VerifiedLinkMetrics: []webui.VerifiedLinkMetricView{
+			{PeerNode: "gz02", Transport: "hysteria2", Carrier: "public", ObservedAt: observedAt, RTTMS: 43, Samples: 2},
+			{PeerNode: "hz01", Transport: "hysteria2", Carrier: "public", ObservedAt: observedAt, RTTMS: 34, Samples: 2},
 		}},
 	}}
 
 	enrichControlView(&v, s, "jm24")
+	gateCurrentSSOTDirectEvidence(&v, revision)
 	got := map[string]webui.LinkView{}
 	for _, link := range v.Links {
 		if link.Kind == "direct-hy2" {
@@ -245,6 +247,44 @@ func TestEnrichControlViewKeepsCurrentSSOTDirectHy2Metrics(t *testing.T) {
 	if len(got) != 3 || got["gz02→hz01"].MS != 32 ||
 		got["jm24→gz02"].MS != 43 || got["jm24→hz01"].MS != 34 {
 		t.Fatalf("current SSOT projection dropped direct Hy2 inventory or metrics: %+v", v.Links)
+	}
+}
+
+func TestCurrentSSOTDirectEvidenceRequiresCurrentPublishedSnapshot(t *testing.T) {
+	const snapshot, revision = "snapshot-current", "ssot-current"
+	base := func() webui.View {
+		return webui.View{
+			Publisher: &webui.PublisherView{LastSnapshot: snapshot, LastSSOT: revision},
+			Nodes: []webui.NodeView{
+				{ID: "source", Applied: snapshot},
+				{ID: "target", Applied: snapshot, Declared: true, PublicDialable: true},
+			},
+			Links: []webui.LinkView{{
+				From: "source", To: "target", Kind: "direct-hy2", State: "active",
+				ObservedFrom: "source", ObservedTo: "target", ObservedAt: "2026-08-31T20:00:00Z", Samples: 3,
+			}},
+		}
+	}
+	for name, mutate := range map[string]func(*webui.View, *string){
+		"current":                    func(*webui.View, *string) {},
+		"SSOT changed after publish": func(_ *webui.View, rev *string) { *rev = "new-ssot" },
+		"source still old":           func(v *webui.View, _ *string) { v.Nodes[0].Applied = "old" },
+		"target still old":           func(v *webui.View, _ *string) { v.Nodes[1].Applied = "old" },
+		"unknown state":              func(v *webui.View, _ *string) { v.Links[0].State = "future-state" },
+		"inconsistent active state":  func(v *webui.View, _ *string) { v.Links[0].Failures = 1 },
+		"invalid timestamp":          func(v *webui.View, _ *string) { v.Links[0].ObservedAt = "not-a-time" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			v, currentRevision := base(), revision
+			mutate(&v, &currentRevision)
+			gateCurrentSSOTDirectEvidence(&v, currentRevision)
+			if name == "current" && v.Links[0].State != "active" {
+				t.Fatalf("current topology evidence was unexpectedly downgraded: %+v", v.Links[0])
+			}
+			if name != "current" && (v.Links[0].State != "unknown" || v.Links[0].Samples != 0 || v.Links[0].ObservedAt != "") {
+				t.Fatalf("mismatched topology evidence survived current-snapshot gate: %+v", v.Links[0])
+			}
+		})
 	}
 }
 

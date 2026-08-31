@@ -3,6 +3,7 @@ package webui
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEvidenceFailureIsVisibleOutsideOverview(t *testing.T) {
@@ -60,13 +61,13 @@ func TestNodeLifecycleAndEndpointEvidenceStayExplicit(t *testing.T) {
 	d.Snapshot = func() View { return v }
 
 	nodes := pageNodes(d, false, "")
-	for _, want := range []string{"1 <small>trusted</small>", "1 decommissioned", "Decommissioned", "节点地址 / SSH 端口", "公网数据入口", "edge.example.net:61698", "SSOT 已声明 · 公网入站未验证"} {
+	for _, want := range []string{"1 <small>trusted</small>", "1 decommissioned", "Decommissioned", "节点地址 / SSH 端口", "公网数据入口", "edge.example.net:61698", "SSOT 已声明 · 当前快照尚无签名单跳证据"} {
 		if !strings.Contains(nodes, want) {
 			t.Errorf("Nodes page is missing lifecycle/endpoint boundary %q", want)
 		}
 	}
 	detail, found := pageNodeDetail(d, v.Nodes[0].ID, false)
-	if !found || !strings.Contains(detail, "声明地址") || !strings.Contains(detail, "公网数据入口") || !strings.Contains(detail, "edge.example.net:61698") || !strings.Contains(detail, "公网入站未验证") {
+	if !found || !strings.Contains(detail, "声明地址") || !strings.Contains(detail, "公网数据入口") || !strings.Contains(detail, "edge.example.net:61698") || !strings.Contains(detail, "当前快照尚无签名单跳证据") || strings.Contains(detail, "当前入口已验证") {
 		t.Fatalf("Node detail treats declared endpoint as verified: found=%v", found)
 	}
 }
@@ -89,8 +90,8 @@ func TestNodePublicIngressDistinguishesPublicTunnelOnlyAndClosed(t *testing.T) {
 
 	list := pageNodes(d, false, "")
 	for _, want := range []string{
-		"edge.example.net:61698", "Hysteria2 / UDP", "公网入站未验证",
-		"仅隧道内", "Trojan / TCP+TLS · 端口 443", "隧道入站未验证",
+		"edge.example.net:61698", "Hysteria2 / UDP", "当前快照尚无签名单跳证据",
+		"仅隧道内", "Trojan / TCP+TLS · 端口 443", "不提供公网接入",
 		"未开放", "SSOT 未声明 server inbound",
 	} {
 		if !strings.Contains(list, want) {
@@ -107,6 +108,49 @@ func TestNodePublicIngressDistinguishesPublicTunnelOnlyAndClosed(t *testing.T) {
 	}
 	if strings.Contains(closed, "ingress unverified") || strings.Contains(closed, "入站未验证") {
 		t.Fatal("node without inbound was mislabeled as an unverified listener")
+	}
+}
+
+func TestNodePublicIngressReusesExistingDirectionalEvidence(t *testing.T) {
+	d := misakaDeps()
+	v := d.Snapshot()
+	v.Nodes = []NodeView{
+		{
+			ID: "signed", Declared: true, PublicEndpoint: "signed.example.net",
+			InboundPort: 61698, InboundProtocol: "hysteria2", IngressKnown: true, PublicDialable: true,
+		},
+		{
+			ID: "mixed", Declared: true, PublicEndpoint: "mixed.example.net",
+			InboundPort: 61698, InboundProtocol: "hysteria2", IngressKnown: true, PublicDialable: true,
+		},
+		{
+			ID: "failed", Declared: true, PublicEndpoint: "failed.example.net",
+			InboundPort: 61698, InboundProtocol: "hysteria2", IngressKnown: true, PublicDialable: true,
+		},
+	}
+	v.Links = []LinkView{
+		{From: "probe-a", To: "signed", Kind: "direct-hy2", State: "active", ObservedFrom: "probe-a", ObservedTo: "signed", ObservedAt: d.Now().Add(-time.Minute).Format(time.RFC3339), Samples: 3},
+		{From: "mixed", To: "probe-a", Kind: "direct-hy2", State: "active", ObservedFrom: "probe-a", ObservedTo: "mixed", ObservedAt: d.Now().Add(-time.Minute).Format(time.RFC3339), Samples: 3},
+		{From: "mixed", To: "probe-b", Kind: "direct-hy2", State: "failed", ObservedFrom: "probe-b", ObservedTo: "mixed", ObservedAt: d.Now().Add(-2 * time.Minute).Format(time.RFC3339), Samples: 2, Failures: 2},
+		{From: "failed", To: "probe-b", Kind: "direct-hy2", State: "failed", ObservedFrom: "probe-b", ObservedTo: "failed", ObservedAt: d.Now().Add(-time.Minute).Format(time.RFC3339), Samples: 2, Failures: 2},
+	}
+	d.Snapshot = func() View { return v }
+
+	body := pageNodes(d, false, "")
+	for _, want := range []string{
+		"当前入口已验证", "probe-a→signed 签名单跳", "3/3 成功",
+		"当前入口部分可达", "probe-a、probe-b→mixed 签名单跳", "3/5 成功",
+		"当前入口签名单跳探测未通过", "probe-b→failed", "不能仅凭此定位故障点",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Nodes page did not project existing ingress evidence %q", want)
+		}
+	}
+}
+
+func TestPublicIngressDirectionStaysCompactAsNodesGrow(t *testing.T) {
+	if got := publicIngressDirection([]string{"a", "b", "c", "d"}, "target"); got != "4 个探测源→target" {
+		t.Fatalf("large source set was not compacted: %q", got)
 	}
 }
 

@@ -108,8 +108,8 @@
       "carrier": "public"
     },
     {
-      "from": "cn-bj",
-      "to": "cn-sh",
+      "from": "cn-sh",
+      "to": "cn-bj",
       "transport": "hysteria2",
       "carrier": "public"
     },

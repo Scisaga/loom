@@ -29,11 +29,11 @@ func (p hy2LinkProbePlan) proxyAddr() string {
 }
 
 // hy2LinkProbePlans derives one actual dial direction for every pair on the
-// directly reachable inner ring.  A node with no public Hysteria2 inbound
-// (currently jm24) can still be the source but can never be invented as the
-// target.  When both ends accept inbound, lexical order picks a stable single
-// direction; the UI renders the pair as one undirected curve and discloses the
-// measured direction in its detail text.
+// directly reachable inner ring. A node with no public Hysteria2 inbound can
+// still be the source but can never be invented as the target. Direction is
+// stable and gives every public inbound a target edge when that is possible
+// without adding a second probe for the same pair. The UI renders the pair as
+// one undirected curve and discloses the measured direction in its detail.
 func hy2LinkProbePlans(s *model.SSOT) []hy2LinkProbePlan {
 	expected := report.ExpectedDirectLinksForSSOT(s)
 	out := make([]hy2LinkProbePlan, 0, len(expected))

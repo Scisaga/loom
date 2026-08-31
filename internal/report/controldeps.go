@@ -164,15 +164,15 @@ func controlDeps(c *Control) *webui.ControlDeps {
 	if enrollmentPathsUsable(c) {
 		enrollment = newNodeEnrollmentDeps(c, &saveMu, read, revision, guardRevision)
 	}
-
 	return &webui.ControlDeps{
 		SSOTPath: c.SSOTPath,
 		Enrich: func(v *webui.View) error {
-			s, err := loadValidatedSSOT(c.SSOTPath)
+			s, body, err := loadValidatedSSOTSnapshot(c.SSOTPath)
 			if err != nil {
 				return err
 			}
 			enrichControlView(v, s, v.Self)
+			gateCurrentSSOTDirectEvidence(v, revision(body))
 			return nil
 		},
 		Read: func() (string, error) {
@@ -275,18 +275,23 @@ func enrollmentPathsUsable(c *Control) bool {
 }
 
 func loadValidatedSSOT(path string) (*model.SSOT, error) {
+	s, _, err := loadValidatedSSOTSnapshot(path)
+	return s, err
+}
+
+func loadValidatedSSOTSnapshot(path string) (*model.SSOT, []byte, error) {
 	snapshot, err := readSSOTSnapshot(path)
 	if err != nil {
-		return nil, fmt.Errorf("读 SSOT:%w", err)
+		return nil, nil, fmt.Errorf("读 SSOT:%w", err)
 	}
 	s, err := model.Load(snapshot.body)
 	if err != nil {
-		return nil, fmt.Errorf("解析 SSOT:%w", err)
+		return nil, nil, fmt.Errorf("解析 SSOT:%w", err)
 	}
 	if fs := validate.Validate(s); len(fs) > 0 {
-		return nil, fmt.Errorf("SSOT 校验不通过:%s", validate.Format(fs))
+		return nil, nil, fmt.Errorf("SSOT 校验不通过:%s", validate.Format(fs))
 	}
-	return s, nil
+	return s, snapshot.body, nil
 }
 
 // saveSSOTAtomic 在目标同目录中写唯一临时文件,落盘后再原子替换。

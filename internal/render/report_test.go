@@ -82,6 +82,15 @@ func TestEveryInnerPairHasExactlyOneDialableLinkMetricDirection(t *testing.T) {
 				}
 			}
 			counts := map[string]int{}
+			inbound := map[string]int{}
+			tunnelPairs := map[string]bool{}
+			for _, tunnel := range s.Tunnels {
+				a, b := tunnel.From, tunnel.To
+				if b < a {
+					a, b = b, a
+				}
+				tunnelPairs[a+"\x00"+b] = true
+			}
 			nodes := s.NodeByID()
 			for _, link := range baseline {
 				a, b := link.From, link.To
@@ -90,10 +99,15 @@ func TestEveryInnerPairHasExactlyOneDialableLinkMetricDirection(t *testing.T) {
 				}
 				pair := a + "\x00" + b
 				counts[pair]++
+				if tunnelPairs[pair] {
+					t.Errorf("有效 SSOT 将同一节点对同时渲染为 WG 和 direct Hy2: %q", pair)
+				}
 				target := nodes[link.To]
 				if target == nil || !target.PubliclyDialable() || target.Server == nil ||
 					target.Server.InboundProtocol.Or() != model.Hysteria2 {
 					t.Errorf("%s→%s 的目标不是可拨 Hysteria2 inbound", link.From, link.To)
+				} else {
+					inbound[link.To]++
 				}
 			}
 			for pair := range wantPairs {
@@ -104,6 +118,20 @@ func TestEveryInnerPairHasExactlyOneDialableLinkMetricDirection(t *testing.T) {
 			for pair, count := range counts {
 				if !wantPairs[pair] {
 					t.Errorf("渲染了不属于内圈的 direct link %q (%d)", pair, count)
+				}
+			}
+			publicHy2 := 0
+			for _, n := range inner {
+				if n.PubliclyDialable() && n.Server.InboundProtocol.Or() == model.Hysteria2 {
+					publicHy2++
+				}
+			}
+			coveragePossible := publicHy2 >= 3 || (publicHy2 > 0 && publicHy2 < len(inner))
+			if coveragePossible {
+				for _, n := range inner {
+					if n.PubliclyDialable() && n.Server.InboundProtocol.Or() == model.Hysteria2 && inbound[n.ID] == 0 {
+						t.Errorf("可公网拨入节点 %s 没有任何定向探测", n.ID)
+					}
 				}
 			}
 		})

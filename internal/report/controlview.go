@@ -3,6 +3,7 @@ package report
 import (
 	"fmt"
 	"sort"
+	"time"
 
 	"loom/internal/model"
 	"loom/internal/webui"
@@ -100,6 +101,71 @@ func enrichNodes(v *webui.View, s *model.SSOT, controlNode string) {
 		}
 	}
 	sort.Slice(v.Nodes, func(i, j int) bool { return v.Nodes[i].ID < v.Nodes[j].ID })
+}
+
+// gateCurrentSSOTDirectEvidence keeps the control topology from attaching an
+// old public probe to a newly edited endpoint or port. The drawn curve is
+// intentionally undirected; ObservedFrom/ObservedTo retain the actual dial.
+//
+// The metric itself is bound to its source Observation, including Applied.
+// The publisher coordinates bind the just-read SSOT bytes to a snapshot. Both
+// endpoints must report that same snapshot before an old endpoint/port probe
+// may be described as evidence for the current declaration.
+func gateCurrentSSOTDirectEvidence(v *webui.View, currentSSOTRevision string) {
+	if v == nil {
+		return
+	}
+	currentSnapshot := ""
+	if v.Publisher != nil && currentSSOTRevision != "" &&
+		v.Publisher.LastSSOT == currentSSOTRevision {
+		currentSnapshot = v.Publisher.LastSnapshot
+	}
+	byID := make(map[string]*webui.NodeView, len(v.Nodes))
+	for i := range v.Nodes {
+		byID[v.Nodes[i].ID] = &v.Nodes[i]
+	}
+	for i := range v.Links {
+		link := &v.Links[i]
+		if link.Kind != "direct-hy2" {
+			continue
+		}
+		valid := currentSnapshot != "" && link.ObservedFrom != "" &&
+			link.ObservedTo != "" && link.Samples > 0 && link.Failures >= 0 &&
+			link.Failures <= link.Samples
+		switch link.State {
+		case "active":
+			valid = valid && link.Failures == 0
+		case "degraded":
+			valid = valid && link.Failures > 0 && link.Failures < link.Samples
+		case "failed":
+			valid = valid && link.Failures == link.Samples
+		default:
+			valid = false
+		}
+		if _, err := time.Parse(time.RFC3339, link.ObservedAt); err != nil {
+			valid = false
+		}
+		source := byID[link.ObservedFrom]
+		target := byID[link.ObservedTo]
+		if !valid || source == nil || target == nil || !target.Declared || !target.PublicDialable ||
+			source.Applied != currentSnapshot || target.Applied != currentSnapshot {
+			resetDirectHy2Observation(link)
+			continue
+		}
+	}
+}
+
+func resetDirectHy2Observation(link *webui.LinkView) {
+	if link == nil {
+		return
+	}
+	from, to := link.From, link.To
+	observedFrom, observedTo := link.ObservedFrom, link.ObservedTo
+	*link = webui.LinkView{
+		From: from, To: to, Kind: "direct-hy2", State: "unknown",
+		ObservedFrom: observedFrom, ObservedTo: observedTo,
+		Source: "SSOT 公网 Hysteria2 单跳 · 等待当前快照可信主动探测",
+	}
 }
 
 func serviceViews(s *model.SSOT) []webui.ServiceView {
