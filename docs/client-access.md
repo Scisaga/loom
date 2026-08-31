@@ -2,7 +2,7 @@
 
 > **状态:** 设计生效；底层路由与中控运维 API 已实现，设备认证 API 与客户端宿主待实现
 >
-> **日期:** 2026-08-30
+> **日期:** 2026-08-30；开发与构建环境于 2026-08-31 核对
 >
 > **适用范围:** Windows、Linux Server 与 Android 接入设备；v1 不考虑 Linux Desktop
 >
@@ -18,7 +18,7 @@
 
 | 平台 | 流量接管 | 客户端形态 | 结论 |
 |---|---|---|---|
-| Windows 桌面 | TUN 主接管 + 同规则的本地 `1080` mixed | Windows Service + 托盘界面 | 需要薄客户端；规则由中控下发 |
+| Windows 桌面 | TUN 主接管 + 同规则的本地 `1080` mixed | Windows Service；托盘 UI 可分阶段交付 | 需要薄客户端；规则由中控下发 |
 | Linux Server | 本地 `1080` mixed，由进程显式使用 | Loom + sing-box 二进制分发包 | 不开发独立 GUI |
 | Android | `VpnService` TUN | Android App，内嵌 sing-box | 必须开发 App；规则由中控下发 |
 
@@ -334,15 +334,31 @@ Windows 睡眠或网络切换后应重新探测，但沿用切换阻尼，不能
 配置失效。服务升级与配置更新是两条流程：配置走 Loom 签名快照；程序升级走签名
 安装包并保留可恢复版本。
 
+**目标实现栈（尚未交付）：**
+
+- 新增依赖收敛的纯 Go Windows 客户端入口，不把包含发布器、SSH 接入和 Linux
+  生命周期的 `cmd/loom` 整体搬到 Windows；
+- 后台使用 Windows Service，平台适配通过 `golang.org/x/sys/windows/svc` 和带
+  `windows` build tag 的窄实现完成；
+- 页面内容沿用当前控制中心的 HTML/CSS 与少量 JavaScript，由 Go `embed` 打入程序；
+  UI 阶段优先使用薄 WebView2/托盘外壳，不再用 WPF/WinUI 重写一份界面和状态模型；
+- 高权限 Service 持有设备密钥、配置与 sing-box 生命周期，普通用户 UI 只通过带
+  Windows ACL 的本机 named pipe 读取状态和执行已定义操作；
+- 数据平面使用钉住版本的 sing-box Windows 制品和官方签名 Wintun，不自行构建或
+  分发同名驱动；
+- 设备密钥与凭据使用 DPAPI/CNG，安装器使用 WiX/MSI，发布制品由 Windows SDK
+  SignTool 做 Authenticode 签名和验证。
+
 **当前 Linux 开发环境的边界：** 可以开发共享 Go 核心、三模式本地 selector、
 签名 pull/回滚状态机和本地控制协议，也可以为这些纯 Go 组件做 Windows 交叉编译。
 现有 `cmd/loom` 是包含接入、发布和 Linux Agent 的全量控制程序，仍依赖 `flock`、
 `O_NOFOLLOW`、`Stat_t` 等 Unix 接口，不能直接作为 Windows 客户端交叉编译；Windows
-实现应新增依赖收敛的独立程序入口，而不是把全量控制端搬过去。本机目前没有 .NET
-SDK、MinGW、Wine、NSIS 或代码签名工具，因此不能在这里完成 WinUI/WPF 托盘界面、
-Windows Service 实机注册、TUN/WinTun 权限、睡眠恢复、安装器和 Authenticode
-验证。合理流程是 Linux 完成共享核心、独立 Windows 程序入口和单元测试，再由
-Windows VM/实体机跑集成测试与签名打包。
+实现应新增依赖收敛的独立程序入口，而不是把全量控制端搬过去。实测
+`GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/loom` 会在这些 Unix 接口
+处失败；安装 MinGW 不能修复错误的程序边界。纯 Go Service 与嵌入式页面不要求
+.NET、MinGW 或 Node；本机目前也没有这些工具、Windows SDK、WiX 或代码签名工具。
+合理流程是 Linux 完成共享核心、页面、独立 Windows 入口和单元测试，再由 Windows
+VM/实体机完成 Service、WebView2、TUN/Wintun、睡眠恢复、安装器和签名验证。
 
 ### 8.3 Android
 
@@ -353,7 +369,7 @@ Android 必须提供应用宿主，因为只有应用可以通过 `VpnService` �
 
 Android App 包含：
 
-- 注册二维码/一次性链接处理；
+- 注册二维码扫描与 `.loom-invite` 文件导入；
 - Android Keystore 中的设备密钥；
 - 配置 pull、平台验签、防回退和最后可用配置；
 - sing-box Android 核心；
@@ -362,6 +378,20 @@ Android App 包含：
 - 最小调度适配：读取候选/排名、执行切换、离线沿用、回传 L4 观测。
 - 中控下发的 package/domain/IP matcher、Service 与声明关系；界面只读展示生效
   结果；用户只能选择 Direct / Auto / 指定出口三种顶层模式。
+
+**目标实现栈（尚未交付）：**
+
+- Kotlin + Gradle Kotlin DSL 作为平台宿主，Jetpack Compose 负责原生 UI；
+- Android `VpnService` 建立系统 TUN，并按平台要求运行前台 Service 与常驻通知；
+- 使用钉住版本的 sing-box `libbox.aar` 承担 TUN 和代理数据平面，不复制协议实现，
+  也不把上游客户端的 profile/规则编辑模型带入 Loom；
+- 将平台无关的 Loom 验签、generation floor、最后可用配置和 selector 状态机抽成窄
+  Go 包；确需在 Android 复用时再评估通过 `gomobile bind` 生成独立 AAR，不为共享代码
+  先引入整套绑定，也不在 Kotlin 中另写一套行为略有差异的验证器；
+- 设备身份密钥进入 Android Keystore；应用私有目录只保存签名配置、状态和不能放进
+  Keystore 的最小材料；
+- Emulator 用于 Compose、注册、权限和基本 TUN 流程，真实 Android 设备负责扫码、
+  移动网络/Wi-Fi 切换、Doze、厂商后台限制、重启和长期运行验证。
 
 Android 不安装 Linux 版 Loom Agent、systemd unit、`/etc/loom` 路径或 Loom
 二进制自更新器。应用更新通过应用商店、企业 MDM 或签名 APK 渠道完成；Loom 只
@@ -372,24 +402,78 @@ mesh；需要访问 mesh 内网时，由被授权的 Loom 服务器代为转发�
 规则按 package、domain 或 IP 匹配 Service；Direct 与指定出口是互斥的顶层覆盖。
 相同 package 内同一域名的多账号无法由 L4/TUN 可靠区分，profile 能力不进入 v1。
 
+### 8.4 开发、构建与验证环境
+
+“能在某个系统生成制品”不等于“已经验证该平台语义”。平台无关逻辑尽量在 Linux
+和 CI 中测试，操作系统生命周期、权限、驱动和安装事务必须在对应系统运行。
+
+| 工作 | Linux / CI | Windows 实体机或 VM | Android Emulator | Android 真机 |
+|---|---|---|---|---|
+| 共享 Go 核心、配置验签与 selector 单测 | 主环境 | 可复测 | 通过 AAR 间接验证 | 最终复测 |
+| Windows Service 未签名 `.exe` | 可交叉编译 | 安装与运行验证 | — | — |
+| Windows 页面 HTML/CSS/交互 | 可完整开发和浏览器测试 | WebView2、托盘、DPI 验证 | — | — |
+| Windows TUN、DPAPI/CNG、MSI 与签名 | 只能准备输入 | 必须完成；签名也可在 Windows CI 完成 | — | — |
+| Android APK/AAB | 可无界面构建 | Android Studio 开发最方便 | UI/权限/基本 VPN | 移动网络与生命周期终验 |
+
+**推荐工作站：** 有真实 Windows 机器时，在 Windows 上 clone 同一仓库，用它同时
+承担 Windows 原生客户端、Android Studio 和 Android Emulator。Windows 只构建明确
+的客户端目标；当前含 Unix API 的全量 `cmd/loom` 与全仓后台测试继续在 Linux、WSL2
+或 CI 运行。不要为两个平台复制 SSOT、matcher、Policy 或 selector 模型。
+
+目标代码边界（尚未创建）应清晰到构建系统无需猜平台：
+
+```text
+clients/windows/       Windows Service、薄 UI 外壳与安装器
+clients/android/       Kotlin/Compose、VpnService 与 Android 打包
+internal/clientcore/   两个平台复用的平台无关 Go 核心
+```
+
+Android Emulator 本身就是专用虚拟机。它应直接运行在 Windows 实体机的系统虚拟化
+上，或直接运行在独立 Linux builder 的 KVM 上；不要把它放进 Windows VM 再做嵌套
+虚拟化。嵌套方案会增加性能、USB/相机和网络语义的不确定性，却不能替代真机测试。
+
+**当前 `jm24` 环境核对（2026-08-31）：** 它是裸机 Ubuntu，中控和本机接入角色已
+在运行；Intel VT-x/EPT、`/dev/kvm` 和 KVM 模块可用，8 CPU、14 GiB 内存、根盘约
+422 GiB 可用。硬件可以运行 Windows VM 或原生 Android Emulator，但当前没有 QEMU、
+OVMF、swtpm、Android SDK、JDK、Gradle、adb 或 Emulator。更重要的是，这台机器是
+现网控制面且已有 swap 压力，不应默认同时承载 Windows VM 和 Android Emulator。
+
+确需在 `jm24` 建一台临时 Windows 开发 VM 时，最小栈为 QEMU/KVM + Q35 + OVMF
+UEFI + swtpm 2.0 + qcow2，建议 4 vCPU、6 GiB RAM、96 GiB thin disk。初期使用
+QEMU user-mode NAT，安装画面和 RDP 只绑定 `127.0.0.1` 并经 SSH 转发；不要先引入
+libvirt bridge 去改动现有 Docker、WireGuard 和 nftables。Windows 介质只能使用用户
+提供的合法 ISO 或微软正式 Evaluation ISO。该 VM 足以做 Service、UI、安装器与基本
+TUN 集成，但真实睡眠、Wi-Fi/有线切换和长期桌面行为仍由实体 Windows 终验。
+
+若没有 Windows 工作站、只需 Android CI，则在**独立** Linux builder 安装 OpenJDK、
+Android command-line tools、SDK、platform-tools、Emulator 和 x86_64 system image，
+直接使用 KVM 跑 headless Emulator；只有自行重建 native AAR 时才增加 NDK。不安装
+Android-x86 通用 VM。`jm24` 可以构建无界面 APK，但不作为日常 Android Studio 或
+Emulator 工作站。
+
 ---
 
 ## 9. 设备注册
 
 ### 9.1 注册邀请
 
-管理员在控制中心为明确的平台、设备和获授权中控规则范围创建注册邀请。注册邀请
-本身不携带路由模式或出口参数；注册完成后再由客户端选择 Direct / Auto / 指定出口。
+管理员在控制中心为设备和获授权中控规则范围创建通用注册邀请，不要求填写平台。
+平台由已安装客户端按自身构建目标报告；中控只校验它是受支持的枚举值并完成绑定，
+用于选择正确的部署目标和安装产物，不把它当作授权条件或人工选项。注册邀请本身不
+携带路由模式或出口参数；注册完成后再由客户端选择 Direct / Auto / 指定出口。
 邀请包含：
 
 - 控制中心地址；
 - 短 TTL、单次使用的随机 token；
 - 预期设备/节点 ID；
-- 预期平台类型；
 - 平台签名公钥指纹或其带外确认信息。
 
-二维码只是邀请的编码，不包含长期凭据或设备私钥。邀请不得通过“浏览器指纹”
-绑定设备；设备绑定必须基于设备本地生成且不可导出的非对称密钥。
+创建成功后页面只呈现一个二维码，不显示或复制原始注册链接，也不按 Windows、
+Android、Linux 拆成三个注册入口。手机客户端扫码导入；点击二维码则直接下载包含
+同一短时邀请载荷的 `.loom-invite` 文件，供桌面或服务器客户端导入。二维码和邀请
+文件都只是同一次邀请的两种载体，共享 TTL 与单次消费状态；它们不包含长期凭据或
+设备私钥。邀请不得通过“浏览器指纹”绑定设备；设备绑定必须基于客户端本地生成且
+不可导出的非对称密钥。
 
 ### 9.2 注册流程
 
@@ -400,7 +484,7 @@ mesh；需要访问 mesh 内网时，由被授权的 Loom 服务器代为转发�
     ↓
 设备在安全存储中生成密钥，只上传公钥
     ↓
-控制中心原子消费邀请，绑定 device_id / platform / public key
+控制中心校验客户端报告的平台枚举并原子消费邀请，绑定 device_id / platform / public key
     ↓
 返回设备身份材料 + 本设备 bootstrap envelope
     ↓
@@ -409,8 +493,12 @@ mesh；需要访问 mesh 内网时，由被授权的 Loom 服务器代为转发�
 客户端上报首份可信状态，设备才从 enrolled 变为 online
 ```
 
-重复消费、平台不符、设备 ID 已绑定、SSOT revision 变化或签名验证失败都必须从
-头注册，不能部分成功。
+注册不是日常连接动作：重连、网络切换、更新配置、更新程序和重新启动都继续使用
+现有设备身份，不得要求重新注册。同一邀请、同一设备公钥在 TTL 内的重试必须幂等，
+以便从传输中断或发布失败处继续；其他公钥重复消费、未知/不受支持的平台、设备 ID
+已被另一身份绑定、SSOT revision 冲突或签名验证失败都不得留下部分注册状态。
+只有邀请在成功绑定前过期、设备身份密钥丢失/重置，或设备已被吊销后重新接入时，
+才需要管理员生成新的邀请。
 
 ### 9.3 稳态认证
 
@@ -542,7 +630,7 @@ Android 签名密钥是应用升级身份，必须备份和严格控制；丢失
 | Android 被系统回收 | 按用户授权与系统规则恢复前台 VPN，不伪装成始终在线 |
 
 卸载默认移除服务、TUN/驱动配置和本机运行状态。是否删除设备身份与凭据需要用户
-明确确认；删除后不可恢复，只能重新注册。
+明确确认；删除后不可恢复，只能由管理员生成新邀请重新接入。
 
 ---
 
@@ -579,22 +667,24 @@ Android 签名密钥是应用升级身份，必须备份和严格控制；丢失
 
 ### 阶段 C3：Windows
 
+- 从 `cmd/loom` 拆出纯 Go `clientcore` 和独立 Windows 程序入口；
 - Windows Service、路径和安全存储；
 - 一个 mixed 首通，再完成 TUN；两种接入面渲染同一份中控规则；
 - 客户端只读展示 matcher、Service、声明与路径，只提供 Direct / Auto / 指定出口；
+- HTML/CSS 页面与薄 WebView2/托盘外壳通过受限本机 IPC 读取 Service 状态；
 - 签名安装器与 previous 恢复；
-- 可选托盘 UI。
+- Linux 交叉编译进入 CI，Windows VM/实体机完成安装、权限、驱动和签名验证。
 
 **完成判据：** 睡眠、网络切换、服务重启和配置失败后都能恢复，卸载不残留活动
 路由或服务。
 
 ### 阶段 C4：Android
 
-- `VpnService` 宿主与 sing-box 集成；
+- Kotlin/Compose `VpnService` 宿主与钉住版本的 sing-box libbox 集成；
 - 二维码注册、Keystore、签名 pull；
 - 最小排名/selector/离线能力；
 - 按中控 package/domain/IP matcher 渲染规则，并提供 Direct / Auto / 指定出口；
-- 前后台、网络切换与省电策略验证；
+- Emulator 覆盖 UI、权限和基本 TUN，真机覆盖前后台、网络切换与省电策略；
 - 签名 APK 发布和升级演练。
 
 **完成判据：** 飞行模式、进程回收、重启、配置损坏和控制中心离线下均有可解释
@@ -606,7 +696,8 @@ Android 签名密钥是应用升级身份，必须备份和严格控制；丢失
 
 每个平台至少覆盖：
 
-1. 首次注册、重复使用邀请、过期邀请和平台不匹配；
+1. 首次注册、同一公钥幂等重试、其他公钥重复消费、过期邀请、未知平台，以及客户端
+   拒绝安装部署目标不匹配的 bundle；
 2. 正确签名、错误签名、内容篡改、generation 回退和未知 schema；
 3. secret 缺失、凭据轮换与设备吊销；
 4. current → candidate → previous 的原子安装与进程中断恢复；
