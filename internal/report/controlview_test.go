@@ -95,7 +95,8 @@ func TestEnrichControlViewPreservesSSOTContractAndRouteScope(t *testing.T) {
 	best := policyByID(t, v.Policies, "best")
 	if best.ProbeBudget != 7 || best.Objective != "latency" || best.SwitchThreshold != 0.15 ||
 		best.Fallback != "last_known_good" || !slices.Equal(best.AllowedServers, []string{"sg02", "ber01"}) ||
-		len(best.Constraints) != 1 || best.Constraints[0].Kind != "region" {
+		len(best.Constraints) != 1 || best.Constraints[0].Kind != "region" ||
+		!best.AvailabilityKnown || !best.Available {
 		t.Fatalf("policy form fields were not preserved: %+v", best)
 	}
 

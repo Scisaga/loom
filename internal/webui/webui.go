@@ -235,6 +235,7 @@ type EnrollmentReview struct {
 	ResolvedDirection                        string
 	DirectionEvidence, Revision              string
 	EgressEnabled                            bool
+	FixedPolicyID, FixedPolicyName           string
 	Tunnels                                  []EnrollmentTunnel
 }
 
@@ -570,6 +571,7 @@ type PolicyView struct {
 	Window, StaleAfter, Fallback                         string
 	ProbeBudget, MaxHops, TopN, MinSamples               int
 	SwitchThreshold                                      float64
+	AvailabilityKnown, Available                         bool
 	AllowedServers                                       []string
 	Constraints                                          []ConstraintView
 }

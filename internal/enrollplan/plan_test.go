@@ -3,6 +3,7 @@ package enrollplan
 import (
 	"bytes"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -46,6 +47,12 @@ func TestPreviewAllocatesCompleteConflictFreePlan(t *testing.T) {
 	if len(plan.Tunnels) != 2 {
 		t.Fatalf("tunnels = %#v, want one for each bidirectional peer", plan.Tunnels)
 	}
+	if plan.FixedPolicy == nil || plan.FixedPolicy.ID != "edge-b-fixed" ||
+		plan.FixedPolicy.EgressAxis != "pinned:edge-b" || plan.FixedPolicy.Name != "固定Tokyo出口" ||
+		plan.FixedPolicy.Objective != model.Latency ||
+		!slices.Equal(plan.FixedPolicy.AllowedServers, []string{"core-a", "core-b", "edge-b"}) {
+		t.Fatalf("fixed policy = %#v", plan.FixedPolicy)
+	}
 
 	seenPorts := map[int]bool{61637: true}
 	seenAddrs := map[string]bool{"10.99.0.1/32": true, "10.99.0.2/32": true}
@@ -88,6 +95,10 @@ func TestPreviewAllocatesCompleteConflictFreePlan(t *testing.T) {
 	if got == nil || got.Name != "Edge B" || got.Country != "JP" || got.City != "Tokyo" ||
 		got.Provider != "example" || got.SSHPort != 2222 {
 		t.Fatalf("applied node = %#v", got)
+	}
+	fixed := ssot.DeclarationByID()["edge-b-fixed"]
+	if fixed == nil || fixed.PinnedEgress() != "edge-b" {
+		t.Fatalf("applied fixed policy = %#v", fixed)
 	}
 }
 

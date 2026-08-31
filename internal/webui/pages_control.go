@@ -98,7 +98,7 @@ func pageServices(d Deps, selected string, create bool, message string, failed b
 		fmt.Fprintf(&b, `<div class=service-editor-head><div><h2>%s</h2><span class=dim>Host group and routing governance</span></div><span class=sp>%s</span></div><div class=service-editor-body>`, title, status)
 		canWrite := d.Control != nil && d.Control.Services != nil && isAuthed && revisionErr == nil
 		if canWrite {
-			fmt.Fprintf(&b, `<form class="blockform service-form" data-submit-progress method=post action="/services/save"><input type=hidden name=revision value="%s"><div class=service-primary-fields><div class=field><label>Service ID</label><input class=mono name=id value="%s" %s required><span class=field-hint>Stable ID · cannot be renamed after creation</span></div><div class=field><label>Display name</label><input name=name value="%s" placeholder="Human-readable name"></div><div class=field><label>Access policy</label><select name=declaration required>%s</select><span class=field-hint>Controls eligible paths and ranking objective</span></div></div><div class=service-host-rules><div class=service-subhead><div><label>Host rules</label><span>One exact hostname or <code>.suffix</code> per line</span></div><span class="badge dim">%d rules</span></div><textarea class=compact name=addresses spellcheck=false required aria-label="Host rules">%s</textarea><div class=service-rule-help><span><code>api.example.com</code> exact host</span><span><code>.example.com</code> DNS suffix</span><span>Unmatched hosts are rejected (fail closed)</span></div></div><div class=service-form-actions><span class="small dim">Saving validates SSOT and triggers signed distribution.</span><div class=toolbar><a class=button href="/services?service=%s">Discard changes</a><button class="green progress-submit" name=action value=save><span class=button-idle>Validate &amp; save</span><span class=button-busy><i class=button-spinner aria-hidden=true></i>Saving…</span></button></div></div></form>`,
+			fmt.Fprintf(&b, `<form class="blockform service-form" data-submit-progress method=post action="/services/save"><input type=hidden name=revision value="%s"><div class=service-primary-fields><div class=field><label>Service ID</label><input class=mono name=id value="%s" %s required><span class=field-hint>Stable ID · cannot be renamed after creation</span></div><div class=field><label>Display name</label><input name=name value="%s" placeholder="Human-readable name"><span class=field-hint>Operator-facing label used across the control center</span></div><div class=field><label>Access policy</label><select name=declaration required>%s</select><span class=field-hint>Fixed exit pins the final node; relay selection still minimizes latency, with threshold-based anti-flap</span></div></div><div class=service-host-rules><div class=service-subhead><div><label>Host rules</label><span>One exact hostname or <code>.suffix</code> per line</span></div><span class="badge dim">%d rules</span></div><textarea class=compact name=addresses spellcheck=false required aria-label="Host rules">%s</textarea><div class=service-rule-help><span><code>api.example.com</code> exact host</span><span><code>.example.com</code> DNS suffix</span><span>Unmatched hosts are rejected (fail closed)</span></div></div><div class=service-form-actions><span class="small dim">Saving validates SSOT and triggers signed distribution.</span><div class=toolbar><a class=button href="/services?service=%s">Discard changes</a><button class="green progress-submit" name=action value=save><span class=button-idle>Validate &amp; save</span><span class=button-busy><i class=button-spinner aria-hidden=true></i>Saving…</span></button></div></div></form>`,
 				esc(revision), esc(svc.ID), map[bool]string{true: "", false: "readonly"}[create], esc(svc.Name), policyOptions(v.Policies, svc.PolicyID), len(svc.Addresses), esc(strings.Join(svc.Addresses, "\n")), queryEscape(svc.ID))
 			if !create {
 				fmt.Fprintf(&b, `<div class=service-danger><div><b>Danger zone</b><span>Delete this destination group from the next SSOT revision.</span></div><form method=post action="/services/delete"><input type=hidden name=revision value="%s"><input type=hidden name=id value="%s"><input type=hidden name=name value="%s"><input type=hidden name=declaration value="%s"><textarea hidden name=addresses>%s</textarea><button class=danger-button name=action value=delete>Delete service</button></form></div>`, esc(revision), esc(svc.ID), esc(svc.Name), esc(svc.PolicyID), esc(strings.Join(svc.Addresses, "\n")))
@@ -129,7 +129,7 @@ func pageServices(d Deps, selected string, create bool, message string, failed b
 		policies := append([]PolicyView(nil), v.Policies...)
 		sort.Slice(policies, func(i, j int) bool { return policies[i].ID < policies[j].ID })
 		for _, p := range policies {
-			fmt.Fprintf(&b, `<article class=policy-card><div class=policy-card-head><div><b class=mono>%s</b><span>%s</span></div><span class="badge intent">%s</span></div><div class=policy-card-servers><span>Eligible nodes</span><code>%s</code></div><div class=policy-card-meta><span><b>%d</b> max hops</span><span><b>%s</b> tuning</span><span><b>%s</b> window · %d samples</span><span><b>%s</b> fallback</span></div></article>`, esc(p.ID), esc(p.Name), esc(p.Objective), esc(strings.Join(p.AllowedServers, " · ")), p.MaxHops, esc(p.TuningPeriod), esc(p.Window), p.MinSamples, esc(p.Fallback))
+			fmt.Fprintf(&b, `<article class=policy-card><div class=policy-card-head><div><b class=mono>%s</b><span>%s</span></div><span class="badge intent">%s</span></div><div class=policy-card-servers><span>Eligible nodes</span><code>%s</code></div><div class=policy-card-meta><span><b>%d</b> max hops</span><span><b>%s</b> tuning</span><span><b>%s</b> window · %d samples</span><span><b>%s</b> fallback</span></div></article>`, esc(p.ID), esc(p.Name), esc(objectiveLabel(p.Objective)), esc(strings.Join(p.AllowedServers, " · ")), p.MaxHops, esc(p.TuningPeriod), esc(p.Window), p.MinSamples, esc(p.Fallback))
 		}
 	}
 	b.WriteString(`</div></details>`)
@@ -328,6 +328,9 @@ func writeNodeAddReview(b *strings.Builder, d Deps, review EnrollmentReview, key
 		}
 		b.WriteString(`</table>`)
 	}
+	if review.FixedPolicyID != "" {
+		fmt.Fprintf(b, `<div class="callout section"><b>Fixed exit policy added automatically</b><br><span class=small><code>%s</code> · %s · lowest latency (P50). The final egress is pinned to this node; secure credential provisioning activates it for access nodes.</span></div>`, esc(review.FixedPolicyID), esc(review.FixedPolicyName))
+	}
 	fmt.Fprintf(b, `</div><div class=section>
 <form class=blockform data-submit-progress method=post action="/nodes/add/commit">%s
 <div class=fields><div class="field span2"><label>Country</label><input class=mono name=country maxlength=2 pattern="[A-Za-z]{2}" value="%s" placeholder="HK"></div><div class="field span4"><label>City <span class=dim>(optional)</span></label><input name=city maxlength=80 value="%s" placeholder="e.g. Hong Kong"></div><div class="field span3"><label>Direction policy</label><select name=direction>%s</select></div><div class="field span3"><label>Effect</label><div class=callout>Recomputes the declaration; it cannot save SSOT.</div></div></div>
@@ -398,12 +401,46 @@ func policyOptions(policies []PolicyView, selected string) string {
 			attr = " selected"
 			found = true
 		}
-		fmt.Fprintf(&b, `<option value="%s"%s>%s · %s</option>`, esc(p.ID), attr, esc(p.ID), esc(p.Objective))
+		if p.AvailabilityKnown && !p.Available {
+			attr += " disabled"
+		}
+		fmt.Fprintf(&b, `<option value="%s"%s>%s</option>`, esc(p.ID), attr, esc(policyOptionLabel(p)))
 	}
 	if selected != "" && !found {
 		fmt.Fprintf(&b, `<option value="%s" selected>%s · submitted value</option>`, esc(selected), esc(selected))
 	}
 	return b.String()
+}
+
+func policyOptionLabel(p PolicyView) string {
+	name := p.Name
+	if name == "" {
+		name = p.ID
+	}
+	suffix := ""
+	if p.AvailabilityKnown && !p.Available {
+		suffix = " · credentials pending"
+	}
+	if p.EgressAxis == "any" {
+		return name + " · automatic egress · " + objectiveLabel(p.Objective) + suffix
+	}
+	if node, ok := strings.CutPrefix(p.EgressAxis, "pinned:"); ok && node != "" {
+		return name + " · fixed " + node + " · " + objectiveLabel(p.Objective) + suffix
+	}
+	return name + " · " + p.ID + " · " + objectiveLabel(p.Objective) + suffix
+}
+
+func objectiveLabel(objective string) string {
+	switch objective {
+	case "latency":
+		return "lowest latency (P50)"
+	case "stability":
+		return "tail stability (P95)"
+	case "throughput":
+		return "highest throughput"
+	default:
+		return objective
+	}
 }
 
 func serviceAddresses(raw string) []string {

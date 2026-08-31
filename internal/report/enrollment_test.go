@@ -217,7 +217,8 @@ func TestEnrollmentReviewAndCommitAreOneRevisionGuardedPlan(t *testing.T) {
 	}
 	if review.NodeID != "hk01" || review.PublicEndpoint != "edge.example.net" || review.Country != "HK" || review.City != "Hong Kong" ||
 		review.RequestedDirection != "automatic" || review.ResolvedDirection != string(model.ReverseOnly) ||
-		!review.EgressEnabled || len(review.Tunnels) != 4 {
+		!review.EgressEnabled || review.FixedPolicyID != "hk01-fixed" ||
+		review.FixedPolicyName != "固定Hong Kong出口" || len(review.Tunnels) != 4 {
 		t.Fatalf("unexpected review: %#v", review)
 	}
 	initialSum := sha256.Sum256(initial)
@@ -264,6 +265,10 @@ func TestEnrollmentReviewAndCommitAreOneRevisionGuardedPlan(t *testing.T) {
 		!node.Server.EgressCapable || node.Server.WGPublicKey != testWGPublicKey ||
 		node.PublicEndpoint != "edge.example.net" || node.SSHPort != 22 || node.Country != "HK" || node.City != "Hong Kong" {
 		t.Fatalf("committed node = %#v", node)
+	}
+	fixed := ssot.DeclarationByID()["hk01-fixed"]
+	if fixed == nil || fixed.PinnedEgress() != "hk01" || fixed.Objective != model.Latency {
+		t.Fatalf("committed fixed policy = %#v", fixed)
 	}
 }
 

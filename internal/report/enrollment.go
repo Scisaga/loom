@@ -230,7 +230,7 @@ func (b enrollmentBackend) review(ctx context.Context, input webui.EnrollmentRev
 	if err != nil {
 		return webui.EnrollmentReview{}, err
 	}
-	return webui.EnrollmentReview{
+	review := webui.EnrollmentReview{
 		Connection:              input.Connection,
 		HostKey:                 enrollmentHostKey(discovered.hostKey),
 		NodeID:                  discovered.nodeID,
@@ -254,7 +254,12 @@ func (b enrollmentBackend) review(ctx context.Context, input webui.EnrollmentRev
 		Revision:                b.revision(current),
 		EgressEnabled:           true,
 		Tunnels:                 tunnels,
-	}, nil
+	}
+	if plan.FixedPolicy != nil {
+		review.FixedPolicyID = plan.FixedPolicy.ID
+		review.FixedPolicyName = plan.FixedPolicy.Name
+	}
+	return review, nil
 }
 
 func (b enrollmentBackend) commit(ctx context.Context, input webui.EnrollmentCommitInput) (string, error) {

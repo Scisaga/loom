@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"loom/internal/model"
 	"loom/internal/render"
 	"loom/internal/secret"
 )
@@ -77,6 +78,14 @@ func cmdSecrets(args []string) error {
 				refs[r] = true
 			}
 		}
+		// Access.Credentials 表示这台接入节点已经被授权持有的完整集合。
+		// 某张凭据可能尚未被当前 Service/default 引用，因此不会出现在本轮
+		// 渲染文件里；但 Services UI 可以把规则切到这条声明。若 split 只扫
+		// 当前产物，保存合法选项后的下一份快照会因本机缺 secret ref 而无法
+		// hydrate。这里把所有有效授权（含轮换中的上一代）预置给凭据所有者。
+		for _, r := range accessCredentialRefs(s, b.Owner) {
+			refs[r] = true
+		}
 		// 形如 `<什么>/<节点 id>` 的引用归这个节点,**即使没有任何渲染产物
 		// 引用它**。中控界面的运维口令 `ui/access-a` 就是这种:它由本机 bootstrap
 		// 配置读取,不出现在任何渲染文件里。不认这条规则的话,每次重新拆分
@@ -124,6 +133,31 @@ func cmdSecrets(args []string) error {
 	}
 	fmt.Printf("\n→ %s\n每份只含该机器自己的凭据 —— 分发点和别的节点都看不到。\n", *out)
 	return nil
+}
+
+func accessCredentialRefs(s *model.SSOT, owner string) []string {
+	node := s.NodeByID()[owner]
+	if node == nil || !node.IsAccess() {
+		return nil
+	}
+	credentials := s.CredentialByID()
+	seen := map[string]bool{}
+	for _, id := range node.Access.Credentials {
+		credential, ok := credentials[id]
+		if !ok || credential.Revoked() {
+			continue
+		}
+		seen[credential.Ref()] = true
+		if credential.RotationPending() {
+			seen[credential.PrevRef()] = true
+		}
+	}
+	refs := make([]string, 0, len(seen))
+	for ref := range seen {
+		refs = append(refs, ref)
+	}
+	sort.Strings(refs)
+	return refs
 }
 
 func secretsUsage() error {

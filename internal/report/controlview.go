@@ -21,7 +21,7 @@ func enrichControlView(v *webui.View, s *model.SSOT, controlNode string) {
 	v.Candidates = candidatePaths(desired, v.Routes)
 	v.Links = topologyLinks(desired, v.Nodes)
 	v.Services = serviceViews(s)
-	v.Policies = policyViews(s)
+	v.Policies = policyViews(s, controlNode)
 	v.Ingresses = ingressViews(s)
 	enrichRouteScopes(v, s)
 }
@@ -111,7 +111,19 @@ func serviceViews(s *model.SSOT) []webui.ServiceView {
 	return out
 }
 
-func policyViews(s *model.SSOT) []webui.PolicyView {
+func policyViews(s *model.SSOT, controlNode string) []webui.PolicyView {
+	access := s.NodeByID()[controlNode]
+	authorized := map[string]bool{}
+	availabilityKnown := access != nil && access.IsAccess()
+	if availabilityKnown {
+		credentials := s.CredentialByID()
+		for _, credentialID := range access.Access.Credentials {
+			credential := credentials[credentialID]
+			if credential != nil && !credential.Revoked() && credential.Declaration != "" {
+				authorized[credential.Declaration] = true
+			}
+		}
+	}
 	out := make([]webui.PolicyView, 0, len(s.Declarations))
 	for i := range s.Declarations {
 		d := &s.Declarations[i]
@@ -122,8 +134,10 @@ func policyViews(s *model.SSOT) []webui.PolicyView {
 			RankingPeriod: d.RankingPeriod, TuningPeriod: d.TuningPeriod,
 			SwitchThreshold: d.SwitchThreshold, TopN: d.TopN,
 			Window: d.Window, MinSamples: d.MinSamples, StaleAfter: d.StaleAfter,
-			Fallback:       string(d.Fallback),
-			AllowedServers: append([]string(nil), d.AllowedServers...),
+			Fallback:          string(d.Fallback),
+			AvailabilityKnown: availabilityKnown,
+			Available:         authorized[d.ID],
+			AllowedServers:    append([]string(nil), d.AllowedServers...),
 		}
 		for _, c := range d.Constraints {
 			v.Constraints = append(v.Constraints, webui.ConstraintView{

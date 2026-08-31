@@ -22,11 +22,22 @@ func TestServicesPageExplainsRoutingFlowAndSeparatesWorkspacePanels(t *testing.T
 		`class="card service-editor"`,
 		`class=service-host-rules`,
 		`class=service-form-actions`,
+		`Operator-facing label used across the control center`,
+		`Fixed exit pins the final node; relay selection still minimizes latency, with threshold-based anti-flap`,
 		`class=service-danger`,
 		`class="card services-policy-library"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("Services workspace is missing %q", want)
+		}
+	}
+	for _, want := range []string{
+		`.service-primary-fields{display:grid;grid-template-columns:minmax(170px,.72fr) minmax(210px,1fr) minmax(230px,1.08fr);gap:12px;align-items:start}`,
+		`.service-primary-fields .field{grid-template-rows:auto 40px minmax(14px,auto);align-content:start}`,
+		`.service-primary-fields input,.service-primary-fields select,.service-primary-fields .readonly-value{width:100%;height:40px;min-height:40px}`,
+	} {
+		if !strings.Contains(style, want) {
+			t.Errorf("Services primary controls are missing alignment rule %q", want)
 		}
 	}
 
@@ -45,6 +56,33 @@ func TestServicesPageExplainsRoutingFlowAndSeparatesWorkspacePanels(t *testing.T
 	}
 	if strings.Contains(body, `<b>Ingress</b>`) {
 		t.Error("routing flow still presents ingress as part of the Service rule model")
+	}
+}
+
+func TestPolicyOptionsExposeAutomaticOrPinnedEgress(t *testing.T) {
+	options := policyOptions([]PolicyView{
+		{ID: "best-egress", Name: "最优出口", EgressAxis: "any", Objective: "latency"},
+		{ID: "de-fixed", Name: "固定德国出口", EgressAxis: "pinned:ber01", Objective: "stability"},
+		{ID: "sv-fixed", Name: "固定硅谷出口", EgressAxis: "pinned:sv01", Objective: "stability"},
+	}, "sv-fixed")
+	for _, want := range []string{
+		`最优出口 · automatic egress · lowest latency (P50)`,
+		`固定德国出口 · fixed ber01 · tail stability (P95)`,
+		`<option value="sv-fixed" selected>固定硅谷出口 · fixed sv01 · tail stability (P95)</option>`,
+	} {
+		if !strings.Contains(options, want) {
+			t.Errorf("policy options do not expose routing semantics %q: %s", want, options)
+		}
+	}
+}
+
+func TestPolicyOptionsDisablePoliciesNotAuthorizedOnControlAccessNode(t *testing.T) {
+	options := policyOptions([]PolicyView{{
+		ID: "new-edge-fixed", Name: "固定新出口", EgressAxis: "pinned:new-edge",
+		Objective: "latency", AvailabilityKnown: true,
+	}}, "")
+	if !strings.Contains(options, `<option value="new-edge-fixed" disabled>固定新出口 · fixed new-edge · lowest latency (P50) · credentials pending</option>`) {
+		t.Fatalf("unprovisioned policy remained selectable: %s", options)
 	}
 }
 
