@@ -57,14 +57,18 @@ func (e *Error) Error() string        { return e.Msg }
 func (e *Error) ProtocolCode() string { return string(e.Code) }
 
 type Client struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	Platform       string `json:"platform,omitempty"`
-	PublicKey      string `json:"public_key,omitempty"`
-	KeyFingerprint string `json:"key_fingerprint,omitempty"`
-	Status         string `json:"status"`
-	CreatedAt      string `json:"created_at"`
-	EnrolledAt     string `json:"enrolled_at,omitempty"`
+	ID                string   `json:"id"`
+	Name              string   `json:"name"`
+	Platform          string   `json:"platform,omitempty"`
+	PublicKey         string   `json:"public_key,omitempty"`
+	KeyFingerprint    string   `json:"key_fingerprint,omitempty"`
+	Status            string   `json:"status"`
+	CreatedAt         string   `json:"created_at"`
+	EnrolledAt        string   `json:"enrolled_at,omitempty"`
+	ProfileVersion    string   `json:"profile_version,omitempty"`
+	ProfileDigest     string   `json:"profile_digest,omitempty"`
+	Responsibilities  []string `json:"responsibilities,omitempty"`
+	DestinationGrants []string `json:"destination_grants,omitempty"`
 }
 
 type Invite struct {
@@ -81,7 +85,19 @@ type Invite struct {
 	// separate 0600 file. It exists only so the authenticated UI can render or
 	// download the invitation after the create POST; claim lookup still uses the
 	// one-way hash above. It is erased as soon as the invite is consumed.
-	SealedToken string `json:"sealed_token,omitempty"`
+	SealedToken    string `json:"sealed_token,omitempty"`
+	ProfileVersion string `json:"profile_version,omitempty"`
+	ProfileDigest  string `json:"profile_digest,omitempty"`
+}
+
+// ProfileAssignment is the immutable expansion pinned when an invitation is
+// created. The registry stores the reference, digest and expanded values so a
+// later SSOT edit cannot silently broaden a pending Device.
+type ProfileAssignment struct {
+	Version           string
+	Digest            string
+	Responsibilities  []string
+	DestinationGrants []string
 }
 
 type CreateResult struct {
@@ -178,9 +194,16 @@ func (s Store) List() ([]Client, []Invite, error) {
 }
 
 func (s Store) Create(name string) (CreateResult, error) {
+	return s.CreateWithProfile(name, ProfileAssignment{})
+}
+
+func (s Store) CreateWithProfile(name string, profile ProfileAssignment) (CreateResult, error) {
 	s = s.defaults()
 	name = strings.TrimSpace(name)
 	if err := validName(name); err != nil {
+		return CreateResult{}, err
+	}
+	if err := validProfileAssignment(profile); err != nil {
 		return CreateResult{}, err
 	}
 	if s.TTL < time.Minute || s.TTL > 24*time.Hour {
@@ -197,10 +220,14 @@ func (s Store) Create(name string) (CreateResult, error) {
 	now := s.Now().UTC().Truncate(time.Second)
 	client := Client{
 		Name: name, Status: "pending", CreatedAt: now.Format(time.RFC3339),
+		ProfileVersion: profile.Version, ProfileDigest: profile.Digest,
+		Responsibilities:  append([]string(nil), profile.Responsibilities...),
+		DestinationGrants: append([]string(nil), profile.DestinationGrants...),
 	}
 	invite := Invite{
 		ID: inviteID, TokenHash: sha256Hex(token),
 		CreatedAt: now.Format(time.RFC3339), ExpiresAt: now.Add(s.TTL).Format(time.RFC3339),
+		ProfileVersion: profile.Version, ProfileDigest: profile.Digest,
 	}
 	err = s.withLock(true, func(st *fileState) error {
 		for attempt := 0; attempt < 8; attempt++ {
@@ -238,6 +265,41 @@ func (s Store) Create(name string) (CreateResult, error) {
 		return CreateResult{}, err
 	}
 	return CreateResult{Client: client, Invite: invite, Token: token}, nil
+}
+
+func validProfileAssignment(profile ProfileAssignment) error {
+	if profile.Version == "" && profile.Digest == "" && len(profile.Responsibilities) == 0 && len(profile.DestinationGrants) == 0 {
+		return nil // compatibility for identity-only records created by older callers
+	}
+	if strings.TrimSpace(profile.Version) != profile.Version || profile.Version == "" || len(profile.Version) > 128 {
+		return &Error{Code: CodeInvalid, Msg: "profile_version is missing or malformed"}
+	}
+	digest, err := hex.DecodeString(profile.Digest)
+	if err != nil || len(digest) != sha256.Size {
+		return &Error{Code: CodeInvalid, Msg: "profile_digest must be a SHA-256 hex digest"}
+	}
+	for _, list := range []struct {
+		field  string
+		values []string
+	}{
+		{field: "responsibilities", values: profile.Responsibilities},
+		{field: "destination_grants", values: profile.DestinationGrants},
+	} {
+		field, values := list.field, list.values
+		if len(values) > 256 {
+			return &Error{Code: CodeInvalid, Msg: field + " contains too many entries"}
+		}
+		seen := map[string]bool{}
+		previous := ""
+		for _, value := range values {
+			if value == "" || strings.TrimSpace(value) != value || len(value) > 128 || seen[value] || (previous != "" && value < previous) {
+				return &Error{Code: CodeInvalid, Msg: field + " must contain unique, sorted, non-empty values"}
+			}
+			seen[value] = true
+			previous = value
+		}
+	}
+	return nil
 }
 
 func (s Store) Claim(input ClaimInput) (ClaimResult, error) {

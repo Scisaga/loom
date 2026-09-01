@@ -205,7 +205,9 @@ go test ./internal/render/ -run TestGolden -update
 ## 深入阅读
 
 - [设计文档](docs/design.md)：模型、不变量、数据平面、控制平面与部署顺序。
+- [Device 生命周期与交付架构](docs/device-lifecycle-and-delivery.md)：统一 Device、Enrollment、授权边界、版本化对象图与分阶段迁移。
 - [客户端接入设计](docs/client-access.md)：Windows、Linux Server、Android 的单入口、设备默认出口、注册、分发与升级边界。
+- [Local Network 目标设计](docs/local-network.md)：具名局域网、重复 CIDR、显式 TCP/UDP 访问及 SSOT/授权边界；当前尚未实现。
 - [Linux 客户端安装](docs/linux-client-install.md)：从中控创建邀请、下载并校验分发包、完成首次签名拉取。
 - [决策记录](docs/decisions.md)：重要设计选择、被推翻的假设及其证据。
 - [参考 SSOT](testdata/matrix/ssot.yaml)：覆盖方向约束、双轴选择、服务契约与多平台接入的合成示例。

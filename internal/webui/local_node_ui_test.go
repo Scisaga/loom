@@ -32,7 +32,7 @@ func TestLocalNodeUIUsesDiagnosticNavigationAndHeadings(t *testing.T) {
 		nav := primaryNavFragment(t, body)
 		for _, want := range []string{
 			`href="/">Local overview</a>`,
-			`href="/nodes/n1">This node</a>`,
+			`href="/nodes/n1">This device</a>`,
 			`href="/topology">Topology</a>`,
 			`href="/routing">Live paths</a>`,
 		} {
@@ -86,7 +86,7 @@ func TestControlNodeKeepsFullControlNavigation(t *testing.T) {
 	body := get(t, Handler(d), "/", nil).Body.String()
 	nav := primaryNavFragment(t, body)
 	for _, want := range []string{
-		`href="/">Overview</a>`, `href="/nodes">Nodes</a>`,
+		`href="/">Overview</a>`, `href="/devices">Devices</a>`,
 		`href="/topology">Topology</a>`, `href="/services">Services</a>`,
 		`data-label="Network"`, `data-label="Traffic"`, `data-label="Operations"`, `data-label="Advanced"`,
 		`href="/routing">Live paths</a>`, `href="/deployments">Deployments</a>`,

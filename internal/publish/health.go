@@ -51,6 +51,20 @@ type Health struct {
 	// LastError 是最近一次失败,**成功不清空**(见类型注释)。
 	LastError   string `json:"last_error,omitempty"`
 	LastErrorAt string `json:"last_error_at,omitempty"`
+
+	// DistributionChecks are exact, per-URL VerifyServed results for the most
+	// recent publish attempt. Enrollment consumes only successful checks bound
+	// to the same snapshot and SSOT; aggregate publisher health is insufficient.
+	DistributionChecks []DistributionCheck `json:"distribution_checks,omitempty"`
+}
+
+type DistributionCheck struct {
+	URL       string `json:"url"`
+	Snapshot  string `json:"snapshot"`
+	SSOT      string `json:"ssot"`
+	CheckedAt string `json:"checked_at"`
+	Success   bool   `json:"success"`
+	Error     string `json:"error,omitempty"`
 }
 
 // Write 原子写:先写临时文件再 rename。读的人要么看到旧的完整版本,

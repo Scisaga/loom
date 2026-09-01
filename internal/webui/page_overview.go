@@ -145,7 +145,7 @@ func writeOverviewAttentionSummary(b *strings.Builder, problems, unknown int, pr
 	if len(unknownNodes) > 0 {
 		fmt.Fprintf(b, `<span>等待上报：<span class=mono>%s</span></span>`, esc(strings.Join(unknownNodes, " · ")))
 	}
-	b.WriteString(`</div></div><span class=status-alert-note>` + esc(note) + ` <a href="/nodes">查看节点详情 →</a></span></aside>`)
+	b.WriteString(`</div></div><span class=status-alert-note>` + esc(note) + ` <a href="/devices">查看设备详情 →</a></span></aside>`)
 }
 
 func overviewFleetConverged(v View) bool {
@@ -353,7 +353,7 @@ func overviewNodeTrafficTotals(v View) map[string]overviewNodeTraffic {
 
 func writeOverviewNodesCompact(b *strings.Builder, v View, now time.Time) {
 	totals := overviewNodeTrafficTotals(v)
-	b.WriteString(`<section class="card overview-list-card"><div class=sectionhead><h2>Nodes</h2><span class="tiny ok">24h trusted adjacent-sample deltas</span><a class="sp tiny" href="/nodes">All nodes →</a></div><table><thead><tr><th>Name<th>Location<th>Status<th>WG RX / TX · 24h<th>Last seen</tr></thead><tbody>`)
+	b.WriteString(`<section class="card overview-list-card"><div class=sectionhead><h2>Network devices</h2><span class="tiny ok">24h trusted adjacent-sample deltas</span><a class="sp tiny" href="/devices">All devices →</a></div><table><thead><tr><th>Name<th>Location<th>Status<th>WG RX / TX · 24h<th>Last seen</tr></thead><tbody>`)
 	shown := 0
 	for _, node := range overviewOrderedNodes(v) {
 		if shown == 5 {

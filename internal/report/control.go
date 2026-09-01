@@ -49,6 +49,10 @@ type Control struct {
 	// ClientLinuxPackagePath is the locally published, signed Linux bootstrap
 	// archive exposed by the authenticated Clients page.
 	ClientLinuxPackagePath string `json:"client_linux_package_path,omitempty"`
+	// ClientPublicBaseURL is the deployment-owned HTTPS directory that exposes
+	// only generic bootstrap artifacts and install.sh. It is never inferred from
+	// an HTTP Host header and contains no invitation or Device configuration.
+	ClientPublicBaseURL string `json:"client_public_base_url,omitempty"`
 
 	// DistributionURL / DNS 用来回答"发布器跟上我这次改动了吗"。
 	//
@@ -93,6 +97,11 @@ func LoadControl(path string) (*Control, string, error) {
 	if c.ClientEnrollmentURL != "" {
 		if _, err := validClientEnrollmentURL(c.ClientEnrollmentURL); err != nil {
 			return &c, "", fmt.Errorf("%s client_enrollment_url 无效:%w", path, err)
+		}
+	}
+	if c.ClientPublicBaseURL != "" {
+		if _, err := validClientPublicBaseURL(c.ClientPublicBaseURL); err != nil {
+			return &c, "", fmt.Errorf("%s client_public_base_url 无效:%w", path, err)
 		}
 	}
 

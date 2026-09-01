@@ -71,6 +71,27 @@ func TestClientAPIUsesSameTrustedRuntimeMergeAsHTML(t *testing.T) {
 	}
 }
 
+func TestDeviceAPIIsCanonicalAndDoesNotRequireCompatibilityAlias(t *testing.T) {
+	d := Deps{
+		Operator: "operator-secret",
+		Now:      func() time.Time { return time.Unix(1_700_000_000, 0) },
+		Snapshot: func() View { return View{} },
+		Control: &ControlDeps{Devices: &ClientControlDeps{List: func() (ClientInventory, error) {
+			return ClientInventory{Clients: []ClientView{{
+				ID: "device-one", Name: "Device one", Status: "ready", Membership: "member",
+			}}}, nil
+		}}},
+	}
+
+	request := authenticatedJSONRequest(t, d, http.MethodGet, "/api/control/devices", "")
+	Handler(d).ServeHTTP(request.recorder, request.request)
+	if request.recorder.Code != http.StatusOK ||
+		!strings.Contains(request.recorder.Body.String(), `"devices":[{"id":"device-one"`) ||
+		strings.Contains(request.recorder.Body.String(), `"clients"`) {
+		t.Fatalf("canonical device API = %d body=%s", request.recorder.Code, request.recorder.Body.String())
+	}
+}
+
 func TestClientAPIBoundsOperatorAndPublicClaimSurfaces(t *testing.T) {
 	d := Deps{
 		Operator: "operator-secret",

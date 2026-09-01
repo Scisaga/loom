@@ -12,6 +12,12 @@ import (
 func clientUIDeps() Deps {
 	d := misakaDeps()
 	d.Control.Clients = &ClientControlDeps{
+		EnrollmentProfile: func() (DeviceEnrollmentProfileView, error) {
+			return DeviceEnrollmentProfileView{
+				Version: "standard-device@v1", Responsibilities: []string{"use_loom"},
+				DestinationGrants: []string{"best-egress", "sg-fixed"},
+			}, nil
+		},
 		List: func() (ClientInventory, error) {
 			return ClientInventory{
 				Clients: []ClientView{
@@ -25,7 +31,7 @@ func clientUIDeps() Deps {
 		LinuxPackage: func() (LinuxClientPackageView, error) {
 			return LinuxClientPackageView{
 				Filename: "loom-client-linux-amd64.tar.gz",
-				URL:      "/clients/download/linux-amd64",
+				URL:      "/devices/download/linux-amd64",
 				SHA256:   "0123456789abcdef",
 				Version:  "v1.0.0",
 				Arch:     "linux/amd64",
@@ -39,13 +45,13 @@ func TestClientsPageSeparatesRegistrationFromRuntimeHealth(t *testing.T) {
 	d := clientUIDeps()
 	body := pageClients(d, clientPageState{}, true)
 	for _, want := range []string{
-		`href="/clients?new=1"`,
+		`href="/devices?new=1"`,
 		`Build server`, `client-linux01`, `Provisioning`,
 		`Phone`, `Pending claim`, `Not reported`,
 		`data: not reported · config: not issued`,
-		`Registration state is not tunnel health or proof of traffic.`,
+		`Identity, desired membership and runtime evidence remain separate facts.`,
 		`1 unconsumed invitations`,
-		`href="/clients/download/linux-amd64"`,
+		`href="/devices/download/linux-amd64"`,
 		`loom-client-linux-amd64.tar.gz`,
 		`sudo ./install.sh --invite-file ../client.loom-invite`,
 		`127.0.0.1:1080`,
@@ -136,8 +142,8 @@ func TestClientInvitationShowsRealQRResourceAndLinuxLink(t *testing.T) {
 	}
 	body := pageClients(d, clientPageState{Invite: &invite}, true)
 	for _, want := range []string{
-		`src="/api/control/client-invites/invite-123/qr.png"`,
-		`href="/api/control/client-invites/invite-123/download"`,
+		`src="/api/control/device-invites/invite-123/qr.png"`,
+		`href="/api/control/device-invites/invite-123/download"`,
 		`alt="Enrollment QR code for client-linux01"`,
 		`value="loom://enroll#opaque-short-lived-payload"`,
 		`Invitation ready`,
@@ -146,8 +152,8 @@ func TestClientInvitationShowsRealQRResourceAndLinuxLink(t *testing.T) {
 		`sudo ./install.sh --no-enroll`,
 		`sudo /usr/local/bin/loom client enroll -stdin`,
 		`press <kbd>Enter</kbd>, then <kbd>Ctrl-D</kbd>`,
-		`method=get action="/clients"`,
-		`Back to client list`,
+		`method=get action="/devices"`,
+		`Back to Device list`,
 		`normal reconnects, restarts and configuration updates do not register the device again`,
 	} {
 		if !strings.Contains(body, want) {
@@ -169,9 +175,10 @@ func TestAddClientDoesNotAskForPlatformOrRoute(t *testing.T) {
 	d := clientUIDeps()
 	body := pageClients(d, clientPageState{Create: true}, true)
 	for _, want := range []string{
-		`action="/clients/create"`, `name=name`, `Display name`,
-		`The client reports its supported platform`,
-		`Do not enter a platform, exit node or route`,
+		`action="/devices/create"`, `name=name`, `Display name`,
+		`The installed client reports its supported platform`,
+		`Platform, endpoint and route are discovered or assigned after identity claim.`,
+		`standard-device@v1`, `use_loom`, `best-egress · sg-fixed`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("Add client page missing %q", want)
@@ -210,7 +217,7 @@ func TestInvitationDoesNotPresentUnrunnableLinuxCommandsWithoutPackage(t *testin
 		InviteURI: "loom://enroll#blocked", ExpiresAt: "2026-08-31T10:15:00Z",
 	}
 	body := pageClients(d, clientPageState{Invite: &invite}, true)
-	for _, want := range []string{"Linux package unavailable", "artifact not published", "Back to client list"} {
+	for _, want := range []string{"Linux package unavailable", "artifact not published", "Back to Device list"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing-package invitation state omits %q", want)
 		}
@@ -222,10 +229,10 @@ func TestInvitationDoesNotPresentUnrunnableLinuxCommandsWithoutPackage(t *testin
 	}
 }
 
-func TestClientsNavigationIsControlOnly(t *testing.T) {
-	control := shell(clientUIDeps(), "Clients", "", false)
-	if !strings.Contains(control, `data-key=clients class=active href="/clients">Clients</a>`) {
-		t.Fatal("control navigation is missing the active Clients entry")
+func TestDevicesNavigationIsControlOnly(t *testing.T) {
+	control := shell(clientUIDeps(), "Devices", "", false)
+	if !strings.Contains(control, `data-key=devices class=active href="/devices">Devices</a>`) {
+		t.Fatal("control navigation is missing the active Devices entry")
 	}
 	local := clientUIDeps()
 	local.Control = nil
@@ -254,12 +261,12 @@ func TestClientEnrollmentUIAndInvitationArtifacts(t *testing.T) {
 		}, nil
 	}
 
-	created := misakaRequest(t, d, http.MethodPost, "/clients/create", url.Values{"name": {"Build server"}}, true)
+	created := misakaRequest(t, d, http.MethodPost, "/devices/create", url.Values{"name": {"Build server"}}, true)
 	if created.Code != http.StatusSeeOther {
-		t.Fatalf("POST /clients/create = %d; body=%s", created.Code, created.Body.String())
+		t.Fatalf("POST /devices/create = %d; body=%s", created.Code, created.Body.String())
 	}
-	if got := created.Header().Get("Location"); got != "/clients/invites/invite-ui" {
-		t.Fatalf("POST /clients/create location = %q, want invitation result GET", got)
+	if got := created.Header().Get("Location"); got != "/devices/invites/invite-ui" {
+		t.Fatalf("POST /devices/create location = %q, want invitation result GET", got)
 	}
 	if got := created.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("POST /clients/create Cache-Control = %q, want no-store", got)
@@ -267,8 +274,8 @@ func TestClientEnrollmentUIAndInvitationArtifacts(t *testing.T) {
 	if strings.Contains(created.Body.String(), "real-short-lived-payload") {
 		t.Fatal("create redirect leaked the bearer invitation in its response body")
 	}
-	unauthenticatedCreate := misakaRequest(t, d, http.MethodPost, "/clients/create", url.Values{"name": {"Other"}}, false)
-	if unauthenticatedCreate.Code != http.StatusSeeOther || unauthenticatedCreate.Header().Get("Location") != loginURL("/clients?new=1") || createdInvites != 1 {
+	unauthenticatedCreate := misakaRequest(t, d, http.MethodPost, "/devices/create", url.Values{"name": {"Other"}}, false)
+	if unauthenticatedCreate.Code != http.StatusSeeOther || unauthenticatedCreate.Header().Get("Location") != loginURL("/devices?new=1") || createdInvites != 1 {
 		t.Fatalf("unauthenticated create = %d location=%q calls=%d", unauthenticatedCreate.Code, unauthenticatedCreate.Header().Get("Location"), createdInvites)
 	}
 	unauthenticatedResult := misakaRequest(t, d, http.MethodGet, created.Header().Get("Location"), nil, false)
@@ -283,12 +290,12 @@ func TestClientEnrollmentUIAndInvitationArtifacts(t *testing.T) {
 	if got := result.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("GET invitation result Cache-Control = %q, want no-store", got)
 	}
-	for _, want := range []string{"Build server", `/api/control/client-invites/invite-ui/qr.png`, `loom://enroll#real-short-lived-payload`} {
+	for _, want := range []string{"Build server", `/api/control/device-invites/invite-ui/qr.png`, `loom://enroll#real-short-lived-payload`} {
 		if !strings.Contains(result.Body.String(), want) {
 			t.Errorf("created invitation page missing %q", want)
 		}
 	}
-	for _, want := range []string{`method=get action="/clients"`, `Back to client list`, `loom client enroll -stdin`, `Ctrl-D`} {
+	for _, want := range []string{`method=get action="/devices"`, `Back to Device list`, `loom client enroll -stdin`, `Ctrl-D`} {
 		if !strings.Contains(result.Body.String(), want) {
 			t.Errorf("invitation result missing return/setup control %q", want)
 		}
@@ -297,23 +304,39 @@ func TestClientEnrollmentUIAndInvitationArtifacts(t *testing.T) {
 	if refreshed.Code != http.StatusOK || createdInvites != 1 {
 		t.Fatalf("refresh result=%d create calls=%d; result refresh must not create another invitation", refreshed.Code, createdInvites)
 	}
-	list := misakaRequest(t, d, http.MethodGet, "/clients", nil, true)
+	list := misakaRequest(t, d, http.MethodGet, "/devices", nil, true)
 	if list.Code != http.StatusOK || list.Header().Get("Cache-Control") != "no-store" ||
 		strings.Contains(list.Body.String(), "real-short-lived-payload") {
-		t.Fatalf("Done target /clients = %d headers=%v; list must be no-store and contain no invitation secret", list.Code, list.Header())
+		t.Fatalf("Done target /devices = %d headers=%v; list must be no-store and contain no invitation secret", list.Code, list.Header())
 	}
 
-	qr := misakaRequest(t, d, http.MethodGet, "/api/control/client-invites/invite-ui/qr.png", nil, true)
+	qr := misakaRequest(t, d, http.MethodGet, "/api/control/device-invites/invite-ui/qr.png", nil, true)
 	if qr.Code != http.StatusOK || qr.Header().Get("Content-Type") != "image/png" || !strings.HasPrefix(qr.Body.String(), "\x89PNG\r\n\x1a\n") {
 		t.Fatalf("QR resource is not a PNG: status=%d content-type=%q prefix=%q", qr.Code, qr.Header().Get("Content-Type"), qr.Body.Bytes()[:min(len(qr.Body.Bytes()), 8)])
 	}
-	download := misakaRequest(t, d, http.MethodGet, "/api/control/client-invites/invite-ui/download", nil, true)
+	download := misakaRequest(t, d, http.MethodGet, "/api/control/device-invites/invite-ui/download", nil, true)
 	if download.Code != http.StatusOK || strings.TrimSpace(download.Body.String()) != "loom://enroll#real-short-lived-payload" ||
 		!strings.Contains(download.Header().Get("Content-Disposition"), "client.loom-invite") {
 		t.Fatalf("invitation download = %d headers=%v body=%q", download.Code, download.Header(), download.Body.String())
 	}
-	unauthorized := misakaRequest(t, d, http.MethodGet, "/api/control/client-invites/invite-ui/download", nil, false)
+	unauthorized := misakaRequest(t, d, http.MethodGet, "/api/control/device-invites/invite-ui/download", nil, false)
 	if unauthorized.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthorized invitation download = %d, want 401", unauthorized.Code)
+	}
+}
+
+func TestLegacyProductEntrypointsConvergeOnDevices(t *testing.T) {
+	d := Deps{Snapshot: func() View { return View{} }}
+	for _, test := range []struct {
+		path string
+		want string
+	}{
+		{path: "/clients?new=1", want: "/devices?new=1"},
+		{path: "/nodes/add", want: "/devices?legacy=ssh"},
+	} {
+		response := misakaRequest(t, d, http.MethodGet, test.path, nil, false)
+		if response.Code != http.StatusPermanentRedirect || response.Header().Get("Location") != test.want {
+			t.Errorf("GET %s = %d location=%q, want 308 to %q", test.path, response.Code, response.Header().Get("Location"), test.want)
+		}
 	}
 }

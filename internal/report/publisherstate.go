@@ -26,11 +26,21 @@ type PublisherState struct {
 	// 循环周期判断心跳，而不是另造一个固定阈值。
 	IntervalSeconds int64 `json:"interval_seconds,omitempty"`
 
-	LastSuccess  string `json:"last_success,omitempty"`
-	LastSnapshot string `json:"last_snapshot,omitempty"`
-	LastSSOT     string `json:"last_ssot,omitempty"`
-	LastError    string `json:"last_error,omitempty"`
-	LastErrorAt  string `json:"last_error_at,omitempty"`
+	LastSuccess        string                       `json:"last_success,omitempty"`
+	LastSnapshot       string                       `json:"last_snapshot,omitempty"`
+	LastSSOT           string                       `json:"last_ssot,omitempty"`
+	LastError          string                       `json:"last_error,omitempty"`
+	LastErrorAt        string                       `json:"last_error_at,omitempty"`
+	DistributionChecks []PublisherDistributionCheck `json:"distribution_checks,omitempty"`
+}
+
+type PublisherDistributionCheck struct {
+	URL       string `json:"url"`
+	Snapshot  string `json:"snapshot"`
+	SSOT      string `json:"ssot"`
+	CheckedAt string `json:"checked_at"`
+	Success   bool   `json:"success"`
+	Error     string `json:"error,omitempty"`
 }
 
 func (p *PublisherState) Unhealthy(now time.Time) bool {

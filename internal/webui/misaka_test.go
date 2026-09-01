@@ -293,7 +293,7 @@ func misakaEnrollmentDeps() (*NodeEnrollmentDeps, *[]EnrollmentConnection, *[]En
 func TestMisakaRoutesAndNavigationContract(t *testing.T) {
 	d := misakaDeps()
 	for _, target := range []string{
-		"/nodes", "/nodes/jm24", "/topology", "/services", "/routing",
+		"/devices", "/nodes", "/nodes/jm24", "/topology", "/services", "/routing",
 		"/deployments", "/events", "/settings",
 	} {
 		t.Run(strings.TrimPrefix(target, "/"), func(t *testing.T) {
@@ -310,11 +310,11 @@ func TestMisakaRoutesAndNavigationContract(t *testing.T) {
 		}
 	}
 
-	body := misakaRequest(t, d, http.MethodGet, "/nodes", nil, false).Body.String()
+	body := misakaRequest(t, d, http.MethodGet, "/devices", nil, false).Body.String()
 	for _, want := range []string{
 		`<header class=header>`, `<nav class=nav`, `<span>LOOM</span>`,
 		`<link rel=icon href="/favicon.svg?v=9" type="image/svg+xml">`,
-		`href="/"`, `href="/nodes"`, `href="/topology"`, `href="/services"`,
+		`href="/"`, `href="/devices"`, `href="/topology"`, `href="/services"`,
 		`href="/routing"`, `href="/deployments"`, `href="/events"`, `href="/settings"`,
 		`--font-mono:"SFMono-Regular"`, `font-weight:400;font-synthesis:none`, `.navgroup{display:contents}`,
 		`.nav a.active:after{transform:scaleX(1)}`, `@keyframes loom-page-in`,
@@ -335,7 +335,7 @@ func TestMisakaRoutesAndNavigationContract(t *testing.T) {
 			t.Errorf("self-contained navigation contains forbidden %q", forbidden)
 		}
 	}
-	if csp := misakaRequest(t, d, http.MethodGet, "/nodes", nil, false).Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "img-src 'self' data:") {
+	if csp := misakaRequest(t, d, http.MethodGet, "/devices", nil, false).Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "img-src 'self' data:") {
 		t.Fatalf("CSP no longer enforces self-contained pages: %q", csp)
 	}
 }
@@ -562,9 +562,9 @@ func TestMisakaNodeEnrollmentStartsWithOnlySSHCoordinates(t *testing.T) {
 	d := misakaDeps()
 	d.Control.Enrollment, _, _, _ = misakaEnrollmentDeps()
 
-	w := misakaRequest(t, d, http.MethodGet, "/nodes/add", nil, true)
+	w := misakaRequest(t, d, http.MethodGet, "/devices?legacy=ssh", nil, true)
 	if w.Code != http.StatusOK {
-		t.Fatalf("GET /nodes/add = %d; body=%s", w.Code, w.Body.String())
+		t.Fatalf("GET /devices?legacy=ssh = %d; body=%s", w.Code, w.Body.String())
 	}
 	body := w.Body.String()
 	for _, want := range []string{
@@ -664,7 +664,7 @@ func TestMisakaNodeEnrollmentPOSTsRequireAuthentication(t *testing.T) {
 	for target, form := range forms {
 		t.Run(strings.TrimPrefix(target, "/nodes/add/"), func(t *testing.T) {
 			w := misakaRequest(t, d, http.MethodPost, target, form, false)
-			if w.Code != http.StatusSeeOther || w.Header().Get("Location") != loginURL("/nodes/add") {
+			if w.Code != http.StatusSeeOther || w.Header().Get("Location") != loginURL("/devices?legacy=ssh") {
 				t.Fatalf("unauthenticated POST %s = %d location %q, want safe login return to Add node", target, w.Code, w.Header().Get("Location"))
 			}
 		})

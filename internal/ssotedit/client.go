@@ -19,6 +19,10 @@ import (
 type ClientInput struct {
 	ID, Name string
 	Platform model.Platform
+	// DestinationGrants is the immutable ProfileVersion expansion. Nil keeps
+	// the historical all-from_request shape only for validating already-managed
+	// legacy clients; new Enrollment must always pass an explicit non-empty set.
+	DestinationGrants []string
 }
 
 // ClientPlan 描述将写入 SSOT 的纯声明结果。秘密值不属于这个包；调用方必须
@@ -38,9 +42,9 @@ type clientShape struct {
 	mixedPorts         []model.MixedPort
 }
 
-// AddAccessClient 为一台客户端生成完整且可发布的 SSOT 候选，但不修改输入或
-// 外部文件。客户端获得所有 from_request 声明的独立凭据，从而能表达 Auto 与
-// 任一固定出口；路径候选仍完全由现有声明和 Agent 生成。
+// AddAccessClient 为一台 Device 生成完整且可发布的 SSOT 候选，但不修改输入或
+// 外部文件。新 Enrollment 只为 ProfileVersion 明确展开的 DestinationGrants
+// 生成独立凭据；nil grants 仅用于验证旧客户端的历史全量形状。
 func AddAccessClient(content []byte, input ClientInput) (ClientPlan, error) {
 	input.ID = strings.TrimSpace(input.ID)
 	input.Name = strings.TrimSpace(input.Name)
@@ -212,15 +216,28 @@ func expectedClientShape(s *model.SSOT, input ClientInput) (clientShape, error) 
 	if input.Platform != model.LinuxServer {
 		return zero, fmt.Errorf("client platform %q is not delivered; v1 only supports linux-server", input.Platform)
 	}
-	declarationIDs := make([]string, 0, len(s.Declarations))
-	for i := range s.Declarations {
-		if s.Declarations[i].AddressFromRequest() {
-			declarationIDs = append(declarationIDs, s.Declarations[i].ID)
+	declarationIDs := append([]string(nil), input.DestinationGrants...)
+	if input.DestinationGrants == nil {
+		declarationIDs = declarationIDs[:0]
+		for i := range s.Declarations {
+			if s.Declarations[i].AddressFromRequest() {
+				declarationIDs = append(declarationIDs, s.Declarations[i].ID)
+			}
 		}
 	}
 	sort.Strings(declarationIDs)
 	if len(declarationIDs) == 0 {
-		return zero, errors.New("SSOT has no from_request access declaration for a client")
+		return zero, errors.New("client profile grants no from_request access declaration")
+	}
+	declarations := s.DeclarationByID()
+	for i, declarationID := range declarationIDs {
+		if i > 0 && declarationID == declarationIDs[i-1] {
+			return zero, fmt.Errorf("client profile repeats destination grant %q", declarationID)
+		}
+		declaration := declarations[declarationID]
+		if declaration == nil || !declaration.AddressFromRequest() {
+			return zero, fmt.Errorf("client profile destination grant %q is not a current from_request declaration", declarationID)
+		}
 	}
 	shape := clientShape{declarationIDs: declarationIDs}
 	for i, declarationID := range declarationIDs {
@@ -231,7 +248,7 @@ func expectedClientShape(s *model.SSOT, input ClientInput) (clientShape, error) 
 		}
 	}
 	if len(s.Services) > 0 {
-		shape.defaultDeclaration = automaticDefault(s)
+		shape.defaultDeclaration = automaticDefault(s, declarationIDs)
 		shape.mixedPorts = []model.MixedPort{{Port: 1080, Services: true}}
 	}
 	return shape, nil
@@ -250,11 +267,15 @@ func clientMixedPort(port int, declaration string, services bool) *yaml.Node {
 	return mixedPort
 }
 
-func automaticDefault(s *model.SSOT) string {
+func automaticDefault(s *model.SSOT, granted []string) string {
+	allowed := make(map[string]bool, len(granted))
+	for _, id := range granted {
+		allowed[id] = true
+	}
 	var matches []string
 	for i := range s.Declarations {
 		d := &s.Declarations[i]
-		if !d.AddressFromRequest() || d.EgressAxis != model.EgressAny {
+		if !allowed[d.ID] || !d.AddressFromRequest() || d.EgressAxis != model.EgressAny {
 			continue
 		}
 		matches = append(matches, d.ID)

@@ -28,7 +28,7 @@ a{color:inherit;text-decoration:none;transition:color .14s ease}a:hover{color:va
 .app{min-height:100vh}.header{height:50px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:stretch;padding:0 20px;gap:20px;position:sticky;top:0;z-index:4}
 .brand{display:flex;align-items:center;gap:9px;flex:0 0 253px;font-size:17px;font-weight:760;letter-spacing:.09em;white-space:nowrap}.brandmark{width:34px;height:34px;color:#252927}.brandmark path{fill:currentColor}
 .role{font-size:10px;color:var(--dim);font-weight:550;letter-spacing:.08em;text-transform:uppercase}.nav{display:flex;align-items:stretch;gap:0;min-width:0;overflow-x:auto;scrollbar-width:none}.nav::-webkit-scrollbar{display:none}.nav a{position:relative;display:flex;align-items:center;gap:7px;padding:0 10px;color:var(--dim);white-space:nowrap;font-size:13px;transition:color .14s ease,background-color .14s ease}.nav a:after{content:"";position:absolute;right:8px;bottom:0;left:8px;height:2px;background:var(--ok);transform:scaleX(0);transform-origin:center;transition:transform .18s ease}.nav a:before{content:"";width:14px;height:14px;flex:0 0 auto;background:50%/14px 14px no-repeat;transition:filter .14s ease}.nav a[data-key=overview]:before{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%237d8280' stroke-width='1.35'%3E%3Crect x='1.5' y='1.5' width='5' height='5' rx='1'/%3E%3Crect x='9.5' y='1.5' width='5' height='5' rx='1'/%3E%3Crect x='1.5' y='9.5' width='5' height='5' rx='1'/%3E%3Crect x='9.5' y='9.5' width='5' height='5' rx='1'/%3E%3C/svg%3E")}.nav a[data-key=nodes]:before{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%237d8280' stroke-width='1.35'%3E%3Crect x='2' y='2' width='12' height='5' rx='1.4'/%3E%3Crect x='2' y='9' width='12' height='5' rx='1.4'/%3E%3C/svg%3E")}.nav a[data-key=topology]:before{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%237d8280' stroke-width='1.35'%3E%3Cpath d='M4.2 4.2L8 8m3.8-3.8L8 8m0 0v4.4'/%3E%3Ccircle cx='3' cy='3' r='1.8'/%3E%3Ccircle cx='13' cy='3' r='1.8'/%3E%3Ccircle cx='8' cy='13.5' r='1.8'/%3E%3C/svg%3E")}.nav a[data-key=services]:before{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%237d8280' stroke-width='1.35'%3E%3Crect x='2' y='2' width='12' height='12' rx='2'/%3E%3Cpath d='M5 5h6M5 8h6M5 11h4'/%3E%3C/svg%3E")}.nav a[data-key=routing]:before{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%237d8280' stroke-width='1.35'%3E%3Cpath d='M2 4h4.2C9 4 8.2 12 11 12h2.5M2 12h3.5C8.4 12 7.7 4 10.7 4h2.8'/%3E%3C/svg%3E")}.nav a[data-key=deployments]:before{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%237d8280' stroke-width='1.35'%3E%3Crect x='2' y='3' width='12' height='10.5' rx='2'/%3E%3Cpath d='M8 6v4m-2-2 2 2 2-2'/%3E%3C/svg%3E")}.nav a[data-key=events]:before{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%237d8280' stroke-width='1.35'%3E%3Ccircle cx='8' cy='8' r='6.2'/%3E%3Cpath d='M8 4.5V8l2.5 1.5'/%3E%3C/svg%3E")}.nav a[data-key=settings]:before{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%237d8280' stroke-width='1.35'%3E%3Cpath d='M2 4h5m3 0h4M2 8h2m3 0h7M2 12h7m3 0h2'/%3E%3C/svg%3E")}.nav a:hover{color:var(--fg);background:#f7f9f8}.nav a:hover:before,.nav a.active:before{filter:brightness(.3)}.nav a.active{color:var(--fg);font-weight:600}.nav a.active:after{transform:scaleX(1)}.nav a:focus-visible{outline:2px solid #b9dfcd;outline-offset:-4px}.navgroup{display:contents}.navgroup:before{display:none}
-.nav a[data-key=clients]:before{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%237d8280' stroke-width='1.35'%3E%3Crect x='1.8' y='2.5' width='8.8' height='7.3' rx='1.3'/%3E%3Cpath d='M4.2 12.7h4M6.2 9.8v2.9'/%3E%3Crect x='11.5' y='5.8' width='2.8' height='7.3' rx='.8'/%3E%3C/svg%3E")}
+.nav a[data-key=devices]:before{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%237d8280' stroke-width='1.35'%3E%3Crect x='1.8' y='2.5' width='8.8' height='7.3' rx='1.3'/%3E%3Cpath d='M4.2 12.7h4M6.2 9.8v2.9'/%3E%3Crect x='11.5' y='5.8' width='2.8' height='7.3' rx='.8'/%3E%3C/svg%3E")}
 .headmeta{margin-left:auto;display:flex;align-items:center;gap:18px;white-space:nowrap;font-size:12px}.headmeta .env{display:flex;align-items:center;gap:7px}.headmeta .dot{width:7px;height:7px}.main{min-width:0;max-width:1586px;margin:0 auto;padding:28px 20px 56px;animation:loom-page-in .16s cubic-bezier(.2,.7,.3,1) both}
 @keyframes loom-page-in{from{opacity:.82}to{opacity:1}}@keyframes loom-spin{to{transform:rotate(360deg)}}
 .top{display:flex;align-items:flex-start;gap:18px;margin-bottom:22px}.eyebrow{font-size:11px;letter-spacing:.13em;font-weight:700;text-transform:uppercase;margin-bottom:3px}.top h1{font-size:28px;letter-spacing:-.025em;line-height:1.2;margin:0 0 5px}.subtitle{color:var(--dim);font-size:13px}.sp{margin-left:auto}
@@ -152,7 +152,7 @@ func shell(d Deps, title, body string, isAuthed bool, evidence ...View) string {
 
 func shellLoginReturnTo(d Deps, title string) string {
 	if title == "Add node" {
-		return "/nodes/add"
+		return "/devices?legacy=ssh"
 	}
 	if strings.HasPrefix(title, "Node · ") {
 		nodeID := strings.TrimSpace(strings.TrimPrefix(title, "Node · "))
@@ -221,16 +221,15 @@ func primaryNavigation(d Deps) []navigationItem {
 	if d.Control == nil {
 		return []navigationItem{
 			{label: "Local overview", href: "/", key: "overview"},
-			{label: "This node", href: "/nodes/" + url.PathEscape(d.Node), key: "nodes"},
+			{label: "This device", href: "/nodes/" + url.PathEscape(d.Node), key: "devices"},
 			{label: "Topology", href: "/topology", key: "topology"},
 			{label: "Live paths", href: "/routing", key: "routing"},
 		}
 	}
 	return []navigationItem{
 		{label: "Overview", href: "/", key: "overview"},
-		{label: "Nodes", href: "/nodes", key: "nodes", group: "Network"},
+		{label: "Devices", href: "/devices", key: "devices", group: "Network"},
 		{label: "Topology", href: "/topology", key: "topology", group: "Network"},
-		{label: "Clients", href: "/clients", key: "clients", group: "Network"},
 		{label: "Services", href: "/services", key: "services", group: "Traffic"},
 		{label: "Live paths", href: "/routing", key: "routing", group: "Traffic"},
 		{label: "Deployments", href: "/deployments", key: "deployments", group: "Operations"},
@@ -244,10 +243,8 @@ func navActive(title string) string {
 	switch {
 	case title == "总览" || strings.Contains(t, "overview"):
 		return "overview"
-	case strings.Contains(t, "node") || strings.Contains(title, "节点"):
-		return "nodes"
-	case strings.Contains(t, "client") || strings.Contains(title, "客户端"):
-		return "clients"
+	case strings.Contains(t, "device") || strings.Contains(t, "node") || strings.Contains(t, "client") || strings.Contains(title, "设备") || strings.Contains(title, "节点") || strings.Contains(title, "客户端"):
+		return "devices"
 	case strings.Contains(t, "topology") || strings.Contains(title, "拓扑"):
 		return "topology"
 	case strings.Contains(t, "service") || strings.Contains(title, "服务"):
@@ -285,8 +282,10 @@ func pageHeading(d Deps, title string) (string, string, string) {
 		return "LIVE NETWORK", "Network overview", d.Node + " control plane · newest trusted observations"
 	case "事件":
 		return "OPERATIONS / EVENTS", "Events", "State transitions recorded by the control plane"
+	case "Devices":
+		return "FLEET / DEVICES", "Devices", "Identity, membership, responsibilities and runtime evidence in one inventory"
 	case "Clients":
-		return "ACCESS / CLIENTS", "Clients", "Enroll devices and deliver the Linux client"
+		return "FLEET / DEVICES", "Devices", "Compatibility view for the unified Device inventory"
 	case "改 SSOT":
 		return "ADVANCED / SSOT", "Advanced / SSOT", "Validate and atomically save the declarative source of truth"
 	case "登录":

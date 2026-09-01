@@ -196,7 +196,7 @@ func pageNodeAdd(d Deps, state nodeAddPageState, isAuthed bool) string {
 		return shell(d, "Add node", b.String(), isAuthed)
 	}
 	if !isAuthed {
-		fmt.Fprintf(&b, `<div class="card section"><h2>Write session required</h2><p>The SSH trust store and SSOT are control-local write boundaries.</p><a class="button primary" href="%s">Sign in to enroll nodes</a></div>`, esc(loginURL("/nodes/add")))
+		fmt.Fprintf(&b, `<div class="card section"><h2>Write session required</h2><p>The SSH trust store and SSOT are control-local write boundaries.</p><a class="button primary" href="%s">Sign in to import a legacy SSH device</a></div>`, esc(loginURL("/devices?legacy=ssh")))
 		return shell(d, "Add node", b.String(), false)
 	}
 	if d.Control.Enrollment == nil {
@@ -247,7 +247,7 @@ func writeNodeAddConnect(b *strings.Builder, connection EnrollmentConnection, ke
 <div class="field span6"><label>Host or IP address</label><input name=host value="%s" placeholder="203.0.113.42" required></div>
 <div class="field span4"><label>SSH user</label><input name=user value="%s" placeholder="loom-bootstrap" required></div>
 <div class="field span2"><label>Port</label><input name=port type=number min=1 max=65535 value="%d" required></div>
-</div><div class="toolbar section"><button class="primary progress-submit"><span class=button-idle>Scan SSH host key</span><span class=button-busy><i class=button-spinner aria-hidden=true></i>Scanning SSH key…</span></button><a class=button href="/nodes">Cancel</a></div></form></div></div>
+</div><div class="toolbar section"><button class="primary progress-submit"><span class=button-idle>Scan SSH host key</span><span class=button-busy><i class=button-spinner aria-hidden=true></i>Scanning SSH key…</span></button><a class=button href="/devices">Cancel</a></div></form></div></div>
 <div class="card span7"><h2>What the control plane will and will not infer</h2>
 <div class=kv><dt>Initial input<dd>SSH host or IP, user and port only<dt>Node ID<dd>Derived from verified remote <code>hostname -s</code>; case and separators are normalized<dt>Location<dd>Country and city are suggested from the public endpoint IP, then remain editable and require declaration review; the lookup can be disabled before preflight<dt>Prerequisite<dd>Missing <code>wireguard-tools</code> is installed automatically through root or passwordless sudo<dt>Egress<dd>Enabled for every new server node<dt>Direction<dd>Reviewed after preflight; Automatic is conservative without UDP evidence<dt>WG identity<dd>Generated or reused on the remote host; only its public key returns</div>
 <div class="callout warnline section"><b>SSH reachability is not UDP reachability</b><br><span class=small>A successfully authenticated SSH host that resolves to a global address may become a control-observed endpoint candidate. Private/local-only addresses stop the workflow, and no page labels an untested UDP endpoint as verified.</span></div>

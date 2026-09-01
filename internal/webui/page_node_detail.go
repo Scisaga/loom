@@ -188,7 +188,7 @@ func pageNodeDetail(d Deps, nodeID string, isAuthed bool) (string, bool) {
 	}
 	b.WriteString(`</section></div></div>`)
 
-	fmt.Fprintf(&b, `<div class=toolbar><a class=button href="/nodes">← Nodes</a><a class=button href="/topology">View in topology →</a><a class=button href="/nodes/%s">Refresh observation</a></div>`, url.PathEscape(n.ID))
+	fmt.Fprintf(&b, `<div class=toolbar><a class=button href="/devices">← Devices</a><a class=button href="/topology">View in topology →</a><a class=button href="/nodes/%s">Refresh observation</a></div>`, url.PathEscape(n.ID))
 	return shell(d, "Node · "+n.ID, b.String(), isAuthed, v), true
 }
 

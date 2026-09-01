@@ -3,6 +3,13 @@
 // 命名遵循 design.md 附录 B:项目名不向下渗透,内部一律用通用词。
 package model
 
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+)
+
 // 节点能力由**哪个角色块存在**推导,不是一个单独的 capabilities 列表。
 //
 // 两者本是同一个事实的两次编码:写了 capabilities: [server] 却不给 server
@@ -406,6 +413,36 @@ type Tunnel struct {
 	Obfuscation string `yaml:"obfuscation,omitempty"`
 }
 
+// EnrollmentProfileVersion is an immutable, explicitly versioned preset used
+// only when a Device joins the network. It expands into an initial
+// responsibility set and declaration grants; it is not a dynamic group and
+// never changes existing Devices implicitly.
+type EnrollmentProfileVersion struct {
+	ID                string   `yaml:"id"`
+	Version           uint64   `yaml:"version"`
+	Default           bool     `yaml:"default,omitempty"`
+	Responsibilities  []string `yaml:"responsibilities"`
+	DestinationGrants []string `yaml:"destination_grants,omitempty"`
+}
+
+func (p EnrollmentProfileVersion) Reference() string {
+	return fmt.Sprintf("%s@v%d", p.ID, p.Version)
+}
+
+// Digest binds an invitation to the expanded immutable profile content. Slice
+// order is validated as canonical SSOT order, making this digest stable across
+// YAML formatting changes.
+func (p EnrollmentProfileVersion) Digest() string {
+	body, _ := json.Marshal(struct {
+		ID                string   `json:"id"`
+		Version           uint64   `json:"version"`
+		Responsibilities  []string `json:"responsibilities"`
+		DestinationGrants []string `json:"destination_grants"`
+	}{p.ID, p.Version, p.Responsibilities, p.DestinationGrants})
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
+}
+
 // Pair 返回这条隧道的稳定标识,用于报错与排序。
 func (t *Tunnel) Pair() string { return t.From + "→" + t.To }
 
@@ -418,6 +455,11 @@ type SSOT struct {
 	Nodes   []Node   `yaml:"nodes"`
 	Tunnels []Tunnel `yaml:"tunnels"`
 
+	// EnrollmentProfiles are immutable onboarding presets. A new version is a
+	// new object; changing the content under an existing id@version is rejected
+	// once an invitation has pinned its digest.
+	EnrollmentProfiles []EnrollmentProfileVersion `yaml:"enrollment_profiles,omitempty"`
+
 	// 服务与调度 —— 目标地址活在等价类里,不在 Nodes 里
 	EquivalenceClasses []EquivalenceClass `yaml:"equivalence_classes,omitempty"`
 
@@ -426,6 +468,32 @@ type SSOT struct {
 	Services     []Service           `yaml:"services,omitempty"`
 	Declarations []AccessDeclaration `yaml:"declarations,omitempty"`
 	Credentials  []Credential        `yaml:"credentials,omitempty"`
+}
+
+func (s *SSOT) DefaultEnrollmentProfile() (*EnrollmentProfileVersion, error) {
+	var selected *EnrollmentProfileVersion
+	for i := range s.EnrollmentProfiles {
+		if !s.EnrollmentProfiles[i].Default {
+			continue
+		}
+		if selected != nil {
+			return nil, fmt.Errorf("multiple default enrollment profile versions are declared")
+		}
+		selected = &s.EnrollmentProfiles[i]
+	}
+	if selected == nil {
+		return nil, fmt.Errorf("no default enrollment profile version is declared")
+	}
+	return selected, nil
+}
+
+func (s *SSOT) EnrollmentProfileByReference(reference string) *EnrollmentProfileVersion {
+	for i := range s.EnrollmentProfiles {
+		if s.EnrollmentProfiles[i].Reference() == reference {
+			return &s.EnrollmentProfiles[i]
+		}
+	}
+	return nil
 }
 
 // AccessNodes 返回全部接入节点，保持 SSOT 中的声明顺序。需要稳定 id 顺序的

@@ -180,6 +180,7 @@ func controlDeps(c *Control) *webui.ControlDeps {
 			CACertPEM:         bootstrap.CACertPEM, NodeCertPEM: bootstrap.NodeCertPEM,
 		}, nil
 	}
+	deviceDeps := newClientControlDeps(c, clientProvision)
 	return &webui.ControlDeps{
 		SSOTPath: c.SSOTPath,
 		Enrich: func(v *webui.View) error {
@@ -244,7 +245,8 @@ func controlDeps(c *Control) *webui.ControlDeps {
 			Ensure: func() (webui.BootstrapIdentityView, error) { return bootstrapView(true) },
 		},
 		Enrollment: enrollment,
-		Clients:    newClientControlDeps(c, clientProvision),
+		Devices:    deviceDeps,
+		Clients:    deviceDeps,
 		Distributed: func() (string, error) {
 			if c.DistributionURL == "" {
 				return "", fmt.Errorf("中控配置里没有 distribution_url")

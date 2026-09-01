@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -128,8 +130,12 @@ func (p *clientProvisioner) provision(client clientregistry.Client, csrPEM strin
 
 		node := current.NodeByID()[client.ID]
 		if node == nil {
+			if err := validatePinnedEnrollmentProfile(current, client); err != nil {
+				return err
+			}
 			plan, err := ssotedit.AddAccessClient(snapshot.body, ssotedit.ClientInput{
 				ID: client.ID, Name: client.Name, Platform: model.LinuxServer,
+				DestinationGrants: append([]string(nil), client.DestinationGrants...),
 			})
 			if err != nil {
 				return err
@@ -218,12 +224,15 @@ func (p *clientProvisioner) provision(client clientregistry.Client, csrPEM strin
 		return clientProvisioningResult{}, err
 	}
 
-	if added || !publisherHasSSOT(p.health, ssotBody, p.now().UTC()) {
+	if added {
 		return clientProvisioningResult{Ready: false}, nil
 	}
 	node := ssot.NodeByID()[client.ID]
 	bootstrap, err := p.readyBootstrap(paths, ssot, node, clientSecrets, csrPEM, ssotBody)
 	if err != nil {
+		if errors.Is(err, errDistributionNotReady) {
+			return clientProvisioningResult{Ready: false}, nil
+		}
 		return clientProvisioningResult{}, err
 	}
 	return clientProvisioningResult{Ready: true, Bootstrap: bootstrap}, nil
@@ -241,10 +250,51 @@ func validateProvisionedClient(s *model.SSOT, node *model.Node, client clientreg
 	}
 	if err := ssotedit.ValidateAccessClientShape(s, node, ssotedit.ClientInput{
 		ID: client.ID, Name: client.Name, Platform: model.LinuxServer,
+		DestinationGrants: clientDestinationGrants(client),
 	}); err != nil {
 		return fmt.Errorf("client id %q has an incomplete or broadened generated shape: %w", client.ID, err)
 	}
 	return nil
+}
+
+func validatePinnedEnrollmentProfile(s *model.SSOT, client clientregistry.Client) error {
+	if s == nil || client.ProfileVersion == "" || client.ProfileDigest == "" {
+		return fmt.Errorf("device %q has no pinned enrollment ProfileVersion", client.ID)
+	}
+	profile := s.EnrollmentProfileByReference(client.ProfileVersion)
+	if profile == nil {
+		return fmt.Errorf("device %q pins missing enrollment profile %q", client.ID, client.ProfileVersion)
+	}
+	if profile.Digest() != client.ProfileDigest {
+		return fmt.Errorf("enrollment profile %q content changed after invitation creation", client.ProfileVersion)
+	}
+	if !sameStrings(profile.Responsibilities, client.Responsibilities) ||
+		!sameStrings(profile.DestinationGrants, client.DestinationGrants) {
+		return fmt.Errorf("device %q profile expansion does not match pinned digest", client.ID)
+	}
+	if len(client.Responsibilities) != 1 || client.Responsibilities[0] != "use_loom" {
+		return fmt.Errorf("enrollment profile %q cannot be materialized by the current E1 Device renderer", client.ProfileVersion)
+	}
+	return nil
+}
+
+func clientDestinationGrants(client clientregistry.Client) []string {
+	if client.ProfileVersion == "" {
+		return nil // validate the historical all-from_request shape for legacy records
+	}
+	return append([]string(nil), client.DestinationGrants...)
+}
+
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func nodeSecretRefs(s *model.SSOT, owner string, all map[string]string) []string {
@@ -537,6 +587,14 @@ func (p *clientProvisioner) readyBootstrap(paths clientProvisionPaths, s *model.
 	if node == nil {
 		return clientBootstrap{}, errors.New("provisioned client disappeared from SSOT")
 	}
+	health, err := readPublisherState(p.health)
+	if err != nil {
+		return clientBootstrap{}, fmt.Errorf("%w: read publisher evidence: %v", errDistributionNotReady, err)
+	}
+	distributionURLs, verifiedSnapshot, err := verifiedEnrollmentDistributionURLs(s, health, expectedSSOT, p.now().UTC())
+	if err != nil {
+		return clientBootstrap{}, err
+	}
 	platformBody, err := os.ReadFile(paths.platformPublic)
 	if err != nil {
 		return clientBootstrap{}, fmt.Errorf("read platform public key: %w", err)
@@ -554,8 +612,7 @@ func (p *clientProvisioner) readyBootstrap(paths clientProvisionPaths, s *model.
 	if err != nil {
 		return clientBootstrap{}, fmt.Errorf("release authority is not a valid platform-signed current: %w", err)
 	}
-	health, err := readPublisherState(p.health)
-	if err != nil || !publisherStateHasSSOT(health, expectedSSOT, p.now().UTC()) || authority.Snapshot != health.LastSnapshot {
+	if authority.Snapshot != verifiedSnapshot {
 		return clientBootstrap{}, errors.New("release authority does not match the healthy publisher state for the provisioned SSOT")
 	}
 	caBody, certBody, err := signClientCSR(paths.caCert, paths.caKey, node.ID, csrPEM, p.now().UTC())
@@ -563,11 +620,98 @@ func (p *clientProvisioner) readyBootstrap(paths clientProvisionPaths, s *model.
 		return clientBootstrap{}, err
 	}
 	return clientBootstrap{
-		NodeID: node.ID, DistributionURLs: append([]string(nil), s.DistributionURLsFor(node)...),
+		NodeID: node.ID, DistributionURLs: distributionURLs,
 		DNS: append([]string(nil), s.DNSFor(node)...), SecretsEnv: string(secrets),
 		PlatformPublicKey: string(platformBody), ReleaseAuthority: string(authorityBody),
 		CACertPEM: string(caBody), NodeCertPEM: string(certBody),
 	}, nil
+}
+
+var errDistributionNotReady = errors.New("no verified public distribution URL for enrollment")
+
+func verifiedEnrollmentDistributionURLs(s *model.SSOT, health *PublisherState, expectedSSOT []byte, now time.Time) ([]string, string, error) {
+	if s == nil || health == nil {
+		return nil, "", fmt.Errorf("%w: publisher evidence is unavailable", errDistributionNotReady)
+	}
+	updatedAt, err := time.Parse(time.RFC3339Nano, health.UpdatedAt)
+	if err != nil || now.Sub(updatedAt) > publisherHeartbeatLimit(health.IntervalSeconds) || now.Sub(updatedAt) < -time.Minute ||
+		health.PID <= 0 || syscall.Kill(health.PID, 0) == syscall.ESRCH {
+		return nil, "", fmt.Errorf("%w: publisher heartbeat is unavailable", errDistributionNotReady)
+	}
+	ssotSum := sha256.Sum256(expectedSSOT)
+	wantSSOT := hex.EncodeToString(ssotSum[:])
+	type verified struct {
+		snapshot string
+		at       time.Time
+	}
+	checks := map[string]verified{}
+	for _, check := range health.DistributionChecks {
+		if !check.Success || check.SSOT != wantSSOT || check.Snapshot == "" {
+			continue
+		}
+		checkedAt, err := time.Parse(time.RFC3339Nano, check.CheckedAt)
+		if err != nil || checkedAt.After(now.Add(time.Minute)) {
+			continue
+		}
+		checks[canonicalDistributionURL(check.URL)] = verified{snapshot: check.Snapshot, at: checkedAt}
+	}
+	seen := map[string]bool{}
+	var selected []string
+	snapshot := ""
+	for _, candidate := range s.DistributionURLs() {
+		candidate = strings.TrimSpace(candidate)
+		canonical := canonicalDistributionURL(candidate)
+		if candidate == "" || seen[canonical] || !safeEnrollmentDistributionURL(candidate) {
+			continue
+		}
+		seen[canonical] = true
+		proof, ok := checks[canonical]
+		if !ok || proof.at.IsZero() {
+			continue
+		}
+		if snapshot != "" && proof.snapshot != snapshot {
+			continue
+		}
+		if snapshot == "" {
+			snapshot = proof.snapshot
+		}
+		selected = append(selected, candidate)
+	}
+	if len(selected) == 0 {
+		return nil, "", fmt.Errorf("%w: no defaults.distribution_urls candidate has exact VerifyServed evidence for SSOT %s", errDistributionNotReady, wantSSOT[:8])
+	}
+	return selected, snapshot, nil
+}
+
+func publisherHeartbeatLimit(intervalSeconds int64) time.Duration {
+	limit := PublisherHeartbeatStale
+	if intervalSeconds > 0 {
+		if candidate := 3 * time.Duration(intervalSeconds) * time.Second; candidate > limit {
+			limit = candidate
+		}
+	}
+	return limit
+}
+
+func canonicalDistributionURL(raw string) string {
+	return strings.TrimRight(strings.TrimSpace(raw), "/")
+}
+
+func safeEnrollmentDistributionURL(raw string) bool {
+	parsed, err := url.ParseRequestURI(raw)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") ||
+		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
+	if host == "" || host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return !ip.IsPrivate() && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() &&
+			!ip.IsLinkLocalMulticast() && !ip.IsUnspecified() && !ip.IsMulticast()
+	}
+	return true
 }
 
 type clientReleaseAssignment struct {

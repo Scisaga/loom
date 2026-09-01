@@ -16,76 +16,143 @@ type clientPageState struct {
 	PackageError  string
 }
 
-func pageClients(d Deps, state clientPageState, isAuthed bool) string {
+func pageDevices(d Deps, state clientPageState, isAuthed bool) string {
 	if d.Control == nil {
-		return shell(d, "Clients", `<div class="card notice"><b>Client inventory is control-local</b><br><span class=small>This node has no client registry, invitation issuer or distribution catalog.</span></div>`, isAuthed)
+		return shell(d, "Devices", `<div class="card notice"><b>Device inventory is control-local</b><br><span class=small>This machine has no fleet identity registry, invitation issuer or distribution catalog.</span></div>`, isAuthed)
 	}
 	state.Package, state.PackageError = clientLinuxPackage(d, state.Package, state.PackageError)
 	if state.Create || state.Invite != nil {
-		return pageClientEnrollment(d, state, isAuthed)
+		return pageDeviceEnrollment(d, state, isAuthed)
 	}
 
-	inventory, inventoryErr := loadClientInventory(d)
+	inventory, inventoryErr := loadDeviceInventory(d)
 
-	total, ready, pending := len(inventory.Clients), 0, 0
-	for _, client := range inventory.Clients {
-		switch client.Status {
-		case "online", "ready":
-			ready++
-		case "pending", "invite_expired", "provisioning":
+	total, members, pending := len(inventory.Clients), 0, 0
+	for _, device := range inventory.Clients {
+		switch device.Membership {
+		case "active":
+			members++
+		case "identity only", "joining":
 			pending++
 		}
 	}
 	var b strings.Builder
 	if state.Error != "" {
-		fmt.Fprintf(&b, `<div class="card notice badline"><b>Client operation failed</b><br><span class=small>%s</span></div>`, esc(state.Error))
+		fmt.Fprintf(&b, `<div class="card notice badline"><b>Device operation failed</b><br><span class=small>%s</span></div>`, esc(state.Error))
 	}
 	if inventoryErr != nil {
-		fmt.Fprintf(&b, `<div class="card notice badline"><b>Client inventory unavailable</b><br><span class=small>%s</span></div>`, esc(inventoryErr.Error()))
+		fmt.Fprintf(&b, `<div class="card notice badline"><b>Device inventory unavailable</b><br><span class=small>%s</span></div>`, esc(inventoryErr.Error()))
 	}
-	fmt.Fprintf(&b, `<section class="card clients-summary" aria-label="Client inventory summary">
-<div class=clients-summary-item><div class=label>Client records</div><div class=metric>%d</div><div class=dim>registry and managed access identities</div></div>
-<div class=clients-summary-item><div class=label>Bootstrap prepared</div><div class="metric ok">%d</div><div class=dim>server-side material ready; online still requires a trusted report</div></div>
-<div class=clients-summary-item><div class=label>Enrollment work</div><div class=metric>%d <small>clients</small></div><div class=dim>%d unconsumed invitations</div></div>
-</section>`, total, ready, pending, inventory.ActiveInvites)
+	fmt.Fprintf(&b, `<section class="card clients-summary" aria-label="Device inventory summary">
+<div class=clients-summary-item><div class=label>Devices</div><div class=metric>%d</div><div class=dim>one identity inventory across all responsibilities</div></div>
+<div class=clients-summary-item><div class=label>Members</div><div class="metric ok">%d</div><div class=dim>present in current desired state; not necessarily online</div></div>
+<div class=clients-summary-item><div class=label>Enrollment work</div><div class=metric>%d <small>devices</small></div><div class=dim>%d unconsumed invitations</div></div>
+</section>`, total, members, pending, inventory.ActiveInvites)
 
-	b.WriteString(`<div class=clients-layout><section class="card clients-list-card"><div class=clients-card-head><div><h2>Client inventory</h2><p class=dim>Registration state is not tunnel health or proof of traffic.</p></div>`)
-	if isAuthed && d.Control != nil && d.Control.Clients != nil && d.Control.Clients.CreateInvite != nil {
-		b.WriteString(`<a class="button primary sp" href="/clients?new=1">＋ Add client</a>`)
+	b.WriteString(`<div class=clients-layout><section class="card clients-list-card"><div class=clients-card-head><div><h2>Device inventory</h2><p class=dim>Identity, desired membership and runtime evidence remain separate facts.</p></div>`)
+	control := deviceControl(d)
+	if isAuthed && control != nil && control.CreateInvite != nil {
+		b.WriteString(`<a class="button primary sp" href="/devices?new=1">＋ Add device</a>`)
 	} else if d.Control != nil && !isAuthed {
-		fmt.Fprintf(&b, `<a class="button sp" href="%s">Sign in to add</a>`, esc(loginURL("/clients?new=1")))
+		fmt.Fprintf(&b, `<a class="button sp" href="%s">Sign in to add</a>`, esc(loginURL("/devices?new=1")))
 	}
 	b.WriteString(`</div>`)
 	if inventoryErr == nil && len(inventory.Clients) == 0 {
-		b.WriteString(`<div class=client-empty><b>No client records exist.</b><span class=dim>Create a short-lived invitation when a device is ready to enroll.</span></div>`)
+		b.WriteString(`<div class=client-empty><b>No Device records exist.</b><span class=dim>Create a short-lived invitation when a machine is ready to enroll.</span></div>`)
 	} else if inventoryErr == nil {
-		b.WriteString(`<div role=region aria-label="Client records" tabindex=0><table class=clients-table><thead><tr><th>Client<th>Platform<th>Status<th>Created<th>Claimed<th>Last seen</tr></thead><tbody>`)
-		for _, client := range inventory.Clients {
-			statusClass, statusLabel := clientStatusPresentation(client.Status)
-			platform := client.Platform
+		b.WriteString(`<div role=region aria-label="Device records" tabindex=0><table class=clients-table><thead><tr><th>Device<th>Membership<th>Responsibilities<th>Destination grants<th>Runtime<th>Last seen</tr></thead><tbody>`)
+		for _, device := range inventory.Clients {
+			statusClass, statusLabel := clientStatusPresentation(device.Status)
+			platform := device.Platform
 			if platform == "" {
 				platform = "Not reported"
 			}
-			fmt.Fprintf(&b, `<tr><td><div class=client-name><b>%s</b><span class="mono dim">%s</span></div><td><span class=client-platform>%s</span><td><span class="client-status %s"><span class=dot></span>%s</span><br><span class="tiny dim">%s</span><td class=mono>%s<td class=mono>%s<td class=mono>%s</tr>`,
-				esc(client.Name), esc(client.ID), esc(platform), statusClass, esc(statusLabel),
-				esc(clientRuntimeDetail(client)), esc(clientTime(client.CreatedAt)), esc(clientTime(client.EnrolledAt)), esc(clientTime(client.LastSeenAt)))
+			legacy := ""
+			if device.Legacy {
+				legacy = ` · <span class="tiny warn">Legacy managed</span>`
+			}
+			fmt.Fprintf(&b, `<tr><td><div class=client-name><b><a href="/devices/%s">%s</a></b><span class="mono dim">%s · %s%s</span></div><td><b>%s</b><td>%s<td>%s<td><span class="client-status %s"><span class=dot></span>%s</span><br><span class="tiny dim">%s</span><td class=mono>%s</tr>`,
+				url.PathEscape(device.ID), esc(device.Name), esc(device.ID), esc(platform), legacy,
+				esc(orDash(device.Membership)), esc(deviceList(device.Responsibilities)),
+				esc(deviceList(device.DestinationGrants)), statusClass, esc(statusLabel),
+				esc(clientRuntimeDetail(device)), esc(clientTime(device.LastSeenAt)))
 		}
 		b.WriteString(`</tbody></table></div>`)
 	}
 	b.WriteString(`</section>`)
 	writeLinuxDelivery(&b, state.Package, state.PackageError)
 	b.WriteString(`</div>`)
-	return shell(d, "Clients", b.String(), isAuthed)
+	return shell(d, "Devices", b.String(), isAuthed)
 }
 
-// loadClientInventory is the single read boundary for both the HTML inventory
-// and its control API. Registry state describes enrollment; only the current
-// trusted runtime snapshot may promote a prepared client to online.
-func loadClientInventory(d Deps) (ClientInventory, error) {
-	if d.Control == nil || d.Control.Clients == nil || d.Control.Clients.List == nil {
-		return ClientInventory{}, fmt.Errorf("client registry is unavailable on this node")
+// pageClients remains only for source-level compatibility with older focused
+// tests. Product routes and navigation use pageDevices.
+func pageClients(d Deps, state clientPageState, isAuthed bool) string {
+	return pageDevices(d, state, isAuthed)
+}
+
+func pageDeviceDetail(d Deps, deviceID string, isAuthed bool) string {
+	inventory, err := loadDeviceInventory(d)
+	if err != nil {
+		return shell(d, "Device · "+deviceID, `<div class="card notice badline"><b>Device unavailable</b><br><span class=small>`+esc(err.Error())+`</span></div>`, isAuthed)
 	}
-	inventory, err := d.Control.Clients.List()
+	var device *ClientView
+	for i := range inventory.Clients {
+		if inventory.Clients[i].ID == deviceID {
+			device = &inventory.Clients[i]
+			break
+		}
+	}
+	if device == nil {
+		return shell(d, "Device · "+deviceID, `<div class="card notice"><b>Device not found</b><br><span class=small>The identity is not present in the current registry or desired state.</span></div>`, isAuthed)
+	}
+	statusClass, statusLabel := clientStatusPresentation(device.Status)
+	legacy := "No"
+	if device.Legacy {
+		legacy = "Yes · identity migration required"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, `<div class=grid>
+<section class="card span4"><div class=label>Identity</div><h2>%s</h2><dl class=kv><dt>Device ID<dd class=mono>%s<dt>Platform<dd>%s<dt>Profile version<dd class=mono>%s<dt>Key fingerprint<dd class=mono>%s<dt>Legacy record<dd>%s</dl></section>
+<section class="card span4"><div class=label>Membership</div><div class=metric>%s</div><p class=dim>Desired membership is separate from enrollment and runtime health.</p><dl class=kv><dt>Created<dd>%s<dt>Claimed<dd>%s</dl></section>
+<section class="card span4"><div class=label>Runtime evidence</div><div class="client-status %s"><span class=dot></span>%s</div><p class=dim>%s</p><dl class=kv><dt>Last seen<dd>%s</dl></section>
+</div>
+<div class=grid><section class="card span6"><div class=label>Responsibilities</div><h2>%s</h2><p class=dim>“use_loom” means traffic originating on this Device may use Loom. It does not imply forwarding, public ingress or egress.</p></section>
+<section class="card span6"><div class=label>Destination grants</div><h2>%s</h2><p class=dim>Explicit declaration references only; there is no blanket “network permission”.</p></section></div>
+<div class=toolbar section><a class=button href="/devices">← Device inventory</a><a class=button href="/nodes/%s">Network diagnostics</a></div>`,
+		esc(device.Name), esc(device.ID), esc(orDash(device.Platform)), esc(orDash(device.ProfileVersion)), esc(orDash(device.KeyFingerprint)), esc(legacy),
+		esc(orDash(device.Membership)), esc(clientTime(device.CreatedAt)), esc(clientTime(device.EnrolledAt)),
+		statusClass, esc(statusLabel), esc(clientRuntimeDetail(*device)), esc(clientTime(device.LastSeenAt)),
+		esc(deviceList(device.Responsibilities)), esc(deviceList(device.DestinationGrants)), url.PathEscape(device.ID))
+	return shell(d, "Device · "+device.ID, b.String(), isAuthed)
+}
+
+func deviceControl(d Deps) *ClientControlDeps {
+	if d.Control == nil {
+		return nil
+	}
+	if d.Control.Devices != nil {
+		return d.Control.Devices
+	}
+	return d.Control.Clients
+}
+
+func deviceList(values []string) string {
+	if len(values) == 0 {
+		return "—"
+	}
+	return strings.Join(values, " · ")
+}
+
+// loadDeviceInventory is the single read boundary for both the HTML inventory
+// and its control API. Registry state describes identity enrollment; only the
+// current trusted runtime snapshot may promote a prepared Device to online.
+func loadDeviceInventory(d Deps) (ClientInventory, error) {
+	control := deviceControl(d)
+	if control == nil || control.List == nil {
+		return ClientInventory{}, fmt.Errorf("device registry is unavailable on this machine")
+	}
+	inventory, err := control.List()
 	if err != nil || d.Snapshot == nil {
 		return inventory, err
 	}
@@ -96,54 +163,67 @@ func loadClientInventory(d Deps) (ClientInventory, error) {
 	return mergeClientRuntime(inventory, d.Snapshot(), now), nil
 }
 
-func pageClientEnrollment(d Deps, state clientPageState, isAuthed bool) string {
+func loadClientInventory(d Deps) (ClientInventory, error) { return loadDeviceInventory(d) }
+
+func pageDeviceEnrollment(d Deps, state clientPageState, isAuthed bool) string {
 	state.Package, state.PackageError = clientLinuxPackage(d, state.Package, state.PackageError)
 	var b strings.Builder
 	if d.Control == nil {
-		b.WriteString(`<div class="card notice badline"><b>Control role required</b><br><span class=small>Client enrollment is available only on the control node.</span></div>`)
-		return shell(d, "Clients", b.String(), isAuthed)
+		b.WriteString(`<div class="card notice badline"><b>Control role required</b><br><span class=small>Device enrollment is available only on the control plane.</span></div>`)
+		return shell(d, "Devices", b.String(), isAuthed)
 	}
 	if !isAuthed {
-		fmt.Fprintf(&b, `<div class=client-add-grid><section class="card client-form-card"><h2>Operator session required</h2><p class=dim>Creating an invitation changes the control-local client registry.</p><a class="button primary" href="%s">Sign in</a></section></div>`, esc(loginURL("/clients?new=1")))
-		return shell(d, "Clients", b.String(), false)
+		fmt.Fprintf(&b, `<div class=client-add-grid><section class="card client-form-card"><h2>Operator session required</h2><p class=dim>Creating an invitation changes the control-local Device identity registry.</p><a class="button primary" href="%s">Sign in</a></section></div>`, esc(loginURL("/devices?new=1")))
+		return shell(d, "Devices", b.String(), false)
 	}
-	if d.Control.Clients == nil || d.Control.Clients.CreateInvite == nil {
-		b.WriteString(`<div class="card notice badline"><b>Client enrollment unavailable</b><br><span class=small>This build has no client registry capability.</span></div>`)
-		return shell(d, "Clients", b.String(), true)
+	control := deviceControl(d)
+	if control == nil || control.CreateInvite == nil {
+		b.WriteString(`<div class="card notice badline"><b>Device enrollment unavailable</b><br><span class=small>This build has no Device identity registry capability.</span></div>`)
+		return shell(d, "Devices", b.String(), true)
 	}
 	if state.Invite != nil {
 		writeClientInvite(&b, *state.Invite, state.Package, state.PackageError)
-		return shell(d, "Clients", b.String(), true)
+		return shell(d, "Devices", b.String(), true)
 	}
 	if state.Error != "" {
 		fmt.Fprintf(&b, `<div class="card notice badline"><b>Invitation was not created</b><br><span class=small>%s</span></div>`, esc(state.Error))
 	}
-	fmt.Fprintf(&b, `<div class=client-add-grid><section class="card client-form-card"><h2>Add client</h2><p class=dim>Name the device for operators. The client reports its supported platform when it claims the invitation.</p>
-<form class=blockform data-submit-progress method=post action="/clients/create"><div class=field><label for=client-name>Display name</label><input id=client-name name=name maxlength=80 required autocomplete=off value="%s" placeholder="e.g. build server"><span class=field-hint>Do not enter a platform, exit node or route. Those are not invitation properties.</span></div>
-<div class=client-form-actions><button class="primary progress-submit"><span class=button-idle>Create invitation</span><span class=button-busy><i class=button-spinner aria-hidden=true></i>Creating…</span></button><a class=button href="/clients">Cancel</a></div></form></section>
-<aside class=card><h2>Enrollment boundary</h2><div class=client-boundary><div><span>Invitation</span><b>Short-lived and single-use</b></div><div><span>Platform</span><b>Reported by the installed client</b></div><div><span>Device key</span><b>Generated locally; private key never uploads</b></div><div><span>Routing</span><b>Chosen after enrollment: Direct, Auto or an authorized exit</b></div></div></aside></div>`, esc(state.SubmittedName))
-	return shell(d, "Clients", b.String(), true)
+	profile, profileErr := deviceEnrollmentProfile(d)
+	fmt.Fprintf(&b, `<div class=client-add-grid><section class="card client-form-card"><h2>Add Device</h2><p class=dim>Name the machine for operators. The installed client reports its supported platform when it claims the invitation.</p>
+<form class=blockform data-submit-progress method=post action="/devices/create"><div class=field><label for=client-name>Display name</label><input id=client-name name=name maxlength=80 required autocomplete=off value="%s" placeholder="e.g. build server"><span class=field-hint>Platform, endpoint and route are discovered or assigned after identity claim.</span></div>
+<div class=client-form-actions><button class="primary progress-submit"><span class=button-idle>Create invitation</span><span class=button-busy><i class=button-spinner aria-hidden=true></i>Creating…</span></button><a class=button href="/devices">Cancel</a></div></form></section>
+<aside class=card><h2>Pinned enrollment profile</h2><div class=client-boundary><div><span>ProfileVersion</span><b class=mono>%s</b></div><div><span>Identity</span><b>Local key + short-lived, single-use invitation</b></div><div><span>Membership</span><b>Published desired state, separate from online status</b></div><div><span>Responsibilities</span><b>%s</b></div><div><span>Destination grants</span><b>%s</b></div></div>%s</aside></div>`, esc(state.SubmittedName), esc(orDash(profile.Version)), esc(deviceList(profile.Responsibilities)), esc(deviceList(profile.DestinationGrants)), enrollmentProfileError(profileErr))
+	return shell(d, "Devices", b.String(), true)
+}
+
+func pageClientEnrollment(d Deps, state clientPageState, isAuthed bool) string {
+	return pageDeviceEnrollment(d, state, isAuthed)
 }
 
 func writeClientInvite(b *strings.Builder, invite ClientInviteView, pkg LinuxClientPackageView, packageError string) {
-	qrURL := "/api/control/client-invites/" + url.PathEscape(invite.InviteID) + "/qr.png"
-	downloadURL := "/api/control/client-invites/" + url.PathEscape(invite.InviteID) + "/download"
+	qrURL := "/api/control/device-invites/" + url.PathEscape(invite.InviteID) + "/qr.png"
+	downloadURL := "/api/control/device-invites/" + url.PathEscape(invite.InviteID) + "/download"
 	fmt.Fprintf(b, `<div class=client-invite-grid><section class="card client-invite-qr"><div class="badge warn"><span class=dot></span>Pending claim</div><a href="%s" download aria-label="Download invitation file"><img src="%s" alt="Enrollment QR code for %s"></a><p><b>Scan or click the QR code</b><br><span class="small dim">Clicking downloads the same invitation as a <code>.loom-invite</code> file.</span></p></section>
 <section class="card client-invite-copy"><div><div class=label>Invitation ready</div><h2>%s</h2><span class="mono dim">%s</span></div>
 <div class=client-invite-expiry><span class=dot></span><span>This invitation is a short-lived, single-use secret and expires at <b>%s</b>. Share it only with the intended device.</span></div>
-<div class=field><label for=invite-link>Linux invitation URI</label><div class=invite-link><input id=invite-link readonly spellcheck=false autocomplete=off autocapitalize=none value="%s" aria-describedby=invite-link-help><a class=button href="%s" download>Download .loom-invite</a></div><span id=invite-link-help class=field-hint>Use either the downloaded file or this URI on the target Linux client. It is not a permanent connection URL.</span></div>`,
-		esc(downloadURL), esc(qrURL), esc(invite.ClientID), esc(invite.ClientName), esc(invite.ClientID), esc(clientTime(invite.ExpiresAt)), esc(invite.InviteURI), esc(downloadURL))
+<div class=client-boundary><div><span>ProfileVersion</span><b class=mono>%s</b></div><div><span>Responsibilities</span><b>%s</b></div><div><span>Destination grants</span><b>%s</b></div></div>
+<div class=field><label for=invite-link>Enrollment invitation URI</label><div class=invite-link><input id=invite-link readonly spellcheck=false autocomplete=off autocapitalize=none value="%s" aria-describedby=invite-link-help><a class=button href="%s" download>Download .loom-invite</a></div><span id=invite-link-help class=field-hint>Every supported platform consumes the same invitation. It is not a permanent connection URL.</span></div>`,
+		esc(downloadURL), esc(qrURL), esc(invite.ClientID), esc(invite.ClientName), esc(invite.ClientID), esc(clientTime(invite.ExpiresAt)), esc(orDash(invite.ProfileVersion)), esc(deviceList(invite.Responsibilities)), esc(deviceList(invite.DestinationGrants)), esc(invite.InviteURI), esc(downloadURL))
 	if clientPackageAvailable(pkg) {
-		fmt.Fprintf(b, `<div class=client-invite-actions><a class="button primary" href="%s" download>Download Linux client</a><form class=client-done-form method=get action="/clients"><button class=button type=submit>Back to client list</button></form></div>`, esc(pkg.URL))
+		fmt.Fprintf(b, `<div class=client-invite-actions><a class="button primary" href="%s" download>Download Linux package</a><form class=client-done-form method=get action="/devices"><button class=button type=submit>Back to Device list</button></form></div>`, esc(pkg.URL))
 	} else {
-		b.WriteString(`<div class=client-invite-actions><form class=client-done-form method=get action="/clients"><button class=button type=submit>Back to client list</button></form></div><p class="small warn">The Linux client package is not currently available from this control node.</p>`)
+		b.WriteString(`<div class=client-invite-actions><form class=client-done-form method=get action="/devices"><button class=button type=submit>Back to Device list</button></form></div><p class="small warn">The Linux package is not currently available from this control plane.</p>`)
 		if packageError != "" {
 			fmt.Fprintf(b, `<p class="tiny dim">%s</p>`, esc(packageError))
 		}
 	}
 	b.WriteString(`</section></div><section class="card client-setup" aria-labelledby=client-setup-title><div class=client-setup-head><div><div class=label>Next step</div><h2 id=client-setup-title>Linux setup</h2></div><p class=small>QR, invitation file and URI carry the same invitation. Choose one enrollment method.</p></div>`)
+	if pkg.InstallerURL != "" {
+		fmt.Fprintf(b, `<div class=client-setup-prepare><div><span class=client-step>1</span><div><b>Install the public generic package</b><span class="small dim">No invitation or Device configuration is embedded in this URL.</span></div></div><code class=command-block>curl -fsSL '%s' | sudo sh
+sudo /usr/local/bin/loom client enroll -stdin</code></div>`, esc(pkg.InstallerURL))
+	}
 	if clientPackageAvailable(pkg) {
-		fmt.Fprintf(b, `<div class=client-setup-prepare><div><span class=client-step>1</span><div><b>Check checksum and extract the Linux client</b><span class="small dim">Run these commands in the directory containing both downloads.</span></div></div><code class=command-block>printf '%%s  %%s\n' '%s' '%s' | sha256sum -c -
+		fmt.Fprintf(b, `<div class=client-setup-prepare><div><span class=client-step>⇩</span><div><b>Manual or offline package install</b><span class="small dim">Run these commands in the directory containing both downloads.</span></div></div><code class=command-block>printf '%%s  %%s\n' '%s' '%s' | sha256sum -c -
 tar -xzf loom-client-linux-amd64.tar.gz
 cd loom-client-linux-amd64</code></div>
 <div class=client-setup-methods><section class=client-setup-method aria-labelledby=invite-file-method><div class=client-method-title><span class=client-step>2A</span><div><h3 id=invite-file-method>Invitation file</h3><span class="badge ok">Recommended</span></div></div><p class="small dim">Use this after downloading <code>client.loom-invite</code>.</p><code class=command-block>sudo ./install.sh --invite-file ../client.loom-invite</code></section>
@@ -155,10 +235,32 @@ sudo /usr/local/bin/loom client enroll -stdin</code><p class="small">Paste the c
 	b.WriteString(`<div class=client-setup-boundary><b>First successful claim consumes the invitation.</b><span>Expired unused invitations require a new one; normal reconnects, restarts and configuration updates do not register the device again.</span></div></section>`)
 }
 
+func deviceEnrollmentProfile(d Deps) (DeviceEnrollmentProfileView, error) {
+	control := deviceControl(d)
+	if control == nil || control.EnrollmentProfile == nil {
+		return DeviceEnrollmentProfileView{}, fmt.Errorf("profile preview is unavailable")
+	}
+	return control.EnrollmentProfile()
+}
+
+func enrollmentProfileError(err error) string {
+	if err == nil {
+		return ""
+	}
+	return `<div class="callout warnline"><b>Profile unavailable</b><br><span class=small>` + esc(err.Error()) + `</span></div>`
+}
+
 func writeLinuxDelivery(b *strings.Builder, pkg LinuxClientPackageView, packageError string) {
 	b.WriteString(`<aside class=linux-delivery><section class="card linux-package"><div class=linux-package-head><div><div class=label>Linux server</div><h2>Client distribution</h2><span class="small dim">Loom, pinned sing-box and systemd installation</span></div>`)
 	if clientPackageAvailable(pkg) {
-		fmt.Fprintf(b, `<a class="button primary sp" href="%s" download>Download</a></div><dl class=linux-package-meta><dt>File<dd class=mono>%s<dt>Version<dd>%s<dt>Target<dd class=mono>%s<dt>SHA-256<dd class=mono>%s</dl>`, esc(pkg.URL), esc(pkg.Filename), esc(orDash(pkg.Version)), esc(orDash(pkg.Arch)), esc(pkg.SHA256))
+		downloadURL := pkg.URL
+		if pkg.PublicURL != "" {
+			downloadURL = pkg.PublicURL
+		}
+		fmt.Fprintf(b, `<a class="button primary sp" href="%s" download>Download</a></div><dl class=linux-package-meta><dt>File<dd class=mono>%s<dt>Version<dd>%s<dt>Target<dd class=mono>%s<dt>SHA-256<dd class=mono>%s</dl>`, esc(downloadURL), esc(pkg.Filename), esc(orDash(pkg.Version)), esc(orDash(pkg.Arch)), esc(pkg.SHA256))
+		if pkg.InstallerURL != "" {
+			fmt.Fprintf(b, `<div><div class=label>One-line public install</div><code class=command-block>curl -fsSL '%s' | sudo sh</code><span class="tiny dim">The generic installer contains no invitation. Enroll afterward with the QR, file or URI.</span></div>`, esc(pkg.InstallerURL))
+		}
 	} else {
 		b.WriteString(`</div><div class="callout warnline"><b>Package unavailable</b><br><span class=small>No validated Linux artifact is published by this control node.</span></div>`)
 		if packageError != "" {
@@ -346,10 +448,11 @@ func clientLinuxPackage(d Deps, provided LinuxClientPackageView, providedError s
 	if clientPackageAvailable(provided) || providedError != "" {
 		return provided, providedError
 	}
-	if d.Control == nil || d.Control.Clients == nil || d.Control.Clients.LinuxPackage == nil {
+	control := deviceControl(d)
+	if control == nil || control.LinuxPackage == nil {
 		return LinuxClientPackageView{}, "Linux client package capability is not configured."
 	}
-	pkg, err := d.Control.Clients.LinuxPackage()
+	pkg, err := control.LinuxPackage()
 	if err != nil {
 		return LinuxClientPackageView{}, err.Error()
 	}

@@ -51,6 +51,30 @@ declarations:
 	}
 }
 
+func TestAddAccessClientUsesOnlyPinnedDestinationGrants(t *testing.T) {
+	content := bytes.Replace(fixtureSSOT(t), []byte("declarations:\n"), []byte(`services:
+  - id: web
+    declaration: best-egress
+    addresses: [api.example.com]
+declarations:
+`), 1)
+	plan, err := AddAccessClient(content, ClientInput{
+		ID: "least-privilege", Platform: model.LinuxServer,
+		DestinationGrants: []string{"best-egress"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := loadResult(t, plan.Content).NodeByID()["least-privilege"]
+	if node == nil || len(node.Access.Credentials) != 1 || len(plan.CredentialIDs) != 1 ||
+		plan.DefaultDeclaration != "best-egress" {
+		t.Fatalf("explicit profile grant shape node=%+v plan=%+v", node, plan)
+	}
+	if strings.Contains(string(plan.Content), "cred-least-privilege-llm-ttft") {
+		t.Fatal("an ungranted current declaration was added to the Device")
+	}
+}
+
 func TestAddAccessClientRejectsUnsupportedOrDuplicateClient(t *testing.T) {
 	content := fixtureSSOT(t)
 	for _, tc := range []struct {

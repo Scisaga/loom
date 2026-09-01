@@ -41,7 +41,7 @@ func TestLoginPreservesSafeRequestedPage(t *testing.T) {
 func TestLoginReturnTargetRejectsExternalAndWriteRoutes(t *testing.T) {
 	for _, target := range []string{
 		"", "https://evil.example/", "//evil.example/", `/\\evil.example`, `/%5c%5cevil.example`,
-		"/clients/create", "/services/save", "/services/delete", "/nodes/add/commit",
+		"/devices/create", "/clients/create", "/services/save", "/services/delete", "/nodes/add/commit",
 		"/login", "/logout", "/act/publish", "/unknown", "/nodes/..", "/clients/invites/../clients",
 	} {
 		if got := safeLoginReturnTo(target); got != "/" {
@@ -49,7 +49,8 @@ func TestLoginReturnTargetRejectsExternalAndWriteRoutes(t *testing.T) {
 		}
 	}
 	for _, target := range []string{
-		"/", "/clients?new=1", "/clients/invites/invite-1", "/clients/download/linux-amd64",
+		"/", "/devices?new=1", "/devices?legacy=ssh", "/devices/invites/invite-1", "/devices/download/linux-amd64", "/devices/jm24",
+		"/clients?new=1", "/clients/invites/invite-1", "/clients/download/linux-amd64",
 		"/nodes", "/nodes/add", "/nodes/jm24", "/topology?entry=jm24%3Asvc%3Aintl-api",
 		"/services?service=intl-api", "/routing?entry=jm24%3Asvc%3Aintl-api", "/deployments", "/events", "/settings",
 	} {
@@ -63,15 +64,14 @@ func TestEveryNavigationPageSignsInBackToItsPage(t *testing.T) {
 	d := misakaDeps()
 	cases := map[string]string{
 		"总览":          "/",
-		"Nodes":       "/nodes",
+		"Devices":     "/devices",
 		"Topology":    "/topology",
-		"Clients":     "/clients",
 		"Services":    "/services",
 		"Live paths":  "/routing",
 		"Deployments": "/deployments",
 		"事件":          "/events",
 		"改 SSOT":      "/settings",
-		"Add node":    "/nodes/add",
+		"Add node":    "/devices?legacy=ssh",
 		"Node · sg02": "/nodes/sg02",
 	}
 	for title, target := range cases {

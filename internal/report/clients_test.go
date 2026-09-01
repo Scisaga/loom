@@ -1,6 +1,7 @@
 package report
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -22,9 +23,7 @@ import (
 func TestClientInviteUsesOpaqueFragmentAndClaimKeepsProvisioningExplicit(t *testing.T) {
 	dir := t.TempDir()
 	ssotPath := filepath.Join(dir, "ssot.yaml")
-	if err := os.WriteFile(ssotPath, []byte("nodes: []\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeClientTestSSOT(t, ssotPath)
 	deps := newClientControlDeps(&Control{
 		SSOTPath: ssotPath, ClientRegistryPath: filepath.Join(dir, "registry.json"),
 		ClientEnrollmentURL: "https://control.example/api/client/enroll",
@@ -65,8 +64,14 @@ func TestClientInviteUsesOpaqueFragmentAndClaimKeepsProvisioningExplicit(t *test
 		t.Fatalf("claim=%+v", claim)
 	}
 	inventory, err := deps.List()
-	if err != nil || len(inventory.Clients) != 1 || inventory.Clients[0].Status != "provisioning" ||
-		inventory.Clients[0].DataPlaneStatus != "pending" {
+	var enrolled *webui.ClientView
+	for i := range inventory.Clients {
+		if inventory.Clients[i].ID == invite.ClientID {
+			enrolled = &inventory.Clients[i]
+		}
+	}
+	if err != nil || enrolled == nil || enrolled.Status != "provisioning" ||
+		enrolled.DataPlaneStatus != "pending" || enrolled.ProfileVersion != "standard-device@v1" {
 		t.Fatalf("inventory=%+v err=%v", inventory, err)
 	}
 }
@@ -93,9 +98,7 @@ func TestInvalidEnrollmentURLDoesNotCreateInvitationState(t *testing.T) {
 func TestClientProvisionHookMarksReadyOnlyWithCompleteBootstrap(t *testing.T) {
 	dir := t.TempDir()
 	ssotPath := filepath.Join(dir, "ssot.yaml")
-	if err := os.WriteFile(ssotPath, []byte("nodes: []\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeClientTestSSOT(t, ssotPath)
 	var provisionedID string
 	deps := newClientControlDeps(&Control{
 		SSOTPath: ssotPath, ClientRegistryPath: filepath.Join(dir, "registry.json"),
@@ -125,8 +128,57 @@ func TestClientProvisionHookMarksReadyOnlyWithCompleteBootstrap(t *testing.T) {
 		t.Fatalf("result=%+v provisioned=%q err=%v", result, provisionedID, err)
 	}
 	inventory, err := deps.List()
-	if err != nil || len(inventory.Clients) != 1 || inventory.Clients[0].Status != "ready" {
+	ready := false
+	for i := range inventory.Clients {
+		ready = ready || inventory.Clients[i].ID == result.ClientID && inventory.Clients[i].Status == "ready"
+	}
+	if err != nil || !ready {
 		t.Fatalf("inventory=%+v err=%v", inventory, err)
+	}
+}
+
+func TestPublicClientBaseAndInstallerAreDeploymentConfigured(t *testing.T) {
+	base, err := validClientPublicBaseURL(" https://download.example/loom/device-dist ")
+	if err != nil || base != "https://download.example/loom/device-dist/" {
+		t.Fatalf("public base=%q err=%v", base, err)
+	}
+	for _, invalid := range []string{"", "http://download.example/", "https://user@download.example/", "https://download.example/?token=x"} {
+		if _, err := validClientPublicBaseURL(invalid); err == nil {
+			t.Errorf("invalid public base %q accepted", invalid)
+		}
+	}
+	script := string(linuxPublicInstallScript(webui.LinuxClientPackageView{
+		Filename:  "loom-client-linux-amd64.tar.gz",
+		PublicURL: "https://download.example/loom/device-dist/loom-client-linux-amd64.tar.gz",
+	}))
+	for _, want := range []string{"--proto '=https'", "sha256sum -c", "install.sh\" --no-enroll", "loom client enroll -stdin"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("public installer missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"loom://", "invite-file", "client_id", "10.99."} {
+		if strings.Contains(script, forbidden) {
+			t.Errorf("public installer contains private/enrollment material %q", forbidden)
+		}
+	}
+}
+
+func writeClientTestSSOT(t *testing.T, path string) {
+	t.Helper()
+	body, err := os.ReadFile("../../testdata/matrix/ssot.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = bytes.Replace(body, []byte("declarations:\n"), []byte(`enrollment_profiles:
+  - id: standard-device
+    version: 1
+    default: true
+    responsibilities: [use_loom]
+    destination_grants: [best-egress]
+declarations:
+`), 1)
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

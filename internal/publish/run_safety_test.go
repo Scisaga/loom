@@ -531,6 +531,45 @@ func TestPublishOnceVerifiesEvenWhenTargetAlreadyCurrent(t *testing.T) {
 	}
 }
 
+func TestPublishOnceRecordsEveryDistributionURLBeforeFailing(t *testing.T) {
+	body := []byte(goodSSOT)
+	now := func() time.Time { return at("2026-09-01T19:00:00Z") }
+	priv := key(t)
+	tree, err := Build(body, priv, Meta{CreatedAt: now().Format(time.RFC3339)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tgt := &safetyTarget{current: tree.Snapshot, files: cloneBytesMap(tree.Files), blobs: cloneBytesMap(tree.Blobs)}
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer bad.Close()
+	goodRequests := 0
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		goodRequests++
+		if body, ok, _ := tgt.ReadFile(strings.TrimPrefix(r.URL.Path, "/")); ok {
+			_, _ = w.Write(body)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer good.Close()
+	var checks []DistributionCheck
+	_, err = publishOnce(&Options{
+		Key: priv, Target: tgt, VerifyURLs: []string{bad.URL, good.URL}, Now: now,
+		recordDistributionCheck: func(check DistributionCheck) { checks = append(checks, check) },
+	}, body, nil, func(string, ...any) {})
+	if err == nil || goodRequests == 0 {
+		t.Fatalf("partial mirror verification err=%v good_requests=%d", err, goodRequests)
+	}
+	if len(checks) != 2 || checks[0].Success || !checks[1].Success || checks[0].URL != bad.URL || checks[1].URL != good.URL {
+		t.Fatalf("distribution checks=%+v", checks)
+	}
+	if checks[0].Snapshot == "" || checks[0].Snapshot != checks[1].Snapshot || len(checks[0].SSOT) != sha256.Size*2 || checks[0].SSOT != checks[1].SSOT {
+		t.Fatalf("distribution checks are not bound to one exact release: %+v", checks)
+	}
+}
+
 func TestPublishOnceRepairsBlobEvenWhenCurrentAlreadyMatches(t *testing.T) {
 	body := []byte(goodSSOT)
 	bins := map[string][]byte{"linux/amd64": []byte("binary blob")}

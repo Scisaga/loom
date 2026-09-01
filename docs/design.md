@@ -4,8 +4,11 @@
 > [status/current.md](status/current.md)。目标机制尚未落地时必须明确标成“目标态”，
 > 不能用将来时能力解释当前生产行为。控制中心的仓库实现边界另见
 > [README](../README.md#控制中心当前边界)。v1 Windows、Linux Server 与 Android
-> 的客户端交付设计另见[客户端接入设计](client-access.md)；Linux Desktop 不在 v1
-> 范围内。
+> 的客户端交付设计另见[客户端接入设计](client-access.md)；统一 Device、Enrollment、
+> 授权拆分与版本化对象图的分阶段目标见
+> [Device 生命周期与交付架构](device-lifecycle-and-delivery.md)；具名局域网、重复 CIDR
+> 与显式 TCP/UDP 访问的后续目标设计另见 [Local Network 专题](local-network.md)，
+> 该专题当前未实现；Linux Desktop 不在 v1 范围内。
 
 > **Loom 是一个基于加密隧道的链路与服务调度基础设施。**
 > 它持续测量网络中所有可用路径的质量,结合成本、容量与合规约束,为每个服务选择当下最优的接入路径。
@@ -408,6 +411,10 @@ Path = 接入节点 → [服务器₁ → 服务器₂ → …] → 目标地址
 ---
 
 ### 4.5 服务:中控分流与度量的单位
+
+> 显式访问具名局域网时，请求以 `LocalNetwork + IP + 协议端口` 分类，再复用本节
+> 之后的 Declaration、Agent 与 ServerChain；它不是第二套 Service 或选路器。该
+> 目标态及未实现边界见 [Local Network 专题](local-network.md)。
 
 > **实现边界:** 按 host 反查 Service、为各 Service 独立生成 selector 已实现并
 > 真机验证(2026-08-23)，实测同一个入口的三个目标可以走三条路，baidu 从

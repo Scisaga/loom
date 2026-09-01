@@ -142,9 +142,14 @@ type ControlDeps struct {
 	// revision 上准备节点本地 WG 身份并原子写入节点与隧道。webui 不执行
 	// shell，也不接受操作者手填 Node ID、public_endpoint 或 egress。
 	Enrollment *NodeEnrollmentDeps
-	// Clients is the control-local device identity registry. It is deliberately
-	// separate from topology Nodes: routes, credentials and generated configs
-	// still come only from SSOT and the publisher.
+	// Devices is the canonical product boundary for every managed machine. The
+	// current implementation still joins the control-local identity registry
+	// with SSOT declarations, but callers no longer need to choose a Nodes or
+	// Clients inventory first.
+	Devices *ClientControlDeps
+	// Clients is a wire/source compatibility alias during the E1 migration.
+	// New UI and API code must use Devices; old routes remain redirect/adapter
+	// boundaries until deployed clients and bookmarks have moved.
 	Clients *ClientControlDeps
 	// Distributed 返回分发点当前指向的快照 id,用来看发布器跟上没有。
 	Distributed func() (string, error)
@@ -202,11 +207,14 @@ type NodeEnrollmentDeps struct {
 
 type ClientControlDeps struct {
 	List                 func() (ClientInventory, error)
+	EnrollmentProfile    func() (DeviceEnrollmentProfileView, error)
 	CreateInvite         func(ClientInviteInput) (ClientInviteView, error)
 	Claim                func(ClientClaimInput) (ClientClaimResult, error)
 	InviteArtifact       func(inviteID string) (ClientInviteArtifact, error)
 	LinuxPackage         func() (LinuxClientPackageView, error)
 	DownloadLinuxPackage func() (LinuxClientPackageView, []byte, error)
+	PublicLinuxArtifact  func(name string) (PublicDeviceArtifact, error)
+	LinuxInstallScript   func() ([]byte, error)
 }
 
 type ClientInventory struct {
@@ -215,16 +223,31 @@ type ClientInventory struct {
 }
 
 type ClientView struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Platform        string `json:"platform,omitempty"`
-	Status          string `json:"status"`
-	KeyFingerprint  string `json:"key_fingerprint,omitempty"`
-	CreatedAt       string `json:"created_at,omitempty"`
-	EnrolledAt      string `json:"claimed_at,omitempty"`
-	LastSeenAt      string `json:"last_seen_at,omitempty"`
-	DataPlaneStatus string `json:"data_plane_status"`
-	ConfigState     string `json:"config_state"`
+	ID                string   `json:"id"`
+	Name              string   `json:"name"`
+	Platform          string   `json:"platform,omitempty"`
+	Status            string   `json:"status"`
+	KeyFingerprint    string   `json:"key_fingerprint,omitempty"`
+	CreatedAt         string   `json:"created_at,omitempty"`
+	EnrolledAt        string   `json:"claimed_at,omitempty"`
+	LastSeenAt        string   `json:"last_seen_at,omitempty"`
+	DataPlaneStatus   string   `json:"data_plane_status"`
+	ConfigState       string   `json:"config_state"`
+	Membership        string   `json:"membership"`
+	Responsibilities  []string `json:"responsibilities,omitempty"`
+	DestinationGrants []string `json:"destination_grants,omitempty"`
+	ProfileVersion    string   `json:"profile_version,omitempty"`
+	Legacy            bool     `json:"legacy,omitempty"`
+}
+
+// DeviceView is the canonical name for the unified inventory projection.
+// ClientView remains as a compatibility spelling while existing public claim
+// payloads keep their client_id fields during E1.
+type DeviceView = ClientView
+
+type DeviceInventory struct {
+	Devices       []DeviceView `json:"devices"`
+	ActiveInvites int          `json:"active_invites"`
 }
 
 type ClientInviteInput struct {
@@ -232,19 +255,31 @@ type ClientInviteInput struct {
 }
 
 type ClientInviteView struct {
-	InviteID      string `json:"invite_id"`
-	ClientID      string `json:"client_id"`
-	ClientName    string `json:"client_name"`
-	InviteURI     string `json:"invite_uri"`
-	EnrollmentURL string `json:"enrollment_url"`
-	ExpiresAt     string `json:"expires_at"`
+	InviteID          string   `json:"invite_id"`
+	ClientID          string   `json:"client_id"`
+	ClientName        string   `json:"client_name"`
+	InviteURI         string   `json:"invite_uri"`
+	EnrollmentURL     string   `json:"enrollment_url"`
+	ExpiresAt         string   `json:"expires_at"`
+	ProfileVersion    string   `json:"profile_version,omitempty"`
+	Responsibilities  []string `json:"responsibilities,omitempty"`
+	DestinationGrants []string `json:"destination_grants,omitempty"`
 }
 
 type ClientInviteArtifact struct {
-	ClientID   string `json:"client_id"`
-	ClientName string `json:"client_name"`
-	InviteURI  string `json:"invite_uri"`
-	ExpiresAt  string `json:"expires_at"`
+	ClientID          string   `json:"client_id"`
+	ClientName        string   `json:"client_name"`
+	InviteURI         string   `json:"invite_uri"`
+	ExpiresAt         string   `json:"expires_at"`
+	ProfileVersion    string   `json:"profile_version,omitempty"`
+	Responsibilities  []string `json:"responsibilities,omitempty"`
+	DestinationGrants []string `json:"destination_grants,omitempty"`
+}
+
+type DeviceEnrollmentProfileView struct {
+	Version           string   `json:"version"`
+	Responsibilities  []string `json:"responsibilities"`
+	DestinationGrants []string `json:"destination_grants"`
 }
 
 type ClientClaimInput struct {
@@ -274,12 +309,20 @@ type ClientBootstrap struct {
 }
 
 type LinuxClientPackageView struct {
-	Filename string `json:"filename"`
-	URL      string `json:"url"`
-	SHA256   string `json:"sha256"`
-	Version  string `json:"version"`
-	Arch     string `json:"arch"`
-	Size     int64  `json:"size"`
+	Filename     string `json:"filename"`
+	URL          string `json:"url"`
+	SHA256       string `json:"sha256"`
+	Version      string `json:"version"`
+	Arch         string `json:"arch"`
+	Size         int64  `json:"size"`
+	PublicURL    string `json:"public_url,omitempty"`
+	InstallerURL string `json:"installer_url,omitempty"`
+}
+
+type PublicDeviceArtifact struct {
+	Filename    string
+	ContentType string
+	Body        []byte
 }
 
 type EnrollmentConnection struct {
@@ -791,13 +834,125 @@ func Handler(d Deps) http.Handler {
 			writeHTML(w, fn(authed(d, r)))
 		}
 	}
-	mux.HandleFunc("/clients", func(w http.ResponseWriter, r *http.Request) {
+	serveRouteAlias := func(w http.ResponseWriter, r *http.Request, from, to string) {
+		clone := r.Clone(r.Context())
+		u := *r.URL
+		u.Path = to + strings.TrimPrefix(r.URL.Path, from)
+		clone.URL = &u
+		mux.ServeHTTP(w, clone)
+	}
+	mux.HandleFunc("/devices", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
-		writeHTML(w, pageClients(d, clientPageState{Create: r.URL.Query().Get("new") == "1"}, authed(d, r)))
+		if r.URL.Query().Get("legacy") == "ssh" {
+			writeHTML(w, pageNodeAdd(d, nodeAddPageState{}, authed(d, r)))
+			return
+		}
+		writeHTML(w, pageDevices(d, clientPageState{Create: r.URL.Query().Get("new") == "1"}, authed(d, r)))
+	})
+	mux.HandleFunc("/devices/create", func(w http.ResponseWriter, r *http.Request) {
+		serveRouteAlias(w, r, "/devices/create", "/clients/create")
+	})
+	mux.HandleFunc("/devices/invites/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && !authed(d, r) {
+			http.Redirect(w, r, loginURL(r.URL.RequestURI()), http.StatusSeeOther)
+			return
+		}
+		serveRouteAlias(w, r, "/devices/invites/", "/clients/invites/")
+	})
+	mux.HandleFunc("/devices/download/linux-amd64", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && !authed(d, r) {
+			http.Redirect(w, r, loginURL(r.URL.RequestURI()), http.StatusSeeOther)
+			return
+		}
+		serveRouteAlias(w, r, "/devices/download/linux-amd64", "/clients/download/linux-amd64")
+	})
+	mux.HandleFunc("/device-dist/install.sh", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", "GET")
+			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
+			return
+		}
+		control := deviceControl(d)
+		if control == nil || control.LinuxInstallScript == nil {
+			http.NotFound(w, r)
+			return
+		}
+		body, err := control.LinuxInstallScript()
+		if err != nil {
+			http.Error(w, "Linux installer is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, no-cache")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+		w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		_, _ = w.Write(body)
+	})
+	mux.HandleFunc("/device-dist/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", "GET")
+			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
+			return
+		}
+		name := strings.TrimPrefix(r.URL.Path, "/device-dist/")
+		if name == "" || strings.Contains(name, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		control := deviceControl(d)
+		if control == nil || control.PublicLinuxArtifact == nil {
+			http.NotFound(w, r)
+			return
+		}
+		artifact, err := control.PublicLinuxArtifact(name)
+		if err != nil || artifact.Filename != name || len(artifact.Body) == 0 {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", artifact.ContentType)
+		w.Header().Set("Cache-Control", "public, no-cache")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+		w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, name))
+		w.Header().Set("Content-Length", strconv.Itoa(len(artifact.Body)))
+		_, _ = w.Write(artifact.Body)
+	})
+	mux.HandleFunc("/devices/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", "GET")
+			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
+			return
+		}
+		rawID := strings.TrimPrefix(r.URL.Path, "/devices/")
+		if rawID == "" || strings.Contains(rawID, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		deviceID, err := url.PathUnescape(rawID)
+		if err != nil || deviceID == "" || strings.Contains(deviceID, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeHTML(w, pageDeviceDetail(d, deviceID, authed(d, r)))
+	})
+	mux.HandleFunc("/clients", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
+			return
+		}
+		target := "/devices"
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, target, http.StatusPermanentRedirect)
 	})
 	mux.HandleFunc("/clients/create", func(w http.ResponseWriter, r *http.Request) {
 		// Creation uses POST/Redirect/GET so refreshing the result page cannot
@@ -810,10 +965,11 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		if !authed(d, r) {
-			http.Redirect(w, r, loginURL("/clients?new=1"), http.StatusSeeOther)
+			http.Redirect(w, r, loginURL("/devices?new=1"), http.StatusSeeOther)
 			return
 		}
-		if d.Control == nil || d.Control.Clients == nil || d.Control.Clients.CreateInvite == nil {
+		control := deviceControl(d)
+		if control == nil || control.CreateInvite == nil {
 			http.Error(w, "这台机器没有客户端注册能力", http.StatusNotImplemented)
 			return
 		}
@@ -823,12 +979,12 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		name := strings.TrimSpace(r.Form.Get("name"))
-		invite, err := d.Control.Clients.CreateInvite(ClientInviteInput{Name: name})
+		invite, err := control.CreateInvite(ClientInviteInput{Name: name})
 		if err != nil {
 			writeHTML(w, pageClients(d, clientPageState{Create: true, SubmittedName: name, Error: err.Error()}, true))
 			return
 		}
-		http.Redirect(w, r, "/clients/invites/"+url.PathEscape(invite.InviteID), http.StatusSeeOther)
+		http.Redirect(w, r, "/devices/invites/"+url.PathEscape(invite.InviteID), http.StatusSeeOther)
 	})
 	mux.HandleFunc("/clients/invites/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -842,7 +998,8 @@ func Handler(d Deps) http.Handler {
 			http.Redirect(w, r, loginURL(r.URL.RequestURI()), http.StatusSeeOther)
 			return
 		}
-		if d.Control == nil || d.Control.Clients == nil || d.Control.Clients.InviteArtifact == nil {
+		control := deviceControl(d)
+		if control == nil || control.InviteArtifact == nil {
 			http.NotFound(w, r)
 			return
 		}
@@ -856,7 +1013,7 @@ func Handler(d Deps) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		artifact, err := d.Control.Clients.InviteArtifact(inviteID)
+		artifact, err := control.InviteArtifact(inviteID)
 		if err != nil {
 			http.Error(w, err.Error(), clientProtocolStatus(err))
 			return
@@ -864,6 +1021,9 @@ func Handler(d Deps) http.Handler {
 		invite := ClientInviteView{
 			InviteID: inviteID, ClientID: artifact.ClientID, ClientName: artifact.ClientName,
 			InviteURI: artifact.InviteURI, ExpiresAt: artifact.ExpiresAt,
+			ProfileVersion:    artifact.ProfileVersion,
+			Responsibilities:  append([]string(nil), artifact.Responsibilities...),
+			DestinationGrants: append([]string(nil), artifact.DestinationGrants...),
 		}
 		writeHTML(w, pageClients(d, clientPageState{Invite: &invite}, true))
 	})
@@ -877,11 +1037,12 @@ func Handler(d Deps) http.Handler {
 			http.Redirect(w, r, loginURL(r.URL.RequestURI()), http.StatusSeeOther)
 			return
 		}
-		if d.Control == nil || d.Control.Clients == nil || d.Control.Clients.DownloadLinuxPackage == nil {
+		control := deviceControl(d)
+		if control == nil || control.DownloadLinuxPackage == nil {
 			http.Error(w, "Linux 客户端包尚未发布", http.StatusServiceUnavailable)
 			return
 		}
-		view, body, err := d.Control.Clients.DownloadLinuxPackage()
+		view, body, err := control.DownloadLinuxPackage()
 		if err != nil {
 			// 本机绝对路径与验签细节不暴露给下载响应。
 			http.Error(w, "Linux 客户端包不可用", http.StatusServiceUnavailable)
@@ -889,7 +1050,7 @@ func Handler(d Deps) http.Handler {
 		}
 		hash := sha256.Sum256(body)
 		if view.Filename != "loom-client-linux-amd64.tar.gz" ||
-			view.URL != "/clients/download/linux-amd64" || view.Arch != "linux/amd64" ||
+			(view.URL != "/devices/download/linux-amd64" && view.URL != "/clients/download/linux-amd64") || view.Arch != "linux/amd64" ||
 			view.Size != int64(len(body)) || view.SHA256 != fmt.Sprintf("%x", hash[:]) {
 			http.Error(w, "Linux 客户端包验证结果不一致", http.StatusServiceUnavailable)
 			return
@@ -913,7 +1074,8 @@ func Handler(d Deps) http.Handler {
 			writeJSONError(w, http.StatusUnauthorized, "需要中控运维会话")
 			return
 		}
-		if d.Control == nil || d.Control.Clients == nil || d.Control.Clients.List == nil {
+		control := deviceControl(d)
+		if control == nil || control.List == nil {
 			writeJSONError(w, http.StatusNotImplemented, "这台机器没有客户端注册能力")
 			return
 		}
@@ -923,6 +1085,26 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, inventory)
+	})
+	mux.HandleFunc("/api/control/devices", func(w http.ResponseWriter, r *http.Request) {
+		clientJSONHeaders(w)
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", "GET")
+			writeJSONError(w, http.StatusMethodNotAllowed, "只接受 GET")
+			return
+		}
+		if !authed(d, r) {
+			writeJSONError(w, http.StatusUnauthorized, "需要中控运维会话")
+			return
+		}
+		inventory, err := loadDeviceInventory(d)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, DeviceInventory{
+			Devices: inventory.Clients, ActiveInvites: inventory.ActiveInvites,
+		})
 	})
 	mux.HandleFunc("/api/control/client-invites", func(w http.ResponseWriter, r *http.Request) {
 		clientJSONHeaders(w)
@@ -935,7 +1117,8 @@ func Handler(d Deps) http.Handler {
 			writeJSONError(w, http.StatusUnauthorized, "需要中控运维会话")
 			return
 		}
-		if d.Control == nil || d.Control.Clients == nil || d.Control.Clients.CreateInvite == nil {
+		control := deviceControl(d)
+		if control == nil || control.CreateInvite == nil {
 			writeJSONError(w, http.StatusNotImplemented, "这台机器没有客户端注册能力")
 			return
 		}
@@ -944,7 +1127,7 @@ func Handler(d Deps) http.Handler {
 			writeJSONError(w, clientDecodeStatus(err), err.Error())
 			return
 		}
-		invite, err := d.Control.Clients.CreateInvite(input)
+		invite, err := control.CreateInvite(input)
 		if err != nil {
 			writeJSONError(w, clientProtocolStatus(err), err.Error())
 			return
@@ -963,7 +1146,8 @@ func Handler(d Deps) http.Handler {
 			http.Error(w, "需要中控运维会话", http.StatusUnauthorized)
 			return
 		}
-		if d.Control == nil || d.Control.Clients == nil || d.Control.Clients.InviteArtifact == nil {
+		control := deviceControl(d)
+		if control == nil || control.InviteArtifact == nil {
 			http.NotFound(w, r)
 			return
 		}
@@ -974,7 +1158,7 @@ func Handler(d Deps) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		artifact, err := d.Control.Clients.InviteArtifact(inviteID)
+		artifact, err := control.InviteArtifact(inviteID)
 		if err != nil {
 			http.Error(w, err.Error(), clientProtocolStatus(err))
 			return
@@ -994,6 +1178,12 @@ func Handler(d Deps) http.Handler {
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 		_, _ = w.Write(png)
 	})
+	mux.HandleFunc("/api/control/device-invites", func(w http.ResponseWriter, r *http.Request) {
+		serveRouteAlias(w, r, "/api/control/device-invites", "/api/control/client-invites")
+	})
+	mux.HandleFunc("/api/control/device-invites/", func(w http.ResponseWriter, r *http.Request) {
+		serveRouteAlias(w, r, "/api/control/device-invites/", "/api/control/client-invites/")
+	})
 	mux.HandleFunc("/api/client/enroll", func(w http.ResponseWriter, r *http.Request) {
 		clientJSONHeaders(w)
 		if r.Method != http.MethodPost {
@@ -1001,7 +1191,8 @@ func Handler(d Deps) http.Handler {
 			writeJSONError(w, http.StatusMethodNotAllowed, "只接受 POST")
 			return
 		}
-		if d.Control == nil || d.Control.Clients == nil || d.Control.Clients.Claim == nil {
+		control := deviceControl(d)
+		if control == nil || control.Claim == nil {
 			// Do not reveal whether an invite exists when this node is not the issuer.
 			writeJSONError(w, http.StatusNotFound, "client enrollment is unavailable")
 			return
@@ -1016,7 +1207,7 @@ func Handler(d Deps) http.Handler {
 			writeJSONError(w, clientDecodeStatus(err), err.Error())
 			return
 		}
-		result, err := d.Control.Clients.Claim(ClientClaimInput{
+		result, err := control.Claim(ClientClaimInput{
 			Token: wire.Token, Platform: wire.Platform, CSRPEM: wire.CSRPEM, RequestID: wire.RequestID,
 		})
 		if err != nil {
@@ -1038,6 +1229,9 @@ func Handler(d Deps) http.Handler {
 		}
 		writeJSON(w, status, result)
 	})
+	mux.HandleFunc("/api/device/enroll", func(w http.ResponseWriter, r *http.Request) {
+		serveRouteAlias(w, r, "/api/device/enroll", "/api/client/enroll")
+	})
 	mux.HandleFunc("/nodes", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
@@ -1045,9 +1239,13 @@ func Handler(d Deps) http.Handler {
 		}
 		writeHTML(w, pageNodes(d, authed(d, r), strings.TrimSpace(r.URL.Query().Get("added"))))
 	})
-	mux.HandleFunc("/nodes/add", readPage(func(ok bool) string {
-		return pageNodeAdd(d, nodeAddPageState{}, ok)
-	}))
+	mux.HandleFunc("/nodes/add", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
+			return
+		}
+		http.Redirect(w, r, "/devices?legacy=ssh", http.StatusPermanentRedirect)
+	})
 	mux.HandleFunc("/nodes/add/scan", func(w http.ResponseWriter, r *http.Request) {
 		if !requireEnrollmentWrite(d, w, r) {
 			return
@@ -1551,7 +1749,7 @@ func requireEnrollmentWrite(d Deps, w http.ResponseWriter, r *http.Request) bool
 		return false
 	}
 	if !authed(d, r) {
-		http.Redirect(w, r, loginURL("/nodes/add"), http.StatusSeeOther)
+		http.Redirect(w, r, loginURL("/devices?legacy=ssh"), http.StatusSeeOther)
 		return false
 	}
 	if d.Control == nil || d.Control.Enrollment == nil {
@@ -1682,12 +1880,14 @@ func safeLoginReturnTo(raw string) string {
 
 func loginReturnPathAllowed(path string) bool {
 	switch path {
-	case "/", "/clients", "/clients/download/linux-amd64", "/nodes", "/nodes/add",
+	case "/", "/devices", "/devices/download/linux-amd64", "/clients", "/clients/download/linux-amd64", "/nodes", "/nodes/add",
 		"/nodes/bootstrap-key.pub", "/topology", "/services", "/routing",
 		"/deployments", "/events", "/settings":
 		return true
 	}
-	return safeSinglePathSegment(path, "/clients/invites/") ||
+	return safeSinglePathSegment(path, "/devices/invites/") ||
+		(path != "/devices/create" && safeSinglePathSegment(path, "/devices/")) ||
+		safeSinglePathSegment(path, "/clients/invites/") ||
 		safeSinglePathSegment(path, "/nodes/")
 }
 

@@ -102,6 +102,33 @@ func TestInvitationPersistsOnlyHashAndExactClaimReplayIsIdempotent(t *testing.T)
 	}
 }
 
+func TestInvitationPinsImmutableProfileExpansion(t *testing.T) {
+	now := time.Date(2026, 9, 1, 19, 0, 0, 0, time.UTC)
+	store := testStore(t, &now)
+	assignment := ProfileAssignment{
+		Version: "standard-device@v1", Digest: strings.Repeat("a", 64),
+		Responsibilities:  []string{"use_loom"},
+		DestinationGrants: []string{"best-egress", "sg-fixed"},
+	}
+	created, err := store.CreateWithProfile("profiled server", assignment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assignment.DestinationGrants[0] = "mutated-after-create"
+	clients, invites, err := store.List()
+	if err != nil || len(clients) != 1 || len(invites) != 1 {
+		t.Fatalf("list clients=%+v invites=%+v err=%v", clients, invites, err)
+	}
+	if clients[0].ProfileVersion != "standard-device@v1" || clients[0].ProfileDigest != strings.Repeat("a", 64) ||
+		strings.Join(clients[0].DestinationGrants, ",") != "best-egress,sg-fixed" ||
+		invites[0].ProfileVersion != clients[0].ProfileVersion || created.Client.ProfileVersion != clients[0].ProfileVersion {
+		t.Fatalf("pinned assignment was not durably copied: client=%+v invite=%+v", clients[0], invites[0])
+	}
+	if _, err := store.CreateWithProfile("invalid profile", ProfileAssignment{Version: "standard-device@v1", Digest: "short"}); err == nil {
+		t.Fatal("malformed profile digest was accepted")
+	}
+}
+
 func TestConcurrentInvitationsCannotBindOneCanonicalSPKITwice(t *testing.T) {
 	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, &now)

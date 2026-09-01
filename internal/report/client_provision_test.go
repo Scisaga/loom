@@ -36,6 +36,7 @@ func TestClientProvisionPrepositionsSecretsBeforeSSOTCommitAndReplaysReady(t *te
 		ID: "client-build01", Name: "Build server", Platform: string(model.LinuxServer),
 		Status: "provisioning",
 	}
+	pinDefaultTestProfile(t, control, &client)
 	csrPEM, csr := clientProvisionCSR(t)
 	var saveMu sync.Mutex
 	p := newClientProvisioner(control, &saveMu)
@@ -201,6 +202,36 @@ func TestPublisherHasSSOTRequiresCurrentHealthyPublisher(t *testing.T) {
 	}
 }
 
+func TestEnrollmentDistributionUsesOnlyExactSafeDefaultEvidence(t *testing.T) {
+	now := time.Date(2026, 9, 1, 19, 0, 0, 0, time.UTC)
+	body := []byte("exact SSOT")
+	sum := sha256.Sum256(body)
+	ssotSum := hex.EncodeToString(sum[:])
+	s := &model.SSOT{Defaults: &model.SSOTDefaults{DistributionURLs: []string{
+		"https://public.example/loom/",
+		"http://10.99.0.1/loom/",
+		"https://unverified.example/loom/",
+		"https://public.example/loom/",
+	}}}
+	health := &PublisherState{
+		PID: os.Getpid(), UpdatedAt: now.Format(time.RFC3339Nano), IntervalSeconds: 30,
+		LastError: "a different mirror failed", LastErrorAt: now.Format(time.RFC3339Nano),
+		DistributionChecks: []PublisherDistributionCheck{
+			{URL: "https://public.example/loom", Snapshot: "snapshot-exact", SSOT: ssotSum, CheckedAt: now.Format(time.RFC3339Nano), Success: true},
+			{URL: "http://10.99.0.1/loom/", Snapshot: "snapshot-exact", SSOT: ssotSum, CheckedAt: now.Format(time.RFC3339Nano), Success: true},
+			{URL: "https://unverified.example/loom/", Snapshot: "snapshot-old", SSOT: strings.Repeat("0", 64), CheckedAt: now.Format(time.RFC3339Nano), Success: true},
+		},
+	}
+	urls, snapshot, err := verifiedEnrollmentDistributionURLs(s, health, body, now)
+	if err != nil || snapshot != "snapshot-exact" || !reflect.DeepEqual(urls, []string{"https://public.example/loom/"}) {
+		t.Fatalf("verified enrollment URLs=%v snapshot=%q err=%v", urls, snapshot, err)
+	}
+	health.DistributionChecks[0].Success = false
+	if _, _, err := verifiedEnrollmentDistributionURLs(s, health, body, now); !errors.Is(err, errDistributionNotReady) {
+		t.Fatalf("no exact public URL error=%v", err)
+	}
+}
+
 func TestNodeSecretRefsUseAccessCredentialBindingNotOwnerLabel(t *testing.T) {
 	control, _ := clientProvisionFixture(t)
 	body, err := os.ReadFile(control.SSOTPath)
@@ -233,6 +264,7 @@ func TestReadyBootstrapRechecksExactSSOTAfterPublisherMoves(t *testing.T) {
 		ID: "client-race01", Name: "Race check", Platform: string(model.LinuxServer),
 		Status: "provisioning",
 	}
+	pinDefaultTestProfile(t, control, &client)
 	csrPEM, _ := clientProvisionCSR(t)
 	var saveMu sync.Mutex
 	p := newClientProvisioner(control, &saveMu)
@@ -262,6 +294,9 @@ func TestReadyBootstrapRechecksExactSSOTAfterPublisherMoves(t *testing.T) {
 	}
 	newerSum := sha256.Sum256([]byte("a different concurrently published SSOT"))
 	health.LastSSOT = hex.EncodeToString(newerSum[:])
+	for i := range health.DistributionChecks {
+		health.DistributionChecks[i].SSOT = health.LastSSOT
+	}
 	healthBody, err := json.Marshal(health)
 	if err != nil {
 		t.Fatal(err)
@@ -278,7 +313,7 @@ func TestReadyBootstrapRechecksExactSSOTAfterPublisherMoves(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = p.readyBootstrap(paths, ssot, ssot.NodeByID()[client.ID], clientSecrets, csrPEM, ssotBody)
-	if err == nil || !strings.Contains(err.Error(), "healthy publisher state for the provisioned SSOT") {
+	if err == nil || !errors.Is(err, errDistributionNotReady) {
 		t.Fatalf("readyBootstrap accepted a different published SSOT: %v", err)
 	}
 }
@@ -422,6 +457,7 @@ func TestClientProvisionFailureLeavesSSOTUnchangedAndRetryReusesSecrets(t *testi
 		t.Fatal(err)
 	}
 	client := clientregistry.Client{ID: "client-retry01", Name: "Retry server", Platform: string(model.LinuxServer)}
+	pinDefaultTestProfile(t, control, &client)
 	csrPEM, _ := clientProvisionCSR(t)
 	var saveMu sync.Mutex
 	p := newClientProvisioner(control, &saveMu)
@@ -661,6 +697,22 @@ func clientProvisionFixture(t *testing.T) (*Control, clientProvisionPaths) {
 	return control, paths
 }
 
+func pinDefaultTestProfile(t *testing.T, control *Control, client *clientregistry.Client) {
+	t.Helper()
+	ssot, err := model.LoadFile(control.SSOTPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile, err := ssot.DefaultEnrollmentProfile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.ProfileVersion = profile.Reference()
+	client.ProfileDigest = profile.Digest()
+	client.Responsibilities = append([]string(nil), profile.Responsibilities...)
+	client.DestinationGrants = append([]string(nil), profile.DestinationGrants...)
+}
+
 func copyTestFile(t *testing.T, source, target string, mode os.FileMode) {
 	t.Helper()
 	body, err := os.ReadFile(source)
@@ -723,10 +775,22 @@ func prepareClientReadyFiles(t *testing.T, paths clientProvisionPaths, healthPat
 		t.Fatal(err)
 	}
 	ssotSum := sha256.Sum256(ssotBody)
+	ssot, err := model.Load(ssotBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	distributionURL := ""
+	if urls := ssot.DistributionURLs(); len(urls) > 0 {
+		distributionURL = urls[0]
+	}
 	healthBody, _ := json.Marshal(PublisherState{
 		PID: os.Getpid(), UpdatedAt: now.Format(time.RFC3339Nano), IntervalSeconds: 30,
 		LastSuccess: now.Format(time.RFC3339Nano), LastSnapshot: authority.Snapshot,
 		LastSSOT: hex.EncodeToString(ssotSum[:]),
+		DistributionChecks: []PublisherDistributionCheck{{
+			URL: distributionURL, Snapshot: authority.Snapshot, SSOT: hex.EncodeToString(ssotSum[:]),
+			CheckedAt: now.Format(time.RFC3339Nano), Success: true,
+		}},
 	})
 	if err := os.WriteFile(healthPath, healthBody, 0o600); err != nil {
 		t.Fatal(err)

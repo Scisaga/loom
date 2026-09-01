@@ -16,10 +16,13 @@ import (
 // signature, embedded manifest and the separately pinned public key are one
 // verification transaction.
 type Published struct {
-	Manifest Manifest
-	SHA256   string
-	Size     int64
-	Archive  []byte
+	Manifest  Manifest
+	SHA256    string
+	Size      int64
+	Archive   []byte
+	Checksum  []byte
+	Signature []byte
+	PublicKey []byte
 }
 
 // VerifyFiles verifies the production archive and its adjacent sidecars.
@@ -62,7 +65,10 @@ func VerifyFiles(archivePath, publicKeyPath string) (Published, error) {
 	}
 	// Return the exact verified bytes. A handler that reopens archivePath after
 	// this point would reintroduce a verify/use race with the publisher.
-	return Published{Manifest: manifest, SHA256: fields[0], Size: int64(len(archive)), Archive: archive}, nil
+	return Published{
+		Manifest: manifest, SHA256: fields[0], Size: int64(len(archive)), Archive: archive,
+		Checksum: checksum, Signature: signature, PublicKey: publicBody,
+	}, nil
 }
 
 func readRegularBounded(path string, limit int64) ([]byte, error) {

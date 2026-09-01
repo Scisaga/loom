@@ -87,6 +87,9 @@ type Options struct {
 	// beforeLock 只给包内回归测试精确构造“读旧输入→另一笔
 	// 发布完成→本轮取锁”的窗口；生产入口无法设置。
 	beforeLock func()
+	// recordDistributionCheck connects publishOnce's per-URL verifier to Run's
+	// durable health state without changing the public publish transaction API.
+	recordDistributionCheck func(DistributionCheck)
 }
 
 func (o *Options) fill() {
@@ -338,6 +341,10 @@ func Run(ctx context.Context, opts Options) error {
 				iterationErr = fmt.Errorf("%s", blocked)
 				recordFailure(iterationErr)
 			} else if changed || diverged || retryPending {
+				health.DistributionChecks = nil
+				opts.recordDistributionCheck = func(check DistributionCheck) {
+					health.DistributionChecks = append(health.DistributionChecks, check)
+				}
 				id, err := func() (string, error) {
 					if opts.beforeLock != nil {
 						opts.beforeLock()
@@ -627,12 +634,29 @@ func publishOnce(opts *Options, body []byte, bins map[string][]byte, logf func(s
 			short(resultSnapshot), len(t.Owners()), strings.Join(t.Owners(), " "), opts.Target)
 	}
 
+	ssotSum := sha256.Sum256(body)
+	var verifyFailures []string
 	for _, verifyURL := range configuredVerifyURLs(opts) {
-		if err := VerifyServed(verifyURL, resultSnapshot, opts.DNS, 20*time.Second, t, pub); err != nil {
-			// 推成功了但节点取不到,等于没发布。必须当成失败。
-			return "", fmt.Errorf("推完了,但从节点视角取不到 %s:%w", verifyURL, err)
+		check := DistributionCheck{
+			URL: verifyURL, Snapshot: resultSnapshot, SSOT: hex.EncodeToString(ssotSum[:]),
+			CheckedAt: opts.Now().Format(time.RFC3339Nano),
 		}
-		logf("  ✅ 节点视角已确认(%s)", verifyURL)
+		if err := VerifyServed(verifyURL, resultSnapshot, opts.DNS, 20*time.Second, t, pub); err != nil {
+			// Check every configured URL even after one fails. Enrollment needs exact
+			// evidence for the working alternatives, while publisher health remains
+			// degraded until all declared publish exits verify.
+			check.Error = err.Error()
+			verifyFailures = append(verifyFailures, fmt.Sprintf("%s:%v", verifyURL, err))
+		} else {
+			check.Success = true
+			logf("  ✅ 节点视角已确认(%s)", verifyURL)
+		}
+		if opts.recordDistributionCheck != nil {
+			opts.recordDistributionCheck(check)
+		}
+	}
+	if len(verifyFailures) > 0 {
+		return "", fmt.Errorf("推完了,但部分节点视角取不到:%s", strings.Join(verifyFailures, "; "))
 	}
 	return resultSnapshot, nil
 }
