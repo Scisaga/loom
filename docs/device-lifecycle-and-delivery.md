@@ -14,8 +14,15 @@
 安装脚本，以及首次 pull 对每个配置 URL 记录精确发布证据并 fail closed。公开地址只读
 部署配置，代码不含部署域名。
 
-当前尚不能宣称 E1 全部完成：通用包和公网反向代理需要随本次版本实际发布；还要在
-一次性 Linux 环境完成 invite → install → claim → first pull → apply → online 的真机 canary。
+上述代码已于 2026-09-01 以提交 `01a16dd172fd` 发布：六台现有 Device 使用相同二进制，
+签名快照为 `93edfe7036c1`；两个配置镜像对同一 SSOT/snapshot 的逐 URL 验证均成功。
+公开 HTTPS 前门已完整下载通用包并通过 checksum，安装脚本、签名公钥和 allowlist 的
+404/拒绝 POST 边界也已实测。部署域名和路径属于本次部署配置，不是产品默认值。
+
+当前仍不能宣称 E1 全部完成：还要在可回收的一次性 Linux Device 上完成 invite →
+install → claim → first pull → apply → online 的真机 canary。生产 registry 暂无安全的
+Device 删除/凭据撤销事务，不能为了测试永久污染 SSOT；本机 Docker daemon 又无法解析
+公共镜像仓库，因此本轮只完成公开包端到端下载，未把它冒充完整 Enrollment canary。
 另外，现有 claim 已统一建立 Device identity 和 `use_loom` 授权，但还没有携带服务器
 `forward` / `internet_egress` 所需的 endpoint、direction 与 inbound 声明。为避免靠猜测
 扩权，本轮对这些职责失败关闭；SSH Add node 暂时只作为 legacy 迁移入口。这部分必须在
