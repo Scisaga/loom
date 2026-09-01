@@ -188,6 +188,35 @@ func TestDecommissionUnitDiscoveryIsStableAndTimerLast(t *testing.T) {
 	}
 }
 
+func TestDecommissionDiscoveryAcceptsEmptyWireGuardCatalog(t *testing.T) {
+	dir := t.TempDir()
+	ctl := func(args ...string) (string, error) {
+		if args[len(args)-1] == "wg-quick@wg-*.service" {
+			t.Fatal("filtered systemd query cannot distinguish no matches from a failed query")
+		}
+		switch args[0] {
+		case "list-units":
+			return "sing-box.service loaded active running sing-box", nil
+		case "list-unit-files":
+			return "sing-box.service enabled enabled", nil
+		default:
+			return "", errors.New("unexpected discovery call")
+		}
+	}
+	units, err := decommissionUnits(dir, nil, ctl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, unit := range units {
+		if strings.HasPrefix(unit, "wg-quick@") {
+			t.Fatalf("unrelated service became a WireGuard unit: %v", units)
+		}
+	}
+	if units[len(units)-1] != "loom-pull.timer" {
+		t.Fatalf("pull.timer is not last: %v", units)
+	}
+}
+
 func TestDecommissionDiscoveryUnionsInventoryAndSystemdOrphans(t *testing.T) {
 	dir := t.TempDir() // 故意没有任何 .conf
 	installed := []string{"/etc/wireguard/wg-inventory.conf"}

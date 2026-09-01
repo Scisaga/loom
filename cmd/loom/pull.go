@@ -993,8 +993,8 @@ func decommissionUnits(wireguardDir string, installed []string, ctl systemctlFun
 	}
 
 	queries := [][]string{
-		{"list-units", "--all", "--plain", "--no-legend", "--no-pager", "wg-quick@wg-*.service"},
-		{"list-unit-files", "--no-legend", "--no-pager", "wg-quick@wg-*.service"},
+		{"list-units", "--all", "--plain", "--type=service", "--no-legend", "--no-pager"},
+		{"list-unit-files", "--type=service", "--no-legend", "--no-pager"},
 	}
 	for _, args := range queries {
 		out, err := ctl(args...)
@@ -1004,6 +1004,13 @@ func decommissionUnits(wireguardDir string, installed []string, ctl systemctlFun
 		for _, line := range strings.Split(out, "\n") {
 			fields := strings.Fields(line)
 			if len(fields) == 0 {
+				continue
+			}
+			// Query the complete service catalog. systemd returns status 1 for a
+			// wildcard with no matches, which is a normal state for access-only
+			// Devices without WireGuard. The unfiltered catalog must succeed;
+			// absence can then be proved without weakening discovery failures.
+			if !strings.HasPrefix(fields[0], "wg-quick@wg-") || !strings.HasSuffix(fields[0], ".service") {
 				continue
 			}
 			if err := addUnit(fields[0], "systemd "+args[0]); err != nil {
