@@ -6,7 +6,7 @@
 > [客户端接入设计](client-access.md)，局域网转发仍是独立的
 > [Local Network 专题](local-network.md)。
 
-### 2026-09-01 E1 实施状态
+### 2026-09-01 E1 实施状态（已完成）
 
 本轮已经完成并通过仓库测试的部分：统一 `/devices` 读模型与详情、规范
 `/api/control/devices`、旧 `/clients` 和 `/nodes/add` 入口收口、四分授权展示、邀请钉住
@@ -15,11 +15,12 @@
 部署配置，代码不含部署域名。
 
 统一读模型与公开分发边界最初以提交 `01a16dd172fd` 发布；服务器职责 Enrollment 的
-后续实现已于同日以提交 `37f86a3977d2` 发布。六台现有 Device 已运行统一 Device 版本，
-并由 signed release 持续收敛；两个配置镜像对同一 SSOT/snapshot 的逐 URL 验证均成功。
+后续实现已于同日以提交 `37f86a3977d2` 发布。E1 的最终回收与 access-only 修复以提交
+`0c29455218c3` 发布。六台现有 Device 已运行同一 Device 版本，并由 signed release
+持续收敛；两个配置镜像对同一 SSOT/snapshot 的逐 URL 验证均成功。
 公开 HTTPS 前门的安装脚本、checksum、
 detached signature、平台公钥和 allowlist 的 404/拒绝写边界均已实测；Linux 包 SHA256
-为 `02a51c18d0dd2d8d32d69004b879e2504b2108704845cf629c0876d2aaf2e4e6`。部署域名和路径
+为 `7a89edb59023c3eeb8bc685a26d56849c31c470548319ea33bdf82969473dab8`。部署域名和路径
 属于本次部署配置，不是产品默认值。
 
 E1 的服务器职责现在也走同一 Enrollment：邀请钉住服务器 ProfileVersion；Linux Device
@@ -30,12 +31,20 @@ E1 的服务器职责现在也走同一 Enrollment：邀请钉住服务器 Profi
 配置应用后的公网入站仍复用已有签名拓扑观测，不另造一次“拨入验证”。服务器缺少
 wireguard-tools 时，在 invitation claim 前使用已有受限包管理器流程安装并复检。
 
-access-only Device 已具备两阶段回收：先通过 signed SSOT 明确 decommission，目标机落下
-停机 marker 后，才允许从期望态移除并 revoke identity；未领取的测试邀请另有严格清理
-入口，只允许删除没有公钥、没有 consumed invite、从未进入 claim 的 identity reservation。
-Docker systemd canary 已从公开 HTTPS 前门下载、逐文件验签并执行通用包安装，但尚未消费
-邀请，因此不能把它写成 invite → online 全链 canary。SSH Add node 继续只作为迁移兼容
-入口，待完整 canary 后移除。
+access-only Device 已具备完整回收：先通过 signed SSOT 明确 decommission，目标机停止并
+禁用 Agent、Report、sing-box 与 pull timer、落下 marker 后，才允许从期望态移除并 revoke
+identity；全网收敛后可按 Device ID 精确清 master/node secrets，并永久清理 revoked registry
+记录。未领取邀请仍使用更窄的 `discard-pending`，只允许删除没有公钥、没有 consumed
+invite、从未进入 claim 的 identity reservation。
+
+真实 Docker systemd canary `d-89e16d6daa` 已完成公开 HTTPS 下载与 checksum、一次性邀请
+claim、P-256 identity、SSOT 提交、generation 66/67 signed pull、首次 apply、3 个自动选择器
+运行和 `/status` 可信 200/verified。canary 随后消费 generation 69 的 signed decommission，
+验证 marker、`applied` 移除及四类 unit inactive/disabled，再从 SSOT、九项 master secret、
+六份 node secret layer、registry 与容器中完整清除；registry 最终恢复为 6 个正式 Device、
+0 个邀请。过程中实际发现并修复了三条既有边界：OpenSSL `EC PARAMETERS + EC PRIVATE KEY`
+CA 文件、无隧道 Device 不应执行 `wg show`、无 WG unit 的下线发现不能把 systemd 的
+“无匹配”当成查询失败。SSH Add node 继续只作为迁移兼容入口，后续再移除。
 
 六台既有 Device 的统一 identity registry 迁移不重新 Enrollment，也不根据名称、hostname
 或 IP 猜身份：导入命令要求 Device 当前存在于 SSOT，证书链通过 Loom CA，CN 与唯一 SAN
@@ -280,6 +289,9 @@ Control revision 变化后，以 View digest 是否变化作为最终影响判�
    删除产品层的 Nodes / Clients 概念，拓扑只保留 Device 的职责投影；
 8. **真实 Linux canary：** 从创建邀请、安装、claim、首次 pull、apply 到可信 online
    全链验收，再发布 E1；此阶段不开始 Windows/Android 宿主开发。
+
+上述 1–8 已完成并上线。E1 仍保留兼容存储与全局 snapshot 协议；它们分别在 E2/E3
+迁移，不能因为入口已统一就误称 per-device generation 或私有 Device view 已经实现。
 
 E1 保持当前签名/pull 协议，并通过兼容投影写入现有 SSOT，避免同时切换全部故障域。
 
