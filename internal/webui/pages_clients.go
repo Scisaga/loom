@@ -71,8 +71,8 @@ func pageDevices(d Deps, state clientPageState, isAuthed bool) string {
 			}
 			fmt.Fprintf(&b, `<tr><td><div class=client-name><b><a href="/devices/%s">%s</a></b><span class="mono dim">%s%s</span></div><td><b>%s</b><td>%s<td>%s<td><span class="client-status %s"><span class=dot></span>%s</span><br><span class="tiny dim">%s</span><td class=mono>%s</tr>`,
 				url.PathEscape(device.ID), esc(device.ID), esc(identityMeta), identityNote,
-				esc(orDash(device.Membership)), esc(deviceList(device.Responsibilities)),
-				esc(deviceList(device.DestinationGrants)), statusClass, esc(statusLabel),
+				esc(orDash(device.Membership)), deviceTagList(device.Responsibilities),
+				deviceTagList(device.DestinationGrants), statusClass, esc(statusLabel),
 				esc(clientRuntimeDetail(device)), esc(clientTime(device.LastSeenAt)))
 		}
 		b.WriteString(`</tbody></table></div>`)
@@ -93,6 +93,19 @@ func deviceListIdentityMeta(device ClientView) string {
 		return platform
 	}
 	return name + " · " + platform
+}
+
+func deviceTagList(values []string) string {
+	if len(values) == 0 {
+		return "—"
+	}
+	var b strings.Builder
+	b.WriteString(`<span class=device-tag-list role=list>`)
+	for _, value := range values {
+		fmt.Fprintf(&b, `<span class=device-tag role=listitem>%s</span>`, esc(value))
+	}
+	b.WriteString(`</span>`)
+	return b.String()
 }
 
 // pageClients remains only for source-level compatibility with older focused

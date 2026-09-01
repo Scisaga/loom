@@ -418,11 +418,13 @@ func TestManagedCertificateIdentityIsNotPresentedAsLegacySoftware(t *testing.T) 
 		return ClientInventory{Clients: []ClientView{{
 			ID: "edge01", Name: "Existing edge", Platform: "linux-server", Status: "managed",
 			IdentitySource: "managed-certificate", KeyFingerprint: "SHA256:abc", Membership: "active",
+			Responsibilities: []string{"forward", "internet_egress"}, DestinationGrants: []string{"best-egress"},
 		}}}, nil
 	}
 	body := pageClients(d, clientPageState{}, true)
 	if strings.Contains(body, "Legacy managed") || !strings.Contains(body, `href="/devices/edge01">edge01</a>`) ||
-		!strings.Contains(body, `Existing edge · linux-server`) || strings.Contains(body, `>Existing edge</a>`) {
+		!strings.Contains(body, `Existing edge · linux-server`) || strings.Contains(body, `>Existing edge</a>`) ||
+		strings.Count(body, `class=device-tag role=listitem`) != 3 || !strings.Contains(body, `>internet_egress</span>`) {
 		t.Fatalf("managed certificate inventory has legacy software semantics: %s", body)
 	}
 	detail := pageDeviceDetail(d, "edge01", true)
