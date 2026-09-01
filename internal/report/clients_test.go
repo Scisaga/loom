@@ -49,6 +49,11 @@ func TestClientInviteUsesOpaqueFragmentAndClaimKeepsProvisioningExplicit(t *test
 		strings.Contains(invite.EnrollmentURL, payload.Token) {
 		t.Fatalf("payload=%+v invite=%+v", payload, invite)
 	}
+	artifact, err := deps.InviteArtifact(invite.InviteID)
+	if err != nil || artifact.ClientID != invite.ClientID || artifact.ClientName != "build server" ||
+		artifact.InviteURI != invite.InviteURI || artifact.ExpiresAt != invite.ExpiresAt {
+		t.Fatalf("artifact=%+v invite=%+v err=%v", artifact, invite, err)
+	}
 
 	claim, err := deps.Claim(webui.ClientClaimInput{
 		Token: payload.Token, Platform: "linux-server", CSRPEM: clientCSR(t), RequestID: "install-1",

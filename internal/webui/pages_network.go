@@ -97,7 +97,7 @@ func pageNodes(d Deps, isAuthed bool, added string) string {
 			if isAuthed {
 				b.WriteString(`<form method=post action="/nodes/bootstrap-key/generate"><button class=primary>Generate shared key pair</button></form>`)
 			} else {
-				b.WriteString(`<a class="button primary" href="/login">Sign in to generate</a>`)
+				fmt.Fprintf(&b, `<a class="button primary" href="%s">Sign in to generate</a>`, esc(loginURL("/nodes")))
 			}
 			b.WriteString(`</div>`)
 		} else {

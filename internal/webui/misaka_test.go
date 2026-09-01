@@ -664,8 +664,8 @@ func TestMisakaNodeEnrollmentPOSTsRequireAuthentication(t *testing.T) {
 	for target, form := range forms {
 		t.Run(strings.TrimPrefix(target, "/nodes/add/"), func(t *testing.T) {
 			w := misakaRequest(t, d, http.MethodPost, target, form, false)
-			if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/login" {
-				t.Fatalf("unauthenticated POST %s = %d location %q, want 303 /login", target, w.Code, w.Header().Get("Location"))
+			if w.Code != http.StatusSeeOther || w.Header().Get("Location") != loginURL("/nodes/add") {
+				t.Fatalf("unauthenticated POST %s = %d location %q, want safe login return to Add node", target, w.Code, w.Header().Get("Location"))
 			}
 		})
 	}

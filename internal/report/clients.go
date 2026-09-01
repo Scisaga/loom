@@ -142,11 +142,28 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 			if err != nil {
 				return webui.ClientInviteArtifact{}, err
 			}
+			clients, _, err := store.List()
+			if err != nil {
+				return webui.ClientInviteArtifact{}, err
+			}
+			clientName := ""
+			for _, client := range clients {
+				if client.ID == invite.ClientID {
+					clientName = client.Name
+					break
+				}
+			}
+			if clientName == "" {
+				return webui.ClientInviteArtifact{}, fmt.Errorf("invitation %s references an unknown client", invite.ID)
+			}
 			uri, err := inviteURI(token, invite.ExpiresAt)
 			if err != nil {
 				return webui.ClientInviteArtifact{}, err
 			}
-			return webui.ClientInviteArtifact{InviteURI: uri, ExpiresAt: invite.ExpiresAt}, nil
+			return webui.ClientInviteArtifact{
+				ClientID: invite.ClientID, ClientName: clientName,
+				InviteURI: uri, ExpiresAt: invite.ExpiresAt,
+			}, nil
 		},
 		Claim: func(input webui.ClientClaimInput) (webui.ClientClaimResult, error) {
 			claimed, err := store.Claim(clientregistry.ClaimInput{

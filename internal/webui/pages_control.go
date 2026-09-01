@@ -114,7 +114,13 @@ func pageServices(d Deps, selected string, create bool, message string, failed b
 		if d.Control == nil {
 			b.WriteString(`<p class="small warn service-editor-access">Structured writes are available only on the control node.</p>`)
 		} else if !isAuthed {
-			b.WriteString(`<p class="small service-editor-access"><a class="button primary" href="/login">Sign in to edit</a></p>`)
+			returnTo := "/services"
+			if create {
+				returnTo = "/services?new=1"
+			} else if svc.ID != "" {
+				returnTo = "/services?service=" + queryEscape(svc.ID)
+			}
+			fmt.Fprintf(&b, `<p class="small service-editor-access"><a class="button primary" href="%s">Sign in to edit</a></p>`, esc(loginURL(returnTo)))
 		} else if d.Control.Services == nil {
 			b.WriteString(`<p class="small service-editor-access"><a class=button href="/settings">Open validated SSOT editor</a> <span class=dim>Structured Service transactions are unavailable in this build.</span></p>`)
 		}
@@ -190,7 +196,7 @@ func pageNodeAdd(d Deps, state nodeAddPageState, isAuthed bool) string {
 		return shell(d, "Add node", b.String(), isAuthed)
 	}
 	if !isAuthed {
-		b.WriteString(`<div class="card section"><h2>Write session required</h2><p>The SSH trust store and SSOT are control-local write boundaries.</p><a class="button primary" href="/login">Sign in to enroll nodes</a></div>`)
+		fmt.Fprintf(&b, `<div class="card section"><h2>Write session required</h2><p>The SSH trust store and SSOT are control-local write boundaries.</p><a class="button primary" href="%s">Sign in to enroll nodes</a></div>`, esc(loginURL("/nodes/add")))
 		return shell(d, "Add node", b.String(), false)
 	}
 	if d.Control.Enrollment == nil {

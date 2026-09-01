@@ -241,8 +241,10 @@ type ClientInviteView struct {
 }
 
 type ClientInviteArtifact struct {
-	InviteURI string `json:"invite_uri"`
-	ExpiresAt string `json:"expires_at"`
+	ClientID   string `json:"client_id"`
+	ClientName string `json:"client_name"`
+	InviteURI  string `json:"invite_uri"`
+	ExpiresAt  string `json:"expires_at"`
 }
 
 type ClientClaimInput struct {
@@ -794,11 +796,13 @@ func Handler(d Deps) http.Handler {
 			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
 			return
 		}
+		w.Header().Set("Cache-Control", "no-store")
 		writeHTML(w, pageClients(d, clientPageState{Create: r.URL.Query().Get("new") == "1"}, authed(d, r)))
 	})
 	mux.HandleFunc("/clients/create", func(w http.ResponseWriter, r *http.Request) {
-		// A successful response contains the short-lived bearer invitation URI.
-		// Keep it out of shared/intermediary caches even on validation errors.
+		// Creation uses POST/Redirect/GET so refreshing the result page cannot
+		// silently create a second client and invitation. Validation errors still
+		// render from POST and therefore remain explicitly non-cacheable.
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		if r.Method != http.MethodPost {
@@ -806,7 +810,7 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		if !authed(d, r) {
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			http.Redirect(w, r, loginURL("/clients?new=1"), http.StatusSeeOther)
 			return
 		}
 		if d.Control == nil || d.Control.Clients == nil || d.Control.Clients.CreateInvite == nil {
@@ -824,6 +828,43 @@ func Handler(d Deps) http.Handler {
 			writeHTML(w, pageClients(d, clientPageState{Create: true, SubmittedName: name, Error: err.Error()}, true))
 			return
 		}
+		http.Redirect(w, r, "/clients/invites/"+url.PathEscape(invite.InviteID), http.StatusSeeOther)
+	})
+	mux.HandleFunc("/clients/invites/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", "GET")
+			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
+			return
+		}
+		if !authed(d, r) {
+			http.Redirect(w, r, loginURL(r.URL.RequestURI()), http.StatusSeeOther)
+			return
+		}
+		if d.Control == nil || d.Control.Clients == nil || d.Control.Clients.InviteArtifact == nil {
+			http.NotFound(w, r)
+			return
+		}
+		rawID := strings.TrimPrefix(r.URL.Path, "/clients/invites/")
+		if rawID == "" || strings.Contains(rawID, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		inviteID, err := url.PathUnescape(rawID)
+		if err != nil || inviteID == "" || strings.Contains(inviteID, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		artifact, err := d.Control.Clients.InviteArtifact(inviteID)
+		if err != nil {
+			http.Error(w, err.Error(), clientProtocolStatus(err))
+			return
+		}
+		invite := ClientInviteView{
+			InviteID: inviteID, ClientID: artifact.ClientID, ClientName: artifact.ClientName,
+			InviteURI: artifact.InviteURI, ExpiresAt: artifact.ExpiresAt,
+		}
 		writeHTML(w, pageClients(d, clientPageState{Invite: &invite}, true))
 	})
 	mux.HandleFunc("/clients/download/linux-amd64", func(w http.ResponseWriter, r *http.Request) {
@@ -833,7 +874,7 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		if !authed(d, r) {
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			http.Redirect(w, r, loginURL(r.URL.RequestURI()), http.StatusSeeOther)
 			return
 		}
 		if d.Control == nil || d.Control.Clients == nil || d.Control.Clients.DownloadLinuxPackage == nil {
@@ -1121,7 +1162,7 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		if !authed(d, r) {
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			http.Redirect(w, r, loginURL("/nodes"), http.StatusSeeOther)
 			return
 		}
 		if d.Control == nil || d.Control.BootstrapIdentity == nil {
@@ -1140,7 +1181,7 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		if !authed(d, r) {
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			http.Redirect(w, r, loginURL(r.URL.RequestURI()), http.StatusSeeOther)
 			return
 		}
 		if d.Control == nil || d.Control.BootstrapIdentity == nil {
@@ -1273,7 +1314,7 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		if !authed(d, r) {
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			http.Redirect(w, r, loginURL("/services"), http.StatusSeeOther)
 			return
 		}
 		if d.Control == nil || d.Control.Services == nil {
@@ -1327,17 +1368,28 @@ func Handler(d Deps) http.Handler {
 		writeHTML(w, pageOverview(d, authed(d, r)))
 	})
 	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			writeHTML(w, pageLogin(d, ""))
+		w.Header().Set("Cache-Control", "no-store")
+		if r.Method != http.MethodGet && r.Method != http.MethodPost {
+			w.Header().Set("Allow", "GET, POST")
+			http.Error(w, "只接受 GET 或 POST", http.StatusMethodNotAllowed)
+			return
+		}
+		next := safeLoginReturnTo(r.FormValue("next"))
+		if r.Method == http.MethodGet {
+			if authed(d, r) {
+				http.Redirect(w, r, next, http.StatusSeeOther)
+				return
+			}
+			writeHTML(w, pageLogin(d, "", next))
 			return
 		}
 		// 口令比较用常数时间:普通的 == 会因为提前返回而泄露前缀长度。
 		if d.Operator == "" {
-			writeHTML(w, pageLogin(d, "这台机器没有配置运维口令,写操作全部关闭"))
+			writeHTML(w, pageLogin(d, "这台机器没有配置运维口令,写操作全部关闭", next))
 			return
 		}
 		if subtle.ConstantTimeCompare([]byte(r.FormValue("password")), []byte(d.Operator)) != 1 {
-			writeHTML(w, pageLogin(d, "口令不对"))
+			writeHTML(w, pageLogin(d, "口令不对", next))
 			return
 		}
 		http.SetCookie(w, &http.Cookie{
@@ -1345,7 +1397,7 @@ func Handler(d Deps) http.Handler {
 			HttpOnly: true, SameSite: http.SameSiteStrictMode,
 			MaxAge: int(sessionTTL.Seconds()),
 		})
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		http.Redirect(w, r, next, http.StatusSeeOther)
 	})
 	mux.HandleFunc("/logout", func(w http.ResponseWriter, r *http.Request) {
 		http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", MaxAge: -1})
@@ -1358,7 +1410,7 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		if !authed(d, r) {
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			http.Redirect(w, r, loginURL("/"), http.StatusSeeOther)
 			return
 		}
 		name := strings.TrimPrefix(r.URL.Path, "/act/")
@@ -1398,7 +1450,7 @@ func Handler(d Deps) http.Handler {
 	if d.Control != nil {
 		serveSSOT := func(w http.ResponseWriter, r *http.Request) {
 			if !authed(d, r) {
-				http.Redirect(w, r, "/login", http.StatusSeeOther)
+				http.Redirect(w, r, loginURL("/settings"), http.StatusSeeOther)
 				return
 			}
 			if r.Method != http.MethodPost {
@@ -1499,7 +1551,7 @@ func requireEnrollmentWrite(d Deps, w http.ResponseWriter, r *http.Request) bool
 		return false
 	}
 	if !authed(d, r) {
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		http.Redirect(w, r, loginURL("/nodes/add"), http.StatusSeeOther)
 		return false
 	}
 	if d.Control == nil || d.Control.Enrollment == nil {
@@ -1608,6 +1660,48 @@ const (
 	cookieName = "loom_session"
 	sessionTTL = 12 * time.Hour
 )
+
+// safeLoginReturnTo accepts only known, read-only, same-origin UI targets.
+// Login never replays a protected POST, and a caller-controlled next value can
+// never turn the control plane into an open redirect.
+func safeLoginReturnTo(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || len(raw) > 2048 || !strings.HasPrefix(raw, "/") ||
+		strings.HasPrefix(raw, "//") || strings.Contains(raw, "\\") ||
+		strings.IndexFunc(raw, unicode.IsControl) >= 0 {
+		return "/"
+	}
+	u, err := url.ParseRequestURI(raw)
+	if err != nil || u.IsAbs() || u.Host != "" || u.User != nil || u.Fragment != "" ||
+		strings.HasPrefix(u.Path, "//") || strings.Contains(u.Path, "\\") ||
+		strings.IndexFunc(u.Path, unicode.IsControl) >= 0 || !loginReturnPathAllowed(u.Path) {
+		return "/"
+	}
+	return u.RequestURI()
+}
+
+func loginReturnPathAllowed(path string) bool {
+	switch path {
+	case "/", "/clients", "/clients/download/linux-amd64", "/nodes", "/nodes/add",
+		"/nodes/bootstrap-key.pub", "/topology", "/services", "/routing",
+		"/deployments", "/events", "/settings":
+		return true
+	}
+	return safeSinglePathSegment(path, "/clients/invites/") ||
+		safeSinglePathSegment(path, "/nodes/")
+}
+
+func safeSinglePathSegment(path, prefix string) bool {
+	if !strings.HasPrefix(path, prefix) {
+		return false
+	}
+	segment := strings.TrimPrefix(path, prefix)
+	return segment != "" && segment != "." && segment != ".." && !strings.Contains(segment, "/")
+}
+
+func loginURL(returnTo string) string {
+	return "/login?next=" + url.QueryEscape(safeLoginReturnTo(returnTo))
+}
 
 // mintToken 签一个带过期时间的会话票。
 //

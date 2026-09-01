@@ -140,8 +140,15 @@ func TestClientInvitationShowsRealQRResourceAndLinuxLink(t *testing.T) {
 		`href="/api/control/client-invites/invite-123/download"`,
 		`alt="Enrollment QR code for client-linux01"`,
 		`value="loom://enroll#opaque-short-lived-payload"`,
+		`Invitation ready`,
 		`short-lived, single-use secret`,
-		`normal reconnects do not register the device again`,
+		`sudo ./install.sh --invite-file ../client.loom-invite`,
+		`sudo ./install.sh --no-enroll`,
+		`sudo /usr/local/bin/loom client enroll -stdin`,
+		`press <kbd>Enter</kbd>, then <kbd>Ctrl-D</kbd>`,
+		`method=get action="/clients"`,
+		`Back to client list`,
+		`normal reconnects, restarts and configuration updates do not register the device again`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("Invitation result missing %q", want)
@@ -149,6 +156,12 @@ func TestClientInvitationShowsRealQRResourceAndLinuxLink(t *testing.T) {
 	}
 	if strings.Contains(body, "EnrollmentURL") {
 		t.Fatal("internal claim endpoint label leaked into the enrollment result")
+	}
+	if strings.Count(body, invite.InviteURI) != 1 {
+		t.Fatalf("invitation URI must appear only in the readonly input; count=%d", strings.Count(body, invite.InviteURI))
+	}
+	if strings.Contains(body, `loom client enroll -invite `) || strings.Contains(body, `printf 'loom://`) {
+		t.Fatal("invitation URI was encouraged in shell arguments or command history")
 	}
 }
 
@@ -187,6 +200,28 @@ func TestClientsPageDoesNotAdvertiseMissingPackage(t *testing.T) {
 	}
 }
 
+func TestInvitationDoesNotPresentUnrunnableLinuxCommandsWithoutPackage(t *testing.T) {
+	d := clientUIDeps()
+	d.Control.Clients.LinuxPackage = func() (LinuxClientPackageView, error) {
+		return LinuxClientPackageView{}, errors.New("artifact not published")
+	}
+	invite := ClientInviteView{
+		InviteID: "invite-blocked", ClientID: "client-blocked", ClientName: "Blocked client",
+		InviteURI: "loom://enroll#blocked", ExpiresAt: "2026-08-31T10:15:00Z",
+	}
+	body := pageClients(d, clientPageState{Invite: &invite}, true)
+	for _, want := range []string{"Linux package unavailable", "artifact not published", "Back to client list"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing-package invitation state omits %q", want)
+		}
+	}
+	for _, forbidden := range []string{"sudo ./install.sh", `href="/clients/download/linux-amd64"`} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("missing-package invitation presents unrunnable action %q", forbidden)
+		}
+	}
+}
+
 func TestClientsNavigationIsControlOnly(t *testing.T) {
 	control := shell(clientUIDeps(), "Clients", "", false)
 	if !strings.Contains(control, `data-key=clients class=active href="/clients">Clients</a>`) {
@@ -201,7 +236,9 @@ func TestClientsNavigationIsControlOnly(t *testing.T) {
 
 func TestClientEnrollmentUIAndInvitationArtifacts(t *testing.T) {
 	d := clientUIDeps()
+	createdInvites := 0
 	d.Control.Clients.CreateInvite = func(input ClientInviteInput) (ClientInviteView, error) {
+		createdInvites++
 		return ClientInviteView{
 			InviteID: "invite-ui", ClientID: "client-ui", ClientName: input.Name,
 			InviteURI: "loom://enroll#real-short-lived-payload", ExpiresAt: "2026-08-31T10:15:00Z",
@@ -211,20 +248,59 @@ func TestClientEnrollmentUIAndInvitationArtifacts(t *testing.T) {
 		if inviteID != "invite-ui" {
 			return ClientInviteArtifact{}, errors.New("not found")
 		}
-		return ClientInviteArtifact{InviteURI: "loom://enroll#real-short-lived-payload", ExpiresAt: "2026-08-31T10:15:00Z"}, nil
+		return ClientInviteArtifact{
+			ClientID: "client-ui", ClientName: "Build server",
+			InviteURI: "loom://enroll#real-short-lived-payload", ExpiresAt: "2026-08-31T10:15:00Z",
+		}, nil
 	}
 
 	created := misakaRequest(t, d, http.MethodPost, "/clients/create", url.Values{"name": {"Build server"}}, true)
-	if created.Code != http.StatusOK {
+	if created.Code != http.StatusSeeOther {
 		t.Fatalf("POST /clients/create = %d; body=%s", created.Code, created.Body.String())
+	}
+	if got := created.Header().Get("Location"); got != "/clients/invites/invite-ui" {
+		t.Fatalf("POST /clients/create location = %q, want invitation result GET", got)
 	}
 	if got := created.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("POST /clients/create Cache-Control = %q, want no-store", got)
 	}
+	if strings.Contains(created.Body.String(), "real-short-lived-payload") {
+		t.Fatal("create redirect leaked the bearer invitation in its response body")
+	}
+	unauthenticatedCreate := misakaRequest(t, d, http.MethodPost, "/clients/create", url.Values{"name": {"Other"}}, false)
+	if unauthenticatedCreate.Code != http.StatusSeeOther || unauthenticatedCreate.Header().Get("Location") != loginURL("/clients?new=1") || createdInvites != 1 {
+		t.Fatalf("unauthenticated create = %d location=%q calls=%d", unauthenticatedCreate.Code, unauthenticatedCreate.Header().Get("Location"), createdInvites)
+	}
+	unauthenticatedResult := misakaRequest(t, d, http.MethodGet, created.Header().Get("Location"), nil, false)
+	if unauthenticatedResult.Code != http.StatusSeeOther || unauthenticatedResult.Header().Get("Location") != loginURL(created.Header().Get("Location")) {
+		t.Fatalf("unauthenticated result = %d location=%q", unauthenticatedResult.Code, unauthenticatedResult.Header().Get("Location"))
+	}
+
+	result := misakaRequest(t, d, http.MethodGet, created.Header().Get("Location"), nil, true)
+	if result.Code != http.StatusOK {
+		t.Fatalf("GET invitation result = %d; body=%s", result.Code, result.Body.String())
+	}
+	if got := result.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("GET invitation result Cache-Control = %q, want no-store", got)
+	}
 	for _, want := range []string{"Build server", `/api/control/client-invites/invite-ui/qr.png`, `loom://enroll#real-short-lived-payload`} {
-		if !strings.Contains(created.Body.String(), want) {
+		if !strings.Contains(result.Body.String(), want) {
 			t.Errorf("created invitation page missing %q", want)
 		}
+	}
+	for _, want := range []string{`method=get action="/clients"`, `Back to client list`, `loom client enroll -stdin`, `Ctrl-D`} {
+		if !strings.Contains(result.Body.String(), want) {
+			t.Errorf("invitation result missing return/setup control %q", want)
+		}
+	}
+	refreshed := misakaRequest(t, d, http.MethodGet, created.Header().Get("Location"), nil, true)
+	if refreshed.Code != http.StatusOK || createdInvites != 1 {
+		t.Fatalf("refresh result=%d create calls=%d; result refresh must not create another invitation", refreshed.Code, createdInvites)
+	}
+	list := misakaRequest(t, d, http.MethodGet, "/clients", nil, true)
+	if list.Code != http.StatusOK || list.Header().Get("Cache-Control") != "no-store" ||
+		strings.Contains(list.Body.String(), "real-short-lived-payload") {
+		t.Fatalf("Done target /clients = %d headers=%v; list must be no-store and contain no invitation secret", list.Code, list.Header())
 	}
 
 	qr := misakaRequest(t, d, http.MethodGet, "/api/control/client-invites/invite-ui/qr.png", nil, true)

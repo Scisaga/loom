@@ -53,7 +53,7 @@ func pageClients(d Deps, state clientPageState, isAuthed bool) string {
 	if isAuthed && d.Control != nil && d.Control.Clients != nil && d.Control.Clients.CreateInvite != nil {
 		b.WriteString(`<a class="button primary sp" href="/clients?new=1">＋ Add client</a>`)
 	} else if d.Control != nil && !isAuthed {
-		b.WriteString(`<a class="button sp" href="/login">Sign in to add</a>`)
+		fmt.Fprintf(&b, `<a class="button sp" href="%s">Sign in to add</a>`, esc(loginURL("/clients?new=1")))
 	}
 	b.WriteString(`</div>`)
 	if inventoryErr == nil && len(inventory.Clients) == 0 {
@@ -104,7 +104,7 @@ func pageClientEnrollment(d Deps, state clientPageState, isAuthed bool) string {
 		return shell(d, "Clients", b.String(), isAuthed)
 	}
 	if !isAuthed {
-		b.WriteString(`<div class=client-add-grid><section class="card client-form-card"><h2>Operator session required</h2><p class=dim>Creating an invitation changes the control-local client registry.</p><a class="button primary" href="/login">Sign in</a></section></div>`)
+		fmt.Fprintf(&b, `<div class=client-add-grid><section class="card client-form-card"><h2>Operator session required</h2><p class=dim>Creating an invitation changes the control-local client registry.</p><a class="button primary" href="%s">Sign in</a></section></div>`, esc(loginURL("/clients?new=1")))
 		return shell(d, "Clients", b.String(), false)
 	}
 	if d.Control.Clients == nil || d.Control.Clients.CreateInvite == nil {
@@ -129,19 +129,30 @@ func writeClientInvite(b *strings.Builder, invite ClientInviteView, pkg LinuxCli
 	qrURL := "/api/control/client-invites/" + url.PathEscape(invite.InviteID) + "/qr.png"
 	downloadURL := "/api/control/client-invites/" + url.PathEscape(invite.InviteID) + "/download"
 	fmt.Fprintf(b, `<div class=client-invite-grid><section class="card client-invite-qr"><div class="badge warn"><span class=dot></span>Pending claim</div><a href="%s" download aria-label="Download invitation file"><img src="%s" alt="Enrollment QR code for %s"></a><p><b>Scan or click the QR code</b><br><span class="small dim">Clicking downloads the same invitation as a <code>.loom-invite</code> file.</span></p></section>
-<section class="card client-invite-copy"><div><div class=label>Client created</div><h2>%s</h2><span class="mono dim">%s</span></div>
+<section class="card client-invite-copy"><div><div class=label>Invitation ready</div><h2>%s</h2><span class="mono dim">%s</span></div>
 <div class=client-invite-expiry><span class=dot></span><span>This invitation is a short-lived, single-use secret and expires at <b>%s</b>. Share it only with the intended device.</span></div>
-<div class=field><label for=invite-link>Linux invitation link</label><div class=invite-link><input id=invite-link readonly spellcheck=false value="%s" aria-describedby=invite-link-help><a class=button href="%s" download>Download .loom-invite</a></div><span id=invite-link-help class=field-hint>Select and copy this link for a Linux client, or download the invitation file. It is not a permanent connection URL.</span></div>`,
+<div class=field><label for=invite-link>Linux invitation URI</label><div class=invite-link><input id=invite-link readonly spellcheck=false autocomplete=off autocapitalize=none value="%s" aria-describedby=invite-link-help><a class=button href="%s" download>Download .loom-invite</a></div><span id=invite-link-help class=field-hint>Use either the downloaded file or this URI on the target Linux client. It is not a permanent connection URL.</span></div>`,
 		esc(downloadURL), esc(qrURL), esc(invite.ClientID), esc(invite.ClientName), esc(invite.ClientID), esc(clientTime(invite.ExpiresAt)), esc(invite.InviteURI), esc(downloadURL))
 	if clientPackageAvailable(pkg) {
-		fmt.Fprintf(b, `<div class=client-invite-actions><a class="button primary" href="%s" download>Download Linux client</a><a class=button href="/clients">Done</a></div>`, esc(pkg.URL))
+		fmt.Fprintf(b, `<div class=client-invite-actions><a class="button primary" href="%s" download>Download Linux client</a><form class=client-done-form method=get action="/clients"><button class=button type=submit>Back to client list</button></form></div>`, esc(pkg.URL))
 	} else {
-		b.WriteString(`<div class=client-invite-actions><a class=button href="/clients">Done</a></div><p class="small warn">The Linux client package is not currently available from this control node.</p>`)
+		b.WriteString(`<div class=client-invite-actions><form class=client-done-form method=get action="/clients"><button class=button type=submit>Back to client list</button></form></div><p class="small warn">The Linux client package is not currently available from this control node.</p>`)
 		if packageError != "" {
 			fmt.Fprintf(b, `<p class="tiny dim">%s</p>`, esc(packageError))
 		}
 	}
-	b.WriteString(`</section></div><div class="card client-result-note"><b>Next step for Linux</b><br><span class=small>Download the Linux package, verify its checksum, extract it, then run <code>sudo ./install.sh --invite-file ../client.loom-invite</code> from the extracted directory. Claiming consumes the invitation; normal reconnects do not register the device again.</span></div>`)
+	b.WriteString(`</section></div><section class="card client-setup" aria-labelledby=client-setup-title><div class=client-setup-head><div><div class=label>Next step</div><h2 id=client-setup-title>Linux setup</h2></div><p class=small>QR, invitation file and URI carry the same invitation. Choose one enrollment method.</p></div>`)
+	if clientPackageAvailable(pkg) {
+		fmt.Fprintf(b, `<div class=client-setup-prepare><div><span class=client-step>1</span><div><b>Check checksum and extract the Linux client</b><span class="small dim">Run these commands in the directory containing both downloads.</span></div></div><code class=command-block>printf '%%s  %%s\n' '%s' '%s' | sha256sum -c -
+tar -xzf loom-client-linux-amd64.tar.gz
+cd loom-client-linux-amd64</code></div>
+<div class=client-setup-methods><section class=client-setup-method aria-labelledby=invite-file-method><div class=client-method-title><span class=client-step>2A</span><div><h3 id=invite-file-method>Invitation file</h3><span class="badge ok">Recommended</span></div></div><p class="small dim">Use this after downloading <code>client.loom-invite</code>.</p><code class=command-block>sudo ./install.sh --invite-file ../client.loom-invite</code></section>
+<section class=client-setup-method aria-labelledby=invite-uri-method><div class=client-method-title><span class=client-step>2B</span><div><h3 id=invite-uri-method>Invitation URI via stdin</h3><span class="small dim">For a Linux host where you copied the URI.</span></div></div><code class=command-block>sudo ./install.sh --no-enroll
+sudo /usr/local/bin/loom client enroll -stdin</code><p class="small">Paste the complete URI shown above, press <kbd>Enter</kbd>, then <kbd>Ctrl-D</kbd>. Stdin keeps the secret out of shell history.</p></section></div>`, esc(pkg.SHA256), esc(pkg.Filename))
+	} else {
+		b.WriteString(`<div class="callout warnline client-setup-blocked"><b>Linux package unavailable</b><br><span class=small>Publish a validated Linux client package before attempting these installation commands. The invitation remains usable until the expiry shown above.</span></div>`)
+	}
+	b.WriteString(`<div class=client-setup-boundary><b>First successful claim consumes the invitation.</b><span>Expired unused invitations require a new one; normal reconnects, restarts and configuration updates do not register the device again.</span></div></section>`)
 }
 
 func writeLinuxDelivery(b *strings.Builder, pkg LinuxClientPackageView, packageError string) {
