@@ -28,3 +28,25 @@ func TestAccessCredentialRefsIncludesAuthorizedInactivePolicies(t *testing.T) {
 		t.Fatalf("access credential refs = %v, want %v", got, want)
 	}
 }
+
+func TestRemovableDeviceSecretRefsAreExactAndRequireSSOTAbsence(t *testing.T) {
+	all := map[string]string{
+		"api/d-canary":              "a",
+		"probe/d-canary":            "b",
+		"telemetry/d-canary":        "c",
+		"cred/d-canary/best-egress": "d",
+		"api/d-canary-other":        "keep",
+		"cred/other/d-canary":       "keep",
+	}
+	want := []string{"api/d-canary", "cred/d-canary/best-egress", "probe/d-canary", "telemetry/d-canary"}
+	got, err := removableDeviceSecretRefs(&model.SSOT{}, "d-canary", all)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("removable refs = %v, want %v", got, want)
+	}
+	if _, err := removableDeviceSecretRefs(&model.SSOT{Nodes: []model.Node{{ID: "d-canary"}}}, "d-canary", all); err == nil {
+		t.Fatal("secrets were considered removable while Device remains in SSOT")
+	}
+}

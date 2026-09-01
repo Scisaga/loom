@@ -25,6 +25,7 @@ import (
 const deviceUsage = `用法:
   loom device decommission <ssot.yaml> -id <Device ID> -revision <SHA256> [-registry <文件>]
   loom device remove <ssot.yaml> -id <Device ID> -revision <SHA256> -confirm-decommissioned [-registry <文件>]
+  loom device purge-revoked <ssot.yaml> -id <Device ID> -revision <SHA256> -confirm-removed [-registry <文件>]
   loom device discard-pending -id <Device ID> [-registry <文件>]
   loom device import-managed <ssot.yaml> -id <Device ID> -cert <node.crt> [-ca <ca.crt>] [-registry <文件>]
 
@@ -43,6 +44,8 @@ func cmdDevice(args []string) error {
 		return cmdDeviceDecommission(args[1:])
 	case "remove":
 		return cmdDeviceRemove(args[1:])
+	case "purge-revoked":
+		return cmdDevicePurgeRevoked(args[1:])
 	case "discard-pending":
 		return cmdDeviceDiscardPending(args[1:])
 	case "import-managed":
@@ -50,6 +53,38 @@ func cmdDevice(args []string) error {
 	default:
 		return errors.New(deviceUsage)
 	}
+}
+
+func cmdDevicePurgeRevoked(args []string) error {
+	fs := flag.NewFlagSet("device purge-revoked", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	id := fs.String("id", "", "revoked Device ID")
+	expected := fs.String("revision", "", "移除后看到的精确 SSOT SHA256")
+	registryPath := fs.String("registry", "/var/lib/loom/client-enrollment/registry.json", "Device identity registry")
+	confirmed := fs.Bool("confirm-removed", false, "已确认 Device 不在当前 SSOT")
+	rest, err := parseInterspersed(fs, args)
+	if err != nil || len(rest) != 1 || *id == "" || *expected == "" || !*confirmed {
+		return errors.New(deviceUsage)
+	}
+	store := clientregistry.Store{Path: *registryPath}
+	err = mutateDeviceSSOT(rest[0], *expected, func(current []byte) ([]byte, error) {
+		ssot, loadErr := model.Load(current)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		if ssot.NodeByID()[*id] != nil {
+			return nil, fmt.Errorf("Device %q is still present in current SSOT", *id)
+		}
+		if purgeErr := store.PurgeRevoked(*id); purgeErr != nil {
+			return nil, purgeErr
+		}
+		return current, nil
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("✓ 已从 identity registry 永久清理 revoked Device %s 及其邀请记录\n", *id)
+	return nil
 }
 
 func cmdDeviceDiscardPending(args []string) error {

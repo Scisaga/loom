@@ -629,6 +629,48 @@ func (s Store) Revoke(clientID string) (Client, error) {
 	return result, err
 }
 
+// PurgeRevoked permanently removes a closed identity and its invitation audit
+// records. It is deliberately narrower than Revoke: callers must first prove
+// outside the registry that the Device has left desired state. This method
+// only accepts an already-revoked identity whose bearer material was erased.
+func (s Store) PurgeRevoked(clientID string) error {
+	s = s.defaults()
+	clientID = strings.TrimSpace(clientID)
+	if clientID == "" || len(clientID) > 128 {
+		return &Error{Code: CodeInvalid, Msg: "Device id is missing or malformed"}
+	}
+	return s.withLock(true, func(st *fileState) error {
+		clientIndex := -1
+		for i := range st.Clients {
+			if st.Clients[i].ID == clientID {
+				clientIndex = i
+				break
+			}
+		}
+		if clientIndex < 0 {
+			return &Error{Code: CodeNotFound, Msg: "Device was not found"}
+		}
+		client := st.Clients[clientIndex]
+		if client.Status != "revoked" || client.RevokedAt == "" {
+			return &Error{Code: CodeConflict, Msg: "only an already-revoked Device can be purged"}
+		}
+		for _, invite := range st.Invites {
+			if invite.ClientID == clientID && invite.SealedToken != "" {
+				return &Error{Code: CodeConflict, Msg: "revoked Device still has recoverable invitation material"}
+			}
+		}
+		st.Clients = append(st.Clients[:clientIndex], st.Clients[clientIndex+1:]...)
+		kept := st.Invites[:0]
+		for _, invite := range st.Invites {
+			if invite.ClientID != clientID {
+				kept = append(kept, invite)
+			}
+		}
+		st.Invites = kept
+		return nil
+	})
+}
+
 // DiscardPending removes an identity reservation that was never claimed. It is
 // intentionally narrower than Revoke: any public key, consumed invitation or
 // post-claim state makes the operation fail closed. This gives operators a way

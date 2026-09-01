@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"loom/internal/model"
 	"loom/internal/render"
 	"loom/internal/secret"
+	"loom/internal/validate"
 )
 
 // secrets split 把一份总表拆成每节点一份,**每台机器只拿它自己用得到的**。
@@ -34,6 +36,8 @@ func cmdSecrets(args []string) error {
 		return cmdSecretsRotate(args[1:])
 	case "retire":
 		return cmdSecretsRetire(args[1:])
+	case "prune-device":
+		return cmdSecretsPruneDevice(args[1:])
 	default:
 		return secretsUsage()
 	}
@@ -165,7 +169,99 @@ func secretsUsage() error {
   loom secrets split  <ssot.yaml> -secrets <总表> -o <目录>   拆成每节点一份
   loom secrets ensure-derived <ssot.yaml> -secrets <总表>     补齐派生遥测口令
   loom secrets rotate <ssot.yaml> -cred <id> -secrets <总表>  生成下一代凭据
-  loom secrets retire <ssot.yaml> -cred <id> -secrets <总表>  删掉已经没人引用的旧代`)
+  loom secrets retire <ssot.yaml> -cred <id> -secrets <总表>  删掉已经没人引用的旧代
+  loom secrets prune-device <ssot.yaml> -id <Device ID> -revision <SHA256> -secrets <总表> -confirm-removed
+                                                              清理已离开 SSOT 的 Device 密钥`)
+}
+
+func cmdSecretsPruneDevice(args []string) error {
+	fs := flag.NewFlagSet("secrets prune-device", flag.ContinueOnError)
+	master := fs.String("secrets", "", "总表(必需)")
+	deviceID := fs.String("id", "", "已移除的 Device ID(必需)")
+	expected := fs.String("revision", "", "移除后看到的精确 SSOT SHA256")
+	confirmed := fs.Bool("confirm-removed", false, "已确认 Device 不在当前 SSOT")
+	fs.SetOutput(os.Stderr)
+	rest, err := parseInterspersed(fs, args)
+	if err != nil || len(rest) != 1 || *master == "" || *deviceID == "" || *expected == "" || !*confirmed {
+		return secretsUsage()
+	}
+	var refs []string
+	err = mutateDeviceSSOT(rest[0], *expected, func(current []byte) ([]byte, error) {
+		s, loadErr := model.Load(current)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		if findings := validate.Validate(s); len(findings) > 0 {
+			return nil, fmt.Errorf("校验未通过,%d 处问题:\n%s", len(findings), validate.Format(findings))
+		}
+		all, loadErr := secret.Load(*master)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		refs, loadErr = removableDeviceSecretRefs(s, *deviceID, all)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		for _, ref := range refs {
+			delete(all, ref)
+		}
+		if len(refs) > 0 {
+			body := secret.Encode(all,
+				"# Loom 秘密层。渲染产物里的 ${secret:REF} 由 loom hydrate 从这里取值。\n"+
+					"# 绝不进版本库(.gitignore 已排除)。0600。\n\n")
+			if writeErr := writeFileAtomicDurable(*master, body, 0o600); writeErr != nil {
+				return nil, writeErr
+			}
+		}
+		return current, nil
+	})
+	if err != nil {
+		return err
+	}
+	if len(refs) == 0 {
+		fmt.Printf("Device %s 没有遗留 master secrets，无事可做\n", *deviceID)
+		return nil
+	}
+	fmt.Printf("✓ 已清理 Device %s 的 %d 项 master secrets: %s\n", *deviceID, len(refs), strings.Join(refs, " "))
+	return nil
+}
+
+func removableDeviceSecretRefs(s *model.SSOT, deviceID string, all map[string]string) ([]string, error) {
+	if !model.ValidNodeID(deviceID) {
+		return nil, errors.New("Device id is malformed")
+	}
+	if s.NodeByID()[deviceID] != nil {
+		return nil, fmt.Errorf("Device %q is still present in current SSOT", deviceID)
+	}
+	rendered, err := render.Render(s)
+	if err != nil {
+		return nil, err
+	}
+	used := map[string]bool{}
+	for _, bundle := range rendered.Bundles {
+		for _, file := range bundle.Files {
+			for _, ref := range secret.Refs(file.Content) {
+				used[ref] = true
+			}
+		}
+		for _, ref := range accessCredentialRefs(s, bundle.Owner) {
+			used[ref] = true
+		}
+	}
+	credentialPrefix := "cred/" + deviceID + "/"
+	var removable []string
+	for ref := range all {
+		candidate := ref == "api/"+deviceID || ref == "probe/"+deviceID || ref == "telemetry/"+deviceID || strings.HasPrefix(ref, credentialPrefix)
+		if !candidate {
+			continue
+		}
+		if used[ref] {
+			return nil, fmt.Errorf("ref %q is still used by current SSOT rendering", ref)
+		}
+		removable = append(removable, ref)
+	}
+	sort.Strings(removable)
+	return removable, nil
 }
 
 // cmdSecretsEnsureDerived creates only renderer-derived telemetry secrets.

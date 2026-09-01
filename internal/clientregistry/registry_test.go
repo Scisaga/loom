@@ -127,6 +127,38 @@ func TestRevokeErasesInvitationMaterialAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestPurgeRevokedRemovesOnlyClosedIdentityAndInvites(t *testing.T) {
+	now := time.Date(2026, 9, 1, 21, 0, 0, 0, time.UTC)
+	store := testStore(t, &now)
+	purged, err := store.Create("Disposable canary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, err := store.Create("Kept identity")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PurgeRevoked(purged.Client.ID); err == nil {
+		t.Fatal("pending Device was purged")
+	}
+	if _, err := store.Revoke(purged.Client.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PurgeRevoked(purged.Client.ID); err != nil {
+		t.Fatal(err)
+	}
+	clients, invites, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(clients) != 1 || clients[0].ID != kept.Client.ID || len(invites) != 1 || invites[0].ClientID != kept.Client.ID {
+		t.Fatalf("after purge clients=%+v invites=%+v", clients, invites)
+	}
+	if err := store.PurgeRevoked(purged.Client.ID); err == nil {
+		t.Fatal("missing revoked Device purge unexpectedly succeeded")
+	}
+}
+
 func TestDiscardPendingRemovesOnlyUnclaimedIdentityAndInvites(t *testing.T) {
 	now := time.Date(2026, 9, 1, 21, 0, 0, 0, time.UTC)
 	store := testStore(t, &now)

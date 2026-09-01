@@ -69,12 +69,15 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
                                          生成下一代凭据(轮换第一步)
   loom secrets  retire <ssot.yaml> -cred <id> -secrets <总表>
                                          删掉已经没人引用的旧代(第二步之后)
+  loom secrets  prune-device <ssot.yaml> -id <Device ID> -revision <SHA256> -secrets <总表> -confirm-removed
+                                         清理已离开 SSOT 的 Device 密钥
   loom apply    -in <hydrate 输出目录>     从工作站 ssh 推(pull 之外的备用路径)
   loom backup   -o <文件> {-passphrase-file <文件> | -plaintext}
                                          打包秘密层与内部 CA(丢了就得全网重来的那些)
   loom restore  <备份文件> -o <目录>       解开备份到一个目录,不覆盖原位置
   loom client   <enroll|package|verify>     客户端注册与 Linux 交付
-  loom device   <decommission|remove>       两阶段回收 access-only Enrollment Device
+  loom device   <decommission|remove|purge-revoked>
+                                         回收 access-only Enrollment Device
 
 `
 
