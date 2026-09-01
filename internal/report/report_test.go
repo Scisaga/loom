@@ -38,6 +38,17 @@ func TestParseWGStatsKeepsZeroHandshakePeerPresentAndSaturatesCounters(t *testin
 	}
 }
 
+func TestNoConfiguredTunnelDoesNotRequireWireGuardTooling(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	dump, stats, errs := readConfiguredWGSnapshot(nil)
+	if len(dump) != 0 || len(stats) != 0 || len(errs) != 0 {
+		t.Fatalf("empty tunnel inventory produced dump=%q stats=%v errors=%v", dump, stats, errs)
+	}
+	if _, _, errs := readConfiguredWGSnapshot([]string{"wg-loom"}); len(errs) == 0 {
+		t.Fatal("configured tunnel silently ignored missing wg tooling")
+	}
+}
+
 // 上报接口没有自己的认证 —— 它靠 WireGuard 兜住。绑到公网地址上就等于
 // 把拓扑和隧道健康白送,而且这种错误一旦发生不会有任何症状。
 func TestRefusesPublicListenAddress(t *testing.T) {

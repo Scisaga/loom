@@ -264,7 +264,7 @@ func (r *RolloutState) StuckFor(now time.Time) (time.Duration, bool) {
 }
 
 func Collect(cfg *Config, now time.Time) *Status {
-	_, stats, errs := readWGSnapshot()
+	_, stats, errs := readConfiguredWGSnapshot(cfg.Interfaces)
 	return collectWithWGStats(cfg, now, stats, errs)
 }
 
@@ -364,6 +364,13 @@ func readWGSnapshot() ([]byte, map[string]wgInterfaceStats, []string) {
 	}
 	stats, errs := parseWGStats(out)
 	return out, stats, errs
+}
+
+func readConfiguredWGSnapshot(interfaces []string) ([]byte, map[string]wgInterfaceStats, []string) {
+	if len(interfaces) == 0 {
+		return nil, map[string]wgInterfaceStats{}, nil
+	}
+	return readWGSnapshot()
 }
 
 func parseWGStats(out []byte) (map[string]wgInterfaceStats, []string) {

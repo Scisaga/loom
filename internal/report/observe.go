@@ -226,7 +226,7 @@ func observe(cfg *Config, h *history, now time.Time) (*Observation, *Status) {
 	// Take one complete local Status snapshot first. Observation identity fields
 	// and the independent self-check verdict must describe the same collection,
 	// rather than racing two separate rollout/Agent/component reads.
-	dump, stats, wgErrors := readWGSnapshot()
+	dump, stats, wgErrors := readConfiguredWGSnapshot(cfg.Interfaces)
 	localStatus := collectWithWGStats(cfg, now, stats, wgErrors)
 	o := &Observation{
 		Node: localStatus.Node, TS: localStatus.TS, Applied: localStatus.Applied,
