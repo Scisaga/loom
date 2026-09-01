@@ -15,9 +15,9 @@
 部署配置，代码不含部署域名。
 
 统一读模型与公开分发边界最初以提交 `01a16dd172fd` 发布；服务器职责 Enrollment 的
-后续实现已于同日以提交 `37f86a3977d2` 发布。六台现有 Device 运行同一二进制
-`a997c08b5b0f`，signed generation 60、snapshot `57fc12f4248a` 全网一致；两个配置镜像
-对同一 SSOT/snapshot 的逐 URL 验证均成功。公开 HTTPS 前门的安装脚本、checksum、
+后续实现已于同日以提交 `37f86a3977d2` 发布。六台现有 Device 已运行统一 Device 版本，
+并由 signed release 持续收敛；两个配置镜像对同一 SSOT/snapshot 的逐 URL 验证均成功。
+公开 HTTPS 前门的安装脚本、checksum、
 detached signature、平台公钥和 allowlist 的 404/拒绝写边界均已实测；Linux 包 SHA256
 为 `02a51c18d0dd2d8d32d69004b879e2504b2108704845cf629c0876d2aaf2e4e6`。部署域名和路径
 属于本次部署配置，不是产品默认值。
@@ -30,12 +30,17 @@ E1 的服务器职责现在也走同一 Enrollment：邀请钉住服务器 Profi
 配置应用后的公网入站仍复用已有签名拓扑观测，不另造一次“拨入验证”。服务器缺少
 wireguard-tools 时，在 invitation claim 前使用已有受限包管理器流程安装并复检。
 
-当前仍不能宣称 E1 全部完成：还要在可回收的一次性 Linux Device 上完成 invite →
-install → claim → first pull → apply → online 的真机 canary。生产 registry 暂无安全的
-Device 删除/凭据撤销事务，不能为了测试永久污染 SSOT；本机 Docker daemon 又无法解析
-公共镜像仓库，因此当前只完成公开包端到端下载和服务器 Enrollment 的仓库级事务测试，
-不能把它冒充完整 Enrollment canary。SSH Add node 继续只作为 legacy 迁移入口，待真机
-canary 与回收边界具备后移除。
+access-only Device 已具备两阶段回收：先通过 signed SSOT 明确 decommission，目标机落下
+停机 marker 后，才允许从期望态移除并 revoke identity；未领取的测试邀请另有严格清理
+入口，只允许删除没有公钥、没有 consumed invite、从未进入 claim 的 identity reservation。
+Docker systemd canary 已从公开 HTTPS 前门下载、逐文件验签并执行通用包安装，但尚未消费
+邀请，因此不能把它写成 invite → online 全链 canary。SSH Add node 继续只作为迁移兼容
+入口，待完整 canary 后移除。
+
+六台既有 Device 的统一 identity registry 迁移不重新 Enrollment，也不根据名称、hostname
+或 IP 猜身份：导入命令要求 Device 当前存在于 SSOT，证书链通过 Loom CA，CN 与唯一 SAN
+都精确等于 `<device_id>.node.internal`，且公钥为 ECDSA P-256。迁移后 UI 将其来源显示为
+`Verified pre-Enrollment certificate`；这描述身份来源，不是软件版本或“未升级”状态。
 
 ## 1. 收敛结论
 
@@ -92,9 +97,10 @@ Device
 ```
 
 当前 `clientregistry.Client` 与 `model.Node` 是两张表按相同 ID 拼出的过渡状态。迁移期
-可以保留底层适配器，但 API、UI 和新代码只能暴露 Device。旧 SSOT 中没有 registry
-identity 的机器显示为 `Legacy managed device`，必须显式认领或迁移，不能根据名称、
-hostname 或 IP 猜身份。
+可以保留底层适配器，但 API、UI 和新代码只能暴露 Device。SSOT 中尚无 registry identity
+的机器显示为 `Identity not indexed`；既有节点只能用受信 CA 证书的精确 Device SAN 导入，
+不能根据名称、hostname 或 IP 猜身份。`identity_source` 只区分 Enrollment 与受信的
+pre-Enrollment certificate，不承担软件版本、在线状态或职责语义。
 
 拓扑仍然存在，但拓扑中的点是承担转发/出口职责的 Device 投影，不再是另一类实体。
 
@@ -258,7 +264,8 @@ Control revision 变化后，以 View digest 是否变化作为最终影响判�
 按以下顺序完成，不并行切换签名协议：
 
 1. **统一 Device 读模型：** 以稳定 `device_id` 合并 Client registry、SSOT Node 和可信
-   runtime evidence；新增 `/devices` 列表/详情，旧设备明确标为 legacy，不猜身份；
+   runtime evidence；新增 `/devices` 列表/详情，缺失 identity 明确标为 not indexed，
+   既有节点只按受信证书迁移；
 2. **统一授权语义：** API、Review 和 UI 使用 Identity / Membership /
    Responsibilities / Destination grants；“Access”改为“在此设备上使用 Loom”；
 3. **统一 Enrollment：** Add Device 只创建一类邀请；服务器、Windows、Android 和
