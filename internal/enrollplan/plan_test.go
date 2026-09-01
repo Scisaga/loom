@@ -265,6 +265,25 @@ func TestExplicitEgressFalseIsPreserved(t *testing.T) {
 	}
 }
 
+func TestExplicitInboundPortAndSecretGenerationArePreserved(t *testing.T) {
+	result, err := Apply(fixtureSSOT(), NodeInput{
+		ID: "core-c", PublicEndpoint: "core-c.example.net", Direction: model.Bidirectional,
+		WGPublicKey: keyZero, InboundPort: 5443, SecretGeneration: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := loadNode(t, result, "core-c")
+	if node.Server.InboundPort != 5443 || node.Server.SecretGeneration != 1 {
+		t.Fatalf("server = %+v", node.Server)
+	}
+	for _, want := range []string{"inbound_port: 5443", "secret_generation: 1"} {
+		if !bytes.Contains(result, []byte(want)) {
+			t.Errorf("applied YAML missing %q", want)
+		}
+	}
+}
+
 func TestApplyPreservesCommentsAndOtherSections(t *testing.T) {
 	result, err := Apply(fixtureSSOT(), NodeInput{
 		ID:             "core-c",
@@ -453,6 +472,15 @@ func assertValid(t *testing.T, content []byte) {
 	if findings := validate.Validate(ssot); len(findings) > 0 {
 		t.Fatalf("validation findings: %v\n%s", findings, content)
 	}
+}
+
+func loadNode(t *testing.T, content []byte, id string) *model.Node {
+	t.Helper()
+	ssot, err := model.Load(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ssot.NodeByID()[id]
 }
 
 func mustPlanBytes(t *testing.T, plan Plan) []byte {

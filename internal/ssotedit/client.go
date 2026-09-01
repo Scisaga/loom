@@ -46,6 +46,17 @@ type clientShape struct {
 // 外部文件。新 Enrollment 只为 ProfileVersion 明确展开的 DestinationGrants
 // 生成独立凭据；nil grants 仅用于验证旧客户端的历史全量形状。
 func AddAccessClient(content []byte, input ClientInput) (ClientPlan, error) {
+	return addAccessClient(content, input, false)
+}
+
+// AddAccessRole attaches the same generated use_loom role to a Device that was
+// already added as a server by enrollplan. It preserves the server block and
+// remains one in-memory SSOT transaction in the caller before any commit.
+func AddAccessRole(content []byte, input ClientInput) (ClientPlan, error) {
+	return addAccessClient(content, input, true)
+}
+
+func addAccessClient(content []byte, input ClientInput, attach bool) (ClientPlan, error) {
 	input.ID = strings.TrimSpace(input.ID)
 	input.Name = strings.TrimSpace(input.Name)
 	if !model.ValidNodeID(input.ID) {
@@ -62,7 +73,12 @@ func AddAccessClient(content []byte, input ClientInput) (ClientPlan, error) {
 	if findings := validate.Validate(current); len(findings) > 0 {
 		return ClientPlan{}, &ValidationError{Findings: findings}
 	}
-	if current.NodeByID()[input.ID] != nil {
+	existingNode := current.NodeByID()[input.ID]
+	if attach {
+		if existingNode == nil || existingNode.Access != nil || existingNode.Server == nil {
+			return ClientPlan{}, fmt.Errorf("node id %q is not an access-free server Device", input.ID)
+		}
+	} else if existingNode != nil {
 		return ClientPlan{}, fmt.Errorf("node id %q already exists in SSOT", input.ID)
 	}
 
@@ -103,10 +119,26 @@ func AddAccessClient(content []byte, input ClientInput) (ClientPlan, error) {
 		return ClientPlan{}, err
 	}
 
-	node := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	appendMappingValue(node, "id", scalarNode(input.ID))
-	if input.Name != "" {
-		appendMappingValue(node, "name", scalarNode(input.Name))
+	var node *yaml.Node
+	if attach {
+		for _, item := range nodes.Content {
+			if item.Kind == yaml.MappingNode {
+				id := mappingValue(item, "id")
+				if id != nil && id.Kind == yaml.ScalarNode && id.Value == input.ID {
+					node = item
+					break
+				}
+			}
+		}
+		if node == nil {
+			return ClientPlan{}, fmt.Errorf("node id %q disappeared while attaching access role", input.ID)
+		}
+	} else {
+		node = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		appendMappingValue(node, "id", scalarNode(input.ID))
+		if input.Name != "" {
+			appendMappingValue(node, "name", scalarNode(input.Name))
+		}
 	}
 	access := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	appendMappingValue(access, "platform", scalarNode(string(input.Platform)))
@@ -120,7 +152,9 @@ func AddAccessClient(content []byte, input ClientInput) (ClientPlan, error) {
 	}
 	appendMappingValue(access, "mixed_ports", mixed)
 	appendMappingValue(node, "access", access)
-	nodes.Content = append(nodes.Content, node)
+	if !attach {
+		nodes.Content = append(nodes.Content, node)
+	}
 
 	for i, declarationID := range shape.declarationIDs {
 		credential := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}

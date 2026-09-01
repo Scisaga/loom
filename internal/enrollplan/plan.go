@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -26,16 +27,18 @@ const defaultInboundPort = 61698
 // EgressCapable is a pointer so an omitted value can safely default to true
 // while an explicit false remains representable.
 type NodeInput struct {
-	ID             string
-	Name           string
-	Country        string
-	City           string
-	Provider       string
-	PublicEndpoint string
-	SSHPort        int
-	Direction      model.Direction
-	WGPublicKey    string
-	EgressCapable  *bool
+	ID               string
+	Name             string
+	Country          string
+	City             string
+	Provider         string
+	PublicEndpoint   string
+	SSHPort          int
+	Direction        model.Direction
+	WGPublicKey      string
+	InboundPort      int
+	SecretGeneration int
+	EgressCapable    *bool
 }
 
 // Plan 是 Preview 产生的完整 SSOT 变更。Tunnels 包含 Node 与现有节点之间
@@ -184,6 +187,16 @@ func nodeFromInput(input NodeInput) (model.Node, error) {
 	if input.SSHPort < 0 || input.SSHPort > 65535 {
 		return model.Node{}, fmt.Errorf("SSH port %d is outside 1-65535 (or 0 for the default 22)", input.SSHPort)
 	}
+	inboundPort := input.InboundPort
+	if inboundPort == 0 {
+		inboundPort = defaultInboundPort
+	}
+	if inboundPort < 1 || inboundPort > 65535 {
+		return model.Node{}, fmt.Errorf("inbound port %d is outside 1-65535", input.InboundPort)
+	}
+	if input.SecretGeneration < 0 || input.SecretGeneration > 1 {
+		return model.Node{}, fmt.Errorf("secret generation %d is unsupported", input.SecretGeneration)
+	}
 	country := strings.ToUpper(strings.TrimSpace(input.Country))
 	if country != "" && !model.ValidCountryCode(country) {
 		return model.Node{}, fmt.Errorf("country %q is invalid: use a two-letter ISO 3166-1 alpha-2 code", input.Country)
@@ -202,10 +215,11 @@ func nodeFromInput(input NodeInput) (model.Node, error) {
 		PublicEndpoint: endpoint,
 		SSHPort:        input.SSHPort,
 		Server: &model.ServerRole{
-			Direction:     input.Direction,
-			InboundPort:   defaultInboundPort,
-			EgressCapable: egress,
-			WGPublicKey:   input.WGPublicKey,
+			Direction:        input.Direction,
+			InboundPort:      inboundPort,
+			EgressCapable:    egress,
+			WGPublicKey:      input.WGPublicKey,
+			SecretGeneration: input.SecretGeneration,
 		},
 	}, nil
 }
@@ -247,6 +261,12 @@ func allocate(ssot *model.SSOT, node model.Node) (Plan, error) {
 		work.Tunnels = append(work.Tunnels, tunnel)
 	}
 	plan.ExpandedPolicies = expandedAutomaticEgressPolicies(ssot, node)
+	policyTopology := *ssot
+	policyTopology.Nodes = append(append([]model.Node(nil), ssot.Nodes...), node)
+	policyTopology.Tunnels = append(append([]model.Tunnel(nil), ssot.Tunnels...), plan.Tunnels...)
+	for i := range plan.ExpandedPolicies {
+		ensureExpandedPolicyProbeBudget(&policyTopology, &plan.ExpandedPolicies[i])
+	}
 	policySSOT := *ssot
 	policySSOT.Nodes = append(append([]model.Node(nil), ssot.Nodes...), node)
 	policySSOT.Declarations = append([]model.AccessDeclaration(nil), ssot.Declarations...)
@@ -290,6 +310,48 @@ func expandedAutomaticEgressPolicies(ssot *model.SSOT, node model.Node) []model.
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+// ensureExpandedPolicyProbeBudget keeps an automatically expanded policy's
+// existing window/min-sample contract satisfiable. Adding an egress can grow
+// multi-hop candidates faster than the server list itself; increasing only the
+// smallest required bounded budget avoids silently lengthening the operator's
+// ranking window or weakening min_samples.
+func ensureExpandedPolicyProbeBudget(s *model.SSOT, declaration *model.AccessDeclaration) {
+	if s == nil || declaration == nil || declaration.ProbeBudget <= 1 || declaration.MinSamples <= 0 {
+		return
+	}
+	period, periodErr := time.ParseDuration(declaration.TuningPeriod)
+	window, windowErr := time.ParseDuration(declaration.Window)
+	if periodErr != nil || windowErr != nil || period <= 0 || window <= 0 {
+		return
+	}
+	maxCandidates := 0
+	for _, access := range s.AccessNodes() {
+		count := 0
+		if services := s.ServicesFor(declaration.ID); len(services) > 0 {
+			for _, service := range services {
+				candidates, _ := s.EnumerateServiceCandidates(access, declaration, service)
+				if len(candidates) > count {
+					count = len(candidates)
+				}
+			}
+		} else {
+			candidates, _ := s.EnumerateCandidates(access, declaration)
+			count = len(candidates)
+		}
+		if count > maxCandidates {
+			maxCandidates = count
+		}
+	}
+	if maxCandidates <= declaration.ProbeBudget {
+		return
+	}
+	rounds := int(window / period)
+	for declaration.ProbeBudget < maxCandidates &&
+		rounds*(declaration.ProbeBudget-1)/(maxCandidates-1) < declaration.MinSamples {
+		declaration.ProbeBudget++
+	}
 }
 
 func containsAll(values, required []string) bool {
@@ -481,6 +543,16 @@ func updateDeclarationAllowedServers(declarations *yaml.Node, update model.Acces
 		for _, server := range update.AllowedServers {
 			allowed.Content = append(allowed.Content, stringScalar(server))
 		}
+		if update.ProbeBudget != 0 {
+			budget := mappingValue(item, "probe_budget")
+			if budget == nil {
+				appendValue(item, "probe_budget", intScalar(update.ProbeBudget))
+			} else {
+				budget.Kind = yaml.ScalarNode
+				budget.Tag = "!!int"
+				budget.Value = strconv.Itoa(update.ProbeBudget)
+			}
+		}
 		return nil
 	}
 	return fmt.Errorf("declaration %q disappeared while applying enrollment plan", update.ID)
@@ -519,6 +591,9 @@ func nodeYAML(node model.Node) *yaml.Node {
 	appendValue(server, "inbound_port", intScalar(node.Server.InboundPort))
 	appendValue(server, "egress_capable", boolScalar(node.Server.EgressCapable))
 	appendValue(server, "wg_public_key", stringScalar(node.Server.WGPublicKey))
+	if node.Server.SecretGeneration != 0 {
+		appendValue(server, "secret_generation", intScalar(node.Server.SecretGeneration))
+	}
 	appendValue(item, "server", server)
 	return item
 }

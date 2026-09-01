@@ -100,6 +100,7 @@ func TestClientAPIBoundsOperatorAndPublicClaimSurfaces(t *testing.T) {
 		Control:  &ControlDeps{},
 	}
 	var createdName string
+	var createdProfile string
 	var claimed ClientClaimInput
 	d.Control.Clients = &ClientControlDeps{
 		List: func() (ClientInventory, error) {
@@ -107,6 +108,7 @@ func TestClientAPIBoundsOperatorAndPublicClaimSurfaces(t *testing.T) {
 		},
 		CreateInvite: func(input ClientInviteInput) (ClientInviteView, error) {
 			createdName = input.Name
+			createdProfile = input.ProfileVersion
 			return ClientInviteView{
 				InviteID: "invite-one", ClientID: "client-one", ClientName: input.Name,
 				InviteURI: "loom://enroll#opaque", EnrollmentURL: "https://control.example/api/client/enroll",
@@ -133,9 +135,9 @@ func TestClientAPIBoundsOperatorAndPublicClaimSurfaces(t *testing.T) {
 		t.Fatalf("unauthorized clients status=%d", unauthorized.Code)
 	}
 
-	create := authenticatedJSONRequest(t, d, http.MethodPost, "/api/control/client-invites", `{"name":"build server"}`)
+	create := authenticatedJSONRequest(t, d, http.MethodPost, "/api/control/client-invites", `{"name":"build server","profile_version":"server-device@v1"}`)
 	handler.ServeHTTP(create.recorder, create.request)
-	if create.recorder.Code != http.StatusCreated || createdName != "build server" ||
+	if create.recorder.Code != http.StatusCreated || createdName != "build server" || createdProfile != "server-device@v1" ||
 		!strings.Contains(create.recorder.Body.String(), `"invite_uri":"loom://enroll#opaque"`) ||
 		create.recorder.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("create=%d name=%q body=%s headers=%v", create.recorder.Code, createdName, create.recorder.Body.String(), create.recorder.Header())
@@ -144,12 +146,14 @@ func TestClientAPIBoundsOperatorAndPublicClaimSurfaces(t *testing.T) {
 	// Claim is intentionally not operator-session authenticated. Its random
 	// invitation token is the one-use credential.
 	claim := httptest.NewRequest(http.MethodPost, "/api/client/enroll", strings.NewReader(
-		`{"token":"opaque-token","platform":"linux-server","csr_pem":"CSR","request_id":"install-1"}`))
+		`{"token":"opaque-token","platform":"linux-server","csr_pem":"CSR","request_id":"install-1","server":{"public_endpoint":"edge.example.net","inbound_port":61698,"direction":"bidirectional","wg_public_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","country":"CN","city":"Beijing","provider":"example"}}`))
 	claim.Header.Set("Content-Type", "application/json")
 	claimResult := httptest.NewRecorder()
 	handler.ServeHTTP(claimResult, claim)
 	if claimResult.Code != http.StatusAccepted || claimed.Token != "opaque-token" ||
-		claimed.CSRPEM != "CSR" || !strings.Contains(claimResult.Body.String(), `"configuration":"pending"`) {
+		claimed.CSRPEM != "CSR" || claimed.Server == nil || claimed.Server.PublicEndpoint != "edge.example.net" ||
+		claimed.Server.InboundPort != 61698 || claimed.Server.Direction != "bidirectional" ||
+		!strings.Contains(claimResult.Body.String(), `"configuration":"pending"`) {
 		t.Fatalf("claim=%d input=%+v body=%s", claimResult.Code, claimed, claimResult.Body.String())
 	}
 	d.Control.Clients.Claim = func(ClientClaimInput) (ClientClaimResult, error) {

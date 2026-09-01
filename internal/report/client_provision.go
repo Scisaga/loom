@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"loom/internal/clientregistry"
+	"loom/internal/enrollplan"
 	"loom/internal/model"
 	"loom/internal/secret"
 	"loom/internal/ssotedit"
@@ -133,14 +134,37 @@ func (p *clientProvisioner) provision(client clientregistry.Client, csrPEM strin
 			if err := validatePinnedEnrollmentProfile(current, client); err != nil {
 				return err
 			}
-			plan, err := ssotedit.AddAccessClient(snapshot.body, ssotedit.ClientInput{
-				ID: client.ID, Name: client.Name, Platform: model.LinuxServer,
-				DestinationGrants: append([]string(nil), client.DestinationGrants...),
-			})
-			if err != nil {
-				return err
+			candidateBody := snapshot.body
+			if hasResponsibility(client, "forward") {
+				egress := hasResponsibility(client, "internet_egress")
+				server := client.Server
+				candidateBody, err = enrollplan.Apply(candidateBody, enrollplan.NodeInput{
+					ID: client.ID, Name: client.Name, Country: server.Country, City: server.City,
+					Provider: server.Provider, PublicEndpoint: server.PublicEndpoint,
+					Direction: model.Direction(server.Direction), WGPublicKey: server.WGPublicKey,
+					InboundPort: server.InboundPort, SecretGeneration: 1, EgressCapable: &egress,
+				})
+				if err != nil {
+					return fmt.Errorf("plan server Device enrollment: %w", err)
+				}
 			}
-			candidate, err := model.Load(plan.Content)
+			var accessPlan ssotedit.ClientPlan
+			if hasResponsibility(client, "use_loom") {
+				input := ssotedit.ClientInput{
+					ID: client.ID, Name: client.Name, Platform: model.LinuxServer,
+					DestinationGrants: append([]string(nil), client.DestinationGrants...),
+				}
+				if hasResponsibility(client, "forward") {
+					accessPlan, err = ssotedit.AddAccessRole(candidateBody, input)
+				} else {
+					accessPlan, err = ssotedit.AddAccessClient(candidateBody, input)
+				}
+				if err != nil {
+					return err
+				}
+				candidateBody = accessPlan.Content
+			}
+			candidate, err := model.Load(candidateBody)
 			if err != nil {
 				return fmt.Errorf("parse client SSOT candidate: %w", err)
 			}
@@ -152,8 +176,13 @@ func (p *clientProvisioner) provision(client clientregistry.Client, csrPEM strin
 				"api/" + client.ID: true, "probe/" + client.ID: true,
 				"telemetry/" + client.ID: true,
 			}
-			for _, ref := range plan.CredentialRefs {
+			for _, ref := range accessPlan.CredentialRefs {
 				allowedNew[ref] = true
+			}
+			for _, link := range ExpectedDirectLinksForSSOT(candidate) {
+				if link.From == client.ID || link.To == client.ID {
+					allowedNew["telemetry/"+link.From] = true
+				}
 			}
 			for _, node := range candidate.Nodes {
 				for _, ref := range nodeSecretRefs(candidate, node.ID, all) {
@@ -195,10 +224,10 @@ func (p *clientProvisioner) provision(client clientregistry.Client, csrPEM strin
 			}
 			// This is the commit point. Publisher observation can only begin after
 			// every existing node can hydrate the candidate snapshot.
-			if err := saveSSOTAtomicFromSnapshot(p.control.SSOTPath, plan.Content, snapshot); err != nil {
+			if err := saveSSOTAtomicFromSnapshot(p.control.SSOTPath, candidateBody, snapshot); err != nil {
 				return fmt.Errorf("commit provisioned client SSOT: %w", err)
 			}
-			ssot, ssotBody, added = candidate, plan.Content, true
+			ssot, ssotBody, added = candidate, candidateBody, true
 			return nil
 		}
 
@@ -239,20 +268,67 @@ func (p *clientProvisioner) provision(client clientregistry.Client, csrPEM strin
 }
 
 func validateProvisionedClient(s *model.SSOT, node *model.Node, client clientregistry.Client) error {
-	if node == nil || !node.IsAccess() || node.IsServer() {
-		return fmt.Errorf("client id %q already exists with a non-client SSOT shape", client.ID)
-	}
-	if node.Access.Platform != model.LinuxServer {
-		return fmt.Errorf("client id %q already has platform %q in SSOT", client.ID, node.Access.Platform)
+	if node == nil {
+		return fmt.Errorf("device id %q is missing from SSOT", client.ID)
 	}
 	if node.Name != client.Name {
-		return fmt.Errorf("client id %q already has a different display name in SSOT", client.ID)
+		return fmt.Errorf("device id %q already has a different display name in SSOT", client.ID)
 	}
-	if err := ssotedit.ValidateAccessClientShape(s, node, ssotedit.ClientInput{
-		ID: client.ID, Name: client.Name, Platform: model.LinuxServer,
-		DestinationGrants: clientDestinationGrants(client),
-	}); err != nil {
-		return fmt.Errorf("client id %q has an incomplete or broadened generated shape: %w", client.ID, err)
+	wantsAccess := client.ProfileVersion == "" || hasResponsibility(client, "use_loom")
+	if wantsAccess {
+		if node.Access == nil || node.Access.Platform != model.LinuxServer {
+			return fmt.Errorf("device id %q is missing its linux-server use_loom role", client.ID)
+		}
+		if err := ssotedit.ValidateAccessClientShape(s, node, ssotedit.ClientInput{
+			ID: client.ID, Name: client.Name, Platform: model.LinuxServer,
+			DestinationGrants: clientDestinationGrants(client),
+		}); err != nil {
+			return fmt.Errorf("device id %q has an incomplete or broadened access shape: %w", client.ID, err)
+		}
+	} else if node.Access != nil {
+		return fmt.Errorf("device id %q gained an access role outside its pinned profile", client.ID)
+	}
+
+	wantsServer := hasResponsibility(client, "forward")
+	if wantsServer {
+		if err := validateProvisionedServerShape(s, node, client); err != nil {
+			return err
+		}
+	} else if node.Server != nil {
+		return fmt.Errorf("device id %q gained a server role outside its pinned profile", client.ID)
+	}
+	return nil
+}
+
+func validateProvisionedServerShape(s *model.SSOT, node *model.Node, client clientregistry.Client) error {
+	server := client.Server
+	if server == nil || node.Server == nil {
+		return fmt.Errorf("device id %q is missing pinned server enrollment facts", client.ID)
+	}
+	if node.PublicEndpoint != server.PublicEndpoint || node.Country != server.Country || node.City != server.City ||
+		node.Provider != server.Provider || node.Server.InboundPort != server.InboundPort ||
+		node.Server.Direction != model.Direction(server.Direction) || node.Server.WGPublicKey != server.WGPublicKey ||
+		node.Server.SecretGeneration != 1 || node.Server.EgressCapable != hasResponsibility(client, "internet_egress") {
+		return fmt.Errorf("device id %q server shape differs from its pinned claim", client.ID)
+	}
+	pairs := map[string]int{}
+	for i := range s.Tunnels {
+		tunnel := &s.Tunnels[i]
+		if tunnel.From == client.ID {
+			pairs[tunnel.To]++
+		} else if tunnel.To == client.ID {
+			pairs[tunnel.From]++
+		}
+	}
+	for i := range s.Nodes {
+		peer := &s.Nodes[i]
+		if peer.ID == client.ID {
+			continue
+		}
+		want := model.NeedsTunnel(node, peer)
+		if (want && pairs[peer.ID] != 1) || (!want && pairs[peer.ID] != 0) {
+			return fmt.Errorf("device id %q tunnel relation with %q does not match direction matrix", client.ID, peer.ID)
+		}
 	}
 	return nil
 }
@@ -272,10 +348,28 @@ func validatePinnedEnrollmentProfile(s *model.SSOT, client clientregistry.Client
 		!sameStrings(profile.DestinationGrants, client.DestinationGrants) {
 		return fmt.Errorf("device %q profile expansion does not match pinned digest", client.ID)
 	}
-	if len(client.Responsibilities) != 1 || client.Responsibilities[0] != "use_loom" {
-		return fmt.Errorf("enrollment profile %q cannot be materialized by the current E1 Device renderer", client.ProfileVersion)
+	hasUse := hasResponsibility(client, "use_loom")
+	hasForward := hasResponsibility(client, "forward")
+	hasEgress := hasResponsibility(client, "internet_egress")
+	if hasEgress && !hasForward {
+		return fmt.Errorf("enrollment profile %q grants internet_egress without forward", client.ProfileVersion)
+	}
+	if hasForward != (client.Server != nil) {
+		return fmt.Errorf("device %q server claim does not match pinned responsibilities", client.ID)
+	}
+	if hasUse != (len(client.DestinationGrants) > 0) {
+		return fmt.Errorf("device %q destination grants do not match use_loom responsibility", client.ID)
 	}
 	return nil
+}
+
+func hasResponsibility(client clientregistry.Client, responsibility string) bool {
+	for _, candidate := range client.Responsibilities {
+		if candidate == responsibility {
+			return true
+		}
+	}
+	return false
 }
 
 func clientDestinationGrants(client clientregistry.Client) []string {
@@ -347,6 +441,11 @@ func nodeSecretRefs(s *model.SSOT, owner string, all map[string]string) []string
 			if credential.RotationPending() {
 				seen[credential.PrevRef()] = true
 			}
+		}
+	}
+	for _, link := range ExpectedDirectLinksForSSOT(s) {
+		if link.From == owner || link.To == owner {
+			seen["telemetry/"+link.From] = true
 		}
 	}
 	for ref := range all {

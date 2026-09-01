@@ -1,6 +1,6 @@
 # Loom Linux 客户端安装
 
-本文面向安装 `linux/amd64` 服务器客户端的管理员。客户端使用本地
+本文面向安装 `linux/amd64` Device 的管理员。具有 `use_loom` 职责的 Device 使用本地
 `127.0.0.1:1080` mixed 入口，不接管宿主机路由表，也不会自动修改全局代理环境变量。
 注册和安装共用现有 SSOT、publisher 与 signed pull，不创建另一套网络或选路规则。
 
@@ -14,8 +14,10 @@
 
 ## 1. 创建邀请
 
-在中控打开 **Clients → Add client**，只填写便于识别的设备名称。不要填写平台、
-出口节点或路径：平台由客户端上报，路由仍由中控规则和 Agent 决定。
+在中控打开 **Devices → Add Device**，填写便于识别的设备名称并选择不可变的 Device
+purpose。不要填写平台、出口节点或路径：平台由客户端上报，路由仍由中控规则和 Agent
+决定。默认 purpose 只在本机使用 Loom；服务器 purpose 展开为 `forward` 与
+`internet_egress`，不是另一种 Enrollment 协议。
 
 创建成功页只展示一次短时邀请，并提供三种等价载体：
 
@@ -28,7 +30,7 @@
 
 ## 2. 下载并核对客户端包
 
-在 Clients 页下载 `loom-client-linux-amd64.tar.gz`。中控只在使用其独立的
+在 Devices 页下载 `loom-client-linux-amd64.tar.gz`。中控只在使用其独立的
 `/etc/loom/trust/platform.pub` 验证 detached signature、archive 哈希和包内文件后
 才提供下载；下载响应本身不把同目录公钥当成信任根。
 
@@ -52,7 +54,31 @@ loom client verify \
 一次 Loom 二进制，用同一字节生成并验签客户端包，最后将 archive 作为提交标记原子
 发布到 `/var/lib/loom/client-dist/`。脏工作树构建默认会被拒绝。
 
-## 3. 安装并注册
+## 3. 服务器职责先声明可达事实
+
+只有邀请的 Responsibilities 包含 `forward` 时，才需要在 claim 前创建严格的本地配置：
+
+```yaml
+# /etc/loom/device.yaml
+server:
+  public_endpoint: edge.example.net
+  inbound_port: 61698
+  direction: bidirectional
+  # country: CN       # 可选
+  # city: Beijing     # 可选
+  # provider: example # 可选
+```
+
+`public_endpoint` 是不带 scheme/端口的真实公网 DNS 或 IP；`inbound_port` 是部署实际开放的
+UDP 端口；`direction` 只能是 `bidirectional`、`reverse_only` 或 `direct_only`。这些字段
+声明服务器如何加入现有拓扑，不是让客户端手选路径或出口，也不会创建第二套选路逻辑。
+
+客户端在本机创建或复用 `/etc/wireguard/node.key`，只把公钥随 claim 发给中控。缺少
+`/usr/bin/wg` 或 `/usr/bin/wg-quick` 时，会在消费邀请前通过受支持的 apt/dnf/yum/apk/
+zypper 安装 `wireguard-tools` 并复检；失败不会建立 Device identity 或修改 SSOT。
+公网可达性仍由配置应用后的现有签名 Hysteria2/拓扑观测验证，不新增一套“再次拨入”逻辑。
+
+## 4. 安装并注册
 
 已经下载邀请文件时：
 
@@ -83,7 +109,7 @@ CA、平台公钥、release authority 和本机秘密，并执行首次 signed p
 设备私钥，不能作为普通重试手段。默认命令等待 provisioning 最长 5 分钟；邀请过期后
 需要由运维人员创建新邀请。
 
-## 4. 让应用使用 Loom
+## 5. 让应用使用 Loom
 
 安装完成后，只让需要接入的应用显式使用回环代理。例如：
 
@@ -102,7 +128,7 @@ Paths 页面手选路径。
 ## 当前边界
 
 - 当前只发布 Linux amd64 `tar.gz`，没有 deb/rpm、Linux GUI 或通用卸载器；
-- 邀请消费/身份绑定不等于在线，Clients 列表中的数据面健康必须来自后续可信报告；
+- 邀请消费/身份绑定不等于在线，Devices 列表中的数据面健康必须来自后续可信报告；
 - 控制面与数据面双重吊销尚未完成；不要用删除列表记录冒充凭据已失效；
 - Windows 与 Android 客户端宿主不在这个分发包内。
 

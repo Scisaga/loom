@@ -130,6 +130,90 @@ func TestClientProvisionPrepositionsSecretsBeforeSSOTCommitAndReplaysReady(t *te
 	}
 }
 
+func TestServerDeviceProvisionUsesTheSameAtomicEnrollmentTransaction(t *testing.T) {
+	control, paths := clientProvisionFixture(t)
+	client := clientregistry.Client{
+		ID: "d-edge01", Name: "Enrolled edge", Platform: string(model.LinuxServer), Status: "provisioning",
+		Server: &clientregistry.ServerEnrollment{
+			PublicEndpoint: "edge-enrolled.example.net", InboundPort: 5443, Direction: "bidirectional",
+			WGPublicKey: base64.StdEncoding.EncodeToString([]byte("01234567890123456789012345678901")),
+			Country:     "CN", City: "Beijing", Provider: "example",
+		},
+	}
+	pinTestProfile(t, control, &client, "server-device@v1")
+	csrPEM, _ := clientProvisionCSR(t)
+	var saveMu sync.Mutex
+	p := newClientProvisioner(control, &saveMu)
+	p.health = filepath.Join(t.TempDir(), "publisher.json")
+	now := time.Date(2026, 9, 1, 20, 0, 0, 0, time.UTC)
+	p.now = func() time.Time { return now }
+	installed := map[string]bool{}
+	p.install = func(_ context.Context, nodeID string, _ []byte) error {
+		current, err := os.ReadFile(control.SSOTPath)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(current), "id: "+client.ID) {
+			return errors.New("server SSOT was committed before existing-node secrets")
+		}
+		installed[nodeID] = true
+		return nil
+	}
+	first, err := p.provision(client, csrPEM)
+	if err != nil || first.Ready {
+		t.Fatalf("first provision=%+v err=%v", first, err)
+	}
+	if len(installed) != 6 {
+		t.Fatalf("pre-positioned existing Devices=%v", mapKeysBool(installed))
+	}
+	body, err := os.ReadFile(control.SSOTPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ssot, err := model.Load(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := ssot.NodeByID()[client.ID]
+	if node == nil || node.Server == nil || node.Access != nil || node.Server.InboundPort != 5443 ||
+		!node.Server.EgressCapable || node.Server.SecretGeneration != 1 || node.PublicEndpoint != client.Server.PublicEndpoint {
+		t.Fatalf("server Device=%+v", node)
+	}
+	tunnelCount := 0
+	for _, tunnel := range ssot.Tunnels {
+		if tunnel.From == client.ID || tunnel.To == client.ID {
+			tunnelCount++
+		}
+	}
+	if tunnelCount == 0 {
+		t.Fatal("server Device was added without direction-derived WireGuard tunnels")
+	}
+	fixed := ssot.DeclarationByID()[client.ID+"-fixed"]
+	if fixed == nil || fixed.PinnedEgress() != client.ID || !containsString(fixed.AllowedServers, client.ID) {
+		t.Fatalf("generated fixed policy=%+v", fixed)
+	}
+	if !containsString(ssot.DeclarationByID()["best-egress"].AllowedServers, client.ID) {
+		t.Fatal("full automatic egress pool was not expanded for the new egress Device")
+	}
+	if err := validateProvisionedClient(ssot, node, client); err != nil {
+		t.Fatalf("generated server shape rejected: %v", err)
+	}
+	node.Server.InboundPort++
+	if err := validateProvisionedClient(ssot, node, client); err == nil || !strings.Contains(err.Error(), "pinned claim") {
+		t.Fatalf("mutated server replay error=%v", err)
+	}
+	node.Server.InboundPort--
+
+	prepareClientReadyFiles(t, paths, p.health, body, now)
+	p.install = func(context.Context, string, []byte) error {
+		return errors.New("server replay attempted to redistribute existing-node secrets")
+	}
+	ready, err := p.provision(client, csrPEM)
+	if err != nil || !ready.Ready || ready.Bootstrap.NodeID != client.ID {
+		t.Fatalf("ready replay=%+v err=%v", ready, err)
+	}
+}
+
 func TestSignClientCSRRejectsIssuerWithoutCurrentSigningAuthority(t *testing.T) {
 	now := time.Date(2026, 8, 31, 22, 0, 0, 0, time.UTC)
 	csrPEM, _ := clientProvisionCSR(t)
@@ -699,11 +783,24 @@ func clientProvisionFixture(t *testing.T) (*Control, clientProvisionPaths) {
 
 func pinDefaultTestProfile(t *testing.T, control *Control, client *clientregistry.Client) {
 	t.Helper()
+	pinTestProfile(t, control, client, "")
+}
+
+func pinTestProfile(t *testing.T, control *Control, client *clientregistry.Client, reference string) {
+	t.Helper()
 	ssot, err := model.LoadFile(control.SSOTPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile, err := ssot.DefaultEnrollmentProfile()
+	var profile *model.EnrollmentProfileVersion
+	if reference == "" {
+		profile, err = ssot.DefaultEnrollmentProfile()
+	} else {
+		profile = ssot.EnrollmentProfileByReference(reference)
+		if profile == nil {
+			err = errors.New("profile not found")
+		}
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -711,6 +808,15 @@ func pinDefaultTestProfile(t *testing.T, control *Control, client *clientregistr
 	client.ProfileDigest = profile.Digest()
 	client.Responsibilities = append([]string(nil), profile.Responsibilities...)
 	client.DestinationGrants = append([]string(nil), profile.DestinationGrants...)
+}
+
+func mapKeysBool(values map[string]bool) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func copyTestFile(t *testing.T, source, target string, mode os.FileMode) {

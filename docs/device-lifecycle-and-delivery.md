@@ -19,14 +19,19 @@
 公开 HTTPS 前门已完整下载通用包并通过 checksum，安装脚本、签名公钥和 allowlist 的
 404/拒绝 POST 边界也已实测。部署域名和路径属于本次部署配置，不是产品默认值。
 
+E1 的服务器职责现在也走同一 Enrollment：邀请钉住服务器 ProfileVersion；Linux Device
+从严格的 `/etc/loom/device.yaml` 读取公网 endpoint、UDP inbound 与 direction，在本机
+创建/复用 WireGuard 私钥且只提交公钥。中控以同一个事务生成 server/access 角色、方向
+矩阵隧道、固定出口策略与全量自动池增量，先生成和预置秘密，最后才提交 SSOT。自动池
+扩大导致原探测预算无法满足 `min_samples` 时，规划器只增加维持既有窗口所需的最小预算。
+配置应用后的公网入站仍复用已有签名拓扑观测，不另造一次“拨入验证”。服务器缺少
+wireguard-tools 时，在 invitation claim 前使用已有受限包管理器流程安装并复检。
+
 当前仍不能宣称 E1 全部完成：还要在可回收的一次性 Linux Device 上完成 invite →
 install → claim → first pull → apply → online 的真机 canary。生产 registry 暂无安全的
 Device 删除/凭据撤销事务，不能为了测试永久污染 SSOT；本机 Docker daemon 又无法解析
-公共镜像仓库，因此本轮只完成公开包端到端下载，未把它冒充完整 Enrollment canary。
-另外，现有 claim 已统一建立 Device identity 和 `use_loom` 授权，但还没有携带服务器
-`forward` / `internet_egress` 所需的 endpoint、direction 与 inbound 声明。为避免靠猜测
-扩权，本轮对这些职责失败关闭；SSH Add node 暂时只作为 legacy 迁移入口。这部分必须在
-补齐同一 Enrollment 事务的服务器事实和检测后再启用，不能用 UI 文案冒充已实现。
+公共镜像仓库，因此此前只完成公开包端到端下载，不能把它冒充完整 Enrollment canary。
+SSH Add node 继续只作为 legacy 迁移入口，待真机 canary 与回收边界具备后移除。
 
 ## 1. 收敛结论
 

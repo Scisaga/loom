@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"loom/internal/model"
+	"loom/internal/netx"
 )
 
 const (
@@ -41,7 +42,7 @@ func lookupIPWhoIs(ctx context.Context, client *http.Client, rawIP string) (geoI
 		return geoIPLocation{}, fmt.Errorf("invalid lookup IP %q", rawIP)
 	}
 	ip = ip.Unmap()
-	if !isPublicGlobalUnicast(ip) {
+	if !netx.IsPublicGlobalUnicast(ip) {
 		return geoIPLocation{}, fmt.Errorf("lookup IP %s is not public global-unicast", ip)
 	}
 	if client == nil {
@@ -113,7 +114,7 @@ func firstEndpointAddress(resolution string) (string, error) {
 		return "", fmt.Errorf("endpoint resolution has no usable public IP")
 	}
 	ip = ip.Unmap()
-	if !isPublicGlobalUnicast(ip) {
+	if !netx.IsPublicGlobalUnicast(ip) {
 		return "", fmt.Errorf("endpoint resolution address %s is not public global-unicast", ip)
 	}
 	return ip.String(), nil

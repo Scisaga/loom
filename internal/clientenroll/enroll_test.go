@@ -95,6 +95,40 @@ func TestClaimPersistsIdentityBeforePOSTAndReusesCSR(t *testing.T) {
 	}
 }
 
+func TestClaimWithServerSendsOnlyPublicServerFacts(t *testing.T) {
+	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x53}, 32))
+	var request claimRequest
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = io.WriteString(w, `{"schema":1,"client_id":"server-a","status":"provisioning","claimed_at":"2026-09-01T19:00:00Z","next":"wait_for_configuration","configuration":"pending"}`)
+	}))
+	defer server.Close()
+	facts := &ServerEnrollment{
+		PublicEndpoint: "edge.example.net", InboundPort: 61698, Direction: "bidirectional",
+		WGPublicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", Country: "CN", City: "Beijing",
+	}
+	_, err := ClaimWithServer(context.Background(), server.Client(), Invite{
+		Endpoint: server.URL, Token: token,
+	}, filepath.Join(t.TempDir(), "state"), facts, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Server == nil || *request.Server != *facts || request.Token != token || request.CSRPEM == "" {
+		t.Fatalf("claim request = %+v", request)
+	}
+	body, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "private_key") || strings.Contains(string(body), "node.key") {
+		t.Fatalf("claim leaked local WireGuard key material: %s", body)
+	}
+}
+
 func TestClaimDoesNotFollowRedirectWithBearerBody(t *testing.T) {
 	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x61}, 32))
 	received := false

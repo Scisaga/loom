@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -17,6 +19,7 @@ import (
 
 	"loom/internal/clientdist"
 	"loom/internal/clientenroll"
+	"loom/internal/enrollssh"
 	"loom/internal/netx"
 	"loom/internal/publish"
 )
@@ -56,6 +59,8 @@ func cmdClientEnroll(args []string) error {
 	inviteText := fs.String("invite", "", "直接给邀请 URI；可能进入 shell history，不推荐")
 	fromStdin := fs.Bool("stdin", false, "从 stdin 读取邀请")
 	stateDir := fs.String("state-dir", "/etc/loom/client", "设备 identity 与注册状态目录")
+	deviceConfig := fs.String("device-config", "/etc/loom/device.yaml", "可选服务器职责声明")
+	wgKey := fs.String("wg-key", "/etc/wireguard/node.key", "服务器 WireGuard 私钥落点")
 	tlsKey := fs.String("tls-key", "/etc/loom/tls/node.key", "节点 TLS 私钥落点")
 	tlsCert := fs.String("tls-cert", "/etc/loom/tls/node.crt", "节点 TLS 证书落点")
 	caCert := fs.String("ca-cert", "/etc/loom/tls/ca.crt", "内部 CA 证书落点")
@@ -103,6 +108,13 @@ func cmdClientEnroll(args []string) error {
 	if err != nil {
 		return err
 	}
+	server, err := clientenroll.PrepareServerEnrollment(*deviceConfig, *wgKey, nil)
+	if err != nil {
+		return err
+	}
+	if err := ensureLocalServerPrerequisites(server); err != nil {
+		return err
+	}
 	if *expectedCurrent == "" {
 		*expectedCurrent = filepath.Join(*stateDir, "expected-current.json")
 	}
@@ -122,7 +134,7 @@ func cmdClientEnroll(args []string) error {
 	var response clientenroll.Response
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		response, err = clientenroll.Claim(ctx, httpClient, invite, *stateDir, nil)
+		response, err = clientenroll.ClaimWithServer(ctx, httpClient, invite, *stateDir, server, nil)
 		cancel()
 		if err != nil {
 			if !clientenroll.IsTransient(err) || *wait == 0 || time.Now().Add(*retry).After(deadline) {
@@ -172,6 +184,60 @@ func cmdClientEnroll(args []string) error {
 	}
 	fmt.Printf("✓ Linux 客户端已完成注册、验签配置安装与首次状态收敛。\n")
 	return nil
+}
+
+func ensureLocalServerPrerequisites(server *clientenroll.ServerEnrollment) error {
+	return ensureServerWireGuardTools(server, executableRegularFile, func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		command := exec.CommandContext(ctx, "/bin/sh", "-s")
+		command.Stdin = strings.NewReader(enrollssh.InstallWireGuardToolsScript)
+		command.Stdout = io.Discard
+		var stderr bytes.Buffer
+		command.Stderr = &stderr
+		if err := command.Run(); err != nil {
+			detail := strings.TrimSpace(stderr.String())
+			if len(detail) > 2048 {
+				detail = detail[:2048] + "…"
+			}
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return errors.New("安装 wireguard-tools 超时")
+			}
+			if detail != "" {
+				return fmt.Errorf("安装 wireguard-tools: %w: %s", err, detail)
+			}
+			return fmt.Errorf("安装 wireguard-tools: %w", err)
+		}
+		return nil
+	})
+}
+
+func ensureServerWireGuardTools(server *clientenroll.ServerEnrollment, executable func(string) bool, install func() error) error {
+	if server == nil {
+		return nil
+	}
+	if executable == nil || install == nil {
+		return errors.New("服务器 Device 的 wireguard-tools 前置检查未配置")
+	}
+	wgOK := executable("/usr/bin/wg")
+	wgQuickOK := executable("/usr/bin/wg-quick")
+	if wgOK && wgQuickOK {
+		return nil
+	}
+	// This happens before the invitation is claimed. Failure can leave only a
+	// local, unreferenced WireGuard key; it cannot create Identity or SSOT state.
+	if err := install(); err != nil {
+		return fmt.Errorf("服务器 Device 需要 wireguard-tools，邀请尚未消费: %w", err)
+	}
+	if !executable("/usr/bin/wg") || !executable("/usr/bin/wg-quick") {
+		return errors.New("wireguard-tools 安装完成但 /usr/bin/wg 或 /usr/bin/wg-quick 仍不可执行；邀请尚未消费")
+	}
+	return nil
+}
+
+func executableRegularFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
 }
 
 func removeClientExpectedCurrent(path string) error {

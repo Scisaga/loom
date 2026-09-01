@@ -74,10 +74,11 @@ type identityMeta struct {
 }
 
 type claimRequest struct {
-	Token     string `json:"token"`
-	Platform  string `json:"platform"`
-	CSRPEM    string `json:"csr_pem"`
-	RequestID string `json:"request_id"`
+	Token     string            `json:"token"`
+	Platform  string            `json:"platform"`
+	CSRPEM    string            `json:"csr_pem"`
+	RequestID string            `json:"request_id"`
+	Server    *ServerEnrollment `json:"server,omitempty"`
 }
 
 // TransientError marks a claim attempt that is safe to replay with the same
@@ -212,6 +213,12 @@ func ReadInviteFile(name string, stdin io.Reader) (Invite, error) {
 // claim attempt. Callers retry this function with the same StateDir and Invite
 // while Configuration remains pending.
 func Claim(ctx context.Context, client *http.Client, invite Invite, stateDir string, random io.Reader) (Response, error) {
+	return ClaimWithServer(ctx, client, invite, stateDir, nil, random)
+}
+
+// ClaimWithServer uses the same identity transaction as Claim and adds only
+// the public server facts prepared from the local Device config.
+func ClaimWithServer(ctx context.Context, client *http.Client, invite Invite, stateDir string, server *ServerEnrollment, random io.Reader) (Response, error) {
 	var zero Response
 	if client == nil {
 		return zero, errors.New("注册 HTTP 客户端为空")
@@ -230,6 +237,7 @@ func Claim(ctx context.Context, client *http.Client, invite Invite, stateDir str
 	}
 	body, err := json.Marshal(claimRequest{
 		Token: invite.Token, Platform: Platform, CSRPEM: string(csrPEM), RequestID: meta.RequestID,
+		Server: server,
 	})
 	if err != nil {
 		return zero, err

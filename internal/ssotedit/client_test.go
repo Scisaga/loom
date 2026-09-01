@@ -75,6 +75,31 @@ declarations:
 	}
 }
 
+func TestAddAccessRolePreservesExistingServerDevice(t *testing.T) {
+	content := fixtureSSOT(t)
+	before := loadResult(t, content).NodeByID()["cn-bj"]
+	if before == nil || before.Server == nil || before.Access != nil {
+		t.Fatalf("fixture server = %#v", before)
+	}
+	server := *before.Server
+	plan, err := AddAccessRole(content, ClientInput{
+		ID: "cn-bj", Name: before.Name, Platform: model.LinuxServer,
+		DestinationGrants: []string{"best-egress"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := loadResult(t, plan.Content).NodeByID()["cn-bj"]
+	if after == nil || after.Access == nil || after.Server == nil || *after.Server != server ||
+		after.PublicEndpoint != before.PublicEndpoint || after.Name != before.Name {
+		t.Fatalf("combined Device = %#v, previous server = %#v", after, before)
+	}
+	if len(after.Access.Credentials) != 1 || len(plan.CredentialRefs) != 1 ||
+		len(after.Access.MixedPorts) != 1 || after.Access.MixedPorts[0].Declaration != "best-egress" {
+		t.Fatalf("attached access credentials=%v mixed=%v refs=%v", after.Access.Credentials, after.Access.MixedPorts, plan.CredentialRefs)
+	}
+}
+
 func TestAddAccessClientRejectsUnsupportedOrDuplicateClient(t *testing.T) {
 	content := fixtureSSOT(t)
 	for _, tc := range []struct {

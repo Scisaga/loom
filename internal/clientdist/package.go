@@ -462,6 +462,22 @@ token in shell history:
     cd loom-client-linux-amd64
     sudo ./install.sh --invite-file ../client.loom-invite
 
+If the invitation pins a forwarding/server purpose, declare the real public
+endpoint before running the installer:
+
+    sudo install -d -m 0755 /etc/loom
+    sudoedit /etc/loom/device.yaml
+
+    server:
+      public_endpoint: edge.example.net
+      inbound_port: 61698
+      direction: bidirectional
+
+This is the server's reachability declaration, not a client route selection.
+Enrollment creates or reuses /etc/wireguard/node.key locally, sends only its
+public key, and installs wireguard-tools through a supported package manager
+before consuming the invitation when the tools are absent.
+
 The installer registers a locally generated P-256 CSR identity (the private key
 never leaves the machine), installs
 the bootstrap response, and starts the first signed pull when the control plane

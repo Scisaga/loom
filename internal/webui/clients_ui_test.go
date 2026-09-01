@@ -177,7 +177,8 @@ func TestAddClientDoesNotAskForPlatformOrRoute(t *testing.T) {
 	for _, want := range []string{
 		`action="/devices/create"`, `name=name`, `Display name`,
 		`The installed client reports its supported platform`,
-		`Platform, endpoint and route are discovered or assigned after identity claim.`,
+		`Platform is reported by the installed Device`,
+		`immutable purpose is pinned below`,
 		`standard-device@v1`, `use_loom`, `best-egress · sg-fixed`,
 	} {
 		if !strings.Contains(body, want) {
@@ -187,6 +188,48 @@ func TestAddClientDoesNotAskForPlatformOrRoute(t *testing.T) {
 	for _, forbidden := range []string{`name=platform`, `name=exit`, `name=route`} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("Add client form exposes forbidden field %q", forbidden)
+		}
+	}
+}
+
+func TestAddDeviceSelectsAnImmutablePurposeNotAPlatform(t *testing.T) {
+	d := clientUIDeps()
+	d.Control.Clients.EnrollmentProfiles = func() ([]DeviceEnrollmentProfileView, error) {
+		return []DeviceEnrollmentProfileView{
+			{Version: "standard-device@v1", Default: true, Responsibilities: []string{"use_loom"}, DestinationGrants: []string{"best-egress"}},
+			{Version: "server-device@v1", Responsibilities: []string{"forward", "internet_egress"}},
+		}, nil
+	}
+	body := pageClients(d, clientPageState{Create: true, SubmittedProfile: "server-device@v1"}, true)
+	for _, want := range []string{
+		`name=profile_version`, `Device purpose`, `server-device@v1 · forward · internet_egress`,
+		`value="server-device@v1" data-responsibilities="forward · internet_egress" data-grants="—" selected`,
+		`data-device-profile-control`, `profile-preview-responsibilities`, `not a platform choice`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Add Device purpose selector missing %q", want)
+		}
+	}
+	if strings.Contains(body, `name=platform`) {
+		t.Fatal("Device purpose selector was presented as a platform selector")
+	}
+}
+
+func TestServerDeviceInvitationExplainsDeclarationBeforeEnrollment(t *testing.T) {
+	d := clientUIDeps()
+	invite := ClientInviteView{
+		InviteID: "invite-server", ClientID: "device-server01", ClientName: "Edge server",
+		InviteURI: "loom://enroll#opaque", ExpiresAt: "2026-09-01T20:00:00Z",
+		ProfileVersion: "server-device@v1", Responsibilities: []string{"forward", "internet_egress"},
+	}
+	body := pageClients(d, clientPageState{Invite: &invite}, true)
+	for _, want := range []string{
+		`Configure the server declaration before claiming`, `/etc/loom/device.yaml`,
+		`public_endpoint: edge.example.net`, `inbound_port: 61698`, `direction: bidirectional`,
+		`not a route or exit selection`, `verified by the existing signed topology observations after apply`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("server invitation missing %q", want)
 		}
 	}
 }
@@ -238,6 +281,28 @@ func TestDevicesNavigationIsControlOnly(t *testing.T) {
 	local.Control = nil
 	if body := shell(local, "总览", "", false); strings.Contains(body, `href="/clients"`) {
 		t.Fatal("local-node navigation exposes control-only client inventory")
+	}
+}
+
+func TestDeviceDetailShowsServerDeclarationAsDesiredNotRuntimeEvidence(t *testing.T) {
+	d := clientUIDeps()
+	d.Control.Clients.List = func() (ClientInventory, error) {
+		return ClientInventory{Clients: []ClientView{{
+			ID: "d-edge01", Name: "Edge", Status: "managed", Membership: "active",
+			Responsibilities: []string{"forward", "internet_egress"},
+			PublicEndpoint:   "edge.example.net", InboundPort: 61698,
+			Direction: "bidirectional", EgressCapable: true,
+		}}}, nil
+	}
+	body := pageDeviceDetail(d, "d-edge01", true)
+	for _, want := range []string{
+		`Server declaration`, `edge.example.net:61698`, `bidirectional`,
+		`These are desired facts from Enrollment/SSOT`, `signed ingress observations remain runtime evidence`,
+		`Network diagnostics`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("server Device detail missing %q", want)
+		}
 	}
 }
 

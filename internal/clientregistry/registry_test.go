@@ -124,8 +124,47 @@ func TestInvitationPinsImmutableProfileExpansion(t *testing.T) {
 		invites[0].ProfileVersion != clients[0].ProfileVersion || created.Client.ProfileVersion != clients[0].ProfileVersion {
 		t.Fatalf("pinned assignment was not durably copied: client=%+v invite=%+v", clients[0], invites[0])
 	}
+	if len(clients[0].ID) > 12 || !strings.HasPrefix(clients[0].ID, "d-") {
+		t.Fatalf("new unified Device id %q cannot safely become a WireGuard peer", clients[0].ID)
+	}
 	if _, err := store.CreateWithProfile("invalid profile", ProfileAssignment{Version: "standard-device@v1", Digest: "short"}); err == nil {
 		t.Fatal("malformed profile digest was accepted")
+	}
+}
+
+func TestServerClaimMustMatchPinnedResponsibilitiesAndExactReplay(t *testing.T) {
+	now := time.Date(2026, 9, 1, 19, 0, 0, 0, time.UTC)
+	store := testStore(t, &now)
+	created, err := store.CreateWithProfile("egress Device", ProfileAssignment{
+		Version: "server-device@v1", Digest: strings.Repeat("b", 64),
+		Responsibilities: []string{"forward", "internet_egress"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim := ClaimInput{
+		Token: created.Token, Platform: "linux-server", CSRPEM: makeCSR(t, "server-install"), RequestID: "server-install",
+	}
+	if _, err := store.Claim(claim); err == nil {
+		t.Fatal("server invitation was consumed without server facts")
+	}
+	claim.Server = &ServerEnrollment{
+		PublicEndpoint: "edge.example.net", InboundPort: 61698, Direction: "bidirectional",
+		WGPublicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", Country: "CN", City: "Beijing",
+	}
+	first, err := store.Claim(claim)
+	if err != nil || first.Replay || first.Client.Server == nil || first.Client.Server.PublicEndpoint != "edge.example.net" {
+		t.Fatalf("server claim=%+v err=%v", first, err)
+	}
+	replay, err := store.Claim(claim)
+	if err != nil || !replay.Replay {
+		t.Fatalf("exact server replay=%+v err=%v", replay, err)
+	}
+	changed := *claim.Server
+	changed.InboundPort++
+	claim.Server = &changed
+	if _, err := store.Claim(claim); err == nil {
+		t.Fatal("server claim replay accepted changed public facts")
 	}
 }
 

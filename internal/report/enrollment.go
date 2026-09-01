@@ -437,7 +437,7 @@ func determinePublicEndpoint(
 ) (string, string, string, error) {
 	if parsed, err := netip.ParseAddr(host); err == nil {
 		parsed = parsed.Unmap()
-		if !isPublicGlobalUnicast(parsed) {
+		if !netx.IsPublicGlobalUnicast(parsed) {
 			return "", "", "", fmt.Errorf("SSH host %q is private, local, reserved, or otherwise not a public global-unicast endpoint", host)
 		}
 		return parsed.String(), fmt.Sprintf(
@@ -459,7 +459,7 @@ func determinePublicEndpoint(
 			continue
 		}
 		parsed = parsed.Unmap()
-		if !isPublicGlobalUnicast(parsed) || seen[parsed.String()] {
+		if !netx.IsPublicGlobalUnicast(parsed) || seen[parsed.String()] {
 			continue
 		}
 		seen[parsed.String()] = true
@@ -479,33 +479,6 @@ func sameIPAddress(a, b string) bool {
 	aAddr, aErr := netip.ParseAddr(a)
 	bAddr, bErr := netip.ParseAddr(b)
 	return aErr == nil && bErr == nil && aAddr.Unmap() == bAddr.Unmap()
-}
-
-var nonPublicGlobalPrefixes = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/8"),
-	netip.MustParsePrefix("100.64.0.0/10"),
-	netip.MustParsePrefix("192.0.0.0/24"),
-	netip.MustParsePrefix("192.0.2.0/24"),
-	netip.MustParsePrefix("198.18.0.0/15"),
-	netip.MustParsePrefix("198.51.100.0/24"),
-	netip.MustParsePrefix("203.0.113.0/24"),
-	netip.MustParsePrefix("240.0.0.0/4"),
-	netip.MustParsePrefix("100::/64"),
-	netip.MustParsePrefix("2001:db8::/32"),
-}
-
-func isPublicGlobalUnicast(address netip.Addr) bool {
-	address = address.Unmap()
-	if !address.IsValid() || !address.IsGlobalUnicast() || address.IsPrivate() ||
-		address.IsLoopback() || address.IsLinkLocalUnicast() || address.IsUnspecified() {
-		return false
-	}
-	for _, prefix := range nonPublicGlobalPrefixes {
-		if prefix.Contains(address) {
-			return false
-		}
-	}
-	return true
 }
 
 func enrollmentTunnelViews(content []byte, plan enrollplan.Plan) ([]webui.EnrollmentTunnel, error) {

@@ -29,6 +29,9 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"loom/internal/model"
+	"loom/internal/netx"
 )
 
 const (
@@ -57,18 +60,33 @@ func (e *Error) Error() string        { return e.Msg }
 func (e *Error) ProtocolCode() string { return string(e.Code) }
 
 type Client struct {
-	ID                string   `json:"id"`
-	Name              string   `json:"name"`
-	Platform          string   `json:"platform,omitempty"`
-	PublicKey         string   `json:"public_key,omitempty"`
-	KeyFingerprint    string   `json:"key_fingerprint,omitempty"`
-	Status            string   `json:"status"`
-	CreatedAt         string   `json:"created_at"`
-	EnrolledAt        string   `json:"enrolled_at,omitempty"`
-	ProfileVersion    string   `json:"profile_version,omitempty"`
-	ProfileDigest     string   `json:"profile_digest,omitempty"`
-	Responsibilities  []string `json:"responsibilities,omitempty"`
-	DestinationGrants []string `json:"destination_grants,omitempty"`
+	ID                string            `json:"id"`
+	Name              string            `json:"name"`
+	Platform          string            `json:"platform,omitempty"`
+	PublicKey         string            `json:"public_key,omitempty"`
+	KeyFingerprint    string            `json:"key_fingerprint,omitempty"`
+	Status            string            `json:"status"`
+	CreatedAt         string            `json:"created_at"`
+	EnrolledAt        string            `json:"enrolled_at,omitempty"`
+	ProfileVersion    string            `json:"profile_version,omitempty"`
+	ProfileDigest     string            `json:"profile_digest,omitempty"`
+	Responsibilities  []string          `json:"responsibilities,omitempty"`
+	DestinationGrants []string          `json:"destination_grants,omitempty"`
+	Server            *ServerEnrollment `json:"server,omitempty"`
+}
+
+// ServerEnrollment is the minimal declarative input a Device must report when
+// its pinned ProfileVersion carries the forward responsibility. It contains no
+// private key and no runtime reachability claim; existing signed topology
+// probes verify the declared public inbound after the Device applies config.
+type ServerEnrollment struct {
+	PublicEndpoint string `json:"public_endpoint"`
+	InboundPort    int    `json:"inbound_port"`
+	Direction      string `json:"direction"`
+	WGPublicKey    string `json:"wg_public_key"`
+	Country        string `json:"country,omitempty"`
+	City           string `json:"city,omitempty"`
+	Provider       string `json:"provider,omitempty"`
 }
 
 type Invite struct {
@@ -107,10 +125,11 @@ type CreateResult struct {
 }
 
 type ClaimInput struct {
-	Token     string `json:"token"`
-	Platform  string `json:"platform"`
-	CSRPEM    string `json:"csr_pem"`
-	RequestID string `json:"request_id"`
+	Token     string            `json:"token"`
+	Platform  string            `json:"platform"`
+	CSRPEM    string            `json:"csr_pem"`
+	RequestID string            `json:"request_id"`
+	Server    *ServerEnrollment `json:"server,omitempty"`
 }
 
 type ClaimResult struct {
@@ -231,11 +250,15 @@ func (s Store) CreateWithProfile(name string, profile ProfileAssignment) (Create
 	}
 	err = s.withLock(true, func(st *fileState) error {
 		for attempt := 0; attempt < 8; attempt++ {
-			suffix, randomErr := randomHexToken(s.Rand, 6)
+			// Server Devices use their stable id in a Linux WireGuard interface
+			// name ("wg-" + id), whose kernel limit is 15 bytes. Keep every new
+			// Device id within that same unified boundary instead of allocating a
+			// longer Client-only id that later cannot gain forwarding duties.
+			suffix, randomErr := randomHexToken(s.Rand, 5)
 			if randomErr != nil {
-				return fmt.Errorf("generate client id: %w", randomErr)
+				return fmt.Errorf("generate Device id: %w", randomErr)
 			}
-			candidate := "client-" + suffix
+			candidate := "d-" + suffix
 			duplicate := false
 			for _, existing := range st.Clients {
 				if existing.ID == candidate {
@@ -250,7 +273,7 @@ func (s Store) CreateWithProfile(name string, profile ProfileAssignment) (Create
 			}
 		}
 		if client.ID == "" {
-			return errors.New("could not allocate a unique client id")
+			return errors.New("could not allocate a unique Device id")
 		}
 		sealed, sealErr := s.sealToken(token)
 		if sealErr != nil {
@@ -308,6 +331,19 @@ func (s Store) Claim(input ClaimInput) (ClaimResult, error) {
 	input.Platform = strings.TrimSpace(input.Platform)
 	input.CSRPEM = strings.TrimSpace(input.CSRPEM)
 	input.RequestID = strings.TrimSpace(input.RequestID)
+	if input.Server != nil {
+		server := *input.Server
+		server.PublicEndpoint = strings.TrimSpace(server.PublicEndpoint)
+		if endpoint, ok := netx.NormalizePublicEndpoint(server.PublicEndpoint); ok {
+			server.PublicEndpoint = endpoint
+		}
+		server.Direction = strings.TrimSpace(server.Direction)
+		server.WGPublicKey = strings.TrimSpace(server.WGPublicKey)
+		server.Country = strings.ToUpper(strings.TrimSpace(server.Country))
+		server.City = strings.TrimSpace(server.City)
+		server.Provider = strings.TrimSpace(server.Provider)
+		input.Server = &server
+	}
 	key, canonicalKey, err := validateClaim(input)
 	if err != nil {
 		return ClaimResult{}, err
@@ -339,6 +375,10 @@ func (s Store) Claim(input ClaimInput) (ClaimResult, error) {
 			return fmt.Errorf("invitation %s references missing client %s", invite.ID, invite.ClientID)
 		}
 		client := &st.Clients[clientIndex]
+		needsServer := containsString(client.Responsibilities, "forward")
+		if needsServer != (input.Server != nil) {
+			return &Error{Code: CodeInvalid, Msg: "server enrollment facts must exactly match the pinned responsibilities"}
+		}
 		expires, parseErr := time.Parse(time.RFC3339, invite.ExpiresAt)
 		if parseErr != nil {
 			return fmt.Errorf("invitation %s has invalid expiry: %w", invite.ID, parseErr)
@@ -353,7 +393,8 @@ func (s Store) Claim(input ClaimInput) (ClaimResult, error) {
 		}
 		if invite.ConsumedAt != "" {
 			if invite.PublicKeyHash == keyHash && invite.Platform == input.Platform &&
-				invite.RequestID == input.RequestID && client.PublicKey == canonicalKey {
+				invite.RequestID == input.RequestID && client.PublicKey == canonicalKey &&
+				sameServerEnrollment(client.Server, input.Server) {
 				result = ClaimResult{Client: *client, Replay: true}
 				return nil
 			}
@@ -375,6 +416,10 @@ func (s Store) Claim(input ClaimInput) (ClaimResult, error) {
 		client.Platform = input.Platform
 		client.PublicKey = canonicalKey
 		client.KeyFingerprint = "SHA256:" + base64.RawStdEncoding.EncodeToString(keyHashBytes(key))
+		if input.Server != nil {
+			server := *input.Server
+			client.Server = &server
+		}
 		// Identity claim is only the first half of enrollment. Data-plane
 		// credentials and the signed device configuration are provisioned by the
 		// SSOT/secret transaction; never present this intermediate state as online.
@@ -476,6 +521,9 @@ func validateClaim(input ClaimInput) ([]byte, string, error) {
 	if input.Platform != "linux-server" {
 		return nil, "", &Error{Code: CodeInvalid, Msg: "platform must be linux-server in client enrollment v1"}
 	}
+	if err := validateServerEnrollment(input.Server); err != nil {
+		return nil, "", err
+	}
 	if input.RequestID == "" || len(input.RequestID) > 128 || strings.IndexFunc(input.RequestID, unicode.IsControl) >= 0 {
 		return nil, "", &Error{Code: CodeInvalid, Msg: "request_id is required and must not exceed 128 bytes"}
 	}
@@ -502,6 +550,57 @@ func validateClaim(input ClaimInput) ([]byte, string, error) {
 		return nil, "", &Error{Code: CodeInvalid, Msg: "csr_pem public key cannot be encoded"}
 	}
 	return spki, base64.RawStdEncoding.EncodeToString(spki), nil
+}
+
+func validateServerEnrollment(server *ServerEnrollment) error {
+	if server == nil {
+		return nil
+	}
+	if !validPublicEndpoint(server.PublicEndpoint) {
+		return &Error{Code: CodeInvalid, Msg: "server public_endpoint must be a public IP or ASCII DNS name without a port"}
+	}
+	if server.InboundPort < 1 || server.InboundPort > 65535 {
+		return &Error{Code: CodeInvalid, Msg: "server inbound_port must be between 1 and 65535"}
+	}
+	if !model.Direction(server.Direction).Valid() {
+		return &Error{Code: CodeInvalid, Msg: "server direction must be bidirectional, reverse_only, or direct_only"}
+	}
+	decoded, err := base64.StdEncoding.Strict().DecodeString(server.WGPublicKey)
+	if err != nil || len(decoded) != 32 || base64.StdEncoding.EncodeToString(decoded) != server.WGPublicKey {
+		return &Error{Code: CodeInvalid, Msg: "server wg_public_key must be canonical base64 for exactly 32 bytes"}
+	}
+	if server.Country != "" && !model.ValidCountryCode(server.Country) {
+		return &Error{Code: CodeInvalid, Msg: "server country must be an uppercase two-letter code"}
+	}
+	for _, item := range []struct{ name, value string }{
+		{"city", server.City}, {"provider", server.Provider},
+	} {
+		if len(item.value) > 128 || strings.IndexFunc(item.value, unicode.IsControl) >= 0 {
+			return &Error{Code: CodeInvalid, Msg: "server " + item.name + " must not exceed 128 bytes or contain controls"}
+		}
+	}
+	return nil
+}
+
+func validPublicEndpoint(value string) bool {
+	_, ok := netx.NormalizePublicEndpoint(value)
+	return ok
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func sameServerEnrollment(a, b *ServerEnrollment) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 func validName(name string) error {

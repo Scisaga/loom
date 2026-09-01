@@ -108,6 +108,17 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 			}
 			return deviceEnrollmentProfileView(profile), nil
 		},
+		EnrollmentProfiles: func() ([]webui.DeviceEnrollmentProfileView, error) {
+			profiles, err := deviceEnrollmentProfiles(c)
+			if err != nil {
+				return nil, err
+			}
+			views := make([]webui.DeviceEnrollmentProfileView, 0, len(profiles))
+			for _, profile := range profiles {
+				views = append(views, deviceEnrollmentProfileView(profile))
+			}
+			return views, nil
+		},
 		List: func() (webui.ClientInventory, error) {
 			clients, invites, err := store.List()
 			if err != nil {
@@ -173,7 +184,7 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 			if err != nil {
 				return webui.ClientInviteView{}, err
 			}
-			profile, err := defaultDeviceEnrollmentProfile(c)
+			profile, err := selectedDeviceEnrollmentProfile(c, input.ProfileVersion)
 			if err != nil {
 				return webui.ClientInviteView{}, err
 			}
@@ -231,9 +242,17 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 			}, nil
 		},
 		Claim: func(input webui.ClientClaimInput) (webui.ClientClaimResult, error) {
+			var server *clientregistry.ServerEnrollment
+			if input.Server != nil {
+				server = &clientregistry.ServerEnrollment{
+					PublicEndpoint: input.Server.PublicEndpoint, InboundPort: input.Server.InboundPort,
+					Direction: input.Server.Direction, WGPublicKey: input.Server.WGPublicKey,
+					Country: input.Server.Country, City: input.Server.City, Provider: input.Server.Provider,
+				}
+			}
 			claimed, err := store.Claim(clientregistry.ClaimInput{
 				Token: input.Token, Platform: input.Platform,
-				CSRPEM: input.CSRPEM, RequestID: input.RequestID,
+				CSRPEM: input.CSRPEM, RequestID: input.RequestID, Server: server,
 			})
 			if err != nil {
 				return webui.ClientClaimResult{}, err
@@ -301,6 +320,10 @@ func applyDeviceDeclaration(device *webui.ClientView, ssot *model.SSOT, node *mo
 	}
 	if node.Server != nil {
 		device.Responsibilities = append(device.Responsibilities, "forward")
+		device.PublicEndpoint = node.PublicEndpoint
+		device.InboundPort = node.Server.InboundPort
+		device.Direction = string(node.Server.Direction)
+		device.EgressCapable = node.Server.EgressCapable
 		if node.Server.EgressCapable {
 			device.Responsibilities = append(device.Responsibilities, "internet_egress")
 		}
@@ -324,29 +347,66 @@ func applyDeviceDeclaration(device *webui.ClientView, ssot *model.SSOT, node *mo
 }
 
 func defaultDeviceEnrollmentProfile(c *Control) (*model.EnrollmentProfileVersion, error) {
+	return selectedDeviceEnrollmentProfile(c, "")
+}
+
+func deviceEnrollmentProfiles(c *Control) ([]*model.EnrollmentProfileVersion, error) {
 	if c == nil {
 		return nil, fmt.Errorf("control configuration is unavailable")
 	}
 	ssot, _, err := loadValidatedSSOTSnapshot(c.SSOTPath)
 	if err != nil {
-		return nil, fmt.Errorf("read enrollment profile: %w", err)
+		return nil, fmt.Errorf("read enrollment profiles: %w", err)
 	}
-	profile, err := ssot.DefaultEnrollmentProfile()
+	if _, err := ssot.DefaultEnrollmentProfile(); err != nil {
+		return nil, err
+	}
+	profiles := make([]*model.EnrollmentProfileVersion, 0, len(ssot.EnrollmentProfiles))
+	for i := range ssot.EnrollmentProfiles {
+		profile := &ssot.EnrollmentProfiles[i]
+		if err := validateSupportedEnrollmentProfile(profile); err != nil {
+			return nil, err
+		}
+		profiles = append(profiles, profile)
+	}
+	return profiles, nil
+}
+
+func selectedDeviceEnrollmentProfile(c *Control, reference string) (*model.EnrollmentProfileVersion, error) {
+	profiles, err := deviceEnrollmentProfiles(c)
 	if err != nil {
 		return nil, err
 	}
-	// The current E1 renderer can materialize the use_loom responsibility. Keep
-	// future server responsibilities declarable, but fail closed until their
-	// endpoint/direction facts have a complete enrollment transaction.
-	for _, responsibility := range profile.Responsibilities {
-		if responsibility != "use_loom" {
-			return nil, fmt.Errorf("default enrollment profile %s requires unsupported responsibility %q", profile.Reference(), responsibility)
+	reference = strings.TrimSpace(reference)
+	for _, profile := range profiles {
+		if (reference == "" && profile.Default) || profile.Reference() == reference {
+			return profile, nil
 		}
 	}
-	if len(profile.DestinationGrants) == 0 {
-		return nil, fmt.Errorf("default enrollment profile %s has no destination grants", profile.Reference())
+	return nil, fmt.Errorf("enrollment profile %q is not available", reference)
+}
+
+func validateSupportedEnrollmentProfile(profile *model.EnrollmentProfileVersion) error {
+	if profile == nil || len(profile.Responsibilities) == 0 {
+		return fmt.Errorf("enrollment profile has no responsibilities")
 	}
-	return profile, nil
+	hasUse := false
+	for _, responsibility := range profile.Responsibilities {
+		switch responsibility {
+		case "use_loom":
+			hasUse = true
+		case "forward", "internet_egress":
+		default:
+			return fmt.Errorf("enrollment profile %s requires unsupported responsibility %q", profile.Reference(), responsibility)
+		}
+	}
+	if hasUse && len(profile.DestinationGrants) == 0 {
+		return fmt.Errorf("enrollment profile %s grants use_loom without destinations", profile.Reference())
+	}
+	if !hasUse && len(profile.DestinationGrants) != 0 {
+		return fmt.Errorf("enrollment profile %s has destination grants without use_loom", profile.Reference())
+	}
+	return nil
 }
 
 func deviceEnrollmentProfileView(profile *model.EnrollmentProfileVersion) webui.DeviceEnrollmentProfileView {
@@ -354,7 +414,7 @@ func deviceEnrollmentProfileView(profile *model.EnrollmentProfileVersion) webui.
 		return webui.DeviceEnrollmentProfileView{}
 	}
 	return webui.DeviceEnrollmentProfileView{
-		Version:           profile.Reference(),
+		Version: profile.Reference(), Default: profile.Default,
 		Responsibilities:  append([]string(nil), profile.Responsibilities...),
 		DestinationGrants: append([]string(nil), profile.DestinationGrants...),
 	}

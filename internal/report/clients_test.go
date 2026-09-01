@@ -76,6 +76,58 @@ func TestClientInviteUsesOpaqueFragmentAndClaimKeepsProvisioningExplicit(t *test
 	}
 }
 
+func TestDeviceInvitePinsSelectedServerPurposeAndClaimFacts(t *testing.T) {
+	dir := t.TempDir()
+	ssotPath := filepath.Join(dir, "ssot.yaml")
+	writeClientTestSSOT(t, ssotPath)
+	deps := newClientControlDeps(&Control{
+		SSOTPath: ssotPath, ClientRegistryPath: filepath.Join(dir, "registry.json"),
+		ClientEnrollmentURL: "https://control.example/api/client/enroll",
+	}, nil)
+	profiles, err := deps.EnrollmentProfiles()
+	if err != nil || len(profiles) != 2 || !profiles[0].Default || profiles[1].Version != "server-device@v1" {
+		t.Fatalf("profiles=%+v err=%v", profiles, err)
+	}
+	invite, err := deps.CreateInvite(webui.ClientInviteInput{Name: "Edge Device", ProfileVersion: "server-device@v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if invite.ProfileVersion != "server-device@v1" || strings.Join(invite.Responsibilities, ",") != "forward,internet_egress" ||
+		len(invite.DestinationGrants) != 0 {
+		t.Fatalf("invite=%+v", invite)
+	}
+	u, _ := url.Parse(invite.InviteURI)
+	body, _ := base64.RawURLEncoding.DecodeString(u.Fragment)
+	var payload clientInvitePayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	result, err := deps.Claim(webui.ClientClaimInput{
+		Token: payload.Token, Platform: "linux-server", CSRPEM: clientCSR(t), RequestID: "server-install",
+		Server: &webui.DeviceServerClaim{
+			PublicEndpoint: "edge.example.net", InboundPort: 61698, Direction: "bidirectional",
+			WGPublicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", Country: "CN", City: "Beijing",
+		},
+	})
+	if err != nil || result.Status != "provisioning" {
+		t.Fatalf("claim=%+v err=%v", result, err)
+	}
+	inventory, err := deps.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found *webui.ClientView
+	for i := range inventory.Clients {
+		if inventory.Clients[i].ID == invite.ClientID {
+			found = &inventory.Clients[i]
+		}
+	}
+	if found == nil || found.ProfileVersion != "server-device@v1" ||
+		strings.Join(found.Responsibilities, ",") != "forward,internet_egress" {
+		t.Fatalf("enrolled server Device=%+v", found)
+	}
+}
+
 func TestInvalidEnrollmentURLDoesNotCreateInvitationState(t *testing.T) {
 	dir := t.TempDir()
 	ssotPath := filepath.Join(dir, "ssot.yaml")
@@ -175,6 +227,9 @@ func writeClientTestSSOT(t *testing.T, path string) {
     default: true
     responsibilities: [use_loom]
     destination_grants: [best-egress]
+  - id: server-device
+    version: 1
+    responsibilities: [forward, internet_egress]
 declarations:
 `), 1)
 	if err := os.WriteFile(path, body, 0o600); err != nil {

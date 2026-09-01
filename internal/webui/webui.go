@@ -206,7 +206,11 @@ type NodeEnrollmentDeps struct {
 }
 
 type ClientControlDeps struct {
-	List                 func() (ClientInventory, error)
+	List               func() (ClientInventory, error)
+	EnrollmentProfiles func() ([]DeviceEnrollmentProfileView, error)
+	// EnrollmentProfile is retained for source compatibility during E1. New
+	// callers use EnrollmentProfiles so the operator can pin one immutable
+	// purpose without selecting a platform or hand-authoring responsibilities.
 	EnrollmentProfile    func() (DeviceEnrollmentProfileView, error)
 	CreateInvite         func(ClientInviteInput) (ClientInviteView, error)
 	Claim                func(ClientClaimInput) (ClientClaimResult, error)
@@ -237,6 +241,10 @@ type ClientView struct {
 	Responsibilities  []string `json:"responsibilities,omitempty"`
 	DestinationGrants []string `json:"destination_grants,omitempty"`
 	ProfileVersion    string   `json:"profile_version,omitempty"`
+	PublicEndpoint    string   `json:"public_endpoint,omitempty"`
+	InboundPort       int      `json:"inbound_port,omitempty"`
+	Direction         string   `json:"direction,omitempty"`
+	EgressCapable     bool     `json:"egress_capable,omitempty"`
 	Legacy            bool     `json:"legacy,omitempty"`
 }
 
@@ -251,7 +259,8 @@ type DeviceInventory struct {
 }
 
 type ClientInviteInput struct {
-	Name string `json:"name"`
+	Name           string `json:"name"`
+	ProfileVersion string `json:"profile_version,omitempty"`
 }
 
 type ClientInviteView struct {
@@ -278,12 +287,24 @@ type ClientInviteArtifact struct {
 
 type DeviceEnrollmentProfileView struct {
 	Version           string   `json:"version"`
+	Default           bool     `json:"default,omitempty"`
 	Responsibilities  []string `json:"responsibilities"`
 	DestinationGrants []string `json:"destination_grants"`
 }
 
 type ClientClaimInput struct {
 	Token, Platform, CSRPEM, RequestID string
+	Server                             *DeviceServerClaim
+}
+
+type DeviceServerClaim struct {
+	PublicEndpoint string `json:"public_endpoint"`
+	InboundPort    int    `json:"inbound_port"`
+	Direction      string `json:"direction"`
+	WGPublicKey    string `json:"wg_public_key"`
+	Country        string `json:"country,omitempty"`
+	City           string `json:"city,omitempty"`
+	Provider       string `json:"provider,omitempty"`
 }
 
 type ClientClaimResult struct {
@@ -979,9 +1000,12 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		name := strings.TrimSpace(r.Form.Get("name"))
-		invite, err := control.CreateInvite(ClientInviteInput{Name: name})
+		profileVersion := strings.TrimSpace(r.Form.Get("profile_version"))
+		invite, err := control.CreateInvite(ClientInviteInput{Name: name, ProfileVersion: profileVersion})
 		if err != nil {
-			writeHTML(w, pageClients(d, clientPageState{Create: true, SubmittedName: name, Error: err.Error()}, true))
+			writeHTML(w, pageClients(d, clientPageState{
+				Create: true, SubmittedName: name, SubmittedProfile: profileVersion, Error: err.Error(),
+			}, true))
 			return
 		}
 		http.Redirect(w, r, "/devices/invites/"+url.PathEscape(invite.InviteID), http.StatusSeeOther)
@@ -1198,10 +1222,11 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		var wire struct {
-			Token     string `json:"token"`
-			Platform  string `json:"platform"`
-			CSRPEM    string `json:"csr_pem"`
-			RequestID string `json:"request_id"`
+			Token     string             `json:"token"`
+			Platform  string             `json:"platform"`
+			CSRPEM    string             `json:"csr_pem"`
+			RequestID string             `json:"request_id"`
+			Server    *DeviceServerClaim `json:"server,omitempty"`
 		}
 		if err := decodeClientJSON(w, r, &wire); err != nil {
 			writeJSONError(w, clientDecodeStatus(err), err.Error())
@@ -1209,6 +1234,7 @@ func Handler(d Deps) http.Handler {
 		}
 		result, err := control.Claim(ClientClaimInput{
 			Token: wire.Token, Platform: wire.Platform, CSRPEM: wire.CSRPEM, RequestID: wire.RequestID,
+			Server: wire.Server,
 		})
 		if err != nil {
 			status := clientProtocolStatus(err)

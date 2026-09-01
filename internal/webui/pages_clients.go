@@ -8,12 +8,13 @@ import (
 )
 
 type clientPageState struct {
-	Create        bool
-	Invite        *ClientInviteView
-	SubmittedName string
-	Error         string
-	Package       LinuxClientPackageView
-	PackageError  string
+	Create           bool
+	Invite           *ClientInviteView
+	SubmittedName    string
+	SubmittedProfile string
+	Error            string
+	Package          LinuxClientPackageView
+	PackageError     string
 }
 
 func pageDevices(d Deps, state clientPageState, isAuthed bool) string {
@@ -111,6 +112,11 @@ func pageDeviceDetail(d Deps, deviceID string, isAuthed bool) string {
 	if device.Legacy {
 		legacy = "Yes · identity migration required"
 	}
+	serverDeclaration := ""
+	if deviceListContains(device.Responsibilities, "forward") {
+		serverDeclaration = fmt.Sprintf(`<section class="card span12"><div class=label>Server declaration</div><dl class=kv><dt>Public endpoint<dd class=mono>%s:%d<dt>Tunnel direction<dd class=mono>%s<dt>Internet egress<dd>%s</dl><p class=dim>These are desired facts from Enrollment/SSOT. Reachability and signed ingress observations remain runtime evidence under Network diagnostics.</p></section>`,
+			esc(orDash(device.PublicEndpoint)), device.InboundPort, esc(orDash(device.Direction)), yesNo(device.EgressCapable))
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, `<div class=grid>
 <section class="card span4"><div class=label>Identity</div><h2>%s</h2><dl class=kv><dt>Device ID<dd class=mono>%s<dt>Platform<dd>%s<dt>Profile version<dd class=mono>%s<dt>Key fingerprint<dd class=mono>%s<dt>Legacy record<dd>%s</dl></section>
@@ -118,12 +124,12 @@ func pageDeviceDetail(d Deps, deviceID string, isAuthed bool) string {
 <section class="card span4"><div class=label>Runtime evidence</div><div class="client-status %s"><span class=dot></span>%s</div><p class=dim>%s</p><dl class=kv><dt>Last seen<dd>%s</dl></section>
 </div>
 <div class=grid><section class="card span6"><div class=label>Responsibilities</div><h2>%s</h2><p class=dim>“use_loom” means traffic originating on this Device may use Loom. It does not imply forwarding, public ingress or egress.</p></section>
-<section class="card span6"><div class=label>Destination grants</div><h2>%s</h2><p class=dim>Explicit declaration references only; there is no blanket “network permission”.</p></section></div>
+<section class="card span6"><div class=label>Destination grants</div><h2>%s</h2><p class=dim>Explicit declaration references only; there is no blanket “network permission”.</p></section>%s</div>
 <div class=toolbar section><a class=button href="/devices">← Device inventory</a><a class=button href="/nodes/%s">Network diagnostics</a></div>`,
 		esc(device.Name), esc(device.ID), esc(orDash(device.Platform)), esc(orDash(device.ProfileVersion)), esc(orDash(device.KeyFingerprint)), esc(legacy),
 		esc(orDash(device.Membership)), esc(clientTime(device.CreatedAt)), esc(clientTime(device.EnrolledAt)),
 		statusClass, esc(statusLabel), esc(clientRuntimeDetail(*device)), esc(clientTime(device.LastSeenAt)),
-		esc(deviceList(device.Responsibilities)), esc(deviceList(device.DestinationGrants)), url.PathEscape(device.ID))
+		esc(deviceList(device.Responsibilities)), esc(deviceList(device.DestinationGrants)), serverDeclaration, url.PathEscape(device.ID))
 	return shell(d, "Device · "+device.ID, b.String(), isAuthed)
 }
 
@@ -188,11 +194,13 @@ func pageDeviceEnrollment(d Deps, state clientPageState, isAuthed bool) string {
 	if state.Error != "" {
 		fmt.Fprintf(&b, `<div class="card notice badline"><b>Invitation was not created</b><br><span class=small>%s</span></div>`, esc(state.Error))
 	}
-	profile, profileErr := deviceEnrollmentProfile(d)
+	profiles, profileErr := deviceEnrollmentProfiles(d)
+	profile := selectedEnrollmentProfile(profiles, state.SubmittedProfile)
+	profileControl := enrollmentProfileControl(profiles, profile.Version)
 	fmt.Fprintf(&b, `<div class=client-add-grid><section class="card client-form-card"><h2>Add Device</h2><p class=dim>Name the machine for operators. The installed client reports its supported platform when it claims the invitation.</p>
-<form class=blockform data-submit-progress method=post action="/devices/create"><div class=field><label for=client-name>Display name</label><input id=client-name name=name maxlength=80 required autocomplete=off value="%s" placeholder="e.g. build server"><span class=field-hint>Platform, endpoint and route are discovered or assigned after identity claim.</span></div>
+<form class=blockform data-submit-progress method=post action="/devices/create"><div class=field><label for=client-name>Display name</label><input id=client-name name=name maxlength=80 required autocomplete=off value="%s" placeholder="e.g. build server"><span class=field-hint>Platform is reported by the installed Device; its immutable purpose is pinned below.</span></div>%s
 <div class=client-form-actions><button class="primary progress-submit"><span class=button-idle>Create invitation</span><span class=button-busy><i class=button-spinner aria-hidden=true></i>Creating…</span></button><a class=button href="/devices">Cancel</a></div></form></section>
-<aside class=card><h2>Pinned enrollment profile</h2><div class=client-boundary><div><span>ProfileVersion</span><b class=mono>%s</b></div><div><span>Identity</span><b>Local key + short-lived, single-use invitation</b></div><div><span>Membership</span><b>Published desired state, separate from online status</b></div><div><span>Responsibilities</span><b>%s</b></div><div><span>Destination grants</span><b>%s</b></div></div>%s</aside></div>`, esc(state.SubmittedName), esc(orDash(profile.Version)), esc(deviceList(profile.Responsibilities)), esc(deviceList(profile.DestinationGrants)), enrollmentProfileError(profileErr))
+<aside class=card><h2>Pinned enrollment profile</h2><div class=client-boundary><div><span>ProfileVersion</span><b id=profile-preview-version class=mono>%s</b></div><div><span>Identity</span><b>Local key + short-lived, single-use invitation</b></div><div><span>Membership</span><b>Published desired state, separate from online status</b></div><div><span>Responsibilities</span><b id=profile-preview-responsibilities>%s</b></div><div><span>Destination grants</span><b id=profile-preview-grants>%s</b></div></div>%s</aside></div>`, esc(state.SubmittedName), profileControl, esc(orDash(profile.Version)), esc(deviceList(profile.Responsibilities)), esc(deviceList(profile.DestinationGrants)), enrollmentProfileError(profileErr))
 	return shell(d, "Devices", b.String(), true)
 }
 
@@ -218,6 +226,13 @@ func writeClientInvite(b *strings.Builder, invite ClientInviteView, pkg LinuxCli
 		}
 	}
 	b.WriteString(`</section></div><section class="card client-setup" aria-labelledby=client-setup-title><div class=client-setup-head><div><div class=label>Next step</div><h2 id=client-setup-title>Linux setup</h2></div><p class=small>QR, invitation file and URI carry the same invitation. Choose one enrollment method.</p></div>`)
+	if deviceListContains(invite.Responsibilities, "forward") {
+		b.WriteString(`<div class=client-setup-prepare><div><span class=client-step>1</span><div><b>Configure the server declaration before claiming</b><span class="small dim">This declares how other Devices may reach this server. It is not a route or exit selection.</span></div></div><code class=command-block>sudo install -d -m 0755 /etc/loom
+sudoedit /etc/loom/device.yaml</code><code class=command-block>server:
+  public_endpoint: edge.example.net
+  inbound_port: 61698
+  direction: bidirectional</code><p class="small dim">Use this Device's real public DNS name or public IP and the UDP port exposed by the deployment. These declared facts are verified by the existing signed topology observations after apply; country, city and provider are optional.</p></div>`)
+	}
 	if pkg.InstallerURL != "" {
 		fmt.Fprintf(b, `<div class=client-setup-prepare><div><span class=client-step>1</span><div><b>Install the public generic package</b><span class="small dim">No invitation or Device configuration is embedded in this URL.</span></div></div><code class=command-block>curl -fsSL '%s' | sudo sh
 sudo /usr/local/bin/loom client enroll -stdin</code></div>`, esc(pkg.InstallerURL))
@@ -235,12 +250,77 @@ sudo /usr/local/bin/loom client enroll -stdin</code><p class="small">Paste the c
 	b.WriteString(`<div class=client-setup-boundary><b>First successful claim consumes the invitation.</b><span>Expired unused invitations require a new one; normal reconnects, restarts and configuration updates do not register the device again.</span></div></section>`)
 }
 
-func deviceEnrollmentProfile(d Deps) (DeviceEnrollmentProfileView, error) {
+func deviceEnrollmentProfiles(d Deps) ([]DeviceEnrollmentProfileView, error) {
 	control := deviceControl(d)
-	if control == nil || control.EnrollmentProfile == nil {
-		return DeviceEnrollmentProfileView{}, fmt.Errorf("profile preview is unavailable")
+	if control == nil {
+		return nil, fmt.Errorf("profile preview is unavailable")
 	}
-	return control.EnrollmentProfile()
+	if control.EnrollmentProfiles != nil {
+		profiles, err := control.EnrollmentProfiles()
+		if err != nil {
+			return nil, err
+		}
+		if len(profiles) == 0 {
+			return nil, fmt.Errorf("no enrollment profile is available")
+		}
+		return profiles, nil
+	}
+	if control.EnrollmentProfile == nil {
+		return nil, fmt.Errorf("profile preview is unavailable")
+	}
+	profile, err := control.EnrollmentProfile()
+	profile.Default = true
+	return []DeviceEnrollmentProfileView{profile}, err
+}
+
+func deviceEnrollmentProfile(d Deps) (DeviceEnrollmentProfileView, error) {
+	profiles, err := deviceEnrollmentProfiles(d)
+	return selectedEnrollmentProfile(profiles, ""), err
+}
+
+func selectedEnrollmentProfile(profiles []DeviceEnrollmentProfileView, requested string) DeviceEnrollmentProfileView {
+	for _, profile := range profiles {
+		if requested != "" && profile.Version == requested {
+			return profile
+		}
+	}
+	for _, profile := range profiles {
+		if profile.Default {
+			return profile
+		}
+	}
+	if len(profiles) > 0 {
+		return profiles[0]
+	}
+	return DeviceEnrollmentProfileView{}
+}
+
+func enrollmentProfileControl(profiles []DeviceEnrollmentProfileView, selected string) string {
+	if len(profiles) <= 1 {
+		return `<input type=hidden name=profile_version value="` + esc(selected) + `">`
+	}
+	var b strings.Builder
+	b.WriteString(`<div class=field><label for=device-profile>Device purpose</label><select id=device-profile name=profile_version required data-device-profile-control>`)
+	for _, profile := range profiles {
+		selectedAttr := ""
+		if profile.Version == selected {
+			selectedAttr = " selected"
+		}
+		fmt.Fprintf(&b, `<option value="%s" data-responsibilities="%s" data-grants="%s"%s>%s · %s</option>`,
+			esc(profile.Version), esc(deviceList(profile.Responsibilities)), esc(deviceList(profile.DestinationGrants)), selectedAttr,
+			esc(profile.Version), esc(deviceList(profile.Responsibilities)))
+	}
+	b.WriteString(`</select><span class=field-hint>This pins an immutable responsibility/grant expansion; it is not a platform choice.</span></div>`)
+	return b.String()
+}
+
+func deviceListContains(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func enrollmentProfileError(err error) string {
