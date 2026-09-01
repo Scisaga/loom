@@ -64,16 +64,13 @@ func pageDevices(d Deps, state clientPageState, isAuthed bool) string {
 		b.WriteString(`<div role=region aria-label="Device records" tabindex=0><table class=clients-table><thead><tr><th>Device<th>Membership<th>Responsibilities<th>Destination grants<th>Runtime<th>Last seen</tr></thead><tbody>`)
 		for _, device := range inventory.Clients {
 			statusClass, statusLabel := clientStatusPresentation(device.Status)
-			platform := device.Platform
-			if platform == "" {
-				platform = "Not reported"
-			}
+			identityMeta := deviceListIdentityMeta(device)
 			identityNote := ""
 			if device.Legacy {
 				identityNote = ` · <span class="tiny warn">Identity not indexed</span>`
 			}
-			fmt.Fprintf(&b, `<tr><td><div class=client-name><b><a href="/devices/%s">%s</a></b><span class="mono dim">%s · %s%s</span></div><td><b>%s</b><td>%s<td>%s<td><span class="client-status %s"><span class=dot></span>%s</span><br><span class="tiny dim">%s</span><td class=mono>%s</tr>`,
-				url.PathEscape(device.ID), esc(device.Name), esc(device.ID), esc(platform), identityNote,
+			fmt.Fprintf(&b, `<tr><td><div class=client-name><b><a href="/devices/%s">%s</a></b><span class="mono dim">%s%s</span></div><td><b>%s</b><td>%s<td>%s<td><span class="client-status %s"><span class=dot></span>%s</span><br><span class="tiny dim">%s</span><td class=mono>%s</tr>`,
+				url.PathEscape(device.ID), esc(device.ID), esc(identityMeta), identityNote,
 				esc(orDash(device.Membership)), esc(deviceList(device.Responsibilities)),
 				esc(deviceList(device.DestinationGrants)), statusClass, esc(statusLabel),
 				esc(clientRuntimeDetail(device)), esc(clientTime(device.LastSeenAt)))
@@ -84,6 +81,18 @@ func pageDevices(d Deps, state clientPageState, isAuthed bool) string {
 	writeLinuxDelivery(&b, state.Package, state.PackageError)
 	b.WriteString(`</div>`)
 	return shell(d, "Devices", b.String(), isAuthed)
+}
+
+func deviceListIdentityMeta(device ClientView) string {
+	name := strings.TrimSpace(device.Name)
+	platform := strings.TrimSpace(device.Platform)
+	if platform == "" {
+		platform = "Not reported"
+	}
+	if name == "" || name == device.ID {
+		return platform
+	}
+	return name + " · " + platform
 }
 
 // pageClients remains only for source-level compatibility with older focused
