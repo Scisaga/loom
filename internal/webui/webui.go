@@ -213,6 +213,7 @@ type ClientControlDeps struct {
 	// purpose without selecting a platform or hand-authoring responsibilities.
 	EnrollmentProfile    func() (DeviceEnrollmentProfileView, error)
 	CreateInvite         func(ClientInviteInput) (ClientInviteView, error)
+	DiscardPending       func(deviceID string) error
 	Claim                func(ClientClaimInput) (ClientClaimResult, error)
 	InviteArtifact       func(inviteID string) (ClientInviteArtifact, error)
 	LinuxPackage         func() (LinuxClientPackageView, error)
@@ -230,6 +231,7 @@ type ClientView struct {
 	ID                string   `json:"id"`
 	Name              string   `json:"name"`
 	Platform          string   `json:"platform,omitempty"`
+	IdentitySource    string   `json:"identity_source,omitempty"`
 	Status            string   `json:"status"`
 	KeyFingerprint    string   `json:"key_fingerprint,omitempty"`
 	CreatedAt         string   `json:"created_at,omitempty"`
@@ -876,6 +878,38 @@ func Handler(d Deps) http.Handler {
 	})
 	mux.HandleFunc("/devices/create", func(w http.ResponseWriter, r *http.Request) {
 		serveRouteAlias(w, r, "/devices/create", "/clients/create")
+	})
+	mux.HandleFunc("/devices/discard-pending", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", "POST")
+			http.Error(w, "只接受 POST", http.StatusMethodNotAllowed)
+			return
+		}
+		if !authed(d, r) {
+			http.Redirect(w, r, loginURL("/devices"), http.StatusSeeOther)
+			return
+		}
+		control := deviceControl(d)
+		if control == nil || control.DiscardPending == nil {
+			http.Error(w, "这台机器没有 Device identity cleanup 能力", http.StatusNotImplemented)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "表单无法解析", http.StatusBadRequest)
+			return
+		}
+		id := strings.TrimSpace(r.Form.Get("id"))
+		if id == "" || strings.Contains(id, "/") {
+			http.Error(w, "Device id 无效", http.StatusBadRequest)
+			return
+		}
+		if err := control.DiscardPending(id); err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		http.Redirect(w, r, "/devices", http.StatusSeeOther)
 	})
 	mux.HandleFunc("/devices/invites/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && !authed(d, r) {

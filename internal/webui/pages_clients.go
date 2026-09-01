@@ -68,12 +68,12 @@ func pageDevices(d Deps, state clientPageState, isAuthed bool) string {
 			if platform == "" {
 				platform = "Not reported"
 			}
-			legacy := ""
+			identityNote := ""
 			if device.Legacy {
-				legacy = ` · <span class="tiny warn">Legacy managed</span>`
+				identityNote = ` · <span class="tiny warn">Identity not indexed</span>`
 			}
 			fmt.Fprintf(&b, `<tr><td><div class=client-name><b><a href="/devices/%s">%s</a></b><span class="mono dim">%s · %s%s</span></div><td><b>%s</b><td>%s<td>%s<td><span class="client-status %s"><span class=dot></span>%s</span><br><span class="tiny dim">%s</span><td class=mono>%s</tr>`,
-				url.PathEscape(device.ID), esc(device.Name), esc(device.ID), esc(platform), legacy,
+				url.PathEscape(device.ID), esc(device.Name), esc(device.ID), esc(platform), identityNote,
 				esc(orDash(device.Membership)), esc(deviceList(device.Responsibilities)),
 				esc(deviceList(device.DestinationGrants)), statusClass, esc(statusLabel),
 				esc(clientRuntimeDetail(device)), esc(clientTime(device.LastSeenAt)))
@@ -108,9 +108,9 @@ func pageDeviceDetail(d Deps, deviceID string, isAuthed bool) string {
 		return shell(d, "Device · "+deviceID, `<div class="card notice"><b>Device not found</b><br><span class=small>The identity is not present in the current registry or desired state.</span></div>`, isAuthed)
 	}
 	statusClass, statusLabel := clientStatusPresentation(device.Status)
-	legacy := "No"
+	identitySource := deviceIdentitySourceLabel(device.IdentitySource)
 	if device.Legacy {
-		legacy = "Yes · identity migration required"
+		identitySource = "Not indexed · certificate import required"
 	}
 	serverDeclaration := ""
 	if deviceListContains(device.Responsibilities, "forward") {
@@ -119,18 +119,36 @@ func pageDeviceDetail(d Deps, deviceID string, isAuthed bool) string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, `<div class=grid>
-<section class="card span4"><div class=label>Identity</div><h2>%s</h2><dl class=kv><dt>Device ID<dd class=mono>%s<dt>Platform<dd>%s<dt>Profile version<dd class=mono>%s<dt>Key fingerprint<dd class=mono>%s<dt>Legacy record<dd>%s</dl></section>
+<section class="card span4"><div class=label>Identity</div><h2>%s</h2><dl class=kv><dt>Device ID<dd class=mono>%s<dt>Platform<dd>%s<dt>Identity source<dd>%s<dt>Profile version<dd class=mono>%s<dt>Key fingerprint<dd class=mono>%s</dl></section>
 <section class="card span4"><div class=label>Membership</div><div class=metric>%s</div><p class=dim>Desired membership is separate from enrollment and runtime health.</p><dl class=kv><dt>Created<dd>%s<dt>Claimed<dd>%s</dl></section>
 <section class="card span4"><div class=label>Runtime evidence</div><div class="client-status %s"><span class=dot></span>%s</div><p class=dim>%s</p><dl class=kv><dt>Last seen<dd>%s</dl></section>
 </div>
 <div class=grid><section class="card span6"><div class=label>Responsibilities</div><h2>%s</h2><p class=dim>“use_loom” means traffic originating on this Device may use Loom. It does not imply forwarding, public ingress or egress.</p></section>
 <section class="card span6"><div class=label>Destination grants</div><h2>%s</h2><p class=dim>Explicit declaration references only; there is no blanket “network permission”.</p></section>%s</div>
 <div class=toolbar section><a class=button href="/devices">← Device inventory</a><a class=button href="/nodes/%s">Network diagnostics</a></div>`,
-		esc(device.Name), esc(device.ID), esc(orDash(device.Platform)), esc(orDash(device.ProfileVersion)), esc(orDash(device.KeyFingerprint)), esc(legacy),
+		esc(device.Name), esc(device.ID), esc(orDash(device.Platform)), esc(identitySource), esc(orDash(device.ProfileVersion)), esc(orDash(device.KeyFingerprint)),
 		esc(orDash(device.Membership)), esc(clientTime(device.CreatedAt)), esc(clientTime(device.EnrolledAt)),
 		statusClass, esc(statusLabel), esc(clientRuntimeDetail(*device)), esc(clientTime(device.LastSeenAt)),
 		esc(deviceList(device.Responsibilities)), esc(deviceList(device.DestinationGrants)), serverDeclaration, url.PathEscape(device.ID))
+	if isAuthed && !device.Legacy && (device.Status == "pending" || device.Status == "invite_expired") {
+		if control := deviceControl(d); control != nil && control.DiscardPending != nil {
+			fmt.Fprintf(&b, `<div class=service-danger><div><b>Unclaimed identity</b><span>This Device never claimed its invitation and has no network membership. Discarding removes only this reservation and its invitations.</span></div><form method=post action="/devices/discard-pending"><input type=hidden name=id value="%s"><button class=danger-button>Discard unclaimed Device</button></form></div>`, esc(device.ID))
+		}
+	}
 	return shell(d, "Device · "+device.ID, b.String(), isAuthed)
+}
+
+func deviceIdentitySourceLabel(source string) string {
+	switch source {
+	case "enrollment":
+		return "Enrollment"
+	case "managed-certificate":
+		return "Verified pre-Enrollment certificate"
+	case "":
+		return "Not reported"
+	default:
+		return source
+	}
 }
 
 func deviceControl(d Deps) *ClientControlDeps {

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"os"
@@ -123,6 +124,70 @@ func TestRevokeErasesInvitationMaterialAndIsIdempotent(t *testing.T) {
 	repeated, err := store.Revoke(created.Client.ID)
 	if err != nil || repeated.RevokedAt != revoked.RevokedAt {
 		t.Fatalf("repeat revoke = %+v err=%v", repeated, err)
+	}
+}
+
+func TestDiscardPendingRemovesOnlyUnclaimedIdentityAndInvites(t *testing.T) {
+	now := time.Date(2026, 9, 1, 21, 0, 0, 0, time.UTC)
+	store := testStore(t, &now)
+	discarded, err := store.Create("Discarded test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, err := store.Create("Claimed Device")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Claim(ClaimInput{
+		Token: kept.Token, Platform: "linux-server", CSRPEM: makeCSR(t, "claimed"), RequestID: "claimed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DiscardPending(kept.Client.ID); err == nil {
+		t.Fatal("claimed Device was discarded")
+	}
+	if err := store.DiscardPending(discarded.Client.ID); err != nil {
+		t.Fatal(err)
+	}
+	clients, invites, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(clients) != 1 || clients[0].ID != kept.Client.ID || len(invites) != 1 || invites[0].ClientID != kept.Client.ID {
+		t.Fatalf("after discard clients=%+v invites=%+v", clients, invites)
+	}
+}
+
+func TestImportManagedIdentityIsCanonicalUniqueAndIdempotent(t *testing.T) {
+	now := time.Date(2026, 9, 1, 21, 0, 0, 0, time.UTC)
+	store := testStore(t, &now)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spki, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := ManagedIdentity{
+		ID: "edge01", Name: "Existing edge", Platform: "linux-server",
+		PublicKey:     base64.RawStdEncoding.EncodeToString(spki),
+		CertificateAt: now.Add(-time.Hour).Format(time.RFC3339),
+	}
+	first, err := store.ImportManaged(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Status != "managed" || first.IdentitySource != "managed-certificate" || first.KeyFingerprint == "" || first.ProfileVersion != "" {
+		t.Fatalf("managed identity = %+v", first)
+	}
+	repeated, err := store.ImportManaged(input)
+	if err != nil || repeated.KeyFingerprint != first.KeyFingerprint {
+		t.Fatalf("repeat import = %+v err=%v", repeated, err)
+	}
+	input.ID = "other01"
+	if _, err := store.ImportManaged(input); err == nil {
+		t.Fatal("one managed public key was bound to a second Device")
 	}
 }
 

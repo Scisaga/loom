@@ -131,7 +131,8 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 				seen[client.ID] = true
 				inventory.Clients = append(inventory.Clients, webui.ClientView{
 					ID: client.ID, Name: client.Name, Platform: client.Platform,
-					Status: client.Status, KeyFingerprint: client.KeyFingerprint,
+					IdentitySource: client.IdentitySource,
+					Status:         client.Status, KeyFingerprint: client.KeyFingerprint,
 					CreatedAt: client.CreatedAt, EnrolledAt: client.EnrolledAt,
 					DataPlaneStatus: "pending", ConfigState: "pending",
 					Membership:        registryMembership(client.Status),
@@ -179,6 +180,7 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 			}
 			return inventory, nil
 		},
+		DiscardPending: store.DiscardPending,
 		CreateInvite: func(input webui.ClientInviteInput) (webui.ClientInviteView, error) {
 			endpoint, err := validClientEnrollmentURL(c.ClientEnrollmentURL)
 			if err != nil {

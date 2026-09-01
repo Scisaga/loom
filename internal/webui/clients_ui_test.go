@@ -390,6 +390,46 @@ func TestClientEnrollmentUIAndInvitationArtifacts(t *testing.T) {
 	}
 }
 
+func TestUnclaimedDeviceCanBeDiscardedButOnlyFromAuthenticatedPOST(t *testing.T) {
+	d := clientUIDeps()
+	discarded := ""
+	d.Control.Clients.DiscardPending = func(id string) error {
+		discarded = id
+		return nil
+	}
+	detail := misakaRequest(t, d, http.MethodGet, "/devices/client-phone01", nil, true)
+	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), `action="/devices/discard-pending"`) ||
+		!strings.Contains(detail.Body.String(), `Discard unclaimed Device`) {
+		t.Fatalf("pending Device detail lacks cleanup action: status=%d body=%s", detail.Code, detail.Body.String())
+	}
+	unauthorized := misakaRequest(t, d, http.MethodPost, "/devices/discard-pending", url.Values{"id": {"client-phone01"}}, false)
+	if unauthorized.Code != http.StatusSeeOther || discarded != "" {
+		t.Fatalf("unauthorized discard status=%d discarded=%q", unauthorized.Code, discarded)
+	}
+	response := misakaRequest(t, d, http.MethodPost, "/devices/discard-pending", url.Values{"id": {"client-phone01"}}, true)
+	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/devices" || discarded != "client-phone01" {
+		t.Fatalf("discard status=%d location=%q discarded=%q", response.Code, response.Header().Get("Location"), discarded)
+	}
+}
+
+func TestManagedCertificateIdentityIsNotPresentedAsLegacySoftware(t *testing.T) {
+	d := clientUIDeps()
+	d.Control.Clients.List = func() (ClientInventory, error) {
+		return ClientInventory{Clients: []ClientView{{
+			ID: "edge01", Name: "Existing edge", Platform: "linux-server", Status: "managed",
+			IdentitySource: "managed-certificate", KeyFingerprint: "SHA256:abc", Membership: "active",
+		}}}, nil
+	}
+	body := pageClients(d, clientPageState{}, true)
+	if strings.Contains(body, "Legacy managed") || !strings.Contains(body, "Existing edge") {
+		t.Fatalf("managed certificate inventory has legacy software semantics: %s", body)
+	}
+	detail := pageDeviceDetail(d, "edge01", true)
+	if !strings.Contains(detail, "Verified pre-Enrollment certificate") || strings.Contains(detail, "Legacy record") {
+		t.Fatalf("managed certificate source is not explicit: %s", detail)
+	}
+}
+
 func TestLegacyProductEntrypointsConvergeOnDevices(t *testing.T) {
 	d := Deps{Snapshot: func() View { return View{} }}
 	for _, test := range []struct {

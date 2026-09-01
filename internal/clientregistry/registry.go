@@ -60,9 +60,12 @@ func (e *Error) Error() string        { return e.Msg }
 func (e *Error) ProtocolCode() string { return string(e.Code) }
 
 type Client struct {
-	ID                string            `json:"id"`
-	Name              string            `json:"name"`
-	Platform          string            `json:"platform,omitempty"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Platform string `json:"platform,omitempty"`
+	// IdentitySource describes how the durable public identity entered this
+	// registry. It is not a software version or a network role.
+	IdentitySource    string            `json:"identity_source,omitempty"`
 	PublicKey         string            `json:"public_key,omitempty"`
 	KeyFingerprint    string            `json:"key_fingerprint,omitempty"`
 	Status            string            `json:"status"`
@@ -136,6 +139,18 @@ type ClaimInput struct {
 type ClaimResult struct {
 	Client Client
 	Replay bool
+}
+
+// ManagedIdentity is a public identity that predates Enrollment but has been
+// independently verified against the Loom CA and the current SSOT by the
+// importing command. The registry still revalidates the canonical key shape
+// and enforces global key uniqueness while holding its file lock.
+type ManagedIdentity struct {
+	ID            string
+	Name          string
+	Platform      string
+	PublicKey     string
+	CertificateAt string
 }
 
 type fileState struct {
@@ -239,7 +254,7 @@ func (s Store) CreateWithProfile(name string, profile ProfileAssignment) (Create
 	}
 	now := s.Now().UTC().Truncate(time.Second)
 	client := Client{
-		Name: name, Status: "pending", CreatedAt: now.Format(time.RFC3339),
+		Name: name, Status: "pending", CreatedAt: now.Format(time.RFC3339), IdentitySource: "enrollment",
 		ProfileVersion: profile.Version, ProfileDigest: profile.Digest,
 		Responsibilities:  append([]string(nil), profile.Responsibilities...),
 		DestinationGrants: append([]string(nil), profile.DestinationGrants...),
@@ -289,6 +304,69 @@ func (s Store) CreateWithProfile(name string, profile ProfileAssignment) (Create
 		return CreateResult{}, err
 	}
 	return CreateResult{Client: client, Invite: invite, Token: token}, nil
+}
+
+// ImportManaged records a pre-Enrollment Device certificate after its caller
+// has verified the certificate chain, exact Device SAN and SSOT membership.
+// It deliberately does not synthesize a ProfileVersion or claim that an
+// Enrollment occurred. Exact retries are idempotent; changing a bound key is a
+// conflict that requires an explicit identity rotation workflow.
+func (s Store) ImportManaged(input ManagedIdentity) (Client, error) {
+	s = s.defaults()
+	input.ID = strings.TrimSpace(input.ID)
+	input.Name = strings.TrimSpace(input.Name)
+	input.Platform = strings.TrimSpace(input.Platform)
+	input.PublicKey = strings.TrimSpace(input.PublicKey)
+	if !model.ValidNodeID(input.ID) {
+		return Client{}, &Error{Code: CodeInvalid, Msg: "managed Device id is malformed"}
+	}
+	if err := validName(input.Name); err != nil {
+		return Client{}, err
+	}
+	if input.Platform != "linux-server" {
+		return Client{}, &Error{Code: CodeInvalid, Msg: "managed Device platform must be linux-server"}
+	}
+	spki, err := base64.RawStdEncoding.Strict().DecodeString(input.PublicKey)
+	if err != nil || base64.RawStdEncoding.EncodeToString(spki) != input.PublicKey {
+		return Client{}, &Error{Code: CodeInvalid, Msg: "managed Device public key is not canonical base64 SPKI"}
+	}
+	parsed, err := x509.ParsePKIXPublicKey(spki)
+	if err != nil {
+		return Client{}, &Error{Code: CodeInvalid, Msg: "managed Device public key is not valid SPKI"}
+	}
+	key, ok := parsed.(*ecdsa.PublicKey)
+	if !ok || key.Curve != elliptic.P256() {
+		return Client{}, &Error{Code: CodeInvalid, Msg: "managed Device public key must use ECDSA P-256"}
+	}
+	certificateAt, err := time.Parse(time.RFC3339, input.CertificateAt)
+	if err != nil {
+		return Client{}, &Error{Code: CodeInvalid, Msg: "managed Device certificate timestamp is malformed"}
+	}
+	createdAt := certificateAt.UTC().Truncate(time.Second).Format(time.RFC3339)
+	fingerprint := "SHA256:" + base64.RawStdEncoding.EncodeToString(keyHashBytes(spki))
+	result := Client{
+		ID: input.ID, Name: input.Name, Platform: input.Platform,
+		IdentitySource: "managed-certificate", PublicKey: input.PublicKey,
+		KeyFingerprint: fingerprint, Status: "managed", CreatedAt: createdAt,
+	}
+	err = s.withLock(true, func(st *fileState) error {
+		for i := range st.Clients {
+			existing := &st.Clients[i]
+			if existing.ID == input.ID {
+				if existing.IdentitySource == result.IdentitySource && existing.PublicKey == result.PublicKey {
+					result = *existing
+					return nil
+				}
+				return &Error{Code: CodeConflict, Msg: "managed Device id is already bound to another identity"}
+			}
+			if existing.PublicKey != "" && existing.PublicKey == result.PublicKey {
+				return &Error{Code: CodeConflict, Msg: "managed Device public key is already bound to another Device"}
+			}
+		}
+		st.Clients = append(st.Clients, result)
+		return nil
+	})
+	return result, err
 }
 
 func validProfileAssignment(profile ProfileAssignment) error {
@@ -549,6 +627,49 @@ func (s Store) Revoke(clientID string) (Client, error) {
 		return nil
 	})
 	return result, err
+}
+
+// DiscardPending removes an identity reservation that was never claimed. It is
+// intentionally narrower than Revoke: any public key, consumed invitation or
+// post-claim state makes the operation fail closed. This gives operators a way
+// to clean up expired/test invitations without turning a real Device deletion
+// into an accidental registry-only action.
+func (s Store) DiscardPending(clientID string) error {
+	s = s.defaults()
+	clientID = strings.TrimSpace(clientID)
+	if clientID == "" || len(clientID) > 128 {
+		return &Error{Code: CodeInvalid, Msg: "Device id is missing or malformed"}
+	}
+	return s.withLock(true, func(st *fileState) error {
+		clientIndex := -1
+		for i := range st.Clients {
+			if st.Clients[i].ID == clientID {
+				clientIndex = i
+				break
+			}
+		}
+		if clientIndex < 0 {
+			return &Error{Code: CodeNotFound, Msg: "Device was not found"}
+		}
+		client := st.Clients[clientIndex]
+		if client.Status != "pending" || client.PublicKey != "" || client.EnrolledAt != "" || client.RevokedAt != "" {
+			return &Error{Code: CodeConflict, Msg: "only an unclaimed pending Device can be discarded"}
+		}
+		for _, invite := range st.Invites {
+			if invite.ClientID == clientID && invite.ConsumedAt != "" {
+				return &Error{Code: CodeConflict, Msg: "a Device with a consumed invitation cannot be discarded"}
+			}
+		}
+		st.Clients = append(st.Clients[:clientIndex], st.Clients[clientIndex+1:]...)
+		kept := st.Invites[:0]
+		for _, invite := range st.Invites {
+			if invite.ClientID != clientID {
+				kept = append(kept, invite)
+			}
+		}
+		st.Invites = kept
+		return nil
+	})
 }
 
 func validateClaim(input ClaimInput) ([]byte, string, error) {
