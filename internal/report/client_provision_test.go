@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -847,6 +848,37 @@ func clientProvisionCSR(t *testing.T) (string, *x509.CertificateRequest) {
 		t.Fatal(err)
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der})), csr
+}
+
+func TestParseECDSAPrivateKeyAcceptsOpenSSLParametersPrefix(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parameters, err := asn1.Marshal(asn1.ObjectIdentifier{1, 2, 840, 10045, 3, 1, 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := append(pem.EncodeToMemory(&pem.Block{Type: "EC PARAMETERS", Bytes: parameters}),
+		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})...)
+	parsed, err := parseECDSAPrivateKey(body)
+	if err != nil || !parsed.Equal(key) {
+		t.Fatalf("parse OpenSSL EC key = %v, err=%v", parsed, err)
+	}
+	wrongParameters, _ := asn1.Marshal(asn1.ObjectIdentifier{1, 3, 132, 0, 34})
+	wrong := append(pem.EncodeToMemory(&pem.Block{Type: "EC PARAMETERS", Bytes: wrongParameters}),
+		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})...)
+	if _, err := parseECDSAPrivateKey(wrong); err == nil {
+		t.Fatal("mismatched EC PARAMETERS were accepted")
+	}
+	trailing := append(append([]byte(nil), body...), pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})...)
+	if _, err := parseECDSAPrivateKey(trailing); err == nil {
+		t.Fatal("multiple private keys were accepted")
+	}
 }
 
 func prepareClientReadyFiles(t *testing.T, paths clientProvisionPaths, healthPath string, ssotBody []byte, now time.Time) {

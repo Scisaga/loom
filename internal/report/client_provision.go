@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -980,24 +981,56 @@ func signClientCSR(caCertPath, caKeyPath, nodeID, csrPEM string, now time.Time) 
 
 func parseECDSAPrivateKey(body []byte) (*ecdsa.PrivateKey, error) {
 	block, rest := pem.Decode(body)
-	if block == nil || len(strings.TrimSpace(string(rest))) != 0 {
-		return nil, errors.New("expected exactly one PEM private key")
+	if block == nil {
+		return nil, errors.New("expected one PEM private key")
 	}
+	var parameters []byte
+	if block.Type == "EC PARAMETERS" {
+		parameters = append([]byte(nil), block.Bytes...)
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			return nil, errors.New("EC PARAMETERS must be followed by one PEM private key")
+		}
+	}
+	if len(strings.TrimSpace(string(rest))) != 0 {
+		return nil, errors.New("expected exactly one PEM private key with optional EC PARAMETERS")
+	}
+	var key *ecdsa.PrivateKey
+	var err error
 	if block.Type == "EC PRIVATE KEY" {
-		return x509.ParseECPrivateKey(block.Bytes)
-	}
-	if block.Type == "PRIVATE KEY" {
-		key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		key, err = x509.ParseECPrivateKey(block.Bytes)
+	} else if block.Type == "PRIVATE KEY" {
+		parsed, parseErr := x509.ParsePKCS8PrivateKey(block.Bytes)
+		err = parseErr
 		if err != nil {
 			return nil, err
 		}
-		ec, ok := key.(*ecdsa.PrivateKey)
+		var ok bool
+		key, ok = parsed.(*ecdsa.PrivateKey)
 		if !ok {
 			return nil, errors.New("PKCS#8 key is not ECDSA")
 		}
-		return ec, nil
+	} else {
+		return nil, fmt.Errorf("unsupported private key PEM type %q", block.Type)
 	}
-	return nil, fmt.Errorf("unsupported private key PEM type %q", block.Type)
+	if err != nil {
+		return nil, err
+	}
+	if len(parameters) > 0 {
+		var oid asn1.ObjectIdentifier
+		if rest, decodeErr := asn1.Unmarshal(parameters, &oid); decodeErr != nil || len(rest) != 0 {
+			return nil, errors.New("EC PARAMETERS are malformed")
+		}
+		want := map[string]asn1.ObjectIdentifier{
+			"P-256": {1, 2, 840, 10045, 3, 1, 7},
+			"P-384": {1, 3, 132, 0, 34},
+			"P-521": {1, 3, 132, 0, 35},
+		}[key.Curve.Params().Name]
+		if want == nil || !oid.Equal(want) {
+			return nil, errors.New("EC PARAMETERS do not match the private key curve")
+		}
+	}
+	return key, nil
 }
 
 func writeClientFileAtomic(path string, body []byte, mode os.FileMode) error {
