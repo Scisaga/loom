@@ -14,10 +14,13 @@
 安装脚本，以及首次 pull 对每个配置 URL 记录精确发布证据并 fail closed。公开地址只读
 部署配置，代码不含部署域名。
 
-上述代码已于 2026-09-01 以提交 `01a16dd172fd` 发布：六台现有 Device 使用相同二进制，
-签名快照为 `93edfe7036c1`；两个配置镜像对同一 SSOT/snapshot 的逐 URL 验证均成功。
-公开 HTTPS 前门已完整下载通用包并通过 checksum，安装脚本、签名公钥和 allowlist 的
-404/拒绝 POST 边界也已实测。部署域名和路径属于本次部署配置，不是产品默认值。
+统一读模型与公开分发边界最初以提交 `01a16dd172fd` 发布；服务器职责 Enrollment 的
+后续实现已于同日以提交 `37f86a3977d2` 发布。六台现有 Device 运行同一二进制
+`a997c08b5b0f`，signed generation 60、snapshot `57fc12f4248a` 全网一致；两个配置镜像
+对同一 SSOT/snapshot 的逐 URL 验证均成功。公开 HTTPS 前门的安装脚本、checksum、
+detached signature、平台公钥和 allowlist 的 404/拒绝写边界均已实测；Linux 包 SHA256
+为 `02a51c18d0dd2d8d32d69004b879e2504b2108704845cf629c0876d2aaf2e4e6`。部署域名和路径
+属于本次部署配置，不是产品默认值。
 
 E1 的服务器职责现在也走同一 Enrollment：邀请钉住服务器 ProfileVersion；Linux Device
 从严格的 `/etc/loom/device.yaml` 读取公网 endpoint、UDP inbound 与 direction，在本机
@@ -30,8 +33,9 @@ wireguard-tools 时，在 invitation claim 前使用已有受限包管理器流�
 当前仍不能宣称 E1 全部完成：还要在可回收的一次性 Linux Device 上完成 invite →
 install → claim → first pull → apply → online 的真机 canary。生产 registry 暂无安全的
 Device 删除/凭据撤销事务，不能为了测试永久污染 SSOT；本机 Docker daemon 又无法解析
-公共镜像仓库，因此此前只完成公开包端到端下载，不能把它冒充完整 Enrollment canary。
-SSH Add node 继续只作为 legacy 迁移入口，待真机 canary 与回收边界具备后移除。
+公共镜像仓库，因此当前只完成公开包端到端下载和服务器 Enrollment 的仓库级事务测试，
+不能把它冒充完整 Enrollment canary。SSH Add node 继续只作为 legacy 迁移入口，待真机
+canary 与回收边界具备后移除。
 
 ## 1. 收敛结论
 
