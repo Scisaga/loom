@@ -68,6 +68,7 @@ type Client struct {
 	Status            string            `json:"status"`
 	CreatedAt         string            `json:"created_at"`
 	EnrolledAt        string            `json:"enrolled_at,omitempty"`
+	RevokedAt         string            `json:"revoked_at,omitempty"`
 	ProfileVersion    string            `json:"profile_version,omitempty"`
 	ProfileDigest     string            `json:"profile_digest,omitempty"`
 	Responsibilities  []string          `json:"responsibilities,omitempty"`
@@ -508,6 +509,44 @@ func (s Store) MarkReady(clientID string) (Client, error) {
 			}
 		}
 		return &Error{Code: CodeNotFound, Msg: "client was not found"}
+	})
+	return result, err
+}
+
+// Revoke closes the control-local identity lifecycle after the Device has been
+// removed from desired state. It also erases any still-recoverable invitation
+// bearer for that Device. Data-plane decommission/removal is intentionally not
+// inferred here; callers must complete that SSOT transaction first.
+func (s Store) Revoke(clientID string) (Client, error) {
+	s = s.defaults()
+	clientID = strings.TrimSpace(clientID)
+	if clientID == "" || len(clientID) > 128 {
+		return Client{}, &Error{Code: CodeInvalid, Msg: "client id is missing or malformed"}
+	}
+	var result Client
+	err := s.withLock(true, func(st *fileState) error {
+		clientIndex := -1
+		for i := range st.Clients {
+			if st.Clients[i].ID == clientID {
+				clientIndex = i
+				break
+			}
+		}
+		if clientIndex < 0 {
+			return &Error{Code: CodeNotFound, Msg: "client was not found"}
+		}
+		client := &st.Clients[clientIndex]
+		if client.Status != "revoked" {
+			client.Status = "revoked"
+			client.RevokedAt = s.Now().UTC().Truncate(time.Second).Format(time.RFC3339)
+		}
+		for i := range st.Invites {
+			if st.Invites[i].ClientID == clientID {
+				st.Invites[i].SealedToken = ""
+			}
+		}
+		result = *client
+		return nil
 	})
 	return result, err
 }

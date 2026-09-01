@@ -102,6 +102,30 @@ func TestInvitationPersistsOnlyHashAndExactClaimReplayIsIdempotent(t *testing.T)
 	}
 }
 
+func TestRevokeErasesInvitationMaterialAndIsIdempotent(t *testing.T) {
+	now := time.Date(2026, 9, 1, 21, 0, 0, 0, time.UTC)
+	store := testStore(t, &now)
+	created, err := store.Create("Disposable canary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	revoked, err := store.Revoke(created.Client.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revoked.Status != "revoked" || revoked.RevokedAt != now.Format(time.RFC3339) {
+		t.Fatalf("revoked Device = %+v", revoked)
+	}
+	if _, _, err := store.Artifact(created.Invite.ID); err == nil {
+		t.Fatal("revoked Device invitation bearer remained recoverable")
+	}
+	now = now.Add(time.Hour)
+	repeated, err := store.Revoke(created.Client.ID)
+	if err != nil || repeated.RevokedAt != revoked.RevokedAt {
+		t.Fatalf("repeat revoke = %+v err=%v", repeated, err)
+	}
+}
+
 func TestInvitationPinsImmutableProfileExpansion(t *testing.T) {
 	now := time.Date(2026, 9, 1, 19, 0, 0, 0, time.UTC)
 	store := testStore(t, &now)
