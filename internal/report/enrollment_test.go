@@ -96,7 +96,7 @@ func TestDeterminePublicEndpointUsesOnlyControlEvidence(t *testing.T) {
 	})
 
 	t.Run("private literal is never replaced by SSH_CONNECTION", func(t *testing.T) {
-		_, _, _, err := determinePublicEndpoint(context.Background(), "10.24.0.18", "8.8.4.4", nil)
+		_, _, _, err := determinePublicEndpoint(context.Background(), "192.0.2.18", "8.8.4.4", nil)
 		if err == nil || !strings.Contains(err.Error(), "not a public global-unicast") {
 			t.Fatalf("private endpoint error = %v", err)
 		}
@@ -150,15 +150,15 @@ func TestEnrollmentNodeIDNormalizesRemoteHostname(t *testing.T) {
 		"VM-0-3":       "vm-0-3",
 		"EDGE__Berlin": "edge-berlin",
 		"_SG---02_":    "sg-02",
-		"hk01":         "hk01",
+		"demo-new-a":   "demo-new-a",
 	} {
 		got, err := enrollmentNodeID(input)
 		if err != nil || got != want {
 			t.Errorf("enrollmentNodeID(%q) = %q, %v; want %q", input, got, err, want)
 		}
 	}
-	long, err := enrollmentNodeID("VM-0-3-ubuntu")
-	if err != nil || !strings.HasPrefix(long, "vm-0-3-") || len(long) > model.LinuxIfnameMax-len("wg-") || !model.ValidNodeID(long) {
+	long, err := enrollmentNodeID("VM-1-2-example-hostname-that-is-long")
+	if err != nil || !strings.HasPrefix(long, "vm-1-2-") || len(long) > model.LinuxIfnameMax-len("wg-") || !model.ValidNodeID(long) {
 		t.Fatalf("long normalized Node ID = %q, %v", long, err)
 	}
 	for _, input := range []string{"---", "___", "node.example"} {
@@ -224,9 +224,9 @@ func TestEnrollmentReviewAndCommitAreOneRevisionGuardedPlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Review: %v", err)
 	}
-	if review.NodeID != "hk01" || review.PublicEndpoint != "edge.example.net" || review.Country != "HK" || review.City != "Hong Kong" ||
+	if review.NodeID != "demo-new-a" || review.PublicEndpoint != "edge.example.net" || review.Country != "HK" || review.City != "Hong Kong" ||
 		review.RequestedDirection != "automatic" || review.ResolvedDirection != string(model.ReverseOnly) ||
-		!review.EgressEnabled || !hasEnrollmentPolicy(review.FixedPolicies, "hk01-fixed", "固定Hong Kong出口") ||
+		!review.EgressEnabled || !hasEnrollmentPolicy(review.FixedPolicies, "demo-new-a-fixed", "固定Hong Kong出口") ||
 		!hasEnrollmentPolicy(review.ExpandedPolicies, "best-egress", "最优出口") ||
 		len(review.Tunnels) != 4 {
 		t.Fatalf("unexpected review: %#v", review)
@@ -239,7 +239,7 @@ func TestEnrollmentReviewAndCommitAreOneRevisionGuardedPlan(t *testing.T) {
 		t.Fatalf("Review changed SSOT: err=%v", err)
 	}
 	for _, tunnel := range review.Tunnels {
-		if tunnel.From != "hk01" || tunnel.Initiator != "hk01" || tunnel.Acceptor == "hk01" ||
+		if tunnel.From != "demo-new-a" || tunnel.Initiator != "demo-new-a" || tunnel.Acceptor == "demo-new-a" ||
 			tunnel.FromAddress == "" || tunnel.ToAddress == "" || tunnel.ListenPort == 0 {
 			t.Errorf("incorrect tunnel mapping: %#v", tunnel)
 		}
@@ -256,7 +256,7 @@ func TestEnrollmentReviewAndCommitAreOneRevisionGuardedPlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
-	if added != "hk01" || counters.confirm != 2 || counters.preflight != 2 || counters.prepare != 1 {
+	if added != "demo-new-a" || counters.confirm != 2 || counters.preflight != 2 || counters.prepare != 1 {
 		t.Fatalf("commit result=%q calls=%#v", added, counters)
 	}
 	content, err := os.ReadFile(path)
@@ -270,19 +270,19 @@ func TestEnrollmentReviewAndCommitAreOneRevisionGuardedPlan(t *testing.T) {
 	if findings := validate.Validate(ssot); len(findings) > 0 {
 		t.Fatalf("committed SSOT is invalid: %s", validate.Format(findings))
 	}
-	node := ssot.NodeByID()["hk01"]
+	node := ssot.NodeByID()["demo-new-a"]
 	if node == nil || node.Server == nil || node.Server.Direction != model.ReverseOnly ||
 		!node.Server.EgressCapable || node.Server.WGPublicKey != testWGPublicKey ||
 		node.PublicEndpoint != "edge.example.net" || node.SSHPort != 22 || node.Country != "HK" || node.City != "Hong Kong" {
 		t.Fatalf("committed node = %#v", node)
 	}
-	fixed := ssot.DeclarationByID()["hk01-fixed"]
-	if fixed == nil || fixed.PinnedEgress() != "hk01" || fixed.Objective != model.Latency {
+	fixed := ssot.DeclarationByID()["demo-new-a-fixed"]
+	if fixed == nil || fixed.PinnedEgress() != "demo-new-a" || fixed.Objective != model.Latency {
 		t.Fatalf("committed fixed policy = %#v", fixed)
 	}
 	best := ssot.DeclarationByID()["best-egress"]
-	if best == nil || !containsString(best.AllowedServers, "hk01") {
-		t.Fatalf("committed best-egress did not include hk01: %#v", best)
+	if best == nil || !containsString(best.AllowedServers, "demo-new-a") {
+		t.Fatalf("committed best-egress did not include demo-new-a: %#v", best)
 	}
 }
 
@@ -377,9 +377,9 @@ func TestEnrollmentAutomaticallyInstallsToolsAndUsesNormalizedNodeID(t *testing.
 	backend.preflight = func(context.Context, enrollssh.Connection) (enrollssh.PreflightResult, error) {
 		counters.preflight++
 		return enrollssh.PreflightResult{
-			Hostname: "VM-0-3-ubuntu", Uname: "Linux 6.8.0 x86_64 GNU/Linux",
+			Hostname: "VM-1-2-example-hostname-that-is-long", Uname: "Linux 6.8.0 x86_64 GNU/Linux",
 			KernelWireGuard: true, WGCommand: toolsAvailable, Privilege: enrollssh.PrivilegeRoot,
-			ObservedSSHServerAddress: "10.24.0.18",
+			ObservedSSHServerAddress: "192.0.2.18",
 		}, nil
 	}
 	backend.installWGTools = func(context.Context, enrollssh.Connection) (bool, error) {
@@ -390,7 +390,7 @@ func TestEnrollmentAutomaticallyInstallsToolsAndUsesNormalizedNodeID(t *testing.
 	backend.prepareWG = func(context.Context, enrollssh.Connection) (enrollssh.PrepareWGResult, error) {
 		counters.prepare++
 		return enrollssh.PrepareWGResult{
-			Hostname: "VM-0-3-ubuntu", ObservedSSHServerAddress: "10.24.0.18", PublicKey: testWGPublicKey,
+			Hostname: "VM-1-2-example-hostname-that-is-long", ObservedSSHServerAddress: "192.0.2.18", PublicKey: testWGPublicKey,
 		}, nil
 	}
 
@@ -400,7 +400,7 @@ func TestEnrollmentAutomaticallyInstallsToolsAndUsesNormalizedNodeID(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(review.NodeID, "vm-0-3-") || review.ObservedHostname != "VM-0-3-ubuntu" || !review.WireGuardToolsInstalled || !review.WGCommand {
+	if !strings.HasPrefix(review.NodeID, "vm-1-2-") || review.ObservedHostname != "VM-1-2-example-hostname-that-is-long" || !review.WireGuardToolsInstalled || !review.WGCommand {
 		t.Fatalf("automatic bootstrap review = %#v", review)
 	}
 	if counters.install != 1 || counters.preflight != 2 {
@@ -499,7 +499,7 @@ func TestEnrollmentCommitBindsDNSAnswersAndPreparedHostSession(t *testing.T) {
 			mutate: func(backend *enrollmentBackend, _ *string) {
 				backend.prepareWG = func(context.Context, enrollssh.Connection) (enrollssh.PrepareWGResult, error) {
 					return enrollssh.PrepareWGResult{
-						Hostname: "hk02", ObservedSSHServerAddress: "10.24.0.18", PublicKey: testWGPublicKey,
+						Hostname: "demo-new-b", ObservedSSHServerAddress: "192.0.2.18", PublicKey: testWGPublicKey,
 					}, nil
 				}
 			},
@@ -565,9 +565,9 @@ func fakeEnrollmentBackend(t *testing.T, path string) (enrollmentBackend, *enrol
 		preflight: func(context.Context, enrollssh.Connection) (enrollssh.PreflightResult, error) {
 			counters.preflight++
 			return enrollssh.PreflightResult{
-				Hostname: "hk01", Uname: "Linux 6.8.0 x86_64 GNU/Linux",
+				Hostname: "demo-new-a", Uname: "Linux 6.8.0 x86_64 GNU/Linux",
 				KernelWireGuard: true, WGCommand: true, Privilege: enrollssh.PrivilegeSudo,
-				ObservedSSHServerAddress: "10.24.0.18",
+				ObservedSSHServerAddress: "192.0.2.18",
 			}, nil
 		},
 		installWGTools: func(context.Context, enrollssh.Connection) (bool, error) {
@@ -577,7 +577,7 @@ func fakeEnrollmentBackend(t *testing.T, path string) (enrollmentBackend, *enrol
 		prepareWG: func(context.Context, enrollssh.Connection) (enrollssh.PrepareWGResult, error) {
 			counters.prepare++
 			return enrollssh.PrepareWGResult{
-				Hostname: "hk01", ObservedSSHServerAddress: "10.24.0.18", PublicKey: testWGPublicKey,
+				Hostname: "demo-new-a", ObservedSSHServerAddress: "192.0.2.18", PublicKey: testWGPublicKey,
 			}, nil
 		},
 		lookupIP: func(context.Context, string) ([]net.IPAddr, error) {

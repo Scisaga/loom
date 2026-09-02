@@ -203,7 +203,7 @@
     <text class="tiny mono" x="82" y="430">ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA…</text><use href="#icon-copy" x="489" y="417" width="14" height="14" class="action-icon" aria-label="Copy shared control public key"/>
 
     <text class="small muted" x="41" y="480">HOST OR IP ADDRESS</text><text class="small muted" x="263" y="480">SSH USER</text><text class="small muted" x="441" y="480">PORT</text>
-    <rect class="panel-soft" x="41" y="492" width="210" height="50" rx="6"/><text class="body mono" x="57" y="523">hk01.edge.example.net</text>
+    <rect class="panel-soft" x="41" y="492" width="210" height="50" rx="6"/><text class="body mono" x="57" y="523">demo-new-a.edge.example.net</text>
     <rect class="panel-soft" x="263" y="492" width="166" height="50" rx="6"/><text class="small mono" x="279" y="523">loom-bootstrap</text>
     <rect class="panel-soft" x="441" y="492" width="80" height="50" rx="6"/><text class="body mono" x="457" y="523">22</text>
     <text class="tiny muted" x="41" y="562">Input once · eligible only as a control-resolved candidate</text><text class="tiny green" x="521" y="562" text-anchor="end">Advanced →</text>
@@ -212,8 +212,8 @@
 
     <line class="rule" x1="41" y1="650" x2="521" y2="650"/>
     <text class="subsection" x="41" y="680">Remote host identity</text>
-    <text class="small muted" x="41" y="711">SSH HOST KEY</text><text class="tiny mono" x="180" y="711">SHA256:W1f2Qe…8k9m</text><text class="tiny green" x="472" y="711" text-anchor="end">Confirmed by operator</text>
-    <text class="small muted" x="41" y="743">HOSTNAME</text><text class="body mono" x="180" y="743">hk01</text><text class="tiny muted" x="472" y="743" text-anchor="end">hostname -s</text>
+    <text class="small muted" x="41" y="711">SSH HOST KEY</text><text class="tiny mono" x="180" y="711">SHA256:ExampleHostKey</text><text class="tiny green" x="472" y="711" text-anchor="end">Confirmed by operator</text>
+    <text class="small muted" x="41" y="743">HOSTNAME</text><text class="body mono" x="180" y="743">demo-new-a</text><text class="tiny muted" x="472" y="743" text-anchor="end">hostname -s</text>
     <text class="small muted" x="41" y="775">SYSTEM</text><text class="body" x="180" y="775">Ubuntu 24.04 · x86_64</text>
     <text class="small muted" x="41" y="807">PRIVILEGE</text><text class="body green" x="180" y="807">Bootstrap permitted</text>
     <text class="small muted" x="41" y="839">WIREGUARD</text><text class="body green" x="180" y="839">Kernel support available</text>
@@ -231,8 +231,8 @@
     <text class="section" x="577" y="332">Review discovered node</text>
     <text class="tiny muted" x="577" y="354">Identity is SSH-observed; endpoint is a control-dialed candidate. UDP exposure is not inferred.</text>
 
-    <text class="small muted" x="577" y="390">NODE ID</text><text class="metric mono" x="577" y="418">hk01</text><text class="tiny muted" x="577" y="438">From remote hostname · locked</text>
-    <text class="small muted" x="802" y="390">ENDPOINT CANDIDATE</text><text class="metric mono" x="802" y="418">hk01.edge.example.net</text><text class="tiny amber" x="802" y="438">Global SSH dial succeeded · UDP unverified</text>
+    <text class="small muted" x="577" y="390">NODE ID</text><text class="metric mono" x="577" y="418">demo-new-a</text><text class="tiny muted" x="577" y="438">From remote hostname · locked</text>
+    <text class="small muted" x="802" y="390">ENDPOINT CANDIDATE</text><text class="metric mono" x="802" y="418">demo-new-a.edge.example.net</text><text class="tiny amber" x="802" y="438">Global SSH dial succeeded · UDP unverified</text>
     <text class="small muted" x="1097" y="390">CONNECTION DIRECTION</text><text class="tiny green" x="1322" y="390" text-anchor="end">Review →</text>
     <rect class="panel-soft" x="1097" y="398" width="225" height="36" rx="5" aria-label="Change connection policy"/>
     <text class="body" x="1112" y="421">Automatic</text><text class="tiny green mono" x="1201" y="421">→ reverse_only</text>
@@ -245,17 +245,17 @@
     <text class="section" x="577" y="493">Proposed network changes</text><text class="tiny green" x="1539" y="493" text-anchor="end">Recomputed with policy · no conflicts</text>
     <text class="small muted" x="583" y="523">EDGE</text><text class="small muted" x="765" y="523">TUNNEL ADDRESSES</text><text class="small muted" x="1048" y="523">ACCEPTOR / LISTEN</text><text class="small muted" x="1240" y="523">INITIATOR</text><text class="small muted" x="1360" y="523">FIREWALL</text>
     <line class="rule" x1="577" y1="531" x2="1539" y2="531"/>
-    <text class="body mono" x="583" y="552">hk01 ↔ jm24</text><text class="body mono" x="765" y="552">10.99.2.1/32 ↔ 10.99.2.2/32</text><text class="body mono" x="1048" y="552">jm24 · 61775/udp</text><text class="body mono" x="1240" y="552">hk01</text><text class="body" x="1360" y="552">Allow UDP on jm24</text>
-    <text class="body mono" x="583" y="579">hk01 ↔ gz02</text><text class="body mono" x="765" y="579">10.99.2.3/32 ↔ 10.99.2.4/32</text><text class="body mono" x="1048" y="579">gz02 · 61683/udp</text><text class="body mono" x="1240" y="579">hk01</text><text class="body" x="1360" y="579">Allow UDP on gz02</text>
-    <text class="body mono" x="583" y="606">hk01 ↔ hz01</text><text class="body mono" x="765" y="606">10.99.2.5/32 ↔ 10.99.2.6/32</text><text class="body mono" x="1048" y="606">hz01 · 61719/udp</text><text class="body mono" x="1240" y="606">hk01</text><text class="body" x="1360" y="606">Allow UDP on hz01</text>
+    <text class="body mono" x="583" y="552">demo-new-a ↔ demo-d</text><text class="body mono" x="765" y="552">10.99.2.1/32 ↔ 10.99.2.2/32</text><text class="body mono" x="1048" y="552">demo-d · 61775/udp</text><text class="body mono" x="1240" y="552">demo-new-a</text><text class="body" x="1360" y="552">Allow UDP on demo-d</text>
+    <text class="body mono" x="583" y="579">demo-new-a ↔ demo-b</text><text class="body mono" x="765" y="579">10.99.2.3/32 ↔ 10.99.2.4/32</text><text class="body mono" x="1048" y="579">demo-b · 61683/udp</text><text class="body mono" x="1240" y="579">demo-new-a</text><text class="body" x="1360" y="579">Allow UDP on demo-b</text>
+    <text class="body mono" x="583" y="606">demo-new-a ↔ demo-c</text><text class="body mono" x="765" y="606">10.99.2.5/32 ↔ 10.99.2.6/32</text><text class="body mono" x="1048" y="606">demo-c · 61719/udp</text><text class="body mono" x="1240" y="606">demo-new-a</text><text class="body" x="1360" y="606">Allow UDP on demo-c</text>
     <line class="rule" x1="577" y1="560" x2="1539" y2="560"/><line class="rule" x1="577" y1="587" x2="1539" y2="587"/><line class="rule" x1="577" y1="614" x2="1539" y2="614"/>
 
-    <text class="small muted" x="577" y="637">WIREGUARD IDENTITY</text><text class="body amber" x="755" y="637">Prepared on hk01 at commit</text>
-    <text class="tiny muted" x="1098" y="637">Reuse existing key or generate locally · private key never leaves hk01</text>
+    <text class="small muted" x="577" y="637">WIREGUARD IDENTITY</text><text class="body amber" x="755" y="637">Prepared on demo-new-a at commit</text>
+    <text class="tiny muted" x="1098" y="637">Reuse existing key or generate locally · private key never leaves demo-new-a</text>
     <line class="rule" x1="577" y1="657" x2="1539" y2="657"/>
 
     <text class="section" x="577" y="687">SSOT change summary</text>
-    <circle class="quiet-dot" cx="583" cy="713" r="3.5"/><text class="body" x="596" y="718">Add node <tspan class="mono">hk01</tspan> using its verified hostname</text>
+    <circle class="quiet-dot" cx="583" cy="713" r="3.5"/><text class="body" x="596" y="718">Add node <tspan class="mono">demo-new-a</tspan> using its verified hostname</text>
     <circle class="quiet-dot" cx="583" cy="743" r="3.5"/><text class="body" x="596" y="748">Record the global endpoint candidate successfully dialed by control</text>
     <circle class="quiet-dot" cx="583" cy="773" r="3.5"/><text class="body" x="596" y="778">Save direction <tspan class="mono">reverse_only</tspan> · enable egress · add derived persistent tunnels</text>
     <circle class="neutral-dot" cx="583" cy="803" r="3.5"/><text class="body" x="596" y="808">No service or access policy changes</text>
@@ -265,7 +265,7 @@
     <circle class="quiet-dot" cx="583" cy="887" r="4"/><text class="small green" x="596" y="892">Discovery and allocation plan are valid</text>
     <rect class="panel" x="1193" y="875" width="118" height="42" rx="6"/><text class="small" x="1252" y="901" text-anchor="middle">Cancel</text>
     <rect class="button-green" x="1325" y="875" width="214" height="42" rx="6"/><use href="#icon-check" x="1338" y="889" width="14" height="14" stroke="#FFFFFF" fill="none" stroke-width="1.5"/><text class="tiny" x="1359" y="900" fill="#FFFFFF">Prepare WG + save declaration</text>
-    <text class="tiny muted" x="577" y="947"><tspan font-weight="600" fill="#181B1A">On confirm:</tspan> prepare hk01 WG identity → revision-guarded SSOT save → remain joining until separate Agent/TLS bootstrap and trusted report.</text>
+    <text class="tiny muted" x="577" y="947"><tspan font-weight="600" fill="#181B1A">On confirm:</tspan> prepare demo-new-a WG identity → revision-guarded SSOT save → remain joining until separate Agent/TLS bootstrap and trusted report.</text>
   </g>
 
 </svg>

@@ -174,7 +174,7 @@
   <g class="ui">
     <text class="eyebrow" x="21" y="91">LIVE NETWORK</text>
     <text class="heading" x="21" y="124">Network overview</text>
-    <text class="body muted" x="21" y="151">jm24 control plane · observed 8s ago</text>
+    <text class="body muted" x="21" y="151">demo-d control plane · observed 8s ago</text>
     <use href="#icon-status-ok" x="20" y="168" width="15" height="15" class="status-icon"/>
     <text class="small" x="43" y="181">All declared nodes are healthy</text>
   </g>
@@ -192,8 +192,8 @@
     <text class="metric" x="835" y="263">2 / 2 <tspan class="body" font-weight="400">fresh</tspan></text>
 
     <text class="label" x="1210" y="234">Snapshot</text>
-    <text class="metric mono" x="1210" y="255">4f09f6f5716d</text>
-    <text class="small muted" x="1210" y="274">fleet converged · publisher code <tspan class="mono">28224ed</tspan></text>
+    <text class="metric mono" x="1210" y="255">a1b2c3d4e5f6</text>
+    <text class="small muted" x="1210" y="274">fleet converged · publisher code <tspan class="mono">deadbee</tspan></text>
   </g>
   <line class="rule" x1="413" y1="225" x2="413" y2="268"/>
   <line class="rule" x1="793" y1="225" x2="793" y2="268"/>
@@ -231,39 +231,39 @@
     <path class="candidate" d="M326 386C292 435 293 520 326 562"/>
   </g>
 
-  <!-- Read-only automatic decisions: local exit for cn-web and ber01 for intl-api. -->
+  <!-- Read-only automatic decisions: local exit for cn-web and demo-a for intl-api. -->
   <defs><marker id="arrow-overview-automatic" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth"><path d="M0 0L7 3.5L0 7Z" fill="#466FC2"/></marker></defs>
   <path class="selected" style="stroke:#466FC2;marker-end:url(#arrow-overview-automatic)" d="M342 372L381 348"/>
   <path class="selected" style="stroke:#466FC2;marker-end:url(#arrow-overview-automatic)" d="M344 382L758 532"/>
   <text class="ui tiny blue mono" x="390" y="350">cn-web · local exit</text>
-  <text class="ui tiny blue mono" x="562" y="474">intl-api · ber01</text>
+  <text class="ui tiny blue mono" x="562" y="474">intl-api · demo-a</text>
 
   <!-- Nodes -->
   <g class="ui">
     <circle cx="333" cy="378" r="7" fill="#FFFFFF"/>
     <circle class="status-dot" cx="333" cy="378" r="5"/>
-    <text class="node-name mono" x="287" y="379" text-anchor="end">jm24</text>
-    <text class="small muted" x="316" y="399" text-anchor="end">Beijing · control + access</text>
+    <text class="node-name mono" x="287" y="379" text-anchor="end">demo-d</text>
+    <text class="small muted" x="316" y="399" text-anchor="end">Region A · control + access</text>
 
     <circle cx="333" cy="468" r="7" fill="#FFFFFF"/>
     <circle class="status-dot" cx="333" cy="468" r="5"/>
-    <text class="node-name mono" x="287" y="467" text-anchor="end">gz02</text>
-    <text class="small muted" x="316" y="489" text-anchor="end">Guangzhou · domestic + egress</text>
+    <text class="node-name mono" x="287" y="467" text-anchor="end">demo-b</text>
+    <text class="small muted" x="316" y="489" text-anchor="end">Region B · domestic + egress</text>
 
     <circle cx="333" cy="570" r="7" fill="#FFFFFF"/>
     <circle class="status-dot" cx="333" cy="570" r="5"/>
-    <text class="node-name mono" x="287" y="569" text-anchor="end">hz01</text>
-    <text class="small muted" x="316" y="591" text-anchor="end">Hangzhou · domestic + egress</text>
+    <text class="node-name mono" x="287" y="569" text-anchor="end">demo-c</text>
+    <text class="small muted" x="316" y="591" text-anchor="end">Region C · domestic + egress</text>
 
     <circle cx="770" cy="417" r="7" fill="#FFFFFF"/>
     <circle class="status-dot" cx="770" cy="417" r="5"/>
-    <text class="node-name mono" x="790" y="420">sg02</text>
-    <text class="small muted" x="790" y="440">Singapore · reverse-only + egress</text>
+    <text class="node-name mono" x="790" y="420">demo-e</text>
+    <text class="small muted" x="790" y="440">Region D · reverse-only + egress</text>
 
     <circle cx="770" cy="536" r="7" fill="#FFFFFF"/>
     <circle class="status-dot" cx="770" cy="536" r="5"/>
-    <text class="node-name mono" x="790" y="539">ber01</text>
-    <text class="small muted" x="790" y="559">Berlin · reverse-only + egress</text>
+    <text class="node-name mono" x="790" y="539">demo-a</text>
+    <text class="small muted" x="790" y="559">Region E · reverse-only + egress</text>
   </g>
 
   <!-- Retained control-node history derived only from adjacent trusted counter samples. -->
@@ -303,7 +303,7 @@
   <rect class="panel" x="1028" y="462" width="531" height="173" rx="7"/>
   <g class="ui">
     <text class="section" x="1046" y="490">Latest fleet rollout</text>
-    <text class="body" x="1046" y="520">Snapshot <tspan class="mono" font-weight="600">4f09f6f5716d</tspan></text>
+    <text class="body" x="1046" y="520">Snapshot <tspan class="mono" font-weight="600">a1b2c3d4e5f6</tspan></text>
     <text class="body muted" x="1046" y="543">5 / 5 verified</text>
 
     <line class="stage-line" x1="1076" y1="566" x2="1477" y2="566"/>
@@ -315,7 +315,7 @@
     <text class="small muted" x="1209" y="591" text-anchor="middle">Distributed</text>
     <text class="small muted" x="1343" y="591" text-anchor="middle">Applied</text>
     <text class="small muted" x="1477" y="591" text-anchor="middle">Verified</text>
-    <text class="small muted" x="1046" y="619">fleet snapshot · publisher code <tspan class="mono">28224ed</tspan> · 19h ago</text>
+    <text class="small muted" x="1046" y="619">fleet snapshot · publisher code <tspan class="mono">deadbee</tspan> · 19h ago</text>
   </g>
 
   <!-- Nodes table -->
@@ -335,11 +335,11 @@
   <line class="rule" x1="39" y1="790" x2="828" y2="790"/>
   <line class="rule" x1="39" y1="818" x2="828" y2="818"/>
   <g class="ui body">
-    <circle class="quiet-dot" cx="43" cy="721" r="4"/><text class="mono" x="65" y="726">jm24</text><text x="207" y="726">Beijing</text><text class="green" x="396" y="726">Healthy</text><text class="mono" x="515" y="726">184 / 96 GB</text><text x="745" y="726">8s</text>
-    <circle class="quiet-dot" cx="43" cy="749" r="4"/><text class="mono" x="65" y="754">gz02</text><text x="207" y="754">Guangzhou</text><text class="green" x="396" y="754">Healthy</text><text class="mono" x="515" y="754">142 / 91 GB</text><text x="745" y="754">11s</text>
-    <circle class="quiet-dot" cx="43" cy="777" r="4"/><text class="mono" x="65" y="782">hz01</text><text x="207" y="782">Hangzhou</text><text class="green" x="396" y="782">Healthy</text><text class="mono" x="515" y="782">98 / 61 GB</text><text x="745" y="782">13s</text>
-    <circle class="quiet-dot" cx="43" cy="805" r="4"/><text class="mono" x="65" y="810">sg02</text><text x="207" y="810">Singapore</text><text class="green" x="396" y="810">Healthy</text><text class="mono" x="515" y="810">204 / 139 GB</text><text x="745" y="810">9s</text>
-    <circle class="quiet-dot" cx="43" cy="833" r="4"/><text class="mono" x="65" y="838">ber01</text><text x="207" y="838">Berlin</text><text class="green" x="396" y="838">Healthy</text><text class="mono" x="515" y="838">176 / 112 GB</text><text x="745" y="838">12s</text>
+    <circle class="quiet-dot" cx="43" cy="721" r="4"/><text class="mono" x="65" y="726">demo-d</text><text x="207" y="726">Region A</text><text class="green" x="396" y="726">Healthy</text><text class="mono" x="515" y="726">184 / 96 GB</text><text x="745" y="726">8s</text>
+    <circle class="quiet-dot" cx="43" cy="749" r="4"/><text class="mono" x="65" y="754">demo-b</text><text x="207" y="754">Region B</text><text class="green" x="396" y="754">Healthy</text><text class="mono" x="515" y="754">142 / 91 GB</text><text x="745" y="754">11s</text>
+    <circle class="quiet-dot" cx="43" cy="777" r="4"/><text class="mono" x="65" y="782">demo-c</text><text x="207" y="782">Region C</text><text class="green" x="396" y="782">Healthy</text><text class="mono" x="515" y="782">98 / 61 GB</text><text x="745" y="782">13s</text>
+    <circle class="quiet-dot" cx="43" cy="805" r="4"/><text class="mono" x="65" y="810">demo-e</text><text x="207" y="810">Region D</text><text class="green" x="396" y="810">Healthy</text><text class="mono" x="515" y="810">204 / 139 GB</text><text x="745" y="810">9s</text>
+    <circle class="quiet-dot" cx="43" cy="833" r="4"/><text class="mono" x="65" y="838">demo-a</text><text x="207" y="838">Region E</text><text class="green" x="396" y="838">Healthy</text><text class="mono" x="515" y="838">176 / 112 GB</text><text x="745" y="838">12s</text>
   </g>
 
   <!-- Automatic Service-scoped Agent decisions. -->
@@ -356,8 +356,8 @@
   <line class="rule" x1="881" y1="734" x2="1541" y2="734"/>
   <line class="rule" x1="881" y1="762" x2="1541" y2="762"/>
   <g class="ui body">
-    <text x="887" y="726">Domestic web</text><text class="muted" x="1040" y="726">Service rule</text><text class="mono blue" x="1172" y="726">jm24 → local exit</text><circle class="quiet-dot" cx="1398" cy="721" r="4"/><text x="1411" y="726">Fresh</text>
-    <text x="887" y="754">International API</text><text class="muted" x="1040" y="754">Service rule</text><text class="mono blue" x="1172" y="754">jm24 → ber01</text><circle class="quiet-dot" cx="1398" cy="749" r="4"/><text x="1411" y="754">Fresh</text>
+    <text x="887" y="726">Domestic web</text><text class="muted" x="1040" y="726">Service rule</text><text class="mono blue" x="1172" y="726">demo-d → local exit</text><circle class="quiet-dot" cx="1398" cy="721" r="4"/><text x="1411" y="726">Fresh</text>
+    <text x="887" y="754">International API</text><text class="muted" x="1040" y="754">Service rule</text><text class="mono blue" x="1172" y="754">demo-d → demo-a</text><circle class="quiet-dot" cx="1398" cy="749" r="4"/><text x="1411" y="754">Fresh</text>
   </g>
   <rect class="panel-soft" x="881" y="782" width="660" height="48" rx="5"/>
   <text class="ui tiny muted" x="897" y="803">Host → Service → Policy → Agent · clients use one automatic ingress.</text>
@@ -379,6 +379,6 @@
 
     <text class="small mono muted" x="40" y="963">17:08</text>
     <circle class="quiet-dot" cx="89" cy="958" r="3.5"/>
-    <text class="body" x="104" y="963">Carrier edge gz02 ↔ sg02 recovered</text>
+    <text class="body" x="104" y="963">Carrier edge demo-b ↔ demo-e recovered</text>
   </g>
 </svg>

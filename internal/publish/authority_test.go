@@ -67,8 +67,8 @@ func TestReleaseAuthorityAssignmentsAreLogicalTarget(t *testing.T) {
 	dir := t.TempDir()
 	priv := key(t)
 	a := []DeploymentAssignment{
-		{Node: "hz01", Snapshot: "cccccccccccc"},
-		{Node: "gz02", Snapshot: "bbbbbbbbbbbb"},
+		{Node: "demo-c", Snapshot: "cccccccccccc"},
+		{Node: "demo-b", Snapshot: "bbbbbbbbbbbb"},
 	}
 	first, _, err := ensureReleaseAuthority(dir, "aaaaaaaaaaaa", a,
 		"2026-08-27T12:00:00Z", priv)

@@ -15,7 +15,7 @@ import (
 func TestSelfCheckClaimCoversCompleteLocalVerdict(t *testing.T) {
 	now := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
 	st := &Status{
-		Node: "gz02", TS: now.Format(time.RFC3339),
+		Node: "demo-b", TS: now.Format(time.RFC3339),
 		Errors: []string{"wg collector failed\nwith detail"},
 		Rollout: &RolloutState{
 			Stage:     string(rollout.Activating),
@@ -25,7 +25,7 @@ func TestSelfCheckClaimCoversCompleteLocalVerdict(t *testing.T) {
 		Agent: &AgentState{Selections: []AgentSelection{{
 			Declaration: "best", Health: &AgentCandidateHealth{Candidates: 2, RecentFailed: 2},
 		}}},
-		Tunnels: []Tunnel{{Interface: "wg-sg02", HandshakeAgeSec: 900, Stale: true, UnitState: "failed"}},
+		Tunnels: []Tunnel{{Interface: "wg-demo-e", HandshakeAgeSec: 900, Stale: true, UnitState: "failed"}},
 		Drift:   &Drift{Modified: []string{"/etc/loom/a"}},
 		Observation: &Observation{Targets: []Reach{{
 			Target: "https://uplink.test", Uplink: true, Error: "timeout",
@@ -51,8 +51,8 @@ func TestSelfCheckClaimCoversCompleteLocalVerdict(t *testing.T) {
 	}
 
 	healthy := selfCheckClaimFromStatus(&Status{
-		Node: "gz02", TS: now.Format(time.RFC3339),
-		Tunnels: []Tunnel{{Interface: "wg-sg02", HandshakeAgeSec: 20, UnitState: "active"}},
+		Node: "demo-b", TS: now.Format(time.RFC3339),
+		Tunnels: []Tunnel{{Interface: "wg-demo-e", HandshakeAgeSec: 20, UnitState: "active"}},
 	}, now)
 	if !healthy.Healthy || len(healthy.Problems) != 0 {
 		t.Fatalf("healthy local status did not produce explicit green: %+v", healthy)
@@ -88,8 +88,8 @@ func TestSelfCheckProblemCompactionRespectsWireBounds(t *testing.T) {
 
 func TestSelfCheckAttachmentBindsOuterObservation(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
-	ca, key, cert := reportTestIdentity(t, "gz02")
-	o := &Observation{Node: "gz02", TS: now.Format(time.RFC3339)}
+	ca, key, cert := reportTestIdentity(t, "demo-b")
+	o := &Observation{Node: "demo-b", TS: now.Format(time.RFC3339)}
 	var err error
 	o.SelfCheck, err = attest.SignSelfCheck(attest.SelfCheckClaim{
 		Version: attest.SelfCheckClaimVersion, Node: o.Node, TS: o.TS, Healthy: true,
@@ -110,10 +110,10 @@ func TestSelfCheckAttachmentBindsOuterObservation(t *testing.T) {
 
 func TestBuildViewUsesOnlySignedSelfCheckForRemoteHealth(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
-	ca, key, cert := reportTestIdentity(t, "gz02")
+	ca, key, cert := reportTestIdentity(t, "demo-b")
 	viewFor := func(claim *attest.SelfCheckClaim) string {
 		o := Observation{
-			Node: "gz02", TS: now.Format(time.RFC3339),
+			Node: "demo-b", TS: now.Format(time.RFC3339),
 			// These mutable outer values must never create a remote verdict.
 			Rollout:    &RolloutState{Stage: string(rollout.Failed), Error: "outer only"},
 			Components: []ComponentStatus{{Name: "wireguard", Expected: "2", Actual: "1"}},
@@ -125,11 +125,11 @@ func TestBuildViewUsesOnlySignedSelfCheckForRemoteHealth(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		v := buildViewWithCA(&Config{Node: "jm24", ExpectedNodes: []string{"jm24", "gz02"}},
-			&Status{Node: "jm24", TS: now.Format(time.RFC3339), Learned: []Observation{o}},
+		v := buildViewWithCA(&Config{Node: "demo-d", ExpectedNodes: []string{"demo-d", "demo-b"}},
+			&Status{Node: "demo-d", TS: now.Format(time.RFC3339), Learned: []Observation{o}},
 			now, func(string) ([]byte, error) { return ca, nil })
 		for _, node := range v.Nodes {
-			if node.ID == "gz02" {
+			if node.ID == "demo-b" {
 				return node.Health + "\x00" + strings.Join(node.Problems, "|")
 			}
 		}
@@ -141,16 +141,16 @@ func TestBuildViewUsesOnlySignedSelfCheckForRemoteHealth(t *testing.T) {
 		t.Fatalf("missing self-check did not remain unknown: %q", got)
 	}
 	healthy := &attest.SelfCheckClaim{
-		Version: attest.SelfCheckClaimVersion, Node: "gz02", TS: now.Format(time.RFC3339), Healthy: true,
+		Version: attest.SelfCheckClaimVersion, Node: "demo-b", TS: now.Format(time.RFC3339), Healthy: true,
 	}
 	if got := viewFor(healthy); got != "healthy\x00" {
 		t.Fatalf("explicit signed healthy was not green: %q", got)
 	}
 	unhealthy := &attest.SelfCheckClaim{
-		Version: attest.SelfCheckClaimVersion, Node: "gz02", TS: now.Format(time.RFC3339),
-		Healthy: false, Problems: []string{"隧道 wg-sg02 down"},
+		Version: attest.SelfCheckClaimVersion, Node: "demo-b", TS: now.Format(time.RFC3339),
+		Healthy: false, Problems: []string{"隧道 wg-demo-e down"},
 	}
-	if got := viewFor(unhealthy); !strings.HasPrefix(got, "problem\x00隧道 wg-sg02 down") {
+	if got := viewFor(unhealthy); !strings.HasPrefix(got, "problem\x00隧道 wg-demo-e down") {
 		t.Fatalf("explicit signed problem was not red/explained: %q", got)
 	}
 }
@@ -161,19 +161,19 @@ func TestTableRejectsInvalidSelfCheckBeforeGossip(t *testing.T) {
 	tbl.verifySelfCheck = func(*Observation, time.Time, time.Duration) error {
 		return errors.New("bad signature")
 	}
-	o := &Observation{Node: "gz02", TS: now.Format(time.RFC3339), SelfCheck: &attest.SelfCheckAttest{}}
+	o := &Observation{Node: "demo-b", TS: now.Format(time.RFC3339), SelfCheck: &attest.SelfCheckAttest{}}
 	if err := tbl.put(o, now, time.Minute); err == nil || !strings.Contains(err.Error(), "自检") {
 		t.Fatalf("invalid self-check entered table: %v", err)
 	}
-	if got := tbl.snapshot("jm24", now, time.Minute); len(got) != 0 {
+	if got := tbl.snapshot("demo-d", now, time.Minute); len(got) != 0 {
 		t.Fatalf("invalid self-check was retained for gossip: %+v", got)
 	}
 }
 
 func TestSelfCheckSurvivesSignedJSONGossipAndView(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
-	ca, key, cert := reportTestIdentity(t, "gz02")
-	o := Observation{Node: "gz02", TS: now.Format(time.RFC3339), Applied: "snap"}
+	ca, key, cert := reportTestIdentity(t, "demo-b")
+	o := Observation{Node: "demo-b", TS: now.Format(time.RFC3339), Applied: "snap"}
 	legacy, current := claimsForObservation(&o, 5)
 	var err error
 	o.Attest, err = attest.Sign(legacy, key, cert)
@@ -211,21 +211,21 @@ func TestSelfCheckSurvivesSignedJSONGossipAndView(t *testing.T) {
 	if err := tbl.put(&relayed, now, time.Minute); err != nil {
 		t.Fatalf("signed self-check did not enter gossip table: %v", err)
 	}
-	learned := tbl.snapshot("jm24", now, time.Minute)
+	learned := tbl.snapshot("demo-d", now, time.Minute)
 	if len(learned) != 1 || learned[0].SelfCheck == nil {
 		t.Fatalf("self-check was lost in gossip: %+v", learned)
 	}
 	v := buildViewWithCA(&Config{
-		Node: "jm24", AttestationMinVersion: 5, ExpectedNodes: []string{"jm24", "gz02"},
-	}, &Status{Node: "jm24", TS: now.Format(time.RFC3339), Learned: learned}, now,
+		Node: "demo-d", AttestationMinVersion: 5, ExpectedNodes: []string{"demo-d", "demo-b"},
+	}, &Status{Node: "demo-d", TS: now.Format(time.RFC3339), Learned: learned}, now,
 		func(string) ([]byte, error) { return ca, nil })
 	for _, node := range v.Nodes {
-		if node.ID == "gz02" {
+		if node.ID == "demo-b" {
 			if node.Health != "healthy" || node.Source != "签名转述" {
 				t.Fatalf("verified relayed self-check did not close remote health: %+v", node)
 			}
 			return
 		}
 	}
-	t.Fatal("gz02 missing from end-to-end view")
+	t.Fatal("demo-b missing from end-to-end view")
 }

@@ -445,24 +445,23 @@ Android Emulator 本身就是专用虚拟机。它应直接运行在 Windows 实
 上，或直接运行在独立 Linux builder 的 KVM 上；不要把它放进 Windows VM 再做嵌套
 虚拟化。嵌套方案会增加性能、USB/相机和网络语义的不确定性，却不能替代真机测试。
 
-**当前 `jm24` 环境核对（2026-08-31）：** 它是裸机 Ubuntu，中控和本机接入角色已
-在运行；Intel VT-x/EPT、`/dev/kvm` 和 KVM 模块可用，8 CPU、14 GiB 内存、根盘约
-422 GiB 可用。硬件可以运行 Windows VM 或原生 Android Emulator，但当前没有 QEMU、
-OVMF、swtpm、Android SDK、JDK、Gradle、adb 或 Emulator。更重要的是，这台机器是
-现网控制面且已有 swap 压力，不应默认同时承载 Windows VM 和 Android Emulator。
+**控制设备不是默认客户端开发机。** 是否能运行 Windows VM 或 Android Emulator，
+由部署者在本地根据 CPU 虚拟化、`/dev/kvm`、内存、磁盘和当前负载核对；这些现网
+硬件信息属于部署状态，不写入版本库。控制面承担生产职责时，不应默认再承载桌面 VM
+或 Emulator。
 
-确需在 `jm24` 建一台临时 Windows 开发 VM 时，最小栈为 QEMU/KVM + Q35 + OVMF
-UEFI + swtpm 2.0 + qcow2，建议 4 vCPU、6 GiB RAM、96 GiB thin disk。初期使用
-QEMU user-mode NAT，安装画面和 RDP 只绑定 `127.0.0.1` 并经 SSH 转发；不要先引入
-libvirt bridge 去改动现有 Docker、WireGuard 和 nftables。Windows 介质只能使用用户
-提供的合法 ISO 或微软正式 Evaluation ISO。该 VM 足以做 Service、UI、安装器与基本
-TUN 集成，但真实睡眠、Wi-Fi/有线切换和长期桌面行为仍由实体 Windows 终验。
+确需在独立 Linux builder 建一台临时 Windows 开发 VM 时，最小栈为 QEMU/KVM + Q35
++ OVMF UEFI + swtpm 2.0 + qcow2。初期使用 QEMU user-mode NAT，安装画面和 RDP 只
+绑定 `127.0.0.1` 并经 SSH 转发；不要先引入 libvirt bridge 去改动已有 Docker、
+WireGuard 和 nftables。Windows 介质只能使用用户提供的合法 ISO 或微软正式
+Evaluation ISO。该 VM 足以做 Service、UI、安装器与基本 TUN 集成，但真实睡眠、
+Wi-Fi/有线切换和长期桌面行为仍由实体 Windows 终验。
 
 若没有 Windows 工作站、只需 Android CI，则在**独立** Linux builder 安装 OpenJDK、
 Android command-line tools、SDK、platform-tools、Emulator 和 x86_64 system image，
 直接使用 KVM 跑 headless Emulator；只有自行重建 native AAR 时才增加 NDK。不安装
-Android-x86 通用 VM。`jm24` 可以构建无界面 APK，但不作为日常 Android Studio 或
-Emulator 工作站。
+Android-x86 通用 VM。无界面 APK 可以在独立 builder 构建；生产控制设备不作为日常
+Android Studio 或 Emulator 工作站。
 
 ---
 

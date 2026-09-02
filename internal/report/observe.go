@@ -323,8 +323,7 @@ func reachTarget(url, dns string, timeout time.Duration) (int, error) {
 	// 那个地址",而系统解析器坏掉时它会报"够不到" —— 长得像出网故障,
 	// 实际只是解析故障,真实流量(sing-box 自带 DNS)一直好着。
 	//
-	// 实测:jm24 的 systemd-resolved 上游是 8.8.8.8(大陆被污染),
-	// 上报者报 baidu 不可达,而换 223.5.5.5 解析后直连是 200/59ms。
+	// 曾有部署因系统解析器异常而把目标误报为不可达，改用 SSOT 显式解析器后恢复。
 	c := netx.Client(dns, timeout)
 	c.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse

@@ -10,7 +10,7 @@ import (
 )
 
 func TestClaimMustBindOuterObservation(t *testing.T) {
-	c := &attest.Claim{Node: "gz02", TS: "2026-08-26T12:00:00Z", Applied: "snap",
+	c := &attest.Claim{Node: "demo-b", TS: "2026-08-26T12:00:00Z", Applied: "snap",
 		Commit: "abc", Binary: "def"}
 	base := Observation{Node: c.Node, TS: c.TS, Applied: c.Applied}
 	if err := bindClaim(&base, c); err != nil {
@@ -18,7 +18,7 @@ func TestClaimMustBindOuterObservation(t *testing.T) {
 	}
 
 	for name, mutate := range map[string]func(*Observation){
-		"节点": func(o *Observation) { o.Node = "hz01" },
+		"节点": func(o *Observation) { o.Node = "demo-c" },
 		"时间": func(o *Observation) { o.TS = "2099-01-01T00:00:00Z" },
 		"快照": func(o *Observation) { o.Applied = "other" },
 	} {
@@ -31,7 +31,7 @@ func TestClaimMustBindOuterObservation(t *testing.T) {
 }
 
 func TestClaimBindsExtendedOuterFields(t *testing.T) {
-	c := &attest.Claim{Node: "gz02", TS: "2026-08-26T12:00:00Z", Applied: "snap",
+	c := &attest.Claim{Node: "demo-b", TS: "2026-08-26T12:00:00Z", Applied: "snap",
 		Commit: "abc", Binary: "def",
 		Rollout: &attest.RolloutClaim{Snapshot: "snap", Stage: "failed", Error: "boom"}}
 	o := Observation{Node: c.Node, TS: c.TS, Applied: c.Applied,
@@ -47,8 +47,8 @@ func TestClaimBindsExtendedOuterFields(t *testing.T) {
 }
 
 func TestClaimBindsMeasurementPayload(t *testing.T) {
-	o := Observation{Node: "gz02", TS: "2026-08-26T12:00:00Z", Applied: "snap",
-		Edges:   []Edge{{To: "sg02", RTTMs: 17, Samples: 5}},
+	o := Observation{Node: "demo-b", TS: "2026-08-26T12:00:00Z", Applied: "snap",
+		Edges:   []Edge{{To: "demo-e", RTTMs: 17, Samples: 5}},
 		Targets: []Reach{{Target: "https://example.test", FirstByteMs: 42, Samples: 5}},
 	}
 	c := &attest.Claim{Node: o.Node, TS: o.TS, Applied: o.Applied,
@@ -69,7 +69,7 @@ func TestClaimBindsMeasurementPayload(t *testing.T) {
 
 func TestClaimBindsComponentVersions(t *testing.T) {
 	o := Observation{
-		Node: "gz02", TS: "2026-08-26T12:00:00Z", Applied: "snap",
+		Node: "demo-b", TS: "2026-08-26T12:00:00Z", Applied: "snap",
 		Components: []ComponentStatus{{
 			Name: "wireguard", Expected: "1.0.20250521", Actual: "1.0.20210914",
 		}},
@@ -106,7 +106,7 @@ func TestMeasurementDigestNormalizesEmptySlicesAcrossJSON(t *testing.T) {
 }
 
 func TestLegacyClaimKeepsTrustedAppliedWithoutMeasurementTrust(t *testing.T) {
-	c := &attest.Claim{Node: "gz02", TS: "2026-08-26T12:00:00Z", Applied: "signed-snapshot"}
+	c := &attest.Claim{Node: "demo-b", TS: "2026-08-26T12:00:00Z", Applied: "signed-snapshot"}
 	st := stateFromClaim(c)
 	if st.Applied != "signed-snapshot" {
 		t.Fatalf("legacy signed Applied was lost: %+v", st)
@@ -125,12 +125,12 @@ func TestClaimBindsAgentHealthAndComponentVersion(t *testing.T) {
 		SelectedKBps: &selectedKBps, BestKBps: &bestKBps,
 	}
 	c := &attest.Claim{
-		Node: "gz02", TS: "2026-08-26T12:00:00Z", Applied: "snap",
+		Node: "demo-b", TS: "2026-08-26T12:00:00Z", Applied: "snap",
 		CanonicalVersion: 4,
 		Agent: &attest.AgentClaim{
-			Node: "gz02", TS: "2026-08-26T12:00:00Z", ComponentVersion: "0.1.0",
+			Node: "demo-b", TS: "2026-08-26T12:00:00Z", ComponentVersion: "0.1.0",
 			Selections: []attest.SelectionClaim{{
-				Declaration: "d", Selector: "svc:d", Candidate: "cand:d:gz02",
+				Declaration: "d", Selector: "svc:d", Candidate: "cand:d:demo-b",
 				UpdatedAt: "2026-08-26T12:00:00Z", Health: claimHealth,
 			}},
 		},
@@ -161,11 +161,11 @@ func TestClaimBindsAgentHealthAndComponentVersion(t *testing.T) {
 func TestExtendedClaimKeepsOldReaderProjectionBound(t *testing.T) {
 	p50, p95, best := 80, 120, 70
 	o := &Observation{
-		Node: "gz02", TS: "2026-08-26T12:00:00Z", Applied: "snap",
+		Node: "demo-b", TS: "2026-08-26T12:00:00Z", Applied: "snap",
 		Agent: &AgentState{
-			Node: "gz02", TS: "2026-08-26T12:00:00Z", ComponentVersion: "0.1.0",
+			Node: "demo-b", TS: "2026-08-26T12:00:00Z", ComponentVersion: "0.1.0",
 			Selections: []AgentSelection{{
-				Declaration: "d", Selector: "svc:d", Candidate: "cand:d:gz02",
+				Declaration: "d", Selector: "svc:d", Candidate: "cand:d:demo-b",
 				UpdatedAt: "2026-08-26T12:00:00Z", Health: &AgentCandidateHealth{
 					Candidates: 1, RecentSuccess: 1, SelectedState: "success",
 					SelectedSamples: 3, SelectedP50MS: &p50, SelectedP95MS: &p95,

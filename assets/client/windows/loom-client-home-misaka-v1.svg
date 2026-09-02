@@ -167,7 +167,7 @@
     <line class="rule" x1="515" y1="314" x2="515" y2="378"/>
     <text class="tiny muted" x="546" y="325">ACTIVE PATH</text>
     <text class="metric" x="546" y="353">2 servers</text>
-    <text class="tiny muted" x="546" y="374">gz02 → sg02</text>
+    <text class="tiny muted" x="546" y="374">demo-b → demo-e</text>
 
     <line class="rule" x1="738" y1="314" x2="738" y2="378"/>
     <text class="tiny muted" x="769" y="325">LAST SWITCH</text>
@@ -217,8 +217,8 @@
     <use href="#icon-globe" x="1256" y="533" width="24" height="24" class="icon-green"/>
 
     <text class="subsection" x="384" y="584" text-anchor="middle">This PC</text>
-    <text class="tiny muted" x="673" y="584" text-anchor="middle">gz02 · Guangzhou</text>
-    <text class="tiny muted" x="961" y="584" text-anchor="middle">sg02 · Singapore</text>
+    <text class="tiny muted" x="673" y="584" text-anchor="middle">demo-b · Region B</text>
+    <text class="tiny muted" x="961" y="584" text-anchor="middle">demo-e · Region D</text>
     <text class="subsection" x="1268" y="584" text-anchor="middle">Internet</text>
     <text class="tiny green" x="526" y="535" text-anchor="middle">31 ms</text>
     <text class="tiny green" x="817" y="535" text-anchor="middle">42 ms</text>

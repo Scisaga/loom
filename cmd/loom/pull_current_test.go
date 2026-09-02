@@ -27,8 +27,8 @@ func signedPullCurrent(t *testing.T, generation uint64) ([]byte, ed25519.PublicK
 		Schema: publish.DeploymentCurrentSchema, Generation: generation,
 		Snapshot: "aaaaaaaaaaaa", PublishedAt: "2026-08-27T12:00:00Z",
 		Assignments: []publish.DeploymentAssignment{
-			{Node: "gz02", Snapshot: "bbbbbbbbbbbb"},
-			{Node: "hz01", Snapshot: "cccccccccccc"},
+			{Node: "demo-b", Snapshot: "bbbbbbbbbbbb"},
+			{Node: "demo-c", Snapshot: "cccccccccccc"},
 		},
 	}
 	if err := current.Sign(priv); err != nil {
@@ -51,7 +51,7 @@ func TestDecodePullCurrentVerifiesSelectsAndChecksFloor(t *testing.T) {
 		Schema: releasefloor.CurrentSchema, Generation: 8,
 		PayloadSHA256: digest, SelectedSnapshot: "cccccccccccc",
 	}
-	got, err := decodePullCurrent(body, "hz01", pub, floor, false)
+	got, err := decodePullCurrent(body, "demo-c", pub, floor, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,13 +60,13 @@ func TestDecodePullCurrentVerifiesSelectsAndChecksFloor(t *testing.T) {
 	}
 	wrongSelection := *floor
 	wrongSelection.SelectedSnapshot = "bbbbbbbbbbbb"
-	if _, err := decodePullCurrent(body, "hz01", pub, &wrongSelection, false); err == nil {
+	if _, err := decodePullCurrent(body, "demo-c", pub, &wrongSelection, false); err == nil {
 		t.Fatal("同 generation/payload 的 floor 选择坐标不一致仍被接受")
 	}
 
 	staleFloor := *floor
 	staleFloor.Generation++
-	if _, err := decodePullCurrent(body, "hz01", pub, &staleFloor, false); err == nil || !strings.Contains(err.Error(), "防重放") {
+	if _, err := decodePullCurrent(body, "demo-c", pub, &staleFloor, false); err == nil || !strings.Contains(err.Error(), "防重放") {
 		t.Fatalf("低于 floor 的 generation 未拒绝:%v", err)
 	}
 }
@@ -74,7 +74,7 @@ func TestDecodePullCurrentVerifiesSelectsAndChecksFloor(t *testing.T) {
 func TestDecodePullCurrentNeverDowngradesBadSignedEnvelope(t *testing.T) {
 	body, pub, _ := signedPullCurrent(t, 3)
 	body = []byte(strings.Replace(string(body), `"generation": 3`, `"generation": 4`, 1))
-	if _, err := decodePullCurrent(body, "gz02", pub, nil, false); err == nil || !strings.Contains(err.Error(), "验签失败") {
+	if _, err := decodePullCurrent(body, "demo-b", pub, nil, false); err == nil || !strings.Contains(err.Error(), "验签失败") {
 		t.Fatalf("signed payload 被改后不应降级成 legacy:%v", err)
 	}
 }
@@ -85,7 +85,7 @@ func TestDecodePullCurrentLegacyMigrationIsStrictAndOneWay(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacy := []byte(`{"snapshot":"0123456789ab","published_at":"2026-08-27T12:00:00Z"}`)
-	got, err := decodePullCurrent(legacy, "jm24", pub, nil, true)
+	got, err := decodePullCurrent(legacy, "demo-d", pub, nil, true)
 	if err != nil || got.snapshot != "0123456789ab" || got.signed != nil {
 		t.Fatalf("迁移期 strict legacy 未被接受:got=%+v err=%v", got, err)
 	}
@@ -93,10 +93,10 @@ func TestDecodePullCurrentLegacyMigrationIsStrictAndOneWay(t *testing.T) {
 		Schema: releasefloor.CurrentSchema, Generation: 1,
 		PayloadSHA256: strings.Repeat("a", 64), SelectedSnapshot: "0123456789ab",
 	}
-	if _, err := decodePullCurrent(legacy, "jm24", pub, floor, true); err == nil || !strings.Contains(err.Error(), "拒绝 unsigned") {
+	if _, err := decodePullCurrent(legacy, "demo-d", pub, floor, true); err == nil || !strings.Contains(err.Error(), "拒绝 unsigned") {
 		t.Fatalf("floor 激活后仍接受 legacy:%v", err)
 	}
-	if _, err := decodePullCurrent(legacy, "jm24", pub, nil, false); err == nil ||
+	if _, err := decodePullCurrent(legacy, "demo-d", pub, nil, false); err == nil ||
 		!strings.Contains(err.Error(), "standalone") {
 		t.Fatalf("新版 standalone pull 不应因 floor 缺失重开 legacy 迁移口:%v", err)
 	}
@@ -107,7 +107,7 @@ func TestDecodePullCurrentLegacyMigrationIsStrictAndOneWay(t *testing.T) {
 		[]byte(`{"snapshot":"NOT-A-SNAPSHOT","published_at":"x"}`),
 		[]byte(`{"snapshot":"0123456789ab","published_at":"x"} {}`),
 	} {
-		if _, err := decodePullCurrent(bad, "jm24", pub, nil, true); err == nil {
+		if _, err := decodePullCurrent(bad, "demo-d", pub, nil, true); err == nil {
 			t.Fatalf("非严格 legacy 被接受:%s", bad)
 		}
 	}
@@ -150,7 +150,7 @@ func TestContinuationRecordsHigherSignedFloorBeforeSnapshotMismatch(t *testing.T
 	defer srv.Close()
 
 	err = cmdPull([]string{
-		"-url", srv.URL, "-node", "hz01", "-pubkey", pubPath,
+		"-url", srv.URL, "-node", "demo-c", "-pubkey", pubPath,
 		"-release-floor", floorPath, "-deploy-lock", lockPath,
 		"-bin", binPath,
 	})
@@ -195,7 +195,7 @@ func TestFirstSeenHigherGenerationRequiresOutOfBandCurrent(t *testing.T) {
 	t.Setenv(contSnapshotEnv, "")
 
 	err := cmdPull([]string{
-		"-url", srv.URL, "-node", "hz01", "-pubkey", pubPath,
+		"-url", srv.URL, "-node", "demo-c", "-pubkey", pubPath,
 		"-release-floor", filepath.Join(dir, "floor.json"),
 		"-deploy-lock", filepath.Join(dir, "deploy.lock"),
 	})
@@ -244,7 +244,7 @@ func TestPullAdvancesSignedFloorBeforeManifestDownloadFails(t *testing.T) {
 	t.Setenv(contSnapshotEnv, "")
 
 	err := cmdPull([]string{
-		"-url", server.URL, "-node", "hz01", "-pubkey", pubPath,
+		"-url", server.URL, "-node", "demo-c", "-pubkey", pubPath,
 		"-release-floor", floorPath, "-deploy-lock", lockPath, "-bin", binPath,
 		"-expected-current", expectedPath,
 	})
@@ -295,7 +295,7 @@ func TestPullNeverPersistsFloorBesideIncapableInstalledReader(t *testing.T) {
 	t.Setenv(contSnapshotEnv, "")
 
 	err := cmdPull([]string{
-		"-url", srv.URL, "-node", "hz01", "-pubkey", pubPath,
+		"-url", srv.URL, "-node", "demo-c", "-pubkey", pubPath,
 		"-expected-current", expectedPath, "-release-floor", floorPath,
 		"-deploy-lock", filepath.Join(dir, "deploy.lock"), "-bin", binPath,
 	})

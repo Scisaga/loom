@@ -25,7 +25,7 @@ func TestRejects(t *testing.T) {
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k1}}
-  - {id: b, public_endpoint: 2.2.2.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
+  - {id: b, public_endpoint: 198.51.100.42, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
 tunnels:
   - {from: a, to: b, listen_port: 61637, retired_ports: [61637], from_addr: 10.99.0.1/32, to_addr: 10.99.0.2/32}
 `,
@@ -37,7 +37,7 @@ tunnels:
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k1}}
-  - {id: b, public_endpoint: 2.2.2.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
+  - {id: b, public_endpoint: 198.51.100.42, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
 tunnels:
   - {from: a, to: b, listen_port: 61637, retired_ports: [8080], from_addr: 10.99.0.1/32, to_addr: 10.99.0.2/32}
 `,
@@ -49,7 +49,7 @@ tunnels:
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: reverse_only, wg_public_key: k1}}
-  - {id: b, public_endpoint: 1.1.1.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
+  - {id: b, public_endpoint: 192.0.2.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
 tunnels:
   - {from: a, to: b, listen_port: 61611, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
 		},
@@ -60,7 +60,7 @@ tunnels:
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: direct_only, wg_public_key: k1}}
-  - {id: b, public_endpoint: 1.1.1.2, server: {direction: direct_only, wg_public_key: k2}}
+  - {id: b, public_endpoint: 192.0.2.2, server: {direction: direct_only, wg_public_key: k2}}
 tunnels:
   - {from: a, to: b, listen_port: 61611, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
 		},
@@ -71,8 +71,8 @@ tunnels:
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: acc, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k0}}
-  - {id: t1, public_endpoint: 1.1.1.2, server: {direction: reverse_only, wg_public_key: k1}}
-  - {id: t2, public_endpoint: 1.1.1.3, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
+  - {id: t1, public_endpoint: 192.0.2.2, server: {direction: reverse_only, wg_public_key: k1}}
+  - {id: t2, public_endpoint: 192.0.2.3, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
 tunnels:
   - {from: acc, to: t1, listen_port: 61637, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}
   - {from: acc, to: t2, listen_port: 61637, from_addr: 10.0.0.3/32, to_addr: 10.0.0.4/32}`,
@@ -84,8 +84,8 @@ tunnels:
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: acc, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k0}}
-  - {id: t1, public_endpoint: 1.1.1.2, server: {direction: reverse_only, wg_public_key: k1}}
-  - {id: t2, public_endpoint: 1.1.1.3, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
+  - {id: t1, public_endpoint: 192.0.2.2, server: {direction: reverse_only, wg_public_key: k1}}
+  - {id: t2, public_endpoint: 192.0.2.3, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
 tunnels:
   - {from: acc, to: t1, listen_port: 61611, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}
   - {from: acc, to: t2, listen_port: 61612, from_addr: 10.0.0.1/32, to_addr: 10.0.0.3/32}`,
@@ -97,7 +97,7 @@ tunnels:
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k1}}
-  - {id: b, public_endpoint: 1.1.1.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
+  - {id: b, public_endpoint: 192.0.2.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
 tunnels:
   - {from: a, to: b, listen_port: 61611, from_addr: 10.0.0.0/24, to_addr: 10.0.1.2/32}`,
 		},
@@ -108,7 +108,7 @@ tunnels:
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k1}}
-  - {id: b, public_endpoint: 1.1.1.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
+  - {id: b, public_endpoint: 192.0.2.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
 tunnels:
   - {from: a, to: b, listen_port: 61611, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
 		},
@@ -119,7 +119,7 @@ tunnels:
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433}}
-  - {id: b, public_endpoint: 1.1.1.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
+  - {id: b, public_endpoint: 192.0.2.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
 tunnels:
   - {from: a, to: b, listen_port: 61611, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
 		},
@@ -130,7 +130,7 @@ tunnels:
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k1}}
-  - {id: b, public_endpoint: 1.1.1.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
+  - {id: b, public_endpoint: 192.0.2.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
 tunnels:
   - {from: a, to: b, listen_port: 61611, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}
   - {from: b, to: a, listen_port: 61612, from_addr: 10.0.0.3/32, to_addr: 10.0.0.4/32}`,
@@ -142,7 +142,7 @@ tunnels:
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k1}}
-  - {id: server-in-a-very-long-city, public_endpoint: 1.1.1.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
+  - {id: server-in-a-very-long-city, public_endpoint: 192.0.2.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
 tunnels:
   - {from: a, to: server-in-a-very-long-city, listen_port: 61611, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
 		},
@@ -188,7 +188,7 @@ tunnels:
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k1}}
-  - {id: b, public_endpoint: 1.1.1.2, server: {direction: direct_only, inbound_port: 4433, wg_public_key: k2}}
+  - {id: b, public_endpoint: 192.0.2.2, server: {direction: direct_only, inbound_port: 4433, wg_public_key: k2}}
 tunnels:
   - {from: a, to: b, listen_port: 61611, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
 		},
@@ -239,7 +239,7 @@ declarations:
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1, }, drain: true}
-  - {id: b, public_endpoint: 1.1.1.2, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k2}}
+  - {id: b, public_endpoint: 192.0.2.2, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k2}}
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: "pinned:a", objective: latency, probe_url: "https://x/", tuning_period: 10m, window: 2h, min_samples: 6, stale_after: 30m, allowed_servers: [a, b]}`,
 		},
@@ -250,7 +250,7 @@ declarations:
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}, drain: true}
-  - {id: b, public_endpoint: 1.1.1.2, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k2}, drain: true}`,
+  - {id: b, public_endpoint: 192.0.2.2, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k2}, drain: true}`,
 		},
 		{
 			name: "§14.4 已下线的节点还挂着隧道",
@@ -259,7 +259,7 @@ nodes:
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
-  - {id: b, public_endpoint: 1.1.1.2, server: {direction: reverse_only, inbound_port: 4433, egress_capable: true, wg_public_key: k2}, decommission: true}
+  - {id: b, public_endpoint: 192.0.2.2, server: {direction: reverse_only, inbound_port: 4433, egress_capable: true, wg_public_key: k2}, decommission: true}
 tunnels:
   - {from: a, to: b, listen_port: 61611, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`,
 		},
@@ -281,7 +281,7 @@ nodes:
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - id: acc
-    public_endpoint: 1.1.1.9
+    public_endpoint: 192.0.2.9
     server: {direction: bidirectional, wg_public_key: k0}
     access: {platform: linux-server, credentials: [c1], mixed_ports: [{port: 1082, services: true}]}
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
@@ -300,7 +300,7 @@ services:
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - id: acc
-    public_endpoint: 1.1.1.9
+    public_endpoint: 192.0.2.9
     server: {direction: bidirectional, wg_public_key: k0}
     access: {platform: linux-server, credentials: [c1], mixed_ports: [{port: 1082, services: true}]}
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
@@ -318,7 +318,7 @@ services:
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - id: acc
-    public_endpoint: 1.1.1.9
+    public_endpoint: 192.0.2.9
     server: {direction: bidirectional, wg_public_key: k0}
     access: {platform: linux-server, credentials: [c1], mixed_ports: [{port: 1082, services: true}]}
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
@@ -336,7 +336,7 @@ services:
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - id: acc
-    public_endpoint: 1.1.1.9
+    public_endpoint: 192.0.2.9
     server: {direction: bidirectional, wg_public_key: k0}
     access: {platform: linux-server, credentials: [c1], mixed_ports: [{port: 1082, services: true}]}
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
@@ -354,7 +354,7 @@ services:
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - id: acc
-    public_endpoint: 1.1.1.9
+    public_endpoint: 192.0.2.9
     server: {direction: bidirectional, wg_public_key: k0}
     access: {platform: linux-server, credentials: [c1], mixed_ports: [{port: 1082, services: true, declaration: d1}]}
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
@@ -372,7 +372,7 @@ services:
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - id: acc
-    public_endpoint: 1.1.1.9
+    public_endpoint: 192.0.2.9
     server: {direction: bidirectional, wg_public_key: k0}
     access:
       platform: linux-server
@@ -395,7 +395,7 @@ services:
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - id: acc
-    public_endpoint: 1.1.1.9
+    public_endpoint: 192.0.2.9
     server: {direction: bidirectional, wg_public_key: k0}
     access: {platform: linux-server, credentials: [c1], mixed_ports: [{port: 1082, services: true}]}
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
@@ -413,12 +413,12 @@ services:
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - id: acc
-    public_endpoint: 1.1.1.9
+    public_endpoint: 192.0.2.9
     server: {direction: bidirectional, wg_public_key: k0}
     access: {platform: linux-server, credentials: [c1], mixed_ports: [{port: 1080, declaration: d1}]}
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
-  - {id: b, public_endpoint: 1.1.1.2, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k2}}
-  - {id: c, public_endpoint: 1.1.1.3, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k3}}
+  - {id: b, public_endpoint: 192.0.2.2, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k2}}
+  - {id: c, public_endpoint: 192.0.2.3, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k3}}
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, probe_url: "https://t/", tuning_period: 10m, window: 2h, min_samples: 6, stale_after: 30m, max_hops: 2, probe_budget: 2, allowed_servers: [a, b, c]}
 credentials:
@@ -573,7 +573,8 @@ func TestAttestationUpgradeGateOnlyAllowsCompatibilityOrV5(t *testing.T) {
 }
 
 func TestDistributionURLMustBeAnUncredentialedHTTPURL(t *testing.T) {
-	for _, raw := range []string{"ssh://mirror/loom/", "https://user:pass@mirror/loom/", "https://mirror/loom/?token=x"} {
+	credentialedURL := "https://" + "user:pass@" + "mirror/loom/"
+	for _, raw := range []string{"ssh://mirror/loom/", credentialedURL, "https://mirror/loom/?token=x"} {
 		s := &model.SSOT{Defaults: &model.SSOTDefaults{DistributionURL: raw}}
 		if got := Format(Validate(s)); !strings.Contains(got, "distribution_url") {
 			t.Errorf("unsafe distribution URL %q was accepted: %s", raw, got)
@@ -581,7 +582,7 @@ func TestDistributionURLMustBeAnUncredentialedHTTPURL(t *testing.T) {
 	}
 	s := &model.SSOT{
 		Defaults: &model.SSOTDefaults{DistributionURL: "https://public.example/loom/"},
-		Nodes:    []model.Node{{ID: "sv01", DistributionURL: "http://10.99.2.2/loom/"}},
+		Nodes:    []model.Node{{ID: "demo-f", DistributionURL: "http://10.99.2.2/loom/"}},
 	}
 	if got := Format(Validate(s)); strings.Contains(got, "distribution_url") {
 		t.Fatalf("safe node distribution override was rejected: %s", got)

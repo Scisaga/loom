@@ -235,7 +235,7 @@ func TestOverviewAttentionNamesProblemAndUnknownNodesWithoutContradiction(t *tes
 	d := misakaDeps()
 	v := d.Snapshot()
 	v.Nodes = []NodeView{
-		{ID: "jm24", Declared: true, Health: "problem"},
+		{ID: "demo-d", Declared: true, Health: "problem"},
 		{ID: "vm-0-3-ed43", Declared: true, Health: "unknown"},
 	}
 	d.Snapshot = func() View { return v }
@@ -244,7 +244,7 @@ func TestOverviewAttentionNamesProblemAndUnknownNodesWithoutContradiction(t *tes
 	body := pageOverview(d, false)
 	for _, want := range []string{
 		"1 个节点存在异常，另有 1 个等待状态上报",
-		"异常：<span class=mono>jm24",
+		"异常：<span class=mono>demo-d",
 		"等待上报：<span class=mono>vm-0-3-ed43",
 		"尚未上线时，与它相连的预期隧道也可能让相邻节点暂时显示异常",
 	} {
@@ -329,9 +329,9 @@ func TestTopologyProjectsAutomaticRoutingWithoutPathControls(t *testing.T) {
 	d := misakaDeps()
 	v := d.Snapshot()
 	v.Routes = append(v.Routes, RouteView{
-		Node: "jm24", Declaration: "cn-web", Selector: "svc:cn-web",
+		Node: "demo-d", Declaration: "cn-web", Selector: "svc:cn-web",
 		ScopeKind: ScopeService, ScopeID: "cn-web", PolicyID: "local",
-		Chain: []string{"jm24"}, ObservedAt: v.ObservedAt, Source: "agent/jm24",
+		Chain: []string{"demo-d"}, ObservedAt: v.ObservedAt, Source: "agent/demo-d",
 	})
 	v.Services = append(v.Services, ServiceView{ID: "cn-web", Name: "Domestic web", PolicyID: "local"})
 	d.Snapshot = func() View { return v }
@@ -339,8 +339,8 @@ func TestTopologyProjectsAutomaticRoutingWithoutPathControls(t *testing.T) {
 	body := pageTopology(d, false)
 	for _, want := range []string{
 		`class=route marker-end`, "Automatic routing", "Read-only · automatic Agent decisions",
-		"Host → Service → Policy", "International APIs", "jm24 → sg02",
-		"Domestic web", "jm24 → local exit", ">LOCAL EXIT</text>",
+		"Host → Service → Policy", "International APIs", "demo-d → demo-e",
+		"Domestic web", "demo-d → local exit", ">LOCAL EXIT</text>",
 		"Automatic Agent route · read-only", "View decision evidence",
 		"新增节点按 direction 自动进入对应环", "不参与节点排序或改变布局",
 		"topology-layout", "topology-status-grid", "Intent matched with signed evidence",
@@ -376,7 +376,7 @@ func TestLivePathsPresentsRulesAsAutomaticReadOnlyDecisions(t *testing.T) {
 	for _, want := range []string{
 		"Automatic routing scopes", "Current automatic decision",
 		"not a client path choice", "not client-selectable paths",
-		"International APIs", "jm24 → sg02", "Inspect in topology",
+		"International APIs", "demo-d → demo-e", "Inspect in topology",
 		"routing-summary", "routing-decision-card", "routing-decision-table", "route-text",
 	} {
 		if !strings.Contains(body, want) {
@@ -396,9 +396,9 @@ func TestLivePathsPresentsRulesAsAutomaticReadOnlyDecisions(t *testing.T) {
 func TestTopologySeparatesCarrierEvidenceFromOnDemandIntent(t *testing.T) {
 	d := misakaDeps()
 	v := d.Snapshot()
-	v.Nodes = append(v.Nodes, NodeView{ID: "gz02", Declared: true, Health: "healthy", Direction: "bidirectional"})
+	v.Nodes = append(v.Nodes, NodeView{ID: "demo-b", Declared: true, Health: "healthy", Direction: "bidirectional"})
 	v.Links = append(v.Links, LinkView{
-		From: "gz02", To: "jm24", Kind: "candidate", State: "unverified",
+		From: "demo-b", To: "demo-d", Kind: "candidate", State: "unverified",
 		Source: "SSOT RouteCandidate.ServerChain · 候选跳，未核验",
 	})
 	d.Snapshot = func() View { return v }
@@ -422,8 +422,8 @@ func TestTopologyDirectProbeStatusSeparatesDeclaredFromSampled(t *testing.T) {
 	d := misakaDeps()
 	v := d.Snapshot()
 	v.Links = append(v.Links,
-		LinkView{From: "jm24", To: "gz02", Kind: "direct-hy2", Samples: 3},
-		LinkView{From: "gz02", To: "hz01", Kind: "direct-hy2"},
+		LinkView{From: "demo-d", To: "demo-b", Kind: "direct-hy2", Samples: 3},
+		LinkView{From: "demo-b", To: "demo-c", Kind: "direct-hy2"},
 	)
 	d.Snapshot = func() View { return v }
 
@@ -442,7 +442,7 @@ func TestEventsShowsCurrentStateSeparatelyFromHistory(t *testing.T) {
 	d := misakaDeps()
 	d.Unresolved = func() []UnresolvedView {
 		return []UnresolvedView{{
-			Node: "sg02", Kind: "tunnel", Subject: "wg-jm24", State: "failed",
+			Node: "demo-e", Kind: "tunnel", Subject: "wg-demo-d", State: "failed",
 			Detail: "current signed observation", Level: "problem", Lasted: "4m",
 		}}
 	}

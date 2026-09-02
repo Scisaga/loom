@@ -23,7 +23,7 @@ func deps(op string, acts map[string]func() (string, error)) Deps {
 					Tunnels: []TunnelView{{Interface: "wg-a", CarrierPresent: true, State: "active", AgeSec: 30, CounterPresent: true, OK: true}},
 					Targets: []TargetView{{Target: "https://t/", MS: 100}}},
 				{ID: "n2", Declared: true, Applied: "abc123",
-					Targets: []TargetView{{Target: "https://t/", Err: `Get "https://t/": dial tcp 1.2.3.4:443: connect: connection refused`}}},
+					Targets: []TargetView{{Target: "https://t/", Err: `Get "https://t/": dial tcp 192.0.2.44:443: connect: connection refused`}}},
 			}}
 		},
 	}
@@ -116,16 +116,16 @@ func TestFaviconUsesSimplifiedLoomMark(t *testing.T) {
 
 func TestTopologyUsesConcentricRingsAndObservedLinkMetrics(t *testing.T) {
 	view := View{Nodes: []NodeView{
-		{ID: "jm24", Self: true, Declared: true, Health: "healthy", Direction: "bidirectional", Roles: []string{"control", "access", "server", "egress"}, City: "北京"},
-		{ID: "gz02", Declared: true, Health: "healthy", Direction: "bidirectional", Roles: []string{"server", "egress"}, City: "广州"},
-		{ID: "hz01", Declared: true, Health: "healthy", Direction: "bidirectional", Roles: []string{"server", "egress"}, City: "杭州"},
-		{ID: "ber01", Declared: true, Health: "healthy", Direction: "reverse_only", Roles: []string{"server", "egress"}, City: "柏林"},
-		{ID: "sg02", Declared: true, Health: "healthy", Direction: "reverse_only", Roles: []string{"server", "egress"}, City: "新加坡"},
-		{ID: "sv01", Declared: true, Health: "healthy", Direction: "reverse_only", Roles: []string{"server", "egress"}, City: "硅谷"},
+		{ID: "demo-d", Self: true, Declared: true, Health: "healthy", Direction: "bidirectional", Roles: []string{"control", "access", "server", "egress"}, City: "区域 A"},
+		{ID: "demo-b", Declared: true, Health: "healthy", Direction: "bidirectional", Roles: []string{"server", "egress"}, City: "区域 B"},
+		{ID: "demo-c", Declared: true, Health: "healthy", Direction: "bidirectional", Roles: []string{"server", "egress"}, City: "区域 C"},
+		{ID: "demo-a", Declared: true, Health: "healthy", Direction: "reverse_only", Roles: []string{"server", "egress"}, City: "区域 E"},
+		{ID: "demo-e", Declared: true, Health: "healthy", Direction: "reverse_only", Roles: []string{"server", "egress"}, City: "区域 D"},
+		{ID: "demo-f", Declared: true, Health: "healthy", Direction: "reverse_only", Roles: []string{"server", "egress"}, City: "区域 F"},
 	}, Links: []LinkView{
-		{From: "jm24", To: "sv01", Kind: "tunnel", State: "active", MS: 18, Samples: 5, ObservedAt: "2026-08-29T12:00:00Z", RecentTXBytes: 75_000, RateWindowSeconds: 300, RateSamples: 4, RateReportingEndpoints: 2, QualityP50MS: 40, QualityP95MS: 75, QualityObservations: 8, MetricsSource: "trusted test evidence"},
-		{From: "gz02", To: "hz01", Kind: "direct-hy2", State: "active", MS: 31, Samples: 5, ObservedAt: "2026-08-29T12:00:00Z", ObservedFrom: "gz02", ObservedTo: "hz01", ProbeBytes: 67_125, ProbeDurationMS: 30_000, ProbeSamples: 4, QualityP50MS: 27, QualityP95MS: 31, QualityObservations: 8, Source: "active single-hop probe", MetricsSource: "signed loom-link-metric-v1"},
-		{From: "gz02", To: "jm24", Kind: "candidate", State: "unverified", Source: "test intent"},
+		{From: "demo-d", To: "demo-f", Kind: "tunnel", State: "active", MS: 18, Samples: 5, ObservedAt: "2026-08-29T12:00:00Z", RecentTXBytes: 75_000, RateWindowSeconds: 300, RateSamples: 4, RateReportingEndpoints: 2, QualityP50MS: 40, QualityP95MS: 75, QualityObservations: 8, MetricsSource: "trusted test evidence"},
+		{From: "demo-b", To: "demo-c", Kind: "direct-hy2", State: "active", MS: 31, Samples: 5, ObservedAt: "2026-08-29T12:00:00Z", ObservedFrom: "demo-b", ObservedTo: "demo-c", ProbeBytes: 67_125, ProbeDurationMS: 30_000, ProbeSamples: 4, QualityP50MS: 27, QualityP95MS: 31, QualityObservations: 8, Source: "active single-hop probe", MetricsSource: "signed loom-link-metric-v1"},
+		{From: "demo-b", To: "demo-d", Kind: "candidate", State: "unverified", Source: "test intent"},
 	}}
 
 	topology := topologySVG(view)
@@ -137,15 +137,15 @@ func TestTopologyUsesConcentricRingsAndObservedLinkMetrics(t *testing.T) {
 	}
 	for _, want := range []string{
 		`class="topology-ring outer"`, `class="topology-ring inner"`,
-		`data-node="jm24" data-ring="inner" data-angle="-90.0"`,
-		`data-node="ber01" data-ring="outer" data-angle="-30.0"`,
+		`data-node="demo-d" data-ring="inner" data-angle="-90.0"`,
+		`data-node="demo-a" data-ring="outer" data-angle="-30.0"`,
 		`role=button tabindex="0" aria-pressed="false"`,
-		`A 170.0 75.0`, `18ms · Δ35ms · 2.0kb/s`, `31ms · Δ4ms · 17.9kb/s`, `硅谷 · server + egress`,
-		`class=edge-metric data-from="jm24" data-to="sv01"`,
-		`class="topology-edge edge-direct-hy2" data-from="gz02" data-to="hz01"`,
+		`A 170.0 75.0`, `18ms · Δ35ms · 2.0kb/s`, `31ms · Δ4ms · 17.9kb/s`, `区域 F · server + egress`,
+		`class=edge-metric data-from="demo-d" data-to="demo-f"`,
+		`class="topology-edge edge-direct-hy2" data-from="demo-b" data-to="demo-c"`,
 		`class="direct-hy2"`,
-		`class=edge-metric data-from="gz02" data-to="hz01"`,
-		`方向 gz02→hz01`, `公网 Hysteria2 单跳主动探测`,
+		`class=edge-metric data-from="demo-b" data-to="demo-c"`,
+		`方向 demo-b→demo-c`, `公网 Hysteria2 单跳主动探测`,
 		`近 5 分钟实际传输速率 2.0kb/s`,
 	} {
 		if !strings.Contains(topology, want) {
@@ -166,14 +166,14 @@ func TestTopologyUsesConcentricRingsAndObservedLinkMetrics(t *testing.T) {
 
 func TestTopologyIsDataDrivenAndRouteOverlayDoesNotReorderRings(t *testing.T) {
 	view := View{Nodes: []NodeView{
-		{ID: "jm24", Self: true, Direction: "bidirectional"},
-		{ID: "hz01", Direction: "bidirectional"},
-		{ID: "ber01", Direction: "reverse_only"},
-		{ID: "sg02", Direction: "reverse_only"},
+		{ID: "demo-d", Self: true, Direction: "bidirectional"},
+		{ID: "demo-c", Direction: "bidirectional"},
+		{ID: "demo-a", Direction: "reverse_only"},
+		{ID: "demo-e", Direction: "reverse_only"},
 	}}
 	base := topologySVG(view)
-	overlaid := topologySVG(view, RouteView{Node: "jm24", Chain: []string{"jm24", "sg02"}})
-	for _, nodeID := range []string{"jm24", "hz01", "ber01", "sg02"} {
+	overlaid := topologySVG(view, RouteView{Node: "demo-d", Chain: []string{"demo-d", "demo-e"}})
+	for _, nodeID := range []string{"demo-d", "demo-c", "demo-a", "demo-e"} {
 		pattern := regexp.MustCompile(`data-node="` + nodeID + `" data-ring="[^"]+" data-angle="[^"]+"`)
 		before, after := pattern.FindString(base), pattern.FindString(overlaid)
 		if before == "" || after == "" || before != after {
@@ -199,7 +199,7 @@ func TestTopologyIsDataDrivenAndRouteOverlayDoesNotReorderRings(t *testing.T) {
 
 func TestTopologyLinkMetricUsesCompactDeltaOrder(t *testing.T) {
 	compact, detail := topologyLinkMetric(LinkView{
-		From: "jm24", To: "sv01", MS: 207, Samples: 5, ObservedAt: "2026-08-29T12:00:00Z",
+		From: "demo-d", To: "demo-f", MS: 207, Samples: 5, ObservedAt: "2026-08-29T12:00:00Z",
 		RecentTXBytes: 671_250, RateWindowSeconds: 300, RateSamples: 4, RateReportingEndpoints: 2,
 		QualityP50MS: 203, QualityP95MS: 207, QualityObservations: 8,
 	})
@@ -215,8 +215,8 @@ func TestTopologyLinkMetricUsesCompactDeltaOrder(t *testing.T) {
 
 func TestTopologyDirectHy2MetricUsesDirectedProbeSemantics(t *testing.T) {
 	compact, detail := topologyLinkMetric(LinkView{
-		From: "gz02", To: "hz01", Kind: "direct-hy2",
-		ObservedFrom: "gz02", ObservedTo: "hz01", MS: 207, Samples: 5, ObservedAt: "2026-08-29T12:00:00Z",
+		From: "demo-b", To: "demo-c", Kind: "direct-hy2",
+		ObservedFrom: "demo-b", ObservedTo: "demo-c", MS: 207, Samples: 5, ObservedAt: "2026-08-29T12:00:00Z",
 		ProbeBytes: 67_125, ProbeDurationMS: 30_000, ProbeSamples: 4,
 		QualityP50MS: 203, QualityP95MS: 207, QualityObservations: 8,
 	})
@@ -224,7 +224,7 @@ func TestTopologyDirectHy2MetricUsesDirectedProbeSemantics(t *testing.T) {
 		t.Fatalf("compact direct Hy2 metric = %q", compact)
 	}
 	for _, want := range []string{
-		"方向 gz02→hz01", "公网 Hysteria2 单跳主动探测", "Hy2 单跳响应延迟 207ms",
+		"方向 demo-b→demo-c", "公网 Hysteria2 单跳主动探测", "Hy2 单跳响应延迟 207ms",
 		"固定响应 67125 bytes / 30000ms", "4 个探测样本",
 		"速率为固定响应的 achieved probe throughput，不是业务流量/容量",
 	} {
@@ -234,7 +234,7 @@ func TestTopologyDirectHy2MetricUsesDirectedProbeSemantics(t *testing.T) {
 	}
 
 	compact, _ = topologyLinkMetric(LinkView{
-		From: "gz02", To: "hz01", Kind: "direct-hy2",
+		From: "demo-b", To: "demo-c", Kind: "direct-hy2",
 		MS: 207, Samples: 5, ObservedAt: "2026-08-29T12:00:00Z",
 		ProbeBytes: 67_125, ProbeSamples: 4,
 	})
@@ -260,15 +260,15 @@ func TestTopologyInteractionContract(t *testing.T) {
 
 func TestFocusedTopologyMetricsDoNotOverlapForSixNodeMesh(t *testing.T) {
 	positions := map[string]topologyPoint{}
-	topologyRingPositions(positions, []string{"jm24", "gz02", "hz01"}, "inner", -90, 170, 75)
-	topologyRingPositions(positions, []string{"ber01", "sg02", "sv01"}, "outer", -30, 310, 130)
+	topologyRingPositions(positions, []string{"demo-d", "demo-b", "demo-c"}, "inner", -90, 170, 75)
+	topologyRingPositions(positions, []string{"demo-a", "demo-e", "demo-f"}, "outer", -30, 310, 130)
 	nodes := map[string]NodeView{
-		"jm24":  {ID: "jm24", City: "北京", Roles: []string{"control", "access", "server", "egress"}},
-		"gz02":  {ID: "gz02", City: "广州", Roles: []string{"server", "egress"}},
-		"hz01":  {ID: "hz01", City: "杭州", Roles: []string{"server", "egress"}},
-		"ber01": {ID: "ber01", City: "柏林", Roles: []string{"server", "egress"}},
-		"sg02":  {ID: "sg02", City: "新加坡", Roles: []string{"server", "egress"}},
-		"sv01":  {ID: "sv01", City: "硅谷", Roles: []string{"server", "egress"}},
+		"demo-d": {ID: "demo-d", City: "区域 A", Roles: []string{"control", "access", "server", "egress"}},
+		"demo-b":  {ID: "demo-b", City: "区域 B", Roles: []string{"server", "egress"}},
+		"demo-c":  {ID: "demo-c", City: "区域 C", Roles: []string{"server", "egress"}},
+		"demo-a":  {ID: "demo-a", City: "区域 E", Roles: []string{"server", "egress"}},
+		"demo-e":  {ID: "demo-e", City: "区域 D", Roles: []string{"server", "egress"}},
+		"demo-f":  {ID: "demo-f", City: "区域 F", Roles: []string{"server", "egress"}},
 	}
 	measuredLink := func(from, to string) LinkView {
 		return LinkView{
@@ -285,17 +285,17 @@ func TestFocusedTopologyMetricsDoNotOverlapForSixNodeMesh(t *testing.T) {
 		}
 	}
 	var links []LinkView
-	for _, inner := range []string{"jm24", "gz02", "hz01"} {
-		for _, outer := range []string{"ber01", "sg02", "sv01"} {
+	for _, inner := range []string{"demo-d", "demo-b", "demo-c"} {
+		for _, outer := range []string{"demo-a", "demo-e", "demo-f"} {
 			links = append(links, measuredLink(inner, outer))
 		}
 	}
 	// Same-ring Hy2 direct probes must use the same measured-label placement
 	// path. (Candidate arcs deliberately remain unmeasured.)
 	links = append(links,
-		measuredDirect("jm24", "gz02"),
-		measuredDirect("gz02", "hz01"),
-		measuredDirect("hz01", "jm24"),
+		measuredDirect("demo-d", "demo-b"),
+		measuredDirect("demo-b", "demo-c"),
+		measuredDirect("demo-c", "demo-d"),
 	)
 	labels := topologyMetricPositions(links, positions, nodes)
 	if len(labels) != len(links) {
@@ -314,15 +314,15 @@ func TestFocusedTopologyMetricsDoNotOverlapForSixNodeMesh(t *testing.T) {
 			}
 		}
 	}
-	// Regression: this was the top-left label hidden behind sv01 and its
+	// Regression: this was the top-left label hidden behind demo-f and its
 	// subtitle when its outer-ring fan used a position only 14%% from the node.
-	svKey := topologyLinkKey("sv01", "jm24")
+	svKey := topologyLinkKey("demo-f", "demo-d")
 	for _, obstacle := range obstacles {
-		if obstacle.node == "sv01" && topologyRectsOverlap(metricBounds[svKey], obstacle.bounds) {
-			t.Fatalf("sv01↔jm24 metric still overlaps sv01: metric=%+v obstacle=%+v", metricBounds[svKey], obstacle.bounds)
+		if obstacle.node == "demo-f" && topologyRectsOverlap(metricBounds[svKey], obstacle.bounds) {
+			t.Fatalf("demo-f↔demo-d metric still overlaps demo-f: metric=%+v obstacle=%+v", metricBounds[svKey], obstacle.bounds)
 		}
 	}
-	for _, node := range []string{"jm24", "gz02", "hz01", "ber01", "sg02", "sv01"} {
+	for _, node := range []string{"demo-d", "demo-b", "demo-c", "demo-a", "demo-e", "demo-f"} {
 		var incident []svgRect
 		for _, link := range links {
 			if link.From == node || link.To == node {
@@ -574,13 +574,13 @@ func TestOverviewShowsComponentDriftAndAgentCandidateHealth(t *testing.T) {
 	d.Snapshot = func() View {
 		return View{
 			Nodes: []NodeView{{
-				ID: "gz02", Health: "problem",
+				ID: "demo-b", Health: "problem",
 				Components: []ComponentView{{
 					Name: "wireguard", Expected: "1.0.20250521", Actual: "1.0.20210914", OK: false,
 				}},
 			}},
 			Routes: []RouteView{{
-				Node: "jm24", Declaration: "best-egress", Chain: []string{"jm24", "gz02"},
+				Node: "demo-d", Declaration: "best-egress", Chain: []string{"demo-d", "demo-b"},
 				ObservedAt: at.Format(time.RFC3339), Source: "签名转述",
 				Health: &CandidateHealthView{
 					Candidates: 4, RecentSuccess: 1, RecentDegraded: 1, RecentFailed: 1, Unknown: 1,
@@ -607,7 +607,7 @@ func TestOverviewShowsSelectedFailureWithoutMetrics(t *testing.T) {
 	d := deps("", nil)
 	d.Snapshot = func() View {
 		return View{Routes: []RouteView{{
-			Node: "jm24", Declaration: "d", Chain: []string{"jm24", "gz02"},
+			Node: "demo-d", Declaration: "d", Chain: []string{"demo-d", "demo-b"},
 			Health: &CandidateHealthView{
 				Candidates: 2, RecentFailed: 2, SelectedState: "failed",
 			},

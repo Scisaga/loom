@@ -11,9 +11,9 @@ func allocSSOT(t *testing.T) *SSOT {
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: cn1, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k1}}
-  - {id: cn2, public_endpoint: 1.1.1.2, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k2}}
-  - {id: v1,  public_endpoint: 2.2.2.1, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k3}}
-  - {id: v2,  public_endpoint: 2.2.2.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k4}}
+  - {id: cn2, public_endpoint: 192.0.2.2, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k2}}
+  - {id: v1,  public_endpoint: 198.51.100.41, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k3}}
+  - {id: v2,  public_endpoint: 198.51.100.42, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k4}}
 tunnels:
   - {from: cn1, to: v1, listen_port: 61637, from_addr: 10.99.0.1/32, to_addr: 10.99.0.2/32}
   - {from: cn2, to: v1, listen_port: 61619, from_addr: 10.99.0.3/32, to_addr: 10.99.0.4/32}
@@ -144,7 +144,7 @@ func TestRefusesUnneededTunnel(t *testing.T) {
 
 // **轮换必须记住换掉了什么。**
 //
-// 起因是实测:hz01 ↔ ber01 在某个端口上被单向丢包丢了 15.8 小时,换个端口
+// 起因是实测:demo-c ↔ demo-a 在某个端口上被单向丢包丢了 15.8 小时,换个端口
 // 七分钟就通。而如果分配器不记退役端口,轮换两次就会转回那个已知不通的
 // 端口 —— 症状是"换了端口还是不通",跟真实原因毫不相干。
 func TestRotationNeverRevisitsARetiredPort(t *testing.T) {
@@ -237,7 +237,7 @@ func TestAllocationAvoidsNewAcceptorInboundPort(t *testing.T) {
 	}
 }
 
-// jm24 这一类既有 bidirectional 节点会接受新 reverse_only 节点发起的
+// demo-d 这一类既有 bidirectional 节点会接受新 reverse_only 节点发起的
 // 隧道。即使新节点尚未加入 SSOT，分配也必须避开既有接受方的公网 inbound。
 func TestAllocationForNewReverseOnlyAvoidsExistingAcceptorInboundPort(t *testing.T) {
 	s := allocSSOT(t)

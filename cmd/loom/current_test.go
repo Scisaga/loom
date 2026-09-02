@@ -19,7 +19,7 @@ func TestCurrentInspectVerifiesEnvelopeAndNodeSelection(t *testing.T) {
 	current := &publish.DeploymentCurrent{
 		Schema: publish.DeploymentCurrentSchema, Generation: 7,
 		Snapshot: "aaaaaaaaaaaa", PublishedAt: "2026-08-27T12:00:00Z",
-		Assignments: []publish.DeploymentAssignment{{Node: "hz01", Snapshot: "bbbbbbbbbbbb"}},
+		Assignments: []publish.DeploymentAssignment{{Node: "demo-c", Snapshot: "bbbbbbbbbbbb"}},
 	}
 	if err := current.Sign(priv); err != nil {
 		t.Fatal(err)
@@ -37,7 +37,7 @@ func TestCurrentInspectVerifiesEnvelopeAndNodeSelection(t *testing.T) {
 	if err := os.WriteFile(pubPath, []byte(base64.StdEncoding.EncodeToString(pub)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := cmdCurrentInspect([]string{"-file", currentPath, "-pubkey", pubPath, "-node", "hz01"}); err != nil {
+	if err := cmdCurrentInspect([]string{"-file", currentPath, "-pubkey", pubPath, "-node", "demo-c"}); err != nil {
 		t.Fatal(err)
 	}
 

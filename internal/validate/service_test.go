@@ -15,8 +15,8 @@ defaults:
   components: {sing_box: 1.11.4, wireguard: 1.0.20250521, agent: 0.1.0}
 nodes:
   - {id: cn-a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
-  - {id: cn-b, public_endpoint: 1.1.1.2, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k2}}
-  - {id: sg-v, public_endpoint: 1.1.1.3, server: {direction: reverse_only, inbound_port: 4433, egress_capable: true, wg_public_key: k3}}
+  - {id: cn-b, public_endpoint: 192.0.2.2, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k2}}
+  - {id: sg-v, public_endpoint: 192.0.2.3, server: {direction: reverse_only, inbound_port: 4433, egress_capable: true, wg_public_key: k3}}
 `
 
 // TestRejectsService 覆盖 §19"校验器必须拒绝的矛盾配置"表里依赖等价类与
@@ -375,7 +375,7 @@ func TestServerNeedsDirection(t *testing.T) {
 // mixed 端口和 server 的 inbound_port 在同一台机器上,两个进程抢同一个
 // 端口时后起的那个静默失败。原来两者用的是两个独立的桶,查不出来。
 func TestRejectsPortClashAcrossRoles(t *testing.T) {
-	s, err := model.Load([]byte(topo + `  - {id: both, public_endpoint: 1.1.1.9, server: {direction: bidirectional, inbound_port: 1080, egress_capable: true, wg_public_key: k9}, access: {platform: linux-server, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}}
+	s, err := model.Load([]byte(topo + `  - {id: both, public_endpoint: 192.0.2.9, server: {direction: bidirectional, inbound_port: 1080, egress_capable: true, wg_public_key: k9}, access: {platform: linux-server, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}}
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, tuning_period: 10m}
 credentials:

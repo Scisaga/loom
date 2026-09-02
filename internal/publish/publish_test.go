@@ -20,14 +20,14 @@ defaults:
   components: {sing_box: 1, wireguard: 1, agent: 1}
 nodes:
   - id: acc
-    public_endpoint: 1.1.1.9
+    public_endpoint: 192.0.2.9
     server: {direction: bidirectional, wg_public_key: Sfhh2xviqn8iws9mnVojcZEQRZANuhoLjoMqjN89y6Q=}
     access:
       platform: linux-server
       credentials: [c1]
       mixed_ports: [{port: 1080, declaration: d1}]
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: 11en8KSnR461ATx3ePxn3hM1+7omYdXS2K6YEPHt3To=}}
-  - {id: b, public_endpoint: 1.1.1.2, server: {direction: reverse_only, inbound_port: 4433, egress_capable: true, wg_public_key: dVg67BLu61j4V2JshVQMHJFuVjhthA+RO4DKSCTtHA0=}}
+  - {id: b, public_endpoint: 192.0.2.2, server: {direction: reverse_only, inbound_port: 4433, egress_capable: true, wg_public_key: dVg67BLu61j4V2JshVQMHJFuVjhthA+RO4DKSCTtHA0=}}
 tunnels:
   - {from: acc, to: b, listen_port: 61637, from_addr: 10.99.0.1/32, to_addr: 10.99.0.2/32}
 declarations:

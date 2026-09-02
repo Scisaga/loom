@@ -19,10 +19,10 @@ func TestLinkMetricHistoryUsesFifteenMinutePercentilesAndMedianRawRatePair(t *te
 		{at: now.Add(-5 * time.Minute), err: "timeout"},
 		{at: now.Add(-time.Minute), rttMS: 200, bytes: 2_000, durationMS: 100}, // median: 20 B/ms
 	} {
-		h.addLinkProbe("gz02", sample)
+		h.addLinkProbe("demo-b", sample)
 	}
 
-	got, ok := h.linkMetric("gz02", attest.LinkMetricTransportHysteria2,
+	got, ok := h.linkMetric("demo-b", attest.LinkMetricTransportHysteria2,
 		attest.LinkMetricCarrierPublic, now)
 	if !ok {
 		t.Fatal("15 分钟内有探测样本却没有生成链路度量")
@@ -43,11 +43,11 @@ func TestLinkMetricHistoryUsesFifteenMinutePercentilesAndMedianRawRatePair(t *te
 func TestLinkMetricAttachmentBindsOuterNodeAndTimestamp(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	ts := now.Format(time.RFC3339)
-	caPEM, keyPEM, certPEM := reportTestIdentity(t, "jm24")
+	caPEM, keyPEM, certPEM := reportTestIdentity(t, "demo-d")
 	signed, err := attest.SignLinkMetric(attest.LinkMetricClaim{
-		Version: attest.LinkMetricClaimVersion, Node: "jm24", TS: ts,
+		Version: attest.LinkMetricClaimVersion, Node: "demo-d", TS: ts,
 		Metrics: []attest.LinkMetric{{
-			PeerNode: "gz02", Transport: attest.LinkMetricTransportHysteria2,
+			PeerNode: "demo-b", Transport: attest.LinkMetricTransportHysteria2,
 			Scope: attest.LinkMetricScopeSingleHop, Carrier: attest.LinkMetricCarrierPublic,
 			ObservedAt: ts, RTTMS: 20, P50MS: 20, P95MS: 24,
 			Samples: 3, TransferBytes: 64 << 10, TransferDurationMS: 30,
@@ -56,13 +56,13 @@ func TestLinkMetricAttachmentBindsOuterNodeAndTimestamp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := Observation{Node: "jm24", TS: ts, LinkMetrics: signed}
+	base := Observation{Node: "demo-d", TS: ts, LinkMetrics: signed}
 	if _, err := verifyLinkMetricAttachment(&base, caPEM, now, time.Minute); err != nil {
 		t.Fatalf("相同外层 node/ts 的有效附件绑定失败: %v", err)
 	}
 
 	for name, mutate := range map[string]func(*Observation){
-		"node": func(o *Observation) { o.Node = "hz01" },
+		"node": func(o *Observation) { o.Node = "demo-c" },
 		"timestamp": func(o *Observation) {
 			o.TS = now.Add(time.Second).Format(time.RFC3339)
 		},

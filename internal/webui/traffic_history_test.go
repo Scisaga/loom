@@ -36,7 +36,7 @@ func TestOverviewShowsRetainedFleetBucketsAndKeepsCurrentCountersSeparate(t *tes
 
 func TestNodeDetailShowsRXTXBucketsAndResetGapBoundary(t *testing.T) {
 	d := misakaDepsWithTrafficHistory()
-	body := misakaRequest(t, d, http.MethodGet, "/nodes/jm24", nil, false).Body.String()
+	body := misakaRequest(t, d, http.MethodGet, "/nodes/demo-d", nil, false).Body.String()
 	for _, want := range []string{
 		"current cumulative counters · retained history attached",
 		"Retained forwarding history",
@@ -69,9 +69,9 @@ func TestNodeDetailShowsRXTXBucketsAndResetGapBoundary(t *testing.T) {
 func TestTopologyComparesLinkTXSamplesAndDoesNotBarMissingLink(t *testing.T) {
 	d := misakaDepsWithTrafficHistory()
 	view := d.Snapshot()
-	view.Nodes = append(view.Nodes, NodeView{ID: "gz02", Health: "unknown"})
+	view.Nodes = append(view.Nodes, NodeView{ID: "demo-b", Health: "unknown"})
 	view.Links = append(view.Links, LinkView{
-		From: "jm24", To: "gz02", Kind: "tunnel", State: "unknown", Source: "SSOT persistent WG",
+		From: "demo-d", To: "demo-b", Kind: "tunnel", State: "unknown", Source: "SSOT persistent WG",
 	})
 	d.Snapshot = func() View { return view }
 
@@ -80,10 +80,10 @@ func TestTopologyComparesLinkTXSamplesAndDoesNotBarMissingLink(t *testing.T) {
 		"WireGuard link forwarding · last 24 hours",
 		"sum of endpoint TX deltas",
 		"3.00 KiB",
-		"jm24 ↔ sg02",
+		"demo-d ↔ demo-e",
 		"2 / 3 buckets",
 		"1 both endpoints · 1 one endpoint",
-		"jm24 ↔ gz02",
+		"demo-d ↔ demo-b",
 		"No retained TX delta · no bar",
 		"0 sample buckets",
 		"Sender TX is not added again as receiver RX",
@@ -103,13 +103,13 @@ func TestTopologyAttributesResetAndGapToSpecificQualityOnlyLinks(t *testing.T) {
 	view.TrafficHistory.Buckets = []TrafficBucketView{{
 		Start: view.TrafficHistory.WindowStart, End: view.TrafficHistory.WindowEnd,
 		Links: []TrafficLinkTotalsView{
-			{From: "jm24", To: "sg02", Resets: 1},
-			{From: "gz02", To: "hz01", Gaps: 2},
+			{From: "demo-d", To: "demo-e", Resets: 1},
+			{From: "demo-b", To: "demo-c", Gaps: 2},
 		},
 	}}
 	d.Snapshot = func() View { return view }
 	body := misakaRequest(t, d, http.MethodGet, "/topology", nil, false).Body.String()
-	for _, want := range []string{"jm24 ↔ sg02", "R1 · G0", "gz02 ↔ hz01", "R0 · G2"} {
+	for _, want := range []string{"demo-d ↔ demo-e", "R1 · G0", "demo-b ↔ demo-c", "R0 · G2"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("quality-only topology is missing %q", want)
 		}
@@ -145,8 +145,8 @@ func TestTrafficHistoryAbsenceAndEmptyBucketsDoNotInventCharts(t *testing.T) {
 		t.Fatal("empty retained link buckets produced a comparison bar")
 	}
 
-	node := misakaRequest(t, d, http.MethodGet, "/nodes/jm24", nil, false).Body.String()
-	for _, want := range []string{"No accepted historical delta for jm24", "accepted samples in 0 / 1 buckets", "1 reset transition(s), 1 long gap(s)", "No chart is drawn"} {
+	node := misakaRequest(t, d, http.MethodGet, "/nodes/demo-d", nil, false).Body.String()
+	for _, want := range []string{"No accepted historical delta for demo-d", "accepted samples in 0 / 1 buckets", "1 reset transition(s), 1 long gap(s)", "No chart is drawn"} {
 		if !strings.Contains(node, want) {
 			t.Errorf("empty node history is missing %q", want)
 		}
@@ -163,12 +163,12 @@ func TestResetOnlyNodeBucketStaysMissingRatherThanZeroTraffic(t *testing.T) {
 		WindowStart: "2026-08-27T12:00:00Z", WindowEnd: "2026-08-28T12:00:00Z",
 		BucketWidth: "1h", Buckets: []TrafficBucketView{{
 			Start: "2026-08-27T12:00:00Z", End: "2026-08-27T13:00:00Z",
-			Resets: 1, Nodes: []TrafficNodeTotalsView{{Node: "jm24", Resets: 1}},
+			Resets: 1, Nodes: []TrafficNodeTotalsView{{Node: "demo-d", Resets: 1}},
 		}},
 	}
 	d.Snapshot = func() View { return view }
 
-	for _, path := range []string{"/", "/nodes/jm24"} {
+	for _, path := range []string{"/", "/nodes/demo-d"} {
 		body := misakaRequest(t, d, http.MethodGet, path, nil, false).Body.String()
 		if !strings.Contains(body, "No accepted") || strings.Contains(body, "class=historychart") {
 			t.Fatalf("%s turned a reset-only bucket into sampled zero traffic", path)
@@ -188,18 +188,18 @@ func TestTrafficHistoryAggregatesSaturateAtMaxInt64(t *testing.T) {
 		Buckets: []TrafficBucketView{{
 			Start: "2026-08-28T10:00:00Z", End: "2026-08-28T11:00:00Z", Samples: 2,
 			Nodes: []TrafficNodeTotalsView{
-				{Node: "jm24", RXBytes: maxCounterValue, TXBytes: maxCounterValue, Samples: 1},
-				{Node: "sg02", RXBytes: maxCounterValue, TXBytes: maxCounterValue, Samples: 1},
+				{Node: "demo-d", RXBytes: maxCounterValue, TXBytes: maxCounterValue, Samples: 1},
+				{Node: "demo-e", RXBytes: maxCounterValue, TXBytes: maxCounterValue, Samples: 1},
 			},
 			Links: []TrafficLinkTotalsView{
-				{From: "jm24", To: "sg02", TXBytes: maxCounterValue, ReportingEndpoints: 1},
-				{From: "sg02", To: "jm24", TXBytes: maxCounterValue, ReportingEndpoints: 2},
+				{From: "demo-d", To: "demo-e", TXBytes: maxCounterValue, ReportingEndpoints: 1},
+				{From: "demo-e", To: "demo-d", TXBytes: maxCounterValue, ReportingEndpoints: 2},
 			},
 		}},
 	}
 	d.Snapshot = func() View { return view }
 
-	for _, path := range []string{"/", "/nodes/jm24", "/topology"} {
+	for _, path := range []string{"/", "/nodes/demo-d", "/topology"} {
 		body := misakaRequest(t, d, http.MethodGet, path, nil, false).Body.String()
 		if !strings.Contains(body, byteSize(maxCounterValue)) {
 			t.Errorf("%s did not render the saturated traffic total", path)
@@ -224,16 +224,16 @@ func misakaDepsWithTrafficHistory() Deps {
 				Start: start.Format(time.RFC3339), End: start.Add(time.Hour).Format(time.RFC3339),
 				Samples: 4, Resets: 1,
 				Nodes: []TrafficNodeTotalsView{
-					{Node: "jm24", RXBytes: 1024, TXBytes: 2048, Bytes: 3072, Samples: 2, Resets: 1},
-					{Node: "sg02", RXBytes: 2048, TXBytes: 1024, Bytes: 3072, Samples: 2},
+					{Node: "demo-d", RXBytes: 1024, TXBytes: 2048, Bytes: 3072, Samples: 2, Resets: 1},
+					{Node: "demo-e", RXBytes: 2048, TXBytes: 1024, Bytes: 3072, Samples: 2},
 				},
-				Links: []TrafficLinkTotalsView{{From: "jm24", To: "sg02", TXBytes: 1024, ReportingEndpoints: 2}},
+				Links: []TrafficLinkTotalsView{{From: "demo-d", To: "demo-e", TXBytes: 1024, ReportingEndpoints: 2}},
 			},
 			{
 				Start: start.Add(time.Hour).Format(time.RFC3339), End: start.Add(2 * time.Hour).Format(time.RFC3339),
 				Samples: 1,
-				Nodes:   []TrafficNodeTotalsView{{Node: "jm24", RXBytes: 1024, TXBytes: 1024, Bytes: 2048, Samples: 1}},
-				Links:   []TrafficLinkTotalsView{{From: "sg02", To: "jm24", TXBytes: 2048, ReportingEndpoints: 1}},
+				Nodes:   []TrafficNodeTotalsView{{Node: "demo-d", RXBytes: 1024, TXBytes: 1024, Bytes: 2048, Samples: 1}},
+				Links:   []TrafficLinkTotalsView{{From: "demo-e", To: "demo-d", TXBytes: 2048, ReportingEndpoints: 1}},
 			},
 			{
 				Start: start.Add(2 * time.Hour).Format(time.RFC3339), End: start.Add(3 * time.Hour).Format(time.RFC3339),

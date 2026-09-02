@@ -62,13 +62,13 @@ func TestServicesPageExplainsRoutingFlowAndSeparatesWorkspacePanels(t *testing.T
 func TestPolicyOptionsExposeAutomaticOrPinnedEgress(t *testing.T) {
 	options := policyOptions([]PolicyView{
 		{ID: "best-egress", Name: "最优出口", EgressAxis: "any", Objective: "latency"},
-		{ID: "de-fixed", Name: "固定德国出口", EgressAxis: "pinned:ber01", Objective: "stability"},
-		{ID: "sv-fixed", Name: "固定硅谷出口", EgressAxis: "pinned:sv01", Objective: "stability"},
+		{ID: "de-fixed", Name: "固定德国出口", EgressAxis: "pinned:demo-a", Objective: "stability"},
+		{ID: "sv-fixed", Name: "固定区域 F出口", EgressAxis: "pinned:demo-f", Objective: "stability"},
 	}, "sv-fixed")
 	for _, want := range []string{
 		`最优出口 · automatic egress · lowest latency (P50)`,
-		`固定德国出口 · fixed ber01 · tail stability (P95)`,
-		`<option value="sv-fixed" selected>固定硅谷出口 · fixed sv01 · tail stability (P95)</option>`,
+		`固定德国出口 · fixed demo-a · tail stability (P95)`,
+		`<option value="sv-fixed" selected>固定区域 F出口 · fixed demo-f · tail stability (P95)</option>`,
 	} {
 		if !strings.Contains(options, want) {
 			t.Errorf("policy options do not expose routing semantics %q: %s", want, options)
@@ -90,10 +90,10 @@ func TestServicesPageOmitsTrafficIngressInventoryButKeepsPolicyLibrary(t *testin
 	d := misakaDeps()
 	v := d.Snapshot()
 	v.Ingresses = []IngressView{
-		{Node: "jm24", Kind: "mixed", Listen: "127.0.0.1:1080", Mode: "policy", ScopeKind: ScopePolicy, ScopeID: "sg-fixed", PolicyID: "sg-fixed"},
-		{Node: "jm24", Kind: "mixed", Listen: "127.0.0.1:1081", Mode: "policy", ScopeKind: ScopePolicy, ScopeID: "de-fixed", PolicyID: "de-fixed"},
-		{Node: "jm24", Kind: "mixed", Listen: "127.0.0.1:1082", Mode: "policy", ScopeKind: ScopePolicy, ScopeID: "best-egress", PolicyID: "best-egress"},
-		{Node: "jm24", Kind: "mixed", Listen: "127.0.0.1:1083", Mode: "host-based", ScopeKind: ScopeServices, PolicyID: "best-egress", Services: true},
+		{Node: "demo-d", Kind: "mixed", Listen: "127.0.0.1:1080", Mode: "policy", ScopeKind: ScopePolicy, ScopeID: "sg-fixed", PolicyID: "sg-fixed"},
+		{Node: "demo-d", Kind: "mixed", Listen: "127.0.0.1:1081", Mode: "policy", ScopeKind: ScopePolicy, ScopeID: "de-fixed", PolicyID: "de-fixed"},
+		{Node: "demo-d", Kind: "mixed", Listen: "127.0.0.1:1082", Mode: "policy", ScopeKind: ScopePolicy, ScopeID: "best-egress", PolicyID: "best-egress"},
+		{Node: "demo-d", Kind: "mixed", Listen: "127.0.0.1:1083", Mode: "host-based", ScopeKind: ScopeServices, PolicyID: "best-egress", Services: true},
 	}
 	d.Snapshot = func() View { return v }
 
@@ -124,15 +124,15 @@ func TestNodeDetailPromotesManagedIngressAndFoldsLegacyPolicyPorts(t *testing.T)
 	d := misakaDeps()
 	v := d.Snapshot()
 	v.Ingresses = []IngressView{
-		{Node: "jm24", Kind: "mixed", Listen: "127.0.0.1:1080", Mode: "policy", ScopeKind: ScopePolicy, ScopeID: "sg-fixed", PolicyID: "sg-fixed"},
-		{Node: "jm24", Kind: "mixed", Listen: "127.0.0.1:1081", Mode: "policy", ScopeKind: ScopePolicy, ScopeID: "de-fixed", PolicyID: "de-fixed"},
-		{Node: "jm24", Kind: "mixed", Listen: "127.0.0.1:1082", Mode: "policy", ScopeKind: ScopePolicy, ScopeID: "best-egress", PolicyID: "best-egress"},
-		{Node: "jm24", Kind: "mixed", Listen: "127.0.0.1:1083", Mode: "host-based", ScopeKind: ScopeServices, PolicyID: "best-egress", Services: true},
-		{Node: "sg02", Kind: "mixed", Listen: "127.0.0.1:2080", Mode: "policy", ScopeKind: ScopePolicy, ScopeID: "remote-only", PolicyID: "remote-only"},
+		{Node: "demo-d", Kind: "mixed", Listen: "127.0.0.1:1080", Mode: "policy", ScopeKind: ScopePolicy, ScopeID: "sg-fixed", PolicyID: "sg-fixed"},
+		{Node: "demo-d", Kind: "mixed", Listen: "127.0.0.1:1081", Mode: "policy", ScopeKind: ScopePolicy, ScopeID: "de-fixed", PolicyID: "de-fixed"},
+		{Node: "demo-d", Kind: "mixed", Listen: "127.0.0.1:1082", Mode: "policy", ScopeKind: ScopePolicy, ScopeID: "best-egress", PolicyID: "best-egress"},
+		{Node: "demo-d", Kind: "mixed", Listen: "127.0.0.1:1083", Mode: "host-based", ScopeKind: ScopeServices, PolicyID: "best-egress", Services: true},
+		{Node: "demo-e", Kind: "mixed", Listen: "127.0.0.1:2080", Mode: "policy", ScopeKind: ScopePolicy, ScopeID: "remote-only", PolicyID: "remote-only"},
 	}
 	d.Snapshot = func() View { return v }
 
-	body, found := pageNodeDetail(d, "jm24", false)
+	body, found := pageNodeDetail(d, "demo-d", false)
 	if !found {
 		t.Fatal("access node detail was not rendered")
 	}

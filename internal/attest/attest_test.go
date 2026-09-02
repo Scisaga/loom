@@ -81,8 +81,8 @@ func claim(node string) Claim {
 
 func TestSignThenVerify(t *testing.T) {
 	ca := newCA(t)
-	key, crt := ca.issue(t, "gz02")
-	s, err := Sign(claim("gz02"), key, crt)
+	key, crt := ca.issue(t, "demo-b")
+	s, err := Sign(claim("demo-b"), key, crt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestSignThenVerify(t *testing.T) {
 	if err != nil {
 		t.Fatalf("自己签的自己验不过:%v", err)
 	}
-	if got.Node != "gz02" || got.Commit != "426961f342b0" {
+	if got.Node != "demo-b" || got.Commit != "426961f342b0" {
 		t.Fatalf("验出来的内容不对:%+v", got)
 	}
 }
@@ -99,14 +99,14 @@ func TestSignThenVerify(t *testing.T) {
 // 都能替别人发言 —— 而"替别人发言"正是转述,正是签名要根治的东西。
 func TestCannotSpeakForAnotherNode(t *testing.T) {
 	ca := newCA(t)
-	key, crt := ca.issue(t, "ber01") // ber01 的合法证书
-	c := claim("gz02")               // 却声称自己是 gz02
+	key, crt := ca.issue(t, "demo-a") // demo-a 的合法证书
+	c := claim("demo-b")              // 却声称自己是 demo-b
 	s, err := Sign(c, key, crt)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Verify(s, ca.certPEM); err == nil {
-		t.Fatal("ber01 拿自己的钥匙替 gz02 发言,必须被拒绝")
+		t.Fatal("demo-a 拿自己的钥匙替 demo-b 发言,必须被拒绝")
 	} else if !strings.Contains(err.Error(), "替") {
 		t.Errorf("错误要说清楚是冒名,得到:%v", err)
 	}
@@ -116,8 +116,8 @@ func TestCannotSpeakForAnotherNode(t *testing.T) {
 func TestSelfSignedCertIsRejected(t *testing.T) {
 	real := newCA(t)
 	rogue := newCA(t)
-	key, crt := rogue.issue(t, "gz02")
-	s, _ := Sign(claim("gz02"), key, crt)
+	key, crt := rogue.issue(t, "demo-b")
+	s, _ := Sign(claim("demo-b"), key, crt)
 	if _, err := Verify(s, real.certPEM); err == nil {
 		t.Fatal("别的 CA 签的证书必须被拒绝")
 	}
@@ -126,8 +126,8 @@ func TestSelfSignedCertIsRejected(t *testing.T) {
 // 内容被改过就验不过 —— 转述路径上任何一环动了手脚都会暴露。
 func TestTamperedClaimFailsVerification(t *testing.T) {
 	ca := newCA(t)
-	key, crt := ca.issue(t, "gz02")
-	s, _ := Sign(claim("gz02"), key, crt)
+	key, crt := ca.issue(t, "demo-b")
+	s, _ := Sign(claim("demo-b"), key, crt)
 
 	for _, tc := range []struct {
 		name string
@@ -142,7 +142,7 @@ func TestTamperedClaimFailsVerification(t *testing.T) {
 			s.Rollout = &RolloutClaim{Snapshot: "other", Stage: "failed"}
 		}},
 		{"改 Agent 选择", func(s *Signed) {
-			s.Agent = &AgentClaim{Node: "gz02", TS: s.TS,
+			s.Agent = &AgentClaim{Node: "demo-b", TS: s.TS,
 				Selections: []SelectionClaim{{Declaration: "d", Candidate: "cand:d:evil"}}}
 		}},
 		{"改测量摘要", func(s *Signed) { s.MeasurementsSHA256 = strings.Repeat("0", 64) }},
@@ -157,10 +157,10 @@ func TestTamperedClaimFailsVerification(t *testing.T) {
 
 func TestVerifyFreshRejectsReplayAndFuture(t *testing.T) {
 	ca := newCA(t)
-	key, crt := ca.issue(t, "gz02")
+	key, crt := ca.issue(t, "demo-b")
 	now := time.Date(2026, 8, 25, 12, 10, 0, 0, time.UTC)
 
-	s, err := Sign(claim("gz02"), key, crt)
+	s, err := Sign(claim("demo-b"), key, crt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestVerifyFreshRejectsReplayAndFuture(t *testing.T) {
 		t.Fatalf("旧陈述应被当作重放拒绝,得到:%v", err)
 	}
 
-	future := claim("gz02")
+	future := claim("demo-b")
 	future.TS = now.Add(3 * time.Minute).Format(time.RFC3339)
 	fs, err := Sign(future, key, crt)
 	if err != nil {
@@ -185,8 +185,8 @@ func TestVerifyFreshRejectsReplayAndFuture(t *testing.T) {
 // 升级期间仍会收到旧二进制签的 v1 陈述；没有扩展字段时必须继续可验。
 func TestV1ClaimRemainsCompatible(t *testing.T) {
 	ca := newCA(t)
-	key, crt := ca.issue(t, "gz02")
-	c := claim("gz02")
+	key, crt := ca.issue(t, "demo-b")
+	c := claim("demo-b")
 	if c.extended() {
 		t.Fatal("基础陈述应走 v1 canonical")
 	}
@@ -231,14 +231,14 @@ func TestV2V3CanonicalBytesRemainCompatible(t *testing.T) {
 
 func TestV4BindsCandidateHealthAndAgentProtocolVersion(t *testing.T) {
 	ca := newCA(t)
-	key, crt := ca.issue(t, "gz02")
+	key, crt := ca.issue(t, "demo-b")
 	p50, p95, best, selectedKBps, bestKBps := 120, 190, 80, 300, 500
-	c := claim("gz02")
+	c := claim("demo-b")
 	c.MeasurementsSHA256 = strings.Repeat("a", 64)
 	c.Agent = &AgentClaim{
-		Node: "gz02", TS: c.TS, ComponentVersion: "0.1.0",
+		Node: "demo-b", TS: c.TS, ComponentVersion: "0.1.0",
 		Selections: []SelectionClaim{{
-			Declaration: "d", Selector: "svc:d", Candidate: "cand:d:gz02", UpdatedAt: c.TS,
+			Declaration: "d", Selector: "svc:d", Candidate: "cand:d:demo-b", UpdatedAt: c.TS,
 			Health: &CandidateHealthClaim{
 				Candidates: 3, RecentSuccess: 1, RecentDegraded: 1, RecentFailed: 1,
 				SelectedState: "degraded", SelectedSamples: 5, SelectedFailures: 2,
@@ -287,8 +287,8 @@ func TestV4BindsCandidateHealthAndAgentProtocolVersion(t *testing.T) {
 
 func TestV5BindsComponentVersions(t *testing.T) {
 	ca := newCA(t)
-	key, crt := ca.issue(t, "gz02")
-	c := claim("gz02")
+	key, crt := ca.issue(t, "demo-b")
+	c := claim("demo-b")
 	c.MeasurementsSHA256 = strings.Repeat("b", 64)
 	c.Components = []ComponentClaim{
 		{Name: "wireguard", Expected: "1.0.20250521", Actual: "1.0.20210914"},
@@ -357,8 +357,8 @@ func TestV2CanonicalSortsSelectionsByAllFields(t *testing.T) {
 
 func TestVerifyRejectsGarbage(t *testing.T) {
 	ca := newCA(t)
-	key, crt := ca.issue(t, "gz02")
-	s, _ := Sign(claim("gz02"), key, crt)
+	key, crt := ca.issue(t, "demo-b")
+	s, _ := Sign(claim("demo-b"), key, crt)
 
 	bad := *s
 	bad.Sig = "这不是 base64!!!"

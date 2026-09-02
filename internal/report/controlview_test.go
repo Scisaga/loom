@@ -15,7 +15,7 @@ func TestEnrichControlViewPreservesSSOTContractAndRouteScope(t *testing.T) {
 	s := &model.SSOT{
 		Nodes: []model.Node{
 			{
-				ID: "jm24", Name: "Control", Country: "CN", City: "Nanjing", Provider: "Example",
+				ID: "demo-d", Name: "Control", Country: "CN", City: "Nanjing", Provider: "Example",
 				PublicEndpoint: "control.example", Drain: true,
 				Server: &model.ServerRole{
 					Direction: model.Bidirectional, InboundPort: 443,
@@ -46,12 +46,12 @@ func TestEnrichControlViewPreservesSSOTContractAndRouteScope(t *testing.T) {
 				EgressAxis: model.EgressAny, Matcher: "host", ProbeURL: "https://probe.example/",
 				ProbeBudget: 7, Objective: model.Latency,
 				Constraints:    []model.Constraint{{Kind: model.Region, Expr: "country != CN"}},
-				AllowedServers: []string{"sg02", "ber01"}, MaxHops: 2,
+				AllowedServers: []string{"demo-e", "demo-a"}, MaxHops: 2,
 				RankingPeriod: "10m", TuningPeriod: "30s", SwitchThreshold: 0.15,
 				TopN: 3, Window: "1h", MinSamples: 6, StaleAfter: "20m",
 				Fallback: model.LastKnownGood,
 			},
-			{ID: "fixed", AddressAxis: model.FromRequest, EgressAxis: "pinned:sg02"},
+			{ID: "fixed", AddressAxis: model.FromRequest, EgressAxis: "pinned:demo-e"},
 		},
 		Credentials: []model.Credential{
 			{ID: "c-best", Declaration: "best"},
@@ -59,24 +59,28 @@ func TestEnrichControlViewPreservesSSOTContractAndRouteScope(t *testing.T) {
 		},
 	}
 	v := webui.View{
-		Self:  "jm24",
-		Nodes: []webui.NodeView{{ID: "jm24", Health: "healthy", Source: "直连 /status"}},
+		Self:  "demo-d",
+		Nodes: []webui.NodeView{{ID: "demo-d", Health: "healthy", Source: "直连 /status"}},
 		Routes: []webui.RouteView{
-			{Node: "jm24", Declaration: "intl-api", Selector: "svc:intl-api", ScopeKind: webui.ScopeService, ScopeID: "intl-api"},
-			{Node: "jm24", Declaration: "fixed", Selector: "decl:fixed", ScopeKind: webui.ScopePolicy, ScopeID: "fixed"},
+			{Node: "demo-d", Declaration: "intl-api", Selector: "svc:intl-api", ScopeKind: webui.ScopeService, ScopeID: "intl-api"},
+			{Node: "demo-d", Declaration: "fixed", Selector: "decl:fixed", ScopeKind: webui.ScopePolicy, ScopeID: "fixed"},
 		},
 		Candidates: []webui.CandidatePathView{
-			{Node: "jm24", Declaration: "intl-api"},
-			{Node: "jm24", Declaration: "fixed"},
+			{Node: "demo-d", Declaration: "intl-api"},
+			{Node: "demo-d", Declaration: "fixed"},
 		},
 	}
 
-	enrichControlView(&v, s, "jm24")
+	enrichControlView(&v, s, "demo-d")
 
-	if len(v.Nodes) != 2 || v.Nodes[0].ID != "desk01" || v.Nodes[0].Health != "unknown" {
+	if len(v.Nodes) != 2 {
 		t.Fatalf("SSOT-only node was not retained as unknown: %+v", v.Nodes)
 	}
-	jm := nodeByID(t, v.Nodes, "jm24")
+	desk := nodeByID(t, v.Nodes, "desk01")
+	if desk.Health != "unknown" {
+		t.Fatalf("SSOT-only node was not retained as unknown: %+v", desk)
+	}
+	jm := nodeByID(t, v.Nodes, "demo-d")
 	if jm.Name != "Control" || jm.Country != "CN" || jm.City != "Nanjing" || jm.Provider != "Example" ||
 		jm.PublicEndpoint != "control.example" || jm.SSHPort != 22 || !jm.Drain ||
 		jm.InboundPort != 443 || jm.InboundProtocol != "trojan" || !jm.IngressKnown || !jm.PublicDialable ||
@@ -98,7 +102,7 @@ func TestEnrichControlViewPreservesSSOTContractAndRouteScope(t *testing.T) {
 	}
 	best := policyByID(t, v.Policies, "best")
 	if best.ProbeBudget != 7 || best.Objective != "latency" || best.SwitchThreshold != 0.15 ||
-		best.Fallback != "last_known_good" || !slices.Equal(best.AllowedServers, []string{"sg02", "ber01"}) ||
+		best.Fallback != "last_known_good" || !slices.Equal(best.AllowedServers, []string{"demo-e", "demo-a"}) ||
 		len(best.Constraints) != 1 || best.Constraints[0].Kind != "region" ||
 		!best.AvailabilityKnown || !best.Available {
 		t.Fatalf("policy form fields were not preserved: %+v", best)
@@ -109,11 +113,11 @@ func TestEnrichControlViewPreservesSSOTContractAndRouteScope(t *testing.T) {
 		got.ScopeKind != webui.ScopeServices || got.Mode != "services" {
 		t.Fatalf("TUN 没有同时表达 Service 路由和显式设备默认策略: %+v", got)
 	}
-	if got := ingressBy(t, v.Ingresses, "jm24", "mixed", 1083); !got.Services ||
+	if got := ingressBy(t, v.Ingresses, "demo-d", "mixed", 1083); !got.Services ||
 		got.ScopeKind != webui.ScopeServices || got.Listen != "127.0.0.1:1083" {
 		t.Fatalf("service-aware mixed ingress wrong: %+v", got)
 	}
-	if got := ingressBy(t, v.Ingresses, "jm24", "mixed", 1080); got.PolicyID != "fixed" ||
+	if got := ingressBy(t, v.Ingresses, "demo-d", "mixed", 1080); got.PolicyID != "fixed" ||
 		got.Declaration != "fixed" || got.ScopeKind != webui.ScopePolicy {
 		t.Fatalf("policy mixed ingress wrong: %+v", got)
 	}
@@ -127,11 +131,11 @@ func TestEnrichControlViewPreservesSSOTContractAndRouteScope(t *testing.T) {
 			t.Fatalf("route policy resolution wrong: %+v", route)
 		}
 	}
-	intl := candidateBy(t, v.Candidates, "jm24", "intl-api")
+	intl := candidateBy(t, v.Candidates, "demo-d", "intl-api")
 	if intl.ScopeKind != webui.ScopeService || intl.PolicyID != "best" || intl.State != "selected" {
 		t.Fatalf("current-SSOT service candidate scope wrong: %+v", intl)
 	}
-	fixed := candidateBy(t, v.Candidates, "jm24", "fixed")
+	fixed := candidateBy(t, v.Candidates, "demo-d", "fixed")
 	if fixed.ScopeKind != webui.ScopePolicy || fixed.PolicyID != "fixed" || fixed.State != "selected" {
 		t.Fatalf("runtime-only policy selection was lost: %+v", fixed)
 	}
@@ -215,28 +219,28 @@ func TestEnrichControlViewRebuildsIntentFromCurrentSSOT(t *testing.T) {
 func TestEnrichControlViewKeepsCurrentSSOTDirectHy2Metrics(t *testing.T) {
 	const snapshot, revision, observedAt = "snapshot-current", "ssot-current", "2026-08-31T20:00:00Z"
 	s := &model.SSOT{Nodes: []model.Node{
-		{ID: "gz02", PublicEndpoint: "gz.example", Server: &model.ServerRole{
+		{ID: "demo-b", PublicEndpoint: "gz.example", Server: &model.ServerRole{
 			Direction: model.Bidirectional, InboundPort: 61698,
 		}},
-		{ID: "hz01", PublicEndpoint: "hz.example", Server: &model.ServerRole{
+		{ID: "demo-c", PublicEndpoint: "hz.example", Server: &model.ServerRole{
 			Direction: model.Bidirectional, InboundPort: 61698,
 		}},
-		{ID: "jm24", Server: &model.ServerRole{Direction: model.Bidirectional},
+		{ID: "demo-d", Server: &model.ServerRole{Direction: model.Bidirectional},
 			Access: &model.AccessRole{Platform: model.LinuxServer}},
 	}}
 	v := webui.View{Publisher: &webui.PublisherView{LastSnapshot: snapshot, LastSSOT: revision}, Nodes: []webui.NodeView{
-		{ID: "gz02", Applied: snapshot, VerifiedLinkMetrics: []webui.VerifiedLinkMetricView{{
-			PeerNode: "hz01", Transport: "hysteria2", Carrier: "public",
+		{ID: "demo-b", Applied: snapshot, VerifiedLinkMetrics: []webui.VerifiedLinkMetricView{{
+			PeerNode: "demo-c", Transport: "hysteria2", Carrier: "public",
 			ObservedAt: observedAt, RTTMS: 32, P50MS: 30, P95MS: 34, Samples: 3,
 		}}},
-		{ID: "hz01", Applied: snapshot},
-		{ID: "jm24", Applied: snapshot, VerifiedLinkMetrics: []webui.VerifiedLinkMetricView{
-			{PeerNode: "gz02", Transport: "hysteria2", Carrier: "public", ObservedAt: observedAt, RTTMS: 43, Samples: 2},
-			{PeerNode: "hz01", Transport: "hysteria2", Carrier: "public", ObservedAt: observedAt, RTTMS: 34, Samples: 2},
+		{ID: "demo-c", Applied: snapshot},
+		{ID: "demo-d", Applied: snapshot, VerifiedLinkMetrics: []webui.VerifiedLinkMetricView{
+			{PeerNode: "demo-b", Transport: "hysteria2", Carrier: "public", ObservedAt: observedAt, RTTMS: 43, Samples: 2},
+			{PeerNode: "demo-c", Transport: "hysteria2", Carrier: "public", ObservedAt: observedAt, RTTMS: 34, Samples: 2},
 		}},
 	}}
 
-	enrichControlView(&v, s, "jm24")
+	enrichControlView(&v, s, "demo-d")
 	gateCurrentSSOTDirectEvidence(&v, revision)
 	got := map[string]webui.LinkView{}
 	for _, link := range v.Links {
@@ -244,8 +248,8 @@ func TestEnrichControlViewKeepsCurrentSSOTDirectHy2Metrics(t *testing.T) {
 			got[link.ObservedFrom+"→"+link.ObservedTo] = link
 		}
 	}
-	if len(got) != 3 || got["gz02→hz01"].MS != 32 ||
-		got["jm24→gz02"].MS != 43 || got["jm24→hz01"].MS != 34 {
+	if len(got) != 3 || got["demo-b→demo-c"].MS != 32 ||
+		got["demo-d→demo-b"].MS != 43 || got["demo-d→demo-c"].MS != 34 {
 		t.Fatalf("current SSOT projection dropped direct Hy2 inventory or metrics: %+v", v.Links)
 	}
 }

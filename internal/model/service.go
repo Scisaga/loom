@@ -184,7 +184,7 @@ type EquivalenceClass struct {
 // 它没有 direction、没有 capabilities、没有隧道 —— 那些都是节点才有的东西。
 // Loom 对它做的唯一事情是:从某台服务器连过去,并测量这次连接的质量。
 type ServiceAddress struct {
-	Address  string         `yaml:"address"` // 如 https://llm-hz.internal/v1
+	Address  string         `yaml:"address"` // 如 https://llm-b.internal/v1
 	Contract AccessContract `yaml:"access_contract"`
 
 	// EgressCredentialRef 是出口服务器向它鉴权时用的凭据引用(§9.3)。

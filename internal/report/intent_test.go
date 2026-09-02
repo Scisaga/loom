@@ -15,18 +15,18 @@ func publicHy2Node(id string) model.Node {
 
 func TestExpectedDirectLinksCoverThreePublicInboundsWithoutExtraPairs(t *testing.T) {
 	s := &model.SSOT{Nodes: []model.Node{
-		publicHy2Node("gz02"), publicHy2Node("hz01"), publicHy2Node("jm24"),
+		publicHy2Node("demo-b"), publicHy2Node("demo-c"), publicHy2Node("demo-d"),
 	}}
 	links := ExpectedDirectLinksForSSOT(s)
 	if len(links) != 3 {
 		t.Fatalf("three nodes should retain exactly three unordered-pair probes: %+v", links)
 	}
 	want := map[string]bool{
-		"jm24→gz02": true,
-		"gz02→hz01": true,
-		"hz01→jm24": true,
+		"demo-d→demo-b": true,
+		"demo-b→demo-c":  true,
+		"demo-c→demo-d": true,
 	}
-	wantPairOrder := []string{"gz02\x00hz01", "gz02\x00jm24", "hz01\x00jm24"}
+	wantPairOrder := []string{"demo-b\x00demo-c", "demo-b\x00demo-d", "demo-c\x00demo-d"}
 	for i, link := range links {
 		delete(want, link.From+"→"+link.To)
 		a, b := link.From, link.To

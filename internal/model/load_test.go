@@ -115,7 +115,7 @@ func TestDistributionMirrorsKeepLegacyCompatibilityAndNodeOverride(t *testing.T)
 	}
 	s := &SSOT{
 		Defaults: &SSOTDefaults{DistributionURLs: []string{"https://a.example/loom/", "https://b.example/loom/"}},
-		Nodes:    []Node{{ID: "sv01", DistributionURLs: []string{"http://10.99.2.2/loom/", "http://10.99.2.4/loom/"}}},
+		Nodes:    []Node{{ID: "demo-f", DistributionURLs: []string{"http://10.99.2.2/loom/", "http://10.99.2.4/loom/"}}},
 	}
 	got := s.DistributionURLsFor(&s.Nodes[0])
 	if len(got) != 2 || got[0] != "http://10.99.2.2/loom/" || got[1] != "http://10.99.2.4/loom/" {

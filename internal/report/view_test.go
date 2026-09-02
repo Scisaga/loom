@@ -183,16 +183,16 @@ func TestSignedDirectMetricOnlyUpgradesExactExpectedDirection(t *testing.T) {
 func TestDomesticTopologyLayerKeepsCandidatePathsWithoutDirectWG(t *testing.T) {
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
 	cfg := &Config{
-		Node: "jm24", ExpectedNodes: []string{"jm24", "gz02", "hz01"},
+		Node: "demo-d", ExpectedNodes: []string{"demo-d", "demo-b", "demo-c"},
 		ExpectedRoutes: []ExpectedRoute{
-			{Access: "jm24", Declaration: "best", Chain: []string{"gz02"}},
-			{Access: "jm24", Declaration: "best", Chain: []string{"hz01"}},
-			{Access: "jm24", Declaration: "best", Chain: []string{"gz02", "hz01"}},
-			{Access: "jm24", Declaration: "best", Chain: []string{"hz01", "gz02"}},
+			{Access: "demo-d", Declaration: "best", Chain: []string{"demo-b"}},
+			{Access: "demo-d", Declaration: "best", Chain: []string{"demo-c"}},
+			{Access: "demo-d", Declaration: "best", Chain: []string{"demo-b", "demo-c"}},
+			{Access: "demo-d", Declaration: "best", Chain: []string{"demo-c", "demo-b"}},
 		},
 	}
-	v := buildView(cfg, &Status{Node: "jm24", TS: now.Format(time.RFC3339)}, now)
-	want := map[string]bool{"gz02\x00hz01": true, "gz02\x00jm24": true, "hz01\x00jm24": true}
+	v := buildView(cfg, &Status{Node: "demo-d", TS: now.Format(time.RFC3339)}, now)
+	want := map[string]bool{"demo-b\x00demo-c": true, "demo-b\x00demo-d": true, "demo-c\x00demo-d": true}
 	for _, l := range v.Links {
 		if l.Kind != "candidate" || l.State != "unverified" {
 			continue

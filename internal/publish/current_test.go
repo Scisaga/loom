@@ -25,8 +25,8 @@ func signedDeploymentCurrent(t *testing.T) (*DeploymentCurrent, ed25519.PublicKe
 		Schema: DeploymentCurrentSchema, Generation: 7,
 		Snapshot: "aaaaaaaaaaaa", PublishedAt: "2026-08-27T12:00:00Z",
 		Assignments: []DeploymentAssignment{
-			{Node: "hz01", Snapshot: "cccccccccccc"},
-			{Node: "gz02", Snapshot: "bbbbbbbbbbbb"},
+			{Node: "demo-c", Snapshot: "cccccccccccc"},
+			{Node: "demo-b", Snapshot: "bbbbbbbbbbbb"},
 		},
 	}
 	if err := c.Sign(priv); err != nil {
@@ -37,7 +37,7 @@ func signedDeploymentCurrent(t *testing.T) (*DeploymentCurrent, ed25519.PublicKe
 
 func TestDeploymentCurrentRoundTripAndLegacyCompatibility(t *testing.T) {
 	c, pub := signedDeploymentCurrent(t)
-	if got := []string{c.Assignments[0].Node, c.Assignments[1].Node}; got[0] != "gz02" || got[1] != "hz01" {
+	if got := []string{c.Assignments[0].Node, c.Assignments[1].Node}; got[0] != "demo-b" || got[1] != "demo-c" {
 		t.Fatalf("Sign 没有规范化 assignment 顺序:%v", got)
 	}
 	if err := c.Verify(pub); err != nil {
@@ -54,10 +54,10 @@ func TestDeploymentCurrentRoundTripAndLegacyCompatibility(t *testing.T) {
 	if err := decoded.Verify(pub); err != nil {
 		t.Fatalf("往返后验签失败:%v", err)
 	}
-	if got, err := decoded.Select("gz02"); err != nil || got != "bbbbbbbbbbbb" {
-		t.Fatalf("gz02 assignment=%q err=%v", got, err)
+	if got, err := decoded.Select("demo-b"); err != nil || got != "bbbbbbbbbbbb" {
+		t.Fatalf("demo-b assignment=%q err=%v", got, err)
 	}
-	if _, err := decoded.Select("jm24"); err == nil {
+	if _, err := decoded.Select("demo-d"); err == nil {
 		t.Fatal("显式 assignment 模式下缺少节点应 fail closed")
 	}
 
@@ -83,7 +83,7 @@ func TestDeploymentCurrentGlobalSelection(t *testing.T) {
 	if c.Schema != DeploymentCurrentSchema {
 		t.Fatalf("Sign 应给零值 schema 填 v1，收到 %d", c.Schema)
 	}
-	if got, err := c.Select("jm24"); err != nil || got != c.Snapshot {
+	if got, err := c.Select("demo-d"); err != nil || got != c.Snapshot {
 		t.Fatalf("全局选择=%q err=%v", got, err)
 	}
 	if _, err := c.Select("bad/node"); err == nil {
@@ -104,7 +104,7 @@ func TestDeploymentCurrentCanonicalizesWireAssignmentOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Assignments[0].Node != "gz02" || decoded.Assignments[1].Node != "hz01" {
+	if decoded.Assignments[0].Node != "demo-b" || decoded.Assignments[1].Node != "demo-c" {
 		t.Fatalf("Decode 没有排序:%+v", decoded.Assignments)
 	}
 	if err := decoded.Verify(pub); err != nil {
@@ -205,11 +205,11 @@ func TestDecodeDeploymentCurrentStrict(t *testing.T) {
 		{"unknown-field", strings.TrimSuffix(valid, "}") + `,"surprise":true}`, "unknown field"},
 		{"trailing-value", valid + ` {}`, "第二个 JSON"},
 		{"duplicate-top-level", `{"schema":1,"schema":1,"generation":1,"snapshot":"aaaaaaaaaaaa","published_at":"2026-08-27T12:00:00Z","signature":"` + sig + `"}`, "重复"},
-		{"duplicate-assignment", `{"schema":1,"generation":1,"snapshot":"aaaaaaaaaaaa","assignments":[{"node":"gz02","snapshot":"bbbbbbbbbbbb"},{"node":"gz02","snapshot":"cccccccccccc"}],"published_at":"2026-08-27T12:00:00Z","signature":"` + sig + `"}`, "重复 assignment"},
-		{"duplicate-assignment-key", `{"schema":1,"generation":1,"snapshot":"aaaaaaaaaaaa","assignments":[{"node":"gz02","node":"hz01","snapshot":"bbbbbbbbbbbb"}],"published_at":"2026-08-27T12:00:00Z","signature":"` + sig + `"}`, "重复"},
+		{"duplicate-assignment", `{"schema":1,"generation":1,"snapshot":"aaaaaaaaaaaa","assignments":[{"node":"demo-b","snapshot":"bbbbbbbbbbbb"},{"node":"demo-b","snapshot":"cccccccccccc"}],"published_at":"2026-08-27T12:00:00Z","signature":"` + sig + `"}`, "重复 assignment"},
+		{"duplicate-assignment-key", `{"schema":1,"generation":1,"snapshot":"aaaaaaaaaaaa","assignments":[{"node":"demo-b","node":"demo-c","snapshot":"bbbbbbbbbbbb"}],"published_at":"2026-08-27T12:00:00Z","signature":"` + sig + `"}`, "重复"},
 		{"bad-node", `{"schema":1,"generation":1,"snapshot":"aaaaaaaaaaaa","assignments":[{"node":"bad/node","snapshot":"bbbbbbbbbbbb"}],"published_at":"2026-08-27T12:00:00Z","signature":"` + sig + `"}`, "格式非法"},
 		{"bad-root-snapshot", `{"schema":1,"generation":1,"snapshot":"AAAAAAAAAAAA","published_at":"2026-08-27T12:00:00Z","signature":"` + sig + `"}`, "12 位小写十六进制"},
-		{"bad-assignment-snapshot", `{"schema":1,"generation":1,"snapshot":"aaaaaaaaaaaa","assignments":[{"node":"gz02","snapshot":"not-a-snap"}],"published_at":"2026-08-27T12:00:00Z","signature":"` + sig + `"}`, "12 位小写十六进制"},
+		{"bad-assignment-snapshot", `{"schema":1,"generation":1,"snapshot":"aaaaaaaaaaaa","assignments":[{"node":"demo-b","snapshot":"not-a-snap"}],"published_at":"2026-08-27T12:00:00Z","signature":"` + sig + `"}`, "12 位小写十六进制"},
 		{"zero-generation", `{"schema":1,"generation":0,"snapshot":"aaaaaaaaaaaa","published_at":"2026-08-27T12:00:00Z","signature":"` + sig + `"}`, "大于 0"},
 		{"future-schema", `{"schema":2,"generation":1,"snapshot":"aaaaaaaaaaaa","published_at":"2026-08-27T12:00:00Z","signature":"` + sig + `"}`, "不支持"},
 		{"missing-signature", `{"schema":1,"generation":1,"snapshot":"aaaaaaaaaaaa","published_at":"2026-08-27T12:00:00Z"}`, "没有签名"},

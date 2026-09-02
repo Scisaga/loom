@@ -14,7 +14,7 @@ func TestMissingDistributionURLIsReported(t *testing.T) {
 defaults: {dns: [223.5.5.5], components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, wg_public_key: k1}}
-  - {id: b, public_endpoint: 1.1.1.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
+  - {id: b, public_endpoint: 192.0.2.2, server: {direction: reverse_only, inbound_port: 4433, wg_public_key: k2}}
 tunnels:
   - {from: a, to: b, listen_port: 61611, from_addr: 10.0.0.1/32, to_addr: 10.0.0.2/32}`)
 	s, err := model.Load(src)
@@ -46,13 +46,13 @@ tunnels:
 func TestNodeDistributionURLOverridesFleetDefault(t *testing.T) {
 	s := &model.SSOT{
 		Defaults: &model.SSOTDefaults{DistributionURL: "https://public.example/loom/", DNS: []string{"223.5.5.5"}},
-		Nodes:    []model.Node{{ID: "sv01", DistributionURL: "http://10.99.2.2/loom/"}},
+		Nodes:    []model.Node{{ID: "demo-f", DistributionURL: "http://10.99.2.2/loom/"}},
 	}
 	files, skips := renderPull(s, &s.Nodes[0])
 	if len(skips) != 0 || len(files) != 2 {
 		t.Fatalf("renderPull() files=%d skips=%v", len(files), skips)
 	}
-	if !strings.Contains(files[0].Content, "pull -url http://10.99.2.2/loom/ -node sv01 -dns 223.5.5.5") {
+	if !strings.Contains(files[0].Content, "pull -url http://10.99.2.2/loom/ -node demo-f -dns 223.5.5.5") {
 		t.Fatalf("node distribution override was not rendered:\n%s", files[0].Content)
 	}
 }
@@ -62,13 +62,13 @@ func TestPullRendersOrderedMirrorFlags(t *testing.T) {
 		Defaults: &model.SSOTDefaults{DistributionURLs: []string{
 			"http://10.99.0.1/loom/", "http://10.99.0.3/loom/",
 		}},
-		Nodes: []model.Node{{ID: "sg02"}},
+		Nodes: []model.Node{{ID: "demo-e"}},
 	}
 	files, skips := renderPull(s, &s.Nodes[0])
 	if len(skips) != 0 || len(files) != 2 {
 		t.Fatalf("renderPull() files=%d skips=%v", len(files), skips)
 	}
-	want := "pull -url http://10.99.0.1/loom/ -url http://10.99.0.3/loom/ -node sg02"
+	want := "pull -url http://10.99.0.1/loom/ -url http://10.99.0.3/loom/ -node demo-e"
 	if !strings.Contains(files[0].Content, want) {
 		t.Fatalf("镜像顺序或重复 -url 丢失:\n%s", files[0].Content)
 	}

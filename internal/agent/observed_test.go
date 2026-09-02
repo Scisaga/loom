@@ -70,10 +70,10 @@ func TestUnsignedRelayedTargetsCannotDrivePruning(t *testing.T) {
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
 	o := newObserved()
 	forged := &report.Observation{
-		Node: "gz02", TS: now.Format(time.RFC3339),
+		Node: "demo-b", TS: now.Format(time.RFC3339),
 		Targets: []report.Reach{{Target: "https://t/", Samples: 5, Failures: 5, Error: "forged"}},
 	}
-	if err := ingestObservation(o, forged, "jm24", false, nil, now, 10*time.Minute, 0); err == nil {
+	if err := ingestObservation(o, forged, "demo-d", false, nil, now, 10*time.Minute, 0); err == nil {
 		t.Fatal("unsigned relay observation was accepted as decision input")
 	}
 	if dead := o.unreachable("https://t/", now, 10*time.Minute); len(dead) != 0 {
@@ -81,11 +81,11 @@ func TestUnsignedRelayedTargetsCannotDrivePruning(t *testing.T) {
 	}
 	// The exact same payload is valid when it comes from the loopback report
 	// and names this node; local node-owned input does not need relay proof.
-	forged.Node = "jm24"
-	if err := ingestObservation(o, forged, "jm24", true, nil, now, 10*time.Minute, 0); err != nil {
+	forged.Node = "demo-d"
+	if err := ingestObservation(o, forged, "demo-d", true, nil, now, 10*time.Minute, 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := o.unreachable("https://t/", now, 10*time.Minute)["jm24"]; !ok {
+	if _, ok := o.unreachable("https://t/", now, 10*time.Minute)["demo-d"]; !ok {
 		t.Fatal("local self observation stopped driving direct-candidate pruning")
 	}
 }
@@ -94,13 +94,13 @@ func TestPhaseBLoopbackRequiresV5Attestation(t *testing.T) {
 	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
 	obs := newObserved()
 	unsigned := &report.Observation{
-		Node: "jm24", TS: now.Format(time.RFC3339),
+		Node: "demo-d", TS: now.Format(time.RFC3339),
 		Targets: []report.Reach{{Target: "https://t/", Samples: 5, Failures: 5, Error: "unsigned"}},
 	}
-	if err := ingestObservation(obs, unsigned, "jm24", true, nil, now, 10*time.Minute, 5); err == nil {
+	if err := ingestObservation(obs, unsigned, "demo-d", true, nil, now, 10*time.Minute, 5); err == nil {
 		t.Fatal("phase-B loopback 接受了 unsigned observation")
 	}
-	if err := ingestObservation(obs, nil, "jm24", true, nil, now, 10*time.Minute, 5); err == nil {
+	if err := ingestObservation(obs, nil, "demo-d", true, nil, now, 10*time.Minute, 5); err == nil {
 		t.Fatal("phase-B loopback 缺少本机 observation 时没有报错")
 	}
 	if obs.len() != 0 {

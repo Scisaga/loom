@@ -409,7 +409,7 @@ func TestCollectCountsMissingAgentHealthOnce(t *testing.T) {
 	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
 	path := filepath.Join(t.TempDir(), "agent-state.json")
 	body, err := json.Marshal(AgentState{
-		Node: "jm24", TS: now.Format(time.RFC3339), ComponentVersion: "0.1.0",
+		Node: "demo-d", TS: now.Format(time.RFC3339), ComponentVersion: "0.1.0",
 		Selections: []AgentSelection{{
 			Declaration: "intl-api", Selector: "svc:intl-api", Candidate: "cand:intl-api:direct",
 			UpdatedAt: now.Format(time.RFC3339),
@@ -422,9 +422,9 @@ func TestCollectCountsMissingAgentHealthOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := &Config{
-		Node: "jm24", AgentState: path,
+		Node: "demo-d", AgentState: path,
 		ExpectedComponents: ComponentVersions{Agent: "0.1.0"},
-		ExpectedRoutes:     []ExpectedRoute{{Access: "jm24", Declaration: "intl-api"}},
+		ExpectedRoutes:     []ExpectedRoute{{Access: "demo-d", Declaration: "intl-api"}},
 	}
 	st := collectWithWGStats(cfg, now, nil, nil)
 	if len(st.Errors) != 1 || !strings.Contains(st.Errors[0], "未上报候选健康") {
@@ -433,7 +433,7 @@ func TestCollectCountsMissingAgentHealthOnce(t *testing.T) {
 	if len(st.Components) != 1 || !st.Components[0].OK() {
 		t.Fatalf("Agent protocol should remain independently healthy: %+v", st.Components)
 	}
-	node := nodeView("jm24", true, true, st, nil, nil, "", now)
+	node := nodeView("demo-d", true, true, st, nil, nil, "", now)
 	if len(node.Problems) != 1 || !strings.Contains(node.Problems[0], "未上报候选健康") {
 		t.Fatalf("one logical Agent problem became %d drift findings: %v", len(node.Problems), node.Problems)
 	}

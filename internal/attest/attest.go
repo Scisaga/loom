@@ -2,8 +2,8 @@
 //
 // # 要解决的是什么
 //
-// gz02 和 hz01 与中控之间没有隧道(这是拓扑,不是故障),它们的消息只能
-// 由 sg02 / ber01 转述过来。观测转述是没问题的 —— 快照 id、RTT 这类
+// demo-b 和 demo-c 与中控之间没有隧道(这是拓扑,不是故障),它们的消息只能
+// 由 demo-e / demo-a 转述过来。观测转述是没问题的 —— 快照 id、RTT 这类
 // 数字,B 转述 C 的观测,可信度就是 B 的可信度,而观测本来就是尽力而为。
 //
 // **但身份不一样。** "C 跑的是 commit X"这句话如果只由 B 说,那么排障时
@@ -361,8 +361,8 @@ func Sign(c Claim, keyPEM, certPEM []byte) (*Signed, error) {
 // 三件事都要查,少一件这个机制就是摆设:
 //
 //  1. 证书链得到 CA —— 否则谁都能自签一张
-//  2. **证书的名字要和 Claim.Node 对上** —— 否则 ber01 可以拿自己的
-//     私钥签一条"gz02 跑的是 commit X"
+//  2. **证书的名字要和 Claim.Node 对上** —— 否则 demo-a 可以拿自己的
+//     私钥签一条"demo-b 跑的是 commit X"
 //  3. 签名覆盖 canonical 字节
 func Verify(s *Signed, caPEM []byte) (*Claim, error) {
 	if s == nil {

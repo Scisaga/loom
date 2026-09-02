@@ -28,9 +28,9 @@ func testLinkMetricClaim(node, peer, ts string) LinkMetricClaim {
 func TestLinkMetricSignVerifyAndJSONRoundTrip(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	ca := newCA(t)
-	key, crt := ca.issue(t, "jm24")
+	key, crt := ca.issue(t, "demo-d")
 	signed, err := SignLinkMetric(
-		testLinkMetricClaim("jm24", "gz02", now.Format(time.RFC3339)), key, crt)
+		testLinkMetricClaim("demo-d", "demo-b", now.Format(time.RFC3339)), key, crt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,8 +46,8 @@ func TestLinkMetricSignVerifyAndJSONRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("JSON 转述后的链路度量无法验签:%v", err)
 	}
-	if got.Node != "jm24" || len(got.Metrics) != 1 ||
-		got.Metrics[0].PeerNode != "gz02" || got.Metrics[0].RTTMS != 207 ||
+	if got.Node != "demo-d" || len(got.Metrics) != 1 ||
+		got.Metrics[0].PeerNode != "demo-b" || got.Metrics[0].RTTMS != 207 ||
 		got.Metrics[0].TransferBytes != 262144 {
 		t.Fatalf("验出的链路度量不完整:%+v", got)
 	}
@@ -56,16 +56,16 @@ func TestLinkMetricSignVerifyAndJSONRoundTrip(t *testing.T) {
 func TestLinkMetricRejectsTamperingAndImpersonation(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	ca := newCA(t)
-	key, crt := ca.issue(t, "jm24")
+	key, crt := ca.issue(t, "demo-d")
 	signed, err := SignLinkMetric(
-		testLinkMetricClaim("jm24", "gz02", now.Format(time.RFC3339)), key, crt)
+		testLinkMetricClaim("demo-d", "demo-b", now.Format(time.RFC3339)), key, crt)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for name, mutate := range map[string]func(*LinkMetricAttest){
-		"node":       func(s *LinkMetricAttest) { s.Node = "hz01" },
+		"node":       func(s *LinkMetricAttest) { s.Node = "demo-c" },
 		"claim time": func(s *LinkMetricAttest) { s.TS = now.Add(time.Second).Format(time.RFC3339) },
-		"peer":       func(s *LinkMetricAttest) { s.Metrics[0].PeerNode = "hz01" },
+		"peer":       func(s *LinkMetricAttest) { s.Metrics[0].PeerNode = "demo-c" },
 		"rtt":        func(s *LinkMetricAttest) { s.Metrics[0].RTTMS++ },
 		"window":     func(s *LinkMetricAttest) { s.Metrics[0].P95MS++ },
 		"transfer":   func(s *LinkMetricAttest) { s.Metrics[0].TransferBytes++ },
@@ -81,24 +81,24 @@ func TestLinkMetricRejectsTamperingAndImpersonation(t *testing.T) {
 		})
 	}
 
-	peerKey, peerCert := ca.issue(t, "ber01")
+	peerKey, peerCert := ca.issue(t, "demo-a")
 	impersonated, err := SignLinkMetric(
-		testLinkMetricClaim("jm24", "gz02", now.Format(time.RFC3339)), peerKey, peerCert)
+		testLinkMetricClaim("demo-d", "demo-b", now.Format(time.RFC3339)), peerKey, peerCert)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := VerifyLinkMetric(impersonated, ca.certPEM); err == nil ||
 		!strings.Contains(err.Error(), "替") {
-		t.Fatalf("ber01 的证书替 jm24 签链路度量未被拒绝:%v", err)
+		t.Fatalf("demo-a 的证书替 demo-d 签链路度量未被拒绝:%v", err)
 	}
 }
 
 func TestLinkMetricRejectsReplayAndStaleOrFutureSamples(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	ca := newCA(t)
-	key, crt := ca.issue(t, "jm24")
+	key, crt := ca.issue(t, "demo-d")
 
-	old := testLinkMetricClaim("jm24", "gz02", now.Add(-11*time.Minute).Format(time.RFC3339))
+	old := testLinkMetricClaim("demo-d", "demo-b", now.Add(-11*time.Minute).Format(time.RFC3339))
 	signed, err := SignLinkMetric(old, key, crt)
 	if err != nil {
 		t.Fatal(err)
@@ -108,7 +108,7 @@ func TestLinkMetricRejectsReplayAndStaleOrFutureSamples(t *testing.T) {
 		t.Fatalf("旧 link metric claim 被无限重放:%v", err)
 	}
 
-	staleSample := testLinkMetricClaim("jm24", "gz02", now.Format(time.RFC3339))
+	staleSample := testLinkMetricClaim("demo-d", "demo-b", now.Format(time.RFC3339))
 	staleSample.Metrics[0].ObservedAt = now.Add(-11 * time.Minute).Format(time.RFC3339)
 	signed, err = SignLinkMetric(staleSample, key, crt)
 	if err != nil {
@@ -119,7 +119,7 @@ func TestLinkMetricRejectsReplayAndStaleOrFutureSamples(t *testing.T) {
 		t.Fatalf("新 claim 中的旧 metric 被接受:%v", err)
 	}
 
-	future := testLinkMetricClaim("jm24", "gz02", now.Add(3*time.Minute).Format(time.RFC3339))
+	future := testLinkMetricClaim("demo-d", "demo-b", now.Add(3*time.Minute).Format(time.RFC3339))
 	signed, err = SignLinkMetric(future, key, crt)
 	if err != nil {
 		t.Fatal(err)
@@ -136,8 +136,8 @@ func TestLinkMetricRejectsReplayAndStaleOrFutureSamples(t *testing.T) {
 func TestLinkMetricRejectsDuplicatePeersAndInvalidBounds(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second).Format(time.RFC3339)
 	ca := newCA(t)
-	key, crt := ca.issue(t, "jm24")
-	base := testLinkMetricClaim("jm24", "gz02", now)
+	key, crt := ca.issue(t, "demo-d")
+	base := testLinkMetricClaim("demo-d", "demo-b", now)
 
 	duplicate := base
 	duplicate.Metrics = append([]LinkMetric(nil), base.Metrics...)
@@ -148,7 +148,7 @@ func TestLinkMetricRejectsDuplicatePeersAndInvalidBounds(t *testing.T) {
 	}
 
 	for name, mutate := range map[string]func(*LinkMetric){
-		"self peer":            func(m *LinkMetric) { m.PeerNode = "jm24" },
+		"self peer":            func(m *LinkMetric) { m.PeerNode = "demo-d" },
 		"transport":            func(m *LinkMetric) { m.Transport = "wireguard" },
 		"scope":                func(m *LinkMetric) { m.Scope = "full_path" },
 		"carrier":              func(m *LinkMetric) { m.Carrier = "wireguard" },
@@ -198,9 +198,9 @@ func TestLinkMetricRejectsDuplicatePeersAndInvalidBounds(t *testing.T) {
 
 func TestLinkMetricCanonicalSortAndV5Independence(t *testing.T) {
 	ts := "2026-08-28T12:00:00Z"
-	a := testLinkMetricClaim("jm24", "hz01", ts)
+	a := testLinkMetricClaim("demo-d", "demo-c", ts)
 	second := a.Metrics[0]
-	second.PeerNode = "gz02"
+	second.PeerNode = "demo-b"
 	a.Metrics = append(a.Metrics, second)
 	b := a
 	b.Metrics = []LinkMetric{a.Metrics[1], a.Metrics[0]}
@@ -209,7 +209,7 @@ func TestLinkMetricCanonicalSortAndV5Independence(t *testing.T) {
 	}
 
 	v5 := Claim{
-		CanonicalVersion: 5, Node: "gz02", TS: ts, Commit: "abc", Binary: "def", Applied: "snap",
+		CanonicalVersion: 5, Node: "demo-b", TS: ts, Commit: "abc", Binary: "def", Applied: "snap",
 		Components:         []ComponentClaim{{Name: "wireguard", Expected: "2", Actual: "2"}},
 		MeasurementsSHA256: strings.Repeat("a", 64),
 	}
@@ -219,7 +219,7 @@ func TestLinkMetricCanonicalSortAndV5Independence(t *testing.T) {
 		t.Fatal("构造 link metric 改变了 loom-attest canonical bytes")
 	}
 	sum := sha256.Sum256(v5.canonical())
-	if got, want := hex.EncodeToString(sum[:]), "4e3634054e55a1ca2174a055f3fee3761bdb81134065b6fed510a49f06285a4b"; got != want {
+	if got, want := hex.EncodeToString(sum[:]), "5e15031765c89c20cc6bfbfae1b484036ed585ce871562bba92a90a39802f1f5"; got != want {
 		t.Fatalf("loom-attest-v5 canonical drifted: %s != %s", got, want)
 	}
 }

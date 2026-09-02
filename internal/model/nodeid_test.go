@@ -10,7 +10,7 @@ func TestValidNodeID(t *testing.T) {
 
 	for _, id := range []string{
 		"a",
-		"jm24",
+		"demo-d",
 		"ci-runner",
 		"server-in-a-very-long-city",
 		strings.Repeat("a", 63),

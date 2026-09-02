@@ -21,7 +21,7 @@ import (
 
 func TestConnectionValidation(t *testing.T) {
 	valid := []Connection{
-		{Host: "hk01", User: "loom-bootstrap", Port: 22},
+		{Host: "demo-new-a", User: "loom-bootstrap", Port: 22},
 		{Host: "node.example.net", User: "_loom", Port: 2222},
 		{Host: "203.0.113.42", User: "root", Port: 1},
 		{Host: "2001:db8::42", User: "ops.user", Port: 65535},
@@ -407,12 +407,12 @@ func TestPreflightUsesHardenedSSHArgvAndParsesOutput(t *testing.T) {
 		invocation = got
 		return Result{Stdout: []byte(strings.Join([]string{
 			"LOOM_PREFLIGHT_V1",
-			"hostname=hk01",
+			"hostname=demo-new-a",
 			"uname=Linux 6.8.0 x86_64 GNU/Linux",
 			"kernel_wireguard=1",
 			"wg_command=1",
 			"privilege=sudo-nopasswd",
-			"ssh_server=10.24.0.18",
+			"ssh_server=192.0.2.18",
 			"",
 		}, "\n"))}, nil
 	})
@@ -425,12 +425,12 @@ func TestPreflightUsesHardenedSSHArgvAndParsesOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := PreflightResult{
-		Hostname:                 "hk01",
+		Hostname:                 "demo-new-a",
 		Uname:                    "Linux 6.8.0 x86_64 GNU/Linux",
 		KernelWireGuard:          true,
 		WGCommand:                true,
 		Privilege:                PrivilegeSudo,
-		ObservedSSHServerAddress: "10.24.0.18",
+		ObservedSSHServerAddress: "192.0.2.18",
 	}
 	if got != want {
 		t.Fatalf("Preflight = %#v, want %#v", got, want)
@@ -509,14 +509,14 @@ func TestPrepareWGUsesFixedScriptAndReturnsOnlyAuthenticatedFacts(t *testing.T) 
 	var invocation Invocation
 	runner := RunnerFunc(func(_ context.Context, got Invocation) (Result, error) {
 		invocation = got
-		return Result{Stdout: []byte("LOOM_WG_PREPARE_V1\nhostname=hk01\nssh_server=10.24.0.18\npublic_key=" + public + "\n")}, nil
+		return Result{Stdout: []byte("LOOM_WG_PREPARE_V1\nhostname=demo-new-a\nssh_server=192.0.2.18\npublic_key=" + public + "\n")}, nil
 	})
 	client := Client{Runner: runner, PrivateKeyPath: privateKey, KnownHostsPath: knownHosts}
 	got, err := client.PrepareWG(context.Background(), connection)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := PrepareWGResult{Hostname: "hk01", ObservedSSHServerAddress: "10.24.0.18", PublicKey: public}
+	want := PrepareWGResult{Hostname: "demo-new-a", ObservedSSHServerAddress: "192.0.2.18", PublicKey: public}
 	if got != want {
 		t.Fatalf("PrepareWG = %#v, want %#v", got, want)
 	}
@@ -623,9 +623,9 @@ func TestSecureSSHInputRequiresExactModeOwnerAndSafeParents(t *testing.T) {
 
 func TestPreflightRejectsInvalidObservedEndpointAndFields(t *testing.T) {
 	for name, output := range map[string]string{
-		"DNS is not SSH_CONNECTION address": "LOOM_PREFLIGHT_V1\nhostname=hk01\nuname=Linux\nkernel_wireguard=1\nwg_command=1\nprivilege=root\nssh_server=edge.example\n",
-		"duplicate":                         "LOOM_PREFLIGHT_V1\nhostname=hk01\nhostname=hk02\nuname=Linux\nkernel_wireguard=1\nwg_command=1\nprivilege=root\nssh_server=192.0.2.1\n",
-		"unknown field":                     "LOOM_PREFLIGHT_V1\nhostname=hk01\nuname=Linux\nkernel_wireguard=1\nwg_command=1\nprivilege=root\nssh_server=192.0.2.1\ndirection=bidirectional\n",
+		"DNS is not SSH_CONNECTION address": "LOOM_PREFLIGHT_V1\nhostname=demo-new-a\nuname=Linux\nkernel_wireguard=1\nwg_command=1\nprivilege=root\nssh_server=edge.example\n",
+		"duplicate":                         "LOOM_PREFLIGHT_V1\nhostname=demo-new-a\nhostname=demo-new-b\nuname=Linux\nkernel_wireguard=1\nwg_command=1\nprivilege=root\nssh_server=192.0.2.1\n",
+		"unknown field":                     "LOOM_PREFLIGHT_V1\nhostname=demo-new-a\nuname=Linux\nkernel_wireguard=1\nwg_command=1\nprivilege=root\nssh_server=192.0.2.1\ndirection=bidirectional\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := parsePreflight([]byte(output)); err == nil {

@@ -753,7 +753,7 @@ func printPublisherHealth(path string, now time.Time) int {
 // **10 分钟这个数是量出来的,不是拍的。** 2026-08-26 那一轮五台机器的
 // 二进制下载耗时(13.4 MB,落在 activating 里):
 //
-//	hz01 39s   gz02 74s   jm24 99s   ber01 134s   sg02 162s
+//	demo-c 39s   demo-b 74s   demo-d 99s   demo-a 134s   demo-e 162s
 //
 // 最坏 2 分 42 秒,取约 3.7 倍余量。**别把它调到分钟以内** —— 无变化的
 // 轮次确实是毫秒级,但那不是最坏情况,拿它定阈值会让每次二进制升级都

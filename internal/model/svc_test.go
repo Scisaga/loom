@@ -9,14 +9,14 @@ const svcSSOT = `
 defaults: {dns: [223.5.5.5], distribution_url: "https://x/", components: {sing_box: 1, wireguard: 1, agent: 1}}
 nodes:
   - id: acc
-    public_endpoint: 1.1.1.9
+    public_endpoint: 192.0.2.9
     server: {direction: bidirectional, wg_public_key: aGVsbG93b3JsZGhlbGxvd29ybGRoZWxsb3dvcmxkMTI=}
     access:
       platform: linux-server
       credentials: [c1]
       mixed_ports: [{port: 1082, services: true}]
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: aGVsbG93b3JsZGhlbGxvd29ybGRoZWxsb3dvcmxkMTM=}}
-  - {id: b, public_endpoint: 1.1.1.2, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: aGVsbG93b3JsZGhlbGxvd29ybGRoZWxsb3dvcmxkMTQ=}}
+  - {id: b, public_endpoint: 192.0.2.2, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: aGVsbG93b3JsZGhlbGxvd29ybGRoZWxsb3dvcmxkMTQ=}}
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, probe_url: "https://t/", tuning_period: 5m, window: 1h, min_samples: 6, stale_after: 20m, max_hops: 1, allowed_servers: [a, b]}
 credentials:

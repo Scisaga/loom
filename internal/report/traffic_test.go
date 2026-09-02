@@ -15,17 +15,17 @@ import (
 func TestTrafficClaimFromWGDumpUsesTopologyIdentityAndResetEpoch(t *testing.T) {
 	now := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
 	cfg := &Config{
-		Node: "gz02", Interfaces: []string{"wg-sg02"},
-		Neighbors: []Neighbor{{Node: "sg02", Addr: "10.99.0.1:61802"}},
+		Node: "demo-b", Interfaces: []string{"wg-demo-e"},
+		Neighbors: []Neighbor{{Node: "demo-e", Addr: "10.99.0.1:61802"}},
 	}
 	dump := strings.Join([]string{
-		"wg-sg02\tprivate\tpublic\t61687\toff",
-		"wg-sg02\tpeer-key-sg\t(none)\t1.2.3.4:61687\t10.99.0.1/32\t123\t1000\t2000\t25",
-		"wg-unmanaged\tother-key\t(none)\t5.6.7.8:1\t10.0.0.1/32\t123\t999\t999\t25",
+		"wg-demo-e\tprivate\tpublic\t61687\toff",
+		"wg-demo-e\tpeer-key-sg\t(none)\t192.0.2.44:61687\t10.99.0.1/32\t123\t1000\t2000\t25",
+		"wg-unmanaged\tother-key\t(none)\t203.0.113.48:1\t10.0.0.1/32\t123\t999\t999\t25",
 	}, "\n")
 	claim, err := trafficClaimFromDump(cfg, now, []byte(dump), "boot-1",
 		func(iface string) (string, error) {
-			if iface != "wg-sg02" {
+			if iface != "wg-demo-e" {
 				t.Fatalf("unexpected interface index lookup %q", iface)
 			}
 			return "42", nil
@@ -33,13 +33,13 @@ func TestTrafficClaimFromWGDumpUsesTopologyIdentityAndResetEpoch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claim.Node != "gz02" || claim.TS != now.Format(time.RFC3339) || len(claim.Counters) != 1 {
+	if claim.Node != "demo-b" || claim.TS != now.Format(time.RFC3339) || len(claim.Counters) != 1 {
 		t.Fatalf("claim identity/counters wrong:%+v", claim)
 	}
 	c := claim.Counters[0]
 	peerKeySum := sha256.Sum256([]byte("peer-key-sg"))
 	wantEpoch := fmt.Sprintf("boot-1/42/%x", peerKeySum[:16])
-	if c.PeerNode != "sg02" || c.LinkID != "gz02/sg02" || c.PeerPublicKey != "peer-key-sg" ||
+	if c.PeerNode != "demo-e" || c.LinkID != "demo-b/demo-e" || c.PeerPublicKey != "peer-key-sg" ||
 		c.CounterEpoch != wantEpoch || c.RXBytes != 1000 || c.TXBytes != 2000 {
 		t.Fatalf("counter did not preserve logical/diagnostic/reset identity:%+v", c)
 	}
@@ -47,9 +47,9 @@ func TestTrafficClaimFromWGDumpUsesTopologyIdentityAndResetEpoch(t *testing.T) {
 
 func TestTrafficClaimRejectsMultiplePeersOnManagedInterface(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
-	cfg := &Config{Node: "gz02", Interfaces: []string{"wg-sg02"}}
+	cfg := &Config{Node: "demo-b", Interfaces: []string{"wg-demo-e"}}
 	row := func(key string) string {
-		return "wg-sg02\t" + key + "\t(none)\t1.2.3.4:1\t10.0.0.1/32\t1\t2\t3\t25"
+		return "wg-demo-e\t" + key + "\t(none)\t192.0.2.44:1\t10.0.0.1/32\t1\t2\t3\t25"
 	}
 	_, err := trafficClaimFromDump(cfg, now, []byte(row("key-a")+"\n"+row("key-b")), "boot",
 		func(string) (string, error) { return "42", nil })
@@ -60,11 +60,11 @@ func TestTrafficClaimRejectsMultiplePeersOnManagedInterface(t *testing.T) {
 
 func TestTrafficAttachmentSurvivesGossipAndMapsOnlyAfterVerification(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
-	ca, key, crt := reportTestIdentity(t, "gz02")
+	ca, key, crt := reportTestIdentity(t, "demo-b")
 	claim := attest.TrafficClaim{
-		Version: attest.TrafficClaimVersion, Node: "gz02", TS: now.Format(time.RFC3339),
+		Version: attest.TrafficClaimVersion, Node: "demo-b", TS: now.Format(time.RFC3339),
 		Counters: []attest.TrafficCounter{{
-			Interface: "wg-sg02", PeerNode: "sg02", LinkID: "gz02/sg02",
+			Interface: "wg-demo-e", PeerNode: "demo-e", LinkID: "demo-b/demo-e",
 			PeerPublicKey: "peer-key", CounterEpoch: "boot/42", RXBytes: 100, TXBytes: 200,
 		}},
 	}
@@ -72,7 +72,7 @@ func TestTrafficAttachmentSurvivesGossipAndMapsOnlyAfterVerification(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	original := Observation{Node: "gz02", TS: claim.TS, Traffic: signed}
+	original := Observation{Node: "demo-b", TS: claim.TS, Traffic: signed}
 	wire, err := json.Marshal(&original)
 	if err != nil {
 		t.Fatal(err)
@@ -90,16 +90,16 @@ func TestTrafficAttachmentSurvivesGossipAndMapsOnlyAfterVerification(t *testing.
 	if err := tbl.put(&relayed, now, time.Minute); err != nil {
 		t.Fatalf("valid traffic attachment did not enter gossip table:%v", err)
 	}
-	learned := tbl.snapshot("jm24", now, time.Minute)
+	learned := tbl.snapshot("demo-d", now, time.Minute)
 	if len(learned) != 1 || learned[0].Traffic == nil {
 		t.Fatalf("gossip dropped optional traffic attachment:%+v", learned)
 	}
-	view := buildViewWithCA(&Config{Node: "jm24", ExpectedNodes: []string{"jm24", "gz02"}},
-		&Status{Node: "jm24", TS: claim.TS, Learned: learned}, now,
+	view := buildViewWithCA(&Config{Node: "demo-d", ExpectedNodes: []string{"demo-d", "demo-b"}},
+		&Status{Node: "demo-d", TS: claim.TS, Learned: learned}, now,
 		func(string) ([]byte, error) { return ca, nil })
 	var remoteFound bool
 	for _, node := range view.Nodes {
-		if node.ID != "gz02" {
+		if node.ID != "demo-b" {
 			continue
 		}
 		remoteFound = true
@@ -108,8 +108,8 @@ func TestTrafficAttachmentSurvivesGossipAndMapsOnlyAfterVerification(t *testing.
 			t.Fatalf("verified remote counters not mapped:%+v", node)
 		}
 		tunnel := node.Tunnels[0]
-		if !tunnel.CounterPresent || !tunnel.TrafficTrusted || !tunnel.TrafficVerified || tunnel.PeerNode != "sg02" ||
-			tunnel.LinkID != "gz02/sg02" || tunnel.CounterEpoch != "boot/42" ||
+		if !tunnel.CounterPresent || !tunnel.TrafficTrusted || !tunnel.TrafficVerified || tunnel.PeerNode != "demo-e" ||
+			tunnel.LinkID != "demo-b/demo-e" || tunnel.CounterEpoch != "boot/42" ||
 			tunnel.CounterObservedAt != claim.TS || tunnel.RxBytes != 100 || tunnel.TxBytes != 200 {
 			t.Fatalf("trusted TunnelView lost counter identity:%+v", tunnel)
 		}
@@ -127,11 +127,11 @@ func TestTrafficAttachmentSurvivesGossipAndMapsOnlyAfterVerification(t *testing.
 	}
 	tampered.Traffic.Counters = append([]attest.TrafficCounter(nil), relayed.Traffic.Counters...)
 	tampered.Traffic.Counters[0].RXBytes++
-	badView := buildViewWithCA(&Config{Node: "jm24"},
-		&Status{Node: "jm24", TS: claim.TS, Learned: []Observation{tampered}}, now,
+	badView := buildViewWithCA(&Config{Node: "demo-d"},
+		&Status{Node: "demo-d", TS: claim.TS, Learned: []Observation{tampered}}, now,
 		func(string) ([]byte, error) { return ca, nil })
 	for _, node := range badView.Nodes {
-		if node.ID == "gz02" && (node.TrafficTrusted || len(node.Tunnels) != 0 || node.Health != "problem") {
+		if node.ID == "demo-b" && (node.TrafficTrusted || len(node.Tunnels) != 0 || node.Health != "problem") {
 			t.Fatalf("tampered traffic was trusted or failed silently:%+v", node)
 		}
 	}
@@ -166,15 +166,15 @@ func TestDirectTunnelOnlyMarksCounterPresentWhenInterfaceExists(t *testing.T) {
 
 func TestTrafficDoesNotChangeV5MeasurementClaim(t *testing.T) {
 	o := &Observation{
-		Node: "gz02", TS: "2026-08-28T12:00:00Z", Applied: "snapshot",
-		Edges: []Edge{{To: "sg02", RTTMs: 10, Samples: 5}},
+		Node: "demo-b", TS: "2026-08-28T12:00:00Z", Applied: "snapshot",
+		Edges: []Edge{{To: "demo-e", RTTMs: 10, Samples: 5}},
 	}
 	legacyBefore, currentBefore := claimsForObservation(o, 5)
 	digestBefore := measurementDigest(o)
 	o.Traffic = &attest.TrafficAttest{TrafficClaim: attest.TrafficClaim{
 		Version: 1, Node: o.Node, TS: o.TS,
 		Counters: []attest.TrafficCounter{{
-			Interface: "wg-sg02", PeerNode: "sg02", LinkID: "gz02/sg02",
+			Interface: "wg-demo-e", PeerNode: "demo-e", LinkID: "demo-b/demo-e",
 			PeerPublicKey: "key", CounterEpoch: "boot/1", RXBytes: 1, TXBytes: 2,
 		}},
 	}}
@@ -188,11 +188,11 @@ func TestTrafficDoesNotChangeV5MeasurementClaim(t *testing.T) {
 
 func TestTrafficAttachmentBindsOuterNodeAndTimestamp(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
-	ca, key, crt := reportTestIdentity(t, "gz02")
+	ca, key, crt := reportTestIdentity(t, "demo-b")
 	claim := attest.TrafficClaim{
-		Version: 1, Node: "gz02", TS: now.Format(time.RFC3339),
+		Version: 1, Node: "demo-b", TS: now.Format(time.RFC3339),
 		Counters: []attest.TrafficCounter{{
-			Interface: "wg-sg02", PeerNode: "sg02", LinkID: "gz02/sg02",
+			Interface: "wg-demo-e", PeerNode: "demo-e", LinkID: "demo-b/demo-e",
 			PeerPublicKey: "key", CounterEpoch: "boot/1",
 		}},
 	}
@@ -201,7 +201,7 @@ func TestTrafficAttachmentBindsOuterNodeAndTimestamp(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, o := range []*Observation{
-		{Node: "hz01", TS: claim.TS, Traffic: signed},
+		{Node: "demo-c", TS: claim.TS, Traffic: signed},
 		{Node: claim.Node, TS: now.Add(time.Second).Format(time.RFC3339), Traffic: signed},
 	} {
 		if _, err := verifyTrafficAttachment(o, ca, now, time.Minute); err == nil ||

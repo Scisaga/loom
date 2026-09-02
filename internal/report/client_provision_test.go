@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
 	"loom/internal/clientregistry"
 	"loom/internal/model"
 	"loom/internal/secret"
@@ -87,8 +88,8 @@ func TestClientProvisionPrepositionsSecretsBeforeSSOTCommitAndReplaysReady(t *te
 	if len(installed) != 6 {
 		t.Fatalf("pre-positioned nodes = %v, want all six existing nodes", mapKeys(installed))
 	}
-	if !strings.Contains(string(installed["gz02"]), "cred/"+client.ID+"/") ||
-		!strings.Contains(string(installed["jm24"]), "ui/jm24=") {
+	if !strings.Contains(string(installed["cn-gz"]), "cred/"+client.ID+"/") ||
+		!strings.Contains(string(installed["cn-bj"]), "ui/cn-bj=") {
 		t.Fatalf("pre-positioned secret layers omitted new server credential or preserved local bootstrap ref")
 	}
 
@@ -327,19 +328,19 @@ func TestNodeSecretRefsUseAccessCredentialBindingNotOwnerLabel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	credential := ssot.CredentialByID()["cred-jm24-gz"]
+	credential := ssot.CredentialByID()["cred-control-best"]
 	if credential == nil || ssot.AccessNodeForCredential(credential.ID) == nil {
-		t.Fatal("fixture is missing the jm24 access credential binding")
+		t.Fatal("fixture is missing the synthetic control access credential binding")
 	}
 	credential.Owner = "北京工作站"
 
-	refs := nodeSecretRefs(ssot, "gz02", nil)
+	refs := nodeSecretRefs(ssot, "cn-gz", nil)
 	found := false
 	for _, ref := range refs {
 		found = found || ref == credential.Ref()
 	}
 	if !found {
-		t.Fatalf("gz02 secret refs %v omitted access-bound credential %q whose owner is only a label", refs, credential.ID)
+		t.Fatalf("cn-gz secret refs %v omitted access-bound credential %q whose owner is only a label", refs, credential.ID)
 	}
 }
 
@@ -547,7 +548,7 @@ func TestClientProvisionFailureLeavesSSOTUnchangedAndRetryReusesSecrets(t *testi
 	var saveMu sync.Mutex
 	p := newClientProvisioner(control, &saveMu)
 	p.install = func(_ context.Context, nodeID string, _ []byte) error {
-		if nodeID == "sg02" {
+		if nodeID == "sg-vps" {
 			return errors.New("simulated SSH failure")
 		}
 		return nil
@@ -587,7 +588,7 @@ func TestClientProvisionSSHUsesPinnedTrustAndSuppressesRemoteOutput(t *testing.T
 	if err := os.WriteFile(control.BootstrapSSHKey, []byte("test private key\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(control.KnownHostsPath, []byte("gz02 ssh-ed25519 test\n"), 0o600); err != nil {
+	if err := os.WriteFile(control.KnownHostsPath, []byte("cn-gz ssh-ed25519 test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -610,7 +611,7 @@ exit 23
 	t.Setenv("LOOM_TEST_SSH_SECRET", secret)
 
 	p := newClientProvisioner(control, new(sync.Mutex))
-	err := p.installNodeSecrets(context.Background(), "gz02", []byte("api/client="+secret+"\n"))
+	err := p.installNodeSecrets(context.Background(), "cn-gz", []byte("api/client="+secret+"\n"))
 	if err == nil || strings.Contains(err.Error(), secret) {
 		t.Fatalf("SSH error = %q, want failure without remote output", err)
 	}
@@ -631,7 +632,7 @@ exit 23
 		"-o", "RequestTTY=no",
 		"-o", "ConnectTimeout=10",
 		"-i", control.BootstrapSSHKey,
-		"--", "gz02", "/bin/sh", "-s", "--",
+		"--", "cn-gz", "/bin/sh", "-s", "--",
 	}
 	if !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("ssh args = %#v, want %#v", gotArgs, wantArgs)
@@ -769,12 +770,74 @@ func clientProvisionFixture(t *testing.T) (*Control, clientProvisionPaths) {
 			t.Fatal(err)
 		}
 	}
-	copyTestFile(t, "../../deploy/ssot.yaml", filepath.Join(deployDir, "ssot.yaml"), 0o600)
-	copyTestFile(t, "../../deploy/secrets.env", filepath.Join(deployDir, "secrets.env"), 0o600)
+	body, err := os.ReadFile("../../testdata/matrix/ssot.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = []byte(strings.Replace(string(body), "declarations:\n", `enrollment_profiles:
+  - id: standard-device
+    version: 1
+    default: true
+    responsibilities: [use_loom]
+    destination_grants: [best-egress]
+  - id: server-device
+    version: 1
+    responsibilities: [forward, internet_egress]
+declarations:
+`, 1))
+	ssot, err := model.Load(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	servers := ssot.Nodes[:0]
+	for _, node := range ssot.Nodes {
+		if node.IsServer() {
+			servers = append(servers, node)
+		}
+	}
+	ssot.Nodes = servers
+	controlNode := ssot.NodeByID()["cn-bj"]
+	controlNode.Access = &model.AccessRole{
+		Platform: model.LinuxServer, Credentials: []string{"cred-control-best"},
+		DefaultDeclaration: "best-egress",
+		MixedPorts:         []model.MixedPort{{Port: 1080, Services: true}},
+	}
+	ssot.Credentials = append(ssot.Credentials, model.Credential{
+		ID: "cred-control-best", Owner: "Synthetic control", Declaration: "best-egress",
+		SecretRef: "cred/control-best",
+	})
+	ssot.Services = append(ssot.Services, model.Service{
+		ID: "example-web", Addresses: []string{"api.example.com"}, Declaration: "best-egress",
+	})
+	best := ssot.DeclarationByID()["best-egress"]
+	best.AllowedServers = best.AllowedServers[:0]
+	for i := range ssot.Nodes {
+		if ssot.Nodes[i].Server.EgressCapable {
+			best.AllowedServers = append(best.AllowedServers, ssot.Nodes[i].ID)
+		}
+	}
+	sort.Strings(best.AllowedServers)
+	body, err = yaml.Marshal(ssot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(deployDir, "ssot.yaml"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	all := map[string]string{"ui/cn-bj": "test-ui-secret"}
+	for i := range ssot.Nodes {
+		for _, ref := range nodeSecretRefs(ssot, ssot.Nodes[i].ID, nil) {
+			all[ref] = "test-secret"
+		}
+	}
+	if err := os.WriteFile(filepath.Join(deployDir, "secrets.env"),
+		secret.Encode(all, masterSecretsHeader()), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(root, ".ssh_config"), []byte("Host *\n  BatchMode yes\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	control := &Control{SSOTPath: filepath.Join(deployDir, "ssot.yaml"), OperatorRef: "ui/jm24"}
+	control := &Control{SSOTPath: filepath.Join(deployDir, "ssot.yaml"), OperatorRef: "ui/cn-bj"}
 	paths, err := clientPaths(control)
 	if err != nil {
 		t.Fatal(err)

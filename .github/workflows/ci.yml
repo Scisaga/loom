@@ -26,6 +26,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Check repository safety boundary
+        run: python3 scripts/check_repository_safety.py
+
       - name: Test
         run: go test ./...
 

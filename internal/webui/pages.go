@@ -1260,7 +1260,7 @@ func short(s string) string {
 
 // brief 把网络错误压成一行能看的。
 //
-// Go 的网络错误带着完整的拨号上下文(`Get "https://…": dial tcp 1.2.3.4:443: …`),
+// Go 的网络错误带着完整的拨号上下文(`Get "https://…": dial tcp 192.0.2.44:443: …`),
 // 在表格里会把整行撑爆,而真正有信息量的是最后那一小截。
 func brief(s string) string {
 	if i := strings.LastIndex(s, ": "); i > 0 {

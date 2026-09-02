@@ -23,7 +23,7 @@ func TestZeroCurrentCountersAreSampledIdleNotMissing(t *testing.T) {
 		"Current cumulative counters by local interface",
 		"Idle · 0 B sampled",
 		`class="current-counter-row idle"`,
-		`title="wg-loom-sg02 0 B · idle"`,
+		`title="wg-loom-demo-e 0 B · idle"`,
 		`<small>RX</small><b class=mono>0 B</b>`,
 		`<small>TX</small><b class=mono>0 B</b>`,
 	} {
@@ -35,10 +35,10 @@ func TestZeroCurrentCountersAreSampledIdleNotMissing(t *testing.T) {
 		t.Fatal("Overview treated a sampled zero counter as missing evidence")
 	}
 
-	detail := misakaRequest(t, d, http.MethodGet, "/nodes/jm24", nil, false).Body.String()
+	detail := misakaRequest(t, d, http.MethodGet, "/nodes/demo-d", nil, false).Body.String()
 	for _, want := range []string{
 		"WG RX total", "WG TX total", "Idle · 0 B sampled",
-		`class=counterchart`, `title="wg-loom-sg02 RX 0 B · idle"`,
+		`class=counterchart`, `title="wg-loom-demo-e RX 0 B · idle"`,
 		"Direct-self /status counter evidence.",
 	} {
 		if !strings.Contains(detail, want) {
@@ -54,7 +54,7 @@ func TestAbsentTunnelEvidenceStillReportsMissingCurrentCounters(t *testing.T) {
 	d := misakaDeps()
 	view := d.Snapshot()
 	view.Nodes[0].Tunnels = []TunnelView{{
-		Interface: "wg-loom-sg02", CarrierPresent: true, State: "down", CounterPresent: false,
+		Interface: "wg-loom-demo-e", CarrierPresent: true, State: "down", CounterPresent: false,
 	}}
 	d.Snapshot = func() View { return view }
 
@@ -62,14 +62,14 @@ func TestAbsentTunnelEvidenceStillReportsMissingCurrentCounters(t *testing.T) {
 	if !strings.Contains(overview, "Current local counters are not present in this view") {
 		t.Fatal("Overview did not report genuinely absent counter evidence")
 	}
-	detail := misakaRequest(t, d, http.MethodGet, "/nodes/jm24", nil, false).Body.String()
+	detail := misakaRequest(t, d, http.MethodGet, "/nodes/demo-d", nil, false).Body.String()
 	if !strings.Contains(detail, "No current cumulative counters for this node") {
 		t.Fatal("Node detail did not report genuinely absent counter evidence")
 	}
-	if !strings.Contains(detail, "wg-loom-sg02") || !strings.Contains(detail, "down") {
+	if !strings.Contains(detail, "wg-loom-demo-e") || !strings.Contains(detail, "down") {
 		t.Fatal("Node detail dropped the down tunnel row while excluding its absent counter")
 	}
-	if !strings.Contains(detail, `<td class=mono>wg-loom-sg02<td class=bad>down<td>interface down<td>—<td>—`) {
+	if !strings.Contains(detail, `<td class=mono>wg-loom-demo-e<td class=bad>down<td>interface down<td>—<td>—`) {
 		t.Fatal("down tunnel row represented absent counters as sampled zero bytes")
 	}
 	if strings.Contains(overview, "Idle · 0 B sampled") || strings.Contains(detail, "Idle · 0 B sampled") {
@@ -93,7 +93,7 @@ func TestNodeDetailLabelsIndependentlySignedRelayCounterEvidence(t *testing.T) {
 	node.Tunnels[0].CounterSource = "independently signed relay"
 	d.Snapshot = func() View { return view }
 
-	body := misakaRequest(t, d, http.MethodGet, "/nodes/jm24", nil, false).Body.String()
+	body := misakaRequest(t, d, http.MethodGet, "/nodes/demo-d", nil, false).Body.String()
 	if !strings.Contains(body, "Independently signed loom-traffic-v1 relay counter evidence.") {
 		t.Fatal("Node detail did not identify independently signed relay counters")
 	}
@@ -195,7 +195,7 @@ func TestTrafficOnlyRowsDoNotBecomeCarrierFailuresOrTopologyRoles(t *testing.T) 
 		t.Fatal("traffic-only counter row was counted as a persistent carrier")
 	}
 
-	detail := misakaRequest(t, d, http.MethodGet, "/nodes/jm24", nil, false).Body.String()
+	detail := misakaRequest(t, d, http.MethodGet, "/nodes/demo-d", nil, false).Body.String()
 	for _, want := range []string{
 		`1 / 1 active`,
 		`<td class=mono>wg-signed-only<td class=dim>traffic counters only<td>—<td>10 B<td>20 B`,
@@ -217,7 +217,7 @@ func TestIntentCopyDistinguishesCurrentSSOTFromAppliedInventory(t *testing.T) {
 	d.Control = nil
 	d.Snapshot = func() View { return view }
 
-	for _, path := range []string{"/", "/nodes", "/nodes/sg02", "/topology"} {
+	for _, path := range []string{"/", "/nodes", "/nodes/demo-e", "/topology"} {
 		body := misakaRequest(t, d, http.MethodGet, path, nil, false).Body.String()
 		if !strings.Contains(body, "serving node applied inventory") {
 			t.Errorf("%s omitted the applied-inventory source", path)

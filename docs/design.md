@@ -1,5 +1,8 @@
 # Loom · 设计文档
 
+> **公开仓库边界:** 本文出现的设备、主机、地址、端口、地域和测量值均为合成
+> 示例，不对应实际部署。真实部署信息不得进入设计文档、代码注释、测试或原型。
+
 > **文档边界:** 本文定义不变量、目标设计与依赖关系；实际已经运行到哪里只看
 > [status/current.md](status/current.md)。目标机制尚未落地时必须明确标成“目标态”，
 > 不能用将来时能力解释当前生产行为。控制中心的仓库实现边界另见
@@ -162,9 +165,9 @@ Loom 管两种机器,再加上一类它**根本不管**的东西:
 **这是"多地址选优"能够成立的前提。** 一个目标地址声明它提供什么服务:
 
 ```
-- address: https://llm-hz.internal/v1
+- address: https://llm-b.internal/v1
   service: llm:qwen3-32b-int8@openai-v1      # 模型+精度+接口契约(见 §4.3)
-- address: https://llm-gy.internal/v1
+- address: https://llm-a.internal/v1
   service: llm:qwen3-32b-int8@openai-v1      # 同一个服务,另一个地址
 ```
 
@@ -328,9 +331,9 @@ Path = 接入节点 → [服务器₁ → 服务器₂ → …] → 目标地址
 
 地址从等价类里选
    客户端说:"我要一个 qwen3-32b 推理端点"
-                                ┌--> https://llm-hz.internal/v1
-   [接入] --选服务器链--> [出口] --┼--> https://llm-gy.internal/v1
-                                └--> https://llm-wlcb.internal/v1
+                                ┌--> https://llm-b.internal/v1
+   [接入] --选服务器链--> [出口] --┼--> https://llm-a.internal/v1
+                                └--> https://llm-c.internal/v1
 ```
 
 > **服务器轴始终需要度量;地址轴只在"从等价类里选"时才需要。** 代理上网是地址轴退化为常量的情形 —— 地址是客户端给的,没得选。
@@ -1159,7 +1162,7 @@ Subnet router 与 NAT 穿透。**生产环境目前没有部署 Headscale/DERP�
 ### 9.1 一个目标地址声明什么
 
 ```
-- address: https://llm-hz.internal/v1
+- address: https://llm-b.internal/v1
   service: llm:qwen3-32b-int8@openai-v1     # 服务类型标签(§1.4)
   access_contract: {...}                    # 换地址的前提(§4.4)
   credential_ref: vault:llm/hz              # 若需鉴权
@@ -1479,7 +1482,7 @@ D88 的 signed deployment envelope 证明平台当前授权，并以节点本地
 
 ```
 签发端(有私钥)               多个静态镜像(不可信)                节点
-  loom publish  ──────────────► gz02 / hz01 / 外部镜像             loom pull
+  loom publish  ──────────────► demo-b / demo-c / 外部镜像             loom pull
     渲染 → 快照签名              current.json(signed,generation)  ──► 1 并行验 current,选最高合法代
     耐久 release authority       <id>/snapshot.json + .sig          2 从任一镜像验 manifest/正文哈希
     产物全是 ${secret:...}        <id>/nodes/<node>.json             3 用本机秘密层填占位符
@@ -2603,7 +2606,7 @@ Node                           # §1 —— Loom 管的机器。目标地址不�
   # 没有 mesh_eligible —— 由 direction 推导(§2.2)。
 
 ServiceAddress                 # §9 —— 目标地址。不是节点,不参与渲染
-  address                      # 如 https://llm-hz.internal/v1
+  address                      # 如 https://llm-b.internal/v1
   service                      # 服务类型标签(§1.4)
   access_contract              # §4.4 转发前提:域名、证书 CA、凭据来源、
                                #      请求路径前缀、协议版本

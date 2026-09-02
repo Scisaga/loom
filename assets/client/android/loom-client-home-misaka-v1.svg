@@ -148,7 +148,7 @@
       <text class="body green" x="286" y="523" text-anchor="middle">→</text>
       <line class="rule" x1="48" y1="552" x2="382" y2="552"/>
       <text class="tiny muted" x="48" y="573">LIVE PATH</text>
-      <text class="small mono" x="124" y="573">gz02 → sg02</text>
+      <text class="small mono" x="124" y="573">demo-b → demo-e</text>
       <text class="small green" x="382" y="573" text-anchor="end">92 ms · healthy</text>
     </g>
 

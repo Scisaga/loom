@@ -13,10 +13,10 @@ import (
 
 func TestConfiguredChainTreatsTagAsOpaque(t *testing.T) {
 	d := &Decl{Candidates: []Cand{
-		{Tag: "cand:svc@v1:gz02@https://api.example/", Chain: []string{"gz02"}},
+		{Tag: "cand:svc@v1:demo-b@https://api.example/", Chain: []string{"demo-b"}},
 		{Tag: "cand:svc@v1:direct@https://api.example/"},
 	}}
-	if got, ok := configuredChain(d, d.Candidates[0].Tag); !ok || !reflect.DeepEqual(got, []string{"gz02"}) {
+	if got, ok := configuredChain(d, d.Candidates[0].Tag); !ok || !reflect.DeepEqual(got, []string{"demo-b"}) {
 		t.Fatalf("显式链没有按 opaque tag 找到:%v,%v", got, ok)
 	}
 	if got, ok := configuredChain(d, d.Candidates[1].Tag); !ok || len(got) != 0 {
@@ -27,14 +27,14 @@ func TestConfiguredChainTreatsTagAsOpaque(t *testing.T) {
 func TestStateStoreWritesCompleteSortedSnapshot(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "state.json")
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
-	s, err := newStateStore(p, "jm24", []Decl{
+	s, err := newStateStore(p, "demo-d", []Decl{
 		{ID: "z", Candidates: []Cand{{Tag: "opaque-z"}}},
 		{ID: "a", Candidates: []Cand{{Tag: "opaque-a"}}},
 	}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.observe(Selection{Declaration: "z", Selector: "svc:z", Candidate: "opaque-z", Chain: []string{"gz02", "sg02"}}, now); err != nil {
+	if err := s.observe(Selection{Declaration: "z", Selector: "svc:z", Candidate: "opaque-z", Chain: []string{"demo-b", "demo-e"}}, now); err != nil {
 		t.Fatal(err)
 	}
 	p50, p95 := 17, 31
@@ -51,13 +51,13 @@ func TestStateStoreWritesCompleteSortedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Node != "jm24" || st.TS != "2026-08-26T12:00:01Z" || len(st.Selections) != 2 {
+	if st.Node != "demo-d" || st.TS != "2026-08-26T12:00:01Z" || len(st.Selections) != 2 {
 		t.Fatalf("状态不完整:%+v", st)
 	}
 	if st.ComponentVersion != version.AgentProtocolVersion {
 		t.Fatalf("Agent 没有自证 component_version:%q", st.ComponentVersion)
 	}
-	if st.Selections[0].Declaration != "a" || !reflect.DeepEqual(st.Selections[1].Chain, []string{"gz02", "sg02"}) {
+	if st.Selections[0].Declaration != "a" || !reflect.DeepEqual(st.Selections[1].Chain, []string{"demo-b", "demo-e"}) {
 		t.Fatalf("声明未稳定排序或路径没解析:%+v", st.Selections)
 	}
 	if st.Selections[0].UpdatedAt != "2026-08-26T12:00:01Z" || st.Selections[1].UpdatedAt != "2026-08-26T12:00:00Z" {
@@ -74,7 +74,7 @@ func TestStateStoreWritesCompleteSortedSnapshot(t *testing.T) {
 
 func TestStateStorePrunesRemovedDeclarationsAtStartup(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "state.json")
-	old := State{Node: "jm24", TS: "2026-08-26T11:00:00Z", Selections: []Selection{
+	old := State{Node: "demo-d", TS: "2026-08-26T11:00:00Z", Selections: []Selection{
 		{Declaration: "keep", Selector: "svc:keep", Candidate: "a", UpdatedAt: "2026-08-26T11:00:00Z"},
 		{Declaration: "removed", Selector: "svc:removed", Candidate: "b", UpdatedAt: "2026-08-26T11:00:00Z"},
 	}}
@@ -83,7 +83,7 @@ func TestStateStorePrunesRemovedDeclarationsAtStartup(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
-	if _, err := newStateStore(p, "jm24", []Decl{{ID: "keep", Candidates: []Cand{{Tag: "a"}}}}, now); err != nil {
+	if _, err := newStateStore(p, "demo-d", []Decl{{ID: "keep", Candidates: []Cand{{Tag: "a"}}}}, now); err != nil {
 		t.Fatal(err)
 	}
 	got, err := ReadState(p)

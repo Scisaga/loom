@@ -15,7 +15,7 @@ nodes:
       credentials: [c1]
       mixed_ports: [{port: 1080, declaration: d1}]
   - {id: a, public_endpoint: 1.1.1.1, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k1}}
-  - {id: b, public_endpoint: 1.1.1.2, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k2}%s}
+  - {id: b, public_endpoint: 192.0.2.2, server: {direction: bidirectional, inbound_port: 4433, egress_capable: true, wg_public_key: k2}%s}
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, probe_url: "https://t/", tuning_period: 5m, window: 1h, min_samples: 6, stale_after: 20m, max_hops: 2, allowed_servers: [a, b]}
 credentials:

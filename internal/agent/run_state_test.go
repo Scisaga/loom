@@ -27,7 +27,7 @@ func TestTickKeepsLastCompleteHealthWhileProbeIsInFlight(t *testing.T) {
 	}
 	p50 := 42
 	initial := State{
-		Node: "jm24", TS: now.Add(-time.Minute).Format(time.RFC3339),
+		Node: "demo-d", TS: now.Add(-time.Minute).Format(time.RFC3339),
 		ComponentVersion: version.AgentProtocolVersion,
 		Selections: []Selection{{
 			Declaration: declaration.ID, Selector: declaration.Selector,
@@ -46,7 +46,7 @@ func TestTickKeepsLastCompleteHealthWhileProbeIsInFlight(t *testing.T) {
 	if err := os.WriteFile(statePath, body, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	selections, err := newStateStore(statePath, "jm24", []Decl{declaration}, now)
+	selections, err := newStateStore(statePath, "demo-d", []Decl{declaration}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestTickKeepsLastCompleteHealthWhileProbeIsInFlight(t *testing.T) {
 
 	opts := Options{Now: func() time.Time { return now }, ProbeTimeout: 2 * time.Second}
 	cfg := &Config{
-		Node: "jm24", Probe: probe.Listener.Addr().String(), ProbeSecret: "secret",
+		Node: "demo-d", Probe: probe.Listener.Addr().String(), ProbeSecret: "secret",
 	}
 	measurements := &store{path: measurementPath, retention: time.Hour, now: opts.Now}
 	errCh := make(chan error, 1)

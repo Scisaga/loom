@@ -15,48 +15,48 @@ import (
 	"time"
 )
 
-const misakaPrivateSentinel = "-----BEGIN PRIVATE KEY-----MUST-NEVER-LEAVE-CONTROL"
+const misakaPrivateSentinel = "-----BEGIN " + "PRIVATE KEY-----MUST-NEVER-LEAVE-CONTROL"
 
 func misakaDeps() Deps {
 	now := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
 	view := View{
-		Self:         "jm24",
+		Self:         "demo-d",
 		Applied:      "snapshot-0123456789abcdef",
 		ObservedAt:   now.Add(-12 * time.Second).Format(time.RFC3339),
 		IntentSource: "current SSOT",
 		Nodes: []NodeView{
 			{
-				ID: "jm24", Name: "Jiangmen", City: "Jiangmen", Provider: "edge",
+				ID: "demo-d", Name: "Jiangmen", City: "Jiangmen", Provider: "edge",
 				Declared: true,
 				Health:   "healthy", Self: true, Reached: true, Applied: "snapshot-0123456789abcdef",
 				ObservedAt: now.Add(-12 * time.Second).Format(time.RFC3339), Source: "direct /status",
 				Direction: "bidirectional", EgressCapable: true,
 				Tunnels: []TunnelView{{
-					Interface: "wg-loom-sg02", CarrierPresent: true, State: "active", AgeSec: 9,
+					Interface: "wg-loom-demo-e", CarrierPresent: true, State: "active", AgeSec: 9,
 					RxBytes: 1536, TxBytes: 2 * 1024 * 1024, CounterPresent: true, OK: true,
 				}},
 			},
 			{
-				ID: "sg02", Name: "Singapore", Health: "healthy", Reached: true,
+				ID: "demo-e", Name: "Region D", Health: "healthy", Reached: true,
 				Declared: true,
 				Applied:  "snapshot-0123456789abcdef", ObservedAt: now.Add(-18 * time.Second).Format(time.RFC3339),
-				Source: "jm24 relay", Direction: "bidirectional", EgressCapable: true,
+				Source: "demo-d relay", Direction: "bidirectional", EgressCapable: true,
 			},
 		},
 		Links: []LinkView{{
-			From: "jm24", To: "sg02", Kind: "tunnel", State: "active", MS: 42,
-			ObservedAt: now.Add(-12 * time.Second).Format(time.RFC3339), Source: "jm24",
+			From: "demo-d", To: "demo-e", Kind: "tunnel", State: "active", MS: 42,
+			ObservedAt: now.Add(-12 * time.Second).Format(time.RFC3339), Source: "demo-d",
 		}},
 		Routes: []RouteView{{
-			Node: "jm24", Declaration: "intl-api", Selector: "svc:intl-api",
+			Node: "demo-d", Declaration: "intl-api", Selector: "svc:intl-api",
 			ScopeKind: ScopeService, ScopeID: "intl-api", PolicyID: "best-egress",
-			Candidate: "sg02", Chain: []string{"jm24", "sg02"},
-			ObservedAt: now.Add(-12 * time.Second).Format(time.RFC3339), Source: "agent/jm24",
+			Candidate: "demo-e", Chain: []string{"demo-d", "demo-e"},
+			ObservedAt: now.Add(-12 * time.Second).Format(time.RFC3339), Source: "agent/demo-d",
 		}},
 		Candidates: []CandidatePathView{{
-			Node: "jm24", Declaration: "intl-api", ScopeKind: ScopeService,
-			ScopeID: "intl-api", PolicyID: "best-egress", Chain: []string{"jm24", "sg02"},
-			State: "selected", ObservedAt: now.Add(-12 * time.Second).Format(time.RFC3339), Source: "agent/jm24",
+			Node: "demo-d", Declaration: "intl-api", ScopeKind: ScopeService,
+			ScopeID: "intl-api", PolicyID: "best-egress", Chain: []string{"demo-d", "demo-e"},
+			State: "selected", ObservedAt: now.Add(-12 * time.Second).Format(time.RFC3339), Source: "agent/demo-d",
 		}},
 		Services: []ServiceView{{
 			ID: "intl-api", Name: "International APIs", PolicyID: "best-egress",
@@ -65,11 +65,11 @@ func misakaDeps() Deps {
 		}},
 		Policies: []PolicyView{{
 			ID: "best-egress", Name: "Best egress", Objective: "latency", MaxHops: 2,
-			AllowedServers: []string{"sg02"}, RankingPeriod: "1m", TuningPeriod: "5m",
+			AllowedServers: []string{"demo-e"}, RankingPeriod: "1m", TuningPeriod: "5m",
 			Window: "10m", MinSamples: 3, Fallback: "direct",
 		}},
 		Ingresses: []IngressView{{
-			Node: "jm24", Kind: "mixed", Listen: "127.0.0.1:1080", Mode: "host-based",
+			Node: "demo-d", Kind: "mixed", Listen: "127.0.0.1:1080", Mode: "host-based",
 			ScopeKind: ScopeServices, PolicyID: "best-egress", Port: 1080, Services: true,
 		}},
 		Publisher: &PublisherView{
@@ -81,21 +81,21 @@ func misakaDeps() Deps {
 	}
 	events := []EventView{
 		{
-			TS: "2026-08-28T11:59:00Z", Node: "jm24", Kind: "tunnel", Subject: "wg-loom-sg02",
+			TS: "2026-08-28T11:59:00Z", Node: "demo-d", Kind: "tunnel", Subject: "wg-loom-demo-e",
 			From: "active", To: "failed", Level: "problem", Ongoing: true, Lasted: "1m",
 			Detail: "needle, with a \"quoted\" peer",
 		},
 		{
-			TS: "2026-08-28T11:58:00Z", Node: "sg02", Kind: "publisher", Subject: "snapshot",
+			TS: "2026-08-28T11:58:00Z", Node: "demo-e", Kind: "publisher", Subject: "snapshot",
 			From: "old", To: "new", Level: "info", Detail: "must-not-match",
 		},
 		{
-			TS: "2026-08-28T11:57:00Z", Node: "jm24", Kind: "tunnel", Subject: "wg-other",
+			TS: "2026-08-28T11:57:00Z", Node: "demo-d", Kind: "tunnel", Subject: "wg-other",
 			From: "failed", To: "active", Level: "ok", Detail: "needle but wrong level",
 		},
 	}
 	return Deps{
-		Node: "jm24", Now: func() time.Time { return now }, Operator: "operator-secret",
+		Node: "demo-d", Now: func() time.Time { return now }, Operator: "operator-secret",
 		Snapshot: func() View { return view },
 		Events: func(limit int) []EventView {
 			if limit > len(events) {
@@ -175,7 +175,7 @@ func TestDirectRouteOverlayHighlightsItsLocalEgressNode(t *testing.T) {
 	d := misakaDeps()
 	view := d.Snapshot()
 	view.Nodes[0].Roles = []string{"control", "access", "server", "egress"}
-	direct := RouteView{Node: "jm24", Chain: nil}
+	direct := RouteView{Node: "demo-d", Chain: nil}
 
 	topology := topologySVG(view, direct)
 	if !strings.Contains(topology, `class=route-ring`) ||
@@ -184,7 +184,7 @@ func TestDirectRouteOverlayHighlightsItsLocalEgressNode(t *testing.T) {
 		!strings.Contains(topology, `width=82 height=19`) ||
 		!strings.Contains(topology, `font-size=8 font-weight=700`) ||
 		!strings.Contains(topology, `>LOCAL EXIT</text>`) {
-		t.Fatalf("direct route did not highlight jm24 as its local egress: %s", topology)
+		t.Fatalf("direct route did not highlight demo-d as its local egress: %s", topology)
 	}
 	if strings.Contains(topology, `class="route route-direct"`) || strings.Contains(topology, `<line class=route`) || strings.Contains(topology, `class="topology-edge edge-route"`) {
 		t.Fatalf("direct route invented a node-to-node path: %s", topology)
@@ -265,7 +265,7 @@ func misakaEnrollmentDeps() (*NodeEnrollmentDeps, *[]EnrollmentConnection, *[]En
 			}
 			return EnrollmentReview{
 				Connection: input.Connection, HostKey: input.HostKey,
-				NodeID: "hk01", ObservedHostname: "HK01", PublicEndpoint: "203.0.113.42",
+				NodeID: "demo-new-a", ObservedHostname: "HK01", PublicEndpoint: "203.0.113.42",
 				Country: country, City: city, DisableGeoIP: input.DisableGeoIP,
 				GeoIPSuggested: geoSuggested, GeoIPEvidence: geoEvidence,
 				EndpointEvidence: "global SSH target resolved by control; WireGuard UDP unverified",
@@ -275,16 +275,16 @@ func misakaEnrollmentDeps() (*NodeEnrollmentDeps, *[]EnrollmentConnection, *[]En
 				DirectionEvidence: evidence, Revision: "revision-enroll-9",
 				EgressEnabled:    true,
 				ExpandedPolicies: []EnrollmentPolicy{{ID: "best-egress", Name: "最优出口"}},
-				FixedPolicies:    []EnrollmentPolicy{{ID: "hk01-fixed", Name: "固定Hong Kong出口"}},
+				FixedPolicies:    []EnrollmentPolicy{{ID: "demo-new-a-fixed", Name: "固定Hong Kong出口"}},
 				Tunnels: []EnrollmentTunnel{{
-					From: "hk01", To: "sg02", FromAddress: "10.99.0.7/32", ToAddress: "10.99.0.8/32",
-					Initiator: "sg02", Acceptor: "hk01", ListenPort: 61775,
+					From: "demo-new-a", To: "demo-e", FromAddress: "10.99.0.7/32", ToAddress: "10.99.0.8/32",
+					Initiator: "demo-e", Acceptor: "demo-new-a", ListenPort: 61775,
 				}},
 			}, nil
 		},
 		Commit: func(_ context.Context, input EnrollmentCommitInput) (string, error) {
 			commits = append(commits, input)
-			return "hk01", nil
+			return "demo-new-a", nil
 		},
 	}
 	return deps, &scans, &reviews, &commits
@@ -293,7 +293,7 @@ func misakaEnrollmentDeps() (*NodeEnrollmentDeps, *[]EnrollmentConnection, *[]En
 func TestMisakaRoutesAndNavigationContract(t *testing.T) {
 	d := misakaDeps()
 	for _, target := range []string{
-		"/devices", "/nodes", "/nodes/jm24", "/topology", "/services", "/routing",
+		"/devices", "/nodes", "/nodes/demo-d", "/topology", "/services", "/routing",
 		"/deployments", "/events", "/settings",
 	} {
 		t.Run(strings.TrimPrefix(target, "/"), func(t *testing.T) {
@@ -304,7 +304,7 @@ func TestMisakaRoutesAndNavigationContract(t *testing.T) {
 		})
 	}
 
-	for _, target := range []string{"/nodes/not-declared", "/nodes/jm24/nested", "/not-a-real-page"} {
+	for _, target := range []string{"/nodes/not-declared", "/nodes/demo-d/nested", "/not-a-real-page"} {
 		if w := misakaRequest(t, d, http.MethodGet, target, nil, false); w.Code != http.StatusNotFound {
 			t.Errorf("GET %s = %d, want 404", target, w.Code)
 		}
@@ -657,7 +657,7 @@ func TestMisakaNodeEnrollmentPOSTsRequireAuthentication(t *testing.T) {
 			"host_key_algorithm": {"ssh-ed25519"}, "host_key_public": {"AAAAtest"},
 			"host_key_fingerprint": {"SHA256:test"}, "direction": {"automatic"},
 			"reviewed_direction": {"automatic"},
-			"expected_node":      {"hk01"}, "expected_endpoint": {"203.0.113.42"},
+			"expected_node":      {"demo-new-a"}, "expected_endpoint": {"203.0.113.42"},
 			"revision": {"revision-enroll-9"}, "action": {"commit"},
 		},
 	}
@@ -744,18 +744,18 @@ func TestMisakaNodeEnrollmentTrustReviewPreviewAndCommitContract(t *testing.T) {
 		t.Fatalf("review page contains a fmt placeholder failure:\n%s", reviewBody)
 	}
 	for _, want := range []string{
-		"Trusted remote observation", "hk01", "derived from remote hostname",
+		"Trusted remote observation", "demo-new-a", "derived from remote hostname",
 		"Public endpoint candidate", "203.0.113.42",
 		"global SSH target resolved by control; WireGuard UDP unverified",
 		"Country / city", "Hong Kong", "HK", `name=country`, `name=city`,
 		"GeoIP is an editable suggestion, not proof", "ipwho.is", `name=disable_geoip`,
 		"Egress", "Enabled", `select name=direction`, "Automatic · conservative",
-		"reverse_only", "10.99.0.7/32", "10.99.0.8/32", "sg02", "61775/udp",
-		"Fixed exit policies added automatically", "hk01-fixed", "lowest latency (P50)",
+		"reverse_only", "10.99.0.7/32", "10.99.0.8/32", "demo-e", "61775/udp",
+		"Fixed exit policies added automatically", "demo-new-a-fixed", "lowest latency (P50)",
 		"Automatic route pools expanded", "best-egress", "Restricted policies keep their existing allowlist",
 		"Reviewed direction is locked for commit", `name=direction value="automatic"`,
 		`name=reviewed_direction value="automatic"`, `name=review_token value="`,
-		`name=expected_node value="hk01"`, `name=expected_endpoint value="203.0.113.42"`,
+		`name=expected_node value="demo-new-a"`, `name=expected_endpoint value="203.0.113.42"`,
 		`name=revision value="revision-enroll-9"`, "Not committed",
 		"Prepare WG identity &amp; save SSOT declaration", "This is declaration bootstrap, not Agent installation",
 		"It does not install or start the Loom Agent", "or claim the node is online",
@@ -767,7 +767,7 @@ func TestMisakaNodeEnrollmentTrustReviewPreviewAndCommitContract(t *testing.T) {
 	if strings.Contains(strings.ToLower(reviewBody), "generate key &amp; add") || strings.Contains(strings.ToLower(reviewBody), "generate key & add") {
 		t.Fatal("review action still conflates remote WG identity preparation with creating the shared control key")
 	}
-	if strings.Contains(reviewBody, "Add hk01 to network") {
+	if strings.Contains(reviewBody, "Add demo-new-a to network") {
 		t.Fatal("review action overclaims that declaration bootstrap makes the remote node operational")
 	}
 	commitForms := regexp.MustCompile(`(?s)<form\b[^>]*action="/nodes/add/commit"[^>]*>.*?</form>`).FindAllString(reviewBody, -1)
@@ -785,7 +785,7 @@ func TestMisakaNodeEnrollmentTrustReviewPreviewAndCommitContract(t *testing.T) {
 		"host": {"203.0.113.42"}, "user": {"loom-bootstrap"}, "port": {"2222"},
 		"host_key_algorithm": {"ssh-ed25519"}, "host_key_public": {"AAAAC3NzaC1lZDI1NTE5AAAAIhost-key"},
 		"host_key_fingerprint": {"SHA256:W1f2Qe-test-host-key"},
-		"expected_node":        {"hk01"}, "expected_endpoint": {"203.0.113.42"},
+		"expected_node":        {"demo-new-a"}, "expected_endpoint": {"203.0.113.42"},
 		"revision": {"revision-enroll-9"},
 	}
 	transactionForm.Set("action", "preview")
@@ -811,8 +811,8 @@ func TestMisakaNodeEnrollmentTrustReviewPreviewAndCommitContract(t *testing.T) {
 	transactionForm.Set("reviewed_direction", "bidirectional")
 	transactionForm.Set("review_token", misakaNamedControlValue(t, previewed.Body.String(), "review_token"))
 	committed := misakaRequest(t, d, http.MethodPost, "/nodes/add/commit", transactionForm, true)
-	if committed.Code != http.StatusSeeOther || committed.Header().Get("Location") != "/nodes?added=hk01" {
-		t.Fatalf("commit = %d location %q, want 303 /nodes?added=hk01; body=%s", committed.Code, committed.Header().Get("Location"), committed.Body.String())
+	if committed.Code != http.StatusSeeOther || committed.Header().Get("Location") != "/nodes?added=demo-new-a" {
+		t.Fatalf("commit = %d location %q, want 303 /nodes?added=demo-new-a; body=%s", committed.Code, committed.Header().Get("Location"), committed.Body.String())
 	}
 	wantCommit := EnrollmentCommitInput{
 		EnrollmentReviewInput: EnrollmentReviewInput{
@@ -823,14 +823,14 @@ func TestMisakaNodeEnrollmentTrustReviewPreviewAndCommitContract(t *testing.T) {
 			},
 			Country: "HK", City: "Hong Kong", RequestedDirection: "bidirectional",
 		},
-		ExpectedNodeID: "hk01", ExpectedEndpoint: "203.0.113.42", ExpectedRevision: "revision-enroll-9",
+		ExpectedNodeID: "demo-new-a", ExpectedEndpoint: "203.0.113.42", ExpectedRevision: "revision-enroll-9",
 	}
 	if len(*commits) != 1 || !reflect.DeepEqual((*commits)[0], wantCommit) {
 		t.Fatalf("Commit inputs = %#v, want %#v", *commits, wantCommit)
 	}
-	nodes := misakaRequest(t, d, http.MethodGet, "/nodes?added=hk01", nil, true)
+	nodes := misakaRequest(t, d, http.MethodGet, "/nodes?added=demo-new-a", nil, true)
 	for _, want := range []string{
-		"hk01 declaration was saved to SSOT; its remote WireGuard identity was prepared.",
+		"demo-new-a declaration was saved to SSOT; its remote WireGuard identity was prepared.",
 		"does not install or start the Loom Agent", "does not prove the node is online",
 		"unknown / joining",
 	} {
@@ -881,7 +881,7 @@ func TestMisakaNodeEnrollmentRejectsUnreviewedDirectionCommit(t *testing.T) {
 					},
 					RequestedDirection: "automatic",
 				},
-				ExpectedNodeID: "hk01", ExpectedEndpoint: "203.0.113.42", ExpectedRevision: "revision-enroll-9",
+				ExpectedNodeID: "demo-new-a", ExpectedEndpoint: "203.0.113.42", ExpectedRevision: "revision-enroll-9",
 			}
 			form := url.Values{
 				"host": {"203.0.113.42"}, "user": {"loom-bootstrap"}, "port": {"2222"},
@@ -889,7 +889,7 @@ func TestMisakaNodeEnrollmentRejectsUnreviewedDirectionCommit(t *testing.T) {
 				"host_key_fingerprint": {"SHA256:W1f2Qe-test-host-key"},
 				"direction":            {tc.direction}, "reviewed_direction": {tc.reviewed},
 				"review_token":  {mintEnrollmentReviewToken(d, reviewedInput)},
-				"expected_node": {"hk01"}, "expected_endpoint": {"203.0.113.42"},
+				"expected_node": {"demo-new-a"}, "expected_endpoint": {"203.0.113.42"},
 				"revision": {"revision-enroll-9"}, "action": {"commit"},
 			}
 			w := misakaRequest(t, d, http.MethodPost, "/nodes/add/commit", form, true)
@@ -923,7 +923,7 @@ func TestMisakaEnrollmentReviewTokenBindsEveryCommitBoundary(t *testing.T) {
 			},
 			RequestedDirection: "automatic",
 		},
-		ExpectedNodeID: "hk01", ExpectedEndpoint: "203.0.113.42", ExpectedRevision: "revision-enroll-9",
+		ExpectedNodeID: "demo-new-a", ExpectedEndpoint: "203.0.113.42", ExpectedRevision: "revision-enroll-9",
 	}
 	token := mintEnrollmentReviewToken(d, base)
 	if token == "" || !validEnrollmentReviewToken(d, base, token) {
@@ -940,10 +940,10 @@ func TestMisakaEnrollmentReviewTokenBindsEveryCommitBoundary(t *testing.T) {
 		{"host public key", func(v *EnrollmentCommitInput) { v.HostKey.PublicKey += "tampered" }},
 		{"host fingerprint", func(v *EnrollmentCommitInput) { v.HostKey.Fingerprint += "tampered" }},
 		{"country", func(v *EnrollmentCommitInput) { v.Country = "SG" }},
-		{"city", func(v *EnrollmentCommitInput) { v.City = "Singapore" }},
+		{"city", func(v *EnrollmentCommitInput) { v.City = "Region D" }},
 		{"geoip opt-out", func(v *EnrollmentCommitInput) { v.DisableGeoIP = true }},
 		{"direction", func(v *EnrollmentCommitInput) { v.RequestedDirection = "direct_only" }},
-		{"node id", func(v *EnrollmentCommitInput) { v.ExpectedNodeID = "hk02" }},
+		{"node id", func(v *EnrollmentCommitInput) { v.ExpectedNodeID = "demo-new-b" }},
 		{"endpoint", func(v *EnrollmentCommitInput) { v.ExpectedEndpoint = "203.0.113.43" }},
 		{"revision", func(v *EnrollmentCommitInput) { v.ExpectedRevision = "revision-enroll-10" }},
 	}
@@ -976,7 +976,7 @@ func TestMisakaNodeEnrollmentBackendFailureDoesNotClaimMutation(t *testing.T) {
 		"host_key_algorithm": {"ssh-ed25519"}, "host_key_public": {"AAAAC3NzaC1lZDI1NTE5AAAAIhost-key"},
 		"host_key_fingerprint": {"SHA256:W1f2Qe-test-host-key"}, "direction": {"automatic"},
 		"reviewed_direction": {"automatic"},
-		"expected_node":      {"hk01"}, "expected_endpoint": {"203.0.113.42"},
+		"expected_node":      {"demo-new-a"}, "expected_endpoint": {"203.0.113.42"},
 		"revision": {"stale-revision"}, "action": {"commit"},
 	}
 	form.Set("review_token", mintEnrollmentReviewToken(d, EnrollmentCommitInput{
@@ -988,7 +988,7 @@ func TestMisakaNodeEnrollmentBackendFailureDoesNotClaimMutation(t *testing.T) {
 			},
 			RequestedDirection: "automatic",
 		},
-		ExpectedNodeID: "hk01", ExpectedEndpoint: "203.0.113.42", ExpectedRevision: "stale-revision",
+		ExpectedNodeID: "demo-new-a", ExpectedEndpoint: "203.0.113.42", ExpectedRevision: "stale-revision",
 	}))
 	w := misakaRequest(t, d, http.MethodPost, "/nodes/add/commit", form, true)
 	if w.Code != http.StatusOK || len(*commits) != 1 {
@@ -1014,12 +1014,12 @@ func TestMisakaNodeEnrollmentBackendFailureDoesNotClaimMutation(t *testing.T) {
 
 func TestMisakaEventsFilterAndCSVEncoding(t *testing.T) {
 	d := misakaDeps()
-	query := "?node=jm24&kind=tunnel&level=problem&q=needle"
+	query := "?node=demo-d&kind=tunnel&level=problem&q=needle"
 	page := misakaRequest(t, d, http.MethodGet, "/events"+query, nil, false)
 	if page.Code != http.StatusOK {
 		t.Fatalf("filtered Events page = %d", page.Code)
 	}
-	if !strings.Contains(page.Body.String(), "wg-loom-sg02") || strings.Contains(page.Body.String(), "must-not-match") || strings.Contains(page.Body.String(), "wg-other") {
+	if !strings.Contains(page.Body.String(), "wg-loom-demo-e") || strings.Contains(page.Body.String(), "must-not-match") || strings.Contains(page.Body.String(), "wg-other") {
 		t.Fatalf("Events page filter was not applied:\n%s", page.Body.String())
 	}
 
@@ -1041,14 +1041,14 @@ func TestMisakaEventsFilterAndCSVEncoding(t *testing.T) {
 	if len(records) != 2 {
 		t.Fatalf("CSV records = %d, want header + one filtered event: %#v", len(records), records)
 	}
-	if records[1][1] != "jm24" || records[1][2] != "tunnel" || records[1][6] != "problem" || records[1][9] != `needle, with a "quoted" peer` {
+	if records[1][1] != "demo-d" || records[1][2] != "tunnel" || records[1][6] != "problem" || records[1][9] != `needle, with a "quoted" peer` {
 		t.Fatalf("filtered CSV row = %#v", records[1])
 	}
 }
 
 func TestMisakaTunnelCountersStayInTrafficViewsWithoutInventedHistory(t *testing.T) {
 	d := misakaDeps()
-	detail := misakaRequest(t, d, http.MethodGet, "/nodes/jm24", nil, false)
+	detail := misakaRequest(t, d, http.MethodGet, "/nodes/demo-d", nil, false)
 	if detail.Code != http.StatusOK {
 		t.Fatalf("node detail = %d", detail.Code)
 	}

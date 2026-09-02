@@ -19,15 +19,15 @@ import (
 // 单包测试各自通过、字段却在 JSON、gossip 或 UI 转换边界上丢失。
 func TestV5ObservationSurvivesJSONGossipVerificationAndView(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
-	caPEM, keyPEM, certPEM := reportTestIdentity(t, "gz02")
+	caPEM, keyPEM, certPEM := reportTestIdentity(t, "demo-b")
 	p50, p95, best := 41, 73, 41
 	o := Observation{
-		Node: "gz02", TS: now.Format(time.RFC3339), Applied: "snapshot-v5",
+		Node: "demo-b", TS: now.Format(time.RFC3339), Applied: "snapshot-v5",
 		Agent: &AgentState{
-			Node: "gz02", TS: now.Format(time.RFC3339), ComponentVersion: "0.1.0",
+			Node: "demo-b", TS: now.Format(time.RFC3339), ComponentVersion: "0.1.0",
 			Selections: []AgentSelection{{
-				Declaration: "best-egress", Selector: "svc:best-egress", Candidate: "cand:gz02",
-				Chain: []string{"gz02"}, UpdatedAt: now.Format(time.RFC3339),
+				Declaration: "best-egress", Selector: "svc:best-egress", Candidate: "cand:demo-b",
+				Chain: []string{"demo-b"}, UpdatedAt: now.Format(time.RFC3339),
 				Health: &AgentCandidateHealth{
 					Candidates: 1, RecentSuccess: 1, SelectedState: "success",
 					SelectedSamples: 5, SelectedP50MS: &p50, SelectedP95MS: &p95,
@@ -36,7 +36,7 @@ func TestV5ObservationSurvivesJSONGossipVerificationAndView(t *testing.T) {
 			}},
 		},
 		Components: []ComponentStatus{{Name: "sing-box", Expected: "1.11.4", Actual: "1.11.4"}},
-		Edges:      []Edge{{To: "sg02", RTTMs: 88, Samples: 5}},
+		Edges:      []Edge{{To: "demo-e", RTTMs: 88, Samples: 5}},
 	}
 	legacy, current := claimsForObservation(&o, 5)
 	var err error
@@ -75,7 +75,7 @@ func TestV5ObservationSurvivesJSONGossipVerificationAndView(t *testing.T) {
 	if err := tbl.put(&relayed, now, 10*time.Minute); err != nil {
 		t.Fatalf("v5 观测无法进入 gossip 表:%v", err)
 	}
-	learned := tbl.snapshot("jm24", now, 10*time.Minute)
+	learned := tbl.snapshot("demo-d", now, 10*time.Minute)
 	if len(learned) != 1 {
 		t.Fatalf("gossip 快照丢失观测:%+v", learned)
 	}
@@ -83,7 +83,7 @@ func TestV5ObservationSurvivesJSONGossipVerificationAndView(t *testing.T) {
 	if err != nil {
 		t.Fatalf("JSON/gossip 后无法重新验签:%v", err)
 	}
-	node := nodeView("gz02", false, false, nil, &learned[0], trusted, "", now)
+	node := nodeView("demo-b", false, false, nil, &learned[0], trusted, "", now)
 	if node.Source != "签名转述" || node.Applied != "snapshot-v5" || len(node.Edges) != 1 {
 		t.Fatalf("签名身份/测量没有进入 UI:%+v", node)
 	}

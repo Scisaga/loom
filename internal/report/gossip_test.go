@@ -84,15 +84,15 @@ func TestExpiredSignedDoesNotPermanentlyHideFreshLegacy(t *testing.T) {
 func TestRelayedSelfObservationCannotOverrideOwnMeasurement(t *testing.T) {
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
 	tbl := newTable()
-	own := &Observation{Node: "jm24", TS: now.Format(time.RFC3339), Applied: "own"}
+	own := &Observation{Node: "demo-d", TS: now.Format(time.RFC3339), Applied: "own"}
 	if err := tbl.put(own, now, 10*time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	poison := &Observation{Node: "jm24", TS: now.Add(time.Minute).Format(time.RFC3339), Applied: "relay-poison"}
-	if err := tbl.putRelayed(poison, "jm24", now, 10*time.Minute); err != nil {
+	poison := &Observation{Node: "demo-d", TS: now.Add(time.Minute).Format(time.RFC3339), Applied: "relay-poison"}
+	if err := tbl.putRelayed(poison, "demo-d", now, 10*time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := tbl.view("jm24", now, 10*time.Minute)
+	got, _ := tbl.view("demo-d", now, 10*time.Minute)
 	if got == nil || got.Applied != "own" {
 		t.Fatalf("邻居转述覆盖了本机 observe:%+v", got)
 	}

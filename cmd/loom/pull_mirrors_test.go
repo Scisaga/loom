@@ -49,7 +49,7 @@ func TestPullMirrorsChooseHighestValidGenerationNotFirstURL(t *testing.T) {
 	defer fresh.Close()
 
 	selection, err := selectPullCurrentFromMirrors(stale.Client(), []string{stale.URL, fresh.URL},
-		"sv01", pub, nil, false, nil)
+		"demo-f", pub, nil, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestPullMirrorsIgnoreBrokenMirrorWhenAnotherIsValid(t *testing.T) {
 	defer good.Close()
 
 	selection, err := selectPullCurrentFromMirrors(good.Client(), []string{broken.URL, good.URL},
-		"sv01", pub, nil, false, nil)
+		"demo-f", pub, nil, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestPullMirrorsFailClosedOnSameGenerationFork(t *testing.T) {
 	defer b.Close()
 
 	_, err = selectPullCurrentFromMirrors(a.Client(), []string{a.URL, b.URL},
-		"sv01", pub, nil, false, nil)
+		"demo-f", pub, nil, false, nil)
 	if err == nil || !strings.Contains(err.Error(), "同一 signed generation") {
 		t.Fatalf("同代分叉应失败关闭:%v", err)
 	}
@@ -115,7 +115,7 @@ func TestPullMirrorCurrentReadsRunConcurrently(t *testing.T) {
 
 	start := time.Now()
 	_, err = selectPullCurrentFromMirrors(slow.Client(), []string{slow.URL, slowTwo.URL},
-		"sv01", pub, nil, false, nil)
+		"demo-f", pub, nil, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

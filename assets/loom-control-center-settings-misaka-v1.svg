@@ -183,9 +183,9 @@
   <!-- Settings context -->
   <rect class="panel" x="21" y="202" width="1538" height="72" rx="7"/>
   <g class="ui">
-    <text class="small muted" x="45" y="232">CONTROL NODE</text><text class="body mono" x="45" y="256">jm24</text>
+    <text class="small muted" x="45" y="232">CONTROL NODE</text><text class="body mono" x="45" y="256">demo-d</text>
     <text class="small muted" x="384" y="232">WRITE AUTHORITY</text><text class="body" x="384" y="256">Single control node</text>
-    <text class="small muted" x="800" y="232">DISTRIBUTED SNAPSHOT</text><text class="body mono" x="800" y="256">4f09f6f5716d</text>
+    <text class="small muted" x="800" y="232">DISTRIBUTED SNAPSHOT</text><text class="body mono" x="800" y="256">a1b2c3d4e5f6</text>
     <text class="small muted" x="1125" y="232">PUBLISH CADENCE</text><text class="body" x="1125" y="256">≤ 30s</text>
     <text class="tiny muted" x="1231" y="256">fleet target ≤ 90s · no publish button</text>
   </g>
@@ -216,14 +216,14 @@
   </g>
   <g class="ui body mono">
     <text x="101" y="447"><tspan class="blue">defaults</tspan>:</text>
-    <text x="101" y="469">  <tspan class="faint"># Control, signing and publishing live on jm24.</tspan></text>
+    <text x="101" y="469">  <tspan class="faint"># Control, signing and publishing live on demo-d.</tspan></text>
     <text x="101" y="491">  <tspan class="faint"># Forwarding continues if that writer is unavailable.</tspan></text>
     <text x="101" y="513">  <tspan class="faint"># Writer state can be moved with SSOT and signing material.</tspan></text>
     <text x="101" y="535"> </text>
     <text x="101" y="557">  <tspan class="faint"># Nodes fetch signed immutable snapshots from this origin.</tspan></text>
     <text x="101" y="579">  <tspan class="faint"># Distribution transport itself is not trusted.</tspan></text>
     <text x="101" y="601">  <tspan class="faint"># Node-local pinned trust verifies the manifest.</tspan></text>
-    <text x="101" y="623">  <tspan class="blue">distribution_url</tspan>: <tspan class="green">https://psi-ai.cn/loom/</tspan></text>
+    <text x="101" y="623">  <tspan class="blue">distribution_url</tspan>: <tspan class="green">https://downloads.example.net/loom/</tspan></text>
     <text x="101" y="645">  <tspan class="faint"># Resolver defaults are selected for the deployed region.</tspan></text>
     <text x="101" y="667">  <tspan class="faint"># Request-derived destinations still resolve at the selected egress.</tspan></text>
     <text x="101" y="689">  <tspan class="faint"># The raw buffer continues; this is only the visible viewport.</tspan></text>

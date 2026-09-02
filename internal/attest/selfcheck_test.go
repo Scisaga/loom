@@ -19,9 +19,9 @@ func selfCheckClaim(node, ts string, healthy bool, problems ...string) SelfCheck
 func TestSelfCheckSignVerifyAndTamper(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	ca := newCA(t)
-	key, crt := ca.issue(t, "gz02")
-	signed, err := SignSelfCheck(selfCheckClaim("gz02", now.Format(time.RFC3339), false,
-		"Agent d 的 2 个候选近期全部失败", "隧道 wg-sg02 握手陈旧"), key, crt)
+	key, crt := ca.issue(t, "demo-b")
+	signed, err := SignSelfCheck(selfCheckClaim("demo-b", now.Format(time.RFC3339), false,
+		"Agent d 的 2 个候选近期全部失败", "隧道 wg-demo-e 握手陈旧"), key, crt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,12 +29,12 @@ func TestSelfCheckSignVerifyAndTamper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Node != "gz02" || got.Healthy || len(got.Problems) != 2 {
+	if got.Node != "demo-b" || got.Healthy || len(got.Problems) != 2 {
 		t.Fatalf("verified self-check changed: %+v", got)
 	}
 
 	for name, mutate := range map[string]func(*SelfCheckAttest){
-		"node":     func(s *SelfCheckAttest) { s.Node = "hz01" },
+		"node":     func(s *SelfCheckAttest) { s.Node = "demo-c" },
 		"time":     func(s *SelfCheckAttest) { s.TS = now.Add(time.Second).Format(time.RFC3339) },
 		"healthy":  func(s *SelfCheckAttest) { s.Healthy = true; s.Problems = nil },
 		"problems": func(s *SelfCheckAttest) { s.Problems[0] = "被 relay 改写" },
@@ -53,19 +53,19 @@ func TestSelfCheckSignVerifyAndTamper(t *testing.T) {
 func TestSelfCheckRejectsImpersonationReplayAndInvalidProblemSet(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	ca := newCA(t)
-	peerKey, peerCert := ca.issue(t, "ber01")
+	peerKey, peerCert := ca.issue(t, "demo-a")
 	impersonated, err := SignSelfCheck(
-		selfCheckClaim("gz02", now.Format(time.RFC3339), true), peerKey, peerCert)
+		selfCheckClaim("demo-b", now.Format(time.RFC3339), true), peerKey, peerCert)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := VerifySelfCheck(impersonated, ca.certPEM); err == nil || !strings.Contains(err.Error(), "替") {
-		t.Fatalf("another node's certificate spoke for gz02: %v", err)
+		t.Fatalf("another node's certificate spoke for demo-b: %v", err)
 	}
 
-	key, crt := ca.issue(t, "gz02")
+	key, crt := ca.issue(t, "demo-b")
 	old, err := SignSelfCheck(
-		selfCheckClaim("gz02", now.Add(-11*time.Minute).Format(time.RFC3339), true), key, crt)
+		selfCheckClaim("demo-b", now.Add(-11*time.Minute).Format(time.RFC3339), true), key, crt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,15 +75,15 @@ func TestSelfCheckRejectsImpersonationReplayAndInvalidProblemSet(t *testing.T) {
 	}
 
 	for name, claim := range map[string]SelfCheckClaim{
-		"healthy with problems": selfCheckClaim("gz02", now.Format(time.RFC3339), true, "down"),
-		"unhealthy empty":       selfCheckClaim("gz02", now.Format(time.RFC3339), false),
-		"unsorted": selfCheckClaim("gz02", now.Format(time.RFC3339), false,
+		"healthy with problems": selfCheckClaim("demo-b", now.Format(time.RFC3339), true, "down"),
+		"unhealthy empty":       selfCheckClaim("demo-b", now.Format(time.RFC3339), false),
+		"unsorted": selfCheckClaim("demo-b", now.Format(time.RFC3339), false,
 			"z problem", "a problem"),
-		"duplicate": selfCheckClaim("gz02", now.Format(time.RFC3339), false,
+		"duplicate": selfCheckClaim("demo-b", now.Format(time.RFC3339), false,
 			"same", "same"),
-		"control": selfCheckClaim("gz02", now.Format(time.RFC3339), false,
+		"control": selfCheckClaim("demo-b", now.Format(time.RFC3339), false,
 			"line\nbreak"),
-		"oversized": selfCheckClaim("gz02", now.Format(time.RFC3339), false,
+		"oversized": selfCheckClaim("demo-b", now.Format(time.RFC3339), false,
 			strings.Repeat("x", SelfCheckMaxProblemSize+1)),
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -97,7 +97,7 @@ func TestSelfCheckRejectsImpersonationReplayAndInvalidProblemSet(t *testing.T) {
 	for i := range tooMany {
 		tooMany[i] = fmt.Sprintf("%03d-problem", i)
 	}
-	if _, err := SignSelfCheck(selfCheckClaim("gz02", now.Format(time.RFC3339), false, tooMany...),
+	if _, err := SignSelfCheck(selfCheckClaim("demo-b", now.Format(time.RFC3339), false, tooMany...),
 		key, crt); err == nil || !strings.Contains(err.Error(), "过多") {
 		t.Fatalf("oversized problem count was accepted: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestSelfCheckRejectsImpersonationReplayAndInvalidProblemSet(t *testing.T) {
 	for i := range totalTooLarge {
 		totalTooLarge[i] = fmt.Sprintf("%03d-%s", i, strings.Repeat("x", 300))
 	}
-	if _, err := SignSelfCheck(selfCheckClaim("gz02", now.Format(time.RFC3339), false,
+	if _, err := SignSelfCheck(selfCheckClaim("demo-b", now.Format(time.RFC3339), false,
 		totalTooLarge...), key, crt); err == nil || !strings.Contains(err.Error(), "总长度") {
 		t.Fatalf("oversized aggregate problems were accepted: %v", err)
 	}
@@ -115,19 +115,19 @@ func TestSelfCheckCanonicalIsIndependentFromV5(t *testing.T) {
 	// Pin an actual v5 layout: the optional self-check must never be appended to
 	// these bytes during a later refactor.
 	c := Claim{
-		CanonicalVersion: 5, Node: "gz02", TS: "2026-08-28T12:00:00Z",
+		CanonicalVersion: 5, Node: "demo-b", TS: "2026-08-28T12:00:00Z",
 		Commit: "abc", Binary: "def", Applied: "snap",
 		Components:         []ComponentClaim{{Name: "wireguard", Expected: "2", Actual: "2"}},
 		MeasurementsSHA256: strings.Repeat("a", 64),
 	}
 	before := string(c.canonical())
-	selfCheck := selfCheckClaim("gz02", c.TS, true)
+	selfCheck := selfCheckClaim("demo-b", c.TS, true)
 	_ = selfCheck.canonical()
 	if after := string(c.canonical()); after != before {
 		t.Fatal("constructing a self-check changed loom-attest canonical bytes")
 	}
 	sum := sha256.Sum256(c.canonical())
-	if got, want := hex.EncodeToString(sum[:]), "4e3634054e55a1ca2174a055f3fee3761bdb81134065b6fed510a49f06285a4b"; got != want {
+	if got, want := hex.EncodeToString(sum[:]), "5e15031765c89c20cc6bfbfae1b484036ed585ce871562bba92a90a39802f1f5"; got != want {
 		t.Fatalf("loom-attest-v5 canonical drifted: %s != %s", got, want)
 	}
 }

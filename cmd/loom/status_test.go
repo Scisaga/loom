@@ -136,20 +136,20 @@ func TestSnapshotSpreadRejectsUnsignedApplied(t *testing.T) {
 // 直接拉取超时或转述链也完全静默时，SSOT 节点仍在“全网”分母里。
 // 否则其余机器恰好同版时，会产生一条自相矛盾的“全网一致”结论。
 func TestSnapshotSpreadIncludesSilentExpectedNodes(t *testing.T) {
-	got := snapshotSpread([]string{"jm24", "gz02", "hz01"}, map[string]string{"jm24": "aaa"})
+	got := snapshotSpread([]string{"demo-d", "demo-b", "demo-c"}, map[string]string{"demo-d": "aaa"})
 	slices.Sort(got[snapshotUnverified])
-	if !slices.Equal(got["aaa"], []string{"jm24"}) ||
-		!slices.Equal(got[snapshotUnverified], []string{"gz02", "hz01"}) || len(got) != 2 {
+	if !slices.Equal(got["aaa"], []string{"demo-d"}) ||
+		!slices.Equal(got[snapshotUnverified], []string{"demo-b", "demo-c"}) || len(got) != 2 {
 		t.Fatalf("静默/超时节点不得从快照分母消失,得到 %v", got)
 	}
 }
 
 func TestSnapshotSpreadAllUnknownOrUnrecordedIsNotConsistent(t *testing.T) {
-	allSilent := snapshotSpread([]string{"jm24", "gz02"}, nil)
+	allSilent := snapshotSpread([]string{"demo-d", "demo-b"}, nil)
 	if len(allSilent) != 1 || snapshotKeyVerified(snapshotUnverified) {
 		t.Fatalf("全静默不得宣称快照一致:%v", allSilent)
 	}
-	allEmpty := snapshotSpread([]string{"jm24", "gz02"}, map[string]string{"jm24": "", "gz02": ""})
+	allEmpty := snapshotSpread([]string{"demo-d", "demo-b"}, map[string]string{"demo-d": "", "demo-b": ""})
 	if len(allEmpty) != 1 || snapshotKeyVerified(snapshotUnrecorded) {
 		t.Fatalf("全未记录 Applied 不得宣称快照一致:%v", allEmpty)
 	}

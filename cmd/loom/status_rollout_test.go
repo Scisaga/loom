@@ -21,7 +21,7 @@ func now() time.Time {
 // 终态不该出现在面板上 —— 装完了就是装完了,天天报"已完成"是噪音。
 func TestVerifiedIsSilent(t *testing.T) {
 	lines, bad := rolloutFindings(map[string]*report.RolloutState{
-		"jm24": rs(rollout.Verified, "2026-08-25T09:00:00Z"),
+		"demo-d": rs(rollout.Verified, "2026-08-25T09:00:00Z"),
 	}, now())
 	if len(lines) != 0 || bad != 0 {
 		t.Fatalf("Verified 不该输出任何东西,得到 bad=%d:\n%s", bad, strings.Join(lines, "\n"))
@@ -41,10 +41,10 @@ func TestDecommissionedIsShownWithoutAlarm(t *testing.T) {
 // 正在装是正常的,说一声但**不报警** —— 否则每次发布都会响一片。
 func TestInFlightIsShownButNotAnAlarm(t *testing.T) {
 	lines, bad := rolloutFindings(map[string]*report.RolloutState{
-		"sg02": rs(rollout.Activating, "2026-08-25T09:58:00Z"), // 才两分钟
+		"demo-e": rs(rollout.Activating, "2026-08-25T09:58:00Z"), // 才两分钟
 	}, now())
 	got := strings.Join(lines, "\n")
-	if !strings.Contains(got, "正在") || !strings.Contains(got, "sg02") {
+	if !strings.Contains(got, "正在") || !strings.Contains(got, "demo-e") {
 		t.Fatalf("正在装的要说出来:\n%s", got)
 	}
 	if bad != 0 {
@@ -56,10 +56,10 @@ func TestInFlightIsShownButNotAnAlarm(t *testing.T) {
 // 只看 Applied 的话,这台机器看起来只是"还没轮到它"。
 func TestStuckIsAnAlarm(t *testing.T) {
 	lines, bad := rolloutFindings(map[string]*report.RolloutState{
-		"hz01": rs(rollout.Activating, "2026-08-25T08:00:00Z"), // 两小时
+		"demo-c": rs(rollout.Activating, "2026-08-25T08:00:00Z"), // 两小时
 	}, now())
 	got := strings.Join(lines, "\n")
-	if !strings.Contains(got, "卡在") || !strings.Contains(got, "hz01") {
+	if !strings.Contains(got, "卡在") || !strings.Contains(got, "demo-c") {
 		t.Fatalf("卡住必须报出来:\n%s", got)
 	}
 	if bad != 1 {
@@ -72,7 +72,7 @@ func TestFailedShowsRollbackTarget(t *testing.T) {
 	r := rs(rollout.Failed, "2026-08-25T09:00:00Z")
 	r.Error = "安装失败(已回滚):exit status 1"
 	r.LastGood = "6f85b31d089a"
-	lines, bad := rolloutFindings(map[string]*report.RolloutState{"ber01": r}, now())
+	lines, bad := rolloutFindings(map[string]*report.RolloutState{"demo-a": r}, now())
 	got := strings.Join(lines, "\n")
 	for _, want := range []string{"失败", "exit status 1", "6f85b31d089a"} {
 		if !strings.Contains(got, want) {
@@ -88,7 +88,7 @@ func TestFailedShowsRollbackTarget(t *testing.T) {
 // 显示成"正在装 0 秒",而这正是面板说谎的形状。
 func TestUnparseableTimestampIsReportedNotGuessed(t *testing.T) {
 	lines, bad := rolloutFindings(map[string]*report.RolloutState{
-		"gz02": rs(rollout.Staging, "不是时间"),
+		"demo-b": rs(rollout.Staging, "不是时间"),
 	}, now())
 	got := strings.Join(lines, "\n")
 	if !strings.Contains(got, "算不出") {
@@ -103,13 +103,13 @@ func TestUnparseableTimestampIsReportedNotGuessed(t *testing.T) {
 func TestStuckThresholdBoundary(t *testing.T) {
 	exact := now().Add(-stuckLimit).UTC().Format(time.RFC3339)
 	if _, bad := rolloutFindings(map[string]*report.RolloutState{
-		"jm24": rs(rollout.Verifying, exact),
+		"demo-d": rs(rollout.Verifying, exact),
 	}, now()); bad != 0 {
 		t.Errorf("恰好等于上限不该算卡住,得到 bad=%d", bad)
 	}
 	over := now().Add(-stuckLimit - time.Second).UTC().Format(time.RFC3339)
 	if _, bad := rolloutFindings(map[string]*report.RolloutState{
-		"jm24": rs(rollout.Verifying, over),
+		"demo-d": rs(rollout.Verifying, over),
 	}, now()); bad != 1 {
 		t.Errorf("超过上限该算卡住,得到 bad=%d", bad)
 	}
@@ -117,13 +117,13 @@ func TestStuckThresholdBoundary(t *testing.T) {
 
 // 一次正常的二进制升级不能被报成卡住。
 //
-// 下载落在 activating 里,实测最坏 2 分 42 秒(sg02,13.4 MB)。
+// 下载落在 activating 里；慢链路下载较大制品可能持续数分钟。
 // 阈值调到分钟以内的话,每次升级都会误报 —— 而误报的面板等于没有面板。
 func TestNormalBinaryUpgradeIsNotReportedAsStuck(t *testing.T) {
-	// 按实测最坏的那台造:进入 activating 已经 3 分钟,还在下载。
+	// 构造进入 activating 已经 3 分钟、仍在下载的慢链路场景。
 	entered := now().Add(-3 * time.Minute).UTC().Format(time.RFC3339Nano)
 	lines, bad := rolloutFindings(map[string]*report.RolloutState{
-		"sg02": rs(rollout.Activating, entered),
+		"demo-e": rs(rollout.Activating, entered),
 	}, now())
 	if bad != 0 {
 		t.Fatalf("正常的二进制升级不该报警:\n%s", strings.Join(lines, "\n"))

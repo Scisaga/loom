@@ -174,7 +174,7 @@
   <g class="ui">
     <text class="eyebrow" x="21" y="91">NETWORK / TOPOLOGY</text>
     <text class="heading" x="21" y="124">Network topology</text>
-    <text class="body muted" x="21" y="151">Intent, trusted observations and read-only automatic Agent decisions · observed 2026-08-27 17:54 UTC</text>
+    <text class="body muted" x="21" y="151">Intent, trusted observations and read-only automatic Agent decisions · observed 2030-01-02 17:54 UTC</text>
     <use href="#icon-status-ok" x="20" y="168" width="15" height="15" class="status-icon"/>
     <text class="small" x="43" y="181">6 nodes · 9 persistent WireGuard links · 2 fresh automatic decisions</text>
   </g>
@@ -233,31 +233,31 @@
     <circle cx="457" cy="279" r="3" fill="#466FC2"/>
     <text class="tiny blue" x="466" y="283" font-size="10" font-weight="650">LOCAL EXIT</text>
   </g>
-  <text class="ui tiny blue mono" x="660" y="325">intl-api · jm24 → ber01</text>
+  <text class="ui tiny blue mono" x="660" y="325">intl-api · demo-d → demo-a</text>
 
   <g class="ui">
     <circle cx="560" cy="320" r="8" fill="#FFFFFF"/><circle class="status-dot" cx="560" cy="320" r="5"/>
-    <text class="mono" x="560" y="301" text-anchor="middle" font-size="14" font-weight="650">jm24</text>
+    <text class="mono" x="560" y="301" text-anchor="middle" font-size="14" font-weight="650">demo-d</text>
     <text class="tiny muted" x="560" y="343" text-anchor="middle">control + access + server + egress</text>
 
     <circle cx="410" cy="475" r="8" fill="#FFFFFF"/><circle class="status-dot" cx="410" cy="475" r="5"/>
-    <text class="mono" x="390" y="474" text-anchor="end" font-size="14" font-weight="650">hz01</text>
+    <text class="mono" x="390" y="474" text-anchor="end" font-size="14" font-weight="650">demo-c</text>
     <text class="tiny muted" x="390" y="494" text-anchor="end">server + egress</text>
 
     <circle cx="710" cy="475" r="8" fill="#FFFFFF"/><circle class="status-dot" cx="710" cy="475" r="5"/>
-    <text class="mono" x="730" y="474" font-size="14" font-weight="650">gz02</text>
+    <text class="mono" x="730" y="474" font-size="14" font-weight="650">demo-b</text>
     <text class="tiny muted" x="730" y="494">server + egress</text>
 
     <circle cx="300" cy="350" r="8" fill="#FFFFFF"/><circle class="status-dot" cx="300" cy="350" r="5"/>
-    <text class="mono" x="280" y="349" text-anchor="end" font-size="14" font-weight="650">sv01</text>
+    <text class="mono" x="280" y="349" text-anchor="end" font-size="14" font-weight="650">demo-f</text>
     <text class="tiny muted" x="280" y="369" text-anchor="end">reverse-only + server + egress</text>
 
     <circle cx="820" cy="350" r="8" fill="#FFFFFF"/><circle class="status-dot" cx="820" cy="350" r="5"/>
-    <text class="mono" x="840" y="349" font-size="14" font-weight="650">ber01</text>
+    <text class="mono" x="840" y="349" font-size="14" font-weight="650">demo-a</text>
     <text class="tiny muted" x="840" y="369">reverse-only + server + egress</text>
 
     <circle cx="560" cy="590" r="8" fill="#FFFFFF"/><circle class="status-dot" cx="560" cy="590" r="5"/>
-    <text class="mono" x="560" y="615" text-anchor="middle" font-size="14" font-weight="650">sg02</text>
+    <text class="mono" x="560" y="615" text-anchor="middle" font-size="14" font-weight="650">demo-e</text>
     <text class="tiny muted" x="560" y="634" text-anchor="middle">reverse-only + server + egress</text>
 
     <text class="tiny muted" x="40" y="649">Candidate edges describe allowable business paths. Missing a direct WG edge does not mean there is no path.</text>
@@ -289,7 +289,7 @@
   <g class="ui">
     <text class="section" x="1132" y="518">Link traffic</text>
     <text class="tiny green" x="1539" y="518" text-anchor="end">Retained · endpoint TX only</text>
-    <text class="body mono" x="1132" y="545">Inspecting · gz02 ↔ sg02</text>
+    <text class="body mono" x="1132" y="545">Inspecting · demo-b ↔ demo-e</text>
 
     <text class="tiny green" x="1132" y="568">Endpoint TX total</text>
     <text class="metric" x="1132" y="590">403 GB</text>
@@ -339,15 +339,15 @@
   </g>
   <line class="rule" x1="40" y1="766" x2="1540" y2="766"/>
   <g class="ui body">
-    <text class="mono" x="46" y="788">jm24 ↔ sv01</text><text class="mono" x="300" y="788">312 GB</text><rect x="415" y="780" width="245" height="8" rx="2" fill="#EEF1EF"/><rect x="415" y="780" width="190" height="8" rx="2" fill="#72C69F"/><text class="mono" x="735" y="788">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="788">32 ms</text><circle class="quiet-dot" cx="1084" cy="783" r="4"/><text x="1097" y="788">Active</text><text class="muted" x="1270" y="788">8s ago</text>
-    <text class="mono" x="46" y="808">jm24 ↔ ber01</text><text class="mono" x="300" y="808">238 GB</text><rect x="415" y="800" width="245" height="8" rx="2" fill="#EEF1EF"/><rect x="415" y="800" width="145" height="8" rx="2" fill="#72C69F"/><text class="mono" x="735" y="808">23 / 24 · G1</text><text class="mono" x="965" y="808">150 ms</text><circle class="quiet-dot" cx="1084" cy="803" r="4"/><text x="1097" y="808">Active</text><text class="muted" x="1270" y="808">8s ago</text>
-    <text class="mono" x="46" y="828">jm24 ↔ sg02</text><text class="mono" x="300" y="828">400 GB</text><rect x="415" y="820" width="245" height="8" rx="2" fill="#EEF1EF"/><rect x="415" y="820" width="243" height="8" rx="2" fill="#72C69F"/><text class="mono" x="735" y="828">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="828">277 ms</text><circle class="quiet-dot" cx="1084" cy="823" r="4"/><text x="1097" y="828">Active</text><text class="muted" x="1270" y="828">8s ago</text>
-    <text class="mono" x="46" y="848">hz01 ↔ sv01</text><text class="mono" x="300" y="848">285 GB</text><rect x="415" y="840" width="245" height="8" rx="2" fill="#EEF1EF"/><rect x="415" y="840" width="173" height="8" rx="2" fill="#72C69F"/><text class="mono" x="735" y="848">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="848">28 ms</text><circle class="quiet-dot" cx="1084" cy="843" r="4"/><text x="1097" y="848">Active</text><text class="muted" x="1270" y="848">13s ago</text>
-    <text class="mono" x="46" y="868">hz01 ↔ ber01</text><text class="mono" x="300" y="868">278 GB</text><rect x="415" y="860" width="245" height="8" rx="2" fill="#EEF1EF"/><rect x="415" y="860" width="169" height="8" rx="2" fill="#72C69F"/><text class="mono" x="735" y="868">23 / 24 · G1</text><text class="mono" x="965" y="868">240 ms</text><circle class="quiet-dot" cx="1084" cy="863" r="4"/><text x="1097" y="868">Active</text><text class="muted" x="1270" y="868">13s ago</text>
-    <text class="mono" x="46" y="888">hz01 ↔ sg02</text><text class="mono" x="300" y="888">179 GB</text><rect x="415" y="880" width="245" height="8" rx="2" fill="#EEF1EF"/><rect x="415" y="880" width="109" height="8" rx="2" fill="#72C69F"/><text class="mono" x="735" y="888">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="888">350 ms</text><circle class="quiet-dot" cx="1084" cy="883" r="4"/><text x="1097" y="888">Active</text><text class="muted" x="1270" y="888">13s ago</text>
-    <text class="mono" x="46" y="908">gz02 ↔ sv01</text><text class="mono" x="300" y="908">365 GB</text><rect x="415" y="900" width="245" height="8" rx="2" fill="#EEF1EF"/><rect x="415" y="900" width="222" height="8" rx="2" fill="#72C69F"/><text class="mono" x="735" y="908">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="908">35 ms</text><circle class="quiet-dot" cx="1084" cy="903" r="4"/><text x="1097" y="908">Active</text><text class="muted" x="1270" y="908">11s ago</text>
-    <text class="mono" x="46" y="928">gz02 ↔ ber01</text><text class="mono" x="300" y="928">342 GB</text><rect x="415" y="920" width="245" height="8" rx="2" fill="#EEF1EF"/><rect x="415" y="920" width="208" height="8" rx="2" fill="#72C69F"/><text class="mono" x="735" y="928">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="928">226 ms</text><circle class="quiet-dot" cx="1084" cy="923" r="4"/><text x="1097" y="928">Active</text><text class="muted" x="1270" y="928">11s ago</text>
-    <text class="mono" x="46" y="952">gz02 ↔ sg02</text><text class="mono green" x="300" y="952">403 GB</text><rect x="415" y="944" width="245" height="8" rx="2" fill="#DDEFE6"/><rect x="415" y="944" width="245" height="8" rx="2" fill="#239B68"/><text class="mono green" x="735" y="952">22 / 24 · R1 G1</text><text class="mono" x="965" y="952">190 ms</text><circle class="quiet-dot" cx="1084" cy="947" r="4"/><text x="1097" y="952">Active</text><text class="muted" x="1270" y="952">11s ago</text>
+    <text class="mono" x="46" y="788">demo-d ↔ demo-f</text><text class="mono" x="300" y="788">312 GB</text><rect x="415" y="780" width="245" height="8" rx="2" fill="#EEF1EF"/><rect x="415" y="780" width="190" height="8" rx="2" fill="#72C69F"/><text class="mono" x="735" y="788">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="788">32 ms</text><circle class="quiet-dot" cx="1084" cy="783" r="4"/><text x="1097" y="788">Active</text><text class="muted" x="1270" y="788">8s ago</text>
+    <text class="mono" x="46" y="808">demo-d ↔ demo-a</text><text class="mono" x="300" y="808">238 GB</text><rect x="415" y="800" width="245" height="8" rx="2" fill="#EEF1EF"/><rect x="415" y="800" width="145" height="8" rx="2" fill="#72C69F"/><text class="mono" x="735" y="808">23 / 24 · G1</text><text class="mono" x="965" y="808">150 ms</text><circle class="quiet-dot" cx="1084" cy="803" r="4"/><text x="1097" y="808">Active</text><text class="muted" x="1270" y="808">8s ago</text>
+    <text class="mono" x="46" y="828">demo-d ↔ demo-e</text><text class="mono" x="300" y="828">400 GB</text><rect x="415" y="820" width="245" height="8" rx="2" fill="#EEF1EF"/><rect x="415" y="820" width="243" height="8" rx="2" fill="#72C69F"/><text class="mono" x="735" y="828">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="828">277 ms</text><circle class="quiet-dot" cx="1084" cy="823" r="4"/><text x="1097" y="828">Active</text><text class="muted" x="1270" y="828">8s ago</text>
+    <text class="mono" x="46" y="848">demo-c ↔ demo-f</text><text class="mono" x="300" y="848">285 GB</text><rect x="415" y="840" width="245" height="8" rx="2" fill="#EEF1EF"/><rect x="415" y="840" width="173" height="8" rx="2" fill="#72C69F"/><text class="mono" x="735" y="848">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="848">28 ms</text><circle class="quiet-dot" cx="1084" cy="843" r="4"/><text x="1097" y="848">Active</text><text class="muted" x="1270" y="848">13s ago</text>
+    <text class="mono" x="46" y="868">demo-c ↔ demo-a</text><text class="mono" x="300" y="868">278 GB</text><rect x="415" y="860" width="245" height="8" rx="2" fill="#EEF1EF"/><rect x="415" y="860" width="169" height="8" rx="2" fill="#72C69F"/><text class="mono" x="735" y="868">23 / 24 · G1</text><text class="mono" x="965" y="868">240 ms</text><circle class="quiet-dot" cx="1084" cy="863" r="4"/><text x="1097" y="868">Active</text><text class="muted" x="1270" y="868">13s ago</text>
+    <text class="mono" x="46" y="888">demo-c ↔ demo-e</text><text class="mono" x="300" y="888">179 GB</text><rect x="415" y="880" width="245" height="8" rx="2" fill="#EEF1EF"/><rect x="415" y="880" width="109" height="8" rx="2" fill="#72C69F"/><text class="mono" x="735" y="888">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="888">350 ms</text><circle class="quiet-dot" cx="1084" cy="883" r="4"/><text x="1097" y="888">Active</text><text class="muted" x="1270" y="888">13s ago</text>
+    <text class="mono" x="46" y="908">demo-b ↔ demo-f</text><text class="mono" x="300" y="908">365 GB</text><rect x="415" y="900" width="245" height="8" rx="2" fill="#EEF1EF"/><rect x="415" y="900" width="222" height="8" rx="2" fill="#72C69F"/><text class="mono" x="735" y="908">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="908">35 ms</text><circle class="quiet-dot" cx="1084" cy="903" r="4"/><text x="1097" y="908">Active</text><text class="muted" x="1270" y="908">11s ago</text>
+    <text class="mono" x="46" y="928">demo-b ↔ demo-a</text><text class="mono" x="300" y="928">342 GB</text><rect x="415" y="920" width="245" height="8" rx="2" fill="#EEF1EF"/><rect x="415" y="920" width="208" height="8" rx="2" fill="#72C69F"/><text class="mono" x="735" y="928">24 / 24 · 2 endpoints</text><text class="mono" x="965" y="928">226 ms</text><circle class="quiet-dot" cx="1084" cy="923" r="4"/><text x="1097" y="928">Active</text><text class="muted" x="1270" y="928">11s ago</text>
+    <text class="mono" x="46" y="952">demo-b ↔ demo-e</text><text class="mono green" x="300" y="952">403 GB</text><rect x="415" y="944" width="245" height="8" rx="2" fill="#DDEFE6"/><rect x="415" y="944" width="245" height="8" rx="2" fill="#239B68"/><text class="mono green" x="735" y="952">22 / 24 · R1 G1</text><text class="mono" x="965" y="952">190 ms</text><circle class="quiet-dot" cx="1084" cy="947" r="4"/><text x="1097" y="952">Active</text><text class="muted" x="1270" y="952">11s ago</text>
   </g>
   <line class="rule" x1="40" y1="796" x2="1540" y2="796"/><line class="rule" x1="40" y1="816" x2="1540" y2="816"/><line class="rule" x1="40" y1="836" x2="1540" y2="836"/><line class="rule" x1="40" y1="856" x2="1540" y2="856"/><line class="rule" x1="40" y1="876" x2="1540" y2="876"/><line class="rule" x1="40" y1="896" x2="1540" y2="896"/><line class="rule" x1="40" y1="916" x2="1540" y2="916"/><line class="rule" x1="40" y1="936" x2="1540" y2="936"/>
 

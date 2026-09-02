@@ -49,10 +49,10 @@ func TestLoginReturnTargetRejectsExternalAndWriteRoutes(t *testing.T) {
 		}
 	}
 	for _, target := range []string{
-		"/", "/devices?new=1", "/devices?legacy=ssh", "/devices/invites/invite-1", "/devices/download/linux-amd64", "/devices/jm24",
+		"/", "/devices?new=1", "/devices?legacy=ssh", "/devices/invites/invite-1", "/devices/download/linux-amd64", "/devices/demo-d",
 		"/clients?new=1", "/clients/invites/invite-1", "/clients/download/linux-amd64",
-		"/nodes", "/nodes/add", "/nodes/jm24", "/topology?entry=jm24%3Asvc%3Aintl-api",
-		"/services?service=intl-api", "/routing?entry=jm24%3Asvc%3Aintl-api", "/deployments", "/events", "/settings",
+		"/nodes", "/nodes/add", "/nodes/demo-d", "/topology?entry=demo-d%3Asvc%3Aintl-api",
+		"/services?service=intl-api", "/routing?entry=demo-d%3Asvc%3Aintl-api", "/deployments", "/events", "/settings",
 	} {
 		if got := safeLoginReturnTo(target); got != target {
 			t.Errorf("safeLoginReturnTo(%q) = %q", target, got)
@@ -63,16 +63,16 @@ func TestLoginReturnTargetRejectsExternalAndWriteRoutes(t *testing.T) {
 func TestEveryNavigationPageSignsInBackToItsPage(t *testing.T) {
 	d := misakaDeps()
 	cases := map[string]string{
-		"总览":          "/",
-		"Devices":     "/devices",
-		"Topology":    "/topology",
-		"Services":    "/services",
-		"Live paths":  "/routing",
-		"Deployments": "/deployments",
-		"事件":          "/events",
-		"改 SSOT":      "/settings",
-		"Add node":    "/devices?legacy=ssh",
-		"Node · sg02": "/nodes/sg02",
+		"总览":                 "/",
+		"Devices":            "/devices",
+		"Topology":           "/topology",
+		"Services":           "/services",
+		"Live paths":         "/routing",
+		"Deployments":        "/deployments",
+		"事件":                 "/events",
+		"改 SSOT":             "/settings",
+		"Add node":           "/devices?legacy=ssh",
+		"Node · demo-e": "/nodes/demo-e",
 	}
 	for title, target := range cases {
 		t.Run(title, func(t *testing.T) {

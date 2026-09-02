@@ -137,7 +137,7 @@ func TestClientInvitationShowsRealQRResourceAndLinuxLink(t *testing.T) {
 	d := clientUIDeps()
 	invite := ClientInviteView{
 		InviteID: "invite-123", ClientID: "client-linux01", ClientName: "Build server",
-		InviteURI: "loom://enroll#opaque-short-lived-payload",
+		InviteURI: "loom://enroll#test",
 		ExpiresAt: "2026-08-31T10:15:00Z",
 	}
 	body := pageClients(d, clientPageState{Invite: &invite}, true)
@@ -145,7 +145,7 @@ func TestClientInvitationShowsRealQRResourceAndLinuxLink(t *testing.T) {
 		`src="/api/control/device-invites/invite-123/qr.png"`,
 		`href="/api/control/device-invites/invite-123/download"`,
 		`alt="Enrollment QR code for client-linux01"`,
-		`value="loom://enroll#opaque-short-lived-payload"`,
+		`value="loom://enroll#test"`,
 		`Invitation ready`,
 		`short-lived, single-use secret`,
 		`sudo ./install.sh --invite-file ../client.loom-invite`,
@@ -313,7 +313,7 @@ func TestClientEnrollmentUIAndInvitationArtifacts(t *testing.T) {
 		createdInvites++
 		return ClientInviteView{
 			InviteID: "invite-ui", ClientID: "client-ui", ClientName: input.Name,
-			InviteURI: "loom://enroll#real-short-lived-payload", ExpiresAt: "2026-08-31T10:15:00Z",
+			InviteURI: "loom://enroll#test", ExpiresAt: "2026-08-31T10:15:00Z",
 		}, nil
 	}
 	d.Control.Clients.InviteArtifact = func(inviteID string) (ClientInviteArtifact, error) {
@@ -322,7 +322,7 @@ func TestClientEnrollmentUIAndInvitationArtifacts(t *testing.T) {
 		}
 		return ClientInviteArtifact{
 			ClientID: "client-ui", ClientName: "Build server",
-			InviteURI: "loom://enroll#real-short-lived-payload", ExpiresAt: "2026-08-31T10:15:00Z",
+			InviteURI: "loom://enroll#test", ExpiresAt: "2026-08-31T10:15:00Z",
 		}, nil
 	}
 
@@ -355,7 +355,7 @@ func TestClientEnrollmentUIAndInvitationArtifacts(t *testing.T) {
 	if got := result.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("GET invitation result Cache-Control = %q, want no-store", got)
 	}
-	for _, want := range []string{"Build server", `/api/control/device-invites/invite-ui/qr.png`, `loom://enroll#real-short-lived-payload`} {
+	for _, want := range []string{"Build server", `/api/control/device-invites/invite-ui/qr.png`, `loom://enroll#test`} {
 		if !strings.Contains(result.Body.String(), want) {
 			t.Errorf("created invitation page missing %q", want)
 		}
@@ -380,7 +380,7 @@ func TestClientEnrollmentUIAndInvitationArtifacts(t *testing.T) {
 		t.Fatalf("QR resource is not a PNG: status=%d content-type=%q prefix=%q", qr.Code, qr.Header().Get("Content-Type"), qr.Body.Bytes()[:min(len(qr.Body.Bytes()), 8)])
 	}
 	download := misakaRequest(t, d, http.MethodGet, "/api/control/device-invites/invite-ui/download", nil, true)
-	if download.Code != http.StatusOK || strings.TrimSpace(download.Body.String()) != "loom://enroll#real-short-lived-payload" ||
+	if download.Code != http.StatusOK || strings.TrimSpace(download.Body.String()) != "loom://enroll#test" ||
 		!strings.Contains(download.Header().Get("Content-Disposition"), "client.loom-invite") {
 		t.Fatalf("invitation download = %d headers=%v body=%q", download.Code, download.Header(), download.Body.String())
 	}

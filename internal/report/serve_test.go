@@ -10,7 +10,7 @@ import (
 
 func TestPhaseBStatusIsUnavailableBeforeFirstValidSelfObservation(t *testing.T) {
 	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
-	cfg := &Config{Node: "jm24", AttestationMinVersion: 5}
+	cfg := &Config{Node: "demo-d", AttestationMinVersion: 5}
 	st := &Status{Node: cfg.Node, TS: now.Format(time.RFC3339)}
 
 	attachObservationState(cfg, newTable(5), st, now, 10*time.Minute)
@@ -28,7 +28,7 @@ func TestPhaseBStatusIsUnavailableBeforeFirstValidSelfObservation(t *testing.T) 
 
 func TestPhaseAStatusDoesNotRequireV5Readiness(t *testing.T) {
 	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
-	cfg := &Config{Node: "jm24"}
+	cfg := &Config{Node: "demo-d"}
 	st := &Status{Node: cfg.Node, TS: now.Format(time.RFC3339)}
 
 	attachObservationState(cfg, newTable(), st, now, 10*time.Minute)

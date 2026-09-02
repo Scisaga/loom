@@ -317,7 +317,7 @@ func TestEmptyManifestRemovesNothing(t *testing.T) {
 // BuildPlan 那套 bundlePath → 服务的映射对它无能为力。
 func TestUnitFor(t *testing.T) {
 	for _, c := range []struct{ path, want string }{
-		{"/etc/wireguard/wg-ber01.conf", "wg-quick@wg-ber01"},
+		{"/etc/wireguard/wg-demo-a.conf", "wg-quick@wg-demo-a"},
 		{"/etc/systemd/system/loom-agent.service", "loom-agent"},
 		{"/etc/systemd/system/loom-pull.timer", "loom-pull.timer"},
 		{"/etc/loom/sing-box/config.json", "sing-box"},

@@ -52,7 +52,7 @@ func TestNoConfiguredTunnelDoesNotRequireWireGuardTooling(t *testing.T) {
 // 上报接口没有自己的认证 —— 它靠 WireGuard 兜住。绑到公网地址上就等于
 // 把拓扑和隧道健康白送,而且这种错误一旦发生不会有任何症状。
 func TestRefusesPublicListenAddress(t *testing.T) {
-	for _, addr := range []string{"0.0.0.0:61802", "1.2.3.4:61802", "[::]:61802"} {
+	for _, addr := range []string{"0.0.0.0:61802", "192.0.2.44:61802", "[::]:61802"} {
 		b, _ := json.Marshal(Config{Node: "n", Listen: []string{addr}})
 		if _, err := Load(b); err == nil {
 			t.Errorf("监听 %s 竟然通过了校验", addr)
@@ -207,7 +207,7 @@ func TestLoadPinsAttestationUpgradeGateToKnownPhases(t *testing.T) {
 
 // **可达性检查必须走自带 DNS,不能用系统解析器。**
 //
-// 这是上线之后当场踩到的:jm24 的 systemd-resolved 上游是 8.8.8.8(大陆
+// 这是上线之后当场踩到的:demo-d 的 systemd-resolved 上游是 8.8.8.8(大陆
 // 被污染),于是上报者报"够不到 baidu",而同一台机器换 223.5.5.5 解析后
 // 直连是 200/59ms。
 //
