@@ -23,8 +23,7 @@ Loom 是一个基于加密隧道的链路与服务调度基础设施。它从一
 
 ## 界面预览
 
-下列界面均使用合成 Device、RFC 5737 文档地址和 `example` 域名，不包含现网
-身份或端点。控制中心把期望状态、可信运行证据与自动选路结果分开呈现。
+控制中心将期望状态、可信运行证据与自动选路结果分层呈现。
 
 <p align="center">
   <img src="assets/loom-control-center-overview-misaka-v1.svg" width="100%" alt="Loom 控制中心总览">
@@ -40,6 +39,30 @@ Loom 是一个基于加密隧道的链路与服务调度基础设施。它从一
 <p align="center">
   <img src="assets/client/windows/loom-client-home-misaka-v1.svg" width="86%" alt="Loom Windows 客户端主界面">
 </p>
+
+## 加入网络
+
+Loom 将服务器、桌面和手机统一视为 **Device**。所有新 Device 都使用同一条
+Enrollment：管理员在 **Devices → Add Device** 创建一次性邀请，设备在本机生成身份
+密钥并 claim，随后获取、验签并安装自己的配置。下面几种方式只是同一邀请的不同载体：
+
+| 方式 | 适用场景 | 当前状态 |
+|---|---|---|
+| 扫描二维码 | 有界面的桌面或移动客户端；点击二维码会直接下载同一份 `.loom-invite` 文件 | 中控生成已实现；Windows / Android 接收端仍在开发 |
+| 导入 `.loom-invite` | 在设备间安全传递邀请文件，适合 Linux 或后续桌面客户端 | Linux 安装流程已实现 |
+| 使用 `loom://enroll#…` | 无图形界面的 Linux 主机；建议经标准输入粘贴，避免进入 shell history | Linux CLI 已实现 |
+| 一行服务器安装命令 | 类似 `get.docker.com` 的 Linux Server 安装体验；从部署配置选择公开分发地址，下载通用包后使用同一邀请 claim | Linux amd64 已实现 |
+
+邀请可以只建立 Device Identity，也可以钉住一个不可变的入网预设，一次性授予初始
+Membership、Responsibilities 与 Destination grants。平台由客户端检测并由中控校验，
+不需要管理员提前选择。邀请成功消费后，重启、断线重连、网络切换和正常升级都沿用
+已有身份，不会重新 Enrollment。
+
+承担转发或公网出口职责的 Linux Server 还需在本机声明实际公网端点、UDP 入站端口和
+隧道方向；这些是可达事实，不是让管理员手选路径。现有 SSH Add node 仅保留为旧设备
+迁移兼容入口，新设备应使用统一 Enrollment。完整步骤见
+[Linux 客户端安装](docs/linux-client-install.md)和
+[Device 生命周期与交付架构](docs/device-lifecycle-and-delivery.md)。
 
 ## 核心能力
 
@@ -57,36 +80,50 @@ Loom 是一个基于加密隧道的链路与服务调度基础设施。它从一
 
 ## 工作方式
 
-```text
-                         ┌──────────────┐
-                         │   SSOT YAML  │
-                         └──────┬───────┘
-                                │ validate
-                                ▼
-                    render → snapshot → sign
-                                │
-                                ▼
-                静态分发点（内容不可信；新鲜度暂受信）
-                                │ pull
-                 ┌──────────────┼──────────────┐
-                 ▼              ▼              ▼
-              节点 A          节点 B          节点 C
-          verify → hydrate → apply → selfcheck
-                 │              │              │
-                 └──── measure / report ───────┘
-                                │
-                                ▼
-                     Agent 排序并切换 selector
+```mermaid
+flowchart TB
+    subgraph Enrollment["一次性 Enrollment"]
+        direction LR
+        Admin["管理员创建邀请"] --> Carrier["QR · loom:// · .loom-invite · 安装命令"]
+        Carrier --> Package["获取并验证公开通用包"]
+        Package --> Claim["Device 本机生成密钥与 CSR<br/>claim 一次性邀请"]
+        Claim --> Identity["建立 Identity<br/>提交初始 Membership、职责与 grants"]
+    end
+
+    subgraph Control["持续控制与发布"]
+        direction LR
+        Identity --> SSOT["声明式 SSOT<br/>Control revision"]
+        SSOT --> Validate["validate"] --> Render["render"]
+        Render --> Snapshot["snapshot · sign"]
+        Snapshot --> Distribution["签名配置分发"]
+    end
+
+    subgraph Device["每个 Device 的持续运行"]
+        direction LR
+        Distribution --> Pull["pull"] --> Verify["verify · hydrate · apply"]
+        Verify --> Selector["Direct / Auto / 指定出口 selector"]
+        Selector --> Runtime["本地数据平面"]
+        Runtime --> Measure["measure · signed report"]
+        Measure --> Agent["Agent 排序与阻尼切换"]
+        Agent -.->|仅更新 Auto 候选排名| Selector
+    end
+
+    SSOT -.->|期望状态| Console["Control Center"]
+    Measure -.->|可信运行证据| Console
 ```
 
-控制平面停机不会让数据平面停机：节点继续使用最后一份已经验签并安装成功的
+Enrollment 只负责建立身份并原子提交初始期望态；运行证据不会反写 SSOT，也不会
+冒充配置已经生效。之后 Device 持续拉取签名配置、验签安装、测量并上报，Agent 只在
+已授权候选中调整本地 selector。
+
+控制平面停机不会让数据平面停机：Device 继续使用最后一份已经验签并安装成功的
 配置，Agent 也能继续依据本地观测调节现有 selector。
 
 ## 控制中心当前边界
 
 控制中心采用无外部资源的服务端渲染界面，仓库当前提供 Overview，并按 Network
-（Nodes / Topology）、Traffic（Services / Live paths）、Operations
-（Deployments / Events）和 Advanced（SSOT）组织入口。所有节点都能读取
+（Devices / Topology）、Traffic（Services / Live paths）、Operations
+（Deployments / Events）和 Advanced（SSOT）组织入口。所有 Device 都能读取
 转述后的全网状态；只有持有本机中控配置和运维口令的节点开放写入口。这里描述的
 是仓库实现边界，不表示线上节点已经部署到相同 revision。
 
@@ -94,35 +131,37 @@ Loom 是一个基于加密隧道的链路与服务调度基础设施。它从一
 |---|---|
 | Service 管理 | 已支持结构化新增、修改和删除；保存前完整校验，并以 SSOT 内容 revision 防止旧页面覆盖新变更。Policy 仍通过完整 SSOT 编辑器修改。 |
 | 事件 | 已支持按节点、类型、级别和文本筛选，并可导出同一筛选结果的 CSV；事件是状态变化历史，不代替当前告警。 |
-| SSH bootstrap 身份 | 中控只维护一组共享 Ed25519 身份，界面只导出公钥；远端仍需人工授权该公钥，不会为每个节点生成一组控制密钥。 |
-| 节点声明（接入前半段） | 已支持输入 SSH 坐标、人工确认 Ed25519 host key、受信预检、从短 hostname 得到 Node ID、复核 direction、在远端生成/复用 WG 身份并以 revision 原子提交完整节点/隧道计划。SSH host 只有是公网 global-unicast IP，或在中控解析出至少一个公网地址的 DNS 名时，才可作为 endpoint candidate；非公网 literal 和没有公网答案的 DNS 失败关闭。当前没有独立的 WireGuard UDP 入站探测，所以 `Automatic` 保守解析为 `reverse_only`。这一步**不会**安装或启动 Loom Agent，也不会分发平台信任、节点秘密和 TLS 身份；完成后节点只是 SSOT 中的 declared / joining，必须经过单独 bootstrap 并产生首份可信报告，才能称为在线。 |
+| 旧设备 SSH 导入身份 | 仅作为 pre-Enrollment 迁移兼容入口。中控维护一组共享 Ed25519 身份，界面只导出公钥；远端仍需人工授权该公钥。新 Device 使用统一 Enrollment，不依赖 SSH push。 |
+| 旧设备 SSH 声明 | 已支持输入 SSH 坐标、人工确认 Ed25519 host key、受信预检、从短 hostname 得到 Device ID、复核 direction、在远端生成/复用 WG 身份并以 revision 原子提交完整 Device/隧道计划。SSH host 只有是公网 global-unicast IP，或在中控解析出至少一个公网地址的 DNS 名时，才可作为 endpoint candidate；非公网 literal 和没有公网答案的 DNS 失败关闭。当前没有独立的 WireGuard UDP 入站探测，所以 `Automatic` 保守解析为 `reverse_only`。这一步**不会**安装或启动 Loom Agent，也不会分发平台信任、Device 秘密和 TLS 身份；完成后 Device 只是 SSOT 中的 declared / joining，必须经过后续 bootstrap 并产生首份可信报告，才能称为在线。 |
 | 远端节点健康 | 每轮从节点本机完整 `Status` 派生最终健康与精简问题列表，并放入独立的 `loom-selfcheck-v1` ECDSA 签名附件转述。中控验证 CA、节点名、签名、新鲜度和外层 node/TS 绑定后才采用：显式 `healthy=true` 且问题为空才显示 healthy，显式失败显示 problem；旧节点或附件缺失保持 unknown。relay 的外层 HTTP 状态和未签名字段不会被当成远端健康。 |
 | 转发流量 | 每个节点按约 60 秒的固定内部节奏把 Loom 管理的 WireGuard peer 累计 RX/TX 放入独立的 `loom-traffic-v1` 签名陈述；中控只对同一 node/interface/peer/epoch 的相邻可信样本计算 delta，并保留 30 天。超过 3 分钟的 gap、reset 与回退都不计入字节。Overview 与 Node detail 使用时间桶柱状图；Topology 的链路量只累加各端 TX，避免再把对端 RX 算一次。“有样本的桶”不冒充完整采集覆盖率。稳定抓取接口是版本化的 `/traffic.json`：byte 使用十进制字符串保证 64 位精度，中控额外附带缓存的历史桶，普通节点不在本地保留历史；`/status` 是诊断状态，可能同时含转述附件。该统计只覆盖 Loom WireGuard，不代表 direct、Service/sing-box 或 Hysteria2 流量。可达性 probe 完全由 SSOT 指定；生产使用 `api.ipify.org` 作为大陆直连分类与境外出口可达性信号，不是程序硬编码默认值，也不能随意替换成普通健康页。 |
 
 通过界面保存的 SSOT 由发布器在下一轮（默认最多约 30 秒）自动校验、渲染、签名
 和分发；界面没有“发布”按钮。二进制升级仍必须先用 `loom release` 显式放行。
-控制页面会立即从刚保存并重新校验的当前 SSOT 派生期望节点、常驻隧道和候选路径，
-不再等待中控自己 pull 后才更新；节点是否真正应用仍由 applied snapshot 和可信
-观测单独显示。已删除但仍有运行态证据的节点标为 `undeclared observed`，不会继续
+控制页面会立即从刚保存并重新校验的当前 SSOT 派生期望 Device、常驻隧道和候选路径，
+不再等待中控自己 pull 后才更新；Device 是否真正应用仍由 applied snapshot 和可信
+观测单独显示。已删除但仍有运行态证据的 Device 标为 `undeclared observed`，不会继续
 计入声明库存或全网快照一致性。
-普通节点没有 SSOT 写权限，它的期望库存只来自本机已经应用的 snapshot，允许在
+普通 Device 没有 SSOT 写权限，它的期望库存只来自本机已经应用的 snapshot，允许在
 下一次 pull 前暂时落后；只有中控成功读取并校验 current SSOT 后才替换期望层。
 
-## 三个基本概念
+## Device、职责与路径
 
 | 概念 | 含义 |
 |---|---|
-| **接入节点** `access` | 流量进入 Loom 的设备，例如工作站、服务器或 Android 设备 |
-| **服务器节点** `server` | 参与转发的机器；同一台机器可同时承担接入与服务器角色 |
-| **目标地址** | 网站、API 或内网服务；它只是地址，不是 Loom 节点 |
+| **Device** | Loom 唯一的受管实体，可以是服务器、桌面或手机 |
+| **Responsibilities** | Device 承担的职责，例如在本机使用 Loom、转发、作为公网出口或中控 |
+| **Destination grants** | Device 获准访问的 Service、出口以及后续具名 Local Network |
+| **目标地址** | 网站、API 或内网服务；它是请求目的地，不是另一类 Device |
 
 一条路径写作：
 
 ```text
-接入节点 → [0..n 台服务器] → 目标地址
+发起请求的 Device → [0..n 台承担转发职责的 Device] → 目标地址
 ```
 
-链上最后一台服务器是这次请求的出口。**出口是路径上的位置，不是节点类型。**
+经过转发链时，最后一台负责访问目标的 Device 位于出口位置；Direct 则不经过远端
+出口 Device。**出口是路径上的位置，不是 Device 类型。**
 
 ## 快速开始
 
