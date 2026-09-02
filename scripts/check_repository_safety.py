@@ -51,7 +51,9 @@ DOMAIN = re.compile(
 )
 APPROVED_DOMAIN_BASES = {
     "aliyun.com",
+    "anthropic.com",
     "baidu.com",
+    "cloudflare.com",
     "docker.com",
     "github.com",
     "golang.org",
