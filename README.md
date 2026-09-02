@@ -8,22 +8,20 @@
   把多条加密网络路径编织成一个可测量、可验证、可持续收敛的服务调度平面。
 </p>
 
-Loom 是一个基于加密隧道的链路与服务调度基础设施。它从一份声明式 SSOT
-生成每个节点的 WireGuard 与 sing-box 配置，持续测量候选路径，并在约束允许
-的范围内选择当前更合适的服务地址与服务器链。
+Loom 用一份声明式 SSOT 管理多节点网络：生成 WireGuard 与 sing-box 配置，持续
+测量候选路径，并按规则选择合适的服务地址和转发链。
 
-它既能处理普通代理上网，也能处理同一服务分布在多个机房、价格与网络质量
-持续变化的场景。Loom 关心的不是“哪个节点叫出口”，而是一次请求最终经过的
-完整路径。
+它既可以用于日常代理，也可以在不同机房的多个服务实例之间调度。Loom 关注的是请求
+实际经过的完整路径，而不是预先给某台机器贴上“出口”标签。
 
 > [!IMPORTANT]
-> Loom 目前是面向自建基础设施的工程项目，不是开箱即用的商业代理产品。
-> 跨节点 canary/平台确认闭环与 L7 网关仍在演进，部署前请先阅读
-> [设计文档](docs/design.md)。
+> Loom 面向自建基础设施，目前还不是开箱即用的商业代理产品。跨设备 canary、
+> 平台确认闭环和 L7 网关仍在完善，部署前请阅读[设计文档](docs/design.md)。
 
 ## 界面预览
 
-控制中心将期望状态、可信运行证据与自动选路结果分层呈现。
+控制中心分别展示期望配置、运行证据和当前选路，避免把“已经配置”和“正在生效”
+混为一谈。
 
 <p align="center">
   <img src="assets/loom-control-center-overview-misaka-v1.svg" width="100%" alt="Loom 控制中心总览">
@@ -33,8 +31,7 @@ Loom 是一个基于加密隧道的链路与服务调度基础设施。它从一
 |---|---|
 | ![Loom 动态双环拓扑](assets/loom-control-center-topology-misaka-v1.svg) | ![Loom Service 管理](assets/loom-control-center-services-misaka-v1.svg) |
 
-桌面客户端延续同一套模型：`Direct` 使用本地网络，`Auto` 遵循中控管理规则，
-也可以显式指定某个 Device 作为出口。
+桌面客户端提供三种模式：本地直连、按中控规则自动选路、固定出口。
 
 <p align="center">
   <img src="assets/client/windows/loom-client-home-misaka-v1.svg" width="86%" alt="Loom Windows 客户端主界面">
@@ -42,132 +39,119 @@ Loom 是一个基于加密隧道的链路与服务调度基础设施。它从一
 
 ## 加入网络
 
-Loom 将服务器、桌面和手机统一视为 **Device**。所有新 Device 都使用同一条
-Enrollment：管理员在 **Devices → Add Device** 创建一次性邀请，设备在本机生成身份
-密钥并 claim，随后获取、验签并安装自己的配置。下面几种方式只是同一邀请的不同载体：
+服务器、桌面和手机在 Loom 中都是 **Device**。添加设备时，管理员在
+**Devices → Add Device** 创建一次性邀请；新设备自行生成密钥、领取邀请，再安装经过
+签名的配置。邀请可以通过以下方式交给设备：
 
-| 方式 | 适用场景 | 当前状态 |
+| 方式 | 适用场景 | 支持情况 |
 |---|---|---|
-| 扫描二维码 | 有界面的桌面或移动客户端；点击二维码会直接下载同一份 `.loom-invite` 文件 | 中控生成已实现；Windows / Android 接收端仍在开发 |
-| 导入 `.loom-invite` | 在设备间安全传递邀请文件，适合 Linux 或后续桌面客户端 | Linux 安装流程已实现 |
-| 使用 `loom://enroll#…` | 无图形界面的 Linux 主机；建议经标准输入粘贴，避免进入 shell history | Linux CLI 已实现 |
-| 一行服务器安装命令 | 类似 `get.docker.com` 的 Linux Server 安装体验；从部署配置选择公开分发地址，下载通用包后使用同一邀请 claim | Linux amd64 已实现 |
+| 二维码 | 桌面或移动客户端扫码；点击二维码可直接下载邀请文件 | 中控已支持；Windows 和 Android 客户端仍在开发 |
+| `.loom-invite` 文件 | Linux 或桌面设备导入 | Linux 已支持 |
+| `loom://enroll#…` | 无图形界面的 Linux 主机 | Linux CLI 已支持，建议从标准输入粘贴，避免写入命令历史 |
+| 一行安装命令 | Linux Server 快速安装 | Linux amd64 已支持；下载地址由实际部署配置决定 |
 
-邀请可以只建立 Device Identity，也可以钉住一个不可变的入网预设，一次性授予初始
-Membership、Responsibilities 与 Destination grants。平台由客户端检测并由中控校验，
-不需要管理员提前选择。邀请成功消费后，重启、断线重连、网络切换和正常升级都沿用
-已有身份，不会重新 Enrollment。
+四种入口使用同一份邀请；邀请有效期很短，而且只能使用一次。平台由客户端报告，
+不需要管理员预先填写。
+邀请还可以绑定一个固定版本的入网预设，写入设备的初始职责和访问范围。设备注册后，
+重启、重连、切换网络或正常升级都会继续使用原有身份。
 
-承担转发或公网出口职责的 Linux Server 还需在本机声明实际公网端点、UDP 入站端口和
-隧道方向；这些是可达事实，不是让管理员手选路径。现有 SSH Add node 仅保留为旧设备
-迁移兼容入口，新设备应使用统一 Enrollment。完整步骤见
+作为转发节点或公网出口的 Linux Server，还要声明公网地址、UDP 入站端口和隧道方向。
+这些字段描述服务器如何被其他设备访问，与手选路径无关。SSH 导入只用于迁移旧设备，
+新设备统一使用 Enrollment。完整步骤见
 [Linux 客户端安装](docs/linux-client-install.md)和
 [Device 生命周期与交付架构](docs/device-lifecycle-and-delivery.md)。
 
 ## 核心能力
 
-- **声明式拓扑**：用严格 YAML 描述节点、隧道、服务、访问声明与调度约束。
-- **完整校验**：一次返回所有问题，拒绝未知字段、惰性配置和不完整能力。
-- **确定性渲染**：同一份输入稳定生成 WireGuard、sing-box、systemd 与 Agent 配置。
-- **路径级调度**：以 `(服务器链, 目标地址)` 为排序和归因单位，支持零跳、单跳与多跳候选。
-- **持续测量**：按段采集延迟与吞吐，通过转述共享不可直达节点的观测结果。
-- **分层近实时拓扑**：分别展示常驻承载、完整候选、签名观测与 Agent 当前实选路径。
-- **带阻尼切换**：当前路径失效时立即切换，普通优化则受样本量、窗口和阈值约束。
-- **签名发布**：配置自动发布，二进制须显式 `release`；节点拉取后先验签再安装。
-  快照内容已防篡改；`current.json` 的反重放与真实 canary 仍在 D88 收口中。
-- **秘密分层**：版本库与分发树只含 `${secret:...}` 占位符，明文只在需要它的节点合并。
-- **事务回滚**：安装按“暂存 → 预检 → 就位 → 稳定验证”执行，崩溃后也能恢复未提交事务。
+- **一份 SSOT**：统一描述设备、隧道、服务、访问范围和选路规则。
+- **严格校验**：拒绝未知字段和不完整配置，并一次列出全部问题。
+- **稳定渲染**：相同输入生成相同的 WireGuard、sing-box、systemd 和 Agent 配置。
+- **按路径调度**：比较完整的转发链和目标地址，支持直连、单跳和多跳。
+- **持续观测**：采集延迟、波动和吞吐，区分期望配置、签名证据与当前选路。
+- **自动切换**：路径失效时立即避开；日常优化使用样本窗口和阈值防止频繁抖动。
+- **签名交付**：配置自动发布，设备验签后安装；二进制升级仍需显式 `release`。
+- **秘密与回滚**：秘密按设备分发，安装失败或进程中断时可以恢复到完整旧版本。
 
 ## 工作方式
 
 ```mermaid
 flowchart TB
-    subgraph Enrollment["一次性 Enrollment"]
+    subgraph Enrollment["首次入网"]
         direction LR
-        Admin["管理员创建邀请"] --> Carrier["QR · loom:// · .loom-invite · 安装命令"]
-        Carrier --> Package["获取并验证公开通用包"]
-        Package --> Claim["Device 本机生成密钥与 CSR<br/>claim 一次性邀请"]
-        Claim --> Identity["建立 Identity<br/>提交初始 Membership、职责与 grants"]
+        Admin["管理员创建邀请"] --> Carrier["二维码 · 邀请链接 · 邀请文件 · 安装命令"]
+        Carrier --> Package["下载并验证安装包"]
+        Package --> Claim["本机生成设备密钥和 CSR<br/>领取邀请"]
+        Claim --> Identity["登记身份<br/>写入初始职责和访问范围"]
     end
 
     subgraph Control["持续控制与发布"]
         direction LR
-        Identity --> SSOT["声明式 SSOT<br/>Control revision"]
-        SSOT --> Validate["validate"] --> Render["render"]
-        Render --> Snapshot["snapshot · sign"]
-        Snapshot --> Distribution["签名配置分发"]
+        Identity --> SSOT["声明式 SSOT<br/>全局修订号"]
+        SSOT --> Validate["校验"] --> Render["渲染"]
+        Render --> Snapshot["生成并签名快照"]
+        Snapshot --> Distribution["分发签名配置"]
     end
 
-    subgraph Device["每个 Device 的持续运行"]
+    subgraph Device["设备持续运行"]
         direction LR
-        Distribution --> Pull["pull"] --> Verify["verify · hydrate · apply"]
-        Verify --> Selector["Direct / Auto / 指定出口 selector"]
+        Distribution --> Pull["拉取"] --> Verify["验签 · 填充秘密 · 安装"]
+        Verify --> Selector["直连 / 自动 / 固定出口"]
         Selector --> Runtime["本地数据平面"]
-        Runtime --> Measure["measure · signed report"]
-        Measure --> Agent["Agent 排序与阻尼切换"]
-        Agent -.->|仅更新 Auto 候选排名| Selector
+        Runtime --> Measure["测量 · 签名上报"]
+        Measure --> Agent["Agent 排序与防抖"]
+        Agent -.->|仅影响自动模式| Selector
     end
 
-    SSOT -.->|期望状态| Console["Control Center"]
+    SSOT -.->|期望状态| Console["控制中心"]
     Measure -.->|可信运行证据| Console
 ```
 
-Enrollment 只负责建立身份并原子提交初始期望态；运行证据不会反写 SSOT，也不会
-冒充配置已经生效。之后 Device 持续拉取签名配置、验签安装、测量并上报，Agent 只在
-已授权候选中调整本地 selector。
+入网流程只在首次注册时运行。此后设备持续拉取签名配置、安装更新并上报测量结果。
+运行证据不会写回 SSOT；Agent 也只在已授权的候选中调整自动模式。
 
-控制平面停机不会让数据平面停机：Device 继续使用最后一份已经验签并安装成功的
-配置，Agent 也能继续依据本地观测调节现有 selector。
+控制平面暂时离线不会中断数据平面。设备继续使用最后一份安装成功的配置，Agent
+也可以根据本地观测继续选路。
 
-## 控制中心当前边界
+## 控制中心
 
-控制中心采用无外部资源的服务端渲染界面，仓库当前提供 Overview，并按 Network
-（Devices / Topology）、Traffic（Services / Live paths）、Operations
-（Deployments / Events）和 Advanced（SSOT）组织入口。所有 Device 都能读取
-转述后的全网状态；只有持有本机中控配置和运维口令的节点开放写入口。这里描述的
-是仓库实现边界，不表示线上节点已经部署到相同 revision。
+控制中心由服务端直接渲染，不依赖外部前端资源。主要页面包括：
 
-| 能力 | 当前状态 |
-|---|---|
-| Service 管理 | 已支持结构化新增、修改和删除；保存前完整校验，并以 SSOT 内容 revision 防止旧页面覆盖新变更。Policy 仍通过完整 SSOT 编辑器修改。 |
-| 事件 | 已支持按节点、类型、级别和文本筛选，并可导出同一筛选结果的 CSV；事件是状态变化历史，不代替当前告警。 |
-| 旧设备 SSH 导入身份 | 仅作为 pre-Enrollment 迁移兼容入口。中控维护一组共享 Ed25519 身份，界面只导出公钥；远端仍需人工授权该公钥。新 Device 使用统一 Enrollment，不依赖 SSH push。 |
-| 旧设备 SSH 声明 | 已支持输入 SSH 坐标、人工确认 Ed25519 host key、受信预检、从短 hostname 得到 Device ID、复核 direction、在远端生成/复用 WG 身份并以 revision 原子提交完整 Device/隧道计划。SSH host 只有是公网 global-unicast IP，或在中控解析出至少一个公网地址的 DNS 名时，才可作为 endpoint candidate；非公网 literal 和没有公网答案的 DNS 失败关闭。当前没有独立的 WireGuard UDP 入站探测，所以 `Automatic` 保守解析为 `reverse_only`。这一步**不会**安装或启动 Loom Agent，也不会分发平台信任、Device 秘密和 TLS 身份；完成后 Device 只是 SSOT 中的 declared / joining，必须经过后续 bootstrap 并产生首份可信报告，才能称为在线。 |
-| 远端节点健康 | 每轮从节点本机完整 `Status` 派生最终健康与精简问题列表，并放入独立的 `loom-selfcheck-v1` ECDSA 签名附件转述。中控验证 CA、节点名、签名、新鲜度和外层 node/TS 绑定后才采用：显式 `healthy=true` 且问题为空才显示 healthy，显式失败显示 problem；旧节点或附件缺失保持 unknown。relay 的外层 HTTP 状态和未签名字段不会被当成远端健康。 |
-| 转发流量 | 每个节点按约 60 秒的固定内部节奏把 Loom 管理的 WireGuard peer 累计 RX/TX 放入独立的 `loom-traffic-v1` 签名陈述；中控只对同一 node/interface/peer/epoch 的相邻可信样本计算 delta，并保留 30 天。超过 3 分钟的 gap、reset 与回退都不计入字节。Overview 与 Node detail 使用时间桶柱状图；Topology 的链路量只累加各端 TX，避免再把对端 RX 算一次。“有样本的桶”不冒充完整采集覆盖率。稳定抓取接口是版本化的 `/traffic.json`：byte 使用十进制字符串保证 64 位精度，中控额外附带缓存的历史桶，普通节点不在本地保留历史；`/status` 是诊断状态，可能同时含转述附件。该统计只覆盖 Loom WireGuard，不代表 direct、Service/sing-box 或 Hysteria2 流量。可达性 probe 完全由 SSOT 指定；生产使用 `api.ipify.org` 作为大陆直连分类与境外出口可达性信号，不是程序硬编码默认值，也不能随意替换成普通健康页。 |
+- **Devices**：设备身份、职责、授权和在线证据；
+- **Topology / Live paths**：常驻隧道、候选路径和当前选路；
+- **Services**：主机规则与访问策略；
+- **Deployments / Events**：配置收敛、状态变化和历史事件；
+- **SSOT**：高级编辑入口。
 
-通过界面保存的 SSOT 由发布器在下一轮（默认最多约 30 秒）自动校验、渲染、签名
-和分发；界面没有“发布”按钮。二进制升级仍必须先用 `loom release` 显式放行。
-控制页面会立即从刚保存并重新校验的当前 SSOT 派生期望 Device、常驻隧道和候选路径，
-不再等待中控自己 pull 后才更新；Device 是否真正应用仍由 applied snapshot 和可信
-观测单独显示。已删除但仍有运行态证据的 Device 标为 `undeclared observed`，不会继续
-计入声明库存或全网快照一致性。
-普通 Device 没有 SSOT 写权限，它的期望库存只来自本机已经应用的 snapshot，允许在
-下一次 pull 前暂时落后；只有中控成功读取并校验 current SSOT 后才替换期望层。
+保存 SSOT 后，发布器会自动校验、渲染、签名和分发，界面不再提供单独的“发布”按钮。
+二进制升级仍需通过 `loom release` 明确放行。期望配置和运行状态始终分开：保存成功
+只说明新配置已经进入发布流程，设备是否安装、链路是否可用，仍以签名上报为准。
 
-## Device、职责与路径
+只有中控开放写操作。普通设备使用自己最后安装的签名配置。旧设备可以通过 SSH
+导入，但该入口只用于迁移；新设备应使用统一的 Enrollment。更完整的权限与证据边界
+见[设计文档](docs/design.md)。
+
+## 设备、职责与路径
 
 | 概念 | 含义 |
 |---|---|
-| **Device** | Loom 唯一的受管实体，可以是服务器、桌面或手机 |
-| **Responsibilities** | Device 承担的职责，例如在本机使用 Loom、转发、作为公网出口或中控 |
-| **Destination grants** | Device 获准访问的 Service、出口以及后续具名 Local Network |
-| **目标地址** | 网站、API 或内网服务；它是请求目的地，不是另一类 Device |
+| **设备（Device）** | Loom 管理的基本实体，可以是服务器、桌面或手机 |
+| **职责（Responsibilities）** | 设备可以使用 Loom、参与转发、提供公网出口或承担中控职责 |
+| **目的地授权（Destination grants）** | 设备获准访问的 Service、出口或具名本地网络 |
+| **目标地址** | 网站、API 或内网服务；它是请求目的地，不是设备 |
 
 一条路径写作：
 
 ```text
-发起请求的 Device → [0..n 台承担转发职责的 Device] → 目标地址
+发起请求的设备 → [0..n 台转发设备] → 目标地址
 ```
 
-经过转发链时，最后一台负责访问目标的 Device 位于出口位置；Direct 则不经过远端
-出口 Device。**出口是路径上的位置，不是 Device 类型。**
+经过转发链时，最后一台访问目标的设备就是出口；本地直连则没有远端出口。
+**出口是路径中的位置，不是一种设备类型。**
 
 ## 快速开始
 
-需要 Go 1.27 或更高版本。仓库中的
-[参考 SSOT](testdata/matrix/ssot.yaml) 只使用 RFC 保留地址与示例域名，不会连接
-任何真实主机。
+需要 Go 1.27 或更高版本。仓库中的[参考 SSOT](testdata/matrix/ssot.yaml)是一套可直接
+校验和渲染的示例拓扑，使用文档保留地址与示例域名。
 
 ```bash
 # 构建
@@ -217,14 +201,13 @@ go build -o out/loom ./cmd/loom
 
 ## 安全边界
 
-- WireGuard 私钥由节点本地生成；SSOT 只记录公钥与秘密层代次。
+- WireGuard 私钥由设备本地生成；SSOT 只记录公钥与秘密层代次。
 - 配置包、manifest 与二进制版本共同进入签名快照。
-- 节点只接受通过平台公钥验证的快照，并在本机填充自己的秘密。
+- 设备只接受通过平台公钥验证的快照，并在本机填充自己的秘密。
 - 分发点只保存签名后的静态内容，不需要被信任，也看不到凭据明文。
 - 真实部署配置与运维状态只保存在本机；公开仓库只提交合成测试矩阵。
-- 中控网页的 SSOT 写入口共用同目录的进程锁、revision 校验和原子替换，并拒绝
-  symlink/hardlink 目标。Git 或外部编辑器不会自动遵守这把锁；直接编辑时仍须保证
-  单写者，并在网页保存前重新加载，不能把任意文件编辑器当作可原子 CAS 的数据库。
+- 中控网页保存 SSOT 时使用进程锁、revision 校验和原子替换，并拒绝符号链接与硬链接
+  目标。直接编辑 SSOT 时仍需保证只有一个写入者。
 
 ## 代码结构
 
