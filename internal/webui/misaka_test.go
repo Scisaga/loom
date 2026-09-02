@@ -265,7 +265,7 @@ func misakaEnrollmentDeps() (*NodeEnrollmentDeps, *[]EnrollmentConnection, *[]En
 			}
 			return EnrollmentReview{
 				Connection: input.Connection, HostKey: input.HostKey,
-				NodeID: "demo-new-a", ObservedHostname: "HK01", PublicEndpoint: "203.0.113.42",
+				NodeID: "demo-new-a", ObservedHostname: "DEMO-NEW-A", PublicEndpoint: "203.0.113.42",
 				Country: country, City: city, DisableGeoIP: input.DisableGeoIP,
 				GeoIPSuggested: geoSuggested, GeoIPEvidence: geoEvidence,
 				EndpointEvidence: "global SSH target resolved by control; WireGuard UDP unverified",

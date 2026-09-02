@@ -72,7 +72,9 @@ EXAMPLE_DOMAIN_SUFFIXES = (
     ".example.org",
 )
 
-SITE_LIKE_ID = re.compile(r"(?<![A-Za-z0-9-])[a-z]{2}[0-9]{2}(?![A-Za-z0-9-])")
+SITE_LIKE_ID = re.compile(
+    r"(?<![A-Za-z0-9-])[a-z]{2}[0-9]{2}(?![A-Za-z0-9-])", re.IGNORECASE
+)
 APPROVED_SITE_EXAMPLES = {"gw01", "sh01"}
 
 
@@ -140,7 +142,7 @@ def main() -> int:
                 if not approved_domain(match.group(0)):
                     failures.append((relative, line_no, "unapproved public domain"))
             for match in SITE_LIKE_ID.finditer(line):
-                if match.group(0) not in APPROVED_SITE_EXAMPLES:
+                if match.group(0).lower() not in APPROVED_SITE_EXAMPLES:
                     failures.append((relative, line_no, "site-like device identifier"))
 
     if not failures:
