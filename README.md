@@ -21,6 +21,26 @@ Loom 是一个基于加密隧道的链路与服务调度基础设施。它从一
 > 跨节点 canary/平台确认闭环与 L7 网关仍在演进，部署前请先阅读
 > [设计文档](docs/design.md)。
 
+## 界面预览
+
+下列界面均使用合成 Device、RFC 5737 文档地址和 `example` 域名，不包含现网
+身份或端点。控制中心把期望状态、可信运行证据与自动选路结果分开呈现。
+
+<p align="center">
+  <img src="assets/loom-control-center-overview-misaka-v1.svg" width="100%" alt="Loom 控制中心总览">
+</p>
+
+| 动态拓扑与当前路径 | Service 与自动路由规则 |
+|---|---|
+| ![Loom 动态双环拓扑](assets/loom-control-center-topology-misaka-v1.svg) | ![Loom Service 管理](assets/loom-control-center-services-misaka-v1.svg) |
+
+桌面客户端延续同一套模型：`Direct` 使用本地网络，`Auto` 遵循中控管理规则，
+也可以显式指定某个 Device 作为出口。
+
+<p align="center">
+  <img src="assets/client/windows/loom-client-home-misaka-v1.svg" width="86%" alt="Loom Windows 客户端主界面">
+</p>
+
 ## 核心能力
 
 - **声明式拓扑**：用严格 YAML 描述节点、隧道、服务、访问声明与调度约束。
