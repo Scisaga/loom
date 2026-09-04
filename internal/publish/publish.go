@@ -5,6 +5,8 @@
 //
 // **分发出去的树里没有任何凭据**:全是 `${secret:REF}` 占位符,合并发生在
 // 各节点本地。所以分发点既看不到秘密,也改不了内容(改了验签过不去)。
+//go:build !windows
+
 package publish
 
 import (
@@ -37,19 +39,6 @@ type Tree struct {
 	// 分发点上已经存在就不必再传 —— 12MB 的东西每次发布都重推是白费。
 	// 回滚到旧快照时,旧二进制也还在,不用重新下载。
 	Blobs map[string][]byte
-}
-
-// Bundle 是分发树里每个节点那一份的结构。
-type Bundle struct {
-	Owner string            `json:"owner"`
-	Files map[string]string `json:"files"`
-}
-
-// Current 是 current.json 的结构。
-type Current struct {
-	Snapshot string `json:"snapshot"`
-	// PublishedAt 只给人看。节点不拿它做任何判断 —— 它没有被签名覆盖。
-	PublishedAt string `json:"published_at"`
 }
 
 // Meta 是发布的外部输入。时间由调用方注入,包内不读时钟(§12、D14)。

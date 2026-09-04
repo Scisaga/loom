@@ -87,7 +87,7 @@ func PrepareServerEnrollment(configPath, privateKeyPath string, random io.Reader
 func readDeviceConfig(path string) (DeviceConfig, error) {
 	var config DeviceConfig
 	if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
-		return config, fmt.Errorf("[§9.2 注册流程] device-config 必须是绝对且已清理的路径:%q", path)
+		return config, fmt.Errorf("[§9.2 加入流程] device-config 必须是绝对且已清理的路径:%q", path)
 	}
 	body, err := readRegularFile(path, 64<<10, false)
 	if errors.Is(err, os.ErrNotExist) {

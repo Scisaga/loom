@@ -19,7 +19,7 @@ type clientPageState struct {
 
 func pageDevices(d Deps, state clientPageState, isAuthed bool) string {
 	if d.Control == nil {
-		return shell(d, "Devices", `<div class="card notice"><b>Device inventory is control-local</b><br><span class=small>This machine has no fleet identity registry, invitation issuer or distribution catalog.</span></div>`, isAuthed)
+		return shell(d, "Devices", `<div class="card notice"><b>Device inventory is control-local</b><br><span class=small>This machine cannot create Devices or issue join codes.</span></div>`, isAuthed)
 	}
 	state.Package, state.PackageError = clientLinuxPackage(d, state.Package, state.PackageError)
 	if state.Create || state.Invite != nil {
@@ -47,19 +47,19 @@ func pageDevices(d Deps, state clientPageState, isAuthed bool) string {
 	fmt.Fprintf(&b, `<section class="card clients-summary" aria-label="Device inventory summary">
 <div class=clients-summary-item><div class=label>Devices</div><div class=metric>%d</div><div class=dim>one identity inventory across all responsibilities</div></div>
 <div class=clients-summary-item><div class=label>Members</div><div class="metric ok">%d</div><div class=dim>present in current desired state; not necessarily online</div></div>
-<div class=clients-summary-item><div class=label>Enrollment work</div><div class=metric>%d <small>devices</small></div><div class=dim>%d unconsumed invitations</div></div>
+<div class=clients-summary-item><div class=label>Waiting to join</div><div class=metric>%d <small>devices</small></div><div class=dim>%d unused join codes</div></div>
 </section>`, total, members, pending, inventory.ActiveInvites)
 
 	b.WriteString(`<div class=clients-layout><section class="card clients-list-card"><div class=clients-card-head><div><h2>Device inventory</h2><p class=dim>Identity, desired membership and runtime evidence remain separate facts.</p></div>`)
 	control := deviceControl(d)
 	if isAuthed && control != nil && control.CreateInvite != nil {
-		b.WriteString(`<a class="button primary sp" href="/devices?new=1">＋ Add device</a>`)
+		b.WriteString(`<a class="button primary sp" href="/devices?new=1">＋ Create Device</a>`)
 	} else if d.Control != nil && !isAuthed {
 		fmt.Fprintf(&b, `<a class="button sp" href="%s">Sign in to add</a>`, esc(loginURL("/devices?new=1")))
 	}
 	b.WriteString(`</div>`)
 	if inventoryErr == nil && len(inventory.Clients) == 0 {
-		b.WriteString(`<div class=client-empty><b>No Device records exist.</b><span class=dim>Create a short-lived invitation when a machine is ready to enroll.</span></div>`)
+		b.WriteString(`<div class=client-empty><b>No Device records exist.</b><span class=dim>Create a Device when a machine is ready to join the network.</span></div>`)
 	} else if inventoryErr == nil {
 		b.WriteString(`<div role=region aria-label="Device records" tabindex=0><table class=clients-table><thead><tr><th>Device<th>Membership<th>Responsibilities<th>Destination grants<th>Runtime<th>Last seen</tr></thead><tbody>`)
 		for _, device := range inventory.Clients {
@@ -136,13 +136,13 @@ func pageDeviceDetail(d Deps, deviceID string, isAuthed bool) string {
 	}
 	serverDeclaration := ""
 	if deviceListContains(device.Responsibilities, "forward") {
-		serverDeclaration = fmt.Sprintf(`<section class="card span12"><div class=label>Server declaration</div><dl class=kv><dt>Public endpoint<dd class=mono>%s:%d<dt>Tunnel direction<dd class=mono>%s<dt>Internet egress<dd>%s</dl><p class=dim>These are desired facts from Enrollment/SSOT. Reachability and signed ingress observations remain runtime evidence under Network diagnostics.</p></section>`,
+		serverDeclaration = fmt.Sprintf(`<section class="card span12"><div class=label>Server declaration</div><dl class=kv><dt>Public endpoint<dd class=mono>%s:%d<dt>Tunnel direction<dd class=mono>%s<dt>Internet egress<dd>%s</dl><p class=dim>These are desired Device/SSOT facts. Reachability and signed ingress observations remain runtime evidence under Network diagnostics.</p></section>`,
 			esc(orDash(device.PublicEndpoint)), device.InboundPort, esc(orDash(device.Direction)), yesNo(device.EgressCapable))
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, `<div class=grid>
 <section class="card span4"><div class=label>Identity</div><h2>%s</h2><dl class=kv><dt>Device ID<dd class=mono>%s<dt>Platform<dd>%s<dt>Identity source<dd>%s<dt>Profile version<dd class=mono>%s<dt>Key fingerprint<dd class=mono>%s</dl></section>
-<section class="card span4"><div class=label>Membership</div><div class=metric>%s</div><p class=dim>Desired membership is separate from enrollment and runtime health.</p><dl class=kv><dt>Created<dd>%s<dt>Claimed<dd>%s</dl></section>
+<section class="card span4"><div class=label>Membership</div><div class=metric>%s</div><p class=dim>Desired membership is separate from join progress and runtime health.</p><dl class=kv><dt>Created<dd>%s<dt>Joined<dd>%s</dl></section>
 <section class="card span4"><div class=label>Runtime evidence</div><div class="client-status %s"><span class=dot></span>%s</div><p class=dim>%s</p><dl class=kv><dt>Last seen<dd>%s</dl></section>
 </div>
 <div class=grid><section class="card span6"><div class=label>Responsibilities</div><h2>%s</h2><p class=dim>“use_loom” means traffic originating on this Device may use Loom. It does not imply forwarding, public ingress or egress.</p></section>
@@ -154,7 +154,7 @@ func pageDeviceDetail(d Deps, deviceID string, isAuthed bool) string {
 		esc(deviceList(device.Responsibilities)), esc(deviceList(device.DestinationGrants)), serverDeclaration, url.PathEscape(device.ID))
 	if isAuthed && !device.Legacy && (device.Status == "pending" || device.Status == "invite_expired") {
 		if control := deviceControl(d); control != nil && control.DiscardPending != nil {
-			fmt.Fprintf(&b, `<div class=service-danger><div><b>Unclaimed identity</b><span>This Device never claimed its invitation and has no network membership. Discarding removes only this reservation and its invitations.</span></div><form method=post action="/devices/discard-pending"><input type=hidden name=id value="%s"><button class=danger-button>Discard unclaimed Device</button></form></div>`, esc(device.ID))
+			fmt.Fprintf(&b, `<div class=service-danger><div><b>Device not joined</b><span>This Device never used its join code and has no network membership. Discarding removes only this reservation and its unused join codes.</span></div><form method=post action="/devices/discard-pending"><input type=hidden name=id value="%s"><button class=danger-button>Discard Device</button></form></div>`, esc(device.ID))
 		}
 	}
 	return shell(d, "Device · "+device.ID, b.String(), isAuthed)
@@ -163,9 +163,9 @@ func pageDeviceDetail(d Deps, deviceID string, isAuthed bool) string {
 func deviceIdentitySourceLabel(source string) string {
 	switch source {
 	case "enrollment":
-		return "Enrollment"
+		return "QR join"
 	case "managed-certificate":
-		return "Verified pre-Enrollment certificate"
+		return "Verified existing certificate"
 	case "":
 		return "Not reported"
 	default:
@@ -215,16 +215,16 @@ func pageDeviceEnrollment(d Deps, state clientPageState, isAuthed bool) string {
 	state.Package, state.PackageError = clientLinuxPackage(d, state.Package, state.PackageError)
 	var b strings.Builder
 	if d.Control == nil {
-		b.WriteString(`<div class="card notice badline"><b>Control role required</b><br><span class=small>Device enrollment is available only on the control plane.</span></div>`)
+		b.WriteString(`<div class="card notice badline"><b>Control role required</b><br><span class=small>Devices and their join codes can be created only on the control plane.</span></div>`)
 		return shell(d, "Devices", b.String(), isAuthed)
 	}
 	if !isAuthed {
-		fmt.Fprintf(&b, `<div class=client-add-grid><section class="card client-form-card"><h2>Operator session required</h2><p class=dim>Creating an invitation changes the control-local Device identity registry.</p><a class="button primary" href="%s">Sign in</a></section></div>`, esc(loginURL("/devices?new=1")))
+		fmt.Fprintf(&b, `<div class=client-add-grid><section class="card client-form-card"><h2>Operator session required</h2><p class=dim>Creating a Device and its one-time join code changes control-plane state.</p><a class="button primary" href="%s">Sign in</a></section></div>`, esc(loginURL("/devices?new=1")))
 		return shell(d, "Devices", b.String(), false)
 	}
 	control := deviceControl(d)
 	if control == nil || control.CreateInvite == nil {
-		b.WriteString(`<div class="card notice badline"><b>Device enrollment unavailable</b><br><span class=small>This build has no Device identity registry capability.</span></div>`)
+		b.WriteString(`<div class="card notice badline"><b>Device creation unavailable</b><br><span class=small>This build has no Device identity registry capability.</span></div>`)
 		return shell(d, "Devices", b.String(), true)
 	}
 	if state.Invite != nil {
@@ -232,15 +232,15 @@ func pageDeviceEnrollment(d Deps, state clientPageState, isAuthed bool) string {
 		return shell(d, "Devices", b.String(), true)
 	}
 	if state.Error != "" {
-		fmt.Fprintf(&b, `<div class="card notice badline"><b>Invitation was not created</b><br><span class=small>%s</span></div>`, esc(state.Error))
+		fmt.Fprintf(&b, `<div class="card notice badline"><b>Device was not created</b><br><span class=small>%s</span></div>`, esc(state.Error))
 	}
 	profiles, profileErr := deviceEnrollmentProfiles(d)
 	profile := selectedEnrollmentProfile(profiles, state.SubmittedProfile)
 	profileControl := enrollmentProfileControl(profiles, profile.Version)
-	fmt.Fprintf(&b, `<div class=client-add-grid><section class="card client-form-card"><h2>Add Device</h2><p class=dim>Name the machine for operators. The installed client reports its supported platform when it claims the invitation.</p>
-<form class=blockform data-submit-progress method=post action="/devices/create"><div class=field><label for=client-name>Display name</label><input id=client-name name=name maxlength=80 required autocomplete=off value="%s" placeholder="e.g. build server"><span class=field-hint>Platform is reported by the installed Device; its immutable purpose is pinned below.</span></div>%s
-<div class=client-form-actions><button class="primary progress-submit"><span class=button-idle>Create invitation</span><span class=button-busy><i class=button-spinner aria-hidden=true></i>Creating…</span></button><a class=button href="/devices">Cancel</a></div></form></section>
-<aside class=card><h2>Pinned enrollment profile</h2><div class=client-boundary><div><span>ProfileVersion</span><b id=profile-preview-version class=mono>%s</b></div><div><span>Identity</span><b>Local key + short-lived, single-use invitation</b></div><div><span>Membership</span><b>Published desired state, separate from online status</b></div><div><span>Responsibilities</span><b id=profile-preview-responsibilities>%s</b></div><div><span>Destination grants</span><b id=profile-preview-grants>%s</b></div></div>%s</aside></div>`, esc(state.SubmittedName), profileControl, esc(orDash(profile.Version)), esc(deviceList(profile.Responsibilities)), esc(deviceList(profile.DestinationGrants)), enrollmentProfileError(profileErr))
+	fmt.Fprintf(&b, `<div class=client-add-grid><section class="card client-form-card"><h2>Create Device</h2><p class=dim>Name the machine for operators. The client reports its supported platform when it imports this Device's join code.</p>
+<form class=blockform data-submit-progress method=post action="/devices/create"><div class=field><label for=client-name>Display name</label><input id=client-name name=name maxlength=80 required autocomplete=off value="%s" placeholder="e.g. build server"><span class=field-hint>Platform is reported by the client running on the Device; its immutable purpose is pinned below.</span></div>%s
+<div class=client-form-actions><button class="primary progress-submit"><span class=button-idle>Create Device</span><span class=button-busy><i class=button-spinner aria-hidden=true></i>Creating…</span></button><a class=button href="/devices">Cancel</a></div></form></section>
+<aside class=card><h2>Pinned join profile</h2><div class=client-boundary><div><span>ProfileVersion</span><b id=profile-preview-version class=mono>%s</b></div><div><span>Identity</span><b>Local key + short-lived, single-use join code</b></div><div><span>Membership</span><b>Published desired state, separate from online status</b></div><div><span>Responsibilities</span><b id=profile-preview-responsibilities>%s</b></div><div><span>Destination grants</span><b id=profile-preview-grants>%s</b></div></div>%s</aside></div>`, esc(state.SubmittedName), profileControl, esc(orDash(profile.Version)), esc(deviceList(profile.Responsibilities)), esc(deviceList(profile.DestinationGrants)), enrollmentProfileError(profileErr))
 	return shell(d, "Devices", b.String(), true)
 }
 
@@ -251,12 +251,12 @@ func pageClientEnrollment(d Deps, state clientPageState, isAuthed bool) string {
 func writeClientInvite(b *strings.Builder, invite ClientInviteView, pkg LinuxClientPackageView, packageError string) {
 	qrURL := "/api/control/device-invites/" + url.PathEscape(invite.InviteID) + "/qr.png"
 	downloadURL := "/api/control/device-invites/" + url.PathEscape(invite.InviteID) + "/download"
-	fmt.Fprintf(b, `<div class=client-invite-grid><section class="card client-invite-qr"><div class="badge warn"><span class=dot></span>Pending claim</div><a href="%s" download aria-label="Download invitation file"><img src="%s" alt="Enrollment QR code for %s"></a><p><b>Scan or click the QR code</b><br><span class="small dim">Clicking downloads the same invitation as a <code>.loom-invite</code> file.</span></p></section>
-<section class="card client-invite-copy"><div><div class=label>Invitation ready</div><h2>%s</h2><span class="mono dim">%s</span></div>
-<div class=client-invite-expiry><span class=dot></span><span>This invitation is a short-lived, single-use secret and expires at <b>%s</b>. Share it only with the intended device.</span></div>
+	fmt.Fprintf(b, `<div class=client-invite-grid><section class="card client-invite-qr"><div class="badge warn"><span class=dot></span>Waiting to join</div><a href="%s" download aria-label="Download join QR code"><img src="%s" alt="Join QR code for %s"></a><p><b>Save or scan this QR code</b><br><span class="small dim">Import the image after starting the client. It binds the client to this existing Device.</span></p></section>
+<section class="card client-invite-copy"><div><div class=label>Device created · join code ready</div><h2>%s</h2><span class="mono dim">%s</span></div>
+<div class=client-invite-expiry><span class=dot></span><span>This join code is a short-lived, single-use secret and expires at <b>%s</b>. Share it only with the intended device.</span></div>
 <div class=client-boundary><div><span>ProfileVersion</span><b class=mono>%s</b></div><div><span>Responsibilities</span><b>%s</b></div><div><span>Destination grants</span><b>%s</b></div></div>
-<div class=field><label for=invite-link>Enrollment invitation URI</label><div class=invite-link><input id=invite-link readonly spellcheck=false autocomplete=off autocapitalize=none value="%s" aria-describedby=invite-link-help><a class=button href="%s" download>Download .loom-invite</a></div><span id=invite-link-help class=field-hint>Every supported platform consumes the same invitation. It is not a permanent connection URL.</span></div>`,
-		esc(downloadURL), esc(qrURL), esc(invite.ClientID), esc(invite.ClientName), esc(invite.ClientID), esc(clientTime(invite.ExpiresAt)), esc(orDash(invite.ProfileVersion)), esc(deviceList(invite.Responsibilities)), esc(deviceList(invite.DestinationGrants)), esc(invite.InviteURI), esc(downloadURL))
+<div class=field><label for=invite-link>Fallback join link</label><div class=invite-link><input id=invite-link readonly spellcheck=false autocomplete=off autocapitalize=none value="%s" aria-describedby=invite-link-help><a class=button href="%s" download>Download join file</a></div><span id=invite-link-help class=field-hint>The QR image, join file and this hidden protocol link are equivalent one-time inputs.</span></div>`,
+		esc(qrURL), esc(qrURL), esc(invite.ClientID), esc(invite.ClientName), esc(invite.ClientID), esc(clientTime(invite.ExpiresAt)), esc(orDash(invite.ProfileVersion)), esc(deviceList(invite.Responsibilities)), esc(deviceList(invite.DestinationGrants)), esc(invite.InviteURI), esc(downloadURL))
 	if clientPackageAvailable(pkg) {
 		fmt.Fprintf(b, `<div class=client-invite-actions><a class="button primary" href="%s" download>Download Linux package</a><form class=client-done-form method=get action="/devices"><button class=button type=submit>Back to Device list</button></form></div>`, esc(pkg.URL))
 	} else {
@@ -265,29 +265,29 @@ func writeClientInvite(b *strings.Builder, invite ClientInviteView, pkg LinuxCli
 			fmt.Fprintf(b, `<p class="tiny dim">%s</p>`, esc(packageError))
 		}
 	}
-	b.WriteString(`</section></div><section class="card client-setup" aria-labelledby=client-setup-title><div class=client-setup-head><div><div class=label>Next step</div><h2 id=client-setup-title>Linux setup</h2></div><p class=small>QR, invitation file and URI carry the same invitation. Choose one enrollment method.</p></div>`)
+	b.WriteString(`</section></div><section class="card client-setup"><div class=client-setup-head><div><div class=label>Windows Portable preview</div><h2>Start the client, then import the QR code</h2></div><p class=small>Portable Mixed and Portable TUN join this existing Device without an extra command or component selection. Installed will use the same flow after its MSI, desktop UI and restricted Service IPC are delivered.</p></div></section><section class="card client-setup" aria-labelledby=client-setup-title><div class=client-setup-head><div><div class=label>Linux server</div><h2 id=client-setup-title>Command-line setup</h2></div><p class=small>The QR, join file and protocol link carry the same one-time code.</p></div>`)
 	if deviceListContains(invite.Responsibilities, "forward") {
-		b.WriteString(`<div class=client-setup-prepare><div><span class=client-step>1</span><div><b>Configure the server declaration before claiming</b><span class="small dim">This declares how other Devices may reach this server. It is not a route or exit selection.</span></div></div><code class=command-block>sudo install -d -m 0755 /etc/loom
+		b.WriteString(`<div class=client-setup-prepare><div><span class=client-step>1</span><div><b>Configure the server declaration before joining</b><span class="small dim">This declares how other Devices may reach this server. It is not a route or exit selection.</span></div></div><code class=command-block>sudo install -d -m 0755 /etc/loom
 sudoedit /etc/loom/device.yaml</code><code class=command-block>server:
   public_endpoint: edge.example.net
   inbound_port: 61698
   direction: bidirectional</code><p class="small dim">Use this Device's real public DNS name or public IP and the UDP port exposed by the deployment. These declared facts are verified by the existing signed topology observations after apply; country, city and provider are optional.</p></div>`)
 	}
 	if pkg.InstallerURL != "" {
-		fmt.Fprintf(b, `<div class=client-setup-prepare><div><span class=client-step>1</span><div><b>Install the public generic package</b><span class="small dim">No invitation or Device configuration is embedded in this URL.</span></div></div><code class=command-block>curl -fsSL '%s' | sudo sh
+		fmt.Fprintf(b, `<div class=client-setup-prepare><div><span class=client-step>1</span><div><b>Install the public generic package</b><span class="small dim">No join code or Device configuration is embedded in this URL.</span></div></div><code class=command-block>curl -fsSL '%s' | sudo sh
 sudo /usr/local/bin/loom client enroll -stdin</code></div>`, esc(pkg.InstallerURL))
 	}
 	if clientPackageAvailable(pkg) {
 		fmt.Fprintf(b, `<div class=client-setup-prepare><div><span class=client-step>⇩</span><div><b>Manual or offline package install</b><span class="small dim">Run these commands in the directory containing both downloads.</span></div></div><code class=command-block>printf '%%s  %%s\n' '%s' '%s' | sha256sum -c -
 tar -xzf loom-client-linux-amd64.tar.gz
 cd loom-client-linux-amd64</code></div>
-<div class=client-setup-methods><section class=client-setup-method aria-labelledby=invite-file-method><div class=client-method-title><span class=client-step>2A</span><div><h3 id=invite-file-method>Invitation file</h3><span class="badge ok">Recommended</span></div></div><p class="small dim">Use this after downloading <code>client.loom-invite</code>.</p><code class=command-block>sudo ./install.sh --invite-file ../client.loom-invite</code></section>
-<section class=client-setup-method aria-labelledby=invite-uri-method><div class=client-method-title><span class=client-step>2B</span><div><h3 id=invite-uri-method>Invitation URI via stdin</h3><span class="small dim">For a Linux host where you copied the URI.</span></div></div><code class=command-block>sudo ./install.sh --no-enroll
+<div class=client-setup-methods><section class=client-setup-method aria-labelledby=invite-file-method><div class=client-method-title><span class=client-step>2A</span><div><h3 id=invite-file-method>Join file</h3><span class="badge ok">Recommended</span></div></div><p class="small dim">Use this after downloading <code>client.loom-invite</code>.</p><code class=command-block>sudo ./install.sh --invite-file ../client.loom-invite</code></section>
+<section class=client-setup-method aria-labelledby=invite-uri-method><div class=client-method-title><span class=client-step>2B</span><div><h3 id=invite-uri-method>Join link via stdin</h3><span class="small dim">For a Linux host where you copied the link.</span></div></div><code class=command-block>sudo ./install.sh --no-enroll
 sudo /usr/local/bin/loom client enroll -stdin</code><p class="small">Paste the complete URI shown above, press <kbd>Enter</kbd>, then <kbd>Ctrl-D</kbd>. Stdin keeps the secret out of shell history.</p></section></div>`, esc(pkg.SHA256), esc(pkg.Filename))
 	} else {
-		b.WriteString(`<div class="callout warnline client-setup-blocked"><b>Linux package unavailable</b><br><span class=small>Publish a validated Linux client package before attempting these installation commands. The invitation remains usable until the expiry shown above.</span></div>`)
+		b.WriteString(`<div class="callout warnline client-setup-blocked"><b>Linux package unavailable</b><br><span class=small>Publish a validated Linux client package before attempting these installation commands. The join code remains usable until the expiry shown above.</span></div>`)
 	}
-	b.WriteString(`<div class=client-setup-boundary><b>First successful claim consumes the invitation.</b><span>Expired unused invitations require a new one; normal reconnects, restarts and configuration updates do not register the device again.</span></div></section>`)
+	b.WriteString(`<div class=client-setup-boundary><b>The first successful identity binding consumes the code.</b><span>Only the exact same token, CSR, request ID, platform and Device facts may resume during the recovery window. If the code or recovery window expires, an operator must explicitly resolve the incomplete identity; same-Device reissue is not yet supported. Reconnects, restarts and configuration updates do not repeat the join.</span></div></section>`)
 }
 
 func deviceEnrollmentProfiles(d Deps) ([]DeviceEnrollmentProfileView, error) {
@@ -301,7 +301,7 @@ func deviceEnrollmentProfiles(d Deps) ([]DeviceEnrollmentProfileView, error) {
 			return nil, err
 		}
 		if len(profiles) == 0 {
-			return nil, fmt.Errorf("no enrollment profile is available")
+			return nil, fmt.Errorf("no join profile is available")
 		}
 		return profiles, nil
 	}
@@ -379,7 +379,7 @@ func writeLinuxDelivery(b *strings.Builder, pkg LinuxClientPackageView, packageE
 		}
 		fmt.Fprintf(b, `<a class="button primary sp" href="%s" download>Download</a></div><dl class=linux-package-meta><dt>File<dd class=mono>%s<dt>Version<dd>%s<dt>Target<dd class=mono>%s<dt>SHA-256<dd class=mono>%s</dl>`, esc(downloadURL), esc(pkg.Filename), esc(orDash(pkg.Version)), esc(orDash(pkg.Arch)), esc(pkg.SHA256))
 		if pkg.InstallerURL != "" {
-			fmt.Fprintf(b, `<div><div class=label>One-line public install</div><code class=command-block>curl -fsSL '%s' | sudo sh</code><span class="tiny dim">The generic installer contains no invitation. Enroll afterward with the QR, file or URI.</span></div>`, esc(pkg.InstallerURL))
+			fmt.Fprintf(b, `<div><div class=label>One-line public install</div><code class=command-block>curl -fsSL '%s' | sudo sh</code><span class="tiny dim">The generic installer contains no join code. Join afterward with the QR, file or URI.</span></div>`, esc(pkg.InstallerURL))
 		}
 	} else {
 		b.WriteString(`</div><div class="callout warnline"><b>Package unavailable</b><br><span class=small>No validated Linux artifact is published by this control node.</span></div>`)
@@ -387,13 +387,13 @@ func writeLinuxDelivery(b *strings.Builder, pkg LinuxClientPackageView, packageE
 			fmt.Fprintf(b, `<span class="tiny dim">%s</span>`, esc(packageError))
 		}
 	}
-	b.WriteString(`</section><details class="card linux-install" open><summary>Install and enroll</summary><ol><li>Download the package and invitation file on the target Linux server.</li><li>Verify the package before extracting it.`)
+	b.WriteString(`</section><details class="card linux-install" open><summary>Install and join</summary><ol><li>Download the package and join file on the target Linux server.</li><li>Verify the package before extracting it.`)
 	if clientPackageAvailable(pkg) && pkg.SHA256 != "" {
 		fmt.Fprintf(b, `<code class=command-block>printf '%%s  %%s\n' '%s' '%s' | sha256sum -c -</code>`, esc(pkg.SHA256), esc(pkg.Filename))
 	} else {
 		b.WriteString(`<span class="small dim">The checksum appears here only when a package is available.</span>`)
 	}
-	b.WriteString(`</li><li>Extract, then install with the downloaded invitation.<code class=command-block>tar -xzf loom-client-linux-amd64.tar.gz
+	b.WriteString(`</li><li>Extract, then install with the downloaded join file.<code class=command-block>tar -xzf loom-client-linux-amd64.tar.gz
 cd loom-client-linux-amd64
 sudo ./install.sh --invite-file ../client.loom-invite</code></li><li>Point the application at <code>127.0.0.1:1080</code>. The default Linux server setup does not take over the host routing table.</li></ol></details></aside>`)
 }
@@ -419,9 +419,9 @@ func clientStatusPresentation(status string) (className, label string) {
 	case "provisioning":
 		return "warn", "Provisioning"
 	case "pending":
-		return "warn", "Pending claim"
+		return "warn", "Waiting to join"
 	case "invite_expired":
-		return "bad", "Invite expired"
+		return "bad", "Join code expired"
 	case "revoked":
 		return "bad", "Revoked"
 	case "":

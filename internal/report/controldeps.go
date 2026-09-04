@@ -15,8 +15,6 @@ import (
 	"time"
 
 	"loom/internal/clientregistry"
-	"loom/internal/enrollkey"
-	"loom/internal/enrollssh"
 	"loom/internal/model"
 	"loom/internal/netx"
 	"loom/internal/ssotedit"
@@ -141,30 +139,6 @@ func controlDeps(c *Control) *webui.ControlDeps {
 		})
 		return state, err
 	}
-	bootstrap := enrollkey.Manager{PrivatePath: c.BootstrapSSHKey}
-	bootstrapView := func(ensure bool) (webui.BootstrapIdentityView, error) {
-		var status enrollkey.Status
-		var err error
-		if ensure {
-			status, err = bootstrap.Ensure()
-		} else {
-			status, err = bootstrap.Status()
-		}
-		if err != nil {
-			return webui.BootstrapIdentityView{}, err
-		}
-		return webui.BootstrapIdentityView{
-			Ready: status.Ready, PublicKey: status.PublicOpenSSH,
-			Fingerprint: status.Fingerprint, PublicPath: status.PublicPath,
-		}, nil
-	}
-	var enrollment *webui.NodeEnrollmentDeps
-	// LoadControl fills both defaults. Keeping this nil for hand-constructed
-	// Control values with incomplete paths prevents the UI from advertising a
-	// workflow whose trust store or private identity cannot be isolated.
-	if enrollmentPathsUsable(c) {
-		enrollment = newNodeEnrollmentDeps(c, &saveMu, read, revision, guardRevision)
-	}
 	clientProvisioner := newClientProvisioner(c, &saveMu)
 	clientProvision := func(client clientregistry.Client, csrPEM string) (*webui.ClientBootstrap, error) {
 		result, err := clientProvisioner.provision(client, csrPEM)
@@ -240,13 +214,8 @@ func controlDeps(c *Control) *webui.ControlDeps {
 			},
 			Set: mutateDefaultExit,
 		},
-		BootstrapIdentity: &webui.BootstrapIdentityDeps{
-			Status: func() (webui.BootstrapIdentityView, error) { return bootstrapView(false) },
-			Ensure: func() (webui.BootstrapIdentityView, error) { return bootstrapView(true) },
-		},
-		Enrollment: enrollment,
-		Devices:    deviceDeps,
-		Clients:    deviceDeps,
+		Devices: deviceDeps,
+		Clients: deviceDeps,
 		Distributed: func() (string, error) {
 			if c.DistributionURL == "" {
 				return "", fmt.Errorf("中控配置里没有 distribution_url")
@@ -269,28 +238,6 @@ func controlDeps(c *Control) *webui.ControlDeps {
 			return cur.Snapshot, nil
 		},
 	}
-}
-
-func enrollmentPathsUsable(c *Control) bool {
-	if c == nil || strings.TrimSpace(c.BootstrapSSHKey) != c.BootstrapSSHKey ||
-		strings.TrimSpace(c.KnownHostsPath) != c.KnownHostsPath ||
-		!filepath.IsAbs(c.BootstrapSSHKey) || !filepath.IsAbs(c.KnownHostsPath) {
-		return false
-	}
-	// A bad bootstrap configuration must not let host-key confirmation replace
-	// the SSH private key, its public half, or the SSOT itself.
-	privatePath := filepath.Clean(c.BootstrapSSHKey)
-	knownHostsPath := filepath.Clean(c.KnownHostsPath)
-	ssotPath := filepath.Clean(c.SSOTPath)
-	isolated := knownHostsPath != privatePath && knownHostsPath != privatePath+".pub" &&
-		knownHostsPath != ssotPath && privatePath != ssotPath && privatePath+".pub" != ssotPath
-	if !isolated {
-		return false
-	}
-	if _, err := (enrollkey.Manager{PrivatePath: privatePath}).Status(); err != nil {
-		return false
-	}
-	return enrollssh.ValidateKnownHostsPath(knownHostsPath) == nil
 }
 
 func loadValidatedSSOT(path string) (*model.SSOT, error) {

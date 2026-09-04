@@ -68,7 +68,7 @@ func TestInvitationPersistsOnlyHashAndExactClaimReplayIsIdempotent(t *testing.T)
 		t.Fatal("consumed invitation artifact remained retrievable")
 	}
 	ready, err := store.MarkReady(first.Client.ID)
-	if err != nil || ready.Status != "ready" {
+	if err != nil || ready.Status != "ready" || ready.ReadyAt != now.Format(time.RFC3339) {
 		t.Fatalf("mark ready=%+v err=%v", ready, err)
 	}
 	readyAgain, err := store.MarkReady(first.Client.ID)
@@ -92,14 +92,83 @@ func TestInvitationPersistsOnlyHashAndExactClaimReplayIsIdempotent(t *testing.T)
 		t.Fatalf("different identity error=%v", err)
 	}
 
-	// Consumption must not extend a bearer invitation forever. Even the exact
-	// identity/request replay is rejected after the original expiry, so callers
-	// cannot retrieve ready bootstrap material with an old token.
+	// The original bearer TTL limits first use. After consumption, the exact
+	// Device identity/request tuple gets a separate bounded recovery window so a
+	// pending or lost ready response does not strand the pre-created Device.
 	now = now.Add(2 * time.Minute)
 	claim.CSRPEM = csr
+	replayed, err = store.Claim(claim)
+	if err != nil || !replayed.Replay || replayed.Client.ID != first.Client.ID {
+		t.Fatalf("post-expiry exact recovery=%+v err=%v", replayed, err)
+	}
+
+	// The recovery token remains bounded; the static CSR is not a fresh
+	// proof-of-possession credential and must not become a permanent bootstrap.
+	now = now.Add(DefaultClaimRecoveryTTL)
 	_, err = store.Claim(claim)
 	if !errors.As(err, &protocolErr) || protocolErr.Code != CodeExpired {
-		t.Fatalf("expired exact replay error=%v", err)
+		t.Fatalf("expired recovery replay error=%v", err)
+	}
+}
+
+func TestProvisioningClaimRecoveryRequiresExactTupleAndExpires(t *testing.T) {
+	started := time.Date(2026, 9, 3, 14, 0, 0, 0, time.UTC)
+	now := started
+	store := testStore(t, &now)
+	store.RecoveryTTL = 30 * time.Minute
+	created, err := store.Create("recovering Device")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim := ClaimInput{
+		Token: created.Token, Platform: "linux-server",
+		CSRPEM: makeCSRWithKey(t, "recovering-install", key), RequestID: "recovering-install",
+	}
+	first, err := store.Claim(claim)
+	if err != nil || first.Replay || first.Client.Status != "provisioning" || first.Client.ReadyAt != "" {
+		t.Fatalf("first provisioning claim=%+v err=%v", first, err)
+	}
+
+	// The invitation itself has expired, but an exact retry can still recover a
+	// lost provisioning response during the separate, bounded recovery window.
+	now = started.Add(store.TTL + time.Second)
+	replay, err := store.Claim(claim)
+	if err != nil || !replay.Replay || replay.Client.ID != first.Client.ID ||
+		replay.Client.Status != "provisioning" || replay.Client.EnrolledAt != first.Client.EnrolledAt {
+		t.Fatalf("post-invite-expiry provisioning replay=%+v err=%v", replay, err)
+	}
+
+	changedCSR := claim
+	changedCSR.CSRPEM = makeCSRWithKey(t, "changed-csr", key)
+	changedRequest := claim
+	changedRequest.RequestID = "changed-request"
+	changedPlatform := claim
+	changedPlatform.Platform = "windows-desktop"
+	for name, changed := range map[string]ClaimInput{
+		"csr":        changedCSR,
+		"request_id": changedRequest,
+		"platform":   changedPlatform,
+	} {
+		t.Run("reject changed "+name, func(t *testing.T) {
+			_, claimErr := store.Claim(changed)
+			var protocolErr *Error
+			if !errors.As(claimErr, &protocolErr) || protocolErr.Code != CodeConflict {
+				t.Fatalf("changed %s replay error=%v", name, claimErr)
+			}
+		})
+	}
+
+	// Recovery is half-open: the exact deadline is already expired.
+	now = started.Add(store.RecoveryTTL)
+	_, err = store.Claim(claim)
+	var protocolErr *Error
+	if !errors.As(err, &protocolErr) || protocolErr.Code != CodeExpired {
+		t.Fatalf("expired provisioning recovery error=%v", err)
 	}
 }
 
@@ -407,7 +476,6 @@ func TestClaimRejectsUnknownPlatformAndMalformedKey(t *testing.T) {
 	}
 	for _, input := range []ClaimInput{
 		{Token: created.Token, Platform: "ios", CSRPEM: makeCSR(t, "ios"), RequestID: "r1"},
-		{Token: created.Token, Platform: "windows-desktop", CSRPEM: makeCSR(t, "windows"), RequestID: "r1"},
 		{Token: created.Token, Platform: "android", CSRPEM: makeCSR(t, "android"), RequestID: "r1"},
 		{Token: created.Token, Platform: "linux-server", CSRPEM: "x", RequestID: "r1"},
 		{Token: created.Token, Platform: "linux-server", CSRPEM: makeCSR(t, "missing-request")},
@@ -423,6 +491,59 @@ func TestClaimRejectsUnknownPlatformAndMalformedKey(t *testing.T) {
 		CSRPEM: makeCSR(t, "linux"), RequestID: "valid-after-rejects",
 	}); err != nil {
 		t.Fatalf("invalid platform consumed the invitation: %v", err)
+	}
+}
+
+func TestClaimAcceptsWindowsDesktopAccessIdentityAndReplay(t *testing.T) {
+	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	store := testStore(t, &now)
+	created, err := store.CreateWithProfile("Windows laptop", ProfileAssignment{
+		Version: "access-device@v1", Digest: strings.Repeat("a", 64),
+		Responsibilities: []string{"use_loom"}, DestinationGrants: []string{"best-egress"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim := ClaimInput{
+		Token: created.Token, Platform: "windows-desktop",
+		CSRPEM: makeCSR(t, "windows-access"), RequestID: "windows-access",
+	}
+	first, err := store.Claim(claim)
+	if err != nil || first.Replay || first.Client.Platform != "windows-desktop" || first.Client.Status != "provisioning" {
+		t.Fatalf("first Windows claim=%+v err=%v", first, err)
+	}
+	replay, err := store.Claim(claim)
+	if err != nil || !replay.Replay || replay.Client.PublicKey != first.Client.PublicKey {
+		t.Fatalf("Windows replay=%+v err=%v", replay, err)
+	}
+}
+
+func TestClaimRejectsWindowsForForwardProfileWithoutConsumingInvite(t *testing.T) {
+	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	store := testStore(t, &now)
+	created, err := store.CreateWithProfile("server Device", ProfileAssignment{
+		Version: "server-device@v1", Digest: strings.Repeat("b", 64),
+		Responsibilities: []string{"forward"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Claim(ClaimInput{
+		Token: created.Token, Platform: "windows-desktop",
+		CSRPEM: makeCSR(t, "windows-server"), RequestID: "windows-server",
+	}); err == nil {
+		t.Fatal("Windows consumed a forward-capable invitation")
+	}
+	linux := ClaimInput{
+		Token: created.Token, Platform: "linux-server",
+		CSRPEM: makeCSR(t, "linux-server"), RequestID: "linux-server",
+		Server: &ServerEnrollment{
+			PublicEndpoint: "edge.example.net", InboundPort: 61698, Direction: "bidirectional",
+			WGPublicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+		},
+	}
+	if _, err := store.Claim(linux); err != nil {
+		t.Fatalf("Windows rejection consumed the invitation: %v", err)
 	}
 }
 
@@ -451,6 +572,11 @@ func makeCSR(t *testing.T, commonName string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return makeCSRWithKey(t, commonName, key)
+}
+
+func makeCSRWithKey(t *testing.T, commonName string, key *ecdsa.PrivateKey) string {
+	t.Helper()
 	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
 		Subject: pkix.Name{CommonName: commonName},
 	}, key)

@@ -33,8 +33,6 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
   loom verify   <目录>                    校验快照签名,并比对目录内容是否漂移
   loom keygen   -o <目录>                 生成平台签名密钥对
   loom firewall <ssot.yaml>              列出每台机器需要放行的端口
-  loom addnode  <ssot.yaml> -id <id> -direction <方向> [-pubkey <公钥>]
-                                         加节点:自动分配隧道地址与端口,生成片段与 bootstrap
   loom rotate-tunnel <ssot.yaml> <节点A> <节点B> -reason <理由>
                                          给一条隧道换端口,旧端口进退役名单(不再回去)
   loom hydrate  -in <目录> -o <目录> -secrets <文件>
@@ -75,7 +73,7 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
   loom backup   -o <文件> {-passphrase-file <文件> | -plaintext}
                                          打包秘密层与内部 CA(丢了就得全网重来的那些)
   loom restore  <备份文件> -o <目录>       解开备份到一个目录,不覆盖原位置
-  loom client   <enroll|package|verify>     客户端注册与 Linux 交付
+  loom client   <enroll|package|verify>     Linux 加入兼容命令与客户端交付
   loom device   <decommission|remove|purge-revoked>
                                          回收 access-only Enrollment Device
 
@@ -128,8 +126,6 @@ func main() {
 		err = cmdStatus(args)
 	case "apply":
 		err = cmdApply(args)
-	case "addnode":
-		err = cmdAddNode(args)
 	case "release":
 		err = cmdRelease(args)
 	case "pin":

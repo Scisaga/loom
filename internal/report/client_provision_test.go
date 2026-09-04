@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -132,6 +133,96 @@ func TestClientProvisionPrepositionsSecretsBeforeSSOTCommitAndReplaysReady(t *te
 	}
 }
 
+func TestWindowsClientProvisionUsesAccessOnlyPlatformShape(t *testing.T) {
+	control, paths := clientProvisionFixture(t)
+	client := clientregistry.Client{
+		ID: "win-laptop01", Name: "Windows laptop", Platform: string(model.WindowsDesktop),
+		Status: "provisioning",
+	}
+	pinDefaultTestProfile(t, control, &client)
+	csrPEM, _ := clientProvisionCSR(t)
+	var saveMu sync.Mutex
+	p := newClientProvisioner(control, &saveMu)
+	p.health = filepath.Join(t.TempDir(), "publisher.json")
+	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	p.now = func() time.Time { return now }
+	installed := map[string]bool{}
+	var installedMu sync.Mutex
+	p.install = func(_ context.Context, nodeID string, _ []byte) error {
+		installedMu.Lock()
+		installed[nodeID] = true
+		installedMu.Unlock()
+		return nil
+	}
+	first, err := p.provision(client, csrPEM)
+	if err != nil || first.Ready {
+		t.Fatalf("first Windows provision=%+v err=%v", first, err)
+	}
+	body, err := os.ReadFile(control.SSOTPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ssot, err := model.Load(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := ssot.NodeByID()[client.ID]
+	if node == nil || node.Server != nil || node.Access == nil || node.Access.Platform != model.WindowsDesktop ||
+		len(node.Access.MixedPorts) != 1 || node.Access.MixedPorts[0].Port != 1080 || !node.Access.MixedPorts[0].Services {
+		t.Fatalf("provisioned Windows node=%+v", node)
+	}
+	if len(installed) != 6 {
+		t.Fatalf("Windows enrollment pre-positioned existing nodes=%v", mapKeysBool(installed))
+	}
+	if err := validateProvisionedClient(ssot, node, client); err != nil {
+		t.Fatalf("generated Windows shape rejected: %v", err)
+	}
+	prepareClientReadyFiles(t, paths, p.health, body, now)
+	ready, err := p.provision(client, csrPEM)
+	if err != nil || !ready.Ready || ready.Bootstrap.NodeID != client.ID ||
+		!strings.Contains(ready.Bootstrap.SecretsEnv, "cred/"+client.ID+"/") {
+		t.Fatalf("Windows ready replay=%+v err=%v", ready, err)
+	}
+}
+
+func TestExistingWindowsSecretsAreSkippedOnlyWhenCandidateIsUnchanged(t *testing.T) {
+	current := &model.SSOT{
+		Nodes: []model.Node{{
+			ID: "win-existing", Access: &model.AccessRole{
+				Platform: model.WindowsDesktop, Credentials: []string{"cred-win-existing"},
+			},
+		}},
+		Credentials: []model.Credential{{
+			ID: "cred-win-existing", Owner: "win-existing", Declaration: "best-egress",
+			SecretRef: "cred/win-existing/best-egress",
+		}},
+	}
+	all := map[string]string{
+		"api/win-existing": "api", "probe/win-existing": "probe",
+		"cred/win-existing/best-egress": "credential",
+	}
+	body, err := encodedNodeSecrets(current, "win-existing", all)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installCalls := 0
+	p := &clientProvisioner{install: func(context.Context, string, []byte) error {
+		installCalls++
+		return nil
+	}}
+	if err := p.installExistingNodeSecrets(current, all, map[string][]byte{"win-existing": body}); err != nil {
+		t.Fatalf("unchanged existing Windows secret layer: %v", err)
+	}
+	if installCalls != 0 {
+		t.Fatalf("existing Windows node was sent through Linux SSH installer %d times", installCalls)
+	}
+	changed := append(append([]byte(nil), body...), []byte("extra/ref=value\n")...)
+	if err := p.installExistingNodeSecrets(current, all, map[string][]byte{"win-existing": changed}); err == nil ||
+		!strings.Contains(err.Error(), "steady update channel") {
+		t.Fatalf("changed existing Windows secret layer error=%v", err)
+	}
+}
+
 func TestServerDeviceProvisionUsesTheSameAtomicEnrollmentTransaction(t *testing.T) {
 	control, paths := clientProvisionFixture(t)
 	client := clientregistry.Client{
@@ -191,10 +282,10 @@ func TestServerDeviceProvisionUsesTheSameAtomicEnrollmentTransaction(t *testing.
 		t.Fatal("server Device was added without direction-derived WireGuard tunnels")
 	}
 	fixed := ssot.DeclarationByID()[client.ID+"-fixed"]
-	if fixed == nil || fixed.PinnedEgress() != client.ID || !containsString(fixed.AllowedServers, client.ID) {
+	if fixed == nil || fixed.PinnedEgress() != client.ID || !slices.Contains(fixed.AllowedServers, client.ID) {
 		t.Fatalf("generated fixed policy=%+v", fixed)
 	}
-	if !containsString(ssot.DeclarationByID()["best-egress"].AllowedServers, client.ID) {
+	if !slices.Contains(ssot.DeclarationByID()["best-egress"].AllowedServers, client.ID) {
 		t.Fatal("full automatic egress pool was not expanded for the new egress Device")
 	}
 	if err := validateProvisionedClient(ssot, node, client); err != nil {

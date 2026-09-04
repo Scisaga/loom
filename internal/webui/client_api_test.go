@@ -128,7 +128,6 @@ func TestClientAPIBoundsOperatorAndPublicClaimSurfaces(t *testing.T) {
 		},
 	}
 	handler := Handler(d)
-
 	unauthorized := httptest.NewRecorder()
 	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/control/clients", nil))
 	if unauthorized.Code != http.StatusUnauthorized {
@@ -200,7 +199,9 @@ func TestClientInviteArtifactsAreAuthenticatedNoStoreAndScannable(t *testing.T) 
 	qr := authenticatedJSONRequest(t, d, http.MethodGet, "/api/control/client-invites/i1/qr.png", "")
 	handler.ServeHTTP(qr.recorder, qr.request)
 	if qr.recorder.Code != http.StatusOK || qr.recorder.Header().Get("Content-Type") != "image/png" ||
-		qr.recorder.Header().Get("Cache-Control") != "no-store" || !strings.HasPrefix(qr.recorder.Body.String(), "\x89PNG") {
+		qr.recorder.Header().Get("Cache-Control") != "no-store" ||
+		!strings.Contains(qr.recorder.Header().Get("Content-Disposition"), "device-join.png") ||
+		!strings.HasPrefix(qr.recorder.Body.String(), "\x89PNG") {
 		t.Fatalf("qr=%d headers=%v body-prefix=%q", qr.recorder.Code, qr.recorder.Header(), qr.recorder.Body.String()[:min(8, qr.recorder.Body.Len())])
 	}
 

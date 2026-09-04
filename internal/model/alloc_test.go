@@ -197,7 +197,7 @@ func TestRotationDoesNotLandNextToTheRetiredPort(t *testing.T) {
 }
 
 // **既有分配不能因为加了轮换而改变。** 没有退役端口时哈希输入与从前一致,
-// 所以 `loom addnode` 对同一份 SSOT 给出的端口必须还是原来那个。
+// 所以同一份 SSOT 的 AllocateTunnel 结果必须保持不变。
 func TestNewAllocationUnchangedByRotationSupport(t *testing.T) {
 	s := allocSSOT(t)
 	n := s.NodeByID()

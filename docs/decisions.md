@@ -60,7 +60,7 @@ PostUp = wg set %i private-key /etc/loom/secrets/%i.key
 快照哈希,秘密层不进。
 
 **仍未定(C16 的其余部分):** `secret_generation` 的记法、轮换流程、
-节点首次注册时生成密钥对的具体时机。
+节点首次加入时生成密钥对的具体时机。
 
 ### D3 · 无法完整表达的输入一律硬报错,不静默降级
 
@@ -345,9 +345,10 @@ apparmor="DENIED" profile="wg" name="/etc/loom/secrets/node.key" denied_mask="r"
 把两边合并进同一份 sing-box 配置(一台机器一个进程)。
 
 > **曾经短暂地禁止过双角色,理由是"两类节点走两个控制面、会互相覆盖"。
-> 那个论证是错的:配置源只有一个**(SSOT → 渲染器),投递也只有该机的
-> Agent 一条。§18 那套一次性链接是给没有 Agent 的设备用的,而那种设备只
-> 可能是纯接入节点。把"投递渠道不同"当成了"配置源不同"。
+> 那个论证是错的:配置源只有一个**(SSOT → 渲染器)。§18 的加入输入只是
+> 把中控已创建的 Device 与本机身份绑定并引导首次签名配置，适用于服务器等
+> 所有新 Device；之后由相应宿主继续 signed pull/Agent 投递。把"投递阶段或
+> 宿主不同"当成了"配置源不同"。
 
 **`capabilities` 字段删除。** 它与角色块是同一个事实的两次编码 —— 写了
 `capabilities: [server]` 却不给 `server` 块(或反过来)就是自相矛盾,而那
@@ -1272,9 +1273,8 @@ cn-b → edge-b:  192.0.2.32 → 192.0.2.33  → 198.51.100.30 → 203.0.113.30
 用 sha256 而不是随机数,是为了满足 §12 的纯函数要求:同样的输入永远得到
 同样的分配,与调用顺序无关。
 
-`loom addnode` 分两步,因为**私钥必须在新机器上生成**(§13.1):不带
-`-pubkey` 时打出生成密钥那一步,带上收回来的公钥才吐出可以直接粘进 SSOT
-的片段。粘进去能不能过校验有回归测试钉着。
+当前 Device 接入规划仍复用该分配器；Device 身份由客户端本地生成，私钥不离开
+客户端。旧的 `loom addnode` SSH 接入命令已经删除。
 
 ### D57 · "该轮换哪几张凭据"按候选链算,不按 allowed_servers 算
 
@@ -1762,12 +1762,12 @@ demo-c ↔ demo-a 那次换端口是手工挑的。
 分布均匀的起点。实测 61691 的下一轮是 61684,不是 61692。
 
 > **`N == 0` 时哈希输入与从前完全一致**,所以既有分配不会因为这个改动而
-> 变 —— `loom addnode` 对同一份 SSOT 给出的端口还是原来那个,有测试钉着。
+> 变；同一份 SSOT 的基础分配由回归测试钉住。
 
 ### 工具只算不写
 
 `loom rotate-tunnel <ssot> <A> <B> -reason <理由>` 打印出替换后的那一行,
-由人粘回 SSOT —— 与 `loom addnode` 同一个道理。这避开两件麻烦:
+由人粘回 SSOT。这避开两件麻烦:
 
 - **自动改写会毁掉 SSOT 里的注释**(那是 YAML 往返的老问题)
 - **"系统自己改 SSOT"会给它添第二个写入者**,而单一写入者是 dry-run diff、
@@ -2493,51 +2493,12 @@ revision，在服务端重新读取、核对、完整校验并原子替换。结
 下一轮自动发布，界面不增加发布按钮，也不把“已保存”写成“节点已应用”。Events
 的查询与 CSV 同样只筛选既有变化日志，不推导当前状态或补造中控停机时的历史。
 
-节点接入有三套不能混用的身份：中控范围唯一、可导出公钥的 SSH bootstrap
-身份；远端自己的 SSH host identity；远端本地生成、只回传公钥的 WireGuard
-identity。接入新节点复用第一套，绝不按节点新建控制密钥。当前 Add node handler
-只让操作者输入 SSH host/IP/user/port；先独立扫描 Ed25519 host key，由操作者从
-带外来源确认，再次扫描一致后才写专用 `known_hosts` 并运行 StrictHostKeyChecking
-预检。短 hostname 经确定性规范化后决定 Node ID：大写转小写、分隔符折叠，过长
-时追加短摘要以满足 Linux WireGuard 接口名上限；原始 hostname 仍作为受信证据。
-WG 私钥在远端幂等生成或复用，只取回公钥。
-
-预检确认内核 WireGuard 和提权边界后，若 `/usr/bin/wg` 缺失，会用固定脚本通过
-apt/dnf/yum/apk/zypper 安装 `wireguard-tools`，随后再次预检并核对 hostname 与
-SSH server address 没有漂移。该动作只补齐新节点 bootstrap 前置条件，不是 D86
-所述的稳态 fleet 组件升级器；安装失败或复检失败均不进入 SSOT 写事务。
-
-SSH 坐标仍不是 UDP 证据。当前只接受操作者输入的公网 global-unicast IP，或在
-中控解析出至少一个公网地址的 DNS 名，作为 control-observed endpoint candidate；
-非公网 literal，以及滤除非公网答案后为空的 DNS 失败关闭。远端
-`SSH_CONNECTION` 地址绝不用于提升证据等级。没有独立 WireGuard UDP 入站探测，
-因此 `Automatic` 固定保守解析为 `reverse_only`；显式 direction 是策略覆盖，
-不伪装成探测结果。提交时重新核对 host key、hostname 与 endpoint candidate，
-DNS 名还要核对预览时绑定的完整公网解析集合；最终 hostname 与 SSH server address
-由准备 WireGuard identity 的同一条受信 SSH 会话返回，并与 preflight 对照。随后
-复算完整隧道计划，再在精确 revision
-上原子替换 SSOT。远端 key 准备在锁外且幂等，所以本地提交失败可能留下一个
-未被 SSOT 引用的本地 key，但不能留下半份节点/隧道声明。SSH host/user 暂不
-持久化；若要长期运维，还需独立的 control-local management inventory。
-
-Direction 的“重算”和“提交”必须是两个表单。提交表单只带已经展示过的固定
-direction；中控以独立 HMAC domain 绑定 SSH 坐标、完整 host key、direction、
-Node ID、endpoint 与 SSOT revision，常量时间验证通过才进入后端。仅比较两个
-客户端 hidden 字段不足以证明复核，二者可一起被改写。任何绑定变化都会回到新的
-Review，不能提交一个操作者没看到的隧道计划。
-
-共享 SSH 私钥与专用 `known_hosts` 都是中控长期管理凭据，不是每节点临时 key。
-私钥要求当前进程所有、权限精确为 `0600`，路径全程拒绝 symlink 与不安全父目录；
-`known_hosts` 只接受 exact Ed25519 记录，跨进程更新使用 no-follow lock。加入节点
-不会自动从远端 `authorized_keys` 撤销这组共享凭据，界面不能暗示“一次性自动回收”。
-
-这次事务的完成语义仅为“远端 WG identity 已准备、节点和隧道已声明”。它没有
-足够的输入去安装 Loom binary、平台信任、节点秘密或 TLS 身份，也没有启动
-report / pull / Agent；因此按钮和成功页必须写“提交已复核声明”，节点随后保持
-joining/unknown，直到单独 bootstrap 后出现首份可信报告。完整自动 bootstrap
-需要显式配置制品、秘密拆分、证书签发、远端 staging 与失败回滚边界，不能依据
-中控工作副本的偶然目录结构推断，更不能在页面上先声称已经实现。
-
+2026-09-03 起，旧的 SSH `Add node` 入口、命令和后端实现已经删除。基础设施 Node
+继续由 SSOT 声明；终端 Device 只在中控 Devices 页面创建并生成一次性二维码。
+客户端导入二维码后在本地生成身份材料，通过私有 claim 接口绑定中控已经创建的
+Device；该接口不是第二次注册，也不会创建另一个 Device。Nodes 页面只展示状态，
+不再暴露 SSH bootstrap key、host key 确认或远端安装表单。
+ 控制页面的期望拓扑必须从当前请求读取并完整校验的 SSOT 派生；不能把刚保存的
 控制页面的期望拓扑必须从当前请求读取并完整校验的 SSOT 派生；不能把刚保存的
 Nodes/Services 与中控本机上一次应用快照里的 `expected_tunnels/expected_routes`
 拼在一起。后者会制造一整个 pull 周期的 UI 漂移。节点实际 applied snapshot 与
@@ -2741,8 +2702,9 @@ Android；Linux Desktop 暂不设计或交付。
 
 服务端先实现 `/api/control/default-exit`：只接受中控运维会话，返回最小授权选项，
 并用 SSOT 内容 revision、进程锁、跨进程文件锁、完整校验和原子替换完成写入。它
-刻意不是客户端认证端点；Windows/Android 不得保存运维口令，设备公钥认证、重放
-防护和节点绑定将在注册模型落地后包住同一个事务层。默认声明还必须使用
+刻意不是客户端认证端点；Windows/Android 不得保存运维口令。现有内部加入协议已提供
+设备公钥绑定和 claim 重放约束，但面向客户端的偏好写入认证端点仍未实现；它落地时必须
+复用同一 Device 身份与事务边界。默认声明还必须使用
 `address_axis: from_request`，否则会把任意未匹配请求错误改写到等价类地址。
 
 ### D96 · 新增出口与全量自动策略池在同一 SSOT 事务中收敛

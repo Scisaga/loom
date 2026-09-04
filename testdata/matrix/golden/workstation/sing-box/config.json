@@ -35,24 +35,6 @@
     },
     {
       "type": "mixed",
-      "tag": "in-1081",
-      "listen": "127.0.0.1",
-      "listen_port": 1081
-    },
-    {
-      "type": "mixed",
-      "tag": "in-1082",
-      "listen": "127.0.0.1",
-      "listen_port": 1082
-    },
-    {
-      "type": "mixed",
-      "tag": "in-1083",
-      "listen": "127.0.0.1",
-      "listen_port": 1083
-    },
-    {
-      "type": "mixed",
       "tag": "probe-in",
       "listen": "127.0.0.1",
       "listen_port": 61801,
@@ -92,46 +74,6 @@
         {
           "username": "probe-876138e797",
           "password": "${secret:probe/workstation}"
-        },
-        {
-          "username": "probe-85a32c1adc",
-          "password": "${secret:probe/workstation}"
-        },
-        {
-          "username": "probe-6522e36d44",
-          "password": "${secret:probe/workstation}"
-        },
-        {
-          "username": "probe-62d10da245",
-          "password": "${secret:probe/workstation}"
-        },
-        {
-          "username": "probe-319d56f9e8",
-          "password": "${secret:probe/workstation}"
-        },
-        {
-          "username": "probe-e06011dbd0",
-          "password": "${secret:probe/workstation}"
-        },
-        {
-          "username": "probe-108cbe0c36",
-          "password": "${secret:probe/workstation}"
-        },
-        {
-          "username": "probe-32a3db7799",
-          "password": "${secret:probe/workstation}"
-        },
-        {
-          "username": "probe-c3966d7906",
-          "password": "${secret:probe/workstation}"
-        },
-        {
-          "username": "probe-fccf0d597d",
-          "password": "${secret:probe/workstation}"
-        },
-        {
-          "username": "probe-8c7e3229d3",
-          "password": "${secret:probe/workstation}"
         }
       ]
     }
@@ -154,7 +96,7 @@
       "tls": {
         "enabled": true,
         "server_name": "cn-bj.node.internal",
-        "certificate_path": "/etc/loom/tls/ca.crt",
+        "certificate_path": "C:\\ProgramData\\Loom\\tls\\ca.crt",
         "alpn": [
           "h3"
         ]
@@ -169,7 +111,7 @@
       "tls": {
         "enabled": true,
         "server_name": "cn-gz.node.internal",
-        "certificate_path": "/etc/loom/tls/ca.crt",
+        "certificate_path": "C:\\ProgramData\\Loom\\tls\\ca.crt",
         "alpn": [
           "h3"
         ]
@@ -184,7 +126,7 @@
       "tls": {
         "enabled": true,
         "server_name": "cn-bj.node.internal",
-        "certificate_path": "/etc/loom/tls/ca.crt",
+        "certificate_path": "C:\\ProgramData\\Loom\\tls\\ca.crt",
         "alpn": [
           "h3"
         ]
@@ -199,7 +141,7 @@
       "tls": {
         "enabled": true,
         "server_name": "cn-gz.node.internal",
-        "certificate_path": "/etc/loom/tls/ca.crt",
+        "certificate_path": "C:\\ProgramData\\Loom\\tls\\ca.crt",
         "alpn": [
           "h3"
         ]
@@ -215,7 +157,7 @@
       "tls": {
         "enabled": true,
         "server_name": "sg-vps.node.internal",
-        "certificate_path": "/etc/loom/tls/ca.crt",
+        "certificate_path": "C:\\ProgramData\\Loom\\tls\\ca.crt",
         "alpn": [
           "h3"
         ]
@@ -231,7 +173,7 @@
       "tls": {
         "enabled": true,
         "server_name": "jp-vps.node.internal",
-        "certificate_path": "/etc/loom/tls/ca.crt",
+        "certificate_path": "C:\\ProgramData\\Loom\\tls\\ca.crt",
         "alpn": [
           "h3"
         ]
@@ -247,7 +189,7 @@
       "tls": {
         "enabled": true,
         "server_name": "cn-gz.node.internal",
-        "certificate_path": "/etc/loom/tls/ca.crt",
+        "certificate_path": "C:\\ProgramData\\Loom\\tls\\ca.crt",
         "alpn": [
           "h3"
         ]
@@ -262,7 +204,7 @@
       "tls": {
         "enabled": true,
         "server_name": "cn-bj.node.internal",
-        "certificate_path": "/etc/loom/tls/ca.crt",
+        "certificate_path": "C:\\ProgramData\\Loom\\tls\\ca.crt",
         "alpn": [
           "h3"
         ]
@@ -278,7 +220,7 @@
       "tls": {
         "enabled": true,
         "server_name": "sg-vps.node.internal",
-        "certificate_path": "/etc/loom/tls/ca.crt",
+        "certificate_path": "C:\\ProgramData\\Loom\\tls\\ca.crt",
         "alpn": [
           "h3"
         ]
@@ -294,7 +236,7 @@
       "tls": {
         "enabled": true,
         "server_name": "jp-vps.node.internal",
-        "certificate_path": "/etc/loom/tls/ca.crt",
+        "certificate_path": "C:\\ProgramData\\Loom\\tls\\ca.crt",
         "alpn": [
           "h3"
         ]
@@ -316,224 +258,6 @@
         "cand:best-egress:cn-gz\u003ejp-vps"
       ],
       "default": "cand:best-egress:cn-bj"
-    },
-    {
-      "type": "direct",
-      "tag": "cand:llm-ttft:direct@https://192.0.2.10:8443/v1",
-      "override_address": "192.0.2.10",
-      "override_port": 8443
-    },
-    {
-      "type": "direct",
-      "tag": "cand:llm-ttft:direct@https://192.0.2.11:8443/v1",
-      "override_address": "192.0.2.11",
-      "override_port": 8443
-    },
-    {
-      "type": "hysteria2",
-      "tag": "hop:llm-ttft:cn-bj",
-      "server": "203.0.113.10",
-      "server_port": 443,
-      "password": "${secret:vault:cred/ws-llm}",
-      "tls": {
-        "enabled": true,
-        "server_name": "cn-bj.node.internal",
-        "certificate_path": "/etc/loom/tls/ca.crt",
-        "alpn": [
-          "h3"
-        ]
-      }
-    },
-    {
-      "type": "direct",
-      "tag": "cand:llm-ttft:cn-bj@https://192.0.2.10:8443/v1",
-      "detour": "hop:llm-ttft:cn-bj",
-      "override_address": "192.0.2.10",
-      "override_port": 8443
-    },
-    {
-      "type": "direct",
-      "tag": "cand:llm-ttft:cn-bj@https://192.0.2.11:8443/v1",
-      "detour": "hop:llm-ttft:cn-bj",
-      "override_address": "192.0.2.11",
-      "override_port": 8443
-    },
-    {
-      "type": "hysteria2",
-      "tag": "hop:llm-ttft:cn-sh",
-      "server": "203.0.113.11",
-      "server_port": 443,
-      "password": "${secret:vault:cred/ws-llm}",
-      "tls": {
-        "enabled": true,
-        "server_name": "cn-sh.node.internal",
-        "certificate_path": "/etc/loom/tls/ca.crt",
-        "alpn": [
-          "h3"
-        ]
-      }
-    },
-    {
-      "type": "direct",
-      "tag": "cand:llm-ttft:cn-sh@https://192.0.2.10:8443/v1",
-      "detour": "hop:llm-ttft:cn-sh",
-      "override_address": "192.0.2.10",
-      "override_port": 8443
-    },
-    {
-      "type": "direct",
-      "tag": "cand:llm-ttft:cn-sh@https://192.0.2.11:8443/v1",
-      "detour": "hop:llm-ttft:cn-sh",
-      "override_address": "192.0.2.11",
-      "override_port": 8443
-    },
-    {
-      "type": "selector",
-      "tag": "decl:llm-ttft",
-      "outbounds": [
-        "cand:llm-ttft:direct@https://192.0.2.10:8443/v1",
-        "cand:llm-ttft:direct@https://192.0.2.11:8443/v1",
-        "cand:llm-ttft:cn-bj@https://192.0.2.10:8443/v1",
-        "cand:llm-ttft:cn-bj@https://192.0.2.11:8443/v1",
-        "cand:llm-ttft:cn-sh@https://192.0.2.10:8443/v1",
-        "cand:llm-ttft:cn-sh@https://192.0.2.11:8443/v1"
-      ],
-      "default": "cand:llm-ttft:direct@https://192.0.2.10:8443/v1"
-    },
-    {
-      "type": "hysteria2",
-      "tag": "hop:sg-fixed:cn-bj",
-      "server": "203.0.113.10",
-      "server_port": 443,
-      "password": "${secret:vault:cred/ws-sg}",
-      "tls": {
-        "enabled": true,
-        "server_name": "cn-bj.node.internal",
-        "certificate_path": "/etc/loom/tls/ca.crt",
-        "alpn": [
-          "h3"
-        ]
-      }
-    },
-    {
-      "type": "hysteria2",
-      "tag": "cand:sg-fixed:cn-bj\u003esg-vps",
-      "server": "10.99.0.2",
-      "server_port": 443,
-      "password": "${secret:vault:cred/ws-sg}",
-      "tls": {
-        "enabled": true,
-        "server_name": "sg-vps.node.internal",
-        "certificate_path": "/etc/loom/tls/ca.crt",
-        "alpn": [
-          "h3"
-        ]
-      },
-      "detour": "hop:sg-fixed:cn-bj"
-    },
-    {
-      "type": "hysteria2",
-      "tag": "hop:sg-fixed:cn-sh",
-      "server": "203.0.113.11",
-      "server_port": 443,
-      "password": "${secret:vault:cred/ws-sg}",
-      "tls": {
-        "enabled": true,
-        "server_name": "cn-sh.node.internal",
-        "certificate_path": "/etc/loom/tls/ca.crt",
-        "alpn": [
-          "h3"
-        ]
-      }
-    },
-    {
-      "type": "hysteria2",
-      "tag": "cand:sg-fixed:cn-sh\u003esg-vps",
-      "server": "10.99.0.4",
-      "server_port": 443,
-      "password": "${secret:vault:cred/ws-sg}",
-      "tls": {
-        "enabled": true,
-        "server_name": "sg-vps.node.internal",
-        "certificate_path": "/etc/loom/tls/ca.crt",
-        "alpn": [
-          "h3"
-        ]
-      },
-      "detour": "hop:sg-fixed:cn-sh"
-    },
-    {
-      "type": "hysteria2",
-      "tag": "hop:sg-fixed:cn-gz",
-      "server": "203.0.113.12",
-      "server_port": 443,
-      "password": "${secret:vault:cred/ws-sg}",
-      "tls": {
-        "enabled": true,
-        "server_name": "cn-gz.node.internal",
-        "certificate_path": "/etc/loom/tls/ca.crt",
-        "alpn": [
-          "h3"
-        ]
-      }
-    },
-    {
-      "type": "hysteria2",
-      "tag": "cand:sg-fixed:cn-gz\u003esg-vps",
-      "server": "10.99.0.6",
-      "server_port": 443,
-      "password": "${secret:vault:cred/ws-sg}",
-      "tls": {
-        "enabled": true,
-        "server_name": "sg-vps.node.internal",
-        "certificate_path": "/etc/loom/tls/ca.crt",
-        "alpn": [
-          "h3"
-        ]
-      },
-      "detour": "hop:sg-fixed:cn-gz"
-    },
-    {
-      "type": "hysteria2",
-      "tag": "hop:sg-fixed:cn-cd",
-      "server": "203.0.113.13",
-      "server_port": 443,
-      "password": "${secret:vault:cred/ws-sg}",
-      "tls": {
-        "enabled": true,
-        "server_name": "cn-cd.node.internal",
-        "certificate_path": "/etc/loom/tls/ca.crt",
-        "alpn": [
-          "h3"
-        ]
-      }
-    },
-    {
-      "type": "hysteria2",
-      "tag": "cand:sg-fixed:cn-cd\u003esg-vps",
-      "server": "10.99.0.8",
-      "server_port": 443,
-      "password": "${secret:vault:cred/ws-sg}",
-      "tls": {
-        "enabled": true,
-        "server_name": "sg-vps.node.internal",
-        "certificate_path": "/etc/loom/tls/ca.crt",
-        "alpn": [
-          "h3"
-        ]
-      },
-      "detour": "hop:sg-fixed:cn-cd"
-    },
-    {
-      "type": "selector",
-      "tag": "decl:sg-fixed",
-      "outbounds": [
-        "cand:sg-fixed:cn-bj\u003esg-vps",
-        "cand:sg-fixed:cn-sh\u003esg-vps",
-        "cand:sg-fixed:cn-gz\u003esg-vps",
-        "cand:sg-fixed:cn-cd\u003esg-vps"
-      ],
-      "default": "cand:sg-fixed:cn-bj\u003esg-vps"
     },
     {
       "type": "block",
@@ -625,115 +349,8 @@
       },
       {
         "inbound": [
-          "probe-in"
-        ],
-        "auth_user": [
-          "probe-85a32c1adc"
-        ],
-        "outbound": "cand:llm-ttft:direct@https://192.0.2.10:8443/v1"
-      },
-      {
-        "inbound": [
-          "probe-in"
-        ],
-        "auth_user": [
-          "probe-6522e36d44"
-        ],
-        "outbound": "cand:llm-ttft:direct@https://192.0.2.11:8443/v1"
-      },
-      {
-        "inbound": [
-          "probe-in"
-        ],
-        "auth_user": [
-          "probe-62d10da245"
-        ],
-        "outbound": "cand:llm-ttft:cn-bj@https://192.0.2.10:8443/v1"
-      },
-      {
-        "inbound": [
-          "probe-in"
-        ],
-        "auth_user": [
-          "probe-319d56f9e8"
-        ],
-        "outbound": "cand:llm-ttft:cn-bj@https://192.0.2.11:8443/v1"
-      },
-      {
-        "inbound": [
-          "probe-in"
-        ],
-        "auth_user": [
-          "probe-e06011dbd0"
-        ],
-        "outbound": "cand:llm-ttft:cn-sh@https://192.0.2.10:8443/v1"
-      },
-      {
-        "inbound": [
-          "probe-in"
-        ],
-        "auth_user": [
-          "probe-108cbe0c36"
-        ],
-        "outbound": "cand:llm-ttft:cn-sh@https://192.0.2.11:8443/v1"
-      },
-      {
-        "inbound": [
-          "probe-in"
-        ],
-        "auth_user": [
-          "probe-32a3db7799"
-        ],
-        "outbound": "cand:sg-fixed:cn-bj\u003esg-vps"
-      },
-      {
-        "inbound": [
-          "probe-in"
-        ],
-        "auth_user": [
-          "probe-c3966d7906"
-        ],
-        "outbound": "cand:sg-fixed:cn-sh\u003esg-vps"
-      },
-      {
-        "inbound": [
-          "probe-in"
-        ],
-        "auth_user": [
-          "probe-fccf0d597d"
-        ],
-        "outbound": "cand:sg-fixed:cn-gz\u003esg-vps"
-      },
-      {
-        "inbound": [
-          "probe-in"
-        ],
-        "auth_user": [
-          "probe-8c7e3229d3"
-        ],
-        "outbound": "cand:sg-fixed:cn-cd\u003esg-vps"
-      },
-      {
-        "inbound": [
+          "tun-in",
           "in-1080"
-        ],
-        "outbound": "decl:sg-fixed"
-      },
-      {
-        "inbound": [
-          "in-1081"
-        ],
-        "outbound": "decl:best-egress"
-      },
-      {
-        "inbound": [
-          "in-1082"
-        ],
-        "outbound": "decl:llm-ttft"
-      },
-      {
-        "inbound": [
-          "tun-in"
         ],
         "outbound": "decl:best-egress"
       }

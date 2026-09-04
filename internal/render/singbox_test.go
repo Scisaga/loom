@@ -3,6 +3,8 @@ package render
 import (
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/netip"
 	"slices"
 	"strings"
 	"testing"
@@ -172,7 +174,7 @@ func TestDeviceDefaultReusesManagedInbounds(t *testing.T) {
 		inbounds []string
 	}{
 		{name: "linux-server", platform: model.LinuxServer, inbounds: []string{"in-1080"}},
-		{name: "windows-shape", platform: model.Desktop, inbounds: []string{"tun-in", "in-1080"}},
+		{name: "windows-desktop", platform: model.WindowsDesktop, inbounds: []string{"tun-in", "in-1080"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, err := model.Load([]byte(fmt.Sprintf(`
@@ -462,10 +464,14 @@ func TestSingBoxPathCorrespondence(t *testing.T) {
 			byTag[o.Tag] = i
 		}
 
+		activeDecls, _ := pinnedDecls(p)
 		for _, cid := range p.Access.Credentials {
 			cred := creds[cid]
 			if cred == nil || cred.Revoked() {
 				continue
+			}
+			if !activeDecls[cred.Declaration] {
+				continue // 只读授权不等于当前配置已引用；Service 路径另有独立测试。
 			}
 			d := decls[cred.Declaration]
 			if d == nil {
@@ -565,7 +571,7 @@ func checkCandidate(
 
 		if i+1 < len(cand.ServerChain) {
 			next := nodes[cand.ServerChain[i+1]]
-			want := s.NextHopAddr(sv, next) + "/32"
+			want := admittedNextHop(s.NextHopAddr(sv, next))
 			if !admits(sc, credID, want) {
 				t.Errorf("服务器 %s 未放行凭据 %s 到下一跳 %s —— 准入校验会阻断这条候选",
 					id, credID, want)
@@ -597,8 +603,20 @@ func admits(c *conf, user, cidr string) bool {
 				return true
 			}
 		}
+		for _, x := range r.Domain {
+			if x == cidr {
+				return true
+			}
+		}
 	}
 	return false
+}
+
+func admittedNextHop(address string) string {
+	if net.ParseIP(address) != nil {
+		return address + "/32"
+	}
+	return address
 }
 
 func hasEgressRule(c *conf, user string) bool {
@@ -644,7 +662,7 @@ func TestServerAdmitsNothingExtra(t *testing.T) {
 					if id != n.ID || x+1 >= len(chain) {
 						continue
 					}
-					want[c.ID+"|"+s.NextHopAddr(n, nodes[chain[x+1]])+"/32"] = true
+					want[c.ID+"|"+admittedNextHop(s.NextHopAddr(n, nodes[chain[x+1]]))] = true
 				}
 			}
 		}
@@ -663,12 +681,61 @@ func TestServerAdmitsNothingExtra(t *testing.T) {
 						t.Errorf("服务器 %s 多放行了 %s → %s", n.ID, u, cidr)
 					}
 				}
+				for _, domain := range r.Domain {
+					if !want[u+"|"+domain] {
+						t.Errorf("服务器 %s 多放行了 %s → %s", n.ID, u, domain)
+					}
+				}
 			}
 		}
 		if sc.Route.Final != "block" {
 			t.Errorf("服务器 %s 的 route.final 是 %q,应为 block —— 白名单之外必须阻断",
 				n.ID, sc.Route.Final)
 		}
+	}
+}
+
+func TestServerNextHopHostnameUsesDomainRuleNotInvalidCIDR(t *testing.T) {
+	s := load(t)
+	changed := false
+	for index := range s.Nodes {
+		if s.Nodes[index].IsServer() && s.Nodes[index].PublicEndpoint != "" {
+			s.Nodes[index].PublicEndpoint = "edge.example.test"
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		t.Fatal("fixture has no public server")
+	}
+	result, err := Render(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundDomain := false
+	for _, bundle := range result.Bundles {
+		for _, file := range bundle.Files {
+			if file.Path != "sing-box/config.json" {
+				continue
+			}
+			var config conf
+			if err := json.Unmarshal([]byte(file.Content), &config); err != nil {
+				t.Fatal(err)
+			}
+			for _, rule := range config.Route.Rules {
+				for _, cidr := range rule.IPCIDR {
+					if _, err := netip.ParsePrefix(cidr); err != nil {
+						t.Fatalf("%s rendered invalid ip_cidr %q: %v", bundle.Owner, cidr, err)
+					}
+				}
+				for _, domain := range rule.Domain {
+					foundDomain = foundDomain || domain == "edge.example.test"
+				}
+			}
+		}
+	}
+	if !foundDomain {
+		t.Fatal("hostname next hop was not represented by a domain route rule")
 	}
 }
 

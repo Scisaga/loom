@@ -68,28 +68,6 @@ func TestPageIsSelfContained(t *testing.T) {
 	}
 }
 
-func TestEnrollmentProgressScriptIsInlineAndCSPHashLocked(t *testing.T) {
-	d := misakaDeps()
-	d.Control.Enrollment = &NodeEnrollmentDeps{}
-	body := pageNodeAdd(d, nodeAddPageState{
-		Phase:      "confirm",
-		Connection: EnrollmentConnection{Host: "203.0.113.42", User: "root", Port: 22},
-		HostKey: EnrollmentHostKey{
-			Algorithm: "ssh-ed25519", PublicKey: "AAAAC3Nza", Fingerprint: "SHA256:test",
-		},
-	}, true)
-	if strings.Count(body, "<script>") != 1 || !strings.Contains(body, progressSubmitScript) || strings.Contains(body, "<script src=") {
-		t.Fatalf("enrollment progress script is not the single approved inline script")
-	}
-	w := httptest.NewRecorder()
-	writeHTML(w, body)
-	digest := sha256.Sum256([]byte(progressSubmitScript))
-	want := "script-src 'sha256-" + base64.StdEncoding.EncodeToString(digest[:]) + "'"
-	if csp := w.Header().Get("Content-Security-Policy"); !strings.Contains(csp, want) || strings.Contains(csp, "'unsafe-inline'") && strings.Contains(strings.Split(csp, "style-src")[0], "'unsafe-inline'") {
-		t.Fatalf("progress script CSP = %q, want exact hash %q", csp, want)
-	}
-}
-
 func TestFaviconUsesSimplifiedLoomMark(t *testing.T) {
 	w := get(t, Handler(deps("", nil)), "/favicon.svg", nil)
 	if w.Code != http.StatusOK {
@@ -264,11 +242,11 @@ func TestFocusedTopologyMetricsDoNotOverlapForSixNodeMesh(t *testing.T) {
 	topologyRingPositions(positions, []string{"demo-a", "demo-e", "demo-f"}, "outer", -30, 310, 130)
 	nodes := map[string]NodeView{
 		"demo-d": {ID: "demo-d", City: "区域 A", Roles: []string{"control", "access", "server", "egress"}},
-		"demo-b":  {ID: "demo-b", City: "区域 B", Roles: []string{"server", "egress"}},
-		"demo-c":  {ID: "demo-c", City: "区域 C", Roles: []string{"server", "egress"}},
-		"demo-a":  {ID: "demo-a", City: "区域 E", Roles: []string{"server", "egress"}},
-		"demo-e":  {ID: "demo-e", City: "区域 D", Roles: []string{"server", "egress"}},
-		"demo-f":  {ID: "demo-f", City: "区域 F", Roles: []string{"server", "egress"}},
+		"demo-b": {ID: "demo-b", City: "区域 B", Roles: []string{"server", "egress"}},
+		"demo-c": {ID: "demo-c", City: "区域 C", Roles: []string{"server", "egress"}},
+		"demo-a": {ID: "demo-a", City: "区域 E", Roles: []string{"server", "egress"}},
+		"demo-e": {ID: "demo-e", City: "区域 D", Roles: []string{"server", "egress"}},
+		"demo-f": {ID: "demo-f", City: "区域 F", Roles: []string{"server", "egress"}},
 	}
 	measuredLink := func(from, to string) LinkView {
 		return LinkView{

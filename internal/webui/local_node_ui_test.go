@@ -72,7 +72,7 @@ func TestLocalNodeUIUsesDiagnosticNavigationAndHeadings(t *testing.T) {
 
 	nodes := get(t, h, "/nodes", nil).Body.String()
 	for _, forbidden := range []string{
-		`href="/nodes/add"`, "Control bootstrap identity", "Open enrollment workflow",
+		`href="/nodes/add"`, "Control SSH migration identity", "Open legacy SSH migration",
 	} {
 		if strings.Contains(nodes, forbidden) {
 			t.Errorf("read-only fleet inventory exposes enrollment capability %q", forbidden)

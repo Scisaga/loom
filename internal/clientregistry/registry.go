@@ -35,9 +35,10 @@ import (
 )
 
 const (
-	Schema           = 1
-	DefaultInviteTTL = 15 * time.Minute
-	maxRegistryBytes = 4 << 20
+	Schema                  = 1
+	DefaultInviteTTL        = 15 * time.Minute
+	DefaultClaimRecoveryTTL = 60 * time.Minute
+	maxRegistryBytes        = 4 << 20
 )
 
 type ErrorCode string
@@ -71,6 +72,7 @@ type Client struct {
 	Status            string            `json:"status"`
 	CreatedAt         string            `json:"created_at"`
 	EnrolledAt        string            `json:"enrolled_at,omitempty"`
+	ReadyAt           string            `json:"ready_at,omitempty"`
 	RevokedAt         string            `json:"revoked_at,omitempty"`
 	ProfileVersion    string            `json:"profile_version,omitempty"`
 	ProfileDigest     string            `json:"profile_digest,omitempty"`
@@ -102,6 +104,7 @@ type Invite struct {
 	ConsumedAt    string `json:"consumed_at,omitempty"`
 	Platform      string `json:"platform,omitempty"`
 	PublicKeyHash string `json:"public_key_sha256,omitempty"`
+	CSRHash       string `json:"csr_sha256,omitempty"`
 	RequestID     string `json:"request_id,omitempty"`
 	// SealedToken is encrypted with a control-local random key kept in a
 	// separate 0600 file. It exists only so the authenticated UI can render or
@@ -160,10 +163,11 @@ type fileState struct {
 }
 
 type Store struct {
-	Path string
-	Now  func() time.Time
-	Rand io.Reader
-	TTL  time.Duration
+	Path        string
+	Now         func() time.Time
+	Rand        io.Reader
+	TTL         time.Duration
+	RecoveryTTL time.Duration
 }
 
 func (s Store) defaults() Store {
@@ -175,6 +179,9 @@ func (s Store) defaults() Store {
 	}
 	if s.TTL == 0 {
 		s.TTL = DefaultInviteTTL
+	}
+	if s.RecoveryTTL == 0 {
+		s.RecoveryTTL = DefaultClaimRecoveryTTL
 	}
 	return s
 }
@@ -429,6 +436,7 @@ func (s Store) Claim(input ClaimInput) (ClaimResult, error) {
 	}
 	tokenHash := sha256Hex(input.Token)
 	keyHash := sha256HexBytes(key)
+	csrHash := sha256Hex(input.CSRPEM)
 	var result ClaimResult
 	err = s.withLock(true, func(st *fileState) error {
 		inviteIndex := -1
@@ -440,7 +448,7 @@ func (s Store) Claim(input ClaimInput) (ClaimResult, error) {
 			}
 		}
 		if inviteIndex < 0 {
-			return &Error{Code: CodeNotFound, Msg: "registration invitation was not found"}
+			return &Error{Code: CodeNotFound, Msg: "Device join code was not found"}
 		}
 		invite := &st.Invites[inviteIndex]
 		clientIndex := -1
@@ -455,29 +463,49 @@ func (s Store) Claim(input ClaimInput) (ClaimResult, error) {
 		}
 		client := &st.Clients[clientIndex]
 		needsServer := containsString(client.Responsibilities, "forward")
+		if input.Platform == string(model.WindowsDesktop) && needsServer {
+			return &Error{Code: CodeInvalid, Msg: "a Windows Device can join with use_loom access only"}
+		}
 		if needsServer != (input.Server != nil) {
-			return &Error{Code: CodeInvalid, Msg: "server enrollment facts must exactly match the pinned responsibilities"}
+			return &Error{Code: CodeInvalid, Msg: "server join facts must exactly match the pinned responsibilities"}
 		}
 		expires, parseErr := time.Parse(time.RFC3339, invite.ExpiresAt)
 		if parseErr != nil {
 			return fmt.Errorf("invitation %s has invalid expiry: %w", invite.ID, parseErr)
 		}
 		now := s.Now().UTC().Truncate(time.Second)
-		// Consumption makes an exact retry idempotent; it does not turn a
-		// short-lived bearer invitation into a permanent bootstrap credential.
-		// Check the original TTL before both first use and replay so a lost
-		// response can be recovered only inside the invitation window.
-		if !now.Before(expires) {
-			return &Error{Code: CodeExpired, Msg: "registration invitation has expired"}
-		}
 		if invite.ConsumedAt != "" {
-			if invite.PublicKeyHash == keyHash && invite.Platform == input.Platform &&
-				invite.RequestID == input.RequestID && client.PublicKey == canonicalKey &&
-				sameServerEnrollment(client.Server, input.Server) {
-				result = ClaimResult{Client: *client, Replay: true}
-				return nil
+			if invite.PublicKeyHash != keyHash || invite.Platform != input.Platform ||
+				invite.RequestID != input.RequestID || client.PublicKey != canonicalKey ||
+				!sameServerEnrollment(client.Server, input.Server) {
+				return &Error{Code: CodeConflict, Msg: "join code has already been used by another Device identity"}
 			}
-			return &Error{Code: CodeConflict, Msg: "registration invitation has already been used by another device identity"}
+			if invite.CSRHash == "" {
+				// Migrate an invitation consumed by the previous schema only while
+				// its original bearer TTL is still valid. After that point there is
+				// no durable evidence that this is the exact original CSR.
+				if !now.Before(expires) {
+					return &Error{Code: CodeExpired, Msg: "legacy Device join cannot be recovered after its original expiry"}
+				}
+				invite.CSRHash = csrHash
+			} else if invite.CSRHash != csrHash {
+				return &Error{Code: CodeConflict, Msg: "join code has already been used with another Device CSR"}
+			}
+			if client.Status != "provisioning" && client.Status != "ready" {
+				return &Error{Code: CodeConflict, Msg: "Device identity is no longer in a recoverable join state"}
+			}
+			deadline, err := claimRecoveryDeadline(*invite, *client, s.RecoveryTTL)
+			if err != nil {
+				return err
+			}
+			if !now.Before(deadline) {
+				return &Error{Code: CodeExpired, Msg: "Device join recovery window has expired"}
+			}
+			result = ClaimResult{Client: *client, Replay: true}
+			return nil
+		}
+		if !now.Before(expires) {
+			return &Error{Code: CodeExpired, Msg: "join code has expired"}
 		}
 		// canonical SPKI is the durable device identity. Check uniqueness while
 		// holding the same registry file lock as the consume/write transaction;
@@ -499,7 +527,7 @@ func (s Store) Claim(input ClaimInput) (ClaimResult, error) {
 			server := *input.Server
 			client.Server = &server
 		}
-		// Identity claim is only the first half of enrollment. Data-plane
+		// The internal identity claim is only the first half of joining. Data-plane
 		// credentials and the signed device configuration are provisioned by the
 		// SSOT/secret transaction; never present this intermediate state as online.
 		client.Status = "provisioning"
@@ -507,6 +535,7 @@ func (s Store) Claim(input ClaimInput) (ClaimResult, error) {
 		invite.ConsumedAt = client.EnrolledAt
 		invite.Platform = input.Platform
 		invite.PublicKeyHash = keyHash
+		invite.CSRHash = csrHash
 		invite.RequestID = input.RequestID
 		invite.SealedToken = ""
 		result = ClaimResult{Client: *client}
@@ -536,14 +565,14 @@ func (s Store) Artifact(inviteID string) (string, Invite, error) {
 				continue
 			}
 			if invite.ConsumedAt != "" || invite.SealedToken == "" {
-				return &Error{Code: CodeConflict, Msg: "registration invitation is no longer available"}
+				return &Error{Code: CodeConflict, Msg: "Device join code is no longer available"}
 			}
 			expires, err := time.Parse(time.RFC3339, invite.ExpiresAt)
 			if err != nil {
 				return fmt.Errorf("invitation %s has invalid expiry: %w", invite.ID, err)
 			}
 			if !s.Now().UTC().Before(expires) {
-				return &Error{Code: CodeExpired, Msg: "registration invitation has expired"}
+				return &Error{Code: CodeExpired, Msg: "Device join code has expired"}
 			}
 			token, err = s.openToken(invite.SealedToken)
 			if err != nil {
@@ -552,7 +581,7 @@ func (s Store) Artifact(inviteID string) (string, Invite, error) {
 			found = invite
 			return nil
 		}
-		return &Error{Code: CodeNotFound, Msg: "registration invitation was not found"}
+		return &Error{Code: CodeNotFound, Msg: "Device join code was not found"}
 	})
 	return token, found, err
 }
@@ -576,10 +605,14 @@ func (s Store) MarkReady(clientID string) (Client, error) {
 			}
 			switch client.Status {
 			case "ready":
+				if client.ReadyAt == "" {
+					client.ReadyAt = s.Now().UTC().Truncate(time.Second).Format(time.RFC3339)
+				}
 				result = *client
 				return nil
 			case "provisioning":
 				client.Status = "ready"
+				client.ReadyAt = s.Now().UTC().Truncate(time.Second).Format(time.RFC3339)
 				result = *client
 				return nil
 			default:
@@ -589,6 +622,28 @@ func (s Store) MarkReady(clientID string) (Client, error) {
 		return &Error{Code: CodeNotFound, Msg: "client was not found"}
 	})
 	return result, err
+}
+
+func claimRecoveryDeadline(invite Invite, client Client, recoveryTTL time.Duration) (time.Time, error) {
+	if recoveryTTL <= 0 || recoveryTTL > 24*time.Hour {
+		return time.Time{}, errors.New("claim recovery TTL must be between 1 nanosecond and 24 hours")
+	}
+	consumedAt, err := time.Parse(time.RFC3339, invite.ConsumedAt)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invitation %s has invalid consumed_at: %w", invite.ID, err)
+	}
+	anchor := consumedAt
+	if client.ReadyAt != "" {
+		readyAt, err := time.Parse(time.RFC3339, client.ReadyAt)
+		if err != nil || readyAt.Before(consumedAt) {
+			if err == nil {
+				err = errors.New("ready_at precedes consumed_at")
+			}
+			return time.Time{}, fmt.Errorf("Device %s has invalid ready_at: %w", client.ID, err)
+		}
+		anchor = readyAt
+	}
+	return anchor.Add(recoveryTTL), nil
 }
 
 // Revoke closes the control-local identity lifecycle after the Device has been
@@ -695,11 +750,11 @@ func (s Store) DiscardPending(clientID string) error {
 		}
 		client := st.Clients[clientIndex]
 		if client.Status != "pending" || client.PublicKey != "" || client.EnrolledAt != "" || client.RevokedAt != "" {
-			return &Error{Code: CodeConflict, Msg: "only an unclaimed pending Device can be discarded"}
+			return &Error{Code: CodeConflict, Msg: "only a pending Device that has not joined can be discarded"}
 		}
 		for _, invite := range st.Invites {
 			if invite.ClientID == clientID && invite.ConsumedAt != "" {
-				return &Error{Code: CodeConflict, Msg: "a Device with a consumed invitation cannot be discarded"}
+				return &Error{Code: CodeConflict, Msg: "a Device whose join code was used cannot be discarded"}
 			}
 		}
 		st.Clients = append(st.Clients[:clientIndex], st.Clients[clientIndex+1:]...)
@@ -718,10 +773,11 @@ func validateClaim(input ClaimInput) ([]byte, string, error) {
 	if len(input.Token) < 32 || len(input.Token) > 128 {
 		return nil, "", &Error{Code: CodeInvalid, Msg: "token is missing or malformed"}
 	}
-	// Only Linux is currently deliverable. Accepting a future platform here
-	// would consume the one-time invite before provisioning can succeed.
-	if input.Platform != "linux-server" {
-		return nil, "", &Error{Code: CodeInvalid, Msg: "platform must be linux-server in client enrollment v1"}
+	if input.Platform != string(model.LinuxServer) && input.Platform != string(model.WindowsDesktop) {
+		return nil, "", &Error{Code: CodeInvalid, Msg: "platform must be linux-server or windows-desktop"}
+	}
+	if input.Platform == string(model.WindowsDesktop) && input.Server != nil {
+		return nil, "", &Error{Code: CodeInvalid, Msg: "a Windows Device join cannot declare server facts"}
 	}
 	if err := validateServerEnrollment(input.Server); err != nil {
 		return nil, "", err

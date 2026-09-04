@@ -342,14 +342,14 @@ func (d *AccessDeclaration) HasCompliance() bool {
 type Platform string
 
 const (
-	Android     Platform = "android"
-	Desktop     Platform = "desktop"
-	LinuxServer Platform = "linux-server"
+	Android        Platform = "android"
+	WindowsDesktop Platform = "windows-desktop"
+	LinuxServer    Platform = "linux-server"
 )
 
 func (p Platform) Valid() bool {
 	switch p {
-	case Android, Desktop, LinuxServer:
+	case Android, WindowsDesktop, LinuxServer:
 		return true
 	}
 	return false
@@ -360,10 +360,14 @@ func (p Platform) Valid() bool {
 // Android 必须 TUN 是因为绝大多数 App 不能单独设代理;Linux 服务器不开
 // TUN 恰恰因为它能设,而开 TUN 需 root、要改路由表,配错一次可能把自己
 // 的 SSH 锁在外面(§7.2)。
-func (p Platform) UsesTUN() bool { return p == Android || p == Desktop }
+func (p Platform) UsesTUN() bool { return p == Android || p == WindowsDesktop }
 
 // UsesMixed 报告该平台是否使用本地 mixed 端口。
-func (p Platform) UsesMixed() bool { return p == Desktop || p == LinuxServer }
+func (p Platform) UsesMixed() bool { return p == WindowsDesktop || p == LinuxServer }
+
+// UsesLinuxLifecycle 报告该接入平台是否消费 systemd 与 /etc/loom 安装层。
+// Windows/Android 只复用签名配置语义，生命周期必须由各自宿主承担(§10.2)。
+func (p Platform) UsesLinuxLifecycle() bool { return p == LinuxServer }
 
 // MixedPort 是本机应用进入 Loom 的 mixed 入口(§7.3)。
 //
@@ -401,8 +405,9 @@ func (m *MixedPort) ByService() bool { return m.ManagedAutomatic() }
 
 // Credential 是接入节点表达"它要什么"的方式(§8.2)。
 //
-// 这里只有对秘密层的引用,没有明文。凭据本身由控制平面持有并经 §18
-// 的一次性链接下发,不进渲染层。
+// 这里只有对秘密层的引用,没有明文。§18 的加入输入只授权中控已创建的
+// Device 绑定本机身份，不携带这些秘密；凭据由控制面持有，并在验签后的
+// 配置分发/hydration 中交付。
 type Credential struct {
 	ID          string `yaml:"id"`
 	Owner       string `yaml:"owner,omitempty"`

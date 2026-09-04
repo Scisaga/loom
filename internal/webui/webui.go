@@ -13,7 +13,6 @@
 package webui
 
 import (
-	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -30,7 +29,6 @@ import (
 	"strings"
 	"time"
 	"unicode"
-	"unicode/utf8"
 
 	qrcode "github.com/skip2/go-qrcode"
 )
@@ -134,14 +132,6 @@ type ControlDeps struct {
 	// DefaultExits 是设备默认出口的中控事务。当前 HTTP 边界只接受运维会话；
 	// Windows/Android 设备身份尚未落地前，不能把它直接暴露成客户端写接口。
 	DefaultExits *DefaultExitControlDeps
-	// BootstrapIdentity 是中控范围唯一的 SSH bootstrap 身份。节点接入只
-	// 复用其公钥；私钥永不通过这个接口返回。
-	BootstrapIdentity *BootstrapIdentityDeps
-	// Enrollment 把节点接入限制在一条可审计的事务路径：先独立扫描并人工
-	// 确认 SSH host key，再从受信会话发现 hostname/能力，最后在同一份
-	// revision 上准备节点本地 WG 身份并原子写入节点与隧道。webui 不执行
-	// shell，也不接受操作者手填 Node ID、public_endpoint 或 egress。
-	Enrollment *NodeEnrollmentDeps
 	// Devices is the canonical product boundary for every managed machine. The
 	// current implementation still joins the control-local identity registry
 	// with SSOT declarations, but callers no longer need to choose a Nodes or
@@ -184,25 +174,6 @@ type DefaultExitOption struct {
 	Name      string `json:"name"`
 	Mode      string `json:"mode"`
 	Available bool   `json:"available"`
-}
-
-type BootstrapIdentityDeps struct {
-	Status func() (BootstrapIdentityView, error)
-	Ensure func() (BootstrapIdentityView, error)
-}
-
-type BootstrapIdentityView struct {
-	Ready                              bool
-	PublicKey, Fingerprint, PublicPath string
-}
-
-// NodeEnrollmentDeps 是 webui 与中控节点接入执行器之间的窄契约。Review
-// 可以重复调用来重新计算 direction 对应的隧道方案；Commit 必须重新做
-// 受信预检，并拒绝 hostname、endpoint 或 SSOT revision 在复核后变化。
-type NodeEnrollmentDeps struct {
-	Scan   func(context.Context, EnrollmentConnection) (EnrollmentHostKey, error)
-	Review func(context.Context, EnrollmentReviewInput) (EnrollmentReview, error)
-	Commit func(context.Context, EnrollmentCommitInput) (string, error)
 }
 
 type ClientControlDeps struct {
@@ -346,63 +317,6 @@ type PublicDeviceArtifact struct {
 	Filename    string
 	ContentType string
 	Body        []byte
-}
-
-type EnrollmentConnection struct {
-	Host, User string
-	Port       int
-}
-
-type EnrollmentHostKey struct {
-	Algorithm, PublicKey, Fingerprint string
-}
-
-type EnrollmentReviewInput struct {
-	Connection EnrollmentConnection
-	HostKey    EnrollmentHostKey
-	// Country / City 是操作者在 declaration review 中确认的人读标注。
-	// GeoIP 只可预填建议，不能把它冒充成远端身份或位置证明。
-	Country, City string
-	// DisableGeoIP lets the operator keep missing fields empty instead of
-	// accepting another advisory lookup during a recomputed review.
-	DisableGeoIP bool
-	// RequestedDirection 是 automatic 或三个 SSOT direction 之一。
-	RequestedDirection string
-}
-
-type EnrollmentCommitInput struct {
-	EnrollmentReviewInput
-	ExpectedNodeID, ExpectedEndpoint, ExpectedEndpointResolution, ExpectedRevision string
-}
-
-type EnrollmentReview struct {
-	Connection                               EnrollmentConnection
-	HostKey                                  EnrollmentHostKey
-	NodeID, ObservedHostname, PublicEndpoint string
-	Country, City                            string
-	DisableGeoIP, GeoIPSuggested             bool
-	GeoIPEvidence                            string
-	EndpointEvidence, EndpointResolution     string
-	System, Privilege                        string
-	KernelWireGuard, WGCommand               bool
-	WireGuardToolsInstalled                  bool
-	RequestedDirection                       string
-	ResolvedDirection                        string
-	DirectionEvidence, Revision              string
-	EgressEnabled                            bool
-	ExpandedPolicies                         []EnrollmentPolicy
-	FixedPolicies                            []EnrollmentPolicy
-	Tunnels                                  []EnrollmentTunnel
-}
-
-type EnrollmentPolicy struct {
-	ID, Name string
-}
-
-type EnrollmentTunnel struct {
-	From, To, FromAddress, ToAddress string
-	Initiator, Acceptor              string
-	ListenPort                       int
 }
 
 // View 是界面要展示的全网状态。它由调用方从转述表里组装 —— webui 不自己
@@ -870,10 +784,6 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
-		if r.URL.Query().Get("legacy") == "ssh" {
-			writeHTML(w, pageNodeAdd(d, nodeAddPageState{}, authed(d, r)))
-			return
-		}
 		writeHTML(w, pageDevices(d, clientPageState{Create: r.URL.Query().Get("new") == "1"}, authed(d, r)))
 	})
 	mux.HandleFunc("/devices/create", func(w http.ResponseWriter, r *http.Request) {
@@ -1025,7 +935,7 @@ func Handler(d Deps) http.Handler {
 		}
 		control := deviceControl(d)
 		if control == nil || control.CreateInvite == nil {
-			http.Error(w, "这台机器没有客户端注册能力", http.StatusNotImplemented)
+			http.Error(w, "这台机器不能创建设备加入码", http.StatusNotImplemented)
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
@@ -1134,7 +1044,7 @@ func Handler(d Deps) http.Handler {
 		}
 		control := deviceControl(d)
 		if control == nil || control.List == nil {
-			writeJSONError(w, http.StatusNotImplemented, "这台机器没有客户端注册能力")
+			writeJSONError(w, http.StatusNotImplemented, "这台机器不能创建设备加入码")
 			return
 		}
 		inventory, err := loadClientInventory(d)
@@ -1177,7 +1087,7 @@ func Handler(d Deps) http.Handler {
 		}
 		control := deviceControl(d)
 		if control == nil || control.CreateInvite == nil {
-			writeJSONError(w, http.StatusNotImplemented, "这台机器没有客户端注册能力")
+			writeJSONError(w, http.StatusNotImplemented, "这台机器不能创建设备加入码")
 			return
 		}
 		var input ClientInviteInput
@@ -1233,6 +1143,7 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Content-Disposition", `attachment; filename="device-join.png"`)
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 		_, _ = w.Write(png)
 	})
@@ -1252,7 +1163,7 @@ func Handler(d Deps) http.Handler {
 		control := deviceControl(d)
 		if control == nil || control.Claim == nil {
 			// Do not reveal whether an invite exists when this node is not the issuer.
-			writeJSONError(w, http.StatusNotFound, "client enrollment is unavailable")
+			writeJSONError(w, http.StatusNotFound, "client join is unavailable")
 			return
 		}
 		var wire struct {
@@ -1299,163 +1210,8 @@ func Handler(d Deps) http.Handler {
 		}
 		writeHTML(w, pageNodes(d, authed(d, r), strings.TrimSpace(r.URL.Query().Get("added"))))
 	})
-	mux.HandleFunc("/nodes/add", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
-			return
-		}
-		http.Redirect(w, r, "/devices?legacy=ssh", http.StatusPermanentRedirect)
-	})
-	mux.HandleFunc("/nodes/add/scan", func(w http.ResponseWriter, r *http.Request) {
-		if !requireEnrollmentWrite(d, w, r) {
-			return
-		}
-		connection, _, err := parseEnrollmentForm(w, r, false)
-		state := nodeAddPageState{Phase: "connect", Connection: connection}
-		if err == nil {
-			state.HostKey, err = d.Control.Enrollment.Scan(r.Context(), connection)
-			state.Phase = "confirm"
-		}
-		if err != nil {
-			state.Error = err.Error()
-		}
-		writeHTML(w, pageNodeAdd(d, state, true))
-	})
-	mux.HandleFunc("/nodes/add/review", func(w http.ResponseWriter, r *http.Request) {
-		if !requireEnrollmentWrite(d, w, r) {
-			return
-		}
-		connection, hostKey, err := parseEnrollmentForm(w, r, true)
-		disableGeoIP := r.Form.Get("disable_geoip") == "yes"
-		state := nodeAddPageState{Phase: "confirm", Connection: connection, HostKey: hostKey, DisableGeoIP: disableGeoIP}
-		if err == nil && r.Form.Get("confirm_host_key") != "yes" {
-			err = fmt.Errorf("confirm the SSH host fingerprint before preflight")
-		}
-		if err == nil {
-			review, reviewErr := d.Control.Enrollment.Review(r.Context(), EnrollmentReviewInput{
-				Connection: connection, HostKey: hostKey, DisableGeoIP: disableGeoIP, RequestedDirection: "automatic",
-			})
-			err = reviewErr
-			if err == nil {
-				state.Phase, state.Review = "review", &review
-			}
-		}
-		if err != nil {
-			state.Error = err.Error()
-		}
-		writeHTML(w, pageNodeAdd(d, state, true))
-	})
-	mux.HandleFunc("/nodes/add/commit", func(w http.ResponseWriter, r *http.Request) {
-		if !requireEnrollmentWrite(d, w, r) {
-			return
-		}
-		connection, hostKey, err := parseEnrollmentForm(w, r, true)
-		country, countryErr := parseEnrollmentCountry(r)
-		city, cityErr := parseEnrollmentCity(r)
-		if err == nil {
-			err = countryErr
-		}
-		if err == nil {
-			err = cityErr
-		}
-		requested := strings.TrimSpace(r.Form.Get("direction"))
-		input := EnrollmentReviewInput{
-			Connection: connection, HostKey: hostKey,
-			Country: country, City: city, DisableGeoIP: r.Form.Get("disable_geoip") == "yes",
-			RequestedDirection: requested,
-		}
-		validReviewInput := err == nil
-		state := nodeAddPageState{Phase: "review", Connection: connection, HostKey: hostKey}
-		if err == nil && r.Form.Get("action") == "preview" {
-			var review EnrollmentReview
-			review, err = d.Control.Enrollment.Review(r.Context(), input)
-			if err == nil {
-				state.Review = &review
-			}
-		} else if err == nil && r.Form.Get("action") == "commit" {
-			reviewedDirection := strings.TrimSpace(r.Form.Get("reviewed_direction"))
-			commitInput := EnrollmentCommitInput{
-				EnrollmentReviewInput:      input,
-				ExpectedNodeID:             strings.TrimSpace(r.Form.Get("expected_node")),
-				ExpectedEndpoint:           strings.TrimSpace(r.Form.Get("expected_endpoint")),
-				ExpectedEndpointResolution: strings.TrimSpace(r.Form.Get("expected_endpoint_resolution")),
-				ExpectedRevision:           strings.TrimSpace(r.Form.Get("revision")),
-			}
-			switch {
-			case reviewedDirection == "":
-				err = fmt.Errorf("reviewed direction is missing; recompute and review the direction plan before committing")
-			case requested != reviewedDirection:
-				err = fmt.Errorf("direction changed after review; recompute and review the direction plan before committing")
-			case !validEnrollmentReviewToken(d, commitInput, r.Form.Get("review_token")):
-				err = fmt.Errorf("review binding is invalid; recompute and review the direction plan before committing")
-			default:
-				var nodeID string
-				nodeID, err = d.Control.Enrollment.Commit(r.Context(), commitInput)
-				if err == nil {
-					http.Redirect(w, r, "/nodes?added="+url.QueryEscape(nodeID), http.StatusSeeOther)
-					return
-				}
-			}
-		} else if err == nil {
-			err = fmt.Errorf("unknown enrollment action")
-		}
-		if err != nil {
-			state.Error = err.Error()
-			if committed, ok := err.(interface{ Committed() bool }); ok {
-				state.Committed = committed.Committed()
-			}
-			// A failed commit is deliberately re-reviewed from trusted state instead
-			// of echoing hidden plan fields back as if they were observations.
-			if validReviewInput {
-				if review, reviewErr := d.Control.Enrollment.Review(r.Context(), input); reviewErr == nil {
-					state.Review = &review
-				}
-			}
-		}
-		writeHTML(w, pageNodeAdd(d, state, true))
-	})
-	mux.HandleFunc("/nodes/bootstrap-key/generate", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "只接受 POST", http.StatusMethodNotAllowed)
-			return
-		}
-		if !authed(d, r) {
-			http.Redirect(w, r, loginURL("/nodes"), http.StatusSeeOther)
-			return
-		}
-		if d.Control == nil || d.Control.BootstrapIdentity == nil {
-			http.Error(w, "这台机器没有 bootstrap identity 能力", http.StatusNotImplemented)
-			return
-		}
-		if _, err := d.Control.BootstrapIdentity.Ensure(); err != nil {
-			writeHTML(w, pageResult(d, "Generate bootstrap identity", "", err))
-			return
-		}
-		http.Redirect(w, r, "/nodes", http.StatusSeeOther)
-	})
-	mux.HandleFunc("/nodes/bootstrap-key.pub", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
-			return
-		}
-		if !authed(d, r) {
-			http.Redirect(w, r, loginURL(r.URL.RequestURI()), http.StatusSeeOther)
-			return
-		}
-		if d.Control == nil || d.Control.BootstrapIdentity == nil {
-			http.NotFound(w, r)
-			return
-		}
-		key, err := d.Control.BootstrapIdentity.Status()
-		if err != nil || !key.Ready {
-			http.Error(w, "bootstrap public key is not ready", http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("Content-Disposition", `attachment; filename="loom-control-bootstrap.pub"`)
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		fmt.Fprintln(w, key.PublicKey)
-	})
+	mux.HandleFunc("/nodes/add", http.NotFound)
+	mux.HandleFunc("/nodes/add/", http.NotFound)
 	mux.HandleFunc("/nodes/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
@@ -1752,153 +1508,6 @@ func Handler(d Deps) http.Handler {
 	return mux
 }
 
-const enrollmentReviewTokenDomain = "loom:webui:node-enrollment-review:v3"
-
-// enrollmentReviewMAC signs the complete client-visible boundary between a
-// reviewed plan and its commit. Length-prefixing keeps the encoding
-// unambiguous even when a host key or endpoint contains punctuation.
-func enrollmentReviewMAC(operator string, input EnrollmentCommitInput) []byte {
-	mac := hmac.New(sha256.New, []byte(operator))
-	mac.Write([]byte(enrollmentReviewTokenDomain))
-	fields := []string{
-		input.Connection.Host,
-		input.Connection.User,
-		strconv.Itoa(input.Connection.Port),
-		input.HostKey.Algorithm,
-		input.HostKey.PublicKey,
-		input.HostKey.Fingerprint,
-		input.Country,
-		input.City,
-		strconv.FormatBool(input.DisableGeoIP),
-		input.RequestedDirection,
-		input.ExpectedNodeID,
-		input.ExpectedEndpoint,
-		input.ExpectedEndpointResolution,
-		input.ExpectedRevision,
-	}
-	for _, field := range fields {
-		mac.Write([]byte(strconv.Itoa(len(field))))
-		mac.Write([]byte{':'})
-		mac.Write([]byte(field))
-	}
-	return mac.Sum(nil)
-}
-
-func mintEnrollmentReviewToken(d Deps, input EnrollmentCommitInput) string {
-	if d.Operator == "" {
-		return ""
-	}
-	return base64.RawURLEncoding.EncodeToString(enrollmentReviewMAC(d.Operator, input))
-}
-
-func validEnrollmentReviewToken(d Deps, input EnrollmentCommitInput, token string) bool {
-	if d.Operator == "" {
-		return false
-	}
-	got, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(token))
-	if err != nil {
-		return false
-	}
-	want := enrollmentReviewMAC(d.Operator, input)
-	return subtle.ConstantTimeCompare(got, want) == 1
-}
-
-func requireEnrollmentWrite(d Deps, w http.ResponseWriter, r *http.Request) bool {
-	if r.Method != http.MethodPost {
-		http.Error(w, "只接受 POST", http.StatusMethodNotAllowed)
-		return false
-	}
-	if !authed(d, r) {
-		http.Redirect(w, r, loginURL("/devices?legacy=ssh"), http.StatusSeeOther)
-		return false
-	}
-	if d.Control == nil || d.Control.Enrollment == nil {
-		http.Error(w, "这台机器没有受信节点接入能力", http.StatusNotImplemented)
-		return false
-	}
-	return true
-}
-
-func parseEnrollmentForm(w http.ResponseWriter, r *http.Request, withHostKey bool) (EnrollmentConnection, EnrollmentHostKey, error) {
-	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
-	if err := r.ParseForm(); err != nil {
-		return EnrollmentConnection{}, EnrollmentHostKey{}, fmt.Errorf("enrollment form is too large or malformed")
-	}
-	read := func(name string, limit int) (string, error) {
-		value := strings.TrimSpace(r.Form.Get(name))
-		if value == "" {
-			return "", fmt.Errorf("%s is required", name)
-		}
-		if len(value) > limit {
-			return "", fmt.Errorf("%s exceeds %d bytes", name, limit)
-		}
-		return value, nil
-	}
-	host, err := read("host", 253)
-	if err != nil {
-		return EnrollmentConnection{}, EnrollmentHostKey{}, err
-	}
-	user, err := read("user", 64)
-	if err != nil {
-		return EnrollmentConnection{}, EnrollmentHostKey{}, err
-	}
-	portText, err := read("port", 5)
-	if err != nil {
-		return EnrollmentConnection{}, EnrollmentHostKey{}, err
-	}
-	port, err := strconv.Atoi(portText)
-	if err != nil || port < 1 || port > 65535 {
-		return EnrollmentConnection{}, EnrollmentHostKey{}, fmt.Errorf("SSH port must be an integer from 1 to 65535")
-	}
-	connection := EnrollmentConnection{Host: host, User: user, Port: port}
-	if !withHostKey {
-		return connection, EnrollmentHostKey{}, nil
-	}
-	algorithm, err := read("host_key_algorithm", 32)
-	if err != nil {
-		return connection, EnrollmentHostKey{}, err
-	}
-	publicKey, err := read("host_key_public", 2048)
-	if err != nil {
-		return connection, EnrollmentHostKey{}, err
-	}
-	fingerprint, err := read("host_key_fingerprint", 256)
-	if err != nil {
-		return connection, EnrollmentHostKey{}, err
-	}
-	return connection, EnrollmentHostKey{
-		Algorithm: algorithm, PublicKey: publicKey, Fingerprint: fingerprint,
-	}, nil
-}
-
-func parseEnrollmentCity(r *http.Request) (string, error) {
-	city := strings.TrimSpace(r.Form.Get("city"))
-	if city == "" {
-		return "", nil
-	}
-	if !utf8.ValidString(city) {
-		return "", fmt.Errorf("city must be valid UTF-8")
-	}
-	if len(city) > 256 {
-		return "", fmt.Errorf("city exceeds 256 bytes")
-	}
-	if strings.IndexFunc(city, func(r rune) bool { return unicode.IsControl(r) }) >= 0 {
-		return "", fmt.Errorf("city contains a control character")
-	}
-	return city, nil
-}
-
-func parseEnrollmentCountry(r *http.Request) (string, error) {
-	country := strings.ToUpper(strings.TrimSpace(r.Form.Get("country")))
-	if country == "" {
-		return "", nil
-	}
-	if len(country) != 2 || country[0] < 'A' || country[0] > 'Z' || country[1] < 'A' || country[1] > 'Z' {
-		return "", fmt.Errorf("country must be a two-letter ISO 3166-1 alpha-2 code")
-	}
-	return country, nil
-}
-
 func eventFilterFromRequest(r *http.Request) eventFilter {
 	q := r.URL.Query()
 	trim := func(value string) string {
@@ -1932,7 +1541,9 @@ func safeLoginReturnTo(raw string) string {
 	u, err := url.ParseRequestURI(raw)
 	if err != nil || u.IsAbs() || u.Host != "" || u.User != nil || u.Fragment != "" ||
 		strings.HasPrefix(u.Path, "//") || strings.Contains(u.Path, "\\") ||
-		strings.IndexFunc(u.Path, unicode.IsControl) >= 0 || !loginReturnPathAllowed(u.Path) {
+		strings.IndexFunc(u.Path, unicode.IsControl) >= 0 || u.Path == "/nodes/add" ||
+		strings.HasPrefix(u.Path, "/nodes/add/") ||
+		(u.Path == "/devices" && u.Query().Get("legacy") != "") || !loginReturnPathAllowed(u.Path) {
 		return "/"
 	}
 	return u.RequestURI()
@@ -1940,8 +1551,8 @@ func safeLoginReturnTo(raw string) string {
 
 func loginReturnPathAllowed(path string) bool {
 	switch path {
-	case "/", "/devices", "/devices/download/linux-amd64", "/clients", "/clients/download/linux-amd64", "/nodes", "/nodes/add",
-		"/nodes/bootstrap-key.pub", "/topology", "/services", "/routing",
+	case "/", "/devices", "/devices/download/linux-amd64", "/clients", "/clients/download/linux-amd64", "/nodes",
+		"/topology", "/services", "/routing",
 		"/deployments", "/events", "/settings":
 		return true
 	}

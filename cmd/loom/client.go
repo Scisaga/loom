@@ -17,20 +17,70 @@ import (
 	"strings"
 	"time"
 
+	"loom/internal/clientcomponent"
 	"loom/internal/clientdist"
 	"loom/internal/clientenroll"
-	"loom/internal/enrollssh"
 	"loom/internal/netx"
 	"loom/internal/publish"
 )
 
-const clientUsage = `loom client —— 客户端注册与 Linux 交付
+const clientUsage = `loom client —— 客户端加入与交付
 
 用法:
-  loom client enroll  -invite-file <文件>       生成本机身份并消费一次性邀请
+  loom client enroll  -invite-file <文件>       Linux 兼容命令：生成本机身份并消费一次性加入码
   loom client package -sing-box <二进制>     生成可重现、已签名的 Linux 客户端包
   loom client verify  -archive <tar.gz> -pubkey <公钥>
                                                验签并检查包内全部文件
+  loom client package-windows -arch <amd64|arm64>
+      -sing-box-archive <官方 ZIP> -wintun-archive <官方 ZIP>
+                                               生成已签名的 Windows 数据面包
+  loom client verify-windows -archive <zip> -pubkey <公钥> [-arch <amd64|arm64>]
+                                               验签并检查 Windows 数据面包
+`
+
+const installLocalWireGuardToolsScript = `set -eu
+set -f
+
+installed=0
+if [ ! -x /usr/bin/wg ]; then
+    if [ "$(id -u)" = 0 ]; then
+        privilege=root
+    elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+        privilege=sudo-nopasswd
+    else
+        echo 'root or passwordless sudo is required to install wireguard-tools' >&2
+        exit 43
+    fi
+
+    run_privileged() {
+        if [ "$privilege" = root ]; then
+            "$@"
+        else
+            sudo -n "$@"
+        fi
+    }
+
+    if command -v apt-get >/dev/null 2>&1; then
+        run_privileged env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 -o Acquire::Retries=2 update >/dev/null
+        run_privileged env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=60 -y --no-install-recommends install wireguard-tools >/dev/null
+    elif command -v dnf >/dev/null 2>&1; then
+        run_privileged dnf -y install wireguard-tools >/dev/null
+    elif command -v yum >/dev/null 2>&1; then
+        run_privileged yum -y install wireguard-tools >/dev/null
+    elif command -v apk >/dev/null 2>&1; then
+        run_privileged apk add --no-cache wireguard-tools >/dev/null
+    elif command -v zypper >/dev/null 2>&1; then
+        run_privileged zypper --non-interactive install wireguard-tools >/dev/null
+    else
+        echo 'no supported package manager found (apt-get, dnf, yum, apk or zypper)' >&2
+        exit 44
+    fi
+    [ -x /usr/bin/wg ] || { echo 'wireguard-tools installation completed without providing /usr/bin/wg' >&2; exit 45; }
+    installed=1
+fi
+
+printf '%s\n' 'LOOM_WG_TOOLS_V1'
+printf 'installed=%s\n' "$installed"
 `
 
 func cmdClient(args []string) error {
@@ -44,6 +94,10 @@ func cmdClient(args []string) error {
 		return cmdClientPackage(args[1:])
 	case "verify":
 		return cmdClientVerify(args[1:])
+	case "package-windows":
+		return cmdClientPackageWindows(args[1:])
+	case "verify-windows":
+		return cmdClientVerifyWindows(args[1:])
 	case "help", "-h", "--help":
 		fmt.Print(clientUsage)
 		return nil
@@ -52,13 +106,109 @@ func cmdClient(args []string) error {
 	}
 }
 
+func cmdClientPackageWindows(args []string) error {
+	fs := flag.NewFlagSet("client package-windows", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	arch := fs.String("arch", "", "目标架构:amd64 或 arm64")
+	singBoxPath := fs.String("sing-box-archive", "", "已审核的官方 sing-box Windows ZIP")
+	wintunPath := fs.String("wintun-archive", "", "已审核的官方 Wintun ZIP")
+	keyPath := fs.String("key", "deploy/keys/platform-signing.key", "平台 Ed25519 签名私钥")
+	outPath := fs.String("o", "", "输出 ZIP；默认 deploy/staging/loom-windows-dataplane-1.11.4-<arch>.zip")
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("用法:loom client package-windows -arch <amd64|arm64> -sing-box-archive <zip> -wintun-archive <zip> [-key <私钥>] [-o <zip>]:%w", err)
+	}
+	if fs.NArg() != 0 || (*arch != "amd64" && *arch != "arm64") || *singBoxPath == "" || *wintunPath == "" {
+		return fmt.Errorf("用法:loom client package-windows -arch <amd64|arm64> -sing-box-archive <zip> -wintun-archive <zip> [-key <私钥>] [-o <zip>]")
+	}
+	singBoxArchive, err := readRegularClientInput(*singBoxPath, false)
+	if err != nil {
+		return err
+	}
+	wintunArchive, err := readRegularClientInput(*wintunPath, false)
+	if err != nil {
+		return err
+	}
+	privateKey, err := readKey(*keyPath, ed25519.PrivateKeySize)
+	if err != nil {
+		return fmt.Errorf("读平台签名私钥:%w", err)
+	}
+	artifact, err := clientcomponent.BuildOfficial(*arch, singBoxArchive, wintunArchive, ed25519.PrivateKey(privateKey))
+	if err != nil {
+		return err
+	}
+	if *outPath == "" {
+		*outPath = filepath.Join("deploy/staging", artifact.Name)
+	}
+	if filepath.Base(*outPath) != artifact.Name {
+		return fmt.Errorf("[§10.2 渲染目标必须显式] 输出文件必须名为 %s，得到 %s", artifact.Name, filepath.Base(*outPath))
+	}
+	publicKey := ed25519.PrivateKey(privateKey).Public().(ed25519.PublicKey)
+	outputs := []struct {
+		path string
+		body []byte
+		mode os.FileMode
+	}{
+		{path: *outPath + ".sha256", body: []byte(fmt.Sprintf("%s  %s\n", artifact.SHA256, artifact.Name)), mode: 0o644},
+		{path: *outPath + ".pub", body: append([]byte(base64.StdEncoding.EncodeToString(publicKey)), '\n'), mode: 0o644},
+		{path: *outPath, body: artifact.Package, mode: 0o644},
+	}
+	for _, output := range outputs {
+		if err := writeClientFileAtomic(output.path, output.body, output.mode); err != nil {
+			return fmt.Errorf("写 Windows 数据面制品 %s:%w", output.path, err)
+		}
+	}
+	fmt.Printf("✓ Windows 数据面包已生成:%s\n", *outPath)
+	fmt.Printf("  平台         windows/%s\n", artifact.Manifest.Arch)
+	fmt.Printf("  sing-box     %s(%s)\n", artifact.Manifest.SingBox.SHA256, artifact.Manifest.SingBox.Version)
+	fmt.Printf("  Wintun       %s(%s，客户端仍会执行 Authenticode)\n", artifact.Manifest.Wintun.SHA256, artifact.Manifest.Wintun.Version)
+	fmt.Printf("  包 SHA-256   %s\n", artifact.SHA256)
+	fmt.Printf("  可信公钥必须通过另一条通道核对；同目录 .pub 不能自我证明可信。\n")
+	return nil
+}
+
+func cmdClientVerifyWindows(args []string) error {
+	fs := flag.NewFlagSet("client verify-windows", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	archivePath := fs.String("archive", "", "Windows 数据面 ZIP")
+	pubPath := fs.String("pubkey", "", "通过带外通道取得的平台公钥(必需)")
+	expectedArch := fs.String("arch", "", "可选的预期架构:amd64 或 arm64")
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("用法:loom client verify-windows -archive <zip> -pubkey <可信公钥> [-arch <amd64|arm64>]:%w", err)
+	}
+	if fs.NArg() != 0 || *archivePath == "" || *pubPath == "" ||
+		(*expectedArch != "" && *expectedArch != "amd64" && *expectedArch != "arm64") {
+		return fmt.Errorf("用法:loom client verify-windows -archive <zip> -pubkey <可信公钥> [-arch <amd64|arm64>]")
+	}
+	body, err := readRegularClientInput(*archivePath, false)
+	if err != nil {
+		return err
+	}
+	publicKey, err := readKey(*pubPath, ed25519.PublicKeySize)
+	if err != nil {
+		return fmt.Errorf("读带外可信平台公钥:%w", err)
+	}
+	verified, err := clientcomponent.Verify(body, ed25519.PublicKey(publicKey))
+	if err != nil {
+		return err
+	}
+	if *expectedArch != "" && verified.Manifest.Arch != *expectedArch {
+		return fmt.Errorf("Windows 数据面架构为 %s，预期 %s", verified.Manifest.Arch, *expectedArch)
+	}
+	fmt.Printf("✓ Windows 数据面包验证通过\n")
+	fmt.Printf("  平台         windows/%s\n", verified.Manifest.Arch)
+	fmt.Printf("  sing-box     %s(%s)\n", verified.Manifest.SingBox.Version, verified.Manifest.SingBox.Commit)
+	fmt.Printf("  Wintun       %s(要求 Windows Authenticode)\n", verified.Manifest.Wintun.Version)
+	fmt.Printf("  槽 ID        %s\n", verified.ID)
+	return nil
+}
+
 func cmdClientEnroll(args []string) error {
 	fs := flag.NewFlagSet("client enroll", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	inviteFile := fs.String("invite-file", "", "从 .loom-invite 文件读取；- 表示 stdin(推荐)")
-	inviteText := fs.String("invite", "", "直接给邀请 URI；可能进入 shell history，不推荐")
-	fromStdin := fs.Bool("stdin", false, "从 stdin 读取邀请")
-	stateDir := fs.String("state-dir", "/etc/loom/client", "设备 identity 与注册状态目录")
+	inviteText := fs.String("invite", "", "直接给加入链接；可能进入 shell history，不推荐")
+	fromStdin := fs.Bool("stdin", false, "从 stdin 读取加入链接")
+	stateDir := fs.String("state-dir", "/etc/loom/client", "设备 identity 与加入状态目录")
 	deviceConfig := fs.String("device-config", "/etc/loom/device.yaml", "可选服务器职责声明")
 	wgKey := fs.String("wg-key", "/etc/wireguard/node.key", "服务器 WireGuard 私钥落点")
 	tlsKey := fs.String("tls-key", "/etc/loom/tls/node.key", "节点 TLS 私钥落点")
@@ -72,7 +222,7 @@ func cmdClientEnroll(args []string) error {
 	releaseFloor := fs.String("release-floor", "/var/lib/loom/release-floor.json", "signed current 防回退 floor")
 	deployLock := fs.String("deploy-lock", "/var/lib/loom/deploy.lock", "pull/apply 部署锁")
 	binPath := fs.String("bin", managedBinary, "首次 pull 可更新的 Loom 二进制")
-	dnsServer := fs.String("dns", "", "解析注册 HTTPS 端点使用的 DNS")
+	dnsServer := fs.String("dns", "", "解析设备加入 HTTPS 端点使用的 DNS")
 	wait := fs.Duration("wait", 5*time.Minute, "等待中控完成 provisioning 的最长时间；0 只提交一次")
 	retry := fs.Duration("retry", 3*time.Second, "provisioning 期间的重试间隔")
 	if err := fs.Parse(args); err != nil {
@@ -125,8 +275,8 @@ func cmdClientEnroll(args []string) error {
 	}
 	httpClient := netx.Client(*dnsServer, 35*time.Second)
 	httpClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
-		// 307/308 会重发包含 token 的 POST；注册端点必须直达(§11)。
-		return fmt.Errorf("注册 HTTPS 端点不允许重定向")
+		// 307/308 会重发包含 token 的 POST；加入端点必须直达(§11)。
+		return fmt.Errorf("设备加入 HTTPS 端点不允许重定向")
 	}
 	deadline := time.Now().Add(*wait)
 	first := true
@@ -141,7 +291,7 @@ func cmdClientEnroll(args []string) error {
 				return err
 			}
 			if !temporaryReported {
-				fmt.Fprintln(os.Stderr, "! 注册端点暂时不可用；将复用同一 key/request_id/CSR 重试。")
+				fmt.Fprintln(os.Stderr, "! 设备加入端点暂时不可用；将复用同一 key/request_id/CSR 重试。")
 				temporaryReported = true
 			}
 			time.Sleep(*retry)
@@ -155,7 +305,7 @@ func cmdClientEnroll(args []string) error {
 			first = false
 		}
 		if *wait == 0 || time.Now().Add(*retry).After(deadline) {
-			return fmt.Errorf("[§9.2 注册流程] 设备仍在 provisioning；identity 已安全保存，请用同一邀请重试，不要重置私钥")
+			return fmt.Errorf("[§9.2 加入流程] 设备仍在 provisioning；identity 已安全保存，请用同一加入码重试，不要重置私钥")
 		}
 		time.Sleep(*retry)
 	}
@@ -182,7 +332,7 @@ func cmdClientEnroll(args []string) error {
 	if err := removeClientExpectedCurrent(*expectedCurrent); err != nil {
 		return err
 	}
-	fmt.Printf("✓ Linux 客户端已完成注册、验签配置安装与首次状态收敛。\n")
+	fmt.Printf("✓ Linux 客户端已加入网络，并完成验签配置安装与首次状态收敛。\n")
 	return nil
 }
 
@@ -191,7 +341,7 @@ func ensureLocalServerPrerequisites(server *clientenroll.ServerEnrollment) error
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
 		command := exec.CommandContext(ctx, "/bin/sh", "-s")
-		command.Stdin = strings.NewReader(enrollssh.InstallWireGuardToolsScript)
+		command.Stdin = strings.NewReader(installLocalWireGuardToolsScript)
 		command.Stdout = io.Discard
 		var stderr bytes.Buffer
 		command.Stderr = &stderr
@@ -227,10 +377,10 @@ func ensureServerWireGuardTools(server *clientenroll.ServerEnrollment, executabl
 	// This happens before the invitation is claimed. Failure can leave only a
 	// local, unreferenced WireGuard key; it cannot create Identity or SSOT state.
 	if err := install(); err != nil {
-		return fmt.Errorf("服务器 Device 需要 wireguard-tools，邀请尚未消费: %w", err)
+		return fmt.Errorf("服务器 Device 需要 wireguard-tools，加入码尚未消费: %w", err)
 	}
 	if !executable("/usr/bin/wg") || !executable("/usr/bin/wg-quick") {
-		return errors.New("wireguard-tools 安装完成但 /usr/bin/wg 或 /usr/bin/wg-quick 仍不可执行；邀请尚未消费")
+		return errors.New("wireguard-tools 安装完成但 /usr/bin/wg 或 /usr/bin/wg-quick 仍不可执行；加入码尚未消费")
 	}
 	return nil
 }

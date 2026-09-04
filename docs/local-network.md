@@ -8,7 +8,7 @@
 > 透明三层组网、租户划分或根据当前 Wi-Fi 自动切换策略
 >
 > **上位约束:** [设计文档](design.md)中的不变量、SSOT 与单一 Agent 决策边界
-> 仍是唯一事实来源；设备注册、Direct / Auto / 指定出口及平台接管方式服从
+> 仍是唯一事实来源；设备加入、Direct / Auto / 指定出口及平台接管方式服从
 > [客户端接入设计](client-access.md)。实际是否实现、发布或部署只看
 > [当前状态](status/current.md)。
 
@@ -60,7 +60,7 @@ sing-box 的 Hysteria2 与 Trojan 出站都能承载 TCP/UDP，只说明底层�
 它**不表示**：
 
 - Loom deployment、租户或 CA 信任域；
-- Device 的永久分组或 Enrollment 邀请归属；
+- Device 的永久分组或加入码归属；
 - 客户端当前连接的 Wi-Fi、SSID 或物理 LAN；
 - 用户指定的中继、出口、首跳或完整路径；
 - 一条新的 WireGuard 隧道或拓扑节点。
@@ -140,7 +140,7 @@ local_networks:
 
 - `gateway_device`：终止该地址域的 Device；它必须具有 Forwarding 能力并对目标
   prefix 存在有效路由；
-- `access_devices`：获准请求该地址域的 Device；邀请、registry 自报或“拥有普通
+- `access_devices`：获准请求该地址域的 Device；加入码、registry 自报或“拥有普通
   from_request 声明”都不能自动扩大这份集合；
 - `prefixes`：允许访问的目标范围，不代表需要写入客户端内核路由表；
 - `declaration`：只复用现有 objective、allowed servers、max hops、窗口和阻尼；

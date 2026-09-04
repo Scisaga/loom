@@ -125,7 +125,7 @@ func TestEffectiveDefaultDeclaration(t *testing.T) {
 		t.Fatalf("显式设备默认策略=%q,期望 de-fixed", got)
 	}
 
-	for _, access := range []*AccessRole{{Platform: Desktop}, {Platform: LinuxServer}, nil} {
+	for _, access := range []*AccessRole{{Platform: WindowsDesktop}, {Platform: LinuxServer}, nil} {
 		if got := access.EffectiveDefaultDeclaration(); got != "" {
 			t.Fatalf("未显式配置默认策略却推导出 %q", got)
 		}

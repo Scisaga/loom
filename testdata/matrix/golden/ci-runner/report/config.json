@@ -267,38 +267,6 @@
         "cn-gz",
         "sg-vps"
       ]
-    },
-    {
-      "access": "workstation",
-      "declaration": "sg-fixed",
-      "chain": [
-        "cn-bj",
-        "sg-vps"
-      ]
-    },
-    {
-      "access": "workstation",
-      "declaration": "sg-fixed",
-      "chain": [
-        "cn-cd",
-        "sg-vps"
-      ]
-    },
-    {
-      "access": "workstation",
-      "declaration": "sg-fixed",
-      "chain": [
-        "cn-gz",
-        "sg-vps"
-      ]
-    },
-    {
-      "access": "workstation",
-      "declaration": "sg-fixed",
-      "chain": [
-        "cn-sh",
-        "sg-vps"
-      ]
     }
   ]
 }

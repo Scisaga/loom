@@ -187,9 +187,6 @@ func checkServicePorts(fs *findings, s *model.SSOT) {
 			case !mp.ManagedAutomatic() && !mp.ExplicitOverride():
 				fs.add("§4.5 服务", where,
 					"端口 %d 既没绑声明也没开 services —— 它不会路由任何流量", mp.Port)
-			case mp.ManagedAutomatic() && len(s.Services) == 0:
-				fs.add("§4.5 服务", where,
-					"端口 %d 按服务分流,但一个服务都没声明 —— 所有流量都会落到兜底", mp.Port)
 			}
 		}
 		if len(automaticPorts) > 1 {

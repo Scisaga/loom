@@ -75,6 +75,26 @@ declarations:
 	}
 }
 
+func TestAddAccessClientBuildsWindowsDesktopAccess(t *testing.T) {
+	plan, err := AddAccessClient(fixtureSSOT(t), ClientInput{
+		ID: "windows-laptop", Name: "Windows laptop", Platform: model.WindowsDesktop,
+		DestinationGrants: []string{"best-egress"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := loadResult(t, plan.Content).NodeByID()["windows-laptop"]
+	if node == nil || node.Server != nil || node.Access == nil || node.Access.Platform != model.WindowsDesktop {
+		t.Fatalf("Windows access node = %#v", node)
+	}
+	if err := ValidateAccessClientShape(loadResult(t, plan.Content), node, ClientInput{
+		ID: node.ID, Name: node.Name, Platform: model.WindowsDesktop,
+		DestinationGrants: []string{"best-egress"},
+	}); err != nil {
+		t.Fatalf("validate Windows access shape: %v", err)
+	}
+}
+
 func TestAddAccessRolePreservesExistingServerDevice(t *testing.T) {
 	content := fixtureSSOT(t)
 	before := loadResult(t, content).NodeByID()["cn-bj"]

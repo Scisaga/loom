@@ -24,26 +24,36 @@ Loom 用一份声明式 SSOT 管理多节点网络：生成 WireGuard 与 sing-b
 |---|---|
 | ![Loom 动态双环拓扑](assets/loom-control-center-topology-misaka-v1.svg) | ![Loom Service 管理](assets/loom-control-center-services-misaka-v1.svg) |
 
-桌面客户端提供三种模式：本地直连、按中控规则自动选路、固定出口。
+Windows 客户端提供本地直连、按中控规则自动选路和固定出口三种模式；三个 edition
+复用同一套原生界面。
 
 <p align="center">
-  <img src="assets/client/windows/loom-client-home-misaka-v1.svg" width="86%" alt="Loom Windows 客户端主界面">
+  <img src="assets/client/windows/loom-client-windows-current.png" width="86%" alt="Loom Windows 客户端原生界面">
 </p>
+
+<p align="center"><sub>当前原生客户端界面；Device、状态目录和出口名称均使用脱敏示例值。</sub></p>
 
 ## 加入网络
 
-服务器、桌面和手机在 Loom 中都是 **Device**。添加设备时，管理员在 **Devices → Add Device** 创建一次性邀请；新设备自行生成密钥、领取邀请，再安装经过签名的配置。邀请可以通过以下方式交给设备：
+服务器、桌面和手机在 Loom 中都是 **Device**。管理员先在 **Devices → Create Device** 创建设备并生成一次性加入二维码；客户端正常启动后导入二维码，绑定这个既有 Device，再取得经过签名的配置。导入二维码不会创建第二个 Device。加入码可以通过以下方式交给设备：
 
 | 方式 | 适用场景 | 支持情况 |
 |---|---|---|
-| 二维码 | 桌面或移动客户端扫码；点击二维码可直接下载邀请文件 | 中控已支持；Windows 和 Android 客户端仍在开发 |
-| `.loom-invite` 文件 | Linux 或桌面设备导入 | Linux 已支持 |
-| `loom://enroll#…` | 无图形界面的 Linux 主机 | Linux CLI 已支持，建议从标准输入粘贴，避免写入命令历史 |
-| 一行安装命令 | Linux Server 快速安装 | Linux amd64 已支持；下载地址由实际部署配置决定 |
+| 二维码 | Windows 或移动客户端扫描/导入；点击二维码下载 PNG | 中控与三个 Windows edition 的原生 GUI 已支持选择、拖入和剪贴板粘贴；Android 尚未实现 |
+| `.loom-invite` 文件 | Linux 或 Windows 客户端导入 | Linux 与三个 Windows edition 的原生 GUI 已支持 |
+| `loom://enroll#…` | 无扫码能力时使用二维码中的协议内容 | Linux CLI 支持；Windows GUI 可从剪贴板接收二维码图片或该文本 |
 
-四种入口使用同一份邀请；邀请有效期很短，而且只能使用一次。平台由客户端报告，不需要管理员预先填写。邀请还可以绑定一个固定版本的入网预设，写入设备的初始职责和访问范围。设备注册后，重启、重连、切换网络或正常升级都会继续使用原有身份。
+上表描述的是当前仓库代码能力，不等于现网已经部署。新二维码携带公开平台公钥的
+SHA-256 指纹，Windows 在提交一次性码前与发行包内嵌公钥本地比对；旧二维码在迁移期
+仍由 ready 响应和首次 signed pull 完成同一信任校验，不再要求额外的公网 `/trust` 路由。
+部署状态以[当前状态](docs/status/current.md)为准。
 
-作为转发节点或公网出口的 Linux Server，还要声明公网地址、UDP 入站端口和隧道方向。这些字段描述服务器如何被其他设备访问，与手选路径无关。SSH 导入只用于迁移旧设备，新设备统一使用 Enrollment。完整步骤见[Linux 客户端安装](docs/linux-client-install.md)和[Device 生命周期与交付架构](docs/device-lifecycle-and-delivery.md)。
+这些载体使用同一份加入码；加入码有效期很短，而且只能使用一次。平台由客户端报告，不需要管理员预先填写。加入码还可以绑定一个固定版本的入网预设，写入设备的初始职责和访问范围。设备加入后，重启、重连、切换网络或正常升级都会继续使用原有身份。
+
+Linux 的一行安装命令只下载并验证通用软件包，不携带 Device 或加入码；安装后仍需导入
+`.loom-invite` 或兼容协议 URI 才会绑定既有 Device。
+
+作为转发节点或公网出口的 Linux Server，还要声明公网地址、UDP 入站端口和隧道方向。这些字段描述服务器如何被其他设备访问，与手选路径无关。所有 Device 都使用同一加入网络流程（底层协议内部仍名为 Enrollment）。完整步骤见[Linux 客户端安装](docs/linux-client-install.md)和[Device 生命周期与交付架构](docs/device-lifecycle-and-delivery.md)。
 
 ## 核心能力
 
@@ -60,12 +70,12 @@ Loom 用一份声明式 SSOT 管理多节点网络：生成 WireGuard 与 sing-b
 
 ```mermaid
 flowchart TB
-    subgraph Enrollment["首次入网"]
+    subgraph Join["首次加入网络"]
         direction LR
-        Admin["管理员创建邀请"] --> Carrier["二维码 · 邀请链接 · 邀请文件 · 安装命令"]
-        Carrier --> Package["下载并验证安装包"]
-        Package --> Claim["本机生成设备密钥和 CSR<br/>领取邀请"]
-        Claim --> Identity["登记身份<br/>写入初始职责和访问范围"]
+        Admin["管理员创建 Device 和加入码"] --> Carrier["二维码 · 加入链接 · 加入文件"]
+        Package["下载并验证通用客户端"] --> Bind["客户端启动并导入加入输入<br/>本机生成设备密钥和 CSR"]
+        Carrier --> Bind
+        Bind --> Identity["绑定既有 Device<br/>写入初始职责和访问范围"]
     end
 
     subgraph Control["持续控制与发布"]
@@ -90,7 +100,7 @@ flowchart TB
     Measure -.->|可信运行证据| Console
 ```
 
-入网流程只在首次注册时运行。此后设备持续拉取签名配置、安装更新并上报测量结果。运行证据不会写回 SSOT；Agent 也只在已授权的候选中调整自动模式。
+加入流程只在首次导入二维码或中控导出的加入文件时运行。此后设备持续拉取签名配置、安装更新并上报测量结果。运行证据不会写回 SSOT；Agent 也只在已授权的候选中调整自动模式。
 
 控制平面暂时离线不会中断数据平面。设备继续使用最后一份安装成功的配置，Agent 也可以根据本地观测继续选路。
 
@@ -106,7 +116,7 @@ flowchart TB
 
 保存 SSOT 后，发布器会自动校验、渲染、签名和分发，界面不再提供单独的“发布”按钮。二进制升级仍需通过 `loom release` 明确放行。期望配置和运行状态始终分开：保存成功只说明新配置已经进入发布流程，设备是否安装、链路是否可用，仍以签名上报为准。
 
-只有中控开放写操作。普通设备使用自己最后安装的签名配置。旧设备可以通过 SSH 导入，但该入口只用于迁移；新设备应使用统一的 Enrollment。更完整的权限与证据边界见[设计文档](docs/design.md)。
+只有中控开放写操作。普通设备使用自己最后安装的签名配置。创建和加入 Device 只走统一流程，不再提供 SSH Add node 入口。更完整的权限与证据边界见[设计文档](docs/design.md)。
 
 ## 设备、职责与路径
 
@@ -165,7 +175,7 @@ go build -o out/loom ./cmd/loom
 
 | 阶段 | 命令 | 作用 |
 |---|---|---|
-| 建模 | `validate`, `firewall`, `addnode`, `rotate-tunnel` | 校验 SSOT、计算防火墙规则、分配新节点地址与端口、给隧道换端口 |
+| 建模 | `validate`, `firewall`, `rotate-tunnel` | 校验 SSOT、计算防火墙规则、给隧道换端口 |
 | 渲染 | `render`, `diff`, `hydrate` | 生成配置、查看差异、在节点本地填充秘密 |
 | 发布 | `snapshot`, `verify`, `release`, `publish`, `publisher` | 显式放行二进制，创建验签快照并发布到静态分发点 |
 | 收敛 | `pull`, `apply`, `selfcheck`, `pin`, `rollback`, `snapshots` | 拉取或推送配置、安装验证、钉住二进制、整份退回历史快照、列出还能退到哪 |
@@ -197,7 +207,7 @@ go build -o out/loom ./cmd/loom
 | `internal/report/`, `internal/events/` | 节点观测、转述与状态变化历史 |
 | `internal/deploy/`, `internal/publish/` | 安装回滚、静态发布与版本钉住 |
 | `internal/secret/` | 秘密占位符、按节点拆分与轮换 |
-| `internal/enrollkey/`, `internal/enrollssh/`, `internal/enrollplan/` | 共享 bootstrap 身份、SSH 主机信任与节点/隧道接入事务计划 |
+| `internal/enrollplan/` | Device 加入时生成节点、隧道与策略的事务计划 |
 | `internal/ssotedit/` | 保留无关 YAML 结构的 Service 定向编辑 |
 | `internal/webui/` | 节点只读界面与中控写入口 |
 | `testdata/matrix/` | 合成 SSOT 与逐字节 golden 配置 |
@@ -221,9 +231,9 @@ go test ./internal/render/ -run TestGolden -update
 ## 深入阅读
 
 - [设计文档](docs/design.md)：模型、不变量、数据平面、控制平面与部署顺序。
-- [Device 生命周期与交付架构](docs/device-lifecycle-and-delivery.md)：统一 Device、Enrollment、授权边界、版本化对象图与分阶段迁移。
-- [客户端接入设计](docs/client-access.md)：Windows、Linux Server、Android 的单入口、设备默认出口、注册、分发与升级边界。
+- [Device 生命周期与交付架构](docs/device-lifecycle-and-delivery.md)：统一 Device、加入协议、授权边界、版本化对象图与分阶段迁移。
+- [客户端接入设计](docs/client-access.md)：Windows、Linux Server、Android 的单入口、设备默认出口、加入网络、分发与升级边界。
 - [Local Network 目标设计](docs/local-network.md)：具名局域网、重复 CIDR、显式 TCP/UDP 访问及 SSOT/授权边界；当前尚未实现。
-- [Linux 客户端安装](docs/linux-client-install.md)：从中控创建邀请、下载并校验分发包、完成首次签名拉取。
+- [Linux 客户端安装](docs/linux-client-install.md)：从中控创建 Device 和加入码、下载并校验分发包、完成首次签名拉取。
 - [决策记录](docs/decisions.md)：重要设计选择、被推翻的假设及其证据。
 - [参考 SSOT](testdata/matrix/ssot.yaml)：覆盖方向约束、双轴选择、服务契约与多平台接入的合成示例。

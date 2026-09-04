@@ -1,10 +1,16 @@
 package report
 
 import (
+	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -17,10 +23,11 @@ import (
 )
 
 type clientInvitePayload struct {
-	Schema    int    `json:"schema"`
-	Endpoint  string `json:"endpoint"`
-	Token     string `json:"token"`
-	ExpiresAt string `json:"expires_at"`
+	Schema            int    `json:"schema"`
+	Endpoint          string `json:"endpoint"`
+	Token             string `json:"token"`
+	ExpiresAt         string `json:"expires_at"`
+	PlatformKeySHA256 string `json:"platform_key_sha256"`
 }
 
 type clientProvisionFunc func(client clientregistry.Client, csrPEM string) (*webui.ClientBootstrap, error)
@@ -54,8 +61,18 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 		if err != nil {
 			return "", err
 		}
+		paths, err := clientPaths(c)
+		if err != nil {
+			return "", err
+		}
+		key, err := readClientPlatformPublicKey(paths.platformPublic)
+		if err != nil {
+			return "", err
+		}
+		keyDigest := sha256.Sum256(key)
 		body, err := json.Marshal(clientInvitePayload{
 			Schema: 1, Endpoint: endpoint, Token: token, ExpiresAt: expires,
+			PlatformKeySHA256: hex.EncodeToString(keyDigest[:]),
 		})
 		if err != nil {
 			return "", err
@@ -290,6 +307,24 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 	}
 }
 
+func readClientPlatformPublicKey(path string) (ed25519.PublicKey, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, errors.New("deployment platform public key is unavailable")
+	}
+	defer file.Close()
+	body, err := io.ReadAll(io.LimitReader(file, 1025))
+	if err != nil || len(body) == 0 || len(body) > 1024 {
+		return nil, errors.New("deployment platform public key is unavailable")
+	}
+	encoded := strings.TrimSpace(string(body))
+	key, err := base64.StdEncoding.Strict().DecodeString(encoded)
+	if err != nil || len(key) != ed25519.PublicKeySize || base64.StdEncoding.EncodeToString(key) != encoded {
+		return nil, errors.New("deployment platform public key is invalid")
+	}
+	return ed25519.PublicKey(key), nil
+}
+
 func registryMembership(status string) string {
 	switch status {
 	case "ready", "managed", "online", "stale", "problem", "decommissioned":
@@ -358,7 +393,7 @@ func deviceEnrollmentProfiles(c *Control) ([]*model.EnrollmentProfileVersion, er
 	}
 	ssot, _, err := loadValidatedSSOTSnapshot(c.SSOTPath)
 	if err != nil {
-		return nil, fmt.Errorf("read enrollment profiles: %w", err)
+		return nil, fmt.Errorf("read join profiles: %w", err)
 	}
 	if _, err := ssot.DefaultEnrollmentProfile(); err != nil {
 		return nil, err
@@ -385,12 +420,12 @@ func selectedDeviceEnrollmentProfile(c *Control, reference string) (*model.Enrol
 			return profile, nil
 		}
 	}
-	return nil, fmt.Errorf("enrollment profile %q is not available", reference)
+	return nil, fmt.Errorf("join profile %q is not available", reference)
 }
 
 func validateSupportedEnrollmentProfile(profile *model.EnrollmentProfileVersion) error {
 	if profile == nil || len(profile.Responsibilities) == 0 {
-		return fmt.Errorf("enrollment profile has no responsibilities")
+		return fmt.Errorf("join profile has no responsibilities")
 	}
 	hasUse := false
 	for _, responsibility := range profile.Responsibilities {
@@ -399,14 +434,14 @@ func validateSupportedEnrollmentProfile(profile *model.EnrollmentProfileVersion)
 			hasUse = true
 		case "forward", "internet_egress":
 		default:
-			return fmt.Errorf("enrollment profile %s requires unsupported responsibility %q", profile.Reference(), responsibility)
+			return fmt.Errorf("join profile %s requires unsupported responsibility %q", profile.Reference(), responsibility)
 		}
 	}
 	if hasUse && len(profile.DestinationGrants) == 0 {
-		return fmt.Errorf("enrollment profile %s grants use_loom without destinations", profile.Reference())
+		return fmt.Errorf("join profile %s grants use_loom without destinations", profile.Reference())
 	}
 	if !hasUse && len(profile.DestinationGrants) != 0 {
-		return fmt.Errorf("enrollment profile %s has destination grants without use_loom", profile.Reference())
+		return fmt.Errorf("join profile %s has destination grants without use_loom", profile.Reference())
 	}
 	return nil
 }

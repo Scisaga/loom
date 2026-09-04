@@ -6,9 +6,9 @@
 > **文档边界:** 本文定义不变量、目标设计与依赖关系；实际已经运行到哪里只看
 > [status/current.md](status/current.md)。目标机制尚未落地时必须明确标成“目标态”，
 > 不能用将来时能力解释当前生产行为。控制中心的仓库实现边界另见
-> [README](../README.md#控制中心当前边界)。v1 Windows、Linux Server 与 Android
-> 的客户端交付设计另见[客户端接入设计](client-access.md)；统一 Device、Enrollment、
-> 授权拆分与版本化对象图的分阶段目标见
+> [README](../README.md#控制中心)。v1 Windows、Linux Server 与 Android
+> 的客户端交付设计另见[客户端接入设计](client-access.md)；统一 Device、加入网络
+> （内部协议名为 Enrollment）、授权拆分与版本化对象图的分阶段目标见
 > [Device 生命周期与交付架构](device-lifecycle-and-delivery.md)；具名局域网、重复 CIDR
 > 与显式 TCP/UDP 访问的后续目标设计另见 [Local Network 专题](local-network.md)，
 > 该专题当前未实现；Linux Desktop 不在 v1 范围内。
@@ -157,8 +157,10 @@ Loom 管两种机器,再加上一类它**根本不管**的东西:
 > 对同一配置包里的重复路径直接报错。
 
 > **为什么不担心"两个配置源打架":源只有一个。** SSOT → 渲染器是唯一的配置
-> 来源,投递也只有该机的 Agent 一条。§18 那套一次性链接是给**没有 Agent 的
-> 设备**用的,而那种设备只可能是纯接入节点,不存在需要合并的情况。
+> 来源。§18 的加入输入只负责把中控已创建的 Device 与本机生成的身份绑定，并引导
+> 首次签名配置；它适用于包括服务器在内的所有新 Device，不是第二个配置源。完成绑定后，
+> 各运行宿主仍用同一 Device 身份走 signed pull/Agent 投递，兼具 `server` 与 `access`
+> 职责的配置继续在同一次渲染中合并。
 
 ### 1.4 目标地址带服务类型标签
 
@@ -792,9 +794,9 @@ VPS —— 它不能被主动拨号，只能向每个需要到达它的节点反
 
 ### 7.1 两种接管方式
 
-| 方式 | 机制 | 需要 root | 粒度 |
+| 方式 | 机制 | 需要特权 | 粒度 |
 |---|---|---|---|
-| **TUN** | 虚拟网卡接管纳入管理的流量,再按中控规则分流 | 是 | 按中控 matcher |
+| **TUN** | 虚拟网卡接管纳入管理的流量,再按中控规则分流 | Linux root / Windows 管理员或系统服务 | 按中控 matcher |
 | **mixed(HTTP+SOCKS5)** | 监听本地端口,程序显式指向 | 否 | v1 日常入口同样按中控规则；Linux 可有兼容覆盖 |
 
 ### 7.2 平台差异
@@ -809,6 +811,60 @@ VPS —— 它不能被主动拨号，只能向每个需要到达它的节点反
 
 Linux 服务器开 TUN 需 root、要改路由表,**配错一次可能把自己的 SSH 锁在外面**。
 mixed 是纯用户态监听,配崩了最多代理不通。
+
+### 7.2.1 Windows 的 Portable 与安装版
+
+`Portable` 描述交付和生命周期，`TUN / mixed` 描述流量如何进入 sing-box；两组概念
+不能混为一谈。Windows 支持三个产品运行形态：
+
+| 形态 | 流量覆盖 | 权限与系统改动 | 生命周期 |
+|---|---|---|---|
+| **Portable Mixed** | 只覆盖显式配置 `127.0.0.1:1080` 的 HTTP/SOCKS 应用 | 普通用户；不创建虚拟网卡、不改路由 | 前台进程，退出即停止代理 |
+| **Portable TUN** | 透明覆盖纳入路由的 TCP、UDP、DNS 及不支持代理的应用 | 应用启动和二维码导入无需提权；当前预览启用 TUN 前要求管理员令牌 | 前台受监督进程，退出必须清理网卡和路由 |
+| **安装版（管理员 GUI 预览；MSI 尚未交付）** | TUN 主接管，同时保留同规则 mixed | 当前交互预览要求管理员；目标日常 UI 和二维码导入不提权 | SCM 下保持 Service；交互预览直接使用机器状态，目标托盘走受限 IPC |
+
+Portable TUN 的“免安装”只表示不注册 MSI/Windows Service，**不表示启用 TUN 时无管理员
+权限或系统改动**。客户端必须先以普通权限完成启动和二维码导入；从真正启用 TUN 的提权
+边界开始，用户可写目录中的程序及 sidecar DLL 存在替换/加载竞态；实现
+必须在提权前后重验 Loom 平台签名、内容哈希、PE 身份和 Wintun Authenticode，使用安全
+DLL 搜索策略，并在受保护的运行目录中完成启动。不能把“解压后右键管理员运行任意 DLL”
+当作可发布的 Portable TUN。
+
+Portable Mixed 是开发、临时使用和逐应用代理的默认形态。TUN 只在需要透明覆盖不支持
+代理的程序、UDP/QUIC 或统一 DNS 路径时启用；它不是性能加速模式。三种形态仍读取同一
+份签名配置，复用 Direct / Auto / 指定出口，不能产生第二套路由规则。
+
+当前 Windows 构建已把三种形态固定进不同二进制，支持 `--build-info` 自证，Portable
+使用 `%LocalAppData%\LoomPortable`、用户范围 DPAPI 和前台退出生命周期。Portable TUN
+只在二维码导入成功、即将启动 TUN 数据面时检查管理员令牌。客户端只从完整签名配置派生本机接管面：Mixed
+删除 TUN 入口及其规则引用，TUN/Installed 保留完整形状；全部先执行结构校验和
+`sing-box check`，再由 Job Object 监督 `sing-box run`。切换前预检失败不影响旧进程，
+新进程启动失败或随后崩溃会恢复上一份健康的内存候选。
+
+三个 edition 已共用原生 Windows GUI 和“启动后导入二维码”的加入核心；当前 Installed
+交互预览要求管理员并使用机器范围 DPAPI，目标普通用户托盘仍必须经受限 Service IPC。
+GUI 选择或接收拖入的二维码 PNG、
+`.loom-invite` 文件，最终进入同一个内部 claim；客户端在内存生成 P-256 key/CSR，把可重试身份用相应范围
+的 DPAPI 保存。Ready 响应必须同时通过节点证书与本机私钥绑定、平台公钥、signed
+current/device assignment、CA 和秘密格式校验。数据平面不再由用户选择：每个发行 ZIP
+固定携带同架构的 `windows-dataplane.zip`、preview 说明和第三方许可证，客户端自动定位并验证 Loom 签名、PE 架构、
+sing-box 身份与 Wintun Authenticode。最后才写 `config/client.json` 作为加入完成标记；
+失败/等待期间普通启动仍保持 disconnected，已加入状态拒绝被另一二维码静默替换。
+组件预检之后、claim POST 之前还会调用不带 token 的 HTTPS trust 端点，比对中控与发行包的
+部署平台公钥。未完成的精确二维码凭据由 DPAPI 保护；中控仅允许同一 token、CSR、request ID、
+平台和 Device facts 在一小时恢复窗口内重放，成功提交后清除 pending token。数据面全局锁
+覆盖整个 joined workload，不在 sing-box 子进程更新切换间释放。
+
+当前原生 Win32 GUI 已接入三个 edition 的首次导入、Connection 状态、数据面启动/停止
+和出口选择；Portable TUN 在加入后请求 UAC，Installed 则在读取机器状态前请求 UAC。
+它不依赖 WebView2 或额外 GUI 运行时。Installed 在 SCM 下仍运行 Service，但正式普通用户
+托盘、受限 IPC、MSI 和 ProgramData ACL 尚未交付，不能把管理员 GUI 预览描述为可发布客户端。
+
+真实 sing-box 的 Portable Mixed 回环监听已在本机验证；完整临时事务也已完成二维码解析 →
+内部身份绑定 → 用户 DPAPI → signed first pull → Portable Mixed 激活并跨过启动宽限期 →
+干净停止，全程未创建 TUN 或修改路由。实际 TUN
+激活与退出清理、跨进程持久回滚、端到端健康探测和 MSI 仍未验收，因此这些制品仍是开发
+构建；“已经编译出 TUN 版”不能写成“已验证 TUN 联网”。
 
 ### 7.3 v1 只有一个中控托管的日常入口
 
@@ -1271,10 +1327,8 @@ SSOT(拓扑 + 服务定义 + 策略)
 
 ## 13. 密钥与信任
 
-> **实现状态:** §13.2 的 SSH User/Host CA 是目标设计，当前声明接入尚未实现证书
-> 签发。现有控制中心使用一组共享 Ed25519 enrollment/management identity，操作者
-> 人工放入远端 `authorized_keys`，并在中控专用 `known_hosts` 中钉住精确主机密钥；
-> 它不会在声明提交后自动轮换或撤销。
+> **实现状态:** §13.2 的 SSH User/Host CA 是运维目标设计，不是 Device 加入机制。
+> Device 统一由中控创建后在本机生成身份并导入加入码；控制中心不再提供 SSH Add node。
 
 ### 13.1 私钥不集中生成
 
@@ -1288,7 +1342,7 @@ SSOT(拓扑 + 服务定义 + 策略)
 
 > **核心安全属性:控制平面沦陷 ≠ 隧道历史流量可解密。** 攻击者能篡改拓扑(会被审计和监控发现),但拿不到节点私钥。
 
-Agent 首次注册时在本地生成 WG 密钥对,只上报公钥。**私钥永不离开节点。**
+Agent 首次接入时在本地生成 WG 密钥对,只上报公钥。**私钥永不离开节点。**
 
 ### 13.2 SSH 证书 CA 替代 authorized_keys
 
@@ -1368,44 +1422,49 @@ user),报成一条状态,进事件历史。于是"开了三天还没关"是一�
 而不是没人知道的事。
 
 
-### 13.5 客户端注册复用现有 SSOT 与发布链
+### 13.5 客户端加入网络复用现有 SSOT 与发布链
 
-客户端注册不是第二套组网或选路模型。它只是把一台新 Linux 接入设备安全地加入
-现有 SSOT，并把该节点首次运行所需的身份、秘密和签名发布坐标交到设备手中。唯一
-允许的链路是：
+管理员先在中控创建 Device。客户端导入该 Device 的二维码只完成身份绑定和首次配置交付，
+不会创建第二条 Device，也不是另一套组网或选路模型。唯一允许的链路是：
 
 ```text
-中控创建短时、一次性邀请
+中控创建 Device，并为它生成短时、一次性加入二维码
     ↓
-设备本地生成 P-256 私钥与 PKCS#10 CSR（私钥不离机）
+客户端正常启动，用户扫描或导入二维码
     ↓
-中控原子消费邀请并绑定 CSR 的 canonical SPKI 指纹
+设备本地生成 P-256 私钥与 PKCS#10 CSR（私钥不离机；Portable 用用户 DPAPI 落盘）
+    ↓
+中控原子消费加入码，把既有 Device 绑定到 CSR 的 canonical SPKI 指纹
     ↓
 先生成并预置新旧节点所需秘密，再提交同一份 SSOT
     ↓
 现有 publisher 校验、渲染、签名并自动发布该 SSOT
     ↓
-publisher 确认精确 SSOT 后，注册响应才返回 ready bootstrap
+publisher 确认精确 SSOT 后，内部 join 响应才返回 ready bootstrap
     ↓
 设备落盘节点证书、CA、平台公钥、release authority 与本机秘密
     ↓
 设备执行现有 signed pull；验签、hydrate、预检、原子安装后才进入运行态
 ```
 
-邀请绑定成功只表示 `claimed/provisioning`，不表示隧道健康、业务流量已经通过或
+加入码绑定成功只表示 `claimed/provisioning`，不表示隧道健康、业务流量已经通过或
 客户端在线。中控在 SSOT 和必要秘密耐久写入、且 publisher 确认对应版本之前只能
-返回 pending；不允许用假配置跳过这段等待。相同邀请、相同 CSR 身份和 request ID
-的网络重试必须幂等，换一把密钥重复消费则失败。邀请 token 只放在
+返回 pending；不允许用假配置跳过这段等待。首次绑定受二维码 TTL 限制；绑定后，相同 token、
+相同 CSR、request ID、平台和 Device facts 的网络重试只在一小时恢复窗口内幂等，窗口以
+`consumed_at` 起算，并在 ready 后重新给足一次恢复时间；换一把密钥或 CSR 重复消费立即失败。
+加入 token 只放在
 `loom://enroll#<base64url payload>` 的 fragment 中，由客户端在 POST body 提交，
-不得进入 HTTPS query、日志或列表接口；列表也不能重新取回已消费 token。
-注册表中的 `ready` 只表示服务端 bootstrap 已准备好，不是客户端已经收到、安装或
+不得进入 HTTPS query、日志或列表接口；列表也不能重新取回已消费 token。当前 Windows
+Portable 预览只在未完成期间把它存入 current-user DPAPI，普通完成标记提交后立即清除；
+Installed 目标态必须由受限 Service broker 写入 machine-scope/受保护 ProgramData。
+内部绑定记录中的 `ready` 只表示服务端 bootstrap 已准备好，不是客户端已经收到、安装或
 在线；页面必须写成 “Bootstrap ready”，数据面在线仍只能来自后续可信运行态报告。
 
-注册成功后，设备仍从签名 SSOT 获得 Service、Policy、候选和授权。Direct / Auto /
+加入成功后，设备仍从签名 SSOT 获得 Service、Policy、候选和授权。Direct / Auto /
 指定出口只是客户端本机的三个顶层偏好：Auto 继续使用
 `Host → Service → Policy → Agent`，指定出口只固定最后一跳且前置中继仍由 Agent
 择优，Direct 才是本地直连。三种模式不创建新隧道模型、不把 Current Paths 变成可写
-选择器，也不通过邀请携带出口或路径参数。
+选择器，也不通过加入码携带出口或路径参数。
 
 ## 14. 控制通道
 
@@ -1683,7 +1742,9 @@ pull 周期 45 秒并带最多 15 秒抖动，正常纯配置收敛目标在 90 
 单独列一段,并且直接写出下一步该做什么:排空之后要**同时**标下线并删掉引用
 它的隧道(校验器要求这两件一起做),下线之后才轮到删节点本身和轮换凭据。
 
-反方向也一样:`loom addnode` 负责加。隧道地址和端口由分配器算,不手填
+新增 Device 只允许先在中控 Create Device，再由客户端导入二维码/加入文件完成绑定；
+`loom addnode` 与控制台 SSH Add node 已删除。隧道地址和端口仍由加入事务中的分配器
+计算，不由用户手填
 ([D56](decisions.md#d56--隧道地址和端口由分配器算不靠手填))。
 
 这两件事没法自动化 —— 前者要重新分发给所有还在的节点,后者要动 CA 私钥。
@@ -2089,13 +2150,8 @@ Direct / Auto / 指定出口三态偏好；它不属于中控 Services 或设备
 
 #### 中控角色是本机 bootstrap 配置,不是渲染产物
 
-`/etc/loom/control.json` 指出 SSOT 在哪、运维口令从哪个引用取，并可指定共享
-bootstrap SSH 私钥与接入专用 `known_hosts` 的本机路径。节点声明 Review 默认
-会从中控经 HTTPS 把确定后的一个公网 endpoint IP 交给 `ipwho.is`，只取国家代码
-与城市作为**可编辑建议**；失败不阻断接入，`geoip_disabled: true` 可完全关闭。
-操作者也可在确认 SSH host key 时对单次接入先行关闭，保证首次 Review 前不会发送。
-这个结果不是端点可达性、机房位置或合规证明，提交前仍由操作者复核并与 revision
-一起锁定。它引用的路径(git 工作
+`/etc/loom/control.json` 指出 SSOT 在哪、运维口令从哪个引用取，以及签名与分发所需的
+中控本机坐标。它引用的路径(git 工作
 副本、秘密层、本机信任库)是**这台机器上的事实**,不是平台约定 —— 写进 SSOT
 会变成自我引用(SSOT 里记着 SSOT 在哪)。它和发布器的 unit、信任根、本机秘密层
 属于同一类。
@@ -2114,9 +2170,8 @@ bootstrap SSH 私钥与接入专用 `known_hosts` 的本机路径。节点声明
 不该能往别人的界面里注入脚本。
 
 当前界面使用统一的 Misaka 风格服务端渲染壳层，页面不依赖头像、CDN、外部字体
-或外部脚本。只有 Add node 的同步 SSH 表单带一段 CSP hash 精确锁定的内联脚本：
-提交后保留 submitter 值、禁用重复操作并显示等待状态；所有接入语义和校验仍在
-服务端，脚本关闭时表单仍可提交。Overview 只放全网摘要和可折叠证据；顶层语义分为 Network
+或外部脚本。需要显示提交进度的受认证表单只使用 CSP hash 精确锁定的内联脚本；
+脚本关闭时表单仍可提交。Overview 只放全网摘要和可折叠证据；顶层语义分为 Network
 （Nodes / Topology）、Traffic（Services / Live paths）、Operations
 （Deployments / Events）与 Advanced（SSOT）。URL 和后端领域边界保持独立，
 不把期望态 Service、运行态 Agent 决策、节点实体和拓扑关系揉成一张万能表。
@@ -2390,7 +2445,6 @@ RTT 变化也不是逐包 jitter；窗口和来源必须可见。RTT 摘要在�
 布局与视觉层次原型见可编辑 SVG：
 [Overview](../assets/loom-control-center-overview-misaka-v1.svg)、
 [Nodes](../assets/loom-control-center-nodes-misaka-v1.svg)、
-[Add node](../assets/loom-control-center-node-add-misaka-v1.svg)、
 [Node detail](../assets/loom-control-center-node-detail-misaka-v1.svg)、
 [Topology](../assets/loom-control-center-topology-misaka-v1.svg)、
 [Services](../assets/loom-control-center-services-misaka-v1.svg)、
@@ -2398,74 +2452,6 @@ RTT 变化也不是逐包 jitter；窗口和来源必须可见。RTT 摘要在�
 [Deployments](../assets/loom-control-center-deployments-misaka-v1.svg)、
 [Events](../assets/loom-control-center-events-misaka-v1.svg) 与
 [Settings](../assets/loom-control-center-settings-misaka-v1.svg)。
-`Nodes` 原型里的 `Control bootstrap identity` 是中控范围的单一身份，不按节点
-重复生成；每次接入只复用它的公钥。平台签名信任和节点本地 WireGuard 身份仍是
-两套独立密钥边界。
-接入页只接收 SSH 的主机名或 IP、用户和端口；这组管理坐标只用于接入，不自动
-等于已验证的 WireGuard 公网端点。`Node ID` 从受信 SSH 会话里的短 hostname
-规范化派生：ASCII 大写转小写，`-`/`_` 分隔符折叠为单个 `-`；超过 Linux
-WireGuard 接口名可承载长度时保留可读前缀并追加确定性短摘要。原始 hostname
-作为证据展示，不修改远端系统 hostname；规范化后的冲突仍由完整 SSOT 预览拒绝。
-中控只在操作者输入的是公网 global-unicast IP，或 DNS 名在中控解析出至少一个
-公网地址时，才把该 host 作为 `public_endpoint` candidate；远端回报的
-`SSH_CONNECTION` 地址只作诊断，不能提升成端点证据。literal 是私网、本地、
-共享或保留地址时直接失败；DNS 的非公网答案被忽略，没有公网答案才失败关闭。
-这个判据证明 SSH 目标可分类，不证明 WireGuard UDP 入站可达。
-
-`egress_capable` 对新节点默认为 `true`。用户确认“加入网络”后，接入流程在
-远端复用或生成节点 WireGuard 密钥、只取回公钥，再把完整节点与隧道作为一个
-revision-guarded 事务写入 SSOT；这些是加入流程的内部步骤，不应伪装成另一个
-主操作。同一事务还会对账缺失的固定出口声明，并把新出口加入此前已覆盖全部在役
-出口的 `egress_axis:any` 自动池；显式漏掉某些既有出口的地域池或人工 allowlist
-保持原样，Review 必须展示本次规则变化。`direction` 在复核阶段可调整，但不与
-SSH 坐标混在基础表单中。当前
-`Automatic` 因没有受信 UDP 入站证据而保守解析为 `reverse_only`；显式选择
-`bidirectional`、`reverse_only` 或 `direct_only` 是操作者的策略覆盖，不是探测
-结论。选择改变后，initiator、acceptor、监听端、地址、端口和隧道计划全部重新
-推导，不能逐项手填。
-
-受信 preflight 若已证明 WireGuard 内核支持且具备 root 或免密 sudo，但
-`/usr/bin/wg` 缺失，会通过固定、无操作者插值的脚本调用受支持的系统包管理器
-安装 `wireguard-tools`，随后重新预检并核对 hostname 与 SSH server address 未漂移。
-已存在的 `wg` 不升级；安装失败不修改 SSOT。这是新主机声明 bootstrap 的前置条件
-修复，不是稳态组件升级器，也不放宽 D86 对 fleet upgrade/canary/rollback 的要求。
-
-DNS 名的预览会绑定排序后的完整公网解析集合，而不是只绑定最终显示的一个地址；
-提交时重新解析，集合漂移就回到 Review。最终准备 WireGuard identity 的 hostname
-与 SSH server address 从同一条受信 SSH 会话返回，并与预检结果核对，避免 DNS、
-跳板或 SSH 目标在 Review 与 commit 之间换成另一台主机。
-Direction 重算表单本身没有提交能力；提交表单锁定刚刚展示的 direction，并用
-中控 HMAC 把 SSH 坐标、host key、Node ID、endpoint、direction 与 SSOT revision
-绑定。任一字段变化都必须重新预览，不能让两个可同时篡改的 hidden 字段冒充
-“已经复核”。
-若后续部署和排障需要长期 SSH，管理 host/user/port 应保存在只属于中控的
-inventory 中，不能从 `public_endpoint` 推导，也不能进入下发给节点的快照。
-当前 SSOT 只有 `public_endpoint + ssh_port`；接入表单里的 SSH host/user 不会
-持久化，长期运维所需的 control-local management inventory 仍未实现。
-
-这里的“提交”当前只完成**声明 bootstrap**，不是完整主机 bootstrap。它不会把
-Loom binary、平台签名公钥、按节点拆分的秘密层或 TLS CA/证书/私钥装到远端，也
-不会启动 report / pull / Agent。提交成功后，控制中心必须把节点显示为
-`declared / joining / no trusted report`，不能写成“已接入”或“在线”。只有单独的
-bootstrap 流程完成、节点应用新快照并交出首份可信报告，运行态才成立。把这些
-材料纳入网页自动化之前，必须先为它们增加显式的 control-local 路径、证书签发与
-失败回滚契约；不能从仓库目录布局猜路径后直接复制生产密钥。
-
-截至 2026-08-29，中控范围共享 bootstrap SSH 身份及公钥导出、专用
-`known_hosts`、host-key 二次扫描确认、严格 SSH preflight、节点/隧道真实预览和
-revision 原子提交已经接通。远端必须先人工授权共享公钥，首次连接必须由操作者
-从独立来源核对 SSH host key；提交前再次确认 host key、hostname 与 endpoint
-candidate 没有漂移。节点 WireGuard 私钥只在远端幂等生成或复用，SSOT 只接收
-公钥。远端 WG 身份准备是 SSOT 锁外的一次幂等 bootstrap 副作用；若随后本地
-提交失败，可能留下尚未被网络引用的本地 key，但不会留下半份 SSOT 变更。
-完整 Agent/信任/秘密/TLS bootstrap 尚未接入该事务，界面不得把这次提交描述为
-远端已经安装、发布完成或开始承载业务流量。
-
-共享 bootstrap 私钥要求当前进程所有且权限精确为 `0600`，所有父目录都经过
-no-symlink 与可写权限检查；专用 `known_hosts` 只接受精确 host:port 的 Ed25519
-记录，拒绝 wildcard、hashed host、marker、host list 与其他算法。网页只表示这组
-长期共享管理凭据已准备好，不暗示接入后会自动从远端 `authorized_keys` 删除它。
-
 中控刚保存 SSOT 后，Nodes、Services、常驻边与候选路径都从同一次当前 SSOT
 读取派生，因此期望态应立即更新；各节点实际 applied snapshot、握手和 Agent
 选择继续来自可信运行态。已从 SSOT 删除但仍有最新观测的节点可暂留为
@@ -2564,10 +2550,10 @@ userspace 实现(基于 wireguard-go)**有明显 CPU 开销**,服务器规格需
 
 | 机制 | 说明 |
 |---|---|
-| **一次性链接** | 短 TTL(如 15 分钟)、访问一次即失效 |
-| **设备绑定** | 首次访问记录设备指纹,后续只对此设备有效 |
-| **二维码** | 移动端扫码导入 |
-| **可吊销** | 独立吊销,所有服务器下一轮询周期移除该 user |
+| **加入码** | 短 TTL(如 15 分钟)，只有成功绑定中控已创建的 Device 才消费；查看或下载二维码不消费 |
+| **设备绑定** | 客户端本地生成 P-256 密钥并提交 CSR，以 canonical SPKI 绑定；同一 token、CSR、request ID、平台和 Device facts 仅可在受限恢复窗口内幂等续接 |
+| **二维码** | 加入码的等价封装；客户端扫码或导入二维码图片，不创建第二个 Device |
+| **可吊销** | Linux access-only 的 signed decommission、移除/吊销与秘密清理已闭环；服务器职责和其他平台的通用双重吊销仍是目标态 |
 | **有效期** | 自带过期时间 |
 
 **配置模板化**：Android 是 TUN；v1 Windows 是 TUN + `127.0.0.1:1080`；Linux

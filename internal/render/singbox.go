@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"sort"
 	"strings"
 
@@ -23,9 +24,11 @@ import (
 // /etc/wireguard/node.key 是两把不同的钥匙 —— 前者给 Hysteria2 的 QUIC
 // 用,后者给隧道用。放在不同目录以免混淆。
 const (
-	tlsCertPath = "/etc/loom/tls/node.crt"
-	tlsKeyPath  = "/etc/loom/tls/node.key"
-	tlsCAPath   = "/etc/loom/tls/ca.crt"
+	tlsCertPath      = "/etc/loom/tls/node.crt"
+	tlsKeyPath       = "/etc/loom/tls/node.key"
+	tlsCAPath        = "/etc/loom/tls/ca.crt"
+	windowsTLSCAPath = `C:\ProgramData\Loom\tls\ca.crt`
+	androidTLSCAPath = "tls/ca.crt"
 )
 
 // secretRef 把秘密层引用渲染成占位符,而不是明文。
@@ -220,12 +223,28 @@ const nodeTLSDomain = "node.internal"
 
 func serverName(n *model.Node) string { return n.ID + "." + nodeTLSDomain }
 
-func clientTLS(name string) *sbTLS {
-	return &sbTLS{Enabled: true, ServerName: name, CertificatePath: tlsCAPath, ALPN: []string{"h3"}}
+func clientTLS(name, caPath string) *sbTLS {
+	return &sbTLS{Enabled: true, ServerName: name, CertificatePath: caPath, ALPN: []string{"h3"}}
 }
 
 func serverTLS() *sbTLS {
 	return &sbTLS{Enabled: true, CertificatePath: tlsCertPath, KeyPath: tlsKeyPath, ALPN: []string{"h3"}}
+}
+
+// accessTLSCAPath 把平台无关的信任语义落到明确宿主路径。
+// Android 的相对路径由 VpnService 将工作目录固定在应用私有目录；Windows
+// 使用 ProgramData。未知平台不猜路径，校验器会在渲染前拒绝。
+func accessTLSCAPath(platform model.Platform) string {
+	switch platform {
+	case model.WindowsDesktop:
+		return windowsTLSCAPath
+	case model.Android:
+		return androidTLSCAPath
+	case model.LinuxServer:
+		return tlsCAPath
+	default:
+		return ""
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -455,7 +474,7 @@ func buildChain(
 			// 后续跳由前一跳转发,拨的是它在那条链路上的地址。
 			o.Server, o.ServerPort = s.NextHopAddr(nodes[c.ServerChain[i-1]], sv), sv.Server.InboundPort
 		}
-		o.TLS = clientTLS(serverName(sv))
+		o.TLS = clientTLS(serverName(sv), accessTLSCAPath(access.Access.Platform))
 		if sv.Server.InboundProtocol.Or() == model.Trojan {
 			o.TLS.ALPN = []string{"h2", "http/1.1"}
 		}
@@ -512,10 +531,11 @@ func serverInto(cfg *sbConfig, s *model.SSOT, sv *model.Node) {
 		// prevUser 非空表示这份凭据正在轮换的过渡窗口里 —— 路由规则要
 		// 同时匹配两代的用户名,否则用旧凭据连上来的流量认证过了却没有
 		// 规则接,落到 final: block。
-		prevUser string
-		nextHops map[string]string // 下一跳地址 -> 出站 tag
-		egress   bool
-		domains  []string // 出口规则的域名限制;空表示不限(地址随请求走)
+		prevUser       string
+		nextHops       map[string]string // 下一跳 CIDR -> 出站 tag
+		nextHopDomains map[string]string // 下一跳域名 -> 出站 tag
+		egress         bool
+		domains        []string // 出口规则的域名限制;空表示不限(地址随请求走)
 	}
 	var rules []rule
 	var users []sbUser
@@ -540,7 +560,7 @@ func serverInto(cfg *sbConfig, s *model.SSOT, sv *model.Node) {
 		}
 		cands, _ := s.EnumerateCandidates(owner, d)
 
-		r := rule{user: c.ID, nextHops: map[string]string{}}
+		r := rule{user: c.ID, nextHops: map[string]string{}, nextHopDomains: map[string]string{}}
 		domains := map[string]bool{}
 		for j := range cands {
 			cand := &cands[j]
@@ -552,7 +572,11 @@ func serverInto(cfg *sbConfig, s *model.SSOT, sv *model.Node) {
 					// 本机是中间一跳:转给下一台服务器。
 					next := nodes[cand.ServerChain[k+1]]
 					if addr := s.NextHopAddr(sv, next); addr != "" {
-						r.nextHops[addr+"/32"] = "via-" + next.ID
+						if net.ParseIP(addr) != nil {
+							r.nextHops[addr+"/32"] = "via-" + next.ID
+						} else {
+							r.nextHopDomains[addr] = "via-" + next.ID
+						}
 					}
 					continue
 				}
@@ -626,6 +650,13 @@ func serverInto(cfg *sbConfig, s *model.SSOT, sv *model.Node) {
 				nextIDs = append(nextIDs, id)
 			}
 		}
+		for _, tag := range r.nextHopDomains {
+			id := strings.TrimPrefix(tag, "via-")
+			if !seen[id] {
+				seen[id] = true
+				nextIDs = append(nextIDs, id)
+			}
+		}
 	}
 	sort.Strings(nextIDs)
 	for _, id := range nextIDs {
@@ -658,6 +689,21 @@ func serverInto(cfg *sbConfig, s *model.SSOT, sv *model.Node) {
 			sort.Strings(byTag[t])
 			cfg.Route.Rules = append(cfg.Route.Rules, sbRule{
 				AuthUser: authUsers(r.user, r.prevUser), IPCIDR: byTag[t], Outbound: t,
+			})
+		}
+		byDomainTag := map[string][]string{}
+		for domain, tag := range r.nextHopDomains {
+			byDomainTag[tag] = append(byDomainTag[tag], domain)
+		}
+		tags = tags[:0]
+		for tag := range byDomainTag {
+			tags = append(tags, tag)
+		}
+		sort.Strings(tags)
+		for _, tag := range tags {
+			sort.Strings(byDomainTag[tag])
+			cfg.Route.Rules = append(cfg.Route.Rules, sbRule{
+				AuthUser: authUsers(r.user, r.prevUser), Domain: byDomainTag[tag], Outbound: tag,
 			})
 		}
 	}
@@ -702,7 +748,7 @@ func linkMetricInto(cfg *sbConfig, s *model.SSOT, n *model.Node) {
 		cfg.Outbounds = append(cfg.Outbounds, sbOutbound{
 			Type: string(model.Hysteria2), Tag: plan.outboundTag(),
 			Server: peer.PublicEndpoint, ServerPort: peer.Server.InboundPort,
-			Password: secretRef(plan.secretRef()), TLS: clientTLS(serverName(peer)),
+			Password: secretRef(plan.secretRef()), TLS: clientTLS(serverName(peer), tlsCAPath),
 		})
 		cfg.Route.Rules = append(cfg.Route.Rules, sbRule{
 			Inbound: []string{plan.inboundTag()}, Outbound: plan.outboundTag(),
@@ -716,9 +762,9 @@ func linkMetricInto(cfg *sbConfig, s *model.SSOT, n *model.Node) {
 // 机器(服务器自己也要走代理出去)把两边的 inbound、outbound 与路由规则
 // 合并进同一份 —— 两种角色喂的是不相干的逻辑,只在这里汇合。
 //
-// 配置源只有一个(SSOT → 渲染器),投递也只有一条(该机的 Agent),
-// 所以合并不存在"两个源互相覆盖"的问题。§18 那套一次性链接是给**没有
-// Agent 的设备**用的,而那种设备只可能是纯接入节点。
+// 配置源只有一个(SSOT → 渲染器),所以合并不存在"两个源互相覆盖"的问题。
+// §18 的加入输入只把中控已创建的 Device 与本机身份绑定并引导首次签名配置；
+// 它适用于包括服务器在内的所有新 Device，不是另一个配置源。
 func renderSingBox(s *model.SSOT, n *model.Node) (File, []Skip, error) {
 	cfg := &sbConfig{Log: sbLog{Level: "warn"}}
 	var skips []Skip

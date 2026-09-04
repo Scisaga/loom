@@ -477,12 +477,12 @@ func (s *SSOT) DefaultEnrollmentProfile() (*EnrollmentProfileVersion, error) {
 			continue
 		}
 		if selected != nil {
-			return nil, fmt.Errorf("multiple default enrollment profile versions are declared")
+			return nil, fmt.Errorf("multiple default join profile versions are declared")
 		}
 		selected = &s.EnrollmentProfiles[i]
 	}
 	if selected == nil {
-		return nil, fmt.Errorf("no default enrollment profile version is declared")
+		return nil, fmt.Errorf("no default join profile version is declared")
 	}
 	return selected, nil
 }

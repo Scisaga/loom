@@ -233,19 +233,11 @@ func writeAtomic(path string, body []byte) (retErr error) {
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("close temporary release floor: %w", err)
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	if err := replaceFile(tmp, path); err != nil {
 		return fmt.Errorf("install release floor %s: %w", path, err)
 	}
-	parent, err := os.Open(dir)
-	if err != nil {
-		return fmt.Errorf("open release floor directory %s: %w", dir, err)
-	}
-	if err := parent.Sync(); err != nil {
-		_ = parent.Close()
+	if err := syncParent(dir); err != nil {
 		return fmt.Errorf("sync release floor directory %s: %w", dir, err)
-	}
-	if err := parent.Close(); err != nil {
-		return fmt.Errorf("close release floor directory %s: %w", dir, err)
 	}
 	return nil
 }

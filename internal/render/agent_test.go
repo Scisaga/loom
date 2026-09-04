@@ -183,13 +183,10 @@ func TestAttestationUpgradeGateReachesEveryReader(t *testing.T) {
 
 func TestEveryReportConfigCarriesWholeNetworkCandidatePaths(t *testing.T) {
 	s := load(t)
-	agents := agentConfigs(t, s)
 	want := map[string]bool{}
-	for access, cfg := range agents {
-		for _, d := range cfg.Declarations {
-			for _, c := range d.Candidates {
-				want[access+"\x00"+d.ID+"\x00"+strings.Join(c.Chain, "\x00")] = true
-			}
+	for _, access := range s.AccessNodes() {
+		for _, r := range report.ExpectedRoutesForAccess(s, access) {
+			want[r.Access+"\x00"+r.Declaration+"\x00"+strings.Join(r.Chain, "\x00")] = true
 		}
 	}
 	res, err := Render(s)
@@ -219,7 +216,7 @@ func TestEveryReportConfigCarriesWholeNetworkCandidatePaths(t *testing.T) {
 					t.Errorf("%s 的 report 配置缺候选 %q", b.Owner, key)
 				}
 			}
-			if agents[b.Owner] == nil && len(got) > 0 {
+			if !s.NodeByID()[b.Owner].IsAccess() && len(got) > 0 {
 				serverWithPaths = true
 			}
 		}

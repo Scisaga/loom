@@ -3,8 +3,10 @@ package report
 import (
 	"bytes"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
@@ -45,7 +47,7 @@ func TestClientInviteUsesOpaqueFragmentAndClaimKeepsProvisioningExplicit(t *test
 		t.Fatal(err)
 	}
 	if payload.Endpoint != invite.EnrollmentURL || payload.Token == "" || payload.ExpiresAt != invite.ExpiresAt ||
-		strings.Contains(invite.EnrollmentURL, payload.Token) {
+		len(payload.PlatformKeySHA256) != sha256.Size*2 || strings.Contains(invite.EnrollmentURL, payload.Token) {
 		t.Fatalf("payload=%+v invite=%+v", payload, invite)
 	}
 	artifact, err := deps.InviteArtifact(invite.InviteID)
@@ -233,6 +235,14 @@ func writeClientTestSSOT(t *testing.T, path string) {
 declarations:
 `), 1)
 	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	keyDir := filepath.Join(filepath.Dir(path), "keys")
+	if err := os.MkdirAll(keyDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	encoded := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x42}, ed25519.PublicKeySize))
+	if err := os.WriteFile(filepath.Join(keyDir, "platform-signing.pub"), []byte(encoded+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

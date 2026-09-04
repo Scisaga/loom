@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -19,6 +20,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -31,10 +33,12 @@ func TestParseInviteUsesFragmentAndRejectsTokenInQuery(t *testing.T) {
 	payload, _ := json.Marshal(invitePayload{
 		Schema: 1, Endpoint: "https://control.example/api/client/enroll",
 		Token: token, ExpiresAt: "2026-09-01T00:00:00Z",
+		PlatformKeySHA256: strings.Repeat("a", sha256.Size*2),
 	})
 	raw := "loom://enroll#" + base64.RawURLEncoding.EncodeToString(payload)
 	invite, err := ParseInvite(raw)
-	if err != nil || invite.Token != token || invite.Endpoint != "https://control.example/api/client/enroll" {
+	if err != nil || invite.Token != token || invite.Endpoint != "https://control.example/api/client/enroll" ||
+		invite.PlatformKeySHA256 != strings.Repeat("a", sha256.Size*2) {
 		t.Fatalf("invite=%+v err=%v", invite, err)
 	}
 	_, err = ParseInvite("loom://enroll?token=" + token)
@@ -80,7 +84,7 @@ func TestClaimPersistsIdentityBeforePOSTAndReusesCSR(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if info.Mode().Perm()&0o077 != 0 {
+		if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
 			t.Fatalf("state file %s mode=%04o", entry.Name(), info.Mode().Perm())
 		}
 		if !entry.IsDir() {
@@ -129,6 +133,39 @@ func TestClaimWithServerSendsOnlyPublicServerFacts(t *testing.T) {
 	}
 }
 
+func TestPreparedWindowsIdentityClaimsWithoutFileBackedLinuxState(t *testing.T) {
+	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x54}, 32))
+	var request claimRequest
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = io.WriteString(w, `{"schema":1,"client_id":"windows-a","status":"provisioning","claimed_at":"2026-09-03T12:00:00Z","next":"wait_for_configuration","configuration":"pending"}`)
+	}))
+	defer server.Close()
+	identity, err := GeneratePreparedIdentity(PlatformWindowsDesktop, server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := ClaimPrepared(context.Background(), server.Client(), Invite{
+		Endpoint: server.URL, Token: token, ExpiresAt: "2026-09-03T12:15:00Z",
+	}, identity, nil)
+	if err != nil || response.Configuration != "pending" {
+		t.Fatalf("prepared Windows claim=%+v err=%v", response, err)
+	}
+	if request.Platform != PlatformWindowsDesktop || request.RequestID != identity.RequestID ||
+		request.CSRPEM != string(identity.CSRPEM) || request.Token != token {
+		t.Fatalf("prepared Windows request=%+v", request)
+	}
+	tampered := identity
+	tampered.RequestID = "another-request"
+	if err := ValidatePreparedIdentity(tampered); err == nil {
+		t.Fatal("prepared identity accepted a request_id not bound by its CSR")
+	}
+}
+
 func TestClaimDoesNotFollowRedirectWithBearerBody(t *testing.T) {
 	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x61}, 32))
 	received := false
@@ -146,7 +183,7 @@ func TestClaimDoesNotFollowRedirectWithBearerBody(t *testing.T) {
 	}
 }
 
-func TestClaimClassifiesOnlyTransportAndServerFailureAsTransient(t *testing.T) {
+func TestClaimClassifiesStatusAndReportsSafeControlDetail(t *testing.T) {
 	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x62}, 32))
 	status := http.StatusServiceUnavailable
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -158,13 +195,29 @@ func TestClaimClassifiesOnlyTransportAndServerFailureAsTransient(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
 	invite := Invite{Endpoint: server.URL, Token: token}
 	_, err := Claim(context.Background(), server.Client(), invite, stateDir, nil)
-	if !IsTransient(err) || strings.Contains(err.Error(), token) || strings.Contains(err.Error(), "do not expose") {
+	if !IsTransient(err) || strings.Contains(err.Error(), token) || !strings.Contains(err.Error(), "do not expose body") {
 		t.Fatalf("503 error=%v transient=%v", err, IsTransient(err))
 	}
 	status = http.StatusConflict
 	_, err = Claim(context.Background(), server.Client(), invite, stateDir, nil)
-	if err == nil || IsTransient(err) || strings.Contains(err.Error(), token) || strings.Contains(err.Error(), "do not expose") {
+	if err == nil || IsTransient(err) || strings.Contains(err.Error(), token) || !strings.Contains(err.Error(), "do not expose body") {
 		t.Fatalf("409 error=%v transient=%v", err, IsTransient(err))
+	}
+}
+
+func TestClaimNeverReportsBearerFromControlError(t *testing.T) {
+	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x63}, 32))
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid token " + token})
+	}))
+	defer server.Close()
+	_, err := Claim(context.Background(), server.Client(), Invite{
+		Endpoint: server.URL, Token: token,
+	}, filepath.Join(t.TempDir(), "state"), nil)
+	if err == nil || strings.Contains(err.Error(), token) || err.Error() != "[§9.2 加入流程] 控制中心返回 HTTP 400" {
+		t.Fatalf("unsafe status error=%v", err)
 	}
 }
 
@@ -225,6 +278,21 @@ func TestInstallReadyValidatesAndLandsBootstrap(t *testing.T) {
 		Schema: 1, ClientID: "client-a", Status: "ready", ClaimedAt: "2026-08-31T12:00:00Z",
 		Next: "pull", Configuration: "ready", Bootstrap: bootstrap,
 	}
+	_, meta, err := loadIdentity(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	csrPEM, err := os.ReadFile(filepath.Join(stateDir, identityCSRFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	material, err := ValidateReady(response, PreparedIdentity{
+		Schema: Schema, Platform: PlatformLinuxServer, Endpoint: endpoint, RequestID: meta.RequestID,
+		PrivateKeyPEM: keyPEM, CSRPEM: csrPEM,
+	})
+	if err != nil || material.NodeID != "client-a" {
+		t.Fatalf("validated ready material=%+v err=%v", material, err)
+	}
 	if err := InstallReady(paths, response); err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +308,7 @@ func TestInstallReadyValidatesAndLandsBootstrap(t *testing.T) {
 		if err != nil {
 			t.Fatalf("stat %s: %v", check.path, err)
 		}
-		if info.Mode().Perm() != check.mode {
+		if runtime.GOOS != "windows" && info.Mode().Perm() != check.mode {
 			t.Fatalf("%s mode=%v", check.path, info.Mode())
 		}
 	}

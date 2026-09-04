@@ -61,16 +61,12 @@ func TestEveryInnerPairHasExactlyOneDialableLinkMetricDirection(t *testing.T) {
 	// every reporter config. Check one copy and then require all copies to
 	// be identical, so a node cannot render a different topology contract.
 	var baseline []report.ExpectedDirectLink
-	for _, n := range s.Nodes {
-		cfg := cfgs[n.ID]
-		if cfg == nil {
-			t.Fatalf("%s 没有 report config", n.ID)
-		}
+	for id, cfg := range cfgs {
 		if baseline == nil {
 			baseline = cfg.ExpectedDirectLinks
 		} else if !sameExpectedDirectLinks(baseline, cfg.ExpectedDirectLinks) {
 			t.Fatalf("%s 的 ExpectedDirectLinks 与其他节点不一致: %+v vs %+v",
-				n.ID, cfg.ExpectedDirectLinks, baseline)
+				id, cfg.ExpectedDirectLinks, baseline)
 		}
 	}
 	counts := map[string]int{}
@@ -140,8 +136,7 @@ func sameExpectedDirectLinks(a, b []report.ExpectedDirectLink) bool {
 	return true
 }
 
-// 上报者装在**每个**有隧道的节点上,服务器也要 —— DDNS 重解析、隧道断连、
-// 有人手工改配置,这些只有节点自己知道。
+// Linux 上报者覆盖所有 Linux 节点；Windows/Android 的同类观测由各自平台宿主承担。
 func TestEveryTunneledNodeGetsAReporter(t *testing.T) {
 	s := load(t)
 	res, err := Render(s)
@@ -150,11 +145,12 @@ func TestEveryTunneledNodeGetsAReporter(t *testing.T) {
 	}
 	cfgs := reportConfigs(t, res)
 
-	// 每个节点都要有 —— 没有隧道的纯接入节点绑回环,远端拉不到,但
-	// 本机的配置自检不能因此消失。
+	// 平台边界必须是双向的：Linux 不能漏，非 Linux 也不能夹带 Linux 配置。
 	for i := range s.Nodes {
-		if cfgs[s.Nodes[i].ID] == nil {
-			t.Errorf("%s 没有上报者配置", s.Nodes[i].ID)
+		n := &s.Nodes[i]
+		got := cfgs[n.ID] != nil
+		if want := usesLinuxLifecycle(n); got != want {
+			t.Errorf("%s:report 配置=%v,期望 Linux 生命周期=%v", n.ID, got, want)
 		}
 	}
 	// 每份配置都要配一个 unit,否则没人启动它。

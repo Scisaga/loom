@@ -362,6 +362,24 @@ func checkAccessNodes(
 					"Android 不应声明 mixed_ports —— 绝大多数 App 不能单独设代理,只能走 TUN")
 			}
 		}
+		// §7.2 / D94:Windows 的 TUN 与 1080 mixed 是同一个中控托管入口。
+		// 显式策略端口是 Linux 迁移能力，带到 Windows 会形成第二套客户端模型。
+		if p.Access.Platform == model.WindowsDesktop {
+			if len(p.Access.MixedPorts) != 1 || p.Access.MixedPorts[0].Port != 1080 ||
+				!p.Access.MixedPorts[0].ManagedAutomatic() || p.Access.MixedPorts[0].ExplicitOverride() {
+				fs.add("§7.3 Windows 入口", where,
+					"windows-desktop 必须且只能声明一个 services:true 的 1080 mixed；"+
+						"它与 TUN 共用中控规则，不能使用 Linux 声明级端口覆盖")
+			}
+			if p.IsServer() {
+				fs.add("§10.2 渲染目标", where,
+					"windows-desktop 的 server 生命周期尚未交付；不能把 Linux WireGuard/systemd 产物装到 Windows")
+			}
+		}
+		if p.Access.Platform == model.Android && p.IsServer() {
+			fs.add("§10.2 渲染目标", where,
+				"Android 的 server 生命周期尚未交付；移动端不能接收 Linux WireGuard/systemd 产物")
+		}
 		// §7.2:Linux 服务器不开 TUN,流量全靠 mixed 端口接管。
 		if p.Access.Platform == model.LinuxServer && len(p.Access.MixedPorts) == 0 {
 			fs.add("§7.2 平台", where,

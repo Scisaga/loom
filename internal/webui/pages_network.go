@@ -50,13 +50,7 @@ func pageNodes(d Deps, isAuthed bool, added string) string {
 <div class="card span3"><div class=label>Lifecycle</div><div class=metric>%d <small>joining</small></div><div class=dim>%d draining · %d decommissioned</div></div>
 	</div>`, declared, esc(intentSource), healthy, unknown, map[bool]string{true: "bad", false: "ok"}[problem > 0], problem, joining, draining, decommissioned)
 
-	fmt.Fprintf(&b, `<div class=section><div class=sectionhead><h2>Node inventory</h2><span class=dim>Declarations from %s plus retained runtime observations</span><span class=sp>`, esc(intentSource))
-	if d.Control != nil {
-		b.WriteString(`<a class="button primary" href="/nodes/add">＋ Add node</a>`)
-	} else {
-		b.WriteString(`<span class="button" aria-disabled=true>Read-only node</span>`)
-	}
-	b.WriteString(`</span></div><div class=node-inventory-help><span><b>本机接管</b> 接管本机流量并执行选路</span><span><b>转发</b> 参与隧道和代理链路</span><span><b>可作出口</b> 可作为路径末端访问公网</span><span><b>隧道方向</b> 只描述 WireGuard 建连职责</span><span><b>公网数据入口</b> 并排显示 SSOT 声明与现有主动探测证据</span><span><b>节点 ID</b> 加入时确定，不随系统 hostname 自动变化</span></div><div class="card node-inventory-card"><table><thead><tr><th>节点 / 生命周期<th>节点地址 / SSH 端口<th>用途 / 隧道方向<th>公网数据入口<th>观测来源<th>配置版本<th>常驻隧道<th>最后上报<th></thead><tbody>`)
+	fmt.Fprintf(&b, `<div class=section><div class=sectionhead><h2>Node inventory</h2><span class=dim>Declarations from %s plus retained runtime observations</span></div><div class=node-inventory-help><span><b>本机接管</b> 接管本机流量并执行选路</span><span><b>转发</b> 参与隧道和代理链路</span><span><b>可作出口</b> 可作为路径末端访问公网</span><span><b>隧道方向</b> 只描述 WireGuard 建连职责</span><span><b>公网数据入口</b> 并排显示 SSOT 声明与现有主动探测证据</span><span><b>节点 ID</b> 加入时确定，不随系统 hostname 自动变化</span></div><div class="card node-inventory-card"><table><thead><tr><th>节点 / 生命周期<th>节点地址 / SSH 端口<th>用途 / 隧道方向<th>公网数据入口<th>观测来源<th>配置版本<th>常驻隧道<th>最后上报<th></thead><tbody>`, esc(intentSource))
 	for _, n := range v.Nodes {
 		stateClass, stateLabel := healthVisual(n.Health)
 		lifecycleClass, lifecycleLabel := nodeLifecycleVisual(n)
@@ -82,29 +76,6 @@ func pageNodes(d Deps, isAuthed bool, added string) string {
 		b.WriteString(`<tr><td colspan=9><div class=empty>No declared nodes are available in this view.</div></tr>`)
 	}
 	b.WriteString(`</tbody></table></div></div>`)
-
-	// Enrollment is a control-local capability. Regular nodes can still show
-	// the learned fleet inventory when reached directly, but must not advertise
-	// a dead /nodes/add workflow or control key management.
-	if d.Control != nil {
-		b.WriteString(`<div class=section><details class="card enrollment-access"><summary class=enrollment-summary><span class=enrollment-summary-copy><b>Enrollment SSH access</b><span>Shared control identity and trust boundary</span></span><span class=enrollment-summary-hint>Access setup</span></summary><div class=enrollment-access-body><div class=enrollment-access-grid><section class=enrollment-identity-panel><div class=enrollment-panel-head><div><div class=label>Control bootstrap identity</div><h3>One reusable control identity</h3></div></div><p class=enrollment-intro>Every enrollment reuses this SSH public key. Platform signing trust and each node's WireGuard identity remain separate.</p>`)
-		if d.Control.BootstrapIdentity == nil {
-			b.WriteString(`<div class="callout warnline"><b>Unavailable on this node</b><br><span class=small>The shared bootstrap identity is a control-local capability.</span></div>`)
-		} else if key, err := d.Control.BootstrapIdentity.Status(); err != nil {
-			fmt.Fprintf(&b, `<div class="notice badline enrollment-state"><b>Bootstrap identity cannot be read</b><br><span class=small>%s</span></div>`, esc(err.Error()))
-		} else if !key.Ready {
-			b.WriteString(`<div class="callout warnline enrollment-state"><b>Not generated</b><br><span class=small>Generate this once, then authorize the exported public key on every host that may be enrolled.</span></div><div class=enrollment-state-action>`)
-			if isAuthed {
-				b.WriteString(`<form method=post action="/nodes/bootstrap-key/generate"><button class=primary>Generate shared key pair</button></form>`)
-			} else {
-				fmt.Fprintf(&b, `<a class="button primary" href="%s">Sign in to generate</a>`, esc(loginURL("/nodes")))
-			}
-			b.WriteString(`</div>`)
-		} else {
-			fmt.Fprintf(&b, `<div class=enrollment-identity-meta><div><span class=label>Status</span><span class="edge-status ok"><span class=dot></span>Ready · shared by every enrollment</span></div><div><span class=label>Fingerprint</span><span class=mono>%s</span></div><div><span class=label>Public file</span><span class=mono>%s</span></div></div><div class=enrollment-public-key><div class=enrollment-public-key-head><div><span class=label>Shared public key</span><span class="tiny dim">Safe to distribute to enrollment targets</span></div><a class=button href="/nodes/bootstrap-key.pub">Download .pub</a></div><code aria-label="Shared control public key">%s</code></div>`, esc(key.Fingerprint), esc(key.PublicPath), esc(key.PublicKey))
-		}
-		b.WriteString(`</section><aside class=enrollment-boundary-panel><div class=label>Enrollment boundary</div><h3>What the workflow may decide</h3><div class=enrollment-boundary-list><div><span>Manual input</span><b>SSH host or IP, user, port</b></div><div><span>Discovered</span><b>Hostname, host key, system, reachability</b></div><div><span>Reviewed</span><b>Direction policy</b></div><div><span>Default</span><b>Egress enabled</b></div></div><a class="button primary enrollment-workflow" href="/nodes/add">Open enrollment workflow <span aria-hidden=true>→</span></a></aside></div><div class=enrollment-key-note><span class=enrollment-key-note-icon aria-hidden=true>◆</span><div><b>Private key boundary</b><span>The control private key never leaves this node. Each enrolled node creates or reuses its own WireGuard identity; only its public key may enter SSOT.</span></div></div></div></details></div>`)
-	}
 
 	return shell(d, "Nodes", b.String(), isAuthed, v)
 }

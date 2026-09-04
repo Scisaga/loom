@@ -115,6 +115,9 @@ func Render(s *model.SSOT) (*Result, error) {
 		if decommissioned[s.Nodes[i].ID] {
 			continue
 		}
+		if !usesLinuxLifecycle(&s.Nodes[i]) {
+			continue
+		}
 		f, sk := renderReport(s, &s.Nodes[i])
 		byNode[s.Nodes[i].ID] = append(byNode[s.Nodes[i].ID], f...)
 		skipped = append(skipped, sk...)
@@ -125,6 +128,9 @@ func Render(s *model.SSOT) (*Result, error) {
 		if decommissioned[s.Nodes[i].ID] {
 			continue
 		}
+		if !usesLinuxLifecycle(&s.Nodes[i]) {
+			continue
+		}
 		f, sk := renderPull(s, &s.Nodes[i])
 		byNode[s.Nodes[i].ID] = append(byNode[s.Nodes[i].ID], f...)
 		skipped = append(skipped, sk...)
@@ -133,6 +139,9 @@ func Render(s *model.SSOT) (*Result, error) {
 	// 对端走 DDNS 的发起方需要定时重解析(§12:这也是渲染产物,不该手写)。
 	for i := range s.Nodes {
 		if decommissioned[s.Nodes[i].ID] {
+			continue
+		}
+		if !usesLinuxLifecycle(&s.Nodes[i]) {
 			continue
 		}
 		if fs := renderReresolve(s, &s.Nodes[i]); fs != nil {
@@ -155,13 +164,23 @@ func Render(s *model.SSOT) (*Result, error) {
 			return nil, err
 		}
 		skipped = append(skipped, sk...)
-		byNode[n.ID] = append(byNode[n.ID], f, renderSingBoxUnit(s, n))
+		byNode[n.ID] = append(byNode[n.ID], f)
+		if usesLinuxLifecycle(n) {
+			byNode[n.ID] = append(byNode[n.ID], renderSingBoxUnit(s, n))
 
-		// Agent 的配置与 sing-box 的配置必须同源:两边枚举出的声明和候选
-		// 一旦分叉,Agent 会去切一个不存在的 selector。
-		af, ask := renderAgent(s, n)
-		byNode[n.ID] = append(byNode[n.ID], af...)
-		skipped = append(skipped, ask...)
+			// Agent 的配置与 sing-box 的配置必须同源:两边枚举出的声明和候选
+			// 一旦分叉,Agent 会去切一个不存在的 selector。
+			af, ask := renderAgent(s, n)
+			byNode[n.ID] = append(byNode[n.ID], af...)
+			skipped = append(skipped, ask...)
+		} else {
+			skipped = append(skipped, Skip{
+				Where: "lifecycle:" + n.ID,
+				Reason: fmt.Sprintf("platform=%s 只渲染平台无关的 sing-box 配置；"+
+					"Windows Service/Android VpnService、配置 pull、Agent 与 report 由平台宿主交付，"+
+					"禁止回退为 systemd 或 /etc/loom 安装", n.Access.Platform),
+			})
+		}
 	}
 
 	ids := make([]string, 0, len(byNode))
@@ -193,6 +212,12 @@ func Render(s *model.SSOT) (*Result, error) {
 // 隧道端点不会安装 sing-box，不能被版本检查误报为缺组件。
 func runsSingBox(n *model.Node) bool {
 	return n != nil && (n.IsAccess() || (n.IsServer() && n.Server.InboundPort > 0))
+}
+
+// usesLinuxLifecycle 是渲染层对平台安装产物的唯一分流点。
+// 纯服务器节点当前都是 Linux；接入节点则必须由显式 platform 决定。
+func usesLinuxLifecycle(n *model.Node) bool {
+	return n != nil && (!n.IsAccess() || n.Access.Platform.UsesLinuxLifecycle())
 }
 
 // Diff 逐文件比较两次渲染,返回人可读的变更摘要。

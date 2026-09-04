@@ -41,16 +41,16 @@ func clientUIDeps() Deps {
 	return d
 }
 
-func TestClientsPageSeparatesRegistrationFromRuntimeHealth(t *testing.T) {
+func TestClientsPageSeparatesJoinProgressFromRuntimeHealth(t *testing.T) {
 	d := clientUIDeps()
 	body := pageClients(d, clientPageState{}, true)
 	for _, want := range []string{
 		`href="/devices?new=1"`,
 		`Build server`, `client-linux01`, `Provisioning`,
-		`Phone`, `Pending claim`, `Not reported`,
+		`Phone`, `Waiting to join`, `Not reported`,
 		`data: not reported · config: not issued`,
 		`Identity, desired membership and runtime evidence remain separate facts.`,
-		`1 unconsumed invitations`,
+		`1 unused join codes`,
 		`href="/devices/download/linux-amd64"`,
 		`loom-client-linux-amd64.tar.gz`,
 		`sudo ./install.sh --invite-file ../client.loom-invite`,
@@ -144,9 +144,10 @@ func TestClientInvitationShowsRealQRResourceAndLinuxLink(t *testing.T) {
 	for _, want := range []string{
 		`src="/api/control/device-invites/invite-123/qr.png"`,
 		`href="/api/control/device-invites/invite-123/download"`,
-		`alt="Enrollment QR code for client-linux01"`,
+		`alt="Join QR code for client-linux01"`,
 		`value="loom://enroll#test"`,
-		`Invitation ready`,
+		`Device created · join code ready`,
+		`Start the client, then import the QR code`,
 		`short-lived, single-use secret`,
 		`sudo ./install.sh --invite-file ../client.loom-invite`,
 		`sudo ./install.sh --no-enroll`,
@@ -154,7 +155,7 @@ func TestClientInvitationShowsRealQRResourceAndLinuxLink(t *testing.T) {
 		`press <kbd>Enter</kbd>, then <kbd>Ctrl-D</kbd>`,
 		`method=get action="/devices"`,
 		`Back to Device list`,
-		`normal reconnects, restarts and configuration updates do not register the device again`,
+		`Reconnects, restarts and configuration updates do not repeat the join`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("Invitation result missing %q", want)
@@ -176,8 +177,8 @@ func TestAddClientDoesNotAskForPlatformOrRoute(t *testing.T) {
 	body := pageClients(d, clientPageState{Create: true}, true)
 	for _, want := range []string{
 		`action="/devices/create"`, `name=name`, `Display name`,
-		`The installed client reports its supported platform`,
-		`Platform is reported by the installed Device`,
+		`The client reports its supported platform`,
+		`Platform is reported by the client running on the Device`,
 		`immutable purpose is pinned below`,
 		`standard-device@v1`, `use_loom`, `best-egress · sg-fixed`,
 	} {
@@ -207,7 +208,7 @@ func TestAddDeviceSelectsAnImmutablePurposeNotAPlatform(t *testing.T) {
 		`data-device-profile-control`, `profile-preview-responsibilities`, `not a platform choice`,
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("Add Device purpose selector missing %q", want)
+			t.Errorf("Create Device join-profile selector missing %q", want)
 		}
 	}
 	if strings.Contains(body, `name=platform`) {
@@ -215,7 +216,7 @@ func TestAddDeviceSelectsAnImmutablePurposeNotAPlatform(t *testing.T) {
 	}
 }
 
-func TestServerDeviceInvitationExplainsDeclarationBeforeEnrollment(t *testing.T) {
+func TestServerDeviceInvitationExplainsDeclarationBeforeJoin(t *testing.T) {
 	d := clientUIDeps()
 	invite := ClientInviteView{
 		InviteID: "invite-server", ClientID: "device-server01", ClientName: "Edge server",
@@ -224,7 +225,7 @@ func TestServerDeviceInvitationExplainsDeclarationBeforeEnrollment(t *testing.T)
 	}
 	body := pageClients(d, clientPageState{Invite: &invite}, true)
 	for _, want := range []string{
-		`Configure the server declaration before claiming`, `/etc/loom/device.yaml`,
+		`Configure the server declaration before joining`, `/etc/loom/device.yaml`,
 		`public_endpoint: edge.example.net`, `inbound_port: 61698`, `direction: bidirectional`,
 		`not a route or exit selection`, `verified by the existing signed topology observations after apply`,
 	} {
@@ -297,7 +298,7 @@ func TestDeviceDetailShowsServerDeclarationAsDesiredNotRuntimeEvidence(t *testin
 	body := pageDeviceDetail(d, "d-edge01", true)
 	for _, want := range []string{
 		`Server declaration`, `edge.example.net:61698`, `bidirectional`,
-		`These are desired facts from Enrollment/SSOT`, `signed ingress observations remain runtime evidence`,
+		`These are desired Device/SSOT facts`, `signed ingress observations remain runtime evidence`,
 		`Network diagnostics`,
 	} {
 		if !strings.Contains(body, want) {
@@ -399,7 +400,7 @@ func TestUnclaimedDeviceCanBeDiscardedButOnlyFromAuthenticatedPOST(t *testing.T)
 	}
 	detail := misakaRequest(t, d, http.MethodGet, "/devices/client-phone01", nil, true)
 	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), `action="/devices/discard-pending"`) ||
-		!strings.Contains(detail.Body.String(), `Discard unclaimed Device`) {
+		!strings.Contains(detail.Body.String(), `Discard Device`) {
 		t.Fatalf("pending Device detail lacks cleanup action: status=%d body=%s", detail.Code, detail.Body.String())
 	}
 	unauthorized := misakaRequest(t, d, http.MethodPost, "/devices/discard-pending", url.Values{"id": {"client-phone01"}}, false)
@@ -428,23 +429,19 @@ func TestManagedCertificateIdentityIsNotPresentedAsLegacySoftware(t *testing.T) 
 		t.Fatalf("managed certificate inventory has legacy software semantics: %s", body)
 	}
 	detail := pageDeviceDetail(d, "edge01", true)
-	if !strings.Contains(detail, "Verified pre-Enrollment certificate") || strings.Contains(detail, "Legacy record") {
+	if !strings.Contains(detail, "Verified existing certificate") || strings.Contains(detail, "Legacy record") {
 		t.Fatalf("managed certificate source is not explicit: %s", detail)
 	}
 }
 
-func TestLegacyProductEntrypointsConvergeOnDevices(t *testing.T) {
+func TestLegacyClientEntrypointConvergesOnDevicesAndRemovedSSHEntryIsNotFound(t *testing.T) {
 	d := Deps{Snapshot: func() View { return View{} }}
-	for _, test := range []struct {
-		path string
-		want string
-	}{
-		{path: "/clients?new=1", want: "/devices?new=1"},
-		{path: "/nodes/add", want: "/devices?legacy=ssh"},
-	} {
-		response := misakaRequest(t, d, http.MethodGet, test.path, nil, false)
-		if response.Code != http.StatusPermanentRedirect || response.Header().Get("Location") != test.want {
-			t.Errorf("GET %s = %d location=%q, want 308 to %q", test.path, response.Code, response.Header().Get("Location"), test.want)
-		}
+	response := misakaRequest(t, d, http.MethodGet, "/clients?new=1", nil, false)
+	if response.Code != http.StatusPermanentRedirect || response.Header().Get("Location") != "/devices?new=1" {
+		t.Errorf("GET /clients?new=1 = %d location=%q, want 308 to /devices?new=1", response.Code, response.Header().Get("Location"))
+	}
+	removed := misakaRequest(t, d, http.MethodGet, "/nodes/add", nil, false)
+	if removed.Code != http.StatusNotFound {
+		t.Errorf("GET /nodes/add = %d, want 404", removed.Code)
 	}
 }

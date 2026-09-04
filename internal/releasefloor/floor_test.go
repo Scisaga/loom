@@ -121,9 +121,7 @@ func TestAdvancePersistsAtomicallyWithPrivatePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotMode := info.Mode().Perm(); gotMode != 0o600 {
-		t.Fatalf("floor permissions = %#o, want 0600", gotMode)
-	}
+	assertFloorFileSecurity(t, info)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)

@@ -32,7 +32,7 @@ func TestEnrichControlViewPreservesSSOTContractAndRouteScope(t *testing.T) {
 			{
 				ID: "desk01", PublicEndpoint: "desk.example", SSHPort: 2222,
 				Access: &model.AccessRole{
-					Platform: model.Desktop, Credentials: []string{"c-best"}, DefaultDeclaration: "best",
+					Platform: model.WindowsDesktop, Credentials: []string{"c-best"}, DefaultDeclaration: "best",
 				},
 			},
 		},

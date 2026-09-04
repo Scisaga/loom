@@ -2,9 +2,6 @@ package report
 
 import (
 	"bytes"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -185,84 +182,6 @@ func TestControlUIServicesPreserveCommentsAndUseRevisionGuard(t *testing.T) {
 		t.Fatal("deleted service remains in SSOT")
 	}
 	assertNoControlUITemps(t, dir)
-}
-
-func TestControlUIBootstrapIdentityIsSharedAndDownloadsOnlyPublicKey(t *testing.T) {
-	dir := t.TempDir()
-	ssotPath := filepath.Join(dir, "ssot.yaml")
-	bootstrapPath := filepath.Join(dir, "keys", "control-bootstrap")
-	writeControlUIFile(t, ssotPath, controlUIFixture(t))
-	control := controlDeps(&Control{SSOTPath: ssotPath, BootstrapSSHKey: bootstrapPath})
-	if control.BootstrapIdentity == nil {
-		t.Fatal("control dependencies have no bootstrap identity")
-	}
-
-	absent, err := control.BootstrapIdentity.Status()
-	if err != nil {
-		t.Fatalf("status before generation: %v", err)
-	}
-	if absent.Ready || absent.PublicKey != "" || absent.Fingerprint != "" {
-		t.Fatalf("absent bootstrap status = %#v", absent)
-	}
-	if _, err := os.Stat(bootstrapPath); !os.IsNotExist(err) {
-		t.Fatalf("Status created or exposed a private identity: %v", err)
-	}
-
-	first, err := control.BootstrapIdentity.Ensure()
-	if err != nil {
-		t.Fatalf("first Ensure: %v", err)
-	}
-	if !first.Ready || !strings.HasPrefix(first.PublicKey, "ssh-ed25519 ") ||
-		!strings.HasPrefix(first.Fingerprint, "SHA256:") || first.PublicPath != bootstrapPath+".pub" {
-		t.Fatalf("generated bootstrap status = %#v", first)
-	}
-	privateBefore := readControlUIFile(t, bootstrapPath)
-	if !bytes.Contains(privateBefore, []byte("BEGIN OPENSSH PRIVATE KEY")) {
-		t.Fatal("bootstrap private file is not an OpenSSH private key")
-	}
-	second, err := control.BootstrapIdentity.Ensure()
-	if err != nil {
-		t.Fatalf("second Ensure: %v", err)
-	}
-	if first != second {
-		t.Fatalf("Ensure did not reuse the shared identity:\nfirst=%#v\nsecond=%#v", first, second)
-	}
-	assertControlUIFile(t, bootstrapPath, privateBefore)
-
-	handler := webui.Handler(webui.Deps{
-		Node: "control", Operator: "test-password", Control: control,
-		Snapshot: func() webui.View { return webui.View{Self: "control"} },
-	})
-	loginForm := url.Values{"password": {"test-password"}}
-	login := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(loginForm.Encode()))
-	login.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	loginResult := httptest.NewRecorder()
-	handler.ServeHTTP(loginResult, login)
-	if loginResult.Code != http.StatusSeeOther {
-		t.Fatalf("login status = %d, body=%s", loginResult.Code, loginResult.Body.String())
-	}
-	cookies := loginResult.Result().Cookies()
-	if len(cookies) == 0 {
-		t.Fatal("login returned no session cookie")
-	}
-
-	download := httptest.NewRequest(http.MethodGet, "/nodes/bootstrap-key.pub", nil)
-	download.AddCookie(cookies[0])
-	downloadResult := httptest.NewRecorder()
-	handler.ServeHTTP(downloadResult, download)
-	if downloadResult.Code != http.StatusOK {
-		t.Fatalf("public-key download status = %d, body=%s", downloadResult.Code, downloadResult.Body.String())
-	}
-	if got, want := downloadResult.Body.String(), first.PublicKey+"\n"; got != want {
-		t.Fatalf("download body = %q, want public key only %q", got, want)
-	}
-	if strings.Contains(downloadResult.Body.String(), "PRIVATE KEY") ||
-		bytes.Equal(downloadResult.Body.Bytes(), privateBefore) {
-		t.Fatal("public-key download exposed private key material")
-	}
-	if disposition := downloadResult.Header().Get("Content-Disposition"); !strings.Contains(disposition, "loom-control-bootstrap.pub") {
-		t.Fatalf("Content-Disposition = %q", disposition)
-	}
 }
 
 func controlUIFixture(t *testing.T) []byte {

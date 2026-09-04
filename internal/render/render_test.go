@@ -97,27 +97,41 @@ func TestMatrixShape(t *testing.T) {
 			}
 		}
 	}
-	// 每份 sing-box 配置都必须配一个 unit —— 否则那份配置没人启动。
-	if units != sb {
-		t.Errorf("%d 份 sing-box 配置却只有 %d 个 systemd unit", sb, units)
+	linuxNodes, linuxSingBox, linuxAccess := 0, 0, 0
+	for i := range s.Nodes {
+		n := &s.Nodes[i]
+		if !usesLinuxLifecycle(n) {
+			continue
+		}
+		linuxNodes++
+		if runsSingBox(n) {
+			linuxSingBox++
+		}
+		if n.IsAccess() {
+			linuxAccess++
+		}
 	}
-	// 每个节点都要能自己取配置(§14.2):一个 service + 一个 timer。
-	if want := len(s.Nodes) * 2; pulls != want {
-		t.Errorf("渲染出 %d 个 pull 单元,期望 %d(每节点一个 service + 一个 timer)", pulls, want)
+	// systemd 只属于 Linux 生命周期；Windows/Android 配置由各自宿主启动。
+	if units != linuxSingBox {
+		t.Errorf("渲染出 %d 个 sing-box systemd unit,期望 %d(Linux workload)", units, linuxSingBox)
+	}
+	// Linux 节点自己取配置(§14.2):一个 service + 一个 timer。
+	if want := linuxNodes * 2; pulls != want {
+		t.Errorf("渲染出 %d 个 pull 单元,期望 %d(每个 Linux 节点一个 service + 一个 timer)", pulls, want)
 	}
 	if reportUnits != reports {
 		t.Errorf("%d 份上报者配置却只有 %d 个 systemd unit", reports, reportUnits)
 	}
-	// 上报者装在每个节点上 —— 服务器也要自检(§16.1)。
-	if reports != len(s.Nodes) {
-		t.Errorf("渲染出 %d 份上报者配置,期望 %d(每个节点一份)", reports, len(s.Nodes))
+	// Linux 上报者仍覆盖服务器与 Linux 接入节点；非 Linux 由平台宿主上报。
+	if reports != linuxNodes {
+		t.Errorf("渲染出 %d 份 Linux 上报者配置,期望 %d", reports, linuxNodes)
 	}
 	if agentUnits != agents {
 		t.Errorf("%d 份 Agent 配置却只有 %d 个 systemd unit", agents, agentUnits)
 	}
-	// Agent 只跑在接入节点上 —— 服务器上没有 selector 可切(§5.1)。
-	if want := len(s.AccessNodes()); agents != want {
-		t.Errorf("渲染出 %d 份 Agent 配置,期望 %d(每个接入节点一份)", agents, want)
+	// 当前 Agent 是 Linux 宿主；Windows/Android 由平台客户端实现同一控制语义。
+	if agents != linuxAccess {
+		t.Errorf("渲染出 %d 份 Linux Agent 配置,期望 %d", agents, linuxAccess)
 	}
 	if want := len(s.Tunnels) * 2; wg != want {
 		t.Errorf("渲染出 %d 个 WireGuard 文件,期望 %d(每条隧道两端各一个)", wg, want)
@@ -146,6 +160,42 @@ func TestMatrixShape(t *testing.T) {
 	}
 }
 
+// Windows 与 Android 只消费平台无关的 sing-box 配置。把 systemd、Linux
+// Agent 或 /etc/loom 绝对路径混进包里，会让平台宿主退化成伪 Linux 安装器。
+func TestNonLinuxBundlesExcludeLinuxLifecycle(t *testing.T) {
+	res, err := Render(load(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	byOwner := map[string]Bundle{}
+	for _, b := range res.Bundles {
+		byOwner[b.Owner] = b
+	}
+
+	for _, tc := range []struct {
+		owner      string
+		wantCAPath string
+	}{
+		{owner: "phone", wantCAPath: `"certificate_path": "tls/ca.crt"`},
+		{owner: "workstation", wantCAPath: `"certificate_path": "C:\\ProgramData\\Loom\\tls\\ca.crt"`},
+	} {
+		b, ok := byOwner[tc.owner]
+		if !ok {
+			t.Fatalf("缺少 %s 配置包", tc.owner)
+		}
+		if len(b.Files) != 1 || b.Files[0].Path != "sing-box/config.json" {
+			t.Errorf("%s 应只有平台无关的 sing-box 配置,得到 %+v", tc.owner, b.Files)
+			continue
+		}
+		if !strings.Contains(b.Files[0].Content, tc.wantCAPath) {
+			t.Errorf("%s 没有使用平台 CA 路径 %s", tc.owner, tc.wantCAPath)
+		}
+		if strings.Contains(b.Files[0].Content, "/etc/loom") {
+			t.Errorf("%s 的配置泄漏了 Linux /etc/loom 路径", tc.owner)
+		}
+	}
+}
+
 // TestDualRoleNodeMergesIntoOneConfig:一台机器一个 sing-box 进程,
 // 所以只有一份配置。
 //
@@ -161,7 +211,7 @@ nodes:
   - id: laptop
     public_endpoint: 10.0.0.9
     server: {direction: bidirectional, inbound_port: 61698, egress_capable: true, wg_public_key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
-    access: {platform: desktop, credentials: [cr1], default_declaration: d1, mixed_ports: [{port: 1080, declaration: d1}]}
+    access: {platform: linux-server, credentials: [cr1], default_declaration: d1, mixed_ports: [{port: 1080, declaration: d1}]}
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: latency, tuning_period: 10m, allowed_servers: [laptop], max_hops: 1}
 credentials:
@@ -233,15 +283,10 @@ func TestSkipsAreExpected(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]int{
-		"carrier 是 l7_gateway": 1, // 第三方等价类不由 L4 换地址(§4.4)
-		"没有任何可表达的 L4 候选":       1,
-		"该端口不生成路由规则":           1, // 上面那条声明绑的端口
-		// Agent 只会 latency / stability;别的 objective 不能拿 L4 首字节
-		// 时间冒充 —— 必须在渲染期就说出来(§16.2)。
-		"ttft 只能由 L7 观测点产出": 1,
-		"cost 需要价格数据源":      1,
-		// 没有隧道的纯接入节点只绑回环 —— 自检可用,远端拉不到。
-		"上报接口只绑回环": 3,
+		"platform=android 只渲染平台无关的 sing-box 配置":         1,
+		"platform=windows-desktop 只渲染平台无关的 sing-box 配置": 1,
+		// 没有隧道的 Linux 接入节点只绑回环 —— 自检可用,远端拉不到。
+		"上报接口只绑回环": 1,
 	}
 	got := map[string]int{}
 	for _, sk := range res.Skipped {
@@ -259,8 +304,8 @@ func TestSkipsAreExpected(t *testing.T) {
 			t.Errorf("跳过原因 %q 出现 %d 次,期望 %d 次", k, got[k], n)
 		}
 	}
-	if len(res.Skipped) != 8 {
-		t.Errorf("共 %d 条跳过,期望 8 条 —— 有新的静默跳过被引入:\n%+v",
+	if len(res.Skipped) != 3 {
+		t.Errorf("共 %d 条跳过,期望 3 条 —— 有新的静默跳过被引入:\n%+v",
 			len(res.Skipped), res.Skipped)
 	}
 }

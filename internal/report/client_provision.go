@@ -1,6 +1,7 @@
 package report
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -102,8 +103,12 @@ func (p *clientProvisioner) provision(client clientregistry.Client, csrPEM strin
 	if p == nil || p.control == nil || p.saveMu == nil || p.install == nil {
 		return clientProvisioningResult{}, errors.New("client provisioning is not configured")
 	}
-	if client.Platform != string(model.LinuxServer) {
+	platform := model.Platform(client.Platform)
+	if platform != model.LinuxServer && platform != model.WindowsDesktop {
 		return clientProvisioningResult{}, fmt.Errorf("client platform %q is not delivered in v1", client.Platform)
+	}
+	if platform == model.WindowsDesktop && hasResponsibility(client, "forward") {
+		return clientProvisioningResult{}, errors.New("windows-desktop provisioning supports use_loom access only")
 	}
 	paths, err := clientPaths(p.control)
 	if err != nil {
@@ -152,7 +157,7 @@ func (p *clientProvisioner) provision(client clientregistry.Client, csrPEM strin
 			var accessPlan ssotedit.ClientPlan
 			if hasResponsibility(client, "use_loom") {
 				input := ssotedit.ClientInput{
-					ID: client.ID, Name: client.Name, Platform: model.LinuxServer,
+					ID: client.ID, Name: client.Name, Platform: platform,
 					DestinationGrants: append([]string(nil), client.DestinationGrants...),
 				}
 				if hasResponsibility(client, "forward") {
@@ -220,7 +225,7 @@ func (p *clientProvisioner) provision(client clientregistry.Client, csrPEM strin
 			if len(clientSecrets) == 0 {
 				return fmt.Errorf("rendered client %q has no bootstrap secret layer", client.ID)
 			}
-			if err := p.installExistingNodeSecrets(current, byOwner); err != nil {
+			if err := p.installExistingNodeSecrets(current, all, byOwner); err != nil {
 				return err
 			}
 			// This is the commit point. Publisher observation can only begin after
@@ -276,12 +281,16 @@ func validateProvisionedClient(s *model.SSOT, node *model.Node, client clientreg
 		return fmt.Errorf("device id %q already has a different display name in SSOT", client.ID)
 	}
 	wantsAccess := client.ProfileVersion == "" || hasResponsibility(client, "use_loom")
+	platform := model.Platform(client.Platform)
+	if platform != model.LinuxServer && platform != model.WindowsDesktop {
+		return fmt.Errorf("device id %q has unsupported platform %q", client.ID, client.Platform)
+	}
 	if wantsAccess {
-		if node.Access == nil || node.Access.Platform != model.LinuxServer {
-			return fmt.Errorf("device id %q is missing its linux-server use_loom role", client.ID)
+		if node.Access == nil || node.Access.Platform != platform {
+			return fmt.Errorf("device id %q is missing its %s use_loom role", client.ID, platform)
 		}
 		if err := ssotedit.ValidateAccessClientShape(s, node, ssotedit.ClientInput{
-			ID: client.ID, Name: client.Name, Platform: model.LinuxServer,
+			ID: client.ID, Name: client.Name, Platform: platform,
 			DestinationGrants: clientDestinationGrants(client),
 		}); err != nil {
 			return fmt.Errorf("device id %q has an incomplete or broadened access shape: %w", client.ID, err)
@@ -304,7 +313,7 @@ func validateProvisionedClient(s *model.SSOT, node *model.Node, client clientreg
 func validateProvisionedServerShape(s *model.SSOT, node *model.Node, client clientregistry.Client) error {
 	server := client.Server
 	if server == nil || node.Server == nil {
-		return fmt.Errorf("device id %q is missing pinned server enrollment facts", client.ID)
+		return fmt.Errorf("device id %q is missing pinned server join facts", client.ID)
 	}
 	if node.PublicEndpoint != server.PublicEndpoint || node.Country != server.Country || node.City != server.City ||
 		node.Provider != server.Provider || node.Server.InboundPort != server.InboundPort ||
@@ -476,7 +485,7 @@ func encodedNodeSecrets(s *model.SSOT, owner string, all map[string]string) ([]b
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("master secrets are missing refs for %s: %s", owner, strings.Join(missing, ", "))
 	}
-	header := fmt.Sprintf("# %s 的秘密层 —— 由中控客户端注册事务生成\n"+
+	header := fmt.Sprintf("# %s 的秘密层 —— 由中控 Device 加入事务生成\n"+
 		"# 只含这台机器自己用得到的引用。0600。\n\n", owner)
 	return secret.Encode(mine, header), nil
 }
@@ -494,7 +503,7 @@ func randomClientSecret() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(value), nil
 }
 
-func (p *clientProvisioner) installExistingNodeSecrets(current *model.SSOT, byOwner map[string][]byte) error {
+func (p *clientProvisioner) installExistingNodeSecrets(current *model.SSOT, all map[string]string, byOwner map[string][]byte) error {
 	ids := make([]string, 0, len(current.Nodes))
 	for i := range current.Nodes {
 		if current.Nodes[i].Decommission {
@@ -508,11 +517,24 @@ func (p *clientProvisioner) installExistingNodeSecrets(current *model.SSOT, byOw
 		err error
 	}
 	results := make(chan result, len(ids))
+	scheduled := 0
 	for _, id := range ids {
 		body := byOwner[id]
 		if len(body) == 0 {
 			return fmt.Errorf("candidate render has no secret layer for existing node %q", id)
 		}
+		node := current.NodeByID()[id]
+		if node != nil && node.Access != nil && node.Access.Platform != model.LinuxServer {
+			previous, err := encodedNodeSecrets(current, id, all)
+			if err != nil {
+				return fmt.Errorf("render current secret layer for non-Linux node %q: %w", id, err)
+			}
+			if !bytes.Equal(previous, body) {
+				return fmt.Errorf("candidate changes secrets for existing %s node %q, but its steady update channel is not delivered", node.Access.Platform, id)
+			}
+			continue
+		}
+		scheduled++
 		go func(id string, body []byte) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
@@ -520,7 +542,7 @@ func (p *clientProvisioner) installExistingNodeSecrets(current *model.SSOT, byOw
 		}(id, body)
 	}
 	var failures []string
-	for range ids {
+	for i := 0; i < scheduled; i++ {
 		result := <-results
 		if result.err != nil {
 			failures = append(failures, result.id+": "+result.err.Error())
@@ -695,13 +717,9 @@ func (p *clientProvisioner) readyBootstrap(paths clientProvisionPaths, s *model.
 	if err != nil {
 		return clientBootstrap{}, err
 	}
-	platformBody, err := os.ReadFile(paths.platformPublic)
+	platformKey, err := readClientPlatformPublicKey(paths.platformPublic)
 	if err != nil {
-		return clientBootstrap{}, fmt.Errorf("read platform public key: %w", err)
-	}
-	platformKey, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(platformBody)))
-	if err != nil || len(platformKey) != ed25519.PublicKeySize {
-		return clientBootstrap{}, errors.New("platform public key is not a 32-byte Ed25519 key")
+		return clientBootstrap{}, err
 	}
 	authorityPath := filepath.Join(paths.releaseArchive, "release-authority.json")
 	authorityBody, err := os.ReadFile(authorityPath)
@@ -722,7 +740,7 @@ func (p *clientProvisioner) readyBootstrap(paths clientProvisionPaths, s *model.
 	return clientBootstrap{
 		NodeID: node.ID, DistributionURLs: distributionURLs,
 		DNS: append([]string(nil), s.DNSFor(node)...), SecretsEnv: string(secrets),
-		PlatformPublicKey: string(platformBody), ReleaseAuthority: string(authorityBody),
+		PlatformPublicKey: base64.StdEncoding.EncodeToString(platformKey), ReleaseAuthority: string(authorityBody),
 		CACertPEM: string(caBody), NodeCertPEM: string(certBody),
 	}, nil
 }

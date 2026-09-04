@@ -43,7 +43,7 @@ func TestAccessOnlyEnrollmentDoesNotInstallWireGuardTools(t *testing.T) {
 
 func TestServerEnrollmentFailsBeforeClaimWhenToolsRemainMissing(t *testing.T) {
 	err := ensureServerWireGuardTools(&clientenroll.ServerEnrollment{}, func(string) bool { return false }, func() error { return nil })
-	if err == nil || !strings.Contains(err.Error(), "邀请尚未消费") {
+	if err == nil || !strings.Contains(err.Error(), "加入码尚未消费") {
 		t.Fatalf("missing tools error=%v", err)
 	}
 }

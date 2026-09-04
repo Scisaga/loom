@@ -1,9 +1,18 @@
 /out/
 /dist/
 /loom
+/.tools/
 __pycache__/
 *.py[cod]
 .ssh_config
+
+# 本机助手配置（项目级共享配置仍可按需纳入版本库）
+/.claude/settings.local.json
+
+# 操作系统自动生成的元数据
+.DS_Store
+Thumbs.db
+Desktop.ini
 # 秘密材料 —— 绝不进版本库
 *.zip
 *.key

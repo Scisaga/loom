@@ -1,6 +1,7 @@
-// Package clientenroll implements the Linux identity-claim bootstrap.
-// It deliberately stops before invoking pull: cmd/loom owns the existing
-// signed pull/apply transaction and calls it only after InstallReady succeeds.
+// Package clientenroll implements the platform-neutral identity-claim protocol.
+// Linux keeps the existing file-backed transaction in this file. Windows uses
+// PreparedIdentity so its private key can be protected with DPAPI before it is
+// ever persisted.
 package clientenroll
 
 import (
@@ -21,13 +22,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 	"unicode"
 
@@ -36,8 +35,11 @@ import (
 )
 
 const (
-	Schema           = 1
-	Platform         = "linux-server"
+	Schema                 = 1
+	PlatformLinuxServer    = "linux-server"
+	PlatformWindowsDesktop = "windows-desktop"
+	// Platform is retained for compatibility with the Linux file-backed API.
+	Platform         = PlatformLinuxServer
 	maxInviteBytes   = 16 << 10
 	maxResponseBytes = 4 << 20
 	identityKeyFile  = "identity.key"
@@ -47,21 +49,23 @@ const (
 	enrollmentLock   = ".enrollment.lock"
 )
 
-var errEnrollmentRedirect = errors.New("注册 HTTPS 端点不允许重定向")
+var errEnrollmentRedirect = errors.New("设备加入 HTTPS 端点不允许重定向")
 
 // Invite is the decoded fragment payload. Token must never be serialized or
 // included in diagnostics after ParseInvite returns it.
 type Invite struct {
-	Endpoint  string
-	Token     string
-	ExpiresAt string
+	Endpoint          string
+	Token             string
+	ExpiresAt         string
+	PlatformKeySHA256 string
 }
 
 type invitePayload struct {
-	Schema    int    `json:"schema"`
-	Endpoint  string `json:"endpoint"`
-	Token     string `json:"token"`
-	ExpiresAt string `json:"expires_at"`
+	Schema            int    `json:"schema"`
+	Endpoint          string `json:"endpoint"`
+	Token             string `json:"token"`
+	ExpiresAt         string `json:"expires_at"`
+	PlatformKeySHA256 string `json:"platform_key_sha256,omitempty"`
 }
 
 type identityMeta struct {
@@ -169,42 +173,73 @@ func ParseInvite(raw string) (Invite, error) {
 	if err := dec.Decode(&payload); err != nil || dec.Decode(&struct{}{}) != io.EOF || payload.Schema != Schema {
 		return out, invalidInvite()
 	}
-	endpoint, err := url.ParseRequestURI(payload.Endpoint)
+	out = Invite{
+		Endpoint: payload.Endpoint, Token: payload.Token, ExpiresAt: payload.ExpiresAt,
+		PlatformKeySHA256: payload.PlatformKeySHA256,
+	}
+	if err := ValidateInvite(out); err != nil {
+		return out, invalidInvite()
+	}
+	return out, nil
+}
+
+// ValidateInvite validates a decoded or protected join artifact without
+// serializing its bearer token into an error. Windows uses it when recovering
+// a DPAPI-protected pending join after the original QR is no longer present.
+func ValidateInvite(invite Invite) error {
+	endpoint, err := url.ParseRequestURI(invite.Endpoint)
 	if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil ||
-		endpoint.RawQuery != "" || endpoint.Fragment != "" {
-		return out, invalidInvite()
+		endpoint.RawQuery != "" || endpoint.Fragment != "" || endpoint.String() != invite.Endpoint {
+		return invalidInvite()
 	}
-	token, err := base64.RawURLEncoding.DecodeString(payload.Token)
-	if err != nil || len(token) != 32 || base64.RawURLEncoding.EncodeToString(token) != payload.Token {
-		return out, invalidInvite()
+	token, err := base64.RawURLEncoding.DecodeString(invite.Token)
+	if err != nil || len(token) != 32 || base64.RawURLEncoding.EncodeToString(token) != invite.Token {
+		return invalidInvite()
 	}
-	if _, err := time.Parse(time.RFC3339, payload.ExpiresAt); err != nil {
-		return out, invalidInvite()
+	if _, err := time.Parse(time.RFC3339, invite.ExpiresAt); err != nil {
+		return invalidInvite()
 	}
-	return Invite{Endpoint: endpoint.String(), Token: payload.Token, ExpiresAt: payload.ExpiresAt}, nil
+	if invite.PlatformKeySHA256 != "" {
+		digest, err := hex.DecodeString(invite.PlatformKeySHA256)
+		if err != nil || len(digest) != sha256.Size || hex.EncodeToString(digest) != invite.PlatformKeySHA256 {
+			return invalidInvite()
+		}
+	}
+	return nil
 }
 
 func invalidInvite() error {
 	// 错误不拼接原始 URI，否则 token 会进入终端/日志(§11 安全存储)。
-	return errors.New("[§9.1 注册邀请] 邀请文件无效；请重新下载，不要复制或记录其原始内容")
+	return errors.New("[§9.1 加入二维码] 加入码无效；请重新获取，不要复制或记录其原始内容")
 }
 
 // ReadInviteFile rejects links and bounds input before parsing it.
 func ReadInviteFile(name string, stdin io.Reader) (Invite, error) {
 	if name == "-" {
 		body, err := io.ReadAll(io.LimitReader(stdin, maxInviteBytes+1))
-		if err != nil || len(body) > maxInviteBytes {
+		if err != nil || len(body) == 0 || len(body) > maxInviteBytes {
 			return Invite{}, invalidInvite()
 		}
 		return ParseInvite(string(body))
 	}
-	info, err := os.Lstat(name)
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() > maxInviteBytes {
-		return Invite{}, fmt.Errorf("[§9.1 注册邀请] 邀请载体必须是小于 16 KiB 的非链接普通文件")
+	before, err := os.Lstat(name)
+	if err != nil || !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 ||
+		before.Size() <= 0 || before.Size() > maxInviteBytes {
+		return Invite{}, fmt.Errorf("[§9.1 加入二维码] 加入文件必须是小于 16 KiB 的非链接普通文件")
 	}
-	body, err := os.ReadFile(name)
+	file, err := os.Open(name)
 	if err != nil {
-		return Invite{}, fmt.Errorf("读邀请文件失败")
+		return Invite{}, fmt.Errorf("读取加入文件失败")
+	}
+	defer file.Close()
+	after, err := file.Stat()
+	if err != nil || !after.Mode().IsRegular() || !os.SameFile(before, after) ||
+		after.Size() <= 0 || after.Size() > maxInviteBytes {
+		return Invite{}, fmt.Errorf("读取加入文件失败")
+	}
+	body, err := io.ReadAll(io.LimitReader(file, maxInviteBytes+1))
+	if err != nil || int64(len(body)) != after.Size() || len(body) > maxInviteBytes {
+		return Invite{}, fmt.Errorf("读取加入文件失败")
 	}
 	return ParseInvite(string(body))
 }
@@ -221,7 +256,7 @@ func Claim(ctx context.Context, client *http.Client, invite Invite, stateDir str
 func ClaimWithServer(ctx context.Context, client *http.Client, invite Invite, stateDir string, server *ServerEnrollment, random io.Reader) (Response, error) {
 	var zero Response
 	if client == nil {
-		return zero, errors.New("注册 HTTP 客户端为空")
+		return zero, errors.New("设备加入 HTTP 客户端为空")
 	}
 	if random == nil {
 		random = rand.Reader
@@ -235,56 +270,18 @@ func ClaimWithServer(ctx context.Context, client *http.Client, invite Invite, st
 	if err != nil {
 		return zero, err
 	}
-	body, err := json.Marshal(claimRequest{
-		Token: invite.Token, Platform: Platform, CSRPEM: string(csrPEM), RequestID: meta.RequestID,
-		Server: server,
-	})
+	keyPEM, loadedMeta, err := loadIdentity(stateDir)
 	if err != nil {
 		return zero, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, invite.Endpoint, bytes.NewReader(body))
+	if loadedMeta != meta {
+		return zero, errors.New("[§4.3 设备绑定] 本机身份在加入事务中发生变化")
+	}
+	result, err := ClaimPrepared(ctx, client, invite, PreparedIdentity{
+		Schema: Schema, Platform: Platform, Endpoint: meta.Endpoint, RequestID: meta.RequestID,
+		PrivateKeyPEM: keyPEM, CSRPEM: csrPEM,
+	}, server)
 	if err != nil {
-		return zero, fmt.Errorf("创建注册请求:%w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	// Never inherit a redirect policy from a caller. A 307/308 redirect would
-	// otherwise replay the POST body, including the bearer token, to another host.
-	safeClient := *client
-	safeClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
-		return errEnrollmentRedirect
-	}
-	response, err := safeClient.Do(req)
-	if err != nil {
-		if errors.Is(err, errEnrollmentRedirect) {
-			return zero, fmt.Errorf("[§9.2 注册流程] 控制中心注册端点拒绝直连:%w", errEnrollmentRedirect)
-		}
-		return zero, &TransientError{cause: fmt.Errorf("[§9.2 注册流程] 提交设备 CSR 的临时网络失败:%w", err)}
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusAccepted {
-		// 服务端正文可能回显请求；不将它拼入错误，确保 token 不进日志。
-		statusErr := fmt.Errorf("[§9.2 注册流程] 控制中心返回 HTTP %d", response.StatusCode)
-		if response.StatusCode >= 500 && response.StatusCode <= 599 {
-			return zero, &TransientError{cause: statusErr}
-		}
-		return zero, statusErr
-	}
-	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
-	if err != nil || mediaType != "application/json" {
-		return zero, errors.New("[§9.2 注册流程] 控制中心未返回 application/json")
-	}
-	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
-	if err != nil || len(responseBody) > maxResponseBytes {
-		return zero, errors.New("[§9.2 注册流程] 控制中心响应超出 4 MiB 边界")
-	}
-	dec := json.NewDecoder(bytes.NewReader(responseBody))
-	dec.DisallowUnknownFields()
-	var result Response
-	if err := dec.Decode(&result); err != nil || dec.Decode(&struct{}{}) != io.EOF {
-		return zero, errors.New("[§9.2 注册流程] 控制中心返回了无法识别的响应")
-	}
-	if err := validateResponse(result, response.StatusCode); err != nil {
 		return zero, err
 	}
 	stored, err := json.MarshalIndent(result, "", "  ")
@@ -293,33 +290,33 @@ func ClaimWithServer(ctx context.Context, client *http.Client, invite Invite, st
 	}
 	stored = append(stored, '\n')
 	if err := writePrivateAtomic(filepath.Join(stateDir, enrollmentFile), stored, 0o600); err != nil {
-		return zero, fmt.Errorf("保存注册响应:%w", err)
+		return zero, fmt.Errorf("保存加入响应:%w", err)
 	}
 	return result, nil
 }
 
 func validateResponse(response Response, statusCode int) error {
 	if response.Schema != Schema || strings.TrimSpace(response.ClientID) == "" {
-		return errors.New("[§9.2 注册流程] 注册响应 schema/client_id 无效")
+		return errors.New("[§9.2 加入流程] 加入响应 schema/client_id 无效")
 	}
 	if _, err := time.Parse(time.RFC3339, response.ClaimedAt); err != nil {
-		return errors.New("[§9.2 注册流程] 注册响应 claimed_at 无效")
+		return errors.New("[§9.2 加入流程] 加入响应 claimed_at 无效")
 	}
 	switch response.Configuration {
 	case "pending":
 		if statusCode != http.StatusAccepted || response.Status != "provisioning" ||
 			response.Next != "wait_for_configuration" || response.Bootstrap != nil {
-			return errors.New("[§9.2 注册流程] pending 注册响应语义不一致")
+			return errors.New("[§9.2 加入流程] pending 加入响应语义不一致")
 		}
 	case "ready":
 		if statusCode != http.StatusOK || response.Status != "ready" || response.Next != "pull" || response.Bootstrap == nil {
-			return errors.New("[§9.2 注册流程] ready 注册响应语义不一致")
+			return errors.New("[§9.2 加入流程] ready 加入响应语义不一致")
 		}
 		if response.Bootstrap.NodeID != response.ClientID {
-			return errors.New("[§4.3 设备绑定] ready 注册响应的 client_id 与 node_id 不一致")
+			return errors.New("[§4.3 设备绑定] ready 加入响应的 client_id 与 node_id 不一致")
 		}
 	default:
-		return fmt.Errorf("[§4.5 fail closed] 不识别注册配置状态 %q", response.Configuration)
+		return fmt.Errorf("[§4.5 fail closed] 不识别加入配置状态 %q", response.Configuration)
 	}
 	return nil
 }
@@ -701,138 +698,8 @@ func refuseIdentityReplacement(paths Paths, material validatedBootstrap, keyPEM 
 	return nil
 }
 
-func lockStateDir(dir string) (*os.File, error) {
-	if dir == "" || !filepath.IsAbs(dir) || filepath.Clean(dir) != dir {
-		return nil, fmt.Errorf("[§11 安全存储] state-dir 必须是绝对且已清理的路径:%q", dir)
-	}
-	if err := secureDir(dir); err != nil {
-		return nil, err
-	}
-	path := filepath.Join(dir, enrollmentLock)
-	lock, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("打开注册锁:%w", err)
-	}
-	info, err := lock.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
-		lock.Close()
-		return nil, errors.New("[§11 安全存储] 注册锁必须是私有普通文件")
-	}
-	if stat, ok := info.Sys().(*syscall.Stat_t); ok && stat.Nlink != 1 {
-		lock.Close()
-		return nil, errors.New("[§11 安全存储] 注册锁不得有硬链接")
-	}
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
-		lock.Close()
-		return nil, fmt.Errorf("获取注册锁:%w", err)
-	}
-	return lock, nil
-}
-
-func unlockState(lock *os.File) {
-	if lock == nil {
-		return
-	}
-	_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-	_ = lock.Close()
-}
-
-func secureDir(dir string) error {
-	info, err := os.Lstat(dir)
-	if errors.Is(err, os.ErrNotExist) {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return fmt.Errorf("创建设备身份目录:%w", err)
-		}
-		info, err = os.Lstat(dir)
-	}
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 {
-		return errors.New("[§11 安全存储] 设备身份目录必须是非链接且权限 0700 的目录")
-	}
-	return nil
-}
-
 func readPrivateFile(path string, limit int64) ([]byte, error) {
 	return readRegularFile(path, limit, true)
-}
-
-func readRegularFile(path string, limit int64, private bool) ([]byte, error) {
-	before, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
-	}
-	if !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 || before.Size() < 0 || before.Size() > limit ||
-		(private && before.Mode().Perm()&0o077 != 0) {
-		return nil, fmt.Errorf("[§11 安全存储] %s 必须是权限正确、有界的普通文件", path)
-	}
-	if stat, ok := before.Sys().(*syscall.Stat_t); ok && stat.Nlink != 1 {
-		return nil, fmt.Errorf("[§11 安全存储] %s 不得有硬链接", path)
-	}
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	after, err := f.Stat()
-	if err != nil || !after.Mode().IsRegular() || !os.SameFile(before, after) || after.Size() != before.Size() {
-		return nil, fmt.Errorf("[§11 安全存储] %s 在读取期间发生变化", path)
-	}
-	body, err := io.ReadAll(io.LimitReader(f, limit+1))
-	if err != nil || int64(len(body)) != after.Size() || int64(len(body)) > limit {
-		return nil, fmt.Errorf("[§11 安全存储] 读取 %s 失败或超出边界", path)
-	}
-	return body, nil
-}
-
-func writePrivateAtomic(path string, body []byte, mode os.FileMode) (retErr error) {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	if info, err := os.Lstat(path); err == nil {
-		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("[§11 安全存储] 拒绝覆盖非普通文件 %s", path)
-		}
-		if stat, ok := info.Sys().(*syscall.Stat_t); ok && stat.Nlink != 1 {
-			return fmt.Errorf("[§11 安全存储] 拒绝覆盖硬链接 %s", path)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	f, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	defer func() {
-		_ = f.Close()
-		if retErr != nil {
-			_ = os.Remove(tmp)
-		}
-	}()
-	if err := f.Chmod(mode); err != nil {
-		return err
-	}
-	if _, err := f.Write(body); err != nil {
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return err
-	}
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	return d.Sync()
 }
 
 func sha256Hex(body []byte) string {

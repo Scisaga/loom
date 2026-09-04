@@ -478,8 +478,8 @@ Enrollment creates or reuses /etc/wireguard/node.key locally, sends only its
 public key, and installs wireguard-tools through a supported package manager
 before consuming the invitation when the tools are absent.
 
-The installer registers a locally generated P-256 CSR identity (the private key
-never leaves the machine), installs
+The installer binds a locally generated P-256 CSR identity to the Device that
+the control plane already created (the private key never leaves the machine), installs
 the bootstrap response, and starts the first signed pull when the control plane
 returned a complete provisioning envelope. It never changes global proxy
 environment variables.
@@ -550,7 +550,7 @@ install_atomic "$base/sing-box" /usr/local/bin/sing-box 0755
 install_atomic "$base/platform.pub" /etc/loom/trust/platform.pub 0644
 
 if [ "$no_enroll" -eq 1 ]; then
-    echo "Installed binaries only; no identity was registered and no service was started."
+    echo "Installed binaries only; no Device identity was bound and no service was started."
     exit 0
 fi
 

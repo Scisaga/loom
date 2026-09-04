@@ -223,15 +223,35 @@ credentials:
   - {id: cr1, declaration: d1, secret_ref: v1}`,
 		},
 		{
-			name: "§7.2 桌面多凭据可以显式选择无默认出口",
+			name: "§7.3 Windows 固定为 TUN 加中控托管的 1080 mixed",
 			want: "",
-			yaml: topo + `  - {id: p1, access: {platform: desktop, credentials: [cr1, cr2], mixed_ports: [{port: 1080, declaration: d1}]}}
+			yaml: topo + `  - {id: p1, access: {platform: windows-desktop, credentials: [cr1, cr2], default_declaration: d1, mixed_ports: [{port: 1080, services: true}]}}
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, probe_url: "https://probe.example/", tuning_period: 10m}
   - {id: d2, address_axis: from_request, egress_axis: any, objective: latency, probe_url: "https://probe.example/", tuning_period: 10m}
 credentials:
   - {id: cr1, declaration: d1, secret_ref: v}
-  - {id: cr2, declaration: d2, secret_ref: v}`,
+  - {id: cr2, declaration: d2, secret_ref: v}
+services:
+  - {id: known, declaration: d2, addresses: [known.example]}`,
+		},
+		{
+			name: "§7.2 旧 desktop 平台名必须拒绝",
+			want: "写错 platform",
+			yaml: topo + `  - {id: p1, access: {platform: desktop, credentials: [cr1]}}
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, probe_url: "https://probe.example/", tuning_period: 10m}
+credentials:
+  - {id: cr1, declaration: d1, secret_ref: v}`,
+		},
+		{
+			name: "§7.3 Windows 不接受声明级端口覆盖",
+			want: "必须且只能声明一个 services:true 的 1080 mixed",
+			yaml: topo + `  - {id: p1, access: {platform: windows-desktop, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}}
+declarations:
+  - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, probe_url: "https://probe.example/", tuning_period: 10m}
+credentials:
+  - {id: cr1, declaration: d1, secret_ref: v}`,
 		},
 		{
 			name: "§7.2 linux-server 没有 mixed 端口就接管不到流量",
@@ -315,19 +335,23 @@ declarations:
 // TestPlatformDerivesTUN:接管方式由平台推导,不是独立配置项(§7.2)。
 func TestPlatformDerivesTUN(t *testing.T) {
 	for _, tc := range []struct {
-		p     model.Platform
-		tun   bool
-		mixed bool
+		p              model.Platform
+		tun            bool
+		mixed          bool
+		linuxLifecycle bool
 	}{
-		{model.Android, true, false},
-		{model.Desktop, true, true},
-		{model.LinuxServer, false, true},
+		{model.Android, true, false, false},
+		{model.WindowsDesktop, true, true, false},
+		{model.LinuxServer, false, true, true},
 	} {
 		if got := tc.p.UsesTUN(); got != tc.tun {
 			t.Errorf("%s.UsesTUN() = %v,期望 %v", tc.p, got, tc.tun)
 		}
 		if got := tc.p.UsesMixed(); got != tc.mixed {
 			t.Errorf("%s.UsesMixed() = %v,期望 %v", tc.p, got, tc.mixed)
+		}
+		if got := tc.p.UsesLinuxLifecycle(); got != tc.linuxLifecycle {
+			t.Errorf("%s.UsesLinuxLifecycle() = %v,期望 %v", tc.p, got, tc.linuxLifecycle)
 		}
 	}
 }

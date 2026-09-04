@@ -15,7 +15,7 @@ import (
 )
 
 // ClientInput 是一次纯接入节点声明的完整可写输入。平台来自已安装客户端，
-// 不是管理 UI 的人工选项；v1 只交付 linux-server。
+// 不是管理 UI 的人工选项。
 type ClientInput struct {
 	ID, Name string
 	Platform model.Platform
@@ -62,8 +62,8 @@ func addAccessClient(content []byte, input ClientInput, attach bool) (ClientPlan
 	if !model.ValidNodeID(input.ID) {
 		return ClientPlan{}, fmt.Errorf("client node id %q is invalid", input.ID)
 	}
-	if input.Platform != model.LinuxServer {
-		return ClientPlan{}, fmt.Errorf("client platform %q is not delivered; v1 only supports linux-server", input.Platform)
+	if !supportedClientPlatform(input.Platform) {
+		return ClientPlan{}, fmt.Errorf("client platform %q is not delivered; supported platforms are linux-server and windows-desktop", input.Platform)
 	}
 
 	current, err := model.Load(content)
@@ -247,8 +247,8 @@ func expectedClientShape(s *model.SSOT, input ClientInput) (clientShape, error) 
 	if !model.ValidNodeID(input.ID) {
 		return zero, fmt.Errorf("client node id %q is invalid", input.ID)
 	}
-	if input.Platform != model.LinuxServer {
-		return zero, fmt.Errorf("client platform %q is not delivered; v1 only supports linux-server", input.Platform)
+	if !supportedClientPlatform(input.Platform) {
+		return zero, fmt.Errorf("client platform %q is not delivered; supported platforms are linux-server and windows-desktop", input.Platform)
 	}
 	declarationIDs := append([]string(nil), input.DestinationGrants...)
 	if input.DestinationGrants == nil {
@@ -277,15 +277,25 @@ func expectedClientShape(s *model.SSOT, input ClientInput) (clientShape, error) 
 	for i, declarationID := range declarationIDs {
 		shape.credentialIDs = append(shape.credentialIDs, clientCredentialID(input.ID, declarationID))
 		shape.credentialRefs = append(shape.credentialRefs, "cred/"+input.ID+"/"+declarationID)
-		if len(s.Services) == 0 {
+		if input.Platform == model.WindowsDesktop {
+			// Windows has one shared managed ingress: TUN and the 1080 mixed port
+			// consume the same Service/default rules. Declaration-specific mixed
+			// ports are a Linux-only compatibility surface.
+			shape.defaultDeclaration = automaticDefault(s, declarationIDs)
+			shape.mixedPorts = []model.MixedPort{{Port: 1080, Services: true}}
+		} else if len(s.Services) == 0 {
 			shape.mixedPorts = append(shape.mixedPorts, model.MixedPort{Port: 1080 + i, Declaration: declarationID})
 		}
 	}
-	if len(s.Services) > 0 {
+	if input.Platform != model.WindowsDesktop && len(s.Services) > 0 {
 		shape.defaultDeclaration = automaticDefault(s, declarationIDs)
 		shape.mixedPorts = []model.MixedPort{{Port: 1080, Services: true}}
 	}
 	return shape, nil
+}
+
+func supportedClientPlatform(platform model.Platform) bool {
+	return platform == model.LinuxServer || platform == model.WindowsDesktop
 }
 
 func clientMixedPort(port int, declaration string, services bool) *yaml.Node {

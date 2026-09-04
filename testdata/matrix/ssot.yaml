@@ -94,14 +94,11 @@ nodes:
   - id: workstation
     name: 开发机
     access:
-      platform: desktop          # TUN 兜底 + mixed 精确控制
+      platform: windows-desktop  # TUN 主接管 + 同规则的本地 1080 mixed
       credentials: [cred-ws-sg, cred-ws-eg, cred-ws-llm, cred-ws-3p]
       default_declaration: best-egress
       mixed_ports:
-        - {port: 1080, declaration: sg-fixed}
-        - {port: 1081, declaration: best-egress}
-        - {port: 1082, declaration: llm-ttft}
-        - {port: 1083, declaration: llm-3p}
+        - {port: 1080, services: true}
 
   - id: ci-runner
     name: CI 构建机

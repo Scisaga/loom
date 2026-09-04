@@ -306,17 +306,14 @@ def overview_page() -> str:
 
 def nodes_page() -> str:
     body = r'''
-  <!-- Fleet state and the only primary action. -->
+  <!-- Fleet state. Node onboarding is not performed from this page. -->
   <rect class="panel" x="21" y="202" width="1538" height="82" rx="7"/>
   <g class="ui">
     <text class="small muted" x="46" y="232">DECLARED</text><text class="metric" x="46" y="258">5 nodes</text>
     <text class="small muted" x="300" y="232">HEALTH</text><text class="metric green" x="300" y="258">5 healthy</text>
-    <text class="small muted" x="554" y="232">ENROLLMENT</text><text class="metric green" x="554" y="258">Available</text>
+    <text class="small muted" x="554" y="232">LIFECYCLE</text><text class="metric green" x="554" y="258">Managed</text>
     <text class="small muted" x="808" y="232">SNAPSHOT</text><text class="metric" x="808" y="258">5 verified</text>
     <text class="small muted" x="1062" y="232">ISSUES</text><text class="metric green" x="1062" y="258">None</text>
-    <rect class="button" x="1390" y="221" width="143" height="40" rx="6"/>
-    <use href="#icon-plus" x="1411" y="233" width="15" height="15" stroke="#FFFFFF" fill="none" stroke-width="1.5" stroke-linecap="round"/>
-    <text class="small" x="1437" y="246" fill="#FFFFFF">Add node</text><text class="tiny green" x="1457" y="278" text-anchor="middle">SSH guarded</text>
   </g>
   <line class="rule" x1="272" y1="222" x2="272" y2="265"/><line class="rule" x1="526" y1="222" x2="526" y2="265"/>
   <line class="rule" x1="780" y1="222" x2="780" y2="265"/><line class="rule" x1="1034" y1="222" x2="1034" y2="265"/>
@@ -328,43 +325,43 @@ def nodes_page() -> str:
     <text class="section" x="41" y="332">Node inventory</text>
     <text class="tiny muted" x="196" y="332">Declared hosts and their newest trusted observation</text>
     <rect class="chip-green" x="1270" y="313" width="55" height="28" rx="14"/><text class="tiny green" x="1297" y="332" text-anchor="middle">All · 5</text>
-    <text class="tiny muted" x="1348" y="332">Attention · 0</text><text class="tiny green" x="1539" y="332" text-anchor="end">Enroll · Available</text>
+    <text class="tiny muted" x="1348" y="332">Attention · 0</text><text class="tiny green" x="1539" y="332" text-anchor="end">Managed · 5</text>
 
-    <text class="small muted" x="47" y="379">NODE / LIFECYCLE</text><text class="small muted" x="180" y="379">DECLARED ENDPOINT / SSH PORT</text><text class="small muted" x="465" y="379">LOCATION</text>
+    <text class="small muted" x="47" y="379">NODE / LIFECYCLE</text><text class="small muted" x="180" y="379">DECLARED ENDPOINT</text><text class="small muted" x="465" y="379">LOCATION</text>
     <text class="small muted" x="560" y="379">ROLE</text><text class="small muted" x="770" y="379">OBSERVATION</text><text class="small muted" x="970" y="379">SNAPSHOT</text>
     <text class="small muted" x="1140" y="379">CARRIER</text><text class="small muted" x="1300" y="379">LAST SEEN</text>
     <line class="rule" x1="41" y1="389" x2="1539" y2="389"/>
 
     <text class="subsection mono" x="47" y="421">demo-d</text><text class="tiny muted" x="47" y="442">control · Active</text>
-    <text class="body mono" x="180" y="421">control.example.net</text><text class="tiny muted" x="180" y="442">SSH port 22 · host/user not retained</text><text class="body" x="465" y="421">Region A</text>
+    <text class="body mono" x="180" y="421">control.example.net</text><text class="tiny muted" x="180" y="442">SSOT endpoint</text><text class="body" x="465" y="421">Region A</text>
     <text class="body" x="560" y="421">control + access</text><text class="tiny muted" x="560" y="442">tunnel endpoint</text>
     <circle class="quiet-dot" cx="775" cy="416" r="4"/><text class="body" x="788" y="421">Healthy</text><text class="tiny muted" x="788" y="442">local /status</text>
     <text class="body mono" x="970" y="421">a1b2c3d4e5f6</text><text class="tiny green" x="970" y="442">Verified</text><text class="body" x="1140" y="421">2 / 2 observed</text><text class="body mono" x="1300" y="421">10s</text>
     <use href="#icon-arrow-right" x="1518" y="411" width="14" height="14" class="action-icon"/><line class="rule" x1="41" y1="459" x2="1539" y2="459"/>
 
     <text class="subsection mono" x="47" y="488">demo-b</text><text class="tiny muted" x="47" y="509">remote · Active</text>
-    <text class="body mono" x="180" y="488">192.0.2.21</text><text class="tiny muted" x="180" y="509">SSH port 22 · host/user not retained</text><text class="body" x="465" y="488">Region B</text>
+    <text class="body mono" x="180" y="488">192.0.2.21</text><text class="tiny muted" x="180" y="509">SSOT endpoint</text><text class="body" x="465" y="488">Region B</text>
     <text class="body" x="560" y="488">domestic + egress</text><text class="tiny muted" x="560" y="509">tunnel endpoint</text>
     <circle class="quiet-dot" cx="775" cy="483" r="4"/><text class="body" x="788" y="488">Healthy</text><text class="tiny muted" x="788" y="509">trusted learned state</text>
     <text class="body mono" x="970" y="488">a1b2c3d4e5f6</text><text class="tiny green" x="970" y="509">Verified</text><text class="body" x="1140" y="488">2 / 2 observed</text><text class="body mono" x="1300" y="488">11s</text>
     <use href="#icon-arrow-right" x="1518" y="478" width="14" height="14" class="action-icon"/><line class="rule" x1="41" y1="526" x2="1539" y2="526"/>
 
     <text class="subsection mono" x="47" y="555">demo-c</text><text class="tiny muted" x="47" y="576">remote · Active</text>
-    <text class="body mono" x="180" y="555">192.0.2.22</text><text class="tiny muted" x="180" y="576">SSH port 22 · host/user not retained</text><text class="body" x="465" y="555">Region C</text>
+    <text class="body mono" x="180" y="555">192.0.2.22</text><text class="tiny muted" x="180" y="576">SSOT endpoint</text><text class="body" x="465" y="555">Region C</text>
     <text class="body" x="560" y="555">domestic + egress</text><text class="tiny muted" x="560" y="576">tunnel endpoint</text>
     <circle class="quiet-dot" cx="775" cy="550" r="4"/><text class="body" x="788" y="555">Healthy</text><text class="tiny muted" x="788" y="576">trusted learned state</text>
     <text class="body mono" x="970" y="555">a1b2c3d4e5f6</text><text class="tiny green" x="970" y="576">Verified</text><text class="body" x="1140" y="555">2 / 2 observed</text><text class="body mono" x="1300" y="555">13s</text>
     <use href="#icon-arrow-right" x="1518" y="545" width="14" height="14" class="action-icon"/><line class="rule" x1="41" y1="593" x2="1539" y2="593"/>
 
     <text class="subsection mono" x="47" y="622">demo-e</text><text class="tiny muted" x="47" y="643">remote · Active</text>
-    <text class="body mono" x="180" y="622">198.51.100.23</text><text class="tiny muted" x="180" y="643">SSH port 22 · host/user not retained</text><text class="body" x="465" y="622">Region D</text>
+    <text class="body mono" x="180" y="622">198.51.100.23</text><text class="tiny muted" x="180" y="643">SSOT endpoint</text><text class="body" x="465" y="622">Region D</text>
     <text class="body" x="560" y="622">reverse-only + egress</text><text class="tiny muted" x="560" y="643">tunnel endpoint</text>
     <circle class="quiet-dot" cx="775" cy="617" r="4"/><text class="body" x="788" y="622">Healthy</text><text class="tiny muted" x="788" y="643">trusted learned state</text>
     <text class="body mono" x="970" y="622">a1b2c3d4e5f6</text><text class="tiny green" x="970" y="643">Verified</text><text class="body" x="1140" y="622">3 / 3 observed</text><text class="body mono" x="1300" y="622">8s</text>
     <use href="#icon-arrow-right" x="1518" y="612" width="14" height="14" class="action-icon"/><line class="rule" x1="41" y1="660" x2="1539" y2="660"/>
 
     <text class="subsection mono" x="47" y="689">demo-a</text><text class="tiny muted" x="47" y="710">remote · Active</text>
-    <text class="body mono" x="180" y="689">198.51.100.24</text><text class="tiny muted" x="180" y="710">SSH port 22 · host/user not retained</text><text class="body" x="465" y="689">Region E</text>
+    <text class="body mono" x="180" y="689">198.51.100.24</text><text class="tiny muted" x="180" y="710">SSOT endpoint</text><text class="body" x="465" y="689">Region E</text>
     <text class="body" x="560" y="689">reverse-only + egress</text><text class="tiny muted" x="560" y="710">tunnel endpoint</text>
     <circle class="quiet-dot" cx="775" cy="684" r="4"/><text class="body" x="788" y="689">Healthy</text><text class="tiny muted" x="788" y="710">trusted learned state</text>
     <text class="body mono" x="970" y="689">a1b2c3d4e5f6</text><text class="tiny green" x="970" y="710">Verified</text><text class="body" x="1140" y="689">3 / 3 observed</text><text class="body mono" x="1300" y="689">8s</text>
@@ -374,138 +371,16 @@ def nodes_page() -> str:
     <text class="small green" x="1430" y="753">View topology</text><use href="#icon-arrow-right" x="1518" y="741" width="14" height="14" class="action-icon"/>
   </g>
 
-  <!-- Enrollment reuses one implemented control-wide key pair. -->
-  <rect class="panel" x="21" y="789" width="1538" height="184" rx="7"/>
-  <g class="ui">
-    <text class="section" x="41" y="821">Control bootstrap identity</text><circle class="quiet-dot" cx="365" cy="816" r="4"/><text class="tiny green" x="378" y="821">Implemented · one control-wide key</text>
-    <text class="tiny muted" x="41" y="844">Fingerprint SHA256:AbCdEf123456…Example · generated once and reused by every enrollment.</text>
-    <rect class="code-bg" x="41" y="860" width="602" height="45" rx="5"/><use href="#icon-key" x="56" y="875" width="14" height="14" class="action-icon"/>
-    <text class="tiny mono" x="81" y="888">ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA… loom-control-bootstrap</text>
-    <rect class="panel" x="659" y="860" width="170" height="45" rx="5"/><use href="#icon-copy" x="674" y="875" width="14" height="14" class="action-icon"/><text class="tiny" x="699" y="888">Copy public key</text>
-    <rect class="panel" x="843" y="860" width="145" height="45" rx="5"/><use href="#icon-download" x="858" y="875" width="14" height="14" class="action-icon"/><text class="tiny" x="883" y="888">Download .pub</text>
-    <text class="small green" x="1090" y="888" text-anchor="end">Key settings →</text>
-    <line class="rule" x1="41" y1="922" x2="1090" y2="922"/>
-    <text class="tiny muted" x="41" y="949">Private key stays on the control node · separate from platform signing trust and node WG identity.</text>
-
-    <line class="rule" x1="1115" y1="811" x2="1115" y2="951"/>
-    <text class="subsection" x="1140" y="821">Enrollment key policy</text>
-    <text class="body" x="1140" y="853">One control-wide ED25519 identity</text>
-    <text class="body" x="1140" y="881">The same public key authorizes every bootstrap</text>
-    <text class="body" x="1140" y="909">Private material is never exported</text>
-    <text class="body" x="1140" y="937">Revoke separately after Agent/TLS bootstrap, if desired</text>
-  </g>
 '''
     return shell(
         active="Nodes",
         eyebrow="NETWORK / NODES",
         title="Nodes",
-        subtitle="Monitor trusted node state · host-key-guarded enrollment on the control node",
-        status="5 declared · 5 healthy · enrollment available",
-        description="A full-width node inventory with one control-wide bootstrap SSH identity and a clear entry point to a separate onboarding page, distinct from platform signing trust and node-local WireGuard identity.",
+        subtitle="Monitor trusted node state",
+        status="5 declared · 5 healthy",
+        description="A read-only node inventory derived from declared state and trusted observations. Device creation and QR import use the separate Devices workflow.",
         body=body,
-        session_status="Control workflow",
-    )
-
-
-def node_add_page() -> str:
-    body = r'''
-  <!-- Implemented task-oriented SSH trust and guarded SSOT workflow. -->
-  <rect class="panel" x="21" y="202" width="1538" height="82" rx="7"/>
-  <g class="ui">
-    <use href="#icon-status-ok" x="46" y="228" width="20" height="20" class="status-icon"/>
-    <text class="tiny green" x="80" y="231">COMPLETE</text><text class="section" x="80" y="256">1 · Connect remote host</text>
-    <circle cx="558" cy="238" r="10" fill="#EEF8F3" stroke="#2AA875"/><text class="tiny green" x="558" y="242" text-anchor="middle" font-weight="650">2</text>
-    <text class="tiny green" x="586" y="231">CURRENT</text><text class="section" x="586" y="256">Review identity &amp; policy</text>
-    <circle cx="1086" cy="238" r="10" fill="#F4F6F5" stroke="#CBD0CD"/><text class="tiny muted" x="1086" y="242" text-anchor="middle" font-weight="650">3</text>
-    <text class="tiny muted" x="1114" y="231">NEXT</text><text class="section" x="1114" y="256">Save reviewed declaration</text>
-  </g>
-  <line class="rule" x1="509" y1="222" x2="509" y2="265"/><line class="rule" x1="1037" y1="222" x2="1037" y2="265"/>
-
-  <!-- Only bootstrap connection coordinates are entered manually. -->
-  <rect class="panel" x="21" y="300" width="520" height="673" rx="7"/>
-  <g class="ui">
-    <text class="section" x="41" y="332">Connect to the remote host</text>
-    <text class="tiny muted" x="41" y="354">The shared control key must already be authorized on this host.</text>
-
-    <text class="small muted" x="41" y="389">SHARED CONTROL PUBLIC KEY</text>
-    <rect class="code-bg" x="41" y="401" width="480" height="47" rx="6"/><use href="#icon-key" x="57" y="417" width="14" height="14" class="action-icon"/>
-    <text class="tiny mono" x="82" y="430">ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA…</text><use href="#icon-copy" x="489" y="417" width="14" height="14" class="action-icon" aria-label="Copy shared control public key"/>
-
-    <text class="small muted" x="41" y="480">HOST OR IP ADDRESS</text><text class="small muted" x="263" y="480">SSH USER</text><text class="small muted" x="441" y="480">PORT</text>
-    <rect class="panel-soft" x="41" y="492" width="210" height="50" rx="6"/><text class="body mono" x="57" y="523">demo-new-a.edge.example.net</text>
-    <rect class="panel-soft" x="263" y="492" width="166" height="50" rx="6"/><text class="small mono" x="279" y="523">loom-bootstrap</text>
-    <rect class="panel-soft" x="441" y="492" width="80" height="50" rx="6"/><text class="body mono" x="457" y="523">22</text>
-    <text class="tiny muted" x="41" y="562">Input once · eligible only as a control-resolved candidate</text><text class="tiny green" x="521" y="562" text-anchor="end">Advanced →</text>
-
-    <rect class="panel" x="41" y="584" width="202" height="41" rx="6"/><use href="#icon-refresh" x="58" y="597" width="14" height="14" class="action-icon"/><text class="small" x="83" y="610">Run preflight again</text>
-
-    <line class="rule" x1="41" y1="650" x2="521" y2="650"/>
-    <text class="subsection" x="41" y="680">Remote host identity</text>
-    <text class="small muted" x="41" y="711">SSH HOST KEY</text><text class="tiny mono" x="180" y="711">SHA256:ExampleHostKey</text><text class="tiny green" x="472" y="711" text-anchor="end">Confirmed by operator</text>
-    <text class="small muted" x="41" y="743">HOSTNAME</text><text class="body mono" x="180" y="743">demo-new-a</text><text class="tiny muted" x="472" y="743" text-anchor="end">hostname -s</text>
-    <text class="small muted" x="41" y="775">SYSTEM</text><text class="body" x="180" y="775">Ubuntu 24.04 · x86_64</text>
-    <text class="small muted" x="41" y="807">PRIVILEGE</text><text class="body green" x="180" y="807">Bootstrap permitted</text>
-    <text class="small muted" x="41" y="839">WIREGUARD</text><text class="body green" x="180" y="839">Kernel support available</text>
-
-    <line class="rule" x1="41" y1="865" x2="521" y2="865"/>
-    <text class="tiny muted" x="41" y="892">Node ID comes from the verified remote hostname.</text>
-    <text class="tiny muted" x="41" y="916">Control resolves and dials a global endpoint candidate.</text>
-    <text class="tiny muted" x="41" y="940">Connection policy is reviewed separately after preflight.</text>
-    <text class="tiny amber" x="41" y="960">Separate semantics · this version promotes only a trusted global SSH target as candidate.</text>
-  </g>
-
-  <!-- Discovery and the concrete SSOT diff have enough room to be reviewed. -->
-  <rect class="panel" x="557" y="300" width="1002" height="673" rx="7"/>
-  <g class="ui">
-    <text class="section" x="577" y="332">Review discovered node</text>
-    <text class="tiny muted" x="577" y="354">Identity is SSH-observed; endpoint is a control-dialed candidate. UDP exposure is not inferred.</text>
-
-    <text class="small muted" x="577" y="390">NODE ID</text><text class="metric mono" x="577" y="418">demo-new-a</text><text class="tiny muted" x="577" y="438">From remote hostname · locked</text>
-    <text class="small muted" x="802" y="390">ENDPOINT CANDIDATE</text><text class="metric mono" x="802" y="418">demo-new-a.edge.example.net</text><text class="tiny amber" x="802" y="438">Global SSH dial succeeded · UDP unverified</text>
-    <text class="small muted" x="1097" y="390">CONNECTION DIRECTION</text><text class="tiny green" x="1322" y="390" text-anchor="end">Review →</text>
-    <rect class="panel-soft" x="1097" y="398" width="225" height="36" rx="5" aria-label="Change connection policy"/>
-    <text class="body" x="1112" y="421">Automatic</text><text class="tiny green mono" x="1201" y="421">→ reverse_only</text>
-    <path d="M1302 411l5 5 5-5" fill="none" stroke="#717674" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-    <text class="tiny muted" x="1097" y="450">Recompute, review, then commit a locked direction</text>
-    <text class="small muted" x="1378" y="390">EGRESS</text><text class="metric green" x="1378" y="418">Enabled</text><text class="tiny muted" x="1378" y="438">New-node default</text>
-    <line class="rule" x1="772" y1="378" x2="772" y2="454"/><line class="rule" x1="1067" y1="378" x2="1067" y2="454"/><line class="rule" x1="1348" y1="378" x2="1348" y2="454"/>
-
-    <line class="rule" x1="577" y1="463" x2="1539" y2="463"/>
-    <text class="section" x="577" y="493">Proposed network changes</text><text class="tiny green" x="1539" y="493" text-anchor="end">Recomputed with policy · no conflicts</text>
-    <text class="small muted" x="583" y="523">EDGE</text><text class="small muted" x="765" y="523">TUNNEL ADDRESSES</text><text class="small muted" x="1048" y="523">ACCEPTOR / LISTEN</text><text class="small muted" x="1240" y="523">INITIATOR</text><text class="small muted" x="1360" y="523">FIREWALL</text>
-    <line class="rule" x1="577" y1="531" x2="1539" y2="531"/>
-    <text class="body mono" x="583" y="552">demo-new-a ↔ demo-d</text><text class="body mono" x="765" y="552">10.99.2.1/32 ↔ 10.99.2.2/32</text><text class="body mono" x="1048" y="552">demo-d · 61775/udp</text><text class="body mono" x="1240" y="552">demo-new-a</text><text class="body" x="1360" y="552">Allow UDP on demo-d</text>
-    <text class="body mono" x="583" y="579">demo-new-a ↔ demo-b</text><text class="body mono" x="765" y="579">10.99.2.3/32 ↔ 10.99.2.4/32</text><text class="body mono" x="1048" y="579">demo-b · 61683/udp</text><text class="body mono" x="1240" y="579">demo-new-a</text><text class="body" x="1360" y="579">Allow UDP on demo-b</text>
-    <text class="body mono" x="583" y="606">demo-new-a ↔ demo-c</text><text class="body mono" x="765" y="606">10.99.2.5/32 ↔ 10.99.2.6/32</text><text class="body mono" x="1048" y="606">demo-c · 61719/udp</text><text class="body mono" x="1240" y="606">demo-new-a</text><text class="body" x="1360" y="606">Allow UDP on demo-c</text>
-    <line class="rule" x1="577" y1="560" x2="1539" y2="560"/><line class="rule" x1="577" y1="587" x2="1539" y2="587"/><line class="rule" x1="577" y1="614" x2="1539" y2="614"/>
-
-    <text class="small muted" x="577" y="637">WIREGUARD IDENTITY</text><text class="body amber" x="755" y="637">Prepared on demo-new-a at commit</text>
-    <text class="tiny muted" x="1098" y="637">Reuse existing key or generate locally · private key never leaves demo-new-a</text>
-    <line class="rule" x1="577" y1="657" x2="1539" y2="657"/>
-
-    <text class="section" x="577" y="687">SSOT change summary</text>
-    <circle class="quiet-dot" cx="583" cy="713" r="3.5"/><text class="body" x="596" y="718">Add node <tspan class="mono">demo-new-a</tspan> using its verified hostname</text>
-    <circle class="quiet-dot" cx="583" cy="743" r="3.5"/><text class="body" x="596" y="748">Record the global endpoint candidate successfully dialed by control</text>
-    <circle class="quiet-dot" cx="583" cy="773" r="3.5"/><text class="body" x="596" y="778">Save direction <tspan class="mono">reverse_only</tspan> · enable egress · add derived persistent tunnels</text>
-    <circle class="neutral-dot" cx="583" cy="803" r="3.5"/><text class="body" x="596" y="808">No service or access policy changes</text>
-    <text class="tiny amber" x="577" y="838">Declaration only · Agent, platform trust, node secrets and TLS identity are not installed by this action.</text>
-
-    <line class="rule" x1="577" y1="858" x2="1539" y2="858"/>
-    <circle class="quiet-dot" cx="583" cy="887" r="4"/><text class="small green" x="596" y="892">Discovery and allocation plan are valid</text>
-    <rect class="panel" x="1193" y="875" width="118" height="42" rx="6"/><text class="small" x="1252" y="901" text-anchor="middle">Cancel</text>
-    <rect class="button-green" x="1325" y="875" width="214" height="42" rx="6"/><use href="#icon-check" x="1338" y="889" width="14" height="14" stroke="#FFFFFF" fill="none" stroke-width="1.5"/><text class="tiny" x="1359" y="900" fill="#FFFFFF">Prepare WG + save declaration</text>
-    <text class="tiny muted" x="577" y="947"><tspan font-weight="600" fill="#181B1A">On confirm:</tspan> prepare demo-new-a WG identity → revision-guarded SSOT save → remain joining until separate Agent/TLS bootstrap and trusted report.</text>
-  </g>
-'''
-    return shell(
-        active="Nodes",
-        eyebrow="NODES / ADD",
-        title="Add node",
-        subtitle="Connect once; the control plane discovers identity, endpoint and the resulting network changes",
-        status="Authenticated workflow · host key and SSOT revision guarded",
-        description="A dedicated declaration-bootstrap page where the operator enters SSH coordinates, confirms an Ed25519 host fingerprint, reviews a direction-bound tunnel plan, and prepares the remote WireGuard identity before an SSOT revision-guarded save. It explicitly does not claim to install or start the Loom Agent.",
-        body=body,
-        session_status="Write session",
+        session_status="Read-only view",
     )
 
 
@@ -1305,7 +1180,6 @@ def settings_page() -> str:
 PAGES = {
     "loom-control-center-overview-misaka-v1.svg": overview_page,
     "loom-control-center-nodes-misaka-v1.svg": nodes_page,
-    "loom-control-center-node-add-misaka-v1.svg": node_add_page,
     "loom-control-center-topology-misaka-v1.svg": topology_page,
     "loom-control-center-node-detail-misaka-v1.svg": node_detail_page,
     "loom-control-center-services-misaka-v1.svg": services_page,
