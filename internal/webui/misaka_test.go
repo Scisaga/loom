@@ -157,6 +157,17 @@ func TestDeclaredCountersExcludeRetainedUndeclaredObservation(t *testing.T) {
 	}
 }
 
+func TestOverviewRecentEventsStayWithinTheirRows(t *testing.T) {
+	for _, want := range []string{
+		`.overview-event-row{min-width:0;overflow:hidden}`,
+		`.overview-event-row .clip{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}`,
+	} {
+		if !strings.Contains(style, want) {
+			t.Fatalf("overview event summary can wrap across adjacent rows; missing CSS %q", want)
+		}
+	}
+}
+
 func TestDirectRouteOverlayHighlightsItsLocalEgressNode(t *testing.T) {
 	d := misakaDeps()
 	view := d.Snapshot()
