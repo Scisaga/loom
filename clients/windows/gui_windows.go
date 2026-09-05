@@ -760,6 +760,9 @@ const (
 	portableDTEndEllipsis   = 0x8000
 	portableDTNoPrefix      = 0x0800
 	portableDTCalcRect      = 0x0400
+	portableRDWInvalidate   = 0x0001
+	portableRDWErase        = 0x0004
+	portableRDWAllChildren  = 0x0080
 	portableODSSelected     = 0x0001
 	portableODSGrayed       = 0x0002
 	portableODSDisabled     = 0x0004
@@ -1020,6 +1023,7 @@ var (
 	procGetWindowText       = portableUser32.NewProc("GetWindowTextW")
 	procGetWindowTextLength = portableUser32.NewProc("GetWindowTextLengthW")
 	procInvalidateRect      = portableUser32.NewProc("InvalidateRect")
+	procRedrawWindow        = portableUser32.NewProc("RedrawWindow")
 	procMoveWindow          = portableUser32.NewProc("MoveWindow")
 	procSetWindowText       = portableUser32.NewProc("SetWindowTextW")
 	procEnableWindow        = portableUser32.NewProc("EnableWindow")
@@ -1437,6 +1441,9 @@ func (app *portableGUI) layoutControls() {
 	if result, _, _ := procGetClientRect.Call(app.hwnd, uintptr(unsafe.Pointer(&client))); result == 0 {
 		return
 	}
+	// 控件移动时会复用旧像素；切换加入页后，旧标题可能被复制到新标题下方。
+	// 完成整轮布局后再清除背景并重绘所有子控件，避免中间布局留下残影。
+	defer procRedrawWindow.Call(app.hwnd, 0, 0, portableRDWInvalidate|portableRDWErase|portableRDWAllChildren)
 	width := client.right - client.left
 	height := client.bottom - client.top
 	s := app.scale
@@ -1451,7 +1458,7 @@ func (app *portableGUI) layoutControls() {
 	}
 	move := func(control uintptr, x, y, w, h int32) {
 		if control != 0 {
-			procMoveWindow.Call(control, uintptr(x), uintptr(y), uintptr(w), uintptr(h), 1)
+			procMoveWindow.Call(control, uintptr(x), uintptr(y), uintptr(w), uintptr(h), 0)
 		}
 	}
 
