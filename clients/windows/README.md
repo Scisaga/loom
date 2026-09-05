@@ -27,6 +27,12 @@ The EXE embeds native-size variants generated directly from
 `internal/webui/favicon.svg` for Explorer, the Windows taskbar, the window title
 bar, and the notification-area icon.
 
+Display scaling changes and moves between monitors update the native fonts,
+list/dropdown row heights, icons, and layout together through `WM_DPICHANGED`.
+The window uses the position and size suggested by Windows. The Windows-native
+`TestGUIDPIChanges` regression covers 100–200% scaling in both directions on
+the onboarding and joined views without changing the machine's display settings.
+
 <p align="center">
   <img src="../../assets/client/windows/loom-client-windows-current.png" width="86%" alt="Loom Windows native client UI">
 </p>

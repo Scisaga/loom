@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -51,6 +52,7 @@ type portableGUI struct {
 	edition           clientEdition
 	root              string
 	hwnd              uintptr
+	windowDPI         int32
 	controls          portableGUIControls
 	fonts             []uintptr
 	statusIcon        uintptr
@@ -651,6 +653,7 @@ const (
 	portableWMLButtonDblClk  = 0x0203
 	portableWMRButtonUp      = 0x0205
 	portableWMDropFiles      = 0x0233
+	portableWMDPIChanged     = 0x02E0
 	portableWMAppRepaint     = 0x8001
 	portableWMAppTray        = 0x8002
 	portableWMAppExit        = 0x8003
@@ -702,6 +705,7 @@ const (
 	portableLBSetCurSel     = 0x0186
 	portableLBGetText       = 0x0189
 	portableLBGetTextLen    = 0x018A
+	portableLBSetItemHeight = 0x01A0
 	portableCBAddString     = 0x0143
 	portableCBGetCurSel     = 0x0147
 	portableCBGetLBText     = 0x0148
@@ -726,6 +730,8 @@ const (
 	portableSWShowNormal       = 1
 	portableSWShow             = 5
 	portableSWRestore          = 9
+	portableSWPNoZOrder        = 0x0004
+	portableSWPNoActivate      = 0x0010
 	portableMBOK               = 0x00000000
 	portableMBIconError        = 0x00000010
 	portableMBIconWarning      = 0x00000030
@@ -1025,6 +1031,7 @@ var (
 	procInvalidateRect      = portableUser32.NewProc("InvalidateRect")
 	procRedrawWindow        = portableUser32.NewProc("RedrawWindow")
 	procMoveWindow          = portableUser32.NewProc("MoveWindow")
+	procSetWindowPos        = portableUser32.NewProc("SetWindowPos")
 	procSetWindowText       = portableUser32.NewProc("SetWindowTextW")
 	procEnableWindow        = portableUser32.NewProc("EnableWindow")
 	procSetForegroundWindow = portableUser32.NewProc("SetForegroundWindow")
@@ -1129,6 +1136,7 @@ func createPortableWindow(app *portableGUI) (uintptr, error) {
 		}
 		procMoveWindow.Call(hwnd, uintptr(x), uintptr(y), uintptr(width), uintptr(height), 0)
 	}
+	app.windowDPI = dpi
 	runtime.KeepAlive(wndClass)
 	return hwnd, nil
 }
@@ -1242,24 +1250,9 @@ func (app *portableGUI) createControls() error {
 		}
 	}
 
-	dpi := app.dpi()
-	regular, err := createPortableFont(9, portableFWNormal, dpi)
-	if err != nil {
+	if err := app.updateFonts(); err != nil {
 		return err
 	}
-	brand, err := createPortableFont(11, portableFWSemibold, dpi)
-	if err != nil {
-		procDeleteObject.Call(regular)
-		return err
-	}
-	app.fonts = []uintptr{regular, brand}
-	for _, control := range app.controls.all() {
-		procSendMessage.Call(control, portableWMSetFont, regular, 1)
-	}
-	procSendMessage.Call(app.controls.brandName, portableWMSetFont, brand, 1)
-	procSendMessage.Call(app.controls.stateValue, portableWMSetFont, brand, 1)
-	procSendMessage.Call(app.controls.routeCombo, portableCBSetItemHeight, ^uintptr(0), uintptr(app.scale(23)))
-	procSendMessage.Call(app.controls.routeCombo, portableCBSetItemHeight, 0, uintptr(app.scale(23)))
 	statusIcon, err := loadPortableConnectedIcon(app.scale(16))
 	if err != nil {
 		return err
@@ -1284,6 +1277,32 @@ func (app *portableGUI) createControls() error {
 	}
 	procSendMessage.Call(app.controls.brandIcon, portableSTMSetIcon, icon, 0)
 	app.layoutControls()
+	return nil
+}
+
+func (app *portableGUI) updateFonts() error {
+	dpi := app.dpi()
+	regular, err := createPortableFont(9, portableFWNormal, dpi)
+	if err != nil {
+		return err
+	}
+	brand, err := createPortableFont(11, portableFWSemibold, dpi)
+	if err != nil {
+		procDeleteObject.Call(regular)
+		return err
+	}
+	// 所有控件换用新字体后才能释放旧字体；本轮布局完成后统一重绘。
+	for _, control := range app.controls.all() {
+		procSendMessage.Call(control, portableWMSetFont, regular, 0)
+	}
+	procSendMessage.Call(app.controls.brandName, portableWMSetFont, brand, 0)
+	procSendMessage.Call(app.controls.stateValue, portableWMSetFont, brand, 0)
+	app.deleteFonts()
+	app.fonts = []uintptr{regular, brand}
+	// Owner-draw 控件不会根据 WM_SETFONT 自动重新测量行高。
+	procSendMessage.Call(app.controls.networkList, portableLBSetItemHeight, 0, uintptr(app.scale(23)))
+	procSendMessage.Call(app.controls.routeCombo, portableCBSetItemHeight, ^uintptr(0), uintptr(app.scale(23)))
+	procSendMessage.Call(app.controls.routeCombo, portableCBSetItemHeight, 0, uintptr(app.scale(23)))
 	return nil
 }
 
@@ -1422,11 +1441,46 @@ func composePortableConnectedTrayIcon(baseIcon, connectedIcon uintptr, size int3
 }
 
 func (app *portableGUI) dpi() int32 {
+	if app.windowDPI > 0 {
+		return app.windowDPI
+	}
 	dpi, _, _ := procGetDPIForWindow.Call(app.hwnd)
 	if dpi == 0 {
 		return 96
 	}
 	return int32(dpi)
+}
+
+func (app *portableGUI) changeDPI(dpi int32, suggested portableRect) {
+	if dpi <= 0 {
+		return
+	}
+	// WM_DPICHANGED 给出本窗口的新 DPI；字体、图标和布局必须使用同一值。
+	app.windowDPI = dpi
+	if err := app.updateFonts(); err != nil {
+		log.Printf("更新 Windows 缩放字体失败: %v", err)
+	}
+	if icon, err := loadPortableConnectedIcon(app.scale(16)); err != nil {
+		log.Printf("更新 Windows 缩放图标失败: %v", err)
+	} else {
+		old := app.statusIcon
+		app.statusIcon = icon
+		stateIcon := uintptr(0)
+		if app.snapshot().state == guiConnected {
+			stateIcon = icon
+		}
+		procSendMessage.Call(app.controls.stateIcon, portableSTMSetIcon, stateIcon, 0)
+		if old != 0 {
+			procDestroyIcon.Call(old)
+		}
+	}
+	app.updateBrandIcon(app.snapshot())
+	procSetWindowPos.Call(app.hwnd, 0,
+		uintptr(suggested.left), uintptr(suggested.top),
+		uintptr(suggested.right-suggested.left), uintptr(suggested.bottom-suggested.top),
+		portableSWPNoZOrder|portableSWPNoActivate,
+	)
+	app.layoutControls()
 }
 
 func (app *portableGUI) scale(value int32) int32 {
@@ -2205,6 +2259,13 @@ func portableWindowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) ui
 	case portableWMSize:
 		if found {
 			app.layoutControls()
+			return 0
+		}
+	case portableWMDPIChanged:
+		if found && lParam != 0 {
+			// Windows 提供的 RECT 仅在本次回调内有效；先复制，再调整窗口。
+			suggested := *(*portableRect)(unsafe.Pointer(lParam))
+			app.changeDPI(int32((wParam>>16)&0xffff), suggested)
 			return 0
 		}
 	case portableWMCommand:
