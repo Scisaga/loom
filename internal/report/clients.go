@@ -18,6 +18,8 @@ import (
 	"loom/internal/clientdist"
 	"loom/internal/clientregistry"
 	"loom/internal/model"
+	"loom/internal/ssotedit"
+	"loom/internal/validate"
 	"loom/internal/version"
 	"loom/internal/webui"
 )
@@ -80,6 +82,19 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 		// Fragment material is never sent as an HTTP request target. The client
 		// decodes it locally and sends the bearer token only in the claim POST body.
 		return "loom://enroll#" + base64.RawURLEncoding.EncodeToString(body), nil
+	}
+	inviteView := func(created clientregistry.CreateResult) (webui.ClientInviteView, error) {
+		uri, err := inviteURI(created.Token, created.Invite.ExpiresAt)
+		if err != nil {
+			return webui.ClientInviteView{}, err
+		}
+		return webui.ClientInviteView{
+			InviteID: created.Invite.ID, ClientID: created.Client.ID, ClientName: created.Client.Name,
+			InviteURI: uri, EnrollmentURL: c.ClientEnrollmentURL, ExpiresAt: created.Invite.ExpiresAt,
+			ProfileVersion: created.Client.ProfileVersion, Replaces: created.Client.Replaces,
+			Responsibilities:  append([]string(nil), created.Client.Responsibilities...),
+			DestinationGrants: append([]string(nil), created.Client.DestinationGrants...),
+		}, nil
 	}
 	return &webui.ClientControlDeps{
 		LinuxPackage: func() (webui.LinuxClientPackageView, error) {
@@ -149,7 +164,8 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 				inventory.Clients = append(inventory.Clients, webui.ClientView{
 					ID: client.ID, Name: client.Name, Platform: client.Platform,
 					IdentitySource: client.IdentitySource,
-					Status:         client.Status, KeyFingerprint: client.KeyFingerprint,
+					ReplacedBy:     client.ReplacedBy, Replaces: client.Replaces,
+					Status: client.Status, KeyFingerprint: client.KeyFingerprint,
 					CreatedAt: client.CreatedAt, EnrolledAt: client.EnrolledAt,
 					DataPlaneStatus: "pending", ConfigState: "pending",
 					Membership:        registryMembership(client.Status),
@@ -198,6 +214,59 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 			return inventory, nil
 		},
 		DiscardPending: store.DiscardPending,
+		RenewInvite: func(id string) (webui.ClientInviteView, error) {
+			// 先核对公开签发信息，避免入口配置损坏时先让旧二维码失效。
+			if _, err := inviteURI("", ""); err != nil {
+				return webui.ClientInviteView{}, err
+			}
+			created, err := store.RenewInvitation(id)
+			if err != nil {
+				return webui.ClientInviteView{}, err
+			}
+			return inviteView(created)
+		},
+		ReplaceDevice: func(id string) (webui.ClientInviteView, error) {
+			if _, err := inviteURI("", ""); err != nil {
+				return webui.ClientInviteView{}, err
+			}
+			var created clientregistry.CreateResult
+			err := withSSOTLock(c.SSOTPath, func() error {
+				snapshot, err := readSSOTSnapshot(c.SSOTPath)
+				if err != nil {
+					return err
+				}
+				current, err := model.Load(snapshot.body)
+				if err != nil {
+					return err
+				}
+				if findings := validate.Validate(current); len(findings) > 0 {
+					return fmt.Errorf("current SSOT is invalid: %s", validate.Format(findings))
+				}
+				created, err = store.ReplaceWithInvitation(id, func(previous clientregistry.Client) error {
+					if err := validatePinnedEnrollmentProfile(current, previous); err != nil {
+						return err
+					}
+					node := current.NodeByID()[id]
+					if node == nil {
+						// SSOT 已撤销但 registry 落盘失败时，重试只补齐身份事务。
+						return nil
+					}
+					if err := validateProvisionedClient(current, node, previous); err != nil {
+						return err
+					}
+					plan, err := ssotedit.RemoveLostAccessDevice(snapshot.body, id)
+					if err != nil {
+						return err
+					}
+					return saveSSOTAtomicFromSnapshot(c.SSOTPath, plan.Content, snapshot)
+				})
+				return err
+			})
+			if err != nil {
+				return webui.ClientInviteView{}, err
+			}
+			return inviteView(created)
+		},
 		CreateInvite: func(input webui.ClientInviteInput) (webui.ClientInviteView, error) {
 			endpoint, err := validClientEnrollmentURL(c.ClientEnrollmentURL)
 			if err != nil {
@@ -258,6 +327,7 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 				ProfileVersion:    invitedClient.ProfileVersion,
 				Responsibilities:  append([]string(nil), invitedClient.Responsibilities...),
 				DestinationGrants: append([]string(nil), invitedClient.DestinationGrants...),
+				Replaces:          invitedClient.Replaces,
 			}, nil
 		},
 		Claim: func(input webui.ClientClaimInput) (webui.ClientClaimResult, error) {

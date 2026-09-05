@@ -184,6 +184,8 @@ type ClientControlDeps struct {
 	// purpose without selecting a platform or hand-authoring responsibilities.
 	EnrollmentProfile    func() (DeviceEnrollmentProfileView, error)
 	CreateInvite         func(ClientInviteInput) (ClientInviteView, error)
+	RenewInvite          func(deviceID string) (ClientInviteView, error)
+	ReplaceDevice        func(deviceID string) (ClientInviteView, error)
 	DiscardPending       func(deviceID string) error
 	Claim                func(ClientClaimInput) (ClientClaimResult, error)
 	InviteArtifact       func(inviteID string) (ClientInviteArtifact, error)
@@ -219,6 +221,8 @@ type ClientView struct {
 	Direction         string   `json:"direction,omitempty"`
 	EgressCapable     bool     `json:"egress_capable,omitempty"`
 	Legacy            bool     `json:"legacy,omitempty"`
+	ReplacedBy        string   `json:"replaced_by,omitempty"`
+	Replaces          string   `json:"replaces,omitempty"`
 }
 
 // DeviceView is the canonical name for the unified inventory projection.
@@ -246,6 +250,7 @@ type ClientInviteView struct {
 	ProfileVersion    string   `json:"profile_version,omitempty"`
 	Responsibilities  []string `json:"responsibilities,omitempty"`
 	DestinationGrants []string `json:"destination_grants,omitempty"`
+	Replaces          string   `json:"replaces,omitempty"`
 }
 
 type ClientInviteArtifact struct {
@@ -256,6 +261,7 @@ type ClientInviteArtifact struct {
 	ProfileVersion    string   `json:"profile_version,omitempty"`
 	Responsibilities  []string `json:"responsibilities,omitempty"`
 	DestinationGrants []string `json:"destination_grants,omitempty"`
+	Replaces          string   `json:"replaces,omitempty"`
 }
 
 type DeviceEnrollmentProfileView struct {
@@ -784,10 +790,62 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
-		writeHTML(w, pageDevices(d, clientPageState{Create: r.URL.Query().Get("new") == "1"}, authed(d, r)))
+		writeHTML(w, pageDevices(d, clientPageState{Create: r.URL.Query().Get("new") == "1", Archived: r.URL.Query().Get("archived") == "1"}, authed(d, r)))
 	})
 	mux.HandleFunc("/devices/create", func(w http.ResponseWriter, r *http.Request) {
 		serveRouteAlias(w, r, "/devices/create", "/clients/create")
+	})
+	deviceInviteWrite := func(w http.ResponseWriter, r *http.Request, replace bool) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", "POST")
+			http.Error(w, "只接受 POST", http.StatusMethodNotAllowed)
+			return
+		}
+		if !authed(d, r) {
+			http.Redirect(w, r, loginURL("/devices"), http.StatusSeeOther)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "表单无法解析", http.StatusBadRequest)
+			return
+		}
+		id := strings.TrimSpace(r.PostForm.Get("id"))
+		if id == "" || strings.Contains(id, "/") {
+			http.Error(w, "Device id 无效", http.StatusBadRequest)
+			return
+		}
+		control := deviceControl(d)
+		if control == nil {
+			http.Error(w, "这台机器不能签发加入码", http.StatusNotImplemented)
+			return
+		}
+		action := control.RenewInvite
+		if replace {
+			if r.PostForm.Get("identity_deleted") != "yes" {
+				http.Error(w, "重新加入前须确认本机身份和配置已删除", http.StatusBadRequest)
+				return
+			}
+			action = control.ReplaceDevice
+		}
+		if action == nil {
+			http.Error(w, "这台机器没有此加入恢复能力", http.StatusNotImplemented)
+			return
+		}
+		invite, err := action(id)
+		if err != nil {
+			http.Error(w, err.Error(), clientProtocolStatus(err))
+			return
+		}
+		http.Redirect(w, r, "/devices/invites/"+url.PathEscape(invite.InviteID), http.StatusSeeOther)
+	}
+	mux.HandleFunc("/devices/renew-invite", func(w http.ResponseWriter, r *http.Request) {
+		deviceInviteWrite(w, r, false)
+	})
+	mux.HandleFunc("/devices/replace", func(w http.ResponseWriter, r *http.Request) {
+		deviceInviteWrite(w, r, true)
 	})
 	mux.HandleFunc("/devices/discard-pending", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -992,6 +1050,7 @@ func Handler(d Deps) http.Handler {
 			ProfileVersion:    artifact.ProfileVersion,
 			Responsibilities:  append([]string(nil), artifact.Responsibilities...),
 			DestinationGrants: append([]string(nil), artifact.DestinationGrants...),
+			Replaces:          artifact.Replaces,
 		}
 		writeHTML(w, pageClients(d, clientPageState{Invite: &invite}, true))
 	})
@@ -1557,7 +1616,7 @@ func loginReturnPathAllowed(path string) bool {
 		return true
 	}
 	return safeSinglePathSegment(path, "/devices/invites/") ||
-		(path != "/devices/create" && safeSinglePathSegment(path, "/devices/")) ||
+		(path != "/devices/create" && path != "/devices/replace" && path != "/devices/renew-invite" && path != "/devices/discard-pending" && safeSinglePathSegment(path, "/devices/")) ||
 		safeSinglePathSegment(path, "/clients/invites/") ||
 		safeSinglePathSegment(path, "/nodes/")
 }

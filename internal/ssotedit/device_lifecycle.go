@@ -60,7 +60,17 @@ func DecommissionAccessDevice(content []byte, id string) ([]byte, error) {
 // has completed. Runtime confirmation is intentionally a caller responsibility;
 // this pure editor cannot infer that a Device consumed the stop instruction.
 func RemoveDecommissionedAccessDevice(content []byte, id string) (DeviceRemovalPlan, error) {
-	current, node, err := removableAccessDevice(content, id, true)
+	return removeAccessDevice(content, id, true)
+}
+
+// RemoveLostAccessDevice 只供操作者确认本机身份已删除后的替换事务调用。
+// 撤销旧凭据随签名配置下发；这不证明旧设备执行过 signed decommission。
+func RemoveLostAccessDevice(content []byte, id string) (DeviceRemovalPlan, error) {
+	return removeAccessDevice(content, id, false)
+}
+
+func removeAccessDevice(content []byte, id string, requireDecommission bool) (DeviceRemovalPlan, error) {
+	current, node, err := removableAccessDevice(content, id, requireDecommission)
 	if err != nil {
 		return DeviceRemovalPlan{}, err
 	}

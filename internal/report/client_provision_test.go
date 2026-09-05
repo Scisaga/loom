@@ -241,6 +241,7 @@ func TestServerDeviceProvisionUsesTheSameAtomicEnrollmentTransaction(t *testing.
 	now := time.Date(2026, 9, 1, 20, 0, 0, 0, time.UTC)
 	p.now = func() time.Time { return now }
 	installed := map[string]bool{}
+	var installedMu sync.Mutex
 	p.install = func(_ context.Context, nodeID string, _ []byte) error {
 		current, err := os.ReadFile(control.SSOTPath)
 		if err != nil {
@@ -249,7 +250,9 @@ func TestServerDeviceProvisionUsesTheSameAtomicEnrollmentTransaction(t *testing.
 		if strings.Contains(string(current), "id: "+client.ID) {
 			return errors.New("server SSOT was committed before existing-node secrets")
 		}
+		installedMu.Lock()
 		installed[nodeID] = true
+		installedMu.Unlock()
 		return nil
 	}
 	first, err := p.provision(client, csrPEM)

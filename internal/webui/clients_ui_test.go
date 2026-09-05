@@ -155,7 +155,7 @@ func TestClientInvitationShowsRealQRResourceAndLinuxLink(t *testing.T) {
 		`press <kbd>Enter</kbd>, then <kbd>Ctrl-D</kbd>`,
 		`method=get action="/devices"`,
 		`Back to Device list`,
-		`Reconnects, restarts and configuration updates do not repeat the join`,
+		`Reconnects, restarts and configuration updates keep the existing identity`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("Invitation result missing %q", want)
@@ -400,8 +400,13 @@ func TestUnclaimedDeviceCanBeDiscardedButOnlyFromAuthenticatedPOST(t *testing.T)
 	}
 	detail := misakaRequest(t, d, http.MethodGet, "/devices/client-phone01", nil, true)
 	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), `action="/devices/discard-pending"`) ||
-		!strings.Contains(detail.Body.String(), `Discard Device`) {
+		!strings.Contains(detail.Body.String(), `Delete Device`) {
 		t.Fatalf("pending Device detail lacks cleanup action: status=%d body=%s", detail.Code, detail.Body.String())
+	}
+	publicDetail := misakaRequest(t, d, http.MethodGet, "/devices/client-phone01", nil, false)
+	if !strings.Contains(publicDetail.Body.String(), `href="/login?next=%2Fdevices%2Fclient-phone01"`) ||
+		strings.Contains(publicDetail.Body.String(), `action="/devices/discard-pending"`) {
+		t.Fatal("unauthed Device detail must explain how to sign in without exposing a delete form")
 	}
 	unauthorized := misakaRequest(t, d, http.MethodPost, "/devices/discard-pending", url.Values{"id": {"client-phone01"}}, false)
 	if unauthorized.Code != http.StatusSeeOther || discarded != "" {

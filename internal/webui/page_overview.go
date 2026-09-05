@@ -2,6 +2,7 @@ package webui
 
 import (
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -170,16 +171,19 @@ func overviewFleetConverged(v View) bool {
 func writeSnapshotVerdict(b *strings.Builder, v View) {
 	versions := map[string][]string{}
 	unknown := 0
+	var missing []string
 	for _, n := range v.Nodes {
 		if !n.Declared || n.Decommission {
 			continue
 		}
 		if n.Applied == "" {
 			unknown++
+			missing = append(missing, n.ID)
 			continue
 		}
 		versions[n.Applied] = append(versions[n.Applied], n.ID)
 	}
+	sort.Strings(missing)
 	if len(versions) > 1 {
 		keys := make([]string, 0, len(versions))
 		for key := range versions {
@@ -208,11 +212,13 @@ func writeSnapshotVerdict(b *strings.Builder, v View) {
 			if key == v.Applied {
 				className += " current"
 			}
-			fmt.Fprintf(b, `<span class="%s"><span class=mono>%s</span><span class=snapshot-group-nodes>%s</span></span>`, className, esc(short(key)), esc(strings.Join(versions[key], " · ")))
+			fmt.Fprintf(b, `<span class="%s"><span>配置快照 <span class=mono>%s</span></span><span class=snapshot-group-nodes>设备：%s</span></span>`, className, esc(short(key)), esc(strings.Join(versions[key], " · ")))
 		}
-		b.WriteString(`</div></div>`)
+		b.WriteString(`</div>`)
+		writeSnapshotMissingDevices(b, missing)
+		b.WriteString(`</div>`)
 		if current > 0 {
-			fmt.Fprintf(b, `<span class=status-alert-note>%d / %d 个节点已应用控制面当前版本</span>`, current, total)
+			fmt.Fprintf(b, `<span class=status-alert-note>%d / %d 个节点已应用控制面当前版本</span>`, current, total+unknown)
 		} else {
 			fmt.Fprintf(b, `<span class=status-alert-note>%d 个已声明节点上报了配置版本</span>`, total)
 		}
@@ -223,11 +229,29 @@ func writeSnapshotVerdict(b *strings.Builder, v View) {
 		}
 	} else if len(versions) == 1 {
 		for key := range versions {
-			fmt.Fprintf(b, `<aside class="status-alert warning snapshot-alert snapshot-verdict" role=status><span class=status-alert-icon aria-hidden=true>?</span><div class=status-alert-body><div class=status-alert-title><strong>配置版本证据不完整</strong><span>%d 个节点尚未验证</span></div><div class=snapshot-groups><span class="snapshot-group current"><span class=mono>%s</span><span class=snapshot-group-nodes>已观测节点</span></span></div></div><span class=status-alert-note>等待节点签名上报，不能据此判断全网一致</span></aside>`, unknown, esc(short(key)))
+			fmt.Fprintf(b, `<aside class="status-alert warning snapshot-alert snapshot-verdict" role=status><span class=status-alert-icon aria-hidden=true>?</span><div class=status-alert-body><div class=status-alert-title><strong>配置版本证据不完整</strong><span>%d 个节点尚未验证</span></div><div class=snapshot-groups><span class="snapshot-group current"><span>配置快照 <span class=mono>%s</span></span><span class=snapshot-group-nodes>%d 个设备已上报</span></span></div>`, unknown, esc(short(key)), len(versions[key]))
+			writeSnapshotMissingDevices(b, missing)
+			b.WriteString(`</div><span class=status-alert-note>已收到的配置报告一致；其余设备的配置与运行状态尚未确认</span></aside>`)
 		}
 	} else if unknown > 0 {
-		fmt.Fprintf(b, `<aside class="status-alert warning snapshot-alert snapshot-verdict" role=status><span class=status-alert-icon aria-hidden=true>?</span><div class=status-alert-body><div class=status-alert-title><strong>暂无配置版本证据</strong><span>%d 个节点尚未验证</span></div></div><span class=status-alert-note>等待节点首次签名上报</span></aside>`, unknown)
+		fmt.Fprintf(b, `<aside class="status-alert warning snapshot-alert snapshot-verdict" role=status><span class=status-alert-icon aria-hidden=true>?</span><div class=status-alert-body><div class=status-alert-title><strong>暂无配置版本证据</strong><span>%d 个节点尚未验证</span></div>`, unknown)
+		writeSnapshotMissingDevices(b, missing)
+		b.WriteString(`</div><span class=status-alert-note>尚无签名报告，无法确认设备的配置与运行状态</span></aside>`)
 	}
+}
+
+func writeSnapshotMissingDevices(b *strings.Builder, ids []string) {
+	if len(ids) == 0 {
+		return
+	}
+	b.WriteString(`<div class="snapshot-missing tiny dim">尚未上报配置的设备：`)
+	for i, id := range ids {
+		if i > 0 {
+			b.WriteString(` · `)
+		}
+		fmt.Fprintf(b, `<a class=mono href="/devices/%s">%s</a>`, url.PathEscape(id), esc(id))
+	}
+	b.WriteString(`</div>`)
 }
 
 // overviewRouteOverlay returns the complete fresh Agent projection. The

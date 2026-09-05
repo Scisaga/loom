@@ -1,0 +1,142 @@
+package report
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"net/url"
+	"os"
+	"path/filepath"
+	"sync"
+	"testing"
+
+	"gopkg.in/yaml.v3"
+
+	"loom/internal/clientregistry"
+	"loom/internal/model"
+	"loom/internal/webui"
+)
+
+func recoveryInviteToken(t *testing.T, uri string) string {
+	t.Helper()
+	u, err := url.Parse(uri)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := base64.RawURLEncoding.DecodeString(u.Fragment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload clientInvitePayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	return payload.Token
+}
+
+func TestLostWindowsDeviceReplacementRemovesOldAccessAndRejectsQueuedClaim(t *testing.T) {
+	control, paths := clientProvisionFixture(t)
+	control.ClientRegistryPath = filepath.Join(filepath.Dir(control.SSOTPath), "registry.json")
+	control.ClientEnrollmentURL = "https://control.example/api/client/enroll"
+	if err := os.WriteFile(paths.platformPublic, []byte(base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x42}, 32))+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	deps := newClientControlDeps(control, nil)
+	first, err := deps.CreateInvite(webui.ClientInviteInput{Name: "demo workstation"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := clientregistry.Store{Path: control.ClientRegistryPath}
+	csr, _ := clientProvisionCSR(t)
+	claimed, err := store.Claim(clientregistry.ClaimInput{Token: recoveryInviteToken(t, first.InviteURI), Platform: "windows-desktop", CSRPEM: csr, RequestID: "demo-original"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saveMu sync.Mutex
+	p := newClientProvisioner(control, &saveMu)
+	p.install = func(context.Context, string, []byte) error { return nil }
+	if result, err := p.provision(claimed.Client, csr); err != nil || result.Ready {
+		t.Fatalf("initial provision ready=%v err=%v", result.Ready, err)
+	}
+	if _, err := store.MarkReady(first.ClientID); err != nil {
+		t.Fatal(err)
+	}
+	before, err := model.LoadFile(control.SSOTPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCredentials := append([]string(nil), before.NodeByID()[first.ClientID].Access.Credentials...)
+	originalBody, err := os.ReadFile(control.SSOTPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutProfile := *before
+	withoutProfile.EnrollmentProfiles = nil
+	missingProfileBody, err := yaml.Marshal(withoutProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(control.SSOTPath, missingProfileBody, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if failed, err := deps.ReplaceDevice(first.ClientID); err == nil || failed.InviteURI != "" {
+		t.Fatal("replacement retired access without a usable pinned profile")
+	}
+	afterFailure, err := os.ReadFile(control.SSOTPath)
+	if err != nil || !bytes.Equal(afterFailure, missingProfileBody) {
+		t.Fatal("failed recovery changed membership")
+	}
+	if err := store.CheckClaimedIdentity(first.ClientID, claimed.Client.PublicKey); err != nil {
+		t.Fatalf("failed recovery retired the original identity: %v", err)
+	}
+	if err := os.WriteFile(control.SSOTPath, originalBody, 0600); err != nil {
+		t.Fatal(err)
+	}
+	next, err := deps.ReplaceDevice(first.ClientID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.ClientID == first.ClientID || next.ClientName != first.ClientName || next.ProfileVersion != first.ProfileVersion || next.Replaces != first.ClientID {
+		t.Fatalf("replacement=%+v", next)
+	}
+	retired, err := model.LoadFile(control.SSOTPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retired.NodeByID()[first.ClientID] != nil || retired.NodeByID()[next.ClientID] != nil {
+		t.Fatal("old membership survived, or unclaimed replacement joined early")
+	}
+	for _, id := range oldCredentials {
+		if retired.CredentialByID()[id] != nil {
+			t.Fatalf("old credential %s survived", id)
+		}
+	}
+	if _, err := p.provision(claimed.Client, csr); err == nil {
+		t.Fatal("queued old claim recreated retired membership")
+	}
+	artifact, err := deps.InviteArtifact(next.InviteID)
+	if err != nil || artifact.Replaces != first.ClientID {
+		t.Fatalf("replacement artifact=%+v err=%v", artifact, err)
+	}
+	csr, _ = clientProvisionCSR(t)
+	newClaim, err := store.Claim(clientregistry.ClaimInput{Token: recoveryInviteToken(t, next.InviteURI), Platform: "windows-desktop", CSRPEM: csr, RequestID: "demo-replacement"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := p.provision(newClaim.Client, csr); err != nil || result.Ready {
+		t.Fatalf("replacement provision ready=%v err=%v", result.Ready, err)
+	}
+	current, err := model.LoadFile(control.SSOTPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.NodeByID()[first.ClientID] != nil || current.NodeByID()[next.ClientID] == nil {
+		t.Fatal("replacement membership is incorrect")
+	}
+	for _, id := range oldCredentials {
+		if current.CredentialByID()[id] != nil {
+			t.Fatalf("replacement reused old credential %s", id)
+		}
+	}
+}

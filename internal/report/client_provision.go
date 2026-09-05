@@ -123,6 +123,11 @@ func (p *clientProvisioner) provision(client clientregistry.Client, csrPEM strin
 	)
 	p.saveMu.Lock()
 	err = withSSOTLock(p.control.SSOTPath, func() error {
+		if p.control.ClientRegistryPath != "" {
+			if err := (clientregistry.Store{Path: p.control.ClientRegistryPath}).CheckClaimedIdentity(client.ID, client.PublicKey); err != nil {
+				return err
+			}
+		}
 		snapshot, err := readSSOTSnapshot(p.control.SSOTPath)
 		if err != nil {
 			return fmt.Errorf("read SSOT before client provisioning: %w", err)

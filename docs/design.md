@@ -1458,7 +1458,15 @@ publisher 确认精确 SSOT 后，内部 join 响应才返回 ready bootstrap
 Portable 预览只在未完成期间把它存入 current-user DPAPI，普通完成标记提交后立即清除；
 Installed 目标态必须由受限 Service broker 写入 machine-scope/受保护 ProgramData。
 内部绑定记录中的 `ready` 只表示服务端 bootstrap 已准备好，不是客户端已经收到、安装或
-在线；页面必须写成 “Bootstrap ready”，数据面在线仍只能来自后续可信运行态报告。
+在线；页面显示 “Joined · status unverified”，数据面在线仍只能来自后续可信运行态报告。
+
+从未领取的 Device 可在详情页重新生成短期加入二维码，保留原 ID 和入网预设，旧码立即
+失效。客户端删除了本机身份后，管理员可对已加入的纯 `use_loom` Device 执行“重新加入”：
+明确确认本机身份已删除，移除旧 SSOT 接入与设备专属凭据，归档旧身份，再生成沿用名称
+和原 ProfileVersion 的新 Device ID 与二维码。新密钥不能静默绑定旧 ID，旧证书不能
+冒充新身份；旧访问凭据的撤销随服务器应用签名配置生效，不宣称旧客户端执行过远程停机。
+替换与 provisioning 使用同一 SSOT 锁，事务内复核 registry 身份，防止排队的旧 claim
+重新创建已撤销成员。归档记录保留替代关系，默认设备列表只显示当前记录。
 
 加入成功后，设备仍从签名 SSOT 获得 Service、Policy、候选和授权。Direct / Auto /
 指定出口只是客户端本机的三个顶层偏好：Auto 继续使用

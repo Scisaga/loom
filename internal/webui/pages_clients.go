@@ -9,6 +9,7 @@ import (
 
 type clientPageState struct {
 	Create           bool
+	Archived         bool
 	Invite           *ClientInviteView
 	SubmittedName    string
 	SubmittedProfile string
@@ -27,6 +28,18 @@ func pageDevices(d Deps, state clientPageState, isAuthed bool) string {
 	}
 
 	inventory, inventoryErr := loadDeviceInventory(d)
+	archived := 0
+	visible := make([]ClientView, 0, len(inventory.Clients))
+	for _, device := range inventory.Clients {
+		isArchived := device.Status == "revoked"
+		if isArchived {
+			archived++
+		}
+		if isArchived == state.Archived {
+			visible = append(visible, device)
+		}
+	}
+	inventory.Clients = visible
 
 	total, members, pending := len(inventory.Clients), 0, 0
 	for _, device := range inventory.Clients {
@@ -52,6 +65,11 @@ func pageDevices(d Deps, state clientPageState, isAuthed bool) string {
 
 	b.WriteString(`<div class=clients-layout><section class="card clients-list-card"><div class=clients-card-head><div><h2>Device inventory</h2><p class=dim>Identity, desired membership and runtime evidence remain separate facts.</p></div>`)
 	control := deviceControl(d)
+	if state.Archived {
+		b.WriteString(`<a class="button sp" href="/devices">Current devices</a><span class=dim>Archived devices</span>`)
+	} else if archived > 0 {
+		fmt.Fprintf(&b, `<a class="button sp" href="/devices?archived=1">Archived devices (%d)</a>`, archived)
+	}
 	if isAuthed && control != nil && control.CreateInvite != nil {
 		b.WriteString(`<a class="button primary sp" href="/devices?new=1">＋ Create Device</a>`)
 	} else if d.Control != nil && !isAuthed {
@@ -61,7 +79,7 @@ func pageDevices(d Deps, state clientPageState, isAuthed bool) string {
 	if inventoryErr == nil && len(inventory.Clients) == 0 {
 		b.WriteString(`<div class=client-empty><b>No Device records exist.</b><span class=dim>Create a Device when a machine is ready to join the network.</span></div>`)
 	} else if inventoryErr == nil {
-		b.WriteString(`<div role=region aria-label="Device records" tabindex=0><table class=clients-table><thead><tr><th>Device<th>Membership<th>Responsibilities<th>Destination grants<th>Runtime<th>Last seen</tr></thead><tbody>`)
+		b.WriteString(`<div class=clients-table-scroll role=region aria-label="Device records" tabindex=0><table class=clients-table><colgroup><col class=client-col-device><col class=client-col-membership><col class=client-col-responsibilities><col class=client-col-grants><col><col class=client-col-seen></colgroup><thead><tr><th>Device<th>Membership<th>Responsibilities<th>Destination grants<th>Runtime<th>Last seen <span class=client-time-zone>UTC</span></tr></thead><tbody>`)
 		for _, device := range inventory.Clients {
 			statusClass, statusLabel := clientStatusPresentation(device.Status)
 			identityMeta := deviceListIdentityMeta(device)
@@ -69,11 +87,11 @@ func pageDevices(d Deps, state clientPageState, isAuthed bool) string {
 			if device.Legacy {
 				identityNote = ` · <span class="tiny warn">Identity not indexed</span>`
 			}
-			fmt.Fprintf(&b, `<tr><td><div class=client-name><b><a href="/devices/%s">%s</a></b><span class="mono dim">%s%s</span></div><td><b>%s</b><td>%s<td>%s<td><span class="client-status %s"><span class=dot></span>%s</span><br><span class="tiny dim">%s</span><td class=mono>%s</tr>`,
+			fmt.Fprintf(&b, `<tr><td><div class=client-name><b><a href="/devices/%s">%s</a></b><span class="mono dim">%s%s</span></div><td><b>%s</b><td>%s<td>%s<td><span class="client-status %s"><span class=dot></span>%s</span><span class="client-runtime-detail tiny dim">%s</span><td>%s</tr>`,
 				url.PathEscape(device.ID), esc(device.ID), esc(identityMeta), identityNote,
 				esc(orDash(device.Membership)), deviceTagList(device.Responsibilities),
 				deviceTagList(device.DestinationGrants), statusClass, esc(statusLabel),
-				esc(clientRuntimeDetail(device)), esc(clientTime(device.LastSeenAt)))
+				esc(clientRuntimeDetail(device)), clientTableTime(device.LastSeenAt))
 		}
 		b.WriteString(`</tbody></table></div>`)
 	}
@@ -140,6 +158,9 @@ func pageDeviceDetail(d Deps, deviceID string, isAuthed bool) string {
 			esc(orDash(device.PublicEndpoint)), device.InboundPort, esc(orDash(device.Direction)), yesNo(device.EgressCapable))
 	}
 	var b strings.Builder
+	if device.ReplacedBy != "" {
+		fmt.Fprintf(&b, `<section class="card notice"><b>Device replaced</b><p>This identity is archived. <a class=button href="/devices/%s">Open replacement Device %s</a></p></section>`, url.PathEscape(device.ReplacedBy), esc(device.ReplacedBy))
+	}
 	fmt.Fprintf(&b, `<div class=grid>
 <section class="card span4"><div class=label>Identity</div><h2>%s</h2><dl class=kv><dt>Device ID<dd class=mono>%s<dt>Platform<dd>%s<dt>Identity source<dd>%s<dt>Profile version<dd class=mono>%s<dt>Key fingerprint<dd class=mono>%s</dl></section>
 <section class="card span4"><div class=label>Membership</div><div class=metric>%s</div><p class=dim>Desired membership is separate from join progress and runtime health.</p><dl class=kv><dt>Created<dd>%s<dt>Joined<dd>%s</dl></section>
@@ -152,12 +173,57 @@ func pageDeviceDetail(d Deps, deviceID string, isAuthed bool) string {
 		esc(orDash(device.Membership)), esc(clientTime(device.CreatedAt)), esc(clientTime(device.EnrolledAt)),
 		statusClass, esc(statusLabel), esc(clientRuntimeDetail(*device)), esc(clientTime(device.LastSeenAt)),
 		esc(deviceList(device.Responsibilities)), esc(deviceList(device.DestinationGrants)), serverDeclaration, url.PathEscape(device.ID))
-	if isAuthed && !device.Legacy && (device.Status == "pending" || device.Status == "invite_expired") {
+	if !device.Legacy && (device.Status == "pending" || device.Status == "invite_expired") {
 		if control := deviceControl(d); control != nil && control.DiscardPending != nil {
-			fmt.Fprintf(&b, `<div class=service-danger><div><b>Device not joined</b><span>This Device never used its join code and has no network membership. Discarding removes only this reservation and its unused join codes.</span></div><form method=post action="/devices/discard-pending"><input type=hidden name=id value="%s"><button class=danger-button>Discard Device</button></form></div>`, esc(device.ID))
+			b.WriteString(`<div class=service-danger><div><b>Delete unjoined Device</b><span>This Device never used its join code. Deleting it removes the reservation and its unused join codes.</span></div>`)
+			if isAuthed {
+				fmt.Fprintf(&b, `<form method=post action="/devices/discard-pending"><input type=hidden name=id value="%s"><button class=danger-button>Delete Device</button></form>`, esc(device.ID))
+			} else {
+				fmt.Fprintf(&b, `<a class=button href="%s">Sign in to delete</a>`, esc(loginURL("/devices/"+url.PathEscape(device.ID))))
+			}
+			b.WriteString(`</div>`)
 		}
 	}
+	writeDeviceJoinActions(&b, d, *device, isAuthed)
 	return shell(d, "Device · "+device.ID, b.String(), isAuthed)
+}
+
+func deviceCanReplace(device ClientView) bool {
+	if device.Legacy || device.IdentitySource != "enrollment" || device.ProfileVersion == "" ||
+		device.ReplacedBy != "" || len(device.Responsibilities) != 1 || device.Responsibilities[0] != "use_loom" {
+		return false
+	}
+	switch device.Status {
+	case "ready", "online", "stale", "problem", "unknown", "undeclared":
+		return true
+	}
+	return false
+}
+
+func writeDeviceJoinActions(b *strings.Builder, d Deps, device ClientView, isAuthed bool) {
+	control := deviceControl(d)
+	if control == nil || device.Legacy {
+		return
+	}
+	pending := device.Status == "pending" || device.Status == "invite_expired"
+	replace := deviceCanReplace(device)
+	if (!pending || control.RenewInvite == nil) && (!replace || control.ReplaceDevice == nil) {
+		return
+	}
+	b.WriteString(`<section class="card device-join-actions"><h2>Join network</h2>`)
+	if pending {
+		b.WriteString(`<p>Generate a fresh, one-time QR for this Device. Previous unused join codes will stop working.</p>`)
+	} else {
+		b.WriteString(`<p>Use this after deleting the client's local identity and configuration. The replacement gets a new Device ID with the same name and purpose. The old identity is archived; its access is revoked as the network applies the signed update.</p>`)
+	}
+	if !isAuthed {
+		fmt.Fprintf(b, `<a class=button href="%s">Sign in to manage join QR</a>`, esc(loginURL("/devices/"+url.PathEscape(device.ID))))
+	} else if pending {
+		fmt.Fprintf(b, `<form method=post action="/devices/renew-invite"><input type=hidden name=id value="%s"><button class="button primary">Generate new join QR</button></form>`, esc(device.ID))
+	} else {
+		fmt.Fprintf(b, `<details><summary>Rejoin Device</summary><form method=post action="/devices/replace"><input type=hidden name=id value="%s"><label class=device-rejoin-confirm><input type=checkbox name=identity_deleted value=yes required> I deleted this client's local identity and configuration and want to revoke the old access.</label><button class="button primary">Replace Device and generate QR</button></form></details>`, esc(device.ID))
+	}
+	b.WriteString(`</section>`)
 }
 
 func deviceIdentitySourceLabel(source string) string {
@@ -228,6 +294,9 @@ func pageDeviceEnrollment(d Deps, state clientPageState, isAuthed bool) string {
 		return shell(d, "Devices", b.String(), true)
 	}
 	if state.Invite != nil {
+		if state.Invite.Replaces != "" {
+			fmt.Fprintf(&b, `<section class="card notice"><b>Replacement join QR ready</b><p>Device <span class=mono>%s</span> replaces <a href="/devices/%s">%s</a>. The name and purpose are preserved. Old access revocation takes effect as the network applies the signed update.</p></section>`, esc(state.Invite.ClientID), url.PathEscape(state.Invite.Replaces), esc(state.Invite.Replaces))
+		}
 		writeClientInvite(&b, *state.Invite, state.Package, state.PackageError)
 		return shell(d, "Devices", b.String(), true)
 	}
@@ -287,7 +356,7 @@ sudo /usr/local/bin/loom client enroll -stdin</code><p class="small">Paste the c
 	} else {
 		b.WriteString(`<div class="callout warnline client-setup-blocked"><b>Linux package unavailable</b><br><span class=small>Publish a validated Linux client package before attempting these installation commands. The join code remains usable until the expiry shown above.</span></div>`)
 	}
-	b.WriteString(`<div class=client-setup-boundary><b>The first successful identity binding consumes the code.</b><span>Only the exact same token, CSR, request ID, platform and Device facts may resume during the recovery window. If the code or recovery window expires, an operator must explicitly resolve the incomplete identity; same-Device reissue is not yet supported. Reconnects, restarts and configuration updates do not repeat the join.</span></div></section>`)
+	b.WriteString(`<div class=client-setup-boundary><b>The first successful join consumes the code.</b><span>Before it is used, an operator can generate a fresh QR from the Device details. After joining, deleting the local identity requires Rejoin Device there to revoke the old access and create a replacement. An interrupted join must finish or be resolved before replacement. Reconnects, restarts and configuration updates keep the existing identity.</span></div></section>`)
 }
 
 func deviceEnrollmentProfiles(d Deps) ([]DeviceEnrollmentProfileView, error) {
@@ -413,7 +482,7 @@ func clientStatusPresentation(status string) (className, label string) {
 	case "decommissioned":
 		return "dim", "Decommissioned"
 	case "ready":
-		return "ok", "Bootstrap ready"
+		return "info", "Joined · status unverified"
 	case "managed":
 		return "info", "SSOT managed"
 	case "provisioning":
@@ -546,6 +615,19 @@ func clientTime(value string) string {
 		return "—"
 	}
 	return shortTS(value) + " UTC"
+}
+
+func clientTableTime(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "—"
+	}
+	at, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return esc(value)
+	}
+	at = at.UTC()
+	return fmt.Sprintf(`<time class="client-time mono" datetime="%s">%s<br>%s</time>`,
+		at.Format(time.RFC3339), at.Format("2006/01/02"), at.Format("15:04:05"))
 }
 
 func clientRuntimeDetail(client ClientView) string {

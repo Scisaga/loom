@@ -74,6 +74,8 @@ type Client struct {
 	EnrolledAt        string            `json:"enrolled_at,omitempty"`
 	ReadyAt           string            `json:"ready_at,omitempty"`
 	RevokedAt         string            `json:"revoked_at,omitempty"`
+	ReplacedBy        string            `json:"replaced_by,omitempty"`
+	Replaces          string            `json:"replaces,omitempty"`
 	ProfileVersion    string            `json:"profile_version,omitempty"`
 	ProfileDigest     string            `json:"profile_digest,omitempty"`
 	Responsibilities  []string          `json:"responsibilities,omitempty"`
@@ -216,14 +218,20 @@ func (s Store) List() ([]Client, []Invite, error) {
 		if clients[i].Status != "pending" {
 			continue
 		}
+		hasExpired, hasActive := false, false
 		for _, invite := range invites {
 			if invite.ClientID != clients[i].ID || invite.ConsumedAt != "" {
 				continue
 			}
 			expires, err := time.Parse(time.RFC3339, invite.ExpiresAt)
 			if err == nil && !now.Before(expires) {
-				clients[i].Status = "invite_expired"
+				hasExpired = true
+			} else if err == nil && invite.SealedToken != "" {
+				hasActive = true
 			}
+		}
+		if hasExpired && !hasActive {
+			clients[i].Status = "invite_expired"
 		}
 	}
 	sort.Slice(clients, func(i, j int) bool {
