@@ -25,6 +25,12 @@ func RunWindowsDataPlane(ctx context.Context, executable string, config []byte, 
 // derived Windows capture profile.
 func RunWindowsDataPlaneProfile(ctx context.Context, executable string, config []byte, runtimeDir string,
 	profile WindowsRuntimeProfile, caPath string) (retErr error) {
+	return RunWindowsDataPlaneProfileStarted(ctx, executable, config, runtimeDir, profile, caPath, nil)
+}
+
+// §16.1：只有进程已创建且已受 Job Object 监督，宿主才可以开始启动稳定窗口。
+func RunWindowsDataPlaneProfileStarted(ctx context.Context, executable string, config []byte, runtimeDir string,
+	profile WindowsRuntimeProfile, caPath string, started func()) (retErr error) {
 	if ctx == nil {
 		return errors.New("sing-box supervisor context is nil")
 	}
@@ -77,6 +83,9 @@ func RunWindowsDataPlaneProfile(ctx context.Context, executable string, config [
 		return fmt.Errorf("attach sing-box process supervisor: %w", err)
 	}
 	defer guard.Close()
+	if started != nil {
+		started()
+	}
 	waited := make(chan error, 1)
 	go func() { waited <- command.Wait() }()
 	select {

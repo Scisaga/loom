@@ -18,7 +18,8 @@ const dataPlaneStartupGrace = 2 * time.Second
 
 func runActiveUpdateLoop(ctx context.Context, updater updatePuller, interval time.Duration,
 	initial *clientActivation, prepareActivation func() (*clientActivation, error),
-	preflight activationPreflight, run activationRunner, startupGrace time.Duration) (retErr error) {
+	preflight activationPreflight, run activationRunner, startupGrace time.Duration,
+	observers ...func(clientRuntimeState)) (retErr error) {
 	if updater == nil || interval <= 0 || prepareActivation == nil {
 		if initial != nil {
 			initial.clear()
@@ -32,6 +33,9 @@ func runActiveUpdateLoop(ctx context.Context, updater updatePuller, interval tim
 		}
 		return err
 	}
+	if len(observers) > 0 {
+		manager.observe = observers[0]
+	}
 	defer func() {
 		if err := manager.Stop(); err != nil && retErr == nil {
 			retErr = fmt.Errorf("stop Windows data plane: %w", err)
@@ -39,6 +43,9 @@ func runActiveUpdateLoop(ctx context.Context, updater updatePuller, interval tim
 	}()
 	if initial != nil {
 		if _, err := manager.Replace(ctx, initial); err != nil {
+			if errors.Is(err, ctx.Err()) {
+				return nil
+			}
 			return fmt.Errorf("activate restored Windows candidate: %w", err)
 		}
 		logActivation("activated restored Windows candidate", manager.active.spec)
@@ -52,6 +59,9 @@ func runActiveUpdateLoop(ctx context.Context, updater updatePuller, interval tim
 			return nil
 		case activeErr := <-manager.Done():
 			if err := manager.Recover(ctx, activeErr); err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
 				return fmt.Errorf("active Windows data plane failed: %w", err)
 			}
 			logActivation("restored previous Windows data plane after runtime failure", manager.active.spec)

@@ -176,6 +176,15 @@ response and first signed-pull trust checks. See
   an immutable runtime slot.
 - `internal/clientruntime` derives the exact Installed, Portable TUN, or TUN-free
   Portable Mixed profile and supervises sing-box in a kill-on-close Job Object.
+- `internal/clientreport` sends the existing minimal Observation with a v5
+  attestation and self-check v1, using the retained DPAPI identity. After
+  activation it reports the active snapshot every 60 seconds to the same-origin
+  report URL derived from the validated enrollment URL; redirects are refused.
+  Candidates do not advance `applied`, and stopping the workload stops reports.
+  Existing reports then become stale after five minutes. Windows currently has
+  no trusted representative end-to-end health result, so self-check reports
+  `healthy=false` with that missing evidence as a problem. See the
+  [reporting contract](../../docs/windows-client-reporting.md).
 - `config\client.json` is written last and is the only joined-state marker
   observed by normal startup. Failed imports cannot start a partial client.
 - In the current Portable preview, until the join commits, the exact QR
@@ -193,7 +202,8 @@ response and first signed-pull trust checks. See
 
 Portable Mixed has a native Windows end-to-end test covering QR decoding,
 current-user DPAPI, HTTPS Device binding, signed component installation, first
-signed pull, listener startup, startup grace, and clean shutdown without TUN or
+signed pull, listener startup, startup grace, two signed report attachments
+after token cleanup, and clean shutdown without TUN or
 route changes. All three editions now provide the same native first-launch and
 Connection GUI; file selection, window lifecycle, and console-free PE output
 have been exercised on the Windows host. Before QR import the network list is

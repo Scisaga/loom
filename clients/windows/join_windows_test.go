@@ -35,6 +35,7 @@ import (
 	"loom/internal/clientcomponent"
 	"loom/internal/clientenroll"
 	"loom/internal/clientjoin"
+	"loom/internal/clientreport"
 	"loom/internal/clientsecret"
 	"loom/internal/clientupdate"
 	"loom/internal/publish"
@@ -104,8 +105,25 @@ func TestWindowsQRJoinNativeReadyTransaction(t *testing.T) {
 	distribution := servePortableTestDistribution(t, authority, platformPrivate,
 		portableTestWindowsConfig("win-enroll"))
 	defer distribution.Close()
+	reports := make(chan clientreport.Observation, 16)
 	var claimRequests, trustRequests int
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/loom-client/report" {
+			var observation clientreport.Observation
+			if err := json.NewDecoder(r.Body).Decode(&observation); err != nil {
+				t.Error(err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if err := verifyNativeReport(&observation, caPEM); err != nil {
+				t.Error(err)
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			reports <- observation
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		if r.URL.Path == "/api/client/trust" {
 			trustRequests++
 			w.Header().Set("Content-Type", "application/json")
@@ -115,7 +133,7 @@ func TestWindowsQRJoinNativeReadyTransaction(t *testing.T) {
 			})
 			return
 		}
-		if r.URL.Path != "/api/client/enroll" {
+		if r.URL.Path != "/loom-client/enroll" {
 			http.NotFound(w, r)
 			return
 		}
@@ -164,7 +182,7 @@ func TestWindowsQRJoinNativeReadyTransaction(t *testing.T) {
 		Endpoint  string `json:"endpoint"`
 		Token     string `json:"token"`
 		ExpiresAt string `json:"expires_at"`
-	}{Schema: 1, Endpoint: server.URL + "/api/client/enroll", Token: token, ExpiresAt: expiresAt})
+	}{Schema: 1, Endpoint: server.URL + "/loom-client/enroll", Token: token, ExpiresAt: expiresAt})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +207,8 @@ func TestWindowsQRJoinNativeReadyTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claimRequests != 1 || trustRequests != 1 || result.NodeID != "win-enroll" {
+	// 加入已经固定 platform key，不再通过远端 trust 接口建立信任。
+	if claimRequests != 1 || trustRequests != 0 || result.NodeID != "win-enroll" {
 		t.Fatalf("join result=%+v claims=%d trust=%d", result, claimRequests, trustRequests)
 	}
 	config, err := clientupdate.ReadConfig(filepath.Join(root, "config", "client.json"))
@@ -215,13 +234,15 @@ func TestWindowsQRJoinNativeReadyTransaction(t *testing.T) {
 	if _, err := readWindowsPendingInvite(root, clientsecret.UserProtector{}); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("completed join retained its pending QR credential: %v", err)
 	}
-	workload, err := preparePortableClient(editionPortableMixed)
+	workload, err := prepareClientAt(root, clientsecret.UserProtector{}, editionPortableMixed, server.Client())
 	if err != nil {
 		t.Fatalf("prepare joined Portable Mixed client: %v", err)
 	}
 	runContext, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- workload(runContext) }()
+	finished := make(chan struct{})
+	go func() { defer close(finished); done <- workload(runContext) }()
+	defer func() { cancel(); <-finished }()
 	deadline := time.Now().Add(15 * time.Second)
 	for {
 		connection, dialErr := net.DialTimeout("tcp", "127.0.0.1:1080", 100*time.Millisecond)
@@ -249,6 +270,14 @@ func TestWindowsQRJoinNativeReadyTransaction(t *testing.T) {
 		t.Fatalf("joined Portable Mixed exited during startup grace: %v", runErr)
 	case <-time.After(dataPlaneStartupGrace + 500*time.Millisecond):
 	}
+	select {
+	case observation := <-reports:
+		if observation.Applied != current.Snapshot || observation.SelfCheck.Healthy || len(observation.SelfCheck.Problems) == 0 {
+			t.Fatal("native activation did not report its snapshot and missing end-to-end health evidence")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("native activation did not send a signed report")
+	}
 	cancel()
 	select {
 	case runErr := <-done:
@@ -257,6 +286,11 @@ func TestWindowsQRJoinNativeReadyTransaction(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("joined Portable Mixed did not stop")
+	}
+	select {
+	case <-reports:
+		t.Fatal("native workload sent a report after stopping")
+	case <-time.After(100 * time.Millisecond):
 	}
 	tamperedPackage := append([]byte(nil), artifact.Package...)
 	tamperedPackage[len(tamperedPackage)/2] ^= 0x80

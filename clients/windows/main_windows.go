@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -147,7 +148,7 @@ func preparePortableClient(edition clientEdition) (func(context.Context) error, 
 	return prepareClientAt(root, clientsecret.UserProtector{}, edition)
 }
 
-func prepareClientAt(root string, protector clientsecret.Protector, edition clientEdition) (func(context.Context) error, error) {
+func prepareClientAt(root string, protector clientsecret.Protector, edition clientEdition, reportClients ...*http.Client) (func(context.Context) error, error) {
 	profile, err := runtimeProfile(edition)
 	if err != nil {
 		return nil, err
@@ -204,7 +205,7 @@ func prepareClientAt(root string, protector clientsecret.Protector, edition clie
 		}
 		return &clientActivation{
 			Version: candidate.Version, SlotID: components.SlotID, Executable: components.SingBox,
-			Config: runtimeConfig, RuntimeDir: filepath.Join(root, "runtime"), Profile: profile, CAPath: caPath,
+			Config: runtimeConfig, RuntimeDir: filepath.Join(root, "runtime"), Profile: profile, CAPath: caPath, WaitForStart: true,
 		}, nil
 	}
 	var initial *clientActivation
@@ -240,8 +241,20 @@ func prepareClientAt(root string, protector clientsecret.Protector, edition clie
 			return err
 		}
 		defer dataPlaneLock.close()
+		var reportClient *http.Client
+		if len(reportClients) > 0 {
+			reportClient = reportClients[0]
+		}
+		reporter, err := startWindowsReporter(root, protector, config, reportClient)
+		if err != nil {
+			if initial != nil {
+				initial.clear()
+			}
+			return err
+		}
+		defer reporter.stop()
 		return runActiveUpdateLoop(ctx, updater, config.PullInterval(), initial, prepareActivation,
-			preflightClientActivation, runClientActivation, dataPlaneStartupGrace)
+			preflightClientActivation, runClientActivation, dataPlaneStartupGrace, reporter.update)
 	}, nil
 }
 
@@ -271,8 +284,8 @@ func preflightClientActivation(ctx context.Context, activation *clientActivation
 }
 
 func runClientActivation(ctx context.Context, activation *clientActivation) error {
-	return clientruntime.RunWindowsDataPlaneProfile(ctx, activation.Executable, activation.Config,
-		activation.RuntimeDir, activation.Profile, activation.CAPath)
+	return clientruntime.RunWindowsDataPlaneProfileStarted(ctx, activation.Executable, activation.Config,
+		activation.RuntimeDir, activation.Profile, activation.CAPath, activation.Started)
 }
 
 func waitForJoinedClient(root string, protector clientsecret.Protector, edition clientEdition) func(context.Context) error {

@@ -11,13 +11,15 @@ import (
 )
 
 type clientActivation struct {
-	Version    clientruntime.CandidateVersion
-	SlotID     string
-	Executable string
-	Config     []byte
-	RuntimeDir string
-	Profile    clientruntime.WindowsRuntimeProfile
-	CAPath     string
+	Version      clientruntime.CandidateVersion
+	SlotID       string
+	Executable   string
+	Config       []byte
+	RuntimeDir   string
+	Profile      clientruntime.WindowsRuntimeProfile
+	CAPath       string
+	WaitForStart bool
+	Started      func()
 }
 
 func (activation *clientActivation) key() string {
@@ -59,6 +61,7 @@ type runningActivation struct {
 	spec   *clientActivation
 	cancel context.CancelFunc
 	done   chan error
+	exited <-chan struct{}
 }
 
 // activationManager serializes data-plane ownership. A replacement is fully
@@ -71,6 +74,18 @@ type activationManager struct {
 	startupGrace time.Duration
 	active       *runningActivation
 	standby      *clientActivation
+	observe      func(clientRuntimeState)
+}
+
+func (manager *activationManager) report(ready bool, exited <-chan struct{}) {
+	if manager.observe == nil {
+		return
+	}
+	state := clientRuntimeState{Ready: ready, Exited: exited}
+	if ready && manager.active != nil {
+		state.Applied = manager.active.spec.Version.Snapshot
+	}
+	manager.observe(state)
 }
 
 func newActivationManager(preflight activationPreflight, run activationRunner, startupGrace time.Duration) (*activationManager, error) {
@@ -94,6 +109,11 @@ func (manager *activationManager) Replace(ctx context.Context, next *clientActiv
 		return false, err
 	}
 	if manager.active != nil && manager.active.spec.key() == next.key() {
+		// 相同数据面也可能属于新的已验证快照；复制元数据，避免修改 runner 正在读的 spec。
+		updated := *manager.active.spec
+		updated.Version = next.Version
+		manager.active.spec = &updated
+		manager.report(true, manager.active.exited)
 		next.clear()
 		return false, nil
 	}
@@ -145,9 +165,32 @@ func (manager *activationManager) Replace(ctx context.Context, next *clientActiv
 }
 
 func (manager *activationManager) start(ctx context.Context, activation *clientActivation) error {
+	manager.report(false, nil)
 	childContext, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
-	go func() { done <- manager.run(childContext, activation) }()
+	exited := make(chan struct{})
+	started := make(chan struct{})
+	activation.Started = func() { close(started) }
+	go func() {
+		err := manager.run(childContext, activation)
+		close(exited)
+		done <- err
+	}()
+	if activation.WaitForStart {
+		select {
+		case <-started:
+		case err := <-done:
+			cancel()
+			if err == nil {
+				err = errors.New("data plane exited before process start")
+			}
+			return err
+		case <-ctx.Done():
+			cancel()
+			<-done
+			return ctx.Err()
+		}
+	}
 	timer := time.NewTimer(manager.startupGrace)
 	defer timer.Stop()
 	select {
@@ -162,7 +205,17 @@ func (manager *activationManager) start(ctx context.Context, activation *clientA
 		<-done
 		return ctx.Err()
 	case <-timer.C:
-		manager.active = &runningActivation{spec: activation, cancel: cancel, done: done}
+		select {
+		case err := <-done:
+			cancel()
+			if err == nil {
+				err = errors.New("data plane exited during startup")
+			}
+			return err
+		default:
+		}
+		manager.active = &runningActivation{spec: activation, cancel: cancel, done: done, exited: exited}
+		manager.report(true, exited)
 		return nil
 	}
 }
@@ -184,6 +237,7 @@ func (manager *activationManager) Recover(ctx context.Context, activeErr error) 
 	failed := manager.active.spec
 	manager.active.cancel()
 	manager.active = nil
+	manager.report(false, nil)
 	if activeErr == nil {
 		activeErr = errors.New("data plane exited unexpectedly without an error")
 	}
@@ -212,6 +266,7 @@ func (manager *activationManager) Stop() error {
 		return nil
 	}
 	var err error
+	manager.report(false, nil)
 	if manager.active != nil {
 		err = stopRunning(manager.active)
 		manager.active.spec.clear()

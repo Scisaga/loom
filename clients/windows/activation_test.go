@@ -118,11 +118,15 @@ func TestActivationManagerAvoidsRestartForSameCoordinates(t *testing.T) {
 		t.Fatalf("initial activation changed=%t err=%v", changed, err)
 	}
 	duplicate := activationFixture(t, "1")
+	duplicate.Version.Snapshot = "0123456789ab"
 	if changed, err := manager.Replace(ctx, duplicate); err != nil || changed {
 		t.Fatalf("duplicate activation changed=%t err=%v", changed, err)
 	}
 	if duplicate.Config != nil {
 		t.Fatal("discarded duplicate retained hydrated config")
+	}
+	if manager.active.spec.Version.Snapshot != "0123456789ab" {
+		t.Fatal("identical data plane did not advance its authenticated snapshot metadata")
 	}
 	if starts, stops := harness.counts(); starts != 1 || stops != 0 {
 		t.Fatalf("duplicate activation starts/stops = %d/%d", starts, stops)
@@ -135,6 +139,8 @@ func TestActivationManagerAvoidsRestartForSameCoordinates(t *testing.T) {
 func TestActivationManagerRestoresPreviousWhenReplacementFailsToStart(t *testing.T) {
 	harness := &activationHarness{}
 	manager := newActivationHarnessManager(t, harness)
+	var states []clientRuntimeState
+	manager.observe = func(state clientRuntimeState) { states = append(states, state) }
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	previous := activationFixture(t, "2")
@@ -142,12 +148,22 @@ func TestActivationManagerRestoresPreviousWhenReplacementFailsToStart(t *testing
 		t.Fatal(err)
 	}
 	replacement := activationFixture(t, "3")
+	replacement.Version.Snapshot = "222222222222"
 	harness.setStartFailure(replacement.key(), errors.New("fixture launch failure"))
 	if _, err := manager.Replace(ctx, replacement); err == nil || !strings.Contains(err.Error(), "previous data plane restored") {
 		t.Fatalf("replacement failure = %v", err)
 	}
 	if manager.active == nil || manager.active.spec.key() != previous.key() {
 		t.Fatal("previous activation was not restored")
+	}
+	last := states[len(states)-1]
+	if !last.Ready || last.Applied != previous.Version.Snapshot {
+		t.Fatal("rollback did not report the restored snapshot")
+	}
+	for _, state := range states {
+		if state.Ready && state.Applied == replacement.Version.Snapshot {
+			t.Fatal("failed replacement became applied evidence")
+		}
 	}
 	if replacement.Config != nil {
 		t.Fatal("failed replacement retained hydrated config")
@@ -163,6 +179,8 @@ func TestActivationManagerRestoresPreviousWhenReplacementFailsToStart(t *testing
 func TestActivationManagerRecoversPreviousAfterRuntimeCrash(t *testing.T) {
 	harness := &activationHarness{}
 	manager := newActivationHarnessManager(t, harness)
+	var reported clientRuntimeState
+	manager.observe = func(state clientRuntimeState) { reported = state }
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	previous := activationFixture(t, "4")
@@ -170,10 +188,14 @@ func TestActivationManagerRecoversPreviousAfterRuntimeCrash(t *testing.T) {
 		t.Fatal(err)
 	}
 	replacement := activationFixture(t, "5")
+	replacement.Version.Snapshot = "222222222222"
 	crash := make(chan error, 1)
 	harness.setCrash(replacement.key(), crash)
 	if _, err := manager.Replace(ctx, replacement); err != nil {
 		t.Fatal(err)
+	}
+	if !reported.active() || reported.Applied != replacement.Version.Snapshot {
+		t.Fatal("successful replacement did not report its snapshot")
 	}
 	crash <- errors.New("fixture runtime crash")
 	var activeErr error
@@ -188,6 +210,9 @@ func TestActivationManagerRecoversPreviousAfterRuntimeCrash(t *testing.T) {
 	if manager.active == nil || manager.active.spec.key() != previous.key() {
 		t.Fatal("previous activation was not recovered after runtime failure")
 	}
+	if !reported.active() || reported.Applied != previous.Version.Snapshot {
+		t.Fatal("recovery retained the failed replacement's snapshot")
+	}
 	if replacement.Config != nil {
 		t.Fatal("crashed replacement retained hydrated config")
 	}
@@ -199,6 +224,8 @@ func TestActivationManagerRecoversPreviousAfterRuntimeCrash(t *testing.T) {
 func TestActivationManagerPreflightFailureLeavesCurrentRunning(t *testing.T) {
 	harness := &activationHarness{}
 	manager := newActivationHarnessManager(t, harness)
+	var reported clientRuntimeState
+	manager.observe = func(state clientRuntimeState) { reported = state }
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	current := activationFixture(t, "6")
@@ -206,6 +233,7 @@ func TestActivationManagerPreflightFailureLeavesCurrentRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	rejected := activationFixture(t, "7")
+	rejected.Version.Snapshot = "222222222222"
 	harness.setPreflightFailure(rejected.key(), errors.New("fixture preflight failure"))
 	if _, err := manager.Replace(ctx, rejected); err == nil {
 		t.Fatal("preflight failure was accepted")
@@ -213,8 +241,73 @@ func TestActivationManagerPreflightFailureLeavesCurrentRunning(t *testing.T) {
 	if manager.active == nil || manager.active.spec.key() != current.key() {
 		t.Fatal("preflight failure stopped the current activation")
 	}
+	if !reported.active() || reported.Applied != current.Version.Snapshot {
+		t.Fatal("unactivated candidate replaced the active snapshot in reports")
+	}
 	if starts, stops := harness.counts(); starts != 1 || stops != 0 {
 		t.Fatalf("preflight failure starts/stops = %d/%d", starts, stops)
+	}
+	if err := manager.Stop(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestActivationStatusWaitsForProcessAndDetectsExit(t *testing.T) {
+	start := make(chan struct{})
+	crash := make(chan struct{})
+	states := make(chan clientRuntimeState, 12)
+	manager, err := newActivationManager(func(context.Context, *clientActivation) error { return nil },
+		func(ctx context.Context, activation *clientActivation) error {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-start:
+			}
+			activation.Started()
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-crash:
+				return errors.New("fixture process crash")
+			}
+		}, 10*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.observe = func(state clientRuntimeState) { states <- state }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	activation := activationFixture(t, "1")
+	activation.WaitForStart = true
+	done := make(chan error, 1)
+	go func() { _, err := manager.Replace(ctx, activation); done <- err }()
+	if initial := <-states; initial.Ready || initial.Applied != "" {
+		t.Fatal("startup claimed a running snapshot")
+	}
+	select {
+	case <-done:
+		t.Fatal("activation completed before the process started")
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(start)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	ready := <-states
+	if !ready.Ready || ready.Applied != activation.Version.Snapshot || !ready.active() {
+		t.Fatal("stable process was not reported with its applied snapshot")
+	}
+	close(crash)
+	activeErr := <-manager.Done()
+	if ready.active() {
+		t.Fatal("process exit still appears healthy before the manager handles recovery")
+	}
+	if err := manager.Recover(ctx, activeErr); err == nil {
+		t.Fatal("crash without standby should fail")
+	}
+	failed := <-states
+	if failed.Ready || failed.Applied != "" {
+		t.Fatal("crash still claimed a running snapshot or remained healthy")
 	}
 	if err := manager.Stop(); err != nil {
 		t.Fatal(err)
