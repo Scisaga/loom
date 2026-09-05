@@ -2750,3 +2750,35 @@ D95 把设备默认声明定义成“仅在 Service 未命中时生效的 catch-
 若所选出口在新配置中被撤权，客户端明确标为不可用并 fail closed，不静默改成其他
 模式。正式交付只需补齐本地 selector、受保护偏好存储和 UI，不能复用 catch-all 字段
 暗中改变其旧语义。
+
+### D98 · NAT Device 只新增 Observation 传输适配器，不新增状态协议
+
+**日期** 2026-09-05 · **状态** 服务端已实现，Windows producer 待接入 · **相关** D81、D87、§13.5、§14.2、§16.1
+
+既有 Linux 上报闭环由节点采集、`loom-attest-v5` 与 `loom-selfcheck-v1` 签名、
+邻居 GET `/status`、接收验签和 gossip 转述组成。没有受管 WireGuard 入站、可能位于
+NAT 后的 Windows Device 即使在回环能提供 `/status`，中控也无法发现或访问该地址；
+把公网反代直接指向 `/status` 又会暴露完整诊断与 learned 转述，并依赖原本由
+WireGuard 承担的网络隔离。
+
+因此服务端只增加一个客户端主动访问的窄传输适配器：公网精确路径
+`/loom-client/report` 接收 `application/json` POST，请求体直接是现有
+`report.Observation`，不包新的 envelope，不接收 `Status` 或 `learned`，也不定义
+self-check v2。`/status` 保持原语义；它即使接受 POST 方法也不读取请求体，不能作为
+上传接口。合法陈述写入同一 gossip table，后续转述、健康和配置版本判定完全复用现有
+代码。
+
+公网传输不能只依赖“证书链到内部 CA”。接收器强制 canonical v5、签名
+measurements 和 self-check v1，并独立验证可选 traffic/link-metric；全部附件的证书
+必须使用同一个 ECDSA P-256 SPKI。该 SPKI 还必须精确匹配控制节点 registry 中
+`ready`、`identity_source=enrollment` 的当前记录，node 同时必须是 SSOT 中未退役的
+`windows-desktop` Device。这样旧证书即使仍在有效期内，也会在设备替换或吊销后被
+拒绝。输入限 1 MiB，反代只开放精确 POST 路径并限速；格式、认证、过大和本地状态
+故障使用不同 HTTP 状态，但认证失败不泄露 registry 是否存在。
+
+客户端无需在加入响应或 SSOT 新增 endpoint 字段。它只从已经通过邀请平台指纹、
+HTTPS、ready bootstrap 和首轮 signed pull 验证的 enrollment URL 做同源精确路径
+替换：`/loom-client/enroll` → `/loom-client/report`；不跟随跨源重定向，也不从
+HTTP Host 或未签名输入猜地址。这满足已加入旧客户端升级后的端点发现，且不迫使设备
+重新消费二维码。Windows 仍须实现本地状态采集、现有 canonical 字节签名和周期提交；
+服务端入口上线本身不能冒充设备已经在线。

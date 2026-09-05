@@ -111,6 +111,41 @@ func TestInvitationPersistsOnlyHashAndExactClaimReplayIsIdempotent(t *testing.T)
 	}
 }
 
+func TestReportingIdentityRequiresExactReadyEnrollmentKey(t *testing.T) {
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	store := testStore(t, &now)
+	created, err := store.Create("Windows workstation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := store.Claim(ClaimInput{
+		Token: created.Token, Platform: string(model.WindowsDesktop),
+		CSRPEM: makeCSR(t, "reporting-device"), RequestID: "reporting-device",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReportingIdentity(claimed.Client.ID, claimed.Client.PublicKey); err == nil {
+		t.Fatal("provisioning identity was authorized to report")
+	}
+	if _, err := store.MarkReady(claimed.Client.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.ReportingIdentity(claimed.Client.ID, claimed.Client.PublicKey)
+	if err != nil || got.ID != claimed.Client.ID {
+		t.Fatalf("ready reporting identity = %+v, %v", got, err)
+	}
+	if _, err := store.ReportingIdentity(claimed.Client.ID, "not-canonical-spki"); err == nil {
+		t.Fatal("wrong reporting key was authorized")
+	}
+	if _, err := store.Revoke(claimed.Client.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReportingIdentity(claimed.Client.ID, claimed.Client.PublicKey); err == nil {
+		t.Fatal("revoked reporting identity was authorized")
+	}
+}
+
 func TestProvisioningClaimRecoveryRequiresExactTupleAndExpires(t *testing.T) {
 	started := time.Date(2026, 9, 3, 14, 0, 0, 0, time.UTC)
 	now := started

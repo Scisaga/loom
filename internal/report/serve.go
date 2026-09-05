@@ -108,13 +108,14 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 	var det *detector
 
 	// 中控角色是本机 bootstrap 配置,不是渲染产物 —— 绝大多数节点没有它。
-	if ctl, pw, err := LoadControl(ControlPath); ctl != nil {
+	ctl, pw, controlErr := LoadControl(ControlPath)
+	if ctl != nil {
 		trafficHistoryStatus = "unavailable"
 		cfg.PublisherHealth = PublisherHealthPath
-		if err != nil {
+		if controlErr != nil {
 			// 声明了中控角色却配不全,必须看得见。悄悄退化成只读的话,
 			// 人会以为是自己没登录。
-			fmt.Fprintf(logw, "! 中控配置有问题,写操作关闭:%v\n", err)
+			fmt.Fprintf(logw, "! 中控配置有问题,写操作关闭:%v\n", controlErr)
 		}
 		deps.Operator = pw
 		deps.Control = controlDeps(ctl)
@@ -147,11 +148,14 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 			trafficHistoryError = ""
 		}
 		fmt.Fprintf(logw, "中控角色:%s(事件 %s,现状 %s,流量历史 %s)\n", ctl.SSOTPath, EventsPath, StatePath, TrafficPath)
-	} else if err != nil {
-		fmt.Fprintf(logw, "! 读 %s 失败:%v\n", ControlPath, err)
+	} else if controlErr != nil {
+		fmt.Fprintf(logw, "! 读 %s 失败:%v\n", ControlPath, controlErr)
 	}
 	if trafficStore != nil {
 		defer trafficStore.Close()
+	}
+	if ctl != nil {
+		mux.Handle("/api/client/report", newClientReportReceiver(tbl, ctl, now, maxAge, logw))
 	}
 	mux.Handle("/", webui.Handler(deps))
 

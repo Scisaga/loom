@@ -1,10 +1,16 @@
 package clientregistry
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"loom/internal/model"
 )
 
 // CheckClaimedIdentity 在 SSOT 事务内复核 claim，防止替换前已通过鉴权的
@@ -20,6 +26,47 @@ func (s Store) CheckClaimedIdentity(id, publicKey string) error {
 		}
 		return &Error{Code: CodeConflict, Msg: "Device identity is no longer authorized to provision"}
 	})
+}
+
+// ReportingIdentity 返回当前仍获准上报、且由 enrollment 建立的 Device 身份。
+// 运行态报告来自公网入口，仅仅“证书能链到 Loom CA”还不够：它的公钥必须仍与
+// registry 里 ready 的当前记录精确相同。所有授权失败故意共用同一错误，避免
+// 公网适配器泄露某个 Device 是否存在。
+func (s Store) ReportingIdentity(id, publicKey string) (Client, error) {
+	s = s.defaults()
+	id = strings.TrimSpace(id)
+	publicKey = strings.TrimSpace(publicKey)
+	unauthorized := func() error {
+		return &Error{Code: CodeConflict, Msg: "Device 上报身份未获授权"}
+	}
+	if !model.ValidNodeID(id) || publicKey == "" {
+		return Client{}, unauthorized()
+	}
+	spki, err := base64.RawStdEncoding.Strict().DecodeString(publicKey)
+	if err != nil || base64.RawStdEncoding.EncodeToString(spki) != publicKey {
+		return Client{}, unauthorized()
+	}
+	parsed, err := x509.ParsePKIXPublicKey(spki)
+	key, ok := parsed.(*ecdsa.PublicKey)
+	if err != nil || !ok || key.Curve != elliptic.P256() {
+		return Client{}, unauthorized()
+	}
+
+	var result Client
+	err = s.withLock(false, func(st *fileState) error {
+		for _, client := range st.Clients {
+			if client.ID == id && client.PublicKey == publicKey && client.Status == "ready" &&
+				client.IdentitySource == "enrollment" {
+				result = client
+				return nil
+			}
+		}
+		return unauthorized()
+	})
+	if err != nil {
+		return Client{}, err
+	}
+	return result, nil
 }
 
 // RenewInvitation 为从未领取的 Device 签发新的短期加入码（§14.2.3）。

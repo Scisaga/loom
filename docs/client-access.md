@@ -5,10 +5,11 @@
 > 本地偏好核心、签名 bundle 验证缓存、DPAPI 秘密仓库、严格 hydration 与加密候选提交，
 > 以及签名数据面包、Wintun Authenticode、可执行预检和进程监督边界；Windows 首次启动
 > 导入二维码与 Portable Mixed 数据面激活已在本机闭环；Linux access-only 的 signed
-> decommission、身份吊销与秘密清理已闭环；Installed UI/IPC、
+> decommission、身份吊销与秘密清理已闭环；服务端已提供复用 v5 Observation 与
+> self-check v1 的 NAT Device 接收适配器，Windows 上报宿主尚待接入；Installed UI/IPC、
 > 真实 TUN、Android 宿主以及服务器职责/其他平台的通用双重吊销仍待实现
 >
-> **日期:** 2026-08-30；开发与构建环境于 2026-09-03 核对
+> **日期:** 2026-09-05；开发与构建环境于 2026-09-03 核对
 >
 > **适用范围:** Windows、Linux Server 与 Android 接入设备；v1 不考虑 Linux Desktop
 >
@@ -73,13 +74,15 @@
 | 安全存储 | 0600 本地文件 | Installed 目标态使用 machine-scope DPAPI；Portable 身份、vault 与候选使用用户范围 DPAPI；CNG、安装器 ACL 尚未实现 | 未接 Android Keystore |
 | 安装与升级 | 已有签名 `tar.gz`、校验与安装器；后续版本仍走 signed pull | 可生成未签名 PE 与平台签名数据面 ZIP；无 MSI 和 Loom 代码签名流程 | 无 APK/商店发布流程 |
 | 加入网络/二维码 | 中控与 Linux CLI 已实现 | 三个 edition 已接入原生 GUI、二维码/加入文件解析和安全绑定；Installed 普通用户托盘/IPC 未完成 | 客户端宿主未实现 |
+| 可信运行态上报 | `/status` 拉取与 gossip 已实现 | 服务端 NAT 接收适配器已实现；Windows producer/周期提交尚未接入 | 客户端与 producer 均未实现 |
 | 设备吊销 | access-only 已完成 signed decommission、移除/吊销与秘密清理；服务器职责的通用双重收敛未完成 | 未实现 | 未实现 |
 
 当前渲染器已按显式部署目标拆开平台无关配置与 Linux 生命周期产物：参考矩阵中的
 `phone` 和 `workstation` 只生成各自平台路径正确的 sing-box 配置，不再携带 systemd、
 Linux Agent、Linux report 或 `/etc/loom` 内容；Linux Server 保持原有产物。Windows
 Installed 的 MSI/普通用户 IPC、Android `VpnService`、各自尚缺的 Agent/report 宿主仍未
-实现；Portable Mixed 已可完成受控开发闭环，但尚不是正式发布客户端。
+实现；服务端已经能接收 Windows 现有签名格式，但这不等于 Windows 已经发送报告。
+Portable Mixed 已可完成受控开发闭环，但尚不是正式发布客户端。
 
 Windows C3 已开始：`internal/clientcore` 实现严格的 Direct / Auto / 指定出口偏好、
 授权变更和撤权后 fail-closed，并以平台原子替换保存非秘密偏好；`internal/clientupdate`

@@ -1493,6 +1493,17 @@ Installed 目标态必须由受限 Service broker 写入 machine-scope/受保护
 Agent pull 解决四件事:节点主动取回、NAT 场景、控制平面可离线、漂移自动收敛。
 管理 SSH 可达的生产节点则不必为了交互式代码发布等待下一次轮询。
 
+> **NAT Device 上报的当前实现边界:** Windows Device 仍使用同一个“客户端主动访问
+> 平台”的控制方向，但上报不是把 JSON 塞进静态 signed-current GET 响应，也不改变
+> `/status`。客户端将本轮自产的既有 `Observation` POST 到 enrollment 同源的精确
+> `/loom-client/report` 路径；服务端不接受完整 `Status` 或 `learned`。入口只做传输
+> 适配，状态线协议仍是 `loom-attest-v5`、签名 measurements 与
+> `loom-selfcheck-v1`。除 CA、证书节点名、签名和新鲜度外，公网入口还要求全部附件
+> 使用同一 P-256 SPKI，且精确匹配 registry 中 `ready`、由 enrollment 建立的当前
+> 身份；node 必须同时是 SSOT 中未退役的 `windows-desktop` Device。成功陈述进入
+> 既有 gossip table。入口地址只能从已经验真的 enrollment URL 做同源精确路径替换
+> 获得，不能信任 HTTP Host、重定向或未签名配置。见 D98。
+
 > 管理 SSH 的可达性来自中控本地 inventory，不能从 `direction` 推断。
 
 ### 14.2.1 apply:五步,顺序不能换
@@ -1984,6 +1995,11 @@ dist/<id>/snapshot.json      ← manifest 里记着该用哪个 sha256
 秘密,换不到实际的隔离。代价是绑错地址后果严重且无症状 —— 所以这是**加载时
 的硬错误**,不是文档里的一句提醒。没有隧道的纯接入节点绑回环:远端拉不到,
 但本机的配置自检仍然可用。
+
+这段描述的是各节点既有 `/status` 拉取与 gossip 边界，不表示回环可被中控访问。
+没有受管 WireGuard 入站的 enrollment Device 使用 §14.2/D98 的签名
+`Observation` 公网适配器；该入口的认证来自 CA、现有签名域、registry 当前 SPKI
+与 SSOT 在役身份的共同约束，不把 `/status` 直接公开。
 
 **采集失败与"一切正常"必须分得开。** 空的隧道列表既可能是没有隧道,也可能
 是 `wg` 跑不起来。后者要单独记进 `errors`,否则一台采集器坏掉的机器看起来
