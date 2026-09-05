@@ -1,0 +1,44 @@
+# Windows 客户端上报实测提示词
+
+请继续 Loom Windows 客户端的正常二维码加入与最小 NAT Device 状态上报验收。
+先检查工作区状态，完整阅读 `docs/windows-client-reporting.md` 和
+`clients/windows/README.md`，按当前仓库实现工作。
+
+## 当前基线
+
+- 服务端上报适配器已实现并上线，客户端最小两签 producer 已提交。
+- 本地 Windows 原生测试已覆盖二维码加入、DPAPI、真实 Portable Mixed 进程激活、
+  两签报告及空正文 `204`；单元测试、race、build、vet 和双架构交叉编译已有结果。
+- 生产环境只确认了公网入口可达、未签名请求返回 `403`。正常扫码加入后的有效报告
+  `204`、last-seen、配置证据与停止后 stale 尚未完整验收。
+- 当前 Windows 缺少可信代表性端到端健康结果，实际 producer 明确报告
+  `healthy=false`。不得把这个事实写成已验证 Online。
+
+## 工作步骤
+
+1. 使用中控正常流程提供的有效二维码，在 Windows 客户端导入并加入网络。
+   二维码失效时按中控既有重新生成或重新加入流程处理。私钥生成、证书验证和 DPAPI
+   保存全部由客户端自动完成；不要求用户找私钥、恢复旧目录或沿用历史绑定。
+2. 启动真实客户端数据面，由现有 activation/recovery 成功路径提供 active snapshot。
+   下载、验签、hydrate、preflight 和 candidate 都不能提前推进 `applied`。
+3. 验证客户端自动上报空正文 `204`，并从中控核对本次加入的 Device、`ts`、last-seen
+   和 `applied`。检查 60 秒周期更新，再停止客户端并验证停止更新及五分钟 stale。
+4. 发现问题时沿该流程定位，只修改 Windows 客户端及必要的跨平台客户端包。
+   不修改服务端源码、部署配置，也不手工修补 SSOT、registry、证书或设备绑定。
+5. 若修改代码，运行相关测试、vet 和 Windows amd64/arm64 交叉编译，再提交。
+   报告提交号、修改文件、实际测试证据与未确认事项；不部署服务端。
+
+## 实现边界
+
+- 复用最小 Observation：外层只有 `node`、`ts`、`applied`、`attest`、`self_check`。
+- 只有 `attest.Claim` canonical v5 与 self-check v1 两份签名，使用客户端本次正常加入
+  保存的同一身份；不生成 legacy Claim、`attest_extended` 或 self-check v2。
+- 从已验证并保存的 enrollment URL 同源推导 report URL；HTTPS、精确路径、拒绝重定向。
+  不使用 `POST /status`。摘要、共同时间戳与 HTTP 结果规则以接入说明为准。
+- reporter 串行运行，UTC RFC3339Nano 时间严格递增。停止或无法恢复的退出后停止上报，
+  由已有报告老化；不新增生命周期协议、睡眠或网络 watcher、复杂重试状态机。
+- 健康结论必须有真实数据面及代表性端到端证据；不新增未签名探测端点来制造绿灯。
+- Windows 生产代码不依赖 `internal/report`。公网拒绝测试和手工报文不能替代正常
+  客户端验收；网络诊断使用客户端实际传输方式与配置的 DNS。
+
+真实端点、设备 ID 和实测记录只写入忽略的 `docs/status/`，不进入仓库示例。

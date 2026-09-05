@@ -2756,7 +2756,7 @@ D95 把设备默认声明定义成“仅在 Service 未命中时生效的 catch-
 
 ### D98 · NAT Device 只新增 Observation 传输适配器，不新增状态协议
 
-**日期** 2026-09-05 · **状态** 服务端已实现，Windows producer 待接入 · **相关** D81、D87、§13.5、§14.2、§16.1
+**日期** 2026-09-05 · **状态** 服务端与 Windows 最小 producer 已实现，生产客户端验收待完成 · **相关** D81、D87、§13.5、§14.2、§16.1
 
 既有 Linux 上报闭环由节点采集、`loom-attest-v5` 与 `loom-selfcheck-v1` 签名、
 邻居 GET `/status`、接收验签和 gossip 转述组成。没有受管 WireGuard 入站、可能位于
@@ -2783,5 +2783,7 @@ measurements 和 self-check v1，并独立验证可选 traffic/link-metric；全
 HTTPS、ready bootstrap 和首轮 signed pull 验证的 enrollment URL 固定为
 `/loom-client/enroll`，客户端据此做同源精确路径替换到 `/loom-client/report`；这是一项
 当前部署约定，不是任意 enrollment URL 的通用语义。不匹配时 fail closed，不跟随跨源
-重定向，也不从 HTTP Host 或未签名输入猜地址。Windows 仍须实现本地状态采集、现有
-canonical 字节签名和周期提交；服务端入口上线本身不能冒充设备已经在线。
+重定向，也不从 HTTP Host 或未签名输入猜地址。Windows producer 使用正常二维码加入
+时由客户端自动生成并保存的身份，已接入 active snapshot、现有 canonical 字节签名和
+周期提交；用户无需提供私钥或恢复旧加入身份。服务端入口上线本身不能冒充设备已经
+在线，完整扫码与上报验收见 [接入说明](windows-client-reporting.md)。

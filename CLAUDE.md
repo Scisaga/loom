@@ -51,6 +51,14 @@ Loom 是一个基于加密隧道的链路与服务调度基础设施。**设计�
 
 ## 构建与测试
 
+Windows 客户端加入与上报任务先完整阅读
+[Windows 上报接入说明](docs/windows-client-reporting.md)，交接使用
+[Windows 上报实测提示词](docs/windows-client-reporting-prompt.md)。实测从正常二维码
+加入流程开始；私钥由客户端自动生成并保存，不要求用户提供私钥或恢复旧身份目录。
+只修改客户端及必要的跨平台客户端包；中控用于既有加入流程和验收，不在本环境修改
+服务端源码、部署配置或手工修补 SSOT/registry。验收必须取得实际客户端的有效报告
+`204` 和中控观测，不能用未签名请求的 `403` 代替。
+
 ```bash
 go build ./...
 go test ./...

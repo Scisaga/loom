@@ -73,6 +73,12 @@ secrets with DPAPI. This is an implementation detail of **Join network**, not a
 second Device-registration workflow. The private key and permanent credentials
 are never placed in the QR code.
 
+Reporting uses the identity created by this same join flow automatically. A
+user never needs to locate or import a private key. An unjoined client starts
+with a valid QR; restoring an old state directory is not a reporting-test
+prerequisite. Live reporting acceptance follows the normal GUI join and connect
+flow described in the [reporting contract](../../docs/windows-client-reporting.md).
+
 Deleting a local Device clears its identity and configuration; it does not notify
 the control plane. To join again, open the original Device in the control UI and
 use **Rejoin Device**. For a joined access-only Device, this archives the old

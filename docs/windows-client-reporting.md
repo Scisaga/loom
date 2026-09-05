@@ -1,6 +1,7 @@
 # Windows NAT Device 状态上报接入说明
 
-> **状态：** 服务端传输适配器已上线，Windows producer 待接入
+> **状态：** 服务端传输适配器已上线；Windows 最小 producer 已实现，已通过本地
+> 原生加入与上报测试。生产环境的扫码加入、有效报告 `204` 和中控状态更新仍待完整验收。
 > **边界：** 复用现有 `report.Observation`、`loom-attest-v5` 和
 > `loom-selfcheck-v1`；不新增状态协议、envelope、心跳格式或 self-check v2。
 
@@ -9,6 +10,18 @@
 Windows 客户端在加入完成、首轮 signed pull 验证且数据面成功激活后，每 60 秒向
 当前生产 enrollment URL 的同源 report 路径提交自身 Observation。服务端验签后写入
 既有 gossip table，中控继续复用原有健康与配置版本判定。
+
+用户操作流程始终是：
+
+```text
+中控提供有效加入二维码 → Windows 导入二维码 → 加入网络 → 启动数据面 → 自动上报
+```
+
+二维码是一次性加入凭据。客户端在加入过程中自动生成设备私钥、验证中控返回的节点
+证书，并用 DPAPI 保存身份；此后上报直接复用这份身份。用户不需要准备、查找、导入或
+备份私钥，也不需要手工构造签名报告。未加入的客户端从二维码开始，不把恢复旧目录或
+沿用旧设备身份作为测试前提。二维码过期或已使用时，按中控现有的重新生成或重新加入
+流程取得有效二维码；客户端仍走同一个加入入口。
 
 首版只提交：
 
@@ -102,7 +115,8 @@ legacy Claim，不得携带 `attest_extended`。`healthy` 必须等于
     "version": 1,
     "node": "demo-windows",
     "ts": "2026-09-05T12:34:56.1234567Z",
-    "healthy": true,
+    "healthy": false,
+    "problems": ["Windows 数据面缺少可信的端到端健康证据"],
     "cert": "<same-node-certificate-pem>",
     "sig": "<base64-ecdsa-asn1-signature>"
   }
@@ -118,13 +132,16 @@ legacy Claim，不得携带 `attest_extended`。`healthy` 必须等于
 现有协议没有 Starting、Stopped 或 Exited 枚举。首版不新增枚举，也不实现睡眠/网络
 Win32 watcher：
 
-- 成功激活并通过既有健康判定后周期报告；
+- 成功激活后周期报告实际健康判定；缺少可信健康证据时报告 `healthy=false`；
 - activation/recovery 成功可以额外触发一次串行报告；
 - replacement 进行中继续保留上一份成功报告，不抢先推进 `applied`；
 - 主动停止、无法恢复的异常退出或整个宿主退出后不再产生报告，由旧 Observation 在
   5 分钟后显示 stale；
 - 如果客户端尚不能获得上位设计要求的代表性端到端健康证据，就不得报告
   `healthy=true`，也不得为达成绿灯发明未签名探测端点。
+
+当前 Windows 宿主尚未接入可信的代表性端到端健康结果，因此其 producer 会明确报告
+缺少证据。有效签名和非空 `applied` 可以证明身份及已激活快照，不能据此宣称 Online。
 
 ## 5. 最小验收
 
@@ -144,6 +161,20 @@ Windows 侧至少覆盖：
 - 串行、严格递增时间戳；candidate 未激活不推进 applied，成功恢复报告旧 snapshot；
 - `204` 成功，其他结果不紧密重试且日志脱敏。
 
-生产验收只使用已有 Windows Device：成功报告后一个刷新周期内 last-seen 更新；真实健康
-时显示 Online；非空 `applied` 补齐配置版本证据，并且只有与当前生产 snapshot 相同才
-表示配置已收敛。不创建测试设备，不修改 SSOT 或 registry。
+生产验收使用用户指定的 Windows Device，按正常用户流程执行：
+
+1. 在中控取得有效加入二维码，用 Windows 客户端的粘贴、文件选择或拖放入口导入。
+2. 由客户端完成加入、证书和 signed pull 验证，并实际启动数据面。
+3. 检查客户端自动生成并发送的两签报告得到空正文 `204`。
+4. 从中控核对该次加入产生的 Device ID、递增的 `ts`、last-seen 和实际 active snapshot。
+   只有 `applied` 与当前生产 snapshot 相同才表示配置已收敛；健康状态按真实证据验收。
+5. 确认后续 60 秒周期仍有更新；停止客户端后确认不再更新，并在五分钟后观察 stale。
+
+本环境只改客户端及必要的跨平台客户端包，不修改服务端源码或部署配置，不手工修改
+SSOT、registry、证书或设备绑定来使验收通过。加入和重新加入由中控与客户端现有流程
+维护身份。配置回滚恢复属于数据面激活事务，与恢复旧加入身份是两件事。
+
+无签名请求返回 `403` 只证明拒绝路径，不能算上报成功。排查网络时复用客户端的
+`netx.Client` 和已配置 DNS；通用工具的请求结果不能替代实际客户端验收。
+
+继续工作的提示词见 [Windows 上报实测提示词](windows-client-reporting-prompt.md)。
