@@ -81,7 +81,8 @@
 `phone` 和 `workstation` 只生成各自平台路径正确的 sing-box 配置，不再携带 systemd、
 Linux Agent、Linux report 或 `/etc/loom` 内容；Linux Server 保持原有产物。Windows
 Installed 的 MSI/普通用户 IPC、Android `VpnService`、各自尚缺的 Agent/report 宿主仍未
-实现；服务端已经能接收 Windows 现有签名格式，但这不等于 Windows 已经发送报告。
+实现；服务端已经能接收平台无关的既有 v5 Observation 格式，但这不等于 Windows
+已经发送报告。
 Portable Mixed 已可完成受控开发闭环，但尚不是正式发布客户端。
 
 Windows C3 已开始：`internal/clientcore` 实现严格的 Direct / Auto / 指定出口偏好、

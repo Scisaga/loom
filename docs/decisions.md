@@ -2426,10 +2426,13 @@ v3，把组件漂移或候选全失败降级成“没有数据”。所以 SSOT 
 的观测，剥离变成明确故障。不能在阶段 A 首次发新二进制时就设 5，也不能升级
 完成后永远忘记收口。
 
+当前生产已经完成 phase B，`attestation_min_version=5`。新 producer 直接把 canonical
+v5 放入主 `attest`，不再复制迁移期的 legacy + `attest_extended` 双签写法。
+
 “确认”必须是可执行闸门，不靠逐页目测：每台 report 节点（包括没有入站角色的
 接入节点）都必须有自己的节点证书；CLI 从本机 `127.0.0.1:61802/status` 读取与
 远端同源的后台 Observation。只有
-`loom status --require-attestation=5 <ssot>` 输出 5/5 且退出码为 0，才允许切换。
+`loom status --require-attestation=5 <ssot>` 显示全部适用节点 ready 且退出码为 0，才允许切换。
 
 ### D88 · 用签名 deployment envelope 同时闭合反重放与真实 canary
 
@@ -2516,7 +2519,7 @@ D90 固定。缺数据时留白仍比生成一条平滑但虚假的历史曲线�
 
 ### D90 · 流量历史只由可信相邻 counter 样本推导
 
-**日期** 2026-08-28 · **状态** 仓库已实现、待部署 · **相关** [D87](#d87--签名协议升级必须双轨兼容再提高最低版本)、[D89](#d89--控制中心是-ssot-的事务视图不是第二套网络模型)、§16.2、§16.4
+**日期** 2026-08-28 · **状态** 仓库已实现、待部署 · **相关** [D87](#d87--attestation-扩展必须两阶段启用兼容不是永久降级口)、[D89](#d89--控制中心是-ssot-的事务视图不是第二套网络模型)、§16.2、§16.4
 
 WireGuard 只给接口/peer 从创建以来的累计 RX/TX。单个累计值既不是速率，也不是
 某个时间窗口的流量；把页面刷新时看到的 counter 当成 24 小时数据，会把接口年龄
@@ -2776,9 +2779,9 @@ measurements 和 self-check v1，并独立验证可选 traffic/link-metric；全
 拒绝。输入限 1 MiB，反代只开放精确 POST 路径并限速；格式、认证、过大和本地状态
 故障使用不同 HTTP 状态，但认证失败不泄露 registry 是否存在。
 
-客户端无需在加入响应或 SSOT 新增 endpoint 字段。它只从已经通过邀请平台指纹、
-HTTPS、ready bootstrap 和首轮 signed pull 验证的 enrollment URL 做同源精确路径
-替换：`/loom-client/enroll` → `/loom-client/report`；不跟随跨源重定向，也不从
-HTTP Host 或未签名输入猜地址。这满足已加入旧客户端升级后的端点发现，且不迫使设备
-重新消费二维码。Windows 仍须实现本地状态采集、现有 canonical 字节签名和周期提交；
-服务端入口上线本身不能冒充设备已经在线。
+客户端无需在加入响应或 SSOT 新增 endpoint 字段。本次生产部署把已经通过邀请平台指纹、
+HTTPS、ready bootstrap 和首轮 signed pull 验证的 enrollment URL 固定为
+`/loom-client/enroll`，客户端据此做同源精确路径替换到 `/loom-client/report`；这是一项
+当前部署约定，不是任意 enrollment URL 的通用语义。不匹配时 fail closed，不跟随跨源
+重定向，也不从 HTTP Host 或未签名输入猜地址。Windows 仍须实现本地状态采集、现有
+canonical 字节签名和周期提交；服务端入口上线本身不能冒充设备已经在线。

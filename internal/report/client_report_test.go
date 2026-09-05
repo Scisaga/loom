@@ -3,6 +3,7 @@ package report
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -31,13 +32,12 @@ func newClientReportHarness(t *testing.T) clientReportHarness {
 	observation := Observation{
 		Node: "workstation", TS: now.Format(time.RFC3339), Applied: "snapshot-v5",
 	}
-	legacy, current := claimsForObservation(&observation, 5)
+	_, current := claimsForObservation(&observation, 5)
 	var err error
-	observation.Attest, err = attest.Sign(legacy, key, cert)
-	if err != nil {
-		t.Fatal(err)
-	}
-	observation.AttestExtended, err = attest.Sign(current, key, cert)
+	// Phase B producers put canonical v5 directly in the primary attachment.
+	// attest_extended exists only for the old-reader rolling migration and is
+	// deliberately absent from the NAT client's minimum wire shape.
+	observation.Attest, err = attest.Sign(current, key, cert)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,8 +111,12 @@ func postClientReport(t *testing.T, receiver http.Handler, observation any) *htt
 	return response
 }
 
-func TestClientReportReceiverAcceptsExistingSignedObservationIntoGossipTable(t *testing.T) {
+func TestClientReportReceiverAcceptsDirectV5ObservationIntoGossipTable(t *testing.T) {
 	h := newClientReportHarness(t)
+	if h.observation.Attest == nil || h.observation.Attest.CanonicalVersion != 5 ||
+		h.observation.AttestExtended != nil {
+		t.Fatalf("client report fixture is not direct canonical v5: %+v", h.observation)
+	}
 	response := postClientReport(t, h.receiver, &h.observation)
 	if response.Code != http.StatusNoContent || response.Body.Len() != 0 {
 		t.Fatalf("client report response = %d %q", response.Code, response.Body.String())
@@ -149,6 +153,17 @@ func TestClientReportReceiverRejectsTamperMissingProofAndRevokedIdentity(t *test
 			t.Fatalf("revoked report response = %d %q", got.Code, got.Body.String())
 		}
 	})
+}
+
+func TestClientReportReceiverReportsLocalTableFailureAsUnavailable(t *testing.T) {
+	h := newClientReportHarness(t)
+	h.table.verify = func(*Observation, time.Time, time.Duration) error {
+		return errors.New("local verifier unavailable")
+	}
+	response := postClientReport(t, h.receiver, &h.observation)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("local table failure response = %d %q", response.Code, response.Body.String())
+	}
 }
 
 func TestClientReportReceiverEnforcesHTTPBoundary(t *testing.T) {

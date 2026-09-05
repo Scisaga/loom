@@ -58,9 +58,9 @@ type Observation struct {
 	// outer HTTP status is never accepted as remote health evidence.
 	SelfCheck *attest.SelfCheckAttest `json:"self_check,omitempty"`
 
-	// Attest 是给旧版 reader 的 v1-v3 兼容签名；AttestExtended 是新版对
-	// Agent 候选健康与组件版本的完整签名。滚动升级期间必须双签：旧 reader
-	// 会忽略新 JSON 字段，但无法验证 v4/v5 canonical。
+	// Attest 是主签名。完成 phase B 后的新 producer 直接把 canonical v5 放在
+	// 这里并省略 AttestExtended。AttestExtended 只用于滚动升级期间：当 Attest
+	// 仍是旧 reader 可验证的 legacy 签名时，它携带完整 v4/v5 陈述。
 	//
 	// 观测可以转述:RTT、可达性是尽力而为的数字,B 转述 C 的观测,
 	// 可信度就是 B 的可信度,而这够用了。**身份不行** —— "C 跑的是

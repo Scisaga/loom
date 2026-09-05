@@ -164,7 +164,9 @@ func (h *clientReportReceiver) accept(o *Observation, at time.Time) (int, error)
 	// table.put 有意重复密码学校验。公网客户端上报量很小，让适配器与 gossip
 	// 共用最后一道门代价可忽略，也避免以后校验器变化形成两个信任边界。
 	if err := h.table.put(o, at, h.maxAge); err != nil {
-		return http.StatusForbidden, err
+		// 客户端输入已经在上面完成同一组协议与签名检查；重复边界此时失败
+		// 表示本地 table/CA verifier 不可用，不能伪装成身份未获授权。
+		return http.StatusServiceUnavailable, err
 	}
 	return http.StatusNoContent, nil
 }

@@ -1488,9 +1488,10 @@ Installed 目标态必须由受限 Service broker 写入 machine-scope/受保护
 | 通道 | 用途 | 方向 | 适用 |
 |---|---|---|---|
 | **SSH + SCP** | bootstrap；操作者触发的代码快速发布 | 平台 → 节点(可经 ProxyJump) | 所有已登记管理 SSH 的节点 |
-| **Agent pull** | 持久收敛、离线补齐、配置下发、状态与度量上报、排序下发 | **节点 → 平台**(主动轮询) | 所有节点；与 WireGuard `direction` 无关 |
+| **Agent pull** | 持久收敛、离线补齐、签名配置与排序下发 | **节点 → 平台**(主动轮询) | 所有节点；与 WireGuard `direction` 无关 |
 
-Agent pull 解决四件事:节点主动取回、NAT 场景、控制平面可离线、漂移自动收敛。
+Agent pull 解决节点主动取回、NAT 下配置分发、控制平面可离线和漂移自动收敛；状态上报
+仍分别走受保护网络内的 `/status` 拉取/gossip，以及下述 NAT HTTPS POST 适配器。
 管理 SSH 可达的生产节点则不必为了交互式代码发布等待下一次轮询。
 
 > **NAT Device 上报的当前实现边界:** Windows Device 仍使用同一个“客户端主动访问
