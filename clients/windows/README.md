@@ -201,10 +201,14 @@ response and first signed-pull trust checks. See
   report URL derived from the validated enrollment URL; redirects are refused
   and only an empty HTTP 204 response is successful.
   Candidates do not advance `applied`, and stopping the workload stops reports.
-  Existing reports then become stale after five minutes. Windows currently has
-  no trusted representative end-to-end health result, so self-check reports
-  `healthy=false` with that missing evidence as a problem. See the
-  [reporting contract](../../docs/windows-client-reporting.md).
+  Existing reports then become stale after five minutes. Each report samples one
+  concrete Service address from the active signed policy. Mixed uses its local
+  proxy; TUN profiles verify capture and send IPv4 DNS/HTTPS through TUN. The
+  current result drives self-check; no target or failed checks produce a redacted
+  problem. Changes to activation or route preference discard in-flight samples.
+  Probe and report have separate 8-second and 5-second budgets, so a probe timeout
+  can still be reported. This tests representative reachability, not every site
+  or exit. See the [reporting contract](../../docs/windows-client-reporting.md).
 - `config\client.json` is written last and is the only joined-state marker
   observed by normal startup. Failed imports cannot start a partial client.
 - In the current Portable preview, until the join commits, the exact QR

@@ -20,6 +20,7 @@ type clientActivation struct {
 	CAPath       string
 	WaitForStart bool
 	Started      func()
+	Health       *clientruntime.WindowsHealthPlan
 }
 
 func (activation *clientActivation) key() string {
@@ -84,6 +85,7 @@ func (manager *activationManager) report(ready bool, exited <-chan struct{}) {
 	state := clientRuntimeState{Ready: ready, Exited: exited}
 	if ready && manager.active != nil {
 		state.Applied = manager.active.spec.Version.Snapshot
+		state.Health = manager.active.spec.Health
 	}
 	manager.observe(state)
 }

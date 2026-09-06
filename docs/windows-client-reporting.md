@@ -1,7 +1,8 @@
 # Windows NAT Device 状态上报接入说明
 
-> **状态：** 服务端传输适配器已上线；Windows 最小 producer 已实现，已通过本地
-> 原生加入与上报测试。生产环境的扫码加入、有效报告 `204` 和中控状态更新仍待完整验收。
+> **状态：** Windows 最小两签 producer 和每轮健康采集已实现。原生测试覆盖加入、
+> 健康/故障/恢复、配置切换及两签上报；Windows amd64 实机已确认 TUN 探测成功、
+> 自动上报 `204` 和中控接收 healthy=true。停止后五分钟 stale 仍待单独验收。
 > **边界：** 复用现有 `report.Observation`、`loom-attest-v5` 和
 > `loom-selfcheck-v1`；不新增状态协议、envelope、心跳格式或 self-check v2。
 
@@ -139,7 +140,7 @@ legacy Claim，不得携带 `attest_extended`。`healthy` 必须等于
     "node": "demo-windows",
     "ts": "2026-09-05T12:34:56.1234567Z",
     "healthy": false,
-    "problems": ["Windows 数据面缺少可信的端到端健康证据"],
+    "problems": ["端到端探测超时"],
     "cert": "<same-node-certificate-pem>",
     "sig": "<base64-ecdsa-asn1-signature>"
   }
@@ -163,8 +164,22 @@ Win32 watcher：
 - 如果客户端尚不能获得上位设计要求的代表性端到端健康证据，就不得报告
   `healthy=true`，也不得为达成绿灯发明未签名探测端点。
 
-当前 Windows 宿主尚未接入可信的代表性端到端健康结果，因此其 producer 会明确报告
-缺少证据。有效签名和非空 `applied` 可以证明身份及已激活快照，不能据此宣称 Online。
+Windows 每轮在现有 reporter 内执行一次有界健康探测，随后上传当轮结果：
+
+- 从成功激活时保存的探测计划取目标，不读 candidate 指针。目标来自签名配置中匹配
+  当前用户入口的 Service 具体域名，按现有 Agent 规则组成 `https://地址/`；排序后取
+  一个代表性地址。后缀及由后缀扩展的根域名、候选专用探测规则不提供目标。
+- Portable Mixed 显式经过本地 `1080` 代理；TUN/Installed 查验托管网卡和 DNS/目标
+  的路由，绑定 TUN 源地址并通过 TUN 网关解析 A 记录，再发送 IPv4 HTTPS。
+  不读取环境代理，不允许物理网卡或 IPv6 旁路冒充 TUN 成功。
+- 校验目标 TLS 证书，不跟随重定向。沿用 Agent 的可达性判据：目标非 5xx 响应；
+  另排除代理鉴权失败。它证明代表性通路可达，不证明所有业务授权、网站或出口健康。
+- 成功时 `problems=[]`、`healthy=true`；缺目标、接管无效、DNS/TLS/连接失败或超时
+  时报告具体的脱敏问题。每轮重新采集，不缓存成功值。
+- 探测期间激活实例、snapshot、运行状态或出口偏好变化时丢弃结果；配置切换可取消
+  在途探测和发送。主动停止仍不再上报，继续使用既有 stale 规则。
+- 探测预算 8 秒、上传预算 5 秒，相互独立。探测超时仍上传 `healthy=false`，
+  不因复用已到期的 context 丢掉故障报告。周期仍为 60 秒，没有额外重试循环。
 
 ## 5. 最小验收
 
@@ -183,6 +198,8 @@ Windows 侧至少覆盖：
 - 两签验签以及 node/ts/applied 篡改失败；
 - 串行、严格递增时间戳；candidate 未激活不推进 applied，成功恢复报告旧 snapshot；
 - `204` 成功，其他结果不紧密重试且日志脱敏。
+- 健康、失败、恢复的当轮采集和两签上报；探测超时后仍有独立的发送预算。
+- 缺少具体目标、TLS 错误、错误路由与重定向；切换/停止/退出不沿用旧探测结果。
 - 新二维码入口、指纹在请求前验证；Windows 请求不附加 server/职责字段；中控对旧码
   或错误平台的拒绝不会触发重试或协议降级，已加入身份不受影响。
 

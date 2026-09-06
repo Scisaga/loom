@@ -9,10 +9,12 @@
 - 服务端上报适配器已实现并上线，客户端最小两签 producer 已提交。
 - 本地 Windows 原生测试已覆盖二维码加入、DPAPI、真实 Portable Mixed 进程激活、
   两签报告及空正文 `204`；单元测试、race、build、vet 和双架构交叉编译已有结果。
-- 生产环境只确认了公网入口可达、未签名请求返回 `403`。正常扫码加入后的有效报告
-  `204`、last-seen、配置证据与停止后 stale 尚未完整验收。
-- 当前 Windows 缺少可信代表性端到端健康结果，实际 producer 明确报告
-  `healthy=false`。不得把这个事实写成已验证 Online。
+- 已正常扫码加入的 Windows amd64 客户端已完成真实 TUN 探测，自动报告得到 `204`，
+  中控收到递增的两签健康与配置证据。停止后五分钟 stale 尚待单独验收。
+  继续使用当前已加入客户端，不要求重新扫码、找私钥或恢复旧身份目录。
+- Windows 已接入与 active 绑定的每轮代表性探测。Mixed 经过 1080；TUN/Installed
+  检查接管与实际 IPv4 DNS/HTTPS。只有当轮成功才报告 healthy=true；缺目标和探测
+  失败均明确报告 false。此结论不覆盖所有网站和出口。
 
 ## 工作步骤
 
@@ -23,7 +25,7 @@
 2. 启动真实客户端数据面，由现有 activation/recovery 成功路径提供 active snapshot。
    下载、验签、hydrate、preflight 和 candidate 都不能提前推进 `applied`。
 3. 验证客户端自动上报空正文 `204`，并从中控核对本次加入的 Device、`ts`、last-seen
-   和 `applied`。检查 60 秒周期更新，再停止客户端并验证停止更新及五分钟 stale。
+   和 `applied`。检查 60 秒周期更新和健康→失败→恢复；再停止客户端并验证停止更新及五分钟 stale。
 4. 发现问题时沿该流程定位，只修改 Windows 客户端及必要的跨平台客户端包。
    不修改服务端源码、部署配置，也不手工修补 SSOT、registry、证书或设备绑定。
 5. 若修改代码，运行相关测试、vet 和 Windows amd64/arm64 交叉编译，再提交。

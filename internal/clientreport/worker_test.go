@@ -152,3 +152,29 @@ func TestWorkerSerialEventsAndFailureWait(t *testing.T) {
 		<-done
 	}
 }
+
+func TestWorkerReportsHealthTimeoutWithFreshSendBudget(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		sent := false
+		worker := NewWorker(func(ctx context.Context, at time.Time) (*Observation, error) {
+			<-ctx.Done()
+			return &Observation{Node: "demo-client", TS: at.Format(time.RFC3339Nano)}, nil
+		}, func(ctx context.Context, o *Observation) Result {
+			if ctx.Err() != nil {
+				t.Fatal("health timeout canceled the failure report")
+			}
+			deadline, ok := ctx.Deadline()
+			if !ok || time.Until(deadline) != 5*time.Second {
+				t.Fatal("report lost its send budget")
+			}
+			sent = true
+			cancel()
+			return Result{}
+		}, nil)
+		worker.Run(ctx)
+		if !sent {
+			t.Fatal("health timeout was not reported")
+		}
+	})
+}

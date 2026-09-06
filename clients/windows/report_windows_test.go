@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"loom/internal/attest"
 	"loom/internal/clientenroll"
 	"loom/internal/clientreport"
+	"loom/internal/clientruntime"
 	"loom/internal/clientsecret"
 	"loom/internal/clientupdate"
 	"net/http"
@@ -84,9 +86,19 @@ func TestWindowsDPAPIReportAfterInviteCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reporter.stop()
+	results := make(chan clientreport.Result, 16)
+	reporter.worker.Result = func(result clientreport.Result) { results <- result }
 	next := func() clientreport.Observation {
 		select {
 		case o := <-reports:
+			select {
+			case result := <-results:
+				if result.Err != nil {
+					t.Fatalf("signed report failed: %v", result.Err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("report did not finish")
+			}
 			return o
 		case <-time.After(5 * time.Second):
 			t.Fatal("report not delivered")
@@ -121,6 +133,17 @@ func TestWindowsDPAPIReportAfterInviteCleanup(t *testing.T) {
 	restoredAt, _ := time.Parse(time.RFC3339Nano, restored.TS)
 	if !restoredAt.After(connectedAt) || restored.Applied != state.Applied {
 		t.Fatal("recovery lost restored snapshot or increasing timestamp")
+	}
+	// §16.1：同一设备身份的真实采集结论应能经历健康、故障、恢复，线上仍只有两签。
+	for _, problems := range [][]string{nil, {"端到端探测 DNS 解析失败"}, nil} {
+		reporter.mu.Lock()
+		reporter.check = func(context.Context, *clientruntime.WindowsHealthPlan) []string { return problems }
+		reporter.mu.Unlock()
+		reporter.worker.Trigger()
+		o := next()
+		if o.SelfCheck.Healthy != (len(problems) == 0) || o.Applied != state.Applied {
+			t.Fatal("health transition lost signed evidence")
+		}
 	}
 	reporter.update(clientRuntimeState{})
 	noReport()

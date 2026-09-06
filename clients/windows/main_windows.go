@@ -203,9 +203,15 @@ func prepareClientAt(root string, protector clientsecret.Protector, edition clie
 		if err != nil {
 			return nil, err
 		}
+		health, err := clientruntime.BuildWindowsHealthPlan(runtimeConfig, profile, caPath)
+		if err != nil {
+			clear(runtimeConfig)
+			return nil, err
+		}
 		return &clientActivation{
 			Version: candidate.Version, SlotID: components.SlotID, Executable: components.SingBox,
 			Config: runtimeConfig, RuntimeDir: filepath.Join(root, "runtime"), Profile: profile, CAPath: caPath, WaitForStart: true,
+			Health: health,
 		}, nil
 	}
 	var initial *clientActivation
