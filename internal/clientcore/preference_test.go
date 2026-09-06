@@ -11,13 +11,13 @@ import (
 
 func verifiedPolicy() Policy {
 	return Policy{Schema: PolicySchema, Exits: []Exit{
-		{ID: "sg01", Name: "Singapore"},
-		{ID: "de01", Name: "Germany"},
+		{ID: "demo-exit-a", Name: "Singapore"},
+		{ID: "demo-exit-b", Name: "Germany"},
 	}}
 }
 
 func TestPreferenceRoundTripAndStrictDecoding(t *testing.T) {
-	want := Preference{Schema: PreferenceSchema, Mode: FixedExit, Exit: "sg01"}
+	want := Preference{Schema: PreferenceSchema, Mode: FixedExit, Exit: "demo-exit-a"}
 	body, err := EncodePreference(want)
 	if err != nil {
 		t.Fatal(err)
@@ -47,7 +47,7 @@ func TestPreferenceShapeIsUnambiguous(t *testing.T) {
 	}{
 		{Preference{Schema: 99, Mode: Auto}, "schema"},
 		{Preference{Schema: 1, Mode: "whatever"}, "mode"},
-		{Preference{Schema: 1, Mode: Auto, Exit: "sg01"}, "must not carry"},
+		{Preference{Schema: 1, Mode: Auto, Exit: "demo-exit-a"}, "must not carry"},
 		{Preference{Schema: 1, Mode: FixedExit}, "requires"},
 		{Preference{Schema: 1, Mode: FixedExit, Exit: "../sg"}, "valid exit"},
 	} {
@@ -62,25 +62,25 @@ func TestAuthorizeChangeCannotExpandSignedExitSet(t *testing.T) {
 	for _, next := range []Preference{
 		{Schema: 1, Mode: Direct},
 		{Schema: 1, Mode: Auto},
-		{Schema: 1, Mode: FixedExit, Exit: "de01"},
+		{Schema: 1, Mode: FixedExit, Exit: "demo-exit-b"},
 	} {
 		if err := AuthorizeChange(next, policy); err != nil {
 			t.Errorf("authorized change %+v failed: %v", next, err)
 		}
 	}
-	err := AuthorizeChange(Preference{Schema: 1, Mode: FixedExit, Exit: "us01"}, policy)
+	err := AuthorizeChange(Preference{Schema: 1, Mode: FixedExit, Exit: "demo-exit-c"}, policy)
 	if !errors.Is(err, ErrExitNotAuthorized) {
 		t.Fatalf("arbitrary exit error = %v, want ErrExitNotAuthorized", err)
 	}
 }
 
 func TestRemovedExitStaysVisibleAndFailsClosed(t *testing.T) {
-	saved := Preference{Schema: 1, Mode: FixedExit, Exit: "sg01"}
-	decision, err := Evaluate(saved, Policy{Schema: 1, Exits: []Exit{{ID: "de01"}}})
+	saved := Preference{Schema: 1, Mode: FixedExit, Exit: "demo-exit-a"}
+	decision, err := Evaluate(saved, Policy{Schema: 1, Exits: []Exit{{ID: "demo-exit-b"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision.Mode != FixedExit || decision.Exit != "sg01" || !decision.Blocked || decision.BlockReason == "" {
+	if decision.Mode != FixedExit || decision.Exit != "demo-exit-a" || !decision.Blocked || decision.BlockReason == "" {
 		t.Fatalf("removed exit silently changed behavior: %+v", decision)
 	}
 }
@@ -94,7 +94,7 @@ func TestPreferenceStoreCreatesAndAtomicallyReplaces(t *testing.T) {
 	if initial.Mode != Auto {
 		t.Fatalf("first-run mode = %s, want auto", initial.Mode)
 	}
-	next := Preference{Schema: 1, Mode: FixedExit, Exit: "sg01"}
+	next := Preference{Schema: 1, Mode: FixedExit, Exit: "demo-exit-a"}
 	if err := WritePreference(path, next); err != nil {
 		t.Fatal(err)
 	}

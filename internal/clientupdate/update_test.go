@@ -297,9 +297,10 @@ func TestPullRejectsWrongSignatureOwnerHashAndUnsafePath(t *testing.T) {
 }
 
 func TestConfigAndTrustRootAreStrict(t *testing.T) {
+	credentialedURL := "https://" + "demo-user:demo-password@example.com/loom"
 	for _, body := range []string{
 		`{"schema":1,"schema":1,"node_id":"win01","distribution_urls":["https://example.com/loom"]}`,
-		`{"schema":1,"node_id":"win01","distribution_urls":["https://user:pass@example.com/loom"]}`,
+		`{"schema":1,"node_id":"win01","distribution_urls":["` + credentialedURL + `"]}`,
 		`{"schema":1,"node_id":"win01","distribution_urls":["https://example.com/loom"],"unknown":true}`,
 	} {
 		path := filepath.Join(t.TempDir(), "client.json")

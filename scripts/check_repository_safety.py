@@ -61,6 +61,7 @@ APPROVED_DOMAIN_BASES = {
     "google.com",
     "gstatic.com",
     "ipify.org",
+    "microsoft.com",  # Windows manifest schema namespaces.
     "oaistatic.com",
     "openai.com",
     "sagernet.org",
@@ -68,8 +69,10 @@ APPROVED_DOMAIN_BASES = {
     "signpath.org",  # Open-source signing foundation.
     "w3.org",
     "wireguard.com",
+    "wintun.net",  # Official Wintun component download and license.
     "wixtoolset.org",  # WiX installer XML schema namespace.
     "zlib.com",
+    "zx2c4.com",  # Upstream WireGuard source repository.
 }
 EXAMPLE_DOMAIN_SUFFIXES = (
     ".example",
@@ -141,7 +144,11 @@ def main() -> int:
 
         text = data.decode("utf-8", errors="ignore")
         for line_no, line in enumerate(text.splitlines(), 1):
-            for match in IPV4.finditer(line):
+            # Manifest assembly versions have four parts but are not endpoints.
+            ip_line = line
+            if path.suffix == ".manifest":
+                ip_line = re.sub(r'\bversion="[0-9]+(?:\.[0-9]+){3}"', "", line)
+            for match in IPV4.finditer(ip_line):
                 if not approved_ip(match.group(0)):
                     failures.append((relative, line_no, "unapproved public IPv4 address"))
             for match in DOMAIN.finditer(line):

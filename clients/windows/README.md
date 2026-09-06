@@ -117,6 +117,33 @@ It accepts no file paths, commands or configuration bodies from the GUI.
 
 ## Build and run
 
+### GitHub Actions
+
+Open **Actions → Windows build → Run workflow**, select the branch and enter an
+MSI version such as `0.1.5`. After the tests and builds pass, download
+`loom-windows-<version>-preview` from the run's **Artifacts** section. It contains
+all six edition/architecture ZIPs, both MSI installers, SHA-256 manifests, and
+`BUILD-INFO.txt` with the source commit and workflow run. Downloads are retained
+for 30 days. These builds are unsigned previews; SignPath signing is pending.
+
+The workflow reuses the existing CI checks and packaging scripts on GitHub-hosted
+Linux and Windows runners. Its repository setup is:
+
+- Actions variable `LOOM_PLATFORM_PUBLIC_KEY`: the trusted platform Ed25519 public
+  key in canonical base64, matching the existing local build's public key.
+- Draft release `windows-components-1.11.4`: the two platform-signed component
+  assets `loom-windows-dataplane-1.11.4-amd64.zip` and
+  `loom-windows-dataplane-1.11.4-arm64.zip`. The workflow reads them using its
+  built-in `GITHUB_TOKEN` with `contents: read`, then verifies their signatures,
+  architectures and pinned upstream contents before compiling.
+
+Keep the platform private key and device credentials on the operator's machine.
+Updating components requires preparing new signed packages and updating the
+reviewed version pins. The workflow uploads build artifacts; publishing a client
+release is a separate step.
+
+### Local build
+
 Build all three editions for amd64 and arm64:
 
 ```sh

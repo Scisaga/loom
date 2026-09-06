@@ -1,0 +1,148 @@
+name: Windows build
+run-name: Windows ${{ inputs.version }} preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: MSI version (major.minor.build)
+        required: true
+        default: '0.1.5'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
+  zip:
+    name: Build Windows ZIPs
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BUILD_VERSION: ${{ inputs.version }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate build inputs
+        env:
+          PLATFORM_PUBLIC_KEY: ${{ vars.LOOM_PLATFORM_PUBLIC_KEY }}
+        run: |
+          python3 - <<'PY'
+          import base64, binascii, os, re
+          from pathlib import Path
+          version = os.environ['BUILD_VERSION']
+          if not re.fullmatch(r'(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,4})', version):
+              raise SystemExit('Version must be major.minor.build without leading zeroes.')
+          if any(value > limit for value, limit in zip(map(int, version.split('.')), (255, 255, 65535))):
+              raise SystemExit('Version exceeds Windows Installer limits.')
+          key = os.environ['PLATFORM_PUBLIC_KEY'].strip()
+          try:
+              decoded = base64.b64decode(key, validate=True)
+          except binascii.Error:
+              decoded = b''
+          if len(decoded) != 32 or base64.b64encode(decoded).decode() != key:
+              raise SystemExit('Configure LOOM_PLATFORM_PUBLIC_KEY with the trusted Ed25519 public key.')
+          temp = Path(os.environ['RUNNER_TEMP'])
+          public_key = temp / 'platform-signing.pub'
+          public_key.write_text(key + '\n')
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write('PLATFORM_SIGNING_PUB=' + str(public_key) + '\n')
+              output.write('LOOM_WINDOWS_COMPONENT_DIR=' + str(temp / 'windows-components') + '\n')
+          PY
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      # §10.2: reuse platform-signed upstream packages; CI holds no platform private key.
+      - name: Download signed component packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mkdir -p "$LOOM_WINDOWS_COMPONENT_DIR"
+          gh release download windows-components-1.11.4 \
+            --pattern 'loom-windows-dataplane-1.11.4-amd64.zip' \
+            --pattern 'loom-windows-dataplane-1.11.4-arm64.zip' \
+            --dir "$LOOM_WINDOWS_COMPONENT_DIR"
+      - name: Build all six ZIPs
+        run: |
+          go mod download
+          ./scripts/build-windows-clients.sh
+          (cd out && sha256sum --check windows-clients-SHA256SUMS)
+      - name: Record build source
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          Path('out/BUILD-INFO.txt').write_text(
+              'Unsigned Windows preview\n'
+              + 'MSI version: ' + os.environ['BUILD_VERSION'] + '\n'
+              + 'Commit: ' + os.environ['GITHUB_SHA'] + '\n'
+              + 'Run: ' + os.environ['GITHUB_SERVER_URL'] + '/' + os.environ['GITHUB_REPOSITORY']
+              + '/actions/runs/' + os.environ['GITHUB_RUN_ID'] + '\n'
+          )
+          PY
+      - name: Upload ZIP build inputs for MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-zips-${{ inputs.version }}
+          path: |
+            out/loom-client-windows-*.zip
+            out/windows-clients-SHA256SUMS
+            out/BUILD-INFO.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  msi:
+    name: Build Windows installers
+    needs: zip
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      BUILD_VERSION: ${{ inputs.version }}
+      DOTNET_ROLL_FORWARD: Major
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download verified ZIP build
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-zips-${{ inputs.version }}
+          path: out
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Install WiX
+        shell: pwsh
+        run: dotnet tool install --tool-path "$env:RUNNER_TEMP\wix" wix --version 5.0.2
+      - name: Build both MSI installers
+        shell: pwsh
+        run: ./scripts/build-windows-installers.ps1 -Version $env:BUILD_VERSION -Wix "$env:RUNNER_TEMP\wix\wix.exe"
+      - name: Upload complete Windows preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: loom-windows-${{ inputs.version }}-preview
+          path: |
+            out/loom-client-windows-*.zip
+            out/loom-client-windows-installed-*.msi
+            out/windows-clients-SHA256SUMS
+            out/windows-installers-SHA256SUMS
+            out/BUILD-INFO.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30

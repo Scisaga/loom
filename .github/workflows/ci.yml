@@ -3,6 +3,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
@@ -27,7 +28,9 @@ jobs:
           cache: true
 
       - name: Check repository safety boundary
-        run: python3 scripts/check_repository_safety.py
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_*.py'
+          python3 scripts/check_repository_safety.py
 
       - name: Test
         run: go test ./...
