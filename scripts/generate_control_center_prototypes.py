@@ -279,8 +279,8 @@ def overview_page() -> str:
     # The asset is the overview body's visual source. Fail fast if its contract
     # labels drift instead of silently rewriting copy by string substitution.
     required_copy = (
-        '5 / 5 <tspan class="body" font-weight="400">healthy</tspan>',
-        '6 / 6 <tspan class="body" font-weight="400">observed</tspan>',
+        '6 / 6 <tspan class="body" font-weight="400">healthy</tspan>',
+        '9 / 9 <tspan class="body" font-weight="400">observed</tspan>',
         ">Healthy<",
         "Read-only · signed Agent decisions",
         "Latest fleet rollout",
@@ -299,7 +299,7 @@ def overview_page() -> str:
         title="Network overview",
         subtitle="demo-d control plane · observed 8s ago",
         status="All declared nodes are healthy",
-        description="A restrained infrastructure overview showing five nodes, six WireGuard links, read-only automatic routing decisions, deployment state, and retained WireGuard counter-delta bars with explicit reset and gap boundaries.",
+        description="A network overview with six sample nodes in a double-ring layout, nine WireGuard links, three Hysteria2 direct links, automatic routes, deployment progress, and traffic history.",
         body=body,
     )
 

@@ -4,7 +4,7 @@
      width="1586" height="992" viewBox="0 0 1586 992"
      role="img" aria-labelledby="title description">
   <title id="title">Network overview — Loom control center prototype</title>
-  <desc id="description">A restrained infrastructure overview showing five nodes, six WireGuard links, read-only automatic routing decisions, deployment state, and retained WireGuard counter-delta bars with explicit reset and gap boundaries.</desc>
+  <desc id="description">A network overview with six sample nodes in a double-ring layout, nine WireGuard links, three Hysteria2 direct links, automatic routes, deployment progress, and traffic history.</desc>
   <defs>
     <marker id="arrow-selected" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
       <path d="M0 0L7 3.5L0 7Z" fill="#2AA875"/>
@@ -183,10 +183,10 @@
   <rect class="panel" x="21" y="205" width="1538" height="82" rx="7"/>
   <g class="ui">
     <text class="label" x="53" y="239">Nodes</text>
-    <text class="metric" x="53" y="263">5 / 5 <tspan class="body" font-weight="400">healthy</tspan></text>
+    <text class="metric" x="53" y="263">6 / 6 <tspan class="body" font-weight="400">healthy</tspan></text>
 
     <text class="label" x="455" y="239">WireGuard</text>
-    <text class="metric" x="455" y="263">6 / 6 <tspan class="body" font-weight="400">observed</tspan></text>
+    <text class="metric" x="455" y="263">9 / 9 <tspan class="body" font-weight="400">observed</tspan></text>
 
     <text class="label" x="835" y="239">Automatic decisions</text>
     <text class="metric" x="835" y="263">2 / 2 <tspan class="body" font-weight="400">fresh</tspan></text>
@@ -199,71 +199,74 @@
   <line class="rule" x1="793" y1="225" x2="793" y2="268"/>
   <line class="rule" x1="1170" y1="225" x2="1170" y2="268"/>
 
-  <!-- Topology panel -->
+  <!-- Topology panel: the same six-node sample as the Topology page. -->
   <rect class="panel" x="20" y="305" width="992" height="330" rx="7"/>
   <g class="ui">
     <text class="section" x="35" y="334">Network topology</text>
-    <text class="small muted" x="214" y="334">Automatic Agent decisions · observed 12s ago</text>
-
+    <text class="small muted" x="214" y="334">6 nodes · observed 12s ago</text>
     <line class="wg" x1="614" y1="328" x2="642" y2="328"/>
     <text class="small muted" x="650" y="333">WireGuard</text>
-    <line class="candidate" x1="738" y1="328" x2="766" y2="328"/>
-    <text class="small muted" x="774" y="333">Candidate</text>
+    <line x1="738" y1="328" x2="766" y2="328" stroke="#4F9B74" stroke-width="1.6"/>
+    <text class="small muted" x="774" y="333">Hy2 direct</text>
     <line x1="859" y1="328" x2="887" y2="328" stroke="#466FC2" stroke-width="1.7"/>
     <path d="M883 324L889 328L883 332" fill="none" stroke="#466FC2" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
     <text class="small muted" x="897" y="333">Automatic route</text>
   </g>
 
-  <!-- Six persistent WireGuard edges: each domestic node to each overseas node -->
-  <g aria-label="Six persistent WireGuard links">
-    <line class="wg" x1="333" y1="378" x2="770" y2="417"/>
-    <line class="wg" x1="333" y1="378" x2="770" y2="536"/>
-    <line class="wg" x1="333" y1="468" x2="770" y2="417"/>
-    <line class="wg" x1="333" y1="468" x2="770" y2="536"/>
-    <line class="wg" x1="333" y1="570" x2="770" y2="417"/>
-    <line class="wg" x1="333" y1="570" x2="770" y2="536"/>
+  <!-- §6: dialable anchors inside; reverse-only servers outside. -->
+  <ellipse cx="510" cy="478" rx="300" ry="116" fill="none" stroke="#EDF0EE"/>
+  <ellipse cx="510" cy="478" rx="146" ry="69" fill="none" stroke="#EDF0EE" stroke-dasharray="3 5"/>
+  <g aria-label="Nine persistent WireGuard links">
+    <line class="wg" x1="510" y1="409" x2="250" y2="420"/>
+    <line class="wg" x1="510" y1="409" x2="770" y2="420"/>
+    <line class="wg" x1="510" y1="409" x2="510" y2="594"/>
+    <line class="wg" x1="384" y1="512" x2="250" y2="420"/>
+    <line class="wg" x1="384" y1="512" x2="770" y2="420"/>
+    <line class="wg" x1="384" y1="512" x2="510" y2="594"/>
+    <line class="wg" x1="636" y1="512" x2="250" y2="420"/>
+    <line class="wg" x1="636" y1="512" x2="770" y2="420"/>
+    <line class="wg" x1="636" y1="512" x2="510" y2="594"/>
+  </g>
+  <g aria-label="Three observed Hysteria2 direct links" fill="none" stroke="#4F9B74" stroke-width="1.6">
+    <line x1="504" y1="417" x2="392" y2="505"/>
+    <line x1="516" y1="417" x2="628" y2="505"/>
+    <path d="M394 518Q510 556 626 518"/>
   </g>
 
-  <!-- Candidate paths within the domestic topology layer -->
-  <g aria-label="Domestic candidate paths">
-    <line class="candidate" x1="333" y1="388" x2="333" y2="456"/>
-    <line class="candidate" x1="333" y1="480" x2="333" y2="558"/>
-    <path class="candidate" d="M326 386C292 435 293 520 326 562"/>
-  </g>
-
-  <!-- Read-only automatic decisions: local exit for cn-web and demo-a for intl-api. -->
+  <!-- Agent decisions overlay the fixed node positions. -->
   <defs><marker id="arrow-overview-automatic" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth"><path d="M0 0L7 3.5L0 7Z" fill="#466FC2"/></marker></defs>
-  <path class="selected" style="stroke:#466FC2;marker-end:url(#arrow-overview-automatic)" d="M342 372L381 348"/>
-  <path class="selected" style="stroke:#466FC2;marker-end:url(#arrow-overview-automatic)" d="M344 382L758 532"/>
-  <text class="ui tiny blue mono" x="390" y="350">cn-web · local exit</text>
-  <text class="ui tiny blue mono" x="562" y="474">intl-api · demo-a</text>
+  <path class="selected" style="stroke:#466FC2;marker-end:url(#arrow-overview-automatic)" d="M520 409L756 419"/>
+  <g class="ui" aria-label="cn-web uses the local exit">
+    <rect x="326" y="366" width="146" height="22" rx="11" fill="#F5F7FC" stroke="#B9C9E9"/>
+    <circle cx="338" cy="377" r="3" fill="#466FC2"/>
+    <text class="tiny blue" x="347" y="381">cn-web · local exit</text>
+    <text class="tiny blue mono" x="604" y="391">intl-api · demo-a</text>
+  </g>
 
-  <!-- Nodes -->
-  <g class="ui">
-    <circle cx="333" cy="378" r="7" fill="#FFFFFF"/>
-    <circle class="status-dot" cx="333" cy="378" r="5"/>
-    <text class="node-name mono" x="287" y="379" text-anchor="end">demo-d</text>
-    <text class="small muted" x="316" y="399" text-anchor="end">Region A · control + access</text>
+  <g class="ui" aria-label="Six nodes in a double-ring layout">
+    <circle cx="510" cy="409" r="8" fill="#FFFFFF"/><circle class="status-dot" cx="510" cy="409" r="5"/>
+    <text class="node-name mono" x="510" y="386" text-anchor="middle">demo-d</text>
+    <text class="tiny muted" x="510" y="400" text-anchor="middle">control + access</text>
 
-    <circle cx="333" cy="468" r="7" fill="#FFFFFF"/>
-    <circle class="status-dot" cx="333" cy="468" r="5"/>
-    <text class="node-name mono" x="287" y="467" text-anchor="end">demo-b</text>
-    <text class="small muted" x="316" y="489" text-anchor="end">Region B · domestic + egress</text>
+    <circle cx="384" cy="512" r="8" fill="#FFFFFF"/><circle class="status-dot" cx="384" cy="512" r="5"/>
+    <text class="node-name mono" x="365" y="527" text-anchor="end">demo-c</text>
+    <text class="tiny muted" x="365" y="544" text-anchor="end">server + egress</text>
 
-    <circle cx="333" cy="570" r="7" fill="#FFFFFF"/>
-    <circle class="status-dot" cx="333" cy="570" r="5"/>
-    <text class="node-name mono" x="287" y="569" text-anchor="end">demo-c</text>
-    <text class="small muted" x="316" y="591" text-anchor="end">Region C · domestic + egress</text>
+    <circle cx="636" cy="512" r="8" fill="#FFFFFF"/><circle class="status-dot" cx="636" cy="512" r="5"/>
+    <text class="node-name mono" x="655" y="527">demo-b</text>
+    <text class="tiny muted" x="655" y="544">server + egress</text>
 
-    <circle cx="770" cy="417" r="7" fill="#FFFFFF"/>
-    <circle class="status-dot" cx="770" cy="417" r="5"/>
-    <text class="node-name mono" x="790" y="420">demo-e</text>
-    <text class="small muted" x="790" y="440">Region D · reverse-only + egress</text>
+    <circle cx="250" cy="420" r="8" fill="#FFFFFF"/><circle class="status-dot" cx="250" cy="420" r="5"/>
+    <text class="node-name mono" x="232" y="414" text-anchor="end">demo-f</text>
+    <text class="tiny muted" x="232" y="432" text-anchor="end">reverse-only</text>
 
-    <circle cx="770" cy="536" r="7" fill="#FFFFFF"/>
-    <circle class="status-dot" cx="770" cy="536" r="5"/>
-    <text class="node-name mono" x="790" y="539">demo-a</text>
-    <text class="small muted" x="790" y="559">Region E · reverse-only + egress</text>
+    <circle cx="770" cy="420" r="8" fill="#FFFFFF"/><circle class="status-dot" cx="770" cy="420" r="5"/>
+    <text class="node-name mono" x="788" y="414">demo-a</text>
+    <text class="tiny muted" x="788" y="432">reverse-only</text>
+
+    <circle cx="510" cy="594" r="8" fill="#FFFFFF"/><circle class="status-dot" cx="510" cy="594" r="5"/>
+    <text class="node-name mono" x="527" y="598">demo-e</text>
+    <text class="tiny muted" x="527" y="615">reverse-only</text>
   </g>
 
   <!-- Retained control-node history derived only from adjacent trusted counter samples. -->
@@ -272,7 +275,7 @@
     <text class="section" x="1046" y="334">WireGuard traffic</text>
     <text class="tiny green" x="1539" y="334" text-anchor="end">Retained centrally · 30 days · fixed 60s samples / 3m gap</text>
     <text class="small muted" x="1046" y="363">LAST 24H</text>
-    <text class="metric" x="1046" y="388">1.30 TB</text>
+    <text class="metric" x="1046" y="388">1.44 TB</text>
     <text class="small muted" x="1046" y="414">10 / 12 buckets · 1 reset · 1 gap</text>
     <text class="tiny muted" x="1046" y="435">WG RX+TX deltas · hop-weighted</text>
 
@@ -304,7 +307,7 @@
   <g class="ui">
     <text class="section" x="1046" y="490">Latest fleet rollout</text>
     <text class="body" x="1046" y="520">Snapshot <tspan class="mono" font-weight="600">a1b2c3d4e5f6</tspan></text>
-    <text class="body muted" x="1046" y="543">5 / 5 verified</text>
+    <text class="body muted" x="1046" y="543">6 / 6 verified</text>
 
     <line class="stage-line" x1="1076" y1="566" x2="1477" y2="566"/>
     <circle class="status-dot" cx="1076" cy="566" r="4"/>
@@ -330,16 +333,18 @@
     <text class="small muted" x="745" y="699">Last seen</text>
   </g>
   <line class="rule" x1="39" y1="706" x2="828" y2="706"/>
-  <line class="rule" x1="39" y1="734" x2="828" y2="734"/>
-  <line class="rule" x1="39" y1="762" x2="828" y2="762"/>
-  <line class="rule" x1="39" y1="790" x2="828" y2="790"/>
-  <line class="rule" x1="39" y1="818" x2="828" y2="818"/>
+  <line class="rule" x1="39" y1="729" x2="828" y2="729"/>
+  <line class="rule" x1="39" y1="752" x2="828" y2="752"/>
+  <line class="rule" x1="39" y1="775" x2="828" y2="775"/>
+  <line class="rule" x1="39" y1="798" x2="828" y2="798"/>
+  <line class="rule" x1="39" y1="821" x2="828" y2="821"/>
   <g class="ui body">
-    <circle class="quiet-dot" cx="43" cy="721" r="4"/><text class="mono" x="65" y="726">demo-d</text><text x="207" y="726">Region A</text><text class="green" x="396" y="726">Healthy</text><text class="mono" x="515" y="726">184 / 96 GB</text><text x="745" y="726">8s</text>
-    <circle class="quiet-dot" cx="43" cy="749" r="4"/><text class="mono" x="65" y="754">demo-b</text><text x="207" y="754">Region B</text><text class="green" x="396" y="754">Healthy</text><text class="mono" x="515" y="754">142 / 91 GB</text><text x="745" y="754">11s</text>
-    <circle class="quiet-dot" cx="43" cy="777" r="4"/><text class="mono" x="65" y="782">demo-c</text><text x="207" y="782">Region C</text><text class="green" x="396" y="782">Healthy</text><text class="mono" x="515" y="782">98 / 61 GB</text><text x="745" y="782">13s</text>
-    <circle class="quiet-dot" cx="43" cy="805" r="4"/><text class="mono" x="65" y="810">demo-e</text><text x="207" y="810">Region D</text><text class="green" x="396" y="810">Healthy</text><text class="mono" x="515" y="810">204 / 139 GB</text><text x="745" y="810">9s</text>
-    <circle class="quiet-dot" cx="43" cy="833" r="4"/><text class="mono" x="65" y="838">demo-a</text><text x="207" y="838">Region E</text><text class="green" x="396" y="838">Healthy</text><text class="mono" x="515" y="838">176 / 112 GB</text><text x="745" y="838">12s</text>
+    <circle class="quiet-dot" cx="43" cy="717" r="4"/><text class="mono" x="65" y="722">demo-d</text><text x="207" y="722">Region A</text><text class="green" x="396" y="722">Healthy</text><text class="mono" x="515" y="722">184 / 96 GB</text><text x="745" y="722">8s</text>
+    <circle class="quiet-dot" cx="43" cy="740" r="4"/><text class="mono" x="65" y="745">demo-b</text><text x="207" y="745">Region B</text><text class="green" x="396" y="745">Healthy</text><text class="mono" x="515" y="745">142 / 91 GB</text><text x="745" y="745">11s</text>
+    <circle class="quiet-dot" cx="43" cy="763" r="4"/><text class="mono" x="65" y="768">demo-c</text><text x="207" y="768">Region C</text><text class="green" x="396" y="768">Healthy</text><text class="mono" x="515" y="768">98 / 61 GB</text><text x="745" y="768">13s</text>
+    <circle class="quiet-dot" cx="43" cy="786" r="4"/><text class="mono" x="65" y="791">demo-e</text><text x="207" y="791">Region D</text><text class="green" x="396" y="791">Healthy</text><text class="mono" x="515" y="791">204 / 139 GB</text><text x="745" y="791">9s</text>
+    <circle class="quiet-dot" cx="43" cy="809" r="4"/><text class="mono" x="65" y="814">demo-a</text><text x="207" y="814">Region E</text><text class="green" x="396" y="814">Healthy</text><text class="mono" x="515" y="814">176 / 112 GB</text><text x="745" y="814">12s</text>
+    <circle class="quiet-dot" cx="43" cy="832" r="4"/><text class="mono" x="65" y="837">demo-f</text><text x="207" y="837">Region F</text><text class="green" x="396" y="837">Healthy</text><text class="mono" x="515" y="837">84 / 53 GB</text><text x="745" y="837">10s</text>
   </g>
 
   <!-- Automatic Service-scoped Agent decisions. -->
@@ -371,7 +376,7 @@
 
     <text class="small mono muted" x="40" y="917">17:10</text>
     <circle class="quiet-dot" cx="89" cy="912" r="3.5"/>
-    <text class="body" x="104" y="917">Fleet snapshot changed across 5 nodes</text>
+    <text class="body" x="104" y="917">Fleet snapshot changed across 6 nodes</text>
 
     <text class="small mono muted" x="40" y="940">17:09</text>
     <circle class="quiet-dot" cx="89" cy="935" r="3.5"/>

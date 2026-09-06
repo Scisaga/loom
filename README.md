@@ -5,16 +5,14 @@
 <h1 align="center">Loom</h1>
 
 <p align="center">
-  把多条加密网络路径编织成一个可测量、可验证、可持续收敛的服务调度平面。
+  基于 WireGuard 和 sing-box 的组网与选路工具。
 </p>
 
-Loom 用一份声明式 SSOT 管理多节点网络：生成 WireGuard 与 sing-box 配置，持续测量候选路径，并按规则选择合适的服务地址和转发链。
+Loom 用一份 YAML 配置管理设备、隧道、服务和访问规则，生成并分发各设备的运行配置。它会持续测量候选路径，根据延迟和可用性自动选路。
 
-它既可以用于日常代理，也可以在不同机房的多个服务实例之间调度。Loom 关注的是请求实际经过的完整路径，而不是预先给某台机器贴上“出口”标签。
+你可以用 Loom 连接自己的电脑和服务器，访问内网服务，或在多个代理和跨机房服务实例之间选择合适的路径。
 
 ## 界面预览
-
-控制中心分别展示期望配置、运行证据和当前选路，避免把“已经配置”和“正在生效”混为一谈。
 
 <p align="center">
   <img src="assets/loom-control-center-overview-misaka-v1.svg" width="100%" alt="Loom 控制中心总览">
@@ -24,49 +22,26 @@ Loom 用一份声明式 SSOT 管理多节点网络：生成 WireGuard 与 sing-b
 |---|---|
 | ![Loom 动态双环拓扑](assets/loom-control-center-topology-misaka-v1.svg) | ![Loom Service 管理](assets/loom-control-center-services-misaka-v1.svg) |
 
-Windows 客户端提供本地直连、按中控规则自动选路和固定出口三种模式；三个 edition
-复用同一套原生界面。
+Windows 客户端支持本地直连、自动选路和固定出口，提供安装版、便携 TUN 版和便携代理版。
 
 <p align="center">
-  <img src="assets/client/windows/loom-client-windows-current.png" width="86%" alt="Loom Windows 客户端原生界面">
+  <img src="assets/client/windows/loom-client-windows-current.png" width="520" alt="Loom Windows 客户端原生界面">
 </p>
 
-<p align="center"><sub>当前原生客户端界面；Device、状态目录和出口名称均使用脱敏示例值。</sub></p>
+<p align="center"><sub>Windows · Portable Mixed</sub></p>
 
 ## 加入网络
 
-服务器、桌面和手机在 Loom 中都是 **Device**。管理员先在 **Devices → Create Device**
-选择平台和职责并生成一次性加入码；客户端绑定这个既有 Device，再取得经过签名的配置。
-导入加入码不会创建第二个 Device。当前交付方式如下：
+管理员在控制中心的 **Devices → Create Device** 创建设备，选择平台、职责和可访问的服务，再生成一次性加入码。用户安装客户端并导入加入码，即可获取配置并连接网络。
 
-| 方式 | 适用场景 | 支持情况 |
+| 平台 | 加入方式 | 用途 |
 |---|---|---|
-| 二维码 | 仅含 `use_loom` 的 Device | 中控与三个 Windows edition 的原生 GUI 已支持选择、拖入和剪贴板粘贴；Android 尚未实现 |
-| `.loom-invite` 文件 | 仅含 `use_loom` 的 Windows 或 Linux Device | Linux CLI 与三个 Windows edition 已支持 |
-| `loom://enroll#…` | Windows 导入，或作为 Linux shell bootstrap 的一次性输入 | Linux CLI 与三个 Windows edition 已支持 |
-| shell bootstrap | Linux，在目标机本地执行 | 使用公开通用包，随后从标准输入或加入文件消费加入码 |
-| SSH 辅助 | 管理员通过 SSH 登录 Linux 后执行同一 bootstrap | SSH 只是执行方式；中控不保存 SSH 凭据，也没有第二套加入协议 |
+| Windows | 导入、拖入或粘贴二维码，也可导入 `.loom-invite` 文件或加入链接 | 直连、自动选路、固定出口 |
+| Linux | 运行安装命令，再导入 `.loom-invite` 文件或加入链接；也可通过 SSH 执行 | 客户端、流量转发、公网出口 |
 
-上表描述的是当前仓库代码能力，不等于现网已经部署。二维码携带公开平台公钥的
-SHA-256 指纹，Windows 在提交一次性码前与发行包内嵌公钥本地比对。registry schema 1
-生成的旧加入码不再接受；升级后必须在中控按明确的平台和职责重新创建尚未加入的 Device。
-系统不要求额外的公网 `/trust` 路由。
-部署状态以[当前状态](docs/status/current.md)为准。
+加入码短期有效且只能使用一次。设备加入后会保留本机身份，重启、重连和正常升级无需重新加入。Android 客户端尚未提供。
 
-这些载体使用同一份短期、单次加入码。管理员创建时直接固定平台、职责和 Destination
-grants；客户端 claim 的平台与服务器连接方向必须精确匹配，不能在加入时扩权。Windows
-当前只支持 `use_loom`；Linux 可组合 `use_loom`、`forward`、`internet_egress`，且
-`internet_egress` 必须同时选择 `forward`。Android 平台属于模型范围，但当前尚未交付。
-设备加入后，重启、重连、切换网络或正常升级都会继续使用原有身份。
-
-Linux 的一行安装命令只下载并验证通用软件包，不携带 Device 或加入码；安装后仍需导入
-`.loom-invite` 或兼容协议 URI 才会绑定既有 Device。
-
-承担 `forward` 或 `internet_egress` 的 Linux Device 还要声明 endpoint、UDP 入站端口和
-连接方向。`reverse_only` 表示该 Device 主动建立并维持反向 WireGuard 隧道；它是可达性
-事实，不是“境外节点”角色。当前部署可以把境外服务器分配为 `reverse_only`，底层模型
-不按地域限制接入。所有 Device 都使用同一加入网络流程（底层协议内部仍名为 Enrollment）。
-完整步骤见[Linux 客户端安装](docs/linux-client-install.md)和[Device 生命周期与交付架构](docs/device-lifecycle-and-delivery.md)。
+安装和使用步骤见 [Windows 客户端](clients/windows/README.md)和 [Linux 客户端安装](docs/linux-client-install.md)。设备职责、授权和连接方向的详细说明见 [Device 生命周期与交付架构](docs/device-lifecycle-and-delivery.md)。
 
 ## 核心能力
 
@@ -74,10 +49,10 @@ Linux 的一行安装命令只下载并验证通用软件包，不携带 Device 
 - **严格校验**：拒绝未知字段和不完整配置，并一次列出全部问题。
 - **稳定渲染**：相同输入生成相同的 WireGuard、sing-box、systemd 和 Agent 配置。
 - **按路径调度**：比较完整的转发链和目标地址，支持直连、单跳和多跳。
-- **持续观测**：采集延迟、波动和吞吐，区分期望配置、签名证据与当前选路。
+- **状态监测**：查看设备、链路和当前路径，记录延迟、波动和吞吐。
 - **自动切换**：路径失效时立即避开；日常优化使用样本窗口和阈值防止频繁抖动。
 - **签名交付**：配置自动发布，设备验签后安装；二进制升级仍需显式 `release`。
-- **秘密与回滚**：秘密按设备分发，安装失败或进程中断时可以恢复到完整旧版本。
+- **密钥与回滚**：按设备管理密钥，更新失败时恢复上一份完整配置。
 
 ## 工作方式
 
@@ -85,15 +60,15 @@ Linux 的一行安装命令只下载并验证通用软件包，不携带 Device 
 flowchart TB
     subgraph Join["首次加入网络"]
         direction LR
-        Admin["管理员创建 Device 和加入码"] --> Carrier["Access：QR / 文件 · Linux：shell / SSH"]
-        Package["下载并验证通用客户端"] --> Bind["客户端启动并导入加入输入<br/>本机生成设备密钥和 CSR"]
+        Admin["管理员创建设备和加入码"] --> Carrier["二维码 / 文件 / 加入链接"]
+        Package["下载并验证通用客户端"] --> Bind["导入加入码并生成本机密钥"]
         Carrier --> Bind
-        Bind --> Identity["绑定既有 Device<br/>写入初始职责和访问范围"]
+        Bind --> Identity["绑定设备身份和访问权限"]
     end
 
     subgraph Control["持续控制与发布"]
         direction LR
-        Identity --> SSOT["声明式 SSOT<br/>全局修订号"]
+        Identity --> SSOT["YAML 配置"]
         SSOT --> Validate["校验"] --> Render["渲染"]
         Render --> Snapshot["生成并签名快照"]
         Snapshot --> Distribution["分发签名配置"]
@@ -101,7 +76,7 @@ flowchart TB
 
     subgraph Device["设备持续运行"]
         direction LR
-        Distribution --> Pull["拉取"] --> Verify["验签 · 填充秘密 · 安装"]
+        Distribution --> Pull["拉取"] --> Verify["验签并安装配置"]
         Verify --> Selector["直连 / 自动 / 固定出口"]
         Selector --> Runtime["本地数据平面"]
         Runtime --> Measure["测量 · 签名上报"]
@@ -110,10 +85,10 @@ flowchart TB
     end
 
     SSOT -.->|期望状态| Console["控制中心"]
-    Measure -.->|可信运行证据| Console
+    Measure -.->|设备和链路状态| Console
 ```
 
-加入流程只在首次消费中控生成的加入输入时运行。此后设备持续拉取签名配置、安装更新并上报测量结果。运行证据不会写回 SSOT；Agent 也只在已授权的候选中调整自动模式。
+设备加入后会定期获取配置并上报状态。调度 Agent 根据测量结果在允许的候选路径中选择，使用窗口和阈值减少频繁切换。
 
 控制平面暂时离线不会中断数据平面。设备继续使用最后一份安装成功的配置，Agent 也可以根据本地观测继续选路。
 
@@ -121,15 +96,15 @@ flowchart TB
 
 控制中心由服务端直接渲染，不依赖外部前端资源。主要页面包括：
 
-- **Devices**：设备身份、职责、授权和在线证据；
+- **Devices**：创建设备、分配权限、查看在线状态；
 - **Topology / Live paths**：常驻隧道、候选路径和当前选路；
 - **Services**：主机规则与访问策略；
-- **Deployments / Events**：配置收敛、状态变化和历史事件；
+- **Deployments / Events**：配置更新进度和历史事件；
 - **SSOT**：高级编辑入口。
 
-保存 SSOT 后，发布器会自动校验、渲染、签名和分发，界面不再提供单独的“发布”按钮。二进制升级仍需通过 `loom release` 明确放行。期望配置和运行状态始终分开：保存成功只说明新配置已经进入发布流程，设备是否安装、链路是否可用，仍以签名上报为准。
+保存配置后，Loom 会自动校验、生成、签名并分发更新。设备的安装进度和运行状态可在控制中心查看；程序升级使用 `loom release`。
 
-只有中控开放写操作。普通设备使用自己最后安装的签名配置。创建和加入 Device 只走统一流程，不再提供 SSH Add node 入口。更完整的权限与证据边界见[设计文档](docs/design.md)。
+设备和服务由中控统一管理，普通设备提供本机状态查看。配置格式和权限说明见[设计文档](docs/design.md)。
 
 ## 设备、职责与路径
 
@@ -146,7 +121,7 @@ flowchart TB
 发起请求的设备 → [0..n 台转发设备] → 目标地址
 ```
 
-经过转发链时，最后一台访问目标的设备就是出口；本地直连则没有远端出口。**出口是路径中的位置，不是一种设备类型。**
+转发链上最后一台访问目标的设备就是这条路径的出口。本地直连时，请求直接从当前设备发出。
 
 ## 快速开始
 
@@ -239,12 +214,11 @@ gofmt -l .
 go test ./internal/render/ -run TestGolden -update
 ```
 
-更新 golden 后必须人工检查 diff。它锁定的是最终配置字节，直接接受所有变化等于放弃这层保护。
+更新 golden 后，请检查 diff，确认生成的配置符合预期。
 
 ## 许可证
 
-Loom 自有代码采用 [Apache License 2.0](LICENSE)，版权声明见 [NOTICE](NOTICE)。
-第三方代码、依赖和随包组件保留各自的许可证；Loom 的许可证不替代它们的授权条件。
+Loom 自有代码采用 [Apache License 2.0](LICENSE)，版权声明见 [NOTICE](NOTICE)。第三方代码、依赖和随包组件保留各自的许可证。
 
 Windows 发行签名说明见 [Code signing policy](docs/code-signing-policy.md)。
 
