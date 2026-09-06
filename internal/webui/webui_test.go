@@ -61,10 +61,15 @@ func TestPageIsSelfContained(t *testing.T) {
 	if !strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "img-src 'self' data:") {
 		t.Errorf("没有为内嵌导航图标设置自包含 CSP:%q", csp)
 	}
-	digest := sha256.Sum256([]byte(topologyInteractionScript))
-	want := "'sha256-" + base64.StdEncoding.EncodeToString(digest[:]) + "'"
-	if !strings.Contains(csp, want) || strings.Contains(strings.Split(csp, "style-src")[0], "'unsafe-inline'") {
-		t.Fatalf("topology script CSP = %q, want exact hash %q and no script unsafe-inline", csp, want)
+	for _, script := range []string{progressSubmitScript, topologyInteractionScript, deviceEnrollmentScript, copyValueScript} {
+		digest := sha256.Sum256([]byte(script))
+		want := "'sha256-" + base64.StdEncoding.EncodeToString(digest[:]) + "'"
+		if !strings.Contains(csp, want) {
+			t.Fatalf("script CSP = %q, want exact hash %q", csp, want)
+		}
+	}
+	if strings.Contains(strings.Split(csp, "style-src")[0], "'unsafe-inline'") {
+		t.Fatalf("script CSP permits unsafe-inline: %q", csp)
 	}
 }
 

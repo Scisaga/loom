@@ -47,6 +47,51 @@ func TestDeviceJoinRecoveryRequiresOperatorPOSTAndExplicitIdentityLoss(t *testin
 	}
 }
 
+func TestJoinedAccessOnlyDeviceRemovalRequiresAuthenticatedConfirmedPost(t *testing.T) {
+	d := clientUIDeps()
+	d.Control.Clients.List = func() (ClientInventory, error) {
+		return ClientInventory{Clients: []ClientView{{
+			ID: "demo-joined", Name: "Demo joined", Platform: "windows-desktop",
+			Status: "ready", IdentitySource: "enrollment", Membership: "active",
+			KeyFingerprint: strings.Repeat("A", 96), Responsibilities: []string{"use_loom"},
+		}}}, nil
+	}
+	removed := ""
+	d.Control.Clients.DeleteDevice = func(id string) error {
+		removed = id
+		return nil
+	}
+
+	detail := misakaRequest(t, d, http.MethodGet, "/devices/demo-joined", nil, true)
+	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), `action="/devices/delete"`) ||
+		!strings.Contains(detail.Body.String(), `name=confirm value=yes required`) ||
+		!strings.Contains(style, `.kv dd.mono{overflow-wrap:anywhere;word-break:break-word}`) {
+		t.Fatalf("joined access Device lacks safe removal or overflow handling: status=%d", detail.Code)
+	}
+	publicDetail := misakaRequest(t, d, http.MethodGet, "/devices/demo-joined", nil, false)
+	if !strings.Contains(publicDetail.Body.String(), `Sign in to remove`) || strings.Contains(publicDetail.Body.String(), `action="/devices/delete"`) {
+		t.Fatal("unauthenticated detail exposed a removal form")
+	}
+	if response := misakaRequest(t, d, http.MethodGet, "/devices/delete", nil, true); response.Code != http.StatusMethodNotAllowed || removed != "" {
+		t.Fatal("GET performed Device removal")
+	}
+	if response := misakaRequest(t, d, http.MethodPost, "/devices/delete", url.Values{"id": {"demo-joined"}, "confirm": {"yes"}}, false); response.Code != http.StatusSeeOther || removed != "" {
+		t.Fatal("anonymous request performed Device removal")
+	}
+	for _, values := range []url.Values{
+		{"id": {"demo-joined"}},
+		{"id": {"demo-joined"}, "confirm": {"no"}},
+	} {
+		if response := misakaRequest(t, d, http.MethodPost, "/devices/delete?confirm=yes", values, true); response.Code != http.StatusBadRequest || removed != "" {
+			t.Fatal("Device removal accepted missing or query-string confirmation")
+		}
+	}
+	response := misakaRequest(t, d, http.MethodPost, "/devices/delete", url.Values{"id": {"demo-joined"}, "confirm": {"yes"}}, true)
+	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/devices" || removed != "demo-joined" {
+		t.Fatalf("confirmed removal status=%d location=%q removed=%q", response.Code, response.Header().Get("Location"), removed)
+	}
+}
+
 func TestReplacedDevicesAreArchivedAndPointToTheirReplacement(t *testing.T) {
 	d := clientUIDeps()
 	d.Control.Clients.List = func() (ClientInventory, error) {

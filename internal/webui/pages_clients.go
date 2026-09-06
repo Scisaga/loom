@@ -189,6 +189,7 @@ func pageDeviceDetail(d Deps, deviceID string, isAuthed bool) string {
 		}
 	}
 	writeDeviceJoinActions(&b, d, *device, isAuthed)
+	writeDeviceDeleteAction(&b, d, *device, isAuthed)
 	return shell(d, "Device · "+device.ID, b.String(), isAuthed)
 }
 
@@ -228,6 +229,20 @@ func writeDeviceJoinActions(b *strings.Builder, d Deps, device ClientView, isAut
 		fmt.Fprintf(b, `<details><summary>Rejoin Device</summary><form method=post action="/devices/replace"><input type=hidden name=id value="%s"><label class=device-rejoin-confirm><input type=checkbox name=identity_deleted value=yes required> I deleted this client's local identity and configuration and want to revoke the old access.</label><button class="button primary">Replace Device and generate QR</button></form></details>`, esc(device.ID))
 	}
 	b.WriteString(`</section>`)
+}
+
+func writeDeviceDeleteAction(b *strings.Builder, d Deps, device ClientView, isAuthed bool) {
+	control := deviceControl(d)
+	if control == nil || control.DeleteDevice == nil || !deviceCanReplace(device) {
+		return
+	}
+	b.WriteString(`<div class=service-danger><div><b>Remove Device</b><span>Immediately remove this access-only Device from the desired network and revoke its identity. The client may not receive a shutdown notification.</span></div>`)
+	if !isAuthed {
+		fmt.Fprintf(b, `<a class=button href="%s">Sign in to remove</a>`, esc(loginURL("/devices/"+url.PathEscape(device.ID))))
+	} else {
+		fmt.Fprintf(b, `<form class=device-delete-form data-submit-progress method=post action="/devices/delete"><input type=hidden name=id value="%s"><label class=device-delete-confirm><input type=checkbox name=confirm value=yes required><span>I understand that local client files are not erased.</span></label><button class=danger-button>Remove Device</button></form>`, esc(device.ID))
+	}
+	b.WriteString(`</div>`)
 }
 
 func deviceIdentitySourceLabel(source string) string {
@@ -356,7 +371,7 @@ func writeClientInvite(b *strings.Builder, invite ClientInviteView, pkg LinuxCli
 	forward := deviceListContains(invite.Responsibilities, "forward")
 	b.WriteString(`<div class=client-invite-grid>`)
 	if !forward {
-		fmt.Fprintf(b, `<section class="card client-invite-qr"><div class="badge warn"><span class=dot></span>Waiting to join</div><a href="%s" download aria-label="Download join QR code"><img src="%s" alt="Join QR code for %s"></a><p><b>Save or scan this QR code</b><br><span class="small dim">QR is an access-only delivery method. It carries the same one-time invitation as the join file.</span></p></section>`, esc(qrURL), esc(qrURL), esc(invite.ClientID))
+		fmt.Fprintf(b, `<section class="card client-invite-qr"><div class="badge warn"><span class=dot></span>Waiting to join</div><button class=client-invite-qr-copy type=button data-copy-target=invite-link aria-label="Copy one-time join link"><img src="%s" alt="Join QR code for %s"></button><p><b data-copy-feedback>Click QR to copy join link</b><br><span class="small dim">Scan the QR, or click it to copy the equivalent one-time input.</span></p></section>`, esc(qrURL), esc(invite.ClientID))
 	}
 	fmt.Fprintf(b, `<section class="card client-invite-copy"><div><div class=label>Device created · join code ready</div><h2>%s</h2><span class="mono dim">%s</span></div>
 	<div class=client-invite-expiry><span class=dot></span><span>This join code is a short-lived, single-use secret and expires at <b>%s</b>. Share it only with the intended device.</span></div>

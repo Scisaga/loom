@@ -199,6 +199,64 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 			return inventory, nil
 		},
 		DiscardPending: store.DiscardPending,
+		DeleteDevice: func(id string) error {
+			id = strings.TrimSpace(id)
+			if !model.ValidNodeID(id) {
+				return &clientregistry.Error{Code: clientregistry.CodeInvalid, Msg: "Device id is malformed"}
+			}
+			return withSSOTLock(c.SSOTPath, func() error {
+				snapshot, err := readSSOTSnapshot(c.SSOTPath)
+				if err != nil {
+					return err
+				}
+				current, err := model.Load(snapshot.body)
+				if err != nil {
+					return err
+				}
+				if findings := validate.Validate(current); len(findings) > 0 {
+					return fmt.Errorf("current SSOT is invalid: %s", validate.Format(findings))
+				}
+				clients, _, err := store.List()
+				if err != nil {
+					return err
+				}
+				var client *clientregistry.Client
+				for i := range clients {
+					if clients[i].ID == id {
+						client = &clients[i]
+						break
+					}
+				}
+				if client == nil {
+					return &clientregistry.Error{Code: clientregistry.CodeNotFound, Msg: "Device was not found"}
+				}
+				node := current.NodeByID()[id]
+				if client.Status == "revoked" && node == nil {
+					return nil
+				}
+				if client.Status != "ready" || client.IdentitySource != "enrollment" || client.ReplacedBy != "" ||
+					len(client.Responsibilities) != 1 || client.Responsibilities[0] != "use_loom" {
+					return &clientregistry.Error{Code: clientregistry.CodeConflict, Msg: "only a joined, access-only enrollment Device can be removed here"}
+				}
+				if err := validateEnrollmentIntent(current, *client); err != nil {
+					return &clientregistry.Error{Code: clientregistry.CodeConflict, Msg: err.Error()}
+				}
+				if node != nil {
+					if err := validateProvisionedClient(current, node, *client); err != nil {
+						return &clientregistry.Error{Code: clientregistry.CodeConflict, Msg: err.Error()}
+					}
+					plan, err := ssotedit.RemoveLostAccessDevice(snapshot.body, id)
+					if err != nil {
+						return &clientregistry.Error{Code: clientregistry.CodeConflict, Msg: err.Error()}
+					}
+					if err := saveSSOTAtomicFromSnapshot(c.SSOTPath, plan.Content, snapshot); err != nil {
+						return err
+					}
+				}
+				_, err = store.Revoke(id)
+				return err
+			})
+		},
 		RenewInvite: func(id string) (webui.ClientInviteView, error) {
 			// 先核对公开签发信息，避免入口配置损坏时先让旧二维码失效。
 			if _, err := inviteURI("", ""); err != nil {

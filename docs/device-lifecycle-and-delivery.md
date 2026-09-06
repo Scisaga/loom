@@ -158,6 +158,7 @@ Device
 
 未领取的身份预留可在 Device 详情页重新生成加入码。名称、ID、平台、职责、grants 和
 direction 保持原值；每次重发都会让旧加入码失效。纯 `use_loom` Device 可重新显示二维码；
+点击二维码复制同一份一次性加入 URI，不触发图片下载；加入文件仍有单独下载按钮。
 包含 `forward` 的 Linux Device 仍只展示 shell/SSH 辅助交付，不展示 QR。
 
 Windows 的“删除本机 Device”会清除本机身份和配置，不通知中控，也不自动撤销网络
@@ -166,7 +167,13 @@ Windows 的“删除本机 Device”会清除本机身份和配置，不通知�
 新二维码；名称、平台和原职责/授权保持不变。旧证书属于旧 ID，不能
 用于领取新身份。归档记录保留 `replaced_by`，新记录保留 `replaces`。
 
-服务器应用新的签名配置后，旧数据面访问凭据才失效。该流程不证明旧客户端执行过
+如果不需要替换设备，同一详情页提供单步 **Remove Device**。它不等待客户端回执：中控
+立即从 SSOT 移除纯 `use_loom` Device 及其设备专属凭据，并把 enrollment identity 标为
+revoked；服务器应用下一份签名配置后不再接受旧数据面凭据。该操作不会远程删除客户端
+本机文件，也不会把未收到停机通知误报成“已停机”。未领取 Device 仍使用更窄的
+**Delete Device**，只删除从未消费的 identity reservation 和加入码。
+
+转发服务器应用新的签名配置后，旧数据面访问凭据才失效。该流程不证明旧客户端执行过
 signed decommission，也不代替服务器/隧道节点的退休迁移或通用证书吊销机制。
 仅有“本机删除”时，中控保留现有记录且不能猜测在线；完成中控替换后，旧身份从当前
 列表移入 Archived devices。SSOT 撤销后若 registry 落盘失败，不返回二维码，重试可

@@ -143,6 +143,8 @@ func TestClientInvitationShowsRealQRResourceAndLinuxLink(t *testing.T) {
 	body := pageClients(d, clientPageState{Invite: &invite}, true)
 	for _, want := range []string{
 		`src="/api/control/device-invites/invite-123/qr.png"`,
+		`data-copy-target=invite-link`,
+		`Click QR to copy join link`,
 		`href="/api/control/device-invites/invite-123/download"`,
 		`alt="Join QR code for client-linux01"`,
 		`value="loom://enroll#test"`,
@@ -166,6 +168,13 @@ func TestClientInvitationShowsRealQRResourceAndLinuxLink(t *testing.T) {
 	}
 	if strings.Count(body, invite.InviteURI) != 1 {
 		t.Fatalf("invitation URI must appear only in the readonly input; count=%d", strings.Count(body, invite.InviteURI))
+	}
+	if strings.Contains(body, `<a href="/api/control/device-invites/invite-123/qr.png"`) ||
+		!strings.Contains(style, `.client-invite-qr-copy{display:block;justify-self:center;width:min(100%,250px)`) {
+		t.Fatal("QR must be centered and copy the join link instead of downloading the image")
+	}
+	if !strings.Contains(body, `<script>`+copyValueScript+`</script>`) {
+		t.Fatal("QR copy control lacks its CSP-pinned local script")
 	}
 	if strings.Contains(body, `loom client enroll -invite `) || strings.Contains(body, `printf 'loom://`) {
 		t.Fatal("invitation URI was encouraged in shell arguments or command history")

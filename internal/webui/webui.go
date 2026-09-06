@@ -182,6 +182,7 @@ type ClientControlDeps struct {
 	CreateInvite         func(ClientInviteInput) (ClientInviteView, error)
 	RenewInvite          func(deviceID string) (ClientInviteView, error)
 	ReplaceDevice        func(deviceID string) (ClientInviteView, error)
+	DeleteDevice         func(deviceID string) error
 	DiscardPending       func(deviceID string) error
 	Claim                func(ClientClaimInput) (ClientClaimResult, error)
 	InviteArtifact       func(inviteID string) (ClientInviteArtifact, error)
@@ -848,6 +849,42 @@ func Handler(d Deps) http.Handler {
 	})
 	mux.HandleFunc("/devices/replace", func(w http.ResponseWriter, r *http.Request) {
 		deviceInviteWrite(w, r, true)
+	})
+	mux.HandleFunc("/devices/delete", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", "POST")
+			http.Error(w, "只接受 POST", http.StatusMethodNotAllowed)
+			return
+		}
+		if !authed(d, r) {
+			http.Redirect(w, r, loginURL("/devices"), http.StatusSeeOther)
+			return
+		}
+		control := deviceControl(d)
+		if control == nil || control.DeleteDevice == nil {
+			http.Error(w, "这台机器没有 Device removal 能力", http.StatusNotImplemented)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "表单无法解析", http.StatusBadRequest)
+			return
+		}
+		id := strings.TrimSpace(r.PostForm.Get("id"))
+		if id == "" || strings.Contains(id, "/") {
+			http.Error(w, "Device id 无效", http.StatusBadRequest)
+			return
+		}
+		if r.PostForm.Get("confirm") != "yes" {
+			http.Error(w, "移除前须确认本机文件不会被中控删除", http.StatusBadRequest)
+			return
+		}
+		if err := control.DeleteDevice(id); err != nil {
+			http.Error(w, err.Error(), clientProtocolStatus(err))
+			return
+		}
+		http.Redirect(w, r, "/devices", http.StatusSeeOther)
 	})
 	mux.HandleFunc("/devices/discard-pending", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -1766,7 +1803,11 @@ func writeHTML(w http.ResponseWriter, body string) {
 	progressHash := base64.StdEncoding.EncodeToString(progressDigest[:])
 	topologyDigest := sha256.Sum256([]byte(topologyInteractionScript))
 	topologyHash := base64.StdEncoding.EncodeToString(topologyDigest[:])
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'sha256-"+progressHash+"' 'sha256-"+topologyHash+"'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'")
+	deviceEnrollmentDigest := sha256.Sum256([]byte(deviceEnrollmentScript))
+	deviceEnrollmentHash := base64.StdEncoding.EncodeToString(deviceEnrollmentDigest[:])
+	copyValueDigest := sha256.Sum256([]byte(copyValueScript))
+	copyValueHash := base64.StdEncoding.EncodeToString(copyValueDigest[:])
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'sha256-"+progressHash+"' 'sha256-"+topologyHash+"' 'sha256-"+deviceEnrollmentHash+"' 'sha256-"+copyValueHash+"'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	fmt.Fprint(w, body)
 }

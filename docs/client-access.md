@@ -74,8 +74,8 @@
 | 安全存储 | 0600 本地文件 | Installed 目标态使用 machine-scope DPAPI；Portable 身份、vault 与候选使用用户范围 DPAPI；CNG、安装器 ACL 尚未实现 | 未接 Android Keystore |
 | 安装与升级 | 已有签名 `tar.gz`、校验与安装器；后续版本仍走 signed pull | 可生成未签名 PE 与平台签名数据面 ZIP；无 MSI 和 Loom 代码签名流程 | 无 APK/商店发布流程 |
 | 加入网络/二维码 | 中控与 Linux CLI 已实现 | 三个 edition 已接入原生 GUI、二维码/加入文件解析和安全绑定；Installed 普通用户托盘/IPC 未完成 | 客户端宿主未实现 |
-| 可信运行态上报 | `/status` 拉取与 gossip 已实现 | 服务端 NAT 接收适配器已实现；Windows producer/周期提交尚未接入 | 客户端与 producer 均未实现 |
-| 设备吊销 | access-only 已完成 signed decommission、移除/吊销与秘密清理；服务器职责的通用双重收敛未完成 | 未实现 | 未实现 |
+| 可信运行态上报 | `/status` 拉取与 gossip 已实现 | 服务端 NAT 接收适配器和 Windows 最小 producer 已实现并通过本地测试；生产端到端验收待完成 | 客户端与 producer 均未实现 |
+| 设备吊销 | access-only 支持单步直接移除/吊销，也保留 signed decommission；服务器职责的依赖迁移未完成 | 中控可直接撤销 access-only 身份与专属凭据；不远程删除 Windows 本机文件 | 未实现 |
 
 当前渲染器已按显式部署目标拆开平台无关配置与 Linux 生命周期产物：参考矩阵中的
 `phone` 和 `workstation` 只生成各自平台路径正确的 sing-box 配置，不再携带 systemd、
@@ -647,6 +647,12 @@ Device 可显示二维码，包含 `forward` 的 Linux Device 只提供 shell/SS
 不走这一窄入口，须先处理其原事务。详见
 [二维码重发与本机身份丢失](device-lifecycle-and-delivery.md#411-二维码重发与本机身份丢失)。
 
+不需要替换时，详情页的 **Remove Device** 用一个中控事务移除纯 `use_loom` Device 的
+SSOT membership 和专属数据面凭据，并立即把 enrollment identity 标为 revoked。它不要求
+客户端在线或先消费 decommission，也不会声称已经清除客户端本机文件；旧连接在转发服务器
+收敛到下一份 signed snapshot 后失效。包含 `forward` / `internet_egress` 的 Device 不走
+该窄入口，因为删除前必须处理隧道、出口策略与依赖凭据。
+
 ### 9.3 稳态认证
 
 首次加入使用客户端本地 P-256 密钥签发节点证书，供现有可信报告/陈述链使用；私钥
@@ -820,9 +826,9 @@ Linux Server。
 
 **完成判据：** 被吊销设备即使保留旧配置，也在服务器收敛后无法继续使用。
 
-**当前进度：** 加入码、二维码、本地 P-256 身份绑定，以及 Linux access-only 的 signed
-decommission → 移除/吊销 → 秘密清理/purge 已完成并通过 canary；服务器职责和 Windows、
-Android 的通用控制面/数据面双重吊销尚未完成，因此 C2 不能整体标记为完成。
+**当前进度：** 加入码、二维码、本地 P-256 身份绑定，以及 access-only 的单步直接
+移除/吊销和 Linux signed decommission → 移除/吊销 → 秘密清理/purge 已完成；服务器职责
+和 Android 的通用控制面/数据面双重吊销尚未完成，因此 C2 不能整体标记为完成。
 
 ### 阶段 C3：Windows（进行中）
 
