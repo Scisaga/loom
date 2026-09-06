@@ -183,6 +183,10 @@ Archived devices 中已为 `revoked` 且不在当前 SSOT 的身份可从详情�
 归档 identity 与旧邀请记录，不重复撤销、轮换或影响 replacement Device；仍在 SSOT 的记录
 和非 revoked 身份由服务端拒绝删除。
 
+Archived devices 只读取 identity、SSOT 与当前运行态，不加载无关的 Linux 安装包信息。
+控制端对同一组未变化的原子发布文件复用已经完成完整验签的发行包结果；任一 archive、
+checksum、signature 或平台公钥文件被替换后都会重新执行完整验证。
+
 ### 4.2 邀请级加入意图的边界
 
 不增加 `standard-device`、`server-device` 或命名 Profile。每张新邀请直接保存以下事实：

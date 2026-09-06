@@ -94,6 +94,14 @@ func TestJoinedAccessOnlyDeviceRemovalRequiresAuthenticatedConfirmedPost(t *test
 
 func TestReplacedDevicesAreArchivedAndPointToTheirReplacement(t *testing.T) {
 	d := clientUIDeps()
+	packageLoads := 0
+	d.Control.Clients.LinuxPackage = func() (LinuxClientPackageView, error) {
+		packageLoads++
+		return LinuxClientPackageView{
+			Filename: "loom-client-linux-amd64.tar.gz", URL: "/devices/download/linux-amd64",
+			SHA256: "0123456789abcdef", Version: "v1.0.0", Arch: "linux/amd64",
+		}, nil
+	}
 	d.Control.Clients.List = func() (ClientInventory, error) {
 		return ClientInventory{Clients: []ClientView{
 			{ID: "demo-old", Name: "Demo workstation", Status: "revoked", ReplacedBy: "demo-new"},
@@ -111,6 +119,9 @@ func TestReplacedDevicesAreArchivedAndPointToTheirReplacement(t *testing.T) {
 	if !strings.Contains(archived, `href="/devices/demo-old"`) || strings.Contains(archived, `href="/devices/demo-new"`) {
 		t.Fatal("archive inventory contains current identities")
 	}
+	if packageLoads != 1 || strings.Contains(archived, "Client distribution") {
+		t.Fatalf("archive inventory performed unrelated Linux package work: loads=%d", packageLoads)
+	}
 	old := misakaRequest(t, d, http.MethodGet, "/devices/demo-old", nil, true).Body.String()
 	if !strings.Contains(old, `href="/devices/demo-new"`) || strings.Contains(old, `action="/devices/replace"`) {
 		t.Fatal("archived identity did not point to replacement or remained replaceable")
@@ -122,6 +133,19 @@ func TestReplacedDevicesAreArchivedAndPointToTheirReplacement(t *testing.T) {
 	joined := misakaRequest(t, d, http.MethodGet, "/devices/demo-joined", nil, true).Body.String()
 	if !strings.Contains(joined, `action="/devices/replace"`) || !strings.Contains(joined, `name=identity_deleted value=yes required`) {
 		t.Fatal("joined access Device lacks explicit replacement flow")
+	}
+}
+
+func TestUnauthenticatedDeviceCreationDoesNotLoadLinuxPackage(t *testing.T) {
+	d := clientUIDeps()
+	packageLoads := 0
+	d.Control.Clients.LinuxPackage = func() (LinuxClientPackageView, error) {
+		packageLoads++
+		return LinuxClientPackageView{}, nil
+	}
+	body := pageDevices(d, clientPageState{Create: true}, false)
+	if packageLoads != 0 || !strings.Contains(body, "Operator session required") {
+		t.Fatalf("unauthenticated creation loaded Linux package: loads=%d", packageLoads)
 	}
 }
 

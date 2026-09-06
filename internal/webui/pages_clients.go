@@ -26,9 +26,11 @@ func pageDevices(d Deps, state clientPageState, isAuthed bool) string {
 	if d.Control == nil {
 		return shell(d, "Devices", `<div class="card notice"><b>Device inventory is control-local</b><br><span class=small>This machine cannot create Devices or issue join codes.</span></div>`, isAuthed)
 	}
-	state.Package, state.PackageError = clientLinuxPackage(d, state.Package, state.PackageError)
 	if state.Create || state.Invite != nil {
 		return pageDeviceEnrollment(d, state, isAuthed)
+	}
+	if !state.Archived {
+		state.Package, state.PackageError = clientLinuxPackage(d, state.Package, state.PackageError)
 	}
 
 	inventory, inventoryErr := loadDeviceInventory(d)
@@ -100,7 +102,9 @@ func pageDevices(d Deps, state clientPageState, isAuthed bool) string {
 		b.WriteString(`</tbody></table></div>`)
 	}
 	b.WriteString(`</section>`)
-	writeLinuxDelivery(&b, state.Package, state.PackageError)
+	if !state.Archived {
+		writeLinuxDelivery(&b, state.Package, state.PackageError)
+	}
 	b.WriteString(`</div>`)
 	return shell(d, "Devices", b.String(), isAuthed)
 }
@@ -312,7 +316,6 @@ func loadDeviceInventory(d Deps) (ClientInventory, error) {
 func loadClientInventory(d Deps) (ClientInventory, error) { return loadDeviceInventory(d) }
 
 func pageDeviceEnrollment(d Deps, state clientPageState, isAuthed bool) string {
-	state.Package, state.PackageError = clientLinuxPackage(d, state.Package, state.PackageError)
 	var b strings.Builder
 	if d.Control == nil {
 		b.WriteString(`<div class="card notice badline"><b>Control role required</b><br><span class=small>Devices and their join codes can be created only on the control plane.</span></div>`)
@@ -322,6 +325,7 @@ func pageDeviceEnrollment(d Deps, state clientPageState, isAuthed bool) string {
 		fmt.Fprintf(&b, `<div class=client-add-grid><section class="card client-form-card"><h2>Operator session required</h2><p class=dim>Creating a Device and its one-time join code changes control-plane state.</p><a class="button primary" href="%s">Sign in</a></section></div>`, esc(loginURL("/devices?new=1")))
 		return shell(d, "Devices", b.String(), false)
 	}
+	state.Package, state.PackageError = clientLinuxPackage(d, state.Package, state.PackageError)
 	control := deviceControl(d)
 	if control == nil || control.CreateInvite == nil {
 		b.WriteString(`<div class="card notice badline"><b>Device creation unavailable</b><br><span class=small>This build has no Device identity registry capability.</span></div>`)

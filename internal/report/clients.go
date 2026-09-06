@@ -13,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"loom/internal/clientdist"
@@ -32,6 +34,70 @@ type clientInvitePayload struct {
 	PlatformKeySHA256 string `json:"platform_key_sha256"`
 }
 
+// verifiedClientPackageCache retains only bytes that already passed the full
+// package verification. The build script publishes every file by atomic rename,
+// so an identity change on any member invalidates the cached generation.
+type verifiedClientPackageCache struct {
+	mu        sync.Mutex
+	paths     []string
+	state     []os.FileInfo
+	published clientdist.Published
+	verifyErr error
+	ready     bool
+	verify    func() (clientdist.Published, error)
+}
+
+func (c *verifiedClientPackageCache) load() (clientdist.Published, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	state, err := clientPackageFileState(c.paths)
+	if err != nil {
+		return clientdist.Published{}, err
+	}
+	if c.ready && sameClientPackageFileState(c.state, state) {
+		return c.published, c.verifyErr
+	}
+	published, verifyErr := c.verify()
+	after, err := clientPackageFileState(c.paths)
+	if err != nil {
+		return clientdist.Published{}, err
+	}
+	if !sameClientPackageFileState(state, after) {
+		return clientdist.Published{}, errors.New("Linux client package changed during verification")
+	}
+	c.state, c.published, c.verifyErr, c.ready = after, published, verifyErr, true
+	return c.published, c.verifyErr
+}
+
+func clientPackageFileState(paths []string) ([]os.FileInfo, error) {
+	state := make([]os.FileInfo, 0, len(paths))
+	for _, path := range paths {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return nil, err
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || !ok || stat.Nlink != 1 {
+			return nil, fmt.Errorf("Linux client package member %s is not a single-link regular file", path)
+		}
+		state = append(state, info)
+	}
+	return state, nil
+}
+
+func sameClientPackageFileState(a, b []os.FileInfo) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !os.SameFile(a[i], b[i]) || a[i].Size() != b[i].Size() ||
+			a[i].Mode() != b[i].Mode() || !a[i].ModTime().Equal(b[i].ModTime()) {
+			return false
+		}
+	}
+	return true
+}
+
 type clientProvisionFunc func(client clientregistry.Client, csrPEM string) (*webui.ClientBootstrap, error)
 
 func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.ClientControlDeps {
@@ -39,9 +105,19 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 		return nil
 	}
 	store := clientregistry.Store{Path: c.ClientRegistryPath}
-	loadPublishedLinuxPackage := func() (clientdist.Published, error) {
-		return clientdist.VerifyFiles(c.ClientLinuxPackagePath, "/etc/loom/trust/platform.pub")
+	platformPublicKeyPath := "/etc/loom/trust/platform.pub"
+	packageCache := verifiedClientPackageCache{
+		paths: []string{
+			c.ClientLinuxPackagePath,
+			c.ClientLinuxPackagePath + ".sha256",
+			c.ClientLinuxPackagePath + ".sig",
+			platformPublicKeyPath,
+		},
+		verify: func() (clientdist.Published, error) {
+			return clientdist.VerifyFiles(c.ClientLinuxPackagePath, platformPublicKeyPath)
+		},
 	}
+	loadPublishedLinuxPackage := packageCache.load
 	loadLinuxPackage := func() (webui.LinuxClientPackageView, []byte, error) {
 		published, err := loadPublishedLinuxPackage()
 		if err != nil {
@@ -96,7 +172,7 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 			DestinationGrants: append([]string(nil), created.Client.DestinationGrants...),
 		}, nil
 	}
-	return &webui.ClientControlDeps{
+	deps := &webui.ClientControlDeps{
 		LinuxPackage: func() (webui.LinuxClientPackageView, error) {
 			view, _, err := loadLinuxPackage()
 			return view, err
@@ -445,6 +521,11 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 			return result, nil
 		},
 	}
+	// Pay the full verification cost during control-plane startup instead of on
+	// the first operator request. A missing package is non-fatal and remains a
+	// cached unavailable state until one of its atomic files changes.
+	_, _ = packageCache.load()
+	return deps
 }
 
 func readClientPlatformPublicKey(path string) (ed25519.PublicKey, error) {

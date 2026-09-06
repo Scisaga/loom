@@ -12,15 +12,92 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"loom/internal/clientdist"
 	"loom/internal/clientregistry"
 	"loom/internal/webui"
 )
+
+func TestVerifiedClientPackageCacheReusesStableFilesAndInvalidatesReplacement(t *testing.T) {
+	dir := t.TempDir()
+	paths := []string{
+		filepath.Join(dir, "archive"), filepath.Join(dir, "checksum"),
+		filepath.Join(dir, "signature"), filepath.Join(dir, "public-key"),
+	}
+	for _, path := range paths {
+		if err := os.WriteFile(path, []byte(filepath.Base(path)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	verifyCalls := 0
+	cache := verifiedClientPackageCache{
+		paths: paths,
+		verify: func() (clientdist.Published, error) {
+			verifyCalls++
+			return clientdist.Published{SHA256: string(rune('0' + verifyCalls))}, nil
+		},
+	}
+	first, err := cache.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := cache.load()
+	if err != nil || second.SHA256 != first.SHA256 || verifyCalls != 1 {
+		t.Fatalf("stable package was reverified: first=%+v second=%+v calls=%d err=%v", first, second, verifyCalls, err)
+	}
+	replacement := filepath.Join(dir, "replacement")
+	if err := os.WriteFile(replacement, []byte("new checksum"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, paths[1]); err != nil {
+		t.Fatal(err)
+	}
+	third, err := cache.load()
+	if err != nil || third.SHA256 == first.SHA256 || verifyCalls != 2 {
+		t.Fatalf("replaced package member did not invalidate cache: first=%+v third=%+v calls=%d err=%v", first, third, verifyCalls, err)
+	}
+}
+
+func TestVerifiedClientPackageCacheRetainsFailureUntilFilesChange(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "archive")
+	if err := os.WriteFile(path, []byte("broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	verifyCalls := 0
+	cache := verifiedClientPackageCache{
+		paths: []string{path},
+		verify: func() (clientdist.Published, error) {
+			verifyCalls++
+			return clientdist.Published{}, errors.New("invalid package")
+		},
+	}
+	for range 2 {
+		if _, err := cache.load(); err == nil {
+			t.Fatal("invalid package unexpectedly passed verification")
+		}
+	}
+	if verifyCalls != 1 {
+		t.Fatalf("unchanged invalid package was repeatedly verified: calls=%d", verifyCalls)
+	}
+	replacement := filepath.Join(dir, "replacement")
+	if err := os.WriteFile(replacement, []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, path); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = cache.load()
+	if verifyCalls != 2 {
+		t.Fatalf("replacement did not retry verification: calls=%d", verifyCalls)
+	}
+}
 
 func TestClientInviteUsesOpaqueFragmentAndClaimKeepsProvisioningExplicit(t *testing.T) {
 	dir := t.TempDir()
