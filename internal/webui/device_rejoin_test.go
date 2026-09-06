@@ -124,3 +124,43 @@ func TestReplacedDevicesAreArchivedAndPointToTheirReplacement(t *testing.T) {
 		t.Fatal("joined access Device lacks explicit replacement flow")
 	}
 }
+
+func TestRevokedDevicePurgeRequiresAuthenticatedConfirmedPost(t *testing.T) {
+	d := clientUIDeps()
+	d.Control.Clients.List = func() (ClientInventory, error) {
+		return ClientInventory{Clients: []ClientView{{
+			ID: "demo-old", Name: "Demo workstation", Status: "revoked", Membership: "revoked",
+			DataPlaneStatus: "not applicable", ConfigState: "not applicable", ReplacedBy: "demo-new",
+		}}}, nil
+	}
+	purged := ""
+	d.Control.Clients.PurgeRevoked = func(id string) error {
+		purged = id
+		return nil
+	}
+
+	detail := misakaRequest(t, d, http.MethodGet, "/devices/demo-old", nil, true)
+	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), `class="card notice device-archive-notice"`) ||
+		!strings.Contains(detail.Body.String(), `action="/devices/purge-revoked"`) ||
+		!strings.Contains(detail.Body.String(), `data: not applicable · config: not applicable`) ||
+		!strings.Contains(style, `.device-archive-notice{margin-bottom:14px}`) {
+		t.Fatal("revoked Device detail lacks purge action, closed runtime semantics, or card spacing")
+	}
+	publicDetail := misakaRequest(t, d, http.MethodGet, "/devices/demo-old", nil, false)
+	if !strings.Contains(publicDetail.Body.String(), `Sign in to delete`) || strings.Contains(publicDetail.Body.String(), `action="/devices/purge-revoked"`) {
+		t.Fatal("unauthenticated detail exposed archived record purge")
+	}
+	if response := misakaRequest(t, d, http.MethodGet, "/devices/purge-revoked", nil, true); response.Code != http.StatusMethodNotAllowed || purged != "" {
+		t.Fatal("GET purged an archived Device")
+	}
+	if response := misakaRequest(t, d, http.MethodPost, "/devices/purge-revoked", url.Values{"id": {"demo-old"}, "confirm": {"yes"}}, false); response.Code != http.StatusSeeOther || purged != "" {
+		t.Fatal("anonymous request purged an archived Device")
+	}
+	if response := misakaRequest(t, d, http.MethodPost, "/devices/purge-revoked?confirm=yes", url.Values{"id": {"demo-old"}}, true); response.Code != http.StatusBadRequest || purged != "" {
+		t.Fatal("archived Device purge accepted query-string confirmation")
+	}
+	response := misakaRequest(t, d, http.MethodPost, "/devices/purge-revoked", url.Values{"id": {"demo-old"}, "confirm": {"yes"}}, true)
+	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/devices?archived=1" || purged != "demo-old" {
+		t.Fatalf("confirmed purge status=%d location=%q purged=%q", response.Code, response.Header().Get("Location"), purged)
+	}
+}

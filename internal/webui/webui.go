@@ -183,6 +183,7 @@ type ClientControlDeps struct {
 	RenewInvite          func(deviceID string) (ClientInviteView, error)
 	ReplaceDevice        func(deviceID string) (ClientInviteView, error)
 	DeleteDevice         func(deviceID string) error
+	PurgeRevoked         func(deviceID string) error
 	DiscardPending       func(deviceID string) error
 	Claim                func(ClientClaimInput) (ClientClaimResult, error)
 	InviteArtifact       func(inviteID string) (ClientInviteArtifact, error)
@@ -886,6 +887,42 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		http.Redirect(w, r, "/devices", http.StatusSeeOther)
+	})
+	mux.HandleFunc("/devices/purge-revoked", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", "POST")
+			http.Error(w, "只接受 POST", http.StatusMethodNotAllowed)
+			return
+		}
+		if !authed(d, r) {
+			http.Redirect(w, r, loginURL("/devices?archived=1"), http.StatusSeeOther)
+			return
+		}
+		control := deviceControl(d)
+		if control == nil || control.PurgeRevoked == nil {
+			http.Error(w, "这台机器没有 archived Device cleanup 能力", http.StatusNotImplemented)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "表单无法解析", http.StatusBadRequest)
+			return
+		}
+		id := strings.TrimSpace(r.PostForm.Get("id"))
+		if id == "" || strings.Contains(id, "/") {
+			http.Error(w, "Device id 无效", http.StatusBadRequest)
+			return
+		}
+		if r.PostForm.Get("confirm") != "yes" {
+			http.Error(w, "删除前须确认归档记录将永久移除", http.StatusBadRequest)
+			return
+		}
+		if err := control.PurgeRevoked(id); err != nil {
+			http.Error(w, err.Error(), clientProtocolStatus(err))
+			return
+		}
+		http.Redirect(w, r, "/devices?archived=1", http.StatusSeeOther)
 	})
 	mux.HandleFunc("/devices/discard-pending", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")

@@ -149,6 +149,9 @@ func TestJoinedAccessDeviceRemovalRevokesIdentityAndDesiredCredentials(t *testin
 		t.Fatal(err)
 	}
 	credentialIDs := append([]string(nil), before.NodeByID()[created.ClientID].Access.Credentials...)
+	if err := deps.PurgeRevoked(created.ClientID); err == nil {
+		t.Fatal("Device still present in SSOT was purged")
+	}
 	if err := deps.DeleteDevice(created.ClientID); err != nil {
 		t.Fatal(err)
 	}
@@ -171,10 +174,28 @@ func TestJoinedAccessDeviceRemovalRevokesIdentityAndDesiredCredentials(t *testin
 	if len(clients) != 1 || clients[0].Status != "revoked" || clients[0].RevokedAt == "" {
 		t.Fatalf("removed Device identity was not revoked: %+v", clients)
 	}
+	inventory, err := deps.List()
+	archivedOK := false
+	for i := range inventory.Clients {
+		if inventory.Clients[i].ID == created.ClientID {
+			archivedOK = inventory.Clients[i].DataPlaneStatus == "not applicable" && inventory.Clients[i].ConfigState == "not applicable"
+			break
+		}
+	}
+	if err != nil || !archivedOK {
+		t.Fatalf("revoked Device runtime semantics = %+v err=%v", inventory.Clients, err)
+	}
 	if err := deps.DeleteDevice(created.ClientID); err != nil {
 		t.Fatalf("idempotent removal retry failed: %v", err)
 	}
 	if _, err := p.provision(claimed.Client, csr); err == nil {
 		t.Fatal("revoked Device recreated desired membership")
+	}
+	if err := deps.PurgeRevoked(created.ClientID); err != nil {
+		t.Fatal(err)
+	}
+	clients, _, err = store.List()
+	if err != nil || len(clients) != 0 {
+		t.Fatalf("purged Device remains in registry: clients=%+v err=%v", clients, err)
 	}
 }

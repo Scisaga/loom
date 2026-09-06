@@ -179,6 +179,10 @@ signed decommission，也不代替服务器/隧道节点的退休迁移或通用
 列表移入 Archived devices。SSOT 撤销后若 registry 落盘失败，不返回二维码，重试可
 继续完成归档与新身份分配；不会恢复旧接入。
 
+Archived devices 中已为 `revoked` 且不在当前 SSOT 的身份可从详情页永久删除。该操作只清理
+归档 identity 与旧邀请记录，不重复撤销、轮换或影响 replacement Device；仍在 SSOT 的记录
+和非 revoked 身份由服务端拒绝删除。
+
 ### 4.2 邀请级加入意图的边界
 
 不增加 `standard-device`、`server-device` 或命名 Profile。每张新邀请直接保存以下事实：

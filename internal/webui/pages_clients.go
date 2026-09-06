@@ -163,7 +163,7 @@ func pageDeviceDetail(d Deps, deviceID string, isAuthed bool) string {
 	}
 	var b strings.Builder
 	if device.ReplacedBy != "" {
-		fmt.Fprintf(&b, `<section class="card notice"><b>Device replaced</b><p>This identity is archived. <a class=button href="/devices/%s">Open replacement Device %s</a></p></section>`, url.PathEscape(device.ReplacedBy), esc(device.ReplacedBy))
+		fmt.Fprintf(&b, `<section class="card notice device-archive-notice"><b>Device replaced</b><p>This identity is archived. <a class=button href="/devices/%s">Open replacement Device %s</a></p></section>`, url.PathEscape(device.ReplacedBy), esc(device.ReplacedBy))
 	}
 	fmt.Fprintf(&b, `<div class=grid>
 	<section class="card span4"><div class=label>Identity</div><h2>%s</h2><dl class=kv><dt>Device ID<dd class=mono>%s<dt>Platform<dd>%s<dt>Identity source<dd>%s<dt>Key fingerprint<dd class=mono>%s</dl></section>
@@ -190,6 +190,7 @@ func pageDeviceDetail(d Deps, deviceID string, isAuthed bool) string {
 	}
 	writeDeviceJoinActions(&b, d, *device, isAuthed)
 	writeDeviceDeleteAction(&b, d, *device, isAuthed)
+	writeDevicePurgeAction(&b, d, *device, isAuthed)
 	return shell(d, "Device · "+device.ID, b.String(), isAuthed)
 }
 
@@ -241,6 +242,20 @@ func writeDeviceDeleteAction(b *strings.Builder, d Deps, device ClientView, isAu
 		fmt.Fprintf(b, `<a class=button href="%s">Sign in to remove</a>`, esc(loginURL("/devices/"+url.PathEscape(device.ID))))
 	} else {
 		fmt.Fprintf(b, `<form class=device-delete-form data-submit-progress method=post action="/devices/delete"><input type=hidden name=id value="%s"><label class=device-delete-confirm><input type=checkbox name=confirm value=yes required><span>I understand that local client files are not erased.</span></label><button class=danger-button>Remove Device</button></form>`, esc(device.ID))
+	}
+	b.WriteString(`</div>`)
+}
+
+func writeDevicePurgeAction(b *strings.Builder, d Deps, device ClientView, isAuthed bool) {
+	control := deviceControl(d)
+	if control == nil || control.PurgeRevoked == nil || device.Status != "revoked" || device.Membership != "revoked" {
+		return
+	}
+	b.WriteString(`<div class=service-danger><div><b>Delete archived record</b><span>Permanently remove this revoked identity and its old invitation records. The replacement Device is not affected.</span></div>`)
+	if !isAuthed {
+		fmt.Fprintf(b, `<a class=button href="%s">Sign in to delete</a>`, esc(loginURL("/devices/"+url.PathEscape(device.ID))))
+	} else {
+		fmt.Fprintf(b, `<form class=device-delete-form data-submit-progress method=post action="/devices/purge-revoked"><input type=hidden name=id value="%s"><label class=device-delete-confirm><input type=checkbox name=confirm value=yes required><span>I understand that this archived record will be permanently removed.</span></label><button class=danger-button>Delete record</button></form>`, esc(device.ID))
 	}
 	b.WriteString(`</div>`)
 }

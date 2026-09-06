@@ -145,6 +145,10 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 			now := time.Now().UTC()
 			seen := make(map[string]bool, len(clients))
 			for _, client := range clients {
+				dataPlaneStatus, configState := "pending", "pending"
+				if client.Status == "revoked" {
+					dataPlaneStatus, configState = "not applicable", "not applicable"
+				}
 				seen[client.ID] = true
 				inventory.Clients = append(inventory.Clients, webui.ClientView{
 					ID: client.ID, Name: client.Name, Platform: client.Platform,
@@ -152,7 +156,7 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 					ReplacedBy:     client.ReplacedBy, Replaces: client.Replaces,
 					Status: client.Status, KeyFingerprint: client.KeyFingerprint,
 					CreatedAt: client.CreatedAt, EnrolledAt: client.EnrolledAt,
-					DataPlaneStatus: "pending", ConfigState: "pending",
+					DataPlaneStatus: dataPlaneStatus, ConfigState: configState,
 					Membership:        registryMembership(client.Status),
 					Responsibilities:  append([]string(nil), client.Responsibilities...),
 					DestinationGrants: append([]string(nil), client.DestinationGrants...),
@@ -199,6 +203,29 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 			return inventory, nil
 		},
 		DiscardPending: store.DiscardPending,
+		PurgeRevoked: func(id string) error {
+			id = strings.TrimSpace(id)
+			if !model.ValidNodeID(id) {
+				return &clientregistry.Error{Code: clientregistry.CodeInvalid, Msg: "Device id is malformed"}
+			}
+			return withSSOTLock(c.SSOTPath, func() error {
+				snapshot, err := readSSOTSnapshot(c.SSOTPath)
+				if err != nil {
+					return err
+				}
+				current, err := model.Load(snapshot.body)
+				if err != nil {
+					return err
+				}
+				if findings := validate.Validate(current); len(findings) > 0 {
+					return fmt.Errorf("current SSOT is invalid: %s", validate.Format(findings))
+				}
+				if current.NodeByID()[id] != nil {
+					return &clientregistry.Error{Code: clientregistry.CodeConflict, Msg: "Device is still present in current SSOT"}
+				}
+				return store.PurgeRevoked(id)
+			})
+		},
 		DeleteDevice: func(id string) error {
 			id = strings.TrimSpace(id)
 			if !model.ValidNodeID(id) {
