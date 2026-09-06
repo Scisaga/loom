@@ -23,7 +23,7 @@ const defaultServerInboundPort = 61698
 
 // DeviceConfig contains only operator-declared facts that cannot be inferred
 // safely from the local platform. It is optional for a use_loom-only Device.
-// ProfileVersion remains the authority for responsibilities; this file cannot
+// The invitation remains the authority for responsibilities; this file cannot
 // grant forward or internet_egress by itself.
 type DeviceConfig struct {
 	Server *ServerConfig `yaml:"server,omitempty"`

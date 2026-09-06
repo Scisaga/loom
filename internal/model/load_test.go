@@ -108,6 +108,23 @@ declarations:
 	}
 }
 
+func TestLoadAcceptsDeprecatedEnrollmentProfilesForSSOTRollbackOnly(t *testing.T) {
+	s, err := Load([]byte(`
+enrollment_profiles:
+  - id: access-v1
+    version: 1
+    default: true
+    responsibilities: [use_loom]
+    destination_grants: [best-egress]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.DeprecatedEnrollmentProfiles) != 1 || s.DeprecatedEnrollmentProfiles[0].ID != "access-v1" {
+		t.Fatalf("deprecated rollback field was not decoded: %+v", s.DeprecatedEnrollmentProfiles)
+	}
+}
+
 func TestDistributionMirrorsKeepLegacyCompatibilityAndNodeOverride(t *testing.T) {
 	legacy := &SSOT{Defaults: &SSOTDefaults{DistributionURL: "https://legacy.example/loom/"}}
 	if got := legacy.DistributionURLs(); len(got) != 1 || got[0] != "https://legacy.example/loom/" {

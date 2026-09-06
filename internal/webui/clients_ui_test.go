@@ -12,11 +12,10 @@ import (
 func clientUIDeps() Deps {
 	d := misakaDeps()
 	d.Control.Clients = &ClientControlDeps{
-		EnrollmentProfile: func() (DeviceEnrollmentProfileView, error) {
-			return DeviceEnrollmentProfileView{
-				Version: "standard-device@v1", Responsibilities: []string{"use_loom"},
-				DestinationGrants: []string{"best-egress", "sg-fixed"},
-			}, nil
+		EnrollmentOptions: func() (DeviceEnrollmentOptions, error) {
+			return DeviceEnrollmentOptions{DestinationGrants: []DeviceDestinationOption{
+				{ID: "best-egress", Name: "Best egress"}, {ID: "sg-fixed", Name: "Singapore"},
+			}}, nil
 		},
 		List: func() (ClientInventory, error) {
 			return ClientInventory{
@@ -30,11 +29,12 @@ func clientUIDeps() Deps {
 		CreateInvite: func(ClientInviteInput) (ClientInviteView, error) { return ClientInviteView{}, nil },
 		LinuxPackage: func() (LinuxClientPackageView, error) {
 			return LinuxClientPackageView{
-				Filename: "loom-client-linux-amd64.tar.gz",
-				URL:      "/devices/download/linux-amd64",
-				SHA256:   "0123456789abcdef",
-				Version:  "v1.0.0",
-				Arch:     "linux/amd64",
+				Filename:     "loom-client-linux-amd64.tar.gz",
+				URL:          "/devices/download/linux-amd64",
+				InstallerURL: "https://packages.example/install.sh",
+				SHA256:       "0123456789abcdef",
+				Version:      "v1.0.0",
+				Arch:         "linux/amd64",
 			}, nil
 		},
 	}
@@ -137,7 +137,7 @@ func TestClientInvitationShowsRealQRResourceAndLinuxLink(t *testing.T) {
 	d := clientUIDeps()
 	invite := ClientInviteView{
 		InviteID: "invite-123", ClientID: "client-linux01", ClientName: "Build server",
-		InviteURI: "loom://enroll#test",
+		InviteURI: "loom://enroll#test", Platform: "linux-server", Responsibilities: []string{"use_loom"},
 		ExpiresAt: "2026-08-31T10:15:00Z",
 	}
 	body := pageClients(d, clientPageState{Invite: &invite}, true)
@@ -147,7 +147,7 @@ func TestClientInvitationShowsRealQRResourceAndLinuxLink(t *testing.T) {
 		`alt="Join QR code for client-linux01"`,
 		`value="loom://enroll#test"`,
 		`Device created · join code ready`,
-		`Start the client, then import the QR code`,
+		`Local or SSH-assisted bootstrap`,
 		`short-lived, single-use secret`,
 		`sudo ./install.sh --invite-file ../client.loom-invite`,
 		`sudo ./install.sh --no-enroll`,
@@ -172,47 +172,41 @@ func TestClientInvitationShowsRealQRResourceAndLinuxLink(t *testing.T) {
 	}
 }
 
-func TestAddClientDoesNotAskForPlatformOrRoute(t *testing.T) {
+func TestAddDeviceSelectsPlatformResponsibilitiesAndGrants(t *testing.T) {
 	d := clientUIDeps()
 	body := pageClients(d, clientPageState{Create: true}, true)
 	for _, want := range []string{
 		`action="/devices/create"`, `name=name`, `Display name`,
-		`The client reports its supported platform`,
-		`Platform is reported by the client running on the Device`,
-		`immutable purpose is pinned below`,
-		`standard-device@v1`, `use_loom`, `best-egress · sg-fixed`,
+		`name=platform`, `value=windows-desktop selected`, `Android · not delivered yet`,
+		`name=responsibility value=use_loom checked`, `name=responsibility value=forward`,
+		`name=responsibility value=internet_egress`, `name=destination_grant value="best-egress" checked`,
+		`data-device-enrollment-form`, `Invitation boundary`,
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("Add client page missing %q", want)
+			t.Errorf("Create Device page missing %q", want)
 		}
 	}
-	for _, forbidden := range []string{`name=platform`, `name=exit`, `name=route`} {
+	for _, forbidden := range []string{`standard-device`, `server-device`, `profile_version`, `ProfileVersion`} {
 		if strings.Contains(body, forbidden) {
-			t.Errorf("Add client form exposes forbidden field %q", forbidden)
+			t.Errorf("Create Device form retained profile concept %q", forbidden)
 		}
 	}
 }
 
-func TestAddDeviceSelectsAnImmutablePurposeNotAPlatform(t *testing.T) {
+func TestAddForwardDeviceKeepsSubmittedDirection(t *testing.T) {
 	d := clientUIDeps()
-	d.Control.Clients.EnrollmentProfiles = func() ([]DeviceEnrollmentProfileView, error) {
-		return []DeviceEnrollmentProfileView{
-			{Version: "standard-device@v1", Default: true, Responsibilities: []string{"use_loom"}, DestinationGrants: []string{"best-egress"}},
-			{Version: "server-device@v1", Responsibilities: []string{"forward", "internet_egress"}},
-		}, nil
-	}
-	body := pageClients(d, clientPageState{Create: true, SubmittedProfile: "server-device@v1"}, true)
+	body := pageClients(d, clientPageState{
+		Create: true, Submitted: true, SubmittedPlatform: "linux-server",
+		SubmittedResponsibilities: []string{"forward", "internet_egress"}, SubmittedDirection: "reverse_only",
+	}, true)
 	for _, want := range []string{
-		`name=profile_version`, `Device purpose`, `server-device@v1 · forward · internet_egress`,
-		`value="server-device@v1" data-responsibilities="forward · internet_egress" data-grants="—" selected`,
-		`data-device-profile-control`, `profile-preview-responsibilities`, `not a platform choice`,
+		`value=linux-server selected`, `name=responsibility value=forward checked`,
+		`name=responsibility value=internet_egress checked`, `value=reverse_only selected`,
+		`not a geography label`,
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("Create Device join-profile selector missing %q", want)
+			t.Errorf("Create Device responsibility selector missing %q", want)
 		}
-	}
-	if strings.Contains(body, `name=platform`) {
-		t.Fatal("Device purpose selector was presented as a platform selector")
 	}
 }
 
@@ -221,16 +215,22 @@ func TestServerDeviceInvitationExplainsDeclarationBeforeJoin(t *testing.T) {
 	invite := ClientInviteView{
 		InviteID: "invite-server", ClientID: "device-server01", ClientName: "Edge server",
 		InviteURI: "loom://enroll#opaque", ExpiresAt: "2026-09-01T20:00:00Z",
-		ProfileVersion: "server-device@v1", Responsibilities: []string{"forward", "internet_egress"},
+		Platform: "linux-server", Direction: "reverse_only", Responsibilities: []string{"forward", "internet_egress"},
 	}
 	body := pageClients(d, clientPageState{Invite: &invite}, true)
 	for _, want := range []string{
 		`Configure the server declaration before joining`, `/etc/loom/device.yaml`,
-		`public_endpoint: edge.example.net`, `inbound_port: 61698`, `direction: bidirectional`,
-		`not a route or exit selection`, `verified by the existing signed topology observations after apply`,
+		`public_endpoint: edge.example.net`, `inbound_port: 61698`, `direction: reverse_only`,
+		`Location does not determine direction`, `initiates persistent WireGuard tunnels`,
+		`Shell bootstrap on the target`, `SSH-assisted`, `No QR or join-file delivery`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("server invitation missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{`/qr.png`, `Download join file`} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("server invitation exposed access-only delivery %q", forbidden)
 		}
 	}
 }
@@ -258,7 +258,7 @@ func TestInvitationDoesNotPresentUnrunnableLinuxCommandsWithoutPackage(t *testin
 	}
 	invite := ClientInviteView{
 		InviteID: "invite-blocked", ClientID: "client-blocked", ClientName: "Blocked client",
-		InviteURI: "loom://enroll#blocked", ExpiresAt: "2026-08-31T10:15:00Z",
+		InviteURI: "loom://enroll#blocked", Platform: "linux-server", Responsibilities: []string{"use_loom"}, ExpiresAt: "2026-08-31T10:15:00Z",
 	}
 	body := pageClients(d, clientPageState{Invite: &invite}, true)
 	for _, want := range []string{"Linux package unavailable", "artifact not published", "Back to Device list"} {
@@ -314,7 +314,7 @@ func TestClientEnrollmentUIAndInvitationArtifacts(t *testing.T) {
 		createdInvites++
 		return ClientInviteView{
 			InviteID: "invite-ui", ClientID: "client-ui", ClientName: input.Name,
-			InviteURI: "loom://enroll#test", ExpiresAt: "2026-08-31T10:15:00Z",
+			InviteURI: "loom://enroll#test", Platform: input.Platform, Responsibilities: input.Responsibilities, ExpiresAt: "2026-08-31T10:15:00Z",
 		}, nil
 	}
 	d.Control.Clients.InviteArtifact = func(inviteID string) (ClientInviteArtifact, error) {
@@ -323,11 +323,14 @@ func TestClientEnrollmentUIAndInvitationArtifacts(t *testing.T) {
 		}
 		return ClientInviteArtifact{
 			ClientID: "client-ui", ClientName: "Build server",
-			InviteURI: "loom://enroll#test", ExpiresAt: "2026-08-31T10:15:00Z",
+			InviteURI: "loom://enroll#test", Platform: "linux-server", Responsibilities: []string{"use_loom"}, ExpiresAt: "2026-08-31T10:15:00Z",
 		}, nil
 	}
 
-	created := misakaRequest(t, d, http.MethodPost, "/devices/create", url.Values{"name": {"Build server"}}, true)
+	created := misakaRequest(t, d, http.MethodPost, "/devices/create", url.Values{
+		"name": {"Build server"}, "platform": {"linux-server"},
+		"responsibility": {"use_loom"}, "destination_grant": {"best-egress"},
+	}, true)
 	if created.Code != http.StatusSeeOther {
 		t.Fatalf("POST /devices/create = %d; body=%s", created.Code, created.Body.String())
 	}

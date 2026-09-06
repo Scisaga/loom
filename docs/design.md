@@ -1424,13 +1424,15 @@ user),报成一条状态,进事件历史。于是"开了三天还没关"是一�
 
 ### 13.5 客户端加入网络复用现有 SSOT 与发布链
 
-管理员先在中控创建 Device。客户端导入该 Device 的二维码只完成身份绑定和首次配置交付，
-不会创建第二条 Device，也不是另一套组网或选路模型。唯一允许的链路是：
+管理员先在中控创建 Device，并固定平台、职责、grants 和必要的连接方向。纯 `use_loom`
+客户端可导入二维码；Linux 也可在本地或管理员建立的 SSH 会话中执行同一 shell bootstrap。
+这些加入输入只完成身份绑定和首次配置交付，不会创建第二条 Device，也不是另一套组网或
+选路模型。唯一允许的链路是：
 
 ```text
-中控创建 Device，并为它生成短时、一次性加入二维码
+中控创建 Device，并为它生成短时、一次性加入码
     ↓
-客户端正常启动，用户扫描或导入二维码
+客户端导入 access-only QR/文件，或在 Linux 本地/SSH 会话执行 shell bootstrap
     ↓
 设备本地生成 P-256 私钥与 PKCS#10 CSR（私钥不离机；Portable 用用户 DPAPI 落盘）
     ↓
@@ -1460,10 +1462,11 @@ Installed 目标态必须由受限 Service broker 写入 machine-scope/受保护
 内部绑定记录中的 `ready` 只表示服务端 bootstrap 已准备好，不是客户端已经收到、安装或
 在线；页面显示 “Joined · status unverified”，数据面在线仍只能来自后续可信运行态报告。
 
-从未领取的 Device 可在详情页重新生成短期加入二维码，保留原 ID 和入网预设，旧码立即
-失效。客户端删除了本机身份后，管理员可对已加入的纯 `use_loom` Device 执行“重新加入”：
-明确确认本机身份已删除，移除旧 SSOT 接入与设备专属凭据，归档旧身份，再生成沿用名称
-和原 ProfileVersion 的新 Device ID 与二维码。新密钥不能静默绑定旧 ID，旧证书不能
+从未领取的 Device 可在详情页重新生成短期加入码，保留原 ID、平台、职责、grants 和
+direction，旧码立即失效；纯 `use_loom` Device 可显示二维码，包含 `forward` 的 Linux
+Device 只展示 shell/SSH 辅助交付。客户端删除了本机身份后，管理员可对已加入的纯
+`use_loom` Device 执行“重新加入”：明确确认本机身份已删除，移除旧 SSOT 接入与设备专属
+凭据，归档旧身份，再生成沿用名称、平台和原职责/授权的新 Device ID 与二维码。新密钥不能静默绑定旧 ID，旧证书不能
 冒充新身份；旧访问凭据的撤销随服务器应用签名配置生效，不宣称旧客户端执行过远程停机。
 替换与 provisioning 使用同一 SSOT 锁，事务内复核 registry 身份，防止排队的旧 claim
 重新创建已撤销成员。归档记录保留替代关系，默认设备列表只显示当前记录。

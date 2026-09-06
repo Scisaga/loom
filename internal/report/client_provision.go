@@ -142,7 +142,7 @@ func (p *clientProvisioner) provision(client clientregistry.Client, csrPEM strin
 
 		node := current.NodeByID()[client.ID]
 		if node == nil {
-			if err := validatePinnedEnrollmentProfile(current, client); err != nil {
+			if err := validateEnrollmentIntent(current, client); err != nil {
 				return err
 			}
 			candidateBody := snapshot.body
@@ -285,7 +285,7 @@ func validateProvisionedClient(s *model.SSOT, node *model.Node, client clientreg
 	if node.Name != client.Name {
 		return fmt.Errorf("device id %q already has a different display name in SSOT", client.ID)
 	}
-	wantsAccess := client.ProfileVersion == "" || hasResponsibility(client, "use_loom")
+	wantsAccess := hasResponsibility(client, "use_loom")
 	platform := model.Platform(client.Platform)
 	if platform != model.LinuxServer && platform != model.WindowsDesktop {
 		return fmt.Errorf("device id %q has unsupported platform %q", client.ID, client.Platform)
@@ -301,7 +301,7 @@ func validateProvisionedClient(s *model.SSOT, node *model.Node, client clientreg
 			return fmt.Errorf("device id %q has an incomplete or broadened access shape: %w", client.ID, err)
 		}
 	} else if node.Access != nil {
-		return fmt.Errorf("device id %q gained an access role outside its pinned profile", client.ID)
+		return fmt.Errorf("device id %q gained an access role outside its invitation", client.ID)
 	}
 
 	wantsServer := hasResponsibility(client, "forward")
@@ -348,32 +348,27 @@ func validateProvisionedServerShape(s *model.SSOT, node *model.Node, client clie
 	return nil
 }
 
-func validatePinnedEnrollmentProfile(s *model.SSOT, client clientregistry.Client) error {
-	if s == nil || client.ProfileVersion == "" || client.ProfileDigest == "" {
-		return fmt.Errorf("device %q has no pinned enrollment ProfileVersion", client.ID)
+func validateEnrollmentIntent(s *model.SSOT, client clientregistry.Client) error {
+	if s == nil {
+		return fmt.Errorf("device %q cannot validate enrollment without SSOT", client.ID)
 	}
-	profile := s.EnrollmentProfileByReference(client.ProfileVersion)
-	if profile == nil {
-		return fmt.Errorf("device %q pins missing enrollment profile %q", client.ID, client.ProfileVersion)
-	}
-	if profile.Digest() != client.ProfileDigest {
-		return fmt.Errorf("enrollment profile %q content changed after invitation creation", client.ProfileVersion)
-	}
-	if !sameStrings(profile.Responsibilities, client.Responsibilities) ||
-		!sameStrings(profile.DestinationGrants, client.DestinationGrants) {
-		return fmt.Errorf("device %q profile expansion does not match pinned digest", client.ID)
+	if err := clientregistry.ValidateEnrollment(client); err != nil {
+		return fmt.Errorf("device %q enrollment intent is invalid: %w", client.ID, err)
 	}
 	hasUse := hasResponsibility(client, "use_loom")
 	hasForward := hasResponsibility(client, "forward")
 	hasEgress := hasResponsibility(client, "internet_egress")
 	if hasEgress && !hasForward {
-		return fmt.Errorf("enrollment profile %q grants internet_egress without forward", client.ProfileVersion)
+		return fmt.Errorf("device %q grants internet_egress without forward", client.ID)
 	}
 	if hasForward != (client.Server != nil) {
-		return fmt.Errorf("device %q server claim does not match pinned responsibilities", client.ID)
+		return fmt.Errorf("device %q server claim does not match invitation responsibilities", client.ID)
 	}
 	if hasUse != (len(client.DestinationGrants) > 0) {
 		return fmt.Errorf("device %q destination grants do not match use_loom responsibility", client.ID)
+	}
+	if client.Server != nil && client.Server.Direction != client.Direction {
+		return fmt.Errorf("device %q server direction does not match invitation", client.ID)
 	}
 	return nil
 }
@@ -388,22 +383,7 @@ func hasResponsibility(client clientregistry.Client, responsibility string) bool
 }
 
 func clientDestinationGrants(client clientregistry.Client) []string {
-	if client.ProfileVersion == "" {
-		return nil // validate the historical all-from_request shape for legacy records
-	}
 	return append([]string(nil), client.DestinationGrants...)
-}
-
-func sameStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func nodeSecretRefs(s *model.SSOT, owner string, all map[string]string) []string {

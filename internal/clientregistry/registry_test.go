@@ -28,10 +28,17 @@ func testStore(t *testing.T, now *time.Time) Store {
 	}
 }
 
+func testAccessIntent(platform string) EnrollmentIntent {
+	return EnrollmentIntent{
+		Platform: platform, Responsibilities: []string{"use_loom"},
+		DestinationGrants: []string{"best-egress"},
+	}
+}
+
 func TestInvitationPersistsOnlyHashAndExactClaimReplayIsIdempotent(t *testing.T) {
 	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, &now)
-	created, err := store.Create("build server")
+	created, err := store.Create("build server", testAccessIntent("linux-server"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +121,7 @@ func TestInvitationPersistsOnlyHashAndExactClaimReplayIsIdempotent(t *testing.T)
 func TestReportingIdentityRequiresExactReadyEnrollmentKey(t *testing.T) {
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, &now)
-	created, err := store.Create("Windows workstation")
+	created, err := store.Create("Windows workstation", testAccessIntent("windows-desktop"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +158,7 @@ func TestProvisioningClaimRecoveryRequiresExactTupleAndExpires(t *testing.T) {
 	now := started
 	store := testStore(t, &now)
 	store.RecoveryTTL = 30 * time.Minute
-	created, err := store.Create("recovering Device")
+	created, err := store.Create("recovering Device", testAccessIntent("linux-server"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +217,7 @@ func TestProvisioningClaimRecoveryRequiresExactTupleAndExpires(t *testing.T) {
 func TestRevokeErasesInvitationMaterialAndIsIdempotent(t *testing.T) {
 	now := time.Date(2026, 9, 1, 21, 0, 0, 0, time.UTC)
 	store := testStore(t, &now)
-	created, err := store.Create("Disposable canary")
+	created, err := store.Create("Disposable canary", testAccessIntent("windows-desktop"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,11 +241,11 @@ func TestRevokeErasesInvitationMaterialAndIsIdempotent(t *testing.T) {
 func TestPurgeRevokedRemovesOnlyClosedIdentityAndInvites(t *testing.T) {
 	now := time.Date(2026, 9, 1, 21, 0, 0, 0, time.UTC)
 	store := testStore(t, &now)
-	purged, err := store.Create("Disposable canary")
+	purged, err := store.Create("Disposable canary", testAccessIntent("windows-desktop"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	kept, err := store.Create("Kept identity")
+	kept, err := store.Create("Kept identity", testAccessIntent("windows-desktop"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,11 +273,11 @@ func TestPurgeRevokedRemovesOnlyClosedIdentityAndInvites(t *testing.T) {
 func TestDiscardPendingRemovesOnlyUnclaimedIdentityAndInvites(t *testing.T) {
 	now := time.Date(2026, 9, 1, 21, 0, 0, 0, time.UTC)
 	store := testStore(t, &now)
-	discarded, err := store.Create("Discarded test")
+	discarded, err := store.Create("Discarded test", testAccessIntent("linux-server"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	kept, err := store.Create("Claimed Device")
+	kept, err := store.Create("Claimed Device", testAccessIntent("linux-server"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +321,7 @@ func TestImportManagedIdentityIsCanonicalUniqueAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Status != "managed" || first.IdentitySource != "managed-certificate" || first.KeyFingerprint == "" || first.ProfileVersion != "" {
+	if first.Status != "managed" || first.IdentitySource != "managed-certificate" || first.KeyFingerprint == "" {
 		t.Fatalf("managed identity = %+v", first)
 	}
 	repeated, err := store.ImportManaged(input)
@@ -327,42 +334,66 @@ func TestImportManagedIdentityIsCanonicalUniqueAndIdempotent(t *testing.T) {
 	}
 }
 
-func TestInvitationPinsImmutableProfileExpansion(t *testing.T) {
+func TestInvitationPinsImmutableEnrollmentIntent(t *testing.T) {
 	now := time.Date(2026, 9, 1, 19, 0, 0, 0, time.UTC)
 	store := testStore(t, &now)
-	assignment := ProfileAssignment{
-		Version: "standard-device@v1", Digest: strings.Repeat("a", 64),
+	intent := EnrollmentIntent{
+		Platform:          "linux-server",
 		Responsibilities:  []string{"use_loom"},
 		DestinationGrants: []string{"best-egress", "sg-fixed"},
 	}
-	created, err := store.CreateWithProfile("profiled server", assignment)
+	created, err := store.Create("access Device", intent)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assignment.DestinationGrants[0] = "mutated-after-create"
+	intent.DestinationGrants[0] = "mutated-after-create"
 	clients, invites, err := store.List()
 	if err != nil || len(clients) != 1 || len(invites) != 1 {
 		t.Fatalf("list clients=%+v invites=%+v err=%v", clients, invites, err)
 	}
-	if clients[0].ProfileVersion != "standard-device@v1" || clients[0].ProfileDigest != strings.Repeat("a", 64) ||
-		strings.Join(clients[0].DestinationGrants, ",") != "best-egress,sg-fixed" ||
-		invites[0].ProfileVersion != clients[0].ProfileVersion || created.Client.ProfileVersion != clients[0].ProfileVersion {
+	if strings.Join(clients[0].DestinationGrants, ",") != "best-egress,sg-fixed" ||
+		strings.Join(created.Client.DestinationGrants, ",") != "best-egress,sg-fixed" {
 		t.Fatalf("pinned assignment was not durably copied: client=%+v invite=%+v", clients[0], invites[0])
 	}
 	if len(clients[0].ID) > 12 || !strings.HasPrefix(clients[0].ID, "d-") {
 		t.Fatalf("new unified Device id %q cannot safely become a WireGuard peer", clients[0].ID)
 	}
-	if _, err := store.CreateWithProfile("invalid profile", ProfileAssignment{Version: "standard-device@v1", Digest: "short"}); err == nil {
-		t.Fatal("malformed profile digest was accepted")
+}
+
+func TestEnrollmentIntentRejectsUnsupportedCombinations(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	store := testStore(t, &now)
+	cases := map[string]EnrollmentIntent{
+		"no responsibilities":       {Platform: "linux-server"},
+		"unknown platform":          {Platform: "android", Responsibilities: []string{"use_loom"}, DestinationGrants: []string{"best-egress"}},
+		"unknown responsibility":    {Platform: "linux-server", Responsibilities: []string{"control"}},
+		"egress without forward":    {Platform: "linux-server", Responsibilities: []string{"internet_egress"}},
+		"use without grants":        {Platform: "linux-server", Responsibilities: []string{"use_loom"}},
+		"grants without use":        {Platform: "linux-server", Responsibilities: []string{"forward"}, DestinationGrants: []string{"best-egress"}, Direction: "bidirectional"},
+		"forward without direction": {Platform: "linux-server", Responsibilities: []string{"forward"}},
+		"direction without forward": {Platform: "linux-server", Responsibilities: []string{"use_loom"}, DestinationGrants: []string{"best-egress"}, Direction: "bidirectional"},
+		"Windows forwarding":        {Platform: "windows-desktop", Responsibilities: []string{"forward"}, Direction: "bidirectional"},
+	}
+	for name, intent := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := store.Create("invalid intent", intent); err == nil {
+				t.Fatalf("accepted %+v", intent)
+			}
+		})
+	}
+	if _, err := store.Create("reverse access and egress", EnrollmentIntent{
+		Platform: "linux-server", Responsibilities: []string{"internet_egress", "use_loom", "forward"},
+		DestinationGrants: []string{"best-egress"}, Direction: "reverse_only",
+	}); err != nil {
+		t.Fatalf("valid combined Linux responsibilities were rejected: %v", err)
 	}
 }
 
 func TestServerClaimMustMatchPinnedResponsibilitiesAndExactReplay(t *testing.T) {
 	now := time.Date(2026, 9, 1, 19, 0, 0, 0, time.UTC)
 	store := testStore(t, &now)
-	created, err := store.CreateWithProfile("egress Device", ProfileAssignment{
-		Version: "server-device@v1", Digest: strings.Repeat("b", 64),
-		Responsibilities: []string{"forward", "internet_egress"},
+	created, err := store.Create("egress Device", EnrollmentIntent{
+		Platform: "linux-server", Responsibilities: []string{"forward", "internet_egress"}, Direction: "bidirectional",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -374,9 +405,13 @@ func TestServerClaimMustMatchPinnedResponsibilitiesAndExactReplay(t *testing.T) 
 		t.Fatal("server invitation was consumed without server facts")
 	}
 	claim.Server = &ServerEnrollment{
-		PublicEndpoint: "edge.example.net", InboundPort: 61698, Direction: "bidirectional",
+		PublicEndpoint: "edge.example.net", InboundPort: 61698, Direction: "reverse_only",
 		WGPublicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", Country: "CN", City: "Beijing",
 	}
+	if _, err := store.Claim(claim); err == nil {
+		t.Fatal("server claim accepted a direction different from the invitation")
+	}
+	claim.Server.Direction = "bidirectional"
 	first, err := store.Claim(claim)
 	if err != nil || first.Replay || first.Client.Server == nil || first.Client.Server.PublicEndpoint != "edge.example.net" {
 		t.Fatalf("server claim=%+v err=%v", first, err)
@@ -393,14 +428,49 @@ func TestServerClaimMustMatchPinnedResponsibilitiesAndExactReplay(t *testing.T) 
 	}
 }
 
-func TestConcurrentInvitationsCannotBindOneCanonicalSPKITwice(t *testing.T) {
-	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+func TestSchemaOneMigrationDropsOldInvitationsAndKeepsJoinedIdentity(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, &now)
-	firstInvite, err := store.Create("first device record")
+	body := `{
+  "schema": 1,
+  "clients": [
+    {"id":"d-ready0001","name":"joined","platform":"windows-desktop","identity_source":"enrollment","public_key":"opaque","status":"ready","created_at":"2026-09-01T00:00:00Z","profile_version":"access-v1","profile_digest":"old","responsibilities":["use_loom"],"destination_grants":["best-egress"]},
+    {"id":"d-pending01","name":"pending","status":"pending","created_at":"2026-09-01T00:00:00Z","profile_version":"access-v1","profile_digest":"old","responsibilities":["use_loom"],"destination_grants":["best-egress"]}
+  ],
+  "invites": [
+    {"id":"old-invite","client_id":"d-pending01","token_sha256":"old","created_at":"2026-09-01T00:00:00Z","expires_at":"2026-09-01T00:15:00Z","profile_version":"access-v1","profile_digest":"old"}
+  ]
+}`
+	if err := os.WriteFile(store.Path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	clients, invites, err := store.List()
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondInvite, err := store.Create("second device record")
+	if len(clients) != 1 || clients[0].ID != "d-ready0001" || len(invites) != 0 {
+		t.Fatalf("migrated clients=%+v invites=%+v", clients, invites)
+	}
+	if err := ValidateEnrollment(clients[0]); err != nil {
+		t.Fatalf("joined identity lost its concrete enrollment intent: %v", err)
+	}
+	persisted, err := os.ReadFile(store.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(string(persisted), `"schema": 2`) || contains(string(persisted), "profile_") || contains(string(persisted), "old-invite") {
+		t.Fatalf("schema-one invitation survived migration: %s", persisted)
+	}
+}
+
+func TestConcurrentInvitationsCannotBindOneCanonicalSPKITwice(t *testing.T) {
+	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	store := testStore(t, &now)
+	firstInvite, err := store.Create("first device record", testAccessIntent("linux-server"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondInvite, err := store.Create("second device record", testAccessIntent("linux-server"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -478,7 +548,7 @@ func TestConcurrentInvitationsCannotBindOneCanonicalSPKITwice(t *testing.T) {
 func TestExpiredInvitationDoesNotPartiallyBindClient(t *testing.T) {
 	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, &now)
-	created, err := store.Create("expired device")
+	created, err := store.Create("expired device", testAccessIntent("linux-server"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -505,7 +575,7 @@ func TestExpiredInvitationDoesNotPartiallyBindClient(t *testing.T) {
 func TestClaimRejectsUnknownPlatformAndMalformedKey(t *testing.T) {
 	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, &now)
-	created, err := store.Create("device")
+	created, err := store.Create("device", testAccessIntent("linux-server"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -532,10 +602,7 @@ func TestClaimRejectsUnknownPlatformAndMalformedKey(t *testing.T) {
 func TestClaimAcceptsWindowsDesktopAccessIdentityAndReplay(t *testing.T) {
 	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, &now)
-	created, err := store.CreateWithProfile("Windows laptop", ProfileAssignment{
-		Version: "access-device@v1", Digest: strings.Repeat("a", 64),
-		Responsibilities: []string{"use_loom"}, DestinationGrants: []string{"best-egress"},
-	})
+	created, err := store.Create("Windows laptop", testAccessIntent("windows-desktop"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -553,12 +620,11 @@ func TestClaimAcceptsWindowsDesktopAccessIdentityAndReplay(t *testing.T) {
 	}
 }
 
-func TestClaimRejectsWindowsForForwardProfileWithoutConsumingInvite(t *testing.T) {
+func TestClaimRejectsPlatformThatDoesNotMatchForwardInvitation(t *testing.T) {
 	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, &now)
-	created, err := store.CreateWithProfile("server Device", ProfileAssignment{
-		Version: "server-device@v1", Digest: strings.Repeat("b", 64),
-		Responsibilities: []string{"forward"},
+	created, err := store.Create("server Device", EnrollmentIntent{
+		Platform: "linux-server", Responsibilities: []string{"forward"}, Direction: "bidirectional",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -587,7 +653,7 @@ func TestGeneratedClientIDsAlwaysUseCanonicalNodeGrammar(t *testing.T) {
 	store := testStore(t, &now)
 	seen := map[string]bool{}
 	for i := 0; i < 64; i++ {
-		created, err := store.Create("device")
+		created, err := store.Create("device", testAccessIntent("windows-desktop"))
 		if err != nil {
 			t.Fatal(err)
 		}

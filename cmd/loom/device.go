@@ -284,8 +284,11 @@ func requireRetirableRegistryDevice(store clientregistry.Store, id string) (clie
 		if client.ID != id {
 			continue
 		}
-		if client.ProfileVersion == "" {
-			return clientregistry.Client{}, fmt.Errorf("Device %q is not pinned to an Enrollment ProfileVersion", id)
+		if client.IdentitySource != "enrollment" {
+			return clientregistry.Client{}, fmt.Errorf("Device %q has no enrollment authorization", id)
+		}
+		if err := clientregistry.ValidateEnrollment(client); err != nil {
+			return clientregistry.Client{}, fmt.Errorf("Device %q has invalid enrollment authorization: %w", id, err)
 		}
 		if client.Status != "ready" && client.Status != "revoked" {
 			return clientregistry.Client{}, fmt.Errorf("Device %q registry status is %q, want ready", id, client.Status)

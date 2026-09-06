@@ -91,7 +91,7 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 		return webui.ClientInviteView{
 			InviteID: created.Invite.ID, ClientID: created.Client.ID, ClientName: created.Client.Name,
 			InviteURI: uri, EnrollmentURL: c.ClientEnrollmentURL, ExpiresAt: created.Invite.ExpiresAt,
-			ProfileVersion: created.Client.ProfileVersion, Replaces: created.Client.Replaces,
+			Platform: created.Client.Platform, Direction: created.Client.Direction, Replaces: created.Client.Replaces,
 			Responsibilities:  append([]string(nil), created.Client.Responsibilities...),
 			DestinationGrants: append([]string(nil), created.Client.DestinationGrants...),
 		}, nil
@@ -133,23 +133,8 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 			}
 			return linuxPublicInstallScript(view), nil
 		},
-		EnrollmentProfile: func() (webui.DeviceEnrollmentProfileView, error) {
-			profile, err := defaultDeviceEnrollmentProfile(c)
-			if err != nil {
-				return webui.DeviceEnrollmentProfileView{}, err
-			}
-			return deviceEnrollmentProfileView(profile), nil
-		},
-		EnrollmentProfiles: func() ([]webui.DeviceEnrollmentProfileView, error) {
-			profiles, err := deviceEnrollmentProfiles(c)
-			if err != nil {
-				return nil, err
-			}
-			views := make([]webui.DeviceEnrollmentProfileView, 0, len(profiles))
-			for _, profile := range profiles {
-				views = append(views, deviceEnrollmentProfileView(profile))
-			}
-			return views, nil
+		EnrollmentOptions: func() (webui.DeviceEnrollmentOptions, error) {
+			return deviceEnrollmentOptions(c)
 		},
 		List: func() (webui.ClientInventory, error) {
 			clients, invites, err := store.List()
@@ -169,9 +154,9 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 					CreatedAt: client.CreatedAt, EnrolledAt: client.EnrolledAt,
 					DataPlaneStatus: "pending", ConfigState: "pending",
 					Membership:        registryMembership(client.Status),
-					ProfileVersion:    client.ProfileVersion,
 					Responsibilities:  append([]string(nil), client.Responsibilities...),
 					DestinationGrants: append([]string(nil), client.DestinationGrants...),
+					Direction:         client.Direction,
 				})
 			}
 			for _, invite := range invites {
@@ -243,7 +228,7 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 					return fmt.Errorf("current SSOT is invalid: %s", validate.Format(findings))
 				}
 				created, err = store.ReplaceWithInvitation(id, func(previous clientregistry.Client) error {
-					if err := validatePinnedEnrollmentProfile(current, previous); err != nil {
+					if err := validateEnrollmentIntent(current, previous); err != nil {
 						return err
 					}
 					node := current.NodeByID()[id]
@@ -272,14 +257,12 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 			if err != nil {
 				return webui.ClientInviteView{}, err
 			}
-			profile, err := selectedDeviceEnrollmentProfile(c, input.ProfileVersion)
-			if err != nil {
+			if err := validateDeviceInviteInput(c, input); err != nil {
 				return webui.ClientInviteView{}, err
 			}
-			created, err := store.CreateWithProfile(input.Name, clientregistry.ProfileAssignment{
-				Version: profile.Reference(), Digest: profile.Digest(),
-				Responsibilities:  append([]string(nil), profile.Responsibilities...),
-				DestinationGrants: append([]string(nil), profile.DestinationGrants...),
+			created, err := store.Create(input.Name, clientregistry.EnrollmentIntent{
+				Platform: input.Platform, Responsibilities: append([]string(nil), input.Responsibilities...),
+				DestinationGrants: append([]string(nil), input.DestinationGrants...), Direction: input.Direction,
 			})
 			if err != nil {
 				return webui.ClientInviteView{}, err
@@ -292,9 +275,10 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 				InviteID: created.Invite.ID, ClientID: created.Client.ID,
 				ClientName: created.Client.Name, InviteURI: uri,
 				EnrollmentURL: endpoint, ExpiresAt: created.Invite.ExpiresAt,
-				ProfileVersion:    created.Client.ProfileVersion,
+				Platform:          created.Client.Platform,
 				Responsibilities:  append([]string(nil), created.Client.Responsibilities...),
 				DestinationGrants: append([]string(nil), created.Client.DestinationGrants...),
+				Direction:         created.Client.Direction,
 			}, nil
 		},
 		InviteArtifact: func(inviteID string) (webui.ClientInviteArtifact, error) {
@@ -324,9 +308,10 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 			return webui.ClientInviteArtifact{
 				ClientID: invite.ClientID, ClientName: invitedClient.Name,
 				InviteURI: uri, ExpiresAt: invite.ExpiresAt,
-				ProfileVersion:    invitedClient.ProfileVersion,
+				Platform:          invitedClient.Platform,
 				Responsibilities:  append([]string(nil), invitedClient.Responsibilities...),
 				DestinationGrants: append([]string(nil), invitedClient.DestinationGrants...),
+				Direction:         invitedClient.Direction,
 				Replaces:          invitedClient.Replaces,
 			}, nil
 		},
@@ -453,78 +438,43 @@ func applyDeviceDeclaration(device *webui.ClientView, ssot *model.SSOT, node *mo
 	}
 }
 
-func defaultDeviceEnrollmentProfile(c *Control) (*model.EnrollmentProfileVersion, error) {
-	return selectedDeviceEnrollmentProfile(c, "")
-}
-
-func deviceEnrollmentProfiles(c *Control) ([]*model.EnrollmentProfileVersion, error) {
+func deviceEnrollmentOptions(c *Control) (webui.DeviceEnrollmentOptions, error) {
 	if c == nil {
-		return nil, fmt.Errorf("control configuration is unavailable")
+		return webui.DeviceEnrollmentOptions{}, fmt.Errorf("control configuration is unavailable")
 	}
 	ssot, _, err := loadValidatedSSOTSnapshot(c.SSOTPath)
 	if err != nil {
-		return nil, fmt.Errorf("read join profiles: %w", err)
+		return webui.DeviceEnrollmentOptions{}, fmt.Errorf("read Device enrollment options: %w", err)
 	}
-	if _, err := ssot.DefaultEnrollmentProfile(); err != nil {
-		return nil, err
-	}
-	profiles := make([]*model.EnrollmentProfileVersion, 0, len(ssot.EnrollmentProfiles))
-	for i := range ssot.EnrollmentProfiles {
-		profile := &ssot.EnrollmentProfiles[i]
-		if err := validateSupportedEnrollmentProfile(profile); err != nil {
-			return nil, err
+	options := webui.DeviceEnrollmentOptions{}
+	for _, declaration := range ssot.Declarations {
+		if !declaration.AddressFromRequest() {
+			continue
 		}
-		profiles = append(profiles, profile)
+		name := strings.TrimSpace(declaration.Name)
+		if name == "" {
+			name = declaration.ID
+		}
+		options.DestinationGrants = append(options.DestinationGrants, webui.DeviceDestinationOption{ID: declaration.ID, Name: name})
 	}
-	return profiles, nil
+	return options, nil
 }
 
-func selectedDeviceEnrollmentProfile(c *Control, reference string) (*model.EnrollmentProfileVersion, error) {
-	profiles, err := deviceEnrollmentProfiles(c)
+func validateDeviceInviteInput(c *Control, input webui.ClientInviteInput) error {
+	options, err := deviceEnrollmentOptions(c)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	reference = strings.TrimSpace(reference)
-	for _, profile := range profiles {
-		if (reference == "" && profile.Default) || profile.Reference() == reference {
-			return profile, nil
+	allowed := make(map[string]bool, len(options.DestinationGrants))
+	for _, option := range options.DestinationGrants {
+		allowed[option.ID] = true
+	}
+	for _, grant := range input.DestinationGrants {
+		if !allowed[strings.TrimSpace(grant)] {
+			return fmt.Errorf("destination grant %q is not an available from_request declaration", grant)
 		}
-	}
-	return nil, fmt.Errorf("join profile %q is not available", reference)
-}
-
-func validateSupportedEnrollmentProfile(profile *model.EnrollmentProfileVersion) error {
-	if profile == nil || len(profile.Responsibilities) == 0 {
-		return fmt.Errorf("join profile has no responsibilities")
-	}
-	hasUse := false
-	for _, responsibility := range profile.Responsibilities {
-		switch responsibility {
-		case "use_loom":
-			hasUse = true
-		case "forward", "internet_egress":
-		default:
-			return fmt.Errorf("join profile %s requires unsupported responsibility %q", profile.Reference(), responsibility)
-		}
-	}
-	if hasUse && len(profile.DestinationGrants) == 0 {
-		return fmt.Errorf("join profile %s grants use_loom without destinations", profile.Reference())
-	}
-	if !hasUse && len(profile.DestinationGrants) != 0 {
-		return fmt.Errorf("join profile %s has destination grants without use_loom", profile.Reference())
 	}
 	return nil
-}
-
-func deviceEnrollmentProfileView(profile *model.EnrollmentProfileVersion) webui.DeviceEnrollmentProfileView {
-	if profile == nil {
-		return webui.DeviceEnrollmentProfileView{}
-	}
-	return webui.DeviceEnrollmentProfileView{
-		Version: profile.Reference(), Default: profile.Default,
-		Responsibilities:  append([]string(nil), profile.Responsibilities...),
-		DestinationGrants: append([]string(nil), profile.DestinationGrants...),
-	}
 }
 
 func validateClientBootstrap(bootstrap webui.ClientBootstrap, clientID string) error {

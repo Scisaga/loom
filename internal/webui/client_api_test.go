@@ -100,7 +100,7 @@ func TestClientAPIBoundsOperatorAndPublicClaimSurfaces(t *testing.T) {
 		Control:  &ControlDeps{},
 	}
 	var createdName string
-	var createdProfile string
+	var createdInput ClientInviteInput
 	var claimed ClientClaimInput
 	d.Control.Clients = &ClientControlDeps{
 		List: func() (ClientInventory, error) {
@@ -108,7 +108,7 @@ func TestClientAPIBoundsOperatorAndPublicClaimSurfaces(t *testing.T) {
 		},
 		CreateInvite: func(input ClientInviteInput) (ClientInviteView, error) {
 			createdName = input.Name
-			createdProfile = input.ProfileVersion
+			createdInput = input
 			return ClientInviteView{
 				InviteID: "invite-one", ClientID: "client-one", ClientName: input.Name,
 				InviteURI: "loom://enroll#opaque", EnrollmentURL: "https://control.example/api/client/enroll",
@@ -134,9 +134,10 @@ func TestClientAPIBoundsOperatorAndPublicClaimSurfaces(t *testing.T) {
 		t.Fatalf("unauthorized clients status=%d", unauthorized.Code)
 	}
 
-	create := authenticatedJSONRequest(t, d, http.MethodPost, "/api/control/client-invites", `{"name":"build server","profile_version":"server-device@v1"}`)
+	create := authenticatedJSONRequest(t, d, http.MethodPost, "/api/control/client-invites", `{"name":"build server","platform":"linux-server","responsibilities":["forward","internet_egress"],"direction":"reverse_only"}`)
 	handler.ServeHTTP(create.recorder, create.request)
-	if create.recorder.Code != http.StatusCreated || createdName != "build server" || createdProfile != "server-device@v1" ||
+	if create.recorder.Code != http.StatusCreated || createdName != "build server" || createdInput.Platform != "linux-server" ||
+		createdInput.Direction != "reverse_only" || strings.Join(createdInput.Responsibilities, ",") != "forward,internet_egress" ||
 		!strings.Contains(create.recorder.Body.String(), `"invite_uri":"loom://enroll#opaque"`) ||
 		create.recorder.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("create=%d name=%q body=%s headers=%v", create.recorder.Code, createdName, create.recorder.Body.String(), create.recorder.Header())
@@ -177,6 +178,11 @@ func TestClientAPIBoundsOperatorAndPublicClaimSurfaces(t *testing.T) {
 	if unknownResult.Code != http.StatusBadRequest {
 		t.Fatalf("unknown field status=%d body=%s", unknownResult.Code, unknownResult.Body.String())
 	}
+	oldProfile := authenticatedJSONRequest(t, d, http.MethodPost, "/api/control/client-invites", `{"name":"old","profile_version":"access-v1"}`)
+	handler.ServeHTTP(oldProfile.recorder, oldProfile.request)
+	if oldProfile.recorder.Code != http.StatusBadRequest {
+		t.Fatalf("old profile API was accepted: status=%d body=%s", oldProfile.recorder.Code, oldProfile.recorder.Body.String())
+	}
 }
 
 func TestClientInviteArtifactsAreAuthenticatedNoStoreAndScannable(t *testing.T) {
@@ -210,5 +216,17 @@ func TestClientInviteArtifactsAreAuthenticatedNoStoreAndScannable(t *testing.T) 
 	if download.recorder.Code != http.StatusOK || download.recorder.Body.String() != "loom://enroll#i1\n" ||
 		!strings.Contains(download.recorder.Header().Get("Content-Disposition"), "client.loom-invite") {
 		t.Fatalf("download=%d headers=%v body=%q", download.recorder.Code, download.recorder.Header(), download.recorder.Body.String())
+	}
+
+	d.Control.Clients.InviteArtifact = func(id string) (ClientInviteArtifact, error) {
+		return ClientInviteArtifact{InviteURI: "loom://enroll#" + id, Responsibilities: []string{"forward"}}, nil
+	}
+	forwardHandler := Handler(d)
+	for _, action := range []string{"qr.png", "download"} {
+		request := authenticatedJSONRequest(t, d, http.MethodGet, "/api/control/device-invites/server/"+action, "")
+		forwardHandler.ServeHTTP(request.recorder, request.request)
+		if request.recorder.Code != http.StatusConflict {
+			t.Errorf("forward invitation %s status=%d body=%s", action, request.recorder.Code, request.recorder.Body.String())
+		}
 	}
 }

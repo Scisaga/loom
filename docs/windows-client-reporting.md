@@ -5,6 +5,20 @@
 > **边界：** 复用现有 `report.Observation`、`loom-attest-v5` 和
 > `loom-selfcheck-v1`；不新增状态协议、envelope、心跳格式或 self-check v2。
 
+## 给 Windows 客户端仓库的简短提示词
+
+```text
+只修改 Loom Windows 客户端：在已加入且成功激活配置后，从 DPAPI 身份的已验证
+PreparedIdentity.Endpoint 精确要求 /loom-client/enroll，并同源替换为 /loom-client/report；
+每 60 秒 POST 现有 report.Observation 原始 JSON，成功只认 204。复用现有 canonical v5 attest 和 self-check v1：
+两份附件使用同一 P-256 设备私钥/节点证书，node/ts 必须一致，applied 绑定最后成功激活
+的 snapshot；无 WG 测量时省略 edges/targets，并按 {"edges":null,"targets":null} 计算
+measurements_sha256。串行生成严格递增 UTC 时间，拒绝重定向，失败等待下一周期且日志脱敏。
+不要新增 envelope、第三份签名、心跳协议、self-check v2 或服务端改动。Windows 邀请固定为
+windows-desktop + use_loom；已加入身份继续使用，仅未消费的旧加入码失效并需由中控重新创建。
+按本文“最小验收”补测试。
+```
+
 ## 1. 最小目标
 
 Windows 客户端在加入完成、首轮 signed pull 验证且数据面成功激活后，每 60 秒向

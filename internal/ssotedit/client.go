@@ -19,7 +19,7 @@ import (
 type ClientInput struct {
 	ID, Name string
 	Platform model.Platform
-	// DestinationGrants is the immutable ProfileVersion expansion. Nil keeps
+	// DestinationGrants is the immutable invitation authorization. Nil keeps
 	// the historical all-from_request shape only for validating already-managed
 	// legacy clients; new Enrollment must always pass an explicit non-empty set.
 	DestinationGrants []string
@@ -43,7 +43,7 @@ type clientShape struct {
 }
 
 // AddAccessClient 为一台 Device 生成完整且可发布的 SSOT 候选，但不修改输入或
-// 外部文件。新 Enrollment 只为 ProfileVersion 明确展开的 DestinationGrants
+// 外部文件。新 Enrollment 只为邀请明确固定的 DestinationGrants
 // 生成独立凭据；nil grants 仅用于验证旧客户端的历史全量形状。
 func AddAccessClient(content []byte, input ClientInput) (ClientPlan, error) {
 	return addAccessClient(content, input, false)

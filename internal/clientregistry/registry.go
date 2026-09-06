@@ -6,6 +6,7 @@
 package clientregistry
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdsa"
@@ -35,7 +36,7 @@ import (
 )
 
 const (
-	Schema                  = 1
+	Schema                  = 2
 	DefaultInviteTTL        = 15 * time.Minute
 	DefaultClaimRecoveryTTL = 60 * time.Minute
 	maxRegistryBytes        = 4 << 20
@@ -76,15 +77,14 @@ type Client struct {
 	RevokedAt         string            `json:"revoked_at,omitempty"`
 	ReplacedBy        string            `json:"replaced_by,omitempty"`
 	Replaces          string            `json:"replaces,omitempty"`
-	ProfileVersion    string            `json:"profile_version,omitempty"`
-	ProfileDigest     string            `json:"profile_digest,omitempty"`
 	Responsibilities  []string          `json:"responsibilities,omitempty"`
 	DestinationGrants []string          `json:"destination_grants,omitempty"`
+	Direction         string            `json:"direction,omitempty"`
 	Server            *ServerEnrollment `json:"server,omitempty"`
 }
 
 // ServerEnrollment is the minimal declarative input a Device must report when
-// its pinned ProfileVersion carries the forward responsibility. It contains no
+// its invitation carries the forward responsibility. It contains no
 // private key and no runtime reachability claim; existing signed topology
 // probes verify the declared public inbound after the Device applies config.
 type ServerEnrollment struct {
@@ -104,7 +104,6 @@ type Invite struct {
 	CreatedAt     string `json:"created_at"`
 	ExpiresAt     string `json:"expires_at"`
 	ConsumedAt    string `json:"consumed_at,omitempty"`
-	Platform      string `json:"platform,omitempty"`
 	PublicKeyHash string `json:"public_key_sha256,omitempty"`
 	CSRHash       string `json:"csr_sha256,omitempty"`
 	RequestID     string `json:"request_id,omitempty"`
@@ -112,19 +111,17 @@ type Invite struct {
 	// separate 0600 file. It exists only so the authenticated UI can render or
 	// download the invitation after the create POST; claim lookup still uses the
 	// one-way hash above. It is erased as soon as the invite is consumed.
-	SealedToken    string `json:"sealed_token,omitempty"`
-	ProfileVersion string `json:"profile_version,omitempty"`
-	ProfileDigest  string `json:"profile_digest,omitempty"`
+	SealedToken string `json:"sealed_token,omitempty"`
 }
 
-// ProfileAssignment is the immutable expansion pinned when an invitation is
-// created. The registry stores the reference, digest and expanded values so a
-// later SSOT edit cannot silently broaden a pending Device.
-type ProfileAssignment struct {
-	Version           string
-	Digest            string
+// EnrollmentIntent is the complete authorization fixed when an invitation is
+// created. Responsibilities and destination grants do not inherit from a
+// mutable preset. Direction is required only for a Device that can forward.
+type EnrollmentIntent struct {
+	Platform          string
 	Responsibilities  []string
 	DestinationGrants []string
+	Direction         string
 }
 
 type CreateResult struct {
@@ -162,6 +159,28 @@ type fileState struct {
 	Schema  int      `json:"schema"`
 	Clients []Client `json:"clients"`
 	Invites []Invite `json:"invites"`
+}
+
+// schema 1 used named enrollment profiles. It is read only for a one-way
+// migration: incomplete Devices and every old invitation are discarded, while
+// already joined identities retain their concrete responsibilities.
+type legacyClient struct {
+	Client
+	ProfileVersion string `json:"profile_version,omitempty"`
+	ProfileDigest  string `json:"profile_digest,omitempty"`
+}
+
+type legacyInvite struct {
+	Invite
+	Platform       string `json:"platform,omitempty"`
+	ProfileVersion string `json:"profile_version,omitempty"`
+	ProfileDigest  string `json:"profile_digest,omitempty"`
+}
+
+type legacyFileState struct {
+	Schema  int            `json:"schema"`
+	Clients []legacyClient `json:"clients"`
+	Invites []legacyInvite `json:"invites"`
 }
 
 type Store struct {
@@ -243,17 +262,14 @@ func (s Store) List() ([]Client, []Invite, error) {
 	return clients, invites, nil
 }
 
-func (s Store) Create(name string) (CreateResult, error) {
-	return s.CreateWithProfile(name, ProfileAssignment{})
-}
-
-func (s Store) CreateWithProfile(name string, profile ProfileAssignment) (CreateResult, error) {
+func (s Store) Create(name string, intent EnrollmentIntent) (CreateResult, error) {
 	s = s.defaults()
 	name = strings.TrimSpace(name)
 	if err := validName(name); err != nil {
 		return CreateResult{}, err
 	}
-	if err := validProfileAssignment(profile); err != nil {
+	intent, err := NormalizeEnrollmentIntent(intent)
+	if err != nil {
 		return CreateResult{}, err
 	}
 	if s.TTL < time.Minute || s.TTL > 24*time.Hour {
@@ -269,15 +285,15 @@ func (s Store) CreateWithProfile(name string, profile ProfileAssignment) (Create
 	}
 	now := s.Now().UTC().Truncate(time.Second)
 	client := Client{
-		Name: name, Status: "pending", CreatedAt: now.Format(time.RFC3339), IdentitySource: "enrollment",
-		ProfileVersion: profile.Version, ProfileDigest: profile.Digest,
-		Responsibilities:  append([]string(nil), profile.Responsibilities...),
-		DestinationGrants: append([]string(nil), profile.DestinationGrants...),
+		Name: name, Platform: intent.Platform, Status: "pending",
+		CreatedAt: now.Format(time.RFC3339), IdentitySource: "enrollment",
+		Responsibilities:  append([]string(nil), intent.Responsibilities...),
+		DestinationGrants: append([]string(nil), intent.DestinationGrants...),
+		Direction:         intent.Direction,
 	}
 	invite := Invite{
 		ID: inviteID, TokenHash: sha256Hex(token),
 		CreatedAt: now.Format(time.RFC3339), ExpiresAt: now.Add(s.TTL).Format(time.RFC3339),
-		ProfileVersion: profile.Version, ProfileDigest: profile.Digest,
 	}
 	err = s.withLock(true, func(st *fileState) error {
 		for attempt := 0; attempt < 8; attempt++ {
@@ -323,7 +339,7 @@ func (s Store) CreateWithProfile(name string, profile ProfileAssignment) (Create
 
 // ImportManaged records a pre-Enrollment Device certificate after its caller
 // has verified the certificate chain, exact Device SAN and SSOT membership.
-// It deliberately does not synthesize a ProfileVersion or claim that an
+// It deliberately does not synthesize enrollment intent or claim that an
 // Enrollment occurred. Exact retries are idempotent; changing a bound key is a
 // conflict that requires an explicit identity rotation workflow.
 func (s Store) ImportManaged(input ManagedIdentity) (Client, error) {
@@ -384,39 +400,104 @@ func (s Store) ImportManaged(input ManagedIdentity) (Client, error) {
 	return result, err
 }
 
-func validProfileAssignment(profile ProfileAssignment) error {
-	if profile.Version == "" && profile.Digest == "" && len(profile.Responsibilities) == 0 && len(profile.DestinationGrants) == 0 {
-		return nil // compatibility for identity-only records created by older callers
+func NormalizeEnrollmentIntent(intent EnrollmentIntent) (EnrollmentIntent, error) {
+	intent.Platform = strings.TrimSpace(intent.Platform)
+	intent.Direction = strings.TrimSpace(intent.Direction)
+	var err error
+	intent.Responsibilities, err = normalizedValues("responsibilities", intent.Responsibilities)
+	if err != nil {
+		return EnrollmentIntent{}, err
 	}
-	if strings.TrimSpace(profile.Version) != profile.Version || profile.Version == "" || len(profile.Version) > 128 {
-		return &Error{Code: CodeInvalid, Msg: "profile_version is missing or malformed"}
+	intent.DestinationGrants, err = normalizedValues("destination_grants", intent.DestinationGrants)
+	if err != nil {
+		return EnrollmentIntent{}, err
 	}
-	digest, err := hex.DecodeString(profile.Digest)
-	if err != nil || len(digest) != sha256.Size {
-		return &Error{Code: CodeInvalid, Msg: "profile_digest must be a SHA-256 hex digest"}
+	if intent.Platform != string(model.LinuxServer) && intent.Platform != string(model.WindowsDesktop) {
+		return EnrollmentIntent{}, &Error{Code: CodeInvalid, Msg: "platform must be linux-server or windows-desktop"}
 	}
-	for _, list := range []struct {
-		field  string
-		values []string
-	}{
-		{field: "responsibilities", values: profile.Responsibilities},
-		{field: "destination_grants", values: profile.DestinationGrants},
-	} {
-		field, values := list.field, list.values
-		if len(values) > 256 {
-			return &Error{Code: CodeInvalid, Msg: field + " contains too many entries"}
+	if len(intent.Responsibilities) == 0 {
+		return EnrollmentIntent{}, &Error{Code: CodeInvalid, Msg: "at least one responsibility is required"}
+	}
+	known := map[string]bool{"use_loom": true, "forward": true, "internet_egress": true}
+	for _, responsibility := range intent.Responsibilities {
+		if !known[responsibility] {
+			return EnrollmentIntent{}, &Error{Code: CodeInvalid, Msg: "unsupported responsibility " + responsibility}
 		}
-		seen := map[string]bool{}
-		previous := ""
-		for _, value := range values {
-			if value == "" || strings.TrimSpace(value) != value || len(value) > 128 || seen[value] || (previous != "" && value < previous) {
-				return &Error{Code: CodeInvalid, Msg: field + " must contain unique, sorted, non-empty values"}
-			}
-			seen[value] = true
-			previous = value
+	}
+	hasUse := containsString(intent.Responsibilities, "use_loom")
+	hasForward := containsString(intent.Responsibilities, "forward")
+	hasEgress := containsString(intent.Responsibilities, "internet_egress")
+	if hasEgress && !hasForward {
+		return EnrollmentIntent{}, &Error{Code: CodeInvalid, Msg: "internet_egress requires forward"}
+	}
+	if hasUse != (len(intent.DestinationGrants) > 0) {
+		return EnrollmentIntent{}, &Error{Code: CodeInvalid, Msg: "destination_grants must be non-empty exactly when use_loom is selected"}
+	}
+	if intent.Platform == string(model.WindowsDesktop) && (!hasUse || hasForward || hasEgress) {
+		return EnrollmentIntent{}, &Error{Code: CodeInvalid, Msg: "a Windows Device supports use_loom only"}
+	}
+	if hasForward {
+		if intent.Platform != string(model.LinuxServer) {
+			return EnrollmentIntent{}, &Error{Code: CodeInvalid, Msg: "forward is supported only on linux-server"}
 		}
+		if !model.Direction(intent.Direction).Valid() {
+			return EnrollmentIntent{}, &Error{Code: CodeInvalid, Msg: "direction must be bidirectional, reverse_only, or direct_only when forward is selected"}
+		}
+	} else if intent.Direction != "" {
+		return EnrollmentIntent{}, &Error{Code: CodeInvalid, Msg: "direction requires forward"}
+	}
+	return intent, nil
+}
+
+func normalizedValues(field string, values []string) ([]string, error) {
+	if len(values) > 256 {
+		return nil, &Error{Code: CodeInvalid, Msg: field + " contains too many entries"}
+	}
+	seen := make(map[string]bool, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || len(value) > 128 {
+			return nil, &Error{Code: CodeInvalid, Msg: field + " contains an empty or malformed value"}
+		}
+		if seen[value] {
+			return nil, &Error{Code: CodeInvalid, Msg: field + " contains duplicate value " + value}
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+// ValidateEnrollment verifies that persisted invitation authorization remains
+// a canonical combination accepted by the current enrollment contract.
+func ValidateEnrollment(client Client) error {
+	intent, err := NormalizeEnrollmentIntent(EnrollmentIntent{
+		Platform: client.Platform, Responsibilities: client.Responsibilities,
+		DestinationGrants: client.DestinationGrants, Direction: client.Direction,
+	})
+	if err != nil {
+		return err
+	}
+	if client.Platform != intent.Platform || client.Direction != intent.Direction ||
+		!sameStrings(client.Responsibilities, intent.Responsibilities) ||
+		!sameStrings(client.DestinationGrants, intent.DestinationGrants) {
+		return &Error{Code: CodeInvalid, Msg: "Device enrollment intent is not canonical"}
 	}
 	return nil
+}
+
+func sameStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (s Store) Claim(input ClaimInput) (ClaimResult, error) {
@@ -470,12 +551,21 @@ func (s Store) Claim(input ClaimInput) (ClaimResult, error) {
 			return fmt.Errorf("invitation %s references missing client %s", invite.ID, invite.ClientID)
 		}
 		client := &st.Clients[clientIndex]
-		needsServer := containsString(client.Responsibilities, "forward")
-		if input.Platform == string(model.WindowsDesktop) && needsServer {
-			return &Error{Code: CodeInvalid, Msg: "a Windows Device can join with use_loom access only"}
+		if err := ValidateEnrollment(*client); err != nil {
+			return &Error{Code: CodeConflict, Msg: "Device join authorization is invalid"}
 		}
+		if input.Platform != client.Platform {
+			if invite.ConsumedAt != "" {
+				return &Error{Code: CodeConflict, Msg: "join code has already been used by another Device identity"}
+			}
+			return &Error{Code: CodeInvalid, Msg: "Device platform does not match the invitation"}
+		}
+		needsServer := containsString(client.Responsibilities, "forward")
 		if needsServer != (input.Server != nil) {
-			return &Error{Code: CodeInvalid, Msg: "server join facts must exactly match the pinned responsibilities"}
+			return &Error{Code: CodeInvalid, Msg: "server join facts must exactly match the invitation responsibilities"}
+		}
+		if input.Server != nil && input.Server.Direction != client.Direction {
+			return &Error{Code: CodeInvalid, Msg: "server direction does not match the invitation"}
 		}
 		expires, parseErr := time.Parse(time.RFC3339, invite.ExpiresAt)
 		if parseErr != nil {
@@ -483,20 +573,12 @@ func (s Store) Claim(input ClaimInput) (ClaimResult, error) {
 		}
 		now := s.Now().UTC().Truncate(time.Second)
 		if invite.ConsumedAt != "" {
-			if invite.PublicKeyHash != keyHash || invite.Platform != input.Platform ||
+			if invite.PublicKeyHash != keyHash ||
 				invite.RequestID != input.RequestID || client.PublicKey != canonicalKey ||
 				!sameServerEnrollment(client.Server, input.Server) {
 				return &Error{Code: CodeConflict, Msg: "join code has already been used by another Device identity"}
 			}
-			if invite.CSRHash == "" {
-				// Migrate an invitation consumed by the previous schema only while
-				// its original bearer TTL is still valid. After that point there is
-				// no durable evidence that this is the exact original CSR.
-				if !now.Before(expires) {
-					return &Error{Code: CodeExpired, Msg: "legacy Device join cannot be recovered after its original expiry"}
-				}
-				invite.CSRHash = csrHash
-			} else if invite.CSRHash != csrHash {
+			if invite.CSRHash != csrHash {
 				return &Error{Code: CodeConflict, Msg: "join code has already been used with another Device CSR"}
 			}
 			if client.Status != "provisioning" && client.Status != "ready" {
@@ -528,7 +610,6 @@ func (s Store) Claim(input ClaimInput) (ClaimResult, error) {
 				return &Error{Code: CodeConflict, Msg: "device public key is already bound to another client"}
 			}
 		}
-		client.Platform = input.Platform
 		client.PublicKey = canonicalKey
 		client.KeyFingerprint = "SHA256:" + base64.RawStdEncoding.EncodeToString(keyHashBytes(key))
 		if input.Server != nil {
@@ -541,7 +622,6 @@ func (s Store) Claim(input ClaimInput) (ClaimResult, error) {
 		client.Status = "provisioning"
 		client.EnrolledAt = now.Format(time.RFC3339)
 		invite.ConsumedAt = client.EnrolledAt
-		invite.Platform = input.Platform
 		invite.PublicKeyHash = keyHash
 		invite.CSRHash = csrHash
 		invite.RequestID = input.RequestID
@@ -1087,22 +1167,77 @@ func (s Store) readState() (fileState, error) {
 	if err != nil || !os.SameFile(info, opened) {
 		return fileState{}, errors.New("client registry changed while opening")
 	}
-	var state fileState
-	dec := json.NewDecoder(io.LimitReader(f, maxRegistryBytes+1))
+	body, err := io.ReadAll(io.LimitReader(f, maxRegistryBytes+1))
+	if err != nil {
+		return fileState{}, fmt.Errorf("read client registry: %w", err)
+	}
+	var header struct {
+		Schema int `json:"schema"`
+	}
+	if err := json.Unmarshal(body, &header); err != nil {
+		return fileState{}, fmt.Errorf("decode client registry schema: %w", err)
+	}
+	switch header.Schema {
+	case Schema:
+		var state fileState
+		if err := decodeRegistryJSON(body, &state); err != nil {
+			return fileState{}, err
+		}
+		return state, nil
+	case 1:
+		var legacy legacyFileState
+		if err := decodeRegistryJSON(body, &legacy); err != nil {
+			return fileState{}, err
+		}
+		return migrateLegacyState(legacy), nil
+	default:
+		return fileState{}, fmt.Errorf("unsupported client registry schema %d", header.Schema)
+	}
+}
+
+func decodeRegistryJSON(body []byte, target any) error {
+	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&state); err != nil {
-		return fileState{}, fmt.Errorf("decode client registry: %w", err)
+	if err := dec.Decode(target); err != nil {
+		return fmt.Errorf("decode client registry: %w", err)
 	}
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		if err == nil {
-			return fileState{}, errors.New("client registry contains trailing JSON")
+			return errors.New("client registry contains trailing JSON")
 		}
-		return fileState{}, fmt.Errorf("decode client registry trailing data: %w", err)
+		return fmt.Errorf("decode client registry trailing data: %w", err)
 	}
-	if state.Schema != Schema {
-		return fileState{}, fmt.Errorf("unsupported client registry schema %d", state.Schema)
+	return nil
+}
+
+func migrateLegacyState(legacy legacyFileState) fileState {
+	state := fileState{Schema: Schema}
+	for _, record := range legacy.Clients {
+		client := record.Client
+		switch client.Status {
+		case "pending", "provisioning":
+			continue
+		}
+		if client.IdentitySource == "enrollment" {
+			if client.Server != nil {
+				client.Direction = client.Server.Direction
+			}
+			intent, err := NormalizeEnrollmentIntent(EnrollmentIntent{
+				Platform: client.Platform, Responsibilities: client.Responsibilities,
+				DestinationGrants: client.DestinationGrants, Direction: client.Direction,
+			})
+			if err == nil {
+				client.Platform = intent.Platform
+				client.Responsibilities = intent.Responsibilities
+				client.DestinationGrants = intent.DestinationGrants
+				client.Direction = intent.Direction
+			}
+		}
+		state.Clients = append(state.Clients, client)
 	}
-	return state, nil
+	// Deliberately do not migrate schema-1 invitations. Operators must create a
+	// new Device with an explicit platform and responsibility set.
+	return state
 }
 
 func (s Store) writeState(state fileState) error {

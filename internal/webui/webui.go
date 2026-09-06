@@ -177,12 +177,8 @@ type DefaultExitOption struct {
 }
 
 type ClientControlDeps struct {
-	List               func() (ClientInventory, error)
-	EnrollmentProfiles func() ([]DeviceEnrollmentProfileView, error)
-	// EnrollmentProfile is retained for source compatibility during E1. New
-	// callers use EnrollmentProfiles so the operator can pin one immutable
-	// purpose without selecting a platform or hand-authoring responsibilities.
-	EnrollmentProfile    func() (DeviceEnrollmentProfileView, error)
+	List                 func() (ClientInventory, error)
+	EnrollmentOptions    func() (DeviceEnrollmentOptions, error)
 	CreateInvite         func(ClientInviteInput) (ClientInviteView, error)
 	RenewInvite          func(deviceID string) (ClientInviteView, error)
 	ReplaceDevice        func(deviceID string) (ClientInviteView, error)
@@ -215,7 +211,6 @@ type ClientView struct {
 	Membership        string   `json:"membership"`
 	Responsibilities  []string `json:"responsibilities,omitempty"`
 	DestinationGrants []string `json:"destination_grants,omitempty"`
-	ProfileVersion    string   `json:"profile_version,omitempty"`
 	PublicEndpoint    string   `json:"public_endpoint,omitempty"`
 	InboundPort       int      `json:"inbound_port,omitempty"`
 	Direction         string   `json:"direction,omitempty"`
@@ -236,8 +231,11 @@ type DeviceInventory struct {
 }
 
 type ClientInviteInput struct {
-	Name           string `json:"name"`
-	ProfileVersion string `json:"profile_version,omitempty"`
+	Name              string   `json:"name"`
+	Platform          string   `json:"platform"`
+	Responsibilities  []string `json:"responsibilities"`
+	DestinationGrants []string `json:"destination_grants,omitempty"`
+	Direction         string   `json:"direction,omitempty"`
 }
 
 type ClientInviteView struct {
@@ -247,9 +245,10 @@ type ClientInviteView struct {
 	InviteURI         string   `json:"invite_uri"`
 	EnrollmentURL     string   `json:"enrollment_url"`
 	ExpiresAt         string   `json:"expires_at"`
-	ProfileVersion    string   `json:"profile_version,omitempty"`
+	Platform          string   `json:"platform"`
 	Responsibilities  []string `json:"responsibilities,omitempty"`
 	DestinationGrants []string `json:"destination_grants,omitempty"`
+	Direction         string   `json:"direction,omitempty"`
 	Replaces          string   `json:"replaces,omitempty"`
 }
 
@@ -258,17 +257,20 @@ type ClientInviteArtifact struct {
 	ClientName        string   `json:"client_name"`
 	InviteURI         string   `json:"invite_uri"`
 	ExpiresAt         string   `json:"expires_at"`
-	ProfileVersion    string   `json:"profile_version,omitempty"`
+	Platform          string   `json:"platform"`
 	Responsibilities  []string `json:"responsibilities,omitempty"`
 	DestinationGrants []string `json:"destination_grants,omitempty"`
+	Direction         string   `json:"direction,omitempty"`
 	Replaces          string   `json:"replaces,omitempty"`
 }
 
-type DeviceEnrollmentProfileView struct {
-	Version           string   `json:"version"`
-	Default           bool     `json:"default,omitempty"`
-	Responsibilities  []string `json:"responsibilities"`
-	DestinationGrants []string `json:"destination_grants"`
+type DeviceEnrollmentOptions struct {
+	DestinationGrants []DeviceDestinationOption `json:"destination_grants"`
+}
+
+type DeviceDestinationOption struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 type ClientClaimInput struct {
@@ -1002,11 +1004,26 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		name := strings.TrimSpace(r.Form.Get("name"))
-		profileVersion := strings.TrimSpace(r.Form.Get("profile_version"))
-		invite, err := control.CreateInvite(ClientInviteInput{Name: name, ProfileVersion: profileVersion})
+		input := ClientInviteInput{
+			Name: name, Platform: strings.TrimSpace(r.Form.Get("platform")),
+			Responsibilities:  append([]string(nil), r.Form["responsibility"]...),
+			DestinationGrants: append([]string(nil), r.Form["destination_grant"]...),
+			Direction:         strings.TrimSpace(r.Form.Get("direction")),
+		}
+		// Browsers omit disabled controls. Apply the same rule server-side so a
+		// stale or scriptless form cannot attach values from a hidden section.
+		if !deviceListContains(input.Responsibilities, "use_loom") {
+			input.DestinationGrants = nil
+		}
+		if !deviceListContains(input.Responsibilities, "forward") {
+			input.Direction = ""
+		}
+		invite, err := control.CreateInvite(input)
 		if err != nil {
 			writeHTML(w, pageClients(d, clientPageState{
-				Create: true, SubmittedName: name, SubmittedProfile: profileVersion, Error: err.Error(),
+				Create: true, Submitted: true, SubmittedName: name, SubmittedPlatform: input.Platform,
+				SubmittedResponsibilities: input.Responsibilities, SubmittedGrants: input.DestinationGrants,
+				SubmittedDirection: input.Direction, Error: err.Error(),
 			}, true))
 			return
 		}
@@ -1047,9 +1064,10 @@ func Handler(d Deps) http.Handler {
 		invite := ClientInviteView{
 			InviteID: inviteID, ClientID: artifact.ClientID, ClientName: artifact.ClientName,
 			InviteURI: artifact.InviteURI, ExpiresAt: artifact.ExpiresAt,
-			ProfileVersion:    artifact.ProfileVersion,
+			Platform:          artifact.Platform,
 			Responsibilities:  append([]string(nil), artifact.Responsibilities...),
 			DestinationGrants: append([]string(nil), artifact.DestinationGrants...),
+			Direction:         artifact.Direction,
 			Replaces:          artifact.Replaces,
 		}
 		writeHTML(w, pageClients(d, clientPageState{Invite: &invite}, true))
@@ -1188,6 +1206,10 @@ func Handler(d Deps) http.Handler {
 		artifact, err := control.InviteArtifact(inviteID)
 		if err != nil {
 			http.Error(w, err.Error(), clientProtocolStatus(err))
+			return
+		}
+		if deviceListContains(artifact.Responsibilities, "forward") {
+			http.Error(w, "forwarding Device invitations use shell or SSH-assisted bootstrap", http.StatusConflict)
 			return
 		}
 		if action == "download" {

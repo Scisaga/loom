@@ -53,7 +53,7 @@ func TestReplacedDevicesAreArchivedAndPointToTheirReplacement(t *testing.T) {
 		return ClientInventory{Clients: []ClientView{
 			{ID: "demo-old", Name: "Demo workstation", Status: "revoked", ReplacedBy: "demo-new"},
 			{ID: "demo-new", Name: "Demo workstation", Status: "pending", Replaces: "demo-old"},
-			{ID: "demo-joined", Name: "Demo joined", Status: "ready", IdentitySource: "enrollment", ProfileVersion: "demo-profile@v1", Responsibilities: []string{"use_loom"}},
+			{ID: "demo-joined", Name: "Demo joined", Status: "ready", IdentitySource: "enrollment", Responsibilities: []string{"use_loom"}},
 		}}, nil
 	}
 	d.Control.Clients.RenewInvite = func(string) (ClientInviteView, error) { return ClientInviteView{}, nil }

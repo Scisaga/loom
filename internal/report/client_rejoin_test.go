@@ -8,14 +8,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
-	"gopkg.in/yaml.v3"
-
 	"loom/internal/clientregistry"
 	"loom/internal/model"
-	"loom/internal/webui"
 )
 
 func recoveryInviteToken(t *testing.T, uri string) string {
@@ -43,7 +41,7 @@ func TestLostWindowsDeviceReplacementRemovesOldAccessAndRejectsQueuedClaim(t *te
 		t.Fatal(err)
 	}
 	deps := newClientControlDeps(control, nil)
-	first, err := deps.CreateInvite(webui.ClientInviteInput{Name: "demo workstation"})
+	first, err := deps.CreateInvite(accessInviteInput("demo workstation", "windows-desktop"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,37 +65,12 @@ func TestLostWindowsDeviceReplacementRemovesOldAccessAndRejectsQueuedClaim(t *te
 		t.Fatal(err)
 	}
 	oldCredentials := append([]string(nil), before.NodeByID()[first.ClientID].Access.Credentials...)
-	originalBody, err := os.ReadFile(control.SSOTPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	withoutProfile := *before
-	withoutProfile.EnrollmentProfiles = nil
-	missingProfileBody, err := yaml.Marshal(withoutProfile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(control.SSOTPath, missingProfileBody, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if failed, err := deps.ReplaceDevice(first.ClientID); err == nil || failed.InviteURI != "" {
-		t.Fatal("replacement retired access without a usable pinned profile")
-	}
-	afterFailure, err := os.ReadFile(control.SSOTPath)
-	if err != nil || !bytes.Equal(afterFailure, missingProfileBody) {
-		t.Fatal("failed recovery changed membership")
-	}
-	if err := store.CheckClaimedIdentity(first.ClientID, claimed.Client.PublicKey); err != nil {
-		t.Fatalf("failed recovery retired the original identity: %v", err)
-	}
-	if err := os.WriteFile(control.SSOTPath, originalBody, 0600); err != nil {
-		t.Fatal(err)
-	}
 	next, err := deps.ReplaceDevice(first.ClientID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if next.ClientID == first.ClientID || next.ClientName != first.ClientName || next.ProfileVersion != first.ProfileVersion || next.Replaces != first.ClientID {
+	if next.ClientID == first.ClientID || next.ClientName != first.ClientName || next.Platform != first.Platform ||
+		strings.Join(next.Responsibilities, ",") != strings.Join(first.Responsibilities, ",") || next.Replaces != first.ClientID {
 		t.Fatalf("replacement=%+v", next)
 	}
 	retired, err := model.LoadFile(control.SSOTPath)

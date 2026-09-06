@@ -374,9 +374,9 @@ machine-scope DPAPI 提交机器状态；正式普通用户托盘仍必须通过
 完成标记；失败或 pending 时继续复用 DPAPI 保护的原身份，已加入状态拒绝被另一二维码
 静默覆盖。发行物内嵌部署平台公钥；它是公开的发行验证信任锚，不是 Device 凭据、连接密钥
 或中控地址。干净首启只等待二维码，不读取该公钥；导入或恢复加入事务时才加载它。提交一次性加入码前，客户端先完成组件签名/架构校验，
-再把新二维码携带的平台公钥 SHA-256 指纹与发行包内嵌公钥在本地比对，避免拿错部署包
-后才消费加入码，也不为此增加另一条公网 API 或反向代理依赖。迁移期旧二维码没有该字段，
-仍必须由 ready 响应和首次 signed pull 校验同一平台公钥后才能提交本机加入状态。
+再把二维码携带的平台公钥 SHA-256 指纹与发行包内嵌公钥在本地比对，避免拿错部署包
+后才消费加入码，也不为此增加另一条公网 API 或反向代理依赖。schema 1 registry 中尚未
+消费的旧邀请在服务端升级时全部失效，不保留缺少该字段的旧二维码兼容路径。
 当前 Portable 预览把二维码 pending 数据、ready 恢复日志和身份放在当前用户 DPAPI 下保护；
 中控只允许同一 token、CSR、request ID、平台和 Device facts 在一小时恢复窗口内重放，
 下次启动可继续，`config\client.json` 提交后立即清除 pending token。当前 Installed 管理员
@@ -588,32 +588,34 @@ Android Studio 或 Emulator 工作站。
 
 ## 9. 加入网络与设备身份
 
-### 9.1 加入二维码
+### 9.1 加入码与交付方式
 
-管理员先在控制中心创建 Device，并为这个既有 Device 生成一次性加入二维码，不要求
-填写平台。平台由客户端按自身构建目标报告；中控只校验它是受支持的枚举值并完成身份
-绑定，用于选择正确的部署目标，不把它当作授权条件或人工选项。加入码不携带路由模式
-或出口参数；加入完成后再由客户端选择 Direct / Auto / 指定出口。二维码内容包含：
+管理员先在控制中心创建 Device，直接选择平台、Responsibilities、Destination grants
+以及 `forward` 所需的 direction。客户端仍按自身构建目标报告平台，中控要求它与邀请
+精确一致；客户端不能在 claim 时选择或扩张职责。加入码不携带运行时路由模式或手选出口
+参数；加入完成后再由客户端选择 Direct / Auto / 指定出口。加入载体内容包含：
 
 - 控制中心地址；
 - 短 TTL、单次使用的随机 token；
 - 过期时间和协议 schema。
 
-创建成功后页面同时呈现二维码图片、备用 `.loom-invite` 加入文件和同一份可复制的
-`loom://enroll#…` 内部协议 URI，不按 Windows、Android、Linux 拆成三个入口。Windows
+纯 `use_loom` 创建成功后页面呈现二维码图片、备用 `.loom-invite` 加入文件和同一份
+可复制的 `loom://enroll#…` 内部协议 URI。包含 `forward` 的 Linux Device 不提供二维码或
+加入文件，只把该 URI 作为本地 shell 或管理员 SSH 登录目标机后执行同一 bootstrap 的
+一次性标准输入；中控不保存 SSH 凭据。Windows
 Portable 还可在中控页面复制二维码图片后直接按 `Ctrl+V` 或点击“粘贴二维码”；图片只在
-内存中解析，不写临时文件。三个载体
+内存中解析，不写临时文件。这三种 access-only 载体
 共享 TTL 与单次消费状态；原始 token 只在创建结果中出现，列表不能再次取回。URI 的
 fragment 由客户端本地解析，token 只在内部 claim POST body 发送，不进入 HTTPS query。
-它们不包含长期凭据、平台信任根或设备私钥。设备绑定不得依赖浏览器指纹，必须基于客户
+它们不包含长期凭据、完整平台公钥或设备私钥。设备绑定不得依赖浏览器指纹，必须基于客户
 端本地生成且不可导出的非对称密钥。
 
 ### 9.2 加入流程
 
 ```text
-管理员在中控创建 Device 和一次性加入二维码
+管理员在中控创建 Device 和一次性加入码
     ↓
-客户端正常启动，用户扫描或导入二维码
+客户端导入 access-only QR/文件，或在 Linux 本地/SSH 会话执行 shell bootstrap
     ↓
 设备在安全存储中生成 P-256 私钥，只上传签名有效的 PKCS#10 CSR
     ↓
@@ -636,9 +638,10 @@ fragment 由客户端本地解析，token 只在内部 claim POST body 发送，
 Portable 预览将这组 pending 数据用当前用户 DPAPI 保护，并在加入提交后清除 token。
 Installed 目标态必须经受限 Service broker 使用 machine-scope/受保护 ProgramData。其他 CSR 身份重复消费、未知/不受支持的平台、设备 ID
 已被另一身份绑定、SSOT revision 冲突或签名验证失败都不得留下部分加入状态。
-加入码在成功绑定前过期时，详情页可重新生成二维码，旧码立即失效。若已加入的纯
+加入码在成功绑定前过期时，详情页可重新生成加入码，旧码立即失效；纯 `use_loom`
+Device 可显示二维码，包含 `forward` 的 Linux Device 只提供 shell/SSH 辅助交付。若已加入的纯
 `use_loom` Device 丢失或删除了本机身份，管理员可在详情页确认后执行 Rejoin Device：
-旧接入从 SSOT 移除，旧身份归档，新 ID 和新二维码沿用原名称与入网预设。旧数据面凭据
+旧接入从 SSOT 移除，旧身份归档，新 ID 和新二维码沿用原名称、平台、职责与 grants。旧数据面凭据
 随服务器应用签名配置撤销。该流程不复用已消费 token、不把新密钥绑定到旧 ID，也不
 把本机删除解释为已完成远程停机。仍在 provisioning 的未完成身份及服务器职责的恢复
 不走这一窄入口，须先处理其原事务。详见
@@ -717,7 +720,7 @@ Windows + `/etc/loom`、Linux server + TUN 等矛盾组合。
 | Android | Android Keystore，优先硬件支持 | Keystore 包装的应用私有存储 | app private storage |
 
 日志、崩溃报告和持久 UI 状态都不得包含完整 token、私钥、密码或可直接导入的配置。
-加入二维码、二维码截图、加入文件和剪贴板文本本身都携带同一个短时 bearer secret，
+access-only 的加入二维码、截图、加入文件和剪贴板文本都携带同一个短时 bearer secret，
 必须只交给目标设备，不得保存到相册、诊断导出、聊天记录或工单。诊断导出默认脱敏，
 并由用户显式操作。
 

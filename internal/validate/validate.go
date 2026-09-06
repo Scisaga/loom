@@ -47,7 +47,6 @@ func Validate(s *model.SSOT) []Finding {
 	idx := checkNodes(s, &fs)
 	checkTunnels(s, idx, &fs)
 	checkService(s, idx, &fs)
-	checkEnrollmentProfiles(s, &fs)
 	checkDrain(&fs, s)
 	checkServices(&fs, s)
 	checkCredentialRotation(&fs, s)
@@ -60,82 +59,6 @@ func Validate(s *model.SSOT) []Finding {
 		return fs[i].Rule < fs[j].Rule
 	})
 	return fs
-}
-
-func checkEnrollmentProfiles(s *model.SSOT, fs *findings) {
-	if len(s.EnrollmentProfiles) == 0 {
-		return
-	}
-	declarations := s.DeclarationByID()
-	seenRefs := map[string]bool{}
-	defaults := 0
-	for i := range s.EnrollmentProfiles {
-		profile := &s.EnrollmentProfiles[i]
-		where := fmt.Sprintf("enrollment_profiles[%d]", i)
-		if profile.ID != "" {
-			where = "profile:" + profile.Reference()
-		}
-		if !model.ValidNodeID(profile.ID) {
-			fs.add("Device Enrollment", where, "profile id %q 格式非法", profile.ID)
-		}
-		if profile.Version == 0 {
-			fs.add("Device Enrollment", where, "version 必须大于 0")
-		}
-		if seenRefs[profile.Reference()] {
-			fs.add("Device Enrollment", where, "profile version 重复")
-		}
-		seenRefs[profile.Reference()] = true
-		if profile.Default {
-			defaults++
-		}
-		checkCanonicalProfileList(fs, where, "responsibilities", profile.Responsibilities)
-		checkCanonicalProfileList(fs, where, "destination_grants", profile.DestinationGrants)
-		responsibilities := map[string]bool{}
-		for _, responsibility := range profile.Responsibilities {
-			responsibilities[responsibility] = true
-			switch responsibility {
-			case "use_loom", "forward", "internet_egress":
-			default:
-				fs.add("Device Enrollment", where, "未知 responsibility %q", responsibility)
-			}
-		}
-		if responsibilities["internet_egress"] && !responsibilities["forward"] {
-			fs.add("Device Enrollment", where, "internet_egress 必须同时声明 forward")
-		}
-		if len(profile.DestinationGrants) > 0 && !responsibilities["use_loom"] {
-			fs.add("Device Enrollment", where, "destination_grants 要求 responsibility use_loom")
-		}
-		for _, grant := range profile.DestinationGrants {
-			declaration := declarations[grant]
-			if declaration == nil {
-				fs.add("Device Enrollment", where, "destination grant 引用了不存在的声明 %q", grant)
-			} else if !declaration.AddressFromRequest() {
-				fs.add("Device Enrollment", where, "destination grant %q 不是 from_request 声明", grant)
-			}
-		}
-	}
-	if defaults != 1 {
-		fs.add("Device Enrollment", "enrollment_profiles", "声明了 %d 个 default profile version，必须恰好为 1", defaults)
-	}
-}
-
-func checkCanonicalProfileList(fs *findings, where, field string, values []string) {
-	seen := map[string]bool{}
-	previous := ""
-	for i, value := range values {
-		if strings.TrimSpace(value) == "" || value != strings.TrimSpace(value) {
-			fs.add("Device Enrollment", where, "%s[%d] 不能为空或包含首尾空白", field, i)
-		}
-		if seen[value] {
-			fs.add("Device Enrollment", where, "%s 包含重复值 %q", field, value)
-		}
-		seen[value] = true
-		if i > 0 && value < previous {
-			fs.add("Device Enrollment", where, "%s 必须按字典序排列，以稳定版本摘要", field)
-			break
-		}
-		previous = value
-	}
 }
 
 func checkDistributionURL(fs *findings, where, raw string) {

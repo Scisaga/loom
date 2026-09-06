@@ -70,7 +70,7 @@ func (s Store) ReportingIdentity(id, publicKey string) (Client, error) {
 }
 
 // RenewInvitation 为从未领取的 Device 签发新的短期加入码（§14.2.3）。
-// 保留身份预留和入网预设；旧码立即失效，不能用重发绕过公钥绑定。
+// 保留身份预留和固定的入网职责；旧码立即失效，不能用重发绕过公钥绑定。
 func (s Store) RenewInvitation(clientID string) (CreateResult, error) {
 	s = s.defaults()
 	clientID = strings.TrimSpace(clientID)
@@ -111,6 +111,9 @@ func (s Store) RenewInvitation(clientID string) (CreateResult, error) {
 }
 
 func (s Store) newInvitation(client Client, existing []Invite) (Invite, string, error) {
+	if err := ValidateEnrollment(client); err != nil {
+		return Invite{}, "", err
+	}
 	if s.TTL < time.Minute || s.TTL > 24*time.Hour {
 		return Invite{}, "", errors.New("client invitation TTL must be between 1 minute and 24 hours")
 	}
@@ -135,7 +138,6 @@ func (s Store) newInvitation(client Client, existing []Invite) (Invite, string, 
 	return Invite{
 		ID: id, ClientID: client.ID, TokenHash: sha256Hex(token), SealedToken: sealed,
 		CreatedAt: now.Format(time.RFC3339), ExpiresAt: now.Add(s.TTL).Format(time.RFC3339),
-		ProfileVersion: client.ProfileVersion, ProfileDigest: client.ProfileDigest,
 	}, token, nil
 }
 
@@ -161,22 +163,19 @@ func (s Store) ReplaceWithInvitation(clientID string, retire func(Client) error)
 		}
 		previous := st.Clients[index]
 		if previous.Status != "ready" || previous.IdentitySource != "enrollment" || previous.PublicKey == "" ||
-			previous.Server != nil || previous.ProfileVersion == "" || previous.ReplacedBy != "" || previous.RevokedAt != "" ||
+			previous.Server != nil || previous.ReplacedBy != "" || previous.RevokedAt != "" ||
 			len(previous.Responsibilities) != 1 || previous.Responsibilities[0] != "use_loom" {
 			return &Error{Code: CodeConflict, Msg: "only a joined, access-only enrollment Device can be replaced"}
 		}
-		if err := validProfileAssignment(ProfileAssignment{
-			Version: previous.ProfileVersion, Digest: previous.ProfileDigest,
-			Responsibilities: previous.Responsibilities, DestinationGrants: previous.DestinationGrants,
-		}); err != nil {
+		if err := ValidateEnrollment(previous); err != nil {
 			return err
 		}
 		client := Client{
-			Name: previous.Name, Status: "pending", IdentitySource: "enrollment",
+			Name: previous.Name, Platform: previous.Platform, Status: "pending", IdentitySource: "enrollment",
 			CreatedAt: s.Now().UTC().Truncate(time.Second).Format(time.RFC3339), Replaces: previous.ID,
-			ProfileVersion: previous.ProfileVersion, ProfileDigest: previous.ProfileDigest,
 			Responsibilities:  append([]string(nil), previous.Responsibilities...),
 			DestinationGrants: append([]string(nil), previous.DestinationGrants...),
+			Direction:         previous.Direction,
 		}
 		for attempt := 0; attempt < 8; attempt++ {
 			suffix, err := randomHexToken(s.Rand, 5)

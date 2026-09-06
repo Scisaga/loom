@@ -30,7 +30,7 @@ func TestClientInviteUsesOpaqueFragmentAndClaimKeepsProvisioningExplicit(t *test
 		SSOTPath: ssotPath, ClientRegistryPath: filepath.Join(dir, "registry.json"),
 		ClientEnrollmentURL: "https://control.example/api/client/enroll",
 	}, nil)
-	invite, err := deps.CreateInvite(webui.ClientInviteInput{Name: "build server"})
+	invite, err := deps.CreateInvite(accessInviteInput("build server", "linux-server"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,12 +73,12 @@ func TestClientInviteUsesOpaqueFragmentAndClaimKeepsProvisioningExplicit(t *test
 		}
 	}
 	if err != nil || enrolled == nil || enrolled.Status != "provisioning" ||
-		enrolled.DataPlaneStatus != "pending" || enrolled.ProfileVersion != "standard-device@v1" {
+		enrolled.DataPlaneStatus != "pending" || enrolled.Platform != "linux-server" {
 		t.Fatalf("inventory=%+v err=%v", inventory, err)
 	}
 }
 
-func TestDeviceInvitePinsSelectedServerPurposeAndClaimFacts(t *testing.T) {
+func TestDeviceInvitePinsServerResponsibilitiesDirectionAndClaimFacts(t *testing.T) {
 	dir := t.TempDir()
 	ssotPath := filepath.Join(dir, "ssot.yaml")
 	writeClientTestSSOT(t, ssotPath)
@@ -86,16 +86,19 @@ func TestDeviceInvitePinsSelectedServerPurposeAndClaimFacts(t *testing.T) {
 		SSOTPath: ssotPath, ClientRegistryPath: filepath.Join(dir, "registry.json"),
 		ClientEnrollmentURL: "https://control.example/api/client/enroll",
 	}, nil)
-	profiles, err := deps.EnrollmentProfiles()
-	if err != nil || len(profiles) != 2 || !profiles[0].Default || profiles[1].Version != "server-device@v1" {
-		t.Fatalf("profiles=%+v err=%v", profiles, err)
+	options, err := deps.EnrollmentOptions()
+	if err != nil || len(options.DestinationGrants) == 0 {
+		t.Fatalf("options=%+v err=%v", options, err)
 	}
-	invite, err := deps.CreateInvite(webui.ClientInviteInput{Name: "Edge Device", ProfileVersion: "server-device@v1"})
+	invite, err := deps.CreateInvite(webui.ClientInviteInput{
+		Name: "Edge Device", Platform: "linux-server",
+		Responsibilities: []string{"forward", "internet_egress"}, Direction: "reverse_only",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if invite.ProfileVersion != "server-device@v1" || strings.Join(invite.Responsibilities, ",") != "forward,internet_egress" ||
-		len(invite.DestinationGrants) != 0 {
+	if invite.Platform != "linux-server" || invite.Direction != "reverse_only" ||
+		strings.Join(invite.Responsibilities, ",") != "forward,internet_egress" || len(invite.DestinationGrants) != 0 {
 		t.Fatalf("invite=%+v", invite)
 	}
 	u, _ := url.Parse(invite.InviteURI)
@@ -107,7 +110,7 @@ func TestDeviceInvitePinsSelectedServerPurposeAndClaimFacts(t *testing.T) {
 	result, err := deps.Claim(webui.ClientClaimInput{
 		Token: payload.Token, Platform: "linux-server", CSRPEM: clientCSR(t), RequestID: "server-install",
 		Server: &webui.DeviceServerClaim{
-			PublicEndpoint: "edge.example.net", InboundPort: 61698, Direction: "bidirectional",
+			PublicEndpoint: "edge.example.net", InboundPort: 61698, Direction: "reverse_only",
 			WGPublicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", Country: "CN", City: "Beijing",
 		},
 	})
@@ -124,8 +127,7 @@ func TestDeviceInvitePinsSelectedServerPurposeAndClaimFacts(t *testing.T) {
 			found = &inventory.Clients[i]
 		}
 	}
-	if found == nil || found.ProfileVersion != "server-device@v1" ||
-		strings.Join(found.Responsibilities, ",") != "forward,internet_egress" {
+	if found == nil || found.Direction != "reverse_only" || strings.Join(found.Responsibilities, ",") != "forward,internet_egress" {
 		t.Fatalf("enrolled server Device=%+v", found)
 	}
 }
@@ -141,7 +143,7 @@ func TestInvalidEnrollmentURLDoesNotCreateInvitationState(t *testing.T) {
 		SSOTPath: ssotPath, ClientRegistryPath: registryPath,
 		ClientEnrollmentURL: "http://control.example/api/client/enroll?token=bad",
 	}, nil)
-	if _, err := deps.CreateInvite(webui.ClientInviteInput{Name: "device"}); err == nil {
+	if _, err := deps.CreateInvite(accessInviteInput("device", "linux-server")); err == nil {
 		t.Fatal("insecure enrollment URL was accepted")
 	}
 	if _, err := os.Stat(registryPath); !os.IsNotExist(err) {
@@ -166,7 +168,7 @@ func TestClientProvisionHookMarksReadyOnlyWithCompleteBootstrap(t *testing.T) {
 			NodeCertPEM: "-----BEGIN CERTIFICATE-----\nnode\n-----END CERTIFICATE-----",
 		}, nil
 	})
-	invite, err := deps.CreateInvite(webui.ClientInviteInput{Name: "ready device"})
+	invite, err := deps.CreateInvite(accessInviteInput("ready device", "linux-server"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,17 +225,6 @@ func writeClientTestSSOT(t *testing.T, path string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body = bytes.Replace(body, []byte("declarations:\n"), []byte(`enrollment_profiles:
-  - id: standard-device
-    version: 1
-    default: true
-    responsibilities: [use_loom]
-    destination_grants: [best-egress]
-  - id: server-device
-    version: 1
-    responsibilities: [forward, internet_egress]
-declarations:
-`), 1)
 	if err := os.WriteFile(path, body, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -244,6 +235,13 @@ declarations:
 	encoded := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x42}, ed25519.PublicKeySize))
 	if err := os.WriteFile(filepath.Join(keyDir, "platform-signing.pub"), []byte(encoded+"\n"), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func accessInviteInput(name, platform string) webui.ClientInviteInput {
+	return webui.ClientInviteInput{
+		Name: name, Platform: platform, Responsibilities: []string{"use_loom"},
+		DestinationGrants: []string{"best-egress"},
 	}
 }
 

@@ -8,14 +8,18 @@ import (
 )
 
 type clientPageState struct {
-	Create           bool
-	Archived         bool
-	Invite           *ClientInviteView
-	SubmittedName    string
-	SubmittedProfile string
-	Error            string
-	Package          LinuxClientPackageView
-	PackageError     string
+	Create                    bool
+	Archived                  bool
+	Submitted                 bool
+	Invite                    *ClientInviteView
+	SubmittedName             string
+	SubmittedPlatform         string
+	SubmittedResponsibilities []string
+	SubmittedGrants           []string
+	SubmittedDirection        string
+	Error                     string
+	Package                   LinuxClientPackageView
+	PackageError              string
 }
 
 func pageDevices(d Deps, state clientPageState, isAuthed bool) string {
@@ -162,14 +166,14 @@ func pageDeviceDetail(d Deps, deviceID string, isAuthed bool) string {
 		fmt.Fprintf(&b, `<section class="card notice"><b>Device replaced</b><p>This identity is archived. <a class=button href="/devices/%s">Open replacement Device %s</a></p></section>`, url.PathEscape(device.ReplacedBy), esc(device.ReplacedBy))
 	}
 	fmt.Fprintf(&b, `<div class=grid>
-<section class="card span4"><div class=label>Identity</div><h2>%s</h2><dl class=kv><dt>Device ID<dd class=mono>%s<dt>Platform<dd>%s<dt>Identity source<dd>%s<dt>Profile version<dd class=mono>%s<dt>Key fingerprint<dd class=mono>%s</dl></section>
+	<section class="card span4"><div class=label>Identity</div><h2>%s</h2><dl class=kv><dt>Device ID<dd class=mono>%s<dt>Platform<dd>%s<dt>Identity source<dd>%s<dt>Key fingerprint<dd class=mono>%s</dl></section>
 <section class="card span4"><div class=label>Membership</div><div class=metric>%s</div><p class=dim>Desired membership is separate from join progress and runtime health.</p><dl class=kv><dt>Created<dd>%s<dt>Joined<dd>%s</dl></section>
 <section class="card span4"><div class=label>Runtime evidence</div><div class="client-status %s"><span class=dot></span>%s</div><p class=dim>%s</p><dl class=kv><dt>Last seen<dd>%s</dl></section>
 </div>
 <div class=grid><section class="card span6"><div class=label>Responsibilities</div><h2>%s</h2><p class=dim>“use_loom” means traffic originating on this Device may use Loom. It does not imply forwarding, public ingress or egress.</p></section>
 <section class="card span6"><div class=label>Destination grants</div><h2>%s</h2><p class=dim>Explicit declaration references only; there is no blanket “network permission”.</p></section>%s</div>
 <div class=toolbar section><a class=button href="/devices">← Device inventory</a><a class=button href="/nodes/%s">Network diagnostics</a></div>`,
-		esc(device.Name), esc(device.ID), esc(orDash(device.Platform)), esc(identitySource), esc(orDash(device.ProfileVersion)), esc(orDash(device.KeyFingerprint)),
+		esc(device.Name), esc(device.ID), esc(orDash(device.Platform)), esc(identitySource), esc(orDash(device.KeyFingerprint)),
 		esc(orDash(device.Membership)), esc(clientTime(device.CreatedAt)), esc(clientTime(device.EnrolledAt)),
 		statusClass, esc(statusLabel), esc(clientRuntimeDetail(*device)), esc(clientTime(device.LastSeenAt)),
 		esc(deviceList(device.Responsibilities)), esc(deviceList(device.DestinationGrants)), serverDeclaration, url.PathEscape(device.ID))
@@ -189,7 +193,7 @@ func pageDeviceDetail(d Deps, deviceID string, isAuthed bool) string {
 }
 
 func deviceCanReplace(device ClientView) bool {
-	if device.Legacy || device.IdentitySource != "enrollment" || device.ProfileVersion == "" ||
+	if device.Legacy || device.IdentitySource != "enrollment" ||
 		device.ReplacedBy != "" || len(device.Responsibilities) != 1 || device.Responsibilities[0] != "use_loom" {
 		return false
 	}
@@ -212,14 +216,14 @@ func writeDeviceJoinActions(b *strings.Builder, d Deps, device ClientView, isAut
 	}
 	b.WriteString(`<section class="card device-join-actions"><h2>Join network</h2>`)
 	if pending {
-		b.WriteString(`<p>Generate a fresh, one-time QR for this Device. Previous unused join codes will stop working.</p>`)
+		b.WriteString(`<p>Generate a fresh, one-time join code for this Device. Previous unused join codes will stop working.</p>`)
 	} else {
 		b.WriteString(`<p>Use this after deleting the client's local identity and configuration. The replacement gets a new Device ID with the same name and purpose. The old identity is archived; its access is revoked as the network applies the signed update.</p>`)
 	}
 	if !isAuthed {
 		fmt.Fprintf(b, `<a class=button href="%s">Sign in to manage join QR</a>`, esc(loginURL("/devices/"+url.PathEscape(device.ID))))
 	} else if pending {
-		fmt.Fprintf(b, `<form method=post action="/devices/renew-invite"><input type=hidden name=id value="%s"><button class="button primary">Generate new join QR</button></form>`, esc(device.ID))
+		fmt.Fprintf(b, `<form method=post action="/devices/renew-invite"><input type=hidden name=id value="%s"><button class="button primary">Generate new join code</button></form>`, esc(device.ID))
 	} else {
 		fmt.Fprintf(b, `<details><summary>Rejoin Device</summary><form method=post action="/devices/replace"><input type=hidden name=id value="%s"><label class=device-rejoin-confirm><input type=checkbox name=identity_deleted value=yes required> I deleted this client's local identity and configuration and want to revoke the old access.</label><button class="button primary">Replace Device and generate QR</button></form></details>`, esc(device.ID))
 	}
@@ -229,7 +233,7 @@ func writeDeviceJoinActions(b *strings.Builder, d Deps, device ClientView, isAut
 func deviceIdentitySourceLabel(source string) string {
 	switch source {
 	case "enrollment":
-		return "QR join"
+		return "Device enrollment"
 	case "managed-certificate":
 		return "Verified existing certificate"
 	case "":
@@ -303,13 +307,42 @@ func pageDeviceEnrollment(d Deps, state clientPageState, isAuthed bool) string {
 	if state.Error != "" {
 		fmt.Fprintf(&b, `<div class="card notice badline"><b>Device was not created</b><br><span class=small>%s</span></div>`, esc(state.Error))
 	}
-	profiles, profileErr := deviceEnrollmentProfiles(d)
-	profile := selectedEnrollmentProfile(profiles, state.SubmittedProfile)
-	profileControl := enrollmentProfileControl(profiles, profile.Version)
-	fmt.Fprintf(&b, `<div class=client-add-grid><section class="card client-form-card"><h2>Create Device</h2><p class=dim>Name the machine for operators. The client reports its supported platform when it imports this Device's join code.</p>
-<form class=blockform data-submit-progress method=post action="/devices/create"><div class=field><label for=client-name>Display name</label><input id=client-name name=name maxlength=80 required autocomplete=off value="%s" placeholder="e.g. build server"><span class=field-hint>Platform is reported by the client running on the Device; its immutable purpose is pinned below.</span></div>%s
-<div class=client-form-actions><button class="primary progress-submit"><span class=button-idle>Create Device</span><span class=button-busy><i class=button-spinner aria-hidden=true></i>Creating…</span></button><a class=button href="/devices">Cancel</a></div></form></section>
-<aside class=card><h2>Pinned join profile</h2><div class=client-boundary><div><span>ProfileVersion</span><b id=profile-preview-version class=mono>%s</b></div><div><span>Identity</span><b>Local key + short-lived, single-use join code</b></div><div><span>Membership</span><b>Published desired state, separate from online status</b></div><div><span>Responsibilities</span><b id=profile-preview-responsibilities>%s</b></div><div><span>Destination grants</span><b id=profile-preview-grants>%s</b></div></div>%s</aside></div>`, esc(state.SubmittedName), profileControl, esc(orDash(profile.Version)), esc(deviceList(profile.Responsibilities)), esc(deviceList(profile.DestinationGrants)), enrollmentProfileError(profileErr))
+	options, optionsErr := deviceEnrollmentOptions(d)
+	platform := state.SubmittedPlatform
+	if platform == "" {
+		platform = "windows-desktop"
+	}
+	responsibilities := state.SubmittedResponsibilities
+	if !state.Submitted {
+		responsibilities = []string{"use_loom"}
+	}
+	grants := state.SubmittedGrants
+	if !state.Submitted {
+		for _, option := range options.DestinationGrants {
+			grants = append(grants, option.ID)
+		}
+	}
+	direction := state.SubmittedDirection
+	if direction == "" {
+		direction = "bidirectional"
+	}
+	fmt.Fprintf(&b, `<div class=client-add-grid><section class="card client-form-card"><h2>Create Device</h2><p class=dim>Select what this Device may do. The platform, responsibilities and destination grants are fixed into its one-time invitation.</p>
+	<form class=blockform data-submit-progress data-device-enrollment-form method=post action="/devices/create"><div class=field><label for=client-name>Display name</label><input id=client-name name=name maxlength=80 required autocomplete=off value="%s" placeholder="e.g. build server"></div>
+	<div class=field><label for=device-platform>Platform</label><select id=device-platform name=platform required data-enrollment-platform><option value=windows-desktop%s>Windows</option><option value=linux-server%s>Linux</option><option value=android disabled>Android · not delivered yet</option></select></div>
+	<fieldset class="field client-choice-group"><legend>Responsibilities</legend><label><input type=checkbox name=responsibility value=use_loom%s data-enrollment-use> use_loom <span>Use Loom from this Device</span></label><label><input type=checkbox name=responsibility value=forward%s data-enrollment-forward> forward <span>Forward traffic for other Devices</span></label><label><input type=checkbox name=responsibility value=internet_egress%s data-enrollment-egress> internet_egress <span>Offer Internet egress; requires forward</span></label></fieldset>`,
+		esc(state.SubmittedName), selected(platform == "windows-desktop"), selected(platform == "linux-server"),
+		checked(deviceListContains(responsibilities, "use_loom")), checked(deviceListContains(responsibilities, "forward")), checked(deviceListContains(responsibilities, "internet_egress")))
+	b.WriteString(`<fieldset class="field client-choice-group" data-enrollment-grants><legend>Destination grants</legend>`)
+	for _, option := range options.DestinationGrants {
+		fmt.Fprintf(&b, `<label><input type=checkbox name=destination_grant value="%s"%s> <span><b>%s</b><small class="mono dim">%s</small></span></label>`, esc(option.ID), checked(deviceListContains(grants, option.ID)), esc(option.Name), esc(option.ID))
+	}
+	if len(options.DestinationGrants) == 0 {
+		b.WriteString(`<span class="small warn">No from_request destination is available.</span>`)
+	}
+	fmt.Fprintf(&b, `</fieldset><div class=field data-enrollment-direction><label for=device-direction>Connection direction</label><select id=device-direction name=direction><option value=bidirectional%s>Can initiate and accept public connections</option><option value=reverse_only%s>Initiates reverse connections only</option><option value=direct_only%s>Accepts connections only</option></select><span class=field-hint>This is a Loom data-plane property, not a geography label. Current policy may recommend reverse_only for an overseas server.</span></div>
+	<div class=client-form-actions><button class="primary progress-submit"><span class=button-idle>Create Device</span><span class=button-busy><i class=button-spinner aria-hidden=true></i>Creating…</span></button><a class=button href="/devices">Cancel</a></div></form></section>
+	<aside class=card><h2>Invitation boundary</h2><div class=client-boundary><div><span>Identity</span><b>Local key + short-lived, single-use join code</b></div><div><span>Authorization</span><b>Platform, responsibilities and grants are immutable for this invitation</b></div><div><span>Connectivity</span><b>Forwarding Devices declare their endpoint locally; direction must match this invitation</b></div><div><span>Delivery</span><b>Access-only: QR where supported; Linux: local or SSH-assisted bootstrap</b></div></div>%s</aside></div>`,
+		selected(direction == "bidirectional"), selected(direction == "reverse_only"), selected(direction == "direct_only"), enrollmentOptionsError(optionsErr))
 	return shell(d, "Devices", b.String(), true)
 }
 
@@ -320,31 +353,55 @@ func pageClientEnrollment(d Deps, state clientPageState, isAuthed bool) string {
 func writeClientInvite(b *strings.Builder, invite ClientInviteView, pkg LinuxClientPackageView, packageError string) {
 	qrURL := "/api/control/device-invites/" + url.PathEscape(invite.InviteID) + "/qr.png"
 	downloadURL := "/api/control/device-invites/" + url.PathEscape(invite.InviteID) + "/download"
-	fmt.Fprintf(b, `<div class=client-invite-grid><section class="card client-invite-qr"><div class="badge warn"><span class=dot></span>Waiting to join</div><a href="%s" download aria-label="Download join QR code"><img src="%s" alt="Join QR code for %s"></a><p><b>Save or scan this QR code</b><br><span class="small dim">Import the image after starting the client. It binds the client to this existing Device.</span></p></section>
-<section class="card client-invite-copy"><div><div class=label>Device created · join code ready</div><h2>%s</h2><span class="mono dim">%s</span></div>
-<div class=client-invite-expiry><span class=dot></span><span>This join code is a short-lived, single-use secret and expires at <b>%s</b>. Share it only with the intended device.</span></div>
-<div class=client-boundary><div><span>ProfileVersion</span><b class=mono>%s</b></div><div><span>Responsibilities</span><b>%s</b></div><div><span>Destination grants</span><b>%s</b></div></div>
-<div class=field><label for=invite-link>Fallback join link</label><div class=invite-link><input id=invite-link readonly spellcheck=false autocomplete=off autocapitalize=none value="%s" aria-describedby=invite-link-help><a class=button href="%s" download>Download join file</a></div><span id=invite-link-help class=field-hint>The QR image, join file and this hidden protocol link are equivalent one-time inputs.</span></div>`,
-		esc(qrURL), esc(qrURL), esc(invite.ClientID), esc(invite.ClientName), esc(invite.ClientID), esc(clientTime(invite.ExpiresAt)), esc(orDash(invite.ProfileVersion)), esc(deviceList(invite.Responsibilities)), esc(deviceList(invite.DestinationGrants)), esc(invite.InviteURI), esc(downloadURL))
-	if clientPackageAvailable(pkg) {
+	forward := deviceListContains(invite.Responsibilities, "forward")
+	b.WriteString(`<div class=client-invite-grid>`)
+	if !forward {
+		fmt.Fprintf(b, `<section class="card client-invite-qr"><div class="badge warn"><span class=dot></span>Waiting to join</div><a href="%s" download aria-label="Download join QR code"><img src="%s" alt="Join QR code for %s"></a><p><b>Save or scan this QR code</b><br><span class="small dim">QR is an access-only delivery method. It carries the same one-time invitation as the join file.</span></p></section>`, esc(qrURL), esc(qrURL), esc(invite.ClientID))
+	}
+	fmt.Fprintf(b, `<section class="card client-invite-copy"><div><div class=label>Device created · join code ready</div><h2>%s</h2><span class="mono dim">%s</span></div>
+	<div class=client-invite-expiry><span class=dot></span><span>This join code is a short-lived, single-use secret and expires at <b>%s</b>. Share it only with the intended device.</span></div>
+	<div class=client-boundary><div><span>Platform</span><b>%s</b></div><div><span>Responsibilities</span><b>%s</b></div><div><span>Destination grants</span><b>%s</b></div>`,
+		esc(invite.ClientName), esc(invite.ClientID), esc(clientTime(invite.ExpiresAt)), esc(invite.Platform), esc(deviceList(invite.Responsibilities)), esc(deviceList(invite.DestinationGrants)))
+	if forward {
+		fmt.Fprintf(b, `<div><span>Connection direction</span><b class=mono>%s</b></div>`, esc(invite.Direction))
+	}
+	fmt.Fprintf(b, `</div>
+	<div class=field><label for=invite-link>One-time join link</label><div class=invite-link><input id=invite-link readonly spellcheck=false autocomplete=off autocapitalize=none value="%s" aria-describedby=invite-link-help>`, esc(invite.InviteURI))
+	if !forward {
+		fmt.Fprintf(b, `<a class=button href="%s" download>Download join file</a>`, esc(downloadURL))
+	}
+	if forward {
+		b.WriteString(`</div><span id=invite-link-help class=field-hint>Paste this link into the local or SSH-assisted bootstrap below. No QR or join-file delivery is enabled for forwarding Devices.</span></div>`)
+	} else {
+		b.WriteString(`</div><span id=invite-link-help class=field-hint>The QR image, join file and this protocol link are equivalent one-time inputs.</span></div>`)
+	}
+	if invite.Platform == "linux-server" && clientPackageAvailable(pkg) {
 		fmt.Fprintf(b, `<div class=client-invite-actions><a class="button primary" href="%s" download>Download Linux package</a><form class=client-done-form method=get action="/devices"><button class=button type=submit>Back to Device list</button></form></div>`, esc(pkg.URL))
 	} else {
-		b.WriteString(`<div class=client-invite-actions><form class=client-done-form method=get action="/devices"><button class=button type=submit>Back to Device list</button></form></div><p class="small warn">The Linux package is not currently available from this control plane.</p>`)
-		if packageError != "" {
+		b.WriteString(`<div class=client-invite-actions><form class=client-done-form method=get action="/devices"><button class=button type=submit>Back to Device list</button></form></div>`)
+		if invite.Platform == "linux-server" {
+			b.WriteString(`<p class="small warn">The Linux package is not currently available from this control plane.</p>`)
+		}
+		if invite.Platform == "linux-server" && packageError != "" {
 			fmt.Fprintf(b, `<p class="tiny dim">%s</p>`, esc(packageError))
 		}
 	}
-	b.WriteString(`</section></div><section class="card client-setup"><div class=client-setup-head><div><div class=label>Windows Portable preview</div><h2>Start the client, then import the QR code</h2></div><p class=small>Portable Mixed and Portable TUN join this existing Device without an extra command or component selection. Installed will use the same flow after its MSI, desktop UI and restricted Service IPC are delivered.</p></div></section><section class="card client-setup" aria-labelledby=client-setup-title><div class=client-setup-head><div><div class=label>Linux server</div><h2 id=client-setup-title>Command-line setup</h2></div><p class=small>The QR, join file and protocol link carry the same one-time code.</p></div>`)
-	if deviceListContains(invite.Responsibilities, "forward") {
-		b.WriteString(`<div class=client-setup-prepare><div><span class=client-step>1</span><div><b>Configure the server declaration before joining</b><span class="small dim">This declares how other Devices may reach this server. It is not a route or exit selection.</span></div></div><code class=command-block>sudo install -d -m 0755 /etc/loom
-sudoedit /etc/loom/device.yaml</code><code class=command-block>server:
-  public_endpoint: edge.example.net
-  inbound_port: 61698
-  direction: bidirectional</code><p class="small dim">Use this Device's real public DNS name or public IP and the UDP port exposed by the deployment. These declared facts are verified by the existing signed topology observations after apply; country, city and provider are optional.</p></div>`)
+	b.WriteString(`</section></div>`)
+	if invite.Platform == "windows-desktop" {
+		b.WriteString(`<section class="card client-setup"><div class=client-setup-head><div><div class=label>Windows</div><h2>Start the client, then import the QR code</h2></div><p class=small>The QR and join file are equivalent. Windows enrollment is limited to use_loom.</p></div></section>`)
+		return
+	}
+	b.WriteString(`<section class="card client-setup" aria-labelledby=client-setup-title><div class=client-setup-head><div><div class=label>Linux</div><h2 id=client-setup-title>Local or SSH-assisted bootstrap</h2></div><p class=small>SSH only runs the same bootstrap on the target host; Loom does not store SSH credentials.</p></div>`)
+	if forward {
+		fmt.Fprintf(b, `<div class=client-setup-prepare><div><span class=client-step>1</span><div><b>Configure the server declaration before joining</b><span class="small dim">This declares data-plane reachability. Location does not determine direction.</span></div></div><code class=command-block>sudo install -d -m 0755 /etc/loom
+	sudoedit /etc/loom/device.yaml</code><code class=command-block>server:
+	  public_endpoint: edge.example.net
+	  inbound_port: 61698
+	  direction: %s</code><p class="small dim">For reverse_only, the Device initiates persistent WireGuard tunnels; inbound_port is reached through those tunnels. The public endpoint remains required by the current server declaration.</p></div>`, esc(invite.Direction))
 	}
 	if pkg.InstallerURL != "" {
-		fmt.Fprintf(b, `<div class=client-setup-prepare><div><span class=client-step>1</span><div><b>Install the public generic package</b><span class="small dim">No join code or Device configuration is embedded in this URL.</span></div></div><code class=command-block>curl -fsSL '%s' | sudo sh
-sudo /usr/local/bin/loom client enroll -stdin</code></div>`, esc(pkg.InstallerURL))
+		fmt.Fprintf(b, `<div class=client-setup-prepare><div><span class=client-step>2</span><div><b>Shell bootstrap on the target</b><span class="small dim">Run these commands locally, or first open an SSH session yourself. No join code or Device configuration is embedded in the installer URL.</span></div></div><code class=command-block>curl -fsSL '%s' | sudo sh
+	sudo /usr/local/bin/loom client enroll -stdin</code><p class="small dim">SSH-assisted: run <code>ssh root@target-host</code>, then run the same two commands. Loom does not receive or store the SSH credential.</p></div>`, esc(pkg.InstallerURL))
 	}
 	if clientPackageAvailable(pkg) {
 		fmt.Fprintf(b, `<div class=client-setup-prepare><div><span class=client-step>⇩</span><div><b>Manual or offline package install</b><span class="small dim">Run these commands in the directory containing both downloads.</span></div></div><code class=command-block>printf '%%s  %%s\n' '%s' '%s' | sha256sum -c -
@@ -356,71 +413,29 @@ sudo /usr/local/bin/loom client enroll -stdin</code><p class="small">Paste the c
 	} else {
 		b.WriteString(`<div class="callout warnline client-setup-blocked"><b>Linux package unavailable</b><br><span class=small>Publish a validated Linux client package before attempting these installation commands. The join code remains usable until the expiry shown above.</span></div>`)
 	}
-	b.WriteString(`<div class=client-setup-boundary><b>The first successful join consumes the code.</b><span>Before it is used, an operator can generate a fresh QR from the Device details. After joining, deleting the local identity requires Rejoin Device there to revoke the old access and create a replacement. An interrupted join must finish or be resolved before replacement. Reconnects, restarts and configuration updates keep the existing identity.</span></div></section>`)
+	b.WriteString(`<div class=client-setup-boundary><b>The first successful join consumes the code.</b><span>Before use, an operator can generate a fresh join code. Reconnects, restarts and configuration updates keep the existing identity.</span></div></section>`)
 }
 
-func deviceEnrollmentProfiles(d Deps) ([]DeviceEnrollmentProfileView, error) {
+func deviceEnrollmentOptions(d Deps) (DeviceEnrollmentOptions, error) {
 	control := deviceControl(d)
-	if control == nil {
-		return nil, fmt.Errorf("profile preview is unavailable")
+	if control == nil || control.EnrollmentOptions == nil {
+		return DeviceEnrollmentOptions{}, fmt.Errorf("Device enrollment options are unavailable")
 	}
-	if control.EnrollmentProfiles != nil {
-		profiles, err := control.EnrollmentProfiles()
-		if err != nil {
-			return nil, err
-		}
-		if len(profiles) == 0 {
-			return nil, fmt.Errorf("no join profile is available")
-		}
-		return profiles, nil
-	}
-	if control.EnrollmentProfile == nil {
-		return nil, fmt.Errorf("profile preview is unavailable")
-	}
-	profile, err := control.EnrollmentProfile()
-	profile.Default = true
-	return []DeviceEnrollmentProfileView{profile}, err
+	return control.EnrollmentOptions()
 }
 
-func deviceEnrollmentProfile(d Deps) (DeviceEnrollmentProfileView, error) {
-	profiles, err := deviceEnrollmentProfiles(d)
-	return selectedEnrollmentProfile(profiles, ""), err
+func selected(value bool) string {
+	if value {
+		return " selected"
+	}
+	return ""
 }
 
-func selectedEnrollmentProfile(profiles []DeviceEnrollmentProfileView, requested string) DeviceEnrollmentProfileView {
-	for _, profile := range profiles {
-		if requested != "" && profile.Version == requested {
-			return profile
-		}
+func checked(value bool) string {
+	if value {
+		return " checked"
 	}
-	for _, profile := range profiles {
-		if profile.Default {
-			return profile
-		}
-	}
-	if len(profiles) > 0 {
-		return profiles[0]
-	}
-	return DeviceEnrollmentProfileView{}
-}
-
-func enrollmentProfileControl(profiles []DeviceEnrollmentProfileView, selected string) string {
-	if len(profiles) <= 1 {
-		return `<input type=hidden name=profile_version value="` + esc(selected) + `">`
-	}
-	var b strings.Builder
-	b.WriteString(`<div class=field><label for=device-profile>Device purpose</label><select id=device-profile name=profile_version required data-device-profile-control>`)
-	for _, profile := range profiles {
-		selectedAttr := ""
-		if profile.Version == selected {
-			selectedAttr = " selected"
-		}
-		fmt.Fprintf(&b, `<option value="%s" data-responsibilities="%s" data-grants="%s"%s>%s · %s</option>`,
-			esc(profile.Version), esc(deviceList(profile.Responsibilities)), esc(deviceList(profile.DestinationGrants)), selectedAttr,
-			esc(profile.Version), esc(deviceList(profile.Responsibilities)))
-	}
-	b.WriteString(`</select><span class=field-hint>This pins an immutable responsibility/grant expansion; it is not a platform choice.</span></div>`)
-	return b.String()
+	return ""
 }
 
 func deviceListContains(values []string, wanted string) bool {
@@ -432,11 +447,11 @@ func deviceListContains(values []string, wanted string) bool {
 	return false
 }
 
-func enrollmentProfileError(err error) string {
+func enrollmentOptionsError(err error) string {
 	if err == nil {
 		return ""
 	}
-	return `<div class="callout warnline"><b>Profile unavailable</b><br><span class=small>` + esc(err.Error()) + `</span></div>`
+	return `<div class="callout warnline"><b>Enrollment options unavailable</b><br><span class=small>` + esc(err.Error()) + `</span></div>`
 }
 
 func writeLinuxDelivery(b *strings.Builder, pkg LinuxClientPackageView, packageError string) {

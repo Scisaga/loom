@@ -39,7 +39,7 @@ func TestClientProvisionPrepositionsSecretsBeforeSSOTCommitAndReplaysReady(t *te
 		ID: "client-build01", Name: "Build server", Platform: string(model.LinuxServer),
 		Status: "provisioning",
 	}
-	pinDefaultTestProfile(t, control, &client)
+	pinAccessTestIntent(t, &client)
 	csrPEM, csr := clientProvisionCSR(t)
 	var saveMu sync.Mutex
 	p := newClientProvisioner(control, &saveMu)
@@ -139,7 +139,7 @@ func TestWindowsClientProvisionUsesAccessOnlyPlatformShape(t *testing.T) {
 		ID: "win-laptop01", Name: "Windows laptop", Platform: string(model.WindowsDesktop),
 		Status: "provisioning",
 	}
-	pinDefaultTestProfile(t, control, &client)
+	pinAccessTestIntent(t, &client)
 	csrPEM, _ := clientProvisionCSR(t)
 	var saveMu sync.Mutex
 	p := newClientProvisioner(control, &saveMu)
@@ -233,7 +233,7 @@ func TestServerDeviceProvisionUsesTheSameAtomicEnrollmentTransaction(t *testing.
 			Country:     "CN", City: "Beijing", Provider: "example",
 		},
 	}
-	pinTestProfile(t, control, &client, "server-device@v1")
+	pinServerTestIntent(t, &client)
 	csrPEM, _ := clientProvisionCSR(t)
 	var saveMu sync.Mutex
 	p := newClientProvisioner(control, &saveMu)
@@ -444,7 +444,7 @@ func TestReadyBootstrapRechecksExactSSOTAfterPublisherMoves(t *testing.T) {
 		ID: "client-race01", Name: "Race check", Platform: string(model.LinuxServer),
 		Status: "provisioning",
 	}
-	pinDefaultTestProfile(t, control, &client)
+	pinAccessTestIntent(t, &client)
 	csrPEM, _ := clientProvisionCSR(t)
 	var saveMu sync.Mutex
 	p := newClientProvisioner(control, &saveMu)
@@ -614,11 +614,24 @@ func generatedProvisionedClient(t *testing.T, withServices bool) (*model.SSOT, *
 declarations:
 `, 1))
 	}
+	base, err := model.Load(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var grants []string
+	for _, declaration := range base.Declarations {
+		if declaration.AddressFromRequest() {
+			grants = append(grants, declaration.ID)
+		}
+	}
 	client := clientregistry.Client{
 		ID: "client-shape01", Name: "Shape client", Platform: string(model.LinuxServer),
 	}
+	pinTestIntent(t, &client, clientregistry.EnrollmentIntent{
+		Platform: client.Platform, Responsibilities: []string{"use_loom"}, DestinationGrants: grants,
+	})
 	plan, err := ssotedit.AddAccessClient(body, ssotedit.ClientInput{
-		ID: client.ID, Name: client.Name, Platform: model.LinuxServer,
+		ID: client.ID, Name: client.Name, Platform: model.LinuxServer, DestinationGrants: grants,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -637,7 +650,7 @@ func TestClientProvisionFailureLeavesSSOTUnchangedAndRetryReusesSecrets(t *testi
 		t.Fatal(err)
 	}
 	client := clientregistry.Client{ID: "client-retry01", Name: "Retry server", Platform: string(model.LinuxServer)}
-	pinDefaultTestProfile(t, control, &client)
+	pinAccessTestIntent(t, &client)
 	csrPEM, _ := clientProvisionCSR(t)
 	var saveMu sync.Mutex
 	p := newClientProvisioner(control, &saveMu)
@@ -868,17 +881,6 @@ func clientProvisionFixture(t *testing.T) (*Control, clientProvisionPaths) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body = []byte(strings.Replace(string(body), "declarations:\n", `enrollment_profiles:
-  - id: standard-device
-    version: 1
-    default: true
-    responsibilities: [use_loom]
-    destination_grants: [best-egress]
-  - id: server-device
-    version: 1
-    responsibilities: [forward, internet_egress]
-declarations:
-`, 1))
 	ssot, err := model.Load(body)
 	if err != nil {
 		t.Fatal(err)
@@ -939,33 +941,34 @@ declarations:
 	return control, paths
 }
 
-func pinDefaultTestProfile(t *testing.T, control *Control, client *clientregistry.Client) {
+func pinAccessTestIntent(t *testing.T, client *clientregistry.Client) {
 	t.Helper()
-	pinTestProfile(t, control, client, "")
+	pinTestIntent(t, client, clientregistry.EnrollmentIntent{
+		Platform: client.Platform, Responsibilities: []string{"use_loom"}, DestinationGrants: []string{"best-egress"},
+	})
 }
 
-func pinTestProfile(t *testing.T, control *Control, client *clientregistry.Client, reference string) {
+func pinServerTestIntent(t *testing.T, client *clientregistry.Client) {
 	t.Helper()
-	ssot, err := model.LoadFile(control.SSOTPath)
+	direction := ""
+	if client.Server != nil {
+		direction = client.Server.Direction
+	}
+	pinTestIntent(t, client, clientregistry.EnrollmentIntent{
+		Platform: client.Platform, Responsibilities: []string{"forward", "internet_egress"}, Direction: direction,
+	})
+}
+
+func pinTestIntent(t *testing.T, client *clientregistry.Client, input clientregistry.EnrollmentIntent) {
+	t.Helper()
+	intent, err := clientregistry.NormalizeEnrollmentIntent(input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var profile *model.EnrollmentProfileVersion
-	if reference == "" {
-		profile, err = ssot.DefaultEnrollmentProfile()
-	} else {
-		profile = ssot.EnrollmentProfileByReference(reference)
-		if profile == nil {
-			err = errors.New("profile not found")
-		}
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	client.ProfileVersion = profile.Reference()
-	client.ProfileDigest = profile.Digest()
-	client.Responsibilities = append([]string(nil), profile.Responsibilities...)
-	client.DestinationGrants = append([]string(nil), profile.DestinationGrants...)
+	client.Platform = intent.Platform
+	client.Responsibilities = append([]string(nil), intent.Responsibilities...)
+	client.DestinationGrants = append([]string(nil), intent.DestinationGrants...)
+	client.Direction = intent.Direction
 }
 
 func mapKeysBool(values map[string]bool) []string {

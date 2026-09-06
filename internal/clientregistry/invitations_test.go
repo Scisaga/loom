@@ -16,7 +16,7 @@ func TestRenewInvitationInvalidatesOldCodeAndPreservesReservation(t *testing.T) 
 		t.Run(delay.String(), func(t *testing.T) {
 			now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 			store := testStore(t, &now)
-			first, err := store.Create("demo workstation")
+			first, err := store.Create("demo workstation", testAccessIntent("windows-desktop"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -53,8 +53,8 @@ func TestRenewInvitationInvalidatesOldCodeAndPreservesReservation(t *testing.T) 
 func TestReplacementRetiresAccessBeforeIssuingOneNewIdentity(t *testing.T) {
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, &now)
-	first, err := store.CreateWithProfile("demo workstation", ProfileAssignment{
-		Version: "demo-purpose@v1", Digest: strings.Repeat("a", 64), Responsibilities: []string{"use_loom"}, DestinationGrants: []string{"demo-policy"},
+	first, err := store.Create("demo workstation", EnrollmentIntent{
+		Platform: "windows-desktop", Responsibilities: []string{"use_loom"}, DestinationGrants: []string{"demo-policy"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +98,10 @@ func TestReplacementRetiresAccessBeforeIssuingOneNewIdentity(t *testing.T) {
 		t.Fatalf("concurrent replacement retired=%d results=%d", retired.Load(), len(results))
 	}
 	next := <-results
-	if next.Client.ID == first.Client.ID || next.Client.Name != first.Client.Name || next.Client.ProfileDigest != first.Client.ProfileDigest || next.Client.Replaces != first.Client.ID {
+	if next.Client.ID == first.Client.ID || next.Client.Name != first.Client.Name ||
+		strings.Join(next.Client.Responsibilities, ",") != strings.Join(first.Client.Responsibilities, ",") ||
+		strings.Join(next.Client.DestinationGrants, ",") != strings.Join(first.Client.DestinationGrants, ",") ||
+		next.Client.Replaces != first.Client.ID {
 		t.Fatalf("replacement=%+v", next.Client)
 	}
 	if err := store.CheckClaimedIdentity(first.Client.ID, claimed.Client.PublicKey); err == nil {

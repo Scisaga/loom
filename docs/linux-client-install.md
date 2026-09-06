@@ -17,18 +17,24 @@
 
 ## 1. 创建 Device 和加入码
 
-在中控打开 **Devices → Create Device**，填写便于识别的设备名称并选择不可变的入网
-预设。不要填写平台、出口节点或路径：平台由客户端上报，路由仍由中控规则和 Agent
-决定。默认预设只在本机使用 Loom；服务器预设展开为 `forward` 与
-`internet_egress`，不是另一种 Enrollment 协议。
+在中控打开 **Devices → Create Device**，选择 Linux 平台并直接勾选职责：
+`use_loom`、`forward`、`internet_egress`。`internet_egress` 必须与 `forward`
+同时选择；只有 `use_loom` 才选择允许访问的 Destination grants。不要填写出口节点或
+路径，路由仍由中控规则和 Agent 决定。平台、职责、grants 和转发连接方向都固定在这次
+邀请中，客户端不能在 claim 时修改。
 
-创建成功页只展示一次短时加入码，并提供三种等价载体：
+创建成功页展示短时加入码。只含 `use_loom` 时可提供二维码和 `.loom-invite` 文件。
+所有 Linux 组合都通过 shell bootstrap 消费页面显示的一次性 `loom://enroll#…` 输入：
 
-- 二维码，供支持扫码或图片导入的客户端使用，也可点击图片下载 `device-join.png`；
-- 单独点击 **Download join file** 下载 `client.loom-invite`，供 Linux CLI 使用；
-- 复制内部兼容 `loom://enroll#…` URI，供无浏览器的 Linux 主机使用。
+- 在目标机本地执行页面给出的 shell bootstrap；
+- 或由管理员先 SSH 到目标机，再执行完全相同的 bootstrap。
 
-三者共享同一个短 TTL、一次性 token。普通重启、断线重连和配置更新不会再次加入。
+纯 `use_loom` Linux Device 也可单独点击 **Download join file** 下载
+`client.loom-invite`，供 Linux CLI 使用。
+
+SSH 不是另一种 Enrollment，也不由 Loom 中控保存主机地址、账号、私钥或口令。
+
+这些方式共享同一个短 TTL、一次性 token。普通重启、断线重连和配置更新不会再次加入。
 不要把加入 URI 放进 shell 参数、聊天记录或工单；它是有效期内的 bearer secret。
 
 ## 2. 下载并核对客户端包
@@ -57,9 +63,9 @@ loom client verify \
 一次 Loom 二进制，用同一字节生成并验签客户端包，最后将 archive 作为提交标记原子
 发布到 `/var/lib/loom/client-dist/`。脏工作树构建默认会被拒绝。
 
-## 3. 服务器职责先声明可达事实
+## 3. 转发职责先声明可达事实
 
-只有加入预设的 Responsibilities 包含 `forward` 时，才需要在消费加入码前创建严格的本地配置：
+只有所选 Responsibilities 包含 `forward` 时，才需要在消费加入码前创建严格的本地配置：
 
 ```yaml
 # /etc/loom/device.yaml
@@ -72,9 +78,11 @@ server:
   # provider: example # 可选
 ```
 
-`public_endpoint` 是不带 scheme/端口的真实公网 DNS 或 IP；`inbound_port` 是部署实际开放的
-UDP 端口；`direction` 只能是 `bidirectional`、`reverse_only` 或 `direct_only`。这些字段
-声明服务器如何加入现有拓扑，不是让客户端手选路径或出口，也不会创建第二套选路逻辑。
+`public_endpoint` 是不带 scheme/端口的 DNS 或 IP；`inbound_port` 是部署使用的 UDP
+端口；`direction` 必须与中控邀请一致，只能是 `bidirectional`、`reverse_only` 或
+`direct_only`。`reverse_only` 由该 Device 主动建立并维持反向 WireGuard 隧道；它表达
+公网/NAT 可达性而不是地理位置。当前部署可将境外服务器设为 `reverse_only`，但协议并不
+禁止境外 Device 承担接入或其他已授权职责。
 
 客户端在本机创建或复用 `/etc/wireguard/node.key`，只把公钥随加入请求发给中控。缺少
 `/usr/bin/wg` 或 `/usr/bin/wg-quick` 时，会在消费加入码前通过受支持的 apt/dnf/yum/apk/

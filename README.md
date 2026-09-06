@@ -35,25 +35,38 @@ Windows 客户端提供本地直连、按中控规则自动选路和固定出口
 
 ## 加入网络
 
-服务器、桌面和手机在 Loom 中都是 **Device**。管理员先在 **Devices → Create Device** 创建设备并生成一次性加入二维码；客户端正常启动后导入二维码，绑定这个既有 Device，再取得经过签名的配置。导入二维码不会创建第二个 Device。加入码可以通过以下方式交给设备：
+服务器、桌面和手机在 Loom 中都是 **Device**。管理员先在 **Devices → Create Device**
+选择平台和职责并生成一次性加入码；客户端绑定这个既有 Device，再取得经过签名的配置。
+导入加入码不会创建第二个 Device。当前交付方式如下：
 
 | 方式 | 适用场景 | 支持情况 |
 |---|---|---|
-| 二维码 | Windows 或移动客户端扫描/导入；点击二维码下载 PNG | 中控与三个 Windows edition 的原生 GUI 已支持选择、拖入和剪贴板粘贴；Android 尚未实现 |
-| `.loom-invite` 文件 | Linux 或 Windows 客户端导入 | Linux 与三个 Windows edition 的原生 GUI 已支持 |
-| `loom://enroll#…` | 无扫码能力时使用二维码中的协议内容 | Linux CLI 支持；Windows GUI 可从剪贴板接收二维码图片或该文本 |
+| 二维码 | 仅含 `use_loom` 的 Device | 中控与三个 Windows edition 的原生 GUI 已支持选择、拖入和剪贴板粘贴；Android 尚未实现 |
+| `.loom-invite` 文件 | 仅含 `use_loom` 的 Windows 或 Linux Device | Linux CLI 与三个 Windows edition 已支持 |
+| `loom://enroll#…` | Windows 导入，或作为 Linux shell bootstrap 的一次性输入 | Linux CLI 与三个 Windows edition 已支持 |
+| shell bootstrap | Linux，在目标机本地执行 | 使用公开通用包，随后从标准输入或加入文件消费加入码 |
+| SSH 辅助 | 管理员通过 SSH 登录 Linux 后执行同一 bootstrap | SSH 只是执行方式；中控不保存 SSH 凭据，也没有第二套加入协议 |
 
-上表描述的是当前仓库代码能力，不等于现网已经部署。新二维码携带公开平台公钥的
-SHA-256 指纹，Windows 在提交一次性码前与发行包内嵌公钥本地比对；旧二维码在迁移期
-仍由 ready 响应和首次 signed pull 完成同一信任校验，不再要求额外的公网 `/trust` 路由。
+上表描述的是当前仓库代码能力，不等于现网已经部署。二维码携带公开平台公钥的
+SHA-256 指纹，Windows 在提交一次性码前与发行包内嵌公钥本地比对。registry schema 1
+生成的旧加入码不再接受；升级后必须在中控按明确的平台和职责重新创建尚未加入的 Device。
+系统不要求额外的公网 `/trust` 路由。
 部署状态以[当前状态](docs/status/current.md)为准。
 
-这些载体使用同一份加入码；加入码有效期很短，而且只能使用一次。平台由客户端报告，不需要管理员预先填写。加入码还可以绑定一个固定版本的入网预设，写入设备的初始职责和访问范围。设备加入后，重启、重连、切换网络或正常升级都会继续使用原有身份。
+这些载体使用同一份短期、单次加入码。管理员创建时直接固定平台、职责和 Destination
+grants；客户端 claim 的平台与服务器连接方向必须精确匹配，不能在加入时扩权。Windows
+当前只支持 `use_loom`；Linux 可组合 `use_loom`、`forward`、`internet_egress`，且
+`internet_egress` 必须同时选择 `forward`。Android 平台属于模型范围，但当前尚未交付。
+设备加入后，重启、重连、切换网络或正常升级都会继续使用原有身份。
 
 Linux 的一行安装命令只下载并验证通用软件包，不携带 Device 或加入码；安装后仍需导入
 `.loom-invite` 或兼容协议 URI 才会绑定既有 Device。
 
-作为转发节点或公网出口的 Linux Server，还要声明公网地址、UDP 入站端口和隧道方向。这些字段描述服务器如何被其他设备访问，与手选路径无关。所有 Device 都使用同一加入网络流程（底层协议内部仍名为 Enrollment）。完整步骤见[Linux 客户端安装](docs/linux-client-install.md)和[Device 生命周期与交付架构](docs/device-lifecycle-and-delivery.md)。
+承担 `forward` 或 `internet_egress` 的 Linux Device 还要声明 endpoint、UDP 入站端口和
+连接方向。`reverse_only` 表示该 Device 主动建立并维持反向 WireGuard 隧道；它是可达性
+事实，不是“境外节点”角色。当前部署可以把境外服务器分配为 `reverse_only`，底层模型
+不按地域限制接入。所有 Device 都使用同一加入网络流程（底层协议内部仍名为 Enrollment）。
+完整步骤见[Linux 客户端安装](docs/linux-client-install.md)和[Device 生命周期与交付架构](docs/device-lifecycle-and-delivery.md)。
 
 ## 核心能力
 
@@ -72,7 +85,7 @@ Linux 的一行安装命令只下载并验证通用软件包，不携带 Device 
 flowchart TB
     subgraph Join["首次加入网络"]
         direction LR
-        Admin["管理员创建 Device 和加入码"] --> Carrier["二维码 · 加入链接 · 加入文件"]
+        Admin["管理员创建 Device 和加入码"] --> Carrier["Access：QR / 文件 · Linux：shell / SSH"]
         Package["下载并验证通用客户端"] --> Bind["客户端启动并导入加入输入<br/>本机生成设备密钥和 CSR"]
         Carrier --> Bind
         Bind --> Identity["绑定既有 Device<br/>写入初始职责和访问范围"]
@@ -100,7 +113,7 @@ flowchart TB
     Measure -.->|可信运行证据| Console
 ```
 
-加入流程只在首次导入二维码或中控导出的加入文件时运行。此后设备持续拉取签名配置、安装更新并上报测量结果。运行证据不会写回 SSOT；Agent 也只在已授权的候选中调整自动模式。
+加入流程只在首次消费中控生成的加入输入时运行。此后设备持续拉取签名配置、安装更新并上报测量结果。运行证据不会写回 SSOT；Agent 也只在已授权的候选中调整自动模式。
 
 控制平面暂时离线不会中断数据平面。设备继续使用最后一份安装成功的配置，Agent 也可以根据本地观测继续选路。
 
