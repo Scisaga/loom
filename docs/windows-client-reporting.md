@@ -10,7 +10,7 @@
 ```text
 只修改 Loom Windows 客户端：在已加入且成功激活配置后，从 DPAPI 身份的已验证
 PreparedIdentity.Endpoint 精确要求 /loom-client/enroll，并同源替换为 /loom-client/report；
-每 60 秒 POST 现有 report.Observation 原始 JSON，成功只认 204。复用现有 canonical v5 attest 和 self-check v1：
+每 60 秒 POST 现有 report.Observation 原始 JSON，成功只认空正文 204。复用现有 canonical v5 attest 和 self-check v1：
 两份附件使用同一 P-256 设备私钥/节点证书，node/ts 必须一致，applied 绑定最后成功激活
 的 snapshot；无 WG 测量时省略 edges/targets，并按 {"edges":null,"targets":null} 计算
 measurements_sha256。串行生成严格递增 UTC 时间，拒绝重定向，失败等待下一周期且日志脱敏。
@@ -36,6 +36,15 @@ Windows 客户端在加入完成、首轮 signed pull 验证且数据面成功�
 备份私钥，也不需要手工构造签名报告。未加入的客户端从二维码开始，不把恢复旧目录或
 沿用旧设备身份作为测试前提。二维码过期或已使用时，按中控现有的重新生成或重新加入
 流程取得有效二维码；客户端仍走同一个加入入口。
+
+Windows 邀请固定为 `windows-desktop + use_loom`，职责由中控创建邀请时确定；客户端
+只声明 `windows-desktop`，不提交 `server`、职责或旧的 profile 字段。未消费的旧加入码
+由中控作废，客户端收到拒绝后直接结束本次加入，不变更平台或尝试旧协议。已加入的
+DPAPI 身份继续使用，不因邀请模型更新而清除或要求重新加入。
+
+导入新二维码时，Windows 在发送一次性凭据前校验精确的 HTTPS `/loom-client/enroll`
+入口及必需的 `platform_key_sha256`；缺失指纹的旧码不再走兼容分支。中控对加入码是否
+仍有效保有最终判断权，不能仅凭二维码格式或指纹认定旧码有效。
 
 首版只提交：
 
@@ -174,6 +183,8 @@ Windows 侧至少覆盖：
 - 两签验签以及 node/ts/applied 篡改失败；
 - 串行、严格递增时间戳；candidate 未激活不推进 applied，成功恢复报告旧 snapshot；
 - `204` 成功，其他结果不紧密重试且日志脱敏。
+- 新二维码入口、指纹在请求前验证；Windows 请求不附加 server/职责字段；中控对旧码
+  或错误平台的拒绝不会触发重试或协议降级，已加入身份不受影响。
 
 生产验收使用用户指定的 Windows Device，按正常用户流程执行：
 

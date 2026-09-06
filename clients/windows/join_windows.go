@@ -26,6 +26,7 @@ import (
 	"loom/internal/clientcomponent"
 	"loom/internal/clientenroll"
 	"loom/internal/clientjoin"
+	"loom/internal/clientreport"
 	"loom/internal/clientsecret"
 	"loom/internal/clientupdate"
 	"loom/internal/netx"
@@ -351,11 +352,12 @@ func prepareWindowsJoinComponent(options windowsJoinCommitOptions) ([]byte, *cli
 }
 
 func verifyWindowsInviteTrust(invite clientenroll.Invite, platformKey ed25519.PublicKey) error {
-	// Invites created before the fingerprint field was introduced remain valid
-	// during migration. Their ready response and first signed pull still have to
-	// match the embedded key before anything is committed locally.
+	// §9.1 / D98：在提交一次性凭据前验证现行入口，避免加入成功后才发现无法上报。
+	if _, err := clientreport.Endpoint(invite.Endpoint); err != nil {
+		return errors.New("加入二维码入口无效；请从中控重新创建 Windows Device 二维码")
+	}
 	if invite.PlatformKeySHA256 == "" {
-		return nil
+		return errors.New("加入二维码缺少中控验证指纹；请从中控重新创建 Windows Device 二维码")
 	}
 	digest := sha256.Sum256(platformKey)
 	if !bytes.Equal([]byte(invite.PlatformKeySHA256), []byte(hex.EncodeToString(digest[:]))) {

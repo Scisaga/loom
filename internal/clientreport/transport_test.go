@@ -2,6 +2,7 @@ package clientreport
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -28,7 +29,7 @@ func TestHTTPClassificationAndRedirectRefusal(t *testing.T) {
 	followed := 0
 	destination := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { followed++; w.WriteHeader(204) }))
 	defer destination.Close()
-	for _, code := range []int{204, 302, 400, 403, 405, 413, 415, 429, 500, 503} {
+	for _, code := range []int{200, 201, 202, 204, 205, 301, 302, 303, 307, 308, 400, 403, 405, 413, 415, 429, 500, 503} {
 		t.Run(http.StatusText(code), func(t *testing.T) {
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != "POST" || r.URL.Path != "/loom-client/report" || r.Header.Get("Content-Type") != "application/json" || r.Header.Get("Authorization") != "" {
@@ -66,6 +67,16 @@ func TestHTTPClassificationAndRedirectRefusal(t *testing.T) {
 type responseTransport func(*http.Request) (*http.Response, error)
 
 func (f responseTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestNetworkErrorsAreRedacted(t *testing.T) {
+	client := &http.Client{Transport: responseTransport(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("demo-private-token demo-certificate demo-report-body")
+	})}
+	result := Send(context.Background(), client, "https://control.example/loom-client/report", &Observation{Node: "demo-client"})
+	if result.Err == nil || strings.Contains(result.Err.Error(), "demo-") || strings.Contains(result.Err.Error(), "control.example") {
+		t.Fatal("transport error was accepted or disclosed raw network diagnostics")
+	}
+}
 
 func TestNonempty204AndBodyLimit(t *testing.T) {
 	called := 0

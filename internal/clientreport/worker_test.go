@@ -5,8 +5,66 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
+
+func TestDefaultPeriodAndFailureWait(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		sent := make(chan time.Time, 8)
+		worker := NewWorker(func(_ context.Context, at time.Time) (*Observation, error) {
+			return &Observation{Node: "demo-client", TS: at.Format(time.RFC3339Nano)}, nil
+		}, func(_ context.Context, observation *Observation) Result {
+			at, err := time.Parse(time.RFC3339Nano, observation.TS)
+			if err != nil {
+				t.Error(err)
+			}
+			sent <- at
+			return Result{Status: 503, Err: errors.New("unavailable")}
+		}, nil)
+		go worker.Run(ctx)
+		synctest.Wait()
+		var previous time.Time
+		select {
+		case previous = <-sent:
+		default:
+			t.Fatal("missing initial attempt")
+		}
+		for range 2 {
+			worker.Trigger()
+			time.Sleep(59 * time.Second)
+			synctest.Wait()
+			select {
+			case <-sent:
+				t.Fatal("failure retried before the next 60-second period")
+			default:
+			}
+			time.Sleep(time.Second)
+			synctest.Wait()
+			select {
+			case at := <-sent:
+				if at.Sub(previous) != time.Minute {
+					t.Fatal("default reporter period is not 60 seconds")
+				}
+				previous = at
+			default:
+				t.Fatal("missing periodic attempt")
+			}
+		}
+		cancel()
+		synctest.Wait()
+		worker.Trigger()
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		select {
+		case <-sent:
+			t.Fatal("stopped worker kept reporting")
+		default:
+		}
+	})
+}
 
 func TestStrictlyIncreasingNanoTimestamps(t *testing.T) {
 	now := time.Now().UTC()

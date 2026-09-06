@@ -30,6 +30,9 @@
 
 ## 实现边界
 
+- Windows 邀请只允许 `windows-desktop + use_loom`，由中控固定职责。客户端只声明
+  Windows 平台，不提交 server 或职责字段，不迁移未消费的旧加入码。已加入身份继续
+  使用；新二维码必须包含与发行包匹配的指纹和精确的 HTTPS `/loom-client/enroll` 入口。
 - 复用最小 Observation：外层只有 `node`、`ts`、`applied`、`attest`、`self_check`。
 - 只有 `attest.Claim` canonical v5 与 self-check v1 两份签名，使用客户端本次正常加入
   保存的同一身份；不生成 legacy Claim、`attest_extended` 或 self-check v2。

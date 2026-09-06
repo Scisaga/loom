@@ -191,7 +191,8 @@ response and first signed-pull trust checks. See
 - `internal/clientreport` sends the existing minimal Observation with a v5
   attestation and self-check v1, using the retained DPAPI identity. After
   activation it reports the active snapshot every 60 seconds to the same-origin
-  report URL derived from the validated enrollment URL; redirects are refused.
+  report URL derived from the validated enrollment URL; redirects are refused
+  and only an empty HTTP 204 response is successful.
   Candidates do not advance `applied`, and stopping the workload stops reports.
   Existing reports then become stale after five minutes. Windows currently has
   no trusted representative end-to-end health result, so self-check reports

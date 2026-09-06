@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -144,7 +145,9 @@ func TestWindowsQRJoinNativeReadyTransaction(t *testing.T) {
 			CSRPEM    string `json:"csr_pem"`
 			RequestID string `json:"request_id"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&claim); err != nil {
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&claim); err != nil {
 			t.Error(err)
 			w.WriteHeader(http.StatusBadRequest)
 			return
@@ -178,11 +181,13 @@ func TestWindowsQRJoinNativeReadyTransaction(t *testing.T) {
 	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x41}, 32))
 	expiresAt := time.Now().Add(time.Minute).Format(time.RFC3339)
 	joinPayload, err := json.Marshal(struct {
-		Schema    int    `json:"schema"`
-		Endpoint  string `json:"endpoint"`
-		Token     string `json:"token"`
-		ExpiresAt string `json:"expires_at"`
-	}{Schema: 1, Endpoint: server.URL + "/loom-client/enroll", Token: token, ExpiresAt: expiresAt})
+		Schema            int    `json:"schema"`
+		Endpoint          string `json:"endpoint"`
+		Token             string `json:"token"`
+		ExpiresAt         string `json:"expires_at"`
+		PlatformKeySHA256 string `json:"platform_key_sha256"`
+	}{Schema: 1, Endpoint: server.URL + "/loom-client/enroll", Token: token, ExpiresAt: expiresAt,
+		PlatformKeySHA256: fmt.Sprintf("%x", sha256.Sum256(platformPrivate.Public().(ed25519.PublicKey)))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +325,7 @@ func TestWindowsQRJoinNativeReadyTransaction(t *testing.T) {
 	}))
 	defer wrongControl.Close()
 	wrongInvite := invite
-	wrongInvite.Endpoint = wrongControl.URL + "/api/client/enroll"
+	wrongInvite.Endpoint = wrongControl.URL + "/loom-client/enroll"
 	wrongDigest := sha256.Sum256(wrongPrivate.Public().(ed25519.PublicKey))
 	wrongInvite.PlatformKeySHA256 = hex.EncodeToString(wrongDigest[:])
 	wrongRoot := filepath.Join(t.TempDir(), "LoomPortable")
@@ -384,7 +389,7 @@ func TestWindowsQRJoinNativeReadyTransaction(t *testing.T) {
 func TestWindowsInviteChecksEmbeddedDeploymentFingerprintWithoutHTTP(t *testing.T) {
 	key := ed25519.PublicKey(bytes.Repeat([]byte{0x31}, ed25519.PublicKeySize))
 	digest := sha256.Sum256(key)
-	invite := clientenroll.Invite{PlatformKeySHA256: hex.EncodeToString(digest[:])}
+	invite := clientenroll.Invite{Endpoint: "https://control.example/loom-client/enroll", PlatformKeySHA256: hex.EncodeToString(digest[:])}
 	if err := verifyWindowsInviteTrust(invite, key); err != nil {
 		t.Fatalf("matching invite fingerprint: %v", err)
 	}
@@ -392,8 +397,61 @@ func TestWindowsInviteChecksEmbeddedDeploymentFingerprintWithoutHTTP(t *testing.
 	if err := verifyWindowsInviteTrust(invite, wrongKey); err == nil {
 		t.Fatal("mismatched deployment fingerprint was accepted")
 	}
-	if err := verifyWindowsInviteTrust(clientenroll.Invite{}, key); err != nil {
-		t.Fatalf("legacy invite migration: %v", err)
+	withoutFingerprint := invite
+	withoutFingerprint.PlatformKeySHA256 = ""
+	if err := verifyWindowsInviteTrust(withoutFingerprint, key); err == nil {
+		t.Fatal("invite without deployment fingerprint was accepted")
+	}
+	for _, endpoint := range []string{
+		"http://control.example/loom-client/enroll", "https://control.example/api/client/enroll",
+		"https://control.example/loom-client/enroll?token=demo-secret", "https://control.example/loom-client/enroll#fragment",
+	} {
+		invalid := invite
+		invalid.Endpoint = endpoint
+		if err := verifyWindowsInviteTrust(invalid, key); err == nil || strings.Contains(err.Error(), endpoint) {
+			t.Fatal("invalid enrollment endpoint accepted or exposed in diagnostics")
+		}
+	}
+}
+
+func TestWindowsRejectedJoinDoesNotRetryOrChangePlatform(t *testing.T) {
+	// §9.2：职责由中控邀请固定。旧码或平台不匹配被拒绝后，不能降级为 Linux 或补报 server。
+	for _, status := range []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusGone} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				var claim struct {
+					Token, Platform string
+					CSRPEM          string `json:"csr_pem"`
+					RequestID       string `json:"request_id"`
+				}
+				decoder := json.NewDecoder(r.Body)
+				decoder.DisallowUnknownFields()
+				if err := decoder.Decode(&claim); err != nil || claim.Platform != clientenroll.PlatformWindowsDesktop ||
+					r.Method != http.MethodPost || r.URL.Path != "/loom-client/enroll" {
+					t.Error("Windows claim changed the platform or declared invitation responsibilities/server facts")
+				}
+				w.WriteHeader(status)
+			}))
+			defer server.Close()
+			invite := clientenroll.Invite{
+				Endpoint:  server.URL + "/loom-client/enroll",
+				Token:     base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x42}, 32)),
+				ExpiresAt: time.Now().Add(time.Minute).Format(time.RFC3339),
+			}
+			identity, err := clientenroll.GeneratePreparedIdentity(clientenroll.PlatformWindowsDesktop, invite.Endpoint, rand.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer clearPreparedIdentity(&identity)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			_, err = waitForReadyJoin(ctx, windowsJoinOptions{Invite: invite, Client: server.Client(), RetryInterval: time.Millisecond}, identity)
+			if err == nil || clientenroll.IsTransient(err) || calls.Load() != 1 || ctx.Err() != nil {
+				t.Fatalf("rejected join was retried or accepted: requests=%d err=%v", calls.Load(), err)
+			}
+		})
 	}
 }
 
