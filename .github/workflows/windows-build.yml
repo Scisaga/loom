@@ -7,7 +7,7 @@ on:
       version:
         description: MSI version (major.minor.build)
         required: true
-        default: '0.1.5'
+        default: '0.1.6'
         type: string
 
 permissions:
@@ -149,3 +149,82 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
+
+  release:
+    name: Publish Windows preview release
+    needs: msi
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BUILD_VERSION: ${{ inputs.version }}
+      RELEASE_TAG: windows-v${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Download complete Windows preview
+        uses: actions/download-artifact@v4
+        with:
+          name: loom-windows-${{ inputs.version }}-preview
+          path: out
+      - name: Verify release files and prepare notes
+        run: |
+          python3 - <<'PY'
+          import hashlib, os
+          from pathlib import Path
+          output = Path('out')
+          packages = {
+              'windows-clients-SHA256SUMS': {
+                  f'loom-client-windows-{edition}-{arch}.zip'
+                  for edition in ('installed', 'portable-mixed', 'portable-tun')
+                  for arch in ('amd64', 'arm64')
+              },
+              'windows-installers-SHA256SUMS': {
+                  f'loom-client-windows-installed-{arch}.msi' for arch in ('amd64', 'arm64')
+              },
+          }
+          expected = {'BUILD-INFO.txt', *packages, *set.union(*packages.values())}
+          if {path.name for path in output.iterdir()} != expected:
+              raise SystemExit('Release must contain all six ZIPs, two MSIs, checksums and build info.')
+          for manifest, names in packages.items():
+              entries = [line.split() for line in (output / manifest).read_text().splitlines()]
+              if len(entries) != len(names) or any(len(entry) != 2 for entry in entries):
+                  raise SystemExit(f'Invalid checksum manifest: {manifest}')
+              if {name for _, name in entries} != names:
+                  raise SystemExit(f'Incomplete checksum manifest: {manifest}')
+              for digest, name in entries:
+                  if hashlib.sha256((output / name).read_bytes()).hexdigest() != digest:
+                      raise SystemExit(f'Checksum mismatch: {name}')
+          version, sha = os.environ['BUILD_VERSION'], os.environ['GITHUB_SHA']
+          repo_url = os.environ['GITHUB_SERVER_URL'] + '/' + os.environ['GH_REPO']
+          run_url = repo_url + '/actions/runs/' + os.environ['GITHUB_RUN_ID']
+          info = (output / 'BUILD-INFO.txt').read_text().splitlines()
+          if not {f'MSI version: {version}', f'Commit: {sha}', f'Run: {run_url}'}.issubset(info):
+              raise SystemExit('Build info does not match this workflow run.')
+          Path(os.environ['RUNNER_TEMP'], 'release-notes.md').write_text(
+              'Windows 客户端预览版，EXE 和 MSI 尚未进行 Authenticode 签名。\n\n'
+              '- 安装使用：选择 `installed-amd64.msi`；Windows on ARM 选择 `installed-arm64.msi`。\n'
+              '- 免安装使用：选择 `portable-mixed`（代理）或 `portable-tun` ZIP，解压后运行 EXE。\n'
+              '- 加入网络需要管理员提供与客户端内置平台公钥匹配的加入码。\n'
+              '- SHA-256 校验值和构建来源见随附清单及 `BUILD-INFO.txt`。\n\n'
+              f'[使用说明]({repo_url}/blob/{sha}/clients/windows/README.md) · '
+              f'[Code signing policy]({repo_url}/blob/{sha}/docs/code-signing-policy.md)\n\n'
+              f'源码：[{sha[:7]}]({repo_url}/commit/{sha}) · [GitHub Actions 构建]({run_url})\n'
+          )
+          PY
+      - name: Publish complete prerelease
+        run: |
+          refs=$(gh api "repos/$GH_REPO/git/matching-refs/tags/$RELEASE_TAG")
+          count=$(jq --arg ref "refs/tags/$RELEASE_TAG" '[.[] | select(.ref == $ref)] | length' <<< "$refs")
+          if [ "$count" != 0 ]; then
+            echo 'This version tag already exists. Choose a new version.' >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" out/* \
+            --target "$GITHUB_SHA" --draft --prerelease \
+            --title "Loom Windows $BUILD_VERSION preview (unsigned)" \
+            --notes-file "$RUNNER_TEMP/release-notes.md"
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
+          gh release view "$RELEASE_TAG" --json url --jq .url >> "$GITHUB_STEP_SUMMARY"

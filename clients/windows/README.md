@@ -129,12 +129,9 @@ It accepts no file paths, commands or configuration bodies from the GUI.
 
 ### GitHub Actions
 
-Open **Actions → Windows build → Run workflow**, select the branch and enter an
-MSI version such as `0.1.5`. After the tests and builds pass, download
-`loom-windows-<version>-preview` from the run's **Artifacts** section. It contains
-all six edition/architecture ZIPs, both MSI installers, SHA-256 manifests, and
-`BUILD-INFO.txt` with the source commit and workflow run. Downloads are retained
-for 30 days. These builds are unsigned previews; SignPath signing is pending.
+Open **Actions → Windows build → Run workflow**, select `main` and enter a new MSI version such as `0.1.6`. After the tests and builds pass, the workflow publishes `windows-v<version>` to [GitHub Releases](https://github.com/Scisaga/loom/releases). Each release contains all six edition/architecture ZIPs, both MSI installers, SHA-256 manifests, and `BUILD-INFO.txt` with the source commit and workflow run. These builds are unsigned previews; SignPath signing is pending.
+
+Other branches produce build artifacts only. Every run also retains `loom-windows-<version>-preview` in **Artifacts** for 30 days. Release files are checked and uploaded to a draft before it becomes public. Existing version tags and releases are never overwritten; if an upload fails, remove that incomplete draft before retrying or use a new version.
 
 The workflow reuses the existing CI checks and packaging scripts on GitHub-hosted
 Linux and Windows runners. Its repository setup is:
@@ -147,13 +144,11 @@ Linux and Windows runners. Its repository setup is:
   built-in `GITHUB_TOKEN`, then verifies their signatures,
   architectures and pinned upstream contents before compiling.
 
-GitHub requires `contents: write` to read draft releases, so this permission is
-limited to the ZIP build job. The test and MSI jobs use `contents: read`.
+GitHub requires `contents: write` to read draft releases and publish releases, so this permission is limited to the ZIP and release jobs. The test and MSI jobs use `contents: read`.
 
 Keep the platform private key and device credentials on the operator's machine.
 Updating components requires preparing new signed packages and updating the
-reviewed version pins. The workflow uploads build artifacts; publishing a client
-release is a separate step.
+reviewed version pins.
 
 ### Local build
 

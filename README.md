@@ -24,6 +24,8 @@ Loom 用一份 YAML 配置管理设备、隧道、服务和访问规则，生成
 
 Windows 客户端支持本地直连、自动选路和固定出口，提供安装版、便携 TUN 版和便携代理版。
 
+从 [Releases](https://github.com/Scisaga/loom/releases) 下载 Windows 预览版。当前 EXE 和 MSI 尚未签名。
+
 <p align="center">
   <img src="assets/client/windows/loom-client-windows-current.png" width="520" alt="Loom Windows 客户端原生界面">
 </p>
