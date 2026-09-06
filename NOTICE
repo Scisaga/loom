@@ -1,0 +1,9 @@
+Loom
+Copyright 2026 Loom contributors
+
+Loom's original code is licensed under the Apache License, Version 2.0.
+See LICENSE for the full terms.
+
+Third-party components retain their own copyright notices and licenses.
+Windows distributions include these notices in the licenses directory and
+inside windows-dataplane.zip. The Loom license does not replace them.

@@ -127,7 +127,8 @@ The build requires the platform-signed component packages in
 `deploy/staging/loom-windows-dataplane-1.11.4-{amd64,arm64}.zip` (or the directory
 selected by `LOOM_WINDOWS_COMPONENT_DIR`). For each edition it produces a full
 ZIP containing the edition-specific executable, the fixed-name
-`windows-dataplane.zip` sidecar, `PREVIEW-NOTICE.txt`, and the licenses/notices
+`windows-dataplane.zip` sidecar, `PREVIEW-NOTICE.txt`, Loom's Apache-2.0 `LICENSE`
+and `NOTICE`, and the licenses/notices
 for statically linked third-party modules. These are development-preview ZIPs,
 not Authenticode-signed release artifacts unless signing is explicitly configured.
 Portable Mixed has a native end-to-end test; TUN lifecycle acceptance is opt-in
@@ -136,6 +137,10 @@ because it changes the test machine's traffic capture.
 complete six-ZIP build set. Build or verification failures before publication
 leave the previous set in place; consumers must verify the manifest so an
 interrupted partial publication is rejected.
+
+MSI installers also install Loom's `LICENSE` and `NOTICE` alongside the executable.
+Third-party components keep their own licenses. See the
+[Code signing policy](../../docs/code-signing-policy.md) for the SignPath scope.
 
 Release builds strip Go symbol and DWARF tables with `-s -w`. Package size is
 still dominated by the signed data-plane sidecar: the amd64 sidecar is about

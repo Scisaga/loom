@@ -241,6 +241,13 @@ go test ./internal/render/ -run TestGolden -update
 
 更新 golden 后必须人工检查 diff。它锁定的是最终配置字节，直接接受所有变化等于放弃这层保护。
 
+## 许可证
+
+Loom 自有代码采用 [Apache License 2.0](LICENSE)，版权声明见 [NOTICE](NOTICE)。
+第三方代码、依赖和随包组件保留各自的许可证；Loom 的许可证不替代它们的授权条件。
+
+Windows 发行签名说明见 [Code signing policy](docs/code-signing-policy.md)。
+
 ## 深入阅读
 
 - [设计文档](docs/design.md)：模型、不变量、数据平面、控制平面与部署顺序。

@@ -52,6 +52,7 @@ DOMAIN = re.compile(
 APPROVED_DOMAIN_BASES = {
     "aliyun.com",
     "anthropic.com",
+    "apache.org",  # Apache-2.0 license text and upstream licensing reference.
     "baidu.com",
     "cloudflare.com",
     "docker.com",
@@ -63,6 +64,8 @@ APPROVED_DOMAIN_BASES = {
     "oaistatic.com",
     "openai.com",
     "sagernet.org",
+    "signpath.io",  # Official release signing service.
+    "signpath.org",  # Open-source signing foundation.
     "w3.org",
     "wireguard.com",
     "wixtoolset.org",  # WiX installer XML schema namespace.

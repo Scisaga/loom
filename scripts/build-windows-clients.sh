@@ -47,6 +47,8 @@ archive_bundle() {
     "$executable_name"
     windows-dataplane.zip
     PREVIEW-NOTICE.txt
+    LICENSE
+    NOTICE
     licenses/gozxing-LICENSE
     licenses/golang-x-sys-LICENSE
     licenses/golang-x-sys-PATENTS
@@ -129,6 +131,8 @@ for arch in amd64 arm64; do
     fi
     install -m 0644 "$staged_component" "$bundle_dir/windows-dataplane.zip"
     install -m 0644 "$repo_root/clients/windows/PREVIEW-NOTICE.txt" "$bundle_dir/PREVIEW-NOTICE.txt"
+    install -m 0644 "$repo_root/LICENSE" "$bundle_dir/LICENSE"
+    install -m 0644 "$repo_root/NOTICE" "$bundle_dir/NOTICE"
     install_module_notices "$bundle_dir"
     archive_bundle "$bundle_dir" "$bundle" "${artifact}.exe"
     echo "packaged $bundle"

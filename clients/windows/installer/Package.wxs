@@ -27,6 +27,12 @@
         <Component Id="Notice" Bitness="always64">
           <File Source="$(var.SourceDir)\PREVIEW-NOTICE.txt" KeyPath="yes" />
         </Component>
+        <Component Id="ProjectLicense" Bitness="always64">
+          <File Source="$(var.SourceDir)\LICENSE" KeyPath="yes" />
+        </Component>
+        <Component Id="ProjectNotice" Bitness="always64">
+          <File Source="$(var.SourceDir)\NOTICE" KeyPath="yes" />
+        </Component>
         <Directory Id="LicensesFolder" Name="licenses">
           <Component Id="Licenses" Guid="D450F757-947F-4893-8037-C50C7BD943FB" Bitness="always64">
             <File Source="$(var.SourceDir)\licenses\gozxing-LICENSE" KeyPath="yes" />
@@ -62,6 +68,8 @@
       <ComponentRef Id="Client" />
       <ComponentRef Id="DataPlane" />
       <ComponentRef Id="Notice" />
+      <ComponentRef Id="ProjectLicense" />
+      <ComponentRef Id="ProjectNotice" />
       <ComponentRef Id="Licenses" />
       <ComponentRef Id="MachineState" />
       <ComponentRef Id="Shortcut" />
