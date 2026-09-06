@@ -188,6 +188,13 @@ response and first signed-pull trust checks. See
   an immutable runtime slot.
 - `internal/clientruntime` derives the exact Installed, Portable TUN, or TUN-free
   Portable Mixed profile and supervises sing-box in a kill-on-close Job Object.
+  TUN profiles enable default-interface binding for underlay sockets and prepend
+  a TUN-only port-53 `hijack-dns` rule. This sends system DNS to the signed DNS
+  resolvers and prevents outbound connections from looping back through TUN.
+  These local capture settings leave the signed egress rules, selectors and
+  outbounds intact; Portable Mixed receives neither setting. Native compatibility
+  is checked with the bundled sing-box using `TestOfficialWindowsTUNCaptureCheck`
+  (`LOOM_SING_BOX_EXECUTABLE` and `LOOM_TEST_CA_CERTIFICATE`).
 - `internal/clientreport` sends the existing minimal Observation with a v5
   attestation and self-check v1, using the retained DPAPI identity. After
   activation it reports the active snapshot every 60 seconds to the same-origin
@@ -230,5 +237,7 @@ executable/installer Authenticode signing are still pending;
 therefore Installed is not a distributable installer. The shared native GUI currently
 implements first launch, Device QR import, Connection state, start/stop, and the
 TUN UAC boundary. Unimplemented prototype navigation pages are deliberately not
-present in the application. Actual Portable TUN adapter/route activation and cleanup also remain
-unverified and must not be described as release-ready.
+present in the application. Portable TUN has a Windows amd64 manual smoke check
+covering adapter activation, UDP/TCP DNS through the TUN gateway, and HTTPS through
+both system capture and the local proxy. This does not replace repeated lifecycle,
+multi-adapter and arm64 host acceptance; TUN must not be described as release-ready.

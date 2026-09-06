@@ -82,7 +82,10 @@ func RunSingBoxCheck(ctx context.Context, executable string, config []byte, runt
 // PreflightWindowsCandidate applies Loom's stricter managed shape checks before
 // invoking the pinned upstream executable.
 func PreflightWindowsCandidate(ctx context.Context, executable string, config []byte, runtimeDir string) error {
-	return PreflightWindowsRuntime(ctx, executable, config, runtimeDir, WindowsInstalledProfile, WindowsInstalledCAPath)
+	if err := ValidateWindowsSingBox(config); err != nil {
+		return fmt.Errorf("Windows sing-box structural preflight: %w", err)
+	}
+	return RunSingBoxCheck(ctx, executable, config, runtimeDir)
 }
 
 // PreflightWindowsRuntime validates the exact derived profile before invoking

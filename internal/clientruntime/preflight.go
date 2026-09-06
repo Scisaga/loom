@@ -15,9 +15,8 @@ const (
 	maxSingBoxBytes        = 16 << 20
 )
 
-// WindowsRuntimeProfile is the local traffic-capture surface derived from the
-// same signed Windows policy. It never changes routes, outbounds, selectors or
-// authorization; Portable Mixed may only remove the managed TUN entry point.
+// WindowsRuntimeProfile 按 §7.2.1 从同一签名策略派生本地接管面。
+// TUN 的 DNS 接管与底层网卡绑定不能改变出口授权。
 type WindowsRuntimeProfile string
 
 const (
@@ -92,8 +91,9 @@ type singBoxOutbound struct {
 }
 
 type singBoxRoute struct {
-	Rules []singBoxRule `json:"rules,omitempty"`
-	Final string        `json:"final"`
+	Rules               []singBoxRule `json:"rules,omitempty"`
+	Final               string        `json:"final"`
+	AutoDetectInterface bool          `json:"auto_detect_interface,omitempty"`
 }
 
 type singBoxRule struct {
@@ -103,7 +103,8 @@ type singBoxRule struct {
 	Domain       []string `json:"domain,omitempty"`
 	DomainSuffix []string `json:"domain_suffix,omitempty"`
 	Port         []int    `json:"port,omitempty"`
-	Outbound     string   `json:"outbound"`
+	Outbound     string   `json:"outbound,omitempty"`
+	Action       string   `json:"action,omitempty"`
 }
 
 type singBoxExperimental struct {
@@ -116,14 +117,12 @@ type singBoxAPI struct {
 }
 
 func ValidateWindowsSingBox(body []byte) error {
-	return validateWindowsSingBox(body, WindowsInstalledProfile, WindowsInstalledCAPath)
+	return validateWindowsSingBox(body, WindowsInstalledProfile, WindowsInstalledCAPath, false)
 }
 
-// DeriveWindowsRuntimeConfig converts the verified full Windows shape to one
-// local runtime shape. The source must first pass the strict installed-policy
-// validator. Portable Mixed removes TUN and only the TUN side of inbound rule
-// selectors; a rule that selected only TUN is removed instead of becoming an
-// accidentally global rule.
+// DeriveWindowsRuntimeConfig 按 §7.2.1 先验证完整签名策略，再派生本机接管面。
+// Mixed 删除 TUN 及仅匹配 TUN 的规则，避免移除匹配条件后扩大规则范围。
+// TUN 将 DNS 交给签名配置中的解析器，并绑定默认网卡以防底层连接重新进入 TUN。
 func DeriveWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile, caPath string) ([]byte, error) {
 	if err := ValidateWindowsSingBox(body); err != nil {
 		return nil, fmt.Errorf("validate signed Windows source config: %w", err)
@@ -164,6 +163,9 @@ func DeriveWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile, caPa
 			rules = append(rules, rule)
 		}
 		config.Route.Rules = rules
+	} else {
+		config.Route.AutoDetectInterface = true
+		config.Route.Rules = append([]singBoxRule{windowsTUNDNSRule()}, config.Route.Rules...)
 	}
 	derived, err := json.MarshalIndent(&config, "", "  ")
 	if err != nil {
@@ -184,7 +186,17 @@ func ValidateWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile, ca
 	if err := validateRuntimeTarget(profile, caPath); err != nil {
 		return err
 	}
-	return validateWindowsSingBox(body, profile, caPath)
+	return validateWindowsSingBox(body, profile, caPath, true)
+}
+
+func windowsTUNDNSRule() singBoxRule {
+	return singBoxRule{Inbound: []string{"tun-in"}, Port: []int{53}, Action: "hijack-dns"}
+}
+
+func isWindowsTUNDNSRule(rule singBoxRule) bool {
+	return rule.Action == "hijack-dns" && rule.Outbound == "" &&
+		slices.Equal(rule.Inbound, []string{"tun-in"}) && slices.Equal(rule.Port, []int{53}) &&
+		len(rule.AuthUser) == 0 && len(rule.IPCIDR) == 0 && len(rule.Domain) == 0 && len(rule.DomainSuffix) == 0
 }
 
 func validateRuntimeTarget(profile WindowsRuntimeProfile, caPath string) error {
@@ -216,7 +228,7 @@ func validAbsoluteWindowsPath(value string) bool {
 	return true
 }
 
-func validateWindowsSingBox(body []byte, profile WindowsRuntimeProfile, caPath string) error {
+func validateWindowsSingBox(body []byte, profile WindowsRuntimeProfile, caPath string, derived bool) error {
 	if len(body) == 0 || len(body) > maxSingBoxBytes {
 		return errors.New("sing-box config has invalid size")
 	}
@@ -245,6 +257,13 @@ func validateWindowsSingBox(body []byte, profile WindowsRuntimeProfile, caPath s
 	}
 	if config.Route.Final != "block" {
 		return fmt.Errorf("route.final must remain block, got %q", config.Route.Final)
+	}
+	localTUNCapture := derived && profile != WindowsPortableMixedProfile
+	if config.Route.AutoDetectInterface != localTUNCapture {
+		return errors.New("[§7.2.1] Windows 网卡绑定与本地接管形态不一致")
+	}
+	if localTUNCapture && (len(config.Route.Rules) == 0 || !isWindowsTUNDNSRule(config.Route.Rules[0])) {
+		return errors.New("[§7.2.1] Windows TUN 必须在出口规则之前接管 DNS")
 	}
 
 	inboundTags := map[string]bool{}
@@ -363,6 +382,12 @@ func validateWindowsSingBox(body []byte, profile WindowsRuntimeProfile, caPath s
 	}
 	managedRule := false
 	for index, rule := range config.Route.Rules {
+		if rule.Action != "" {
+			if localTUNCapture && index == 0 && isWindowsTUNDNSRule(rule) {
+				continue
+			}
+			return fmt.Errorf("[§7.2.1] 路由规则 %d 包含非托管 action", index)
+		}
 		if rule.Outbound == "" || !outboundTags[rule.Outbound] {
 			return fmt.Errorf("route rule %d references unknown outbound %q", index, rule.Outbound)
 		}

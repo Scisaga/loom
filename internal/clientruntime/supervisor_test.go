@@ -21,10 +21,14 @@ func TestRunWindowsDataPlanePreflightsAndStopsChild(t *testing.T) {
 	runtimeDir := filepath.Join(root, "runtime")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	config := strings.NewReplacer(
+	source := strings.NewReplacer(
 		"${secret:vault:cred/win01}", "fixture-password",
 		"${secret:api/win01}", "fixture-api",
 	).Replace(validWindowsConfig("warn"))
+	config, err := DeriveWindowsRuntimeConfig([]byte(source), WindowsInstalledProfile, WindowsInstalledCAPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	go func() {
 		done <- RunWindowsDataPlane(ctx, executable, []byte(config), runtimeDir)
 	}()
@@ -77,10 +81,14 @@ func TestRunWindowsDataPlaneRemovesStalePlaintextConfigBeforeStart(t *testing.T)
 	if err := os.WriteFile(stale, []byte("old secret"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	config := strings.NewReplacer(
+	source := strings.NewReplacer(
 		"${secret:vault:cred/win01}", "fixture-password",
 		"${secret:api/win01}", "fixture-api",
 	).Replace(validWindowsConfig("warn"))
+	config, err := DeriveWindowsRuntimeConfig([]byte(source), WindowsInstalledProfile, WindowsInstalledCAPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- RunWindowsDataPlane(ctx, executable, []byte(config), runtimeDir) }()
