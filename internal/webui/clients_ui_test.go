@@ -84,9 +84,9 @@ func TestClientsPageMergesOnlyTrustedCurrentNodeRuntime(t *testing.T) {
 		return View{Nodes: []NodeView{
 			{ID: "direct", Declared: true, Reached: true, Health: "healthy", Source: "直连 /status", ObservedAt: now.Add(-5 * time.Second).Format(time.RFC3339), Applied: "snapshot-direct-0123456789"},
 			{ID: "signed", Declared: true, Health: "healthy", Source: "签名健康转述", ObservedAt: now.Add(-20 * time.Second).Format(time.RFC3339), AgeSec: 20, Applied: "snapshot-signed-0123456789"},
-			{ID: "unsigned", Declared: true, Health: "healthy", Source: "未签名转述", ObservedAt: now.Add(-10 * time.Second).Format(time.RFC3339), Applied: "untrusted"},
+			{ID: "unsigned", Declared: true, Health: "healthy", Source: "未签名转述", ObservedAt: now.Add(-10 * time.Second).Format(time.RFC3339), Applied: "untrusted", Problems: []string{"must not be shown"}},
 			{ID: "stale", Declared: true, Health: "healthy", Source: "签名转述", ObservedAt: now.Add(-10 * time.Minute).Format(time.RFC3339), AgeSec: 600, Applied: "snapshot-stale"},
-			{ID: "broken", Declared: true, Reached: true, Health: "problem", Source: "直连 /status", ObservedAt: now.Add(-8 * time.Second).Format(time.RFC3339), Applied: "snapshot-broken"},
+			{ID: "broken", Declared: true, Reached: true, Health: "problem", Source: "直连 /status", ObservedAt: now.Add(-8 * time.Second).Format(time.RFC3339), Applied: "snapshot-broken", Problems: []string{"trusted runtime reason"}},
 			{ID: "silent", Declared: true, Health: "unknown", Source: "中控 SSOT · 尚无观测"},
 			{ID: "revoked", Declared: true, Reached: true, Health: "healthy", Source: "直连 /status", ObservedAt: now.Format(time.RFC3339), Applied: "snapshot-revoked"},
 		}}
@@ -109,13 +109,13 @@ func TestClientsPageMergesOnlyTrustedCurrentNodeRuntime(t *testing.T) {
 			t.Errorf("%s runtime merge = %+v", id, byID[id])
 		}
 	}
-	if got := byID["unsigned"]; got.Status == "online" || got.DataPlaneStatus != "untrusted observation" || got.LastSeenAt != "" || got.ConfigState != "not reported" {
+	if got := byID["unsigned"]; got.Status == "online" || got.DataPlaneStatus != "untrusted observation" || got.LastSeenAt != "" || got.ConfigState != "not reported" || len(got.RuntimeProblems) != 0 {
 		t.Errorf("unsigned runtime was trusted: %+v", got)
 	}
 	if got := byID["stale"]; got.Status != "stale" || got.DataPlaneStatus != "stale" || got.LastSeenAt == "" {
 		t.Errorf("stale runtime = %+v", got)
 	}
-	if got := byID["broken"]; got.Status != "problem" || got.DataPlaneStatus != "problem" {
+	if got := byID["broken"]; got.Status != "problem" || got.DataPlaneStatus != "problem" || len(got.RuntimeProblems) != 1 || got.RuntimeProblems[0] != "trusted runtime reason" {
 		t.Errorf("problem runtime = %+v", got)
 	}
 	if got := byID["silent"]; got.Status == "online" || got.DataPlaneStatus != "not observed" || got.LastSeenAt != "" {
@@ -130,6 +130,26 @@ func TestClientsPageMergesOnlyTrustedCurrentNodeRuntime(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("Clients runtime page missing %q", want)
 		}
+	}
+}
+
+func TestDeviceDetailShowsTrustedRuntimeProblemReason(t *testing.T) {
+	now := time.Date(2026, 9, 6, 14, 53, 51, 0, time.UTC)
+	d := clientUIDeps()
+	d.Now = func() time.Time { return now }
+	d.Control.Clients.List = func() (ClientInventory, error) {
+		return ClientInventory{Clients: []ClientView{{ID: "d-windows", Name: "Windows", Status: "ready"}}}, nil
+	}
+	d.Snapshot = func() View {
+		return View{Nodes: []NodeView{{
+			ID: "d-windows", Declared: true, Reached: true, Health: "problem", Source: "直连 /status",
+			ObservedAt: now.Add(-5 * time.Second).Format(time.RFC3339), Applied: "snapshot-current",
+			Problems: []string{`Windows 数据面缺少可信的端到端健康证据 <detail>`},
+		}}}
+	}
+	body := pageDeviceDetail(d, "d-windows", true)
+	if !strings.Contains(body, `Windows 数据面缺少可信的端到端健康证据 &lt;detail&gt;`) {
+		t.Fatal("Device detail omitted or failed to escape the trusted runtime problem reason")
 	}
 }
 

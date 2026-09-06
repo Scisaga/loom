@@ -208,6 +208,7 @@ type ClientView struct {
 	EnrolledAt        string   `json:"claimed_at,omitempty"`
 	LastSeenAt        string   `json:"last_seen_at,omitempty"`
 	DataPlaneStatus   string   `json:"data_plane_status"`
+	RuntimeProblems   []string `json:"runtime_problems,omitempty"`
 	ConfigState       string   `json:"config_state"`
 	Membership        string   `json:"membership"`
 	Responsibilities  []string `json:"responsibilities,omitempty"`

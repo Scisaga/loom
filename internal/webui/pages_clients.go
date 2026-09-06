@@ -168,14 +168,14 @@ func pageDeviceDetail(d Deps, deviceID string, isAuthed bool) string {
 	fmt.Fprintf(&b, `<div class=grid>
 	<section class="card span4"><div class=label>Identity</div><h2>%s</h2><dl class=kv><dt>Device ID<dd class=mono>%s<dt>Platform<dd>%s<dt>Identity source<dd>%s<dt>Key fingerprint<dd class=mono>%s</dl></section>
 <section class="card span4"><div class=label>Membership</div><div class=metric>%s</div><p class=dim>Desired membership is separate from join progress and runtime health.</p><dl class=kv><dt>Created<dd>%s<dt>Joined<dd>%s</dl></section>
-<section class="card span4"><div class=label>Runtime evidence</div><div class="client-status %s"><span class=dot></span>%s</div><p class=dim>%s</p><dl class=kv><dt>Last seen<dd>%s</dl></section>
+<section class="card span4"><div class=label>Runtime evidence</div><div class="client-status %s"><span class=dot></span>%s</div><p class=dim>%s</p>%s<dl class=kv><dt>Last seen<dd>%s</dl></section>
 </div>
 <div class=grid><section class="card span6"><div class=label>Responsibilities</div><h2>%s</h2><p class=dim>“use_loom” means traffic originating on this Device may use Loom. It does not imply forwarding, public ingress or egress.</p></section>
 <section class="card span6"><div class=label>Destination grants</div><h2>%s</h2><p class=dim>Explicit declaration references only; there is no blanket “network permission”.</p></section>%s</div>
 <div class=toolbar section><a class=button href="/devices">← Device inventory</a><a class=button href="/nodes/%s">Network diagnostics</a></div>`,
 		esc(device.Name), esc(device.ID), esc(orDash(device.Platform)), esc(identitySource), esc(orDash(device.KeyFingerprint)),
 		esc(orDash(device.Membership)), esc(clientTime(device.CreatedAt)), esc(clientTime(device.EnrolledAt)),
-		statusClass, esc(statusLabel), esc(clientRuntimeDetail(*device)), esc(clientTime(device.LastSeenAt)),
+		statusClass, esc(statusLabel), esc(clientRuntimeDetail(*device)), clientRuntimeProblems(*device), esc(clientTime(device.LastSeenAt)),
 		esc(deviceList(device.Responsibilities)), esc(deviceList(device.DestinationGrants)), serverDeclaration, url.PathEscape(device.ID))
 	if !device.Legacy && (device.Status == "pending" || device.Status == "invite_expired") {
 		if control := deviceControl(d); control != nil && control.DiscardPending != nil {
@@ -565,8 +565,10 @@ func mergeClientRuntime(inventory ClientInventory, view View, now time.Time) Cli
 }
 
 func mergeClientNodeRuntime(client *ClientView, node NodeView, now time.Time) {
+	client.RuntimeProblems = nil
 	if node.IdentityError != "" {
 		client.DataPlaneStatus = "problem"
+		client.RuntimeProblems = []string{node.IdentityError}
 		client.ConfigState = "not reported"
 		client.LastSeenAt = ""
 		overrideClientRuntimeStatus(client, "problem")
@@ -596,6 +598,7 @@ func mergeClientNodeRuntime(client *ClientView, node NodeView, now time.Time) {
 	} else {
 		client.ConfigState = "applied " + short(node.Applied)
 	}
+	client.RuntimeProblems = append([]string(nil), node.Problems...)
 
 	stale := !direct && (!observedOK || node.AgeSec > int(clientRuntimeStaleAfter.Seconds()) ||
 		now.Sub(observed) > clientRuntimeStaleAfter || observed.After(now.Add(time.Minute)))
@@ -670,6 +673,19 @@ func clientRuntimeDetail(client ClientView) string {
 		config = "not issued"
 	}
 	return "data: " + dataPlane + " · config: " + config
+}
+
+func clientRuntimeProblems(client ClientView) string {
+	if client.DataPlaneStatus != "problem" || len(client.RuntimeProblems) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, problem := range client.RuntimeProblems {
+		if problem = strings.TrimSpace(problem); problem != "" {
+			fmt.Fprintf(&b, `<div class="callout warnline"><span class=small>%s</span></div>`, esc(problem))
+		}
+	}
+	return b.String()
 }
 
 func clientPackageAvailable(pkg LinuxClientPackageView) bool {
