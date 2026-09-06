@@ -5,9 +5,61 @@ package main
 import (
 	"context"
 	"runtime"
+	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 	"unsafe"
 )
+
+func TestGUIJoinProgressPreservesTransactionState(t *testing.T) {
+	for _, edition := range []clientEdition{editionPortableMixed, editionPortableTUN, editionInstalled} {
+		t.Run(string(edition), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				app := &portableGUI{edition: edition, ctx: ctx, state: guiLoading}
+				app.joinProgress("正在联系中控，等待加入配置…")
+				time.Sleep(65 * time.Second)
+				app.joinProgress("中控已确认设备，正在等待配置发布…")
+				s := app.snapshot()
+				if s.state != guiJoining || s.joined || s.deviceID != "" || app.runCancel != nil {
+					t.Fatal("progress advanced the join or started a workload")
+				}
+				if !strings.Contains(s.detail, "1 分 05 秒") {
+					t.Fatalf("stage change reset elapsed time: %q", s.detail)
+				}
+				_, message, _, enabled := app.presentation(s)
+				if enabled || message != s.detail {
+					t.Fatal("pending join lost progress or allowed a second import")
+				}
+				if remote := app.brokerSnapshot(); remote.Detail != s.detail || remote.Joined {
+					t.Fatal("Installed broker lost join progress or prematurely reported joined")
+				}
+				app.update(guiError, false, "", "加入已结束")
+				app.joinProgress("迟到的阶段回调")
+				if s := app.snapshot(); s.state != guiError || s.detail != "加入已结束" {
+					t.Fatal("late progress overwrote completed state")
+				}
+				app.mu.Lock()
+				app.state, app.joined = guiStopped, true
+				app.mu.Unlock()
+				app.joinProgress("迟到的阶段回调")
+				if s := app.snapshot(); s.state != guiStopped || !s.joined || strings.Contains(s.detail, "已用时") {
+					t.Fatal("joined state regressed or retained the join clock")
+				}
+				app.mu.Lock()
+				app.state, app.joined = guiJoining, false
+				app.mu.Unlock()
+				cancel()
+				app.joinProgress("取消后的阶段回调")
+				if strings.Contains(app.snapshot().detail, "取消后") {
+					t.Fatal("progress continued after cancellation")
+				}
+			})
+		})
+	}
+}
 
 func TestGUIDPIChanges(t *testing.T) {
 	runtime.LockOSThread()

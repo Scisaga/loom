@@ -71,7 +71,17 @@ There is deliberately no Windows `enroll` command and no user-selected
 `-component` argument. The data plane ships beside the executable as
 `windows-dataplane.zip` and is selected automatically.
 
-Internally, the QR import performs one short-lived identity handshake: the
+All three editions show the current join stage and elapsed time: local checks,
+contacting the control, waiting for configuration publication after a `pending`
+response, and verifying/saving the returned bootstrap. The clock keeps updating
+during a slow request; Installed carries the same detail through its existing
+broker status response. A pending response does not mark the client joined or
+start the data plane. The existing three-second retry interval and request/overall
+timeouts are unchanged. These messages explain the wait; they do not shorten
+the control's publication process. Server-side work belongs in the server development
+environment; use the [enrollment latency prompt](../../docs/server-enrollment-latency-prompt.md).
+
+Internally, the QR import performs an identity handshake: the
 client generates its private key locally, binds the already-created Device,
 validates the returned certificate and signed bootstrap, and protects local
 secrets with DPAPI. This is an implementation detail of **Join network**, not a

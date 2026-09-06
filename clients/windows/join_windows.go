@@ -53,6 +53,16 @@ type windowsJoinOptions struct {
 	Arch          string
 	PlatformKey   ed25519.PublicKey
 	RetryInterval time.Duration
+	Progress      windowsJoinProgress
+}
+
+// §13.5：只传递本地阶段文案，不传递二维码、证书或服务端响应正文。
+type windowsJoinProgress func(string)
+
+func (progress windowsJoinProgress) report(detail string) {
+	if progress != nil {
+		progress(detail)
+	}
 }
 
 type windowsJoinResult struct {
@@ -72,6 +82,7 @@ type windowsJoinCommitOptions struct {
 	Protector     clientsecret.Protector
 	Arch          string
 	PlatformKey   ed25519.PublicKey
+	Progress      windowsJoinProgress
 }
 
 var errWindowsJoinInputRequired = errors.New("需要导入中控生成的 Device 二维码")
@@ -81,16 +92,11 @@ var errWindowsJoinInputRequired = errors.New("需要导入中控生成的 Device
 // second Device. An empty source only resumes protected pending state.
 func ensureWindowsJoined(ctx context.Context, root string, protector clientsecret.Protector,
 	source string) (windowsJoinResult, error) {
-	return ensureWindowsJoinedInput(ctx, root, protector, source, nil)
-}
-
-func ensureWindowsJoinedInvite(ctx context.Context, root string, protector clientsecret.Protector,
-	provided clientenroll.Invite) (windowsJoinResult, error) {
-	return ensureWindowsJoinedInput(ctx, root, protector, "", &provided)
+	return ensureWindowsJoinedInput(ctx, root, protector, source, nil, nil)
 }
 
 func ensureWindowsJoinedInput(ctx context.Context, root string, protector clientsecret.Protector,
-	source string, provided *clientenroll.Invite) (windowsJoinResult, error) {
+	source string, provided *clientenroll.Invite, progress windowsJoinProgress) (windowsJoinResult, error) {
 	hasInput := strings.TrimSpace(source) != "" || provided != nil
 	configPath := filepath.Join(root, "config", "client.json")
 	if config, err := clientupdate.ReadConfig(configPath); err == nil {
@@ -130,6 +136,7 @@ func ensureWindowsJoinedInput(ctx context.Context, root string, protector client
 		return windowsJoinResult{}, errWindowsJoinInputRequired
 	}
 
+	progress.report("正在读取加入信息并检查发行包…")
 	componentPath, err := bundledWindowsComponentPath()
 	if err != nil {
 		return windowsJoinResult{}, err
@@ -140,7 +147,7 @@ func ensureWindowsJoinedInput(ctx context.Context, root string, protector client
 	}
 	commitOptions := windowsJoinCommitOptions{
 		Root: root, ComponentPath: componentPath, Protector: protector,
-		Arch: runtime.GOARCH, PlatformKey: platformKey,
+		Arch: runtime.GOARCH, PlatformKey: platformKey, Progress: progress,
 	}
 	if result, resumed, err := resumeWindowsJoinAt(commitOptions); err != nil {
 		return windowsJoinResult{}, fmt.Errorf("恢复已验证的加入事务: %w", err)
@@ -168,7 +175,7 @@ func ensureWindowsJoinedInput(ctx context.Context, root string, protector client
 		Root: root, Invite: invite, ComponentPath: componentPath,
 		Client: netx.Client("", 60*time.Second), Protector: protector,
 		Random: rand.Reader, Arch: runtime.GOARCH, PlatformKey: platformKey,
-		RetryInterval: 3 * time.Second,
+		RetryInterval: 3 * time.Second, Progress: progress,
 	})
 	if err != nil {
 		return windowsJoinResult{}, err
@@ -241,7 +248,7 @@ func joinWindowsAt(ctx context.Context, options windowsJoinOptions) (windowsJoin
 	}
 	commitOptions := windowsJoinCommitOptions{
 		Root: options.Root, ComponentPath: options.ComponentPath, Protector: options.Protector,
-		Arch: options.Arch, PlatformKey: options.PlatformKey,
+		Arch: options.Arch, PlatformKey: options.PlatformKey, Progress: options.Progress,
 	}
 	componentBody, verified, err := prepareWindowsJoinComponent(commitOptions)
 	if err != nil {
@@ -265,6 +272,7 @@ func joinWindowsAt(ctx context.Context, options windowsJoinOptions) (windowsJoin
 	if !time.Now().Before(expiresAt) && errors.Is(identityStatErr, os.ErrNotExist) {
 		return zero, errors.New("加入二维码已过期；请在中控为同一个 Device 重新生成")
 	}
+	options.Progress.report("正在准备本机设备身份…")
 	identity, err := loadOrCreateWindowsIdentity(options.Root, options.Invite, options.Protector, options.Random)
 	if err != nil {
 		return zero, err
@@ -276,6 +284,7 @@ func joinWindowsAt(ctx context.Context, options windowsJoinOptions) (windowsJoin
 		return zero, err
 	}
 	defer clearJoinResponse(&response)
+	options.Progress.report("已收到中控配置，正在验证签名和设备证书…")
 	if err := validateWindowsReady(response, identity, options.PlatformKey); err != nil {
 		return zero, err
 	}
@@ -335,6 +344,7 @@ func prepareWindowsJoinComponent(options windowsJoinCommitOptions) ([]byte, *cli
 		len(options.PlatformKey) != ed25519.PublicKeySize {
 		return nil, nil, errors.New("Windows join commit dependencies are incomplete")
 	}
+	options.Progress.report("正在验证本地数据面组件…")
 	body, err := readWindowsComponent(options.ComponentPath)
 	if err != nil {
 		return nil, nil, err
@@ -397,6 +407,7 @@ func validateWindowsReady(response clientenroll.Response, identity clientenroll.
 func commitWindowsReady(options windowsJoinCommitOptions, identity clientenroll.PreparedIdentity,
 	response clientenroll.Response, componentBody []byte, verified *clientcomponent.Verified) (windowsJoinResult, error) {
 	var zero windowsJoinResult
+	options.Progress.report("正在验证并保存加入配置…")
 	if verified == nil || verified.Manifest.Arch != options.Arch {
 		return zero, errors.New("verified Windows component does not match join commit")
 	}
@@ -495,6 +506,7 @@ func waitForReadyJoin(ctx context.Context, options windowsJoinOptions, identity 
 	// keeps retrying across the QR's first-use expiry, but never retains an
 	// offline retry loop beyond one additional bounded window.
 	localRecoveryDeadline := expiresAt.Add(windowsJoinRecoveryGrace)
+	options.Progress.report("正在联系中控，等待加入配置…")
 	for {
 		response, err := clientenroll.ClaimPrepared(ctx, options.Client, options.Invite, identity, nil)
 		if err == nil && response.Configuration == "ready" {
@@ -505,6 +517,11 @@ func waitForReadyJoin(ctx context.Context, options windowsJoinOptions, identity 
 		}
 		if err == nil && response.Configuration != "pending" {
 			return clientenroll.Response{}, fmt.Errorf("unexpected join state %q", response.Configuration)
+		}
+		if err == nil {
+			options.Progress.report("中控已确认设备，正在等待配置发布…")
+		} else {
+			options.Progress.report("暂时无法取得中控配置，稍后自动重试…")
 		}
 		if !time.Now().Before(localRecoveryDeadline) {
 			return clientenroll.Response{}, errors.New("Device 加入恢复窗口已过期；请在中控明确处理后重新生成二维码")

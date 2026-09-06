@@ -77,6 +77,7 @@ type portableGUI struct {
 	detail        string
 	hostname      string
 	runCancel     context.CancelFunc
+	joinStarted   time.Time
 	runDone       chan struct{}
 	stopRequested bool
 	runSequence   uint64
@@ -161,7 +162,7 @@ func (app *portableGUI) initialize() {
 		app.pollInstalledBroker()
 		return
 	}
-	result, err := ensureWindowsJoined(app.ctx, app.root, app.protector(), "")
+	result, err := app.joinInput("", nil)
 	if errors.Is(err, errWindowsJoinInputRequired) {
 		app.update(guiNeedsJoin, false, "", "")
 		return
@@ -197,7 +198,7 @@ func (app *portableGUI) importJoinArtifact(source string) {
 		return
 	}
 	app.beginJoin(func() (windowsJoinResult, error) {
-		return ensureWindowsJoined(app.ctx, app.root, app.protector(), source)
+		return app.joinInput(source, nil)
 	})
 }
 
@@ -207,8 +208,42 @@ func (app *portableGUI) importJoinInvite(invite clientenroll.Invite) {
 		return
 	}
 	app.beginJoin(func() (windowsJoinResult, error) {
-		return ensureWindowsJoinedInvite(app.ctx, app.root, app.protector(), invite)
+		return app.joinInput("", &invite)
 	})
+}
+
+func (app *portableGUI) joinInput(source string, invite *clientenroll.Invite) (windowsJoinResult, error) {
+	// §13.5：网络请求期间也刷新等待时长；仅重绘，不增加请求或更改加入状态。
+	ctx, cancel := context.WithCancel(app.ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				app.repaint()
+			}
+		}
+	}()
+	defer func() { cancel(); <-done }()
+	return ensureWindowsJoinedInput(app.ctx, app.root, app.protector(), source, invite, app.joinProgress)
+}
+
+func (app *portableGUI) joinProgress(detail string) {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	if app.ctx.Err() != nil || app.joined || (app.state != guiLoading && app.state != guiJoining) {
+		return
+	}
+	if app.joinStarted.IsZero() {
+		app.joinStarted = time.Now()
+	}
+	app.state, app.detail = guiJoining, detail
+	app.repaintLocked()
 }
 
 func (app *portableGUI) beginJoin(join func() (windowsJoinResult, error)) {
@@ -219,7 +254,8 @@ func (app *portableGUI) beginJoin(join func() (windowsJoinResult, error)) {
 	}
 	app.state = guiJoining
 	app.stopRequested = false
-	app.detail = "正在验证二维码、设备身份和签名数据面…"
+	app.joinStarted = time.Now()
+	app.detail = "正在读取加入二维码…"
 	app.mu.Unlock()
 	app.repaint()
 
@@ -631,9 +667,14 @@ func (app *portableGUI) update(state portableGUIState, joined bool, deviceID, de
 func (app *portableGUI) snapshot() portableGUISnapshot {
 	app.mu.RLock()
 	defer app.mu.RUnlock()
+	detail := app.detail
+	if app.state == guiJoining && !app.joinStarted.IsZero() {
+		elapsed := int64(time.Since(app.joinStarted) / time.Second)
+		detail += fmt.Sprintf("\r\n已用时 %d 分 %02d 秒", elapsed/60, elapsed%60)
+	}
 	return portableGUISnapshot{
 		state: app.state, joined: app.joined, deviceID: app.deviceID,
-		detail: app.detail, hostname: app.hostname,
+		detail: detail, hostname: app.hostname,
 		routeOptions:  append([]portableRouteOption(nil), app.routeOptions...),
 		routeSelected: app.routeSelected, routeBusy: app.routeBusy, routeDetail: app.routeDetail,
 	}
@@ -1890,7 +1931,7 @@ func (app *portableGUI) presentation(snapshot portableGUISnapshot) (state, messa
 	case guiNeedsJoin:
 		return "尚未加入 Loom 网络", "在中控页面复制二维码后按 Ctrl+V，或粘贴、选择、拖入 PNG / .loom-invite 文件。", "选择文件…", true
 	case guiJoining:
-		return "正在加入", detail, "正在导入…", false
+		return "正在加入", detail, "正在加入…", false
 	case guiNeedsElevation:
 		return "需要管理员权限", detail, "管理员启动", true
 	case guiStarting:

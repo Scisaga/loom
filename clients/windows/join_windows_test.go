@@ -155,6 +155,16 @@ func TestWindowsQRJoinNativeReadyTransaction(t *testing.T) {
 		if claim.Platform != clientenroll.PlatformWindowsDesktop {
 			t.Errorf("claim platform=%q", claim.Platform)
 		}
+		if claimRequests == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(clientenroll.Response{
+				Schema: clientenroll.Schema, ClientID: "win-enroll", Status: "provisioning",
+				ClaimedAt:     time.Now().UTC().Format(time.RFC3339),
+				Configuration: "pending", Next: "wait_for_configuration",
+			})
+			return
+		}
 		certPEM, err := portableTestNodeCertificate(ca, caKey, claim.CSRPEM, "win-enroll")
 		if err != nil {
 			t.Error(err)
@@ -204,17 +214,30 @@ func TestWindowsQRJoinNativeReadyTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var progress []string
 	result, err := joinWindowsAt(context.Background(), windowsJoinOptions{
 		Root: root, ComponentPath: componentPath, Client: server.Client(),
 		Protector: clientsecret.UserProtector{}, Arch: runtime.GOARCH, RetryInterval: time.Millisecond,
 		Invite: invite, PlatformKey: platformPrivate.Public().(ed25519.PublicKey),
+		Progress: func(detail string) {
+			progress = append(progress, detail)
+			if _, err := os.Stat(filepath.Join(root, "config", "client.json")); !errors.Is(err, os.ErrNotExist) {
+				t.Error("progress marked the join committed before verification and installation completed")
+			}
+			if strings.Contains(detail, token) || strings.Contains(detail, server.URL) {
+				t.Error("join progress exposed a credential or endpoint")
+			}
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// 加入已经固定 platform key，不再通过远端 trust 接口建立信任。
-	if claimRequests != 1 || trustRequests != 0 || result.NodeID != "win-enroll" {
+	if claimRequests != 2 || trustRequests != 0 || result.NodeID != "win-enroll" {
 		t.Fatalf("join result=%+v claims=%d trust=%d", result, claimRequests, trustRequests)
+	}
+	if got := strings.Join(progress, "\n"); !strings.Contains(got, "等待配置发布") || !strings.Contains(got, "已收到中控配置") {
+		t.Fatalf("pending and ready responses did not update join progress: %q", got)
 	}
 	config, err := clientupdate.ReadConfig(filepath.Join(root, "config", "client.json"))
 	if err != nil || config.NodeID != "win-enroll" {
@@ -450,6 +473,76 @@ func TestWindowsRejectedJoinDoesNotRetryOrChangePlatform(t *testing.T) {
 			_, err = waitForReadyJoin(ctx, windowsJoinOptions{Invite: invite, Client: server.Client(), RetryInterval: time.Millisecond}, identity)
 			if err == nil || clientenroll.IsTransient(err) || calls.Load() != 1 || ctx.Err() != nil {
 				t.Fatalf("rejected join was retried or accepted: requests=%d err=%v", calls.Load(), err)
+			}
+		})
+	}
+}
+
+func TestWindowsJoinWaitProgress(t *testing.T) {
+	for _, stopPending := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cancel=%t", stopPending), func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				call := calls.Add(1)
+				if !stopPending && call == 1 {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					_, _ = w.Write([]byte(`{"error":"demo-sensitive-response"}`))
+					return
+				}
+				response := clientenroll.Response{
+					Schema: clientenroll.Schema, ClientID: "demo-device", Status: "provisioning",
+					ClaimedAt:     time.Now().UTC().Format(time.RFC3339),
+					Configuration: "pending", Next: "wait_for_configuration",
+				}
+				status := http.StatusAccepted
+				if call == 3 {
+					status = http.StatusOK
+					response.Status, response.Configuration, response.Next = "ready", "ready", "pull"
+					response.Bootstrap = &clientenroll.Bootstrap{NodeID: "demo-device"}
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(status)
+				_ = json.NewEncoder(w).Encode(response)
+			}))
+			defer server.Close()
+			invite := clientenroll.Invite{
+				Endpoint:  server.URL + "/loom-client/enroll",
+				Token:     base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x43}, 32)),
+				ExpiresAt: time.Now().Add(time.Minute).Format(time.RFC3339),
+			}
+			identity, err := clientenroll.GeneratePreparedIdentity(clientenroll.PlatformWindowsDesktop, invite.Endpoint, rand.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer clearPreparedIdentity(&identity)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			var progress []string
+			response, err := waitForReadyJoin(ctx, windowsJoinOptions{
+				Invite: invite, Client: server.Client(), RetryInterval: time.Millisecond,
+				Progress: func(detail string) {
+					progress = append(progress, detail)
+					if stopPending && strings.Contains(detail, "等待配置发布") {
+						cancel()
+					}
+				},
+			}, identity)
+			if stopPending {
+				if !errors.Is(err, context.Canceled) || calls.Load() != 1 {
+					t.Fatalf("cancelled join kept polling: calls=%d err=%v", calls.Load(), err)
+				}
+			} else if err != nil || response.Configuration != "ready" || calls.Load() != 3 {
+				t.Fatalf("join did not reach ready: calls=%d err=%v", calls.Load(), err)
+			}
+			joined := strings.Join(progress, "\n")
+			if !strings.Contains(joined, "联系中控") || !strings.Contains(joined, "等待配置发布") ||
+				(!stopPending && !strings.Contains(joined, "自动重试")) {
+				t.Fatalf("missing wait feedback: %q", joined)
+			}
+			for _, secret := range []string{invite.Token, server.URL, "demo-sensitive-response", string(identity.PrivateKeyPEM)} {
+				if strings.Contains(joined, secret) {
+					t.Error("progress exposed enrollment material or server diagnostics")
+				}
 			}
 		})
 	}

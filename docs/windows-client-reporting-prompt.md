@@ -33,6 +33,10 @@
 
 ## 实现边界
 
+- 排查“正在加入”耗时，按客户端显示的本地检查、联系中控、等待配置发布、验证并保存
+  阶段区分原因。计时只用于反馈；`pending` 不能提前成为已加入、已连接或健康。
+  服务端发布耗时的优化交给服务端开发环境，使用
+  [加入耗时优化提示词](server-enrollment-latency-prompt.md)，不在 Windows 环境修改服务端。
 - Windows 邀请只允许 `windows-desktop + use_loom`，由中控固定职责。客户端只声明
   Windows 平台，不提交 server 或职责字段，不迁移未消费的旧加入码。已加入身份继续
   使用；新二维码必须包含与发行包匹配的指纹和精确的 HTTPS `/loom-client/enroll` 入口。
