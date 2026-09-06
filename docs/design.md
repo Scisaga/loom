@@ -1458,7 +1458,7 @@ publisher 确认精确 SSOT 后，内部 join 响应才返回 ready bootstrap
 `loom://enroll#<base64url payload>` 的 fragment 中，由客户端在 POST body 提交，
 不得进入 HTTPS query、日志或列表接口；列表也不能重新取回已消费 token。当前 Windows
 Portable 预览只在未完成期间把它存入 current-user DPAPI，普通完成标记提交后立即清除；
-Installed 目标态必须由受限 Service broker 写入 machine-scope/受保护 ProgramData。
+Installed 由受限 Service broker 写入 machine-scope/受保护 ProgramData；普通用户界面经 ACL 保护的本机管道调用固定操作。
 内部绑定记录中的 `ready` 只表示服务端 bootstrap 已准备好，不是客户端已经收到、安装或
 在线；页面显示 “Joined · status unverified”，数据面在线仍只能来自后续可信运行态报告。
 

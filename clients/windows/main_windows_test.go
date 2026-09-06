@@ -98,7 +98,7 @@ func TestWindowsGUIEditionBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(programData, "Loom"); installedRoot != want {
+	if want, _ := installedStateRoot(); installedRoot != want {
 		t.Fatalf("Installed GUI root = %q, want %q", installedRoot, want)
 	}
 	if got := windowsClientCAPath(installedRoot, editionInstalled); got != clientruntime.WindowsInstalledCAPath {
@@ -126,7 +126,7 @@ func TestWindowsGUIEditionBoundaries(t *testing.T) {
 	if windowsEditionLabel(editionInstalled) != "Installed" || windowsEditionLabel(editionPortableTUN) != "Portable TUN" {
 		t.Fatal("Windows GUI edition labels are not distinct")
 	}
-	if !windowsEditionRequiresElevation(editionInstalled) || !windowsEditionRequiresElevation(editionPortableTUN) || windowsEditionRequiresElevation(editionPortableMixed) {
+	if windowsEditionRequiresElevation(editionInstalled) || !windowsEditionRequiresElevation(editionPortableTUN) || windowsEditionRequiresElevation(editionPortableMixed) {
 		t.Fatal("Windows GUI elevation boundary is incorrect")
 	}
 }

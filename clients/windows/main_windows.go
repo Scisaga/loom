@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
+	"golang.org/x/sys/windows/svc/eventlog"
 
 	"loom/internal/clientcomponent"
 	"loom/internal/clientcore"
@@ -48,7 +49,7 @@ func main() {
 			log.Fatalf("detect Windows service session: %v", serviceErr)
 		}
 		if isService {
-			handler := &loomService{prepare: prepareClient}
+			handler := &loomService{prepare: prepareInstalledService}
 			if err := svc.Run(serviceName, handler); err != nil {
 				log.Fatalf("run %s: %v", serviceName, err)
 			}
@@ -80,6 +81,10 @@ func (s *loomService) Execute(_ []string, requests <-chan svc.ChangeRequest, sta
 	workload, err := s.prepare()
 	if err != nil {
 		log.Printf("client initialization failed: %v", err)
+		if events, openErr := eventlog.Open(serviceName); openErr == nil {
+			_ = events.Error(1, "Loom Client 初始化失败："+err.Error())
+			events.Close()
+		}
 		return false, 1
 	}
 

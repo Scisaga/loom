@@ -29,39 +29,43 @@ func (app *portableGUI) watchRoutePreference(ctx context.Context, sequence uint6
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			path, body, err := activePortableRuntimeConfig(app.root)
+			path, err := app.refreshRoutePreference(ctx, sequence, lastConfig)
 			if err != nil {
 				app.routeFailure(sequence, err)
-				continue
+			} else {
+				lastConfig = path
 			}
-			if path == lastConfig {
-				continue
-			}
-			preference, err := clientcore.ReadPreference(filepath.Join(app.root, "state", "preference.json"))
-			if err != nil {
-				app.routeFailure(sequence, err)
-				continue
-			}
-			plan, err := clientruntime.BuildWindowsSelectorPlan(body, mustRuntimeProfile(app.edition), windowsClientCAPath(app.root, app.edition))
-			clear(body)
-			if err != nil {
-				app.routeFailure(sequence, err)
-				continue
-			}
-			client := &http.Client{Timeout: 3 * time.Second}
-			applyCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			err = clientruntime.ApplyWindowsPreference(applyCtx, client, plan, preference)
-			cancel()
-			if err != nil {
-				// The plaintext runtime file is created immediately before sing-box;
-				// leave lastConfig unchanged so startup races retry without busy-looping.
-				app.routeFailure(sequence, err)
-				continue
-			}
-			lastConfig = path
-			app.routeReady(sequence, plan, preference)
 		}
 	}
+}
+
+// §7.2：配置切换时恢复偏好与用户切换串行，避免旧偏好覆盖新选择。
+func (app *portableGUI) refreshRoutePreference(ctx context.Context, sequence uint64, lastConfig string) (string, error) {
+	app.routeMu.Lock()
+	defer app.routeMu.Unlock()
+	path, body, err := activePortableRuntimeConfig(app.root)
+	if err != nil {
+		return lastConfig, err
+	}
+	defer clear(body)
+	if path == lastConfig {
+		return path, nil
+	}
+	preference, err := clientcore.ReadPreference(filepath.Join(app.root, "state", "preference.json"))
+	if err != nil {
+		return lastConfig, err
+	}
+	plan, err := clientruntime.BuildWindowsSelectorPlan(body, mustRuntimeProfile(app.edition), windowsClientCAPath(app.root, app.edition))
+	if err != nil {
+		return lastConfig, err
+	}
+	applyCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := clientruntime.ApplyWindowsPreference(applyCtx, &http.Client{Timeout: 3 * time.Second}, plan, preference); err != nil {
+		return lastConfig, err
+	}
+	app.routeReady(sequence, plan, preference)
+	return path, nil
 }
 
 func mustRuntimeProfile(edition clientEdition) clientruntime.WindowsRuntimeProfile {
@@ -171,7 +175,7 @@ func (app *portableGUI) routeSelectionChanged() {
 	index := app.routeVisible[visibleIndex]
 	wasFiltering := app.routeFiltering
 	app.mu.Lock()
-	online := app.state == guiConnected && app.runCancel != nil
+	online := app.state == guiConnected && (app.runCancel != nil || app.brokerClient)
 	offline := app.state == guiStopped || app.state == guiError || app.state == guiNeedsElevation
 	if (!online && !offline) || app.routeBusy || index < 0 || index >= len(app.routeOptions) || index == app.routeSelected {
 		app.mu.Unlock()
@@ -203,23 +207,11 @@ func (app *portableGUI) routeSelectionChanged() {
 	go func() {
 		defer app.workers.Done()
 		var err error
-		if online {
-			_, body, loadErr := activePortableRuntimeConfig(app.root)
-			err = loadErr
-			if err == nil {
-				var plan *clientruntime.WindowsSelectorPlan
-				plan, err = clientruntime.BuildWindowsSelectorPlan(body, mustRuntimeProfile(app.edition), windowsClientCAPath(app.root, app.edition))
-				clear(body)
-				if err == nil {
-					applyCtx, cancel := context.WithTimeout(app.ctx, 5*time.Second)
-					err = clientruntime.ApplyWindowsPreference(applyCtx, &http.Client{Timeout: 3 * time.Second}, plan, preference)
-					cancel()
-				}
-			}
+		if app.brokerClient {
+			app.exchangeInstalledBroker(brokerRequest{Operation: "preference", Preference: &preference})
+			return
 		}
-		if err == nil {
-			err = clientcore.WritePreference(filepath.Join(app.root, "state", "preference.json"), preference)
-		}
+		err = app.setRoutePreference(preference)
 		app.mu.Lock()
 		if sequence == app.runSequence {
 			app.routeBusy = false
@@ -238,4 +230,54 @@ func (app *portableGUI) routeSelectionChanged() {
 		app.mu.Unlock()
 		app.repaint()
 	}()
+}
+
+// §7.2：IPC 与本地 GUI 共用签名出口授权；只接受现有三态偏好。
+func (app *portableGUI) setRoutePreference(preference clientcore.Preference) error {
+	app.routeMu.Lock()
+	defer app.routeMu.Unlock()
+	app.mu.RLock()
+	index := routeOptionIndex(app.routeOptions, preference)
+	online := app.state == guiConnected && app.runCancel != nil
+	offline := app.joined && (app.state == guiStopped || app.state == guiError)
+	app.mu.RUnlock()
+	if index < 0 || (!online && !offline) {
+		return errors.New("出口未获当前签名配置授权，或数据面正在切换")
+	}
+	path := filepath.Join(app.root, "state", "preference.json")
+	previous, err := clientcore.ReadPreference(path)
+	if err != nil {
+		return err
+	}
+	var plan *clientruntime.WindowsSelectorPlan
+	if online {
+		_, body, err := activePortableRuntimeConfig(app.root)
+		if err != nil {
+			return err
+		}
+		plan, err = clientruntime.BuildWindowsSelectorPlan(body, mustRuntimeProfile(app.edition), windowsClientCAPath(app.root, app.edition))
+		clear(body)
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(app.ctx, 5*time.Second)
+		err = clientruntime.ApplyWindowsPreference(ctx, &http.Client{Timeout: 3 * time.Second}, plan, preference)
+		cancel()
+		if err != nil {
+			return err
+		}
+	}
+	if err := clientcore.WritePreference(path, preference); err != nil {
+		if plan != nil {
+			ctx, cancel := context.WithTimeout(app.ctx, 5*time.Second)
+			defer cancel()
+			_ = clientruntime.ApplyWindowsPreference(ctx, &http.Client{Timeout: 3 * time.Second}, plan, previous)
+		}
+		return err
+	}
+	app.mu.Lock()
+	app.routeSelected = index
+	app.routeDetail = ""
+	app.mu.Unlock()
+	return nil
 }

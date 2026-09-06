@@ -7,10 +7,9 @@ operations into the Windows executable.
 ## User flow
 
 The control plane creates the Device first. All three embedded editions now use
-the same native Windows GUI and join flow. The current Installed interactive
-shell requires elevation and writes machine state directly; the eventual
-ordinary-user desktop process must instead use an installer-created restricted
-Service broker:
+the same native Windows GUI and join flow. Installed uses an ordinary-user
+window and an MSI-installed Service broker. The service owns machine credentials,
+signed updates and the data-plane process:
 
 ```text
 Control: Create Device → show one-time join QR
@@ -100,7 +99,7 @@ Portable is a delivery choice; TUN and mixed are traffic-capture choices.
 |---|---|---|---|
 | Portable Mixed | Applications explicitly using `127.0.0.1:1080` as HTTP/SOCKS proxy | None | None |
 | Portable TUN | System TCP/UDP/DNS selected by the managed TUN rules | The current preview requires an administrator relaunch before TUN activation | No MSI or Service; adapter/routes exist while connected |
-| Installed (administrator GUI preview; MSI not delivered) | Managed TUN plus the same-rule mixed endpoint | Current interactive preview requires elevation; target ordinary UI/join stays unprivileged | Windows Service shell and machine-scope ProgramData state |
+| Installed | Managed TUN plus the same-rule mixed endpoint | MSI installation requires elevation; daily UI, join and connection do not | Windows Service and restricted machine-scope ProgramData state |
 
 Portable editions can open and import a join QR without TUN privileges. Portable
 TUN checks elevation only after the join is safely committed and immediately
@@ -110,8 +109,11 @@ creates an adapter or changes the route table.
 
 Portable state is stored under `%LocalAppData%\LoomPortable` using current-user
 DPAPI. Installed state is stored under `%ProgramData%\Loom` using machine-scope
-DPAPI. The current administrator GUI preview does not replace the still-required
-installer-created ProgramData ACL and restricted Service IPC.
+DPAPI. MSI creates a SYSTEM/Administrators-only state directory. Its local pipe
+allows only the installing Windows user and administrators; the GUI verifies the
+server PID against SCM before sending a QR credential. The service accepts only
+status, join, connect, disconnect, authorized route preference and local deletion.
+It accepts no file paths, commands or configuration bodies from the GUI.
 
 ## Build and run
 
@@ -127,8 +129,9 @@ selected by `LOOM_WINDOWS_COMPONENT_DIR`). For each edition it produces a full
 ZIP containing the edition-specific executable, the fixed-name
 `windows-dataplane.zip` sidecar, `PREVIEW-NOTICE.txt`, and the licenses/notices
 for statically linked third-party modules. These are development-preview ZIPs,
-not Authenticode-signed release artifacts; only Portable Mixed has completed
-the native, TUN-free end-to-end run.
+not Authenticode-signed release artifacts unless signing is explicitly configured.
+Portable Mixed has a native end-to-end test; TUN lifecycle acceptance is opt-in
+because it changes the test machine's traffic capture.
 `out/windows-clients-SHA256SUMS` is published last as the commit marker for the
 complete six-ZIP build set. Build or verification failures before publication
 leave the previous set in place; consumers must verify the manifest so an
@@ -161,9 +164,8 @@ architecture, Go/VCS coordinate, and executable hash.
 
 New QR codes include the SHA-256 fingerprint of the deployment platform key.
 The client compares it with its embedded key locally before sending the
-one-time code, so joining does not depend on an extra public trust route. Older
-QR codes remain usable during migration and still have to pass the ready
-response and first signed-pull trust checks. See
+one-time code, so joining does not depend on an extra public trust route. QR codes
+without this fingerprint are rejected; already joined identities remain valid. See
 [`docs/status/current.md`](../../docs/status/current.md) before testing.
 
 ## Security and runtime boundaries
@@ -233,15 +235,61 @@ Connection GUI; file selection, window lifecycle, and console-free PE output
 have been exercised on the Windows host. Before QR import the network list is
 empty; an entry appears only after a Device has been successfully bound.
 
-The Installed binary keeps the Service-side waiting state when launched by SCM
-and now opens the shared GUI when launched interactively. Its current elevated
-ProgramData adapter is only a development preview. A production ordinary-user
-tray process, privileged broker/IPC, MSI, ProgramData ACL setup, and
-executable/installer Authenticode signing are still pending;
-therefore Installed is not a distributable installer. The shared native GUI currently
-implements first launch, Device QR import, Connection state, start/stop, and the
-TUN UAC boundary. Unimplemented prototype navigation pages are deliberately not
-present in the application. Portable TUN has a Windows amd64 manual smoke check
-covering adapter activation, UDP/TCP DNS through the TUN gateway, and HTTPS through
-both system capture and the local proxy. This does not replace repeated lifecycle,
-multi-adapter and arm64 host acceptance; TUN must not be described as release-ready.
+Installed uses the same lifecycle implementation inside SCM and connects the
+ordinary-user window through an ACL-restricted named pipe. Windows amd64 native
+acceptance covers ordinary-user QR join, machine DPAPI, actual TUN activation,
+route selection, disconnect/reconnect and signed reporting. MSI upgrade, uninstall
+and reinstall were exercised with the same retained machine identity and no
+second QR; uninstall removed the service, executable, TUN routes and listener. Portable TUN live
+acceptance covers three connect/stop cycles, adapter and route removal, listener
+and plaintext-config cleanup, and host crash followed by signed-state recovery.
+The control UI has also been observed changing the stopped Device to stale.
+
+ARM64 packages are built and their MSI databases validated, but ARM64 host and
+multiple physical network/display configurations need their own acceptance.
+Authenticode signing requires a real code-signing certificate and timestamp
+service. These external requirements do not turn an unsigned build into a
+formal signed release.
+
+## Installed package
+
+After the six ZIPs are built, run on Windows with WiX 5 available:
+
+```powershell
+.\scripts\build-windows-installers.ps1 -Version 0.1.0 -Wix C:\tools\wix\wix.exe
+```
+
+This produces amd64/arm64 MSI files and `out/windows-installers-SHA256SUMS`.
+Increase the three-part MSI version for each installed upgrade.
+The script verifies the full ZIP input manifest, stages both installers, and
+publishes their checksum manifest last. Install the matching MSI from the Windows
+account that will operate Loom, then open **Loom** from the Start menu. An unpacked
+Installed EXE expects this registered service and cannot substitute for MSI.
+
+The service starts with Windows and restores an existing joined Device. Closing
+the window hides it to the tray; explicit **Exit Loom** disconnects the workload.
+If join is still pending, the service finishes saving the identity and stays
+disconnected instead of starting traffic capture after the window exits.
+Uninstall stops/removes the service and installed program, while preserving the
+restricted machine identity and its authorized operator for reinstall. Use
+**Delete local Device** while disconnected to intentionally remove that identity.
+Portable state is separate and is never imported or deleted by MSI. Old preview
+state with user-owned files is rejected by the service; it must not be silently
+promoted to trusted machine state. Initialization errors are recorded in the
+Windows Application event log.
+
+For a signed release, set `LOOM_WINDOWS_SIGN_CERT` to a CurrentUser\My certificate
+thumbprint and `LOOM_WINDOWS_TIMESTAMP_URL` to an HTTPS RFC3161 endpoint. The ZIP
+build also accepts `LOOM_WINDOWS_SIGNTOOL` and `LOOM_WINDOWS_REQUIRE_SIGNED=1`.
+The MSI build accepts `-SignTool` and `-RequireSigned`. Both sign the EXE before
+packaging; MSI is then signed separately. Signing verifies the requested signer,
+trusted Authenticode chain and timestamp before publishing the artifact manifest.
+
+Opt-in native acceptance tests:
+
+- `LOOM_ACCEPT_INSTALLED=1`: ordinary-user IPC/ACL checks; after join,
+  `TestInstalledConnectStopLive` tests disconnect/reconnect and route cleanup.
+- `LOOM_ACCEPT_INSTALLED_QR`: a fresh control-issued PNG for
+  `TestInstalledGUIJoinLive`, executed as the ordinary installing user.
+- `LOOM_ACCEPT_TUN_LIFECYCLE=1`: `TestWindowsTUNLifecycleLive`, executed elevated
+  after normal Portable QR join and with other Loom workloads disconnected.

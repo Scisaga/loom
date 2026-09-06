@@ -1,12 +1,14 @@
 Loom Windows client development preview
 
-Portable Mixed has passed the native Windows QR/DPAPI/signed-pull/Mixed test.
-Portable Mixed, Portable TUN, and Installed include the native first-launch and Connection GUI.
-Portable TUN has not completed real adapter, route, and cleanup validation.
-Installed interactive mode currently requires elevation and uses ProgramData plus
-machine-scope DPAPI directly. It does not yet include MSI, ProgramData ACL setup,
-an ordinary-user tray process, or restricted Service IPC.
+All three editions use the native first-launch and Connection GUI.
+Installed requires the matching MSI. Its ordinary-user GUI communicates with
+an ACL-restricted Service; machine credentials remain in protected ProgramData.
+Portable TUN still requests UAC before activation. Portable Mixed requires none.
 
-The Loom executable and this checksum set are not Authenticode-signed release
-artifacts. Do not register the unpacked Installed executable as a LocalSystem
-service. Use Portable Mixed for current local development tests.
+Windows amd64 acceptance covers native QR join, DPAPI, signed configuration,
+TUN DNS/HTTPS, signed health reporting, repeated stop/route cleanup and host
+crash recovery. ARM64 host and broader hardware acceptance remain external.
+
+Default builds are not Authenticode-signed release artifacts. A formal signed
+release requires the configured code-signing certificate and timestamp service.
+The signed data-plane sidecar is independently verified before activation.

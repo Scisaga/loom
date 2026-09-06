@@ -10,7 +10,7 @@
 - 本地 Windows 原生测试已覆盖二维码加入、DPAPI、真实 Portable Mixed 进程激活、
   两签报告及空正文 `204`；单元测试、race、build、vet 和双架构交叉编译已有结果。
 - 已正常扫码加入的 Windows amd64 客户端已完成真实 TUN 探测，自动报告得到 `204`，
-  中控收到递增的两签健康与配置证据。停止后五分钟 stale 尚待单独验收。
+  中控收到递增的两签健康与配置证据。停止后五分钟 stale 已由真实停止与中控页面验收。
   继续使用当前已加入客户端，不要求重新扫码、找私钥或恢复旧身份目录。
 - Windows 已接入与 active 绑定的每轮代表性探测。Mixed 经过 1080；TUN/Installed
   检查接管与实际 IPv4 DNS/HTTPS。只有当轮成功才报告 healthy=true；缺目标和探测

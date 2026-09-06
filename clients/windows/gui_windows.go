@@ -19,6 +19,7 @@ import (
 	"golang.org/x/sys/windows"
 
 	"loom/internal/clientenroll"
+	"loom/internal/clientjoin"
 	"loom/internal/clientsecret"
 )
 
@@ -49,6 +50,9 @@ type portableGUISnapshot struct {
 }
 
 type portableGUI struct {
+	brokerClient      bool
+	brokerMu          sync.Mutex
+	routeMu           sync.Mutex
 	edition           clientEdition
 	root              string
 	hwnd              uintptr
@@ -101,6 +105,7 @@ func runWindowsGUI(edition clientEdition) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	hostname, _ := os.Hostname()
 	app := &portableGUI{
+		brokerClient:  edition == editionInstalled,
 		edition:       edition,
 		root:          root,
 		ctx:           ctx,
@@ -152,8 +157,8 @@ func runWindowsGUI(edition clientEdition) error {
 }
 
 func (app *portableGUI) initialize() {
-	if app.edition == editionInstalled && !windows.GetCurrentProcessToken().IsElevated() {
-		app.update(guiNeedsElevation, false, "", "Installed 版使用机器范围凭据和 ProgramData 状态；请以管理员身份启动。")
+	if app.brokerClient {
+		app.pollInstalledBroker()
 		return
 	}
 	result, err := ensureWindowsJoined(app.ctx, app.root, app.protector(), "")
@@ -182,12 +187,25 @@ func (app *portableGUI) afterJoin(deviceID string) {
 }
 
 func (app *portableGUI) importJoinArtifact(source string) {
+	if app.brokerClient {
+		invite, err := clientjoin.Read(source, nil)
+		if err != nil {
+			app.update(guiError, false, "", err.Error())
+			return
+		}
+		app.importJoinInvite(invite)
+		return
+	}
 	app.beginJoin(func() (windowsJoinResult, error) {
 		return ensureWindowsJoined(app.ctx, app.root, app.protector(), source)
 	})
 }
 
 func (app *portableGUI) importJoinInvite(invite clientenroll.Invite) {
+	if app.brokerClient {
+		app.installedCommand(brokerRequest{Operation: "join", Invite: &invite})
+		return
+	}
 	app.beginJoin(func() (windowsJoinResult, error) {
 		return ensureWindowsJoinedInvite(app.ctx, app.root, app.protector(), invite)
 	})
@@ -200,6 +218,7 @@ func (app *portableGUI) beginJoin(join func() (windowsJoinResult, error)) {
 		return
 	}
 	app.state = guiJoining
+	app.stopRequested = false
 	app.detail = "正在验证二维码、设备身份和签名数据面…"
 	app.mu.Unlock()
 	app.repaint()
@@ -219,6 +238,10 @@ func (app *portableGUI) beginJoin(join func() (windowsJoinResult, error)) {
 }
 
 func (app *portableGUI) startRuntime() {
+	if app.brokerClient {
+		app.installedCommand(brokerRequest{Operation: "connect"})
+		return
+	}
 	if windowsEditionRequiresElevation(app.edition) && !windows.GetCurrentProcessToken().IsElevated() {
 		app.update(guiNeedsElevation, true, app.snapshot().deviceID, app.elevationDetail(false))
 		return
@@ -226,6 +249,14 @@ func (app *portableGUI) startRuntime() {
 	app.mu.Lock()
 	if app.runCancel != nil || !app.joined || app.ctx.Err() != nil {
 		app.mu.Unlock()
+		return
+	}
+	if app.stopRequested {
+		app.stopRequested = false
+		app.state = guiStopped
+		app.detail = "加入状态已保存；数据面保持断开。"
+		app.mu.Unlock()
+		app.repaint()
 		return
 	}
 	runCtx, runCancel := context.WithCancel(app.ctx)
@@ -345,8 +376,16 @@ func (app *portableGUI) finishRuntime(sequence uint64, runCtx context.Context, r
 }
 
 func (app *portableGUI) stopRuntime() {
+	if app.brokerClient {
+		app.installedCommand(brokerRequest{Operation: "disconnect"})
+		return
+	}
 	app.mu.Lock()
 	if app.runCancel == nil {
+		if app.state == guiJoining || app.state == guiLoading {
+			// §13.5：保留服务中的加入事务，但退出 UI 后不能再自动连接。
+			app.stopRequested = true
+		}
 		app.mu.Unlock()
 		return
 	}
@@ -369,6 +408,10 @@ func (app *portableGUI) deleteLocalDevice() {
 		"此操作只删除这台电脑上的 Loom 身份、配置和运行状态，无法恢复。\n\n中控中的 Device 仍需由管理员下线并吊销。是否继续？",
 		portableMBYesNo|portableMBIconWarning|portableMBDefButton2)
 	if answer != portableIDYes {
+		return
+	}
+	if app.brokerClient {
+		app.installedCommand(brokerRequest{Operation: "delete"})
 		return
 	}
 	app.mu.Lock()
@@ -421,6 +464,22 @@ func removeWindowsLocalDevice(root string, edition clientEdition) error {
 	}
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("状态目录不是普通目录")
+	}
+	if edition == editionInstalled {
+		// §13.5：保留安装器创建的 ACL 根目录，避免删除后由普通用户抢建。
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if entry.Name() == "client.log" {
+				continue
+			}
+			if err := os.RemoveAll(filepath.Join(root, entry.Name())); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	return os.RemoveAll(root)
 }
@@ -515,7 +574,7 @@ func (app *portableGUI) restartElevated() {
 func windowsGUIStateRoot(edition clientEdition) (string, error) {
 	switch edition {
 	case editionInstalled:
-		return programDataRoot()
+		return installedStateRoot()
 	case editionPortableMixed, editionPortableTUN:
 		return localAppDataRoot()
 	default:
@@ -535,7 +594,7 @@ func windowsEditionLabel(edition clientEdition) string {
 }
 
 func windowsEditionRequiresElevation(edition clientEdition) bool {
-	return edition == editionInstalled || edition == editionPortableTUN
+	return edition == editionPortableTUN
 }
 
 func (app *portableGUI) protector() clientsecret.Protector {
@@ -603,6 +662,12 @@ func (app *portableGUI) beginClose() {
 }
 
 func (app *portableGUI) shutdown() {
+	if app.brokerClient {
+		// 显式退出仍断开；关闭窗口到托盘不经过这里。服务进程继续等待下一次连接。
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_, _ = callInstalledBroker(ctx, brokerRequest{Operation: "disconnect"})
+		cancel()
+	}
 	app.beginClose()
 	done := make(chan struct{})
 	go func() {
@@ -2339,6 +2404,15 @@ func portableWindowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) ui
 			return 0
 		}
 		procDestroyWindow.Call(hwnd)
+		return 0
+	case 0x0011: // WM_QUERYENDSESSION：允许 Windows Installer / 注销正常结束界面。
+		return 1
+	case 0x0016: // WM_ENDSESSION
+		if app != nil && wParam != 0 {
+			app.beginClose()
+			app.removeTrayIcon()
+			procDestroyWindow.Call(hwnd)
+		}
 		return 0
 	case portableWMAppExit:
 		if found {

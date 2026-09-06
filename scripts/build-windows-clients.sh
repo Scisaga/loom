@@ -6,6 +6,14 @@ output_root="$repo_root/out"
 component_root="${LOOM_WINDOWS_COMPONENT_DIR:-$repo_root/deploy/staging}"
 platform_public_key="${PLATFORM_SIGNING_PUB:-$repo_root/deploy/keys/platform-signing.pub}"
 cd "$repo_root"
+if [[ -n "${LOOM_WINDOWS_SIGN_CERT:-}" || -n "${LOOM_WINDOWS_TIMESTAMP_URL:-}" || "${LOOM_WINDOWS_REQUIRE_SIGNED:-0}" == 1 ]]; then
+  if [[ -z "${LOOM_WINDOWS_SIGN_CERT:-}" || -z "${LOOM_WINDOWS_TIMESTAMP_URL:-}" ]]; then
+    echo "signed builds require LOOM_WINDOWS_SIGN_CERT and LOOM_WINDOWS_TIMESTAMP_URL" >&2
+    exit 1
+  fi
+  command -v powershell.exe >/dev/null
+  command -v wslpath >/dev/null
+fi
 mkdir -p "$output_root"
 if ! command -v flock >/dev/null 2>&1; then
   echo "flock is required to serialize Windows client builds" >&2
@@ -114,6 +122,11 @@ for arch in amd64 arm64; do
     CGO_ENABLED=0 GOOS=windows GOARCH="$arch" go build -trimpath \
       -ldflags "-s -w ${subsystem_ldflag} -X main.buildEdition=${edition} -X main.buildPlatformPublicKey=${platform_public_key_value} -X loom/internal/version.Tag=windows-${edition}-${arch}" \
       -o "$target" ./clients/windows
+    if [[ -n "${LOOM_WINDOWS_SIGN_CERT:-}" ]]; then
+      powershell.exe -NoProfile -NonInteractive -File "$(wslpath -w "$repo_root/scripts/sign-windows-artifact.ps1")" \
+        -Path "$(wslpath -w "$target")" -CertificateThumbprint "$LOOM_WINDOWS_SIGN_CERT" \
+        -TimestampUrl "$LOOM_WINDOWS_TIMESTAMP_URL" -SignTool "${LOOM_WINDOWS_SIGNTOOL:-signtool.exe}"
+    fi
     install -m 0644 "$staged_component" "$bundle_dir/windows-dataplane.zip"
     install -m 0644 "$repo_root/clients/windows/PREVIEW-NOTICE.txt" "$bundle_dir/PREVIEW-NOTICE.txt"
     install_module_notices "$bundle_dir"

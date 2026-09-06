@@ -68,22 +68,20 @@
 | 能力 | Linux | Windows | Android |
 |---|---|---|---|
 | sing-box 配置渲染 | 已实现 | 配置形状部分可复用 | 已能生成 TUN 配置 |
-| 系统生命周期 | systemd 已实现 | Portable 前台与 Service handler、Job Object、进程内替换/恢复已实现；Portable Mixed 已真实激活，TUN/跨重启恢复未验收 | 已与 Linux 产物隔离；`VpnService` 宿主未实现 |
+| 系统生命周期 | systemd 已实现 | Portable 前台、受限 Service broker、Job Object 与更新恢复已实现；amd64 实机 TUN 启停、宿主崩溃恢复和安装器生命周期已验收 | 已与 Linux 产物隔离；`VpnService` 宿主未实现 |
 | 配置 pull 与验签 | Loom CLI 已实现 | signed current、generation floor、snapshot 签名、节点 bundle 哈希与 current/previous 验证缓存已适配；缓存会在 hydrate 前完整复验并激活通过预检的候选 | 未适配 |
 | Agent 调参 | Go Agent 已实现 | 未适配服务与路径 | 设计要求内嵌最小能力，未实现 |
-| 安全存储 | 0600 本地文件 | Installed 目标态使用 machine-scope DPAPI；Portable 身份、vault 与候选使用用户范围 DPAPI；CNG、安装器 ACL 尚未实现 | 未接 Android Keystore |
-| 安装与升级 | 已有签名 `tar.gz`、校验与安装器；后续版本仍走 signed pull | 可生成未签名 PE 与平台签名数据面 ZIP；无 MSI 和 Loom 代码签名流程 | 无 APK/商店发布流程 |
-| 加入网络/二维码 | 中控与 Linux CLI 已实现 | 三个 edition 已接入原生 GUI、二维码/加入文件解析和安全绑定；Installed 普通用户托盘/IPC 未完成 | 客户端宿主未实现 |
-| 可信运行态上报 | `/status` 拉取与 gossip 已实现 | 服务端 NAT 接收适配器和 Windows 最小 producer 已实现并通过本地测试；生产端到端验收待完成 | 客户端与 producer 均未实现 |
+| 安全存储 | 0600 本地文件 | Installed 使用 machine-scope DPAPI 与安装器创建的受限 ACL；Portable 身份、vault 与候选使用用户范围 DPAPI；未另加 CNG 存储 | 未接 Android Keystore |
+| 安装与升级 | 已有签名 `tar.gz`、校验与安装器；后续版本仍走 signed pull | 双架构 ZIP/MSI 已实现；可配置 SignTool 验签构建，正式签名需要实际证书 | 无 APK/商店发布流程 |
+| 加入网络/二维码 | 中控与 Linux CLI 已实现 | 三个 edition 已接入原生 GUI、二维码/加入文件解析和安全绑定；Installed 普通用户托盘经受限 IPC 加入 | 客户端宿主未实现 |
+| 可信运行态上报 | `/status` 拉取与 gossip 已实现 | 现有两签 producer 已通过原生与实机上报 204、健康/故障和停止后 stale 验收 | 客户端与 producer 均未实现 |
 | 设备吊销 | access-only 支持单步直接移除/吊销，也保留 signed decommission；服务器职责的依赖迁移未完成 | 中控可直接撤销 access-only 身份与专属凭据；不远程删除 Windows 本机文件 | 未实现 |
 
 当前渲染器已按显式部署目标拆开平台无关配置与 Linux 生命周期产物：参考矩阵中的
 `phone` 和 `workstation` 只生成各自平台路径正确的 sing-box 配置，不再携带 systemd、
 Linux Agent、Linux report 或 `/etc/loom` 内容；Linux Server 保持原有产物。Windows
-Installed 的 MSI/普通用户 IPC、Android `VpnService`、各自尚缺的 Agent/report 宿主仍未
-实现；服务端已经能接收平台无关的既有 v5 Observation 格式，但这不等于 Windows
-已经发送报告。
-Portable Mixed 已可完成受控开发闭环，但尚不是正式发布客户端。
+Installed 的 MSI/普通用户 IPC 和现有 v5 两签上报已实现，并在 amd64 实机完成最小闭环；
+Windows Agent 调参和 Android 宿主仍未实现。当前无实际 Authenticode 证书的构建仍为预览包。
 
 Windows C3 已开始：`internal/clientcore` 实现严格的 Direct / Auto / 指定出口偏好、
 授权变更和撤权后 fail-closed，并以平台原子替换保存非秘密偏好；`internal/clientupdate`
@@ -333,7 +331,7 @@ Portable 与 TUN/mixed 是两个维度：Portable 表示不通过 MSI 注册持�
 |---|---|---|---|---|
 | **Portable Mixed** | 仅显式使用本机 HTTP/SOCKS 代理的应用 | 不需要 | 不创建虚拟网卡、不改系统路由 | 默认开发模式、浏览器、IDE、CLI |
 | **Portable TUN** | 纳入 TUN 路由的系统 TCP/UDP/DNS 流量 | 导入二维码不需要；当前预览启用 TUN 前要求以管理员身份重启 | 加载 Wintun、创建虚拟网卡并修改路由；退出必须恢复 | 不支持代理的应用、UDP/QUIC、全局接管测试 |
-| **安装版（管理员 GUI 预览；MSI 尚未交付）** | TUN 主接管 + 同规则 mixed | 当前交互预览要求管理员；目标日常 UI 与导入不需要 | 已有 Service 外壳和机器状态；仍缺 ProgramData ACL、受限 IPC、驱动生命周期和卸载恢复 | 安装链路开发验证 |
+| **安装版** | TUN 主接管 + 同规则 mixed | MSI 安装需管理员；日常 UI、导入和连接不需要 | MSI 注册 Service、创建受限 ProgramData ACL；普通用户经本机管道操作 | 常规 Windows 客户端 |
 
 Portable TUN 只是“不装 MSI、不注册常驻 Service”，不是“零安装痕迹”或“普通用户 TUN”。
 若启动失败、进程崩溃或电脑关机，下一次启动必须识别并清理遗留适配器/路由，再决定是否
@@ -352,10 +350,15 @@ amd64/arm64），并为每个 edition 生成一个完整 ZIP。ZIP 内包含 edi
 固定名称 `windows-dataplane.zip`、`PREVIEW-NOTICE.txt` 和静态链接依赖的许可证；客户端自动定位并验签组件，
 不接受用户提供的组件路径。六个 ZIP 全部构建和验证成功后才进入发布阶段，并最后更新
 `windows-clients-SHA256SUMS`；该清单是整组构建的提交标记，消费者必须据此拒绝中断造成的
-部分发布。这里的“发布”仅指本地 preview 输出集，不代表 Authenticode 签名或正式发行。
+部分发布。Windows 上另用 WiX 构建双架构 MSI，独立验证输入 ZIP 清单后最后发布 MSI
+清单。构建默认输出未签名预览包；显式配置证书时先签 EXE 再打包，并独立签名 MSI。
+要求正式签名的构建缺证书或时间戳就失败，不把预览包标成已签名发行。
 
-三个构建已复用同一套原生 GUI 和加入核心。当前 Installed 交互预览要求管理员，并直接以
-machine-scope DPAPI 提交机器状态；正式普通用户托盘仍必须通过受限 Service IPC 提交。
+三个构建复用同一套原生 GUI 和加入核心。Installed 普通用户界面经受限本机 named pipe
+调用 SCM 服务，服务持有 machine-scope DPAPI 身份并运行现有加入/更新/数据面状态机。
+MSI 将操作用户固定为安装时的 Windows 用户；管道只允许该用户和管理员，拒绝远程访问。
+UI 在发送二维码凭据前核对管道服务 PID 与 SCM 注册记录。IPC 只接受状态查询、加入、
+连接、断开、签名配置已授权的出口偏好和删除本机 Device，不接受任意路径、命令或配置。
 产品状态机是：`未加入网络 → 导入二维码 → 正在加入 → 已加入 → 连接`。
 二维码 PNG 与 `.loom-invite` 文件是同一次加入的等价输入；导入不会创建第二个 Device。
 当前原生 Win32 GUI 在未加入时只显示品牌、加入说明和导入动作；成功加入后才切换到紧凑的
@@ -379,17 +382,19 @@ machine-scope DPAPI 提交机器状态；正式普通用户托盘仍必须通过
 消费的旧邀请在服务端升级时全部失效，不保留缺少该字段的旧二维码兼容路径。
 当前 Portable 预览把二维码 pending 数据、ready 恢复日志和身份放在当前用户 DPAPI 下保护；
 中控只允许同一 token、CSR、request ID、平台和 Device facts 在一小时恢复窗口内重放，
-下次启动可继续，`config\client.json` 提交后立即清除 pending token。当前 Installed 管理员
-预览已经改用 machine-scope DPAPI 与 `%ProgramData%\Loom`，但正式普通用户托盘仍必须经
-受限 Service broker，并由安装器建立受保护的 ProgramData ACL。
+下次启动可继续，`config\client.json` 提交后立即清除 pending token。Installed 经 Service
+使用 machine-scope DPAPI 与 `%ProgramData%\Loom`；安装器将目录设为 SYSTEM/管理员独占。
+服务启动时检查目录所有者、ACL、重解析点和硬链接，拒绝将用户可写的旧预览状态当成可信机器状态。
 全局进程锁阻止两个 Windows GUI 同时运行或两个数据面争抢端口/TUN，最终完成标记使用
 create-only 提交；数据面锁覆盖整个 joined workload，不在子进程更新切换间释放。
 
-真实 Portable Mixed 已完成二维码解析、内部身份绑定、signed first pull、无 TUN 回环
-监听与干净停止测试；Portable TUN 与 Installed GUI 已在 Windows 本机启动，Installed
-未提权页会明确要求管理员启动且不会读取或写入机器状态。实际 TUN 清理、跨进程持久回滚、
-端到端健康、Installed 普通用户托盘/IPC、ProgramData ACL 和 MSI 尚未验收；这些制品仍
-不是正式发行版。
+Portable Mixed 已完成原生二维码解析、身份绑定、signed first pull、回环监听与干净停止。
+Windows amd64 已验证 Portable TUN 三轮启停后的网卡/路由/监听清理、宿主崩溃后的子进程
+退出与签名状态恢复，以及 Installed 的 MSI 安装、普通用户 GUI 加入、授权出口切换和
+连接/断开；机器凭据对普通用户不可读。健康报告复用既有两签协议，停止后由中控显示 stale。
+MSI 卸载保留受保护身份以供重装；主动删除身份使用已断开的客户端入口。
+签名构建流程已经接好；正式 Authenticode 签名需要实际证书。ARM64 实机及不同物理网卡、
+显示器组合仍需各自验收，交叉构建不能替代实机证据。
 
 ---
 
@@ -452,7 +457,7 @@ Windows 睡眠或网络切换后应重新探测，但沿用切换阻尼，不能
 配置失效。服务升级与配置更新是两条流程：配置走 Loom 签名快照；程序升级走签名
 安装包并保留可恢复版本。
 
-**目标实现栈（三版 GUI 已建立；Installed 正式交付仍未完成）：**
+**实现栈（三版 GUI 与 Installed MSI/IPC 已建立，正式签名依赖实际证书）：**
 
 - 新增依赖收敛的纯 Go Windows 客户端入口，不把包含发布器、SSH 接入和 Linux
   生命周期的 `cmd/loom` 整体搬到 Windows；
@@ -639,7 +644,7 @@ Device 详情页的 Runtime evidence 只展示经过现有信任链验证的运�
 部署公钥指纹与发行包内嵌公钥。加入码一旦成功绑定，中控只允许同一 token、同一 CSR、
 同一 request ID、平台和 Device facts 在限定的一小时恢复窗口内幂等重试；当前 Windows
 Portable 预览将这组 pending 数据用当前用户 DPAPI 保护，并在加入提交后清除 token。
-Installed 目标态必须经受限 Service broker 使用 machine-scope/受保护 ProgramData。其他 CSR 身份重复消费、未知/不受支持的平台、设备 ID
+Installed 经受限 Service broker 使用 machine-scope/受保护 ProgramData。其他 CSR 身份重复消费、未知/不受支持的平台、设备 ID
 已被另一身份绑定、SSOT revision 冲突或签名验证失败都不得留下部分加入状态。
 加入码在成功绑定前过期时，详情页可重新生成加入码，旧码立即失效；纯 `use_loom`
 Device 可显示二维码，包含 `forward` 的 Linux Device 只提供 shell/SSH 辅助交付。若已加入的纯
@@ -787,10 +792,10 @@ Android 签名密钥是应用升级身份，必须备份和严格控制；丢失
 | 设备被吊销 | 停止获取新配置；服务器侧凭据移除后数据面失败 |
 | Android 被系统回收 | 按用户授权与系统规则恢复前台 VPN，不伪装成始终在线 |
 
-目标态卸载器默认移除服务、TUN/驱动配置和本机运行状态；是否删除设备身份与凭据必须
-由用户明确确认。当前未交付 Installed/MSI 和统一卸载流程，Portable 预览也不支持为同一
-Device 安全重发加入码。当前身份一旦删除，不得用另一张二维码静默改绑；运维人员需先
-下线/吊销旧 Device，再创建替代 Device 并生成新的加入二维码。
+Installed MSI 卸载停止并移除服务、程序和活动 TUN 路由；受限机器身份与操作用户记录
+保留，重装继续使用同一 Device。主动清除身份须在客户端断开后确认“删除本机 Device”。
+本机删除不等于中控吊销；需要重新加入时使用中控既有 Rejoin Device 流程生成替代身份与
+二维码，不能手工修补 registry 或静默改绑。
 
 Windows Portable 界面只在数据面已断开时启用“删除”操作，并二次确认后清除本机身份、
 签名配置与运行状态；它不会伪装成中控吊销。操作者仍须在中控端下线并吊销原 Device。
@@ -855,8 +860,9 @@ sing-box 1.11.4 与 Wintun 0.14.1 官方 ZIP，生成域隔离 Ed25519 签名包
 清单、全部文件、PE 架构、sing-box Go build identity 和 Wintun Authenticode，再提交
 immutable current/previous 槽，并只选择与签名 snapshot 版本相符的槽。真实 Windows x64
 已执行 `sing-box check`、kill-on-close Job Object 终止试验，以及完整二维码解析 → 内部
-身份绑定 → signed pull → TUN-free Mixed `run` → 停止事务。当前尚未 Installed 托盘/IPC、
-ProgramData 最终 ACL、真实 TUN、端到端健康确认、跨重启自动回滚和 MSI，不能作为正式客户端发布。
+身份绑定 → signed pull → TUN-free Mixed `run` → 停止事务。Installed 的普通用户托盘/IPC、
+ProgramData ACL、MSI 升级/卸载/重装与身份保留，以及 amd64 真实 TUN 启停清理、宿主崩溃
+恢复和健康上报已验收。ARM64 和不同物理环境仍需实测；无正式证书的制品保持预览标记。
 
 **完成判据：** 睡眠、网络切换、服务重启和配置失败后都能恢复，卸载不残留活动
 路由或服务。

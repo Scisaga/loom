@@ -62,3 +62,27 @@ jobs:
 
       - name: Test with race detector
         run: go test -race ./...
+
+  windows:
+    name: Windows client native checks
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      # Win32 message pointers retain the documented unsafe.Pointer vet baseline.
+      # Real QR/TUN/MSI acceptance remains explicitly opt-in on a Windows host.
+      - name: Native client tests
+        run: go test -vet=off ./clients/windows ./internal/clientruntime ./internal/clientsecret ./internal/clientjoin ./internal/clientreport
+      - name: Vet client packages
+        run: go vet -unsafeptr=false ./clients/windows ./internal/clientruntime ./internal/clientsecret ./internal/clientjoin ./internal/clientreport
+      - name: Compile ARM64 host
+        shell: pwsh
+        run: |
+          $env:GOARCH = 'arm64'
+          go test -c -vet=off -o client-arm64.test.exe ./clients/windows

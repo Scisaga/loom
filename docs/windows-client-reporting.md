@@ -2,7 +2,7 @@
 
 > **状态：** Windows 最小两签 producer 和每轮健康采集已实现。原生测试覆盖加入、
 > 健康/故障/恢复、配置切换及两签上报；Windows amd64 实机已确认 TUN 探测成功、
-> 自动上报 `204` 和中控接收 healthy=true。停止后五分钟 stale 仍待单独验收。
+> 自动上报 `204` 和中控接收 healthy=true。停止后五分钟 stale 已在中控验收。
 > **边界：** 复用现有 `report.Observation`、`loom-attest-v5` 和
 > `loom-selfcheck-v1`；不新增状态协议、envelope、心跳格式或 self-check v2。
 

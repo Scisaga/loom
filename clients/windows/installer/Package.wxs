@@ -1,0 +1,70 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Loom" Manufacturer="Loom" Version="$(var.Version)" Language="1033"
+           UpgradeCode="A2C983CA-D7B2-4ED0-A4F1-7D399513F2B4" Scope="perMachine" InstallerVersion="500">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Loom is already installed." Schedule="afterInstallInitialize" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <Launch Condition="Installed OR (VersionNT64 AND UserSID AND UserSID &lt;&gt; &quot;S-1-5-18&quot;)"
+            Message="Run this installer from the Windows user account that will use Loom." />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Icon Id="LoomIcon" SourceFile="$(var.SourceDir)\loom-client.exe" />
+    <Property Id="ARPPRODUCTICON" Value="LoomIcon" />
+    <Property Id="LOOM_OPERATOR_SID" Secure="yes">
+      <RegistrySearch Id="ExistingOperator" Root="HKLM" Key="SOFTWARE\Loom" Name="OperatorSID" Type="raw" Bitness="always64" />
+    </Property>
+    <SetProperty Id="LOOM_OPERATOR_SID" Value="[UserSID]" Before="InstallInitialize" Sequence="execute" Condition="NOT LOOM_OPERATOR_SID" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="InstallFolder" Name="Loom">
+        <Component Id="Client" Bitness="always64">
+          <File Id="ClientExe" Source="$(var.SourceDir)\loom-client.exe" KeyPath="yes" />
+          <ServiceInstall Id="Service" Name="LoomClient" DisplayName="Loom Client" Description="Loom network client"
+                          Type="ownProcess" Start="auto" ErrorControl="normal" Account="LocalSystem" Vital="yes" />
+          <ServiceControl Id="ServiceControl" Name="LoomClient" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+        </Component>
+        <Component Id="DataPlane" Bitness="always64">
+          <File Source="$(var.SourceDir)\windows-dataplane.zip" KeyPath="yes" />
+        </Component>
+        <Component Id="Notice" Bitness="always64">
+          <File Source="$(var.SourceDir)\PREVIEW-NOTICE.txt" KeyPath="yes" />
+        </Component>
+        <Directory Id="LicensesFolder" Name="licenses">
+          <Component Id="Licenses" Guid="D450F757-947F-4893-8037-C50C7BD943FB" Bitness="always64">
+            <File Source="$(var.SourceDir)\licenses\gozxing-LICENSE" KeyPath="yes" />
+            <File Source="$(var.SourceDir)\licenses\golang-x-sys-LICENSE" />
+            <File Source="$(var.SourceDir)\licenses\golang-x-sys-PATENTS" />
+            <File Source="$(var.SourceDir)\licenses\golang-x-text-LICENSE" />
+            <File Source="$(var.SourceDir)\licenses\golang-x-text-PATENTS" />
+            <File Source="$(var.SourceDir)\licenses\golang-x-xerrors-LICENSE" />
+            <File Source="$(var.SourceDir)\licenses\golang-x-xerrors-PATENTS" />
+            <File Source="$(var.SourceDir)\licenses\yaml-v3-LICENSE" />
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="StateFolder" Name="Loom">
+        <!-- §13.5：根目录保留到重装；普通用户不能读取机器 DPAPI 密文或运行配置。 -->
+        <Component Id="MachineState" Guid="3BD3B3DC-B574-49FC-B175-749DF4FE2135" Bitness="always64" Permanent="yes">
+          <CreateFolder>
+            <PermissionEx Sddl="O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
+          </CreateFolder>
+          <RegistryValue Root="HKLM" Key="SOFTWARE\Loom" Name="OperatorSID" Type="string" Value="[LOOM_OPERATOR_SID]" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="Shortcut" Guid="952B20B0-8D7F-43EF-AEAC-8B3256D685B3" Bitness="always64">
+        <Shortcut Id="LoomShortcut" Name="Loom" Target="[#ClientExe]" WorkingDirectory="InstallFolder" Icon="LoomIcon" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Loom" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+    <Feature Id="ClientFeature" Title="Loom" Level="1">
+      <ComponentRef Id="Client" />
+      <ComponentRef Id="DataPlane" />
+      <ComponentRef Id="Notice" />
+      <ComponentRef Id="Licenses" />
+      <ComponentRef Id="MachineState" />
+      <ComponentRef Id="Shortcut" />
+    </Feature>
+  </Package>
+</Wix>

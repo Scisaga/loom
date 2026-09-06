@@ -65,6 +65,7 @@ APPROVED_DOMAIN_BASES = {
     "sagernet.org",
     "w3.org",
     "wireguard.com",
+    "wixtoolset.org",  # WiX installer XML schema namespace.
     "zlib.com",
 }
 EXAMPLE_DOMAIN_SUFFIXES = (
