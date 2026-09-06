@@ -81,7 +81,7 @@ jobs:
       - name: Build all six ZIPs
         run: |
           go mod download
-          ./scripts/build-windows-clients.sh
+          bash ./scripts/build-windows-clients.sh
           (cd out && sha256sum --check windows-clients-SHA256SUMS)
       - name: Record build source
         run: |

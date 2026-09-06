@@ -150,7 +150,7 @@ release is a separate step.
 Build all three editions for amd64 and arm64:
 
 ```sh
-./scripts/build-windows-clients.sh
+bash ./scripts/build-windows-clients.sh
 ```
 
 The build requires the platform-signed component packages in
