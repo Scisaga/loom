@@ -24,6 +24,9 @@ jobs:
   zip:
     name: Build Windows ZIPs
     needs: checks
+    # GitHub requires push access to read unpublished release assets.
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:

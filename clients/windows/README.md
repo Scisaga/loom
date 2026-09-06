@@ -134,8 +134,11 @@ Linux and Windows runners. Its repository setup is:
 - Draft release `windows-components-1.11.4`: the two platform-signed component
   assets `loom-windows-dataplane-1.11.4-amd64.zip` and
   `loom-windows-dataplane-1.11.4-arm64.zip`. The workflow reads them using its
-  built-in `GITHUB_TOKEN` with `contents: read`, then verifies their signatures,
+  built-in `GITHUB_TOKEN`, then verifies their signatures,
   architectures and pinned upstream contents before compiling.
+
+GitHub requires `contents: write` to read draft releases, so this permission is
+limited to the ZIP build job. The test and MSI jobs use `contents: read`.
 
 Keep the platform private key and device credentials on the operator's machine.
 Updating components requires preparing new signed packages and updating the
