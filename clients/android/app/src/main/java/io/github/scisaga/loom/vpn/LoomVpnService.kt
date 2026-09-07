@@ -133,6 +133,10 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 val candidateID = intent?.getStringExtra(EXTRA_CANDIDATE_ID).orEmpty()
                 scope.launch { reloadTunnel(candidateID, startId) }
             }
+            ACTION_ENROLLMENT_KEEPALIVE -> {
+                desiredConnected = false
+                updateNotification("正在完成设备入网…")
+            }
             ACTION_DISCONNECT -> {
                 desiredConnected = false
                 activeProbe?.cancel()
@@ -841,6 +845,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         private const val ROUTE_RETRY_MS = 60_000L
         const val ACTION_CONNECT = "io.github.scisaga.loom.action.CONNECT"
         const val ACTION_RELOAD = "io.github.scisaga.loom.action.RELOAD"
+        const val ACTION_ENROLLMENT_KEEPALIVE = "io.github.scisaga.loom.action.ENROLLMENT_KEEPALIVE"
         const val ACTION_DISCONNECT = "io.github.scisaga.loom.action.DISCONNECT"
         const val EXTRA_CANDIDATE_ID = "io.github.scisaga.loom.extra.CANDIDATE_ID"
         const val EXTRA_EMULATOR_PROXY = "io.github.scisaga.loom.extra.EMULATOR_PROXY"

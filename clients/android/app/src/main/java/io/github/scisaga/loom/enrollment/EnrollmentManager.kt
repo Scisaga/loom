@@ -25,9 +25,17 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.EOFException
+import java.io.IOException
+import java.net.ConnectException
+import java.net.NoRouteToHostException
+import java.net.ProtocolException
+import java.net.SocketException
+import java.net.SocketTimeoutException
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import javax.net.ssl.SSLException
 
 enum class EnrollmentPhase { CHECKING, NOT_JOINED, CLAIMING, WAITING, PULLING, READY, ERROR }
 
@@ -38,6 +46,7 @@ data class EnrollmentStatus(
     val snapshot: String = "",
     val generation: Long = 0,
     val canAbandonPending: Boolean = false,
+    val diagnostic: String = "",
 )
 
 class EnrollmentManager private constructor(context: Context) {
@@ -257,15 +266,23 @@ class EnrollmentManager private constructor(context: Context) {
                 HttpTransport.postJSON(appContext, endpoint, claim, ENROLLMENT_RESPONSE_LIMIT)
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
-                mutableStatus.value = EnrollmentStatus(EnrollmentPhase.WAITING, "网络暂不可用；将安全重试同一身份")
+            } catch (failure: Exception) {
+                mutableStatus.value = EnrollmentStatus(
+                    EnrollmentPhase.WAITING,
+                    "网络暂不可用；将安全重试同一身份",
+                    diagnostic = networkFailureKind(failure),
+                )
                 delay(retryDelay)
                 retryDelay = (retryDelay * 2).coerceAtMost(MAX_RETRY_MS)
                 continue
             }
             currentCoroutineContext().ensureActive()
             if (result.status >= 500 || result.status == 429) {
-                mutableStatus.value = EnrollmentStatus(EnrollmentPhase.WAITING, "中控暂不可用；将安全重试同一身份")
+                mutableStatus.value = EnrollmentStatus(
+                    EnrollmentPhase.WAITING,
+                    "中控暂不可用；将安全重试同一身份",
+                    diagnostic = "http-${result.status}",
+                )
                 delay(retryDelay)
                 retryDelay = (retryDelay * 2).coerceAtMost(MAX_RETRY_MS)
                 continue
@@ -476,6 +493,47 @@ class EnrollmentManager private constructor(context: Context) {
             instance ?: EnrollmentManager(context).also { instance = it }
         }
     }
+}
+
+internal fun networkFailureKind(error: Throwable): String {
+    val chain = generateSequence(error) { it.cause }.toList()
+    return when {
+        chain.any { it is java.net.UnknownHostException } -> "dns"
+        chain.any { it is SSLException } -> "tls"
+        chain.any { it is SocketTimeoutException } -> "timeout"
+        chain.any { it is ConnectException || it is NoRouteToHostException } -> {
+            val errno = chain.firstNotNullOfOrNull(::androidErrno)
+            if (errno == null) "connect" else "connect-e$errno"
+        }
+        chain.any { it is ProtocolException } -> "protocol"
+        chain.any { it is EOFException } -> "eof"
+        chain.any { it is SocketException } -> {
+            val errno = chain.firstNotNullOfOrNull(::androidErrno)
+            if (errno != null) {
+                "socket-e$errno"
+            } else {
+                val message = chain.filterIsInstance<SocketException>()
+                    .firstNotNullOfOrNull { it.message }
+                    ?.lowercase()
+                    .orEmpty()
+                when {
+                    "network is unreachable" in message -> "socket-unreachable"
+                    "connection reset" in message -> "socket-reset"
+                    "connection abort" in message -> "socket-aborted"
+                    "socket closed" in message -> "socket-closed"
+                    "operation not permitted" in message || "permission denied" in message -> "socket-denied"
+                    else -> "socket"
+                }
+            }
+        }
+        chain.any { it is IOException } -> "io"
+        else -> "unexpected"
+    }
+}
+
+private fun androidErrno(error: Throwable): Int? {
+    if (error.javaClass.name != "android.system.ErrnoException") return null
+    return runCatching { error.javaClass.getField("errno").getInt(error) }.getOrNull()
 }
 
 /**

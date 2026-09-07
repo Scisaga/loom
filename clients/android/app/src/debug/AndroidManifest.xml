@@ -8,7 +8,12 @@
             android:permission="android.permission.DUMP">
             <intent-filter>
                 <action android:name="io.github.scisaga.loom.debug.CONNECT" />
+                <action android:name="io.github.scisaga.loom.debug.ENROLLMENT_KEEPALIVE" />
                 <action android:name="io.github.scisaga.loom.debug.DISCONNECT" />
+                <action android:name="io.github.scisaga.loom.debug.IMPORT_INVITE" />
+                <action android:name="io.github.scisaga.loom.debug.RETRY_ENROLLMENT" />
+                <action android:name="io.github.scisaga.loom.debug.ABANDON_PENDING" />
+                <action android:name="io.github.scisaga.loom.debug.ENROLLMENT_STATUS" />
             </intent-filter>
         </receiver>
     </application>

@@ -39,6 +39,39 @@ adb -s "$ANDROID_SERIAL" shell am broadcast -n "$receiver" \
   -a io.github.scisaga.loom.debug.DISCONNECT
 ```
 
+When the phone is physically remote and cannot point its camera at a second
+screen, the same debug-only receiver can feed a downloaded `.loom-invite` into
+the production invitation parser and enrollment state machine. The secret is
+carried in a file rather than an ADB argument, the receiver accepts only this
+fixed app-specific path, and it deletes the file immediately after a bounded
+read:
+
+```bash
+remote=/sdcard/Android/data/io.github.scisaga.loom/files/pending.loom-invite
+adb -s "$ANDROID_SERIAL" push /secure/path/device.loom-invite "$remote"
+adb -s "$ANDROID_SERIAL" shell am broadcast -n "$receiver" \
+  -a io.github.scisaga.loom.debug.IMPORT_INVITE
+# These return only redacted state, never the Device ID, URL or token.
+adb -s "$ANDROID_SERIAL" shell am broadcast -n "$receiver" \
+  -a io.github.scisaga.loom.debug.ENROLLMENT_STATUS
+adb -s "$ANDROID_SERIAL" shell am broadcast -n "$receiver" \
+  -a io.github.scisaga.loom.debug.RETRY_ENROLLMENT
+```
+
+`ABANDON_PENDING` is also available for an expired, never-claimed local
+transaction. It calls the normal guarded abandon operation and cannot clear a
+ready identity or active profile.
+
+For locked-device enrollment acceptance, `ENROLLMENT_KEEPALIVE` starts the
+existing foreground service without creating a VPN interface; this mirrors the
+foreground lifetime normally supplied by the QR scanner Activity while leaving
+the physical network as Android's default.
+
+This transport exists only in the debug source set and still exercises the
+same key-fingerprint check, Keystore CSR, claim/recovery, signed pull and
+candidate activation used by camera scanning. CameraX/ZXing remains the normal
+production input.
+
 The end-to-end HTTPS check uses independent public endpoints and accepts one
 valid TLS/HTTP response. This avoids declaring the whole tunnel unhealthy when
 one provider is regionally filtered; if every endpoint fails, their individual
@@ -71,6 +104,14 @@ The key is public and contains no device credential or control address. Debug
 builds without it remain useful for the emulator data-plane fixture, but QR
 import fails closed before sending the one-time token. Every release task
 refuses to run without a valid 32-byte trust anchor.
+
+The enrollment endpoint must also serve a complete TLS chain which terminates
+at a root in the supported Android system stores. Verify this on physical
+devices, not only with a builder's OpenSSL bundle. In particular, the short
+Let's Encrypt Generation Y ECDSA chain ending at ISRG Root X2 is not sufficient
+for devices which lack X2; serve the default compatibility chain continuing to
+ISRG Root X1. The client does not disable certificate or hostname verification
+to compensate for a deployment chain error.
 
 ## Enrollment and activation transaction
 
