@@ -309,7 +309,7 @@ Agent-only 变化推进 hash、旧 schema 拒绝；完整代理请求验证慢�
 `min_samples` 后获选，两条路径共享末跳。测试还核对普通代理入口确实经过获胜前缀，
 再断开该前缀，验证同一窗口内故障切回仍保持固定末跳；不创建 TUN 或使用生产身份。
 
-本次修改没有部署。真实 Windows canary 仍需逐项进行：
+真实 Windows canary 按以下项目验收；各环境的实际完成情况记录在 `docs/status/current.md`：
 
 - 使用正常已加入身份接收现有双文件签名 bundle；核对缺失/篡改拒绝及激活失败回滚。
 - 在 Portable Mixed、Portable TUN、Installed 上核对候选探测确实经各自完整路径，
