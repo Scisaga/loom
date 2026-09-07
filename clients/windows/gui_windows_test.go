@@ -10,6 +10,10 @@ import (
 	"testing/synctest"
 	"time"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
+
+	"loom/internal/clientcore"
 )
 
 func TestGUIJoinProgressPreservesTransactionState(t *testing.T) {
@@ -180,4 +184,91 @@ func guiWindowRect(t *testing.T, hwnd uintptr) portableRect {
 		t.Fatalf("GetWindowRect: %v", err)
 	}
 	return rect
+}
+
+func TestGUIStatusRefreshDoesNotRewriteUnchangedControls(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	app := &portableGUI{edition: editionInstalled, ctx: ctx, cancel: cancel,
+		state: guiConnected, joined: true, deviceID: "demo-device", root: `C:\demo-client`,
+		detail: "已连接", routeSelected: 0, routeOptions: []portableRouteOption{
+			{Label: "自动选择", Preference: clientcore.Preference{Schema: 1, Mode: clientcore.Auto}},
+			{Label: "固定出口 · demo-exit", Preference: clientcore.Preference{Schema: 1, Mode: clientcore.FixedExit, Exit: "demo-exit"}},
+		}}
+	hwnd, err := createPortableWindow(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.hwnd = hwnd
+	portableGUIWindows.Store(hwnd, app)
+	defer func() {
+		procDestroyWindow.Call(hwnd)
+		app.deleteFonts()
+		app.deleteIcons()
+		var message portableMSG
+		portableUser32.NewProc("PeekMessageW").Call(uintptr(unsafe.Pointer(&message)), 0, 0x0012, 0x0012, 1)
+	}()
+	if err := app.createControls(); err != nil {
+		t.Fatal(err)
+	}
+	app.renderControls()
+
+	// §7.2：在真实 HWND 上记录引起闪烁的写消息，不能仅断言缓存变量相等。
+	type write struct {
+		control uintptr
+		message uint32
+	}
+	var writes []write
+	setProcedure := portableUser32.NewProc("SetWindowLongPtrW")
+	callProcedure := portableUser32.NewProc("CallWindowProcW")
+	for _, control := range append(app.controls.all(), hwnd) {
+		var original uintptr
+		callback := windows.NewCallback(func(window uintptr, message uint32, wParam, lParam uintptr) uintptr {
+			if message == 0x000C || message == 0x0046 || // WM_SETTEXT / WM_WINDOWPOSCHANGING
+				message == portableWMSetIcon || message == portableSTMSetIcon ||
+				(window == app.controls.networkList && message == portableLBResetContent) ||
+				(window == app.controls.routeCombo && message == portableCBResetContent) {
+				writes = append(writes, write{window, message})
+			}
+			result, _, _ := callProcedure.Call(original, window, uintptr(message), wParam, lParam)
+			return result
+		})
+		original, _, err = setProcedure.Call(control, ^uintptr(3), callback) // GWLP_WNDPROC
+		if original == 0 {
+			t.Fatal(err)
+		}
+		defer setProcedure.Call(control, ^uintptr(3), original)
+	}
+	for refresh := 0; refresh < 20; refresh++ {
+		// 每次 broker JSON 解码会产生新切片，但显示内容并没有改变。
+		app.routeOptions = append([]portableRouteOption(nil), app.routeOptions...)
+		app.renderControls()
+	}
+	if len(writes) != 0 {
+		t.Fatalf("unchanged status issued %d native control writes", len(writes))
+	}
+	app.detail = "连接详情已更新"
+	app.renderControls()
+	if len(writes) != 1 || writes[0] != (write{app.controls.message, 0x000C}) {
+		t.Fatalf("detail update rewrote unrelated controls: %+v", writes)
+	}
+	writes = nil
+	app.routeSelected = 1
+	app.renderControls()
+	resets := 0
+	for _, event := range writes {
+		if event.control != app.controls.routeCombo {
+			t.Fatalf("route update rewrote another control: %+v", event)
+		}
+		if event.message == portableCBResetContent {
+			resets++
+		}
+	}
+	selection, _, _ := procSendMessage.Call(app.controls.routeCombo, portableCBGetCurSel, 0, 0)
+	if resets != 1 || selection != 1 {
+		t.Fatal("real route change was lost")
+	}
+	t.Log("20 identical polls: zero native writes; detail and route changes update only their controls")
 }

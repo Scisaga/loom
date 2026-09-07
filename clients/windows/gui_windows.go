@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -49,6 +50,13 @@ type portableGUISnapshot struct {
 	routeDetail   string
 }
 
+func (s portableGUISnapshot) equal(other portableGUISnapshot) bool {
+	return s.state == other.state && s.joined == other.joined && s.deviceID == other.deviceID &&
+		s.detail == other.detail && s.hostname == other.hostname &&
+		s.routeSelected == other.routeSelected && s.routeBusy == other.routeBusy &&
+		s.routeDetail == other.routeDetail && slices.Equal(s.routeOptions, other.routeOptions)
+}
+
 type portableGUI struct {
 	brokerClient      bool
 	brokerMu          sync.Mutex
@@ -58,6 +66,7 @@ type portableGUI struct {
 	hwnd              uintptr
 	windowDPI         int32
 	controls          portableGUIControls
+	rendered          *portableGUISnapshot // §7.2：仅 UI 线程访问；服务轮询不等于界面变化。
 	fonts             []uintptr
 	statusIcon        uintptr
 	trayConnectedIcon uintptr
@@ -1134,6 +1143,7 @@ var (
 	procGetKeyState         = portableUser32.NewProc("GetKeyState")
 	procGetWindowText       = portableUser32.NewProc("GetWindowTextW")
 	procGetWindowTextLength = portableUser32.NewProc("GetWindowTextLengthW")
+	procIsWindowEnabled     = portableUser32.NewProc("IsWindowEnabled")
 	procInvalidateRect      = portableUser32.NewProc("InvalidateRect")
 	procRedrawWindow        = portableUser32.NewProc("RedrawWindow")
 	procMoveWindow          = portableUser32.NewProc("MoveWindow")
@@ -1295,6 +1305,7 @@ func loadPortableAppIcon(instance uintptr, widthMetric, heightMetric, dpi int32)
 }
 
 func (app *portableGUI) createControls() error {
+	app.rendered = nil
 	instance, _, _ := procGetModuleHandle.Call(0)
 	create := func(target *uintptr, exStyle uintptr, className, text string, style, id uintptr) error {
 		classPtr, _ := windows.UTF16PtrFromString(className)
@@ -1735,7 +1746,14 @@ func (app *portableGUI) renderControls() {
 		return
 	}
 	snapshot := app.snapshot()
-	app.layoutControls()
+	previous := app.rendered
+	if previous != nil && snapshot.equal(*previous) {
+		return
+	}
+	// §7.2：只有加入页与连接页互换才需要布局；尺寸和 DPI 由系统消息处理。
+	if previous == nil || previous.joined != snapshot.joined {
+		app.layoutControls()
+	}
 	stateText, message, primaryText, primaryEnabled := app.presentation(snapshot)
 	if snapshot.routeDetail != "" {
 		if message != "" {
@@ -1748,7 +1766,9 @@ func (app *portableGUI) renderControls() {
 	if snapshot.state == guiConnected {
 		stateIcon = app.statusIcon
 	}
-	procSendMessage.Call(app.controls.stateIcon, portableSTMSetIcon, stateIcon, 0)
+	if previous == nil || previous.state != snapshot.state {
+		procSendMessage.Call(app.controls.stateIcon, portableSTMSetIcon, stateIcon, 0)
+	}
 	setPortableControlText(app.controls.message, message)
 	setPortableControlText(app.controls.primaryButton, primaryText)
 	enablePortableControl(app.controls.primaryButton, primaryEnabled)
@@ -1759,12 +1779,18 @@ func (app *portableGUI) renderControls() {
 	pasteEnabled := primaryEnabled && !snapshot.joined && (snapshot.state == guiNeedsJoin || snapshot.state == guiError)
 	enablePortableControl(app.controls.pasteButton, pasteEnabled)
 
-	procSendMessage.Call(app.controls.networkList, portableLBResetContent, 0, 0)
+	if previous == nil || previous.joined != snapshot.joined || previous.deviceID != snapshot.deviceID {
+		procSendMessage.Call(app.controls.networkList, portableLBResetContent, 0, 0)
+		if snapshot.joined {
+			entryPtr, _ := windows.UTF16PtrFromString(snapshot.deviceID)
+			procSendMessage.Call(app.controls.networkList, portableLBAddString, 0, uintptr(unsafe.Pointer(entryPtr)))
+			procSendMessage.Call(app.controls.networkList, portableLBSetCurSel, 0, 0)
+			runtime.KeepAlive(entryPtr)
+		}
+	} else if previous.state != snapshot.state {
+		procInvalidateRect.Call(app.controls.networkList, 0, 0)
+	}
 	if snapshot.joined {
-		entryPtr, _ := windows.UTF16PtrFromString(snapshot.deviceID)
-		procSendMessage.Call(app.controls.networkList, portableLBAddString, 0, uintptr(unsafe.Pointer(entryPtr)))
-		procSendMessage.Call(app.controls.networkList, portableLBSetCurSel, 0, 0)
-		runtime.KeepAlive(entryPtr)
 		setPortableControlText(app.controls.interfaceGroup, "连接: Loom 网络")
 		setPortableControlText(app.controls.localGroup, "设备: "+snapshot.deviceID)
 	} else {
@@ -1793,14 +1819,23 @@ func (app *portableGUI) renderControls() {
 	}
 	setPortableControlText(app.controls.privilegeValue, fmt.Sprintf("%s  ·  Windows/%s", privilege, runtime.GOARCH))
 	routeSelectable := portableRouteSelectable(snapshot)
+	filterReset := !routeSelectable && app.routeFiltering
 	if !routeSelectable {
 		app.routeFiltering = false
 		app.routeFilter = ""
 	}
-	app.renderRouteCombo(snapshot)
+	if previous == nil || filterReset || previous.routeSelected != snapshot.routeSelected ||
+		!slices.Equal(previous.routeOptions, snapshot.routeOptions) {
+		app.renderRouteCombo(snapshot)
+	}
 	enablePortableControl(app.controls.routeCombo, routeSelectable)
-	app.updateBrandIcon(snapshot)
-	app.modifyTrayIcon(snapshot)
+	if previous == nil {
+		app.updateBrandIcon(snapshot)
+	}
+	if previous == nil || previous.state != snapshot.state {
+		app.modifyTrayIcon(snapshot)
+	}
+	app.rendered = &snapshot
 }
 
 func (app *portableGUI) updateBrandIcon(_ portableGUISnapshot) {
@@ -1953,12 +1988,23 @@ func (app *portableGUI) presentation(snapshot portableGUISnapshot) (state, messa
 }
 
 func setPortableControlText(hwnd uintptr, value string) {
+	// §7.2：STATIC 的重复 WM_SETTEXT 也会擦除背景，进度更新不能连带闪烁其他字段。
+	length, _, _ := procGetWindowTextLength.Call(hwnd)
+	current := make([]uint16, length+1)
+	procGetWindowText.Call(hwnd, uintptr(unsafe.Pointer(&current[0])), uintptr(len(current)))
+	if windows.UTF16ToString(current) == value {
+		return
+	}
 	wide, _ := windows.UTF16PtrFromString(value)
 	procSetWindowText.Call(hwnd, uintptr(unsafe.Pointer(wide)))
 	runtime.KeepAlive(wide)
 }
 
 func enablePortableControl(hwnd uintptr, enabled bool) {
+	current, _, _ := procIsWindowEnabled.Call(hwnd)
+	if (current != 0) == enabled {
+		return
+	}
 	value := uintptr(0)
 	if enabled {
 		value = 1
