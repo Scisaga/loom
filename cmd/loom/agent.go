@@ -50,8 +50,8 @@ func cmdAgent(args []string) error {
 		fmt.Println("  (dry-run:只探测和判断,不切)")
 	}
 
-	// SIGTERM 来自 systemd stop/restart,SIGINT 来自终端 Ctrl-C。两者都该让
-	// 当前这轮跑完再退出,而不是把度量写了一半。
+	// SIGTERM 来自 systemd stop/restart,SIGINT 来自终端 Ctrl-C。两者都必须
+	// 取消在途探测和控制请求；旧配置的一轮不能在 stop 后继续改 selector。
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 

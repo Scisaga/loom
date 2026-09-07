@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -121,7 +122,7 @@ func cmdProbe(args []string) error {
 				break
 			}
 			sent++
-			r, perr := agent.ProbeOnce(*probeAddr, sec, render.ProbeUser(it.cand), it.url,
+			r, perr := agent.ProbeOnce(context.Background(), *probeAddr, sec, render.ProbeUser(it.cand), it.url,
 				time.Duration(*timeoutMs)*time.Millisecond)
 			m := measure.Measurement{
 				// 时间由调用方注入,与渲染/打包保持同一个原则(D14)。

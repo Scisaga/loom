@@ -18,7 +18,7 @@ const (
 // all 只用来区分“曾经量过但已过期”和“从未见过”；陈旧样本绝不重新参与
 // 成功/失败或延迟计算。
 func summarizeCandidateHealth(d *Decl, selected string, fresh []measure.Summary,
-	all []measure.Measurement) *CandidateHealth {
+	all []measure.Measurement, node, scope string) *CandidateHealth {
 
 	h := &CandidateHealth{Candidates: len(d.Candidates), SelectedState: healthUnknown}
 	configured := make(map[string]bool, len(d.Candidates))
@@ -28,7 +28,8 @@ func summarizeCandidateHealth(d *Decl, selected string, fresh []measure.Summary,
 	seenBefore := make(map[string]bool, len(d.Candidates))
 	for i := range all {
 		m := &all[i]
-		if m.Declaration != d.ID || !configured[m.CandidateID] {
+		if m.Node != node || m.Declaration != d.ID || m.DecisionScope != scope ||
+			!configured[m.CandidateID] {
 			continue
 		}
 		if _, err := time.Parse(time.RFC3339, m.TS); err == nil {

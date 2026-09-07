@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -32,8 +33,8 @@ func newClash(addr, secret string) *clash {
 	}
 }
 
-func (k *clash) do(method, path string, body []byte) ([]byte, error) {
-	req, err := http.NewRequest(method, k.base+path, bytes.NewReader(body))
+func (k *clash) do(ctx context.Context, method, path string, body []byte) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, method, k.base+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -54,8 +55,8 @@ func (k *clash) do(method, path string, body []byte) ([]byte, error) {
 }
 
 // Now 返回 selector 当前选中的出站。
-func (k *clash) Now(selector string) (string, error) {
-	b, err := k.do("GET", "/proxies/"+url.PathEscape(selector), nil)
+func (k *clash) Now(ctx context.Context, selector string) (string, error) {
+	b, err := k.do(ctx, "GET", "/proxies/"+url.PathEscape(selector), nil)
 	if err != nil {
 		return "", err
 	}
@@ -73,8 +74,8 @@ func (k *clash) Now(selector string) (string, error) {
 }
 
 // Select 把 selector 切到指定候选。
-func (k *clash) Select(selector, candidate string) error {
+func (k *clash) Select(ctx context.Context, selector, candidate string) error {
 	body, _ := json.Marshal(map[string]string{"name": candidate})
-	_, err := k.do("PUT", "/proxies/"+url.PathEscape(selector), body)
+	_, err := k.do(ctx, "PUT", "/proxies/"+url.PathEscape(selector), body)
 	return err
 }

@@ -339,13 +339,24 @@ func writeStatus(w http.ResponseWriter, st *Status, at time.Time) {
 //
 // 503 是"自检有发现",不是传输失败 —— 照常解析,由调用方判断。
 func Fetch(addr string, timeout time.Duration) (*Status, error) {
+	return FetchContext(context.Background(), addr, timeout)
+}
+
+// FetchContext is Fetch with caller-controlled cancellation. Long-lived
+// control loops must use it so a stopped generation cannot remain blocked on a
+// peer and later continue into a selector decision.
+func FetchContext(ctx context.Context, addr string, timeout time.Duration) (*Status, error) {
 	c := &http.Client{
 		// Proxy 显式置空:节点上设了 HTTP_PROXY 时,发往隧道地址的请求
 		// 会被交给那个代理,拿回来的东西和这台机器毫无关系。
 		Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true},
 		Timeout:   timeout,
 	}
-	resp, err := c.Get("http://" + addr + "/status")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/status", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.Do(req)
 	if err != nil {
 		return nil, err
 	}

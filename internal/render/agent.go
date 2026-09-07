@@ -39,11 +39,27 @@ StateDirectory=loom
 WantedBy=multi-user.target
 `
 
-// renderAgent 生成接入节点的 Agent 配置与 unit。
-//
-// 只有接入节点需要:调参是"这个接入点该走哪条路"的决定(§5.1),服务器
-// 上没有 selector 可切。
+// renderAgent 生成 Linux 接入节点的 Agent 配置与 unit。Windows 只复用
+// renderAgentPlan 产出的平台无关调度计划，它的宿主生命周期不在此处表达。
 func renderAgent(s *model.SSOT, p *model.Node) ([]File, []Skip) {
+	files, skips := renderAgentPlan(s, p)
+	if len(files) == 0 {
+		return nil, skips
+	}
+	return append(files, File{
+		Path: "systemd/loom-agent.service", Content: fmt.Sprintf(agentUnit, p.ID),
+	}), skips
+}
+
+// renderAgentPlan 生成接入节点本地调参回路的已有 agent.Config 协议。
+//
+// 这个文件与 sing-box/config.json 进入同一节点 bundle，由 bundle hash
+// 和 snapshot 签名一起绑定；不设第二个调度系统或旁路交付。候选、Service
+// 目标和评分/探测参数仍全部由 renderAgentDeclarations 从 SSOT 推导。
+//
+// Linux 的对端观测剪枝依赖 report、节点 CA 路径和 systemd，因此只在 Linux
+// 计划中增补；Windows 包里只放可由平台宿主消费的本地端到端调参输入。
+func renderAgentPlan(s *model.SSOT, p *model.Node) ([]File, []Skip) {
 	if !p.IsAccess() {
 		return nil, nil
 	}
@@ -58,40 +74,42 @@ func renderAgent(s *model.SSOT, p *model.Node) ([]File, []Skip) {
 		Declarations:          declarations,
 		ObservationStale:      observationStale,
 		AttestationMinVersion: s.AttestationMinVersion(),
-		AttestationCA:         tlsCAPath,
 	}
 
-	// 能顺着隧道直接够到的节点。AllowedIPs 是 /32,所以只有隧道对端 ——
-	// 拉不到"对端的对端"。
-	shortest := ""
-	for i := range cfg.Declarations {
-		if p := cfg.Declarations[i].TuningPeriod; shortest == "" || shorterPeriod(p, shortest) {
-			shortest = p
+	if usesLinuxLifecycle(p) {
+		cfg.AttestationCA = tlsCAPath
+		// 能顺着隧道直接够到的节点。AllowedIPs 是 /32,所以只有隧道对端 ——
+		// 拉不到"对端的对端"。
+		shortest := ""
+		for i := range cfg.Declarations {
+			if period := cfg.Declarations[i].TuningPeriod; shortest == "" || shorterPeriod(period, shortest) {
+				shortest = period
+			}
 		}
+		for i := range s.Tunnels {
+			t := &s.Tunnels[i]
+			peer := ""
+			switch p.ID {
+			case t.From:
+				peer = t.To
+			case t.To:
+				peer = t.From
+			default:
+				continue
+			}
+			if a := s.TunnelAddrOn(peer, p.ID); a != "" {
+				cfg.Peers = append(cfg.Peers, agent.Peer{
+					Node: peer, Addr: fmt.Sprintf("%s:%d", a, ReportPort)})
+			}
+		}
+		sort.Slice(cfg.Peers, func(i, j int) bool { return cfg.Peers[i].Node < cfg.Peers[j].Node })
+		// 本机上报者必须明确走 loopback。Listen 排序后第一个常常是 10.99.*，
+		// 从 report 配置反取会把“本机”错误地绑到 WG 是否在线。
+		cfg.SelfReport = fmt.Sprintf("127.0.0.1:%d", ReportPort)
+		// 拉取节奏跟最短的调参周期走,不另发明一个旋钮:上报阈值是 5 分钟,
+		// 按同样的量级去拉就够了。
+		cfg.PeerPeriod = shortest
 	}
-	for i := range s.Tunnels {
-		t := &s.Tunnels[i]
-		peer := ""
-		switch p.ID {
-		case t.From:
-			peer = t.To
-		case t.To:
-			peer = t.From
-		default:
-			continue
-		}
-		if a := s.TunnelAddrOn(peer, p.ID); a != "" {
-			cfg.Peers = append(cfg.Peers, agent.Peer{
-				Node: peer, Addr: fmt.Sprintf("%s:%d", a, ReportPort)})
-		}
-	}
-	sort.Slice(cfg.Peers, func(i, j int) bool { return cfg.Peers[i].Node < cfg.Peers[j].Node })
-	// 本机上报者必须明确走 loopback。Listen 排序后第一个常常是 10.99.*，
-	// 从 report 配置反取会把“本机”错误地绑到 WG 是否在线。
-	cfg.SelfReport = fmt.Sprintf("127.0.0.1:%d", ReportPort)
-	// 拉取节奏跟最短的调参周期走,不另发明一个旋钮:上报阈值是 5 分钟,
-	// 按同样的量级去拉就够了。
-	cfg.PeerPeriod = shortest
 
 	if len(cfg.Declarations) == 0 {
 		skips = append(skips, Skip{
@@ -108,7 +126,6 @@ func renderAgent(s *model.SSOT, p *model.Node) ([]File, []Skip) {
 	}
 	return []File{
 		{Path: "agent/config.json", Content: string(b) + "\n"},
-		{Path: "systemd/loom-agent.service", Content: fmt.Sprintf(agentUnit, p.ID)},
 	}, skips
 }
 

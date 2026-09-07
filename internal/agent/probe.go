@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -48,7 +49,7 @@ const maxProbeBytes = 256 << 10
 //
 // Proxy 一律显式指定,**不读环境变量**:节点上可能设了 HTTP_PROXY,那会让
 // 探测悄悄绕开被测的候选,测出来的是那个代理的延迟。
-func ProbeOnce(probeAddr, secret, probeUser, target string, timeout time.Duration) (Result, error) {
+func ProbeOnce(ctx context.Context, probeAddr, secret, probeUser, target string, timeout time.Duration) (Result, error) {
 	pu := &url.URL{Scheme: "http", User: url.UserPassword(probeUser, secret), Host: probeAddr}
 	c := &http.Client{
 		Transport: &http.Transport{
@@ -63,8 +64,12 @@ func ProbeOnce(probeAddr, secret, probeUser, target string, timeout time.Duratio
 		},
 	}
 
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return Result{}, err
+	}
 	start := time.Now()
-	resp, err := c.Get(target)
+	resp, err := c.Do(req)
 	if err != nil {
 		return Result{}, err
 	}

@@ -1,14 +1,19 @@
 package render
 
 import (
+	"encoding/json"
 	"flag"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"loom/internal/model"
+	"loom/internal/report"
+	"loom/internal/secret"
 	"loom/internal/validate"
+	loomcore "loom/mobile/loomcore"
 )
 
 var update = flag.Bool("update", false, "重写 golden 文件")
@@ -97,9 +102,12 @@ func TestMatrixShape(t *testing.T) {
 			}
 		}
 	}
-	linuxNodes, linuxSingBox, linuxAccess := 0, 0, 0
+	linuxNodes, linuxSingBox, linuxAccess, windowsAccess := 0, 0, 0, 0
 	for i := range s.Nodes {
 		n := &s.Nodes[i]
+		if n.IsAccess() && n.Access.Platform == model.WindowsDesktop {
+			windowsAccess++
+		}
 		if !usesLinuxLifecycle(n) {
 			continue
 		}
@@ -126,12 +134,12 @@ func TestMatrixShape(t *testing.T) {
 	if reports != linuxNodes {
 		t.Errorf("渲染出 %d 份 Linux 上报者配置,期望 %d", reports, linuxNodes)
 	}
-	if agentUnits != agents {
-		t.Errorf("%d 份 Agent 配置却只有 %d 个 systemd unit", agents, agentUnits)
+	if agentUnits != linuxAccess {
+		t.Errorf("渲染出 %d 个 Agent systemd unit,期望 %d(Linux access)", agentUnits, linuxAccess)
 	}
-	// 当前 Agent 是 Linux 宿主；Windows/Android 由平台客户端实现同一控制语义。
-	if agents != linuxAccess {
-		t.Errorf("渲染出 %d 份 Linux Agent 配置,期望 %d", agents, linuxAccess)
+	// Windows 与 Linux 复用同一 agent.Config 调度协议；只有 Linux 获得 unit。
+	if want := linuxAccess + windowsAccess; agents != want {
+		t.Errorf("渲染出 %d 份 Agent 调度计划,期望 %d(Linux + Windows access)", agents, want)
 	}
 	if want := len(s.Tunnels) * 2; wg != want {
 		t.Errorf("渲染出 %d 个 WireGuard 文件,期望 %d(每条隧道两端各一个)", wg, want)
@@ -160,8 +168,8 @@ func TestMatrixShape(t *testing.T) {
 	}
 }
 
-// Windows 与 Android 只消费平台无关的 sing-box 配置。把 systemd、Linux
-// Agent 或 /etc/loom 绝对路径混进包里，会让平台宿主退化成伪 Linux 安装器。
+// Windows 消费平台无关的 sing-box 配置和同包 Agent 调度计划；Android
+// 目前仍只消费 sing-box。两者都不得夹带 systemd 或 /etc/loom 绝对路径。
 func TestNonLinuxBundlesExcludeLinuxLifecycle(t *testing.T) {
 	res, err := Render(load(t))
 	if err != nil {
@@ -175,24 +183,106 @@ func TestNonLinuxBundlesExcludeLinuxLifecycle(t *testing.T) {
 	for _, tc := range []struct {
 		owner      string
 		wantCAPath string
+		wantFiles  []string
 	}{
-		{owner: "phone", wantCAPath: `"certificate_path": "tls/ca.crt"`},
-		{owner: "workstation", wantCAPath: `"certificate_path": "C:\\ProgramData\\Loom\\tls\\ca.crt"`},
+		{owner: "phone", wantCAPath: `"certificate_path": "tls/ca.crt"`, wantFiles: []string{"sing-box/config.json"}},
+		{owner: "workstation", wantCAPath: `"certificate_path": "C:\\ProgramData\\Loom\\tls\\ca.crt"`,
+			wantFiles: []string{"agent/config.json", "sing-box/config.json"}},
 	} {
 		b, ok := byOwner[tc.owner]
 		if !ok {
 			t.Fatalf("缺少 %s 配置包", tc.owner)
 		}
-		if len(b.Files) != 1 || b.Files[0].Path != "sing-box/config.json" {
-			t.Errorf("%s 应只有平台无关的 sing-box 配置,得到 %+v", tc.owner, b.Files)
+		var gotFiles []string
+		byPath := map[string]string{}
+		for _, f := range b.Files {
+			gotFiles = append(gotFiles, f.Path)
+			byPath[f.Path] = f.Content
+			if strings.HasPrefix(f.Path, "systemd/") || strings.Contains(f.Content, "/etc/loom") {
+				t.Errorf("%s 的非 Linux bundle 泄漏了 Linux lifecycle 产物:%s", tc.owner, f.Path)
+			}
+		}
+		if !slices.Equal(gotFiles, tc.wantFiles) {
+			t.Errorf("%s bundle 文件 = %v,期望 %v", tc.owner, gotFiles, tc.wantFiles)
 			continue
 		}
-		if !strings.Contains(b.Files[0].Content, tc.wantCAPath) {
+		if !strings.Contains(byPath["sing-box/config.json"], tc.wantCAPath) {
 			t.Errorf("%s 没有使用平台 CA 路径 %s", tc.owner, tc.wantCAPath)
 		}
-		if strings.Contains(b.Files[0].Content, "/etc/loom") {
-			t.Errorf("%s 的配置泄漏了 Linux /etc/loom 路径", tc.owner)
-		}
+	}
+}
+
+func TestAndroidBootstrapSecretRefsExactlyMatchRenderedBundle(t *testing.T) {
+	tests := []struct {
+		name string
+		ssot *model.SSOT
+		node string
+		want []string
+	}{
+		{
+			name: "matrix routed access", ssot: load(t), node: "phone",
+			want: []string{"api/phone", "probe/phone", "vault:cred/phone"},
+		},
+		{
+			name: "zero-hop direct does not consume credential",
+			ssot: &model.SSOT{
+				Nodes: []model.Node{{
+					ID: "android-direct", Access: &model.AccessRole{
+						Platform: model.Android, Credentials: []string{"cred-direct"},
+						DefaultDeclaration: "direct",
+					},
+				}},
+				Declarations: []model.AccessDeclaration{{
+					ID: "direct", AddressAxis: model.FromRequest, EgressAxis: model.EgressAny,
+				}},
+				Credentials: []model.Credential{{
+					ID: "cred-direct", Declaration: "direct", SecretRef: "cred/android-direct/direct",
+				}},
+			},
+			node: "android-direct", want: []string{"api/android-direct", "probe/android-direct"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := Render(tc.ssot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var content string
+			for _, bundle := range result.Bundles {
+				if bundle.Owner == tc.node && len(bundle.Files) == 1 && bundle.Files[0].Path == "sing-box/config.json" {
+					content = bundle.Files[0].Content
+				}
+			}
+			if content == "" {
+				t.Fatalf("missing Android sing-box bundle for %q", tc.node)
+			}
+			actual := secret.Refs(content)
+			node := tc.ssot.NodeByID()[tc.node]
+			bootstrap := report.AndroidBundleSecretRefs(tc.ssot, node)
+			if !slices.Equal(actual, tc.want) || !slices.Equal(bootstrap, actual) {
+				t.Fatalf("rendered refs=%v bootstrap refs=%v want=%v", actual, bootstrap, tc.want)
+			}
+			bundleJSON, err := json.Marshal(struct {
+				Owner string            `json:"owner"`
+				Files map[string]string `json:"files"`
+			}{Owner: tc.node, Files: map[string]string{"sing-box/config.json": content}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			vault := make(map[string]string, len(bootstrap))
+			for _, ref := range bootstrap {
+				vault[ref] = "test-secret"
+			}
+			if _, err := loomcore.HydrateSingBoxConfig(bundleJSON, secret.Encode(vault, "")); err != nil {
+				t.Fatalf("strict Android hydration rejected exact bootstrap refs: %v", err)
+			}
+			vault["telemetry/"+tc.node] = "unused-secret"
+			if _, err := loomcore.HydrateSingBoxConfig(bundleJSON, secret.Encode(vault, "")); err == nil ||
+				!strings.Contains(err.Error(), "unused refs") {
+				t.Fatalf("strict Android hydration accepted a secret superset: %v", err)
+			}
+		})
 	}
 }
 
@@ -283,8 +373,10 @@ func TestSkipsAreExpected(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]int{
-		"platform=android 只渲染平台无关的 sing-box 配置":         1,
-		"platform=windows-desktop 只渲染平台无关的 sing-box 配置": 1,
+		"platform=android 只渲染平台无关的 sing-box 配置":                                         1,
+		"platform=windows-desktop 已在同一签名 bundle 渲染 sing-box 配置与 agent/config.json 调度计划": 1,
+		"ttft 只能由 L7 观测点产出":                                                             1,
+		"cost 需要价格数据源":                                                                  1,
 		// 没有隧道的 Linux 接入节点只绑回环 —— 自检可用,远端拉不到。
 		"上报接口只绑回环": 1,
 	}
@@ -304,8 +396,8 @@ func TestSkipsAreExpected(t *testing.T) {
 			t.Errorf("跳过原因 %q 出现 %d 次,期望 %d 次", k, got[k], n)
 		}
 	}
-	if len(res.Skipped) != 3 {
-		t.Errorf("共 %d 条跳过,期望 3 条 —— 有新的静默跳过被引入:\n%+v",
+	if len(res.Skipped) != 5 {
+		t.Errorf("共 %d 条跳过,期望 5 条 —— 有新的静默跳过被引入:\n%+v",
 			len(res.Skipped), res.Skipped)
 	}
 }

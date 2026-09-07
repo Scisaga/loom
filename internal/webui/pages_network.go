@@ -267,7 +267,7 @@ func pageRouting(d Deps, isAuthed bool, selectedEntry ...string) string {
 		}
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, `<div class="grid routing-summary"><div class="card span4"><div class=label>Automatic Agent decisions</div><div class=metric>%d</div><div class=dim>read-only runtime observations · generated from managed rules</div></div><div class="card span4"><div class=label>Fresh</div><div class="metric ok">%d <small>/ %d</small></div><div class=dim>each decision has its own signed timestamp</div></div><div class="card span4"><div class=label>Inventory candidates</div><div class=metric>%d</div><div class=dim>%s · evaluated by Agent, not selected by clients</div></div></div>`, len(v.Routes), fresh, len(v.Routes), len(v.Candidates), esc(intentSource))
+	fmt.Fprintf(&b, `<div class="grid routing-summary"><div class="card span4"><div class=label>Automatic Agent decisions</div><div class=metric>%d</div><div class=dim>read-only runtime observations · generated from managed rules</div></div><div class="card span4"><div class=label>Fresh</div><div class="metric ok">%d <small>/ %d</small></div><div class=dim>each decision has its own signed timestamp</div></div><div class="card span4"><div class=label>Inventory candidates</div><div class=metric>%d</div><div class=dim>%s · evaluated by the access Agent, not manually selected</div></div></div>`, len(v.Routes), fresh, len(v.Routes), len(v.Candidates), esc(intentSource))
 	b.WriteString(`<div class="section routing-scopes"><div class=sectionhead><h2>Automatic routing scopes</h2><span class=dim>Host → Service → Policy creates each scope; the access Agent continuously chooses its current route.</span></div><nav class=routing-entry-grid aria-label="Automatic routing scopes">`)
 	for _, entry := range entries {
 		className, current := "routing-entry-card", ""
@@ -292,7 +292,7 @@ func pageRouting(d Deps, isAuthed bool, selectedEntry ...string) string {
 		fmt.Fprintf(&b, `<a class="%s" href="/routing?entry=%s"%s><span><b>%s</b><small>%s</small></span><span class=mono>%s</span><span class="tiny %s">%s · View evidence</span></a>`, className, queryEscape(entry.Key), current, esc(name), esc(meta), esc(path), stateClass, esc(state))
 	}
 	b.WriteString(`</nav></div>`)
-	b.WriteString(`<div class="card routing-decision-card"><div class="sectionhead routing-decision-head"><h2>Current automatic decision</h2><span class=dim>Read-only selector state reported by the access Agent; it is not a client path choice.</span>`)
+	b.WriteString(`<div class="card routing-decision-card"><div class="sectionhead routing-decision-head"><h2>Current automatic decision</h2><span class=dim>Read-only selector state reported by the access Agent; it is not an operator path choice.</span>`)
 	if len(routes) > 0 {
 		b.WriteString(`<span class=sp><a class=tiny href="/topology?entry=` + queryEscape(selected) + `">Inspect in topology →</a></span>`)
 	}
@@ -778,7 +778,14 @@ func candidateHealthText(h *CandidateHealthView) string {
 	} else if h.RecentSuccess+h.RecentDegraded == 0 {
 		cls = "warn"
 	}
-	return fmt.Sprintf(`<span class=%s>%d success · %d degraded · %d failed · %d stale · %d unknown</span>`, cls, h.RecentSuccess, h.RecentDegraded, h.RecentFailed, h.Stale, h.Unknown)
+	out := fmt.Sprintf(`<span class=%s>%d success · %d degraded · %d failed · %d stale · %d unknown</span>`, cls, h.RecentSuccess, h.RecentDegraded, h.RecentFailed, h.Stale, h.Unknown)
+	if h.SelectedMetrics != "" {
+		out += `<br><span class=tiny>Selected quality · ` + esc(h.SelectedMetrics) + `</span>`
+	}
+	if h.BestMetrics != "" {
+		out += `<br><span class="tiny dim">Window best · ` + esc(h.BestMetrics) + `</span>`
+	}
+	return out
 }
 
 func byteSize(value int64) string {

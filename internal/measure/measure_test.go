@@ -1,6 +1,10 @@
 package measure
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 // TestPercentileRoundsUp:小样本下 p95 必须偏向最大值。
 //
@@ -65,5 +69,20 @@ func TestObservationPointIsRecorded(t *testing.T) {
 	}
 	if m.FirstByteMs != 0 {
 		t.Error("零值不该被当成有效测量")
+	}
+}
+
+func TestLegacyMeasurementJSONRemainsReadableWithoutInventingScope(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "measurements.jsonl")
+	legacy := []byte(`{"ts":"2026-09-07T12:00:00Z","node":"n","candidate_id":"a","declaration_id":"d","first_byte_ms":12,"observation_point":"l4_tunnel","observation_kind":"active"}` + "\n")
+	if err := os.WriteFile(path, legacy, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("legacy JSONL no longer loads:%v", err)
+	}
+	if len(got) != 1 || got[0].CandidateID != "a" || got[0].DecisionScope != "" {
+		t.Fatalf("legacy sample was changed or assigned a false scope:%+v", got)
 	}
 }

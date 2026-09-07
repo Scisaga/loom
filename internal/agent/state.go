@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -35,6 +37,11 @@ type Selection struct {
 	Chain       []string `json:"chain,omitempty"`
 	Reason      string   `json:"reason,omitempty"`
 	UpdatedAt   string   `json:"updated_at"`
+	// DecisionScope identifies the exact decision plan that produced this
+	// selector observation. Legacy state omits it and remains readable, but is
+	// discarded at startup rather than being presented as current evidence for
+	// a changed plan.
+	DecisionScope string `json:"decision_scope,omitempty"`
 
 	// Health 是与本次 selector 实读同一轮得到的候选集摘要。它是可选字段，
 	// 让旧版 agent-state.json 在滚动升级期间仍可读取；缺失只表示旧格式或
@@ -91,24 +98,30 @@ func ReadState(path string) (*State, error) {
 }
 
 type stateStore struct {
-	mu   sync.Mutex
-	path string
-	node string
-	byID map[string]Selection
+	mu     sync.Mutex
+	path   string
+	node   string
+	byID   map[string]Selection
+	scopes map[string]string
 }
 
 func newStateStore(path, node string, declarations []Decl, now time.Time) (*stateStore, error) {
-	s := &stateStore{path: path, node: node, byID: map[string]Selection{}}
+	s := &stateStore{
+		path: path, node: node, byID: map[string]Selection{},
+		scopes: make(map[string]string, len(declarations)),
+	}
 	active := make(map[string]map[string]bool, len(declarations))
 	for _, d := range declarations {
 		active[d.ID] = map[string]bool{}
+		s.scopes[d.ID] = decisionScope(node, &d)
 		for _, c := range d.Candidates {
 			active[d.ID][c.Tag] = true
 		}
 	}
 	if old, err := ReadState(path); err == nil && old != nil && old.Node == node {
 		for _, v := range old.Selections {
-			if active[v.Declaration][v.Candidate] {
+			if active[v.Declaration][v.Candidate] &&
+				v.DecisionScope != "" && v.DecisionScope == s.scopes[v.Declaration] {
 				s.byID[v.Declaration] = v
 			}
 		}
@@ -123,12 +136,23 @@ func newStateStore(path, node string, declarations []Decl, now time.Time) (*stat
 	return s, nil
 }
 
-func (s *stateStore) observe(v Selection, now time.Time) error {
+func (s *stateStore) observe(ctx context.Context, v Selection, now time.Time) error {
 	if s == nil || s.path == "" {
 		return nil
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	scope, ok := s.scopes[v.Declaration]
+	if !ok {
+		return fmt.Errorf("Agent 状态含非当前 declaration:%s", v.Declaration)
+	}
+	v.DecisionScope = scope
 	v.Chain = append([]string(nil), v.Chain...)
 	v.Health = cloneCandidateHealth(v.Health)
 	v.UpdatedAt = now.UTC().Format(time.RFC3339)

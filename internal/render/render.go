@@ -174,11 +174,26 @@ func Render(s *model.SSOT) (*Result, error) {
 			byNode[n.ID] = append(byNode[n.ID], af...)
 			skipped = append(skipped, ask...)
 		} else {
+			if n.Access.Platform == model.WindowsDesktop {
+				// Windows 不消费 Linux 的 systemd 生命周期，但仍必须从同一个
+				// 签名 bundle 得到与 sing-box 同源的调度计划。这会把 Windows
+				// bundle 明确定义为 sing-box 配置与 Agent 计划两个文件；Windows
+				// 宿主必须完整消费这个版本化契约，不提供单文件降级分支。
+				af, ask := renderAgentPlan(s, n)
+				byNode[n.ID] = append(byNode[n.ID], af...)
+				skipped = append(skipped, ask...)
+			}
+			reason := fmt.Sprintf("platform=%s 只渲染平台无关的 sing-box 配置；"+
+				"Windows Service/Android VpnService、配置 pull、Agent 与 report 由平台宿主交付，"+
+				"禁止回退为 systemd 或 /etc/loom 安装", n.Access.Platform)
+			if n.Access.Platform == model.WindowsDesktop {
+				reason = "platform=windows-desktop 已在同一签名 bundle 渲染 sing-box 配置与 agent/config.json 调度计划；" +
+					"Service、配置 pull、Agent 执行与 report 由 Windows 宿主交付，" +
+					"禁止回退为 systemd 或 /etc/loom 安装"
+			}
 			skipped = append(skipped, Skip{
-				Where: "lifecycle:" + n.ID,
-				Reason: fmt.Sprintf("platform=%s 只渲染平台无关的 sing-box 配置；"+
-					"Windows Service/Android VpnService、配置 pull、Agent 与 report 由平台宿主交付，"+
-					"禁止回退为 systemd 或 /etc/loom 安装", n.Access.Platform),
+				Where:  "lifecycle:" + n.ID,
+				Reason: reason,
 			})
 		}
 	}

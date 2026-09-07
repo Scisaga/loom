@@ -123,13 +123,70 @@ func TestAgentAndSingBoxAgreeOnCandidates(t *testing.T) {
 }
 
 func TestAgentSelfReportAlwaysUsesLoopback(t *testing.T) {
-	for node, cfg := range agentConfigs(t, load(t)) {
+	s := load(t)
+	for node, cfg := range agentConfigs(t, s) {
 		if cfg.Schema != agent.ConfigSchema {
 			t.Errorf("%s 的新渲染 Agent 配置缺少 schema=%d，得到 %d", node, agent.ConfigSchema, cfg.Schema)
+		}
+		if !usesLinuxLifecycle(s.NodeByID()[node]) {
+			if cfg.SelfReport != "" || len(cfg.Peers) != 0 || cfg.PeerPeriod != "" || cfg.AttestationCA != "" {
+				t.Errorf("%s 的平台无关调度计划泄漏 Linux report/CA 依赖:%+v", node, cfg)
+			}
+			continue
 		}
 		if cfg.SelfReport != "127.0.0.1:61802" {
 			t.Errorf("%s 的本机上报者依赖隧道地址:%q", node, cfg.SelfReport)
 		}
+	}
+}
+
+// Windows 不运行 Linux lifecycle，但它必须在 sing-box 的同一节点 bundle 里
+// 获得完整的 agent.Config 调度计划。直接比对唯一候选推导函数，避免
+// 平台分支只复制 selector 名称，却丢掉 Service 目标或评分/探测参数。
+func TestWindowsAgentPlanContainsSameCompleteDeclarations(t *testing.T) {
+	s := load(t)
+	s.Services = append(s.Services, model.Service{
+		ID: "windows-web", Addresses: []string{"api.example.com", ".example.com"}, Declaration: "best-egress",
+	})
+	workstation := s.NodeByID()["workstation"]
+	if workstation == nil || workstation.Access.Platform != model.WindowsDesktop {
+		t.Fatal("fixture 缺少 Windows workstation")
+	}
+	// 不支持的 objective 和 L4 不可表达的声明仍由共享推导函数
+	// 显式记入 Skipped；不在 Windows 分支中另造一份“完整”候选。
+	want, _ := renderAgentDeclarations(s, workstation)
+	got := agentConfigs(t, s)[workstation.ID]
+	if got == nil {
+		t.Fatal("Windows bundle 缺少 agent/config.json")
+	}
+	gotJSON, err := json.Marshal(got.Declarations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantJSON, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotJSON) != string(wantJSON) {
+		t.Fatalf("Windows 调度计划与共享推导结果不同:\n got %s\nwant %s", gotJSON, wantJSON)
+	}
+	if got.API != APIListen || got.Probe != ProbeListen ||
+		got.APISecret != secretRef("api/"+workstation.ID) || got.ProbeSecret != secretRef("probe/"+workstation.ID) {
+		t.Fatalf("Windows 调度计划没有复用 sing-box 的控制/探测入口:%+v", got)
+	}
+	services := 0
+	for _, d := range got.Declarations {
+		if strings.HasPrefix(d.Selector, "svc:") {
+			services++
+		}
+		if len(d.Candidates) == 0 || len(d.Targets) == 0 || d.Objective == "" ||
+			d.TuningPeriod == "" || d.SwitchThreshold <= 0 || d.Window == "" ||
+			d.MinSamples == 0 || d.StaleAfter == "" {
+			t.Errorf("Windows 调度计划 %s 缺候选、目标或评分/探测参数:%+v", d.ID, d)
+		}
+	}
+	if services == 0 {
+		t.Fatal("Windows 调度计划没有任何 Service 级目标")
 	}
 }
 

@@ -155,16 +155,17 @@ func TestUnsupportedObjectivesAreRefused(t *testing.T) {
 
 func TestInWindowDropsOldAndStale(t *testing.T) {
 	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	const node, scope = "n", "scope"
 	at := func(d time.Duration) string { return now.Add(-d).Format(time.RFC3339) }
 	ms := []measure.Measurement{
-		{TS: at(90 * time.Minute), Declaration: "d", CandidateID: "old", FirstByteMs: 1},
-		{TS: at(5 * time.Minute), Declaration: "d", CandidateID: "fresh", FirstByteMs: 2},
-		{TS: now.Add(time.Hour).Format(time.RFC3339), Declaration: "d", CandidateID: "future", FirstByteMs: 99},
-		{TS: at(5 * time.Minute), Declaration: "other", CandidateID: "fresh", FirstByteMs: 3},
+		{TS: at(90 * time.Minute), Node: node, DecisionScope: scope, Declaration: "d", CandidateID: "old", FirstByteMs: 1},
+		{TS: at(5 * time.Minute), Node: node, DecisionScope: scope, Declaration: "d", CandidateID: "fresh", FirstByteMs: 2},
+		{TS: now.Add(time.Hour).Format(time.RFC3339), Node: node, DecisionScope: scope, Declaration: "d", CandidateID: "future", FirstByteMs: 99},
+		{TS: at(5 * time.Minute), Node: node, DecisionScope: scope, Declaration: "other", CandidateID: "fresh", FirstByteMs: 3},
 		// 窗口内有样本,但这条候选最新的一笔已经超过 stale_after
-		{TS: at(50 * time.Minute), Declaration: "d", CandidateID: "stale", FirstByteMs: 4},
+		{TS: at(50 * time.Minute), Node: node, DecisionScope: scope, Declaration: "d", CandidateID: "stale", FirstByteMs: 4},
 	}
-	got := inWindow(ms, "d", now, time.Hour, 30*time.Minute)
+	got := inWindow(ms, node, "d", scope, now, time.Hour, 30*time.Minute)
 	if len(got) != 1 || got[0].CandidateID != "fresh" {
 		t.Fatalf("窗口过滤结果不对:%+v", got)
 	}

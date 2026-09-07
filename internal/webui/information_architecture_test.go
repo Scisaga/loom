@@ -307,7 +307,7 @@ func TestLivePathsPresentsRulesAsAutomaticReadOnlyDecisions(t *testing.T) {
 	body := pageRouting(misakaDeps(), false)
 	for _, want := range []string{
 		"Automatic routing scopes", "Current automatic decision",
-		"not a client path choice", "not client-selectable paths",
+		"not an operator path choice", "not manually selected", "not client-selectable paths",
 		"International APIs", "demo-d → demo-e", "Inspect in topology",
 		"routing-summary", "routing-decision-card", "routing-decision-table", "route-text",
 	} {
@@ -315,13 +315,50 @@ func TestLivePathsPresentsRulesAsAutomaticReadOnlyDecisions(t *testing.T) {
 			t.Errorf("Live paths automatic routing semantics are missing %q", want)
 		}
 	}
-	for _, unwanted := range []string{`<select name=entry`, ">View</button>", "Overlay in topology"} {
+	for _, unwanted := range []string{
+		`<select name=entry`, ">View</button>", "Overlay in topology",
+		"not selected by clients", "not a client path choice",
+	} {
 		if strings.Contains(body, unwanted) {
 			t.Errorf("Live paths still presents a routing decision as a picker %q", unwanted)
 		}
 	}
 	if strings.Contains(body, `</table></div></div><div class="section routing-candidates">`) {
 		t.Fatal("Live paths closes the main content container before the candidate section")
+	}
+}
+
+func TestLivePathsShowsReportedCandidateQualityWithoutInventingMissingMetrics(t *testing.T) {
+	d := misakaDeps()
+	v := d.Snapshot()
+	v.Routes[0].Health = &CandidateHealthView{
+		Candidates: 3, RecentSuccess: 2, RecentDegraded: 1, SelectedState: "success",
+		SelectedMetrics: `p50 28ms · p95 41ms <measured>`, BestMetrics: "p50 28ms",
+	}
+	d.Snapshot = func() View { return v }
+	body := pageRouting(d, false)
+	for _, want := range []string{
+		"2 success · 1 degraded · 0 failed · 0 stale · 0 unknown",
+		"Selected quality · p50 28ms · p95 41ms &lt;measured&gt;",
+		"Window best · p50 28ms",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Live paths candidate quality is missing %q", want)
+		}
+	}
+	if strings.Contains(body, "<measured>") {
+		t.Fatal("Live paths did not escape reported quality text")
+	}
+
+	v.Routes[0].Health = &CandidateHealthView{
+		Candidates: 2, RecentFailed: 2, SelectedState: "failed",
+	}
+	d.Snapshot = func() View { return v }
+	body = pageRouting(d, false)
+	for _, invented := range []string{"Selected quality", "Window best", "p50 0ms", "p95 0ms", "0 KB/s"} {
+		if strings.Contains(body, invented) {
+			t.Errorf("Live paths invented missing candidate quality %q", invented)
+		}
 	}
 }
 

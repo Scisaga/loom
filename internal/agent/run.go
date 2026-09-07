@@ -65,6 +65,12 @@ func (o *Options) fill() {
 // 每条声明一个 goroutine、各按自己的 tuning_period 走 —— 声明之间的节奏
 // 本来就不同,合并成一个全局节拍会让快的那条被慢的拖住。
 func Run(ctx context.Context, cfg *Config, opts Options) error {
+	if ctx == nil {
+		return fmt.Errorf("Agent context 不能为空")
+	}
+	if ctx.Err() != nil {
+		return nil
+	}
 	opts.fill()
 	logf := func(f string, a ...any) {
 		fmt.Fprintf(opts.Log, "%s "+f+"\n",
@@ -96,7 +102,7 @@ func Run(ctx context.Context, cfg *Config, opts Options) error {
 	k := newClash(cfg.API, cfg.APISecret)
 	obs := newObserved()
 	// 每条声明各自的轮换游标。有界探测靠它保证"每条候选迟早都被试到"。
-	rot := map[string]int{}
+	rot := map[string]string{}
 	var rotMu sync.Mutex
 	var wg sync.WaitGroup
 
@@ -105,7 +111,10 @@ func Run(ctx context.Context, cfg *Config, opts Options) error {
 	// **第一轮同步跑完再开始调参。** 并发启动的话,第一次决策会在全网观测
 	// 到手之前做出,剪枝失效 —— 而下一次机会要等一整个 tuning_period。
 	if len(cfg.Peers) > 0 || cfg.SelfReport != "" {
-		pollPeers(cfg, obs, attestationCA, opts.Now(), observationMaxAge, logf)
+		pollPeers(ctx, cfg, obs, attestationCA, opts.Now(), observationMaxAge, logf)
+		if ctx.Err() != nil {
+			return nil
+		}
 		logf("已收到 %d 个节点的观测", obs.len())
 	}
 	if (len(cfg.Peers) > 0 || cfg.SelfReport != "") && cfg.PeerPeriod != "" {
@@ -122,7 +131,10 @@ func Run(ctx context.Context, cfg *Config, opts Options) error {
 					return
 				case <-time.After(pp):
 				}
-				pollPeers(cfg, obs, attestationCA, opts.Now(), observationMaxAge, logf)
+				pollPeers(ctx, cfg, obs, attestationCA, opts.Now(), observationMaxAge, logf)
+				if ctx.Err() != nil {
+					return
+				}
 				if opts.Once {
 					return
 				}
@@ -140,7 +152,13 @@ func Run(ctx context.Context, cfg *Config, opts Options) error {
 		go func() {
 			defer wg.Done()
 			for {
-				if err := tick(cfg, d, k, st, selections, obs, observationMaxAge, rot, &rotMu, &opts, logf); err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				if err := tick(ctx, cfg, d, k, st, selections, obs, observationMaxAge, rot, &rotMu, &opts, logf); err != nil {
+					if ctx.Err() != nil {
+						return
+					}
 					// 一轮失败不该让回路停掉:控制端点可能只是在重启。
 					logf("[%s] 本轮失败:%v", d.ID, err)
 				}
@@ -164,7 +182,7 @@ func Run(ctx context.Context, cfg *Config, opts Options) error {
 // 它**不做任何处置** —— 隧道断了要人去看,不是 Agent 能自动修的。价值在于
 // 从"完全没有信号"变成"有带时间戳的记录":DDNS 重解析以前是全程静默的,
 // IP 变了、隧道断了、脚本修好了,事后连查都没得查。
-func pollPeers(cfg *Config, obs *observed, ca []byte, now time.Time,
+func pollPeers(ctx context.Context, cfg *Config, obs *observed, ca []byte, now time.Time,
 	maxAge time.Duration, logf func(string, ...any)) {
 	peers := append([]Peer(nil), cfg.Peers...)
 	sort.Slice(peers, func(i, j int) bool { return peers[i].Node < peers[j].Node })
@@ -174,7 +192,13 @@ func pollPeers(cfg *Config, obs *observed, ca []byte, now time.Time,
 		peers = append([]Peer{{Node: cfg.Node, Addr: cfg.SelfReport}}, peers...)
 	}
 	for _, p := range peers {
-		st, err := report.Fetch(p.Addr, 5*time.Second)
+		if ctx.Err() != nil {
+			return
+		}
+		st, err := report.FetchContext(ctx, p.Addr, 5*time.Second)
+		if ctx.Err() != nil {
+			return
+		}
 		if err != nil {
 			logf("[对端 %s] ❌ 拉不到 %s:%v", p.Node, p.Addr, err)
 			continue
@@ -260,13 +284,17 @@ func ingestObservation(dst *observed, o *report.Observation, self string, local 
 }
 
 // tick 是一轮:探测全部候选 → 按窗口聚合 → 决定 → 必要时切。
-func tick(cfg *Config, d *Decl, k *clash, st *store, selections *stateStore,
-	obs *observed, observationMaxAge time.Duration, rot map[string]int,
+func tick(ctx context.Context, cfg *Config, d *Decl, k *clash, st *store, selections *stateStore,
+	obs *observed, observationMaxAge time.Duration, rot map[string]string,
 	rotMu *sync.Mutex, opts *Options, logf func(string, ...any)) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	win, err := d.Win()
 	if err != nil {
 		return err
 	}
+	scope := decisionScope(cfg.Node, d)
 	stale, err := d.Stale()
 	if err != nil {
 		return err
@@ -321,7 +349,7 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, selections *stateStore,
 
 	// 当前选中的那条**每轮必探**。它变坏了要立刻知道 —— 这正是 D23
 	// (停在死候选上不受阻尼保护)依赖的信号。
-	current, cerr := k.Now(d.Selector)
+	current, cerr := k.Now(ctx, d.Selector)
 	if cerr != nil {
 		return fmt.Errorf("读 selector:%w", cerr)
 	}
@@ -336,28 +364,10 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, selections *stateStore,
 	var skippedByBudget int
 	if d.ProbeBudget > 0 && len(probe) > d.ProbeBudget {
 		rotMu.Lock()
-		start := rot[d.ID]
-		rot[d.ID] = (start + d.ProbeBudget) % len(probe)
+		var next string
+		probe, next, skippedByBudget = pickProbeCandidates(probe, current, d.ProbeBudget, rot[d.ID])
+		rot[d.ID] = next
 		rotMu.Unlock()
-
-		picked := map[string]bool{}
-		var sel []Cand
-		for i := range probe {
-			if probe[i].Tag == current {
-				sel = append(sel, probe[i])
-				picked[probe[i].Tag] = true
-			}
-		}
-		// 其余按游标轮换,保证每条迟早轮到。
-		for i := 0; len(sel) < d.ProbeBudget && i < len(probe); i++ {
-			c := probe[(start+i)%len(probe)]
-			if !picked[c.Tag] {
-				sel = append(sel, c)
-				picked[c.Tag] = true
-			}
-		}
-		skippedByBudget = len(probe) - len(sel)
-		probe = sel
 	}
 
 	ts := opts.Now().Format(time.RFC3339)
@@ -377,7 +387,8 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, selections *stateStore,
 		for _, t := range d.Targets {
 			got = append(got, measure.Measurement{
 				TS: ts, Node: cfg.Node, CandidateID: c.Tag, Declaration: d.ID, Target: t,
-				Point: measure.L4Tunnel, Kind: measure.Derived,
+				DecisionScope: scope,
+				Point:         measure.L4Tunnel, Kind: measure.Derived,
 				Error: fmt.Sprintf("出口 %s 自己观测到打不到 %s:%s", exit, t, deadFor[t][exit]),
 			})
 		}
@@ -385,10 +396,14 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, selections *stateStore,
 	cands = probe
 	for _, c := range cands {
 		for _, t := range d.Targets {
-			r, perr := ProbeOnce(cfg.Probe, cfg.ProbeSecret, c.ProbeUser, t, opts.ProbeTimeout)
+			r, perr := ProbeOnce(ctx, cfg.Probe, cfg.ProbeSecret, c.ProbeUser, t, opts.ProbeTimeout)
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			m := measure.Measurement{
 				TS: ts, Node: cfg.Node, CandidateID: c.Tag, Declaration: d.ID, Target: t,
-				Point: measure.L4Tunnel, Kind: measure.Active,
+				DecisionScope: scope,
+				Point:         measure.L4Tunnel, Kind: measure.Active,
 			}
 			if perr != nil {
 				m.Error = perr.Error()
@@ -400,6 +415,9 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, selections *stateStore,
 			got = append(got, m)
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := st.append(got); err != nil {
 		return fmt.Errorf("写度量:%w", err)
 	}
@@ -410,9 +428,12 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, selections *stateStore,
 	if err != nil {
 		return fmt.Errorf("读度量:%w", err)
 	}
-	sums := measure.Summarize(inWindow(all, d.ID, opts.Now(), win, stale))
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	sums := measure.Summarize(inWindow(all, cfg.Node, d.ID, scope, opts.Now(), win, stale))
 	healthFor := func(selected string) *CandidateHealth {
-		return summarizeCandidateHealth(d, selected, sums, all)
+		return summarizeCandidateHealth(d, selected, sums, all, cfg.Node, scope)
 	}
 
 	// 3. 决定。
@@ -432,7 +453,10 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, selections *stateStore,
 	}
 	logf("[%s] %s · %s", d.ID, line, dec.Reason)
 	if !dec.Switch {
-		if err := selections.observe(Selection{
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := selections.observe(ctx, Selection{
 			Declaration: d.ID, Selector: d.Selector, Candidate: selected,
 			Chain: currentChain, Reason: reason, Health: healthFor(selected),
 		}, opts.Now()); err != nil {
@@ -442,7 +466,10 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, selections *stateStore,
 	}
 	if opts.DryRun {
 		logf("[%s] (dry-run)本应切 %s → %s", d.ID, current, dec.Choice)
-		if err := selections.observe(Selection{
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := selections.observe(ctx, Selection{
 			Declaration: d.ID, Selector: d.Selector, Candidate: current,
 			Chain: currentChain, Reason: "dry-run，实际未切；" + reason,
 			Health: healthFor(current),
@@ -451,10 +478,13 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, selections *stateStore,
 		}
 		return nil
 	}
-	if err := k.Select(d.Selector, dec.Choice); err != nil {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := k.Select(ctx, d.Selector, dec.Choice); err != nil {
 		return fmt.Errorf("切 selector:%w", err)
 	}
-	actual, err := k.Now(d.Selector)
+	actual, err := k.Now(ctx, d.Selector)
 	if err != nil {
 		return fmt.Errorf("切 selector 后读回实际选择:%w", err)
 	}
@@ -466,7 +496,10 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, selections *stateStore,
 		return fmt.Errorf("selector %s 读回值 %q 不在渲染候选中", d.Selector, actual)
 	}
 	logf("[%s] ✅ %s → %s", d.ID, current, actual)
-	if err := selections.observe(Selection{
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := selections.observe(ctx, Selection{
 		Declaration: d.ID, Selector: d.Selector, Candidate: actual,
 		Chain: actualChain, Reason: reason, Health: healthFor(actual),
 	}, opts.Now()); err != nil {
@@ -475,6 +508,9 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, selections *stateStore,
 	// 切换是状态变化,该进事件历史 —— 只写 journald 的话,"这条路是什么
 	// 时候、因为什么切过去的"事后查不到。
 	if opts.EventsPath != "" {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		_ = events.Append(opts.EventsPath, []events.Event{{
 			TS: opts.Now().UTC().Format(time.RFC3339), Node: cfg.Node,
 			Kind: "route", Subject: d.ID, From: shortChain(currentChain), To: shortChain(actualChain),
@@ -482,6 +518,51 @@ func tick(cfg *Config, d *Decl, k *clash, st *store, selections *stateStore,
 		}})
 	}
 	return nil
+}
+
+// pickProbeCandidates keeps the current selector member in every bounded
+// round, then spends only the remaining slots on a stable ring of other
+// candidates. The cursor is the next tag rather than a numeric slice index so
+// pruning or candidate-set changes cannot silently shift it onto a different
+// part of the ring.
+func pickProbeCandidates(candidates []Cand, current string, budget int, nextTag string) ([]Cand, string, int) {
+	probe := append([]Cand(nil), candidates...)
+	sort.Slice(probe, func(i, j int) bool { return probe[i].Tag < probe[j].Tag })
+	if budget <= 0 || len(probe) <= budget {
+		return probe, nextTag, 0
+	}
+
+	selected := make([]Cand, 0, budget)
+	others := make([]Cand, 0, len(probe))
+	for _, candidate := range probe {
+		if candidate.Tag == current {
+			selected = append(selected, candidate)
+			continue
+		}
+		others = append(others, candidate)
+	}
+
+	slots := budget - len(selected)
+	if slots < 0 {
+		slots = 0
+	}
+	if slots > len(others) {
+		slots = len(others)
+	}
+	start := 0
+	if nextTag != "" && len(others) > 0 {
+		start = sort.Search(len(others), func(i int) bool { return others[i].Tag >= nextTag })
+		if start == len(others) {
+			start = 0
+		}
+	}
+	for i := 0; i < slots; i++ {
+		selected = append(selected, others[(start+i)%len(others)])
+	}
+	if slots > 0 {
+		nextTag = others[(start+slots)%len(others)].Tag
+	}
+	return selected, nextTag, len(probe) - len(selected)
 }
 
 // configuredChain 按 opaque tag 找 renderer 显式携带的节点链。拓扑不能从
@@ -507,7 +588,7 @@ func shortChain(chain []string) string {
 // window 与 stale_after 是两件事:前者决定"用多久的数据算分位数",后者决定
 // "多久没新数据就认为这条候选的情况已经不知道了"。一条候选如果最近一次
 // 样本已经超过 stale_after,它在本轮里等同没有数据。
-func inWindow(ms []measure.Measurement, decl string, now time.Time, window, stale time.Duration) []measure.Measurement {
+func inWindow(ms []measure.Measurement, node, decl, scope string, now time.Time, window, stale time.Duration) []measure.Measurement {
 	cut := now.Add(-window)
 	staleCut := now.Add(-stale)
 	// 节点之间允许少量时钟偏差，但不能让一条来自“未来”的记录在 VM
@@ -523,14 +604,16 @@ func inWindow(ms []measure.Measurement, decl string, now time.Time, window, stal
 			continue
 		}
 		parsed[i] = t
-		if ms[i].Declaration == decl && t.After(newest[ms[i].CandidateID]) {
+		if ms[i].Node == node && ms[i].Declaration == decl && ms[i].DecisionScope == scope &&
+			t.After(newest[ms[i].CandidateID]) {
 			newest[ms[i].CandidateID] = t
 		}
 	}
 
 	var out []measure.Measurement
 	for i := range ms {
-		if ms[i].Declaration != decl || parsed[i].IsZero() || parsed[i].Before(cut) {
+		if ms[i].Node != node || ms[i].Declaration != decl || ms[i].DecisionScope != scope ||
+			parsed[i].IsZero() || parsed[i].Before(cut) {
 			continue
 		}
 		if newest[ms[i].CandidateID].Before(staleCut) {

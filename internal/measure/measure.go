@@ -55,6 +55,11 @@ type Measurement struct {
 	Node        string `json:"node"`
 	CandidateID string `json:"candidate_id"`
 	Declaration string `json:"declaration_id"`
+	// DecisionScope binds a sample to the access node, targets, candidates, and
+	// decision parameters that produced it. It is optional on the wire so old
+	// JSONL remains readable; an empty value is legacy evidence and must not be
+	// admitted into a scoped live decision.
+	DecisionScope string `json:"decision_scope,omitempty"`
 	// Target 是这次测的目标地址。
 	//
 	// **一条候选对不同目标的表现可以天差地别** —— 实测同一条候选到 baidu

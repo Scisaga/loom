@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"loom/internal/snapshot"
 )
 
 const goodSSOT = `
@@ -81,6 +83,66 @@ func TestTreeContainsNoPlaintextSecrets(t *testing.T) {
 	}
 	if !found {
 		t.Error("树里一个占位符都没有 —— 要么渲染错了,要么秘密被提前填进去了")
+	}
+}
+
+// Windows 调度计划不走新端点或旁路协议：它和 sing-box 一起进入节点
+// bundle，bundle hash 再进入已签名 manifest。Windows 宿主必须原子消费这个
+// 双文件契约；缺少 Agent 计划的单文件包不属于这个版本的有效输入。
+func TestWindowsAgentPlanIsCoveredBySignedBundle(t *testing.T) {
+	raw, err := os.ReadFile("../../testdata/matrix/ssot.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := Build(raw, priv, Meta{CreatedAt: "2026-08-23T00:00:00Z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestBody := tree.Files[tree.Snapshot+"/snapshot.json"]
+	signature := tree.Files[tree.Snapshot+"/snapshot.sig"]
+	if err := snapshot.VerifySignature(manifestBody, signature, pub); err != nil {
+		t.Fatalf("Windows bundle 所在 snapshot 验签失败:%v", err)
+	}
+	var manifest snapshot.Manifest
+	if err := json.Unmarshal(manifestBody, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	var wantHash string
+	for _, ref := range manifest.Bundles {
+		if ref.Owner == "workstation" {
+			wantHash = ref.Hash
+		}
+	}
+	if wantHash == "" {
+		t.Fatal("已签名 manifest 没有 Windows bundle 引用")
+	}
+	var bundle Bundle
+	if err := json.Unmarshal(tree.Files[tree.Snapshot+"/nodes/workstation.json"], &bundle); err != nil {
+		t.Fatal(err)
+	}
+	wantFiles := []string{"agent/config.json", "sing-box/config.json"}
+	for _, name := range wantFiles {
+		if bundle.Files[name] == "" {
+			t.Fatalf("Windows 已签名同包缺少 %s", name)
+		}
+	}
+	if len(bundle.Files) != len(wantFiles) {
+		t.Fatalf("Windows bundle 有 %d 个文件,期望 %d", len(bundle.Files), len(wantFiles))
+	}
+	if got := servedBundleHash(bundle.Files); got != wantHash {
+		t.Fatalf("Windows bundle hash=%s,manifest=%s", got, wantHash)
+	}
+	tampered := make(map[string]string, len(bundle.Files))
+	for name, content := range bundle.Files {
+		tampered[name] = content
+	}
+	tampered["agent/config.json"] += " "
+	if got := servedBundleHash(tampered); got == wantHash {
+		t.Fatal("篡改 agent/config.json 没有改变已签名 bundle hash")
 	}
 }
 

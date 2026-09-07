@@ -1,0 +1,92 @@
+{
+  "schema": 1,
+  "node": "workstation",
+  "api": "127.0.0.1:61800",
+  "api_secret": "${secret:api/workstation}",
+  "probe": "127.0.0.1:61801",
+  "probe_secret": "${secret:probe/workstation}",
+  "declarations": [
+    {
+      "id": "best-egress",
+      "selector": "decl:best-egress",
+      "objective": "latency",
+      "targets": [
+        "https://api.ipify.org"
+      ],
+      "tuning_period": "5m",
+      "switch_threshold": 0.2,
+      "window": "1h",
+      "min_samples": 6,
+      "stale_after": "20m",
+      "candidates": [
+        {
+          "tag": "cand:best-egress:direct",
+          "probe_user": "probe-02eece9b5b"
+        },
+        {
+          "tag": "cand:best-egress:cn-bj",
+          "chain": [
+            "cn-bj"
+          ],
+          "probe_user": "probe-49c4e69a25"
+        },
+        {
+          "tag": "cand:best-egress:cn-gz",
+          "chain": [
+            "cn-gz"
+          ],
+          "probe_user": "probe-f46520afcd"
+        },
+        {
+          "tag": "cand:best-egress:cn-bj\u003ecn-gz",
+          "chain": [
+            "cn-bj",
+            "cn-gz"
+          ],
+          "probe_user": "probe-8a4bfda38e"
+        },
+        {
+          "tag": "cand:best-egress:cn-bj\u003esg-vps",
+          "chain": [
+            "cn-bj",
+            "sg-vps"
+          ],
+          "probe_user": "probe-c9d8b6ed28"
+        },
+        {
+          "tag": "cand:best-egress:cn-bj\u003ejp-vps",
+          "chain": [
+            "cn-bj",
+            "jp-vps"
+          ],
+          "probe_user": "probe-b77644fb76"
+        },
+        {
+          "tag": "cand:best-egress:cn-gz\u003ecn-bj",
+          "chain": [
+            "cn-gz",
+            "cn-bj"
+          ],
+          "probe_user": "probe-ae1d824ea6"
+        },
+        {
+          "tag": "cand:best-egress:cn-gz\u003esg-vps",
+          "chain": [
+            "cn-gz",
+            "sg-vps"
+          ],
+          "probe_user": "probe-7c91abaccc"
+        },
+        {
+          "tag": "cand:best-egress:cn-gz\u003ejp-vps",
+          "chain": [
+            "cn-gz",
+            "jp-vps"
+          ],
+          "probe_user": "probe-876138e797"
+        }
+      ]
+    }
+  ],
+  "observation_stale": "10m"
+}
