@@ -129,11 +129,13 @@ It accepts no file paths, commands or configuration bodies from the GUI.
 
 ### GitHub Actions
 
-Every push to `main` runs the CI checks, builds the Windows packages, and publishes an unsigned preview to [GitHub Releases](https://github.com/Scisaga/loom/releases). The MSI version increments automatically from the highest existing `windows-v<version>` tag or release draft, for example `0.1.6` → `0.1.7`. Each release contains all six edition/architecture ZIPs, both MSI installers, SHA-256 manifests, and `BUILD-INFO.txt` with the source commit and workflow run. SignPath signing is deferred in [issue #5](https://github.com/Scisaga/loom/issues/5).
+Pushes to all branches (including `main`) and pull requests run CI checks. Windows builds and GitHub Releases are triggered manually.
 
-**Actions → Windows build → Run workflow** remains available for manual builds. Leave the version blank for automatic numbering, or supply a higher version on `main`. Manual builds of other branches produce artifacts only. Pull requests and pushes to other branches continue to run CI without publishing.
+To publish an unsigned preview to [GitHub Releases](https://github.com/Scisaga/loom/releases), open **Actions → Windows build → Run workflow** and select `main`. The workflow runs CI checks, builds the Windows packages, and publishes the release. Leave the version blank to increment automatically from the highest existing `windows-v<version>` tag or release draft, for example `0.1.6` → `0.1.7`, or supply a higher version. Manual builds of other branches produce artifacts only.
 
-Every Windows build also retains `loom-windows-<version>-preview` in **Artifacts** for 30 days. Release files are checked and uploaded to a draft before it becomes public. Existing version tags and releases are never overwritten. A failed upload leaves a draft; the next automatic build uses a higher version.
+Each release contains all six edition/architecture ZIPs, both MSI installers, SHA-256 manifests, and `BUILD-INFO.txt` with the source commit and workflow run. SignPath signing is deferred in [issue #5](https://github.com/Scisaga/loom/issues/5).
+
+Every Windows build also retains `loom-windows-<version>-preview` in **Artifacts** for 30 days. Release files are checked and uploaded to a draft before it becomes public. Existing version tags and releases are never overwritten. A failed upload leaves a draft; the next manually triggered build with the version left blank uses a higher version.
 
 The workflow reuses the existing CI checks and packaging scripts on GitHub-hosted
 Linux and Windows runners. Its repository setup is:

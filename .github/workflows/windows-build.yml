@@ -2,8 +2,6 @@ name: Windows build
 run-name: Windows preview · ${{ inputs.version || github.sha }}
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       version:
@@ -181,7 +179,7 @@ jobs:
   release:
     name: Publish Windows preview release
     needs: [zip, msi]
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
     runs-on: ubuntu-latest
