@@ -84,7 +84,7 @@ func runControlledUpdateLoop(ctx context.Context, updater updatePuller, interval
 				}
 				return fmt.Errorf("active Windows data plane failed: %w", err)
 			}
-			logActivation("restored previous Windows data plane after runtime failure", manager.active.spec)
+			logActivation("restored verified Windows data plane after runtime failure", manager.active.spec)
 		case <-timer.C:
 			result, err := updater.PullOnce(ctx)
 			if err != nil {

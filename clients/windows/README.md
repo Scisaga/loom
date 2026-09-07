@@ -285,6 +285,9 @@ Auto 保留各 Service 全部授权候选。FixedExit 按签名 `candidate.chain
 也必须属于当前授权集合。配置、偏好、重连和进程重启都通过同一激活事务，先取消并
 等待旧 Agent 完全退出，再激活数据面、等待 Clash API readback，最后启动新 Agent。
 激活失败恢复上一份完整配置；恢复不得跨越已成功提交的出口偏好。
+数据面意外退出时，先等待旧 Agent 和进程清理完成，再预检并恢复已验证的配置；
+没有备用配置时重启当前配置，创建新 Agent。每分钟最多恢复三次，持续崩溃或预检
+失败会明确停止；取消和主动断开不会触发恢复。
 
 Agent 状态、measurement 和 event 位于本机 `runtime/agent/generation-*` 下；Windows
 DACL 仅授予当前运行身份、SYSTEM 和管理员访问，子文件继承。每次激活使用独立目录，

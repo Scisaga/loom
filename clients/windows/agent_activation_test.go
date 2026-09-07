@@ -53,6 +53,7 @@ func TestAgentActivationModesReconnectAndCancellationBarrier(t *testing.T) {
 	current := "opaque-a"
 	puts := 0
 	planes := 0
+	crashes := make(chan struct{}, 1)
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -91,11 +92,16 @@ func TestAgentActivationModesReconnectAndCancellationBarrier(t *testing.T) {
 		}
 		mu.Unlock()
 		started()
-		<-ctx.Done()
+		var planeErr error
+		select {
+		case <-ctx.Done():
+		case <-crashes:
+			planeErr = errors.New("demo unexpected sing-box exit")
+		}
 		mu.Lock()
 		planes--
 		mu.Unlock()
-		return nil
+		return planeErr
 	}
 	wait := func(ctx context.Context, cfg *agent.Config) error {
 		cfg.API = strings.TrimPrefix(api.URL, "http://")
@@ -143,6 +149,25 @@ func TestAgentActivationModesReconnectAndCancellationBarrier(t *testing.T) {
 	case <-entered:
 	case <-time.After(time.Second):
 		t.Fatal("FixedExit Agent not probing")
+	}
+	previous = manager.active.spec.AgentRuntime
+	crashes <- struct{}{}
+	activeErr := <-manager.Done()
+	if err := manager.Recover(ctx, activeErr); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-previous.Done():
+	default:
+		t.Fatal("crash recovery skipped old Agent exit")
+	}
+	if manager.active.spec.AgentRuntime == previous || manager.active.spec.Preference.Mode != clientcore.FixedExit {
+		t.Fatal("crash recovery reused a canceled Agent or lost the fixed exit")
+	}
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("crash recovery did not start a fresh probe generation")
 	}
 	previous = manager.active.spec.AgentRuntime
 	rejected, err := manager.active.spec.withPreference(manager.active.spec.Preference)
