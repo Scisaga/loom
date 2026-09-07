@@ -12,7 +12,7 @@ import (
 )
 
 func TestVersion(t *testing.T) {
-	if got, want := Version(), "android-stage2-v1"; got != want {
+	if got, want := Version(), "android-stage3-v1"; got != want {
 		t.Fatalf("Version() = %q, want %q", got, want)
 	}
 }

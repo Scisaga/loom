@@ -1,0 +1,98 @@
+{
+  "schema": 1,
+  "node": "phone",
+  "api": "127.0.0.1:61800",
+  "api_secret": "${secret:api/phone}",
+  "probe": "127.0.0.1:61801",
+  "probe_secret": "${secret:probe/phone}",
+  "declarations": [
+    {
+      "id": "sg-fixed",
+      "selector": "decl:sg-fixed",
+      "objective": "stability",
+      "targets": [
+        "https://api.ipify.org"
+      ],
+      "tuning_period": "10m",
+      "switch_threshold": 0.2,
+      "window": "2h",
+      "min_samples": 6,
+      "stale_after": "30m",
+      "candidates": [
+        {
+          "tag": "cand:sg-fixed:cn-bj\u003esg-vps",
+          "chain": [
+            "cn-bj",
+            "sg-vps"
+          ],
+          "probe_user": "probe-32a3db7799"
+        },
+        {
+          "tag": "cand:sg-fixed:cn-sh\u003esg-vps",
+          "chain": [
+            "cn-sh",
+            "sg-vps"
+          ],
+          "probe_user": "probe-c3966d7906"
+        },
+        {
+          "tag": "cand:sg-fixed:cn-gz\u003esg-vps",
+          "chain": [
+            "cn-gz",
+            "sg-vps"
+          ],
+          "probe_user": "probe-fccf0d597d"
+        },
+        {
+          "tag": "cand:sg-fixed:cn-cd\u003esg-vps",
+          "chain": [
+            "cn-cd",
+            "sg-vps"
+          ],
+          "probe_user": "probe-8c7e3229d3"
+        }
+      ]
+    }
+  ],
+  "selectors": [
+    {
+      "selector": "decl:sg-fixed",
+      "default": "cand:sg-fixed:cn-bj\u003esg-vps",
+      "candidates": [
+        {
+          "tag": "cand:sg-fixed:cn-bj\u003esg-vps",
+          "chain": [
+            "cn-bj",
+            "sg-vps"
+          ],
+          "probe_user": "probe-32a3db7799"
+        },
+        {
+          "tag": "cand:sg-fixed:cn-sh\u003esg-vps",
+          "chain": [
+            "cn-sh",
+            "sg-vps"
+          ],
+          "probe_user": "probe-c3966d7906"
+        },
+        {
+          "tag": "cand:sg-fixed:cn-gz\u003esg-vps",
+          "chain": [
+            "cn-gz",
+            "sg-vps"
+          ],
+          "probe_user": "probe-fccf0d597d"
+        },
+        {
+          "tag": "cand:sg-fixed:cn-cd\u003esg-vps",
+          "chain": [
+            "cn-cd",
+            "sg-vps"
+          ],
+          "probe_user": "probe-8c7e3229d3"
+        }
+      ]
+    }
+  ],
+  "observation_stale": "10m"
+}

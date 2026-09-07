@@ -5,6 +5,7 @@ import android.content.Intent
 import androidx.core.content.ContextCompat
 import io.github.scisaga.loom.security.DeviceKeyStore
 import io.github.scisaga.loom.security.TrustAnchor
+import io.github.scisaga.loom.route.RouteManager
 import io.github.scisaga.loom.vpn.ConnectionPhase
 import io.github.scisaga.loom.vpn.LoomVpnService
 import io.github.scisaga.loom.vpn.VpnRuntime
@@ -422,6 +423,7 @@ class EnrollmentManager private constructor(context: Context) {
     }
 
     private fun ready(profile: ManagedProfile, detail: String) {
+        RouteManager.get(appContext).profileAvailable(profile)
         mutableStatus.value = EnrollmentStatus(
             phase = EnrollmentPhase.READY,
             detail = detail,

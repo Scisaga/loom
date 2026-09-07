@@ -35,6 +35,7 @@ import io.github.scisaga.loom.enrollment.EnrollmentManager
 import io.github.scisaga.loom.enrollment.ManagedProfile
 import io.github.scisaga.loom.enrollment.HealthReporter
 import io.github.scisaga.loom.security.DeviceKeyStore
+import io.github.scisaga.loom.route.RouteManager
 import io.github.scisaga.loom.stage1.Stage1Config
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
@@ -105,6 +106,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
     private var boxService: BoxService? = null
     @Volatile private var tunnel: ParcelFileDescriptor? = null
     private var reportJob: Job? = null
+    private var routeJob: Job? = null
     @Volatile private var sessionID = 0L
     private var lastUseEmulatorProxy = false
     @Volatile private var desiredConnected = false
@@ -192,7 +194,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
             val candidate = manager.candidateProfile()
             if (candidate != null) {
                 try {
-                    val probe = activateAndProbe(candidate.config)
+                    val probe = activateAndProbe(candidate)
                     ensureConnectionWanted()
                     val committed = manager.candidateActivated(candidate)
                     connected(committed, probe, "已验证并激活 snapshot ${committed.snapshot}")
@@ -254,7 +256,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         manager: EnrollmentManager,
     ): Pair<ManagedProfile, ProbeResult> {
         try {
-            return current to activateAndProbe(current.config)
+            return current to activateAndProbe(current)
         } catch (cancelled: CancellationException) {
             closeResources()
             throw cancelled
@@ -267,7 +269,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 ?.takeIf { it.recordID != current.recordID }
                 ?: throw currentError
             return try {
-                val probe = activateAndProbe(previous.config)
+                val probe = activateAndProbe(previous)
                 val promoted = checkNotNull(manager.promotePrevious()) { "previous 配置在恢复时消失" }
                 promoted to probe
             } catch (cancelled: CancellationException) {
@@ -281,8 +283,12 @@ class LoomVpnService : VpnService(), PlatformInterface {
         }
     }
 
-    private suspend fun activateAndProbe(config: String): ProbeResult {
+    private suspend fun activateAndProbe(profile: ManagedProfile): ProbeResult =
+        activateAndProbe(profile.config, profile)
+
+    private suspend fun activateAndProbe(config: String, profile: ManagedProfile? = null): ProbeResult {
         activate(config)
+        profile?.let { RouteManager.get(this).applyToRunning(it) }
         val probeSession = ProbeSession()
         activeProbe = probeSession
         val probe = try {
@@ -311,7 +317,10 @@ class LoomVpnService : VpnService(), PlatformInterface {
             ),
         )
         updateNotification("已连接 · $detail")
-        profile?.let { startReporter(it, probe) }
+        profile?.let {
+            startReporter(it, probe)
+            startRouteScheduler(it)
+        }
     }
 
     private fun activate(config: String) {
@@ -356,6 +365,29 @@ class LoomVpnService : VpnService(), PlatformInterface {
         }
     }
 
+    private fun startRouteScheduler(profile: ManagedProfile) {
+        routeJob?.cancel()
+        val routeSession = sessionID
+        routeJob = scope.launch {
+            val manager = RouteManager.get(this@LoomVpnService)
+            var waitMS = 0L
+            while (isActive && routeSession == sessionID && desiredConnected) {
+                if (waitMS > 0) delay(waitMS)
+                if (!isActive || routeSession != sessionID || !desiredConnected) return@launch
+                waitMS = try {
+                    manager.runSchedulerTick(profile)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Throwable) {
+                    if (!isActive || routeSession != sessionID || !desiredConnected) return@launch
+                    Log.w(TAG, "Android route scheduling round failed", error)
+                    manager.schedulerFailed(error)
+                    ROUTE_RETRY_MS
+                }
+            }
+        }
+    }
+
     private suspend fun stopTunnel(stopStartId: Int? = null) = lifecycle.withLock {
         if (boxService == null && tunnel == null) {
             VpnRuntime.update(VpnStatus())
@@ -380,6 +412,8 @@ class LoomVpnService : VpnService(), PlatformInterface {
         activeProbe = null
         reportJob?.cancel()
         reportJob = null
+        routeJob?.cancel()
+        routeJob = null
         monitors.entries.toList().forEach { (listener, monitor) ->
             removeUnderlyingMonitor(listener, monitor)
         }
@@ -389,6 +423,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         boxService = null
         runCatching { tunnel?.close() }.onFailure { Log.w(TAG, "close tun", it) }
         tunnel = null
+        RouteManager.get(this).tunnelStopped()
     }
 
     private fun stopForegroundCompat() {
@@ -803,6 +838,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         private const val CHANNEL_ID = "loom-vpn"
         private const val NOTIFICATION_ID = 4101
         private const val REPORT_INTERVAL_MS = 60_000L
+        private const val ROUTE_RETRY_MS = 60_000L
         const val ACTION_CONNECT = "io.github.scisaga.loom.action.CONNECT"
         const val ACTION_RELOAD = "io.github.scisaga.loom.action.RELOAD"
         const val ACTION_DISCONNECT = "io.github.scisaga.loom.action.DISCONNECT"

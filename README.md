@@ -40,8 +40,9 @@ Windows 客户端支持本地直连、自动选路和固定出口，提供安装
 |---|---|---|
 | Windows | 导入、拖入或粘贴二维码，也可导入 `.loom-invite` 文件或加入链接 | 直连、自动选路、固定出口 |
 | Linux | 运行安装命令，再导入 `.loom-invite` 文件或加入链接；也可通过 SSH 执行 | 客户端、流量转发、公网出口 |
+| Android | 扫描二维码或导入 `.loom-invite` 文件 | 系统 VPN、直连、自动选路、固定出口 |
 
-加入码短期有效且只能使用一次。设备加入后会保留本机身份，重启、重连和正常升级无需重新加入。Android 客户端尚未提供。
+加入码短期有效且只能使用一次。设备加入后会保留本机身份，重启、重连和正常升级无需重新加入。Android 客户端目前从源码构建私有 APK，正式发布签名与商店分发尚未提供。
 
 安装和使用步骤见 [Windows 客户端](clients/windows/README.md)和 [Linux 客户端安装](docs/linux-client-install.md)。设备职责、授权和连接方向的详细说明见 [Device 生命周期与交付架构](docs/device-lifecycle-and-delivery.md)。
 

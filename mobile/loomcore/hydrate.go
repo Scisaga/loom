@@ -12,40 +12,111 @@ import (
 
 const maxSecretPlaintext = 1 << 20
 
-// HydrateSingBoxConfig extracts the sole Android sing-box config from an
-// already verified canonical bundle and substitutes its secret references.
-// Missing and unused entries are both rejected, as are malformed/nested refs,
-// duplicate env refs, residual placeholders, and invalid hydrated JSON. The
-// function performs no persistence; the caller must protect secrets and
-// candidate bytes with Android platform storage.
+// HydrateSingBoxConfig extracts the Android sing-box config from an already
+// verified canonical bundle and substitutes the union of secret references in
+// the permitted Android files. Stage-2 bundles may contain only sing-box;
+// stage-3 additionally carries agent/config.json as a data-only mobile routing
+// plan. Any other file remains a hard failure.
 func HydrateSingBoxConfig(verifiedBundleJSON, secretsEnv []byte) ([]byte, error) {
-	var bundle bundleWire
-	if err := decodeStrictJSON(verifiedBundleJSON, maxBundleBytes, &bundle); err != nil {
-		return nil, fmt.Errorf("verified bundle JSON: %w", err)
-	}
-	if !validNodeID(bundle.Owner) {
-		return nil, errors.New("verified bundle owner is invalid")
-	}
-	if err := validateBundle(bundle, bundle.Owner); err != nil {
+	files, _, err := hydrateAndroidFiles(verifiedBundleJSON, secretsEnv)
+	if err != nil {
 		return nil, err
 	}
-	if len(bundle.Files) != 1 {
-		return nil, errors.New("Android bundle must contain exactly sing-box/config.json")
+	return files["sing-box/config.json"], nil
+}
+
+type preparedAndroidRuntime struct {
+	Schema        int    `json:"schema"`
+	SingBoxConfig string `json:"sing_box_config"`
+	RoutePlan     string `json:"route_plan,omitempty"`
+}
+
+// PrepareAndroidRuntime hydrates both permitted Android runtime files and
+// verifies that the data-only route plan exactly describes the selectors and
+// probe paths in sing-box. The returned JSON is an in-memory handoff; callers
+// must never persist or display route_plan because it contains loopback API
+// credentials already protected by the enrollment vault.
+func PrepareAndroidRuntime(verifiedBundleJSON, secretsEnv []byte) ([]byte, error) {
+	files, owner, err := hydrateAndroidFiles(verifiedBundleJSON, secretsEnv)
+	if err != nil {
+		return nil, err
 	}
-	redacted, ok := bundle.Files["sing-box/config.json"]
+	plan := files["agent/config.json"]
+	if len(plan) > 0 {
+		if err := validateAndroidRoutePlan(files["sing-box/config.json"], plan, owner); err != nil {
+			return nil, fmt.Errorf("Android route plan: %w", err)
+		}
+	}
+	return marshalCanonical(&preparedAndroidRuntime{
+		Schema: 1, SingBoxConfig: string(files["sing-box/config.json"]), RoutePlan: string(plan),
+	})
+}
+
+func hydrateAndroidFiles(verifiedBundleJSON, secretsEnv []byte) (map[string][]byte, string, error) {
+	var bundle bundleWire
+	if err := decodeStrictJSON(verifiedBundleJSON, maxBundleBytes, &bundle); err != nil {
+		return nil, "", fmt.Errorf("verified bundle JSON: %w", err)
+	}
+	if !validNodeID(bundle.Owner) {
+		return nil, "", errors.New("verified bundle owner is invalid")
+	}
+	if err := validateBundle(bundle, bundle.Owner); err != nil {
+		return nil, "", err
+	}
+	if len(bundle.Files) < 1 || len(bundle.Files) > 2 {
+		return nil, "", errors.New("Android bundle must contain sing-box/config.json and optional agent/config.json")
+	}
+	_, ok := bundle.Files["sing-box/config.json"]
 	if !ok {
-		return nil, errors.New("Android bundle does not contain sing-box/config.json")
+		return nil, "", errors.New("Android bundle does not contain sing-box/config.json")
+	}
+	for path := range bundle.Files {
+		if path != "sing-box/config.json" && path != "agent/config.json" {
+			return nil, "", fmt.Errorf("Android bundle contains unsupported file %s", path)
+		}
 	}
 	secrets, err := parseSecretsEnv(string(secretsEnv))
 	if err != nil {
-		return nil, fmt.Errorf("secret bootstrap: %w", err)
+		return nil, "", fmt.Errorf("secret bootstrap: %w", err)
 	}
-	hydrated, used, missing, err := hydrateStrict(redacted, secrets)
-	if err != nil {
-		return nil, err
+	used := map[string]bool{}
+	missingSet := map[string]bool{}
+	hydratedFiles := make(map[string][]byte, len(bundle.Files))
+	paths := make([]string, 0, len(bundle.Files))
+	for path := range bundle.Files {
+		paths = append(paths, path)
 	}
-	if len(missing) > 0 {
-		return nil, fmt.Errorf("protected secret vault is missing refs: %s", strings.Join(missing, ", "))
+	sort.Strings(paths)
+	for _, path := range paths {
+		hydrated, fileUsed, missing, err := hydrateStrict(bundle.Files[path], secrets)
+		if err != nil {
+			return nil, "", fmt.Errorf("hydrate %s: %w", path, err)
+		}
+		for ref := range fileUsed {
+			used[ref] = true
+		}
+		for _, ref := range missing {
+			missingSet[ref] = true
+		}
+		if strings.Contains(hydrated, "${secret:") {
+			continue
+		}
+		var document map[string]json.RawMessage
+		if err := decodeStrictJSON([]byte(hydrated), maxBundleBytes, &document); err != nil {
+			return nil, "", fmt.Errorf("hydrated %s is invalid JSON: %w", path, err)
+		}
+		if document == nil {
+			return nil, "", fmt.Errorf("hydrated %s must be a JSON object", path)
+		}
+		hydratedFiles[path] = []byte(hydrated)
+	}
+	if len(missingSet) > 0 {
+		missing := make([]string, 0, len(missingSet))
+		for ref := range missingSet {
+			missing = append(missing, ref)
+		}
+		sort.Strings(missing)
+		return nil, "", fmt.Errorf("protected secret vault is missing refs: %s", strings.Join(missing, ", "))
 	}
 	unused := make([]string, 0)
 	for ref := range secrets {
@@ -55,22 +126,9 @@ func HydrateSingBoxConfig(verifiedBundleJSON, secretsEnv []byte) ([]byte, error)
 	}
 	sort.Strings(unused)
 	if len(unused) > 0 {
-		return nil, fmt.Errorf("protected secret vault contains unused refs: %s", strings.Join(unused, ", "))
+		return nil, "", fmt.Errorf("protected secret vault contains unused refs: %s", strings.Join(unused, ", "))
 	}
-	if strings.Contains(hydrated, "${secret:") {
-		return nil, errors.New("hydrated Android config still contains a secret placeholder")
-	}
-	// A secret is inserted into signed renderer output as raw string content.
-	// Parsing again prevents malformed quoting and duplicate-key injection from
-	// reaching libbox even if protected local state was corrupted.
-	var document map[string]json.RawMessage
-	if err := decodeStrictJSON([]byte(hydrated), maxBundleBytes, &document); err != nil {
-		return nil, fmt.Errorf("hydrated Android config is invalid JSON: %w", err)
-	}
-	if document == nil {
-		return nil, errors.New("hydrated Android config must be a JSON object")
-	}
-	return []byte(hydrated), nil
+	return hydratedFiles, bundle.Owner, nil
 }
 
 func parseSecretsEnv(body string) (map[string]string, error) {

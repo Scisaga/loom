@@ -102,11 +102,11 @@ func TestMatrixShape(t *testing.T) {
 			}
 		}
 	}
-	linuxNodes, linuxSingBox, linuxAccess, windowsAccess := 0, 0, 0, 0
+	linuxNodes, linuxSingBox, linuxAccess, managedClientAccess := 0, 0, 0, 0
 	for i := range s.Nodes {
 		n := &s.Nodes[i]
-		if n.IsAccess() && n.Access.Platform == model.WindowsDesktop {
-			windowsAccess++
+		if n.IsAccess() && (n.Access.Platform == model.WindowsDesktop || n.Access.Platform == model.Android) {
+			managedClientAccess++
 		}
 		if !usesLinuxLifecycle(n) {
 			continue
@@ -137,9 +137,9 @@ func TestMatrixShape(t *testing.T) {
 	if agentUnits != linuxAccess {
 		t.Errorf("渲染出 %d 个 Agent systemd unit,期望 %d(Linux access)", agentUnits, linuxAccess)
 	}
-	// Windows 与 Linux 复用同一 agent.Config 调度协议；只有 Linux 获得 unit。
-	if want := linuxAccess + windowsAccess; agents != want {
-		t.Errorf("渲染出 %d 份 Agent 调度计划,期望 %d(Linux + Windows access)", agents, want)
+	// Windows/Android 与 Linux 复用同一 agent.Config 调度协议；只有 Linux 获得 unit。
+	if want := linuxAccess + managedClientAccess; agents != want {
+		t.Errorf("渲染出 %d 份 Agent 调度计划,期望 %d(Linux + managed clients)", agents, want)
 	}
 	if want := len(s.Tunnels) * 2; wg != want {
 		t.Errorf("渲染出 %d 个 WireGuard 文件,期望 %d(每条隧道两端各一个)", wg, want)
@@ -168,8 +168,8 @@ func TestMatrixShape(t *testing.T) {
 	}
 }
 
-// Windows 消费平台无关的 sing-box 配置和同包 Agent 调度计划；Android
-// 目前仍只消费 sing-box。两者都不得夹带 systemd 或 /etc/loom 绝对路径。
+// Windows 和 Android 消费平台无关的 sing-box 配置和同包数据化调度计划；
+// 两者都不得夹带 systemd、Agent 二进制或 /etc/loom 绝对路径。
 func TestNonLinuxBundlesExcludeLinuxLifecycle(t *testing.T) {
 	res, err := Render(load(t))
 	if err != nil {
@@ -185,7 +185,8 @@ func TestNonLinuxBundlesExcludeLinuxLifecycle(t *testing.T) {
 		wantCAPath string
 		wantFiles  []string
 	}{
-		{owner: "phone", wantCAPath: `"certificate_path": "tls/ca.crt"`, wantFiles: []string{"sing-box/config.json"}},
+		{owner: "phone", wantCAPath: `"certificate_path": "tls/ca.crt"`,
+			wantFiles: []string{"agent/config.json", "sing-box/config.json"}},
 		{owner: "workstation", wantCAPath: `"certificate_path": "C:\\ProgramData\\Loom\\tls\\ca.crt"`,
 			wantFiles: []string{"agent/config.json", "sing-box/config.json"}},
 	} {
@@ -248,16 +249,29 @@ func TestAndroidBootstrapSecretRefsExactlyMatchRenderedBundle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var content string
+			var content, agentContent string
 			for _, bundle := range result.Bundles {
-				if bundle.Owner == tc.node && len(bundle.Files) == 1 && bundle.Files[0].Path == "sing-box/config.json" {
-					content = bundle.Files[0].Content
+				if bundle.Owner != tc.node {
+					continue
+				}
+				if len(bundle.Files) != 2 || bundle.Files[0].Path != "agent/config.json" ||
+					bundle.Files[1].Path != "sing-box/config.json" {
+					t.Fatalf("Android bundle files=%+v", bundle.Files)
+				}
+				for _, file := range bundle.Files {
+					if file.Path == "sing-box/config.json" {
+						content = file.Content
+					} else if file.Path == "agent/config.json" {
+						agentContent = file.Content
+					}
 				}
 			}
-			if content == "" {
-				t.Fatalf("missing Android sing-box bundle for %q", tc.node)
+			if content == "" || agentContent == "" {
+				t.Fatalf("missing Android runtime bundle for %q", tc.node)
 			}
-			actual := secret.Refs(content)
+			actual := append(secret.Refs(content), secret.Refs(agentContent)...)
+			slices.Sort(actual)
+			actual = slices.Compact(actual)
 			node := tc.ssot.NodeByID()[tc.node]
 			bootstrap := report.AndroidBundleSecretRefs(tc.ssot, node)
 			if !slices.Equal(actual, tc.want) || !slices.Equal(bootstrap, actual) {
@@ -266,7 +280,9 @@ func TestAndroidBootstrapSecretRefsExactlyMatchRenderedBundle(t *testing.T) {
 			bundleJSON, err := json.Marshal(struct {
 				Owner string            `json:"owner"`
 				Files map[string]string `json:"files"`
-			}{Owner: tc.node, Files: map[string]string{"sing-box/config.json": content}})
+			}{Owner: tc.node, Files: map[string]string{
+				"agent/config.json": agentContent, "sing-box/config.json": content,
+			}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -373,10 +389,10 @@ func TestSkipsAreExpected(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]int{
-		"platform=android 只渲染平台无关的 sing-box 配置":                                         1,
+		"platform=android 已在同一签名 bundle 渲染 sing-box 配置与 agent/config.json 移动调度计划":       1,
 		"platform=windows-desktop 已在同一签名 bundle 渲染 sing-box 配置与 agent/config.json 调度计划": 1,
-		"ttft 只能由 L7 观测点产出":                                                             1,
-		"cost 需要价格数据源":                                                                  1,
+		"ttft 只能由 L7 观测点产出": 1,
+		"cost 需要价格数据源":      1,
 		// 没有隧道的 Linux 接入节点只绑回环 —— 自检可用,远端拉不到。
 		"上报接口只绑回环": 1,
 	}
