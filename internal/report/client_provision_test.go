@@ -185,6 +185,91 @@ func TestWindowsClientProvisionUsesAccessOnlyPlatformShape(t *testing.T) {
 	}
 }
 
+func TestAndroidClientProvisionUsesTUNOnlyPlatformShape(t *testing.T) {
+	control, paths := clientProvisionFixture(t)
+	client := clientregistry.Client{
+		ID: "android01", Name: "Android phone", Platform: string(model.Android),
+		Status: "provisioning",
+	}
+	pinAccessTestIntent(t, &client)
+	csrPEM, _ := clientProvisionCSR(t)
+	var saveMu sync.Mutex
+	p := newClientProvisioner(control, &saveMu)
+	p.health = filepath.Join(t.TempDir(), "publisher.json")
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	p.now = func() time.Time { return now }
+	installed := map[string]bool{}
+	var installedMu sync.Mutex
+	p.install = func(_ context.Context, nodeID string, _ []byte) error {
+		installedMu.Lock()
+		installed[nodeID] = true
+		installedMu.Unlock()
+		return nil
+	}
+	first, err := p.provision(client, csrPEM)
+	if err != nil || first.Ready {
+		t.Fatalf("first Android provision=%+v err=%v", first, err)
+	}
+	body, err := os.ReadFile(control.SSOTPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ssot, err := model.Load(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := ssot.NodeByID()[client.ID]
+	if node == nil || node.Server != nil || node.Access == nil || node.Access.Platform != model.Android ||
+		len(node.Access.MixedPorts) != 0 || node.Access.DefaultDeclaration != "best-egress" {
+		t.Fatalf("provisioned Android node=%+v", node)
+	}
+	if len(installed) != 6 {
+		t.Fatalf("Android enrollment pre-positioned existing nodes=%v", mapKeysBool(installed))
+	}
+	if err := validateProvisionedClient(ssot, node, client); err != nil {
+		t.Fatalf("generated Android shape rejected: %v", err)
+	}
+	// A long-lived master file may contain dormant owner-local entries. They
+	// must not cross the Android bootstrap boundary because the Android vault
+	// rejects every entry absent from the signed sing-box config.
+	all, err := secret.Load(paths.masterSecrets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all["telemetry/"+client.ID] = "unused-telemetry"
+	all["unused/"+client.ID] = "unused-owner-local-secret"
+	if err := os.WriteFile(paths.masterSecrets, secret.Encode(all, masterSecretsHeader()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prepareClientReadyFiles(t, paths, p.health, body, now)
+	ready, err := p.provision(client, csrPEM)
+	if err != nil || !ready.Ready || ready.Bootstrap.NodeID != client.ID ||
+		!strings.Contains(ready.Bootstrap.SecretsEnv, "cred/"+client.ID+"/") {
+		t.Fatalf("Android ready replay=%+v err=%v", ready, err)
+	}
+	secretPath := filepath.Join(t.TempDir(), "android-bootstrap.env")
+	if err := os.WriteFile(secretPath, []byte(ready.Bootstrap.SecretsEnv), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	delivered, err := secret.Load(secretPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var deliveredRefs []string
+	for ref := range delivered {
+		deliveredRefs = append(deliveredRefs, ref)
+	}
+	sort.Strings(deliveredRefs)
+	wantRefs := []string{
+		"api/" + client.ID,
+		"cred/" + client.ID + "/best-egress",
+		"probe/" + client.ID,
+	}
+	if !slices.Equal(deliveredRefs, wantRefs) {
+		t.Fatalf("Android bootstrap secret refs=%v, want exact bundle refs %v", deliveredRefs, wantRefs)
+	}
+}
+
 func TestExistingWindowsSecretsAreSkippedOnlyWhenCandidateIsUnchanged(t *testing.T) {
 	current := &model.SSOT{
 		Nodes: []model.Node{{

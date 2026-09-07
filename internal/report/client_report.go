@@ -158,8 +158,9 @@ func (h *clientReportReceiver) accept(o *Observation, at time.Time) (int, error)
 	}
 	node := ssot.NodeByID()[o.Node]
 	if node == nil || node.Decommission || node.Access == nil ||
-		node.Access.Platform != model.WindowsDesktop || identity.Platform != string(node.Access.Platform) {
-		return http.StatusForbidden, errors.New("客户端上报节点不是在役 Windows Device")
+		(node.Access.Platform != model.WindowsDesktop && node.Access.Platform != model.Android) ||
+		identity.Platform != string(node.Access.Platform) {
+		return http.StatusForbidden, errors.New("客户端上报节点不是在役 Windows/Android Device")
 	}
 	// table.put 有意重复密码学校验。公网客户端上报量很小，让适配器与 gossip
 	// 共用最后一道门代价可忽略，也避免以后校验器变化形成两个信任边界。

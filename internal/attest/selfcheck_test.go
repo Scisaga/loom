@@ -1,6 +1,8 @@
 package attest
 
 import (
+	"crypto/ecdsa"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -47,6 +49,33 @@ func TestSelfCheckSignVerifyAndTamper(t *testing.T) {
 				t.Fatal("tampered self-check verified")
 			}
 		})
+	}
+}
+
+func TestExternalSelfCheckSignerThenAssemble(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	ca := newCA(t)
+	keyPEM, certPEM := ca.issue(t, "demo-b")
+	key, err := parseKey(keyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim := selfCheckClaim("demo-b", now.Format(time.RFC3339), true)
+	message, err := PrepareSelfCheckSignature(claim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(message)
+	signature, err := ecdsa.SignASN1(rand.Reader, key, sum[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := AssembleSelfCheckSignature(claim, certPEM, signature)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifySelfCheck(signed, ca.certPEM); err != nil {
+		t.Fatalf("平台自检签名组装后无法验证:%v", err)
 	}
 }
 

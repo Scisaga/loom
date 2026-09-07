@@ -130,7 +130,7 @@ type ControlDeps struct {
 	// 完整 SSOT 编辑器修改，避免用一个不完整表单悄悄丢约束字段。
 	Services *ServiceControlDeps
 	// DefaultExits 是设备默认出口的中控事务。当前 HTTP 边界只接受运维会话；
-	// Windows/Android 设备身份尚未落地前，不能把它直接暴露成客户端写接口。
+	// 客户端三态只切本机 selector，设备身份始终不能调用这个 SSOT 写接口。
 	DefaultExits *DefaultExitControlDeps
 	// Devices is the canonical product boundary for every managed machine. The
 	// current implementation still joins the control-local identity registry

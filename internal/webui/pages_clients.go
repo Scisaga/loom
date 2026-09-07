@@ -362,9 +362,9 @@ func pageDeviceEnrollment(d Deps, state clientPageState, isAuthed bool) string {
 	}
 	fmt.Fprintf(&b, `<div class=client-add-grid><section class="card client-form-card"><h2>Create Device</h2><p class=dim>Select what this Device may do. The platform, responsibilities and destination grants are fixed into its one-time invitation.</p>
 	<form class=blockform data-submit-progress data-device-enrollment-form method=post action="/devices/create"><div class=field><label for=client-name>Display name</label><input id=client-name name=name maxlength=80 required autocomplete=off value="%s" placeholder="e.g. build server"></div>
-	<div class=field><label for=device-platform>Platform</label><select id=device-platform name=platform required data-enrollment-platform><option value=windows-desktop%s>Windows</option><option value=linux-server%s>Linux</option><option value=android disabled>Android · not delivered yet</option></select></div>
-	<fieldset class="field client-choice-group"><legend>Responsibilities</legend><label><input type=checkbox name=responsibility value=use_loom%s data-enrollment-use> use_loom <span>Use Loom from this Device</span></label><label><input type=checkbox name=responsibility value=forward%s data-enrollment-forward> forward <span>Forward traffic for other Devices</span></label><label><input type=checkbox name=responsibility value=internet_egress%s data-enrollment-egress> internet_egress <span>Offer Internet egress; requires forward</span></label></fieldset>`,
-		esc(state.SubmittedName), selected(platform == "windows-desktop"), selected(platform == "linux-server"),
+	<div class=field><label for=device-platform>Platform</label><select id=device-platform name=platform required data-enrollment-platform><option value=windows-desktop%s>Windows</option><option value=linux-server%s>Linux</option><option value=android%s>Android</option></select></div>
+	<fieldset class="field client-choice-group"><legend>Responsibilities</legend><label><input type=checkbox name=responsibility value=use_loom%s data-enrollment-use> use_loom <span>Use Loom from this Device</span></label><label><input type=checkbox name=responsibility value=forward%s data-enrollment-forward> forward <span>Forward traffic for other Devices</span></label><label><input type=checkbox name=responsibility value=internet_egress%s data-enrollment-egress> internet_egress <span>Offer Internet egress; requires forward</span></label><span class=field-hint>Windows and Android Devices are limited to use_loom; Linux Devices may also forward traffic.</span></fieldset>`,
+		esc(state.SubmittedName), selected(platform == "windows-desktop"), selected(platform == "linux-server"), selected(platform == "android"),
 		checked(deviceListContains(responsibilities, "use_loom")), checked(deviceListContains(responsibilities, "forward")), checked(deviceListContains(responsibilities, "internet_egress")))
 	b.WriteString(`<fieldset class="field client-choice-group" data-enrollment-grants><legend>Destination grants</legend>`)
 	for _, option := range options.DestinationGrants {
@@ -423,6 +423,10 @@ func writeClientInvite(b *strings.Builder, invite ClientInviteView, pkg LinuxCli
 	b.WriteString(`</section></div>`)
 	if invite.Platform == "windows-desktop" {
 		b.WriteString(`<section class="card client-setup"><div class=client-setup-head><div><div class=label>Windows</div><h2>Start the client, then import the QR code</h2></div><p class=small>The QR and join file are equivalent. Windows enrollment is limited to use_loom.</p></div></section>`)
+		return
+	}
+	if invite.Platform == "android" {
+		b.WriteString(`<section class="card client-setup"><div class=client-setup-head><div><div class=label>Android</div><h2>Open Loom, then scan the QR code</h2></div><p class=small>Scan the QR in the Android app, or import the downloaded <code>client.loom-invite</code> join file. Android enrollment is limited to use_loom.</p></div></section>`)
 		return
 	}
 	b.WriteString(`<section class="card client-setup" aria-labelledby=client-setup-title><div class=client-setup-head><div><div class=label>Linux</div><h2 id=client-setup-title>Local or SSH-assisted bootstrap</h2></div><p class=small>SSH only runs the same bootstrap on the target host; Loom does not store SSH credentials.</p></div>`)

@@ -95,6 +95,33 @@ func TestAddAccessClientBuildsWindowsDesktopAccess(t *testing.T) {
 	}
 }
 
+func TestAddAccessClientBuildsAndroidTUNOnlyAccess(t *testing.T) {
+	plan, err := AddAccessClient(fixtureSSOT(t), ClientInput{
+		ID: "android-phone", Name: "Android phone", Platform: model.Android,
+		DestinationGrants: []string{"best-egress"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ssot := loadResult(t, plan.Content)
+	node := ssot.NodeByID()["android-phone"]
+	if node == nil || node.Server != nil || node.Access == nil || node.Access.Platform != model.Android {
+		t.Fatalf("Android access node = %#v", node)
+	}
+	if len(node.Access.MixedPorts) != 0 {
+		t.Fatalf("Android access declared mixed ports = %#v", node.Access.MixedPorts)
+	}
+	if plan.DefaultDeclaration != "best-egress" || node.Access.DefaultDeclaration != "best-egress" {
+		t.Fatalf("Android automatic default = plan %q node %q", plan.DefaultDeclaration, node.Access.DefaultDeclaration)
+	}
+	if err := ValidateAccessClientShape(ssot, node, ClientInput{
+		ID: node.ID, Name: node.Name, Platform: model.Android,
+		DestinationGrants: []string{"best-egress"},
+	}); err != nil {
+		t.Fatalf("validate Android access shape: %v", err)
+	}
+}
+
 func TestAddAccessRolePreservesExistingServerDevice(t *testing.T) {
 	content := fixtureSSOT(t)
 	before := loadResult(t, content).NodeByID()["cn-bj"]
@@ -128,7 +155,7 @@ func TestAddAccessClientRejectsUnsupportedOrDuplicateClient(t *testing.T) {
 		want string
 	}{
 		{"invalid id", ClientInput{ID: "Not Safe", Platform: model.LinuxServer}, "invalid"},
-		{"unsupported platform", ClientInput{ID: "new-client", Platform: model.Android}, "not delivered"},
+		{"unsupported platform", ClientInput{ID: "new-client", Platform: model.Platform("ios")}, "not delivered"},
 		{"duplicate", ClientInput{ID: "workstation", Platform: model.LinuxServer}, "already exists"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

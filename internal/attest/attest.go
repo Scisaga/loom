@@ -27,6 +27,7 @@ import (
 	"bytes"
 	"cmp"
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
@@ -324,8 +325,10 @@ type Signed struct {
 	Sig   string `json:"sig"`
 }
 
-// Sign 用本机私钥给陈述签名。
-func Sign(c Claim, keyPEM, certPEM []byte) (*Signed, error) {
+// PrepareSignature 固定陈述版本并返回应由平台密钥签名的原文。
+// Android 可以把这些字节交给 Keystore SHA256withECDSA，共享核心不再
+// 要求平台导出设备私钥。
+func PrepareSignature(c Claim) (Claim, []byte, error) {
 	if c.CanonicalVersion == 0 {
 		switch {
 		case len(c.Components) > 0:
@@ -335,25 +338,57 @@ func Sign(c Claim, keyPEM, certPEM []byte) (*Signed, error) {
 		}
 	}
 	if c.CanonicalVersion != 0 && c.CanonicalVersion != 4 && c.CanonicalVersion != 5 {
-		return nil, fmt.Errorf("不支持 canonical_version=%d", c.CanonicalVersion)
+		return Claim{}, nil, fmt.Errorf("不支持 canonical_version=%d", c.CanonicalVersion)
 	}
 	if len(c.Components) > 0 && c.CanonicalVersion != 5 {
-		return nil, fmt.Errorf("组件陈述必须使用 canonical_version=5")
+		return Claim{}, nil, fmt.Errorf("组件陈述必须使用 canonical_version=5")
+	}
+	return c, c.canonical(), nil
+}
+
+// AssembleSignature 把平台密钥产生的 ASN.1 DER 签名组装成可上报陈述。
+// 组装前会用证书公钥重新验签，避免把错钥或损坏的结果写入缓存。
+func AssembleSignature(c Claim, certPEM, signatureDER []byte) (*Signed, error) {
+	normalized, message, err := PrepareSignature(c)
+	if err != nil {
+		return nil, err
+	}
+	crt, err := parseSingleCertificate(certPEM)
+	if err != nil {
+		return nil, err
+	}
+	pub, ok := crt.PublicKey.(*ecdsa.PublicKey)
+	if !ok || pub.Curve != elliptic.P256() {
+		return nil, fmt.Errorf("证书里不是 ECDSA P-256 公钥")
+	}
+	sum := sha256.Sum256(message)
+	if !ecdsa.VerifyASN1(pub, sum[:], signatureDER) {
+		return nil, fmt.Errorf("平台签名对不上证书公钥")
+	}
+	return &Signed{
+		Claim: normalized,
+		Cert:  string(certPEM),
+		Sig:   base64.StdEncoding.EncodeToString(signatureDER),
+	}, nil
+}
+
+// Sign 用本机可读私钥给陈述签名。它保留 Linux/Windows 的旧调用面；
+// Android 应使用 PrepareSignature + Keystore + AssembleSignature。
+func Sign(c Claim, keyPEM, certPEM []byte) (*Signed, error) {
+	normalized, message, err := PrepareSignature(c)
+	if err != nil {
+		return nil, err
 	}
 	key, err := parseKey(keyPEM)
 	if err != nil {
 		return nil, err
 	}
-	sum := sha256.Sum256(c.canonical())
+	sum := sha256.Sum256(message)
 	sig, err := ecdsa.SignASN1(rand.Reader, key, sum[:])
 	if err != nil {
 		return nil, fmt.Errorf("签名:%w", err)
 	}
-	return &Signed{
-		Claim: c,
-		Cert:  string(certPEM),
-		Sig:   base64.StdEncoding.EncodeToString(sig),
-	}, nil
+	return AssembleSignature(normalized, certPEM, sig)
 }
 
 // Verify 校验一条陈述,返回其中可信的部分。
@@ -462,6 +497,18 @@ func certName(crt *x509.Certificate) string {
 		return crt.DNSNames[0]
 	}
 	return "(无名)"
+}
+
+func parseSingleCertificate(certPEM []byte) (*x509.Certificate, error) {
+	blk, rest := pem.Decode(certPEM)
+	if blk == nil || blk.Type != "CERTIFICATE" || len(bytes.TrimSpace(rest)) != 0 {
+		return nil, fmt.Errorf("陈述证书不是单个 PEM certificate")
+	}
+	crt, err := x509.ParseCertificate(blk.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("解析陈述证书:%w", err)
+	}
+	return crt, nil
 }
 
 func parseKey(keyPEM []byte) (*ecdsa.PrivateKey, error) {

@@ -27,10 +27,15 @@ type clientReportHarness struct {
 
 func newClientReportHarness(t *testing.T) clientReportHarness {
 	t.Helper()
+	return newClientReportHarnessFor(t, "workstation", "windows-desktop")
+}
+
+func newClientReportHarnessFor(t *testing.T, node, platform string) clientReportHarness {
+	t.Helper()
 	now := time.Date(2026, 9, 5, 15, 20, 0, 0, time.UTC)
-	ca, key, cert := reportTestIdentity(t, "workstation")
+	ca, key, cert := reportTestIdentity(t, node)
 	observation := Observation{
-		Node: "workstation", TS: now.Format(time.RFC3339), Applied: "snapshot-v5",
+		Node: node, TS: now.Format(time.RFC3339), Applied: "snapshot-v5",
 	}
 	_, current := claimsForObservation(&observation, 5)
 	var err error
@@ -57,7 +62,7 @@ func newClientReportHarness(t *testing.T) clientReportHarness {
 		t.Fatal(err)
 	}
 	registryPath := filepath.Join(t.TempDir(), "registry.json")
-	writeClientReportRegistry(t, registryPath, "ready", publicKey)
+	writeClientReportRegistryFor(t, registryPath, node, platform, "ready", publicKey)
 	tbl := newTable(5)
 	tbl.verify = func(got *Observation, at time.Time, maxAge time.Duration) error {
 		_, err := VerifyObservationAtLeast(got, ca, at, maxAge, 5)
@@ -79,13 +84,18 @@ func newClientReportHarness(t *testing.T) clientReportHarness {
 
 func writeClientReportRegistry(t *testing.T, path, status, publicKey string) {
 	t.Helper()
+	writeClientReportRegistryFor(t, path, "workstation", "windows-desktop", status, publicKey)
+}
+
+func writeClientReportRegistryFor(t *testing.T, path, node, platform, status, publicKey string) {
+	t.Helper()
 	body, err := json.Marshal(struct {
 		Schema  int                     `json:"schema"`
 		Clients []clientregistry.Client `json:"clients"`
 	}{
 		Schema: clientregistry.Schema,
 		Clients: []clientregistry.Client{{
-			ID: "workstation", Name: "Windows workstation", Platform: "windows-desktop",
+			ID: node, Name: node, Platform: platform,
 			IdentitySource: "enrollment", PublicKey: publicKey, Status: status,
 			CreatedAt: "2026-09-05T15:00:00Z", EnrolledAt: "2026-09-05T15:01:00Z",
 		}},
@@ -128,6 +138,23 @@ func TestClientReportReceiverAcceptsDirectV5ObservationIntoGossipTable(t *testin
 	}
 }
 
+func TestClientReportReceiverAcceptsAndroidDirectV5Observation(t *testing.T) {
+	h := newClientReportHarnessFor(t, "phone", "android")
+	if h.observation.Attest == nil || h.observation.Attest.CanonicalVersion != 5 ||
+		h.observation.SelfCheck == nil || h.observation.SelfCheck.Version != attest.SelfCheckClaimVersion {
+		t.Fatalf("Android report fixture is not v5 + self-check v1: %+v", h.observation)
+	}
+	response := postClientReport(t, h.receiver, &h.observation)
+	if response.Code != http.StatusNoContent || response.Body.Len() != 0 {
+		t.Fatalf("Android client report response = %d %q", response.Code, response.Body.String())
+	}
+	learned := h.table.snapshot("control", h.now, 10*time.Minute)
+	if len(learned) != 1 || learned[0].Node != "phone" || learned[0].Applied != h.observation.Applied ||
+		learned[0].SelfCheck == nil {
+		t.Fatalf("accepted Android report did not enter gossip table: %+v", learned)
+	}
+}
+
 func TestClientReportReceiverRejectsTamperMissingProofAndRevokedIdentity(t *testing.T) {
 	t.Run("tampered applied", func(t *testing.T) {
 		h := newClientReportHarness(t)
@@ -153,6 +180,52 @@ func TestClientReportReceiverRejectsTamperMissingProofAndRevokedIdentity(t *test
 			t.Fatalf("revoked report response = %d %q", got.Code, got.Body.String())
 		}
 	})
+	t.Run("not ready registry identity", func(t *testing.T) {
+		h := newClientReportHarness(t)
+		writeClientReportRegistry(t, h.registryPath, "provisioning", h.publicKey)
+		if got := postClientReport(t, h.receiver, &h.observation); got.Code != http.StatusForbidden {
+			t.Fatalf("not-ready report response = %d %q", got.Code, got.Body.String())
+		}
+	})
+	t.Run("wrong registry SPKI", func(t *testing.T) {
+		h := newClientReportHarness(t)
+		_, otherKey, otherCert := reportTestIdentity(t, h.observation.Node)
+		other := h.observation
+		_, current := claimsForObservation(&other, 5)
+		var err error
+		other.Attest, err = attest.Sign(current, otherKey, otherCert)
+		if err != nil {
+			t.Fatal(err)
+		}
+		other.SelfCheck, err = attest.SignSelfCheck(attest.SelfCheckClaim{
+			Version: attest.SelfCheckClaimVersion, Node: other.Node, TS: other.TS, Healthy: true,
+		}, otherKey, otherCert)
+		if err != nil {
+			t.Fatal(err)
+		}
+		otherPublicKey, err := clientReportPublicKey(&other)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeClientReportRegistry(t, h.registryPath, "ready", otherPublicKey)
+		if got := postClientReport(t, h.receiver, &h.observation); got.Code != http.StatusForbidden {
+			t.Fatalf("wrong-SPKI report response = %d %q", got.Code, got.Body.String())
+		}
+	})
+	t.Run("registry platform differs from SSOT", func(t *testing.T) {
+		h := newClientReportHarnessFor(t, "phone", "android")
+		writeClientReportRegistryFor(t, h.registryPath, "phone", "windows-desktop", "ready", h.publicKey)
+		if got := postClientReport(t, h.receiver, &h.observation); got.Code != http.StatusForbidden {
+			t.Fatalf("platform-mismatch report response = %d %q", got.Code, got.Body.String())
+		}
+	})
+}
+
+func TestClientReportReceiverRejectsLinuxAccessDevice(t *testing.T) {
+	h := newClientReportHarnessFor(t, "ci-runner", "linux-server")
+	if got := postClientReport(t, h.receiver, &h.observation); got.Code != http.StatusForbidden {
+		t.Fatalf("Linux client report response = %d %q", got.Code, got.Body.String())
+	}
 }
 
 func TestClientReportReceiverReportsLocalTableFailureAsUnavailable(t *testing.T) {

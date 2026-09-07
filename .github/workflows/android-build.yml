@@ -1,0 +1,59 @@
+name: Android client build
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "clients/android/**"
+      - "mobile/loomcore/**"
+      - "internal/attest/**"
+      - "internal/snapshot/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/android-build.yml"
+  push:
+    branches: [main]
+    paths:
+      - "clients/android/**"
+      - "mobile/loomcore/**"
+      - "internal/attest/**"
+      - "internal/snapshot/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/android-build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: android-actions/setup-android@v3
+      - name: Install pinned Android inputs
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platforms;android-35" "build-tools;35.0.1" "ndk;28.0.13004108"
+      - name: Test shared mobile trust core
+        run: go -C mobile/loomcore test ./...
+      - name: Test emulator-only smoke guard
+        run: |
+          clients/android/scripts/test-emulator-smoke-preflight.sh
+          python3 clients/android/scripts/test_install_confirmation.py
+      - name: Build combined libbox and Loom AAR
+        working-directory: clients/android
+        run: ./scripts/build-mobile-aar.sh
+      - name: Build and unit test APK
+        working-directory: clients/android
+        run: ./gradlew --no-daemon lintDebug testDebugUnitTest assembleDebug assembleDebugAndroidTest

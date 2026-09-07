@@ -412,8 +412,9 @@ func NormalizeEnrollmentIntent(intent EnrollmentIntent) (EnrollmentIntent, error
 	if err != nil {
 		return EnrollmentIntent{}, err
 	}
-	if intent.Platform != string(model.LinuxServer) && intent.Platform != string(model.WindowsDesktop) {
-		return EnrollmentIntent{}, &Error{Code: CodeInvalid, Msg: "platform must be linux-server or windows-desktop"}
+	if intent.Platform != string(model.LinuxServer) && intent.Platform != string(model.WindowsDesktop) &&
+		intent.Platform != string(model.Android) {
+		return EnrollmentIntent{}, &Error{Code: CodeInvalid, Msg: "platform must be linux-server, windows-desktop, or android"}
 	}
 	if len(intent.Responsibilities) == 0 {
 		return EnrollmentIntent{}, &Error{Code: CodeInvalid, Msg: "at least one responsibility is required"}
@@ -433,8 +434,9 @@ func NormalizeEnrollmentIntent(intent EnrollmentIntent) (EnrollmentIntent, error
 	if hasUse != (len(intent.DestinationGrants) > 0) {
 		return EnrollmentIntent{}, &Error{Code: CodeInvalid, Msg: "destination_grants must be non-empty exactly when use_loom is selected"}
 	}
-	if intent.Platform == string(model.WindowsDesktop) && (!hasUse || hasForward || hasEgress) {
-		return EnrollmentIntent{}, &Error{Code: CodeInvalid, Msg: "a Windows Device supports use_loom only"}
+	if (intent.Platform == string(model.WindowsDesktop) || intent.Platform == string(model.Android)) &&
+		(!hasUse || hasForward || hasEgress) {
+		return EnrollmentIntent{}, &Error{Code: CodeInvalid, Msg: "a " + intent.Platform + " Device supports use_loom only"}
 	}
 	if hasForward {
 		if intent.Platform != string(model.LinuxServer) {
@@ -861,11 +863,12 @@ func validateClaim(input ClaimInput) ([]byte, string, error) {
 	if len(input.Token) < 32 || len(input.Token) > 128 {
 		return nil, "", &Error{Code: CodeInvalid, Msg: "token is missing or malformed"}
 	}
-	if input.Platform != string(model.LinuxServer) && input.Platform != string(model.WindowsDesktop) {
-		return nil, "", &Error{Code: CodeInvalid, Msg: "platform must be linux-server or windows-desktop"}
+	if input.Platform != string(model.LinuxServer) && input.Platform != string(model.WindowsDesktop) &&
+		input.Platform != string(model.Android) {
+		return nil, "", &Error{Code: CodeInvalid, Msg: "platform must be linux-server, windows-desktop, or android"}
 	}
-	if input.Platform == string(model.WindowsDesktop) && input.Server != nil {
-		return nil, "", &Error{Code: CodeInvalid, Msg: "a Windows Device join cannot declare server facts"}
+	if (input.Platform == string(model.WindowsDesktop) || input.Platform == string(model.Android)) && input.Server != nil {
+		return nil, "", &Error{Code: CodeInvalid, Msg: "a " + input.Platform + " Device join cannot declare server facts"}
 	}
 	if err := validateServerEnrollment(input.Server); err != nil {
 		return nil, "", err

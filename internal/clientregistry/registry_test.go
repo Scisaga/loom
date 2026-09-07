@@ -365,7 +365,7 @@ func TestEnrollmentIntentRejectsUnsupportedCombinations(t *testing.T) {
 	store := testStore(t, &now)
 	cases := map[string]EnrollmentIntent{
 		"no responsibilities":       {Platform: "linux-server"},
-		"unknown platform":          {Platform: "android", Responsibilities: []string{"use_loom"}, DestinationGrants: []string{"best-egress"}},
+		"unknown platform":          {Platform: "ios", Responsibilities: []string{"use_loom"}, DestinationGrants: []string{"best-egress"}},
 		"unknown responsibility":    {Platform: "linux-server", Responsibilities: []string{"control"}},
 		"egress without forward":    {Platform: "linux-server", Responsibilities: []string{"internet_egress"}},
 		"use without grants":        {Platform: "linux-server", Responsibilities: []string{"use_loom"}},
@@ -373,6 +373,8 @@ func TestEnrollmentIntentRejectsUnsupportedCombinations(t *testing.T) {
 		"forward without direction": {Platform: "linux-server", Responsibilities: []string{"forward"}},
 		"direction without forward": {Platform: "linux-server", Responsibilities: []string{"use_loom"}, DestinationGrants: []string{"best-egress"}, Direction: "bidirectional"},
 		"Windows forwarding":        {Platform: "windows-desktop", Responsibilities: []string{"forward"}, Direction: "bidirectional"},
+		"Android forwarding":        {Platform: "android", Responsibilities: []string{"forward"}, Direction: "bidirectional"},
+		"Android direction":         {Platform: "android", Responsibilities: []string{"use_loom"}, DestinationGrants: []string{"best-egress"}, Direction: "bidirectional"},
 	}
 	for name, intent := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -386,6 +388,9 @@ func TestEnrollmentIntentRejectsUnsupportedCombinations(t *testing.T) {
 		DestinationGrants: []string{"best-egress"}, Direction: "reverse_only",
 	}); err != nil {
 		t.Fatalf("valid combined Linux responsibilities were rejected: %v", err)
+	}
+	if _, err := store.Create("Android access Device", testAccessIntent("android")); err != nil {
+		t.Fatalf("valid Android access responsibility was rejected: %v", err)
 	}
 }
 
@@ -617,6 +622,32 @@ func TestClaimAcceptsWindowsDesktopAccessIdentityAndReplay(t *testing.T) {
 	replay, err := store.Claim(claim)
 	if err != nil || !replay.Replay || replay.Client.PublicKey != first.Client.PublicKey {
 		t.Fatalf("Windows replay=%+v err=%v", replay, err)
+	}
+}
+
+func TestClaimAcceptsAndroidAccessIdentityAndReplay(t *testing.T) {
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	store := testStore(t, &now)
+	created, err := store.Create("Android phone", testAccessIntent(string(model.Android)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim := ClaimInput{
+		Token: created.Token, Platform: string(model.Android),
+		CSRPEM: makeCSR(t, "android-access"), RequestID: "android-access",
+	}
+	withServer := claim
+	withServer.Server = &ServerEnrollment{}
+	if _, err := store.Claim(withServer); err == nil {
+		t.Fatal("Android claim accepted server facts")
+	}
+	first, err := store.Claim(claim)
+	if err != nil || first.Replay || first.Client.Platform != string(model.Android) || first.Client.Status != "provisioning" {
+		t.Fatalf("first Android claim=%+v err=%v", first, err)
+	}
+	replay, err := store.Claim(claim)
+	if err != nil || !replay.Replay || replay.Client.PublicKey != first.Client.PublicKey {
+		t.Fatalf("Android replay=%+v err=%v", replay, err)
 	}
 }
 

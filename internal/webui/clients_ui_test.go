@@ -206,10 +206,10 @@ func TestAddDeviceSelectsPlatformResponsibilitiesAndGrants(t *testing.T) {
 	body := pageClients(d, clientPageState{Create: true}, true)
 	for _, want := range []string{
 		`action="/devices/create"`, `name=name`, `Display name`,
-		`name=platform`, `value=windows-desktop selected`, `Android · not delivered yet`,
+		`name=platform`, `value=windows-desktop selected`, `<option value=android>Android</option>`,
 		`name=responsibility value=use_loom checked`, `name=responsibility value=forward`,
 		`name=responsibility value=internet_egress`, `name=destination_grant value="best-egress" checked`,
-		`data-device-enrollment-form`, `Invitation boundary`,
+		`data-device-enrollment-form`, `Windows and Android Devices are limited to use_loom`, `Invitation boundary`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("Create Device page missing %q", want)
@@ -218,6 +218,50 @@ func TestAddDeviceSelectsPlatformResponsibilitiesAndGrants(t *testing.T) {
 	for _, forbidden := range []string{`standard-device`, `server-device`, `profile_version`, `ProfileVersion`} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("Create Device form retained profile concept %q", forbidden)
+		}
+	}
+}
+
+func TestAndroidDeviceSelectionIsUseLoomOnly(t *testing.T) {
+	d := clientUIDeps()
+	body := pageClients(d, clientPageState{
+		Create: true, Submitted: true, SubmittedPlatform: "android",
+		SubmittedResponsibilities: []string{"use_loom"},
+	}, true)
+	for _, want := range []string{
+		`value=android selected`, `name=responsibility value=use_loom checked`,
+		`if(!linux)use.checked=true`, `forward.disabled=!linux`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Android Device selector missing access-only constraint %q", want)
+		}
+	}
+}
+
+func TestAndroidInvitationUsesQRAndJoinFileWithoutLinuxInstructions(t *testing.T) {
+	d := clientUIDeps()
+	invite := ClientInviteView{
+		InviteID: "invite-android", ClientID: "device-phone01", ClientName: "Demo phone",
+		InviteURI: "loom://enroll#android-test", Platform: "android", Responsibilities: []string{"use_loom"},
+		ExpiresAt: "2026-09-01T20:00:00Z",
+	}
+	body := pageClients(d, clientPageState{Invite: &invite}, true)
+	for _, want := range []string{
+		`src="/api/control/device-invites/invite-android/qr.png"`,
+		`href="/api/control/device-invites/invite-android/download"`,
+		`Open Loom, then scan the QR code`, `client.loom-invite`,
+		`Android enrollment is limited to use_loom`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Android invitation missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		`Local or SSH-assisted bootstrap`, `Download Linux package`,
+		`sudo ./install.sh`, `loom client enroll -stdin`,
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("Android invitation exposed Linux instruction %q", forbidden)
 		}
 	}
 }

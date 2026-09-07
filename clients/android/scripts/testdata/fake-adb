@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "$*" in
+    *" wait-for-device") exit 0 ;;
+    *" shell getprop ro.kernel.qemu") printf '%s\n' "${FAKE_QEMU:-0}" ;;
+    *" shell getprop ro.build.version.sdk") printf '%s\n' "${FAKE_API:-35}" ;;
+    *) printf 'unexpected fake adb call: %s\n' "$*" >&2; exit 99 ;;
+esac

@@ -6,10 +6,11 @@
 > 以及签名数据面包、Wintun Authenticode、可执行预检和进程监督边界；Windows 首次启动
 > 导入二维码与 Portable Mixed 数据面激活已在本机闭环；Linux access-only 的 signed
 > decommission、身份吊销与秘密清理已闭环；服务端已提供复用 v5 Observation 与
-> self-check v1 的 NAT Device 接收适配器，Windows 上报宿主尚待接入；Installed UI/IPC、
-> 真实 TUN、Android 宿主以及服务器职责/其他平台的通用双重吊销仍待实现
+> self-check v1 的 NAT Device 接收适配器；Android 的原生宿主、扫码/文件加入、Keystore
+> 身份、签名 pull/cache、候选激活恢复与可信上报已在代码和 Emulator 闭环，正式环境部署、
+> 真机入网与移动端 selector/可靠性仍待验收；服务器职责/其他平台的通用双重吊销仍待实现
 >
-> **日期:** 2026-09-05；开发与构建环境于 2026-09-03 核对
+> **日期:** 2026-09-07；开发与构建环境于 2026-09-07 核对
 >
 > **适用范围:** Windows、Linux Server 与 Android 接入设备；v1 不考虑 Linux Desktop
 >
@@ -63,25 +64,27 @@
 到 SSOT 自动发布、ready bootstrap 和首次 signed pull 的安装闭环。是否已经部署到
 生产应以[当前状态](status/current.md)为准，不能用仓库代码状态代替上线核验。
 
-这不等于 Windows 和 Android 客户端已经可用：
+仓库能力与生产部署是两条独立事实；是否已经部署和完成真机验收，以
+[当前状态](status/current.md)为准：
 
 | 能力 | Linux | Windows | Android |
 |---|---|---|---|
-| sing-box 配置渲染 | 已实现 | 配置形状部分可复用 | 已能生成 TUN 配置 |
-| 系统生命周期 | systemd 已实现 | Portable 前台、受限 Service broker、Job Object 与更新恢复已实现；amd64 实机 TUN 启停、宿主崩溃恢复和安装器生命周期已验收 | 已与 Linux 产物隔离；`VpnService` 宿主未实现 |
-| 配置 pull 与验签 | Loom CLI 已实现 | signed current、generation floor、snapshot 签名、节点 bundle 哈希与 current/previous 验证缓存已适配；缓存会在 hydrate 前完整复验并激活通过预检的候选 | 未适配 |
-| Agent 调参 | Go Agent 已实现 | 未适配服务与路径 | 设计要求内嵌最小能力，未实现 |
-| 安全存储 | 0600 本地文件 | Installed 使用 machine-scope DPAPI 与安装器创建的受限 ACL；Portable 身份、vault 与候选使用用户范围 DPAPI；未另加 CNG 存储 | 未接 Android Keystore |
-| 安装与升级 | 已有签名 `tar.gz`、校验与安装器；后续版本仍走 signed pull | 双架构 ZIP/MSI 已实现；可配置 SignTool 验签构建，正式签名需要实际证书 | 无 APK/商店发布流程 |
-| 加入网络/二维码 | 中控与 Linux CLI 已实现 | 三个 edition 已接入原生 GUI、二维码/加入文件解析和安全绑定；Installed 普通用户托盘经受限 IPC 加入 | 客户端宿主未实现 |
-| 可信运行态上报 | `/status` 拉取与 gossip 已实现 | 现有两签 producer 已通过原生与实机上报 204、健康/故障和停止后 stale 验收 | 客户端与 producer 均未实现 |
-| 设备吊销 | access-only 支持单步直接移除/吊销，也保留 signed decommission；服务器职责的依赖迁移未完成 | 中控可直接撤销 access-only 身份与专属凭据；不远程删除 Windows 本机文件 | 未实现 |
+| sing-box 配置渲染 | 已实现 | 配置形状部分可复用 | TUN-only bundle 与严格 hydration 已实现 |
+| 系统生命周期 | systemd 已实现 | Portable 前台、受限 Service broker、Job Object 与更新恢复已实现；amd64 实机 TUN 启停、宿主崩溃恢复和安装器生命周期已验收 | 原生 `VpnService`、前台通知、幂等启停与 Emulator TUN 已实现；真机网络切换/Doze 待验收 |
+| 配置 pull 与验签 | Loom CLI 已实现 | signed current、generation floor、snapshot 签名、节点 bundle 哈希与 current/previous 验证缓存已适配；缓存会在 hydrate 前完整复验并激活通过预检的候选 | signed current 镜像选择、防回退、完整签名链重放与 candidate/current/previous 事务已实现 |
+| Agent 调参 | Go Agent 已实现 | 未适配服务与路径 | Stage 3 最小测量与 selector 尚未实现 |
+| 安全存储 | 0600 本地文件 | Installed 使用 machine-scope DPAPI 与安装器创建的受限 ACL；Portable 身份、vault 与候选使用用户范围 DPAPI；未另加 CNG 存储 | 不可导出 Keystore P-256 身份与 AES-GCM 应用私有存储已实现 |
+| 安装与升级 | 已有签名 `tar.gz`、校验与安装器；后续版本仍走 signed pull | 双架构 ZIP/MSI 已实现；可配置 SignTool 验签构建，正式签名需要实际证书 | Linux 可重复构建 debug APK；私有发布签名与覆盖升级演练属于 Stage 4 |
+| 加入网络/二维码 | 中控与 Linux CLI 已实现 | 三个 edition 已接入原生 GUI、二维码/加入文件解析和安全绑定；Installed 普通用户托盘经受限 IPC 加入 | 中控 Android Device、二维码/加入文件、CSR 身份绑定与崩溃恢复已实现；正式环境真机待验收 |
+| 可信运行态上报 | `/status` 拉取与 gossip 已实现 | 现有两签 producer 已通过原生与实机上报 204、健康/故障和停止后 stale 验收 | Keystore 外部签名的 canonical v5 + self-check v1 producer 已实现；服务端纵向测试为 204，生产真机待验收 |
+| 设备吊销 | access-only 支持单步直接移除/吊销，也保留 signed decommission；服务器职责的依赖迁移未完成 | 中控可直接撤销 access-only 身份与专属凭据；不远程删除 Windows 本机文件 | access-only 中控身份/凭据吊销沿用统一事务；真机撤权与旧缓存收敛待 Stage 4 验收 |
 
 当前渲染器已按显式部署目标拆开平台无关配置与 Linux 生命周期产物：参考矩阵中的
 `phone` 和 `workstation` 只生成各自平台路径正确的 sing-box 配置，不再携带 systemd、
 Linux Agent、Linux report 或 `/etc/loom` 内容；Linux Server 保持原有产物。Windows
 Installed 的 MSI/普通用户 IPC 和现有 v5 两签上报已实现，并在 amd64 实机完成最小闭环；
-Windows Agent 调参和 Android 宿主仍未实现。当前无实际 Authenticode 证书的构建仍为预览包。
+Windows Agent 调参与 Android Stage 3 selector 仍未实现。当前无实际 Authenticode
+证书的 Windows 构建及无固定升级签名密钥的 Android 构建都不是正式分发包。
 
 Windows C3 已开始：`internal/clientcore` 实现严格的 Direct / Auto / 指定出口偏好、
 授权变更和撤权后 fail-closed，并以平台原子替换保存非秘密偏好；`internal/clientupdate`
@@ -109,13 +112,14 @@ current/previous 候选。三个 Windows edition 已在成功 pull 后接入这�
 上复用设备 `default_declaration`；它只处理 Auto 模式下未命中 Service 的流量，
 不是客户端顶层三模式。
 Windows 的三个宿主已接入原生 GUI、签名 pull 与数据面，Agent 尚未完成；Android
-客户端宿主仍未实现。参考矩阵中的 Windows 形状已经收敛为 TUN + 同规则的
+宿主和正式入网链已实现，三态 selector 尚未接线。参考矩阵中的 Windows 形状已经收敛为 TUN + 同规则的
 `127.0.0.1:1080` managed mixed。生产 Linux 端口原语义仍必须保留或显式
 下线，不能把既有端口静默改成另一条规则。
 中控已经提供需要运维会话的 `default_declaration` 查询/写入 API，并以 revision
 保护 SSOT 原子更新；但它只修改 Auto 下未命中 Service 时的 catch-all，与客户端
 本地 Direct / Auto / 指定出口三态无关。Windows 已实现共享 selector 和受保护的本地偏好
-存储，三个 Windows GUI 已展示连接状态；Android 客户端尚未实现。两者都不应调用该运维接口。
+存储，三个 Windows GUI 已展示连接状态；Android 只读展示同一入口，Stage 3 才保存并
+应用本机偏好。两者都不应调用该运维接口。
 当前结构化 Service 与数据面只实现 exact hostname 和 `.suffix`；本文后续的 Windows
 IP/CIDR 与 Android package matcher 是 v1 目标，尚未进入 SSOT 模型、校验或渲染，
 不能把原型中尚未接线的页面当成已交付能力。
@@ -502,7 +506,7 @@ Android App 包含：
 - 中控下发的 package/domain/IP matcher、Service 与声明关系；界面只读展示生效
   结果；用户只能选择 Direct / Auto / 指定出口三种顶层模式。
 
-**目标实现栈（尚未交付）：**
+**实现栈（Stage 2 已进入代码，生产真机验收与移动端调度待后续阶段）：**
 
 - Kotlin + Gradle Kotlin DSL 作为平台宿主，Jetpack Compose 负责原生 UI；
 - Android `VpnService` 建立系统 TUN，并按平台要求运行前台 Service 与常驻通知；
@@ -515,6 +519,21 @@ Android App 包含：
   Keystore 的最小材料；
 - Emulator 用于 Compose、加入网络、权限和基本 TUN 流程，真实 Android 设备负责扫码、
   移动网络/Wi-Fi 切换、Doze、厂商后台限制、重启和长期运行验证。
+
+2026-09-07 已在 Linux x86_64 服务器完成原生宿主和 Stage 2 正式入网代码：固定包名的
+Kotlin / Compose 工程、二维码/加入文件、Android Keystore P-256 身份与 AES-GCM 私有存储、
+支持平台外部签名器的共享 Go 核心，以及一次 `gomobile bind` 生成的 sing-box `1.11.4` +
+Loom core 单运行时 AAR。客户端先校验二维码中的平台公钥指纹，再提交同一 Keystore key
+绑定的 CSR；signed pull 先持久化 generation floor，再完整重放 current/manifest/bundle
+签名链，候选只有在 libbox 启动及真实 DNS/HTTPS 探测通过后才提交，否则恢复 previous。
+可信上报复用 canonical v5 与 self-check v1，并由 Keystore 对共享核心准备的原文签名。
+
+中控已能创建 access-only Android Device，生成不夹带 Linux 安装说明的二维码/加入文件，
+配置 Android TUN-only SSOT，并按精确 bundle 引用返回秘密；服务端纵向测试覆盖 claim pending
+与幂等 replay、ready、签名配置和可信报告 204。API 35 x86_64 Emulator 覆盖正式标识与三态
+入口、Keystore、签名 fixture、DNS/HTTPS 穿过 TUN、断开释放和再次连接。上述是仓库和
+Emulator 证据；未部署的中控代码、开发签名 APK 或模拟器 204 不能冒充生产手机已经入网。
+Direct / Auto / 指定出口在 Stage 2 只读可见，Stage 3 才保存本机偏好并驱动 selector。
 
 Android 不安装 Linux 版 Loom Agent、systemd unit、`/etc/loom` 路径或 Loom
 二进制自更新器。应用更新通过应用商店、企业 MDM 或签名 APK 渠道完成；Loom 只
@@ -836,7 +855,8 @@ Linux Server。
 
 **当前进度：** 加入码、二维码、本地 P-256 身份绑定，以及 access-only 的单步直接
 移除/吊销和 Linux signed decommission → 移除/吊销 → 秘密清理/purge 已完成；服务器职责
-和 Android 的通用控制面/数据面双重吊销尚未完成，因此 C2 不能整体标记为完成。
+和各移动端的通用控制面/数据面双重吊销尚未完成，因此 C2 不能整体标记为完成。Android
+已接入同一 claim/ready 身份链，不再属于“尚无加入宿主”的缺口。
 
 ### 阶段 C3：Windows（进行中）
 
@@ -875,6 +895,11 @@ ProgramData ACL、MSI 升级/卸载/重装与身份保留，以及 amd64 真实 
 - 按中控 package/domain/IP matcher 渲染规则，并提供 Direct / Auto / 指定出口；
 - Emulator 覆盖 UI、权限和基本 TUN，真机覆盖前后台、网络切换与省电策略；
 - 签名 APK 发布和升级演练。
+
+前两项及候选配置离线缓存/恢复、可信健康上报已进入代码，并通过服务端纵向测试与
+API 35 Emulator；最小排名/selector、真机前后台与 Wi-Fi/蜂窝切换、厂商省电限制、
+固定升级签名和覆盖升级仍未完成。界面已经展示三态入口，但在 Stage 3 前保持只读，
+不能把签名配置的默认声明冒充为用户已经选择的 Direct。
 
 **完成判据：** 飞行模式、进程回收、重启、配置损坏和控制中心离线下均有可解释
 状态，且不会泄露凭据或把系统网络留在不可用状态。

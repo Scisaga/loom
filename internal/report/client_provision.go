@@ -104,11 +104,11 @@ func (p *clientProvisioner) provision(client clientregistry.Client, csrPEM strin
 		return clientProvisioningResult{}, errors.New("client provisioning is not configured")
 	}
 	platform := model.Platform(client.Platform)
-	if platform != model.LinuxServer && platform != model.WindowsDesktop {
+	if platform != model.LinuxServer && platform != model.WindowsDesktop && platform != model.Android {
 		return clientProvisioningResult{}, fmt.Errorf("client platform %q is not delivered in v1", client.Platform)
 	}
-	if platform == model.WindowsDesktop && hasResponsibility(client, "forward") {
-		return clientProvisioningResult{}, errors.New("windows-desktop provisioning supports use_loom access only")
+	if (platform == model.WindowsDesktop || platform == model.Android) && hasResponsibility(client, "forward") {
+		return clientProvisioningResult{}, fmt.Errorf("%s provisioning supports use_loom access only", platform)
 	}
 	paths, err := clientPaths(p.control)
 	if err != nil {
@@ -287,7 +287,7 @@ func validateProvisionedClient(s *model.SSOT, node *model.Node, client clientreg
 	}
 	wantsAccess := hasResponsibility(client, "use_loom")
 	platform := model.Platform(client.Platform)
-	if platform != model.LinuxServer && platform != model.WindowsDesktop {
+	if platform != model.LinuxServer && platform != model.WindowsDesktop && platform != model.Android {
 		return fmt.Errorf("device id %q has unsupported platform %q", client.ID, client.Platform)
 	}
 	if wantsAccess {
@@ -456,10 +456,100 @@ func nodeSecretRefs(s *model.SSOT, owner string, all map[string]string) []string
 	return refs
 }
 
+// AndroidBundleSecretRefs returns exactly the placeholders emitted in the
+// sing-box bundle for a validated Android access-only Device. Android's vault
+// deliberately rejects unused entries, so the broader Linux provisioning set
+// from nodeSecretRefs (which also preserves dormant and owner-local refs) is
+// not suitable for its one-time bootstrap response.
+func AndroidBundleSecretRefs(s *model.SSOT, node *model.Node) []string {
+	if s == nil || node == nil || node.Decommission || node.Access == nil ||
+		node.Access.Platform != model.Android || node.IsServer() {
+		return nil
+	}
+	seen := map[string]bool{"api/" + node.ID: true}
+	credentials := s.CredentialByID()
+	credentialByDeclaration := map[string]*model.Credential{}
+	var declarationIDs []string
+	for _, credentialID := range node.Access.Credentials {
+		credential := credentials[credentialID]
+		if credential == nil || credential.Revoked() {
+			continue
+		}
+		if credentialByDeclaration[credential.Declaration] == nil {
+			declarationIDs = append(declarationIDs, credential.Declaration)
+		}
+		// Match render.accessDecls: if malformed input repeats a declaration,
+		// the last listed credential is the one used to build its outbounds.
+		credentialByDeclaration[credential.Declaration] = credential
+	}
+	sort.Strings(declarationIDs)
+
+	pinned := map[string]bool{}
+	for _, mixed := range node.Access.MixedPorts {
+		if !mixed.ManagedAutomatic() && mixed.ExplicitOverride() {
+			pinned[mixed.Declaration] = true
+		}
+	}
+	if declaration := node.Access.EffectiveDefaultDeclaration(); declaration != "" {
+		pinned[declaration] = true
+	}
+	declarations := s.DeclarationByID()
+	usesProbe := false
+	includeCandidates := func(credential *model.Credential, candidates []model.RouteCandidate) {
+		if credential == nil || len(candidates) == 0 {
+			return
+		}
+		// render.accessInto creates a probe user for every candidate, including
+		// zero-hop direct. The access credential itself appears only when at
+		// least one candidate actually dials a server hop.
+		usesProbe = true
+		for _, candidate := range candidates {
+			if len(candidate.ServerChain) > 0 {
+				seen[credential.Ref()] = true
+				break
+			}
+		}
+	}
+	for _, declarationID := range declarationIDs {
+		credential := credentialByDeclaration[declarationID]
+		declaration := declarations[declarationID]
+		if declaration == nil {
+			continue
+		}
+		if pinned[declarationID] {
+			candidates, _ := s.EnumerateCandidates(node, declaration)
+			includeCandidates(credential, candidates)
+		}
+		// Android's TUN is a managed inbound, so every authorized Service is
+		// rendered even though Android has no mixed listener.
+		for _, service := range s.ServicesFor(declarationID) {
+			candidates, _ := s.EnumerateServiceCandidates(node, declaration, service)
+			includeCandidates(credential, candidates)
+		}
+	}
+	if usesProbe {
+		seen["probe/"+node.ID] = true
+	}
+	refs := make([]string, 0, len(seen))
+	for ref := range seen {
+		refs = append(refs, ref)
+	}
+	sort.Strings(refs)
+	return refs
+}
+
+func deliveredNodeSecretRefs(s *model.SSOT, owner string, all map[string]string) []string {
+	node := s.NodeByID()[owner]
+	if node != nil && node.Access != nil && node.Access.Platform == model.Android && !node.IsServer() {
+		return AndroidBundleSecretRefs(s, node)
+	}
+	return nodeSecretRefs(s, owner, all)
+}
+
 func encodedNodeSecrets(s *model.SSOT, owner string, all map[string]string) ([]byte, error) {
 	mine := map[string]string{}
 	var missing []string
-	for _, ref := range nodeSecretRefs(s, owner, all) {
+	for _, ref := range deliveredNodeSecretRefs(s, owner, all) {
 		value, ok := all[ref]
 		if !ok {
 			missing = append(missing, ref)

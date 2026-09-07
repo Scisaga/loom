@@ -8,6 +8,7 @@ package attest
 import (
 	"bytes"
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
@@ -124,10 +125,52 @@ func validateSelfCheckClaim(c *SelfCheckClaim) error {
 	return nil
 }
 
-// SignSelfCheck signs only in the loom-selfcheck-v1 domain. It never calls
-// Sign and therefore cannot change loom-attest-v1..v5 canonical bytes.
-func SignSelfCheck(c SelfCheckClaim, keyPEM, certPEM []byte) (*SelfCheckAttest, error) {
+// PrepareSelfCheckSignature returns the exact bytes for a platform
+// SHA256withECDSA signer. It stays in the independent loom-selfcheck-v1 domain.
+func PrepareSelfCheckSignature(c SelfCheckClaim) ([]byte, error) {
 	if err := validateSelfCheckClaim(&c); err != nil {
+		return nil, err
+	}
+	return c.canonical(), nil
+}
+
+// AssembleSelfCheckSignature accepts an ASN.1 DER signature produced by an
+// external platform key and verifies it before returning a report attachment.
+func AssembleSelfCheckSignature(c SelfCheckClaim, certPEM, signatureDER []byte) (*SelfCheckAttest, error) {
+	message, err := PrepareSelfCheckSignature(c)
+	if err != nil {
+		return nil, err
+	}
+	if len(certPEM) == 0 || len(certPEM) > selfCheckMaxCertSize {
+		return nil, fmt.Errorf("自检陈述证书长度无效")
+	}
+	if len(signatureDER) == 0 || len(signatureDER) > selfCheckMaxSignature {
+		return nil, fmt.Errorf("自检签名 DER 长度无效")
+	}
+	crt, err := parseSingleCertificate(certPEM)
+	if err != nil {
+		return nil, fmt.Errorf("自检%s", err)
+	}
+	pub, ok := crt.PublicKey.(*ecdsa.PublicKey)
+	if !ok || pub.Curve != elliptic.P256() {
+		return nil, fmt.Errorf("自检陈述证书里不是 ECDSA P-256 公钥")
+	}
+	sum := sha256.Sum256(message)
+	if !ecdsa.VerifyASN1(pub, sum[:], signatureDER) {
+		return nil, fmt.Errorf("自检平台签名对不上证书公钥")
+	}
+	return &SelfCheckAttest{
+		SelfCheckClaim: c,
+		Cert:           string(certPEM),
+		Sig:            base64.StdEncoding.EncodeToString(signatureDER),
+	}, nil
+}
+
+// SignSelfCheck keeps the readable-key path for existing hosts. Android uses
+// PrepareSelfCheckSignature + Keystore + AssembleSelfCheckSignature instead.
+func SignSelfCheck(c SelfCheckClaim, keyPEM, certPEM []byte) (*SelfCheckAttest, error) {
+	message, err := PrepareSelfCheckSignature(c)
+	if err != nil {
 		return nil, err
 	}
 	if len(certPEM) == 0 || len(certPEM) > selfCheckMaxCertSize {
@@ -137,16 +180,12 @@ func SignSelfCheck(c SelfCheckClaim, keyPEM, certPEM []byte) (*SelfCheckAttest, 
 	if err != nil {
 		return nil, err
 	}
-	sum := sha256.Sum256(c.canonical())
+	sum := sha256.Sum256(message)
 	sig, err := ecdsa.SignASN1(rand.Reader, key, sum[:])
 	if err != nil {
 		return nil, fmt.Errorf("签名自检陈述:%w", err)
 	}
-	return &SelfCheckAttest{
-		SelfCheckClaim: c,
-		Cert:           string(certPEM),
-		Sig:            base64.StdEncoding.EncodeToString(sig),
-	}, nil
+	return AssembleSelfCheckSignature(c, certPEM, sig)
 }
 
 // VerifySelfCheck verifies structure, CA chain, node certificate name and the

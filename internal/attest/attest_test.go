@@ -95,6 +95,35 @@ func TestSignThenVerify(t *testing.T) {
 	}
 }
 
+func TestExternalPlatformSignerThenAssemble(t *testing.T) {
+	ca := newCA(t)
+	keyPEM, certPEM := ca.issue(t, "demo-b")
+	key, err := parseKey(keyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized, message, err := PrepareSignature(claim("demo-b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(message)
+	signature, err := ecdsa.SignASN1(rand.Reader, key, sum[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := AssembleSignature(normalized, certPEM, signature)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Verify(signed, ca.certPEM); err != nil {
+		t.Fatalf("平台签名组装后无法验证:%v", err)
+	}
+	signature[len(signature)-1] ^= 1
+	if _, err := AssembleSignature(normalized, certPEM, signature); err == nil {
+		t.Fatal("损坏的平台签名必须在组装时被拒绝")
+	}
+}
+
 // **这是本文件存在的主要理由。** 没有这一条,任何一台有合法证书的机器
 // 都能替别人发言 —— 而"替别人发言"正是转述,正是签名要根治的东西。
 func TestCannotSpeakForAnotherNode(t *testing.T) {
