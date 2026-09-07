@@ -456,8 +456,8 @@ func nodeSecretRefs(s *model.SSOT, owner string, all map[string]string) []string
 	return refs
 }
 
-// AndroidBundleSecretRefs returns exactly the placeholders emitted in the
-// sing-box bundle for a validated Android access-only Device. Android's vault
+// AndroidBundleSecretRefs returns exactly the placeholders emitted across the
+// permitted Android runtime bundle for a validated access-only Device. Android's vault
 // deliberately rejects unused entries, so the broader Linux provisioning set
 // from nodeSecretRefs (which also preserves dormant and owner-local refs) is
 // not suitable for its one-time bootstrap response.

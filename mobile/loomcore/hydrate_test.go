@@ -60,3 +60,21 @@ func TestHydrateSingBoxConfigRejectsUnexpectedBundleFiles(t *testing.T) {
 		t.Fatal("extra lifecycle file was accepted")
 	}
 }
+
+func TestHydrateSingBoxConfigAcceptsSignedMobilePlanAndChecksUnion(t *testing.T) {
+	bundle := hydrationBundle(t, map[string]string{
+		"sing-box/config.json": `{"experimental":{"clash_api":{"secret":"${secret:api/android-a}"}}}`,
+		"agent/config.json":    `{"api_secret":"${secret:api/android-a}","probe_secret":"${secret:probe/android-a}"}`,
+	})
+	got, err := HydrateSingBoxConfig(bundle, []byte("api/android-a=api-secret\nprobe/android-a=probe-secret\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(got, []byte("api-secret")) {
+		t.Fatalf("hydrated sing-box=%s", got)
+	}
+	if _, err := HydrateSingBoxConfig(bundle, []byte("api/android-a=api-secret\n")); err == nil ||
+		!strings.Contains(err.Error(), "missing refs") {
+		t.Fatalf("missing plan-only secret error=%v", err)
+	}
+}

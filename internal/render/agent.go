@@ -39,8 +39,8 @@ StateDirectory=loom
 WantedBy=multi-user.target
 `
 
-// renderAgent 生成 Linux 接入节点的 Agent 配置与 unit。Windows 只复用
-// renderAgentPlan 产出的平台无关调度计划，它的宿主生命周期不在此处表达。
+// renderAgent 生成 Linux 接入节点的 Agent 配置与 unit。Windows/Android 只复用
+// renderAgentPlan 产出的平台无关调度计划，它们的宿主生命周期不在此处表达。
 func renderAgent(s *model.SSOT, p *model.Node) ([]File, []Skip) {
 	files, skips := renderAgentPlan(s, p)
 	if len(files) == 0 {
@@ -58,7 +58,7 @@ func renderAgent(s *model.SSOT, p *model.Node) ([]File, []Skip) {
 // 目标和评分/探测参数仍全部由 renderAgentDeclarations 从 SSOT 推导。
 //
 // Linux 的对端观测剪枝依赖 report、节点 CA 路径和 systemd，因此只在 Linux
-// 计划中增补；Windows 包里只放可由平台宿主消费的本地端到端调参输入。
+// 计划中增补；Windows/Android 包里只放可由平台宿主消费的本地端到端调参输入。
 func renderAgentPlan(s *model.SSOT, p *model.Node) ([]File, []Skip) {
 	if !p.IsAccess() {
 		return nil, nil
@@ -72,6 +72,7 @@ func renderAgentPlan(s *model.SSOT, p *model.Node) ([]File, []Skip) {
 		Probe:                 ProbeListen,
 		ProbeSecret:           secretRef("probe/" + p.ID),
 		Declarations:          declarations,
+		Selectors:             renderSelectorPlans(s, p),
 		ObservationStale:      observationStale,
 		AttestationMinVersion: s.AttestationMinVersion(),
 	}
@@ -112,11 +113,19 @@ func renderAgentPlan(s *model.SSOT, p *model.Node) ([]File, []Skip) {
 	}
 
 	if len(cfg.Declarations) == 0 {
+		reason := "没有任何可自动调参的声明；仍交付 selector 计划供客户端三态切换"
+		if usesLinuxLifecycle(p) || len(cfg.Selectors) == 0 {
+			reason = "没有任何可调参的声明,不生成 Agent 配置"
+		}
 		skips = append(skips, Skip{
 			Where:  "agent:" + p.ID,
-			Reason: "没有任何可调参的声明,不生成 Agent 配置",
+			Reason: reason,
 		})
-		return nil, skips
+		// Linux 没有循环可跑时不安装空 Agent。移动/桌面客户端仍需要完整
+		// selector 计划承载三态偏好，即使某些 objective 暂不能自动排名。
+		if usesLinuxLifecycle(p) || len(cfg.Selectors) == 0 {
+			return nil, skips
+		}
 	}
 
 	b, err := json.MarshalIndent(&cfg, "", "  ")
@@ -127,6 +136,47 @@ func renderAgentPlan(s *model.SSOT, p *model.Node) ([]File, []Skip) {
 	return []File{
 		{Path: "agent/config.json", Content: string(b) + "\n"},
 	}, skips
+}
+
+// renderSelectorPlans 覆盖 sing-box 中客户端可写的全部 selector，包括因 objective
+// 或探测目标不足而不能进入 Agent 自动排序的声明。顶层模式仍必须能安全地切换这些
+// selector；候选链在这里由 renderer 明示，客户端不得从 opaque tag 猜拓扑。
+func renderSelectorPlans(s *model.SSOT, p *model.Node) []agent.SelectorPlan {
+	declIDs, _ := accessDecls(s, p)
+	declarations := s.DeclarationByID()
+	pinned, _ := pinnedDecls(p)
+	var plans []agent.SelectorPlan
+	appendPlan := func(selector string, candidates []model.RouteCandidate) {
+		if len(candidates) == 0 {
+			return
+		}
+		plan := agent.SelectorPlan{Selector: selector}
+		var tags []string
+		for i := range candidates {
+			tag := candidates[i].Tag()
+			tags = append(tags, tag)
+			plan.Candidates = append(plan.Candidates, agent.Cand{
+				Tag: tag, Chain: append([]string(nil), candidates[i].ServerChain...), ProbeUser: ProbeUser(tag),
+			})
+		}
+		plan.Default = selectorDefault(tags)
+		plans = append(plans, plan)
+	}
+	for _, declarationID := range declIDs {
+		declaration := declarations[declarationID]
+		if declaration == nil {
+			continue
+		}
+		if pinned[declarationID] {
+			candidates, _ := s.EnumerateCandidates(p, declaration)
+			appendPlan("decl:"+declarationID, candidates)
+		}
+		for _, service := range s.ServicesFor(declarationID) {
+			candidates, _ := s.EnumerateServiceCandidates(p, declaration, service)
+			appendPlan(service.Tag(), candidates)
+		}
+	}
+	return plans
 }
 
 // renderAgentDeclarations 是 Agent 配置与 report.expected_routes 的唯一候选

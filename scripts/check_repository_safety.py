@@ -51,6 +51,7 @@ DOMAIN = re.compile(
 )
 APPROVED_DOMAIN_BASES = {
     "aliyun.com",
+    "android.com",  # Official Android XML schema namespace.
     "anthropic.com",
     "apache.org",  # Apache-2.0 license text and upstream licensing reference.
     "baidu.com",
@@ -59,11 +60,14 @@ APPROVED_DOMAIN_BASES = {
     "github.com",
     "golang.org",
     "google.com",
+    "gradle.org",  # Official Gradle wrapper distribution host.
     "gstatic.com",
+    "gnu.org",  # GPL license text and canonical license reference.
     "ipify.org",
     "microsoft.com",  # Windows manifest schema namespaces.
     "oaistatic.com",
     "openai.com",
+    "qq.com",  # Independent regional HTTPS endpoint used by Android TUN health checks.
     "sagernet.org",
     "signpath.io",  # Official release signing service.
     "signpath.org",  # Open-source signing foundation.
@@ -151,8 +155,27 @@ def main() -> int:
             for match in IPV4.finditer(ip_line):
                 if not approved_ip(match.group(0)):
                     failures.append((relative, line_no, "unapproved public IPv4 address"))
-            for match in DOMAIN.finditer(line):
-                if not approved_domain(match.group(0)):
+            # Java/Kotlin package and import names commonly end in `.io` or
+            # `.net`; they are identifiers, not deployment endpoints. String
+            # literals cannot be part of these declarations, so skipping the
+            # whole declaration does not weaken the endpoint boundary.
+            domain_line = line
+            if re.match(r"^\s*(?:package|import)\s+[A-Za-z0-9_.*]+\s*;?\s*$", line):
+                domain_line = ""
+            for match in DOMAIN.finditer(domain_line):
+                value = match.group(0)
+                followed_by_member = (
+                    match.end() + 1 < len(domain_line)
+                    and domain_line[match.end()] == "."
+                    and domain_line[match.end() + 1].isupper()
+                )
+                inside_double_quotes = domain_line[:match.start()].count('"') % 2 == 1
+                source_identifier = path.suffix in {".cs", ".go", ".java", ".kt", ".py"} and not inside_double_quotes
+                android_component = "android:name=" in domain_line and followed_by_member
+                if (source_identifier and any(character.isupper() for character in value)) or \
+                        (followed_by_member and (source_identifier or android_component)):
+                    continue
+                if not approved_domain(value):
                     failures.append((relative, line_no, "unapproved public domain"))
             for match in SITE_LIKE_ID.finditer(line):
                 if match.group(0).lower() not in APPROVED_SITE_EXAMPLES:

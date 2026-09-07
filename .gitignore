@@ -17,6 +17,7 @@ Desktop.ini
 # Android 客户端本地 SDK/Gradle/native 构建产物
 /clients/android/.build/
 /clients/android/.gradle/
+/clients/android/.kotlin/
 /clients/android/.idea/
 /clients/android/local.properties
 /clients/android/app/build/

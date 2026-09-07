@@ -17,7 +17,7 @@ import (
 	"unicode"
 )
 
-const bindingVersion = "android-stage2-v1"
+const bindingVersion = "android-stage3-v1"
 
 var oidECDSAWithSHA256 = asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 3, 2}
 

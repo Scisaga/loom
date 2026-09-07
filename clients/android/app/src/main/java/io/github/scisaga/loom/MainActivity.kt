@@ -60,6 +60,9 @@ import io.github.scisaga.loom.enrollment.EnrollmentStatus
 import io.github.scisaga.loom.enrollment.InviteScanner
 import io.github.scisaga.libbox.Libbox
 import io.github.scisaga.loom.security.DeviceKeyStore
+import io.github.scisaga.loom.route.RouteManager
+import io.github.scisaga.loom.route.RouteMode
+import io.github.scisaga.loom.route.RouteStatus
 import io.github.scisaga.loom.stage1.Stage1Config
 import io.github.scisaga.loom.vpn.ConnectionPhase
 import io.github.scisaga.loom.vpn.LoomVpnService
@@ -159,6 +162,8 @@ private fun LoomHome(
     val status by VpnRuntime.status.collectAsStateWithLifecycle()
     val join by enrollment.status.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val routeManager = remember(context) { RouteManager.get(context) }
+    val route by routeManager.status.collectAsStateWithLifecycle()
     val hasManagedProfile = join.snapshot.isNotEmpty()
     var diagnostics by remember { mutableStateOf("正在检查…") }
     var scanning by remember { mutableStateOf(false) }
@@ -265,13 +270,16 @@ private fun LoomHome(
                     DebugDirectCard(status = status, onToggle = onToggle)
                 }
 
-                RouteModeCard()
+                RouteModeCard(route, routeManager::select)
                 InfoCard(
                     "当前路径",
-                    if (status.phase == ConnectionPhase.CONNECTED) {
-                        status.detail
+                    if (route.currentPaths.isNotEmpty()) {
+                        buildString {
+                            if (!route.running) append("上次/下次连接选择：\n")
+                            append(route.currentPaths.joinToString("\n"))
+                        }
                     } else {
-                        "未连接；连接后显示已激活 snapshot，实际候选路径在 Stage 3 接线"
+                        "尚无可验证的 selector 路径"
                     },
                 )
                 InfoCard(
@@ -281,7 +289,7 @@ private fun LoomHome(
                 InfoCard("信任边界", diagnostics)
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Stage 2 完成身份、验签配置、TUN 激活和可信上报；移动端选路在 Stage 3 启用。",
+                    "Stage 3 已启用三态偏好、签名出口授权、候选测量、阈值阻尼和 selector 原子切换。",
                     color = Muted,
                     fontSize = 12.sp,
                 )
@@ -429,7 +437,34 @@ private fun enrollmentTitle(phase: EnrollmentPhase): String = when (phase) {
 }
 
 @Composable
-private fun RouteModeCard() {
+private fun RouteModeCard(status: RouteStatus, onSelect: (RouteMode, String) -> Unit) {
+    var choosingExit by remember { mutableStateOf(false) }
+    if (choosingExit) {
+        AlertDialog(
+            onDismissRequest = { choosingExit = false },
+            title = { Text("选择固定出口") },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    status.exits.forEach { exit ->
+                        TextButton(
+                            onClick = {
+                                choosingExit = false
+                                onSelect(RouteMode.FIXED_EXIT, exit)
+                            },
+                            modifier = Modifier.fillMaxWidth().testTag("route-exit-$exit"),
+                        ) { Text(exit) }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { choosingExit = false }) { Text("取消") }
+            },
+        )
+    }
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(16.dp),
@@ -441,31 +476,60 @@ private fun RouteModeCard() {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Button(
-                    onClick = {},
-                    enabled = false,
+                RouteModeButton(
+                    label = "Direct",
+                    selected = status.mode == RouteMode.DIRECT,
+                    onClick = { onSelect(RouteMode.DIRECT, "") },
+                    enabled = status.available && status.directAvailable && !status.busy,
                     modifier = Modifier.weight(1f).testTag("route-direct"),
-                    shape = RoundedCornerShape(12.dp),
-                ) { Text("Direct") }
-                OutlinedButton(
-                    onClick = {},
-                    enabled = false,
+                )
+                RouteModeButton(
+                    label = "Auto",
+                    selected = status.mode == RouteMode.AUTO,
+                    onClick = { onSelect(RouteMode.AUTO, "") },
+                    enabled = status.available && !status.busy,
                     modifier = Modifier.weight(1f).testTag("route-auto"),
-                    shape = RoundedCornerShape(12.dp),
-                ) { Text("Auto") }
-                OutlinedButton(
-                    onClick = {},
-                    enabled = false,
+                )
+                RouteModeButton(
+                    label = "指定出口",
+                    selected = status.mode == RouteMode.FIXED_EXIT,
+                    onClick = { choosingExit = true },
+                    enabled = status.available && status.exits.isNotEmpty() && !status.busy,
                     modifier = Modifier.weight(1f).testTag("route-fixed-exit"),
-                    shape = RoundedCornerShape(12.dp),
-                ) { Text("指定出口") }
+                )
             }
             Text(
-                "切换入口已保留。当前遵循签名配置的默认声明；Stage 3 才会保存本机偏好并驱动 selector。",
-                color = Muted,
+                status.detail,
+                color = if (status.blocked) Color(0xFFB33A3A) else Muted,
                 fontSize = 12.sp,
             )
         }
+    }
+}
+
+@Composable
+private fun RouteModeButton(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    enabled: Boolean,
+    modifier: Modifier,
+) {
+    if (selected) {
+        Button(
+            onClick = onClick,
+            enabled = enabled,
+            modifier = modifier,
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = LoomGreen),
+        ) { Text(label) }
+    } else {
+        OutlinedButton(
+            onClick = onClick,
+            enabled = enabled,
+            modifier = modifier,
+            shape = RoundedCornerShape(12.dp),
+        ) { Text(label) }
     }
 }
 

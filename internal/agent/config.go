@@ -40,6 +40,12 @@ type Config struct {
 
 	Declarations []Decl `json:"declarations"`
 
+	// Selectors 是客户端顶层 Direct / Auto / 指定出口所需的完整可写边界。
+	// 它与 Declarations 分开：无法由 L4 Agent 排序的 objective 仍然必须能被
+	// 客户端安全切换，且候选 tag 是 opaque，不能从字符串反解析真实节点链。
+	// 旧配置可以没有该字段；所有新渲染配置都会显式携带。
+	Selectors []SelectorPlan `json:"selectors,omitempty"`
+
 	// Peers 是本节点能顺着隧道直接够到的上报接口(§16.1)。
 	//
 	// 覆盖面取决于拓扑:接入节点只和一部分服务器有隧道,而 AllowedIPs 是
@@ -76,6 +82,14 @@ type Config struct {
 	// observations must not influence routing during that bridge.  Load therefore
 	// removes those sources and Run reports the reason loudly.
 	ObservationDisabledReason string `json:"-"`
+}
+
+// SelectorPlan 把一个 sing-box selector 与 renderer 枚举出的候选链精确绑定。
+// Default 是 Auto 冷启动值；运行时实测选择属于本地状态，不写回这份签名计划。
+type SelectorPlan struct {
+	Selector   string `json:"selector"`
+	Default    string `json:"default"`
+	Candidates []Cand `json:"candidates"`
 }
 
 // Peer 是一个能拉到的节点。
@@ -191,6 +205,45 @@ func Load(b []byte) (*Config, error) {
 			return nil, fmt.Errorf("%s 没有探测目标 —— 排序无从谈起", d.ID)
 		}
 	}
+	selectors := make(map[string]SelectorPlan, len(c.Selectors))
+	for i := range c.Selectors {
+		selector := c.Selectors[i]
+		if selector.Selector == "" || selector.Default == "" || len(selector.Candidates) == 0 {
+			return nil, fmt.Errorf("selector 计划 %d 缺少 selector、default 或候选", i)
+		}
+		if _, duplicate := selectors[selector.Selector]; duplicate {
+			return nil, fmt.Errorf("selector 计划重复 %q", selector.Selector)
+		}
+		members := make(map[string]bool, len(selector.Candidates))
+		for _, candidate := range selector.Candidates {
+			if candidate.Tag == "" || candidate.ProbeUser == "" {
+				return nil, fmt.Errorf("selector %q 含空候选 tag 或 probe_user", selector.Selector)
+			}
+			if members[candidate.Tag] {
+				return nil, fmt.Errorf("selector %q 重复候选 %q", selector.Selector, candidate.Tag)
+			}
+			members[candidate.Tag] = true
+		}
+		if !members[selector.Default] {
+			return nil, fmt.Errorf("selector %q 的 default %q 不在候选中", selector.Selector, selector.Default)
+		}
+		selectors[selector.Selector] = selector
+	}
+	for _, declaration := range c.Declarations {
+		selector, ok := selectors[declaration.Selector]
+		if len(c.Selectors) == 0 { // 已部署的 schema 1 旧配置兼容。
+			break
+		}
+		if !ok || len(selector.Candidates) != len(declaration.Candidates) {
+			return nil, fmt.Errorf("声明 %s 与 selector 计划 %q 不一致", declaration.ID, declaration.Selector)
+		}
+		for index := range declaration.Candidates {
+			got, want := selector.Candidates[index], declaration.Candidates[index]
+			if got.Tag != want.Tag || got.ProbeUser != want.ProbeUser || !sameStrings(got.Chain, want.Chain) {
+				return nil, fmt.Errorf("声明 %s 的候选 %d 与 selector 计划不一致", declaration.ID, index)
+			}
+		}
+	}
 	if c.PeerPeriod != "" {
 		if _, err := dur(c.PeerPeriod, "peer_period"); err != nil {
 			return nil, err
@@ -229,6 +282,18 @@ func Load(b []byte) (*Config, error) {
 		}
 	}
 	return &c, nil
+}
+
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for index := range a {
+		if a[index] != b[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func (d *Decl) Period() (time.Duration, error) { return dur(d.TuningPeriod, "tuning_period") }

@@ -19,7 +19,7 @@ class SecurityInstrumentedTest {
         assertTrue(keys.proveBinding().contains("non-exportable"))
         val csr = keys.createCSR("demo-android-request")
         assertTrue(csr.decodeToString().startsWith("-----BEGIN CERTIFICATE REQUEST-----"))
-        assertTrue(Loomcore.version().startsWith("android-stage2"))
+        assertTrue(Loomcore.version().startsWith("android-stage3"))
 
         val context = ApplicationProvider.getApplicationContext<LoomApplication>()
         val store = EncryptedStore(context)

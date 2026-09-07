@@ -18,6 +18,7 @@ data class ManagedProfile(
     val snapshot: String,
     val generation: Long,
     val config: String,
+    val routePlan: String?,
     val certificatePEM: ByteArray,
     val caPEM: ByteArray,
     val reportEndpoint: String,
@@ -211,14 +212,20 @@ internal class ManagedProfileStore(private val context: Context) {
         val ca = bootstrap.getString("ca_cert_pem").encodeToByteArray()
         val caRelativePath = "tls/ca-${sha256Hex(ca)}.crt"
         installImmutableCA(caRelativePath, ca)
-        val hydrated = Loomcore.hydrateSingBoxConfig(canonicalBundle, secrets)
-        val config = Loomcore.relocateAndroidCA(hydrated, caRelativePath).decodeToString()
+        val prepared = JSONObject(Loomcore.prepareAndroidRuntime(canonicalBundle, secrets).decodeToString())
+        check(prepared.getInt("schema") == 1) { "Android runtime 准备结果 schema 无效" }
+        val routePlan = prepared.optString("route_plan").takeIf(String::isNotBlank)
+        val config = Loomcore.relocateAndroidCA(
+            prepared.getString("sing_box_config").encodeToByteArray(),
+            caRelativePath,
+        ).decodeToString()
         Libbox.checkConfig(config)
         return ManagedProfile(
             nodeID = nodeID,
             snapshot = pull.getString("snapshot"),
             generation = pull.getLong("generation"),
             config = config,
+            routePlan = routePlan,
             certificatePEM = bootstrap.getString("node_cert_pem").encodeToByteArray(),
             caPEM = ca,
             reportEndpoint = enrollment.getString("report_endpoint"),

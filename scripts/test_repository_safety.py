@@ -55,6 +55,23 @@ class RepositorySafetyTests(unittest.TestCase):
         self.assertIn("credentialed URL", output)
         self.assertNotIn(value, output)
 
+    def test_kotlin_import_is_not_treated_as_endpoint(self):
+        content = "package io.example.client\nimport android." + "net.Network\nval scope = Dispatchers." + "IO\n"
+        result, _ = self.scan("Client.kt", content)
+        self.assertEqual(result, 0)
+
+    def test_kotlin_string_endpoint_is_still_rejected(self):
+        value = 'private val endpoint = "https://private-deployment' + '.net/api"'
+        result, output = self.scan("Client.kt", value)
+        self.assertEqual(result, 1)
+        self.assertIn("unapproved public domain", output)
+
+    def test_uppercase_string_endpoint_is_still_rejected(self):
+        value = 'private val endpoint = "HTTPS://PRIVATE-DEPLOYMENT' + '.NET/api"'
+        result, output = self.scan("Client.kt", value)
+        self.assertEqual(result, 1)
+        self.assertIn("unapproved public domain", output)
+
 
 if __name__ == "__main__":
     unittest.main()

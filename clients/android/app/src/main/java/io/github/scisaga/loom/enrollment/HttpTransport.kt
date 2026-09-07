@@ -78,7 +78,7 @@ internal object HttpTransport {
             connection.readTimeout = READ_TIMEOUT_MS
             connection.requestMethod = method
             connection.setRequestProperty("Accept", accept)
-            connection.setRequestProperty("User-Agent", "Loom-Android/0.2")
+            connection.setRequestProperty("User-Agent", "Loom-Android/0.3")
             if (requestBody != null) {
                 require(requestBody.size <= MAXIMUM_REQUEST) { "HTTP 请求体过大" }
                 connection.doOutput = true

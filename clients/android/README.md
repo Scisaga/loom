@@ -1,15 +1,21 @@
-# Loom Android client — stage 2
+# Loom Android client — stage 3
 
 This directory contains the native Kotlin/Compose host and the pinned
 sing-box/Loom mobile binding. Stage 2 implements the complete access-only
 enrollment path: QR or `.loom-invite` import, a non-exportable Android
 Keystore identity, signed pull with a durable anti-rollback floor, candidate
-activation/previous recovery, and signed health reporting.
+activation/previous recovery, and signed health reporting. Stage 3 adds the
+signed mobile route plan, Direct / Auto / fixed-exit preference, authenticated
+loopback selector changes, bounded candidate measurement, threshold damping,
+and plan-scoped offline selection reuse.
 
-The visible Direct / Auto / fixed-exit control is intentionally read-only in
-this stage. Mobile measurement, selector switching and persisted route
-preference belong to stage 3; the UI must not claim that the signed default is
-Direct before that runtime evidence exists.
+The three route modes are enabled only after a verified managed snapshot carries
+a mobile route plan. Direct requires a direct candidate for every selector;
+fixed-exit choices are the exact intersection authorized by the signed plan.
+If a fixed exit is removed, the client blocks instead of silently falling back.
+Auto always probes the current path, rotates the remaining candidates within
+the signed budget, leaves a failed path immediately, and otherwise switches
+only after the configured sample and improvement thresholds are met.
 
 The primary Connect action stays disabled until a verified managed snapshot is
 available. Debug builds expose the bundled stage-1 Direct fixture in a separate
@@ -46,7 +52,7 @@ NDK 28.0.13004108 and either an arm64 device or an x86_64 emulator. Set
 
 ```bash
 ./scripts/build-mobile-aar.sh
-./gradlew --no-daemon testDebugUnitTest assembleDebug assembleDebugAndroidTest
+./gradlew --no-daemon --max-workers=4 testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
 ```
 
 The first command checks out the exact sing-box commit recorded in

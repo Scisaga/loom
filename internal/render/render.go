@@ -174,7 +174,7 @@ func Render(s *model.SSOT) (*Result, error) {
 			byNode[n.ID] = append(byNode[n.ID], af...)
 			skipped = append(skipped, ask...)
 		} else {
-			if n.Access.Platform == model.WindowsDesktop {
+			if n.Access.Platform == model.WindowsDesktop || n.Access.Platform == model.Android {
 				// Windows 不消费 Linux 的 systemd 生命周期，但仍必须从同一个
 				// 签名 bundle 得到与 sing-box 同源的调度计划。这会把 Windows
 				// bundle 明确定义为 sing-box 配置与 Agent 计划两个文件；Windows
@@ -190,6 +190,10 @@ func Render(s *model.SSOT) (*Result, error) {
 				reason = "platform=windows-desktop 已在同一签名 bundle 渲染 sing-box 配置与 agent/config.json 调度计划；" +
 					"Service、配置 pull、Agent 执行与 report 由 Windows 宿主交付，" +
 					"禁止回退为 systemd 或 /etc/loom 安装"
+			} else if n.Access.Platform == model.Android {
+				reason = "platform=android 已在同一签名 bundle 渲染 sing-box 配置与 agent/config.json 移动调度计划；" +
+					"VpnService、配置 pull、移动端调度与 report 由 Android 宿主交付，" +
+					"禁止回退为 systemd、Agent 二进制或 /etc/loom 安装"
 			}
 			skipped = append(skipped, Skip{
 				Where:  "lifecycle:" + n.ID,
