@@ -188,3 +188,71 @@ func TestWindowsFixedExitRequiresCandidatesForEveryService(t *testing.T) {
 		t.Fatal("Auto lost Service candidates")
 	}
 }
+
+func TestWindowsSharedSelectorMetadata(t *testing.T) {
+	body, planBody := pathPlanFixture(t)
+	var signed agent.Config
+	if err := json.Unmarshal(planBody, &signed); err != nil {
+		t.Fatal(err)
+	}
+	d := signed.Declarations[0]
+	signed.Selectors = []agent.SelectorPlan{{Selector: d.Selector, Default: d.Candidates[0].Tag, Candidates: d.Candidates}}
+	planBody, _ = json.Marshal(signed)
+	p, err := validateWindowsAgentPair(body, planBody, "demo-windows")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pref := range []clientcore.Preference{
+		{Schema: 1, Mode: clientcore.Auto},
+		{Schema: 1, Mode: clientcore.FixedExit, Exit: "demo-exit"},
+		{Schema: 1, Mode: clientcore.FixedExit, Exit: "demo-other"},
+		{Schema: 1, Mode: clientcore.Direct},
+	} {
+		derived, cfg, err := p.Derive(body, pref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pref.Mode == clientcore.Direct {
+			if cfg != nil {
+				t.Fatal("Direct started Agent")
+			}
+			cfg = p.DirectReadinessConfig()
+		}
+		encoded, _ := json.Marshal(cfg)
+		if _, err := agent.Load(encoded); err != nil {
+			t.Fatalf("derived %s plan cannot be loaded: %v", pref.Mode, err)
+		}
+		var sb singBoxConfig
+		_ = json.Unmarshal(derived, &sb)
+		selector := cfg.Selectors[0]
+		var tags []string
+		for _, c := range selector.Candidates {
+			tags = append(tags, c.Tag)
+		}
+		if !slices.Equal(tags, sb.Outbounds[1].Outbounds) || selector.Default != sb.Outbounds[1].Default {
+			t.Fatalf("%s selector metadata escaped derived data plane", pref.Mode)
+		}
+	}
+	if len(p.config.Selectors[0].Candidates) != 4 {
+		t.Fatal("preference mutated signed selector metadata")
+	}
+	for name, mutate := range map[string]func(*agent.Config){
+		"default": func(c *agent.Config) { c.Selectors[0].Default = d.Candidates[1].Tag },
+		"extra selector": func(c *agent.Config) {
+			extra := c.Selectors[0]
+			extra.Selector = "demo-extra"
+			c.Selectors = append(c.Selectors, extra)
+		},
+		"chain": func(c *agent.Config) { c.Selectors[0].Candidates[0].Chain = []string{"demo-other"} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			var cfg agent.Config
+			_ = json.Unmarshal(planBody, &cfg)
+			mutate(&cfg)
+			bad, _ := json.Marshal(cfg)
+			if _, err := validateWindowsAgentPair(body, bad, "demo-windows"); err == nil {
+				t.Fatal("accepted inconsistent selector metadata")
+			}
+		})
+	}
+}

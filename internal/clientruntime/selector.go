@@ -63,6 +63,19 @@ func validateWindowsAgentPair(body, agentBody []byte, node string) (*WindowsSele
 			selectors[o.Tag] = true
 		}
 	}
+	// §12：新版共享计划的 selector 元数据也必须与同包数据面一致。
+	// Windows 要求每个可写 selector 都有可执行的完整路径决策声明。
+	if len(cfg.Selectors) > 0 {
+		if len(cfg.Selectors) != len(cfg.Declarations) {
+			return nil, errors.New("[§12] selector 计划未完整绑定 Agent 声明")
+		}
+		for _, selector := range cfg.Selectors {
+			outbound := outbounds[selector.Selector]
+			if outbound.Type != "selector" || outbound.Default != selector.Default {
+				return nil, errors.New("[§12] selector 计划与 sing-box 默认候选不一致")
+			}
+		}
+	}
 	users := map[string]string{}
 	probeTag := ""
 	for _, in := range sb.Inbounds {
@@ -236,6 +249,7 @@ func (p *WindowsSelectorPlan) Derive(body []byte, preference clientcore.Preferen
 			}
 		}
 	}
+	restrictWindowsAgentSelectors(&cfg)
 	derived, err := json.Marshal(&sb)
 	if preference.Mode == clientcore.Direct {
 		return derived, nil, err
@@ -255,5 +269,25 @@ func (p *WindowsSelectorPlan) DirectReadinessConfig() *agent.Config {
 			}
 		}
 	}
+	restrictWindowsAgentSelectors(&cfg)
 	return &cfg
+}
+
+// §5.1：保留同一份签名计划的两种投影一致，不让原候选元数据越过本地偏好。
+func restrictWindowsAgentSelectors(cfg *agent.Config) {
+	cfg.Selectors = append([]agent.SelectorPlan(nil), cfg.Selectors...)
+	for i := range cfg.Selectors {
+		selector := &cfg.Selectors[i]
+		for _, declaration := range cfg.Declarations {
+			if declaration.Selector != selector.Selector {
+				continue
+			}
+			selector.Candidates = append([]agent.Cand(nil), declaration.Candidates...)
+			if len(selector.Candidates) == 0 {
+				selector.Default = ""
+			} else if !slices.ContainsFunc(selector.Candidates, func(c agent.Cand) bool { return c.Tag == selector.Default }) {
+				selector.Default = selector.Candidates[0].Tag
+			}
+		}
+	}
 }
