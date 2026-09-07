@@ -129,9 +129,11 @@ It accepts no file paths, commands or configuration bodies from the GUI.
 
 ### GitHub Actions
 
-Open **Actions → Windows build → Run workflow**, select `main` and enter a new MSI version such as `0.1.6`. After the tests and builds pass, the workflow publishes `windows-v<version>` to [GitHub Releases](https://github.com/Scisaga/loom/releases). Each release contains all six edition/architecture ZIPs, both MSI installers, SHA-256 manifests, and `BUILD-INFO.txt` with the source commit and workflow run. These builds are unsigned previews; SignPath signing is pending.
+Every push to `main` runs the CI checks, builds the Windows packages, and publishes an unsigned preview to [GitHub Releases](https://github.com/Scisaga/loom/releases). The MSI version increments automatically from the highest existing `windows-v<version>` tag or release draft, for example `0.1.6` → `0.1.7`. Each release contains all six edition/architecture ZIPs, both MSI installers, SHA-256 manifests, and `BUILD-INFO.txt` with the source commit and workflow run. SignPath signing is deferred in [issue #5](https://github.com/Scisaga/loom/issues/5).
 
-Other branches produce build artifacts only. Every run also retains `loom-windows-<version>-preview` in **Artifacts** for 30 days. Release files are checked and uploaded to a draft before it becomes public. Existing version tags and releases are never overwritten; if an upload fails, remove that incomplete draft before retrying or use a new version.
+**Actions → Windows build → Run workflow** remains available for manual builds. Leave the version blank for automatic numbering, or supply a higher version on `main`. Manual builds of other branches produce artifacts only. Pull requests and pushes to other branches continue to run CI without publishing.
+
+Every Windows build also retains `loom-windows-<version>-preview` in **Artifacts** for 30 days. Release files are checked and uploaded to a draft before it becomes public. Existing version tags and releases are never overwritten. A failed upload leaves a draft; the next automatic build uses a higher version.
 
 The workflow reuses the existing CI checks and packaging scripts on GitHub-hosted
 Linux and Windows runners. Its repository setup is:

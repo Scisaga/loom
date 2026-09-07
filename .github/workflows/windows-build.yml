@@ -1,13 +1,14 @@
 name: Windows build
-run-name: Windows ${{ inputs.version }} preview
+run-name: Windows preview · ${{ inputs.version || github.sha }}
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       version:
-        description: MSI version (major.minor.build)
-        required: true
-        default: '0.1.6'
+        description: MSI version (leave blank to increment automatically)
+        required: false
         type: string
 
 permissions:
@@ -29,25 +30,49 @@ jobs:
       contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      BUILD_VERSION: ${{ inputs.version }}
+    outputs:
+      version: ${{ steps.build_inputs.outputs.version }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
         with:
           persist-credentials: false
       - name: Validate build inputs
+        id: build_inputs
         env:
           PLATFORM_PUBLIC_KEY: ${{ vars.LOOM_PLATFORM_PUBLIC_KEY }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
+          gh api "repos/$GH_REPO/git/matching-refs/tags/windows-v" \
+            --jq '.[].ref | ltrimstr("refs/tags/")' > "$RUNNER_TEMP/windows-tags.txt"
+          gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+            --jq '.[].tag_name' > "$RUNNER_TEMP/windows-releases.txt"
           python3 - <<'PY'
           import base64, binascii, os, re
           from pathlib import Path
-          version = os.environ['BUILD_VERSION']
+          temp = Path(os.environ['RUNNER_TEMP'])
+          tags = (temp / 'windows-tags.txt').read_text().splitlines()
+          tags += (temp / 'windows-releases.txt').read_text().splitlines()
+          versions = [tuple(map(int, match.groups())) for tag in tags
+                      if (match := re.fullmatch(r'windows-v(\d+)\.(\d+)\.(\d+)', tag))]
+          latest = max(versions, default=(0, 1, 0))
+          version = os.environ['REQUESTED_VERSION'].strip()
+          if not version:
+              major, minor, build = latest
+              build += 1
+              if build > 65535:
+                  minor, build = minor + 1, 0
+              if minor > 255:
+                  major, minor = major + 1, 0
+              version = f'{major}.{minor}.{build}'
           if not re.fullmatch(r'(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,4})', version):
               raise SystemExit('Version must be major.minor.build without leading zeroes.')
           if any(value > limit for value, limit in zip(map(int, version.split('.')), (255, 255, 65535))):
               raise SystemExit('Version exceeds Windows Installer limits.')
+          if os.environ['GITHUB_REF'] == 'refs/heads/main' and tuple(map(int, version.split('.'))) <= latest:
+              raise SystemExit('Choose a version higher than existing Windows tags and release drafts.')
           key = os.environ['PLATFORM_PUBLIC_KEY'].strip()
           try:
               decoded = base64.b64decode(key, validate=True)
@@ -55,12 +80,15 @@ jobs:
               decoded = b''
           if len(decoded) != 32 or base64.b64encode(decoded).decode() != key:
               raise SystemExit('Configure LOOM_PLATFORM_PUBLIC_KEY with the trusted Ed25519 public key.')
-          temp = Path(os.environ['RUNNER_TEMP'])
           public_key = temp / 'platform-signing.pub'
           public_key.write_text(key + '\n')
           with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write('BUILD_VERSION=' + version + '\n')
               output.write('PLATFORM_SIGNING_PUB=' + str(public_key) + '\n')
               output.write('LOOM_WINDOWS_COMPONENT_DIR=' + str(temp / 'windows-components') + '\n')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('version=' + version + '\n')
+          print('Windows preview version: ' + version)
           PY
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -99,7 +127,7 @@ jobs:
       - name: Upload ZIP build inputs for MSI
         uses: actions/upload-artifact@v4
         with:
-          name: windows-zips-${{ inputs.version }}
+          name: windows-zips-${{ steps.build_inputs.outputs.version }}
           path: |
             out/loom-client-windows-*.zip
             out/windows-clients-SHA256SUMS
@@ -114,7 +142,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     env:
-      BUILD_VERSION: ${{ inputs.version }}
+      BUILD_VERSION: ${{ needs.zip.outputs.version }}
       DOTNET_ROLL_FORWARD: Major
     steps:
       - name: Check out source
@@ -124,7 +152,7 @@ jobs:
       - name: Download verified ZIP build
         uses: actions/download-artifact@v4
         with:
-          name: windows-zips-${{ inputs.version }}
+          name: windows-zips-${{ needs.zip.outputs.version }}
           path: out
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
@@ -139,7 +167,7 @@ jobs:
       - name: Upload complete Windows preview
         uses: actions/upload-artifact@v4
         with:
-          name: loom-windows-${{ inputs.version }}-preview
+          name: loom-windows-${{ needs.zip.outputs.version }}-preview
           path: |
             out/loom-client-windows-*.zip
             out/loom-client-windows-installed-*.msi
@@ -152,22 +180,22 @@ jobs:
 
   release:
     name: Publish Windows preview release
-    needs: msi
+    needs: [zip, msi]
     if: github.ref == 'refs/heads/main'
     permissions:
       contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      BUILD_VERSION: ${{ inputs.version }}
-      RELEASE_TAG: windows-v${{ inputs.version }}
+      BUILD_VERSION: ${{ needs.zip.outputs.version }}
+      RELEASE_TAG: windows-v${{ needs.zip.outputs.version }}
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
       - name: Download complete Windows preview
         uses: actions/download-artifact@v4
         with:
-          name: loom-windows-${{ inputs.version }}-preview
+          name: loom-windows-${{ needs.zip.outputs.version }}-preview
           path: out
       - name: Verify release files and prepare notes
         run: |

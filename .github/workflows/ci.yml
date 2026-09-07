@@ -2,6 +2,9 @@ name: CI
 
 on:
   push:
+    # main 由 Windows build 调用同一套检查，避免重复运行。
+    branches-ignore: [main]
+    tags: ['**']
   pull_request:
   workflow_call:
 
