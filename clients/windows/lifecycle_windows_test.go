@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"os/exec"
@@ -165,4 +166,22 @@ func TestWindowsTUNCrashHelper(t *testing.T) {
 	app.initialize()
 	defer func() { app.beginClose(); app.workers.Wait() }()
 	<-ctx.Done()
+}
+
+// §7.2：实机验收只读运行配置，生产 UI 已不再从临时文件推断选路。
+func activePortableRuntimeConfig(root string) (string, []byte, error) {
+	paths, err := filepath.Glob(filepath.Join(root, "runtime", ".sing-box-active-*.json"))
+	if err != nil || len(paths) != 1 {
+		return "", nil, errors.New("本地数据面尚未提供出口控制")
+	}
+	info, err := os.Lstat(paths[0])
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() <= 0 || info.Size() > 16<<20 {
+		return "", nil, errors.New("本地出口控制配置无效")
+	}
+	body, err := os.ReadFile(paths[0])
+	if err != nil || int64(len(body)) != info.Size() {
+		clear(body)
+		return "", nil, errors.New("读取本地出口控制配置失败")
+	}
+	return paths[0], body, nil
 }

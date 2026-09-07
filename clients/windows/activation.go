@@ -7,10 +7,17 @@ import (
 	"path/filepath"
 	"time"
 
+	"loom/internal/agent"
+	"loom/internal/clientcore"
 	"loom/internal/clientruntime"
 )
 
 type clientActivation struct {
+	BaseConfig   []byte
+	Policy       *clientruntime.WindowsSelectorPlan
+	Preference   clientcore.Preference
+	AgentConfig  *agent.Config
+	AgentRuntime *clientruntime.WindowsAgent
 	Version      clientruntime.CandidateVersion
 	SlotID       string
 	Executable   string
@@ -27,7 +34,7 @@ func (activation *clientActivation) key() string {
 	if activation == nil {
 		return ""
 	}
-	return activation.Version.ConfigSHA256 + "\x00" + activation.SlotID + "\x00" + string(activation.Profile)
+	return activation.Version.ConfigSHA256 + "\x00" + activation.SlotID + "\x00" + string(activation.Profile) + "\x00" + string(activation.Preference.Mode) + "\x00" + activation.Preference.Exit
 }
 
 func (activation *clientActivation) validate() error {
@@ -52,6 +59,8 @@ func (activation *clientActivation) clear() {
 	if activation != nil {
 		clear(activation.Config)
 		activation.Config = nil
+		clear(activation.BaseConfig)
+		activation.BaseConfig = nil
 	}
 }
 
@@ -59,6 +68,7 @@ type activationPreflight func(context.Context, *clientActivation) error
 type activationRunner func(context.Context, *clientActivation) error
 
 type runningActivation struct {
+	ctx    context.Context
 	spec   *clientActivation
 	cancel context.CancelFunc
 	done   chan error
@@ -84,8 +94,12 @@ func (manager *activationManager) report(ready bool, exited <-chan struct{}) {
 	}
 	state := clientRuntimeState{Ready: ready, Exited: exited}
 	if ready && manager.active != nil {
+		state.Generation = manager.active.ctx
 		state.Applied = manager.active.spec.Version.Snapshot
 		state.Health = manager.active.spec.Health
+		state.Agent = manager.active.spec.AgentRuntime
+		state.Policy = manager.active.spec.Policy
+		state.Preference = manager.active.spec.Preference
 	}
 	manager.observe(state)
 }
@@ -126,6 +140,7 @@ func (manager *activationManager) Replace(ctx context.Context, next *clientActiv
 
 	previous := manager.active
 	if previous != nil {
+		manager.report(false, nil)
 		if err := stopRunning(previous); err != nil {
 			next.clear()
 			manager.active = nil
@@ -158,7 +173,10 @@ func (manager *activationManager) Replace(ctx context.Context, next *clientActiv
 	if manager.standby != nil {
 		manager.standby.clear()
 	}
-	if previous != nil {
+	if previous != nil && previous.spec.Preference != next.Preference {
+		previous.spec.clear()
+		manager.standby = nil
+	} else if previous != nil {
 		manager.standby = previous.spec
 	} else {
 		manager.standby = nil
@@ -216,7 +234,7 @@ func (manager *activationManager) start(ctx context.Context, activation *clientA
 			return err
 		default:
 		}
-		manager.active = &runningActivation{spec: activation, cancel: cancel, done: done, exited: exited}
+		manager.active = &runningActivation{ctx: childContext, spec: activation, cancel: cancel, done: done, exited: exited}
 		manager.report(true, exited)
 		return nil
 	}

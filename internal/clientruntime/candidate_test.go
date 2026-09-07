@@ -142,6 +142,14 @@ func validWindowsConfig(logLevel string) string {
 }`, logLevel)
 }
 
+func validWindowsBundle(node, level string) map[string]string {
+	config := validWindowsConfig(level)
+	config = strings.Replace(config, `"inbounds": [`, `"inbounds": [{"type":"mixed","tag":"probe-in","listen":"127.0.0.1","listen_port":61801,"users":[{"username":"demo-probe","password":"${secret:api/win01}"}]},`, 1)
+	config = strings.Replace(config, `"rules":[`, `"rules":[{"inbound":["probe-in"],"auth_user":["demo-probe"],"outbound":"cand:auto:edge"},`, 1)
+	plan := fmt.Sprintf(`{"schema":1,"node":%q,"api":"127.0.0.1:61800","api_secret":"${secret:api/win01}","probe":"127.0.0.1:61801","probe_secret":"${secret:api/win01}","declarations":[{"id":"auto","selector":"decl:auto","objective":"latency","targets":["https://demo-target.example/"],"tuning_period":"1s","window":"1m","min_samples":3,"stale_after":"1m","switch_threshold":0.2,"candidates":[{"tag":"cand:auto:edge","chain":["demo-edge"],"probe_user":"demo-probe"}]}]}`, node)
+	return map[string]string{"sing-box/config.json": config, "agent/config.json": plan}
+}
+
 func installVerifiedRuntimeBundle(t *testing.T, root, node string, public ed25519.PublicKey,
 	tree *runtimeTree) (*clientupdate.Updater, *httptest.Server) {
 	t.Helper()
@@ -163,7 +171,7 @@ func TestPrepareWindowsCandidateHydratesPreflightsAndProtects(t *testing.T) {
 	public, private, _ := ed25519.GenerateKey(rand.Reader)
 	node, root := "win01", t.TempDir()
 	tree := makeRuntimeTree(t, private, 1, "111111111111", node,
-		map[string]string{"sing-box/config.json": validWindowsConfig("warn")})
+		validWindowsBundle(node, "warn"))
 	_, server := installVerifiedRuntimeBundle(t, root, node, public, &tree)
 	defer server.Close()
 	vaultPath := filepath.Join(root, "secrets", "vault.json.dpapi")
@@ -204,7 +212,7 @@ func TestPrepareWindowsCandidateTracksPrevious(t *testing.T) {
 	public, private, _ := ed25519.GenerateKey(rand.Reader)
 	node, root := "win01", t.TempDir()
 	tree := makeRuntimeTree(t, private, 1, "111111111111", node,
-		map[string]string{"sing-box/config.json": validWindowsConfig("warn")})
+		validWindowsBundle(node, "warn"))
 	updater, server := installVerifiedRuntimeBundle(t, root, node, public, &tree)
 	defer server.Close()
 	vaultPath := filepath.Join(root, "secrets", "vault.json.dpapi")
@@ -218,7 +226,7 @@ func TestPrepareWindowsCandidateTracksPrevious(t *testing.T) {
 		t.Fatal(err)
 	}
 	tree = makeRuntimeTree(t, private, 2, "222222222222", node,
-		map[string]string{"sing-box/config.json": validWindowsConfig("info")})
+		validWindowsBundle(node, "info"))
 	if _, err := updater.PullOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +249,7 @@ func TestPrepareWindowsCandidateFailsClosedOnMissingSecretOrExtraFile(t *testing
 		secrets map[string]string
 		want    string
 	}{
-		{"missing secret", map[string]string{"sing-box/config.json": validWindowsConfig("warn")}, map[string]string{"api/win01": "api"}, "missing refs"},
+		{"missing secret", validWindowsBundle(node, "warn"), map[string]string{"api/win01": "api"}, "missing refs"},
 		{"extra file", map[string]string{"sing-box/config.json": validWindowsConfig("warn"), "systemd/bad.service": "bad"}, map[string]string{"vault:cred/win01": "password", "api/win01": "api"}, "exactly"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -382,5 +390,140 @@ func TestWindowsStructuralPreflightAcceptsRenderedGolden(t *testing.T) {
 	}
 	if err := ValidateWindowsSingBox([]byte(hydrated)); err != nil {
 		t.Fatalf("rendered Windows golden failed structural preflight: %v", err)
+	}
+}
+
+type failCandidateCommit struct{ runtimeProtector }
+
+func (p failCandidateCommit) Protect(purpose string, body []byte) ([]byte, error) {
+	if purpose == CandidateStatePurpose {
+		return nil, errors.New("demo pointer commit failure")
+	}
+	return p.runtimeProtector.Protect(purpose, body)
+}
+
+func TestWindowsTwoFileBundleFailsClosedAndRollsBack(t *testing.T) {
+	public, private, _ := ed25519.GenerateKey(rand.Reader)
+	for _, kind := range []string{"missing agent", "missing sing-box", "extra file", "tampered sing-box", "tampered agent", "signature", "invalid plan", "pointer commit"} {
+		t.Run(kind, func(t *testing.T) {
+			node, root := "demo-windows", t.TempDir()
+			original := validWindowsBundle(node, "warn")
+			tree := makeRuntimeTree(t, private, 1, "111111111111", node, original)
+			updater, server := installVerifiedRuntimeBundle(t, root, node, public, &tree)
+			defer server.Close()
+			vault := filepath.Join(root, "vault.dpapi")
+			if err := clientsecret.WriteVault(vault, map[string]string{"api/win01": "demo-api", "vault:cred/win01": "demo-credential"}, runtimeProtector{}); err != nil {
+				t.Fatal(err)
+			}
+			first, err := PrepareWindowsCandidate(root, node, public, vault, runtimeProtector{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			files := validWindowsBundle(node, "info")
+			switch kind {
+			case "missing agent":
+				delete(files, "agent/config.json")
+			case "missing sing-box":
+				delete(files, "sing-box/config.json")
+			case "extra file":
+				files["agent/extra.json"] = "{}"
+			case "invalid plan":
+				files["agent/config.json"] = strings.Replace(files["agent/config.json"], `"min_samples":3`, `"min_samples":9999`, 1)
+			}
+			tree = makeRuntimeTree(t, private, 2, "222222222222", node, files)
+			switch kind {
+			case "tampered sing-box":
+				tree.bundle = bytes.Replace(tree.bundle, []byte("info"), []byte("debug"), 1)
+			case "tampered agent":
+				tree.bundle = bytes.Replace(tree.bundle, []byte("latency"), []byte("stability"), 1)
+			case "signature":
+				tree.signature[0] ^= 1
+			}
+			_, pullErr := updater.PullOnce(context.Background())
+			if strings.HasPrefix(kind, "tampered") || kind == "signature" {
+				if pullErr == nil {
+					t.Fatal("signature/hash tamper accepted")
+				}
+			} else {
+				if pullErr != nil {
+					t.Fatal(pullErr)
+				}
+				var protector clientsecret.Protector = runtimeProtector{}
+				if kind == "pointer commit" {
+					protector = failCandidateCommit{}
+				}
+				if _, err := PrepareWindowsCandidate(root, node, public, vault, protector); err == nil {
+					t.Fatal("invalid bundle/failed commit activated")
+				}
+			}
+			restored, state, err := ReadCandidateBundle(root, runtimeProtector{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if state.Current != first.Version || !strings.Contains(restored["sing-box/config.json"], `"warn"`) || len(restored) != 2 {
+				t.Fatal("failed transaction changed one of the paired files")
+			}
+		})
+	}
+}
+
+func TestWindowsAgentOnlyChangesCandidateHashAndLegacyStateRejected(t *testing.T) {
+	public, private, _ := ed25519.GenerateKey(rand.Reader)
+	node, root := "demo-windows", t.TempDir()
+	files := validWindowsBundle(node, "warn")
+	tree := makeRuntimeTree(t, private, 1, "111111111111", node, files)
+	updater, server := installVerifiedRuntimeBundle(t, root, node, public, &tree)
+	defer server.Close()
+	vault := filepath.Join(root, "vault.dpapi")
+	if err := clientsecret.WriteVault(vault, map[string]string{"api/win01": "demo-api", "vault:cred/win01": "demo-credential"}, runtimeProtector{}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := PrepareWindowsCandidate(root, node, public, vault, runtimeProtector{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files["agent/config.json"] = strings.Replace(files["agent/config.json"], `"window":"1m"`, `"window":"2m"`, 1)
+	tree = makeRuntimeTree(t, private, 2, "222222222222", node, files)
+	if _, err := updater.PullOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	second, err := PrepareWindowsCandidate(root, node, public, vault, runtimeProtector{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !second.Changed || first.Version.ConfigSHA256 == second.Version.ConfigSHA256 || first.Version.BundleSHA256 == second.Version.BundleSHA256 {
+		t.Fatal("Agent plan not included in both hashes")
+	}
+	legacy := CandidateState{Schema: 1, Current: second.Version}
+	if err := clientsecret.WriteJSONProtected(candidateStatePath(root), CandidateStatePurpose, &legacy, runtimeProtector{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PrepareWindowsCandidate(root, node, public, vault, runtimeProtector{}); err == nil {
+		t.Fatal("legacy state migrated")
+	}
+	if _, _, err := ReadCandidateBundle(root, runtimeProtector{}); err == nil {
+		t.Fatal("legacy state accepted")
+	}
+}
+
+func TestWindowsAgentPairAcceptsCurrentRenderedGolden(t *testing.T) {
+	files := map[string]string{}
+	for _, path := range []string{"sing-box/config.json", "agent/config.json"} {
+		body, err := os.ReadFile(filepath.Join("..", "..", "testdata", "matrix", "golden", "workstation", filepath.FromSlash(path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		values := map[string]string{}
+		for _, ref := range secret.Refs(string(body)) {
+			values[ref] = "demo-secret"
+		}
+		hydrated, missing := secret.Hydrate(string(body), values)
+		if len(missing) != 0 {
+			t.Fatal(missing)
+		}
+		files[path] = hydrated
+	}
+	if _, err := validateWindowsAgentPair([]byte(files["sing-box/config.json"]), []byte(files["agent/config.json"]), "workstation"); err != nil {
+		t.Fatal(err)
 	}
 }

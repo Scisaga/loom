@@ -12,7 +12,6 @@ import (
 
 	"loom/internal/events"
 	"loom/internal/measure"
-	"loom/internal/report"
 )
 
 // Options 是 Agent 的运行期参数。它们不进 SSOT —— 都是本机的事(文件放哪、
@@ -36,7 +35,8 @@ type Options struct {
 	Log    io.Writer
 	// Now 由调用方注入,便于测试。渲染与打包不读时钟(§12),但 Agent 是
 	// 运行期组件 —— 它**必须**读时钟,只是入口收在这一处。
-	Now func() time.Time
+	Now     func() time.Time
+	eventMu *sync.Mutex
 }
 
 func (o *Options) fill() {
@@ -64,14 +64,23 @@ func (o *Options) fill() {
 //
 // 每条声明一个 goroutine、各按自己的 tuning_period 走 —— 声明之间的节奏
 // 本来就不同,合并成一个全局节拍会让快的那条被慢的拖住。
-func Run(ctx context.Context, cfg *Config, opts Options) error {
+func Run(ctx context.Context, cfg *Config, opts Options) (retErr error) {
 	if ctx == nil {
 		return fmt.Errorf("Agent context 不能为空")
 	}
 	if ctx.Err() != nil {
 		return nil
 	}
+	defer func() {
+		if ctx.Err() != nil {
+			retErr = nil
+		}
+	}()
+	if err := validateObservationPlatform(cfg); err != nil {
+		return err
+	}
 	opts.fill()
+	opts.eventMu = &sync.Mutex{}
 	logf := func(f string, a ...any) {
 		fmt.Fprintf(opts.Log, "%s "+f+"\n",
 			append([]any{opts.Now().Format("15:04:05")}, a...)...)
@@ -80,7 +89,7 @@ func Run(ctx context.Context, cfg *Config, opts Options) error {
 		logf("⚠️ %s", cfg.ObservationDisabledReason)
 	}
 	st := &store{path: opts.MeasurementPath, retention: opts.Retention, now: opts.Now}
-	selections, err := newStateStore(opts.StatePath, cfg.Node, cfg.Declarations, opts.Now())
+	selections, err := newStateStore(ctx, opts.StatePath, cfg.Node, cfg.Declarations, opts.Now())
 	if err != nil {
 		return fmt.Errorf("初始化 Agent 当前选择:%w", err)
 	}
@@ -88,7 +97,7 @@ func Run(ctx context.Context, cfg *Config, opts Options) error {
 	if err != nil {
 		return err
 	}
-	if err := st.compact(); err != nil {
+	if err := st.compact(ctx); err != nil {
 		return fmt.Errorf("压实度量文件:%w", err)
 	}
 	var attestationCA []byte
@@ -174,112 +183,6 @@ func Run(ctx context.Context, cfg *Config, opts Options) error {
 		}()
 	}
 	wg.Wait()
-	return nil
-}
-
-// pollPeers 拉一遍能够到的节点的自检结果。
-//
-// 它**不做任何处置** —— 隧道断了要人去看,不是 Agent 能自动修的。价值在于
-// 从"完全没有信号"变成"有带时间戳的记录":DDNS 重解析以前是全程静默的,
-// IP 变了、隧道断了、脚本修好了,事后连查都没得查。
-func pollPeers(ctx context.Context, cfg *Config, obs *observed, ca []byte, now time.Time,
-	maxAge time.Duration, logf func(string, ...any)) {
-	peers := append([]Peer(nil), cfg.Peers...)
-	sort.Slice(peers, func(i, j int) bool { return peers[i].Node < peers[j].Node })
-	// 本机上报者排在最前:它手里已经有转述过来的全网观测,先拿到它,
-	// 后面每条声明剪枝就有依据了。
-	if cfg.SelfReport != "" {
-		peers = append([]Peer{{Node: cfg.Node, Addr: cfg.SelfReport}}, peers...)
-	}
-	for _, p := range peers {
-		if ctx.Err() != nil {
-			return
-		}
-		st, err := report.FetchContext(ctx, p.Addr, 5*time.Second)
-		if ctx.Err() != nil {
-			return
-		}
-		if err != nil {
-			logf("[对端 %s] ❌ 拉不到 %s:%v", p.Node, p.Addr, err)
-			continue
-		}
-		// The loopback report's own observation is local node-owned input, so phase A
-		// may accept it unsigned. Phase B closes that exception; every measurement
-		// must then carry the configured v5 claim binding Edges/Targets.
-		local := p.Node == cfg.Node && p.Addr == cfg.SelfReport
-		if err := ingestObservation(obs, st.Observation, cfg.Node, local, ca, now, maxAge,
-			cfg.AttestationMinVersion); err != nil {
-			logf("[对端 %s] ⚠️ 拒绝观测:%v", p.Node, err)
-		}
-		for i := range st.Learned {
-			if err := ingestObservation(obs, &st.Learned[i], cfg.Node, false, ca, now, maxAge,
-				cfg.AttestationMinVersion); err != nil {
-				logf("[对端 %s] ⚠️ 拒绝转述观测:%v", p.Node, err)
-			}
-		}
-		if p.Node == cfg.Node {
-			continue // 自己的隧道健康由自己的日志说,不在这里重复
-		}
-		if st.OK() {
-			continue // 正常就不说话,否则日志里全是噪声
-		}
-		for i := range st.Tunnels {
-			t := &st.Tunnels[i]
-			switch {
-			case t.Down:
-				logf("[对端 %s] ❌ 隧道 %s 没起来", p.Node, t.Interface)
-			case t.HandshakeAgeSec < 0:
-				logf("[对端 %s] ❌ 隧道 %s 从未握手", p.Node, t.Interface)
-			case t.Stale:
-				logf("[对端 %s] ⚠️ 隧道 %s 握手已 %d 秒前", p.Node, t.Interface, t.HandshakeAgeSec)
-			}
-		}
-		if d := st.Drift; d != nil {
-			for _, f := range d.Modified {
-				logf("[对端 %s] ⚠️ 配置被改过:%s", p.Node, f)
-			}
-			for _, f := range d.Missing {
-				logf("[对端 %s] ⚠️ 配置缺失:%s", p.Node, f)
-			}
-			for _, f := range d.Unreadable {
-				logf("[对端 %s] ⚠️ 配置读不到:%s", p.Node, f)
-			}
-		}
-		for _, e := range st.Errors {
-			logf("[对端 %s] ⚠️ 采集错误:%s", p.Node, e)
-		}
-	}
-}
-
-// ingestObservation is the decision boundary between display data and control
-// input. Phase A allows an unsigned loopback self-observation because it never
-// crossed a relay boundary; phase B deliberately closes that exception so the
-// selector cannot keep consuming unsigned measurements after the v5 gate closes.
-func ingestObservation(dst *observed, o *report.Observation, self string, local bool,
-	ca []byte, now time.Time, maxAge time.Duration, minAttestationVersion int) error {
-	if o == nil {
-		if local && minAttestationVersion >= 5 {
-			return fmt.Errorf("phase-B loopback 上报缺少本机观测")
-		}
-		return nil
-	}
-	if local {
-		if o.Node != self {
-			return fmt.Errorf("loopback 上报声称自己是 %q，不是 %q", o.Node, self)
-		}
-		if minAttestationVersion < 5 {
-			dst.put(o)
-			return nil
-		}
-	}
-	trusted, err := report.VerifyObservationAtLeast(o, ca, now, maxAge, minAttestationVersion)
-	if err != nil {
-		return err
-	}
-	if !trusted.MeasurementsVerified {
-		return fmt.Errorf("节点 %s 的 legacy 签名未覆盖 Edges/Targets", o.Node)
-	}
-	dst.put(o)
 	return nil
 }
 
@@ -418,7 +321,7 @@ func tick(ctx context.Context, cfg *Config, d *Decl, k *clash, st *store, select
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := st.append(got); err != nil {
+	if err := st.append(ctx, got); err != nil {
 		return fmt.Errorf("写度量:%w", err)
 	}
 
@@ -511,11 +414,19 @@ func tick(ctx context.Context, cfg *Config, d *Decl, k *clash, st *store, select
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		_ = events.Append(opts.EventsPath, []events.Event{{
+		ev := events.Event{
 			TS: opts.Now().UTC().Format(time.RFC3339), Node: cfg.Node,
 			Kind: "route", Subject: d.ID, From: shortChain(currentChain), To: shortChain(actualChain),
 			Detail: dec.Reason,
-		}})
+		}
+		if opts.eventMu != nil {
+			opts.eventMu.Lock()
+			defer opts.eventMu.Unlock()
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		_ = events.Append(opts.EventsPath, []events.Event{ev})
 	}
 	return nil
 }
@@ -622,4 +533,13 @@ func inWindow(ms []measure.Measurement, node, decl, scope string, now time.Time,
 		out = append(out, ms[i])
 	}
 	return out
+}
+
+// candidateExit 取 renderer 显式携带的最后一跳。Tag 是 opaque ID，服务 key
+// 与地址都允许 ':'/'@'，不能再从它反解析出口。
+func candidateExit(c Cand, self string) string {
+	if len(c.Chain) == 0 {
+		return self
+	}
+	return c.Chain[len(c.Chain)-1]
 }

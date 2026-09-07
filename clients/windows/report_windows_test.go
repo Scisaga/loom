@@ -164,6 +164,18 @@ func verifyNativeReport(o *clientreport.Observation, ca []byte) error {
 	if _, err := attest.VerifyFresh(o.Attest, ca, time.Now(), time.Minute); err != nil {
 		return err
 	}
-	_, err := attest.VerifySelfCheckFresh(o.SelfCheck, ca, time.Now(), time.Minute)
+	// §16.1：原生测试也核对外层路径与 canonical v5 签名附件，避免只验证身份。
+	wireAgent, err := json.Marshal(o.Agent)
+	if err != nil {
+		return err
+	}
+	signedAgent, err := json.Marshal(o.Attest.Agent)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(wireAgent, signedAgent) {
+		return errors.New("Agent path does not match canonical v5 claim")
+	}
+	_, err = attest.VerifySelfCheckFresh(o.SelfCheck, ca, time.Now(), time.Minute)
 	return err
 }

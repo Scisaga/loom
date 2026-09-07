@@ -313,3 +313,15 @@ func TestActivationStatusWaitsForProcessAndDetectsExit(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCanceledGenerationCannotRemainReportable(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	state := clientRuntimeState{Generation: ctx, Ready: true, Applied: "0123456789ab", Exited: make(chan struct{})}
+	if !state.active() {
+		t.Fatal("live generation not reportable")
+	}
+	cancel()
+	if state.active() {
+		t.Fatal("canceled generation reportable before data-plane teardown completes")
+	}
+}

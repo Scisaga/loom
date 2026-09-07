@@ -196,10 +196,11 @@ func prepareClientAt(root string, protector clientsecret.Protector, edition clie
 		if err != nil {
 			return nil, fmt.Errorf("select signed Windows data plane: %w", err)
 		}
-		sourceConfig, candidateState, err := clientruntime.ReadCandidateConfig(root, protector)
+		files, candidateState, err := clientruntime.ReadCandidateBundle(root, protector)
 		if err != nil {
 			return nil, fmt.Errorf("load protected Windows candidate: %w", err)
 		}
+		sourceConfig := []byte(files["sing-box/config.json"])
 		defer clear(sourceConfig)
 		if candidateState.Current != candidate.Version {
 			return nil, errors.New("prepared candidate does not match the protected current pointer")
@@ -213,9 +214,25 @@ func prepareClientAt(root string, protector clientsecret.Protector, edition clie
 			clear(runtimeConfig)
 			return nil, err
 		}
+		plan, err := clientruntime.BuildWindowsSelectorPlan(runtimeConfig, []byte(files["agent/config.json"]), profile, caPath)
+		if err != nil {
+			clear(runtimeConfig)
+			return nil, err
+		}
+		preference, err := clientcore.ReadPreference(preferencePath)
+		if err != nil {
+			clear(runtimeConfig)
+			return nil, err
+		}
+		filtered, agentConfig, err := plan.Derive(runtimeConfig, preference)
+		if err != nil {
+			clear(runtimeConfig)
+			return nil, err
+		}
 		return &clientActivation{
+			BaseConfig: runtimeConfig, Policy: plan, Preference: preference, AgentConfig: agentConfig,
 			Version: candidate.Version, SlotID: components.SlotID, Executable: components.SingBox,
-			Config: runtimeConfig, RuntimeDir: filepath.Join(root, "runtime"), Profile: profile, CAPath: caPath, WaitForStart: true,
+			Config: filtered, RuntimeDir: filepath.Join(root, "runtime"), Profile: profile, CAPath: caPath, WaitForStart: true,
 			Health: health,
 		}, nil
 	}
@@ -264,8 +281,11 @@ func prepareClientAt(root string, protector clientsecret.Protector, edition clie
 			return err
 		}
 		defer reporter.stop()
-		return runActiveUpdateLoop(ctx, updater, config.PullInterval(), initial, prepareActivation,
-			preflightClientActivation, runClientActivation, dataPlaneStartupGrace, reporter.update)
+		control := &routeControl{requests: make(chan routeRequest), done: make(chan struct{}), persist: func(p clientcore.Preference) error { return clientcore.WritePreference(preferencePath, p) }}
+		routeControls.Store(root, control)
+		defer func() { routeControls.Delete(root); close(control.done) }()
+		return runControlledUpdateLoop(ctx, updater, config.PullInterval(), initial, prepareActivation,
+			preflightClientActivation, runClientActivation, dataPlaneStartupGrace, control, reporter.update)
 	}, nil
 }
 
@@ -295,8 +315,7 @@ func preflightClientActivation(ctx context.Context, activation *clientActivation
 }
 
 func runClientActivation(ctx context.Context, activation *clientActivation) error {
-	return clientruntime.RunWindowsDataPlaneProfileStarted(ctx, activation.Executable, activation.Config,
-		activation.RuntimeDir, activation.Profile, activation.CAPath, activation.Started)
+	return runWindowsAgentActivation(ctx, activation)
 }
 
 func waitForJoinedClient(root string, protector clientsecret.Protector, edition clientEdition) func(context.Context) error {

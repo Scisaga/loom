@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -19,8 +20,8 @@ import (
 )
 
 const (
-	CandidateSchema        = 1
-	CandidateConfigPurpose = "candidate-config-v1"
+	CandidateSchema        = 2
+	CandidateConfigPurpose = "candidate-config-v2"
 	CandidateStatePurpose  = "candidate-state-v1"
 )
 
@@ -55,28 +56,41 @@ func PrepareWindowsCandidate(root, node string, publicKey ed25519.PublicKey, vau
 	if err != nil {
 		return PrepareResult{}, fmt.Errorf("load verified bundle: %w", err)
 	}
-	if len(verified.Files) != 1 {
-		return PrepareResult{}, fmt.Errorf("Windows bundle must contain exactly sing-box/config.json, got %d files", len(verified.Files))
-	}
-	redacted, ok := verified.Files["sing-box/config.json"]
-	if !ok {
-		return PrepareResult{}, errors.New("Windows bundle does not contain sing-box/config.json")
+	if len(verified.Files) != 2 || verified.Files["sing-box/config.json"] == "" || verified.Files["agent/config.json"] == "" {
+		return PrepareResult{}, errors.New("[§12] Windows bundle must contain exactly sing-box/config.json and agent/config.json")
 	}
 	secrets, err := clientsecret.ReadVault(vaultPath, protector)
 	if err != nil {
 		return PrepareResult{}, fmt.Errorf("read protected secret vault: %w", err)
 	}
-	hydrated, missing := secret.Hydrate(redacted, secrets)
-	clear(secrets)
-	if len(missing) > 0 {
-		return PrepareResult{}, fmt.Errorf("protected secret vault is missing refs: %s", strings.Join(missing, ", "))
+	defer clear(secrets)
+	files := map[string]string{}
+	refs := map[string]bool{}
+	for _, path := range []string{"sing-box/config.json", "agent/config.json"} {
+		redacted := verified.Files[path]
+		hydrated, missing := secret.Hydrate(redacted, secrets)
+		if len(missing) > 0 {
+			return PrepareResult{}, fmt.Errorf("protected secret vault is missing refs: %s", strings.Join(missing, ", "))
+		}
+		if secret.HasPlaceholder(hydrated) {
+			return PrepareResult{}, errors.New("[§12] 配置仍包含秘密占位符")
+		}
+		files[path] = hydrated
+		for _, ref := range secret.Refs(redacted) {
+			refs[ref] = true
+		}
 	}
-	if secret.HasPlaceholder(hydrated) {
-		return PrepareResult{}, errors.New("hydrated Windows config still contains a secret placeholder")
+	if err := ValidateWindowsSingBox([]byte(files["sing-box/config.json"])); err != nil {
+		return PrepareResult{}, err
 	}
-	if err := ValidateWindowsSingBox([]byte(hydrated)); err != nil {
-		return PrepareResult{}, fmt.Errorf("Windows sing-box structural preflight: %w", err)
+	if _, err := validateWindowsAgentPair([]byte(files["sing-box/config.json"]), []byte(files["agent/config.json"]), node); err != nil {
+		return PrepareResult{}, err
 	}
+	hydrated, err := json.Marshal(files)
+	if err != nil {
+		return PrepareResult{}, err
+	}
+	defer clear(hydrated)
 	configSum := sha256.Sum256([]byte(hydrated))
 	version := CandidateVersion{
 		Generation: verified.Version.Generation, PayloadSHA256: verified.Version.PayloadSHA256,
@@ -113,7 +127,7 @@ func PrepareWindowsCandidate(root, node string, publicKey ed25519.PublicKey, vau
 		return PrepareResult{}, fmt.Errorf("commit candidate pointer: %w", err)
 	}
 	return PrepareResult{
-		Version: version, Components: verified.Components, Changed: changed, SecretsUsed: len(secret.Refs(redacted)),
+		Version: version, Components: verified.Components, Changed: changed, SecretsUsed: len(refs),
 		CandidateRef: filepath.Base(candidatePath),
 	}, nil
 }
@@ -132,10 +146,8 @@ func ReadCandidateState(root string, protector clientsecret.Protector) (*Candida
 	return &state, nil
 }
 
-func ReadCandidateConfig(root string, protector clientsecret.Protector) ([]byte, *CandidateState, error) {
-	if err := validateRoot(root); err != nil {
-		return nil, nil, err
-	}
+// §12：一个 DPAPI 对象与一个指针原子提交两文件，旧 schema 明确拒绝。
+func ReadCandidateBundle(root string, protector clientsecret.Protector) (map[string]string, *CandidateState, error) {
 	state, err := ReadCandidateState(root, protector)
 	if err != nil {
 		return nil, nil, err
@@ -144,16 +156,33 @@ func ReadCandidateConfig(root string, protector clientsecret.Protector) ([]byte,
 	if err != nil {
 		return nil, nil, err
 	}
+	defer clear(body)
 	sum := sha256.Sum256(body)
 	if hex.EncodeToString(sum[:]) != state.Current.ConfigSHA256 {
-		clear(body)
 		return nil, nil, errors.New("protected candidate content does not match candidate pointer")
 	}
-	if err := ValidateWindowsSingBox(body); err != nil {
-		clear(body)
+	var files map[string]string
+	if err := json.Unmarshal(body, &files); err != nil {
 		return nil, nil, err
 	}
-	return body, state, nil
+	if len(files) != 2 {
+		return nil, nil, errors.New("[§12] 双文件 candidate 不完整")
+	}
+	if err := ValidateWindowsSingBox([]byte(files["sing-box/config.json"])); err != nil {
+		return nil, nil, err
+	}
+	if _, err := validateWindowsAgentPair([]byte(files["sing-box/config.json"]), []byte(files["agent/config.json"]), ""); err != nil {
+		return nil, nil, err
+	}
+	return files, state, nil
+}
+
+func ReadCandidateConfig(root string, protector clientsecret.Protector) ([]byte, *CandidateState, error) {
+	files, state, err := ReadCandidateBundle(root, protector)
+	if err != nil {
+		return nil, nil, err
+	}
+	return []byte(files["sing-box/config.json"]), state, nil
 }
 
 func (s CandidateState) Validate() error {

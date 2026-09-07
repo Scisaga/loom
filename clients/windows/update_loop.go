@@ -20,6 +20,13 @@ func runActiveUpdateLoop(ctx context.Context, updater updatePuller, interval tim
 	initial *clientActivation, prepareActivation func() (*clientActivation, error),
 	preflight activationPreflight, run activationRunner, startupGrace time.Duration,
 	observers ...func(clientRuntimeState)) (retErr error) {
+	return runControlledUpdateLoop(ctx, updater, interval, initial, prepareActivation, preflight, run, startupGrace, nil, observers...)
+}
+
+func runControlledUpdateLoop(ctx context.Context, updater updatePuller, interval time.Duration,
+	initial *clientActivation, prepareActivation func() (*clientActivation, error),
+	preflight activationPreflight, run activationRunner, startupGrace time.Duration,
+	control *routeControl, observers ...func(clientRuntimeState)) (retErr error) {
 	if updater == nil || interval <= 0 || prepareActivation == nil {
 		if initial != nil {
 			initial.clear()
@@ -35,6 +42,17 @@ func runActiveUpdateLoop(ctx context.Context, updater updatePuller, interval tim
 	}
 	if len(observers) > 0 {
 		manager.observe = observers[0]
+	}
+	var requests <-chan routeRequest
+	if control != nil {
+		requests = control.requests
+		observe := manager.observe
+		manager.observe = func(state clientRuntimeState) {
+			control.update(state)
+			if observe != nil {
+				observe(state)
+			}
+		}
 	}
 	defer func() {
 		if err := manager.Stop(); err != nil && retErr == nil {
@@ -57,6 +75,8 @@ func runActiveUpdateLoop(ctx context.Context, updater updatePuller, interval tim
 		select {
 		case <-ctx.Done():
 			return nil
+		case req := <-requests:
+			req.done <- applyRouteRequest(ctx, manager, control, req)
 		case activeErr := <-manager.Done():
 			if err := manager.Recover(ctx, activeErr); err != nil {
 				if ctx.Err() != nil {

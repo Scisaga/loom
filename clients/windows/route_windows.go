@@ -6,8 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -43,29 +41,19 @@ func (app *portableGUI) watchRoutePreference(ctx context.Context, sequence uint6
 func (app *portableGUI) refreshRoutePreference(ctx context.Context, sequence uint64, lastConfig string) (string, error) {
 	app.routeMu.Lock()
 	defer app.routeMu.Unlock()
-	path, body, err := activePortableRuntimeConfig(app.root)
+	control, err := activeRouteControl(app.root)
 	if err != nil {
 		return lastConfig, err
 	}
-	defer clear(body)
-	if path == lastConfig {
-		return path, nil
+	state := control.snapshot()
+	if !state.active() || state.Policy == nil {
+		return lastConfig, errors.New("本地数据面正在切换")
 	}
-	preference, err := clientcore.ReadPreference(filepath.Join(app.root, "state", "preference.json"))
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return lastConfig, err
 	}
-	plan, err := clientruntime.BuildWindowsSelectorPlan(body, mustRuntimeProfile(app.edition), windowsClientCAPath(app.root, app.edition))
-	if err != nil {
-		return lastConfig, err
-	}
-	applyCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	if err := clientruntime.ApplyWindowsPreference(applyCtx, &http.Client{Timeout: 3 * time.Second}, plan, preference); err != nil {
-		return lastConfig, err
-	}
-	app.routeReady(sequence, plan, preference)
-	return path, nil
+	app.routeReady(sequence, state.Policy, state.Preference)
+	return state.Applied, nil
 }
 
 func mustRuntimeProfile(edition clientEdition) clientruntime.WindowsRuntimeProfile {
@@ -74,23 +62,6 @@ func mustRuntimeProfile(edition clientEdition) clientruntime.WindowsRuntimeProfi
 		panic(err)
 	}
 	return profile
-}
-
-func activePortableRuntimeConfig(root string) (string, []byte, error) {
-	paths, err := filepath.Glob(filepath.Join(root, "runtime", ".sing-box-active-*.json"))
-	if err != nil || len(paths) != 1 {
-		return "", nil, errors.New("本地数据面尚未提供出口控制")
-	}
-	info, err := os.Lstat(paths[0])
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() <= 0 || info.Size() > 16<<20 {
-		return "", nil, errors.New("本地出口控制配置无效")
-	}
-	body, err := os.ReadFile(paths[0])
-	if err != nil || int64(len(body)) != info.Size() {
-		clear(body)
-		return "", nil, errors.New("读取本地出口控制配置失败")
-	}
-	return paths[0], body, nil
 }
 
 func portableRouteOptions(plan *clientruntime.WindowsSelectorPlan) ([]portableRouteOption, error) {
@@ -245,36 +216,20 @@ func (app *portableGUI) setRoutePreference(preference clientcore.Preference) err
 		return errors.New("出口未获当前签名配置授权，或数据面正在切换")
 	}
 	path := filepath.Join(app.root, "state", "preference.json")
-	previous, err := clientcore.ReadPreference(path)
-	if err != nil {
-		return err
-	}
-	var plan *clientruntime.WindowsSelectorPlan
 	if online {
-		_, body, err := activePortableRuntimeConfig(app.root)
+		control, err := activeRouteControl(app.root)
 		if err != nil {
 			return err
 		}
-		plan, err = clientruntime.BuildWindowsSelectorPlan(body, mustRuntimeProfile(app.edition), windowsClientCAPath(app.root, app.edition))
-		clear(body)
-		if err != nil {
+		if err := control.apply(app.ctx, preference); err != nil {
 			return err
 		}
-		ctx, cancel := context.WithTimeout(app.ctx, 5*time.Second)
-		err = clientruntime.ApplyWindowsPreference(ctx, &http.Client{Timeout: 3 * time.Second}, plan, preference)
-		cancel()
-		if err != nil {
+	} else {
+		if err := clientcore.WritePreference(path, preference); err != nil {
 			return err
 		}
 	}
-	if err := clientcore.WritePreference(path, preference); err != nil {
-		if plan != nil {
-			ctx, cancel := context.WithTimeout(app.ctx, 5*time.Second)
-			defer cancel()
-			_ = clientruntime.ApplyWindowsPreference(ctx, &http.Client{Timeout: 3 * time.Second}, plan, previous)
-		}
-		return err
-	}
+
 	app.mu.Lock()
 	app.routeSelected = index
 	app.routeDetail = ""

@@ -29,7 +29,7 @@ func TestConfiguredChainTreatsTagAsOpaque(t *testing.T) {
 func TestStateStoreWritesCompleteSortedSnapshot(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "state.json")
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
-	s, err := newStateStore(p, "demo-d", []Decl{
+	s, err := newStateStore(context.Background(), p, "demo-d", []Decl{
 		{ID: "z", Candidates: []Cand{{Tag: "opaque-z"}}},
 		{ID: "a", Candidates: []Cand{{Tag: "opaque-a"}}},
 	}, now)
@@ -90,7 +90,7 @@ func TestStateStorePrunesRemovedDeclarationsAtStartup(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
-	if _, err := newStateStore(p, "demo-d", []Decl{keep}, now); err != nil {
+	if _, err := newStateStore(context.Background(), p, "demo-d", []Decl{keep}, now); err != nil {
 		t.Fatal(err)
 	}
 	got, err := ReadState(p)
@@ -116,7 +116,7 @@ func TestStateStoreDropsLegacyAndChangedDecisionScopesAtStartup(t *testing.T) {
 	if err := os.WriteFile(p, b, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newStateStore(p, "demo-d", []Decl{current}, now); err != nil {
+	if _, err := newStateStore(context.Background(), p, "demo-d", []Decl{current}, now); err != nil {
 		t.Fatal(err)
 	}
 	got, err := ReadState(p)
@@ -132,7 +132,7 @@ func TestStateStoreDoesNotWriteAfterCancellation(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "state.json")
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
 	d := Decl{ID: "d", Candidates: []Cand{{Tag: "a"}}}
-	s, err := newStateStore(p, "demo-d", []Decl{d}, now)
+	s, err := newStateStore(context.Background(), p, "demo-d", []Decl{d}, now)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -241,7 +241,7 @@ without this fingerprint are rejected; already joined identities remain valid. S
   outbounds intact; Portable Mixed receives neither setting. Native compatibility
   is checked with the bundled sing-box using `TestOfficialWindowsTUNCaptureCheck`
   (`LOOM_SING_BOX_EXECUTABLE` and `LOOM_TEST_CA_CERTIFICATE`).
-- `internal/clientreport` sends the existing minimal Observation with a v5
+- `internal/clientreport` sends the existing Observation, including actual Agent evidence, with a v5
   attestation and self-check v1, using the retained DPAPI identity. After
   activation it reports the active snapshot every 60 seconds to the same-origin
   report URL derived from the validated enrollment URL; redirects are refused
@@ -267,6 +267,57 @@ without this fingerprint are rejected; already joined identities remain valid. S
   time, and the data-plane lock prevents two joined workloads; the latter remains held while
   an update swaps child data planes, and the final joined-state commit never
   replaces an existing file.
+
+## 本地 Agent 接入（§5.5 / §7.3.3）
+
+Windows 每个激活实例在本机运行 `internal/agent`，与 Linux 接入节点复用同一份
+Probe → Rank → Decide → Switch 实现。不是连接一台远程调度 Agent。
+
+签名 bundle 必须恰有 `sing-box/config.json`、`agent/config.json`。两个文件共同
+验签、hydrate、交叉校验、计算 bundle/CandidateVersion hash，并作为一个 DPAPI
+对象原子提交。CandidateState schema 为 2；不迁移 schema 1，也不接受旧单文件包。
+这不改变或清除已加入设备的 DPAPI 身份。
+
+Auto 保留各 Service 全部授权候选。FixedExit 按签名 `candidate.chain` 最后一跳
+逐 Service 裁剪候选，保留该出口的全部前缀，由 Agent 用 Service 的真实 targets
+和候选 probe user 测量完整路径。Direct 使用授权 direct 候选并停止 Agent。
+客户端没有静态 selector PUT；偏好同时裁剪 sing-box selector 成员，冷启动默认值
+也必须属于当前授权集合。配置、偏好、重连和进程重启都通过同一激活事务，先取消并
+等待旧 Agent 完全退出，再激活数据面、等待 Clash API readback，最后启动新 Agent。
+激活失败恢复上一份完整配置；恢复不得跨越已成功提交的出口偏好。
+
+Agent 状态、measurement 和 event 位于本机 `runtime/agent/generation-*` 下；Windows
+DACL 仅授予当前运行身份、SYSTEM 和管理员访问，子文件继承。每次激活使用独立目录，
+旧实例不再提供报告，也不会把旧 scope 样本带入新实例。旧目录保留用于本地排障。
+共享 Agent 的服务器 report 适配仅在非 Windows 编译；Windows 明确拒绝服务器
+观测源配置，排序只消费本机完整路径测量。
+
+Windows reporter 使用既有 AgentState 的客户端线格式投影、attest.AgentClaim 和
+canonical v5，上报重新 GET 得到的 candidate 及签名 plan 对应的 chain。质量只有在
+同一实例、同一实际候选、未过期时才可携带；否则标记 unknown 并省略数值。
+`decision_scope` 写入既有受签名保护的 `reason`（v5 没有独立 scope 字段），不增加
+字段、端点或签名版本。数据面健康采集仍保留；缺少有效 Agent 质量不能报告为健康。
+
+新增测试覆盖双文件缺失/额外文件/篡改/验签失败/plan 非法、指针提交失败回滚、
+Agent-only 变化推进 hash、旧 schema 拒绝；完整代理请求验证慢前缀到快前缀的门槛
+切换、故障切换和 readback 拒绝；还覆盖 scope 失效、Auto/FixedExit/Direct、取消和
+重连屏障，以及 v5 实际路径/质量/原因签名与篡改拒绝。
+官方 sing-box 的原生隔离加入测试还核对实际 Agent selector/chain、外层与 v5 附件
+一致、不可达目标不产生虚构延迟，并确认本地验签服务返回空正文 204。
+设置 `LOOM_SING_BOX_EXECUTABLE` 后，`TestOfficialWindowsAgentSwitchesCompleteFixedExitPaths`
+使用回环上的两跳 TLS 代理验证门槛切换：较慢前缀排在名称顺序前方，较快前缀达到
+`min_samples` 后获选，两条路径共享末跳。测试还核对普通代理入口确实经过获胜前缀，
+再断开该前缀，验证同一窗口内故障切回仍保持固定末跳；不创建 TUN 或使用生产身份。
+
+本次修改没有部署。真实 Windows canary 仍需逐项进行：
+
+- 使用正常已加入身份接收现有双文件签名 bundle；核对缺失/篡改拒绝及激活失败回滚。
+- 在 Portable Mixed、Portable TUN、Installed 上核对候选探测确实经各自完整路径，
+  达门槛后优胜前缀切换，固定出口全过程末跳不变，当前路径故障可切换。
+- 验证 Auto/FixedExit/Direct、断开重连、sing-box 异常退出及配置更新期间无旧 Agent
+  selector PUT、文件追加或报告；检查本地证据目录继承的实际 ACL。
+- 核对自动 v5 报告得到空正文 204，中控看到与 Clash GET 一致的完整路径、质量、原因
+  与 reason 内的 decision_scope；停止后不再上报并按现有规则变 stale。
 
 ## Current implementation boundary
 
@@ -337,3 +388,12 @@ Opt-in native acceptance tests:
   `TestInstalledGUIJoinLive`, executed as the ordinary installing user.
 - `LOOM_ACCEPT_TUN_LIFECYCLE=1`: `TestWindowsTUNLifecycleLive`, executed elevated
   after normal Portable QR join and with other Loom workloads disconnected.
+
+## 本次 Agent 接入修改文件
+
+| 目录 | 运行代码 / 文档 | 测试 |
+|---|---|---|
+| `clients/windows` | `README.md`, `activation.go`, `agent_activation.go`, `main_windows.go`, `report_windows.go`, `route_control.go`, `route_windows.go`, `runtime_report.go`, `update_loop.go` | `activation_test.go`, `agent_activation_test.go`, `join_windows_test.go`, `lifecycle_windows_test.go`, `report_windows_test.go` |
+| `internal/clientruntime` | `agent.go`, `agent_paths_other.go`, `agent_paths_windows.go`, `candidate.go`, `selector.go` | `agent_paths_windows_test.go`, `agent_test.go`, `agent_windows_integration_test.go`, `candidate_test.go`, `candidate_windows_test.go`, `selector_test.go` |
+| `internal/clientreport` | `observation.go` | `observation_test.go` |
+| `internal/agent` | `observed.go`, `observed_windows.go`, `run.go`, `state.go`, `store.go` | `observed_test.go`, `observed_windows_test.go`, `run_state_test.go`, `state_test.go` |

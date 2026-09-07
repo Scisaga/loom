@@ -105,7 +105,10 @@ type stateStore struct {
 	scopes map[string]string
 }
 
-func newStateStore(path, node string, declarations []Decl, now time.Time) (*stateStore, error) {
+func newStateStore(ctx context.Context, path, node string, declarations []Decl, now time.Time) (*stateStore, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s := &stateStore{
 		path: path, node: node, byID: map[string]Selection{},
 		scopes: make(map[string]string, len(declarations)),
@@ -130,7 +133,7 @@ func newStateStore(path, node string, declarations []Decl, now time.Time) (*stat
 	}
 	// 启动就写一份过滤后的快照。否则已经从配置删除的 declaration 会在
 	// 第一个新观测到来前继续冒充当前 route。
-	if err := s.writeLocked(now); err != nil {
+	if err := s.writeLocked(ctx, now); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -157,7 +160,7 @@ func (s *stateStore) observe(ctx context.Context, v Selection, now time.Time) er
 	v.Health = cloneCandidateHealth(v.Health)
 	v.UpdatedAt = now.UTC().Format(time.RFC3339)
 	s.byID[v.Declaration] = v
-	return s.writeLocked(now)
+	return s.writeLocked(ctx, now)
 }
 
 func cloneCandidateHealth(h *CandidateHealth) *CandidateHealth {
@@ -180,7 +183,10 @@ func cloneCandidateHealth(h *CandidateHealth) *CandidateHealth {
 	return &cp
 }
 
-func (s *stateStore) writeLocked(now time.Time) error {
+func (s *stateStore) writeLocked(ctx context.Context, now time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if s == nil || s.path == "" {
 		return nil
 	}
@@ -204,7 +210,14 @@ func (s *stateStore) writeLocked(now time.Time) error {
 		return err
 	}
 	tmp := s.path + ".tmp"
+	defer os.Remove(tmp)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := os.WriteFile(tmp, append(b, '\n'), 0o644); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return os.Rename(tmp, s.path)

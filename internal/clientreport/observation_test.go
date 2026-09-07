@@ -3,6 +3,7 @@
 package clientreport_test
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -15,6 +16,7 @@ import (
 	"loom/internal/clientreport"
 	"loom/internal/report"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 )
@@ -166,5 +168,57 @@ func TestProblemsAreNormalizedWithoutInventingHealth(t *testing.T) {
 	}
 	if _, err := clientreport.Build("demo-client", "0123456789ab", []string{"bad\nproblem"}, time.Now(), key, cert, ca); err == nil {
 		t.Fatal("control characters accepted")
+	}
+}
+
+func TestAgentPathQualityReasonAreBoundToCanonicalV5(t *testing.T) {
+	now := time.Now()
+	key, cert, ca := reportIdentityFixture(t, "demo-client")
+	defer clear(key)
+	p50, p95, best, kbps := 12, 24, 12, 100
+	state := &clientreport.AgentState{Node: "demo-client", TS: now.UTC().Format(time.RFC3339), ComponentVersion: "demo-agent", Selections: []clientreport.AgentSelection{{
+		Declaration: "demo-service", Selector: "opaque:selector", Candidate: "opaque:fast", Chain: []string{"demo-prefix-b", "demo-exit"}, UpdatedAt: now.UTC().Format(time.RFC3339),
+		Reason: "完整路径改善超过门槛 [decision_scope=" + strings.Repeat("a", 64) + "]",
+		Health: &clientreport.AgentCandidateHealth{Candidates: 2, RecentSuccess: 2, SelectedState: "success", SelectedSamples: 6, SelectedP50MS: &p50, SelectedP95MS: &p95, BestP50MS: &best, SelectedKBps: &kbps, BestKBps: &kbps},
+	}}}
+	o, err := clientreport.BuildWithAgent("demo-client", "0123456789ab", nil, state, now, key, cert, ca)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyWithServer(o, ca, now, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if o.Attest.CanonicalVersion != 5 || o.Attest.Agent == nil || o.Attest.Agent.Selections[0].Health.SelectedP50MS == nil {
+		t.Fatal("not a signed Agent v5 report")
+	}
+	for name, mutate := range map[string]func(*clientreport.Observation){
+		"candidate":        func(o *clientreport.Observation) { o.Agent.Selections[0].Candidate = "opaque:other" },
+		"chain":            func(o *clientreport.Observation) { o.Agent.Selections[0].Chain[0] = "demo-forged-prefix" },
+		"quality":          func(o *clientreport.Observation) { *o.Agent.Selections[0].Health.SelectedP50MS = 1 },
+		"reason and scope": func(o *clientreport.Observation) { o.Agent.Selections[0].Reason = "forged decision_scope" },
+		"signed scope":     func(o *clientreport.Observation) { o.Attest.Agent.Selections[0].Reason = "forged decision_scope" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			body, _ := json.Marshal(o)
+			var changed clientreport.Observation
+			_ = json.Unmarshal(body, &changed)
+			mutate(&changed)
+			if err := verifyWithServer(&changed, ca, now, time.Minute); err == nil {
+				t.Fatal("unsigned/tampered Agent evidence accepted")
+			}
+		})
+	}
+	state.Selections[0].Health = nil
+	state.Selections[0].Reason = "unknown"
+	unknown, err := clientreport.BuildWithAgent("demo-client", "0123456789ab", []string{"Agent 尚无测量"}, state, now, key, cert, ca)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(unknown)
+	if bytes.Contains(body, []byte("selected_p50_ms")) || unknown.SelfCheck.Healthy {
+		t.Fatal("missing quality became fabricated zero/healthy")
+	}
+	if err := verifyWithServer(unknown, ca, now, time.Minute); err != nil {
+		t.Fatal(err)
 	}
 }
