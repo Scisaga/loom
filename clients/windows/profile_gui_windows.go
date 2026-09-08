@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"runtime"
 	"slices"
-	"strings"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -21,7 +20,7 @@ var (
 
 func (app *portableGUI) updateStatusIcon(state portableGUIState) {
 	procSendMessage.Call(app.controls.stateIcon, portableSTMSetIcon, app.statusIcons.icon(state, app.statusFrame, app.statusIcon), 0)
-	animated := portableStatusAnimated(state)
+	animated := portableStatusAnimated(state) || slices.ContainsFunc(app.snapshot().profiles, func(p windowsProfileDisplay) bool { return portableStatusAnimated(p.State) })
 	if animated == app.statusAnimating {
 		return
 	}
@@ -33,63 +32,16 @@ func (app *portableGUI) updateStatusIcon(state portableGUIState) {
 	}
 }
 
-func (app *portableGUI) layoutProfileControls(snapshot portableGUISnapshot, width, height int32) {
-	s := app.scale
-	move := func(control uintptr, x, y, w, h int32) {
-		procMoveWindow.Call(control, uintptr(x), uintptr(y), uintptr(w), uintptr(h), 0)
-	}
-	for _, c := range app.controls.all() {
-		setPortableControlVisible(c, false)
-	}
-	for _, c := range []uintptr{app.controls.brandIcon, app.controls.brandName, app.controls.brandEdition, app.controls.networkList,
-		app.controls.addProfileButton, app.controls.profileNameEdit, app.controls.renameProfileButton,
-		app.controls.interfaceGroup, app.controls.stateCaption, app.controls.stateIcon, app.controls.stateValue,
-		app.controls.primaryButton, app.controls.deleteButton, app.controls.message} {
-		setPortableControlVisible(c, true)
-	}
-	margin, left, gap := s(8), s(165), s(12)
-	right := margin + left + gap
-	rightWidth := width - right - margin
-	bottom := height - s(30)
-	move(app.controls.brandIcon, margin, s(10), s(48), s(48))
-	move(app.controls.brandName, margin+s(58), s(14), left-s(58), s(20))
-	move(app.controls.brandEdition, margin+s(58), s(36), left-s(58), s(20))
-	move(app.controls.networkList, margin, s(70), left, bottom-s(70)-s(64))
-	move(app.controls.profileNameEdit, margin, bottom-s(56), left, s(23))
-	move(app.controls.addProfileButton, margin, bottom-s(27), (left-s(6))/2, s(26))
-	move(app.controls.renameProfileButton, margin+(left+s(6))/2, bottom-s(27), (left-s(6))/2, s(26))
-	move(app.controls.interfaceGroup, right, s(8), rightWidth, s(154))
-	captionX, captionWidth := right+s(12), s(56)
-	valueX := captionX + captionWidth + s(8)
-	valueWidth := right + rightWidth - valueX - s(12)
-	move(app.controls.stateCaption, captionX, s(37), captionWidth, s(22))
-	move(app.controls.stateIcon, valueX, s(38), s(20), s(20))
-	move(app.controls.stateValue, valueX+s(25), s(37), valueWidth-s(25), s(22))
-	if snapshot.joined {
-		for _, c := range []uintptr{app.controls.modeCaption, app.controls.modeValue, app.controls.routeCaption, app.controls.routeCombo,
-			app.controls.localGroup, app.controls.deviceCaption, app.controls.deviceValue, app.controls.pathsValue, app.controls.pathsHint, app.controls.pathsDetailsButton} {
-			setPortableControlVisible(c, true)
+func (app *portableGUI) animateMisakaProfiles(snapshot portableGUISnapshot) {
+	for index, profile := range snapshot.profiles {
+		if !portableStatusAnimated(profile.State) {
+			continue
 		}
-		move(app.controls.modeCaption, captionX, s(65), captionWidth, s(21))
-		move(app.controls.modeValue, valueX, s(65), valueWidth, s(21))
-		move(app.controls.routeCaption, captionX, s(95), captionWidth, s(21))
-		move(app.controls.routeCombo, valueX, s(90), valueWidth, s(180))
-		move(app.controls.primaryButton, valueX, s(124), s(112), s(26))
-		move(app.controls.deleteButton, valueX+s(122), s(124), s(80), s(26))
-		localTop := s(172)
-		move(app.controls.localGroup, right, localTop, rightWidth, bottom-localTop)
-		move(app.controls.deviceCaption, captionX, localTop+s(23), captionWidth, s(20))
-		move(app.controls.deviceValue, valueX, localTop+s(23), valueWidth, s(20))
-		move(app.controls.pathsValue, right+s(12), localTop+s(49), rightWidth-s(24), bottom-localTop-s(115))
-		move(app.controls.pathsHint, right+s(12), bottom-s(60), rightWidth-s(24), s(23))
-		move(app.controls.pathsDetailsButton, right+s(12), bottom-s(32), s(105), s(25))
-		move(app.controls.message, margin, height-s(25), width-2*margin, s(23))
-	} else {
-		setPortableControlVisible(app.controls.pasteButton, snapshot.selectedProfile != "")
-		move(app.controls.primaryButton, valueX, s(100), s(112), s(26))
-		move(app.controls.pasteButton, valueX+s(122), s(100), s(112), s(26))
-		move(app.controls.deleteButton, right+s(12), s(176), s(80), s(26))
-		move(app.controls.message, right+s(12), s(218), rightWidth-s(24), s(100))
+		var rect portableRect
+		procSendMessage.Call(app.controls.networkList, 0x0198, uintptr(index), uintptr(unsafe.Pointer(&rect)))
+		rect.left += app.scale(5)
+		rect.right = rect.left + app.scale(22)
+		procInvalidateRect.Call(app.controls.networkList, uintptr(unsafe.Pointer(&rect)), 0)
 	}
 }
 
@@ -157,9 +109,4 @@ func (app *portableGUI) renderProfileDetails(s portableGUISnapshot, previous *po
 	}
 	setPortableControlText(app.controls.pathsValue, text)
 	setPortableControlText(app.controls.pathsDetailsButton, button)
-	if s.activeProfile != "" && s.activeProfile != s.selectedProfile {
-		_, message, _, _ := app.presentation(s)
-		message = "当前连接：“" + s.activeProfileName + "”；正在查看：“" + s.profileName + "”。  " + message
-		setPortableControlText(app.controls.message, strings.TrimSpace(message))
-	}
 }

@@ -55,6 +55,7 @@ type portableGUISnapshot struct {
 	profileName       string
 	activeProfile     string
 	activeProfileName string
+	profileDraft      *windowsProfileDraftDisplay
 }
 
 func (s portableGUISnapshot) equal(other portableGUISnapshot) bool {
@@ -64,7 +65,20 @@ func (s portableGUISnapshot) equal(other portableGUISnapshot) bool {
 		s.routeDetail == other.routeDetail && slices.Equal(s.routeOptions, other.routeOptions) &&
 		slices.Equal(s.paths, other.paths) && slices.Equal(s.profiles, other.profiles) &&
 		s.profilesReady == other.profilesReady && s.selectedProfile == other.selectedProfile &&
-		s.profileName == other.profileName && s.activeProfile == other.activeProfile && s.activeProfileName == other.activeProfileName
+		s.profileName == other.profileName && s.activeProfile == other.activeProfile && s.activeProfileName == other.activeProfileName &&
+		equalProfileDraft(s.profileDraft, other.profileDraft)
+}
+
+func equalProfileDraft(a, b *windowsProfileDraftDisplay) bool {
+	return a == nil && b == nil || a != nil && b != nil && *a == *b
+}
+
+func cloneProfileDraft(value *windowsProfileDraftDisplay) *windowsProfileDraftDisplay {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
 }
 
 type portableGUI struct {
@@ -76,6 +90,7 @@ type portableGUI struct {
 	hwnd                uintptr
 	windowDPI           int32
 	controls            portableGUIControls
+	skin                *misakaUI
 	rendered            *portableGUISnapshot // §7.2：仅 UI 线程访问；服务轮询不等于界面变化。
 	fonts               []uintptr
 	statusIcon          uintptr
@@ -116,6 +131,7 @@ type portableGUI struct {
 	profileMessage      string
 	brokerProfiles      []windowsProfileDisplay
 	brokerProfilesReady bool
+	brokerProfileDraft  *windowsProfileDraftDisplay
 	selectedProfile     string
 	profileName         string
 	activeProfile       string
@@ -233,6 +249,11 @@ func (app *portableGUI) afterJoin(deviceID string) {
 }
 
 func (app *portableGUI) importJoinArtifact(source string) {
+	if app.skin != nil && app.snapshot().profileDraft != nil {
+		invite, err := clientjoin.Read(source, nil)
+		app.acceptMisakaInvite(invite, err)
+		return
+	}
 	if app.profileHost && !app.brokerClient && app.profileManager() == nil {
 		return
 	}
@@ -260,6 +281,10 @@ func (app *portableGUI) importJoinArtifact(source string) {
 }
 
 func (app *portableGUI) importJoinInvite(invite clientenroll.Invite) {
+	if app.skin != nil && app.snapshot().profileDraft != nil {
+		app.acceptMisakaInvite(invite, nil)
+		return
+	}
 	if app.profileHost && !app.brokerClient && app.profileManager() == nil {
 		return
 	}
@@ -651,6 +676,10 @@ func (app *portableGUI) chooseJoinArtifact() {
 
 func (app *portableGUI) pasteJoinArtifact() {
 	snapshot := app.snapshot()
+	if app.skin != nil && snapshot.profileDraft != nil {
+		app.chooseMisakaInvite(true)
+		return
+	}
 	if snapshot.joined || (snapshot.state != guiNeedsJoin && snapshot.state != guiError) {
 		return
 	}
@@ -674,7 +703,7 @@ func (app *portableGUI) acceptDroppedFiles(drop uintptr) {
 		return
 	}
 	snapshot := app.snapshot()
-	if snapshot.joined || (snapshot.state != guiNeedsJoin && snapshot.state != guiError) {
+	if snapshot.profileDraft == nil && (snapshot.joined || (snapshot.state != guiNeedsJoin && snapshot.state != guiError)) {
 		showWindowsError("导入 Loom 二维码", errors.New("此 Device 已经加入网络，不能导入另一张二维码"))
 		return
 	}
@@ -786,6 +815,7 @@ func (app *portableGUI) snapshot() portableGUISnapshot {
 		routeSelected: app.routeSelected, routeBusy: app.routeBusy, routeDetail: app.routeDetail,
 		paths: slices.Clone(app.paths), profilesReady: app.brokerProfilesReady, profiles: slices.Clone(app.brokerProfiles),
 		selectedProfile: app.selectedProfile, profileName: app.profileName, activeProfile: app.activeProfile, activeProfileName: app.activeProfileName,
+		profileDraft: cloneProfileDraft(app.brokerProfileDraft),
 	}
 }
 
@@ -846,8 +876,7 @@ func showWindowsError(title string, err error) {
 	messageBox(0, title, err.Error(), portableMBOK|portableMBIconError)
 }
 
-// Native Win32 controls keep the Portable shell compact and consistent with
-// Windows desktop conventions. The window itself owns no custom-painted canvas.
+// §7.2：外观由轻量绘图层统一绘制，原生控件继续提供输入、焦点和辅助技术语义。
 
 const (
 	portableWMCreate         = 0x0001
@@ -880,11 +909,12 @@ const (
 	portableWSMinimizeBox   = 0x00020000
 	portableWSMaximizeBox   = 0x00010000
 	portableWSChild         = 0x40000000
+	portableWSClipChildren  = 0x02000000
 	portableWSVisible       = 0x10000000
 	portableWSVScroll       = 0x00200000
 	portableWSTabStop       = 0x00010000
 	portableMainWindowStyle = portableWSOverlapped | portableWSCaption | portableWSSysMenu |
-		portableWSThickFrame | portableWSMinimizeBox | portableWSMaximizeBox
+		portableWSThickFrame | portableWSMinimizeBox | portableWSMaximizeBox | portableWSClipChildren
 
 	portableWSExClientEdge    = 0x00000200
 	portableLBSNotify         = 0x0001
@@ -1168,6 +1198,15 @@ type portableIconInfo struct {
 }
 
 type portableGUIControls struct {
+	modeAuto            uintptr
+	modeFixed           uintptr
+	modeDirect          uintptr
+	profileMenu         uintptr
+	draftName           uintptr
+	draftImport         uintptr
+	draftPaste          uintptr
+	draftSubmit         uintptr
+	draftCancel         uintptr
 	brandIcon           uintptr
 	brandName           uintptr
 	brandEdition        uintptr
@@ -1205,6 +1244,8 @@ type portableGUIControls struct {
 
 func (controls portableGUIControls) all() []uintptr {
 	return []uintptr{
+		controls.modeAuto, controls.modeFixed, controls.modeDirect, controls.profileMenu,
+		controls.draftName, controls.draftImport, controls.draftPaste, controls.draftSubmit, controls.draftCancel,
 		controls.brandIcon, controls.brandName, controls.brandEdition,
 		controls.networkList, controls.interfaceGroup,
 		controls.addProfileButton, controls.renameProfileButton, controls.profileNameEdit,
@@ -1323,11 +1364,12 @@ func createPortableWindow(app *portableGUI) (uintptr, error) {
 	iconSmall := loadPortableAppIcon(instance, portableSMCXSmallIcon, portableSMCYSmallIcon, dpi)
 	wndClass := portableWNDClassEx{
 		size:       uint32(unsafe.Sizeof(portableWNDClassEx{})),
+		style:      0x0008, // §7.2：自绘标题栏保留双击最大化。
 		wndProc:    windows.NewCallback(portableWindowProc),
 		instance:   instance,
 		icon:       icon,
 		cursor:     cursor,
-		background: portableColorWindow + 1,
+		background: 0,
 		className:  className,
 		iconSmall:  iconSmall,
 	}
@@ -1336,7 +1378,7 @@ func createPortableWindow(app *portableGUI) (uintptr, error) {
 		return 0, fmt.Errorf("register Windows client UI: %w", registerErr)
 	}
 	style := uintptr(portableMainWindowStyle)
-	width, height := portableMinimumWindowSize(dpi)
+	width, height := int32(860)*dpi/96, int32(600)*dpi/96
 	screenWidth, _, _ := procGetSystemMetrics.Call(0)
 	screenHeight, _, _ := procGetSystemMetrics.Call(1)
 	x, y := int32(portableCWUseDefault), int32(portableCWUseDefault)
@@ -1356,7 +1398,7 @@ func createPortableWindow(app *portableGUI) (uintptr, error) {
 	// window's real DPI so controls and the bottom status row cannot overlap.
 	if windowDPI, _, _ := procGetDPIForWindow.Call(hwnd); windowDPI != 0 && int32(windowDPI) != dpi {
 		dpi = int32(windowDPI)
-		width, height = portableMinimumWindowSize(dpi)
+		width, height = int32(860)*dpi/96, int32(600)*dpi/96
 		screenWidth, _, _ = procGetSystemMetrics.Call(0)
 		screenHeight, _, _ = procGetSystemMetrics.Call(1)
 		if screenWidth > uintptr(width) && screenHeight > uintptr(height) {
@@ -1366,6 +1408,11 @@ func createPortableWindow(app *portableGUI) (uintptr, error) {
 		procMoveWindow.Call(hwnd, uintptr(x), uintptr(y), uintptr(width), uintptr(height), 0)
 	}
 	app.windowDPI = dpi
+	configureMisakaFrame(hwnd)
+	if err := fitMisakaInitialWindow(hwnd, dpi); err != nil {
+		procDestroyWindow.Call(hwnd)
+		return 0, err
+	}
 	runtime.KeepAlive(wndClass)
 	return hwnd, nil
 }
@@ -1374,27 +1421,7 @@ func portableMinimumWindowSize(dpi int32) (int32, int32) {
 	if dpi <= 0 {
 		dpi = 96
 	}
-	rect := portableRect{
-		right:  int32(portableMinClientWidth) * dpi / 96,
-		bottom: int32(portableMinClientHeight) * dpi / 96,
-	}
-	adjusted := false
-	if err := procAdjustWindowRectDPI.Find(); err == nil {
-		result, _, _ := procAdjustWindowRectDPI.Call(
-			uintptr(unsafe.Pointer(&rect)), portableMainWindowStyle, 0, 0, uintptr(dpi),
-		)
-		adjusted = result != 0
-	}
-	if !adjusted {
-		result, _, _ := procAdjustWindowRectEx.Call(
-			uintptr(unsafe.Pointer(&rect)), portableMainWindowStyle, 0, 0,
-		)
-		adjusted = result != 0
-	}
-	if !adjusted {
-		return rect.right, rect.bottom
-	}
-	return rect.right - rect.left, rect.bottom - rect.top
+	return 720 * dpi / 96, 500 * dpi / 96
 }
 
 func portableSystemMetricForDPI(metric, dpi int32) int32 {
@@ -1419,6 +1446,9 @@ func loadPortableAppIcon(instance uintptr, widthMetric, heightMetric, dpi int32)
 
 func (app *portableGUI) createControls() error {
 	app.rendered = nil
+	if app.skin == nil {
+		app.skin = &misakaUI{}
+	}
 	instance, _, _ := procGetModuleHandle.Call(0)
 	create := func(target *uintptr, exStyle uintptr, className, text string, style, id uintptr) error {
 		classPtr, _ := windows.UTF16PtrFromString(className)
@@ -1449,17 +1479,17 @@ func (app *portableGUI) createControls() error {
 		{&app.controls.brandIcon, 0, "STATIC", "", portableSSIcon, 0},
 		{&app.controls.brandName, 0, "STATIC", "Loom", portableSSLeft | portableSSNoPrefix | portableSSCenterImage, 0},
 		{&app.controls.brandEdition, 0, "STATIC", "", portableSSLeft | portableSSNoPrefix | portableSSCenterImage, 0},
-		{&app.controls.networkList, portableWSExClientEdge, "LISTBOX", "", portableWSVScroll | portableWSTabStop | portableLBSNotify | portableLBSOwnerDraw | portableLBSHasStrings | portableLBSNoIntegral, portableControlNetworkList},
+		{&app.controls.networkList, 0, "LISTBOX", "", portableWSVScroll | portableWSTabStop | portableLBSNotify | portableLBSOwnerDraw | portableLBSHasStrings | portableLBSNoIntegral, portableControlNetworkList},
 		{&app.controls.addProfileButton, 0, "BUTTON", "添加配置", portableWSTabStop | portableBSOwnerDraw, portableControlAddProfile},
 		{&app.controls.renameProfileButton, 0, "BUTTON", "保存名称", portableWSTabStop | portableBSOwnerDraw, portableControlRenameProfile},
-		{&app.controls.profileNameEdit, portableWSExClientEdge, "EDIT", "", portableWSTabStop | 0x0080, portableControlProfileName},
-		{&app.controls.pathsValue, portableWSExClientEdge, "EDIT", "", portableWSTabStop | portableWSVScroll | 0x0004 | 0x0040 | 0x0800, 0},
+		{&app.controls.profileNameEdit, 0, "EDIT", "", portableWSTabStop | 0x0080, portableControlProfileName},
+		{&app.controls.pathsValue, 0, "LISTBOX", "", portableWSTabStop | portableWSVScroll | portableLBSOwnerDraw | portableLBSHasStrings | portableLBSNoIntegral | 0x4000, 0},
 		{&app.controls.pathsDetailsButton, 0, "BUTTON", "详细信息", portableWSTabStop | portableBSOwnerDraw, portableControlPathDetails},
 		{&app.controls.pathsHint, 0, "STATIC", "当前选路用于新连接；已有连接可能沿用原路径。", portableSSLeft | portableSSNoPrefix, 0},
 		{&app.controls.interfaceGroup, 0, "BUTTON", "连接: Loom 网络", portableBSGroupBox, 0},
 		{&app.controls.stateCaption, 0, "STATIC", "状态:", portableSSRight | portableSSNoPrefix, 0},
 		{&app.controls.stateIcon, 0, "STATIC", "", portableSSIcon | portableSSCenterImage, portableControlStateIcon},
-		{&app.controls.stateValue, 0, "STATIC", "正在检查", portableSSLeft | portableSSNoPrefix | portableSSCenterImage, 0},
+		{&app.controls.stateValue, 0, "STATIC", "正在检查", 0x000D, 0},
 		{&app.controls.modeCaption, 0, "STATIC", "模式:", portableSSRight | portableSSNoPrefix, 0},
 		{&app.controls.modeValue, 0, "STATIC", "", portableSSLeft | portableSSNoPrefix, 0},
 		{&app.controls.endpointCaption, 0, "STATIC", "本地入口:", portableSSRight | portableSSNoPrefix, 0},
@@ -1478,12 +1508,24 @@ func (app *portableGUI) createControls() error {
 		{&app.controls.storageValue, 0, "STATIC", "", portableSSLeft | portableSSNoPrefix, 0},
 		{&app.controls.privilegeCaption, 0, "STATIC", "权限:", portableSSRight | portableSSNoPrefix, 0},
 		{&app.controls.privilegeValue, 0, "STATIC", "", portableSSLeft | portableSSNoPrefix, 0},
-		{&app.controls.message, 0, "STATIC", "", portableSSLeft | portableSSNoPrefix, 0},
+		{&app.controls.message, 0, "STATIC", "", 0x000D, 0},
+		{&app.controls.modeAuto, 0, "BUTTON", "自动", portableWSTabStop | portableBSOwnerDraw, misakaControlAuto},
+		{&app.controls.modeFixed, 0, "BUTTON", "固定出口", portableWSTabStop | portableBSOwnerDraw, misakaControlFixed},
+		{&app.controls.modeDirect, 0, "BUTTON", "直连", portableWSTabStop | portableBSOwnerDraw, misakaControlDirect},
+		{&app.controls.profileMenu, 0, "BUTTON", "配置操作", portableWSTabStop | portableBSOwnerDraw, misakaControlMenu},
+		{&app.controls.draftName, 0, "EDIT", "", portableWSTabStop | 0x0080, misakaControlDraftName},
+		{&app.controls.draftImport, 0, "BUTTON", "选择邀请文件", portableWSTabStop | portableBSOwnerDraw, misakaControlDraftImport},
+		{&app.controls.draftPaste, 0, "BUTTON", "粘贴二维码", portableWSTabStop | portableBSOwnerDraw, misakaControlDraftPaste},
+		{&app.controls.draftSubmit, 0, "BUTTON", "加入并保存", portableWSTabStop | portableBSOwnerDraw, misakaControlDraftSubmit},
+		{&app.controls.draftCancel, 0, "BUTTON", "取消", portableWSTabStop | portableBSOwnerDraw, misakaControlDraftCancel},
 	}
 	for _, spec := range specs {
 		if err := create(spec.target, spec.exStyle, spec.className, spec.text, spec.style, spec.id); err != nil {
 			return err
 		}
+	}
+	if err := app.initializeMisaka(); err != nil {
+		return err
 	}
 
 	if err := app.updateFonts(); err != nil {
@@ -1541,7 +1583,8 @@ func (app *portableGUI) updateFonts() error {
 	app.deleteFonts()
 	app.fonts = []uintptr{regular, brand}
 	// Owner-draw 控件不会根据 WM_SETFONT 自动重新测量行高。
-	procSendMessage.Call(app.controls.networkList, portableLBSetItemHeight, 0, uintptr(app.scale(23)))
+	procSendMessage.Call(app.controls.networkList, portableLBSetItemHeight, 0, uintptr(app.scale(46)))
+	procSendMessage.Call(app.controls.pathsValue, portableLBSetItemHeight, 0, uintptr(app.scale(app.misakaPathHeight())))
 	procSendMessage.Call(app.controls.routeCombo, portableCBSetItemHeight, ^uintptr(0), uintptr(app.scale(23)))
 	procSendMessage.Call(app.controls.routeCombo, portableCBSetItemHeight, 0, uintptr(app.scale(23)))
 	return nil
@@ -1743,140 +1786,8 @@ func (app *portableGUI) layoutControls() {
 	if result, _, _ := procGetClientRect.Call(app.hwnd, uintptr(unsafe.Pointer(&client))); result == 0 {
 		return
 	}
-	// 控件移动时会复用旧像素；切换加入页后，旧标题可能被复制到新标题下方。
-	// 完成整轮布局后再清除背景并重绘所有子控件，避免中间布局留下残影。
-	defer procRedrawWindow.Call(app.hwnd, 0, 0, portableRDWInvalidate|portableRDWErase|portableRDWAllChildren)
-	width := client.right - client.left
-	height := client.bottom - client.top
-	s := app.scale
-	margin := s(portableLayoutMargin)
-	gap := s(portableLayoutGap)
-	leftWidth := s(140)
-	buttonHeight := s(26)
-	rightX := margin + leftWidth + gap
-	rightWidth := width - rightX - margin
-	if rightWidth < s(300) {
-		rightWidth = s(300)
-	}
-	move := func(control uintptr, x, y, w, h int32) {
-		if control != 0 {
-			procMoveWindow.Call(control, uintptr(x), uintptr(y), uintptr(w), uintptr(h), 0)
-		}
-	}
-
-	snapshot := app.snapshot()
-	if snapshot.profilesReady {
-		app.layoutProfileControls(snapshot, width, height)
-		return
-	}
-	for _, control := range []uintptr{app.controls.addProfileButton, app.controls.renameProfileButton, app.controls.profileNameEdit, app.controls.pathsValue, app.controls.pathsDetailsButton, app.controls.pathsHint} {
-		setPortableControlVisible(control, false)
-	}
-	joinedOnly := []uintptr{
-		app.controls.networkList, app.controls.interfaceGroup,
-		app.controls.stateCaption, app.controls.stateIcon, app.controls.modeCaption, app.controls.modeValue,
-		app.controls.endpointCaption, app.controls.endpointValue,
-		app.controls.routeCaption, app.controls.routeCombo,
-		app.controls.deleteButton,
-		app.controls.localGroup, app.controls.deviceCaption, app.controls.deviceValue,
-		app.controls.profileCaption, app.controls.profileValue,
-		app.controls.storageCaption, app.controls.storageValue,
-		app.controls.privilegeCaption, app.controls.privilegeValue,
-	}
-	for _, control := range joinedOnly {
-		setPortableControlVisible(control, snapshot.joined)
-	}
-	// The local proxy endpoint belongs in the bottom status line, not among
-	// connection controls. Keep these legacy controls hidden in both states.
-	setPortableControlVisible(app.controls.endpointCaption, false)
-	setPortableControlVisible(app.controls.endpointValue, false)
-	for _, control := range []uintptr{
-		app.controls.brandIcon, app.controls.brandName, app.controls.brandEdition,
-		app.controls.stateValue, app.controls.primaryButton, app.controls.pasteButton, app.controls.message,
-	} {
-		setPortableControlVisible(control, true)
-	}
-	if !snapshot.joined {
-		brandLeft := margin + s(12)
-		brandTop := margin + s(10)
-		move(app.controls.brandIcon, brandLeft, brandTop, s(48), s(48))
-		move(app.controls.brandName, brandLeft+s(58), brandTop+s(4), s(210), s(20))
-		move(app.controls.brandEdition, brandLeft+s(58), brandTop+s(24), s(210), s(20))
-
-		contentWidth := s(360)
-		contentLeft := (width - contentWidth) / 2
-		contentTop := s(125)
-		move(app.controls.stateValue, contentLeft, contentTop, contentWidth, s(26))
-		move(app.controls.message, contentLeft, contentTop+s(38), contentWidth, s(62))
-		move(app.controls.primaryButton, contentLeft, contentTop+s(108), s(120), buttonHeight)
-		move(app.controls.pasteButton, contentLeft+s(130), contentTop+s(108), s(120), buttonHeight)
-		return
-	}
-
-	brandTop := margin + s(3)
-	move(app.controls.brandIcon, margin+s(5), brandTop, s(48), s(48))
-	move(app.controls.brandName, margin+s(60), brandTop+s(4), s(80), s(20))
-	move(app.controls.brandEdition, margin+s(60), brandTop+s(24), s(80), s(20))
-	listTop := margin + s(60)
-
-	interfaceTop := margin
-	interfaceHeight := s(portableInterfaceHeight)
-	move(app.controls.interfaceGroup, rightX, interfaceTop, rightWidth, interfaceHeight)
-	captionX := rightX + s(10)
-	captionWidth := s(82)
-	valueX := captionX + captionWidth + s(8)
-	valueWidth := rightWidth - (valueX - rightX) - s(12)
-	rowTop := interfaceTop + s(28)
-	rowHeight := s(28)
-	move(app.controls.stateCaption, captionX, rowTop, captionWidth, s(20))
-	move(app.controls.stateIcon, valueX, rowTop, s(20), s(20))
-	move(app.controls.stateValue, valueX+s(24), rowTop, valueWidth-s(24), s(20))
-	interfaceRows := []struct {
-		caption uintptr
-		value   uintptr
-	}{
-		{app.controls.modeCaption, app.controls.modeValue},
-		{app.controls.routeCaption, app.controls.routeCombo},
-	}
-	for index, row := range interfaceRows {
-		y := rowTop + int32(index+1)*rowHeight
-		move(row.caption, captionX, y, captionWidth, s(20))
-		if row.value == app.controls.routeCombo {
-			move(row.value, valueX, y-s(3), valueWidth, s(180))
-		} else {
-			move(row.value, valueX, y, valueWidth, s(20))
-		}
-	}
-	primaryWidth := s(105)
-	move(app.controls.primaryButton, valueX, interfaceTop+s(117), primaryWidth, buttonHeight)
-	move(app.controls.deleteButton, valueX+primaryWidth+s(10), interfaceTop+s(117), s(80), buttonHeight)
-	setPortableControlVisible(app.controls.pasteButton, false)
-
-	localTop := interfaceTop + interfaceHeight + gap
-	messageHeight := s(portableStatusHeight)
-	messageTop := height - s(portableStatusBottomMargin) - messageHeight
-	localHeight := messageTop - s(portableStatusGap) - localTop
-	if localHeight < s(portableLocalMinimumHeight) {
-		localHeight = s(portableLocalMinimumHeight)
-	}
-	move(app.controls.networkList, margin, listTop, leftWidth, localTop+localHeight-listTop)
-	move(app.controls.localGroup, rightX, localTop, rightWidth, localHeight)
-	localRows := []struct {
-		caption uintptr
-		value   uintptr
-	}{
-		{app.controls.deviceCaption, app.controls.deviceValue},
-		{app.controls.profileCaption, app.controls.profileValue},
-		{app.controls.storageCaption, app.controls.storageValue},
-		{app.controls.privilegeCaption, app.controls.privilegeValue},
-	}
-	for index, row := range localRows {
-		y := localTop + s(29) + int32(index)*rowHeight
-		move(row.caption, captionX, y, captionWidth, s(20))
-		move(row.value, valueX, y, valueWidth, s(20))
-	}
-	messageInset := margin + s(5)
-	move(app.controls.message, messageInset, messageTop, width-2*messageInset, messageHeight)
+	app.layoutMisaka(app.snapshot(), client.right, client.bottom)
+	procRedrawWindow.Call(app.hwnd, 0, 0, portableRDWInvalidate|portableRDWAllChildren)
 }
 
 func (app *portableGUI) renderControls() {
@@ -1889,25 +1800,36 @@ func (app *portableGUI) renderControls() {
 		return
 	}
 	// §7.2：只有加入页与连接页互换才需要布局；尺寸和 DPI 由系统消息处理。
-	if previous == nil || previous.joined != snapshot.joined || previous.profilesReady != snapshot.profilesReady {
+	if previous == nil || previous.joined != snapshot.joined || previous.profilesReady != snapshot.profilesReady ||
+		(previous.profileDraft == nil) != (snapshot.profileDraft == nil) || previous.routeSelected != snapshot.routeSelected {
 		app.layoutControls()
 	}
 	stateText, message, primaryText, primaryEnabled := app.presentation(snapshot)
+	if snapshot.profilesReady && snapshot.selectedProfile == "" {
+		primaryText = "添加配置"
+	}
+	if snapshot.activeProfile != "" && snapshot.activeProfile != snapshot.selectedProfile && snapshot.joined &&
+		(snapshot.state == guiStopped || snapshot.state == guiError) {
+		primaryText = "切换连接"
+	}
 	if snapshot.routeDetail != "" {
 		if message != "" {
 			message += "  "
 		}
 		message += snapshot.routeDetail
 	}
+	if snapshot.activeProfile != "" && snapshot.activeProfile != snapshot.selectedProfile {
+		message = "当前连接：“" + snapshot.activeProfileName + "”；正在查看：“" + snapshot.profileName + "”。  " + message
+	}
 	setPortableControlText(app.controls.stateValue, stateText)
-	if previous == nil || previous.state != snapshot.state {
+	if previous == nil || previous.state != snapshot.state || !slices.Equal(previous.profiles, snapshot.profiles) {
 		app.statusFrame = 0
 		app.updateStatusIcon(snapshot.state)
 	}
 	setPortableControlText(app.controls.message, message)
 	setPortableControlText(app.controls.primaryButton, primaryText)
 	enablePortableControl(app.controls.primaryButton, primaryEnabled)
-	setPortableControlText(app.controls.deleteButton, "删除…")
+	setPortableControlText(app.controls.deleteButton, "删除配置…")
 	deleteEnabled := (snapshot.joined || snapshot.profilesReady && snapshot.selectedProfile != "") && (snapshot.state == guiStopped || snapshot.state == guiError || snapshot.state == guiNeedsElevation || snapshot.state == guiNeedsJoin)
 	enablePortableControl(app.controls.deleteButton, deleteEnabled)
 	setPortableControlText(app.controls.pasteButton, "粘贴二维码")
@@ -1975,6 +1897,7 @@ func (app *portableGUI) renderControls() {
 	if previous == nil || previous.state != snapshot.state || previous.activeProfile != snapshot.activeProfile || !slices.Equal(previous.profiles, snapshot.profiles) {
 		app.modifyTrayIcon(snapshot)
 	}
+	app.renderMisaka(snapshot, previous)
 	app.rendered = &snapshot
 }
 
@@ -2168,6 +2091,13 @@ func enablePortableControl(hwnd uintptr, enabled bool) {
 }
 
 func setPortableControlVisible(hwnd uintptr, visible bool) {
+	if hwnd == 0 {
+		return
+	}
+	style, _, _ := procMisakaGetWindowLong.Call(hwnd, ^uintptr(15))
+	if (style&portableWSVisible != 0) == visible {
+		return
+	}
 	command := uintptr(portableSWHide)
 	if visible {
 		command = portableSWShow
@@ -2190,10 +2120,16 @@ func runPortableMessageLoop() error {
 		if result == 0 {
 			return nil
 		}
+		if handleMisakaKeyboard(message) {
+			continue
+		}
 		if handlePortableRouteFilter(message) {
 			continue
 		}
 		if handlePortablePasteShortcut(message) {
+			continue
+		}
+		if misakaDialogMessage(message) {
 			continue
 		}
 		procTranslateMessage.Call(uintptr(unsafe.Pointer(&message)))
@@ -2289,6 +2225,9 @@ func (app *portableGUI) renderRouteCombo(snapshot portableGUISnapshot) {
 	app.routeVisible = app.routeVisible[:0]
 	query := strings.ToLower(app.routeFilter)
 	for index, option := range snapshot.routeOptions {
+		if app.skin != nil && option.Preference.Mode != "fixed_exit" {
+			continue
+		}
 		if app.routeFiltering && !strings.Contains(strings.ToLower(option.Label), query) {
 			continue
 		}
@@ -2323,242 +2262,19 @@ func handlePortablePasteShortcut(message portableMSG) bool {
 	if !found || !ok {
 		return false
 	}
+	if message.hwnd == app.controls.profileNameEdit || message.hwnd == app.controls.draftName {
+		return false
+	}
 	app.pasteJoinArtifact()
-	return true
-}
-
-func (app *portableGUI) drawActionButton(item *portableDrawItem) bool {
-	if item == nil || !slices.Contains([]uintptr{app.controls.primaryButton, app.controls.deleteButton, app.controls.pasteButton, app.controls.addProfileButton, app.controls.renameProfileButton, app.controls.pathsDetailsButton}, item.hwndItem) {
-		return false
-	}
-
-	disabled := item.itemState&(portableODSDisabled|portableODSGrayed) != 0
-	background, _, _ := procGetSysColor.Call(portableColorWindow)
-	borderColor := uintptr(portableButtonBorder)
-	textColor, _, _ := procGetSysColor.Call(portableColorWindowText)
-	switch {
-	case disabled:
-		background, _, _ = procGetSysColor.Call(portableColorBtnFace)
-		borderColor = 0x00E0E0E0
-		textColor, _, _ = procGetSysColor.Call(portableColorGrayText)
-	case item.itemState&portableODSSelected != 0:
-		background = portableButtonPressed
-		borderColor = portableButtonFocus
-	case item.itemState&(portableODSFocus|portableODSHotLight) != 0:
-		background = portableButtonHover
-		borderColor = portableButtonFocus
-	}
-
-	brush, _, _ := procCreateSolidBrush.Call(background)
-	pen, _, _ := procCreatePen.Call(portablePSSolid, uintptr(app.scale(1)), borderColor)
-	oldBrush, _, _ := procSelectObject.Call(item.dc, brush)
-	oldPen, _, _ := procSelectObject.Call(item.dc, pen)
-	corner := app.scale(3)
-	procRoundRect.Call(
-		item.dc,
-		uintptr(item.rect.left), uintptr(item.rect.top), uintptr(item.rect.right-1), uintptr(item.rect.bottom-1),
-		uintptr(corner), uintptr(corner),
-	)
-	procSelectObject.Call(item.dc, oldPen)
-	procSelectObject.Call(item.dc, oldBrush)
-	procDeleteObject.Call(pen)
-	procDeleteObject.Call(brush)
-
-	length, _, _ := procGetWindowTextLength.Call(item.hwndItem)
-	if int32(length) <= 0 {
-		return true
-	}
-	label := make([]uint16, int(length)+1)
-	procGetWindowText.Call(item.hwndItem, uintptr(unsafe.Pointer(&label[0])), length+1)
-	font, _, _ := procSendMessage.Call(item.hwndItem, portableWMGetFont, 0, 0)
-	oldFont, _, _ := procSelectObject.Call(item.dc, font)
-	procSetBkMode.Call(item.dc, portableTransparent)
-	procSetTextColor.Call(item.dc, textColor)
-	textRect := item.rect
-	textRect.right--
-	textRect.bottom--
-	procDrawText.Call(
-		item.dc,
-		uintptr(unsafe.Pointer(&label[0])),
-		length,
-		uintptr(unsafe.Pointer(&textRect)),
-		portableDTCenter|portableDTVCenter|portableDTSingleLine|portableDTNoPrefix,
-	)
-	procSelectObject.Call(item.dc, oldFont)
-	runtime.KeepAlive(label)
-	return true
-}
-
-func (app *portableGUI) drawRouteOption(item *portableDrawItem) bool {
-	if item == nil || item.hwndItem != app.controls.routeCombo {
-		return false
-	}
-
-	isSelectionField := item.itemState&portableODSComboBoxEdit != 0
-	backgroundIndex := uintptr(portableColorWindow)
-	textColorIndex := uintptr(portableColorWindowText)
-	if item.itemState&portableODSDisabled != 0 {
-		backgroundIndex = portableColorBtnFace
-		textColorIndex = portableColorGrayText
-	} else if !isSelectionField && item.itemState&portableODSSelected != 0 {
-		backgroundIndex = portableColorHighlight
-		textColorIndex = portableColorHighlightText
-	}
-	background, _, _ := procGetSysColorBrush.Call(backgroundIndex)
-	procFillRect.Call(item.dc, uintptr(unsafe.Pointer(&item.rect)), background)
-
-	var label []uint16
-	var length uintptr
-	if isSelectionField && app.routeFiltering {
-		label, _ = windows.UTF16FromString(app.routeFilter)
-		length = uintptr(len(label) - 1)
-	} else {
-		if item.itemID == ^uint32(0) {
-			return true
-		}
-		length, _, _ = procSendMessage.Call(item.hwndItem, portableCBGetLBTextLen, uintptr(item.itemID), 0)
-		if int32(length) < 0 {
-			return true
-		}
-		label = make([]uint16, int(length)+1)
-		procSendMessage.Call(item.hwndItem, portableCBGetLBText, uintptr(item.itemID), uintptr(unsafe.Pointer(&label[0])))
-	}
-
-	font, _, _ := procSendMessage.Call(item.hwndItem, portableWMGetFont, 0, 0)
-	oldFont, _, _ := procSelectObject.Call(item.dc, font)
-	procSetBkMode.Call(item.dc, portableTransparent)
-	textColor, _, _ := procGetSysColor.Call(textColorIndex)
-	procSetTextColor.Call(item.dc, textColor)
-
-	textRect := item.rect
-	if isSelectionField && !app.routeFiltering {
-		measurement := portableRect{}
-		procDrawText.Call(
-			item.dc,
-			uintptr(unsafe.Pointer(&label[0])),
-			length,
-			uintptr(unsafe.Pointer(&measurement)),
-			portableDTLeft|portableDTSingleLine|portableDTNoPrefix|portableDTCalcRect,
-		)
-		tagRect := item.rect
-		tagRect.left += app.scale(4)
-		tagRect.top += app.scale(3)
-		tagRect.bottom -= app.scale(3)
-		tagRect.right = tagRect.left + (measurement.right - measurement.left) + app.scale(16)
-		maxRight := item.rect.right - app.scale(4)
-		if tagRect.right > maxRight {
-			tagRect.right = maxRight
-		}
-
-		tagColor := uintptr(portableTagBackground)
-		borderColor := uintptr(portableGreenColor)
-		if item.itemState&portableODSDisabled != 0 {
-			tagColor, _, _ = procGetSysColor.Call(portableColorBtnFace)
-			borderColor, _, _ = procGetSysColor.Call(portableColorGrayText)
-		}
-		tagBrush, _, _ := procCreateSolidBrush.Call(tagColor)
-		tagPen, _, _ := procCreatePen.Call(portablePSSolid, uintptr(app.scale(1)), borderColor)
-		oldBrush, _, _ := procSelectObject.Call(item.dc, tagBrush)
-		oldPen, _, _ := procSelectObject.Call(item.dc, tagPen)
-		corner := app.scale(8)
-		procRoundRect.Call(
-			item.dc,
-			uintptr(tagRect.left), uintptr(tagRect.top), uintptr(tagRect.right), uintptr(tagRect.bottom),
-			uintptr(corner), uintptr(corner),
-		)
-		procSelectObject.Call(item.dc, oldPen)
-		procSelectObject.Call(item.dc, oldBrush)
-		procDeleteObject.Call(tagPen)
-		procDeleteObject.Call(tagBrush)
-
-		textRect = tagRect
-		textRect.left += app.scale(8)
-		textRect.right -= app.scale(8)
-	} else {
-		textRect.left += app.scale(8)
-		textRect.right -= app.scale(5)
-	}
-	procDrawText.Call(
-		item.dc,
-		uintptr(unsafe.Pointer(&label[0])),
-		length,
-		uintptr(unsafe.Pointer(&textRect)),
-		portableDTLeft|portableDTVCenter|portableDTSingleLine|portableDTEndEllipsis|portableDTNoPrefix,
-	)
-	if item.itemState&portableODSFocus != 0 {
-		focusRect := item.rect
-		focusRect.left++
-		focusRect.top++
-		focusRect.right--
-		focusRect.bottom--
-		procDrawFocusRect.Call(item.dc, uintptr(unsafe.Pointer(&focusRect)))
-	}
-	procSelectObject.Call(item.dc, oldFont)
-	runtime.KeepAlive(label)
-	return true
-}
-
-func (app *portableGUI) drawNetworkListItem(item *portableDrawItem) bool {
-	if item == nil || item.hwndItem != app.controls.networkList || item.itemID == ^uint32(0) {
-		return false
-	}
-	background := uintptr(portableColorWindow)
-	textColor := uintptr(portableColorWindowText)
-	if item.itemState&portableODSSelected != 0 {
-		background = portableColorHighlight
-		textColor = portableColorHighlightText
-	}
-	brush, _, _ := procGetSysColorBrush.Call(background)
-	procFillRect.Call(item.dc, uintptr(unsafe.Pointer(&item.rect)), brush)
-
-	snapshot := app.snapshot()
-	state := snapshot.state
-	if snapshot.profilesReady && int(item.itemID) < len(snapshot.profiles) {
-		state = snapshot.profiles[item.itemID].State
-	}
-	{
-		dotSize := app.scale(7)
-		dotLeft := item.rect.left + app.scale(6)
-		dotTop := item.rect.top + (item.rect.bottom-item.rect.top-dotSize)/2
-		color := uintptr(0x999999)
-		if state == guiConnected {
-			color = portableGreenColor
-		} else if state == guiError {
-			color = 0x4444cc
-		} else if portableStatusAnimated(state) {
-			color = 0xd98b24
-		}
-		greenBrush, _, _ := procCreateSolidBrush.Call(color)
-		oldBrush, _, _ := procSelectObject.Call(item.dc, greenBrush)
-		nullPen, _, _ := procGetStockObject.Call(portableNullPen)
-		oldPen, _, _ := procSelectObject.Call(item.dc, nullPen)
-		procEllipse.Call(item.dc, uintptr(dotLeft), uintptr(dotTop), uintptr(dotLeft+dotSize), uintptr(dotTop+dotSize))
-		procSelectObject.Call(item.dc, oldPen)
-		procSelectObject.Call(item.dc, oldBrush)
-		procDeleteObject.Call(greenBrush)
-	}
-
-	length, _, _ := procSendMessage.Call(item.hwndItem, portableLBGetTextLen, uintptr(item.itemID), 0)
-	if int32(length) < 0 {
-		return true
-	}
-	text := make([]uint16, int(length)+1)
-	procSendMessage.Call(item.hwndItem, portableLBGetText, uintptr(item.itemID), uintptr(unsafe.Pointer(&text[0])))
-	textRect := item.rect
-	textRect.left += app.scale(20)
-	font, _, _ := procSendMessage.Call(item.hwndItem, portableWMGetFont, 0, 0)
-	oldFont, _, _ := procSelectObject.Call(item.dc, font)
-	procSetBkMode.Call(item.dc, portableTransparent)
-	procSetTextColor.Call(item.dc, textColor)
-	procDrawText.Call(item.dc, uintptr(unsafe.Pointer(&text[0])), length, uintptr(unsafe.Pointer(&textRect)), portableDTLeft|portableDTVCenter|portableDTSingleLine|portableDTNoPrefix)
-	procSelectObject.Call(item.dc, oldFont)
-	runtime.KeepAlive(text)
 	return true
 }
 
 func portableWindowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 	value, found := portableGUIWindows.Load(hwnd)
 	app, _ := value.(*portableGUI)
+	if result, handled := misakaWindowMessage(app, hwnd, message, wParam, lParam); handled {
+		return result
+	}
 	switch message {
 	case portableWMGetMinMaxInfo:
 		if lParam != 0 {
@@ -2590,19 +2306,24 @@ func portableWindowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) ui
 			notification := uint16((wParam >> 16) & 0xffff)
 			switch controlID {
 			case portableControlNetworkList:
+				if notification == 2 {
+					app.beginMisakaRename()
+					return 0
+				}
 				if notification == 1 && !app.profileListUpdating {
 					app.selectProfileFromList()
 				}
 				return 0
 			case portableControlAddProfile:
-				app.profileCommand(brokerRequest{Operation: "add_profile"})
+				app.openMisakaDraft()
 				return 0
 			case portableControlRenameProfile:
-				app.renameSelectedProfile()
+				app.beginMisakaRename()
 				return 0
 			case portableControlPathDetails:
 				app.pathsExpanded = !app.pathsExpanded
 				app.renderProfileDetails(app.snapshot(), nil)
+				app.updateMisakaPaths(app.snapshot(), true)
 				return 0
 			case portableControlPrimary:
 				app.primaryAction()
@@ -2631,17 +2352,20 @@ func portableWindowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) ui
 		return brush
 	case 0x0113: // WM_TIMER：仅更新动画图标，状态轮询不触发全窗重绘。
 		if found && wParam == portableStatusTimerID {
-			state := app.snapshot().state
-			if portableStatusAnimated(state) {
+			snapshot := app.snapshot()
+			if app.statusAnimating {
 				app.statusFrame++
-				app.updateStatusIcon(state)
+				if portableStatusAnimated(snapshot.state) {
+					app.updateStatusIcon(snapshot.state)
+				}
+				app.animateMisakaProfiles(snapshot)
 			}
 			return 0
 		}
 	case portableWMDrawItem:
 		if found {
 			item := (*portableDrawItem)(unsafe.Pointer(lParam))
-			if app.drawActionButton(item) || app.drawRouteOption(item) || app.drawNetworkListItem(item) {
+			if app.drawMisakaItem(item) {
 				return 1
 			}
 		}

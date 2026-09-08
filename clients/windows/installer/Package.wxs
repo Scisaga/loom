@@ -6,7 +6,7 @@
     <Launch Condition="Installed OR (VersionNT64 AND UserSID AND UserSID &lt;&gt; &quot;S-1-5-18&quot;)"
             Message="Run this installer from the Windows user account that will use Loom." />
     <Property Id="ARPNOMODIFY" Value="1" />
-    <Icon Id="LoomIcon" SourceFile="$(var.SourceDir)\loom-client.exe" />
+    <Icon Id="LoomIcon" SourceFile="$(var.SourceDir)\favicon.ico" />
     <Property Id="ARPPRODUCTICON" Value="LoomIcon" />
     <Property Id="LOOM_OPERATOR_SID" Secure="yes">
       <RegistrySearch Id="ExistingOperator" Root="HKLM" Key="SOFTWARE\Loom" Name="OperatorSID" Type="raw" Bitness="always64" />

@@ -13,30 +13,34 @@ signed updates and the data-plane process:
 
 ```text
 Control: Create Device → show one-time join QR
-Windows: start client → import QR → join → connect
+Windows: start client → import invitation → join and save → connect
 ```
 
-The native shell uses standard Win32 list, text, and button controls in a
-compact list/detail/action layout. It follows the interaction shape of the
-[WireGuard for Windows tunnel page](https://git.zx2c4.com/wireguard-windows/tree/ui/tunnelspage.go?h=v0.5.3):
-network selection on the left, selected-network state on the right, and the
-current action inside the selected-network detail. It does not paint an SVG-like
-full-window canvas or show navigation entries for features that are not implemented.
+The window uses a light Misaka appearance: saved connections in the sidebar,
+the selected connection's status and route mode above, and actual Service paths
+below. Windows system Direct2D and DirectWrite draw the frame, cards, text and
+paths; native Win32 controls retain keyboard input, list selection, editing and
+window behavior. There is no additional GUI runtime or bundled font dependency:
+WebView2, Electron, .NET and Qt are not required. The Go runtime is included in
+the executable; the signed data-plane sidecar remains a separate package.
 The EXE embeds native-size variants generated directly from
 `internal/webui/favicon.svg` for Explorer, the Windows taskbar, the window title
 bar, and the notification-area icon.
 
-Display scaling changes and moves between monitors update the native fonts,
-list/dropdown row heights, icons, and layout together through `WM_DPICHANGED`.
-The window uses the position and size suggested by Windows. The Windows-native
-`TestGUIDPIChanges` regression covers 100–200% scaling in both directions on
-the onboarding and joined views without changing the machine's display settings.
+Display scaling changes and moves between monitors update drawing coordinates,
+text, input controls, icons and hit areas together through `WM_DPICHANGED`. The
+window uses the position and size suggested by Windows. Native window tests
+exercise scaling, keyboard input and rendering with synthetic profiles; they do
+not change the machine's display settings or use a real joined identity.
 
 <p align="center">
-  <img src="../../assets/client/windows/loom-client-windows-current.png" width="86%" alt="Loom Windows native client UI">
+  <img src="../../assets/client/windows/loom-client-home-misaka-v2.svg" width="86%" alt="Loom Windows Misaka design reference with example connections">
 </p>
 
-<p align="center"><sub>Current native UI with example-only Device, state-path, and exit labels.</sub></p>
+<p align="center"><sub>Misaka design reference with example-only labels; not a live connection screenshot.</sub></p>
+
+The [interaction reference](../../assets/client/windows/loom-client-interactions-misaka-v2.svg)
+shows inline renaming and the invitation panel.
 
 ### Icon asset invariant
 
@@ -53,14 +57,33 @@ may overlay the Windows-native green shield in the lower-right corner, but the
 favicon beneath it remains unchanged. `assets/loom-logo-v4.svg` is reserved for
 the larger in-window brand area beside the product name.
 
-The left-hand list contains saved connection profiles. **添加配置** creates an
-unjoined local entry with a default name; edit its name to distinguish networks.
-Import a separate control-issued QR into each entry. A new local entry has no
-Device identity until that join completes, and joining does not start a connection.
-Selecting another entry only changes the details being viewed. **连接** first
-stops and waits for the active profile's workload, then starts the selected one;
-at most one profile can be connecting or connected. The list and active-connection
-indicator distinguish the selected entry from the profile carrying traffic.
+The left-hand list contains saved connection profiles. Single-clicking a row
+changes only the details being viewed. Double-click its name, press **F2**, or
+use the profile menu to rename it inline: **Enter** saves and **Esc** cancels.
+Names must be unique locally and contain at most 64 characters. Renaming does
+not restart a connection. **连接** or **切换连接** first stops and waits for the
+active profile's workload, then starts the selected one; at most one profile can
+be connecting or connected. The selected row and active-connection indicator
+distinguish the viewed profile from the one carrying traffic.
+
+The sidebar **+** opens **添加配置** in the right-hand pane. The list stays
+visible and temporarily disabled; opening or canceling this panel creates no
+empty saved profile. Enter a local name, import or paste a control-issued
+invitation, then choose **加入并保存**. The new profile appears in the list only
+after its joined identity and local index have been saved successfully. It stays
+disconnected, and a connection already running under another profile continues.
+
+Once joining starts, the client may already have generated or claimed an
+identity. **稍后继续** cancels the current attempt and closes the panel while
+retaining its protected identity and recovery data. Reopen the panel, including
+after restarting Loom, and choose **继续加入** to resume that same transaction.
+A recovery attempt cannot replace its invitation or identity; its local display
+name can still be corrected. If the final profile-index write fails after the
+identity is ready, retry saves that identity without claiming another Device.
+A fresh state directory starts with an empty list. Only existing join identity,
+pending/ready data or joined configuration creates the retained **Loom 网络**
+entry on first initialization. Already saved indices are preserved, so an
+existing unjoined entry can still use its original join action.
 
 Each profile retains its own DPAPI-protected join identity, verified configuration,
 route preference, Agent generations and measurements. Existing single-profile
@@ -68,13 +91,23 @@ state remains at its original protected location and appears in the list; it is
 not copied into a new identity. Additional profiles use isolated subdirectories.
 Local names and list selection do not change the control-plane Device or policy.
 Deleting a disconnected profile removes only that profile's local identity and
-configuration. MSI uninstall continues to preserve retained joined state.
+configuration. MSI uninstall continues to preserve retained joined state,
+profile metadata and pending recovery data. The profile index is strict and
+written atomically; an invalid index blocks profile operations. A missing index
+with existing additional-profile directories is also rejected.
 
 The status label and corresponding list entry show an icon in every connection
-state: blue progress while connecting, green when connected, gray progress while
-disconnecting, gray when disconnected, and red after failure. Connecting can be
-canceled. Progress animation refreshes its own icon area, while unchanged status
-polls do not rewrite controls or repaint the entire window.
+state: progress while connecting or disconnecting, green when connected, gray
+when disconnected, and red after failure. Connecting can be canceled. Progress
+animation refreshes its own icon area, while unchanged status polls do not rewrite
+controls or repaint the entire window.
+
+The **自动 / 固定出口 / 直连** controls change the authorized route preference.
+Fixed exit also offers an authorized exit picker. **当前选路** shows a separate
+read-only server chain and health state for each Service; **详情** adds current
+and best quality, decision reason and read time. Missing measurements stay
+unknown. The local TUN capture address is not presented as an independently
+reachable Loom network IP.
 
 The notification-area tooltip includes the embedded
 edition and current state. Double-click restores the window; closing the window
@@ -82,9 +115,10 @@ hides it to the tray; the tray menu provides show, the current
 import/connect/disconnect action, and an explicit exit.
 
 Importing the QR never creates a second Device. In the Windows GUI, copy
-the QR image from the control page and press `Ctrl+V` (or click **粘贴二维码**),
+the QR image from the control page and press `Ctrl+V` (or click the paste action),
 select the downloaded QR PNG, or drag one local QR PNG or `.loom-invite` file
-onto the window. Clipboard images are decoded in memory and are not written to
+onto the window. In the add-profile panel this reads the invitation; **加入并保存**
+starts the join. Clipboard images are decoded in memory and are not written to
 a temporary file. The executable does not accept join material as a command-line
 argument, so its bearer token cannot enter process listings or shell history.
 
@@ -143,9 +177,12 @@ DPAPI. Installed state is stored under `%ProgramData%\Loom` using machine-scope
 DPAPI. MSI creates a SYSTEM/Administrators-only state directory. Its local pipe
 allows only the installing Windows user and administrators; the GUI verifies the
 server PID against SCM before sending a QR credential. The service accepts only
-status, profile add/select/rename, join, connect, disconnect, authorized route
-preference and local deletion. Profile operations use bounded local identifiers
-and names resolved by the service.
+status, profile selection/rename, opening or closing the add panel, joining or
+resuming its draft, the existing profile join, connect, disconnect, authorized
+route preference and local deletion. Profile operations use bounded local
+identifiers and names resolved by the service. Draft snapshots contain only
+display state and progress. These actions use the existing local named pipe;
+enrollment and reporting endpoints and signatures are unchanged.
 It accepts no file paths, commands or configuration bodies from the GUI.
 
 ## Build and run
@@ -223,10 +260,12 @@ then start:
 .\loom-client-windows-portable-mixed-amd64.exe
 ```
 
-This starts the native GUI without a console window. On first launch, select or
-drag in the QR PNG generated by **Devices → Create Device** on
-the control plane. Later launches reuse the protected joined state and connect
-without asking for the QR again. `--build-info` reports the embedded edition,
+This starts the GUI without a console window. On first launch, import the QR PNG
+generated by **Devices → Create Device** on the control plane, complete joining,
+then choose **连接**. Use the sidebar **+** to join additional profiles. Later
+launches reuse the protected joined state and restore the last connected profile;
+merely selecting a different row does not change that choice. An explicitly
+disconnected client stays disconnected. `--build-info` reports the embedded edition,
 architecture, Go/VCS coordinate, and executable hash.
 
 New QR codes include the SHA-256 fingerprint of the deployment platform key.
@@ -278,14 +317,20 @@ without this fingerprint are rejected; already joined identities remain valid. S
   Probe and report have separate 8-second and 5-second budgets, so a probe timeout
   can still be reported. This tests representative reachability, not every site
   or exit. See the [reporting contract](../../docs/windows-client-reporting.md).
-- Each profile's `config\client.json` is written last and is the only joined-state marker
-  observed by normal startup. Failed imports cannot start a partial client.
-- In the current Portable preview, until the join commits, the exact QR
-  credential and generated identity are current-user-DPAPI protected. The control permits only the same token, CSR,
+- Each profile's `config\client.json` is written last in the join core and is its
+  joined-state marker. A newly added profile becomes selectable only after a
+  subsequent atomic profile-index commit. Failed imports cannot start a partial
+  client, and a ready identity remains recoverable if that index commit fails.
+- Until the join commits, the exact QR credential and generated identity are
+  protected with the edition's DPAPI scope. The control permits only the same token, CSR,
   request ID, platform and Device facts during a one-hour recovery window. A
   validated ready response is journaled separately before local installation;
-  the next launch resumes automatically, and the pending token is scrubbed
-  after `config\client.json` commits.
+  the pending token is scrubbed after `config\client.json` commits. Existing
+  registered profiles retain their startup recovery behavior. A new add-profile
+  draft resumes when the user chooses **继续加入**, using its retained identity.
+- `state\profile-draft.json` stores only a schema, random local profile ID and
+  display name. The invitation and credentials stay in protected per-profile
+  storage. Canceling a draft does not delete a pending or ready identity.
 - A global UI lock prevents two Windows client windows from running at the same
   time, and the data-plane lock prevents two joined workloads; the latter remains held while
   an update swaps child data planes, and the final joined-state commit never
@@ -361,10 +406,13 @@ Portable Mixed has a native Windows end-to-end test covering QR decoding,
 current-user DPAPI, HTTPS Device binding, signed component installation, first
 signed pull, listener startup, startup grace, two signed report attachments
 after token cleanup, and clean shutdown without TUN or
-route changes. All three editions now provide the same native first-launch and
-Connection GUI; file selection, window lifecycle, and console-free PE output
-have been exercised on the Windows host. An added local profile remains explicitly
-unjoined until its Device has been successfully bound through QR import.
+route changes. All three editions provide the same first-launch and connection
+GUI; file selection, window lifecycle, and console-free PE output have been
+exercised on the Windows host. Native draft tests cover cancellation before
+allocation, protected recovery after restart, a late ready response after cancel,
+atomic profile-index failure, and joining without switching the active profile.
+Misaka rendering tests use isolated native windows and synthetic profile/path
+data. These checks do not replace live acceptance of multiple real identities.
 
 Installed uses the same lifecycle implementation inside SCM and connects the
 ordinary-user window through an ACL-restricted named pipe. Windows amd64 native
@@ -403,7 +451,8 @@ If join is still pending, the service finishes saving the identity and stays
 disconnected instead of starting traffic capture after the window exits.
 Uninstall stops/removes the service and installed program, while preserving the
 restricted machine identity and its authorized operator for reinstall. Use
-**Delete local Device** while disconnected to intentionally remove that identity.
+the profile menu's **删除配置…** while that profile is disconnected to intentionally
+remove its identity.
 Portable state is separate and is never imported or deleted by MSI. Old preview
 state with user-owned files is rejected by the service; it must not be silently
 promoted to trusted machine state. Initialization errors are recorded in the

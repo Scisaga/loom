@@ -51,10 +51,11 @@ func writeProfileFixtureIdentity(t *testing.T, root string) {
 
 func addProfileFixture(t *testing.T, m *windowsProfileManager) string {
 	t.Helper()
-	if err := m.command(brokerRequest{Operation: "add_profile", Name: "demo-second"}); err != nil {
+	p, err := m.store.Add("demo-second")
+	if err != nil {
 		t.Fatal(err)
 	}
-	id := m.store.Snapshot().Selected
+	id := p.ID
 	root, err := m.store.ResolveRoot(id)
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +65,6 @@ func addProfileFixture(t *testing.T, m *windowsProfileManager) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.children[id].beginClose()
 	m.children[id] = child
 	return id
 }
@@ -360,42 +360,58 @@ func TestWindowsProfilesDeleteIndexFailureRestoresIdentityAndHost(t *testing.T) 
 	}
 }
 
-func TestWindowsProfilesAddInitializationFailureRemainsInspectable(t *testing.T) {
-	for _, failRollback := range []bool{false, true} {
-		t.Run(map[bool]string{false: "rollback", true: "rollback-failure"}[failRollback], func(t *testing.T) {
-			m := newProfileManagerFixture(t)
-			check, write := m.store.checkPath, m.store.writeFile
-			checks := 0
-			failure := false
-			m.store.checkPath = func(path string) error {
-				if filepath.Dir(path) == filepath.Join(m.owner.root, "profiles") && validConnectionProfileID(filepath.Base(path)) {
-					checks++
-					if checks == 2 {
-						failure = true
-						return errors.New("demo profile initialization failure")
-					}
-				}
-				return check(path)
-			}
-			m.store.writeFile = func(path string, body []byte) error {
-				if failRollback && failure {
-					return errors.New("demo rollback index failure")
-				}
-				return write(path, body)
-			}
-			if err := m.command(brokerRequest{Operation: "add_profile", Name: "demo-second"}); err == nil {
-				t.Fatal("accepted failed child creation")
-			}
-			m.store.checkPath, m.store.writeFile = check, write
-			s := m.snapshot()
-			if failRollback {
-				if len(s.profiles) != 2 || s.state != guiError {
-					t.Fatalf("missing child did not fail closed: %+v", s)
-				}
-			} else if len(s.profiles) != 1 {
-				t.Fatal("failed add retained index entry")
-			}
-		})
+func TestWindowsProfilesOpeningAddDoesNotInitializeAnEmptyProfile(t *testing.T) {
+	m := newProfileManagerFixture(t)
+	writes := 0
+	m.store.writeFile = func(string, []byte) error {
+		writes++
+		return errors.New("demo index writes disabled")
+	}
+	before := m.store.Snapshot()
+	if err := m.dispatch(brokerRequest{Operation: "add_profile", Name: "demo-second"}); err != nil {
+		t.Fatal(err)
+	}
+	if writes != 0 || len(m.snapshot().profiles) != len(before.Profiles) || m.snapshot().selectedProfile != before.Selected || m.snapshot().profileDraft == nil {
+		t.Fatal("opening add created or selected an empty formal profile")
+	}
+	if err := m.dispatch(brokerRequest{Operation: "cancel_add_profile"}); err != nil {
+		t.Fatal(err)
+	}
+	if m.snapshot().profileDraft != nil || writes != 0 {
+		t.Fatal("canceling an empty panel retained a draft or wrote state")
+	}
+}
+
+func TestWindowsProfilesFreshRootHasNoFormalProfile(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	owner := &portableGUI{root: t.TempDir(), edition: editionPortableMixed, ctx: ctx, cancel: cancel}
+	m, err := newWindowsProfileManager(owner)
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cancel(); m.close() })
+	assertEmpty := func() {
+		t.Helper()
+		snapshot := m.snapshot()
+		if !snapshot.profilesReady || len(snapshot.profiles) != 0 || snapshot.selectedProfile != "" || snapshot.activeProfile != "" || snapshot.joined || len(m.children) != 0 {
+			t.Fatalf("fresh root created a formal profile or host: %+v", snapshot)
+		}
+		if m.store.Snapshot().LastConnected != "" {
+			t.Fatal("fresh root acquired an auto-connect intent")
+		}
+	}
+	assertEmpty()
+	if err := m.dispatch(brokerRequest{Operation: "add_profile"}); err != nil {
+		t.Fatal(err)
+	}
+	assertEmpty()
+	if err := m.dispatch(brokerRequest{Operation: "cancel_add_profile"}); err != nil {
+		t.Fatal(err)
+	}
+	assertEmpty()
+	if _, err := os.Stat(filepath.Join(owner.root, "join")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("empty panel allocated an identity: %v", err)
 	}
 }
 
@@ -443,6 +459,13 @@ func TestWindowsProfilesResumeOnlyExistingProtectedJoin(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			owner := &portableGUI{root: t.TempDir(), edition: editionPortableMixed, ctx: ctx, cancel: cancel}
+			// §7.2：旧版本已登记的未加入条目保留原恢复行为；全新根不再生成 legacy。
+			if err := os.Mkdir(filepath.Join(owner.root, "state"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeWindowsJoinFile(filepath.Join(owner.root, "state", "profiles.json"), []byte(`{"schema":1,"profiles":[{"id":"legacy","name":"Loom 网络"}],"selected":"legacy","last_connected":"legacy"}`)); err != nil {
+				t.Fatal(err)
+			}
 			m, err := newWindowsProfileManager(owner)
 			if err != nil {
 				t.Fatal(err)

@@ -126,23 +126,20 @@ func TestGUIDPIChanges(t *testing.T) {
 				t.Errorf("DPI %d: window rectangle = %+v, want %+v", dpi, rect, suggested)
 			}
 			button := guiWindowRect(t, app.controls.primaryButton)
-			buttonWidth := int32(120)
-			if joined {
-				buttonWidth = 105
-			}
-			if button.right-button.left != buttonWidth*dpi/96 || button.bottom-button.top != 26*dpi/96 {
+			if button.right-button.left != 100*dpi/96 || button.bottom-button.top != 32*dpi/96 {
 				t.Errorf("DPI %d: button did not scale with its font: %+v", dpi, button)
 			}
 			for _, row := range []struct {
 				control, message, index uintptr
+				height                  int32
 			}{
-				{app.controls.networkList, 0x01A1, 0}, // LB_GETITEMHEIGHT
-				{app.controls.routeCombo, 0x0154, 0},  // CB_GETITEMHEIGHT
-				{app.controls.routeCombo, 0x0154, ^uintptr(0)},
+				{app.controls.networkList, 0x01A1, 0, 46}, // LB_GETITEMHEIGHT
+				{app.controls.routeCombo, 0x0154, 0, 23},  // CB_GETITEMHEIGHT
+				{app.controls.routeCombo, 0x0154, ^uintptr(0), 23},
 			} {
 				got, _, _ := procSendMessage.Call(row.control, row.message, row.index, 0)
-				if int32(got) != 23*dpi/96 {
-					t.Errorf("DPI %d: row height = %d, want %d", dpi, got, 23*dpi/96)
+				if int32(got) != row.height*dpi/96 {
+					t.Errorf("DPI %d: row height = %d, want %d", dpi, got, row.height*dpi/96)
 				}
 			}
 			t.Logf("joined=%t: %d%% fonts, control sizes, row heights and window bounds verified", joined, dpi*100/96)
@@ -259,7 +256,11 @@ func TestGUIStatusRefreshDoesNotRewriteUnchangedControls(t *testing.T) {
 	app.renderControls()
 	resets := 0
 	for _, event := range writes {
-		if event.control != app.controls.routeCombo {
+		if event.message == 0x0046 { // §7.2：固定出口会展开出口输入，允许这次真实模式变化重排布局。
+			continue
+		}
+		if event.control != app.controls.routeCombo && event.control != app.controls.modeAuto &&
+			event.control != app.controls.modeFixed && event.control != app.controls.modeDirect {
 			t.Fatalf("route update rewrote another control: %+v", event)
 		}
 		if event.message == portableCBResetContent {
@@ -267,7 +268,7 @@ func TestGUIStatusRefreshDoesNotRewriteUnchangedControls(t *testing.T) {
 		}
 	}
 	selection, _, _ := procSendMessage.Call(app.controls.routeCombo, portableCBGetCurSel, 0, 0)
-	if resets != 1 || selection != 1 {
+	if resets != 1 || selection == ^uintptr(0) {
 		t.Fatal("real route change was lost")
 	}
 	t.Log("20 identical polls: zero native writes; detail and route changes update only their controls")

@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1140" height="780" viewBox="0 0 1140 780" role="img" aria-labelledby="title description">
+  <title id="title">Loom Windows client interactions — Misaka v2</title>
+  <desc id="description">Flat content views for inline rename, a right-side invitation form, and an animated connection summary; no nested panels, modal frame or upload dropzone.</desc>
+  <!-- Original Windows favicon and large brand asset are embedded byte-for-byte; no recoloring. -->
+  <defs>
+    <symbol id="brand-favicon" viewBox="0 0 32 32">
+      <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjEyNyAxMTIgMTAwMCAxMDAwIj4KICA8ZGVmcz4KICAgIDwhLS0gRXhhY3Qgb3V0ZXIgc2lsaG91ZXR0ZSBvZiB0aGUgYXBwcm92ZWQgTG9vbSBtYXJrLiAtLT4KICAgIDxwYXRoIGlkPSJsb29tLW91dGxpbmUiIGQ9Ik02MTYgMTEwOGMtNjctNDktMTE4LTEzMy0xMjktMjA5IDAtNiAwLTYtMTQtMS03NSAyNy0xNjYgMjQtMjM5LTYtMTMtNS0xNC03LTExLTI5IDEyLTgwIDUzLTE1NSAxMTUtMjExbDktOC02LTVjLTYxLTUzLTEwMC0xMjEtMTE0LTIwMC01LTMxLTUtMzggNC00MiA1Ny0yNiAxMzgtMzQgMjAzLTIwIDEzIDIgMjIgNSAzOSAxMCAxNCA1IDE0IDUgMTUtMiA5LTcwIDYwLTE1NSAxMjEtMjA0IDE3LTE1IDE4LTE1IDM0LTIgNDcgMzcgODcgOTMgMTA3IDE1MSA3IDIwIDE2IDUyIDE2IDYwIDAgNCAxIDQgMTIgMCA3Mi0yOCAxNTgtMjcgMjM2IDMgMTcgNiAxNyA3IDE1IDI3LTggNzktNDkgMTU5LTExMSAyMTVsLTkgOSAxMCA5YzYxIDUzIDEwNSAxMzkgMTE0IDIxOSAyIDE1IDEgMTYtMjggMjYtNzUgMjUtMTU2IDI1LTIyNy0yLTQtMS04LTItOC0yLTEgMC0yIDctMyAxNS0xNSA4MS02MCAxNTItMTI2IDE5OC0xMiA5LTE0IDktMjUgMXoiLz4KICAgIDwhLS0gT25lIGNsZWFuIG9wZW5pbmcgcmVwbGFjZXMgdGhlIG9yaWdpbmFsIHRocmVlIG5lc3RlZCB3ZWF2ZSBjb250b3Vycy4gLS0+CiAgICA8cGF0aCBpZD0icGV0YWwtb3BlbmluZyIgZD0iTTYyOCAxMDQwQzUyMCA5NDUgNTM1IDc5MCA2MjggNjYwQzcyMSA3OTAgNzM2IDk0NSA2MjggMTA0MFoiLz4KICA8L2RlZnM+CiAgPGcgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoMCAxMjU0KSBzY2FsZSgxIC0xKSI+CiAgICA8dXNlIGhyZWY9IiNsb29tLW91dGxpbmUiIGZpbGw9IiMxMTEiLz4KICAgIDxnIGZpbGw9IiNmZmYiPgogICAgICA8dXNlIGhyZWY9IiNwZXRhbC1vcGVuaW5nIi8+CiAgICAgIDx1c2UgaHJlZj0iI3BldGFsLW9wZW5pbmciIHRyYW5zZm9ybT0icm90YXRlKDYwIDYyOCA2NDQpIi8+CiAgICAgIDx1c2UgaHJlZj0iI3BldGFsLW9wZW5pbmciIHRyYW5zZm9ybT0icm90YXRlKDEyMCA2MjggNjQ0KSIvPgogICAgICA8dXNlIGhyZWY9IiNwZXRhbC1vcGVuaW5nIiB0cmFuc2Zvcm09InJvdGF0ZSgxODAgNjI4IDY0NCkiLz4KICAgICAgPHVzZSBocmVmPSIjcGV0YWwtb3BlbmluZyIgdHJhbnNmb3JtPSJyb3RhdGUoMjQwIDYyOCA2NDQpIi8+CiAgICAgIDx1c2UgaHJlZj0iI3BldGFsLW9wZW5pbmciIHRyYW5zZm9ybT0icm90YXRlKDMwMCA2MjggNjQ0KSIvPgogICAgPC9nPgogIDwvZz4KPC9zdmc+Cg==" width="32" height="32"/>
+    </symbol>
+    <symbol id="brand-large" viewBox="0 0 64 64">
+      <image href="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBzdGFuZGFsb25lPSJubyI/Pgo8IURPQ1RZUEUgc3ZnIFBVQkxJQyAiLS8vVzNDLy9EVEQgU1ZHIDIwMDEwOTA0Ly9FTiIKICJodHRwOi8vd3d3LnczLm9yZy9UUi8yMDAxL1JFQy1TVkctMjAwMTA5MDQvRFREL3N2ZzEwLmR0ZCI+CjxzdmcgdmVyc2lvbj0iMS4wIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciCiB3aWR0aD0iMTI1NCIgaGVpZ2h0PSIxMjU0IiB2aWV3Qm94PSIwIDAgMTI1NC4wMDAwMDAgMTI1NC4wMDAwMDAiCiBwcmVzZXJ2ZUFzcGVjdFJhdGlvPSJ4TWlkWU1pZCBtZWV0Ij4KPHRpdGxlPkxvb20gbG9nbzwvdGl0bGU+CjxkZXNjPkEgc21vb3RoIHNpeC1wZXRhbCB3b3ZlbiBrbm90IGluIGl2b3J5IHdoaXRlIG9uIHRpdGFuaXVtIGdyYXkuPC9kZXNjPgo8bWV0YWRhdGE+CkNyZWF0ZWQgYnkgcG90cmFjZSAxLjE2LCB3cml0dGVuIGJ5IFBldGVyIFNlbGluZ2VyIDIwMDEtMjAxOQo8L21ldGFkYXRhPgo8cmVjdCB3aWR0aD0iMTI1NCIgaGVpZ2h0PSIxMjU0IiBmaWxsPSIjNUI2MTY2Ii8+CjxnIHRyYW5zZm9ybT0idHJhbnNsYXRlKDAuMDAwMDAwLDEyNTQuMDAwMDAwKSBzY2FsZSgxLjAwMDAwMCwtMS4wMDAwMDApIgpmaWxsPSIjZmFmYWY3IiBzdHJva2U9Im5vbmUiPgo8cGF0aCBmaWxsPSIjZmFmYWY3IiBzdHJva2U9Im5vbmUiIGQ9Ik02MTYgMTEwOCBjLTY3IC00OSAtMTE4IC0xMzMgLTEyOQotMjA5IDAgLTYgMCAtNiAtMTQgLTEgLTc1IDI3IC0xNjYgMjQgLTIzOSAtNiAtMTMgLTUgLTE0IC03IC0xMSAtMjkgMTIgLTgwCjUzIC0xNTUgMTE1IC0yMTEgbDkgLTggLTYgLTUgYy02MSAtNTMgLTEwMCAtMTIxIC0xMTQgLTIwMCAtNSAtMzEgLTUgLTM4IDQKLTQyIDU3IC0yNiAxMzggLTM0IDIwMyAtMjAgMTMgMiAyMiA1IDM5IDEwIDE0IDUgMTQgNSAxNSAtMiA5IC03MCA2MCAtMTU1CjEyMSAtMjA0IDE3IC0xNSAxOCAtMTUgMzQgLTIgNDcgMzcgODcgOTMgMTA3IDE1MSA3IDIwIDE2IDUyIDE2IDYwIDAgNCAxIDQKMTIgMCA3MiAtMjggMTU4IC0yNyAyMzYgMyAxNyA2IDE3IDcgMTUgMjcgLTggNzkgLTQ5IDE1OSAtMTExIDIxNSBsLTkgOSAxMCA5CmM2MSA1MyAxMDUgMTM5IDExNCAyMTkgMiAxNSAxIDE2IC0yOCAyNiAtNzUgMjUgLTE1NiAyNSAtMjI3IC0yIC00IC0xIC04IC0yCi04IC0yIC0xIDAgLTIgNyAtMyAxNSAtMTUgODEgLTYwIDE1MiAtMTI2IDE5OCAtMTIgOSAtMTQgOSAtMjUgMXoiLz4KPHBhdGggZmlsbD0iIzViNjE2NiIgc3Ryb2tlPSJub25lIiBkPSJNNjM5IDEwODQgYzEwNSAtODIgMTQyIC0yMjUgOTIgLTM1NgotNyAtMTggLTcgLTE3IC0xNiAtMTcgLTQgMCAtOCAxIC04IDEgLTEgMSAxIDcgNCAxNSAzMiA3OCAzMCAxNzAgLTUgMjQzIC0xNgozNSAtNDAgNjYgLTY4IDg4IC05IDggLTExIDggLTIwIDAgLTQ3IC0zOSAtODIgLTEwMyAtOTMgLTE2OSAtMSAtNyAtMiAtMTIgLTIKLTEzIC0xIDAgLTE3IDggLTE3IDkgLTEgMSA0IDI3IDcgNDAgMTMgNDQgMzcgODkgNjggMTI0IDE1IDE2IDQ0IDQzIDQ3IDQzIDAKMCA1IC0zIDExIC04eiIvPgo8cGF0aCBmaWxsPSIjNWI2MTY2IiBzdHJva2U9Im5vbmUiIGQ9Ik02MzggMTAzMSBjNzcgLTcyIDk4IC0yMDAgNTAgLTMwNyAtMwotOCAtNSAtMTEgLTcgLTEyIC0yIC0xIC0xNyAtMSAtMTggMCAtMSAwIDIgNiA1IDEyIDQ0IDk0IDMxIDIxMyAtMzEgMjc4IC0xMAoxMSAtMTIgMTAgLTI5IC0xMiAtMjYgLTM2IC00NCAtODMgLTQ3IC0xMjggMCAtNiAtMSAtMTEgLTEgLTExIC0xIDAgLTYgNCAtMTYKMTEgLTQgMyAyIDM5IDEyIDY3IDEzIDQxIDQxIDg0IDY4IDEwOCA0IDQgMyA0IDE0IC02eiIvPgo8cGF0aCBmaWxsPSIjNWI2MTY2IiBzdHJva2U9Im5vbmUiIGQ9Ik02MzUgOTczIGMyNCAtMzMgMzcgLTc0IDQwIC0xMjQgbDAKLTE1IC0xMCAtMTAgYy0xMSAtMTEgLTIzIC0yNSAtMzIgLTM4IC02IC04IC01IC05IC0xMyAzIC05IDEzIC0xOSAyNCAtMzAgMzYKbC0xMCAxMCAwIDEzIGMzIDQ4IDE4IDk0IDQyIDEyOCA2IDcgNiA3IDEzIC0zeiIvPgo8cGF0aCBmaWxsPSIjNWI2MTY2IiBzdHJva2U9Im5vbmUiIGQ9Ik00MTMgODkzIGM3OSAtMTMgMTQ4IC01NiAxOTMgLTExOCAxMgotMTcgMTEgLTE1IDYgLTI2IC0zIC02IC01IC0xMCAtNSAtMTAgMCAwIC00IDYgLTkgMTMgLTY2IDEwMyAtMTkwIDE0NyAtMzE0CjExNCAtMjAgLTYgLTIxIC02IC0xNCAtMzQgMTUgLTYwIDU0IC0xMjAgMTAyIC0xNTggOSAtOCA5IC03IDAgLTEyIC05IC02IC04Ci02IC0xOCAyIC01NyA0OCAtOTcgMTIwIC0xMTAgMTk2IC0yIDE0IC0zIDEzIDcgMTYgMjIgOSA1MyAxNiA4NSAxOSAxMyAyIDYxCjAgNzcgLTJ6Ii8+CjxwYXRoIGZpbGw9IiM1YjYxNjYiIHN0cm9rZT0ibm9uZSIgZD0iTTkyMyA4OTUgYzMwIC0zIDgzIC0xNiA4OSAtMjIgMiAtMiAtNwotNDMgLTE0IC02NCAtMzQgLTEwMCAtMTA5IC0xNzYgLTIwMCAtMjAzIC0yMyAtNyAtNTkgLTEzIC02MSAtMTEgLTIgMiAtOCAxNgotOCAxNiAwIDEgNyAyIDE2IDIgNzQgOSAxMzYgNDUgMTg1IDEwOCAyNyAzNSA0OSA4MSA1NyAxMjAgNCAxNyAzIDE5IC0xMyAyNAotNjIgMTkgLTEzNSAxNSAtMTkzIC05IC05IC00IC05IC01IC05IDcgbDAgMTAgOSAzIGMyNSAxMCA1NiAxNyA4MyAxOSA5IDEgNTAKMSA1OSAweiIvPgo8cGF0aCBmaWxsPSIjNWI2MTY2IiBzdHJva2U9Im5vbmUiIGQ9Ik00MDAgODU0IGM3MCAtOSAxMzQgLTQ3IDE3NiAtMTA0IDcKLTExIDIxIC0zNCAyMSAtMzYgMCAtMiAtNiAtMjQgLTcgLTI1IDAgLTEgLTQgNSAtOCAxMyAtMzggNzYgLTEwNiAxMjQgLTE5MAoxMzQgLTE0IDIgLTQ5IDEgLTYyIC0xIC0xNiAtMyAtMTggLTUgLTEyIC0yMSAxNCAtNDIgNDggLTg4IDg3IC0xMTcgNyAtNSAxMwotMTAgMTMgLTEwIDAgLTEgLTE3IC05IC0xOCAtOSAtNSAwIC00MiAzNSAtNTYgNTIgLTI0IDI5IC00NiA3MiAtNTQgMTA1IC0zCjExIC0zIDEwIDExIDE0IDMwIDggNjcgMTAgOTkgNXoiLz4KPHBhdGggZmlsbD0iIzViNjE2NiIgc3Ryb2tlPSJub25lIiBkPSJNOTI2IDg1NCBjMTMgLTEgMzkgLTcgNDAgLTkgMiAtMiAtOAotMzQgLTE3IC01NSAtNDMgLTkzIC0xMjUgLTE1MiAtMjIwIC0xNTggbC0xMSAwIC02IDkgYy0zIDUgLTUgOSAtNSA5IDAgMSA4IDEKMTggMSA1NiAwIDEwNyAyMyAxNTMgNjkgMjkgMjkgNTkgNzkgNjMgMTA0IDEgMTAgLTExIDEzIC01MyAxMiAtNDIgMCAtNzEgLTYKLTEwNyAtMjQgLTEyIC02IC0xMSAtNiAtMTAgNSAxIDQgMSA5IDEgMTAgMCAzIDEgMyAxMyA4IDQ1IDE5IDkzIDI2IDE0MSAxOXoiLz4KPHBhdGggZmlsbD0iIzViNjE2NiIgc3Ryb2tlPSJub25lIiBkPSJNMzkxIDgxNiBjMzAgLTMgNjggLTE2IDkxIC0zMiBsNiAtMyA0Ci0xNSBjNCAtMTYgMTAgLTM0IDE2IC00NyA0IC0xMSA0IC0xMSAtMyAtMTEgLTEyIC0yIC0zNyAtNiAtNDggLTkgLTE2IC00IC0xNAotNCAtMjYgNCAtMzggMjUgLTY3IDU3IC04NiA5NiAtNyAxNSAtNyAxNiAwIDE3IDEwIDEgMzYgMSA0NiAweiIvPgo8cGF0aCBmaWxsPSIjNWI2MTY2IiBzdHJva2U9Im5vbmUiIGQ9Ik05MTQgODE2IGMzIC0yIDIgLTUgLTQgLTE4IC0xOSAtMzkKLTUzIC03NSAtODkgLTk3IGwtOCAtNSAtMTEgMyBjLTE1IDQgLTMzIDggLTQ1IDkgLTYgMSAtMTEgMiAtMTEgMiAtMSAwIDEgNyA0CjE0IDYgMTcgMTIgMzYgMTUgNDggbDEgOSA5IDUgYzI3IDE1IDU1IDI1IDg1IDMwIDEwIDEgNTEgMSA1NCAweiIvPgo8cGF0aCBmaWxsPSIjNWI2MTY2IiBzdHJva2U9Im5vbmUiIGQ9Ik02NjkgNzg5IGMtNCAtMTkgLTcgLTI3IC0xNCAtMzkgLTEwCi0xOCAtMjAgLTM5IC0yOSAtNjQgLTEgLTQgLTIgLTUgLTEwIC05IC05IC01IC05IC01IC01IDExIDEwIDQwIDI4IDc1IDUxIDEwMwoxMCAxMiAxMCAxMiA3IC0yeiIvPgo8cGF0aCBmaWxsPSIjNWI2MTY2IiBzdHJva2U9Im5vbmUiIGQ9Ik01MjkgNzQ2IGMxNCAtMTYgMTcgLTIwIDI1IC0zNyA4IC0xNwoyMiAtNDIgMzAgLTU0IDUgLTkgNiAtMjQgMSAtMjYgLTcgLTIgLTEzIDUgLTM1IDQ2IC0xNSAyOCAtMzUgNzUgLTM1IDgzIDAgMgo3IC00IDE0IC0xMnoiLz4KPHBhdGggZmlsbD0iIzViNjE2NiIgc3Ryb2tlPSJub25lIiBkPSJNNzIxIDY5MSBjMjUgLTEgNDMgLTMgNjEgLTggNCAwIDIgLTIKLTggLTUgLTE5IC02IC0yOCAtNyAtNDggLTYgLTEyIDEgLTI5IDEgLTQ2IDEgLTM2IC0xIC0zNyAtMSAtMzMgMTEgMiA3IDEgNgoyNCA3IDEyIDAgMjMgMSAyNiAxIDIgMCAxMyAwIDI0IC0xeiIvPgo8cGF0aCBmaWxsPSIjNWI2MTY2IiBzdHJva2U9Im5vbmUiIGQ9Ik01MjUgNjgxIGM1IC0xMCA1IC0xMCAtNyAtMTAgLTEyMCAtOQotMjIzIC0xMDEgLTI0OCAtMjIxIC00IC0yMiAtNCAtMjMgMTEgLTI4IDYxIC0xOSAxMzIgLTE2IDE5MiA3IDUgMiA5IDMgMTAgMwowIDAgMCAtNSAwIC0xMCBsMSAtOSAtOSAtNCBjLTYyIC0yNCAtMTQ1IC0yNSAtMjE2IC0xIC0xNyA1IC0xNiA0IC0xNCAxNSAxNQoxMDQgNzQgMTkwIDE2MCAyMzUgMzQgMTcgNjMgMjUgMTA4IDMwIDggMSA3IDIgMTIgLTd6Ii8+CjxwYXRoIGZpbGw9IiM1YjYxNjYiIHN0cm9rZT0ibm9uZSIgZD0iTTYzOCA2NTUgbDkgLTQgMCAtMTAgYzEgLTEzIDIgLTEyIC0xMAotMTkgbC05IC02IC0xMCA2IC05IDYgLTEgMTEgMCAxMSA5IDUgYzEyIDYgMTEgNiAyMSAweiIvPgo8cGF0aCBmaWxsPSIjNWI2MTY2IiBzdHJva2U9Im5vbmUiIGQ9Ik02ODMgNjUxIGMwIC0xIDYgLTEwIDEyIC0yMSAxOCAtMzAgMjkKLTU0IDM5IC04MiA2IC0xOSA2IC0xOSAtNCAtOSAtMTYgMTYgLTIyIDI1IC0zMCA0MiAtNyAxNCAtMjUgNDggLTMwIDU0IC0yIDMKLTMgMTUgLTEgMTYgMSAyIDEzIDEgMTQgMHoiLz4KPHBhdGggZmlsbD0iIzViNjE2NiIgc3Ryb2tlPSJub25lIiBkPSJNNTQ2IDY0MiBjMyAtNSA1IC05IDUgLTkgMCAtMSAtNyAtMQotMTYgLTEgLTk0IDAgLTE4NSAtNjYgLTIxNiAtMTU1IC03IC0yMiAtNiAtMjMgMjMgLTI3IDQ0IC01IDg5IDMgMTMxIDIxIDcgMwoxMyA2IDEzIDYgMCAtMSAtMSAtNSAtMSAtMTEgbC0xIC0xMSAtMTEgLTUgYy01MyAtMjIgLTExNSAtMjYgLTE3NCAtMTIgLTExIDMKLTEwIDMgLTkgMTAgOCAzOSAzMCA4MiA1OCAxMTUgNDQgNTMgMTE5IDg4IDE4NCA4OCBsOSAwIDUgLTl6Ii8+CjxwYXRoIGZpbGw9IiM1YjYxNjYiIHN0cm9rZT0ibm9uZSIgZD0iTTkwMiA2MjIgYzQ1IC0zOSA3OSAtOTIgOTYgLTE1MSA1IC0xOQoxMCAtNDMgMTAgLTUxIGwxIC03IC0xNCAtNSBjLTg5IC0zMCAtMTgwIC0yMiAtMjUzIDIyIC00MCAyNSAtNjggNDkgLTkzIDgzCmwtNyAxMCA0IDcgYzcgMTMgNiAxMiAxMiAzIDczIC0xMDQgMTk4IC0xNDggMzE3IC0xMTAgMTIgNCAxMyA0IDggMjcgLTkgNDIKLTMxIDg4IC01OSAxMjMgLTggMTAgLTMzIDM1IC00MiA0MSAtNiA1IC02IDUgMiAxMSA5IDYgOCA2IDE4IC0zeiIvPgo8cGF0aCBmaWxsPSIjNWI2MTY2IiBzdHJva2U9Im5vbmUiIGQ9Ik01NDIgNjEwIGMxMCAtMSAyNyAtMSAzOCAtMSBsMjAgMCA4Ci01IGM0IC0yIDggLTQgOCAtNSAwIDAgLTEgLTIgLTIgLTQgbC0xIC00IC00MyAwIGMtNDUgMSAtNTUgMiAtODEgNyAtOCAxIC0xNAozIC0xNSAzIDAgMSAxNSA2IDI3IDggMTUgMyAxNSAzIDIwIDIgMiAwIDExIDAgMjEgLTF6Ii8+CjxwYXRoIGZpbGw9IiM1YjYxNjYiIHN0cm9rZT0ibm9uZSIgZD0iTTY2MSA2MDkgYzUgLTkgLTUzIC0xMDcgLTczIC0xMjUgLTMKLTMgLTMgMCAxIDE0IDQgMTcgOCAyNiAxNCAzNyAxMiAxOCAzMSA1MiAzNCA2MCAxIDIgNCA1IDExIDEwIDExIDcgMTEgNyAxMyA0eiIvPgo8cGF0aCBmaWxsPSIjNWI2MTY2IiBzdHJva2U9Im5vbmUiIGQ9Ik04NjMgNjA0IGM0OCAtMzYgODMgLTkwIDk4IC0xNDggMiAtNwozIC0xNCAzIC0xNCAtMSAtMSAtNSAtMyAtMTEgLTQgLTkwIC0yMyAtMTgwIDMgLTI0NyA2OSAtMTcgMTggLTQyIDUxIC00MiA1NgowIDIgOSAyMCAxMCAyMCAwIDAgMyAtNCA1IC04IDM2IC02NiAxMDIgLTExMiAxNzcgLTEyNCAxMiAtMiA1MSAtMiA2NCAwIDE5IDQKMjEgNSAxNyAxNyAtMTUgNTAgLTU1IDEwMyAtOTcgMTI4IC0xIDEgLTIgMiAtMiAyIDAgMSAxNyAxMCAxOSAxMCAwIDAgMyAtMiA2Ci00eiIvPgo8cGF0aCBmaWxsPSIjNWI2MTY2IiBzdHJva2U9Im5vbmUiIGQ9Ik00NTggNTg1IGMxMiAtNCAzNyAtOSA0OCAtMTEgOCAwIDcgMAozIC0xMCAtNSAtMTMgLTEzIC0zNiAtMTYgLTQ5IC0zIC0xMyAtMiAtMTIgLTE5IC0yMSAtMzggLTE5IC03MiAtMjYgLTExMiAtMjUKLTIyIDEgLTIzIDEgLTIzIDUgMyAxMyAyMyA0NSA0MSA2NyAxNiAxOCA1OCA0OSA2NCA0OCAxIC0xIDcgLTIgMTQgLTR6Ii8+CjxwYXRoIGZpbGw9IiM1YjYxNjYiIHN0cm9rZT0ibm9uZSIgZD0iTTgyNCA1ODMgYzM1IC0yMiA2MyAtNTMgODEgLTg5IDYgLTEyCjExIC0yMiAxMCAtMjMgLTQgLTMgLTQ3IC0yIC02OCAyIC0yNiA1IC02OSAyNCAtODIgMzUgMCAxIC0yIDggLTQgMTcgLTIgOSAtNgoyMyAtMTAgMzIgLTYgMTkgLTYgMTggMSAxOSAxNCAxIDU3IDExIDU5IDEzIDEgMSA0IDAgMTMgLTZ6Ii8+CjxwYXRoIGZpbGw9IiM1YjYxNjYiIHN0cm9rZT0ibm9uZSIgZD0iTTU1MyA1NzAgYzEgLTEgMSAtMiAtMiAtNyAtMTEgLTIxIC0yMQotNTUgLTI2IC04MiAtMTUgLTg2IDE3IC0xODAgODIgLTI0NSAyMCAtMjAgMTkgLTIwIDQwIDAgNDQgNDUgNzEgMTAxIDgyIDE2NQoxIDYgMiAxMSAyIDExIDAgMSA0IC0xIDkgLTQgbDggLTQgMCAtNSBjLTExIC03NCAtNTEgLTE0NiAtMTEwIC0xOTggLTEyIC0xMAotMTAgLTEwIC0yMSAtMSAtNzcgNjUgLTEyMiAxNjcgLTExMyAyNTkgMyAzNCAxNCA3NCAyNiAxMDMgbDQgOSA5IDAgYzUgMCA5IDAKMTAgLTF6Ii8+CjxwYXRoIGZpbGw9IiM1YjYxNjYiIHN0cm9rZT0ibm9uZSIgZD0iTTU5NyA1NzAgYzAgLTEgLTQgLTkgLTggLTE4IC00MyAtODgKLTM1IC0xODQgMjAgLTI1OCAxNSAtMjAgMTcgLTIxIDI3IC0xMCAzMCAzMyA1MiA5MCA1NyAxNDUgMCAxMSAwIDExIDEwIDMgMTAKLTcgOSAtNiA3IC0xOSAtNyAtNjIgLTM0IC0xMTcgLTc2IC0xNjEgbC03IC03IC04IDggYy01MSA1MCAtODIgMTMxIC03NyAyMDAKMyAzNSAxMiA3MCAyOCAxMDMgbDcgMTQgMTAgMCBjNSAwIDEwIDAgMTAgMHoiLz4KPHBhdGggZmlsbD0iIzViNjE2NiIgc3Ryb2tlPSJub25lIiBkPSJNNjM5IDQ5MyBjNSAtNiAxNCAtMTcgMjIgLTI0IGwxMyAtMTQKMCAtOCBjMCAtNDQgLTE0IC05MyAtMzggLTEzMCAtOSAtMTQgLTkgLTE0IC0xMyAtOCAtMjYgMzUgLTQyIDg0IC00MiAxMjcgbDAKMTEgMTIgMTIgYzExIDEyIDIyIDI1IDMxIDM4IDMgNCA2IDcgNiA3IDAgMCA0IC01IDkgLTExeiIvPgo8L2c+Cjwvc3ZnPgo=" width="64" height="64"/>
+    </symbol>
+    <symbol id="pc" viewBox="0 0 24 24">
+      <rect x="3" y="4" width="18" height="12" rx="2"/>
+      <path d="M8 21h8m-4-5v5"/>
+    </symbol>
+    <symbol id="server" viewBox="0 0 24 24">
+      <rect x="4" y="3" width="16" height="7" rx="2"/>
+      <rect x="4" y="14" width="16" height="7" rx="2"/>
+      <path d="M8 6.5h.01M8 17.5h.01m4-11h4m-4 11h4"/>
+    </symbol>
+    <symbol id="target" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9"/>
+      <path d="M3 12h18m-9-9c5 5 5 13 0 18m0-18c-5 5-5 13 0 18"/>
+    </symbol>
+    <symbol id="check" viewBox="0 0 24 24">
+      <path d="m5 12 5 5L20 7"/>
+    </symbol>
+    <symbol id="plus" viewBox="0 0 24 24">
+      <path d="M12 5v14M5 12h14"/>
+    </symbol>
+    <symbol id="arrow" viewBox="0 0 24 24">
+      <path d="m9 6 6 6-6 6"/>
+    </symbol>
+    <symbol id="power" viewBox="0 0 24 24">
+      <path d="M12 3v9M7 5.5a8 8 0 1 0 10 0"/>
+    </symbol>
+    <symbol id="file" viewBox="0 0 24 24">
+      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Zm0 0v6h6M8 13h8m-8 4h5"/>
+    </symbol>
+    <style><![CDATA[
+    .ui {font-family:"Segoe UI","Microsoft YaHei UI",sans-serif;fill:#181B1A;font-size:13px}
+    .muted {fill:#747D77} .green {fill:#239B68} .blue {fill:#3979C5} .white {fill:#FFF}
+    .title {font-size:23px;font-weight:650} .section {font-size:15px;font-weight:600}
+    .body {font-size:13px} .small {font-size:12px} .tiny {font-size:11px}
+    .mono {font-family:Consolas,"Microsoft YaHei UI",monospace} .medium {font-weight:600}
+    .icon {fill:none;stroke:#737976;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+    .icon-green {fill:none;stroke:#239B68;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+    .card {fill:#FFF;stroke:#E4E7E5} .rule {stroke:#E6E9E7;stroke-width:1}
+  ]]></style>
+  </defs>
+  <g class="ui">
+    <rect x="0" y="0" width="1140" height="780" rx="0" fill="#FCFCFB"/>
+    <text x="32" y="35" class="section">重命名 · 原位置编辑</text>
+    <text x="391" y="35" class="section">添加 · 直接使用右侧内容区</text>
+    <path d="M358 65L358 524" stroke="#E6E9E7" stroke-width="1"/>
+    <path d="M32 548H1108" stroke="#E6E9E7" stroke-width="1"/>
+    <text x="32" y="92" class="small medium muted">连接配置</text>
+    <use href="#plus" x="299" y="77" width="20" height="20" class="icon"/>
+    <rect x="20" y="116" width="304" height="58" rx="5" fill="#E9F3ED"/>
+    <circle cx="36" cy="138" r="4" fill="#239B68"/>
+    <rect x="50" y="125" width="260" height="28" rx="3" fill="#FFF" stroke="#239B68"/>
+    <text x="61" y="145" class="body medium">demo-work</text>
+    <path d="M138 129L138 149" stroke="#239B68" stroke-width="1"/>
+    <text x="36" y="166" class="tiny green">已连接</text>
+    <circle cx="36" cy="206" r="4" fill="#AAB2AC"/>
+    <text x="50" y="211" class="body">demo-personal</text>
+    <text x="36" y="235" class="tiny muted">未连接</text>
+    <text x="32" y="298" class="small">双击名称或按 F2 开始编辑</text>
+    <text x="32" y="328" class="small medium">Enter 保存 · Esc 取消</text>
+    <text x="32" y="358" class="small muted">只修改本地名称，连接继续运行</text>
+    <text x="32" y="495" class="tiny muted">行内输入框是唯一新增的边框。</text>
+    <text x="391" y="93" class="title">添加连接配置</text>
+    <text x="391" y="118" class="small muted">使用中控提供的加入邀请</text>
+    <text x="391" y="158" class="small medium">配置名称</text>
+    <rect x="391" y="171" width="690" height="34" rx="4" fill="#FFF" stroke="#D8DDD9"/>
+    <text x="403" y="194" class="body">demo-new</text>
+    <text x="391" y="244" class="small medium">加入邀请</text>
+    <text x="391" y="269" class="small muted">选择二维码 PNG 或 .loom-invite 文件，也可粘贴二维码。</text>
+    <rect x="391" y="289" width="136" height="34" rx="6" fill="#FFF" stroke="#D8DDD9"/>
+    <text x="459.0" y="311" class="small medium" text-anchor="middle">选择邀请文件</text>
+    <rect x="539" y="289" width="128" height="34" rx="6" fill="#FFF" stroke="#D8DDD9"/>
+    <text x="603.0" y="311" class="small medium" text-anchor="middle">粘贴二维码</text>
+    <use href="#check" x="391" y="343" width="19" height="19" class="icon-green"/>
+    <text x="419" y="357" class="small green">demo-invite.loom-invite · 已选择</text>
+    <rect x="391" y="404" width="124" height="34" rx="6" fill="#239B68"/>
+    <text x="453.0" y="426" class="small medium white" text-anchor="middle">加入并保存</text>
+    <rect x="527" y="404" width="88" height="34" rx="6" fill="#FFF" stroke="#D8DDD9"/>
+    <text x="571.0" y="426" class="small medium" text-anchor="middle">取消</text>
+    <text x="391" y="470" class="small muted">加入成功后保持未连接，点击“连接”才接管流量。</text>
+    <text x="391" y="495" class="small muted">添加期间保留左侧列表；当前连接继续运行。</text>
+    <text x="32" y="582" class="section">连接中 · 更新原连接摘要</text>
+    <text x="32" y="620" class="title">demo-new</text>
+    <circle cx="56" cy="666" r="21" fill="#EDF3FC"/>
+    <circle cx="56" cy="666" r="11" fill="none" stroke="#D6E4F6" stroke-width="2"/>
+    <path d="M56 655a11 11 0 0 1 11 11" fill="none" stroke="#3979C5" stroke-width="2.2" stroke-linecap="round"/>
+    <text x="94" y="664" class="title">正在连接</text>
+    <text x="94" y="691" class="small muted">正在验证并启动本地数据面…</text>
+    <rect x="969" y="647" width="139" height="34" rx="6" fill="#FFF" stroke="#D8DDD9"/>
+    <text x="1038.5" y="669" class="small medium" text-anchor="middle">取消连接</text>
+    <text x="32" y="737" class="small muted">连接完成后显示实际路径；进度仅刷新图标区域。</text>
+    <text x="1108" y="768" class="tiny muted" text-anchor="end">交互原型 · demo-* 为示意；所有边框仅用于实际可编辑控件。</text>
+  </g>
+</svg>

@@ -84,14 +84,48 @@ func loadConnectionProfiles(base string, writeFile func(string, []byte) error, c
 	if len(entries) != 0 {
 		return nil, errors.New("[§13.5 连接配置] 配置索引缺失，但独立配置目录非空；拒绝重建索引")
 	}
-	index := connectionProfileIndex{
-		Schema: connectionProfileSchema, Profiles: []connectionProfile{{ID: legacyConnectionProfile, Name: "Loom 网络"}},
-		Selected: legacyConnectionProfile, LastConnected: legacyConnectionProfile,
+	legacy, err := store.hasLegacyJoinState()
+	if err != nil {
+		return nil, err
+	}
+	index := connectionProfileIndex{Schema: connectionProfileSchema, Profiles: []connectionProfile{}}
+	if legacy {
+		index.Profiles = []connectionProfile{{ID: legacyConnectionProfile, Name: "Loom 网络"}}
+		index.Selected, index.LastConnected = legacyConnectionProfile, legacyConnectionProfile
 	}
 	if err := store.save(index); err != nil {
 		return nil, err
 	}
 	return store, nil
+}
+
+// §7.2.1 / §13.5：只有已有加入资料才保留 legacy；不解密、迁移或重写其内容。
+// pending 凭据保存在 identity.json.dpapi 中，ready 日志和已加入标记可独立存在。
+func (store *connectionProfileStore) hasLegacyJoinState() (bool, error) {
+	found := false
+	for _, relative := range []string{"join/identity.json.dpapi", "join/ready.json.dpapi", "config/client.json"} {
+		path := filepath.Join(store.base, filepath.FromSlash(relative))
+		if err := store.checkDirectory(filepath.Dir(path)); err != nil {
+			return false, err
+		}
+		info, err := os.Lstat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if !info.Mode().IsRegular() {
+			return false, errors.New("[§13.5 连接配置] 旧加入资料必须是普通文件")
+		}
+		if store.checkPath != nil {
+			if err := store.checkPath(path); err != nil {
+				return false, err
+			}
+		}
+		found = true
+	}
+	return found, nil
 }
 
 func (store *connectionProfileStore) Snapshot() connectionProfileIndex {
@@ -257,7 +291,10 @@ func (store *connectionProfileStore) save(next connectionProfileIndex) error {
 }
 
 func (store *connectionProfileStore) readIndex() ([]byte, error) {
-	path := store.indexPath()
+	return store.readProfileFile(store.indexPath())
+}
+
+func (store *connectionProfileStore) readProfileFile(path string) ([]byte, error) {
 	if err := store.checkDirectory(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
@@ -443,6 +480,7 @@ func rejectConnectionProfileDuplicateFields(decoder *json.Decoder, depth int) er
 				return err
 			}
 			key, ok := keyToken.(string)
+			key = strings.ToLower(key)
 			if !ok || seen[key] {
 				return errors.New("[§13.5 连接配置] 索引字段重复或无效")
 			}

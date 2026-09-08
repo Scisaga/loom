@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/png"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -95,6 +96,22 @@ func profileGUIListText(t *testing.T, control uintptr, index int) string {
 	return windows.UTF16ToString(text)
 }
 
+func profileGUIPathText(t *testing.T, app *portableGUI) string {
+	t.Helper()
+	count, _, _ := procSendMessage.Call(app.controls.pathsValue, 0x018B, 0, 0) // LB_GETCOUNT
+	if count == ^uintptr(0) {
+		t.Fatal("actual paths must expose native list entries")
+	}
+	if count == 0 {
+		return profileGUIText(app.controls.pathsValue)
+	}
+	var rows []string
+	for index := 0; index < int(count); index++ {
+		rows = append(rows, profileGUIListText(t, app.controls.pathsValue, index))
+	}
+	return strings.Join(rows, "\n")
+}
+
 type profileGUIWrite struct {
 	control uintptr
 	message uint32
@@ -110,6 +127,7 @@ func recordProfileGUIWrites(t *testing.T, app *portableGUI) *[]profileGUIWrite {
 		callback := windows.NewCallback(func(window uintptr, message uint32, wParam, lParam uintptr) uintptr {
 			if message == 0x000C || message == 0x0046 || message == portableWMSetIcon || message == portableSTMSetIcon ||
 				(window == app.controls.networkList && message == portableLBResetContent) ||
+				(window == app.controls.pathsValue && message == portableLBResetContent) ||
 				(window == app.controls.routeCombo && message == portableCBResetContent) {
 				writes = append(writes, profileGUIWrite{window, message})
 			}
@@ -133,21 +151,25 @@ func TestGUIProfilesSelectionAndActualServicePaths(t *testing.T) {
 	if count != 2 || selection != 0 || profileGUIListText(t, app.controls.networkList, 0) != "演示网络甲" || profileGUIListText(t, app.controls.networkList, 1) != "演示网络乙" {
 		t.Fatal("native profile list lost separate friendly names or selection")
 	}
-	text := profileGUIText(app.controls.pathsValue)
+	text := profileGUIPathText(t, app)
 	for _, row := range app.paths {
 		if !strings.Contains(text, row.Service) || !strings.Contains(text, row.Chain) || !strings.Contains(text, row.Health) {
 			t.Fatalf("native paths view lost a complete service path: %q", text)
 		}
 	}
-	if profileGUIStyle(app.controls.pathsValue)&0x0800 == 0 { // ES_READONLY
-		t.Fatal("actual path control permits editing")
+	if profileGUIStyle(app.controls.pathsValue)&0x0010 == 0 { // LBS_OWNERDRAWFIXED
+		t.Fatal("actual path control is not a native owner-drawn list")
 	}
 	procSendMessage.Call(app.controls.pathsValue, 0x0102, uintptr('X'), 0) // WM_CHAR
-	if got := profileGUIText(app.controls.pathsValue); got != text {
+	if got := profileGUIPathText(t, app); got != text {
 		t.Fatal("read-only paths changed in response to typed text")
 	}
+	captureConfiguredProfileGUIState(t, app, "")
 	procSendMessage.Call(app.hwnd, portableWMCommand, portableControlPathDetails, app.controls.pathsDetailsButton)
-	expanded := profileGUIText(app.controls.pathsValue)
+	expanded := profileGUIPathText(t, app)
+	if !strings.Contains(profileGUIText(app.controls.pathsValue), `C:\demo-client\profiles\`+profileGUIFixtureA) {
+		t.Fatal("profile details displayed the shared root instead of this profile's root")
+	}
 	for _, row := range app.paths {
 		for _, field := range []string{row.Service, row.Chain, row.SelectedQuality, row.BestQuality, row.Reason} {
 			if !strings.Contains(expanded, field) {
@@ -155,12 +177,7 @@ func TestGUIProfilesSelectionAndActualServicePaths(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(expanded, `C:\demo-client\profiles\`+profileGUIFixtureA) {
-		t.Fatal("profile details displayed the shared root instead of this profile's root")
-	}
-	if output := os.Getenv("LOOM_PROFILE_GUI_CAPTURE"); output != "" {
-		captureProfileGUITestWindow(t, app, output)
-	}
+	captureConfiguredProfileGUIState(t, app, "-expanded")
 	// §7.2：模拟 broker 返回正在查看的乙配置；实际连接仍是甲，不调用连接命令。
 	app.mu.Lock()
 	app.selectedProfile, app.profileName = profileGUIFixtureB, "演示网络乙"
@@ -172,7 +189,7 @@ func TestGUIProfilesSelectionAndActualServicePaths(t *testing.T) {
 	if selection != 1 || snapshot.activeProfile != profileGUIFixtureA || snapshot.profiles[0].State != guiConnected || snapshot.profiles[1].State != guiStopped {
 		t.Fatal("viewing another profile changed the connected profile")
 	}
-	text = profileGUIText(app.controls.pathsValue)
+	text = profileGUIPathText(t, app)
 	if !strings.Contains(text, "未连接") || strings.Contains(text, "demo-prefix-a") || strings.Contains(text, "demo-web") {
 		t.Fatalf("disconnected profile inherited another profile's actual paths: %q", text)
 	}
@@ -184,6 +201,10 @@ func TestGUIProfilesSelectionAndActualServicePaths(t *testing.T) {
 
 func TestGUIProfileNameDraftSurvivesUnchangedPolling(t *testing.T) {
 	app := newProfileGUITestWindow(t)
+	app.beginMisakaRename()
+	if profileGUIStyle(app.controls.profileNameEdit)&portableWSVisible == 0 {
+		t.Fatal("inline name editor is hidden after rename starts")
+	}
 	draft := "尚未保存的本地名称"
 	setPortableControlText(app.controls.profileNameEdit, draft)
 	writes := recordProfileGUIWrites(t, app)
@@ -288,9 +309,14 @@ func TestGUIProfileLayoutScalesWithoutOverlap(t *testing.T) {
 					rect    portableRect
 				}{control, rect})
 			}
-			for _, button := range []uintptr{app.controls.addProfileButton, app.controls.renameProfileButton, app.controls.primaryButton, app.controls.deleteButton} {
+			for _, button := range []uintptr{app.controls.addProfileButton, app.controls.primaryButton, app.controls.profileMenu} {
 				if profileGUIStyle(button)&portableWSVisible == 0 {
 					t.Errorf("joined=%t DPI=%d required button=%x is hidden", joined, dpi, button)
+				}
+			}
+			for _, control := range []uintptr{app.controls.profileNameEdit, app.controls.renameProfileButton, app.controls.deleteButton} {
+				if profileGUIStyle(control)&portableWSVisible != 0 {
+					t.Errorf("joined=%t DPI=%d inactive editor or menu action=%x remains visible", joined, dpi, control)
 				}
 			}
 			t.Logf("joined=%t: %d%% native profile controls fit without overlap", joined, dpi*100/96)
@@ -298,8 +324,8 @@ func TestGUIProfileLayoutScalesWithoutOverlap(t *testing.T) {
 	}
 }
 
-// §7.2：可选导出只捕获本测试的合成 HWND，不读取屏幕或其他客户端窗口。
-func captureProfileGUITestWindow(t *testing.T, app *portableGUI, path string) {
+// §7.2：只捕获本测试的合成 HWND，不读取屏幕或其他客户端窗口。
+func readProfileGUITestWindow(t *testing.T, app *portableGUI) *image.NRGBA {
 	t.Helper()
 	rect := guiWindowRect(t, app.hwnd)
 	width, height := rect.right-rect.left, rect.bottom-rect.top
@@ -325,6 +351,12 @@ func captureProfileGUITestWindow(t *testing.T, app *portableGUI, path string) {
 	for index := 0; index < len(data); index += 4 {
 		picture.Pix[index], picture.Pix[index+1], picture.Pix[index+2], picture.Pix[index+3] = data[index+2], data[index+1], data[index], 255
 	}
+	return picture
+}
+
+func captureProfileGUITestWindow(t *testing.T, app *portableGUI, path string) {
+	t.Helper()
+	picture := readProfileGUITestWindow(t, app)
 	file, err := os.Create(path)
 	if err != nil {
 		t.Fatal(err)
@@ -337,4 +369,17 @@ func captureProfileGUITestWindow(t *testing.T, app *portableGUI, path string) {
 		t.Fatal(err)
 	}
 	t.Logf("synthetic native profile window captured to %s", path)
+}
+
+func captureConfiguredProfileGUIState(t *testing.T, app *portableGUI, suffix string) {
+	t.Helper()
+	output := os.Getenv("LOOM_PROFILE_GUI_CAPTURE")
+	if output == "" {
+		return
+	}
+	extension := filepath.Ext(output)
+	if suffix != "" {
+		output = strings.TrimSuffix(output, extension) + suffix + extension
+	}
+	captureProfileGUITestWindow(t, app, output)
 }

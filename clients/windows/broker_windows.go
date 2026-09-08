@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -30,21 +31,22 @@ type brokerRequest struct {
 
 // §13.5：界面只收到显示状态和已授权出口，不传送配置正文、文件路径、API 密码或私钥。
 type brokerSnapshot struct {
-	State             portableGUIState        `json:"state"`
-	Joined            bool                    `json:"joined"`
-	DeviceID          string                  `json:"device_id"`
-	Detail            string                  `json:"detail"`
-	Routes            []portableRouteOption   `json:"routes,omitempty"`
-	RouteSelected     int                     `json:"route_selected"`
-	RouteBusy         bool                    `json:"route_busy"`
-	RouteDetail       string                  `json:"route_detail"`
-	Paths             []windowsPathDisplay    `json:"paths,omitempty"`
-	ProfilesReady     bool                    `json:"profiles_ready"`
-	Profiles          []windowsProfileDisplay `json:"profiles,omitempty"`
-	SelectedProfile   string                  `json:"selected_profile,omitempty"`
-	ProfileName       string                  `json:"profile_name,omitempty"`
-	ActiveProfile     string                  `json:"active_profile,omitempty"`
-	ActiveProfileName string                  `json:"active_profile_name,omitempty"`
+	State             portableGUIState            `json:"state"`
+	Joined            bool                        `json:"joined"`
+	DeviceID          string                      `json:"device_id"`
+	Detail            string                      `json:"detail"`
+	Routes            []portableRouteOption       `json:"routes,omitempty"`
+	RouteSelected     int                         `json:"route_selected"`
+	RouteBusy         bool                        `json:"route_busy"`
+	RouteDetail       string                      `json:"route_detail"`
+	Paths             []windowsPathDisplay        `json:"paths,omitempty"`
+	ProfilesReady     bool                        `json:"profiles_ready"`
+	Profiles          []windowsProfileDisplay     `json:"profiles,omitempty"`
+	SelectedProfile   string                      `json:"selected_profile,omitempty"`
+	ProfileName       string                      `json:"profile_name,omitempty"`
+	ActiveProfile     string                      `json:"active_profile,omitempty"`
+	ActiveProfileName string                      `json:"active_profile_name,omitempty"`
+	ProfileDraft      *windowsProfileDraftDisplay `json:"profile_draft,omitempty"`
 }
 
 type brokerResponse struct {
@@ -54,10 +56,15 @@ type brokerResponse struct {
 
 func decodeBrokerRequest(body []byte) (brokerRequest, error) {
 	var req brokerRequest
-	if len(body) == 0 || len(body) > 16<<10 {
+	if len(body) == 0 || len(body) > 16<<10 || !utf8.Valid(body) {
 		return req, errors.New("服务请求长度无效")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
+	// §13.5：encoding/json 忽略字段大小写；同一字段的不同拼写也不能覆盖操作或邀请。
+	if err := rejectConnectionProfileDuplicateFields(decoder, 0); err != nil {
+		return req, errors.New("服务请求字段重复或结构无效")
+	}
+	decoder = json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
 		return req, errors.New("服务请求格式无效")
@@ -72,6 +79,14 @@ func decodeBrokerRequest(body []byte) (brokerRequest, error) {
 		return req, errors.New("连接配置名称无效")
 	}
 	switch req.Operation {
+	case "cancel_add_profile":
+		if req.ProfileID != "" || req.Invite != nil || req.Preference != nil || req.Name != "" {
+			return req, errors.New("关闭加入面板不接受附加参数")
+		}
+	case "join_profile":
+		if req.ProfileID != "" || req.Preference != nil || (req.Invite != nil && clientenroll.ValidateInvite(*req.Invite) != nil) {
+			return req, errors.New("新增连接配置的加入参数无效")
+		}
 	case "status", "connect", "disconnect", "delete", "select_profile":
 		if req.Invite != nil || req.Preference != nil || req.Name != "" || (req.Operation == "status" && req.ProfileID != "") || (req.Operation == "select_profile" && req.ProfileID == "") {
 			return req, errors.New("服务操作不接受附加参数")
@@ -99,7 +114,8 @@ func (app *portableGUI) brokerSnapshot() brokerSnapshot {
 	s := app.snapshot()
 	return brokerSnapshot{State: s.state, Joined: s.joined, DeviceID: s.deviceID, Detail: s.detail, Routes: s.routeOptions, RouteSelected: s.routeSelected,
 		RouteBusy: s.routeBusy, RouteDetail: s.routeDetail, Paths: s.paths, ProfilesReady: s.profilesReady, Profiles: s.profiles,
-		SelectedProfile: s.selectedProfile, ProfileName: s.profileName, ActiveProfile: s.activeProfile, ActiveProfileName: s.activeProfileName}
+		SelectedProfile: s.selectedProfile, ProfileName: s.profileName, ActiveProfile: s.activeProfile, ActiveProfileName: s.activeProfileName,
+		ProfileDraft: cloneProfileDraft(s.profileDraft)}
 }
 
 func (app *portableGUI) handleBrokerRequest(req brokerRequest) error {
@@ -107,7 +123,7 @@ func (app *portableGUI) handleBrokerRequest(req brokerRequest) error {
 		if req.Operation == "status" {
 			return nil
 		}
-		if req.ProfileID == "" && req.Operation != "add_profile" && req.Operation != "disconnect" {
+		if req.ProfileID == "" && !profileDraftOperation(req.Operation) && req.Operation != "disconnect" {
 			req.ProfileID = m.snapshot().selectedProfile
 		}
 		return m.dispatch(req)
@@ -290,6 +306,7 @@ func (app *portableGUI) exchangeInstalledBroker(request brokerRequest) {
 	if err != nil {
 		app.mu.Lock()
 		app.paths = nil
+		app.brokerProfileDraft = nil
 		for i := range app.brokerProfiles {
 			if app.brokerProfiles[i].ID == app.activeProfile {
 				app.brokerProfiles[i].State = guiError
@@ -307,6 +324,7 @@ func (app *portableGUI) exchangeInstalledBroker(request brokerRequest) {
 	app.routeOptions, app.routeSelected, app.routeBusy, app.routeDetail = s.Routes, s.RouteSelected, s.RouteBusy, s.RouteDetail
 	app.paths = s.Paths
 	app.brokerProfilesReady, app.brokerProfiles = s.ProfilesReady, s.Profiles
+	app.brokerProfileDraft = cloneProfileDraft(s.ProfileDraft)
 	app.selectedProfile, app.profileName, app.activeProfile, app.activeProfileName = s.SelectedProfile, s.ProfileName, s.ActiveProfile, s.ActiveProfileName
 	if response.Error != "" {
 		app.detail = response.Error

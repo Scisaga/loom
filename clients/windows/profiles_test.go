@@ -36,11 +36,144 @@ func writeConnectionProfileTestFile(path string, body []byte) (retErr error) {
 
 func newConnectionProfileTestStore(t *testing.T) *connectionProfileStore {
 	t.Helper()
-	store, err := loadConnectionProfiles(t.TempDir(), writeConnectionProfileTestFile, nil)
+	base := t.TempDir()
+	if err := os.Mkdir(filepath.Join(base, "join"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "join", "identity.json.dpapi"), []byte("demo-existing-protected-identity"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := loadConnectionProfiles(base, writeConnectionProfileTestFile, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return store
+}
+
+func TestConnectionProfilesFreshRootStaysEmptyUntilJoined(t *testing.T) {
+	base := t.TempDir()
+	store, err := loadConnectionProfiles(base, writeConnectionProfileTestFile, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := store.Snapshot()
+	if index.Schema != connectionProfileSchema || index.Profiles == nil || len(index.Profiles) != 0 || index.Selected != "" || index.LastConnected != "" {
+		t.Fatalf("fresh root created a formal empty identity: %+v", index)
+	}
+	if _, err := store.ResolveRoot(legacyConnectionProfile); err == nil {
+		t.Fatal("fresh root resolved an unregistered legacy identity")
+	}
+	if _, err := os.Stat(filepath.Join(base, "join")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("fresh initialization allocated an identity directory: %v", err)
+	}
+	draft, err := store.BeginDraft("演示加入")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Snapshot().Profiles) != 0 || draft.ID == legacyConnectionProfile {
+		t.Fatal("starting a draft created a formal or legacy profile")
+	}
+	if _, err := store.CommitDraft(draft.ID); err != nil {
+		t.Fatal(err)
+	}
+	committed := store.Snapshot()
+	if len(committed.Profiles) != 1 || committed.Selected != draft.ID || committed.LastConnected != "" {
+		t.Fatalf("draft commit created an extra profile or auto-connect intent: %+v", committed)
+	}
+}
+
+func TestConnectionProfilesInitializeLegacyOnlyForExistingJoinState(t *testing.T) {
+	for _, marker := range []string{"join/identity.json.dpapi", "join/ready.json.dpapi", "config/client.json"} {
+		t.Run(marker, func(t *testing.T) {
+			base := t.TempDir()
+			path := filepath.Join(base, filepath.FromSlash(marker))
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			original := []byte("demo-existing-material-is-not-decoded-or-migrated")
+			if err := os.WriteFile(path, original, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			store, err := loadConnectionProfiles(base, writeConnectionProfileTestFile, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			index := store.Snapshot()
+			if len(index.Profiles) != 1 || index.Profiles[0].ID != legacyConnectionProfile || index.Selected != legacyConnectionProfile || index.LastConnected != legacyConnectionProfile {
+				t.Fatalf("existing join state lost its legacy profile: %+v", index)
+			}
+			after, err := os.Stat(path)
+			if err != nil || !os.SameFile(before, after) || !before.ModTime().Equal(after.ModTime()) {
+				t.Fatalf("legacy marker was replaced: %v", err)
+			}
+			body, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(body, original) {
+				t.Fatalf("legacy marker contents changed: %v", err)
+			}
+			if err := store.Remove(legacyConnectionProfile); err != nil {
+				t.Fatal(err)
+			}
+			saved := append([]byte{}, store.body...)
+			reopened, err := loadConnectionProfiles(base, writeConnectionProfileTestFile, nil)
+			if err != nil || len(reopened.Snapshot().Profiles) != 0 || !bytes.Equal(reopened.body, saved) {
+				t.Fatalf("existing empty index was changed by retained legacy files: %v", err)
+			}
+		})
+	}
+}
+
+func TestConnectionProfilesRejectUnsafeLegacyStateBeforeInitialization(t *testing.T) {
+	for _, kind := range []string{"directory", "file-link", "parent-link", "platform-reparse"} {
+		t.Run(kind, func(t *testing.T) {
+			base := t.TempDir()
+			join := filepath.Join(base, "join")
+			if err := os.Mkdir(join, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			marker := filepath.Join(join, "identity.json.dpapi")
+			var check func(string) error
+			switch kind {
+			case "directory":
+				if err := os.Mkdir(marker, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			case "file-link":
+				outside := filepath.Join(t.TempDir(), "demo-identity")
+				if err := os.WriteFile(outside, []byte("demo-protected-identity"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, marker); err != nil {
+					t.Skipf("symlink creation requires platform privileges: %v", err)
+				}
+			case "parent-link":
+				if err := os.Remove(join); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(t.TempDir(), join); err != nil {
+					t.Skipf("symlink creation requires platform privileges: %v", err)
+				}
+			case "platform-reparse":
+				if err := os.WriteFile(marker, []byte("demo-protected-identity"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				check = func(path string) error {
+					if path == marker {
+						return errors.New("demo platform reparse rejection")
+					}
+					return nil
+				}
+			}
+			writes := 0
+			_, err := loadConnectionProfiles(base, func(string, []byte) error { writes++; return nil }, check)
+			if err == nil || writes != 0 {
+				t.Fatalf("unsafe old identity initialized a new index: writes=%d err=%v", writes, err)
+			}
+		})
+	}
 }
 
 func TestConnectionProfilesPreserveLegacyIdentityAndIsolateRoots(t *testing.T) {
@@ -213,14 +346,14 @@ func TestConnectionProfilesMissingIndexDoesNotHideExistingIdentities(t *testing.
 	if err != nil || !bytes.Equal(body, original) {
 		t.Fatalf("existing profile identity was modified: %v", err)
 	}
-	// §13.5：空目录不代表多身份已存在，仍允许旧单身份首次登记为 legacy。
+	// §13.5：空目录不代表多身份已存在；没有加入资料时初始化空列表。
 	empty := t.TempDir()
 	if err := os.Mkdir(filepath.Join(empty, "profiles"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	initialized, err := loadConnectionProfiles(empty, writeConnectionProfileTestFile, nil)
-	if err != nil || initialized.Snapshot().Selected != legacyConnectionProfile {
-		t.Fatalf("empty profiles directory blocked legacy initialization: %v", err)
+	if err != nil || len(initialized.Snapshot().Profiles) != 0 {
+		t.Fatalf("empty profiles directory did not allow an empty index: %v", err)
 	}
 }
 
@@ -239,6 +372,7 @@ func TestConnectionProfilesRejectCorruptIndexWithoutOverwriting(t *testing.T) {
 		"null_select":     `{"schema":1,"profiles":[],"selected":null}`,
 		"null_last":       `{"schema":1,"profiles":[],"selected":"","last_connected":null}`,
 		"duplicate_field": strings.Replace(valid, `"schema":1`, `"schema":1,"schema":1`, 1),
+		"duplicate_case":  strings.Replace(valid, `"schema":1`, `"schema":1,"Schema":1`, 1),
 		"duplicate_name":  `{"schema":1,"profiles":[{"id":"legacy","name":"Demo"},{"id":"00112233445566778899aabbccddeeff","name":"demo"}],"selected":"legacy"}`,
 		"duplicate_id":    `{"schema":1,"profiles":[{"id":"legacy","name":"一"},{"id":"legacy","name":"二"}],"selected":"legacy"}`,
 		"path_id":         strings.ReplaceAll(valid, `legacy`, `../outside`),

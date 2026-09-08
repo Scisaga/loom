@@ -11,6 +11,7 @@ $ErrorActionPreference = 'Stop'
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $PSScriptRoot '..\out' }
 $output = (Resolve-Path -LiteralPath $OutputDirectory).Path
 $source = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\clients\windows\installer\Package.wxs')).Path
+$icon = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\clients\windows\favicon.ico')).Path
 if ($RequireSigned -and (-not $CertificateThumbprint -or -not $TimestampUrl)) {
     throw 'Signed release requires LOOM_WINDOWS_SIGN_CERT and LOOM_WINDOWS_TIMESTAMP_URL.'
 }
@@ -38,6 +39,10 @@ try {
         if ((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash -ne $hashes["$name.zip"]) { throw 'Input ZIP changed during staging.' }
         Expand-Archive -LiteralPath $zip -DestinationPath $bundle
         Move-Item -LiteralPath (Join-Path $bundle "$name.exe") -Destination (Join-Path $bundle 'loom-client.exe')
+        # MSI stores Icon streams without cabinet compression. Use the same
+        # favicon as the EXE, not another complete copy of the executable.
+        $stagedIcon = Join-Path $bundle 'favicon.ico'
+        Copy-Item -LiteralPath $icon -Destination $stagedIcon
         if ($CertificateThumbprint) {
             & (Join-Path $PSScriptRoot 'sign-windows-artifact.ps1') -Path (Join-Path $bundle 'loom-client.exe') -CertificateThumbprint $CertificateThumbprint -TimestampUrl $TimestampUrl -SignTool $SignTool
         }
@@ -47,6 +52,7 @@ try {
         $process = Start-Process -FilePath $Wix -ArgumentList $wixArgs -Wait -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $stage 'wix.log') -RedirectStandardError (Join-Path $stage 'wix.err')
         Get-Content -LiteralPath (Join-Path $stage 'wix.log'),(Join-Path $stage 'wix.err')
         if ($process.ExitCode -ne 0) { throw "WiX build failed: $arch" }
+        & (Join-Path $PSScriptRoot 'verify-windows-installer.ps1') -Path $msi -IconPath $stagedIcon
         if ($CertificateThumbprint) {
             & (Join-Path $PSScriptRoot 'sign-windows-artifact.ps1') -Path $msi -CertificateThumbprint $CertificateThumbprint -TimestampUrl $TimestampUrl -SignTool $SignTool
         }

@@ -29,6 +29,15 @@ func TestBrokerRejectsUnboundedAuthority(t *testing.T) {
 		`{"operation":"connect","profile_id":"C:\\demo"}`,
 		`{"operation":"select_profile"}`,
 		`{"operation":"add_profile","profile_id":"legacy"}`,
+		`{"operation":"join_profile","profile_id":"legacy"}`,
+		`{"operation":"join_profile","invite":{}}`,
+		`{"operation":"join_profile","preference":{"schema":1,"mode":"auto"}}`,
+		`{"operation":"cancel_add_profile","name":"demo"}`,
+		`{"operation":"cancel_add_profile","profile_id":"legacy"}`,
+		`{"operation":"cancel_add_profile","invite":{}}`,
+		`{"operation":"add_profile","operation":"cancel_add_profile"}`,
+		`{"operation":"add_profile","Operation":"cancel_add_profile"}`,
+		`{"operation":"join_profile","invite":{"Token":"demo-first","token":"demo-second"}}`,
 		`{"operation":"rename_profile","profile_id":"legacy","name":""}`,
 		`{"operation":"rename_profile","profile_id":"legacy","name":"demo\nname"}`,
 		`{"operation":"status","profile_id":"legacy"}`,
@@ -48,7 +57,7 @@ func TestBrokerCannotBypassUnavailableProfileIndex(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	app := &portableGUI{profileHost: true, ctx: ctx, cancel: cancel, state: guiError}
-	for _, operation := range []string{"join", "connect", "disconnect", "delete", "preference", "add_profile", "select_profile", "rename_profile"} {
+	for _, operation := range []string{"join", "connect", "disconnect", "delete", "preference", "add_profile", "join_profile", "cancel_add_profile", "select_profile", "rename_profile"} {
 		if err := app.handleBrokerRequest(brokerRequest{Operation: operation, ProfileID: "legacy"}); err == nil {
 			t.Fatalf("配置索引不可用时接受了 %s", operation)
 		}
@@ -58,6 +67,40 @@ func TestBrokerCannotBypassUnavailableProfileIndex(t *testing.T) {
 	}
 	if _, _, _, enabled := app.presentation(app.snapshot()); enabled {
 		t.Fatal("损坏索引不能显示可连接的按钮")
+	}
+}
+
+func TestBrokerProfileDraftUsesBoundedActionsAndDisplayOnlySnapshot(t *testing.T) {
+	for _, req := range []brokerRequest{
+		{Operation: "add_profile"}, {Operation: "cancel_add_profile"}, {Operation: "join_profile"},
+		{Operation: "join_profile", Name: "演示网络", Invite: profileDraftInvite()},
+	} {
+		body, err := json.Marshal(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := decodeBrokerRequest(body); err != nil {
+			t.Fatalf("valid draft action rejected: %s: %v", req.Operation, err)
+		}
+	}
+	draft := &windowsProfileDraftDisplay{State: guiJoining, Name: "演示网络", Detail: "正在等待加入配置", Recoverable: true, Busy: true}
+	app := &portableGUI{brokerProfilesReady: true, brokerProfileDraft: draft}
+	snapshot := app.brokerSnapshot()
+	if snapshot.ProfileDraft == nil || *snapshot.ProfileDraft != *draft {
+		t.Fatal("broker dropped join draft progress")
+	}
+	snapshot.ProfileDraft.Name = "仅修改返回值"
+	if app.brokerProfileDraft.Name != "演示网络" {
+		t.Fatal("broker draft snapshot aliases mutable host state")
+	}
+	body, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"token", "invite", "private_key", "profile-draft.json", "identity.json.dpapi", "endpoint"} {
+		if strings.Contains(string(body), forbidden) {
+			t.Fatalf("broker draft snapshot leaked %q", forbidden)
+		}
 	}
 }
 

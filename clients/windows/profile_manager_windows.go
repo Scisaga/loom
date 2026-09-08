@@ -8,13 +8,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"sync"
 	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 	"loom/internal/clientcore"
+	"loom/internal/clientenroll"
 	"loom/internal/clientruntime"
 	"loom/internal/clientsecret"
 	"loom/internal/clientupdate"
@@ -41,6 +41,9 @@ type windowsProfileManager struct {
 	closing          bool
 	start            func(*portableGUI)
 	resume           func(*portableGUI) (windowsJoinResult, error)
+	joinDraft        func(*portableGUI, *clientenroll.Invite) (windowsJoinResult, error)
+	draft            *windowsProfileDraft
+	draftVisible     bool
 	workers          sync.WaitGroup
 }
 
@@ -79,13 +82,23 @@ func newWindowsProfileManager(owner *portableGUI) (*windowsProfileManager, error
 		return nil, err
 	}
 	m := &windowsProfileManager{store: store, owner: owner, children: make(map[string]*portableGUI), start: (*portableGUI).startRuntime,
-		resume: func(child *portableGUI) (windowsJoinResult, error) { return child.joinInput("", nil) }}
+		resume: func(child *portableGUI) (windowsJoinResult, error) { return child.joinInput("", nil) },
+		joinDraft: func(child *portableGUI, invite *clientenroll.Invite) (windowsJoinResult, error) {
+			return child.joinInput("", invite)
+		}}
 	for _, p := range store.Snapshot().Profiles {
 		child, err := m.makeChild(p.ID)
 		if err != nil {
 			return nil, err
 		}
 		m.children[p.ID] = child
+	}
+	if draft, err := store.Draft(); err != nil {
+		return nil, err
+	} else if draft != nil {
+		if err := m.restoreProfileDraft(*draft); err != nil {
+			return nil, err
+		}
 	}
 	return m, nil
 }
@@ -95,6 +108,10 @@ func (m *windowsProfileManager) makeChild(id string) (*portableGUI, error) {
 	if err != nil {
 		return nil, err
 	}
+	return m.makeProfileChild(root), nil
+}
+
+func (m *windowsProfileManager) makeProfileChild(root string) *portableGUI {
 	ctx, cancel := context.WithCancel(m.owner.ctx)
 	child := &portableGUI{edition: m.owner.edition, root: root, ctx: ctx, cancel: cancel,
 		state: guiNeedsJoin, routeSelected: -1, profileChild: true, hostname: m.owner.hostname}
@@ -106,7 +123,7 @@ func (m *windowsProfileManager) makeChild(id string) (*portableGUI, error) {
 	} else if !os.IsNotExist(err) {
 		child.state, child.detail = guiError, "连接配置无效："+err.Error()
 	}
-	return child, nil
+	return child
 }
 
 func (app *portableGUI) loadOfflineProfileRoutes() {
@@ -194,6 +211,13 @@ func (m *windowsProfileManager) snapshot() portableGUISnapshot {
 			s.detail = "正在切换连接，等待原连接完全停止…"
 			s.paths = nil
 		}
+	}
+	if m.draftVisible && m.draft != nil {
+		display := m.draft.display
+		if display.Busy && m.draft.child != nil {
+			display.Detail = m.draft.child.snapshot().detail
+		}
+		s.profileDraft = &display
 	}
 	return s
 }
@@ -353,6 +377,21 @@ func (m *windowsProfileManager) runDisconnect(op *windowsProfileDisconnect) erro
 }
 
 func (m *windowsProfileManager) dispatch(req brokerRequest) error {
+	// §7.2：Installed broker 与本地 GUI 一样，新的用户操作清除上次命令错误。
+	m.owner.mu.Lock()
+	m.owner.profileMessage = ""
+	m.owner.mu.Unlock()
+	// §7.2：面板意图在接收时生效，关闭不能落到尚未启动的加入 worker 后面。
+	if req.Operation == "add_profile" {
+		err := m.openProfileDraft(req.Name)
+		m.owner.repaint()
+		return err
+	}
+	if req.Operation == "cancel_add_profile" {
+		m.cancelProfileDraft()
+		m.owner.repaint()
+		return nil
+	}
 	m.mu.Lock()
 	if m.closing || m.owner.ctx.Err() != nil {
 		m.mu.Unlock()
@@ -360,6 +399,13 @@ func (m *windowsProfileManager) dispatch(req brokerRequest) error {
 	}
 	var run func() error
 	switch req.Operation {
+	case "join_profile":
+		if m.draft == nil || !m.draftVisible {
+			m.mu.Unlock()
+			return errors.New("请先打开添加连接配置面板")
+		}
+		draft, epoch := m.draft, m.draft.epoch
+		run = func() error { return m.joinProfileDraftFor(req, draft, epoch) }
 	case "connect":
 		op, err := m.prepareConnectLocked(req.ProfileID)
 		if err != nil {
@@ -389,6 +435,15 @@ func (m *windowsProfileManager) dispatch(req brokerRequest) error {
 }
 
 func (m *windowsProfileManager) command(req brokerRequest) error {
+	switch req.Operation {
+	case "add_profile":
+		return m.openProfileDraft(req.Name)
+	case "join_profile":
+		return m.joinProfileDraft(req)
+	case "cancel_add_profile":
+		m.cancelProfileDraft()
+		return nil
+	}
 	if req.Operation == "connect" {
 		return m.connect(req.ProfileID)
 	}
@@ -418,32 +473,6 @@ func (m *windowsProfileManager) command(req brokerRequest) error {
 	child := m.children[req.ProfileID]
 	m.mu.Unlock()
 	switch req.Operation {
-	case "add_profile":
-		name := req.Name
-		if name == "" {
-			for n := 1; ; n++ {
-				name = fmt.Sprintf("连接配置 %d", n)
-				if !slices.ContainsFunc(m.store.Snapshot().Profiles, func(p connectionProfile) bool { return p.Name == name }) {
-					break
-				}
-			}
-		}
-		p, err := m.store.Add(name)
-		if err != nil {
-			return err
-		}
-		newChild, err := m.makeChild(p.ID)
-		if err != nil {
-			return errors.Join(err, m.store.Remove(p.ID))
-		}
-		m.mu.Lock()
-		m.children[p.ID] = newChild
-		closing := m.closing
-		m.mu.Unlock()
-		if closing {
-			newChild.beginClose()
-		}
-		return nil
 	case "join":
 		if child == nil || req.Invite == nil {
 			return errors.New("请选择连接配置并导入加入二维码")
@@ -504,6 +533,9 @@ func (m *windowsProfileManager) close() {
 	m.closing = true
 	if m.transitionCancel != nil {
 		m.transitionCancel()
+	}
+	if m.draft != nil && m.draft.child != nil {
+		m.draft.child.cancel()
 	}
 	children := make([]*portableGUI, 0, len(m.children))
 	for _, child := range m.children {
@@ -588,7 +620,7 @@ func removeWindowsProfileDataWithCommit(base, root string, commit func() error) 
 					return err
 				}
 				for _, state := range states {
-					if state.Name() != "profiles.json" {
+					if state.Name() != "profiles.json" && state.Name() != "profile-draft.json" {
 						sources = append(sources, filepath.Join(path, state.Name()))
 					}
 				}
@@ -747,7 +779,7 @@ func (app *portableGUI) profileError(err error) {
 }
 
 func (app *portableGUI) profileCommand(req brokerRequest) {
-	if req.ProfileID == "" && req.Operation != "add_profile" && req.Operation != "disconnect" {
+	if req.ProfileID == "" && !profileDraftOperation(req.Operation) && req.Operation != "disconnect" {
 		req.ProfileID = app.snapshot().selectedProfile
 	}
 	app.mu.Lock()
