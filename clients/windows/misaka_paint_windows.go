@@ -109,11 +109,6 @@ func (app *portableGUI) paintMisakaContent(c *misakaCanvas, snapshot portableGUI
 			c.Text("前置路径自动选择", misakaRect(s(689), s(220), end-s(689), s(34)), s(10), 400, misakaMuted, 2)
 		}
 		c.Text("当前选路", misakaRect(main, s(269), s(140), s(25)), s(15), 600, misakaText, 0)
-		routeCaption := "按服务 · 用于新连接"
-		if misakaSelectedMode(snapshot) == clientcore.FixedExit {
-			routeCaption = "全部上网流量 · 用于新连接"
-		}
-		c.Text(routeCaption, misakaRect(main+s(90), s(273), end-main-s(188), s(18)), s(10), 400, misakaMuted, 2)
 	}
 }
 
@@ -678,19 +673,28 @@ func (app *portableGUI) drawMisakaPath(item *portableDrawItem) {
 		}
 	}
 	if app.pathsExpanded {
-		y := r.top + s(130+(misakaPathNodeRows(row)-1)*88)
-		width := r.right - r.left - s(28)
+		y := r.top + s(142+(misakaPathNodeRows(row)-1)*88)
+		width := r.right - r.left - s(36)
 		details := app.misakaPathDetails(row, width)
 		place := func(bounds portableRect) portableRect {
-			bounds.left, bounds.right = bounds.left+r.left+s(14), bounds.right+r.left+s(14)
+			bounds.left, bounds.right = bounds.left+r.left+s(18), bounds.right+r.left+s(18)
 			bounds.top, bounds.bottom = bounds.top+y, bounds.bottom+y
 			return bounds
 		}
-		c.Paragraph(details.best, place(details.bestBounds), s(10), 400, misakaMuted)
-		c.Paragraph(details.reason, place(details.reasonBounds), s(10), 400, misakaMuted)
-		c.Text(details.read, place(details.readBounds), s(9), 400, misakaMuted, 0)
+		if len(details.blocks) == 0 {
+			c.Paragraph(details.best, place(details.bestBounds), s(misakaDetailBodySize), 400, misakaMuted)
+		}
+		for _, block := range details.blocks {
+			c.Paragraph(block.title, place(block.titleBounds), s(misakaDetailTitleSize), misakaDetailTitleWeight, misakaText)
+			if block.body != "" {
+				c.Paragraph(block.body, place(block.bodyBounds), s(misakaDetailBodySize), 400, misakaMuted)
+			}
+		}
+		c.Paragraph("选路说明", place(details.reasonTitleBounds), s(misakaDetailTitleSize), misakaDetailTitleWeight, misakaText)
+		c.Paragraph(details.reason, place(details.reasonBounds), s(misakaDetailBodySize), 400, misakaText)
+		c.Paragraph(details.read, place(details.readBounds), s(misakaDetailBodySize), 400, misakaMuted)
 		if details.scope != "" {
-			c.Paragraph(details.scope, place(details.scopeBounds), s(9), 400, misakaMuted)
+			c.Paragraph(details.scope, place(details.scopeBounds), s(misakaDetailBodySize), 400, misakaMuted)
 		}
 	}
 	app.finishMisakaPaint(item.dc)

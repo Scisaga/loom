@@ -249,11 +249,11 @@ func windowsLinkMeasurement(m agent.ClientPathMeasurement) (string, string) {
 	case "entry":
 		source = "客户端连接时单次 ping"
 	case "neighbor":
-		source = "服务器 WireGuard 邻居 RTT；波动与速率尚无可用数据"
+		source = "服务器 WireGuard 邻居 RTT"
 	case "public-hysteria2":
-		source = "服务器公网 Hy2 单跳观测；Δ 为该观测 P95−P50；速率为固定响应探测速率"
+		source = "服务器公网 Hy2 单跳；Δ=P95−P50；固定响应探测速率"
 	case "target":
-		source = "服务器直连此探测目标、收到首次响应的耗时"
+		source = "服务器直连目标的首次响应耗时"
 	}
 	if m.DelayMS == nil {
 		if m.Samples > 0 && m.Failures == m.Samples {
@@ -378,6 +378,9 @@ func formatWindowsPaths(rows []windowsPathDisplay, details bool) string {
 			line += "\r\n原因：" + row.Reason
 			if row.UpdatedAt != "" {
 				line += "\r\n读取时间：" + row.UpdatedAt
+			}
+			if row.DecisionScope != "" {
+				line += "\r\n诊断标识：" + row.DecisionScope
 			}
 		}
 		lines = append(lines, line)

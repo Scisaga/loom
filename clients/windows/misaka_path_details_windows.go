@@ -8,6 +8,7 @@ import (
 	"math"
 	"runtime"
 	"strings"
+	"time"
 	"unicode/utf8"
 	"unsafe"
 
@@ -29,13 +30,17 @@ type misakaParagraphMetrics struct {
 }
 
 // §7.2：测量与绘制共用 DirectWrite 格式和可用宽度，不能按字符数猜测正常换行。
-func (c *misakaCanvas) measureParagraph(text string, width, size int32) (int32, error) {
+func (c *misakaCanvas) measureParagraph(text string, width, size int32, weights ...int32) (int32, error) {
 	if c == nil || c.closed || width <= 0 {
 		return 0, errors.New("[§7.2] 段落测量缺少有效画布或宽度")
 	}
 	previousError := c.err
 	defer func() { c.err = previousError }()
-	format := c.textFormat(misakaTextStyle{size: size, weight: 400, wrap: true, cjk: misakaTextHasCJK(text)})
+	weight := int32(400)
+	if len(weights) > 0 {
+		weight = weights[0]
+	}
+	format := c.textFormat(misakaTextStyle{size: size, weight: weight, wrap: true, cjk: misakaTextHasCJK(text)})
 	if format == nil {
 		return 0, c.err
 	}
@@ -59,8 +64,8 @@ func (c *misakaCanvas) measureParagraph(text string, width, size int32) (int32, 
 	return max(1, int32(math.Ceil(float64(metrics.height)))), nil
 }
 
-func (app *portableGUI) misakaDetailParagraphHeight(text string, width, size int32) int32 {
-	height, err := app.skin.canvas.measureParagraph(text, width, size)
+func (app *portableGUI) misakaDetailParagraphHeight(text string, width, size int32, weight ...int32) int32 {
+	height, err := app.skin.canvas.measureParagraph(text, width, size, weight...)
 	if err == nil {
 		return height
 	}
@@ -73,43 +78,103 @@ func (app *portableGUI) misakaDetailParagraphHeight(text string, width, size int
 	return lines * (size + app.scale(6))
 }
 
-type misakaPathDetailLayout struct {
-	best, reason, read, scope                         string
-	bestBounds, reasonBounds, readBounds, scopeBounds portableRect
-	height                                            int32
+const (
+	misakaDetailBodySize    int32 = 11
+	misakaDetailTitleSize   int32 = 12
+	misakaDetailTitleWeight int32 = 500
+)
+
+type misakaDetailBlock struct {
+	title, body             string
+	titleBounds, bodyBounds portableRect
 }
 
-// §7.2：详情逐项顺排，读取时间紧接实际原因行；缺少 scope 时不保留占位行。
+type misakaPathDetailLayout struct {
+	best, reason, read, scope                                            string
+	bestBounds, reasonBounds, readBounds, scopeBounds, reasonTitleBounds portableRect
+	blocks                                                               []misakaDetailBlock
+	height                                                               int32
+}
+
+func windowsDetailTime(value string) string {
+	at, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return value
+	}
+	return at.UTC().Format("2006-01-02 15:04:05 UTC")
+}
+
+// §7.2：测量逐段分组，标题与正文使用同一套实际字体度量，间距随 DPI 缩放。
 func (app *portableGUI) misakaPathDetails(row windowsPathDisplay, width int32) misakaPathDetailLayout {
 	s := app.scale
-	value := func(text string) string {
-		if text == "" {
-			return "未知"
-		}
-		return text
+	layout := misakaPathDetailLayout{reason: row.Reason, read: "读取时间：" + windowsDetailTime(row.UpdatedAt)}
+	if layout.reason == "" {
+		layout.reason = "暂无选路说明"
 	}
-	metrics := "当前测量：" + value(row.SelectedQuality) + "；已测候选：" + value(row.BestQuality)
-	if row.LinkLabels != "" {
-		metrics = row.LinkDetails
-		if metrics == "" {
-			metrics = "暂无对应连线的有效观测"
+	if row.LinkLabels != "" && strings.HasPrefix(layout.reason, "入口") {
+		if _, rest, ok := strings.Cut(layout.reason, "；"); ok {
+			layout.reason = rest
 		}
 	}
-	if row.Comparison != "" {
-		metrics += "\n" + row.Comparison
-	}
-	layout := misakaPathDetailLayout{best: metrics, reason: "原因：" + value(row.Reason), read: "读取：" + value(row.UpdatedAt)}
-	line := func(height int32) portableRect {
+	layout.reason = strings.ReplaceAll(layout.reason, "；未测整条业务路径", "")
+	line := func(text string, size, weight int32) portableRect {
+		height := app.misakaDetailParagraphHeight(text, width, s(size), weight)
 		bounds := misakaRect(0, layout.height, width, height)
 		layout.height += height
 		return bounds
 	}
-	layout.bestBounds = line(app.misakaDetailParagraphHeight(layout.best, width, s(10)))
-	layout.reasonBounds = line(app.misakaDetailParagraphHeight(layout.reason, width, s(10)))
-	layout.readBounds = line(s(18))
+	if row.LinkLabels != "" {
+		for _, entry := range strings.Split(row.LinkDetails, "\n") {
+			if entry == "" {
+				continue
+			}
+			title, body, _ := strings.Cut(entry, "；")
+			if source, tail, ok := strings.Cut(body, "；测量于 "); ok {
+				ts, rest, _ := strings.Cut(tail, "；")
+				body = source + " · " + windowsDetailTime(ts)
+				if rest != "" {
+					body += "；" + rest
+				}
+			}
+			body = strings.ReplaceAll(body, "；", " · ")
+			block := misakaDetailBlock{title: title, body: body}
+			if len(layout.blocks) > 0 {
+				layout.height += s(12)
+			}
+			block.titleBounds = line(title, misakaDetailTitleSize, misakaDetailTitleWeight)
+			if body != "" {
+				layout.height += s(4)
+				block.bodyBounds = line(body, misakaDetailBodySize, 400)
+			}
+			layout.blocks = append(layout.blocks, block)
+		}
+	}
+	if len(layout.blocks) == 0 {
+		layout.best = "暂无对应连线的有效观测"
+		if row.LinkLabels == "" {
+			layout.best = "当前测量：" + row.SelectedQuality + "；已测候选：" + row.BestQuality
+			if row.Comparison != "" {
+				layout.best += "\n" + row.Comparison
+			}
+		}
+		layout.bestBounds = line(layout.best, misakaDetailBodySize, 400)
+	} else {
+		layout.bestBounds = misakaRect(0, 0, width, layout.height)
+	}
+	layout.height += s(16)
+	layout.reasonTitleBounds = line("选路说明", misakaDetailTitleSize, misakaDetailTitleWeight)
+	layout.height += s(4)
+	layout.reasonBounds = line(layout.reason, misakaDetailBodySize, 400)
+	layout.height += s(8)
+	layout.readBounds = line(layout.read, misakaDetailBodySize, 400)
 	if row.DecisionScope != "" {
-		layout.scope = "决策范围：" + row.DecisionScope
-		layout.scopeBounds = line(app.misakaDetailParagraphHeight(layout.scope, width, s(9)))
+		scope := row.DecisionScope
+		if len(scope) > 12 {
+			scope = scope[:12] + "…"
+		}
+		layout.scope = "诊断标识：" + scope
+		layout.height += s(4)
+		layout.scopeBounds = line(layout.scope, misakaDetailBodySize, 400)
 	}
 	return layout
 }
@@ -122,10 +187,20 @@ func misakaPathNodeRows(row windowsPathDisplay) int32 {
 }
 
 func (app *portableGUI) syncMisakaPathItemHeight() {
-	height := uintptr(app.scale(app.misakaPathHeight()))
-	current, _, _ := procSendMessage.Call(app.controls.pathsValue, 0x01A1, 0, 0) // LB_GETITEMHEIGHT
-	if current != height {
-		procSendMessage.Call(app.controls.pathsValue, portableLBSetItemHeight, 0, height)
+	count, _, _ := procSendMessage.Call(app.controls.pathsValue, 0x018B, 0, 0)
+	if count == ^uintptr(0) {
+		return
+	}
+	changed := false
+	for index := uintptr(0); index < count; index++ {
+		height := uintptr(app.scale(app.misakaPathHeightAt(int(index))))
+		current, _, _ := procSendMessage.Call(app.controls.pathsValue, 0x01A1, index, 0)
+		if current != height {
+			procSendMessage.Call(app.controls.pathsValue, portableLBSetItemHeight, index, height)
+			changed = true
+		}
+	}
+	if changed {
 		procInvalidateRect.Call(app.controls.pathsValue, 0, 0)
 	}
 }

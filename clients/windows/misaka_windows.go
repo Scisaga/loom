@@ -28,9 +28,9 @@ const (
 	misakaControlDraftCancel
 )
 
-// §7.2：标题栏缩为 32 DIP；正文保留原绘制坐标原点，由视口整体上移。
+// §7.2：标题栏为 36 DIP；正文保留原绘制坐标原点，由视口整体上移。
 const (
-	misakaTitleHeight    int32 = 32
+	misakaTitleHeight    int32 = 36
 	misakaContentOriginY int32 = 40
 )
 
@@ -154,15 +154,11 @@ func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height
 	resized := app.skin.width != width || app.skin.height != height
 	app.skin.width, app.skin.height = width, height
 	moveMisakaControl(app.skin.pane, app.hwnd, misakaRect(s(176), s(misakaTitleHeight), width-s(176), height-s(misakaTitleHeight)))
-	count := 0
-	if snapshot.state == guiConnected {
-		count = len(snapshot.paths)
-	}
 	for pass := 0; pass < 2; pass++ {
 		end := app.misakaContentEnd()
 		content := s(320)
 		if snapshot.joined {
-			content = s(300) + s(app.misakaPathHeight())*int32(max(1, count)) + s(20)
+			content = s(300) + app.misakaPathsHeight() + s(20)
 		}
 		if snapshot.profileDraft != nil {
 			content = s(468)
@@ -225,7 +221,7 @@ func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height
 			}
 			visible[app.controls.routeCombo] = true
 		}
-		move(app.controls.pathsValue, main, s(300), end-main, s(app.misakaPathHeight())*int32(max(1, count)))
+		move(app.controls.pathsValue, main, s(300), end-main, app.misakaPathsHeight())
 		move(app.controls.pathsDetailsButton, end-s(86), s(265), s(86), s(26))
 	}
 	if app.skin.rename {
@@ -316,9 +312,9 @@ func (app *portableGUI) renderMisaka(snapshot portableGUISnapshot, previous *por
 			setPortableControlText(app.controls.draftCancel, "取消")
 		}
 	}
-	oldHeight := app.misakaPathHeight()
+	oldHeight := app.misakaPathsHeight()
 	app.updateMisakaPaths(snapshot, previous == nil || previous.state != snapshot.state)
-	if previous == nil || previous.state != snapshot.state || len(previous.paths) != len(snapshot.paths) || oldHeight != app.misakaPathHeight() {
+	if previous == nil || previous.state != snapshot.state || len(previous.paths) != len(snapshot.paths) || oldHeight != app.misakaPathsHeight() {
 		app.layoutControls()
 	}
 	// §7.2：观测变化只使对应卡片失效，定时轮询没有任何绘制副作用。
@@ -329,24 +325,35 @@ func (app *portableGUI) renderMisaka(snapshot portableGUISnapshot, previous *por
 	}
 }
 
-func (app *portableGUI) misakaPathHeight() int32 {
+// §7.2：每个服务按自身内容计算高度，不能让短详情继承最长服务的留白。
+func (app *portableGUI) misakaPathHeightAt(index int) int32 {
 	s := app.scale
-	height := s(138)
-	if app.skin == nil {
+	if app.skin == nil || index < 0 || index >= len(app.skin.lastPaths) {
 		return 138
 	}
-	width := max(s(40), app.misakaContentEnd()-s(196)-s(3)-2-s(28))
-	for _, path := range app.skin.lastPaths {
-		rows := misakaPathNodeRows(path)
-		needed := s(138 + (rows-1)*88)
-		if app.pathsExpanded && path.Candidate != "" {
-			details := app.misakaPathDetails(path, width)
-			needed = 2 + s(130+(rows-1)*88) + details.height + s(10)
-		}
-		height = max(height, needed)
+	path := app.skin.lastPaths[index]
+	rows := misakaPathNodeRows(path)
+	needed := s(138 + (rows-1)*88)
+	if app.pathsExpanded && path.Candidate != "" {
+		width := max(s(40), app.misakaContentEnd()-s(196)-s(3)-2-s(36))
+		details := app.misakaPathDetails(path, width)
+		needed = 2 + s(142+(rows-1)*88) + details.height + s(16)
 	}
-	// §7.2：物理像素高度向上换算，防止非整数 DPI 再缩放时裁掉段落末行。
-	return (height*96 + app.dpi() - 1) / app.dpi()
+	return (needed*96 + app.dpi() - 1) / app.dpi()
+}
+
+func (app *portableGUI) misakaPathHeight() int32 { return app.misakaPathHeightAt(0) }
+
+func (app *portableGUI) misakaPathsHeight() int32 {
+	count := 1
+	if app.skin != nil {
+		count = max(1, len(app.skin.lastPaths))
+	}
+	var height int32
+	for index := 0; index < count; index++ {
+		height += app.scale(app.misakaPathHeightAt(index))
+	}
+	return height
 }
 
 func (app *portableGUI) updateMisakaPaths(snapshot portableGUISnapshot, force bool) {
@@ -366,7 +373,6 @@ func (app *portableGUI) updateMisakaPaths(snapshot portableGUISnapshot, force bo
 		procSendMessage.Call(app.controls.pathsValue, 0x000B, 0, 0)
 	}
 	procSendMessage.Call(app.controls.pathsValue, portableLBResetContent, 0, 0)
-	app.syncMisakaPathItemHeight()
 	for _, row := range rows {
 		label, _ := windows.UTF16PtrFromString(formatWindowsPaths([]windowsPathDisplay{row}, true))
 		procSendMessage.Call(app.controls.pathsValue, portableLBAddString, 0, uintptr(unsafe.Pointer(label)))
@@ -381,6 +387,7 @@ func (app *portableGUI) updateMisakaPaths(snapshot portableGUISnapshot, force bo
 		procSendMessage.Call(app.controls.pathsValue, portableLBAddString, 0, uintptr(unsafe.Pointer(label)))
 		runtime.KeepAlive(label)
 	}
+	app.syncMisakaPathItemHeight()
 	if len(rows) > 0 {
 		procSendMessage.Call(app.controls.pathsValue, 0x0197, min(top, uintptr(len(rows)-1)), 0)
 	}

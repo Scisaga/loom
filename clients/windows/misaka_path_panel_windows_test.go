@@ -2,7 +2,11 @@
 
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"unsafe"
+)
 
 // §7.3.3：实际像素应是连续面板与细分隔线，不能残留两张卡片之间的背景空隙。
 func TestGUIMisakaPathsShareOnePanel(t *testing.T) {
@@ -30,6 +34,33 @@ func TestGUIMisakaPathsShareOnePanel(t *testing.T) {
 			if got := misakaCanvasTestPixel(pixels, width, 0, y); got != misakaBorder {
 				t.Fatalf("DPI %d panel side is not continuous: %06x", dpi, got)
 			}
+		}
+	}
+}
+
+func TestGUIMisakaExpandedServicesHaveIndependentHeights(t *testing.T) {
+	app := newProfileGUITestWindow(t)
+	app.pathsExpanded = true
+	for _, dpi := range []int32{96, 144, 192} {
+		width, height := portableMinimumWindowSize(dpi)
+		suggested := portableRect{left: 20, top: 20, right: 20 + width, bottom: 20 + height}
+		procSendMessage.Call(app.hwnd, portableWMDPIChanged, uintptr(dpi)|uintptr(dpi)<<16, uintptr(unsafe.Pointer(&suggested)))
+		app.paths[0].Reason = strings.Repeat("说明较长的服务需要自身增加高度，不能让其他服务同步变高。", 8)
+		app.renderControls()
+		read := func(index uintptr) portableRect {
+			var r portableRect
+			procSendMessage.Call(app.controls.pathsValue, 0x0198, index, uintptr(unsafe.Pointer(&r)))
+			return r
+		}
+		first, second := read(0), read(1)
+		if first.bottom-first.top <= second.bottom-second.top || second.top != first.bottom {
+			t.Fatalf("DPI %d service rows still share a height or leave a gap: first=%+v second=%+v", dpi, first, second)
+		}
+		app.paths[0].Reason = "保留当前路径"
+		app.renderControls()
+		shorter, unchanged := read(0), read(1)
+		if shorter.bottom-shorter.top >= first.bottom-first.top || unchanged.bottom-unchanged.top != second.bottom-second.top || unchanged.top != shorter.bottom {
+			t.Fatalf("DPI %d shortening one service changed another height or retained blank space", dpi)
 		}
 	}
 }

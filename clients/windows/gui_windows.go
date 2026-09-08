@@ -902,34 +902,35 @@ const (
 	portableMainWindowStyle = portableWSOverlapped | portableWSCaption | portableWSSysMenu |
 		portableWSThickFrame | portableWSMinimizeBox | portableWSClipChildren
 
-	portableWSExClientEdge    = 0x00000200
-	portableLBSNotify         = 0x0001
-	portableLBSOwnerDraw      = 0x0010
-	portableLBSHasStrings     = 0x0040
-	portableLBSNoIntegral     = 0x0100
-	portableCBSDropDownList   = 0x0003
-	portableCBSOwnerDrawFixed = 0x0010
-	portableCBSHasStrings     = 0x0200
-	portableBSGroupBox        = 0x0007
-	portableBSOwnerDraw       = 0x000B
-	portableSSLeft            = 0x0000
-	portableSSRight           = 0x0002
-	portableSSIcon            = 0x0003
-	portableSSNoPrefix        = 0x0080
-	portableSSCenterImage     = 0x0200
-	portableSTMSetIcon        = 0x0170
-	portableImageIcon         = 1
-	portableLRShared          = 0x00008000
-	portableDrawIconNormal    = 0x0003
-	portableDIBRGBColors      = 0
-	portableBIRGB             = 0
-	portableTrayIconSize      = 32
-	portableSMCXIcon          = 11
-	portableSMCYIcon          = 12
-	portableSMCXSmallIcon     = 49
-	portableSMCYSmallIcon     = 50
-	portableIconSmall         = 0
-	portableIconBig           = 1
+	portableWSExClientEdge       = 0x00000200
+	portableLBSNotify            = 0x0001
+	portableLBSOwnerDraw         = 0x0010
+	portableLBSOwnerDrawVariable = 0x0020
+	portableLBSHasStrings        = 0x0040
+	portableLBSNoIntegral        = 0x0100
+	portableCBSDropDownList      = 0x0003
+	portableCBSOwnerDrawFixed    = 0x0010
+	portableCBSHasStrings        = 0x0200
+	portableBSGroupBox           = 0x0007
+	portableBSOwnerDraw          = 0x000B
+	portableSSLeft               = 0x0000
+	portableSSRight              = 0x0002
+	portableSSIcon               = 0x0003
+	portableSSNoPrefix           = 0x0080
+	portableSSCenterImage        = 0x0200
+	portableSTMSetIcon           = 0x0170
+	portableImageIcon            = 1
+	portableLRShared             = 0x00008000
+	portableDrawIconNormal       = 0x0003
+	portableDIBRGBColors         = 0
+	portableBIRGB                = 0
+	portableTrayIconSize         = 32
+	portableSMCXIcon             = 11
+	portableSMCYIcon             = 12
+	portableSMCXSmallIcon        = 49
+	portableSMCYSmallIcon        = 50
+	portableIconSmall            = 0
+	portableIconBig              = 1
 
 	portableLBAddString     = 0x0180
 	portableLBResetContent  = 0x0184
@@ -959,6 +960,7 @@ const (
 	portableControlRenameProfile = 1009
 	portableControlProfileName   = 1010
 	portableControlPathDetails   = 1011
+	portableControlPaths         = 1012
 	portableLBGetCurSel          = 0x0188
 
 	portableCWUseDefault       = -2147483648
@@ -1473,7 +1475,7 @@ func (app *portableGUI) createControls() error {
 		{&app.controls.networkList, 0, "LISTBOX", "", portableWSVScroll | portableWSTabStop | portableLBSNotify | portableLBSOwnerDraw | portableLBSHasStrings | portableLBSNoIntegral, portableControlNetworkList},
 		{&app.controls.addProfileButton, 0, "BUTTON", "添加配置", portableWSTabStop | portableBSOwnerDraw, portableControlAddProfile},
 		{&app.controls.profileNameEdit, 0, "EDIT", "", portableWSTabStop | 0x0080, portableControlProfileName},
-		{&app.controls.pathsValue, 0, "LISTBOX", "", portableWSTabStop | portableLBSOwnerDraw | portableLBSHasStrings | portableLBSNoIntegral | 0x4000, 0},
+		{&app.controls.pathsValue, 0, "LISTBOX", "", portableWSTabStop | portableLBSOwnerDrawVariable | portableLBSHasStrings | portableLBSNoIntegral | 0x4000, portableControlPaths},
 		{&app.controls.pathsDetailsButton, 0, "BUTTON", "详细信息", portableWSTabStop | portableBSOwnerDraw, portableControlPathDetails},
 		{&app.controls.pathsHint, 0, "STATIC", "当前选路用于新连接；已有连接可能沿用原路径。", portableSSLeft | portableSSNoPrefix, 0},
 		{&app.controls.interfaceGroup, 0, "BUTTON", "连接: Loom 网络", portableBSGroupBox, 0},
@@ -1587,7 +1589,7 @@ func (app *portableGUI) updateFonts() error {
 	app.fonts = []uintptr{regular, brand, profileNormal, profileSelected}
 	// Owner-draw 控件不会根据 WM_SETFONT 自动重新测量行高。
 	procSendMessage.Call(app.controls.networkList, portableLBSetItemHeight, 0, uintptr(app.scale(55)))
-	procSendMessage.Call(app.controls.pathsValue, portableLBSetItemHeight, 0, uintptr(app.scale(app.misakaPathHeight())))
+	app.syncMisakaPathItemHeight()
 	procSendMessage.Call(app.controls.routeCombo, portableCBSetItemHeight, ^uintptr(0), uintptr(app.scale(23)))
 	procSendMessage.Call(app.controls.routeCombo, portableCBSetItemHeight, 0, uintptr(app.scale(23)))
 	return nil
@@ -2425,6 +2427,10 @@ func portableWindowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) ui
 	case portableWMMeasureItem:
 		if found && lParam != 0 {
 			item := (*portableMeasureItem)(unsafe.Pointer(lParam))
+			if item.controlID == portableControlPaths {
+				item.itemHeight = uint32(app.scale(app.misakaPathHeightAt(int(item.itemID))))
+				return 1
+			}
 			if item.controlID == portableControlRoute {
 				item.itemHeight = uint32(app.scale(23))
 				return 1

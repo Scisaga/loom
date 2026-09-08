@@ -464,7 +464,7 @@ Windows 不需要新的网络核心，但需要平台宿主：
 **功能原型（定义布局与交互，不作为窗口逐像素实现）：**
 [Windows 客户端首页 v2](../assets/client/windows/loom-client-home-misaka-v2.svg) 与
 [重命名、添加和连接状态 v2](../assets/client/windows/loom-client-interactions-misaka-v2.svg)。
-浅色 Misaka 外观采用紧凑配置侧栏、32 DIP 自绘标题栏、连接摘要和当前选路面板；各服务
+浅色 Misaka 外观采用紧凑配置侧栏、36 DIP 自绘标题栏、连接摘要和当前选路面板；各服务
 在同一白色面板内逐行展示，用贯穿面板的细线分隔，测量标在对应连线上。交互沿用首页完整窗口、侧栏和单层白色
 内容卡片：重命名只增加条目内编辑框，添加在右侧卡片直接排列表单，不嵌套上传面板；
 连接中只更新原摘要状态。三个 edition
@@ -473,6 +473,9 @@ Windows 不需要新的网络核心，但需要平台宿主：
 保留为早期视觉参考，当前交互与分段测量显示以 v2 为准。
 窗口标题和托盘提示统一为 `Loom (Portable TUN) 已连接 · demo-work`，随版本、
 连接状态和名称更新；有连接正在运行时显示实际连接，未连接时显示当前查看的配置。
+展开详情时按链路分组，标题 12 DIP、正文 11 DIP，时间与诊断信息另行排列。每个服务按
+自身内容计算行高，不共享最长行高；当前选路右侧不再显示用途提示。详见
+[选路详情原型](../assets/client/windows/loom-client-route-details-misaka-v2.svg)。
 
 - v1 目标态由 Windows Service 以受控权限运行配置客户端和 sing-box；
 - 托盘程序只调用本机受限控制接口，显示状态、启停和当前路径；

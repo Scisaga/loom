@@ -45,10 +45,11 @@
     .mono {font-family:Consolas,"Microsoft YaHei UI",monospace} .medium {font-weight:600}
     .icon {fill:none;stroke:#737976;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
     .icon-green {fill:none;stroke:#239B68;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+    .detail-title {font-size:12px;font-weight:500} .detail-body {font-size:11px}
     .card {fill:#FFF;stroke:#E4E7E5} .rule {stroke:#E6E9E7;stroke-width:1}
   </style>
     <clipPath id="main-pane-clip" clipPathUnits="userSpaceOnUse">
-      <rect x="188" y="50" width="700" height="582" />
+      <rect x="188" y="50" width="700" height="578" />
     </clipPath>
   </defs>
   <g class="ui">
@@ -57,18 +58,18 @@
     <text x="888" y="24" class="tiny muted" text-anchor="end">原位编辑 · Enter 保存 / Esc 取消 · 右侧整体滚动</text>
     <g transform="translate(0 32)">
       <rect x="12" y="10" width="876" height="614" rx="10" fill="#FCFCFB" stroke="#D9DDDA" />
-      <rect x="13" y="11" width="874" height="31" rx="10" fill="#FFF" />
-      <rect x="13" y="24" width="874" height="18" rx="0" fill="#FFF" />
-      <use href="#brand-favicon" x="25" y="15" width="22" height="22" class="" />
-      <text x="58" y="31" class="small">Loom (Portable TUN) 已连接 · demo-work</text>
+      <rect x="13" y="11" width="874" height="35" rx="10" fill="#FFF" />
+      <rect x="13" y="26" width="874" height="20" rx="0" fill="#FFF" />
+      <use href="#brand-favicon" x="25" y="17" width="22" height="22" class="" />
+      <text x="58" y="33" class="small">Loom (Portable TUN) 已连接 · demo-work</text>
 
-      <path d="M816 26H826" stroke="#747D77" stroke-width="1.4" />
-      <path d="M861 21L871 31" stroke="#747D77" stroke-width="1.3" />
-      <path d="M871 21L861 31" stroke="#747D77" stroke-width="1.3" />
-      <path d="M12 42H888" stroke="#E6E9E7" stroke-width="1" />
-      <g transform="translate(0 -8)">
-      <rect x="13" y="51" width="175" height="571" rx="0" fill="#F7F8F7" />
-      <path d="M188 51L188 632" stroke="#E6E9E7" stroke-width="1" />
+      <path d="M816 28H826" stroke="#747D77" stroke-width="1.4" />
+      <path d="M861 23L871 33" stroke="#747D77" stroke-width="1.3" />
+      <path d="M871 23L861 33" stroke="#747D77" stroke-width="1.3" />
+      <path d="M12 46H888" stroke="#E6E9E7" stroke-width="1" />
+      <g transform="translate(0 -4)">
+      <rect x="13" y="51" width="175" height="567" rx="0" fill="#F7F8F7" />
+      <path d="M188 51L188 628" stroke="#E6E9E7" stroke-width="1" />
       <use href="#brand-large" x="28" y="68" width="40" height="40" class="" />
       <text x="79" y="89" class="title">Loom</text>
       <text x="80" y="108" class="tiny muted">你的连接配置</text>
@@ -109,82 +110,83 @@
         <text x="397" y="252" class="small green medium" text-anchor="middle">自动</text>
         <text x="473" y="252" class="small muted" text-anchor="middle">固定出口</text>
         <text x="208" y="292" class="section">当前选路</text>
-        <text x="759" y="292" class="tiny muted" text-anchor="end">按服务 · 用于新连接</text>
-        <rect x="208" y="308" width="660" height="366" rx="8" fill="#FFF" stroke="#E4E7E5" />
-        <text x="226" y="333" class="section mono">demo-web</text>
 
-        <text x="345" y="369" class="tiny muted" text-anchor="middle">ping 12 ms</text>
-    <text x="534" y="355" class="tiny muted" text-anchor="middle">38 ms · Δ3 ms</text>
-    <text x="534" y="369" class="tiny muted" text-anchor="middle">6.4 Mb/s</text>
-    <text x="727" y="369" class="tiny muted" text-anchor="middle">57 ms</text>
+            <rect x="208" y="308" width="660" height="750" rx="8" fill="#FFF" stroke="#E4E7E5" />
+    <text x="226" y="333" class="section">demo-default</text>
     <path d="M270 391H806" stroke="#C7D8CD" stroke-width="2" />
-        <circle cx="250" cy="391" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" stroke-width="1" />
-        <use href="#pc" x="241" y="382" width="18" height="18" class="icon" />
-        <text x="250" y="423" class="small" text-anchor="middle">本机</text>
-        <circle cx="440" cy="391" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" stroke-width="1" />
-        <use href="#server" x="431" y="382" width="18" height="18" class="icon" />
-        <text x="440" y="423" class="small mono" text-anchor="middle">demo-relay-a</text>
-        <circle cx="629" cy="391" r="16.5" fill="#EEF8F3" stroke="#239B68" stroke-width="1" />
-        <use href="#server" x="620" y="382" width="18" height="18" class="icon-green" />
-        <text x="629" y="423" class="small mono" text-anchor="middle">demo-exit</text>
-        <circle cx="826" cy="391" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" stroke-width="1" />
-        <use href="#target" x="817" y="382" width="18" height="18" class="icon" />
-        <text x="826" y="423" class="small" text-anchor="middle">目标地址</text>
-        <path d="M208 498H868" class="rule" />
-        <text x="226" y="529" class="section mono">demo-api</text>
-
-        <text x="345" y="565" class="tiny muted" text-anchor="middle">ping 12 ms</text>
-    <text x="534" y="565" class="tiny muted" text-anchor="middle">170 ms</text>
-    <text x="727" y="565" class="tiny muted" text-anchor="middle">—</text>
-    <path d="M270 587H806" stroke="#C7D8CD" stroke-width="2" />
-        <circle cx="250" cy="587" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" stroke-width="1" />
-        <use href="#pc" x="241" y="578" width="18" height="18" class="icon" />
-        <text x="250" y="619" class="small" text-anchor="middle">本机</text>
-        <circle cx="440" cy="587" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" stroke-width="1" />
-        <use href="#server" x="431" y="578" width="18" height="18" class="icon" />
-        <text x="440" y="619" class="small mono" text-anchor="middle">demo-relay-b</text>
-        <circle cx="629" cy="587" r="16.5" fill="#EEF8F3" stroke="#239B68" stroke-width="1" />
-        <use href="#server" x="620" y="578" width="18" height="18" class="icon-green" />
-        <text x="629" y="619" class="small mono" text-anchor="middle">demo-exit</text>
-        <circle cx="826" cy="587" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" stroke-width="1" />
-        <use href="#target" x="817" y="578" width="18" height="18" class="icon" />
-        <text x="826" y="619" class="small" text-anchor="middle">目标地址</text>
-        <text x="208" y="699" class="tiny muted">连线数值为合成示例；已有连接可能沿用原路径。</text>
-        <rect x="780" y="65" width="88" height="28" rx="5" fill="#FFF" stroke="#E4E7E5" />
-        <text x="824" y="83" text-anchor="middle" class="body muted">删除配置</text>
-        <rect x="782" y="274" width="86" height="26" rx="5" fill="#FFF" stroke="#E4E7E5" />
-        <text x="825" y="292" text-anchor="middle" class="tiny">收起详情</text>
-        <text x="277" y="182" class="small green medium">本地 HTTP/SOCKS 代理：运行时地址</text>
-        <text x="226" y="442" class="tiny muted">本机单次 ping · 服务器链路观测</text>
-        <text x="226" y="456" class="tiny muted">
-          <tspan x="226" y="456">原因：根据入口与服务器观测选择当前路径，</tspan>
-          <tspan x="226" y="470">实际候选以 selector 读回为准。</tspan>
-        </text>
-        <text x="226" y="484" class="tiny muted">读取：未知</text>
-        <text x="226" y="638" class="tiny muted">本机单次 ping · 服务器链路观测</text>
-        <text x="226" y="652" class="tiny muted">原因：保留当前出口</text>
-        <text x="226" y="666" class="tiny muted">读取：未知</text>
+    <text x="345" y="369" class="tiny muted" text-anchor="middle">ping 12 ms</text>
+    <text x="534" y="369" class="tiny muted" text-anchor="middle">170 ms</text>
+    <text x="727" y="369" class="tiny muted" text-anchor="middle">57 ms</text>
+    <circle cx="250" cy="391" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" />
+    <use href="#pc" x="241" y="382" width="18" height="18" class="icon" />
+    <text x="250" y="423" class="small" text-anchor="middle">本机</text>
+    <circle cx="440" cy="391" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" />
+    <use href="#server" x="431" y="382" width="18" height="18" class="icon" />
+    <text x="440" y="423" class="small" text-anchor="middle">demo-entry</text>
+    <circle cx="629" cy="391" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" />
+    <use href="#server" x="620" y="382" width="18" height="18" class="icon" />
+    <text x="629" y="423" class="small" text-anchor="middle">demo-exit</text>
+    <circle cx="826" cy="391" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" />
+    <use href="#target" x="817" y="382" width="18" height="18" class="icon" />
+    <text x="826" y="423" class="small" text-anchor="middle">目标地址</text>
+    <text x="226" y="463" class="detail-title">本机 → demo-entry：ping 12 ms</text>
+    <text x="226" y="485" class="detail-body muted">客户端连接时单次 ping · 2026-01-02 03:04:05 UTC</text>
+    <text x="226" y="513" class="detail-title">demo-entry → demo-exit：170 ms</text>
+    <text x="226" y="535" class="detail-body muted">服务器 WireGuard 邻居 RTT · 2026-01-02 03:04:06 UTC</text>
+    <text x="226" y="563" class="detail-title">demo-exit → https://demo.example/：57 ms</text>
+    <text x="226" y="585" class="detail-body muted">服务器直连目标的首次响应耗时 · 2026-01-02 03:04:07 UTC</text>
+    <text x="226" y="623" class="detail-title">选路说明</text>
+    <text x="226" y="645" class="detail-body">根据入口与服务器观测选择当前路径。</text>
+    <text x="226" y="670" class="detail-body muted">读取时间：2026-01-02 03:04:08 UTC</text>
+    <text x="226" y="692" class="detail-body muted">诊断标识：demo-scope</text>
+    <path d="M208 708H868" class="rule" />
+    <text x="226" y="733" class="section">demo-web</text>
+    <path d="M270 791H806" stroke="#C7D8CD" stroke-width="2" />
+    <text x="394" y="769" class="tiny muted" text-anchor="middle">ping 12 ms</text>
+    <text x="682" y="769" class="tiny muted" text-anchor="middle">26 ms</text>
+    <circle cx="250" cy="791" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" />
+    <use href="#pc" x="241" y="782" width="18" height="18" class="icon" />
+    <text x="250" y="823" class="small" text-anchor="middle">本机</text>
+    <circle cx="538" cy="791" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" />
+    <use href="#server" x="529" y="782" width="18" height="18" class="icon" />
+    <text x="538" y="823" class="small" text-anchor="middle">demo-entry</text>
+    <circle cx="826" cy="791" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" />
+    <use href="#target" x="817" y="782" width="18" height="18" class="icon" />
+    <text x="826" y="823" class="small" text-anchor="middle">目标地址</text>
+    <text x="226" y="863" class="detail-title">本机 → demo-entry：ping 12 ms</text>
+    <text x="226" y="885" class="detail-body muted">客户端连接时单次 ping · 2026-01-02 03:04:05 UTC</text>
+    <text x="226" y="913" class="detail-title">demo-entry → https://demo.example/：26 ms</text>
+    <text x="226" y="935" class="detail-body muted">服务器直连目标的首次响应耗时 · 2026-01-02 03:04:07 UTC</text>
+    <text x="226" y="973" class="detail-title">选路说明</text>
+    <text x="226" y="995" class="detail-body">根据入口与服务器观测选择当前路径。</text>
+    <text x="226" y="1020" class="detail-body muted">读取时间：2026-01-02 03:04:08 UTC</text>
+    <text x="226" y="1042" class="detail-body muted">诊断标识：demo-scope</text>
+    <rect x="780" y="65" width="88" height="28" rx="5" fill="#FFF" stroke="#E4E7E5" />
+    <text x="824" y="83" text-anchor="middle" class="body muted">删除配置</text>
+    <rect x="782" y="274" width="86" height="26" rx="5" fill="#FFF" stroke="#E4E7E5" />
+    <text x="825" y="292" text-anchor="middle" class="tiny">收起详情</text>
+    <text x="277" y="182" class="small green medium">本地 HTTP/SOCKS 代理：运行时地址</text>
       </g>
-      <rect x="879" y="58" width="4" height="566" rx="2" fill="#EDF0EE" />
-      <rect x="879" y="58" width="4" height="478" rx="2" fill="#C6CDC8" />
+      <rect x="879" y="58" width="4" height="562" rx="2" fill="#EDF0EE" />
+      <rect x="879" y="58" width="4" height="260" rx="2" fill="#C6CDC8" />
       </g>
     </g>
     <text x="12" y="684" class="section">02  添加配置</text>
     <text x="888" y="684" class="tiny muted" text-anchor="end">当前连接继续运行 · 新配置加入后保持断开</text>
     <g transform="translate(0 692)">
       <rect x="12" y="10" width="876" height="614" rx="10" fill="#FCFCFB" stroke="#D9DDDA" />
-      <rect x="13" y="11" width="874" height="31" rx="10" fill="#FFF" />
-      <rect x="13" y="24" width="874" height="18" rx="0" fill="#FFF" />
-      <use href="#brand-favicon" x="25" y="15" width="22" height="22" class="" />
-      <text x="58" y="31" class="small">Loom (Portable TUN) 已连接 · demo-work</text>
+      <rect x="13" y="11" width="874" height="35" rx="10" fill="#FFF" />
+      <rect x="13" y="26" width="874" height="20" rx="0" fill="#FFF" />
+      <use href="#brand-favicon" x="25" y="17" width="22" height="22" class="" />
+      <text x="58" y="33" class="small">Loom (Portable TUN) 已连接 · demo-work</text>
 
-      <path d="M816 26H826" stroke="#747D77" stroke-width="1.4" />
-      <path d="M861 21L871 31" stroke="#747D77" stroke-width="1.3" />
-      <path d="M871 21L861 31" stroke="#747D77" stroke-width="1.3" />
-      <path d="M12 42H888" stroke="#E6E9E7" stroke-width="1" />
-      <g transform="translate(0 -8)">
-      <rect x="13" y="51" width="175" height="571" rx="0" fill="#F7F8F7" />
-      <path d="M188 51L188 632" stroke="#E6E9E7" stroke-width="1" />
+      <path d="M816 28H826" stroke="#747D77" stroke-width="1.4" />
+      <path d="M861 23L871 33" stroke="#747D77" stroke-width="1.3" />
+      <path d="M871 23L861 33" stroke="#747D77" stroke-width="1.3" />
+      <path d="M12 46H888" stroke="#E6E9E7" stroke-width="1" />
+      <g transform="translate(0 -4)">
+      <rect x="13" y="51" width="175" height="567" rx="0" fill="#F7F8F7" />
+      <path d="M188 51L188 628" stroke="#E6E9E7" stroke-width="1" />
       <text x="79" y="89" class="title">Loom</text>
       <text x="80" y="108" class="tiny muted">你的连接配置</text>
       <text x="28" y="145" class="small medium muted">连接配置</text>
@@ -271,18 +273,18 @@
     <text x="888" y="1846" class="tiny muted" text-anchor="end">邀请加入当前配置 · 不另建条目</text>
     <g transform="translate(0 1854)">
       <rect x="12" y="10" width="876" height="614" rx="10" fill="#FCFCFB" stroke="#D9DDDA" />
-      <rect x="13" y="11" width="874" height="31" rx="10" fill="#FFF" />
-      <rect x="13" y="24" width="874" height="18" rx="0" fill="#FFF" />
-      <use href="#brand-favicon" x="25" y="15" width="22" height="22" class="" />
-      <text x="58" y="31" class="small">Loom (Portable TUN) 已连接 · demo-work</text>
+      <rect x="13" y="11" width="874" height="35" rx="10" fill="#FFF" />
+      <rect x="13" y="26" width="874" height="20" rx="0" fill="#FFF" />
+      <use href="#brand-favicon" x="25" y="17" width="22" height="22" class="" />
+      <text x="58" y="33" class="small">Loom (Portable TUN) 已连接 · demo-work</text>
 
-      <path d="M816 26H826" stroke="#747D77" stroke-width="1.4" />
-      <path d="M861 21L871 31" stroke="#747D77" stroke-width="1.3" />
-      <path d="M871 21L861 31" stroke="#747D77" stroke-width="1.3" />
-      <path d="M12 42H888" stroke="#E6E9E7" stroke-width="1" />
-      <g transform="translate(0 -8)">
-      <rect x="13" y="51" width="175" height="571" rx="0" fill="#F7F8F7" />
-      <path d="M188 51L188 632" stroke="#E6E9E7" stroke-width="1" />
+      <path d="M816 28H826" stroke="#747D77" stroke-width="1.4" />
+      <path d="M861 23L871 33" stroke="#747D77" stroke-width="1.3" />
+      <path d="M871 23L861 33" stroke="#747D77" stroke-width="1.3" />
+      <path d="M12 46H888" stroke="#E6E9E7" stroke-width="1" />
+      <g transform="translate(0 -4)">
+      <rect x="13" y="51" width="175" height="567" rx="0" fill="#F7F8F7" />
+      <path d="M188 51L188 628" stroke="#E6E9E7" stroke-width="1" />
       <use href="#brand-large" x="28" y="68" width="40" height="40" class="" />
       <text x="79" y="89" class="title">Loom</text>
       <text x="80" y="108" class="tiny muted">你的连接配置</text>

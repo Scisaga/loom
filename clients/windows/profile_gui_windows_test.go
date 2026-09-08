@@ -45,7 +45,7 @@ func newProfileGUITestWindow(t *testing.T) *portableGUI {
 		},
 		paths: []windowsPathDisplay{
 			{Service: "demo-web", Candidate: "demo-candidate-a", Chain: "本机 → demo-prefix-a → demo-exit → 目标", LinkLabels: "ping 12 ms\n38 ms · Δ3 ms · 6.4 Mb/s\n57 ms",
-				LinkDetails: "本机 → demo-prefix-a：ping 12 ms；客户端连接时单次 ping\ndemo-prefix-a → demo-exit：38 ms · Δ3 ms · 6.4 Mb/s；服务器 Hy2 单跳观测\ndemo-exit → https://demo.example/：57 ms", Reason: "根据入口与服务器观测选择当前路径"},
+				LinkDetails: "本机 → demo-prefix-a：ping 12 ms；客户端连接时单次 ping；测量于 2026-01-02T03:04:05Z\ndemo-prefix-a → demo-exit：38 ms · Δ3 ms · 6.4 Mb/s；服务器 Hy2 单跳观测；测量于 2026-01-02T03:04:06Z\ndemo-exit → https://demo.example/：57 ms；服务器直连目标的首次响应耗时；测量于 2026-01-02T03:04:07Z", Reason: "根据入口与服务器观测选择当前路径"},
 			{Service: "demo-api", Candidate: "demo-candidate-b", Chain: "本机 → demo-prefix-b → demo-exit → 目标", LinkLabels: "ping 12 ms\n170 ms\n—", LinkDetails: "demo-prefix-b → demo-exit：170 ms；服务器 WireGuard 邻居 RTT", Reason: "保留当前出口"},
 		},
 	}
@@ -164,7 +164,7 @@ func TestGUIProfilesSelectionAndActualServicePaths(t *testing.T) {
 			t.Fatalf("native paths view lost a complete service path: %q", text)
 		}
 	}
-	if profileGUIStyle(app.controls.pathsValue)&0x0010 == 0 { // LBS_OWNERDRAWFIXED
+	if profileGUIStyle(app.controls.pathsValue)&portableLBSOwnerDrawVariable == 0 { // LBS_OWNERDRAWVARIABLE
 		t.Fatal("actual path control is not a native owner-drawn list")
 	}
 	procSendMessage.Call(app.controls.pathsValue, 0x0102, uintptr('X'), 0) // WM_CHAR
