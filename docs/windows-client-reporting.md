@@ -1,5 +1,9 @@
 # Windows NAT Device 状态上报接入说明
 
+> **需求优先级：** 本文保留既有协议与历史验收说明。当前客户端选路遵守
+> [执行边界](../CLAUDE.md#执行边界与客户端选路约束)：入口单次并行探测，后段复用
+> 服务器观测。下文旧端到端健康采集与验收条目，不授权保留或新增客户端整路径探测。
+
 > **状态：** Windows 最小两签 producer 和每轮健康采集已实现。原生测试覆盖加入、
 > 健康/故障/恢复、配置切换及两签上报；Windows amd64 实机已确认 TUN 探测成功、
 > 自动上报 `204` 和中控接收 healthy=true。停止后五分钟 stale 已在中控验收。
@@ -13,6 +17,8 @@
 ## 给 Windows 客户端仓库的简短提示词
 
 ```text
+遵守 CLAUDE.md 的执行边界：客户端只补入口单次并行探测，后段复用服务器观测；
+不要因健康上报、旧测试或 min_samples 重新加入整条业务路径探测。
 只修改 Loom Windows 客户端：在已加入且成功激活配置后，从 DPAPI 身份的已验证
 PreparedIdentity.Endpoint 精确要求 /loom-client/enroll，并同源替换为 /loom-client/report；
 每 60 秒 POST 现有 report.Observation 原始 JSON，并以 observations=1 请求服务器观测。
