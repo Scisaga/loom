@@ -110,11 +110,16 @@ func writeClientReportRegistryFor(t *testing.T, path, node, platform, status, pu
 
 func postClientReport(t *testing.T, receiver http.Handler, observation any) *httptest.ResponseRecorder {
 	t.Helper()
+	return postClientReportURL(t, receiver, observation, "/api/client/report")
+}
+
+func postClientReportURL(t *testing.T, receiver http.Handler, observation any, endpoint string) *httptest.ResponseRecorder {
+	t.Helper()
 	body, err := json.Marshal(observation)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/client/report", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	receiver.ServeHTTP(response, req)

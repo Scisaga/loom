@@ -50,7 +50,7 @@ func (o *observed) unreachable(target string, now time.Time, maxAge time.Duratio
 		}
 		for i := range x.Targets {
 			r := &x.Targets[i]
-			if r.Target == target && !r.OK() {
+			if EquivalentTargetURL(r.Target, target) && !r.OK() {
 				out[id] = r.Error
 			}
 		}

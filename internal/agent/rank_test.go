@@ -93,6 +93,53 @@ func TestFailureRateOutranksSpeed(t *testing.T) {
 	}
 }
 
+// §5.5 小于旧 10% 分档的差异也必须优先于速度；现任样本不足不能绕过这一规则。
+func TestFailureRateAlwaysPrecedesObjective(t *testing.T) {
+	for _, objective := range []model.Objective{model.Latency, model.Stability, model.Throughput} {
+		for _, tc := range []struct {
+			name                                                                   string
+			currentSamples, currentFailures, challengerSamples, challengerFailures int
+		}{
+			{"same old tier", 100, 0, 100, 9},
+			{"nonzero same old tier", 100, 11, 100, 19},
+			{"current below min samples", 2, 0, 10, 5},
+			{"current below min and same old tier", 2, 0, 100, 1},
+		} {
+			t.Run(string(objective)+"/"+tc.name, func(t *testing.T) {
+				d := decl(objective, 3, 0.2, "solid", "flaky")
+				sums := []measure.Summary{
+					withKBps(sum("solid", tc.currentSamples, tc.currentFailures, 900, 950), 100),
+					withKBps(sum("flaky", tc.challengerSamples, tc.challengerFailures, 50, 60), 2000),
+				}
+				if got := Decide(d, "solid", sums); got.Switch || got.Choice != "solid" {
+					t.Fatalf("higher failure rate won on speed: %+v", got)
+				}
+				if got := Decide(d, "", sums); !got.Switch || got.Choice != "solid" {
+					t.Fatalf("initial ranking chose higher failure rate: %+v", got)
+				}
+				if tc.currentSamples >= d.MinSamples {
+					if got := Decide(d, "flaky", sums); !got.Switch || got.Choice != "solid" {
+						t.Fatalf("lower failure rate lost to latency threshold: %+v", got)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestEqualFailureRatiosKeepObjectiveDamping(t *testing.T) {
+	d := decl(model.Latency, 3, 0.2, "a", "b")
+	for _, tc := range []struct {
+		p50        int
+		wantSwitch bool
+	}{{90, false}, {60, true}} {
+		got := Decide(d, "a", []measure.Summary{sum("a", 10, 1, 100, 120), sum("b", 20, 2, tc.p50, 110)})
+		if got.Switch != tc.wantSwitch {
+			t.Fatalf("equal failure ratios bypassed damping: %+v", got)
+		}
+	}
+}
+
 // stability 看 p95 而不是 p50 —— p50 好看、p95 很差的链路正是它要避开的。
 func TestStabilityRanksByTail(t *testing.T) {
 	d := decl(model.Stability, 3, 0.2, "spiky", "even")
