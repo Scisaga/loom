@@ -10,11 +10,17 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -29,10 +35,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -62,47 +71,75 @@ fun InviteScanner(
         if (!granted) permission.launch(Manifest.permission.CAMERA)
     }
 
-    Card(
-        colors = CardDefaults.cardColors(containerColor = Color.Black),
-        shape = RoundedCornerShape(20.dp),
-        modifier = Modifier.fillMaxWidth().testTag("invite-scanner"),
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.TopCenter,
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (granted && !cameraFailed) {
-                CameraPreview(
-                    onScanned = onScanned,
-                    onCameraError = { cameraFailed = true },
-                    modifier = Modifier.fillMaxWidth().height(360.dp),
-                )
-                Text(
-                    "将中控的一次性加入二维码放入取景框。二维码不会写入相册或诊断。",
-                    color = Color.White,
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                )
-            } else if (!granted) {
-                Text(
-                    "扫码需要相机权限；也可以返回后导入 .loom-invite 文件。",
-                    color = Color.White,
-                    modifier = Modifier.padding(20.dp),
-                )
-                Button(
-                    onClick = { permission.launch(Manifest.permission.CAMERA) },
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                ) { Text("允许相机") }
-            } else {
-                Text(
-                    "无法启动相机。请返回并导入 .loom-invite 文件，或稍后重新打开扫码。",
-                    color = Color.White,
-                    modifier = Modifier.padding(20.dp).testTag("invite-camera-error"),
-                )
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color.Black),
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().testTag("invite-scanner"),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (granted && !cameraFailed) {
+                    BoxWithConstraints(
+                        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 16.dp, end = 16.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        val edge = scannerViewportEdge(maxWidth)
+                        Box(
+                            modifier = Modifier
+                                .size(edge)
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(Color(0xFF111111))
+                                .testTag("invite-scanner-preview"),
+                        ) {
+                            CameraPreview(
+                                onScanned = onScanned,
+                                onCameraError = { cameraFailed = true },
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.Center)
+                                    .fillMaxSize(0.72f)
+                                    .border(2.dp, Color.White, RoundedCornerShape(16.dp))
+                                    .testTag("invite-scanner-reticle"),
+                            )
+                        }
+                    }
+                    Text(
+                        "将中控的一次性加入二维码放入方框。二维码不会写入相册或诊断。",
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                } else if (!granted) {
+                    Text(
+                        "扫码需要相机权限；也可以返回后导入 .loom-invite 文件。",
+                        color = Color.White,
+                        modifier = Modifier.padding(20.dp),
+                    )
+                    Button(
+                        onClick = { permission.launch(Manifest.permission.CAMERA) },
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    ) { Text("允许相机") }
+                } else {
+                    Text(
+                        "无法启动相机。请返回并导入 .loom-invite 文件，或稍后重新打开扫码。",
+                        color = Color.White,
+                        modifier = Modifier.padding(20.dp).testTag("invite-camera-error"),
+                    )
+                }
+                OutlinedButton(
+                    onClick = onCancel,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 16.dp),
+                ) { Text("取消") }
             }
-            OutlinedButton(
-                onClick = onCancel,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 16.dp),
-            ) { Text("取消") }
         }
     }
 }
+
+internal fun scannerViewportEdge(available: Dp): Dp = minOf(available, 420.dp)
 
 @Composable
 private fun CameraPreview(
@@ -113,7 +150,10 @@ private fun CameraPreview(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val previewView = remember {
-        PreviewView(context).apply { scaleType = PreviewView.ScaleType.FILL_CENTER }
+        PreviewView(context).apply {
+            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+            scaleType = PreviewView.ScaleType.FILL_CENTER
+        }
     }
     val delivered = remember { AtomicBoolean(false) }
     val currentOnScanned by rememberUpdatedState(onScanned)
