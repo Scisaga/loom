@@ -5,13 +5,19 @@
 > 自动上报 `204` 和中控接收 healthy=true。停止后五分钟 stale 已在中控验收。
 > **边界：** 复用现有 `report.Observation`、`loom-attest-v5` 和
 > `loom-selfcheck-v1`；不新增状态协议、envelope、心跳格式或 self-check v2。
+>
+> **当前读取扩展：** Windows 已在同一报告周期请求 `observations=1`，成功接受
+> `200` 的有界原始 Observation 数组，也兼容旧服务器的空正文 `204`。来源与测量
+> 独立验签后进入当前 Agent 的剪枝缓存；规则见[观测复用说明](client-observation-reuse.md)。
 
 ## 给 Windows 客户端仓库的简短提示词
 
 ```text
 只修改 Loom Windows 客户端：在已加入且成功激活配置后，从 DPAPI 身份的已验证
 PreparedIdentity.Endpoint 精确要求 /loom-client/enroll，并同源替换为 /loom-client/report；
-每 60 秒 POST 现有 report.Observation 原始 JSON，成功只认空正文 204。复用现有 canonical v5 attest 和 self-check v1：
+每 60 秒 POST 现有 report.Observation 原始 JSON，并以 observations=1 请求服务器观测。
+成功接受200原始Observation数组或旧服空正文204；观测响应错误与设备健康分开。
+复用现有 canonical v5 attest 和 self-check v1：
 两份附件使用同一 P-256 设备私钥/节点证书，node/ts 必须一致，applied 绑定最后成功激活
 的 snapshot；无 WG 测量时省略 edges/targets，并按 {"edges":null,"targets":null} 计算
 measurements_sha256。串行生成严格递增 UTC 时间，拒绝重定向，失败等待下一周期且日志脱敏。
@@ -66,7 +72,7 @@ DPAPI 身份继续使用，不因邀请模型更新而清除或要求重新加�
 具备的通用推导规则；不匹配时 fail closed，不猜测其他地址。
 
 ```text
-POST https://<current-production-host>/loom-client/report
+POST https://<current-production-host>/loom-client/report?observations=1
 Content-Type: application/json
 
 <raw Observation JSON>
@@ -76,8 +82,10 @@ Content-Type: application/json
 registry 中 `ready` enrollment 身份的精确 SPKI 绑定。HTTP 客户端拒绝重定向，不记录
 私钥、完整证书、正文或加入 token。
 
-只有空正文的 `204` 表示成功。首版每个 60 秒 tick 只尝试一次；网络错误、`429`、
-`5xx` 或其他非 `204` 响应只做脱敏日志并等待后续 tick。若响应携带 `Retry-After`，不得
+读取模式接受 `200 application/json` 的完整数组，旧服务器的空正文 `204` 也表示
+上报成功。200 观测正文损坏、过大或验签失败会单独记录，不改变已上报的设备健康。
+每个 60 秒 tick 只尝试一次；网络错误、`429`、`5xx` 或其他状态只做脱敏日志并等待后续 tick。
+若响应携带 `Retry-After`，不得
 在其到期前重试。当前反代限流默认可能返回 `503`，不能假设一定是 `429`。
 
 上述是现有 producer 的默认契约。服务端另支持显式 `?observations=1` 返回已有
@@ -180,10 +188,12 @@ Windows 每轮在现有 reporter 内执行一次有界健康探测，随后上�
 - 校验目标 TLS 证书，不跟随重定向。沿用 Agent 的可达性判据：目标非 5xx 响应；
   另排除代理鉴权失败。它证明代表性通路可达，不证明所有业务授权、网站或出口健康。
 - 成功时 `problems=[]`、`healthy=true`；缺目标、接管无效、DNS/TLS/连接失败或超时
-  时报告具体的脱敏问题。每轮重新采集，不缓存成功值。
+  时报告具体的脱敏问题，标明单目标及失败环节，不把单个网站不可达写成设备整体断网。
+  每轮重新采集，不缓存成功值。Agent 样本未知或过期只说明选优证据不足，不冒充路径失败。
 - 探测期间激活实例、snapshot、运行状态或出口偏好变化时丢弃结果；配置切换可取消
   在途探测和发送。主动停止仍不再上报，继续使用既有 stale 规则。
-- 探测预算 8 秒、上传预算 5 秒，相互独立。探测超时仍上传 `healthy=false`，
+- 采集预算 8 秒，先读取本机实际路径再执行健康探测；上传另有 5 秒预算。
+  健康超时保留已读路径，并上传实际失败问题，
   不因复用已到期的 context 丢掉故障报告。周期仍为 60 秒，没有额外重试循环。
 
 ## 5. 最小验收
@@ -212,7 +222,8 @@ Windows 侧至少覆盖：
 
 1. 在中控取得有效加入二维码，用 Windows 客户端的粘贴、文件选择或拖放入口导入。
 2. 由客户端完成加入、证书和 signed pull 验证，并实际启动数据面。
-3. 检查客户端自动生成并发送的两签报告得到空正文 `204`。
+3. 检查客户端自动生成的两签报告得到 `200` 观测数组（或旧服空正文 `204`）；
+   读取扩展另核对真实来源观测已验签并进入当前 Agent，不能用空数组冒充复用成功。
 4. 从中控核对该次加入产生的 Device ID、递增的 `ts`、last-seen 和实际 active snapshot。
    只有 `applied` 与当前生产 snapshot 相同才表示配置已收敛；健康状态按真实证据验收。
 5. 确认后续 60 秒周期仍有更新；停止客户端后确认不再更新，并在五分钟后观察 stale。

@@ -1,6 +1,6 @@
 # 客户端复用现有签名 Observation
 
-本文描述已核实的代码通路、本次服务端读取适配，以及尚未实现的客户端接入。
+本文描述已有服务端读取适配、Windows 消费实现，以及 Android 尚未接入的边界。
 遵循 design.md §5.5.1、§16.1.2；不增加 SSOT 字段、测量协议、探测目标或推荐路径表。
 
 ## 已核实的读取与上报通路
@@ -8,7 +8,7 @@
 | 消费者 | 仓库当前行为 |
 |---|---|
 | Linux Agent | `internal/agent/observed.go` 的 `pollPeers` 通过 `report.FetchContext` 读取本机及 WG 邻居 `/status` 中的 `observation` 和 `learned`；`ingestObservation` 校验签名绑定、新鲜度及 measurements 后进入现有按来源去重的观测缓存 |
-| Windows | `observed_windows.go` 的观测读取为空实现；`clientruntime/selector.go` 拒绝 `peers/self_report`。已有 NAT 签名上报，尚无服务器观测消费者 |
+| Windows | 在原有 NAT 签名上报周期内请求观测，经跨平台校验器验证后接入当前 Agent 的候选剪枝；继续拒绝 Linux 专用 `peers/self_report` 配置 |
 | Android | `mobile/loomcore/route.go` 拒绝 Linux peer/report 配置；宿主 `HealthReporter.kt` 只发送报告并接受空正文 204。尚未把服务器观测接入本地候选回路 |
 
 Linux 的 canonical v5 闸门覆盖测量；旧兼容阶段的本机例外不能用于客户端读取。
@@ -65,21 +65,24 @@ Content-Type: application/json
 `https://demo.example?x=1` 和 `https://demo.example/?x=1`。其他路径、尾斜线、
 百分号转义、查询值/顺序/空查询、端口等保持原状。先验签，再比较；不要改写原对象。
 
-## 客户端仍需配合，尚未实现
+## 客户端消费边界
 
 1. 在现有报告周期内显式选择读取模式，并解析有大小上限的完整 Observation 数组；
-   不增加独立轮询/探测周期。现有 Go `clientreport.Send` 禁止查询参数且丢弃非 204
-   正文；Android `HealthReporter` 也只接受 204，二者都需要读取分支适配。
+   不增加独立轮询/探测周期。Windows 使用 `clientreport.SendWithObservations`，
+   保留 `Send` 的原 204 契约；200 已接受报告但观测正文无效时单独报告读取错误，
+   不篡改设备健康。Android `HealthReporter` 仍只接受 204，尚需读取分支适配。
    旧服务器若返回 204，表示上报成功但本轮没有观测数据，不能当成失败证据。
 2. 使用已验证加入身份保存的 CA，复用现有 canonical v5 校验与绑定规则。
-   Go 服务端参考入口为 `report.VerifyObservationAtLeast`，必须检查
+   Go 共用入口为 `observation.VerifyObservationAtLeast`（服务端原入口委托它），必须检查
    `MeasurementsVerified`；仅调用 `attest.VerifyFresh` 不会绑定外层 Targets/Edges。
    可选 self-check/traffic/link-metric 需各自验签、绑定来源和时间，不借主签名背书。
-   Windows/Android 不能用当前仅含上报最小字段的 DTO 解码后丢掉 measurements。
-   若需抽出跨平台读取代码，应复用该 verifier 的规则与契约测试，不实现第二套签名。
+   Windows 以完整 Observation 读取，避免上报最小 DTO 丢掉 measurements；
+   `internal/observation` 复用原 verifier 的绑定规则，不实现第二套签名。
 3. 按现有 plan 的候选链和 `observation_stale` 消费证据，以原来源/原时间去重，
    不用 HTTP 接收时间延长有效期；缺失、失效或签名失败不改变授权集合。
-   接入现有候选剪枝回路，推导失败沿用 `observation_kind: derived`。
+   Windows 已接入现有候选剪枝回路。服务器不可达证据作为当轮约束及决策原因，
+   不按本机探测样本累计；旧 `observation_kind: derived` 记录不进入数值排名。
+   不把来源节点的 Agent 选择当成客户端推荐路径。
 4. 客户端仍须测量自己的直连和到入口的路径，并在已有预算、窗口、`min_samples`
    与 `switch_threshold` 内验证实际端到端候选。客户端网络、DNS、TLS、鉴权及
    入口链路条件无法从服务器报告替代得出。已有报告未覆盖的目标仍依赖原有本地
@@ -95,4 +98,6 @@ Content-Type: application/json
 用修改前的 Agent 源码运行同一批新测试可复现 URL 匹配失败及较高失败率胜出。
 报告适配使用真实测试证书验证端到端 POST、原签名重新验签、默认 204 兼容、
 来源范围过滤、撤销身份拒读与过期/无签名/篡改证据缺席。
-这些是仓库测试事实；尚未取得 Windows/Android 真机读取并影响本地选路的验收证据。
+Windows 回归还覆盖原签名绑定、范围/过期拒收、原时间去重、200/204 兼容，
+以及健康超时后仍保留路径证据。实机验收状态见忽略目录中的当前状态记录；
+Android 读取与本地选路接入仍未实现。

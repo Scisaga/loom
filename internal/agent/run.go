@@ -32,6 +32,10 @@ type Options struct {
 	// declarations for the same complete chain and equivalent target URL. It
 	// never reuses a sample twice inside one decision scope.
 	ShareEquivalentProbes bool
+	// StartupProbeInterval enables one bounded comparison after the first
+	// normal round. Only real sample deficits for the current path and one
+	// promising challenger are filled; zero preserves server scheduling.
+	StartupProbeInterval time.Duration
 
 	// Once 为真时,每条声明只跑一轮就返回。给人工执行和自检用。
 	Once bool
@@ -41,9 +45,12 @@ type Options struct {
 	Log    io.Writer
 	// Now 由调用方注入,便于测试。渲染与打包不读时钟(§12),但 Agent 是
 	// 运行期组件 —— 它**必须**读时钟,只是入口收在这一处。
-	Now     func() time.Time
-	eventMu *sync.Mutex
-	probes  *sharedProbes
+	Now              func() time.Time
+	eventMu          *sync.Mutex
+	probes           *sharedProbes
+	probeSubset      []Cand
+	probed           *[]Cand
+	probeSampleLimit map[string]int
 }
 
 func (o *Options) fill() {
@@ -171,26 +178,7 @@ func Run(ctx context.Context, cfg *Config, opts Options) (retErr error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for {
-				if ctx.Err() != nil {
-					return
-				}
-				if err := tick(ctx, cfg, d, k, st, selections, obs, observationMaxAge, rot, &rotMu, &opts, logf); err != nil {
-					if ctx.Err() != nil {
-						return
-					}
-					// 一轮失败不该让回路停掉:控制端点可能只是在重启。
-					logf("[%s] 本轮失败:%v", d.ID, err)
-				}
-				if opts.Once {
-					return
-				}
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(period):
-				}
-			}
+			runDeclaration(ctx, cfg, d, period, k, st, selections, obs, observationMaxAge, rot, &rotMu, opts, logf)
 		}()
 	}
 	wg.Wait()
@@ -253,9 +241,11 @@ func tick(ctx context.Context, cfg *Config, d *Decl, k *clash, st *store, select
 	}
 	var probe []Cand
 	var pruned []string
+	unavailable := map[string]bool{}
 	for _, c := range cands {
 		if dead[candidateExit(c, cfg.Node)] {
 			pruned = append(pruned, c.Tag)
+			unavailable[c.Tag] = true
 			continue
 		}
 		probe = append(probe, c)
@@ -276,7 +266,22 @@ func tick(ctx context.Context, cfg *Config, d *Decl, k *clash, st *store, select
 	// 反复地产生“证据不完整”漂移。下方各成功路径会把 selector 与本轮健康
 	// 一起原子发布。
 	var skippedByBudget int
-	if d.ProbeBudget > 0 && len(probe) > d.ProbeBudget {
+	if opts.probeSubset != nil {
+		wanted := make(map[string]bool, len(opts.probeSubset))
+		for _, c := range opts.probeSubset {
+			wanted[c.Tag] = true
+		}
+		filtered := make([]Cand, 0, len(wanted))
+		for _, c := range probe {
+			if wanted[c.Tag] {
+				filtered = append(filtered, c)
+			}
+		}
+		probe = filtered
+		if d.ProbeBudget > 0 && len(probe) > d.ProbeBudget {
+			probe = probe[:d.ProbeBudget]
+		}
+	} else if d.ProbeBudget > 0 && len(probe) > d.ProbeBudget {
 		rotMu.Lock()
 		var next string
 		probe, next, skippedByBudget = pickProbeCandidates(probe, current, d.ProbeBudget, rot[d.ID])
@@ -284,32 +289,17 @@ func tick(ctx context.Context, cfg *Config, d *Decl, k *clash, st *store, select
 		rotMu.Unlock()
 	}
 
-	ts := opts.Now().Format(time.RFC3339)
 	var got []measure.Measurement
 	ok := 0
 
-	// 被剪掉的也要如实记一笔失败,而且标成 derived。
-	//
-	// 不记的话有个洞:当前选中的候选如果正好被剪掉,它在窗口里的**旧数据**
-	// 会让 Decide 以为它还健康,于是流量继续停在一条已知不通的路上 ——
-	// 正是 Agent 本来要解决的那个问题。
-	for _, c := range cands {
-		exit := candidateExit(c, cfg.Node)
-		if !dead[exit] {
-			continue
-		}
-		for _, t := range d.Targets {
-			got = append(got, measure.Measurement{
-				TS: ts, Node: cfg.Node, CandidateID: c.Tag, Declaration: d.ID, Target: t,
-				DecisionScope: scope,
-				Point:         measure.L4Tunnel, Kind: measure.Derived,
-				Error: fmt.Sprintf("出口 %s 自己观测到打不到 %s:%s", exit, t, deadFor[t][exit]),
-			})
-		}
-	}
+	// §16.1.2：服务器出口失败是本轮候选约束，不是新的完整路径测量。
+	// 不追加 derived，避免同一签名时间在启动补样/常规周期里被反复计数。
 	cands = probe
 	for _, c := range cands {
-		for _, t := range d.Targets {
+		for targetIndex, t := range d.Targets {
+			if limit, limited := opts.probeSampleLimit[c.Tag]; limited && targetIndex >= limit {
+				break
+			}
 			at := opts.Now()
 			var r Result
 			var perr error
@@ -342,6 +332,9 @@ func tick(ctx context.Context, cfg *Config, d *Decl, k *clash, st *store, select
 	if err := st.append(ctx, got); err != nil {
 		return fmt.Errorf("写度量:%w", err)
 	}
+	if opts.probed != nil {
+		*opts.probed = append([]Cand(nil), cands...)
+	}
 
 	// 2. 聚合。窗口之外的不参与;整条候选最新样本超过 stale_after 的当作
 	//    没测过 —— 拿半小时前的数据当依据去切换,和瞎猜差不多(§5.8)。
@@ -353,17 +346,45 @@ func tick(ctx context.Context, cfg *Config, d *Decl, k *clash, st *store, select
 		return err
 	}
 	sums := measure.Summarize(inWindow(all, cfg.Node, d.ID, scope, opts.Now(), win, stale))
+	available := make([]measure.Summary, 0, len(sums))
+	for _, summary := range sums {
+		if !unavailable[summary.CandidateID] {
+			available = append(available, summary)
+		}
+	}
+	// 旧成功不能覆盖当前仍新鲜的出口失败；恢复或原观测过期后，约束自然
+	// 消失，旧 derived 也不能继续影响失败率。完整路径质量缺证据时仍未知。
+	availableHistory := make([]measure.Measurement, 0, len(all))
+	for _, m := range all {
+		if m.Kind != measure.Derived && !unavailable[m.CandidateID] {
+			availableHistory = append(availableHistory, m)
+		}
+	}
 	healthFor := func(selected string) *CandidateHealth {
-		return summarizeCandidateHealth(d, selected, sums, all, cfg.Node, scope)
+		return summarizeCandidateHealth(d, selected, available, availableHistory, cfg.Node, scope)
 	}
 
 	// 3. 决定。
-	dec := Decide(d, current, sums)
+	dec := Decide(d, current, available)
+	if unavailable[current] {
+		if dec.Switch {
+			dec.Reason = fmt.Sprintf("服务器可信观测表明当前出口对全部目标不可达，切到已有本机成功测量的 %s", dec.Choice)
+		} else {
+			dec.Reason = "服务器可信观测表明当前出口对全部目标不可达；" + dec.Reason
+		}
+	}
 	selected := current
 	reason := dec.Reason
 	// 亲自测的和照别人观测判定的必须分开说 —— 混成一个数字,就看不出
 	// 这一轮到底有多少是真的测过的。
 	line := fmt.Sprintf("探测 %d 条 × %d 个目标(%d 通)", len(cands), len(d.Targets), ok)
+	if opts.probeSubset != nil {
+		samples := 0
+		for _, candidate := range cands {
+			samples += min(len(d.Targets), opts.probeSampleLimit[candidate.Tag])
+		}
+		line = fmt.Sprintf("启动补样 %d 条候选、%d 次目标采样(%d 通)", len(cands), samples, ok)
+	}
 	if skippedByBudget > 0 {
 		// 少探了多少必须说出来 —— 静默截断会让"这一轮没试到"看起来像
 		// "试过了但不行"。
@@ -528,6 +549,10 @@ func inWindow(ms []measure.Measurement, node, decl, scope string, now time.Time,
 	newest := map[string]time.Time{}
 	parsed := make([]time.Time, len(ms))
 	for i := range ms {
+		// §16.1.2：兼容旧日志，但服务端推论不能充作新的完整路径样本。
+		if ms[i].Kind == measure.Derived {
+			continue
+		}
 		t, err := time.Parse(time.RFC3339, ms[i].TS)
 		if err != nil || t.After(futureCut) {
 			continue

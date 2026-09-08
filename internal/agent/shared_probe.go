@@ -9,13 +9,14 @@ import (
 
 // sharedProbes is only an in-flight/short-lived coalescer. Measurements still
 // live in the existing scoped journal; this is not another ranking history.
-// The mutex also prevents different declarations from competing for the same
-// client uplink while measuring it.
+// 相同完整链路和目标按 key 合并；不同目标不持有网络请求锁，避免一个境外
+// 超时拖住国内服务的独立验证。每条声明内部仍按既有顺序串行探测。
 type sharedProbes struct {
 	mu        sync.Mutex
 	targets   map[string]string
 	ambiguous map[string]bool
 	last      map[string]*sharedProbe
+	inflight  map[string]chan struct{}
 }
 
 type sharedProbe struct {
@@ -28,7 +29,7 @@ type sharedProbe struct {
 }
 
 func newSharedProbes(cfg *Config) *sharedProbes {
-	p := &sharedProbes{targets: map[string]string{}, ambiguous: map[string]bool{}, last: map[string]*sharedProbe{}}
+	p := &sharedProbes{targets: map[string]string{}, ambiguous: map[string]bool{}, last: map[string]*sharedProbe{}, inflight: map[string]chan struct{}{}}
 	for _, d := range cfg.Declarations {
 		chains := map[string]int{}
 		for _, c := range d.Candidates {
@@ -62,22 +63,12 @@ func probeChainKey(c Cand) string {
 }
 
 func (p *sharedProbes) probe(ctx context.Context, cfg *Config, d *Decl, c Cand, target, scope string, opts *Options) (Result, error, time.Time) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if err := ctx.Err(); err != nil {
-		return Result{}, err, opts.Now()
-	}
 	// Never keep a sample for longer than either consumer's freshness/cadence.
 	// One minute is only a coalescing limit, not an extension of evidence age.
 	maxAge := time.Minute
 	for _, duration := range []string{d.TuningPeriod, d.StaleAfter, d.Window} {
 		if parsed, err := time.ParseDuration(duration); err == nil && parsed < maxAge {
 			maxAge = parsed
-		}
-	}
-	for key, sample := range p.last {
-		if time.Since(sample.wallTime) > time.Minute {
-			delete(p.last, key)
 		}
 	}
 	chain := probeChainKey(c)
@@ -87,14 +78,43 @@ func (p *sharedProbes) probe(ctx context.Context, cfg *Config, d *Decl, c Cand, 
 	}
 	encoded, _ := json.Marshal(keyParts)
 	key := string(encoded)
-	if previous := p.last[key]; previous != nil && !previous.used[scope] && time.Since(previous.wallTime) <= min(maxAge, previous.maxAge) {
-		previous.used[scope] = true
-		return previous.result, previous.err, previous.at
+	for {
+		p.mu.Lock()
+		if err := ctx.Err(); err != nil {
+			p.mu.Unlock()
+			return Result{}, err, opts.Now()
+		}
+		for key, sample := range p.last {
+			if time.Since(sample.wallTime) > time.Minute {
+				delete(p.last, key)
+			}
+		}
+		if previous := p.last[key]; previous != nil && !previous.used[scope] && time.Since(previous.wallTime) <= min(maxAge, previous.maxAge) {
+			previous.used[scope] = true
+			p.mu.Unlock()
+			return previous.result, previous.err, previous.at
+		}
+		if pending := p.inflight[key]; pending != nil {
+			p.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				return Result{}, ctx.Err(), opts.Now()
+			case <-pending:
+				continue
+			}
+		}
+		pending := make(chan struct{})
+		p.inflight[key] = pending
+		p.mu.Unlock()
+		at, wallTime := opts.Now(), time.Now()
+		result, err := ProbeOnce(ctx, cfg.Probe, cfg.ProbeSecret, c.ProbeUser, target, opts.ProbeTimeout)
+		p.mu.Lock()
+		if ctx.Err() == nil {
+			p.last[key] = &sharedProbe{result: result, err: err, at: at, wallTime: wallTime, maxAge: maxAge, used: map[string]bool{scope: true}}
+		}
+		delete(p.inflight, key)
+		close(pending)
+		p.mu.Unlock()
+		return result, err, at
 	}
-	at, wallTime := opts.Now(), time.Now()
-	result, err := ProbeOnce(ctx, cfg.Probe, cfg.ProbeSecret, c.ProbeUser, target, opts.ProbeTimeout)
-	if ctx.Err() == nil {
-		p.last[key] = &sharedProbe{result: result, err: err, at: at, wallTime: wallTime, maxAge: maxAge, used: map[string]bool{scope: true}}
-	}
-	return result, err, at
 }
