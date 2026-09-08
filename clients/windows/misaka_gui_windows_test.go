@@ -96,6 +96,52 @@ func TestGUIMisakaDoubleClickRenameUsesActualListSelection(t *testing.T) {
 	procSendMessage.Call(app.controls.profileNameEdit, portableWMKeyDown, portableVKEscape, 0)
 }
 
+func TestGUIMisakaProfileMenuWaitsForBrokerSelectionAndCancelsPendingOpen(t *testing.T) {
+	app := newProfileGUITestWindow(t)
+	assertMenu := func(want bool) {
+		t.Helper()
+		for _, control := range []uintptr{app.controls.renameProfileButton, app.controls.deleteButton} {
+			if visible := profileGUIStyle(control)&portableWSVisible != 0; visible != want {
+				t.Fatalf("配置菜单可见状态=%v，预期=%v", visible, want)
+			}
+		}
+	}
+	// §7.2：模拟 Installed 右键选中乙后，broker 仍在返回甲的快照；甲的操作不可见。
+	app.skin.menuProfileID = profileGUIFixtureB
+	app.layoutControls()
+	app.renderControls()
+	assertMenu(false)
+	if enabled, _, _ := procIsWindowEnabled.Call(app.controls.profileMenu); enabled != 0 {
+		t.Fatal("等待 broker 确认期间仍允许打开旧配置菜单")
+	}
+	app.misakaCommand(misakaControlMenu)
+	assertMenu(false)
+	if app.misakaMenuActionReady() || app.skin.menuProfileID != profileGUIFixtureB {
+		t.Fatal("等待确认期间菜单操作改变了配置对象")
+	}
+	app.selectedProfile, app.profileName, app.state = profileGUIFixtureB, "演示网络乙", guiStopped
+	app.renderControls()
+	assertMenu(true)
+	if app.skin.menuProfileID != app.snapshot().selectedProfile {
+		t.Fatal("配置菜单未绑定 broker 确认的对象")
+	}
+	procSendMessage.Call(app.controls.networkList, portableWMKeyDown, portableVKEscape, 0)
+	assertMenu(false)
+	if app.skin.menuProfileID != "" {
+		t.Fatal("关闭菜单后仍保留待打开的配置")
+	}
+	for _, cancel := range []uint32{portableWMKeyDown, 0x0201} {
+		app.skin.menuProfileID = profileGUIFixtureA
+		procSendMessage.Call(app.controls.networkList, uintptr(cancel), portableVKEscape, 0)
+		if app.skin.menuProfileID != "" {
+			t.Fatal("Escape 或新点击未取消待确认的菜单")
+		}
+	}
+	app.selectedProfile, app.profileName, app.state = profileGUIFixtureA, "演示网络甲", guiConnected
+	app.renderControls()
+	assertMenu(false)
+}
+
 func TestGUIMisakaDraftPreservesActiveConnectionAndUnsavedInput(t *testing.T) {
 	app := newProfileGUITestWindow(t)
 	m := newProfileManagerFixture(t)

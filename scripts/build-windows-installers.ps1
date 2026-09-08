@@ -39,8 +39,8 @@ try {
         if ((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash -ne $hashes["$name.zip"]) { throw 'Input ZIP changed during staging.' }
         Expand-Archive -LiteralPath $zip -DestinationPath $bundle
         Move-Item -LiteralPath (Join-Path $bundle "$name.exe") -Destination (Join-Path $bundle 'loom-client.exe')
-        # MSI stores Icon streams without cabinet compression. Use the same
-        # favicon as the EXE, not another complete copy of the executable.
+        # §7.2：MSI 的图标流不会经过 cabinet 压缩，直接复用 EXE 的 favicon，
+        # 避免在安装包中额外存储一份完整客户端。
         $stagedIcon = Join-Path $bundle 'favicon.ico'
         Copy-Item -LiteralPath $icon -Destination $stagedIcon
         if ($CertificateThumbprint) {

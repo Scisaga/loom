@@ -48,6 +48,7 @@ type misakaUI struct {
 	rename         bool
 	renameID       string
 	menu           bool
+	menuProfileID  string
 	fixedPicker    bool
 	draftInvite    *clientenroll.Invite
 	draftError     string
@@ -190,6 +191,7 @@ func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height
 		move(app.controls.draftCancel, x+s(24), y+s(338), s(86), s(34))
 	}
 	enablePortableControl(app.controls.networkList, snapshot.profileDraft == nil)
+	enablePortableControl(app.controls.profileMenu, app.misakaMenuSelectionConfirmed(snapshot))
 }
 
 func (app *portableGUI) misakaDraftBounds() (int32, int32, int32) {
@@ -205,6 +207,18 @@ func misakaSelectedMode(snapshot portableGUISnapshot) clientcore.Mode {
 	return ""
 }
 
+func (app *portableGUI) misakaMenuSelectionConfirmed(snapshot portableGUISnapshot) bool {
+	if snapshot.selectedProfile == "" || (app.skin.menuProfileID != "" && app.skin.menuProfileID != snapshot.selectedProfile) {
+		return false
+	}
+	index, _, _ := procSendMessage.Call(app.controls.networkList, portableLBGetCurSel, 0, 0)
+	return int(index) >= 0 && int(index) < len(snapshot.profiles) && snapshot.profiles[index].ID == snapshot.selectedProfile
+}
+
+func (app *portableGUI) misakaMenuActionReady() bool {
+	return app.skin != nil && app.skin.menu && app.misakaMenuSelectionConfirmed(app.snapshot())
+}
+
 func (app *portableGUI) renderMisaka(snapshot portableGUISnapshot, previous *portableGUISnapshot) {
 	if app.skin == nil {
 		return
@@ -213,7 +227,11 @@ func (app *portableGUI) renderMisaka(snapshot portableGUISnapshot, previous *por
 		if app.skin.renameID != snapshot.selectedProfile {
 			app.finishMisakaRename(false)
 		}
-		app.skin.menu, app.skin.fixedPicker = false, false
+		app.skin.menu = app.skin.menuProfileID != "" && app.skin.menuProfileID == snapshot.selectedProfile
+		if !app.skin.menu {
+			app.skin.menuProfileID = ""
+		}
+		app.skin.fixedPicker = false
 		app.layoutControls()
 	}
 	if previous != nil && previous.routeSelected != snapshot.routeSelected {
@@ -229,7 +247,7 @@ func (app *portableGUI) renderMisaka(snapshot portableGUISnapshot, previous *por
 	}
 	setPortableControlText(app.controls.renameProfileButton, "重命名   F2")
 	setPortableControlText(app.controls.deleteButton, "删除配置…")
-	enablePortableControl(app.controls.profileMenu, snapshot.selectedProfile != "")
+	enablePortableControl(app.controls.profileMenu, app.misakaMenuSelectionConfirmed(snapshot))
 	enablePortableControl(app.controls.addProfileButton, snapshot.profilesReady)
 	if snapshot.profilesReady && snapshot.selectedProfile == "" {
 		setPortableControlText(app.controls.primaryButton, "添加配置")
@@ -332,7 +350,7 @@ func (app *portableGUI) updateMisakaPaths(snapshot portableGUISnapshot, force bo
 
 func (app *portableGUI) openMisakaDraft() {
 	app.finishMisakaRename(false)
-	app.skin.menu = false
+	app.skin.menu, app.skin.menuProfileID = false, ""
 	app.profileCommand(brokerRequest{Operation: "add_profile"})
 }
 
@@ -346,7 +364,7 @@ func (app *portableGUI) beginMisakaRename() {
 		return
 	}
 	profile := snapshot.profiles[index]
-	app.skin.menu = false
+	app.skin.menu, app.skin.menuProfileID = false, ""
 	app.skin.rename, app.skin.renameID = true, profile.ID
 	setPortableControlText(app.controls.profileNameEdit, profile.Name)
 	app.layoutControls()
@@ -474,7 +492,15 @@ func (app *portableGUI) misakaCommand(id uint16) bool {
 		}
 		return true
 	case misakaControlMenu:
+		// §7.2：列表已指向新配置但 broker 尚未确认时，不能重新打开旧配置菜单。
+		if !app.misakaMenuSelectionConfirmed(snapshot) {
+			return true
+		}
 		app.skin.menu = !app.skin.menu
+		app.skin.menuProfileID = ""
+		if app.skin.menu {
+			app.skin.menuProfileID = snapshot.selectedProfile
+		}
 		app.layoutControls()
 		return true
 	case misakaControlDraftImport:
@@ -539,8 +565,8 @@ func handleMisakaKeyboard(message portableMSG) bool {
 			app.misakaCommand(misakaControlDraftCancel)
 			return true
 		}
-		if app.skin.menu {
-			app.skin.menu = false
+		if app.skin.menu || app.skin.menuProfileID != "" {
+			app.skin.menu, app.skin.menuProfileID = false, ""
 			app.layoutControls()
 			return true
 		}
@@ -578,14 +604,28 @@ func misakaControlProc(hwnd uintptr, message uint32, wParam, lParam, subclass, o
 			if hwnd == app.controls.profileNameEdit {
 				app.finishMisakaRename(true)
 			}
+		case 0x0201: // WM_LBUTTONDOWN：新点击也取消尚未得到 broker 确认的菜单。
+			if hwnd == app.controls.networkList && app.skin.menuProfileID != "" {
+				app.skin.menu, app.skin.menuProfileID = false, ""
+				app.layoutControls()
+			}
 		case portableWMRButtonUp:
 			if hwnd == app.controls.networkList {
 				index, _, _ := procSendMessage.Call(hwnd, 0x01A9, 0, lParam)
-				if index>>16 == 0 {
-					procSendMessage.Call(hwnd, portableLBSetCurSel, index&0xffff, 0)
+				snapshot := app.snapshot()
+				if index>>16 != 0 || int(index) >= len(snapshot.profiles) {
+					app.skin.menu, app.skin.menuProfileID = false, ""
+					app.layoutControls()
+					return 0
+				}
+				profileID := snapshot.profiles[index].ID
+				app.skin.menuProfileID = profileID
+				app.skin.menu = profileID == snapshot.selectedProfile
+				procSendMessage.Call(hwnd, portableLBSetCurSel, index, 0)
+				if !app.skin.menu {
 					app.selectProfileFromList()
 				}
-				app.skin.menu = true
+				// §7.2：等待 broker 确认查看对象后才显示其菜单，不能删除上一份配置。
 				app.layoutControls()
 				return 0
 			}
@@ -641,8 +681,8 @@ func misakaWindowMessage(app *portableGUI, hwnd uintptr, message uint32, wParam,
 			return 0, true
 		}
 	case 0x0202:
-		if app.skin.menu {
-			app.skin.menu = false
+		if app.skin.menu || app.skin.menuProfileID != "" {
+			app.skin.menu, app.skin.menuProfileID = false, ""
 			app.layoutControls()
 		}
 	case 0x0085:

@@ -540,8 +540,12 @@ func (app *portableGUI) stopRuntime() {
 	app.repaint()
 }
 
-func (app *portableGUI) deleteLocalDevice() {
+func (app *portableGUI) deleteLocalDevice(expectedProfile string) {
 	snapshot := app.snapshot()
+	// §7.2：broker 可在菜单点击后更新快照，确认框与删除请求必须绑定原操作对象。
+	if expectedProfile == "" || snapshot.selectedProfile != expectedProfile {
+		return
+	}
 	if snapshot.profilesReady {
 		if snapshot.selectedProfile == "" {
 			return
@@ -2318,7 +2322,9 @@ func portableWindowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) ui
 				app.openMisakaDraft()
 				return 0
 			case portableControlRenameProfile:
-				app.beginMisakaRename()
+				if app.misakaMenuActionReady() {
+					app.beginMisakaRename()
+				}
 				return 0
 			case portableControlPathDetails:
 				app.pathsExpanded = !app.pathsExpanded
@@ -2332,7 +2338,12 @@ func portableWindowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) ui
 				app.pasteJoinArtifact()
 				return 0
 			case portableControlDelete:
-				app.deleteLocalDevice()
+				if app.misakaMenuActionReady() {
+					profileID := app.skin.menuProfileID
+					app.skin.menu, app.skin.menuProfileID = false, ""
+					app.layoutControls()
+					app.deleteLocalDevice(profileID)
+				}
 				return 0
 			case portableControlRoute:
 				if app.routeUpdating {
