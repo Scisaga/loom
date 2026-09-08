@@ -33,7 +33,7 @@ type windowsReporter struct {
 
 func (reporter *windowsReporter) update(state clientRuntimeState) {
 	reporter.mu.Lock()
-	changed := reporter.state.Applied != state.Applied || reporter.state.Ready != state.Ready || reporter.state.Exited != state.Exited || reporter.state.Health != state.Health
+	changed := reporter.state.Applied != state.Applied || reporter.state.Ready != state.Ready || reporter.state.Exited != state.Exited || reporter.state.Health != state.Health || reporter.state.Agent != state.Agent || reporter.state.Generation != state.Generation
 	if changed {
 		reporter.revision++
 		if reporter.interrupt != nil {
@@ -84,12 +84,23 @@ func startWindowsReporter(root string, protector clientsecret.Protector, config 
 		if !ok {
 			return nil, nil
 		}
+		agentState, err := state.Agent.Report(ctx, at)
 		reporter.mu.Lock()
 		defer reporter.mu.Unlock()
 		if !reporter.state.active() || reporter.sampledRevision != reporter.revision {
 			return nil, nil
 		}
-		return clientreport.Build(config.NodeID, state.Applied, problems, at, identity.PrivateKeyPEM, cert, ca)
+		if err != nil {
+			problems = append(problems, "Agent 实际路径或测量暂不可用")
+		}
+		if agentState != nil {
+			for _, s := range agentState.Selections {
+				if s.Health == nil || s.Health.SelectedState != "success" {
+					problems = append(problems, "Agent 当前路径质量未知或异常")
+				}
+			}
+		}
+		return clientreport.BuildWithAgent(config.NodeID, state.Applied, problems, agentState, at, identity.PrivateKeyPEM, cert, ca)
 	}, func(ctx context.Context, o *clientreport.Observation) clientreport.Result {
 		reporter.mu.Lock()
 		if !reporter.state.active() || reporter.sampledRevision != reporter.revision {
@@ -97,9 +108,17 @@ func startWindowsReporter(root string, protector clientsecret.Protector, config 
 			return clientreport.Result{Err: errors.New("本轮数据面已变化，丢弃旧健康结果")}
 		}
 		sendCtx, cancel := context.WithCancel(ctx)
+		generation := reporter.state.Generation
 		reporter.interrupt = cancel
 		reporter.mu.Unlock()
 		defer cancel()
+		if generation != nil {
+			stop := context.AfterFunc(generation, cancel)
+			defer stop()
+			if generation.Err() != nil {
+				cancel()
+			}
+		}
 		return clientreport.Send(sendCtx, client, endpoint, o)
 	}, func(result clientreport.Result) {
 		if result.Err == nil {
@@ -128,6 +147,13 @@ func (reporter *windowsReporter) sampleHealth(ctx context.Context, preferencePat
 	reporter.interrupt = cancel
 	reporter.mu.Unlock()
 	defer cancel()
+	if state.Generation != nil {
+		stop := context.AfterFunc(state.Generation, cancel)
+		defer stop()
+		if state.Generation.Err() != nil {
+			cancel()
+		}
+	}
 	preference, preferenceErr := clientcore.ReadPreference(preferencePath)
 	problems := check(probeCtx, state.Health)
 	if state.Health != nil {

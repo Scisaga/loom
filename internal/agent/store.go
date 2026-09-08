@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sync"
@@ -21,10 +22,16 @@ type store struct {
 	now       func() time.Time
 }
 
-func (s *store) append(ms []measure.Measurement) error {
+func (s *store) append(ctx context.Context, ms []measure.Measurement) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return measure.Append(s.path, ms)
@@ -40,9 +47,12 @@ func (s *store) load() ([]measure.Measurement, error) {
 	return ms, err
 }
 
-func (s *store) compact() error {
+func (s *store) compact(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	ms, err := measure.Load(s.path)
 	if os.IsNotExist(err) {
 		return nil
@@ -65,11 +75,18 @@ func (s *store) compact() error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	tmp := s.path + ".compact"
+	defer os.Remove(tmp)
 	if err := os.Remove(tmp); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	if err := measure.Append(tmp, kept); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return os.Rename(tmp, s.path)

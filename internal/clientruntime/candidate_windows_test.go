@@ -19,7 +19,7 @@ func TestPrepareWindowsCandidateNativeDPAPI(t *testing.T) {
 	}
 	node, root := "win-native", t.TempDir()
 	tree := makeRuntimeTree(t, private, 1, "111111111111", node,
-		map[string]string{"sing-box/config.json": validWindowsConfig("warn")})
+		validWindowsBundle(node, "warn"))
 	_, server := installVerifiedRuntimeBundle(t, root, node, public, &tree)
 	defer server.Close()
 

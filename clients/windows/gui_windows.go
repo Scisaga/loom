@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -38,53 +39,87 @@ const (
 )
 
 type portableGUISnapshot struct {
-	state         portableGUIState
-	joined        bool
-	deviceID      string
-	detail        string
-	hostname      string
-	routeOptions  []portableRouteOption
-	routeSelected int
-	routeBusy     bool
-	routeDetail   string
+	state             portableGUIState
+	joined            bool
+	deviceID          string
+	detail            string
+	hostname          string
+	routeOptions      []portableRouteOption
+	routeSelected     int
+	routeBusy         bool
+	routeDetail       string
+	paths             []windowsPathDisplay
+	profilesReady     bool
+	profiles          []windowsProfileDisplay
+	selectedProfile   string
+	profileName       string
+	activeProfile     string
+	activeProfileName string
+}
+
+func (s portableGUISnapshot) equal(other portableGUISnapshot) bool {
+	return s.state == other.state && s.joined == other.joined && s.deviceID == other.deviceID &&
+		s.detail == other.detail && s.hostname == other.hostname &&
+		s.routeSelected == other.routeSelected && s.routeBusy == other.routeBusy &&
+		s.routeDetail == other.routeDetail && slices.Equal(s.routeOptions, other.routeOptions) &&
+		slices.Equal(s.paths, other.paths) && slices.Equal(s.profiles, other.profiles) &&
+		s.profilesReady == other.profilesReady && s.selectedProfile == other.selectedProfile &&
+		s.profileName == other.profileName && s.activeProfile == other.activeProfile && s.activeProfileName == other.activeProfileName
 }
 
 type portableGUI struct {
-	brokerClient      bool
-	brokerMu          sync.Mutex
-	routeMu           sync.Mutex
-	edition           clientEdition
-	root              string
-	hwnd              uintptr
-	windowDPI         int32
-	controls          portableGUIControls
-	fonts             []uintptr
-	statusIcon        uintptr
-	trayConnectedIcon uintptr
-	trayAdded         bool
-	routeFiltering    bool
-	routeFilter       string
-	routeVisible      []int
-	routeUpdating     bool
+	brokerClient        bool
+	brokerMu            sync.Mutex
+	routeMu             sync.Mutex
+	edition             clientEdition
+	root                string
+	hwnd                uintptr
+	windowDPI           int32
+	controls            portableGUIControls
+	rendered            *portableGUISnapshot // §7.2：仅 UI 线程访问；服务轮询不等于界面变化。
+	fonts               []uintptr
+	statusIcon          uintptr
+	statusIcons         *portableStatusIcons
+	statusFrame         int
+	statusAnimating     bool
+	pathsExpanded       bool
+	profileListUpdating bool
+	trayConnectedIcon   uintptr
+	trayAdded           bool
+	routeFiltering      bool
+	routeFilter         string
+	routeVisible        []int
+	routeUpdating       bool
 
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	mu            sync.RWMutex
-	state         portableGUIState
-	joined        bool
-	deviceID      string
-	detail        string
-	hostname      string
-	runCancel     context.CancelFunc
-	joinStarted   time.Time
-	runDone       chan struct{}
-	stopRequested bool
-	runSequence   uint64
-	routeOptions  []portableRouteOption
-	routeSelected int
-	routeBusy     bool
-	routeDetail   string
+	mu                  sync.RWMutex
+	state               portableGUIState
+	joined              bool
+	deviceID            string
+	detail              string
+	hostname            string
+	runCancel           context.CancelFunc
+	joinStarted         time.Time
+	runDone             chan struct{}
+	stopRequested       bool
+	runSequence         uint64
+	routeOptions        []portableRouteOption
+	routeSelected       int
+	routeBusy           bool
+	routeDetail         string
+	paths               []windowsPathDisplay
+	profiles            *windowsProfileManager
+	profileChild        bool
+	profileHost         bool
+	profileMessage      string
+	brokerProfiles      []windowsProfileDisplay
+	brokerProfilesReady bool
+	selectedProfile     string
+	profileName         string
+	activeProfile       string
+	activeProfileName   string
 
 	lockMu sync.Mutex
 	lock   *windowsNamedLock
@@ -106,6 +141,7 @@ func runWindowsGUI(edition clientEdition) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	hostname, _ := os.Hostname()
 	app := &portableGUI{
+		profileHost:   true,
 		brokerClient:  edition == editionInstalled,
 		edition:       edition,
 		root:          root,
@@ -162,6 +198,10 @@ func (app *portableGUI) initialize() {
 		app.pollInstalledBroker()
 		return
 	}
+	if app.profileHost {
+		app.initializeProfiles()
+		return
+	}
 	result, err := app.joinInput("", nil)
 	if errors.Is(err, errWindowsJoinInputRequired) {
 		app.update(guiNeedsJoin, false, "", "")
@@ -180,6 +220,11 @@ func (app *portableGUI) afterJoin(deviceID string) {
 	app.deviceID = deviceID
 	app.detail = ""
 	app.mu.Unlock()
+	if app.profileChild {
+		app.update(guiStopped, true, deviceID, "加入身份已保存；点击连接即可使用此配置。")
+		app.loadOfflineProfileRoutes()
+		return
+	}
 	if windowsEditionRequiresElevation(app.edition) && !windows.GetCurrentProcessToken().IsElevated() {
 		app.update(guiNeedsElevation, true, deviceID, app.elevationDetail(true))
 		return
@@ -188,6 +233,18 @@ func (app *portableGUI) afterJoin(deviceID string) {
 }
 
 func (app *portableGUI) importJoinArtifact(source string) {
+	if app.profileHost && !app.brokerClient && app.profileManager() == nil {
+		return
+	}
+	if app.profileManager() != nil {
+		invite, err := clientjoin.Read(source, nil)
+		if err != nil {
+			app.profileError(err)
+			return
+		}
+		app.profileCommand(brokerRequest{Operation: "join", Invite: &invite, ProfileID: app.snapshot().selectedProfile})
+		return
+	}
 	if app.brokerClient {
 		invite, err := clientjoin.Read(source, nil)
 		if err != nil {
@@ -203,6 +260,13 @@ func (app *portableGUI) importJoinArtifact(source string) {
 }
 
 func (app *portableGUI) importJoinInvite(invite clientenroll.Invite) {
+	if app.profileHost && !app.brokerClient && app.profileManager() == nil {
+		return
+	}
+	if app.profileManager() != nil || app.snapshot().profilesReady {
+		app.profileCommand(brokerRequest{Operation: "join", Invite: &invite, ProfileID: app.snapshot().selectedProfile})
+		return
+	}
 	if app.brokerClient {
 		app.installedCommand(brokerRequest{Operation: "join", Invite: &invite})
 		return
@@ -274,6 +338,13 @@ func (app *portableGUI) beginJoin(join func() (windowsJoinResult, error)) {
 }
 
 func (app *portableGUI) startRuntime() {
+	if app.profileHost && !app.brokerClient && app.profileManager() == nil {
+		return
+	}
+	if app.profileManager() != nil || app.snapshot().profilesReady {
+		app.profileCommand(brokerRequest{Operation: "connect", ProfileID: app.snapshot().selectedProfile})
+		return
+	}
 	if app.brokerClient {
 		app.installedCommand(brokerRequest{Operation: "connect"})
 		return
@@ -303,6 +374,7 @@ func (app *portableGUI) startRuntime() {
 	app.runDone = done
 	app.stopRequested = false
 	app.state = guiStarting
+	app.paths = nil
 	app.detail = "正在拉取并验证最新配置…"
 	app.mu.Unlock()
 	app.repaint()
@@ -329,10 +401,13 @@ func (app *portableGUI) startRuntime() {
 			defer close(routeDone)
 			app.watchRoutePreference(runCtx, sequence)
 		}()
+		pathsDone := make(chan struct{})
+		go func() { defer close(pathsDone); app.watchCurrentPaths(runCtx, sequence) }()
 		err = workload(runCtx)
 		runCancel()
 		<-watchDone
 		<-routeDone
+		<-pathsDone
 		app.finishRuntime(sequence, runCtx, err)
 	}()
 }
@@ -393,6 +468,7 @@ func (app *portableGUI) finishRuntime(sequence uint64, runCtx context.Context, r
 	}
 	stopped := app.stopRequested || app.ctx.Err() != nil || errors.Is(runCtx.Err(), context.Canceled)
 	app.runCancel = nil
+	app.paths = nil
 	app.runDone = nil
 	app.stopRequested = false
 	if app.ctx.Err() != nil {
@@ -412,6 +488,10 @@ func (app *portableGUI) finishRuntime(sequence uint64, runCtx context.Context, r
 }
 
 func (app *portableGUI) stopRuntime() {
+	if app.profileManager() != nil || app.snapshot().profilesReady {
+		app.profileCommand(brokerRequest{Operation: "disconnect", ProfileID: app.snapshot().selectedProfile})
+		return
+	}
 	if app.brokerClient {
 		app.installedCommand(brokerRequest{Operation: "disconnect"})
 		return
@@ -427,6 +507,7 @@ func (app *portableGUI) stopRuntime() {
 	}
 	app.stopRequested = true
 	app.state = guiStopping
+	app.paths = nil
 	app.detail = "正在停止数据面并清理临时运行状态…"
 	cancel := app.runCancel
 	app.mu.Unlock()
@@ -436,6 +517,19 @@ func (app *portableGUI) stopRuntime() {
 
 func (app *portableGUI) deleteLocalDevice() {
 	snapshot := app.snapshot()
+	if snapshot.profilesReady {
+		if snapshot.selectedProfile == "" {
+			return
+		}
+		if snapshot.state == guiStarting || snapshot.state == guiConnected || snapshot.state == guiStopping || snapshot.state == guiJoining || snapshot.state == guiLoading {
+			messageBox(app.hwnd, "删除连接配置", "请先停止该配置的连接或加入操作。", portableMBOK|portableMBIconWarning)
+			return
+		}
+		if messageBoxResult(app.hwnd, "删除连接配置", "删除“"+snapshot.profileName+"”及其本机加入身份？此操作无法恢复。\n其他连接配置保留；中控 Device 需另行下线和吊销。", portableMBYesNo|portableMBIconWarning|portableMBDefButton2) == portableIDYes {
+			app.profileCommand(brokerRequest{Operation: "delete", ProfileID: snapshot.selectedProfile})
+		}
+		return
+	}
 	if !snapshot.joined || (snapshot.state != guiStopped && snapshot.state != guiError && snapshot.state != guiNeedsElevation) {
 		messageBox(app.hwnd, "删除本机 Device", "请先断开 Loom 网络，再删除本机身份和配置。", portableMBOK|portableMBIconWarning)
 		return
@@ -522,6 +616,10 @@ func removeWindowsLocalDevice(root string, edition clientEdition) error {
 
 func (app *portableGUI) primaryAction() {
 	snapshot := app.snapshot()
+	if snapshot.profilesReady && snapshot.selectedProfile == "" {
+		app.profileCommand(brokerRequest{Operation: "add_profile"})
+		return
+	}
 	switch snapshot.state {
 	case guiNeedsJoin:
 		app.chooseJoinArtifact()
@@ -666,6 +764,15 @@ func (app *portableGUI) update(state portableGUIState, joined bool, deviceID, de
 
 func (app *portableGUI) snapshot() portableGUISnapshot {
 	app.mu.RLock()
+	if manager := app.profiles; manager != nil {
+		message := app.profileMessage
+		app.mu.RUnlock()
+		s := manager.snapshot()
+		if message != "" {
+			s.detail = message
+		}
+		return s
+	}
 	defer app.mu.RUnlock()
 	detail := app.detail
 	if app.state == guiJoining && !app.joinStarted.IsZero() {
@@ -677,6 +784,8 @@ func (app *portableGUI) snapshot() portableGUISnapshot {
 		detail: detail, hostname: app.hostname,
 		routeOptions:  append([]portableRouteOption(nil), app.routeOptions...),
 		routeSelected: app.routeSelected, routeBusy: app.routeBusy, routeDetail: app.routeDetail,
+		paths: slices.Clone(app.paths), profilesReady: app.brokerProfilesReady, profiles: slices.Clone(app.brokerProfiles),
+		selectedProfile: app.selectedProfile, profileName: app.profileName, activeProfile: app.activeProfile, activeProfileName: app.activeProfileName,
 	}
 }
 
@@ -824,12 +933,17 @@ const (
 	portableCBNSelEndOK     = 9
 	portableCBNSelEndCancel = 10
 
-	portableControlNetworkList = 1001
-	portableControlPrimary     = 1003
-	portableControlPaste       = 1004
-	portableControlRoute       = 1005
-	portableControlStateIcon   = 1006
-	portableControlDelete      = 1007
+	portableControlNetworkList   = 1001
+	portableControlPrimary       = 1003
+	portableControlPaste         = 1004
+	portableControlRoute         = 1005
+	portableControlStateIcon     = 1006
+	portableControlDelete        = 1007
+	portableControlAddProfile    = 1008
+	portableControlRenameProfile = 1009
+	portableControlProfileName   = 1010
+	portableControlPathDetails   = 1011
+	portableLBGetCurSel          = 0x0188
 
 	portableCWUseDefault       = -2147483648
 	portableSWHide             = 0
@@ -913,11 +1027,11 @@ const (
 	portableLayoutMargin       = 5
 	portableLayoutGap          = 10
 	portableInterfaceHeight    = 154
-	portableLocalMinimumHeight = 145
+	portableLocalMinimumHeight = 220
 	portableStatusGap          = 8
 	portableStatusHeight       = 20
 	portableStatusBottomMargin = 2
-	portableMinClientWidth     = 584
+	portableMinClientWidth     = 680
 	portableMinClientHeight    = portableLayoutMargin + portableInterfaceHeight + portableLayoutGap +
 		portableLocalMinimumHeight + portableStatusGap + portableStatusHeight + portableStatusBottomMargin
 
@@ -1054,39 +1168,47 @@ type portableIconInfo struct {
 }
 
 type portableGUIControls struct {
-	brandIcon        uintptr
-	brandName        uintptr
-	brandEdition     uintptr
-	networkList      uintptr
-	interfaceGroup   uintptr
-	stateCaption     uintptr
-	stateIcon        uintptr
-	stateValue       uintptr
-	modeCaption      uintptr
-	modeValue        uintptr
-	deviceCaption    uintptr
-	deviceValue      uintptr
-	endpointCaption  uintptr
-	endpointValue    uintptr
-	routeCaption     uintptr
-	routeCombo       uintptr
-	primaryButton    uintptr
-	deleteButton     uintptr
-	pasteButton      uintptr
-	localGroup       uintptr
-	profileCaption   uintptr
-	profileValue     uintptr
-	storageCaption   uintptr
-	storageValue     uintptr
-	privilegeCaption uintptr
-	privilegeValue   uintptr
-	message          uintptr
+	brandIcon           uintptr
+	brandName           uintptr
+	brandEdition        uintptr
+	networkList         uintptr
+	addProfileButton    uintptr
+	renameProfileButton uintptr
+	profileNameEdit     uintptr
+	pathsValue          uintptr
+	pathsDetailsButton  uintptr
+	pathsHint           uintptr
+	interfaceGroup      uintptr
+	stateCaption        uintptr
+	stateIcon           uintptr
+	stateValue          uintptr
+	modeCaption         uintptr
+	modeValue           uintptr
+	deviceCaption       uintptr
+	deviceValue         uintptr
+	endpointCaption     uintptr
+	endpointValue       uintptr
+	routeCaption        uintptr
+	routeCombo          uintptr
+	primaryButton       uintptr
+	deleteButton        uintptr
+	pasteButton         uintptr
+	localGroup          uintptr
+	profileCaption      uintptr
+	profileValue        uintptr
+	storageCaption      uintptr
+	storageValue        uintptr
+	privilegeCaption    uintptr
+	privilegeValue      uintptr
+	message             uintptr
 }
 
 func (controls portableGUIControls) all() []uintptr {
 	return []uintptr{
 		controls.brandIcon, controls.brandName, controls.brandEdition,
 		controls.networkList, controls.interfaceGroup,
+		controls.addProfileButton, controls.renameProfileButton, controls.profileNameEdit,
+		controls.pathsValue, controls.pathsDetailsButton, controls.pathsHint,
 		controls.stateCaption, controls.stateIcon, controls.stateValue,
 		controls.modeCaption, controls.modeValue,
 		controls.deviceCaption, controls.deviceValue,
@@ -1134,6 +1256,7 @@ var (
 	procGetKeyState         = portableUser32.NewProc("GetKeyState")
 	procGetWindowText       = portableUser32.NewProc("GetWindowTextW")
 	procGetWindowTextLength = portableUser32.NewProc("GetWindowTextLengthW")
+	procIsWindowEnabled     = portableUser32.NewProc("IsWindowEnabled")
 	procInvalidateRect      = portableUser32.NewProc("InvalidateRect")
 	procRedrawWindow        = portableUser32.NewProc("RedrawWindow")
 	procMoveWindow          = portableUser32.NewProc("MoveWindow")
@@ -1295,6 +1418,7 @@ func loadPortableAppIcon(instance uintptr, widthMetric, heightMetric, dpi int32)
 }
 
 func (app *portableGUI) createControls() error {
+	app.rendered = nil
 	instance, _, _ := procGetModuleHandle.Call(0)
 	create := func(target *uintptr, exStyle uintptr, className, text string, style, id uintptr) error {
 		classPtr, _ := windows.UTF16PtrFromString(className)
@@ -1326,6 +1450,12 @@ func (app *portableGUI) createControls() error {
 		{&app.controls.brandName, 0, "STATIC", "Loom", portableSSLeft | portableSSNoPrefix | portableSSCenterImage, 0},
 		{&app.controls.brandEdition, 0, "STATIC", "", portableSSLeft | portableSSNoPrefix | portableSSCenterImage, 0},
 		{&app.controls.networkList, portableWSExClientEdge, "LISTBOX", "", portableWSVScroll | portableWSTabStop | portableLBSNotify | portableLBSOwnerDraw | portableLBSHasStrings | portableLBSNoIntegral, portableControlNetworkList},
+		{&app.controls.addProfileButton, 0, "BUTTON", "添加配置", portableWSTabStop | portableBSOwnerDraw, portableControlAddProfile},
+		{&app.controls.renameProfileButton, 0, "BUTTON", "保存名称", portableWSTabStop | portableBSOwnerDraw, portableControlRenameProfile},
+		{&app.controls.profileNameEdit, portableWSExClientEdge, "EDIT", "", portableWSTabStop | 0x0080, portableControlProfileName},
+		{&app.controls.pathsValue, portableWSExClientEdge, "EDIT", "", portableWSTabStop | portableWSVScroll | 0x0004 | 0x0040 | 0x0800, 0},
+		{&app.controls.pathsDetailsButton, 0, "BUTTON", "详细信息", portableWSTabStop | portableBSOwnerDraw, portableControlPathDetails},
+		{&app.controls.pathsHint, 0, "STATIC", "当前选路用于新连接；已有连接可能沿用原路径。", portableSSLeft | portableSSNoPrefix, 0},
 		{&app.controls.interfaceGroup, 0, "BUTTON", "连接: Loom 网络", portableBSGroupBox, 0},
 		{&app.controls.stateCaption, 0, "STATIC", "状态:", portableSSRight | portableSSNoPrefix, 0},
 		{&app.controls.stateIcon, 0, "STATIC", "", portableSSIcon | portableSSCenterImage, portableControlStateIcon},
@@ -1364,6 +1494,11 @@ func (app *portableGUI) createControls() error {
 		return err
 	}
 	app.statusIcon = statusIcon
+	statusIcons, err := loadPortableStatusIcons(app.scale(16))
+	if err != nil {
+		return err
+	}
+	app.statusIcons = statusIcons
 	traySize := uintptr(portableTrayIconSize)
 	trayBase, _, _ := procLoadImage.Call(instance, portableIconApp, portableImageIcon, traySize, traySize, portableLRShared)
 	if trayBase == 0 {
@@ -1439,6 +1574,9 @@ func (app *portableGUI) deleteFonts() {
 }
 
 func (app *portableGUI) deleteIcons() {
+	procKillTimer.Call(app.hwnd, portableStatusTimerID)
+	app.statusIcons.destroy()
+	app.statusIcons = nil
 	if app.statusIcon != 0 {
 		procDestroyIcon.Call(app.statusIcon)
 		app.statusIcon = 0
@@ -1571,14 +1709,18 @@ func (app *portableGUI) changeDPI(dpi int32, suggested portableRect) {
 	} else {
 		old := app.statusIcon
 		app.statusIcon = icon
-		stateIcon := uintptr(0)
-		if app.snapshot().state == guiConnected {
-			stateIcon = icon
-		}
-		procSendMessage.Call(app.controls.stateIcon, portableSTMSetIcon, stateIcon, 0)
+		app.updateStatusIcon(app.snapshot().state)
 		if old != 0 {
 			procDestroyIcon.Call(old)
 		}
+	}
+	if icons, err := loadPortableStatusIcons(app.scale(16)); err != nil {
+		log.Printf("更新连接状态图标失败: %v", err)
+	} else {
+		old := app.statusIcons
+		app.statusIcons = icons
+		app.updateStatusIcon(app.snapshot().state)
+		old.destroy()
 	}
 	app.updateBrandIcon(app.snapshot())
 	procSetWindowPos.Call(app.hwnd, 0,
@@ -1623,6 +1765,13 @@ func (app *portableGUI) layoutControls() {
 	}
 
 	snapshot := app.snapshot()
+	if snapshot.profilesReady {
+		app.layoutProfileControls(snapshot, width, height)
+		return
+	}
+	for _, control := range []uintptr{app.controls.addProfileButton, app.controls.renameProfileButton, app.controls.profileNameEdit, app.controls.pathsValue, app.controls.pathsDetailsButton, app.controls.pathsHint} {
+		setPortableControlVisible(control, false)
+	}
 	joinedOnly := []uintptr{
 		app.controls.networkList, app.controls.interfaceGroup,
 		app.controls.stateCaption, app.controls.stateIcon, app.controls.modeCaption, app.controls.modeValue,
@@ -1735,7 +1884,14 @@ func (app *portableGUI) renderControls() {
 		return
 	}
 	snapshot := app.snapshot()
-	app.layoutControls()
+	previous := app.rendered
+	if previous != nil && snapshot.equal(*previous) {
+		return
+	}
+	// §7.2：只有加入页与连接页互换才需要布局；尺寸和 DPI 由系统消息处理。
+	if previous == nil || previous.joined != snapshot.joined || previous.profilesReady != snapshot.profilesReady {
+		app.layoutControls()
+	}
 	stateText, message, primaryText, primaryEnabled := app.presentation(snapshot)
 	if snapshot.routeDetail != "" {
 		if message != "" {
@@ -1744,30 +1900,37 @@ func (app *portableGUI) renderControls() {
 		message += snapshot.routeDetail
 	}
 	setPortableControlText(app.controls.stateValue, stateText)
-	stateIcon := uintptr(0)
-	if snapshot.state == guiConnected {
-		stateIcon = app.statusIcon
+	if previous == nil || previous.state != snapshot.state {
+		app.statusFrame = 0
+		app.updateStatusIcon(snapshot.state)
 	}
-	procSendMessage.Call(app.controls.stateIcon, portableSTMSetIcon, stateIcon, 0)
 	setPortableControlText(app.controls.message, message)
 	setPortableControlText(app.controls.primaryButton, primaryText)
 	enablePortableControl(app.controls.primaryButton, primaryEnabled)
 	setPortableControlText(app.controls.deleteButton, "删除…")
-	deleteEnabled := snapshot.joined && (snapshot.state == guiStopped || snapshot.state == guiError || snapshot.state == guiNeedsElevation)
+	deleteEnabled := (snapshot.joined || snapshot.profilesReady && snapshot.selectedProfile != "") && (snapshot.state == guiStopped || snapshot.state == guiError || snapshot.state == guiNeedsElevation || snapshot.state == guiNeedsJoin)
 	enablePortableControl(app.controls.deleteButton, deleteEnabled)
 	setPortableControlText(app.controls.pasteButton, "粘贴二维码")
 	pasteEnabled := primaryEnabled && !snapshot.joined && (snapshot.state == guiNeedsJoin || snapshot.state == guiError)
 	enablePortableControl(app.controls.pasteButton, pasteEnabled)
 
-	procSendMessage.Call(app.controls.networkList, portableLBResetContent, 0, 0)
-	if snapshot.joined {
-		entryPtr, _ := windows.UTF16PtrFromString(snapshot.deviceID)
-		procSendMessage.Call(app.controls.networkList, portableLBAddString, 0, uintptr(unsafe.Pointer(entryPtr)))
-		procSendMessage.Call(app.controls.networkList, portableLBSetCurSel, 0, 0)
-		runtime.KeepAlive(entryPtr)
+	if snapshot.profilesReady {
+		app.renderProfileList(snapshot, previous)
+	} else if previous == nil || previous.joined != snapshot.joined || previous.deviceID != snapshot.deviceID {
+		procSendMessage.Call(app.controls.networkList, portableLBResetContent, 0, 0)
+		if snapshot.joined {
+			entryPtr, _ := windows.UTF16PtrFromString(snapshot.deviceID)
+			procSendMessage.Call(app.controls.networkList, portableLBAddString, 0, uintptr(unsafe.Pointer(entryPtr)))
+			procSendMessage.Call(app.controls.networkList, portableLBSetCurSel, 0, 0)
+			runtime.KeepAlive(entryPtr)
+		}
+	} else if previous.state != snapshot.state {
+		procInvalidateRect.Call(app.controls.networkList, 0, 0)
+	}
+	if snapshot.joined && !snapshot.profilesReady {
 		setPortableControlText(app.controls.interfaceGroup, "连接: Loom 网络")
 		setPortableControlText(app.controls.localGroup, "设备: "+snapshot.deviceID)
-	} else {
+	} else if !snapshot.profilesReady {
 		setPortableControlText(app.controls.interfaceGroup, "加入 Loom 网络")
 		setPortableControlText(app.controls.localGroup, "设备")
 	}
@@ -1792,15 +1955,27 @@ func (app *portableGUI) renderControls() {
 		privilege = "管理员"
 	}
 	setPortableControlText(app.controls.privilegeValue, fmt.Sprintf("%s  ·  Windows/%s", privilege, runtime.GOARCH))
+	if snapshot.profilesReady {
+		app.renderProfileDetails(snapshot, previous)
+	}
 	routeSelectable := portableRouteSelectable(snapshot)
+	filterReset := !routeSelectable && app.routeFiltering
 	if !routeSelectable {
 		app.routeFiltering = false
 		app.routeFilter = ""
 	}
-	app.renderRouteCombo(snapshot)
+	if previous == nil || filterReset || previous.routeSelected != snapshot.routeSelected ||
+		!slices.Equal(previous.routeOptions, snapshot.routeOptions) {
+		app.renderRouteCombo(snapshot)
+	}
 	enablePortableControl(app.controls.routeCombo, routeSelectable)
-	app.updateBrandIcon(snapshot)
-	app.modifyTrayIcon(snapshot)
+	if previous == nil {
+		app.updateBrandIcon(snapshot)
+	}
+	if previous == nil || previous.state != snapshot.state || previous.activeProfile != snapshot.activeProfile || !slices.Equal(previous.profiles, snapshot.profiles) {
+		app.modifyTrayIcon(snapshot)
+	}
+	app.rendered = &snapshot
 }
 
 func (app *portableGUI) updateBrandIcon(_ portableGUISnapshot) {
@@ -1850,6 +2025,14 @@ func (app *portableGUI) removeTrayIcon() {
 }
 
 func (app *portableGUI) trayIconData(snapshot portableGUISnapshot) portableNotifyIconData {
+	if snapshot.profilesReady && snapshot.activeProfile != "" {
+		for _, profile := range snapshot.profiles {
+			if profile.ID == snapshot.activeProfile {
+				snapshot.state = profile.State
+				break
+			}
+		}
+	}
 	instance, _, _ := procGetModuleHandle.Call(0)
 	icon, _, _ := procLoadIcon.Call(instance, portableIconApp)
 	if snapshot.state == guiConnected && app.trayConnectedIcon != 0 {
@@ -1865,7 +2048,11 @@ func (app *portableGUI) trayIconData(snapshot portableGUISnapshot) portableNotif
 		callbackMessage: portableWMAppTray,
 		icon:            icon,
 	}
-	tip, _ := windows.UTF16FromString("Loom — " + mode + " — " + stateText)
+	tipText := "Loom — " + mode + " — " + stateText
+	if snapshot.activeProfileName != "" {
+		tipText += " · " + snapshot.activeProfileName
+	}
+	tip, _ := windows.UTF16FromString(tipText)
 	if len(tip) > len(data.tip) {
 		tip = tip[:len(data.tip)]
 		tip[len(tip)-1] = 0
@@ -1925,6 +2112,9 @@ func appendPortableMenuText(menu, flags, id uintptr, label string) {
 
 func (app *portableGUI) presentation(snapshot portableGUISnapshot) (state, message, button string, enabled bool) {
 	detail := snapshot.detail
+	if app.profileHost && !snapshot.profilesReady && snapshot.state == guiError {
+		return "连接配置不可用", detail, "无法连接", false
+	}
 	switch snapshot.state {
 	case guiLoading:
 		return "正在检查", "正在检查本机身份和发行包。", "请稍候…", false
@@ -1935,7 +2125,7 @@ func (app *portableGUI) presentation(snapshot portableGUISnapshot) (state, messa
 	case guiNeedsElevation:
 		return "需要管理员权限", detail, "管理员启动", true
 	case guiStarting:
-		return "正在连接", detail, "断开", true
+		return "正在连接", detail, "取消连接", true
 	case guiConnected:
 		return "已连接", detail, "断开", true
 	case guiStopping:
@@ -1953,12 +2143,23 @@ func (app *portableGUI) presentation(snapshot portableGUISnapshot) (state, messa
 }
 
 func setPortableControlText(hwnd uintptr, value string) {
+	// §7.2：STATIC 的重复 WM_SETTEXT 也会擦除背景，进度更新不能连带闪烁其他字段。
+	length, _, _ := procGetWindowTextLength.Call(hwnd)
+	current := make([]uint16, length+1)
+	procGetWindowText.Call(hwnd, uintptr(unsafe.Pointer(&current[0])), uintptr(len(current)))
+	if windows.UTF16ToString(current) == value {
+		return
+	}
 	wide, _ := windows.UTF16PtrFromString(value)
 	procSetWindowText.Call(hwnd, uintptr(unsafe.Pointer(wide)))
 	runtime.KeepAlive(wide)
 }
 
 func enablePortableControl(hwnd uintptr, enabled bool) {
+	current, _, _ := procIsWindowEnabled.Call(hwnd)
+	if (current != 0) == enabled {
+		return
+	}
 	value := uintptr(0)
 	if enabled {
 		value = 1
@@ -2127,7 +2328,7 @@ func handlePortablePasteShortcut(message portableMSG) bool {
 }
 
 func (app *portableGUI) drawActionButton(item *portableDrawItem) bool {
-	if item == nil || (item.hwndItem != app.controls.primaryButton && item.hwndItem != app.controls.deleteButton && item.hwndItem != app.controls.pasteButton) {
+	if item == nil || !slices.Contains([]uintptr{app.controls.primaryButton, app.controls.deleteButton, app.controls.pasteButton, app.controls.addProfileButton, app.controls.renameProfileButton, app.controls.pathsDetailsButton}, item.hwndItem) {
 		return false
 	}
 
@@ -2310,12 +2511,24 @@ func (app *portableGUI) drawNetworkListItem(item *portableDrawItem) bool {
 	brush, _, _ := procGetSysColorBrush.Call(background)
 	procFillRect.Call(item.dc, uintptr(unsafe.Pointer(&item.rect)), brush)
 
-	connected := app.snapshot().state == guiConnected
-	if connected {
+	snapshot := app.snapshot()
+	state := snapshot.state
+	if snapshot.profilesReady && int(item.itemID) < len(snapshot.profiles) {
+		state = snapshot.profiles[item.itemID].State
+	}
+	{
 		dotSize := app.scale(7)
 		dotLeft := item.rect.left + app.scale(6)
 		dotTop := item.rect.top + (item.rect.bottom-item.rect.top-dotSize)/2
-		greenBrush, _, _ := procCreateSolidBrush.Call(portableGreenColor)
+		color := uintptr(0x999999)
+		if state == guiConnected {
+			color = portableGreenColor
+		} else if state == guiError {
+			color = 0x4444cc
+		} else if portableStatusAnimated(state) {
+			color = 0xd98b24
+		}
+		greenBrush, _, _ := procCreateSolidBrush.Call(color)
 		oldBrush, _, _ := procSelectObject.Call(item.dc, greenBrush)
 		nullPen, _, _ := procGetStockObject.Call(portableNullPen)
 		oldPen, _, _ := procSelectObject.Call(item.dc, nullPen)
@@ -2332,10 +2545,7 @@ func (app *portableGUI) drawNetworkListItem(item *portableDrawItem) bool {
 	text := make([]uint16, int(length)+1)
 	procSendMessage.Call(item.hwndItem, portableLBGetText, uintptr(item.itemID), uintptr(unsafe.Pointer(&text[0])))
 	textRect := item.rect
-	textRect.left += app.scale(5)
-	if connected {
-		textRect.left += app.scale(15)
-	}
+	textRect.left += app.scale(20)
 	font, _, _ := procSendMessage.Call(item.hwndItem, portableWMGetFont, 0, 0)
 	oldFont, _, _ := procSelectObject.Call(item.dc, font)
 	procSetBkMode.Call(item.dc, portableTransparent)
@@ -2379,6 +2589,21 @@ func portableWindowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) ui
 			controlID := uint16(wParam & 0xffff)
 			notification := uint16((wParam >> 16) & 0xffff)
 			switch controlID {
+			case portableControlNetworkList:
+				if notification == 1 && !app.profileListUpdating {
+					app.selectProfileFromList()
+				}
+				return 0
+			case portableControlAddProfile:
+				app.profileCommand(brokerRequest{Operation: "add_profile"})
+				return 0
+			case portableControlRenameProfile:
+				app.renameSelectedProfile()
+				return 0
+			case portableControlPathDetails:
+				app.pathsExpanded = !app.pathsExpanded
+				app.renderProfileDetails(app.snapshot(), nil)
+				return 0
 			case portableControlPrimary:
 				app.primaryAction()
 				return 0
@@ -2404,6 +2629,15 @@ func portableWindowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) ui
 		procSetBkMode.Call(wParam, portableTransparent)
 		brush, _, _ := procGetSysColorBrush.Call(portableColorWindow)
 		return brush
+	case 0x0113: // WM_TIMER：仅更新动画图标，状态轮询不触发全窗重绘。
+		if found && wParam == portableStatusTimerID {
+			state := app.snapshot().state
+			if portableStatusAnimated(state) {
+				app.statusFrame++
+				app.updateStatusIcon(state)
+			}
+			return 0
+		}
 	case portableWMDrawItem:
 		if found {
 			item := (*portableDrawItem)(unsafe.Pointer(lParam))

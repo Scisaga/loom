@@ -303,7 +303,7 @@ func TestActivationStatusWaitsForProcessAndDetectsExit(t *testing.T) {
 		t.Fatal("process exit still appears healthy before the manager handles recovery")
 	}
 	if err := manager.Recover(ctx, activeErr); err == nil {
-		t.Fatal("crash without standby should fail")
+		t.Fatal("recovery that crashes again during startup should fail")
 	}
 	failed := <-states
 	if failed.Ready || failed.Applied != "" {
@@ -311,5 +311,86 @@ func TestActivationStatusWaitsForProcessAndDetectsExit(t *testing.T) {
 	}
 	if err := manager.Stop(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestActivationManagerRestartsCurrentWithBoundedRecovery(t *testing.T) {
+	harness := &activationHarness{}
+	manager := newActivationHarnessManager(t, harness)
+	defer manager.Stop()
+	var reported clientRuntimeState
+	manager.observe = func(state clientRuntimeState) { reported = state }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	current := activationFixture(t, "8")
+	crash := make(chan error, 1)
+	harness.setCrash(current.key(), crash)
+	if _, err := manager.Replace(ctx, current); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 4; attempt++ {
+		old := reported
+		crash <- errors.New("demo sing-box crash")
+		activeErr := <-manager.Done()
+		err := manager.Recover(ctx, activeErr)
+		if old.Generation.Err() == nil || old.active() {
+			t.Fatal("retired generation remained reportable")
+		}
+		if attempt == 3 {
+			if err == nil || manager.active != nil || reported.Ready || current.Config != nil {
+				t.Fatal("repeated crashes did not stop and clear the failed activation")
+			}
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if manager.active.spec != current || !reported.active() || reported.Generation == old.Generation {
+			t.Fatal("recovery did not reactivate the verified current configuration in a new generation")
+		}
+	}
+	if starts, _ := harness.counts(); starts != 4 {
+		t.Fatalf("unbounded recovery: starts=%d", starts)
+	}
+}
+
+func TestActivationManagerRecoveryRechecksPreflightAndCancellation(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		harness := &activationHarness{}
+		manager := newActivationHarnessManager(t, harness)
+		ctx, cancel := context.WithCancel(context.Background())
+		current := activationFixture(t, "9")
+		crash := make(chan error, 1)
+		harness.setCrash(current.key(), crash)
+		if _, err := manager.Replace(ctx, current); err != nil {
+			t.Fatal(err)
+		}
+		crash <- errors.New("demo sing-box crash")
+		activeErr := <-manager.Done()
+		if canceled {
+			cancel()
+		} else {
+			harness.setPreflightFailure(current.key(), errors.New("demo component validation failed"))
+		}
+		if err := manager.Recover(ctx, activeErr); err == nil {
+			t.Fatal("recovery ignored cancellation or preflight failure")
+		}
+		if starts, _ := harness.counts(); starts != 1 || manager.active != nil || current.Config != nil {
+			t.Fatal("invalid recovery started a child or retained hydrated config")
+		}
+		cancel()
+		_ = manager.Stop()
+	}
+}
+
+func TestCanceledGenerationCannotRemainReportable(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	state := clientRuntimeState{Generation: ctx, Ready: true, Applied: "0123456789ab", Exited: make(chan struct{})}
+	if !state.active() {
+		t.Fatal("live generation not reportable")
+	}
+	cancel()
+	if state.active() {
+		t.Fatal("canceled generation reportable before data-plane teardown completes")
 	}
 }

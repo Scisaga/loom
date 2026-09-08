@@ -1,76 +1,177 @@
 package clientruntime
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
+	"math"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 
+	"loom/internal/agent"
 	"loom/internal/clientcore"
 	"loom/internal/model"
 )
 
-// WindowsSelectorPlan is the bounded local-control projection of one already
-// verified runtime configuration. Its credentials are intentionally private:
-// callers can apply a preference, but cannot accidentally render the API
-// bearer into a UI or diagnostic.
+// §5.1、§7.3.3：本地偏好只裁剪签名候选，selector 的运行期写者只有共享 Agent。
 type WindowsSelectorPlan struct {
-	controller string
-	secret     string
-	selectors  []windowsSelector
-	policy     clientcore.Policy
-	direct     bool
+	config agent.Config
+	policy clientcore.Policy
+	direct bool
 }
 
-type windowsSelector struct {
-	tag       string
-	defaults  string
-	direct    string
-	fixedExit map[string]string
-}
-
-// BuildWindowsSelectorPlan derives the client-writable choice set only from a
-// configuration which passes the normal signed-runtime validation boundary.
-func BuildWindowsSelectorPlan(body []byte, profile WindowsRuntimeProfile, caPath string) (*WindowsSelectorPlan, error) {
+func BuildWindowsSelectorPlan(body, agentBody []byte, profile WindowsRuntimeProfile, caPath string) (*WindowsSelectorPlan, error) {
 	if err := ValidateWindowsRuntimeConfig(body, profile, caPath); err != nil {
 		return nil, err
 	}
-	var config singBoxConfig
-	if err := json.Unmarshal(body, &config); err != nil {
-		return nil, err
-	}
-	return windowsSelectorPlanFromConfig(config)
+	return validateWindowsAgentPair(body, agentBody, "")
 }
 
-func windowsSelectorPlanFromConfig(config singBoxConfig) (*WindowsSelectorPlan, error) {
-	if config.Experimental == nil || config.Experimental.ClashAPI == nil ||
-		config.Experimental.ClashAPI.ExternalController != "127.0.0.1:61800" ||
-		strings.TrimSpace(config.Experimental.ClashAPI.Secret) == "" {
-		return nil, errors.New("Windows selector API is unavailable")
+// §12：两个文件必须一起验证；opaque tag 只用于关联，绝不反解析节点链。
+func validateWindowsAgentPair(body, agentBody []byte, node string) (*WindowsSelectorPlan, error) {
+	if len(agentBody) == 0 || len(agentBody) > maxSingBoxBytes {
+		return nil, errors.New("[§12] Agent plan 大小无效")
 	}
-	plan := &WindowsSelectorPlan{
-		controller: "http://" + config.Experimental.ClashAPI.ExternalController,
-		secret:     config.Experimental.ClashAPI.Secret,
-		policy:     clientcore.Policy{Schema: clientcore.PolicySchema},
+	if err := rejectDuplicateJSONKeys(agentBody); err != nil {
+		return nil, err
 	}
+	cfg, err := agent.Load(agentBody)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Schema != agent.ConfigSchema || !model.ValidNodeID(cfg.Node) || (node != "" && cfg.Node != node) || len(cfg.Declarations) == 0 {
+		return nil, errors.New("[§12] Agent plan schema、节点或 Service 无效")
+	}
+	// §16.1.2：Windows 只用客户端完整路径测量，不引入服务器分段观测源。
+	if len(cfg.Peers) > 0 || cfg.SelfReport != "" {
+		return nil, errors.New("[§16.1.2] Windows Agent 不接受服务器观测源")
+	}
+	var sb singBoxConfig
+	if err := json.Unmarshal(body, &sb); err != nil {
+		return nil, err
+	}
+	if sb.Experimental == nil || sb.Experimental.ClashAPI == nil || cfg.API != "127.0.0.1:61800" || cfg.API != sb.Experimental.ClashAPI.ExternalController || cfg.APISecret == "" || cfg.APISecret != sb.Experimental.ClashAPI.Secret || cfg.Probe != "127.0.0.1:61801" || cfg.ProbeSecret == "" {
+		return nil, errors.New("[§7.3.3] Agent API/probe 与 sing-box 不匹配")
+	}
+	outbounds := map[string]singBoxOutbound{}
+	selectors := map[string]bool{}
+	for _, o := range sb.Outbounds {
+		outbounds[o.Tag] = o
+		if o.Type == "selector" {
+			selectors[o.Tag] = true
+		}
+	}
+	// §12：新版共享计划的 selector 元数据也必须与同包数据面一致。
+	// Windows 要求每个可写 selector 都有可执行的完整路径决策声明。
+	if len(cfg.Selectors) > 0 {
+		if len(cfg.Selectors) != len(cfg.Declarations) {
+			return nil, errors.New("[§12] selector 计划未完整绑定 Agent 声明")
+		}
+		for _, selector := range cfg.Selectors {
+			outbound := outbounds[selector.Selector]
+			if outbound.Type != "selector" || outbound.Default != selector.Default {
+				return nil, errors.New("[§12] selector 计划与 sing-box 默认候选不一致")
+			}
+		}
+	}
+	users := map[string]string{}
+	probeTag := ""
+	for _, in := range sb.Inbounds {
+		if in.Listen == "127.0.0.1" && in.ListenPort == 61801 && in.Type == "mixed" {
+			if probeTag != "" {
+				return nil, errors.New("[§7.3.3] 重复探测入口")
+			}
+			probeTag = in.Tag
+			for _, u := range in.Users {
+				if _, ok := users[u.Username]; ok {
+					return nil, errors.New("[§7.3.3] 重复探测用户")
+				}
+				users[u.Username] = u.Password
+			}
+		}
+	}
+	if probeTag == "" {
+		return nil, errors.New("[§7.3.3] 缺少候选探测入口")
+	}
+	plan := &WindowsSelectorPlan{config: *cfg, policy: clientcore.Policy{Schema: clientcore.PolicySchema}, direct: true}
+	ids, seenUsers := map[string]bool{}, map[string]bool{}
 	var common map[string]bool
-	plan.direct = true
-	for _, outbound := range config.Outbounds {
-		if outbound.Type != "selector" {
-			continue
+	for _, d := range cfg.Declarations {
+		if d.ID == "" || ids[d.ID] || !selectors[d.Selector] {
+			return nil, errors.New("[§5.1] 重复 Service 或缺失 selector")
 		}
-		selector, exits, err := parseWindowsSelector(outbound)
-		if err != nil {
-			return nil, err
+		ids[d.ID] = true
+		delete(selectors, d.Selector)
+		period, _ := d.Period()
+		window, _ := d.Win()
+		stale, _ := d.Stale()
+		if d.MinSamples < 1 || int64(d.MinSamples) > int64(window/period) || stale < period || d.ProbeBudget < 0 || (d.ProbeBudget == 1 && len(d.Candidates) > 1) || math.IsNaN(d.SwitchThreshold) || math.IsInf(d.SwitchThreshold, 0) || d.SwitchThreshold < 0 || d.SwitchThreshold >= 1 {
+			return nil, fmt.Errorf("[§5.5] Service %s 的窗口、门槛或探测预算不可执行", d.ID)
 		}
-		plan.selectors = append(plan.selectors, selector)
-		plan.direct = plan.direct && selector.direct != ""
+		targets := map[string]bool{}
+		for _, target := range d.Targets {
+			u, e := url.Parse(target)
+			if e != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.Fragment != "" || targets[target] {
+				return nil, errors.New("[§7.3.3] 探测目标无效或重复")
+			}
+			targets[target] = true
+		}
+		members := outbounds[d.Selector].Outbounds
+		if len(members) != len(d.Candidates) {
+			return nil, errors.New("[§12] Agent 与 selector 候选集合不同")
+		}
+		seen := map[string]bool{}
+		exits := map[string]bool{}
+		direct := false
+		for _, c := range d.Candidates {
+			if c.Tag == "" || seen[c.Tag] || !slices.Contains(members, c.Tag) || c.ProbeUser == "" || strings.Contains(c.ProbeUser, ":") || seenUsers[c.ProbeUser] || users[c.ProbeUser] != cfg.ProbeSecret {
+				return nil, errors.New("[§7.3.3] 候选或 probe user 不匹配")
+			}
+			seen[c.Tag] = true
+			seenUsers[c.ProbeUser] = true
+			if outbounds[c.Tag].Type == "selector" || outbounds[c.Tag].Type == "block" {
+				return nil, errors.New("[§5.6] 候选不是完整路径出站")
+			}
+			hops := map[string]bool{}
+			for _, hop := range c.Chain {
+				if !model.ValidNodeID(hop) || hops[hop] || hop == cfg.Node {
+					return nil, errors.New("[§5.6] 候选链非法")
+				}
+				hops[hop] = true
+			}
+			if len(c.Chain) == 0 {
+				if outbounds[c.Tag].Type != "direct" || outbounds[c.Tag].Detour != "" {
+					return nil, errors.New("[§5.6] direct 链与出站不一致")
+				}
+				direct = true
+			} else {
+				if outbounds[c.Tag].Type == "direct" && outbounds[c.Tag].Detour == "" {
+					return nil, errors.New("[§5.6] 服务器链指向 direct")
+				}
+				exits[c.Chain[len(c.Chain)-1]] = true
+			}
+			// 首个能匹配该 probe user 的规则必须无目标限制地指向同一候选。
+			matched := false
+			for _, r := range sb.Route.Rules {
+				if len(r.Inbound) > 0 && !slices.Contains(r.Inbound, probeTag) {
+					continue
+				}
+				if len(r.AuthUser) > 0 && !slices.Contains(r.AuthUser, c.ProbeUser) {
+					continue
+				}
+				if !slices.Equal(r.Inbound, []string{probeTag}) || !slices.Equal(r.AuthUser, []string{c.ProbeUser}) || r.Outbound != c.Tag || r.Action != "" || len(r.Domain)+len(r.DomainSuffix)+len(r.IPCIDR)+len(r.Port) > 0 {
+					return nil, errors.New("[§7.3.3] 探测规则未唯一绑定完整候选")
+				}
+				matched = true
+				break
+			}
+			if !matched {
+				return nil, errors.New("[§7.3.3] 候选缺少探测规则")
+			}
+		}
+		plan.direct = plan.direct && direct
 		if common == nil {
 			common = exits
 		} else {
@@ -81,8 +182,8 @@ func windowsSelectorPlanFromConfig(config singBoxConfig) (*WindowsSelectorPlan, 
 			}
 		}
 	}
-	if len(plan.selectors) == 0 {
-		return nil, errors.New("Windows runtime has no controllable selectors")
+	if len(selectors) > 0 || len(seenUsers) != len(users) {
+		return nil, errors.New("[§12] 未纳入 Agent 的 selector 或 probe user")
 	}
 	for exit := range common {
 		plan.policy.Exits = append(plan.policy.Exits, clientcore.Exit{ID: exit})
@@ -94,177 +195,99 @@ func windowsSelectorPlanFromConfig(config singBoxConfig) (*WindowsSelectorPlan, 
 	return plan, nil
 }
 
-func parseWindowsSelector(outbound singBoxOutbound) (windowsSelector, map[string]bool, error) {
-	selector := windowsSelector{tag: outbound.Tag, defaults: outbound.Default, fixedExit: map[string]string{}}
-	kind, id, ok := strings.Cut(outbound.Tag, ":")
-	if !ok || (kind != "decl" && kind != "svc") || !model.ValidNodeID(id) {
-		return selector, nil, fmt.Errorf("unsupported managed selector %q", outbound.Tag)
-	}
-	prefix := "cand:" + id + ":"
-	exits := map[string]bool{}
-	for _, member := range outbound.Outbounds {
-		if member == prefix+"direct" {
-			selector.direct = member
-			continue
-		}
-		if !strings.HasPrefix(member, prefix) {
-			return selector, nil, fmt.Errorf("selector %q has an unrelated candidate %q", outbound.Tag, member)
-		}
-		path := strings.TrimPrefix(member, prefix)
-		exit := path
-		if index := strings.LastIndexByte(path, '>'); index >= 0 {
-			exit = path[index+1:]
-		}
-		if !model.ValidNodeID(exit) {
-			return selector, nil, fmt.Errorf("selector %q has an invalid exit candidate", outbound.Tag)
-		}
-		exits[exit] = true
-		// Renderer order is the deterministic path preference. A direct hop is
-		// emitted before a multi-hop path to the same final exit.
-		if selector.fixedExit[exit] == "" {
-			selector.fixedExit[exit] = member
-		}
-	}
-	return selector, exits, nil
-}
-
-func (plan *WindowsSelectorPlan) Policy() clientcore.Policy {
-	if plan == nil {
+func (p *WindowsSelectorPlan) Policy() clientcore.Policy {
+	if p == nil {
 		return clientcore.Policy{}
 	}
-	return clientcore.Policy{Schema: plan.policy.Schema, Exits: append([]clientcore.Exit(nil), plan.policy.Exits...)}
+	return clientcore.Policy{Schema: p.policy.Schema, Exits: append([]clientcore.Exit(nil), p.policy.Exits...)}
 }
+func (p *WindowsSelectorPlan) DirectAvailable() bool { return p != nil && p.direct }
 
-func (plan *WindowsSelectorPlan) DirectAvailable() bool { return plan != nil && plan.direct }
-
-// ApplyWindowsPreference changes only selector state on the authenticated
-// loopback API. It first snapshots current choices and rolls back a partial
-// update, so a failed UI action cannot leave Service selectors in mixed modes.
-func ApplyWindowsPreference(ctx context.Context, client *http.Client, plan *WindowsSelectorPlan, preference clientcore.Preference) error {
-	if ctx == nil || client == nil || plan == nil {
-		return errors.New("Windows selector dependencies are incomplete")
+// §5.1：固定末跳保留所有授权前缀；启动默认值也必须在裁剪后的集合内。
+func (p *WindowsSelectorPlan) Derive(body []byte, preference clientcore.Preference) ([]byte, *agent.Config, error) {
+	if p == nil {
+		return nil, nil, errors.New("[§5.1] 缺少签名 Agent plan")
 	}
-	if err := clientcore.AuthorizeChange(preference, plan.policy); err != nil {
-		return err
+	if err := clientcore.AuthorizeChange(preference, p.policy); err != nil {
+		return nil, nil, err
 	}
-	targets := make(map[string]string, len(plan.selectors))
-	for _, selector := range plan.selectors {
-		switch preference.Mode {
-		case clientcore.Auto:
-			targets[selector.tag] = selector.defaults
-		case clientcore.Direct:
-			if selector.direct == "" {
-				return fmt.Errorf("selector %q has no authorized direct candidate", selector.tag)
+	if preference.Mode == clientcore.Direct && !p.direct {
+		return nil, nil, errors.New("[§5.8] Service 无授权 direct 候选")
+	}
+	var sb singBoxConfig
+	if err := json.Unmarshal(body, &sb); err != nil {
+		return nil, nil, err
+	}
+	cfg := p.config
+	cfg.Declarations = make([]agent.Decl, len(p.config.Declarations))
+	for i, d := range p.config.Declarations {
+		d.Candidates = append([]agent.Cand(nil), d.Candidates...)
+		d.Candidates = slices.DeleteFunc(d.Candidates, func(c agent.Cand) bool {
+			switch preference.Mode {
+			case clientcore.FixedExit:
+				return len(c.Chain) == 0 || c.Chain[len(c.Chain)-1] != preference.Exit
+			case clientcore.Direct:
+				return len(c.Chain) != 0
 			}
-			targets[selector.tag] = selector.direct
-		case clientcore.FixedExit:
-			targets[selector.tag] = selector.fixedExit[preference.Exit]
+			return false
+		})
+		if len(d.Candidates) == 0 {
+			return nil, nil, errors.New("[§5.8] 偏好裁剪后 Service 无候选")
 		}
-		if targets[selector.tag] == "" {
-			return fmt.Errorf("selector %q cannot apply route preference", selector.tag)
+		cfg.Declarations[i] = d
+		for j := range sb.Outbounds {
+			o := &sb.Outbounds[j]
+			if o.Tag != d.Selector {
+				continue
+			}
+			o.Outbounds = nil
+			for _, c := range d.Candidates {
+				o.Outbounds = append(o.Outbounds, c.Tag)
+			}
+			if !slices.Contains(o.Outbounds, o.Default) {
+				o.Default = o.Outbounds[0]
+			}
 		}
 	}
-	return applySelectorTargets(ctx, client, plan.controller, plan.secret, targets)
+	restrictWindowsAgentSelectors(&cfg)
+	derived, err := json.Marshal(&sb)
+	if preference.Mode == clientcore.Direct {
+		return derived, nil, err
+	}
+	return derived, &cfg, err
 }
 
-func applySelectorTargets(ctx context.Context, client *http.Client, controller, secret string, targets map[string]string) error {
-	current := make(map[string]string, len(targets))
-	tags := make([]string, 0, len(targets))
-	for tag := range targets {
-		tags = append(tags, tag)
-	}
-	sort.Strings(tags)
-	for _, tag := range tags {
-		var state struct {
-			Now string `json:"now"`
-		}
-		if err := selectorRequest(ctx, client, http.MethodGet, controller, secret, tag, "", &state); err != nil {
-			return err
-		}
-		if strings.TrimSpace(state.Now) == "" {
-			return fmt.Errorf("selector %q returned no current choice", tag)
-		}
-		current[tag] = state.Now
-	}
-	changed := make([]string, 0, len(tags))
-	rollback := func() {
-		for index := len(changed) - 1; index >= 0; index-- {
-			tag := changed[index]
-			_ = selectorRequest(context.Background(), client, http.MethodPut, controller, secret, tag, current[tag], nil)
+// §7.3.1：Direct 不启动 Agent，但同样验证受限 selector 的实际默认值。
+func (p *WindowsSelectorPlan) DirectReadinessConfig() *agent.Config {
+	cfg := p.config
+	cfg.Declarations = append([]agent.Decl(nil), p.config.Declarations...)
+	for i := range cfg.Declarations {
+		cfg.Declarations[i].Candidates = nil
+		for _, c := range p.config.Declarations[i].Candidates {
+			if len(c.Chain) == 0 {
+				cfg.Declarations[i].Candidates = append(cfg.Declarations[i].Candidates, c)
+			}
 		}
 	}
-	for _, tag := range tags {
-		if current[tag] == targets[tag] {
-			continue
-		}
-		if err := selectorRequest(ctx, client, http.MethodPut, controller, secret, tag, targets[tag], nil); err != nil {
-			rollback()
-			return err
-		}
-		changed = append(changed, tag)
-	}
-	if len(changed) > 0 {
-		if err := closeSelectorConnections(ctx, client, controller, secret); err != nil {
-			rollback()
-			return err
-		}
-	}
-	return nil
+	restrictWindowsAgentSelectors(&cfg)
+	return &cfg
 }
 
-func closeSelectorConnections(ctx context.Context, client *http.Client, controller, secret string) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, controller+"/connections/", nil)
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Authorization", "Bearer "+secret)
-	response, err := client.Do(request)
-	if err != nil {
-		return fmt.Errorf("关闭旧出口连接: %w", err)
-	}
-	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("关闭旧出口连接返回 HTTP %d", response.StatusCode)
-	}
-	return nil
-}
-
-func selectorRequest(ctx context.Context, client *http.Client, method, controller, secret, tag, target string, output any) error {
-	var body io.Reader
-	if method == http.MethodPut {
-		encoded, err := json.Marshal(struct {
-			Name string `json:"name"`
-		}{Name: target})
-		if err != nil {
-			return err
+// §5.1：保留同一份签名计划的两种投影一致，不让原候选元数据越过本地偏好。
+func restrictWindowsAgentSelectors(cfg *agent.Config) {
+	cfg.Selectors = append([]agent.SelectorPlan(nil), cfg.Selectors...)
+	for i := range cfg.Selectors {
+		selector := &cfg.Selectors[i]
+		for _, declaration := range cfg.Declarations {
+			if declaration.Selector != selector.Selector {
+				continue
+			}
+			selector.Candidates = append([]agent.Cand(nil), declaration.Candidates...)
+			if len(selector.Candidates) == 0 {
+				selector.Default = ""
+			} else if !slices.ContainsFunc(selector.Candidates, func(c agent.Cand) bool { return c.Tag == selector.Default }) {
+				selector.Default = selector.Candidates[0].Tag
+			}
 		}
-		body = bytes.NewReader(encoded)
 	}
-	request, err := http.NewRequestWithContext(ctx, method, controller+"/proxies/"+url.PathEscape(tag), body)
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Authorization", "Bearer "+secret)
-	if method == http.MethodPut {
-		request.Header.Set("Content-Type", "application/json")
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		return fmt.Errorf("访问本地出口控制接口: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-		return fmt.Errorf("本地出口控制接口返回 HTTP %d", response.StatusCode)
-	}
-	if output == nil {
-		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-		return nil
-	}
-	decoder := json.NewDecoder(io.LimitReader(response.Body, 4097))
-	if err := decoder.Decode(output); err != nil {
-		return errors.New("本地出口控制接口返回无效状态")
-	}
-	return nil
 }

@@ -25,6 +25,13 @@ func TestBrokerRejectsUnboundedAuthority(t *testing.T) {
 		`{"operation":"status","preference":{}}`,
 		`{"operation":"status"} {}`,
 		`{"operation":"join","invite":{}}`,
+		`{"operation":"connect","profile_id":"../demo"}`,
+		`{"operation":"connect","profile_id":"C:\\demo"}`,
+		`{"operation":"select_profile"}`,
+		`{"operation":"add_profile","profile_id":"legacy"}`,
+		`{"operation":"rename_profile","profile_id":"legacy","name":""}`,
+		`{"operation":"rename_profile","profile_id":"legacy","name":"demo\nname"}`,
+		`{"operation":"status","profile_id":"legacy"}`,
 		strings.Repeat(" ", 16385),
 	} {
 		if _, err := decodeBrokerRequest([]byte(input)); err == nil {
@@ -34,6 +41,45 @@ func TestBrokerRejectsUnboundedAuthority(t *testing.T) {
 	app := &portableGUI{state: guiStopped, joined: true, routeSelected: -1}
 	if err := app.setRoutePreference(clientcore.Preference{Schema: 1, Mode: clientcore.FixedExit, Exit: "demo-unauthorized"}); err == nil {
 		t.Fatal("broker accepted an exit outside the signed options")
+	}
+}
+
+func TestBrokerCannotBypassUnavailableProfileIndex(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	app := &portableGUI{profileHost: true, ctx: ctx, cancel: cancel, state: guiError}
+	for _, operation := range []string{"join", "connect", "disconnect", "delete", "preference", "add_profile", "select_profile", "rename_profile"} {
+		if err := app.handleBrokerRequest(brokerRequest{Operation: operation, ProfileID: "legacy"}); err == nil {
+			t.Fatalf("配置索引不可用时接受了 %s", operation)
+		}
+	}
+	if err := app.handleBrokerRequest(brokerRequest{Operation: "status"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, enabled := app.presentation(app.snapshot()); enabled {
+		t.Fatal("损坏索引不能显示可连接的按钮")
+	}
+}
+
+func TestBrokerProfileSnapshotCarriesOnlyReadOnlyPaths(t *testing.T) {
+	app := &portableGUI{brokerProfilesReady: true, brokerProfiles: []windowsProfileDisplay{{ID: "legacy", Name: "演示连接", State: guiConnected}},
+		selectedProfile: "legacy", profileName: "演示连接", activeProfile: "legacy", activeProfileName: "演示连接", state: guiConnected, joined: true,
+		paths: []windowsPathDisplay{{Service: "demo-service", Candidate: "opaque-current", Chain: "本机 → demo-prefix → demo-exit → 目标", Health: "正常", SelectedQuality: "P50 25 ms", Reason: "改善达到切换门槛"}}}
+	body, err := json.Marshal(app.brokerSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got brokerSnapshot
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.ProfilesReady || got.SelectedProfile != "legacy" || len(got.Profiles) != 1 || len(got.Paths) != 1 || got.Paths[0] != app.paths[0] {
+		t.Fatalf("配置和实际路径快照丢失: %s", body)
+	}
+	for _, secret := range []string{"private_key", "api_secret", "certificate_path", "runtime_dir"} {
+		if strings.Contains(string(body), secret) {
+			t.Fatalf("显示快照暴露了 %s", secret)
+		}
 	}
 }
 

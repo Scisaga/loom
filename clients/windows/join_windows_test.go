@@ -303,6 +303,17 @@ func TestWindowsQRJoinNativeReadyTransaction(t *testing.T) {
 		if observation.Applied != current.Snapshot || observation.SelfCheck.Healthy || len(observation.SelfCheck.Problems) == 0 {
 			t.Fatal("native activation did not report its snapshot and missing end-to-end health evidence")
 		}
+		if observation.Agent == nil || observation.Agent.Node != config.NodeID || len(observation.Agent.Selections) != 1 {
+			t.Fatal("native activation did not attach the running shared Agent")
+		}
+		selection := observation.Agent.Selections[0]
+		if selection.Selector != "decl:auto" || selection.Candidate != "cand:auto:edge" ||
+			len(selection.Chain) != 1 || selection.Chain[0] != "demo-edge" || selection.Reason == "" {
+			t.Fatal("native report lost actual selector readback, signed chain or decision reason")
+		}
+		if selection.Health != nil && (selection.Health.SelectedP50MS != nil || selection.Health.SelectedP95MS != nil || selection.Health.BestP50MS != nil) {
+			t.Fatal("unreachable fixture target produced fabricated latency")
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("native activation did not send a signed report")
 	}
@@ -602,7 +613,7 @@ func portableTestWindowsConfig(node string) string {
 	return fmt.Sprintf(`{
   "log": {"level": "warn"},
   "dns": {"servers": [{"tag":"dns0","address":"1.1.1.1","detour":"dns-out"}]},
-  "inbounds": [
+  "inbounds": [{"type":"mixed","tag":"probe-in","listen":"127.0.0.1","listen_port":61801,"users":[{"username":"demo-probe","password":"${secret:api/%s}"}]},
     {"type":"tun","tag":"tun-in","address":["172.19.0.1/30"],"auto_route":true,"stack":"system"},
     {"type":"mixed","tag":"in-1080","listen":"127.0.0.1","listen_port":1080}
   ],
@@ -612,17 +623,20 @@ func portableTestWindowsConfig(node string) string {
     {"type":"selector","tag":"decl:auto","outbounds":["cand:auto:edge"],"default":"cand:auto:edge"},
     {"type":"block","tag":"block"}
   ],
-  "route": {"rules":[{"inbound":["tun-in","in-1080"],"outbound":"decl:auto"}],"final":"block"},
+  "route": {"rules":[{"inbound":["probe-in"],"auth_user":["demo-probe"],"outbound":"cand:auto:edge"},{"inbound":["tun-in","in-1080"],"outbound":"decl:auto"}],"final":"block"},
   "experimental": {"clash_api":{"external_controller":"127.0.0.1:61800","secret":"${secret:api/%s}"}}
-}`, node, node)
+}`, node, node, node)
 }
 
 func servePortableTestDistribution(t *testing.T, current []byte, private ed25519.PrivateKey, config string) *httptest.Server {
 	t.Helper()
 	const node = "win-enroll"
-	files := map[string]string{"sing-box/config.json": config}
+	plan := fmt.Sprintf(`{"schema":1,"node":%q,"api":"127.0.0.1:61800","api_secret":"${secret:api/%s}","probe":"127.0.0.1:61801","probe_secret":"${secret:api/%s}","declarations":[{"id":"auto","selector":"decl:auto","objective":"latency","targets":["https://demo-target.example/"],"tuning_period":"1s","window":"1m","min_samples":3,"stale_after":"1m","switch_threshold":0.2,"candidates":[{"tag":"cand:auto:edge","chain":["demo-edge"],"probe_user":"demo-probe"}]}]}`, node, node, node)
+	files := map[string]string{"sing-box/config.json": config, "agent/config.json": plan}
 	hash := sha256.New()
-	_, _ = fmt.Fprintf(hash, "%s\x00%d\x00%s\x00", "sing-box/config.json", len(config), config)
+	for _, path := range []string{"agent/config.json", "sing-box/config.json"} {
+		_, _ = fmt.Fprintf(hash, "%s\x00%d\x00%s\x00", path, len(files[path]), files[path])
+	}
 	bundleHash := hex.EncodeToString(hash.Sum(nil))
 	bundle, err := json.MarshalIndent(struct {
 		Owner string            `json:"owner"`

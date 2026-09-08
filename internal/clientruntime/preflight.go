@@ -202,8 +202,8 @@ func isWindowsTUNDNSRule(rule singBoxRule) bool {
 func validateRuntimeTarget(profile WindowsRuntimeProfile, caPath string) error {
 	switch profile {
 	case WindowsInstalledProfile:
-		if caPath != WindowsInstalledCAPath {
-			return fmt.Errorf("installed Windows CA path must be %q", WindowsInstalledCAPath)
+		if !validInstalledWindowsCAPath(caPath) {
+			return errors.New("[§7.2.1 / §13.5] Installed CA 路径必须属于受保护的本地连接配置")
 		}
 	case WindowsPortableMixedProfile, WindowsPortableTUNProfile:
 		if !validAbsoluteWindowsPath(caPath) || !strings.HasSuffix(strings.ToLower(caPath), `\tls\ca.crt`) {
@@ -213,6 +213,28 @@ func validateRuntimeTarget(profile WindowsRuntimeProfile, caPath string) error {
 		return fmt.Errorf("unsupported Windows runtime profile %q", profile)
 	}
 	return nil
+}
+
+// §13.5：签名源仍使用统一的 CA 占位路径；只有本机派生配置可定位到独立身份根。
+// 用固定目录与精确标识校验，不将 GUI 名称、相对路径或规范化别名当作可信路径。
+func validInstalledWindowsCAPath(path string) bool {
+	if path == WindowsInstalledCAPath {
+		return true
+	}
+	id, ok := strings.CutPrefix(path, `C:\ProgramData\Loom\profiles\`)
+	if !ok {
+		return false
+	}
+	id, ok = strings.CutSuffix(id, `\tls\ca.crt`)
+	if !ok || len(id) != 32 {
+		return false
+	}
+	for _, character := range id {
+		if !(character >= '0' && character <= '9' || character >= 'a' && character <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func validAbsoluteWindowsPath(value string) bool {

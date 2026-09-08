@@ -51,7 +51,7 @@ func TestTickKeepsLastCompleteHealthWhileProbeIsInFlight(t *testing.T) {
 	if err := os.WriteFile(statePath, body, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	selections, err := newStateStore(statePath, "demo-d", []Decl{declaration}, now)
+	selections, err := newStateStore(context.Background(), statePath, "demo-d", []Decl{declaration}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestCancelledTickCannotWriteSelectorMeasurementsOrState(t *testing.T) {
 		TuningPeriod: "10m", Window: "1h", MinSamples: 1, StaleAfter: "30m",
 		Candidates: []Cand{{Tag: "a", ProbeUser: "a"}, {Tag: "b", ProbeUser: "b"}},
 	}
-	selections, err := newStateStore(statePath, "access-a", []Decl{declaration}, now)
+	selections, err := newStateStore(context.Background(), statePath, "access-a", []Decl{declaration}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,4 +209,57 @@ func TestCancelledContextPreventsClashRequest(t *testing.T) {
 	if got := requests.Load(); got != 0 {
 		t.Fatalf("cancelled selector request reached server %d times", got)
 	}
+}
+
+// §5.5：取消发生在启动时间注入点或文件锁等待期间，也不能开始一次新提交。
+func TestCancelAtInitializationAndStoreBarrier(t *testing.T) {
+	t.Run("initial state", func(t *testing.T) {
+		root := t.TempDir()
+		ctx, cancel := context.WithCancel(context.Background())
+		err := Run(ctx, &Config{Node: "demo-windows"}, Options{StatePath: filepath.Join(root, "state.json"), MeasurementPath: filepath.Join(root, "measurement.jsonl"), Now: func() time.Time { cancel(); return time.Now() }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries, err := os.ReadDir(root)
+		if err != nil || len(entries) != 0 {
+			t.Fatal("canceled initialization wrote state")
+		}
+	})
+	t.Run("measurement lock", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "measurements.jsonl")
+		s := &store{path: path}
+		s.mu.Lock()
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- s.append(ctx, nil) }()
+		cancel()
+		s.mu.Unlock()
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Fatalf("append=%v", err)
+		}
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatal("canceled append created measurement")
+		}
+	})
+	t.Run("state lock", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "state.json")
+		st, err := newStateStore(context.Background(), path, "demo-windows", []Decl{{ID: "demo-service"}}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		before, _ := os.ReadFile(path)
+		st.mu.Lock()
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- st.observe(ctx, Selection{Declaration: "demo-service"}, time.Now()) }()
+		cancel()
+		st.mu.Unlock()
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Fatalf("observe=%v", err)
+		}
+		after, _ := os.ReadFile(path)
+		if string(after) != string(before) {
+			t.Fatal("canceled state changed")
+		}
+	})
 }
