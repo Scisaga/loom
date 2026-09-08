@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"loom/internal/agent"
 	"loom/internal/model"
 	"loom/internal/report"
 )
@@ -198,14 +199,27 @@ func expectedReportRoutes(s *model.SSOT, n *model.Node) []report.ExpectedRoute {
 	return report.ExpectedRoutesForAccess(s, n)
 }
 
-// probeTargets 收集 SSOT 里全部去重后的探测目标。
+// probeTargets 合并声明与 Service 的具体目标（§4.5、§16.1.2），让服务器观测
+// 覆盖服务选路使用的地址；后缀规则不是可请求主机，不能作为采集目标。
 func probeTargets(s *model.SSOT) []string {
-	seen := map[string]bool{}
 	var out []string
+	add := func(raw string) {
+		if raw == "" {
+			return
+		}
+		for _, existing := range out {
+			if agent.EquivalentTargetURL(existing, raw) {
+				return
+			}
+		}
+		out = append(out, raw)
+	}
 	for i := range s.Declarations {
-		if u := s.Declarations[i].ProbeURL; u != "" && !seen[u] {
-			seen[u] = true
-			out = append(out, u)
+		add(s.Declarations[i].ProbeURL)
+	}
+	for i := range s.Services {
+		for _, raw := range probeURLsFor(&s.Services[i]) {
+			add(raw)
 		}
 	}
 	sort.Strings(out)

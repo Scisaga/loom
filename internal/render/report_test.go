@@ -3,6 +3,8 @@ package render
 import (
 	"encoding/json"
 	"net"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -10,6 +12,34 @@ import (
 	"loom/internal/model"
 	"loom/internal/report"
 )
+
+// §4.5、§16.1.2：多目标服务必须在各服务器得到相同采集集合，根路径不能重复采集。
+func TestReporterIncludesConcreteServiceTargets(t *testing.T) {
+	s := load(t)
+	s.Declarations[0].ProbeURL = "https://demo-covered.example"
+	want := append(probeTargets(s), "https://demo-missing.example/")
+	sort.Strings(want)
+	s.Services = []model.Service{
+		{ID: "demo-service", Declaration: "best-egress", Addresses: []string{"demo-covered.example", "demo-missing.example", ".demo-suffix.example"}},
+		{ID: "demo-other-service", Declaration: "best-egress", Addresses: []string{"demo-missing.example"}},
+	}
+	res, err := Render(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configs := reportConfigs(t, res)
+	if len(configs) == 0 {
+		t.Fatal("[§16.1.2] 未生成服务器采集配置")
+	}
+	for owner, cfg := range configs {
+		if !reflect.DeepEqual(cfg.Targets, want) {
+			t.Errorf("[§16.1.2] %s 采集目标=%v，期望 %v", owner, cfg.Targets, want)
+		}
+		if !reflect.DeepEqual(cfg.UplinkTargets, s.NodeByID()[owner].ProbeTargets) {
+			t.Errorf("[§16.1.2] %s 将服务目标误作出网健康目标", owner)
+		}
+	}
+}
 
 func reportConfigs(t *testing.T, res *Result) map[string]*report.Config {
 	t.Helper()
