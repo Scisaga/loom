@@ -166,28 +166,28 @@ func selectClientRoute(ctx context.Context, cfg *Config, d Decl, k *clash, state
 		best = costs[actual]
 		for _, c := range d.Candidates {
 			x := costs[c.Tag]
-			if !x.known || x.failed {
+			// §5.5.1：先判断每条路径是否值得切换，避免被门槛挡住的最快候选
+			// 遮住另一条能立即减少中继的路径。
+			if !clientRouteImproves(c, x, *current, costs[actual], d.SwitchThreshold) {
 				continue
 			}
-			if !best.known || best.failed || x.failureRate < best.failureRate || x.failureRate == best.failureRate && x.ms < best.ms {
+			if !best.known || best.failed || x.failureRate < best.failureRate || x.failureRate == best.failureRate &&
+				(x.ms < best.ms || x.ms == best.ms && len(c.Chain) < len(chosen.Chain)) {
 				chosen, best = c, x
 			}
 		}
-		old := costs[actual]
-		if chosen.Tag != actual && old.known && !old.failed && best.failureRate == old.failureRate && old.ms > 0 && (old.ms-best.ms)/old.ms < d.SwitchThreshold {
-			chosen, best = *current, old
-		}
 	}
-	// 尚无后段观测时沿用已配置出口，只根据入口实测改善第一跳；不等待、不补测。
+	// §16.1.2：缺后段观测时保留出口，入口 ping 不能成为新增中继的理由。
 	if !best.known || best.failed {
 		var fastest time.Duration
 		found := false
 		for _, c := range d.Candidates {
-			if !sameClientExit(c, *current) || costs[c.Tag].failed {
+			if !sameClientExit(c, *current) || len(c.Chain) > len(current.Chain) || costs[c.Tag].failed {
 				continue
 			}
 			r, ok := entryFor(c, entries)
-			if ok && (!found || r.RTT < fastest || r.RTT == fastest && c.Tag == actual) {
+			if ok && (!found || r.RTT < fastest || r.RTT == fastest &&
+				(len(c.Chain) < len(chosen.Chain) || len(c.Chain) == len(chosen.Chain) && c.Tag == actual)) {
 				chosen, fastest, found = c, r.RTT, true
 			}
 		}
@@ -226,10 +226,30 @@ func selectClientRoute(ctx context.Context, cfg *Config, d Decl, k *clash, state
 		if len(targets) < len(d.Targets) {
 			reason += fmt.Sprintf("；服务器观测覆盖 %d/%d 个目标，其余未知", len(targets), len(d.Targets))
 		}
+		if chosen.Tag != current.Tag && len(chosen.Chain) < len(current.Chain) && best.known && !best.failed && d.Objective == model.Latency {
+			reason += fmt.Sprintf("；减少中继 %d→%d 跳", len(current.Chain), len(chosen.Chain))
+		}
 	}
 	// §16.1：分段估算不是实测健康/分位数。已有线格式保留 unknown，原因承载分工。
 	h := &CandidateHealth{Candidates: len(d.Candidates), Unknown: len(d.Candidates), SelectedState: healthUnknown}
 	return states.observe(ctx, Selection{Declaration: d.ID, Selector: d.Selector, Candidate: actual, Chain: chosen.Chain, Reason: reason, Health: h}, now)
+}
+
+// §5.5.1：更少中继且延迟不增是可直接执行的简化；切换门槛不能保护被支配的绕路。
+func clientRouteImproves(next Cand, cost clientCost, current Cand, old clientCost, threshold float64) bool {
+	if !cost.known || cost.failed {
+		return false
+	}
+	if !old.known || old.failed || cost.failureRate < old.failureRate {
+		return true
+	}
+	if cost.failureRate > old.failureRate {
+		return false
+	}
+	if len(next.Chain) < len(current.Chain) && cost.ms <= old.ms {
+		return true
+	}
+	return cost.ms < old.ms && old.ms > 0 && (old.ms-cost.ms)/old.ms >= threshold
 }
 
 func entryFor(c Cand, entries map[string]entryResult) (entryResult, bool) {
