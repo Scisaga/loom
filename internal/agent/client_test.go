@@ -53,8 +53,13 @@ func TestClientEntryProbesConcurrentOnceAndServerUpdatesDoNotProbe(t *testing.T)
 	started := make(chan string, 2)
 	release := make(chan struct{})
 	probes := map[string]int{}
+	var entryDisplays [][]ClientPathMeasurement
 	opts := ClientOptions{StatePath: filepath.Join(t.TempDir(), "state.json"), Observations: cache, Entries: []ClientEntry{
 		{Node: "demo-entry", Address: "192.0.2.1"}, {Node: "demo-exit", Address: "192.0.2.2"}, {Node: "demo-entry", Address: "192.0.2.1"},
+	}, OnEntries: func(m []ClientPathMeasurement) {
+		mu.Lock()
+		defer mu.Unlock()
+		entryDisplays = append(entryDisplays, m)
 	}, Probe: func(ctx context.Context, e ClientEntry) (time.Duration, error) {
 		mu.Lock()
 		probes[e.Node]++
@@ -109,6 +114,9 @@ func TestClientEntryProbesConcurrentOnceAndServerUpdatesDoNotProbe(t *testing.T)
 	defer mu.Unlock()
 	if probes["demo-entry"] != 1 || probes["demo-exit"] != 1 || requests != 0 {
 		t.Fatalf("probes=%v business requests=%d", probes, requests)
+	}
+	if len(entryDisplays) != 1 || len(entryDisplays[0]) != 2 || *entryDisplays[0][0].DelayMS != 1 || entryDisplays[0][0].ObservedAt == "" {
+		t.Fatalf("UI callback duplicated probes or lost original entry result: %+v", entryDisplays)
 	}
 }
 

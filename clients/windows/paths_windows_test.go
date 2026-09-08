@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"loom/internal/agent"
 	"loom/internal/clientcore"
 	"loom/internal/clientreport"
 	"loom/internal/clientruntime"
@@ -63,7 +64,7 @@ func TestWindowsPathsUseActualAgentReadback(t *testing.T) {
 	if len(rows) != 1 || rows[0].Candidate != "opaque-b" || rows[0].Chain != "本机 → demo-prefix-b → demo-exit → 目标" {
 		t.Fatalf("必须映射实际读回，不沿用默认 opaque-a: %+v", rows)
 	}
-	if rows[0].Health != "未知" || rows[0].SelectedQuality != "未知" || rows[0].BestQuality != "未知" || strings.Contains(formatWindowsPaths(rows, true), "0 ms") {
+	if rows[0].Health != "" || rows[0].LinkLabels != "—\n—\n—" || strings.Contains(formatWindowsPaths(rows, true), "0 ms") {
 		t.Fatalf("未完成的测量不能伪造质量: %+v", rows)
 	}
 	if puts.Load() != 0 {
@@ -189,9 +190,40 @@ func TestWindowsPathsShowProbeCountsAndIncompleteComparison(t *testing.T) {
 
 // §16.1：入口单次结果与服务器估算不能显示为整路径实测或健康绿灯。
 func TestWindowsPathsDescribeEntryAndServerEvidence(t *testing.T) {
-	reason := "入口 demo-entry：单次 ping 12 ms（2026-09-09T00:00:00Z）；入口与服务器分段观测估算 90 ms；未测整条业务路径"
-	rows := windowsPathsFromReport(&clientreport.AgentState{Selections: []clientreport.AgentSelection{{Declaration: "demo-service", Chain: []string{"demo-entry", "demo-exit"}, Reason: reason, Health: &clientreport.AgentCandidateHealth{Candidates: 2, Unknown: 2, SelectedState: "unknown"}}}})
-	if len(rows) != 1 || rows[0].Health != "业务未测" || rows[0].MeasurementSummary != "入口 demo-entry：单次 ping 12 ms" || !strings.Contains(rows[0].Comparison, "分段观测估算 90 ms") || strings.Contains(rows[0].SelectedQuality, "P50") {
-		t.Fatalf("misleading display: %+v", rows)
+	reason := "入口与服务器分段观测估算 90 ms；未测整条业务路径"
+	rows := windowsPathsFromReport(&clientreport.AgentState{Selections: []clientreport.AgentSelection{{Declaration: "demo-service", Candidate: "demo-path", Chain: []string{"demo-entry", "demo-exit"}, Reason: reason}}})
+	entry, link, delta, target, rate := int64(12), int64(38), int64(3), int64(57), float64(6400000)
+	applyWindowsPathMeasurements(&rows[0], []agent.ClientPathMeasurement{
+		{Hop: 0, To: "demo-entry", Kind: "entry", DelayMS: &entry, Samples: 1, ObservedAt: "demo-entry-time"},
+		{Hop: 1, From: "demo-entry", To: "demo-exit", Kind: "public-hysteria2", DelayMS: &link, VariationMS: &delta, RateBPS: &rate, Samples: 2, ObservedAt: "demo-link-time"},
+		{Hop: 2, From: "demo-exit", To: "https://demo.example/", Kind: "target", DelayMS: &target, Samples: 2},
+	})
+	row := rows[0]
+	if row.Health != "" || row.MeasurementSummary != "" || row.LinkLabels != "ping 12 ms\n38 ms · Δ3 ms · 6.4 Mb/s\n57 ms" {
+		t.Fatalf("misleading display: %+v", row)
+	}
+	for _, want := range []string{"本机 → demo-entry", "demo-entry → demo-exit", "demo-link-time", "固定响应探测速率", "https://demo.example/"} {
+		if !strings.Contains(formatWindowsPaths(rows, true), want) {
+			t.Errorf("missing link detail %q", want)
+		}
+	}
+	if strings.Contains(row.LinkLabels, "90") || strings.Contains(formatWindowsPaths(rows, false), "业务未测") {
+		t.Fatal("reason became a measured edge or health badge")
+	}
+	applyWindowsPathMeasurements(&rows[0], nil)
+	if rows[0].LinkLabels != "—\n—\n—" || rows[0].LinkDetails != "" {
+		t.Fatal("old measurements survived empty input")
+	}
+}
+
+func TestWindowsPathTargetFailuresAreAttachedToTheirOwnLink(t *testing.T) {
+	row := windowsPathDisplay{Candidate: "demo-path", Chain: "本机 → demo-exit → 目标"}
+	applyWindowsPathMeasurements(&row, []agent.ClientPathMeasurement{
+		{Hop: 0, To: "demo-exit", Kind: "entry", Samples: 1, Failures: 1},
+		{Hop: 1, From: "demo-exit", To: "https://demo.example/", Kind: "target", Samples: 2, Failures: 2, Error: "demo timeout"},
+		{Hop: 1, From: "demo-exit", To: "https://missing.example/", Kind: "target"},
+	})
+	if row.LinkLabels != "ping 无响应\n1/2 目标有观测" || !strings.Contains(row.LinkDetails, "https://demo.example/：探测失败") || !strings.Contains(row.LinkDetails, "失败 2/2") || row.Health != "" {
+		t.Fatalf("failure attributed to the entire device or wrong link: %+v", row)
 	}
 }

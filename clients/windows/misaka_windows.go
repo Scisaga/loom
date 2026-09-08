@@ -325,17 +325,17 @@ func (app *portableGUI) renderMisaka(snapshot portableGUISnapshot, previous *por
 
 func (app *portableGUI) misakaPathHeight() int32 {
 	s := app.scale
-	height := s(126)
+	height := s(138)
 	if app.skin == nil {
-		return 126
+		return 138
 	}
 	width := max(s(40), app.misakaContentEnd()-s(196)-s(3)-2-s(28))
 	for _, path := range app.skin.lastPaths {
 		rows := misakaPathNodeRows(path)
-		needed := s(126 + (rows-1)*64)
+		needed := s(138 + (rows-1)*88)
 		if app.pathsExpanded && path.Candidate != "" {
 			details := app.misakaPathDetails(path, width)
-			needed = 2 + s(106+(rows-1)*64) + details.height + s(10) + s(12)
+			needed = 2 + s(130+(rows-1)*88) + details.height + s(10)
 		}
 		height = max(height, needed)
 	}

@@ -149,19 +149,19 @@ func TestGUIMisakaProfileSelectionHasSquareCornersAndContinuousRail(t *testing.T
 
 func TestGUIMisakaPathLabelsStayUnderTheirNodesAtBothEdges(t *testing.T) {
 	app := newProfileGUITestWindow(t)
-	const width, height int32 = 1300, 300
+	const width, height int32 = 1300, 360
 	dc, pixels := misakaCanvasTestDC(t, width, height)
 	for _, dpi := range []int32{96, 120, 144, 168, 192} {
 		app.windowDPI = dpi
 		s := app.scale
 		for _, logicalWidth := range []int32{480, 640} {
-			r := misakaRect(s(3), s(2), s(logicalWidth), s(128))
+			r := misakaRect(s(3), s(2), s(logicalWidth), s(150))
 			app.drawMisakaPath(&portableDrawItem{hwndItem: app.controls.pathsValue, dc: dc, rect: r, itemID: 0})
 			portableGDI32.NewProc("GdiFlush").Call()
 			left, right, top := r.left+1, r.right-s(3)-1, r.top+1
 			step := (right - left - s(84)) / 3
 			for _, index := range []int32{0, 3} {
-				x, y := left+s(42)+index*step, top+s(59)
+				x, y := left+s(42)+index*step, top+s(83)
 				area := misakaRect(x-s(55), y+s(23), s(110), s(20))
 				area.left, area.right = max(area.left, r.left+1), min(area.right, r.right-1)
 				ink := misakaAlignmentInk(pixels, width, area, func(rgb uint32) bool { return rgb>>16 < 160 && rgb>>8&255 < 160 && rgb&255 < 160 })

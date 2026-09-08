@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='UTF-8'?>
-<svg xmlns="http://www.w3.org/2000/svg" width="900" height="640" viewBox="0 0 900 640" role="img" aria-labelledby="title description">
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="800" viewBox="0 0 900 800" role="img" aria-labelledby="title description">
   <title id="title">Loom Windows client home — Misaka v2</title>
-  <desc id="description">紧凑自绘窗口：固定出口只显示统一上网实际路径；文字采用灰度抗锯齿且无阴影，圆点与节点使用同心描边。详情按原因实际行数排列，读取信息紧接正文，缺少 scope 不留占位行。右侧整体滚动。demo-* 和运行时地址为占位，不包含运行指标。</desc>
+  <desc id="description">自动模式的当前选路共用一个白色面板，各服务之间用细线分隔。入口单次 ping、服务器链路的延迟及已有波动和速率直接显示在连线上。demo-*、地址和数值均为合成示例，不包含实际运行指标。</desc>
   <defs>
     <symbol id="brand-favicon" viewBox="0 0 32 32">
       <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjEyNyAxMTIgMTAwMCAxMDAwIj4KICA8ZGVmcz4KICAgIDwhLS0gRXhhY3Qgb3V0ZXIgc2lsaG91ZXR0ZSBvZiB0aGUgYXBwcm92ZWQgTG9vbSBtYXJrLiAtLT4KICAgIDxwYXRoIGlkPSJsb29tLW91dGxpbmUiIGQ9Ik02MTYgMTEwOGMtNjctNDktMTE4LTEzMy0xMjktMjA5IDAtNiAwLTYtMTQtMS03NSAyNy0xNjYgMjQtMjM5LTYtMTMtNS0xNC03LTExLTI5IDEyLTgwIDUzLTE1NSAxMTUtMjExbDktOC02LTVjLTYxLTUzLTEwMC0xMjEtMTE0LTIwMC01LTMxLTUtMzggNC00MiA1Ny0yNiAxMzgtMzQgMjAzLTIwIDEzIDIgMjIgNSAzOSAxMCAxNCA1IDE0IDUgMTUtMiA5LTcwIDYwLTE1NSAxMjEtMjA0IDE3LTE1IDE4LTE1IDM0LTIgNDcgMzcgODcgOTMgMTA3IDE1MSA3IDIwIDE2IDUyIDE2IDYwIDAgNCAxIDQgMTIgMCA3Mi0yOCAxNTgtMjcgMjM2IDMgMTcgNiAxNyA3IDE1IDI3LTggNzktNDkgMTU5LTExMSAyMTVsLTkgOSAxMCA5YzYxIDUzIDEwNSAxMzkgMTE0IDIxOSAyIDE1IDEgMTYtMjggMjYtNzUgMjUtMTU2IDI1LTIyNy0yLTQtMS04LTItOC0yLTEgMC0yIDctMyAxNS0xNSA4MS02MCAxNTItMTI2IDE5OC0xMiA5LTE0IDktMjUgMXoiLz4KICAgIDwhLS0gT25lIGNsZWFuIG9wZW5pbmcgcmVwbGFjZXMgdGhlIG9yaWdpbmFsIHRocmVlIG5lc3RlZCB3ZWF2ZSBjb250b3Vycy4gLS0+CiAgICA8cGF0aCBpZD0icGV0YWwtb3BlbmluZyIgZD0iTTYyOCAxMDQwQzUyMCA5NDUgNTM1IDc5MCA2MjggNjYwQzcyMSA3OTAgNzM2IDk0NSA2MjggMTA0MFoiLz4KICA8L2RlZnM+CiAgPGcgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoMCAxMjU0KSBzY2FsZSgxIC0xKSI+CiAgICA8dXNlIGhyZWY9IiNsb29tLW91dGxpbmUiIGZpbGw9IiMxMTEiLz4KICAgIDxnIGZpbGw9IiNmZmYiPgogICAgICA8dXNlIGhyZWY9IiNwZXRhbC1vcGVuaW5nIi8+CiAgICAgIDx1c2UgaHJlZj0iI3BldGFsLW9wZW5pbmciIHRyYW5zZm9ybT0icm90YXRlKDYwIDYyOCA2NDQpIi8+CiAgICAgIDx1c2UgaHJlZj0iI3BldGFsLW9wZW5pbmciIHRyYW5zZm9ybT0icm90YXRlKDEyMCA2MjggNjQ0KSIvPgogICAgICA8dXNlIGhyZWY9IiNwZXRhbC1vcGVuaW5nIiB0cmFuc2Zvcm09InJvdGF0ZSgxODAgNjI4IDY0NCkiLz4KICAgICAgPHVzZSBocmVmPSIjcGV0YWwtb3BlbmluZyIgdHJhbnNmb3JtPSJyb3RhdGUoMjQwIDYyOCA2NDQpIi8+CiAgICAgIDx1c2UgaHJlZj0iI3BldGFsLW9wZW5pbmciIHRyYW5zZm9ybT0icm90YXRlKDMwMCA2MjggNjQ0KSIvPgogICAgPC9nPgogIDwvZz4KPC9zdmc+Cg==" width="32" height="32" />
@@ -49,8 +49,8 @@
   </style>
   </defs>
   <g class="ui">
-    <rect x="0" y="0" width="900" height="640" rx="0" fill="#EDF0EE" />
-    <rect x="12" y="10" width="876" height="614" rx="10" fill="#FCFCFB" stroke="#D9DDDA" />
+    <rect x="0" y="0" width="900" height="800" rx="0" fill="#EDF0EE" />
+    <rect x="12" y="10" width="876" height="774" rx="10" fill="#FCFCFB" stroke="#D9DDDA" />
     <rect x="13" y="11" width="874" height="39" rx="10" fill="#FFF" />
     <rect x="13" y="32" width="874" height="18" rx="0" fill="#FFF" />
     <use href="#brand-favicon" x="25" y="19" width="22" height="22" class="" />
@@ -61,8 +61,8 @@
     <path d="M861 25L871 35" stroke="#747D77" stroke-width="1.3" />
     <path d="M871 25L861 35" stroke="#747D77" stroke-width="1.3" />
     <path d="M12 50H888" stroke="#E6E9E7" stroke-width="1" />
-    <rect x="13" y="51" width="175" height="563" rx="0" fill="#F7F8F7" />
-    <path d="M188 51L188 624" stroke="#E6E9E7" stroke-width="1" />
+    <rect x="13" y="51" width="175" height="723" rx="0" fill="#F7F8F7" />
+    <path d="M188 51L188 784" stroke="#E6E9E7" stroke-width="1" />
     <use href="#brand-large" x="28" y="68" width="40" height="40" class="" />
     <text x="79" y="89" class="title">Loom</text>
     <text x="80" y="108" class="tiny muted">你的连接配置</text>
@@ -80,9 +80,9 @@
     <circle cx="39.5" cy="288.5" r="4" fill="#AAB2AC" />
     <text x="53" y="295" class="body">demo-lab</text>
     <text x="53" y="313" class="tiny muted">未连接</text>
-    <path d="M28 556H172" stroke="#E6E9E7" stroke-width="1" />
-    <text x="28" y="579" class="tiny muted">双击名称可重命名</text>
-    <text x="28" y="600" class="tiny muted">同时只运行一个连接</text>
+    <path d="M28 716H172" stroke="#E6E9E7" stroke-width="1" />
+    <text x="28" y="739" class="tiny muted">双击名称可重命名</text>
+    <text x="28" y="760" class="tiny muted">同时只运行一个连接</text>
     <text x="208" y="87" class="title">demo-work</text>
     <rect x="208" y="108" width="660" height="112" rx="8" fill="#FFF" stroke="#E4E7E5" />
     <circle cx="242" cy="144" r="19" fill="#EEF8F3" />
@@ -95,43 +95,73 @@
     <text x="226" y="214" class="tiny muted mono">Device  demo-pc</text>
     <text x="208" y="252" class="small medium">路由模式</text>
     <rect x="281" y="230" width="231" height="34" rx="6" fill="#F1F3F1" stroke="#E1E6E2" />
-    <rect x="437" y="233" width="71" height="28" rx="5" fill="#FFF" stroke="#D5DED7" />
+    <rect x="360" y="233" width="71" height="28" rx="5" fill="#FFF" stroke="#D5DED7" />
     <text x="320" y="252" class="small muted" text-anchor="middle">直连</text>
-    <text x="397" y="252" class="small muted" text-anchor="middle">自动</text>
-    <text x="473" y="252" class="small green medium" text-anchor="middle">固定出口</text>
-    <rect x="526" y="230" width="163" height="34" rx="6" fill="#FFF" stroke="#D8DDD9" />
-    <text x="540" y="252" class="small mono">demo-exit</text>
-    <text x="674" y="250" class="small muted" text-anchor="end">⌄</text>
-    <text x="868" y="252" class="tiny muted" text-anchor="end">前置路径自动选择</text>
+    <text x="397" y="252" class="small green medium" text-anchor="middle">自动</text>
+    <text x="473" y="252" class="small muted" text-anchor="middle">固定出口</text>
     <text x="208" y="292" class="section">当前选路</text>
-    <text x="759" y="292" class="tiny muted" text-anchor="end">全部上网流量 · 用于新连接</text>
-    <rect x="208" y="308" width="660" height="170" rx="8" fill="#FFF" stroke="#E4E7E5" />
-    <text x="226" y="333" class="section">统一上网路径</text>
-    <text x="758" y="333" class="small muted" text-anchor="end">入口单次延迟 —</text>
-    <rect x="772" y="318" width="76" height="24" rx="12" fill="#F4F6F5" stroke="#E4E7E5" />
-    <text x="810" y="334" class="tiny muted" text-anchor="middle">健康未知</text>
-    <path d="M270 367H806" stroke="#C7D8CD" stroke-width="2" />
-    <circle cx="250" cy="367" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" stroke-width="1" />
-    <use href="#pc" x="241" y="358" width="18" height="18" class="icon" />
-    <text x="250" y="399" class="small" text-anchor="middle">本机</text>
-    <circle cx="440" cy="367" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" stroke-width="1" />
-    <use href="#server" x="431" y="358" width="18" height="18" class="icon" />
-    <text x="440" y="399" class="small mono" text-anchor="middle">demo-relay-a</text>
-    <circle cx="629" cy="367" r="16.5" fill="#EEF8F3" stroke="#239B68" stroke-width="1" />
-    <use href="#server" x="620" y="358" width="18" height="18" class="icon-green" />
-    <text x="629" y="399" class="small mono" text-anchor="middle">demo-exit</text>
-    <circle cx="826" cy="367" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" stroke-width="1" />
-    <use href="#target" x="817" y="358" width="18" height="18" class="icon" />
-    <text x="826" y="399" class="small" text-anchor="middle">目标地址</text>
-    <text x="208" y="503" class="tiny muted">新连接使用当前路径，已有连接可能沿用原路径。</text>
-    <text x="888" y="637" class="tiny muted" text-anchor="end">紧凑界面原型 · 右侧整体滚动 · demo-* 与运行时地址为占位。</text>
+    <text x="759" y="292" class="tiny muted" text-anchor="end">按服务 · 用于新连接</text>
+    <rect x="208" y="308" width="660" height="414" rx="8" fill="#FFF" stroke="#E4E7E5" />
+    <text x="226" y="333" class="section">demo-default</text>
+    <path d="M270 391H806" stroke="#C7D8CD" stroke-width="2" />
+    <text x="345" y="369" class="tiny muted" text-anchor="middle">ping 12 ms</text>
+    <text x="534" y="369" class="tiny muted" text-anchor="middle">170 ms</text>
+    <text x="727" y="369" class="tiny muted" text-anchor="middle">57 ms</text>
+    <circle cx="250" cy="391" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" />
+    <use href="#pc" x="241" y="382" width="18" height="18" class="icon" />
+    <text x="250" y="423" class="small" text-anchor="middle">本机</text>
+    <circle cx="440" cy="391" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" />
+    <use href="#server" x="431" y="382" width="18" height="18" class="icon" />
+    <text x="440" y="423" class="small" text-anchor="middle">demo-entry</text>
+    <circle cx="629" cy="391" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" />
+    <use href="#server" x="620" y="382" width="18" height="18" class="icon" />
+    <text x="629" y="423" class="small" text-anchor="middle">demo-exit-a</text>
+    <circle cx="826" cy="391" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" />
+    <use href="#target" x="817" y="382" width="18" height="18" class="icon" />
+    <text x="826" y="423" class="small" text-anchor="middle">目标地址</text>
+    <path d="M226 446H850" class="rule" />
+    <text x="226" y="471" class="section">demo-web</text>
+    <path d="M270 529H806" stroke="#C7D8CD" stroke-width="2" />
+    <text x="345" y="507" class="tiny muted" text-anchor="middle">ping 12 ms</text>
+    <text x="534" y="493" class="tiny muted" text-anchor="middle">38 ms · Δ3 ms</text>
+    <text x="534" y="507" class="tiny muted" text-anchor="middle">6.4 Mb/s</text>
+    <text x="727" y="507" class="tiny muted" text-anchor="middle">26 ms</text>
+    <circle cx="250" cy="529" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" />
+    <use href="#pc" x="241" y="520" width="18" height="18" class="icon" />
+    <text x="250" y="561" class="small" text-anchor="middle">本机</text>
+    <circle cx="440" cy="529" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" />
+    <use href="#server" x="431" y="520" width="18" height="18" class="icon" />
+    <text x="440" y="561" class="small" text-anchor="middle">demo-entry</text>
+    <circle cx="629" cy="529" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" />
+    <use href="#server" x="620" y="520" width="18" height="18" class="icon" />
+    <text x="629" y="561" class="small" text-anchor="middle">demo-exit-b</text>
+    <circle cx="826" cy="529" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" />
+    <use href="#target" x="817" y="520" width="18" height="18" class="icon" />
+    <text x="826" y="561" class="small" text-anchor="middle">目标地址</text>
+    <path d="M226 584H850" class="rule" />
+    <text x="226" y="609" class="section">demo-api</text>
+    <path d="M270 667H806" stroke="#C7D8CD" stroke-width="2" />
+    <text x="345" y="645" class="tiny muted" text-anchor="middle">ping 12 ms</text>
+    <text x="534" y="645" class="tiny muted" text-anchor="middle">170 ms</text>
+    <text x="727" y="645" class="tiny muted" text-anchor="middle">—</text>
+    <circle cx="250" cy="667" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" />
+    <use href="#pc" x="241" y="658" width="18" height="18" class="icon" />
+    <text x="250" y="699" class="small" text-anchor="middle">本机</text>
+    <circle cx="440" cy="667" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" />
+    <use href="#server" x="431" y="658" width="18" height="18" class="icon" />
+    <text x="440" y="699" class="small" text-anchor="middle">demo-entry</text>
+    <circle cx="629" cy="667" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" />
+    <use href="#server" x="620" y="658" width="18" height="18" class="icon" />
+    <text x="629" y="699" class="small" text-anchor="middle">demo-exit-a</text>
+    <circle cx="826" cy="667" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" />
+    <use href="#target" x="817" y="658" width="18" height="18" class="icon" />
+    <text x="826" y="699" class="small" text-anchor="middle">目标地址</text>
+    <text x="208" y="750" class="tiny muted">新连接使用当前路径，已有连接可能沿用原路径。</text>
+    <text x="888" y="797" class="tiny muted" text-anchor="end">紧凑界面原型 · 身份、地址与连线数值均为示例。</text>
     <rect x="780" y="65" width="88" height="28" rx="5" fill="#FFF" stroke="#E4E7E5" />
     <text x="824" y="83" text-anchor="middle" class="body muted">删除配置</text>
     <rect x="782" y="274" width="86" height="26" rx="5" fill="#FFF" stroke="#E4E7E5" />
-    <text x="825" y="292" text-anchor="middle" class="tiny">收起详情</text>
+    <text x="825" y="292" text-anchor="middle" class="tiny">详细信息</text>
     <text x="277" y="182" class="small green medium">本地 HTTP/SOCKS 代理：运行时地址</text>
-    <text x="226" y="429" class="tiny muted">最佳：未知</text>
-    <text x="226" y="447" class="tiny muted">原因：未知</text>
-    <text x="226" y="461" class="tiny muted">读取：未知</text>
   </g>
 </svg>

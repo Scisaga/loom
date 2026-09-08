@@ -89,8 +89,11 @@ func (app *portableGUI) misakaPathDetails(row windowsPathDisplay, width int32) m
 		return text
 	}
 	metrics := "当前测量：" + value(row.SelectedQuality) + "；已测候选：" + value(row.BestQuality)
-	if row.Health == "业务未测" {
-		metrics = value(row.SelectedQuality)
+	if row.LinkLabels != "" {
+		metrics = row.LinkDetails
+		if metrics == "" {
+			metrics = "暂无对应连线的有效观测"
+		}
 	}
 	if row.Comparison != "" {
 		metrics += "\n" + row.Comparison
@@ -115,7 +118,7 @@ func misakaPathNodeRows(row windowsPathDisplay) int32 {
 	if row.Candidate == "" {
 		return 1
 	}
-	return max(1, int32((len(strings.Split(row.Chain, " → "))+3)/4))
+	return max(1, int32((len(strings.Split(row.Chain, " → "))+1)/3))
 }
 
 func (app *portableGUI) syncMisakaPathItemHeight() {

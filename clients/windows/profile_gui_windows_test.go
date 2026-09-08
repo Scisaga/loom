@@ -44,10 +44,9 @@ func newProfileGUITestWindow(t *testing.T) *portableGUI {
 			{Label: "固定出口 · demo-exit", Preference: clientcore.Preference{Schema: 1, Mode: clientcore.FixedExit, Exit: "demo-exit"}},
 		},
 		paths: []windowsPathDisplay{
-			{Service: "demo-web", Candidate: "demo-candidate-a", Chain: "本机 → demo-prefix-a → demo-exit → 目标", Health: "正常",
-				SelectedQuality: "P50 17 ms · P95 23 ms", BestQuality: "P50 17 ms", Reason: "完整路径测量满足切换门槛"},
-			{Service: "demo-api", Candidate: "demo-candidate-b", Chain: "本机 → demo-prefix-b → demo-exit → 目标", Health: "未知",
-				SelectedQuality: "未知", BestQuality: "未知", Reason: "本次 Agent 尚无当前候选的有效测量"},
+			{Service: "demo-web", Candidate: "demo-candidate-a", Chain: "本机 → demo-prefix-a → demo-exit → 目标", LinkLabels: "ping 12 ms\n38 ms · Δ3 ms · 6.4 Mb/s\n57 ms",
+				LinkDetails: "本机 → demo-prefix-a：ping 12 ms；客户端连接时单次 ping\ndemo-prefix-a → demo-exit：38 ms · Δ3 ms · 6.4 Mb/s；服务器 Hy2 单跳观测\ndemo-exit → https://demo.example/：57 ms", Reason: "根据入口与服务器观测选择当前路径"},
+			{Service: "demo-api", Candidate: "demo-candidate-b", Chain: "本机 → demo-prefix-b → demo-exit → 目标", LinkLabels: "ping 12 ms\n170 ms\n—", LinkDetails: "demo-prefix-b → demo-exit：170 ms；服务器 WireGuard 邻居 RTT", Reason: "保留当前出口"},
 		},
 	}
 	hwnd, err := createPortableWindow(app)
@@ -172,7 +171,7 @@ func TestGUIProfilesSelectionAndActualServicePaths(t *testing.T) {
 	}
 
 	for _, row := range app.paths {
-		for _, field := range []string{row.Service, row.Chain, row.SelectedQuality, row.BestQuality, row.Reason} {
+		for _, field := range []string{row.Service, row.Chain, row.LinkDetails, row.Reason} {
 			if !strings.Contains(expanded, field) {
 				t.Fatalf("expanded native path view lost %q: %q", field, expanded)
 			}

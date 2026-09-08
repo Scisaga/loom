@@ -572,14 +572,31 @@ func (app *portableGUI) drawMisakaPath(item *portableDrawItem) {
 	}
 	row := app.skin.lastPaths[item.itemID]
 	r := item.rect
-	r.bottom -= s(12)
 	r.right -= s(3)
-	c.Fill(r, misakaBorder, s(8))
+	first, last := item.itemID == 0, int(item.itemID) == len(app.skin.lastPaths)-1
+	// §7.3.3：所有服务共用一个面板，只有首尾保留圆角，行间以细线分隔。
+	fillPanel := func(bounds portableRect, color uint32, radius int32) {
+		c.Fill(bounds, color, radius)
+		if !first {
+			c.Fill(misakaRect(bounds.left, bounds.top, bounds.right-bounds.left, radius), color, 0)
+		}
+		if !last {
+			c.Fill(misakaRect(bounds.left, bounds.bottom-radius, bounds.right-bounds.left, radius), color, 0)
+		}
+	}
+	fillPanel(r, misakaBorder, s(8))
 	r.left++
-	r.top++
 	r.right--
-	r.bottom--
-	c.Fill(r, misakaWhite, s(7))
+	if first {
+		r.top++
+	}
+	if last {
+		r.bottom--
+	}
+	fillPanel(r, misakaWhite, s(7))
+	if !last {
+		c.Fill(misakaRect(r.left+s(18), r.bottom-s(1), r.right-r.left-s(36), s(1)), misakaBorder, 0)
+	}
 	color := uint32(misakaMuted)
 	if row.Health == "部分失败" || row.Health == "测量过期" {
 		color = misakaAmber
@@ -593,25 +610,27 @@ func (app *portableGUI) drawMisakaPath(item *portableDrawItem) {
 		serviceLabel = "统一上网路径"
 	}
 	c.Text(serviceLabel, misakaRect(r.left+s(18), r.top+s(8), serviceWidth, s(24)), s(13), 600, misakaText, 0)
-	quality := row.MeasurementSummary
-	if quality == "" || quality == "未知" {
-		quality = "近期测量未知"
+	if row.LinkLabels == "" {
+		quality := row.MeasurementSummary
+		if quality == "" || quality == "未知" {
+			quality = "近期测量未知"
+		}
+		qualityLeft := r.left + s(30) + serviceWidth
+		c.Text(quality, misakaRect(qualityLeft, r.top+s(8), r.right-s(104)-qualityLeft, s(24)), s(11), 400, misakaMuted, 2)
+		health := misakaRect(r.right-s(92), r.top+s(9), s(76), s(22))
+		healthFill := uint32(0xF4F6F5)
+		if color == misakaRed {
+			healthFill = 0xFFF0ED
+		} else if color == misakaAmber {
+			healthFill = 0xFFF6E7
+		}
+		c.Fill(health, healthFill, s(11))
+		healthLabel := row.Health
+		if healthLabel == "" || healthLabel == "未知" {
+			healthLabel = "测量未知"
+		}
+		c.Text(healthLabel, health, s(10), 500, color, 1)
 	}
-	qualityLeft := r.left + s(30) + serviceWidth
-	c.Text(quality, misakaRect(qualityLeft, r.top+s(8), r.right-s(104)-qualityLeft, s(24)), s(11), 400, misakaMuted, 2)
-	health := misakaRect(r.right-s(92), r.top+s(9), s(76), s(22))
-	healthFill := uint32(0xF4F6F5)
-	if color == misakaRed {
-		healthFill = 0xFFF0ED
-	} else if color == misakaAmber {
-		healthFill = 0xFFF6E7
-	}
-	c.Fill(health, healthFill, s(11))
-	healthLabel := row.Health
-	if healthLabel == "" || healthLabel == "未知" {
-		healthLabel = "测量未知"
-	}
-	c.Text(healthLabel, health, s(10), 500, color, 1)
 	// §7.3.3：只拆分只读显示字符串用于布局，不由名称推导路径或操作 selector。
 	nodes := strings.Split(row.Chain, " → ")
 	if len(nodes) < 2 || row.Candidate == "" {
@@ -619,11 +638,13 @@ func (app *portableGUI) drawMisakaPath(item *portableDrawItem) {
 		app.finishMisakaPaint(item.dc)
 		return
 	}
-	for start := 0; start < len(nodes); start += 4 {
+	links := strings.Split(row.LinkLabels, "\n")
+	// §7.3.3：换行时重复衔接节点，跨行的那一段也必须有连线与测量。
+	for start := 0; start < len(nodes)-1; start += 3 {
 		count := min(4, len(nodes)-start)
 		usable := r.right - r.left - s(84)
 		step := usable / int32(max(1, count-1))
-		y := r.top + s(59+int32(start/4)*64)
+		y := r.top + s(83+int32(start/3)*88)
 		if start > 0 {
 			c.Text("↳", misakaRect(r.left+s(12), y-s(12), s(22), s(24)), s(16), 400, misakaMuted, 1)
 		}
@@ -634,6 +655,17 @@ func (app *portableGUI) drawMisakaPath(item *portableDrawItem) {
 			}
 			if index < count-1 {
 				c.Fill(misakaRect(x+s(17), y-s(1), step-s(34), s(2)), 0xC7D8CD, 0)
+				if start+index < len(links) {
+					parts := strings.Split(links[start+index], " · ")
+					lines := []string{links[start+index]}
+					if len(parts) > 2 {
+						lines = []string{strings.Join(parts[:2], " · "), strings.Join(parts[2:], " · ")}
+					}
+					for line, text := range lines {
+						top := y - s(22+int32(len(lines)-1-line)*14)
+						c.Text(text, misakaRect(x+s(10), top, step-s(20), s(16)), s(10), 400, misakaMuted, 1)
+					}
+				}
 			}
 			fixed := start+index == len(nodes)-2 && misakaSelectedMode(app.snapshot()) == clientcore.FixedExit
 			paintMisakaPathNode(c, x, y, start+index, len(nodes), s, fixed)
@@ -648,7 +680,7 @@ func (app *portableGUI) drawMisakaPath(item *portableDrawItem) {
 		}
 	}
 	if app.pathsExpanded {
-		y := r.top + s(106+int32((len(nodes)-1)/4)*64)
+		y := r.top + s(130+(misakaPathNodeRows(row)-1)*88)
 		width := r.right - r.left - s(28)
 		details := app.misakaPathDetails(row, width)
 		place := func(bounds portableRect) portableRect {

@@ -18,6 +18,8 @@ type ClientOptions struct {
 	Probe        func(context.Context, ClientEntry) (time.Duration, error)
 	Observations *ObservationCache
 	HopCarriers  map[string][]string
+	// §7.3.3：仅供本地界面保留本轮入口结果，不进入报告协议。
+	OnEntries func([]ClientPathMeasurement)
 }
 type entryResult struct {
 	RTT time.Duration
@@ -80,6 +82,27 @@ func RunClient(ctx context.Context, cfg *Config, opts ClientOptions) (retErr err
 		}()
 	}
 	wg.Wait()
+	if opts.OnEntries != nil {
+		var measured []ClientPathMeasurement
+		seen := map[string]bool{}
+		for _, e := range opts.Entries {
+			if seen[e.Node] {
+				continue
+			}
+			seen[e.Node] = true
+			r := entries[e.Node]
+			m := ClientPathMeasurement{From: cfg.Node, To: e.Node, Kind: "entry", ObservedAt: r.At.UTC().Format(time.RFC3339), Samples: 1}
+			if r.Err == nil && r.RTT >= 0 {
+				ms := r.RTT.Milliseconds()
+				m.DelayMS = &ms
+			} else {
+				m.Failures = 1
+				m.Error = "单次 ping 未获响应"
+			}
+			measured = append(measured, m)
+		}
+		opts.OnEntries(measured)
+	}
 	k := newClash(cfg.API, cfg.APISecret)
 	defer k.c.CloseIdleConnections()
 	for {

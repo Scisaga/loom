@@ -464,13 +464,13 @@ Windows 不需要新的网络核心，但需要平台宿主：
 **功能原型（定义布局与交互，不作为窗口逐像素实现）：**
 [Windows 客户端首页 v2](../assets/client/windows/loom-client-home-misaka-v2.svg) 与
 [重命名、添加和连接状态 v2](../assets/client/windows/loom-client-interactions-misaka-v2.svg)。
-浅色 Misaka 外观采用紧凑配置侧栏、自绘标题栏、连接摘要和逐服务路径卡片；每个服务的
-路径卡片直接排在主内容区，不再包一层总卡片。交互沿用首页完整窗口、侧栏和单层白色
+浅色 Misaka 外观采用紧凑配置侧栏、自绘标题栏、连接摘要和当前选路面板；各服务
+在同一白色面板内逐行展示，用细线分隔，测量标在对应连线上。交互沿用首页完整窗口、侧栏和单层白色
 内容卡片：重命名只增加条目内编辑框，添加在右侧卡片直接排列表单，不嵌套上传面板；
 连接中只更新原摘要状态。三个 edition
 共用布局，以实际运行方式显示系统 TUN 或本地代理状态。原型中的 `demo-*` 身份与路径
-只用于说明结构，质量使用未知占位；[v1](../assets/client/windows/loom-client-home-misaka-v1.svg)
-保留为早期视觉参考，不代表单一全局路径、分段延迟或未接线页面已经可用。
+与连线数值只用于说明结构，均为合成示例；[v1](../assets/client/windows/loom-client-home-misaka-v1.svg)
+保留为早期视觉参考，当前交互与分段测量显示以 v2 为准。
 
 - v1 目标态由 Windows Service 以受控权限运行配置客户端和 sing-box；
 - 托盘程序只调用本机受限控制接口，显示状态、启停和当前路径；

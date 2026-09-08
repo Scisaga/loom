@@ -20,14 +20,17 @@ import (
 
 // §5.5、§16.1：每次激活拥有自己的 Agent 生命周期和证据目录，退出后不再提供报告。
 type WindowsAgent struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	done         chan struct{}
-	config       *agent.Config
-	statePath    string
-	err          error
-	once         sync.Once
-	observations *agent.ObservationCache
+	ctx           context.Context
+	cancel        context.CancelFunc
+	done          chan struct{}
+	config        *agent.Config
+	statePath     string
+	err           error
+	once          sync.Once
+	observations  *agent.ObservationCache
+	measurementMu sync.RWMutex
+	entries       []agent.ClientPathMeasurement
+	hopCarriers   map[string][]string
 }
 
 func StartWindowsAgent(ctx context.Context, cfg *agent.Config, runtimeDir string, inputs ...agent.ClientOptions) (*WindowsAgent, error) {
@@ -68,11 +71,49 @@ func StartWindowsAgent(ctx context.Context, cfg *agent.Config, runtimeDir string
 			options.HopCarriers[tag] = append([]string(nil), values...)
 		}
 	}
+	a.hopCarriers = options.HopCarriers
+	options.OnEntries = func(entries []agent.ClientPathMeasurement) {
+		a.measurementMu.Lock()
+		defer a.measurementMu.Unlock()
+		a.entries = entries
+	}
 	go func() {
 		defer close(a.done)
 		a.err = agent.RunClient(child, cfg, options)
 	}()
 	return a, nil
+}
+
+// PathMeasurements 只为当前实际候选组装本地显示数据，不改变 Report 线格式。
+// §7.3.3：不重新读取 selector、不发探测、不把不同承载或不同代次的观测混在一起。
+func (a *WindowsAgent) PathMeasurements(report *clientreport.AgentState, now time.Time) map[string][]agent.ClientPathMeasurement {
+	out := map[string][]agent.ClientPathMeasurement{}
+	if a == nil || report == nil || a.ctx.Err() != nil || report.Node != a.config.Node {
+		return out
+	}
+	a.measurementMu.RLock()
+	defer a.measurementMu.RUnlock()
+	for _, s := range report.Selections {
+		for _, d := range a.config.Declarations {
+			if d.ID != s.Declaration || d.Selector != s.Selector {
+				continue
+			}
+			for _, candidate := range d.Candidates {
+				if candidate.Tag != s.Candidate || len(candidate.Chain) == 0 {
+					continue
+				}
+				entry := agent.ClientPathMeasurement{To: candidate.Chain[0], Kind: "entry"}
+				for _, m := range a.entries {
+					if m.To == entry.To {
+						entry = m
+						break
+					}
+				}
+				out[d.ID] = append([]agent.ClientPathMeasurement{entry}, a.observations.ClientPathMeasurements(candidate.Chain, d.Targets, a.hopCarriers[candidate.Tag], now)...)
+			}
+		}
+	}
+	return out
 }
 
 // IngestObservations 只接入当前激活代次；Direct 没有 Agent，不消费服务器证据。

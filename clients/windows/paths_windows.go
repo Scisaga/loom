@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"loom/internal/agent"
 	"loom/internal/clientcore"
 	"loom/internal/clientreport"
 )
@@ -27,6 +28,9 @@ type windowsPathDisplay struct {
 	Reason             string `json:"reason"`
 	DecisionScope      string `json:"decision_scope,omitempty"`
 	UpdatedAt          string `json:"updated_at,omitempty"`
+	// 连线按 Chain 顺序，每行一个标签；IPC 继续只传不可变显示字符串。
+	LinkLabels  string `json:"link_labels,omitempty"`
+	LinkDetails string `json:"link_details,omitempty"`
 }
 
 const windowsPathReadInterval = 5 * time.Second
@@ -120,6 +124,10 @@ func (reader *windowsPathReader) Read(ctx context.Context, root string, now time
 		}
 	} else {
 		rows = windowsPathsFromReport(report)
+		measurements := state.Agent.PathMeasurements(report, now)
+		for i := range rows {
+			applyWindowsPathMeasurements(&rows[i], measurements[rows[i].Service])
+		}
 	}
 	reader.root, reader.state, reader.readAt, reader.rows = root, state, now, rows
 	return slices.Clone(rows)
@@ -182,18 +190,98 @@ func windowsPathsFromReport(report *clientreport.AgentState) []windowsPathDispla
 		if row.Reason == "" {
 			row.Reason = "未知"
 		}
-		// §16.1：客户端原因已有明确分段说明；仅格式化显示，不由文案决定路由。
-		if strings.HasPrefix(reason, "入口 ") && strings.Contains(reason, "未测整条业务路径") {
-			entry, rest, _ := strings.Cut(reason, "；")
-			row.SelectedQuality = entry
-			row.MeasurementSummary, _, _ = strings.Cut(entry, "（")
-			row.Health = "业务未测"
-			row.BestQuality = "不做完整路径比较"
-			row.Comparison = rest
-		}
 		rows = append(rows, row)
 	}
 	return rows
+}
+
+// §7.3.3：显示数据按实际连线定位，不再从中文选路原因中解析数值。
+func applyWindowsPathMeasurements(row *windowsPathDisplay, measurements []agent.ClientPathMeasurement) {
+	if row.Candidate == "" {
+		return
+	}
+	labels := make([]string, len(strings.Split(row.Chain, " → "))-1)
+	groups := make([][]agent.ClientPathMeasurement, len(labels))
+	var details []string
+	for _, m := range measurements {
+		if m.Hop < 0 || m.Hop >= len(groups) {
+			continue
+		}
+		groups[m.Hop] = append(groups[m.Hop], m)
+		label, source := windowsLinkMeasurement(m)
+		from := m.From
+		if m.Kind == "entry" {
+			from = "本机"
+		}
+		line := from + " → " + m.To + "：" + label + "；" + source
+		if m.ObservedAt != "" {
+			line += "；测量于 " + m.ObservedAt
+		}
+		if m.Failures > 0 {
+			line += fmt.Sprintf("；失败 %d/%d", m.Failures, m.Samples)
+		}
+		if m.Error != "" {
+			line += "；" + m.Error
+		}
+		details = append(details, line)
+	}
+	for hop, group := range groups {
+		labels[hop] = "—"
+		if len(group) == 1 {
+			labels[hop], _ = windowsLinkMeasurement(group[0])
+		} else if len(group) > 1 {
+			known := 0
+			for _, m := range group {
+				if m.Samples > 0 {
+					known++
+				}
+			}
+			labels[hop] = fmt.Sprintf("%d/%d 目标有观测", known, len(group))
+		}
+	}
+	row.LinkLabels, row.LinkDetails = strings.Join(labels, "\n"), strings.Join(details, "\n")
+	row.Health, row.MeasurementSummary, row.SelectedQuality, row.BestQuality, row.Comparison = "", "", "", "", ""
+}
+
+func windowsLinkMeasurement(m agent.ClientPathMeasurement) (string, string) {
+	source := "暂无对应承载的有效观测"
+	switch m.Kind {
+	case "entry":
+		source = "客户端连接时单次 ping"
+	case "neighbor":
+		source = "服务器 WireGuard 邻居 RTT；波动与速率尚无可用数据"
+	case "public-hysteria2":
+		source = "服务器公网 Hy2 单跳观测；Δ 为该观测 P95−P50；速率为固定响应探测速率"
+	case "target":
+		source = "服务器直连此探测目标、收到首次响应的耗时"
+	}
+	if m.DelayMS == nil {
+		if m.Samples > 0 && m.Failures == m.Samples {
+			if m.Kind == "entry" {
+				return "ping 无响应", source
+			}
+			return "探测失败", source
+		}
+		return "—", source
+	}
+	label := fmt.Sprintf("%d ms", *m.DelayMS)
+	if m.Kind == "entry" {
+		label = "ping " + label
+	}
+	if m.VariationMS != nil {
+		label += fmt.Sprintf(" · Δ%d ms", *m.VariationMS)
+	}
+	if m.RateBPS != nil {
+		rate, unit := *m.RateBPS, "bit/s"
+		for _, next := range []string{"kb/s", "Mb/s", "Gb/s"} {
+			if rate < 1000 {
+				break
+			}
+			rate, unit = rate/1000, next
+		}
+		label += fmt.Sprintf(" · %.1f %s", rate, unit)
+	}
+	return label, source
 }
 
 // §16.1：次数、失败和覆盖来自已有测量摘要，不能把读取时间冒充最近探测时间。
@@ -274,9 +362,16 @@ func formatWindowsPaths(rows []windowsPathDisplay, details bool) string {
 	}
 	var lines []string
 	for _, row := range rows {
-		line := row.Service + "：" + row.Chain + "（" + row.Health + "）"
+		line := row.Service + "：" + row.Chain
+		if row.Health != "" {
+			line += "（" + row.Health + "）"
+		}
 		if details {
-			line += "\r\n" + row.MeasurementSummary + "\r\n当前测量：" + row.SelectedQuality + "；已测候选：" + row.BestQuality
+			if row.LinkLabels != "" {
+				line += "\r\n" + row.LinkDetails
+			} else {
+				line += "\r\n" + row.MeasurementSummary + "\r\n当前测量：" + row.SelectedQuality + "；已测候选：" + row.BestQuality
+			}
 			if row.Comparison != "" {
 				line += "\r\n" + row.Comparison
 			}

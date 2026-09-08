@@ -31,12 +31,12 @@ func TestGUIMisakaPathDetailsFollowActualReasonLinesWithoutBlankRow(t *testing.T
 	app := newProfileGUITestWindow(t)
 	app.paths = app.paths[:1]
 	app.pathsExpanded = true
-	long := strings.Repeat("演示路径经过完整测量后确认健康，保持当前链路并继续比较授权候选。", 5) + "\nDEMO_REASON_END"
+	long := strings.Repeat("演示路径根据入口与服务器观测选择，保留各段测量的来源与时间。", 5) + "\nDEMO_REASON_END"
 	for _, dpi := range []int32{96, 120, 144, 168, 192} {
 		width, height := portableMinimumWindowSize(dpi)
 		suggested := portableRect{left: 20, top: 20, right: 20 + width, bottom: 20 + height}
 		procSendMessage.Call(app.hwnd, portableWMDPIChanged, uintptr(dpi)|uintptr(dpi)<<16, uintptr(unsafe.Pointer(&suggested)))
-		for _, reason := range []string{"完整路径测量满足切换门槛", long} {
+		for _, reason := range []string{"根据入口与服务器观测选择当前路径", long} {
 			var withoutScope int32
 			for _, scoped := range []bool{false, true} {
 				app.paths[0].Reason = reason
@@ -59,7 +59,7 @@ func TestGUIMisakaPathDetailsFollowActualReasonLinesWithoutBlankRow(t *testing.T
 				portableGDI32.NewProc("GdiFlush").Call()
 				details := app.misakaPathDetails(app.paths[0], item.right-app.scale(3)-2-app.scale(28))
 				place := func(r portableRect) portableRect {
-					x, y := 1+app.scale(14), 1+app.scale(106)
+					x, y := 1+app.scale(14), 1+app.scale(130)
 					return portableRect{left: r.left + x, top: r.top + y, right: r.right + x, bottom: r.bottom + y}
 				}
 				reasonInk, reasonCount := misakaDetailInkBounds(pixels, item.right, place(details.reasonBounds))
@@ -83,7 +83,7 @@ func TestGUIMisakaPathDetailsFollowActualReasonLinesWithoutBlankRow(t *testing.T
 				} else {
 					withoutScope = item.bottom
 				}
-				cardBottom := item.bottom - app.scale(12)
+				cardBottom := item.bottom
 				if gap := cardBottom - last.bottom; gap < app.scale(6) || gap > app.scale(24) {
 					t.Errorf("[§7.2] DPI %d 卡片末尾没有按详情内容收紧：尾部空白=%d", dpi, gap)
 				}
@@ -103,7 +103,7 @@ func TestGUIMisakaPathDetailsResizeUpdatesNativeRowsAndScrollReach(t *testing.T)
 	app := newProfileGUITestWindow(t)
 	app.paths = app.paths[:1]
 	app.pathsExpanded = true
-	app.paths[0].Reason = strings.Repeat("演示原因按当前窗口宽度换行，完整路径测量已确认当前选择。", 8)
+	app.paths[0].Reason = strings.Repeat("演示原因按当前窗口宽度换行，入口与服务器观测用于当前选择。", 8)
 	app.paths[0].DecisionScope = strings.Repeat("d", 64)
 	app.renderControls()
 	var wide int32
@@ -139,7 +139,7 @@ func TestGUIMisakaPathDetailsCompactSyntheticCapture(t *testing.T) {
 	procRedrawWindow.Call(app.hwnd, 0, 0, 0x0181)
 	misakaAssertVisibleFrame(t, app, "紧凑路径详情")
 	captureConfiguredProfileGUIState(t, app, "-detail-short")
-	app.paths[0].Reason = strings.Repeat("演示路径经过完整测量后确认健康，保持当前链路并继续比较授权候选。", 4)
+	app.paths[0].Reason = strings.Repeat("演示路径根据入口与服务器观测选择，保留各段测量的来源与时间。", 4)
 	app.paths[0].DecisionScope = strings.Repeat("d", 64)
 	app.renderControls()
 	app.scrollMisakaPane(app.skin.scrollMaximum)
@@ -177,7 +177,7 @@ func TestGUIMisakaPathDetailsRenderLimitedMeasurementEvidence(t *testing.T) {
 		details := app.misakaPathDetails(app.paths[0], item.right-app.scale(3)-2-app.scale(28))
 		last := details.bestBounds
 		last.left, last.right = last.left+1+app.scale(14), last.right+1+app.scale(14)
-		last.top, last.bottom = last.top+1+app.scale(106), last.bottom+1+app.scale(106)
+		last.top, last.bottom = last.top+1+app.scale(130), last.bottom+1+app.scale(130)
 		last.top = last.bottom - app.scale(12)
 		if _, count := misakaDetailInkBounds(pixels, item.right, last); count < 10 {
 			t.Fatalf("[§16.1] DPI %d 比较边界最后一行被裁切", dpi)
