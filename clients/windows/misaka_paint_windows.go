@@ -595,7 +595,7 @@ func (app *portableGUI) drawMisakaPath(item *portableDrawItem) {
 	}
 	fillPanel(r, misakaWhite, s(7))
 	if !last {
-		c.Fill(misakaRect(r.left+s(18), r.bottom-s(1), r.right-r.left-s(36), s(1)), misakaBorder, 0)
+		c.Fill(misakaRect(r.left, r.bottom-s(1), r.right-r.left, s(1)), misakaBorder, 0)
 	}
 	color := uint32(misakaMuted)
 	if row.Health == "部分失败" || row.Health == "测量过期" {

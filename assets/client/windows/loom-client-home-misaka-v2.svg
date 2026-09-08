@@ -119,7 +119,7 @@
     <circle cx="826" cy="391" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" />
     <use href="#target" x="817" y="382" width="18" height="18" class="icon" />
     <text x="826" y="423" class="small" text-anchor="middle">目标地址</text>
-    <path d="M226 446H850" class="rule" />
+    <path d="M208 446H868" class="rule" />
     <text x="226" y="471" class="section">demo-web</text>
     <path d="M270 529H806" stroke="#C7D8CD" stroke-width="2" />
     <text x="345" y="507" class="tiny muted" text-anchor="middle">ping 12 ms</text>
@@ -138,7 +138,7 @@
     <circle cx="826" cy="529" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" />
     <use href="#target" x="817" y="520" width="18" height="18" class="icon" />
     <text x="826" y="561" class="small" text-anchor="middle">目标地址</text>
-    <path d="M226 584H850" class="rule" />
+    <path d="M208 584H868" class="rule" />
     <text x="226" y="609" class="section">demo-api</text>
     <path d="M270 667H806" stroke="#C7D8CD" stroke-width="2" />
     <text x="345" y="645" class="tiny muted" text-anchor="middle">ping 12 ms</text>

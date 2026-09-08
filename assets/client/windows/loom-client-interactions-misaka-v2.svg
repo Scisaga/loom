@@ -130,7 +130,7 @@
         <circle cx="826" cy="391" r="16.5" fill="#F7F9F8" stroke="#D8DFDA" stroke-width="1" />
         <use href="#target" x="817" y="382" width="18" height="18" class="icon" />
         <text x="826" y="423" class="small" text-anchor="middle">目标地址</text>
-        <path d="M226 498H850" class="rule" />
+        <path d="M208 498H868" class="rule" />
         <text x="226" y="529" class="section mono">demo-api</text>
 
         <text x="345" y="565" class="tiny muted" text-anchor="middle">ping 12 ms</text>
