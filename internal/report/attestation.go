@@ -1,12 +1,9 @@
 package report
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
-	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -14,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"loom/internal/attest"
+	"loom/internal/observation"
 	"loom/internal/version"
 )
 
@@ -42,30 +40,11 @@ type AttestedState struct {
 // fixes JSON field order; observation construction sorts both slices, so the
 // same node-owned payload has stable bytes without coupling attest to report.
 func measurementDigest(o *Observation) string {
-	if o == nil {
+	wire, err := observationPayload(o)
+	if err != nil {
 		return ""
 	}
-	edges := o.Edges
-	targets := o.Targets
-	// Observation uses omitempty, so a non-nil empty slice becomes absent on
-	// the wire and unmarshals as nil. Normalize the two equivalent forms before
-	// hashing or a legitimate empty observation could fail after JSON transit.
-	if len(edges) == 0 {
-		edges = nil
-	}
-	if len(targets) == 0 {
-		targets = nil
-	}
-	payload := struct {
-		Edges   []Edge  `json:"edges"`
-		Targets []Reach `json:"targets"`
-	}{Edges: edges, Targets: targets}
-	b, err := json.Marshal(payload)
-	if err != nil {
-		return "" // current concrete fields cannot fail; fail closed if that changes
-	}
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
+	return observation.MeasurementDigest(wire)
 }
 
 // VerifyObservation 先验签和检查新鲜度，再把签名 Claim 与外层观测绑定。
@@ -78,66 +57,27 @@ func VerifyObservation(o *Observation, ca []byte, now time.Time, maxAge time.Dur
 // VerifyObservationAtLeast 在验签之外执行配置下发的最小 canonical 版本闸门。
 // minVersion=0 是滚动兼容阶段；=5 表示全网 reader 已升级，legacy 只能作为
 // 旧 reader 的旁路副本，不能再被新版信任为完整状态。
-func VerifyObservationAtLeast(o *Observation, ca []byte, now time.Time, maxAge time.Duration,
-	minVersion int) (*AttestedState, error) {
-	if minVersion != 0 && minVersion != 5 {
-		return nil, fmt.Errorf("不支持 attestation 最小版本 %d", minVersion)
-	}
-	if o == nil || o.Attest == nil {
-		return nil, fmt.Errorf("没有签名陈述")
-	}
-	primary, err := attest.VerifyFresh(o.Attest, ca, now, maxAge)
+func VerifyObservationAtLeast(o *Observation, ca []byte, now time.Time, maxAge time.Duration, minVersion int) (*AttestedState, error) {
+	wire, err := observationPayload(o)
 	if err != nil {
-		return nil, fmt.Errorf("签名:%w", err)
-	}
-	c := primary
-	if primary.CanonicalVersion == 0 {
-		// 用旧 reader 反序列化后能看见的投影再绑定一次。这样双签不是
-		// “多放了一个没人检查的字段”，而是每个新节点都会持续验证旧节点
-		// 能消费的 v3。
-		if err := bindClaim(legacyObservation(o), primary); err != nil {
-			return nil, fmt.Errorf("兼容签名绑定:%w", err)
-		}
-	} else if o.AttestExtended != nil {
-		return nil, fmt.Errorf("主签名已经是 v4/v5，不能再携带第二份扩展签名")
-	}
-	if o.AttestExtended != nil {
-		if o.AttestExtended.CanonicalVersion != 4 && o.AttestExtended.CanonicalVersion != 5 {
-			return nil, fmt.Errorf("扩展签名必须使用 canonical_version=4/5")
-		}
-		c, err = attest.VerifyFresh(o.AttestExtended, ca, now, maxAge)
-		if err != nil {
-			return nil, fmt.Errorf("扩展签名:%w", err)
-		}
-	}
-	if err := requireAttestationVersion(c, minVersion); err != nil {
 		return nil, err
 	}
-	if err := bindClaim(o, c); err != nil {
+	trusted, err := observation.VerifyObservationAtLeast(wire, ca, now, maxAge, minVersion)
+	if err != nil {
 		return nil, err
 	}
-	st := stateFromClaim(c)
-	if problems := validateAgentState(st.Agent, o.Node, now); len(problems) > 0 {
-		return nil, fmt.Errorf("签名 Agent 状态非法:%s", problems[0])
+	body, err := json.Marshal(trusted)
+	if err != nil {
+		return nil, err
 	}
-	if problems := validateComponentStatuses(st.Components); len(problems) > 0 {
-		return nil, fmt.Errorf("签名组件状态非法:%s", problems[0])
+	var state AttestedState
+	if err := json.Unmarshal(body, &state); err != nil {
+		return nil, err
 	}
-	return st, nil
+	return &state, nil
 }
-
 func requireAttestationVersion(c *attest.Claim, minVersion int) error {
-	if minVersion == 0 {
-		return nil
-	}
-	if c == nil || c.CanonicalVersion != 5 {
-		got := 0
-		if c != nil {
-			got = c.CanonicalVersion
-		}
-		return fmt.Errorf("需要 canonical_version=5，收到 %d（扩展签名可能被剥离）", got)
-	}
-	return nil
+	return observation.RequireAttestationVersion(c, minVersion)
 }
 
 // legacyObservation 模拟旧 Go 结构对新 JSON 的解码结果：未知的 components、
@@ -165,39 +105,12 @@ func legacyObservation(o *Observation) *Observation {
 }
 
 func bindClaim(o *Observation, c *attest.Claim) error {
-	switch {
-	case c.Node != o.Node:
-		return fmt.Errorf("签名节点 %q 与外层观测节点 %q 不一致", c.Node, o.Node)
-	case c.TS != o.TS:
-		return fmt.Errorf("签名时间 %q 与外层观测时间 %q 不一致", c.TS, o.TS)
-	case c.Applied != o.Applied:
-		return fmt.Errorf("签名快照 %q 与外层观测快照 %q 不一致", c.Applied, o.Applied)
+	wire, err := observationPayload(o)
+	if err != nil {
+		return err
 	}
-
-	// v1 观测没有这些外层字段，可信值仍从 Claim 取；新格式一旦携带，就必须
-	// 与签名完全相同，不能让 relay 改 UI 上显示的版本、rollout 或路径。
-	trusted := stateFromClaim(c)
-	if trusted.Agent != nil && trusted.Agent.Node != o.Node {
-		return fmt.Errorf("Agent 状态节点 %q 与观测节点 %q 不一致", trusted.Agent.Node, o.Node)
-	}
-	if o.Version != nil && !reflect.DeepEqual(o.Version, trusted.Version) {
-		return fmt.Errorf("外层版本坐标与签名陈述不一致")
-	}
-	if o.Rollout != nil && !reflect.DeepEqual(o.Rollout, trusted.Rollout) {
-		return fmt.Errorf("外层 rollout 与签名陈述不一致")
-	}
-	if o.Agent != nil && !reflect.DeepEqual(o.Agent, trusted.Agent) {
-		return fmt.Errorf("外层 Agent 选择与签名陈述不一致")
-	}
-	if !componentStatusesEqual(o.Components, trusted.Components) {
-		return fmt.Errorf("外层组件版本与签名陈述不一致")
-	}
-	if c.MeasurementsSHA256 != "" && c.MeasurementsSHA256 != measurementDigest(o) {
-		return fmt.Errorf("外层链路观测与签名陈述不一致")
-	}
-	return nil
+	return observation.BindClaim(wire, c)
 }
-
 func stateFromClaim(c *attest.Claim) *AttestedState {
 	st := &AttestedState{Version: &version.Coordinate{
 		Commit: c.Commit, Dirty: c.Dirty, Tag: c.Tag, Binary: c.Binary,
@@ -232,14 +145,6 @@ func stateFromClaim(c *attest.Claim) *AttestedState {
 	}
 	sortComponentStatuses(st.Components)
 	return st
-}
-
-func componentStatusesEqual(a, b []ComponentStatus) bool {
-	aa := append([]ComponentStatus(nil), a...)
-	bb := append([]ComponentStatus(nil), b...)
-	sortComponentStatuses(aa)
-	sortComponentStatuses(bb)
-	return reflect.DeepEqual(aa, bb)
 }
 
 func candidateHealthClaim(h *AgentCandidateHealth) *attest.CandidateHealthClaim {
@@ -437,22 +342,11 @@ func compactSelfCheckProblems(problems []string) []string {
 // verifySelfCheckAttachment binds the independently verified verdict back to
 // its containing Observation. A relay cannot move a green claim to another
 // node or refresh its timestamp through the mutable outer envelope.
-func verifySelfCheckAttachment(o *Observation, ca []byte, now time.Time,
-	maxAge time.Duration) (*attest.SelfCheckClaim, error) {
-	if o == nil || o.SelfCheck == nil {
+func verifySelfCheckAttachment(o *Observation, ca []byte, now time.Time, maxAge time.Duration) (*attest.SelfCheckClaim, error) {
+	if o == nil {
 		return nil, nil
 	}
-	claim, err := attest.VerifySelfCheckFresh(o.SelfCheck, ca, now, maxAge)
-	if err != nil {
-		return nil, err
-	}
-	if claim.Node != o.Node {
-		return nil, fmt.Errorf("自检签名节点 %q 与外层观测节点 %q 不一致", claim.Node, o.Node)
-	}
-	if claim.TS != o.TS {
-		return nil, fmt.Errorf("自检签名时间 %q 与外层观测时间 %q 不一致", claim.TS, o.TS)
-	}
-	return claim, nil
+	return observation.VerifySelfCheckAttachment(&observation.Observation{Node: o.Node, TS: o.TS, SelfCheck: o.SelfCheck}, ca, now, maxAge)
 }
 
 // AttestationErrors 校验 Status 里所有带签名的观测。兼容阶段允许完全无签名
@@ -523,3 +417,19 @@ func AttestationErrors(st *Status, now time.Time, maxAge time.Duration, minVersi
 }
 
 const caPath = "/etc/loom/tls/ca.crt"
+
+// §16.1.2：仅转换既有 DTO，签名与外层字段绑定统一由纯 observation 包执行。
+func observationPayload(o *Observation) (*observation.Observation, error) {
+	if o == nil {
+		return nil, nil
+	}
+	body, err := json.Marshal(o)
+	if err != nil {
+		return nil, err
+	}
+	var wire observation.Observation
+	if err := json.Unmarshal(body, &wire); err != nil {
+		return nil, err
+	}
+	return &wire, nil
+}

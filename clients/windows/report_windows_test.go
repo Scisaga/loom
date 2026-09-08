@@ -28,7 +28,7 @@ func TestWindowsDPAPIReportAfterInviteCleanup(t *testing.T) {
 	ca, caKey, caPEM := portableTestCA(t)
 	reports := make(chan clientreport.Observation, 16)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" || r.URL.Path != "/loom-client/report" {
+		if r.Method != "POST" || r.URL.Path != "/loom-client/report" || r.URL.RawQuery != "observations=1" {
 			t.Error("unexpected report endpoint")
 			w.WriteHeader(400)
 			return
@@ -49,6 +49,12 @@ func TestWindowsDPAPIReportAfterInviteCleanup(t *testing.T) {
 			return
 		}
 		reports <- o
+		if o.SelfCheck.Healthy {
+			// §16.1.2：同一个既有上报周期兼容旧服204与读取模式200。
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("[]"))
+			return
+		}
 		w.WriteHeader(204)
 	}))
 	defer server.Close()

@@ -16,10 +16,12 @@ func validateObservationPlatform(cfg *Config) error {
 	return nil
 }
 
-type observed struct{}
+type observed struct{ external *ObservationCache }
 
-func newObserved() *observed                                                     { return &observed{} }
-func (*observed) unreachable(string, time.Time, time.Duration) map[string]string { return nil }
-func (*observed) len() int                                                       { return 0 }
+func newObserved() *observed { return &observed{} }
+func (o *observed) unreachable(target string, now time.Time, maxAge time.Duration) map[string]string {
+	return o.external.unreachable(target, now, maxAge)
+}
+func (*observed) len() int { return 0 }
 func pollPeers(context.Context, *Config, *observed, []byte, time.Time, time.Duration, func(string, ...any)) {
 }

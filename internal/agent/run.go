@@ -26,6 +26,12 @@ type Options struct {
 	Retention time.Duration
 	// EventsPath 非空时,选路切换会记进事件历史。
 	EventsPath string
+	// §16.1.2：宿主复用现有报告响应喂入可信观测，不增加对端轮询。
+	Observations *ObservationCache
+	// ShareEquivalentProbes lets a client reuse one physical observation across
+	// declarations for the same complete chain and equivalent target URL. It
+	// never reuses a sample twice inside one decision scope.
+	ShareEquivalentProbes bool
 
 	// Once 为真时,每条声明只跑一轮就返回。给人工执行和自检用。
 	Once bool
@@ -37,6 +43,7 @@ type Options struct {
 	// 运行期组件 —— 它**必须**读时钟,只是入口收在这一处。
 	Now     func() time.Time
 	eventMu *sync.Mutex
+	probes  *sharedProbes
 }
 
 func (o *Options) fill() {
@@ -81,6 +88,9 @@ func Run(ctx context.Context, cfg *Config, opts Options) (retErr error) {
 	}
 	opts.fill()
 	opts.eventMu = &sync.Mutex{}
+	if opts.ShareEquivalentProbes {
+		opts.probes = newSharedProbes(cfg)
+	}
 	logf := func(f string, a ...any) {
 		fmt.Fprintf(opts.Log, "%s "+f+"\n",
 			append([]any{opts.Now().Format("15:04:05")}, a...)...)
@@ -110,6 +120,7 @@ func Run(ctx context.Context, cfg *Config, opts Options) (retErr error) {
 
 	k := newClash(cfg.API, cfg.APISecret)
 	obs := newObserved()
+	obs.external = opts.Observations
 	// 每条声明各自的轮换游标。有界探测靠它保证"每条候选迟早都被试到"。
 	rot := map[string]string{}
 	var rotMu sync.Mutex
@@ -299,12 +310,19 @@ func tick(ctx context.Context, cfg *Config, d *Decl, k *clash, st *store, select
 	cands = probe
 	for _, c := range cands {
 		for _, t := range d.Targets {
-			r, perr := ProbeOnce(ctx, cfg.Probe, cfg.ProbeSecret, c.ProbeUser, t, opts.ProbeTimeout)
+			at := opts.Now()
+			var r Result
+			var perr error
+			if opts.probes == nil {
+				r, perr = ProbeOnce(ctx, cfg.Probe, cfg.ProbeSecret, c.ProbeUser, t, opts.ProbeTimeout)
+			} else {
+				r, perr, at = opts.probes.probe(ctx, cfg, d, c, t, scope, opts)
+			}
 			if err := ctx.Err(); err != nil {
 				return err
 			}
 			m := measure.Measurement{
-				TS: ts, Node: cfg.Node, CandidateID: c.Tag, Declaration: d.ID, Target: t,
+				TS: at.UTC().Format(time.RFC3339), Node: cfg.Node, CandidateID: c.Tag, Declaration: d.ID, Target: t,
 				DecisionScope: scope,
 				Point:         measure.L4Tunnel, Kind: measure.Active,
 			}

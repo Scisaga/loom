@@ -7,6 +7,7 @@ import (
 	"debug/buildinfo"
 	"errors"
 	"fmt"
+	"loom/internal/observation"
 	"os"
 	"os/exec"
 	"sort"
@@ -435,39 +436,11 @@ func sortComponentStatuses(xs []ComponentStatus) {
 }
 
 func validateComponentStatuses(xs []ComponentStatus) []string {
-	if len(xs) > 16 {
-		return []string{"组件条目超过 16 个"}
+	wire := make([]observation.ComponentStatus, len(xs))
+	for i, c := range xs {
+		wire[i] = observation.ComponentStatus{Name: c.Name, Expected: c.Expected, Actual: c.Actual, Error: c.Error}
 	}
-	allowed := map[string]bool{
-		"sing-box": true, wireGuardComponentName: true, "tailscale": true, "agent-protocol": true,
-	}
-	seen := map[string]bool{}
-	var out []string
-	validText := func(s string, limit int) bool {
-		return len(s) <= limit && strings.TrimSpace(s) == s && !strings.ContainsAny(s, "\r\n\x00")
-	}
-	for _, c := range xs {
-		switch {
-		case !allowed[c.Name]:
-			out = append(out, "未知组件名:"+c.Name)
-		case seen[c.Name]:
-			out = append(out, "重复组件:"+c.Name)
-		}
-		seen[c.Name] = true
-		if c.Expected == "" || !validText(c.Expected, 64) {
-			out = append(out, "组件 "+c.Name+" 的 expected 非法")
-		}
-		if c.Actual != "" && !validText(c.Actual, 64) {
-			out = append(out, "组件 "+c.Name+" 的 actual 非法")
-		}
-		if !validText(c.Error, 512) {
-			out = append(out, "组件 "+c.Name+" 的 error 非法")
-		}
-		if c.Actual == "" && c.Error == "" {
-			out = append(out, "组件 "+c.Name+" 既没有 actual 也没有 error")
-		}
-	}
-	return out
+	return observation.ValidateComponentStatuses(wire)
 }
 
 const (

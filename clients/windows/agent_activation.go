@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 
 	"loom/internal/agent"
 	"loom/internal/clientruntime"
@@ -52,7 +54,8 @@ func runAgentDataPlane(ctx context.Context, a *clientActivation, start dataPlane
 	}
 	var err error
 	if a.AgentConfig != nil {
-		a.AgentRuntime, err = clientruntime.StartWindowsAgent(ctx, a.AgentConfig, a.RuntimeDir)
+		runtimeIdentity := fmt.Sprintf("windows-runtime-v1:%s:%x", a.Profile, sha256.Sum256(a.Config))
+		a.AgentRuntime, err = clientruntime.StartWindowsAgent(ctx, a.AgentConfig, a.RuntimeDir, runtimeIdentity)
 		if err != nil {
 			_ = stopPlane()
 			if ctx.Err() != nil {

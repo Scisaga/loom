@@ -17,8 +17,9 @@ import (
 // 数据来自上报者的转述网络(§16.1.2)。Agent 只读不产 —— 观测是每台机器
 // 量自己那几段的产物,Agent 的活是**用**它。
 type observed struct {
-	mu sync.Mutex
-	by map[string]report.Observation
+	mu       sync.Mutex
+	by       map[string]report.Observation
+	external *ObservationCache
 }
 
 func newObserved() *observed { return &observed{by: map[string]report.Observation{}} }
@@ -44,6 +45,9 @@ func (o *observed) unreachable(target string, now time.Time, maxAge time.Duratio
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	out := map[string]string{}
+	for node, reason := range o.external.unreachable(target, now, maxAge) {
+		out[node] = reason
+	}
 	for id, x := range o.by {
 		if x.Age(now) > maxAge {
 			continue

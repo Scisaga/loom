@@ -107,3 +107,45 @@ func TestRetryAfterOnAnyHTTPResponse(t *testing.T) {
 		t.Fatal("503 Retry-After ignored")
 	}
 }
+
+func TestObservationReadKeepsReportAcceptedAndRawSignedObjects(t *testing.T) {
+	for _, test := range []struct {
+		name              string
+		status            int
+		contentType, body string
+		want              int
+		bad               bool
+	}{
+		{"old server", 204, "", "", 0, false},
+		{"empty", 200, "application/json", "[]", 0, false},
+		{"raw object", 200, "application/json; charset=utf-8", `[{"node":"demo-server","targets":[{"target":"https://service.example/"}],"attest":{"sig":"synthetic-only"}}]`, 1, false},
+		{"null", 200, "application/json", "null", 0, true},
+		{"object", 200, "application/json", `{"node":"demo-server"}`, 0, true},
+		{"trailing", 200, "application/json", "[] []", 0, true},
+		{"truncated", 200, "application/json", "[{", 0, true},
+		{"wrong type", 200, "text/html", "[]", 0, true},
+		{"too large", 200, "application/json", "[" + strings.Repeat(" ", MaxBody) + "]", 0, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &http.Client{Transport: responseTransport(func(r *http.Request) (*http.Response, error) {
+				if r.URL.RawQuery != "observations=1" || r.Method != http.MethodPost || r.URL.Path != "/loom-client/report" {
+					t.Fatal("observation read changed the report boundary")
+				}
+				return &http.Response{StatusCode: test.status, Header: http.Header{"Content-Type": []string{test.contentType}}, Body: io.NopCloser(strings.NewReader(test.body)), ContentLength: int64(len(test.body))}, nil
+			})}
+			result, raw := SendWithObservations(context.Background(), client, "https://control.example/loom-client/report", &Observation{Node: "demo-client"})
+			if result.Err != nil || result.Status != test.status || (result.ObservationsErr != nil) != test.bad || len(raw) != test.want {
+				t.Fatalf("result=%+v raw=%d", result, len(raw))
+			}
+			if len(raw) == 1 && string(raw[0]) != test.body[1:len(test.body)-1] {
+				t.Fatal("transport rewrote signed observation")
+			}
+		})
+	}
+	for _, endpoint := range []string{"https://control.example/loom-client/report?observations=1", "https://control.example/loom-client/report?other=1", "https://control.example/loom-client/report#fragment"} {
+		result, _ := SendWithObservations(context.Background(), http.DefaultClient, endpoint, &Observation{})
+		if result.Err == nil {
+			t.Fatal("caller supplied query or fragment bypassed the fixed endpoint")
+		}
+	}
+}

@@ -11,6 +11,7 @@ import (
 
 	"loom/internal/attest"
 	"loom/internal/model"
+	"loom/internal/observation"
 )
 
 const bootIDPath = "/proc/sys/kernel/random/boot_id"
@@ -140,24 +141,12 @@ func trafficClaimFromDump(cfg *Config, now time.Time, dump []byte, bootID string
 // verifyTrafficAttachment binds the independently verified claim back to its
 // containing Observation. Without both comparisons a relay could attach B's
 // valid counter snapshot to A's otherwise valid observation.
-func verifyTrafficAttachment(o *Observation, ca []byte, now time.Time,
-	maxAge time.Duration) (*attest.TrafficClaim, error) {
-	if o == nil || o.Traffic == nil {
+func verifyTrafficAttachment(o *Observation, ca []byte, now time.Time, maxAge time.Duration) (*attest.TrafficClaim, error) {
+	if o == nil {
 		return nil, nil
 	}
-	claim, err := attest.VerifyTrafficFresh(o.Traffic, ca, now, maxAge)
-	if err != nil {
-		return nil, err
-	}
-	if claim.Node != o.Node {
-		return nil, fmt.Errorf("流量签名节点 %q 与外层观测节点 %q 不一致", claim.Node, o.Node)
-	}
-	if claim.TS != o.TS {
-		return nil, fmt.Errorf("流量签名时间 %q 与外层观测时间 %q 不一致", claim.TS, o.TS)
-	}
-	return claim, nil
+	return observation.VerifyTrafficAttachment(&observation.Observation{Node: o.Node, TS: o.TS, Traffic: o.Traffic}, ca, now, maxAge)
 }
-
 func trafficPeerNode(iface string) string {
 	if !strings.HasPrefix(iface, "wg-") {
 		return ""

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"loom/internal/attest"
+	"loom/internal/observation"
 )
 
 const (
@@ -222,20 +223,9 @@ func collectLinkMetricAttestation(cfg *Config, h *history, now time.Time) *attes
 // verifyLinkMetricAttachment binds the independent claim to its containing
 // Observation. A relay cannot attach one node's valid probe to another node or
 // refresh its timestamp by changing the outer envelope.
-func verifyLinkMetricAttachment(o *Observation, ca []byte, now time.Time,
-	maxAge time.Duration) (*attest.LinkMetricClaim, error) {
-	if o == nil || o.LinkMetrics == nil {
+func verifyLinkMetricAttachment(o *Observation, ca []byte, now time.Time, maxAge time.Duration) (*attest.LinkMetricClaim, error) {
+	if o == nil {
 		return nil, nil
 	}
-	claim, err := attest.VerifyLinkMetricFresh(o.LinkMetrics, ca, now, maxAge)
-	if err != nil {
-		return nil, err
-	}
-	if claim.Node != o.Node {
-		return nil, fmt.Errorf("链路度量签名节点 %q 与外层观测节点 %q 不一致", claim.Node, o.Node)
-	}
-	if claim.TS != o.TS {
-		return nil, fmt.Errorf("链路度量签名时间 %q 与外层观测时间 %q 不一致", claim.TS, o.TS)
-	}
-	return claim, nil
+	return observation.VerifyLinkMetricAttachment(&observation.Observation{Node: o.Node, TS: o.TS, LinkMetrics: o.LinkMetrics}, ca, now, maxAge)
 }
