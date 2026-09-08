@@ -179,9 +179,24 @@ signed decommission，也不代替服务器/隧道节点的退休迁移或通用
 列表移入 Archived devices。SSOT 撤销后若 registry 落盘失败，不返回二维码，重试可
 继续完成归档与新身份分配；不会恢复旧接入。
 
+设备列表直接提供 **Pause / Resume**，只对当前职责恰好为 `use_loom`、已加入且未下线的
+Device 开放，包含 `forward`、`internet_egress` 或 `control` 的设备不能使用此快捷操作。
+`nodes[].paused` 是独立的可恢复 SSOT 状态；它不吊销 identity、不改 Destination grants
+和秘密，也不停掉客户端或配置拉取。服务器应用签名配置后停止接受该设备的全部数据面
+凭据（包括轮换期间的上一代），恢复后沿用原身份和授权，无需重新扫码。
+这是暂停 Loom 转发访问，不是系统断网：本机直连不受影响，旧客户端仍可保持启动和上报。
+不向旧客户端下发“全部入口阻断”来伪装停机，避免宿主健康检查将其当成故障回滚。
+列表中的 `paused` 表示期望态，不能当成所有服务器已经生效的运行回执。
+
 Archived devices 中已为 `revoked` 且不在当前 SSOT 的身份可从详情页永久删除。该操作只清理
 归档 identity 与旧邀请记录，不重复撤销、轮换或影响 replacement Device；仍在 SSOT 的记录
 和非 revoked 身份由服务端拒绝删除。
+
+概览和拓扑页的当前设备、连线及选路投影以当前 SSOT 成员为准。移除 Device 后，即使
+旧快照或 gossip 仍保留该设备的运行观测，也不再把它或引用它的路径显示为当前网络；
+概览中的当前异常同样排除已移除设备；暂停设备保留在 Devices，退出当前网络投影。
+历史事件、流量时间桶与节点诊断证据仍按原有
+保留规则保存，不因 identity 归档或永久删除而被改写。
 
 Archived devices 只读取 identity、SSOT 与当前运行态，不加载无关的 Linux 安装包信息。
 控制端对同一组未变化的原子发布文件复用已经完成完整验签的发行包结果；任一 archive、

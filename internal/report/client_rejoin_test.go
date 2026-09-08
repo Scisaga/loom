@@ -5,15 +5,18 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"loom/internal/clientregistry"
 	"loom/internal/model"
+	"loom/internal/webui"
 )
 
 func recoveryInviteToken(t *testing.T, uri string) string {
@@ -149,6 +152,72 @@ func TestJoinedAccessDeviceRemovalRevokesIdentityAndDesiredCredentials(t *testin
 		t.Fatal(err)
 	}
 	credentialIDs := append([]string(nil), before.NodeByID()[created.ClientID].Access.Credentials...)
+	// Keep the old applied inventory and observation after deletion, as a
+	// running reporter does until its next pull and gossip expiry.
+	assertLiveMembership := func(wantPresent bool) {
+		t.Helper()
+		current, err := model.LoadFile(control.SSOTPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now().UTC()
+		cfg := expectedConfigFromSSOT(before)
+		cfg.Node = before.Nodes[0].ID
+		view := buildView(cfg, &Status{
+			Node: cfg.Node, TS: now.Format(time.RFC3339),
+			Learned: []Observation{{Node: created.ClientID, TS: now.Format(time.RFC3339)}},
+		}, now)
+		enrichControlView(&view, current, cfg.Node)
+		retained := false
+		for _, node := range view.Nodes {
+			if node.ID == created.ClientID {
+				retained = true
+			}
+		}
+		if !retained {
+			t.Fatal("test lost the retained observation before page projection")
+		}
+		handler := webui.Handler(webui.Deps{
+			Node: cfg.Node, Now: func() time.Time { return now },
+			Snapshot: func() webui.View { return view },
+		})
+		for _, path := range []string{"/", "/topology"} {
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, httptest.NewRequest("GET", path, nil))
+			if recorder.Code != 200 || strings.Contains(recorder.Body.String(), created.ClientID) != wantPresent {
+				t.Errorf("%s status=%d, device presence should be %v", path, recorder.Code, wantPresent)
+			}
+		}
+	}
+	assertLiveMembership(true)
+	for _, paused := range []bool{true, true, false, false} {
+		if err := deps.SetDevicePaused(created.ClientID, paused); err != nil {
+			t.Fatal(err)
+		}
+		current, err := model.LoadFile(control.SSOTPath)
+		if err != nil || current.NodeByID()[created.ClientID].Paused != paused {
+			t.Fatalf("pause state was not persisted: %v", err)
+		}
+		clients, _, err := store.List()
+		if err != nil || len(clients) != 1 || clients[0].Status != "ready" || clients[0].ID != created.ClientID {
+			t.Fatalf("pause changed the enrolled identity: %v", err)
+		}
+		inventory, err := deps.List()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, device := range inventory.Clients {
+			if device.ID == created.ClientID && (device.Membership == "paused") != paused {
+				t.Fatalf("inventory membership did not follow SSOT: %+v", device)
+			}
+		}
+		assertLiveMembership(!paused)
+	}
+	for _, id := range []string{"cn-bj", "cn-hz", "demo-missing"} {
+		if err := deps.SetDevicePaused(id, true); err == nil {
+			t.Fatalf("pause accepted a control/server/missing device %s", id)
+		}
+	}
 	if err := deps.PurgeRevoked(created.ClientID); err == nil {
 		t.Fatal("Device still present in SSOT was purged")
 	}
@@ -162,6 +231,10 @@ func TestJoinedAccessDeviceRemovalRevokesIdentityAndDesiredCredentials(t *testin
 	if after.NodeByID()[created.ClientID] != nil {
 		t.Fatal("removed Device remains in SSOT")
 	}
+	if err := deps.SetDevicePaused(created.ClientID, false); err == nil {
+		t.Fatal("resume resurrected a removed device")
+	}
+	assertLiveMembership(false)
 	for _, id := range credentialIDs {
 		if after.CredentialByID()[id] != nil {
 			t.Fatalf("removed Device credential %s remains accepted", id)
@@ -198,4 +271,5 @@ func TestJoinedAccessDeviceRemovalRevokesIdentityAndDesiredCredentials(t *testin
 	if err != nil || len(clients) != 0 {
 		t.Fatalf("purged Device remains in registry: clients=%+v err=%v", clients, err)
 	}
+	assertLiveMembership(false)
 }

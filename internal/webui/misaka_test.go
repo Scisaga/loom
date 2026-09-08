@@ -142,7 +142,6 @@ func TestDeclaredCountersExcludeRetainedUndeclaredObservation(t *testing.T) {
 	for _, want := range []string{
 		`<b>1 <small>/ 2 正常</small></b>`,
 		`快照 snapshot-new · 全网一致`,
-		`Undeclared observed`,
 	} {
 		if !strings.Contains(overview, want) {
 			t.Errorf("Overview missing declaration-aware output %q", want)
@@ -151,9 +150,10 @@ func TestDeclaredCountersExcludeRetainedUndeclaredObservation(t *testing.T) {
 	if strings.Contains(overview, "配置仍在同步") {
 		t.Fatal("removed runtime node polluted the current declared snapshot verdict")
 	}
-	if topology := topologySVG(view); !strings.Contains(topology, "undeclared observed") ||
-		!strings.Contains(topology, `class="node problem undeclared"`) {
-		t.Fatalf("topology did not retain and label the undeclared observation: %s", topology)
+	for name, page := range map[string]string{"overview": overview, "topology": pageTopology(d, false)} {
+		if strings.Contains(page, "removed") || strings.Contains(page, "Undeclared observed") {
+			t.Errorf("%s retained a removed device in the live network", name)
+		}
 	}
 }
 

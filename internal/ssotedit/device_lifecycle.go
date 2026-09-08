@@ -23,6 +23,43 @@ type DeviceRemovalPlan struct {
 	SecretRefs    []string
 }
 
+// SetAccessDevicePaused 只改可恢复的访问开关，不撤销身份或停掉 pull(§14.4)。
+// 控制设备职责由调用方校验，因为 control 是中控本地事实。
+func SetAccessDevicePaused(content []byte, id string, paused bool) ([]byte, error) {
+	current, err := model.Load(content)
+	if err != nil {
+		return nil, err
+	}
+	if findings := validate.Validate(current); len(findings) > 0 {
+		return nil, &ValidationError{Findings: findings}
+	}
+	node := current.NodeByID()[id]
+	if node == nil || !node.IsAccess() || node.IsServer() || node.Decommission {
+		return nil, errors.New("暂停/恢复只适用于未下线的纯 use_loom 设备")
+	}
+	if node.Paused == paused {
+		return append([]byte(nil), content...), nil
+	}
+	doc, root, err := parseDocument(content)
+	if err != nil {
+		return nil, err
+	}
+	nodes, err := clientSequenceAt(root, "nodes")
+	if err != nil {
+		return nil, err
+	}
+	item, err := uniqueMappingByID(nodes, "nodes", id)
+	if err != nil {
+		return nil, err
+	}
+	value := "false"
+	if paused {
+		value = "true"
+	}
+	setMappingValue(item, "paused", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: value})
+	return encodeAndValidate(doc)
+}
+
 // DecommissionAccessDevice writes the authenticated stop instruction for one
 // access-only Device. It deliberately refuses server and combined Devices:
 // retiring an egress also requires policy, pool and tunnel migration and must
@@ -52,6 +89,9 @@ func DecommissionAccessDevice(content []byte, id string) ([]byte, error) {
 		return nil, err
 	}
 	setMappingValue(item, "decommission", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"})
+	if node.Paused {
+		setMappingValue(item, "paused", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "false"})
+	}
 	return encodeAndValidate(doc)
 }
 

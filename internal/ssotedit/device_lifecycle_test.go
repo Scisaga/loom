@@ -2,12 +2,45 @@ package ssotedit
 
 import (
 	"bytes"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
 	"loom/internal/model"
 )
+
+func TestAccessPausePreservesIdentityAndGrants(t *testing.T) {
+	plan, id := enrolledAccessDevice(t)
+	before := loadResult(t, plan.Content)
+	paused, err := SetAccessDevicePaused(plan.Content, id, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := loadResult(t, paused)
+	if !got.NodeByID()[id].Paused || !reflect.DeepEqual(before.Credentials, got.Credentials) ||
+		!reflect.DeepEqual(before.NodeByID()[id].Access, got.NodeByID()[id].Access) {
+		t.Fatal("pause changed identity or grants")
+	}
+	repeated, err := SetAccessDevicePaused(paused, id, true)
+	if err != nil || !bytes.Equal(paused, repeated) {
+		t.Fatalf("pause is not idempotent: %v", err)
+	}
+	resumed, err := SetAccessDevicePaused(paused, id, false)
+	if err != nil || !reflect.DeepEqual(before, loadResult(t, resumed)) {
+		t.Fatalf("resume did not restore original desired state: %v", err)
+	}
+	if _, err := SetAccessDevicePaused(plan.Content, "cn-bj", true); err == nil {
+		t.Fatal("server was allowed to pause")
+	}
+	stopped, err := DecommissionAccessDevice(paused, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SetAccessDevicePaused(stopped, id, false); err == nil {
+		t.Fatal("resume reactivated a decommissioned device")
+	}
+}
 
 func enrolledAccessDevice(t *testing.T) (ClientPlan, string) {
 	t.Helper()

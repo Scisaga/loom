@@ -302,6 +302,9 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 				return store.PurgeRevoked(id)
 			})
 		},
+		SetDevicePaused: func(id string, paused bool) error {
+			return setDevicePaused(c, store, id, paused)
+		},
 		DeleteDevice: func(id string) error {
 			id = strings.TrimSpace(id)
 			if !model.ValidNodeID(id) {
@@ -565,6 +568,9 @@ func applyDeviceDeclaration(device *webui.ClientView, ssot *model.SSOT, node *mo
 	}
 	device.Legacy = legacy
 	device.Membership = "active"
+	if node.Paused {
+		device.Membership = "paused"
+	}
 	if node.Decommission {
 		device.Membership = "decommissioned"
 	}

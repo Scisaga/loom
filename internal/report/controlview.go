@@ -47,6 +47,7 @@ func enrichNodes(v *webui.View, s *model.SSOT, controlNode string) {
 		node.Direction = ""
 		node.EgressCapable = false
 		node.Drain, node.Decommission = false, false
+		node.Paused = false
 		byID[v.Nodes[i].ID] = i
 	}
 	for i := range s.Nodes {
@@ -72,6 +73,7 @@ func enrichNodes(v *webui.View, s *model.SSOT, controlNode string) {
 		}
 		got.Drain = declared.Drain
 		got.Decommission = declared.Decommission
+		got.Paused = declared.Paused
 		got.IngressKnown = true
 		got.Roles = got.Roles[:0]
 		if declared.ID == controlNode {

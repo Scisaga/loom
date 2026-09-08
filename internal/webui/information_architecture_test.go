@@ -390,6 +390,7 @@ func TestTopologySeparatesCarrierEvidenceFromOnDemandIntent(t *testing.T) {
 func TestTopologyDirectProbeStatusSeparatesDeclaredFromSampled(t *testing.T) {
 	d := misakaDeps()
 	v := d.Snapshot()
+	v.Nodes = append(v.Nodes, NodeView{ID: "demo-b", Declared: true}, NodeView{ID: "demo-c", Declared: true})
 	v.Links = append(v.Links,
 		LinkView{From: "demo-d", To: "demo-b", Kind: "direct-hy2", Samples: 3},
 		LinkView{From: "demo-b", To: "demo-c", Kind: "direct-hy2"},

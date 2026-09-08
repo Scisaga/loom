@@ -555,7 +555,7 @@ func serverInto(cfg *sbConfig, s *model.SSOT, sv *model.Node) {
 		}
 		// 候选集因接入节点而异,所以先找出这张凭据是谁的。
 		owner := s.AccessNodeForCredential(c.ID)
-		if owner == nil {
+		if owner == nil || owner.Paused {
 			continue
 		}
 		cands, _ := s.EnumerateCandidates(owner, d)
