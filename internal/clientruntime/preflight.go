@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"slices"
 	"strings"
 )
@@ -39,8 +40,9 @@ type singBoxLog struct {
 }
 
 type singBoxDNS struct {
-	Servers  []singBoxDNSServer `json:"servers"`
-	Strategy string             `json:"strategy,omitempty"`
+	Servers        []singBoxDNSServer `json:"servers"`
+	Strategy       string             `json:"strategy,omitempty"`
+	ReverseMapping bool               `json:"reverse_mapping,omitempty"`
 }
 
 type singBoxDNSServer struct {
@@ -97,14 +99,19 @@ type singBoxRoute struct {
 }
 
 type singBoxRule struct {
-	Inbound      []string `json:"inbound,omitempty"`
-	AuthUser     []string `json:"auth_user,omitempty"`
-	IPCIDR       []string `json:"ip_cidr,omitempty"`
-	Domain       []string `json:"domain,omitempty"`
-	DomainSuffix []string `json:"domain_suffix,omitempty"`
-	Port         []int    `json:"port,omitempty"`
-	Outbound     string   `json:"outbound,omitempty"`
-	Action       string   `json:"action,omitempty"`
+	Type         string        `json:"type,omitempty"`
+	Mode         string        `json:"mode,omitempty"`
+	Rules        []singBoxRule `json:"rules,omitempty"`
+	DomainRegex  []string      `json:"domain_regex,omitempty"`
+	Invert       bool          `json:"invert,omitempty"`
+	Inbound      []string      `json:"inbound,omitempty"`
+	AuthUser     []string      `json:"auth_user,omitempty"`
+	IPCIDR       []string      `json:"ip_cidr,omitempty"`
+	Domain       []string      `json:"domain,omitempty"`
+	DomainSuffix []string      `json:"domain_suffix,omitempty"`
+	Port         []int         `json:"port,omitempty"`
+	Outbound     string        `json:"outbound,omitempty"`
+	Action       string        `json:"action,omitempty"`
 }
 
 type singBoxExperimental struct {
@@ -165,7 +172,10 @@ func DeriveWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile, caPa
 		config.Route.Rules = rules
 	} else {
 		config.Route.AutoDetectInterface = true
-		config.Route.Rules = append([]singBoxRule{windowsTUNDNSRule()}, config.Route.Rules...)
+		// §7.2.1：TUN 只收到目标 IP；复用受管 DNS 的域名映射，并从可见的
+		// HTTP/TLS/QUIC 元数据补充域名，才能执行原签名 Service 规则。
+		config.DNS.ReverseMapping = true
+		config.Route.Rules = append([]singBoxRule{windowsTUNDNSRule(), windowsTUNSniffRule()}, config.Route.Rules...)
 	}
 	derived, err := json.MarshalIndent(&config, "", "  ")
 	if err != nil {
@@ -194,9 +204,19 @@ func windowsTUNDNSRule() singBoxRule {
 }
 
 func isWindowsTUNDNSRule(rule singBoxRule) bool {
-	return rule.Action == "hijack-dns" && rule.Outbound == "" &&
-		slices.Equal(rule.Inbound, []string{"tun-in"}) && slices.Equal(rule.Port, []int{53}) &&
-		len(rule.AuthUser) == 0 && len(rule.IPCIDR) == 0 && len(rule.Domain) == 0 && len(rule.DomainSuffix) == 0
+	return reflect.DeepEqual(rule, windowsTUNDNSRule())
+}
+
+func windowsTUNSniffRule() singBoxRule {
+	// §7.2.1：1.11.4 的无 SNI TLS 嗅探会清空已恢复的 DNS 域名；只补充未知域名。
+	return singBoxRule{Type: "logical", Mode: "and", Rules: []singBoxRule{
+		{Inbound: []string{"tun-in"}},
+		{DomainRegex: []string{".+"}, Invert: true},
+	}, Action: "sniff"}
+}
+
+func isWindowsTUNSniffRule(rule singBoxRule) bool {
+	return reflect.DeepEqual(rule, windowsTUNSniffRule())
 }
 
 func validateRuntimeTarget(profile WindowsRuntimeProfile, caPath string) error {
@@ -284,8 +304,11 @@ func validateWindowsSingBox(body []byte, profile WindowsRuntimeProfile, caPath s
 	if config.Route.AutoDetectInterface != localTUNCapture {
 		return errors.New("[§7.2.1] Windows 网卡绑定与本地接管形态不一致")
 	}
-	if localTUNCapture && (len(config.Route.Rules) == 0 || !isWindowsTUNDNSRule(config.Route.Rules[0])) {
-		return errors.New("[§7.2.1] Windows TUN 必须在出口规则之前接管 DNS")
+	if config.DNS.ReverseMapping != localTUNCapture {
+		return errors.New("[§7.2.1] DNS 域名映射只属于本机 TUN 接管，不属于远端签名策略")
+	}
+	if localTUNCapture && (len(config.Route.Rules) < 2 || !isWindowsTUNDNSRule(config.Route.Rules[0]) || !isWindowsTUNSniffRule(config.Route.Rules[1])) {
+		return errors.New("[§7.2.1] Windows TUN 必须在出口规则之前接管 DNS 并识别域名")
 	}
 
 	inboundTags := map[string]bool{}
@@ -405,10 +428,13 @@ func validateWindowsSingBox(body []byte, profile WindowsRuntimeProfile, caPath s
 	managedRule := false
 	for index, rule := range config.Route.Rules {
 		if rule.Action != "" {
-			if localTUNCapture && index == 0 && isWindowsTUNDNSRule(rule) {
+			if localTUNCapture && (index == 0 && isWindowsTUNDNSRule(rule) || index == 1 && isWindowsTUNSniffRule(rule)) {
 				continue
 			}
 			return fmt.Errorf("[§7.2.1] 路由规则 %d 包含非托管 action", index)
+		}
+		if rule.Type != "" || rule.Mode != "" || len(rule.Rules) != 0 || len(rule.DomainRegex) != 0 || rule.Invert {
+			return fmt.Errorf("[§7.2.1] 路由规则 %d 包含本地接管专用匹配字段", index)
 		}
 		if rule.Outbound == "" || !outboundTags[rule.Outbound] {
 			return fmt.Errorf("route rule %d references unknown outbound %q", index, rule.Outbound)
