@@ -48,7 +48,7 @@
     .card {fill:#FFF;stroke:#E4E7E5} .rule {stroke:#E6E9E7;stroke-width:1}
   </style>
     <clipPath id="main-pane-clip" clipPathUnits="userSpaceOnUse">
-      <rect x="188" y="50" width="700" height="574" />
+      <rect x="188" y="50" width="700" height="582" />
     </clipPath>
   </defs>
   <g class="ui">
@@ -57,18 +57,19 @@
     <text x="888" y="24" class="tiny muted" text-anchor="end">原位编辑 · Enter 保存 / Esc 取消 · 右侧整体滚动</text>
     <g transform="translate(0 32)">
       <rect x="12" y="10" width="876" height="614" rx="10" fill="#FCFCFB" stroke="#D9DDDA" />
-      <rect x="13" y="11" width="874" height="39" rx="10" fill="#FFF" />
-      <rect x="13" y="32" width="874" height="18" rx="0" fill="#FFF" />
-      <use href="#brand-favicon" x="25" y="19" width="22" height="22" class="" />
-      <text x="58" y="35" class="section">Loom</text>
-      <rect x="109" y="18" width="96" height="24" rx="12" fill="#F4F6F5" stroke="#E4E7E5" />
-      <text x="157.0" y="34" class="tiny muted" text-anchor="middle">Portable TUN</text>
-      <path d="M816 30H826" stroke="#747D77" stroke-width="1.4" />
-      <path d="M861 25L871 35" stroke="#747D77" stroke-width="1.3" />
-      <path d="M871 25L861 35" stroke="#747D77" stroke-width="1.3" />
-      <path d="M12 50H888" stroke="#E6E9E7" stroke-width="1" />
-      <rect x="13" y="51" width="175" height="563" rx="0" fill="#F7F8F7" />
-      <path d="M188 51L188 624" stroke="#E6E9E7" stroke-width="1" />
+      <rect x="13" y="11" width="874" height="31" rx="10" fill="#FFF" />
+      <rect x="13" y="24" width="874" height="18" rx="0" fill="#FFF" />
+      <use href="#brand-favicon" x="25" y="15" width="22" height="22" class="" />
+      <text x="58" y="31" class="section">Loom</text>
+      <rect x="109" y="14" width="96" height="24" rx="12" fill="#F4F6F5" stroke="#E4E7E5" />
+      <text x="157.0" y="30" class="tiny muted" text-anchor="middle">Portable TUN</text>
+      <path d="M816 26H826" stroke="#747D77" stroke-width="1.4" />
+      <path d="M861 21L871 31" stroke="#747D77" stroke-width="1.3" />
+      <path d="M871 21L861 31" stroke="#747D77" stroke-width="1.3" />
+      <path d="M12 42H888" stroke="#E6E9E7" stroke-width="1" />
+      <g transform="translate(0 -8)">
+      <rect x="13" y="51" width="175" height="571" rx="0" fill="#F7F8F7" />
+      <path d="M188 51L188 632" stroke="#E6E9E7" stroke-width="1" />
       <use href="#brand-large" x="28" y="68" width="40" height="40" class="" />
       <text x="79" y="89" class="title">Loom</text>
       <text x="80" y="108" class="tiny muted">你的连接配置</text>
@@ -85,9 +86,9 @@
       <circle cx="39.5" cy="288.5" r="4" fill="#AAB2AC" />
       <text x="53" y="295" class="body">demo-lab</text>
       <text x="53" y="313" class="tiny muted">未连接</text>
-      <path d="M28 556H172" stroke="#E6E9E7" stroke-width="1" />
-      <text x="28" y="579" class="tiny muted">Enter 保存 · Esc 取消</text>
-      <text x="28" y="600" class="tiny muted">同时只运行一个连接</text>
+      <path d="M28 564H172" stroke="#E6E9E7" stroke-width="1" />
+      <text x="28" y="587" class="tiny muted">Enter 保存 · Esc 取消</text>
+      <text x="28" y="608" class="tiny muted">同时只运行一个连接</text>
       <rect x="50" y="167" width="120" height="24" rx="0" fill="#FFF" stroke="#239B68" />
       <text x="53" y="185" class="body medium">demo-work</text>
       <path d="M120 171v15" stroke="#239B68" stroke-width="1" />
@@ -165,33 +166,35 @@
         <text x="226" y="652" class="tiny muted">原因：保留当前出口</text>
         <text x="226" y="666" class="tiny muted">读取：未知</text>
       </g>
-      <rect x="879" y="58" width="4" height="558" rx="2" fill="#EDF0EE" />
+      <rect x="879" y="58" width="4" height="566" rx="2" fill="#EDF0EE" />
       <rect x="879" y="58" width="4" height="478" rx="2" fill="#C6CDC8" />
+      </g>
     </g>
     <text x="12" y="684" class="section">02  添加配置</text>
     <text x="888" y="684" class="tiny muted" text-anchor="end">当前连接继续运行 · 新配置加入后保持断开</text>
     <g transform="translate(0 692)">
       <rect x="12" y="10" width="876" height="614" rx="10" fill="#FCFCFB" stroke="#D9DDDA" />
-      <rect x="13" y="11" width="874" height="39" rx="10" fill="#FFF" />
-      <rect x="13" y="32" width="874" height="18" rx="0" fill="#FFF" />
-      <use href="#brand-favicon" x="25" y="19" width="22" height="22" class="" />
-      <text x="58" y="35" class="section">Loom</text>
-      <rect x="109" y="18" width="96" height="24" rx="12" fill="#F4F6F5" stroke="#E4E7E5" />
-      <text x="157.0" y="34" class="tiny muted" text-anchor="middle">Portable TUN</text>
-      <path d="M816 30H826" stroke="#747D77" stroke-width="1.4" />
-      <path d="M861 25L871 35" stroke="#747D77" stroke-width="1.3" />
-      <path d="M871 25L861 35" stroke="#747D77" stroke-width="1.3" />
-      <path d="M12 50H888" stroke="#E6E9E7" stroke-width="1" />
-      <rect x="13" y="51" width="175" height="563" rx="0" fill="#F7F8F7" />
-      <path d="M188 51L188 624" stroke="#E6E9E7" stroke-width="1" />
+      <rect x="13" y="11" width="874" height="31" rx="10" fill="#FFF" />
+      <rect x="13" y="24" width="874" height="18" rx="0" fill="#FFF" />
+      <use href="#brand-favicon" x="25" y="15" width="22" height="22" class="" />
+      <text x="58" y="31" class="section">Loom</text>
+      <rect x="109" y="14" width="96" height="24" rx="12" fill="#F4F6F5" stroke="#E4E7E5" />
+      <text x="157.0" y="30" class="tiny muted" text-anchor="middle">Portable TUN</text>
+      <path d="M816 26H826" stroke="#747D77" stroke-width="1.4" />
+      <path d="M861 21L871 31" stroke="#747D77" stroke-width="1.3" />
+      <path d="M871 21L861 31" stroke="#747D77" stroke-width="1.3" />
+      <path d="M12 42H888" stroke="#E6E9E7" stroke-width="1" />
+      <g transform="translate(0 -8)">
+      <rect x="13" y="51" width="175" height="571" rx="0" fill="#F7F8F7" />
+      <path d="M188 51L188 632" stroke="#E6E9E7" stroke-width="1" />
       <text x="79" y="89" class="title">Loom</text>
       <text x="80" y="108" class="tiny muted">你的连接配置</text>
       <text x="28" y="145" class="small medium muted">连接配置</text>
       <rect x="146" y="122" width="28" height="28" rx="6" fill="#EEF1EE" />
       <use href="#plus" x="151" y="127" width="18" height="18" class="icon" />
-      <path d="M28 556H172" stroke="#E6E9E7" stroke-width="1" />
-      <text x="28" y="579" class="tiny muted">添加时暂不可切换</text>
-      <text x="28" y="600" class="tiny muted">当前连接继续运行</text>
+      <path d="M28 564H172" stroke="#E6E9E7" stroke-width="1" />
+      <text x="28" y="587" class="tiny muted">添加时暂不可切换</text>
+      <text x="28" y="608" class="tiny muted">当前连接继续运行</text>
       <text x="208" y="87" class="title">添加连接配置</text>
       <text x="208" y="110" class="small muted">使用中控提供的加入邀请</text>
       <rect x="208" y="126" width="660" height="330" rx="8" fill="#FFF" stroke="#E4E7E5" />
@@ -224,6 +227,7 @@
       <circle cx="39.5" cy="288.5" r="4" fill="#AAB2AC" />
       <text x="53" y="295" class="body">demo-lab</text>
       <text x="53" y="313" class="tiny muted">未连接</text>
+      </g>
     </g>
     <text x="12" y="1344" class="section">03  连接中</text>
     <text x="888" y="1344" class="tiny muted" text-anchor="end">连接摘要局部 · 保留取消连接</text>
@@ -269,18 +273,19 @@
     <text x="888" y="1846" class="tiny muted" text-anchor="end">邀请加入当前配置 · 不另建条目</text>
     <g transform="translate(0 1854)">
       <rect x="12" y="10" width="876" height="614" rx="10" fill="#FCFCFB" stroke="#D9DDDA" />
-      <rect x="13" y="11" width="874" height="39" rx="10" fill="#FFF" />
-      <rect x="13" y="32" width="874" height="18" rx="0" fill="#FFF" />
-      <use href="#brand-favicon" x="25" y="19" width="22" height="22" class="" />
-      <text x="58" y="35" class="section">Loom</text>
-      <rect x="109" y="18" width="96" height="24" rx="12" fill="#F4F6F5" stroke="#E4E7E5" />
-      <text x="157.0" y="34" class="tiny muted" text-anchor="middle">Portable TUN</text>
-      <path d="M816 30H826" stroke="#747D77" stroke-width="1.4" />
-      <path d="M861 25L871 35" stroke="#747D77" stroke-width="1.3" />
-      <path d="M871 25L861 35" stroke="#747D77" stroke-width="1.3" />
-      <path d="M12 50H888" stroke="#E6E9E7" stroke-width="1" />
-      <rect x="13" y="51" width="175" height="563" rx="0" fill="#F7F8F7" />
-      <path d="M188 51L188 624" stroke="#E6E9E7" stroke-width="1" />
+      <rect x="13" y="11" width="874" height="31" rx="10" fill="#FFF" />
+      <rect x="13" y="24" width="874" height="18" rx="0" fill="#FFF" />
+      <use href="#brand-favicon" x="25" y="15" width="22" height="22" class="" />
+      <text x="58" y="31" class="section">Loom</text>
+      <rect x="109" y="14" width="96" height="24" rx="12" fill="#F4F6F5" stroke="#E4E7E5" />
+      <text x="157.0" y="30" class="tiny muted" text-anchor="middle">Portable TUN</text>
+      <path d="M816 26H826" stroke="#747D77" stroke-width="1.4" />
+      <path d="M861 21L871 31" stroke="#747D77" stroke-width="1.3" />
+      <path d="M871 21L861 31" stroke="#747D77" stroke-width="1.3" />
+      <path d="M12 42H888" stroke="#E6E9E7" stroke-width="1" />
+      <g transform="translate(0 -8)">
+      <rect x="13" y="51" width="175" height="571" rx="0" fill="#F7F8F7" />
+      <path d="M188 51L188 632" stroke="#E6E9E7" stroke-width="1" />
       <use href="#brand-large" x="28" y="68" width="40" height="40" class="" />
       <text x="79" y="89" class="title">Loom</text>
       <text x="80" y="108" class="tiny muted">你的连接配置</text>
@@ -298,9 +303,9 @@
       <circle cx="39.5" cy="288.5" r="4" fill="#AAB2AC" />
       <text x="53" y="295" class="body">demo-lab</text>
       <text x="53" y="313" class="tiny muted">未连接</text>
-      <path d="M28 556H172" stroke="#E6E9E7" stroke-width="1" />
-      <text x="28" y="579" class="tiny muted">双击名称可重命名</text>
-      <text x="28" y="600" class="tiny muted">同时只运行一个连接</text>
+      <path d="M28 564H172" stroke="#E6E9E7" stroke-width="1" />
+      <text x="28" y="587" class="tiny muted">双击名称可重命名</text>
+      <text x="28" y="608" class="tiny muted">同时只运行一个连接</text>
       <text x="208" y="87" class="title">demo-new</text>
       <rect x="780" y="65" width="88" height="28" rx="5" fill="#FFF" stroke="#E4E7E5" />
       <text x="824" y="83" class="body muted" text-anchor="middle">删除配置</text>
@@ -317,6 +322,7 @@
       <text x="484" y="244" class="small medium" text-anchor="middle">粘贴二维码</text>
       <text x="276" y="273" class="tiny muted">也可拖入邀请文件，或按 Ctrl+V 粘贴二维码。</text>
       <text x="208" y="310" class="small green">当前连接：“demo-work”</text>
+      </g>
     </g>
   </g>
 </svg>

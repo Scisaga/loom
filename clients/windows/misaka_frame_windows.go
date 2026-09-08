@@ -113,7 +113,7 @@ func misakaCaptionHit(app *portableGUI, hwnd uintptr, point portablePoint) int {
 	}
 	s := app.scale
 	left := bounds.right - s(84)
-	if point.y < 0 || point.y >= s(40) || point.x < left || point.x >= bounds.right {
+	if point.y < 0 || point.y >= s(misakaTitleHeight) || point.x < left || point.x >= bounds.right {
 		return 0
 	}
 	// §7.2：分别缩放各条边界，与非整数 DPI 下的绘制位置一致，
@@ -127,7 +127,7 @@ func misakaCaptionHit(app *portableGUI, hwnd uintptr, point portablePoint) int {
 func misakaInvalidateCaption(app *portableGUI, hwnd uintptr) {
 	var bounds portableRect
 	procGetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&bounds)))
-	bounds.left, bounds.bottom = bounds.right-app.scale(84), app.scale(40)
+	bounds.left, bounds.bottom = bounds.right-app.scale(84), app.scale(misakaTitleHeight)
 	procInvalidateRect.Call(hwnd, uintptr(unsafe.Pointer(&bounds)), 0)
 }
 

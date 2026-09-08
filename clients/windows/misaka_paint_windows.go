@@ -21,15 +21,15 @@ func (app *portableGUI) paintMisaka(dc uintptr) {
 		return
 	}
 	c.Fill(bounds, misakaBackground, 0)
-	c.Fill(misakaRect(0, s(40), s(176), bounds.bottom-s(40)), misakaSidebar, 0)
-	c.Fill(misakaRect(s(176), s(40), s(1), bounds.bottom-s(40)), misakaBorder, 0)
-	c.Fill(misakaRect(0, 0, bounds.right, s(40)), misakaWhite, 0)
-	c.Fill(misakaRect(0, s(39), bounds.right, s(1)), misakaBorder, 0)
-	c.Text("Loom", misakaRect(s(42), s(9), s(80), s(23)), s(16), 600, misakaText, 0)
-	c.Fill(misakaRect(s(97), s(8), s(96), s(24)), 0xF4F6F5, s(12))
-	c.Text(windowsEditionLabel(app.edition), misakaRect(s(97), s(8), s(96), s(24)), s(10), 400, misakaMuted, 1)
+	c.Fill(misakaRect(0, s(misakaTitleHeight), s(176), bounds.bottom-s(misakaTitleHeight)), misakaSidebar, 0)
+	c.Fill(misakaRect(s(176), s(misakaTitleHeight), s(1), bounds.bottom-s(misakaTitleHeight)), misakaBorder, 0)
+	c.Fill(misakaRect(0, 0, bounds.right, s(misakaTitleHeight)), misakaWhite, 0)
+	c.Fill(misakaRect(0, s(misakaTitleHeight-1), bounds.right, s(1)), misakaBorder, 0)
+	c.Text("Loom", misakaRect(s(42), s((misakaTitleHeight-24)/2), s(80), s(24)), s(16), 600, misakaText, 0)
+	c.Fill(misakaRect(s(97), s((misakaTitleHeight-24)/2), s(96), s(24)), 0xF4F6F5, s(12))
+	c.Text(windowsEditionLabel(app.edition), misakaRect(s(97), s((misakaTitleHeight-24)/2), s(96), s(24)), s(10), 400, misakaMuted, 1)
 	for i, label := range []string{"−", "×"} {
-		r := misakaRect(bounds.right-s(int32(2-i)*42), 0, s(42), s(40))
+		r := misakaRect(bounds.right-s(int32(2-i)*42), 0, s(42), s(misakaTitleHeight))
 		color := uint32(misakaText)
 		if app.skin.hoverCaption == i+1 {
 			fill := uint32(0xEEF0EE)
@@ -41,9 +41,9 @@ func (app *portableGUI) paintMisaka(dc uintptr) {
 		}
 		c.Text(label, r, s(18), 400, color, 1)
 	}
-	c.Text("Loom", misakaRect(s(67), s(58), s(95), s(28)), s(23), 600, misakaText, 0)
-	c.Text("你的连接配置", misakaRect(s(68), s(85), s(98), s(18)), s(10), 400, misakaMuted, 0)
-	c.Text("连接配置", misakaRect(s(16), s(115), s(112), s(24)), s(12), 600, misakaMuted, 0)
+	c.Text("Loom", misakaRect(s(67), s(misakaTitleHeight+18), s(95), s(28)), s(23), 600, misakaText, 0)
+	c.Text("你的连接配置", misakaRect(s(68), s(misakaTitleHeight+45), s(98), s(18)), s(10), 400, misakaMuted, 0)
+	c.Text("连接配置", misakaRect(s(16), s(misakaTitleHeight+75), s(112), s(24)), s(12), 600, misakaMuted, 0)
 	c.Fill(misakaRect(s(16), bounds.bottom-s(64), s(144), s(1)), misakaBorder, 0)
 	c.Text("双击名称可重命名", misakaRect(s(16), bounds.bottom-s(56), s(148), s(20)), s(10), 400, misakaMuted, 0)
 	c.Text("同时只运行一个连接", misakaRect(s(16), bounds.bottom-s(34), s(148), s(20)), s(10), 400, misakaMuted, 0)
@@ -62,7 +62,7 @@ func (app *portableGUI) paintMisakaPane(dc uintptr) {
 	}
 	c, s := app.skin.canvas, app.scale
 	c.Fill(bounds, misakaBackground, 0)
-	c.offsetX, c.offsetY = -s(176), -s(40)-app.skin.scrollY
+	c.offsetX, c.offsetY = -s(176), -s(misakaContentOriginY)-app.skin.scrollY
 	snapshot := app.snapshot()
 	if snapshot.profileDraft != nil {
 		app.paintMisakaDraft(c, snapshot)
@@ -125,11 +125,11 @@ func (app *portableGUI) drawMisakaBrand(dc uintptr, large bool) {
 	icon := loadPortableAppIcon(instance, portableSMCXSmallIcon, portableSMCYSmallIcon, app.dpi())
 	iconWidth := portableSystemMetricForDPI(portableSMCXSmallIcon, app.dpi())
 	iconHeight := portableSystemMetricForDPI(portableSMCYSmallIcon, app.dpi())
-	procDrawIconEx.Call(dc, uintptr(s(15)), uintptr((s(40)-iconHeight)/2), icon, uintptr(iconWidth), uintptr(iconHeight), 0, 0, portableDrawIconNormal)
+	procDrawIconEx.Call(dc, uintptr(s(15)), uintptr((s(misakaTitleHeight)-iconHeight)/2), icon, uintptr(iconWidth), uintptr(iconHeight), 0, 0, portableDrawIconNormal)
 	if large {
 		// §7.2：窗口内品牌区沿用完整版标志，系统小图标继续使用 favicon 原图。
 		brand, _, _ := procLoadImage.Call(instance, portableIconBrand, portableImageIcon, uintptr(s(40)), uintptr(s(40)), portableLRShared)
-		procDrawIconEx.Call(dc, uintptr(s(16)), uintptr(s(58)), brand, uintptr(s(40)), uintptr(s(40)), 0, 0, portableDrawIconNormal)
+		procDrawIconEx.Call(dc, uintptr(s(16)), uintptr(s(misakaTitleHeight+18)), brand, uintptr(s(40)), uintptr(s(40)), 0, 0, portableDrawIconNormal)
 	}
 }
 

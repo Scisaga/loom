@@ -28,6 +28,12 @@ const (
 	misakaControlDraftCancel
 )
 
+// §7.2：标题栏缩为 32 DIP；正文保留原绘制坐标原点，由视口整体上移。
+const (
+	misakaTitleHeight    int32 = 32
+	misakaContentOriginY int32 = 40
+)
+
 const (
 	misakaBackground = 0xFCFCFB
 	misakaSidebar    = 0xF7F8F7
@@ -147,7 +153,7 @@ func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height
 	s := app.scale
 	resized := app.skin.width != width || app.skin.height != height
 	app.skin.width, app.skin.height = width, height
-	moveMisakaControl(app.skin.pane, app.hwnd, misakaRect(s(176), s(40), width-s(176), height-s(40)))
+	moveMisakaControl(app.skin.pane, app.hwnd, misakaRect(s(176), s(misakaTitleHeight), width-s(176), height-s(misakaTitleHeight)))
 	count := 0
 	if snapshot.state == guiConnected {
 		count = len(snapshot.paths)
@@ -161,7 +167,7 @@ func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height
 		if snapshot.profileDraft != nil {
 			content = s(468)
 		}
-		app.updateMisakaScroll(content - s(40))
+		app.updateMisakaScroll(content - s(misakaContentOriginY))
 		if app.misakaContentEnd() == end {
 			break
 		}
@@ -173,14 +179,14 @@ func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height
 		parent, _, _ := portableUser32.NewProc("GetParent").Call(control)
 		if parent == app.skin.pane {
 			x -= s(176)
-			y -= s(40) + app.skin.scrollY
+			y -= s(misakaContentOriginY) + app.skin.scrollY
 		}
 		moveMisakaControl(control, parent, misakaRect(x, y, max(1, w), max(1, h)))
 		visible[control] = true
 	}
 	side, main, end := s(176), s(196), app.misakaContentEnd()
-	move(app.controls.addProfileButton, side-s(42), s(112), s(28), s(28))
-	move(app.controls.networkList, s(12), s(150), side-s(24), height-s(214))
+	move(app.controls.addProfileButton, side-s(42), s(misakaTitleHeight+72), s(28), s(28))
+	move(app.controls.networkList, s(12), s(misakaTitleHeight+110), side-s(24), height-s(misakaTitleHeight+174))
 	move(app.controls.stateIcon, main+s(15), s(115), s(38), s(38))
 	move(app.controls.stateValue, main+s(68), s(114), end-main-s(198), s(32))
 	move(app.controls.primaryButton, end-s(118), s(118), s(100), s(32))
@@ -210,7 +216,7 @@ func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height
 				h = s(28)
 			}
 			parent := app.skin.pane
-			target := misakaRect(main+s(318)-s(176), s(220)+(s(34)-h)/2-s(40)-app.skin.scrollY, min(s(163), end-main-s(318)), h)
+			target := misakaRect(main+s(318)-s(176), s(220)+(s(34)-h)/2-s(misakaContentOriginY)-app.skin.scrollY, min(s(163), end-main-s(318)), h)
 			procMisakaMapPoints.Call(0, parent, uintptr(unsafe.Pointer(&r)), 2)
 			if r != target {
 				procMoveWindow.Call(app.controls.routeCombo, uintptr(target.left), uintptr(target.top), uintptr(target.right-target.left), uintptr(s(220)), 0)
@@ -719,7 +725,7 @@ func misakaWindowMessage(app *portableGUI, hwnd uintptr, message uint32, wParam,
 				return 11, true
 			}
 		}
-		if y < s(40) {
+		if y < s(misakaTitleHeight) {
 			if x < w-s(84) {
 				return 2, true
 			}

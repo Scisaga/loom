@@ -464,7 +464,7 @@ Windows 不需要新的网络核心，但需要平台宿主：
 **功能原型（定义布局与交互，不作为窗口逐像素实现）：**
 [Windows 客户端首页 v2](../assets/client/windows/loom-client-home-misaka-v2.svg) 与
 [重命名、添加和连接状态 v2](../assets/client/windows/loom-client-interactions-misaka-v2.svg)。
-浅色 Misaka 外观采用紧凑配置侧栏、自绘标题栏、连接摘要和当前选路面板；各服务
+浅色 Misaka 外观采用紧凑配置侧栏、32 DIP 自绘标题栏、连接摘要和当前选路面板；各服务
 在同一白色面板内逐行展示，用贯穿面板的细线分隔，测量标在对应连线上。交互沿用首页完整窗口、侧栏和单层白色
 内容卡片：重命名只增加条目内编辑框，添加在右侧卡片直接排列表单，不嵌套上传面板；
 连接中只更新原摘要状态。三个 edition

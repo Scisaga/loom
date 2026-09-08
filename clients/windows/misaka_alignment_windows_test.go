@@ -191,9 +191,9 @@ func TestGUIMisakaBrandUsesExistingFullMark(t *testing.T) {
 		if icon == 0 {
 			t.Fatal(err)
 		}
-		procDrawIconEx.Call(referenceDC, uintptr(s(16)), uintptr(s(58)), icon, uintptr(s(40)), uintptr(s(40)), 0, 0, portableDrawIconNormal)
+		procDrawIconEx.Call(referenceDC, uintptr(s(16)), uintptr(s(misakaTitleHeight+18)), icon, uintptr(s(40)), uintptr(s(40)), 0, 0, portableDrawIconNormal)
 		portableGDI32.NewProc("GdiFlush").Call()
-		for y := s(58); y < s(58)+s(40); y++ {
+		for y := s(misakaTitleHeight + 18); y < s(misakaTitleHeight+18)+s(40); y++ {
 			for x := s(16); x < s(16)+s(40); x++ {
 				if misakaCanvasTestPixel(pixels, width, x, y) != misakaCanvasTestPixel(reference, width, x, y) {
 					t.Fatalf("[§7.2] DPI %d 品牌区与既有完整版图标不一致", dpi)

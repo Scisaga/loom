@@ -25,6 +25,7 @@ func TestGUIMisakaFrameRetainsNativeWindowInteractions(t *testing.T) {
 		want uintptr
 	}{
 		{"caption", client.right / 2, app.scale(20), 2},
+		{"content below shorter caption", client.right / 2, app.scale(36), 1},
 		{"left resize", 1, client.bottom / 2, 10},
 		{"bottom-right resize", client.right - 1, client.bottom - 1, 17},
 		{"minimize", client.right - app.scale(63), app.scale(20), 1},
