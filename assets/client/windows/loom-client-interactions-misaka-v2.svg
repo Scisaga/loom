@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1500" viewBox="0 0 900 1500" role="img" aria-labelledby="title description">
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1508" viewBox="0 0 900 1508" role="img" aria-labelledby="title description">
   <title id="title">Loom Windows client interactions — Misaka v2</title>
   <desc id="description">Two complete compact windows reuse the approved home style: inline profile rename and a single right-side white form card. A small crop shows the same connection summary while connecting. The invitation area has no nested card.</desc>
   <!-- Every full window is 876 × 614, matching the approved home prototype. Only ordinary inputs and actions add borders inside the content card. -->
@@ -50,8 +50,9 @@
   </style>
   </defs>
   <g class="ui">
-    <rect x="0" y="0" width="900" height="1500" rx="0" fill="#EDF0EE"/>
-    <text x="12" y="25" class="section">01  重命名 · 保留首页，只在名称原位编辑</text>
+    <rect x="0" y="0" width="900" height="1508" rx="0" fill="#EDF0EE"/>
+    <text x="12" y="24" class="section">01  重命名</text>
+    <text x="888" y="24" class="tiny muted" text-anchor="end">原位编辑 · Enter 保存 / Esc 取消</text>
     <g transform="translate(0 32)">
       <rect xmlns="http://www.w3.org/2000/svg" x="12" y="10" width="876" height="614" rx="10" fill="#FCFCFB" stroke="#D9DDDA"/>
       <rect xmlns="http://www.w3.org/2000/svg" x="13" y="11" width="874" height="39" rx="10" fill="#FFF"/>
@@ -159,12 +160,13 @@
       <text xmlns="http://www.w3.org/2000/svg" x="826" y="522" class="small" text-anchor="middle">服务目标</text>
       <text xmlns="http://www.w3.org/2000/svg" x="208" y="571" class="tiny muted">详情包含当前 / 最佳质量、切换原因和读取时间。</text>
       <text xmlns="http://www.w3.org/2000/svg" x="208" y="594" class="tiny muted">新连接使用当前路径，已有连接可能沿用原路径。</text>
-      <rect x="47" y="172" width="124" height="27" rx="3" fill="#FFF" stroke="#239B68"/>
-      <text x="56" y="190" class="body medium">demo-work</text>
-      <path d="M121 176L121 195" stroke="#239B68" stroke-width="1"/>
+      <rect x="46" y="172" width="125" height="24" rx="3" fill="#FFF" stroke="#239B68"/>
+      <text x="50" y="190" class="body medium">demo-work</text>
+      <path d="M116 177L116 191" stroke="#239B68" stroke-width="1"/>
     </g>
-    <text x="12" y="682" class="section">02  添加配置 · 同一窗口，右侧使用一层内容卡片</text>
-    <g transform="translate(0 690)">
+    <text x="12" y="684" class="section">02  添加配置</text>
+    <text x="888" y="684" class="tiny muted" text-anchor="end">当前连接继续运行 · 新配置加入后保持断开</text>
+    <g transform="translate(0 692)">
       <rect x="12" y="10" width="876" height="614" rx="10" fill="#FCFCFB" stroke="#D9DDDA"/>
       <rect x="13" y="11" width="874" height="39" rx="10" fill="#FFF"/>
       <rect x="13" y="32" width="874" height="18" rx="0" fill="#FFF"/>
@@ -201,27 +203,27 @@
       <text x="28" y="600" class="tiny muted">当前连接继续运行</text>
       <text x="208" y="87" class="title">添加连接配置</text>
       <text x="208" y="110" class="small muted">使用中控提供的加入邀请</text>
-      <rect x="208" y="126" width="660" height="405" rx="8" fill="#FFF" stroke="#E4E7E5"/>
-      <text x="232" y="162" class="small medium">配置名称</text>
-      <rect x="232" y="175" width="612" height="34" rx="4" fill="#FFF" stroke="#D8DDD9"/>
-      <text x="244" y="198" class="body">demo-new</text>
-      <text x="232" y="246" class="small medium">加入邀请</text>
-      <text x="232" y="270" class="small muted">二维码 PNG 或 .loom-invite 文件，也可从剪贴板粘贴。</text>
-      <rect x="232" y="288" width="136" height="34" rx="6" fill="#FFF" stroke="#D8DDD9"/>
-      <text x="300.0" y="310" class="small medium" text-anchor="middle">选择邀请文件</text>
-      <rect x="380" y="288" width="124" height="34" rx="6" fill="#FFF" stroke="#D8DDD9"/>
-      <text x="442.0" y="310" class="small medium" text-anchor="middle">粘贴二维码</text>
-      <use href="#file" x="232" y="347" width="19" height="19" class="icon"/>
-      <text x="260" y="362" class="small">demo-invite.loom-invite · 已选择</text>
-      <text x="232" y="399" class="small muted">加入成功后保持未连接，点击“连接”才接管流量。</text>
-      <rect x="232" y="455" width="124" height="34" rx="6" fill="#239B68"/>
-      <text x="294.0" y="477" class="small medium white" text-anchor="middle">加入并保存</text>
-      <rect x="368" y="455" width="86" height="34" rx="6" fill="#FFF" stroke="#D8DDD9"/>
-      <text x="411.0" y="477" class="small medium" text-anchor="middle">取消</text>
-      <text x="208" y="560" class="tiny muted">取消未提交的添加不会新增配置。</text>
+      <rect x="208" y="126" width="660" height="330" rx="8" fill="#FFF" stroke="#E4E7E5"/>
+      <text x="232" y="160" class="small medium">配置名称</text>
+      <rect x="232" y="172" width="612" height="36" rx="4" fill="#FFF" stroke="#D8DDD9"/>
+      <text x="244" y="195" class="body">demo-new</text>
+      <text x="232" y="244" class="small medium">加入邀请</text>
+      <text x="232" y="264" class="small muted">二维码 PNG 或 .loom-invite 文件，也可从剪贴板粘贴。</text>
+      <rect x="232" y="280" width="144" height="34" rx="6" fill="#FFF" stroke="#D8DDD9"/>
+      <text x="304" y="302" class="small medium" text-anchor="middle">选择邀请文件</text>
+      <rect x="388" y="280" width="144" height="34" rx="6" fill="#FFF" stroke="#D8DDD9"/>
+      <text x="460" y="302" class="small medium" text-anchor="middle">粘贴二维码</text>
+      <use href="#file" x="232" y="330" width="19" height="19" class="icon"/>
+      <text x="260" y="344" class="small">demo-invite.loom-invite · 已选择</text>
+      <text x="232" y="371" class="small muted">加入成功后保持未连接，点击“连接”才接管流量。</text>
+      <rect x="720" y="398" width="124" height="34" rx="6" fill="#239B68"/>
+      <text x="782" y="420" class="small medium white" text-anchor="middle">加入并保存</text>
+      <rect x="622" y="398" width="86" height="34" rx="6" fill="#FFF" stroke="#D8DDD9"/>
+      <text x="665" y="420" class="small medium" text-anchor="middle">取消</text>
       <text x="208" y="595" class="small green">当前连接：demo-work</text>
     </g>
-    <text x="208" y="1348" class="small medium">连接中 · 原连接摘要的状态变化</text>
+    <text x="12" y="1344" class="section">03  连接中</text>
+    <text x="888" y="1344" class="tiny muted" text-anchor="end">连接摘要局部 · 沿用首页布局</text>
     <rect x="208" y="1362" width="660" height="106" rx="8" fill="#FFF" stroke="#E4E7E5"/>
     <circle cx="242" cy="1398" r="19" fill="#EDF3FC"/>
     <circle cx="242" cy="1398" r="10" fill="none" stroke="#D6E4F6" stroke-width="2"/>
