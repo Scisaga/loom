@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
-	"fmt"
 
 	"loom/internal/agent"
 	"loom/internal/clientruntime"
@@ -18,6 +16,10 @@ func runWindowsAgentActivation(ctx context.Context, a *clientActivation) error {
 type dataPlaneStarter func(context.Context, string, []byte, string, clientruntime.WindowsRuntimeProfile, string, func()) error
 
 func runAgentDataPlane(ctx context.Context, a *clientActivation, start dataPlaneStarter, readiness ...func(context.Context, *agent.Config) error) error {
+	entries, err := clientruntime.WindowsEntries(a.Config, a.AgentConfig)
+	if err != nil {
+		return err
+	}
 	wait := clientruntime.WaitWindowsAgentAPI
 	if len(readiness) > 0 {
 		wait = readiness[0]
@@ -52,10 +54,8 @@ func runAgentDataPlane(ctx context.Context, a *clientActivation, start dataPlane
 			return err
 		}
 	}
-	var err error
 	if a.AgentConfig != nil {
-		runtimeIdentity := fmt.Sprintf("windows-runtime-v1:%s:%x", a.Profile, sha256.Sum256(a.Config))
-		a.AgentRuntime, err = clientruntime.StartWindowsAgent(ctx, a.AgentConfig, a.RuntimeDir, runtimeIdentity)
+		a.AgentRuntime, err = clientruntime.StartWindowsAgent(ctx, a.AgentConfig, a.RuntimeDir, entries...)
 		if err != nil {
 			_ = stopPlane()
 			if ctx.Err() != nil {

@@ -4,20 +4,14 @@ package clientruntime
 
 import (
 	"context"
-	"net"
 	"os"
 	"testing"
 	"time"
 )
 
-func TestWindowsHealthRejectsPhysicalOrLoopbackRoute(t *testing.T) {
-	for _, ip := range []net.IP{net.IPv4(192, 0, 2, 1), net.IPv4(127, 0, 0, 1), net.ParseIP("::1")} {
-		if err := requireTUNRoute(ip, -1); err == nil {
-			t.Fatal("non-TUN route was accepted")
-		}
-	}
+func TestWindowsHealthMissingPlan(t *testing.T) {
 	if got := CheckWindowsHealth(context.Background(), nil); len(got) == 0 {
-		t.Fatal("missing plan appeared healthy")
+		t.Fatal("missing runtime plan accepted")
 	}
 }
 

@@ -186,3 +186,12 @@ func TestWindowsPathsShowProbeCountsAndIncompleteComparison(t *testing.T) {
 		t.Fatalf("[§16.1] 失败样本不能变成成功延迟分位：%+v", row)
 	}
 }
+
+// §16.1：入口单次结果与服务器估算不能显示为整路径实测或健康绿灯。
+func TestWindowsPathsDescribeEntryAndServerEvidence(t *testing.T) {
+	reason := "入口 demo-entry：单次 ping 12 ms（2026-09-09T00:00:00Z）；入口与服务器分段观测估算 90 ms；未测整条业务路径"
+	rows := windowsPathsFromReport(&clientreport.AgentState{Selections: []clientreport.AgentSelection{{Declaration: "demo-service", Chain: []string{"demo-entry", "demo-exit"}, Reason: reason, Health: &clientreport.AgentCandidateHealth{Candidates: 2, Unknown: 2, SelectedState: "unknown"}}}})
+	if len(rows) != 1 || rows[0].Health != "业务未测" || rows[0].MeasurementSummary != "入口 demo-entry：单次 ping 12 ms" || !strings.Contains(rows[0].Comparison, "分段观测估算 90 ms") || strings.Contains(rows[0].SelectedQuality, "P50") {
+		t.Fatalf("misleading display: %+v", rows)
+	}
+}

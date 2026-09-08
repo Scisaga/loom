@@ -89,6 +89,9 @@ func (app *portableGUI) misakaPathDetails(row windowsPathDisplay, width int32) m
 		return text
 	}
 	metrics := "当前测量：" + value(row.SelectedQuality) + "；已测候选：" + value(row.BestQuality)
+	if row.Health == "业务未测" {
+		metrics = value(row.SelectedQuality)
+	}
 	if row.Comparison != "" {
 		metrics += "\n" + row.Comparison
 	}

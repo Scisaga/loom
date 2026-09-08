@@ -307,16 +307,13 @@ without this fingerprint are rejected; already joined identities remain valid. S
   attestation and self-check v1, using the retained DPAPI identity. After
   activation it reports the active snapshot every 60 seconds to the same-origin
   report URL derived from the validated enrollment URL; redirects are refused
-  and only an empty HTTP 204 response is successful.
-  Candidates do not advance `applied`, and stopping the workload stops reports.
-  Existing reports then become stale after five minutes. Each report samples one
-  concrete Service address from the active signed policy. Mixed uses its local
-  proxy; TUN profiles verify capture and send IPv4 DNS/HTTPS through TUN. The
-  current result drives self-check; no target or failed checks produce a redacted
-  problem. Changes to activation or route preference discard in-flight samples.
-  Probe and report have separate 8-second and 5-second budgets, so a probe timeout
-  can still be reported. This tests representative reachability, not every site
-  or exit. See the [reporting contract](../../docs/windows-client-reporting.md).
+  and accepts verified server observations in a bounded HTTP 200 response, with
+  compatibility for the old empty HTTP 204 response. Candidates do not advance
+  `applied`, and stopping the workload stops reports. Self-check checks local
+  runtime listeners and the managed TUN adapter; it sends no business requests.
+  Business reachability remains unmeasured. Server observation errors are
+  separate from local runtime health. See the
+  [reporting contract](../../docs/windows-client-reporting.md).
 - Each profile's `config\client.json` is written last in the join core and is its
   joined-state marker. A newly added profile becomes selectable only after a
   subsequent atomic profile-index commit. Failed imports cannot start a partial
@@ -336,69 +333,35 @@ without this fingerprint are rejected; already joined identities remain valid. S
   an update swaps child data planes, and the final joined-state commit never
   replaces an existing file.
 
-## 本地 Agent 接入（§5.5 / §7.3.3）
+## 本地客户端选路（§5.6 / §7.3.3）
 
-Windows 每个激活实例在本机运行 `internal/agent`，与 Linux 接入节点复用同一份
-Probe → Rank → Decide → Switch 实现。不是连接一台远程调度 Agent。
+Windows 使用 `agent.RunClient`。从已验证配置与实际 detour 提取授权入口，每次激活
+按地址去重、各发一次并行 ICMP；在 TUN 启动前捕获源网卡，探测不阻塞激活。
+不调用服务器使用的完整路径 `agent.Run`，不扫描 Service × 候选路径，不等待样本。
 
-签名 bundle 必须恰有 `sing-box/config.json`、`agent/config.json`。两个文件共同
-验签、hydrate、交叉校验、计算 bundle/CandidateVersion hash，并作为一个 DPAPI
-对象原子提交。CandidateState schema 为 2；不迁移 schema 1，也不接受旧单文件包。
-这不改变或清除已加入设备的 DPAPI 身份。
+后段复用原上报响应中的已验签服务器观测。服务器结果更新只重算，不触发客户端探测。
+后段证据未到时沿用当前出口，只比较同出口候选的入口延迟；有完整分段证据后，latency
+使用入口 RTT、实际方向的公网 Hy2 RTT 和出口目标首字节时间估算，沿用切换阈值。
+其他目标指标缺乏相应分段证据时明确说明，不能冒充已经优化。未覆盖目标保持未知。
 
-Auto 保留各 Service 全部授权候选。FixedExit 按签名 `candidate.chain` 最后一跳
-逐 Service 裁剪候选，保留该出口的全部前缀，由 Agent 用 Service 的真实 targets
-和候选 probe user 测量完整路径。Direct 使用授权 direct 候选并停止 Agent。
-客户端没有静态 selector PUT；偏好同时裁剪 sing-box selector 成员，冷启动默认值
-也必须属于当前授权集合。配置、偏好、重连和进程重启都通过同一激活事务，先取消并
-等待旧 Agent 完全退出，再激活数据面、等待 Clash API readback，最后启动新 Agent。
-激活失败恢复上一份完整配置；恢复不得跨越已成功提交的出口偏好。
-数据面意外退出时，先等待旧 Agent 和进程清理完成，再预检并恢复已验证的配置；
-没有备用配置时重启当前配置，创建新 Agent。每分钟最多恢复三次，持续崩溃或预检
-失败会明确停止；取消和主动断开不会触发恢复。
+Auto 保留授权的 Service 候选；FixedExit 保留固定末跳的全部授权前缀；Direct 停止
+选路 Agent。配置、偏好、重连和恢复继续使用同一激活事务，等待旧 Agent 退出再启动
+新代次。签名 bundle、DPAPI 身份、授权裁剪、回滚及服务器协议保持原契约。
 
-Agent 状态、measurement 和 event 位于本机 `runtime/agent/generation-*` 下；Windows
-DACL 仅授予当前运行身份、SYSTEM 和管理员访问，子文件继承。每次激活使用独立目录，
-旧实例不再提供报告，也不会把旧 scope 样本带入新实例。旧目录保留用于本地排障。
-共享 Agent 的服务器 report 适配仅在非 Windows 编译；Windows 明确拒绝服务器
-观测源配置，排序只消费本机完整路径测量。
+选择状态保存于受 Windows DACL 保护的 `runtime/agent/generation-*`，不再写入或消费
+完整路径 measurement 历史。报告每次 GET 实际 selector，并用签名 plan 映射节点链；
+PUT 意图不能冒充已生效路径。原因用已有 canonical v5 reason 签名，不新增线格式。
 
-Windows reporter 使用既有 AgentState 的客户端线格式投影、attest.AgentClaim 和
-canonical v5，上报重新 GET 得到的 candidate 及签名 plan 对应的 chain。质量只有在
-同一实例、同一实际候选、未过期时才可携带；否则标记 unknown 并省略数值。
-`decision_scope` 写入既有受签名保护的 `reason`（v5 没有独立 scope 字段），不增加
-字段、端点或签名版本。数据面健康采集仍保留；缺少有效 Agent 质量不能报告为健康。
+界面显示入口单次延迟和服务器分段估算，业务健康标为未测。P50/P95 与完整路径样本
+不再由客户端填充。每轮 self-check 只检查本机监听、托管网卡及当前运行态，缺少
+业务目标不再被误报为设备断网。界面读取和健康上报均不触发业务探测。
 
-连接后的“当前选路”按 Service 显示实际路径和健康状态，展开详情可见当前/最佳质量、
-切换原因和读取时间。该区域只读；不同 Service 可以经过不同服务器链，不能把其中
-一条描述成所有流量共用的路径。数据来自当前激活实例的 selector GET 与同一签名
-Agent plan 的映射，不解析候选名称。Direct 也必须实际读回授权的零跳候选才能显示
-直连；没有 Agent 测量时质量保持“未知”，不把缺失值显示成零延迟。
-
-GUI 在后台至多每五秒读取一次，复用共享 Agent 的状态投影，不启动额外探测或上报。
-断开、出口切换、配置激活代次变化时立即清掉旧路径；读回失败显示“未知”。当前选路
-表示数据面当前 selector 的选择，已建立的长连接可能仍沿用之前的路径。
-
-新增测试覆盖双文件缺失/额外文件/篡改/验签失败/plan 非法、指针提交失败回滚、
-Agent-only 变化推进 hash、旧 schema 拒绝；完整代理请求验证慢前缀到快前缀的门槛
-切换、故障切换和 readback 拒绝；还覆盖 scope 失效、Auto/FixedExit/Direct、取消和
-重连屏障，以及 v5 实际路径/质量/原因签名与篡改拒绝。
-官方 sing-box 的原生隔离加入测试还核对实际 Agent selector/chain、外层与 v5 附件
-一致、不可达目标不产生虚构延迟，并确认本地验签服务返回空正文 204。
-设置 `LOOM_SING_BOX_EXECUTABLE` 后，`TestOfficialWindowsAgentSwitchesCompleteFixedExitPaths`
-使用回环上的两跳 TLS 代理验证门槛切换：较慢前缀排在名称顺序前方，较快前缀达到
-`min_samples` 后获选，两条路径共享末跳。测试还核对普通代理入口确实经过获胜前缀，
-再断开该前缀，验证同一窗口内故障切回仍保持固定末跳；不创建 TUN 或使用生产身份。
-
-真实 Windows canary 按以下项目验收；各环境的实际完成情况记录在 `docs/status/current.md`：
-
-- 使用正常已加入身份接收现有双文件签名 bundle；核对缺失/篡改拒绝及激活失败回滚。
-- 在 Portable Mixed、Portable TUN、Installed 上核对候选探测确实经各自完整路径，
-  达门槛后优胜前缀切换，固定出口全过程末跳不变，当前路径故障可切换。
-- 验证 Auto/FixedExit/Direct、断开重连、sing-box 异常退出及配置更新期间无旧 Agent
-  selector PUT、文件追加或报告；检查本地证据目录继承的实际 ACL。
-- 核对自动 v5 报告得到空正文 204，中控看到与 Clash GET 一致的完整路径、质量、原因
-  与 reason 内的 decision_scope；停止后不再上报并按现有规则变 stale。
+测试覆盖入口去重与并行、启动不等待服务器观测、更新不重测、授权限制、未知与过期
+证据、失败约束、实际 selector readback、固定末跳、代次取消及原签名绑定。
+Windows 原生测试验证单次 ICMP API；设置 `LOOM_SING_BOX_EXECUTABLE` 可运行
+`TestOfficialWindowsClientSelectsEntryWithoutBusinessProbes`，使用官方数据面验证
+selector 已切换且目标及代理接收器始终没有收到业务探测请求。
+当前实机及发布情况见 `docs/status/current.md`，历史端到端探测验收不代表新版本已部署。
 
 ## Current implementation boundary
 

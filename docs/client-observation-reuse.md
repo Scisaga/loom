@@ -8,7 +8,7 @@
 | 消费者 | 仓库当前行为 |
 |---|---|
 | Linux Agent | `internal/agent/observed.go` 的 `pollPeers` 通过 `report.FetchContext` 读取本机及 WG 邻居 `/status` 中的 `observation` 和 `learned`；`ingestObservation` 校验签名绑定、新鲜度及 measurements 后进入现有按来源去重的观测缓存 |
-| Windows | 在原有 NAT 签名上报周期内请求观测，经跨平台校验器验证后接入当前 Agent 的候选剪枝；继续拒绝 Linux 专用 `peers/self_report` 配置 |
+| Windows | 在原有 NAT 签名上报周期内请求观测，经跨平台校验器验证后接入入口与服务器分段选路；继续拒绝 Linux 专用 `peers/self_report` 配置 |
 | Android | `mobile/loomcore/route.go` 拒绝 Linux peer/report 配置；宿主 `HealthReporter.kt` 只发送报告并接受空正文 204。尚未把服务器观测接入本地候选回路 |
 
 Linux 的 canonical v5 闸门覆盖测量；旧兼容阶段的本机例外不能用于客户端读取。
@@ -80,7 +80,7 @@ Content-Type: application/json
    `internal/observation` 复用原 verifier 的绑定规则，不实现第二套签名。
 3. 按现有 plan 的候选链和 `observation_stale` 消费证据，以原来源/原时间去重，
    不用 HTTP 接收时间延长有效期；缺失、失效或签名失败不改变授权集合。
-   Windows 已接入现有候选剪枝回路。服务器不可达证据作为当轮约束及决策原因，
+   Windows 已接入客户端分段选择。服务器不可达证据作为当轮约束及决策原因，
    不按本机探测样本累计；旧 `observation_kind: derived` 记录不进入数值排名。
    不把来源节点的 Agent 选择当成客户端推荐路径。
 4. 按用户已明确的分工，客户端首轮只对授权入口去重后各做一次并行探测，入口之后
@@ -92,9 +92,22 @@ Content-Type: application/json
 与阻尼。Android 的独立候选循环尚未接入。Windows TUN 域名识别另在本地派生配置中
 处理，不改变服务器观测协议或签名策略。
 
-本轮新增的启动补样及等待实现已撤回。现有 Windows 仍调用旧的完整路径 Agent，
-尚未完成上述入口探测替换，不能把观测接口接入描述为客户端选路已经修好。
-签名观测读取、原时间校验以及本地 TUN 域名识别修复可独立保留。
+Windows 已改用 `agent.RunClient`，不再调用完整路径 `agent.Run`。启动时从已验证
+数据面的 detour 找授权入口，在 TUN 启动前记录源网卡；各地址并行发送一次 ICMP，
+单次超时上限一秒且不阻塞数据面激活。ICMP 无响应表示入口质量未知，不证明业务失败。
+没有后段观测时保留当前配置出口，只在相同出口的授权候选中比较入口延迟。
+
+服务器观测由既有上报 POST 响应提供，客户端没有新增“观测配置”。新鲜且已验签的
+服务器结果到达后只重算选择，不再次 ping、不访问业务目标、不轮询等待样本。
+对 latency 目标，比较入口 RTT + 原方向公网 Hy2 RTT + 出口精确目标首字节时间的
+分段估算；要求各段有证据，失败率较差的候选不能靠较低延迟胜出。沿用配置的
+切换阈值抑制小幅波动，但不等待 min_samples。WG RTT 不冒充公网 Hy2 RTT，
+其他目标指标缺少相应证据时明确说明，不能拿延迟冒充吞吐或稳定性。
+
+分段估算不是业务端到端实测，界面标明入口单次结果和估算来源，旧 P50/P95、样本数
+保持空值。每轮健康上报只检查本机监听与托管网卡，业务可用性保持未测量。
+激活、重连沿用原生命周期，每代重新测入口；配置更新仍走原验签流程。
+签名、服务器采集和授权候选协议均未改变。Android 尚未接入此客户端流程。
 
 ## 验证范围
 

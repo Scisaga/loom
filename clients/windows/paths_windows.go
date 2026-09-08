@@ -182,6 +182,15 @@ func windowsPathsFromReport(report *clientreport.AgentState) []windowsPathDispla
 		if row.Reason == "" {
 			row.Reason = "未知"
 		}
+		// §16.1：客户端原因已有明确分段说明；仅格式化显示，不由文案决定路由。
+		if strings.HasPrefix(reason, "入口 ") && strings.Contains(reason, "未测整条业务路径") {
+			entry, rest, _ := strings.Cut(reason, "；")
+			row.SelectedQuality = entry
+			row.MeasurementSummary, _, _ = strings.Cut(entry, "（")
+			row.Health = "业务未测"
+			row.BestQuality = "不做完整路径比较"
+			row.Comparison = rest
+		}
 		rows = append(rows, row)
 	}
 	return rows

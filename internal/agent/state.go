@@ -18,6 +18,9 @@ import (
 // 度量和事件都回答不了这个问题：前者是候选样本，后者只记发生过的切换。
 const StatePath = "/var/lib/loom/agent-state.json"
 
+// §16.1：Windows 文件替换不能与本进程的界面读取交叠；读写均短暂持锁。
+var stateFileMu sync.RWMutex
+
 // State 是一次完整的 Agent 选择快照。整份原子覆盖，读取方不会看到五条声明
 // 只写到一半的状态。
 type State struct {
@@ -80,6 +83,8 @@ type CandidateHealth struct {
 // ReadState 读取 Agent 状态；不存在表示这台机器没有 Agent（服务器节点的
 // 正常形态），不是错误。
 func ReadState(path string) (*State, error) {
+	stateFileMu.RLock()
+	defer stateFileMu.RUnlock()
 	if path == "" {
 		return nil, nil
 	}
@@ -184,6 +189,8 @@ func cloneCandidateHealth(h *CandidateHealth) *CandidateHealth {
 }
 
 func (s *stateStore) writeLocked(ctx context.Context, now time.Time) error {
+	stateFileMu.Lock()
+	defer stateFileMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err
 	}

@@ -21,6 +21,7 @@ type ObservationCache struct {
 	maxAge  time.Duration
 	by      map[string]observation.Observation
 	changed chan struct{}
+	updated chan struct{}
 }
 
 func NewObservationCache(cfg *Config) (*ObservationCache, error) {
@@ -31,7 +32,7 @@ func NewObservationCache(cfg *Config) (*ObservationCache, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &ObservationCache{allowed: map[string]bool{}, maxAge: maxAge, by: map[string]observation.Observation{}, changed: make(chan struct{})}
+	c := &ObservationCache{allowed: map[string]bool{}, maxAge: maxAge, by: map[string]observation.Observation{}, changed: make(chan struct{}), updated: make(chan struct{})}
 	seen := map[string]bool{}
 	for _, d := range cfg.Declarations {
 		for _, candidate := range d.Candidates {
@@ -60,6 +61,16 @@ func (c *ObservationCache) Changes() <-chan struct{} {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.changed
+}
+
+// Updates 供只消费观测的客户端重算选择，不触发主动探测（§16.1.2）。
+func (c *ObservationCache) Updates() <-chan struct{} {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.updated
 }
 
 // Ingest 先验证完整原对象，再按原来源和原时间去重；接收时间不能延长证据寿命。
@@ -106,6 +117,7 @@ func (c *ObservationCache) Ingest(ctx context.Context, raw []json.RawMessage, ca
 		return err
 	}
 	before := c.failuresLocked(now)
+	updated := false
 	for _, o := range accepted {
 		at, _ := time.Parse(time.RFC3339, o.TS)
 		if old, ok := c.by[o.Node]; ok {
@@ -115,6 +127,11 @@ func (c *ObservationCache) Ingest(ctx context.Context, raw []json.RawMessage, ca
 			}
 		}
 		c.by[o.Node] = o
+		updated = true
+	}
+	if updated {
+		close(c.updated)
+		c.updated = make(chan struct{})
 	}
 	if !maps.Equal(before, c.failuresLocked(now)) {
 		close(c.changed)

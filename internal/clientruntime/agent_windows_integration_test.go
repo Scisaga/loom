@@ -29,12 +29,11 @@ import (
 
 	"loom/internal/agent"
 	"loom/internal/clientcore"
-	"loom/internal/measure"
 )
 
-// §5.5、§7.3.3：使用官方数据面的真实 TLS 两跳，覆盖模拟 Clash API 无法证明的路径执行。
+// §5.6、§7.3.3：官方数据面读回实际 selector；业务目标及代理接收器验证零探测请求。
 // 测试只绑定回环地址，不创建 TUN、改系统路由或读取已加入身份。
-func TestOfficialWindowsAgentSwitchesCompleteFixedExitPaths(t *testing.T) {
+func TestOfficialWindowsClientSelectsEntryWithoutBusinessProbes(t *testing.T) {
 	executable := os.Getenv("LOOM_SING_BOX_EXECUTABLE")
 	if executable == "" {
 		t.Skip("set LOOM_SING_BOX_EXECUTABLE for the native shared Agent path test")
@@ -50,7 +49,7 @@ func TestOfficialWindowsAgentSwitchesCompleteFixedExitPaths(t *testing.T) {
 	caPath, keyPath := nativeAgentTLS(t, root)
 	firstHop, lastHop := nativeAgentProxyServer(t, executable, root, caPath, keyPath)
 	slow, slowCount, _ := nativeAgentBridge(t, firstHop, 200*time.Millisecond)
-	fast, fastCount, failFast := nativeAgentBridge(t, firstHop, 0)
+	fast, fastCount, _ := nativeAgentBridge(t, firstHop, 0)
 	exit, exitCount, _ := nativeAgentBridge(t, lastHop, 0)
 	var targetRequests atomic.Int64
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -158,83 +157,45 @@ func TestOfficialWindowsAgentSwitchesCompleteFixedExitPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	opts := agent.Options{StatePath: filepath.Join(dir, "state.json"), MeasurementPath: filepath.Join(dir, "measurements.jsonl"), EventsPath: filepath.Join(dir, "events.jsonl"), Once: true, Log: io.Discard}
-	for round := 0; round < 3; round++ {
-		if err := agent.Run(ctx, active, opts); err != nil {
-			t.Fatal(err)
+	// §5.6：只提供两次入口结果；目标接收器必须始终零请求。
+	opts := agent.ClientOptions{StatePath: filepath.Join(dir, "state.json"), Entries: []agent.ClientEntry{
+		{Node: "demo-prefix-a", Address: "192.0.2.1"}, {Node: "demo-prefix-b", Address: "192.0.2.2"},
+	}, Probe: func(_ context.Context, e agent.ClientEntry) (time.Duration, error) {
+		if e.Node == "demo-prefix-a" {
+			return 200 * time.Millisecond, nil
 		}
-		actual, err := selectorReadback(ctx, active, active.Declarations[0].Selector)
-		if err != nil {
-			t.Fatal(err)
+		return time.Millisecond, nil
+	}}
+	clientCtx, stopClient := context.WithCancel(ctx)
+	agentDone := make(chan error, 1)
+	go func() { agentDone <- agent.RunClient(clientCtx, active, opts) }()
+	defer func() {
+		stopClient()
+		if err := <-agentDone; err != nil {
+			t.Error(err)
 		}
-		want := "opaque:a@slow"
-		if round == 2 {
-			want = "opaque:z@fast"
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	var st *agent.State
+	for time.Now().Before(deadline) {
+		st, _ = agent.ReadState(opts.StatePath)
+		if st != nil && len(st.Selections) == 1 && st.Selections[0].Candidate == "opaque:z@fast" {
+			break
 		}
-		if actual != want {
-			t.Fatalf("round %d actual selector = %q, want %q", round+1, actual, want)
-		}
-		state, err := agent.ReadState(opts.StatePath)
-		if err != nil || state == nil || len(state.Selections) != 1 {
-			t.Fatalf("missing actual Agent state: %v", err)
-		}
-		s := state.Selections[0]
-		if s.Candidate != actual || len(s.Chain) != 2 || s.Chain[1] != "demo-exit" {
-			t.Fatal("Agent state does not bind actual two-hop fixed exit")
-		}
-		if round == 2 && (!slices.Equal(s.Chain, []string{"demo-prefix-b", "demo-exit"}) || s.Health == nil || s.Health.SelectedP50MS == nil || s.Health.BestP50MS == nil || s.Health.SelectedSamples < 3 || s.Reason == "" || len(s.DecisionScope) != 64) {
-			t.Fatal("winning real path lost selected/best quality, reason or decision scope")
-		}
-	}
-	ms, err := measure.Load(opts.MeasurementPath)
-	if err != nil || len(ms) != 6 || targetRequests.Load() != 6 {
-		t.Fatalf("complete path probes: measurements=%d, target requests=%d, err=%v", len(ms), targetRequests.Load(), err)
-	}
-	for _, m := range ms {
-		if m.Target != target.URL+"/service" || m.Kind != measure.Active {
-			t.Fatal("measurement did not come from the actual Service target")
-		}
-	}
-	// §7.3.1：用户入口也必须随真实 selector 切到同一获胜前缀，不能只改变报告。
-	a, b, e := slowCount.Load(), fastCount.Load(), exitCount.Load()
-	if a != 3 || b != 3 || e != 6 {
-		t.Fatalf("two-hop traversal counts = %d/%d/%d", a, b, e)
-	}
-	u, _ := url.Parse("http://127.0.0.1:1080")
-	transport := &http.Transport{Proxy: http.ProxyURL(u), DisableKeepAlives: true}
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
-	for _, targetURL := range []string{target.URL, otherTarget.URL} {
-		resp, err := client.Get(targetURL + "/service")
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = io.Copy(io.Discard, resp.Body)
-		_ = resp.Body.Close()
-		if err != nil || resp.StatusCode != http.StatusOK {
-			t.Fatal("[§7.3] Service 实际请求没有进入统一上网路径")
-		}
-	}
-	if slowCount.Load() != a || fastCount.Load() != b+2 || exitCount.Load() != e+2 {
-		t.Fatal("[§7.3] 两个 Service 的实际请求没有使用同一获胜前缀和固定末跳")
-	}
-	// §5.5：现任前缀真实断开后，继续使用同一窗口和配置，由既有失败率排序完成切换。
-	failFast.Store(true)
-	if err := agent.Run(ctx, active, opts); err != nil {
-		t.Fatal(err)
+		time.Sleep(time.Millisecond)
 	}
 	actual, err := selectorReadback(ctx, active, active.Declarations[0].Selector)
-	if err != nil || actual != "opaque:a@slow" {
-		t.Fatalf("failed current prefix did not switch to the surviving path: %q, %v", actual, err)
+	if err != nil || actual != "opaque:z@fast" || st == nil || len(st.Selections) != 1 {
+		t.Fatalf("actual selector=%q err=%v", actual, err)
 	}
-	state, err := agent.ReadState(opts.StatePath)
-	if err != nil || state == nil || len(state.Selections) != 1 {
-		t.Fatalf("missing failure-switch state: %v", err)
+	selected := st.Selections[0]
+	if !slices.Equal(selected.Chain, []string{"demo-prefix-b", "demo-exit"}) || selected.Health.SelectedP50MS != nil || selected.Health.SelectedSamples != 0 {
+		t.Fatal("entry selection fabricated full path evidence")
 	}
-	s := state.Selections[0]
-	if s.Candidate != actual || !slices.Equal(s.Chain, []string{"demo-prefix-a", "demo-exit"}) || s.Reason == "" || s.Health == nil || s.Health.RecentDegraded != 1 || s.Health.SelectedState != "success" {
-		t.Fatal("failure switch lost actual fixed-exit chain, failure evidence or reason")
+	if targetRequests.Load() != 0 || slowCount.Load() != 0 || fastCount.Load() != 0 || exitCount.Load() != 0 {
+		t.Fatal("client emitted a business path probe")
 	}
+
 }
 
 func nativeAgentTLS(t *testing.T, root string) (string, string) {

@@ -126,8 +126,8 @@ func TestAgentActivationModesReconnectAndCancellationBarrier(t *testing.T) {
 	}
 	select {
 	case <-entered:
-	case <-time.After(time.Second):
-		t.Fatal("Auto Agent not probing")
+		t.Fatal("client sent an excluded business probe")
+	default:
 	}
 	previous := manager.active.spec.AgentRuntime
 	fixed, err := manager.active.spec.withPreference(clientcore.Preference{Schema: 1, Mode: clientcore.FixedExit, Exit: "demo-exit"})
@@ -147,8 +147,8 @@ func TestAgentActivationModesReconnectAndCancellationBarrier(t *testing.T) {
 	}
 	select {
 	case <-entered:
-	case <-time.After(time.Second):
-		t.Fatal("FixedExit Agent not probing")
+		t.Fatal("client sent an excluded business probe")
+	default:
 	}
 	previous = manager.active.spec.AgentRuntime
 	crashes <- struct{}{}
@@ -166,8 +166,8 @@ func TestAgentActivationModesReconnectAndCancellationBarrier(t *testing.T) {
 	}
 	select {
 	case <-entered:
-	case <-time.After(time.Second):
-		t.Fatal("crash recovery did not start a fresh probe generation")
+		t.Fatal("client sent an excluded business probe")
+	default:
 	}
 	previous = manager.active.spec.AgentRuntime
 	rejected, err := manager.active.spec.withPreference(manager.active.spec.Preference)
@@ -189,8 +189,8 @@ func TestAgentActivationModesReconnectAndCancellationBarrier(t *testing.T) {
 	}
 	select {
 	case <-entered:
-	case <-time.After(time.Second):
-		t.Fatal("rollback did not start restored Agent")
+		t.Fatal("client sent an excluded business probe")
+	default:
 	}
 	previous = manager.active.spec.AgentRuntime
 	direct, err := manager.active.spec.withPreference(clientcore.Preference{Schema: 1, Mode: clientcore.Direct})
@@ -223,8 +223,8 @@ func TestAgentActivationModesReconnectAndCancellationBarrier(t *testing.T) {
 	}
 	select {
 	case <-entered:
-	case <-time.After(time.Second):
-		t.Fatal("Auto reconnect did not start Agent")
+		t.Fatal("client sent an excluded business probe")
+	default:
 	}
 	cancel()
 	if err := manager.Stop(); err != nil {

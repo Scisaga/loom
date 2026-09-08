@@ -107,7 +107,7 @@
     <text x="759" y="292" class="tiny muted" text-anchor="end">全部上网流量 · 用于新连接</text>
     <rect x="208" y="308" width="660" height="170" rx="8" fill="#FFF" stroke="#E4E7E5" />
     <text x="226" y="333" class="section">统一上网路径</text>
-    <text x="758" y="333" class="small muted" text-anchor="end">完整路径质量 —</text>
+    <text x="758" y="333" class="small muted" text-anchor="end">入口单次延迟 —</text>
     <rect x="772" y="318" width="76" height="24" rx="12" fill="#F4F6F5" stroke="#E4E7E5" />
     <text x="810" y="334" class="tiny muted" text-anchor="middle">健康未知</text>
     <path d="M270 367H806" stroke="#C7D8CD" stroke-width="2" />

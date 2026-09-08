@@ -17,7 +17,6 @@ import (
 
 	"loom/internal/agent"
 	"loom/internal/clientcore"
-	"loom/internal/measure"
 )
 
 type agentNetwork struct {
@@ -134,131 +133,47 @@ func agentTestOptions(t *testing.T) agent.Options {
 }
 func runRound(t *testing.T, cfg *agent.Config, opts agent.Options) {
 	t.Helper()
-	if err := agent.Run(context.Background(), cfg, opts); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestWindowsSharedAgentMeasuresRanksSwitchesFixedExit(t *testing.T) {
-	network, cfg := agentNetworkFixture(t)
-	opts := agentTestOptions(t)
-	for round := 0; round < 3; round++ {
-		runRound(t, cfg, opts)
-		network.mu.Lock()
-		current, puts := network.current, len(network.puts)
-		network.mu.Unlock()
-		if round < 2 && puts != 0 {
-			t.Fatal("switched before min_samples")
-		}
-		if round == 2 && (current != "opaque:z@fast" || puts != 1) {
-			t.Fatalf("faster complete prefix did not win: %q, PUTs %d", current, puts)
-		}
-	}
-	st, err := agent.ReadState(opts.StatePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := st.Selections[0]
-	if !reflect.DeepEqual(s.Chain, []string{"demo-prefix-b", "demo-exit"}) || s.DecisionScope == "" || s.Health == nil || s.Health.SelectedP50MS == nil || s.Health.BestP50MS == nil || s.Reason == "" {
-		t.Fatalf("missing actual evidence: %+v", s)
-	}
-	measurements, err := measure.Load(opts.MeasurementPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(measurements) != 12 {
-		t.Fatalf("full candidates × targets × rounds: %d", len(measurements))
-	}
-	for _, m := range measurements {
-		if m.DecisionScope != s.DecisionScope || !strings.HasPrefix(m.Target, "http://demo-target.example/service-") || m.Kind != measure.Active {
-			t.Fatalf("foreign evidence %+v", m)
-		}
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	runtime := &WindowsAgent{ctx: ctx, done: make(chan struct{}), config: cfg, statePath: opts.StatePath}
-	actual, err := runtime.Report(ctx, time.Now())
-	if err != nil {
+	entries := []agent.ClientEntry{{Node: "demo-prefix-a", Address: "192.0.2.1"}, {Node: "demo-prefix-b", Address: "192.0.2.2"}}
+	done := make(chan error, 1)
+	go func() {
+		done <- agent.RunClient(ctx, cfg, agent.ClientOptions{StatePath: opts.StatePath, Entries: entries, Probe: func(_ context.Context, e agent.ClientEntry) (time.Duration, error) {
+			if e.Node == "demo-prefix-a" {
+				return 100 * time.Millisecond, nil
+			}
+			return 5 * time.Millisecond, nil
+		}})
+	}()
+	deadline := time.Now().Add(time.Second)
+	for {
+		st, err := agent.ReadState(opts.StatePath)
+		if err == nil && st != nil && len(st.Selections) == len(cfg.Declarations) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("client did not publish selection")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if actual.Selections[0].Candidate != s.Candidate || !reflect.DeepEqual(actual.Selections[0].Chain, s.Chain) || !strings.Contains(actual.Selections[0].Reason, "decision_scope="+s.DecisionScope) {
-		t.Fatalf("report=%+v", actual)
-	}
-	// 报告必须重新 GET：外部改变 selector 后，不能把之前质量移植给新的实际路径。
+}
+
+func TestWindowsClientChoosesEntryWithoutBusinessRequests(t *testing.T) {
+	network, cfg := agentNetworkFixture(t)
+	opts := agentTestOptions(t)
+	runRound(t, cfg, opts)
 	network.mu.Lock()
-	network.current = "opaque:a@slow"
-	network.mu.Unlock()
-	actual, err = runtime.Report(ctx, time.Now())
-	if err != nil {
-		t.Fatal(err)
+	defer network.mu.Unlock()
+	if network.current != "opaque:z@fast" || len(network.targets) != 0 || len(network.puts) != 1 {
+		t.Fatalf("current=%s business requests=%d puts=%v", network.current, len(network.targets), network.puts)
 	}
-	if actual.Selections[0].Candidate != "opaque:a@slow" || actual.Selections[0].Health != nil || actual.Selections[0].Chain[0] != "demo-prefix-a" {
-		t.Fatal("report fabricated actual quality/chain")
-	}
-}
-
-func TestWindowsSharedAgentCurrentFailureAndReadbackRefusal(t *testing.T) {
-	for _, refuse := range []bool{false, true} {
-		t.Run(map[bool]string{false: "failure switch", true: "readback refuses intent"}[refuse], func(t *testing.T) {
-			network, cfg := agentNetworkFixture(t)
-			opts := agentTestOptions(t)
-			network.failed["demo-slow"] = true
-			network.refuse = refuse
-			runRound(t, cfg, opts)
-			st, err := agent.ReadState(opts.StatePath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			network.mu.Lock()
-			puts := len(network.puts)
-			network.mu.Unlock()
-			if puts != 1 {
-				t.Fatal("current all-failed did not switch before sample threshold")
-			}
-			if refuse {
-				for _, s := range st.Selections {
-					if s.Candidate == "opaque:z@fast" {
-						t.Fatal("PUT intent appeared as actual")
-					}
-				}
-			} else if st.Selections[0].Candidate != "opaque:z@fast" {
-				t.Fatal("failed path remained selected")
-			}
-		})
-	}
-}
-
-func TestWindowsSharedAgentChangedScopeDiscardsSamples(t *testing.T) {
-	for _, change := range []string{"candidates", "targets", "parameters"} {
-		t.Run(change, func(t *testing.T) {
-			network, cfg := agentNetworkFixture(t)
-			opts := agentTestOptions(t)
-			for i := 0; i < 3; i++ {
-				runRound(t, cfg, opts)
-			}
-			old, _ := agent.ReadState(opts.StatePath)
-			scope := old.Selections[0].DecisionScope
-			network.mu.Lock()
-			network.current = "opaque:a@slow"
-			network.puts = nil
-			network.mu.Unlock()
-			switch change {
-			case "candidates":
-				cfg.Declarations[0].Candidates[1].Chain[0] = "demo-new-prefix"
-			case "targets":
-				cfg.Declarations[0].Targets = []string{"http://demo-new-target.example/"}
-			case "parameters":
-				cfg.Declarations[0].SwitchThreshold = 0.3
-			}
-			runRound(t, cfg, opts)
-			current, _ := agent.ReadState(opts.StatePath)
-			network.mu.Lock()
-			puts := len(network.puts)
-			network.mu.Unlock()
-			if puts != 0 || current.Selections[0].DecisionScope == scope || current.Selections[0].Health.SelectedSamples > 2 {
-				t.Fatal("old scope influenced new decision")
-			}
-		})
+	st, err := agent.ReadState(opts.StatePath)
+	if err != nil || st.Selections[0].Health.SelectedP50MS != nil || st.Selections[0].Health.SelectedSamples != 0 {
+		t.Fatal("fabricated full-path sample", err)
 	}
 }
 
@@ -270,11 +185,6 @@ func TestWindowsAgentCancelAndReconnectLeaveNoOldWrites(t *testing.T) {
 	a, err := StartWindowsAgent(ctx, cfg, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
-	}
-	select {
-	case <-network.entered:
-	case <-time.After(3 * time.Second):
-		t.Fatal("probe never started")
 	}
 	cancel()
 	if err := a.Stop(); err != nil {
@@ -294,8 +204,8 @@ func TestWindowsAgentCancelAndReconnectLeaveNoOldWrites(t *testing.T) {
 	network.entered = nil
 	network.release = nil
 	network.mu.Unlock()
-	if puts != 0 {
-		t.Fatal("canceled generation sent selector PUT")
+	if puts != 0 || len(network.targets) != 0 {
+		t.Fatal("canceled generation sent selector PUT or business probes")
 	}
 	fresh, err := StartWindowsAgent(context.Background(), cfg, filepath.Dir(filepath.Dir(filepath.Dir(a.statePath))))
 	if err != nil {

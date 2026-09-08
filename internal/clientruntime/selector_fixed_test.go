@@ -217,14 +217,12 @@ func TestWindowsFixedInternetAgentChoosesOneActualPrefixForAllServices(t *testin
 	body, planBody := multipleInternetServicesFixture(t)
 	network, cfg := agentNetworkFixturePlan(t, body, planBody)
 	opts := agentTestOptions(t)
-	for round := 0; round < 3; round++ {
-		runRound(t, cfg, opts)
-	}
+	runRound(t, cfg, opts)
 	network.mu.Lock()
 	current, puts := network.current, slices.Clone(network.puts)
 	network.mu.Unlock()
 	if len(cfg.Declarations) != 1 || current != "opaque:z@fast" || !slices.Equal(puts, []string{current}) {
-		t.Fatal("[§7.3] 统一上网路径没有在门槛后选择较快的完整前缀")
+		t.Fatal("[§7.3] 统一上网路径没有根据单次入口探测选择较快入口")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -234,8 +232,8 @@ func TestWindowsFixedInternetAgentChoosesOneActualPrefixForAllServices(t *testin
 		t.Fatal("[§16.1] 固定出口报告没有唯一实际路径、质量和切换原因", err)
 	}
 	health := report.Selections[0].Health
-	if health.SelectedState != "success" || health.SelectedP50MS == nil || health.SelectedP95MS == nil || health.BestP50MS == nil {
-		t.Fatal("[§16.1] 实测完成后的统一路径缺少当前/最佳质量")
+	if health.SelectedState != "unknown" || health.SelectedP50MS != nil || health.SelectedP95MS != nil || health.BestP50MS != nil {
+		t.Fatal("[§16.1] 入口探测冒充完整路径质量")
 	}
 	key, cert, ca := fixedInternetReportIdentity(t, cfg.Node)
 	defer clear(key)

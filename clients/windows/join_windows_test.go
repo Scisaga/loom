@@ -300,8 +300,8 @@ func TestWindowsQRJoinNativeReadyTransaction(t *testing.T) {
 	}
 	select {
 	case observation := <-reports:
-		if observation.Applied != current.Snapshot || observation.SelfCheck.Healthy || len(observation.SelfCheck.Problems) == 0 {
-			t.Fatal("native activation did not report its snapshot and missing end-to-end health evidence")
+		if observation.Applied != current.Snapshot || !observation.SelfCheck.Healthy || len(observation.SelfCheck.Problems) != 0 {
+			t.Fatal("native activation did not report its snapshot and local runtime readiness")
 		}
 		if observation.Agent == nil || observation.Agent.Node != config.NodeID || len(observation.Agent.Selections) != 1 {
 			t.Fatal("native activation did not attach the running shared Agent")

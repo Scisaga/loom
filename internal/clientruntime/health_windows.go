@@ -4,48 +4,33 @@ package clientruntime
 
 import (
 	"context"
-	"golang.org/x/sys/windows"
+	"errors"
 	"net"
-	"net/http"
+	"time"
 )
 
+var errTUNCapture = errors.New("TUN 接管未生效")
+
+// §16.1：只检查本机监听与托管网卡，不发送 DNS、TLS 或业务请求。
+// healthy 仅说明本机运行面检查通过；业务可用性由 Agent reason 明确保持未测量。
 func CheckWindowsHealth(ctx context.Context, plan *WindowsHealthPlan) []string {
-	if plan == nil || plan.target == "" {
-		return []string{"已激活配置缺少可探测的具体服务地址"}
+	if plan == nil {
+		return []string{"缺少已激活的本机运行配置"}
 	}
-	if plan.profile == WindowsPortableMixedProfile {
-		return plan.check(ctx, mixedHealthTransport())
+	if err := ctx.Err(); err != nil {
+		return []string{"本机运行检查已取消"}
 	}
-	// §7.2.1：不以 Mixed 的成功代替 TUN；只检查托管 IPv4 接管面，禁止 IPv6/环境代理旁路。
-	iface, err := managedTUNInterface()
+	if plan.profile != WindowsPortableMixedProfile {
+		if _, err := managedTUNInterface(); err != nil {
+			return []string{"托管 TUN 网卡未就绪"}
+		}
+	}
+	c, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "tcp4", "127.0.0.1:1080")
 	if err != nil {
-		return []string{plan.probeProblem(errTUNCapture, "TUN 接管")}
+		return []string{"本地代理监听未就绪"}
 	}
-	transport := &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(address)
-		if err != nil {
-			return nil, err
-		}
-		resolver := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			if err := requireTUNRoute(net.IPv4(172, 19, 0, 2), iface.Index); err != nil {
-				return nil, err
-			}
-			return dialTUN(ctx, network, "172.19.0.2:53")
-		}}
-		addresses, err := resolver.LookupIP(ctx, "ip4", host)
-		if err != nil {
-			return nil, err
-		}
-		if len(addresses) == 0 {
-			return nil, &net.DNSError{IsNotFound: true}
-		}
-		ip := addresses[0]
-		if err := requireTUNRoute(ip, iface.Index); err != nil {
-			return nil, err
-		}
-		return dialTUN(ctx, "tcp", net.JoinHostPort(ip.String(), port))
-	}}
-	return plan.check(ctx, transport)
+	c.Close()
+	return nil
 }
 
 func managedTUNInterface() (*net.Interface, error) {
@@ -68,28 +53,4 @@ func managedTUNInterface() (*net.Interface, error) {
 		}
 	}
 	return nil, errTUNCapture
-}
-
-func requireTUNRoute(ip net.IP, index int) error {
-	ipv4 := ip.To4()
-	if ipv4 == nil || !ip.IsGlobalUnicast() {
-		return errTUNCapture
-	}
-	address := &windows.SockaddrInet4{}
-	copy(address.Addr[:], ipv4)
-	var best uint32
-	if windows.GetBestInterfaceEx(address, &best) != nil || best != uint32(index) {
-		return errTUNCapture
-	}
-	return nil
-}
-
-func dialTUN(ctx context.Context, network, address string) (net.Conn, error) {
-	source := net.IPv4(172, 19, 0, 1)
-	var local net.Addr = &net.TCPAddr{IP: source}
-	if network == "udp" {
-		local = &net.UDPAddr{IP: source}
-	}
-	dialer := net.Dialer{LocalAddr: local}
-	return dialer.DialContext(ctx, network+"4", address)
 }

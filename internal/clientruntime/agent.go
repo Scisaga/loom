@@ -2,7 +2,6 @@ package clientruntime
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,18 +20,17 @@ import (
 
 // §5.5、§16.1：每次激活拥有自己的 Agent 生命周期和证据目录，退出后不再提供报告。
 type WindowsAgent struct {
-	ctx             context.Context
-	cancel          context.CancelFunc
-	done            chan struct{}
-	config          *agent.Config
-	statePath       string
-	measurementPath string
-	err             error
-	once            sync.Once
-	observations    *agent.ObservationCache
+	ctx          context.Context
+	cancel       context.CancelFunc
+	done         chan struct{}
+	config       *agent.Config
+	statePath    string
+	err          error
+	once         sync.Once
+	observations *agent.ObservationCache
 }
 
-func StartWindowsAgent(ctx context.Context, cfg *agent.Config, runtimeDir string, runtimeIdentity ...string) (*WindowsAgent, error) {
+func StartWindowsAgent(ctx context.Context, cfg *agent.Config, runtimeDir string, entries ...agent.ClientEntry) (*WindowsAgent, error) {
 	if ctx == nil || cfg == nil {
 		return nil, errors.New("[§5.5] Agent 生命周期参数不完整")
 	}
@@ -46,7 +44,6 @@ func StartWindowsAgent(ctx context.Context, cfg *agent.Config, runtimeDir string
 	}
 	var immutable agent.Config
 	err = json.Unmarshal(encoded, &immutable)
-	historyKey := sha256.Sum256(encoded)
 	clear(encoded)
 	if err != nil {
 		return nil, err
@@ -56,29 +53,17 @@ func StartWindowsAgent(ctx context.Context, cfg *agent.Config, runtimeDir string
 	if err != nil {
 		return nil, err
 	}
-	// Only raw measurements survive mode changes. Config alone cannot bind
-	// server addresses/transport credentials, so reuse additionally requires an
-	// explicit identity of the activated data plane. Legacy callers stay isolated.
-	measurementPath := filepath.Join(dir, "measurements.jsonl")
-	if len(runtimeIdentity) == 1 && runtimeIdentity[0] != "" {
-		historyKey = sha256.Sum256(append(historyKey[:], []byte("windows-agent-history-v1\x00"+runtimeIdentity[0])...))
-		measurementPath = filepath.Join(filepath.Dir(dir), fmt.Sprintf("measurements-%x.jsonl", historyKey))
-	}
-	if info, statErr := os.Lstat(measurementPath); statErr != nil && !os.IsNotExist(statErr) {
-		return nil, statErr
-	} else if statErr == nil && !info.Mode().IsRegular() {
-		return nil, errors.New("[§13.5] Agent 度量历史必须是普通文件")
-	}
 	child, cancel := context.WithCancel(ctx)
-	a := &WindowsAgent{ctx: child, cancel: cancel, done: make(chan struct{}), config: cfg, statePath: filepath.Join(dir, "state.json"), measurementPath: measurementPath}
+	a := &WindowsAgent{ctx: child, cancel: cancel, done: make(chan struct{}), config: cfg, statePath: filepath.Join(dir, "state.json")}
 	a.observations, err = agent.NewObservationCache(cfg)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
+	entries = append([]agent.ClientEntry(nil), entries...)
 	go func() {
 		defer close(a.done)
-		a.err = agent.Run(child, cfg, agent.Options{StatePath: a.statePath, MeasurementPath: a.measurementPath, EventsPath: filepath.Join(dir, "events.jsonl"), ShareEquivalentProbes: true, Log: io.Discard, Observations: a.observations})
+		a.err = agent.RunClient(child, cfg, agent.ClientOptions{StatePath: a.statePath, Entries: entries, Probe: pingWindowsEntry, Observations: a.observations})
 	}()
 	return a, nil
 }

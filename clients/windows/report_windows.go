@@ -142,7 +142,7 @@ func startWindowsReporter(root string, protector clientsecret.Protector, config 
 	return reporter, nil
 }
 
-// §16.1：先读本机路径，再做网络健康探测；健康超时不能抹掉已经取得的路径证据。
+// §16.1：读本机路径与运行状态；上报不触发业务探测。
 func (reporter *windowsReporter) sampleReport(ctx context.Context, preferencePath string, at time.Time) (clientRuntimeState, []string, *clientreport.AgentState, bool) {
 	reporter.mu.Lock()
 	state, revision, read := reporter.state, reporter.revision, reporter.readPaths
@@ -177,7 +177,7 @@ func (reporter *windowsReporter) sampleReport(ctx context.Context, preferencePat
 	return current, problems, agentState, true
 }
 
-// §16.1：网络探测不持有激活锁，切换/停止可取消；每轮结果只属于同一次 active。
+// §16.1：本机检查不持有激活锁，切换/停止可取消；结果只属于同一次 active。
 func (reporter *windowsReporter) sampleHealth(ctx context.Context, preferencePath string) (clientRuntimeState, []string, bool) {
 	reporter.mu.Lock()
 	state, revision, check := reporter.state, reporter.revision, reporter.check
