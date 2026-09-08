@@ -581,13 +581,10 @@ func (app *portableGUI) drawMisakaPath(item *portableDrawItem) {
 	r.bottom--
 	c.Fill(r, misakaWhite, s(7))
 	color := uint32(misakaMuted)
-	if row.Health == "正常" {
-		color = misakaGreen
-	}
-	if row.Health == "不稳定" || row.Health == "测量已过期" {
+	if row.Health == "部分失败" || row.Health == "测量过期" {
 		color = misakaAmber
 	}
-	if row.Health == "故障" {
+	if row.Health == "探测失败" {
 		color = misakaRed
 	}
 	serviceWidth := min(s(200), (r.right-r.left-s(110))/3)
@@ -596,17 +593,15 @@ func (app *portableGUI) drawMisakaPath(item *portableDrawItem) {
 		serviceLabel = "统一上网路径"
 	}
 	c.Text(serviceLabel, misakaRect(r.left+s(18), r.top+s(8), serviceWidth, s(24)), s(13), 600, misakaText, 0)
-	quality := row.SelectedQuality
+	quality := row.MeasurementSummary
 	if quality == "" || quality == "未知" {
-		quality = "—"
+		quality = "近期测量未知"
 	}
 	qualityLeft := r.left + s(30) + serviceWidth
-	c.Text("完整路径质量  "+quality, misakaRect(qualityLeft, r.top+s(8), r.right-s(104)-qualityLeft, s(24)), s(11), 400, misakaMuted, 2)
+	c.Text(quality, misakaRect(qualityLeft, r.top+s(8), r.right-s(104)-qualityLeft, s(24)), s(11), 400, misakaMuted, 2)
 	health := misakaRect(r.right-s(92), r.top+s(9), s(76), s(22))
 	healthFill := uint32(0xF4F6F5)
-	if row.Health == "正常" {
-		healthFill = misakaGreenLight
-	} else if color == misakaRed {
+	if color == misakaRed {
 		healthFill = 0xFFF0ED
 	} else if color == misakaAmber {
 		healthFill = 0xFFF6E7
@@ -614,7 +609,7 @@ func (app *portableGUI) drawMisakaPath(item *portableDrawItem) {
 	c.Fill(health, healthFill, s(11))
 	healthLabel := row.Health
 	if healthLabel == "" || healthLabel == "未知" {
-		healthLabel = "健康未知"
+		healthLabel = "测量未知"
 	}
 	c.Text(healthLabel, health, s(10), 500, color, 1)
 	// §7.3.3：只拆分只读显示字符串用于布局，不由名称推导路径或操作 selector。
@@ -661,7 +656,7 @@ func (app *portableGUI) drawMisakaPath(item *portableDrawItem) {
 			bounds.top, bounds.bottom = bounds.top+y, bounds.bottom+y
 			return bounds
 		}
-		c.Text(details.best, place(details.bestBounds), s(10), 400, misakaMuted, 0)
+		c.Paragraph(details.best, place(details.bestBounds), s(10), 400, misakaMuted)
 		c.Paragraph(details.reason, place(details.reasonBounds), s(10), 400, misakaMuted)
 		c.Text(details.read, place(details.readBounds), s(9), 400, misakaMuted, 0)
 		if details.scope != "" {

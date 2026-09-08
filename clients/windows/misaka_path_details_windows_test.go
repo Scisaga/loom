@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"unsafe"
+
+	"loom/internal/clientreport"
 )
 
 func misakaDetailInkBounds(pixels []byte, width int32, area portableRect) (portableRect, int) {
@@ -142,4 +144,46 @@ func TestGUIMisakaPathDetailsCompactSyntheticCapture(t *testing.T) {
 	app.renderControls()
 	app.scrollMisakaPane(app.skin.scrollMaximum)
 	captureConfiguredProfileGUIState(t, app, "-detail-long-scope")
+}
+
+// §7.2 / §16.1：使用真实摘要投影验证单样本为中性色，统计和比较边界完整换行。
+func TestGUIMisakaPathDetailsRenderLimitedMeasurementEvidence(t *testing.T) {
+	app := newProfileGUITestWindow(t)
+	latency := 37
+	app.paths = windowsPathsFromReport(&clientreport.AgentState{Selections: []clientreport.AgentSelection{{
+		Declaration: "demo-service", Candidate: "demo-path", Chain: []string{"demo-entry", "demo-exit"},
+		UpdatedAt: "demo-read-time", Reason: "当前候选仅有一次近期探测，继续比较其余授权候选",
+		Health: &clientreport.AgentCandidateHealth{Candidates: 12, RecentSuccess: 1, RecentFailed: 1, Unknown: 9, Stale: 1,
+			SelectedState: "success", SelectedSamples: 1, SelectedP50MS: &latency, SelectedP95MS: &latency, BestP50MS: &latency},
+	}}})
+	app.pathsExpanded = true
+	for _, dpi := range []int32{96, 144, 192} {
+		width, height := portableMinimumWindowSize(dpi)
+		suggested := portableRect{left: 20, top: 20, right: 20 + width, bottom: 20 + height}
+		procSendMessage.Call(app.hwnd, portableWMDPIChanged, uintptr(dpi)|uintptr(dpi)<<16, uintptr(unsafe.Pointer(&suggested)))
+		app.renderControls()
+		app.layoutControls()
+		var item portableRect
+		procSendMessage.Call(app.controls.pathsValue, 0x0198, 0, uintptr(unsafe.Pointer(&item)))
+		item = misakaRect(0, 0, item.right-item.left, item.bottom-item.top)
+		dc, pixels := misakaCanvasTestDC(t, item.right, item.bottom)
+		draw := portableDrawItem{hwndItem: app.controls.pathsValue, dc: dc, rect: item, itemID: 0}
+		procSendMessage.Call(app.skin.pane, portableWMDrawItem, 0, uintptr(unsafe.Pointer(&draw)))
+		portableGDI32.NewProc("GdiFlush").Call()
+		badgeX, badgeY := item.right-app.scale(3)-1-app.scale(92)+app.scale(7), 1+app.scale(20)
+		if got := misakaCanvasTestPixel(pixels, item.right, badgeX, badgeY); got != 0xF4F6F5 {
+			t.Fatalf("[§16.1] DPI %d 单样本徽标没有使用中性色：%06x", dpi, got)
+		}
+		details := app.misakaPathDetails(app.paths[0], item.right-app.scale(3)-2-app.scale(28))
+		last := details.bestBounds
+		last.left, last.right = last.left+1+app.scale(14), last.right+1+app.scale(14)
+		last.top, last.bottom = last.top+1+app.scale(106), last.bottom+1+app.scale(106)
+		last.top = last.bottom - app.scale(12)
+		if _, count := misakaDetailInkBounds(pixels, item.right, last); count < 10 {
+			t.Fatalf("[§16.1] DPI %d 比较边界最后一行被裁切", dpi)
+		}
+		if dpi == 144 {
+			captureConfiguredProfileGUIState(t, app, "-measurement-evidence")
+		}
+	}
 }

@@ -16,15 +16,17 @@ import (
 
 // §7.3.3：只读显示是实际选路的投影，字符串值避免 GUI 和受限 IPC 共享可变测量对象。
 type windowsPathDisplay struct {
-	Service         string `json:"service"`
-	Candidate       string `json:"candidate,omitempty"`
-	Chain           string `json:"chain"`
-	Health          string `json:"health"`
-	SelectedQuality string `json:"selected_quality"`
-	BestQuality     string `json:"best_quality"`
-	Reason          string `json:"reason"`
-	DecisionScope   string `json:"decision_scope,omitempty"`
-	UpdatedAt       string `json:"updated_at,omitempty"`
+	Service            string `json:"service"`
+	Candidate          string `json:"candidate,omitempty"`
+	Chain              string `json:"chain"`
+	Health             string `json:"health"`
+	MeasurementSummary string `json:"measurement_summary,omitempty"`
+	Comparison         string `json:"comparison,omitempty"`
+	SelectedQuality    string `json:"selected_quality"`
+	BestQuality        string `json:"best_quality"`
+	Reason             string `json:"reason"`
+	DecisionScope      string `json:"decision_scope,omitempty"`
+	UpdatedAt          string `json:"updated_at,omitempty"`
 }
 
 const windowsPathReadInterval = 5 * time.Second
@@ -160,16 +162,22 @@ func windowsPathsFromReport(report *clientreport.AgentState) []windowsPathDispla
 		if health := selection.Health; health != nil {
 			switch health.SelectedState {
 			case "success":
-				row.Health = "正常"
+				row.Health = "探测可达"
+				if health.SelectedSamples == 1 {
+					row.Health = "单次可达"
+				} else if health.SelectedSamples == 0 {
+					row.Health = "样本未知"
+				}
 			case "degraded":
-				row.Health = "不稳定"
+				row.Health = "部分失败"
 			case "failed":
-				row.Health = "故障"
+				row.Health = "探测失败"
 			case "stale":
-				row.Health = "测量已过期"
+				row.Health = "测量过期"
 			}
-			row.SelectedQuality = windowsPathQuality(health.SelectedP50MS, health.SelectedP95MS, health.SelectedKBps)
-			row.BestQuality = windowsPathQuality(health.BestP50MS, nil, health.BestKBps)
+			row.SelectedQuality = windowsSelectedPathQuality(health)
+			row.BestQuality = windowsMeasuredPathQuality(health)
+			row.MeasurementSummary, row.Comparison = windowsPathEvidence(health)
 		}
 		if row.Reason == "" {
 			row.Reason = "未知"
@@ -179,10 +187,56 @@ func windowsPathsFromReport(report *clientreport.AgentState) []windowsPathDispla
 	return rows
 }
 
+// §16.1：次数、失败和覆盖来自已有测量摘要，不能把读取时间冒充最近探测时间。
+func windowsPathEvidence(health *clientreport.AgentCandidateHealth) (string, string) {
+	summary := "近期无有效测量"
+	if health.SelectedSamples > 0 {
+		summary = fmt.Sprintf("近期探测 %d 次 · 失败 %d", health.SelectedSamples, health.SelectedFailures)
+	}
+	if health.Candidates <= 0 {
+		return summary, "候选比较范围未知"
+	}
+	measured := health.RecentSuccess + health.RecentDegraded + health.RecentFailed
+	summary += fmt.Sprintf(" · 已测 %d/%d", measured, health.Candidates)
+	comparison := fmt.Sprintf("候选 %d 个有近期样本，%d 个未测，%d 个已过期", measured, health.Unknown, health.Stale)
+	if measured < health.Candidates {
+		comparison += "；比较尚未覆盖全部候选"
+	} else {
+		comparison += "；可达状态不代表已选到最优路径"
+	}
+	return summary, comparison
+}
+
+func windowsSelectedPathQuality(health *clientreport.AgentCandidateHealth) string {
+	if health.SelectedSamples-health.SelectedFailures == 1 && health.SelectedP50MS != nil {
+		quality := fmt.Sprintf("单个成功样本 %d ms", *health.SelectedP50MS)
+		if health.SelectedKBps != nil {
+			quality += fmt.Sprintf(" · %d KB/s", *health.SelectedKBps)
+		}
+		return quality
+	}
+	return windowsPathQuality(health.SelectedP50MS, health.SelectedP95MS, health.SelectedKBps)
+}
+
+// §16.1：最低延迟和最高吞吐可能来自不同候选，不将两个独立极值称为“最佳路径”。
+func windowsMeasuredPathQuality(health *clientreport.AgentCandidateHealth) string {
+	var metrics []string
+	if health.BestP50MS != nil {
+		metrics = append(metrics, fmt.Sprintf("最低中位延迟 %d ms", *health.BestP50MS))
+	}
+	if health.BestKBps != nil {
+		metrics = append(metrics, fmt.Sprintf("最高吞吐 %d KB/s", *health.BestKBps))
+	}
+	if len(metrics) == 0 {
+		return "未知"
+	}
+	return strings.Join(metrics, " · ")
+}
+
 func windowsPathQuality(p50, p95, kbps *int) string {
 	var metrics []string
 	if p50 != nil {
-		metrics = append(metrics, fmt.Sprintf("P50 %d ms", *p50))
+		metrics = append(metrics, fmt.Sprintf("P50（中位）%d ms", *p50))
 	}
 	if p95 != nil {
 		metrics = append(metrics, fmt.Sprintf("P95 %d ms", *p95))
@@ -213,7 +267,11 @@ func formatWindowsPaths(rows []windowsPathDisplay, details bool) string {
 	for _, row := range rows {
 		line := row.Service + "：" + row.Chain + "（" + row.Health + "）"
 		if details {
-			line += "\r\n当前质量：" + row.SelectedQuality + "；最佳质量：" + row.BestQuality + "\r\n原因：" + row.Reason
+			line += "\r\n" + row.MeasurementSummary + "\r\n当前测量：" + row.SelectedQuality + "；已测候选：" + row.BestQuality
+			if row.Comparison != "" {
+				line += "\r\n" + row.Comparison
+			}
+			line += "\r\n原因：" + row.Reason
 			if row.UpdatedAt != "" {
 				line += "\r\n读取时间：" + row.UpdatedAt
 			}

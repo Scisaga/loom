@@ -136,7 +136,8 @@ func TestWindowsHealthDistinguishesTCPAndTLS(t *testing.T) {
 	if len(got) != 1 || got[0] != "单目标探测 "+plan.target+"/：TCP 连接失败" {
 		t.Fatalf("TCP phase missing: %v", got)
 	}
-	plan.target = "https://demo-user:demo-token@demo.example/private?key=demo-secret#fragment"
+	target := &url.URL{Scheme: "https", Host: "demo.example", User: url.UserPassword("demo-user", "demo-token"), Path: "/private", RawQuery: "key=demo-secret", Fragment: "fragment"}
+	plan.target = target.String()
 	got = []string{plan.probeProblem(errors.New("sensitive transport details"), "TLS 握手")}
 	if got[0] != "单目标探测 https://demo.example/：TLS 握手失败" {
 		t.Fatalf("target metadata leaked: %v", got)

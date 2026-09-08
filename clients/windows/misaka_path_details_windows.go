@@ -88,13 +88,17 @@ func (app *portableGUI) misakaPathDetails(row windowsPathDisplay, width int32) m
 		}
 		return text
 	}
-	layout := misakaPathDetailLayout{best: "最佳：" + value(row.BestQuality), reason: "原因：" + value(row.Reason), read: "读取：" + value(row.UpdatedAt)}
+	metrics := "当前测量：" + value(row.SelectedQuality) + "；已测候选：" + value(row.BestQuality)
+	if row.Comparison != "" {
+		metrics += "\n" + row.Comparison
+	}
+	layout := misakaPathDetailLayout{best: metrics, reason: "原因：" + value(row.Reason), read: "读取：" + value(row.UpdatedAt)}
 	line := func(height int32) portableRect {
 		bounds := misakaRect(0, layout.height, width, height)
 		layout.height += height
 		return bounds
 	}
-	layout.bestBounds = line(s(20))
+	layout.bestBounds = line(app.misakaDetailParagraphHeight(layout.best, width, s(10)))
 	layout.reasonBounds = line(app.misakaDetailParagraphHeight(layout.reason, width, s(10)))
 	layout.readBounds = line(s(18))
 	if row.DecisionScope != "" {

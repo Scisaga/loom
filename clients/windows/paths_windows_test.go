@@ -75,14 +75,14 @@ func TestWindowsPathsFormatServicesQualityAndReason(t *testing.T) {
 	zero, p50, p95, kbps := 0, 25, 40, 800
 	scope := strings.Repeat("a", 64)
 	rows := windowsPathsFromReport(&clientreport.AgentState{Selections: []clientreport.AgentSelection{
-		{Declaration: "demo-service-a", Candidate: "opaque-b", Chain: []string{"demo-prefix", "demo-exit"}, UpdatedAt: "2026-09-08T00:00:00Z", Reason: "改善达到切换门槛 [decision_scope=" + scope + "]", Health: &clientreport.AgentCandidateHealth{SelectedState: "success", SelectedP50MS: &p50, SelectedP95MS: &p95, BestP50MS: &zero}},
+		{Declaration: "demo-service-a", Candidate: "opaque-b", Chain: []string{"demo-prefix", "demo-exit"}, UpdatedAt: "2026-09-08T00:00:00Z", Reason: "改善达到切换门槛 [decision_scope=" + scope + "]", Health: &clientreport.AgentCandidateHealth{SelectedState: "success", SelectedSamples: 4, Candidates: 3, RecentSuccess: 2, Unknown: 1, SelectedP50MS: &p50, SelectedP95MS: &p95, BestP50MS: &zero}},
 		{Declaration: "demo-service-b", Candidate: "opaque-c", Chain: []string{"demo-other"}, Reason: "当前路径发生故障", Health: &clientreport.AgentCandidateHealth{SelectedState: "degraded", SelectedKBps: &kbps}},
 		{Declaration: "demo-service-c", Candidate: "opaque-direct", Reason: "直连模式；不进行 Agent 路径测量"},
 	}})
 	if len(rows) != 3 || rows[0].DecisionScope != scope || rows[0].Reason != "改善达到切换门槛" || rows[1].Chain != "本机 → demo-other → 目标" || rows[2].Chain != "本机 → 目标（直连）" || rows[2].Health != "未知" {
 		t.Fatalf("服务路径与原因投影错误: %+v", rows)
 	}
-	if rows[0].SelectedQuality != "P50 25 ms · P95 40 ms" || rows[0].BestQuality != "P50 0 ms" || rows[1].SelectedQuality != "800 KB/s" || rows[1].BestQuality != "未知" || rows[1].Health != "不稳定" {
+	if rows[0].SelectedQuality != "P50（中位）25 ms · P95 40 ms" || rows[0].BestQuality != "最低中位延迟 0 ms" || rows[1].SelectedQuality != "800 KB/s" || rows[1].BestQuality != "未知" || rows[1].Health != "部分失败" {
 		t.Fatalf("质量必须区别无值和真实零值: %+v", rows)
 	}
 	compact, detail := formatWindowsPaths(rows, false), formatWindowsPaths(rows, true)
@@ -163,5 +163,26 @@ func TestWindowsPathsDiscardGenerationChangedDuringRead(t *testing.T) {
 				t.Fatalf("旧代结果不能回填: %+v", rows)
 			}
 		})
+	}
+}
+
+// §16.1：单样本、失败样本和未知候选不能通过统计标签被包装成健康或已完成选优。
+func TestWindowsPathsShowProbeCountsAndIncompleteComparison(t *testing.T) {
+	latency := 37
+	health := &clientreport.AgentCandidateHealth{Candidates: 12, RecentSuccess: 1, RecentFailed: 1, Unknown: 9, Stale: 1,
+		SelectedState: "success", SelectedSamples: 1, SelectedP50MS: &latency, SelectedP95MS: &latency}
+	rows := windowsPathsFromReport(&clientreport.AgentState{Selections: []clientreport.AgentSelection{{Declaration: "demo-service", Health: health, UpdatedAt: "demo-read-time"}}})
+	row := rows[0]
+	if row.Health != "单次可达" || row.SelectedQuality != "单个成功样本 37 ms" || row.MeasurementSummary != "近期探测 1 次 · 失败 0 · 已测 2/12" ||
+		!strings.Contains(row.Comparison, "9 个未测，1 个已过期") || !strings.Contains(row.Comparison, "比较尚未覆盖全部候选") {
+		t.Fatalf("[§16.1] 单样本或未比较边界失真：%+v", row)
+	}
+	if detail := formatWindowsPaths(rows, true); strings.Contains(detail, "P95") || strings.Contains(detail, "最近探测：demo-read-time") || !strings.Contains(detail, "读取时间：demo-read-time") {
+		t.Fatalf("[§16.1] 单样本统计或读回时间失真：%s", detail)
+	}
+	health.SelectedState, health.SelectedSamples, health.SelectedFailures = "degraded", 2, 1
+	row = windowsPathsFromReport(&clientreport.AgentState{Selections: []clientreport.AgentSelection{{Health: health}}})[0]
+	if row.Health != "部分失败" || !strings.Contains(row.MeasurementSummary, "探测 2 次 · 失败 1") || strings.Contains(row.SelectedQuality, "P95") {
+		t.Fatalf("[§16.1] 失败样本不能变成成功延迟分位：%+v", row)
 	}
 }
