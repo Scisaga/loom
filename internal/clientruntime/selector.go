@@ -17,9 +17,10 @@ import (
 
 // §5.1、§7.3.3：本地偏好只裁剪签名候选，selector 的运行期写者只有共享 Agent。
 type WindowsSelectorPlan struct {
-	config agent.Config
-	policy clientcore.Policy
-	direct bool
+	config           agent.Config
+	policy           clientcore.Policy
+	direct           bool
+	internetSelector string
 }
 
 func BuildWindowsSelectorPlan(body, agentBody []byte, profile WindowsRuntimeProfile, caPath string) (*WindowsSelectorPlan, error) {
@@ -97,7 +98,7 @@ func validateWindowsAgentPair(body, agentBody []byte, node string) (*WindowsSele
 	}
 	plan := &WindowsSelectorPlan{config: *cfg, policy: clientcore.Policy{Schema: clientcore.PolicySchema}, direct: true}
 	ids, seenUsers := map[string]bool{}, map[string]bool{}
-	var common map[string]bool
+	exitsBySelector := map[string]map[string]bool{}
 	for _, d := range cfg.Declarations {
 		if d.ID == "" || ids[d.ID] || !selectors[d.Selector] {
 			return nil, errors.New("[§5.1] 重复 Service 或缺失 selector")
@@ -172,20 +173,16 @@ func validateWindowsAgentPair(body, agentBody []byte, node string) (*WindowsSele
 			}
 		}
 		plan.direct = plan.direct && direct
-		if common == nil {
-			common = exits
-		} else {
-			for exit := range common {
-				if !exits[exit] {
-					delete(common, exit)
-				}
-			}
-		}
+		exitsBySelector[d.Selector] = exits
 	}
 	if len(selectors) > 0 || len(seenUsers) != len(users) {
 		return nil, errors.New("[§12] 未纳入 Agent 的 selector 或 probe user")
 	}
-	for exit := range common {
+	plan.internetSelector, _, err = windowsInternetSelector(&sb)
+	if err != nil {
+		return nil, err
+	}
+	for exit := range exitsBySelector[plan.internetSelector] {
 		plan.policy.Exits = append(plan.policy.Exits, clientcore.Exit{ID: exit})
 	}
 	sort.Slice(plan.policy.Exits, func(i, j int) bool { return plan.policy.Exits[i].ID < plan.policy.Exits[j].ID })
@@ -218,14 +215,20 @@ func (p *WindowsSelectorPlan) Derive(body []byte, preference clientcore.Preferen
 	if err := json.Unmarshal(body, &sb); err != nil {
 		return nil, nil, err
 	}
+	if preference.Mode == clientcore.FixedExit {
+		cfg, err := p.fixedInternetConfig(&sb, preference)
+		if err != nil {
+			return nil, nil, err
+		}
+		derived, err := json.Marshal(&sb)
+		return derived, cfg, err
+	}
 	cfg := p.config
 	cfg.Declarations = make([]agent.Decl, len(p.config.Declarations))
 	for i, d := range p.config.Declarations {
 		d.Candidates = append([]agent.Cand(nil), d.Candidates...)
 		d.Candidates = slices.DeleteFunc(d.Candidates, func(c agent.Cand) bool {
 			switch preference.Mode {
-			case clientcore.FixedExit:
-				return len(c.Chain) == 0 || c.Chain[len(c.Chain)-1] != preference.Exit
 			case clientcore.Direct:
 				return len(c.Chain) != 0
 			}

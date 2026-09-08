@@ -39,6 +39,22 @@ func (app *portableGUI) misakaRouteSelectable(snapshot portableGUISnapshot) bool
 	return snapshot.joined && snapshot.profileDraft == nil && portableRouteSelectable(snapshot) && app.skin.route.pending == nil
 }
 
+func (app *portableGUI) misakaRouteLayoutChanged(snapshot portableGUISnapshot) bool {
+	if app.skin == nil || app.controls.routeCombo == 0 {
+		return false
+	}
+	style, _, _ := procMisakaGetWindowLong.Call(app.controls.routeCombo, ^uintptr(15)) // GWL_STYLE
+	visible := style&portableWSVisible != 0
+	return visible != app.misakaRouteVisible(snapshot)
+}
+
+// §7.2：偏好等待与确认只更新局部状态；没有可见性变化时不得重排整个右侧面板。
+func (app *portableGUI) syncMisakaRouteLayout(snapshot portableGUISnapshot) {
+	if app.misakaRouteLayoutChanged(snapshot) {
+		app.layoutControls()
+	}
+}
+
 // §7.2：必须在布局和快照相等短路之前收敛，避免拿旧编辑状态布局新偏好。
 func (app *portableGUI) reconcileMisakaRoute(snapshot portableGUISnapshot) bool {
 	if app.skin == nil {
@@ -80,13 +96,10 @@ func (app *portableGUI) cancelMisakaRoutePicker() {
 		return
 	}
 	snapshot := app.snapshot()
-	visible := app.misakaRouteVisible(snapshot)
 	app.skin.route.picker = false
 	app.closeMisakaRouteDropDown()
 	app.renderRouteCombo(snapshot)
-	if visible != app.misakaRouteVisible(snapshot) {
-		app.layoutControls()
-	}
+	app.syncMisakaRouteLayout(snapshot)
 }
 
 func (app *portableGUI) misakaRouteFilterKey(message portableMSG) bool {
@@ -132,7 +145,7 @@ func (app *portableGUI) misakaRouteCommand(id uint16) bool {
 	if mode == clientcore.FixedExit {
 		app.skin.route.picker = true
 		app.renderRouteCombo(snapshot)
-		app.layoutControls()
+		app.syncMisakaRouteLayout(snapshot)
 		procMisakaSetFocus.Call(app.controls.routeCombo)
 		procSendMessage.Call(app.controls.routeCombo, portableCBShowDropDown, 1, 0)
 		return true
@@ -180,14 +193,16 @@ func (app *portableGUI) submitMisakaRoutePreference(snapshot portableGUISnapshot
 	route := &app.skin.route
 	route.picker = false
 	if snapshot.routeSelected == routeOptionIndex(snapshot.routeOptions, preference) {
-		app.layoutControls()
+		app.renderRouteCombo(snapshot)
+		app.syncMisakaRouteLayout(snapshot)
 		return
 	}
 	route.sequence++
 	route.profileID, route.pending, route.acknowledged = snapshot.selectedProfile, &preference, false
 	sequence := route.sequence
-	app.layoutControls()
-	app.renderMisakaRoutes(snapshot, nil)
+	app.renderRouteCombo(snapshot)
+	app.syncMisakaRouteLayout(snapshot)
+	app.renderMisakaRoutes(snapshot, &snapshot)
 	req := brokerRequest{Operation: "preference", ProfileID: snapshot.selectedProfile, Preference: &preference}
 	app.dispatchMisakaRoutePreference(req, sequence)
 }

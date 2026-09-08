@@ -253,3 +253,27 @@ func TestWindowsProfilePreferenceBusyCoversTheWholeWorker(t *testing.T) {
 		t.Fatal("[§7.2] 最终完成没有发布真实偏好并清除忙状态")
 	}
 }
+
+func TestGUIMisakaRouteUnchangedGeometryDoesNotRelayoutOnClickOrAck(t *testing.T) {
+	app, manager, child := newMisakaRouteGUITestWindow(t)
+	writes := recordProfileGUIWrites(t, app)
+	for click := 0; click < 5; click++ {
+		app.misakaRouteCommand(misakaControlAuto)
+	}
+	if len(*writes) != 0 {
+		t.Fatal("[§7.2] 点击已经确认的模式仍重新布局或改写控件")
+	}
+	release := lockMisakaRouteWorker(t, child)
+	app.misakaRouteCommand(misakaControlDirect)
+	app.renderControls()
+	release()
+	finishMisakaRouteTestRequest(t, app, manager)
+	for _, write := range *writes {
+		if write.message == 0x0046 {
+			t.Fatal("[§7.2] Auto 到 Direct 的等待或 ACK 在几何不变时仍移动了控件")
+		}
+	}
+	if misakaSelectedMode(app.snapshot()) != clientcore.Direct {
+		t.Fatal("[§7.2] 减少重绘丢失了实际模式确认")
+	}
+}

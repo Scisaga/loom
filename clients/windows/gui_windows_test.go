@@ -167,9 +167,13 @@ func checkGUIFonts(t *testing.T, app *portableGUI, dpi int32) {
 		if control == app.controls.brandName || control == app.controls.stateValue {
 			points, weight = 11, portableFWSemibold
 		}
-		if logicalFont.height != -points*dpi/72 || logicalFont.weight != weight {
+		height := -points * dpi / 72
+		if control == app.controls.profileNameEdit {
+			height, weight = -misakaProfileNameSize*dpi/96, portableFWSemibold
+		}
+		if logicalFont.height != height || logicalFont.weight != weight {
 			t.Errorf("DPI %d control %x: font height/weight = %d/%d, want %d/%d", dpi, control,
-				logicalFont.height, logicalFont.weight, -points*dpi/72, weight)
+				logicalFont.height, logicalFont.weight, height, weight)
 		}
 	}
 }

@@ -167,9 +167,10 @@ func TestGUIProfilesSelectionAndActualServicePaths(t *testing.T) {
 	captureConfiguredProfileGUIState(t, app, "")
 	procSendMessage.Call(app.hwnd, portableWMCommand, portableControlPathDetails, app.controls.pathsDetailsButton)
 	expanded := profileGUIPathText(t, app)
-	if !strings.Contains(profileGUIText(app.controls.pathsValue), `C:\demo-client\profiles\`+profileGUIFixtureA) {
-		t.Fatal("profile details displayed the shared root instead of this profile's root")
+	if profileGUIStyle(app.controls.pathsValue)&portableWSVScroll != 0 {
+		t.Fatal("路径列表仍有独立滚动条")
 	}
+
 	for _, row := range app.paths {
 		for _, field := range []string{row.Service, row.Chain, row.SelectedQuality, row.BestQuality, row.Reason} {
 			if !strings.Contains(expanded, field) {
@@ -320,7 +321,9 @@ func TestGUIProfileLayoutScalesWithoutOverlap(t *testing.T) {
 				}
 				rect := guiWindowRect(t, control)
 				portableUser32.NewProc("MapWindowPoints").Call(0, app.hwnd, uintptr(unsafe.Pointer(&rect)), 2)
-				if rect.left < 0 || rect.top < 0 || rect.right > client.right || rect.bottom > client.bottom || rect.right <= rect.left || rect.bottom <= rect.top {
+				parent, _, _ := portableUser32.NewProc("GetParent").Call(control)
+				outsideVertical := parent != app.skin.pane && (rect.top < 0 || rect.bottom > client.bottom)
+				if rect.left < 0 || outsideVertical || rect.right > client.right || rect.right <= rect.left || rect.bottom <= rect.top {
 					t.Errorf("joined=%t DPI=%d control=%x exceeds client bounds: %+v inside %+v", joined, dpi, control, rect, client)
 				}
 				if control == app.controls.interfaceGroup || control == app.controls.localGroup {
@@ -336,7 +339,7 @@ func TestGUIProfileLayoutScalesWithoutOverlap(t *testing.T) {
 					rect    portableRect
 				}{control, rect})
 			}
-			for _, button := range []uintptr{app.controls.addProfileButton, app.controls.primaryButton, app.controls.renameProfileButton, app.controls.deleteButton} {
+			for _, button := range []uintptr{app.controls.addProfileButton, app.controls.primaryButton, app.controls.deleteButton} {
 				if profileGUIStyle(button)&portableWSVisible == 0 {
 					t.Errorf("joined=%t DPI=%d required button=%x is hidden", joined, dpi, button)
 				}

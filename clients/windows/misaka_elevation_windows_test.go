@@ -30,7 +30,7 @@ func newMisakaElevationFixture(t *testing.T) (*portableGUI, *windowsProfileManag
 
 func assertMisakaElevationControlsDisabled(t *testing.T, app *portableGUI) {
 	t.Helper()
-	for _, control := range []uintptr{app.controls.networkList, app.controls.addProfileButton, app.controls.renameProfileButton,
+	for _, control := range []uintptr{app.controls.networkList, app.controls.addProfileButton,
 		app.controls.deleteButton, app.controls.primaryButton, app.controls.modeAuto, app.controls.modeFixed, app.controls.modeDirect, app.controls.routeCombo} {
 		if enabled, _, _ := procIsWindowEnabled.Call(control); enabled != 0 {
 			t.Fatal("[§7.2] 提权交接期间仍允许更改身份、连接或路由偏好")

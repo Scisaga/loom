@@ -21,6 +21,7 @@ type misakaCanvas struct {
 	brushes                       map[uint32]*misakaCOMObject
 	formats                       map[misakaTextStyle]*misakaCOMObject
 	bounds                        portableRect
+	offsetX, offsetY              int32
 	dpi                           int32
 	drawing, closed               bool
 	err                           error
@@ -136,6 +137,7 @@ func (c *misakaCanvas) Begin(dc uintptr, bounds portableRect, dpi int32) error {
 		return err
 	}
 	c.bounds = bounds
+	c.offsetX, c.offsetY = 0, 0
 	misakaCOMCall(c.target, 48) // §7.2：开始本次绘制。
 	c.drawing = true
 	return nil
@@ -230,8 +232,8 @@ func (c *misakaCanvas) canDraw(rect portableRect) bool {
 }
 
 func (c *misakaCanvas) relativeRect(rect portableRect) misakaFloatRect {
-	return misakaFloatRect{float32(rect.left - c.bounds.left), float32(rect.top - c.bounds.top),
-		float32(rect.right - c.bounds.left), float32(rect.bottom - c.bounds.top)}
+	return misakaFloatRect{float32(rect.left - c.bounds.left + c.offsetX), float32(rect.top - c.bounds.top + c.offsetY),
+		float32(rect.right - c.bounds.left + c.offsetX), float32(rect.bottom - c.bounds.top + c.offsetY)}
 }
 
 func (c *misakaCanvas) brush(rgb uint32) *misakaCOMObject {

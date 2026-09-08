@@ -147,40 +147,6 @@ func TestGUIMisakaProfileSelectionHasSquareCornersAndContinuousRail(t *testing.T
 	}
 }
 
-func TestGUIMisakaRenamePencilDoesNotTransformFollowingControls(t *testing.T) {
-	app := newProfileGUITestWindow(t)
-	const width, height int32 = 340, 220
-	dc, pixels := misakaCanvasTestDC(t, width, height)
-	for _, dpi := range []int32{96, 120, 144, 168, 192} {
-		app.windowDPI = dpi
-		s, c := app.scale, app.skin.canvas
-		bounds := misakaRect(s(5), s(4), s(150), s(100))
-		if err := c.Begin(dc, bounds, dpi); err != nil {
-			t.Fatal(err)
-		}
-		c.Fill(bounds, misakaWhite, 0)
-		button := misakaRect(s(34), s(20), s(28), s(28))
-		paintMisakaPencil(c, button, s, misakaText)
-		following := misakaRect(s(110), s(72), s(11), s(11))
-		c.Fill(following, misakaGreen, 0)
-		if err := c.End(); err != nil {
-			t.Fatal(err)
-		}
-		portableGDI32.NewProc("GdiFlush").Call()
-		ink := misakaAlignmentInk(pixels, width, button, func(rgb uint32) bool { return rgb>>16 < 160 && rgb>>8&255 < 160 && rgb&255 < 160 })
-		if ink.right <= ink.left || absMisakaAlignment(ink.left+ink.right-button.left-button.right) > 3 || absMisakaAlignment(ink.top+ink.bottom-button.top-button.bottom) > 3 {
-			t.Errorf("[§7.2] DPI %d 铅笔符号未在重命名按钮中居中：%+v", dpi, ink)
-		}
-		for y := following.top; y < following.bottom; y++ {
-			for x := following.left; x < following.right; x++ {
-				if misakaCanvasTestPixel(pixels, width, x, y) != misakaGreen {
-					t.Fatalf("[§7.2] DPI %d 铅笔旋转污染了后续控件坐标", dpi)
-				}
-			}
-		}
-	}
-}
-
 func TestGUIMisakaPathLabelsStayUnderTheirNodesAtBothEdges(t *testing.T) {
 	app := newProfileGUITestWindow(t)
 	const width, height int32 = 1300, 300

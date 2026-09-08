@@ -34,6 +34,11 @@ type agentNetwork struct {
 func agentNetworkFixture(t *testing.T) (*agentNetwork, *agent.Config) {
 	t.Helper()
 	body, planBody := pathPlanFixture(t)
+	return agentNetworkFixturePlan(t, body, planBody)
+}
+
+func agentNetworkFixturePlan(t *testing.T, body, planBody []byte) (*agentNetwork, *agent.Config) {
+	t.Helper()
 	p, err := validateWindowsAgentPair(body, planBody, "")
 	if err != nil {
 		t.Fatal(err)

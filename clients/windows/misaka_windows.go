@@ -42,22 +42,26 @@ const (
 )
 
 type misakaUI struct {
-	canvas         *misakaCanvas
-	brushes        map[uint32]uintptr
-	width, height  int32
-	rename         bool
-	renameID       string
-	route          misakaRouteUI
-	draftInvite    *clientenroll.Invite
-	draftError     string
-	inviteLabel    string
-	hoverCaption   int
-	pressedCaption int
-	paintFailures  int
-	paintError     string
-	lastPaths      []windowsPathDisplay
-	pathsText      string
-	closed         bool
+	canvas                                    *misakaCanvas
+	brushes                                   map[uint32]uintptr
+	width, height                             int32
+	pane                                      uintptr
+	scrollY, scrollMaximum, wheelDelta        int32
+	layingOut                                 bool
+	scrollContent, scrollPage, scrollPosition int32
+	rename                                    bool
+	renameID                                  string
+	route                                     misakaRouteUI
+	draftInvite                               *clientenroll.Invite
+	draftError                                string
+	inviteLabel                               string
+	hoverCaption                              int
+	pressedCaption                            int
+	paintFailures                             int
+	paintError                                string
+	lastPaths                                 []windowsPathDisplay
+	pathsText                                 string
+	closed                                    bool
 }
 
 var (
@@ -95,7 +99,7 @@ func (app *portableGUI) initializeMisaka() error {
 	}
 	app.skin.canvas = canvas
 	app.skin.brushes = make(map[uint32]uintptr)
-	for _, hwnd := range []uintptr{app.controls.networkList, app.controls.pathsValue, app.controls.profileNameEdit, app.controls.draftName, app.controls.routeCombo} {
+	for _, hwnd := range app.controls.all() {
 		if result, _, err := procMisakaSetSubclass.Call(hwnd, misakaSubclassCallback, 1, app.hwnd); result == 0 {
 			app.closeMisaka()
 			return fmt.Errorf("[§7.2] 初始化自绘输入控件: %w", err)
@@ -135,48 +139,77 @@ func misakaColorRef(rgb uint32) uint32 { return rgb>>16 | rgb&0xFF00 | (rgb&0xFF
 func misakaRect(x, y, w, h int32) portableRect { return portableRect{x, y, x + w, y + h} }
 
 func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height int32) {
-	if app.skin == nil {
+	if app.skin == nil || app.skin.layingOut {
 		return
 	}
-	app.skin.width, app.skin.height = width, height
+	app.skin.layingOut = true
+	defer func() { app.skin.layingOut = false }()
 	s := app.scale
+	resized := app.skin.width != width || app.skin.height != height
+	app.skin.width, app.skin.height = width, height
+	moveMisakaControl(app.skin.pane, app.hwnd, misakaRect(s(176), s(40), width-s(176), height-s(40)))
+	count := 0
+	if snapshot.state == guiConnected {
+		count = len(snapshot.paths)
+	}
+	content := s(330)
+	if snapshot.joined {
+		content = s(300) + s(app.misakaPathHeight())*int32(max(1, count)) + s(20)
+	}
+	if snapshot.profileDraft != nil {
+		content = s(468)
+	}
+	app.updateMisakaScroll(content - s(40))
 	visible := make(map[uintptr]bool)
-	defer func() {
-		for _, control := range app.controls.all() {
-			setPortableControlVisible(control, visible[control])
-		}
-	}()
 	move := func(control uintptr, x, y, w, h int32) {
-		procMoveWindow.Call(control, uintptr(x), uintptr(y), uintptr(max(1, w)), uintptr(max(1, h)), 0)
+		parent, _, _ := portableUser32.NewProc("GetParent").Call(control)
+		if parent == app.skin.pane {
+			x -= s(176)
+			y -= s(40) + app.skin.scrollY
+		}
+		moveMisakaControl(control, parent, misakaRect(x, y, max(1, w), max(1, h)))
 		visible[control] = true
 	}
-	side, main, end := s(176), s(196), width-s(20)
+	side, main, end := s(176), s(196), app.misakaContentEnd()
 	move(app.controls.addProfileButton, side-s(42), s(112), s(28), s(28))
 	move(app.controls.networkList, s(12), s(150), side-s(24), height-s(214))
 	move(app.controls.stateIcon, main+s(15), s(115), s(38), s(38))
 	move(app.controls.stateValue, main+s(68), s(114), end-main-s(198), s(32))
 	move(app.controls.primaryButton, end-s(118), s(118), s(100), s(32))
-	move(app.controls.message, main, height-s(32), end-main, s(22))
+	move(app.controls.message, main+s(68), s(152), end-main-s(86), s(30))
 	if snapshot.selectedProfile != "" {
-		move(app.controls.renameProfileButton, end-s(151), s(55), s(28), s(28))
-		move(app.controls.deleteButton, end-s(106), s(178), s(88), s(22))
+		move(app.controls.deleteButton, end-s(90), s(57), s(90), s(28))
 	}
 	if snapshot.joined {
 		modeWidth := s(77)
-		move(app.controls.modeDirect, main+s(73), s(215), modeWidth, s(34))
-		move(app.controls.modeAuto, main+s(73)+modeWidth, s(215), modeWidth, s(34))
-		move(app.controls.modeFixed, main+s(73)+modeWidth*2, s(215), s(231)-modeWidth*2, s(34))
+		move(app.controls.modeDirect, main+s(73), s(220), modeWidth, s(34))
+		move(app.controls.modeAuto, main+s(73)+modeWidth, s(220), modeWidth, s(34))
+		move(app.controls.modeFixed, main+s(73)+modeWidth*2, s(220), s(231)-modeWidth*2, s(34))
 		if app.misakaRouteVisible(snapshot) {
-			move(app.controls.routeCombo, main+s(318), s(215), min(s(163), end-main-s(318)), s(220))
+			var r portableRect
+			procMisakaGetWindowRect.Call(app.controls.routeCombo, uintptr(unsafe.Pointer(&r)))
+			h := r.bottom - r.top
+			if h <= 0 || h > s(100) {
+				h = s(28)
+			}
+			parent := app.skin.pane
+			target := misakaRect(main+s(318)-s(176), s(220)+(s(34)-h)/2-s(40)-app.skin.scrollY, min(s(163), end-main-s(318)), h)
+			procMisakaMapPoints.Call(0, parent, uintptr(unsafe.Pointer(&r)), 2)
+			if r != target {
+				procMoveWindow.Call(app.controls.routeCombo, uintptr(target.left), uintptr(target.top), uintptr(target.right-target.left), uintptr(s(220)), 0)
+				procInvalidateRect.Call(parent, uintptr(unsafe.Pointer(&r)), 0)
+				procInvalidateRect.Call(parent, uintptr(unsafe.Pointer(&target)), 0)
+			}
+			visible[app.controls.routeCombo] = true
 		}
-		move(app.controls.pathsValue, main, s(295), end-main, height-s(357))
-		move(app.controls.pathsDetailsButton, end-s(86), s(261), s(86), s(26))
+		move(app.controls.pathsValue, main, s(300), end-main, s(app.misakaPathHeight())*int32(max(1, count)))
+		move(app.controls.pathsDetailsButton, end-s(86), s(265), s(86), s(26))
 	}
 	if app.skin.rename {
 		visible[app.controls.profileNameEdit] = true
 		app.positionMisakaRename()
 	}
-	if draft := snapshot.profileDraft; draft != nil {
+	if snapshot.profileDraft != nil {
 		clear(visible)
 		visible[app.controls.networkList] = true
 		visible[app.controls.addProfileButton] = true
@@ -187,12 +220,19 @@ func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height
 		move(app.controls.draftSubmit, x+w-s(148), y+s(272), s(124), s(34))
 		move(app.controls.draftCancel, x+w-s(246), y+s(272), s(86), s(34))
 	}
+	for _, control := range app.controls.all() {
+		setPortableControlVisible(control, visible[control])
+	}
 	enablePortableControl(app.controls.networkList, snapshot.profileDraft == nil && !app.isElevationPending())
+	if resized {
+		procInvalidateRect.Call(app.hwnd, 0, 0)
+		procInvalidateRect.Call(app.skin.pane, 0, 0)
+	}
 }
 
 func (app *portableGUI) misakaDraftBounds() (int32, int32, int32) {
 	x := app.scale(196)
-	w := app.skin.width - x - app.scale(20)
+	w := app.misakaContentEnd() - x
 	return x, app.scale(118), w
 }
 
@@ -221,7 +261,6 @@ func (app *portableGUI) renderMisaka(snapshot portableGUISnapshot, previous *por
 			procMisakaSetFocus.Call(app.controls.draftName)
 		}
 	}
-	setPortableControlText(app.controls.renameProfileButton, "重命名配置")
 	setPortableControlText(app.controls.deleteButton, "删除配置")
 	enablePortableControl(app.controls.addProfileButton, snapshot.profilesReady && !app.isElevationPending())
 	if snapshot.profilesReady && snapshot.selectedProfile == "" {
@@ -232,7 +271,7 @@ func (app *portableGUI) renderMisaka(snapshot portableGUISnapshot, previous *por
 		setPortableControlText(app.controls.primaryButton, "切换连接")
 	}
 	if app.isElevationPending() {
-		for _, control := range []uintptr{app.controls.networkList, app.controls.renameProfileButton, app.controls.deleteButton, app.controls.primaryButton, app.controls.modeAuto, app.controls.modeFixed, app.controls.modeDirect, app.controls.routeCombo} {
+		for _, control := range []uintptr{app.controls.networkList, app.controls.deleteButton, app.controls.primaryButton, app.controls.modeAuto, app.controls.modeFixed, app.controls.modeDirect, app.controls.routeCombo} {
 			enablePortableControl(control, false)
 		}
 	}
@@ -254,12 +293,16 @@ func (app *portableGUI) renderMisaka(snapshot portableGUISnapshot, previous *por
 			setPortableControlText(app.controls.draftCancel, "取消")
 		}
 	}
+	oldHeight := app.misakaPathHeight()
 	app.updateMisakaPaths(snapshot, previous == nil || previous.state != snapshot.state)
+	if previous == nil || previous.state != snapshot.state || len(previous.paths) != len(snapshot.paths) || oldHeight != app.misakaPathHeight() {
+		app.layoutControls()
+	}
 	// §7.2：观测变化只使对应卡片失效，定时轮询没有任何绘制副作用。
 	if previous == nil || !equalProfileDraft(snapshot.profileDraft, previous.profileDraft) ||
 		previous.state != snapshot.state || previous.profileName != snapshot.profileName || previous.routeSelected != snapshot.routeSelected ||
 		previous.joined != snapshot.joined || previous.activeProfileName != snapshot.activeProfileName {
-		procInvalidateRect.Call(app.hwnd, 0, 0)
+		procInvalidateRect.Call(app.skin.pane, 0, 0)
 	}
 }
 
@@ -272,7 +315,7 @@ func (app *portableGUI) misakaPathHeight() int32 {
 	}
 	height := int32(126 + (rows-1)*64)
 	if app.pathsExpanded {
-		height += 146
+		height += 88
 	}
 	return height
 }
@@ -348,10 +391,7 @@ func (app *portableGUI) positionMisakaRename() {
 	var rect portableRect
 	procSendMessage.Call(app.controls.networkList, 0x0198, uintptr(index), uintptr(unsafe.Pointer(&rect)))
 	procMisakaMapPoints.Call(app.controls.networkList, app.hwnd, uintptr(unsafe.Pointer(&rect)), 2)
-	rect.left += app.scale(29)
-	rect.right -= app.scale(6)
-	rect.top += app.scale(7)
-	rect.bottom = rect.top + app.scale(24)
+	rect = app.misakaProfileNameBounds(rect, app.misakaProfileNameFont(true))
 	procMoveWindow.Call(app.controls.profileNameEdit, uintptr(rect.left), uintptr(rect.top), uintptr(rect.right-rect.left), uintptr(rect.bottom-rect.top), 0)
 	procSendMessage.Call(app.controls.profileNameEdit, 0x00D3, 3, 0) // §7.2：原位编辑不增加系统文字边距。
 	setPortableControlVisible(app.controls.profileNameEdit, true)
@@ -521,7 +561,19 @@ func misakaControlProc(hwnd uintptr, message uint32, wParam, lParam, subclass, o
 	value, found := portableGUIWindows.Load(owner)
 	app, _ := value.(*portableGUI)
 	if found && app.skin != nil && !app.skin.closed {
+		if result, handled := app.misakaPaneMessage(hwnd, message, wParam, lParam); handled {
+			return result
+		}
 		switch message {
+		case 0x0007:
+			app.revealMisakaControl(hwnd)
+		case 0x020A:
+			parent, _, _ := portableUser32.NewProc("GetParent").Call(hwnd)
+			if parent == app.skin.pane && hwnd != app.controls.routeCombo {
+				result, _, _ := procSendMessage.Call(parent, uintptr(message), wParam, lParam)
+				return result
+			}
+
 		case 0x0082:
 			procMisakaRemoveSubclass.Call(hwnd, misakaSubclassCallback, subclass)
 		case 0x0008:
@@ -645,10 +697,7 @@ func misakaWindowMessage(app *portableGUI, hwnd uintptr, message uint32, wParam,
 			}
 		}
 		if y < s(40) {
-			if x >= w-s(84) && x < w-s(42) {
-				return 9, true
-			} // HTMAXBUTTON：Windows 11 Snap。
-			if x < w-s(126) {
+			if x < w-s(84) {
 				return 2, true
 			}
 		}
@@ -657,12 +706,4 @@ func misakaWindowMessage(app *portableGUI, hwnd uintptr, message uint32, wParam,
 		app.closeMisaka()
 	}
 	return 0, false
-}
-
-func toggleMisakaMaximize(hwnd uintptr) {
-	command := uintptr(3)
-	if zoomed, _, _ := procMisakaIsZoomed.Call(hwnd); zoomed != 0 {
-		command = portableSWRestore
-	}
-	procShowWindow.Call(hwnd, command)
 }

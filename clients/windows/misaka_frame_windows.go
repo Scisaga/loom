@@ -34,6 +34,17 @@ type misakaMonitorInfo struct {
 // 尚未创建或正在销毁的控件，避免其中某一条消息路径重新启用原生标题。
 func misakaNonclientMessage(hwnd uintptr, message uint32, wParam, lParam uintptr) (uintptr, bool) {
 	switch message {
+	case 0x0112: // §7.2：窗口只提供最小化与关闭，系统快捷键也不能重新最大化。
+		switch wParam & 0xFFF0 {
+		case 0xF030:
+			return 0, true
+		case 0xF120:
+			if iconic, _, _ := portableUser32.NewProc("IsIconic").Call(hwnd); iconic != 0 {
+				// §7.2：任务栏恢复最小化窗口时使用普通尺寸，不恢复隐藏的最大化状态。
+				procShowWindow.Call(hwnd, portableSWShowNormal)
+			}
+			return 0, true
+		}
 	case 0x0083: // §7.2：WM_NCCALCSIZE 的两种参数形式都以一个 RECT 开头。
 		if lParam != 0 {
 			if zoomed, _, _ := procMisakaIsZoomed.Call(hwnd); zoomed != 0 {
@@ -101,25 +112,22 @@ func misakaCaptionHit(app *portableGUI, hwnd uintptr, point portablePoint) int {
 		return 0
 	}
 	s := app.scale
-	left := bounds.right - s(126)
+	left := bounds.right - s(84)
 	if point.y < 0 || point.y >= s(40) || point.x < left || point.x >= bounds.right {
 		return 0
 	}
 	// §7.2：分别缩放各条边界，与非整数 DPI 下的绘制位置一致，
-	// 避免三个取整后的按钮宽度累加产生偏差。
-	if point.x < bounds.right-s(84) {
+	// 避免两个取整后的按钮宽度累加产生偏差。
+	if point.x < bounds.right-s(42) {
 		return 1
 	}
-	if point.x < bounds.right-s(42) {
-		return 2
-	}
-	return 3
+	return 2
 }
 
 func misakaInvalidateCaption(app *portableGUI, hwnd uintptr) {
 	var bounds portableRect
 	procGetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&bounds)))
-	bounds.left, bounds.bottom = bounds.right-app.scale(126), app.scale(40)
+	bounds.left, bounds.bottom = bounds.right-app.scale(84), app.scale(40)
 	procInvalidateRect.Call(hwnd, uintptr(unsafe.Pointer(&bounds)), 0)
 }
 
@@ -143,7 +151,7 @@ func misakaCancelCaption(app *portableGUI, hwnd uintptr, release bool) {
 	}
 }
 
-// §7.2：仅接管三个自绘标题按钮；标题拖动、边缘缩放与标题双击交给系统。
+// §7.2：仅接管最小化与关闭两个自绘标题按钮；标题拖动和边缘缩放交给系统。
 func misakaCaptionMessage(app *portableGUI, hwnd uintptr, message uint32, wParam, lParam uintptr) (uintptr, bool) {
 	if app == nil || app.skin == nil || app.skin.closed {
 		return 0, false
@@ -151,11 +159,14 @@ func misakaCaptionMessage(app *portableGUI, hwnd uintptr, message uint32, wParam
 	switch message {
 	case 0x0201, 0x0203, 0x00A1, 0x00A3: // §7.2：客户区／非客户区左键按下或双击。
 		nonclient := message == 0x00A1 || message == 0x00A3
-		if nonclient && wParam != 9 { // §7.2：仅处理最大化按钮，保留系统拖动和缩放。
+		if nonclient && (wParam == 9 || message == 0x00A3 && wParam == 2) {
+			return 0, true // §7.2：旧最大化命中与标题双击均不再触发窗口状态变化。
+		}
+		if nonclient && wParam != 8 && wParam != 20 {
 			return 0, false
 		}
 		button := misakaCaptionHit(app, hwnd, misakaCaptionPoint(hwnd, lParam, nonclient))
-		if button == 0 || nonclient && button != 2 {
+		if button == 0 || nonclient && (wParam == 8 && button != 1 || wParam == 20 && button != 2) {
 			return 0, nonclient
 		}
 		app.skin.pressedCaption = button
@@ -165,14 +176,14 @@ func misakaCaptionMessage(app *portableGUI, hwnd uintptr, message uint32, wParam
 			misakaCancelCaption(app, hwnd, false)
 		}
 		misakaInvalidateCaption(app, hwnd)
-		// §7.2：接管非客户区按下事件，避免默认过程再次执行最大化按钮跟踪。
+		// §7.2：接管按钮按下事件，避免默认过程再次执行原生按钮跟踪。
 		return 0, true
 	case 0x0202, 0x00A2: // §7.2：鼠标捕获可能把非客户区按下转换为客户区抬起。
 		nonclient := message == 0x00A2
 		button := misakaCaptionHit(app, hwnd, misakaCaptionPoint(hwnd, lParam, nonclient))
 		pressed := app.skin.pressedCaption
 		if pressed == 0 {
-			return 0, button != 0 || nonclient && wParam == 9
+			return 0, button != 0 || nonclient && (wParam == 8 || wParam == 9 || wParam == 20)
 		}
 		capture, _, _ := procMisakaGetCapture.Call()
 		activate := capture == hwnd && button == pressed
@@ -182,8 +193,6 @@ func misakaCaptionMessage(app *portableGUI, hwnd uintptr, message uint32, wParam
 			case 1:
 				procShowWindow.Call(hwnd, 6) // §7.2：最小化。
 			case 2:
-				toggleMisakaMaximize(hwnd)
-			case 3:
 				procShowWindow.Call(hwnd, portableSWHide) // §7.2：隐藏到托盘，保留连接。
 			}
 		}
@@ -191,7 +200,7 @@ func misakaCaptionMessage(app *portableGUI, hwnd uintptr, message uint32, wParam
 	case 0x0200, 0x00A0: // §7.2：客户区／非客户区鼠标移动。
 		nonclient := message == 0x00A0
 		button := misakaCaptionHit(app, hwnd, misakaCaptionPoint(hwnd, lParam, nonclient))
-		if nonclient && wParam != 9 {
+		if nonclient && wParam != 8 && wParam != 20 {
 			button = 0 // §7.2：按钮旁的缩放边缘仍由系统处理。
 		}
 		misakaCaptionHover(app, hwnd, button)
@@ -203,7 +212,6 @@ func misakaCaptionMessage(app *portableGUI, hwnd uintptr, message uint32, wParam
 			}
 			procMisakaTrackMouse.Call(uintptr(unsafe.Pointer(&tracking)))
 		}
-		// §7.2：保留默认过程的最大化悬停处理，以支持 Windows 贴靠布局。
 		return 0, false
 	case 0x02A3, 0x02A2: // §7.2：鼠标离开客户区或非客户区。
 		misakaCaptionHover(app, hwnd, 0)

@@ -900,7 +900,7 @@ const (
 	portableWSVScroll       = 0x00200000
 	portableWSTabStop       = 0x00010000
 	portableMainWindowStyle = portableWSOverlapped | portableWSCaption | portableWSSysMenu |
-		portableWSThickFrame | portableWSMinimizeBox | portableWSMaximizeBox | portableWSClipChildren
+		portableWSThickFrame | portableWSMinimizeBox | portableWSClipChildren
 
 	portableWSExClientEdge    = 0x00000200
 	portableLBSNotify         = 0x0001
@@ -1184,47 +1184,46 @@ type portableIconInfo struct {
 }
 
 type portableGUIControls struct {
-	modeAuto            uintptr
-	modeFixed           uintptr
-	modeDirect          uintptr
-	draftName           uintptr
-	draftImport         uintptr
-	draftPaste          uintptr
-	draftSubmit         uintptr
-	draftCancel         uintptr
-	brandIcon           uintptr
-	brandName           uintptr
-	brandEdition        uintptr
-	networkList         uintptr
-	addProfileButton    uintptr
-	renameProfileButton uintptr
-	profileNameEdit     uintptr
-	pathsValue          uintptr
-	pathsDetailsButton  uintptr
-	pathsHint           uintptr
-	interfaceGroup      uintptr
-	stateCaption        uintptr
-	stateIcon           uintptr
-	stateValue          uintptr
-	modeCaption         uintptr
-	modeValue           uintptr
-	deviceCaption       uintptr
-	deviceValue         uintptr
-	endpointCaption     uintptr
-	endpointValue       uintptr
-	routeCaption        uintptr
-	routeCombo          uintptr
-	primaryButton       uintptr
-	deleteButton        uintptr
-	pasteButton         uintptr
-	localGroup          uintptr
-	profileCaption      uintptr
-	profileValue        uintptr
-	storageCaption      uintptr
-	storageValue        uintptr
-	privilegeCaption    uintptr
-	privilegeValue      uintptr
-	message             uintptr
+	modeAuto           uintptr
+	modeFixed          uintptr
+	modeDirect         uintptr
+	draftName          uintptr
+	draftImport        uintptr
+	draftPaste         uintptr
+	draftSubmit        uintptr
+	draftCancel        uintptr
+	brandIcon          uintptr
+	brandName          uintptr
+	brandEdition       uintptr
+	networkList        uintptr
+	addProfileButton   uintptr
+	profileNameEdit    uintptr
+	pathsValue         uintptr
+	pathsDetailsButton uintptr
+	pathsHint          uintptr
+	interfaceGroup     uintptr
+	stateCaption       uintptr
+	stateIcon          uintptr
+	stateValue         uintptr
+	modeCaption        uintptr
+	modeValue          uintptr
+	deviceCaption      uintptr
+	deviceValue        uintptr
+	endpointCaption    uintptr
+	endpointValue      uintptr
+	routeCaption       uintptr
+	routeCombo         uintptr
+	primaryButton      uintptr
+	deleteButton       uintptr
+	pasteButton        uintptr
+	localGroup         uintptr
+	profileCaption     uintptr
+	profileValue       uintptr
+	storageCaption     uintptr
+	storageValue       uintptr
+	privilegeCaption   uintptr
+	privilegeValue     uintptr
+	message            uintptr
 }
 
 func (controls portableGUIControls) all() []uintptr {
@@ -1233,7 +1232,7 @@ func (controls portableGUIControls) all() []uintptr {
 		controls.draftName, controls.draftImport, controls.draftPaste, controls.draftSubmit, controls.draftCancel,
 		controls.brandIcon, controls.brandName, controls.brandEdition,
 		controls.networkList, controls.interfaceGroup,
-		controls.addProfileButton, controls.renameProfileButton, controls.profileNameEdit,
+		controls.addProfileButton, controls.profileNameEdit,
 		controls.pathsValue, controls.pathsDetailsButton, controls.pathsHint,
 		controls.stateCaption, controls.stateIcon, controls.stateValue,
 		controls.modeCaption, controls.modeValue,
@@ -1349,7 +1348,7 @@ func createPortableWindow(app *portableGUI) (uintptr, error) {
 	iconSmall := loadPortableAppIcon(instance, portableSMCXSmallIcon, portableSMCYSmallIcon, dpi)
 	wndClass := portableWNDClassEx{
 		size:       uint32(unsafe.Sizeof(portableWNDClassEx{})),
-		style:      0x0008, // §7.2：自绘标题栏保留双击最大化。
+		style:      0, // §7.2：自绘标题只保留最小化与关闭，不注册标题双击最大化。
 		wndProc:    windows.NewCallback(portableWindowProc),
 		instance:   instance,
 		icon:       icon,
@@ -1435,16 +1434,23 @@ func (app *portableGUI) createControls() error {
 		app.skin = &misakaUI{}
 	}
 	instance, _, _ := procGetModuleHandle.Call(0)
+	if err := app.createMisakaPane(instance); err != nil {
+		return err
+	}
 	create := func(target *uintptr, exStyle uintptr, className, text string, style, id uintptr) error {
 		classPtr, _ := windows.UTF16PtrFromString(className)
 		textPtr, _ := windows.UTF16PtrFromString(text)
+		parent := app.skin.pane
+		if target == &app.controls.networkList || target == &app.controls.addProfileButton || target == &app.controls.profileNameEdit || target == &app.controls.brandIcon || target == &app.controls.brandName || target == &app.controls.brandEdition {
+			parent = app.hwnd
+		}
 		hwnd, _, callErr := procCreateWindowEx.Call(
 			exStyle,
 			uintptr(unsafe.Pointer(classPtr)),
 			uintptr(unsafe.Pointer(textPtr)),
 			portableWSChild|portableWSVisible|style,
 			0, 0, 10, 10,
-			app.hwnd, id, instance, 0,
+			parent, id, instance, 0,
 		)
 		if hwnd == 0 {
 			return fmt.Errorf("create Windows control %q: %w", className, callErr)
@@ -1466,9 +1472,8 @@ func (app *portableGUI) createControls() error {
 		{&app.controls.brandEdition, 0, "STATIC", "", portableSSLeft | portableSSNoPrefix | portableSSCenterImage, 0},
 		{&app.controls.networkList, 0, "LISTBOX", "", portableWSVScroll | portableWSTabStop | portableLBSNotify | portableLBSOwnerDraw | portableLBSHasStrings | portableLBSNoIntegral, portableControlNetworkList},
 		{&app.controls.addProfileButton, 0, "BUTTON", "添加配置", portableWSTabStop | portableBSOwnerDraw, portableControlAddProfile},
-		{&app.controls.renameProfileButton, 0, "BUTTON", "保存名称", portableWSTabStop | portableBSOwnerDraw, portableControlRenameProfile},
 		{&app.controls.profileNameEdit, 0, "EDIT", "", portableWSTabStop | 0x0080, portableControlProfileName},
-		{&app.controls.pathsValue, 0, "LISTBOX", "", portableWSTabStop | portableWSVScroll | portableLBSOwnerDraw | portableLBSHasStrings | portableLBSNoIntegral | 0x4000, 0},
+		{&app.controls.pathsValue, 0, "LISTBOX", "", portableWSTabStop | portableLBSOwnerDraw | portableLBSHasStrings | portableLBSNoIntegral | 0x4000, 0},
 		{&app.controls.pathsDetailsButton, 0, "BUTTON", "详细信息", portableWSTabStop | portableBSOwnerDraw, portableControlPathDetails},
 		{&app.controls.pathsHint, 0, "STATIC", "当前选路用于新连接；已有连接可能沿用原路径。", portableSSLeft | portableSSNoPrefix, 0},
 		{&app.controls.interfaceGroup, 0, "BUTTON", "连接: Loom 网络", portableBSGroupBox, 0},
@@ -1480,7 +1485,7 @@ func (app *portableGUI) createControls() error {
 		{&app.controls.endpointCaption, 0, "STATIC", "本地入口:", portableSSRight | portableSSNoPrefix, 0},
 		{&app.controls.endpointValue, 0, "STATIC", "", portableSSLeft | portableSSNoPrefix, 0},
 		{&app.controls.routeCaption, 0, "STATIC", "出口:", portableSSRight | portableSSNoPrefix, 0},
-		{&app.controls.routeCombo, portableWSExClientEdge, "COMBOBOX", "", portableWSVScroll | portableWSTabStop | portableCBSDropDownList | portableCBSOwnerDrawFixed | portableCBSHasStrings, portableControlRoute},
+		{&app.controls.routeCombo, 0, "COMBOBOX", "", portableWSVScroll | portableWSTabStop | portableCBSDropDownList | portableCBSOwnerDrawFixed | portableCBSHasStrings, portableControlRoute},
 		{&app.controls.primaryButton, 0, "BUTTON", "请稍候…", portableWSTabStop | portableBSOwnerDraw, portableControlPrimary},
 		{&app.controls.deleteButton, 0, "BUTTON", "删除…", portableWSTabStop | portableBSOwnerDraw, portableControlDelete},
 		{&app.controls.pasteButton, 0, "BUTTON", "粘贴二维码", portableWSTabStop | portableBSOwnerDraw, portableControlPaste},
@@ -1558,14 +1563,28 @@ func (app *portableGUI) updateFonts() error {
 		procDeleteObject.Call(regular)
 		return err
 	}
+	profileNormal, err := createMisakaProfileNameFont(dpi, portableFWNormal)
+	if err != nil {
+		procDeleteObject.Call(regular)
+		procDeleteObject.Call(brand)
+		return err
+	}
+	profileSelected, err := createMisakaProfileNameFont(dpi, portableFWSemibold)
+	if err != nil {
+		procDeleteObject.Call(regular)
+		procDeleteObject.Call(brand)
+		procDeleteObject.Call(profileNormal)
+		return err
+	}
 	// 所有控件换用新字体后才能释放旧字体；本轮布局完成后统一重绘。
 	for _, control := range app.controls.all() {
 		procSendMessage.Call(control, portableWMSetFont, regular, 0)
 	}
 	procSendMessage.Call(app.controls.brandName, portableWMSetFont, brand, 0)
 	procSendMessage.Call(app.controls.stateValue, portableWMSetFont, brand, 0)
+	procSendMessage.Call(app.controls.profileNameEdit, portableWMSetFont, profileSelected, 0)
 	app.deleteFonts()
-	app.fonts = []uintptr{regular, brand}
+	app.fonts = []uintptr{regular, brand, profileNormal, profileSelected}
 	// Owner-draw 控件不会根据 WM_SETFONT 自动重新测量行高。
 	procSendMessage.Call(app.controls.networkList, portableLBSetItemHeight, 0, uintptr(app.scale(55)))
 	procSendMessage.Call(app.controls.pathsValue, portableLBSetItemHeight, 0, uintptr(app.scale(app.misakaPathHeight())))
@@ -1772,7 +1791,6 @@ func (app *portableGUI) layoutControls() {
 		return
 	}
 	app.layoutMisaka(app.snapshot(), client.right, client.bottom)
-	procRedrawWindow.Call(app.hwnd, 0, 0, portableRDWInvalidate|portableRDWAllChildren)
 }
 
 func (app *portableGUI) renderControls() {
@@ -1781,13 +1799,16 @@ func (app *portableGUI) renderControls() {
 	}
 	snapshot := app.snapshot()
 	previous := app.rendered
+	if previous != nil && (previous.selectedProfile != snapshot.selectedProfile || (previous.profileDraft == nil) != (snapshot.profileDraft == nil)) {
+		app.skin.scrollY = 0
+	}
 	routeChanged := app.reconcileMisakaRoute(snapshot)
 	if previous != nil && !routeChanged && snapshot.equal(*previous) {
 		return
 	}
-	// §7.2：只有加入页与连接页互换才需要布局；尺寸和 DPI 由系统消息处理。
-	if previous == nil || routeChanged || previous.joined != snapshot.joined || previous.profilesReady != snapshot.profilesReady ||
-		(previous.profileDraft == nil) != (snapshot.profileDraft == nil) || previous.routeSelected != snapshot.routeSelected {
+	// §7.2：仅在页面、连接状态或出口框可见性变化时布局；尺寸与 DPI 由系统消息处理。
+	if previous == nil || app.misakaRouteLayoutChanged(snapshot) || previous.state != snapshot.state || previous.joined != snapshot.joined || previous.profilesReady != snapshot.profilesReady ||
+		(previous.profileDraft == nil) != (snapshot.profileDraft == nil) {
 		app.layoutControls()
 	}
 	stateText, message, primaryText, primaryEnabled := app.presentation(snapshot)
@@ -2308,11 +2329,6 @@ func portableWindowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) ui
 				}
 				app.openMisakaDraft()
 				return 0
-			case portableControlRenameProfile:
-				if notification == 0 {
-					app.beginMisakaRenameFor(app.snapshot().selectedProfile)
-				}
-				return 0
 			case portableControlPathDetails:
 				if notification != 0 {
 					return 0
@@ -2320,6 +2336,7 @@ func portableWindowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) ui
 				app.pathsExpanded = !app.pathsExpanded
 				app.renderProfileDetails(app.snapshot(), nil)
 				app.updateMisakaPaths(app.snapshot(), true)
+				app.layoutControls()
 				return 0
 			case portableControlPrimary:
 				if notification != 0 {

@@ -113,8 +113,8 @@ func (reader *windowsPathReader) Read(ctx context.Context, root string, now time
 	}
 	var rows []windowsPathDisplay
 	if err != nil || report == nil || len(report.Selections) == 0 {
-		for _, declaration := range state.Policy.DirectReadinessConfig().Declarations {
-			rows = append(rows, windowsPathDisplay{Service: declaration.ID, Chain: "未知", Health: "未知", SelectedQuality: "未知", BestQuality: "未知", Reason: "暂无法读取当前实际选路"})
+		for _, declaration := range state.Policy.ObservationDeclarations(state.Preference) {
+			rows = append(rows, windowsPathDisplay{Service: declaration, Chain: "未知", Health: "未知", SelectedQuality: "未知", BestQuality: "未知", Reason: "暂无法读取当前实际选路"})
 		}
 	} else {
 		rows = windowsPathsFromReport(report)

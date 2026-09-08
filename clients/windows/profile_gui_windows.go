@@ -3,7 +3,6 @@
 package main
 
 import (
-	"fmt"
 	"runtime"
 	"slices"
 	"unsafe"
@@ -83,7 +82,6 @@ func (app *portableGUI) renderProfileList(snapshot portableGUISnapshot, previous
 		setPortableControlText(app.controls.profileNameEdit, snapshot.profileName)
 	}
 	enablePortableControl(app.controls.profileNameEdit, snapshot.selectedProfile != "")
-	enablePortableControl(app.controls.renameProfileButton, snapshot.selectedProfile != "")
 }
 
 func (app *portableGUI) renderProfileDetails(s portableGUISnapshot, previous *portableGUISnapshot) {
@@ -95,21 +93,10 @@ func (app *portableGUI) renderProfileDetails(s portableGUISnapshot, previous *po
 	setPortableControlText(app.controls.interfaceGroup, group)
 	setPortableControlText(app.controls.localGroup, "当前选路（按服务）")
 	setPortableControlText(app.controls.modeCaption, "方式:")
-	text := formatWindowsPaths(s.paths, app.pathsExpanded)
-	if s.state != guiConnected {
-		text = "未连接；连接成功后显示各服务实际选路。"
-	} else if len(s.paths) == 0 {
-		text = "当前选路未知；正在读取本机实际连接状态。"
-	}
 	button := "详细信息"
 	if app.pathsExpanded {
 		button = "收起详情"
-		root := app.root
-		if s.selectedProfile != "" && s.selectedProfile != "legacy" {
-			root += `\profiles\` + s.selectedProfile
-		}
-		text += fmt.Sprintf("\r\n\r\n配置：中控签名配置（只读）\r\n状态目录：%s\r\n运行方式：%s · Windows/%s", root, windowsEditionLabel(app.edition), runtime.GOARCH)
 	}
-	setPortableControlText(app.controls.pathsValue, text)
+	// §7.2：路径文字由原生列表项提供，无需再重写 LISTBOX 窗口标题。
 	setPortableControlText(app.controls.pathsDetailsButton, button)
 }

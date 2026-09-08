@@ -27,7 +27,9 @@ func TestGUIMisakaFrameRetainsNativeWindowInteractions(t *testing.T) {
 		{"caption", client.right / 2, app.scale(20), 2},
 		{"left resize", 1, client.bottom / 2, 10},
 		{"bottom-right resize", client.right - 1, client.bottom - 1, 17},
-		{"maximize and snap", client.right - app.scale(63), app.scale(20), 9},
+		{"minimize", client.right - app.scale(63), app.scale(20), 1},
+		{"close", client.right - app.scale(21), app.scale(20), 1},
+		{"former third button becomes caption", client.right - app.scale(105), app.scale(20), 2},
 	} {
 		point := uintptr(uint32(uint16(window.left+hit.x)) | uint32(uint16(window.top+hit.y))<<16)
 		got, _, _ := procSendMessage.Call(app.hwnd, 0x0084, 0, point) // WM_NCHITTEST
@@ -35,7 +37,7 @@ func TestGUIMisakaFrameRetainsNativeWindowInteractions(t *testing.T) {
 			t.Errorf("%s hit=%d, want %d", hit.name, got, hit.want)
 		}
 	}
-	t.Log("custom caption fills the window while native drag, resize, maximize and snap hit targets remain available")
+	t.Log("[§7.2] 自绘标题保留拖动与缩放；右侧仅有最小化和关闭，不再返回最大化命中")
 }
 
 func TestGUIMisakaInlineRenameUsesKeyboardAndPersistsOnlyOnSave(t *testing.T) {
@@ -98,7 +100,7 @@ func TestGUIMisakaDoubleClickRenameUsesActualListSelection(t *testing.T) {
 
 func TestGUIMisakaHeaderActionsAndContextMenuBindExplicitProfile(t *testing.T) {
 	app := newProfileGUITestWindow(t)
-	for _, control := range []uintptr{app.controls.renameProfileButton, app.controls.deleteButton} {
+	for _, control := range []uintptr{app.controls.deleteButton} {
 		if profileGUIStyle(control)&portableWSVisible == 0 {
 			t.Fatal("右侧缺少配置操作")
 		}
@@ -120,11 +122,6 @@ func TestGUIMisakaHeaderActionsAndContextMenuBindExplicitProfile(t *testing.T) {
 	app.misakaProfileAction(id, misakaProfileRename)
 	if app.skin.renameID != profileGUIFixtureB {
 		t.Fatal("异步快照使菜单重命名了另一项")
-	}
-	app.finishMisakaRename(false)
-	procSendMessage.Call(app.hwnd, portableWMCommand, portableControlRenameProfile, app.controls.renameProfileButton)
-	if app.skin.renameID != profileGUIFixtureA {
-		t.Fatal("右侧铅笔未绑定当前面板")
 	}
 	app.finishMisakaRename(false)
 	app.misakaProfileAction("deleted-profile", misakaProfileRename)

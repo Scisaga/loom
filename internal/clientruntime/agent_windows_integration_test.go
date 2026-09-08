@@ -61,6 +61,10 @@ func TestOfficialWindowsAgentSwitchesCompleteFixedExitPaths(t *testing.T) {
 		_, _ = io.WriteString(w, "demo full path response")
 	}))
 	defer target.Close()
+	otherTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "demo second service response")
+	}))
+	defer otherTarget.Close()
 
 	body, planBody := pathPlanFixture(t)
 	var sb singBoxConfig
@@ -70,6 +74,24 @@ func TestOfficialWindowsAgentSwitchesCompleteFixedExitPaths(t *testing.T) {
 	}
 	if err := json.Unmarshal(planBody, &cfg); err != nil {
 		t.Fatal(err)
+	}
+	// §7.3：两条原本独立的 Service 规则故意指向不可达候选，统一路径必须覆盖实际请求。
+	for i, targetURL := range []string{target.URL, otherTarget.URL} {
+		u, _ := url.Parse(targetURL)
+		port, _ := strconv.Atoi(u.Port())
+		name := "demo-service-" + strconv.Itoa(i)
+		candidate := agent.Cand{Tag: "opaque:" + name, Chain: []string{"demo-other"}, ProbeUser: name + "-probe"}
+		d := cfg.Declarations[0]
+		d.ID, d.Selector, d.Targets, d.Candidates = name, "opaque:selector-"+name, []string{targetURL + "/service"}, []agent.Cand{candidate}
+		cfg.Declarations = append(cfg.Declarations, d)
+		outbound := sb.Outbounds[3]
+		outbound.Tag = candidate.Tag
+		sb.Outbounds = append(sb.Outbounds, outbound, singBoxOutbound{Type: "selector", Tag: d.Selector, Default: candidate.Tag, Outbounds: []string{candidate.Tag}})
+		sb.Inbounds[0].Users = append(sb.Inbounds[0].Users, singBoxUser{Username: candidate.ProbeUser, Password: cfg.ProbeSecret})
+		sb.Route.Rules = append([]singBoxRule{
+			{Inbound: []string{"probe-in"}, AuthUser: []string{candidate.ProbeUser}, Outbound: candidate.Tag},
+			{Inbound: []string{"tun-in", "in-1080"}, Domain: []string{u.Hostname()}, Port: []int{port}, Outbound: d.Selector},
+		}, sb.Route.Rules...)
 	}
 	proxy := func(tag, address, detour string) singBoxOutbound {
 		host, port, err := net.SplitHostPort(address)
@@ -114,6 +136,9 @@ func TestOfficialWindowsAgentSwitchesCompleteFixedExitPaths(t *testing.T) {
 	filtered, active, err := plan.Derive(runtime, clientcore.Preference{Schema: 1, Mode: clientcore.FixedExit, Exit: "demo-exit"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(active.Declarations) != 1 || active.Declarations[0].Selector != cfg.Declarations[0].Selector {
+		t.Fatal("[§7.3] 固定出口仍启动了独立的 Service 决策")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	done := make(chan error, 1)
@@ -179,14 +204,19 @@ func TestOfficialWindowsAgentSwitchesCompleteFixedExitPaths(t *testing.T) {
 	transport := &http.Transport{Proxy: http.ProxyURL(u), DisableKeepAlives: true}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
-	resp, err := client.Get(target.URL + "/service")
-	if err != nil {
-		t.Fatal(err)
+	for _, targetURL := range []string{target.URL, otherTarget.URL} {
+		resp, err := client.Get(targetURL + "/service")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		if err != nil || resp.StatusCode != http.StatusOK {
+			t.Fatal("[§7.3] Service 实际请求没有进入统一上网路径")
+		}
 	}
-	_, err = io.Copy(io.Discard, resp.Body)
-	_ = resp.Body.Close()
-	if err != nil || resp.StatusCode != http.StatusOK || slowCount.Load() != a || fastCount.Load() != b+1 || exitCount.Load() != e+1 {
-		t.Fatal("user traffic did not follow the winning prefix through the fixed exit")
+	if slowCount.Load() != a || fastCount.Load() != b+2 || exitCount.Load() != e+2 {
+		t.Fatal("[§7.3] 两个 Service 的实际请求没有使用同一获胜前缀和固定末跳")
 	}
 	// §5.5：现任前缀真实断开后，继续使用同一窗口和配置，由既有失败率排序完成切换。
 	failFast.Store(true)

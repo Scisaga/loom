@@ -155,7 +155,7 @@ func TestWindowsAgentPairRejectsInvalidPlans(t *testing.T) {
 	}
 }
 
-func TestWindowsFixedExitRequiresCandidatesForEveryService(t *testing.T) {
+func TestWindowsFixedExitUsesDefaultInternetAuthorization(t *testing.T) {
 	body, planBody := pathPlanFixture(t)
 	var sb singBoxConfig
 	_ = json.Unmarshal(body, &sb)
@@ -177,8 +177,9 @@ func TestWindowsFixedExitRequiresCandidatesForEveryService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := plan.Derive(body, clientcore.Preference{Schema: 1, Mode: clientcore.FixedExit, Exit: "demo-exit"}); err == nil {
-		t.Fatal("first Service's exit authorization leaked into second Service")
+	_, fixed, err := plan.Derive(body, clientcore.Preference{Schema: 1, Mode: clientcore.FixedExit, Exit: "demo-exit"})
+	if err != nil || len(fixed.Declarations) != 1 || fixed.Declarations[0].Selector != cfg.Declarations[0].Selector {
+		t.Fatal("[§7.3] 固定出口没有只使用默认上网声明的授权", err)
 	}
 	_, auto, err := plan.Derive(body, clientcore.Preference{Schema: 1, Mode: clientcore.Auto})
 	if err != nil {
