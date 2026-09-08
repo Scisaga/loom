@@ -268,6 +268,7 @@
     <text x="524" y="1668" text-anchor="middle" class="small muted">固定出口</text>
     <text x="582" y="1668" class="tiny muted">直连与自动均不展开出口列表。</text>
     <text x="332" y="1705" class="tiny muted">固定出口先选择授权出口，再提交；提交期间不重复执行。</text>
+    <text x="332" y="1730" class="tiny muted">列表内滚动浏览出口；移到页面滚动时取消未确认的选择。</text>
     <text x="888" y="2518" text-anchor="end" class="tiny muted">交互原型 · demo-* 为示意；不包含运行指标。</text>
     <text x="12" y="1846" class="section">05 空配置 · 直接加入</text>
     <text x="888" y="1846" class="tiny muted" text-anchor="end">邀请加入当前配置 · 不另建条目</text>

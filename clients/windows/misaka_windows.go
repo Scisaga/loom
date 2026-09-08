@@ -111,6 +111,17 @@ func (app *portableGUI) initializeMisaka() error {
 			return fmt.Errorf("[§7.2] 初始化自绘输入控件: %w", err)
 		}
 	}
+	info := misakaComboInfo{}
+	info.size = uint32(unsafe.Sizeof(info))
+	if ok, _, err := portableUser32.NewProc("GetComboBoxInfo").Call(app.controls.routeCombo, uintptr(unsafe.Pointer(&info))); ok == 0 || info.list == 0 {
+		app.closeMisaka()
+		return fmt.Errorf("[§7.2] 获取出口弹出列表: %w", err)
+	}
+	app.skin.route.list = info.list
+	if ok, _, err := procMisakaSetSubclass.Call(info.list, misakaSubclassCallback, 1, app.hwnd); ok == 0 {
+		app.closeMisaka()
+		return fmt.Errorf("[§7.2] 初始化出口列表滚轮: %w", err)
+	}
 	procSendMessage.Call(app.controls.profileNameEdit, 0x00C5, 128, 0) // EM_SETLIMITTEXT：最终按字符数校验。
 	procSendMessage.Call(app.controls.draftName, 0x00C5, 128, 0)
 	return nil
@@ -597,19 +608,17 @@ func misakaControlProc(hwnd uintptr, message uint32, wParam, lParam, subclass, o
 	value, found := portableGUIWindows.Load(owner)
 	app, _ := value.(*portableGUI)
 	if found && app.skin != nil && !app.skin.closed {
+		if message == 0x020A {
+			if result, handled := app.misakaRouteWheel(hwnd, wParam, lParam); handled {
+				return result
+			}
+		}
 		if result, handled := app.misakaPaneMessage(hwnd, message, wParam, lParam); handled {
 			return result
 		}
 		switch message {
 		case 0x0007:
 			app.revealMisakaControl(hwnd)
-		case 0x020A:
-			parent, _, _ := portableUser32.NewProc("GetParent").Call(hwnd)
-			if parent == app.skin.pane && hwnd != app.controls.routeCombo {
-				result, _, _ := procSendMessage.Call(parent, uintptr(message), wParam, lParam)
-				return result
-			}
-
 		case 0x0082:
 			procMisakaRemoveSubclass.Call(hwnd, misakaSubclassCallback, subclass)
 		case 0x0008:

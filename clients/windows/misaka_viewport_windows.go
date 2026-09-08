@@ -83,10 +83,47 @@ func (app *portableGUI) scrollMisakaPane(position int32) {
 	if next == app.skin.scrollY {
 		return
 	}
-	app.closeMisakaRouteDropDown()
+	dropped, _, _ := procSendMessage.Call(app.controls.routeCombo, 0x0157, 0, 0) // CB_GETDROPPEDSTATE
+	if dropped != 0 || app.skin.route.picker || app.routeFiltering {
+		app.cancelMisakaRoutePicker()
+	}
+	delta := app.skin.scrollY - next
 	app.skin.scrollY = next
-	app.layoutControls()
-	procInvalidateRect.Call(app.skin.pane, 0, 0)
+	// §7.2：滚动只平移已有控件，不重新测量所有服务和详情段落。
+	if !app.moveMisakaPaneChildren(delta) {
+		app.layoutControls()
+	} else {
+		app.updateMisakaScroll(app.skin.scrollContent)
+	}
+	// §7.2：批量移动结束后同时刷新背景与子控件，清除弹出层和旧位置残影。
+	procRedrawWindow.Call(app.skin.pane, 0, 0, portableRDWInvalidate|portableRDWAllChildren|0x0004)
+}
+
+func (app *portableGUI) moveMisakaPaneChildren(delta int32) bool {
+	deferPos := portableUser32.NewProc("DeferWindowPos")
+	batch, _, _ := portableUser32.NewProc("BeginDeferWindowPos").Call(uintptr(len(app.controls.all())))
+	if batch == 0 {
+		return false
+	}
+	app.skin.layingOut = true
+	defer func() { app.skin.layingOut = false }()
+	for _, hwnd := range app.controls.all() {
+		parent, _, _ := portableUser32.NewProc("GetParent").Call(hwnd)
+		style, _, _ := procMisakaGetWindowLong.Call(hwnd, ^uintptr(15))
+		if parent != app.skin.pane || style&portableWSVisible == 0 {
+			continue
+		}
+		var r portableRect
+		procMisakaGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&r)))
+		procMisakaMapPoints.Call(0, parent, uintptr(unsafe.Pointer(&r)), 2)
+		batch, _, _ = deferPos.Call(batch, hwnd, 0, uintptr(r.left), uintptr(r.top+delta), 0, 0,
+			0x001D) // NOSIZE | NOZORDER | NOREDRAW | NOACTIVATE
+		if batch == 0 {
+			return false
+		}
+	}
+	ok, _, _ := portableUser32.NewProc("EndDeferWindowPos").Call(batch)
+	return ok != 0
 }
 
 func (app *portableGUI) revealMisakaControl(hwnd uintptr) {

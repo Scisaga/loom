@@ -16,12 +16,54 @@ const misakaWMRouteAcknowledged = 0x8005
 
 // §7.2：这只是编辑器状态；按钮高亮与实际选路始终来自宿主确认的快照。
 type misakaRouteUI struct {
+	list         uintptr
 	profileID    string
 	sequence     uintptr
 	picker       bool
 	pending      *clientcore.Preference
 	acknowledged bool
 	options      []portableRouteOption
+}
+
+type misakaComboInfo struct {
+	size              uint32
+	item, button      portableRect
+	state             uint32
+	combo, edit, list uintptr
+}
+
+// §7.2：焦点可留在出口框，滚轮归属仍按鼠标位置判断；导航不能提交偏好。
+func (app *portableGUI) misakaRouteWheel(hwnd, wParam, lParam uintptr) (uintptr, bool) {
+	parent, _, _ := portableUser32.NewProc("GetParent").Call(hwnd)
+	combo, list := app.controls.routeCombo, app.skin.route.list
+	if hwnd != app.skin.pane && hwnd != combo && hwnd != list && parent != app.skin.pane {
+		return 0, false
+	}
+	x, y := int32(int16(lParam)), int32(int16(lParam>>16))
+	inside := func(window uintptr) bool {
+		var r portableRect
+		procMisakaGetWindowRect.Call(window, uintptr(unsafe.Pointer(&r)))
+		return x >= r.left && x < r.right && y >= r.top && y < r.bottom
+	}
+	dropped, _, _ := procSendMessage.Call(combo, 0x0157, 0, 0)
+	if dropped != 0 && list != 0 && inside(list) {
+		if hwnd == combo || hwnd == list {
+			return 0, false
+		}
+		result, _, _ := procSendMessage.Call(list, 0x020A, wParam, lParam)
+		return result, true
+	}
+	if !inside(app.skin.pane) {
+		return 0, hwnd == combo || hwnd == list
+	}
+	if dropped != 0 || app.skin.route.picker || app.routeFiltering {
+		app.cancelMisakaRoutePicker()
+	}
+	if hwnd != app.skin.pane {
+		result, _, _ := procSendMessage.Call(app.skin.pane, 0x020A, wParam, lParam)
+		return result, true
+	}
+	return 0, false
 }
 
 func (app *portableGUI) misakaRouteVisible(snapshot portableGUISnapshot) bool {
