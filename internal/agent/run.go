@@ -32,10 +32,6 @@ type Options struct {
 	// declarations for the same complete chain and equivalent target URL. It
 	// never reuses a sample twice inside one decision scope.
 	ShareEquivalentProbes bool
-	// StartupProbeInterval enables one bounded comparison after the first
-	// normal round. Only real sample deficits for the current path and one
-	// promising challenger are filled; zero preserves server scheduling.
-	StartupProbeInterval time.Duration
 
 	// Once 为真时,每条声明只跑一轮就返回。给人工执行和自检用。
 	Once bool
@@ -45,12 +41,9 @@ type Options struct {
 	Log    io.Writer
 	// Now 由调用方注入,便于测试。渲染与打包不读时钟(§12),但 Agent 是
 	// 运行期组件 —— 它**必须**读时钟,只是入口收在这一处。
-	Now              func() time.Time
-	eventMu          *sync.Mutex
-	probes           *sharedProbes
-	probeSubset      []Cand
-	probed           *[]Cand
-	probeSampleLimit map[string]int
+	Now     func() time.Time
+	eventMu *sync.Mutex
+	probes  *sharedProbes
 }
 
 func (o *Options) fill() {
@@ -178,7 +171,25 @@ func Run(ctx context.Context, cfg *Config, opts Options) (retErr error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			runDeclaration(ctx, cfg, d, period, k, st, selections, obs, observationMaxAge, rot, &rotMu, opts, logf)
+			for {
+				if ctx.Err() != nil {
+					return
+				}
+				if err := tick(ctx, cfg, d, k, st, selections, obs, observationMaxAge, rot, &rotMu, &opts, logf); err != nil {
+					if ctx.Err() != nil {
+						return
+					}
+					logf("[%s] 本轮失败:%v", d.ID, err)
+				}
+				if opts.Once {
+					return
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(period):
+				}
+			}
 		}()
 	}
 	wg.Wait()
@@ -266,22 +277,7 @@ func tick(ctx context.Context, cfg *Config, d *Decl, k *clash, st *store, select
 	// 反复地产生“证据不完整”漂移。下方各成功路径会把 selector 与本轮健康
 	// 一起原子发布。
 	var skippedByBudget int
-	if opts.probeSubset != nil {
-		wanted := make(map[string]bool, len(opts.probeSubset))
-		for _, c := range opts.probeSubset {
-			wanted[c.Tag] = true
-		}
-		filtered := make([]Cand, 0, len(wanted))
-		for _, c := range probe {
-			if wanted[c.Tag] {
-				filtered = append(filtered, c)
-			}
-		}
-		probe = filtered
-		if d.ProbeBudget > 0 && len(probe) > d.ProbeBudget {
-			probe = probe[:d.ProbeBudget]
-		}
-	} else if d.ProbeBudget > 0 && len(probe) > d.ProbeBudget {
+	if d.ProbeBudget > 0 && len(probe) > d.ProbeBudget {
 		rotMu.Lock()
 		var next string
 		probe, next, skippedByBudget = pickProbeCandidates(probe, current, d.ProbeBudget, rot[d.ID])
@@ -293,13 +289,10 @@ func tick(ctx context.Context, cfg *Config, d *Decl, k *clash, st *store, select
 	ok := 0
 
 	// §16.1.2：服务器出口失败是本轮候选约束，不是新的完整路径测量。
-	// 不追加 derived，避免同一签名时间在启动补样/常规周期里被反复计数。
+	// 不追加 derived，避免同一签名时间在多个周期里被反复计数。
 	cands = probe
 	for _, c := range cands {
-		for targetIndex, t := range d.Targets {
-			if limit, limited := opts.probeSampleLimit[c.Tag]; limited && targetIndex >= limit {
-				break
-			}
+		for _, t := range d.Targets {
 			at := opts.Now()
 			var r Result
 			var perr error
@@ -331,9 +324,6 @@ func tick(ctx context.Context, cfg *Config, d *Decl, k *clash, st *store, select
 	}
 	if err := st.append(ctx, got); err != nil {
 		return fmt.Errorf("写度量:%w", err)
-	}
-	if opts.probed != nil {
-		*opts.probed = append([]Cand(nil), cands...)
 	}
 
 	// 2. 聚合。窗口之外的不参与;整条候选最新样本超过 stale_after 的当作
@@ -378,13 +368,6 @@ func tick(ctx context.Context, cfg *Config, d *Decl, k *clash, st *store, select
 	// 亲自测的和照别人观测判定的必须分开说 —— 混成一个数字,就看不出
 	// 这一轮到底有多少是真的测过的。
 	line := fmt.Sprintf("探测 %d 条 × %d 个目标(%d 通)", len(cands), len(d.Targets), ok)
-	if opts.probeSubset != nil {
-		samples := 0
-		for _, candidate := range cands {
-			samples += min(len(d.Targets), opts.probeSampleLimit[candidate.Tag])
-		}
-		line = fmt.Sprintf("启动补样 %d 条候选、%d 次目标采样(%d 通)", len(cands), samples, ok)
-	}
 	if skippedByBudget > 0 {
 		// 少探了多少必须说出来 —— 静默截断会让"这一轮没试到"看起来像
 		// "试过了但不行"。

@@ -78,7 +78,7 @@ func StartWindowsAgent(ctx context.Context, cfg *agent.Config, runtimeDir string
 	}
 	go func() {
 		defer close(a.done)
-		a.err = agent.Run(child, cfg, agent.Options{StatePath: a.statePath, MeasurementPath: a.measurementPath, EventsPath: filepath.Join(dir, "events.jsonl"), ShareEquivalentProbes: true, StartupProbeInterval: 15 * time.Second, Log: io.Discard, Observations: a.observations})
+		a.err = agent.Run(child, cfg, agent.Options{StatePath: a.statePath, MeasurementPath: a.measurementPath, EventsPath: filepath.Join(dir, "events.jsonl"), ShareEquivalentProbes: true, Log: io.Discard, Observations: a.observations})
 	}()
 	return a, nil
 }
