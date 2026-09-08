@@ -1335,7 +1335,7 @@ func createPortableWindow(app *portableGUI) (uintptr, error) {
 	// PER_MONITOR_AWARE_V2. Failure on an older Windows build is harmless.
 	procSetDPIAware.Call(^uintptr(3))
 	className, _ := windows.UTF16PtrFromString("LoomPortableClientWindow")
-	title := "Loom — " + windowsEditionLabel(app.edition)
+	title := app.windowTitle(app.snapshot())
 	titlePtr, _ := windows.UTF16PtrFromString(title)
 	instance, _, _ := procGetModuleHandle.Call(0)
 	cursor, _, _ := procLoadCursor.Call(0, portableIDCArrow)
@@ -1806,6 +1806,15 @@ func (app *portableGUI) renderControls() {
 	if previous != nil && !routeChanged && snapshot.equal(*previous) {
 		return
 	}
+	title := app.windowTitle(snapshot)
+	titleChanged := previous == nil || title != app.windowTitle(*previous)
+	if titleChanged {
+		setPortableControlText(app.hwnd, title)
+		var bounds portableRect
+		procGetClientRect.Call(app.hwnd, uintptr(unsafe.Pointer(&bounds)))
+		bounds.bottom = app.scale(misakaTitleHeight)
+		procInvalidateRect.Call(app.hwnd, uintptr(unsafe.Pointer(&bounds)), 0)
+	}
 	// §7.2：仅在页面、连接状态或出口框可见性变化时布局；尺寸与 DPI 由系统消息处理。
 	if previous == nil || app.misakaRouteLayoutChanged(snapshot) || previous.state != snapshot.state || previous.joined != snapshot.joined || previous.profilesReady != snapshot.profilesReady ||
 		(previous.profileDraft == nil) != (snapshot.profileDraft == nil) {
@@ -1891,7 +1900,7 @@ func (app *portableGUI) renderControls() {
 	if previous == nil {
 		app.updateBrandIcon(snapshot)
 	}
-	if previous == nil || previous.state != snapshot.state || previous.activeProfile != snapshot.activeProfile || !slices.Equal(previous.profiles, snapshot.profiles) {
+	if titleChanged || previous.state != snapshot.state || previous.activeProfile != snapshot.activeProfile || !slices.Equal(previous.profiles, snapshot.profiles) {
 		app.modifyTrayIcon(snapshot)
 	}
 	app.renderMisaka(snapshot, previous)
@@ -1944,22 +1953,37 @@ func (app *portableGUI) removeTrayIcon() {
 	app.trayAdded = false
 }
 
-func (app *portableGUI) trayIconData(snapshot portableGUISnapshot) portableNotifyIconData {
-	if snapshot.profilesReady && snapshot.activeProfile != "" {
+// §7.2：窗口与托盘优先表示实际连接；浏览另一配置时不能把它标成已连接。
+func windowsTitleSnapshot(snapshot portableGUISnapshot) portableGUISnapshot {
+	if snapshot.activeProfile != "" {
+		snapshot.profileName = snapshot.activeProfileName
 		for _, profile := range snapshot.profiles {
 			if profile.ID == snapshot.activeProfile {
-				snapshot.state = profile.State
+				snapshot.state, snapshot.joined = profile.State, profile.DeviceID != ""
 				break
 			}
 		}
 	}
+	return snapshot
+}
+
+func (app *portableGUI) windowTitle(snapshot portableGUISnapshot) string {
+	snapshot = windowsTitleSnapshot(snapshot)
+	state, _, _, _ := app.presentation(snapshot)
+	title := "Loom (" + windowsEditionLabel(app.edition) + ") " + state
+	if snapshot.profileName != "" {
+		title += " · " + snapshot.profileName
+	}
+	return title
+}
+
+func (app *portableGUI) trayIconData(snapshot portableGUISnapshot) portableNotifyIconData {
+	snapshot = windowsTitleSnapshot(snapshot)
 	instance, _, _ := procGetModuleHandle.Call(0)
 	icon, _, _ := procLoadIcon.Call(instance, portableIconApp)
 	if snapshot.state == guiConnected && app.trayConnectedIcon != 0 {
 		icon = app.trayConnectedIcon
 	}
-	stateText, _, _, _ := app.presentation(snapshot)
-	mode := windowsEditionLabel(app.edition)
 	data := portableNotifyIconData{
 		size:            uint32(unsafe.Sizeof(portableNotifyIconData{})),
 		hwnd:            app.hwnd,
@@ -1968,10 +1992,7 @@ func (app *portableGUI) trayIconData(snapshot portableGUISnapshot) portableNotif
 		callbackMessage: portableWMAppTray,
 		icon:            icon,
 	}
-	tipText := "Loom — " + mode + " — " + stateText
-	if snapshot.activeProfileName != "" {
-		tipText += " · " + snapshot.activeProfileName
-	}
+	tipText := app.windowTitle(snapshot)
 	tip, _ := windows.UTF16FromString(tipText)
 	if len(tip) > len(data.tip) {
 		tip = tip[:len(data.tip)]

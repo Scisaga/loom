@@ -25,9 +25,7 @@ func (app *portableGUI) paintMisaka(dc uintptr) {
 	c.Fill(misakaRect(s(176), s(misakaTitleHeight), s(1), bounds.bottom-s(misakaTitleHeight)), misakaBorder, 0)
 	c.Fill(misakaRect(0, 0, bounds.right, s(misakaTitleHeight)), misakaWhite, 0)
 	c.Fill(misakaRect(0, s(misakaTitleHeight-1), bounds.right, s(1)), misakaBorder, 0)
-	c.Text("Loom", misakaRect(s(42), s((misakaTitleHeight-24)/2), s(80), s(24)), s(16), 600, misakaText, 0)
-	c.Fill(misakaRect(s(97), s((misakaTitleHeight-24)/2), s(96), s(24)), 0xF4F6F5, s(12))
-	c.Text(windowsEditionLabel(app.edition), misakaRect(s(97), s((misakaTitleHeight-24)/2), s(96), s(24)), s(10), 400, misakaMuted, 1)
+	c.Text(app.windowTitle(app.snapshot()), misakaRect(s(42), 0, max(1, bounds.right-s(136)), s(misakaTitleHeight)), s(12), 400, misakaText, 0)
 	for i, label := range []string{"−", "×"} {
 		r := misakaRect(bounds.right-s(int32(2-i)*42), 0, s(42), s(misakaTitleHeight))
 		color := uint32(misakaText)

@@ -145,6 +145,14 @@ func recordProfileGUIWrites(t *testing.T, app *portableGUI) *[]profileGUIWrite {
 
 func TestGUIProfilesSelectionAndActualServicePaths(t *testing.T) {
 	app := newProfileGUITestWindow(t)
+	checkTitle := func(want string) {
+		t.Helper()
+		tray := app.trayIconData(app.snapshot())
+		if got := profileGUIText(app.hwnd); got != want || windows.UTF16ToString(tray.tip[:]) != want {
+			t.Fatalf("window/tray title mismatch: window=%q tray=%q want=%q", got, windows.UTF16ToString(tray.tip[:]), want)
+		}
+	}
+	checkTitle("Loom (Portable TUN) 已连接 · 演示网络甲")
 	count, _, _ := procSendMessage.Call(app.controls.networkList, 0x018B, 0, 0) // LB_GETCOUNT
 	selection, _, _ := procSendMessage.Call(app.controls.networkList, portableLBGetCurSel, 0, 0)
 	if count != 2 || selection != 0 || profileGUIListText(t, app.controls.networkList, 0) != "演示网络甲" || profileGUIListText(t, app.controls.networkList, 1) != "演示网络乙" {
@@ -193,10 +201,17 @@ func TestGUIProfilesSelectionAndActualServicePaths(t *testing.T) {
 	if !strings.Contains(text, "未连接") || strings.Contains(text, "demo-prefix-a") || strings.Contains(text, "demo-web") {
 		t.Fatalf("disconnected profile inherited another profile's actual paths: %q", text)
 	}
+	checkTitle("Loom (Portable TUN) 已连接 · 演示网络甲")
 	message := profileGUIText(app.controls.message)
 	if !strings.Contains(message, "当前连接：“演示网络甲”") || !strings.Contains(message, "正在查看：“演示网络乙”") {
 		t.Fatalf("active and viewed profiles are ambiguous: %q", message)
 	}
+	app.activeProfileName = "演示网络甲（已改名）"
+	app.renderControls()
+	checkTitle("Loom (Portable TUN) 已连接 · 演示网络甲（已改名）")
+	app.activeProfile, app.activeProfileName = "", ""
+	app.renderControls()
+	checkTitle("Loom (Portable TUN) 已断开 · 演示网络乙")
 }
 
 func TestGUIProfileNameDraftSurvivesUnchangedPolling(t *testing.T) {
