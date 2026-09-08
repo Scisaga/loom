@@ -17,6 +17,7 @@ type ClientOptions struct {
 	Entries      []ClientEntry
 	Probe        func(context.Context, ClientEntry) (time.Duration, error)
 	Observations *ObservationCache
+	HopCarriers  map[string][]string
 }
 type entryResult struct {
 	RTT time.Duration
@@ -87,7 +88,7 @@ func RunClient(ctx context.Context, cfg *Config, opts ClientOptions) (retErr err
 		}
 		updates := opts.Observations.Updates()
 		for _, d := range cfg.Declarations {
-			if err := selectClientRoute(ctx, cfg, d, k, states, entries, opts.Observations, time.Now()); err != nil {
+			if err := selectClientRoute(ctx, cfg, d, k, states, entries, opts.Observations, opts.HopCarriers, time.Now()); err != nil {
 				if ctx.Err() != nil {
 					return nil
 				}
@@ -108,7 +109,7 @@ type clientCost struct {
 	failureRate   float64
 }
 
-func selectClientRoute(ctx context.Context, cfg *Config, d Decl, k *clash, states *stateStore, entries map[string]entryResult, observations *ObservationCache, now time.Time) error {
+func selectClientRoute(ctx context.Context, cfg *Config, d Decl, k *clash, states *stateStore, entries map[string]entryResult, observations *ObservationCache, carriers map[string][]string, now time.Time) error {
 	actual, err := k.Now(ctx, d.Selector)
 	if err != nil {
 		return err
@@ -126,8 +127,9 @@ func selectClientRoute(ctx context.Context, cfg *Config, d Decl, k *clash, state
 	chosen := *current
 	best := clientCost{}
 	costs := map[string]clientCost{}
+	targets := observations.clientTargets(d.Targets, now)
 	for _, c := range d.Candidates {
-		cost := observations.clientCost(c.Chain, d.Targets, now)
+		cost := observations.clientCost(c.Chain, targets, now, carriers[c.Tag])
 		entry, ok := entryFor(c, entries)
 		if !ok {
 			cost.known = false
@@ -197,6 +199,9 @@ func selectClientRoute(ctx context.Context, cfg *Config, d Decl, k *clash, state
 		}
 		if d.Objective != model.Latency {
 			reason += "；现有分段观测不能计算配置目标 " + string(d.Objective)
+		}
+		if len(targets) < len(d.Targets) {
+			reason += fmt.Sprintf("；服务器观测覆盖 %d/%d 个目标，其余未知", len(targets), len(d.Targets))
 		}
 	}
 	// §16.1：分段估算不是实测健康/分位数。已有线格式保留 unknown，原因承载分工。

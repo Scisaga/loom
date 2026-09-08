@@ -16,7 +16,7 @@ func runWindowsAgentActivation(ctx context.Context, a *clientActivation) error {
 type dataPlaneStarter func(context.Context, string, []byte, string, clientruntime.WindowsRuntimeProfile, string, func()) error
 
 func runAgentDataPlane(ctx context.Context, a *clientActivation, start dataPlaneStarter, readiness ...func(context.Context, *agent.Config) error) error {
-	entries, err := clientruntime.WindowsEntries(a.Config, a.AgentConfig)
+	inputs, err := clientruntime.WindowsRoutingInputs(a.Config, a.AgentConfig)
 	if err != nil {
 		return err
 	}
@@ -55,7 +55,7 @@ func runAgentDataPlane(ctx context.Context, a *clientActivation, start dataPlane
 		}
 	}
 	if a.AgentConfig != nil {
-		a.AgentRuntime, err = clientruntime.StartWindowsAgent(ctx, a.AgentConfig, a.RuntimeDir, entries...)
+		a.AgentRuntime, err = clientruntime.StartWindowsAgent(ctx, a.AgentConfig, a.RuntimeDir, inputs)
 		if err != nil {
 			_ = stopPlane()
 			if ctx.Err() != nil {

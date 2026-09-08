@@ -30,7 +30,7 @@ type WindowsAgent struct {
 	observations *agent.ObservationCache
 }
 
-func StartWindowsAgent(ctx context.Context, cfg *agent.Config, runtimeDir string, entries ...agent.ClientEntry) (*WindowsAgent, error) {
+func StartWindowsAgent(ctx context.Context, cfg *agent.Config, runtimeDir string, inputs ...agent.ClientOptions) (*WindowsAgent, error) {
 	if ctx == nil || cfg == nil {
 		return nil, errors.New("[§5.5] Agent 生命周期参数不完整")
 	}
@@ -60,10 +60,17 @@ func StartWindowsAgent(ctx context.Context, cfg *agent.Config, runtimeDir string
 		cancel()
 		return nil, err
 	}
-	entries = append([]agent.ClientEntry(nil), entries...)
+	options := agent.ClientOptions{StatePath: a.statePath, Probe: pingWindowsEntry, Observations: a.observations}
+	if len(inputs) > 0 {
+		options.Entries = append([]agent.ClientEntry(nil), inputs[0].Entries...)
+		options.HopCarriers = map[string][]string{}
+		for tag, values := range inputs[0].HopCarriers {
+			options.HopCarriers[tag] = append([]string(nil), values...)
+		}
+	}
 	go func() {
 		defer close(a.done)
-		a.err = agent.RunClient(child, cfg, agent.ClientOptions{StatePath: a.statePath, Entries: entries, Probe: pingWindowsEntry, Observations: a.observations})
+		a.err = agent.RunClient(child, cfg, options)
 	}()
 	return a, nil
 }

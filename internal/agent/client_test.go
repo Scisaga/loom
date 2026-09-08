@@ -169,3 +169,21 @@ func TestClientPingFailureIsUnknownAndUnauthorizedEntryIsNotProbed(t *testing.T)
 		t.Fatal("unauthorized entry probed")
 	}
 }
+
+func TestClientReusesNeighborMeasurementsAndAvailableServiceTargets(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	c := newTestObservationCache(t)
+	c.by["demo-entry"] = observation.Observation{Node: "demo-entry", TS: now.Format(time.RFC3339), Edges: []observation.Edge{{To: "demo-exit", RTTMs: 20, Samples: 5}}}
+	c.by["demo-exit"] = observation.Observation{Node: "demo-exit", TS: now.Format(time.RFC3339), Targets: []observation.Reach{{Target: "https://service.example", FirstByteMs: 30, Samples: 5}}}
+	targets := c.clientTargets([]string{"https://missing.example/", "https://service.example/"}, now)
+	if len(targets) != 1 || targets[0] != "https://service.example/" {
+		t.Fatalf("available target discarded: %v", targets)
+	}
+	cost := c.clientCost([]string{"demo-entry", "demo-exit"}, targets, now, []string{"neighbor"})
+	if !cost.known || cost.failed || cost.ms != 50 {
+		t.Fatalf("actual neighbor measurements ignored: %+v", cost)
+	}
+	if c.clientCost([]string{"demo-entry", "demo-exit"}, targets, now, []string{"public-hysteria2"}).known {
+		t.Fatal("neighbor measurements used for a public carrier")
+	}
+}
