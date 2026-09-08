@@ -126,7 +126,11 @@ func TestGUIDPIChanges(t *testing.T) {
 				t.Errorf("DPI %d: window rectangle = %+v, want %+v", dpi, rect, suggested)
 			}
 			button := guiWindowRect(t, app.controls.primaryButton)
-			if button.right-button.left != 100*dpi/96 || button.bottom-button.top != 32*dpi/96 {
+			buttonWidth := int32(100)
+			if !joined {
+				buttonWidth = 132 // §7.2：空配置的导入按钮与说明左对齐，容纳完整操作名。
+			}
+			if button.right-button.left != buttonWidth*dpi/96 || button.bottom-button.top != 32*dpi/96 {
 				t.Errorf("DPI %d: button did not scale with its font: %+v", dpi, button)
 			}
 			for _, row := range []struct {

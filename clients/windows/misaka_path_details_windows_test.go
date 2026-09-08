@@ -1,0 +1,145 @@
+//go:build windows
+
+package main
+
+import (
+	"strings"
+	"testing"
+	"unsafe"
+)
+
+func misakaDetailInkBounds(pixels []byte, width int32, area portableRect) (portableRect, int) {
+	ink := portableRect{left: area.right, top: area.bottom, right: area.left, bottom: area.top}
+	count := 0
+	for y := area.top; y < area.bottom; y++ {
+		for x := area.left; x < area.right; x++ {
+			pixel := misakaCanvasTestPixel(pixels, width, x, y)
+			if pixel>>16 >= 210 || pixel>>8&255 >= 210 || pixel&255 >= 210 {
+				continue
+			}
+			count++
+			ink.left, ink.top = min(ink.left, x), min(ink.top, y)
+			ink.right, ink.bottom = max(ink.right, x+1), max(ink.bottom, y+1)
+		}
+	}
+	return ink, count
+}
+
+func TestGUIMisakaPathDetailsFollowActualReasonLinesWithoutBlankRow(t *testing.T) {
+	app := newProfileGUITestWindow(t)
+	app.paths = app.paths[:1]
+	app.pathsExpanded = true
+	long := strings.Repeat("演示路径经过完整测量后确认健康，保持当前链路并继续比较授权候选。", 5) + "\nDEMO_REASON_END"
+	for _, dpi := range []int32{96, 120, 144, 168, 192} {
+		width, height := portableMinimumWindowSize(dpi)
+		suggested := portableRect{left: 20, top: 20, right: 20 + width, bottom: 20 + height}
+		procSendMessage.Call(app.hwnd, portableWMDPIChanged, uintptr(dpi)|uintptr(dpi)<<16, uintptr(unsafe.Pointer(&suggested)))
+		for _, reason := range []string{"完整路径测量满足切换门槛", long} {
+			var withoutScope int32
+			for _, scoped := range []bool{false, true} {
+				app.paths[0].Reason = reason
+				app.paths[0].UpdatedAt = "demo-read-time"
+				app.paths[0].DecisionScope = ""
+				if scoped {
+					app.paths[0].DecisionScope = strings.Repeat("d", 64)
+				}
+				app.renderControls()
+				app.layoutControls()
+				var item portableRect
+				procSendMessage.Call(app.controls.pathsValue, 0x0198, 0, uintptr(unsafe.Pointer(&item)))
+				if item.bottom-item.top != app.scale(app.misakaPathHeight()) {
+					t.Fatalf("[§7.2] DPI %d 原生行高没有同步原因换行：%+v", dpi, item)
+				}
+				item = misakaRect(0, 0, item.right-item.left, item.bottom-item.top)
+				dc, pixels := misakaCanvasTestDC(t, item.right, item.bottom)
+				draw := portableDrawItem{hwndItem: app.controls.pathsValue, dc: dc, rect: item, itemID: 0}
+				procSendMessage.Call(app.skin.pane, portableWMDrawItem, 0, uintptr(unsafe.Pointer(&draw)))
+				portableGDI32.NewProc("GdiFlush").Call()
+				details := app.misakaPathDetails(app.paths[0], item.right-app.scale(3)-2-app.scale(28))
+				place := func(r portableRect) portableRect {
+					x, y := 1+app.scale(14), 1+app.scale(106)
+					return portableRect{left: r.left + x, top: r.top + y, right: r.right + x, bottom: r.bottom + y}
+				}
+				reasonInk, reasonCount := misakaDetailInkBounds(pixels, item.right, place(details.reasonBounds))
+				readInk, readCount := misakaDetailInkBounds(pixels, item.right, place(details.readBounds))
+				if reasonCount < 10 || readCount < 10 {
+					t.Fatalf("[§7.2] DPI %d 原因或读取时间未绘出：原因=%d 读取=%d", dpi, reasonCount, readCount)
+				}
+				if gap := readInk.top - reasonInk.bottom; gap < 0 || gap > app.scale(8) {
+					t.Errorf("[§7.2] DPI %d 读取与原因的实际字形之间仍有空行或重叠：间距=%d", dpi, gap)
+				}
+				last := readInk
+				if scoped {
+					scopeInk, scopeCount := misakaDetailInkBounds(pixels, item.right, place(details.scopeBounds))
+					if scopeCount < 10 || scopeInk.top-readInk.bottom > app.scale(8) {
+						t.Fatalf("[§7.2] DPI %d 决策范围未紧接读取时间完整绘出", dpi)
+					}
+					last = scopeInk
+					if item.bottom <= withoutScope {
+						t.Fatalf("[§7.2] DPI %d 无scope时仍虚占同样行高", dpi)
+					}
+				} else {
+					withoutScope = item.bottom
+				}
+				cardBottom := item.bottom - app.scale(12)
+				if gap := cardBottom - last.bottom; gap < app.scale(6) || gap > app.scale(24) {
+					t.Errorf("[§7.2] DPI %d 卡片末尾没有按详情内容收紧：尾部空白=%d", dpi, gap)
+				}
+				if reason == long {
+					endLine := place(details.reasonBounds)
+					endLine.top = endLine.bottom - app.scale(13)
+					if _, count := misakaDetailInkBounds(pixels, item.right, endLine); count < 10 {
+						t.Fatalf("[§7.2] DPI %d 长原因的最后一行被裁切", dpi)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestGUIMisakaPathDetailsResizeUpdatesNativeRowsAndScrollReach(t *testing.T) {
+	app := newProfileGUITestWindow(t)
+	app.paths = app.paths[:1]
+	app.pathsExpanded = true
+	app.paths[0].Reason = strings.Repeat("演示原因按当前窗口宽度换行，完整路径测量已确认当前选择。", 8)
+	app.paths[0].DecisionScope = strings.Repeat("d", 64)
+	app.renderControls()
+	var wide int32
+	for _, width := range []int32{1000, 720, 1000} {
+		procSetWindowPos.Call(app.hwnd, 0, 0, 0, uintptr(app.scale(width)), uintptr(app.scale(420)), 0x0016)
+		var item portableRect
+		procSendMessage.Call(app.controls.pathsValue, 0x0198, 0, uintptr(unsafe.Pointer(&item)))
+		height := item.bottom - item.top
+		if width == 1000 && wide == 0 {
+			wide = height
+		} else if width == 1000 && height != wide || width == 720 && height <= wide {
+			t.Fatalf("[§7.2] 宽度 %d 没有同步详情原生行高：实际=%d 宽窗=%d", width, height, wide)
+		}
+		app.scrollMisakaPane(app.skin.scrollMaximum)
+		procSendMessage.Call(app.controls.pathsValue, 0x0198, 0, uintptr(unsafe.Pointer(&item)))
+		procMisakaMapPoints.Call(app.controls.pathsValue, app.skin.pane, uintptr(unsafe.Pointer(&item)), 2)
+		view := misakaViewportClientRect(app.skin.pane)
+		if gap := view.bottom - item.bottom; gap < app.scale(19) || gap > app.scale(21) {
+			t.Fatalf("[§7.2] 宽度 %d 详情末尾不能按正确滚动范围到达：间距=%d", width, gap)
+		}
+	}
+}
+
+func TestGUIMisakaPathDetailsCompactSyntheticCapture(t *testing.T) {
+	app := newProfileGUITestWindow(t)
+	app.paths = app.paths[:1]
+	app.pathsExpanded = true
+	app.routeSelected = 1
+	app.detail = "系统 TUN 已启用；本地 HTTP/SOCKS 代理：127.0.0.1:1080。"
+	app.paths[0].UpdatedAt = "demo-read-time"
+	app.renderControls()
+	procSetWindowPos.Call(app.hwnd, 0, 0, 0, 0, 0, 0x0057)
+	procRedrawWindow.Call(app.hwnd, 0, 0, 0x0181)
+	misakaAssertVisibleFrame(t, app, "紧凑路径详情")
+	captureConfiguredProfileGUIState(t, app, "-detail-short")
+	app.paths[0].Reason = strings.Repeat("演示路径经过完整测量后确认健康，保持当前链路并继续比较授权候选。", 4)
+	app.paths[0].DecisionScope = strings.Repeat("d", 64)
+	app.renderControls()
+	app.scrollMisakaPane(app.skin.scrollMaximum)
+	captureConfiguredProfileGUIState(t, app, "-detail-long-scope")
+}

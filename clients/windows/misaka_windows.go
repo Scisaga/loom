@@ -152,14 +152,22 @@ func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height
 	if snapshot.state == guiConnected {
 		count = len(snapshot.paths)
 	}
-	content := s(330)
-	if snapshot.joined {
-		content = s(300) + s(app.misakaPathHeight())*int32(max(1, count)) + s(20)
+	for pass := 0; pass < 2; pass++ {
+		end := app.misakaContentEnd()
+		content := s(320)
+		if snapshot.joined {
+			content = s(300) + s(app.misakaPathHeight())*int32(max(1, count)) + s(20)
+		}
+		if snapshot.profileDraft != nil {
+			content = s(468)
+		}
+		app.updateMisakaScroll(content - s(40))
+		if app.misakaContentEnd() == end {
+			break
+		}
+		// §7.2：滚动条出现或消失后宽度会变化，按最终宽度重算段落换行与范围。
 	}
-	if snapshot.profileDraft != nil {
-		content = s(468)
-	}
-	app.updateMisakaScroll(content - s(40))
+	app.syncMisakaPathItemHeight()
 	visible := make(map[uintptr]bool)
 	move := func(control uintptr, x, y, w, h int32) {
 		parent, _, _ := portableUser32.NewProc("GetParent").Call(control)
@@ -179,6 +187,15 @@ func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height
 	move(app.controls.message, main+s(68), s(152), end-main-s(86), s(30))
 	if snapshot.selectedProfile != "" {
 		move(app.controls.deleteButton, end-s(90), s(57), s(90), s(28))
+	}
+	if !snapshot.joined {
+		// §7.2：未加入配置直接在同一块内容区完成导入，操作和说明不挤进连接摘要。
+		move(app.controls.stateValue, main+s(68), s(115), end-main-s(86), s(30))
+		move(app.controls.message, main+s(68), s(155), end-main-s(86), s(38))
+		move(app.controls.primaryButton, main+s(68), s(213), s(132), s(32))
+		if !snapshot.profilesReady || snapshot.selectedProfile != "" {
+			move(app.controls.pasteButton, main+s(212), s(213), s(128), s(32))
+		}
 	}
 	if snapshot.joined {
 		modeWidth := s(77)
@@ -307,17 +324,23 @@ func (app *portableGUI) renderMisaka(snapshot portableGUISnapshot, previous *por
 }
 
 func (app *portableGUI) misakaPathHeight() int32 {
-	rows := 1
-	if app.skin != nil {
-		for _, path := range app.skin.lastPaths {
-			rows = max(rows, (len(strings.Split(path.Chain, " → "))+3)/4)
+	s := app.scale
+	height := s(126)
+	if app.skin == nil {
+		return 126
+	}
+	width := max(s(40), app.misakaContentEnd()-s(196)-s(3)-2-s(28))
+	for _, path := range app.skin.lastPaths {
+		rows := misakaPathNodeRows(path)
+		needed := s(126 + (rows-1)*64)
+		if app.pathsExpanded && path.Candidate != "" {
+			details := app.misakaPathDetails(path, width)
+			needed = 2 + s(106+(rows-1)*64) + details.height + s(10) + s(12)
 		}
+		height = max(height, needed)
 	}
-	height := int32(126 + (rows-1)*64)
-	if app.pathsExpanded {
-		height += 88
-	}
-	return height
+	// §7.2：物理像素高度向上换算，防止非整数 DPI 再缩放时裁掉段落末行。
+	return (height*96 + app.dpi() - 1) / app.dpi()
 }
 
 func (app *portableGUI) updateMisakaPaths(snapshot portableGUISnapshot, force bool) {
@@ -337,7 +360,7 @@ func (app *portableGUI) updateMisakaPaths(snapshot portableGUISnapshot, force bo
 		procSendMessage.Call(app.controls.pathsValue, 0x000B, 0, 0)
 	}
 	procSendMessage.Call(app.controls.pathsValue, portableLBResetContent, 0, 0)
-	procSendMessage.Call(app.controls.pathsValue, portableLBSetItemHeight, 0, uintptr(app.scale(app.misakaPathHeight())))
+	app.syncMisakaPathItemHeight()
 	for _, row := range rows {
 		label, _ := windows.UTF16PtrFromString(formatWindowsPaths([]windowsPathDisplay{row}, true))
 		procSendMessage.Call(app.controls.pathsValue, portableLBAddString, 0, uintptr(unsafe.Pointer(label)))

@@ -1825,7 +1825,7 @@ func (app *portableGUI) renderControls() {
 		}
 		message += snapshot.routeDetail
 	}
-	if snapshot.activeProfile != "" && snapshot.activeProfile != snapshot.selectedProfile {
+	if snapshot.joined && snapshot.activeProfile != "" && snapshot.activeProfile != snapshot.selectedProfile {
 		message = "当前连接：“" + snapshot.activeProfileName + "”；正在查看：“" + snapshot.profileName + "”。  " + message
 	}
 	setPortableControlText(app.controls.stateValue, stateText)
@@ -2039,7 +2039,14 @@ func (app *portableGUI) presentation(snapshot portableGUISnapshot) (state, messa
 	case guiLoading:
 		return "正在检查", "正在检查本机身份和发行包。", "请稍候…", false
 	case guiNeedsJoin:
-		return "尚未加入 Loom 网络", "在中控页面复制二维码后按 Ctrl+V，或粘贴、选择、拖入 PNG / .loom-invite 文件。", "选择文件…", true
+		if snapshot.profilesReady && snapshot.selectedProfile == "" {
+			return "添加第一个连接配置", "使用加入邀请创建配置；每份配置单独保存加入身份。", "添加配置", true
+		}
+		message := "导入此配置的加入邀请，加入后保持断开。"
+		if !snapshot.profilesReady {
+			message = "导入加入邀请以连接 Loom 网络。"
+		}
+		return "此配置尚未加入", message + "\n支持二维码 PNG 或 .loom-invite 文件。", "选择邀请文件", true
 	case guiJoining:
 		return "正在加入", detail, "正在加入…", false
 	case guiNeedsElevation:

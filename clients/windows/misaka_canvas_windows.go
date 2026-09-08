@@ -138,7 +138,9 @@ func (c *misakaCanvas) Begin(dc uintptr, bounds portableRect, dpi int32) error {
 	}
 	c.bounds = bounds
 	c.offsetX, c.offsetY = 0, 0
-	misakaCOMCall(c.target, 48) // §7.2：开始本次绘制。
+	// §7.2：自绘内容在合成视口和截图中共用灰度抗锯齿，避免 ClearType 子像素形成彩色字边。
+	misakaCOMCall(c.target, 34, 2) // SetTextAntialiasMode(GRAYSCALE)，重建或重新绑定后均保持一致。
+	misakaCOMCall(c.target, 48)    // §7.2：开始本次绘制。
 	c.drawing = true
 	return nil
 }
@@ -171,6 +173,19 @@ func (c *misakaCanvas) Fill(rect portableRect, rgb uint32, radius int32) {
 	radius = min(radius, (rect.right-rect.left)/2, (rect.bottom-rect.top)/2)
 	rounded := misakaRoundedRect{rect: area, radiusX: float32(radius), radiusY: float32(radius)}
 	misakaCOMCall(c.target, 19, uintptr(unsafe.Pointer(&rounded)), uintptr(unsafe.Pointer(brush)))
+}
+
+// §7.2：同心圆共享浮点圆心，内外直径取整为不同奇偶数时也不能产生半像素偏移。
+func (c *misakaCanvas) Ellipse(x, y, radiusX, radiusY float32, rgb uint32) {
+	if c == nil || !c.canDraw(c.bounds) || radiusX <= 0 || radiusY <= 0 {
+		return
+	}
+	brush := c.brush(rgb)
+	if brush == nil {
+		return
+	}
+	ellipse := [4]float32{x - float32(c.bounds.left) + float32(c.offsetX), y - float32(c.bounds.top) + float32(c.offsetY), radiusX, radiusY}
+	misakaCOMCall(c.target, 21, uintptr(unsafe.Pointer(&ellipse)), uintptr(unsafe.Pointer(brush)))
 }
 
 // §7.2：单行文字垂直居中，超长时显示省略号，中文回退使用系统字体。
@@ -320,7 +335,7 @@ type misakaTextFormatArgs struct {
 	output     **misakaCOMObject
 }
 
-type misakaCOMObject struct{ vtable *[58]uintptr }
+type misakaCOMObject struct{ vtable *[67]uintptr }
 
 func misakaCOMMethod(object *misakaCOMObject, index uintptr) uintptr {
 	return object.vtable[index]

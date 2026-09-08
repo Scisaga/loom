@@ -89,6 +89,9 @@ SITE_LIKE_ID = re.compile(
     r"(?<![A-Za-z0-9-])[a-z]{2}[0-9]{2}(?![A-Za-z0-9-])", re.IGNORECASE
 )
 APPROVED_SITE_EXAMPLES = {"gw01", "sh01"}
+IPV6_NETWORK_LITERAL = re.compile(
+    r"(?<![\w:./%\[\]@-])[0-9A-Fa-f:]+/[0-9]{1,3}(?![\w:./%\[\]@-])"
+)
 
 
 def tracked_files() -> list[Path]:
@@ -126,6 +129,21 @@ def approved_ip(value: str) -> bool:
     if not address.is_global:
         return True
     return value in APPROVED_PUBLIC_IPS
+
+
+def broad_ipv6_network_spans(line: str) -> list[tuple[int, int]]:
+    """Recognize standard/broad network literals, never host/URL fragments or IDs."""
+    spans = []
+    for match in IPV6_NETWORK_LITERAL.finditer(line):
+        try:
+            interface = ipaddress.IPv6Interface(match.group(0))
+        except ValueError:
+            continue
+        # §12：只允许前 16 位非零且前缀不超过 16 位的宽网段；容纳边界测试的
+        # 更宽掩码，但不豁免部署子网或含具体主机位的地址。
+        if interface.network.prefixlen <= 16 and interface.ip.packed[2:] == bytes(14):
+            spans.append(match.span())
+    return spans
 
 
 def line_number(data: bytes, offset: int) -> int:
@@ -177,8 +195,11 @@ def main() -> int:
                     continue
                 if not approved_domain(value):
                     failures.append((relative, line_no, "unapproved public domain"))
+            network_spans = broad_ipv6_network_spans(line)
             for match in SITE_LIKE_ID.finditer(line):
-                if match.group(0).lower() not in APPROVED_SITE_EXAMPLES:
+                in_network = any(start <= match.start() and match.end() <= end
+                                 for start, end in network_spans)
+                if match.group(0).lower() not in APPROVED_SITE_EXAMPLES and not in_network:
                     failures.append((relative, line_no, "site-like device identifier"))
 
     if not failures:
