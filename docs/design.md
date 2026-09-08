@@ -821,7 +821,7 @@ mixed 是纯用户态监听,配崩了最多代理不通。
 |---|---|---|---|
 | **Portable Mixed** | 只覆盖显式配置 `127.0.0.1:1080` 的 HTTP/SOCKS 应用 | 普通用户；不创建虚拟网卡、不改路由 | 前台进程，退出即停止代理 |
 | **Portable TUN** | 透明覆盖纳入路由的 TCP、UDP、DNS 及不支持代理的应用 | 应用启动和二维码导入无需提权；当前预览启用 TUN 前要求管理员令牌 | 前台受监督进程，退出必须清理网卡和路由 |
-| **安装版（管理员 GUI 预览；MSI 尚未交付）** | TUN 主接管，同时保留同规则 mixed | 当前交互预览要求管理员；目标日常 UI 和二维码导入不提权 | SCM 下保持 Service；交互预览直接使用机器状态，目标托盘走受限 IPC |
+| **安装版** | TUN 主接管，同时保留同规则 mixed | MSI 安装提权；日常 UI 和二维码导入不提权 | SCM 下保持 Service，普通用户界面通过受限 IPC 操作 |
 
 Portable TUN 的“免安装”只表示不注册 MSI/Windows Service，**不表示启用 TUN 时无管理员
 权限或系统改动**。客户端必须先以普通权限完成启动和二维码导入；从真正启用 TUN 的提权
@@ -841,8 +841,21 @@ Portable Mixed 是开发、临时使用和逐应用代理的默认形态。TUN �
 `sing-box check`，再由 Job Object 监督 `sing-box run`。切换前预检失败不影响旧进程，
 新进程启动失败或随后崩溃会恢复上一份健康的内存候选。
 
-三个 edition 已共用原生 Windows GUI 和“启动后导入二维码”的加入核心；当前 Installed
-交互预览要求管理员并使用机器范围 DPAPI，目标普通用户托盘仍必须经受限 Service IPC。
+三个 edition 共用原生 Windows GUI 和“启动后导入二维码”的加入核心；Installed
+由 Service 使用机器范围 DPAPI，普通用户界面经受限 Service IPC 操作。
+
+Windows 左侧保存多份**连接配置**：每份对应独立加入身份、签名配置、偏好和测量状态，
+本地名称只用于识别，不改变 SSOT。选中条目只查看；连接操作必须先等待旧宿主、Agent
+和数据面完全退出，再启动目标配置，同一时间只有一个数据面。新加入的配置保持断开，
+不替换正在使用的另一份身份；原单身份目录就地保留，不迁移 CandidateState schema。
+配置索引损坏时拒绝连接或加入，不能回退为单身份流程绕过索引。删除仅作用于选中配置，
+卸载 Installed 仍保留受保护的机器身份及多配置索引。
+
+连接中、已连接、断开中、未连接与错误状态均有对应图标；动画只刷新图标区域。
+“当前选路”逐 Service 展示实际 selector 读回映射出的签名 chain，详情显示当前/最佳
+质量、原因和读取时间；Direct 也须读回验证。停止、取消、换代或读取失败不能把旧路径
+显示为当前值，无质量数据明确显示未知。这是新连接的选路，不保证既有长连接同步换路。
+本地 TUN 接管地址不标成可供其他设备访问的独立 Loom 网络 IP。
 GUI 选择或接收拖入的二维码 PNG、
 `.loom-invite` 文件，最终进入同一个内部 claim；客户端在内存生成 P-256 key/CSR，把可重试身份用相应范围
 的 DPAPI 保存。Ready 响应必须同时通过节点证书与本机私钥绑定、平台公钥、signed
@@ -856,15 +869,13 @@ sing-box 身份与 Wintun Authenticode。最后才写 `config/client.json` 作�
 覆盖整个 joined workload，不在 sing-box 子进程更新切换间释放。
 
 当前原生 Win32 GUI 已接入三个 edition 的首次导入、Connection 状态、数据面启动/停止
-和出口选择；Portable TUN 在加入后请求 UAC，Installed 则在读取机器状态前请求 UAC。
-它不依赖 WebView2 或额外 GUI 运行时。Installed 在 SCM 下仍运行 Service，但正式普通用户
-托盘、受限 IPC、MSI 和 ProgramData ACL 尚未交付，不能把管理员 GUI 预览描述为可发布客户端。
+和出口选择；Portable TUN 在启动已加入配置的系统 TUN 时请求 UAC，Installed 由 Service
+读取受保护机器状态。GUI 不依赖 WebView2 或额外运行时，关闭窗口隐藏到托盘，显式退出
+停止连接。普通用户 IPC 只接收显示状态和已授权操作，不传递身份密钥、配置正文或任意路径。
 
-真实 sing-box 的 Portable Mixed 回环监听已在本机验证；完整临时事务也已完成二维码解析 →
-内部身份绑定 → 用户 DPAPI → signed first pull → Portable Mixed 激活并跨过启动宽限期 →
-干净停止，全程未创建 TUN 或修改路由。实际 TUN
-激活与退出清理、跨进程持久回滚、端到端健康探测和 MSI 仍未验收，因此这些制品仍是开发
-构建；“已经编译出 TUN 版”不能写成“已验证 TUN 联网”。
+原生窗口测试、真实 sing-box、MSI 和加入/上报验收的实际结果记录在
+[当前状态](status/current.md)，不能用编译成功代替真实网络验收；新增多配置同样需要
+分别验证身份隔离、单连接切换、取消和按服务实际路径显示。
 
 ### 7.3 v1 只有一个中控托管的日常入口
 

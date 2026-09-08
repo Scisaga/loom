@@ -144,6 +144,17 @@ func (app *portableGUI) routeSelectionChanged() {
 		return
 	}
 	index := app.routeVisible[visibleIndex]
+	if snapshot := app.snapshot(); snapshot.profilesReady {
+		if index < 0 || index >= len(snapshot.routeOptions) || index == snapshot.routeSelected || snapshot.routeBusy {
+			return
+		}
+		preference := snapshot.routeOptions[index].Preference
+		if app.routeFiltering {
+			app.cancelRouteFilter(snapshot)
+		}
+		app.profileCommand(brokerRequest{Operation: "preference", ProfileID: snapshot.selectedProfile, Preference: &preference})
+		return
+	}
 	wasFiltering := app.routeFiltering
 	app.mu.Lock()
 	online := app.state == guiConnected && (app.runCancel != nil || app.brokerClient)
@@ -210,11 +221,17 @@ func (app *portableGUI) setRoutePreference(preference clientcore.Preference) err
 	app.mu.RLock()
 	index := routeOptionIndex(app.routeOptions, preference)
 	online := app.state == guiConnected && app.runCancel != nil
-	offline := app.joined && (app.state == guiStopped || app.state == guiError)
+	offline := app.joined && (app.state == guiStopped || app.state == guiError || app.state == guiNeedsElevation)
 	app.mu.RUnlock()
 	if index < 0 || (!online && !offline) {
 		return errors.New("出口未获当前签名配置授权，或数据面正在切换")
 	}
+	app.mu.Lock()
+	app.routeBusy = true
+	app.paths = nil
+	app.mu.Unlock()
+	app.repaint()
+	defer func() { app.mu.Lock(); app.routeBusy = false; app.mu.Unlock(); app.repaint() }()
 	path := filepath.Join(app.root, "state", "preference.json")
 	if online {
 		control, err := activeRouteControl(app.root)

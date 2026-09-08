@@ -24,18 +24,27 @@ type brokerRequest struct {
 	Operation  string                 `json:"operation"`
 	Invite     *clientenroll.Invite   `json:"invite,omitempty"`
 	Preference *clientcore.Preference `json:"preference,omitempty"`
+	ProfileID  string                 `json:"profile_id,omitempty"`
+	Name       string                 `json:"name,omitempty"`
 }
 
 // §13.5：界面只收到显示状态和已授权出口，不传送配置正文、文件路径、API 密码或私钥。
 type brokerSnapshot struct {
-	State         portableGUIState      `json:"state"`
-	Joined        bool                  `json:"joined"`
-	DeviceID      string                `json:"device_id"`
-	Detail        string                `json:"detail"`
-	Routes        []portableRouteOption `json:"routes,omitempty"`
-	RouteSelected int                   `json:"route_selected"`
-	RouteBusy     bool                  `json:"route_busy"`
-	RouteDetail   string                `json:"route_detail"`
+	State             portableGUIState        `json:"state"`
+	Joined            bool                    `json:"joined"`
+	DeviceID          string                  `json:"device_id"`
+	Detail            string                  `json:"detail"`
+	Routes            []portableRouteOption   `json:"routes,omitempty"`
+	RouteSelected     int                     `json:"route_selected"`
+	RouteBusy         bool                    `json:"route_busy"`
+	RouteDetail       string                  `json:"route_detail"`
+	Paths             []windowsPathDisplay    `json:"paths,omitempty"`
+	ProfilesReady     bool                    `json:"profiles_ready"`
+	Profiles          []windowsProfileDisplay `json:"profiles,omitempty"`
+	SelectedProfile   string                  `json:"selected_profile,omitempty"`
+	ProfileName       string                  `json:"profile_name,omitempty"`
+	ActiveProfile     string                  `json:"active_profile,omitempty"`
+	ActiveProfileName string                  `json:"active_profile_name,omitempty"`
 }
 
 type brokerResponse struct {
@@ -56,18 +65,29 @@ func decodeBrokerRequest(body []byte) (brokerRequest, error) {
 	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
 		return req, errors.New("服务请求含多余数据")
 	}
+	if req.ProfileID != "" && !validConnectionProfileID(req.ProfileID) {
+		return req, errors.New("连接配置标识无效")
+	}
+	if req.Name != "" && validateConnectionProfileName(req.Name) != nil {
+		return req, errors.New("连接配置名称无效")
+	}
 	switch req.Operation {
-	case "status", "connect", "disconnect", "delete":
-		if req.Invite != nil || req.Preference != nil {
+	case "status", "connect", "disconnect", "delete", "select_profile":
+		if req.Invite != nil || req.Preference != nil || req.Name != "" || (req.Operation == "status" && req.ProfileID != "") || (req.Operation == "select_profile" && req.ProfileID == "") {
 			return req, errors.New("服务操作不接受附加参数")
 		}
 	case "join":
-		if req.Invite == nil || req.Preference != nil || clientenroll.ValidateInvite(*req.Invite) != nil {
+		if req.Invite == nil || req.Preference != nil || req.Name != "" || clientenroll.ValidateInvite(*req.Invite) != nil {
 			return req, errors.New("加入二维码无效")
 		}
 	case "preference":
-		if req.Invite != nil || req.Preference == nil {
+		if req.Invite != nil || req.Preference == nil || req.Name != "" {
 			return req, errors.New("出口选择无效")
+		}
+	case "add_profile", "rename_profile":
+		if req.Invite != nil || req.Preference != nil || (req.Operation == "add_profile" && req.ProfileID != "") ||
+			(req.Operation == "rename_profile" && (req.ProfileID == "" || req.Name == "")) {
+			return req, errors.New("连接配置操作参数无效")
 		}
 	default:
 		return req, errors.New("未支持的服务操作")
@@ -77,10 +97,24 @@ func decodeBrokerRequest(body []byte) (brokerRequest, error) {
 
 func (app *portableGUI) brokerSnapshot() brokerSnapshot {
 	s := app.snapshot()
-	return brokerSnapshot{s.state, s.joined, s.deviceID, s.detail, s.routeOptions, s.routeSelected, s.routeBusy, s.routeDetail}
+	return brokerSnapshot{State: s.state, Joined: s.joined, DeviceID: s.deviceID, Detail: s.detail, Routes: s.routeOptions, RouteSelected: s.routeSelected,
+		RouteBusy: s.routeBusy, RouteDetail: s.routeDetail, Paths: s.paths, ProfilesReady: s.profilesReady, Profiles: s.profiles,
+		SelectedProfile: s.selectedProfile, ProfileName: s.profileName, ActiveProfile: s.activeProfile, ActiveProfileName: s.activeProfileName}
 }
 
 func (app *portableGUI) handleBrokerRequest(req brokerRequest) error {
+	if m := app.profileManager(); m != nil {
+		if req.Operation == "status" {
+			return nil
+		}
+		if req.ProfileID == "" && req.Operation != "add_profile" && req.Operation != "disconnect" {
+			req.ProfileID = m.snapshot().selectedProfile
+		}
+		return m.dispatch(req)
+	}
+	if app.profileHost && req.Operation != "status" {
+		return errors.New("连接配置尚未就绪；不能绕过配置索引执行操作")
+	}
 	s := app.snapshot()
 	switch req.Operation {
 	case "status":
@@ -192,7 +226,7 @@ func prepareInstalledService() (func(context.Context) error, error) {
 		defer log.SetOutput(previousLog)
 		appCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		app := &portableGUI{edition: editionInstalled, root: root, ctx: appCtx, cancel: cancel, state: guiLoading, routeSelected: -1}
+		app := &portableGUI{profileHost: true, edition: editionInstalled, root: root, ctx: appCtx, cancel: cancel, state: guiLoading, routeSelected: -1}
 		app.workers.Add(1)
 		go func() { defer app.workers.Done(); app.initialize() }()
 		err = serveBroker(ctx, pipe, app)
@@ -254,6 +288,16 @@ func (app *portableGUI) exchangeInstalledBroker(request brokerRequest) {
 	defer app.brokerMu.Unlock()
 	response, err := callInstalledBroker(app.ctx, request)
 	if err != nil {
+		app.mu.Lock()
+		app.paths = nil
+		for i := range app.brokerProfiles {
+			if app.brokerProfiles[i].ID == app.activeProfile {
+				app.brokerProfiles[i].State = guiError
+			}
+		}
+		app.activeProfile = ""
+		app.activeProfileName = ""
+		app.mu.Unlock()
 		app.update(guiError, app.snapshot().joined, "", err.Error())
 		return
 	}
@@ -261,6 +305,9 @@ func (app *portableGUI) exchangeInstalledBroker(request brokerRequest) {
 	app.mu.Lock()
 	app.state, app.joined, app.deviceID, app.detail = s.State, s.Joined, s.DeviceID, s.Detail
 	app.routeOptions, app.routeSelected, app.routeBusy, app.routeDetail = s.Routes, s.RouteSelected, s.RouteBusy, s.RouteDetail
+	app.paths = s.Paths
+	app.brokerProfilesReady, app.brokerProfiles = s.ProfilesReady, s.Profiles
+	app.selectedProfile, app.profileName, app.activeProfile, app.activeProfileName = s.SelectedProfile, s.ProfileName, s.ActiveProfile, s.ActiveProfileName
 	if response.Error != "" {
 		app.detail = response.Error
 	}

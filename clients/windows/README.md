@@ -53,9 +53,30 @@ may overlay the Windows-native green shield in the lower-right corner, but the
 favicon beneath it remains unchanged. `assets/loom-logo-v4.svg` is reserved for
 the larger in-window brand area beside the product name.
 
-Before join, the window uses a focused onboarding view without an empty network
-pane or placeholder Device details. After join, it switches to the compact
-network-list/detail layout. The notification-area tooltip includes the embedded
+The left-hand list contains saved connection profiles. **添加配置** creates an
+unjoined local entry with a default name; edit its name to distinguish networks.
+Import a separate control-issued QR into each entry. A new local entry has no
+Device identity until that join completes, and joining does not start a connection.
+Selecting another entry only changes the details being viewed. **连接** first
+stops and waits for the active profile's workload, then starts the selected one;
+at most one profile can be connecting or connected. The list and active-connection
+indicator distinguish the selected entry from the profile carrying traffic.
+
+Each profile retains its own DPAPI-protected join identity, verified configuration,
+route preference, Agent generations and measurements. Existing single-profile
+state remains at its original protected location and appears in the list; it is
+not copied into a new identity. Additional profiles use isolated subdirectories.
+Local names and list selection do not change the control-plane Device or policy.
+Deleting a disconnected profile removes only that profile's local identity and
+configuration. MSI uninstall continues to preserve retained joined state.
+
+The status label and corresponding list entry show an icon in every connection
+state: blue progress while connecting, green when connected, gray progress while
+disconnecting, gray when disconnected, and red after failure. Connecting can be
+canceled. Progress animation refreshes its own icon area, while unchanged status
+polls do not rewrite controls or repaint the entire window.
+
+The notification-area tooltip includes the embedded
 edition and current state. Double-click restores the window; closing the window
 hides it to the tray; the tray menu provides show, the current
 import/connect/disconnect action, and an explicit exit.
@@ -94,7 +115,7 @@ with a valid QR; restoring an old state directory is not a reporting-test
 prerequisite. Live reporting acceptance follows the normal GUI join and connect
 flow described in the [reporting contract](../../docs/windows-client-reporting.md).
 
-Deleting a local Device clears its identity and configuration; it does not notify
+Deleting a local profile clears that profile's identity and configuration; it does not notify
 the control plane. To join again, open the original Device in the control UI and
 use **Rejoin Device**. For a joined access-only Device, this archives the old
 identity and generates a new ID and QR with the same name and purpose. The old
@@ -122,7 +143,9 @@ DPAPI. Installed state is stored under `%ProgramData%\Loom` using machine-scope
 DPAPI. MSI creates a SYSTEM/Administrators-only state directory. Its local pipe
 allows only the installing Windows user and administrators; the GUI verifies the
 server PID against SCM before sending a QR credential. The service accepts only
-status, join, connect, disconnect, authorized route preference and local deletion.
+status, profile add/select/rename, join, connect, disconnect, authorized route
+preference and local deletion. Profile operations use bounded local identifiers
+and names resolved by the service.
 It accepts no file paths, commands or configuration bodies from the GUI.
 
 ## Build and run
@@ -255,7 +278,7 @@ without this fingerprint are rejected; already joined identities remain valid. S
   Probe and report have separate 8-second and 5-second budgets, so a probe timeout
   can still be reported. This tests representative reachability, not every site
   or exit. See the [reporting contract](../../docs/windows-client-reporting.md).
-- `config\client.json` is written last and is the only joined-state marker
+- Each profile's `config\client.json` is written last and is the only joined-state marker
   observed by normal startup. Failed imports cannot start a partial client.
 - In the current Portable preview, until the join commits, the exact QR
   credential and generated identity are current-user-DPAPI protected. The control permits only the same token, CSR,
@@ -301,6 +324,16 @@ canonical v5，上报重新 GET 得到的 candidate 及签名 plan 对应的 cha
 `decision_scope` 写入既有受签名保护的 `reason`（v5 没有独立 scope 字段），不增加
 字段、端点或签名版本。数据面健康采集仍保留；缺少有效 Agent 质量不能报告为健康。
 
+连接后的“当前选路”按 Service 显示实际路径和健康状态，展开详情可见当前/最佳质量、
+切换原因和读取时间。该区域只读；不同 Service 可以经过不同服务器链，不能把其中
+一条描述成所有流量共用的路径。数据来自当前激活实例的 selector GET 与同一签名
+Agent plan 的映射，不解析候选名称。Direct 也必须实际读回授权的零跳候选才能显示
+直连；没有 Agent 测量时质量保持“未知”，不把缺失值显示成零延迟。
+
+GUI 在后台至多每五秒读取一次，复用共享 Agent 的状态投影，不启动额外探测或上报。
+断开、出口切换、配置激活代次变化时立即清掉旧路径；读回失败显示“未知”。当前选路
+表示数据面当前 selector 的选择，已建立的长连接可能仍沿用之前的路径。
+
 新增测试覆盖双文件缺失/额外文件/篡改/验签失败/plan 非法、指针提交失败回滚、
 Agent-only 变化推进 hash、旧 schema 拒绝；完整代理请求验证慢前缀到快前缀的门槛
 切换、故障切换和 readback 拒绝；还覆盖 scope 失效、Auto/FixedExit/Direct、取消和
@@ -330,8 +363,8 @@ signed pull, listener startup, startup grace, two signed report attachments
 after token cleanup, and clean shutdown without TUN or
 route changes. All three editions now provide the same native first-launch and
 Connection GUI; file selection, window lifecycle, and console-free PE output
-have been exercised on the Windows host. Before QR import the network list is
-empty; an entry appears only after a Device has been successfully bound.
+have been exercised on the Windows host. An added local profile remains explicitly
+unjoined until its Device has been successfully bound through QR import.
 
 Installed uses the same lifecycle implementation inside SCM and connects the
 ordinary-user window through an ACL-restricted named pipe. Windows amd64 native

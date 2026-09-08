@@ -203,6 +203,36 @@ func (a *WindowsAgent) Report(ctx context.Context, now time.Time) (*clientreport
 	return out, nil
 }
 
+// §7.3.3：Direct 的界面观测同样来自实际 selector；偏好本身不能证明数据面已直连。
+func (p *WindowsSelectorPlan) ReadDirectPaths(ctx context.Context, now time.Time) (*clientreport.AgentState, error) {
+	if p == nil || !p.DirectAvailable() {
+		return nil, errors.New("[§7.3.3] 当前签名计划没有完整直连授权")
+	}
+	cfg := p.DirectReadinessConfig()
+	out := &clientreport.AgentState{Node: cfg.Node, TS: now.UTC().Format(time.RFC3339)}
+	for _, d := range cfg.Declarations {
+		actual, err := selectorReadback(ctx, cfg, d.Selector)
+		if err != nil {
+			return nil, err
+		}
+		found := false
+		for _, candidate := range d.Candidates {
+			found = found || candidate.Tag == actual && len(candidate.Chain) == 0
+		}
+		if !found {
+			return nil, errors.New("[§7.3.3] 实际 selector 不属于当前签名直连候选")
+		}
+		out.Selections = append(out.Selections, clientreport.AgentSelection{
+			Declaration: d.ID, Selector: d.Selector, Candidate: actual, UpdatedAt: out.TS,
+			Reason: "直连模式；不进行 Agent 路径测量",
+		})
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // §13.5：随机代次目录继承受保护父目录；重启不把上代证据当成本代状态。
 func newProtectedAgentDir(runtimeDir string) (string, error) {
 	if err := validateRoot(runtimeDir); err != nil {
