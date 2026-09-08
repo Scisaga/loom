@@ -184,11 +184,11 @@ func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height
 		visible[app.controls.networkList] = true
 		visible[app.controls.addProfileButton] = true
 		x, y, w := app.misakaDraftBounds()
-		move(app.controls.draftName, x+s(25), y+s(116), w-s(50), s(25))
-		move(app.controls.draftImport, x+s(24), y+s(197), s(144), s(34))
-		move(app.controls.draftPaste, x+s(178), y+s(197), s(144), s(34))
-		move(app.controls.draftSubmit, x+w-s(150), y+s(338), s(126), s(34))
-		move(app.controls.draftCancel, x+s(24), y+s(338), s(86), s(34))
+		move(app.controls.draftName, x+s(25), y+s(48), w-s(50), s(25))
+		move(app.controls.draftImport, x+s(20), y+s(132), s(144), s(34))
+		move(app.controls.draftPaste, x+s(174), y+s(132), s(144), s(34))
+		move(app.controls.draftSubmit, x+w-s(146), y+s(296), s(126), s(34))
+		move(app.controls.draftCancel, x+s(20), y+s(296), s(86), s(34))
 	}
 	enablePortableControl(app.controls.networkList, snapshot.profileDraft == nil)
 	enablePortableControl(app.controls.profileMenu, app.misakaMenuSelectionConfirmed(snapshot))
@@ -196,8 +196,8 @@ func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height
 
 func (app *portableGUI) misakaDraftBounds() (int32, int32, int32) {
 	x := app.scale(196)
-	w := min(app.scale(500), app.skin.width-x-app.scale(20))
-	return x, app.scale(52), w
+	w := app.skin.width - x - app.scale(20)
+	return x, app.scale(118), w
 }
 
 func misakaSelectedMode(snapshot portableGUISnapshot) clientcore.Mode {

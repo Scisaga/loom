@@ -126,17 +126,25 @@ func (app *portableGUI) drawMisakaBrand(dc uintptr, large bool) {
 func (app *portableGUI) paintMisakaDraft(c *misakaCanvas, snapshot portableGUISnapshot) {
 	s := app.scale
 	x, y, w := app.misakaDraftBounds()
-	c.Text("添加连接配置", misakaRect(x+s(24), y+s(22), w-s(48), s(32)), s(23), 600, misakaText, 0)
-	c.Text("保存后保持断开，现有连接继续运行。", misakaRect(x+s(24), y+s(59), w-s(48), s(24)), s(12), 400, misakaMuted, 0)
-	c.Text("配置名称", misakaRect(x+s(24), y+s(88), w-s(48), s(21)), s(11), 600, misakaMuted, 0)
-	field := misakaRect(x+s(20), y+s(111), w-s(40), s(36))
+	c.Text("添加连接配置", misakaRect(x, s(57), w, s(31)), s(23), 600, misakaText, 0)
+	c.Text("保存后保持断开，现有连接继续运行。", misakaRect(x, s(88), w, s(20)), s(11), 400, misakaMuted, 0)
+	// §7.2：沿用首页的一层内容卡片，名称和邀请控件直接排列，不再嵌套上传面板。
+	card := misakaRect(x, y, w, s(352))
+	c.Fill(card, misakaBorder, s(9))
+	card.left++
+	card.top++
+	card.right--
+	card.bottom--
+	c.Fill(card, misakaWhite, s(8))
+	c.Text("配置名称", misakaRect(x+s(20), y+s(18), w-s(40), s(21)), s(11), 600, misakaMuted, 0)
+	field := misakaRect(x+s(20), y+s(43), w-s(40), s(36))
 	c.Fill(field, misakaBorder, s(6))
 	field.left++
 	field.top++
 	field.right--
 	field.bottom--
 	c.Fill(field, misakaWhite, s(5))
-	c.Text("加入邀请", misakaRect(x+s(24), y+s(165), w-s(48), s(23)), s(11), 600, misakaMuted, 0)
+	c.Text("加入邀请", misakaRect(x+s(20), y+s(101), w-s(40), s(23)), s(11), 600, misakaMuted, 0)
 	text := app.skin.inviteLabel
 	if text == "" {
 		text = "支持二维码 PNG / .loom-invite，也可粘贴二维码图片。"
@@ -157,7 +165,7 @@ func (app *portableGUI) paintMisakaDraft(c *misakaCanvas, snapshot portableGUISn
 		text = app.skin.draftError
 		color = misakaRed
 	}
-	c.Paragraph(text, misakaRect(x+s(24), y+s(247), w-s(48), s(78)), s(12), 400, color)
+	c.Paragraph(text, misakaRect(x+s(20), y+s(181), w-s(40), s(78)), s(12), 400, color)
 }
 
 func (app *portableGUI) drawMisakaItem(item *portableDrawItem) bool {

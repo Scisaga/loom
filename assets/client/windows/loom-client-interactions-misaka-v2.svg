@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1140" height="780" viewBox="0 0 1140 780" role="img" aria-labelledby="title description">
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1500" viewBox="0 0 900 1500" role="img" aria-labelledby="title description">
   <title id="title">Loom Windows client interactions — Misaka v2</title>
-  <desc id="description">Flat content views for inline rename, a right-side invitation form, and an animated connection summary; no nested panels, modal frame or upload dropzone.</desc>
-  <!-- Original Windows favicon and large brand asset are embedded byte-for-byte; no recoloring. -->
-  <defs>
+  <desc id="description">Two complete compact windows reuse the approved home style: inline profile rename and a single right-side white form card. A small crop shows the same connection summary while connecting. The invitation area has no nested card.</desc>
+  <!-- Every full window is 876 × 614, matching the approved home prototype. Only ordinary inputs and actions add borders inside the content card. -->
+  <defs xmlns="http://www.w3.org/2000/svg">
     <symbol id="brand-favicon" viewBox="0 0 32 32">
       <image href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjEyNyAxMTIgMTAwMCAxMDAwIj4KICA8ZGVmcz4KICAgIDwhLS0gRXhhY3Qgb3V0ZXIgc2lsaG91ZXR0ZSBvZiB0aGUgYXBwcm92ZWQgTG9vbSBtYXJrLiAtLT4KICAgIDxwYXRoIGlkPSJsb29tLW91dGxpbmUiIGQ9Ik02MTYgMTEwOGMtNjctNDktMTE4LTEzMy0xMjktMjA5IDAtNiAwLTYtMTQtMS03NSAyNy0xNjYgMjQtMjM5LTYtMTMtNS0xNC03LTExLTI5IDEyLTgwIDUzLTE1NSAxMTUtMjExbDktOC02LTVjLTYxLTUzLTEwMC0xMjEtMTE0LTIwMC01LTMxLTUtMzggNC00MiA1Ny0yNiAxMzgtMzQgMjAzLTIwIDEzIDIgMjIgNSAzOSAxMCAxNCA1IDE0IDUgMTUtMiA5LTcwIDYwLTE1NSAxMjEtMjA0IDE3LTE1IDE4LTE1IDM0LTIgNDcgMzcgODcgOTMgMTA3IDE1MSA3IDIwIDE2IDUyIDE2IDYwIDAgNCAxIDQgMTIgMCA3Mi0yOCAxNTgtMjcgMjM2IDMgMTcgNiAxNyA3IDE1IDI3LTggNzktNDkgMTU5LTExMSAyMTVsLTkgOSAxMCA5YzYxIDUzIDEwNSAxMzkgMTE0IDIxOSAyIDE1IDEgMTYtMjggMjYtNzUgMjUtMTU2IDI1LTIyNy0yLTQtMS04LTItOC0yLTEgMC0yIDctMyAxNS0xNSA4MS02MCAxNTItMTI2IDE5OC0xMiA5LTE0IDktMjUgMXoiLz4KICAgIDwhLS0gT25lIGNsZWFuIG9wZW5pbmcgcmVwbGFjZXMgdGhlIG9yaWdpbmFsIHRocmVlIG5lc3RlZCB3ZWF2ZSBjb250b3Vycy4gLS0+CiAgICA8cGF0aCBpZD0icGV0YWwtb3BlbmluZyIgZD0iTTYyOCAxMDQwQzUyMCA5NDUgNTM1IDc5MCA2MjggNjYwQzcyMSA3OTAgNzM2IDk0NSA2MjggMTA0MFoiLz4KICA8L2RlZnM+CiAgPGcgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoMCAxMjU0KSBzY2FsZSgxIC0xKSI+CiAgICA8dXNlIGhyZWY9IiNsb29tLW91dGxpbmUiIGZpbGw9IiMxMTEiLz4KICAgIDxnIGZpbGw9IiNmZmYiPgogICAgICA8dXNlIGhyZWY9IiNwZXRhbC1vcGVuaW5nIi8+CiAgICAgIDx1c2UgaHJlZj0iI3BldGFsLW9wZW5pbmciIHRyYW5zZm9ybT0icm90YXRlKDYwIDYyOCA2NDQpIi8+CiAgICAgIDx1c2UgaHJlZj0iI3BldGFsLW9wZW5pbmciIHRyYW5zZm9ybT0icm90YXRlKDEyMCA2MjggNjQ0KSIvPgogICAgICA8dXNlIGhyZWY9IiNwZXRhbC1vcGVuaW5nIiB0cmFuc2Zvcm09InJvdGF0ZSgxODAgNjI4IDY0NCkiLz4KICAgICAgPHVzZSBocmVmPSIjcGV0YWwtb3BlbmluZyIgdHJhbnNmb3JtPSJyb3RhdGUoMjQwIDYyOCA2NDQpIi8+CiAgICAgIDx1c2UgaHJlZj0iI3BldGFsLW9wZW5pbmciIHRyYW5zZm9ybT0icm90YXRlKDMwMCA2MjggNjQ0KSIvPgogICAgPC9nPgogIDwvZz4KPC9zdmc+Cg==" width="32" height="32"/>
     </symbol>
@@ -38,67 +38,201 @@
     <symbol id="file" viewBox="0 0 24 24">
       <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Zm0 0v6h6M8 13h8m-8 4h5"/>
     </symbol>
-    <style><![CDATA[
-    .ui {font-family:"Segoe UI","Microsoft YaHei UI",sans-serif;fill:#181B1A;font-size:13px}
+    <style>
+    .ui {font-family:&quot;Segoe UI&quot;,&quot;Microsoft YaHei UI&quot;,sans-serif;fill:#181B1A;font-size:13px}
     .muted {fill:#747D77} .green {fill:#239B68} .blue {fill:#3979C5} .white {fill:#FFF}
     .title {font-size:23px;font-weight:650} .section {font-size:15px;font-weight:600}
     .body {font-size:13px} .small {font-size:12px} .tiny {font-size:11px}
-    .mono {font-family:Consolas,"Microsoft YaHei UI",monospace} .medium {font-weight:600}
+    .mono {font-family:Consolas,&quot;Microsoft YaHei UI&quot;,monospace} .medium {font-weight:600}
     .icon {fill:none;stroke:#737976;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
     .icon-green {fill:none;stroke:#239B68;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
     .card {fill:#FFF;stroke:#E4E7E5} .rule {stroke:#E6E9E7;stroke-width:1}
-  ]]></style>
+  </style>
   </defs>
   <g class="ui">
-    <rect x="0" y="0" width="1140" height="780" rx="0" fill="#FCFCFB"/>
-    <text x="32" y="35" class="section">重命名 · 原位置编辑</text>
-    <text x="391" y="35" class="section">添加 · 直接使用右侧内容区</text>
-    <path d="M358 65L358 524" stroke="#E6E9E7" stroke-width="1"/>
-    <path d="M32 548H1108" stroke="#E6E9E7" stroke-width="1"/>
-    <text x="32" y="92" class="small medium muted">连接配置</text>
-    <use href="#plus" x="299" y="77" width="20" height="20" class="icon"/>
-    <rect x="20" y="116" width="304" height="58" rx="5" fill="#E9F3ED"/>
-    <circle cx="36" cy="138" r="4" fill="#239B68"/>
-    <rect x="50" y="125" width="260" height="28" rx="3" fill="#FFF" stroke="#239B68"/>
-    <text x="61" y="145" class="body medium">demo-work</text>
-    <path d="M138 129L138 149" stroke="#239B68" stroke-width="1"/>
-    <text x="36" y="166" class="tiny green">已连接</text>
-    <circle cx="36" cy="206" r="4" fill="#AAB2AC"/>
-    <text x="50" y="211" class="body">demo-personal</text>
-    <text x="36" y="235" class="tiny muted">未连接</text>
-    <text x="32" y="298" class="small">双击名称或按 F2 开始编辑</text>
-    <text x="32" y="328" class="small medium">Enter 保存 · Esc 取消</text>
-    <text x="32" y="358" class="small muted">只修改本地名称，连接继续运行</text>
-    <text x="32" y="495" class="tiny muted">行内输入框是唯一新增的边框。</text>
-    <text x="391" y="93" class="title">添加连接配置</text>
-    <text x="391" y="118" class="small muted">使用中控提供的加入邀请</text>
-    <text x="391" y="158" class="small medium">配置名称</text>
-    <rect x="391" y="171" width="690" height="34" rx="4" fill="#FFF" stroke="#D8DDD9"/>
-    <text x="403" y="194" class="body">demo-new</text>
-    <text x="391" y="244" class="small medium">加入邀请</text>
-    <text x="391" y="269" class="small muted">选择二维码 PNG 或 .loom-invite 文件，也可粘贴二维码。</text>
-    <rect x="391" y="289" width="136" height="34" rx="6" fill="#FFF" stroke="#D8DDD9"/>
-    <text x="459.0" y="311" class="small medium" text-anchor="middle">选择邀请文件</text>
-    <rect x="539" y="289" width="128" height="34" rx="6" fill="#FFF" stroke="#D8DDD9"/>
-    <text x="603.0" y="311" class="small medium" text-anchor="middle">粘贴二维码</text>
-    <use href="#check" x="391" y="343" width="19" height="19" class="icon-green"/>
-    <text x="419" y="357" class="small green">demo-invite.loom-invite · 已选择</text>
-    <rect x="391" y="404" width="124" height="34" rx="6" fill="#239B68"/>
-    <text x="453.0" y="426" class="small medium white" text-anchor="middle">加入并保存</text>
-    <rect x="527" y="404" width="88" height="34" rx="6" fill="#FFF" stroke="#D8DDD9"/>
-    <text x="571.0" y="426" class="small medium" text-anchor="middle">取消</text>
-    <text x="391" y="470" class="small muted">加入成功后保持未连接，点击“连接”才接管流量。</text>
-    <text x="391" y="495" class="small muted">添加期间保留左侧列表；当前连接继续运行。</text>
-    <text x="32" y="582" class="section">连接中 · 更新原连接摘要</text>
-    <text x="32" y="620" class="title">demo-new</text>
-    <circle cx="56" cy="666" r="21" fill="#EDF3FC"/>
-    <circle cx="56" cy="666" r="11" fill="none" stroke="#D6E4F6" stroke-width="2"/>
-    <path d="M56 655a11 11 0 0 1 11 11" fill="none" stroke="#3979C5" stroke-width="2.2" stroke-linecap="round"/>
-    <text x="94" y="664" class="title">正在连接</text>
-    <text x="94" y="691" class="small muted">正在验证并启动本地数据面…</text>
-    <rect x="969" y="647" width="139" height="34" rx="6" fill="#FFF" stroke="#D8DDD9"/>
-    <text x="1038.5" y="669" class="small medium" text-anchor="middle">取消连接</text>
-    <text x="32" y="737" class="small muted">连接完成后显示实际路径；进度仅刷新图标区域。</text>
-    <text x="1108" y="768" class="tiny muted" text-anchor="end">交互原型 · demo-* 为示意；所有边框仅用于实际可编辑控件。</text>
+    <rect x="0" y="0" width="900" height="1500" rx="0" fill="#EDF0EE"/>
+    <text x="12" y="25" class="section">01  重命名 · 保留首页，只在名称原位编辑</text>
+    <g transform="translate(0 32)">
+      <rect xmlns="http://www.w3.org/2000/svg" x="12" y="10" width="876" height="614" rx="10" fill="#FCFCFB" stroke="#D9DDDA"/>
+      <rect xmlns="http://www.w3.org/2000/svg" x="13" y="11" width="874" height="39" rx="10" fill="#FFF"/>
+      <rect xmlns="http://www.w3.org/2000/svg" x="13" y="32" width="874" height="18" rx="0" fill="#FFF"/>
+      <use xmlns="http://www.w3.org/2000/svg" href="#brand-favicon" x="25" y="19" width="22" height="22" class=""/>
+      <text xmlns="http://www.w3.org/2000/svg" x="58" y="35" class="section">Loom</text>
+      <rect xmlns="http://www.w3.org/2000/svg" x="109" y="18" width="96" height="24" rx="12" fill="#F4F6F5" stroke="#E4E7E5"/>
+      <text xmlns="http://www.w3.org/2000/svg" x="157.0" y="34" class="tiny muted" text-anchor="middle">Portable TUN</text>
+      <text xmlns="http://www.w3.org/2000/svg" x="770" y="36" class="section muted">—</text>
+      <rect xmlns="http://www.w3.org/2000/svg" x="816" y="25" width="10" height="10" rx="1" fill="none" stroke="#747D77"/>
+      <path xmlns="http://www.w3.org/2000/svg" d="M861 25L871 35" stroke="#747D77" stroke-width="1.3"/>
+      <path xmlns="http://www.w3.org/2000/svg" d="M871 25L861 35" stroke="#747D77" stroke-width="1.3"/>
+      <path xmlns="http://www.w3.org/2000/svg" d="M12 50H888" stroke="#E6E9E7" stroke-width="1"/>
+      <rect xmlns="http://www.w3.org/2000/svg" x="13" y="51" width="175" height="563" rx="0" fill="#F7F8F7"/>
+      <path xmlns="http://www.w3.org/2000/svg" d="M188 51L188 624" stroke="#E6E9E7" stroke-width="1"/>
+      <use xmlns="http://www.w3.org/2000/svg" href="#brand-large" x="28" y="68" width="40" height="40" class=""/>
+      <text xmlns="http://www.w3.org/2000/svg" x="79" y="89" class="title">Loom</text>
+      <text xmlns="http://www.w3.org/2000/svg" x="80" y="108" class="tiny muted">你的连接配置</text>
+      <text xmlns="http://www.w3.org/2000/svg" x="28" y="145" class="small medium muted">连接配置</text>
+      <rect xmlns="http://www.w3.org/2000/svg" x="146" y="126" width="28" height="28" rx="6" fill="#EEF1EE"/>
+      <use xmlns="http://www.w3.org/2000/svg" href="#plus" x="151" y="131" width="18" height="18" class="icon"/>
+      <rect xmlns="http://www.w3.org/2000/svg" x="23" y="166" width="154" height="55" rx="6" fill="#E9F3ED"/>
+      <rect xmlns="http://www.w3.org/2000/svg" x="23" y="176" width="3" height="35" rx="1.5" fill="#239B68"/>
+      <circle xmlns="http://www.w3.org/2000/svg" cx="38" cy="185" r="4" fill="#239B68"/>
+      <text xmlns="http://www.w3.org/2000/svg" x="38" y="208" class="tiny green">已连接</text>
+      <circle xmlns="http://www.w3.org/2000/svg" cx="38" cy="247" r="4" fill="#AAB2AC"/>
+      <text xmlns="http://www.w3.org/2000/svg" x="50" y="252" class="body">demo-personal</text>
+      <text xmlns="http://www.w3.org/2000/svg" x="38" y="270" class="tiny muted">未连接</text>
+      <circle xmlns="http://www.w3.org/2000/svg" cx="38" cy="308" r="4" fill="#AAB2AC"/>
+      <text xmlns="http://www.w3.org/2000/svg" x="50" y="313" class="body">demo-lab</text>
+      <text xmlns="http://www.w3.org/2000/svg" x="38" y="331" class="tiny muted">未连接</text>
+      <path xmlns="http://www.w3.org/2000/svg" d="M28 556H172" stroke="#E6E9E7" stroke-width="1"/>
+      <text xmlns="http://www.w3.org/2000/svg" x="28" y="579" class="tiny muted">Enter 保存 · Esc 取消</text>
+      <text xmlns="http://www.w3.org/2000/svg" x="28" y="600" class="tiny muted">同时只运行一个连接</text>
+      <text xmlns="http://www.w3.org/2000/svg" x="208" y="87" class="title">demo-work</text>
+      <rect xmlns="http://www.w3.org/2000/svg" x="757" y="67" width="111" height="24" rx="12" fill="#EEF8F3" stroke="#C9E5D5"/>
+      <text xmlns="http://www.w3.org/2000/svg" x="812.5" y="83" class="tiny green" text-anchor="middle">配置签名已验证</text>
+      <rect xmlns="http://www.w3.org/2000/svg" x="208" y="108" width="660" height="106" rx="8" fill="#FFF" stroke="#E4E7E5"/>
+      <circle xmlns="http://www.w3.org/2000/svg" cx="242" cy="144" r="19" fill="#EEF8F3"/>
+      <use xmlns="http://www.w3.org/2000/svg" href="#check" x="231" y="133" width="22" height="22" class="icon-green"/>
+      <text xmlns="http://www.w3.org/2000/svg" x="276" y="145" class="title">已连接</text>
+      <text xmlns="http://www.w3.org/2000/svg" x="277" y="169" class="small muted">系统 TUN 已启用</text>
+      <rect xmlns="http://www.w3.org/2000/svg" x="748" y="128" width="100" height="32" rx="6" fill="#FFF" stroke="#D8DDD9"/>
+      <text xmlns="http://www.w3.org/2000/svg" x="798" y="149" class="small medium" text-anchor="middle">断开连接</text>
+      <path xmlns="http://www.w3.org/2000/svg" d="M226 182H850" stroke="#E6E9E7" stroke-width="1"/>
+      <text xmlns="http://www.w3.org/2000/svg" x="226" y="202" class="tiny muted mono">Device  demo-pc</text>
+      <text xmlns="http://www.w3.org/2000/svg" x="850" y="202" class="tiny muted" text-anchor="end">连接信息  ›</text>
+      <text xmlns="http://www.w3.org/2000/svg" x="208" y="247" class="small medium">路由模式</text>
+      <rect xmlns="http://www.w3.org/2000/svg" x="281" y="225" width="231" height="34" rx="6" fill="#F1F3F1" stroke="#E1E6E2"/>
+      <rect xmlns="http://www.w3.org/2000/svg" x="437" y="228" width="71" height="28" rx="5" fill="#FFF" stroke="#D5DED7"/>
+      <text xmlns="http://www.w3.org/2000/svg" x="320" y="247" class="small muted" text-anchor="middle">Direct</text>
+      <text xmlns="http://www.w3.org/2000/svg" x="397" y="247" class="small muted" text-anchor="middle">Auto</text>
+      <text xmlns="http://www.w3.org/2000/svg" x="473" y="247" class="small green medium" text-anchor="middle">固定出口</text>
+      <rect xmlns="http://www.w3.org/2000/svg" x="526" y="225" width="163" height="34" rx="6" fill="#FFF" stroke="#D8DDD9"/>
+      <text xmlns="http://www.w3.org/2000/svg" x="540" y="247" class="small mono">demo-exit</text>
+      <text xmlns="http://www.w3.org/2000/svg" x="674" y="245" class="small muted" text-anchor="end">⌄</text>
+      <text xmlns="http://www.w3.org/2000/svg" x="868" y="247" class="tiny muted" text-anchor="end">前置路径自动选择</text>
+      <text xmlns="http://www.w3.org/2000/svg" x="208" y="289" class="section">当前选路</text>
+      <text xmlns="http://www.w3.org/2000/svg" x="868" y="289" class="tiny muted" text-anchor="end">按服务 · 只读</text>
+      <rect xmlns="http://www.w3.org/2000/svg" x="208" y="305" width="660" height="114" rx="8" fill="#FFF" stroke="#E4E7E5"/>
+      <text xmlns="http://www.w3.org/2000/svg" x="226" y="330" class="section mono">demo-web</text>
+      <text xmlns="http://www.w3.org/2000/svg" x="562" y="330" class="small muted">完整路径质量 —</text>
+      <rect xmlns="http://www.w3.org/2000/svg" x="700" y="315" width="80" height="24" rx="12" fill="#F4F6F5" stroke="#E4E7E5"/>
+      <text xmlns="http://www.w3.org/2000/svg" x="740.0" y="331" class="tiny muted" text-anchor="middle">健康未知</text>
+      <text xmlns="http://www.w3.org/2000/svg" x="848" y="330" class="small muted" text-anchor="end">详情 ›</text>
+      <path xmlns="http://www.w3.org/2000/svg" d="M270 364H806" stroke="#C7D8CD" stroke-width="2"/>
+      <circle xmlns="http://www.w3.org/2000/svg" cx="250" cy="364" r="17" fill="#F7F9F8"/>
+      <circle xmlns="http://www.w3.org/2000/svg" cx="250" cy="364" r="17" fill="none" stroke="#D8DFDA"/>
+      <use xmlns="http://www.w3.org/2000/svg" href="#pc" x="241" y="355" width="18" height="18" class="icon"/>
+      <text xmlns="http://www.w3.org/2000/svg" x="250" y="396" class="small" text-anchor="middle">本机</text>
+      <circle xmlns="http://www.w3.org/2000/svg" cx="440" cy="364" r="17" fill="#F7F9F8"/>
+      <circle xmlns="http://www.w3.org/2000/svg" cx="440" cy="364" r="17" fill="none" stroke="#D8DFDA"/>
+      <use xmlns="http://www.w3.org/2000/svg" href="#server" x="431" y="355" width="18" height="18" class="icon"/>
+      <text xmlns="http://www.w3.org/2000/svg" x="440" y="396" class="small mono" text-anchor="middle">demo-relay-a</text>
+      <circle xmlns="http://www.w3.org/2000/svg" cx="629" cy="364" r="17" fill="#F7F9F8"/>
+      <circle xmlns="http://www.w3.org/2000/svg" cx="629" cy="364" r="17" fill="none" stroke="#D8DFDA"/>
+      <use xmlns="http://www.w3.org/2000/svg" href="#server" x="620" y="355" width="18" height="18" class="icon"/>
+      <text xmlns="http://www.w3.org/2000/svg" x="629" y="396" class="small mono" text-anchor="middle">demo-exit</text>
+      <circle xmlns="http://www.w3.org/2000/svg" cx="826" cy="364" r="17" fill="#F7F9F8"/>
+      <circle xmlns="http://www.w3.org/2000/svg" cx="826" cy="364" r="17" fill="none" stroke="#D8DFDA"/>
+      <use xmlns="http://www.w3.org/2000/svg" href="#target" x="817" y="355" width="18" height="18" class="icon"/>
+      <text xmlns="http://www.w3.org/2000/svg" x="826" y="396" class="small" text-anchor="middle">服务目标</text>
+      <rect xmlns="http://www.w3.org/2000/svg" x="208" y="431" width="660" height="114" rx="8" fill="#FFF" stroke="#E4E7E5"/>
+      <text xmlns="http://www.w3.org/2000/svg" x="226" y="456" class="section mono">demo-api</text>
+      <text xmlns="http://www.w3.org/2000/svg" x="562" y="456" class="small muted">完整路径质量 —</text>
+      <rect xmlns="http://www.w3.org/2000/svg" x="700" y="441" width="80" height="24" rx="12" fill="#F4F6F5" stroke="#E4E7E5"/>
+      <text xmlns="http://www.w3.org/2000/svg" x="740.0" y="457" class="tiny muted" text-anchor="middle">健康未知</text>
+      <text xmlns="http://www.w3.org/2000/svg" x="848" y="456" class="small muted" text-anchor="end">详情 ›</text>
+      <path xmlns="http://www.w3.org/2000/svg" d="M270 490H806" stroke="#C7D8CD" stroke-width="2"/>
+      <circle xmlns="http://www.w3.org/2000/svg" cx="250" cy="490" r="17" fill="#F7F9F8"/>
+      <circle xmlns="http://www.w3.org/2000/svg" cx="250" cy="490" r="17" fill="none" stroke="#D8DFDA"/>
+      <use xmlns="http://www.w3.org/2000/svg" href="#pc" x="241" y="481" width="18" height="18" class="icon"/>
+      <text xmlns="http://www.w3.org/2000/svg" x="250" y="522" class="small" text-anchor="middle">本机</text>
+      <circle xmlns="http://www.w3.org/2000/svg" cx="440" cy="490" r="17" fill="#F7F9F8"/>
+      <circle xmlns="http://www.w3.org/2000/svg" cx="440" cy="490" r="17" fill="none" stroke="#D8DFDA"/>
+      <use xmlns="http://www.w3.org/2000/svg" href="#server" x="431" y="481" width="18" height="18" class="icon"/>
+      <text xmlns="http://www.w3.org/2000/svg" x="440" y="522" class="small mono" text-anchor="middle">demo-relay-b</text>
+      <circle xmlns="http://www.w3.org/2000/svg" cx="629" cy="490" r="17" fill="#F7F9F8"/>
+      <circle xmlns="http://www.w3.org/2000/svg" cx="629" cy="490" r="17" fill="none" stroke="#D8DFDA"/>
+      <use xmlns="http://www.w3.org/2000/svg" href="#server" x="620" y="481" width="18" height="18" class="icon"/>
+      <text xmlns="http://www.w3.org/2000/svg" x="629" y="522" class="small mono" text-anchor="middle">demo-exit</text>
+      <circle xmlns="http://www.w3.org/2000/svg" cx="826" cy="490" r="17" fill="#F7F9F8"/>
+      <circle xmlns="http://www.w3.org/2000/svg" cx="826" cy="490" r="17" fill="none" stroke="#D8DFDA"/>
+      <use xmlns="http://www.w3.org/2000/svg" href="#target" x="817" y="481" width="18" height="18" class="icon"/>
+      <text xmlns="http://www.w3.org/2000/svg" x="826" y="522" class="small" text-anchor="middle">服务目标</text>
+      <text xmlns="http://www.w3.org/2000/svg" x="208" y="571" class="tiny muted">详情包含当前 / 最佳质量、切换原因和读取时间。</text>
+      <text xmlns="http://www.w3.org/2000/svg" x="208" y="594" class="tiny muted">新连接使用当前路径，已有连接可能沿用原路径。</text>
+      <rect x="47" y="172" width="124" height="27" rx="3" fill="#FFF" stroke="#239B68"/>
+      <text x="56" y="190" class="body medium">demo-work</text>
+      <path d="M121 176L121 195" stroke="#239B68" stroke-width="1"/>
+    </g>
+    <text x="12" y="682" class="section">02  添加配置 · 同一窗口，右侧使用一层内容卡片</text>
+    <g transform="translate(0 690)">
+      <rect x="12" y="10" width="876" height="614" rx="10" fill="#FCFCFB" stroke="#D9DDDA"/>
+      <rect x="13" y="11" width="874" height="39" rx="10" fill="#FFF"/>
+      <rect x="13" y="32" width="874" height="18" rx="0" fill="#FFF"/>
+      <use href="#brand-favicon" x="25" y="19" width="22" height="22" class=""/>
+      <text x="58" y="35" class="section">Loom</text>
+      <rect x="109" y="18" width="96" height="24" rx="12" fill="#F4F6F5" stroke="#E4E7E5"/>
+      <text x="157.0" y="34" class="tiny muted" text-anchor="middle">Portable TUN</text>
+      <text x="770" y="36" class="section muted">—</text>
+      <rect x="816" y="25" width="10" height="10" rx="1" fill="none" stroke="#747D77"/>
+      <path d="M861 25L871 35" stroke="#747D77" stroke-width="1.3"/>
+      <path d="M871 25L861 35" stroke="#747D77" stroke-width="1.3"/>
+      <path d="M12 50H888" stroke="#E6E9E7" stroke-width="1"/>
+      <rect x="13" y="51" width="175" height="563" rx="0" fill="#F7F8F7"/>
+      <path d="M188 51L188 624" stroke="#E6E9E7" stroke-width="1"/>
+      <use href="#brand-large" x="28" y="68" width="40" height="40" class=""/>
+      <text x="79" y="89" class="title">Loom</text>
+      <text x="80" y="108" class="tiny muted">你的连接配置</text>
+      <text x="28" y="145" class="small medium muted">连接配置</text>
+      <rect x="146" y="126" width="28" height="28" rx="6" fill="#EEF1EE"/>
+      <use href="#plus" x="151" y="131" width="18" height="18" class="icon"/>
+      <rect x="23" y="166" width="154" height="55" rx="6" fill="#E9F3ED"/>
+      <rect x="23" y="176" width="3" height="35" rx="1.5" fill="#239B68"/>
+      <circle cx="38" cy="185" r="4" fill="#239B68"/>
+      <text x="50" y="190" class="body medium">demo-work</text>
+      <text x="38" y="208" class="tiny green">已连接</text>
+      <circle cx="38" cy="247" r="4" fill="#AAB2AC"/>
+      <text x="50" y="252" class="body muted">demo-personal</text>
+      <text x="38" y="270" class="tiny muted">未连接</text>
+      <circle cx="38" cy="308" r="4" fill="#AAB2AC"/>
+      <text x="50" y="313" class="body muted">demo-lab</text>
+      <text x="38" y="331" class="tiny muted">未连接</text>
+      <path d="M28 556H172" stroke="#E6E9E7" stroke-width="1"/>
+      <text x="28" y="579" class="tiny muted">添加时暂不可切换</text>
+      <text x="28" y="600" class="tiny muted">当前连接继续运行</text>
+      <text x="208" y="87" class="title">添加连接配置</text>
+      <text x="208" y="110" class="small muted">使用中控提供的加入邀请</text>
+      <rect x="208" y="126" width="660" height="405" rx="8" fill="#FFF" stroke="#E4E7E5"/>
+      <text x="232" y="162" class="small medium">配置名称</text>
+      <rect x="232" y="175" width="612" height="34" rx="4" fill="#FFF" stroke="#D8DDD9"/>
+      <text x="244" y="198" class="body">demo-new</text>
+      <text x="232" y="246" class="small medium">加入邀请</text>
+      <text x="232" y="270" class="small muted">二维码 PNG 或 .loom-invite 文件，也可从剪贴板粘贴。</text>
+      <rect x="232" y="288" width="136" height="34" rx="6" fill="#FFF" stroke="#D8DDD9"/>
+      <text x="300.0" y="310" class="small medium" text-anchor="middle">选择邀请文件</text>
+      <rect x="380" y="288" width="124" height="34" rx="6" fill="#FFF" stroke="#D8DDD9"/>
+      <text x="442.0" y="310" class="small medium" text-anchor="middle">粘贴二维码</text>
+      <use href="#file" x="232" y="347" width="19" height="19" class="icon"/>
+      <text x="260" y="362" class="small">demo-invite.loom-invite · 已选择</text>
+      <text x="232" y="399" class="small muted">加入成功后保持未连接，点击“连接”才接管流量。</text>
+      <rect x="232" y="455" width="124" height="34" rx="6" fill="#239B68"/>
+      <text x="294.0" y="477" class="small medium white" text-anchor="middle">加入并保存</text>
+      <rect x="368" y="455" width="86" height="34" rx="6" fill="#FFF" stroke="#D8DDD9"/>
+      <text x="411.0" y="477" class="small medium" text-anchor="middle">取消</text>
+      <text x="208" y="560" class="tiny muted">取消未提交的添加不会新增配置。</text>
+      <text x="208" y="595" class="small green">当前连接：demo-work</text>
+    </g>
+    <text x="208" y="1348" class="small medium">连接中 · 原连接摘要的状态变化</text>
+    <rect x="208" y="1362" width="660" height="106" rx="8" fill="#FFF" stroke="#E4E7E5"/>
+    <circle cx="242" cy="1398" r="19" fill="#EDF3FC"/>
+    <circle cx="242" cy="1398" r="10" fill="none" stroke="#D6E4F6" stroke-width="2"/>
+    <path d="M242 1388a10 10 0 0 1 10 10" fill="none" stroke="#3979C5" stroke-width="2.2" stroke-linecap="round"/>
+    <text x="276" y="1399" class="title">正在连接</text>
+    <text x="277" y="1423" class="small muted">正在验证并启动本地数据面…</text>
+    <rect x="748" y="1382" width="100" height="32" rx="6" fill="#FFF" stroke="#D8DDD9"/>
+    <text x="798" y="1403" class="small medium" text-anchor="middle">取消连接</text>
+    <path d="M226 1436H850" stroke="#E6E9E7" stroke-width="1"/>
+    <text x="226" y="1456" class="tiny muted">连接完成后显示实际选路</text>
+    <text x="850" y="1456" class="tiny muted" text-anchor="end">仅刷新进度图标区域</text>
+    <text x="888" y="1492" class="tiny muted" text-anchor="end">交互原型 · demo-* 为示意；不包含运行指标。</text>
   </g>
 </svg>
