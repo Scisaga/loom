@@ -184,11 +184,11 @@ func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height
 		visible[app.controls.networkList] = true
 		visible[app.controls.addProfileButton] = true
 		x, y, w := app.misakaDraftBounds()
-		move(app.controls.draftName, x+s(25), y+s(48), w-s(50), s(25))
-		move(app.controls.draftImport, x+s(20), y+s(132), s(144), s(34))
-		move(app.controls.draftPaste, x+s(174), y+s(132), s(144), s(34))
-		move(app.controls.draftSubmit, x+w-s(146), y+s(296), s(126), s(34))
-		move(app.controls.draftCancel, x+s(20), y+s(296), s(86), s(34))
+		move(app.controls.draftName, x+s(29), y+s(51), w-s(58), s(25))
+		move(app.controls.draftImport, x+s(24), y+s(154), s(144), s(34))
+		move(app.controls.draftPaste, x+s(180), y+s(154), s(144), s(34))
+		move(app.controls.draftSubmit, x+w-s(148), y+s(272), s(124), s(34))
+		move(app.controls.draftCancel, x+w-s(246), y+s(272), s(86), s(34))
 	}
 	enablePortableControl(app.controls.networkList, snapshot.profileDraft == nil)
 	enablePortableControl(app.controls.profileMenu, app.misakaMenuSelectionConfirmed(snapshot))
@@ -382,11 +382,12 @@ func (app *portableGUI) positionMisakaRename() {
 	var rect portableRect
 	procSendMessage.Call(app.controls.networkList, 0x0198, uintptr(index), uintptr(unsafe.Pointer(&rect)))
 	procMisakaMapPoints.Call(app.controls.networkList, app.hwnd, uintptr(unsafe.Pointer(&rect)), 2)
-	rect.left += app.scale(30)
+	rect.left += app.scale(29)
 	rect.right -= app.scale(6)
 	rect.top += app.scale(7)
 	rect.bottom = rect.top + app.scale(24)
 	procMoveWindow.Call(app.controls.profileNameEdit, uintptr(rect.left), uintptr(rect.top), uintptr(rect.right-rect.left), uintptr(rect.bottom-rect.top), 0)
+	procSendMessage.Call(app.controls.profileNameEdit, 0x00D3, 3, 0) // §7.2：原位编辑不增加系统文字边距。
 	setPortableControlVisible(app.controls.profileNameEdit, true)
 }
 
