@@ -81,6 +81,75 @@ func newTestObservationCache(t *testing.T) *ObservationCache {
 	return c
 }
 
+func TestClientObservationCacheReadyRequiresAcceptedSource(t *testing.T) {
+	var absent *ObservationCache
+	if absent.Ready() != nil {
+		t.Fatal("nil cache produced a readiness event")
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	id := newObservationIdentity(t, "demo-exit")
+	positive := signedCacheObservation(t, id, now, false)
+	for _, batch := range []string{"positive", "mixed"} {
+		t.Run(batch, func(t *testing.T) {
+			c := newTestObservationCache(t)
+			ready := c.Ready()
+			assertPending := func() {
+				t.Helper()
+				select {
+				case <-ready:
+					t.Fatal("cache became ready without accepting a trusted source")
+				default:
+				}
+			}
+			assertPending()
+			if err := c.Ingest(context.Background(), nil, id.ca, now); err != nil {
+				t.Fatal(err)
+			}
+			assertPending()
+			if err := c.Ingest(context.Background(), []json.RawMessage{json.RawMessage(`{}`)}, id.ca, now); err == nil {
+				t.Fatal("invalid source was accepted")
+			}
+			assertPending()
+			expired := signedCacheObservation(t, id, now.Add(-11*time.Minute), false)
+			if err := c.Ingest(context.Background(), rawCacheObservation(t, expired), id.ca, now); err == nil {
+				t.Fatal("expired source was accepted")
+			}
+			assertPending()
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			if err := c.Ingest(ctx, rawCacheObservation(t, positive), id.ca, now); err == nil {
+				t.Fatal("canceled ingest was accepted")
+			}
+			assertPending()
+			changes := c.Changes()
+			raw := rawCacheObservation(t, positive)
+			if batch == "mixed" {
+				raw = append(raw, json.RawMessage(`{}`))
+			}
+			err := c.Ingest(context.Background(), raw, id.ca, now)
+			if (err != nil) != (batch == "mixed") {
+				t.Fatalf("batch rejection result: %v", err)
+			}
+			select {
+			case <-ready:
+			default:
+				t.Fatal("accepted positive source did not release initial waiters")
+			}
+			select {
+			case <-changes:
+				t.Fatal("positive readiness manufactured a pruning change")
+			default:
+			}
+			if err := c.Ingest(context.Background(), rawCacheObservation(t, positive), id.ca, now); err != nil {
+				t.Fatal(err)
+			}
+			if c.Ready() != ready {
+				t.Fatal("duplicate batch replaced permanent readiness notification")
+			}
+		})
+	}
+}
+
 func TestClientObservationCacheAuthenticatesBeforePruningAndPreservesTime(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	id := newObservationIdentity(t, "demo-exit")

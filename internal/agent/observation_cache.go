@@ -21,6 +21,8 @@ type ObservationCache struct {
 	maxAge  time.Duration
 	by      map[string]observation.Observation
 	changed chan struct{}
+	ready   chan struct{}
+	seen    bool
 }
 
 func NewObservationCache(cfg *Config) (*ObservationCache, error) {
@@ -31,7 +33,7 @@ func NewObservationCache(cfg *Config) (*ObservationCache, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &ObservationCache{allowed: map[string]bool{}, maxAge: maxAge, by: map[string]observation.Observation{}, changed: make(chan struct{})}
+	c := &ObservationCache{allowed: map[string]bool{}, maxAge: maxAge, by: map[string]observation.Observation{}, changed: make(chan struct{}), ready: make(chan struct{})}
 	seen := map[string]bool{}
 	for _, d := range cfg.Declarations {
 		for _, candidate := range d.Candidates {
@@ -49,6 +51,15 @@ func NewObservationCache(cfg *Config) (*ObservationCache, error) {
 		}
 	}
 	return c, nil
+}
+
+// Ready 在首次实际接收合法来源观测后永久关闭，供首轮有界等待使用。
+// §16.1.2：正向观测也足够；空响应、坏签名或取消不能冒充已有可信数据。
+func (c *ObservationCache) Ready() <-chan struct{} {
+	if c == nil {
+		return nil
+	}
+	return c.ready
 }
 
 // Changes 广播有效剪枝事实的变化。相同来源仅刷新原 ts 时不唤醒调参，避免把
@@ -115,6 +126,10 @@ func (c *ObservationCache) Ingest(ctx context.Context, raw []json.RawMessage, ca
 			}
 		}
 		c.by[o.Node] = o
+		if !c.seen {
+			c.seen = true
+			close(c.ready)
+		}
 	}
 	if !maps.Equal(before, c.failuresLocked(now)) {
 		close(c.changed)
