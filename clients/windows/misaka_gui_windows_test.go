@@ -96,50 +96,41 @@ func TestGUIMisakaDoubleClickRenameUsesActualListSelection(t *testing.T) {
 	procSendMessage.Call(app.controls.profileNameEdit, portableWMKeyDown, portableVKEscape, 0)
 }
 
-func TestGUIMisakaProfileMenuWaitsForBrokerSelectionAndCancelsPendingOpen(t *testing.T) {
+func TestGUIMisakaHeaderActionsAndContextMenuBindExplicitProfile(t *testing.T) {
 	app := newProfileGUITestWindow(t)
-	assertMenu := func(want bool) {
-		t.Helper()
-		for _, control := range []uintptr{app.controls.renameProfileButton, app.controls.deleteButton} {
-			if visible := profileGUIStyle(control)&portableWSVisible != 0; visible != want {
-				t.Fatalf("配置菜单可见状态=%v，预期=%v", visible, want)
-			}
+	for _, control := range []uintptr{app.controls.renameProfileButton, app.controls.deleteButton} {
+		if profileGUIStyle(control)&portableWSVisible == 0 {
+			t.Fatal("右侧缺少配置操作")
 		}
 	}
-	// §7.2：模拟 Installed 右键选中乙后，broker 仍在返回甲的快照；甲的操作不可见。
-	app.skin.menuProfileID = profileGUIFixtureB
-	app.layoutControls()
-	app.renderControls()
-	assertMenu(false)
-	if enabled, _, _ := procIsWindowEnabled.Call(app.controls.profileMenu); enabled != 0 {
-		t.Fatal("等待 broker 确认期间仍允许打开旧配置菜单")
+	procSendMessage.Call(app.controls.networkList, portableLBSetCurSel, 1, 0)
+	id, _ := app.misakaProfileMenuTarget(^uintptr(0))
+	if id != profileGUIFixtureB {
+		t.Fatal("键盘菜单没有绑定实际列表选中项")
 	}
-	app.misakaCommand(misakaControlMenu)
-	assertMenu(false)
-	if app.misakaMenuActionReady() || app.skin.menuProfileID != profileGUIFixtureB {
-		t.Fatal("等待确认期间菜单操作改变了配置对象")
+	menu := app.createMisakaProfileMenu(id)
+	if menu == 0 {
+		t.Fatal("未创建原生配置菜单")
 	}
-	app.selectedProfile, app.profileName, app.state = profileGUIFixtureB, "演示网络乙", guiStopped
-	app.renderControls()
-	assertMenu(true)
-	if app.skin.menuProfileID != app.snapshot().selectedProfile {
-		t.Fatal("配置菜单未绑定 broker 确认的对象")
+	defer procDestroyMenu.Call(menu)
+	count, _, _ := portableUser32.NewProc("GetMenuItemCount").Call(menu)
+	if count != 4 {
+		t.Fatalf("菜单项数量=%d，预期启动、重命名、分隔符和删除", count)
 	}
-	procSendMessage.Call(app.controls.networkList, portableWMKeyDown, portableVKEscape, 0)
-	assertMenu(false)
-	if app.skin.menuProfileID != "" {
-		t.Fatal("关闭菜单后仍保留待打开的配置")
+	app.misakaProfileAction(id, misakaProfileRename)
+	if app.skin.renameID != profileGUIFixtureB {
+		t.Fatal("异步快照使菜单重命名了另一项")
 	}
-	for _, cancel := range []uint32{portableWMKeyDown, 0x0201} {
-		app.skin.menuProfileID = profileGUIFixtureA
-		procSendMessage.Call(app.controls.networkList, uintptr(cancel), portableVKEscape, 0)
-		if app.skin.menuProfileID != "" {
-			t.Fatal("Escape 或新点击未取消待确认的菜单")
-		}
+	app.finishMisakaRename(false)
+	procSendMessage.Call(app.hwnd, portableWMCommand, portableControlRenameProfile, app.controls.renameProfileButton)
+	if app.skin.renameID != profileGUIFixtureA {
+		t.Fatal("右侧铅笔未绑定当前面板")
 	}
-	app.selectedProfile, app.profileName, app.state = profileGUIFixtureA, "演示网络甲", guiConnected
-	app.renderControls()
-	assertMenu(false)
+	app.finishMisakaRename(false)
+	app.misakaProfileAction("deleted-profile", misakaProfileRename)
+	if app.skin.rename {
+		t.Fatal("已删除菜单对象仍能触发操作")
+	}
 }
 
 func TestGUIMisakaDraftPreservesActiveConnectionAndUnsavedInput(t *testing.T) {
@@ -213,16 +204,20 @@ func TestGUIMisakaCustomCanvasPaintsLightFrameAndSeparateSidebar(t *testing.T) {
 	button := guiWindowRect(t, app.controls.primaryButton)
 	button.left, button.right = button.left-window.left, button.right-window.left
 	button.top, button.bottom = button.top-window.top, button.bottom-window.top
-	green := 0
+	light, ink := 0, 0
 	for y := button.top + app.scale(4); y < button.bottom-app.scale(4); y++ {
 		for x := button.left + app.scale(4); x < button.right-app.scale(4); x++ {
-			if picture.NRGBAAt(int(x), int(y)) == (color.NRGBA{35, 155, 104, 255}) {
-				green++
+			pixel := picture.NRGBAAt(int(x), int(y))
+			if pixel.R > 235 && pixel.G > 235 && pixel.B > 235 {
+				light++
+			}
+			if pixel.R < 190 && pixel.G < 190 && pixel.B < 190 {
+				ink++
 			}
 		}
 	}
-	if area := int((button.right - button.left) * (button.bottom - button.top)); green < area/3 {
-		t.Errorf("primary connection button was not printed: green pixels=%d, button area=%d", green, area)
+	if area := int((button.right - button.left) * (button.bottom - button.top)); light < area/3 || ink < int(app.scale(5)*app.scale(5)) {
+		t.Errorf("断开按钮缺少白底或可读文字: light=%d ink=%d area=%d", light, ink, area)
 	}
 	for index, row := range app.paths {
 		var rect portableRect

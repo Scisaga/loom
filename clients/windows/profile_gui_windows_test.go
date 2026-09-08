@@ -236,36 +236,63 @@ func TestGUIProfileConnectingTimerOnlyChangesStatusIcon(t *testing.T) {
 	app.brokerProfiles[0].State = guiStarting
 	app.paths = nil
 	app.renderControls()
-	icon, _, _ := procSendMessage.Call(app.controls.stateIcon, 0x0171, 0, 0) // STM_GETICON
-	if icon == 0 || !app.statusAnimating || profileGUIText(app.controls.stateValue) != "正在连接" {
-		t.Fatal("connecting status has no visible animated icon")
+	// §7.2：隐藏或屏幕外 HWND 的更新区域可被 Windows 丢弃。
+	// 仅显示本测试的合成窗口且禁止激活，完成初次绘制后再验证局部失效。
+	procSetWindowPos.Call(app.hwnd, 0, 0, 0, 0, 0, 0x0057)
+	portableUser32.NewProc("RedrawWindow").Call(app.hwnd, 0, 0, 0x0181)
+	var message portableMSG
+	for count := 0; count < 64; count++ {
+		if available, _, _ := portableUser32.NewProc("PeekMessageW").Call(uintptr(unsafe.Pointer(&message)), app.hwnd, 0, 0, 1); available == 0 {
+			break
+		}
+		procTranslateMessage.Call(uintptr(unsafe.Pointer(&message)))
+		procDispatchMessage.Call(uintptr(unsafe.Pointer(&message)))
 	}
+	procKillTimer.Call(app.hwnd, portableStatusTimerID)
+	if !app.statusAnimating || profileGUIText(app.controls.stateValue) != "正在连接" || profileGUIStyle(app.controls.stateIcon)&0x1F != 0x000D {
+		t.Fatal("[§7.2] 连接状态缺少独立自绘动画图标或可访问文字")
+	}
+	size := app.scale(38)
+	dc, pixels := misakaCanvasTestDC(t, size, size)
+	drawFrame := func() []byte {
+		app.drawMisakaItem(&portableDrawItem{hwndItem: app.controls.stateIcon, dc: dc, rect: portableRect{right: size, bottom: size}})
+		portableGDI32.NewProc("GdiFlush").Call()
+		return slices.Clone(pixels)
+	}
+	previous := drawFrame()
 	writes := recordProfileGUIWrites(t, app)
+	validate := portableUser32.NewProc("ValidateRect")
+	getUpdate := portableUser32.NewProc("GetUpdateRect")
 	for frame := 0; frame < 16; frame++ {
-		previous := icon
-		procSendMessage.Call(app.hwnd, 0x0113, portableStatusTimerID, 0) // WM_TIMER
-		icon, _, _ = procSendMessage.Call(app.controls.stateIcon, 0x0171, 0, 0)
-		if icon == 0 || icon == previous {
-			t.Fatalf("animation did not advance at frame %d", frame)
+		validate.Call(app.hwnd, 0)
+		validate.Call(app.controls.stateIcon, 0)
+		procSendMessage.Call(app.hwnd, 0x0113, portableStatusTimerID, 0)
+		if changed, _, _ := getUpdate.Call(app.controls.stateIcon, 0, 0); changed == 0 {
+			t.Fatalf("[§7.2] 第 %d 帧没有刷新独立状态图标", frame)
 		}
-	}
-	if len(*writes) != 16 {
-		t.Fatalf("animation issued %d writes for 16 frames", len(*writes))
-	}
-	for _, write := range *writes {
-		if write != (profileGUIWrite{app.controls.stateIcon, portableSTMSetIcon}) {
-			t.Fatalf("icon animation rewrote text, layout, or a list: %+v", write)
+		if changed, _, _ := getUpdate.Call(app.hwnd, 0, 0); changed != 0 {
+			t.Fatalf("[§7.2] 第 %d 帧使整个窗口重绘", frame)
 		}
+		current := drawFrame()
+		if slices.Equal(previous, current) {
+			t.Fatalf("[§7.2] 第 %d 帧实际进度像素没有变化", frame)
+		}
+		previous = current
+	}
+	if len(*writes) != 0 {
+		t.Fatalf("[§7.2] 图标动画重写了文字、布局或列表：%+v", *writes)
 	}
 	app.state = guiStopped
 	app.brokerProfiles[0].State = guiStopped
 	app.renderControls()
 	*writes = nil
+	validate.Call(app.controls.stateIcon, 0)
 	procSendMessage.Call(app.hwnd, 0x0113, portableStatusTimerID, 0)
-	if app.statusAnimating || len(*writes) != 0 {
-		t.Fatal("stopped state retained an active animation")
+	changed, _, _ := getUpdate.Call(app.controls.stateIcon, 0, 0)
+	if app.statusAnimating || len(*writes) != 0 || changed != 0 {
+		t.Fatal("[§7.2] 停止状态仍残留进度动画刷新")
 	}
-	t.Log("16 connecting frames only replace the status icon; stopped state ignores timer")
+	t.Log("[§7.2] 16 帧只刷新独立状态图标，实际像素变化且无整窗重绘；停止后不再刷新")
 }
 
 func TestGUIProfileLayoutScalesWithoutOverlap(t *testing.T) {
@@ -309,12 +336,12 @@ func TestGUIProfileLayoutScalesWithoutOverlap(t *testing.T) {
 					rect    portableRect
 				}{control, rect})
 			}
-			for _, button := range []uintptr{app.controls.addProfileButton, app.controls.primaryButton, app.controls.profileMenu} {
+			for _, button := range []uintptr{app.controls.addProfileButton, app.controls.primaryButton, app.controls.renameProfileButton, app.controls.deleteButton} {
 				if profileGUIStyle(button)&portableWSVisible == 0 {
 					t.Errorf("joined=%t DPI=%d required button=%x is hidden", joined, dpi, button)
 				}
 			}
-			for _, control := range []uintptr{app.controls.profileNameEdit, app.controls.renameProfileButton, app.controls.deleteButton} {
+			for _, control := range []uintptr{app.controls.profileNameEdit} {
 				if profileGUIStyle(control)&portableWSVisible != 0 {
 					t.Errorf("joined=%t DPI=%d inactive editor or menu action=%x remains visible", joined, dpi, control)
 				}

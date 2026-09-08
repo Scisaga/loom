@@ -129,6 +129,10 @@ func (app *portableGUI) routeFailure(sequence uint64, err error) {
 }
 
 func (app *portableGUI) routeSelectionChanged() {
+	if app.skin != nil {
+		app.commitMisakaRouteSelection()
+		return
+	}
 	selection, _, _ := procSendMessage.Call(app.controls.routeCombo, portableCBGetCurSel, 0, 0)
 	if selection == ^uintptr(0) {
 		if app.routeFiltering {

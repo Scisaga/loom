@@ -8,6 +8,7 @@ import (
 	"math"
 	"runtime"
 	"syscall"
+	"unicode"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -29,6 +30,7 @@ type misakaTextStyle struct {
 	size, weight int32
 	align        uint32
 	wrap         bool
+	cjk          bool
 }
 
 type misakaFloatRect struct{ left, top, right, bottom float32 }
@@ -193,6 +195,9 @@ func (c *misakaCanvas) drawText(text string, rect portableRect, style misakaText
 		c.err = fmt.Errorf("[§7.2] DirectWrite 文字编码： %w", err)
 		return
 	}
+	// §7.2：Segoe UI 的默认中文回退可能是宋体；中文明确使用系统雅黑界面字体。
+	// 字体族参与格式缓存，不能把同字号的中文与拉丁文字错误地复用成一种格式。
+	style.cjk = misakaTextHasCJK(text)
 	format := c.textFormat(style)
 	brush := c.brush(rgb)
 	if format == nil || brush == nil {
@@ -202,6 +207,15 @@ func (c *misakaCanvas) drawText(text string, rect portableRect, style misakaText
 	misakaCOMCall(c.target, 27, uintptr(unsafe.Pointer(&characters[0])), uintptr(len(characters)-1), uintptr(unsafe.Pointer(format)),
 		uintptr(unsafe.Pointer(&area)), uintptr(unsafe.Pointer(brush)), 2, 0) // §7.2：裁剪到文字矩形。
 	runtime.KeepAlive(characters)
+}
+
+func misakaTextHasCJK(text string) bool {
+	for _, character := range text {
+		if unicode.Is(unicode.Han, character) || character >= 0x3000 && character <= 0x30FF || character >= 0xFF00 && character <= 0xFFEF {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *misakaCanvas) canDraw(rect portableRect) bool {
@@ -243,7 +257,11 @@ func (c *misakaCanvas) textFormat(style misakaTextStyle) *misakaCOMObject {
 	if format := c.formats[style]; format != nil {
 		return format
 	}
-	family, _ := windows.UTF16FromString("Segoe UI")
+	familyName := "Segoe UI"
+	if style.cjk {
+		familyName = "Microsoft YaHei UI"
+	}
+	family, _ := windows.UTF16FromString(familyName)
 	locale, _ := windows.UTF16FromString("zh-CN")
 	var format *misakaCOMObject
 	args := misakaTextFormatArgs{

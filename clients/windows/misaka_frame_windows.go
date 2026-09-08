@@ -14,6 +14,8 @@ var (
 	procMisakaTrackMouse  = portableUser32.NewProc("TrackMouseEvent")
 	procMisakaMonitorFrom = portableUser32.NewProc("MonitorFromWindow")
 	procMisakaMonitorInfo = portableUser32.NewProc("GetMonitorInfoW")
+	procMisakaMonitorRect = portableUser32.NewProc("MonitorFromRect")
+	procMisakaSetStyle    = portableUser32.NewProc("SetWindowLongPtrW")
 )
 
 type misakaMouseTracking struct {
@@ -26,6 +28,63 @@ type misakaMonitorInfo struct {
 	size          uint32
 	monitor, work portableRect
 	flags         uint32
+}
+
+// §7.2：系统在创建、主题切换及恢复窗口时均可计算非客户区；此处不依赖
+// 尚未创建或正在销毁的控件，避免其中某一条消息路径重新启用原生标题。
+func misakaNonclientMessage(hwnd uintptr, message uint32, wParam, lParam uintptr) (uintptr, bool) {
+	switch message {
+	case 0x0083: // §7.2：WM_NCCALCSIZE 的两种参数形式都以一个 RECT 开头。
+		if lParam != 0 {
+			if zoomed, _, _ := procMisakaIsZoomed.Call(hwnd); zoomed != 0 {
+				// §7.2：使用即将生效的矩形选择显示器，最大化切屏不能继续
+				// 套用旧显示器的工作区，也不能覆盖新显示器的任务栏。
+				monitor, _, _ := procMisakaMonitorRect.Call(lParam, 2)
+				info := misakaMonitorInfo{size: uint32(unsafe.Sizeof(misakaMonitorInfo{}))}
+				if ok, _, _ := procMisakaMonitorInfo.Call(monitor, uintptr(unsafe.Pointer(&info))); ok != 0 {
+					*(*portableRect)(unsafe.Pointer(lParam)) = info.work
+				}
+			}
+		}
+		return 0, true
+	case 0x0085, 0x00AE, 0x00AF:
+		// §7.2：除 WM_NCPAINT 外，系统主题还可能单独要求绘制标题与
+		// 边框；这些消息只属于自绘区域，没有需要默认过程维护的状态。
+		return 0, true
+	case 0x0086:
+		// §7.2：仍由系统维护激活状态；非合成主题下 -1 仍不足以
+		// 阻止直接绘制，必须在这次默认调用内同时屏蔽可见绘制。
+		return misakaDefaultWithoutFramePaint(hwnd, message, wParam, ^uintptr(0)), true
+	case 0x000C, 0x0080:
+		// §7.2：标题与图标仍需供任务栏、Alt+Tab 与无障碍读取，但默认
+		// 实现可能直接画原生标题，绕过 WM_NCPAINT。仅在本次同步调用
+		// 内屏蔽其可见绘制，不改变窗口布局或发送 FRAMECHANGED。
+		return misakaDefaultWithoutFramePaint(hwnd, message, wParam, lParam), true
+	case 0x031A, 0x031E:
+		result := misakaDefaultWithoutFramePaint(hwnd, message, wParam, lParam)
+		// §7.2：主题／合成器真正变化时重新应用一次自绘边界；静止状态
+		// 和普通激活不重新布局，不安排周期性的整窗重绘。
+		configureMisakaFrame(hwnd)
+		procInvalidateRect.Call(hwnd, 0, 0)
+		return result, true
+	}
+	return 0, false
+}
+
+func misakaDefaultWithoutFramePaint(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
+	style, _, _ := procMisakaGetWindowLong.Call(hwnd, ^uintptr(15))
+	visible := style&portableWSVisible != 0
+	if visible {
+		procMisakaSetStyle.Call(hwnd, ^uintptr(15), style&^portableWSVisible)
+		defer func() {
+			// §7.2：只恢复自己临时移除的可见位，保留默认过程内可能
+			// 发生的其他样式变更；嵌套调用看到隐藏位，不重复恢复。
+			current, _, _ := procMisakaGetWindowLong.Call(hwnd, ^uintptr(15))
+			procMisakaSetStyle.Call(hwnd, ^uintptr(15), current|portableWSVisible)
+		}()
+	}
+	result, _, _ := procDefWindowProc.Call(hwnd, uintptr(message), wParam, lParam)
+	return result
 }
 
 func misakaCaptionPoint(hwnd uintptr, packed uintptr, nonclient bool) portablePoint {

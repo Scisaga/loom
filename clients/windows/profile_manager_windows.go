@@ -35,6 +35,8 @@ type windowsProfileManager struct {
 	store            *connectionProfileStore
 	owner            *portableGUI
 	children         map[string]*portableGUI
+	routeRequests    map[string]bool
+	elevationID      string
 	transitionID     string
 	transitionCancel context.CancelFunc
 	epoch            uint64
@@ -175,6 +177,7 @@ func (m *windowsProfileManager) snapshot() portableGUISnapshot {
 		s = child.snapshot()
 		s.profilesReady = true
 		s.selectedProfile = index.Selected
+		s.routeBusy = s.routeBusy || m.routeRequests[index.Selected]
 	}
 	for _, p := range index.Profiles {
 		child := m.children[p.ID]
@@ -377,6 +380,17 @@ func (m *windowsProfileManager) runDisconnect(op *windowsProfileDisconnect) erro
 }
 
 func (m *windowsProfileManager) dispatch(req brokerRequest) error {
+	return m.dispatchWithCompletion(req, nil)
+}
+
+// §7.2：偏好界面的完成通知必须来自实际 worker，入队本身不能作为保存成功。
+func (m *windowsProfileManager) dispatchWithCompletion(req brokerRequest, complete func()) error {
+	m.mu.Lock()
+	elevating := m.elevationID != ""
+	m.mu.Unlock()
+	if elevating {
+		return errors.New("正在请求管理员权限，请等待本次启动完成")
+	}
 	// §7.2：Installed broker 与本地 GUI 一样，新的用户操作清除上次命令错误。
 	m.owner.mu.Lock()
 	m.owner.profileMessage = ""
@@ -393,12 +407,44 @@ func (m *windowsProfileManager) dispatch(req brokerRequest) error {
 		return nil
 	}
 	m.mu.Lock()
-	if m.closing || m.owner.ctx.Err() != nil {
+	if m.closing || m.owner.ctx.Err() != nil || m.elevationID != "" {
 		m.mu.Unlock()
 		return context.Canceled
 	}
 	var run func() error
 	switch req.Operation {
+	case "preference":
+		child := m.children[req.ProfileID]
+		if child == nil || req.Preference == nil {
+			m.mu.Unlock()
+			return errors.New("请选择连接配置")
+		}
+		child.mu.Lock()
+		online := child.state == guiConnected && child.runCancel != nil
+		offline := child.joined && (child.state == guiStopped || child.state == guiError || child.state == guiNeedsElevation)
+		if child.routeBusy || m.routeRequests[req.ProfileID] || (!online && !offline) || routeOptionIndex(child.routeOptions, *req.Preference) < 0 {
+			child.mu.Unlock()
+			m.mu.Unlock()
+			return errors.New("出口未获当前签名配置授权，或数据面正在切换")
+		}
+		// §7.2：先发布现有忙状态，Installed 的异步 ACK 才能区分已完成与尚未执行。
+		child.routeBusy = true
+		child.mu.Unlock()
+		if m.routeRequests == nil {
+			m.routeRequests = make(map[string]bool)
+		}
+		m.routeRequests[req.ProfileID] = true
+		run = func() error {
+			defer func() {
+				child.mu.Lock()
+				child.routeBusy = false
+				child.mu.Unlock()
+				m.mu.Lock()
+				delete(m.routeRequests, req.ProfileID)
+				m.mu.Unlock()
+			}()
+			return m.command(req)
+		}
 	case "join_profile":
 		if m.draft == nil || !m.draftVisible {
 			m.mu.Unlock()
@@ -429,12 +475,21 @@ func (m *windowsProfileManager) dispatch(req brokerRequest) error {
 	go func() {
 		defer m.workers.Done()
 		m.owner.profileError(run())
+		if complete != nil {
+			complete()
+		}
 		m.owner.repaint()
 	}()
 	return nil
 }
 
 func (m *windowsProfileManager) command(req brokerRequest) error {
+	m.mu.Lock()
+	elevating := m.elevationID != ""
+	m.mu.Unlock()
+	if elevating {
+		return errors.New("正在请求管理员权限，请等待本次启动完成")
+	}
 	switch req.Operation {
 	case "add_profile":
 		return m.openProfileDraft(req.Name)

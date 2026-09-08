@@ -306,6 +306,7 @@ func (app *portableGUI) exchangeInstalledBroker(request brokerRequest) {
 	if err != nil {
 		app.mu.Lock()
 		app.paths = nil
+		app.routeBusy = false
 		app.brokerProfileDraft = nil
 		for i := range app.brokerProfiles {
 			if app.brokerProfiles[i].ID == app.activeProfile {

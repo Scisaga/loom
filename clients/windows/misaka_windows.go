@@ -20,7 +20,7 @@ const (
 	misakaControlAuto = 4201 + iota
 	misakaControlFixed
 	misakaControlDirect
-	misakaControlMenu
+	_ // §7.2：保留后续控件编号；侧栏不再有配置操作按钮。
 	misakaControlDraftName
 	misakaControlDraftImport
 	misakaControlDraftPaste
@@ -47,9 +47,7 @@ type misakaUI struct {
 	width, height  int32
 	rename         bool
 	renameID       string
-	menu           bool
-	menuProfileID  string
-	fixedPicker    bool
+	route          misakaRouteUI
 	draftInvite    *clientenroll.Invite
 	draftError     string
 	inviteLabel    string
@@ -87,7 +85,7 @@ func configureMisakaFrame(hwnd uintptr) {
 		preference := uint32(2)
 		proc.Call(hwnd, 33, uintptr(unsafe.Pointer(&preference)), unsafe.Sizeof(preference))
 	}
-	procSetWindowPos.Call(hwnd, 0, 0, 0, 0, 0, 0x0027) // FRAMECHANGED | NOMOVE | NOSIZE | NOZORDER
+	procSetWindowPos.Call(hwnd, 0, 0, 0, 0, 0, 0x0037) // FRAMECHANGED | NOMOVE | NOSIZE | NOZORDER | NOACTIVATE
 }
 
 func (app *portableGUI) initializeMisaka() error {
@@ -154,26 +152,25 @@ func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height
 	}
 	side, main, end := s(176), s(196), width-s(20)
 	move(app.controls.addProfileButton, side-s(42), s(112), s(28), s(28))
-	move(app.controls.networkList, s(12), s(150), side-s(24), height-s(242))
-	move(app.controls.profileMenu, s(16), height-s(80), side-s(32), s(28))
-	move(app.controls.stateIcon, main+s(18), s(134), s(20), s(20))
-	move(app.controls.stateValue, main+s(47), s(129), end-main-s(179), s(30))
-	move(app.controls.primaryButton, end-s(118), s(130), s(100), s(32))
+	move(app.controls.networkList, s(12), s(150), side-s(24), height-s(214))
+	move(app.controls.stateIcon, main+s(15), s(115), s(38), s(38))
+	move(app.controls.stateValue, main+s(68), s(114), end-main-s(198), s(32))
+	move(app.controls.primaryButton, end-s(118), s(118), s(100), s(32))
 	move(app.controls.message, main, height-s(32), end-main, s(22))
-	if snapshot.joined {
-		modeWidth := min(s(82), (end-main-s(212))/3)
-		move(app.controls.modeAuto, main+s(20), s(190), modeWidth, s(31))
-		move(app.controls.modeFixed, main+s(20)+modeWidth, s(190), modeWidth, s(31))
-		move(app.controls.modeDirect, main+s(20)+modeWidth*2, s(190), modeWidth, s(31))
-		if misakaSelectedMode(snapshot) == clientcore.FixedExit || app.skin.fixedPicker {
-			move(app.controls.routeCombo, main+s(36)+modeWidth*3, s(190), end-main-s(56)-modeWidth*3, s(220))
-		}
-		move(app.controls.pathsValue, main, s(272), end-main, height-s(320))
-		move(app.controls.pathsDetailsButton, end-s(86), s(240), s(86), s(26))
+	if snapshot.selectedProfile != "" {
+		move(app.controls.renameProfileButton, end-s(151), s(55), s(28), s(28))
+		move(app.controls.deleteButton, end-s(106), s(178), s(88), s(22))
 	}
-	if app.skin.menu && snapshot.selectedProfile != "" {
-		move(app.controls.renameProfileButton, s(20), height-s(158), side-s(40), s(32))
-		move(app.controls.deleteButton, s(20), height-s(121), side-s(40), s(32))
+	if snapshot.joined {
+		modeWidth := s(77)
+		move(app.controls.modeDirect, main+s(73), s(215), modeWidth, s(34))
+		move(app.controls.modeAuto, main+s(73)+modeWidth, s(215), modeWidth, s(34))
+		move(app.controls.modeFixed, main+s(73)+modeWidth*2, s(215), s(231)-modeWidth*2, s(34))
+		if app.misakaRouteVisible(snapshot) {
+			move(app.controls.routeCombo, main+s(318), s(215), min(s(163), end-main-s(318)), s(220))
+		}
+		move(app.controls.pathsValue, main, s(295), end-main, height-s(357))
+		move(app.controls.pathsDetailsButton, end-s(86), s(261), s(86), s(26))
 	}
 	if app.skin.rename {
 		visible[app.controls.profileNameEdit] = true
@@ -190,8 +187,7 @@ func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height
 		move(app.controls.draftSubmit, x+w-s(148), y+s(272), s(124), s(34))
 		move(app.controls.draftCancel, x+w-s(246), y+s(272), s(86), s(34))
 	}
-	enablePortableControl(app.controls.networkList, snapshot.profileDraft == nil)
-	enablePortableControl(app.controls.profileMenu, app.misakaMenuSelectionConfirmed(snapshot))
+	enablePortableControl(app.controls.networkList, snapshot.profileDraft == nil && !app.isElevationPending())
 }
 
 func (app *portableGUI) misakaDraftBounds() (int32, int32, int32) {
@@ -207,18 +203,6 @@ func misakaSelectedMode(snapshot portableGUISnapshot) clientcore.Mode {
 	return ""
 }
 
-func (app *portableGUI) misakaMenuSelectionConfirmed(snapshot portableGUISnapshot) bool {
-	if snapshot.selectedProfile == "" || (app.skin.menuProfileID != "" && app.skin.menuProfileID != snapshot.selectedProfile) {
-		return false
-	}
-	index, _, _ := procSendMessage.Call(app.controls.networkList, portableLBGetCurSel, 0, 0)
-	return int(index) >= 0 && int(index) < len(snapshot.profiles) && snapshot.profiles[index].ID == snapshot.selectedProfile
-}
-
-func (app *portableGUI) misakaMenuActionReady() bool {
-	return app.skin != nil && app.skin.menu && app.misakaMenuSelectionConfirmed(app.snapshot())
-}
-
 func (app *portableGUI) renderMisaka(snapshot portableGUISnapshot, previous *portableGUISnapshot) {
 	if app.skin == nil {
 		return
@@ -227,15 +211,7 @@ func (app *portableGUI) renderMisaka(snapshot portableGUISnapshot, previous *por
 		if app.skin.renameID != snapshot.selectedProfile {
 			app.finishMisakaRename(false)
 		}
-		app.skin.menu = app.skin.menuProfileID != "" && app.skin.menuProfileID == snapshot.selectedProfile
-		if !app.skin.menu {
-			app.skin.menuProfileID = ""
-		}
-		app.skin.fixedPicker = false
 		app.layoutControls()
-	}
-	if previous != nil && previous.routeSelected != snapshot.routeSelected {
-		app.skin.fixedPicker = false
 	}
 	if previous == nil || (previous.profileDraft == nil) != (snapshot.profileDraft == nil) {
 		app.skin.draftInvite = nil
@@ -245,10 +221,9 @@ func (app *portableGUI) renderMisaka(snapshot portableGUISnapshot, previous *por
 			procMisakaSetFocus.Call(app.controls.draftName)
 		}
 	}
-	setPortableControlText(app.controls.renameProfileButton, "重命名   F2")
-	setPortableControlText(app.controls.deleteButton, "删除配置…")
-	enablePortableControl(app.controls.profileMenu, app.misakaMenuSelectionConfirmed(snapshot))
-	enablePortableControl(app.controls.addProfileButton, snapshot.profilesReady)
+	setPortableControlText(app.controls.renameProfileButton, "重命名配置")
+	setPortableControlText(app.controls.deleteButton, "删除配置")
+	enablePortableControl(app.controls.addProfileButton, snapshot.profilesReady && !app.isElevationPending())
 	if snapshot.profilesReady && snapshot.selectedProfile == "" {
 		setPortableControlText(app.controls.primaryButton, "添加配置")
 	}
@@ -256,14 +231,9 @@ func (app *portableGUI) renderMisaka(snapshot portableGUISnapshot, previous *por
 		(snapshot.state == guiStopped || snapshot.state == guiError) {
 		setPortableControlText(app.controls.primaryButton, "切换连接")
 	}
-	for _, pair := range []struct {
-		hwnd uintptr
-		mode clientcore.Mode
-	}{{app.controls.modeAuto, clientcore.Auto}, {app.controls.modeFixed, clientcore.FixedExit}, {app.controls.modeDirect, clientcore.Direct}} {
-		available := slices.ContainsFunc(snapshot.routeOptions, func(option portableRouteOption) bool { return option.Preference.Mode == pair.mode })
-		enablePortableControl(pair.hwnd, portableRouteSelectable(snapshot) && available)
-		if previous == nil || previous.routeSelected != snapshot.routeSelected || previous.routeBusy != snapshot.routeBusy {
-			procInvalidateRect.Call(pair.hwnd, 0, 0)
+	if app.isElevationPending() {
+		for _, control := range []uintptr{app.controls.networkList, app.controls.renameProfileButton, app.controls.deleteButton, app.controls.primaryButton, app.controls.modeAuto, app.controls.modeFixed, app.controls.modeDirect, app.controls.routeCombo} {
+			enablePortableControl(control, false)
 		}
 	}
 	if draft := snapshot.profileDraft; draft != nil {
@@ -300,7 +270,7 @@ func (app *portableGUI) misakaPathHeight() int32 {
 			rows = max(rows, (len(strings.Split(path.Chain, " → "))+3)/4)
 		}
 	}
-	height := int32(128 + (rows-1)*64)
+	height := int32(126 + (rows-1)*64)
 	if app.pathsExpanded {
 		height += 146
 	}
@@ -349,8 +319,10 @@ func (app *portableGUI) updateMisakaPaths(snapshot portableGUISnapshot, force bo
 }
 
 func (app *portableGUI) openMisakaDraft() {
+	if app.isElevationPending() {
+		return
+	}
 	app.finishMisakaRename(false)
-	app.skin.menu, app.skin.menuProfileID = false, ""
 	app.profileCommand(brokerRequest{Operation: "add_profile"})
 }
 
@@ -363,13 +335,7 @@ func (app *portableGUI) beginMisakaRename() {
 	if int(index) >= len(snapshot.profiles) {
 		return
 	}
-	profile := snapshot.profiles[index]
-	app.skin.menu, app.skin.menuProfileID = false, ""
-	app.skin.rename, app.skin.renameID = true, profile.ID
-	setPortableControlText(app.controls.profileNameEdit, profile.Name)
-	app.layoutControls()
-	procMisakaSetFocus.Call(app.controls.profileNameEdit)
-	procSendMessage.Call(app.controls.profileNameEdit, 0x00B1, 0, ^uintptr(0))
+	app.beginMisakaRenameFor(snapshot.profiles[index].ID)
 }
 
 func (app *portableGUI) positionMisakaRename() {
@@ -465,45 +431,7 @@ func (app *portableGUI) misakaCommand(id uint16) bool {
 	snapshot := app.snapshot()
 	switch id {
 	case misakaControlAuto, misakaControlDirect, misakaControlFixed:
-		if !portableRouteSelectable(snapshot) {
-			return true
-		}
-		mode := clientcore.Auto
-		if id == misakaControlDirect {
-			mode = clientcore.Direct
-		}
-		if id == misakaControlFixed {
-			app.skin.fixedPicker = true
-			app.layoutControls()
-			procSendMessage.Call(app.controls.routeCombo, portableCBShowDropDown, 1, 0)
-			procMisakaSetFocus.Call(app.controls.routeCombo)
-			return true
-		}
-		for _, option := range snapshot.routeOptions {
-			if option.Preference.Mode == mode {
-				app.skin.fixedPicker = false
-				app.layoutControls()
-				if misakaSelectedMode(snapshot) == mode {
-					return true
-				}
-				preference := option.Preference
-				app.profileCommand(brokerRequest{Operation: "preference", ProfileID: snapshot.selectedProfile, Preference: &preference})
-				break
-			}
-		}
-		return true
-	case misakaControlMenu:
-		// §7.2：列表已指向新配置但 broker 尚未确认时，不能重新打开旧配置菜单。
-		if !app.misakaMenuSelectionConfirmed(snapshot) {
-			return true
-		}
-		app.skin.menu = !app.skin.menu
-		app.skin.menuProfileID = ""
-		if app.skin.menu {
-			app.skin.menuProfileID = snapshot.selectedProfile
-		}
-		app.layoutControls()
-		return true
+		return app.misakaRouteCommand(id)
 	case misakaControlDraftImport:
 		app.chooseMisakaInvite(false)
 		return true
@@ -566,11 +494,6 @@ func handleMisakaKeyboard(message portableMSG) bool {
 			app.misakaCommand(misakaControlDraftCancel)
 			return true
 		}
-		if app.skin.menu || app.skin.menuProfileID != "" {
-			app.skin.menu, app.skin.menuProfileID = false, ""
-			app.layoutControls()
-			return true
-		}
 	}
 	if app.snapshot().profileDraft != nil && message.wParam == portableVKV {
 		control, _, _ := procGetKeyState.Call(portableVKControl)
@@ -605,29 +528,9 @@ func misakaControlProc(hwnd uintptr, message uint32, wParam, lParam, subclass, o
 			if hwnd == app.controls.profileNameEdit {
 				app.finishMisakaRename(true)
 			}
-		case 0x0201: // WM_LBUTTONDOWN：新点击也取消尚未得到 broker 确认的菜单。
-			if hwnd == app.controls.networkList && app.skin.menuProfileID != "" {
-				app.skin.menu, app.skin.menuProfileID = false, ""
-				app.layoutControls()
-			}
-		case portableWMRButtonUp:
+		case 0x007B: // WM_CONTEXTMENU：鼠标与键盘共用真正的弹出菜单。
 			if hwnd == app.controls.networkList {
-				index, _, _ := procSendMessage.Call(hwnd, 0x01A9, 0, lParam)
-				snapshot := app.snapshot()
-				if index>>16 != 0 || int(index) >= len(snapshot.profiles) {
-					app.skin.menu, app.skin.menuProfileID = false, ""
-					app.layoutControls()
-					return 0
-				}
-				profileID := snapshot.profiles[index].ID
-				app.skin.menuProfileID = profileID
-				app.skin.menu = profileID == snapshot.selectedProfile
-				procSendMessage.Call(hwnd, portableLBSetCurSel, index, 0)
-				if !app.skin.menu {
-					app.selectProfileFromList()
-				}
-				// §7.2：等待 broker 确认查看对象后才显示其菜单，不能删除上一份配置。
-				app.layoutControls()
+				app.showMisakaListContextMenu(lParam)
 				return 0
 			}
 		case portableWMKeyDown:
@@ -652,20 +555,8 @@ func misakaControlProc(hwnd uintptr, message uint32, wParam, lParam, subclass, o
 }
 
 func misakaWindowMessage(app *portableGUI, hwnd uintptr, message uint32, wParam, lParam uintptr) (uintptr, bool) {
-	if message == 0x0083 && wParam != 0 { // WM_NCCALCSIZE
-		if zoomed, _, _ := procMisakaIsZoomed.Call(hwnd); zoomed != 0 {
-			// §7.2：最大化服从当前显示器工作区，不能盖住任务栏。
-			monitor, _, _ := portableUser32.NewProc("MonitorFromWindow").Call(hwnd, 2)
-			info := struct {
-				size          uint32
-				monitor, work portableRect
-				flags         uint32
-			}{size: 40}
-			if ok, _, _ := portableUser32.NewProc("GetMonitorInfoW").Call(monitor, uintptr(unsafe.Pointer(&info))); ok != 0 {
-				*(*portableRect)(unsafe.Pointer(lParam)) = info.work
-			}
-		}
-		return 0, true
+	if result, handled := misakaNonclientMessage(hwnd, message, wParam, lParam); handled {
+		return result, true
 	}
 	if app == nil || app.skin == nil || app.skin.closed {
 		return 0, false
@@ -675,22 +566,15 @@ func misakaWindowMessage(app *portableGUI, hwnd uintptr, message uint32, wParam,
 	}
 	s := app.scale
 	switch message {
+	case misakaWMRouteAcknowledged:
+		app.acknowledgeMisakaRoute(wParam)
+		return 0, true
 	case 0x0113:
 		if wParam == misakaRetryPaintTimer {
 			procKillTimer.Call(hwnd, misakaRetryPaintTimer)
 			procRedrawWindow.Call(hwnd, 0, 0, portableRDWInvalidate|portableRDWAllChildren)
 			return 0, true
 		}
-	case 0x0202:
-		if app.skin.menu || app.skin.menuProfileID != "" {
-			app.skin.menu, app.skin.menuProfileID = false, ""
-			app.layoutControls()
-		}
-	case 0x0085:
-		return 0, true // WM_NCPAINT：默认边框不再绘制。
-	case 0x0086:
-		result, _, _ := procDefWindowProc.Call(hwnd, uintptr(message), wParam, ^uintptr(0))
-		return result, true
 	case 0x0317:
 		procDefWindowProc.Call(hwnd, uintptr(message), wParam, (lParam&^0x000A)|0x0004)
 		return 0, true
@@ -712,7 +596,7 @@ func misakaWindowMessage(app *portableGUI, hwnd uintptr, message uint32, wParam,
 		app.paintMisaka(wParam)
 		return 0, true // WM_PRINTCLIENT
 	case portableWMCommand:
-		if app.misakaCommand(uint16(wParam & 0xffff)) {
+		if uint16(wParam>>16) == 0 && app.misakaCommand(uint16(wParam&0xffff)) {
 			return 0, true
 		}
 	case portableWMCtlColorStatic, 0x0133, 0x0134:

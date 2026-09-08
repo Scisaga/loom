@@ -137,8 +137,9 @@ type portableGUI struct {
 	activeProfile       string
 	activeProfileName   string
 
-	lockMu sync.Mutex
-	lock   *windowsNamedLock
+	lockMu           sync.Mutex
+	lock             *windowsNamedLock
+	elevationPending bool
 
 	workers sync.WaitGroup
 }
@@ -543,19 +544,20 @@ func (app *portableGUI) stopRuntime() {
 func (app *portableGUI) deleteLocalDevice(expectedProfile string) {
 	snapshot := app.snapshot()
 	// §7.2：broker 可在菜单点击后更新快照，确认框与删除请求必须绑定原操作对象。
-	if expectedProfile == "" || snapshot.selectedProfile != expectedProfile {
+	if expectedProfile == "" {
 		return
 	}
 	if snapshot.profilesReady {
-		if snapshot.selectedProfile == "" {
+		profile, ok := app.misakaProfile(expectedProfile)
+		if !ok {
 			return
 		}
-		if snapshot.state == guiStarting || snapshot.state == guiConnected || snapshot.state == guiStopping || snapshot.state == guiJoining || snapshot.state == guiLoading {
+		if !misakaProfileDeletable(profile.State) {
 			messageBox(app.hwnd, "删除连接配置", "请先停止该配置的连接或加入操作。", portableMBOK|portableMBIconWarning)
 			return
 		}
-		if messageBoxResult(app.hwnd, "删除连接配置", "删除“"+snapshot.profileName+"”及其本机加入身份？此操作无法恢复。\n其他连接配置保留；中控 Device 需另行下线和吊销。", portableMBYesNo|portableMBIconWarning|portableMBDefButton2) == portableIDYes {
-			app.profileCommand(brokerRequest{Operation: "delete", ProfileID: snapshot.selectedProfile})
+		if messageBoxResult(app.hwnd, "删除连接配置", "删除“"+profile.Name+"”及其本机加入身份？此操作无法恢复。\n其他连接配置保留；中控 Device 需另行下线和吊销。", portableMBYesNo|portableMBIconWarning|portableMBDefButton2) == portableIDYes {
+			app.profileCommand(brokerRequest{Operation: "delete", ProfileID: expectedProfile})
 		}
 		return
 	}
@@ -715,27 +717,7 @@ func (app *portableGUI) acceptDroppedFiles(drop uintptr) {
 }
 
 func (app *portableGUI) restartElevated() {
-	snapshot := app.snapshot()
-	app.update(guiStarting, snapshot.joined, snapshot.deviceID, "正在请求 Windows 管理员权限…")
-	app.releasePortableLock()
-	executable, err := os.Executable()
-	if err == nil {
-		verb, _ := windows.UTF16PtrFromString("runas")
-		file, _ := windows.UTF16PtrFromString(executable)
-		cwd, _ := windows.UTF16PtrFromString(filepath.Dir(executable))
-		err = windows.ShellExecute(windows.Handle(app.hwnd), verb, file, nil, cwd, portableSWShowNormal)
-	}
-	if err != nil {
-		lock, lockErr := acquireWindowsClientUILock()
-		if lockErr == nil {
-			app.lockMu.Lock()
-			app.lock = lock
-			app.lockMu.Unlock()
-		}
-		app.update(guiNeedsElevation, true, app.snapshot().deviceID, "未获得管理员权限："+err.Error())
-		return
-	}
-	postPortableMessage(app.hwnd, portableWMAppExit, 0, 0)
+	app.restartElevatedFor(app.snapshot().selectedProfile)
 }
 
 func windowsGUIStateRoot(edition clientEdition) (string, error) {
@@ -1205,7 +1187,6 @@ type portableGUIControls struct {
 	modeAuto            uintptr
 	modeFixed           uintptr
 	modeDirect          uintptr
-	profileMenu         uintptr
 	draftName           uintptr
 	draftImport         uintptr
 	draftPaste          uintptr
@@ -1248,7 +1229,7 @@ type portableGUIControls struct {
 
 func (controls portableGUIControls) all() []uintptr {
 	return []uintptr{
-		controls.modeAuto, controls.modeFixed, controls.modeDirect, controls.profileMenu,
+		controls.modeAuto, controls.modeFixed, controls.modeDirect,
 		controls.draftName, controls.draftImport, controls.draftPaste, controls.draftSubmit, controls.draftCancel,
 		controls.brandIcon, controls.brandName, controls.brandEdition,
 		controls.networkList, controls.interfaceGroup,
@@ -1492,7 +1473,7 @@ func (app *portableGUI) createControls() error {
 		{&app.controls.pathsHint, 0, "STATIC", "当前选路用于新连接；已有连接可能沿用原路径。", portableSSLeft | portableSSNoPrefix, 0},
 		{&app.controls.interfaceGroup, 0, "BUTTON", "连接: Loom 网络", portableBSGroupBox, 0},
 		{&app.controls.stateCaption, 0, "STATIC", "状态:", portableSSRight | portableSSNoPrefix, 0},
-		{&app.controls.stateIcon, 0, "STATIC", "", portableSSIcon | portableSSCenterImage, portableControlStateIcon},
+		{&app.controls.stateIcon, 0, "STATIC", "", 0x000D, portableControlStateIcon}, // §7.2：状态符号独立自绘，保留旁侧原生状态文字。
 		{&app.controls.stateValue, 0, "STATIC", "正在检查", 0x000D, 0},
 		{&app.controls.modeCaption, 0, "STATIC", "模式:", portableSSRight | portableSSNoPrefix, 0},
 		{&app.controls.modeValue, 0, "STATIC", "", portableSSLeft | portableSSNoPrefix, 0},
@@ -1516,7 +1497,6 @@ func (app *portableGUI) createControls() error {
 		{&app.controls.modeAuto, 0, "BUTTON", "自动", portableWSTabStop | portableBSOwnerDraw, misakaControlAuto},
 		{&app.controls.modeFixed, 0, "BUTTON", "固定出口", portableWSTabStop | portableBSOwnerDraw, misakaControlFixed},
 		{&app.controls.modeDirect, 0, "BUTTON", "直连", portableWSTabStop | portableBSOwnerDraw, misakaControlDirect},
-		{&app.controls.profileMenu, 0, "BUTTON", "配置操作", portableWSTabStop | portableBSOwnerDraw, misakaControlMenu},
 		{&app.controls.draftName, 0, "EDIT", "", portableWSTabStop | 0x0080, misakaControlDraftName},
 		{&app.controls.draftImport, 0, "BUTTON", "选择邀请文件", portableWSTabStop | portableBSOwnerDraw, misakaControlDraftImport},
 		{&app.controls.draftPaste, 0, "BUTTON", "粘贴二维码", portableWSTabStop | portableBSOwnerDraw, misakaControlDraftPaste},
@@ -1587,7 +1567,7 @@ func (app *portableGUI) updateFonts() error {
 	app.deleteFonts()
 	app.fonts = []uintptr{regular, brand}
 	// Owner-draw 控件不会根据 WM_SETFONT 自动重新测量行高。
-	procSendMessage.Call(app.controls.networkList, portableLBSetItemHeight, 0, uintptr(app.scale(46)))
+	procSendMessage.Call(app.controls.networkList, portableLBSetItemHeight, 0, uintptr(app.scale(55)))
 	procSendMessage.Call(app.controls.pathsValue, portableLBSetItemHeight, 0, uintptr(app.scale(app.misakaPathHeight())))
 	procSendMessage.Call(app.controls.routeCombo, portableCBSetItemHeight, ^uintptr(0), uintptr(app.scale(23)))
 	procSendMessage.Call(app.controls.routeCombo, portableCBSetItemHeight, 0, uintptr(app.scale(23)))
@@ -1595,7 +1575,8 @@ func (app *portableGUI) updateFonts() error {
 }
 
 func createPortableFont(points, weight, dpi int32) (uintptr, error) {
-	return createPortableFontFace(points, weight, dpi, "Segoe UI")
+	// §7.2：原生输入框与自绘中文使用同一系统字体，避免默认字体回退成宋体。
+	return createPortableFontFace(points, weight, dpi, "Microsoft YaHei UI")
 }
 
 func createPortableFontFace(points, weight, dpi int32, faceName string) (uintptr, error) {
@@ -1800,11 +1781,12 @@ func (app *portableGUI) renderControls() {
 	}
 	snapshot := app.snapshot()
 	previous := app.rendered
-	if previous != nil && snapshot.equal(*previous) {
+	routeChanged := app.reconcileMisakaRoute(snapshot)
+	if previous != nil && !routeChanged && snapshot.equal(*previous) {
 		return
 	}
 	// §7.2：只有加入页与连接页互换才需要布局；尺寸和 DPI 由系统消息处理。
-	if previous == nil || previous.joined != snapshot.joined || previous.profilesReady != snapshot.profilesReady ||
+	if previous == nil || routeChanged || previous.joined != snapshot.joined || previous.profilesReady != snapshot.profilesReady ||
 		(previous.profileDraft == nil) != (snapshot.profileDraft == nil) || previous.routeSelected != snapshot.routeSelected {
 		app.layoutControls()
 	}
@@ -1833,7 +1815,7 @@ func (app *portableGUI) renderControls() {
 	setPortableControlText(app.controls.message, message)
 	setPortableControlText(app.controls.primaryButton, primaryText)
 	enablePortableControl(app.controls.primaryButton, primaryEnabled)
-	setPortableControlText(app.controls.deleteButton, "删除配置…")
+	setPortableControlText(app.controls.deleteButton, "删除配置")
 	deleteEnabled := (snapshot.joined || snapshot.profilesReady && snapshot.selectedProfile != "") && (snapshot.state == guiStopped || snapshot.state == guiError || snapshot.state == guiNeedsElevation || snapshot.state == guiNeedsJoin)
 	enablePortableControl(app.controls.deleteButton, deleteEnabled)
 	setPortableControlText(app.controls.pasteButton, "粘贴二维码")
@@ -1884,17 +1866,7 @@ func (app *portableGUI) renderControls() {
 	if snapshot.profilesReady {
 		app.renderProfileDetails(snapshot, previous)
 	}
-	routeSelectable := portableRouteSelectable(snapshot)
-	filterReset := !routeSelectable && app.routeFiltering
-	if !routeSelectable {
-		app.routeFiltering = false
-		app.routeFilter = ""
-	}
-	if previous == nil || filterReset || previous.routeSelected != snapshot.routeSelected ||
-		!slices.Equal(previous.routeOptions, snapshot.routeOptions) {
-		app.renderRouteCombo(snapshot)
-	}
-	enablePortableControl(app.controls.routeCombo, routeSelectable)
+	app.renderMisakaRoutes(snapshot, previous)
 	if previous == nil {
 		app.updateBrandIcon(snapshot)
 	}
@@ -2149,6 +2121,14 @@ func handlePortableRouteFilter(message portableMSG) bool {
 		return false
 	}
 	snapshot := app.snapshot()
+	if app.skin != nil {
+		if !app.misakaRouteSelectable(snapshot) || !app.misakaRouteVisible(snapshot) {
+			return false
+		}
+		if app.misakaRouteFilterKey(message) {
+			return true
+		}
+	}
 	if !portableRouteSelectable(snapshot) {
 		return false
 	}
@@ -2223,6 +2203,10 @@ func (app *portableGUI) cancelRouteFilter(snapshot portableGUISnapshot) {
 }
 
 func (app *portableGUI) renderRouteCombo(snapshot portableGUISnapshot) {
+	if app.skin != nil {
+		app.renderMisakaRouteCombo(snapshot)
+		return
+	}
 	app.routeUpdating = true
 	defer func() { app.routeUpdating = false }()
 	procSendMessage.Call(app.controls.routeCombo, portableCBResetContent, 0, 0)
@@ -2319,33 +2303,46 @@ func portableWindowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) ui
 				}
 				return 0
 			case portableControlAddProfile:
+				if notification != 0 {
+					return 0
+				}
 				app.openMisakaDraft()
 				return 0
 			case portableControlRenameProfile:
-				if app.misakaMenuActionReady() {
-					app.beginMisakaRename()
+				if notification == 0 {
+					app.beginMisakaRenameFor(app.snapshot().selectedProfile)
 				}
 				return 0
 			case portableControlPathDetails:
+				if notification != 0 {
+					return 0
+				}
 				app.pathsExpanded = !app.pathsExpanded
 				app.renderProfileDetails(app.snapshot(), nil)
 				app.updateMisakaPaths(app.snapshot(), true)
 				return 0
 			case portableControlPrimary:
+				if notification != 0 {
+					return 0
+				}
 				app.primaryAction()
 				return 0
 			case portableControlPaste:
+				if notification != 0 {
+					return 0
+				}
 				app.pasteJoinArtifact()
 				return 0
 			case portableControlDelete:
-				if app.misakaMenuActionReady() {
-					profileID := app.skin.menuProfileID
-					app.skin.menu, app.skin.menuProfileID = false, ""
-					app.layoutControls()
-					app.deleteLocalDevice(profileID)
+				if notification == 0 {
+					app.deleteLocalDevice(app.snapshot().selectedProfile)
 				}
 				return 0
 			case portableControlRoute:
+				if app.skin != nil {
+					app.misakaRouteNotification(notification)
+					return 0
+				}
 				if app.routeUpdating {
 					return 0
 				}

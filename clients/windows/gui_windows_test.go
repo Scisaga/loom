@@ -133,7 +133,7 @@ func TestGUIDPIChanges(t *testing.T) {
 				control, message, index uintptr
 				height                  int32
 			}{
-				{app.controls.networkList, 0x01A1, 0, 46}, // LB_GETITEMHEIGHT
+				{app.controls.networkList, 0x01A1, 0, 55}, // LB_GETITEMHEIGHT
 				{app.controls.routeCombo, 0x0154, 0, 23},  // CB_GETITEMHEIGHT
 				{app.controls.routeCombo, 0x0154, ^uintptr(0), 23},
 			} {
@@ -268,7 +268,8 @@ func TestGUIStatusRefreshDoesNotRewriteUnchangedControls(t *testing.T) {
 		}
 	}
 	selection, _, _ := procSendMessage.Call(app.controls.routeCombo, portableCBGetCurSel, 0, 0)
-	if resets != 1 || selection == ^uintptr(0) {
+	// §7.2：只改变实际选择时复用已有授权列表，不能为刷新读回值重建整个弹出层。
+	if resets != 0 || selection == ^uintptr(0) || int(selection) >= len(app.routeVisible) || app.routeVisible[selection] != app.routeSelected {
 		t.Fatal("real route change was lost")
 	}
 	t.Log("20 identical polls: zero native writes; detail and route changes update only their controls")
