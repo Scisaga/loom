@@ -78,7 +78,7 @@ func TestWindowsHealthHTTPSFailureAndRecovery(t *testing.T) {
 			t.Fatalf("status %d: %v", code, problems)
 		}
 	}
-	if got := plan.check(context.Background(), &http.Transport{}); len(got) != 1 || got[0] != "端到端探测 TLS 证书验证失败" {
+	if got := plan.check(context.Background(), &http.Transport{}); len(got) != 1 || got[0] != "单目标探测 "+server.URL+"/：TLS 证书验证失败" {
 		t.Fatalf("untrusted TLS: %v", got)
 	}
 }
@@ -109,11 +109,11 @@ func TestWindowsHealthTimeoutAndRedaction(t *testing.T) {
 	defer cancel()
 	plan := &WindowsHealthPlan{target: server.URL}
 	got := plan.check(ctx, server.Client().Transport.(*http.Transport).Clone())
-	if len(got) != 1 || got[0] != "端到端探测超时" {
+	if len(got) != 1 || got[0] != "单目标探测 "+server.URL+"/：HTTP 响应超时" {
 		t.Fatalf("timeout: %v", got)
 	}
 	for _, err := range []error{&net.DNSError{Err: "secret-host-and-token", Name: "secret.example"}, errors.New("https://secret.example/token"), fmtWrappedTUNError()} {
-		if got := healthProbeProblem(err); strings.Contains(got, "secret") {
+		if got := plan.probeProblem(err, "连接"); strings.Contains(got, "secret") {
 			t.Fatalf("leaked error: %s", got)
 		}
 	}
@@ -121,4 +121,24 @@ func TestWindowsHealthTimeoutAndRedaction(t *testing.T) {
 
 func fmtWrappedTUNError() error {
 	return &net.DNSError{Err: "TUN unavailable", UnwrapErr: errTUNCapture}
+}
+
+// §16.1：真实传输失败必须保留目标和环节，路径可达与该目标的失败可同时成立。
+func TestWindowsHealthDistinguishesTCPAndTLS(t *testing.T) {
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	plan := &WindowsHealthPlan{target: strings.Replace(plain.URL, "http:", "https:", 1)}
+	got := plan.check(context.Background(), &http.Transport{})
+	if len(got) != 1 || got[0] != "单目标探测 "+plan.target+"/：TLS 握手失败" {
+		t.Fatalf("TLS phase missing: %v", got)
+	}
+	plain.Close()
+	got = plan.check(context.Background(), &http.Transport{})
+	if len(got) != 1 || got[0] != "单目标探测 "+plan.target+"/：TCP 连接失败" {
+		t.Fatalf("TCP phase missing: %v", got)
+	}
+	plan.target = "https://demo-user:demo-token@demo.example/private?key=demo-secret#fragment"
+	got = []string{plan.probeProblem(errors.New("sensitive transport details"), "TLS 握手")}
+	if got[0] != "单目标探测 https://demo.example/：TLS 握手失败" {
+		t.Fatalf("target metadata leaked: %v", got)
+	}
 }

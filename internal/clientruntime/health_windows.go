@@ -19,7 +19,7 @@ func CheckWindowsHealth(ctx context.Context, plan *WindowsHealthPlan) []string {
 	// §7.2.1：不以 Mixed 的成功代替 TUN；只检查托管 IPv4 接管面，禁止 IPv6/环境代理旁路。
 	iface, err := managedTUNInterface()
 	if err != nil {
-		return []string{errTUNCapture.Error()}
+		return []string{plan.probeProblem(errTUNCapture, "TUN 接管")}
 	}
 	transport := &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(address)

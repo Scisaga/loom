@@ -156,6 +156,10 @@ func validateWindowsAgentPair(body, agentBody []byte, node string) (*WindowsSele
 			// 首个能匹配该 probe user 的规则必须无目标限制地指向同一候选。
 			matched := false
 			for _, r := range sb.Route.Rules {
+				// §7.2.1 / §7.3.3：精确的本地 TUN 嗅探不匹配候选 Mixed 探测入口。
+				if isWindowsTUNSniffRule(r) {
+					continue
+				}
 				if len(r.Inbound) > 0 && !slices.Contains(r.Inbound, probeTag) {
 					continue
 				}

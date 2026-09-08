@@ -128,3 +128,28 @@ func TestWindowsTUNRejectsLocalDomainCaptureInSignedSource(t *testing.T) {
 		}
 	}
 }
+
+func TestWindowsTUNDomainCapturePreservesCandidateProbeBinding(t *testing.T) {
+	source, agentBody := pathPlanFixture(t)
+	for _, profile := range []WindowsRuntimeProfile{WindowsInstalledProfile, WindowsPortableTUNProfile, WindowsPortableMixedProfile} {
+		body, err := DeriveWindowsRuntimeConfig(source, profile, WindowsInstalledCAPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := BuildWindowsSelectorPlan(body, agentBody, profile, WindowsInstalledCAPath); err != nil {
+			t.Fatalf("[§7.3.3] %s 域名接管影响了候选探测：%v", profile, err)
+		}
+		if profile == WindowsPortableMixedProfile {
+			continue
+		}
+		var config singBoxConfig
+		if err := json.Unmarshal(body, &config); err != nil {
+			t.Fatal(err)
+		}
+		config.Route.Rules[1].Rules[0].Inbound = []string{"probe-in"}
+		bad, _ := json.Marshal(config)
+		if _, err := BuildWindowsSelectorPlan(bad, agentBody, profile, WindowsInstalledCAPath); err == nil {
+			t.Fatal("[§7.3.3] 将嗅探扩大到候选入口仍被放行")
+		}
+	}
+}
