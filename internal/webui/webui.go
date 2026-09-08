@@ -183,6 +183,7 @@ type ClientControlDeps struct {
 	RenewInvite          func(deviceID string) (ClientInviteView, error)
 	ReplaceDevice        func(deviceID string) (ClientInviteView, error)
 	DeleteDevice         func(deviceID string) error
+	SetDevicePaused      func(deviceID string, paused bool) error
 	PurgeRevoked         func(deviceID string) error
 	DiscardPending       func(deviceID string) error
 	Claim                func(ClientClaimInput) (ClientClaimResult, error)
@@ -510,6 +511,7 @@ type NodeView struct {
 	Direction           string
 	EgressCapable       bool
 	Drain, Decommission bool
+	Paused              bool
 	// Health 是 healthy / problem / unknown。空值也按 unknown 处理；
 	// 未签名转述和静默节点不能因为“没看到错误”就被冒充成健康。
 	Health        string
@@ -852,6 +854,40 @@ func Handler(d Deps) http.Handler {
 	mux.HandleFunc("/devices/replace", func(w http.ResponseWriter, r *http.Request) {
 		deviceInviteWrite(w, r, true)
 	})
+	for _, action := range []string{"pause", "resume"} {
+		mux.HandleFunc("/devices/"+action, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-store")
+			if r.Method != http.MethodPost {
+				w.Header().Set("Allow", "POST")
+				http.Error(w, "只接受 POST", http.StatusMethodNotAllowed)
+				return
+			}
+			if !authed(d, r) {
+				http.Redirect(w, r, loginURL("/devices"), http.StatusSeeOther)
+				return
+			}
+			control := deviceControl(d)
+			if control == nil || control.SetDevicePaused == nil {
+				http.Error(w, "这台机器不能暂停/恢复 Device", http.StatusNotImplemented)
+				return
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+			if err := r.ParseForm(); err != nil {
+				http.Error(w, "表单无法解析", http.StatusBadRequest)
+				return
+			}
+			id := strings.TrimSpace(r.PostForm.Get("id"))
+			if id == "" || strings.Contains(id, "/") {
+				http.Error(w, "Device id 无效", http.StatusBadRequest)
+				return
+			}
+			if err := control.SetDevicePaused(id, action == "pause"); err != nil {
+				http.Error(w, err.Error(), clientProtocolStatus(err))
+				return
+			}
+			http.Redirect(w, r, "/devices", http.StatusSeeOther)
+		})
+	}
 	mux.HandleFunc("/devices/delete", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		if r.Method != http.MethodPost {

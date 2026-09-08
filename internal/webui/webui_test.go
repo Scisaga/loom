@@ -420,7 +420,7 @@ func TestTargetShowsMeasurementAgeNotNodeStatusAge(t *testing.T) {
 	d := deps("", nil)
 	d.Snapshot = func() View {
 		return View{Nodes: []NodeView{{
-			ID: "n1", ObservedAt: at.Format(time.RFC3339),
+			ID: "n1", Declared: true, ObservedAt: at.Format(time.RFC3339),
 			Targets: []TargetView{{
 				Target: "https://old-measurement.test/", MS: 12,
 				ObservedAt: at.Add(-5 * time.Minute).Format(time.RFC3339),
@@ -436,7 +436,7 @@ func TestTargetShowsMeasurementAgeNotNodeStatusAge(t *testing.T) {
 func TestTargetFailureIsDataButUplinkFailureIsProblem(t *testing.T) {
 	d := deps("", nil)
 	d.Snapshot = func() View {
-		return View{Nodes: []NodeView{{ID: "n1", Targets: []TargetView{
+		return View{Nodes: []NodeView{{ID: "n1", Declared: true, Targets: []TargetView{
 			{Target: "https://ordinary.test/", Err: "blocked"},
 			{Target: "https://uplink.test/", Err: "timeout", Uplink: true},
 		}}}}
@@ -455,7 +455,7 @@ func TestTargetFailureIsDataButUplinkFailureIsProblem(t *testing.T) {
 func TestUntrustedStringsAreEscaped(t *testing.T) {
 	d := deps("", nil)
 	d.Snapshot = func() View {
-		return View{Nodes: []NodeView{{ID: `<script>alert(1)</script>`,
+		return View{Nodes: []NodeView{{ID: `<script>alert(1)</script>`, Declared: true,
 			Targets: []TargetView{{Target: "t", Err: `<img onerror=x>`}}}}}
 	}
 	body := get(t, Handler(d), "/", nil).Body.String()
@@ -528,7 +528,7 @@ func TestTopologyShowsKindsSourceAndObservationAge(t *testing.T) {
 	d := deps("", nil)
 	d.Snapshot = func() View {
 		return View{ObservedAt: at.Format(time.RFC3339), Nodes: []NodeView{
-			{ID: "a", Health: "healthy"}, {ID: "b", Health: "unknown"}, {ID: "c", Health: "unknown"},
+			{ID: "a", Declared: true, Health: "healthy"}, {ID: "b", Declared: true, Health: "unknown"}, {ID: "c", Declared: true, Health: "unknown"},
 		}, Links: []LinkView{
 			{From: "a", To: "b", Kind: "tunnel", State: "unknown", Source: "SSOT 常驻 WG"},
 			{From: "b", To: "c", Kind: "tunnel", State: "degraded", Source: "5 样本/4 失败"},
@@ -557,11 +557,11 @@ func TestOverviewShowsComponentDriftAndAgentCandidateHealth(t *testing.T) {
 	d.Snapshot = func() View {
 		return View{
 			Nodes: []NodeView{{
-				ID: "demo-b", Health: "problem",
+				ID: "demo-b", Declared: true, Health: "problem",
 				Components: []ComponentView{{
 					Name: "wireguard", Expected: "1.0.20250521", Actual: "1.0.20210914", OK: false,
 				}},
-			}},
+			}, {ID: "demo-d", Declared: true}},
 			Routes: []RouteView{{
 				Node: "demo-d", Declaration: "best-egress", Chain: []string{"demo-d", "demo-b"},
 				ObservedAt: at.Format(time.RFC3339), Source: "签名转述",
@@ -589,7 +589,7 @@ func TestOverviewShowsComponentDriftAndAgentCandidateHealth(t *testing.T) {
 func TestOverviewShowsSelectedFailureWithoutMetrics(t *testing.T) {
 	d := deps("", nil)
 	d.Snapshot = func() View {
-		return View{Routes: []RouteView{{
+		return View{Nodes: []NodeView{{ID: "demo-d", Declared: true}, {ID: "demo-b", Declared: true}}, Routes: []RouteView{{
 			Node: "demo-d", Declaration: "d", Chain: []string{"demo-d", "demo-b"},
 			Health: &CandidateHealthView{
 				Candidates: 2, RecentFailed: 2, SelectedState: "failed",

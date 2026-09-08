@@ -81,7 +81,7 @@ func pageNodes(d Deps, isAuthed bool, added string) string {
 }
 
 func pageTopology(d Deps, isAuthed bool, selectedEntry ...string) string {
-	v := d.Snapshot()
+	v := currentNetworkView(d.Snapshot())
 	now := d.Now().UTC()
 	intentSource := intentSourceLabel(v)
 	requested := ""
@@ -409,6 +409,8 @@ func nodeLifecycleVisual(n NodeView) (class, label string) {
 		return "warn", "Undeclared observed"
 	case n.Decommission:
 		return "dim", "Decommissioned"
+	case n.Paused:
+		return "dim", "Paused · desired access state"
 	case n.Drain:
 		return "warn", "Draining"
 	case n.Applied == "":

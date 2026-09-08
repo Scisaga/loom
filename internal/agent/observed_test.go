@@ -3,11 +3,41 @@
 package agent
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
 	"loom/internal/report"
 )
+
+// §16.1.2 只在消费侧比较等价 URL，不能改动原始观测或把缺测推成失败。
+func TestObservedRootURLPruningPreservesOriginalObservation(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, target := range []string{"https://demo.example", "https://demo.example/"} {
+		o := newObserved()
+		original := &report.Observation{
+			Node: "demo-exit", TS: now.Format(time.RFC3339),
+			Targets: []report.Reach{{Target: target, Samples: 5, Failures: 5, Error: "refused"}},
+		}
+		before, _ := json.Marshal(original)
+		o.put(original)
+		for _, equivalent := range []string{"https://demo.example", "https://demo.example/"} {
+			if got := o.unreachable(equivalent, now, time.Minute); got["demo-exit"] != "refused" {
+				t.Errorf("%q did not match %q: %v", equivalent, target, got)
+			}
+		}
+		for _, missing := range []string{"https://demo.example/api", "https://demo.example/?q=1"} {
+			if got := o.unreachable(missing, now, time.Minute); len(got) != 0 {
+				t.Errorf("missing target %q became unreachable: %v", missing, got)
+			}
+		}
+		retained := o.by["demo-exit"]
+		after, _ := json.Marshal(&retained)
+		if string(before) != string(after) {
+			t.Fatalf("consumer rewrote observation: %s -> %s", before, after)
+		}
+	}
+}
 
 func TestExitOfPicksTheLastHop(t *testing.T) {
 	cases := map[string]struct {

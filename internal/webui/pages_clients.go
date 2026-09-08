@@ -50,7 +50,7 @@ func pageDevices(d Deps, state clientPageState, isAuthed bool) string {
 	total, members, pending := len(inventory.Clients), 0, 0
 	for _, device := range inventory.Clients {
 		switch device.Membership {
-		case "active":
+		case "active", "paused":
 			members++
 		case "identity only", "joining":
 			pending++
@@ -93,13 +93,16 @@ func pageDevices(d Deps, state clientPageState, isAuthed bool) string {
 			if device.Legacy {
 				identityNote = ` · <span class="tiny warn">Identity not indexed</span>`
 			}
-			fmt.Fprintf(&b, `<tr><td><div class=client-name><b><a href="/devices/%s">%s</a></b><span class="mono dim">%s%s</span></div><td><b>%s</b><td>%s<td>%s<td><span class="client-status %s"><span class=dot></span>%s</span><span class="client-runtime-detail tiny dim">%s</span><td>%s</tr>`,
+			fmt.Fprintf(&b, `<tr><td><div class=client-name><b><a href="/devices/%s">%s</a></b><span class="mono dim">%s%s</span></div><td><b>%s</b>%s<td>%s<td>%s<td><span class="client-status %s"><span class=dot></span>%s</span><span class="client-runtime-detail tiny dim">%s</span><td>%s</tr>`,
 				url.PathEscape(device.ID), esc(device.ID), esc(identityMeta), identityNote,
-				esc(orDash(device.Membership)), deviceTagList(device.Responsibilities),
+				esc(orDash(device.Membership)), devicePauseAction(d, device, isAuthed), deviceTagList(device.Responsibilities),
 				deviceTagList(device.DestinationGrants), statusClass, esc(statusLabel),
 				esc(clientRuntimeDetail(device)), clientTableTime(device.LastSeenAt))
 		}
 		b.WriteString(`</tbody></table></div>`)
+	}
+	if !state.Archived && control != nil && control.SetDevicePaused != nil {
+		b.WriteString(`<p class="tiny dim">Pause / Resume is available only for devices whose sole responsibility is use_loom. It changes Loom forwarding access after servers apply the signed configuration. Identity and grants are retained; the client stays installed and local direct traffic is unaffected.</p>`)
 	}
 	b.WriteString(`</section>`)
 	if !state.Archived {
@@ -196,6 +199,25 @@ func pageDeviceDetail(d Deps, deviceID string, isAuthed bool) string {
 	writeDeviceDeleteAction(&b, d, *device, isAuthed)
 	writeDevicePurgeAction(&b, d, *device, isAuthed)
 	return shell(d, "Device · "+device.ID, b.String(), isAuthed)
+}
+
+// 暂停按当前 SSOT 职责开放，运行态离线不应妨碍管理员恢复设备(§14.4)。
+func devicePauseAction(d Deps, device ClientView, isAuthed bool) string {
+	control := deviceControl(d)
+	if control == nil || control.SetDevicePaused == nil ||
+		len(device.Responsibilities) != 1 || device.Responsibilities[0] != "use_loom" ||
+		(device.Membership != "active" && device.Membership != "paused") ||
+		device.Status == "revoked" || device.Status == "pending" || device.Status == "provisioning" || device.ReplacedBy != "" {
+		return ""
+	}
+	if !isAuthed {
+		return fmt.Sprintf(`<div class=device-pause-action><a class="button tiny" href="%s">Sign in to manage</a></div>`, esc(loginURL("/devices")))
+	}
+	action, label := "pause", "Pause"
+	if device.Membership == "paused" {
+		action, label = "resume", "Resume"
+	}
+	return fmt.Sprintf(`<form class=device-pause-action data-submit-progress method=post action="/devices/%s"><input type=hidden name=id value="%s"><button class="button tiny" aria-label="%s %s">%s</button><span class="tiny dim">Loom forwarding access</span></form>`, action, esc(device.ID), label, esc(device.ID), label)
 }
 
 func deviceCanReplace(device ClientView) bool {

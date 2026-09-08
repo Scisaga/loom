@@ -18,27 +18,27 @@ type Decision struct {
 	Reason      string
 }
 
-// rank 是一条候选的排序键。**失败率优先,同档内再比目标指标。**
+// rank 是一条候选的排序键。**失败率优先,相同失败率再比目标指标。**
 //
 // 为什么不把失败折算成"很慢":一条 50% 失败但很快的候选,按延迟排会赢过
 // 一条 100% 成功但慢一点的 —— 而用起来一半的请求是错误。失败与快慢不是
-// 同一个量纲,不能相加。分档比较是最小的诚实做法。
+// 同一个量纲,不能相加；10% 分档还会把小幅失败率差异抹掉。
 type rank struct {
-	tier  int     // 失败率的 10% 分档,越小越好
-	score float64 // 目标对应的指标,越小越好
+	failureRate float64 // 实际失败率，越小越好
+	score       float64 // 目标对应的指标,越小越好
 }
 
 func (r rank) less(o rank) bool {
-	if r.tier != o.tier {
-		return r.tier < o.tier
+	if r.failureRate != o.failureRate {
+		return r.failureRate < o.failureRate
 	}
 	return r.score < o.score
 }
 
 func rankOf(o model.Objective, s measure.Summary) rank {
-	tier := 0
+	failureRate := 0.0
 	if s.Samples > 0 {
-		tier = s.Failures * 10 / s.Samples
+		failureRate = float64(s.Failures) / float64(s.Samples)
 	}
 	score := float64(s.P50)
 	switch o {
@@ -58,7 +58,7 @@ func rankOf(o model.Objective, s measure.Summary) rank {
 			score = 1e6 / float64(s.KBps)
 		}
 	}
-	return rank{tier: tier, score: score}
+	return rank{failureRate: failureRate, score: score}
 }
 
 // Decide 按窗口内的聚合结果决定这条声明该用哪个候选。
@@ -70,8 +70,8 @@ func rankOf(o model.Objective, s measure.Summary) rank {
 //     让流量继续停在一条已经证明不通的路上。§5.8 的冷启动规则说样本不足的
 //     候选"不参与排序也不被淘汰",管的是选谁,不是要不要离开一具尸体。
 //  2. 当前候选不在候选集里(配置变了 / 首次启动)→ 切到最优的。
-//  3. 否则:在样本数达到 min_samples 的健康候选里排序,赢家要比现任好过
-//     switch_threshold 才切,否则原地不动。
+//  3. 否则:在样本数达到 min_samples 的健康候选里排序；失败率降低可切，
+//     失败率相同时目标指标要好过 switch_threshold 才切，失败率升高不切。
 func Decide(d *Decl, current string, sums []measure.Summary) Decision {
 	dec := Decision{Declaration: d.ID, Current: current, Choice: current}
 
@@ -167,8 +167,13 @@ func Decide(d *Decl, current string, sums []measure.Summary) Decision {
 	}
 
 	rb, rc := rankOf(d.Objective, best), rankOf(d.Objective, cur)
-	// 跨失败档一律算显著:失败率的差别不该被阈值挡住。
-	if rb.tier < rc.tier {
+	// §5.5：现任可能因样本不足没进入 qualified，必须再比较失败率。
+	// 延迟/吞吐阈值只用于相同失败率，不能允许更不可靠的挑战者胜出。
+	if rb.failureRate > rc.failureRate {
+		dec.Reason = fmt.Sprintf("%s 的失败率高于当前候选,保持不动", best.CandidateID)
+		return dec
+	}
+	if rb.failureRate < rc.failureRate {
 		dec.Choice, dec.Switch = best.CandidateID, true
 		dec.Reason = fmt.Sprintf("%s 的失败率低于当前候选,切换", best.CandidateID)
 		return dec

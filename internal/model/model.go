@@ -51,6 +51,10 @@ type Node struct {
 	// **它不影响别人到它的隧道** —— 这是有意的:排空期间你仍然要能观测它。
 	Drain bool `yaml:"drain,omitempty"`
 
+	// Paused 暂停纯接入设备的网络访问(§14.4)，保留身份、授权及配置拉取。
+	// 服务器不再接受它的凭据；本机直连不受影响，恢复不需要重新 Enrollment。
+	Paused bool `yaml:"paused,omitempty"`
+
 	// Decommission 为真时:这台机器**停掉全部 Loom 服务并禁用自启**。
 	//
 	// 它与"从 SSOT 里删掉"是两回事,而且必须先于后者:

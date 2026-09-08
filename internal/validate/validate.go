@@ -133,6 +133,9 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 			idx[n.ID] = n
 		}
 		checkDistributionURLs(fs, where, n.DistributionURL, n.DistributionURLs)
+		if n.Paused && (!n.IsAccess() || n.IsServer() || n.Decommission) {
+			fs.add("§14.4 暂停", where, "paused 只适用于未下线的纯 use_loom 设备")
+		}
 		if country := n.Country; country != "" && !model.ValidCountryCode(country) {
 			fs.add("§19 schema", where,
 				"country %q 格式非法 —— 必须是两个大写 ASCII 字母组成的 ISO 3166-1 alpha-2 代码", country)

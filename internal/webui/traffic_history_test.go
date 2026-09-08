@@ -69,7 +69,7 @@ func TestNodeDetailShowsRXTXBucketsAndResetGapBoundary(t *testing.T) {
 func TestTopologyComparesLinkTXSamplesAndDoesNotBarMissingLink(t *testing.T) {
 	d := misakaDepsWithTrafficHistory()
 	view := d.Snapshot()
-	view.Nodes = append(view.Nodes, NodeView{ID: "demo-b", Health: "unknown"})
+	view.Nodes = append(view.Nodes, NodeView{ID: "demo-b", Declared: true, Health: "unknown"})
 	view.Links = append(view.Links, LinkView{
 		From: "demo-d", To: "demo-b", Kind: "tunnel", State: "unknown", Source: "SSOT persistent WG",
 	})

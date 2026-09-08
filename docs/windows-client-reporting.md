@@ -80,6 +80,11 @@ registry 中 `ready` enrollment 身份的精确 SPKI 绑定。HTTP 客户端拒�
 `5xx` 或其他非 `204` 响应只做脱敏日志并等待后续 tick。若响应携带 `Retry-After`，不得
 在其到期前重试。当前反代限流默认可能返回 `503`，不能假设一定是 `429`。
 
+上述是现有 producer 的默认契约。服务端另支持显式 `?observations=1` 返回已有
+签名 Observation 数组，接口见[客户端观测复用说明](client-observation-reuse.md)。
+当前 `clientreport.Send` 会拒绝带查询的地址，且只接受空正文 204；读取模式仍需
+客户端接入，不能仅给现有配置追加参数就声称已复用服务端观测。
+
 ## 3. 报文与签名
 
 每轮生成一份 UTC、严格晚于上一份成功构造报告的 RFC3339Nano 时间。外层 Observation、
