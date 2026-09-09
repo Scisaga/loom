@@ -1,6 +1,6 @@
 # 客户端复用现有签名 Observation
 
-本文描述已有服务端读取适配、Windows 消费实现，以及 Android 尚未接入的边界。
+本文描述已有服务端读取适配，以及 Windows / Android 共用的客户端消费边界。
 遵循 design.md §5.5.1、§16.1.2；不增加 SSOT 字段、测量协议或推荐路径表。
 
 ## 已核实的读取与上报通路
@@ -9,7 +9,7 @@
 |---|---|
 | Linux Agent | `internal/agent/observed.go` 的 `pollPeers` 通过 `report.FetchContext` 读取本机及 WG 邻居 `/status` 中的 `observation` 和 `learned`；`ingestObservation` 校验签名绑定、新鲜度及 measurements 后进入现有按来源去重的观测缓存 |
 | Windows | 在原有 NAT 签名上报周期内请求观测，经跨平台校验器验证后接入入口与服务器分段选路；继续拒绝 Linux 专用 `peers/self_report` 配置 |
-| Android | `mobile/loomcore/route.go` 拒绝 Linux peer/report 配置；宿主 `HealthReporter.kt` 只发送报告并接受空正文 204。尚未把服务器观测接入本地候选回路 |
+| Android | `mobile/loomcore` 拒绝 Linux peer/report 配置并复用同一验签/决策包；宿主在原健康周期兼容 204 或读取 200 观测，按实际 selector 读回重算，不另起探测周期 |
 
 Linux 的 canonical v5 闸门覆盖测量；旧兼容阶段的本机例外不能用于客户端读取。
 现有公网报告入口将客户端报告写入与 WG gossip、`/status`、中控展示相同的内存表。
@@ -73,17 +73,18 @@ Content-Type: application/json
 1. 在现有报告周期内显式选择读取模式，并解析有大小上限的完整 Observation 数组；
    不增加独立轮询/探测周期。Windows 使用 `clientreport.SendWithObservations`，
    保留 `Send` 的原 204 契约；200 已接受报告但观测正文无效时单独报告读取错误，
-   不篡改设备健康。Android `HealthReporter` 仍只接受 204，尚需读取分支适配。
+   不篡改设备健康。Android `HealthReporter` 使用相同的 `observations=1`，兼容
+   200 JSON 与旧服务端 204；正文读取错误同样不篡改已接受的设备健康。
    旧服务器若返回 204，表示上报成功但本轮没有观测数据，不能当成失败证据。
 2. 使用已验证加入身份保存的 CA，复用现有 canonical v5 校验与绑定规则。
    Go 共用入口为 `observation.VerifyObservationAtLeast`（服务端原入口委托它），必须检查
    `MeasurementsVerified`；仅调用 `attest.VerifyFresh` 不会绑定外层 Targets/Edges。
    可选 self-check/traffic/link-metric 需各自验签、绑定来源和时间，不借主签名背书。
-   Windows 以完整 Observation 读取，避免上报最小 DTO 丢掉 measurements；
+   Windows / Android 都以完整 Observation 读取，避免上报最小 DTO 丢掉 measurements；
    `internal/observation` 复用原 verifier 的绑定规则，不实现第二套签名。
 3. 按现有 plan 的候选链和 `observation_stale` 消费证据，以原来源/原时间去重，
    不用 HTTP 接收时间延长有效期；缺失、失效或签名失败不改变授权集合。
-   Windows 已接入客户端分段选择。服务器不可达证据作为当轮约束及决策原因，
+   两个原生客户端均已接入分段选择。服务器不可达证据作为当轮约束及决策原因，
    不按本机探测样本累计；旧 `observation_kind: derived` 记录不进入数值排名。
    不把来源节点的 Agent 选择当成客户端推荐路径。
 4. 按用户已明确的分工，客户端首轮只对授权入口去重后各做一次并行探测，入口之后
@@ -91,9 +92,9 @@ Content-Type: application/json
    `min_samples` 要求恢复这些探测。不等待观测到齐才启动。服务器报告未覆盖的
    目标保持未知；客户端不为填空扩大探测面。服务器按上述明确的目标集合采集。
 
-共用 Go Agent 已修复实际失败率的排序和切换守卫；相同失败率仍使用现有目标指标
-与阻尼。Android 的独立候选循环尚未接入。Windows TUN 域名识别另在本地派生配置中
-处理，不改变服务器观测协议或签名策略。
+共用 Go 决策包按实际失败率、现有目标指标与阻尼排序；Windows Agent 与 Android
+libbox 宿主都调用它。Windows TUN 域名识别另在本地派生配置中处理，不改变服务器
+观测协议或签名策略。
 
 Windows 已改用 `agent.RunClient`，不再调用完整路径 `agent.Run`。启动时从已验证
 数据面的 detour 找授权入口，在 TUN 启动前记录源网卡；各地址并行发送一次 ICMP，
@@ -114,10 +115,11 @@ Windows 已改用 `agent.RunClient`，不再调用完整路径 `agent.Run`。启
 隧道内下一跳用已有邻接 RTT；公网 Hy2 下一跳用 LinkMetrics，二者不互相替代。
 其他目标指标缺少相应证据时明确说明，不能拿延迟冒充吞吐或稳定性。
 
-分段估算不是业务端到端实测，界面标明入口单次结果和估算来源，旧 P50/P95、样本数
-保持空值。每轮健康上报只检查本机监听与托管网卡，业务可用性保持未测量。
-激活、重连沿用原生命周期，每代重新测入口；配置更新仍走原验签流程。
-签名、服务器采集和授权候选协议均未改变。Android 尚未接入此客户端流程。
+分段估算不是业务端到端实测。两个客户端的路径页都按实际连线显示证据：本机到
+入口是当前连接代的单次 ping，服务器段和精确目标来自原始签名观测；缺失显示 `—`。
+不再用整条路径“健康”或旧 P50/P95 占位概括这些不同来源。每轮健康上报只检查
+本机监听与托管网卡，业务可用性保持未测量。激活、重连沿用原生命周期，每代重新
+测入口；配置更新仍走原验签流程。签名、服务器采集和授权候选协议均未改变。
 
 ## 验证范围
 
@@ -127,12 +129,14 @@ Windows 已改用 `agent.RunClient`，不再调用完整路径 `agent.Run`。启
 报告适配使用真实测试证书验证端到端 POST、原签名重新验签、默认 204 兼容、
 来源范围过滤、撤销身份拒读与过期/无签名/篡改证据缺席。
 Windows 回归还覆盖原签名绑定、范围/过期拒收、原时间去重、200/204 兼容，
-以及健康超时后仍保留路径证据。实机验收状态见忽略目录中的当前状态记录；
-Android 读取与本地选路接入仍未实现。
+以及健康超时后仍保留路径证据。Android 回归覆盖数据面入口/承载推导、每底层网络代
+一次入口轮次、实际 selector 读回、观测拒收与离线缓存、Keystore 签名的实际选择状态，
+以及逐连线只读展示。生产受管网络与 Wi-Fi/蜂窝故障切换仍属真机验收。
 
-## Windows 拓扑显示
+## Windows / Android 拓扑显示
 
-当前选路合并为一个白色面板，各服务用细线分隔，测量标在各段连线上，取消“业务未测”及整条路径质量占位。
+Windows 当前选路合并为一个白色面板，各服务用细线分隔；Android 使用单一当前路径
+卡片逐声明排列。两端都把测量标在对应连线上，取消“业务未测”及整条路径质量占位。
 本机到入口显示本次连接的单次 ping；服务器段按实际承载显示对应方向的 RTT。
 公网 Hy2 有现成数据时追加该观测的 Δ（P95−P50）与固定响应探测速率；这不是
 业务吞吐或容量。WireGuard 原始邻居观测只有 RTT，中控从历史汇总的波动和流量速率

@@ -6,16 +6,27 @@ enrollment path: QR or `.loom-invite` import, a non-exportable Android
 Keystore identity, signed pull with a durable anti-rollback floor, candidate
 activation/previous recovery, and signed health reporting. Stage 3 adds the
 signed mobile route plan, Direct / Auto / fixed-exit preference, authenticated
-loopback selector changes, bounded candidate measurement, threshold damping,
-and plan-scoped offline selection reuse.
+loopback selector changes, one deduplicated entry-probe round per underlying
+network generation, verified server-observation reuse, threshold damping,
+actual-selector readback, and plan-scoped offline evidence reuse.
 
 The three route modes are enabled only after a verified managed snapshot carries
 a mobile route plan. Direct requires a direct candidate for every selector;
 fixed-exit choices are the exact intersection authorized by the signed plan.
 If a fixed exit is removed, the client blocks instead of silently falling back.
-Auto always probes the current path, rotates the remaining candidates within
-the signed budget, leaves a failed path immediately, and otherwise switches
-only after the configured sample and improvement thresholds are met.
+Auto never probes a complete candidate or business path. It sends one ICMP echo
+per distinct authorized entry address in parallel, then reuses fresh canonical
+v5 server observations returned by the existing health-report cycle. Missing,
+expired, out-of-scope or invalid evidence stays unknown. A lower failure rate
+can switch immediately; at equal failure rate, removing a relay without adding
+estimated latency is not blocked by the improvement threshold. Same-hop
+replacements and added relays still require the configured improvement.
+
+The Current Paths card is a read-only projection of libbox selector readback.
+It shows the entry ping, each matching WireGuard or public Hysteria2 server hop,
+and each exact target observation separately. It does not infer measurements
+from candidate names or present segmented evidence as end-to-end P50/P95,
+business throughput, or whole-path health.
 
 The primary Connect action stays disabled until a verified managed snapshot is
 available. Debug builds expose the bundled stage-1 Direct fixture in a separate
@@ -131,7 +142,11 @@ enters a candidate slot. Its CA uses an immutable content-addressed path, so
 preflight cannot replace the active profile's trust file. `VpnService` promotes
 the candidate only after libbox starts and real DNS plus HTTPS probes traverse
 the TUN; otherwise it restores the last verified profile. Reports use the same
-Keystore key through the existing canonical v5 and self-check v1 contracts.
+Keystore key through the existing canonical v5 and self-check v1 contracts;
+the canonical v5 claim also binds the actual selector, candidate and chain.
+The same report POST requests `observations=1`: a current server returns a
+bounded JSON snapshot with HTTP 200, while an older server's empty 204 remains
+a successful report with no new route evidence.
 
 ## Emulator and device acceptance
 

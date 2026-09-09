@@ -72,11 +72,11 @@
 | sing-box 配置渲染 | 已实现 | 配置形状部分可复用 | TUN-only bundle 与严格 hydration 已实现 |
 | 系统生命周期 | systemd 已实现 | Portable 前台、受限 Service broker、Job Object 与更新恢复已实现；amd64 实机 TUN 启停、宿主崩溃恢复和安装器生命周期已验收 | 原生 `VpnService`、前台通知、幂等启停与 Emulator TUN 已实现；真机网络切换/Doze 待验收 |
 | 配置 pull 与验签 | Loom CLI 已实现 | signed current、generation floor、snapshot 签名、节点 bundle 哈希与 current/previous 验证缓存已适配；缓存会在 hydrate 前完整复验并激活通过预检的候选 | signed current 镜像选择、防回退、完整签名链重放与 candidate/current/previous 事务已实现 |
-| Agent 调参 | Go Agent 已实现 | 已接入候选链、决策 scope、探测预算与 selector | Stage 3 已接入签名候选计划、预算轮测、阈值阻尼、三态约束与 selector 原子切换；真机受管配置验收待完成 |
+| Agent 调参 | Go Agent 已实现 | 已接入候选链、入口一次测量、服务器观测与 selector | Stage 3 已接入签名候选计划、入口一次测量、服务器观测、阈值阻尼、三态约束与 selector 读回事务；真机受管配置验收待完成 |
 | 安全存储 | 0600 本地文件 | Installed 使用 machine-scope DPAPI 与安装器创建的受限 ACL；Portable 身份、vault 与候选使用用户范围 DPAPI；未另加 CNG 存储 | 不可导出 Keystore P-256 身份与 AES-GCM 应用私有存储已实现 |
 | 安装与升级 | 已有签名 `tar.gz`、校验与安装器；后续版本仍走 signed pull | 双架构 ZIP/MSI 已实现；可配置 SignTool 验签构建，正式签名需要实际证书 | Linux 可重复构建 debug APK；私有发布签名与覆盖升级演练属于 Stage 4 |
 | 加入网络/二维码 | 中控与 Linux CLI 已实现 | 三个 edition 已接入原生 GUI、二维码/加入文件解析和安全绑定；Installed 普通用户托盘经受限 IPC 加入 | 中控 Android Device、二维码/加入文件、CSR 身份绑定与崩溃恢复已实现；正式环境真机待验收 |
-| 可信运行态上报 | `/status` 拉取与 gossip 已实现 | 现有两签 producer 已通过原生与实机上报 204、健康/故障和停止后 stale 验收 | Keystore 外部签名的 canonical v5 + self-check v1 producer 已实现；服务端纵向测试为 204，生产真机待验收 |
+| 可信运行态上报 | `/status` 拉取与 gossip 已实现 | 现有两签 producer 已通过原生与实机上报 204、健康/故障和停止后 stale 验收 | Keystore 外部签名的 canonical v5 + self-check v1 producer 已实现，并兼容 200 观测读取与旧 204；生产真机待验收 |
 | 设备吊销 | access-only 支持单步直接移除/吊销，也保留 signed decommission；服务器职责的依赖迁移未完成 | 中控可直接撤销 access-only 身份与专属凭据；不远程删除 Windows 本机文件 | access-only 中控身份/凭据吊销沿用统一事务；真机撤权与旧缓存收敛待 Stage 4 验收 |
 
 当前渲染器已按显式部署目标拆开平台无关配置与 Linux 生命周期产物：参考矩阵中的
@@ -545,7 +545,8 @@ Android App 包含：
 - sing-box Android 核心；
 - `VpnService` 与常驻通知；
 - 当前路径、连接状态、有限诊断与手动重连；
-- 最小调度适配：读取候选/排名、执行切换、离线沿用、回传 L4 观测。
+- 最小调度适配：实际 selector 读回、入口一次测量、服务器签名观测复用、离线沿用和
+  实际路径状态上报。
 - 中控下发的 package/domain/IP matcher、Service 与声明关系；界面只读展示生效
   结果；用户只能选择 Direct / Auto / 指定出口三种顶层模式。
 
@@ -571,15 +572,17 @@ Loom core 单运行时 AAR。客户端先校验二维码中的平台公钥指纹
 签名链，候选只有在 libbox 启动及真实 DNS/HTTPS 探测通过后才提交，否则恢复 previous。
 可信上报复用 canonical v5 与 self-check v1，并由 Keystore 对共享核心准备的原文签名。
 同一签名 bundle 还携带数据型移动调度计划；共享 Go 核心校验它与 sing-box selector、
-候选顺序、显式链和探测用户完全一致，并执行计划作用域隔离、候选预算轮换、窗口聚合与
-切换阈值。Kotlin 宿主只负责生命周期、Keystore 加密状态和已认证的回环 selector 事务。
+候选顺序、显式链和探测用户完全一致，并执行计划作用域隔离、入口后服务器观测复用与
+切换阈值。Kotlin 宿主只负责生命周期、每底层网络代一次的入口并行测量、Keystore
+加密状态和已认证的回环 selector 事务；不再运行候选预算轮换或完整路径窗口聚合。
 
 中控已能创建 access-only Android Device，生成不夹带 Linux 安装说明的二维码/加入文件，
 配置 Android TUN-only SSOT，并按精确 bundle 引用返回秘密；服务端纵向测试覆盖 claim pending
 与幂等 replay、ready、签名配置和可信报告 204。API 35 x86_64 Emulator 覆盖正式标识与三态
 入口、Keystore、签名 fixture、DNS/HTTPS 穿过 TUN、断开释放和再次连接。上述是仓库和
 Emulator 证据；未部署的中控代码、开发签名 APK 或模拟器 204 不能冒充生产手机已经入网。
-Direct / Auto / 指定出口会保存本机偏好并驱动 selector；生产受管配置下的故障切换与
+Direct / Auto / 指定出口会保存本机偏好并驱动 selector；路径页按实际 selector 逐连线
+显示入口单次 ping 和已有服务器观测，不把分段证据包装成整条路径健康。生产受管配置下的故障切换与
 Wi-Fi/蜂窝、Doze、进程回收仍需 Stage 4 真机验收。
 
 Android 不安装 Linux 版 Loom Agent、systemd unit、`/etc/loom` 路径或 Loom
@@ -944,14 +947,15 @@ ProgramData ACL、MSI 升级/卸载/重装与身份保留，以及 amd64 真实 
 
 - Kotlin/Compose `VpnService` 宿主与钉住版本的 sing-box libbox 集成；
 - 二维码加入、Keystore、签名 pull；
-- 最小排名/selector/离线能力；
+- 共享分段决策、实际 selector 读回、离线可信证据和逐连线路径展示；
 - 按中控 package/domain/IP matcher 渲染规则，并提供 Direct / Auto / 指定出口；
 - Emulator 覆盖 UI、权限和基本 TUN，真机覆盖前后台、网络切换与省电策略；
 - 签名 APK 发布和升级演练。
 
 前三项及候选配置离线缓存/恢复、可信健康上报已进入代码，并通过服务端纵向测试、
-共享核心测试与 API 35 Emulator 基线；三态入口只使用签名候选，固定出口撤权会阻断，
-Auto 已接入预算轮测、窗口和阈值。中控 package/IP matcher、生产受管配置真机故障切换、
+共享核心测试与 API 35 Emulator 基线；三态入口只使用签名候选，固定出口撤权会阻断。
+Auto 在每个底层网络代只对去重授权入口各测一次，之后只复用已验签服务器观测；不做
+候选轮测、完整路径窗口或 `min_samples` 等待。中控 package/IP matcher、生产受管配置真机故障切换、
 真机前后台与 Wi-Fi/蜂窝切换、厂商省电限制、固定升级签名和覆盖升级仍未完成，不能把
 开发签名 APK 或纯函数调度测试冒充为这些验收已经完成。
 

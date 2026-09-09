@@ -139,9 +139,10 @@ Device
 ```
 
 - 管理员创建时选择平台；客户端仍报告本机平台，服务端要求它与邀请精确一致。
-- 当前 Windows 只允许 `use_loom`；Linux 可组合 `use_loom`、`forward` 和
+- 当前 Windows 和 Android 只允许 `use_loom`；Linux 可组合 `use_loom`、`forward` 和
   `internet_egress`。`internet_egress` 必须包含 `forward`，只有 `use_loom` 才能携带
-  Destination grants。Android 属于统一 Device 模型，但当前交付尚未实现，因此不能创建邀请。
+  Destination grants。Android 属于统一 Device 模型，可创建固定 Android 平台的邀请；
+  客户端仍须完成 Keystore 身份绑定、签名 pull 和候选激活才算加入完成。
 - claim 建立 Identity；只有 Enrollment 事务成功提交展开后的 Membership、
   Responsibilities 与 grants，Device 才获得对应期望态。两者都不等于已经 online。
 - 一次性码的 TTL 限制首次绑定。绑定后只允许同一 token、CSR、request ID、平台和
