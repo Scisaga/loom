@@ -154,7 +154,14 @@ type sbAPI struct {
 }
 
 type sbExperimental struct {
-	ClashAPI *sbAPI `json:"clash_api,omitempty"`
+	CacheFile *sbCacheFile `json:"cache_file,omitempty"`
+	ClashAPI  *sbAPI       `json:"clash_api,omitempty"`
+}
+
+type sbCacheFile struct {
+	Enabled     bool   `json:"enabled"`
+	Path        string `json:"path"`
+	StoreFakeIP bool   `json:"store_fakeip"`
 }
 
 type sbDNSServer struct {
@@ -166,14 +173,28 @@ type sbDNSServer struct {
 	// 是 block(未匹配一律阻断,§5.8 的 fail_closed) —— 于是 sing-box 连
 	// 解析器都问不到。症状只有"直连候选失败":走代理的域名是交给出口解析
 	// 的(§7.4),根本不用本地 DNS,所以代理候选一切正常。
-	Detour string `json:"detour"`
+	Detour string `json:"detour,omitempty"`
 }
 
 // dnsOutbound 是 DNS 查询专用的直连出站。
 //
 // 它不参与选路,也不该被任何访问声明引用 —— 它存在的唯一目的是让解析器
 // 可达。
-const dnsOutbound = "dns-out"
+const (
+	dnsOutbound = "dns-out"
+
+	// Android 的应用 DNS 不能把接入侧解析到的地址直接交给固定出口。
+	// FakeIP 让 TUN 连接在路由前恢复成 FQDN；代理协议把 FQDN 传到链末，
+	// 最终出口才使用它自己的 DNS 解析真实目标。规则只匹配 tun-in，不能
+	// 污染 libbox 自己解析公网入口所需的 bootstrap DNS。
+	androidFakeIPDNSTag    = "dns-fakeip"
+	androidFakeIPTransport = "fakeip"
+	androidFakeIPv4Range   = "198.18.0.0/15"
+	androidFakeIPv6Range   = "2001:db8:8000::/49"
+	androidTUNIPv4         = "172.19.0.1/30"
+	androidTUNIPv6         = "2001:db8::1/126"
+	androidFakeIPCache     = "cache.db"
+)
 
 // ProbeListen 是探测专用入口。
 //
@@ -202,9 +223,24 @@ func ProbeUser(candidateTag string) string {
 }
 
 type sbDNS struct {
-	Servers        []sbDNSServer `json:"servers"`
-	Strategy       string        `json:"strategy,omitempty"`
-	ReverseMapping bool          `json:"reverse_mapping,omitempty"`
+	Servers          []sbDNSServer `json:"servers"`
+	Rules            []sbDNSRule   `json:"rules,omitempty"`
+	Strategy         string        `json:"strategy,omitempty"`
+	ReverseMapping   bool          `json:"reverse_mapping,omitempty"`
+	IndependentCache bool          `json:"independent_cache,omitempty"`
+	FakeIP           *sbDNSFakeIP  `json:"fakeip,omitempty"`
+}
+
+type sbDNSRule struct {
+	Inbound   []string `json:"inbound,omitempty"`
+	QueryType []string `json:"query_type,omitempty"`
+	Server    string   `json:"server"`
+}
+
+type sbDNSFakeIP struct {
+	Enabled    bool   `json:"enabled"`
+	Inet4Range string `json:"inet4_range"`
+	Inet6Range string `json:"inet6_range"`
 }
 
 type sbConfig struct {
@@ -281,9 +317,16 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 	declIDs, credOf := accessDecls(s, p)
 
 	if p.Access.Platform.UsesTUN() {
+		addresses := []string{androidTUNIPv4}
+		if p.Access.Platform == model.Android {
+			// Android 会给 A 与 AAAA 都返回 FakeIP。两族地址都必须进入 TUN，
+			// 否则 AAAA 会落到系统的 unreachable IPv6 默认路由，连接无法在
+			// libbox 内恢复成域名。
+			addresses = append(addresses, androidTUNIPv6)
+		}
 		cfg.Inbounds = append(cfg.Inbounds, sbInbound{
 			Type: "tun", Tag: "tun-in",
-			Address:   []string{"172.19.0.1/30"},
+			Address:   addresses,
 			AutoRoute: true, Stack: "system",
 		})
 	}
@@ -801,6 +844,25 @@ func renderSingBox(s *model.SSOT, n *model.Node) (File, []Skip, error) {
 			d.Servers = append(d.Servers, sbDNSServer{
 				Tag: fmt.Sprintf("dns%d", i), Address: addr, Detour: dnsOutbound})
 		}
+		if n.IsAccess() && n.Access.Platform == model.Android {
+			// 只把来自应用 TUN 的地址查询交给 FakeIP。libbox 自己对公网入口
+			// 的解析没有 tun-in 元数据，仍命中首个真实解析器；独立缓存防止
+			// 两类查询通过相同问题名相互复用答案。
+			d.IndependentCache = true
+			d.Servers = append(d.Servers, sbDNSServer{
+				Tag: androidFakeIPDNSTag, Address: androidFakeIPTransport,
+			})
+			d.Rules = append(d.Rules, sbDNSRule{
+				Inbound:   []string{"tun-in"},
+				QueryType: []string{"A", "AAAA"},
+				Server:    androidFakeIPDNSTag,
+			})
+			d.FakeIP = &sbDNSFakeIP{
+				Enabled:    true,
+				Inet4Range: androidFakeIPv4Range,
+				Inet6Range: androidFakeIPv6Range,
+			}
+		}
 		cfg.DNS = d
 		cfg.Outbounds = append(cfg.Outbounds, sbOutbound{Type: "direct", Tag: dnsOutbound})
 	}
@@ -822,6 +884,13 @@ func renderSingBox(s *model.SSOT, n *model.Node) (File, []Skip, error) {
 			ExternalController: APIListen,
 			Secret:             secretRef("api/" + n.ID),
 		}}
+		if n.Access.Platform == model.Android {
+			// Android 会在进程回收、网络切换或配置热更新后重建 libbox。
+			// 持久化映射才能让系统仍缓存着的 FakeIP 在重启后继续恢复为域名。
+			cfg.Experimental.CacheFile = &sbCacheFile{
+				Enabled: true, Path: androidFakeIPCache, StoreFakeIP: true,
+			}
+		}
 	}
 	if n.IsServer() && n.Server.InboundPort > 0 {
 		serverInto(cfg, s, n)

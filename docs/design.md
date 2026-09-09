@@ -1067,6 +1067,16 @@ dns: lookup failed: operation not permitted
 所以 DNS 服务器必须显式指定 `detour`,指向一个专用的直连出站。**它不参与
 选路,存在的唯一目的是让解析器可达。**
 
+Android TUN 的业务域名另有一条硬约束：**目标域名必须由候选链的最终出口
+解析，不能把接入侧得到的 A/AAAA 地址沿链转发。** Android 配置因此只对来自
+`tun-in` 的 A/AAAA 查询返回 FakeIP；业务连接进入 libbox 后先用持久化映射把
+FakeIP 恢复为 FQDN，再把 FQDN 原样传过每一跳，最后由出口节点的 `egress`
+direct 使用该节点自己的 DNS 解析。`reverse_mapping` 只能给路由补充域名元数据，
+不会替换已经确定的目标 IP，不能单独满足这条约束。FakeIP DNS 规则必须限定
+`inbound: tun-in` 并与普通解析器使用独立缓存，否则 libbox 自己解析公网入口时
+也可能拿到 FakeIP，在隧道建立前形成回环；映射必须落入应用私有缓存，且 FakeIP
+的 IPv4/IPv6 地址池都必须被 TUN 接管，才能跨进程重建和系统 DNS 缓存继续工作。
+
 > 这两个坑叠在一起的症状是同一个:直连候选失败、代理候选正常。第一次遇到时
 > 很容易归因成"这台机器上不了网" —— 而实际上它直连 baidu 只要 68ms。
 > **排查顺序应当是:先绕过 DNS 用 IP 直连一次,再看是不是解析的问题。**

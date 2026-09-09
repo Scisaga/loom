@@ -21,13 +21,27 @@ type conf struct {
 			Address string `json:"address"`
 			Detour  string `json:"detour"`
 		} `json:"servers"`
-		ReverseMapping bool `json:"reverse_mapping"`
+		Rules []struct {
+			Inbound   []string `json:"inbound"`
+			QueryType []string `json:"query_type"`
+			Server    string   `json:"server"`
+		} `json:"rules"`
+		ReverseMapping   bool `json:"reverse_mapping"`
+		IndependentCache bool `json:"independent_cache"`
+		FakeIP           *struct {
+			Enabled    bool   `json:"enabled"`
+			Inet4Range string `json:"inet4_range"`
+			Inet6Range string `json:"inet6_range"`
+		} `json:"fakeip"`
 	} `json:"dns"`
 	Inbounds []struct {
-		Type       string `json:"type"`
-		Tag        string `json:"tag"`
-		Listen     string `json:"listen"`
-		ListenPort int    `json:"listen_port"`
+		Type       string   `json:"type"`
+		Tag        string   `json:"tag"`
+		Listen     string   `json:"listen"`
+		ListenPort int      `json:"listen_port"`
+		Address    []string `json:"address"`
+		AutoRoute  bool     `json:"auto_route"`
+		Stack      string   `json:"stack"`
 		Users      []struct {
 			Name     string `json:"name"`
 			Username string `json:"username"`
@@ -69,6 +83,13 @@ type conf struct {
 		} `json:"rules"`
 		Final string `json:"final"`
 	} `json:"route"`
+	Experimental *struct {
+		CacheFile *struct {
+			Enabled     bool   `json:"enabled"`
+			Path        string `json:"path"`
+			StoreFakeIP bool   `json:"store_fakeip"`
+		} `json:"cache_file"`
+	} `json:"experimental"`
 }
 
 // TestManagedAutomaticAndExplicitOverrideRouting 把 mixed 入口的两种派生语义
@@ -825,6 +846,12 @@ func TestDNSHasEscapeFromBlock(t *testing.T) {
 			tags[o.Tag] = true
 		}
 		for _, srv := range c.DNS.Servers {
+			if srv.Address == androidFakeIPTransport {
+				if srv.Tag != androidFakeIPDNSTag || srv.Detour != "" {
+					t.Errorf("%s 的 FakeIP DNS 服务器形状无效：%+v", owner, srv)
+				}
+				continue
+			}
 			if srv.Detour == "" {
 				t.Errorf("%s 的 DNS 服务器 %s 没有 detour —— 查询会落到 route.final=block",
 					owner, srv.Address)
@@ -837,10 +864,11 @@ func TestDNSHasEscapeFromBlock(t *testing.T) {
 	}
 }
 
-// TestAndroidDirectSocketsEscapeOwnTUN 钉住 Android DNS 可达性的宿主侧条件。
-// VpnService 持有默认路由时，仅有 dns-out detour 仍不够；libbox 必须在建立
-// 直连套接字前调用 VpnService.protect（§7.4）。
-func TestAndroidDirectSocketsEscapeOwnTUN(t *testing.T) {
+// TestAndroidDNSResolvesAtFinalEgress 钉住 Android TUN 的两个独立 DNS 边界：
+// libbox 自己的入口/bootstrap 解析仍从受保护的直连套接字出去；应用的 A/AAAA
+// 查询只得到 FakeIP，使后续连接恢复成 FQDN 并由代理链的最终出口解析。
+// reverse_mapping 只补路由元数据，不能把已经污染的目标 IP 改回域名。
+func TestAndroidDNSResolvesAtFinalEgress(t *testing.T) {
 	s, cfgs := configs(t)
 	for _, node := range s.AccessNodes() {
 		config := cfgs[node.ID]
@@ -853,10 +881,59 @@ func TestAndroidDirectSocketsEscapeOwnTUN(t *testing.T) {
 				node.ID, node.Access.Platform, config.Route.AutoDetectInterface, want)
 		}
 		if !want {
+			if config.DNS != nil && (config.DNS.FakeIP != nil || config.DNS.IndependentCache) {
+				t.Errorf("%s platform=%s 不应启用 Android FakeIP", node.ID, node.Access.Platform)
+			}
+			if config.Experimental != nil && config.Experimental.CacheFile != nil {
+				t.Errorf("%s platform=%s 不应启用 Android FakeIP 缓存", node.ID, node.Access.Platform)
+			}
 			continue
 		}
 		if config.DNS == nil || !config.DNS.ReverseMapping {
 			t.Errorf("%s 的 Android TUN 没有保留受管 DNS 域名", node.ID)
+		}
+		if len(config.DNS.Servers) < 2 || config.DNS.Servers[0].Address == androidFakeIPTransport {
+			t.Fatalf("%s 必须把真实 bootstrap 解析器放在 FakeIP 之前", node.ID)
+		}
+		fakeServerCount := 0
+		for _, server := range config.DNS.Servers {
+			if server.Tag == androidFakeIPDNSTag && server.Address == androidFakeIPTransport && server.Detour == "" {
+				fakeServerCount++
+			}
+		}
+		if fakeServerCount != 1 {
+			t.Errorf("%s 的 Android FakeIP DNS server 数量=%d，期望 1", node.ID, fakeServerCount)
+		}
+		if !config.DNS.IndependentCache {
+			t.Errorf("%s 没有隔离应用 FakeIP 与 bootstrap DNS 缓存", node.ID)
+		}
+		if len(config.DNS.Rules) != 1 ||
+			!slices.Equal(config.DNS.Rules[0].Inbound, []string{"tun-in"}) ||
+			!slices.Equal(config.DNS.Rules[0].QueryType, []string{"A", "AAAA"}) ||
+			config.DNS.Rules[0].Server != androidFakeIPDNSTag {
+			t.Errorf("%s 的 FakeIP 规则未严格限定为 tun-in A/AAAA：%+v", node.ID, config.DNS.Rules)
+		}
+		if config.DNS.FakeIP == nil || !config.DNS.FakeIP.Enabled ||
+			config.DNS.FakeIP.Inet4Range != androidFakeIPv4Range ||
+			config.DNS.FakeIP.Inet6Range != androidFakeIPv6Range {
+			t.Errorf("%s 的 Android FakeIP 地址池无效：%+v", node.ID, config.DNS.FakeIP)
+		}
+		if config.Experimental == nil || config.Experimental.CacheFile == nil ||
+			!config.Experimental.CacheFile.Enabled || !config.Experimental.CacheFile.StoreFakeIP ||
+			config.Experimental.CacheFile.Path != androidFakeIPCache {
+			t.Errorf("%s 没有持久化 Android FakeIP 映射：%+v", node.ID, config.Experimental)
+		}
+		var tunAddresses []string
+		for _, inbound := range config.Inbounds {
+			if inbound.Tag == "tun-in" {
+				tunAddresses = inbound.Address
+				if !inbound.AutoRoute || inbound.Stack != "system" {
+					t.Errorf("%s 的 Android TUN 路由形状无效：%+v", node.ID, inbound)
+				}
+			}
+		}
+		if !slices.Equal(tunAddresses, []string{androidTUNIPv4, androidTUNIPv6}) {
+			t.Errorf("%s 的 Android TUN 没有同时接管 FakeIP 双栈：%v", node.ID, tunAddresses)
 		}
 		dnsIndex, sniffIndex, businessIndex := -1, -1, len(config.Route.Rules)
 		for index, rule := range config.Route.Rules {
