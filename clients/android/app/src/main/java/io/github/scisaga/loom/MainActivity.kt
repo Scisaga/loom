@@ -2,10 +2,10 @@ package io.github.scisaga.loom
 
 import android.Manifest
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -51,6 +51,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -83,6 +84,7 @@ private val CardTint = Color(0xFFF1F5F2)
 
 class MainActivity : ComponentActivity() {
     private val enrollment by lazy { EnrollmentManager.get(this) }
+    private var notificationsAllowed by mutableStateOf(true)
 
     private val vpnPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         if (it.resultCode == RESULT_OK) {
@@ -97,7 +99,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+        notificationsAllowed = notificationPermissionGranted()
+    }
 
     private val inviteFile = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@registerForActivityResult
@@ -114,8 +118,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        notificationsAllowed = notificationPermissionGranted()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+            !notificationsAllowed
         ) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -125,12 +130,15 @@ class MainActivity : ComponentActivity() {
                 enrollment = enrollment,
                 onToggle = ::toggle,
                 onImportFile = { inviteFile.launch(arrayOf("*/*")) },
+                notificationsAllowed = notificationsAllowed,
+                onOpenNotificationSettings = ::openNotificationSettings,
             )
         }
     }
 
     override fun onResume() {
         super.onResume()
+        notificationsAllowed = notificationPermissionGranted()
         if (VpnRuntime.status.value.phase in setOf(ConnectionPhase.STARTING, ConnectionPhase.CONNECTED)) {
             ContextCompat.startForegroundService(
                 this,
@@ -158,6 +166,16 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    private fun notificationPermissionGranted(): Boolean =
+        NotificationManagerCompat.from(this).areNotificationsEnabled()
+
+    private fun openNotificationSettings() {
+        startActivity(
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, packageName),
+        )
+    }
+
     companion object {
         private const val MAX_INVITE_BYTES = 16 * 1024
     }
@@ -168,6 +186,8 @@ private fun LoomHome(
     enrollment: EnrollmentManager,
     onToggle: (ConnectionPhase) -> Unit,
     onImportFile: () -> Unit,
+    notificationsAllowed: Boolean,
+    onOpenNotificationSettings: () -> Unit,
 ) {
     val status by VpnRuntime.status.collectAsStateWithLifecycle()
     val join by enrollment.status.collectAsStateWithLifecycle()
@@ -296,6 +316,10 @@ private fun LoomHome(
                     DebugDirectCard(status = status, onToggle = onToggle)
                 }
 
+                if (!notificationsAllowed) {
+                    NotificationPermissionCard(onOpenNotificationSettings)
+                }
+
                 RouteModeCard(route, routeManager::select)
                 InfoCard(
                     "当前路径",
@@ -339,6 +363,30 @@ private fun LoomHome(
                     color = Muted,
                     fontSize = 12.sp,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NotificationPermissionCard(onOpenSettings: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF7E8)),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth().testTag("notification-permission-card"),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("连接通知已关闭", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "VPN 可以继续运行，但连接状态和故障提醒可能不可见。请在系统设置中允许 Loom 通知。",
+                color = Muted,
+                fontSize = 13.sp,
+            )
+            OutlinedButton(
+                onClick = onOpenSettings,
+                modifier = Modifier.fillMaxWidth().testTag("open-notification-settings"),
+            ) {
+                Text("打开通知设置")
             }
         }
     }
