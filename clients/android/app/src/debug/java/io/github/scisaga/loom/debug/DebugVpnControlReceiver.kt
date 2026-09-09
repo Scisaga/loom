@@ -10,6 +10,7 @@ import io.github.scisaga.loom.readBounded
 import io.github.scisaga.loom.route.RouteManager
 import io.github.scisaga.loom.route.RouteMode
 import io.github.scisaga.loom.vpn.LoomVpnService
+import io.github.scisaga.loom.vpn.VpnRuntime
 import java.io.File
 
 /** ADB-only control surface for physical-device data-plane acceptance. */
@@ -49,6 +50,16 @@ class DebugVpnControlReceiver : BroadcastReceiver() {
                 append(";mode=").append(status.mode.wire)
                 append(";paths=").append(status.currentPaths.size)
                 append(";detail=").append(status.detail)
+            }
+            return
+        }
+        if (intent.action == ACTION_RUNTIME_STATUS) {
+            val status = VpnRuntime.status.value
+            resultData = buildString {
+                append("phase=").append(status.phase.name)
+                append(";dns=").append(status.dnsProbe)
+                append(";https=").append(status.httpsProbe)
+                append(";report=").append(status.trustedReport)
             }
             return
         }
@@ -101,6 +112,7 @@ class DebugVpnControlReceiver : BroadcastReceiver() {
         const val ACTION_ABANDON_PENDING = "io.github.scisaga.loom.debug.ABANDON_PENDING"
         const val ACTION_ENROLLMENT_STATUS = "io.github.scisaga.loom.debug.ENROLLMENT_STATUS"
         const val ACTION_ROUTE_STATUS = "io.github.scisaga.loom.debug.ROUTE_STATUS"
+        const val ACTION_RUNTIME_STATUS = "io.github.scisaga.loom.debug.RUNTIME_STATUS"
         const val ACTION_ROUTE_DIRECT = "io.github.scisaga.loom.debug.ROUTE_DIRECT"
         const val ACTION_ROUTE_AUTO = "io.github.scisaga.loom.debug.ROUTE_AUTO"
         private const val PENDING_INVITE = "pending.loom-invite"
