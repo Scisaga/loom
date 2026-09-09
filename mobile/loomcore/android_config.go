@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"strings"
 )
 
@@ -14,20 +15,23 @@ const (
 )
 
 // RelocateAndroidCA gives one hydrated candidate an immutable,
-// content-addressed CA slot before libbox preflight. relativePath must be
-// exactly tls/ca-<64 lowercase hex>.crt. Every certificate_path anywhere in
-// the JSON must exist as a string and still equal the renderer-owned
-// tls/ca.crt default; all are replaced in one pure transformation. Any other
-// path, duplicate JSON key, missing certificate_path, or non-object root fails.
-func RelocateAndroidCA(config []byte, relativePath string) ([]byte, error) {
-	if !validAndroidCAPath(relativePath) {
-		return nil, errors.New("Android CA candidate path must be tls/ca-<64 lowercase hex>.crt")
+// content-addressed CA slot before libbox preflight. candidatePath must be
+// exactly tls/ca-<64 lowercase hex>.crt or an absolute clean path ending in
+// libbox/tls/ca-<64 lowercase hex>.crt. libbox checks certificate files against
+// the process filesystem rather than SetupOptions.WorkingPath, so Android uses
+// the latter form in production. Every certificate_path anywhere in the JSON
+// must exist as a string and still equal the renderer-owned tls/ca.crt default;
+// all are replaced in one pure transformation. Any other path, duplicate JSON
+// key, missing certificate_path, or non-object root fails.
+func RelocateAndroidCA(config []byte, candidatePath string) ([]byte, error) {
+	if !validAndroidCAPath(candidatePath) {
+		return nil, errors.New("Android CA candidate path must be a content-addressed libbox/tls slot")
 	}
 	var document map[string]json.RawMessage
 	if err := decodeStrictJSON(config, maxBundleBytes, &document); err != nil || document == nil {
 		return nil, errors.New("Android config must be one strict JSON object")
 	}
-	relocated, replaced, err := relocateCertificatePaths(document, relativePath)
+	relocated, replaced, err := relocateCertificatePaths(document, candidatePath)
 	if err != nil {
 		return nil, err
 	}
@@ -42,10 +46,21 @@ func RelocateAndroidCA(config []byte, relativePath string) ([]byte, error) {
 }
 
 func validAndroidCAPath(value string) bool {
-	if !strings.HasPrefix(value, androidCAPathPrefix) || !strings.HasSuffix(value, androidCAPathSuffix) {
+	name := value
+	if strings.HasPrefix(value, "/") {
+		if path.Clean(value) != value {
+			return false
+		}
+		directory := path.Dir(value)
+		if path.Base(directory) != "tls" || path.Base(path.Dir(directory)) != "libbox" {
+			return false
+		}
+		name = "tls/" + path.Base(value)
+	}
+	if !strings.HasPrefix(name, androidCAPathPrefix) || !strings.HasSuffix(name, androidCAPathSuffix) {
 		return false
 	}
-	digest := strings.TrimSuffix(strings.TrimPrefix(value, androidCAPathPrefix), androidCAPathSuffix)
+	digest := strings.TrimSuffix(strings.TrimPrefix(name, androidCAPathPrefix), androidCAPathSuffix)
 	return validLowerHex(digest, 64)
 }
 

@@ -30,12 +30,23 @@ func TestRelocateAndroidCARewritesEveryExactDefault(t *testing.T) {
 	}
 }
 
+func TestRelocateAndroidCAAcceptsAbsoluteLibboxSlot(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	wanted := "/data/user/0/example/files/libbox/tls/ca-" + digest + ".crt"
+	body, err := RelocateAndroidCA([]byte(`{"certificate_path":"tls/ca.crt"}`), wanted)
+	if err != nil || !strings.Contains(string(body), wanted) {
+		t.Fatalf("relocated=%s err=%v", body, err)
+	}
+}
+
 func TestRelocateAndroidCAFailsClosed(t *testing.T) {
 	validPath := "tls/ca-" + strings.Repeat("b", 64) + ".crt"
 	for _, test := range []struct {
 		name, config, path string
 	}{
-		{"absolute target", `{"certificate_path":"tls/ca.crt"}`, "/data/ca.crt"},
+		{"arbitrary absolute target", `{"certificate_path":"tls/ca.crt"}`, "/data/ca.crt"},
+		{"wrong absolute directory", `{"certificate_path":"tls/ca.crt"}`, "/data/files/tls/ca-" + strings.Repeat("a", 64) + ".crt"},
+		{"absolute traversal", `{"certificate_path":"tls/ca.crt"}`, "/data/files/libbox/../tls/ca-" + strings.Repeat("a", 64) + ".crt"},
 		{"uppercase digest", `{"certificate_path":"tls/ca.crt"}`, "tls/ca-" + strings.Repeat("A", 64) + ".crt"},
 		{"traversal", `{"certificate_path":"tls/ca.crt"}`, "tls/../ca-" + strings.Repeat("a", 64) + ".crt"},
 		{"missing field", `{"tls":{"enabled":true}}`, validPath},

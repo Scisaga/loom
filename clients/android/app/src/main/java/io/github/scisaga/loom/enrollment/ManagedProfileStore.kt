@@ -214,13 +214,13 @@ internal class ManagedProfileStore(private val context: Context) {
         val secrets = bootstrap.getString("secrets_env").encodeToByteArray()
         val ca = bootstrap.getString("ca_cert_pem").encodeToByteArray()
         val caRelativePath = "tls/ca-${sha256Hex(ca)}.crt"
-        installImmutableCA(caRelativePath, ca)
+        val caPath = installImmutableCA(caRelativePath, ca).absolutePath
         val prepared = JSONObject(Loomcore.prepareAndroidRuntime(canonicalBundle, secrets).decodeToString())
         check(prepared.getInt("schema") == 1) { "Android runtime 准备结果 schema 无效" }
         val routePlan = prepared.optString("route_plan").takeIf(String::isNotBlank)
         val config = Loomcore.relocateAndroidCA(
             prepared.getString("sing_box_config").encodeToByteArray(),
-            caRelativePath,
+            caPath,
         ).decodeToString()
         Libbox.checkConfig(config)
         return ManagedProfile(
@@ -240,12 +240,12 @@ internal class ManagedProfileStore(private val context: Context) {
      * Immutable content-addressed CA slots let a candidate be checked while an
      * existing tunnel continues to use its own CA path.
      */
-    private fun installImmutableCA(relativePath: String, body: ByteArray) {
+    private fun installImmutableCA(relativePath: String, body: ByteArray): File {
         val workingDirectory = libboxWorkingDirectory(context.filesDir)
         val directory = workingDirectory.resolve("tls").apply { mkdirs() }
         val target = workingDirectory.resolve(relativePath)
         check(target.parentFile == directory) { "CA 槽路径越界" }
-        if (target.isFile && target.readBytes().contentEquals(body)) return
+        if (target.isFile && target.readBytes().contentEquals(body)) return target
         val temporary = File.createTempFile(".ca-slot-", ".tmp", directory)
         try {
             FileOutputStream(temporary).use {
@@ -262,6 +262,7 @@ internal class ManagedProfileStore(private val context: Context) {
             if (temporary.exists()) temporary.delete()
         }
         check(target.readBytes().contentEquals(body)) { "CA 槽写入回读不一致" }
+        return target
     }
 
     private fun decodeCanonicalBase64(value: String): ByteArray {
