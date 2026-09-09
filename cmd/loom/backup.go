@@ -340,6 +340,11 @@ func defaultBackupSrcs() ([]backupSrc, error) {
 		{path: "deploy/keys"},
 		{path: "deploy/secrets.env"},
 		{path: "deploy/pki"},
+		// Android 的发布 keystore 与它的构建凭据共同构成固定包名的升级
+		// 身份。它只在第一次 provision 之后出现，所以 clean clone 上允许
+		// 缺失；但只要目录存在，默认备份就必须递归收集。否则控制面备份
+		// 可以成功，灾难恢复后却再也无法覆盖升级已经安装的 APK。
+		{path: "deploy/android", optional: true},
 		// 源头存档:SSOT 是全系统唯一不可再生的输入,而它没有别的版本
 		// 历史(不在 git,中控界面覆盖式保存)。存档只在中控本地,
 		// 那台机器没了就没了 —— 而中控没了本来就是"从备份恢复"事件。

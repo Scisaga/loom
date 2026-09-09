@@ -142,6 +142,24 @@ key. Preserve that key and its credentials in a separate protected backup:
 losing it makes in-place upgrades of the fixed `io.github.scisaga.loom` package
 impossible.
 
+Once `deploy/android` exists, the repository-level `loom backup` default set
+includes the complete directory. Create an encrypted backup, copy the archive
+off this machine, and store its passphrase through a different channel:
+
+```bash
+go run ./cmd/loom backup -o /secure/destination/loom-secrets.bak \
+  -passphrase-file /separate/location/backup-passphrase
+./clients/android/scripts/verify-release-backup.sh \
+  /secure/destination/loom-secrets.bak \
+  /separate/location/backup-passphrase
+```
+
+The verifier restores into a new temporary directory, requires byte-identical
+signing material, and proves that the recovered PKCS12 can be opened with the
+recovered credentials. It never overwrites the live key. A backup left on the
+builder, or an archive stored beside its passphrase, does not satisfy the
+off-machine recovery requirement.
+
 The enrollment endpoint must also serve a complete TLS chain which terminates
 at a root in the supported Android system stores. Verify this on physical
 devices, not only with a builder's OpenSSL bundle. In particular, the short

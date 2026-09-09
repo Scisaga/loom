@@ -136,6 +136,12 @@ func TestDefaultBackupSrcsCoverTheIrreplaceable(t *testing.T) {
 		}
 	}
 
+	// Android 发布身份在第一次 provision 后才出现，所以 clean clone 上
+	// 可以没有；一旦存在，默认备份必须递归收集 keystore 和构建凭据。
+	if !got["deploy/android"] || !optional["deploy/android"] {
+		t.Error("deploy/android 应在清单里,且必须在首次 provision 前允许缺失")
+	}
+
 	// 源头存档要发布器成功发布过一次才会建,所以它可以合法地还不存在。
 	if !got["deploy/ssot-history"] || !optional["deploy/ssot-history"] {
 		t.Error("deploy/ssot-history 应在清单里,且必须是可选的")
