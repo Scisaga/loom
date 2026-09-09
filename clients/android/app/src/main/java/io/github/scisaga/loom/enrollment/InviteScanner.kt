@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.OutlinedButton
@@ -41,8 +42,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -52,6 +55,11 @@ import com.google.zxing.common.HybridBinarizer
 import com.google.zxing.qrcode.QRCodeReader
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+
+private val ScannerGreen = Color(0xFF239B68)
+private val ScannerInk = Color(0xFF17211B)
+private val ScannerMuted = Color(0xFF647269)
+private val ScannerCard = Color(0xFFFFFFFF)
 
 @Composable
 fun InviteScanner(
@@ -76,14 +84,24 @@ fun InviteScanner(
         contentAlignment = Alignment.TopCenter,
     ) {
         Card(
-            colors = CardDefaults.cardColors(containerColor = Color.Black),
+            colors = CardDefaults.cardColors(containerColor = ScannerCard),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
             shape = RoundedCornerShape(20.dp),
             modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().testTag("invite-scanner"),
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    "扫描加入二维码",
+                    color = ScannerInk,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                )
                 if (granted && !cameraFailed) {
                     BoxWithConstraints(
-                        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 16.dp, end = 16.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         contentAlignment = Alignment.Center,
                     ) {
                         val edge = scannerViewportEdge(maxWidth)
@@ -103,36 +121,39 @@ fun InviteScanner(
                                 modifier = Modifier
                                     .align(Alignment.Center)
                                     .fillMaxSize(0.72f)
-                                    .border(2.dp, Color.White, RoundedCornerShape(16.dp))
+                                    .border(2.dp, ScannerGreen, RoundedCornerShape(16.dp))
                                     .testTag("invite-scanner-reticle"),
                             )
                         }
                     }
                     Text(
                         "将中控的一次性加入二维码放入方框。二维码不会写入相册或诊断。",
-                        color = Color.White,
-                        modifier = Modifier.padding(horizontal = 16.dp),
+                        color = ScannerMuted,
+                        fontSize = 13.sp,
                     )
                 } else if (!granted) {
                     Text(
                         "扫码需要相机权限；也可以返回后导入 .loom-invite 文件。",
-                        color = Color.White,
-                        modifier = Modifier.padding(20.dp),
+                        color = ScannerMuted,
+                        fontSize = 13.sp,
                     )
                     Button(
                         onClick = { permission.launch(Manifest.permission.CAMERA) },
-                        modifier = Modifier.padding(horizontal = 16.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = ScannerGreen),
                     ) { Text("允许相机") }
                 } else {
                     Text(
                         "无法启动相机。请返回并导入 .loom-invite 文件，或稍后重新打开扫码。",
-                        color = Color.White,
-                        modifier = Modifier.padding(20.dp).testTag("invite-camera-error"),
+                        color = ScannerMuted,
+                        fontSize = 13.sp,
+                        modifier = Modifier.testTag("invite-camera-error"),
                     )
                 }
                 OutlinedButton(
                     onClick = onCancel,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 16.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ScannerGreen),
                 ) { Text("取消") }
             }
         }

@@ -190,9 +190,18 @@ func TestFreezesVersionsAndSecrets(t *testing.T) {
 	if len(m.Components) != len(s.Nodes) {
 		t.Errorf("冻了 %d 台机器的版本,期望 %d 台", len(m.Components), len(s.Nodes))
 	}
+	nodes := s.NodeByID()
 	for _, c := range m.Components {
-		if c.SingBox == "" || c.Agent == "" {
-			t.Errorf("%s 的版本没冻全:%+v", c.Node, c)
+		n := nodes[c.Node]
+		if c.SingBox == "" {
+			t.Errorf("%s 的 sing-box 版本未冻结:%+v", c.Node, c)
+		}
+		if n != nil && n.IsAccess() && !n.Access.Platform.UsesLinuxLifecycle() {
+			if c.WireGuard != "" || c.Tailscale != "" || c.Agent != "" {
+				t.Errorf("%s 的非 Linux manifest 含不可执行服务器组件:%+v", c.Node, c)
+			}
+		} else if c.Agent == "" {
+			t.Errorf("%s 的 Linux Agent 版本未冻结:%+v", c.Node, c)
 		}
 	}
 	// fixture 里 cn-bj 有节点级覆盖,应当压过全局默认。

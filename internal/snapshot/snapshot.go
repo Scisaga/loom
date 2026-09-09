@@ -138,6 +138,16 @@ func Build(s *model.SSOT, res *render.Result, ssotBytes []byte, meta Meta) *Mani
 	for i := range s.Nodes {
 		n := &s.Nodes[i]
 		v := s.VersionsFor(n)
+		// Windows 与 Android 复用 defaults 中的 sing-box 版本坐标，但它们
+		// 不消费 Linux 的 WireGuard、Tailscale 或 Agent 可执行组件。调度计划
+		// 虽然沿用 agent/config.json 的数据格式，执行者仍是各自的平台宿主。
+		// manifest 只声明设备真正能够运行的组件，避免已签名的版本坐标被
+		// 客户端误解为安装或执行服务器程序的授权。
+		if n.IsAccess() && !n.Access.Platform.UsesLinuxLifecycle() {
+			v.WireGuard = ""
+			v.Tailscale = ""
+			v.Agent = ""
+		}
 		m.Components = append(m.Components, ComponentRef{
 			Node: n.ID, SingBox: v.SingBox, WireGuard: v.WireGuard,
 			Tailscale: v.Tailscale, Agent: v.Agent,
