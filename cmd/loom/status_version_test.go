@@ -55,8 +55,8 @@ func joined(lines []string) string { return strings.Join(lines, "\n") }
 func TestFetchFailureIsNotMistakenForOldBinary(t *testing.T) {
 	vcs := map[string]*version.Coordinate{
 		"demo-d": coord("aaaa111122223333"),
-		"demo-e":  coord("aaaa111122223333"),
-		"demo-a":  coord("aaaa111122223333"),
+		"demo-e": coord("aaaa111122223333"),
+		"demo-a": coord("aaaa111122223333"),
 	}
 	// demo-c 拉取超时:它既不在 vcs 里,也不在 answered 里。
 	answered := map[string]bool{"demo-d": true, "demo-e": true, "demo-a": true}
@@ -102,7 +102,7 @@ func TestDenominatorComesFromSSOTNotFromWhoAnswered(t *testing.T) {
 func TestUnreachableIsReportedButNotAnAlarm(t *testing.T) {
 	vcs := map[string]*version.Coordinate{
 		"demo-d": coord("aaaa111122223333"),
-		"demo-e":  coord("aaaa111122223333"),
+		"demo-e": coord("aaaa111122223333"),
 	}
 	answered := map[string]bool{"demo-d": true, "demo-e": true}
 	lines, bad := versionFindings(vcs, answered, []string{"demo-b", "demo-c"}, 5)
@@ -122,7 +122,7 @@ func TestUnreachableIsReportedButNotAnAlarm(t *testing.T) {
 func TestCommitSplitIsAnAlarm(t *testing.T) {
 	vcs := map[string]*version.Coordinate{
 		"demo-d": coord("aaaa111122223333"),
-		"demo-e":  coord("bbbb444455556666"),
+		"demo-e": coord("bbbb444455556666"),
 	}
 	lines, bad := versionFindings(vcs, map[string]bool{"demo-d": true, "demo-e": true}, nil, 2)
 	if !strings.Contains(joined(lines), "不是同一个 commit") || bad != 1 {
