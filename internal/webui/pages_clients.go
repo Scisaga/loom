@@ -78,8 +78,6 @@ func pageDevices(d Deps, state clientPageState, isAuthed bool) string {
 	}
 	if isAuthed && control != nil && control.CreateInvite != nil {
 		b.WriteString(`<a class="button primary sp" href="/devices?new=1">＋ Create Device</a>`)
-	} else if d.Control != nil && !isAuthed {
-		fmt.Fprintf(&b, `<a class="button sp" href="%s">Sign in to add</a>`, esc(loginURL("/devices?new=1")))
 	}
 	b.WriteString(`</div>`)
 	if inventoryErr == nil && len(inventory.Clients) == 0 {
@@ -93,7 +91,7 @@ func pageDevices(d Deps, state clientPageState, isAuthed bool) string {
 			if device.Legacy {
 				identityNote = ` · <span class="tiny warn">Identity not indexed</span>`
 			}
-			fmt.Fprintf(&b, `<tr><td><div class=client-name><b><a href="/devices/%s">%s</a></b><span class="mono dim">%s%s</span></div><td><b>%s</b>%s<td>%s<td>%s<td><span class="client-status %s"><span class=dot></span>%s</span><span class="client-runtime-detail tiny dim">%s</span><td>%s</tr>`,
+			fmt.Fprintf(&b, `<tr><td><div class=client-name><b><a href="/devices/%s">%s</a></b><span class="mono dim">%s%s</span></div><td><div class=device-membership><b>%s</b>%s</div><td>%s<td>%s<td><span class="client-status %s"><span class=dot></span>%s</span><span class="client-runtime-detail tiny dim">%s</span><td>%s</tr>`,
 				url.PathEscape(device.ID), esc(device.ID), esc(identityMeta), identityNote,
 				esc(orDash(device.Membership)), devicePauseAction(d, device, isAuthed), deviceTagList(device.Responsibilities),
 				deviceTagList(device.DestinationGrants), statusClass, esc(statusLabel),
@@ -204,20 +202,19 @@ func pageDeviceDetail(d Deps, deviceID string, isAuthed bool) string {
 // 暂停按当前 SSOT 职责开放，运行态离线不应妨碍管理员恢复设备(§14.4)。
 func devicePauseAction(d Deps, device ClientView, isAuthed bool) string {
 	control := deviceControl(d)
-	if control == nil || control.SetDevicePaused == nil ||
+	if !isAuthed || control == nil || control.SetDevicePaused == nil ||
 		len(device.Responsibilities) != 1 || device.Responsibilities[0] != "use_loom" ||
 		(device.Membership != "active" && device.Membership != "paused") ||
 		device.Status == "revoked" || device.Status == "pending" || device.Status == "provisioning" || device.ReplacedBy != "" {
 		return ""
 	}
-	if !isAuthed {
-		return fmt.Sprintf(`<div class=device-pause-action><a class="button tiny" href="%s">Sign in to manage</a></div>`, esc(loginURL("/devices")))
-	}
 	action, label := "pause", "Pause"
+	icon := `<path d="M8 5v14M16 5v14"/>`
 	if device.Membership == "paused" {
 		action, label = "resume", "Resume"
+		icon = `<path d="m8 5 11 7-11 7Z"/>`
 	}
-	return fmt.Sprintf(`<form class=device-pause-action data-submit-progress method=post action="/devices/%s"><input type=hidden name=id value="%s"><button class="button tiny" aria-label="%s %s">%s</button><span class="tiny dim">Loom forwarding access</span></form>`, action, esc(device.ID), label, esc(device.ID), label)
+	return fmt.Sprintf(`<form class=device-pause-action data-submit-progress method=post action="/devices/%s"><input type=hidden name=id value="%s"><button class="button tiny" aria-label="%s %s" title="%s Loom forwarding access"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">%s</svg></button></form>`, action, esc(device.ID), label, esc(device.ID), label, icon)
 }
 
 func deviceCanReplace(device ClientView) bool {
