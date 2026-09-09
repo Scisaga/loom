@@ -121,9 +121,15 @@ class LoomVpnService : VpnService(), PlatformInterface {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (boxService == null) startForeground(NOTIFICATION_ID, foregroundNotification("正在准备…"))
-        when (intent?.action ?: ACTION_CONNECT) {
+        when (intent?.action) {
+            null, SERVICE_INTERFACE -> {
+                // §8.3：sticky 重建与系统 always-on 启动都没有应用自定义 action。
+                desiredConnected = true
+                scope.launch { startTunnel(useEmulatorProxy = false, startId) }
+            }
             ACTION_CONNECT -> {
                 desiredConnected = true
+                VpnConnectionPreference(this).setDesiredConnected(true)
                 val useEmulatorProxy = intent?.getBooleanExtra(EXTRA_EMULATOR_PROXY, false) == true
                 check(!useEmulatorProxy || applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
                     "emulator proxy fixture is debug-only"
@@ -140,17 +146,21 @@ class LoomVpnService : VpnService(), PlatformInterface {
             }
             ACTION_DISCONNECT -> {
                 desiredConnected = false
+                VpnConnectionPreference(this).setDesiredConnected(false)
                 activeProbe?.cancel()
                 scope.launch { stopTunnel(stopStartId = startId) }
             }
+            else -> stopIdleForeground(startId)
         }
-        return START_NOT_STICKY
+        // §8.3：连接是用户明确发出的长期请求；主动断开已在返回前清除该请求。
+        return vpnServiceRestartMode(desiredConnected)
     }
 
     override fun onBind(intent: Intent): IBinder? = super.onBind(intent)
 
     override fun onRevoke() {
         desiredConnected = false
+        VpnConnectionPreference(this).setDesiredConnected(false)
         activeProbe?.cancel()
         scope.launch {
             stopTunnel()
@@ -854,3 +864,6 @@ class LoomVpnService : VpnService(), PlatformInterface {
         const val EXTRA_EMULATOR_PROXY = "io.github.scisaga.loom.extra.EMULATOR_PROXY"
     }
 }
+
+internal fun vpnServiceRestartMode(desiredConnected: Boolean): Int =
+    if (desiredConnected) android.app.Service.START_STICKY else android.app.Service.START_NOT_STICKY
