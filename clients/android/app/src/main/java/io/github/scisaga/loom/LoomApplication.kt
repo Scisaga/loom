@@ -4,11 +4,12 @@ import android.app.Application
 import io.github.scisaga.libbox.Libbox
 import io.github.scisaga.libbox.SetupOptions
 import io.github.scisaga.loom.enrollment.EnrollmentManager
+import io.github.scisaga.loom.enrollment.libboxWorkingDirectory
 
 class LoomApplication : Application() {
     override fun onCreate() {
         super.onCreate()
-        val working = filesDir.resolve("libbox").apply { mkdirs() }
+        val working = libboxWorkingDirectory(filesDir).apply { mkdirs() }
         val temporary = cacheDir.resolve("libbox").apply { mkdirs() }
         Libbox.setup(
             SetupOptions().apply {

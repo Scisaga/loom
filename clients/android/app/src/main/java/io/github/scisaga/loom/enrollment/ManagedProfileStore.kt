@@ -41,6 +41,9 @@ internal fun validateAndroidRuntimeComponents(
     }
 }
 
+/** Keep certificate slots under the same root libbox uses for relative paths. */
+internal fun libboxWorkingDirectory(filesDir: File): File = filesDir.resolve("libbox")
+
 /**
  * Owns the durable transaction between a verified pull and VpnService. Every
  * profile retains the exact signed inputs, so process restart replays the full
@@ -238,8 +241,9 @@ internal class ManagedProfileStore(private val context: Context) {
      * existing tunnel continues to use its own CA path.
      */
     private fun installImmutableCA(relativePath: String, body: ByteArray) {
-        val directory = context.filesDir.resolve("tls").apply { mkdirs() }
-        val target = context.filesDir.resolve(relativePath)
+        val workingDirectory = libboxWorkingDirectory(context.filesDir)
+        val directory = workingDirectory.resolve("tls").apply { mkdirs() }
+        val target = workingDirectory.resolve(relativePath)
         check(target.parentFile == directory) { "CA 槽路径越界" }
         if (target.isFile && target.readBytes().contentEquals(body)) return
         val temporary = File.createTempFile(".ca-slot-", ".tmp", directory)

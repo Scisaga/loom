@@ -1,9 +1,16 @@
 package io.github.scisaga.loom.enrollment
 
+import java.io.File
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class AndroidRuntimeCompatibilityTest {
+    @Test
+    fun certificateSlotsShareLibboxWorkingDirectory() {
+        assertEquals(File("/app/files/libbox"), libboxWorkingDirectory(File("/app/files")))
+    }
+
     @Test
     fun acceptsOnlyTheEmbeddedSingBoxRuntime() {
         validateAndroidRuntimeComponents(
