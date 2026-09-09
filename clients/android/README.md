@@ -1,4 +1,4 @@
-# Loom Android client — stage 3
+# Loom Android client — stage 3 routing and stage 4 reliability
 
 This directory contains the native Kotlin/Compose host and the pinned
 sing-box/Loom mobile binding. Stage 2 implements the complete access-only
@@ -114,7 +114,33 @@ uses the first available value from:
 The key is public and contains no device credential or control address. Debug
 builds without it remain useful for the emulator data-plane fixture, but QR
 import fails closed before sending the one-time token. Every release task
-refuses to run without a valid 32-byte trust anchor.
+refuses to run without a valid 32-byte trust anchor and all four release-signing
+environment variables:
+
+- `LOOM_ANDROID_RELEASE_STORE_FILE`;
+- `LOOM_ANDROID_RELEASE_STORE_PASSWORD`;
+- `LOOM_ANDROID_RELEASE_KEY_ALIAS`;
+- `LOOM_ANDROID_RELEASE_KEY_PASSWORD`.
+
+Keep the encrypted keystore and its credentials outside Git. The repository's
+ignored default credential file is `../../deploy/android/android-signing.env`;
+it can be overridden with `LOOM_ANDROID_SIGNING_ENV_FILE`. Build and verify a
+private signed APK with:
+
+```bash
+./scripts/provision-release-key.sh # exactly once; refuses to overwrite
+ANDROID_HOME=/path/to/android-sdk ./scripts/build-release.sh
+```
+
+Provisioning creates an encrypted PKCS12 upgrade key and a root-only environment
+file in the ignored deployment directory. It refuses to replace either file and
+does not make a backup. The build helper caps Gradle at four workers, runs unit
+tests and release Lint, builds the release APK, and requires the pinned
+build-tools `apksigner` to verify every APK signature before printing the
+artifact SHA-256. It never creates, copies or backs up the long-lived upgrade
+key. Preserve that key and its credentials in a separate protected backup:
+losing it makes in-place upgrades of the fixed `io.github.scisaga.loom` package
+impossible.
 
 The enrollment endpoint must also serve a complete TLS chain which terminates
 at a root in the supported Android system stores. Verify this on physical
