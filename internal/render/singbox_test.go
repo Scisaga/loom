@@ -46,7 +46,8 @@ type conf struct {
 		OverridePort    int      `json:"override_port"`
 	} `json:"outbounds"`
 	Route struct {
-		Rules []struct {
+		AutoDetectInterface bool `json:"auto_detect_interface"`
+		Rules               []struct {
 			Inbound      []string `json:"inbound"`
 			AuthUser     []string `json:"auth_user"`
 			IPCIDR       []string `json:"ip_cidr"`
@@ -811,6 +812,24 @@ func TestDNSHasEscapeFromBlock(t *testing.T) {
 			if !tags[srv.Detour] {
 				t.Errorf("%s 的 DNS detour %q 指向不存在的出站", owner, srv.Detour)
 			}
+		}
+	}
+}
+
+// TestAndroidDirectSocketsEscapeOwnTUN 钉住 Android DNS 可达性的宿主侧条件。
+// VpnService 持有默认路由时，仅有 dns-out detour 仍不够；libbox 必须在建立
+// 直连套接字前调用 VpnService.protect（§7.4）。
+func TestAndroidDirectSocketsEscapeOwnTUN(t *testing.T) {
+	s, cfgs := configs(t)
+	for _, node := range s.AccessNodes() {
+		config := cfgs[node.ID]
+		if config == nil {
+			t.Fatalf("接入节点 %s 没有 sing-box 配置", node.ID)
+		}
+		want := node.Access.Platform == model.Android
+		if config.Route.AutoDetectInterface != want {
+			t.Errorf("%s platform=%s auto_detect_interface=%t，期望 %t",
+				node.ID, node.Access.Platform, config.Route.AutoDetectInterface, want)
 		}
 	}
 }

@@ -242,7 +242,8 @@
         "outbound": "decl:sg-fixed"
       }
     ],
-    "final": "block"
+    "final": "block",
+    "auto_detect_interface": true
   },
   "experimental": {
     "clash_api": {

@@ -128,8 +128,9 @@ type sbRule struct {
 }
 
 type sbRoute struct {
-	Rules []sbRule `json:"rules,omitempty"`
-	Final string   `json:"final"`
+	Rules               []sbRule `json:"rules,omitempty"`
+	Final               string   `json:"final"`
+	AutoDetectInterface bool     `json:"auto_detect_interface,omitempty"`
 }
 
 // APIListen 是 sing-box 本地控制端点。
@@ -783,6 +784,12 @@ func renderSingBox(s *model.SSOT, n *model.Node) (File, []Skip, error) {
 	}
 
 	if n.IsAccess() {
+		// Android VpnService 会把本进程的普通套接字也纳入默认路由。要求 libbox
+		// 把直连/传输套接字交给平台 protect 回调，否则具名公网入口的启动 DNS
+		// 会在代理建成前绕回自身 TUN（§7.4）。
+		if n.Access.Platform == model.Android {
+			cfg.Route.AutoDetectInterface = true
+		}
 		sk, err := accessInto(cfg, s, n)
 		if err != nil {
 			return File{}, nil, err
