@@ -60,6 +60,7 @@ class DebugVpnControlReceiver : BroadcastReceiver() {
                 append(";dns=").append(status.dnsProbe)
                 append(";https=").append(status.httpsProbe)
                 append(";report=").append(status.trustedReport)
+                append(";alwaysOn=").append(status.alwaysOn)
             }
             return
         }

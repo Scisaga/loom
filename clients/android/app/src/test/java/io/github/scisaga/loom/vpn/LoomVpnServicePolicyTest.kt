@@ -17,6 +17,12 @@ class LoomVpnServicePolicyTest {
     }
 
     @Test
+    fun disconnectActionFollowsAndroidAlwaysOnPolicy() {
+        assertEquals(true, shouldOfferAppDisconnect(alwaysOn = false))
+        assertEquals(false, shouldOfferAppDisconnect(alwaysOn = true))
+    }
+
+    @Test
     fun bootAndUpgradeRestoreOnlyAnAuthorizedRequestedConnection() {
         assertEquals(true, shouldRestoreVpn(Intent.ACTION_BOOT_COMPLETED, true, true))
         assertEquals(true, shouldRestoreVpn(Intent.ACTION_MY_PACKAGE_REPLACED, true, true))

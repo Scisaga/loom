@@ -117,6 +117,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        VpnRuntime.transform { it.copy(alwaysOn = alwaysOnEnabled()) }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -144,11 +145,30 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 desiredConnected = false
                 updateNotification("正在完成设备入网…")
             }
+            ACTION_SYNC_SYSTEM_POLICY -> {
+                val alwaysOn = alwaysOnEnabled()
+                VpnRuntime.transform { it.copy(alwaysOn = alwaysOn) }
+                if (boxService == null) {
+                    stopIdleForeground(startId)
+                } else {
+                    val detail = VpnRuntime.status.value.detail
+                    updateNotification(if (alwaysOn) "始终开启 · $detail" else detail)
+                }
+            }
             ACTION_DISCONNECT -> {
-                desiredConnected = false
-                VpnConnectionPreference(this).setDesiredConnected(false)
-                activeProbe?.cancel()
-                scope.launch { stopTunnel(stopStartId = startId) }
+                if (!shouldOfferAppDisconnect(alwaysOnEnabled())) {
+                    // Android 的始终开启策略是期望态来源；应用内断开不能与系统策略对打。
+                    desiredConnected = true
+                    VpnConnectionPreference(this).setDesiredConnected(true)
+                    VpnRuntime.transform { it.copy(alwaysOn = true) }
+                    updateNotification("始终开启 · ${VpnRuntime.status.value.detail}")
+                    if (boxService == null) scope.launch { startTunnel(useEmulatorProxy = false, startId) }
+                } else {
+                    desiredConnected = false
+                    VpnConnectionPreference(this).setDesiredConnected(false)
+                    activeProbe?.cancel()
+                    scope.launch { stopTunnel(stopStartId = startId) }
+                }
             }
             else -> stopIdleForeground(startId)
         }
@@ -201,7 +221,13 @@ class LoomVpnService : VpnService(), PlatformInterface {
         // A queued disconnect may have removed foreground state while a newer
         // connect command was waiting for the lifecycle mutex.
         startForeground(NOTIFICATION_ID, foregroundNotification("正在准备…"))
-        VpnRuntime.update(VpnStatus(ConnectionPhase.STARTING, "正在验签并建立 TUN…"))
+        VpnRuntime.update(
+            VpnStatus(
+                phase = ConnectionPhase.STARTING,
+                detail = "正在验签并建立 TUN…",
+                alwaysOn = alwaysOnEnabled(),
+            ),
+        )
         updateNotification("正在连接…")
         try {
             DeviceKeyStore().proveBinding()
@@ -329,6 +355,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 detail = detail,
                 dnsProbe = probe.dns,
                 httpsProbe = probe.https,
+                alwaysOn = alwaysOnEnabled(),
             ),
         )
         updateNotification("已连接 · $detail")
@@ -791,22 +818,27 @@ class LoomVpnService : VpnService(), PlatformInterface {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val disconnect = PendingIntent.getService(
-            this,
-            1,
-            Intent(this, LoomVpnService::class.java).setAction(ACTION_DISCONNECT),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_loom)
             .setContentTitle("Loom VPN")
             .setContentText(text)
             .setContentIntent(open)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .addAction(0, "断开", disconnect)
-            .build()
+        if (shouldOfferAppDisconnect(alwaysOnEnabled())) {
+            val disconnect = PendingIntent.getService(
+                this,
+                1,
+                Intent(this, LoomVpnService::class.java).setAction(ACTION_DISCONNECT),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            builder.addAction(0, "断开", disconnect)
+        }
+        return builder.build()
     }
+
+    private fun alwaysOnEnabled(): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && isAlwaysOn
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -859,6 +891,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         const val ACTION_CONNECT = "io.github.scisaga.loom.action.CONNECT"
         const val ACTION_RELOAD = "io.github.scisaga.loom.action.RELOAD"
         const val ACTION_ENROLLMENT_KEEPALIVE = "io.github.scisaga.loom.action.ENROLLMENT_KEEPALIVE"
+        const val ACTION_SYNC_SYSTEM_POLICY = "io.github.scisaga.loom.action.SYNC_SYSTEM_POLICY"
         const val ACTION_DISCONNECT = "io.github.scisaga.loom.action.DISCONNECT"
         const val EXTRA_CANDIDATE_ID = "io.github.scisaga.loom.extra.CANDIDATE_ID"
         const val EXTRA_EMULATOR_PROXY = "io.github.scisaga.loom.extra.EMULATOR_PROXY"
@@ -867,3 +900,5 @@ class LoomVpnService : VpnService(), PlatformInterface {
 
 internal fun vpnServiceRestartMode(desiredConnected: Boolean): Int =
     if (desiredConnected) android.app.Service.START_STICKY else android.app.Service.START_NOT_STICKY
+
+internal fun shouldOfferAppDisconnect(alwaysOn: Boolean): Boolean = !alwaysOn

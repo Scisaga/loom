@@ -129,6 +129,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (VpnRuntime.status.value.phase in setOf(ConnectionPhase.STARTING, ConnectionPhase.CONNECTED)) {
+            ContextCompat.startForegroundService(
+                this,
+                Intent(this, LoomVpnService::class.java).setAction(LoomVpnService.ACTION_SYNC_SYSTEM_POLICY),
+            )
+        }
+    }
+
     private fun toggle(phase: ConnectionPhase) {
         if (phase == ConnectionPhase.CONNECTED || phase == ConnectionPhase.STARTING) {
             ContextCompat.startForegroundService(
@@ -244,9 +254,21 @@ private fun LoomHome(
                             )
                         }
                         Text(status.detail, color = Muted)
+                        if (status.alwaysOn) {
+                            Text(
+                                "Android 已开启“始终开启 VPN”；断开和关闭策略请在系统 VPN 设置中管理。",
+                                color = Muted,
+                                fontSize = 13.sp,
+                                modifier = Modifier.testTag("always-on-guidance"),
+                            )
+                        }
                         Button(
                             onClick = { onToggle(status.phase) },
                             enabled = status.phase != ConnectionPhase.STOPPING &&
+                                !(status.alwaysOn && status.phase in setOf(
+                                    ConnectionPhase.STARTING,
+                                    ConnectionPhase.CONNECTED,
+                                )) &&
                                 (hasManagedProfile || status.phase in setOf(
                                     ConnectionPhase.STARTING,
                                     ConnectionPhase.CONNECTED,
@@ -257,6 +279,10 @@ private fun LoomHome(
                         ) {
                             Text(
                                 when {
+                                    status.alwaysOn && status.phase in setOf(
+                                        ConnectionPhase.STARTING,
+                                        ConnectionPhase.CONNECTED,
+                                    ) -> "由系统保持连接"
                                     status.phase in setOf(ConnectionPhase.CONNECTED, ConnectionPhase.STARTING) -> "断开"
                                     hasManagedProfile -> "连接"
                                     else -> "请先扫码加入"
@@ -339,10 +365,16 @@ private fun DebugDirectCard(
             )
             OutlinedButton(
                 onClick = { onToggle(status.phase) },
-                enabled = status.phase != ConnectionPhase.STOPPING,
+                enabled = status.phase != ConnectionPhase.STOPPING && !(active && status.alwaysOn),
                 modifier = Modifier.fillMaxWidth().testTag("debug-direct-toggle"),
             ) {
-                Text(if (active) "断开 Debug Direct" else "测试 Debug Direct")
+                Text(
+                    when {
+                        active && status.alwaysOn -> "由系统保持连接"
+                        active -> "断开 Debug Direct"
+                        else -> "测试 Debug Direct"
+                    },
+                )
             }
         }
     }
