@@ -23,7 +23,7 @@ func TestExpectedDirectLinksCoverThreePublicInboundsWithoutExtraPairs(t *testing
 	}
 	want := map[string]bool{
 		"demo-d→demo-b": true,
-		"demo-b→demo-c":  true,
+		"demo-b→demo-c": true,
 		"demo-c→demo-d": true,
 	}
 	wantPairOrder := []string{"demo-b\x00demo-c", "demo-b\x00demo-d", "demo-c\x00demo-d"}

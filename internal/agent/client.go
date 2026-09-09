@@ -3,11 +3,10 @@ package agent
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"time"
 
-	"loom/internal/model"
+	"loom/internal/clientroute"
 )
 
 // ClientEntry 是从已验证数据面按候选链提取的入口，不增加配置协议（§5.1）。
@@ -21,10 +20,19 @@ type ClientOptions struct {
 	// §7.3.3：仅供本地界面保留本轮入口结果，不进入报告协议。
 	OnEntries func([]ClientPathMeasurement)
 }
-type entryResult struct {
-	RTT time.Duration
-	At  time.Time
-	Err error
+
+// ClientEntryResult 是客户端在当前连接代对一个授权入口的单次测量。
+// 它不进入 Agent 的窗口样本，也不能冒充完整业务路径健康。
+type ClientEntryResult = clientroute.EntryResult
+
+// §5.5.1：保留 Windows 包内测试使用的旧名称；两个客户端宿主实际复用同一表示。
+type entryResult = ClientEntryResult
+
+// §16.1.2：兼容既有观测缓存测试；运行时决策统一委托给共享 clientroute。
+type clientCost struct {
+	known, failed bool
+	ms            float64
+	failureRate   float64
 }
 
 // RunClient 只在启动时对去重入口各探一次；服务器更新只重算，不调用旧 Run（§5.6）。
@@ -42,7 +50,7 @@ func RunClient(ctx context.Context, cfg *Config, opts ClientOptions) (retErr err
 	if err != nil {
 		return err
 	}
-	entries := map[string]entryResult{}
+	entries := map[string]ClientEntryResult{}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	// 同地址的多个授权身份也只发一个包；绝不按声明或完整候选重复测量。
@@ -65,7 +73,7 @@ func RunClient(ctx context.Context, cfg *Config, opts ClientOptions) (retErr err
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			var r entryResult
+			var r ClientEntryResult
 			probeCtx, cancel := context.WithTimeout(ctx, time.Second)
 			defer cancel()
 			if opts.Probe == nil {
@@ -126,139 +134,55 @@ func RunClient(ctx context.Context, cfg *Config, opts ClientOptions) (retErr err
 	}
 }
 
-type clientCost struct {
-	known, failed bool
-	ms            float64
-	failureRate   float64
-}
-
-func selectClientRoute(ctx context.Context, cfg *Config, d Decl, k *clash, states *stateStore, entries map[string]entryResult, observations *ObservationCache, carriers map[string][]string, now time.Time) error {
+func selectClientRoute(ctx context.Context, cfg *Config, d Decl, k *clash, states *stateStore, entries map[string]ClientEntryResult, observations *ObservationCache, carriers map[string][]string, now time.Time) error {
 	actual, err := k.Now(ctx, d.Selector)
 	if err != nil {
 		return err
 	}
-	var current *Cand
-	for i := range d.Candidates {
-		if d.Candidates[i].Tag == actual {
-			current = &d.Candidates[i]
-			break
-		}
+	selection, err := DecideClientRoute(d, actual, entries, observations, carriers, now)
+	if err != nil {
+		return err
 	}
-	if current == nil {
-		return errors.New("[§5.1] 实际 selector 不在授权候选内")
-	}
-	chosen := *current
-	best := clientCost{}
-	costs := map[string]clientCost{}
-	targets := observations.clientTargets(d.Targets, now)
-	for _, c := range d.Candidates {
-		cost := observations.clientCost(c.Chain, targets, now, carriers[c.Tag])
-		entry, ok := entryFor(c, entries)
-		if !ok {
-			cost.known = false
-		} else {
-			cost.ms += float64(entry.RTT) / float64(time.Millisecond)
-		}
-		costs[c.Tag] = cost
-	}
-	// 只有已覆盖后段的观测才用于跨出口比较，绝不把未知当零延迟。
-	if d.Objective == model.Latency {
-		best = costs[actual]
-		for _, c := range d.Candidates {
-			x := costs[c.Tag]
-			// §5.5.1：先判断每条路径是否值得切换，避免被门槛挡住的最快候选
-			// 遮住另一条能立即减少中继的路径。
-			if !clientRouteImproves(c, x, *current, costs[actual], d.SwitchThreshold) {
-				continue
-			}
-			if !best.known || best.failed || x.failureRate < best.failureRate || x.failureRate == best.failureRate &&
-				(x.ms < best.ms || x.ms == best.ms && len(c.Chain) < len(chosen.Chain)) {
-				chosen, best = c, x
-			}
-		}
-	}
-	// §16.1.2：缺后段观测时保留出口，入口 ping 不能成为新增中继的理由。
-	if !best.known || best.failed {
-		var fastest time.Duration
-		found := false
-		for _, c := range d.Candidates {
-			if !sameClientExit(c, *current) || len(c.Chain) > len(current.Chain) || costs[c.Tag].failed {
-				continue
-			}
-			r, ok := entryFor(c, entries)
-			if ok && (!found || r.RTT < fastest || r.RTT == fastest &&
-				(len(c.Chain) < len(chosen.Chain) || len(c.Chain) == len(chosen.Chain) && c.Tag == actual)) {
-				chosen, fastest, found = c, r.RTT, true
-			}
-		}
-	}
-	if chosen.Tag != actual {
-		if err := k.Select(ctx, d.Selector, chosen.Tag); err != nil {
+	if selection.Candidate != actual {
+		if err := k.Select(ctx, d.Selector, selection.Candidate); err != nil {
 			return err
 		}
 		actual, err = k.Now(ctx, d.Selector)
 		if err != nil {
 			return err
 		}
-		if actual != chosen.Tag {
+		if actual != selection.Candidate {
 			return errors.New("[§7.3.1] selector 未应用本次选择")
 		}
 	}
-	reason := "直连候选；业务可用性未测量"
-	if len(chosen.Chain) > 0 {
-		r, ok := entryFor(chosen, entries)
-		if ok {
-			reason = fmt.Sprintf("入口 %s：单次 ping %d ms（%s）；", chosen.Chain[0], r.RTT.Milliseconds(), r.At.UTC().Format(time.RFC3339))
-		} else {
-			reason = "入口 ping 未获响应，入口可达性未知；"
-		}
-		x := costs[chosen.Tag]
-		if x.known && !x.failed && d.Objective == model.Latency {
-			reason += fmt.Sprintf("入口与服务器分段观测估算 %.0f ms；未测整条业务路径", x.ms)
-		} else if x.failed {
-			reason += "服务器观测显示后段失败；暂无可比较替代路径"
-		} else {
-			reason += "后段比较证据不足，保留当前出口；未测整条业务路径"
-		}
-		if d.Objective != model.Latency {
-			reason += "；现有分段观测不能计算配置目标 " + string(d.Objective)
-		}
-		if len(targets) < len(d.Targets) {
-			reason += fmt.Sprintf("；服务器观测覆盖 %d/%d 个目标，其余未知", len(targets), len(d.Targets))
-		}
-		if chosen.Tag != current.Tag && len(chosen.Chain) < len(current.Chain) && best.known && !best.failed && d.Objective == model.Latency {
-			reason += fmt.Sprintf("；减少中继 %d→%d 跳", len(current.Chain), len(chosen.Chain))
-		}
+	selection.Candidate = actual
+	return states.observe(ctx, selection, now)
+}
+
+// DecideClientRoute 复用 Windows 与 Android 客户端的窄选路语义。调用方必须
+// 先从实际 selector 读取 current，并在返回后自行执行和读回切换；本函数不访问
+// 网络、不等待样本，也不会探测入口后的业务路径。
+func DecideClientRoute(d Decl, actual string, entries map[string]ClientEntryResult, observations *ObservationCache, carriers map[string][]string, now time.Time) (Selection, error) {
+	declaration := clientroute.Declaration{
+		ID: d.ID, Selector: d.Selector, Objective: string(d.Objective), Targets: append([]string(nil), d.Targets...),
+		SwitchThreshold: d.SwitchThreshold,
+	}
+	for _, candidate := range d.Candidates {
+		declaration.Candidates = append(declaration.Candidates, clientroute.Candidate{Tag: candidate.Tag, Chain: append([]string(nil), candidate.Chain...)})
+	}
+	decision, err := clientroute.Decide(declaration, actual, entries, observations.clientEvidence(), carriers, now)
+	if err != nil {
+		return Selection{}, err
 	}
 	// §16.1：分段估算不是实测健康/分位数。已有线格式保留 unknown，原因承载分工。
 	h := &CandidateHealth{Candidates: len(d.Candidates), Unknown: len(d.Candidates), SelectedState: healthUnknown}
-	return states.observe(ctx, Selection{Declaration: d.ID, Selector: d.Selector, Candidate: actual, Chain: chosen.Chain, Reason: reason, Health: h}, now)
+	return Selection{Declaration: d.ID, Selector: d.Selector, Candidate: decision.Candidate, Chain: decision.Chain, Reason: decision.Reason, Health: h}, nil
 }
 
-// §5.5.1：更少中继且延迟不增是可直接执行的简化；切换门槛不能保护被支配的绕路。
-func clientRouteImproves(next Cand, cost clientCost, current Cand, old clientCost, threshold float64) bool {
-	if !cost.known || cost.failed {
-		return false
-	}
-	if !old.known || old.failed || cost.failureRate < old.failureRate {
-		return true
-	}
-	if cost.failureRate > old.failureRate {
-		return false
-	}
-	if len(next.Chain) < len(current.Chain) && cost.ms <= old.ms {
-		return true
-	}
-	return cost.ms < old.ms && old.ms > 0 && (old.ms-cost.ms)/old.ms >= threshold
-}
-
-func entryFor(c Cand, entries map[string]entryResult) (entryResult, bool) {
+func entryFor(c Cand, entries map[string]ClientEntryResult) (ClientEntryResult, bool) {
 	if len(c.Chain) == 0 {
-		return entryResult{}, false
+		return ClientEntryResult{}, false
 	}
 	r, ok := entries[c.Chain[0]]
 	return r, ok && r.Err == nil && r.RTT >= 0
-}
-func sameClientExit(a, b Cand) bool {
-	return len(a.Chain) > 0 && len(b.Chain) > 0 && a.Chain[len(a.Chain)-1] == b.Chain[len(b.Chain)-1]
 }

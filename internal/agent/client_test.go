@@ -166,7 +166,7 @@ func TestClientCostPreservesUnknownFailureAndDirection(t *testing.T) {
 }
 
 func TestClientPingFailureIsUnknownAndUnauthorizedEntryIsNotProbed(t *testing.T) {
-	r := map[string]entryResult{"demo-entry": {Err: errors.New("ICMP filtered")}}
+	r := map[string]ClientEntryResult{"demo-entry": {Err: errors.New("ICMP filtered")}}
 	if _, ok := entryFor(Cand{Chain: []string{"demo-entry"}}, r); ok {
 		t.Fatal("ICMP failure treated as valid zero RTT")
 	}

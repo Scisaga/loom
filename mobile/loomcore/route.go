@@ -83,10 +83,13 @@ type androidUser struct {
 }
 
 type androidOutbound struct {
-	Type      string   `json:"type"`
-	Tag       string   `json:"tag"`
-	Outbounds []string `json:"outbounds"`
-	Default   string   `json:"default"`
+	Type       string   `json:"type"`
+	Tag        string   `json:"tag"`
+	Outbounds  []string `json:"outbounds"`
+	Default    string   `json:"default"`
+	Server     string   `json:"server"`
+	ServerPort int      `json:"server_port"`
+	Detour     string   `json:"detour"`
 }
 
 type androidRoute struct {
@@ -143,10 +146,118 @@ type androidAppliedSelection struct {
 	Chain     []string `json:"chain,omitempty"`
 }
 
-// EvaluateAndroidRoute applies the only client-writable preference to a
-// verified mobile plan. An empty preference means Auto on first install. A
-// fixed exit removed by a newer plan is returned as blocked while preserving
-// the saved choice; it never silently falls back to Direct or Auto.
+type androidRoutingInputs struct {
+	Schema      int                 `json:"schema"`
+	Entries     []androidRouteEntry `json:"entries"`
+	HopCarriers map[string][]string `json:"hop_carriers"`
+}
+
+type androidRouteEntry struct {
+	Node    string `json:"node"`
+	Address string `json:"address"`
+}
+
+// AndroidRoutingInputs 按 §5.1 从已验证 sing-box 数据面推导入口目标和服务器段承载。
+// candidate tag 是不透明标识，Kotlin 不得按命名约定重建这些事实。
+func AndroidRoutingInputs(singBox, routePlan []byte) ([]byte, error) {
+	var plan androidRoutePlan
+	if err := decodeStrictJSON(routePlan, maxBundleBytes, &plan); err != nil {
+		return nil, fmt.Errorf("plan JSON: %w", err)
+	}
+	if err := validateAndroidRoutePlan(singBox, routePlan, plan.Node); err != nil {
+		return nil, err
+	}
+	var config androidSingBox
+	if err := json.Unmarshal(singBox, &config); err != nil {
+		return nil, errors.New("sing-box routing input is invalid")
+	}
+	byTag := make(map[string]androidOutbound, len(config.Outbounds))
+	for _, outbound := range config.Outbounds {
+		if outbound.Tag != "" {
+			if _, exists := byTag[outbound.Tag]; exists {
+				return nil, errors.New("sing-box routing input contains duplicate outbound tags")
+			}
+			byTag[outbound.Tag] = outbound
+		}
+	}
+	byNode := map[string]androidRouteEntry{}
+	for _, declaration := range plan.Declarations {
+		for _, candidate := range declaration.Candidates {
+			if len(candidate.Chain) == 0 {
+				continue
+			}
+			address, _, err := androidCandidateHops(candidate.Tag, byTag)
+			if err != nil || address == "" {
+				return nil, fmt.Errorf("candidate %q has no usable entry outbound", candidate.Tag)
+			}
+			node := candidate.Chain[0]
+			if old, ok := byNode[node]; ok && old.Address != address {
+				return nil, errors.New("one authorized entry maps to multiple addresses")
+			}
+			byNode[node] = androidRouteEntry{Node: node, Address: address}
+		}
+	}
+	inputs := androidRoutingInputs{Schema: 1, HopCarriers: map[string][]string{}}
+	for _, node := range sortedKeys(byNode) {
+		inputs.Entries = append(inputs.Entries, byNode[node])
+	}
+	addresses := map[string]string{}
+	for _, entry := range inputs.Entries {
+		addresses[entry.Node] = entry.Address
+	}
+	for _, declaration := range plan.Declarations {
+		for _, candidate := range declaration.Candidates {
+			_, reverse, err := androidCandidateHops(candidate.Tag, byTag)
+			if err != nil && len(candidate.Chain) > 0 {
+				return nil, err
+			}
+			var carriers []string
+			for index := 1; index < len(candidate.Chain); index++ {
+				carrier := "unknown"
+				if len(reverse) == len(candidate.Chain) {
+					hop := reverse[len(reverse)-1-index]
+					if public := addresses[candidate.Chain[index]]; public != "" {
+						if hop.Server != public {
+							carrier = "neighbor"
+						} else if hop.Type == "hysteria2" {
+							carrier = "public-hysteria2"
+						}
+					} else if ip := net.ParseIP(hop.Server); ip != nil && ip.IsPrivate() {
+						carrier = "neighbor"
+					}
+				}
+				carriers = append(carriers, carrier)
+			}
+			inputs.HopCarriers[candidate.Tag] = carriers
+		}
+	}
+	return marshalCanonical(&inputs)
+}
+
+func androidCandidateHops(tag string, byTag map[string]androidOutbound) (string, []androidOutbound, error) {
+	seen := map[string]bool{}
+	var address string
+	var reverse []androidOutbound
+	for tag != "" {
+		outbound, ok := byTag[tag]
+		if !ok || seen[tag] {
+			return "", nil, errors.New("entry outbound is missing or has a detour cycle")
+		}
+		seen[tag] = true
+		if outbound.Type == "hysteria2" || outbound.Type == "trojan" {
+			if outbound.Server == "" {
+				return "", nil, errors.New("entry outbound has no server address")
+			}
+			address = outbound.Server
+			reverse = append(reverse, outbound)
+		}
+		tag = outbound.Detour
+	}
+	return address, reverse, nil
+}
+
+// EvaluateAndroidRoute 把客户端唯一可写偏好应用到已验证移动计划。首次空偏好表示
+// Auto；新版计划移除固定出口时保留偏好并返回阻断，不能静默退回 Direct 或 Auto。
 func EvaluateAndroidRoute(routePlan, preference, savedSelections []byte) ([]byte, error) {
 	var plan androidRoutePlan
 	if err := decodeStrictJSON(routePlan, maxBundleBytes, &plan); err != nil {

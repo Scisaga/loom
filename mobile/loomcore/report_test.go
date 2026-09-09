@@ -106,3 +106,39 @@ func TestAssembleObservationRejectsWrongSignerAndInvalidInput(t *testing.T) {
 		t.Fatal("null problems were accepted as an array")
 	}
 }
+
+func TestAssembleObservationBindsActualAndroidRouteState(t *testing.T) {
+	privateKey, _, caPEM, certPEM := testP256Identity(t, "android-a")
+	agentState := []byte(`{"node":"android-a","ts":"2026-09-07T12:34:56.123456789Z","component_version":"android-client-route-v2","selections":[{"declaration":"web","selector":"svc:web","candidate":"opaque","chain":["entry","exit"],"reason":"入口 entry：单次 ping 12 ms；未测整条业务路径","updated_at":"2026-09-07T12:34:56.123456789Z","health":{"candidates":2,"recent_success":0,"recent_failed":0,"stale":0,"unknown":2,"selected_state":"unknown"}}]}`)
+	attestMessage, err := PrepareObservationAttestationWithAgent("android-a", "0123456789ab", reportFixtureTimestamp, agentState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selfCheckMessage, err := PrepareSelfCheckAttestation("android-a", reportFixtureTimestamp, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := AssembleObservationWithAgent(
+		"android-a", "0123456789ab", reportFixtureTimestamp, nil, agentState, certPEM, caPEM,
+		signP256Message(t, privateKey, attestMessage), signP256Message(t, privateKey, selfCheckMessage),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var observation struct {
+		Agent *struct {
+			Node       string `json:"node"`
+			Selections []struct {
+				Candidate string `json:"candidate"`
+				Reason    string `json:"reason"`
+			} `json:"selections"`
+		} `json:"agent"`
+	}
+	if err := json.Unmarshal(body, &observation); err != nil {
+		t.Fatal(err)
+	}
+	if observation.Agent == nil || observation.Agent.Node != "android-a" || len(observation.Agent.Selections) != 1 ||
+		observation.Agent.Selections[0].Candidate != "opaque" || !strings.Contains(observation.Agent.Selections[0].Reason, "未测整条业务路径") {
+		t.Fatalf("actual Android route state was not bound: %s", body)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"loom/internal/clientroute"
 	"loom/internal/observation"
 )
 
@@ -22,6 +23,19 @@ type ObservationCache struct {
 	by      map[string]observation.Observation
 	changed chan struct{}
 	updated chan struct{}
+}
+
+func (c *ObservationCache) clientEvidence() clientroute.Evidence {
+	if c == nil {
+		return clientroute.Evidence{}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	byNode := make(map[string]observation.Observation, len(c.by))
+	for node, value := range c.by {
+		byNode[node] = value
+	}
+	return clientroute.Evidence{ByNode: byNode, MaxAge: c.maxAge}
 }
 
 func NewObservationCache(cfg *Config) (*ObservationCache, error) {

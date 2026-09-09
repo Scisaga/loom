@@ -276,7 +276,26 @@ private fun LoomHome(
                     if (route.currentPaths.isNotEmpty()) {
                         buildString {
                             if (!route.running) append("上次/下次连接选择：\n")
-                            append(route.currentPaths.joinToString("\n"))
+                            append(
+                                route.currentPaths.joinToString("\n\n") { path ->
+                                    buildString {
+                                        append("${path.service}\n")
+                                        append("实际候选：${path.candidate}\n")
+                                        append("实际路径：${path.chain}\n")
+                                        if (path.links.isEmpty()) {
+                                            append("连线观测：无服务器路径或证据尚未就绪\n")
+                                        } else {
+                                            append("连线观测：\n")
+                                            path.links.forEach { link ->
+                                                append("${link.from} → ${link.to}：${link.label}\n")
+                                                append("  ${link.detail}\n")
+                                            }
+                                        }
+                                        append("选路说明：${path.reason}")
+                                        if (path.updatedAt.isNotBlank()) append("\n决策时间：${path.updatedAt}")
+                                    }
+                                },
+                            )
                         }
                     } else {
                         "尚无可验证的 selector 路径"
@@ -284,12 +303,13 @@ private fun LoomHome(
                 )
                 InfoCard(
                     "网络诊断",
-                    "DNS：${status.dnsProbe}\nHTTPS：${status.httpsProbe}\n可信上报：${status.trustedReport}",
+                    "DNS/HTTPS 激活门禁：${status.dnsProbe} / ${status.httpsProbe}\n" +
+                        "可信上报：${status.trustedReport}\n服务器观测：${route.observationDetail}",
                 )
                 InfoCard("信任边界", diagnostics)
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Stage 3 已启用三态偏好、签名出口授权、候选测量、阈值阻尼和 selector 原子切换。",
+                    "Stage 3 只在每个底层网络代并行测量授权入口一次；入口之后复用可信服务器观测，不探测完整业务路径。",
                     color = Muted,
                     fontSize = 12.sp,
                 )

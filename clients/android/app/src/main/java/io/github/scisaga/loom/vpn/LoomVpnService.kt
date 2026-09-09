@@ -112,6 +112,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
     @Volatile private var desiredConnected = false
     @Volatile private var activeProbe: ProbeSession? = null
     @Volatile private var selectedUnderlyingNetwork: Network? = null
+    @Volatile private var activeManagedProfile: ManagedProfile? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -322,8 +323,9 @@ class LoomVpnService : VpnService(), PlatformInterface {
         )
         updateNotification("已连接 · $detail")
         profile?.let {
+            activeManagedProfile = it
+            startRouteSession(it)
             startReporter(it, probe)
-            startRouteScheduler(it)
         }
     }
 
@@ -342,52 +344,50 @@ class LoomVpnService : VpnService(), PlatformInterface {
         val reporterSession = sessionID
         reportJob = scope.launch {
             val reporter = HealthReporter(this@LoomVpnService)
-            var probe = initialProbe
             while (isActive && reporterSession == sessionID) {
                 val status = VpnRuntime.status.value
                 if (status.phase != ConnectionPhase.CONNECTED) return@launch
-                val report = runCatching { reporter.send(profile, probe.problems()) }
+                val report = runCatching { reporter.send(profile, initialProbe.problems()) }
                 if (!isActive || reporterSession != sessionID) return@launch
                 if (report.isSuccess) {
-                    VpnRuntime.transform { it.copy(trustedReport = "成功（HTTP 204）") }
+                    val result = report.getOrThrow()
+                    VpnRuntime.transform { it.copy(trustedReport = "成功（HTTP ${result.status}）") }
+                    runCatching {
+                        RouteManager.get(this@LoomVpnService).consumeObservations(
+                            profile,
+                            result.observations,
+                            result.observationError,
+                        )
+                    }.onFailure { error ->
+                        if (error !is CancellationException) {
+                            Log.w(TAG, "Android server observation update failed", error)
+                            RouteManager.get(this@LoomVpnService).routeUpdateFailed(error)
+                        }
+                    }
                 } else {
                     VpnRuntime.transform { it.copy(trustedReport = "失败；将重试") }
                 }
                 delay(REPORT_INTERVAL_MS)
-                if (!isActive || reporterSession != sessionID) return@launch
-                val probeSession = ProbeSession()
-                activeProbe = probeSession
-                val refreshedProbe = try {
-                    NetworkProbe.run(probeSession)
-                } finally {
-                    if (activeProbe === probeSession) activeProbe = null
-                }
-                if (!isActive || reporterSession != sessionID || !desiredConnected) return@launch
-                probe = refreshedProbe
-                VpnRuntime.transform { it.copy(dnsProbe = probe.dns, httpsProbe = probe.https) }
             }
         }
     }
 
-    private fun startRouteScheduler(profile: ManagedProfile) {
+    private fun startRouteSession(profile: ManagedProfile, sourceOverride: String? = null) {
         routeJob?.cancel()
         val routeSession = sessionID
         routeJob = scope.launch {
             val manager = RouteManager.get(this@LoomVpnService)
-            var waitMS = 0L
-            while (isActive && routeSession == sessionID && desiredConnected) {
-                if (waitMS > 0) delay(waitMS)
+            val source = sourceOverride ?: selectedUnderlyingNetwork?.let {
+                connectivity.getLinkProperties(it)?.interfaceName
+            }.orEmpty()
+            try {
+                manager.beginRouteSession(profile, source)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
                 if (!isActive || routeSession != sessionID || !desiredConnected) return@launch
-                waitMS = try {
-                    manager.runSchedulerTick(profile)
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (error: Throwable) {
-                    if (!isActive || routeSession != sessionID || !desiredConnected) return@launch
-                    Log.w(TAG, "Android route scheduling round failed", error)
-                    manager.schedulerFailed(error)
-                    ROUTE_RETRY_MS
-                }
+                Log.w(TAG, "Android entry route round failed", error)
+                manager.routeUpdateFailed(error)
             }
         }
     }
@@ -418,6 +418,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         reportJob = null
         routeJob?.cancel()
         routeJob = null
+        activeManagedProfile = null
         monitors.entries.toList().forEach { (listener, monitor) ->
             removeUnderlyingMonitor(listener, monitor)
         }
@@ -655,6 +656,9 @@ class LoomVpnService : VpnService(), PlatformInterface {
         monitor.notified = true
         monitor.lastSelection = selected
         if (!selectionChanged) return@synchronized
+        if (selected != null) {
+            activeManagedProfile?.let { profile -> startRouteSession(profile, selected.name) }
+        }
         if (selected == null) {
             listener.updateDefaultInterface("", -1, false, false)
         } else {
@@ -842,7 +846,6 @@ class LoomVpnService : VpnService(), PlatformInterface {
         private const val CHANNEL_ID = "loom-vpn"
         private const val NOTIFICATION_ID = 4101
         private const val REPORT_INTERVAL_MS = 60_000L
-        private const val ROUTE_RETRY_MS = 60_000L
         const val ACTION_CONNECT = "io.github.scisaga.loom.action.CONNECT"
         const val ACTION_RELOAD = "io.github.scisaga.loom.action.RELOAD"
         const val ACTION_ENROLLMENT_KEEPALIVE = "io.github.scisaga.loom.action.ENROLLMENT_KEEPALIVE"

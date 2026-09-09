@@ -26,6 +26,20 @@ internal object HttpTransport {
         accept = "application/json",
     )
 
+    fun postJSONWithObservations(context: Context, endpoint: String, body: ByteArray, maximum: Int): HttpResult {
+        val base = URL(endpoint)
+        require(base.query == null) { "可信上报基址不能预置 query" }
+        return request(
+            context = context,
+            endpoint = "$endpoint?observations=1",
+            method = "POST",
+            requestBody = body,
+            maximum = maximum,
+            accept = "application/json",
+            observationQuery = true,
+        )
+    }
+
     fun get(context: Context, endpoint: String, maximum: Int): HttpResult = request(
         context = context,
         endpoint = endpoint,
@@ -42,13 +56,14 @@ internal object HttpTransport {
         requestBody: ByteArray?,
         maximum: Int,
         accept: String,
+        observationQuery: Boolean = false,
     ): HttpResult {
         require(maximum in 1..MAXIMUM_RESPONSE) { "HTTP 响应边界无效" }
         val url = URL(endpoint)
         require(
             url.protocol == "https" && url.userInfo == null && url.host.isNotBlank() &&
-                url.ref == null && url.query == null,
-        ) { "控制通道必须是无凭据、无 query/fragment 的 HTTPS 地址" }
+                url.ref == null && (url.query == null || observationQuery && url.query == "observations=1"),
+        ) { "控制通道必须是无凭据、无未授权 query/fragment 的 HTTPS 地址" }
         val networks = underlyingNetworks(context)
         check(networks.isNotEmpty()) { "没有已验证且未被 VPN 接管的底层网络" }
         var lastFailure: Throwable? = null

@@ -17,7 +17,12 @@ func androidRouteFixture(t *testing.T) ([]byte, []byte) {
   ]}],
   "outbounds":[
     {"type":"selector","tag":"decl:auto","outbounds":["opaque-a-direct","opaque-a-via"],"default":"opaque-a-via"},
-    {"type":"selector","tag":"svc:web","outbounds":["opaque-b-direct","opaque-b-via"],"default":"opaque-b-via"}
+    {"type":"selector","tag":"svc:web","outbounds":["opaque-b-direct","opaque-b-via"],"default":"opaque-b-via"},
+    {"type":"direct","tag":"opaque-a-direct"},
+    {"type":"hysteria2","tag":"hop-a-relay","server":"relay.example","server_port":443},
+    {"type":"hysteria2","tag":"opaque-a-via","server":"10.0.0.2","server_port":443,"detour":"hop-a-relay"},
+    {"type":"direct","tag":"opaque-b-direct"},
+    {"type":"hysteria2","tag":"opaque-b-via","server":"edge.example","server_port":443}
   ],
   "route":{"rules":[
     {"inbound":["probe-in"],"auth_user":["probe-a-direct"],"outbound":"opaque-a-direct"},

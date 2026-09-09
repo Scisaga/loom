@@ -6,7 +6,6 @@ import (
 	"crypto/elliptic"
 	"crypto/sha256"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -18,6 +17,9 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"loom/internal/attest"
+	trustedobservation "loom/internal/observation"
 )
 
 const (
@@ -64,22 +66,32 @@ type minimalObservation struct {
 	SelfCheck *signedSelfCheck     `json:"self_check"`
 }
 
-// EmptyMeasurementsDigest is the existing Observation digest for omitted
-// edges and targets: SHA-256 of {"edges":null,"targets":null}.
+// EmptyMeasurementsDigest 是 §16.1 Observation 省略 edges/targets 时的既有摘要：
+// {"edges":null,"targets":null} 的 SHA-256。
 func EmptyMeasurementsDigest() string { return emptyMeasurementsSHA256 }
 
-// PrepareObservationAttestation returns the exact loom-attest-v5 bytes that
-// Android must sign with SHA256withECDSA in Keystore.
+// PrepareObservationAttestation 返回 Android 必须在 Keystore 内用 SHA256withECDSA
+// 签名的精确 loom-attest-v5 原文。
 func PrepareObservationAttestation(nodeID, appliedSnapshot, timestamp string) ([]byte, error) {
+	return PrepareObservationAttestationWithAgent(nodeID, appliedSnapshot, timestamp, nil)
+}
+
+// PrepareObservationAttestationWithAgent 把实际 selector 读回绑定到 canonical v5，
+// 同时让私钥始终留在 Android Keystore。
+func PrepareObservationAttestationWithAgent(nodeID, appliedSnapshot, timestamp string, agentJSON []byte) ([]byte, error) {
 	if err := validateMinimalObservationCoordinates(nodeID, appliedSnapshot, timestamp); err != nil {
 		return nil, err
 	}
-	return canonicalMinimalAttest(nodeID, appliedSnapshot, timestamp), nil
+	claim, err := androidObservationClaim(nodeID, appliedSnapshot, timestamp, agentJSON)
+	if err != nil {
+		return nil, err
+	}
+	_, message, err := attest.PrepareSignature(claim)
+	return message, err
 }
 
-// PrepareSelfCheckAttestation returns the independent loom-selfcheck-v1 bytes.
-// problemsJSON is either empty or a JSON string array; it is sorted and
-// deduplicated with the same rules as the existing client report producer.
+// PrepareSelfCheckAttestation 返回独立 loom-selfcheck-v1 原文。problemsJSON 为空或
+// JSON 字符串数组，并按既有客户端报告规则排序去重。
 func PrepareSelfCheckAttestation(nodeID, timestamp string, problemsJSON []byte) ([]byte, error) {
 	problems, err := normalizeProblems(problemsJSON)
 	if err != nil {
@@ -94,12 +106,17 @@ func PrepareSelfCheckAttestation(nodeID, timestamp string, problemsJSON []byte) 
 	return canonicalSelfCheck(claim), nil
 }
 
-// AssembleObservation verifies both external ASN.1 DER signatures against the
-// same P-256 node certificate, checks the CA chain and node name, then returns
-// the existing five-field Observation JSON. It does not send or persist it.
+// AssembleObservation 用同一 P-256 节点证书验证两个外部 ASN.1 DER 签名，并校验
+// CA 链和节点名后返回既有五字段 Observation JSON；它不发送或持久化正文。
 func AssembleObservation(nodeID, appliedSnapshot, timestamp string, problemsJSON, certPEM, caPEM,
 	attestSignatureDER, selfCheckSignatureDER []byte) ([]byte, error) {
-	attestMessage, err := PrepareObservationAttestation(nodeID, appliedSnapshot, timestamp)
+	return AssembleObservationWithAgent(nodeID, appliedSnapshot, timestamp, problemsJSON, nil, certPEM, caPEM,
+		attestSignatureDER, selfCheckSignatureDER)
+}
+
+func AssembleObservationWithAgent(nodeID, appliedSnapshot, timestamp string, problemsJSON, agentJSON, certPEM, caPEM,
+	attestSignatureDER, selfCheckSignatureDER []byte) ([]byte, error) {
+	attestMessage, err := PrepareObservationAttestationWithAgent(nodeID, appliedSnapshot, timestamp, agentJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -122,24 +139,59 @@ func AssembleObservation(nodeID, appliedSnapshot, timestamp string, problemsJSON
 	if err := verifyExternalReportSignature(publicKey, selfCheckMessage, selfCheckSignatureDER); err != nil {
 		return nil, fmt.Errorf("自检陈述签名:%w", err)
 	}
-	cert := string(certPEM)
-	observation := &minimalObservation{
-		Node: nodeID, TS: timestamp, Applied: appliedSnapshot,
-		Attest: &minimalSignedAttest{
-			minimalAttestClaim: minimalAttestClaim{
-				CanonicalVersion: 5, Node: nodeID, TS: timestamp, Applied: appliedSnapshot,
-				MeasurementsSHA256: emptyMeasurementsSHA256,
-			},
-			Cert: cert, Sig: base64.StdEncoding.EncodeToString(attestSignatureDER),
-		},
-		SelfCheck: &signedSelfCheck{
-			selfCheckClaim: selfCheckClaim{
-				Version: 1, Node: nodeID, TS: timestamp, Healthy: len(problems) == 0, Problems: problems,
-			},
-			Cert: cert, Sig: base64.StdEncoding.EncodeToString(selfCheckSignatureDER),
-		},
+	claim, err := androidObservationClaim(nodeID, appliedSnapshot, timestamp, agentJSON)
+	if err != nil {
+		return nil, err
+	}
+	signed, err := attest.AssembleSignature(claim, certPEM, attestSignatureDER)
+	if err != nil {
+		return nil, fmt.Errorf("主陈述签名:%w", err)
+	}
+	selfCheck, err := attest.AssembleSelfCheckSignature(attest.SelfCheckClaim{
+		Version: 1, Node: nodeID, TS: timestamp, Healthy: len(problems) == 0, Problems: problems,
+	}, certPEM, selfCheckSignatureDER)
+	if err != nil {
+		return nil, fmt.Errorf("自检陈述签名:%w", err)
+	}
+	observation := &trustedobservation.Observation{
+		Node: nodeID, TS: timestamp, Applied: appliedSnapshot, Agent: claim.Agent,
+		Attest: signed, SelfCheck: selfCheck,
+	}
+	assembledAt, _ := time.Parse(time.RFC3339, timestamp)
+	verified, err := trustedobservation.VerifyObservationAtLeast(observation, caPEM, assembledAt, time.Minute, 5)
+	if err != nil {
+		return nil, fmt.Errorf("组装后的主陈述验证失败:%w", err)
+	}
+	if !verified.MeasurementsVerified {
+		return nil, errors.New("组装后的主陈述验证失败:测量摘要未被签名覆盖")
+	}
+	if err := trustedobservation.VerifyAttachments(observation, caPEM, assembledAt, time.Minute); err != nil {
+		return nil, fmt.Errorf("组装后的自检陈述验证失败:%w", err)
 	}
 	return json.Marshal(observation)
+}
+
+func androidObservationClaim(nodeID, appliedSnapshot, timestamp string, agentJSON []byte) (attest.Claim, error) {
+	claim := attest.Claim{
+		CanonicalVersion: 5, Node: nodeID, TS: timestamp, Applied: appliedSnapshot,
+		MeasurementsSHA256: emptyMeasurementsSHA256,
+	}
+	if len(agentJSON) == 0 {
+		return claim, nil
+	}
+	var state attest.AgentClaim
+	if err := decodeStrictJSON(agentJSON, maxCurrentBytes, &state); err != nil {
+		return claim, fmt.Errorf("Android actual route state JSON: %w", err)
+	}
+	if state.Node != nodeID || state.TS != timestamp || len(state.Selections) == 0 || len(state.Selections) > 256 {
+		return claim, errors.New("[§16.1 上报] Android actual route state is not bound to this report")
+	}
+	parsed, _ := time.Parse(time.RFC3339, timestamp)
+	if problems := trustedobservation.ValidateAgentState(&state, nodeID, parsed); len(problems) > 0 {
+		return claim, fmt.Errorf("[§16.1 上报] Android actual route state is invalid: %s", problems[0])
+	}
+	claim.Agent = &state
+	return claim, nil
 }
 
 func canonicalMinimalAttest(nodeID, appliedSnapshot, timestamp string) []byte {
@@ -284,8 +336,7 @@ func verifyExternalReportSignature(publicKey *ecdsa.PublicKey, message, signatur
 	return nil
 }
 
-// Compile-time guard for the documented digest rather than trusting a copied
-// literal without checking the corresponding wire bytes.
+// §16.1：编译期核对文档摘要对应的线格式，不能只信任复制的常量。
 func init() {
 	body := []byte(`{"edges":null,"targets":null}`)
 	digest := sha256.Sum256(body)

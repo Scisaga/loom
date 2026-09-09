@@ -21,8 +21,7 @@ internal class SelectorClient(routePlan: String) {
     suspend fun apply(targets: List<AppliedSelector>) {
         check(targets.isNotEmpty()) { "没有可应用的 selector" }
         val ordered = targets.sortedBy(AppliedSelector::selector)
-        val current = linkedMapOf<String, String>()
-        ordered.forEach { target -> current[target.selector] = readCurrentWithStartupRetry(target.selector) }
+        val current = readCurrent(ordered)
         val changed = mutableListOf<String>()
         try {
             ordered.forEach { target ->
@@ -41,6 +40,16 @@ internal class SelectorClient(routePlan: String) {
                 runCatching { request("PUT", selector, current.getValue(selector)) }
             }
             throw error
+        }
+    }
+
+    /** §7.3.3：只读投影 libbox 的实际 selector 状态。 */
+    suspend fun readCurrent(targets: List<AppliedSelector>): Map<String, String> {
+        check(targets.isNotEmpty()) { "没有可读取的 selector" }
+        return linkedMapOf<String, String>().apply {
+            targets.sortedBy(AppliedSelector::selector).forEach { target ->
+                put(target.selector, readCurrentWithStartupRetry(target.selector))
+            }
         }
     }
 
