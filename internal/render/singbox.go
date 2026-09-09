@@ -116,15 +116,21 @@ type sbOutbound struct {
 }
 
 type sbRule struct {
-	Inbound  []string `json:"inbound,omitempty"`
-	AuthUser []string `json:"auth_user,omitempty"`
-	IPCIDR   []string `json:"ip_cidr,omitempty"`
-	Domain   []string `json:"domain,omitempty"`
+	Type        string   `json:"type,omitempty"`
+	Mode        string   `json:"mode,omitempty"`
+	Rules       []sbRule `json:"rules,omitempty"`
+	DomainRegex []string `json:"domain_regex,omitempty"`
+	Invert      bool     `json:"invert,omitempty"`
+	Inbound     []string `json:"inbound,omitempty"`
+	AuthUser    []string `json:"auth_user,omitempty"`
+	IPCIDR      []string `json:"ip_cidr,omitempty"`
+	Domain      []string `json:"domain,omitempty"`
 	// DomainSuffix 让服务的地址清单能用后缀兜住子域 —— 清单几乎一定不全,
 	// 这是最省事的补救(§4.5)。
 	DomainSuffix []string `json:"domain_suffix,omitempty"`
 	Port         []int    `json:"port,omitempty"`
-	Outbound     string   `json:"outbound"`
+	Outbound     string   `json:"outbound,omitempty"`
+	Action       string   `json:"action,omitempty"`
 }
 
 type sbRoute struct {
@@ -196,8 +202,9 @@ func ProbeUser(candidateTag string) string {
 }
 
 type sbDNS struct {
-	Servers  []sbDNSServer `json:"servers"`
-	Strategy string        `json:"strategy,omitempty"`
+	Servers        []sbDNSServer `json:"servers"`
+	Strategy       string        `json:"strategy,omitempty"`
+	ReverseMapping bool          `json:"reverse_mapping,omitempty"`
 }
 
 type sbConfig struct {
@@ -279,6 +286,18 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 			Address:   []string{"172.19.0.1/30"},
 			AutoRoute: true, Stack: "system",
 		})
+	}
+	if p.Access.Platform == model.Android {
+		// 系统 DNS 由 VpnService 指向 TUN 的虚拟 DNS 地址；先劫持 53 端口交给
+		// 签名解析器，再只对尚无反向 DNS 域名的连接嗅探，避免 TLS 无 SNI 时
+		// 清掉已经恢复的 Service 域名（§7.4）。
+		cfg.Route.Rules = append(cfg.Route.Rules,
+			sbRule{Inbound: []string{"tun-in"}, Port: []int{53}, Action: "hijack-dns"},
+			sbRule{Type: "logical", Mode: "and", Rules: []sbRule{
+				{Inbound: []string{"tun-in"}},
+				{DomainRegex: []string{".+"}, Invert: true},
+			}, Action: "sniff"},
+		)
 	}
 	ports := append([]model.MixedPort(nil), p.Access.MixedPorts...)
 	sort.Slice(ports, func(i, j int) bool { return ports[i].Port < ports[j].Port })
@@ -774,7 +793,10 @@ func renderSingBox(s *model.SSOT, n *model.Node) (File, []Skip, error) {
 	// 永远失败、代理候选一切正常" —— 因为走代理的域名是交给出口解析的
 	// (§7.4),根本不经过本机。这种不对称极难往 DNS 上想。
 	if dns := s.DNSFor(n); len(dns) > 0 {
-		d := &sbDNS{Strategy: "prefer_ipv4"}
+		d := &sbDNS{
+			Strategy:       "prefer_ipv4",
+			ReverseMapping: n.IsAccess() && n.Access.Platform == model.Android,
+		}
 		for i, addr := range dns {
 			d.Servers = append(d.Servers, sbDNSServer{
 				Tag: fmt.Sprintf("dns%d", i), Address: addr, Detour: dnsOutbound})

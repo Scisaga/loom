@@ -21,6 +21,7 @@ type conf struct {
 			Address string `json:"address"`
 			Detour  string `json:"detour"`
 		} `json:"servers"`
+		ReverseMapping bool `json:"reverse_mapping"`
 	} `json:"dns"`
 	Inbounds []struct {
 		Type       string `json:"type"`
@@ -48,6 +49,16 @@ type conf struct {
 	Route struct {
 		AutoDetectInterface bool `json:"auto_detect_interface"`
 		Rules               []struct {
+			Type        string   `json:"type"`
+			Mode        string   `json:"mode"`
+			Action      string   `json:"action"`
+			DomainRegex []string `json:"domain_regex"`
+			Invert      bool     `json:"invert"`
+			Rules       []struct {
+				Inbound     []string `json:"inbound"`
+				DomainRegex []string `json:"domain_regex"`
+				Invert      bool     `json:"invert"`
+			} `json:"rules"`
 			Inbound      []string `json:"inbound"`
 			AuthUser     []string `json:"auth_user"`
 			IPCIDR       []string `json:"ip_cidr"`
@@ -381,12 +392,22 @@ func TestSingBoxReferentialIntegrity(t *testing.T) {
 				}
 			}
 			for i, r := range c.Route.Rules {
-				if !outTags[r.Outbound] {
+				if r.Outbound != "" && !outTags[r.Outbound] {
 					t.Errorf("route.rules[%d] 指向不存在的 outbound %q", i, r.Outbound)
+				}
+				if r.Outbound == "" && r.Action == "" {
+					t.Errorf("route.rules[%d] 既没有 outbound 也没有 action", i)
 				}
 				for _, in := range r.Inbound {
 					if !inTags[in] {
 						t.Errorf("route.rules[%d] 引用了不存在的 inbound %q", i, in)
+					}
+				}
+				for nestedIndex, nested := range r.Rules {
+					for _, in := range nested.Inbound {
+						if !inTags[in] {
+							t.Errorf("route.rules[%d].rules[%d] 引用了不存在的 inbound %q", i, nestedIndex, in)
+						}
 					}
 				}
 			}
@@ -830,6 +851,31 @@ func TestAndroidDirectSocketsEscapeOwnTUN(t *testing.T) {
 		if config.Route.AutoDetectInterface != want {
 			t.Errorf("%s platform=%s auto_detect_interface=%t，期望 %t",
 				node.ID, node.Access.Platform, config.Route.AutoDetectInterface, want)
+		}
+		if !want {
+			continue
+		}
+		if config.DNS == nil || !config.DNS.ReverseMapping {
+			t.Errorf("%s 的 Android TUN 没有保留受管 DNS 域名", node.ID)
+		}
+		dnsIndex, sniffIndex, businessIndex := -1, -1, len(config.Route.Rules)
+		for index, rule := range config.Route.Rules {
+			if rule.Action == "hijack-dns" && slices.Equal(rule.Inbound, []string{"tun-in"}) &&
+				slices.Equal(rule.Port, []int{53}) {
+				dnsIndex = index
+			}
+			if rule.Type == "logical" && rule.Mode == "and" && rule.Action == "sniff" &&
+				len(rule.Rules) == 2 && slices.Equal(rule.Rules[0].Inbound, []string{"tun-in"}) &&
+				slices.Equal(rule.Rules[1].DomainRegex, []string{".+"}) && rule.Rules[1].Invert {
+				sniffIndex = index
+			}
+			if rule.Outbound != "" && slices.Contains(rule.Inbound, "tun-in") && index < businessIndex {
+				businessIndex = index
+			}
+		}
+		if dnsIndex < 0 || sniffIndex < 0 || dnsIndex >= sniffIndex || sniffIndex >= businessIndex {
+			t.Errorf("%s 的 Android TUN DNS/嗅探规则顺序无效：dns=%d sniff=%d business=%d",
+				node.ID, dnsIndex, sniffIndex, businessIndex)
 		}
 	}
 }

@@ -15,7 +15,8 @@
         "detour": "dns-out"
       }
     ],
-    "strategy": "prefer_ipv4"
+    "strategy": "prefer_ipv4",
+    "reverse_mapping": true
   },
   "inbounds": [
     {
@@ -234,6 +235,33 @@
           "probe-8c7e3229d3"
         ],
         "outbound": "cand:sg-fixed:cn-cd\u003esg-vps"
+      },
+      {
+        "inbound": [
+          "tun-in"
+        ],
+        "port": [
+          53
+        ],
+        "action": "hijack-dns"
+      },
+      {
+        "type": "logical",
+        "mode": "and",
+        "rules": [
+          {
+            "inbound": [
+              "tun-in"
+            ]
+          },
+          {
+            "domain_regex": [
+              ".+"
+            ],
+            "invert": true
+          }
+        ],
+        "action": "sniff"
       },
       {
         "inbound": [
