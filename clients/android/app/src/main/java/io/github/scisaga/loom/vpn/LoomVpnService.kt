@@ -497,10 +497,10 @@ class LoomVpnService : VpnService(), PlatformInterface {
         builderUnderlying?.let { builder.setUnderlyingNetworks(arrayOf(it)) }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setMetered(false)
 
-        addAddresses(builder, options)
+        val addressFamilies = addAddresses(builder, options)
         if (options.autoRoute) {
             options.dnsServerAddress?.value?.takeIf { it.isNotBlank() }?.let(builder::addDnsServer)
-            addRoutes(builder, options)
+            addRoutes(builder, options, addressFamilies)
         }
         val descriptor = checkNotNull(builder.establish()) { "android: VPN permission revoked while opening TUN" }
         synchronized(underlyingPublicationLock) { underlyingPublication.builderBound(builderUnderlying) }
@@ -509,23 +509,40 @@ class LoomVpnService : VpnService(), PlatformInterface {
         return descriptor.fd
     }
 
-    private fun addAddresses(builder: Builder, options: TunOptions) {
+    private fun addAddresses(builder: Builder, options: TunOptions): TunAddressFamilies {
+        var hasIPv4 = false
         val ipv4 = options.inet4Address
-        while (ipv4.hasNext()) ipv4.next().also { builder.addAddress(it.address(), it.prefix()) }
+        while (ipv4.hasNext()) ipv4.next().also {
+            hasIPv4 = true
+            builder.addAddress(it.address(), it.prefix())
+        }
+        var hasIPv6 = false
         val ipv6 = options.inet6Address
-        while (ipv6.hasNext()) ipv6.next().also { builder.addAddress(it.address(), it.prefix()) }
+        while (ipv6.hasNext()) ipv6.next().also {
+            hasIPv6 = true
+            builder.addAddress(it.address(), it.prefix())
+        }
+        return TunAddressFamilies(ipv4 = hasIPv4, ipv6 = hasIPv6)
     }
 
-    private fun addRoutes(builder: Builder, options: TunOptions) {
+    private fun addRoutes(builder: Builder, options: TunOptions, families: TunAddressFamilies) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            var hasIPv4Route = false
             val ipv4 = options.inet4RouteAddress
-            if (ipv4.hasNext()) while (ipv4.hasNext()) ipv4.next().also {
-                builder.addRoute(IpPrefix(InetAddress.getByName(it.address()), it.prefix()))
-            } else builder.addRoute("0.0.0.0", 0)
-            val ipv6 = options.inet6RouteAddress
-            while (ipv6.hasNext()) ipv6.next().also {
+            while (ipv4.hasNext()) ipv4.next().also {
+                hasIPv4Route = true
                 builder.addRoute(IpPrefix(InetAddress.getByName(it.address()), it.prefix()))
             }
+            if (requiresDefaultRoute(families.ipv4, hasIPv4Route)) builder.addRoute("0.0.0.0", 0)
+
+            var hasIPv6Route = false
+            val ipv6 = options.inet6RouteAddress
+            while (ipv6.hasNext()) ipv6.next().also {
+                hasIPv6Route = true
+                builder.addRoute(IpPrefix(InetAddress.getByName(it.address()), it.prefix()))
+            }
+            if (requiresDefaultRoute(families.ipv6, hasIPv6Route)) builder.addRoute("::", 0)
+
             val exclude4 = options.inet4RouteExcludeAddress
             while (exclude4.hasNext()) exclude4.next().also {
                 builder.excludeRoute(IpPrefix(InetAddress.getByName(it.address()), it.prefix()))
@@ -535,12 +552,25 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 builder.excludeRoute(IpPrefix(InetAddress.getByName(it.address()), it.prefix()))
             }
         } else {
+            var hasIPv4Route = false
             val ipv4 = options.inet4RouteRange
-            while (ipv4.hasNext()) ipv4.next().also { builder.addRoute(it.address(), it.prefix()) }
+            while (ipv4.hasNext()) ipv4.next().also {
+                hasIPv4Route = true
+                builder.addRoute(it.address(), it.prefix())
+            }
+            if (requiresDefaultRoute(families.ipv4, hasIPv4Route)) builder.addRoute("0.0.0.0", 0)
+
+            var hasIPv6Route = false
             val ipv6 = options.inet6RouteRange
-            while (ipv6.hasNext()) ipv6.next().also { builder.addRoute(it.address(), it.prefix()) }
+            while (ipv6.hasNext()) ipv6.next().also {
+                hasIPv6Route = true
+                builder.addRoute(it.address(), it.prefix())
+            }
+            if (requiresDefaultRoute(families.ipv6, hasIPv6Route)) builder.addRoute("::", 0)
         }
     }
+
+    private data class TunAddressFamilies(val ipv4: Boolean, val ipv6: Boolean)
 
     override fun useProcFS(): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
 
@@ -897,6 +927,9 @@ class LoomVpnService : VpnService(), PlatformInterface {
         const val EXTRA_EMULATOR_PROXY = "io.github.scisaga.loom.extra.EMULATOR_PROXY"
     }
 }
+
+internal fun requiresDefaultRoute(hasAddress: Boolean, hasExplicitRoute: Boolean): Boolean =
+    hasAddress && !hasExplicitRoute
 
 internal fun vpnServiceRestartMode(desiredConnected: Boolean): Int =
     if (desiredConnected) android.app.Service.START_STICKY else android.app.Service.START_NOT_STICKY

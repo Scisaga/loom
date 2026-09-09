@@ -558,7 +558,8 @@ Android App 包含：
   也不把上游客户端的 profile/规则编辑模型带入 Loom；
 - 应用的 A/AAAA 查询只接收持久化 FakeIP，连接进入 libbox 后恢复为 FQDN 并沿
   候选链传到最终出口解析；FakeIP 规则只匹配 `tun-in`，不会接管 libbox 自己的
-  公网入口/bootstrap 解析；
+  公网入口/bootstrap 解析；宿主对已经配置 TUN 地址但 libbox 未显式列路由的
+  地址族补默认路由，保证 FakeIP 双栈都进入同一数据面；
 - 将平台无关的 Loom 验签、generation floor、最后可用配置和 selector 状态机抽成窄
   Go 包；确需在 Android 复用时再评估通过 `gomobile bind` 生成独立 AAR，不为共享代码
   先引入整套绑定，也不在 Kotlin 中另写一套行为略有差异的验证器；

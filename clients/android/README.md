@@ -16,7 +16,10 @@ through the selected proxy chain, and resolved by the final egress with that
 node's DNS configuration. The FakeIP rule matches only DNS originating from
 `tun-in`; libbox bootstrap resolution for a named public entry remains on the
 first real DNS server, with an independent cache, so tunnel startup cannot
-resolve its own entry to a FakeIP.
+resolve its own entry to a FakeIP. If libbox supplies a TUN address family but
+no explicit route for that family, the Android host adds its default route;
+this prevents IPv6 FakeIP traffic from bypassing the VPN or becoming
+unreachable.
 
 The three route modes are enabled only after a verified managed snapshot carries
 a mobile route plan. Direct requires a direct candidate for every selector;
