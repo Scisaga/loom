@@ -65,8 +65,8 @@ android {
         applicationId = "io.github.scisaga.loom"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.3.1-stage3"
+        versionCode = 5
+        versionName = "0.4.0-rc1"
 
         buildConfigField("String", "LOOM_PLATFORM_PUBLIC_KEY_B64", "\"$platformPublicKeyB64\"")
 
