@@ -33,6 +33,13 @@ can switch immediately; at equal failure rate, removing a relay without adding
 estimated latency is not blocked by the improvement threshold. Same-hop
 replacements and added relays still require the configured improvement.
 
+The signed configuration pins the Android TUN MTU to 1500 instead of inheriting
+sing-box's 9000-byte default. A server with `public_data_ingress` contributes a
+single-Hysteria2 client candidate even when its WireGuard direction remains
+`reverse_only`; such an endpoint is never promoted into an intermediate relay.
+This keeps the reverse tunnel policy while avoiding Hysteria2-over-Hysteria2 for
+an authorized fixed foreign exit.
+
 The Current Paths card is a read-only projection of libbox selector readback.
 It shows the entry ping, each matching WireGuard or public Hysteria2 server hop,
 and each exact target observation separately. It does not infer measurements

@@ -141,6 +141,11 @@ type ServerRole struct {
 	// Direction 约束这个节点在隧道里能扮演什么角色(§2.1)。
 	Direction Direction `yaml:"direction"`
 
+	// PublicDataIngress 表示这台服务器是否把 sing-box 数据入口开放给公网接入设备。
+	// 它不改变 WireGuard 的发起方向：reverse_only 仍由本机主动维持隧道，但可在
+	// 显式启用后接受已授权客户端直拨 Hysteria2，从而避免代理套代理(§2.3)。
+	PublicDataIngress bool `yaml:"public_data_ingress,omitempty"`
+
 	// InboundPort 是接受上游连接的端口(§8.1)。上游可能是接入节点,
 	// 也可能是链上的前一台服务器。
 	InboundPort int `yaml:"inbound_port"`
@@ -309,19 +314,19 @@ func (s *SSOT) VersionsFor(n *Node) ComponentVersions {
 // 真正的 mesh 仍是独立可选项(§6.3、§8.3、D29)。
 func (n *Node) MeshEligible() bool { return n.IsServer() && n.Server.Direction != ReverseOnly }
 
-// PubliclyDialable 报告能否从公网直接拨这台服务器。
+// PubliclyDialable 报告接入设备能否从公网直拨这台服务器的数据入口。
 //
-// reverse_only 的服务器拨不到 —— 它只能自己连出来(§2.2)。
+// direction 只决定 WireGuard 隧道由谁发起。reverse_only 默认仍不暴露公网数据
+// 入口；只有显式 public_data_ingress 才允许已授权客户端直拨(§2.3)。
 func (n *Node) PubliclyDialable() bool {
-	return n.IsServer() && n.Server.Direction != ReverseOnly &&
+	return n.IsServer() && (n.Server.Direction != ReverseOnly || n.Server.PublicDataIngress) &&
 		n.PublicEndpoint != "" && n.Server.InboundPort > 0
 }
 
 // AccessHopAddr 返回接入节点该拨哪个地址才能到达这台服务器;不可达时返回空。
 //
-// **reverse_only 也可以是第一跳 —— 只要它和这个接入节点之间有隧道。**
-// "拨不到"说的是公网:一旦它主动连过来建起了隧道,接入节点用隧道内地址
-// 就能直接找到它,不需要再往公网拨。这把两跳压成一跳。
+// **reverse_only 也可以是第一跳**：显式开放公网数据入口，或与这个接入节点
+// 已有隧道。两者都不改变 WireGuard 仍由 reverse_only 节点主动发起的约束。
 //
 // 公网可达时优先走公网:隧道多一层加密,而 Hysteria2/Trojan 本身已经加密了。
 func (s *SSOT) AccessHopAddr(access, target *Node) string {

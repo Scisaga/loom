@@ -206,6 +206,12 @@ func (s *SSOT) candidateChains(access *Node, d *AccessDeclaration, nodes map[str
 			if a.ID == access.ID {
 				continue
 			}
+			// public_data_ingress 是给接入设备减少一层代理的客户端入口，不把
+			// reverse_only 节点顺带提升成公网中继。否则自动池会产生
+			// “境外入口 → 国内出口”之类倒走候选，既扩大候选集又增加损耗。
+			if a.Server.Direction == ReverseOnly && a.Server.PublicDataIngress {
+				continue
+			}
 			if s.AccessHopAddr(access, a) == "" {
 				continue
 			}

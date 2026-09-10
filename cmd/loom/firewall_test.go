@@ -14,7 +14,8 @@ func TestFirewallKeepsNewPublicIngressOpenForFutureClients(t *testing.T) {
   - id: public-entry
     public_endpoint: edge.example
     server:
-      direction: bidirectional
+      direction: reverse_only
+      public_data_ingress: true
       inbound_port: 61698
 `)
 	if err := os.WriteFile(path, content, 0o600); err != nil {
@@ -44,5 +45,8 @@ func TestFirewallKeepsNewPublicIngressOpenForFutureClients(t *testing.T) {
 	}
 	if strings.Contains(got, "只经隧道内地址到达") {
 		t.Fatalf("public ingress was mislabeled tunnel-only:\n%s", got)
+	}
+	if !strings.Contains(got, "必须保留上面的客户端数据入口") {
+		t.Fatalf("reverse-only public ingress warning was missing:\n%s", got)
 	}
 }

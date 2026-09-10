@@ -2790,3 +2790,22 @@ HTTPS、ready bootstrap 和首轮 signed pull 验证的 enrollment URL 固定为
 时由客户端自动生成并保存的身份，已接入 active snapshot、现有 canonical 字节签名和
 周期提交；用户无需提供私钥或恢复旧加入身份。服务端入口上线本身不能冒充设备已经
 在线，完整扫码与上报验收见 [接入说明](windows-client-reporting.md)。
+
+### D99 · WireGuard 发起方向与客户端公网数据入口分离
+
+**日期** 2026-09-10 · **状态** 已实现 · **相关** §2.2、§2.3、§6.1、D97
+
+`direction` 继续只决定 WireGuard 隧道由谁发起；新增可选
+`server.public_data_ingress`，表示现有 sing-box 入站能否由持有签名授权凭据的
+接入设备从公网直拨。该开关默认关闭，不能由节点地域、SSH 可达性或
+`public_endpoint` 自动推断，也不改变 `reverse_only` 的隧道角色。
+
+启用后候选枚举增加“接入设备 → 该服务器”的一跳候选，但不会让
+`reverse_only` 节点成为两跳路径的公网中继。原有“接入 → 国内入口 → 境外出口”
+继续作为兼容候选；在完整证据下，同出口且失败率不高的一跳路径因减少中继而支配
+两跳路径。这样移动端无需用外层 Hysteria2 DATAGRAM 承载内层 Hysteria2 QUIC，
+避免不可重传分片与两层拥塞控制相互放大丢包。
+
+公网监听仍使用原有 TLS、按凭据生成的 user 白名单和 `route.final=block`；它不是开放
+代理。防火墙、云安全组和运行时展示必须单独反映该开关，不能再用
+`reverse_only` 文案声称除 SSH 外可关闭所有公网入站。

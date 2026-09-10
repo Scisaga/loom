@@ -87,6 +87,7 @@ type sbInbound struct {
 	Address   []string `json:"address,omitempty"`
 	AutoRoute bool     `json:"auto_route,omitempty"`
 	Stack     string   `json:"stack,omitempty"`
+	MTU       int      `json:"mtu,omitempty"`
 
 	// Users 是 []sbUser(hysteria2/trojan)或 []sbMixedUser(mixed)。
 	// 两者字段名不同(name vs username)且互斥,所以这里用 any 承载 ——
@@ -193,6 +194,7 @@ const (
 	androidFakeIPv6Range   = "2001:db8:8000::/49"
 	androidTUNIPv4         = "172.19.0.1/30"
 	androidTUNIPv6         = "2001:db8::1/126"
+	androidTUNMTU          = 1500
 	androidFakeIPCache     = "cache.db"
 )
 
@@ -318,16 +320,19 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 
 	if p.Access.Platform.UsesTUN() {
 		addresses := []string{androidTUNIPv4}
+		mtu := 0
 		if p.Access.Platform == model.Android {
 			// Android 会给 A 与 AAAA 都返回 FakeIP。两族地址都必须进入 TUN，
 			// 否则 AAAA 会落到系统的 unreachable IPv6 默认路由，连接无法在
 			// libbox 内恢复成域名。
 			addresses = append(addresses, androidTUNIPv6)
+			mtu = androidTUNMTU
 		}
 		cfg.Inbounds = append(cfg.Inbounds, sbInbound{
 			Type: "tun", Tag: "tun-in",
 			Address:   addresses,
 			AutoRoute: true, Stack: "system",
+			MTU: mtu,
 		})
 	}
 	if p.Access.Platform == model.Android {

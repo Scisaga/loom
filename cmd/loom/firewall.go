@@ -149,8 +149,12 @@ func cmdFirewall(args []string) error {
 			fmt.Printf("  %-8s %-6s %-46s %s\n", r.Port, r.Proto, src, r.Why)
 		}
 		if n.Server.Direction == model.ReverseOnly {
-			fmt.Printf("\n  ↑ 这台是 reverse_only:所有连接都由它主动发起,\n")
-			fmt.Printf("    除 SSH 外公网入站可以全关。\n")
+			fmt.Printf("\n  ↑ 这台是 reverse_only:WireGuard 隧道仍由它主动发起。\n")
+			if n.Server.PublicDataIngress {
+				fmt.Printf("    public_data_ingress 已启用,必须保留上面的客户端数据入口。\n")
+			} else {
+				fmt.Printf("    除 SSH 外公网入站可以全关。\n")
+			}
 		}
 	}
 	fmt.Printf("\n出站:全部放行(做出口时要连任意公网地址)。\n")

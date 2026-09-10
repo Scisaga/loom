@@ -42,6 +42,7 @@ type conf struct {
 		Address    []string `json:"address"`
 		AutoRoute  bool     `json:"auto_route"`
 		Stack      string   `json:"stack"`
+		MTU        int      `json:"mtu"`
 		Users      []struct {
 			Name     string `json:"name"`
 			Username string `json:"username"`
@@ -927,7 +928,7 @@ func TestAndroidDNSResolvesAtFinalEgress(t *testing.T) {
 		for _, inbound := range config.Inbounds {
 			if inbound.Tag == "tun-in" {
 				tunAddresses = inbound.Address
-				if !inbound.AutoRoute || inbound.Stack != "system" {
+				if !inbound.AutoRoute || inbound.Stack != "system" || inbound.MTU != androidTUNMTU {
 					t.Errorf("%s 的 Android TUN 路由形状无效：%+v", node.ID, inbound)
 				}
 			}

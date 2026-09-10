@@ -1,11 +1,35 @@
 package clientroute
 
 import (
+	"math"
 	"testing"
 	"time"
 
 	"loom/internal/observation"
 )
+
+func TestEvidenceCostCombinesSequentialFailureRates(t *testing.T) {
+	now := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	evidence := Evidence{MaxAge: time.Minute, ByNode: map[string]observation.Observation{
+		"entry": {
+			Node: "entry", TS: now.Format(time.RFC3339),
+			Edges: []observation.Edge{{To: "exit", RTTMs: 20, Samples: 100, Failures: 6}},
+		},
+		"exit": {
+			Node: "exit", TS: now.Format(time.RFC3339),
+			Targets: []observation.Reach{{
+				Target: "https://target.example/", FirstByteMs: 30, Samples: 100, Failures: 6,
+			}},
+		},
+	}}
+
+	cost := evidence.Cost(
+		[]string{"entry", "exit"}, []string{"https://target.example/"}, now, []string{"neighbor"},
+	)
+	if !cost.Known || cost.Failed || math.Abs(cost.FailureRate-0.1164) > 0.000001 {
+		t.Fatalf("顺序路径失败率=%v,期望 0.1164；cost=%+v", cost.FailureRate, cost)
+	}
+}
 
 func TestDecideRemovesRedundantRelayBeforeThresholdCandidates(t *testing.T) {
 	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)

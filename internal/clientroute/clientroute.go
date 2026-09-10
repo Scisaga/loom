@@ -104,7 +104,9 @@ func (e Evidence) Cost(chain, targets []string, now time.Time, carriers []string
 					}
 					found = true
 					out.Failed = out.Failed || edge.Failures == edge.Samples
-					out.FailureRate = max(out.FailureRate, float64(edge.Failures)/float64(edge.Samples))
+					out.FailureRate = combineFailureRate(
+						out.FailureRate, float64(edge.Failures)/float64(edge.Samples),
+					)
 					out.MS += float64(edge.RTTMs)
 					break
 				}
@@ -118,7 +120,9 @@ func (e Evidence) Cost(chain, targets []string, now time.Time, carriers []string
 					}
 					found = true
 					out.Failed = out.Failed || metric.Failures == metric.Samples
-					out.FailureRate = max(out.FailureRate, float64(metric.Failures)/float64(metric.Samples))
+					out.FailureRate = combineFailureRate(
+						out.FailureRate, float64(metric.Failures)/float64(metric.Samples),
+					)
 					out.MS += float64(metric.RTTMS)
 					break
 				}
@@ -126,7 +130,7 @@ func (e Evidence) Cost(chain, targets []string, now time.Time, carriers []string
 			out.Known = out.Known && found
 			continue
 		}
-		var total float64
+		var total, targetFailureRate float64
 		for _, target := range targets {
 			found := false
 			for _, reach := range value.Targets {
@@ -135,15 +139,22 @@ func (e Evidence) Cost(chain, targets []string, now time.Time, carriers []string
 				}
 				found = true
 				out.Failed = out.Failed || reach.Failures == reach.Samples
-				out.FailureRate = max(out.FailureRate, float64(reach.Failures)/float64(reach.Samples))
+				targetFailureRate = max(targetFailureRate, float64(reach.Failures)/float64(reach.Samples))
 				total += float64(reach.FirstByteMs)
 				break
 			}
 			out.Known = out.Known && found
 		}
+		out.FailureRate = combineFailureRate(out.FailureRate, targetFailureRate)
 		out.MS += total / float64(len(targets))
 	}
 	return out
+}
+
+// combineFailureRate 合并顺序路径各段的失败概率。取 max 会系统性低估多跳路径：
+// 两段各失败 6% 时整链成功率是 .94²，失败率应为 11.64%，而不是 6%。
+func combineFailureRate(current, next float64) float64 {
+	return 1 - (1-current)*(1-next)
 }
 
 func Decide(declaration Declaration, actual string, entries map[string]EntryResult, evidence Evidence,
