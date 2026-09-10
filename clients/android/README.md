@@ -1,4 +1,4 @@
-# Loom Android client — stage 3
+# Loom Android client — stage 3 routing and stage 4 reliability
 
 This directory contains the native Kotlin/Compose host and the pinned
 sing-box/Loom mobile binding. Stage 2 implements the complete access-only
@@ -9,6 +9,17 @@ signed mobile route plan, Direct / Auto / fixed-exit preference, authenticated
 loopback selector changes, one deduplicated entry-probe round per underlying
 network generation, verified server-observation reuse, threshold damping,
 actual-selector readback, and plan-scoped offline evidence reuse.
+
+Android TUN address queries use a persistent, dual-stack FakeIP mapping. The
+subsequent connection is restored to an FQDN before routing, carried unchanged
+through the selected proxy chain, and resolved by the final egress with that
+node's DNS configuration. The FakeIP rule matches only DNS originating from
+`tun-in`; libbox bootstrap resolution for a named public entry remains on the
+first real DNS server, with an independent cache, so tunnel startup cannot
+resolve its own entry to a FakeIP. If libbox supplies a TUN address family but
+no explicit route for that family, the Android host adds its default route;
+this prevents IPv6 FakeIP traffic from bypassing the VPN or becoming
+unreachable.
 
 The three route modes are enabled only after a verified managed snapshot carries
 a mobile route plan. Direct requires a direct candidate for every selector;
@@ -21,6 +32,13 @@ expired, out-of-scope or invalid evidence stays unknown. A lower failure rate
 can switch immediately; at equal failure rate, removing a relay without adding
 estimated latency is not blocked by the improvement threshold. Same-hop
 replacements and added relays still require the configured improvement.
+
+The signed configuration pins the Android TUN MTU to 1500 instead of inheriting
+sing-box's 9000-byte default. A server with `public_data_ingress` contributes a
+single-Hysteria2 client candidate even when its WireGuard direction remains
+`reverse_only`; such an endpoint is never promoted into an intermediate relay.
+This keeps the reverse tunnel policy while avoiding Hysteria2-over-Hysteria2 for
+an authorized fixed foreign exit.
 
 The Current Paths card is a read-only projection of libbox selector readback.
 It shows the entry ping, each matching WireGuard or public Hysteria2 server hop,
@@ -114,7 +132,51 @@ uses the first available value from:
 The key is public and contains no device credential or control address. Debug
 builds without it remain useful for the emulator data-plane fixture, but QR
 import fails closed before sending the one-time token. Every release task
-refuses to run without a valid 32-byte trust anchor.
+refuses to run without a valid 32-byte trust anchor and all four release-signing
+environment variables:
+
+- `LOOM_ANDROID_RELEASE_STORE_FILE`;
+- `LOOM_ANDROID_RELEASE_STORE_PASSWORD`;
+- `LOOM_ANDROID_RELEASE_KEY_ALIAS`;
+- `LOOM_ANDROID_RELEASE_KEY_PASSWORD`.
+
+Keep the encrypted keystore and its credentials outside Git. The repository's
+ignored default credential file is `../../deploy/android/android-signing.env`;
+it can be overridden with `LOOM_ANDROID_SIGNING_ENV_FILE`. Build and verify a
+private signed APK with:
+
+```bash
+./scripts/provision-release-key.sh # exactly once; refuses to overwrite
+ANDROID_HOME=/path/to/android-sdk ./scripts/build-release.sh
+```
+
+Provisioning creates an encrypted PKCS12 upgrade key and a root-only environment
+file in the ignored deployment directory. It refuses to replace either file and
+does not make a backup. The build helper caps Gradle at four workers, runs unit
+tests and release Lint, builds the release APK, and requires the pinned
+build-tools `apksigner` to verify every APK signature before printing the
+artifact SHA-256. It never creates, copies or backs up the long-lived upgrade
+key. Preserve that key and its credentials in a separate protected backup:
+losing it makes in-place upgrades of the fixed `io.github.scisaga.loom` package
+impossible.
+
+Once `deploy/android` exists, the repository-level `loom backup` default set
+includes the complete directory. Create an encrypted backup, copy the archive
+off this machine, and store its passphrase through a different channel:
+
+```bash
+go run ./cmd/loom backup -o /secure/destination/loom-secrets.bak \
+  -passphrase-file /separate/location/backup-passphrase
+./clients/android/scripts/verify-release-backup.sh \
+  /secure/destination/loom-secrets.bak \
+  /separate/location/backup-passphrase
+```
+
+The verifier restores into a new temporary directory, requires byte-identical
+signing material, and proves that the recovered PKCS12 can be opened with the
+recovered credentials. It never overwrites the live key. A backup left on the
+builder, or an archive stored beside its passphrase, does not satisfy the
+off-machine recovery requirement.
 
 The enrollment endpoint must also serve a complete TLS chain which terminates
 at a root in the supported Android system stores. Verify this on physical

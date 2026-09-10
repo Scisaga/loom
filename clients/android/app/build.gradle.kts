@@ -32,8 +32,28 @@ val requirePinnedTrustAnchor = tasks.register("requirePinnedTrustAnchor") {
     }
 }
 
+val releaseSigningInputs = linkedMapOf(
+    "LOOM_ANDROID_RELEASE_STORE_FILE" to providers.environmentVariable("LOOM_ANDROID_RELEASE_STORE_FILE").orNull,
+    "LOOM_ANDROID_RELEASE_STORE_PASSWORD" to
+        providers.environmentVariable("LOOM_ANDROID_RELEASE_STORE_PASSWORD").orNull,
+    "LOOM_ANDROID_RELEASE_KEY_ALIAS" to providers.environmentVariable("LOOM_ANDROID_RELEASE_KEY_ALIAS").orNull,
+    "LOOM_ANDROID_RELEASE_KEY_PASSWORD" to providers.environmentVariable("LOOM_ANDROID_RELEASE_KEY_PASSWORD").orNull,
+).mapValues { (_, value) -> value.orEmpty() }
+val releaseSigningConfigured = releaseSigningInputs.values.all(String::isNotEmpty)
+
+val requireSigningInputs = tasks.register("requireSigningInputs") {
+    doLast {
+        val missing = releaseSigningInputs.filterValues(String::isEmpty).keys
+        if (missing.isNotEmpty()) {
+            throw GradleException("Release signing inputs are missing: ${missing.joinToString()}")
+        }
+        val store = file(releaseSigningInputs.getValue("LOOM_ANDROID_RELEASE_STORE_FILE"))
+        if (!store.isFile) throw GradleException("Release signing store does not exist: $store")
+    }
+}
+
 tasks.configureEach {
-    if (name.contains("Release")) dependsOn(requirePinnedTrustAnchor)
+    if (name.contains("Release")) dependsOn(requirePinnedTrustAnchor, requireSigningInputs)
 }
 
 android {
@@ -45,8 +65,8 @@ android {
         applicationId = "io.github.scisaga.loom"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.3.1-stage3"
+        versionCode = 6
+        versionName = "0.4.0-rc2"
 
         buildConfigField("String", "LOOM_PLATFORM_PUBLIC_KEY_B64", "\"$platformPublicKeyB64\"")
 
@@ -54,8 +74,20 @@ android {
         ndk { abiFilters += setOf("arm64-v8a", "x86_64") }
     }
 
+    signingConfigs {
+        create("release") {
+            if (releaseSigningConfigured) {
+                storeFile = file(releaseSigningInputs.getValue("LOOM_ANDROID_RELEASE_STORE_FILE"))
+                storePassword = releaseSigningInputs.getValue("LOOM_ANDROID_RELEASE_STORE_PASSWORD")
+                keyAlias = releaseSigningInputs.getValue("LOOM_ANDROID_RELEASE_KEY_ALIAS")
+                keyPassword = releaseSigningInputs.getValue("LOOM_ANDROID_RELEASE_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }

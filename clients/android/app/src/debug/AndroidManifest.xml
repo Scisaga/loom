@@ -14,6 +14,10 @@
                 <action android:name="io.github.scisaga.loom.debug.RETRY_ENROLLMENT" />
                 <action android:name="io.github.scisaga.loom.debug.ABANDON_PENDING" />
                 <action android:name="io.github.scisaga.loom.debug.ENROLLMENT_STATUS" />
+                <action android:name="io.github.scisaga.loom.debug.ROUTE_STATUS" />
+                <action android:name="io.github.scisaga.loom.debug.RUNTIME_STATUS" />
+                <action android:name="io.github.scisaga.loom.debug.ROUTE_DIRECT" />
+                <action android:name="io.github.scisaga.loom.debug.ROUTE_AUTO" />
             </intent-filter>
         </receiver>
     </application>

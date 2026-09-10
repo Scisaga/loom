@@ -556,6 +556,14 @@ Android App 包含：
 - Android `VpnService` 建立系统 TUN，并按平台要求运行前台 Service 与常驻通知；
 - 使用钉住版本的 sing-box `libbox.aar` 承担 TUN 和代理数据平面，不复制协议实现，
   也不把上游客户端的 profile/规则编辑模型带入 Loom；
+- 应用的 A/AAAA 查询只接收持久化 FakeIP，连接进入 libbox 后恢复为 FQDN 并沿
+  候选链传到最终出口解析；FakeIP 规则只匹配 `tun-in`，不会接管 libbox 自己的
+  公网入口/bootstrap 解析；宿主对已经配置 TUN 地址但 libbox 未显式列路由的
+  地址族补默认路由，保证 FakeIP 双栈都进入同一数据面；生产 TUN 显式使用 1500
+  MTU，不能沿用上游 9000 默认值跨越普通移动/Wi-Fi underlay；
+- `reverse_only` 只约束 WireGuard 发起方向。服务器显式启用
+  `public_data_ingress` 时，移动端获得到最终出口的一跳 Hysteria2 候选；两跳国内
+  中继保留兼容，但不得让 Hysteria2-over-Hysteria2 压过同等健康的一跳路径；
 - 将平台无关的 Loom 验签、generation floor、最后可用配置和 selector 状态机抽成窄
   Go 包；确需在 Android 复用时再评估通过 `gomobile bind` 生成独立 AAR，不为共享代码
   先引入整套绑定，也不在 Kotlin 中另写一套行为略有差异的验证器；

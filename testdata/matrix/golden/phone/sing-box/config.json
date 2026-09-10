@@ -13,20 +13,44 @@
         "tag": "dns1",
         "address": "119.29.29.29",
         "detour": "dns-out"
+      },
+      {
+        "tag": "dns-fakeip",
+        "address": "fakeip"
+      }
+    ],
+    "rules": [
+      {
+        "inbound": [
+          "tun-in"
+        ],
+        "query_type": [
+          "A",
+          "AAAA"
+        ],
+        "server": "dns-fakeip"
       }
     ],
     "strategy": "prefer_ipv4",
-    "reverse_mapping": true
+    "reverse_mapping": true,
+    "independent_cache": true,
+    "fakeip": {
+      "enabled": true,
+      "inet4_range": "198.18.0.0/15",
+      "inet6_range": "2001:db8:8000::/49"
+    }
   },
   "inbounds": [
     {
       "type": "tun",
       "tag": "tun-in",
       "address": [
-        "172.19.0.1/30"
+        "172.19.0.1/30",
+        "2001:db8::1/126"
       ],
       "auto_route": true,
-      "stack": "system"
+      "stack": "system",
+      "mtu": 1500
     },
     {
       "type": "mixed",
@@ -274,6 +298,11 @@
     "auto_detect_interface": true
   },
   "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "path": "cache.db",
+      "store_fakeip": true
+    },
     "clash_api": {
       "external_controller": "127.0.0.1:61800",
       "secret": "${secret:api/phone}"

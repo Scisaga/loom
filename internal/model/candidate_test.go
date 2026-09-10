@@ -99,3 +99,49 @@ func TestPinnedEgressRetainsAllAllowedIntermediatePaths(t *testing.T) {
 		t.Fatalf("allowed intermediate paths missing: %v", want)
 	}
 }
+
+func TestReverseOnlyPublicDataIngressAddsDirectClientCandidate(t *testing.T) {
+	access := Node{ID: "client", Access: &AccessRole{Platform: Android}}
+	domestic := Node{
+		ID: "domestic", PublicEndpoint: "192.0.2.9",
+		Server: &ServerRole{Direction: Bidirectional, InboundPort: 4433, EgressCapable: true},
+	}
+	exit := Node{
+		ID: "fixed-exit", PublicEndpoint: "192.0.2.8",
+		Server: &ServerRole{
+			Direction: ReverseOnly, PublicDataIngress: true,
+			InboundPort: 4433, EgressCapable: true,
+		},
+	}
+	s := &SSOT{
+		Nodes: []Node{access, domestic, exit},
+		Tunnels: []Tunnel{{
+			From: "domestic", To: "fixed-exit", FromAddr: "10.0.0.1/32", ToAddr: "10.0.0.2/32",
+		}},
+	}
+	d := &AccessDeclaration{
+		ID: "fixed", AddressAxis: FromRequest, EgressAxis: "pinned:fixed-exit",
+		AllowedServers: []string{"fixed-exit"}, MaxHops: 1,
+	}
+
+	candidates, skips := s.EnumerateCandidates(&s.Nodes[0], d)
+	if len(skips) != 0 || len(candidates) != 1 {
+		t.Fatalf("公网数据入口没有生成唯一单跳候选:candidates=%+v skips=%+v", candidates, skips)
+	}
+	if got := strings.Join(candidates[0].ServerChain, ">"); got != "fixed-exit" {
+		t.Fatalf("公网数据入口候选=%q,期望 fixed-exit", got)
+	}
+	if got := s.AccessHopAddr(&s.Nodes[0], &s.Nodes[2]); got != "192.0.2.8" {
+		t.Fatalf("客户端拨号地址=%q,期望公网入口", got)
+	}
+
+	d.EgressAxis = EgressAny
+	d.AllowedServers = []string{"domestic", "fixed-exit"}
+	d.MaxHops = 2
+	candidates, _ = s.EnumerateCandidates(&s.Nodes[0], d)
+	for _, candidate := range candidates {
+		if strings.Join(candidate.ServerChain, ">") == "fixed-exit>domestic" {
+			t.Fatal("客户端专用公网入口被错误提升成了两跳中继")
+		}
+	}
+}

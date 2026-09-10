@@ -150,7 +150,7 @@ func TestMeshEligibleIsDerived(t *testing.T) {
 	}{
 		{Bidirectional, true, true},
 		{DirectOnly, true, true},
-		{ReverseOnly, false, false}, // 进不了 mesh,公网也拨不到
+		{ReverseOnly, false, false}, // 进不了 mesh,公网数据入口默认关闭
 	} {
 		n := &Node{ID: "n", PublicEndpoint: "1.1.1.1",
 			Server: &ServerRole{Direction: tc.d, InboundPort: 1}}
@@ -160,6 +160,12 @@ func TestMeshEligibleIsDerived(t *testing.T) {
 		if got := n.PubliclyDialable(); got != tc.dial {
 			t.Errorf("%s.PubliclyDialable() = %v,期望 %v", tc.d, got, tc.dial)
 		}
+	}
+	reversePublic := &Node{ID: "n", PublicEndpoint: "192.0.2.1", Server: &ServerRole{
+		Direction: ReverseOnly, InboundPort: 4433, PublicDataIngress: true,
+	}}
+	if reversePublic.MeshEligible() || !reversePublic.PubliclyDialable() {
+		t.Fatal("reverse_only 的公网数据入口错误改变了 WireGuard 方向或未能供客户端直拨")
 	}
 }
 

@@ -174,12 +174,22 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 			continue // 后面的规则都依赖 direction 有效
 		}
 
-		// §2.2:reverse_only 拨不到,只能由前一跳经反连隧道推给它。
-		// 它可以是出口,但永远不能是链上第一跳。
+		// §2.2:reverse_only 只决定 WireGuard 发起方向。公网数据入口仍默认关闭，
+		// 但可显式开放给已授权客户端，不能再从 direction 偷推数据面可达性。
 		if isServer && n.Server.Direction == model.ReverseOnly && n.PublicEndpoint == "" {
 			fs.add("§2.2 相容性", where,
 				"reverse_only 的服务器仍需 public_endpoint —— 它主动连出去时,"+
 					"对端要写 Endpoint 指回来的是**对端**的地址,而本机地址用于排障与探测标注")
+		}
+		if isServer && n.Server.PublicDataIngress {
+			if n.PublicEndpoint == "" {
+				fs.add("§2.3 公网数据入口", where,
+					"public_data_ingress 已启用,却没有 public_endpoint —— 客户端无处可拨")
+			}
+			if n.Server.InboundPort == 0 {
+				fs.add("§2.3 公网数据入口", where,
+					"public_data_ingress 已启用,却没有 inbound_port —— 公网没有数据面监听")
+			}
 		}
 		// inbound_port 只在真有人要连它时才必需。
 		//

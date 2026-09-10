@@ -117,13 +117,20 @@ class LoomVpnService : VpnService(), PlatformInterface {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        VpnRuntime.transform { it.copy(alwaysOn = alwaysOnEnabled()) }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (boxService == null) startForeground(NOTIFICATION_ID, foregroundNotification("正在准备…"))
-        when (intent?.action ?: ACTION_CONNECT) {
+        when (intent?.action) {
+            null, SERVICE_INTERFACE -> {
+                // §8.3：sticky 重建与系统 always-on 启动都没有应用自定义 action。
+                desiredConnected = true
+                scope.launch { startTunnel(useEmulatorProxy = false, startId) }
+            }
             ACTION_CONNECT -> {
                 desiredConnected = true
+                VpnConnectionPreference(this).setDesiredConnected(true)
                 val useEmulatorProxy = intent?.getBooleanExtra(EXTRA_EMULATOR_PROXY, false) == true
                 check(!useEmulatorProxy || applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
                     "emulator proxy fixture is debug-only"
@@ -138,19 +145,42 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 desiredConnected = false
                 updateNotification("正在完成设备入网…")
             }
-            ACTION_DISCONNECT -> {
-                desiredConnected = false
-                activeProbe?.cancel()
-                scope.launch { stopTunnel(stopStartId = startId) }
+            ACTION_SYNC_SYSTEM_POLICY -> {
+                val alwaysOn = alwaysOnEnabled()
+                VpnRuntime.transform { it.copy(alwaysOn = alwaysOn) }
+                if (boxService == null) {
+                    stopIdleForeground(startId)
+                } else {
+                    val detail = VpnRuntime.status.value.detail
+                    updateNotification(if (alwaysOn) "始终开启 · $detail" else detail)
+                }
             }
+            ACTION_DISCONNECT -> {
+                if (!shouldOfferAppDisconnect(alwaysOnEnabled())) {
+                    // Android 的始终开启策略是期望态来源；应用内断开不能与系统策略对打。
+                    desiredConnected = true
+                    VpnConnectionPreference(this).setDesiredConnected(true)
+                    VpnRuntime.transform { it.copy(alwaysOn = true) }
+                    updateNotification("始终开启 · ${VpnRuntime.status.value.detail}")
+                    if (boxService == null) scope.launch { startTunnel(useEmulatorProxy = false, startId) }
+                } else {
+                    desiredConnected = false
+                    VpnConnectionPreference(this).setDesiredConnected(false)
+                    activeProbe?.cancel()
+                    scope.launch { stopTunnel(stopStartId = startId) }
+                }
+            }
+            else -> stopIdleForeground(startId)
         }
-        return START_NOT_STICKY
+        // §8.3：连接是用户明确发出的长期请求；主动断开已在返回前清除该请求。
+        return vpnServiceRestartMode(desiredConnected)
     }
 
     override fun onBind(intent: Intent): IBinder? = super.onBind(intent)
 
     override fun onRevoke() {
         desiredConnected = false
+        VpnConnectionPreference(this).setDesiredConnected(false)
         activeProbe?.cancel()
         scope.launch {
             stopTunnel()
@@ -191,7 +221,13 @@ class LoomVpnService : VpnService(), PlatformInterface {
         // A queued disconnect may have removed foreground state while a newer
         // connect command was waiting for the lifecycle mutex.
         startForeground(NOTIFICATION_ID, foregroundNotification("正在准备…"))
-        VpnRuntime.update(VpnStatus(ConnectionPhase.STARTING, "正在验签并建立 TUN…"))
+        VpnRuntime.update(
+            VpnStatus(
+                phase = ConnectionPhase.STARTING,
+                detail = "正在验签并建立 TUN…",
+                alwaysOn = alwaysOnEnabled(),
+            ),
+        )
         updateNotification("正在连接…")
         try {
             DeviceKeyStore().proveBinding()
@@ -319,6 +355,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 detail = detail,
                 dnsProbe = probe.dns,
                 httpsProbe = probe.https,
+                alwaysOn = alwaysOnEnabled(),
             ),
         )
         updateNotification("已连接 · $detail")
@@ -460,10 +497,10 @@ class LoomVpnService : VpnService(), PlatformInterface {
         builderUnderlying?.let { builder.setUnderlyingNetworks(arrayOf(it)) }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setMetered(false)
 
-        addAddresses(builder, options)
+        val addressFamilies = addAddresses(builder, options)
         if (options.autoRoute) {
             options.dnsServerAddress?.value?.takeIf { it.isNotBlank() }?.let(builder::addDnsServer)
-            addRoutes(builder, options)
+            addRoutes(builder, options, addressFamilies)
         }
         val descriptor = checkNotNull(builder.establish()) { "android: VPN permission revoked while opening TUN" }
         synchronized(underlyingPublicationLock) { underlyingPublication.builderBound(builderUnderlying) }
@@ -472,23 +509,40 @@ class LoomVpnService : VpnService(), PlatformInterface {
         return descriptor.fd
     }
 
-    private fun addAddresses(builder: Builder, options: TunOptions) {
+    private fun addAddresses(builder: Builder, options: TunOptions): TunAddressFamilies {
+        var hasIPv4 = false
         val ipv4 = options.inet4Address
-        while (ipv4.hasNext()) ipv4.next().also { builder.addAddress(it.address(), it.prefix()) }
+        while (ipv4.hasNext()) ipv4.next().also {
+            hasIPv4 = true
+            builder.addAddress(it.address(), it.prefix())
+        }
+        var hasIPv6 = false
         val ipv6 = options.inet6Address
-        while (ipv6.hasNext()) ipv6.next().also { builder.addAddress(it.address(), it.prefix()) }
+        while (ipv6.hasNext()) ipv6.next().also {
+            hasIPv6 = true
+            builder.addAddress(it.address(), it.prefix())
+        }
+        return TunAddressFamilies(ipv4 = hasIPv4, ipv6 = hasIPv6)
     }
 
-    private fun addRoutes(builder: Builder, options: TunOptions) {
+    private fun addRoutes(builder: Builder, options: TunOptions, families: TunAddressFamilies) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            var hasIPv4Route = false
             val ipv4 = options.inet4RouteAddress
-            if (ipv4.hasNext()) while (ipv4.hasNext()) ipv4.next().also {
-                builder.addRoute(IpPrefix(InetAddress.getByName(it.address()), it.prefix()))
-            } else builder.addRoute("0.0.0.0", 0)
-            val ipv6 = options.inet6RouteAddress
-            while (ipv6.hasNext()) ipv6.next().also {
+            while (ipv4.hasNext()) ipv4.next().also {
+                hasIPv4Route = true
                 builder.addRoute(IpPrefix(InetAddress.getByName(it.address()), it.prefix()))
             }
+            if (requiresDefaultRoute(families.ipv4, hasIPv4Route)) builder.addRoute("0.0.0.0", 0)
+
+            var hasIPv6Route = false
+            val ipv6 = options.inet6RouteAddress
+            while (ipv6.hasNext()) ipv6.next().also {
+                hasIPv6Route = true
+                builder.addRoute(IpPrefix(InetAddress.getByName(it.address()), it.prefix()))
+            }
+            if (requiresDefaultRoute(families.ipv6, hasIPv6Route)) builder.addRoute("::", 0)
+
             val exclude4 = options.inet4RouteExcludeAddress
             while (exclude4.hasNext()) exclude4.next().also {
                 builder.excludeRoute(IpPrefix(InetAddress.getByName(it.address()), it.prefix()))
@@ -498,12 +552,25 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 builder.excludeRoute(IpPrefix(InetAddress.getByName(it.address()), it.prefix()))
             }
         } else {
+            var hasIPv4Route = false
             val ipv4 = options.inet4RouteRange
-            while (ipv4.hasNext()) ipv4.next().also { builder.addRoute(it.address(), it.prefix()) }
+            while (ipv4.hasNext()) ipv4.next().also {
+                hasIPv4Route = true
+                builder.addRoute(it.address(), it.prefix())
+            }
+            if (requiresDefaultRoute(families.ipv4, hasIPv4Route)) builder.addRoute("0.0.0.0", 0)
+
+            var hasIPv6Route = false
             val ipv6 = options.inet6RouteRange
-            while (ipv6.hasNext()) ipv6.next().also { builder.addRoute(it.address(), it.prefix()) }
+            while (ipv6.hasNext()) ipv6.next().also {
+                hasIPv6Route = true
+                builder.addRoute(it.address(), it.prefix())
+            }
+            if (requiresDefaultRoute(families.ipv6, hasIPv6Route)) builder.addRoute("::", 0)
         }
     }
+
+    private data class TunAddressFamilies(val ipv4: Boolean, val ipv6: Boolean)
 
     override fun useProcFS(): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
 
@@ -781,22 +848,27 @@ class LoomVpnService : VpnService(), PlatformInterface {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val disconnect = PendingIntent.getService(
-            this,
-            1,
-            Intent(this, LoomVpnService::class.java).setAction(ACTION_DISCONNECT),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_loom)
             .setContentTitle("Loom VPN")
             .setContentText(text)
             .setContentIntent(open)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .addAction(0, "断开", disconnect)
-            .build()
+        if (shouldOfferAppDisconnect(alwaysOnEnabled())) {
+            val disconnect = PendingIntent.getService(
+                this,
+                1,
+                Intent(this, LoomVpnService::class.java).setAction(ACTION_DISCONNECT),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            builder.addAction(0, "断开", disconnect)
+        }
+        return builder.build()
     }
+
+    private fun alwaysOnEnabled(): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && isAlwaysOn
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -849,8 +921,17 @@ class LoomVpnService : VpnService(), PlatformInterface {
         const val ACTION_CONNECT = "io.github.scisaga.loom.action.CONNECT"
         const val ACTION_RELOAD = "io.github.scisaga.loom.action.RELOAD"
         const val ACTION_ENROLLMENT_KEEPALIVE = "io.github.scisaga.loom.action.ENROLLMENT_KEEPALIVE"
+        const val ACTION_SYNC_SYSTEM_POLICY = "io.github.scisaga.loom.action.SYNC_SYSTEM_POLICY"
         const val ACTION_DISCONNECT = "io.github.scisaga.loom.action.DISCONNECT"
         const val EXTRA_CANDIDATE_ID = "io.github.scisaga.loom.extra.CANDIDATE_ID"
         const val EXTRA_EMULATOR_PROXY = "io.github.scisaga.loom.extra.EMULATOR_PROXY"
     }
 }
+
+internal fun requiresDefaultRoute(hasAddress: Boolean, hasExplicitRoute: Boolean): Boolean =
+    hasAddress && !hasExplicitRoute
+
+internal fun vpnServiceRestartMode(desiredConnected: Boolean): Int =
+    if (desiredConnected) android.app.Service.START_STICKY else android.app.Service.START_NOT_STICKY
+
+internal fun shouldOfferAppDisconnect(alwaysOn: Boolean): Boolean = !alwaysOn
