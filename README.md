@@ -8,7 +8,7 @@
   基于 WireGuard 和 sing-box 的组网与选路工具。
 </p>
 
-Loom 用一份 YAML 配置管理设备、隧道、服务和访问规则，生成并分发各设备的运行配置。它会持续测量候选路径，根据延迟和可用性自动选路。
+Loom 用一份 YAML 配置管理设备、隧道、服务和访问规则，生成并分发各设备的运行配置。节点上报链路观测，接入端结合有效观测在授权范围内自动选路。
 
 你可以用 Loom 连接自己的电脑和服务器，访问内网服务，或在多个代理和跨机房服务实例之间选择合适的路径。
 
@@ -22,15 +22,25 @@ Loom 用一份 YAML 配置管理设备、隧道、服务和访问规则，生成
 |---|---|
 | ![Loom 动态双环拓扑](assets/loom-control-center-topology-misaka-v1.svg) | ![Loom Service 管理](assets/loom-control-center-services-misaka-v1.svg) |
 
-Windows 客户端支持本地直连、自动选路和固定出口，提供安装版、便携 TUN 版和便携代理版。
+Windows 客户端采用原生浅色界面，支持多份连接配置、本地直连、自动选路和固定出口。左侧管理连接，右侧查看连接状态、当前路径及各段测量；同一时间只运行一个连接，单击配置只切换查看，双击名称可重命名。
 
 从 [Releases](https://github.com/Scisaga/loom/releases) 下载 Windows 预览版。当前 EXE 和 MSI 尚未签名。
 
 <p align="center">
-  <img src="assets/client/windows/loom-client-windows-current.png" width="520" alt="Loom Windows 客户端原生界面">
+  <img src="assets/client/windows/loom-client-windows-current.png" width="900" alt="Loom Windows 客户端：多配置侧栏、路由模式与 Service 分段路径">
 </p>
 
-<p align="center"><sub>Windows · Portable Mixed</sub></p>
+<p align="center"><sub>Windows · Portable TUN · 当前源码的原生窗口截图，连接、身份与测量值均为演示数据；发行版可能滞后于源码。</sub></p>
+
+三个版本均提供 x64（amd64）和 ARM64 包，共用同一套界面与加入流程：
+
+| 版本 | 流量接管 | 安装与权限 |
+|---|---|---|
+| 便携代理版（Portable Mixed） | 显式配置 HTTP/SOCKS 代理的应用 | 解压即用，普通用户运行 |
+| 便携 TUN 版（Portable TUN） | 纳入 TUN 规则的系统 TCP、UDP 与 DNS | 无需安装；当前预览启用 TUN 前需以管理员身份重新启动 |
+| 安装版（Installed） | TUN 接管，同时提供同规则代理入口 | MSI 安装时提权；日常界面和连接由普通用户操作 |
+
+Windows 的自动模式按 Service 分流；固定出口让受管上网流量共用一条到所选出口的授权路径，中间转发仍自动选择。**当前选路**展示实际生效的路径，展开**详细信息**可查看各段观测来源、测量时间和选路说明。
 
 ## 加入网络
 
@@ -44,16 +54,16 @@ Windows 客户端支持本地直连、自动选路和固定出口，提供安装
 
 加入码短期有效且只能使用一次。设备加入后会保留本机身份，重启、重连和正常升级无需重新加入。Android 客户端目前从源码构建私有 APK，正式发布签名与商店分发尚未提供。
 
-安装和使用步骤见 [Windows 客户端](clients/windows/README.md)和 [Linux 客户端安装](docs/linux-client-install.md)。设备职责、授权和连接方向的详细说明见 [Device 生命周期与交付架构](docs/device-lifecycle-and-delivery.md)。
+安装和使用步骤见 [Windows 客户端](clients/windows/README.md)、[Linux 客户端安装](docs/linux-client-install.md)和 [Android 客户端](clients/android/README.md)。设备职责、授权和连接方向的详细说明见 [Device 生命周期与交付架构](docs/device-lifecycle-and-delivery.md)。
 
 ## 核心能力
 
 - **一份 SSOT**：统一描述设备、隧道、服务、访问范围和选路规则。
 - **严格校验**：拒绝未知字段和不完整配置，并一次列出全部问题。
 - **稳定渲染**：相同输入生成相同的 WireGuard、sing-box、systemd 和 Agent 配置。
-- **按路径调度**：比较完整的转发链和目标地址，支持直连、单跳和多跳。
-- **状态监测**：查看设备、链路和当前路径，记录延迟、波动和吞吐。
-- **自动切换**：路径失效时立即避开；日常优化使用样本窗口和阈值防止频繁抖动。
+- **按路径调度**：在授权的转发链和目标地址候选中选路，支持直连、单跳和多跳。
+- **状态监测**：查看设备、链路、当前路径及可用测量；缺失或过期观测保持未知。
+- **自动切换**：根据有效观测避开失败候选，使用切换阈值减少频繁抖动。
 - **签名交付**：配置自动发布，设备验签后安装；二进制升级仍需显式 `release`。
 - **密钥与回滚**：按设备管理密钥，更新失败时恢复上一份完整配置。
 
@@ -77,23 +87,30 @@ flowchart TB
         Snapshot --> Distribution["分发签名配置"]
     end
 
-    subgraph Device["设备持续运行"]
+    subgraph Device["Windows / Android 客户端持续运行"]
         direction LR
         Distribution --> Pull["拉取"] --> Verify["验签并安装配置"]
-        Verify --> Selector["直连 / 自动 / 固定出口"]
-        Selector --> Runtime["本地数据平面"]
-        Runtime --> Measure["测量 · 签名上报"]
-        Measure --> Agent["Agent 排序与防抖"]
-        Agent -.->|仅影响自动模式| Selector
+        Verify --> Preference["直连 / 自动 / 固定出口"]
+        Preference --> Runtime["本地数据平面"]
+        Runtime --> Report["运行状态 · 签名上报"]
+        Preference --> Entry["自动 / 固定出口：首轮并行探测授权入口"]
+        Entry --> Agent["客户端 Agent 选路与防抖"]
+        Report --> Evidence["获取并验证服务器观测"]
+        Evidence --> Agent
+        Agent -.->|切换授权候选| Runtime
     end
 
+    Servers["服务器按段测量 · 签名上报"] --> Evidence
     SSOT -.->|期望状态| Console["控制中心"]
-    Measure -.->|设备和链路状态| Console
+    Report -.->|客户端状态与实际选路| Console
+    Servers -.->|服务器和链路状态| Console
 ```
 
-设备加入后会定期获取配置并上报状态。调度 Agent 根据测量结果在允许的候选路径中选择，使用窗口和阈值减少频繁切换。
+设备加入后会定期获取配置并上报状态。Windows 和 Android 客户端首轮将授权入口去重、各探测一次并行完成，入口之后复用已验签的服务器分段观测；不逐条探测完整业务路径，也不等待服务器观测到齐才启动。服务器观测更新只触发重新选路，不追加客户端探测。
 
-控制平面暂时离线不会中断数据平面。设备继续使用最后一份安装成功的配置，Agent 也可以根据本地观测继续选路。
+客户端展示的入口延迟、服务器单跳测量和目标响应时间各有来源，分段估算不代表实测端到端 P50/P95 或整条业务路径健康。Linux 接入端的 `loom agent` 仍使用候选测量窗口与防抖规则。
+
+控制平面暂时离线不会中断数据平面。设备继续使用最后一份安装成功的配置；本地选路只使用仍然有效的观测，缺失或过期数据保持未知。
 
 ## 控制中心
 
@@ -115,7 +132,7 @@ flowchart TB
 |---|---|
 | **设备（Device）** | Loom 管理的基本实体，可以是服务器、桌面或手机 |
 | **职责（Responsibilities）** | 设备可以使用 Loom、参与转发、提供公网出口或承担中控职责 |
-| **目的地授权（Destination grants）** | 设备获准访问的 Service、出口或具名本地网络 |
+| **目的地授权（Destination grants）** | 设备获准访问的 Service 和出口；具名本地网络仍处于设计阶段 |
 | **目标地址** | 网站、API 或内网服务；它是请求目的地，不是设备 |
 
 一条路径写作：
@@ -190,11 +207,14 @@ go build -o out/loom ./cmd/loom
 | 路径 | 职责 |
 |---|---|
 | `cmd/loom/` | CLI 入口与运维工作流 |
+| `clients/windows/`, `clients/android/` | 原生客户端界面、加入流程与本地运行宿主 |
+| `mobile/loomcore/` | Android 使用的 Go 移动绑定 |
 | `internal/model/` | SSOT 模型、严格解码与路径候选生成 |
 | `internal/validate/` | 跨字段、跨节点与能力完整性校验 |
 | `internal/render/` | WireGuard、sing-box、systemd 与节点配置渲染 |
 | `internal/snapshot/` | 内容寻址快照与 Ed25519 签名 |
 | `internal/measure/`, `internal/agent/` | 测量聚合、候选排序与调参回路 |
+| `internal/clientroute/`, `internal/clientruntime/` | 客户端分段观测选路、授权偏好派生与运行时管理 |
 | `internal/report/`, `internal/events/` | 节点观测、转述与状态变化历史 |
 | `internal/deploy/`, `internal/publish/` | 安装回滚、静态发布与版本钉住 |
 | `internal/secret/` | 秘密占位符、按节点拆分与轮换 |
@@ -209,6 +229,7 @@ go build -o out/loom ./cmd/loom
 go test ./...
 go vet ./...
 gofmt -l .
+python3 scripts/check_repository_safety.py
 ```
 
 渲染 golden 由测试维护，不要直接编辑：

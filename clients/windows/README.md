@@ -34,12 +34,16 @@ exercise scaling, keyboard input and rendering with synthetic profiles; they do
 not change the machine's display settings or use a real joined identity.
 
 <p align="center">
-  <img src="../../assets/client/windows/loom-client-home-misaka-v2.svg" width="86%" alt="Loom Windows Misaka design reference with example connections">
+  <img src="../../assets/client/windows/loom-client-windows-current.png" width="900" alt="Loom Windows native interface with saved profiles, route modes and per-Service paths">
 </p>
 
-<p align="center"><sub>Misaka design reference with example-only labels; not a live connection screenshot.</sub></p>
+<p align="center"><sub>Portable TUN · Native window captured from the current source with synthetic profiles and measurements. Published previews may lag behind the source.</sub></p>
 
-The [interaction reference](../../assets/client/windows/loom-client-interactions-misaka-v2.svg)
+The screenshot is produced by `TestGUIProfilesSelectionAndActualServicePaths`
+with `LOOM_PROFILE_GUI_CAPTURE` set to the output PNG path.
+
+The [design reference](../../assets/client/windows/loom-client-home-misaka-v2.svg)
+documents the layout; the [interaction reference](../../assets/client/windows/loom-client-interactions-misaka-v2.svg)
 shows inline renaming and the invitation panel.
 
 ### Icon asset invariant
@@ -102,12 +106,15 @@ when disconnected, and red after failure. Connecting can be canceled. Progress
 animation refreshes its own icon area, while unchanged status polls do not rewrite
 controls or repaint the entire window.
 
-The **自动 / 固定出口 / 直连** controls change the authorized route preference.
-Fixed exit also offers an authorized exit picker. **当前选路** shows a separate
-read-only server chain and health state for each Service; **详情** adds current
-and best quality, decision reason and read time. Missing measurements stay
-unknown. The local TUN capture address is not presented as an independently
-reachable Loom network IP.
+The **直连 / 自动 / 固定出口** controls change the authorized route preference.
+Auto retains per-Service routing. Fixed exit offers an authorized exit picker
+and uses one shared path for managed internet traffic; the Agent still chooses
+the intermediate servers leading to that exit. **当前选路** reads back the actual
+server chain and shows each available entry, server-hop and target measurement
+on its corresponding link. **详细信息** adds each measurement's source and time,
+the decision reason and read time. Missing measurements stay unknown; segmented
+estimates do not establish end-to-end P50/P95 or business-path health. The local
+TUN capture address is not presented as an independently reachable Loom network IP.
 
 The notification-area tooltip includes the embedded
 edition and current state. Double-click restores the window; closing the window
@@ -345,9 +352,11 @@ Windows 使用 `agent.RunClient`。从已验证配置与实际 detour 提取授�
 同一声明的候选使用相同目标子集，未覆盖目标明确标注未知，不阻断其他已有数据。
 其他目标指标缺乏相应分段证据时明确说明，不能冒充已经优化。未覆盖目标保持未知。
 
-Auto 保留授权的 Service 候选；FixedExit 保留固定末跳的全部授权前缀；Direct 停止
-选路 Agent。配置、偏好、重连和恢复继续使用同一激活事务，等待旧 Agent 退出再启动
-新代次。签名 bundle、DPAPI 身份、授权裁剪、回滚及服务器协议保持原契约。
+Auto 保留授权的 Service 分流；FixedExit 从签名配置识别默认上网声明，保留到所选
+末跳的全部授权前缀，让受管上网流量共用一条 Agent 择优路径。独立私网或私网/公网
+混合规则无法安全合并时，拒绝固定出口并保留当前有效配置。Direct 停止选路 Agent。
+配置、偏好、重连和恢复继续使用同一激活事务，等待旧 Agent 退出再启动新代次。
+签名 bundle、DPAPI 身份、授权裁剪、回滚及服务器协议保持原契约。
 
 选择状态保存于受 Windows DACL 保护的 `runtime/agent/generation-*`，不再写入或消费
 完整路径 measurement 历史。报告每次 GET 实际 selector，并用签名 plan 映射节点链；
