@@ -1,6 +1,6 @@
 # Loom · Local Network 目标设计
 
-> **状态:** 提案已收敛，**尚未实现**；不得用于解释当前生产能力
+> **状态:** 目标提案；实施与部署进度只见 [status/current.md](status/current.md)，不得用本文解释生产能力
 >
 > **日期:** 2026-09-01
 >
@@ -39,9 +39,9 @@ LocalNetwork + target
 客户端安装 LAN 路由，不接管系统 `ping`，不构造第二套选路器，也不要求改造现有
 WireGuard `/32` 隧道为站点到站点 VPN。
 
-当前仓库中没有 `LocalNetwork`、`network_id`、对应 CLI、协议级授权和端到端测试。
-sing-box 的 Hysteria2 与 Trojan 出站都能承载 TCP/UDP，只说明底层原语可用，不能
-冒充 Loom 已经交付该功能：
+本文以尚无 `LocalNetwork`、`network_id`、对应 CLI、协议级授权和端到端测试作为迁移
+基线；实际代码和部署进度只以 [当前状态](status/current.md) 为准。sing-box 的 Hysteria2
+与 Trojan 出站都能承载 TCP/UDP，只说明底层原语可用，不能冒充 Loom 已经交付该功能：
 
 - [sing-box Hysteria2 outbound](https://sing-box.sagernet.org/configuration/outbound/hysteria2/)
 - [sing-box Trojan outbound](https://sing-box.sagernet.org/configuration/outbound/trojan/)

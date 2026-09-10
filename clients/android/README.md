@@ -1,14 +1,55 @@
 # Loom Android client — stage 3 routing and stage 4 reliability
 
-This directory contains the native Kotlin/Compose host and the pinned
-sing-box/Loom mobile binding. Stage 2 implements the complete access-only
+> **Protocol contract:** v1 compatibility uses a strict invitation, a single platform-key current,
+> and same-origin reporting. V2 accepts only a certified head and Device view, and adds ControlSet
+> checkpoints/QCs; four durable rollback-floor groups for recovery (including statement and policy
+> hashes), ControlSet, head, and Device view; QR v2 multi-seeds; role-scoped EndpointSets with
+> WebPKI/SPKI pins; overlapping Hysteria2/Trojan listener generations; a bootstrap transition hash;
+> WireGuard rotation remains disruptive until a dedicated dual-interface/peer profile is validated; and an irreversible
+> v2 latch. V2 resources are versioned and never extend strict v1 JSON in place. See
+> [the distributed control-plane design](../../docs/distributed-control-plane.md#19-从当前实现迁移).
+> Code, deployment, and device-acceptance progress is recorded only in
+> [the current status](../../docs/status/current.md).
+
+In the target v2 flow, an administrator reaches **Create Device** only through
+an exact transport-verified endpoint in a trusted certified
+`EndpointSet(role=control_api)` and authenticates with an admin certificate.
+Before it has a Device identity, Android sends its claim only to the bounded
+`EndpointSet(role=enroll)` seeds carried directly by that invitation delivery
+envelope; it never substitutes a control API, redirect, or newly discovered URL.
+
+This directory defines the native Kotlin/Compose host and the pinned
+sing-box/Loom mobile binding. The Stage 2 contract covers the access-only
 enrollment path: QR or `.loom-invite` import, a non-exportable Android
 Keystore identity, signed pull with a durable anti-rollback floor, candidate
-activation/previous recovery, and signed health reporting. Stage 3 adds the
+activation/previous recovery, and signed health reporting. The Stage 3 contract covers the
 signed mobile route plan, Direct / Auto / fixed-exit preference, authenticated
 loopback selector changes, one deduplicated entry-probe round per underlying
 network generation, verified server-observation reuse, threshold damping,
 actual-selector readback, and plan-scoped offline evidence reuse.
+
+For v2, Raft durable commit alone is never an activation or authorization signal.
+A `committed_not_certified` head cannot update mutable current, change grants,
+select an endpoint, or trigger external side effects; the app continues its
+last-known-good profile. Before installing a candidate, it verifies the bootstrap
+or recovery lineage (including `recovery_policy_hash`), the ControlSet transition,
+the post-commit replication QC, the Device inclusion proof, and the signed
+EndpointSet. It then atomically advances all four durable floor groups:
+
+```text
+recovery_epoch + recovery_statement_hash + recovery_policy_hash
+control_epoch + control_set_hash
+control_revision + head_hash
+device_generation + device_leaf_hash + device_view_hash
+```
+
+The first v2 install atomically persists those floors, the
+`bootstrap_transition_hash`, and `protocol_latch=v2`. After that latch, no v1
+current, invitation, view, or recovery statement can regain authority. Endpoint
+roles are not inferred from an enrollment URL: `device_config`, `device_report`,
+and `data_ingress` are distinct. Every HTTPS/Hysteria2/Trojan endpoint uses the
+exact signed server name plus WebPKI and its generation/overlap-bounded TLS SPKI
+pin set.
 
 Android TUN address queries use a persistent, dual-stack FakeIP mapping. The
 subsequent connection is restored to an FQDN before routing, carried unchanged
@@ -21,35 +62,50 @@ no explicit route for that family, the Android host adds its default route;
 this prevents IPv6 FakeIP traffic from bypassing the VPN or becoming
 unreachable.
 
-The three route modes are enabled only after a verified managed snapshot carries
-a mobile route plan. Direct requires a direct candidate for every selector;
+The three route modes are enabled only after an activatable configuration carries
+a mobile route plan: a certified Device view for v2, or an explicitly verified
+v1 snapshot before the protocol latch. Direct requires a direct candidate for every selector;
 fixed-exit choices are the exact intersection authorized by the signed plan.
 If a fixed exit is removed, the client blocks instead of silently falling back.
-Auto never probes a complete candidate or business path. It sends one ICMP echo
-per distinct authorized entry address in parallel, then reuses fresh canonical
-v5 server observations returned by the existing health-report cycle. Missing,
-expired, out-of-scope or invalid evidence stays unknown. A lower failure rate
+Auto never probes a complete candidate or business path. Direct does not freeze a
+candidate snapshot or spend probe budget. On the first transition into Auto or fixed-exit
+mode in each underlying-network generation, the client atomically freezes the then-current
+candidate snapshot and sends at most one lightweight probe per authorized entry deduplicated
+by address and source interface in that snapshot,
+in parallel, then reuses fresh canonical v5 server observations returned by the
+existing health-report cycle. Configuration refreshes, mode or exit changes, and
+reconnects within the same generation do not probe again. Entries introduced later
+in that generation receive no active probe; real dial/fallback attempts may only
+produce passive evidence. Missing, expired, out-of-scope or invalid evidence stays
+unknown, and neither the one-shot entry round nor server evidence gates data-plane
+startup. A lower failure rate
 can switch immediately; at equal failure rate, removing a relay without adding
 estimated latency is not blocked by the improvement threshold. Same-hop
 replacements and added relays still require the configured improvement.
 
 The signed configuration pins the Android TUN MTU to 1500 instead of inheriting
-sing-box's 9000-byte default. A server with `public_data_ingress` contributes a
-single-Hysteria2 client candidate even when its WireGuard direction remains
-`reverse_only`; such an endpoint is never promoted into an intermediate relay.
-This keeps the reverse tunnel policy while avoiding Hysteria2-over-Hysteria2 for
-an authorized fixed foreign exit.
+sing-box's 9000-byte default. Before the v2 latch, a server whose verified v1
+snapshot enables `public_data_ingress` may contribute a single-hop client candidate
+using its configured data-ingress transport (Hysteria2 or Trojan), even when its
+WireGuard direction remains `reverse_only`. After the latch, that Boolean has no
+authority by itself: a certified `PublicEndpointIntent` and this Device's
+`EndpointSet(role=data_ingress)` must authorize the candidate. Such an endpoint is
+never promoted into an intermediate relay. This keeps the reverse tunnel policy
+while avoiding unnecessary same-transport nesting for an authorized fixed exit.
 
 The Current Paths card is a read-only projection of libbox selector readback.
-It shows the entry ping, each matching WireGuard or public Hysteria2 server hop,
-and each exact target observation separately. It does not infer measurements
+It shows the entry ping, each matching WireGuard or public data-ingress server hop
+with its actual protocol, and each exact target observation separately. Hysteria2-
+specific variation/rate evidence is shown only when that signed metric exists;
+Trojan is not assigned synthetic Hy2 telemetry. The card does not infer measurements
 from candidate names or present segmented evidence as end-to-end P50/P95,
 business throughput, or whole-path health.
 
 The primary Connect action stays disabled until a verified managed snapshot is
 available. Debug builds expose the bundled stage-1 Direct fixture in a separate
-`Debug Direct TUN` diagnostic card; that action proves only local TUN, DNS and
-HTTPS behavior and must never be presented as enrollment or trusted reporting.
+`Debug Direct TUN` diagnostic card; that action proves only local libbox, TUN,
+route and selector plumbing and must never be presented as enrollment, trusted
+reporting or business-path health.
 Cancelling Android's VPN consent is reported as an explicit connection error
 instead of silently returning to the disconnected screen.
 
@@ -63,7 +119,7 @@ the user has granted Android's VPN consent once, ADB can run a bounded test:
 receiver=io.github.scisaga.loom/.debug.DebugVpnControlReceiver
 adb -s "$ANDROID_SERIAL" shell am broadcast -n "$receiver" \
   -a io.github.scisaga.loom.debug.CONNECT
-# inspect LoomNetworkProbe / LoomVpnService, then always disconnect
+# inspect LoomVpnService local lifecycle and selector state, then always disconnect
 adb -s "$ANDROID_SERIAL" shell am broadcast -n "$receiver" \
   -a io.github.scisaga.loom.debug.DISCONNECT
 ```
@@ -101,10 +157,12 @@ same key-fingerprint check, Keystore CSR, claim/recovery, signed pull and
 candidate activation used by camera scanning. CameraX/ZXing remains the normal
 production input.
 
-The end-to-end HTTPS check uses independent public endpoints and accepts one
-valid TLS/HTTP response. This avoids declaring the whole tunnel unhealthy when
-one provider is regionally filtered; if every endpoint fails, their individual
-errors remain in the connection status.
+The required connection-health contract combines local `VpnService`/libbox/TUN
+state, the one-shot entry result, verified server observations, and passive
+feedback from actual connections and handshakes. Production self-checks must not
+send business DNS/HTTPS requests or probe complete paths; reachability outside
+the available evidence remains unknown. Remaining implementation gaps are
+tracked only in `docs/status/current.md`; this paragraph is not a completion claim.
 
 ## Reproducible Linux build
 
@@ -188,12 +246,12 @@ to compensate for a deployment chain error.
 
 ## Enrollment and activation transaction
 
-The client compares the QR fingerprint with the embedded key before the first
+In the v1 compatibility transaction, the client compares the QR fingerprint with the embedded key before the first
 POST, persists the exact CSR/request identity and retries only within the
 bounded enrollment recovery window. A ready response must bind the returned
 certificate to the same Keystore P-256 key.
 
-Signed `current.json`, snapshot manifest/signature and the exact node bundle
+V1 signed `current.json`, snapshot manifest/signature and the exact node bundle
 are retained in Keystore-encrypted app storage. They are all reverified on
 restart against the platform key embedded in the currently running APK; a
 cached bootstrap cannot keep an older APK trust root alive after an upgrade.
@@ -201,14 +259,21 @@ A verified Android manifest must declare exactly the sing-box version embedded
 in `Libbox.version()` and no server-only runtime component.
 A new pull first advances the authenticated generation floor, then
 enters a candidate slot. Its CA uses an immutable content-addressed path, so
-preflight cannot replace the active profile's trust file. `VpnService` promotes
-the candidate only after libbox starts and real DNS plus HTTPS probes traverse
-the TUN; otherwise it restores the last verified profile. Reports use the same
+preflight cannot replace the active profile's trust file. `VpnService` must
+promote the candidate after static validation, bundle hydration, libbox
+configuration preflight, and successful local TUN/route/selector startup. It
+must not wait for an entry probe or server observation or send a business
+DNS/HTTPS request as an activation gate. Only a local startup-transaction failure
+may restore the last verified profile; runtime connection/handshake failures
+remain scoped evidence and do not roll back a verified configuration. The current
+implementation gaps are listed in `docs/status/current.md`. Reports use the same
 Keystore key through the existing canonical v5 and self-check v1 contracts;
 the canonical v5 claim also binds the actual selector, candidate and chain.
-The same report POST requests `observations=1`: a current server returns a
-bounded JSON snapshot with HTTP 200, while an older server's empty 204 remains
-a successful report with no new route evidence.
+Before the v2 latch, the same-origin v1 report POST requests `observations=1`:
+a compatible server may return a bounded JSON snapshot with HTTP 200, while an
+empty 204 remains a successful report with no new route evidence. After the
+latch, the report destination comes only from a certified
+`EndpointSet(role=device_report)` and cannot be derived from the enrollment URL.
 
 ## Emulator and device acceptance
 
@@ -240,9 +305,10 @@ mismatch, emulator target, or changed APK bytes fails closed.
 
 The script installs the debug APK and starts the opt-in instrumented smoke
 test. Success requires the signed fixture and libbox config checks, a
-non-exportable Keystore P-256 key, DNS and HTTPS through TUN, an idempotent
-disconnect, a second connect, and the approved logo plus visible Stage 3 route
-entrances. It refuses to run unless `ANDROID_SERIAL` names a device that
+non-exportable Keystore P-256 key, local TUN/route/selector lifecycle without a
+business DNS/HTTPS probe, an idempotent disconnect, a second connect, and the
+approved logo plus visible Stage 3 route entrances. It refuses to run unless
+`ANDROID_SERIAL` names a device that
 reports `ro.kernel.qemu=1`, so an attached phone can never become the implicit
 test target. When the Linux builder needs an HTTPS proxy,
 the script uses a temporary emulator-only relay that is removed on exit.
@@ -252,8 +318,8 @@ HTTPS only, even though the cross-platform signed-artifact format can describe
 an HTTP mirror. HTTP entries are skipped and are never a downgrade fallback;
 at least one verified HTTPS distribution mirror must therefore be available.
 
-Formal enrollment still needs a control-created Android Device and the APK
-built with that deployment's public key. On vendor Android builds, keep the
+Enrollment acceptance requires a control-created Android Device and, for the
+v1 compatibility flow, an APK built with that deployment's public key. On vendor Android builds, keep the
 screen unlocked. ADB authorization alone may not authorize package
 installation; the constrained helper above can approve Loom's separate vendor
 confirmation when explicitly enabled.

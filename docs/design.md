@@ -11,10 +11,14 @@
 > （内部协议名为 Enrollment）、授权拆分与版本化对象图的分阶段目标见
 > [Device 生命周期与交付架构](device-lifecycle-and-delivery.md)；具名局域网、重复 CIDR
 > 与显式 TCP/UDP 访问的后续目标设计另见 [Local Network 专题](local-network.md)，
-> 该专题当前未实现；Linux Desktop 不在 v1 范围内。
+> 其实施状态只见 `status/current.md`；动态 `ControlSet`、CRDT/共识边界、托管 DNS/ACME 和入口轮换见
+> [分布式控制平面专题](distributed-control-plane.md)，该专题定义目标态，实施状态同样只见
+> `status/current.md`；
+> Linux Desktop 不在 v1 范围内。
 
 > **Loom 是一个基于加密隧道的链路与服务调度基础设施。**
-> 它持续测量网络中所有可用路径的质量,结合成本、容量与合规约束,为每个服务选择当下最优的接入路径。
+> 它在授权预算内采集可明确归因的主动、被动与分段观测，结合成本、容量与合规约束为服务
+> 选择路径；没有覆盖的候选保持 unknown，不以全路径扫描换取虚假的完整性。
 >
 > CLI:`loom render` / `loom diff` / `loom apply` / `loom rollback` / `loom probe`
 
@@ -65,6 +69,7 @@
 | **访问契约** | 输出等价还不够,请求还得能原样送过去 —— **决定换地址能否只靠 L4** | §4.4 |
 | **路径候选** | `RouteCandidate = (服务器链, 目标地址)` —— 排序与归因的唯一单位 | §5.6 |
 | **调度** | 策略裁剪候选集,度量在候选集内按周期选优 | §5 |
+| **控制集合** | `control` 是正交 Device 能力；生效成员为动态 `ControlSet(epoch)`，数量 1～全部合格节点 | §11 |
 
 **七条不变量:**
 
@@ -76,7 +81,7 @@
 | 4 | **策略约束候选集,度量在候选集内选优** —— 两者不得互相污染 | §5.1 |
 | 5 | **数据平面只做 L4 选路,不改写连接内容** —— 换地址只在访问契约同构时成立 | §4.4 |
 | 6 | **应用层指标需要 L7 观测点** —— L4 隧道拿不到 `tokens/s` 与响应结构 | §16.2 |
-| 7 | **控制平面停机,数据平面必须继续运行**;配置是 SSOT 的纯函数渲染 | §11, §12 |
+| 7 | **控制平面停机,数据平面必须继续运行**；`control` 数量不固定，只有完成 Raft durable commit、状态机 apply/recompute 并取得提交后 replication QC 的 `certified` head 才能改变 effective SSOT，配置仍是其纯函数渲染 | §11, §12 |
 
 ---
 
@@ -87,6 +92,10 @@
 ## 1. 两类节点,加一类不是节点的东西
 
 Loom 管两种机器,再加上一类它**根本不管**的东西:
+
+> **术语边界：** 产品生命周期只有一种受管实体 `Device`；本节的“接入节点/服务器节点”
+> 是同一 Device 的数据平面投影，不是两套身份或 Enrollment。v1 Go/YAML 仍使用 `Node`
+> 作为兼容存储名，迁移规则见[Device 生命周期设计](device-lifecycle-and-delivery.md)。
 
 | | 是什么 | Loom 管吗 |
 |---|---|---|
@@ -124,9 +133,13 @@ Loom 管两种机器,再加上一类它**根本不管**的东西:
 
 境外 VPS 并不是另一个物种,它只是**接入方式复杂一些** —— 被国内主动拨号会提高被封概率,所以要反过来让它主动连出来。接上之后,它和国内云机一样,就是一台能转发流量的服务器。
 
-### 1.3 角色分块;一台机器可以同时承担两种
+### 1.3 数据平面角色分块；`control` 是正交只读投影
 
-节点分两块写:
+数据平面期望态按 `server` / `access` 两块写；一台机器可同时承担两者。与它们正交的
+`control` 块只由 certified `FinalControlSet` authority 与同一 head/QC 承诺、hash 匹配的 private
+`ControlPeerDirectory` 联合物化，不能在普通 SSOT proposal 或 Enrollment Responsibilities 中直接
+写入。公开 ControlSet 只有 opaque member ID 和用途隔离公钥；Device 映射、peer URL 与 fault
+domain 只在私有目录。下例是授权 operator 的 materialized view，不是允许自授权的输入：
 
 ```yaml
 - id: cn-a
@@ -138,9 +151,13 @@ Loom 管两种机器,再加上一类它**根本不管**的东西:
 - id: sh01                      # 两个块都有:它转发流量,自己也要走代理出去
   server: {...}
   access: {...}
+
+- id: control-a                # 只读投影：control 与两个数据平面角色正交
+  server: {...}
+  control: {...}               # 仅由 FinalControlSet materializer 生成
 ```
 
-**为什么不写成 `capabilities: [server]` 这样的列表。** 两个理由:
+**为什么数据平面不写成 `capabilities: [server]` 这样的列表。** 两个理由:
 
 1. 它与角色块是同一事实的两次编码,两边能对不上;
 2. 字段扁平放时,把 `direction` 写在纯接入节点上不报错也不生效 ——
@@ -148,19 +165,24 @@ Loom 管两种机器,再加上一类它**根本不管**的东西:
    以为已经生效。分块之后它在 schema 层面就不成立(§12 的严格解码在加载
    阶段即拒绝)。
 
-**两种角色喂的是不相干的逻辑。** `server` 块进隧道矩阵、候选枚举、准入校验;
-`access` 块进本地端口与 selector。它们只在最后汇合成同一份 sing-box 配置 ——
+**三个投影喂的是不相干的逻辑。** `server` 块进隧道矩阵、候选枚举、准入校验；
+`access` 块进本地端口与 selector；`control` 块是 certified `FinalControlSet` 与其 matching private
+peer directory 的只读物化投影，只供
+SSOT/UI/endpoint materialization，Raft 选举与投票只读取 committed Joint/Final config ledger，
+不因机器同时是 server/access 而改变数据路径。前两个角色只在最后汇合成同一份 sing-box 配置 ——
 一台机器一个进程,所以只能有一份。
 
 > ⚠️ **合并必须发生在渲染期。** 分成两个文件会让它们抢同一个路径,后写的
-> 静默覆盖先写的,而产物计数仍然对得上 —— 这个 bug 真实发生过。渲染器现在
-> 对同一配置包里的重复路径直接报错。
+> 静默覆盖先写的,而产物计数仍然对得上。稳定契约要求渲染器
+> 对同一配置包里的重复路径直接报错；实现覆盖情况只见[当前状态](status/current.md)。
 
-> **为什么不担心"两个配置源打架":源只有一个。** SSOT → 渲染器是唯一的配置
+> **为什么不担心“多个配置源打架”：逻辑源只有一个。** certified SSOT → 渲染器是唯一的配置
 > 来源。§18 的加入输入只负责把中控已创建的 Device 与本机生成的身份绑定，并引导
 > 首次签名配置；它适用于包括服务器在内的所有新 Device，不是第二个配置源。完成绑定后，
 > 各运行宿主仍用同一 Device 身份走 signed pull/Agent 投递，兼具 `server` 与 `access`
-> 职责的配置继续在同一次渲染中合并。
+> 职责的配置继续在同一次渲染中合并。多个 control 副本也不产生多份 SSOT：只有
+> 经 Raft commit、state-machine 复算并取得 replication QC 的唯一 certified head 能对外
+> 生效；candidate render 只用于提交前校验，详见 §11～§12。
 
 ### 1.4 目标地址带服务类型标签
 
@@ -205,8 +227,11 @@ direction:
 | `direct_only` | 只能接受 | ✅ | 由独立管理面事实决定 |
 
 > `direction` 只描述 WireGuard 建连职责，不是 SSH ACL，也不自动声明客户端代理入口。
-> `public_data_ingress` 是后者唯一的显式开关；默认关闭，开启后仍不改变隧道发起方。生产管理
-> SSH 是中控本地的独立事实；已登记且可达时可用于 bootstrap 和代码快速发布。
+> v1 compatibility 在 protocol latch 前只允许由已验签 snapshot 中的 `public_data_ingress`
+> 显式开启客户端代理入口；默认关闭，开启后仍不改变隧道发起方。v2 latch 后该字段只可作为
+> migration input，本身没有暴露或授权效力：必须有 certified `PublicEndpointIntent`，且本
+> Device view 的 `EndpointSet(role=data_ingress)` 精确包含该入口。管理
+> SSH 是部署本地的独立事实；已登记且可达时可用于 bootstrap 和代码快速发布。
 > signed pull 仍是所有节点的持久收敛与离线恢复通道(§14.2)。
 
 **隧道建立方由一条边的两端共同决定,不由单端决定。** 六种组合的完整真值表:
@@ -223,29 +248,32 @@ direction:
 > **mesh 成员资格与隧道发起方从两端的 `direction` 推导。** 客户端公网数据入口
 > 则必须显式声明，不能由 direction 猜测；管理 bootstrap 继续属于独立事实。
 
-**`public_data_ingress` 只增加客户端直拨的一跳候选，不把 `reverse_only` 节点提升成
-公网中继。** 已认证客户端可以把它作为第一跳兼最终出口；两跳兼容路径仍可经反连
-WireGuard 到达。候选枚举不得据此生成“境外入口 → 国内出口”之类倒走路径。
+**在 v1 compatibility 中，已验签 `public_data_ingress` 只增加客户端直拨的一跳候选，不把
+`reverse_only` 节点提升成公网中继。** 已认证客户端可以把它作为第一跳兼最终出口；两跳
+兼容路径仍可经反连 WireGuard 到达。候选枚举不得据此生成“境外入口 → 国内出口”之类
+倒走路径。v2 使用 PublicEndpointIntent + per-Device EndpointSet 授权，不能继续单独读取该
+布尔值生成候选。
 
 ### 2.3 `reverse_only` 可以是一跳出口
 
-有两种彼此独立的方式：稳定接入节点通过反连隧道内地址直达；移动/桌面客户端通过
-显式 `public_data_ingress` 直拨带认证的 Hysteria2/Trojan。两种方式都不改变
-WireGuard 仍由 `reverse_only` 节点主动建立。
+有两种彼此独立的方式：稳定接入节点通过反连隧道内地址直达；移动/桌面客户端在 v1
+compatibility 中通过已验签 `public_data_ingress`，在 v2 中通过 certified
+`PublicEndpointIntent + EndpointSet(role=data_ingress)`，直拨带认证的 Hysteria2/Trojan。
+两种方式都不改变 WireGuard 仍由 `reverse_only` 节点主动建立。
 
 这把两跳压成一跳:
 
 ```
 没有隧道:  接入 → 国内中继 → 境外出口 → 公网        两跳
 有了隧道:  接入 →──────────→ 境外出口 → 公网        一跳
-显式入口:  接入 ── Hysteria2 → 境外出口 → 公网        一跳
+显式入口:  接入 ── 已配置 data ingress → 境外出口 → 公网 一跳
 ```
 
 **约束是 WireGuard“谁发起”，不是让代理套代理。** 公网数据入口必须继续执行
 现有凭据白名单、TLS 验证和 fail-closed 路由，不能因公开监听退化成开放代理。
 
-> **实测收益(2026-08-23,access-a):** 到柏林 550ms → 333ms(省 40%);
-> 到新加坡 521ms → 465ms(省 11%)。差距因链路而异,**必须实测**。
+> **收益必须按实际链路验证。** 少一层代理通常会减少额外握手、排队和故障面，但不能
+> 从拓扑直接推导延迟、丢包或业务可用性；验收必须使用客户端实际传输与出口侧证据。
 
 **代价是它不扩展。** N 个客户端 × M 个出口的隧道数无界,而 §6.3 的扇出
 (中继 × 出口)是有界的。这条只适用于**常开、有稳定入口的接入节点** ——
@@ -336,7 +364,7 @@ Path = 接入节点 → [服务器₁ → 服务器₂ → …] → 目标地址
 ```
 地址由请求决定 · 出口钉死
    客户端说:"我要走 SG 出口"
-   [接入] --度量选前面几跳--> [SG 服务器](钉死) --> 你打开的那个网页
+   [接入] --度量选前面几跳--> [SG 服务器（钉死）] --> 你打开的那个网页
 
 地址从等价类里选
    客户端说:"我要一个 qwen3-32b 推理端点"
@@ -345,10 +373,14 @@ Path = 接入节点 → [服务器₁ → 服务器₂ → …] → 目标地址
                                 └--> https://llm-c.internal/v1
 ```
 
-> **服务器轴始终需要度量;地址轴只在"从等价类里选"时才需要。** 代理上网是地址轴退化为常量的情形 —— 地址是客户端给的,没得选。
+> **服务器轴始终需要可归因的质量证据；地址轴只在"从等价类里选"时才需要。** 证据缺失时
+> 保持 unknown，不为填空追加探测。代理上网是地址轴退化为常量的情形 —— 地址是客户端给的,没得选。
 
 > ⚠️ **"两个轴"说的是决策自由度,不是指标可分离。**
-> 钉死出口不限制前面几跳怎么选(§4.1),这是"互不相干"的确切含义。但**质量必须按完整路径度量** —— 经广州到杭州地址的 TTFT,推不出经北京到杭州地址的 TTFT。评分与排序的单位是 `(服务器链, 地址)` 组合,**不是两个轴各自打分再相加**(§5.6)。
+> 钉死出口不限制前面几跳怎么选(§4.1),这是"互不相干"的确切含义。评分与排序的单位仍是
+> `(服务器链, 地址)` 组合，证据可以来自该完整路径的明确观测点，或来自标明为估算的入口与
+> 服务器分段；经广州到杭州地址实测的 TTFT 不能推成经北京到杭州的 TTFT。未覆盖维度保持
+> unknown，不能把两个轴独立打分后相加，也不能为补齐每个组合强制客户端扫描完整路径(§5.6)。
 
 ### 4.1 为什么要钉死出口
 
@@ -428,14 +460,10 @@ Path = 接入节点 → [服务器₁ → 服务器₂ → …] → 目标地址
 > 之后的 Declaration、Agent 与 ServerChain；它不是第二套 Service 或选路器。该
 > 目标态及未实现边界见 [Local Network 专题](local-network.md)。
 
-> **实现边界:** 按 host 反查 Service、为各 Service 独立生成 selector 已实现并
-> 真机验证(2026-08-23)，实测同一个入口的三个目标可以走三条路，baidu 从
-> 1.464s 降到 0.066s。生产 Linux 已于 2026-08-30 收敛为 1080 一个中控托管
-> 入口，1081–1083 不再监听；固定 SG/DE 也由 Service 在中控选择，不再由
-> 客户端端口选择。底层已支持 managed mixed/TUN 复用 `default_declaration`，中控
-> 运维 API 已实现该 catch-all 的 revision 写入；但它只处理未命中 Service 的流量，
-> 不能表达客户端顶层 Direct / Auto / 指定出口三模式。三模式是客户端本地偏好，
-> 不新增 SSOT 写 API；本地 selector、状态展示与 Windows/Android 宿主仍未完成。
+> **v1 兼容边界:** host → Service → selector 与 `default_declaration` 只表达 Auto 中
+> 未命中 Service 的 catch-all；它们不能表达客户端顶层 Direct / Auto / 指定出口。
+> 三模式是客户端在 signed plan 授权范围内的本地偏好，不新增 SSOT 写 API。哪些宿主
+> 已实现和完成真机验收只见[当前状态](status/current.md)。
 
 #### 应用照常请求 URL，Loom UI 不重复选择每个请求的目标
 
@@ -594,8 +622,9 @@ catch-all 不该是隐含假设。若 Auto 模式确实需要“其余请求都�
 
 ### 5.6 决策位置由信息可得性决定
 
-> **Windows / Android 客户端当前分工：** 只对授权入口做单次并行 ICMP，后段复用服务器现有
-> 签名观测。不运行下文服务器 Agent 的完整路径探测、min_samples 补样或等待观测。
+> **Windows / Android 客户端测量契约：** Direct 不探测；每个底层网络代首次进入 Auto/指定
+> 出口时才原子冻结当时的候选快照，对其中按地址与源接口去重后的授权入口各做至多一次轻量并行探测，后段复用服务器已有
+> 签名观测；同代配置刷新、后续模式/出口切换和重连不重新探测。不运行下文服务器 Agent 的完整路径探测、min_samples 补样或等待观测。
 > 分段数据只能称为估算，不能填充实测端到端 P50/P95。实现与边界见
 > [客户端观测复用](client-observation-reuse.md)。
 
@@ -616,21 +645,20 @@ RouteCandidate = (服务器链, 目标地址)
 
 > ### 修正:这里曾经写着"地址是常量,只在服务器链上选"
 >
-> 下表是历史实测记录；其中的公网域名不是 Loom 默认值或硬编码依赖，probe 完全
-> 由 SSOT 指定。生产和仓库夹具保留 `api.ipify.org`，因为它在这里承担大陆直连
-> 分类与境外出口可达性信号，不是可随意互换的普通健康检查地址。
+> 下表是合成反例，只说明“不同目标的最优链可以不同”；目标和 probe 必须由 SSOT
+> 显式指定，仓库不携带真实部署目标或测量。
 >
 > 那句话把**"地址不由我们选"**和**"地址不影响该选哪条链"**混为一谈了。
-> 前者对,后者错得离谱。实测同一批候选:
+> 前者对,后者错得离谱。假设同一批候选得到以下结果:
 >
 > | 目标 | 经 edge-b | 经 cn-a | 直连 |
 > |---|---|---|---|
-> | `www.baidu.com` | 1.464s | 0.145s | **0.058s** |
-> | `www.aliyun.com` | 1.175s | 0.182s | **0.056s** |
-> | `api.ipify.org` | **0.401s** | 失败 | 失败 |
+> | `latency-a.example` | 1.400s | 0.140s | **0.060s** |
+> | `latency-b.example` | 1.100s | 0.180s | **0.050s** |
+> | `egress-check.example` | **0.400s** | 失败 | 失败 |
 >
 > **没有任何一条候选对三个目标都好。** 按原来的写法,`best-egress` 给整条
-> 声明选一个候选(实测选中 edge-b),于是访问 baidu 慢了 25 倍。
+> 声明选一个候选（在这个合成例中会选中 edge-b），于是前两个目标明显变慢。
 >
 > 决策单位因此不是"声明",而是**"声明 × 服务"**(§4.5)。
 
@@ -674,13 +702,17 @@ RouteCandidate = (服务器链, 目标地址)
 
 评分默认候选有数据。**三种情况下它没有,行为必须是确定的,不能留给实现随手决定。**
 
+> 本节的窗口、`min_samples` 和受限主动补样只适用于 Linux/server Agent。Windows/Android
+> 原生客户端遵守 §5.6：Direct 不探测，每底层网络代首次进入代理模式只冻结一次入口快照，
+> 后续缺失保持 unknown，不为达到样本数重测、预热或扫描完整路径。
+
 | 情况 | 定义 | 行为 |
 |---|---|---|
-| **冷启动** | 新端点或新路径,样本数 < `min_samples` | **不参与排序,也不被淘汰。** 以受限速率主动探测积累样本,达标后才进入排序 |
+| **冷启动** | Linux/server Agent 的新端点或新路径,样本数 < `min_samples` | **不参与排序,也不被淘汰。** 仅由该 Agent 在既有预算内主动探测；原生客户端保持 unknown |
 | **数据过期** | 最新样本早于 `stale_after` | 视同无数据,退回冷启动状态。**过期数据绝不参与评分** —— 拿陈旧数据排序比不排序更糟 |
 | **候选集为空** | 策略过滤或契约校验后无可用成员 | 见下 |
 
-**度量窗口与样本数必须显式声明**,而不是"取最近的值":
+**Linux/server Agent 的度量窗口与样本数必须显式声明**,而不是"取最近的值":
 
 | 参数 | 作用 | 建议 |
 |---|---|---|
@@ -698,7 +730,6 @@ RouteCandidate = (服务器链, 目标地址)
 
 > **为什么默认 `fail_closed`:** §5.1 规定合规是约束不是评分项。若候选集因合规过滤而变空,任何"退而求其次"的自动回退都等于绕过约束。**空候选集是需要人介入的事件,不是需要自动兜底的事件。**
 
----
 ---
 
 # 第二部分 · 数据平面
@@ -777,12 +808,12 @@ tcpdump -nn -i any "udp and host <客户端出口IP>"
 
 | 服务器的 `direction` | 怎么建立互联 | 需要渲染配置吗 |
 |---|---|---|
-| `bidirectional` / `direct_only` | 当前用公网 Hysteria2 直拨；**目标态**可加入 mesh(§8.3) | 两个这类节点之间不需要常驻 WG |
+| `bidirectional` / `direct_only` | 用已签配置的公网 data ingress 直拨（Hysteria2 默认，UDP 不通可用 Trojan）；**目标态**可加入 mesh(§8.3) | 两个这类节点之间不需要常驻 WG |
 | `reverse_only` | 进不了 mesh(§2.2),必须手工建点对点隧道 | ✅ **需要** |
 
 也就是说:**隧道矩阵只由包含 `reverse_only` 端点的关系产生。** 典型就是境外
-VPS —— 它不能被主动拨号，只能向每个需要到达它的节点反连。当前生产没有 mesh；
-两个可被拨号的节点直接用公网 Hysteria2，不需要等待 Headscale。
+VPS —— 它不能被主动拨号，只能向每个需要到达它的节点反连。本文基线不假定 mesh
+存在；两个可被拨号的节点可以直接使用显式公网数据入口，不需要等待 Headscale。
 
 **这类服务器必须向所有需要到达它的服务器扇出反连:**
 
@@ -832,7 +863,7 @@ mixed 是纯用户态监听,配崩了最多代理不通。
 | 形态 | 流量覆盖 | 权限与系统改动 | 生命周期 |
 |---|---|---|---|
 | **Portable Mixed** | 只覆盖显式配置 `127.0.0.1:1080` 的 HTTP/SOCKS 应用 | 普通用户；不创建虚拟网卡、不改路由 | 前台进程，退出即停止代理 |
-| **Portable TUN** | 透明覆盖纳入路由的 TCP、UDP、DNS 及不支持代理的应用 | 应用启动和二维码导入无需提权；当前预览启用 TUN 前要求管理员令牌 | 前台受监督进程，退出必须清理网卡和路由 |
+| **Portable TUN** | 透明覆盖纳入路由的 TCP、UDP、DNS 及不支持代理的应用 | 应用启动和二维码导入无需提权；启用 TUN 前通过受约束的管理员或预授权 Service 边界 | 前台受监督进程，退出必须清理网卡和路由 |
 | **安装版** | TUN 主接管，同时保留同规则 mixed | MSI 安装提权；日常 UI 和二维码导入不提权 | SCM 下保持 Service，普通用户界面通过受限 IPC 操作 |
 
 Portable TUN 的“免安装”只表示不注册 MSI/Windows Service，**不表示启用 TUN 时无管理员
@@ -846,9 +877,9 @@ Portable Mixed 是开发、临时使用和逐应用代理的默认形态。TUN �
 代理的程序、UDP/QUIC 或统一 DNS 路径时启用；它不是性能加速模式。三种形态仍读取同一
 份签名配置，复用 Direct / Auto / 指定出口，不能产生第二套路由规则。
 
-当前 Windows 构建已把三种形态固定进不同二进制，支持 `--build-info` 自证，Portable
+v1 Windows 交付契约把三种形态固定进不同二进制，要求 `--build-info` 自证；Portable
 使用 `%LocalAppData%\LoomPortable`、用户范围 DPAPI 和前台退出生命周期。Portable TUN
-只在二维码导入成功、即将启动 TUN 数据面时检查管理员令牌。客户端只从完整签名配置派生本机接管面：Mixed
+只在二维码导入成功、即将启动 TUN 数据面时检查管理员边界。客户端只从完整签名配置派生本机接管面：Mixed
 删除 TUN 入口及其规则引用，TUN/Installed 保留完整形状；全部先执行结构校验和
 `sing-box check`，再由 Job Object 监督 `sing-box run`。切换前预检失败不影响旧进程，
 新进程启动失败或随后崩溃会恢复上一份健康的内存候选。
@@ -900,8 +931,8 @@ Esc 取消；重命名不影响正在运行的连接，可通过侧栏双击、F
 连接中、已连接、断开中、未连接与错误状态均有对应图标；动画只
 刷新图标区域，静止状态不持续重绘。Auto 的“当前选路”逐 Service 绘制实际 selector
 读回映射出的签名 chain；FixedExit 只显示一张“统一上网路径”，节点来自当前实际链，
-不保留已停用的 Service 行。目标地址不作为服务器节点；当前连接代入口 ping、服务器
-邻接/公网 Hy2 与出口精确目标观测分别标在对应连线上，详情保留来源、原测量时间、
+不保留已停用的 Service 行。目标地址不作为服务器节点；当前底层网络代按 probe registry 取得的入口 ping、服务器
+邻接/公网 data-ingress 与出口精确目标观测分别标在对应连线上，详情保留实际协议、来源、原测量时间、
 失败、原因、读取时间及决策范围，不再放整条路径质量或健康占位。
 原因按实际字体、可用宽度和换行数确定高度，读取时间紧接原因正文，决策范围随后
 显示；缺少决策范围时不保留占位行，不能用固定段落高度在原因和读取时间间留空白。
@@ -920,12 +951,12 @@ current/device assignment、CA 和秘密格式校验。数据平面不再由用�
 固定携带同架构的 `windows-dataplane.zip`、preview 说明和第三方许可证，客户端自动定位并验证 Loom 签名、PE 架构、
 sing-box 身份与 Wintun Authenticode。最后才写 `config/client.json` 作为加入完成标记；
 失败/等待期间普通启动仍保持 disconnected，已加入状态拒绝被另一二维码静默替换。
-组件预检之后、claim POST 之前还会调用不带 token 的 HTTPS trust 端点，比对中控与发行包的
-部署平台公钥。未完成的精确二维码凭据由 DPAPI 保护；中控仅允许同一 token、CSR、request ID、
+v1 compatibility 在组件预检之后、claim POST 之前调用不带 token 的 HTTPS trust 端点，比对
+控制端与发行包的部署平台公钥。未完成的精确二维码凭据由 DPAPI 保护；控制端仅允许同一 token、CSR、request ID、
 平台和 Device facts 在一小时恢复窗口内重放，成功提交后清除 pending token。数据面全局锁
 覆盖整个 joined workload，不在 sing-box 子进程更新切换间释放。
 
-当前原生 Win32 GUI 已接入三个 edition 的首次导入、Connection 状态、数据面启动/停止
+v1 原生 Win32 GUI 的产品契约覆盖三个 edition 的首次导入、Connection 状态、数据面启动/停止
 和出口选择；Portable TUN 在启动已加入配置的系统 TUN 时请求 UAC，Installed 由 Service
 读取受保护机器状态。GUI 不依赖 WebView2 或额外运行时，关闭窗口隐藏到托盘，显式退出
 停止连接。普通用户 IPC 只接收显示状态和已授权操作，不传递身份密钥、配置正文或任意路径。
@@ -934,12 +965,12 @@ sing-box 身份与 Wintun Authenticode。最后才写 `config/client.json` 作�
 [当前状态](status/current.md)，不能用编译成功代替真实网络验收；新增多配置同样需要
 分别验证身份隔离、单连接切换、取消和按服务实际路径显示。
 
-### 7.3 v1 只有一个中控托管的日常入口
+### 7.3 v1 只有一个逻辑日常入口
 
 “一个入口”是**一个产品与规则入口**，不是要求三个操作系统使用同一种系统 API：
 
 ```text
-中控       Auto: matcher → Service → AccessDeclaration → 候选与授权
+控制规则   Auto: matcher → Service → AccessDeclaration → 候选与授权
 Linux      127.0.0.1:1080 mixed ─────┐
 Windows    TUN + 127.0.0.1:1080 ─────┼→ 同一份签名配置与顶层路由模式
 Android    VpnService TUN ────────────┘
@@ -962,7 +993,7 @@ Linux Server 没有 TUN，所以用只监听回环的 `1080` mixed 承载日常�
 | 模式 | 语义 |
 |---|---|
 | **Direct** | 全部接管的业务流量从设备本地直连，不使用 Loom 服务器路径 |
-| **Auto** | 完整使用中控 `Host → Service → Policy`；客户端在签名候选内按入口一次测量与可信服务器观测选择实际链 |
+| **Auto** | 完整使用 certified `Host → Service → Policy`；客户端在签名候选内按入口一次测量与可信服务器观测选择实际链 |
 | **指定出口** | 全部接管的上网流量固定由所选最终节点出网；候选仍只能来自签名计划，前置链按同一分段证据择优 |
 
 指定出口可包含内圈或外圈的在役 `egress_capable` 节点；Windows 列表只显示当前签名
@@ -977,7 +1008,7 @@ Windows 固定出口依据签名 sing-box 中覆盖受管业务入口的唯一�
 所有业务上网规则统一指向该 selector，只保留这一声明的测量与决策；候选严格按
 `Chain` 最后一跳等于所选出口裁剪，并保留该声明原有的 targets、objective 和
 切换抑制参数。Windows / Android 客户端不执行完整路径窗口或 `min_samples` 等待，
-只使用当前连接代入口结果与可信服务器观测。不同网站与 Service 的新连接因此共用实际读回的
+只使用当前底层网络代 probe registry 的入口结果与可信服务器观测。不同网站与 Service 的新连接因此共用实际读回的
 同一条服务器链，前置路径仍可随测量改善或故障切换。必要的 DNS、探测认证、引导与
 私有网络运行规则保持原状；无唯一完整业务规则或无所选末跳的授权候选时拒绝固定模式。
 私网规则若依赖独立 selector，则拒绝合并，保留原 Auto 配置与 Agent；不能停止其测量后
@@ -997,12 +1028,11 @@ ID。最终出口钉到该节点，探测与调参边界从已有 `from_request`
 但接入凭据的值属于秘密层，必须完成显式安全分发后才可在客户端或 Service 表单中
 启用；未授权策略只能显示为待激活，不得伪装成可用选项。
 
-三个模式复用现有 TUN/`1080`，不需要模式专用端口。当前代码实现的
-`access.default_declaration` 仍只是 Auto 模式下未命中 Service 的 catch-all；现有
-中控运维 API 也只编辑该字段。它们没有 Direct 状态，不能表达“全部接管业务流量固定最终
-出口”，因此不能冒充客户端三模式已经交付。三态由客户端依据最后一份签名配置在
-本机原子切换并持久化，不新增顶层 SSOT 模型或设备写 API；尚需补齐本地 selector、
-状态展示及 Windows/Android UI。
+三个模式复用同一 TUN/`1080`，不需要模式专用端口。v1
+`access.default_declaration` 只是 Auto 模式下未命中 Service 的 catch-all；控制 API 对该字段
+的编辑也不能表达 Direct 或“全部接管业务流量固定最终出口”。三态由具备该能力的客户端
+依据最后一份签名配置在本机原子切换并持久化，不新增顶层 SSOT 模型或设备写 API；
+宿主实现和实机结果只见[当前状态](status/current.md)。
 
 v1 matcher 只使用接管层真实可见且能稳定渲染的事实：Windows 使用 domain/IP，
 Android 可再用 package 缩小范围；Linux mixed 使用代理请求可见的 domain/IP。
@@ -1014,15 +1044,15 @@ Android 可再用 package 缩小范围；Linux mixed 使用代理请求可见的
 
 #### Linux 兼容与高级覆盖
 
-旧的“端口 → AccessDeclaration”仍是当前已实现能力，但 v1 只允许在 Linux 上作为
+旧的“端口 → AccessDeclaration”是 v1 兼容能力，只允许在 Linux 上作为
 兼容或高级覆盖：例如旧程序无法表达中控 matcher，或运维需要临时验证一条已经由
 中控授权的固定出口声明。覆盖端口必须显式命名、只监听回环、出现在 Advanced/CLI
 而不是 Service 页面，并继续受原有凭据、目标范围和 fail-closed 约束。不能让端口
 选择扩大候选集或绕过合规约束。
 
-生产环境确认没有遗留端口调用方后，将惯用的 1080 设为唯一入口并停止监听
-1081–1083；固定 SG/DE 改由中控的 `Service → AccessDeclaration` 表达。若存在
-遗留调用方则不得做这种复用，必须先迁移或选择一个没有历史语义的新端口。
+部署确认没有遗留端口调用方后，才可将惯用的 mixed 端口设为唯一入口并停止兼容端口；
+固定出口改由 certified `Service → AccessDeclaration` 表达。若存在遗留调用方则不得
+复用旧端口，必须先迁移或选择一个没有历史语义的新端口。
 
 同一域名下的不同账号藏在 TLS 内，L4 看不到账号身份。按账号选择固定出口需要
 调用方 profile、SDK 或 L7 上下文；v1 不引入这套 profile，也不允许配置两条相同
@@ -1074,29 +1104,40 @@ dns: lookup failed: operation not permitted
 所以 DNS 服务器必须显式指定 `detour`,指向一个专用的直连出站。**它不参与
 选路,存在的唯一目的是让解析器可达。**
 
-Android TUN 的业务域名另有一条硬约束：**目标域名必须由候选链的最终出口
-解析，不能把接入侧得到的 A/AAAA 地址沿链转发。** Android 配置因此只对来自
-`tun-in` 的 A/AAAA 查询返回 FakeIP；业务连接进入 libbox 后先用持久化映射把
-FakeIP 恢复为 FQDN，再把 FQDN 原样传过每一跳，最后由出口节点的 `egress`
-direct 使用该节点自己的 DNS 解析。`reverse_mapping` 只能给路由补充域名元数据，
-不会替换已经确定的目标 IP，不能单独满足这条约束。FakeIP DNS 规则必须限定
-`inbound: tun-in` 并与普通解析器使用独立缓存，否则 libbox 自己解析公网入口时
-也可能拿到 FakeIP，在隧道建立前形成回环；映射必须落入应用私有缓存，且 FakeIP
-的 IPv4/IPv6 地址池都必须被 TUN 接管，才能跨进程重建和系统 DNS 缓存继续工作。
-Android 宿主不能假定 libbox 一定显式列出两族默认路由：只要某地址族已配置 TUN
-地址而对应路由迭代器为空，`VpnService.Builder` 必须补上该地址族的默认路由。
+业务 DNS 是跨平台不变量，不能只在 Android 特判：
+
+- **Direct** 由接入设备的 underlay/本地 resolver 解析并从本机直连；
+- **Auto / 指定出口** 必须把 FQDN 保留到候选链的最终出口，由该出口自己的受管 resolver
+  解析；禁止把接入侧先得到的 A/AAAA 地址沿链转发，否则 CDN/污染结果会绑定错误地域；
+- IP literal 不触发 DNS，也不得被反向改写成域名；
+- `control_api/enroll/device_config/device_report/distribution/data_ingress` 的 bootstrap/dial
+  hostname 属于传输建立，不是业务目标。它们使用独立 underlay resolver/cache、EndpointSet
+  identity/pin 和防回环保护，不进入 FakeIP 或最终出口业务解析。
+
+Linux mixed 强制使用 `socks5h://` 或语义等价的远端解析。Windows/Android TUN 使用持久化
+FakeIP 映射或经测试等价的 domain-recovery 机制：只对来自 TUN 的业务 A/AAAA 查询返回
+FakeIP；连接进入 sing-box 后恢复 FQDN，并沿所选链交给最终出口解析。`reverse_mapping` 只能
+补充路由元数据，不会替换已经确定的目标 IP，不能单独满足约束。FakeIP 规则必须限定 TUN
+inbound 并与 transport bootstrap resolver 使用独立缓存；映射和 IPv4/IPv6 地址池必须随平台
+安全保存并全部被 TUN 接管。Android 宿主不能假定 libbox 一定显式列出两族默认路由：只要
+某地址族已配置 TUN 地址而对应路由迭代器为空，`VpnService.Builder` 必须补上该地址族的
+默认路由。Windows 必须用等价的双栈路由和域名恢复验收，不能把“系统 DNS 已被 hijack”
+误当成“最终出口已解析”。
 
 > 这两个坑叠在一起的症状是同一个:直连候选失败、代理候选正常。第一次遇到时
 > 很容易归因成"这台机器上不了网" —— 而实际上它直连 baidu 只要 68ms。
 > **排查顺序应当是:先绕过 DNS 用 IP 直连一次,再看是不是解析的问题。**
 
-### 5.5.1 Agent:调参回路的唯一执行者
+### 7.3.3 Agent：调参回路的唯一执行者
+
+> 编号兼容：append-only 决策记录中的旧引用“§5.5.1”均指本节；章节整理后规范编号为
+> §7.3.3，探测入口为 §7.3.4。
 
 Agent 跑在**接入节点**上(服务器上没有 selector 可切),每条声明一个循环,
 各按自己的 `tuning_period` 走:
 
 ```
-探测每条候选(§7.3.3) → 按窗口聚合 → 排序 → 够格才切 selector
+探测每条候选(§7.3.4) → 按窗口聚合 → 排序 → 够格才切 selector
 ```
 
 **它读的不是 SSOT,是渲染出来的 `agent/config.json`。** 节点上不该有全网
@@ -1166,7 +1207,7 @@ selector,或者漏掉某条候选从不探测(它永远达不到 `min_samples`,�
 (`throughput` 已经能测了,见 §16.2.1。)渲染期就把这类声明挡在 Agent 配置外并报出原因,
 而不是让 Agent 在节点上启动失败 —— 那时人已经不在终端前面了。
 
-### 7.3.3 探测入口:一个端口,用户名区分候选
+### 7.3.4 探测入口：一个端口，用户名区分候选
 
 要给候选排序,就得能**单独测量每一条**。三条路都试过:
 
@@ -1204,12 +1245,11 @@ selector,或者漏掉某条候选从不探测(它永远达不到 `min_samples`,�
   客户端普遍在第一个冒号处切分 `user:pass` —— curl 就是这样,结果用户名变成
   `cand`。改用 tag 的哈希前缀,可读性由紧邻的路由规则补上。
 
-### 7.3.4 按服务分流:rule_set 热更新
+### 7.3.5 可选扩展：按服务热更新 `rule_set`
 
-> **状态:实测可行,但**当前没有用到**。** 服务是声明出来的,域名规则因此
-> 是渲染产物,只有"哪条候选被选中"是运行时的 —— 而那是 selector 本来就在
-> 做的事(§4.5 落地时验证过)。这一节留着,是因为**服务清单要在运行时增删**
-> 的那天会需要它。
+> 这不是基础客户端契约。若以后要求在不重装主配置的情况下增删 Service，可采用本节
+> 方案；是否启用只见[当前状态](status/current.md)。服务是声明值，域名规则仍必须是
+> certified view 的渲染产物，只有“哪条候选被选中”属于 selector 运行态。
 
 服务模型要求数据平面能按 host 分流,而且**分流规则要能在运行时改** ——
 Agent 学到"服务 X 现在该走 edge-b"之后,得让它立刻生效。
@@ -1252,7 +1292,9 @@ Agent 只决定哪些地址落进哪个桶 —— 这样"节点上的配置是 S
 
 ### 7.5 Android 的调度承载
 
-Android 没有 Agent(§15.4),但 §5.6 要求接入节点承担四件事:接收 ranked list、本地测量、执行切换阈值、离线沿用上次排序。**这些能力必须由 Android 客户端自身内嵌**,否则 Android 只能退化成静态选路。
+Android 没有 Linux Agent(§15.4)，但 §5.6 要求接入节点承担四件事：接收已授权候选和规则、
+测量只有本机知道的入口段、执行切换阈值、离线沿用最后一份可信状态。**这些能力必须由
+Android 客户端自身内嵌**，否则 Android 只能退化成静态选路。
 
 v1 Android 的 matcher、Service 与声明映射全部来自中控签名配置。应用只能显示
 哪些规则已经生效、当前走哪条路径以及规则是否陈旧；用户不能新增规则或修改声明
@@ -1262,12 +1304,14 @@ v1 Android 的 matcher、Service 与声明映射全部来自中控签名配置�
 
 | 能力 | 承载方式 |
 |---|---|
-| 接收 ranked list | 客户端内嵌**最小 pull 客户端**:mTLS 拉取、校验平台签名、落地为本地文件(复用 §14.3 的端点与签名校验) |
-| 本地测量与切换 | sing-box 的 `urltest` / `selector` outbound,候选集与阈值由渲染产物填充 |
-| 离线沿用 | ranked list 已落地为本地文件,与 §11 的推论一致 |
-| 观测上报 | 走同一条 pull 通道回传;**指标限于 L4 可得的那几项**(§16.2) |
+| 接收授权 plan/view | v1 compatibility 验单签 snapshot；v2 验 bootstrap/recovery、ControlSet QC、Device proof、EndpointSet、四组 floor 与 latch，原子落入 LKG |
+| 本地测量与切换 | Direct 不探测；宿主在每底层网络代首次进入 Auto/指定出口时冻结当时的候选快照，只对其中按地址与源接口去重的入口各做至多一次轻量并行测量；共享决策包应用可信服务器分段观测与阻尼，libbox `selector` 执行并读回 |
+| 离线沿用 | 保留最后一份已验证 plan/view、入口证据和仍新鲜的服务器观测；不延长原证据时间 |
+| 观测上报 | 使用独立 `device_report` role 和 Device 身份签名；**指标限于本机实际可得且声明过的范围**(§16.2) |
 
-> **这不等于把 Agent 装进 Android。** 它不做配置收敛、不做二进制自更新、不做漂移纠正 —— 那些走应用分发渠道(§17.5)。它只做"拉排名 + 报观测"这一条窄通道。
+> **这不等于把 Linux Agent 装进 Android。** 它不运行候选窗口、`min_samples`、整路径探测、
+> 配置收敛、二进制自更新或 Linux 漂移纠正；应用更新走平台分发渠道(§17.5)。配置刷新、
+> 模式/出口切换和同一网络代重连也不能重新触发入口探测。
 
 ---
 
@@ -1277,7 +1321,8 @@ v1 Android 的 matcher、Service 与声明映射全部来自中控签名配置�
 
 ### 8.1 职责
 
-1. 接受上游连接(Hysteria2 inbound,多凭据)—— 上游可能是接入节点,也可能是另一台服务器;
+1. 接受已签配置指定的 data-ingress transport（Hysteria2 或 Trojan，多凭据）—— 上游可能是
+   接入节点，也可能是另一台服务器；
 2. 按连接所属的访问声明,把流量送往下一跳;
 3. **当它是链上最后一跳时,直接连向目标地址**(出公网)。这需要 `ip_forward` + MASQUERADE;
 4. 维持到各 `reverse_only` 服务器的反连隧道(§6.3);
@@ -1294,21 +1339,21 @@ v1 Android 的 matcher、Service 与声明映射全部来自中控签名配置�
 
 | 接入节点 | 持有凭据 | 效果 |
 |---|---|---|
-| Windows / Android / Linux 日常入口 | 一把或多把，仅限本设备获授权的声明 | Direct 本地直连；Auto 使用中控规则；指定出口固定最后一跳，前置路径仍由 Agent 选择 |
+| Windows / Android / Linux 日常入口 | 一把或多把，仅限本设备获授权的声明 | Direct 本地直连；Auto 使用 certified 控制规则；指定出口固定最后一跳，前置路径仍由 Agent 选择 |
 | Linux 兼容/高级覆盖 | 多把 | 端口或临时 CLI 只可强制使用已经授权的声明，不得扩权 |
 
 **服务器侧零改动,差别只在发几把钥匙。**
 
 > **凭据同时是授权边界。** 允许的下一跳集合是访问声明的渲染产物(§19)—— **拿到一张凭据不等于能经这台服务器访问任意地方。**
 
-### 8.3 mesh 互联（独立目标态，当前未部署）
+### 8.3 mesh 互联（独立可选目标态）
 
 目标设计中，持有 `bidirectional` 或 `direct_only` 的服务器可通过
 **Headscale + 自建 DERP** 组网，获得密钥/peer 自动分发、ACL、MagicDNS、
-Subnet router 与 NAT 穿透。**生产环境目前没有部署 Headscale/DERP，不能把
-这些能力当作现状或运维前提。**
+Subnet router 与 NAT 穿透。**主设计与部署流程不能假定 Headscale/DERP 已存在；是否部署
+只见[当前状态](status/current.md)。**
 
-> **目标态下**这一条会进一步缩小隧道矩阵。当前生产的矩阵仍以 SSOT 显式
+> **启用后**这一条会进一步缩小隧道矩阵。未完成该独立能力验收前仍以 SSOT 显式
 > `tunnels` 为真值，不能假设 Headscale 已经接管。
 
 **两个必须知道的限制:**
@@ -1358,7 +1403,6 @@ Subnet router 与 NAT 穿透。**生产环境目前没有部署 Headscale/DERP�
 两者都由控制平面签发下发,但**作用域完全不同,不可混用**。出口凭据同样只以引用形式进渲染层(§12.1)。
 
 ---
----
 
 # 第三部分 · 控制平面
 
@@ -1382,35 +1426,75 @@ Subnet router 与 NAT 穿透。**生产环境目前没有部署 Headscale/DERP�
 - 节点必须能**自治运行**;
 - **排序结果也必须落地。** 控制平面离线时,节点沿用最后一次下发的 ranked list 继续本地选服务器链(见 §5.6)。
 
-### 11.1 因此不需要分布式控制平面
+### 11.1 `control` 是动态节点能力，不是固定三台机器
 
-对数十节点规模,分布式控制平面意味着共识协议、脑裂处理、状态同步、多写冲突、成员变更 —— 一个独立且困难的工程项目,**而且它自己就是新的故障源**。
+Loom 没有永久中控。Raft config ledger 中最新 durable committed 的 `JointControlSet` 或
+`FinalControlSet(epoch)` 是内部 membership 状态；Joint 立即要求 old/new 双多数，Final 表示
+稳定态。只有相应 transition 完成 apply/recompute 并取得所需 joint replication QC 后，
+才成为对外 effective 的成员 authority。materialized SSOT 再把该 certified 集合中的 Device
+投影为 `control` 块。集合
+至少一个，最多可以包含全部合格 Device。普通 SSOT operation 不能靠先增加 `control` 字段
+来自我授权。协议、客户端和
+校验器不得写死 3，也不得出现 `primary_controller`。3 只是 CFT 模型下能容忍一个
+成员离线的最小推荐部署：
 
-真正的目标是**控制平面挂掉不会造成损失**,即**故障域隔离**:
+```text
+N = |ControlSet(epoch)|
+q = floor(N / 2) + 1
+```
 
-| 手段 | 说明 |
-|---|---|
-| 状态全部可序列化 | 拓扑 + 服务定义 + 密钥材料 → 定期导出、异地备份 |
-| 控制平面无状态化 | 状态在数据库/Git,进程可随时重建 |
-| Warm standby | 另一台机器有同步备份,**手工**切换,不做自动选主 |
-| 节点自治 | 离线时按现有配置与最后排序继续运行 |
+| N | quorum | 可容忍离线 |
+|---:|---:|---:|
+| 1 | 1 | 0 |
+| 2 | 2 | 0 |
+| 3 | 2 | 1 |
+| 4 | 3 | 1 |
+| 5 | 3 | 2 |
 
-> 只有规模到数百节点或多租户并发时才重新评估。
+Raft 选举、AppendEntries 和 commit quorum 只能按日志中最新 durable committed 的稳定
+`FinalControlSet` 或 JointControlSet 计算，绝不能按在线数自动缩小；Final commit 后即使其
+post-commit QC 尚未齐，新集合也已经约束内部 Raft，但不能对客户端发布为新 authority。
+外部 reader/executor 只接受 joint-QC-certified Final。任一 control Device 都可在内部转发和复制对象；
+只有带相应 certified EndpointSet role 的可达入口才对外接收管理或读取请求。Raft 临时 leader 只负责串行化日志，外部
+副作用由另行持有资源租约的合格 executor 执行，二者都不是额外信任根。失去 quorum 时停止成员、权限、邀请、配置和端口等安全关键
+写入，但继续收集观测和草稿；数据平面继续使用最后一份已认证配置。
+
+首版故障模型是 crash/partition tolerant，不宣称普通多数能抵御恶意 voter。成员加入、
+移除和控制密钥更换必须由旧、新集合 joint quorum 确认；旧 quorum 永久丢失时只能用
+离线 recovery root 产生显式更高 epoch，不能用 CRDT 或 DNS 静默接管。recovery transition
+只授权新的 bootstrap lineage；新 ControlSet 仍须对精确 genesis durable install/commit、
+apply/recompute 并形成 `q(new)` replication QC，缺少该 QC 时客户端继续旧 LKG。完整协议见
+[分布式控制平面专题](distributed-control-plane.md#5-controlsetquorum-与故障模型)。
 
 ---
 
-## 12. SSOT 与纯函数渲染
+## 12. 逻辑 SSOT 与纯函数渲染
 
 > **拓扑与服务定义是唯一事实来源。所有节点上的配置文件,都是它的渲染输出。**
 
 ```
-SSOT(拓扑 + 服务定义 + 策略)
-      │  render()   ← 纯函数:同样输入必然产生同样输出
-      ▼
-每节点配置包(sing-box.json / wg*.conf / systemd unit / 候选集 / ...)
+签名不可变操作/完整候选 SSOT ── CRDT anti-entropy ── control 副本
+                         │ 每个 voter 严格 validate + candidate Reduce/render
+                         ▼
+                   Raft durable commit
+                         │ state-machine apply/recompute roots
+                         ▼
+                 quorum replication attest/QC
+                         │ certified 后才成为 effective SSOT/发布同一确定性字节
+                         └──► 每节点配置包(sing-box.json / wg*.conf / systemd unit / 候选集 / ...)
 ```
 
-**手工登录任何机器改配置,都是错误操作。** 正确做法是改 SSOT 再重新渲染。
+“唯一”指一个已取得提交后 replication QC 的 certified 逻辑提交头，不是磁盘上只能存在一个 YAML 文件。
+Git/YAML 继续适合导入、导出、评审、diff 和归档；在线 authority 是不可变 operation DAG、
+commit ledger 与 deterministic reducer。未提交草稿即使已经复制到所有 control Device，也不
+能进入 **effective/published** 渲染或改变权限；voter 仍必须对它执行无副作用的 candidate
+reduce/render，才能在 append 前验证确定性结果。
+
+**手工登录任何机器改配置,都是错误操作。** 正确做法是从已信 certified
+`EndpointSet(role=control_api)` 选择入口，验证精确 transport identity 并使用
+admin cert 认证后提交带 base head 的变更；候选经各 voter 校验、Raft durable commit、状态机 apply/recompute 并取得
+提交后 replication QC 后，才把相同的确定性结果提升为 effective SSOT 并发布。控制副本间只能交换 canonical 操作和
+内容寻址对象；字段级 LWW 合并不得直接产生一份从未被操作者批准的 SSOT。
 
 理由是一致性约束:§6.3 的 N×M 矩阵两端必须严格对应;凭据到访问声明的映射必须在所有服务器上一致;候选集必须与实际存活的节点集合一致;混淆参数双端必须逐位相同。**这些人工维护必然出错。**
 
@@ -1420,7 +1504,11 @@ SSOT(拓扑 + 服务定义 + 策略)
 2. **漂移检测** —— Agent 比对本地文件哈希与期望值,不一致即纠正;
 3. **回滚** —— 用旧快照重新渲染,不需保存旧配置文件。
 
-渲染函数里**不能有**随机数、当前时间戳、外部查询。**平台生成的随机性**(混淆参数、客户端凭据)必须**先固化进 SSOT** 再参与渲染。
+渲染函数里**不能有**随机数、当前时间戳、外部查询。**控制平面生成的随机性**（混淆
+参数、端口等公开随机选择）必须在 proposal 前生成并成为 canonical 输入，因此可以参与
+无副作用的 candidate render；只有经 Raft commit、apply/recompute 与提交后 QC 后，同一结果
+才可进入 effective/published render。秘密随机值只提交 commitment/hash、公钥、加密制品引用或 secret ref；invite token
+明文、Device 数据面凭据和私钥不得进入 operation、CRDT、SSOT 或镜像。
 
 **节点私钥是显式例外。** §13.1 要求 WG 私钥只在节点本地生成、永不离开节点 —— 平台既然没有它,就渲染不出含 `PrivateKey = ...` 的完整文件。两条规则用**渲染配置 + 本地秘密覆盖层**调和:
 
@@ -1439,8 +1527,11 @@ SSOT(拓扑 + 服务定义 + 策略)
 
 ## 13. 密钥与信任
 
-> **实现状态:** §13.2 的 SSH User/Host CA 是运维目标设计，不是 Device 加入机制。
-> Device 统一由中控创建后在本机生成身份并导入加入码；控制中心不再提供 SSH Add node。
+> **迁移边界:** v1 使用单在线平台签名 key 和指定控制节点；以下多签、admin/control
+> 证书分域与 recovery root 是目标态。是否仍运行 v1 只见[当前状态](status/current.md)。
+> §13.2 的 SSH User/Host CA 是运维目标设计，不是
+> Device Enrollment 机制。完整迁移见
+> [分布式控制平面 §6、§19](distributed-control-plane.md#6-信任域与密钥)。
 
 ### 13.1 私钥不集中生成
 
@@ -1448,11 +1539,20 @@ SSOT(拓扑 + 服务定义 + 策略)
 |---|---|---|
 | **节点 WG 私钥** | **节点本地** | 仅公钥 |
 | **节点 SSH 主机密钥** | 节点本地 | 仅公钥 |
-| **SSH 用户证书** | 控制平面(CA 签发) | CA 私钥 |
-| **客户端凭据** | 控制平面 | 是(必须下发,无法避免) |
-| **混淆参数** | 控制平面 | 是(非密钥,是双端须一致的公共参数) |
+| **SSH 用户证书** | CA 签发流程 | 受约束 CA 私钥；不等于 admin cert |
+| **Device 身份私钥** | **Device 本地** | 仅证书/SPKI 与 certified membership |
+| **control peer mTLS cert/key** | **每个 control Device 各自生成** | 只持本 peer 私钥；只用于 Raft/anti-entropy transport identity |
+| **control membership/config/enrollment keys** | **每个 control Device 按用途分别生成三把** | 只持本成员对应私钥；三者互不复用，也不与 peer/Device/admin/CA/TLS/code-signing/recovery key 复用 |
+| **admin 私钥** | 管理员终端/硬件 | 仅验证证书与 certified ACL |
+| **公开 TLS/ACME 私钥** | TLS 终止 Device 本地 | 证书、SPKI 摘要和状态，不持有节点私钥 |
+| **客户端数据面凭据** | approval commit 前生成并 sealed 给既定接收者，或写入不可变版本 KMS | 只提交 ciphertext hash/secret ref；接替 executor 只能重放同一制品 |
+| **混淆参数** | 提案方生成、随 certified proposal 固化 | 是公开参数，不是私钥 |
+| **recovery root** | 离线介质/可选多人门槛 | 日常 control Device 不持有 |
 
-> **核心安全属性:控制平面沦陷 ≠ 隧道历史流量可解密。** 攻击者能篡改拓扑(会被审计和监控发现),但拿不到节点私钥。
+> **核心安全属性（`q > 1` 时）：单个 control Device 沦陷既拿不到节点私钥，也不能
+> 独自篡改 certified 拓扑。** `N=1, q=1` 的迁移态不具备这项性质。CFT 多数不是 Byzantine
+> 容错；一旦攻击者控制达到 quorum，仍能批准恶意新配置，
+> 因此密钥分域、最小 admin scope、离线恢复与审计不能省略。
 
 Agent 首次接入时在本地生成 WG 密钥对,只上报公钥。**私钥永不离开节点。**
 
@@ -1464,9 +1564,13 @@ Agent 首次接入时在本地生成 WG 密钥对,只上报公钥。**私钥永�
 
 反向也建议用 **Host CA** 签发主机证书,免去 `known_hosts` 分发和 TOFU 风险。
 
-### 13.3 CA 私钥是最高价值目标
+### 13.3 CA 与恢复私钥是最高价值目标
 
-泄露 = 可签发任意主机的登录证书。按投入排序:离线保管根 CA、签发中间 CA 日常使用;中间 CA 私钥加密存储、启动时人工解锁;所有签发写审计日志;有条件上硬件。
+CA root 泄露会允许伪造其证书域，recovery root 泄露会允许在灾难恢复时重建
+`ControlSet`。两者必须分开，离线保管；在线只使用按 EKU/profile 受约束的中间 CA，
+所有签发与恢复写入不可变审计。公开 WebPKI、Device、control peer、admin 与配置投票
+签名不能共用证书或私钥。普通证书本身也不授予权限，接收方还要核对 certified
+registry/ACL/ControlSet。
 
 ---
 
@@ -1504,7 +1608,7 @@ Agent 首次接入时在本地生成 WG 密钥对,只上报公钥。**私钥永�
 | 2 | `cred/x@2` | `<id>`,外加过渡期的 `<id>@1` |
 | 3 | `cred/x@3` | `<id>`,外加过渡期的 `<id>@2` |
 
-第一代不带后缀,是为了让**已经部署好的秘密层不必因为引入这个字段而全网重发**。
+第一代不带后缀,是为了让 **v1 迁移基线的秘密层不必因为引入这个字段而全网重发**。
 
 上一代的用户名**不能和当前代同名**:同名两条 user 的行为取决于 sing-box 的
 实现细节,而且路由规则按名字匹配 —— 分不开就没法确认过渡窗口真的生效了。
@@ -1534,69 +1638,82 @@ user),报成一条状态,进事件历史。于是"开了三天还没关"是一�
 而不是没人知道的事。
 
 
-### 13.5 客户端加入网络复用现有 SSOT 与发布链
+### 13.5 客户端加入网络复用 certified SSOT 与发布链
 
-管理员先在中控创建 Device，并固定平台、职责、grants 和必要的连接方向。纯 `use_loom`
-客户端可导入二维码；Linux 也可在本地或管理员建立的 SSH 会话中执行同一 shell bootstrap。
-这些加入输入只完成身份绑定和首次配置交付，不会创建第二条 Device，也不是另一套组网或
-选路模型。唯一允许的链路是：
+创建端先用 CSPRNG 生成一次性 token 并封存为 exact-version immutable artifact；管理员再从
+已信 certified `EndpointSet(role=control_api)` 选择入口，验证精确 URL、hostname/WebPKI、
+SPKI pin 并用 admin cert 认证后，提交公开层只含 token commitment/private-binding hash 以及平台、
+职责、grants 和必要方向的 Create Device proposal；完整 exact-version artifact ref 与明文一致性
+回执保存在 control-private replicated binding 中。该安全关键提案经 Raft commit、apply/recompute 与提交后
+QC 成为 certified 状态后，renderer 才解封同一 token 并一次性交付载体。纯 `use_loom` 客户端可导入二维码；Linux 也可在本地或
+管理员建立的 SSH 会话中执行同一 shell bootstrap。这些载体只绑定既有 Device，不创建
+第二套节点、配置或选路模型。
 
 ```text
-中控创建 Device，并为它生成短时、一次性加入码
+创建端预生成/封存 token artifact
+    ↓ 已信 certified EndpointSet(role=control_api) 内的入口验 transport + admin cert，接收 Create Device（public commitment/binding hash；private exact ref）
+    ↓ validate → Raft durable commit → apply/recompute → quorum replication attest/QC
+certified 后一次性返回短时 descriptor QR/URI（token + context/commitment + ≤3 个带 pin seed + proof-bundle hash）；文件可内嵌无 token proof bundle
     ↓
-客户端导入 access-only QR/文件，或在 Linux 本地/SSH 会话执行 shell bootstrap
+Device 在 descriptor 有界 EndpointSet(role=enroll) 中验 transport，无 token GET/验证 immutable proof bundle 后，本地生成独立的 P-256 identity/CSR key 与按 intent 有界选择的不可导出 wrapping/PoP key（Android API 31+ P-256，API 26–30 RSA fallback）并提交同一 claim
     ↓
-设备本地生成 P-256 私钥与 PKCS#10 CSR（私钥不离机；Portable 用用户 DPAPI 落盘）
+ControlSet 对 token/Device ID 预留、SPKI、Membership 计划、职责、grants、已验证可取/PoP 的
+exact-version sealed secret-ref root 与 future Device view leaf 提交原子 CAS proposal（refs 仅随私有 receipt）
+    ↓ Raft durable commit
+state machine apply/recompute，只形成 claim reservation 与 head；尚不激活 Membership/view/secret
+    ↓ quorum replication attest/QC；到此 reservation 才 certified
+受约束 CA 验 claim config QC 与最新 active/fenced profile，确定性签证并把 first-result 写入 Raft issuance registry
     ↓
-中控原子消费加入码，把既有 Device 绑定到 CSR 的 canonical SPKI 指纹
+enrollment keys 验 issued certificate、issuance log entry 与 profile inclusion 后形成 approval QC
+    ↓ approval-QC-authorized completion 进入第二个 ordinary head，并由当前 ControlSet config QC 认证
+原子完成 invite consumption、Membership/view 激活与 artifact release
     ↓
-先生成并预置新旧节点所需秘密，再提交同一份 SSOT
+ready bootstrap 返回证书、信任 checkpoint、EndpointSet、只为该 wrapping key 封装的精确 secret artifact 与 claim/completion 分发坐标
     ↓
-现有 publisher 校验、渲染、签名并自动发布该 SSOT
-    ↓
-publisher 确认精确 SSOT 后，内部 join 响应才返回 ready bootstrap
-    ↓
-设备落盘节点证书、CA、平台公钥、release authority 与本机秘密
-    ↓
-设备执行现有 signed pull；验签、hydrate、预检、原子安装后才进入运行态
+Device 验 bootstrap/recovery/ControlSet/transition/QC/view proof/floor，原子 latch v2，
+hydrate、预检、原子安装并可信上报
 ```
 
-加入码绑定成功只表示 `claimed/provisioning`，不表示隧道健康、业务流量已经通过或
-客户端在线。中控在 SSOT 和必要秘密耐久写入、且 publisher 确认对应版本之前只能
-返回 pending；不允许用假配置跳过这段等待。首次绑定受二维码 TTL 限制；绑定后，相同 token、
-相同 CSR、request ID、平台和 Device facts 的网络重试只在一小时恢复窗口内幂等，窗口以
-`consumed_at` 起算，并在 ready 后重新给足一次恢复时间；换一把密钥或 CSR 重复消费立即失败。
-加入 token 只放在
-`loom://enroll#<base64url payload>` 的 fragment 中，由客户端在 POST body 提交，
-不得进入 HTTPS query、日志或列表接口；列表也不能重新取回已消费 token。当前 Windows
-Portable 预览只在未完成期间把它存入 current-user DPAPI，普通完成标记提交后立即清除；
-Installed 由受限 Service broker 写入 machine-scope/受保护 ProgramData；普通用户界面经 ACL 保护的本机管道调用固定操作。
-内部绑定记录中的 `ready` 只表示服务端 bootstrap 已准备好，不是客户端已经收到、安装或
-在线；页面显示 “Joined · status unverified”，数据面在线仍只能来自后续可信运行态报告。
+任一接收节点都不能单独消费 token 或签出有效身份。同一 descriptor 有界
+`EndpointSet(role=enroll)` 内不同 seed 的并发 claim 只有第一份
+certified SPKI reservation 成功；相同 token 与 exact request body（包括 CSR、wrapping descriptor、
+request ID、平台和 Device facts）的恢复重试返回同一事务，detached proof 可重新签名，不同 body
+立即失败。无 quorum 时保持 pending/unavailable，不能用本地 registry、
+文件锁或临时证书假装已加入。
 
-从未领取的 Device 可在详情页重新生成短期加入码，保留原 ID、平台、职责、grants 和
-direction，旧码立即失效；纯 `use_loom` Device 可显示二维码，包含 `forward` 的 Linux
-Device 只展示 shell/SSH 辅助交付。客户端删除了本机身份后，管理员可对已加入的纯
-`use_loom` Device 执行“重新加入”：明确确认本机身份已删除，移除旧 SSOT 接入与设备专属
-凭据，归档旧身份，再生成沿用名称、平台和原职责/授权的新 Device ID 与二维码。新密钥不能静默绑定旧 ID，旧证书不能
-冒充新身份；旧访问凭据的撤销随服务器应用签名配置生效，不宣称旧客户端执行过远程停机。
-替换与 provisioning 使用同一 SSOT 锁，事务内复核 registry 身份，防止排队的旧 claim
-重新创建已撤销成员。归档记录保留替代关系，默认设备列表只显示当前记录。
+QR descriptor 的 seed 可以按已有 Web 观测给出提示顺序，但最多 3 个且必须携带精确 HTTPS URL
+与 TLS SPKI pin set，并由同一 certified context 绑定；完整 authority/head/QC/inclusion proof 不
+塞进二维码，而由客户端先从 seed 无 token 获取并按 descriptor `proof_bundle_hash` 验证。最终
+`loom://enroll/v2#d=<base64url descriptor>` 不超过 1800 ASCII bytes；超限时只提供可内嵌 proof 的
+`.loom-invite`，不得生成不可扫二维码。客户端发送 token 前验证 hostname/WebPKI、pin、proof bundle
+和 record commitment，且拒绝重定向。DNS、排序和处理请求的那台机器都不是 authority。一次性
+token 只在 URI fragment、离线加入文件和 claim POST body 中出现，不进入 query、proof GET、日志、
+CRDT operation、列表或镜像。
 
-加入成功后，设备仍从签名 SSOT 获得 Service、Policy、候选和授权。Direct / Auto /
-指定出口只是客户端本机的三个顶层偏好：Auto 继续使用
-`Host → Service → Policy → Agent`，指定出口只固定最后一跳且前置中继仍由 Agent
-择优，Direct 才是本地直连。三种模式不创建新隧道模型、不把 Current Paths 变成可写
-选择器，也不通过加入码携带出口或路径参数。
+`ready` 只表示 identity、certified Device view 与必要制品可取，不表示客户端已经安装、
+隧道健康或在线。重新发码、Rejoin、Remove 和吊销同样必须经 Raft commit、apply/recompute
+与提交后 QC 成为 certified 状态；普通 Device 删除
+不能隐式删除 control member，后者必须先走 §11.1 的 joint transition。
+
+加入成功后，Device 仍从签名 view 获得 Service、Policy、候选和授权。Direct / Auto /
+指定出口只是客户端本机顶层偏好，既不进入邀请，也不改变 ControlSet。完整对象、重试、
+证书 receipt 和 v1→v2 兼容规则见
+[分布式控制平面 §11、§19](distributed-control-plane.md#11-enrollment邀请与报告)。
+
+> **v1 兼容边界：** v1 由一个指定控制节点、单 registry/SSOT 锁、单 publisher 和
+> 单平台签名 key 实现上述流程。v1 reader 使用严格 schema，不能在 v1 QR/current
+> 原位添加 seeds/QC 字段；迁移必须并行发布 schema 2 资源，先升级 reader，再启用多 voter。
 
 ## 14. 控制通道
 
-### 14.1 可达性是图,不是列表
+### 14.1 可达性是图，不是成员资格
 
-控制平面不一定能直连所有节点。BFS 求最短路径 → 生成 `ProxyJump` 链:`ssh -J bj-cloud,cd-local target`。
+任一管理工作站或 control Device 不一定能直连所有节点。bootstrap inventory 可用 BFS
+求最短路径并生成 `ProxyJump` 链：`ssh -J demo-a,demo-b target`。
 
-这个图用于 bootstrap，也可用于操作者显式触发的管理面快速发布。节点稳态配置与
-离线后的补齐仍走 signed pull(§14.2.2,已实现)。
+这个图用于 bootstrap，也可用于操作者显式触发的管理面快速发布；它是 controller-local
+运维事实，不进入 `ControlSet`，不能根据 SSH/DNS 可达性增删 voter。节点稳态配置与离线后
+的补齐仍走 signed pull。
 
 ### 14.2 signed pull 与管理面快速发布并存
 
@@ -1609,7 +1726,7 @@ Agent pull 解决节点主动取回、NAT 下配置分发、控制平面可离�
 仍分别走受保护网络内的 `/status` 拉取/gossip，以及下述 NAT HTTPS POST 适配器。
 管理 SSH 可达的生产节点则不必为了交互式代码发布等待下一次轮询。
 
-> **NAT Device 上报的当前实现边界:** Windows Device 仍使用同一个“客户端主动访问
+> **NAT Device 上报的 v1 兼容边界:** Windows Device 使用同一个“客户端主动访问
 > 平台”的控制方向，但上报不是把 JSON 塞进静态 signed-current GET 响应，也不改变
 > `/status`。客户端将本轮自产的既有 `Observation` POST 到 enrollment 同源的精确
 > `/loom-client/report` 路径；服务端不接受完整 `Status` 或 `learned`。入口只做传输
@@ -1650,8 +1767,8 @@ Capability 与 sandbox 都只在新进程上生效，旧进程仍是 `active` �
 `is-active` 会看到 `active`。`NRestarts` 是累计计数，不能拿“历史上曾重启过”
 冒充“本轮正在重启循环”；验证关注本轮稳定窗口内的状态与增量。
 
-**回滚必须只碰动过的东西。** 实测踩过:预检阶段失败(什么都没装),而回滚
-逻辑无差别重启了三条隧道 —— 把一次干净的拒绝变成一次真实的扰动。
+**回滚必须只碰动过的东西。** 若预检阶段失败（什么都没装），回滚却无差别重启
+既有隧道，就会把一次干净的拒绝变成一次真实的扰动。
 
 #### wg-quick 不能用 systemctl restart
 
@@ -1668,51 +1785,64 @@ systemctl stop wg-quick@X; ip link del X 2>/dev/null; systemctl start wg-quick@X
 文件用 base64 内嵌在脚本里,从 stdin 进 `sh`,不落盘也不另开 scp ——
 "传了一半断线"只会让脚本没跑起来,不会在机器上留下半套文件。
 
-### 14.2.2 控制面:一棵签了名的静态树
+### 14.2.2 分发面：公开证明与私有 Device view 分离
 
-节点自己去取配置,而不是等人来推。不可变快照的 manifest 证明内容真实性；
-D88 的 signed deployment envelope 证明平台当前授权，并以节点本地单调 floor
-记住已经接受到哪一代。两层签名解决的是不同问题，不能只留其中一层。
+节点自己去取配置，而不是等人来推；但“可由任何人缓存的公开字节”和“仅本 Device 可读的
+授权 view”不能共用静态树。提交后 replication QC 绑定完整 ControlHead 坐标：recovery 的
+epoch/statement/policy hash、control 的 epoch/set hash、revision/head hash、Raft
+term/index/entry hash，以及 `device_views_root`。它证明当前 ControlSet 已在 Raft 提交并由
+quorum 复算该 head；经 Device 身份认证返回的 Merkle inclusion proof 再证明本机 payload
+属于该 root；节点本地 floor/latch 防止回退。这些检查解决不同问题，不能只留其中一层。
 
+```text
+ControlSet                         public distribution（不可信）
+  validate candidate                current/head + QC
+  → Raft durable commit             bootstrap/recovery/ControlSet transition
+  → apply/recompute roots           通用内容寻址二进制/公开制品
+  → quorum replication attest/QC
+  → certified publish ───────────┬──────────────────────────────► Device 验公开 lineage/head
+                                 │
+                                 └─► device_config（Device 身份认证）
+                                      DeviceViewEnvelope + payload + leaf/proof
+                                      EndpointSet refs + 本 Device 的 sealed artifact refs
+                                                                 ──► 验 proof/floor 后 hydrate/安装
 ```
-签发端(有私钥)               多个静态镜像(不可信)                节点
-  loom publish  ──────────────► demo-b / demo-c / 外部镜像             loom pull
-    渲染 → 快照签名              current.json(signed,generation)  ──► 1 并行验 current,选最高合法代
-    耐久 release authority       <id>/snapshot.json + .sig          2 从任一镜像验 manifest/正文哈希
-    产物全是 ${secret:...}        <id>/nodes/<node>.json             3 用本机秘密层填占位符
-                                                                        4 事务安装并记录 applied
-```
 
-三件事因此成立:
+因此有四条边界：
 
-**分发点看不到任何凭据。** 树里全是占位符,合并发生在节点上(D9)。实测把
-每一个凭据值拿去搜整棵树,一个都搜不到。
+1. **public `distribution` 看不到 Device identity↔control member 映射、普通 Device membership、
+   私有拓扑或凭据。** 它会搬运公开的 opaque ControlSet member ID/验证公钥、
+   head/QC/transition 和通用内容寻址制品；private ControlPeerDirectory preimage、per-Device view
+   均不进入公开树，对整棵公开树搜索测试凭据必须零命中。
+2. **`device_config` 必须认证 Device 身份并只返回该 Device 的最小 view。** control 副本内部
+   可以用内容寻址/CRDT 复制该 view，但不得据此把它发布到公共镜像或共享 CDN cache。响应
+   中的 secret 仍只用 exact-version sealed artifact ref 表达，本机解封/合并遵守 D9。
+3. **任一传输点都改不了授权或让已 latch 的节点倒退。** 篡改会 hash/proof 不符；重放旧
+   epoch/revision、同坐标换 payload、缺 transition、QC 不足或剥掉 envelope 都失败关闭。合法
+   回滚使用更高 revision/device generation 指回旧内容，不重放旧 pointer。
+4. **访问控制不替代密码学 authority。** Device mTLS/等价持钥认证保护隐私与下载范围；
+   ControlSet QC、Merkle proof、EndpointSet、floor/latch 仍分别验证真实性、授权和新鲜度。
 
-**分发点既改不了快照内容，也不能让已 latch 的节点倒退授权。** 改配置包会哈希
-不符，改 manifest 或 current payload 会验签失败；重放低 generation、同代换
-payload、以及 floor 已存在后剥掉 envelope 变回 legacy 都会失败关闭。旧快照仍可
-永久保留，合法回滚用更高 generation 指回旧 snapshot，不靠删除历史或重放旧指针。
+新装 Device 从邀请/安装包的受信 bootstrap 获得 `cluster_id`、bootstrap transition digest、
+recovery/genesis anchor、ControlSet checkpoint 和初始 floor；已安装 Device 只通过连续 joint
+transition/recovery 改变信任集。v1 迁移客户端首次验过 v2 后原子写入不可逆 latch，此后任何
+v1 current/invite/view 都不能成为 authority。状态丢失节点不能仅凭公开镜像中“最大的数字”或
+退回 v1 恢复 freshness，必须使用带外 v2 checkpoint/recovery/re-enrollment 流程。
 
-这个结论有一条明确边界：没有 floor 的新装/状态丢失节点只能验证签名，无法仅凭
-一个不可信镜像知道“最高代是多少”。干净迁移只允许首次 generation 1 自动 latch；
-无 floor 首见更高代必须用 `pull -expected-current <中控 authority 文件>` 做带外
-钉住：该文件先验签，公开分发点还必须逐字节一致。新版 standalone pull 永久拒绝
-unsigned legacy；legacy 只留给旧版父进程持有继承 deploy.lock 发起的同快照
-continuation。首次见到有效签名仍不是一般意义上的全局 freshness 证明。
+公开 `distribution` 和私有 `device_config` 都可以各有多个 signed EndpointSet 地址。客户端可
+并行读取公开 head，逐份验 QC/floor 后选最高合法连续 head；再以 Device 身份向匹配 role 的
+`device_config` 请求该 head 下的精确 view。落后私有端点可以返回旧而合法的 view 并标 stale，
+但不能让同 epoch/revision 的冲突 payload 按 URL 顺序择一。通用内容寻址二进制可从任一公开
+镜像取得；Device view、leaf/proof 与私有 artifact refs 只能从认证配置通道取得。
 
-**分发坐标可以按节点覆盖或列出多个，但接受边界不能覆盖。** 公网分发域名在某条
-线路上可能被 SNI/备案策略拦截；节点已经建立 WireGuard 邻接时，可以优先从两个
-邻居的隧道地址读取同一份静态树，再以公网镜像兜底。`loom pull` 并行读取全部
-`current.json`，逐份验签和核对本地 floor，选择最高合法 generation；同 generation
-出现不同 payload 是签发端分叉，必须失败关闭，不能按 URL 顺序任选一个。mutable
-指针选定后，manifest、节点正文和内容寻址二进制可从任一镜像取得，每一层仍单独
-验签/验哈希。该覆盖只改变字节从哪里取得，平台签名、本机秘密合并和单调 floor
-完全相同；隧道内 HTTP 也不能绕过任何接受检查。
+缓存语义也按角色拆分：公开 mutable current 使用 `no-store`，公开 hash-addressed transition、
+QC 和通用二进制可用长效 `immutable`；`device_config` 响应使用 `private, no-store`，共享缓存不得
+存储。publisher/reconciler 分别收敛公开制品和认证配置服务，任何一个地址部分成功都只能显示
+降级，不能把“至少一处可取”报告成全部绿色。
 
-镜像的缓存语义必须与可变性一致：`current.json` 使用 `no-store`；snapshot、节点
-正文和 `bin/<sha256>` 都由签名或内容哈希绑定，使用长效 `immutable` 缓存。publisher
-把同一棵树收敛到所有声明镜像，并逐个从 HTTP 读取验证；某个目标部分成功不会破坏
-安全，但本轮保持失败状态并在下一轮修复落后的镜像，不能把“至少写进一台”报告为绿。
+> **v1 兼容：** 旧协议使用单 Ed25519 `current.json + generation +
+> release-floor.json`，以下 pull/apply 自恢复细节描述 v1 契约，迁移时继续保留；严格 reader
+> 决定了 v2 必须使用并行 versioned 资源，不能向 v1 JSON 原位塞入未知字段。
 
 **每台机器只拿自己那份秘密。** `loom secrets split` 扫一遍各节点的渲染产物,
 按实际引用拆分总表:cn-a 拿 3 项,edge-b 拿 2 项,只有 access-a 有控制端点与
@@ -1723,15 +1853,15 @@ continuation。首次见到有效签名仍不是一般意义上的全局 freshne
 `loom pull` **不因为快照 id 和本机记录一样就跳过**。
 
 id 只说明"配置来自哪一版",不说明机器现在是不是那个样子。靠它早退会让漂移
-永远修不了 —— 实测 cn-b 的 `loom-pull.timer` 一度是 `active` 但没 `enable`
-(重启就没了),而 pull 每次都说"已是最新,无事可做"。
+永远修不了：例如 `loom-pull.timer` 可能是 `active` 但未 `enable`（重启即消失），
+而只比版本的 pull 仍会误报“已是最新，无事可做”。
 
 安装脚本本身幂等(逐文件比哈希),跑一遍很便宜,顺带把 **enable、服务状态
 这些不在文件里的期望状态**也拉回来。
 
 #### 三类"自己套自己"的坑
 
-`loom pull` 的最后一步是重启服务,而它自己就是一个服务。三次踩到:
+`loom pull` 的最后一步是重启服务,而它自己就是一个服务。需要防住三类递归/并发陷阱：
 
 | 坑 | 后果 |
 |---|---|
@@ -1742,72 +1872,122 @@ id 只说明"配置来自哪一版",不说明机器现在是不是那个样子�
 前两个按类堵掉(oneshot 永不重启、timer 用 `OnActiveSec` 且不 Persistent),
 第三个用文件锁兜住整类问题。
 
-#### 二进制与配置的当前闭环
+#### v1 二进制与配置的安全契约
 
-`loom pull` 已能按快照安装 Loom 二进制，随后由新二进制子进程继续安装同一
-快照的配置；旧进程不解析新 schema。代码变更不会因编译自动武装全网，必须先
+v1 `loom pull` 的目标契约是按同一快照安装 Loom 二进制，再由新二进制子进程继续安装同一
+快照的配置；旧进程不解析新 schema。代码变更不能因编译自动武装全网，必须先
 把构建产物写到 `deploy/staging/loom`，再由人执行 `loom release -reason ...`
 显式放行。首次分配 signed generation 1 之前，publisher 会从稳定候选重新执行
 `selfcheck -q -require signed-current-v1`，并要求该候选进入同一快照；旧 release
 或空 release 都会在 authority 分配之前失败关闭。配置变更仍由发布器自动收敛。
 
-### 14.2.3 发布器:把人从环里拿出去
+### 14.2.3 Publisher/reconciler：提交与外部副作用分开
 
-`loom pull` 让节点自己取,但**发布这一头还是人在敲**:`loom publish`,再把树
-送到分发点。那不是控制面,那是把手工步骤从五台减到一台。
+任一 control Device 都能在 Raft apply 时重算同一棵树；只有收齐提交后 QC 的 certified head 能授权 mutable
+current 前移。镜像写入由取得资源租约的 publisher executor 执行，leader/executor 换届后
+根据相同 desired hash 幂等接管：
 
-发布器是中控上的守护进程，盯着 SSOT 与显式放行记录:
-
+```text
+admin proposal → 每个 voter validate/reduce/candidate render → Raft durable commit
+              → apply/recompute → quorum replication attest/QC
+              → immutable objects → conditional mutable current/QC → 从 Device 视角读回
 ```
-SSOT/放行记录变了 → 校验 → 渲染 → 签名 → 推到全部镜像 → 逐镜像确认取得到
-```
 
-**只有 SSOT 是保存后自动发布。** Go 代码必须显式 `loom release`；把“编译”
-和“批准升级”分开，避免调试构建触发全网更新。发布器周期最多约 30 秒，节点
-pull 周期 45 秒并带最多 15 秒抖动，正常纯配置收敛目标在 90 秒内。
+代码构建仍不等于升级批准。binary hash、理由和 rollout policy 作为 release proposal
+显式提交；纯配置变更可由策略自动生成 proposal，但仍须完成 Raft commit、apply/recompute
+与提交后 QC，不能因保存某个副本的文件而自动成为 certified state。
 
-#### 它同时做两件事,第二件容易被忘掉
+publisher 同时负责首次写入和持续对账。镜像被清空、部分复制或落后时重推；镜像出现
+同坐标不同 hash/QC 时失败关闭，不用本地副本静默覆盖证据。外部发布通常不支持跨镜像
+事务，因此保证的是“不可变正文先行、current 最后、最终收敛”，客户端用 QC 与 floor
+承受短暂代次不同。
 
-1. SSOT 变了 → 发布
-2. **分发点指向的快照与本地算出来的不一致 → 重推**
+三条硬规则保持不变：
 
-第二件是收敛,和 §14.2.2 里"pull 不按快照 id 早退"是同一个道理
-([D33](decisions.md))。分发点被清空、推到一半断线、有人手工动过,都会让它
-和真相分叉;只在"文件变了"时才动作的发布器修不了这些。实测把分发点的
-`current.json` 改成假 id、旧 generation、坏签名或剥成 legacy，发布器下一轮都会
-按中控本地耐久 authority 对账并修复。若分发点出现平台有效签名的更高 generation，
-或同 generation 的另一份 payload，发布器不会“自愈”掩盖分叉，而是失败关闭并要求
-恢复中控 authority。
+1. **校验、Raft commit 或提交后 QC 任一步不足都不发布。** 上一合法 current 原地服务。
+2. **commit/QC 先耐久，不可变正文其次，带 revision 条件写的 mutable current 最后。** 旧对象按保留策略保存。
+3. **写成功不等于取得到。** 发布后必须从声明的 Device/网络视角取回并逐层验证。
 
-#### 三条硬规矩
+DNS、ACME、云防火墙和 NAT 映射也使用同一“certified intent + 租约 executor + 幂等
+reconcile + 读回”边界；additive、monotonic pointer 与 destructive 动作分别处理，外部 API
+不能提供 generation CAS/fencing 时禁止无人值守 delete/close。详见
+[分布式控制平面 §15](distributed-control-plane.md#15-外部副作用与租约)。租约只减少重复
+副作用，不授予 authority，也不能在过期时触发删除。
 
-**校验不过就不发。** 发一份自相矛盾的配置出去,比什么都不做糟得多 —— 节点
-会照单全收,而问题要等到流量打不通才暴露。上一个快照留在原地继续服务。
-
-**authority 先耐久，`current.json` 最后写。** authority 若晚于 Push，网络失败会让
-签发端忘记已经用过的 generation；current 若早于不可变正文，节点会拿到 404 或半截
-文件。旧快照不删 —— 节点可能正拿着旧 id 在取,而且留着才有回滚的余地。
-
-**推成功不等于取得到。** nginx 的 `alias` 写错、权限不对、路径多一层,推送
-这一侧全都完全正常。所以推完要**从节点视角**再取一次确认。这条不是假设 ——
-`-verify-url` 加上去的第一次运行就抓到了中控自己的 DNS 问题。
-若 signed current 带 assignments，验证还会逐个拉取每个被选快照的 manifest、
-签名、节点正文与 binary；只验证全局 snapshot 会让缺失的 canary 表面假绿。
+> **v1 兼容：** 单节点 `publisher` 监视本地 SSOT/放行记录并按配置周期
+> 收敛；这是迁移源，不是目标协议。其 authority 文件、单机锁和单签名不得被新实现继续
+> 当成全局 CAS。
 
 ### 14.3 拉取通道的保护
 
-- 现状是服务器节点上的公开 HTTPS 静态只读目录，不提供管理 API；尚未启用
-  拉取端 mTLS，不能把目标设计写成现有安全边界；
-- **配置包与 deployment current 都由平台签名**。前者保证内容真实性，后者配合
-  `/var/lib/loom/release-floor.json` 保证节点首次可信接受之后不倒退；
-- 旧 reader 可忽略 envelope 新字段完成滚动升级；新版 reader 的 standalone 路径
-  永久拒绝 unsigned legacy，只有旧父进程持锁的同快照 continuation 可走一次桥。
-  新装/丢 floor 且首见 generation > 1 的节点须用 `-expected-current` 从受信
-  bootstrap 获得新鲜度锚点；
-- 若未来需要隐藏拓扑或限制下载方，再给静态端点增加平台 CA 签发、可吊销的
-  mTLS 客户端证书；它是访问控制，不替代签名 envelope 的反重放。
+- v1 基线是服务器节点上的公开 HTTPS 静态只读目录，不提供管理 API，也不要求
+  拉取端 mTLS；不能把目标设计写成 v1 安全边界；
+- **目标 v2 的配置包与 current 都由当前 ControlSet 的提交后 QC 认证**。manifest 保证内容，
+  Device Merkle proof 证明本机 view 属于 certified head，提交后 QC 证明授权，跨
+  recovery epoch/statement/policy、control epoch/set、revision/head、Device generation/leaf/view
+  floor 与 v2 latch 防回退；当前 v1 的单平台
+  签名和 `/var/lib/loom/release-floor.json` 在兼容期保留；
+- 严格 v1 reader 不能忽略或接收原位增加的 envelope 字段；迁移必须并行发布独立 v1/v2
+  资源。旧 reader 只读原 v1 bytes，新 reader 在 latch 前验证受限 v1 和完整
+  BootstrapTransition，首次接受 v2 后永久拒绝 v1 authority。v2 新装/丢 floor 必须从 QR、
+  已知 ControlSet checkpoint 或 recovery 流程获得新鲜度锚点；
+- 目标 v2 的 `device_config` 必须使用独立 Device 身份认证（首版为 profile-scoped mTLS）并只
+  返回本机最小 view；`distribution` 只承载公开 head/QC/transition 和通用制品。mTLS 是隐私与
+  下载范围控制，不替代签名 envelope、Merkle proof 或 floor 的反重放。
 
 最后一条关键:**它让"传输通道"与"配置真实性"解耦** —— 即使中继被攻破也无法注入恶意配置。
+
+### 14.3.1 托管域名与证书
+
+目标态由 provider-neutral adapter 管理已经委派给 Loom 的 zone/subzone。注册商可以是
+Dynadot、Gandi 或其他服务；provider 不是协议身份。FQDN、A/AAAA、证书 intent 和 endpoint
+用途先经 Raft commit 与提交后 replication QC 认证，再由持租约 reconciler 调 DNS/ACME API、
+读回权威结果并验证传播。只有显式 `PublicEndpointIntent(exposure=public)` 才触发公开资源；
+`control`/`server` 角色本身不自动暴露公网 API。
+API token、ACME account key 与 TLS 私钥只在秘密层；公开 TLS、Device、control、admin
+证书用途严格分离。
+
+`control_api/enroll/device_config/device_report/distribution/data_ingress` 六种 role 使用不同的
+稳定 logical endpoint、hostname、role-bounded CertificateIdentityProjection/CertificateIntent、
+TLS key artifact 和认证策略，并在 EndpointSet/QR checkpoint
+中绑定对应 transport identity/TLS SPKI pin set；control peer RPC 另由 head/QC 承诺的 private
+ControlPeerDirectory 管理，不复用
+这些地址。仅劫持 DNS 或出示 pin 不匹配的
+合法 WebPKI 证书至多造成拒绝服务，不能新增 voter、端口或信任根；被钉住私钥也失陷则必须
+走 credential revocation/recovery。ACME 优先使用委派的 DNS-01 challenge 子区；并行 order
+合并 TXT 且只清理自己的 value。节点本地生成 TLS key/CSR，换 key 时先以 certified head 发布新旧 pin
+overlap，再安装、验证并最终移除旧 pin。完整模型与 provider 约束见
+[分布式控制平面 §12](distributed-control-plane.md#12-域名与公开证书管理)。
+
+### 14.3.2 公网 listener 与端口无中断轮换
+
+单个 `public_endpoint + inbound_port` 是 v1 compatibility schema 的 singleton 表达，目标态由稳定
+`LogicalEndpoint` 和多个 `ListenerGeneration` 取代。正常轮换固定为：
+
+```text
+allocate → prepare（双监听/防火墙/NAT/证书）
+         → advertise（新旧都下发，旧 preferred）
+         → prefer（新连接用新，失败回退旧）
+         → drain（新 view 不再首选旧端口；旧 listener 仍接旧 view 客户端并维持旧会话）
+         → retire（关旧监听/映射，写 retired tombstone）
+```
+
+任何准备或外部验证失败都保留旧 listener。客户端的出口/候选 ID 不随物理端口变化；
+Android 与 Windows 的 Direct 不探测；每个底层网络代首次进入 Auto/指定出口时才冻结当时的
+候选快照，只对按地址与源接口去重的授权入口做至多一次有界并行探测，不扩张为整路径扫描；
+同代配置刷新、后续模式/出口切换和重连不再探测。
+同代新 advertise 的 listener 只在真实新连接的拨号/回退中形成运行证据，下一网络代才进入
+一次性入口探测集合。Linux access 的既有 Agent 仍按 §5.5/§7.3.3 的 tuning/window 契约
+测候选，但端口轮换不得另起一套 rotation probe loop，只能复用正常探测预算。
+所有经 certified PublicEndpointIntent 授权的公网 Hysteria2/Trojan listener 都使用同一代次与
+提交语义，境内外 server 没有两套轮换协议；`public_data_ingress` 只在 v1 compatibility
+控制客户端一跳资格，v2 必须由 per-Device EndpointSet 授权。WireGuard 只有实现双
+interface/peer/key/address/route 的专用 overlap 状态机并单独验收后，才能纳入同等级别承诺。
+既有连接不保证跨端口迁移，“无中断”只承诺计划内不存在新旧同时关闭的窗口；旧 listener
+在 reader/offline 窗口、仍可消费 invite seed 生存性和最后新握手/活动会话 quiet period 满足前
+继续接受旧 view。进行中的 rotation 冻结 exact intent/policy/credential 依赖；普通更新等待终态或
+在 prefer 前原子取消，安全撤权则显式 withdraw endpoint 并承认可能中断。详见
+[分布式控制平面 §13～§14](distributed-control-plane.md#13-endpointset-与公网端口模型)。
 
 ---
 
@@ -1885,14 +2065,23 @@ pull 周期 45 秒并带最多 15 秒抖动，正常纯配置收敛目标在 90 
 单独列一段,并且直接写出下一步该做什么:排空之后要**同时**标下线并删掉引用
 它的隧道(校验器要求这两件一起做),下线之后才轮到删节点本身和轮换凭据。
 
-新增 Device 只允许先在中控 Create Device，再由客户端导入二维码/加入文件完成绑定；
-`loom addnode` 与控制台 SSH Add node 已删除。隧道地址和端口仍由加入事务中的分配器
+#### control capability 必须先退出 FinalControlSet
+
+普通 `drain/decommission/remove` 不得隐式改变控制成员。兼任 control 的 Device 退役时，
+先加入并追平替代 learner（若需要），再由 old/new joint quorum 提交新 epoch、撤销旧 control
+证书与投票 key；完成后才按本节处理它的 server/access 生命周期。最后一个 control member
+不能用普通 Remove 删除。旧 quorum 已不可恢复时只能走离线 recovery epoch。
+
+新增 Device 只允许先经已信 certified `EndpointSet(role=control_api)` 入口和 admin cert
+向分布式控制平面提交 Create Device，再由客户端导入二维码/加入文件
+完成绑定；目标产品/API 不提供 `loom addnode` 或控制台 SSH Add node 旁路，legacy 入口是否仍
+存在只见[当前状态](status/current.md)。隧道地址和端口仍由加入事务中的分配器
 计算，不由用户手填
 ([D56](decisions.md#d56--隧道地址和端口由分配器算不靠手填))。
 
-这两件事没法自动化 —— 前者要重新分发给所有还在的节点,后者要动 CA 私钥。
-把它们写在这里,是因为**忘掉它们不会有任何症状**,直到有人用那台机器上
-捡到的凭据连进来。
+v1 契约允许凭据轮换和 CA 吊销采用人工运维。目标态把二者作为显式、可重试的 certified
+operation，由受租约 executor 执行并读回；这不等于“删除节点时顺手销毁秘密”。UI 必须
+持续展示未完成项，因为忘掉它们不会有任何症状，直到旧机器上的凭据被重新使用。
 
 
 ## 15. 部署与回滚
@@ -1900,26 +2089,35 @@ pull 周期 45 秒并带最多 15 秒抖动，正常纯配置收敛目标在 90 
 ### 15.1 流程
 
 ```
-1. 修改拓扑 / 服务定义 / 策略
-2. 校验(端口冲突、矩阵完整性、两端 direction 组合合法性、
+1. 管理员基于精确 epoch/revision/head 提交候选 SSOT 或类型化 operation
+2. 每个 voter 独立校验(端口冲突、矩阵完整性、两端 direction 组合合法性、
         角色块完整性(server 缺 direction / access 缺 platform)、
         等价类的输出契约与访问契约、
         carrier 与成员契约一致性、目标函数所需观测点存在性、
         fallback 与合规约束相容性、凭据引用、混淆参数合法性)
    —— 完整清单见 §19
-3. 渲染 → 新版本配置包 + diff
-4. dry-run diff,人工确认
-5. 打不可变快照,签名
-6. Agent 下次轮询拉取 → 应用 → 上报
-7. 汇总:全部成功 / 部分失败 / 超时
+3. 确定性 materialize/render → 新版本配置包、state root 与 diff
+4. 按策略人工确认高风险 diff；Raft durable commit 后复算并取得 ControlSet attestation，形成 certified head/QC
+5. 写不可变对象 → 分发 current/QC → DNS/端口等 executor 幂等收敛
+6. Agent 下次轮询拉取 → 验 transition/QC/floor → 应用 → 签名上报
+7. 分别汇总 committed_not_certified / certified / published / device applied / healthy，不能合成一个“成功”
 ```
 
-### 15.2 自动回滚（跨节点目标态；当前已实现节点内事务回滚与 rollout 观察）
+回滚也必须提交一个更高 control revision/device generation 指向旧内容；不能覆盖 commit
+ledger、降低 floor 或让某个副本直接把本地历史重新发布。当前 v1 的手工 diff、单签名与
+发布器继续作为迁移实现，不能被描述为已经具备 quorum。
 
-当前实现已有共享部署锁、暂存、预检、持久事务状态、文件与服务原态回滚、
-崩溃后恢复、稳定窗口检查和 rollout 阶段记录，但尚没有本节描述的平台确认、
-四级数据平面验证、canary 与超时自动接管。
-因此下面是必须达到的目标机制，不是当前生产能力说明。
+### 15.2 自动回滚（仅 Linux/server 发布 canary 的跨节点目标态）
+
+迁移基线可以复用节点内的暂存、预检、持久事务状态和原态回滚，但不能把这些组件
+等同于本节的跨节点确认、四级数据平面验证、canary 与超时接管。下面是必须达到的
+目标机制；实际已覆盖到哪只见[当前状态](status/current.md)。
+
+> **平台边界：** 下述四级确认只适用于应用服务器/转发配置的 Linux/server Agent canary。
+> Windows/Android 原生客户端候选激活只做严格静态校验、secret hydrate、libbox/sing-box
+> preflight 与本机 TUN/route/selector 启动事务；不得为确认或回滚发送业务 DNS/HTTPS、代表性
+> 端到端探测或完整路径扫描。原生客户端运行期连接/握手失败只形成范围受限的被动证据，不能
+> 因其回滚已认证配置；只有本机启动事务失败才恢复 previous。
 
 > **改网络配置最常见的事故是把自己锁在外面。** 一条错误路由、一个防火墙规则、一个写错的 AllowedIPs,节点就再也连不上 —— 而它恰恰在另一个城市或国家。
 
@@ -1942,7 +2140,7 @@ Agent 依次自检四级,全部通过才上报成功
 | 级 | 检查 | 失败含义 |
 |---|---|---|
 | 1 | 配置语法与本地校验(`sing-box check`、wg 配置解析) | 配置写坏了,服务起不来 |
-| 2 | 本节点相关隧道握手成功(WG handshake、Hy2 连通) | 隧道断了 |
+| 2 | 本节点相关隧道握手成功（WG handshake、已配置 Hysteria2/Trojan 连通） | 隧道断了 |
 | 3 | **代表性端到端探测**:每个访问声明至少一条候选路径可达 | 隧道活着但选路不通 |
 | 4 | 回连控制平面上报 | Agent 自己还活着 |
 
@@ -1962,12 +2160,10 @@ Agent 崩溃、机器重启、有人手工改了文件,下次轮询自动纠正�
 
 **原则:版本是期望态的一部分,并入同一条收敛回路,不建独立的 updater 子系统。** 收敛时除比对配置文件哈希外,同时比对组件版本。
 
-> **当前实现边界（2026-08-27）：** Loom 自身二进制已经进入签名快照并随配置
-> 一起回滚；sing-box、WireGuard 等外部组件目前只做“按实际 workload 下发期望值
-> → 节点限时读取真实运行版本 → 节点签名上报 → 不一致判红”，**尚不自动下载安装或
-> 回滚**。因此把版本写进 SSOT 不能冒充升级已经完成。Tailscale 还没有独立的
-> workload 启用真值，非空版本会被校验器拒绝，直到安装、启停和回滚语义一并实现。
-> 下表中的外部组件自动更新、镜像和双签名仍是目标能力。
+> **迁移边界：** v1 可以把 Loom 二进制纳入签名快照，并对外部组件只下发期望版本、
+> 读取运行版本和报告漂移；这不等于已经具备外部组件自动下载/回滚。任何组件必须在
+> 安装、启停、签名和回滚语义完整后才可启用其 workload。实际覆盖范围只见
+> [当前状态](status/current.md)，下表定义目标能力。
 
 | 要求 | 说明 |
 |---|---|
@@ -1975,7 +2171,7 @@ Agent 崩溃、机器重启、有人手工改了文件,下次轮询自动纠正�
 | **配置与二进制绑定回滚** | 新版可能不认旧配置,旧版也可能不认新配置。**只回滚其一会得到起不来的节点**。快照必须同时钉住两者,§15.2 的回滚一起回 |
 | **本地保留旧版本** | 回滚不能依赖网络下载。节点本地保留最近 N 个版本的二进制 |
 | **制品镜像** | 节点不直连上游。控制平面镜像制品,经 §14.3 的中继反代通道下发 —— **该通道不依赖数据平面隧道健康**,正好适用 |
-| **双重签名** | 镜像入库时校验上游校验和/签名;分发时用平台密钥重新签名,Agent 校验后才安装 |
+| **双重授权链** | 镜像入库时校验上游校验和/生产者代码签名；发布时由 certified release head/QC 绑定精确制品哈希，Agent 两层都校验后才安装 |
 | **分批推进** | 二进制变更的爆炸半径大于配置变更,强制先小批量再全量 |
 
 **Agent 自更新需单独设计。** 其他进程崩了 Agent 可以回滚,Agent 自己崩了则无人接管。要求:
@@ -1984,7 +2180,9 @@ Agent 崩溃、机器重启、有人手工改了文件,下次轮询自动纠正�
 - 看门狗放在 **Agent 之外**(systemd 或极小的守护进程),超时未确认则切回旧槽;
 - 自更新与其他组件更新分开进行,不在同一批次。
 
-> **Android 不适用本机制** —— 无 Agent,更新走应用分发渠道(见 §17.5)。这是模型中的一处明确空洞。
+> **Android 不适用 Linux Agent 的 A/B 自更新机制** —— Android 宿主承载 §7.5 的窄调度，
+> 应用升级走固定包名、升级签名与受控分发渠道（见 §17.5）。这是平台更新机制差异，
+> 不是允许静态选路或跳过 signed pull 的例外。
 >
 > 目标地址不是节点,自然也不涉及制品下发(§9)。
 
@@ -1994,7 +2192,7 @@ Agent 崩溃、机器重启、有人手工改了文件,下次轮询自动纠正�
 
 **这是 Loom 的核心能力,不是配套设施** —— §5 的整个调度机制建立在它之上。
 
-#### Agent 自身的分发(已实现)
+#### Agent 自身的分发契约
 
 Agent 的二进制和配置**在同一个签名之下**:它的 SHA256 进 manifest,而
 manifest 的内容哈希就是快照 id。**换二进制就换快照 id** —— §15.4 要的绑定
@@ -2174,10 +2372,9 @@ dist/<id>/snapshot.json      ← manifest 里记着该用哪个 sha256
 接入节点不一定和每台服务器都有隧道 —— access-a 就只和 edge-a、edge-b 有,而上报
 接口只绑隧道内地址(D26)。
 
-**额外加隧道当然能让上报端口互通，但不值得为监控复制数据平面。** access-a
-与 cn-a 两端都可被拨号，业务流量已经能走公网 Hysteria2；当前没有 Headscale，
-上报接口又只绑常驻 WG 地址，所以两者之间存在的是**观测通道缺口**，不是数据
-平面不可达。用转述补这个缺口，比新增一组只为监控服务的隧道更小、更清晰。
+**额外加隧道当然能让上报端口互通，但不值得为监控复制数据平面。** 两个节点即使能通过
+公网 Hysteria2 承载业务，也可能因报告接口只绑定常驻 WG 地址而存在**观测通道缺口**，
+这不等于数据平面不可达。用转述补这个缺口，比新增一组只为监控服务的隧道更小、更清晰。
 
 转述绕开了它:每个节点只向**直接邻居**拉,而邻居返回的内容里已经包含了**它**
 听来的那些,一跳一跳自然传开。cn-a 够不到 access-a,但够得到 edge-a;access-a 问
@@ -2195,7 +2392,7 @@ POST 上显式请求返回同一张表中的签名观测；Windows 已接入，�
 [客户端观测复用说明](client-observation-reuse.md)。URL 只在消费时允许 HTTP(S)
 空路径与 `/` 等价，其他路径、转义、查询均保留，不改动已签名测量正文。
 
-#### 用法一:剪枝(已实现)
+#### 用法一:剪枝
 
 出口已知打不到目标的候选,不必再探。实测把 15 条探测降到 6 条,一轮从
 13 秒降到 4 秒。剪枝**每轮按新观测重取**,不是一次性判定 —— cn-a 什么时候
@@ -2213,16 +2410,19 @@ POST 上显式请求返回同一张表中的签名观测；Windows 已接入，�
 **三个状态必须分清:已知能到、已知不能到、不知道。** 只有第二种能剪 ——
 把"不知道"当成"不能到",一台刚加进来还没被观测过的服务器会永远不被尝试。
 
-#### 用法二:合成估计(未实现)
+#### 用法二：分段合成估计
 
 有了各段的数字,链路质量可以**算**而不是**测**:
 `access-a→cn-a` + `cn-a→edge-a` + `edge-a→目标`。
 
 好处是新接入的设备不必从零攒样本 —— 拉一份现成的表就能排序,几秒而不是
-半小时。**代价是算出来的不等于测出来的**:延迟大致能相加,但每多一跳多一次
-握手,还有排队和分片。所以正确用法是**用估计排序,再对前几名做一次真实验证**。
+半小时。**代价是算出来的不等于测出来的**：延迟大致能相加，但每多一跳多一次
+握手，还有排队和分片。所以 Linux Agent 可以**用估计排序，再在既有候选测量预算内
+验证**。Windows/Android 原生客户端不能因此新增完整路径验证：它们只使用每底层网络代首次
+进入代理模式时冻结的候选快照所产生的
+一次性入口证据、已验签服务器分段观测和真实拨号的被动反馈，并把未覆盖业务目标保持为未知。
 
-### 16.1.3 界面:读在每台机器上,写只在中控
+### 16.1.3 界面：运行态可分布读取，管理写经 control_api 入口可由任一 control Device 接收
 
 上报者顺带提供一个网页。**它不自己采集任何东西** —— 显示的就是 `/status`
 返回的那份数据,于是"页面上说的"和"接口返回的"永远是同一件事。
@@ -2240,84 +2440,81 @@ POST 上显式请求返回同一张表中的签名观测；Windows 已接入，�
 Topology、Service 当前路径和 Agent 候选检查严格分开。指定出口只选择最终节点，
 不能借此把 Current Paths 变成手选路径。
 
-因为有转述(§16.1.2),**随便打开哪一台看到的都是整张网**。没有单点,也没有
-"控制面所在的机器挂了就看不见它挂了"这种循环。
+因为有转述(§16.1.2)，普通节点可以展示自己持有的运行态；control 副本还会复制签名
+观测与事件 CRDT。任何页面都必须显示数据来源、观察时间、certified head 和覆盖范围，
+不能因为本副本缺数据就断言“全网正常”。
 
-#### 两条进入路径,没有第三条
+#### 进入路径与认证
 
 ```
-在 loom 网里    →  http://<节点的隧道地址>:61802/
-不在            →  ssh -L 8080:127.0.0.1:61802 <节点>
+普通节点本地诊断       → 隧道地址或 SSH 转发进入只读页面
+control 管理 API/UI   → 已信 certified EndpointSet(role=control_api) + 精确 transport + admin mTLS
+一次性加入             → 本 InviteBootstrapDescriptorV2 有界 EndpointSet(role=enroll) + bearer-token 前置 pin 校验
+Device 报告            → EndpointSet(role=device_report) + Device mTLS
 ```
 
-回环**永远绑上**,因为 ssh 端口转发是隧道断掉时唯一还能进的路 —— 而那正是
-最需要看它的时候。**不开任何公网面。**
+节点回环诊断入口继续保留，因为控制网络断掉时它仍有价值。目标态只有经 certified
+`PublicEndpointIntent` 明确公开的 role endpoint 才能对外服务；`control_api`、`enroll` 和
+`device_report` 必须使用不同 hostname、CertificateIntent、认证策略和精确路径，不能在同一
+公网 endpoint 上只靠 path 分流。各入口实施独立速率限制，`/status` 不能因此整体公开。
+DNS 只是发现，ControlSet/QC 才是 authority。
 
-#### 权限按机器分,不按人分
+#### 权限按身份和用途分
 
-| | 装在哪 | 认证 |
+| 操作 | 装在哪 | 认证/一致性 |
 |---|---|---|
-| 读 | **每个节点** | 无 —— 同样的数据已经在同一个端口上以 JSON 提供了,换成 HTML 不增加任何能力(D26) |
-| 写 | **只有中控** | 运维口令 |
+| 本机运行态读 | 每个节点 | 现有受保护网络/回环边界；不获得管理能力 |
+| 全局 certified/观测读 | 每个 control Device | admin/Device scope；响应标 recovery/control 坐标、head/QC 与 staleness |
+| 管理写 | 已信 certified `EndpointSet(role=control_api)` 内的入口 | 精确 URL/hostname/WebPKI/SPKI pin + admin cert + certified ACL + base head；Raft commit、apply/recompute 后须取得提交后 QC |
+| control 投票 | 当前 voter | control key/cert；不等同 admin 身份 |
 
-写只在中控一台,是因为原本"一个运维、五道门"的账算不过来:任何节点都能到
-任何节点的隧道地址,五个写入口意味着一台被拿下就能去动其他四台。收敛到一台
-之后,那台**本来就持有签名私钥**,写界面不扩大信任边界(D36)。
+当 `q > 1` 时，单个 `EndpointSet(role=control_api)` 入口被攻破不能独自形成 certified write；`N=1, q=1`
+迁移态没有这一属性。接收端验证管理员证书和
+scope，将 proposal 复制并交给临时协调者；每个 voter 独立校验精确 state root 后才签名。
+admin cert 不投票，control peer cert 不自动获得人类管理权限。
 
-#### 中控多出来的写入口:只改变 SSOT
+#### 写入口只提交 SSOT operation
 
-界面上**没有"发布"按钮**。发布是自动的(§14.2.3),存盘之后 30 秒内发布器
-接管。于是中控界面对**网络期望态**的唯一写操作就是改 SSOT —— 加节点、
-管服务地址、挪窝,最终都必须落到那一个文件。生成中控本机的 bootstrap SSH
-身份是一次性本机信任材料初始化,不是另一条网络配置通道。
+界面上没有绕过控制提交链的“直接发布”按钮。Service、Device、域名、证书、入口端口和
+raw SSOT 编辑最终都产生带 admin signature、request ID、base epoch/revision/head 和 reason
+的 operation；只有完成 Raft commit、apply/recompute 与提交后 QC 的 certified operation 才改变 effective SSOT。生成 controller-local SSH 或
+executor secret 是本机 bootstrap，不是另一条网络配置通道。
 
 不存在"对某台机器执行某某"这种旁路,而这正是 §12 想要的:节点上的所有配置
 都是 SSOT 的渲染输出。开一条临时通道,等于在系统里造一个官方认可的漂移来源。
 
-**保存前服务端自己再校验一次。** 页面上的"只校验"按钮是给人看的,不是守卫 ——
-表单可以被直接 POST。而这条防线的价值在于失败模式很隐蔽:一份坏 SSOT 存进去
-不会有任何提示,发布器随后拒绝发布,线上停在旧快照,症状是**"我改了但没生效"**。
+**提交前每个 voter 都要重新校验。** 页面上的“只校验”按钮只提供预览，不是守卫。
+接收节点本地保存或 CRDT 复制成功只能显示 `pending`；Raft commit 后但 QC 未齐显示
+`committed_not_certified`，取得提交后 QC 才显示 `certified`，之后另行显示
+`published / reconciled / device applied / healthy`。无 quorum 时可以保留草稿，但不能
+显示“已保存并将自动生效”。
 
-写盘用同目录临时文件加改名。发布器可能正好在读,而半截 YAML 会让它报一个
-跟真实原因毫不相干的解析错误。
+v1 把单节点写入口分成两层；迁移后 UI 保留产品语义，底层改为 proposal/QC：
 
-当前实现把写入口分成两层:
-
-| 入口 | 已实现的语义 | 有意不做的事 |
+| 入口 | v1 产品语义 | 有意不做的事 |
 |---|---|---|
-| **Services** | 结构化新增、修改、删除服务；严格校验 exact host 与 `.suffix`；展示中控 matcher → Service → Policy 关系；保留无关 YAML 内容、顺序和注释 | 不把多个本地端口当成 Service 主模型；不用不完整表单修改 Policy，也不从当前 route 反推期望态 |
+| **Services** | 结构化新增、修改、删除服务；严格校验 exact host 与 `.suffix`；展示 certified matcher → Service → Policy 关系；保留无关 YAML 内容、顺序和注释 | 不把多个本地端口当成 Service 主模型；不用不完整表单修改 Policy，也不从当前 route 反推期望态 |
 | **Settings / SSOT** | 查看、校验并保存完整原文 | 不提供绕过完整校验的“强制保存” |
 
-v1 的 Services 页面只编辑中控事实。Windows 与 Android 上如何把规则落到 TUN、
+v1 的 Services 页面只编辑逻辑控制事实。Windows 与 Android 上如何把规则落到 TUN、
 Windows 的开发者 mixed 如何复用同一规则，都是渲染结果。客户端只在本机保存
 Direct / Auto / 指定出口三态偏好；它不属于中控 Services 或设备期望态页面，也不允许
 改 matcher、Service、Policy 或 Current Paths。现有 `default_declaration` 写入口只编辑 Auto
 模式下的 catch-all，不能作为三模式 UI 的后端。Linux 的兼容覆盖端口若需要展示，
 只能放在节点详情的 Advanced/Compatibility 区，并明确它不是另一套 Service 配置。
 
-两条保存路径都带当前 SSOT 内容摘要作为 revision。服务端在同一个串行事务内
-重新读取、核对 revision、完整解析与校验，再以唯一临时文件、`fsync`、rename
-和目录同步替换；旧浏览器页面不能静默覆盖 git、编辑器或另一个会话的新修改。
-保存成功只表示**期望态已经耐久写入**，随后由发布器自动收敛；它不等于节点
-已经拉取、应用并通过验证。
+所有写入口携带 current head 作 CAS。过期页面不能静默覆盖别的管理员操作；冲突草稿
+使用 MV-register 显式展示并生成新的精确候选，不能用字段级 LWW 自动合并。当前 v1 的
+本地 `fsync + rename`、inode/symlink/hardlink 检查和进程锁继续保护单机文件 cache，
+但不再充当跨 control Device 的系统 CAS。
 
-所有网页写入口还共用 SSOT 同目录的稳定进程锁；锁与目标都拒绝 symlink，目标
-也拒绝多 hardlink，并在 rename 前再次核对打开时的 inode 与逐字节内容。这个锁
-只能串行化 Loom 自己的协作写者，不能让任意 Git 命令或文本编辑器自动获得文件
-系统级 CAS。直接编辑 SSOT 时必须保持单写者，并让网页重新加载最新 revision；
-否则只能得到“发现冲突并拒绝”，不能承诺替外部编辑器合并变更。
+#### control 本机 bootstrap 与 certified membership 分开
 
-#### 中控角色是本机 bootstrap 配置,不是渲染产物
-
-`/etc/loom/control.json` 指出 SSOT 在哪、运维口令从哪个引用取，以及签名与分发所需的
-中控本机坐标。它引用的路径(git 工作
-副本、秘密层、本机信任库)是**这台机器上的事实**,不是平台约定 —— 写进 SSOT
-会变成自我引用(SSOT 里记着 SSOT 在哪)。它和发布器的 unit、信任根、本机秘密层
-属于同一类。
-
-口令走已有的秘密层(`ui/<节点>`),不新增凭据机制。取不到口令时**写操作
-全部关闭**,而不是退化成"不需要认证" —— 后者是那种没有任何症状、直到出事
-才发现的配置错误。
+每个 control Device 的本机 bootstrap 配置只记录数据目录、peer listener、secret refs、
+初始 trust checkpoint 和 executor 资格；这些路径与私钥是本机事实。正式 voter 身份来自
+已取得提交后 QC 的 certified `FinalControlSet`，不能由本机把 `control: true` 或 endpoint
+写进文件自授予。缺少 admin、
+control 或 executor secret 时对应操作 fail closed，不退化为无认证。
 
 #### 页面里不能有任何外部资源
 
@@ -2328,7 +2525,7 @@ Direct / Auto / 指定出口三态偏好；它不属于中控 Services 或设备
 同理,节点 id 和错误信息都来自**别的机器**,一律转义 —— 一台被拿下的机器
 不该能往别人的界面里注入脚本。
 
-当前界面使用统一的 Misaka 风格服务端渲染壳层，页面不依赖头像、CDN、外部字体
+界面契约使用统一的 Misaka 风格服务端渲染壳层，页面不依赖头像、CDN、外部字体
 或外部脚本。需要显示提交进度的受认证表单只使用 CSP hash 精确锁定的内联脚本；
 脚本关闭时表单仍可提交。Overview 只放全网摘要和可折叠证据；顶层语义分为 Network
 （Nodes / Topology）、Traffic（Services / Live paths）、Operations
@@ -2353,7 +2550,7 @@ Direct / Auto / 指定出口三态偏好；它不属于中控 Services 或设备
 | **调用方 SDK / OpenTelemetry** | 全部应用层指标 + 端到端体感 | — | 调用方代码可改 |
 | **主动契约请求**(§4.3) | 全部应用层指标 | — | 花钱,须限频限额 |
 
-> **仓库流量统计边界(2026-08-28；不等于线上部署 revision):** report 把 Loom
+> **v1 流量统计协议边界:** report 把 Loom
 > 管理的 WireGuard 接口累计 RX/TX 放进独立的 `loom-traffic-v1` 签名域。它作为
 > Observation 的可选附件转述，因此不改变既有 `loom-attest-v5` canonical bytes；
 > 新节点必须独立验证 CA、节点身份、签名、新鲜度以及外层 node/TS 绑定后才能使用。
@@ -2373,7 +2570,7 @@ Direct / Auto / 指定出口三态偏好；它不属于中控 Services 或设备
 > Service/sing-box 或 Hysteria2 流量；没有对应 L7/数据平面采集器时不得把它们归入
 > WireGuard 柱状图。
 
-> **远端健康转述边界(2026-08-28):** `healthy` 不能由 relay 的 HTTP 503/200、
+> **v1 远端健康转述协议边界:** `healthy` 不能由 relay 的 HTTP 503/200、
 > 外层 Observation 或若干局部字段推断。每个节点在观测轮次用真实 `Collect`
 > 结果汇总 Tunnels、Drift、Errors、Components、Rollout 与 Agent 等完整
 > `Status.OKAt` 判定，生成有严格限长、排序和去重的问题列表，再以现有节点 TLS
@@ -2447,6 +2644,10 @@ Direct / Auto / 指定出口三态偏好；它不属于中控 Services 或设备
 
 ### 16.2.2 探测预算:有界,而不是全探
 
+本节描述 Linux Agent 的候选窗口。Windows/Android 不使用这个轮询预算，也不执行下述
+“当前候选每轮必探”；它们遵守 §5.6 的 Direct 不探测、每底层网络代首次进入代理模式才冻结
+快照并执行单次入口测量的契约。
+
 候选数是 `1 + N + N(N-1)`。加上"每次探测要读正文才算得出吞吐",全探不可持续:
 
 ```
@@ -2479,7 +2680,7 @@ Direct / Auto / 指定出口三态偏好；它不属于中控 Services 或设备
 每条候选的样本数 ≈ (window / tuning_period) × (budget-1) / (候选数-1)
 ```
 
-小于 `min_samples` 时,排序永远不会启动 —— 和 §5.5.1 那条"窗口装不下
+小于 `min_samples` 时,排序永远不会启动 —— 和 §7.3.3 那条"窗口装不下
 min_samples"是同一类错误,只是原因从"窗口太短"换成了"预算太小",而症状
 一模一样:配置看着完整,日志里只说"没有候选达到 min_samples"。
 
@@ -2530,17 +2731,20 @@ min_samples"是同一类错误,只是原因从"窗口太短"换成了"预算太�
 **"还在持续"和"持续了 X 之后恢复了"必须分开。** 后者是历史,前者需要人
 现在就管 —— 界面上前者置顶且标红。
 
-#### 记在中控,而不是每个节点
+#### 内容寻址事件在 control 副本间收敛
 
-每个节点都有同样的视图(靠转述,§16.1.2),所以理论上谁都能记。**记 N 份
-同样的事件只会让人不知道该看哪一份**,而中控是人会去看的地方。
+事件由观察到变化的 control 副本生成，绑定 source observation hashes、certified head 和
+canonical `From/To`，以 event hash 去重并通过 CRDT anti-entropy 复制。多个副本看见同一
+变化不会产生 N 条不同事实；分区中的事件在恢复后合并。事件不是配置 SSOT，不需要先取
+quorum 才能记录，但删除/tombstone 与压缩水位必须由 quorum checkpoint 保护，旧副本不能
+让已清理或撤权历史复活。
 
-代价写在这里:**中控停了就不记事件。** 转述仍然在传、每个节点仍然知道现状,
-只是没人写下来。
+v1 只在单控制节点写事件，因此该节点停机期间存在记录缺口；目标 UI 必须展示
+source、coverage 和副本 staleness，不能把“本地没看到”当成“没有发生”。
 
 #### 这不是告警,而且不能当告警用
 
-事件日志在中控上,而中控在被管网络里面。§16.3 那条约束仍然成立:
+事件副本仍在被管系统里面。即使有多个 control Device，§16.3 那条约束仍然成立：
 
 > **告警通道不能依赖被管网络** —— 否则网络挂了收不到告警。
 
@@ -2551,12 +2755,14 @@ min_samples"是同一类错误,只是原因从"窗口太短"换成了"预算太�
 | **事件记录** | 什么时候坏的、坏了多久、跟哪次发布有关 | 可以 —— 它是事后查的 |
 | **告警通道** | 现在有人该来看看 | **不可以** |
 
-第二层还没做。做之前值得先看一段时间的事件日志 —— 那时你会知道**多久发生
-一次值得被吵醒的事**,而这个问题在有历史之前只能猜。
+外部告警是独立能力，不能从 Events 页面是否存在推断其已经部署；实现状态只见
+[当前状态](status/current.md)。设计告警策略前应先用事件历史估算频率，避免无依据地设置
+噪声门槛。
 
-当前中控 Events 页已经支持按节点、类型、级别与文本筛选，并用标准 CSV 编码
-导出相同筛选结果。它读取的仍是中控单点的变化日志；筛选与导出没有把事件历史
-升级成告警，也不能补回中控停机期间未记录的变化。
+v1 Events 页的兼容契约允许按节点、类型、级别与文本筛选，并用标准 CSV 编码导出相同
+筛选结果；它读取单点变化日志，不能补回停机期间未记录的变化，也不会因筛选/导出升级
+成告警。目标态切换为 CRDT event store 后，这项限制才退出；实际页面状态只见
+[当前状态](status/current.md)。
 
 ### 16.4 可视化
 
@@ -2611,17 +2817,17 @@ RTT 变化也不是逐包 jitter；窗口和来源必须可见。RTT 摘要在�
 [Deployments](../assets/loom-control-center-deployments-misaka-v1.svg)、
 [Events](../assets/loom-control-center-events-misaka-v1.svg) 与
 [Settings](../assets/loom-control-center-settings-misaka-v1.svg)。
-中控刚保存 SSOT 后，Nodes、Services、常驻边与候选路径都从同一次当前 SSOT
-读取派生，因此期望态应立即更新；各节点实际 applied snapshot、握手和 Agent
+新 head 经 Raft commit、apply/recompute 和 quorum attestation 成为 certified 后，Nodes、
+Services、常驻边与候选路径都从同一次 effective SSOT 读取派生；各节点实际 applied snapshot、握手和 Agent
 选择继续来自可信运行态。已从 SSOT 删除但仍有最新观测的节点可暂留为
 `undeclared observed`，用于识别未清理进程或配置漂移，但它不进入声明库存、健康
 比例、joining 数或快照一致性结论。
 普通节点没有 current SSOT 视图，其声明库存只来自本机已应用 report config 的
 expected inventory，可以合法落后一个或多个 pull 周期；页面必须标为 applied
-inventory。只有中控 enrich 成功后才把期望层标为 current validated SSOT，运行态
-仍然只能来自可信观测。
-独立 WireGuard UDP 入站探测仍未实现，界面必须把 candidate 与 verified endpoint
-分开表述，不能把 `Automatic → reverse_only` 说成主动探测结论。
+inventory。control 副本只有在验证 certified head/QC 并成功重算相同 roots 后才把期望层标为
+current validated SSOT；落后副本显示 stale，运行态仍然只能来自可信观测。
+无论独立 WireGuard UDP 入站探测是否启用（状态见[当前状态](status/current.md)），界面都必须
+把 candidate 与 verified endpoint 分开表述，不能把 `Automatic → reverse_only` 说成主动探测结论。
 原型只定义信息结构与视觉语言；线上颜色、边和状态必须由上述四层真实数据生成，
 不能把原型里的示意状态硬编码进页面。
 
@@ -2709,21 +2915,26 @@ userspace 实现(基于 wireguard-go)**有明显 CPU 开销**,服务器规格需
 
 | 机制 | 说明 |
 |---|---|
-| **加入码** | 短 TTL(如 15 分钟)，只有成功绑定中控已创建的 Device 才消费；查看或下载二维码不消费 |
-| **设备绑定** | 客户端本地生成 P-256 密钥并提交 CSR，以 canonical SPKI 绑定；同一 token、CSR、request ID、平台和 Device facts 仅可在受限恢复窗口内幂等续接 |
+| **加入码** | 短 TTL；token 在 proposal 前生成并封装，公开 Raft/QC 只固定 Device intent、commitment 与 private artifact-binding hash，control-private binding 才保存 exact-version ref；certified 后的一次性创建响应 reveal 有界 QR descriptor 不消费 claim token，但列表/普通下载不能再次取回明文；claim 只能跨本 descriptor 有界 `EndpointSet(role=enroll)` seeds 故障切换，并只允许一次 certified 消费 |
+| **设备绑定** | 客户端本地生成 P-256 identity/CSR key 与独立不可导出 wrapping key（Android API 31+ P-256、API 26–30 RSA fallback）；以 canonical SPKI 绑定，同一 token + exact request body（含 wrapping descriptor）跨 seed 幂等续接，completion QC 后才激活 |
 | **二维码** | 加入码的等价封装；客户端扫码或导入二维码图片，不创建第二个 Device |
-| **可吊销** | Linux access-only 的 signed decommission、移除/吊销与秘密清理已闭环；服务器职责和其他平台的通用双重吊销仍是目标态 |
+| **可吊销** | 控制面拒绝读取/上报与数据面撤除凭据必须分别收敛；各平台覆盖状态只见当前状态文档 |
 | **有效期** | 自带过期时间 |
 
 **配置模板化**：Android 是 TUN；v1 Windows 是 TUN + `127.0.0.1:1080`；Linux
 Server 是 `127.0.0.1:1080`，另可带显式的兼容/高级覆盖端口。所有 matcher、Service
-与 AccessDeclaration 定义都由中控下发；客户端本地只可切换 Direct / Auto /
+与 AccessDeclaration 定义都由 certified 控制平面 view 下发；客户端本地只可切换 Direct / Auto /
 指定出口三模式。平台应提供**下发前预览**，但预览不能变成客户端侧规则或路径
 编辑器。
 
 ---
 
 ## 19. 数据模型
+
+下列清单同时标出当前模型和目标态扩展；标为“目标态”的 control/DNS/EndpointSet 类型尚未
+进入 v1 Go `model.Node` 严格 schema，不能据此向部署 SSOT 提前写字段。目标对象这里只做
+概念索引，不是可编码 wire schema；字段、tagged union、排序和签名的规范定义以
+[分布式控制平面专题](distributed-control-plane.md)及其黄金向量为准。
 
 ```
 Node                           # §1 —— Loom 管的机器。目标地址不在这里
@@ -2734,7 +2945,7 @@ Node                           # §1 —— Loom 管的机器。目标地址不�
 
   server?                      # 这个块存在 = 持有 server 能力(§1.3)
     direction                  # bidirectional | reverse_only | direct_only(§2)
-    public_data_ingress?       # 客户端可否公网直拨；不改变 WireGuard direction(§2.3)
+    public_data_ingress?       # 仅 v1 compatibility 客户端直拨开关；v2 单独无 authority(§2.3)
     inbound_port               # 接受上游连接的端口(§8.1)
     inbound_protocol?          # hysteria2 | trojan(§6.2.1)
     egress_capable             # 能否作为出口出公网
@@ -2742,12 +2953,19 @@ Node                           # §1 —— Loom 管的机器。目标地址不�
     secret_generation          # 秘密层代次,只记代次不记私钥(§12.1)
 
   access?                      # 这个块存在 = 持有 access 能力(§1.3)
-    platform                   # android | desktop | linux-server(§7.2)
+    platform                   # android | windows-desktop | linux-server(§7.2)
     credentials[]              # §8.2
     mixed_ports[]              # managed 1080；固定声明端口仅限 Linux 兼容/高级覆盖
     default_declaration?       # Auto 的中控 catch-all；客户端本地三态偏好不进入 SSOT
 
-  # 没有 capabilities 字段 —— 由哪个块存在推导;两个都有也合法(§1.3)。
+  control?                     # 目标态：certified FinalControlSet + matching private directory 的只读投影
+    member_id                  # 公开 set 中的 opaque ID；不从 Device ID 导出
+    signing_public_keys        # config / membership / enrollment 的独立公钥（公开 authority）
+    peer_rpc_endpoints[]       # private directory；与公网 control_api EndpointSet 分离
+    peer_identity_spki_hash    # private directory；同时绑定 exact control_peer_identity artifact hash
+    fault_domain?              # private directory；部署提示，不改变 quorum 公式
+
+  # 没有 capabilities 字段 —— 由哪个块存在推导；多个块并存合法(§1.3)。
   # 没有 target 能力 —— 出口是位置不是类型(§1.1)。
   # 没有 mesh_eligible —— 由 direction 推导(§2.2)。
 
@@ -2836,7 +3054,7 @@ Credential                     # §8.2 —— 接入凭据
                                # 出口凭据是另一类东西,见 ServiceAddress(§9.3)
 
 Snapshot                       # 不可变版本
-  id, created_at, author, ssot_hash, signature
+  id, created_at, author, ssot_hash
   rendered_bundles{owner: bundle_hash}          # 只含渲染层,不含秘密层
                                # owner 是节点 id 或客户端档案 id
   component_versions{node_id: {sing-box, wireguard, tailscale, agent}}
@@ -2844,18 +3062,92 @@ Snapshot                       # 不可变版本
   secret_generations{node_id: gen}
                                # 只记代次与公钥,不含私钥;
                                # 回滚不回滚秘密层(§12.1)
+
+ControlHead                    # 目标态；versioned wire profile 详见分布式控制专题
+  recovery_epoch, recovery_statement_hash, recovery_policy_hash
+  control_epoch, control_set_hash, control_revision
+  raft_term, raft_index, parent_head_hash, head_hash
+  operation_root, effective_ssot_hash, device_views_root
+  replication_qc               # Raft commit/apply 后的 quorum attestation，不属于 Snapshot
+
+FinalControlSet / Transition   # 目标态；成员 authority，不由普通 SSOT 字段自我授权
+  JointControlSet(old,new) -> FinalControlSet(new)
+  recovery/old/new set hash, Raft coordinates, old+new quorum proof
+
+DeviceViewEnvelope             # 目标态；绑定 ControlHead/QC、leaf/proof、payload 与 EndpointSet
+
+DeviceViewLeaf / Proof         # 目标态；本机最小授权 view；leaf 不含 head/root/control 坐标
+  cluster_id, view_schema_version, device_id, device_generation, state
+  payload_hash, previous_view_hash, endpoint_set_hash, min_reader_version
+  RFC 6962 inclusion path -> ControlHead.device_views_root
+
+ControlSet / ControlPeerDirectory # 目标态；公开 authority 与私有拓扑严格分离
+  public set: opaque member_id + membership/config/enrollment public keys
+  private directory: hiding nonce + member→Device/SPKI/peer URL/fault-domain；head 只公开其 hash
+
+EndpointSet                    # 目标态 transport bundle；authority 坐标由 DeviceViewEnvelope/head 绑定
+  schema, cluster_id, endpoint_set_id, generation, source, digest
+                               # source 是 genesis epoch 或 parent-head + 预生成 operation ID + revision
+                               # 不引用当前 head/object hash，避免 EndpointSet 自引用
+  endpoints[]
+
+LogicalEndpoint                # EndpointSet 内的稳定逻辑身份
+  id, role(control_api|enroll|device_config|device_report|distribution|data_ingress), owner_device_id
+  protocol, public_endpoint_intent_hash, public_endpoint_intent_generation
+  address_or_domain_intent_hash
+  transport_identity           # TLS server_name/WebPKI/SPKI pins 或 WireGuard peer public key 的 tagged union
+  listeners[]                  # generation + 与 address/domain intent 精确相等的 dial target/families
+                               # public/local port + exact credential artifact/certificate generation
+                               # phase-payload rotation hash + optional retire-not-before
+
+PublicEndpointIntent           # 目标态；显式决定公网暴露，不从 control role 自动推导
+  id, generation, owner_device_id, role, exposure, protocol
+  address_or_domain_intent, listener_policy_ref, credential_artifact_hashes[]
+  certificate_identity_projection_hashes[]? # TLS 排序 1..2（old/new overlap）；WireGuard 缺失
+
+ManagedZoneV1                  # 目标态；id+generation+hash 固定已委派 DNS 边界
+  suffix, provider profile, exact credential artifact hash, record/TTL/naming policy
+
+DomainBindingIntentV1 / DNSAddressLifecycleStateV1 # 目标态；DNS desired 与新旧地址 overlap
+  exact zone ref, endpoint/owner/fqdn/families/policy hash
+  claim generation, preparing/overlapping/preferred/draining/retired, actual TTL/remove-not-before
+
+AddressChallengeIntentV1 / AddressClaimV1 # 目标态；地址 ownership、可达性和代次
+  one-time challenge、binding/endpoint/owner/family/address、前代与有效期
+  Device signature、连续稳定窗口、多视角验证 receipts
+
+CertificateIdentityProjection # role-bounded 入口稳定绑定；公开 TLS，不是 control/Device authority
+  certificate_intent_id, identity_generation, role, endpoint_ids[], dns_names[], issuer_profile_ref
+  key_owner_device_id, exact key_artifact_hash, spki, identity_projection_hash
+
+CertificateIntent              # 可按 issuance 变化的签发对象
+  exact identity_projection + hash, csr_hash, renew_before, issuance_generation
+  # 同 projection 下例行续签不迫使 PublicEndpointIntent/EndpointSet 换代
+
+SecretArtifactRef              # 目标态；权威 secret 必须在引用它的 proposal 提交前固定
+  cluster/proposal/secret/purpose/owner/generation, public_identity_or_spki, immutable_ref
+  ciphertext_digest + sealing_policy/recipient key versions + availability receipts
+  # 或 exact kms/hardware key id + version + policy；禁止 latest/alias/可覆盖路径
+
+ResourceLease                 # 目标态；协调外部副作用，不产生 desired-state authority
+  resource_id, holder_control_id, recovery_epoch, control_epoch, raft_term
+  acquired_index, desired_hash, fencing_token, expires_at
 ```
 
-**七处关键关系:**
+**九处关键关系:**
 
 - **`Node` 与 `ServiceAddress` 是两张表,不是一张。** 前者是 Loom 管的机器,后者只是地址 —— 这条区分是全模型的地基(§1、§9);
 - **没有 `target` 角色** —— 出口是路径上的位置,由 `RouteCandidate.server_chain` 的最后一项决定(§1.1);
-- `Tunnel` 当前按 SSOT 与方向约束产生；可进入 mesh 的服务器在**目标态**可交由
-  Headscale 自动分发，但生产尚未部署该独立可选项(§6.3、§8.3);
+- `Tunnel` 按 SSOT 与方向约束产生；可进入 mesh 的服务器在**目标态**可交由
+  Headscale 自动分发，但主设计不假定该独立可选项存在(§6.3、§8.3);
 - `Tunnel.initiator` 由**两端** `direction` 共同推导 —— 见 §2.2 的六格真值表,其中两种组合非法;
 - `EquivalenceClass.carrier` 由成员 `access_contract` 是否同构决定 —— **`l4_direct` 是有前提的,不是默认可行**(§4.4);
 - `RouteCandidate` 是排序、下发与归因的**唯一单位** —— 地址与服务器链不分开排序(§5.6);
-- `PriceRecord` 与 `Measurement` 分表 —— **声明值与度量值性质不同**(§5.2)。
+- `PriceRecord` 与 `Measurement` 分表 —— **声明值与度量值性质不同**(§5.2)；
+- `control` 与 access/server 正交；正式 authority 由 certified `FinalControlSet` 确定，映射到 Device
+  的只读投影还必须取得同 head 绑定的 matching private `ControlPeerDirectory`，不由普通字段
+  自我授权或在线探测推导；
+- `EndpointSet` 的逻辑 ID 稳定，DNS/地址/端口/certificate generation 可重叠轮换。
 
 **校验器必须拒绝的矛盾配置:**
 
@@ -2872,8 +3164,11 @@ Snapshot                       # 不可变版本
 | 有合规 `constraints` 但 `fallback ≠ fail_closed` | §5.8 |
 | `address_axis = from_request` 却配置了 `ranking_period` | §5.5 |
 | `egress_axis = pinned:<x>` 但 `x` 不在 `allowed_servers` 里 | §5.1 |
+| `ControlSet` 为空、按在线数缩 quorum，或成员变化缺 old/new joint proof | §11.1 |
+| 相同 control epoch/revision 或 endpoint generation 对应不同 hash | §12、§14.3.2 |
+| DNS/ACME/端口副作用没有 certified intent 就执行，或对象缺席触发删除 | §14.2.3 |
+| 新 listener 未验证就 advertise/prefer，或 retire 时兼容/排空门槛不足 | §14.3.2 |
 
----
 ---
 
 # 第四部分 · 构建顺序
@@ -2896,7 +3191,25 @@ L3  调度引擎
 L4  部署自动化
     ↓
 L5  运维界面      L6  凭据分发
+
+控制平面迁移支线（依赖现有 L0/L4，不能跳步）：
+C0  canonical object/QC/transition 测试向量
+    ↓
+C1  单成员 ControlSet + v1/v2 双发布
+    ↓
+C2  全平台 v2 reader、EndpointSet 与 floor
+    ↓
+C3  learner + joint consensus + 多 control API
+    ↓
+C4  分布式 Enrollment/事件/publisher
+    ↓
+C5  托管 DNS/ACME + 双 listener 端口轮换
 ```
+
+控制平面支线的完整迁移与验收见
+[分布式控制平面 §19～§20](distributed-control-plane.md#19-从当前实现迁移)。域名、证书和
+端口轮换不能先于 v2 reader：旧严格 schema 客户端看不懂多 endpoint，提前关闭旧端口必然
+造成离线 Device 失联。
 
 **独立可选项**(不在主线上,任何时候可插入):
 
@@ -2929,9 +3242,9 @@ tunnel: { from: cn-bj, to: sg-vps, protocol: wg }
 
 **4 台国内云机 × 3 台境外 VPS = 12 条隧道 = 24 个文件,每一对都必须逐字段吻合。** 手工写错一个字符的后果是隧道**静默不通** —— 不报错,只是连不上,而你要在两地之间来回比对才能找到。
 
-> **注意矩阵只覆盖包含 `reverse_only` 服务器的关系**(§6.3)。当前生产没有
-> Headscale；其他节点对走公网 Hysteria2。目标态启用 mesh 后才由 Headscale
-> 自动分发对应 peer，不能把目标态写成现状。
+> **注意矩阵只覆盖包含 `reverse_only` 服务器的关系**(§6.3)。未明确启用 mesh 时，
+> 其他节点对使用显式公网数据入口；启用并验收 mesh 后才由 Headscale 自动分发对应
+> peer，不能把可选目标态写成默认前提。
 
 L0 就是消灭这件事。它排在最前,是因为 L1 要建的隧道矩阵、L3 要用的候选集,全都是这份数据的渲染产物。
 
@@ -2949,7 +3262,8 @@ L0 就是消灭这件事。它排在最前,是因为 L1 要建的隧道矩阵、
 
 > **开工前必须先定观测点(§16.2)。** L4 隧道只能产出连接级指标;`ttft` / `tokens/s` / 响应结构需要自有端点埋点、L7 网关或调用方 SDK。**观测点没定,这一层就只能做出网络层的一半。**
 
-**产出:** 每条 RouteCandidate 有真实质量数据,且每条数据标明了观测点。
+**产出:** 每条质量数据都标明观测点、覆盖范围和实测/估算属性；未被证据覆盖的
+RouteCandidate 或指标保持 unknown，而不是强制全候选探测或补造数值。
 
 ### 20.4 L3 · 调度引擎
 
@@ -2966,7 +3280,6 @@ L0 就是消灭这件事。它排在最前,是因为 L1 要建的隧道矩阵、
 **访问契约与观测点必须早于 L2。** 这两个决定(§4.4、§16.2)看起来像实现细节,实际决定了 L2 能采到什么、L3 能优化什么。**先建观测再定观测点,等于先采一堆用不上的数据。** 具体地:目标函数选了 `ttft`,却发现所有候选都只有 L4 观测点 —— 那 L3 从第一天起就在拿首字节时间冒充 TTFT,而且没人会发现。
 
 ---
----
 
 # 附录
 
@@ -2974,8 +3287,11 @@ L0 就是消灭这件事。它排在最前,是因为 L1 要建的隧道矩阵、
 
 | 不做 | 理由 |
 |---|---|
-| 分布式共识控制平面 | §11.1,规模不匹配 |
 | 控制平面参与数据转发 | 违反 §11,且成为瓶颈与单点 |
+| 让 CRDT 原始合并结果直接授权安全关键状态 | §12；邀请、撤权、成员和 current 必须完成 Raft commit、apply/recompute 与提交后 QC |
+| 根据在线节点自动缩小 quorum | §11.1；分区两侧会分别自封多数 |
+| 用 DNS/公开 TLS 证书证明 control membership | §13、§14.3.1；它们只负责发现和传输身份 |
+| 端口轮换时直接关闭旧 listener | §14.3.2；必须 prepare/advertise/prefer/drain/retire |
 | fork 修改密码学协议 | §17.1,风险不可控 |
 | 纯度量驱动、无策略约束的调度 | §5.1,策略必须在度量之前生效 |
 | 仅凭标签判定端点可互换 | §4.3,必须有可验证的等价类契约 |
@@ -2996,11 +3312,13 @@ L0 就是消灭这件事。它排在最前,是因为 L1 要建的隧道矩阵、
 
 | 组件 | 建议 | 理由 |
 |---|---|---|
-| SSOT 存储 | Git 仓库 + 结构化文件(YAML/TOML) | 天然版本化、diff、blame、回滚、审计 |
+| 逻辑 SSOT | 内容寻址 operation DAG + Raft commit ledger + post-commit attestation QC；YAML/Git 作导入导出、评审和归档 | 多副本下仍只有一个 certified head；保留 diff/blame/回滚与纯函数渲染 |
+| 控制复制 | Go 共识状态机 + Merkle/CRDT anti-entropy | 共识决定生效，CRDT 复制事实/草稿/不可变对象，边界不能混 |
 | **控制平面** | **Go** | 与 Agent 同语言,**渲染器与校验器共用同一份实现** —— 跨语言实现同一套规则是长期漂移来源,会产生"两侧对同一份配置的合法性判断不一致" |
 | **Agent** | **Go**,单个静态二进制 | 交叉编译、零运行时依赖、单文件分发、A/B 双槽自更新简单(§15.4) |
 | 渲染 | 任意模板引擎,但**必须纯函数** | 可测试、可 dry-run |
-| Agent ↔ 平台 | 当前 HTTPS + 配置包独立签名；mTLS 是目标增强项 | 当前 HTTP client 没有客户端证书，不能宣称已经 mTLS |
+| Agent ↔ control plane | 当前 v1 HTTPS + 单签名；目标为多 EndpointSet + mTLS + ControlSet QC | 传输认证、配置授权与防回退是三层，不能互相替代 |
+| DNS/ACME | provider-neutral adapter + DNS-01；DNS token 仅在 executor 秘密层 | Gandi/Dynadot 只是 adapter，DNS 不是 control authority |
 | 度量存储 | 轻量时序;价格与配额用关系表 | **声明值与度量值分开**(§5.2) |
 | 数据平面 | sing-box(接入 / 服务器)+ WireGuard(隧道) | 成熟、可编程、覆盖所需全部形态 |
 | **L7 网关**(若需要,§4.4) | 现成反代 + 少量鉴权/改写逻辑 | **不要自己写 L7 代理。** 它同时承担 §16.2 的应用层埋点,埋点比转发更值得投入 |
@@ -3035,9 +3353,16 @@ L0 就是消灭这件事。它排在最前,是因为 L1 要建的隧道矩阵、
 
 **平台侧**
 
-14. **控制平面放在哪** —— 需稳定、能被各 Agent 经中继反代访问
-15. **CA 私钥怎么保管** —— 整个系统的信任根
+14. **控制平面拓扑（已定）** —— `control` 是正交 Device 能力，`ControlSet` 为 1～全部
+    合格节点，CFT quorum 动态推导；具体首批选 1/3/5 个稳定 Linux voter 属部署决定
+15. **信任与恢复材料** —— Device/control/admin/public TLS 分域；离线 recovery root 的
+    保管人数、介质和恢复演练仍需按部署确定
 16. **秘密层怎么放** —— 私钥文件路径约定、generation 记法、轮换流程(§12.1)
-17. **Android 客户端做到什么程度** —— 是否内嵌 §7.5 的最小 pull 客户端,还是接受 Android 退化为静态选路
+17. **Android 客户端边界（已定）** —— 必须内嵌 §7.5 的最小 signed pull、验签、防回退和窄调度；
+    不接受退化为静态选路。仍需部署决定的是升级渠道、签名密钥托管与真机验收矩阵
 18. **是否面向多租户** —— 决定 §5.7 跨客户聚合的脱敏设计是否现在就要做
 19. **是否启用指纹参数化** —— 触发自建客户端的重决策(§17.5)
+20. **托管 DNS provider 与 zone 委派** —— 选择 Gandi、Dynadot 或其他 adapter，以及
+    Loom 独占子区、最小权限 token、DNSSEC/CAA 和传播验收策略
+21. **公网入口兼容窗口** —— 双端口 overlap、最大离线兼容期、旧会话 quiet period 与
+    emergency retire 的审批门槛

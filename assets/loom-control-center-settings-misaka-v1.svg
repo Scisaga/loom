@@ -4,7 +4,7 @@
      width="1586" height="992" viewBox="0 0 1586 992"
      role="img" aria-labelledby="title description">
   <title id="title">Settings / SSOT — Loom control center prototype</title>
-  <desc id="description">The authenticated raw SSOT YAML editor with whole-buffer validation, a lock shared by cooperating web writers, revision-guarded atomic saves, automatic publication, and an explicit single-writer boundary for external editors.</desc>
+  <desc id="description">A target-v2 raw SSOT proposal editor: admin-authenticated validation, Raft commit, deterministic recomputation, post-commit quorum certification, and separately reported reconciliation.</desc>
   <defs>
     <marker id="arrow-selected" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
       <path d="M0 0L7 3.5L0 7Z" fill="#2AA875"/>
@@ -166,28 +166,28 @@
   <g class="ui nav">
     <text class="amber" x="1160" y="31">Prototype · sample data</text>
     <circle class="status-dot" cx="1322" cy="26" r="4"/>
-    <text x="1335" y="31">Control node</text>
+    <text x="1335" y="31">Control replica</text>
     <use href="#icon-lock" x="1428" y="18" width="14" height="14" class="nav-icon"/>
-    <text x="1538" y="31" text-anchor="end">Write session</text>
+    <text x="1538" y="31" text-anchor="end">Admin session</text>
   </g>
 
   <g class="ui">
     <text class="eyebrow" x="21" y="91">CONTROL / SSOT</text>
     <text class="heading" x="21" y="124">Settings / SSOT</text>
-    <text class="body muted" x="21" y="151">Declarative source of truth · saves are validated and published automatically</text>
+    <text class="body muted" x="21" y="151">Target v2 declarative proposal · only a quorum-certified head becomes effective</text>
     <use href="#icon-status-ok" x="20" y="168" width="15" height="15" class="status-icon"/>
-    <text class="small" x="43" y="181">Raw SSOT write session · authenticated by node-local operator_ref</text>
+    <text class="small" x="43" y="181">Raw SSOT proposal · authenticated by admin certificate and certified ACL</text>
   </g>
 
 
   <!-- Settings context -->
   <rect class="panel" x="21" y="202" width="1538" height="72" rx="7"/>
   <g class="ui">
-    <text class="small muted" x="45" y="232">CONTROL NODE</text><text class="body mono" x="45" y="256">demo-d</text>
-    <text class="small muted" x="384" y="232">WRITE AUTHORITY</text><text class="body" x="384" y="256">Single control node</text>
-    <text class="small muted" x="800" y="232">DISTRIBUTED SNAPSHOT</text><text class="body mono" x="800" y="256">a1b2c3d4e5f6</text>
-    <text class="small muted" x="1125" y="232">PUBLISH CADENCE</text><text class="body" x="1125" y="256">≤ 30s</text>
-    <text class="tiny muted" x="1231" y="256">fleet target ≤ 90s · no publish button</text>
+    <text class="small muted" x="45" y="232">CONTROL REPLICA</text><text class="body mono" x="45" y="256">demo-d · caught up</text>
+    <text class="small muted" x="384" y="232">CONTROL MEMBERSHIP</text><text class="body" x="384" y="256">Dynamic ControlSet quorum</text>
+    <text class="small muted" x="800" y="232">CERTIFIED HEAD</text><text class="body mono" x="800" y="256">a1b2c3d4e5f6</text>
+    <text class="small muted" x="1125" y="232">RECONCILIATION</text><text class="body" x="1125" y="256">Current</text>
+    <text class="tiny muted" x="1231" y="256">commit and apply remain separate</text>
   </g>
   <line class="rule" x1="349" y1="219" x2="349" y2="259"/><line class="rule" x1="765" y1="219" x2="765" y2="259"/><line class="rule" x1="1090" y1="219" x2="1090" y2="259"/>
 
@@ -198,14 +198,14 @@
   <line x1="21" y1="325" x2="78" y2="325" stroke="#2AA875" stroke-width="2"/>
   <line class="rule" x1="21" y1="325" x2="1559" y2="325"/>
 
-  <!-- The implemented surface is the authenticated raw /ssot YAML editor. -->
+  <!-- Target-v2 proposal editor; the v1 compatibility writer is a separate profile. -->
   <rect class="panel" x="21" y="341" width="1005" height="632" rx="7"/>
   <g class="ui">
     <text class="section" x="41" y="373">Raw SSOT editor</text>
     <text class="tiny muted" x="218" y="373">Full YAML buffer · viewport shown below</text>
     <rect class="chip" x="735" y="354" width="116" height="30" rx="5"/><use href="#icon-check" x="750" y="362" width="14" height="14" class="action-icon"/><text class="small" x="812" y="374" text-anchor="middle">Validate</text>
-    <rect class="button-green" x="860" y="354" width="144" height="30" rx="5"/><use href="#icon-save" x="875" y="362" width="14" height="14" class="action-icon" style="stroke:#FFFFFF"/><text class="small" x="945" y="374" text-anchor="middle" fill="#FFFFFF">Validate &amp; save</text>
-    <text class="tiny muted" x="41" y="404">GET /ssot · POST /ssot · viewport lines 11–33</text><text class="tiny green" x="1004" y="404" text-anchor="end">Write session · node-local operator_ref</text>
+    <rect class="button-green" x="860" y="354" width="144" height="30" rx="5"/><use href="#icon-save" x="875" y="362" width="14" height="14" class="action-icon" style="stroke:#FFFFFF"/><text class="small" x="945" y="374" text-anchor="middle" fill="#FFFFFF">Submit proposal</text>
+    <text class="tiny muted" x="41" y="404">Certified view · proposal editor · viewport lines 11–33</text><text class="tiny green" x="1004" y="404" text-anchor="end">Admin certificate verified</text>
   </g>
 
   <rect class="code-bg" x="41" y="419" width="965" height="532" rx="5"/>
@@ -216,18 +216,18 @@
   </g>
   <g class="ui body mono">
     <text x="101" y="447"><tspan class="blue">defaults</tspan>:</text>
-    <text x="101" y="469">  <tspan class="faint"># Control, signing and publishing live on demo-d.</tspan></text>
-    <text x="101" y="491">  <tspan class="faint"># Forwarding continues if that writer is unavailable.</tspan></text>
-    <text x="101" y="513">  <tspan class="faint"># Writer state can be moved with SSOT and signing material.</tspan></text>
+    <text x="101" y="469">  <tspan class="faint"># Raw YAML is imported as a signed admin proposal.</tspan></text>
+    <text x="101" y="491">  <tspan class="faint"># Only a quorum-certified head becomes effective.</tspan></text>
+    <text x="101" y="513">  <tspan class="faint"># A replica outage does not change the data-plane LKG.</tspan></text>
     <text x="101" y="535"> </text>
-    <text x="101" y="557">  <tspan class="faint"># Nodes fetch signed immutable snapshots from this origin.</tspan></text>
-    <text x="101" y="579">  <tspan class="faint"># Distribution transport itself is not trusted.</tspan></text>
-    <text x="101" y="601">  <tspan class="faint"># Node-local pinned trust verifies the manifest.</tspan></text>
-    <text x="101" y="623">  <tspan class="blue">distribution_url</tspan>: <tspan class="green">https://downloads.example.net/loom/</tspan></text>
+    <text x="101" y="557">  <tspan class="faint"># A QC-signed EndpointSet authorizes distribution endpoints.</tspan></text>
+    <text x="101" y="579">  <tspan class="faint"># Multiple endpoint IDs provide transport failover: dist/demo-a, dist/demo-b.</tspan></text>
+    <text x="101" y="601">  <tspan class="faint"># Each endpoint carries independent WebPKI and SPKI transport pins.</tspan></text>
+    <text x="101" y="623">  <tspan class="blue">endpoint_set_ref</tspan>: <tspan class="green">distribution/main</tspan></text>
     <text x="101" y="645">  <tspan class="faint"># Resolver defaults are selected for the deployed region.</tspan></text>
     <text x="101" y="667">  <tspan class="faint"># Request-derived destinations still resolve at the selected egress.</tspan></text>
     <text x="101" y="689">  <tspan class="faint"># The raw buffer continues; this is only the visible viewport.</tspan></text>
-    <text x="101" y="711">  <tspan class="blue">dns</tspan>: [<tspan class="green">223.5.5.5</tspan>, <tspan class="green">119.29.29.29</tspan>]</text>
+    <text x="101" y="711">  <tspan class="blue">dns</tspan>: [<tspan class="green">192.0.2.53</tspan>, <tspan class="green">2001:db8::53</tspan>]</text>
     <text x="101" y="733"> </text>
     <text x="101" y="755">  <tspan class="blue">components</tspan>:</text>
     <text x="101" y="777">    <tspan class="blue">sing_box</tspan>: <tspan class="green">1.11.4</tspan></text>
@@ -235,7 +235,7 @@
     <text x="101" y="821">    <tspan class="blue">agent</tspan>: <tspan class="green">0.1.0</tspan></text>
     <text x="101" y="843"> </text>
     <text x="101" y="865"><tspan class="blue">nodes</tspan>:</text>
-    <text x="101" y="887">  <tspan class="faint"># Domestic nodes have public endpoints; no mesh is deployed.</tspan></text>
+    <text x="101" y="887">  <tspan class="faint"># Optional mesh state is never assumed by this proposal.</tspan></text>
     <text x="101" y="909">  <tspan class="faint"># Candidate paths are distinct from persistent WireGuard edges.</tspan></text>
     <text x="101" y="931">  <tspan class="faint"># Scroll for complete node, tunnel, declaration and service entries.</tspan></text>
   </g>
@@ -244,34 +244,35 @@
   <rect class="panel" x="1042" y="341" width="517" height="632" rx="7"/>
   <g class="ui">
     <text class="section" x="1062" y="373">Validation</text>
-    <circle class="status-dot" cx="1067" cy="406" r="4"/><text class="body green" x="1080" y="411">Current file passes all checks</text>
+    <circle class="status-dot" cx="1067" cy="406" r="4"/><text class="body green" x="1080" y="411">Current proposal passes all checks</text>
     <text class="small muted" x="1062" y="443">Schema</text><text class="body" x="1207" y="443">Valid</text>
     <text class="small muted" x="1062" y="471">Topology</text><text class="body" x="1207" y="471">5 nodes · 6 tunnels</text>
     <text class="small muted" x="1062" y="499">Routing entries</text><text class="body" x="1207" y="499">5 renderable</text>
-    <text class="tiny muted" x="1062" y="522">Save performs validation again; the UI check is not the guard.</text>
+    <text class="tiny muted" x="1062" y="522">Every voter validates again; the UI check is not the guard.</text>
   </g>
 
   <line class="rule" x1="1062" y1="545" x2="1539" y2="545"/>
   <g class="ui">
-    <text class="section" x="1062" y="585">What happens after save</text>
-    <text class="body" x="1062" y="619">1</text><text class="body" x="1093" y="619">Atomic SSOT write after validation</text>
-    <text class="body" x="1062" y="650">2</text><text class="body" x="1093" y="650">Publisher detects the change within ~30s</text>
-    <text class="body" x="1062" y="681">3</text><text class="body" x="1093" y="681">Render, sign and distribute immutable snapshot</text>
-    <text class="body" x="1062" y="712">4</text><text class="body" x="1093" y="712">Nodes pull, apply, verify or stay on last good</text>
-    <line class="rule" x1="1062" y1="731" x2="1539" y2="731"/>
-    <text class="tiny muted" x="1062" y="751">There is deliberately no second, manual Publish decision.</text>
+    <text class="section" x="1062" y="585">What happens after submit</text>
+    <text class="body" x="1062" y="610">1</text><text class="body" x="1093" y="610">Validate the signed candidate deterministically</text>
+    <text class="body" x="1062" y="638">2</text><text class="body" x="1093" y="638">Durably commit it through Raft</text>
+    <text class="body" x="1062" y="666">3</text><text class="body" x="1093" y="666">Apply and recompute on each voter</text>
+    <text class="body" x="1062" y="694">4</text><text class="body" x="1093" y="694">Collect replication attestations and issue QC</text>
+    <text class="body" x="1062" y="722">5</text><text class="body" x="1093" y="722">Publish and reconcile through a leased executor</text>
+    <line class="rule" x1="1062" y1="739" x2="1539" y2="739"/>
+    <text class="tiny muted" x="1062" y="759">Candidate, Raft-committed, certified and reconciled are distinct states.</text>
   </g>
 
   <line class="rule" x1="1062" y1="772" x2="1539" y2="772"/>
   <g class="ui">
     <text class="section" x="1062" y="812">Security boundary &amp; gaps</text>
-    <text class="small muted" x="1062" y="841">AUTH SOURCE</text><text class="body" x="1238" y="841">Node-local secrets · operator_ref</text>
+    <text class="small muted" x="1062" y="841">AUTH SOURCE</text><text class="body" x="1238" y="841">Admin certificate · certified ACL</text>
     <text class="small muted" x="1062" y="869">CONTROL BOOTSTRAP</text><text class="body" x="1238" y="869">/etc/loom/control.json · not editable here</text>
     <text class="small muted" x="1062" y="897">PRIVATE KEYS</text><text class="body" x="1238" y="897">Never shown or stored in SSOT</text>
     <line class="rule" x1="1062" y1="912" x2="1539" y2="912"/>
-    <text class="tiny amber" x="1062" y="932">Known web-editing gaps</text>
-    <text class="tiny muted" x="1062" y="950">Web writers share a process lock + revision guard.</text>
-    <text class="tiny muted" x="1062" y="967">External Git/editor is not locked; stop or reload before saving.</text>
+    <text class="tiny amber" x="1062" y="932">Replica and conflict boundary</text>
+    <text class="tiny muted" x="1062" y="950">Local fsync and locks protect only this replica cache.</text>
+    <text class="tiny muted" x="1062" y="967">Conflicts remain pending; only a QC head changes the network.</text>
   </g>
 
 </svg>

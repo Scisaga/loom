@@ -8,13 +8,25 @@
 
 1. 实现期间做出的、[design.md](design.md) 里没有的推导决定 —— 连同**理由**,
    否则下一个人会把它当成随意选择而拆掉;
-2. [附录 C](design.md#c--开工前需要确定的问题) 那 19 个问题的答案与状态。
+2. [附录 C](design.md#c--开工前需要确定的问题) 中各问题的答案与状态。
 
 **不记什么:** 已经写进 design.md 的决定(那里是唯一事实来源,这里重复只会漂移)、
 任务分解、时间估计。
 
 条目**只追加不删改**。决定变了就追加一条新的并注明取代了哪条 —— 被推翻的决定
 和它当时的理由同样有价值。
+
+> 条目里的“当前”“已实现”“待部署”等状态只表示该条记录日期当时的快照，不是实时进度；
+> 后续决定会取代旧语义但保留原文。实时实现与部署边界只看被忽略的
+> [docs/status/current.md](status/current.md)，规范语义以 [design.md](design.md) 和未被取代的
+> 最新决定为准。
+>
+> **历史入口用语：** 早期条目中未分 role 的“control endpoint”、“跨 seed
+> claim”均按 D107 及分布式控制平面解释：管理请求只能经已信 certified
+> `EndpointSet(role=control_api)` 入口的精确 transport 校验与 admin cert 认证后提交；
+> claim 只能使用本次 `InviteBootstrapDescriptorV2` 中有界的
+> `EndpointSet(role=enroll)` seeds。
+> 这项解释不回写历史条目。
 
 ---
 
@@ -1539,7 +1551,7 @@ D60 末尾写着"钉住 + SSOT 变过 = 旧二进制 + 新配置,目前只写在
 → 39470e023ff3  08-24 08:21       5da74d247aff  ✅
 ```
 
-两个显示口径上的坑,都属于"会说谎的面板比没有面板更糟"([D55](#d55--未解决问题的可见性))
+两个显示口径上的坑,都属于"会说谎的面板比没有面板更糟"([D55](#d55--不是所有变化都是问题))
 那一类:
 
 - **同一个快照出现两次时,`→` 只标最后那次。** 都标会看成有两个当前版本
@@ -1642,7 +1654,7 @@ D65 做完之后那条链路**仍然上不了面板**。
 ### 下界必须标成下界
 
 `已 9 小时` 和 `至少 9 小时(上报者启动时已如此)` 是不同的两句话。
-把后者写成前者就是在假装知道起点 —— 而那正是面板说谎的方式(同 [D55](#d55--未解决问题的可见性))。
+把后者写成前者就是在假装知道起点 —— 而那正是面板说谎的方式(同 [D55](#d55--不是所有变化都是问题))。
 
 
 ### D67 · 同一个测量,两种含义:target 是数据,uplink 才是告警
@@ -1714,7 +1726,7 @@ demo-b 的直连整个坏掉,面板上不会有任何变化 —— 因为它本�
 
 症状极具误导性:它长得像"这台机器出网坏了",而真实流量一直好着 ——
 sing-box 自己配了 DNS(§7.4),根本不经过系统解析器。这与
-[D 系列里那个 DNS 坑](#dns两个只影响直连候选的坑)是同一个形状,
+[设计文档里的 DNS 坑](design.md#732-dns-必须显式配而且要给它留一条出路)是同一个形状,
 只是换了一个消费者。
 
 修法:上报者配置带上本节点的 `dns`(来自 SSOT,渲染时填),`reachTarget`
@@ -1825,7 +1837,7 @@ demo-d 那两条隧道(61711、61763)本来就在注释说的范围之外。手�
 
 ### D69 · 版本坐标:commit 靠 Go 的 VCS 戳,不靠构建脚本
 
-**日期** 2026-08-24 · **状态** 生效 · **相关** §15.4、[D62](#d62--整份回滚源头与二进制一起退回)
+**日期** 2026-08-24 · **状态** 生效 · **相关** §15.4、[D62](#d62--整份回滚源头跟着成品一起回去)
 
 现场同时存在四个互不相干的标识,排障时反复绕晕:
 
@@ -1910,7 +1922,7 @@ demo-b / demo-c 从来没进过表 —— 既没核对,也没被列进没问到�
 | 够不到、只能靠转述 | 拓扑事实 | 印出来,**不计入 bad** |
 
 第二类刻意不报警。demo-b / demo-c 在这张拓扑里**永远**够不到,报成告警就是
-每次都响的常驻误报 —— 正是 [D64](#d64--面板只报真问题)–D67 花力气清掉的那类噪音。
+每次都响的常驻误报 —— 正是 [D55](#d55--不是所有变化都是问题)–D67 花力气清掉的那类噪音。
 但空白也不能不说:一台跑着老二进制、又恰好够不到的机器,会被表的沉默
 算成同意。
 
@@ -1992,7 +2004,7 @@ D71 把节点分成"够得到"和"够不到"两类,但**"够得到"取自 SSOT �
 
 ### D75 · 追溯不回 git 的二进制,默认不许发到全网
 
-**日期** 2026-08-25 · **状态** 生效 · **相关** [D69](#d69--版本坐标commit-靠-go-的-vcs-戳不靠构建脚本)、[D31](#d31--加不加密必须显式选)
+**日期** 2026-08-25 · **状态** 生效 · **相关** [D69](#d69--版本坐标commit-靠-go-的-vcs-戳不靠构建脚本)、[D31](#d31--备份加不加密必须显式选)
 
 D69 让脏构建**能被看见**,但只是打印警告 —— `selfcheck` 印完警告仍然返回
 成功,发布器也照发不误。于是"看得见"和"拦得住"之间还差一步:一个对不上
@@ -2009,7 +2021,7 @@ D69 让脏构建**能被看见**,但只是打印警告 —— `selfcheck` 印完
 2. **拒发也要记进 Health(D72)。** 只打日志的话,这本身就变成一个新的
    "systemd 说 active 但发不出去"的静默故障 —— 正是 D72 要根治的形状。
 3. **留出口,不硬堵死。** 救火时确实可能要发一个还没提交的修复。但要
-   **显式选** —— 与 [D31](#d31--加不加密必须显式选)"加不加密必须显式选"
+   **显式选** —— 与 [D31](#d31--备份加不加密必须显式选)"加不加密必须显式选"
    同一个规矩:风险选项不能默认帮人做主,也不能默认拦死。
 
 `OfFile` 读不出构建信息时**报错,不返回空坐标** —— 空坐标会让闸门把不可
@@ -2017,7 +2029,7 @@ D69 让脏构建**能被看见**,但只是打印警告 —— `selfcheck` 印完
 
 ### D76 · 备份要递归子目录,非普通文件要报出来
 
-**日期** 2026-08-25 · **状态** 生效 · **相关** [D74](#d74--签名私钥必须进默认备份清单)、[D31](#d31--加不加密必须显式选)
+**日期** 2026-08-25 · **状态** 生效 · **相关** [D74](#d74--签名私钥必须进默认备份清单)、[D31](#d31--备份加不加密必须显式选)
 
 `addPath` 遇到子目录直接 `continue` —— **静默跳过,不计数也不报告**。
 
@@ -2041,7 +2053,7 @@ backup.go 开头警告的那种:备份"成功"了,内容不全,**只有在需要
 
 ### D77 · 改代码要显式 `loom release`,改 SSOT 才自动发布
 
-**日期** 2026-08-25 · **状态** 生效 · **相关** [D75](#d75--追溯不回-git-的二进制默认不许发到全网)、[D60](#d60--钉住的是二进制回滚的是整份)
+**日期** 2026-08-25 · **状态** 生效 · **相关** [D75](#d75--追溯不回-git-的二进制默认不许发到全网)、[D60](#d60--二进制回滚靠钉住不靠重新编译)
 
 发布器每轮重新读 `-binary` 指的那个文件,sha 一变就发。于是**任何一次
 `go build` 都武装了一次全网升级** —— 改一行状态页面的措辞,5 台机器各下载
@@ -2171,7 +2183,7 @@ loom release -reason "..."
 
 ### D80 · 换完二进制起子进程续跑,不等下一个定时器
 
-**日期** 2026-08-25 · **状态** 生效 · **相关** [D78](#d78--rollout-是显式状态机但先只观察不接管)、[D46](#d46--二进制在配置之前)
+**日期** 2026-08-25 · **状态** 生效 · **相关** [D78](#d78--rollout-是显式状态机但先只观察不接管)、[D46](#d46--先装二进制后装配置)
 
 D78 的观察阶段拿到了要的数字:**demo-d 卡在 `activating` 10 分 11 秒**,
 而那 10 分钟里它是"新二进制 + 旧配置"。
@@ -2264,7 +2276,7 @@ ca.crt** 验,通过;把同一份签名改说成 demo-c 的,被真证书拦下:
 
 ### D82 · 删除收敛照 dpkg 的文件清单模型,不自己发明
 
-**日期** 2026-08-26 · **状态** 生效 · **相关** [D33](#d33--收敛不是反应文件变化)、§14.2
+**日期** 2026-08-26 · **状态** 生效 · **相关** [D33](#d33--期望状态不只是文件内容)、§14.2
 
 `BuildPlan` 只遍历这次渲染出来的文件,**没有任何删除逻辑**。于是 SSOT 里
 删掉一条隧道之后:渲染输出里没有 `wg-demo-a.conf` 了,但节点上的文件和
@@ -2809,3 +2821,825 @@ HTTPS、ready bootstrap 和首轮 signed pull 验证的 enrollment URL 固定为
 公网监听仍使用原有 TLS、按凭据生成的 user 白名单和 `route.final=block`；它不是开放
 代理。防火墙、云安全组和运行时展示必须单独反映该开关，不能再用
 `reverse_only` 文案声称除 SSH 外可关闭所有公网入站。
+
+### D100 · `control` 是节点能力，控制集合不固定为三台
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D19、D35、§1.3、§11、
+[分布式控制平面](distributed-control-plane.md)
+
+D35 选择单中控是上一阶段的实现取舍，不再是目标架构。`control` 改为与 `access/server`
+正交的 Device 角色块；committed SSOT 中所有合格 `control` Device 的规范化投影构成
+`ControlSet(epoch)`。集合至少一个，最多可以是全部合格 Device，协议不得固定为三台，也
+不得出现永久 `primary_controller`。
+
+首版采用 crash/partition fault model，法定人数为
+`q=floor(|ControlSet|/2)+1`，永远按已提交成员数而非在线数计算。N=1 合法但无 HA；N=2
+需要 2/2；N=3 的 2/3 是能容忍一个节点离线的最小推荐部署；N=5 可容忍两个。3/5 是部署
+建议，不进入 schema 或验证协议。
+
+任何 control Device 都能提供读、接收 admin proposal 和转发给临时 leader。leader 只解决
+活性和排序，不是额外 authority。失去 quorum 时所有安全关键写停止，观测/草稿仍可复制，
+数据面继续 last-known-good。普通多数不宣称 Byzantine 安全；若要容忍 `f` 个恶意 voter，
+必须另用经审计的 BFT profile，满足 `N>=3f+1`、提交至少 `2f+1` 并实现完整轮次/锁定协议。
+
+成员和 control key 变化必须走 learner 全量同步以及 old/new joint quorum。普通
+drain/decommission/remove 不能隐式删 control；旧 quorum 永久丢失时只能用离线 recovery
+root 签更高 recovery epoch。此决定取代 D35 的单中控结论，并把 D19 的角色分块从两个扩展
+为两种数据平面角色加一个正交 control 角色。
+
+### D101 · CRDT 复制材料，quorum commit 定义唯一生效 SSOT
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D32、D36、D39、D41、
+D45、D61～D63、D72、D77、D85、D88～D93、§12、§14、§16
+
+多副本不等于多份事实来源。管理员请求、完整 candidate SSOT、不可变制品、观测、草稿和
+副作用回执都变成签名、内容寻址对象，通过 Merkle/CRDT anti-entropy 乱序、重复、分区后
+合并。CRDT 原始并集永不直接改变权限或渲染输入；唯一生效 SSOT 是
+`Reduce(quorum-certified committed head)`。
+
+ControlSet、admin ACL、Device membership/grants、邀请消费、吊销、唯一资源分配、release
+current、DNS/端口代次和 tombstone checkpoint 必须串行提交。每个候选 head 绑定
+`cluster_id/control_epoch/revision/parent_hash/operation_root/effective_ssot_hash`，每个 voter
+对同一坐标只耐久签一个 hash；达到 quorum 才形成 QC。字段级 LWW 不能把两份分别合法的
+草稿自动合成一份从未审核的配置；UI 用 MV-register 显示冲突，再提交一个精确 blob hash。
+
+现有严格 YAML、完整校验、diff、纯函数渲染、秘密占位符、内容寻址静态树和原子 apply
+继续保留。Git/YAML 从在线单写 authority 降为导入、导出、评审和归档格式；单机文件锁、
+本地 authority 与单 publisher 只是 v1 迁移实现。任一 control 副本可以 materialize/publish，
+但只有 QC 能推动 mutable current。事件与观测用 CRDT 去重复制，配置和运行态仍分域。
+
+本决定取代 D36 的“写只在中控”、D45/D61～D63 的“历史只在中控”、D91 对有状态共识的
+否定及相关单机 authority 结论；D32/D91 关于不可信静态镜像、内容寻址和传输不等于真实性
+的部分继续有效。
+
+### D102 · 控制成员、管理员、Device、CA 与公开 TLS 使用独立信任域
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D38、D74、D87、D88、
+§13、§13.5
+
+现有一把在线 Ed25519 平台 key 不能继续既代表集群又独自发布。每个 voter 使用独立且按
+用途分开的 membership/config/enrollment key；QC 首版携带按 signer ID 排序的普通多签，
+客户端拒绝重复、未知、已移除或错误用途 signer。阈值聚合签名可后置，不改变签名对象。
+
+至少分开 recovery root、control peer、control vote、human admin、Device identity、internal
+CA、public WebPKI/ACME 和 APK/MSI code-signing。证书使用不同 EKU/profile；证书只证明身份，
+授权还要核对 committed ControlSet/ACL/registry。control cert 不自动授予 admin，普通 Device
+cert 不投票，公开 TLS 证书不签 SSOT。
+
+当前平台 key 在迁移期只签一次 bootstrap transition，绑定初始单成员 ControlSet 和新离线
+recovery anchor；它不是永久 recovery root。客户端保存
+`control epoch/set hash + control revision/head hash + device generation/view hash` 三层 floor，
+只有连续 joint transition 或 recovery proof 能改变信任集。v1 严格 schema 不能原位增加
+未知字段，必须并行发布 versioned v2 QR/current/view，先升级 reader，再撤旧 signer。
+
+邀请 token 只以 hash 进入 committed log；跨 seed claim 用 quorum CAS 绑定唯一 SPKI。在线
+intermediate 只能在 enrollment approval QC 后签证，验证方仍核对 committed binding，防止
+单个 CA executor 独自创造有效成员。本决定取代 D38/D74 把在线单机密钥和备份当完整恢复
+模型的部分；当前生产边界仍须在 status 中如实保留直到迁移完成。
+
+### D103 · 托管 DNS/ACME 与多代 listener 使用同一提交和协调边界
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D56、D68、D99、§2.3、
+§14.2～§14.4、[分布式控制平面 §12～§15](distributed-control-plane.md#12-域名与公开证书管理)
+
+受管节点的公开控制、分发和数据入口使用稳定 logical endpoint 与托管 hostname。Loom 只
+自动管理显式委派的 zone/subzone；域名购买、迁移和续费扣款默认仍需管理员批准。DNS
+provider 使用可替换 adapter，Gandi、Dynadot 或 RFC 2136 都不是协议 authority。provider
+token、ACME account key 和 TLS private key 只在秘密层。
+
+FQDN、RRset、CertificateIntent、端口和 listener generation 先 quorum commit，再由持资源
+租约的 executor 幂等调用 DNS/ACME/防火墙/NAT API并读回验证。租约只协调副作用，不授予
+desired-state authority；外部 API 不支持 CAS/fencing 时只承诺检测漂移后的最终收敛，不
+冒充 exactly-once。DNS 只负责发现，不能改变 ControlSet 或让 signed EndpointSet 外的地址
+获得信任。公开证书优先 ACME DNS-01，TLS key 在终止节点本地生成，新证书验证后才替换旧证书。
+
+单 `public_endpoint + inbound_port` 只作为 v1 generation 0 兼容。目标 EndpointSet 为同一
+logical ID 保存多个 listener generation，正常轮换固定为
+`allocate → prepare → advertise → prefer → drain → retire`：先开启新 listener、证书、
+防火墙和 NAT，外部验证后下发新旧两代；新连接优先新代并可回退，旧会话自然排空；满足
+客户端 applied/兼容窗口/quiet period 后才关旧端口并写 retired tombstone。准备失败时旧端口
+始终 active。
+
+该机制适用于所有显式公网 Hysteria2 入口及需要轮换的 WireGuard/Trojan listener，不按境内/
+境外分叉。端口变化不新增客户端选择轴，Direct/Auto/指定出口仍绑定逻辑节点。既有连接不
+承诺跨端口迁移；“无中断”只保证计划内没有新旧同时不可用。D56 的唯一分配和 D68 的退役
+记忆原则保留，但其单端口人工替换不再是目标轮换流程；D99 的显式公网数据入口边界继续有效。
+
+### D104 · Raft 耐久日志决定提交，signed replication QC 只证明已提交状态
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D100～D103、
+[分布式控制平面 §7～§10](distributed-control-plane.md)
+
+首个可交付的一致性 profile 固定为 crash-fault-tolerant Raft。管理员签名 proposal、CRDT
+对象和完整 candidate blob 都只是日志输入；只有按 Raft term/index 排序、写入法定多数的
+耐久日志并推进 `commitIndex` 的 entry 才能改变状态机。voter 必须在确认 AppendEntries
+前持久化 `currentTerm/votedFor/log`，并执行 Raft 的 log-matching、leader-completeness 和
+提交规则；未提交的冲突 suffix 可以被新 leader 覆盖。因此，D101 所称“每个 voter 对同一
+epoch/revision 永久只签一个候选 hash、凑齐签名即提交”不再是提交算法，明确由本决定取代。
+
+每个安全关键 entry 的规范坐标至少包括
+`cluster_id/recovery_epoch/control_epoch/control_set_hash/raft_term/raft_index/`
+`parent_head_hash/entry_hash`；
+对外的 `control_revision` 从已提交 Raft log position 确定，不允许 leader 另行分配。状态机
+应用 entry 后计算 `operation_root/effective_ssot_hash/device_views_root` 和新 `head_hash`。
+Control voter 只有在确认该 entry 已提交、按序 apply 且本地计算结果逐字节相同后，才以独立
+config key 签署 domain-separated `ReplicationAttestationV1`；签名输入覆盖上述坐标、三个
+计算 root 和新 `head_hash`。满足当前 quorum 的有序多签
+组成 signed replication QC。QC 是供客户端、镜像和审计者离线验证的“已提交且已复算”证明，
+不是 Raft 的投票消息，也不能反过来提交日志。已在 Raft 内提交但尚未收齐 QC 的 head 标记为
+`committed_not_certified`，不得发布为 mutable current；客户端继续 last-known-good。
+
+ControlSet 的变化不允许由普通 SSOT 字段先行自我授权。规范成员事实是复制状态机中的
+`FinalControlSet` 记录，committed SSOT 的 `control` block 只是它的投影。每次变化只允许一个
+进行中的 transition，并严格执行：
+
+1. 新成员先作为无投票权 learner 验证 key possession、实现版本和 eligibility，再同步已认证
+   checkpoint 及其后的完整日志；
+2. 在旧配置下提出 `JointControlSet(old,new)`；该 entry 的提交和 replication QC 都必须同时
+   满足 `majority(old)` 与 `majority(new)`；
+3. joint 状态 certified 后提出 `FinalControlSet(new)`；其提交和 QC 仍必须同时满足 old/new
+   两个 majority；状态机 apply 该 entry 时递增 `control_epoch`，取得 joint QC 后新的
+   `control` 投影才成为 effective；
+4. 此后 entry 才能只按 `majority(new)` 提交。被移除 key、旧成员的迟到签名和较低 epoch
+   的 QC 一律不计数。
+
+control key 轮换按“加入新 key identity、joint commit、移除旧 identity”处理，不允许原地换
+key。任一 signer ID 在一个 QC 中只计一次；签名集合必须携带 ControlSet hash，joint QC 必须
+标明 old/new membership 并分别验 quorum。普通 SSOT、邀请、DNS/ACME 或 listener proposal
+不能绕过该流程改变 voter。以上 `FinalControlSet` authority 取代 D100 中“committed SSOT
+的 control block 构成 ControlSet”的措辞；D100 的动态数量与 joint quorum 其余结论保留。
+D103 中的
+“先 quorum commit”自此精确定义为 Raft durable commit，只有取得 replication QC 的 certified
+intent 才可公开或驱动外部副作用。该 profile 仍只承诺 CFT，不因增加签名而宣称 BFT。
+
+### D105 · 每台 Device 的最小视图用 Merkle inclusion proof 绑定到 quorum head
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D88、D101～D104、
+[分布式控制平面 §10～§11](distributed-control-plane.md)
+
+客户端不得把“由某个 control 返回”当成配置真实性。每个 certified head 必须包含
+`device_views_root`；它承诺该 revision 中每台 Device 的完整授权结果，而不只承诺一个 generation
+整数。目标 wire schema 中含义较弱的 `device_generations_root` 由此字段取代；若迁移实现暂时
+保留旧字段名，它也必须承诺本决定定义的完整 leaf，不能只哈希 generation。
+
+`DeviceViewLeafV2` 使用版本化 canonical encoding，至少包含
+`cluster_id/view_schema_version/device_id/device_generation/state/payload_hash/`
+`previous_view_hash/endpoint_set_hash/min_reader_version`。
+`state` 必须显式表示 `active/revoked/decommissioned`；吊销和删除以 tombstone leaf 表达，缺少
+leaf 既不授权也不等于吊销。leaf 不包含 control revision、当前 `head_hash` 或 root，避免
+无关提交迫使所有 Device 改 generation，也避免自引用；inclusion proof 所指 root 等于
+certified head 中的 root 才完成绑定。leaf 的任一字段发生变化都必须提高该 Device generation。
+Device payload、EndpointSet 和 route/grant 的实际字节分别由相应 hash 承诺，DNS、证书或新旧
+listener 地址不能在证明外追加。
+
+树形固定采用 RFC 6962 的二进制 Merkle 形状：按规范化 Device ID 的原始字节升序排列且拒绝
+重复 ID，`LeafHash=SHA-256(0x00 || canonical_leaf)`，
+`NodeHash=SHA-256(0x01 || left || right)`，空树 root 为 `SHA-256("")`。响应携带 canonical
+leaf、payload、leaf index/tree size 和 inclusion audit path；所有实现必须通过同一组跨语言
+golden vectors，包括 0/1/奇数 leaves、Unicode/大小写非法 ID、重复 ID 和错误 proof。不得用
+“复制末叶”等未写入 profile 的本地约定补树。
+
+客户端验证顺序固定为：先验证 v2 bootstrap/recovery lineage 与当前 ControlSet，再验证 head
+的 replication QC 和单调坐标，随后重算 inclusion proof，最后核对 `device_id/state/`
+`payload_hash/endpoint_set_hash` 及各项 floor，全部通过后才原子安装。任一 control、静态镜像
+或 CDN 可以单独传输 view 和 proof，但不能创造或扩大授权。相同 Device generation 对应不同
+leaf/payload，proof 指向错误 tree size，或高 revision 携带回退 generation，均作为 fork/replay
+fail closed；合法回滚必须发布更高 generation 且明确引用被恢复的 payload。
+
+客户端至少耐久保存
+`recovery_epoch/recovery_statement_hash/recovery_policy_hash + control_epoch/control_set_hash + `
+`control_revision/head_hash + device_generation/leaf_hash/view_hash`，并在激活依赖内容前原子提高
+floor。D101 的 committed head 因而有了可验证的 per-Device 投影；D102 的三层 floor 由这里扩展
+为可实现字段。D103 的 EndpointSet、DNS 与 listener rotation 只能经 leaf hash 进入某台 Device
+视图，取代“已签 head 之外的 endpoint 也可被客户端信任”的任何解读。
+
+### D106 · Recovery lineage 与 v2 latch 独立单调，bootstrap 绑定旧 floor 和初始信任
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D88、D100、D102、D104、
+D105、[分布式控制平面 §9、§10、§19](distributed-control-plane.md)
+
+`recovery_epoch` 是独立于 `control_epoch` 和 Raft term/index 的最高级 lineage。正常 joint
+consensus 永远不改变它；旧 ControlSet 永久失去 quorum 时，只有已钉住的 offline recovery
+policy 达到其阈值，才能签署 domain-separated `RecoveryTransitionV1`。规范对象至少绑定
+`cluster_id/previous_recovery_epoch/new_recovery_epoch/previous_trusted_head_hash/`
+`previous_recovery_statement_hash/previous_recovery_policy_hash/new_recovery_policy_hash/`
+`new_control_set_and_key_hashes/new_lineage_genesis_entry_hash/initial_admin_acl_hash/`
+`internal_ca_profile_and_anchor_hash/reason/issued_at`。`new_recovery_epoch` 必须严格增加，同一
+previous epoch 出现两个不同 transition 是 security fork；证明链和其引用对象必须能从不可变
+镜像、control 或受信 bootstrap 包完整取得。transition 只授权新 lineage bootstrap；新
+ControlSet 仍须将所绑定 genesis 以 `q(new)` durable install/commit、apply/recompute 并形成首个
+replication QC。recovery threshold signature 不能替代该 QC。
+
+客户端先以已经钉住的 recovery anchor 验 transition，再验证所绑定 genesis 的 `q(new)`
+replication QC；两者都通过后，才把新 epoch、statement/policy hash、新 ControlSet 与首个 head
+原子写入 durable floor 并安装 view。缺少新 QC 时继续旧 LKG。一旦写入，所有较低
+recovery epoch 永久拒绝，即使它带更大的 control epoch、revision 或旧 quorum QC。客户端尚未
+接触新 recovery proof 时仍可能在隔离分区继续旧 last-known-good，这是 CFT 和离线模型的固有
+限制，不能用 DNS freshness 或墙上时钟冒充解决；重新联网或新 enrollment 必须拿到并比较最新
+recovery checkpoint。遗失 durable floor 视同重新入网，不能 TOFU 接受任一在线 control。
+
+v1 到 v2 只允许经过 canonical `BootstrapTransitionV1ToV2`。它由当前 v1 platform key 用独立
+domain 签名，并精确绑定
+`cluster_id/v1_platform_key_id/v1_device_floor_merkle_root/initial_recovery_epoch_and_policy_hash/`
+`initial_control_set_and_key_hashes/initial_admin_acl_hash/internal_ca_profile_and_anchor_hash/`
+`initial_v2_head_hash/initial_v2_raft_index/schema_version/min_reader_version`。迁移 Merkle leaf 按
+Device ID 排序并绑定每台既有 Device 的精确
+`device_id/v1_generation/v1_signed_current_hash/v1_payload_hash`；客户端必须收到自己的 inclusion
+proof，generation 不得低于本地 v1 floor，两个 hash 都必须与已验证的 v1 current/payload 一致。
+初始 v2 head 还必须带初始 ControlSet 的有效 replication QC；platform signature 不替代 v2 quorum。
+
+旧 platform key 能签名不代表它能自行选择新网络根。transition hash 还必须匹配客户端经部署
+专属升级包、企业策略、现场 QR 或人工核验预置的独立 migration-anchor digest；普通应用代码
+签名、DNS 和旧 current 下载源都不能代替这个 pin。旧 key 签出的另一 transition 即使签名有效，
+只要不匹配该 digest 就作为 bootstrap fork 拒绝，不能按时间、generation 或下载速度择一。
+
+验证成功后，客户端必须在安装首个 v2 view 前原子持久化 transition hash、初始 recovery/control
+floor 和不可逆 `protocol_latch=v2`。此后可以在控制面不可用时继续运行已有 last-known-good，
+但永远不得再用 v1 current、v1 QR 或 v1 view 推高状态；应用更新器也必须禁止降级到不认识该
+latch 或低于 `min_reader_version` 的 reader。卸载、Keystore 丢失或状态损坏后只能凭新的受信
+邀请/bootstrap checkpoint 重新入网，不能静默清除 latch。
+
+任何 v2 邀请/QR 都必须钉住 `cluster_id/bootstrap_transition_hash/min_recovery_epoch/`
+`recovery_statement_hash/recovery_policy_hash/control_set_hash/min_head_hash` 和预期公开入口身份；二维码中的 URL
+仅用于发现，不能替换这些信任对象。没有携带这些字段的旧 QR 只可进入显式 v1 迁移流程，
+不能直接建立 v2 信任。离线客户端在没有受信新 QR、recovery witness 或在线 quorum 的情况下
+无法证明自己看见的是全局最新 lineage，产品和状态页必须如实显示这个 freshness 边界。
+
+初始 admin ACL、ControlSet、recovery anchor 和内部 CA 都由同一个 bootstrap transition 绑定，
+解决“先信谁来授权第一位管理员”的循环；之后的任何变化一律走 v2 quorum/joint/recovery
+规则。迁移完成后撤销旧在线 signer 只是缩小攻击面，安全性不得依赖它确实只签一次。D100
+对 recovery epoch 的简述和 D102 的一次 bootstrap/三层 floor 由本决定补全并在冲突处取代；
+D103 的 DNS、ACME、端口或证书状态不能改变 recovery lineage，也不能充当 bootstrap freshness
+证明。
+
+### D107 · 公网暴露必须显式授权，EndpointSet 同时承诺地址与传输身份
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D56、D68、D99、D103、
+D105、[分布式控制平面 §12～§14](distributed-control-plane.md)
+
+存在公网 IP、`control`/`server` 能力、受管域名或可申请证书都不等于允许公网暴露。只有经
+Raft commit 和 replication QC 的 `PublicEndpointIntent(exposure=public)` 才能授权创建公网
+DNS、证书、listener、防火墙或 NAT 映射。intent 至少绑定稳定 endpoint ID、owner Device、
+role、protocol、暴露范围、地址/域名 intent、listener policy 和 generation；扩大地域、端口池、
+provider scope 或入口角色是新的安全关键提交，不能由 executor、实时测量或节点自报隐式产生。
+control peer RPC 地址只属于 ControlSet，面向客户端的
+`control_api/enroll/device_config/device_report/distribution/data_ingress` 地址只属于
+EndpointSet；二者不能互相推导成员资格或公网可达性。
+
+客户端可用的 `EndpointSetV2` 是 certified head 经 D105 Device leaf 授权的完整 transport trust
+bundle。每个 LogicalEndpoint 至少携带稳定 ID、owner、role、protocol，以及与 protocol 匹配的
+`transport_identity` tagged union：HTTPS/Hysteria2/Trojan 固定 server name、WebPKI profile 和
+带 generation/重叠界限的 TLS SPKI pins；WireGuard 固定 peer key ID 与精确 public key/digest。
+TLS 与 WireGuard identity 不能同时出现。首个 v2 profile 要求
+`control_api/enroll/device_config/device_report/distribution/data_ingress` 各自使用独立
+logical endpoint、hostname、CertificateIntent 与认证策略；control peer RPC 仍只属于
+ControlSet。role×protocol 合法矩阵以分布式控制平面 §13 为准，未知组合失败关闭。listener
+projection 为：
+
+```text
+ListenerGenerationV2
+  generation, dial_target(dns_name|ip_literal), public_port, local_port?
+  address_families[], credential_generation, certificate_intent_hash?
+  introduced_revision, published_state, rotation_operation_hash, retire_not_before?
+```
+
+`published_state` 只能是 `advertised/preferred/draining`，每个可用 LogicalEndpoint 恰有一个
+preferred；`preparing` 只在运维 view，`retired/blocked/quarantined` 只以历史 tombstone 和
+分配约束存在。客户端按 listener generation 连接和上报，不能从端口大小、最新 revision 或
+数组顺序猜 preferred。HTTPS、Hysteria2 和 Trojan 验证 server name/WebPKI 后还必须匹配授权
+TLS SPKI；WireGuard 必须匹配授权 peer public key。DNS、WebPKI 或连接成功都不能替代这些 pin。
+
+Enrollment 发生在 Device view 之前，因此 v2 QR 必须自身携带有界 seed 列表、精确 HTTPS URL、
+预期 hostname、当前与 staged-next TLS SPKI pin，以及 recovery/ControlSet/head checkpoint/QC；
+发送 bearer token 前 WebPKI 和 pin 必须同时通过，且禁止跨 origin redirect。pin 换代必须先把
+old+new 写进 certified QR/EndpointSet，再展示新 key，最后至少等待所有仍有效旧邀请消费或
+过期、客户端兼容窗口和观测 quiet period 才移除旧 pin。只续证且 SPKI 不变不需要伪造一次
+pin 换代。
+
+域名、地址、证书和 listener 分别有代次，但一个 rollout 必须以 operation hash 明确关联。地址
+变化严格执行 `prepare → overlap → drain → retire`：先验证新地址上的正确 transport identity，
+再让权威 DNS 同时返回 old+new；移除旧 RR 后，旧地址、listener、防火墙和 NAT 仍继续服务，
+直至移除前实际权威 TTL、传播安全余量、客户端 DNS cache grace、EndpointSet 离线兼容窗口和
+最后新握手/活动会话门槛全部满足。ACME DNS-01 的并行 order 只可添加和删除自己拥有的 TXT
+value；不得用整 RRset replace 清掉别的 order。TLS key 更换同样先发布 old+new SPKI overlap，
+新证书安装并从外部验证后才 prefer，旧证书/key 最后退役。任一阶段失败都保留上一个可用代；
+DNS 仅负责发现，不能把 EndpointSet 外的地址或身份变成 authority。
+
+首版“计划内无中断”只适用于运行时能真正并行承载 generation-scoped listener 的 Hysteria2
+和 Trojan：新连接 prefer 新代并立即回退仍 advertised 的旧代，已建立 QUIC/TCP 会话留在旧
+listener 自然排空，不承诺跨端口迁移。reload 会杀死旧会话、NAT 无法并存或旧 listener 在
+overlap 前必须关闭时，必须标记为 disruptive maintenance，不能使用“无中断”状态。
+
+WireGuard 只有在 renderer 和目标主机支持两套同时工作的 interface/peer generation，且具备
+独立 key、隧道地址、listen port、fwmark/policy route、NAT/firewall 规则、健康检查和确定性
+回滚，并完成跨 Linux/Android/Windows 的重复路由与泄漏验收后，才能获得同一产品承诺。只改
+单 interface 的 `ListenPort` 或复用冲突路由不合格；在达到门槛前，WireGuard 轮换是独立的
+显式维护流程。端口代次与 credential 代次正交，紧急换端口也不能冒充已撤销泄露凭据。
+
+本决定保留 D103 的稳定 logical endpoint、先开后关和“既有会话不迁移”原则，但取代其可能
+被理解为“节点角色会自动公网暴露”“DNS/WebPKI 足以授权地址”或“所有 transport 天然共享
+同一种无中断轮换”的部分；D107 是公网 endpoint 与 transport identity 的规范边界。
+
+### D108 · 权威 secret 先固化再提交，外部副作用按可逆性选择自动化等级
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D74、D87、D102～D107、
+[分布式控制平面 §12、§15](distributed-control-plane.md)
+
+任何会决定邀请、Device、listener、CA、provider 或传输身份的 secret 都必须在引用它的 proposal
+提交前生成，并固定为不可覆盖的 sealed artifact、硬件/Keystore key version 或精确 KMS version。
+提交对象至少绑定 `secret_id/purpose/owner/generation/public_identity_or_spki/immutable_ref`，并按
+后端绑定 `ciphertext_digest + sealing_policy/recipient_set`，或精确
+`kms_or_hardware_key_id + version + policy`；禁止引用 `latest`、可变 alias、可覆盖文件路径或
+“executor 首次运行时随机生成”。非导出私钥以 key handle/version、公开 key 和
+proof-of-possession 表达；TLS 终止节点先本地生成 key/CSR，再提交 SPKI 和 CSR hash。需要多方
+读取的随机凭据先按获授权 recipient 分别封装，提交只含 artifact hash/ref，不含 plaintext。
+
+voter 在 commit 前验证对象不可变性、hash、用途、recipient/policy 和所需 possession/availability
+ack；它们无需也不应普遍解密 secret。未获提交的预生成 artifact 没有 authority，按显式 orphan
+retention policy 隔离，不能被后续 proposal 凭可变名字捡用。提交后 executor 只能把 certified
+intent 指定的同一 version 重放到目标系统；unwrap、安装或 API 调用失败时状态保持 pending 并
+重试该 version。任何“重试时换 secret”、重新生成 key 或改变 recipient 都必须创建更高
+generation 的新 proposal、artifact 和 QC。ACME nonce/order response 等非 authority 临时值可以
+由 executor 取得，但证书只在其 CSR/SPKI、intent 与外部握手读回完全匹配后进入 EndpointSet。
+
+外部系统通常不能与 Raft 原子提交，因此统一采用 certified intent、quorum-issued lease、稳定
+idempotency key、读回验证和签名 receipt 的 at-least-once reconcile，不声称 exactly-once。
+`ResourceLeaseV2` 至少绑定
+`resource_id/holder/recovery_epoch/control_epoch/raft_term/acquired_index/desired_hash/`
+`fencing_token/expires_at`；租约只减少并发，不创造 desired state。executor 在调用前后都复核
+最新 certified intent，并使用
+`cluster_id/resource_id/action/generation/desired_hash` 作为幂等/fencing 上下文。失去租约必须
+停止发起新动作，但网络中已经发出的迟到请求仍由 provider CAS、generation fencing 和读回
+reconcile 防护。
+
+副作用按最坏迟到重放结果分三类，不能按 API 名称笼统授权：
+
+1. **immutable/additive**：上传内容寻址对象、增加 generation-scoped listener、增加本 order
+   的 ACME TXT 或明确集合元素。只要名字含 generation/hash、重放幂等且不覆盖其他 owner，
+   可以无人值守执行；“replace 整个集合”不属于 additive。
+2. **monotonic pointer/upsert**：发布 `current`、设置 preferred、写 DNS binding 或 provider
+   metadata。优先强制 provider version/CAS；确无 CAS 时，只能在旧写不会获得密码学 authority、
+   能读回检测并由新 lease 收敛的资源上自动执行，且必须暴露 stale/degraded。包含隐式删除的
+   upsert 降级为 destructive。
+3. **destructive/irreversible**：删除 RR/TXT、关闭 listener、撤防火墙/NAT、删除 secret/key、
+   撤销或释放唯一资源。必须同时具备新鲜 certified tombstone、精确 owner/generation、单调
+   fencing token 与 provider/local Agent 的条件删除。外部 API 若不能证明 CAS/fencing，禁止
+   无人值守执行；系统宁可暂留资源并告警，只有管理员在读回精确对象、影响预览和二次确认后
+   才能走受审计的 supervised cleanup。
+
+receipt 和 CRDT observation 只报告调用及读回事实，不能反向修改 desired state。secret 删除、
+端口释放和 DNS 清理都必须满足各自 retention/overlap 后再另行提交 tombstone；过期 executor
+的成功回执不能复活旧 generation。此决定细化 D103 的租约/幂等原则，并取代其中任何允许
+executor 在 commit 后临时生成权威 secret、把 lease 当授权、或在无 fencing provider 上自动
+关闭/删除资源的解读。
+
+### D109 · Recovery policy 的连续轮换必须由旧阈值授权并进入更高 recovery epoch
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D102、D106、D108、
+[分布式控制平面 §9、§10、§18～§19](distributed-control-plane.md)
+
+recovery policy 是客户端已经钉住的根，而不是普通 SSOT/CA/provider secret。policy 的 canonical
+对象至少包含 `policy_id/generation/algorithm/key_ids_and_public_keys/threshold/ceremony_profile`；
+新 key/share 必须先在离线环境生成不可变 version，并为每个 key 或 DKG transcript 产生
+domain-separated proof-of-possession。阈值必须满足 `1 <= threshold <= key_count`，校验器还应
+展示故障域和在 share 丢失、泄露后的实际容错，不能把普通 ControlSet 多数当 recovery threshold。
+
+有当前 ControlSet quorum 的计划轮换固定为四步：
+
+1. control 以 Raft/QC 提交 `RecoveryPolicyIntent`，绑定当前 recovery statement/head、等于
+   `previous_recovery_epoch + 1` 的 `new_recovery_epoch`、新 policy hash、
+   proof-of-possession root、ceremony ID 和理由；
+2. **旧 recovery policy 的有效 threshold** 对引用该 intent QC 的
+   `RecoveryPolicyTransitionV1` 签名；transition 同时绑定 previous/new epoch、previous statement
+   hash、old/new policy hash、最后 certified head 和保持不变的 ControlSet hash；
+3. 当前 ControlSet 验旧阈值签名后，把 `RecoveryActivation` 作为更高 recovery epoch 的首个
+   certified head 提交，绑定 transition hash。因而计划轮换必须同时有旧 recovery threshold
+   的信任连续性和当前 control QC 的在线审计/排序，任一方都不能单独完成；
+4. 发布完整 intent QC、threshold signatures、transition、activation head/QC 和后续 view proof。
+   客户端先原子提高 `recovery_epoch + statement/policy hash` floor，再接受新 epoch 内容。
+
+同一时刻只允许一个 recovery transition；从 intent 到 activation 禁止并行启动 ControlSet joint
+transition 或另一 recovery 操作。普通配置若在其间继续提交，activation 必须证明其 parent 是
+intent head 的连续后代且中间没有改变 ControlSet/recovery policy；否则原 intent 作废并重新举行
+仪式，不能把旧 threshold signature 拼接到另一条 head 上。
+
+每个新 epoch 只接受一个 previous-statement-linked transition；同一 previous statement 指向两个
+新 policy/epoch 是 recovery fork，fail closed。旧 public policy、所有历史 transition 和 proof
+永久按恢复链保留，使跨过多次离线轮换的客户端可以从自己钉住的 policy 逐跳验证；客户端兼容
+不需要旧 private share。新 policy 完成独立恢复演练、activation finality 且 transition 已有足够
+离线副本后，旧 private share 按 ceremony 销毁；继续保留它们只会增加签出竞争分叉的风险。
+
+当前 ControlSet quorum 不可用时，不存在“计划轮换”。若旧 recovery threshold 仍可用，只能
+走 D106 的显式 emergency recovery：声明缺少 control QC 的原因，选择完整新 ControlSet/genesis
+head，并进入更高 recovery epoch；UI、审计和客户端不得把它显示成普通 policy maintenance。
+反过来，若**旧 recovery threshold 已丢失**，即使全部 control、管理员证书和内部 CA 都可用，
+也无权给自己签发连续的新 recovery root。集群可继续普通 quorum 操作，但必须在灾难前安排
+全体客户端带外 rebootstrap；真正失去旧阈值后只能创建新 cluster/trust root 并逐台重新锚定，
+不能保留旧 `cluster_id` 冒充连续升级。
+
+新 recovery policy 的 sealed shares/KMS versions 遵守 D108，但 KMS、DNS、ACME、control QC、
+管理员证书或云账户都不能代替旧 threshold signature。此决定补全 D106 的
+`previous_recovery_policy_hash/new_recovery_policy_hash` 语义，并取代 D103 中把所有秘密都视为
+普通秘密层可由在线协调者轮换的任何泛化；recovery trust continuity 始终是独立仪式。
+
+### D110 · Recovery statement hash 固定为建立该 epoch 的 canonical statement body
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D106、D109、
+[分布式控制平面 §9.3](distributed-control-plane.md#93-丢失-quorum)
+
+客户端保存的 `recovery_epoch/recovery_statement_hash/recovery_policy_hash` 三元组不能只有字段名
+而没有跨平台相同的取值规则。每个 recovery epoch 只接受一个带显式 `statement_type` 的
+`RecoveryStatementBodyV1`：epoch 0 是 bootstrap body，失去 control quorum 时是 emergency
+`RecoveryTransitionV1` 的无签名 body，有 quorum 的 policy 轮换时是
+`RecoveryPolicyTransitionV1` 的无签名 body。body 不序列化签名数组、statement hash 本身或其他
+由自身导出的 hash；首版按 §7.1 的 I-JSON/JCS/UTF-8 规则 canonicalize，并计算：
+
+```text
+SHA-256(uint32_be(len("loom-recovery-statement-v1")) ||
+        UTF8("loom-recovery-statement-v1") || JCS(statement_body))
+```
+
+该值同时就是建立新 epoch 的 `transition_hash`/`new_recovery_statement_hash`。紧急 transition
+不得绑定含该 statement hash 的完整 Genesis entry；它改为绑定不含 statement hash、entry hash、
+Raft envelope 或 QC 的 `RecoveryGenesisPayloadV1` hash。payload 精确承诺 cluster、新 recovery
+epoch/policy、新 ControlSet、`new_control_epoch=0`、previous trusted head、初始 admin/CA、操作与
+effective SSOT/Device roots、render contract 和 minimum reader；实际 Raft term/index 由新集合在
+提交完整 Genesis entry 时赋值并由其 QC 认证。每条新 recovery lineage 的 control epoch 在首版
+wire profile 都重置为 0，包括保持同一 ControlSet 的计划 policy 轮换。
+
+初始
+`BootstrapTransitionV1ToV2` 内嵌 bootstrap body 并承诺其导出值，不能对包含自身 hash 的外层
+对象循环取 hash；紧急 RecoveryGenesis、计划 RecoveryActivation、首个 ControlHead、QR/checkpoint
+和客户端 floor 都必须绑定同一个值。threshold signatures 使用各对象独立的签名 domain 覆盖同一
+canonical body，不因签名顺序或收集数量改变 statement identity。
+
+同 epoch 的 statement hash 或 policy hash 任一不同即为 recovery fork，不能按更大 revision、
+时间、下载源或签名更多的一侧自动选择。实现必须用 bootstrap/emergency/policy-rotation 三类正常
+向量以及错 type、自引用、签名数组参与 hash、非 JCS 输入等负向量做 Go/Kotlin/Windows 互操作
+测试。本决定以 `new_lineage_genesis_payload_hash` 取代 D106 中会形成自引用的
+`new_lineage_genesis_entry_hash`，并消除 D106/D109 中 `transition_hash` 与
+`recovery_statement_hash` 可能被实现成两套序列化的歧义；其他恢复授权和阈值规则保持不变。
+
+### D111 · 首次 v2 bootstrap 按 payload → transition → head/QC 单向构造
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D104、D106、D110、
+[分布式控制平面 §10.3](distributed-control-plane.md#103-v1--v2-不可逆-latch)
+
+D106 让 `BootstrapTransitionV1ToV2` 绑定完整 `initial_v2_head_hash`，而初始 head 又必须绑定该
+bootstrap transition proof；两者互相引用，无法得到 canonical bytes。首版改为三层单向 DAG：
+
+1. 先生成 `InitialV2HeadPayloadV1`，固定 recovery 三元组、`control_epoch=0`、初始 ControlSet、
+   `control_revision=1`、snapshot/operation/effective SSOT/Device/admin/CA roots、render contract
+   与最低 reader；payload 不含 transition proof/hash、head hash 或 QC。
+2. `BootstrapTransitionV1ToV2` 绑定该 payload hash、完整 recovery bootstrap statement、v1
+   per-Device floor root、初始 ControlSet/admin/CA、`initial_v2_raft_index=1` 和最低 reader，由
+   v1 key 签名并计算 bootstrap transition hash。它不再绑定完整 initial head hash。
+3. 最后生成初始 `ControlHeadV2`：加入实际 Raft term、固定 index 1、空 previous-log hash，令
+   `transition_proof_hash=bootstrap_transition_hash`，计算完整 head hash，再由初始 ControlSet
+   durable commit、apply/recompute 并形成 post-commit QC。
+
+三种摘要分别使用 `loom-initial-v2-head-payload-v1`、
+`loom-bootstrap-transition-v1-to-v2` 和 `loom-control-head-v2` domain，并采用 DCP §7.1 的长度前缀
+framing + JCS。transition body 排除自身 hash/signature；head body 排除自身 hash/QC，但必须包含
+transition proof。这样旧 v1 authority 精确承诺初始逻辑内容与新 authority，新 ControlSet 的 QC
+精确承诺 Raft 排序和完整 head，不存在任何 hash 豁免或循环。
+
+本决定以 `initial_v2_head_payload_hash` 取代 D106 的 `initial_v2_head_hash` 字段，并与 D110
+一同固定所有新 recovery lineage 的初始 `control_epoch=0`。实现必须提供三层正常向量，以及把
+transition proof 漏出 head hash、把 QC 纳入 head hash、把完整 head hash 塞回 transition 等负向量。
+
+### D112 · ControlSet 采用 exact set bytes，Joint commit 立即改变内部提交规则
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D100、D102、D107、
+[分布式控制平面 §9.1](distributed-control-plane.md#91-加入)
+
+首版以 `ControlMemberV1` 和 `ControlSetV1` 作为跨实现唯一成员对象。member 精确承诺 Device ID、
+三把用途隔离的 Ed25519 public key/key ID、peer identity SPKI、排序 peer endpoints、fault domain 与
+最低 control protocol；set 非空并按 member ID 的 UTF-8 bytes 排序，所有 member、key、SPKI 与
+endpoint 标识按 schema 去重。`control_set_hash` 使用
+`loom-control-set-v1` 长度前缀 domain + JCS；epoch 不进入 set bytes，使 recovery epoch 重置
+control epoch、但成员不变时仍能引用同一集合 hash。
+
+成员变化按单向 DAG 构造：old/new set → old/new membership-key 双多数
+`ControlMembershipApprovalProofV1` → `JointControlSetEntryBodyV1` → old/new 双多数
+`JointConfigReplicationQCV1` → `JointControlSetProofV1` → signature-free
+`FinalControlSetHeadPayloadV1` → `ControlSetTransitionProofV1` → Final head → Final old/new 双多数 QC。
+各层的 exact 字段、hash domain 和排序规则由 DCP §9.1 固定；proof hash 不包含尚未生成的 Final
+head/QC，外层 bundle hash 也不写回内层，禁止循环引用。
+
+Raft 内部 membership 由最新 durable committed config entry 决定：Joint 一旦 committed，选举、
+普通 entry 和 Final 都立即要求 old/new 双多数；Final 一旦 committed，从其后使用新稳定集合。
+对外 authority 更保守：只有 Final apply/recompute 且取得 old/new post-commit QC 后，才发布新
+ControlSet、`control` projection 和客户端 transition。此决定取代任何“内部始终只看最后一个
+FinalControlSet”或“SSOT control 块可以改变 voter”的表述。
+
+### D113 · 计划 recovery policy 轮换必须验证 Intent → threshold proof → Activation
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D109、D110、D112、
+[分布式控制平面 §9.4](distributed-control-plane.md#94-recovery-policy-的计划轮换)
+
+`RecoveryPolicyIntentV1` 先作为旧 lineage 的普通 operation 取得 current ControlSet head/QC；旧
+recovery policy 随后签 exact `RecoveryPolicyTransitionBodyV1`。body 不内嵌 QC/signature 数组，
+只绑定 exact immutable `intent_qc_hash`、intent/head、old/new recovery 三元组、保持不变的
+ControlSet、最后 certified head、PoP root 和 ceremony。交付包另带与该 hash 逐字节相同的 intent
+QC。D109/D110 中未展开的 `RecoveryPolicyTransitionV1` 从此精确解释为该 signature-free body 与
+分离的 threshold proof，不能另造 schema。
+
+`RecoveryPolicyTransitionProofV1` 包含 body、按 D110 导出的 statement hash 和排序去重的旧 policy
+threshold signatures；proof 使用 `loom-recovery-policy-transition-proof-v1` domain 取 hash，
+不包含 Activation/head/QC。Activation 必须是 body 所指最后 certified head 的直接下一 head，
+保持同一 ControlSet、将 control epoch 重置为 0，并由该集合 durable commit、apply/recompute 后
+取得 QC。若 threshold 完成后有任何中间 commit，整个 body 必须改绑新 last head 并重新签名。
+
+客户端只有依次验证 intent head/QC、连续旧 lineage、旧 policy threshold proof、Activation 的
+直接 parent 与 post-commit QC 后，才原子提高 recovery 三元组 floor；只有 Intent 或 threshold
+transition 时继续 LKG。此决定取代 D109 中可能被理解成“验证公开 transition 即抬 floor”的简写。
+
+### D114 · Invite token 与交付上下文使用两个无环 exact commitment
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D105、D108、D113、
+[分布式控制平面 §11.1](distributed-control-plane.md#111-邀请-v2)
+
+邀请 token 固定为 32-byte CSPRNG 值，wire 使用无 padding base64url。日志记录的
+`token_commitment` 对 exact
+`InviteTokenCommitmentInputV2{schema,cluster_id,invite_id,token}` 使用
+`loom-invite-token-commitment-v2` framing + JCS 取 hash；token 明文只存在于提交前固定的 sealed
+artifact 与 certified 后的一次性交付载体。
+
+`InviteDeliveryContextV2` 只含 cluster/invite、bootstrap/recovery/control checkpoint、创建 intent 的
+`base_head_hash` 和排序去重的有界 `role=enroll` seed 对象。它明确不含 token、certified record、
+record head/QC、`delivery_context_hash` 自身或 renderer 声称的 `min_head_hash`；其 commitment 使用
+`loom-invite-delivery-context-v2` framing + JCS。因而记录可以安全承诺 context，而包含该记录的
+head 不会被 context 反向引用。
+
+交付 envelope 携带 record、其实际 certified head/QC、原 context、token 与连续 checkpoint/proof。
+客户端重算两个 commitment，验证 record inclusion、head/QC 和连续链后，才向 envelope 内有界
+`role=enroll` seed 发送 token；管理端创建设备另走经认证的 `role=control_api`。二维码、加入文件和
+`loom://` 只是同一 envelope bytes 的不同本地载体，不得由 renderer 临时改 seed、pin 或 checkpoint。
+
+### D115 · QR 只携带有界 descriptor，完整证明按 hash 分离
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D105、D108、D114、
+[分布式控制平面 §11.1](distributed-control-plane.md#111-邀请-v2)
+
+D114 最后一段把 QR、加入文件与完整证明称为同一 envelope bytes，会让 head/QC/transition 把二维码
+撑到不可扫描，也无法同时满足 token 不出现在 proof GET。首版改为两层：QR 与 `loom://` 只携带
+不超过 1800 ASCII bytes 的 `InviteBootstrapDescriptorV2`；它含 token、双 commitment、过期时间、
+checkpoint/base-head commitment、最多三个 exact enroll seeds 与无 token `InviteProofBundleV2` hash。
+`.loom-invite` 才可把相同 descriptor 与完整无 token proof bundle 放进
+`InviteOfflinePackageV2`。本决定明确取代 D114 关于“三种载体同一 envelope bytes”的表述，D114
+的 token/context 无环 commitment 继续有效。
+
+seed 数组按 endpoint ID canonical 排序；Web 观测提示仅写入唯一 `hint_rank`，不能改变数组顺序。
+每个 seed 必须逐字段投影自 base head 下 certified enroll listener，并绑定 PublicEndpointIntent、
+listener generation/phase hash、URL/dial target、TLS identity 与 pins。客户端先无 token 下载并按
+descriptor hash 验完整 proof，全部通过后才向同一有界 seed POST token。
+
+### D116 · 新 recovery policy 与 ControlSet 的每把用途 key 都必须有 PoP
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D109、D111～D115、
+[分布式控制平面 §9](distributed-control-plane.md#9-controlset-成员变化)
+
+ControlSet 的多数 membership/config 签名不能证明所有 member 的 enrollment key 可用，也不能证明
+未进多数的其他 key 有持有人。首版对每个新 ControlSet 强制携带按 member/purpose 排序的
+`ControlKeyPossessionProofV1`，恰好覆盖每个 member 的 membership、config、enrollment 三把 key；
+proof 绑定完整 target set hash 并使用独立 domain。正常 joint transition 把 proofs 放入 membership
+approval proof；bootstrap 与 emergency recovery 由旧 authority 签名对象承诺其 RFC 6962 root。
+
+同理，bootstrap、计划 policy 轮换与 emergency recovery 都必须携带与新
+`RecoveryPolicyV1.keys[]` 一一对应的 `RecoveryKeyPossessionProofV1`。Emergency threshold-signed
+body 和 Genesis payload 同时绑定 new recovery PoP root 与 new ControlSet PoP root。缺失、重复、
+额外或 public key 不等均在切换 floor 前拒绝，不能把集群恢复到无人持有下一次恢复 key 的状态。
+
+### D117 · Endpoint provenance 不得反向引用生成它的 head 或 operation hash
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D107、D115、D116、
+[分布式控制平面 §13～§14](distributed-control-plane.md#13-endpointset-与公网端口模型)
+
+若 EndpointSet 写入当前 head hash，或 listener spec 写入包含该 spec 的 phase hash，会形成无法构造
+的内容哈希环。首版 `EndpointSetSourceV1` 与 `ListenerIntroductionV1` 只使用 pre-generated
+operation ID 加 parent head（EndpointSet 另带目标 revision）；bootstrap/emergency Genesis 使用不含
+自身 hash 的 recovery epoch variant。listener `rotation_operation_hash` 精确指 phase payload hash，
+outer `ControlOperationV1` 则以 `kind/payload_schema/payload_hash` 显式承载该 payload；两者不可混称。
+
+从未发布过的 logical endpoint 在 allocated/preparing/advertised 阶段只存在控制 view，首次
+`advertised→preferred` 与插入 EndpointSet 在一个 certified candidate 中原子发生。因此客户端从不
+看见零 preferred，也无需伪造旧 listener。每个 phase 的 `evidence_root` 按 exact evidence leaf、
+签名对象、RFC 6962 排序规则及 phase-specific predicate 验证；opaque 健康摘要、sender 自报分母或
+本地默认门槛不能推进状态。
+
+### D118 · Joint commit 后冻结普通提交，Final 必须紧接 Joint
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D102、D112、
+[分布式控制平面 §9.1](distributed-control-plane.md#91-加入)
+
+D112 同时要求 Final 紧接 Joint，又允许 Joint 状态下插入普通 entry，二者不能同时实现。首版选择
+短暂冻结：Joint durable commit 后进入 `joint_finalization_only(transition_id)`，选举仍要求 old/new
+双多数，但日志只允许匹配的 Final 作为下一 entry。普通 proposal 留在 CRDT/pending 层，Final
+certified 后基于新 head 重做 CAS。崩溃恢复也只能继续该 Finalization，不能回到 old-only 或在中间
+夹入普通配置。本决定取代 D112 中“Joint 后每个普通 entry 可继续提交”的表述。
+
+### D119 · 首版 recovery epoch 逐次增加，不允许跳号
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D106、D109、D110、D113、
+[分布式控制平面 §9.3～§9.4](distributed-control-plane.md#93-丢失-quorum)
+
+Emergency recovery 与 planned policy rotation 在首版都要求
+`new_recovery_epoch == previous_recovery_epoch + 1`。这使长期离线 reader 与邀请
+`authority_transitions[]` 使用同一连续性规则，不会出现 §9.3 接受跳号而扫码链拒绝的两套语义。
+同一 previous statement 产生两个不同 transition 仍是 fork，不能靠选择更大 epoch 解决。本决定把
+D106 中“严格增加”的宽松表述收紧为精确加一。
+
+### D120 · 公网 listener 与端口轮换必须是 exact certified state machine
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D104、D107、D117、
+[分布式控制平面 §13～§14](distributed-control-plane.md#13-endpointset-与公网端口模型)
+
+公网 listener 的授权链固定为 certified LogicalEndpointIntent →
+PublicEndpointIntent → PortRotationPolicy → evidence policy/PortPool/typed scope；每一层都使用
+domain-separated hash、exact tagged union 和逐字节 ref equality。owner、provisioning、automatic 与
+emergency scope 不得互换，现有 admin ACL 始终是上界。首次 listener 使用独立
+`initial_provision` proof，只对从未存在的 generation 1 生效；已发布 endpoint 的轮换才必须
+匹配 manual/periodic/degraded policy trigger，不能要求未存在的旧 listener 提供 lifetime 或失败证据。
+
+listener immutable spec 必须绑定 deterministic render contract、resolved logical/public intent、
+exact-version credential/resource refs 以及 firewall/mapping requirement。owner ready receipt 的 config hash 必须等于
+voter 从相同 render input 重算的 hash。external/transport/failure evidence 的 source/fault domain
+必须等于签名 key 在 evidence policy 中的 exact vantage ref；传输窗口交付可重算的原始
+attempt samples，reader 分母、时效、去重、P95 和连续窗口均使用固定整数公式。
+
+reducer 以 phase parent 中的 `ListenerLifecycleStateV1` 作唯一 from-state，并保留
+retired/abandoned tombstone。活动端口为 `in_use`，正常/暂态退出进入有确定
+`reuse_not_before` 的 `quarantined`，端口冲突、管理封禁或滥用进入首版永久
+`blocked`（升级协议前无解封 edge）。minimum lifetime、overlap、offline compatibility、cooldown、quiet window 和 quarantine
+各自绑定规范中指定的 certified phase/head time，proposal 不得自报更晚 anchor。本决定
+把 D117 中未展开的 evidence/state-machine 要求收紧为可由 Go/Kotlin/Windows 从同一
+candidate bytes 重算的唯一 contract。
+
+### D121 · v1→v2 bootstrap 分离 body/proof 摘要 domain
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D106、D110、D111、
+[分布式控制平面 §10.3](distributed-control-plane.md#103-v1--v2-不可逆-latch)
+
+D111 把 transition body 与带签名 proof 简写为同一摘要 domain，会使 wire 有两种解释。
+首版固定四个逐层摘要：`InitialV2HeadPayloadV1` 使用
+`loom-initial-v2-head-payload-v1`；无签名 `BootstrapTransitionBodyV1ToV2` 使用
+`loom-bootstrap-transition-body-v1-to-v2`；包含 body、body hash 和 v1 signature 的
+`BootstrapTransitionProofV1ToV2` 使用 `loom-bootstrap-transition-proof-v1-to-v2`；最终
+`HeadEntryV2` 使用通用 `loom-control-head-v2`。v1 signature 另使用
+`loom-bootstrap-transition-signature-v1-to-v2` 覆盖 exact body，不是第五个 object identity。
+每层只指向前层 hash，proof/head 不反写 body，QC 不进入 head hash。本决定取代
+D111 的“三种摘要”与 `loom-bootstrap-transition-v1-to-v2` 简写，其单向 DAG 结论保持不变。
+
+### D122 · 公网 TLS 稳定身份与例行签发分离
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D107、D117、D120、
+[分布式控制平面 §12～§13](distributed-control-plane.md#12-域名与公开证书管理)
+
+D107 的 listener `certificate_intent_hash?` 字段同时可被理解为可变签发对象或稳定
+SPKI identity，无法唯一决定续证是否换 EndpointSet generation。首版将
+`CertificateIdentityProjectionV1` 及其 domain-separated hash 作为入口权威，它绑定
+intent ID/identity generation、endpoint/DNS names、issuer profile、key owner、exact key artifact
+与 SPKI。`CertificateIntentV1` 内嵌并重算该 projection，另携 CSR、renew policy 和
+issuance generation；只改后三者不改入口身份。
+
+PublicEndpointIntent 使用按 hash bytes 排序的 1..2 个 projection hashes；两个值只用于
+old/new key overlap。每个 listener 和 SPKI pin 绑定其中一个 exact projection，EndpointSet pins
+恰好覆盖全数组。换 key 必须先扩为 old+new，再切 listener，最后等无 published
+listener、有效 invite 或 offline view 引用 old 后才收缩为 new。本决定取代 D107
+projection 中的 `certificate_intent_hash?`；D107 其他公网暴露与 transport pin 结论保持。
+
+### D123 · invite 固定 exact Device enrollment intent，claim 不得扩权
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D105、D108、D115、
+[分布式控制平面 §11](distributed-control-plane.md#11-enrollment邀请与报告)
+
+`CertifiedInviteRecordV2.device_intent_hash` 精确指向
+`DeviceEnrollmentIntentV1`，它在创建时固定 cluster/invite/Device ID、platform、目标
+Membership、排序 Responsibilities、排序 service/egress grants 和 exact direction union。无 token
+proof bundle 携带该 exact bytes，客户端和 voter 都从 record 重算；不依赖创建节点的
+本地 Device 表。`EnrollmentApprovalIntentV1` 必须绑定同一 Device intent hash、四个
+projection hash 与 exact claim facts，其客户端自报 platform 必须相等；CSR/SPKI 可在 claim
+时填入，职责、grants 和 direction 不可替换。
+
+claim certified 后的 `retry_not_after` 唯一等于 claim head logical time + 3600 seconds，并由
+Enrollment approval attestation/QC 绑定。只有 token、CSR、request ID 和 exact facts 全部
+相同，且接收节点的最新 certified logical time 与可信 wall clock 都未越过该 deadline
+时，才返回同一 immutable receipt/artifacts。窗口后 token 不再是 recovery credential；客户端
+完成 receipt/identity 持久化后立即清除 token。
+
+### D124 · 公开 ControlSet 与私有 peer directory 分离；Final payload 不再套空 wrapper
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D112、D118、
+[分布式控制平面 §9.1](distributed-control-plane.md#91-加入)
+
+D112 把 member ID 固定为 Device ID，并把 peer URL/SPKI/fault domain 放入公开 ControlSet，会让
+transition、邀请 proof 和镜像暴露控制拓扑。首版改为 public-safe `ControlMemberV1`：128-bit
+CSPRNG opaque member ID 与三把用途隔离公钥；Device 映射、peer identity/URL 与 fault domain 移入
+private `ControlPeerDirectoryV1`。目录每代带 32-byte hiding nonce，公开 head/transition 只承诺其
+domain-separated hash，避免低熵字段字典攻击。control voter 必须私下取得 preimage 并验证与 set
+一一对应；普通客户端不取得它。本决定取代 D112 对 member 精确字段的旧定义。
+
+Final transition 的唯一形状是 `ControlSetTransitionProofV1.final_payload: HeadEntryPayloadV2`，其
+`head_kind=control_set_final` 且 context 为 exact `FinalControlSetContextV1`；不存在再包一层
+`FinalControlSetHeadPayloadV1{payload:...}` 的 wire object。D112 DAG 中该名称从此解释为上述受限
+`HeadEntryPayloadV2`，避免 JCS 多一层导致 proof hash 分叉。
+
+### D125 · secret、DNS 地址与公开证书均使用 exact versioned dependency chain
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D120、D122、
+[分布式控制平面 §6.2、§12～§13](distributed-control-plane.md#62-权威-secret-artifact)
+
+`SecretArtifactRefV2` 固定 backend tagged union、purpose profile、PoP、availability policy、签名
+receipt 与 RFC 6962 root；所有 listener/render/seed 以
+`loom-secret-artifact-ref-v2` 的 exact hash 指向完整 immutable ref，不得只带一个 generation 或
+解析 mutable latest。
+
+ManagedZone、DomainBinding、一次性 AddressChallenge、AddressClaim、rotation policy/evidence 与
+DNS phase/reducer 均成为带 schema/generation/domain hash 的 exact object。managed-domain ref 必须
+绑定 zone 与 binding hash；listener dial target/address families 必须逐字段投影该 union。地址切换
+固定 prepare/overlap/atomic prefer/drain/retire，并以实际 TTL、传播/cache/offline/invite 门槛决定
+退役。六种公开 role 的 hostname、certificate projection 与 key artifact 严格隔离；projection
+新增 role，禁止跨 role 共用。本决定收紧 D120/D122 未闭合的 dependency contract。
+
+### D126 · invite 重新签发是原子生命周期事务，活动 seed 会阻止过早退役
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D115、D123、
+[分布式控制平面 §11、§14](distributed-control-plane.md#11-enrollment邀请与报告)
+
+invite 状态只由 certified reducer 产生：`available → consumed | revoked`，终态不复活。首次创建与
+重新签发使用不同 exact operation；reissue 必须在一个 head 中 CAS 旧 available state、撤销旧
+record/token 并创建全新 invite ID/token/artifact/context，同时保持 Device intent 除 invite ID 外
+完全相同。新 token 只在该 head/QC certified 后一次性交付，并发 claim/revoke/reissue 只有一个
+成功。consumed invite 不可重签，失败 claim 只在既定 exact retry window 恢复。
+
+listener 或 DNS address 的 retire 必须枚举仍 available、未过期的 certified invite context。若待
+退役 generation 被 seed 引用，只有同一 context 中另一个仍可拨、身份/pin 至少覆盖 invite expiry
+的 seed 才允许退役；单 seed invite 必须等作废/过期，若已消费还要等 receipt retry window 结束。
+Device ack 和当前排名不能代替此门槛。
+
+### D127 · 活动 listener rotation 冻结依赖，变更必须等待、取消或显式安全撤出
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D120、D125、
+[分布式控制平面 §13～§14](distributed-control-plane.md#13-endpointset-与公网端口模型)
+
+rotation allocate 时解析出的 logical/public/address/certificate/credential/policy/pool/resource hashes
+全程冻结，历史 bytes 保留重算；scheduler 不读取同 ID 的 latest。会改变活动依赖的普通更新必须
+等待 lineage terminal，或在 target 尚未 preferred 且旧 preferred 仍存时，用同 head exact
+`cancel_port_rotation` 把 target 写成 abandoned 后再生效。
+
+credential/certificate/public-intent 安全撤权不能被“等待轮换完成”延迟：带 admin ACL/emergency
+scope 的 `withdraw_endpoint` 在一个 certified candidate 中移除全部 Device EndpointSet 授权并写
+blocked/abandoned tombstone。它明确允许中断，UI 不得宣传为无中断；无撤权依据的普通 cancel
+不能在 target preferred 后跳过 drain/retire。
+
+### D128 · Enrollment 保留 direct_only；两类 recovery 的 ControlSet 承诺不同
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D113、D119、D123、
+[分布式控制平面 §9.4、§11](distributed-control-plane.md#94-recovery-policy-的计划轮换)
+
+`EnrollmentDirectionV1.server_direction.value` 精确允许
+`bidirectional | reverse_only | direct_only`，三者只用于含 `forward` 的 Linux Device；Windows、
+Android 与非-forward intent 必须是 `not_applicable`。这与主设计 §2.2 的方向矩阵一致。
+
+Emergency recovery 在新 Genesis 绑定完整新 ControlSet、matching private peer-directory hash 与
+key PoP；planned recovery policy rotation 则保持当前已信 ControlSet/directory hash，由同一稳定
+集合对 Activation 取得 QC。两者都把新 lineage 的 control epoch 重置为 0，但 planned 路径不
+虚构新 set 或 PoP。本决定消除“所有 recovery 都换完整 ControlSet”的旧概括。
+
+### D129 · Enrollment claim 使用 token-authorized operation，不借用 admin envelope
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D108、D123、D126、
+[分布式控制平面 §11.2](distributed-control-plane.md#112-claim)
+
+扫码 Device 没有 admin cert，`claim_invite` 不得伪装成要求 admin ACL 的
+`ControlOperationV1`。首版由 CSR key 签 exact `EnrollmentClaimRequestV1`；当前 stable ControlSet
+的 enrollment voter 通过私有 peer RPC 暂时验证 bearer token preimage，形成多数
+`StableInviteTokenValidationProofV1`。专用 `EnrollmentClaimOperationV1` 同时绑定 request、proof、
+claim intent 与 parent authority，随后仍须 Raft CAS commit/apply 和 config QC；token proof 本身不
+消费 token，并发 winner 只由 certified lifecycle transition 决定。token bytes 不持久化或进入日志。
+
+Enrollment receipt 必须携带按 purpose/secret/generation 排序的 exact `SecretArtifactRefV2`，从中
+重算 leaf 和 RFC 6962 `secret_artifact_refs_root`，再与 intent、approval attestation/QC 比较；opaque
+root 不能替代 refs/availability/PoP 验证。所有 ordinary head 全局继承 parent 的 recovery/control/
+directory/transition authority，只有 exact transition head 能改变这些字段。
+
+### D130 · Enrollment 采用 reservation→issuance→approval→completion 原子流程
+
+**日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D102、D123、D126、D129、
+[分布式控制平面 §11](distributed-control-plane.md#11-enrollment邀请与报告)
+
+claim head 只把 invite 从 `available` 变为 `claim_reserved`，并建立有界 retry transaction；它不激活
+Membership、Device view 或 secret。CA 对该 certified reservation 产生内容寻址 issuance 结果，随后
+历史 claim head 的 stable enrollment quorum 签 approval；最后一个普通 completion head/QC 原子完成
+`claim_reserved→consumed`、激活 Membership/view，并授权释放已绑定 artifact。失败、超时、authority
+变化或 profile 失效走 certified abort，写入 tombstone 后才能用新 invite/request 重试，不留下半激活
+Device。本段取代 D102 的“approval 后才允许 CA 签证”顺序，以及 D126 的二态 invite reducer。
+
+幂等 identity 是 token 加 exact `EnrollmentClaimRequestBodyV1`，其中包含 CSR/identity、facts 与完整
+wrapping-key descriptor；同 body 的 detached ECDSA/PoP 签名可以重签，任一 body 字段变化都是冲突。
+Android API 31+ 使用不可导出 P-256 ECDH wrapping key，API 26–30 使用 intent 明确允许的独立
+RSA-2048 OAEP fallback；identity key 不能兼任 wrapping key。公开 invite 只含 token commitment 与
+private-binding hash，完整 secret ref、recipient 和 availability receipt 留在 control-private binding。
+本段取代 D123 的旧 retry tuple、D126 的“除 invite ID 外完全相同”限制，以及 D129 把 detached token
+proof 写成 claim operation 内嵌字段的表述；完整 exact wire 以目标文档当前 §6.2/§11 为准。

@@ -4,64 +4,43 @@
 > **范围：** Device 统一、Enrollment、授权边界、版本化对象图、设备配置交付。  
 > **当前事实：** 以 [当前状态](status/current.md) 为准；平台客户端细节见
 > [客户端接入设计](client-access.md)，局域网转发仍是独立的
-> [Local Network 专题](local-network.md)。
+> [Local Network 专题](local-network.md)。动态 ControlSet、CRDT/QC、域名/证书和入口轮换
+> 见[分布式控制平面设计](distributed-control-plane.md)。
 >
 > 本文的 **Enrollment** 只指内部的一次性身份 claim 协议。产品界面统一使用
-> **Create Device / 加入网络**：中控先创建 Device；纯接入客户端可导入二维码，Linux
+> **Create Device / 加入网络**：管理员只向已信 certified
+> `EndpointSet(role=control_api)` 内经精确 transport 校验的入口提交，并用 admin cert
+> 认证；只有经 Raft commit、
+> apply/recompute 和 quorum attestation 成为 certified 后才创建可交付的
+> Device；纯接入客户端可导入二维码，Linux
 > 也可通过本地或 SSH 会话执行 shell bootstrap。消费加入输入不会再创建或“注册”第二个 Device。
+> claim 不使用 `control_api`；尚无 Device 身份的客户端只能在本次邀请
+> 交付包直接携带的有界 `EndpointSet(role=enroll)` seeds 中故障切换。
 
-### 2026-09-01 E1 实施状态（已完成）
+### E1 历史基线（仅用于解释迁移起点）
 
-本轮已经完成并通过仓库测试的部分：统一 `/devices` 读模型与详情、规范
-`/api/control/devices`、删除旧 `/nodes/add` SSH 入口、收口旧 `/clients` 别名、四分授权展示、加入码固定
-平台、职责和 Destination grants、公开通用 Linux 包/校验附件/
-安装脚本，以及首次 pull 对每个配置 URL 记录精确发布证据并 fail closed。公开地址只读
-部署配置，代码不含部署域名。
+E1 迁移基线包括统一 `/devices` 读模型、四分授权、一次性加入、公开通用包、逐 URL 发布
+证据、fail-closed 首次 pull 和 access-only Device 回收。这些是 v2 要兼容的协议起点，不是
+本文维护的运行状态。现网数量、版本、验收结果和部署细节只写入
+[当前状态](status/current.md)；提交记录由 Git 保留，不在架构文档复制容易过期的摘要。
 
-统一读模型与公开分发边界最初以提交 `01a16dd172fd` 发布；服务器职责 Enrollment 的
-后续实现已于同日以提交 `37f86a3977d2` 发布。E1 的最终回收与 access-only 修复以提交
-`0c29455218c3` 发布。六台现有 Device 已运行同一 Device 版本，并由 signed release
-持续收敛；两个配置镜像对同一 SSOT/snapshot 的逐 URL 验证均成功。
-公开 HTTPS 前门的安装脚本、checksum、
-detached signature、平台公钥和 allowlist 的 404/拒绝写边界均已实测；Linux 包 SHA256
-为 `7a89edb59023c3eeb8bc685a26d56849c31c470548319ea33bdf82969473dab8`。部署域名和路径
-属于本次部署配置，不是产品默认值。
-
-E1 的服务器职责现在也走同一 Enrollment：管理员创建时直接固定 Linux 平台、职责和连接方向；Linux Device
-从严格的 `/etc/loom/device.yaml` 读取公网 endpoint、UDP inbound 与 direction，在本机
-创建/复用 WireGuard 私钥且只提交公钥。中控以同一个事务生成 server/access 角色、方向
-矩阵隧道、固定出口策略与全量自动池增量，先生成和预置秘密，最后才提交 SSOT。自动池
-扩大导致原探测预算无法满足 `min_samples` 时，规划器只增加维持既有窗口所需的最小预算。
-配置应用后的公网入站仍复用已有签名拓扑观测，不另造一次“拨入验证”。服务器缺少
-wireguard-tools 时，在 invitation claim 前使用已有受限包管理器流程安装并复检。
-
-access-only Device 已具备完整回收：先通过 signed SSOT 明确 decommission，目标机停止并
-禁用 Agent、Report、sing-box 与 pull timer、落下 marker 后，才允许从期望态移除并 revoke
-identity；全网收敛后可按 Device ID 精确清 master/node secrets，并永久清理 revoked registry
-记录。未使用加入码仍使用更窄的 `discard-pending`，只允许删除没有公钥、没有 consumed
-join code、从未进入 claim 的 identity reservation。
-
-真实 Docker systemd canary `d-89e16d6daa` 已完成公开 HTTPS 下载与 checksum、一次性加入码
-claim、P-256 identity、SSOT 提交、generation 66/67 signed pull、首次 apply、3 个自动选择器
-运行和 `/status` 可信 200/verified。canary 随后消费 generation 69 的 signed decommission，
-验证 marker、`applied` 移除及四类 unit inactive/disabled，再从 SSOT、九项 master secret、
-六份 node secret layer、registry 与容器中完整清除；registry 最终恢复为 6 个正式 Device、
-0 个加入码。过程中实际发现并修复了三条既有边界：OpenSSL `EC PARAMETERS + EC PRIVATE KEY`
-CA 文件、无隧道 Device 不应执行 `wg show`、无 WG unit 的下线发现不能把 systemd 的
-“无匹配”当成查询失败。旧 SSH Add node 入口及对应实现现已删除。
-
-六台既有 Device 的统一 identity registry 迁移不重新 Enrollment，也不根据名称、hostname
-或 IP 猜身份：导入命令要求 Device 当前存在于 SSOT，证书链通过 Loom CA，CN 与唯一 SAN
-都精确等于 `<device_id>.node.internal`，且公钥为 ECDSA P-256。迁移后 UI 将其来源显示为
-`Verified existing certificate`；这描述身份来源，不是软件版本或“未升级”状态。
+既有 Device 的 identity registry 迁移不重新 Enrollment，也不根据名称、hostname 或 IP
+猜身份：导入命令要求 Device 已存在于当前期望态，证书链通过 Loom CA，CN 与唯一 SAN 都
+精确等于 `<device_id>.node.internal`，且公钥为 ECDSA P-256。UI 中
+`Verified existing certificate` 只描述身份来源，不表示软件版本或运行状态。
 
 ## 1. 收敛结论
 
 产品模型只保留一种受管实体：**Device**。服务器、桌面和手机的差别是平台事实与
 承担的职责，不再是 `Node` / `Client` 两套生命周期。
 
-所有新 Device 使用同一条 **Enrollment** 内部协议：管理员先在中控创建 Device 和
-一次性加入码，客户端安装并启动通用包后导入加入输入，再自行生成身份并 claim 这个
+所有新 Device 使用同一条 **Enrollment** 内部协议：创建端先用 CSPRNG 生成一次性 token，
+把它封装为 exact-version secret artifact；管理员从已信 certified
+`EndpointSet(role=control_api)` 选择并校验入口、使用 admin cert 认证，再提交只含 token commitment
+与 private artifact-binding hash 的 public Device/invite intent；
+完整 exact ref 只在 matching control-private binding 中。该 intent 经 Raft commit、apply/recompute 和 quorum attestation 成为
+certified 后，获授权 renderer 才可解封同一 token 并一次性输出加入码。客户端安装并启动通用包后导入加入输入，
+再自行生成身份并 claim 这个
 既有 Device。纯 `use_loom` Device 可用二维码、内部兼容 `loom://enroll` URI 或加入文件；
 包含 `forward` 的 Linux Device 只通过本地/SSH 会话执行 shell bootstrap，并从标准输入
 消费同一 URI。服务器安装命令只获取通用包，本身不携带加入码。
@@ -70,30 +49,40 @@ CA 文件、无隧道 Device 不应执行 `wg show`、无 WG unit 的下线发�
 
 1. **Identity**：这是谁，持有什么设备密钥；
 2. **Membership**：它是否属于当前 Loom；
-3. **Responsibilities**：它为 Loom 承担什么，例如在本机使用 Loom、转发、作为公网出口或中控；
+3. **Responsibilities**：它承担哪些普通数据面职责，例如在本机使用 Loom、转发或作为公网出口；
 4. **Destination grants**：它获准通过 Loom 访问哪些 Service、出口或后续 Local Network。
 
-版本采用两个轴：全局 **Control revision** 记录一次不可变期望对象图；独立
+`control` 是 Device 的正交 capability，但不是普通、可由邀请或常规 SSOT operation 写入的
+Responsibility。Raft 内部成员与 quorum 立即服从配置日志中最新 durable committed 的
+JointControlSet/`FinalControlSet`；Final 即使尚无 post-commit QC 也已约束内部协议。只有它
+apply/recompute 并取得 old/new replication QC 后，才产生对外可发布的 certified authority；映射到
+具体 Device 的只读 `control` 投影还必须使用同一 head 绑定、hash 匹配的 private
+`ControlPeerDirectory`。公开 ControlSet 不暴露 Device/peer URL/fault-domain 映射。
+`committed_not_certified` membership 不能授权客户端或外部副作用。
+
+信任与配置先按最高级 **Recovery epoch/statement/policy hash** 区分不可逆 lineage，再采用三个相互约束
+的轴：**Control epoch** 标识成员/控制 key 集合；epoch 内全局 **Control revision** 记录一次不可变期望对象图；独立
 **Device generation** 只在该 Device 的有效配置变化时递增。加入一个 Device 不应
-使所有既有 Device 的 generation 一起变化。
+使所有既有 Device 的 generation 一起变化；v1→v2 另有一次性不可逆 protocol latch。
 
-## 2. 已确认决策及实施归属
+## 2. 已确认决策及迁移归属
 
-| 决策 | 本次 Device / Enrollment 修改 | 后续工作 |
+| 决策 | v1 迁移基线 | v2 目标工作 |
 |---|---|---|
 | 统一 Device | 建立统一 ID、库存读模型与 `/devices` 添加入口；删除 `/nodes/add` 产品入口 | 删除剩余旧 `/clients` 命名与兼容存储 |
-| 统一 Enrollment | 中控 Create Device 和加入码 → 客户端启动并消费加入输入 → 本机密钥 → claim 既有 Device；Linux 可本地或经 SSH 会话运行同一 bootstrap | 无第二套 SSH 加入协议 |
-| 四分授权模型 | API、Review 和 UI 分开显示 Identity / Membership / Responsibilities / Destination grants | 复杂授权治理另议，不引入 ABAC 或动态组 |
+| 统一 Enrollment | 指定 v1 compatibility control 先创建既有 Device 与一次性 invite，单 registry/endpoint 完成 claim；Linux 可在本地或 SSH 会话运行同一 bootstrap，不另建 SSH 加入协议 | Create Device 只由已信 certified `EndpointSet(role=control_api)` 入口在 admin cert 认证后接收；claim 只由本 descriptor 有界 `EndpointSet(role=enroll)` seeds 接收；Raft commit、apply/recompute 和 quorum attestation 分别形成 certified invite/claim |
+| 四分授权模型 | API、Review 和 UI 分开显示 Identity / Membership / Responsibilities / Destination grants | `control` authority 由 FinalControlSet、Device 投影由 matching private peer directory 联合导出；复杂授权治理另议，不引入 ABAC 或动态组 |
 | “Access”文案 | 改为“在此设备上使用 Loom”，明确只表示本机流量可交给 Loom | 无 |
 | 直接固定加入意图 | 创建时直接选择平台、职责、grants 和必要的连接方向；不引入 Device 类型或 Profile 层 | 已加入 Device 的职责变更另走显式配置变更，不复用加入码 |
 | 公开通用包 | GitHub 或实际部署配置中的国内/公网镜像只放通用包、签名和校验材料 | 具体镜像供应商、域名和同步运维按部署决定 |
-| HTTPS 前门与 Device mTLS | 本次只区分公开包地址和设备配置地址，不宣称尚不存在的 mTLS | 与证书轮换、吊销一起实施独立的私有 Device Distribution |
-| 最小 per-device signed view | 本次固定渲染契约和禁止暴露项，不把现有 bundle 冒充最小视图 | 改造签名、pull、缓存与旧快照迁移 |
-| Control revision / Device generation | 本次固定语义和对象关系，不复用现有同名但语义不同的版本号 | 随 per-device view 一起切换协议和 anti-rollback floor |
-| 依赖增量发布 | 渲染契约必须返回依赖集合；当前仍可全量计算 | 后续 publisher 只发布 view digest 真正变化的 Device，并做千台压测 |
+| HTTPS 前门与 Device mTLS | v1 只区分公开包地址和设备配置地址，不把传输信任冒充配置 authority | v2 按 role 拆 EndpointSet，并与证书轮换、吊销一起实施 |
+| 最小 per-device signed view | 固定渲染契约和禁止暴露项，不把现有 bundle 冒充最小视图 | ControlSet QC、per-device view、pull/cache 与旧快照迁移 |
+| 版本坐标 | 保持 raw SSOT revision、snapshot ID 与全局 signed release generation 的既有含义，禁止改名冒充目标字段 | 引入独立 Recovery lineage、Control epoch/revision、per-Device generation、四组 durable floor 与不可逆 v2 latch |
+| 域名与 listener | 公开地址继续来自部署配置 | 托管 zone/ACME；Hysteria2/Trojan 用多 generation listener 做计划内无中断轮换，WireGuard 未完成双 interface/peer profile 前只允许 disruptive maintenance |
+| 依赖增量发布 | 正确性允许先对全部 Device 重算 | publisher 只发布 view digest 真正变化的 Device，并做千台压测 |
 | 不引入 route broker | 本次即作为 API/UI 负向约束 | 只有出现实测规模或隐私瓶颈才重新评估 |
 
-这里的“后续工作”不是推翻已确认方向。per-device view、双版本轴和增量发布必须作为
+这里的“v2 目标工作”不是推翻已确认方向。per-device view、多层版本坐标和增量发布必须作为
 一个有迁移与回滚的协议改造实施，不能夹进 Create Device / 加入网络页面或 URL 筛选中零散上线。
 
 ## 3. 单一 Device 模型
@@ -104,14 +93,16 @@ CA 文件、无隧道 Device 不应执行 `wg show`、无 WG unit 的下线发�
 ```text
 Device
 ├── Identity              稳定 ID、公钥/证书、创建与吊销状态
-├── Membership            是否进入某个 Control revision
-├── Responsibilities      use_loom / forward / internet_egress / control / ...
+├── Membership            是否进入某个 certified Control head
+├── Responsibilities      use_loom / forward / internet_egress / ...
 ├── Destination grants    获准使用的 Service、出口、后续 Local Network
-├── Desired view          control_revision + device_generation + digest
+├── Control projection?   certified FinalControlSet authority + matching private peer directory 的只读投影
+├── Desired view          recovery/control 坐标 + device_generation + leaf/proof + QC
+├── EndpointSet           control_api/enroll/device_config/device_report/distribution/data_ingress 的已签入口
 └── Runtime evidence      applied / online / stale；带时间，不写回期望态
 ```
 
-当前 `clientregistry.Client` 与 `model.Node` 是两张表按相同 ID 拼出的过渡状态。迁移期
+v1 的 `clientregistry.Client` 与 `model.Node` 是两张表按相同 ID 拼出的迁移形状。迁移期
 可以保留底层适配器，但 API、UI 和新代码只能暴露 Device。SSOT 中尚无 registry identity
 的机器显示为 `Identity not indexed`；既有节点只能用受信 CA 证书的精确 Device SAN 导入，
 不能根据名称、hostname 或 IP 猜身份。`identity_source` 只区分二维码加入与受信的
@@ -124,64 +115,85 @@ Device
 ### 4.1 一条协议，多种载体
 
 ```text
-管理员在中控创建 Device 和加入码
-  → access-only 可显示 QR；Linux 可用本地或 SSH 会话执行同一 bootstrap
-  → 内部兼容 loom://enroll URI / .loom-invite 携带同一加入码
+创建端一次性生成 token、封装 control-private exact-version artifact binding
+  → 管理员经已信 certified EndpointSet(role=control_api) 入口的精确 transport + admin cert 提交 Create Device intent
+  → validate 后写入 Raft durable log，apply 后取得 quorum attestation QC
+  → certified 后 renderer 才解封同一 token；access-only 一次性显示有界 descriptor QR，Linux 可用本地或 SSH 会话执行同一 bootstrap
+  → QR / loom:// URI 携带 token、commitment、checkpoint、最多 3 个带 pin seed 与 proof-bundle hash；.loom-invite 可内嵌完整无 token proof bundle
 客户端安装并启动通用包
   → 导入上述加入输入
   → 本机检测平台与架构，并与邀请固定的平台比较
-  → 本机生成不可导出的设备密钥和 CSR
-  → 内部 claim 加入码并绑定这个既有 Device
-  → 建立 Identity
-  → 原子提交邀请已经固定的 Membership / Responsibilities / grants / direction
-  → 发布该 Device 的有效期望态
-  → 返回可信 bootstrap，首次 pull、验签、安装、上报
+  → 本机生成独立、不可导出的 P-256 identity/CSR key 与按 intent 选择的 wrapping/PoP key（Android API 31+ P-256，API 26–30 RSA fallback）
+  → 只在 descriptor 有界 EndpointSet(role=enroll) 内选 seed，验 hostname/WebPKI + SPKI pin、拒绝重定向并无 token GET/验证 proof bundle 后才提交 token/exact request body（含 CSR、wrapping descriptor、request ID/facts）
+  → Raft 以线性化 CAS 提交 token/Device ID reservation，并承诺 Identity、Membership 计划、
+    Responsibilities、grants、direction、sealed secret-ref root 与 future view leaf；exact refs 只随私有 receipt
+  → apply/recompute 后取得 config replication QC，claim reservation 才成为 certified；尚不激活 Membership/view/secret
+  → 在线 CA 验 claim QC 与最新 active/fenced exact profile，确定性签证并提交 Raft issuance registry
+  → enrollment voters 验证证书、issuance entry 与 profile inclusion 后形成 Enrollment approval QC
+  → approval-QC-authorized completion 进入第二个 ordinary head，current config QC 后原子消费 invite、激活 Membership/view 并授权 artifact release
+  → 发布带 claim/completion QC/head 及 Merkle inclusion proof 的 Device view、EndpointSet 与只为该 wrapping key 封装的 artifacts
+  → 客户端验证 checkpoint/QC/proof/floor 并原子 latch v2 后首次 pull、安装和签名上报
 ```
 
+这是目标 v2 流程。v1 的严格 invite/claim schema、单 registry 和单 endpoint 保持原样，
+只能通过并行的 v2 资源与 reader 迁移，不能向 v1 JSON 就地添加字段。QR 中的 seed 只是
+bootstrap 能力，不是长期权威；加入后只接受已信 transition/QC 连续引入且 transport identity
+pin 匹配的新 endpoint。
+
 - 管理员创建时选择平台；客户端仍报告本机平台，服务端要求它与邀请精确一致。
-- 当前 Windows 和 Android 只允许 `use_loom`；Linux 可组合 `use_loom`、`forward` 和
+- v1 邀请契约中 Windows 和 Android 只允许 `use_loom`；Linux 可组合 `use_loom`、`forward` 和
   `internet_egress`。`internet_egress` 必须包含 `forward`，只有 `use_loom` 才能携带
   Destination grants。Android 属于统一 Device 模型，可创建固定 Android 平台的邀请；
   客户端仍须完成 Keystore 身份绑定、签名 pull 和候选激活才算加入完成。
-- claim 建立 Identity；只有 Enrollment 事务成功提交展开后的 Membership、
-  Responsibilities 与 grants，Device 才获得对应期望态。两者都不等于已经 online。
-- 一次性码的 TTL 限制首次绑定。绑定后只允许同一 token、CSR、request ID、平台和
-  Device facts 在一小时恢复窗口内重放；当前 Windows Portable 预览仅在未完成期间用
+- Raft-committed claim 只建立 Identity/Device reservation；证书 issuance、Enrollment approval QC
+  和 completion head/config QC 全部完成后，才激活并向 Device 交付 Membership、Responsibilities、
+  grants 与 view。reserved、active 与 online 是三个不同状态。
+- 一次性码的 TTL 限制首次绑定。只有本次 descriptor 有界
+  `EndpointSet(role=enroll)` 内 seed 的 claim 才可接收，并必须以全局 token digest 做
+  线性化 CAS；预留后只允许同一 token 与 exact request body（CSR、wrapping descriptor、request ID、
+  平台和 Device facts）在一小时恢复窗口内重放，detached signature bytes 可变化；v1 Windows Portable 契约只在未完成期间用
   当前用户 DPAPI 保存 pending token，并在 joined 完成标记提交后清除。
 - 加入码不能创建 identity-only Device；平台、Responsibilities、Destination grants 和
   `forward` 所需的 direction 在创建时直接固定，提交前必须展示。
 - 重连、升级、网络切换和重启使用既有身份，不重新 Enrollment。
-- 服务器不依赖中控 SSH push 作为安装或加入模型。`get.docker.com` 式脚本只负责获取
-  通用包，随后仍导入同一加入码；管理员可以先 SSH 到目标机执行同一脚本，但中控不保存
+- 服务器不依赖 control 节点 SSH push 作为安装或加入模型。`get.docker.com` 式脚本只负责获取
+  通用包，随后仍导入同一加入码；管理员可以先 SSH 到目标机执行同一脚本，但控制平面不保存
   SSH 凭据，也不存在第二套 SSH Enrollment。
 
 ### 4.1.1 二维码重发与本机身份丢失
 
-未领取的身份预留可在 Device 详情页重新生成加入码。名称、ID、平台、职责、grants 和
-direction 保持原值；每次重发都会让旧加入码失效。纯 `use_loom` Device 可重新显示二维码；
-点击二维码复制同一份一次性加入 URI，不触发图片下载；加入文件仍有单独下载按钮。
+未领取的身份预留可在 Device 详情页**重新签发**加入码。名称、ID、平台、职责、grants 和
+direction 保持原值；创建端先预生成并封存新 token/artifact，再用一个原子 proposal 同时撤销
+旧 record 并创建绑定新 commitment/private-binding hash 的 public record，完整 ref 仍只在
+control-private binding；取得 QC 后才一次性交付新载体。
+旧 invite 的明文不能从列表重新取回。纯 `use_loom` Device 只在新 invite 的一次性创建结果中
+显示二维码；结果页内点击二维码可复制同一份一次性加入 URI，不触发图片下载，加入文件仍有
+单独下载按钮。离开结果页后如未保存，只能重新签发，不能 reveal 旧 token。
 包含 `forward` 的 Linux Device 仍只展示 shell/SSH 辅助交付，不展示 QR。
 
-Windows 的“删除本机 Device”会清除本机身份和配置，不通知中控，也不自动撤销网络
+Windows 的“删除本机 Device”会清除本机身份和配置，不通知控制平面，也不自动撤销网络
 中的凭据。管理员确认本机身份已删除后，可对 Enrollment 生成的纯 `use_loom` Device
-使用“Rejoin Device”。中控移除旧成员及其专属凭据、将旧身份归档，并分配新 ID 与
-新二维码；名称、平台和原职责/授权保持不变。旧证书属于旧 ID，不能
+使用“Rejoin Device”。控制平面提交移除旧成员及其专属凭据、将旧身份归档，并分配新 ID 与
+新二维码；只有该替换取得对应 reader 协议要求的认证（v1 单签或 v2 replication QC）后才交付。
+名称、平台和原职责/授权保持不变。旧证书属于旧 ID，不能
 用于领取新身份。归档记录保留 `replaced_by`，新记录保留 `replaces`。
 
-如果不需要替换设备，同一详情页提供单步 **Remove Device**。它不等待客户端回执：中控
-立即从 SSOT 移除纯 `use_loom` Device 及其设备专属凭据，并把 enrollment identity 标为
-revoked；服务器应用下一份签名配置后不再接受旧数据面凭据。该操作不会远程删除客户端
+如果不需要替换设备，同一详情页提供单步 **Remove Device**。它不等待客户端回执：控制平面
+提交纯 `use_loom` Device、设备专属凭据和 enrollment identity 的撤销；只有变更取得对应
+reader 协议要求的认证后，发布视图才将其标为 revoked，服务器应用下一份认证配置后不再
+接受旧数据面凭据。该操作不会远程删除客户端
 本机文件，也不会把未收到停机通知误报成“已停机”。未领取 Device 仍使用更窄的
 **Delete Device**，只删除从未消费的 identity reservation 和加入码。
 
 转发服务器应用新的签名配置后，旧数据面访问凭据才失效。该流程不证明旧客户端执行过
 signed decommission，也不代替服务器/隧道节点的退休迁移或通用证书吊销机制。
-仅有“本机删除”时，中控保留现有记录且不能猜测在线；完成中控替换后，旧身份从当前
+仅有“本机删除”时，控制平面保留现有记录且不能猜测在线；完成控制平面替换后，旧身份从当前
 列表移入 Archived devices。SSOT 撤销后若 registry 落盘失败，不返回二维码，重试可
 继续完成归档与新身份分配；不会恢复旧接入。
 
 设备列表直接提供 **Pause / Resume**，只对当前职责恰好为 `use_loom`、已加入且未下线的
-Device 开放，包含 `forward`、`internet_egress` 或 `control` 的设备不能使用此快捷操作。
+Device 开放；包含 `forward`、`internet_egress`，或存在 FinalControlSet `control` 投影的
+Device 不能使用此快捷操作。
 未登录时，设备列表不显示添加或管理的登录提示按钮；登录后，暂停/恢复使用图标按钮，
 与 `active` / `paused` 状态同行显示，并提供操作提示及无障碍名称。
 `nodes[].paused` 是独立的可恢复 SSOT 状态；它不吊销 identity、不改 Destination grants
@@ -209,22 +221,38 @@ checksum、signature 或平台公钥文件被替换后都会重新执行完整�
 
 不增加 `standard-device`、`server-device` 或命名 Profile。每张新邀请直接保存以下事实：
 
-- `platform`：当前可创建 `windows-desktop` 或 `linux-server`；
+- `platform`：可创建 `windows-desktop`、`android` 或 `linux-server`；
 - `responsibilities`：`use_loom` / `forward` / `internet_egress` 的合法组合；
 - `destination_grants`：仅在选择 `use_loom` 时非空；
 - `direction`：仅在选择 `forward` 时必填。
 
-客户端 claim 只提交身份与实际服务器声明，不能选择或扩张这些授权。registry 直接字段就是
-事务事实，不再额外增加无密钥 digest 或签名层。旧 schema 1 邀请全部失效：迁移只保留已经
+邀请不能携带或授予 `control`。既有 Device 只有先作为 learner 完成同步，再经
+`JointControlSet → FinalControlSet` 提交、apply 并取得 old/new replication QC，才获得只读
+`control` 投影。
+
+客户端 claim 只提交身份与实际服务器声明，不能选择或扩张这些授权。目标 v2 将 invite
+拆成 record、descriptor 与 proof 三层：token 必须在 proposal 前生成并封装，Raft/CRDT 中的 canonical
+`CertifiedInviteRecordV2` 只记录 exact `DeviceEnrollmentIntentV1` hash、token commitment、
+control-private artifact-binding hash 和 delivery-context hash；完整 exact-version ref 与 token 明文一致性
+回执只在 matching private binding 中。certified 后的一次性 `InviteBootstrapDescriptorV2` 携带 token、
+context/commitment、最多 3 个 `role=enroll` 精确 seeds 和无 token proof-bundle hash。客户端先用
+descriptor 的 transport pins 无 token 获取并验证 `InviteProofBundleV2` 中的 record inclusion、
+head/QC 与 authority chain，才 POST claim；`.loom-invite` 可内嵌两者。这样响应时 head 变化不会改写已提交
+record，也不会让完整历史挤爆二维码。token 明文只存在于 descriptor，以及该 exact
+token/exact request body（含 CSR、wrapping descriptor、request ID/platform/facts）事务在 certified
+claim head 导出的一小时恢复窗口内
+发出的 claim/retry request body；不进入 URL/header/cookie 或复制日志，验证并持久化
+certified receipt/identity 后客户端必须清除。v1 registry 的直接字段仍是迁移事实，不向其严格 schema
+就地增加 v2 字段。旧 schema 1 邀请全部失效：迁移只保留已经
 加入的 identity 及其具体职责，丢弃旧邀请和未完成的 pending/provisioning 记录；管理员必须
 按新模型重新创建未加入 Device。这是一次单向迁移，不兼容旧邀请。
 
-为保证中控仍能读取并回滚既有 SSOT 存档，模型暂时保留 `enrollment_profiles` 的废弃
+为保证 v1 reader 仍能读取并回滚既有 SSOT 存档，模型暂时保留 `enrollment_profiles` 的废弃
 decoder-only 字段；它不参与校验、UI、邀请创建或 claim，不能让旧加入码重新生效。
 
 连接方向也不是角色。`reverse_only` 表示该 Linux Device 主动建立并维持反向 WireGuard
 隧道，适用于无公网入站或受限网络；`bidirectional` / `direct_only` 沿用现有方向矩阵。
-当前部署可把境外节点设为 `reverse_only`，但位置不决定方向，境外节点也不被底层模型禁止
+部署可把境外节点设为 `reverse_only`，但位置不决定方向，境外节点也不被底层模型禁止
 承担 `use_loom`、`forward` 或 `internet_egress`。
 
 ## 5. 通用包与设备配置分开
@@ -239,12 +267,12 @@ decoder-only 字段；它不参与校验、UI、邀请创建或 claim，不能�
 页面为 access-only 生成二维码/加入文件，为 Linux 生成本地或 SSH 辅助的 bootstrap；二者
 内部都消费一次性 URI。安装命令只下载公开通用包，加入 secret 不成为公开包 URL 的一部分。
 
-### 5.2 E1 首次配置分发
+### 5.2 v1 首次配置分发契约（迁移基线）
 
-E1 之前，`readyBootstrap()` 直接返回 `SSOT.DistributionURLsFor(node)`，可能把加入前
-可达的公网地址与接入后才能访问的 WireGuard 私网地址混在一起。E1 已按以下规则修复：
+v1 的 `readyBootstrap()` / Enrollment 分发适配器只有满足以下规则，才可作为 v2 迁移输入；
+实际部署是否满足只见[当前状态](status/current.md)：
 
-1. Enrollment 候选只来自当前部署的 `defaults.distribution_urls`，顺序表达运维偏好；
+1. Enrollment 候选只来自部署配置的 `defaults.distribution_urls`，顺序表达运维偏好；
 2. publisher 对每个候选复用现有 `VerifyServed()`，记录 URL、snapshot、SSOT、验证时间、
    成功或失败；验证循环检查全部候选，不在首个失败处停止；
 3. 选择函数只保留合法 HTTP/HTTPS、无凭据/query/fragment、非 loopback/link-local/私网
@@ -257,14 +285,17 @@ E1 之前，`readyBootstrap()` 直接返回 `SSOT.DistributionURLsFor(node)`，�
 SSOT/snapshot 精确验证时，Enrollment 可以使用它，但不能因此把 publisher 标成绿色。
 统一 Device 详情只读显示返回地址数、最近验证时间和阻塞原因，不提供手选下载节点。
 
-E1 已覆盖：更换部署地址无需改代码、私网/重复/非法 URL 排除、snapshot 不一致排除、
-首选不可达时客户端使用备用地址、无候选 fail closed，以及日志不泄露加入码和密钥。
+兼容测试必须覆盖：更换部署地址无需改代码、私网/重复/非法 URL 排除、snapshot 不一致
+排除、首选不可达时客户端使用备用地址、无候选 fail closed，以及日志不泄露加入码和密钥。
 
 ### 5.3 目标设备配置通道
 
-E1 仍使用公开的全局 signed distribution 作为过渡。目标态由经过认证的
-`device_config` endpoint 返回本 Device 的最小 signed view；独立 HTTPS 前门和 Device
-mTLS 在 E3 一起实施。签名证明内容，TLS/mTLS 负责传输与访问控制，不能互相替代。
+E1 使用公开的全局 signed distribution 作为过渡。目标态由 signed `EndpointSet` 的
+`device_config` 入口返回本 Device 的最小 signed view；`control_api`、`enroll`、
+`device_config`、`device_report`、`distribution` 和 `data_ingress` 是互不混用的 endpoint role。Device 身份认证使用独立的客户端
+凭据；公网 TLS 同时验证 hostname/WebPKI 与 signed EndpointSet 的 transport identity/SPKI
+pin；ControlSet replication QC 证明内容已由 Raft 提交并被当前 quorum 复算；三者不能互相
+替代。v1 URL 和 current envelope 在兼容期只作为显式 legacy reader 输入。
 
 ## 6. 版本化对象图
 
@@ -281,33 +312,69 @@ DeviceIdentity (稳定)
         ├── ResponsibilitySetVersion
         └── DestinationGrantVersion refs
 
-上述不可变对象的根 ──> ControlRevision
-
-Materialize(ControlRevision, DeviceID)
-        └── DeviceView bytes + digest + dependency refs
+上述不可变对象的根 ──> candidate ControlRevision
+        │ 每个 voter validate/reduce/candidate render
+        ▼
+ControlSet(epoch) ── Raft durable commit ──> apply/recompute
+                                              ├── device_views_root
+CandidateDeviceView(RaftCommit, DeviceID)     │
+        └── DeviceView bytes + leaf + dependency refs + EndpointSet
                 └── 内容变化时 DeviceGeneration + 1
+                                              │ voter replication attest
+                                              ▼
+                                     CertifiedHead + quorum QC
+                                              └── publish Device view + inclusion proof
 ```
 
 RuntimeEvidence 独立进入观察投影，不参与 Control revision，也不因一次上报触发发布。
 
-### 6.2 两个版本轴
+### 6.2 Recovery lineage、三个版本轴与 protocol latch
+
+**Recovery epoch / statement / policy hash**
+
+- 是高于 Control epoch 的恢复 lineage；无论计划轮换还是灾难恢复，都只能由客户端已钉住的
+  旧 recovery policy 达到 threshold 后签署连续 transition 来提高；计划轮换还必须取得当前
+  ControlSet 的 intent/activation QC；
+- 更高合法 recovery lineage 压过旧 ControlSet 后续产生的任意普通 revision；
+- 与 statement hash、policy hash 一起耐久保存，同 epoch 任一 hash 不同都失败关闭。
+
+**Control epoch（作用域为 recovery lineage）**
+
+- 标识一条经过证明的 ControlSet 成员与 membership key 历史；
+- 同一 recovery lineage 内只有 `JointControlSet → FinalControlSet` 能递增。两种 recovery 路径都把
+  新 lineage 的 control epoch 重置为 0，但承诺不同：emergency `RecoveryGenesis` 明确绑定完整新
+  ControlSet、matching private peer-directory hash 与 key PoP；有 quorum 的 planned
+  `RecoveryActivation` 保持当前已信 ControlSet/directory hash，由同一稳定集合 QC 认证，不生成
+  新成员集合或 PoP；
+- 客户端持久化 checkpoint；同一 recovery lineage 内不能从网络响应重新信任更小或无连续
+  joint proof 的 epoch，跨 recovery lineage 则先验证 recovery transition，再采用新 lineage
+  明确绑定的初始 control epoch。
 
 **Control revision**
 
-- 标识一次已接受的全局期望对象图；
+- 由当前 recovery/control lineage 内已提交的 Raft log position 确定；只有 apply/recompute 后
+  取得 replication QC 的 certified head 才能作为客户端和外部 executor 的生效期望对象图；
 - 用于审计、并发提交、影响分析和复现；
 - 是规范化对象图的 revision，不等于当前 raw YAML bytes 的编辑摘要；
-- 不直接作为设备 anti-rollback 序号。
+- 不能替代 Device generation；客户端同时保存 revision/head 与 generation/leaf/view floor。
 
 **Device generation**
 
 - 对每个 Device 独立、单调递增；
 - 只有 materialized DeviceView 的语义内容变化时才递增；
-- 与 `device_id`、view digest、来源 Control revision 一起签名；
-- 客户端只持久化自己的 generation floor。
+- canonical leaf 绑定 `device_id`、generation、state、payload/previous/EndpointSet hash 和最低
+  reader version；来源 Control revision 只通过 head QC 与 inclusion proof 绑定，不进入 leaf；
+- leaf 本身不含当前 head/revision；通过 RFC 6962 inclusion proof 绑定到 certified
+  `device_views_root`，避免无关提交迫使所有 Device 改 generation；
+- 客户端持久化自己的 generation/leaf/view floor，并与 recovery/epoch/revision floor 分开比较。
 
-当前代码中的 raw SSOT revision、snapshot ID 和全局 signed release generation 是三个
-现行坐标，迁移期间都不能改名冒充上述目标字段。
+v1 迁移客户端只有在 BootstrapTransition 同时匹配旧本机 floor proof、初始 ControlSet/
+admin ACL/CA/recovery 材料和独立 migration anchor 时才能接受首个 v2 head。接受前原子写入
+`protocol_latch=v2`；之后 v1 current、QR 或 view 永不再成为 authority，状态丢失必须重新
+受信 bootstrap，不能以清 cache 的方式降级。
+
+v1 的 raw SSOT revision、snapshot ID 和全局 signed release generation 是三个兼容坐标，
+迁移期间都不能改名冒充上述目标字段。
 
 ### 6.3 最小 per-device signed view
 
@@ -316,7 +383,8 @@ RuntimeEvidence 独立进入观察投影，不参与 Control revision，也不�
 - 本设备身份绑定、组件约束与本地入口；
 - 获授权的 Service/Policy 结果和出口集合；
 - 实际候选路径需要的最小 peer endpoint 与凭据引用；
-- Device generation、Control revision、digest 和签名元数据。
+- envelope 中的 recovery/Control checkpoint、Control revision、Device generation、head QC、
+  leaf + inclusion proof、transition proof 和按用途拆分且带 transport pin 的 EndpointSet。
 
 禁止包含无关 Device 清单、完整拓扑、其他设备凭据/配置、未授权 Service、加入凭据或
 全网运行观测。Device 可以看到它实际需要连接或被授权选择的节点，不能枚举全网。
@@ -326,9 +394,12 @@ RuntimeEvidence 独立进入观察投影，不参与 Control revision，也不�
 渲染器应是纯函数，并同时返回 View 和依赖集合：
 
 ```text
-RenderDeviceView(control_revision, device_id)
+RenderDeviceView(effective_state, device_id)
     -> bytes, digest, dependency_refs
 ```
+
+同一函数在提交前 candidate 校验和 Raft apply 后复算时必须产生逐字节相同结果；这些结果进入
+`device_views_root`。只有 root 所属 head 取得 replication QC 后，publisher 才能交付 view/proof。
 
 Control revision 变化后，以 View digest 是否变化作为最终影响判据：
 
@@ -338,13 +409,14 @@ Control revision 变化后，以 View digest 是否变化作为最终影响判�
 - 仅修改显示名且不进入运行 View：不增加 Device generation。
 
 第一版可以对全部 Device 重新计算 digest；1000 台规模下这比先建复杂调度系统更可靠。
-确认结果后只签名和发布变化的 Device。依赖索引是性能优化，不能成为正确性来源。
+head QC 认证整棵 root；publisher 只需发布 digest 真正变化的 Device view。依赖索引是性能
+优化，不能成为正确性来源。
 
 ## 8. 分阶段迁移
 
-### E1（已完成）：统一入口与安全交付边界
+### E1：v1 统一入口与安全交付基线
 
-实际按以下顺序完成，未并行切换签名协议：
+v2 迁移以前必须具备以下基线；本节不记录完成状态：
 
 1. **统一 Device 读模型：** 以稳定 `device_id` 合并 Client registry、SSOT Node 和可信
    runtime evidence；新增 `/devices` 列表/详情，缺失 identity 明确标为 not indexed，
@@ -352,49 +424,81 @@ Control revision 变化后，以 View digest 是否变化作为最终影响判�
 2. **统一授权语义：** API、Review 和 UI 使用 Identity / Membership /
    Responsibilities / Destination grants；“Access”改为“在此设备上使用 Loom”；
 3. **统一加入网络：** Create Device 先建立唯一设备记录并生成一种一次性加入码；服务器、
-   Windows 和 Linux 共用底层 claim，管理员先选平台，客户端报告必须一致；客户端启动后
-   导入加入输入，只绑定这个既有 Device；Android 等待客户端交付；删除 SSH Add node 入口；
+   Windows、Android 和 Linux 共用底层 claim，管理员先选平台，客户端报告必须一致；客户端启动后
+   导入加入输入，只绑定这个既有 Device；不保留 SSH Add node 入口；
 4. **直接固定加入意图：** 创建时直接选择 Responsibilities、必要的 Destination grants 与
    `forward` direction；不新增 Device 类型或 Profile 管理页，不允许 identity-only 邀请；
 5. **公开通用包：** 生成带签名/校验的通用包和服务器安装脚本，发布到部署配置声明的
    公开源；Device 页面按职责给出 access-only QR/文件，或 Linux shell/SSH 辅助安装方法；
 6. **修复首次 pull：** 落地 §5.2 的逐 URL 发布证据与选择函数，替换
    `readyBootstrap()` 在 E1 前直接继承节点地址的行为；
-7. **收口旧入口：** `/nodes/add` 及其 SSH 实现已删除；旧 `/clients` 仍只作命名别名，
-   后续删除该别名和兼容存储；拓扑中的 Nodes 只保留 Device 的职责投影；
-8. **真实 Linux canary：** 从创建 Device 和加入码、安装、内部 claim、首次 pull、apply
-   到可信 online 全链验收，再发布 E1；Windows/Android 宿主在该基线之后分别开发。
+7. **收口旧入口：** 产品/API 不暴露 `/nodes/add` SSH 加入；旧 `/clients` 只能是有期限的
+   命名兼容层；拓扑中的 Nodes 只保留 Device 的职责投影；
+8. **真实端到端 canary：** 每个平台从创建 Device 和加入码、安装、内部 claim、首次 pull、
+   apply 到可信 online 分别验收，不能用另一平台或模拟器替代。
 
-上述 1–8 已完成并上线。E1 仍保留兼容存储与全局 snapshot 协议；它们分别在 E2/E3
-迁移，不能因为入口已统一就误称 per-device generation 或私有 Device view 已经实现。
+上述基线实际覆盖范围只见[当前状态](status/current.md)。E1 保留兼容存储、v1 SSOT 投影、
+签名/pull 和全局 snapshot/release generation，以免同时切换全部故障域；这些分别在 E2/E3
+迁移。全局 generation 是明确的迁移债务，UI/API 不得把它标成 Device generation，也不得
+宣称已经实现最小私有 view 或增量发布。
 
-E1 保持当前签名/pull 协议，并通过兼容投影写入现有 SSOT，避免同时切换全部故障域。
+### E2：v2 对象与单成员 ControlSet
 
-E1 仍会触发现有全局 snapshot/release generation，这是明确的迁移债务。UI 和 API
-不得把它标成 Device generation，也不得宣称已经实现最小私有 view 或增量发布。
+1. 固定 JCS/domain framing、Raft log/提交后 attestation QC、recovery/Control 坐标、Device
+   Merkle proof 与 transition 跨平台向量；
+2. 将 v1 指定 control 表示为 `N=1, q=1` 并运行完整 durable log，同时发布 v1 单签与独立 v2
+   envelope；明确单成员不具备抗单节点失陷能力；
+3. 实现确定性的 per-device view/leaf/RFC 6962 proof、digest 与依赖集合；
+4. bootstrap transition 精确绑定 v1 per-Device floor root、初始 admin/CA/ControlSet/recovery，
+   v1 platform key 签名之外另由部署专属 migration anchor 钉住；
+5. 保持严格 v1 reader 不变，禁止在旧 current/invite/report schema 中混入 v2 字段。
 
-### E2：已确定方向的协议迁移
+### E3：reader 优先与私有 Device Distribution
 
-1. 引入规范化版本对象图和 Control revision；
-2. 实现确定性的 per-device view、digest 与独立 Device generation；
-3. 双写/双读验证后，将客户端从全局 snapshot 迁到 per-device signed view；
-4. 根据 view digest 只发布真正变化的 Device；
-5. 完成旧 generation floor、回滚、吊销和公开快照撤除的迁移测试。
+1. Android、Windows、Linux 先支持 bootstrap/recovery checkpoint、提交后 QC、Device inclusion
+   proof、joint transition、完整 floor 和不可逆 v2 latch；
+2. 支持带 transport identity/TLS SPKI pin 的多 seed、按 role 拆分的 EndpointSet，以及新旧 listener overlap；
+3. 经过身份认证的 `device_config` endpoint 返回最小 Device view；`distribution` 只承载可公开的
+   通用静态制品；
+4. 双读验证、故障切换和隐私边界通过后，才停止依赖公开全局 snapshot。
 
-### E3：私有 Device Distribution
+### E4：ControlSet 扩容与分布式写入
 
-1. 部署配置声明独立 HTTPS `device_config` endpoint；
-2. 启用 Device mTLS、证书轮换与吊销；
-3. 公开渠道最终只保留通用包；
-4. 从境内外真实网络验收可达性、故障切换与隐私边界。
+1. 新 control 先作为 learner 同步并校验 committed history，再经 certified joint transition 入组；
+2. invite token CAS、identity registry、admin ACL、release head 和撤权进入 Raft durable commit
+   并取得提交后 attestation QC；
+3. 不可变提案、报告和观测用 CRDT anti-entropy 复制；candidate 只用于校验，只有取得提交后
+   QC 的 certified head 才能发布为 Device view；
+4. 已信 certified `EndpointSet(role=control_api)` 内的任一入口可在精确 transport
+   和 admin cert 认证后接收管理请求，少数分区拒绝安全关键写。
+
+### E5：域名、证书与端口轮换
+
+1. 以 provider-neutral adapter 接入托管 DNS zone 和 ACME DNS-01；
+2. 为 control_api/enroll/device_config/device_report/distribution/data_ingress 分离域名与证书用途，先在测试 zone 验证幂等 reconcile；
+3. 将现有单公网 endpoint 映射为 generation 0；显式 PublicEndpointIntent 才触发公开域名，
+   `control` membership 本身不自动暴露 API；再实现
+   allocate → prepare → advertise → prefer → drain → retire；
+4. Linux server 先对 Hysteria2/Trojan 并行监听，三平台接受已签新旧代并反馈 ack；新 listener
+   未验证或兼容窗口未满足时不得关闭旧端口。WireGuard 只有完成双 interface/peer 专用流程
+   后才能宣称无中断轮换。
+
+### E6：收口兼容路径
+
+设置最低客户端版本，确认 reader 已原子 latch v2，停止生成 v1 current/invite，撤销旧在线
+signer，删除单机文件锁作为协议 authority 的路径；本地 cache、静态镜像和离线 recovery
+能力继续保留。丢失状态的 Device 只能重新受信 bootstrap，不得自动回退 v1。完整顺序与回滚
+点见[分布式控制平面设计 §19](distributed-control-plane.md#19-从当前实现迁移)。
 
 ## 9. 后续仍需单独决定
 
 只有以下实现选择尚未确定：
 
 1. 通用包实际使用哪些 GitHub/国内镜像及同步、保留和故障切换方式；
-2. Device mTLS 前门的部署位置、证书生命周期和高可用方式；
-3. 已加入 Device 的职责与 grants 是否需要批量变更 UI；这属于显式配置变更，不改变加入协议。
+2. 首批 DNS provider/托管 zone、provider credential 的保管方式及自动购买/续费审批边界；
+3. 离线 recovery root 的持有人、门槛、演练周期与带外重锚流程；
+4. v1/v2 双发的最长兼容窗口，以及哪些最低客户端版本允许 retire 旧入口；
+5. 已加入 Device 的职责与 grants 是否需要批量变更 UI；这属于显式配置变更，不改变加入协议。
 
 route broker 当前明确不做；Local Network 按独立专题推进，不在本计划重复讨论。
 
@@ -406,5 +510,12 @@ route broker 当前明确不做；Local Network 按独立专题推进，不在�
 - 更换部署域名或镜像不需要修改代码；
 - 同一 Control revision 可对应不同 Device generation，未受影响设备不更新；
 - 客户端只能获得本设备实际需要的配置与节点信息；
+- N=1/2/3/5 的 quorum、joint transition、少数分区拒写与离线恢复均有确定测试；
+- 只允许在同一 descriptor 有界 `EndpointSet(role=enroll)` 内进行多 seed
+  并发 claim，且只能消费一次；客户端拒绝无连续 transition、QC 不足和 recovery、control、head、Device view 任一 durable floor 回退；
+- DNS/ACME reconciliation 可幂等接管，域名解析不构成控制权威；
+- Hysteria2/Trojan 计划内端口轮换时新旧 listener 重叠，失败时旧入口保持可用；它不承诺
+  QUIC/TCP 会话跨端口迁移，只保证没有新旧同时关闭的窗口，旧会话排空后才 retire。
+  WireGuard 在双 interface/peer/key/address/route profile 验收前不得通过该项；
 - `ready`、`published`、`applied`、`online` 始终是不同状态；
 - 任何迁移阶段都能回退，且不能把目标态文案冒充当前已上线能力。

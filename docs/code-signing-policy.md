@@ -21,6 +21,14 @@ Loom 自有代码使用 [Apache License 2.0](../LICENSE)。Windows 发行计划�
 批准发行签名。正式启用前须在 SignPath 配置实际批准人，为参与签名的 GitHub 和
 SignPath 账号启用 MFA。每个正式发行版本的签名均须由维护者人工批准。
 
+## 与网络控制信任分离
+
+Windows Authenticode/安装包签名只证明发行制品来源，不得用于签 Loom 配置、ControlSet
+membership、Device identity、公开 HTTPS 或 DNS provider 请求。v1 compatibility 平台签名 key 是
+迁移输入；目标 v2 分离发行签名、每个 control membership key、Device/CA、TLS、DNS
+provider credential 与离线 recovery root。任何一类密钥泄露都不得自动取得另一用途权限。
+完整 key-purpose 与迁移规则见[分布式控制平面设计](distributed-control-plane.md#6-信任域与密钥)。
+
 ## Privacy policy
 
 用户通过邀请选择加入的网络。Windows 客户端与该网络控制面交换加入信息、

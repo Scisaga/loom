@@ -230,7 +230,7 @@
   <!-- Filters -->
   <rect class="panel" x="1106" y="304" width="453" height="242" rx="7"/>
   <g class="ui">
-    <use href="#icon-filter" x="1126" y="321" width="16" height="16" class="action-icon"/><text class="section" x="1150" y="334">Filter</text><text class="tiny green" x="1202" y="334">SSR query · implemented</text>
+    <use href="#icon-filter" x="1126" y="321" width="16" height="16" class="action-icon"/><text class="section" x="1150" y="334">Filter</text><text class="tiny green" x="1202" y="334">SSR query</text>
     <rect class="chip-green" x="1126" y="357" width="75" height="30" rx="5"/><text class="small green" x="1163" y="377" text-anchor="middle">All</text>
     <rect class="chip" x="1209" y="357" width="97" height="30" rx="5"/><text class="small" x="1257" y="377" text-anchor="middle">Problems</text>
     <rect class="chip" x="1314" y="357" width="105" height="30" rx="5"/><text class="small" x="1366" y="377" text-anchor="middle">Recoveries</text>

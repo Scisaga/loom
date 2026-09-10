@@ -1,17 +1,24 @@
 # Windows NAT Device 状态上报接入说明
 
+> **协议代次：v1 compatibility。** 本文的同源 `/loom-client/enroll` → `/loom-client/report`、单
+> enrollment endpoint、平台公钥和 `200/204` 契约描述现行兼容路径，不是分布式目标协议。
+> v2 使用 certified `EndpointSet(role=device_report)`、Device 身份认证、ControlSet checkpoint/QC 和独立
+> versioned resource；不得把 v2 字段加入本文严格的 v1 JSON。迁移见
+> [分布式控制平面设计 §19](distributed-control-plane.md#19-从当前实现迁移)。
+
 > **需求优先级：** 本文保留既有协议与历史验收说明。当前客户端选路遵守
 > [执行边界](../CLAUDE.md#执行边界与客户端选路约束)：入口单次并行探测，后段复用
 > 服务器观测。下文旧端到端健康采集与验收条目，不授权保留或新增客户端整路径探测。
 
-> **状态：** Windows 使用既有两签 producer；本机检查不再请求业务目标，选路改为
+> **稳定契约：** Windows 保留两签 producer；本机检查不请求业务目标，选路使用
 > 入口单次并行 ping 与服务器观测复用。最新测试和部署情况见忽略目录的当前状态。
 > **边界：** 复用现有 `report.Observation`、`loom-attest-v5` 和
 > `loom-selfcheck-v1`；不新增状态协议、envelope、心跳格式或 self-check v2。
 >
-> **当前读取扩展：** Windows 已在同一报告周期请求 `observations=1`，成功接受
-> `200` 的有界原始 Observation 数组，也兼容旧服务器的空正文 `204`。来源与测量
-> 独立验签后进入当前 Agent 的剪枝缓存；规则见[观测复用说明](client-observation-reuse.md)。
+> **读取契约：** 活动宿主在同一报告周期使用 `SendWithObservations` 请求
+> `observations=1`，成功接受 `200` 的有界原始 Observation 数组，也兼容旧服务器的空正文
+> `204`。来源与测量独立验签后进入 Agent 的剪枝缓存；规则见
+> [观测复用说明](client-observation-reuse.md)。
 
 ## 给 Windows 客户端仓库的简短提示词
 
@@ -34,16 +41,16 @@ windows-desktop + use_loom；已加入身份继续使用，仅未消费的旧加
 ## 1. 最小目标
 
 Windows 客户端在加入完成、首轮 signed pull 验证且数据面成功激活后，每 60 秒向
-当前生产 enrollment URL 的同源 report 路径提交自身 Observation。服务端验签后写入
+v1 enrollment URL 的同源 report 路径提交自身 Observation。服务端验签后写入
 既有 gossip table，中控继续复用原有健康与配置版本判定。
 
 用户操作流程始终是：
 
 ```text
-中控提供有效加入二维码 → Windows 导入二维码 → 加入网络 → 启动数据面 → 自动上报
+v1 compatibility control 提供有效加入二维码 → Windows 导入二维码 → 加入网络 → 启动数据面 → 自动上报
 ```
 
-二维码是一次性加入凭据。客户端在加入过程中自动生成设备私钥、验证中控返回的节点
+二维码是一次性加入凭据。客户端在加入过程中自动生成设备私钥、验证 v1 compatibility control 返回的节点
 证书，并用 DPAPI 保存身份；此后上报直接复用这份身份。用户不需要准备、查找、导入或
 备份私钥，也不需要手工构造签名报告。未加入的客户端从二维码开始，不把恢复旧目录或
 沿用旧设备身份作为测试前提。二维码过期或已使用时，按中控现有的重新生成或重新加入
@@ -51,7 +58,7 @@ Windows 客户端在加入完成、首轮 signed pull 验证且数据面成功�
 
 Windows 邀请固定为 `windows-desktop + use_loom`，职责由中控创建邀请时确定；客户端
 只声明 `windows-desktop`，不提交 `server`、职责或旧的 profile 字段。未消费的旧加入码
-由中控作废，客户端收到拒绝后直接结束本次加入，不变更平台或尝试旧协议。已加入的
+由 v1 compatibility control 作废，客户端收到拒绝后直接结束本次加入，不变更平台或尝试旧协议。已加入的
 DPAPI 身份继续使用，不因邀请模型更新而清除或要求重新加入。
 
 导入新二维码时，Windows 在发送一次性凭据前校验精确的 HTTPS `/loom-client/enroll`
@@ -70,14 +77,18 @@ DPAPI 身份继续使用，不因邀请模型更新而清除或要求重新加�
 
 ## 2. 端点与 HTTP
 
-端点来自 DPAPI 保护的 `clientenroll.PreparedIdentity.Endpoint`。本次生产部署的已验证
-约定是：只接受 `https`、无 userinfo/query/fragment 且 path 为
+端点来自 DPAPI 保护的 `clientenroll.PreparedIdentity.Endpoint`。v1 部署契约是：只接受
+`https`、无 userinfo/query/fragment 且 path 为
 `/loom-client/enroll`，保持 scheme、host、port 不变，将 path 替换为
-`/loom-client/report`。这是当前生产部署约定，不是任意 Loom enrollment URL 都天然
+`/loom-client/report`。这是 v1 兼容约定，不是任意 Loom enrollment URL 都天然
 具备的通用推导规则；不匹配时 fail closed，不猜测其他地址。
 
+目标 v2 明确禁止继续从 enroll URL 猜 report URL：客户端只使用经过 QC 签发且 role 为
+`device_report` 的 EndpointSet 条目，在 endpoint 故障时切换同 role 候选，不把 DNS 或 HTTP
+重定向当作新 authority。
+
 ```text
-POST https://<current-production-host>/loom-client/report?observations=1
+POST https://report.demo-node.example/loom-client/report?observations=1
 Content-Type: application/json
 
 <raw Observation JSON>
@@ -93,10 +104,11 @@ registry 中 `ready` enrollment 身份的精确 SPKI 绑定。HTTP 客户端拒�
 若响应携带 `Retry-After`，不得
 在其到期前重试。当前反代限流默认可能返回 `503`，不能假设一定是 `429`。
 
-上述是现有 producer 的默认契约。服务端另支持显式 `?observations=1` 返回已有
-签名 Observation 数组，接口见[客户端观测复用说明](client-observation-reuse.md)。
-当前 `clientreport.Send` 会拒绝带查询的地址，且只接受空正文 204；读取模式仍需
-客户端接入，不能仅给现有配置追加参数就声称已复用服务端观测。
+`clientreport.Send` 是保留给不读取观测的 legacy producer helper：它拒绝带查询的地址且只
+接受空正文 `204`。需要观测的活动宿主必须调用 `SendWithObservations`，由 helper 自己追加
+精确 `observations=1` 并处理有界 `200`/兼容 `204`；调用方不能给配置 URL 手工追加 query，
+也不能只改 URL 就声称已经验证并复用了服务端观测。接口见
+[客户端观测复用说明](client-observation-reuse.md)。
 
 ## 3. 报文与签名
 
@@ -191,7 +203,7 @@ Agent 路径健康保持 unknown，入口单次延迟与服务器分段估算写
 
 Windows 侧至少覆盖：
 
-- 从当前生产 enrollment URL 得到同源 report URL，并拒绝重定向；
+- 从 v1 enrollment URL 得到同源 report URL，并拒绝重定向；
 - DPAPI 身份在 invite token 清理后仍可取得 Endpoint、私钥和节点证书；
 - 空 measurement digest 测试向量；
 - 两签验签以及 node/ts/applied 篡改失败；
@@ -209,7 +221,7 @@ Windows 侧至少覆盖：
 3. 检查客户端自动生成的两签报告得到 `200` 观测数组（或旧服空正文 `204`）；
    读取扩展另核对真实来源观测已验签并进入当前 Agent，不能用空数组冒充复用成功。
 4. 从中控核对该次加入产生的 Device ID、递增的 `ts`、last-seen 和实际 active snapshot。
-   只有 `applied` 与当前生产 snapshot 相同才表示配置已收敛；健康状态按真实证据验收。
+   在 v1 验收中，只有 `applied` 与控制平面的 active signed snapshot 相同才表示配置已收敛；健康状态按真实证据验收。
 5. 确认后续 60 秒周期仍有更新；停止客户端后确认不再更新，并在五分钟后观察 stale。
 
 本环境只改客户端及必要的跨平台客户端包，不修改服务端源码或部署配置，不手工修改

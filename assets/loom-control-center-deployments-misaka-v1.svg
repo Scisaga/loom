@@ -4,7 +4,7 @@
      width="1586" height="992" viewBox="0 0 1586 992"
      role="img" aria-labelledby="title description">
   <title id="title">Fleet deployments — Loom control center prototype</title>
-  <desc id="description">A fleet-configuration deployment view showing publisher heartbeat, node rollout state, the declared automatic release workflow, and the pending signed-current pointer migration; it is not source-code deployment history.</desc>
+  <desc id="description">A target-v2 fleet-configuration deployment view showing Raft commit, state-machine recomputation, replication attestations, quorum certification, publication, and node reconciliation; all identities and values are synthetic sample data.</desc>
   <defs>
     <marker id="arrow-selected" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
       <path d="M0 0L7 3.5L0 7Z" fill="#2AA875"/>
@@ -174,39 +174,39 @@
   <g class="ui">
     <text class="eyebrow" x="21" y="91">CONTROL PLANE / RELEASE</text>
     <text class="heading" x="21" y="124">Fleet deployments</text>
-    <text class="body muted" x="21" y="151">demo-d publisher · heartbeat 8s ago · reconciliation interval 30s</text>
+    <text class="body muted" x="21" y="151">Target v2 · ControlSet epoch 7 · q=3/5 · leased executor demo-d</text>
     <use href="#icon-status-ok" x="20" y="168" width="15" height="15" class="status-icon"/>
-    <text class="small" x="43" y="181">Latest fleet snapshot verified across 5 nodes · business-path canary planned</text>
+    <text class="small" x="43" y="181">Certified head published · QC verified · 5/5 nodes reconciled</text>
   </g>
 
 
-  <!-- Release summary -->
+  <!-- Target control and release summary -->
   <rect class="panel" x="21" y="202" width="1538" height="86" rx="7"/>
   <g class="ui">
-    <text class="small muted" x="47" y="234">PUBLISHER</text><circle class="status-dot" cx="51" cy="257" r="4"/><text class="metric" x="64" y="262">Heartbeat healthy</text>
-    <text class="small muted" x="421" y="234">FLEET SNAPSHOT</text><text class="metric mono" x="421" y="262">a1b2c3d4e5f6</text>
-    <text class="small muted" x="786" y="234">ROLLOUT</text><text class="metric" x="786" y="262">5 / 5 verified</text>
-    <text class="small muted" x="1106" y="234">DISTRIBUTION POINTER</text><circle class="warn-dot" cx="1110" cy="257" r="4"/><text class="metric amber" x="1123" y="262">Legacy current</text><text class="tiny muted" x="1293" y="261">floor not reported · signed current planned</text>
+    <text class="small muted" x="47" y="234">CONTROLSET</text><text class="metric" x="47" y="262">epoch 7 · q=3/5</text>
+    <text class="small muted" x="421" y="234">CERTIFIED HEAD</text><text class="metric mono" x="421" y="262">a1b2c3d4e5f6</text>
+    <text class="small muted" x="786" y="234">RECONCILIATION</text><text class="metric" x="786" y="262">5 / 5 applied</text>
+    <text class="small muted" x="1106" y="234">REPLICATION</text><circle class="status-dot" cx="1110" cy="257" r="4"/><text class="metric" x="1123" y="262">QC + attest verified</text>
   </g>
   <line class="rule" x1="386" y1="222" x2="386" y2="269"/><line class="rule" x1="751" y1="222" x2="751" y2="269"/><line class="rule" x1="1071" y1="222" x2="1071" y2="269"/>
 
-  <!-- Publisher -->
+  <!-- Replaceable release executor -->
   <rect class="panel" x="21" y="304" width="511" height="392" rx="7"/>
   <g class="ui">
-    <text class="section" x="41" y="334">Publisher</text>
-    <rect class="chip-green" x="401" y="316" width="108" height="27" rx="13.5"/><circle class="quiet-dot" cx="418" cy="329" r="3.5"/><text class="tiny green" x="429" y="333">Healthy</text>
-    <text class="tiny muted" x="41" y="357">Automatic release worker on demo-d</text>
-    <text class="small muted" x="41" y="395">HEARTBEAT</text><text class="body" x="218" y="395">8s ago</text>
-    <text class="small muted" x="41" y="427">INTERVAL</text><text class="body" x="218" y="427">30 seconds</text>
+    <text class="section" x="41" y="334">Release executor</text>
+    <rect class="chip-green" x="401" y="316" width="108" height="27" rx="13.5"/><circle class="quiet-dot" cx="418" cy="329" r="3.5"/><text class="tiny green" x="429" y="333">Lease active</text>
+    <text class="tiny muted" x="41" y="357">Replaceable materialization and reconciliation worker on demo-d</text>
+    <text class="small muted" x="41" y="395">RAFT TERM / INDEX</text><text class="body mono" x="218" y="395">12 / 104</text>
+    <text class="small muted" x="41" y="427">CONTROL EPOCH</text><text class="body" x="218" y="427">7 · q=3/5</text>
     <text class="small muted" x="41" y="459">LOOM CODE</text><text class="body mono" x="218" y="459">deadbee</text>
     <text class="small muted" x="41" y="491">BINARY</text><text class="body mono" x="218" y="491">449597b5…</text>
-    <text class="small muted" x="41" y="523">LAST SUCCESS</text><text class="body" x="218" y="523">19h ago</text>
-    <text class="small muted" x="41" y="555">LAST SNAPSHOT</text><text class="body mono" x="218" y="555">a1b2c3d4e5f6</text>
+    <text class="small muted" x="41" y="523">LAST RECONCILE</text><text class="body" x="218" y="523">8s ago</text>
+    <text class="small muted" x="41" y="555">TARGET SNAPSHOT</text><text class="body mono" x="218" y="555">a1b2c3d4e5f6</text>
     <line class="rule" x1="41" y1="579" x2="512" y2="579"/>
-    <text class="tiny muted" x="41" y="607">No new publish is expected while SSOT and renderer output are unchanged.</text>
-    <text class="tiny muted" x="41" y="629">Heartbeat freshness, not release age, determines publisher health.</text>
+    <text class="tiny muted" x="41" y="607">No new publish is expected while the certified head and renderer output are unchanged.</text>
+    <text class="tiny muted" x="41" y="629">Lease loss changes the executor, never the certified authority.</text>
     <rect class="chip" x="41" y="650" width="168" height="27" rx="6"/><text class="tiny" x="125" y="668" text-anchor="middle">No manual Publish action</text>
-    <text class="tiny muted" x="225" y="668">Fleet rollout · not code deployment history</text>
+    <text class="tiny muted" x="225" y="668">Fleet reconciliation · not code deployment history</text>
   </g>
 
   <!-- Node convergence -->
@@ -215,11 +215,11 @@
     <text class="section" x="568" y="334">Fleet convergence</text><text class="tiny muted" x="742" y="334">target snapshot <tspan class="mono">a1b2c3d4e5f6</tspan></text>
     <text class="small muted" x="574" y="369">NODE</text><text class="small muted" x="743" y="369">TARGET</text><text class="small muted" x="928" y="369">STAGE</text><text class="small muted" x="1098" y="369">ENTERED</text><text class="small muted" x="1281" y="369">LAST GOOD</text><text class="small muted" x="1438" y="369">DRIFT</text>
     <line class="rule" x1="568" y1="377" x2="1539" y2="377"/>
-    <text class="body mono" x="574" y="412">demo-d</text><text class="body mono" x="743" y="412">a1b2c3d</text><circle class="quiet-dot" cx="932" cy="407" r="4"/><text class="body" x="945" y="412">Verified</text><text class="body" x="1098" y="412">19h ago</text><text class="body mono" x="1281" y="412">3e8d7c2a</text><text class="tiny muted" x="1438" y="412">Not reported</text>
-    <text class="body mono" x="574" y="463">demo-b</text><text class="body mono" x="743" y="463">a1b2c3d</text><circle class="quiet-dot" cx="932" cy="458" r="4"/><text class="body" x="945" y="463">Verified</text><text class="body" x="1098" y="463">19h ago</text><text class="body mono" x="1281" y="463">3e8d7c2a</text><text class="tiny muted" x="1438" y="463">Not reported</text>
-    <text class="body mono" x="574" y="514">demo-c</text><text class="body mono" x="743" y="514">a1b2c3d</text><circle class="quiet-dot" cx="932" cy="509" r="4"/><text class="body" x="945" y="514">Verified</text><text class="body" x="1098" y="514">19h ago</text><text class="body mono" x="1281" y="514">3e8d7c2a</text><text class="tiny muted" x="1438" y="514">Not reported</text>
-    <text class="body mono" x="574" y="565">demo-e</text><text class="body mono" x="743" y="565">a1b2c3d</text><circle class="quiet-dot" cx="932" cy="560" r="4"/><text class="body" x="945" y="565">Verified</text><text class="body" x="1098" y="565">19h ago</text><text class="body mono" x="1281" y="565">3e8d7c2a</text><text class="tiny muted" x="1438" y="565">Not reported</text>
-    <text class="body mono" x="574" y="616">demo-a</text><text class="body mono" x="743" y="616">a1b2c3d</text><circle class="quiet-dot" cx="932" cy="611" r="4"/><text class="body" x="945" y="616">Verified</text><text class="body" x="1098" y="616">19h ago</text><text class="body mono" x="1281" y="616">3e8d7c2a</text><text class="tiny muted" x="1438" y="616">Not reported</text>
+    <text class="body mono" x="574" y="412">demo-d</text><text class="body mono" x="743" y="412">a1b2c3d</text><circle class="quiet-dot" cx="932" cy="407" r="4"/><text class="body" x="945" y="412">Verified</text><text class="body" x="1098" y="412">19h ago</text><text class="body mono" x="1281" y="412">3e8d7c2a</text><text class="tiny green" x="1438" y="412">In sync</text>
+    <text class="body mono" x="574" y="463">demo-b</text><text class="body mono" x="743" y="463">a1b2c3d</text><circle class="quiet-dot" cx="932" cy="458" r="4"/><text class="body" x="945" y="463">Verified</text><text class="body" x="1098" y="463">19h ago</text><text class="body mono" x="1281" y="463">3e8d7c2a</text><text class="tiny green" x="1438" y="463">In sync</text>
+    <text class="body mono" x="574" y="514">demo-c</text><text class="body mono" x="743" y="514">a1b2c3d</text><circle class="quiet-dot" cx="932" cy="509" r="4"/><text class="body" x="945" y="514">Verified</text><text class="body" x="1098" y="514">19h ago</text><text class="body mono" x="1281" y="514">3e8d7c2a</text><text class="tiny green" x="1438" y="514">In sync</text>
+    <text class="body mono" x="574" y="565">demo-e</text><text class="body mono" x="743" y="565">a1b2c3d</text><circle class="quiet-dot" cx="932" cy="560" r="4"/><text class="body" x="945" y="565">Verified</text><text class="body" x="1098" y="565">19h ago</text><text class="body mono" x="1281" y="565">3e8d7c2a</text><text class="tiny green" x="1438" y="565">In sync</text>
+    <text class="body mono" x="574" y="616">demo-a</text><text class="body mono" x="743" y="616">a1b2c3d</text><circle class="quiet-dot" cx="932" cy="611" r="4"/><text class="body" x="945" y="616">Verified</text><text class="body" x="1098" y="616">19h ago</text><text class="body mono" x="1281" y="616">3e8d7c2a</text><text class="tiny green" x="1438" y="616">In sync</text>
     <line class="rule" x1="568" y1="431" x2="1539" y2="431"/><line class="rule" x1="568" y1="482" x2="1539" y2="482"/><line class="rule" x1="568" y1="533" x2="1539" y2="533"/><line class="rule" x1="568" y1="584" x2="1539" y2="584"/><line class="rule" x1="568" y1="635" x2="1539" y2="635"/>
     <text class="tiny muted" x="568" y="668">A node is converged only after its local verifier records the target snapshot as verified.</text>
   </g>
@@ -227,29 +227,29 @@
   <!-- Release pipeline -->
   <rect class="panel" x="21" y="712" width="1004" height="261" rx="7"/>
   <g class="ui">
-    <text class="section" x="41" y="742">Automatic release workflow</text><text class="tiny amber" x="315" y="742">Stage history is not reported</text>
-    <text class="tiny muted" x="41" y="764">Saving a valid SSOT change is the only write; the publisher owns every downstream stage.</text>
+    <text class="section" x="41" y="742">Certified release workflow</text><text class="tiny amber" x="315" y="742">Target v2 · sample data</text>
+    <text class="tiny muted" x="41" y="764">Apply computes roots after Raft commit; only the attested head may be published.</text>
     <line class="timeline" x1="87" y1="830" x2="955" y2="830"/>
-    <circle class="neutral-dot" cx="87" cy="830" r="5"/><circle class="neutral-dot" cx="232" cy="830" r="5"/><circle class="neutral-dot" cx="377" cy="830" r="5"/><circle class="neutral-dot" cx="522" cy="830" r="5"/><circle class="neutral-dot" cx="667" cy="830" r="5"/><circle class="neutral-dot" cx="812" cy="830" r="5"/><circle class="neutral-dot" cx="955" cy="830" r="5"/>
-    <text class="small" x="87" y="860" text-anchor="middle">Validate</text><text class="small" x="232" y="860" text-anchor="middle">Render</text><text class="small" x="377" y="860" text-anchor="middle">Sign</text><text class="small" x="522" y="860" text-anchor="middle">Distribute</text><text class="small" x="667" y="860" text-anchor="middle">Pull</text><text class="small" x="812" y="860" text-anchor="middle">Apply</text><text class="small" x="955" y="860" text-anchor="middle">Verify</text>
-    <text class="tiny muted" x="87" y="882" text-anchor="middle">SSOT</text><text class="tiny muted" x="232" y="882" text-anchor="middle">per node</text><text class="tiny muted" x="377" y="882" text-anchor="middle">manifest</text><text class="tiny muted" x="522" y="882" text-anchor="middle">snapshot</text><text class="tiny muted" x="667" y="882" text-anchor="middle">timer</text><text class="tiny muted" x="812" y="882" text-anchor="middle">atomic</text><text class="tiny muted" x="955" y="882" text-anchor="middle">local</text>
+    <circle class="neutral-dot" cx="87" cy="830" r="5"/><circle class="neutral-dot" cx="304" cy="830" r="5"/><circle class="neutral-dot" cx="522" cy="830" r="5"/><circle class="neutral-dot" cx="739" cy="830" r="5"/><circle class="neutral-dot" cx="955" cy="830" r="5"/>
+    <text class="small" x="87" y="860" text-anchor="middle">Validate candidate</text><text class="small" x="304" y="860" text-anchor="middle">Raft durable commit</text><text class="small" x="522" y="860" text-anchor="middle">Apply / recompute</text><text class="small" x="739" y="860" text-anchor="middle">Replication attest / QC</text><text class="small" x="955" y="860" text-anchor="middle">Publish / reconcile</text>
+    <text class="tiny muted" x="87" y="882" text-anchor="middle">deterministic</text><text class="tiny muted" x="304" y="882" text-anchor="middle">majority fsync</text><text class="tiny muted" x="522" y="882" text-anchor="middle">each voter</text><text class="tiny muted" x="739" y="882" text-anchor="middle">committed head</text><text class="tiny muted" x="955" y="882" text-anchor="middle">leased executor</text>
     <line class="rule" x1="41" y1="909" x2="1005" y2="909"/>
-    <text class="small muted" x="41" y="938">LATEST FLEET</text><text class="body" x="153" y="938">Snapshot manifest signed · distributed · verified by 5 nodes</text><text class="tiny muted mono" x="870" y="938">publisher code deadbee</text>
+    <text class="small muted" x="41" y="938">LATEST FLEET</text><text class="body" x="153" y="938">QC-bound snapshot · EndpointSet mirrors · 5/5 reconciled</text><text class="tiny muted mono" x="870" y="938">executor code deadbee</text>
   </g>
 
   <!-- Distribution contract -->
   <rect class="panel" x="1041" y="712" width="518" height="261" rx="7"/>
   <g class="ui">
     <text class="section" x="1061" y="742">Distribution &amp; safety boundary</text>
-    <text class="small muted" x="1061" y="778">SNAPSHOT MANIFEST</text><text class="body green" x="1267" y="778">Signed</text>
-    <text class="small muted" x="1061" y="810">CURRENT POINTER</text><text class="body amber" x="1267" y="810">Legacy / unsigned</text>
-    <text class="small muted" x="1061" y="842">NODE ROLLBACK</text><text class="body" x="1267" y="842">Last verified snapshot</text>
+    <text class="small muted" x="1061" y="778">CANDIDATE</text><text class="body green" x="1267" y="778">Validated before append</text>
+    <text class="small muted" x="1061" y="810">RAFT COMMIT</text><text class="body green" x="1267" y="810">Durable majority</text>
+    <text class="small muted" x="1061" y="842">REPLICATION QC</text><text class="body green" x="1267" y="842">Certified roots bound</text>
     <line class="rule" x1="1061" y1="866" x2="1539" y2="866"/>
-    <text class="tiny muted" x="1061" y="889">A manifest signature proves content authenticity, not pointer freshness.</text>
-    <rect class="chip-amber" x="1061" y="903" width="478" height="43" rx="6"/>
-    <text class="tiny amber" x="1077" y="922">Canary controller + representative business-path gate</text>
-    <text class="tiny muted" x="1077" y="939">Not implemented · no Promote or Rollback action in the web UI</text>
-    <text class="tiny muted" x="1061" y="964">Signed-current reader rollout remains pending.</text>
+    <text class="tiny muted" x="1061" y="889">The executor may reconcile only the QC-certified head.</text>
+    <rect class="chip" x="1061" y="903" width="478" height="43" rx="6"/>
+    <text class="tiny green" x="1077" y="922">EndpointSet mirrors are transport, never authority</text>
+    <text class="tiny muted" x="1077" y="939">Readers verify QC, content hashes and monotonic floors</text>
+    <text class="tiny muted" x="1061" y="964">Apply/recompute failure blocks certification; last good stays active.</text>
   </g>
 
 </svg>

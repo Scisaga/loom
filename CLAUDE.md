@@ -6,6 +6,9 @@ Loom 是一个基于加密隧道的链路与服务调度基础设施。**既有�
 
 当前实现进度与已知缺口见 **[docs/status/current.md](docs/status/current.md)**;
 已定的决定与未决问题见 [docs/decisions.md](docs/decisions.md)。
+动态 `ControlSet`、CRDT/QC、托管域名/证书和 listener 轮换的目标协议见
+[docs/distributed-control-plane.md](docs/distributed-control-plane.md)。该文档是迁移目标，
+不是当前能力；处理现行代码时不得把目标字段直接塞进严格的 v1 wire schema。
 
 `docs/status/` 含真实地址,**不进版本库**。所以**干净 clone 拿不到它,
 上面那个链接会是断的** —— 这是有意的取舍,不是漏配:内容不能提交,
@@ -32,6 +35,11 @@ Loom 是一个基于加密隧道的链路与服务调度基础设施。**既有�
 
 ## 执行边界与客户端选路约束
 
+- 目标 v2 的 role 入口不得混用：管理请求只能经已信 certified
+  `EndpointSet(role=control_api)` 入口的精确 transport 校验和 admin cert 认证后
+  提交；尚无 Device 身份的 claim 只能使用本次 `InviteBootstrapDescriptorV2` 中有界的
+  `EndpointSet(role=enroll)` seeds。control peer RPC、DNS 临时发现或其他 role
+  都不能作为替代入口。
 - 开工前从当前对话提取“必须实现”和“明确排除”，交给子任务时一并传递。
   用户排除的方案，不得改名为后台验证、异步补样、兜底或可靠性保障后重新加入。
 - 旧框架、文档和测试不是必须保留的需求。发生冲突时，删改不符合要求的实现与测试；
@@ -39,8 +47,12 @@ Loom 是一个基于加密隧道的链路与服务调度基础设施。**既有�
   “完成当前功能必须检查这些问题”。
 - 评价方案必须基于本任务的分工、必要收益和实际成本，不能用抽象的可靠性好处
   为重复工作辩护。用户纠正后应落实修改，不继续罗列已排除方案的一般优点。
-- 当前客户端选路分工：首轮对授权入口去重，各探测一次，并行完成；入口之后复用
-  现有已验证服务器观测。客户端不再探测整条业务路径，不按 Service × 候选路径扫描，
+- 当前 Windows/Android 客户端选路分工：每个底层网络代维护一份不可因 Agent/profile 重启而
+  清空的 probe registry。Direct 不冻结候选也不花探测预算；该网络代第一次进入 Auto 或指定
+  出口时，原子冻结当时的授权入口快照，按地址/源接口去重后各探测至多一次并行完成，入口
+  之后复用现有已验证服务器观测。同代再次切换模式、出口、配置或重连只复用该 registry，
+  后来出现的入口只接收真实拨号的被动证据，直到 OS 报告底层网络代变化。客户端不再探测
+  整条业务路径，不按 Service × 候选路径扫描，
   不增加样本预热、挑战者比较或 P50/P95 收敛流程，也不等待服务器观测到齐才启动。
   不以本条约束扩改服务器测量或签名协议。
 - 缺失、过期或无效观测保持未知；不得为填满评分、健康绿灯或测试断言追加探测，
@@ -122,13 +134,13 @@ go run ./cmd/loom verify   /tmp/out -pubkey /tmp/keys/platform-signing.pub
 | `internal/agent/` | **决策者**:接入节点上的调参回路,探测 → 排序 → 带阻尼切 selector |
 | `internal/report/` | **上报者**:每个节点都跑。隧道健康、配置自检、按段测量与转述。不做任何决定 |
 | `internal/deploy/` | 安装计划与远端脚本:暂存 → 预检 → 就位 → 验证,失败回滚 |
-| `internal/publish/` | 中控侧:校验 → 渲染 → 签名 → 推到分发点;发布器守护进程 |
+| `internal/publish/` | v1 compatibility 指定 control：校验 → 渲染 → 单签 → 推到分发点；目标由 certified head 驱动可接管 executor |
 | `internal/attest/` | 节点给自己的身份陈述签名,好让转述过来的版本也能核对(D81) |
 | `internal/rollout/` | 节点装一份新快照走到哪一步了。**现在只记录,不接管控制流**(D78) |
 | `internal/version/` | 版本坐标:commit(Go 的 VCS 戳自动带入)+ 二进制 sha256 |
 | `internal/netx/` | 不依赖机器全局设置的 HTTP 客户端(不读 HTTP_PROXY、自带 DNS) |
-| `internal/events/` | 状态变化历史。**只记变化,不记状态** —— 记在中控一处 |
-| `internal/webui/` | 节点上的操作界面:读在每台机器上,写只在中控 |
+| `internal/events/` | 状态变化历史。**只记变化,不记状态**；v1 compatibility 记在指定 control，目标以不可变事件 CRDT 复制 |
+| `internal/webui/` | v1 compatibility：节点只读、指定 control 写；目标为已信 certified `EndpointSet(role=control_api)` 内的入口经 admin cert 认证后接收，Raft commit/apply 后取得 replication QC，并显示副本新鲜度 |
 | `internal/secret/` | 秘密层:占位符解析与替换、两步轮换。**合并发生在节点上**,分发树里只有占位符 |
 | `cmd/loom/` | CLI:`validate` / `render` / `diff` / `snapshot` / `verify` / `keygen` / `firewall` / `hydrate` / `probe` / `agent` / `report` / `selfcheck` / `status` / `apply` / `publish` / `publisher` / `pull` / `secrets` / `backup` / `restore` / `pin` / `rollback` / `snapshots` / `rotate-tunnel` / `version` / `release` |
 | `testdata/matrix/` | 参考 SSOT(4 国内云机 + 2 境外 VPS)与 golden |

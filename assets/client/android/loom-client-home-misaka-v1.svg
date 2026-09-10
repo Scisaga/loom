@@ -2,7 +2,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="430" height="932" viewBox="0 0 430 932"
      role="img" aria-labelledby="title description">
   <title id="title">Loom Android client home — self-contained SVG prototype</title>
-  <desc id="description">An Android VpnService client proposal showing device-local Direct, Auto, and specific-exit routing modes, centrally delivered rules, and an Agent-selected read-only current path.</desc>
+  <desc id="description">An Android VpnService client proposal showing device-local Direct, Auto, and specific-exit routing modes, certified control rules, and an Agent-selected read-only current path.</desc>
 
   <defs>
     <clipPath id="screen-clip"><rect x="12" y="12" width="406" height="908" rx="38"/></clipPath>
@@ -99,7 +99,7 @@
     <!-- Prototype banner. -->
     <rect x="28" y="122" width="374" height="28" rx="14" class="chip-amber"/>
     <circle cx="45" cy="136" r="3.5" fill="#D79B3B"/>
-    <text class="ui tiny amber" x="57" y="140">DESIGN PROPOSAL · SAMPLE DATA · NOT IMPLEMENTED</text>
+    <text class="ui tiny amber" x="57" y="140">DESIGN PROPOSAL · SAMPLE DATA</text>
 
     <!-- VPN state. -->
     <rect x="28" y="164" width="374" height="230" rx="12" class="panel"/>
@@ -111,18 +111,18 @@
       <circle cx="349" cy="230" r="30" fill="#EEF8F3" stroke="#B9DEC9"/>
       <use href="#icon-power" x="337" y="218" width="24" height="24" class="icon-green"/>
       <text class="heading" x="48" y="224">System tunnel active</text>
-      <text class="body muted" x="48" y="248">End-to-end reachable · checked 14s ago</text>
+      <text class="body muted" x="48" y="248">Local runtime ready · server evidence 14s ago</text>
       <rect x="48" y="263" width="166" height="25" rx="12.5" class="chip-green"/>
       <use href="#icon-shield" x="58" y="268" width="15" height="15" class="icon-green"/>
-      <text class="tiny green" x="80" y="279">Central rules applied</text>
+      <text class="tiny green" x="80" y="279">Certified rules applied</text>
 
       <line class="rule" x1="48" y1="303" x2="382" y2="303"/>
       <text class="tiny muted" x="48" y="326">HOST</text>
       <text class="subsection" x="48" y="345">App running</text>
       <text class="tiny muted" x="211" y="326">TRAFFIC CAPTURE</text>
       <text class="subsection" x="211" y="345">TUN active</text>
-      <text class="tiny muted" x="48" y="369">DATA PLANE</text>
-      <text class="subsection green" x="48" y="386">92 ms · healthy</text>
+      <text class="tiny muted" x="48" y="369">ENTRY EVIDENCE</text>
+      <text class="subsection green" x="48" y="386">92 ms · observed</text>
       <text class="tiny muted" x="211" y="369">CONTROL SYNC</text>
       <text class="subsection" x="211" y="386">22s ago</text>
     </g>
@@ -134,7 +134,7 @@
       <rect x="301" y="423" width="81" height="24" rx="12" class="chip-green"/>
       <circle cx="315" cy="435" r="3" class="status-dot"/>
       <text class="tiny green" x="325" y="439">READ ONLY</text>
-      <text class="small muted" x="48" y="462">Auto mode · central rule matched · path read-only</text>
+      <text class="small muted" x="48" y="462">Auto mode · certified rule matched · path read-only</text>
 
       <line class="rule" x1="48" y1="477" x2="382" y2="477"/>
       <text class="tiny muted" x="48" y="499">APP / DOMAIN</text>
@@ -149,7 +149,7 @@
       <line class="rule" x1="48" y1="552" x2="382" y2="552"/>
       <text class="tiny muted" x="48" y="573">LIVE PATH</text>
       <text class="small mono" x="124" y="573">demo-b → demo-e</text>
-      <text class="small green" x="382" y="573" text-anchor="end">92 ms · healthy</text>
+      <text class="small green" x="382" y="573" text-anchor="end">Partial evidence</text>
     </g>
 
     <!-- Signed profile. -->

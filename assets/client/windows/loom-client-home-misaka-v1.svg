@@ -2,7 +2,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900"
      role="img" aria-labelledby="title description">
   <title id="title">Loom Windows client home — interface prototype</title>
-  <desc id="description">A Windows desktop client proposal showing device-local Direct, Auto, and specific-exit routing modes, plus an Agent-selected read-only current path and control-plane-delivered read-only Host to Service to Policy rules.</desc>
+  <desc id="description">A Windows desktop client proposal showing device-local Direct, Auto, and specific-exit routing modes, an Agent-selected read-only current path, certified read-only rules, and separately scoped entry, server, and runtime evidence.</desc>
 
   <defs>
     <symbol id="loom-mark" viewBox="127 112 1000 1000">
@@ -118,7 +118,7 @@
     <text x="99" y="133" font-weight="650">Connection</text>
 
     <use href="#icon-routes" x="65" y="172" width="19" height="19" class="icon"/>
-    <text x="99" y="188">Central rules</text>
+    <text x="99" y="188">Certified rules</text>
     <use href="#icon-activity" x="65" y="227" width="19" height="19" class="icon"/>
     <text x="99" y="243">Activity</text>
     <use href="#icon-device" x="65" y="282" width="19" height="19" class="icon"/>
@@ -152,7 +152,7 @@
     <use href="#icon-shield" x="337" y="213" width="34" height="34" class="icon-green"/>
     <text class="eyebrow green" x="407" y="211">SYSTEM TUNNEL</text>
     <text class="hero" x="407" y="242">System traffic routed</text>
-    <text class="body muted" x="407" y="267">TUN active · central rules applied</text>
+    <text class="body muted" x="407" y="267">TUN active · certified rules applied</text>
 
     <rect x="856" y="206" width="94" height="42" rx="21" fill="#239B68"/>
     <circle cx="928" cy="227" r="16" fill="#FFFFFF"/>
@@ -160,9 +160,9 @@
     <text class="tiny muted" x="864" y="266">Tunnel on</text>
 
     <line class="rule" x1="326" y1="296" x2="962" y2="296"/>
-    <text class="tiny muted" x="326" y="325">CURRENT LATENCY</text>
-    <text class="metric" x="326" y="353">84 ms</text>
-    <text class="tiny green" x="326" y="374">Stable · 12 samples</text>
+    <text class="tiny muted" x="326" y="325">ENTRY EVIDENCE</text>
+    <text class="metric" x="326" y="353">31 ms</text>
+    <text class="tiny green" x="326" y="374">Single probe · network generation</text>
 
     <line class="rule" x1="515" y1="314" x2="515" y2="378"/>
     <text class="tiny muted" x="546" y="325">ACTIVE PATH</text>
@@ -225,10 +225,10 @@
     <text class="tiny green" x="1115" y="535" text-anchor="middle">11 ms</text>
   </g>
 
-  <!-- Centrally managed access rules. -->
+  <!-- Certified access rules. -->
   <rect x="294" y="622" width="700" height="218" rx="8" class="panel"/>
   <g class="ui">
-    <text class="section" x="322" y="657">Central access rules</text>
+    <text class="section" x="322" y="657">Certified access rules</text>
     <text class="tiny muted" x="966" y="656" text-anchor="end">CONTROL-PLANE SIGNED · READ-ONLY</text>
     <text class="tiny muted" x="322" y="686">DOMAIN / IP</text>
     <text class="tiny muted" x="535" y="686">SERVICE</text>
@@ -262,10 +262,10 @@
     <text class="body" x="1063" y="690">Windows Service running</text>
     <text class="small muted" x="1042" y="721">sing-box core</text>
     <text class="small mono" x="1348" y="721" text-anchor="end">1.11.4</text>
-    <text class="small muted" x="1042" y="749">Last successful probe</text>
+    <text class="small muted" x="1042" y="749">Runtime feedback</text>
     <text class="small" x="1348" y="749" text-anchor="end">8s ago</text>
-    <text class="small muted" x="1042" y="777">Control plane</text>
-    <text class="small green" x="1348" y="777" text-anchor="end">Reachable</text>
+    <text class="small muted" x="1042" y="777">Control sync</text>
+    <text class="small green" x="1348" y="777" text-anchor="end">22s ago</text>
     <rect x="1042" y="796" width="306" height="30" rx="6" class="panel-soft"/>
     <text class="small" x="1178" y="816" text-anchor="middle">Open diagnostics</text>
     <use href="#icon-chevron" x="1318" y="803" width="15" height="15" class="icon"/>

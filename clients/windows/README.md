@@ -1,12 +1,53 @@
 # Loom Windows client
 
+> **Protocol contract:** v1 compatibility uses a strict invitation, a single platform-key current,
+> and an enrollment-derived report endpoint. V2 accepts only a certified head and Device view, and
+> adds ControlSet checkpoints/QCs; four durable rollback-floor groups for recovery (including
+> statement and policy hashes), ControlSet, head, and Device view; QR v2 multi-seeds; role-scoped
+> EndpointSets with WebPKI/SPKI pins; Hysteria2/Trojan listener overlap; a bootstrap transition hash;
+> WireGuard rotation remains disruptive until a dedicated dual-interface/peer profile is validated; and an
+> irreversible v2 latch. V2 resources are versioned and never extend strict v1 JSON in place. See
+> [the distributed control-plane design](../../docs/distributed-control-plane.md#19-从当前实现迁移).
+> Code, deployment, and native-acceptance progress is recorded only in
+> [the current status](../../docs/status/current.md).
+
+In the target v2 flow, an administrator reaches **Create Device** only through
+an exact transport-verified endpoint in a trusted certified
+`EndpointSet(role=control_api)` and authenticates with an admin certificate.
+The unjoined Windows client submits its claim only to the bounded
+`EndpointSet(role=enroll)` seeds carried directly by that invitation delivery
+envelope; it never substitutes a control API, redirect, or newly discovered URL.
+
+For v2, Raft durable commit alone is never an activation or authorization signal.
+A `committed_not_certified` head cannot update mutable current, change grants,
+select an endpoint, or trigger an external side effect; the client continues its
+last-known-good profile. Before installation it verifies the bootstrap or recovery
+lineage (including `recovery_policy_hash`), the ControlSet transition, the post-commit
+replication QC, the Device inclusion proof, and the signed EndpointSet. It then
+atomically advances all four durable floor groups:
+
+```text
+recovery_epoch + recovery_statement_hash + recovery_policy_hash
+control_epoch + control_set_hash
+control_revision + head_hash
+device_generation + device_leaf_hash + device_view_hash
+```
+
+The first v2 install atomically persists those floors, the
+`bootstrap_transition_hash`, and `protocol_latch=v2`. After that latch, no v1
+current, invitation, view, or recovery statement can regain authority. Endpoint
+roles are not inferred from an enrollment URL: `device_config`, `device_report`,
+and `data_ingress` are distinct. Every HTTPS/Hysteria2/Trojan endpoint uses the
+exact signed server name plus WebPKI and its generation/overlap-bounded TLS SPKI
+pin set.
+
 `clients/windows` is the Windows-only client host. It does not compile the
 control-plane publisher, SSH provisioning, systemd lifecycle, or other Linux
 operations into the Windows executable.
 
 ## User flow
 
-The control plane creates the Device first. All three embedded editions now use
+The control plane creates the Device first. The three embedded editions use
 the same native Windows GUI and join flow. Installed uses an ordinary-user
 window and an MSI-installed Service broker. The service owns machine credentials,
 signed updates and the data-plane process:
@@ -37,7 +78,7 @@ not change the machine's display settings or use a real joined identity.
   <img src="../../assets/client/windows/loom-client-windows-current.png" width="900" alt="Loom Windows native interface with saved profiles, route modes and per-Service paths">
 </p>
 
-<p align="center"><sub>Portable TUN · Native window captured from the current source with synthetic profiles and measurements. Published previews may lag behind the source.</sub></p>
+<p align="center"><sub>Portable TUN · Native window generated from repository source with synthetic profiles and measurements. Published previews may lag behind the source.</sub></p>
 
 The screenshot is produced by `TestGUIProfilesSelectionAndActualServicePaths`
 with `LOOM_PROFILE_GUI_CAPTURE` set to the output PNG path.
@@ -110,11 +151,18 @@ The **直连 / 自动 / 固定出口** controls change the authorized route pref
 Auto retains per-Service routing. Fixed exit offers an authorized exit picker
 and uses one shared path for managed internet traffic; the Agent still chooses
 the intermediate servers leading to that exit. **当前选路** reads back the actual
-server chain and shows each available entry, server-hop and target measurement
+server chain and shows the current entry, server-hop and target evidence
 on its corresponding link. **详细信息** adds each measurement's source and time,
 the decision reason and read time. Missing measurements stay unknown; segmented
 estimates do not establish end-to-end P50/P95 or business-path health. The local
 TUN capture address is not presented as an independently reachable Loom network IP.
+Direct does not freeze a candidate snapshot or spend probe budget. On the first transition
+into Auto or fixed-exit mode in each underlying-network generation, the client atomically
+freezes the then-current candidate snapshot and probes each entry deduplicated by address
+and source interface at most once and in parallel. Configuration refreshes, later mode or exit changes, and reconnects
+within that generation reuse the result. Entries introduced later in the same generation
+receive no active probe; only real dial/fallback attempts may produce passive evidence.
+Entry probes never send business DNS/HTTPS requests and never gate data-plane startup.
 
 The notification-area tooltip includes the embedded
 edition and current state. Double-click restores the window; closing the window
@@ -170,11 +218,12 @@ Portable is a delivery choice; TUN and mixed are traffic-capture choices.
 | Edition | Traffic coverage | Elevation | Persistent installation |
 |---|---|---|---|
 | Portable Mixed | Applications explicitly using `127.0.0.1:1080` as HTTP/SOCKS proxy | None | None |
-| Portable TUN | System TCP/UDP/DNS selected by the managed TUN rules | The current preview requires an administrator relaunch before TUN activation | No MSI or Service; adapter/routes exist while connected |
+| Portable TUN | System TCP/UDP/DNS selected by the managed TUN rules | Requires an administrator relaunch before TUN activation | No MSI or Service; adapter/routes exist while connected |
 | Installed | Managed TUN plus the same-rule mixed endpoint | MSI installation requires elevation; daily UI, join and connection do not | Windows Service and restricted machine-scope ProgramData state |
 
 Portable editions can open and import a join QR without TUN privileges. Portable
-TUN checks elevation only after the join is safely committed and immediately
+TUN checks elevation only after the enrollment response has passed its applicable
+v1 verification or v2 certified gate and the joined state is durably saved, immediately
 before starting its data plane; its GUI offers a Windows UAC relaunch at that
 boundary. Portable Mixed never
 creates an adapter or changes the route table.
@@ -275,7 +324,7 @@ merely selecting a different row does not change that choice. An explicitly
 disconnected client stays disconnected. `--build-info` reports the embedded edition,
 architecture, Go/VCS coordinate, and executable hash.
 
-New QR codes include the SHA-256 fingerprint of the deployment platform key.
+V1 compatibility QR codes include the SHA-256 fingerprint of the deployment platform key.
 The client compares it with its embedded key locally before sending the
 one-time code, so joining does not depend on an extra public trust route. QR codes
 without this fingerprint are rejected; already joined identities remain valid. See
@@ -296,26 +345,39 @@ without this fingerprint are rejected; already joined identities remain valid. S
   import; it binds an existing Device and is not a user registration command.
 - `internal/clientsecret` protects the join identity, secret vault, and hydrated
   candidates with edition-appropriate DPAPI scope.
-- `internal/clientupdate` verifies signed current state, generation floors,
-  snapshot signatures, and the Device bundle before activation.
+- The v1 `internal/clientupdate` path verifies signed current state, its generation
+  floor, snapshot signatures, and the Device bundle before activation. A future v2
+  reader **must** additionally apply the certified-head gate, four durable floor
+  groups, bootstrap transition hash, irreversible latch, Device proof, and
+  EndpointSet WebPKI/SPKI pins described above; `committed_not_certified` must never
+  become current. This is a target contract, not a claim that the current Windows
+  implementation has shipped the v2 reader.
 - `internal/clientcomponent` verifies the bundled component signature, hashes,
   PE architecture, sing-box identity, and Wintun Authenticode before installing
   an immutable runtime slot.
 - `internal/clientruntime` derives the exact Installed, Portable TUN, or TUN-free
   Portable Mixed profile and supervises sing-box in a kill-on-close Job Object.
   TUN profiles enable default-interface binding for underlay sockets and prepend
-  a TUN-only port-53 `hijack-dns` rule. This sends system DNS to the signed DNS
-  resolvers and prevents outbound connections from looping back through TUN.
-  These local capture settings leave the signed egress rules, selectors and
-  outbounds intact; Portable Mixed receives neither setting. Native compatibility
+  a TUN-only port-53 `hijack-dns` rule. For Auto/fixed-exit business traffic, the
+  resulting FakeIP/domain mapping must restore and carry the FQDN through the
+  selected chain so that the final egress resolver, not the Windows/access-side
+  resolver, chooses A/AAAA. Direct resolves locally. EndpointSet transport hostnames
+  use a separate protected underlay resolver/cache and never enter business FakeIP;
+  otherwise bootstrap would loop through the tunnel it is trying to create. Merely
+  sending system DNS to a configured resolver does not prove this contract. These
+  local capture settings leave the signed egress rules, selectors and outbounds
+  intact; Portable Mixed receives neither setting. Native compatibility
   is checked with the bundled sing-box using `TestOfficialWindowsTUNCaptureCheck`
   (`LOOM_SING_BOX_EXECUTABLE` and `LOOM_TEST_CA_CERTIFICATE`).
-- `internal/clientreport` sends the existing Observation, including actual Agent evidence, with a v5
+- `internal/clientreport` sends the v1 Observation, including actual Agent evidence, with a v5
   attestation and self-check v1, using the retained DPAPI identity. After
-  activation it reports the active snapshot every 60 seconds to the same-origin
-  report URL derived from the validated enrollment URL; redirects are refused
-  and accepts verified server observations in a bounded HTTP 200 response, with
-  compatibility for the old empty HTTP 204 response. Candidates do not advance
+  activation it reports the active snapshot every 60 seconds. Before the v2 latch,
+  the v1 destination is the same-origin report URL derived from the validated
+  enrollment URL; redirects are refused, and verified server observations may be
+  returned in a bounded HTTP 200 response with compatibility for an empty HTTP 204.
+  After the latch, only a certified `EndpointSet(role=device_report)` supplies the
+  exact URL, hostname/WebPKI and SPKI pins; no path is inferred from enrollment.
+  Candidates do not advance
   `applied`, and stopping the workload stops reports. Self-check checks local
   runtime listeners and the managed TUN adapter; it sends no business requests.
   Business reachability remains unmeasured. Server observation errors are
@@ -340,15 +402,21 @@ without this fingerprint are rejected; already joined identities remain valid. S
   an update swaps child data planes, and the final joined-state commit never
   replaces an existing file.
 
-## 本地客户端选路（§5.6 / §7.3.3）
+## 本地客户端选路目标契约（§5.6 / §7.3.3）
 
-Windows 使用 `agent.RunClient`。从已验证配置与实际 detour 提取授权入口，每次激活
-按地址去重、各发一次并行 ICMP；在 TUN 启动前捕获源网卡，探测不阻塞激活。
-不调用服务器使用的完整路径 `agent.Run`，不扫描 Service × 候选路径，不等待样本。
+Windows 宿主必须使用 `agent.RunClient`，从已验证配置与实际 detour 提取授权入口，并为每个底层
+网络代维护跨 Agent/profile 替换的 probe registry。Direct 不冻结候选也不探测；该网络代第一次
+进入 Auto/指定出口时原子冻结当时的候选快照，按地址与源接口去重并对快照内每个入口至多发一次轻量并行 ICMP。
+配置刷新、模式/出口切换和同一网络代内重连复用该结果，不重测；同代新出现的授权入口
+（目标 v2 中来自 signed EndpointSet）不加入主动探测集合，只能从真实拨号/回退取得被动
+证据，下一底层网络代才可进入新快照。探测不阻塞数据面激活，
+不发送业务 DNS/HTTPS，不调用服务器使用的
+完整路径 `agent.Run`，不扫描 Service × 候选路径，不等待样本或服务器观测。
 
 后段复用原上报响应中的已验签服务器观测。服务器结果更新只重算，不触发客户端探测。
 后段证据未到时沿用当前出口，只比较同出口候选的入口延迟；latency 使用入口 RTT、
-实际承载的服务器邻接/公网 Hy2 RTT 和出口已覆盖目标的首字节时间估算，沿用切换阈值。
+实际承载的服务器邻接/公网 data-ingress RTT 和出口已覆盖目标的首字节时间估算，沿用切换阈值。
+Hy2 专属的 Δ/固定响应速率只在对应已签 LinkMetric 存在时显示；Trojan 不借用或补造 Hy2 指标。
 同一声明的候选使用相同目标子集，未覆盖目标明确标注未知，不阻断其他已有数据。
 其他目标指标缺乏相应分段证据时明确说明，不能冒充已经优化。未覆盖目标保持未知。
 
@@ -366,42 +434,38 @@ PUT 意图不能冒充已生效路径。原因用已有 canonical v5 reason 签�
 不再由客户端填充。每轮 self-check 只检查本机监听、托管网卡及当前运行态，缺少
 业务目标不再被误报为设备断网。界面读取和健康上报均不触发业务探测。
 
-测试覆盖入口去重与并行、启动不等待服务器观测、更新不重测、授权限制、未知与过期
+验收测试必须覆盖入口去重与并行、启动不等待服务器观测、同一网络代的配置刷新/模式/出口切换/重连不重测、授权限制、未知与过期
 证据、失败约束、实际 selector readback、固定末跳、代次取消及原签名绑定。
-Windows 原生测试验证单次 ICMP API；设置 `LOOM_SING_BOX_EXECUTABLE` 可运行
+Windows 原生验收还必须验证单次 ICMP API；设置 `LOOM_SING_BOX_EXECUTABLE` 后的目标用例为
 `TestOfficialWindowsClientSelectsEntryWithoutBusinessProbes`，使用官方数据面验证
-selector 已切换且目标及代理接收器始终没有收到业务探测请求。
-当前实机及发布情况见 `docs/status/current.md`，历史端到端探测验收不代表新版本已部署。
+selector 已切换且目标及代理接收器始终没有收到业务探测请求。哪些用例已经通过、registry
+是否已跨 Agent/profile 生命周期实现，只见[Current status](../../docs/status/current.md)；本节不构成完成声明。
 
-## Current implementation boundary
+## Acceptance contract
 
-Portable Mixed has a native Windows end-to-end test covering QR decoding,
-current-user DPAPI, HTTPS Device binding, signed component installation, first
-signed pull, listener startup, startup grace, two signed report attachments
-after token cleanup, and clean shutdown without TUN or
-route changes. All three editions provide the same first-launch and connection
-GUI; file selection, window lifecycle, and console-free PE output have been
-exercised on the Windows host. Native draft tests cover cancellation before
-allocation, protected recovery after restart, a late ready response after cancel,
-atomic profile-index failure, and joining without switching the active profile.
-Misaka rendering tests use isolated native windows and synthetic profile/path
-data. These checks do not replace live acceptance of multiple real identities.
+Acceptance is tracked per architecture and edition; one passing form does not
+stand in for another:
 
-Installed uses the same lifecycle implementation inside SCM and connects the
-ordinary-user window through an ACL-restricted named pipe. Windows amd64 native
-acceptance covers ordinary-user QR join, machine DPAPI, actual TUN activation,
-route selection, disconnect/reconnect and signed reporting. MSI upgrade, uninstall
-and reinstall were exercised with the same retained machine identity and no
-second QR; uninstall removed the service, executable, TUN routes and listener. Portable TUN live
-acceptance covers three connect/stop cycles, adapter and route removal, listener
-and plaintext-config cleanup, and host crash followed by signed-state recovery.
-The control UI has also been observed changing the stopped Device to stale.
+- Portable Mixed covers bounded QR decoding, current-user DPAPI, Device binding,
+  signed component/config installation, listener/report lifecycle, pending/ready
+  recovery, multi-profile isolation, and shutdown without TUN or route changes.
+- Installed covers ordinary-user GUI to ACL-restricted SCM broker, machine DPAPI,
+  real TUN activation, route selection, disconnect/reconnect, signed reporting,
+  upgrade/uninstall/reinstall with retained identity, and complete service/route
+  cleanup.
+- Portable TUN covers repeated connect/stop, adapter/route/listener/plaintext
+  cleanup, process/host crash recovery, and fail-closed restoration.
+- V2 coverage includes the certified-only gate, four durable floor groups with
+  recovery policy hash, bootstrap transition/latch persistence, Device proof,
+  role-separated EndpointSets, SPKI pin overlap, and rejection of every v1
+  authority after the latch.
+- AMD64 and ARM64 require their own host evidence across supported network and
+  display configurations. A database-valid MSI or cross-build is not host
+  acceptance. Formal release additionally requires a trusted Authenticode
+  certificate and timestamp.
 
-ARM64 packages are built and their MSI databases validated, but ARM64 host and
-multiple physical network/display configurations need their own acceptance.
-Authenticode signing requires a real code-signing certificate and timestamp
-service. These external requirements do not turn an unsigned build into a
-formal signed release.
+Which items have evidence, and which remain open, is recorded only in
+[the current status](../../docs/status/current.md).
 
 ## Installed package
 
@@ -447,7 +511,7 @@ Opt-in native acceptance tests:
 - `LOOM_ACCEPT_TUN_LIFECYCLE=1`: `TestWindowsTUNLifecycleLive`, executed elevated
   after normal Portable QR join and with other Loom workloads disconnected.
 
-## 本次 Agent 接入修改文件
+## Agent 选路集成代码映射
 
 | 目录 | 运行代码 / 文档 | 测试 |
 |---|---|---|

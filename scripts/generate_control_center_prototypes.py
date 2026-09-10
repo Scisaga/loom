@@ -690,7 +690,7 @@ def services_page() -> str:
     <text class="small green" x="82" y="224" text-anchor="middle">Services · 2</text>
     <text class="small muted" x="169" y="224">Access policies · 3</text>
     <circle class="quiet-dot" cx="326" cy="219" r="4"/><text class="small green" x="339" y="224">All definitions valid</text>
-    <rect class="chip-green" x="486" y="202" width="225" height="34" rx="17"/><text class="tiny green" x="599" y="223" text-anchor="middle">Structured save · implemented</text>
+    <rect class="chip-green" x="486" y="202" width="225" height="34" rx="17"/><text class="tiny green" x="599" y="223" text-anchor="middle">Structured proposal</text>
     <rect class="button" x="1390" y="198" width="169" height="40" rx="6"/>
     <use href="#icon-plus" x="1413" y="210" width="15" height="15" stroke="#FFFFFF" fill="none" stroke-width="1.5" stroke-linecap="round"/>
     <text class="small" x="1439" y="223" fill="#FFFFFF">Add service</text>
@@ -774,11 +774,11 @@ def services_page() -> str:
     <line class="rule" x1="467" y1="921" x2="1559" y2="921"/>
 
     <circle class="quiet-dot" cx="472" cy="951" r="4"/><text class="small green" x="485" y="956">All fields valid</text>
-    <text class="tiny muted" x="616" y="956">Save validates, writes SSOT atomically and publishes automatically.</text>
+    <text class="tiny muted" x="616" y="956">Raft commit plus post-commit quorum QC authorizes reconciliation.</text>
     <rect class="panel" x="1290" y="932" width="112" height="39" rx="6"/><text class="small" x="1346" y="956" text-anchor="middle">Discard</text>
     <rect class="button-green" x="1417" y="932" width="142" height="39" rx="6"/>
     <use href="#icon-save" x="1437" y="944" width="14" height="14" stroke="#FFFFFF" fill="none" stroke-width="1.4" stroke-linejoin="round"/>
-    <text class="small" x="1462" y="956" fill="#FFFFFF">Save service</text>
+    <text class="small" x="1462" y="956" fill="#FFFFFF">Submit proposal</text>
   </g>
 '''
     return shell(
@@ -887,33 +887,33 @@ def routes_page() -> str:
 
 def deployments_page() -> str:
     body = r'''
-  <!-- Release summary -->
+  <!-- Target control and release summary -->
   <rect class="panel" x="21" y="202" width="1538" height="86" rx="7"/>
   <g class="ui">
-    <text class="small muted" x="47" y="234">PUBLISHER</text><circle class="status-dot" cx="51" cy="257" r="4"/><text class="metric" x="64" y="262">Heartbeat healthy</text>
-    <text class="small muted" x="421" y="234">FLEET SNAPSHOT</text><text class="metric mono" x="421" y="262">a1b2c3d4e5f6</text>
-    <text class="small muted" x="786" y="234">ROLLOUT</text><text class="metric" x="786" y="262">5 / 5 verified</text>
-    <text class="small muted" x="1106" y="234">DISTRIBUTION POINTER</text><circle class="warn-dot" cx="1110" cy="257" r="4"/><text class="metric amber" x="1123" y="262">Legacy current</text><text class="tiny muted" x="1293" y="261">floor not reported · signed current planned</text>
+    <text class="small muted" x="47" y="234">CONTROLSET</text><text class="metric" x="47" y="262">epoch 7 · q=3/5</text>
+    <text class="small muted" x="421" y="234">CERTIFIED HEAD</text><text class="metric mono" x="421" y="262">a1b2c3d4e5f6</text>
+    <text class="small muted" x="786" y="234">RECONCILIATION</text><text class="metric" x="786" y="262">5 / 5 applied</text>
+    <text class="small muted" x="1106" y="234">REPLICATION</text><circle class="status-dot" cx="1110" cy="257" r="4"/><text class="metric" x="1123" y="262">QC + attest verified</text>
   </g>
   <line class="rule" x1="386" y1="222" x2="386" y2="269"/><line class="rule" x1="751" y1="222" x2="751" y2="269"/><line class="rule" x1="1071" y1="222" x2="1071" y2="269"/>
 
-  <!-- Publisher -->
+  <!-- Replaceable release executor -->
   <rect class="panel" x="21" y="304" width="511" height="392" rx="7"/>
   <g class="ui">
-    <text class="section" x="41" y="334">Publisher</text>
-    <rect class="chip-green" x="401" y="316" width="108" height="27" rx="13.5"/><circle class="quiet-dot" cx="418" cy="329" r="3.5"/><text class="tiny green" x="429" y="333">Healthy</text>
-    <text class="tiny muted" x="41" y="357">Automatic release worker on demo-d</text>
-    <text class="small muted" x="41" y="395">HEARTBEAT</text><text class="body" x="218" y="395">8s ago</text>
-    <text class="small muted" x="41" y="427">INTERVAL</text><text class="body" x="218" y="427">30 seconds</text>
+    <text class="section" x="41" y="334">Release executor</text>
+    <rect class="chip-green" x="401" y="316" width="108" height="27" rx="13.5"/><circle class="quiet-dot" cx="418" cy="329" r="3.5"/><text class="tiny green" x="429" y="333">Lease active</text>
+    <text class="tiny muted" x="41" y="357">Replaceable materialization and reconciliation worker on demo-d</text>
+    <text class="small muted" x="41" y="395">RAFT TERM / INDEX</text><text class="body mono" x="218" y="395">12 / 104</text>
+    <text class="small muted" x="41" y="427">CONTROL EPOCH</text><text class="body" x="218" y="427">7 · q=3/5</text>
     <text class="small muted" x="41" y="459">LOOM CODE</text><text class="body mono" x="218" y="459">deadbee</text>
     <text class="small muted" x="41" y="491">BINARY</text><text class="body mono" x="218" y="491">449597b5…</text>
-    <text class="small muted" x="41" y="523">LAST SUCCESS</text><text class="body" x="218" y="523">19h ago</text>
-    <text class="small muted" x="41" y="555">LAST SNAPSHOT</text><text class="body mono" x="218" y="555">a1b2c3d4e5f6</text>
+    <text class="small muted" x="41" y="523">LAST RECONCILE</text><text class="body" x="218" y="523">8s ago</text>
+    <text class="small muted" x="41" y="555">TARGET SNAPSHOT</text><text class="body mono" x="218" y="555">a1b2c3d4e5f6</text>
     <line class="rule" x1="41" y1="579" x2="512" y2="579"/>
-    <text class="tiny muted" x="41" y="607">No new publish is expected while SSOT and renderer output are unchanged.</text>
-    <text class="tiny muted" x="41" y="629">Heartbeat freshness, not release age, determines publisher health.</text>
+    <text class="tiny muted" x="41" y="607">No new publish is expected while the certified head and renderer output are unchanged.</text>
+    <text class="tiny muted" x="41" y="629">Lease loss changes the executor, never the certified authority.</text>
     <rect class="chip" x="41" y="650" width="168" height="27" rx="6"/><text class="tiny" x="125" y="668" text-anchor="middle">No manual Publish action</text>
-    <text class="tiny muted" x="225" y="668">Fleet rollout · not code deployment history</text>
+    <text class="tiny muted" x="225" y="668">Fleet reconciliation · not code deployment history</text>
   </g>
 
   <!-- Node convergence -->
@@ -922,11 +922,11 @@ def deployments_page() -> str:
     <text class="section" x="568" y="334">Fleet convergence</text><text class="tiny muted" x="742" y="334">target snapshot <tspan class="mono">a1b2c3d4e5f6</tspan></text>
     <text class="small muted" x="574" y="369">NODE</text><text class="small muted" x="743" y="369">TARGET</text><text class="small muted" x="928" y="369">STAGE</text><text class="small muted" x="1098" y="369">ENTERED</text><text class="small muted" x="1281" y="369">LAST GOOD</text><text class="small muted" x="1438" y="369">DRIFT</text>
     <line class="rule" x1="568" y1="377" x2="1539" y2="377"/>
-    <text class="body mono" x="574" y="412">demo-d</text><text class="body mono" x="743" y="412">a1b2c3d</text><circle class="quiet-dot" cx="932" cy="407" r="4"/><text class="body" x="945" y="412">Verified</text><text class="body" x="1098" y="412">19h ago</text><text class="body mono" x="1281" y="412">3e8d7c2a</text><text class="tiny muted" x="1438" y="412">Not reported</text>
-    <text class="body mono" x="574" y="463">demo-b</text><text class="body mono" x="743" y="463">a1b2c3d</text><circle class="quiet-dot" cx="932" cy="458" r="4"/><text class="body" x="945" y="463">Verified</text><text class="body" x="1098" y="463">19h ago</text><text class="body mono" x="1281" y="463">3e8d7c2a</text><text class="tiny muted" x="1438" y="463">Not reported</text>
-    <text class="body mono" x="574" y="514">demo-c</text><text class="body mono" x="743" y="514">a1b2c3d</text><circle class="quiet-dot" cx="932" cy="509" r="4"/><text class="body" x="945" y="514">Verified</text><text class="body" x="1098" y="514">19h ago</text><text class="body mono" x="1281" y="514">3e8d7c2a</text><text class="tiny muted" x="1438" y="514">Not reported</text>
-    <text class="body mono" x="574" y="565">demo-e</text><text class="body mono" x="743" y="565">a1b2c3d</text><circle class="quiet-dot" cx="932" cy="560" r="4"/><text class="body" x="945" y="565">Verified</text><text class="body" x="1098" y="565">19h ago</text><text class="body mono" x="1281" y="565">3e8d7c2a</text><text class="tiny muted" x="1438" y="565">Not reported</text>
-    <text class="body mono" x="574" y="616">demo-a</text><text class="body mono" x="743" y="616">a1b2c3d</text><circle class="quiet-dot" cx="932" cy="611" r="4"/><text class="body" x="945" y="616">Verified</text><text class="body" x="1098" y="616">19h ago</text><text class="body mono" x="1281" y="616">3e8d7c2a</text><text class="tiny muted" x="1438" y="616">Not reported</text>
+    <text class="body mono" x="574" y="412">demo-d</text><text class="body mono" x="743" y="412">a1b2c3d</text><circle class="quiet-dot" cx="932" cy="407" r="4"/><text class="body" x="945" y="412">Verified</text><text class="body" x="1098" y="412">19h ago</text><text class="body mono" x="1281" y="412">3e8d7c2a</text><text class="tiny green" x="1438" y="412">In sync</text>
+    <text class="body mono" x="574" y="463">demo-b</text><text class="body mono" x="743" y="463">a1b2c3d</text><circle class="quiet-dot" cx="932" cy="458" r="4"/><text class="body" x="945" y="463">Verified</text><text class="body" x="1098" y="463">19h ago</text><text class="body mono" x="1281" y="463">3e8d7c2a</text><text class="tiny green" x="1438" y="463">In sync</text>
+    <text class="body mono" x="574" y="514">demo-c</text><text class="body mono" x="743" y="514">a1b2c3d</text><circle class="quiet-dot" cx="932" cy="509" r="4"/><text class="body" x="945" y="514">Verified</text><text class="body" x="1098" y="514">19h ago</text><text class="body mono" x="1281" y="514">3e8d7c2a</text><text class="tiny green" x="1438" y="514">In sync</text>
+    <text class="body mono" x="574" y="565">demo-e</text><text class="body mono" x="743" y="565">a1b2c3d</text><circle class="quiet-dot" cx="932" cy="560" r="4"/><text class="body" x="945" y="565">Verified</text><text class="body" x="1098" y="565">19h ago</text><text class="body mono" x="1281" y="565">3e8d7c2a</text><text class="tiny green" x="1438" y="565">In sync</text>
+    <text class="body mono" x="574" y="616">demo-a</text><text class="body mono" x="743" y="616">a1b2c3d</text><circle class="quiet-dot" cx="932" cy="611" r="4"/><text class="body" x="945" y="616">Verified</text><text class="body" x="1098" y="616">19h ago</text><text class="body mono" x="1281" y="616">3e8d7c2a</text><text class="tiny green" x="1438" y="616">In sync</text>
     <line class="rule" x1="568" y1="431" x2="1539" y2="431"/><line class="rule" x1="568" y1="482" x2="1539" y2="482"/><line class="rule" x1="568" y1="533" x2="1539" y2="533"/><line class="rule" x1="568" y1="584" x2="1539" y2="584"/><line class="rule" x1="568" y1="635" x2="1539" y2="635"/>
     <text class="tiny muted" x="568" y="668">A node is converged only after its local verifier records the target snapshot as verified.</text>
   </g>
@@ -934,38 +934,38 @@ def deployments_page() -> str:
   <!-- Release pipeline -->
   <rect class="panel" x="21" y="712" width="1004" height="261" rx="7"/>
   <g class="ui">
-    <text class="section" x="41" y="742">Automatic release workflow</text><text class="tiny amber" x="315" y="742">Stage history is not reported</text>
-    <text class="tiny muted" x="41" y="764">Saving a valid SSOT change is the only write; the publisher owns every downstream stage.</text>
+    <text class="section" x="41" y="742">Certified release workflow</text><text class="tiny amber" x="315" y="742">Target v2 · sample data</text>
+    <text class="tiny muted" x="41" y="764">Apply computes roots after Raft commit; only the attested head may be published.</text>
     <line class="timeline" x1="87" y1="830" x2="955" y2="830"/>
-    <circle class="neutral-dot" cx="87" cy="830" r="5"/><circle class="neutral-dot" cx="232" cy="830" r="5"/><circle class="neutral-dot" cx="377" cy="830" r="5"/><circle class="neutral-dot" cx="522" cy="830" r="5"/><circle class="neutral-dot" cx="667" cy="830" r="5"/><circle class="neutral-dot" cx="812" cy="830" r="5"/><circle class="neutral-dot" cx="955" cy="830" r="5"/>
-    <text class="small" x="87" y="860" text-anchor="middle">Validate</text><text class="small" x="232" y="860" text-anchor="middle">Render</text><text class="small" x="377" y="860" text-anchor="middle">Sign</text><text class="small" x="522" y="860" text-anchor="middle">Distribute</text><text class="small" x="667" y="860" text-anchor="middle">Pull</text><text class="small" x="812" y="860" text-anchor="middle">Apply</text><text class="small" x="955" y="860" text-anchor="middle">Verify</text>
-    <text class="tiny muted" x="87" y="882" text-anchor="middle">SSOT</text><text class="tiny muted" x="232" y="882" text-anchor="middle">per node</text><text class="tiny muted" x="377" y="882" text-anchor="middle">manifest</text><text class="tiny muted" x="522" y="882" text-anchor="middle">snapshot</text><text class="tiny muted" x="667" y="882" text-anchor="middle">timer</text><text class="tiny muted" x="812" y="882" text-anchor="middle">atomic</text><text class="tiny muted" x="955" y="882" text-anchor="middle">local</text>
+    <circle class="neutral-dot" cx="87" cy="830" r="5"/><circle class="neutral-dot" cx="304" cy="830" r="5"/><circle class="neutral-dot" cx="522" cy="830" r="5"/><circle class="neutral-dot" cx="739" cy="830" r="5"/><circle class="neutral-dot" cx="955" cy="830" r="5"/>
+    <text class="small" x="87" y="860" text-anchor="middle">Validate candidate</text><text class="small" x="304" y="860" text-anchor="middle">Raft durable commit</text><text class="small" x="522" y="860" text-anchor="middle">Apply / recompute</text><text class="small" x="739" y="860" text-anchor="middle">Replication attest / QC</text><text class="small" x="955" y="860" text-anchor="middle">Publish / reconcile</text>
+    <text class="tiny muted" x="87" y="882" text-anchor="middle">deterministic</text><text class="tiny muted" x="304" y="882" text-anchor="middle">majority fsync</text><text class="tiny muted" x="522" y="882" text-anchor="middle">each voter</text><text class="tiny muted" x="739" y="882" text-anchor="middle">committed head</text><text class="tiny muted" x="955" y="882" text-anchor="middle">leased executor</text>
     <line class="rule" x1="41" y1="909" x2="1005" y2="909"/>
-    <text class="small muted" x="41" y="938">LATEST FLEET</text><text class="body" x="153" y="938">Snapshot manifest signed · distributed · verified by 5 nodes</text><text class="tiny muted mono" x="870" y="938">publisher code deadbee</text>
+    <text class="small muted" x="41" y="938">LATEST FLEET</text><text class="body" x="153" y="938">QC-bound snapshot · EndpointSet mirrors · 5/5 reconciled</text><text class="tiny muted mono" x="870" y="938">executor code deadbee</text>
   </g>
 
   <!-- Distribution contract -->
   <rect class="panel" x="1041" y="712" width="518" height="261" rx="7"/>
   <g class="ui">
     <text class="section" x="1061" y="742">Distribution &amp; safety boundary</text>
-    <text class="small muted" x="1061" y="778">SNAPSHOT MANIFEST</text><text class="body green" x="1267" y="778">Signed</text>
-    <text class="small muted" x="1061" y="810">CURRENT POINTER</text><text class="body amber" x="1267" y="810">Legacy / unsigned</text>
-    <text class="small muted" x="1061" y="842">NODE ROLLBACK</text><text class="body" x="1267" y="842">Last verified snapshot</text>
+    <text class="small muted" x="1061" y="778">CANDIDATE</text><text class="body green" x="1267" y="778">Validated before append</text>
+    <text class="small muted" x="1061" y="810">RAFT COMMIT</text><text class="body green" x="1267" y="810">Durable majority</text>
+    <text class="small muted" x="1061" y="842">REPLICATION QC</text><text class="body green" x="1267" y="842">Certified roots bound</text>
     <line class="rule" x1="1061" y1="866" x2="1539" y2="866"/>
-    <text class="tiny muted" x="1061" y="889">A manifest signature proves content authenticity, not pointer freshness.</text>
-    <rect class="chip-amber" x="1061" y="903" width="478" height="43" rx="6"/>
-    <text class="tiny amber" x="1077" y="922">Canary controller + representative business-path gate</text>
-    <text class="tiny muted" x="1077" y="939">Not implemented · no Promote or Rollback action in the web UI</text>
-    <text class="tiny muted" x="1061" y="964">Signed-current reader rollout remains pending.</text>
+    <text class="tiny muted" x="1061" y="889">The executor may reconcile only the QC-certified head.</text>
+    <rect class="chip" x="1061" y="903" width="478" height="43" rx="6"/>
+    <text class="tiny green" x="1077" y="922">EndpointSet mirrors are transport, never authority</text>
+    <text class="tiny muted" x="1077" y="939">Readers verify QC, content hashes and monotonic floors</text>
+    <text class="tiny muted" x="1061" y="964">Apply/recompute failure blocks certification; last good stays active.</text>
   </g>
 '''
     return shell(
         active="Deployments",
         eyebrow="CONTROL PLANE / RELEASE",
         title="Fleet deployments",
-        subtitle="demo-d publisher · heartbeat 8s ago · reconciliation interval 30s",
-        status="Latest fleet snapshot verified across 5 nodes · business-path canary planned",
-        description="A fleet-configuration deployment view showing publisher heartbeat, node rollout state, the declared automatic release workflow, and the pending signed-current pointer migration; it is not source-code deployment history.",
+        subtitle="Target v2 · ControlSet epoch 7 · q=3/5 · leased executor demo-d",
+        status="Certified head published · QC verified · 5/5 nodes reconciled",
+        description="A target-v2 fleet-configuration deployment view showing Raft commit, state-machine recomputation, replication attestations, quorum certification, publication, and node reconciliation; all identities and values are synthetic sample data.",
         body=body,
     )
 
@@ -1022,7 +1022,7 @@ def events_page() -> str:
   <!-- Filters -->
   <rect class="panel" x="1106" y="304" width="453" height="242" rx="7"/>
   <g class="ui">
-    <use href="#icon-filter" x="1126" y="321" width="16" height="16" class="action-icon"/><text class="section" x="1150" y="334">Filter</text><text class="tiny green" x="1202" y="334">SSR query · implemented</text>
+    <use href="#icon-filter" x="1126" y="321" width="16" height="16" class="action-icon"/><text class="section" x="1150" y="334">Filter</text><text class="tiny green" x="1202" y="334">SSR query</text>
     <rect class="chip-green" x="1126" y="357" width="75" height="30" rx="5"/><text class="small green" x="1163" y="377" text-anchor="middle">All</text>
     <rect class="chip" x="1209" y="357" width="97" height="30" rx="5"/><text class="small" x="1257" y="377" text-anchor="middle">Problems</text>
     <rect class="chip" x="1314" y="357" width="105" height="30" rx="5"/><text class="small" x="1366" y="377" text-anchor="middle">Recoveries</text>
@@ -1073,11 +1073,11 @@ def settings_page() -> str:
   <!-- Settings context -->
   <rect class="panel" x="21" y="202" width="1538" height="72" rx="7"/>
   <g class="ui">
-    <text class="small muted" x="45" y="232">CONTROL NODE</text><text class="body mono" x="45" y="256">demo-d</text>
-    <text class="small muted" x="384" y="232">WRITE AUTHORITY</text><text class="body" x="384" y="256">Single control node</text>
-    <text class="small muted" x="800" y="232">DISTRIBUTED SNAPSHOT</text><text class="body mono" x="800" y="256">a1b2c3d4e5f6</text>
-    <text class="small muted" x="1125" y="232">PUBLISH CADENCE</text><text class="body" x="1125" y="256">≤ 30s</text>
-    <text class="tiny muted" x="1231" y="256">fleet target ≤ 90s · no publish button</text>
+    <text class="small muted" x="45" y="232">CONTROL REPLICA</text><text class="body mono" x="45" y="256">demo-d · caught up</text>
+    <text class="small muted" x="384" y="232">CONTROL MEMBERSHIP</text><text class="body" x="384" y="256">Dynamic ControlSet quorum</text>
+    <text class="small muted" x="800" y="232">CERTIFIED HEAD</text><text class="body mono" x="800" y="256">a1b2c3d4e5f6</text>
+    <text class="small muted" x="1125" y="232">RECONCILIATION</text><text class="body" x="1125" y="256">Current</text>
+    <text class="tiny muted" x="1231" y="256">commit and apply remain separate</text>
   </g>
   <line class="rule" x1="349" y1="219" x2="349" y2="259"/><line class="rule" x1="765" y1="219" x2="765" y2="259"/><line class="rule" x1="1090" y1="219" x2="1090" y2="259"/>
 
@@ -1088,14 +1088,14 @@ def settings_page() -> str:
   <line x1="21" y1="325" x2="78" y2="325" stroke="#2AA875" stroke-width="2"/>
   <line class="rule" x1="21" y1="325" x2="1559" y2="325"/>
 
-  <!-- The implemented surface is the authenticated raw /ssot YAML editor. -->
+  <!-- Target-v2 proposal editor; the v1 compatibility writer is a separate profile. -->
   <rect class="panel" x="21" y="341" width="1005" height="632" rx="7"/>
   <g class="ui">
     <text class="section" x="41" y="373">Raw SSOT editor</text>
     <text class="tiny muted" x="218" y="373">Full YAML buffer · viewport shown below</text>
     <rect class="chip" x="735" y="354" width="116" height="30" rx="5"/><use href="#icon-check" x="750" y="362" width="14" height="14" class="action-icon"/><text class="small" x="812" y="374" text-anchor="middle">Validate</text>
-    <rect class="button-green" x="860" y="354" width="144" height="30" rx="5"/><use href="#icon-save" x="875" y="362" width="14" height="14" class="action-icon" style="stroke:#FFFFFF"/><text class="small" x="945" y="374" text-anchor="middle" fill="#FFFFFF">Validate &amp; save</text>
-    <text class="tiny muted" x="41" y="404">GET /ssot · POST /ssot · viewport lines 11–33</text><text class="tiny green" x="1004" y="404" text-anchor="end">Write session · node-local operator_ref</text>
+    <rect class="button-green" x="860" y="354" width="144" height="30" rx="5"/><use href="#icon-save" x="875" y="362" width="14" height="14" class="action-icon" style="stroke:#FFFFFF"/><text class="small" x="945" y="374" text-anchor="middle" fill="#FFFFFF">Submit proposal</text>
+    <text class="tiny muted" x="41" y="404">Certified view · proposal editor · viewport lines 11–33</text><text class="tiny green" x="1004" y="404" text-anchor="end">Admin certificate verified</text>
   </g>
 
   <rect class="code-bg" x="41" y="419" width="965" height="532" rx="5"/>
@@ -1106,18 +1106,18 @@ def settings_page() -> str:
   </g>
   <g class="ui body mono">
     <text x="101" y="447"><tspan class="blue">defaults</tspan>:</text>
-    <text x="101" y="469">  <tspan class="faint"># Control, signing and publishing live on demo-d.</tspan></text>
-    <text x="101" y="491">  <tspan class="faint"># Forwarding continues if that writer is unavailable.</tspan></text>
-    <text x="101" y="513">  <tspan class="faint"># Writer state can be moved with SSOT and signing material.</tspan></text>
+    <text x="101" y="469">  <tspan class="faint"># Raw YAML is imported as a signed admin proposal.</tspan></text>
+    <text x="101" y="491">  <tspan class="faint"># Only a quorum-certified head becomes effective.</tspan></text>
+    <text x="101" y="513">  <tspan class="faint"># A replica outage does not change the data-plane LKG.</tspan></text>
     <text x="101" y="535"> </text>
-    <text x="101" y="557">  <tspan class="faint"># Nodes fetch signed immutable snapshots from this origin.</tspan></text>
-    <text x="101" y="579">  <tspan class="faint"># Distribution transport itself is not trusted.</tspan></text>
-    <text x="101" y="601">  <tspan class="faint"># Node-local pinned trust verifies the manifest.</tspan></text>
-    <text x="101" y="623">  <tspan class="blue">distribution_url</tspan>: <tspan class="green">https://downloads.example.net/loom/</tspan></text>
+    <text x="101" y="557">  <tspan class="faint"># A QC-signed EndpointSet authorizes distribution endpoints.</tspan></text>
+    <text x="101" y="579">  <tspan class="faint"># Multiple endpoint IDs provide transport failover: dist/demo-a, dist/demo-b.</tspan></text>
+    <text x="101" y="601">  <tspan class="faint"># Each endpoint carries independent WebPKI and SPKI transport pins.</tspan></text>
+    <text x="101" y="623">  <tspan class="blue">endpoint_set_ref</tspan>: <tspan class="green">distribution/main</tspan></text>
     <text x="101" y="645">  <tspan class="faint"># Resolver defaults are selected for the deployed region.</tspan></text>
     <text x="101" y="667">  <tspan class="faint"># Request-derived destinations still resolve at the selected egress.</tspan></text>
     <text x="101" y="689">  <tspan class="faint"># The raw buffer continues; this is only the visible viewport.</tspan></text>
-    <text x="101" y="711">  <tspan class="blue">dns</tspan>: [<tspan class="green">223.5.5.5</tspan>, <tspan class="green">119.29.29.29</tspan>]</text>
+    <text x="101" y="711">  <tspan class="blue">dns</tspan>: [<tspan class="green">192.0.2.53</tspan>, <tspan class="green">2001:db8::53</tspan>]</text>
     <text x="101" y="733"> </text>
     <text x="101" y="755">  <tspan class="blue">components</tspan>:</text>
     <text x="101" y="777">    <tspan class="blue">sing_box</tspan>: <tspan class="green">1.11.4</tspan></text>
@@ -1125,7 +1125,7 @@ def settings_page() -> str:
     <text x="101" y="821">    <tspan class="blue">agent</tspan>: <tspan class="green">0.1.0</tspan></text>
     <text x="101" y="843"> </text>
     <text x="101" y="865"><tspan class="blue">nodes</tspan>:</text>
-    <text x="101" y="887">  <tspan class="faint"># Domestic nodes have public endpoints; no mesh is deployed.</tspan></text>
+    <text x="101" y="887">  <tspan class="faint"># Optional mesh state is never assumed by this proposal.</tspan></text>
     <text x="101" y="909">  <tspan class="faint"># Candidate paths are distinct from persistent WireGuard edges.</tspan></text>
     <text x="101" y="931">  <tspan class="faint"># Scroll for complete node, tunnel, declaration and service entries.</tspan></text>
   </g>
@@ -1134,46 +1134,47 @@ def settings_page() -> str:
   <rect class="panel" x="1042" y="341" width="517" height="632" rx="7"/>
   <g class="ui">
     <text class="section" x="1062" y="373">Validation</text>
-    <circle class="status-dot" cx="1067" cy="406" r="4"/><text class="body green" x="1080" y="411">Current file passes all checks</text>
+    <circle class="status-dot" cx="1067" cy="406" r="4"/><text class="body green" x="1080" y="411">Current proposal passes all checks</text>
     <text class="small muted" x="1062" y="443">Schema</text><text class="body" x="1207" y="443">Valid</text>
     <text class="small muted" x="1062" y="471">Topology</text><text class="body" x="1207" y="471">5 nodes · 6 tunnels</text>
     <text class="small muted" x="1062" y="499">Routing entries</text><text class="body" x="1207" y="499">5 renderable</text>
-    <text class="tiny muted" x="1062" y="522">Save performs validation again; the UI check is not the guard.</text>
+    <text class="tiny muted" x="1062" y="522">Every voter validates again; the UI check is not the guard.</text>
   </g>
 
   <line class="rule" x1="1062" y1="545" x2="1539" y2="545"/>
   <g class="ui">
-    <text class="section" x="1062" y="585">What happens after save</text>
-    <text class="body" x="1062" y="619">1</text><text class="body" x="1093" y="619">Atomic SSOT write after validation</text>
-    <text class="body" x="1062" y="650">2</text><text class="body" x="1093" y="650">Publisher detects the change within ~30s</text>
-    <text class="body" x="1062" y="681">3</text><text class="body" x="1093" y="681">Render, sign and distribute immutable snapshot</text>
-    <text class="body" x="1062" y="712">4</text><text class="body" x="1093" y="712">Nodes pull, apply, verify or stay on last good</text>
-    <line class="rule" x1="1062" y1="731" x2="1539" y2="731"/>
-    <text class="tiny muted" x="1062" y="751">There is deliberately no second, manual Publish decision.</text>
+    <text class="section" x="1062" y="585">What happens after submit</text>
+    <text class="body" x="1062" y="610">1</text><text class="body" x="1093" y="610">Validate the signed candidate deterministically</text>
+    <text class="body" x="1062" y="638">2</text><text class="body" x="1093" y="638">Durably commit it through Raft</text>
+    <text class="body" x="1062" y="666">3</text><text class="body" x="1093" y="666">Apply and recompute on each voter</text>
+    <text class="body" x="1062" y="694">4</text><text class="body" x="1093" y="694">Collect replication attestations and issue QC</text>
+    <text class="body" x="1062" y="722">5</text><text class="body" x="1093" y="722">Publish and reconcile through a leased executor</text>
+    <line class="rule" x1="1062" y1="739" x2="1539" y2="739"/>
+    <text class="tiny muted" x="1062" y="759">Candidate, Raft-committed, certified and reconciled are distinct states.</text>
   </g>
 
   <line class="rule" x1="1062" y1="772" x2="1539" y2="772"/>
   <g class="ui">
     <text class="section" x="1062" y="812">Security boundary &amp; gaps</text>
-    <text class="small muted" x="1062" y="841">AUTH SOURCE</text><text class="body" x="1238" y="841">Node-local secrets · operator_ref</text>
+    <text class="small muted" x="1062" y="841">AUTH SOURCE</text><text class="body" x="1238" y="841">Admin certificate · certified ACL</text>
     <text class="small muted" x="1062" y="869">CONTROL BOOTSTRAP</text><text class="body" x="1238" y="869">/etc/loom/control.json · not editable here</text>
     <text class="small muted" x="1062" y="897">PRIVATE KEYS</text><text class="body" x="1238" y="897">Never shown or stored in SSOT</text>
     <line class="rule" x1="1062" y1="912" x2="1539" y2="912"/>
-    <text class="tiny amber" x="1062" y="932">Known web-editing gaps</text>
-    <text class="tiny muted" x="1062" y="950">Web writers share a process lock + revision guard.</text>
-    <text class="tiny muted" x="1062" y="967">External Git/editor is not locked; stop or reload before saving.</text>
+    <text class="tiny amber" x="1062" y="932">Replica and conflict boundary</text>
+    <text class="tiny muted" x="1062" y="950">Local fsync and locks protect only this replica cache.</text>
+    <text class="tiny muted" x="1062" y="967">Conflicts remain pending; only a QC head changes the network.</text>
   </g>
 '''
     return shell(
         active="Settings",
         eyebrow="CONTROL / SSOT",
         title="Settings / SSOT",
-        subtitle="Declarative source of truth · saves are validated and published automatically",
-        status="Raw SSOT write session · authenticated by node-local operator_ref",
-        description="The authenticated raw SSOT YAML editor with whole-buffer validation, a lock shared by cooperating web writers, revision-guarded atomic saves, automatic publication, and an explicit single-writer boundary for external editors.",
+        subtitle="Target v2 declarative proposal · only a quorum-certified head becomes effective",
+        status="Raw SSOT proposal · authenticated by admin certificate and certified ACL",
+        description="A target-v2 raw SSOT proposal editor: admin-authenticated validation, Raft commit, deterministic recomputation, post-commit quorum certification, and separately reported reconciliation.",
         body=body,
-        environment_status="Control node",
-        session_status="Write session",
+        environment_status="Control replica",
+        session_status="Admin session",
     )
 
 

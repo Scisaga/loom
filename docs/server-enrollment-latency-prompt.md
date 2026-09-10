@@ -1,5 +1,10 @@
 # 服务端开发环境：优化 Windows 加入等待
 
+> **状态：v1 专项提示词。** 它优化单 registry、单 publisher 和严格 v1 Enrollment 的等待，
+> 不定义目标 v2 的多 seed、quorum token CAS 或分布式 executor。v2 迁移必须另按
+> [分布式控制平面设计](distributed-control-plane.md)实施，不能把本文的本地唤醒机制提升为
+> 集群共识或长期 SSOT 权威。
+
 将以下提示词交给**服务端开发环境**执行。Windows 环境只实现真实阶段与等待时长的
 界面反馈；本提示词不表示服务端优化已实现或已部署。
 
@@ -16,7 +21,7 @@
 
 ## 先核对现有瓶颈
 
-以下来自仓库实现，开始修改前须按当前代码复核：
+以下是 v1 回归基线；开始修改前须先按 `docs/status/current.md` 与当前代码复核，不能把它当成完成状态：
 
 1. `internal/report/clients.go` 的 claim 先绑定现有 Device，再同步调用 provision。
    `internal/report/client_provision.go` 的 `provision` 在保存 SSOT 前调用
@@ -55,8 +60,10 @@
 
 复用 `202 pending` / `200 ready` 与既有相同身份重试。二维码仍为现有一次性凭据，
 固定 `windows-desktop + use_loom`，不新增 enrollment schema、轮询端点或生命周期枚举。
-本任务不修改上报：仍是原始 Observation、canonical v5 attest + self-check v1 两签、
-空正文 204；Windows 的 applied 仍只在实际激活成功后推进。
+本任务不修改上报：仍是原始 Observation、canonical v5 attest + self-check v1 两签；请求
+`observations=1` 时成功响应可以是带有界原始 Observation 数组的 `200`，旧服务兼容空正文
+`204`。空 `204` 只表示上报成功，不能冒充已经取得可复用观测。Windows 的 applied 仍只在
+实际激活成功后推进。
 
 ## 验收与交付
 
@@ -68,7 +75,8 @@
   和未验证 URL。ready 必须仍来自完整可信 bootstrap。
 - 运行相关测试、race、全仓 test/build/vet、修改文件 gofmt 和仓库安全扫描。
 - 在获准的测试环境从正常有效二维码做加入对比，给出优化前后各阶段耗时及 ready、
-  客户端激活、自动有效 204 的证据。不要求用户提供私钥、恢复旧身份目录或手工签报告。
+  客户端激活、实际成功的 `200`（含可验证观测）或兼容 `204` 证据。不要求用户提供私钥、
+  恢复旧身份目录或手工签报告。
   已正常加入的生产设备保持原身份；新加入实测使用测试环境正常流程提供的二维码。
 - 报告提交号、修改文件、实测数据、未确认事项。未做生产端到端测试就明确标注；
   未获得部署授权时只交付代码。真实地址、设备 ID 与运行记录只放忽略的 `docs/status/`。

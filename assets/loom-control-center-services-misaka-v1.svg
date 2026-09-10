@@ -186,7 +186,7 @@
     <text class="small green" x="82" y="224" text-anchor="middle">Services · 2</text>
     <text class="small muted" x="169" y="224">Access policies · 3</text>
     <circle class="quiet-dot" cx="326" cy="219" r="4"/><text class="small green" x="339" y="224">All definitions valid</text>
-    <rect class="chip-green" x="486" y="202" width="225" height="34" rx="17"/><text class="tiny green" x="599" y="223" text-anchor="middle">Structured save · implemented</text>
+    <rect class="chip-green" x="486" y="202" width="225" height="34" rx="17"/><text class="tiny green" x="599" y="223" text-anchor="middle">Structured proposal</text>
     <rect class="button" x="1390" y="198" width="169" height="40" rx="6"/>
     <use href="#icon-plus" x="1413" y="210" width="15" height="15" stroke="#FFFFFF" fill="none" stroke-width="1.5" stroke-linecap="round"/>
     <text class="small" x="1439" y="223" fill="#FFFFFF">Add service</text>
@@ -270,11 +270,11 @@
     <line class="rule" x1="467" y1="921" x2="1559" y2="921"/>
 
     <circle class="quiet-dot" cx="472" cy="951" r="4"/><text class="small green" x="485" y="956">All fields valid</text>
-    <text class="tiny muted" x="616" y="956">Save validates, writes SSOT atomically and publishes automatically.</text>
+    <text class="tiny muted" x="616" y="956">Raft commit plus post-commit quorum QC authorizes reconciliation.</text>
     <rect class="panel" x="1290" y="932" width="112" height="39" rx="6"/><text class="small" x="1346" y="956" text-anchor="middle">Discard</text>
     <rect class="button-green" x="1417" y="932" width="142" height="39" rx="6"/>
     <use href="#icon-save" x="1437" y="944" width="14" height="14" stroke="#FFFFFF" fill="none" stroke-width="1.4" stroke-linejoin="round"/>
-    <text class="small" x="1462" y="956" fill="#FFFFFF">Save service</text>
+    <text class="small" x="1462" y="956" fill="#FFFFFF">Submit proposal</text>
   </g>
 
 </svg>
