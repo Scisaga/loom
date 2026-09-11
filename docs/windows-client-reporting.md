@@ -2,8 +2,8 @@
 
 > **协议代次：v1 compatibility。** 本文的同源 `/loom-client/enroll` → `/loom-client/report`、单
 > enrollment endpoint、平台公钥和 `200/204` 契约描述现行兼容路径，不是分布式目标协议。
-> v2 使用 certified `EndpointSet(role=device_report)`、Device 身份认证、ControlSet checkpoint/QC 和独立
-> versioned resource；不得把 v2 字段加入本文严格的 v1 JSON。迁移见
+> v2 使用 certified private `ControlServiceDirectoryV1` 中 overlay-only `device_report` 服务、
+> Device mTLS、ControlSet checkpoint/QC 和独立 versioned resource；不得把 v2 字段加入本文严格的 v1 JSON。迁移见
 > [分布式控制平面设计 §19](distributed-control-plane.md#19-从当前实现迁移)。
 
 > **需求优先级：** 本文保留既有协议与历史验收说明。当前客户端选路遵守
@@ -83,8 +83,9 @@ DPAPI 身份继续使用，不因邀请模型更新而清除或要求重新加�
 `/loom-client/report`。这是 v1 兼容约定，不是任意 Loom enrollment URL 都天然
 具备的通用推导规则；不匹配时 fail closed，不猜测其他地址。
 
-目标 v2 明确禁止继续从 enroll URL 猜 report URL：客户端只使用经过 QC 签发且 role 为
-`device_report` 的 EndpointSet 条目，在 endpoint 故障时切换同 role 候选，不把 DNS 或 HTTP
+目标 v2 明确禁止继续从 enroll URL 猜 report URL：客户端只使用 certified private
+`ControlServiceDirectoryV1` 中的 `device_report` 条目，核对 overlay IP、internal CA/EKU 和
+Device mTLS policy；在同 role 私有服务间故障切换，不依赖公网 DNS/WebPKI，也不把 HTTP
 重定向当作新 authority。
 
 ```text

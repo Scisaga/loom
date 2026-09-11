@@ -21,12 +21,15 @@
 > [docs/status/current.md](status/current.md)，规范语义以 [design.md](design.md) 和未被取代的
 > 最新决定为准。
 >
-> **历史入口用语：** 早期条目中未分 role 的“control endpoint”、“跨 seed
-> claim”均按 D107 及分布式控制平面解释：管理请求只能经已信 certified
-> `EndpointSet(role=control_api)` 入口的精确 transport 校验与 admin cert 认证后提交；
-> claim 只能使用本次 `InviteBootstrapDescriptorV2` 中有界的
-> `EndpointSet(role=enroll)` seeds。
-> 这项解释不回写历史条目。
+> **历史入口用语：** 早期条目中的公网 `control_api`、公网 `role=enroll` seed 和
+> “跨 seed claim”只描述当时方案，已被 D131 取代。当前目标态中，公网 Nginx 只提供
+> fake website 与无 token immutable distribution；管理、Raft、Enrollment、Device config/report
+> 都只在 Loom overlay。未入网客户端通过 QR/catalog 授权的短期受限 bootstrap tunnel 到达
+> private Enrollment，token 只在内层 TLS 中提交。这项解释不回写历史条目。
+> D123/D128 中的目标 Device-wide Enrollment direction 及 D123 的固定一小时 retry window 也已由
+> D131 取代：direction 只作 v1 LinkIntent 迁移事实；v2 初始重试受 Invite/capability 共同期限
+> 约束，已提交 reservation 只能使用管理员签发、绑定原事务且不晚于 certified retry deadline 的
+> resume capability。
 
 ---
 
@@ -2900,7 +2903,7 @@ intermediate 只能在 enrollment approval QC 后签证，验证方仍核对 com
 ### D103 · 托管 DNS/ACME 与多代 listener 使用同一提交和协调边界
 
 **日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D56、D68、D99、§2.3、
-§14.2～§14.4、[分布式控制平面 §12～§15](distributed-control-plane.md#12-域名与公开证书管理)
+§14.2～§14.4、[分布式控制平面 §12～§15](distributed-control-plane.md#12-域名公开服务与证书管理)
 
 受管节点的公开控制、分发和数据入口使用稳定 logical endpoint 与托管 hostname。Loom 只
 自动管理显式委派的 zone/subzone；域名购买、迁移和续费扣款默认仍需管理员批准。DNS
@@ -3358,7 +3361,7 @@ transition 时继续 LKG。此决定取代 D109 中可能被理解成“验证�
 ### D114 · Invite token 与交付上下文使用两个无环 exact commitment
 
 **日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D105、D108、D113、
-[分布式控制平面 §11.1](distributed-control-plane.md#111-邀请-v2)
+[分布式控制平面 §11.2](distributed-control-plane.md#112-invitecatalog-与紧凑二维码)
 
 邀请 token 固定为 32-byte CSPRNG 值，wire 使用无 padding base64url。日志记录的
 `token_commitment` 对 exact
@@ -3380,7 +3383,7 @@ head 不会被 context 反向引用。
 ### D115 · QR 只携带有界 descriptor，完整证明按 hash 分离
 
 **日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D105、D108、D114、
-[分布式控制平面 §11.1](distributed-control-plane.md#111-邀请-v2)
+[分布式控制平面 §11.2](distributed-control-plane.md#112-invitecatalog-与紧凑二维码)
 
 D114 最后一段把 QR、加入文件与完整证明称为同一 envelope bytes，会让 head/QC/transition 把二维码
 撑到不可扫描，也无法同时满足 token 不出现在 proof GET。首版改为两层：QR 与 `loom://` 只携带
@@ -3414,7 +3417,7 @@ body 和 Genesis payload 同时绑定 new recovery PoP root 与 new ControlSet P
 ### D117 · Endpoint provenance 不得反向引用生成它的 head 或 operation hash
 
 **日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D107、D115、D116、
-[分布式控制平面 §13～§14](distributed-control-plane.md#13-endpointset-与公网端口模型)
+[分布式控制平面 §13～§14](distributed-control-plane.md#13-endpointsetcatalog-与公网端口模型)
 
 若 EndpointSet 写入当前 head hash，或 listener spec 写入包含该 spec 的 phase hash，会形成无法构造
 的内容哈希环。首版 `EndpointSetSourceV1` 与 `ListenerIntroductionV1` 只使用 pre-generated
@@ -3453,7 +3456,7 @@ D106 中“严格增加”的宽松表述收紧为精确加一。
 ### D120 · 公网 listener 与端口轮换必须是 exact certified state machine
 
 **日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D104、D107、D117、
-[分布式控制平面 §13～§14](distributed-control-plane.md#13-endpointset-与公网端口模型)
+[分布式控制平面 §13～§14](distributed-control-plane.md#13-endpointsetcatalog-与公网端口模型)
 
 公网 listener 的授权链固定为 certified LogicalEndpointIntent →
 PublicEndpointIntent → PortRotationPolicy → evidence policy/PortPool/typed scope；每一层都使用
@@ -3494,7 +3497,7 @@ D111 的“三种摘要”与 `loom-bootstrap-transition-v1-to-v2` 简写，其�
 ### D122 · 公网 TLS 稳定身份与例行签发分离
 
 **日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D107、D117、D120、
-[分布式控制平面 §12～§13](distributed-control-plane.md#12-域名与公开证书管理)
+[分布式控制平面 §12～§13](distributed-control-plane.md#12-域名公开服务与证书管理)
 
 D107 的 listener `certificate_intent_hash?` 字段同时可被理解为可变签发对象或稳定
 SPKI identity，无法唯一决定续证是否换 EndpointSet generation。首版将
@@ -3581,7 +3584,7 @@ Device ack 和当前排名不能代替此门槛。
 ### D127 · 活动 listener rotation 冻结依赖，变更必须等待、取消或显式安全撤出
 
 **日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D120、D125、
-[分布式控制平面 §13～§14](distributed-control-plane.md#13-endpointset-与公网端口模型)
+[分布式控制平面 §13～§14](distributed-control-plane.md#13-endpointsetcatalog-与公网端口模型)
 
 rotation allocate 时解析出的 logical/public/address/certificate/credential/policy/pool/resource hashes
 全程冻结，历史 bytes 保留重算；scheduler 不读取同 ID 的 latest。会改变活动依赖的普通更新必须
@@ -3610,7 +3613,7 @@ key PoP；planned recovery policy rotation 则保持当前已信 ControlSet/dire
 ### D129 · Enrollment claim 使用 token-authorized operation，不借用 admin envelope
 
 **日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D108、D123、D126、
-[分布式控制平面 §11.2](distributed-control-plane.md#112-claim)
+[分布式控制平面 §11.4](distributed-control-plane.md#114-内层-tlstokenkeystore-pop-与一次性提交)
 
 扫码 Device 没有 admin cert，`claim_invite` 不得伪装成要求 admin ACL 的
 `ControlOperationV1`。首版由 CSR key 签 exact `EnrollmentClaimRequestV1`；当前 stable ControlSet
@@ -3643,3 +3646,166 @@ RSA-2048 OAEP fallback；identity key 不能兼任 wrapping key。公开 invite 
 private-binding hash，完整 secret ref、recipient 和 availability receipt 留在 control-private binding。
 本段取代 D123 的旧 retry tuple、D126 的“除 invite ID 外完全相同”限制，以及 D129 把 detached token
 proof 写成 claim operation 内嵌字段的表述；完整 exact wire 以目标文档当前 §6.2/§11 为准。
+
+### D131 · 公网只承载静态分发与受控 tunnel，Enrollment 和控制服务退回 overlay
+
+**日期** 2026-09-11 · **状态** 目标设计生效、尚未实现 · **相关** D99～D107、D114～D130、
+[主设计 §2、§6、§8、§11、§13.5、§14](design.md)、
+[分布式控制平面 §11～§14](distributed-control-plane.md#11-enrollment邀请与报告)
+
+此前把 `control_api/enroll/device_config/device_report/distribution/data_ingress` 都建模为公网
+HTTPS role，会让真正的控制服务暴露面随镜像数量增长，也把公开 Web 传输误当成加入路径。
+目标态改为严格的 public/private split：
+
+- 每个具有 `forward` Responsibility 的 Device 必有稳定 FQDN 和
+  `ServerPublicAccessProfile`。公网 443 可用则 FQDN:443 到本机 Nginx；不可用时由 signed
+  endpoint 声明替代 TCP 端口；NAT 部署必须分别声明 public/local tuple 与映射。替代端口不
+  构成对备案或供应商政策的规避。
+- forward Device 至少收敛 Nginx、DNS-01 证书管理、HY2 UDP 与 WG UDP 四类受控资源。
+  Nginx 只提供 fake website 和无 token、content-addressed、客户端自行验签的 immutable
+  `distribution`。它不接收、终止或代理 Enrollment，也不公开 control/config/report/Raft。
+- 公网 endpoint 拆成 `DistributionEndpointSet`、`BootstrapIngressEndpointSet` 和按 Device
+  授权的 `DataIngressEndpointSet`。前者是 Nginx TCP 443/替代端口，后两者是实际 tunnel
+  transport。`control_api`、Enrollment、Raft peer、`device_config` 与 `device_report` 只记录在
+  private service/peer directory，绑定 overlay IP、internal CA/EKU、IP SAN 或 certified SPKI。
+  TLS 验证不得关闭；admin、Device 与 control-peer mTLS 用途隔离。
+
+**首次加入固定为 compact QR → static catalog → restricted tunnel → private Enrollment：**
+
+1. 已入网管理员经 private `control_api` 和 admin mTLS 创建 Invite；certified record 精确绑定
+   Device-intent commitment、token commitment、`InviteIssuancePolicy`、immutable catalog 与有界
+   private Enrollment service ref 的 hash。以上对象与 capability 派生上限经 Raft commit/apply/QC
+   后才交付。
+2. QR/URI 不超过 1800 ASCII bytes 的目标上限，只放一次性 token/commitment、初始
+   checkpoint/floor、相互独立的 immutable `catalog_hash` 与 `proof_bundle_hash`、2～3 个跨故障域
+   distribution mirrors、由 record 承诺的 `PrivateEnrollmentServiceRef`，以及
+   `BootstrapTunnelCapability`；`.loom-invite` 可以内嵌同一 descriptor、catalog 与 public proof
+   bundle。完整入口集不塞进二维码。
+3. 客户端从任一 Nginx mirror 以只含 content hash 的 URL、无 token/capability/cookie 下载 catalog
+   和 public proof，拒绝任何 HTTP redirect；验证 record inclusion、head/QC、authority、
+   catalog hash 与 `BootstrapIngressEndpointSet`。`PrivateEnrollmentServiceRef` 来自 descriptor，
+   必须与 certified record 的 hash 及 capability 的精确目的 tuple 相等，不能从 catalog、DNS 或所选
+   ingress 推导。
+4. 客户端对 catalog 中候选只做实际 outer transport/SNI identity probe，探测阶段不发送
+   capability、token 或其他 bearer。Web RTT、control 侧测量只可排列初始探测次序，不能代替
+   客户端当前网络的 transport 测量。
+5. 选定入口后才出示 capability、建立限路由 tunnel；随后先完成不含 token 的内层 Enrollment TLS
+   handshake、验证 internal server identity。客户端先以不含 token/CSR/key 的 preflight 请求取得
+   private Device-intent opening，验 commitment 并展示职责/grants；通过后取得 fresh server nonce，
+   最后才发送 claim。
+6. 首版 bootstrap transport 只实现 HY2。WG 留给入网后的 permanent L3/control overlay，避免
+   在最终 Device key/identity 形成前同步临时 peer。正式交付必须增加独立 Trojan/TLS TCP
+   fallback 以覆盖 UDP 全阻断网络；可用 L4 SNI dispatcher 与 Nginx 共用 TCP 443，但 Nginx
+   仍不处理 tunnel 或 Enrollment。
+7. tunnel ACL 只允许 private Enrollment 的 TCP `/32` 或 `/128` 加精确端口，禁止 Internet、
+   其他 overlay CIDR、DNS、ICMP、隧道内 UDP、control API、Raft、配置和报告；ingress 与
+   control firewall 双重执行。
+
+公开镜像不能因 proof 下载获得 Device ID、Responsibilities 或 grants。public proof 只携
+`DeviceEnrollmentIntentCommitment`，不携 intent/opening；commitment 覆盖每张 Invite 独立的
+32-byte hiding nonce，阻止对低熵 Device/职责作离线字典测试。intent/opening 只由 private Enrollment
+在已验 capability tunnel 的 inner-TLS preflight 返回。客户端重算 intent、opening 与 commitment hash
+并核对 certified record 后才可发 token；catalog 保持公开、可复用且不含 per-Device intent/view。
+
+`BootstrapTunnelCapability` 与 enrollment token 是两份凭据。前者由 certified Invite/QC 授权的
+独立 BootstrapIssuer key 签发，只负责打开上述受限 tunnel；后者只在内层 TLS 到达 ControlSet，
+绝不能复用为 HY2/Trojan password。默认 capability TTL 为 15 分钟，可配置 5～30 分钟、硬上限
+30 分钟；单 session 上限 180 秒、总流量上限 8 MiB、最多 3 次顺序重连，每个 ingress 同一
+`capability_id` 至多一个并发 session。入口侧计数是抗滥用措施，真正的一次性消费仍由 enrollment
+token 的 Raft CAS 决定。
+
+BootstrapIssuer 不能只凭一把可验签公钥获得权限。每个 authorization 必须作为 certified registry
+leaf 由 inclusion proof 连到 exact head/QC，携 ID、generation、previous hash、有效期、active/revoked
+状态，并完整限定 capability TTL、session、bytes、attempts、concurrency、ingress 与 service scope。
+`CertifiedInviteRecord` 引用 exact `invite_issuance_policy_hash`；capability body 同时引用 exact record、
+policy、issuer-authorization、ingress-set 与 private-service-ref hash。入口从同一 proof chain 重算全部
+引用，并按 Invite、policy、authorization 与 capability 的有效期交集验收。把 authorization 与一份
+不承诺它的合法 QC 并列、从本地默认值补上限，或由 issuer 自报 policy 都必须失败关闭；
+`capability_id` 是 exact body 的 domain-separated hash，只存在于签名 envelope，body 不回填该 ID
+再递归求 hash。
+
+首次 Enrollment 默认使用**服务端认证的内层 TLS + 高熵 token + 本机 identity key PoP**，不再
+额外签发邀请级临时客户端证书。PoP 至少绑定 cluster、Invite、request ID、CSR hash、独立
+wrapping-key hash、certified record/token commitment、exact request-body hash 与该 TLS session 的
+fresh server nonce；正式 Device certificate 必须签给同一 identity SPKI。canonical
+`EnrollmentClaimRequestBody` 不含 server nonce 或签名字节，PoP 是 detached envelope，因此新
+ingress/new TLS challenge 可以重签 PoP 而不改变事务的 request-body hash。Android
+identity key 留在 Keystore，API 31+ 使用独立不可导出 P-256 ECDH wrapping key，API 26～30 只按
+intent 使用独立 RSA-OAEP fallback；identity key 不兼任 wrapping key。只有明确合规要求连接层
+mTLS 时，才增加私钥在设备本地生成的 invite-scoped 临时证书阶段，不能把可复制私钥塞进 QR。
+
+private Enrollment 收到 claim 后，当前 stable ControlSet 的 enrollment voters 经私有 peer RPC 验证
+token preimage、commitment、Invite 状态、stable request body 和 detached PoP，签
+`EnrollmentAdmissionAttestationBodyV1` 并组成 enrollment-key quorum 的
+`StableEnrollmentAdmissionQCV1`。QC 不含
+token 明文，绑定 exact base head、Invite/record、token commitment、request-body/identity/wrapping/
+CSR hashes 与 PoP facts；reservation operation 只持久引用其 exact hash。这样 follower/replay reader
+无需 token 明文也能确定性验证 admission，任一 ingress 或 leader 都不能独自声称 token 已验证。
+
+跨 ingress 初始重试必须复用完全相同的 token、request ID、CSR、wrapping key 与 canonical request
+body，detached PoP 可随 fresh server nonce 重签；它只在 Invite 和 initial capability **都有效**时
+自动进行，任一在 reservation commit 前过期都要求新 Invite。若 reservation 已 certified 而响应
+丢失，管理员只能在线性化读取该事务后显式签发 `EnrollmentResumeDescriptorV1`：不含新 token，
+携一张不晚于 committed `retry_not_after` 的短期 resume capability，并逐字段绑定原 invite/request、
+request-body/CSR/identity/wrapping-key、admission-QC 与 transaction-state hash 以及当前
+catalog/proof/private-service refs。completed 只返回原 artifact，reserved 只继续原事务；不得复活或
+延长 Invite、重置 reservation、重消费 token 或授权新 body。v2 不存在 D123 所写固定一小时恢复
+窗口；retry deadline 由 certified policy/transaction 明确给出。D129 的 token-authorized domain 与
+D130 的 reservation→issuance→approval→completion 顺序保持，但 D129 中把 token-validation proof
+内嵌 operation 的旧形状由上述“独立 QC 对象、operation 只引用 exact hash”取代。
+
+控制拓扑同时收紧：ControlSet 仍为 1～全部合格成员；除离线 recovery/bootstrap authority
+明确签定的初始 genesis member 外，候选 control 必须先完成普通 Device Enrollment、取得
+permanent overlay/Device identity，再经旧/新集合 Joint→Final transition 晋升。genesis 例外只
+建立首个 lineage，不能成为后续绕过 Enrollment 的路径。
+首版 permanent control L3 使用 WG；数据 link 按边以 certified `LinkIntent` 固定 initiator、
+purpose、允许 transport、listener 和 ACL，可逐边选择 WG 或 HY2。v1 节点级 `direction` 只用于
+确定性迁移现有 WG 边，不再决定 mesh 资格、公开入口或新链路；未单独实现并验收
+L3-over-HY2 时，HY2 proxy 不能替代 WG control overlay，也不默认 WG-over-HY2。
+
+公网 listener 延续 D120 的 `prepare → advertise → prefer → drain → retire` 与 tombstone/
+quarantine。Nginx TCP、HY2 UDP、Trojan TCP 和 WG UDP 分别管理 port pool；HY2 与 WG 不得占用
+同一 UDP tuple，TCP 443 与 UDP 443 可以共存。预映射完整 UDP 范围的 NAT Device 可在范围内
+轮换而无需每次改 CPE，但 public/local tuple、transport、外部验证与 cooldown 仍逐 generation
+进入 certified state；客户端 EndpointSet 不泄露内部 mapping 细节。
+
+EndpointSet 的 wire 以 `(endpoint_id, listener_generation)` 为 listener 复合唯一键，必须允许同一
+logical endpoint 的新旧代同时出现。每代携 `published_state=advertised|preferred|draining`、exact
+public tuple、transport identity/credential refs、`rotation_operation_hash`、validity 与可选
+`retire_not_before`；每个可用 logical endpoint 恰有一个 preferred。preparing 只在私有运维 view，
+retired/revoked/abandoned 只留不可复活 tombstone。若某一用途的 schema 仍只能放一个 generation、
+按 endpoint ID 拒绝 overlap，或没有 published state，就不能宣称实现无中断轮换。
+
+rotation allocate 时冻结 logical/public intent、DNS/address binding、certificate/SPKI、credential、
+render contract、evidence policy、port pool、NAT mapping、防火墙和 resource generation 的 exact
+hashes，后续阶段不得读取 mutable latest。retire 必须同时满足 EndpointSet/reader propagation floor、
+仍有效 catalog/capability、available Invite、reserved transaction 的 `retry_not_after`、certificate-pin
+overlap、offline window、drain/quiet period 与 backup retention；当前排名、单个 ACK 或新端口健康都
+不能替代。普通依赖变更等待 lineage terminal 或在 prefer 前 exact cancel；安全撤权走显式
+withdraw/revoke 并承认中断。
+
+本决定：
+
+- 取代 D103/D107/D122/D125 中“六种公网 role/hostname/certificate”、public control/enroll
+  endpoint，以及 D107 允许 public listener 使用 IP literal 的部分；三类 public Endpoint
+  一律拨 certified forward-server FQDN。保留显式公网授权、稳定 transport identity、DNS-01
+  和 exact dependency；
+- 收紧 D100/D124 的 control membership：初始 genesis 之后必须先是已入网 Device，再经
+  Joint→Final 晋升；private peer/service directory 不得公开；
+- 取代 D114/D115 的 `role=enroll` HTTPS seed/POST 语义；保留无环 token commitment、compact QR、
+  immutable proof/catalog hash 与离线 package，并以 hiding commitment + private inner-TLS preflight
+  满足公开镜像的 Device-intent 隐私；
+- 取代 D123 把 exact direction union 写入目标 `DeviceEnrollmentIntentV1`，以及把
+  `retry_not_after` 固定成 claim head 后 3600 秒、把 exact intent 明文放入 public proof 的部分；
+  继续保留 intent 对 Device/platform/Responsibilities/grants 的固定与 claim 不得扩权。公开 proof
+  改存 hiding commitment，opening 只在 inner-TLS preflight 交付；v2 的初始重试由
+  Invite/capability 共同期限限制，已 certified reservation 只由 policy-bound retry deadline 与
+  exact resume 控制；
+- 收窄 D126 中“活动 enroll seed 阻止退役”为仍有效 catalog、capability 与 bootstrap listener
+  及已 reservation transaction retry deadline 的生存性约束；
+- 取代 D128 的目标 `EnrollmentDirectionV1`/Device-wide direction；direction 只作为 v1 migration
+  fact，目标使用逐边 LinkIntent。D128 对 emergency recovery 与 planned policy rotation 的不同
+  ControlSet/directory commitment 仍保留；
+- 保留 D99 的“WG 发起方向不等于公网 data ingress”、D120 的 exact listener state machine、
+  D129 的 claim 授权域及 D130 的原子 Enrollment 状态机；D129 的 proof 承载形状按本决定的
+  external admission QC + operation hash reference 解释。

@@ -5,14 +5,14 @@
 > 单平台签名和单 endpoint 是 v1 迁移输入；ControlSet/QC/EndpointSet 是 v2
 > 目标协议。任一代协议的实施、部署与验收状态都不由本文声明。
 >
-> **设计复核日期：** 2026-09-10
+> **设计复核日期：** 2026-09-11
 >
 > **适用范围:** Windows、Linux Server 与 Android 接入设备；v1 不考虑 Linux Desktop
 >
 > **上位约束:** [设计文档](design.md)中的模型、安全边界与控制平面不变量是
 > v1 兼容边界；统一 Device、内部 Enrollment 协议和版本化对象图的迁移目标见
 > [Device 生命周期与交付架构](device-lifecycle-and-delivery.md)，本文只展开平台客户端交付。
-> 动态 `ControlSet`、QR v2、多控制入口、quorum certificate、托管域名和端口轮换见
+> 动态 `ControlSet`、QR v2、私有控制服务、bootstrap tunnel、quorum certificate、托管域名和端口轮换见
 > [分布式控制平面设计](distributed-control-plane.md)。它们是目标态；本文标出的单 endpoint、
 > 单平台签名与 `generation` 是 v1 迁移基线，不能混写成已部署。
 > 具名局域网访问是独立目标协议，
@@ -65,9 +65,9 @@ v1 的兼容形状固定如下；这里只定义迁移约束，不声明仓库�
 | 边界 | v1 形状 | v2 迁移要求 |
 |---|---|---|
 | 平台 | `android` / `windows-desktop` / `linux-server`；拒绝含糊 `desktop` | 保持枚举稳定，能力通过 versioned view 协商 |
-| 邀请 | 单 HTTPS enroll endpoint、一次性 token、平台 key digest、严格 schema | 并行 QR/invite v2，携带 bootstrap/recovery checkpoint、多个带 transport pin 的 direct seed |
+| 邀请 | 单 HTTPS enroll endpoint、一次性 token、平台 key digest、严格 schema | 并行 QR/invite v2：紧凑 descriptor 精确携带 token/commitment、minimum recovery/trusted checkpoint、`bootstrap_catalog_hash`、`proof_bundle_hash`、2～3 个静态 distribution mirror、有界 `PrivateEnrollmentServiceRefV1` 和短期 bootstrap capability；claim 经临时隧道进入私有 Enrollment |
 | 配置 | 单签 current、全局 generation、静态多镜像 | per-device Merkle view、提交后 ControlSet QC；recovery、control、head 与 Device view 四组 durable floor（含 recovery policy hash）与不可逆 v2 latch |
-| 报告 | enrollment 同源 report、canonical v5 + self-check v1、`200/204` | signed `EndpointSet(role=device_report)`；保留 producer 签名和原时间，跨 control CRDT 去重 |
+| 报告 | enrollment 同源 report、canonical v5 + self-check v1、`200/204` | 经 Loom overlay 访问 `ControlServiceDirectoryV1` 中 `role=device_report` 的私有服务；保留 producer 签名和原时间，跨 control CRDT 去重 |
 | 数据入口 | 单 `public_endpoint + inbound_port`；客户端使用签名候选 | 稳定 logical endpoint；首版 Hysteria2/Trojan 支持多 listener generation overlap，WireGuard 另需双 interface/peer profile |
 | 本机状态 | Linux 0600；Windows DPAPI；Android Keystore + 应用私有存储 | 原身份私钥不重建，原子增加 checkpoint/QC/EndpointSet、四组 floor、bootstrap transition hash 与 v2 latch |
 | 路由偏好 | Direct / Auto / 指定出口是本机偏好；`default_declaration` 仅为 Auto catch-all | 语义不变，端口轮换和 control failover 不新增用户选择轴 |
@@ -85,8 +85,8 @@ v1 读写器对未知字段 fail closed，因此迁移只能新增明确版本�
 
 ### 3.1 目标
 
-1. 创建端先生成并封装 exact-version 一次性 token，再由管理员从已信
-   certified `EndpointSet(role=control_api)` 选择入口，验证精确 transport identity
+1. 创建端先生成并封装 exact-version 一次性 token，再由已入网管理员经
+   Loom overlay 访问已信 `ControlServiceDirectoryV1` 中 `role=control_api` 的私有服务，验证服务器证书/IP
    并使用 admin cert 认证后，提交公开层只含 commitment/private-binding hash 的 Create Device
    intent；完整 artifact ref 与明文一致性回执仅进入 control-private replicated binding；
    只有 Raft 耐久提交、apply/recompute 且
@@ -109,7 +109,8 @@ v1 读写器对未知字段 fail closed，因此迁移只能新增明确版本�
 - 不自行实现代理协议、TLS、WireGuard 或 Android VPN 网络栈。
 - 不 fork sing-box 来承载 Loom 控制逻辑。
 - 不让客户端获得完整 SSOT、其他设备凭据或无权访问的服务清单。
-- 不让移动端加入常驻 WireGuard/Headscale mesh。
+- 不让移动端启动第二套系统 VPN 或加入独立 Headscale mesh；正式 WG control/L3 overlay
+  必须由同一个 VpnService/libbox 运行时承载。
 - 不依赖控制平面在线或拥有 quorum 参与数据转发。
 - 不承诺连接建立后的无损路径迁移；切换只影响新连接。
 - 不允许 Windows/Android 客户端本地新增或修改 matcher、Service、声明定义或
@@ -138,10 +139,28 @@ Windows 与 Android UI 中的规则、Service、声明定义和当前路径均�
 ### 4.3 签名高于传输信任
 
 HTTPS 保护传输，提交后的 ControlSet replication QC 证明 Raft 已提交且 quorum 已复算授权。
-未加入客户端对 QR seed 只做一个受限的 bootstrap transport gate：先核对 descriptor 自带的精确
-URL、hostname/WebPKI 与 SPKI pin，且只允许无 token、无 Device 凭据的 proof GET；取回 proof 后
-必须完成下列 authority 链，才可发送 claim token。这个 gate 不把 seed 或 EndpointSet 提前提升为
-配置 authority。
+未加入客户端从 QR 中的 2～3 个 `DistributionEndpointSetV1` 镜像只能执行无 token 的
+内容寻址 GET；按 descriptor 的 `bootstrap_catalog_hash` 和 `proof_bundle_hash`
+分别验证静态 catalog/proof bundle 及其 authority 链后，才可使用其中的
+`BootstrapIngressEndpointSetV1`。公开 proof 只含
+`DeviceEnrollmentIntentCommitmentV1` 及其认证路径，不含 Device intent 的明文或 opening；
+完整 `DeviceEnrollmentIntentOpeningV1` 只能在选中 ingress、建立受限隧道并验证
+内层 TLS 后，由不含 token/CSR/key 的 `EnrollmentIntentPreflightRequestV1` /
+`EnrollmentIntentPreflightResponseV1` 取得并与 commitment 核对。公网 Nginx 只提供 fake
+website 和 immutable distribution，不接收、不转发 Enrollment，也永远不应看到
+token、intent/opening、CSR、PoP 或 Device 凭据。
+
+客户端从当前 underlay 对已验 bundle 中的实际 bootstrap transport 做一次有界并行测量，
+优先 Hysteria2，正式版再以独立 Trojan/TLS TCP listener 处理 UDP 全阻断。镜像 HTTPS
+RTT 只能帮助选下载源，不是 bootstrap path 质量。选定入口后，客户端才出示
+短期 `BootstrapTunnelCapabilityV1`，其路由 ACL 只允许 descriptor 中
+`PrivateEnrollmentServiceRefV1` 的 overlay IP/TCP port。内层 server-auth TLS 在客户端与
+ControlSet 间终止。客户端先完成上述无 token preflight，再以稳定
+`EnrollmentClaimCoreV2` 构造 claim；身份/CSR key 对含新鲜 server nonce 的
+`EnrollmentPoPBodyV2` 签名，wrapping key 只用于封装凭据。`EnrollmentClaimSubmissionV2`
+中的 token、`EnrollmentPoPChallengeV1` 和 detached signature 不进入稳定
+`claim_core_hash`；重试必须保持 core 完全一致，但可对新 server nonce 重签。这些材料
+只在内层 TLS 中发送，公网 ingress 看不到。
 
 目标 v2 客户端激活稳态 DeviceView 必须按顺序验证：
 
@@ -175,7 +194,7 @@ URL、hostname/WebPKI 与 SPKI pin，且只允许无 token、无 Device 凭据�
 
 ### 4.4 离线继续运行
 
-网络失败、全部已授权 `EndpointSet(role=device_config)` 入口停机、可达成员不足
+网络失败、Loom overlay 或 `ControlServiceDirectoryV1` 中 `role=device_config` 的全部已授权私有服务停机、可达成员不足
 quorum 或更新校验失败时，不删除
 当前工作配置。客户端继续运行最后一次成功安装的版本，并把“控制入口不可达”“控制面
 无 quorum”“副本落后”和“数据面不可用”分开显示。
@@ -238,8 +257,9 @@ GET 返回 `node`、当前 SSOT `revision`、当前默认策略和授权选项�
 该 v1 运维端点只接受指定控制节点的 SameSite 运维会话，并要求 JSON PUT；契约不启用 CORS，也不接受
 数据面凭据充当控制面身份。Windows/Android 客户端不得保存运维 cookie 或调用它。
 
-目标 v2 中，管理客户端只能从已信 certified `EndpointSet(role=control_api)`
-选择入口，验证精确 URL/hostname/WebPKI/SPKI pin 后再提交同一管理
+目标 v2 中，已入网管理客户端只能经 Loom overlay 从已信 private
+`ControlServiceDirectoryV1` 中 `role=control_api` 的私有服务
+选择入口，验证精确 overlay IP 和内部证书身份后再提交同一管理
 proposal；接收端还必须验证 admin cert、certified ACL 与 expected
 `{recovery_epoch, control_epoch, revision, head_hash}`。Raft commit
 后 QC 未齐只能返回 `committed_not_certified`；取得提交后 quorum attestation 才返回
@@ -250,12 +270,23 @@ DNS/CA/listener 等外部 executor。这不会把三模式改成远程偏好：W
 
 ### 4.8 EndpointSet、域名与端口轮换
 
-客户端从带 inclusion proof 的 Device view 获得按用途拆分的 EndpointSet：
-`control_api/enroll/device_config/device_report/distribution/data_ingress` 不能互相推导。
-Invite v2 只把一次性 token 发给 `InviteBootstrapDescriptorV2.delivery_context` 直接携带的 HTTPS
-seed；首次 POST 前必须验证精确 URL、hostname/WebPKI 与 descriptor-carried TLS SPKI pin，并禁止
-重定向。加入后，新 endpoint/pin 必须由已信 ControlSet 的 certified head 连续引入。DNS 只
-解析已签 hostname，不能把任意新地址加入集合；合法 WebPKI 证书也不能替代 pin。
+用途必须在类型层拆分，不能从同源 URL 互相推导：
+
+| 类型 | 可达性 | 用途 |
+|---|---|---|
+| `DistributionEndpointSetV1` | 公网 FQDN + TCP 443/替代端口 | Nginx fake website 与无秘密 immutable distribution |
+| `BootstrapIngressEndpointSetV1` | 公网 HY2/UDP；正式版独立 Trojan/TLS TCP fallback | 建立短期、限路由 bootstrap tunnel |
+| `ControlServiceDirectoryV1` | 只经临时或正式 Loom overlay 可达 | 按 role 分离 `control_api`、`enroll`、`device_config` 与 `device_report`；每项绑定 overlay IP、内部证书和主体策略，普通客户端不获取 control peer directory |
+| `DataIngressEndpointSetV2` | 公网或已授权私网 transport | 正式数据转发 |
+
+QR 只携带 token/commitment、trust checkpoint、`bootstrap_catalog_hash`、
+`proof_bundle_hash`、2～3 个跨故障域的 distribution mirrors、有界
+`PrivateEnrollmentServiceRefV1` 和短期 capability；完整 bootstrap ingress 集合位于
+内容寻址 catalog。公开 proof 只证明 intent 的 hiding commitment，完整 opening 只在
+受限隧道内的 token-free preflight 交付。`.loom-invite` 可作为完整离线载体，
+但和 QR 承载同一协议对象，不能把 intent/opening 发布到公网 mirror。
+加入后的新 endpoint/pin 必须由已信 ControlSet 的 certified head 连续引入。DNS 只
+解析已签 hostname，不能把任意新地址加入集合；合法 WebPKI 证书也不能替代已签 transport identity。
 
 首版 Hysteria2/Trojan 数据入口使用稳定 logical endpoint ID 和多个 listener generation。正常 overlap 中旧、新
 端口同时可用：新连接在 `prefer` 阶段先试新端口、失败立即回退仍 advertised 的旧端口；
@@ -265,22 +296,28 @@ Windows/Android 在每个底层网络代第一次进入 Auto/指定出口时冻�
 真实拨号/回退取得被动证据，到下一底层网络代才可进入新的快照。配置刷新、模式/出口切换
 或同代重连都不能重置预算。Linux access Agent 仍把 listener 纳入既有 `tuning/window` 预算，
 但不得另起 rotation probe loop。任何平台都不能把测量扩张为额外业务 DNS/HTTPS 验证、重复
-样本预热或数据面启动门槛。WireGuard 在双 interface/peer/key/address/route 专用 profile 完成
+样本预热或数据面启动门槛。WireGuard 在正式入网后承担持久 control/L3 overlay，
+不作为首版 bootstrap transport；其双 interface/peer/key/address/route 专用 profile 完成
 跨平台验收前只能显式 disruptive maintenance，不进入这套计划内无中断 scheduler。完整状态机见
-[分布式控制平面 §13～§14](distributed-control-plane.md#13-endpointset-与公网端口模型)。
+[分布式控制平面 §13～§14](distributed-control-plane.md#13-endpointsetcatalog-与公网端口模型)。
 
 ---
 
 ## 5. 总体架构
 
 ```text
+          公网 Nginx mirrors          公网 bootstrap ingress
+       fake + immutable distribution       HY2 / Trojan-TLS
+                    │                         │短期限路由隧道
+                    └────────────┐    ┌──────────┘
+                                 ▼    ▼
                     Loom ControlSet(epoch)
          ┌─────────────────────────────────────┐
          │ 1..全部合格 control Device · q/N QC │
-         │ 邀请/身份 · certified head/Device view │
-         │ 多 EndpointSet · 观测 CRDT · 吊销     │
+         │ 私有 Enrollment/control/config/report │
+         │ certified head/view · 观测 CRDT · 吊销 │
          └──────────────────┬──────────────────┘
-                            │ HTTPS/mTLS；多 seed/mirror
+                            │ Loom overlay + mTLS
                  signed view│ + transition/QC
                             ▼
         ┌──────────────── 客户端公共逻辑 ────────────────┐
@@ -360,9 +397,10 @@ DNS 归属不因宿主平台变化。Direct 模式在接入设备本地解析并
 把接入侧取得的 A/AAAA 沿链转发。Linux mixed 使用 `socks5h`；Windows/Android TUN 使用
 FakeIP + 持久映射 + FQDN 恢复，或经过同一测试向量证明的等价机制。IP literal 保持原样。
 
-EndpointSet 内 `control_api/enroll/device_config/device_report/distribution/data_ingress` 的
+公网 `DistributionEndpointSetV1`、`BootstrapIngressEndpointSetV1` 和 `DataIngressEndpointSetV2` 的
 hostname 只用于建立受信传输，必须走与业务 FakeIP 分离的 underlay resolver/cache，并配合
-hostname/WebPKI、transport identity pin 及平台防回环。它们不能被送到某个业务出口解析；
+hostname/WebPKI 或其已签 transport identity 及平台防回环。私有 control/enrollment/config/report
+使用 overlay IP 和内部服务器证书，不发布公网 hostname。这些端点不能被送到某个业务出口解析；
 反过来，业务域名也不能借 bootstrap resolver 提前固化成接入侧 IP。
 
 ### 7.3 Windows Portable 与安装版
@@ -584,6 +622,8 @@ Android 必须提供应用宿主，因为只有应用可以通过 `VpnService` �
 Android App 包含：
 
 - 加入网络二维码扫描与 `.loom-invite` 文件导入；
+- 静态 distribution bundle 验证、从当前 Android 网络对实际 HY2/TCP bootstrap
+  入口做一次并行测量、短期 capability 隧道与私有 Enrollment；
 - Android Keystore 中的设备密钥；
 - 配置 pull、平台验签、防回退和最后可用配置；
 - sing-box Android 核心；
@@ -609,15 +649,20 @@ Android App 包含：
 - `reverse_only` 只约束 WireGuard 发起方向。v1 latch 前，服务器在已验签 snapshot 中显式
   启用 `public_data_ingress` 时，移动端可获得到最终出口的一跳已配置 data-ingress transport
   候选（Hysteria2 或 Trojan）；v2 latch 后该布尔值单独无效，必须由 certified
-  `PublicEndpointIntent` 和本 Device 的 `EndpointSet(role=data_ingress)` 授权。两跳国内中继
+  `PublicEndpointIntent` 和本 Device 的 `DataIngressEndpointSetV2` 授权。两跳国内中继
   保留兼容，但不得让同协议套叠的两跳候选压过同等健康的一跳路径；
 - 继续使用现有窄 `mobile/loomcore` binding，通过 `gomobile bind` 与钉住的 libbox 一起
   生成 Android AAR，复用平台无关的 Loom 验签、generation floor、最后可用配置和
   selector 状态机；不得把完整 CLI/server core 绑定进应用，也不得在 Kotlin 中另写一套
   行为略有差异的验证器；
-- 设备 P-256 identity/CSR key 与独立 wrapping/PoP key 都进入 Android Keystore；API 31+ wrapping
-  使用 P-256 `SIGN|AGREE_KEY`，API 26–30 使用 RSA-2048 `SIGN|DECRYPT` + exact OAEP fallback，绝不
+- 设备 P-256 identity/CSR signing key 与独立 wrapping key 都进入 Android Keystore；
+  Enrollment PoP 只由 identity key 签名，wrapping key 只封装本机凭据。API 31+ wrapping
+  使用不可导出 P-256 `AGREE_KEY`，API 26–30 使用 RSA-2048 `DECRYPT` + exact OAEP fallback，绝不
   导出软件 ECDH 私钥；应用私有目录只保存签名配置、状态和不能放进 Keystore 的最小材料；
+- 首版 bootstrap 只实现 Hysteria2；可日常使用的正式版再加独立
+  Trojan/TLS TCP fallback。两者的 `VpnService` socket 必须 `protect()` 以避免隧道回环；
+  WireGuard 只在正式身份和视图取得后由同一 libbox/`VpnService` 宿主建立持久
+  control/L3 overlay，不是首版 bootstrap，也不创建第二套系统 VPN；
 - Emulator 用于 Compose、加入网络、权限和基本 TUN 流程，真实 Android 设备负责扫码、
   移动网络/Wi-Fi 切换、Doze、厂商后台限制、重启和长期运行验证。
 
@@ -631,7 +676,11 @@ Kotlin 宿主只负责生命周期、Direct 不探测、每底层网络代首次
 回环 selector 事务；配置刷新、模式/出口切换和同一网络代内重连不重测。它不运行候选预算轮换、
 业务 DNS/HTTPS 探测或完整路径窗口聚合。
 
-目标 v2 复用同一 Device identity key、经认证生成上述独立 wrapping key，并原子保存 ControlSet checkpoint/transition、QC、
+目标 v2 在入网前先以 bootstrap capability 建立只可达私有 Enrollment IP/port 的临时隧道，
+再在内层 server-auth TLS 中发送 token、CSR 和 Keystore PoP。ControlSet 以 Raft CAS 保证一次消费；
+完成后 App 原子安装正式 certificate/view/credentials，然后删除 token、capability、临时 profile 和隧道状态。
+该流程复用同一 Device identity key 完成 PoP，并使用上述独立 wrapping key 解封凭据；
+客户端原子保存 ControlSet checkpoint/transition、QC、
 recovery/control/head/Device view 四组 floor（含 recovery policy hash）、bootstrap transition hash、
 `protocol_latch=v2` 和带 TLS SPKI pin generation/overlap 的 EndpointSet，不要求清除身份或重新扫码。
 原生宿主、服务端纵向测试、Emulator 和真机
@@ -642,8 +691,9 @@ Android 不安装 Linux 版 Loom Agent、systemd unit、`/etc/loom` 路径或 Lo
 二进制自更新器。应用更新通过应用商店、企业 MDM 或签名 APK 渠道完成；Loom 只
 更新配置和排名。
 
-Android 同时只能有一个活动 `VpnService`。因此它不加入 Tailscale/Headscale
-mesh；需要访问 mesh 内网时，由被授权的 Loom 服务器代为转发。Auto 模式由中控
+Android 同时只能有一个活动 `VpnService`。因此它不启动独立
+Tailscale/Headscale 客户端，也不建第二套系统 VPN；Loom 的正式 WG control/L3
+overlay 和数据路由由同一 libbox/`VpnService` 宿主统一持有。Auto 模式由中控
 规则按 package、domain 或 IP 匹配 Service；Direct 与指定出口是互斥的顶层覆盖。
 相同 package 内同一域名的多账号无法由 L4/TUN 可靠区分，profile 能力不进入 v1。
 
@@ -707,65 +757,104 @@ Android Studio 或 Emulator 工作站。
 
 ### 9.1 加入码与交付方式
 
-创建端先用 CSPRNG 生成 token 并封装为 exact-version secret artifact；管理员从已信
-certified `EndpointSet(role=control_api)` 选择入口，验证精确 transport identity 并用
-admin cert 认证后，提交公开层只含 commitment/private-binding hash 的 Create Device/invite intent；
-完整 exact-version ref 与明文一致性回执只保存在 control-private replicated binding。提案经 Raft durable
+创建端先用 CSPRNG 生成 token 并封装为 exact-version secret artifact；已入网管理员经
+Loom overlay 访问已信 `ControlServiceDirectoryV1` 中 `role=control_api` 的私有服务，
+验证 overlay IP/内部证书并用 admin cert 认证后，提交只公开
+`DeviceEnrollmentIntentCommitmentV1`、token commitment 和 private-binding hash 的 Create Device/invite
+proposal；完整 `DeviceEnrollmentIntentOpeningV1`、exact-version ref 与明文一致性回执只
+保存在 control-private replicated binding。提案经 Raft durable
 commit、apply/recompute 并获得 replication QC 成为 certified 后，renderer 才可解封同一 token
-并一次性输出邀请。平台、Responsibilities、Destination grants 以及 `forward` 所需的 direction
-在 exact `DeviceEnrollmentIntentV1` 提案中已经固定，并由 certified invite record
-的 hash 承诺。客户端仍按自身
+并一次性输出邀请。平台、Responsibilities 与 Destination grants 在
+`DeviceEnrollmentIntentOpeningV1` 内的 exact intent 中固定；目标态不携 Device-wide direction，完成加入后的每条
+control/data 边由独立 certified `LinkIntent` 固定 initiator、transport 与 route scope。上述
+intent 由 certified invite record 的 hiding commitment 承诺。客户端仍按自身
 构建目标报告平台，控制平面要求它与 certified invite
 精确一致；客户端不能在 claim 时选择或扩张职责。加入码不携带运行时路由模式或手选出口
 参数；加入完成后再由客户端选择 Direct / Auto / 指定出口。QR/URI 中的有界
-`InviteBootstrapDescriptorV2` 包含：
+`InviteBootstrapDescriptorV2` 是尽量小且可扫的载体，其 exact 字段是：
 
-- `cluster_id/invite_id`、`bootstrap_transition_hash`、最低 recovery epoch/statement/policy hash、
-  当前 ControlSet 与创建 intent 的 base-head commitment；
-- 最多 3 个直接写入 descriptor 的精确 HTTPS seed enrollment endpoints（`role=enroll`），以及
-  各自 TLS SPKI pin set/有效期；
-- 短 TTL、单次使用的随机 token；
-- token/context commitment、无 token immutable proof bundle hash、过期时间和协议 schema。
+- `schema/cluster_id/invite_id/expires_at`、`minimum_recovery_epoch` 和
+  `trusted_checkpoint_hash`；
+- 短 TTL、单次使用的 `token` 及 `token_commitment`；
+- `bootstrap_catalog_hash` 和 `proof_bundle_hash`；
+- 2～3 个跨节点/故障域的精确 HTTPS `DistributionMirrorRefV1`，投影自
+  `DistributionEndpointSetV1`；
+- 一个有界 `PrivateEnrollmentServiceRefV1`，只指向本次 claim 所需的 overlay
+  IP/TCP port 和内部 TLS 身份，不公开完整 `ControlServiceDirectoryV1`；
+- 与 invite 绑定的 `BootstrapTunnelCapabilityV1`：只授权到上述私有
+  Enrollment tuple 的临时路由，不授权通用 overlay 或 Internet egress。
 
 纯 `use_loom` 创建成功后页面呈现二维码图片和同一 descriptor 的可复制
 `loom://enroll/v2#d=…` 内部协议 URI；最终 URI 不超过 1800 ASCII bytes，超限时不得生成不可扫
-二维码。备用 `.loom-invite` 可以内嵌 descriptor 和完整无 token proof bundle。包含 `forward` 的 Linux Device 不提供二维码或
+二维码。备用 `.loom-invite` 可以内嵌 descriptor、catalog 和 public proof bundle，
+但不能内嵌只应经私有 preflight 交付的 intent opening。包含 `forward` 的 Linux Device 不提供二维码或
 加入文件，只把该 URI 作为本地 shell 或管理员 SSH 登录目标机后执行同一 bootstrap 的
 一次性标准输入；控制平面不保存 SSH 凭据。Windows
 Portable 还可在 control 页面复制二维码图片后直接按 `Ctrl+V` 或点击“粘贴二维码”；图片只在
 内存中解析，不写临时文件。这些 access-only 载体
 共享 TTL 与单次消费状态；原始 token 只在创建结果中出现，列表不能再次取回。URI 的
-fragment 由客户端本地解析，token 只在内部 claim POST body 发送，不进入 HTTPS query。
+fragment 由客户端本地解析，token 只在私有 Enrollment 的内层 TLS claim body 发送，不进入公网 HTTPS query。
 它们不包含长期凭据、完整 SSOT 或设备私钥。设备绑定不得依赖浏览器指纹，必须基于客户
 端本地生成且不可导出的非对称密钥。
 
-客户端只能使用 descriptor 直接携带的 seed。它先验证精确 URL、hostname/WebPKI 与 SPKI pin，
-在不把 claim token 放入 URL/header/cookie/body 的前提下 GET 与 descriptor hash 一致的 immutable
-`InviteProofBundleV2`，拒绝重定向；重算 token/context commitment 并验证 record inclusion、
-bootstrap/recovery/ControlSet transition、head/QC 后，才可把 token 放进 claim POST body。
-不能先信任未认证 DNS/HTTP 发现的新 URL。
-seed 的提示顺序可来自 Web 实时观测，但不删掉其他已签 seed，也不成为 authority。加入后
-端点变化必须由已信 ControlSet 的新 EndpointSet/QC 连续引入。
+客户端只能从 descriptor 直接携带的 mirrors 下载与两个 hash 分别一致的
+immutable catalog 和 public proof bundle，请求不得携带 token/header/cookie，且拒绝重定向。
+Nginx 不知道这次下载对应的 token 或 claim，也不处理 claim。客户端验证
+bootstrap/recovery/ControlSet transition、record/head/QC、
+`DeviceEnrollmentIntentCommitmentV1` 和 `BootstrapIngressEndpointSetV1` 后，从当前网络
+对实际 HY2 入口（正式版再包括独立 Trojan/TLS TCP fallback）各测至多一次并选择可达入口。
 
-加入入口的 TLS 验收必须在受支持的 Android 真机系统信任库上执行，不能只用服务器侧
-OpenSSL/curl 判定。服务端必须发送能一直构建到目标系统已有根证书的完整兼容链；例如
-Let’s Encrypt Generation Y 的默认 ECDSA 链应继续经交叉签名构建到 ISRG Root X1，不能只
-发送终止于部分设备尚未信任的 ISRG Root X2 的短链。客户端不得通过跳过主机名、证书或
-系统时间校验来兼容错误链；部署时须按 CA 当前公布的 Chains of Trust 核对完整链。
+只在选定入口时才出示 bootstrap capability。入口验签、限制并发/时间/流量，并将隧道
+路由限制为 descriptor 认证的 `PrivateEnrollmentServiceRefV1` overlay IP 和 TLS port。
+客户端再验证内层 server-auth TLS，先使用不含 token/CSR/key 的
+`EnrollmentIntentPreflightRequestV1` 取得 `EnrollmentIntentPreflightResponseV1` 中的 exact
+`DeviceEnrollmentIntentOpeningV1`，重算 hiding commitment 并验证平台、职责和 grants。
+只有 preflight 通过后才生成稳定 `EnrollmentClaimCoreV2`、取得
+`EnrollmentPoPChallengeV1`，并由 identity/CSR key 签名含 server nonce 的
+`EnrollmentPoPBodyV2`；然后在 `EnrollmentClaimSubmissionV2` 中发送 token、core、challenge
+和 detached signature。公网入口不得终止该内层 TLS。静态镜像的提示顺序可来自 Web 观测，但不能代替客户端对
+实际 tunnel transport 的当前网络测量。加入后端点变化必须由已信 ControlSet 的新 view/QC 连续引入。
+
+capability 是 certified Invite 的受限派生物，由 ControlSet 授权的专用 issuer 签名。
+默认 TTL 15 分钟（可配 5～30 分钟、硬上限 30 分钟），单 session 最长 180 秒、总流量
+默认 8 MiB、最多 3 次顺序建连，且每入口同一 `cap_id` 只允许一个并发 session。
+入口与 ControlSet 防火墙双重禁止其他 overlay CIDR、Internet egress、DNS、ICMP、隧道内
+UDP、control API、Raft、SSH、配置和报告。这些限额只用于防滥用；一次消费边界仍是
+ControlSet 对 enrollment token 的 Raft CAS。
+
+公网 distribution 和 Trojan/TLS bootstrap 入口的 TLS 验收必须在受支持的
+Android 真机系统信任库上执行，不能只用服务器侧 OpenSSL/curl 判定。公网服务端必须
+发送可构建到目标系统已有根证书的完整兼容链；客户端不得跳过主机名、证书或系统时间校验。
+内层 Enrollment 不使用公网 WebPKI 主机名：客户端必须按已验 catalog 中的内部 CA/IP SAN
+或固定 SPKI 验证私有 overlay IP，绝不允许 `InsecureSkipVerify`。
 
 ### 9.2 加入流程
 
 ```text
-已信 certified EndpointSet(role=control_api) 内入口验精确 transport + admin cert，接收管理员提案
+已入网管理员经 overlay 访问 ControlServiceDirectoryV1 中 role=control_api 的私有服务，验服务器证书/IP + admin cert
     ↓ validate → Raft commit → apply/recompute → attest/QC
-    ↓ certified 后返回带 checkpoint/base-head commitment、proof-bundle hash 和 seed pins 的有界 QR descriptor；加入文件可另内嵌完整 head/QC proof bundle
+    ↓ certified 后返回紧凑 QR：token/commitment + trust checkpoint + catalog/proof hash
+      + 2～3 个静态 mirrors + PrivateEnrollmentServiceRefV1 + 短期 capability
 客户端导入 access-only QR/文件，或在 Linux 本地/SSH 会话执行 shell bootstrap
     ↓
-设备在安全存储中生成独立的 P-256 identity/CSR key 与 intent 允许的不可导出 wrapping/PoP key
-（Android API 31+ P-256，API 26–30 RSA fallback），只上传公钥、CSR 与 PoP
+从 mirror 无 token 下载 immutable catalog/public proof，分别验 catalog/proof hash、
+authority/QC、DeviceEnrollmentIntentCommitmentV1 及 BootstrapIngressEndpointSetV1
     ↓
-仅本 descriptor 有界 EndpointSet(role=enroll) 内的 seed 在 transport pin 验证后接收，
-    以 transport-only token envelope 提交绑定 device_id/platform/identity SPKI/wrapping SPKI 的 claim
+从当前 underlay 对实际 HY2 入口各测至多一次；正式版在 UDP 阻断时选独立 Trojan/TLS TCP
+    ↓
+出示短期 capability，建立只可达 PrivateEnrollmentServiceRefV1 私有 IP/port 的临时隧道
+    ↓
+验证内层 Enrollment 服务器证书/IP，做无 token intent preflight，
+取得 DeviceEnrollmentIntentOpeningV1 并重算 hiding commitment
+    ↓
+设备按 exact intent 在安全存储中生成 identity/CSR signing key 和只用于封装的独立 wrapping key
+    ↓
+构造稳定 EnrollmentClaimCoreV2，取得 EnrollmentPoPChallengeV1；identity key 对含 server nonce 的 EnrollmentPoPBodyV2 签名
+    ↓
+在内层 TLS 中提交 EnrollmentClaimSubmissionV2：token + stable core + challenge + detached PoP
+    ↓
+当前 stable ControlSet 的 enrollment voters 各自在私有 peer RPC 验 token/core/opening/challenge/PoP，
+对同一无秘密 admission body 形成 StableEnrollmentAdmissionQCV1；单 ingress 不能批准
     ↓
 Raft durable commit 原子预留 token/Device ID，并承诺 Membership 计划、职责/grants、sealed
 secret-artifact root 与 future Device view；尚不激活或交付
@@ -781,21 +870,42 @@ approval-QC-authorized completion 进入第二个 ordinary head，current config
     ↓
 返回绑定 claim/completion leaf/root/head/config+approval QC 的 ready receipt、节点证书、CA/checkpoint、只为 wrapping key 封装的本机秘密与分发坐标
     ↓
-客户端验 bootstrap/recovery/transition/QC/inclusion proof/floor，原子 latch v2 后 hydrate、预检并安装
+客户端验 bootstrap/recovery/transition/QC/inclusion proof/floor，原子安装正式 cert/view/creds 并 latch v2
+    ↓
+删除 token、capability、临时 profile/隧道；再由同一客户端宿主建立正式 WG control/L3 overlay
     ↓
 客户端上报首份可信状态后，才可由运行态观测判定 online
 ```
+
+PoP 必须由 identity/CSR key 签名，绑定 stable `claim_core_hash`、network/invite/request ID、
+CSR/identity/wrapping-key hash 和服务端 nonce；wrapping key 不签 PoP，只用于封装与解封本机凭据。
+Android 用 Keystore，Windows Installed 用 CNG/DPAPI 保护的机器密钥，Windows Portable 用
+当前用户 DPAPI，Linux 用 root-only 身份密钥。任何平台都不得把可导出客户端私钥放入 QR。
+首次 Enrollment 的客户端认证是“服务器认证 TLS + token + PoP”；正式 Device certificate
+必须签给同一本机密钥，不为了形式上的首包 mTLS 再引入可复制的临时客户端私钥。
 
 Device 详情页的 Runtime evidence 只展示经过现有信任链验证的运行问题原文；未签名或
 身份校验失败的客户端自述不能作为该问题详情。
 
 加入网络不是单独的“注册客户端”流程，也不是日常连接动作。二维码导入只绑定 certified
 invite 已经创建的 Device，不创建第二条记录。重连、网络切换、更新配置、更新程序和重新
-启动都继续使用现有设备身份，不得再次要求二维码。v2 首次 POST 前，客户端验证 bootstrap
+启动都继续使用现有设备身份，不得再次要求二维码。v2 首次携 token 的内层请求前，客户端验证 bootstrap
 transition/checkpoint；v1 Windows 兼容流程比较二维码部署公钥指纹与发行包内嵌公钥。加入码
-一旦成功绑定，控制平面只允许同一 token、同一 CSR/wrapping descriptor、
-同一 request ID、平台和 Device facts 在限定的一小时恢复窗口内幂等重试；Windows
-Portable v1 兼容契约将这组 pending 数据用操作用户 DPAPI 保护，并在加入提交后清除 token。
+一旦成功绑定，v2 控制平面只允许同一 token 与字节完全相同的
+`EnrollmentClaimCoreV2`（包括 request/record/intent 绑定、base floors、平台、
+CSR/identity、wrapping descriptor 和 client nonce）
+在 invite 与 bootstrap capability 仍有效时幂等重试。新鲜 server nonce 会产生新的 detached
+PoP 签名，但不得改变 stable core 或 `claim_core_hash`。
+Windows Portable v1 兼容契约仍是指定 control 的一小时恢复窗口，并将这组 pending 数据用
+操作用户 DPAPI 保护，在加入提交后清除 token。
+v2 claim 已 commit 但 capability 过期时，管理员必须先经私有
+`ControlServiceDirectoryV1` 中 `role=control_api` 的服务线性化确认 transaction 仍为
+reserved/completed，再一次性生成 `EnrollmentResumeDescriptorV1`。它不含 token，携带
+exact resume capability、`claim_core_hash`/transaction binding、catalog/proof/service/mirror refs，
+只能由管理员带外交付为 QR 或 `.loom-resume`；不经公网 mirror 动态生成，
+客户端也不能自动刷新。客户端导入后先用本机 pending core/identity 核对 exact binding，
+再以 identity key 对新 server nonce 重签 PoP。ControlSet 幂等返回既有事务结果，
+不重置、不再消费 token；不得通过延长原 capability 绕过该绑定。
 Installed 经受限 Service broker 使用 machine-scope/受保护 ProgramData。其他 CSR 身份重复消费、未知/不受支持的平台、设备 ID
 已被另一身份绑定、SSOT revision 冲突或签名验证失败都不得留下部分加入状态。
 加入码在成功绑定前过期时，详情页可重新生成加入码；创建端先封存新 token/artifact，再以
@@ -819,7 +929,10 @@ Raft durable commit、apply/recompute 并取得 replication QC 成为 certified 
 ### 9.3 稳态认证
 
 首次加入使用客户端本地 P-256 key/CSR 签发 Device 证书，供可信报告和私有读取使用；
-私钥不离机。目标 pull 同时验证 HTTPS/mTLS + WebPKI/SPKI transport pin、
+私钥不离机。加入后，private `ControlServiceDirectoryV1` 中的 `device_config` 和
+`device_report` 服务只由
+正式 Loom overlay 的私有 IP 可达，并用 Device mTLS 与分用途内部服务器证书认证；
+不从任何公网 distribution 或 bootstrap URL 推导。目标 pull 同时验证该私有传输身份、
 提交后 ControlSet QC、Device Merkle proof、内容 hash、四组 durable floor（含 recovery
 policy hash）与 v2 latch，任何一层都不能替代另一层。v1 兼容协议依赖 HTTPS、
 单平台签名和 generation floor；严格 schema
@@ -937,7 +1050,7 @@ Android 签名密钥是应用升级身份，必须备份和严格控制；丢失
 - 当前是否使用 previous/离线配置；
 - 凭据是否临近过期或已被吊销。
 
-“VPN 图标存在”不等于数据平面健康，“某个 `EndpointSet(role=device_config)`
+“VPN 图标存在”不等于数据平面健康，“某个 private `device_config` 服务
 入口可达”也不等于有 quorum 或
 用户流量可达。
 客户端只按证据范围分别报告本机运行面、入口单次结果、已验签服务器分段观测与
@@ -952,7 +1065,14 @@ Android 签名密钥是应用升级身份，必须备份和严格控制；丢失
 
 | 故障 | 行为 |
 |---|---|
-| 全部已授权 `EndpointSet(role=device_config)` 入口不可达 | 继续 current，显示配置入口离线 |
+| QR 中某个 distribution mirror 不可达 | 不携 token 尝试其他已列镜像；不听从重定向或无签名发现 |
+| catalog/proof bundle hash 或 QC 无效 | 在任何 capability/token 离机前 fail closed |
+| HY2 bootstrap 入口全部失败 | 正式版才尝试已签独立 Trojan/TLS TCP fallback；首版明确报告 UDP 不可用 |
+| capability 过期/超次数/超限流 | 停止自动重试并关闭临时隧道，不用 enrollment token 作为替代 transport 密码；已 commit 事务只可导入管理员带外交付的 exact-bound resume descriptor |
+| 内层 Enrollment 证书/IP 不匹配 | 不发送 token/CSR/PoP，关闭临时隧道 |
+| intent preflight 的 opening 与公开 hiding commitment 不匹配 | 不生成 claim submission、不发 token，关闭临时隧道 |
+| resume descriptor 与本机 `claim_core_hash`/身份/事务绑定不同 | 拒绝恢复，不替换 pending identity，不重新消费 token |
+| `ControlServiceDirectoryV1` 中 `role=device_config` 的全部已授权私有服务不可达 | 继续 current，显示配置入口离线 |
 | 只能访问少数派/无 quorum | 继续 current；可读旧状态但不接受未认证变更 |
 | head 已提交但 QC 未齐 | 标记 `committed_not_certified`，继续 LKG；不授权、不发布 mutable current、不驱动外部副作用 |
 | 新配置 QC 不足、signer/用途错误 | 拒绝，不触碰 current |
@@ -1041,7 +1161,7 @@ Direct 不探测；Auto/指定出口在每个底层网络代首次进入时才�
 签名及覆盖升级的分别验收。
 
 **完成判据：** 飞行模式、进程回收、重启、配置损坏和全部已授权
-`EndpointSet(role=device_config)` 入口离线下均有可解释
+private `device_config` 服务入口离线下均有可解释
 状态，且不会泄露凭据或把系统网络留在不可用状态。
 
 ### 阶段 C5：分布式控制协议迁移（目标态）
@@ -1050,8 +1170,17 @@ Direct 不探测；Auto/指定出口在每个底层网络代首次进入时才�
 - 三平台保存 bootstrap/recovery/ControlSet checkpoint/transition、提交后 QC、Device proof、
   recovery（epoch/statement/policy hash）、control（epoch/set hash）、head（revision/hash）、
   Device view（generation/leaf/view hash）四组 durable floor，以及 bootstrap transition hash 和不可逆 v2 latch；
-- `control_api/enroll/device_config/device_report/distribution/data_ingress` EndpointSet 按用途和
-  transport pin 分开并支持多入口故障切换；
+- 实现紧凑 QR，精确携带 catalog/proof hash、2～3 个公网 Nginx mirror、
+  有界 `PrivateEnrollmentServiceRefV1` 和 capability；无 token 下载并验证 immutable catalog/public proof，
+  public proof 只含 hiding commitment；
+- 三平台对 `BootstrapIngressEndpointSetV1` 做一次实际 transport 测量，先实现 HY2，
+  正式版增加独立 Trojan/TLS TCP fallback；
+- 实现短期限路由 capability 隧道、私有 Enrollment 内层 TLS、token-free intent
+  preflight、稳定 claim core、identity-key detached PoP、Raft CAS、带外 resume descriptor 和完成后临时状态清理；
+- `DistributionEndpointSetV1` / `BootstrapIngressEndpointSetV1` / `DataIngressEndpointSetV2` 是公网用途；
+  `ControlServiceDirectoryV1` 的 `enroll/control_api/device_config/device_report` 条目为
+  overlay-only typed services，与公网 set 彼此不可推导；
+- 正式身份就绪后建立持久 WG control/L3 overlay，WG 不是首版 bootstrap；
 - 同一 Hysteria2/Trojan logical data endpoint 支持新旧 listener overlap、prefer、drain 与 retire；
   WireGuard 未完成专用双 interface/peer profile 时只能显式 disruptive maintenance；
 - 先完成 reader 覆盖，再从单成员 ControlSet 扩容并最终撤销 v1 signer。
@@ -1094,15 +1223,24 @@ Direct 不探测；Auto/指定出口在每个底层网络代首次进入时才�
 14. Current Paths 在所有模式下均为只读；任何路径选择或 Apply 控件都视为回归。
 15. N=1/2/3/5 的动态 quorum、joint ControlSet 迁移、少数分区拒绝写、全部控制入口离线
     继续 LKG，以及 recovery transition 必须连续绑定 statement/policy hash 而不重置其他 floor。
-16. 同 token 只能跨同一 descriptor 有界 `EndpointSet(role=enroll)` 的多个 seed
-    并发 claim，且只绑定一个 SPKI；精确重试幂等；QR seed 故障、
-    hostname/WebPKI 或 QR pin 不匹配、持合法未钉住证书的假端点、集合外重定向、旧副本与
-    已撤权 membership 均在发送秘密前 fail closed/换已签 endpoint。
-17. 数据入口轮换期间新旧端口重叠，新连接优先新代且可回退、旧连接排空；端口变化不
+16. QR 只携 token/commitment、trust checkpoint、catalog/proof hash、2～3 个镜像、有界
+    `PrivateEnrollmentServiceRefV1` 和 capability；镜像请求无 token，Nginx 不能观察或转发 claim。
+    public proof 只含 hiding commitment，镜像故障、两个内容 hash/QC 错误、重定向、假 endpoint 和回退均 fail closed。
+17. 客户端从当前网络对每个实际 bootstrap transport 各测至多一次，不以 Nginx
+    RTT 代替；HY2 成功、UDP 全阻断后 Trojan/TLS TCP fallback、全失败均有明确结果。
+18. bootstrap capability 过期、限流、限次数、并发重放和 ACL 越界均被拒；隧道只可达
+    私有 Enrollment IP/port。公网入口无法看到内层 token/CSR/PoP，内层证书/IP 不匹配或
+    token-free preflight opening 不匹配 hiding commitment 时不发 token。
+19. 同 token + stable `EnrollmentClaimCoreV2` 跨入口重试幂等；每个新 server nonce 可以
+    产生新 detached PoP，但 core/hash 不得变化，Raft CAS 只消费一次，换 key/core 重放失败。
+    已 commit claim 的 `EnrollmentResumeDescriptorV1` 必须不含 token、绑定原 exact core/transaction，
+    由私有 control API 确认后带外交付，不得自动刷新；只返回既有结果且不重消费 token。
+    ready 后必须原子安装正式 cert/view/creds 并清除临时隧道所有材料。
+20. 数据入口轮换期间新旧端口重叠，新连接优先新代且可回退、旧连接排空；端口变化不
     改变出口/三态。Android 的 Direct 不探测；每底层网络代首次进入 Auto/指定出口时冻结
     当时的候选快照，同代新增 listener 不追加主动
     probe，只从真实拨号取得被动证据，也不追加整路径探测。
-18. 首次 v2 接受原子保存 bootstrap hash、四组 floors（含 recovery policy hash）和 latch；
+21. 首次 v2 接受原子保存 bootstrap hash、四组 floors（含 recovery policy hash）和 latch；
     冲突 bootstrap、latch 后 v1 current/
     invite/recovery replay、删除非关键 cache 后诱导降级均失败关闭；身份状态丢失必须重新入网。
 

@@ -57,11 +57,15 @@ Windows 的自动模式按 Service 分流；固定出口让受管上网流量共
 
 ## 加入网络
 
-管理员在控制中心的 **Devices → Create Device** 创建设备，选择平台、职责和可访问的服务，再生成一次性加入码。目标 v2 中，管理请求只经已信 certified
-`EndpointSet(role=control_api)` 入口的精确 transport 校验和 admin cert 认证后提交；
-未加入客户端的 claim 则只能在本次邀请 descriptor 直接携带的有界
-`EndpointSet(role=enroll)` seeds 中故障切换。用户安装客户端并导入加入码，
-即可获取配置并连接网络。
+管理员在控制中心的 **Devices → Create Device** 创建设备，选择平台、职责和可访问的服务，再生成一次性加入码。目标 v2 中，已入网管理端只经 Loom overlay
+访问 certified private `ControlServiceDirectoryV1` 中的 `control_api`，校验内部服务证书并使用
+admin mTLS 提交。未加入客户端先从加入码列出的 2～3 个公网静态镜像下载并验证不可变
+bootstrap catalog，实测其中的 HY2 入口（正式版在 UDP 不通时使用独立 Trojan/TLS TCP
+fallback），再用短期、限路由 capability 建立只可到达私有 Enrollment 的临时隧道。
+客户端只对外层 transport/SNI 做无凭据测量；选中一个入口后才出示 capability。隧道内先
+验证端到端 TLS，再取得并核对完整 Device intent 的私有 preflight，最后提交 token、稳定的
+claim core、CSR 和基于服务端 nonce 的本机 identity-key detached PoP。公网 Nginx 只提供 fake website
+和无 token 的 immutable distribution，不能接收或代理 claim。
 
 | 平台 | 加入方式 | 用途 |
 |---|---|---|
@@ -72,7 +76,7 @@ Windows 的自动模式按 Service 分流；固定出口让受管上网流量共
 加入码短期有效且只能使用一次。设备加入后会保留本机身份，重启、重连和正常升级无需重新加入。
 Android 的私有 APK、固定升级签名和发行渠道状态见[当前状态](docs/status/current.md)。
 
-安装和使用步骤见 [Windows 客户端](clients/windows/README.md)、[Linux 客户端安装](docs/linux-client-install.md)和 [Android 客户端](clients/android/README.md)。设备职责、授权和连接方向的详细说明见 [Device 生命周期与交付架构](docs/device-lifecycle-and-delivery.md)。
+安装和使用步骤见 [Windows 客户端](clients/windows/README.md)、[Linux 客户端安装](docs/linux-client-install.md)和 [Android 客户端](clients/android/README.md)。设备职责、授权和逐链路发起方向的详细说明见 [Device 生命周期与交付架构](docs/device-lifecycle-and-delivery.md)。
 
 ## 核心能力
 
@@ -91,12 +95,14 @@ Android 的私有 APK、固定升级签名和发行渠道状态见[当前状态]
 flowchart TB
     subgraph Join["首次加入网络"]
         direction LR
-        Admin["管理员经 certified control_api EndpointSet + admin cert 提交"] --> Commit["validate → Raft commit → apply/recompute → quorum attest/QC"]
-        Commit --> Carrier["有界 descriptor QR/链接；文件可内嵌无 token proof"]
+        Admin["管理员经 private control_api + admin mTLS 提交"] --> Commit["validate → Raft commit → apply/recompute → quorum attest/QC"]
+        Commit --> Carrier["紧凑 QR：token/capability + catalog/proof hashes + 2～3 mirrors + private Enrollment ref"]
+        Carrier --> Catalog["从 Nginx 无 token 下载并验证 immutable catalog/proof"]
         Package["下载并验证通用客户端"] --> Bind["导入加入码并生成本机密钥"]
-        Carrier --> Bind
-        Bind --> EnrollSeed["仅 descriptor 有界 enroll EndpointSet seed"]
-        EnrollSeed --> Identity["Raft CAS commit → apply/recompute → QC 认证身份和权限"]
+        Catalog --> Bind
+        Bind --> Tunnel["实测 HY2/TCP ingress → 建立限路由临时隧道"]
+        Tunnel --> PrivateEnroll["私有 Enrollment：inner TLS → intent preflight → token + detached PoP"]
+        PrivateEnroll --> Identity["Raft CAS commit → apply/recompute → QC 认证身份和权限"]
     end
 
     subgraph Control["分布式控制与发布"]
@@ -110,7 +116,7 @@ flowchart TB
         Render --> Public["公开 head / QC / transition / 通用制品"]
         Render --> Private["本 Device 的最小 view / proof"]
         Public --> Distribution["distribution：不可信公开镜像"]
-        Private --> DeviceConfig["device_config：Device 身份认证"]
+        Private --> DeviceConfig["overlay-only device_config：Device mTLS"]
     end
 
     subgraph Device["Windows / Android 客户端持续运行"]
@@ -128,7 +134,7 @@ flowchart TB
     end
 
     Servers["服务器按段测量 · 签名上报"] --> Evidence
-    Attest -.->|certified 期望状态| Console["certified control_api EndpointSet 内的 UI"]
+    Attest -.->|certified 期望状态| Console["private ControlServiceDirectoryV1 内的 UI/control_api"]
     Report -.->|客户端状态与实际选路| Console
     Servers -.->|服务器和链路状态| Console
 ```
@@ -264,7 +270,7 @@ go build -o out/loom ./cmd/loom
 | `internal/secret/` | 秘密占位符、按节点拆分与轮换 |
 | `internal/enrollplan/` | Device 加入时生成节点、隧道与策略的事务计划 |
 | `internal/ssotedit/` | 保留无关 YAML 结构的 Service 定向编辑 |
-| `internal/webui/` | v1 compatibility 节点只读界面与指定 control 写入口；目标为已信 certified `EndpointSet(role=control_api)` 内的入口经 admin cert 认证后接收、Raft commit 后取得 replication QC |
+| `internal/webui/` | v1 compatibility 节点只读界面与指定 control 写入口；目标为已入网管理端经 overlay IP、内部服务证书和 admin mTLS 访问 private `control_api`，Raft commit 后取得 replication QC；公网 Nginx 不代理控制 UI/API |
 | `testdata/matrix/` | 合成 SSOT 与逐字节 golden 配置 |
 
 ## 开发

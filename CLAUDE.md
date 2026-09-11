@@ -35,11 +35,20 @@ Loom 是一个基于加密隧道的链路与服务调度基础设施。**既有�
 
 ## 执行边界与客户端选路约束
 
-- 目标 v2 的 role 入口不得混用：管理请求只能经已信 certified
-  `EndpointSet(role=control_api)` 入口的精确 transport 校验和 admin cert 认证后
-  提交；尚无 Device 身份的 claim 只能使用本次 `InviteBootstrapDescriptorV2` 中有界的
-  `EndpointSet(role=enroll)` seeds。control peer RPC、DNS 临时发现或其他 role
-  都不能作为替代入口。
+- 目标 v2 的公开入口与私有控制服务不得混用。公网 Nginx 只提供 fake website 和
+  content-addressed、客户端自行验签的 immutable `distribution`；不得接收、终止或反代
+  Enrollment claim，也不得公开 `control_api`、Raft peer RPC、`device_config` 或
+  `device_report`。管理请求只能由已经入网的管理员设备经 Loom overlay IP 访问
+  `control_api`，同时验证 internal service certificate、admin mTLS、certified ACL 与 base head。
+  尚无 Device 身份的客户端先从二维码所列少量 distribution 镜像取得并验证完整 bootstrap
+  catalog/proof；对候选的主动测量只完成 outer transport/SNI 身份验证，不发送 capability、token
+  或其他 bearer。选中实测最优的 HY2 bootstrap ingress 后才出示本次邀请的短期、限路由
+  capability、建立临时隧道，再验证内层 TLS；只有隧道内的私有 Enrollment IP/port 可达，claim
+  token 仅在内层 TLS 中提交。v2 没有通用“一小时恢复窗口”：未提交 claim 的自动重试同时受
+  Invite 与 capability 有效期约束；已提交 reservation 只能由管理员为原 request/body/key/transaction
+  显式签发不晚于其 retry deadline 的 exact-bound resume capability，不能复活 Invite 或授权新 claim。
+  首版 bootstrap 不用 WireGuard；正式交付另设独立 Trojan/TLS TCP fallback，Nginx 仍不得承接
+  Enrollment。DNS、公开证书或其他 role 都不能替代 ControlSet/QC authority。
 - 开工前从当前对话提取“必须实现”和“明确排除”，交给子任务时一并传递。
   用户排除的方案，不得改名为后台验证、异步补样、兜底或可靠性保障后重新加入。
 - 旧框架、文档和测试不是必须保留的需求。发生冲突时，删改不符合要求的实现与测试；
@@ -72,8 +81,9 @@ Loom 是一个基于加密隧道的链路与服务调度基础设施。**既有�
 `/usr/local/bin/loom`；随后只重启该节点实际运行的 Loom 常驻服务。控制设备若同时是
 构建机，也必须使用同一制品就位；仓库文档不得记录实际设备 ID、地址或主机名。
 
-`reverse_only` 只约束 WireGuard 加密隧道的发起方向，不表示主机不能被管理 SSH
-直连，也不得据此改成等待节点 pull。默认只等待 SSH/SCP/激活命令本身返回；除非
+v1 的 `reverse_only` 只约束由它参与的 WireGuard 边的发起方向；目标 v2 把发起方、
+允许 transport 与公网/私网可达性落实到每条 link intent，不能再从一个节点标签推导
+所有链路。两种模型都不表示主机不能被管理 SSH 直连，也不得据此改成等待节点 pull。默认只等待 SSH/SCP/激活命令本身返回；除非
 操作者明确要求，不额外探测 SSH 可达性，不等待 publisher 或 pull 的轮询，不轮询
 6/6 收敛，也不做发布后的全网核验。哪个节点命令失败，就立即报告哪个节点。
 
@@ -140,7 +150,7 @@ go run ./cmd/loom verify   /tmp/out -pubkey /tmp/keys/platform-signing.pub
 | `internal/version/` | 版本坐标:commit(Go 的 VCS 戳自动带入)+ 二进制 sha256 |
 | `internal/netx/` | 不依赖机器全局设置的 HTTP 客户端(不读 HTTP_PROXY、自带 DNS) |
 | `internal/events/` | 状态变化历史。**只记变化,不记状态**；v1 compatibility 记在指定 control，目标以不可变事件 CRDT 复制 |
-| `internal/webui/` | v1 compatibility：节点只读、指定 control 写；目标为已信 certified `EndpointSet(role=control_api)` 内的入口经 admin cert 认证后接收，Raft commit/apply 后取得 replication QC，并显示副本新鲜度 |
+| `internal/webui/` | v1 compatibility：节点只读、指定 control 写；目标为已入网管理员设备经 overlay IP、internal service certificate 与 admin mTLS 访问私有 `control_api`，Raft commit/apply 后取得 replication QC，并显示副本新鲜度；公网 Nginx 不代理控制 UI/API |
 | `internal/secret/` | 秘密层:占位符解析与替换、两步轮换。**合并发生在节点上**,分发树里只有占位符 |
 | `cmd/loom/` | CLI:`validate` / `render` / `diff` / `snapshot` / `verify` / `keygen` / `firewall` / `hydrate` / `probe` / `agent` / `report` / `selfcheck` / `status` / `apply` / `publish` / `publisher` / `pull` / `secrets` / `backup` / `restore` / `pin` / `rollback` / `snapshots` / `rotate-tunnel` / `version` / `release` |
 | `testdata/matrix/` | 参考 SSOT(4 国内云机 + 2 境外 VPS)与 golden |

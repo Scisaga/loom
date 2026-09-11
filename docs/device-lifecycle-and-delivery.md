@@ -8,14 +8,16 @@
 > 见[分布式控制平面设计](distributed-control-plane.md)。
 >
 > 本文的 **Enrollment** 只指内部的一次性身份 claim 协议。产品界面统一使用
-> **Create Device / 加入网络**：管理员只向已信 certified
-> `EndpointSet(role=control_api)` 内经精确 transport 校验的入口提交，并用 admin cert
+> **Create Device / 加入网络**：管理员只能经 Loom overlay 向已信任的 certified
+> `ControlServiceDirectoryV1` 中 `role=control_api` 的私有服务提交，先校验 overlay IP/证书，再用 admin cert
 > 认证；只有经 Raft commit、
 > apply/recompute 和 quorum attestation 成为 certified 后才创建可交付的
 > Device；纯接入客户端可导入二维码，Linux
 > 也可通过本地或 SSH 会话执行 shell bootstrap。消费加入输入不会再创建或“注册”第二个 Device。
-> claim 不使用 `control_api`；尚无 Device 身份的客户端只能在本次邀请
-> 交付包直接携带的有界 `EndpointSet(role=enroll)` seeds 中故障切换。
+> claim 不使用公网 Nginx 或 `control_api`；尚无 Device 身份的客户端先验证
+> 静态 bootstrap catalog，再以短期 capability 经受限 bootstrap tunnel 访问私有
+> `PrivateEnrollmentServiceRefV1` 所指的 Enrollment 服务；它是私有
+> `ControlServiceDirectoryV1` 中 `role=enroll` 条目的本次有界投影，不是公网 EndpointSet。
 
 ### E1 历史基线（仅用于解释迁移起点）
 
@@ -35,12 +37,13 @@ E1 迁移基线包括统一 `/devices` 读模型、四分授权、一次性加�
 承担的职责，不再是 `Node` / `Client` 两套生命周期。
 
 所有新 Device 使用同一条 **Enrollment** 内部协议：创建端先用 CSPRNG 生成一次性 token，
-把它封装为 exact-version secret artifact；管理员从已信 certified
-`EndpointSet(role=control_api)` 选择并校验入口、使用 admin cert 认证，再提交只含 token commitment
-与 private artifact-binding hash 的 public Device/invite intent；
-完整 exact ref 只在 matching control-private binding 中。该 intent 经 Raft commit、apply/recompute 和 quorum attestation 成为
+把它封装为 exact-version secret artifact；管理员经 Loom overlay 从已信任的 certified
+`ControlServiceDirectoryV1` 中 `role=control_api` 的私有服务、校验入口并使用 admin cert
+认证，再提交只公开 `DeviceEnrollmentIntentCommitmentV1`、token commitment
+与 private artifact-binding hash 的 proposal；完整 `DeviceEnrollmentIntentOpeningV1` 与 exact ref
+只在 matching control-private binding 中。该 proposal 经 Raft commit、apply/recompute 和 quorum attestation 成为
 certified 后，获授权 renderer 才可解封同一 token 并一次性输出加入码。客户端安装并启动通用包后导入加入输入，
-再自行生成身份并 claim 这个
+再自行生成身份，验证无秘密 bootstrap catalog，通过受限临时隧道 claim 这个
 既有 Device。纯 `use_loom` Device 可用二维码、内部兼容 `loom://enroll` URI 或加入文件；
 包含 `forward` 的 Linux Device 只通过本地/SSH 会话执行 shell bootstrap，并从标准输入
 消费同一 URI。服务器安装命令只获取通用包，本身不携带加入码。
@@ -70,12 +73,12 @@ apply/recompute 并取得 old/new replication QC 后，才产生对外可发布�
 | 决策 | v1 迁移基线 | v2 目标工作 |
 |---|---|---|
 | 统一 Device | 建立统一 ID、库存读模型与 `/devices` 添加入口；删除 `/nodes/add` 产品入口 | 删除剩余旧 `/clients` 命名与兼容存储 |
-| 统一 Enrollment | 指定 v1 compatibility control 先创建既有 Device 与一次性 invite，单 registry/endpoint 完成 claim；Linux 可在本地或 SSH 会话运行同一 bootstrap，不另建 SSH 加入协议 | Create Device 只由已信 certified `EndpointSet(role=control_api)` 入口在 admin cert 认证后接收；claim 只由本 descriptor 有界 `EndpointSet(role=enroll)` seeds 接收；Raft commit、apply/recompute 和 quorum attestation 分别形成 certified invite/claim |
+| 统一 Enrollment | 指定 v1 compatibility control 先创建既有 Device 与一次性 invite，单 registry/endpoint 完成 claim；Linux 可在本地或 SSH 会话运行同一 bootstrap，不另建 SSH 加入协议 | Create Device 只由 `ControlServiceDirectoryV1` 中 `role=control_api` 的 overlay-only 服务在 admin cert 认证后接收；公网 Nginx 只发静态 distribution；claim 经 capability 受限隧道到达 QR 中 `PrivateEnrollmentServiceRefV1` 指向的私有 `role=enroll` 服务；Raft commit、apply/recompute 和 quorum attestation 分别形成 certified invite/claim |
 | 四分授权模型 | API、Review 和 UI 分开显示 Identity / Membership / Responsibilities / Destination grants | `control` authority 由 FinalControlSet、Device 投影由 matching private peer directory 联合导出；复杂授权治理另议，不引入 ABAC 或动态组 |
 | “Access”文案 | 改为“在此设备上使用 Loom”，明确只表示本机流量可交给 Loom | 无 |
-| 直接固定加入意图 | 创建时直接选择平台、职责、grants 和必要的连接方向；不引入 Device 类型或 Profile 层 | 已加入 Device 的职责变更另走显式配置变更，不复用加入码 |
+| 直接固定加入意图 | v1 创建时选择平台、职责、grants 和 Linux forward direction；不引入 Device 类型或 Profile 层 | v2 Invite 只固定平台、职责和 grants，不携 Device-wide direction；每条链路的 initiator/transport/route scope 由 Enrollment 后的 certified LinkIntent 固定，职责变更另走显式配置变更 |
 | 公开通用包 | GitHub 或实际部署配置中的国内/公网镜像只放通用包、签名和校验材料 | 具体镜像供应商、域名和同步运维按部署决定 |
-| HTTPS 前门与 Device mTLS | v1 只区分公开包地址和设备配置地址，不把传输信任冒充配置 authority | v2 按 role 拆 EndpointSet，并与证书轮换、吊销一起实施 |
+| 公网分发、bootstrap 与 Device mTLS | v1 只区分公开包地址和设备配置地址，不把传输信任冒充配置 authority | v2 拆分 public distribution/bootstrap/data 与 private control/enrollment/config/report；稳态 Device 通道均用 overlay IP + 分用途 mTLS |
 | 最小 per-device signed view | 固定渲染契约和禁止暴露项，不把现有 bundle 冒充最小视图 | ControlSet QC、per-device view、pull/cache 与旧快照迁移 |
 | 版本坐标 | 保持 raw SSOT revision、snapshot ID 与全局 signed release generation 的既有含义，禁止改名冒充目标字段 | 引入独立 Recovery lineage、Control epoch/revision、per-Device generation、四组 durable floor 与不可逆 v2 latch |
 | 域名与 listener | 公开地址继续来自部署配置 | 托管 zone/ACME；Hysteria2/Trojan 用多 generation listener 做计划内无中断轮换，WireGuard 未完成双 interface/peer profile 前只允许 disruptive maintenance |
@@ -98,7 +101,8 @@ Device
 ├── Destination grants    获准使用的 Service、出口、后续 Local Network
 ├── Control projection?   certified FinalControlSet authority + matching private peer directory 的只读投影
 ├── Desired view          recovery/control 坐标 + device_generation + leaf/proof + QC
-├── EndpointSet           control_api/enroll/device_config/device_report/distribution/data_ingress 的已签入口
+├── Public EndpointSets   DistributionEndpointSetV1 / BootstrapIngressEndpointSetV1 / DataIngressEndpointSetV2
+├── Private services      ControlServiceDirectoryV1 中按 role 授权的条目
 └── Runtime evidence      applied / online / stale；带时间，不写回期望态
 ```
 
@@ -116,28 +120,39 @@ v1 的 `clientregistry.Client` 与 `model.Node` 是两张表按相同 ID 拼出�
 
 ```text
 创建端一次性生成 token、封装 control-private exact-version artifact binding
-  → 管理员经已信 certified EndpointSet(role=control_api) 入口的精确 transport + admin cert 提交 Create Device intent
+  → 已入网管理员经 overlay 访问 ControlServiceDirectoryV1 中 role=control_api 的私有服务，验服务器证书/IP + admin cert 提交 Create Device intent commitment
   → validate 后写入 Raft durable log，apply 后取得 quorum attestation QC
   → certified 后 renderer 才解封同一 token；access-only 一次性显示有界 descriptor QR，Linux 可用本地或 SSH 会话执行同一 bootstrap
-  → QR / loom:// URI 携带 token、commitment、checkpoint、最多 3 个带 pin seed 与 proof-bundle hash；.loom-invite 可内嵌完整无 token proof bundle
+  → QR / loom:// URI 携带 token/commitment、trust checkpoint、catalog/proof hash、2～3 个静态 distribution mirrors、PrivateEnrollmentServiceRefV1 和短期 capability；.loom-invite 可内嵌 catalog/public proof
 客户端安装并启动通用包
   → 导入上述加入输入
   → 本机检测平台与架构，并与邀请固定的平台比较
-  → 本机生成独立、不可导出的 P-256 identity/CSR key 与按 intent 选择的 wrapping/PoP key（Android API 31+ P-256，API 26–30 RSA fallback）
-  → 只在 descriptor 有界 EndpointSet(role=enroll) 内选 seed，验 hostname/WebPKI + SPKI pin、拒绝重定向并无 token GET/验证 proof bundle 后才提交 token/exact request body（含 CSR、wrapping descriptor、request ID/facts）
+  → 从 descriptor 的 mirrors 无 token 下载 immutable catalog/public proof，分别验 bootstrap_catalog_hash、proof_bundle_hash、record/QC/authority、intent hiding commitment 和 BootstrapIngressEndpointSetV1
+  → 从当前 underlay 对实际 HY2 入口各测至多一次；正式版对 UDP 全阻断使用独立 Trojan/TLS TCP fallback
+  → 只在选定入口时出示 capability，建立只能达 PrivateEnrollmentServiceRefV1 IP/port 的短期隧道
+  → 验证内层 server-auth TLS，先做不含 token/CSR/key 的 EnrollmentIntentPreflightRequestV1/ResponseV1，取得 exact DeviceEnrollmentIntentOpeningV1 并重算 hiding commitment
+  → 按 exact intent 生成 identity/CSR signing key 和仅用于封装的独立 wrapping key（Android API 31+ P-256 ECDH，API 26–30 RSA-OAEP fallback）
+  → 构造稳定 EnrollmentClaimCoreV2，取得 EnrollmentPoPChallengeV1，identity key 对含 server nonce 的 EnrollmentPoPBodyV2 签名
+  → 在内层 TLS 提交 EnrollmentClaimSubmissionV2：token + stable core + challenge + detached PoP
+  → 当前 stable ControlSet 的 enrollment voters 各自经私有 peer RPC 验 token/core/opening/challenge/PoP，形成 StableEnrollmentAdmissionQCV1；单 ingress 不能批准
   → Raft 以线性化 CAS 提交 token/Device ID reservation，并承诺 Identity、Membership 计划、
-    Responsibilities、grants、direction、sealed secret-ref root 与 future view leaf；exact refs 只随私有 receipt
+    Responsibilities、grants、sealed secret-ref root 与 future view leaf；exact refs 只随私有 receipt
   → apply/recompute 后取得 config replication QC，claim reservation 才成为 certified；尚不激活 Membership/view/secret
   → 在线 CA 验 claim QC 与最新 active/fenced exact profile，确定性签证并提交 Raft issuance registry
   → enrollment voters 验证证书、issuance entry 与 profile inclusion 后形成 Enrollment approval QC
   → approval-QC-authorized completion 进入第二个 ordinary head，current config QC 后原子消费 invite、激活 Membership/view 并授权 artifact release
   → 发布带 claim/completion QC/head 及 Merkle inclusion proof 的 Device view、EndpointSet 与只为该 wrapping key 封装的 artifacts
-  → 客户端验证 checkpoint/QC/proof/floor 并原子 latch v2 后首次 pull、安装和签名上报
+  → 客户端验证 checkpoint/QC/proof/floor，原子安装正式 cert/view/creds 并 latch v2
+  → 清除 token/capability/临时 profile 与隧道，以正式身份由同一平台客户端宿主建立持久 WG control/L3 overlay，再首次 pull 和签名上报
 ```
 
-这是目标 v2 流程。v1 的严格 invite/claim schema、单 registry 和单 endpoint 保持原样，
-只能通过并行的 v2 资源与 reader 迁移，不能向 v1 JSON 就地添加字段。QR 中的 seed 只是
-bootstrap 能力，不是长期权威；加入后只接受已信 transition/QC 连续引入且 transport identity
+这是目标 v2 流程。公开 proof 只含 `DeviceEnrollmentIntentCommitmentV1` 及其认证路径，
+不含 exact intent/opening；完整 opening 只经上述 tunnel preflight 交付。公网 Nginx 只提供 fake website 和 immutable distribution，永远不见
+token/CSR/PoP，也不反向代理 Enrollment。WG 只是正式入网后的持久 control/L3 overlay，不是首版
+bootstrap transport。Android 的该持久 overlay 由同一 libbox/`VpnService` 宿主承载，不启动
+第二套系统 VPN 或独立 Tailscale/Headscale 客户端。v1 的严格 invite/claim schema、单 registry 和单 endpoint 保持原样，
+只能通过并行的 v2 资源与 reader 迁移，不能向 v1 JSON 就地添加字段。QR 中的 mirrors 和
+capability 只是 bootstrap 能力，不是长期权威；加入后只接受已信 transition/QC 连续引入且 transport identity
 pin 匹配的新 endpoint。
 
 - 管理员创建时选择平台；客户端仍报告本机平台，服务端要求它与邀请精确一致。
@@ -148,22 +163,45 @@ pin 匹配的新 endpoint。
 - Raft-committed claim 只建立 Identity/Device reservation；证书 issuance、Enrollment approval QC
   和 completion head/config QC 全部完成后，才激活并向 Device 交付 Membership、Responsibilities、
   grants 与 view。reserved、active 与 online 是三个不同状态。
-- 一次性码的 TTL 限制首次绑定。只有本次 descriptor 有界
-  `EndpointSet(role=enroll)` 内 seed 的 claim 才可接收，并必须以全局 token digest 做
-  线性化 CAS；预留后只允许同一 token 与 exact request body（CSR、wrapping descriptor、request ID、
-  平台和 Device facts）在一小时恢复窗口内重放，detached signature bytes 可变化；v1 Windows Portable 契约只在未完成期间用
-  当前用户 DPAPI 保存 pending token，并在 joined 完成标记提交后清除。
-- 加入码不能创建 identity-only Device；平台、Responsibilities、Destination grants 和
-  `forward` 所需的 direction 在创建时直接固定，提交前必须展示。
+- 一次性码的 TTL 限制首次绑定。只有经已验 `BootstrapIngressEndpointSetV1`
+  建立、ACL 只可达本次 `PrivateEnrollmentServiceRefV1` 的 claim 才可接收，并必须以全局 token digest 做
+  线性化 CAS；预留后只允许同一 token 与字节完全相同的 `EnrollmentClaimCoreV2`
+  在 invite/capability 有效期内重放。server nonce 可更新，identity key 对应的 detached signature bytes
+  可随之变化，但 stable core/hash 不变。v1 Windows
+  Portable 契约独立保留指定 control 的一小时恢复窗口，未完成期间用当前用户 DPAPI
+  保存 pending token，并在 joined 完成标记提交后清除。
+- 加入码不能创建 identity-only Device；v2 intent 在创建时固定平台、
+  Responsibilities 和 Destination grants，提交前必须展示；它不携 Device-wide direction。
+  每条 control/data 边的 initiator/transport/route scope 只能在 Enrollment 后由 certified LinkIntent 授权。
 - 重连、升级、网络切换和重启使用既有身份，不重新 Enrollment。
 - 服务器不依赖 control 节点 SSH push 作为安装或加入模型。`get.docker.com` 式脚本只负责获取
   通用包，随后仍导入同一加入码；管理员可以先 SSH 到目标机执行同一脚本，但控制平面不保存
   SSH 凭据，也不存在第二套 SSH Enrollment。
 
+`BootstrapTunnelCapabilityV1` 是已 certified Invite 的受限派生物，由 ControlSet 授权的
+专用 bootstrap issuer 签名，不能自行扩大 Invite 边界。默认 TTL 15 分钟，可配 5～30 分钟且
+硬上限 30 分钟；单隧道会话上限 180 秒、总流量默认 8 MiB、最多 3 次顺序建连尝试，
+每入口同一 `cap_id` 最多一个并发 session。这些是防滥用界限，真正的一次消费
+仍由 ControlSet 对 enrollment token 执行 Raft CAS；全网强一次拨号不得破坏弱网重试。
+若 claim 已 commit 但 capability 过期，管理员必须经私有 `role=control_api` 服务线性化
+确认 transaction 仍为 reserved/completed，再一次性生成不含 token 的
+`EnrollmentResumeDescriptorV1`。它携带 exact resume capability、`claim_core_hash`/transaction
+binding 与 catalog/proof/service/mirror refs，只以带外 QR 或 `.loom-resume` 交付，不发布到
+公网 mirror，也不允许客户端自动刷新。客户端必须以本机 pending core/identity
+核对 exact binding，并对新 server nonce 重签 PoP；ControlSet 幂等返回既有结果，
+不重置、不重消费 token，也不延长旧 capability。
+
+隧道 ACL 只允许 catalog 认证的 Enrollment `/32` 或 `/128` 和 TLS TCP port，禁止其他
+overlay CIDR、Internet egress、DNS、ICMP、隧道内 UDP、control API、Raft、SSH、配置和报告。
+入口转发器与 ControlSet 防火墙双重执行。内层 server-auth TLS 绑定私有 IP 的内部 CA/IP SAN
+或固定 SPKI；token 与 PoP 只在内层发送。PoP 由 identity/CSR key 签名，覆盖 stable
+`claim_core_hash`、network/invite/request ID、CSR/identity/wrapping-key hash 和 server nonce；
+wrapping key 只用于凭据包装。相同 token + stable core 的跨入口重试幂等；换 key/core 的重放拒绝。
+
 ### 4.1.1 二维码重发与本机身份丢失
 
-未领取的身份预留可在 Device 详情页**重新签发**加入码。名称、ID、平台、职责、grants 和
-direction 保持原值；创建端先预生成并封存新 token/artifact，再用一个原子 proposal 同时撤销
+未领取的身份预留可在 Device 详情页**重新签发**加入码。名称、ID、平台、职责和 grants
+保持原值；目标 v2 没有需要保持的 Device-wide direction。创建端先预生成并封存新 token/artifact，再用一个原子 proposal 同时撤销
 旧 record 并创建绑定新 commitment/private-binding hash 的 public record，完整 ref 仍只在
 control-private binding；取得 QC 后才一次性交付新载体。
 旧 invite 的明文不能从列表重新取回。纯 `use_loom` Device 只在新 invite 的一次性创建结果中
@@ -223,25 +261,38 @@ checksum、signature 或平台公钥文件被替换后都会重新执行完整�
 
 - `platform`：可创建 `windows-desktop`、`android` 或 `linux-server`；
 - `responsibilities`：`use_loom` / `forward` / `internet_egress` 的合法组合；
-- `destination_grants`：仅在选择 `use_loom` 时非空；
-- `direction`：仅在选择 `forward` 时必填。
+- `destination_grants`：仅在选择 `use_loom` 时非空。
+
+上述是目标 v2 `DeviceEnrollmentIntent` 的全部 Device 级授权输入；它不包含
+`direction`。含 `forward` 不会自动生成全局连接方向，每条实际边必须在 Enrollment 后由
+certified LinkIntent 独立固定两端、initiator、transport 和 route scope。
 
 邀请不能携带或授予 `control`。既有 Device 只有先作为 learner 完成同步，再经
 `JointControlSet → FinalControlSet` 提交、apply 并取得 old/new replication QC，才获得只读
 `control` 投影。
 
-客户端 claim 只提交身份与实际服务器声明，不能选择或扩张这些授权。目标 v2 将 invite
+客户端 claim 只提交身份/包装公钥、CSR、已验 base authority 与本机平台，
+不能选择或扩张职责和 grants。目标 v2 将 invite
 拆成 record、descriptor 与 proof 三层：token 必须在 proposal 前生成并封装，Raft/CRDT 中的 canonical
-`CertifiedInviteRecordV2` 只记录 exact `DeviceEnrollmentIntentV1` hash、token commitment、
-control-private artifact-binding hash 和 delivery-context hash；完整 exact-version ref 与 token 明文一致性
-回执只在 matching private binding 中。certified 后的一次性 `InviteBootstrapDescriptorV2` 携带 token、
-context/commitment、最多 3 个 `role=enroll` 精确 seeds 和无 token proof-bundle hash。客户端先用
-descriptor 的 transport pins 无 token 获取并验证 `InviteProofBundleV2` 中的 record inclusion、
-head/QC 与 authority chain，才 POST claim；`.loom-invite` 可内嵌两者。这样响应时 head 变化不会改写已提交
-record，也不会让完整历史挤爆二维码。token 明文只存在于 descriptor，以及该 exact
-token/exact request body（含 CSR、wrapping descriptor、request ID/platform/facts）事务在 certified
-claim head 导出的一小时恢复窗口内
-发出的 claim/retry request body；不进入 URL/header/cookie 或复制日志，验证并持久化
+`CertifiedInviteRecordV2` 只记录 `DeviceEnrollmentIntentCommitmentV1`、token commitment、
+control-private artifact-binding hash 和 delivery-context hash；完整 `DeviceEnrollmentIntentOpeningV1`、
+exact-version ref 与 token 明文一致性回执只在 matching private binding 中。certified 后的一次性
+`InviteBootstrapDescriptorV2` exact 携带 schema/cluster/invite/expiry、token/commitment、
+`bootstrap_catalog_hash`、`proof_bundle_hash`、minimum recovery/trusted checkpoint、2～3 个精确
+`DistributionMirrorRefV1`、有界 `PrivateEnrollmentServiceRefV1` 和短期
+`BootstrapTunnelCapabilityV1`。客户端只向 mirror 无 token 获取并分别验证 catalog/public proof；
+public proof 只含 hiding commitment 及 record/head/QC/authority 证明，不含 intent/opening。
+客户端验证 `BootstrapIngressEndpointSetV1`、测实际 transport、建立受限隧道并验内层 TLS 后，
+才可用 token-free preflight 取得 opening 并重算 commitment，然后提交 claim；`.loom-invite`
+可内嵌 descriptor/catalog/public proof，不能内嵌 private intent opening。
+这样响应时 head 变化不会改写已提交
+record，也不会让完整历史挤爆二维码。token 明文只存在于初始 descriptor，并只进入
+当前 invite/capability 有效期内的 `EnrollmentClaimSubmissionV2`；
+其 stable `EnrollmentClaimCoreV2` 包含 request/record/intent 绑定、base floors、platform、
+CSR/identity、wrapping descriptor 和 client nonce。
+`EnrollmentPoPChallengeV1`/server nonce 与 detached PoP 不进入 stable core/hash，因此 exact core 重试可对新
+nonce 重签。已 commit 事务只能通过管理员带外交付且 exact-bound 的
+`EnrollmentResumeDescriptorV1` 恢复。token 不进入 URL/header/cookie 或复制日志，验证并持久化
 certified receipt/identity 后客户端必须清除。v1 registry 的直接字段仍是迁移事实，不向其严格 schema
 就地增加 v2 字段。旧 schema 1 邀请全部失效：迁移只保留已经
 加入的 identity 及其具体职责，丢弃旧邀请和未完成的 pending/provisioning 记录；管理员必须
@@ -250,17 +301,20 @@ certified receipt/identity 后客户端必须清除。v1 registry 的直接字�
 为保证 v1 reader 仍能读取并回滚既有 SSOT 存档，模型暂时保留 `enrollment_profiles` 的废弃
 decoder-only 字段；它不参与校验、UI、邀请创建或 claim，不能让旧加入码重新生效。
 
-连接方向也不是角色。`reverse_only` 表示该 Linux Device 主动建立并维持反向 WireGuard
-隧道，适用于无公网入站或受限网络；`bidirectional` / `direct_only` 沿用现有方向矩阵。
-部署可把境外节点设为 `reverse_only`，但位置不决定方向，境外节点也不被底层模型禁止
+连接方向也不是角色。在 v1 兼容模型中，`reverse_only` 表示该 Linux Device 主动建立并维持
+反向 WireGuard 隧道，适用于无公网入站或受限网络；`bidirectional` / `direct_only` 沿用现有方向矩阵。
+目标 v2 将发起方向和允许 transport 放到每条 LinkIntent：WG 是稳定 L3/control overlay 的首个实现，
+HY2 可承担符合发起/可达条件的数据转发 hop，不把全节点永久定性为某种 tunnel。
+旧 v1 部署可把境外节点设为 `reverse_only`，但这只是迁移输入；位置不决定方向，境外节点也不被底层模型禁止
 承担 `use_loom`、`forward` 或 `internet_egress`。
 
 ## 5. 通用包与设备配置分开
 
 ### 5.1 公开通用包
 
-公开渠道只允许发布版本化客户端包/安装脚本、manifest、checksum、签名、公开验证
-材料和不含秘密的兼容性元数据。加入 token、Device identity、证书、秘密、设备配置、
+每个公网 Nginx 只允许提供 fake website 和内容寻址的静态 distribution：版本化客户端包/
+安装脚本、manifest、checksum、签名、公开验证材料、bootstrap catalog bundle 和不含秘密的
+兼容性元数据。Nginx 不接收、终止或代理 Enrollment。加入 token、Device identity、证书、秘密、设备配置、
 全局拓扑和运行证据不得进入 GitHub 或公开镜像。
 
 包地址来自实际部署配置，代码不硬编码域名、IP、节点或供应商。Create Device / 加入网络
@@ -290,12 +344,14 @@ SSOT/snapshot 精确验证时，Enrollment 可以使用它，但不能因此把 
 
 ### 5.3 目标设备配置通道
 
-E1 使用公开的全局 signed distribution 作为过渡。目标态由 signed `EndpointSet` 的
-`device_config` 入口返回本 Device 的最小 signed view；`control_api`、`enroll`、
-`device_config`、`device_report`、`distribution` 和 `data_ingress` 是互不混用的 endpoint role。Device 身份认证使用独立的客户端
-凭据；公网 TLS 同时验证 hostname/WebPKI 与 signed EndpointSet 的 transport identity/SPKI
-pin；ControlSet replication QC 证明内容已由 Raft 提交并被当前 quorum 复算；三者不能互相
-替代。v1 URL 和 current envelope 在兼容期只作为显式 legacy reader 输入。
+E1 使用公开的全局 signed distribution 作为过渡。目标态由私有
+`ControlServiceDirectoryV1` 中 `role=device_config` 的服务返回本 Device 的最小
+signed view；`control_api`、`enroll`、`device_config` 和 `device_report` 都是该私有目录的分用途
+role，只经 Loom overlay IP 可达。稳态 Device 使用独立客户端证书 mTLS，内部服务器证书按用途隔离。
+`DistributionEndpointSetV1`、`BootstrapIngressEndpointSetV1` 和 `DataIngressEndpointSetV2` 才是公网对象，
+三者也不能互相推导。ControlSet replication QC 证明内容已由 Raft 提交并被当前
+quorum 复算；传输身份、Device 身份与内容 authority 不能互相替代。v1 URL 和 current
+envelope 在兼容期只作为显式 legacy reader 输入。
 
 ## 6. 版本化对象图
 
@@ -303,7 +359,7 @@ pin；ControlSet replication QC 证明内容已由 Raft 提交并被当前 quoru
 
 ```text
 EnrollmentTransaction (短期、单次)
-        │ 固定 platform / responsibilities / grants / direction
+        │ 固定 platform / responsibilities / grants；不含 Device-wide direction
         │ claim
         ▼
 DeviceIdentity (稳定)
@@ -426,8 +482,9 @@ v2 迁移以前必须具备以下基线；本节不记录完成状态：
 3. **统一加入网络：** Create Device 先建立唯一设备记录并生成一种一次性加入码；服务器、
    Windows、Android 和 Linux 共用底层 claim，管理员先选平台，客户端报告必须一致；客户端启动后
    导入加入输入，只绑定这个既有 Device；不保留 SSH Add node 入口；
-4. **直接固定加入意图：** 创建时直接选择 Responsibilities、必要的 Destination grants 与
-   `forward` direction；不新增 Device 类型或 Profile 管理页，不允许 identity-only 邀请；
+4. **直接固定加入意图（v1 基线）：** 创建时直接选择 Responsibilities、必要的
+   Destination grants 与 v1 `forward` direction；不新增 Device 类型或 Profile 管理页，不允许
+   identity-only 邀请。该 direction 只供 v2 LinkIntent 迁移器一次性投影，不进入 v2 Invite；
 5. **公开通用包：** 生成带签名/校验的通用包和服务器安装脚本，发布到部署配置声明的
    公开源；Device 页面按职责给出 access-only QR/文件，或 Linux shell/SSH 辅助安装方法；
 6. **修复首次 pull：** 落地 §5.2 的逐 URL 发布证据与选择函数，替换
@@ -457,10 +514,15 @@ v2 迁移以前必须具备以下基线；本节不记录完成状态：
 
 1. Android、Windows、Linux 先支持 bootstrap/recovery checkpoint、提交后 QC、Device inclusion
    proof、joint transition、完整 floor 和不可逆 v2 latch；
-2. 支持带 transport identity/TLS SPKI pin 的多 seed、按 role 拆分的 EndpointSet，以及新旧 listener overlap；
-3. 经过身份认证的 `device_config` endpoint 返回最小 Device view；`distribution` 只承载可公开的
-   通用静态制品；
-4. 双读验证、故障切换和隐私边界通过后，才停止依赖公开全局 snapshot。
+2. 支持紧凑 QR：token/commitment、trust checkpoint、catalog/proof hash、2～3 个静态 mirrors、
+   有界 `PrivateEnrollmentServiceRefV1` 和 bootstrap capability；
+3. 只从 Nginx 无 token 下载并分别验证 immutable catalog/public proof，public proof 只含
+   hiding commitment；然后对实际 HY2 入口各测至多一次；
+4. 实现受限临时隧道、私有 Enrollment 内层 TLS、token-free intent preflight、stable claim core、
+   identity-key detached PoP、Raft CAS、带外 resume descriptor 与完成清理；
+5. 经过 Device mTLS 访问 `ControlServiceDirectoryV1` 中 `role=device_config` 的私有服务
+   以返回最小 Device view，报告走 `role=device_report` 的独立私有服务；
+6. 双读验证、故障切换和隐私边界通过后，才停止依赖公开全局 snapshot。
 
 ### E4：ControlSet 扩容与分布式写入
 
@@ -469,15 +531,17 @@ v2 迁移以前必须具备以下基线；本节不记录完成状态：
    并取得提交后 attestation QC；
 3. 不可变提案、报告和观测用 CRDT anti-entropy 复制；candidate 只用于校验，只有取得提交后
    QC 的 certified head 才能发布为 Device view；
-4. 已信 certified `EndpointSet(role=control_api)` 内的任一入口可在精确 transport
-   和 admin cert 认证后接收管理请求，少数分区拒绝安全关键写。
+4. 已入网管理端可经 overlay 访问已信 `ControlServiceDirectoryV1` 中
+   `role=control_api` 的任一已授权私有服务，
+   在精确内部证书/IP 和 admin cert 认证后提交管理请求，少数分区拒绝安全关键写。
 
 ### E5：域名、证书与端口轮换
 
 1. 以 provider-neutral adapter 接入托管 DNS zone 和 ACME DNS-01；
-2. 为 control_api/enroll/device_config/device_report/distribution/data_ingress 分离域名与证书用途，先在测试 zone 验证幂等 reconcile；
+2. 每个具有 `forward` 职责的服务器使用稳定 FQDN 和 DNS-01，公网 Nginx 只提供
+   fake website/immutable distribution；同机 HY2 UDP 和 WG UDP 使用不同端口，正式版另有独立 Trojan/TLS TCP bootstrap listener；
 3. 将现有单公网 endpoint 映射为 generation 0；显式 PublicEndpointIntent 才触发公开域名，
-   `control` membership 本身不自动暴露 API；再实现
+   `control` membership 本身不暴露 API、Enrollment、config 或 report；再实现
    allocate → prepare → advertise → prefer → drain → retire；
 4. Linux server 先对 Hysteria2/Trojan 并行监听，三平台接受已签新旧代并反馈 ack；新 listener
    未验证或兼容窗口未满足时不得关闭旧端口。WireGuard 只有完成双 interface/peer 专用流程
@@ -511,8 +575,20 @@ route broker 当前明确不做；Local Network 按独立专题推进，不在�
 - 同一 Control revision 可对应不同 Device generation，未受影响设备不更新；
 - 客户端只能获得本设备实际需要的配置与节点信息；
 - N=1/2/3/5 的 quorum、joint transition、少数分区拒写与离线恢复均有确定测试；
-- 只允许在同一 descriptor 有界 `EndpointSet(role=enroll)` 内进行多 seed
-  并发 claim，且只能消费一次；客户端拒绝无连续 transition、QC 不足和 recovery、control、head、Device view 任一 durable floor 回退；
+- QR 只携带 token/commitment、trust checkpoint、catalog/proof hash、2～3 个镜像、有界
+  `PrivateEnrollmentServiceRefV1` 和短期 capability；公网 Nginx 无 token、不处理 Enrollment，
+  catalog/public proof 内容寻址且客户端自行验证，proof 只含 intent hiding commitment；
+- 客户端从当前网络对实际 HY2/TCP bootstrap 入口各测至多一次；不用 Nginx RTT
+  代替，UDP 阻断时仅使用已签独立 Trojan/TLS fallback；
+- capability 的时间、并发、次数、流量和 ACL 限制均有测试；隧道只可达私有 Enrollment
+  IP/port，入口无法观察 token/CSR/PoP；
+- 无 token preflight 交付的 exact intent opening 必须重算出 public proof 中的 hiding commitment；
+  不匹配时不得发 token 或 claim；
+- 同 token/stable `EnrollmentClaimCoreV2` 跨入口重试幂等，新 server nonce 只允许 identity key
+  重签 detached PoP，Raft CAS 只消费一次；换 key/core 重放拒绝。
+  `EnrollmentResumeDescriptorV1` 必须不含 token、精确绑定原已 commit 事务并由私有
+  control API 确认后带外交付，不得自动刷新；ready 后清除全部临时凭据和隧道状态；
+- 客户端拒绝无连续 transition、QC 不足和 recovery、control、head、Device view 任一 durable floor 回退；
 - DNS/ACME reconciliation 可幂等接管，域名解析不构成控制权威；
 - Hysteria2/Trojan 计划内端口轮换时新旧 listener 重叠，失败时旧入口保持可用；它不承诺
   QUIC/TCP 会话跨端口迁移，只保证没有新旧同时关闭的窗口，旧会话排空后才 retire。

@@ -4,8 +4,9 @@
 遵循 design.md §7.3.3、§7.3.4、§16.1.2；不增加 SSOT 字段、测量协议或推荐路径表。
 
 > **协议代次：** v1 兼容契约使用同源 report POST、内存 gossip table 和
-> `200/204` 响应。目标 v2 保持 Observation 的生产者签名与原时间不变，但通过 signed
-> `EndpointSet(role=device_report)` 发现入口，并将不可变报告按
+> `200/204` 响应。目标 v2 保持 Observation 的生产者签名与原时间不变，但通过 certified
+> private `ControlServiceDirectoryV1` 取得 overlay-only `device_report` 服务，以 Device mTLS
+> 认证，并将不可变报告按
 > `(device_id, observed_at, attestation_hash)` 在 control
 > 副本间 CRDT 去重；ControlSet QC 决定授权范围，CRDT 到达本身不能改变期望态。
 > 详见[分布式控制平面设计](distributed-control-plane.md)。代码、部署与验收进度只见
@@ -84,13 +85,14 @@ Content-Type: application/json
 ## 客户端消费边界
 
 v2 客户端在使用报告入口或其观测改变选路前，必须先验证 certified head、
-Device inclusion proof 及 `EndpointSet(role=device_report)`，并原子执行四组 durable floor：
+Device inclusion proof 及其绑定的 private `ControlServiceDirectoryV1`，并原子执行四组 durable floor：
 `recovery_epoch/recovery_statement_hash/recovery_policy_hash`、
 `control_epoch/control_set_hash`、`control_revision/head_hash` 和
 `device_generation/device_leaf_hash/device_view_hash`。首次 v2 安装还必须原子写入
 `bootstrap_transition_hash` 与不可逆 `protocol_latch=v2`；latch 后 v1 同源 URL 不再是 authority。
-`device_report` 的每个 HTTPS endpoint 都按 signed EndpointSet 核对精确 URL、hostname/WebPKI
-和带 generation/overlap 边界的 TLS SPKI pin，拒绝重定向。
+`device_report` 的每个入口都按 private directory 核对精确 overlay IP、端口、internal CA/EKU
+和允许的 SPKI pin，并要求 Device mTLS、拒绝重定向。它不依赖公网 DNS/WebPKI，也不能由
+distribution、bootstrap 或 Enrollment URL 推导。
 
 1. 在现有报告周期内显式选择读取模式，并解析有大小上限的完整 Observation 数组；
    不增加独立轮询/探测周期。Windows 使用 `clientreport.SendWithObservations`，
@@ -159,7 +161,7 @@ Windows 客户端适配只能使用 `agent.RunClient`，不得调用服务器完
 
 - 空路径/根路径等价、其他 URL 语义隔离、缺失目标未知以及原始签名内容/时间保留；
 - 端到端 report POST、200/204 兼容、范围过滤、撤销拒读，以及过期、无签名或篡改证据缺席；
-- v2 `device_report` EndpointSet 的 WebPKI/SPKI pin、角色隔离与 overlap，
+- v2 private `device_report` service 的 overlay IP、internal CA/EKU、SPKI pin、Device mTLS 与角色隔离，
   `committed_not_certified` 不授权，四组 floor/recovery policy hash 和 latch 回退拒绝；
 - Windows/Android 的 Direct 不探测；每底层网络代首次进入 Auto/指定出口时，才对当时冻结
   候选快照中的每个去重入口至多一次并行探测，同代

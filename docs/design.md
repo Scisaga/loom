@@ -62,7 +62,7 @@
 |---|---|---|
 | **两类节点** | 接入节点 / 服务器节点,一台机器可兼任。目标地址不是节点 | §1 |
 | **出口是位置** | 链上最后一台服务器就是出口 —— 不是一种节点类型 | §1.1 |
-| **方向约束** | 反连、双向、仅直连 —— 是**节点属性**,不是全局规则 | §2 |
+| **链路契约** | 发起方、可达性、transport 与 purpose 按边固化；节点级 direction 仅作 v1 迁移输入 | §2 |
 | **路径** | 从接入到目标地址的一条具体走法,零跳到多跳 | §3 |
 | **两个选择轴** | 地址轴 / 服务器轴 —— **决定度量作用在哪儿** | §4 |
 | **等价类** | 只有真正可互换的地址才能进同一候选集 | §4.3 |
@@ -77,7 +77,7 @@
 |---|---|---|
 | 1 | **目标不是节点。** 自建的和买来的一视同仁,都只是地址 | §1, §9 |
 | 2 | **出口是路径上的位置,不是节点类型。** 最后一跳就是出口 | §1.1 |
-| 3 | 角色字段分块,能力由块推导;方向约束是**两端共同**决定的 | §1.3, §2.2 |
+| 3 | 角色字段分块、能力由职责推导；链路发起/transport/purpose 必须逐边 certified | §1.3, §2 |
 | 4 | **策略约束候选集,度量在候选集内选优** —— 两者不得互相污染 | §5.1 |
 | 5 | **数据平面只做 L4 选路,不改写连接内容** —— 换地址只在访问契约同构时成立 | §4.4 |
 | 6 | **应用层指标需要 L7 观测点** —— L4 隧道拿不到 `tokens/s` 与响应结构 | §16.2 |
@@ -124,18 +124,28 @@ Loom 管两种机器,再加上一类它**根本不管**的东西:
 
 **中继当然可以直接访问 API。** 它就是一台有 IP 的服务器。如果目标地址国内直连就通,一跳足够,用不上境外 VPS。**用不用境外 VPS 是选路的结果,不是架构里预先分好的类。**
 
-### 1.2 服务器之间只有两点区别
+### 1.2 服务器之间只有职责和可达性差异
 
-| 区别 | 影响什么 |
+目标态用正向职责 `forward` 表示能承载数据转发；`internet_egress` 必然蕴含
+`forward`。不要用“非 `use_loom` 节点”定义服务器，因为同一 Device 可以既使用 Loom，
+又为其他 Device 转发。
+
+| 差异 | 影响什么 |
 |---|---|
-| **在哪** | 出口 IP 是哪个地区、能连通哪些目标、到各处的链路质量 |
-| **怎么接入** | 能被主动连接,还是必须由它主动连出来(见 §2) |
+| **位置与能力** | 出口 IP 所在地区、可达目标、容量和链路质量 |
+| **公网接入 profile** | 直连 443、替代 HTTPS 端口，或经 NAT 映射的公开 listener（§8.1、§14.3） |
+| **每条边的发起与 transport** | 这条边由哪端拨号，以及使用 WG、HY2 或经批准的 TCP transport（§2、§6） |
 
-境外 VPS 并不是另一个物种,它只是**接入方式复杂一些** —— 被国内主动拨号会提高被封概率,所以要反过来让它主动连出来。接上之后,它和国内云机一样,就是一台能转发流量的服务器。
+境外 VPS 并不是另一种节点，国内/境外、直连/NAT、仅能主动发起某条 WG 边都只是
+Device 或 link intent 上的事实。它们不能被提升成全网节点分类。某条“境外服务器向境内
+服务器反连 WG”的现有链路只是一个具体实现；相同逻辑转发边在满足发起和可达约束时也
+可使用 HY2，但这不自动让 HY2 成为控制面的 L3 overlay。
 
-### 1.3 数据平面角色分块；`control` 是正交只读投影
+### 1.3 数据平面职责分块；`control` 是正交只读投影
 
-数据平面期望态按 `server` / `access` 两块写；一台机器可同时承担两者。与它们正交的
+v1 数据平面期望态按 `server` / `access` 两块写；目标态迁移为正向 Responsibilities：
+`forward`、`use_loom` 与蕴含 `forward` 的 `internet_egress`，一台 Device 可同时承担多个职责。
+与它们正交的
 `control` 块只由 certified `FinalControlSet` authority 与同一 head/QC 承诺、hash 匹配的 private
 `ControlPeerDirectory` 联合物化，不能在普通 SSOT proposal 或 Enrollment Responsibilities 中直接
 写入。公开 ControlSet 只有 opaque member ID 和用途隔离公钥；Device 映射、peer URL 与 fault
@@ -165,8 +175,8 @@ domain 只在私有目录。下例是授权 operator 的 materialized view，不
    以为已经生效。分块之后它在 schema 层面就不成立(§12 的严格解码在加载
    阶段即拒绝)。
 
-**三个投影喂的是不相干的逻辑。** `server` 块进隧道矩阵、候选枚举、准入校验；
-`access` 块进本地端口与 selector；`control` 块是 certified `FinalControlSet` 与其 matching private
+**三个投影喂的是不相干的逻辑。** v1 `server` / 目标 `forward` 进入 LinkIntent、候选枚举和
+准入校验；v1 `access` / 目标 `use_loom` 进入本地接管与 selector；`control` 块是 certified `FinalControlSet` 与其 matching private
 peer directory 的只读物化投影，只供
 SSOT/UI/endpoint materialization，Raft 选举与投票只读取 committed Joint/Final config ledger，
 不因机器同时是 server/access 而改变数据路径。前两个角色只在最后汇合成同一份 sing-box 配置 ——
@@ -201,83 +211,65 @@ SSOT/UI/endpoint materialization，Raft 选举与投票只读取 committed Joint
 
 ---
 
-## 2. 方向约束是节点属性
+## 2. 发起方向、可达性与 transport 是每条边的契约
 
-某些节点不能作为 WireGuard 隧道的被动端。典型情况:跨境节点被固定隧道特征主动
-拨号会显著提高被标记概率,进而导致该主机被屏蔽。这个约束不应偷换成“任何已认证
-客户端都不能拨它的独立代理入口”。
+“谁能主动拨谁”首先来自两端的网络事实，但目标态必须把结果固化为每条
+`LinkIntent`，不能拿一个节点级标签推导该 Device 的所有公网、控制和数据连接。
+同一台服务器完全可以同时：接受公网 HY2 数据入口、主动建立一条 WG 反连，并只在
+overlay 上接受 control RPC。三件事的暴露面和凭据各自独立。
 
-**但这是那些节点的性质,不是整个架构的性质。** 写成全局规则会丢掉三种真实场景:无约束的节点、有约束但特定场景下仍可直连的节点、以及**同时测量两种连接方式再择优**。
+### 2.1 目标态的 LinkIntent
 
-### 2.1 方向属性
+每条受管边至少固定：
 
-```
-direction:
-  bidirectional   —— 双向可连,无限制
-  reverse_only    —— 只能由该节点主动发起
-  direct_only     —— 只能被主动连接
-```
-
-### 2.2 由方向属性推导出的行为
-
-| 属性 | 该节点在隧道中的角色 | 可否加入 mesh | 管理 SSH |
-|---|---|---|---|
-| `bidirectional` | 可发起、可接受 | ✅ | 由独立管理面事实决定 |
-| `reverse_only` | **只能发起**,`PersistentKeepalive` 维持 | ❌ 会诱发主动直连,与约束冲突 | 由独立管理面事实决定 |
-| `direct_only` | 只能接受 | ✅ | 由独立管理面事实决定 |
-
-> `direction` 只描述 WireGuard 建连职责，不是 SSH ACL，也不自动声明客户端代理入口。
-> v1 compatibility 在 protocol latch 前只允许由已验签 snapshot 中的 `public_data_ingress`
-> 显式开启客户端代理入口；默认关闭，开启后仍不改变隧道发起方。v2 latch 后该字段只可作为
-> migration input，本身没有暴露或授权效力：必须有 certified `PublicEndpointIntent`，且本
-> Device view 的 `EndpointSet(role=data_ingress)` 精确包含该入口。管理
-> SSH 是部署本地的独立事实；已登记且可达时可用于 bootstrap 和代码快速发布。
-> signed pull 仍是所有节点的持久收敛与离线恢复通道(§14.2)。
-
-**隧道建立方由一条边的两端共同决定,不由单端决定。** 六种组合的完整真值表:
-
-| A 端 | B 端 | 发起方 | 说明 |
-|---|---|---|---|
-| `bidirectional` | `bidirectional` | 任意一方(渲染器取确定性规则:node_id 小者发起) | 需要确定性,否则渲染不是纯函数 |
-| `reverse_only` | `bidirectional` | A | |
-| `direct_only` | `bidirectional` | B | |
-| `reverse_only` | `direct_only` | A | **合法** —— 一方只能发起、一方只能接受,恰好互补 |
-| `reverse_only` | `reverse_only` | — | ❌ **非法**:双方都要发起,无人接受 |
-| `direct_only` | `direct_only` | — | ❌ **非法**:双方都要被连,无人发起 |
-
-> **mesh 成员资格与隧道发起方从两端的 `direction` 推导。** 客户端公网数据入口
-> 则必须显式声明，不能由 direction 猜测；管理 bootstrap 继续属于独立事实。
-
-**在 v1 compatibility 中，已验签 `public_data_ingress` 只增加客户端直拨的一跳候选，不把
-`reverse_only` 节点提升成公网中继。** 已认证客户端可以把它作为第一跳兼最终出口；两跳
-兼容路径仍可经反连 WireGuard 到达。候选枚举不得据此生成“境外入口 → 国内出口”之类
-倒走路径。v2 使用 PublicEndpointIntent + per-Device EndpointSet 授权，不能继续单独读取该
-布尔值生成候选。
-
-### 2.3 `reverse_only` 可以是一跳出口
-
-有两种彼此独立的方式：稳定接入节点通过反连隧道内地址直达；移动/桌面客户端在 v1
-compatibility 中通过已验签 `public_data_ingress`，在 v2 中通过 certified
-`PublicEndpointIntent + EndpointSet(role=data_ingress)`，直拨带认证的 Hysteria2/Trojan。
-两种方式都不改变 WireGuard 仍由 `reverse_only` 节点主动建立。
-
-这把两跳压成一跳:
-
-```
-没有隧道:  接入 → 国内中继 → 境外出口 → 公网        两跳
-有了隧道:  接入 →──────────→ 境外出口 → 公网        一跳
-显式入口:  接入 ── 已配置 data ingress → 境外出口 → 公网 一跳
+```text
+from/to                  精确 Device 或逻辑 service endpoint
+allowed_transports       wireguard | hysteria2 | trojan_tls 中的有序允许集合
+initiator                from | to；由可达性验证后固化，不在运行时猜
+listen/profile refs      对应 listener、映射、身份和凭据的 exact refs
+purpose                  control_overlay | data_forward | bootstrap
 ```
 
-**约束是 WireGuard“谁发起”，不是让代理套代理。** 公网数据入口必须继续执行
-现有凭据白名单、TLS 验证和 fail-closed 路由，不能因公开监听退化成开放代理。
+发起方向不授予访问权限；transport 可用也不等于允许把这条边用于另一 purpose。公网客户端
+入口必须由对应的 signed EndpointSet 授权，管理 SSH 是独立运维事实，控制服务只在 overlay
+地址监听。
 
-> **收益必须按实际链路验证。** 少一层代理通常会减少额外握手、排队和故障面，但不能
-> 从拓扑直接推导延迟、丢包或业务可用性；验收必须使用客户端实际传输与出口侧证据。
+### 2.2 v1 `direction` 只是迁移输入
 
-**代价是它不扩展。** N 个客户端 × M 个出口的隧道数无界,而 §6.3 的扇出
-(中继 × 出口)是有界的。这条只适用于**常开、有稳定入口的接入节点** ——
-一台会睡眠的笔记本不值得让境外机为它长期维持隧道。
+v1 严格 schema 仍保留节点级 `direction`，只用于确定现有 WG 边的发起方：
+
+```text
+bidirectional  可发起也可接受
+reverse_only   该 Device 在这条兼容 WG 边上只能发起
+direct_only    该 Device 在这条兼容 WG 边上只能接受
+```
+
+两端组合继续按下表确定迁移得到的 WG `LinkIntent.initiator`；非法组合必须在迁移时失败，
+不能静默挑一端：
+
+| A 端 | B 端 | 兼容 WG 发起方 |
+|---|---|---|
+| `bidirectional` | `bidirectional` | `node_id` 较小者（保证纯函数） |
+| `reverse_only` | `bidirectional` | A |
+| `direct_only` | `bidirectional` | B |
+| `reverse_only` | `direct_only` | A |
+| `reverse_only` | `reverse_only` | 非法 |
+| `direct_only` | `direct_only` | 非法 |
+
+迁移完成后，渲染和调度读取 `LinkIntent`，不再把 `direction` 当作 mesh 成员资格、公开
+listener 授权或节点分类。`reverse_only` 尤其不表示该服务器不能提供认证的公网 HY2/Trojan
+入口，也不表示它不能被 SSH 管理。
+
+### 2.3 反连只是某条链路的实现
+
+现有“境外服务器主动向境内服务器建立 WG”的关系可继续作为一条
+`purpose=data_forward, transport=wireguard, initiator=境外端` 的 link。若两端 reachability、认证和
+性能验证允许，同一逻辑数据边可以改用 HY2；它仍必须拥有独立 listener/credential 与
+明确发起端，不能从“HY2 更快”推导全网切换。
+
+WG 提供稳定双向 L3，因此首版 control overlay 继续使用 WG。HY2 默认承载公网数据入口和
+首版 bootstrap tunnel；除非单独设计并验收 L3-over-HY2，否则它不能替代 Raft/control 的
+overlay。默认也不把 WG 再套进 HY2。
 
 #### 对端走 DDNS 时必须重解析
 
@@ -299,15 +291,17 @@ WireGuard 的 `Endpoint` 只在接口启动时解析一次。对端是固定 IP 
 
 ### 2.4 双模测量
 
-对某些节点,反连与直连可能都能工作,只是风险与质量不同:
+对某些 link，两个发起方向或两种 transport 可能都能工作，只是风险与质量不同：
 
 ```
-direction: reverse_only
-direct_probe: enabled          # 允许低频探测直连可行性与质量
-direct_use: disabled           # 但不允许实际承载流量
+link: demo-a--demo-b
+probe_transport: hy2
+probe_enabled: true            # 允许低频验证候选 transport
+data_use: false                # 尚未进入已授权 LinkIntent，不承载业务
 ```
 
-这样可以**积累两种方式的质量与稳定性数据**再决定是否放开。探测必须低频、可关闭,且**探测行为本身就是风险**,需显式开启而非默认。
+这样可以积累证据后再通过 certified operation 改 LinkIntent。探测必须低频、可关闭，且
+**探测行为本身就是风险**，需显式开启而非默认；观测本身不能改变允许 transport。
 
 ---
 
@@ -738,19 +732,25 @@ RouteCandidate = (服务器链, 目标地址)
 
 ## 6. 隧道与协议
 
-**协议按跳选择,不做全局统一。**
+**协议按边和 purpose 选择，不做全局统一。** 同一种协议也不能跨 purpose 复用凭据或
+listener：control overlay、正式数据转发和首次 bootstrap 是三份独立契约。
 
 ### 6.1 跨受限链路
 
-**默认 WireGuard。** `PersistentKeepalive` 天生就是"由一侧维持隧道、建立后即双向",与 `reverse_only` 原生契合;长连接稳定。这类链路上**稳定 > 速度**。
+服务器间需要稳定 L3 或主动反连的边默认 WireGuard。`PersistentKeepalive` 适合由指定一侧
+维持、建立后双向可达的长期 overlay；首版 Raft/control overlay 因此固定使用 WG。
 
-Hysteria2 的 Brutal 拥塞控制在高丢包链路收益最大,但它是 client-dials-server 模型:满足 `reverse_only` 需再套一层反向承载,抵消部分速度优势且增加活动部件;QUIC 复位加激进拥塞控制的组合稳定性更差。
+Hysteria2 的拥塞控制可能在高丢包数据链路收益更大。只要 LinkIntent 明确发起端和 listener，
+它可以承载某条代理/数据转发边，不需要保留“境内/境外固定协议”的分类；收益必须实测。
 
-> **默认 WG(需抗 DPI 时换 AmneziaWG,见 §17)。仅当某条具体链路 WG 吞吐实测太差,才单独换成反向承载的 Hy2。不做全局切换。**
+> **WG 是首版 control L3 的默认，不是所有数据边的默认。** HY2 代理转发不等价于任意
+> 双向 L3；未实现 L3-over-HY2 时不得用它承载 Raft/control overlay，也不默认 WG-over-HY2。
 
 ### 6.2 无约束链路
 
-**Hysteria2。** 与标记风险无关,速度优势白拿,尤其移动网络丢包时。
+公网数据入口默认 Hysteria2。首次 Enrollment 的临时 bootstrap tunnel 首版也只实现 HY2，
+避免在 Device 身份尚未签发时先向所有入口分发 WG peer。正式交付增加独立 Trojan/TLS TCP
+fallback 以覆盖 UDP 完全阻断网络；该 TCP listener 不是 Nginx Enrollment 反代。
 
 ### 6.2.1 接入侧协议可按节点配置
 
@@ -769,9 +769,9 @@ Hysteria2 的 Brutal 拥塞控制在高丢包链路收益最大,但它是 client
 > 网络你往往控制不了**,而 UDP 被整体封禁时,WireGuard 和 Hysteria2 会一起
 > 失效 —— 这时唯一的出路是 TCP。
 
-因此 `inbound_protocol` 按节点配置:面向受限客户端的服务器说 TCP,其余说 QUIC。
-这是 §6 开头"协议按跳选择"的第二个理由 —— 第一个是快慢与隐蔽,第二个是
-**能不能通**。
+目标态在 `BootstrapIngressEndpointSet` / `DataIngressEndpointSet` 中并列授权实际可用的
+transport；v1 才继续由 `inbound_protocol` 单值兼容。客户端先测 HY2，确认 UDP 不可达后才
+使用已签名的 Trojan/TLS TCP fallback。两者都必须执行各自的认证和 ACL。
 
 **默认仍是 Hysteria2。** 只在确认 UDP 不通之后才改 —— 见下面的排查方法,
 以及那个很容易掉进去的坑。
@@ -802,20 +802,14 @@ tcpdump -nn -i any "udp and host <客户端出口IP>"
 > 同理,测试端口必须落在防火墙实际放行的范围内。拿范围外的端口去测,
 > 测到的是防火墙规则,不是网络能力。
 
-### 6.3 隧道矩阵只在 `reverse_only` 服务器上才需要
+### 6.3 只渲染被显式授权的 LinkIntent
 
-**先说清楚适用范围,否则会把矩阵想得比实际大得多。**
+目标态不再从 `reverse_only` 或全连接 mesh 自动生成隧道矩阵。渲染器只处理 certified
+SSOT 中确有业务候选或 control overlay 需要的 `LinkIntent`，并逐边验证 purpose、发起端、
+transport、地址、listener、凭据和路由。v1 可以用 §2.2 真值表把既有 `direction + Tunnel`
+确定性迁移成这些对象；迁移后不再读取节点级方向做新决策。
 
-| 服务器的 `direction` | 怎么建立互联 | 需要渲染配置吗 |
-|---|---|---|
-| `bidirectional` / `direct_only` | 用已签配置的公网 data ingress 直拨（Hysteria2 默认，UDP 不通可用 Trojan）；**目标态**可加入 mesh(§8.3) | 两个这类节点之间不需要常驻 WG |
-| `reverse_only` | 进不了 mesh(§2.2),必须手工建点对点隧道 | ✅ **需要** |
-
-也就是说:**隧道矩阵只由包含 `reverse_only` 端点的关系产生。** 典型就是境外
-VPS —— 它不能被主动拨号，只能向每个需要到达它的节点反连。本文基线不假定 mesh
-存在；两个可被拨号的节点可以直接使用显式公网数据入口，不需要等待 Headscale。
-
-**这类服务器必须向所有需要到达它的服务器扇出反连:**
+需要到达同一末跳的多个前置服务器通常仍各自直连，避免人为制造汇聚单点：
 
 ```
 接入(北京) ──选中──→ 北京云机 ──[反连隧道]──→ 境外 VPS
@@ -823,13 +817,15 @@ VPS —— 它不能被主动拨号，只能向每个需要到达它的节点反
                             ↑ 每台各自直连,无单点汇聚
 ```
 
-强制汇聚会产生 `贵州 → 广州 → 北京 → 境外` 的绕行。扇出的代价只是 N×M 条空闲隧道的 keepalive 心跳,可忽略。
+强制汇聚会产生无收益绕行。具体扇出集合由已授权 RouteCandidate 反推，不是所有
+`forward` Device 的笛卡尔积；没有候选引用的 link 不应只为“矩阵完整”而创建。
 
 **一条隧道一个网卡,不是一个网卡挂多个 peer。**
 
 这不是风格选择。**多台境外 VPS 都要承载 `AllowedIPs = 0.0.0.0/0`**(出口流量的目的地是任意公网地址),而 WireGuard 按目的地址匹配 peer —— 同一个网卡上不能有两个 peer 都吃下全部地址空间。**必须分网卡。**
 
-> ⚠️ **这个 N×M 矩阵是全系统最容易手工出错的地方** —— 两端密钥、AllowedIPs、端口、方向必须严格对应。必须由渲染生成(见 §12、§20.1)。
+> ⚠️ **每条双端配置仍必须由渲染器生成。** 两端密钥、AllowedIPs、端口、transport 与
+> 发起方向必须逐字段对应；一端无法表达时整条 link 失败关闭，不能降级到另一协议。
 
 ---
 
@@ -945,15 +941,23 @@ Android 采用适合窄屏的单列当前路径卡片，但沿用相同只读事
 反解析数值，也不能用“业务健康”或整条路径 P50/P95 概括分段证据。
 本地 TUN 接管地址不标成可供其他设备访问的独立 Loom 网络 IP。
 GUI 选择或接收拖入的二维码 PNG、
-`.loom-invite` 文件，最终进入同一个内部 claim；客户端在内存生成 P-256 key/CSR，把可重试身份用相应范围
-的 DPAPI 保存。Ready 响应必须同时通过节点证书与本机私钥绑定、平台公钥、signed
+`.loom-invite` 文件，最终进入同一个私有 Enrollment 事务。客户端先验证二维码中的 compact
+descriptor，从其中 2～3 个静态 distribution 镜像按独立 catalog/proof hash 取得完整 bootstrap
+材料；镜像请求不携 token、capability 或 cookie。随后对 HY2 bootstrap ingress 只做 outer
+transport/SNI 身份探测，不发送 bearer；正式版仅在 UDP 全阻断时同样探测已签名的独立
+Trojan/TLS TCP fallback。选定入口后才出示短期、限路由 capability，建立只能访问 Enrollment
+overlay IP/port 的临时隧道并验证内层 TLS。客户端在内存生成 P-256 identity/CSR 与独立 wrapping
+key，以 token + Keystore/DPAPI 保护的 key PoP 在该 TLS 中 claim。Ready 响应必须同时通过节点证书与本机私钥绑定、平台公钥、signed
 current/device assignment、CA 和秘密格式校验。数据平面不再由用户选择：每个发行 ZIP
 固定携带同架构的 `windows-dataplane.zip`、preview 说明和第三方许可证，客户端自动定位并验证 Loom 签名、PE 架构、
 sing-box 身份与 Wintun Authenticode。最后才写 `config/client.json` 作为加入完成标记；
 失败/等待期间普通启动仍保持 disconnected，已加入状态拒绝被另一二维码静默替换。
-v1 compatibility 在组件预检之后、claim POST 之前调用不带 token 的 HTTPS trust 端点，比对
-控制端与发行包的部署平台公钥。未完成的精确二维码凭据由 DPAPI 保护；控制端仅允许同一 token、CSR、request ID、
-平台和 Device facts 在一小时恢复窗口内重放，成功提交后清除 pending token。数据面全局锁
+公网 Nginx 只提供 fake website 和无 token 的 immutable distribution，不提供 trust/claim API，
+也看不到 token、CSR 或 PoP。未完成的精确二维码凭据由 DPAPI 保护。claim 尚未提交时，自动
+重试必须同时落在 Invite 与 capability 有效期内；任一过期就需要新 Invite。reservation 已 certified
+但响应丢失时，只能由管理员线性化读取原事务，再签发绑定同一 request/body/identity/wrapping/
+transaction hash 且不晚于 committed retry deadline 的 resume capability；它不复活 Invite、不授权
+新 claim，也不存在固定一小时的 v2 恢复窗口。成功提交后清除 pending token。数据面全局锁
 覆盖整个 joined workload，不在 sing-box 子进程更新切换间释放。
 
 v1 原生 Win32 GUI 的产品契约覆盖三个 edition 的首次导入、Connection 状态、数据面启动/停止
@@ -1110,9 +1114,11 @@ dns: lookup failed: operation not permitted
 - **Auto / 指定出口** 必须把 FQDN 保留到候选链的最终出口，由该出口自己的受管 resolver
   解析；禁止把接入侧先得到的 A/AAAA 地址沿链转发，否则 CDN/污染结果会绑定错误地域；
 - IP literal 不触发 DNS，也不得被反向改写成域名；
-- `control_api/enroll/device_config/device_report/distribution/data_ingress` 的 bootstrap/dial
-  hostname 属于传输建立，不是业务目标。它们使用独立 underlay resolver/cache、EndpointSet
-  identity/pin 和防回环保护，不进入 FakeIP 或最终出口业务解析。
+- `distribution`、公网 bootstrap/data ingress 的 dial hostname 属于传输建立，不是业务目标。
+  它们使用独立 underlay resolver/cache、signed public EndpointSet、transport identity/pin 和
+  防回环保护，不进入 FakeIP 或最终出口业务解析；`control_api`、Enrollment、Raft、
+  `device_config` 与 `device_report` 使用 overlay IP 和 internal service certificate，不要求公网
+  DNS，也不得经公网 Nginx 解析/反代。
 
 Linux mixed 强制使用 `socks5h://` 或语义等价的远端解析。Windows/Android TUN 使用持久化
 FakeIP 映射或经测试等价的 domain-recovery 机制：只对来自 TUN 的业务 A/AAAA 查询返回
@@ -1307,7 +1313,7 @@ v1 Android 的 matcher、Service 与声明映射全部来自中控签名配置�
 | 接收授权 plan/view | v1 compatibility 验单签 snapshot；v2 验 bootstrap/recovery、ControlSet QC、Device proof、EndpointSet、四组 floor 与 latch，原子落入 LKG |
 | 本地测量与切换 | Direct 不探测；宿主在每底层网络代首次进入 Auto/指定出口时冻结当时的候选快照，只对其中按地址与源接口去重的入口各做至多一次轻量并行测量；共享决策包应用可信服务器分段观测与阻尼，libbox `selector` 执行并读回 |
 | 离线沿用 | 保留最后一份已验证 plan/view、入口证据和仍新鲜的服务器观测；不延长原证据时间 |
-| 观测上报 | 使用独立 `device_report` role 和 Device 身份签名；**指标限于本机实际可得且声明过的范围**(§16.2) |
+| 观测上报 | 通过 permanent overlay 访问私有 `device_report`，使用 Device 身份签名；**指标限于本机实际可得且声明过的范围**(§16.2) |
 
 > **这不等于把 Linux Agent 装进 Android。** 它不运行候选窗口、`min_samples`、整路径探测、
 > 配置收敛、二进制自更新或 Linux 漂移纠正；应用更新走平台分发渠道(§17.5)。配置刷新、
@@ -1317,19 +1323,43 @@ v1 Android 的 matcher、Service 与声明映射全部来自中控签名配置�
 
 ## 8. 服务器节点
 
-**所有服务器跑同一套配置形状。** 国内云机和境外 VPS 不是两种东西,区别只在接入方式(§1.2)与它在某条路径上排第几。
+目标态以 `forward` Responsibility 正向识别服务器。国内/境外、直连公网/NAT、是否同时
+`use_loom` 或 `control` 都不产生新的节点类型；差异由 public access profile、LinkIntent 和它在
+某条路径上的位置表达。
 
 ### 8.1 职责
 
-1. 接受已签配置指定的 data-ingress transport（Hysteria2 或 Trojan，多凭据）—— 上游可能是
-   接入节点，也可能是另一台服务器；
-2. 按连接所属的访问声明,把流量送往下一跳;
-3. **当它是链上最后一跳时,直接连向目标地址**(出公网)。这需要 `ip_forward` + MASQUERADE;
-4. 维持到各 `reverse_only` 服务器的反连隧道(§6.3);
-5. **作为探测发起点**,上报链路与地址的质量 —— 这是 §5 调度的数据来源;
-6. 可选:作为 Agent → 控制平面的反向代理端点(见 §14.3)。
+每台 `forward` 服务器至少收敛四类受控服务/资源：
 
-> 第 3 条不是某类"落地节点"的专属职责,而是**每台服务器都具备的能力**。它这次用不用得上,取决于它在这条路径上是不是最后一跳(§1.1)。
+1. **Nginx HTTPS**：只提供 fake website 与无 token、content-addressed、客户端自行验签的
+   immutable `distribution`；不接收或反代 Enrollment/control API；
+2. **证书管理**：节点本地持有 TLS key，经最小权限 DNS-01 adapter 签发/续签；
+3. **Hysteria2 UDP**：承载正式 data ingress，并可承载短期受限 bootstrap tunnel；
+4. **WireGuard UDP**：承载已授权的数据 link 和首版 permanent control L3 overlay。
+
+正式交付还部署独立 Trojan/TLS TCP bootstrap/data fallback，以覆盖 UDP 全阻断网络；它可以与
+Nginx 共用一个 L4 SNI dispatcher，但不能由 Nginx 终止或转发 Enrollment。HY2 与 WG 都是 UDP，
+不得占用相同 `<address, port, protocol>`；Nginx TCP 443 与 HY2 UDP 443 则不存在传输层冲突。
+
+数据面继续承担：验证连接凭据与访问声明、转发到 LinkIntent 指定的下一跳、在链上最后一跳
+从自己的受管 resolver 解析 FQDN 并直连目标，以及上报可归因的分段观测。每台 forward
+服务器都具备成为最后一跳的实现能力，是否获得 `internet_egress` 授权由 certified SSOT 决定。
+
+每台 forward 服务器必须有稳定 FQDN，指向其公网地址或 NAT 前端，并有
+`ServerPublicAccessProfile`：
+
+| 部署形态 | 公开 HTTPS | UDP listener |
+|---|---|---|
+| 直连公网且 443 可用 | FQDN:443 → 本机 Nginx | HY2 与 WG 使用各自端口 |
+| 443 因部署/合规条件不可用 | FQDN:签名替代 TCP 端口 → Nginx | UDP 端口仍分别声明 |
+| NAT/光猫后 | FQDN → NAT 公网地址；外部 TCP 端口映射到本地 Nginx | 外部 UDP 端口/范围映射到不同本地 HY2/WG listener |
+
+DNS 记录本身没有端口；客户端实际拨号 tuple 只从 signed EndpointSet 读取。直连公网部署没有
+“映射”可配置；NAT 部署必须把 public/local address、port 与 transport 分开建模并逐项验证。
+替代端口是网络部署能力，不是绕过备案或供应商政策的法律方案。
+
+> 同一物理 Device 若兼任 `control`，public listeners 与 overlay-only control listeners 必须绑定
+> 不同地址/防火墙域和用途证书；公网 Nginx 不能成为控制服务反向代理。
 
 ### 8.2 凭据即访问声明
 
@@ -1346,22 +1376,16 @@ v1 Android 的 matcher、Service 与声明映射全部来自中控签名配置�
 
 > **凭据同时是授权边界。** 允许的下一跳集合是访问声明的渲染产物(§19)—— **拿到一张凭据不等于能经这台服务器访问任意地方。**
 
-### 8.3 mesh 互联（独立可选目标态）
+### 8.3 permanent overlay 与数据链路分开
 
-目标设计中，持有 `bidirectional` 或 `direct_only` 的服务器可通过
-**Headscale + 自建 DERP** 组网，获得密钥/peer 自动分发、ACL、MagicDNS、
-Subnet router 与 NAT 穿透。**主设计与部署流程不能假定 Headscale/DERP 已存在；是否部署
-只见[当前状态](status/current.md)。**
+首版以 Loom 自己的 certified LinkIntent 渲染 WG peer，建立 Device/control 所需的 permanent
+L3 overlay；Raft、Enrollment、`control_api`、`device_config` 和 `device_report` 只监听该 overlay
+的私有 IP。是否以后用 Headscale 等协调器分发 WG peer 是可替换实现，不得改变 ControlSet、
+EndpointSet、证书和 ACL authority。
 
-> **启用后**这一条会进一步缩小隧道矩阵。未完成该独立能力验收前仍以 SSOT 显式
-> `tunnels` 为真值，不能假设 Headscale 已经接管。
-
-**两个必须知道的限制:**
-
-- **DERP 必须自建,且它不是"备用"。** 跨运营商对称 NAT 很常见,回退中继是常态而非例外。derper 要放在出口质量好的节点上,**带宽按"实际转发节点"规划**。
-- **Android 只允许一个 VpnService。** sing-box 与 Tailscale 无法在 Android 上同时作为 VPN 运行。**Android 只跑 sing-box,不入 mesh**;需访问 mesh 内网时由中继代为转发(多一跳,需 ACL 授权)。
-
-> Headscale 可回退:嫌重可塌缩为"纯渲染 + 静态配置",代价是丢掉自动密钥分发、ACL 和 NAT 穿透。**它与调度正交,不在主线上。**
+数据链路可以逐边选择 WG 或 HY2，不要求都进入 permanent overlay。Android 只有一个
+`VpnService`，因此由同一 libbox/TUN 宿主承载用户流量与必要的 Loom 私网路由，不额外运行
+第二个 VPN 应用。未获 ACL 的 Device 即使建立了数据 transport，也不能访问 control subnet。
 
 ---
 
@@ -1428,7 +1452,13 @@ Subnet router 与 NAT 穿透。**主设计与部署流程不能假定 Headscale/
 
 ### 11.1 `control` 是动态节点能力，不是固定三台机器
 
-Loom 没有永久中控。Raft config ledger 中最新 durable committed 的 `JointControlSet` 或
+Loom 没有永久中控。除由离线 recovery/bootstrap authority 明确签定的初始 genesis member 外，
+**control member 必须先作为普通 Device 完成 Enrollment、取得 permanent overlay 地址与 Device
+identity，之后才能由既有 ControlSet 的 Joint→Final membership transition 晋升。** 邀请中的
+Responsibilities 或本机配置都不能直接创建 voter；genesis 例外也只能建立首个已认证 lineage，
+不能作为以后绕过 Enrollment 的通道。
+
+Raft config ledger 中最新 durable committed 的 `JointControlSet` 或
 `FinalControlSet(epoch)` 是内部 membership 状态；Joint 立即要求 old/new 双多数，Final 表示
 稳定态。只有相应 transition 完成 apply/recompute 并取得所需 joint replication QC 后，
 才成为对外 effective 的成员 authority。materialized SSOT 再把该 certified 集合中的 Device
@@ -1454,8 +1484,9 @@ q = floor(N / 2) + 1
 Raft 选举、AppendEntries 和 commit quorum 只能按日志中最新 durable committed 的稳定
 `FinalControlSet` 或 JointControlSet 计算，绝不能按在线数自动缩小；Final commit 后即使其
 post-commit QC 尚未齐，新集合也已经约束内部 Raft，但不能对客户端发布为新 authority。
-外部 reader/executor 只接受 joint-QC-certified Final。任一 control Device 都可在内部转发和复制对象；
-只有带相应 certified EndpointSet role 的可达入口才对外接收管理或读取请求。Raft 临时 leader 只负责串行化日志，外部
+外部 reader/executor 只接受 joint-QC-certified Final。任一 control Device 都可在私有 overlay 内
+接收管理请求、转发给 leader 并复制对象；`control_api` 使用 overlay IP、internal service
+certificate 与 admin mTLS，不进入公网 DNS、PublicEndpointIntent 或 public EndpointSet。Raft 临时 leader 只负责串行化日志，外部
 副作用由另行持有资源租约的合格 executor 执行，二者都不是额外信任根。失去 quorum 时停止成员、权限、邀请、配置和端口等安全关键
 写入，但继续收集观测和草稿；数据平面继续使用最后一份已认证配置。
 
@@ -1490,9 +1521,9 @@ commit ledger 与 deterministic reducer。未提交草稿即使已经复制到�
 能进入 **effective/published** 渲染或改变权限；voter 仍必须对它执行无副作用的 candidate
 reduce/render，才能在 append 前验证确定性结果。
 
-**手工登录任何机器改配置,都是错误操作。** 正确做法是从已信 certified
-`EndpointSet(role=control_api)` 选择入口，验证精确 transport identity 并使用
-admin cert 认证后提交带 base head 的变更；候选经各 voter 校验、Raft durable commit、状态机 apply/recompute 并取得
+**手工登录任何机器改配置,都是错误操作。** 正确做法是由已经入网的管理员 Device 通过
+permanent overlay 选择 private ControlServiceDirectory 中的 `control_api` IP，验证 internal
+service certificate/IP SAN 或 pinned SPKI，并使用 admin mTLS 提交带 base head 的变更；候选经各 voter校验、Raft durable commit、状态机 apply/recompute 并取得
 提交后 replication QC 后，才把相同的确定性结果提升为 effective SSOT 并发布。控制副本间只能交换 canonical 操作和
 内容寻址对象；字段级 LWW 合并不得直接产生一份从未被操作者批准的 SSOT。
 
@@ -1543,7 +1574,9 @@ admin cert 认证后提交带 base head 的变更；候选经各 voter 校验、
 | **Device 身份私钥** | **Device 本地** | 仅证书/SPKI 与 certified membership |
 | **control peer mTLS cert/key** | **每个 control Device 各自生成** | 只持本 peer 私钥；只用于 Raft/anti-entropy transport identity |
 | **control membership/config/enrollment keys** | **每个 control Device 按用途分别生成三把** | 只持本成员对应私钥；三者互不复用，也不与 peer/Device/admin/CA/TLS/code-signing/recovery key 复用 |
+| **BootstrapIssuer key** | 受约束 control executor/HSM；按 epoch 轮换 | 只签 Invite/QC 派生且不越过 policy 上限的短期 tunnel capability；公开验证 key 经 ControlSet 认证 |
 | **admin 私钥** | 管理员终端/硬件 | 仅验证证书与 certified ACL |
+| **internal service TLS key** | 每个 control Device 本地 | 只持本机 key；证书限定 control_api/Enrollment/Raft/config/report 的独立 EKU/profile 与 overlay IP SAN |
 | **公开 TLS/ACME 私钥** | TLS 终止 Device 本地 | 证书、SPKI 摘要和状态，不持有节点私钥 |
 | **客户端数据面凭据** | approval commit 前生成并 sealed 给既定接收者，或写入不可变版本 KMS | 只提交 ciphertext hash/secret ref；接替 executor 只能重放同一制品 |
 | **混淆参数** | 提案方生成、随 certified proposal 固化 | 是公开参数，不是私钥 |
@@ -1640,55 +1673,116 @@ user),报成一条状态,进事件历史。于是"开了三天还没关"是一�
 
 ### 13.5 客户端加入网络复用 certified SSOT 与发布链
 
-创建端先用 CSPRNG 生成一次性 token 并封存为 exact-version immutable artifact；管理员再从
-已信 certified `EndpointSet(role=control_api)` 选择入口，验证精确 URL、hostname/WebPKI、
-SPKI pin 并用 admin cert 认证后，提交公开层只含 token commitment/private-binding hash 以及平台、
-职责、grants 和必要方向的 Create Device proposal；完整 exact-version artifact ref 与明文一致性
-回执保存在 control-private replicated binding 中。该安全关键提案经 Raft commit、apply/recompute 与提交后
-QC 成为 certified 状态后，renderer 才解封同一 token 并一次性交付载体。纯 `use_loom` 客户端可导入二维码；Linux 也可在本地或
-管理员建立的 SSH 会话中执行同一 shell bootstrap。这些载体只绑定既有 Device，不创建
-第二套节点、配置或选路模型。
+管理员必须先以自己的 permanent Loom 身份经 overlay `control_api` 创建 Invite。创建端用
+CSPRNG 生成一次性 enrollment token，公开状态只提交 commitment；token 的 exact-version
+artifact ref 与明文一致性回执保存在 control-private binding。Invite、Device intent、bootstrap
+policy 与 capability 派生上限经 Raft commit、apply/recompute 和提交后 QC certified 后，才能
+一次性交付二维码或 `.loom-invite`。`CertifiedInviteRecord` 必须绑定 exact Device-intent commitment、
+`InviteIssuancePolicy`、catalog 与 private Enrollment service ref 的各自 hash，不能让在线 issuer
+在 record certified 后另选 policy、目的地址或上限。
+
+二维码保持紧凑，只携带 token/commitment、初始 trust checkpoint 与 floor、相互独立的 immutable
+catalog/proof bundle hash、2～3 个跨故障域 distribution mirror、由 record hash 承诺的有界
+`PrivateEnrollmentServiceRef`，以及一个短期 bootstrap tunnel capability。catalog 是可公开复用的
+入口集合；private service ref 来自 descriptor 并与 certified record 逐字段核对，不能从 catalog、
+DNS 或所选 ingress 推导。完整 catalog 与 proof envelope 由任意 forward 服务器的公网 Nginx 作为
+无 token、content-addressed static bytes 提供；客户端必须按 hash/QC 验证。公网 Nginx 不知道 token，
+不接收 claim，不代理 Enrollment，也不是 authority。`.loom-invite` 可以内嵌同一 descriptor、catalog
+与 public proof bundle 供离线交付，但两种载体进入同一事务。
+
+公开镜像不得看到明文 Device ID、Responsibilities 或 grants。public proof bundle 因此只携带由
+每张 Invite 独立 32-byte hiding nonce 形成的 `DeviceEnrollmentIntentCommitment`，不携 intent/opening；
+低熵 Device ID 或职责不能通过公开 commitment 作离线字典测试。客户端选定 ingress、提交
+capability、建立 tunnel 并验证内层 TLS 后，先以不含 token/CSR/key 的 preflight 请求取得私有
+`DeviceEnrollmentIntentOpening`，重算 intent/opening/commitment hash、核对 record 并向用户显示
+职责与 grants；全部通过后才发送 claim。公开 catalog/proof 仍不含 per-Device intent/view 明文。
 
 ```text
-创建端预生成/封存 token artifact
-    ↓ 已信 certified EndpointSet(role=control_api) 内的入口验 transport + admin cert，接收 Create Device（public commitment/binding hash；private exact ref）
+已入网管理员 → overlay control_api（internal cert + admin mTLS）创建 Invite
     ↓ validate → Raft durable commit → apply/recompute → quorum replication attest/QC
-certified 后一次性返回短时 descriptor QR/URI（token + context/commitment + ≤3 个带 pin seed + proof-bundle hash）；文件可内嵌无 token proof bundle
+certified 后一次性返回 compact QR/文件
     ↓
-Device 在 descriptor 有界 EndpointSet(role=enroll) 中验 transport，无 token GET/验证 immutable proof bundle 后，本地生成独立的 P-256 identity/CSR key 与按 intent 有界选择的不可导出 wrapping/PoP key（Android API 31+ P-256，API 26–30 RSA fallback）并提交同一 claim
+Device 从少量 DistributionEndpointSet 镜像取得并验证 immutable catalog + public proof bundle
     ↓
-ControlSet 对 token/Device ID 预留、SPKI、Membership 计划、职责、grants、已验证可取/PoP 的
-exact-version sealed secret-ref root 与 future Device view leaf 提交原子 CAS proposal（refs 仅随私有 receipt）
+Device 实测 catalog 中 BootstrapIngressEndpointSet：只做 HY2 outer transport/SNI handshake，不发 bearer
+    ↓ 选定 ingress 后才出示 bootstrap capability，仍不出示 enrollment token
+建立短期、限路由 HY2 tunnel（正式版 UDP 失败可选独立 Trojan/TLS fallback）
+    ↓ ACL 只允许 ControlServiceDirectoryV1 所承诺 PrivateEnrollmentServiceRef 的 TCP /32(/128)+port
+Device 建立并验证内层 Enrollment TLS，以无 token/CSR/key preflight 取得 private intent opening
+    ↓ 验 commitment 并展示职责/grants，再生成 identity/CSR 与独立 wrapping key、取得 fresh server nonce
+    ↓ 在内层 TLS 提交 enrollment token + exact request body + detached identity-key PoP
+stable enrollment quorum 私下验证 token/PoP，形成不含 token 明文的 StableEnrollmentAdmissionQCV1
+    ↓ reservation operation 引用 exact admission-QC hash
+ControlSet 对 Device ID、SPKI、Membership 计划、Responsibilities/grants、sealed secret refs
+与 future Device view leaf 执行 reservation CAS；token 明文不进日志
     ↓ Raft durable commit
-state machine apply/recompute，只形成 claim reservation 与 head；尚不激活 Membership/view/secret
+state machine apply/recompute，只形成 reservation；尚不激活 Membership/view/secret
     ↓ quorum replication attest/QC；到此 reservation 才 certified
-受约束 CA 验 claim config QC 与最新 active/fenced profile，确定性签证并把 first-result 写入 Raft issuance registry
+受约束 CA 验 reservation QC 与 active profile，签证并写入 issuance registry
     ↓
 enrollment keys 验 issued certificate、issuance log entry 与 profile inclusion 后形成 approval QC
     ↓ approval-QC-authorized completion 进入第二个 ordinary head，并由当前 ControlSet config QC 认证
 原子完成 invite consumption、Membership/view 激活与 artifact release
     ↓
-ready bootstrap 返回证书、信任 checkpoint、EndpointSet、只为该 wrapping key 封装的精确 secret artifact 与 claim/completion 分发坐标
+内层 ready 返回证书、信任 checkpoint、per-Device view/EndpointSet 与 sealed artifacts
     ↓
 Device 验 bootstrap/recovery/ControlSet/transition/QC/view proof/floor，原子 latch v2，
-hydrate、预检、原子安装并可信上报
+安装 permanent data/control connectivity，销毁临时 capability/tunnel，再可信上报
 ```
 
-任一接收节点都不能单独消费 token 或签出有效身份。同一 descriptor 有界
-`EndpointSet(role=enroll)` 内不同 seed 的并发 claim 只有第一份
-certified SPKI reservation 成功；相同 token 与 exact request body（包括 CSR、wrapping descriptor、
-request ID、平台和 Device facts）的恢复重试返回同一事务，detached proof 可重新签名，不同 body
-立即失败。无 quorum 时保持 pending/unavailable，不能用本地 registry、
-文件锁或临时证书假装已加入。
+**两份凭据不可混用。** `BootstrapTunnelCapability` 是由 certified Invite/QC 授权的独立
+BootstrapIssuer key 签发的短期 bearer capability；enrollment token 只在内层 TLS 到达 control，
+绝不能当 HY2/Trojan 密码。Capability 默认 TTL 15 分钟、可配置 5～30 分钟且硬上限 30 分钟；
+单 session 上限 180 秒、总流量上限 8 MiB、最多 3 次顺序重连，每个 ingress 同一 `capability_id`
+至多一个并发 session。它只允许 Enrollment 的 TCP 目标，禁止 Internet egress、任意 overlay
+CIDR、DNS、ICMP、隧道内 UDP、`control_api`、Raft、配置和报告；入口转发器与 control 防火墙
+必须双重执行 ACL。入口的 `capability_id` 计数是抗滥用边界，真正一次性消费由 ControlSet 的 token
+Raft CAS 决定。
 
-QR descriptor 的 seed 可以按已有 Web 观测给出提示顺序，但最多 3 个且必须携带精确 HTTPS URL
-与 TLS SPKI pin set，并由同一 certified context 绑定；完整 authority/head/QC/inclusion proof 不
-塞进二维码，而由客户端先从 seed 无 token 获取并按 descriptor `proof_bundle_hash` 验证。最终
-`loom://enroll/v2#d=<base64url descriptor>` 不超过 1800 ASCII bytes；超限时只提供可内嵌 proof 的
-`.loom-invite`，不得生成不可扫二维码。客户端发送 token 前验证 hostname/WebPKI、pin、proof bundle
-和 record commitment，且拒绝重定向。DNS、排序和处理请求的那台机器都不是 authority。一次性
-token 只在 URI fragment、离线加入文件和 claim POST body 中出现，不进入 query、proof GET、日志、
-CRDT operation、列表或镜像。
+BootstrapIssuer 本身必须通过 certified authorization registry leaf/inclusion proof 和对应 head/QC
+获得授权；authorization 有 ID、generation、前代 hash、有效期、active/revoked 状态，并列出 TTL、
+session、bytes、attempts、concurrency、service 与 ingress scope 的全部上界。
+`CertifiedInviteRecord` 引用 exact issuance-policy hash；capability body 同时引用 record、policy、
+issuer-authorization、ingress-set 与 private-service-ref hash。入口必须从同一 proof chain 重算这些
+hash 并取 Invite、policy、authorization 和 capability 有效期的交集，不能仅凭 issuer 公钥验签、
+本地默认值或一个无关的合法 head/QC 接受 capability。
+
+首次 Enrollment 不要求临时客户端证书。内层 TLS 必须验证 internal CA、IP SAN 或 certified
+SPKI，禁止关闭服务端验证；客户端用高熵 token 与本机生成的 identity key PoP 认证。PoP 至少
+绑定 cluster、Invite、request ID、certified record hash、token commitment、exact request-body hash、
+CSR hash、identity/wrapping-key hash 与该 TLS session 的 fresh server nonce。稳定的
+`EnrollmentClaimRequestBody` 不含 server nonce 或签名字节；PoP 作为 detached envelope，可为新
+nonce 重签而不改变 reservation 的幂等 identity。Android identity
+key 留在 Keystore；API 31+ 使用独立不可导出 P-256 ECDH wrapping key，API 26～30 只按 intent
+允许独立 RSA-OAEP fallback。Windows/Linux 使用等价的平台私钥保护，identity key 不兼任
+wrapping key。只有在外部合规明确要求首次连接层 mTLS 时，才增加 invite-scoped、设备本地生成
+私钥的临时证书阶段；默认协议不携带可复制的临时私钥。
+
+客户端选择 bootstrap ingress 必须测实际 transport，而不是沿用服务器 Web RTT：探测阶段只验证
+outer HY2/Trojan transport 与 SNI identity，不发送 capability、token 或其他 bearer。选定一个入口后
+才提交 capability、建立限路由 tunnel，再完成不含 token 的内层 TLS handshake；握手认证通过并
+取得 server nonce 后才发送 claim。Web/control 观测只能给镜像和探测次序提示。HY2 是首版唯一
+bootstrap transport；WG 留给入网后的 permanent L3/control overlay。正式版增加独立 Trojan/TLS
+TCP fallback；即使共享 TCP 443 的 L4 SNI
+dispatcher，Nginx 仍只处理 static distribution/fake website。
+
+跨 ingress 重试必须复用完全相同的 token、request ID、CSR、wrapping key 和 canonical request
+body；detached PoP 可因新 server nonce 重签。claim 尚未 committed 时仅可在 Invite 与 initial
+capability 都有效时自动重试，任一过期即需新 Invite。只有第一份 certified reservation 能成功；
+若其响应丢失，管理员可在线性化读取 transaction 后一次性生成 `EnrollmentResumeDescriptorV1`：它
+不含新 token，只携绑定原 invite/request/request-body/CSR/identity/wrapping/transaction-state hash
+且不晚于 committed `retry_not_after` 的新 resume capability，以及当前 catalog/proof/private-service
+引用。客户端仍用同一 identity key 对 fresh server nonce 作 PoP；completed 返回原 artifact，reserved
+只继续原事务。resume 不复活/延长 Invite、不重置 reservation、不再次消费 token，也不能授权不同
+body。v2 不存在固定一小时恢复窗口。无 quorum 时保持 pending/unavailable，不能用入口本地
+registry、文件锁或临时证书假装加入。
+
+`loom://enroll/v2#d=<base64url descriptor>` 仍以不超过 1800 ASCII bytes 为目标；descriptor 只放
+catalog/proof hash、有界 private service ref 和少量 mirror，不内嵌完整 catalog、proof 或 intent
+对象，绝不能为“完整”生成难以扫描的二维码。token 只出现在
+URI fragment、离线加入文件和内层 claim body，不进入 query、distribution 路径、HTTP 日志、
+CRDT operation、列表或镜像。客户端拒绝 mirror/ingress 重定向，DNS 和处理请求的服务器都不是
+authority。
 
 `ready` 只表示 identity、certified Device view 与必要制品可取，不表示客户端已经安装、
 隧道健康或在线。重新发码、Rejoin、Remove 和吊销同样必须经 Raft commit、apply/recompute
@@ -1700,9 +1794,9 @@ CRDT operation、列表或镜像。
 证书 receipt 和 v1→v2 兼容规则见
 [分布式控制平面 §11、§19](distributed-control-plane.md#11-enrollment邀请与报告)。
 
-> **v1 兼容边界：** v1 由一个指定控制节点、单 registry/SSOT 锁、单 publisher 和
-> 单平台签名 key 实现上述流程。v1 reader 使用严格 schema，不能在 v1 QR/current
-> 原位添加 seeds/QC 字段；迁移必须并行发布 schema 2 资源，先升级 reader，再启用多 voter。
+> **v1 兼容边界：** v1 的公开 claim URL 只能在迁移期服务旧 reader，不是目标安全边界。
+> v1 严格 schema 不能原位添加 catalog/capability/QC 字段；必须并行发布 schema 2 资源，先升级
+> reader 和 server bootstrap ingress，再启用 private Enrollment，最后退役公开 claim。
 
 ## 14. 控制通道
 
@@ -1795,12 +1889,12 @@ quorum 复算该 head；经 Device 身份认证返回的 Merkle inclusion proof 
 属于该 root；节点本地 floor/latch 防止回退。这些检查解决不同问题，不能只留其中一层。
 
 ```text
-ControlSet                         public distribution（不可信）
-  validate candidate                current/head + QC
+ControlSet                         public Nginx distribution（不可信）
+  validate candidate                hash-addressed head + QC
   → Raft durable commit             bootstrap/recovery/ControlSet transition
   → apply/recompute roots           通用内容寻址二进制/公开制品
   → quorum replication attest/QC
-  → certified publish ───────────┬──────────────────────────────► Device 验公开 lineage/head
+  → certified publish ───────────┬──────────────────────────────► Device 验公开 lineage/head/catalog
                                  │
                                  └─► device_config（Device 身份认证）
                                       DeviceViewEnvelope + payload + leaf/proof
@@ -1812,8 +1906,10 @@ ControlSet                         public distribution（不可信）
 
 1. **public `distribution` 看不到 Device identity↔control member 映射、普通 Device membership、
    私有拓扑或凭据。** 它会搬运公开的 opaque ControlSet member ID/验证公钥、
-   head/QC/transition 和通用内容寻址制品；private ControlPeerDirectory preimage、per-Device view
-   均不进入公开树，对整棵公开树搜索测试凭据必须零命中。
+   head/QC/transition、通用内容寻址制品，以及带 hiding nonce commitment、但不含 opening/intent
+   明文的 public invite proof；private ControlPeerDirectory preimage、per-Device view 和 invite-specific
+   Device intent/opening 均不进入公开树，对整棵公开树搜索测试凭据、Device ID、
+   Responsibilities/grants 必须零命中。
 2. **`device_config` 必须认证 Device 身份并只返回该 Device 的最小 view。** control 副本内部
    可以用内容寻址/CRDT 复制该 view，但不得据此把它发布到公共镜像或共享 CDN cache。响应
    中的 secret 仍只用 exact-version sealed artifact ref 表达，本机解封/合并遵守 D9。
@@ -1829,14 +1925,21 @@ transition/recovery 改变信任集。v1 迁移客户端首次验过 v2 后原�
 v1 current/invite/view 都不能成为 authority。状态丢失节点不能仅凭公开镜像中“最大的数字”或
 退回 v1 恢复 freshness，必须使用带外 v2 checkpoint/recovery/re-enrollment 流程。
 
-公开 `distribution` 和私有 `device_config` 都可以各有多个 signed EndpointSet 地址。客户端可
-并行读取公开 head，逐份验 QC/floor 后选最高合法连续 head；再以 Device 身份向匹配 role 的
-`device_config` 请求该 head 下的精确 view。落后私有端点可以返回旧而合法的 view 并标 stale，
+目标态公网 Nginx 不提供 mutable `current/latest`；公开 head/QC 只以 exact hash/coordinate
+寻址的 immutable bytes 存在。QR 精确指定 bootstrap catalog/proof hashes，
+已经入网的 Device 则先经 private `device_config` 得到 certified current coordinate，再按 hash
+从任意镜像取公开正文。因此公开目录不能靠列举对象或“最大 revision”发现 authority。
+
+公开 `distribution` 由 `DistributionEndpointSet` 给出多个 FQDN:443/替代 TCP 端口；其中还可
+承载无 token 的 immutable bootstrap catalog。私有 `device_config` 不进入 public EndpointSet，
+而由 Device view 中的 overlay service directory 给出 IP、port 与 internal certificate identity。
+客户端经 permanent overlay 以 Device 身份请求精确 current/view，再并行下载其引用的公开
+immutable objects 并逐份验 hash/QC/floor。落后私有端点可以返回旧而合法的 view 并标 stale，
 但不能让同 epoch/revision 的冲突 payload 按 URL 顺序择一。通用内容寻址二进制可从任一公开
 镜像取得；Device view、leaf/proof 与私有 artifact refs 只能从认证配置通道取得。
 
-缓存语义也按角色拆分：公开 mutable current 使用 `no-store`，公开 hash-addressed transition、
-QC 和通用二进制可用长效 `immutable`；`device_config` 响应使用 `private, no-store`，共享缓存不得
+缓存语义也按角色拆分：目标态公开对象全部按 hash-addressed 并使用长效 `immutable`；
+`device_config` 的 mutable current/view 响应使用 `private, no-store`，共享缓存不得
 存储。publisher/reconciler 分别收敛公开制品和认证配置服务，任何一个地址部分成功都只能显示
 降级，不能把“至少一处可取”报告成全部绿色。
 
@@ -1883,14 +1986,15 @@ v1 `loom pull` 的目标契约是按同一快照安装 Loom 二进制，再由�
 
 ### 14.2.3 Publisher/reconciler：提交与外部副作用分开
 
-任一 control Device 都能在 Raft apply 时重算同一棵树；只有收齐提交后 QC 的 certified head 能授权 mutable
-current 前移。镜像写入由取得资源租约的 publisher executor 执行，leader/executor 换届后
+任一 control Device 都能在 Raft apply 时重算同一棵树；只有收齐提交后 QC 的 certified head
+能授权 private mutable current/view 前移。公网镜像只写 content-addressed immutable objects；
+镜像写入由取得资源租约的 publisher executor 执行，leader/executor 换届后
 根据相同 desired hash 幂等接管：
 
 ```text
 admin proposal → 每个 voter validate/reduce/candidate render → Raft durable commit
               → apply/recompute → quorum replication attest/QC
-              → immutable objects → conditional mutable current/QC → 从 Device 视角读回
+              → public immutable objects + private conditional current/view → 从 Device 视角读回
 ```
 
 代码构建仍不等于升级批准。binary hash、理由和 rollout policy 作为 release proposal
@@ -1899,20 +2003,21 @@ admin proposal → 每个 voter validate/reduce/candidate render → Raft durabl
 
 publisher 同时负责首次写入和持续对账。镜像被清空、部分复制或落后时重推；镜像出现
 同坐标不同 hash/QC 时失败关闭，不用本地副本静默覆盖证据。外部发布通常不支持跨镜像
-事务，因此保证的是“不可变正文先行、current 最后、最终收敛”，客户端用 QC 与 floor
+事务，因此保证的是“公开不可变正文先行、private current/view 最后、最终收敛”，客户端用 QC 与 floor
 承受短暂代次不同。
 
 三条硬规则保持不变：
 
 1. **校验、Raft commit 或提交后 QC 任一步不足都不发布。** 上一合法 current 原地服务。
-2. **commit/QC 先耐久，不可变正文其次，带 revision 条件写的 mutable current 最后。** 旧对象按保留策略保存。
+2. **commit/QC 先耐久，公开不可变正文其次，带 revision 条件写的 private current/view 最后。** 旧对象按保留策略保存。
 3. **写成功不等于取得到。** 发布后必须从声明的 Device/网络视角取回并逐层验证。
 
 DNS、ACME、云防火墙和 NAT 映射也使用同一“certified intent + 租约 executor + 幂等
 reconcile + 读回”边界；additive、monotonic pointer 与 destructive 动作分别处理，外部 API
 不能提供 generation CAS/fencing 时禁止无人值守 delete/close。详见
 [分布式控制平面 §15](distributed-control-plane.md#15-外部副作用与租约)。租约只减少重复
-副作用，不授予 authority，也不能在过期时触发删除。
+副作用，不授予 authority，也不能在过期时触发删除。只有 v1 compatibility 仍向公开静态树
+写 mutable signed-current；目标 v2 不把它延续为公网发现机制。
 
 > **v1 兼容：** 单节点 `publisher` 监视本地 SSOT/放行记录并按配置周期
 > 收敛；这是迁移源，不是目标协议。其 authority 文件、单机锁和单签名不得被新实现继续
@@ -1931,8 +2036,9 @@ reconcile + 读回”边界；additive、monotonic pointer 与 destructive 动�
   资源。旧 reader 只读原 v1 bytes，新 reader 在 latch 前验证受限 v1 和完整
   BootstrapTransition，首次接受 v2 后永久拒绝 v1 authority。v2 新装/丢 floor 必须从 QR、
   已知 ControlSet checkpoint 或 recovery 流程获得新鲜度锚点；
-- 目标 v2 的 `device_config` 必须使用独立 Device 身份认证（首版为 profile-scoped mTLS）并只
-  返回本机最小 view；`distribution` 只承载公开 head/QC/transition 和通用制品。mTLS 是隐私与
+- 目标 v2 的 `device_config` 必须只在 permanent overlay 监听，使用独立 Device 身份认证
+  （首版为 profile-scoped mTLS）并只返回本机最小 view；公网 Nginx 的 `distribution` 只承载
+  fake website、公开 head/QC/transition、bootstrap catalog 和通用 immutable 制品。mTLS 是隐私与
   下载范围控制，不替代签名 envelope、Merkle proof 或 floor 的反重放。
 
 最后一条关键:**它让"传输通道"与"配置真实性"解耦** —— 即使中继被攻破也无法注入恶意配置。
@@ -1942,27 +2048,30 @@ reconcile + 读回”边界；additive、monotonic pointer 与 destructive 动�
 目标态由 provider-neutral adapter 管理已经委派给 Loom 的 zone/subzone。注册商可以是
 Dynadot、Gandi 或其他服务；provider 不是协议身份。FQDN、A/AAAA、证书 intent 和 endpoint
 用途先经 Raft commit 与提交后 replication QC 认证，再由持租约 reconciler 调 DNS/ACME API、
-读回权威结果并验证传播。只有显式 `PublicEndpointIntent(exposure=public)` 才触发公开资源；
-`control`/`server` 角色本身不自动暴露公网 API。
+读回权威结果并验证传播。每个具有 `forward` Responsibility 的 Device 都必须有一个
+`ServerPublicAccessProfile` 和稳定 FQDN；它触发的公开资源仍须逐 listener exact intent，不能
+从 `control`、公网 IP 或证书存在性推导更多 API。
 API token、ACME account key 与 TLS 私钥只在秘密层；公开 TLS、Device、control、admin
 证书用途严格分离。
 
-`control_api/enroll/device_config/device_report/distribution/data_ingress` 六种 role 使用不同的
-稳定 logical endpoint、hostname、role-bounded CertificateIdentityProjection/CertificateIntent、
-TLS key artifact 和认证策略，并在 EndpointSet/QR checkpoint
-中绑定对应 transport identity/TLS SPKI pin set；control peer RPC 另由 head/QC 承诺的 private
-ControlPeerDirectory 管理，不复用
-这些地址。仅劫持 DNS 或出示 pin 不匹配的
+公网只存在两类用途：Nginx 的 `distribution`（同时提供 fake website）与经 per-Device 授权的
+`bootstrap_ingress`/`data_ingress` transport。Nginx HTTPS 和 HY2/Trojan TLS 使用用途隔离的
+CertificateIdentityProjection/CertificateIntent 与节点本地 key；WG 使用独立 peer key。
+`control_api`、Enrollment、Raft peer、`device_config` 和 `device_report` 只存在于 overlay private
+service directory，使用 internal CA/EKU/IP SAN 或 certified SPKI，不创建公网 hostname、
+PublicEndpointIntent、NAT mapping 或 Nginx route。仅劫持 DNS 或出示 pin 不匹配的
 合法 WebPKI 证书至多造成拒绝服务，不能新增 voter、端口或信任根；被钉住私钥也失陷则必须
 走 credential revocation/recovery。ACME 优先使用委派的 DNS-01 challenge 子区；并行 order
 合并 TXT 且只清理自己的 value。节点本地生成 TLS key/CSR，换 key 时先以 certified head 发布新旧 pin
-overlap，再安装、验证并最终移除旧 pin。完整模型与 provider 约束见
-[分布式控制平面 §12](distributed-control-plane.md#12-域名与公开证书管理)。
+overlap，再安装、验证并最终移除旧 pin。证书优先 DNS-01，因此直接 443、替代 TCP 端口和
+NAT 部署都不依赖公网 80；DNS credential 必须限制到专用 zone/challenge 权限。完整模型与 provider 约束见
+[分布式控制平面 §12](distributed-control-plane.md#12-域名公开服务与证书管理)。
 
 ### 14.3.2 公网 listener 与端口无中断轮换
 
 单个 `public_endpoint + inbound_port` 是 v1 compatibility schema 的 singleton 表达，目标态由稳定
-`LogicalEndpoint` 和多个 `ListenerGeneration` 取代。正常轮换固定为：
+public logical endpoint 和多个 `ListenerGeneration` 取代。Nginx TCP、HY2 UDP、Trojan TCP 和
+WG UDP 分别维护 listener/pool；HY2 与 WG 不得分到同一 UDP tuple。正常轮换固定为：
 
 ```text
 allocate → prepare（双监听/防火墙/NAT/证书）
@@ -1972,6 +2081,15 @@ allocate → prepare（双监听/防火墙/NAT/证书）
          → retire（关旧监听/映射，写 retired tombstone）
 ```
 
+公开 wire 必须真能表达这段 overlap。一个稳定 `LogicalPublicEndpoint` 下携带 1..N 个
+`ListenerGeneration`；数组唯一键是 `(endpoint_id, listener_generation)`，而不是只按 endpoint ID
+拒绝重复。每代至少固定 `published_state=advertised|preferred|draining`、public dial tuple、transport
+identity/credential ref、`rotation_operation_hash`、`valid_from/valid_until` 与可选
+`retire_not_before`。一个可用 logical endpoint 恰有一个 preferred generation；preparing 只在私有
+运维状态，retired/revoked/abandoned 只以不可复活 tombstone 保存。Distribution、bootstrap ingress
+和 data ingress 使用同一代次形状但不同用途 schema，不能把 Nginx 的 HTTPS generation 搬作 HY2、
+Trojan 或 WG 授权。
+
 任何准备或外部验证失败都保留旧 listener。客户端的出口/候选 ID 不随物理端口变化；
 Android 与 Windows 的 Direct 不探测；每个底层网络代首次进入 Auto/指定出口时才冻结当时的
 候选快照，只对按地址与源接口去重的授权入口做至多一次有界并行探测，不扩张为整路径扫描；
@@ -1979,15 +2097,29 @@ Android 与 Windows 的 Direct 不探测；每个底层网络代首次进入 Aut
 同代新 advertise 的 listener 只在真实新连接的拨号/回退中形成运行证据，下一网络代才进入
 一次性入口探测集合。Linux access 的既有 Agent 仍按 §5.5/§7.3.3 的 tuning/window 契约
 测候选，但端口轮换不得另起一套 rotation probe loop，只能复用正常探测预算。
-所有经 certified PublicEndpointIntent 授权的公网 Hysteria2/Trojan listener 都使用同一代次与
-提交语义，境内外 server 没有两套轮换协议；`public_data_ingress` 只在 v1 compatibility
-控制客户端一跳资格，v2 必须由 per-Device EndpointSet 授权。WireGuard 只有实现双
-interface/peer/key/address/route 的专用 overlap 状态机并单独验收后，才能纳入同等级别承诺。
-既有连接不保证跨端口迁移，“无中断”只承诺计划内不存在新旧同时关闭的窗口；旧 listener
-在 reader/offline 窗口、仍可消费 invite seed 生存性和最后新握手/活动会话 quiet period 满足前
-继续接受旧 view。进行中的 rotation 冻结 exact intent/policy/credential 依赖；普通更新等待终态或
-在 prefer 前原子取消，安全撤权则显式 withdraw endpoint 并承认可能中断。详见
-[分布式控制平面 §13～§14](distributed-control-plane.md#13-endpointset-与公网端口模型)。
+所有经 certified PublicEndpointIntent 授权的公网 Nginx/Hysteria2/Trojan/WireGuard listener 都
+使用相同提交原则，境内外、直连与 NAT server 没有两套协议；`public_data_ingress` 只在 v1
+compatibility 控制客户端一跳资格，v2 必须由 per-Device public EndpointSet 授权。WG listener
+端口轮换可以复用端口 phase，但 peer/key/address/route overlap 仍须专用状态机并单独验收。
+既有连接不保证跨端口迁移，“无中断”只承诺计划内不存在新旧同时关闭的窗口。rotation 在 allocate
+时冻结 logical/public intent、DNS/address binding、certificate/SPKI、credential、render contract、
+evidence policy、port pool、NAT mapping、防火墙和 resource generation 的 exact hashes，后续阶段不
+读取同 ID 的 mutable latest。普通更新等待 lineage 终态，或在 target 尚未 preferred 时以同一
+certified head 原子 cancel 并留下 abandoned tombstone；安全撤权只能走显式 withdraw/revoke，并在
+UI 承认可能中断。
+
+旧 listener 的 retire predicate 必须同时枚举 reader/EndpointSet propagation floor、仍有效
+bootstrap catalog 与 capability、available Invite、已 reservation 事务的 `retry_not_after`、证书 pin
+overlap、离线兼容窗口、drain deadline、最后新握手/活动会话 quiet period 和 backup retention。任何
+一项仍引用旧 generation 就继续接受其被授权的新连接或旧会话；不能用当前排名、单个 Device ACK
+或“新端口已经健康”代替。详见
+[分布式控制平面 §13～§14](distributed-control-plane.md#13-endpointsetcatalog-与公网端口模型)。
+
+NAT 节点的 `ListenerResourceIntent` 同时固定 public/local tuple 与映射证据；客户端 public
+EndpointSet 只看可拨的 public tuple，不能泄露 CPE 内部细节。若运维已预映射一段完整 UDP
+范围，轮换只需在已验证范围内选择未占用的新 public/local port、启动新旧 listener overlap 并
+外部验证，不必每次重配 CPE；仍须分别为 HY2/WG 保留不重叠端口，并把退役端口进入
+cooldown/quarantine 后才可复用。
 
 ---
 
@@ -2072,8 +2204,9 @@ interface/peer/key/address/route 的专用 overlap 状态机并单独验收后�
 证书与投票 key；完成后才按本节处理它的 server/access 生命周期。最后一个 control member
 不能用普通 Remove 删除。旧 quorum 已不可恢复时只能走离线 recovery epoch。
 
-新增 Device 只允许先经已信 certified `EndpointSet(role=control_api)` 入口和 admin cert
-向分布式控制平面提交 Create Device，再由客户端导入二维码/加入文件
+新增 Device 只允许由已入网管理员经 overlay-only `control_api`、internal service certificate
+和 admin mTLS 向分布式控制平面提交 Create Device，再由客户端导入二维码/加入文件、建立
+短期受限 bootstrap tunnel 并访问私有 Enrollment
 完成绑定；目标产品/API 不提供 `loom addnode` 或控制台 SSH Add node 旁路，legacy 入口是否仍
 存在只见[当前状态](status/current.md)。隧道地址和端口仍由加入事务中的分配器
 计算，不由用户手填
@@ -2090,8 +2223,8 @@ operation，由受租约 executor 执行并读回；这不等于“删除节点�
 
 ```
 1. 管理员基于精确 epoch/revision/head 提交候选 SSOT 或类型化 operation
-2. 每个 voter 独立校验(端口冲突、矩阵完整性、两端 direction 组合合法性、
-        角色块完整性(server 缺 direction / access 缺 platform)、
+2. 每个 voter 独立校验(端口/transport 冲突、LinkIntent 双端完整性、v1 direction 迁移合法性、
+        角色块/Responsibilities 完整性、PublicAccessProfile 与 public/local mapping、
         等价类的输出契约与访问契约、
         carrier 与成员契约一致性、目标函数所需观测点存在性、
         fallback 与合规约束相容性、凭据引用、混淆参数合法性)
@@ -2372,9 +2505,11 @@ dist/<id>/snapshot.json      ← manifest 里记着该用哪个 sha256
 接入节点不一定和每台服务器都有隧道 —— access-a 就只和 edge-a、edge-b 有,而上报
 接口只绑隧道内地址(D26)。
 
-**额外加隧道当然能让上报端口互通，但不值得为监控复制数据平面。** 两个节点即使能通过
-公网 Hysteria2 承载业务，也可能因报告接口只绑定常驻 WG 地址而存在**观测通道缺口**，
-这不等于数据平面不可达。用转述补这个缺口，比新增一组只为监控服务的隧道更小、更清晰。
+在 v1，**额外加隧道当然能让上报端口互通，但不值得为监控复制数据平面。** 两个节点即使
+能通过公网 Hysteria2 承载业务，也可能因报告接口只绑定常驻 WG 地址而存在观测通道缺口，
+这不等于数据平面不可达；转述继续补这个兼容缺口。目标 v2 的 `device_report` 只经 Device
+的 permanent overlay/private service directory 到达 control，不为监控另开公网 HTTPS role，
+也不从 data-ingress 可达性推导报告权限。
 
 转述绕开了它:每个节点只向**直接邻居**拉,而邻居返回的内容里已经包含了**它**
 听来的那些,一跳一跳自然传开。cn-a 够不到 access-a,但够得到 edge-a;access-a 问
@@ -2422,7 +2557,7 @@ POST 上显式请求返回同一张表中的签名观测；Windows 已接入，�
 进入代理模式时冻结的候选快照所产生的
 一次性入口证据、已验签服务器分段观测和真实拨号的被动反馈，并把未覆盖业务目标保持为未知。
 
-### 16.1.3 界面：运行态可分布读取，管理写经 control_api 入口可由任一 control Device 接收
+### 16.1.3 界面：运行态可分布读取，管理写经私有 control_api 由任一 control Device 接收
 
 上报者顺带提供一个网页。**它不自己采集任何东西** —— 显示的就是 `/status`
 返回的那份数据,于是"页面上说的"和"接口返回的"永远是同一件事。
@@ -2448,15 +2583,16 @@ Topology、Service 当前路径和 Agent 候选检查严格分开。指定出口
 
 ```
 普通节点本地诊断       → 隧道地址或 SSH 转发进入只读页面
-control 管理 API/UI   → 已信 certified EndpointSet(role=control_api) + 精确 transport + admin mTLS
-一次性加入             → 本 InviteBootstrapDescriptorV2 有界 EndpointSet(role=enroll) + bearer-token 前置 pin 校验
-Device 报告            → EndpointSet(role=device_report) + Device mTLS
+control 管理 API/UI   → permanent overlay IP + internal service cert + admin mTLS
+一次性加入             → public distribution/catalog → capability-limited bootstrap tunnel → private Enrollment
+Device 配置/报告       → permanent overlay IP + internal service cert + Device mTLS
 ```
 
 节点回环诊断入口继续保留，因为控制网络断掉时它仍有价值。目标态只有经 certified
-`PublicEndpointIntent` 明确公开的 role endpoint 才能对外服务；`control_api`、`enroll` 和
-`device_report` 必须使用不同 hostname、CertificateIntent、认证策略和精确路径，不能在同一
-公网 endpoint 上只靠 path 分流。各入口实施独立速率限制，`/status` 不能因此整体公开。
+`PublicEndpointIntent` 明确授权的 distribution/bootstrap/data listener 才能对外服务；
+`control_api`、Enrollment、Raft、`device_config` 和 `device_report` 只在 overlay 监听，使用用途
+隔离的 internal certificate/认证策略，不能在公网 endpoint 上靠 path 分流。公网 Nginx 只提供
+fake website 和 immutable distribution，`/status` 不能因此整体公开。
 DNS 只是发现，ControlSet/QC 才是 authority。
 
 #### 权限按身份和用途分
@@ -2465,10 +2601,10 @@ DNS 只是发现，ControlSet/QC 才是 authority。
 |---|---|---|
 | 本机运行态读 | 每个节点 | 现有受保护网络/回环边界；不获得管理能力 |
 | 全局 certified/观测读 | 每个 control Device | admin/Device scope；响应标 recovery/control 坐标、head/QC 与 staleness |
-| 管理写 | 已信 certified `EndpointSet(role=control_api)` 内的入口 | 精确 URL/hostname/WebPKI/SPKI pin + admin cert + certified ACL + base head；Raft commit、apply/recompute 后须取得提交后 QC |
+| 管理写 | private ControlServiceDirectory 内任一可达 control | overlay IP + internal cert/IP SAN/SPKI + admin mTLS + certified ACL + base head；Raft commit、apply/recompute 后须取得提交后 QC |
 | control 投票 | 当前 voter | control key/cert；不等同 admin 身份 |
 
-当 `q > 1` 时，单个 `EndpointSet(role=control_api)` 入口被攻破不能独自形成 certified write；`N=1, q=1`
+当 `q > 1` 时，单个 control API listener 被攻破不能独自形成 certified write；`N=1, q=1`
 迁移态没有这一属性。接收端验证管理员证书和
 scope，将 proposal 复制并交给临时协调者；每个 voter 独立校验精确 state root 后才签名。
 admin cert 不投票，control peer cert 不自动获得人类管理权限。
@@ -2777,12 +2913,13 @@ v1 Events 页的兼容契约允许按节点、类型、级别与文本筛选，�
 
 界面用实线表示已观测健康的常驻隧道，候选路径表列出未被选择的完整 chain，
 虚线表示按 SSOT 允许但未连续观测的动态边，高亮线表示当前选中路径；陈旧或缺失
-数据必须明确标注，不能补画成绿色。拓扑位置按建连职责分为同心双环：可接受反向
-建连的锚点在内圈，`reverse_only` 出口在外圈，各环等角分布并错开半步。内外圈不
-表示内网/公网、控制层级或地理距离。
+数据必须明确标注，不能补画成绿色。拓扑位置使用稳定的同心双环：纯 `use_loom` Device
+在内圈，具有 `forward` Responsibility 的 Device 在外圈；兼具两者时按 `forward` 放外圈，
+`control` 不改变位置。每条 LinkIntent 的箭头/标签单独表达发起方、transport 与 purpose，不能
+再用节点所在环暗示所有边的建连方向。内外圈不表示控制层级或地理距离。
 
 线上拓扑不是嵌入的静态 SVG。每次渲染都从当前 `View.Nodes` / `View.Links` 生成：
-新增节点按 `direction` 自动进入对应环并重新等角排列，新增声明边随数据一同出现。
+新增节点按 certified Responsibilities 自动进入对应环并重新等角排列，新增 LinkIntent/声明边随数据一同出现。
 `assets/` 下的 SVG 只定义信息结构和视觉样例，不参与运行时绘图。Agent 当前路径是
 基础拓扑之上的色彩叠加层，不能参与节点排序或改变双环位置；聚焦某条决策也只能
 改变强调程度，不能让底图重新布局。
@@ -2827,7 +2964,7 @@ expected inventory，可以合法落后一个或多个 pull 周期；页面必�
 inventory。control 副本只有在验证 certified head/QC 并成功重算相同 roots 后才把期望层标为
 current validated SSOT；落后副本显示 stale，运行态仍然只能来自可信观测。
 无论独立 WireGuard UDP 入站探测是否启用（状态见[当前状态](status/current.md)），界面都必须
-把 candidate 与 verified endpoint 分开表述，不能把 `Automatic → reverse_only` 说成主动探测结论。
+把 candidate 与 verified endpoint 分开表述，不能把“存在 LinkIntent”说成主动探测成功。
 原型只定义信息结构与视觉语言；线上颜色、边和状态必须由上述四层真实数据生成，
 不能把原型里的示意状态硬编码进页面。
 
@@ -2915,9 +3052,9 @@ userspace 实现(基于 wireguard-go)**有明显 CPU 开销**,服务器规格需
 
 | 机制 | 说明 |
 |---|---|
-| **加入码** | 短 TTL；token 在 proposal 前生成并封装，公开 Raft/QC 只固定 Device intent、commitment 与 private artifact-binding hash，control-private binding 才保存 exact-version ref；certified 后的一次性创建响应 reveal 有界 QR descriptor 不消费 claim token，但列表/普通下载不能再次取回明文；claim 只能跨本 descriptor 有界 `EndpointSet(role=enroll)` seeds 故障切换，并只允许一次 certified 消费 |
-| **设备绑定** | 客户端本地生成 P-256 identity/CSR key 与独立不可导出 wrapping key（Android API 31+ P-256、API 26–30 RSA fallback）；以 canonical SPKI 绑定，同一 token + exact request body（含 wrapping descriptor）跨 seed 幂等续接，completion QC 后才激活 |
-| **二维码** | 加入码的等价封装；客户端扫码或导入二维码图片，不创建第二个 Device |
+| **加入码** | 短 TTL；certified record 固定 Device-intent commitment、token commitment、issuance policy、catalog 与 private-service-ref hash；compact descriptor 携 2～3 个 distribution mirror、catalog/proof hash、有界 private ref 和 exact-bound 短期 tunnel capability，token 只在私有内层 TLS 中提交并由 Raft CAS 一次性消费 |
+| **设备绑定** | 客户端先无 bearer 实测 HY2 outer transport/SNI（正式版含 TCP fallback），选中后才以 capability 建临时隧道访问 private Enrollment；本地生成 P-256 identity/CSR key 与独立不可导出 wrapping key，以 stable request-body hash + fresh server-nonce detached PoP 绑定，completion QC 后才激活 |
+| **二维码** | 加入码的 compact 封装；完整 catalog 与不含 intent opening 的 public proof 按各自 hash 从静态 Nginx 镜像取得，intent/opening 只在 inner-TLS preflight 返回；客户端扫码、导入图片或 `.loom-invite` 不创建第二个 Device；未 commit 只在 Invite/capability 有效期内重试，已 reservation 只接受管理员签发的 exact-bound resume |
 | **可吊销** | 控制面拒绝读取/上报与数据面撤除凭据必须分别收敛；各平台覆盖状态只见当前状态文档 |
 | **有效期** | 自带过期时间 |
 
@@ -2944,13 +3081,16 @@ Node                           # §1 —— Loom 管的机器。目标地址不�
   agent_last_seen, agent_version, status
 
   server?                      # 这个块存在 = 持有 server 能力(§1.3)
-    direction                  # bidirectional | reverse_only | direct_only(§2)
+    direction                  # 仅 v1 兼容/迁移输入；目标态由每条 LinkIntent 表达(§2)
     public_data_ingress?       # 仅 v1 compatibility 客户端直拨开关；v2 单独无 authority(§2.3)
     inbound_port               # 接受上游连接的端口(§8.1)
     inbound_protocol?          # hysteria2 | trojan(§6.2.1)
     egress_capable             # 能否作为出口出公网
     wg_public_key              # 节点上报,平台不持有私钥
     secret_generation          # 秘密层代次,只记代次不记私钥(§12.1)
+
+  responsibilities[]           # 目标态：use_loom | forward | internet_egress；后者蕴含 forward
+  server_public_access_profile_ref? # 目标态：所有 forward Device 必有；不进入 v1 strict schema
 
   access?                      # 这个块存在 = 持有 access 能力(§1.3)
     platform                   # android | windows-desktop | linux-server(§7.2)
@@ -2961,13 +3101,14 @@ Node                           # §1 —— Loom 管的机器。目标地址不�
   control?                     # 目标态：certified FinalControlSet + matching private directory 的只读投影
     member_id                  # 公开 set 中的 opaque ID；不从 Device ID 导出
     signing_public_keys        # config / membership / enrollment 的独立公钥（公开 authority）
-    peer_rpc_endpoints[]       # private directory；与公网 control_api EndpointSet 分离
+    peer_rpc_endpoints[]       # private directory；overlay IP only
+    private_service_endpoints[] # control_api/enrollment/config/report；overlay IP + internal cert
     peer_identity_spki_hash    # private directory；同时绑定 exact control_peer_identity artifact hash
     fault_domain?              # private directory；部署提示，不改变 quorum 公式
 
   # 没有 capabilities 字段 —— 由哪个块存在推导；多个块并存合法(§1.3)。
   # 没有 target 能力 —— 出口是位置不是类型(§1.1)。
-  # 没有 mesh_eligible —— 由 direction 推导(§2.2)。
+  # 没有 mesh_eligible —— 是否存在 overlay/data link 由 certified LinkIntent 决定(§2)。
 
 ServiceAddress                 # §9 —— 目标地址。不是节点,不参与渲染
   address                      # 如 https://llm-b.internal/v1
@@ -2991,13 +3132,21 @@ EquivalenceClass               # §4.3 —— 可互换性的定义
 ReachEdge                      # 仅 bootstrap 阶段(§14.1)
   from_node, to_node, ssh_port, ssh_user
 
-Tunnel                         # §6.3 —— 只在 reverse_only 服务器上才需要
+Tunnel                         # v1 compatibility；迁移后投影成 LinkIntent
   id, from_node, to_node, protocol(wg|awg|hy2)
   initiator                    # 由两端 direction 推导,不可手工指定
   listen_port, from_addr, to_addr
   obfuscation_param_set?
                                # 一条隧道一个网卡:多个出口都要 0.0.0.0/0,
                                # 同一网卡上无法共存(§6.3)
+
+LinkIntent                     # 目标态：每条边的唯一传输契约(§2、§6.3)
+  id, from_device_id, to_device_or_service
+  purpose                      # control_overlay | data_forward | bootstrap
+  allowed_transports[]         # wireguard | hysteria2 | trojan_tls；稳定排序
+  initiator                    # from | to；经可达性验证后由 certified intent 固化
+  listener_resource_refs[], credential_refs[], route_scope
+                               # purpose/ACL 不因 transport 可用而自动扩大
 
 ObfuscationSet                 # §17
   id, version, created_at
@@ -3078,29 +3227,82 @@ DeviceViewEnvelope             # 目标态；绑定 ControlHead/QC、leaf/proof�
 
 DeviceViewLeaf / Proof         # 目标态；本机最小授权 view；leaf 不含 head/root/control 坐标
   cluster_id, view_schema_version, device_id, device_generation, state
-  payload_hash, previous_view_hash, endpoint_set_hash, min_reader_version
+  payload_hash, previous_view_hash, public_endpoint_set_hashes[], private_service_directory_hash
+  min_reader_version
   RFC 6962 inclusion path -> ControlHead.device_views_root
 
 ControlSet / ControlPeerDirectory # 目标态；公开 authority 与私有拓扑严格分离
   public set: opaque member_id + membership/config/enrollment public keys
   private directory: hiding nonce + member→Device/SPKI/peer URL/fault-domain；head 只公开其 hash
 
-EndpointSet                    # 目标态 transport bundle；authority 坐标由 DeviceViewEnvelope/head 绑定
+PublicEndpointSet              # 目标态公开 transport bundle；authority 坐标由 DeviceViewEnvelope/head 绑定
   schema, cluster_id, endpoint_set_id, generation, source, digest
                                # source 是 genesis epoch 或 parent-head + 预生成 operation ID + revision
                                # 不引用当前 head/object hash，避免 EndpointSet 自引用
+  kind                         # distribution | bootstrap_ingress | data_ingress
+                               # 前两者可由 Invite/catalog 引用，data_ingress 按 Device 授权
   endpoints[]
 
-LogicalEndpoint                # EndpointSet 内的稳定逻辑身份
-  id, role(control_api|enroll|device_config|device_report|distribution|data_ingress), owner_device_id
+DistributionEndpointSet / BootstrapIngressEndpointSet / DataIngressEndpointSet
+                               # 上述 kind 的独立 wire profile，不能跨 kind 搬用 endpoint/credential
+
+LogicalPublicEndpoint          # PublicEndpointSet 内的稳定逻辑身份
+  id, role(distribution|bootstrap_ingress|data_ingress), owner_device_id
   protocol, public_endpoint_intent_hash, public_endpoint_intent_generation
   address_or_domain_intent_hash
   transport_identity           # TLS server_name/WebPKI/SPKI pins 或 WireGuard peer public key 的 tagged union
-  listeners[]                  # generation + 与 address/domain intent 精确相等的 dial target/families
-                               # public/local port + exact credential artifact/certificate generation
-                               # phase-payload rotation hash + optional retire-not-before
+  listeners[]                  # 唯一键=(id,generation)，允许同一 id 的新旧代 overlap
+                               # advertised|preferred|draining + certified FQDN/public port/transport identity
+                               # rotation-operation hash + validity/retire-not-before；不含 local mapping
+  frozen_dependency_hashes[]   # intent/DNS/cert/credential/policy/pool/mapping/firewall/render/evidence
 
-PublicEndpointIntent           # 目标态；显式决定公网暴露，不从 control role 自动推导
+ControlServiceDirectoryV1      # 不公开；由 matching certified view/directory hash 约束
+  services[]                   # role=control_api|enroll|device_config|device_report
+                               # overlay IP + 分用途 internal cert、pin 与 subject policy
+
+ControlPeerDirectoryV1         # 与上项独立；只下发给 ControlSet voter
+  peers[]                      # member→Device/SPKI/overlay peer tuple + control-peer mTLS policy
+                               # 不进入普通 Device view 或公开 distribution
+
+ServerPublicAccessProfileV1    # 每个 forward Device 的公网基线
+  server_id, generation, fqdn, dns_zone_ref, public_frontend_addresses[]
+  address_family_policy, https_public_port, certificate_profile_ref
+  deployment_kind              # direct_standard | direct_alternate | nat_mapped
+  forward_listener_resources_hash
+
+ForwardServerListenerResourcesV1 # server-private desired/resource facts
+  nginx_local_tcp_port, hy2_local_udp_port_pool[], wireguard_local_udp_ports[]
+  trojan_local_tcp_port_pool[], mappings[]
+                               # public EndpointSet 只投影 FQDN/public port，不泄露本地/CPE 细节
+
+PortMappingIntentV1            # 只用于 nat_mapped
+  transport, public_address/port_range, local_address/port_range, mapping_generation
+
+BootstrapTunnelCapability      # Invite/QC 授权、BootstrapIssuer 签发的短期能力
+  body
+    certified_invite_record_hash, invite_issuance_policy_hash
+    issuer_authorization_hash, ingress_set_hash, private_service_ref_hash, mode
+    not_before, expires_at, resume_transaction_binding?
+    allowed_private_destination, session_limit, byte_limit, attempt_limit
+  capability_id                 # exact body 的 domain-separated hash；不回填 body
+  signature
+                               # 与 enrollment token 分离；只准 Enrollment TCP /32(/128)+port
+
+BootstrapIssuerAuthorization   # certified registry leaf + inclusion proof + matching head/QC
+  id, generation, previous_hash, active|revoked, key/purpose, validity
+  max_ttl/session/bytes/attempts/concurrency, permitted ingress/service scope
+
+InviteProofBundleV2            # public mirror；只含 hiding commitment，不含 intent/opening
+  certified invite record/policy/commitment + operation inclusion + issuer/authority/head/QC proofs
+
+DeviceEnrollmentIntentOpening # control-private；仅 capability tunnel + inner-TLS preflight 返回
+  exact intent + per-Invite 32-byte hiding nonce；客户端重算 intent/opening/commitment hash
+
+StableEnrollmentAdmissionQCV1  # control-private；不含 token 明文
+  token-commitment + exact request-body/PoP facts + invite/base-head/state
+  stable enrollment-key quorum signatures；reservation operation 只引用其 exact hash
+
+PublicEndpointIntent           # 目标态；显式决定公网 listener，不从 control role 自动推导
   id, generation, owner_device_id, role, exposure, protocol
   address_or_domain_intent, listener_policy_ref, credential_artifact_hashes[]
   certificate_identity_projection_hashes[]? # TLS 排序 1..2（old/new overlap）；WireGuard 缺失
@@ -3116,7 +3318,7 @@ AddressChallengeIntentV1 / AddressClaimV1 # 目标态；地址 ownership、可�
   one-time challenge、binding/endpoint/owner/family/address、前代与有效期
   Device signature、连续稳定窗口、多视角验证 receipts
 
-CertificateIdentityProjection # role-bounded 入口稳定绑定；公开 TLS，不是 control/Device authority
+CertificateIdentityProjection # public role-bounded 稳定绑定；不是 internal control/Device authority
   certificate_intent_id, identity_generation, role, endpoint_ids[], dns_names[], issuer_profile_ref
   key_owner_device_id, exact key_artifact_hash, spki, identity_projection_hash
 
@@ -3134,27 +3336,34 @@ ResourceLease                 # 目标态；协调外部副作用，不产生 de
   acquired_index, desired_hash, fencing_token, expires_at
 ```
 
-**九处关键关系:**
+**十一处关键关系:**
 
 - **`Node` 与 `ServiceAddress` 是两张表,不是一张。** 前者是 Loom 管的机器,后者只是地址 —— 这条区分是全模型的地基(§1、§9);
 - **没有 `target` 角色** —— 出口是路径上的位置,由 `RouteCandidate.server_chain` 的最后一项决定(§1.1);
-- `Tunnel` 按 SSOT 与方向约束产生；可进入 mesh 的服务器在**目标态**可交由
-  Headscale 自动分发，但主设计不假定该独立可选项存在(§6.3、§8.3);
-- `Tunnel.initiator` 由**两端** `direction` 共同推导 —— 见 §2.2 的六格真值表,其中两种组合非法;
+- v1 `Tunnel.initiator` 由两端 `direction` 确定性迁移；目标态由每条 certified
+  `LinkIntent` 独立固定 initiator/transport/purpose，节点级方向不再授权新边(§2、§6.3);
 - `EquivalenceClass.carrier` 由成员 `access_contract` 是否同构决定 —— **`l4_direct` 是有前提的,不是默认可行**(§4.4);
 - `RouteCandidate` 是排序、下发与归因的**唯一单位** —— 地址与服务器链不分开排序(§5.6);
 - `PriceRecord` 与 `Measurement` 分表 —— **声明值与度量值性质不同**(§5.2)；
 - `control` 与 access/server 正交；正式 authority 由 certified `FinalControlSet` 确定，映射到 Device
   的只读投影还必须取得同 head 绑定的 matching private `ControlPeerDirectory`，不由普通字段
   自我授权或在线探测推导；
-- `EndpointSet` 的逻辑 ID 稳定，DNS/地址/端口/certificate generation 可重叠轮换。
+- 每个 `forward` Device 必有稳定 FQDN 与 `ServerPublicAccessProfile`；DNS 没有端口，实际
+  TCP/UDP public tuple 来自 signed public EndpointSet；NAT mapping 只在 private resource intent；
+- `DistributionEndpointSet`、`BootstrapIngressEndpointSet` 与 `DataIngressEndpointSet` 是公开
+  transport 集；control/Enrollment/Raft/config/report 只在 private service directory；
+- bootstrap capability 与 enrollment token 分离：前者只开限时限路由 tunnel，后者只在内层
+  TLS 中由 ControlSet CAS 消费；issuer authorization、Invite policy 与 admission QC 都必须由
+  exact hash/proof 连到 certified head，不能拿独立合法的 QC 拼接；
+- public EndpointSet 的逻辑 ID 稳定，DNS/地址/端口/certificate generation 可重叠轮换；HY2/WG
+  端口池分离，NAT 预映射范围仍逐 generation 验证；同一逻辑 ID 的 listener 以 generation 复合
+  唯一键并显式携带 advertised/preferred/draining 状态。
 
 **校验器必须拒绝的矛盾配置:**
 
 | 矛盾 | 出处 |
 |---|---|
 | 两端 `direction` 组合非法(rev↔rev、dir↔dir) | §2.2 |
-| 节点同时持有 `server` 能力与 `reverse_only` 却被要求接受接入连接 | §2.2、§8.1 |
 | 手工指定 `mesh_eligible` / `Tunnel.initiator` / `uses_tun` / `capabilities` | §2.2、§7.2、§1.3 |
 | 把角色字段写进错误的块(如 `access: {direction: …}`) | §1.3,严格解码在加载阶段即拒绝 |
 | 方向组合与显式 `Tunnel` 矛盾 | §2.2、§6.3；当前不能假设 Headscale 已接管 |
@@ -3165,9 +3374,16 @@ ResourceLease                 # 目标态；协调外部副作用，不产生 de
 | `address_axis = from_request` 却配置了 `ranking_period` | §5.5 |
 | `egress_axis = pinned:<x>` 但 `x` 不在 `allowed_servers` 里 | §5.1 |
 | `ControlSet` 为空、按在线数缩 quorum，或成员变化缺 old/new joint proof | §11.1 |
+| 未完成普通 Device Enrollment/overlay 身份就加入 ControlSet | §11.1 |
 | 相同 control epoch/revision 或 endpoint generation 对应不同 hash | §12、§14.3.2 |
+| 公网 Nginx 接收/代理 claim 或公开 control/config/report/Raft listener | §8.1、§13.5、§14.3.1 |
+| bootstrap capability 可访问 Enrollment 之外的地址/协议，或与 enrollment token 共用 | §13.5 |
+| capability 未绑定 certified record/policy/issuer authorization，或 admission QC 未绑定 exact claim body | §13.5 |
+| 公开 proof 正文含 intent/opening 或可离线枚举的 Device ID/Responsibilities/grants commitment | §13.5、§14.2.2 |
+| forward Device 无 FQDN/PublicAccessProfile，NAT public/local tuple 未分离，或 HY2/WG 共用 UDP tuple | §8.1、§14.3.2 |
 | DNS/ACME/端口副作用没有 certified intent 就执行，或对象缺席触发删除 | §14.2.3 |
 | 新 listener 未验证就 advertise/prefer，或 retire 时兼容/排空门槛不足 | §14.3.2 |
+| 同一 logical endpoint 的新旧 generation 无法共存、没有唯一 preferred，或轮换阶段读取 mutable latest 依赖 | §14.3.2 |
 
 ---
 
@@ -3192,18 +3408,22 @@ L4  部署自动化
     ↓
 L5  运维界面      L6  凭据分发
 
-控制平面迁移支线（依赖现有 L0/L4，不能跳步）：
-C0  canonical object/QC/transition 测试向量
+控制平面与 Enrollment 迁移支线（依赖现有 L0/L4，不能跳步）：
+C0  canonical object/QC/transition + issuer/policy/admission proof + public/private split 黄金向量
     ↓
-C1  单成员 ControlSet + v1/v2 双发布
+C1  单成员 ControlSet + WG private overlay + overlay-only control service directory
     ↓
-C2  全平台 v2 reader、EndpointSet 与 floor
+C2  forward PublicAccessProfile、静态 Nginx distribution、catalog/public proof 与全平台 v2 reader
     ↓
-C3  learner + joint consensus + 多 control API
+C3  HY2 BootstrapIngress + exact-bound capability/ACL + private Enrollment TLS/token/server-nonce PoP/resume
     ↓
-C4  分布式 Enrollment/事件/publisher
+C4  learner + Joint/Final consensus + 分布式 Enrollment/事件/publisher
     ↓
-C5  托管 DNS/ACME + 双 listener 端口轮换
+C5  permanent Device connectivity、private config/report、全平台切换与恢复
+    ↓
+C6  Trojan/TLS TCP fallback + DNS/ACME + per-generation overlap/frozen refs + 独立端口池/NAT 映射轮换
+    ↓
+C7  全平台验收、故障演练，并退役 v1 public claim/单中控 authority
 ```
 
 控制平面支线的完整迁移与验收见
@@ -3213,7 +3433,8 @@ C5  托管 DNS/ACME + 双 listener 端口轮换
 
 **独立可选项**(不在主线上,任何时候可插入):
 
-- **mesh 组网**(Headscale + derper)—— 与调度正交;
+- **替换 WG peer 协调实现**（如 Headscale）—— 只能替换 peer 分发/NAT 协调，不改变
+  permanent overlay、ControlSet 或 private service authority；
 - **L7 API 网关**(§4.4)—— **只有需要把访问契约不同构的地址纳入同一等价类时才需要**。它同时是 §16.2 应用层指标的观测点,因此若目标函数含 `ttft` / `tokens/s` 而地址侧没有埋点,它就从"可选"变成"必需";
 - **指纹参数化**(AmneziaWG)—— 依赖 L4 的自动回滚,且触发客户端自建的重决策;
 - **回放/回测**(§16.5)—— 依赖 L2 的度量留存,**在 L3 期间就应具备**,否则阻尼参数只能拍脑袋;
@@ -3223,28 +3444,29 @@ C5  托管 DNS/ACME + 双 listener 端口轮换
 
 **做什么:** 把"网络长什么样、有哪些服务、什么策略"写成结构化数据,再写一个把它变成配置文件的函数。**这一层不含任何自动部署** —— 生成完文件,人工 scp 过去。
 
-**为什么它必须最先做 —— 一个具体例子。** SSOT 里你写一行:
+**为什么它必须最先做 —— 一个具体例子。** SSOT 里写入一条 certified link intent：
 
 ```yaml
-tunnel: { from: cn-bj, to: sg-vps, protocol: wg }
+link: { from: demo-a, to: demo-b, purpose: data_forward, transport: wireguard, initiator: demo-b }
 ```
 
 渲染器要输出**两个必须严格对应的文件**:
 
-| `cn-bj` 侧(国内云机) | `sg-vps` 侧(境外 VPS,`reverse_only`) |
+| `demo-a` 接受侧 | `demo-b` 发起侧 |
 |---|---|
-| sg-vps 的公钥 | cn-bj 的公钥 |
-| **不写 Endpoint**(对方是 `reverse_only`) | `Endpoint = <cn-bj 公网IP>:51820` |
-| `ListenPort = 51820` | `PersistentKeepalive = 25` |
-| `AllowedIPs = 10.99.0.2/32` | `AllowedIPs = 10.99.0.1/32` |
+| demo-b 的公钥 | demo-a 的公钥 |
+| 绑定 intent 指定的 listener | `Endpoint = <intent 中的已验证 public tuple>` |
+| 接受方 overlay `/32` | `PersistentKeepalive` 与发起方 overlay `/32` |
+| data-forward ACL | 同一 purpose/route scope |
 
-密钥要配对、IP 不能撞、端口要一致、**方向由 `direction` 属性推导**。
+密钥要配对、IP 不能撞、端口与 mapping 必须一致，发起方向和允许 transport 必须来自同一
+LinkIntent。v1 迁移器可以从两端 `direction` 推导一次，目标 reader 不再重复猜。
 
-**4 台国内云机 × 3 台境外 VPS = 12 条隧道 = 24 个文件,每一对都必须逐字段吻合。** 手工写错一个字符的后果是隧道**静默不通** —— 不报错,只是连不上,而你要在两地之间来回比对才能找到。
+每条双端 link 都至少产生两份必须吻合的配置。手工写错一个字符的后果可能是隧道
+静默不通，也可能是 route scope 意外扩大；两者都必须由渲染和校验消除。
 
-> **注意矩阵只覆盖包含 `reverse_only` 服务器的关系**(§6.3)。未明确启用 mesh 时，
-> 其他节点对使用显式公网数据入口；启用并验收 mesh 后才由 Headscale 自动分发对应
-> peer，不能把可选目标态写成默认前提。
+> **只渲染被 certified RouteCandidate 或 control overlay 引用的 LinkIntent。** 不生成所有
+> forward Device 的笛卡尔积，也不因某个节点有公网 FQDN 就自动授权一条边。
 
 L0 就是消灭这件事。它排在最前,是因为 L1 要建的隧道矩阵、L3 要用的候选集,全都是这份数据的渲染产物。
 
@@ -3252,7 +3474,8 @@ L0 就是消灭这件事。它排在最前,是因为 L1 要建的隧道矩阵、
 
 ### 20.2 L1 · 数据平面连通
 
-隧道矩阵、接入节点接管、服务器转发、末跳出公网。**此时路径是静态指定的** —— 还没有选优,只是能通。
+LinkIntent、接入节点接管、服务器转发、末跳出公网，以及每台 forward Device 的
+FQDN/Nginx/HY2/WG/PublicAccessProfile。**此时路径是静态指定的** —— 还没有选优，只是能通。
 
 **产出:** 每条候选路径都真实可用。没有连通的路径,无从测量。
 
@@ -3317,10 +3540,10 @@ RouteCandidate 或指标保持 unknown，而不是强制全候选探测或补造
 | **控制平面** | **Go** | 与 Agent 同语言,**渲染器与校验器共用同一份实现** —— 跨语言实现同一套规则是长期漂移来源,会产生"两侧对同一份配置的合法性判断不一致" |
 | **Agent** | **Go**,单个静态二进制 | 交叉编译、零运行时依赖、单文件分发、A/B 双槽自更新简单(§15.4) |
 | 渲染 | 任意模板引擎,但**必须纯函数** | 可测试、可 dry-run |
-| Agent ↔ control plane | 当前 v1 HTTPS + 单签名；目标为多 EndpointSet + mTLS + ControlSet QC | 传输认证、配置授权与防回退是三层，不能互相替代 |
+| Agent ↔ control plane | 当前 v1 HTTPS + 单签名；目标为 permanent overlay 上的 private service directory + mTLS + ControlSet QC | 公网 EndpointSet 只用于 distribution/bootstrap/data；传输认证、配置授权与防回退不能互相替代 |
 | DNS/ACME | provider-neutral adapter + DNS-01；DNS token 仅在 executor 秘密层 | Gandi/Dynadot 只是 adapter，DNS 不是 control authority |
 | 度量存储 | 轻量时序;价格与配额用关系表 | **声明值与度量值分开**(§5.2) |
-| 数据平面 | sing-box(接入 / 服务器)+ WireGuard(隧道) | 成熟、可编程、覆盖所需全部形态 |
+| 数据平面 | sing-box/libbox（HY2 主入口、Trojan/TLS TCP fallback）+ WireGuard（permanent L3/control overlay 与逐边数据 link） | 按 purpose 分离且覆盖移动弱网、UDP 阻断与稳定私网 |
 | **L7 网关**(若需要,§4.4) | 现成反代 + 少量鉴权/改写逻辑 | **不要自己写 L7 代理。** 它同时承担 §16.2 的应用层埋点,埋点比转发更值得投入 |
 | UI | 服务端渲染 | 内部工具,不需要复杂前端 |
 
@@ -3334,13 +3557,13 @@ RouteCandidate 或指标保持 unknown，而不是强制全候选探测或补造
 
 **模型侧**
 
-1. **节点清单**:各节点位置、能力集合、方向属性、是否 managed
+1. **节点清单**:各 Device 位置、Responsibilities、PublicAccessProfile、每条 LinkIntent 的可达性和是否 managed
 2. **服务标签体系**:初期定义哪些等价类,粒度如何划分
 3. **⚠️ 访问契约与承载方式(§4.4)** —— 每个等价类的成员地址是否共用域名、证书、凭据与接口?`carrier` 取 `l4_direct` / `l7_gateway` / `sdk` 中的哪个?**这条不定,服务调度无法落地**
 4. **第三方端点**:哪些不可部署的端点需纳入候选;它们的契约是否同构,不同构时是否值得为它引入网关
 5. **访问声明**:初期定义哪几个,各自模式、objective、约束、`fallback`
 6. **最大跳数**:2 是否够用
-7. **双模测量**:哪些 `reverse_only` 节点允许开启直连探测
+7. **双模测量**:哪些 LinkIntent 允许对未启用方向/transport 做低频风险探测
 
 **调度侧**
 

@@ -1,12 +1,14 @@
 # Loom Linux 客户端安装
 
 > **适用范围：v1 安装流程契约。** 本文描述单 control、v1 invite、平台公钥、
-> `public_endpoint + inbound_port` 和 signed pull 的兼容命令。目标 v2 的多 seed QR、
-> ControlSet/QC、托管域名、EndpointSet 和 listener generation 见
+> `public_endpoint + inbound_port` 和 signed pull 的兼容命令。目标 v2 的紧凑 QR、
+> 静态 distribution catalog、bootstrap tunnel、ControlSet/QC、托管域名、EndpointSet 和 listener generation 见
 > [分布式控制平面设计](distributed-control-plane.md)；迁移完成前不要混用两代字段。
-> 目标 v2 的 Create Device 只经已信 certified `EndpointSet(role=control_api)` 入口
-> 和 admin cert 提交；Linux bootstrap claim 也只能使用本次 descriptor 有界
-> `EndpointSet(role=enroll)` seeds，不得把下文 v1 单入口扩张成无界发现。
+> 目标 v2 的 Create Device 只由已入网管理端经 overlay 访问
+> `ControlServiceDirectoryV1` 中 `role=control_api` 的私有服务并使用 admin cert 提交；
+> Linux bootstrap claim 从已验公网 transport 建立限路由临时隧道，只访问 QR 中
+> `PrivateEnrollmentServiceRefV1` 所指的私有 `role=enroll` 服务。下文的公网 v1 HTTPS claim 是历史兼容，
+> 不是目标安全边界。
 
 本文面向安装 `linux/amd64` Device 的管理员。具有 `use_loom` 职责的 Device 使用本地
 `127.0.0.1:1080` mixed 入口，不接管宿主机路由表，也不会自动修改全局代理环境变量。
@@ -23,13 +25,48 @@
 - 在 v1 指定 control 登录运维会话。v1 契约中只有该写入口能创建 Device、生成加入码和下载已验证的客户端包；
 - 目标机上有 `tar` 和 `sha256sum`。Loom 与 sing-box 已包含在分发包内。
 
+## v2 目标加入过程（不是下文 v1 命令）
+
+1. 紧凑 QR/URI 的 exact descriptor 携带 schema/cluster/invite/expiry、token/commitment、
+   minimum recovery/trusted checkpoint、`bootstrap_catalog_hash`、`proof_bundle_hash`、2～3 个静态
+   `DistributionMirrorRefV1`、有界 `PrivateEnrollmentServiceRefV1` 和短期
+   `BootstrapTunnelCapabilityV1`。
+2. Linux 只向这些 Nginx mirrors 发无 token GET，分别验 catalog/proof hash 与 QC 后取得
+   `BootstrapIngressEndpointSetV1`。public proof 只含 `DeviceEnrollmentIntentCommitmentV1` 及认证路径，
+   不含 exact intent/opening。Nginx 只有 fake website 和 immutable distribution，不见 token，不代理 Enrollment。
+3. 客户端从当前 underlay 对实际 HY2 入口各测至多一次；首版以 HY2 完成闭环，
+   正式版在 UDP 全阻断时尝试已签独立 Trojan/TLS TCP fallback。
+4. 选中入口后才出示 capability，建立只可达 `PrivateEnrollmentServiceRefV1`
+   `/32`/`/128` 和 TLS port 的短期隧道。验证内层 server-auth TLS 后，先用不含 token/CSR/key 的
+   `EnrollmentIntentPreflightRequestV1`/`ResponseV1` 取得 `DeviceEnrollmentIntentOpeningV1`
+   并重算 hiding commitment；不匹配时不发 token。
+5. Linux 生成 root-only identity/CSR signing key 和独立 wrapping key；wrapping key 只用于
+   凭据包装，Enrollment PoP 只由 identity key 签名。客户端构造稳定
+   `EnrollmentClaimCoreV2`，取得 `EnrollmentPoPChallengeV1`，对含 server nonce 的
+   `EnrollmentPoPBodyV2` 签名，再在 `EnrollmentClaimSubmissionV2` 中提交 token、core、
+   challenge 与 detached PoP；当前 stable ControlSet 的 voters 先形成
+   `StableEnrollmentAdmissionQCV1`，再以 Raft CAS 保证一次消费。
+6. ready 后原子安装正式 certificate/view/credentials，清除 token、capability、临时 profile/隧道，
+   然后由同一 Linux 客户端宿主建立正式 WG control/L3 overlay；配置与报告继续访问
+   `ControlServiceDirectoryV1` 中分用途的 `device_config`/`device_report` 私有服务。
+
+这个流程不使用 WG 做首版 bootstrap，也不以 distribution HTTPS RTT 代替实际隧道测量。
+自动重试只在 invite/capability 有效期内执行；重试保持 token 和字节完全相同的
+`EnrollmentClaimCoreV2`，可对新 server nonce 重签 detached PoP，但不得改 core/hash。claim 已 commit
+而 capability 过期时，管理员先经私有 `role=control_api` 服务线性化确认事务，
+再生成不含 token、exact-bound 的 `EnrollmentResumeDescriptorV1`，以 QR 或 `.loom-resume`
+带外交付；Linux 通过受保护文件或标准输入导入并与本机 pending core/identity 核对。
+该 descriptor 不经公网 mirror 动态发布，客户端不能自动刷新；ControlSet 只幂等
+继续/取回既有结果，不延长旧 capability、不重消费 token。
+
 ## 1. 创建 Device 和加入码
 
 在中控打开 **Devices → Create Device**，选择 Linux 平台并直接勾选职责：
 `use_loom`、`forward`、`internet_egress`。`internet_egress` 必须与 `forward`
 同时选择；只有 `use_loom` 才选择允许访问的 Destination grants。不要填写出口节点或
-路径，路由仍由 active signed 控制规则和 Agent 决定。平台、职责、grants 和转发连接方向都固定在这次
-邀请中，客户端不能在 claim 时修改。
+路径，路由仍由 active signed 控制规则和 Agent 决定。本节是 v1 兼容流程：平台、职责、grants
+和转发连接方向都固定在 v1 邀请中，客户端不能在 claim 时修改。目标 v2
+不携 Device-wide direction，只在 Enrollment 后由 certified LinkIntent 按边固定 initiator。
 
 创建成功页展示短时加入码。只含 `use_loom` 时可提供二维码和 `.loom-invite` 文件。
 所有 Linux 组合都通过 shell bootstrap 消费页面显示的一次性 `loom://enroll#…` 输入：
@@ -90,12 +127,16 @@ server:
 `public_endpoint` 是不带 scheme/端口的 DNS 或 IP；`inbound_port` 使用的传输由
 `inbound_protocol` 决定：默认 Hysteria2/UDP，显式 `trojan` 时为 TCP，不能一律当作 UDP。
 `direction` 必须与中控邀请一致，只能是 `bidirectional`、`reverse_only` 或
-`direct_only`。`reverse_only` 由该 Device 主动建立并维持反向 WireGuard 隧道；它表达
+`direct_only`。在本文 v1 兼容契约中，`reverse_only` 由该 Device 主动建立并维持反向 WireGuard 隧道；它表达
 公网/NAT 可达性而不是地理位置。部署可以将境外服务器设为 `reverse_only`，但协议并不
 禁止境外 Device 承担接入或其他已授权职责。
 
-这两个静态字段只描述 v1 bootstrap 事实。目标 v2 由 certified `PublicEndpointIntent`、
-`ManagedZone` / `DomainBinding`、`EndpointSet` 和 listener generation 表达公开入口，并通过新旧 listener overlap 轮换；
+这两个静态字段只描述 v1 bootstrap 事实。目标 v2 中每个 `forward` server 均具有
+稳定 FQDN、只服务 fake/immutable distribution 的 Nginx、DNS-01 证书管理、HY2 UDP 和不同
+UDP tuple 上的 WG listener；正式版另有独立 Trojan/TLS TCP bootstrap fallback。直连服务器使用
+443 或 EndpointSet 中的替代 HTTPS 端口，NAT server 另显式区分 public/local port 并预配 TCP/UDP 映射。
+这些由 certified `PublicEndpointIntent`、`ManagedZone` / `DomainBinding`、按用途拆分的 EndpointSet 和
+listener generation 表达，并通过新旧 listener overlap 轮换；
 DNS 解析结果和本机探测只能帮助选 endpoint，不能自行授权未签地址或端口。
 
 客户端在本机创建或复用 `/etc/wireguard/node.key`，只把公钥随加入请求发给中控。缺少

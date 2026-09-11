@@ -1,22 +1,31 @@
-# Loom Android client — stage 3 routing and stage 4 reliability
+# Loom Android client — native host, v1 compatibility and v2 bootstrap
 
 > **Protocol contract:** v1 compatibility uses a strict invitation, a single platform-key current,
 > and same-origin reporting. V2 accepts only a certified head and Device view, and adds ControlSet
 > checkpoints/QCs; four durable rollback-floor groups for recovery (including statement and policy
-> hashes), ControlSet, head, and Device view; QR v2 multi-seeds; role-scoped EndpointSets with
-> WebPKI/SPKI pins; overlapping Hysteria2/Trojan listener generations; a bootstrap transition hash;
+> hashes), ControlSet, head, and Device view; a compact QR descriptor, immutable bootstrap catalog,
+> restricted bootstrap tunnel, three purpose-scoped public EndpointSets, a private
+> `ControlServiceDirectoryV1`, overlapping Hysteria2/Trojan
+> listener generations, and a bootstrap transition hash;
 > WireGuard rotation remains disruptive until a dedicated dual-interface/peer profile is validated; and an irreversible
 > v2 latch. V2 resources are versioned and never extend strict v1 JSON in place. See
 > [the distributed control-plane design](../../docs/distributed-control-plane.md#19-从当前实现迁移).
 > Code, deployment, and device-acceptance progress is recorded only in
 > [the current status](../../docs/status/current.md).
 
-In the target v2 flow, an administrator reaches **Create Device** only through
-an exact transport-verified endpoint in a trusted certified
-`EndpointSet(role=control_api)` and authenticates with an admin certificate.
-Before it has a Device identity, Android sends its claim only to the bounded
-`EndpointSet(role=enroll)` seeds carried directly by that invitation delivery
-envelope; it never substitutes a control API, redirect, or newly discovered URL.
+In the target v2 flow, an already-enrolled administrator reaches **Create Device**
+only through a `role=control_api` service in the private
+`ControlServiceDirectoryV1`, verifies its overlay IP and internal service
+certificate, and authenticates with an admin certificate. Before it has
+a Device identity, Android downloads an immutable bootstrap bundle without a
+token from one of the QR's two or three public distribution mirrors. It verifies
+the separately hashed catalog and public proof bundle, measures the actual
+bootstrap transports from the current Android network, and uses a short-lived
+restricted tunnel to reach only the
+`PrivateEnrollmentServiceRefV1` carried by the invitation. That bounded ref is
+the projection of a private `role=enroll` directory entry, not a public
+EndpointSet. Public Nginx serves only a fake website and
+immutable distribution; it never receives or proxies an enrollment claim.
 
 This directory defines the native Kotlin/Compose host and the pinned
 sing-box/Loom mobile binding. The Stage 2 contract covers the access-only
@@ -46,10 +55,100 @@ device_generation + device_leaf_hash + device_view_hash
 The first v2 install atomically persists those floors, the
 `bootstrap_transition_hash`, and `protocol_latch=v2`. After that latch, no v1
 current, invitation, view, or recovery statement can regain authority. Endpoint
-roles are not inferred from an enrollment URL: `device_config`, `device_report`,
-and `data_ingress` are distinct. Every HTTPS/Hysteria2/Trojan endpoint uses the
-exact signed server name plus WebPKI and its generation/overlap-bounded TLS SPKI
-pin set.
+purposes are not inferred from an enrollment URL. Public
+`DistributionEndpointSetV1`, `BootstrapIngressEndpointSetV1`, and
+`DataIngressEndpointSetV2` are the only public endpoint sets. Private
+`control_api`, `enroll`, `device_config`, and `device_report` are role-separated
+services in `ControlServiceDirectoryV1`; they are never modeled as public
+EndpointSets. Public HTTPS,
+Hysteria2, and Trojan endpoints use their exact signed server identity;
+private services use a purpose-specific internal certificate bound to the signed
+overlay IP or pin.
+
+The target v2 bootstrap transaction is:
+
+```text
+scan compact QR
+  -> validate schema/cluster/invite/expiry, token/commitment,
+     minimum_recovery_epoch/trusted_checkpoint_hash,
+     bootstrap_catalog_hash,
+     proof_bundle_hash, 2-3 mirrors, PrivateEnrollmentServiceRefV1 and
+     BootstrapTunnelCapabilityV1
+  -> fetch immutable catalog/public proof from the mirrors without token/cookie
+  -> verify both hashes, authority/QC, intent commitment and BootstrapIngressEndpointSetV1
+  -> from the current Android network, probe each actual HY2 bootstrap entry at most once
+  -> use an independently signed Trojan/TLS TCP entry only when UDP is blocked
+  -> present BootstrapTunnelCapabilityV1 and establish an ACL-restricted tunnel
+  -> verify inner Enrollment server certificate/private IP
+  -> run EnrollmentIntentPreflightRequestV1/ResponseV1 without token/CSR/key,
+     obtain DeviceEnrollmentIntentOpeningV1 and verify its hiding commitment
+  -> create the identity/CSR signing key and distinct credential-wrapping key
+  -> build stable EnrollmentClaimCoreV2 and obtain EnrollmentPoPChallengeV1
+  -> sign EnrollmentPoPBodyV2 with the identity key over the fresh server nonce
+  -> send EnrollmentClaimSubmissionV2 (token + core + challenge + detached PoP)
+     inside that TLS channel
+  -> require the stable ControlSet's enrollment voters to form
+     StableEnrollmentAdmissionQCV1 before the Raft reservation CAS
+  -> accept only the Raft-CAS/QC-bound ready result for the same key and request
+  -> atomically install the permanent certificate/view/credentials
+  -> destroy token, capability, temporary profile, tunnel, and retry state
+  -> establish the permanent WireGuard control/L3 overlay in the same libbox/VpnService host
+```
+
+HY2 is the first implementation slice. A daily-use release also implements a
+separate Trojan/TLS TCP fallback for networks that block UDP. WireGuard is not a
+first-enrollment bootstrap transport and does not start a second Android VPN or
+a separate Tailscale/Headscale client. The same libbox/`VpnService` host owns its
+permanent overlay routes. Bootstrap HY2/TCP sockets must be protected
+with `VpnService.protect()` before the temporary TUN becomes active. Mirror HTTPS
+latency may order downloads but never substitutes for measuring the actual tunnel
+transport.
+
+The capability is derived from a certified Invite and signed by a dedicated
+ControlSet-authorized bootstrap issuer. Its ACL allows only the certified private
+Enrollment `/32` or `/128` and TLS TCP port—never general overlay routes, Internet
+egress, DNS, ICMP, control API, Raft, SSH, configuration, or reporting. The
+default capability lifetime is 15 minutes (configurable from 5 through 30 minutes,
+with a hard 30-minute limit); one tunnel lasts at most 180 seconds and 8 MiB, with
+at most three sequential connection attempts and one concurrent session per
+`cap_id` at an ingress. The enrollment token remains the authoritative one-shot
+boundary through Raft CAS.
+
+The public proof bundle contains only `DeviceEnrollmentIntentCommitmentV1` and
+its authority path; it never exposes the exact intent or opening. Only after the
+restricted tunnel and inner TLS are verified does preflight without token/CSR/key return
+`DeviceEnrollmentIntentOpeningV1`. Android recomputes the commitment and checks
+the exact platform, responsibilities and grants before building a claim. An
+offline `.loom-invite` may embed the same catalog/public proof, but never this
+private opening.
+
+The inner TLS authenticates the Enrollment server before any secret leaves the
+app. Android signs proof-of-possession with the non-exportable identity/CSR
+Keystore key over the stable `claim_core_hash`, network, invite and request IDs,
+CSR/identity/wrapping-key hashes, and server nonce. The distinct wrapping key
+only unwraps device credentials; it never signs Enrollment PoP. Exact retries
+reuse the token and byte-identical `EnrollmentClaimCoreV2`. A fresh
+`EnrollmentPoPChallengeV1` may change the server nonce and detached signature,
+but not the stable core/hash; changing the key or core is rejected. No temporary
+client private key is placed in the QR merely to make the first connection look
+like mTLS.
+
+The identity/CSR signing key is a non-exportable Keystore P-256 signing key. The
+wrapping profile is separate: API 31+ uses a non-exportable P-256 ECDH key with
+`AGREE_KEY`, while API 26–30 uses only the intent-authorized RSA-2048 OAEP
+fallback with `DECRYPT`. Neither wrapping profile receives signing authority.
+
+Automatic retries stop when either the Invite or capability expires. If the
+claim is already committed, an administrator first performs a linearizable read
+through the private `role=control_api` service. For a reserved or completed
+transaction it may generate a one-time `EnrollmentResumeDescriptorV1`, containing
+no token and carrying the exact resume capability, claim-core/transaction
+binding, and catalog/proof/service/mirror refs. It is delivered out of band as a
+QR or `.loom-resume`, never generated by a public mirror and never automatically
+refreshed by Android. The app accepts it only when it matches its protected
+pending identity and stable core, then signs a fresh server nonce with that same
+identity key. The ControlSet continues or returns the existing idempotent result
+without resetting or consuming the token again or extending the old capability.
 
 Android TUN address queries use a persistent, dual-stack FakeIP mapping. The
 subsequent connection is restored to an FQDN before routing, carried unchanged
@@ -89,7 +188,7 @@ snapshot enables `public_data_ingress` may contribute a single-hop client candid
 using its configured data-ingress transport (Hysteria2 or Trojan), even when its
 WireGuard direction remains `reverse_only`. After the latch, that Boolean has no
 authority by itself: a certified `PublicEndpointIntent` and this Device's
-`EndpointSet(role=data_ingress)` must authorize the candidate. Such an endpoint is
+`DataIngressEndpointSetV2` must authorize the candidate. Such an endpoint is
 never promoted into an intermediate relay. This keeps the reverse tunnel policy
 while avoiding unnecessary same-transport nesting for an authorized fixed exit.
 
@@ -236,13 +335,14 @@ recovered credentials. It never overwrites the live key. A backup left on the
 builder, or an archive stored beside its passphrase, does not satisfy the
 off-machine recovery requirement.
 
-The enrollment endpoint must also serve a complete TLS chain which terminates
-at a root in the supported Android system stores. Verify this on physical
-devices, not only with a builder's OpenSSL bundle. In particular, the short
-Let's Encrypt Generation Y ECDSA chain ending at ISRG Root X2 is not sufficient
-for devices which lack X2; serve the default compatibility chain continuing to
-ISRG Root X1. The client does not disable certificate or hostname verification
-to compensate for a deployment chain error.
+Every public distribution mirror and Trojan/TLS bootstrap fallback must serve a
+complete TLS chain which terminates at a root in the supported Android system
+stores. Verify this on physical devices, not only with a builder's OpenSSL bundle.
+The private Enrollment service instead presents the catalog-authorized internal
+certificate for its overlay IP (or the exact authorized SPKI); it is never
+validated by disabling certificate or hostname/IP checks. The app does not
+weaken either public or private verification to compensate for a deployment
+chain error.
 
 ## Enrollment and activation transaction
 
@@ -250,6 +350,13 @@ In the v1 compatibility transaction, the client compares the QR fingerprint with
 POST, persists the exact CSR/request identity and retries only within the
 bounded enrollment recovery window. A ready response must bind the returned
 certificate to the same Keystore P-256 key.
+
+That direct public HTTPS POST is retained only by the strict v1 reader. It is not
+the v2 target and must not be retrofitted with v2 fields. V2 follows the compact
+QR, static distribution, measured HY2/TCP bootstrap, private inner TLS, token +
+identity-key Keystore PoP and Raft CAS flow above. Once ready is atomically installed, all
+temporary bootstrap material is deleted before the permanent overlay and private
+configuration/report channels become active.
 
 V1 signed `current.json`, snapshot manifest/signature and the exact node bundle
 are retained in Keystore-encrypted app storage. They are all reverified on
@@ -272,8 +379,10 @@ the canonical v5 claim also binds the actual selector, candidate and chain.
 Before the v2 latch, the same-origin v1 report POST requests `observations=1`:
 a compatible server may return a bounded JSON snapshot with HTTP 200, while an
 empty 204 remains a successful report with no new route evidence. After the
-latch, the report destination comes only from a certified
-`EndpointSet(role=device_report)` and cannot be derived from the enrollment URL.
+latch, configuration and reporting use the role-separated `device_config` and
+`device_report` services from private `ControlServiceDirectoryV1`, with Device
+mTLS. Neither service can be derived from a distribution, bootstrap, or
+enrollment URL.
 
 ## Emulator and device acceptance
 
@@ -313,16 +422,45 @@ reports `ro.kernel.qemu=1`, so an attached phone can never become the implicit
 test target. When the Linux builder needs an HTTPS proxy,
 the script uses a temporary emulator-only relay that is removed on exit.
 
-The Android host deliberately fetches control and distribution data over
-HTTPS only, even though the cross-platform signed-artifact format can describe
-an HTTP mirror. HTTP entries are skipped and are never a downgrade fallback;
-at least one verified HTTPS distribution mirror must therefore be available.
+The Android host deliberately fetches public distribution data over HTTPS only,
+even though the cross-platform signed-artifact format can describe an HTTP
+mirror. HTTP entries are skipped and are never a downgrade fallback; at least
+one verified HTTPS distribution mirror must therefore be available. Private
+control, Enrollment, configuration and reporting use their purpose-specific
+TLS service over the temporary or permanent Loom overlay, not public Nginx.
 
 Enrollment acceptance requires a control-created Android Device and, for the
 v1 compatibility flow, an APK built with that deployment's public key. On vendor Android builds, keep the
 screen unlocked. ADB authorization alone may not authorize package
 installation; the constrained helper above can approve Loom's separate vendor
 confirmation when explicitly enabled.
+
+Target-v2 acceptance additionally proves all of the following on both emulator
+and a physical device where applicable:
+
+- the QR stays within its size limit and contains exactly the compact descriptor:
+  token/commitment, trust checkpoint, catalog/proof hashes, 2–3 mirrors, the
+  bounded private Enrollment ref and capability;
+- every distribution request is token-free and a mirror cannot observe a claim;
+- catalog/proof hash or QC, redirect, rollback, expiry, and endpoint substitution
+  failures stop before capability or token disclosure; the public proof exposes
+  only the intent hiding commitment, never its opening;
+- actual HY2 bootstrap entries are probed once from the current Android network,
+  and the independent Trojan/TLS fallback is used only when UDP is unavailable;
+- capability expiry, connection-count, concurrency, byte/time limits and route
+  ACL are enforced, including denial of Internet and non-Enrollment overlay access;
+- inner Enrollment certificate/IP verification and token-free intent preflight
+  precede token/CSR/PoP; the opening must reproduce the public hiding commitment;
+- exact stable claim-core retries are idempotent while detached identity-key PoP
+  may be resigned for a fresh server nonce; changed key/core replays fail;
+- a token-free `EnrollmentResumeDescriptorV1` is issued only after a private
+  linearizable transaction read, delivered out of band, matches the protected
+  pending core/identity, cannot auto-refresh, and does not consume the token again;
+- ready installs the certificate/view/credentials atomically, deletes every
+  temporary artifact, establishes the permanent WG overlay inside the same
+  libbox/VpnService, and reaches private configuration/report services with Device mTLS;
+- process death, Wi-Fi/mobile transitions and device reboot cannot resurrect an
+  expired capability, duplicate token consumption, or a partially installed identity.
 
 No fixture or source file contains an invitation token, device private key,
 production endpoint or private signing key. Third-party versions, source and

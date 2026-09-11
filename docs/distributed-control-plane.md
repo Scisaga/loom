@@ -6,7 +6,8 @@
 >
 > **与主设计的关系：** [design.md](design.md) 定义全系统不变量；本文细化其控制平面、
 > SSOT 复制、身份、Enrollment、DNS/ACME 和公网入口轮换。发生冲突时，以本文和
-> [D100–D130](decisions.md#d100--control-是节点能力控制集合不固定为三台)的新决定为准。
+> [D100–D131](decisions.md#d100--control-是节点能力控制集合不固定为三台)的新决定为准；D131 对公网入口、
+> Enrollment、Device-wide direction 和 bootstrap transport 的结论在与 D100–D130 冲突时优先。
 
 ---
 
@@ -44,19 +45,20 @@ ControlSet member/key，不含 Device 映射或 peer 拓扑。ControlSet 至少�
               └──► DNS、ACME、端口、防火墙等幂等 reconciler
 ```
 
-CRDT 负责复制事实、草稿和不可变对象；quorum 负责决定什么已经生效。任一 control Device
-都可在内部转发请求，但只有带相应 certified EndpointSet role 且网络可达的入口才对外接收
-管理、Enrollment、报告或配置读取；control capability 本身不自动暴露服务。当 `q > 1` 时，单个控制节点不能独立改变成员、权限、配置、邀请、
+CRDT 负责复制事实、草稿和不可变对象；quorum 负责决定什么已经生效。control Device
+只能通过 Loom overlay 上的私有地址承载管理、Enrollment、报告、配置读取和 peer RPC；
+这些服务不得写入公网 DNS、公开 EndpointSet 或 Nginx route。公网 forward server 只承载静态
+distribution/fake website 和被签名目录授权的数据/临时 bootstrap listener；它可以不是
+ControlSet 成员，也不能因此转发应用层 claim。当 `q > 1` 时，单个控制节点不能独立改变成员、权限、配置、邀请、
 证书批准、域名绑定或入口端口；`N=1,q=1` 是明确的迁移/最小部署模式，不具备这项抗单节点
 失陷性质。
 
-本文中“从多个控制 API 入口任选其一”只是一个集合内选择的简写：
-管理客户端只能从已信的 certified `EndpointSet(role=control_api)` 中选入口，
-校验精确 URL、hostname/WebPKI 和 SPKI pin 后再用 admin cert 认证。这不包含
-control peer RPC 地址、节点的其他 role 入口或 DNS 临时发现的 URL。尚无 Device
-身份的 claim 更不读这个管理集合；它只能在本次 `InviteBootstrapDescriptorV2.delivery_context`
-直接携带的有界 `EndpointSet(role=enroll)` seed 子集中故障切换，并在发送 token
-前逐个完成同样的精确 transport 校验。
+管理客户端只能在已验证的私有 ControlServiceDirectory 中选择 overlay IP，校验 internal CA、
+IP SAN/固定 SPKI 和 admin mTLS 后提交。尚无 Device 身份的客户端先从二维码列出的 2–3 个
+公网 distribution mirror 下载并验证不可变 bootstrap catalog，再实测 catalog 中的 HY2
+bootstrap ingress；正式版在 UDP 全阻断时使用独立 Trojan/TLS TCP fallback。外层临时隧道
+只允许到私有 Enrollment `/32` 或 `/128` 和精确 TCP 端口，token 与 CSR 只在内层 TLS 中发送。
+公开 Nginx 永远不接收、终止或代理 Enrollment。
 
 ---
 
@@ -65,22 +67,23 @@ control peer RPC 地址、节点的其他 role 入口或 DNS 临时发现的 URL
 ### 2.1 目标
 
 1. 控制节点数量可以从 1 在线扩展到任意数量，也可以安全缩容。
-2. 任一带相应 certified EndpointSet role 的可达入口都能接收请求并转发给当前 leader/服务；
-   control Device 没有任何公网 role 时仍可只作为 voter。
+2. 任一已入网且合格的 Device 都可晋升为 control；ControlSet 为 1..N，管理与 peer RPC 只在
+   Loom overlay 内可达，control Device 不需要任何公网入口。
 3. 网络分区时至多有一个控制状态继续提交，少数派不得自封为新集群。
 4. 控制面失去 quorum 不影响已安装的数据面；节点继续使用最后一个已认证 view。
 5. 配置来源、传输镜像、DNS 和 TLS 终止点均可替换，但不能扩大签名 authority。
-6. 自动为受管入口分配稳定域名、申请和续签证书，并可由另一个控制节点接管执行。
-7. Hysteria2、Trojan 等可并行 listener 的公网入口使用同一代次模型无中断轮换；
+6. 每个 active forward server 都有稳定 FQDN 与 public access profile；自动申请和续签证书，
+   并显式支持直连 443、替代 TCP 端口和 NAT 映射三种部署。
+7. Hysteria2、Trojan/TLS 等可并行 listener 的公网入口使用同一代次模型无中断轮换；
    WireGuard 只有采用双接口/双 peer 专用状态机后才能宣称同等级别的无中断轮换。
 8. Android、Windows 和 Linux 使用同一信任、anti-rollback、端点集合与轮换语义。
 9. 从当前单签、单控制节点部署可以分阶段迁移，不重建既有 Device 私钥。
 
 ### 2.2 非目标
 
-- 不让控制平面进入用户数据路径。
+- 不让控制平面进入用户数据路径，也不把控制服务暴露到公网。
 - 不声称普通多数共识能够容忍 Byzantine 控制节点；首版只承诺 crash/partition safety。
-- 不用 DNS、HTTPS 证书、在线节点数或 Web 测量结果决定控制成员资格。
+- 不用 DNS、HTTPS 证书、在线节点数或 Web 测量结果决定控制成员资格或客户端实际入口。
 - 不把域名购买、续费扣款或注册商迁移默认做成无人批准的自动操作。
 - 不承诺 QUIC/TCP 会话跨端口迁移；“无中断轮换”靠新旧 listener 重叠和旧会话排空。
 - 不为控制复制重新引入客户端整路径探测；客户端仍遵守入口单次有界测量约束。
@@ -101,12 +104,16 @@ control peer RPC 地址、节点的其他 role 入口或 DNS 临时发现的 URL
 | 8 | **端点身份稳定，物理地址可轮换。** 客户端选择逻辑 endpoint，不把端口代次当新出口。 |
 | 9 | **数据面离线自治。** 无 quorum、所有控制端不可达或新 view 无效时保留 last-known-good。 |
 | 10 | **恢复必须显式留下新 epoch。** 丢失 quorum 后不得静默删成员、降门槛或重置 revision。 |
+| 11 | **公开面与控制面隔离。** Nginx 只给 fake website 和不可变 distribution；Enrollment/control/config/report 只走 Loom 私网。 |
+| 12 | **首次入网双层认证。** 外层 capability 只开受限隧道，内层 TLS 才承载 token、CSR 与 Keystore PoP。 |
 
 ---
 
 ## 4. Device 能力与控制角色
 
-目标 SSOT 对 `access/server` 仍使用“角色块存在即拥有能力”；`control` 块只展示
+control 候选必须先按 §11 完成 Enrollment、持有有效 Device identity，并已能通过永久 Loom
+overlay 到达现有 ControlSet；不能在公网 bootstrap 阶段直接成为 voter。目标 SSOT 对
+`access/server` 仍使用“角色块存在即拥有能力”；`control` 块只展示
 `FinalControlSet` 已授予的 capability projection，不是管理员可直接生效的普通字段：
 
 ```yaml
@@ -197,18 +204,24 @@ Device 仍可作为镜像、观测副本或 learner。这个建议不进入协�
 | control membership key | 每个 voter | ControlSet 联合迁移 | 签普通配置或 Device 报告 |
 | control config key | 每个 voter | 对 committed head/view 投票签名 | 充当公开 TLS 或 admin 身份 |
 | control enrollment key | 每个 voter | 对已提交 claim/CSR 作独立 Enrollment approval | 独自签发成员资格或替代 config QC |
-| control peer cert | control Device | 控制复制、选举、内部 RPC mTLS | 自动获得人类 admin 权限 |
-| admin cert | 人类/自动化管理员 | 向已信 certified `EndpointSet(role=control_api)` 内的入口提交有范围的操作 | 参与 controller quorum |
+| bootstrap issuer key | ControlSet 授权的有界 signer | 从已提交 Invite 派生短期 bootstrap tunnel capability | 签正式 Device 身份或扩大 capability ACL |
+| control peer cert | control Device | overlay 内控制复制、选举、内部 RPC mTLS | 自动获得人类 admin 权限或公开服务 |
+| admin cert | 人类/自动化管理员 | 通过私有 overlay control API 提交有范围的操作 | 参与 controller quorum或访问公网管理入口 |
 | Device identity cert | 每台 Device | 报告、配置读取、节点声明 | 管理 SSOT 或成为 voter |
 | internal CA | 离线根 + 受约束在线中间 CA | 签 control/admin/Device profile | 配置发布投票 |
-| public WebPKI cert | 公开入口所在 Device | HTTPS/Hysteria2/Trojan 传输身份 | 成员资格、配置真实性 |
+| public WebPKI cert | active forward server | Nginx/Hysteria2/Trojan 传输身份 | Enrollment 应用认证、成员资格、配置真实性 |
 | application code-signing key | 发布流水线 | APK/MSI/EXE 来源与升级连续性 | 签 SSOT 或 Enrollment |
 
-不同证书 profile 使用不同 EKU、SAN、issuer policy 和私钥。验证器不得再用
+不同证书 profile 使用不同 EKU、SAN、issuer policy 和私钥。Control peer、admin、Device 与
+Enrollment 服务的 key 必须彼此隔离，也不得复用公开 TLS key。Nginx/HY2/Trojan 的公网 listener
+始终分别建模；同一 FQDN 可出现在多个 listener，推荐分别持钥。若受限实现共享同一 public
+WebPKI cert/key，每个 transport profile 必须显式引用同一 exact artifact 并共同轮换，不能靠本地
+文件名暗中复用。验证器不得再用
 `ExtKeyUsageAny` 把角色边界抹平。公开 ACME 证书本身不是配置 authority；但服务端 TLS
 SPKI 发生变化时，必须先通过 quorum 把新旧 pin overlap 写入 EndpointSet/邀请 checkpoint，
 不能把普通 WebPKI 续签当成静默替换服务身份。客户端同时验证 hostname/WebPKI、签名端点
-中的身份 pin 和配置 QC。
+中的身份 pin 和配置 QC。私有 control/Enrollment 服务使用 internal CA 与 overlay IP SAN
+（或经 certified directory 绑定的固定 SPKI），不得关闭 hostname/IP 验证来迁就 IP URL。
 
 每个 voter 持有独立 Ed25519 密钥。首版 quorum certificate 保留按 `signer_id` 排序的
 多份普通签名，便于 Go、Android 和 Windows 审计；阈值/聚合签名可以后置，不能改变签名
@@ -248,7 +261,8 @@ online intermediate 轮换使用 `stage → issue/verify → overlap → revoke 
 才提交旧 issuer 的撤销与 CRL/registry 水位。admin key replacement 同样先增加新主体、验证
 持钥，再撤旧主体，禁止用节点本地运维 cookie 绕过 ACL。
 
-`admin_acl_root` 与 `ca_profile_root` 不是 opaque 本地数据库摘要。首个 v2 profile 固定以下 exact
+`admin_acl_root`、`ca_profile_root` 与 `bootstrap_issuer_registry_root` 不是 opaque 本地数据库摘要。
+首个 v2 profile 固定以下 exact
 preimage；它们只在 control-private/operator API 复制，公开 head/recovery/bootstrap 仅携 roots：
 
 ```text
@@ -296,8 +310,41 @@ AuthorityRegistryPrivateObjectV1
   admin_authorizations[]                   # 每 ID 最新代，按 authorization_id 排序
   admin_acl_root
   admin_certificate_profiles[]             # 按 profile_id 排序
-  device_certificate_profile_states[]      # §11.2 DeviceCertificateProfileStateV1，按 profile_id 排序
+  device_certificate_profile_states[]      # DeviceCertificateProfileStateV1，按 profile_id 排序
   ca_profile_root
+  bootstrap_issuer_authorizations[]        # 每 authorization_id 最新代，按 ID 排序
+  bootstrap_issuer_registry_root
+
+DeviceCertificateProfileRefV1
+  profile_id, generation
+  device_certificate_profile_intent_hash, device_certificate_profile_state_hash
+
+IssuanceLogCoordinateV1
+  recovery_epoch, raft_index
+
+DeviceCertificateProfileIntentV1
+  schema = 1, cluster_id, profile_id, generation
+  expected_previous_profile_state_hash?
+  target_status                            # staged | active | retired | revoked
+  issuer_id, issuer_generation, issuer_fencing_epoch
+  issuance_not_before, issuance_not_after
+  revocation_reason?                       # issuer_compromise | administrative
+  profile_kind = "loom-device-x509-v1"
+  issuer_certificate_der, issuer_certificate_hash
+  issuer_chain_der[], issuer_chain_hash, issuer_key_artifact_hash
+  allowed_platforms[], allowed_responsibilities[]
+  validity_seconds, allowed_subject_key_algorithm = "p256"
+  signature_algorithm = "ed25519", subject_mode = "empty"
+  san_uri_prefix, key_usage_bits[]
+  basic_constraints_ca = false
+  required_eku_oids[], required_policy_oids[], extension_order_oids[]
+
+DeviceCertificateProfileStateV1
+  schema = 1, cluster_id, profile_id, generation
+  profile_intent: DeviceCertificateProfileIntentV1
+  device_certificate_profile_intent_hash
+  status, status_changed_at
+  issuance_cutoff?                         # terminal state 必需
 ```
 
 摘要固定为：
@@ -312,6 +359,12 @@ admin_certificate_profile_hash = H(frame(
 admin_authorization_hash = H(frame(
   "loom-admin-authorization-v1", JCS(AdminAuthorizationV1)
 ))
+device_certificate_profile_intent_hash = H(frame(
+  "loom-device-certificate-profile-intent-v1", JCS(DeviceCertificateProfileIntentV1)
+))
+device_certificate_profile_state_hash = H(frame(
+  "loom-device-certificate-profile-state-v1", JCS(DeviceCertificateProfileStateV1)
+))
 authority_registry_private_object_hash = H(frame(
   "loom-authority-registry-private-object-v1", JCS(AuthorityRegistryPrivateObjectV1)
 ))
@@ -324,6 +377,9 @@ authority_registry_private_object_hash = H(frame(
 `JCS({schema:1,issuer_chain_der})))`；证书 digest 是
 `H(frame("loom-admin-certificate-der-v1",raw_der))`，key ID 从 leaf DER SPKI 重算。所有 refs、leaf、
 roots 与 private object 都由 exact bytes 重算，不能从裸 ID 或本机 trust store恢复。
+§11.3 的 `bootstrap_issuer_registry_root` 对每个 authorization ID 的最新代
+`BootstrapIssuerAuthorizationLeafV1` 按 ID 排序使用同一 tree；active/revoked 代均必须进 root，
+不得通过删除 leaf 隐藏撤销。
 其中 admin leaf 的 `profile_hash` 是 `admin_certificate_profile_hash`；Device leaf 的 `profile_hash`
 是 reducer 派生的 `device_certificate_profile_state_hash`，并由 state 内嵌 intent 重算另一层 intent
 hash。两个 variant 不得互换摘要 domain。
@@ -372,7 +428,7 @@ fence 即使仍能产生密码学签名，也不得产生 cutoff 后的新 issua
 或创建新 Device；retired 前已满足上述 cutoff/approval 条件的证书仍可验证，只有 revoked 会使该
 issuer/profile 的既有证书失效。多个
 profile 可以同时 active 以完成 overlap，但 enrollment intent 必须显式引用其中一份 exact ref，不能
-由 leader 按“最合适”选择。`allowed_platforms[]` 按 §11.1 platform enum、
+由 leader 按“最合适”选择。`allowed_platforms[]` 按 §11.2 platform enum、
 `allowed_responsibilities[]` 按 responsibility enum 排序去重且非空；引用者必须全部落在其 scope。
 
 任一 stage/activate commit 都必须先严格解析 issuer material：`issuer_chain_der[]` 非空、
@@ -390,7 +446,7 @@ PoP/availability/fence，而不能沿用 staged 时的 mutable provider alias。
 
 普通变更的 outer kind 固定为 `upsert_admin_authorization`、`revoke_admin_authorization`、
 `upsert_admin_certificate_profile` 或 `upsert_device_certificate_profile`，payload/hash 分别使用上式或
-§11.2 `device_certificate_profile_intent_hash`；调用者在 base ACL 中还必须具有
+上文 `device_certificate_profile_intent_hash`；调用者在 base ACL 中还必须具有
 对应 capability、outer kind 及 matching scope。reducer 以 expected previous
 state hash 做 CAS，以 candidate Head 的 committed time/recovery epoch/Raft index 派生 profile state，
 选择每 ID 最新代并重算两个 root；同一 head 内先按 operation ID 应用全部已授权操作，再计算 root。
@@ -624,11 +680,13 @@ artifact-binding hash，exact ref/recipient policy 只在 control-private bindin
 `loom://` 携带同一有界 bootstrap descriptor，加入文件可再
 内嵌无 token 的完整 proof bundle。服务端只能在邀请 certified 后由授权
 invite-delivery renderer 解封，并通过一次性创建响应输出 token；此后明文只存在
-用户持有的 descriptor/QR/加入文件/URI 和该事务 `retry_not_after` 前的 exact
-claim/retry body，绝不进入 Raft/CRDT/SSOT、URL/header/cookie 或复制日志。邀请
+用户持有的 descriptor/QR/加入文件/URI，以及自动重试窗口内的 exact claim body；claim 已 commit
+后可为 §11.3 的管理员授权 resume 保留到事务 `retry_not_after`，但过期 capability 本身不因此
+续期。token 明文绝不进入 Raft/CRDT/SSOT、URL/header/cookie 或复制日志。邀请
 certified 前不得输出任一可消费载体。ACME nonce/order URL 等临时 provider 值可以在 order intent
 certified 后由 executor 取得，但必须立即封装为 purpose=`acme_order_state` 的 exact artifact，并在
-任何 DNS/安装/cleanup 副作用前提交 §12.4 private provider-state object；不能只留进程内 handle。
+任何 DNS/安装/cleanup 副作用前在 §15 的外部副作用账本中提交 private provider-state object；
+不能只留进程内 handle。
 
 每个 ref、policy、PoP 与 receipt 的唯一内容身份固定为：
 
@@ -653,8 +711,9 @@ hash 从同时交付的 receipt 重算。ref 的 policy/proof/root 必须分别�
 重复、过期或 fault-domain 不足都在包含 ref 的 proposal commit 前失败关闭。
 
 所有写作 `credential_artifact_hash(es)` 或 `key_artifact_hash` 的 v2 exact 字段都必须解析到本节
-定义的完整 immutable ref 并重算该 hash；invite 的 `token_artifact_binding_hash` 则先解析 §11.1
-private binding，再从中解析同一类完整 token ref。字段名不会创造第二种 secret-ref 摘要算法。
+定义的完整 immutable ref 并重算该 hash；invite 的 `token_artifact_binding_hash` 则先解析
+control-private InviteTokenArtifactBindingV2，再从中解析同一类完整 token ref。字段名不会创造
+第二种 secret-ref 摘要算法；binding 的目标 wire 见 §11.2。
 
 ---
 
@@ -723,8 +782,9 @@ ControlOperationLeafV1
 ```
 
 只纳入该 head 已按序 apply 的 canonical operation objects；通常是 admin-signed
-`ControlOperationV1`，两个非 admin variant 仅为 §11.2 明确定义的 token-authorized
-`EnrollmentClaimOperationV1` 与 approval-QC-authorized `EnrollmentCompletionOperationV1`。每个 leaf
+`ControlOperationV1`，三个非 admin variant 仅为 §11.4 明确定义的 admission-QC-authorized
+`EnrollmentClaimOperationV2`、CA-authorized `EnrollmentProvisionalIssuanceOperationV1` 与
+approval-QC-authorized `EnrollmentCompletionOperationV2`。每个 leaf
 的 `object_id` 按其 exact variant/domain 重算，operation ID
 从对应 body 取得。leaf 按规范化 `operation_id` UTF-8 bytes 升序，跨 variant 重复 ID 同样拒绝；
 `LeafHash=SHA-256(0x00 || JCS(ControlOperationLeafV1))`，内部节点为
@@ -782,7 +842,7 @@ HeadEntryPayloadV2
   control_revision              # 由 committed raft_index 按 wire profile 确定，禁止另行分配
   parent_head_hash
   operation_root, snapshot_hash, effective_ssot_hash, device_views_root
-  admin_acl_root, ca_profile_root
+  admin_acl_root, ca_profile_root, bootstrap_issuer_registry_root
   render_contract_version, min_reader_version
   committed_logical_time, max_clock_skew_seconds
   transition_context            # 按 head_kind 选择本文后续章节定义的 exact tagged object
@@ -848,7 +908,8 @@ HeadReplicationAttestationBodyV1
   raft_term, raft_index, previous_log_entry_hash, control_revision
   entry_hash, head_hash, parent_head_hash, transition_proof_hash
   operation_root, snapshot_hash, effective_ssot_hash, device_views_root
-  admin_acl_root, ca_profile_root, render_contract_version, min_reader_version
+  admin_acl_root, ca_profile_root, bootstrap_issuer_registry_root
+  render_contract_version, min_reader_version
   committed_logical_time, max_clock_skew_seconds
 
 JointConfigReplicationQCV1
@@ -889,7 +950,8 @@ Raft 坐标、membership proof 与 `joint_entry_hash` 必须和 `JointControlSet
 
 稳定配置收齐 `q(N)` 份，joint 配置收齐 old/new 两边各自多数，才组成对外 QC。因此可能短暂
 存在 `committed_not_certified`：它已经进入内部状态机，
-但不得发布为 mutable current、驱动外部副作用或返回“已生效”；客户端继续 LKG。QC 是对
+但不得由 private API 返回为 current、发布为可引用的 immutable signed head、驱动外部副作用或
+返回“已生效”；客户端继续 LKG。QC 是对
 “Raft 已提交且 quorum 已复算”的证明，不是 Raft 投票消息，也不能反向提交日志。
 
 未被 Raft committed 的日志后缀可在更高 term 按 Raft 规则覆盖；不存在永久占用某个 revision
@@ -908,8 +970,9 @@ view change、成员迁移和可机检安全证明；不能只实现 parent/hash
 节点不得批准新邀请、证书或租约，但可以读取旧状态并维持 LKG。
 
 首版 `max_clock_skew_seconds` 是 HeadEntry/QC 必签的 0..300 整数秒；不能用浮点、duration 字符串或
-本地默认值。未入网客户端在 proof GET 前使用 descriptor context 中的值但仍硬截断到 300 秒，
-下载后必须确认它等于 certified base/record head；不等即拒绝并且不发送 token。
+本地默认值。未入网客户端在下载 catalog/proof 和建立 tunnel 前使用 descriptor context 中的值，
+但仍硬截断到 300 秒；下载后必须确认它等于 certified base/record head，不等即拒绝并且不发送
+capability 或 token。
 
 租约同时绑定 Raft term/log index 和有界墙钟期限；executor 必须在 deadline 前预留
 `max_clock_skew + request_timeout` 安全裕量，跨过安全截止即停止发新请求。墙钟只帮助停止
@@ -922,8 +985,8 @@ view change、成员迁移和可机检安全证明；不能只实现 parent/hash
 ### 8.1 写路径
 
 ```text
-admin → 已信 certified EndpointSet(role=control_api) 内的任一入口
-      → 验精确 URL/hostname/WebPKI/SPKI pin、admin cert、权限、request id、expected head
+admin → 已信 private ControlServiceDirectory 中的任一 overlay control_api
+      → 验 internal CA、overlay IP SAN/固定 SPKI、admin cert、权限、request id、expected head
       → 本地保存并 CRDT 广播 proposal
       → leader/协调者选择 parent，所有 voter 独立校验
       → Raft durable commit
@@ -932,7 +995,8 @@ admin → 已信 certified EndpointSet(role=control_api) 内的任一入口
       → immutable-artifact renderer、publisher、reconciler 分别收敛
 ```
 
-接受请求的节点不必是 leader；它可以转发，也可以返回稳定 operation ID 让客户端轮询。
+接受请求的 control 不必是 leader；它可经 control peer mTLS 转发，也可返回稳定 operation ID
+让客户端轮询。该转发不经过公网 forward server 或 Nginx。
 同步成功的 HTTP `200/201` 只能表示已经取得 QC。仅写入本地/CRDT 时显示 `pending`；已经
 Raft commit 但尚未收齐 attestation 时显示 `committed_not_certified`，可用 `202 + operation ID`
 轮询，但不得声称已生效。无法形成 quorum 返回可重试错误，不能把少数派草稿包装成“稍后会发布”。
@@ -972,6 +1036,10 @@ ControlSet 不是若干实现自行解释的 Device ID 列表。公开 authority
 必须拆开：公开 transition、邀请 proof 与静态镜像只携不暴露 Device/拓扑的 ControlSet，完整 peer
 目录只在已认证 control-to-control 通道复制。首版 wire 使用以下 exact 对象；字段缺失、额外字段、
 未排序数组、重复 member/key/endpoint 或同一公钥跨用途复用都必须拒绝：
+
+加入流程的前置条件是候选已经是 active Device，持有 Device identity，安装过合法 LKG view，且能
+经永久 Loom overlay 到达至少一个现有 control。管理员不能把二维码中的未入网身份直接写进
+ControlSet，也不能用公网 FQDN、Nginx 或 bootstrap capability 承载 Raft learner 同步。
 
 ```text
 ControlMemberV1
@@ -1088,7 +1156,7 @@ profile 的 mTLS scheme。`fault_domain` 只用于部署风险/放置检查，�
 验证 authority 只需要公开 ControlSet 与被 authority 签过的 directory hash，不得请求其 preimage；
 参与安装/投票的 control 必须先通过私有通道取得完整 exact directory 并重算 hash，否则拒绝
 membership transition。目录内容进入 effective SSOT 的私有投影，绝不进入 public mirror、QR、
-InviteProofBundle 或 per-Device view。
+InviteProofBundleV2 或 per-Device view。
 每个 `peer_identity_artifact_hash` 必须解析到 §6.2 purpose=`control_peer_identity` 的 exact
 `SecretArtifactRefV2`，owner 等于 directory Device、公开 SPKI hash相等且 PoP/availability 满足；
 其中 `peer_identity_spki_hash=H(frame("loom-control-peer-identity-spki-v1",raw_spki_der))`，
@@ -1220,7 +1288,8 @@ Final membership transition 不授权夹带普通业务、ACL、CA 或 reader-po
 reducer 从 `parent_certified_head_hash` 的 materialized state 出发，只把 private operator
 `control` projection 替换为 new public ControlSet hash、matching directory hash 与新 control epoch，
 其余业务对象逐字节保持；随后按同一 render contract 重算 snapshot/effective SSOT hash。因此 Final
-payload 的 `operation_root/device_views_root/admin_acl_root/ca_profile_root/render_contract_version/`
+payload 的 `operation_root/device_views_root/admin_acl_root/ca_profile_root/bootstrap_issuer_registry_root/`
+`render_contract_version/`
 `min_reader_version/max_clock_skew_seconds` 必须逐字节继承 parent，`snapshot_hash` 与
 `effective_ssot_hash` 必须等于上述唯一 reducer 输出，不能由 sender 自报。`committed_logical_time`
 只能按 §7.5 单调前进，`control_revision` 仍由 Final 的 raft index 映射；只有 authority 字段、
@@ -1418,6 +1487,7 @@ RecoveryBootstrapStatementV1
   initial_control_epoch = 0, initial_control_set_hash, initial_control_peer_directory_hash
   initial_control_key_pop_root
   initial_admin_acl_hash, internal_ca_profile_and_anchor_hash
+  initial_bootstrap_issuer_registry_root
 ```
 
 失去 quorum 的恢复使用下述 `RecoveryTransitionBodyV1` 全部字段并取
@@ -1466,6 +1536,7 @@ RecoveryTransitionBodyV1             # signature-free RecoveryStatementBodyV1 �
   new_control_epoch = 0
   new_control_set_hash, new_control_peer_directory_hash, new_control_key_pop_root
   initial_admin_acl_hash, internal_ca_profile_and_anchor_hash
+  initial_bootstrap_issuer_registry_root
   new_lineage_genesis_payload_hash
   reason, issued_at
 
@@ -1481,6 +1552,7 @@ RecoveryGenesisPayloadV1              # 不含 statement hash、Raft envelope �
   new_control_key_pop_root
   parent_recovery_head_hash
   initial_admin_acl_hash, internal_ca_profile_and_anchor_hash
+  initial_bootstrap_issuer_registry_root
   operation_root, snapshot_hash, effective_ssot_hash, device_views_root
   render_contract_version, min_reader_version, max_clock_skew_seconds
 
@@ -1516,7 +1588,7 @@ entry hash、Raft term/index 或 QC，因而不存在 transition ↔ genesis 自
 校验 transition 时必须逐字节确认 payload 的 `cluster_id/new_recovery_epoch/`
 `new_recovery_policy_hash/new_policy_pop_root/new_control_epoch/new_control_set_hash/`
 `new_control_peer_directory_hash/new_control_key_pop_root/initial_admin_acl_hash/`
-`internal_ca_profile_and_anchor_hash` 与 transition 同名承诺一致，且
+`internal_ca_profile_and_anchor_hash/initial_bootstrap_issuer_registry_root` 与 transition 同名承诺一致，且
 `payload.parent_recovery_head_hash == transition.previous_trusted_head_hash`；任一不等即拒绝，不能
 让 hash 引用掩盖字段别名或 continuity 差异。
 `RecoveryTransitionProofV1` 只包含上列 signature-free body、导出的 statement hash 和按
@@ -1528,6 +1600,7 @@ Genesis head 的同名字段必须等于该值。其 `HeadEntryPayloadV2` 必须
 三元组与 `operation_root/snapshot_hash/effective_ssot_hash/device_views_root` 必须与
 `RecoveryGenesisPayloadV1` 逐字段一致，`admin_acl_root == initial_admin_acl_hash`、
 `ca_profile_root == internal_ca_profile_and_anchor_hash`，
+`bootstrap_issuer_registry_root == initial_bootstrap_issuer_registry_root`，
 `render_contract_version/min_reader_version/max_clock_skew_seconds` 也逐字段相等，并包含
 `committed_logical_time`；transition context 必须精确等于上列 `RecoveryGenesisContextV1`。包含
 Genesis 与 QC 的完整 recovery delivery bundle 另有外层 content hash，但该 hash 不写回 Genesis。
@@ -1681,7 +1754,8 @@ commit、apply/recompute 和 post-commit QC。Activation 后的首份 Device vie
 Activation 不授权夹带 ordinary state。确定性 reducer 从 `last_certified_head_hash` materialization
 只替换 recovery policy/epoch/statement projection，并把 control epoch 重置为 0；业务对象、private
 peer directory bytes 与 ControlSet 不变，再按同一 render contract 重算 snapshot/effective SSOT hash。
-payload 的 `operation_root/device_views_root/admin_acl_root/ca_profile_root/render_contract_version/`
+payload 的 `operation_root/device_views_root/admin_acl_root/ca_profile_root/bootstrap_issuer_registry_root/`
+`render_contract_version/`
 `min_reader_version/max_clock_skew_seconds` 必须逐字节继承 last head，`snapshot_hash` 与
 `effective_ssot_hash` 必须等于该唯一 reducer 输出；logical time/raft index/revision 按 §7.4～§7.5
 推进。其他字段变化一律拒绝，普通操作必须等 Activation certified 后再提交。
@@ -1732,7 +1806,9 @@ emergency recovery，并明确缺少 control QC；旧 threshold 已丢失时，�
 
 ### 10.1 signed current v2
 
-目标 mutable current 不另造一套扁平但字段不全的 head。首版 exact envelope 为：
+目标 signed current 对象不另造一套扁平但字段不全的 head。私有 Device API 可返回当前对象；
+公开 mirror 只能按其内容 hash 保存不可变副本，不能提供未被 descriptor/认证响应约束的动态
+latest locator。首版 exact envelope 为：
 
 ```text
 SignedCurrentV2
@@ -1764,18 +1840,17 @@ DeviceConfigArtifactRefV1
 
 DeviceEndpointBundleV1
   schema = 1, cluster_id, device_id, device_generation
-  endpoint_sets[]                      # DeviceEndpointSetBindingV1；按 (role,endpoint_set_id) 排序
+  data_ingress_sets[]                  # DeviceDataIngressBindingV1；按 endpoint_set_id 排序
 
-DeviceEndpointSetBindingV1
-  role                                 # §13 role enum
-  endpoint_set: EndpointSetV2, endpoint_set_hash
+DeviceDataIngressBindingV1
+  endpoint_set_id
+  endpoint_set: DataIngressEndpointSetV2, endpoint_set_hash
 
 DeviceActiveViewV1
   identity_spki_hash
   membership: EnrollmentMembershipV1, membership_hash
   responsibilities: EnrollmentResponsibilitiesV1, responsibilities_hash
   grants: EnrollmentDestinationGrantsV1, grants_hash
-  direction: EnrollmentDirectionV1, direction_hash
   endpoint_bundle: DeviceEndpointBundleV1, endpoint_bundle_hash
   config_artifact_refs[]               # 按 artifact_id/generation 排序去重
   secret_artifact_refs_root
@@ -1796,13 +1871,13 @@ DeviceViewLeafV2
   endpoint_set_hash                    # active 时等于 endpoint_bundle_hash；tombstone 为 EMPTY_HASH_V1
   min_reader_version
 
-DeviceViewEnvelopeV2                   # 只由 authenticated role=device_config 返回
+DeviceViewEnvelopeV2                   # 只由 overlay 内 Device mTLS device_config 返回
   schema = 2
   payload: DeviceViewPayloadV2
   leaf: DeviceViewLeafV2
   leaf_index, tree_size, audit_path[]
   signed_current: SignedCurrentV2
-  secret_artifact_refs[]?              # active view root 的 exact private refs；按 §11.2 排序
+  secret_artifact_refs[]?              # active view root 的 exact private refs；按 §6.2 排序
 ```
 
 摘要固定为：
@@ -1823,11 +1898,11 @@ device_view_envelope_hash = H(frame(
 `payload_hash == device_view_hash`；`previous_view_hash` 指向上一已接受 generation 的该摘要，首代为
 `EMPTY_HASH_V1`。`device_leaf_hash` 是 RFC 6962
 `SHA-256(0x00 || JCS(DeviceViewLeafV2))`，不是另一种 payload hash；二者不能混用。payload 与 leaf
-的 cluster/device/generation/state 必须相等，active/tombstone tag 与唯一 variant 一致。active 的四个
-授权对象及 hash 必须从 effective state 重算，Membership 必须已完成 §11.2 completion；endpoint
-bundle 的每个 EndpointSet exact bytes/hash/role 必须满足 grants 和职责且数组无缺漏，不能只返回
-一个裸 endpoint hash；binding hash 必须等于 §13 `EndpointSetV2.digest`，且 set 内所有 endpoint role
-都等于 binding role。Service/route/component 的源依赖索引只是 reducer 的失效重算优化，不进入
+的 cluster/device/generation/state 必须相等，active/tombstone tag 与唯一 variant 一致。active 的三个
+授权对象及 hash 必须从 effective state 重算，Membership 必须已完成 §11.4 completion；endpoint
+bundle 的每个 DataIngressEndpointSet exact bytes/hash 必须满足 grants 和职责且数组无缺漏，不能只返回
+一个裸 endpoint hash；binding hash 必须等于 §13 对该 set 的规范摘要。distribution/bootstrap set
+不进入正式 Device 授权 bundle，private ControlServiceDirectory 也不在此公开投影。Service/route/component 的源依赖索引只是 reducer 的失效重算优化，不进入
 客户端 wire；其已授权结果必须体现在 grants、EndpointSet 与可按内容 hash 验证的 config artifact，
 不能用未定义的 generic dependency ref 代替。config artifact 的
 raw bytes 长度/hash/media type/platform/render contract 必须与 ref 相等。
@@ -1885,7 +1960,8 @@ InitialV2HeadPayloadV1                 # 先生成；不含 transition proof/has
   schema = 1, cluster_id, recovery_epoch, recovery_statement_hash, recovery_policy_hash
   control_epoch = 0, control_set_hash, control_peer_directory_hash, control_revision = 1
   snapshot_hash, operation_root, effective_ssot_hash, device_views_root
-  admin_acl_root, ca_profile_root, render_contract_version, min_reader_version
+  admin_acl_root, ca_profile_root, bootstrap_issuer_registry_root
+  render_contract_version, min_reader_version
   max_clock_skew_seconds
 
 BootstrapTransitionBodyV1ToV2          # signature-free；再 canonicalize
@@ -1896,6 +1972,7 @@ BootstrapTransitionBodyV1ToV2          # signature-free；再 canonicalize
   initial_recovery_key_pop_root
   initial_control_set_hash, initial_control_peer_directory_hash, initial_control_key_pop_root
   initial_admin_acl_hash, internal_ca_profile_and_anchor_hash
+  initial_bootstrap_issuer_registry_root
   initial_v2_head_payload_hash, initial_v2_raft_index = 1, minimum_reader_version
 
 BootstrapTransitionProofV1ToV2
@@ -1968,11 +2045,11 @@ bootstrap 的重复承诺必须逐字段相等：statement 的
 `cluster_id/recovery_epoch=0/recovery_policy_hash/initial_recovery_key_pop_root/`
 `initial_control_epoch=0/initial_control_set_hash/initial_control_peer_directory_hash/`
 `initial_control_key_pop_root/initial_admin_acl_hash/`
-`internal_ca_profile_and_anchor_hash` 先导出 body 所带的
+`internal_ca_profile_and_anchor_hash/initial_bootstrap_issuer_registry_root` 先导出 body 所带的
 `recovery_statement_hash`；body 的 `cluster_id/initial_control_set_hash/`
 `initial_control_peer_directory_hash/initial_admin_acl_hash/`
-`internal_ca_profile_and_anchor_hash/minimum_reader_version` 必须分别等于 initial payload/head 的
-`cluster_id/control_set_hash/control_peer_directory_hash/admin_acl_root/ca_profile_root/min_reader_version`，initial payload 的
+`internal_ca_profile_and_anchor_hash/initial_bootstrap_issuer_registry_root/minimum_reader_version` 必须分别等于 initial payload/head 的
+`cluster_id/control_set_hash/control_peer_directory_hash/admin_acl_root/ca_profile_root/bootstrap_issuer_registry_root/min_reader_version`，initial payload 的
 recovery 三元组也必须等于 statement 及其导出 hash。任何 set A/statement 配 head B 的组合都拒绝。
 此外必须重算 `initial_v2_head_payload_hash`，并确认它同时等于
 `BootstrapTransitionBodyV1ToV2.initial_v2_head_payload_hash` 与
@@ -2016,3007 +2093,1279 @@ floor **原子耐久写入**。latch 前只可接受满足 BootstrapTransition �
 ### 10.4 镜像
 
 静态镜像仍然不可信并保留多地址并行拉取。它们只复制公开的 immutable
-bootstrap/recovery/ControlSet transition、QC、通用内容寻址制品和 mutable v2 head；不得复制
-per-Device view、leaf/proof、私有拓扑或 artifact ref。后者只由 `EndpointSet(role=device_config)`
-入口在 Device 身份认证后返回。control 副本内部以内容寻址复制 view 不等于授权公共 publisher
-输出它。不同镜像短暂落后是正常；客户端选最高合法连续 head。DNS、镜像顺序和 RTT 只影响
-从哪里下载，不能覆盖签名、floor 或 ControlSet。
+bootstrap/recovery/ControlSet transition、QC、无 token 的 bootstrap endpoint catalog、通用内容
+寻址制品和按 hash 寻址的 signed head；不得复制 Invite token、bootstrap capability、
+DeviceEnrollmentIntent/opening、per-Device view/leaf/proof、私有拓扑或 secret artifact ref。公开
+Invite proof 只能携带加盐 hiding commitment 及其在 certified head 中的包含证明；完整
+intent/opening 只能在相应 Loom 私网身份通道内返回。control
+副本内部以内容寻址复制 view 不等于授权公共 publisher 输出它。不同镜像短暂落后是正常；客户端
+只获取 QR 或已认证 private API 精确引用的 hash，不通过列目录猜“最新”。DNS、镜像顺序、网页探测和 RTT 只影响从哪里下载，不能覆盖签名、floor、
+ControlSet，也不能替客户端选择实际 bootstrap/data tunnel。
+
+每个 active forward server 的公网 Nginx 只提供 fake website 根路径与上述静态 distribution；
+任何动态 claim、control、config、report handler 或反向代理 location 都是配置错误并必须 fail closed。
 
 publisher 不再是某台中控上的 authority。任一 control 副本都可 materialize 相同字节；
-只有带 QC 的 head 能更新 mutable current。发布 executor 用租约避免无意义并发，失败后
+只有带 QC 的 head 才能被 private API 作为 current 返回并把相应 immutable object 发布到镜像。
+发布 executor 用租约避免无意义并发，失败后
 任何合格副本都可接管。
 
 ---
 
 ## 11. Enrollment、邀请与报告
 
-### 11.1 邀请 v2
+本章定义新 Device 第一次进入 Loom 的唯一目标流程。**Enrollment 是私有控制服务**；
+公网 Nginx 只提供 fake website 和无秘密、内容寻址的静态 distribution。公开入口不得接收、
+终止、检查或反向代理 claim。尚无 Device identity 的客户端通过受限 bootstrap tunnel 到达
+overlay 内的 Enrollment 服务；取得正式身份后，bootstrap 权限立即失效。
 
-管理员可以连接已信 certified `EndpointSet(role=control_api)` 内的任一入口创建设备；
-客户端 claim 则只能使用后续 `InviteBootstrapDescriptorV2` 中的有界
-`EndpointSet(role=enroll)` seeds。
-复制/提交的记录与一次性交付 envelope 必须
-分开；Raft/CRDT/SSOT 永远不含 bearer token 明文：
+### 11.1 边界与端到端流程
 
-```text
+角色严格分为四层：
+
+| 层 | 公开性 | 功能 | 不允许 |
+|---|---|---|---|
+| distribution mirror | 公网 HTTPS | fake website、按 hash 下载签名制品和 bootstrap catalog | token、capability、claim、control/config/report |
+| bootstrap ingress | 公网 HY2；正式版另有 Trojan/TLS TCP | 验短期 capability，建立限路由临时隧道 | 解密 Enrollment 内层 TLS、访问任意 overlay/Internet |
+| private Enrollment | Loom overlay | 验 internal TLS、token、CSR、Keystore PoP，提交一次性 claim | 公网监听、接受未经 tunnel ACL 的来源 |
+| steady-state Device API | Loom overlay | Device mTLS 下提供 view/config/report | 借用 bootstrap capability 或公开 Nginx |
+
+规范流程：
+
+~~~text
+admin 已在 Loom 内
+  → 通过 private control_api 创建 Invite
+  → Raft commit + apply + QC，产生一次性 token commitment
+  → 生成紧凑 QR / loom:// descriptor
+
+未入网客户端
+  → 离线验证 descriptor 的最小信任材料
+  → 从 descriptor 中 2–3 个 distribution mirrors 下载 immutable catalog/proof
+  → 验 hash、QC、有效期、lineage 与 anti-rollback floor
+  → 在当前底层网络实测 catalog 中的 HY2 bootstrap ingress
+  → UDP 全阻断且正式 TCP fallback 已发布时，实测 Trojan/TLS ingress
+  → 向最佳可达入口出示短期 bootstrap tunnel capability
+  → 得到仅通往 private Enrollment 服务的临时 tunnel
+  → 在 tunnel 内验证 internal TLS server identity
+  → 不发 token 地取得 private intent opening，重算 public hiding commitment
+  → 生成/使用设备本地不可导出的 Keystore key，固定 stable claim core
+  → 取得 server-nonce challenge，提交 token + claim core + detached PoP
+  → enrollment voter 多数形成 token-validation admission QC，Raft CAS 预留该 core
+  → 受约束 CA 产生并耐久登记 provisional issuance
+  → enrollment voter 验证 issuance 后形成 approval QC
+  → approval-QC-authorized completion 原子消费 Invite 并激活 Device identity/view
+  → 客户端原子安装正式身份和 LKG，关闭并擦除 bootstrap 状态
+~~~
+
+网页 HTTPS RTT、服务器汇总测量和二维码生成端的观测只能决定 mirror 提示顺序，不能替代
+客户端当前网络对真实 HY2/Trojan transport 的探测。下载 mirror 与建立 tunnel 的 ingress
+可以是不同服务器。
+
+首版 bootstrap transport 是 HY2。WG 不作为首版 bootstrap：它要求在正式 Enrollment 之前
+创建临时 peer、地址和分发状态，会重新形成身份循环。WG 保留为完成 Enrollment 后的永久
+L3/control overlay。schema 必须保留 transport tagged union，以后可增加 WG bootstrap profile，
+但 reader 遇到未实现 transport 必须明确报不支持，不能静默改拨 HY2。
+
+正式版必须提供**独立的** Trojan/TLS TCP fallback，以覆盖完全阻断 UDP 的接入网络。它可以
+通过独立公网地址/端口，或由只做 L4 SNI 分发的前置 listener 与 Nginx 共用 TCP 入口；无论哪种
+部署，Nginx 都不成为 tunnel 或 Enrollment handler，Enrollment 内层 TLS 始终端到端终止在
+private control service。
+
+### 11.2 Invite、catalog 与紧凑二维码
+
+以下对象都使用 §7.1 的 canonical encoding、domain separator 和内容哈希。数组按文中键排序，
+拒绝未知字段、重复 ID、非规范 URL、超限长度和不在 certified parent 中的引用。
+
+~~~text
 InviteIssuancePolicyV2
   schema = 2, cluster_id, policy_id, generation
-  minimum_ttl_seconds, maximum_ttl_seconds
-  maximum_seed_count, maximum_descriptor_bytes
+  minimum_ttl_seconds
+  maximum_ttl_seconds                 # 不得超过 1800
+  maximum_descriptor_bytes
+  maximum_intent_opening_bytes
+  minimum_distribution_mirrors = 2
+  maximum_distribution_mirrors = 3
+  allowed_bootstrap_transports[]      # hysteria2 | trojan_tls；按 enum 排序
+  maximum_initial_capability_ttl_seconds
+  maximum_resume_capability_ttl_seconds
+  maximum_reservation_retry_seconds
+  bootstrap_session_seconds           # 默认 180，最大 300
+  bootstrap_total_bytes               # 默认 8 MiB
+  bootstrap_connection_attempts       # 默认 3
+  bootstrap_max_concurrent_sessions = 1
 
-InviteTokenCommitmentInputV2       # canonical preimage；token 是 32-byte CSPRNG 值
+InviteTokenCommitmentInputV2
   schema = 2, cluster_id, invite_id
-  token                            # 无 padding base64url，解码后必须精确为 32 bytes
-
-InviteEnrollSeedV2                # 只允许从 base head 下已认证 enroll listener 逐字段投影
-  schema = 2, endpoint_id
-  public_endpoint_intent_hash, public_endpoint_intent_generation
-  listener_generation, rotation_operation_hash
-  https_base_url
-  dial_target                     # tagged union：dns_name | ip_literal，恰有一个
-  server_name, webpki_profile_ref: WebPKIProfileRefV1
-  credential_generation, credential_artifact_hashes[], tls_identity_key_id
-  spki_pins[]                     # TlsSpkiPinV1，按 (pin_generation,digest) 排序
-  hint_rank                       # 0..seed_count-1 的唯一整数；只表达创建时提示顺序
-
-InviteDeliveryContextV2            # 不含 token、record/head/QC 或自身 hash
-  schema = 2, cluster_id, invite_id
-  bootstrap_transition_hash
-  min_recovery_epoch, recovery_statement_hash, recovery_policy_hash
-  control_epoch, control_set_hash
-  base_head_hash                   # 创建 intent 的已认证 parent，不是 record_head_hash
-  max_clock_skew_seconds           # 0..300；必须等于 base/record head
-  seed_enroll_endpoints[]          # InviteEnrollSeedV2；按 endpoint_id UTF-8 bytes 排序
-
-CertifiedInviteRecordV2           # Raft/CRDT 中的 canonical 安全关键记录
-  schema = 2, cluster_id, invite_id, record_generation = 1, issued_at, expires_at
-  issuance_policy_hash
-  record_operation_kind           # create_invite | reissue_invite
-  record_operation_id
-  device_intent_hash
-  token_commitment, token_artifact_binding_hash
-  delivery_context: InviteDeliveryContextV2, delivery_context_hash
-
-InviteTokenArtifactBindingV2      # control-private；绝不进入 public proof/QR/mirror
-  schema = 2, cluster_id, invite_id, record_operation_id
-  token_commitment
-  token_artifact_ref: SecretArtifactRefV2
-  plaintext_validation_receipts[] # InviteTokenPlaintextValidationReceiptV1，按 renderer_id 排序
-  plaintext_validation_receipts_root
-
-InviteTokenPlaintextValidationReceiptBodyV1
-  schema = 1, cluster_id, invite_id, record_operation_id
-  renderer_id, renderer_identity_key_id, recipient_key: SealedBlobRecipientKeyRefV1
-  token_commitment, token_secret_artifact_ref_hash, validated_at
-
-InviteTokenPlaintextValidationReceiptV1
-  body: InviteTokenPlaintextValidationReceiptBodyV1
-  renderer_signature: AuthorityProofSignatureV1
-
-InviteLifecycleStateV2            # reducer 输出，不由 sender 直接写
-  schema = 2, cluster_id, invite_id, lifecycle_generation
-  certified_record_hash
-  status                          # available | claim_reserved | consumed | revoked
-  claim_intent_hash?, retry_not_after?, replaced_by_invite_id?
-  last_operation_kind, last_operation_id, last_payload_hash
-
-InviteReissueTransactionV2
-  schema = 2, cluster_id, operation_id
-  old_invite_id, expected_old_record_hash, expected_old_lifecycle_state_hash
-  expected_aborted_enrollment_transaction_state_hash? # 仅 aborted replacement 必需
-  new_device_enrollment_intent: DeviceEnrollmentIntentV1
-  new_certified_record: CertifiedInviteRecordV2
-  reason
-
-InviteRevokeIntentV2
-  schema = 2, cluster_id, operation_id, invite_id
-  expected_record_hash, expected_lifecycle_state_hash, reason
-
-InviteProofBundleV2               # 无 token；可由任一有界 enroll seed 提供
-  schema = 2
-  bootstrap_bundle: BootstrapTransitionBundleV1ToV2
-  authority_transitions[]         # InviteAuthorityTransitionV2，按 lineage 顺序
-  base_head: HeadEntryV2
-  base_head_qc: CertifiedHeadQCV1
-  device_enrollment_intent: DeviceEnrollmentIntentV1
-  certified_record, record_operation       # create_invite 或 reissue_invite exact operation
-  record_head: HeadEntryV2
-  replication_qc: CertifiedHeadQCV1
-  delivery_context
-  record_operation_leaf: ControlOperationLeafV1
-  record_leaf_index, operation_tree_size, operation_audit_path[]
-
-InviteAuthorityTransitionV2       # exact tagged union
-  schema = 2
-  kind                            # control_set | emergency_recovery | recovery_policy_rotation
-  transition                     # 按 kind 恰为对应的 ControlSetTransitionBundleV1 /
-                                 # EmergencyRecoveryBundleV1 / RecoveryPolicyActivationBundleV1
-
-InviteBootstrapDescriptorV2       # QR 与 loom:// 的严格有界 payload
-  schema = 2, cluster_id, invite_id, expires_at
-  token, token_commitment
-  delivery_context, delivery_context_hash
-  proof_bundle_hash
-
-InviteOfflinePackageV2            # .loom-invite 可选完整离线载体
-  schema = 2
-  descriptor: InviteBootstrapDescriptorV2
-  proof_bundle: InviteProofBundleV2
+  token                                # 解码后精确 32 bytes
 
 DeviceEnrollmentIntentV1
   schema = 1, cluster_id, invite_id, device_id
-  platform                          # windows-desktop | android | linux-server
+  platform                            # windows-desktop | android | linux-server
   device_certificate_profile_ref: DeviceCertificateProfileRefV1
-  wrapping_key_profiles[]           # p256-keystore-sign-ecdh-v1 |
-                                    # rsa2048-keystore-sign-decrypt-v1；按下文 preference 排序
+  wrapping_key_profiles[]
   membership: EnrollmentMembershipV1
   responsibilities: EnrollmentResponsibilitiesV1
   grants: EnrollmentDestinationGrantsV1
-  direction: EnrollmentDirectionV1
 
 EnrollmentMembershipV1
   schema = 1, desired_state = "active_on_completion"
 
 EnrollmentResponsibilitiesV1
   schema = 1
-  values[]                          # use_loom | forward | internet_egress，按此 enum 顺序
+  values[]                            # use_loom | forward | internet_egress
 
 EnrollmentDestinationGrantsV1
   schema = 1
-  values[]                          # EnrollmentDestinationGrantV1，按 (kind,target_id) UTF-8 bytes 排序
+  values[]                            # EnrollmentDestinationGrantV1，按 (kind,target_id) 排序
 
 EnrollmentDestinationGrantV1
-  kind                              # service | egress
+  kind                                # service | egress
   target_id
 
-EnrollmentDirectionV1              # exact tagged union
-  kind                              # not_applicable | server_direction
-  not_applicable?                   # exact empty object
-  server_direction?                 # {value: bidirectional | reverse_only | direct_only}
-```
+DeviceEnrollmentIntentOpeningV1       # control-private；只在 inner TLS preflight 返回
+  schema = 1, cluster_id, invite_id
+  device_enrollment_intent: DeviceEnrollmentIntentV1
+  device_enrollment_intent_hash
+  hiding_nonce                        # 32-byte CSPRNG，每个 Invite 唯一
 
-两个承诺都采用 §7.1 的 framing/JCS，精确定义为：
+DeviceEnrollmentIntentCommitmentV1    # public-safe；不含 Device 或授权字段
+  schema = 1, cluster_id, invite_id
+  opening_hash                        # 对 exact opening 的 domain-separated hash
 
-```text
-token_commitment = H(frame(
-  "loom-invite-token-commitment-v2",
-  JCS(InviteTokenCommitmentInputV2)
-))
-invite_issuance_policy_hash = H(frame(
-  "loom-invite-issuance-policy-v2", JCS(InviteIssuancePolicyV2)
-))
-delivery_context_hash = H(frame(
-  "loom-invite-delivery-context-v2",
-  JCS(InviteDeliveryContextV2)
-))
-certified_record_hash = H(frame(
-  "loom-certified-invite-record-v2",
-  JCS(CertifiedInviteRecordV2)
-))
-invite_token_artifact_binding_hash = H(frame(
-  "loom-invite-token-artifact-binding-v2", JCS(InviteTokenArtifactBindingV2)
-))
-invite_token_plaintext_validation_receipt_hash = H(frame(
-  "loom-invite-token-plaintext-validation-receipt-v1",
-  JCS(InviteTokenPlaintextValidationReceiptV1)
-))
-invite_lifecycle_state_hash = H(frame(
-  "loom-invite-lifecycle-state-v2", JCS(InviteLifecycleStateV2)
-))
-invite_reissue_transaction_hash = H(frame(
-  "loom-invite-reissue-transaction-v2", JCS(InviteReissueTransactionV2)
-))
-invite_revoke_intent_hash = H(frame(
-  "loom-invite-revoke-intent-v2", JCS(InviteRevokeIntentV2)
-))
-device_enrollment_intent_hash = H(frame(
-  "loom-device-enrollment-intent-v1", JCS(DeviceEnrollmentIntentV1)
-))
-membership_hash = H(frame(
-  "loom-enrollment-membership-v1", JCS(EnrollmentMembershipV1)
-))
-responsibilities_hash = H(frame(
-  "loom-enrollment-responsibilities-v1", JCS(EnrollmentResponsibilitiesV1)
-))
-grants_hash = H(frame(
-  "loom-enrollment-destination-grants-v1", JCS(EnrollmentDestinationGrantsV1)
-))
-direction_hash = H(frame(
-  "loom-enrollment-direction-v1", JCS(EnrollmentDirectionV1)
-))
-proof_bundle_hash = H(frame(
-  "loom-invite-proof-bundle-v2",
-  JCS(InviteProofBundleV2)
-))
-```
+CertifiedInviteRecordV2
+  schema = 2, cluster_id, invite_id, generation
+  issued_at, expires_at
+  device_enrollment_intent_commitment_hash
+  token_commitment
+  token_artifact_binding_hash
+  invite_issuance_policy_hash
+  bootstrap_issuer_authorization_hash
+  bootstrap_issuer_registry_root
+  bootstrap_catalog_hash
+  enrollment_service_ref_hash
+  operation_id, parent_head_hash
 
-`InviteIssuancePolicyV2` 由 admin `ControlOperationV1` 的
-`kind="upsert_invite_issuance_policy"`、`payload_schema=2` 与上式 payload hash 提交；operation ID
-独立于 policy ID。generation 从 1 连续递增，`60 <= minimum_ttl_seconds <=`
-`maximum_ttl_seconds <= 604800`，`1 <= maximum_seed_count <= 3`，
-`512 <= maximum_descriptor_bytes <= 1800`。create/reissue record 的 policy hash 必须解析到 base head
-中的 exact policy；`issued_at < expires_at`，其差值位于 policy min/max 内，candidate logical time
-和创建节点可信墙钟都必须在 issued_at 的 `max_clock_skew_seconds` 容差内且严格早于 expires_at。
-已过期或超长期的新 record 不能 commit；旧 expired available record 仍可作为 reissue 的被撤销端。
-context 的 seed 数量必须同时满足 `1..policy.maximum_seed_count` 与协议硬上限 3；policy 不是只供
-UI 显示，所有 voter 都必须从 base head 解析同一代 policy 后重验。
+InviteTokenArtifactBindingV2          # control-private；绝不进 QR/mirror
+  schema = 2, cluster_id, invite_id, operation_id
+  token_commitment
+  token_artifact_ref: SecretArtifactRefV2
+  device_enrollment_intent_opening_hash
 
-`CertifiedInviteRecordV2` 是可进入无 token public proof 的最小投影，所以只承诺 private binding
-hash，不含 `SecretArtifactRefV2`、backend locator、recipient 或 availability receipt。
-`InviteTokenArtifactBindingV2` 的 cluster/invite/record operation/token commitment 必须与 record
-逐字段相等，内嵌 ref 必须为 §6.2 purpose=`invite_token` 且重算 availability/policy/hash 成功；所有
-stable voters 在 invite head commit 前经 private control channel 持久保存同一 binding bytes/hash。
-ref 的 `proposal_id=record_operation_id`、owner 必须是创建 principal 的 control Device，sealed
-recipients 必须逐字节等于 ref 的 certified availability policy 中 purpose=`invite_token` 的 renderer
-reporters/recipient key refs。每份 plaintext receipt 的 renderer/key/recipient ref 必须解析到
-该 policy/ref；`renderer_signature.algorithm/key_id` 必须逐字段等于 policy 中该 renderer 的 exact
-`AuthorityProofKeyV1`，并按 §6.2 的算法、长度和 canonical base64url 规则验签。signature 覆盖
-`frame("loom-invite-token-plaintext-validation-signature-v1", JCS(body))`；renderer 在签名前必须实际
-解封 token、严格得到 32 bytes，并按 record invite ID 重算 commitment 相等。root 对按 renderer ID
-排序的 `{schema:1,renderer_id,receipt_hash}` leaves 使用 §7.1 RFC 6962 算法，数量、fault domain 和
-age 必须至少满足 ref 的 availability policy。缺 receipt/preimage equality 时 invite 不得 commit，
-不能等 QC 后才让 renderer 发现 artifact 与 commitment 不同。
-renderer 在 commit 前只可经 control-private、proposal-scoped validation capability 读取/解封并签上式
-plaintext receipt；这不是 bearer delivery，结果不得离开 voter proposal sidecar。面向管理员的一次性
-创建响应必须等 invite certified 后，才允许具 delivery capability 的 renderer 再读取同一 exact
-binding 并输出 token；公开 enroll proof GET、InviteProofBundle、QR、Device view 和 mirror 永远只能
-看到 binding hash。缺 private preimage 的副本可验证公开 record/QC，但不能验证或交付 token。
+InviteLifecycleStateV2                # reducer 输出
+  schema = 2, cluster_id, invite_id, generation
+  certified_invite_record_hash
+  status                              # available | reserved | consumed | revoked | expired
+  request_id?, claim_core_hash?, result_artifact_hash?
+  last_operation_id
 
-proof bundle 内的 `device_enrollment_intent` 必须重算为 record 的
-`device_intent_hash`，其 cluster/invite ID 与 record 相等，device ID 与创建时保留的
-唯一 Device 相等。四个子对象都严格解码；数组按 schema 顺序排序去重，未知
-platform/responsibility/grant kind/direction 失败关闭。responsibilities 非空，
-`internet_egress` 必须同时有 `forward`，只有 `use_loom` 可携非空 grants；
-Windows/Android 首版只允许 `use_loom`，Linux 才可组合三种职责。包含
-`forward` 时 direction 必须是 `server_direction`，否则必须是
-`not_applicable`。`server_direction` 三个值精确沿用主设计 §2.2：`bidirectional` 允许双向建隧道，
-`reverse_only` 只允许该 server 主动发起，`direct_only` 只允许对端主动直连；三者均只允许
-`platform=linux-server` 且 responsibilities 含 `forward`。每个 grant target 必须在 base head 中解决到同 cluster 的 certified
-Service 或 egress Device；显示名、客户端自报或 claim endpoint 不得改写该 intent。
-`wrapping_key_profiles[]` 非空、无重复，只能使用 §6.2 两个已知 profile，并按
-`p256-keystore-sign-ecdh-v1 → rsa2048-keystore-sign-decrypt-v1` preference 子序列排序。Windows/Linux
-首版必须至少支持 P-256；Android intent 若支持仓库现行 API 26 最低版本则必须同时允许 RSA fallback，
-API 31+ 客户端选择 P-256，API 26–30 选择 RSA。profile 是客户端按本机 Keystore 能力做的有界选择，
-不是 server/leader 根据默认值代选；不在 intent 列表中的选择必须拒绝。
-`device_certificate_profile_ref` 必须在同一 base head 的 `ca_profile_root` 解析到唯一 exact
-`DeviceCertificateProfileStateV1(status=active)`，并重算其中完整 intent/state 两层 hash；
-base/candidate 两种可信时间都在其 issuance window 内，
-且 intent 的 platform 与全部 responsibilities 都属于 profile 的有界数组。profile 不唯一不构成
-歧义，因为 invite 已选择 exact ref；staged/retired/revoked、过期或后来被更高 generation 取代的 ref
-均不得创建新 invite，已有 invite claim 时也必须重新检查并在失效时 reissue。
+DistributionMirrorRefV1
+  schema = 1, endpoint_id
+  distribution_endpoint_set_hash
+  listener_generation
+  base_url                            # HTTPS；显式携带 443 或替代 TCP 端口
+  server_name, webpki_profile_ref
+  spki_pins[]
+  hint_rank                           # 仅提示下载顺序
 
-`base_head_hash` 只指向创建 intent 已认证的 parent，避免
-`record → delivery_context → record_head → record` 的哈希环。完整 context 作为 record 的内嵌
-canonical bytes 随 operation/head 耐久复制，record 同时承诺其 hash；proof bundle 和 descriptor
-只能逐字节复用这份 preimage，不依赖 renderer、本地缓存或从 hash 反查未复制的对象。真正最低可消费 head 就是 proof bundle
-携带且包含 `CertifiedInviteRecordV2` 的 `record_head`；客户端必须验证其 QC、记录 inclusion 和从
-context checkpoint 到 record head 的连续 transition/head proof，不能相信 renderer 另报的
-`min_head_hash`。context 的 seed 是有界集合而非发现机制，其完整对象必须与 record 中 hash 相符。
-
-每个 `InviteEnrollSeedV2` 必须逐字段投影自 `base_head` 已 certified effective state 中一个
-`role=enroll, protocol=https` 的 `LogicalEndpoint` 及其当时 `preferred` 或仍可接收新连接的
-`advertised` listener：intent hash/generation、listener generation、最后 phase hash、规范化 base
-URL/dial target、TLS identity/profile、credential generation 和完整有效 pin 集合都必须相等。
-seed 的 `credential_artifact_hashes[]` 也必须逐字节等于 listener/spec 的排序数组并为
-PublicEndpointIntent 授权数组的非空子集；这里只公开内容 hash，不把 `SecretArtifactRefV2` 或
-backend locator 放进二维码。
-`tls_identity_key_id` 固定为该 listener 当前 DER SPKI 的小写 `sha256:` digest，并必须等于同
-credential generation 的一个 pin digest。候选 reducer 从 base head state 执行这个确定性 subset
-校验；invite QC 不能把任意 URL/pin 自己变成新的公网入口。一个 endpoint ID 在 context 中至多
-出现一次，seed 数量为 `1..min(policy.maximum_seed_count,3)`；数组始终按 endpoint ID 排序，`hint_rank` 才保存创建时控制面观测给出
-的 0..N-1 无重复提示名次。因此 Web 测量不会改变 canonical 数组顺序或产生另一份 context hash，
-客户端也不得把 hint 当 authority 或替代当前底层网络上的有界竞速。
-
-`authority_transitions` 是序列而非集合排序：从 initial head 的 recovery/control `(0,0)` 开始，
-`control_set` 只能在同一 recovery epoch 将 control epoch 精确加 1，两个 recovery variant 只能将
-recovery epoch 精确加 1 并把 control epoch 重置为 0；每项必须以前一项验证出的 authority
-验证自身 old/previous 字段。拒绝未知 tag、epoch 缺口、重复、倒序和多 variant。序列结束后的
-authority 必须与 delivery context 的 recovery/statement/policy/control/set 五元组逐字段一致；
-`base_head` 必须在该 authority 下有合法 `CertifiedHeadQCV1`，且其 hash 等于 context
-`base_head_hash`：普通 head 使用 stable QC，作为 ControlSet transition Final 的 head 使用其
-old/new joint head QC；tag 与 head kind 不匹配时拒绝。
-创建 invite 使用 expected-head CAS，所以 `record_head.parent_head_hash` 必须直接等于 base head；
-不需要把无 authority 变化的全部普通 head 塞入数组。`record_head` 必须是
-`head_kind="ordinary"`、context 精确为 `{schema:1,kind:"ordinary"}`，其 recovery/control 五元组
-与 base head 及 delivery context 逐字节一致，`control_peer_directory_hash` 与
-`transition_proof_hash` 逐字节继承 base head。
-它必须由当前稳定 ControlSet 的 `StableHeadReplicationQCV1` 认证；在 Joint 期间由于
-§9.1 冻结普通提交，不存在可创建 invite 的 joint ordinary head。bundle 的
-`replication_qc` 类型/全部 attestation 字段必须与该 record head 一致，不得把创建
-invite 偷换为 control/recovery transition。
-context 的 `max_clock_skew_seconds` 必须等于 base head 和 record head 的签名字段；扫码前只可在
-0..300 硬上限内用于 pin 时间容差，proof 验证后任一不等即拒绝。
-验证 initial head/QC 前必须先验证 `bootstrap_bundle`：从其中的 initial recovery policy、initial
-ControlSet 及两类完整 PoP arrays 重算 policy/set hash 与 PoP roots，确认它们与 bootstrap
-statement/body/head 逐字段相等，再用该 ControlSet 的 config keys 验初始 QC。每个
-emergency/policy transition 同理必须携带并验证 wrapper 中的新 public
-policy，emergency 还必须携带新 ControlSet；缺 public key bytes 时不能仅凭 hash 继续。
-还必须从 `bootstrap_bundle.initial_head_entry.initial_payload` 重算 bootstrap body 的 payload hash，
-并确认 descriptor context 的 `bootstrap_transition_hash` 等于
-`bootstrap_bundle.transition_proof` 重算出的 proof hash；两者任一不等即拒绝。
-
-邀请记录 inclusion 使用 §7.1 的累计操作树。`record_operation` 只能是以下两个 exact variant：
-
-- 首次创建：`kind="create_invite"`、`payload_schema=2`，payload 精确为
-  `CertifiedInviteRecordV2`，`payload_hash=certified_record_hash`；
-- 重新签发：`kind="reissue_invite"`、`payload_schema=2`，payload 精确为
-  `InviteReissueTransactionV2`，`payload_hash=invite_reissue_transaction_hash`，且 transaction 内
-  `new_certified_record` 必须逐字节等于 bundle 顶层 `certified_record`。
-
-首次创建时 outer/record 的 cluster 相等且
-`outer.operation_id == record.record_operation_id`。重新签发时
-`outer.cluster_id == transaction.cluster_id == new_record.cluster_id` 且
-`outer.operation_id == transaction.operation_id == new_record.record_operation_id`；old/new invite ID
-必须不同，new record 的 `record_operation_kind="reissue_invite"`，首次 record 则为
-`"create_invite"`。其他 kind、任一三方 equality 不成立或把 transaction hash 冒充 record hash 均拒绝。
-outer 的 `base_recovery_epoch/base_recovery_statement_hash/base_recovery_policy_hash` 必须等于
-context 的 minimum recovery 三元组，`base_control_epoch/base_control_set_hash` 等于 context
-control 坐标，`base_control_revision` 等于实际 base head revision，且
-`parent_head_hash == delivery_context.base_head_hash == base_head.head_hash`。再重算完整 operation 的
-`object_id` 与 `ControlOperationLeafV1`。客户端验证 leaf、index/tree size 和
-`operation_audit_path` 后结果必须精确等于 `record_head.operation_root`；proof bundle 仅携带
-record/head/QC 而没有该路径时不可消费。
-
-首次创建把不存在的 invite 归约为 `InviteLifecycleStateV2(lifecycle_generation=1,status=available)`。
-重新签发通常只允许 base head 中 old invite 仍为 `available`（因此从未 claim/撤销）且未被另一
-transaction 锁定；另一个唯一入口是 old invite 已因 §11.2 matching
-`EnrollmentTransactionStateV1(status=aborted)` 成为 `revoked`，且其 `replaced_by_invite_id` 仍缺失。
-允许已过期但未领取的 record 重签，旧 token 始终不可恢复。
-transaction 必须从该 state/record bytes 重算两个 expected hash，新 invite ID 必须全局未使用，
-new record/token commitment/private artifact binding/context 必须全新。其内嵌新 Device intent 的
-Device ID、platform、Membership、Responsibilities、grants 与 direction 除 `invite_id` 外必须逐字节
-等于 old record 所指 intent。若旧 `device_certificate_profile_ref` 在 reissue parent 仍是 latest active
-且处于 issuance window，新 ref 也必须相等；若旧 ref 已 staged/retired/revoked/过期或被高代取代，
-reissue admin 必须在 new intent 中显式选择该 parent `ca_profile_root` 中另一个 exact ref；reducer 只
-验证它是其自身 profile ID 的 latest generation、active/in-window 且与相同
-platform/responsibilities scope-compatible，不在多个 profile ID 间运行“latest/最合适”selector。继续
-引用旧失效 ref 必须拒绝。旧、新 intent bytes 均随 transaction 交付并按各自
-record hash 重算，所以这个唯一例外不能被用来修改其他授权字段；new record 必须绑定该新 intent hash。一个 certified reducer step 原子完成 old
-`available→revoked`，或对 matching aborted old 做一次
-`revoked(unreplaced)→revoked(replaced_by_invite_id=new)` metadata CAS（两者都 generation +1），并创建
-new `absent→available`；aborted 分支还必须携带并 CAS matching
-`expected_aborted_enrollment_transaction_state_hash`，原子把 transaction 的
-`replaced_by_invite_id` 设为 new；available 分支必须缺失该字段。不能只创建新码或先暴露新 token。
-old token/artifact 从该 head 起永久不能
-claim；new token 仅在 reissue head/QC certified 后由一次性响应交付。
-
-显式作废使用 `kind="revoke_invite"`、`payload_schema=2`、payload 为
-`InviteRevokeIntentV2` 且 hash 为 `invite_revoke_intent_hash`；outer/payload operation ID 相等，
-expected record/state 必须匹配 base head，reducer 只允许 `available→revoked`。claim operation 则在
-同一 certified head 把 `available→claim_reserved` 并绑定 `claim_intent_hash` 以及唯一导出的
-`retry_not_after = claim_head.committed_logical_time + 3600 seconds`；它只占用 token/Device ID，不激活
-Membership、Device view 或 credential。completion head 才把 `claim_reserved→consumed`；abort head
-则把它变成 `revoked`。available 必须缺失两个 reservation 字段；reissue 或 abort 产生的 revoked 可
-保留它们用于审计，只有一次 reissue metadata CAS 可补 `replaced_by_invite_id`。consumed/revoked 均
-不可回退或复活，`claim_reserved` 只能走 §11.2 的 exact complete/abort 边，不能直接 reissue/revoke。
-
-descriptor、context、record 与 `record_operation.body.cluster_id` 必须相等；invite ID 还必须等于
-create payload record 或 reissue payload new record 的 invite ID。operation 通过重算 payload hash
-绑定 record，leaf 只通过 `operation_id/object_id` 绑定 operation，proof bundle 则通过其所携带这些
-对象建立同一 cluster/invite 链。
-客户端从 descriptor token 重算的 commitment 必须同时等于 descriptor 与 record 的
-`token_commitment`；record 内嵌 context 必须重算为自身 `delivery_context_hash`，且该 hash 同时等于
-descriptor；bundle 与 descriptor 的 context 都必须逐字节等于 record 内嵌 context。下载或离线取得的
-bundle 重算 hash必须等于 descriptor `proof_bundle_hash`。descriptor 的 `expires_at` 必须逐字节等于
-record 的 `expires_at`，并按 §7.5 同时通过 certified logical time 与本地可信墙钟检查。任一不等都
-不得发送 token。
-
-`pending` 或 `committed_not_certified` 阶段只返回不含 token/交付载体的 operation status；即使创建端
-已经按 §6.2 预生成 token，也必须等邀请 head/QC certified 后才输出可消费载体。二维码与
-`loom://enroll/v2#d=<base64url(JCS(descriptor))>` 只携带同一
-`InviteBootstrapDescriptorV2`。最终 ASCII URI 必须同时不超过 resolved policy 的
-`maximum_descriptor_bytes` 与协议硬上限 1800 bytes。提案方必须在计算
-`delivery_context_hash`、record 与 proof-bundle hash **之前**，从 base head 的 certified 集合中
-固定 `1..min(policy.maximum_seed_count,3)` 个 seed 和 hint ranks，按最终 exact descriptor bytes
-预验 URI 大小。若保留一个 seed 仍超过任一上限，同一提案从一开始就标记为 file-only；预验时对尚未产生的
-proof bundle digest 使用同一 wire 格式的固定长度占位值，certified 后再用实际 digest 复核，
-但不改 context。file-only 的 certified invite 只输出
-`.loom-invite` 的 `InviteOfflinePackageV2`，不生成 QR/URI。QC 形成后 renderer 禁止删减、重排
-或替换 seed/pin，因为任何改动都会破坏 record 已承诺的 context hash。
-
-扫码客户端严格解码 32-byte token 并重算 token/context commitment，然后先从 context 中已钉住的
-`role=enroll` seed 获取与 `proof_bundle_hash` 相同的 immutable `InviteProofBundleV2`；该 GET 不得在
-URL、header、cookie 或 body 中发送 claim token，必须先验证精确 URL、hostname/WebPKI、SPKI pin，
-禁止重定向。下载后验证 record inclusion、head/QC 和连续 proof，全部成功才允许 POST claim
-token。renderer 不能在 QC 到达后临时替换 token、seed、pin 或 recovery checkpoint，也不能把
-descriptor/proof bundle 反写进复制日志。
-
-邀请载体不携带长期私钥、完整 SSOT、数据入口选择或固定出口。seed 的 `hint_rank` 可以由控制面
-已有 Web 观测产生，但按 endpoint ID 排列的 canonical 列表和 checkpoint 必须由同一 certified head
-绑定；提示名次不是权限，
-客户端仍按自己当前网络做有界竞速/故障切换。DNS 只解析这些已签 endpoint，不能发现并
-信任列表外的新 controller。由于 token 是 bearer secret，首次 proof GET 与 POST 前还必须同时验证
-hostname/WebPKI 和 descriptor context 中该 seed 的 TLS SPKI pin；禁止重定向。证书轮换时，当前与 staged
-next pin 可以在短邀请 TTL 内重叠，旧 TLS key 至少保留到相关 invite 失效或被显式作废。
-
-`min_recovery_epoch/recovery_statement_hash/recovery_policy_hash` 是不可拆分的 checkpoint：
-客户端低于它时必须先验证完整 recovery transition chain；处在相同 epoch 却任一 hash 不同
-时，在发送 token 前按 recovery fork 失败关闭。URL、DNS 新鲜度或更大的普通 control revision
-都不能覆盖这个比较。
-
-### 11.2 claim
-
-第三把 enrollment key 不是未使用的备用 key，也不替代 Raft/config QC。claim 的 committed intent 与
-提交后 approval 使用以下 exact wire：
-
-```text
-EnrollmentApprovalIntentV1           # 作为 claim operation 进入 HeadEntryV2.operation_root
-  schema = 1, cluster_id, invite_id, request_id, device_id
-  certified_invite_record_hash, token_commitment
-  device_enrollment_intent_hash, claim_request_body_hash
-  claim_facts: DeviceClaimFactsV1
-  csr_hash, identity_spki_hash
-  wrapping_key_descriptor_hash
-  membership_hash, responsibilities_hash, grants_hash, direction_hash
-  device_certificate_issuance_intent: DeviceCertificateIssuanceIntentV1
-  device_certificate_issuance_intent_hash
-  secret_artifact_refs_root
-  initial_device_view_payload: DeviceViewPayloadV2, device_view_hash
-  initial_device_view_leaf: DeviceViewLeafV2, device_view_leaf_hash
-
-DeviceCertificateIssuanceIntentV1
-  schema = 1, cluster_id, issuance_id, request_id, device_id
-  csr_hash, identity_spki_hash
-  certificate_profile_ref: DeviceCertificateProfileRefV1
-  issuer_certificate_hash, issuer_chain_hash, issuer_key_artifact_hash
-  serial_number                    # 20-byte positive integer，无 padding base64url，最高 bit 必须为 0
-  not_before, not_after
-  subject_alt_names[], eku_oids[], policy_oids[]
-  tbs_certificate_der, tbs_certificate_hash
-
-DeviceCertificateProfileRefV1
-  profile_id, generation
-  device_certificate_profile_intent_hash, device_certificate_profile_state_hash
-
-IssuanceLogCoordinateV1
-  recovery_epoch, raft_index
-
-DeviceCertificateProfileIntentV1          # admin-signed、可在 Raft 分配坐标前构造
-  schema = 1, cluster_id, profile_id, generation
-  expected_previous_profile_state_hash?
-  target_status                      # staged | active | retired | revoked
-  issuer_id, issuer_generation, issuer_fencing_epoch
-  issuance_not_before, issuance_not_after
-  revocation_reason?                 # issuer_compromise | administrative；仅 revoked 必需
-  profile_kind = "loom-device-x509-v1"
-  issuer_certificate_der, issuer_certificate_hash
-  issuer_chain_der[], issuer_chain_hash, issuer_key_artifact_hash
-  allowed_platforms[], allowed_responsibilities[]
-  validity_seconds, allowed_subject_key_algorithm = "p256"
-  signature_algorithm = "ed25519", subject_mode = "empty"
-  san_uri_prefix, key_usage_bits[]
-  basic_constraints_ca = false
-  required_eku_oids[], required_policy_oids[]
-  extension_order_oids[]
-
-DeviceCertificateProfileStateV1           # reducer 从 intent + 承载 Head 坐标派生
-  schema = 1, cluster_id, profile_id, generation
-  profile_intent: DeviceCertificateProfileIntentV1
-  device_certificate_profile_intent_hash
-  status, status_changed_at
-  issuance_cutoff?                   # IssuanceLogCoordinateV1；terminal state 必需
-
-IssuedDeviceCertificateV1
-  schema = 1, cluster_id, issuance_id
-  device_certificate_issuance_intent_hash
-  certificate_der, certificate_chain_der[]
-
-IssuedDeviceCertificateLogEntryBodyV1
-  schema = 1, cluster_id
-  issued_certificate: IssuedDeviceCertificateV1, issued_device_certificate_hash
-  issuance_authority_head_hash
-  recovery_epoch, recovery_statement_hash, recovery_policy_hash
-  control_epoch, control_set_hash, ca_profile_root
-  certificate_profile_ref: DeviceCertificateProfileRefV1
-  committed_logical_time
-  raft_term, raft_index, previous_log_entry_hash
-
-IssuedDeviceCertificateLogEntryV1
-  body: IssuedDeviceCertificateLogEntryBodyV1
-  entry_hash
-
-DeviceClaimFactsV1
-  schema = 1
-  platform                           # windows-desktop | android | linux-server
-  architecture                       # amd64 | arm64 | armv7
-  client_protocol_version, client_build_id
-
-DeviceWrappingKeyDescriptorV1
-  schema = 1, cluster_id, invite_id, request_id, device_id
-  generation = 1
-  profile                            # 从 intent 的 wrapping_key_profiles[] 选择一个 exact enum
-  sealing_policy_hash                # §6.2 profile→canonical policy 的唯一映射
-  wrapping_spki_der, wrapping_spki_hash, wrapping_key_id
-
-EnrollmentClaimRequestBodyV1
-  schema = 1, cluster_id, invite_id, request_id, device_id
-  certified_invite_record_hash, token_commitment, device_enrollment_intent_hash
-  claim_facts: DeviceClaimFactsV1
-  csr_der, csr_hash, identity_spki_der, identity_spki_hash, claimant_key_id
-  wrapping_key: DeviceWrappingKeyDescriptorV1, wrapping_key_descriptor_hash
-
-EnrollmentClaimRequestV1
-  body: EnrollmentClaimRequestBodyV1
-  claimant_signature: ClaimantSignatureV1
-  wrapping_key_possession_signature: WrappingKeyPossessionSignatureV1
-
-EnrollmentClaimSubmissionV1             # HTTPS transport-only；不进入 object hash、Raft 或 receipt
-  schema = 1
-  token                                  # descriptor 同一无 padding base64url 32-byte token
-  claim_request: EnrollmentClaimRequestV1
-
-ClaimantSignatureV1
-  algorithm = "ecdsa-p256-sha256", claimant_key_id
-  signature                         # 无 padding base64url；raw r||s，精确 64 bytes，low-S
-
-WrappingKeyPossessionSignatureV1
-  algorithm, wrapping_key_id         # ecdsa-p256-sha256 | rsassa-pkcs1v15-sha256
-  signature                          # P-256: raw low-S r||s 64 bytes；RSA: raw 256 bytes
-
-InviteTokenValidationAttestationBodyV1
-  schema = 1, attestation_type = "invite_token_validation"
-  cluster_id, claim_request_body_hash, claim_intent_hash
-  invite_id, request_id, device_id
-  certified_invite_record_hash, token_commitment
-  record_expires_at, validated_at
+BootstrapEndpointCatalogV1
+  schema = 1, cluster_id, catalog_generation
+  valid_from, valid_until
+  bootstrap_ingress_set: BootstrapIngressEndpointSetV1 # exact wire 见 §13.1
+  bootstrap_ingress_set_hash
+  required_client_protocol
   parent_head_hash
-  recovery_epoch, recovery_statement_hash, recovery_policy_hash
-  control_epoch, control_set_hash
+  config_qc_hash
 
-StableInviteTokenValidationProofV1
-  schema = 1, proof_type = "stable_invite_token_validation"
-  attestation: InviteTokenValidationAttestationBodyV1
-  signatures[]                       # ControlEnrollmentSignatureV1
-  signer_refs[]
+InviteProofBundleV2                   # public immutable object；无 token/capability
+  schema = 2, cluster_id, invite_id
+  bootstrap_transition_bundle
+  authority_transitions[]
+  certified_invite_record
+  invite_issuance_policy
+  device_enrollment_intent_commitment
+  invite_operation_leaf
+  invite_leaf_index, invite_operation_tree_size, invite_operation_audit_path[]
+  record_head, record_head_qc
+  bootstrap_issuer_authorization_proof: BootstrapIssuerAuthorizationProofV1
+  bootstrap_catalog_hash
 
-EnrollmentClaimOperationBodyV1       # token-authorized；不是 admin ControlOperationBodyV1
-  schema = 1, cluster_id, operation_id
-  claim_request_body_hash, claim_preparation_hash
-  kind = "claim_invite", payload_schema = 1, payload_hash
+PrivateEnrollmentServiceRefV1
+  schema = 1, service_id
+  overlay_ip                          # 精确 /32 或 /128 目的地址
+  tcp_port
+  internal_ca_profile_ref
+  server_identity_spki_pins[]
+  service_generation
 
-EnrollmentClaimOperationV1
-  body: EnrollmentClaimOperationBodyV1
-  claim_request_body: EnrollmentClaimRequestBodyV1
-  intent: EnrollmentApprovalIntentV1
+InviteBootstrapDescriptorV2
+  schema = 2, cluster_id, invite_id, expires_at
+  token                              # 32-byte CSPRNG；只在 QR/offline package
+  token_commitment
+  bootstrap_tunnel_capability: BootstrapTunnelCapabilityV1
+  bootstrap_catalog_hash
+  proof_bundle_hash
+  enrollment_service_ref: PrivateEnrollmentServiceRefV1
+  distribution_mirrors[]: DistributionMirrorRefV1 # 2–3 个，跨 server/address/fault domain
+  minimum_recovery_epoch
+  trusted_checkpoint_hash
 
-EnrollmentClaimPreparationV1        # request_id keyed、无外部 authority 的 durable first-result record
-  schema = 1, cluster_id, request_id, claim_request_body_hash
-  certified_invite_record_hash, device_enrollment_intent_hash
-  prepared_logical_time
-  intent: EnrollmentApprovalIntentV1
+EnrollmentIntentPreflightRequestV1
+  schema = 1, cluster_id, invite_id
+  certified_invite_record_hash
+  capability_id
 
-EnrollmentClaimPreparationLogEntryBodyV1
-  schema = 1, cluster_id
-  preparation: EnrollmentClaimPreparationV1, claim_preparation_hash
-  preparation_authority_head_hash
-  recovery_epoch, recovery_statement_hash, recovery_policy_hash
-  control_epoch, control_set_hash
-  committed_logical_time
-  raft_term, raft_index, previous_log_entry_hash
+EnrollmentIntentPreflightResponseV1
+  schema = 1, cluster_id, invite_id
+  request_hash
+  device_enrollment_intent_commitment: DeviceEnrollmentIntentCommitmentV1
+  device_enrollment_intent_opening: DeviceEnrollmentIntentOpeningV1
 
-EnrollmentClaimPreparationLogEntryV1
-  body: EnrollmentClaimPreparationLogEntryBodyV1
-  entry_hash
-
-EnrollmentSecretArtifactRefLeafV1
-  schema = 1, purpose, secret_id, generation, secret_artifact_ref_hash
-
-EnrollmentApprovalAttestationBodyV1  # 仅在 claim head committed/apply 后产生
-  schema = 1, attestation_type = "enrollment_approval"
-  cluster_id, claim_intent_hash
-  recovery_epoch, recovery_statement_hash, recovery_policy_hash
-  control_epoch, control_set_hash
-  raft_term, raft_index, claim_head_entry_hash, claim_head_hash
-  invite_id, request_id, device_id
-  device_enrollment_intent_hash, platform
-  csr_hash, identity_spki_hash, wrapping_key_descriptor_hash
-  device_view_hash, device_view_leaf_hash
-  device_certificate_issuance_intent_hash, issued_device_certificate_hash
-  issued_device_certificate_log_entry_hash
-  issuance_recovery_epoch, issuance_raft_term, issuance_raft_index, issuance_committed_logical_time
-  issuance_authority_head_hash
-  secret_artifact_refs_root
-  approved_at
-  retry_not_after
-
-StableEnrollmentApprovalQCV1
-  schema = 1, qc_type = "stable_enrollment_approval"
-  attestation: EnrollmentApprovalAttestationBodyV1
-  signatures[]                     # ControlEnrollmentSignatureV1
-  signer_refs[]
-
-EnrollmentTransactionStateV1       # reducer 输出；claim 不直接激活 Device
-  schema = 1, cluster_id, request_id, invite_id, device_id
-  claim_operation_object_id, claim_request_body_hash, claim_intent_hash
-  claim_recovery_epoch, claim_raft_term, claim_raft_index
-  reserved_at, retry_not_after
-  status                            # reserved | completed | aborted
-  completion_operation_id?, completion_attestation_hash?
-  abort_intent_hash?, replaced_by_invite_id?
-
-EnrollmentCompletionOperationBodyV1 # approval-QC-authorized；不是 admin operation
-  schema = 1, cluster_id, operation_id
-  request_id, invite_id, device_id
-  expected_enrollment_transaction_state_hash
-  claim_intent_hash, enrollment_approval_attestation_hash
-  kind = "complete_enrollment", payload_schema = 1
-  payload_hash = enrollment_approval_attestation_hash
-
-EnrollmentCompletionOperationV1
-  body: EnrollmentCompletionOperationBodyV1
-
-EnrollmentAbortIntentV1             # 由普通 admin ControlOperationV1 承载
-  schema = 1, cluster_id, operation_id, request_id, invite_id, device_id
-  expected_enrollment_transaction_state_hash
-  reason                             # retry_expired | administrator_cancel |
-                                     # authority_invalidated | certificate_profile_revoked
-
-EnrollmentApprovalReceiptV2
+InviteOfflinePackageV2
   schema = 2
-  intent: EnrollmentApprovalIntentV1
-  claim_operation: EnrollmentClaimOperationV1
-  claim_preparation: EnrollmentClaimPreparationV1
-  claim_request: EnrollmentClaimRequestV1
-  token_validation_proof: StableInviteTokenValidationProofV1
-  operation_leaf, leaf_index, operation_tree_size, operation_audit_path[]
-  claim_head, claim_head_replication_qc
-  enrollment_approval_qc: StableEnrollmentApprovalQCV1
-  completion_operation: EnrollmentCompletionOperationV1
-  completion_operation_leaf, completion_leaf_index
-  completion_operation_tree_size, completion_operation_audit_path[]
-  completion_head, completion_head_replication_qc
-  enrollment_transaction_state: EnrollmentTransactionStateV1
-  secret_artifact_refs[]              # exact SecretArtifactRefV2，按 (purpose,secret_id,generation) 排序
-  issued_device_certificate: IssuedDeviceCertificateV1
-  issued_device_certificate_entry: IssuedDeviceCertificateLogEntryV1
-  issuance_authority_head: HeadEntryV2
-  issuance_authority_head_replication_qc: CertifiedHeadQCV1
-  device_certificate_profile_state: DeviceCertificateProfileStateV1
-  issuance_ca_profile_leaf: CAProfileRegistryLeafV1
-  issuance_ca_profile_leaf_index, issuance_ca_profile_tree_size, issuance_ca_profile_audit_path[]
-  initial_device_view_envelope
-```
+  descriptor
+  bootstrap_catalog
+  proof_bundle
+~~~
 
-`claim_intent_hash = H(frame("loom-enrollment-approval-intent-v1", JCS(intent)))`；其余摘要固定为：
+关键摘要固定为：
 
-```text
-claim_request_body_hash = H(frame(
-  "loom-enrollment-claim-request-body-v1", JCS(EnrollmentClaimRequestBodyV1)
-))
-claim_request_proof_hash = H(frame(
-  "loom-enrollment-claim-request-proof-v1", JCS(EnrollmentClaimRequestV1)
-))
-device_wrapping_key_descriptor_hash = H(frame(
-  "loom-device-wrapping-key-descriptor-v1", JCS(DeviceWrappingKeyDescriptorV1)
-))
-claim_preparation_hash = H(frame(
-  "loom-enrollment-claim-preparation-v1", JCS(EnrollmentClaimPreparationV1)
-))
-claim_preparation_log_entry_hash = H(frame(
-  "loom-enrollment-claim-preparation-log-entry-v1",
-  JCS(EnrollmentClaimPreparationLogEntryBodyV1)
-))
-device_certificate_profile_intent_hash = H(frame(
-  "loom-device-certificate-profile-intent-v1", JCS(DeviceCertificateProfileIntentV1)
-))
-device_certificate_profile_state_hash = H(frame(
-  "loom-device-certificate-profile-state-v1", JCS(DeviceCertificateProfileStateV1)
-))
-device_certificate_issuance_intent_hash = H(frame(
-  "loom-device-certificate-issuance-intent-v1",
-  JCS(DeviceCertificateIssuanceIntentV1)
-))
-issued_device_certificate_hash = H(frame(
-  "loom-issued-device-certificate-v1", JCS(IssuedDeviceCertificateV1)
-))
-issued_device_certificate_log_entry_hash = H(frame(
-  "loom-issued-device-certificate-log-entry-v1",
-  JCS(IssuedDeviceCertificateLogEntryBodyV1)
-))
-tbs_certificate_hash = H(frame(
-  "loom-device-tbs-certificate-v1", raw_tbs_certificate_der
-))
-issuer_chain_hash = H(frame(
-  "loom-device-issuer-chain-v1", JCS({schema:1,issuer_chain_der})
-))
-issuer_certificate_hash = H(frame(
-  "loom-device-issuer-certificate-v1", raw_issuer_certificate_der
-))
-token_validation_attestation_hash = H(frame(
-  "loom-invite-token-validation-attestation-v1",
-  JCS(InviteTokenValidationAttestationBodyV1)
-))
-token_validation_proof_hash = H(frame(
-  "loom-invite-token-validation-proof-v1", JCS(StableInviteTokenValidationProofV1)
-))
-enrollment_approval_attestation_hash = H(frame(
-  "loom-enrollment-approval-attestation-v1", JCS(EnrollmentApprovalAttestationBodyV1)
-))
-enrollment_transaction_state_hash = H(frame(
-  "loom-enrollment-transaction-state-v1", JCS(EnrollmentTransactionStateV1)
-))
-enrollment_completion_operation_id = H(frame(
-  "loom-enrollment-completion-operation-id-v1",
-  JCS({schema:1,cluster_id,request_id,invite_id,device_id})
-))
-enrollment_completion_operation_object_id = H(frame(
-  "loom-enrollment-completion-operation-v1", JCS(EnrollmentCompletionOperationV1)
-))
-enrollment_abort_intent_hash = H(frame(
-  "loom-enrollment-abort-intent-v1", JCS(EnrollmentAbortIntentV1)
-))
-claim_operation_object_id = H(frame(
-  "loom-enrollment-claim-operation-v1", JCS(EnrollmentClaimOperationV1)
-))
-```
+~~~text
+token_commitment = H(frame("loom-invite-token-commitment-v2",
+  JCS(InviteTokenCommitmentInputV2)))
+device_enrollment_intent_hash = H(frame("loom-device-enrollment-intent-v1",
+  JCS(DeviceEnrollmentIntentV1)))
+device_enrollment_intent_opening_hash = H(frame(
+  "loom-device-enrollment-intent-opening-v1", JCS(DeviceEnrollmentIntentOpeningV1)))
+device_enrollment_intent_commitment_hash = H(frame(
+  "loom-device-enrollment-intent-commitment-v1", JCS(DeviceEnrollmentIntentCommitmentV1)))
+invite_issuance_policy_hash = H(frame("loom-invite-issuance-policy-v2",
+  JCS(InviteIssuancePolicyV2)))
+certified_invite_record_hash = H(frame("loom-certified-invite-record-v2",
+  JCS(CertifiedInviteRecordV2)))
+bootstrap_catalog_hash = H(frame("loom-bootstrap-endpoint-catalog-v1",
+  JCS(BootstrapEndpointCatalogV1)))
+enrollment_service_ref_hash = H(frame("loom-private-enrollment-service-ref-v1",
+  JCS(PrivateEnrollmentServiceRefV1)))
+invite_proof_bundle_hash = H(frame("loom-invite-proof-bundle-v2",
+  JCS(InviteProofBundleV2)))
+invite_descriptor_hash = H(frame("loom-invite-bootstrap-descriptor-v2",
+  JCS(InviteBootstrapDescriptorV2)))
+enrollment_intent_preflight_request_hash = H(frame(
+  "loom-enrollment-intent-preflight-request-v1", JCS(EnrollmentIntentPreflightRequestV1)))
+~~~
 
-claim request signature 覆盖
-`frame("loom-enrollment-claim-request-signature-v1", JCS(EnrollmentClaimRequestBodyV1))`；
-signature profile 固定为 SHA-256 + NIST P-256 ECDSA；wire 只接受 32-byte big-endian `r` 后接 32-byte
-big-endian `s` 的 64-byte raw 编码，且 `1 <= r < n`、`1 <= s <= n/2`。Android Keystore/Windows
-产生的 DER 签名必须在边界严格解析、拒绝非最短/负整数后转换为 low-S raw；wire 不接受 DER、
-high-S 或可变长度整数。设备 identity 的唯一 key ID 定义为
-`device_identity_key_id="sha256:" + lowercase_hex(H(frame(`
-`"loom-device-identity-key-id-v1",raw_identity_spki_der)))`；`claimant_key_id` 必须等于从 CSR
-SPKI 重算的该值，并用该 key 验签。完成 enrollment 后，certified Device state 将
-`(device_id,identity_spki_hash,device_identity_key_id)` 作为同一 generation 的不可拆分身份绑定；
-本文所有 `identity_key_id`、`owner_identity_key_id`、`responder_identity_key_id` 以及
-`renderer_identity_key_id` 字段，只要其 authority 是 Device identity，都必须逐字段等于该绑定，
-不得改用裸 SPKI SHA-256、`identity_spki_hash` 或 provider 自己的 key handle。由于 ECDSA nonce
-允许同一 body 有不同合法签名字节，完整 request 是 detached proof：
-operation 只内嵌 exact body 并绑定 `claim_request_body_hash`，receipt/proposal sidecar 携 request
-signature；`claim_request_proof_hash` 不进入 operation ID/object ID。重签不会制造同 request ID 的
-第二个 operation，修改 body 任一字段则 body hash 不同并按冲突拒绝。
-wrapping key 必须是与 CSR identity key 不同的 Android Keystore/Windows CNG/Linux restricted-store
-不可导出 key。descriptor 的 cluster/invite/request/device 必须等于 request，generation 首次固定为
-1，profile 必须是 Device intent 允许列表中客户端选择的一项，`sealing_policy_hash` 必须等于 §6.2
-一对一 canonical policy hash。P-256 profile 的 strict DER SPKI 必须是
-`id-ecPublicKey + prime256v1`；RSA profile 必须是 `rsaEncryption`（parameters 为 DER NULL）、2048-bit
-modulus、public exponent 65537。两者都重算
-`wrapping_spki_hash=H(frame("loom-device-wrapping-spki-v1",raw_spki_der))`、
-`wrapping_key_id=H(frame("loom-device-wrapping-key-id-v1",raw_spki_der))`。
-`wrapping_key_possession_signature` 覆盖
-`frame("loom-device-wrapping-key-possession-signature-v1",JCS(DeviceWrappingKeyDescriptorV1))`。P-256
-profile 使用前述 strict low-S raw ECDSA；RSA profile 使用 RSASSA-PKCS1-v1_5/SHA-256，wire signature
-必须恰为 256-byte raw RSA result。algorithm、SPKI 类型和 descriptor profile 必须完全匹配；identity
-key 对完整 claim body 的签名又把 descriptor 绑定到 claimant。封装/解封严格使用 §6.2 exact policy
-和 envelope；任何组件不得把签名 identity key 临时当 wrapping/decryption key。
-`POST claims` 的 `Content-Type` 固定为 `application/json`，strict body 只能是上式
-`EnrollmentClaimSubmissionV1`；未知/重复字段拒绝。客户端只复制本次 descriptor 的 token；seed 解码
-后必须精确为 32 bytes，逐字节等于 private binding 解封出的已验证 token，并以 request 的
-cluster/invite ID 重算 commitment 同时等于 request、record 与 descriptor。submission 是 bearer
-transport envelope，不进入 request/operation/object hash、日志、
-缓存或 receipt；重试必须发送相同 token 与 exact `EnrollmentClaimRequestBodyV1`。两份 detached
-proof 可重放原 bytes，也可对同一 body/descriptor 重新产生另一份有效签名；服务端只以 body hash
-判断幂等，不比较 ECDSA nonce 导致的 signature bytes。取得/持久化 preparation 后立即丢弃 token
-transport bytes。token 不得移入 URL/header/cookie，客户端只向 §13 固定的 same-origin
-`POST claims` 发送且拒绝重定向。
-`csr_der` 是严格 DER PKCS #10，`identity_spki_der` 是其 subjectPublicKeyInfo 的逐字节 DER 投影；两者
-使用无 padding base64url。验证器解析 CSR、拒绝 trailing/非 DER/未知 critical attribute，验证 CSR
-self-signature，重算 `csr_hash=H(frame("loom-device-csr-v1",raw_csr_der))` 与
-`identity_spki_hash=H(frame("loom-device-identity-spki-v1",raw_spki_der))`，并要求 request/intent/TBS/
-receipt 的 bytes/hash 全部一致。只给 opaque hash 而没有这两个 preimage 不可 claim。
-token-validation signature 覆盖
-`frame("loom-invite-token-validation-attestation-v1",`
-`JCS(InviteTokenValidationAttestationBodyV1))`。proof signer/ref 排序、去重，并从 parent head 的唯一
-stable ControlSet enrollment keys 重算 `floor(N/2)+1`；Joint 期间不产生此 proof。同一 attestation
-可因在线 voter 不同而形成多个等价的合法 proof envelope，因此 proof 是 proposal/receipt 携带的
-detached authorization evidence，不进入 `EnrollmentClaimOperationV1`、其 object ID 或 operation
-tree leaf。所有 envelope 都必须重算相同 attestation hash；签名子集差异不能制造第二个 claim
-operation 或触发“同 operation ID 不同 object ID”。
-`record_expires_at` 必须等于 exact record；`parent_head.committed_logical_time <= validated_at <=`
-candidate claim head logical time，且 candidate 与 validated_at 的差不超过 parent
-`max_clock_skew_seconds`。每个 voter 在签 proof 时、所有 voter 在接受 claim entry 时都必须确认
-candidate logical time 与接收节点可信墙钟严格早于 record expiry；预签 proof 不能在过期后提交。
+DeviceEnrollmentIntentV1 只固定 Device 身份、platform、responsibilities 和 grants，不携节点级
+direction。Enrollment 完成后，每条新 control/data 边必须通过独立 certified LinkIntent 固定两端、
+purpose、allowed transports、发起方、listener/credential refs 和 route scope；不能从 Device 标签
+推导全局发起方向。v1 direction 只能由迁移器一次性投影成 LinkIntent，不进入新 Invite wire。
 
-Enrollment approval signature
-覆盖 `frame("loom-enrollment-approval-attestation-v1", JCS(attestation))`，approval QC hash 使用
-`H(frame("loom-enrollment-approval-qc-v1", JCS(exact_tagged_qc)))`。signature/ref 都按
-`(member_id,enrollment_key_id)` 排序、拒绝重复；从 claim head 的唯一 stable ControlSet
-重算 `floor(N/2)+1` 多数。首版没有 JointEnrollmentApproval QC；§9.1 在 Joint
-commit 后冻结普通 entry，因此 claim ordinary head 不可能产生在 Joint 中。若 claim head
-已在成员变更前 certified、但 approval 尚未收齐，仍只使用该历史 claim head
-绑定的 stable set/enrollment keys；后续 ControlSet 不能改写 quorum，历史 public keys 必须
-保留到 §18 GC waterline 越过该 receipt。旧 quorum 无法收齐时该 claim 不得由新集合
-补签；reserved transaction 必须先走下述 certified abort，再用全新 invite/request 重新邀请。
-approval coordinator 在收集签名前必须线性化确认 issuance entry 所指的 certified authority head
-仍是最新 head；存在任何更晚 head、committed-not-certified head 或 Joint 时，不得为同 request
-改绑另一个 approval head，reserved transaction 只能 certified abort。所有 signer 均从 receipt 的该 head/QC、exact
-profile leaf 与 inclusion path 重算 profile 仍是自身 ID 的 latest active generation、fence 与 issuance
-entry 一致。为消除 coordinator 自选时间，`approved_at` 唯一等于
-`issuance_committed_logical_time`，且必须不晚于 `retry_not_after`；它是该 issuance 获准收集 approval
-的确定性逻辑时间，不声称最后一份签名的墙钟时刻。这样 retire/revoke 已先进入 head 时无法伪造
-更早 approval authority，计划 retire 又能用已绑定的 issuance 坐标区分此前结果。
-approval attestation 以 `claim_head_entry_hash`、`claim_head_hash` 和 Raft 坐标绑定业务 head，
-不绑定某一种合法 config-QC signer subset；receipt 携带的 `claim_head_replication_qc` 必须是对这些
-exact bytes 的任一有效 QC。approval QC 自身也允许不同的合法多数 signer envelope，但所有
-attestation 字段、transaction facts、artifact refs 与证书必须相同；这些 envelope hash 不作为
-request ID 的幂等 object identity。
+创建 Invite 时必须预生成独立 32-byte `hiding_nonce`。公开 record/proof 只携
+`DeviceEnrollmentIntentCommitmentV1`；因为 commitment 覆盖不公开的 nonce，mirror 无法对低熵
+Device ID、platform、responsibilities 或 grants 做离线字典测试。客户端选定 ingress、建立
+tunnel 并验过 inner TLS 后，先发送不含 token/CSR/key 的
+`EnrollmentIntentPreflightRequestV1`。私有 Enrollment 只向与 capability/record 同一 Invite 的请求
+返回 opening；客户端重算 intent hash、opening hash 和 public commitment hash，逐字节核对
+cluster/invite/platform，并在发 token 前显示职责与 grants。任一不等立即关闭 tunnel。
 
-intent 内嵌的初始 `DeviceViewPayloadV2/DeviceViewLeafV2` 必须按 §10.1 重算
-`device_view_hash/device_view_leaf_hash`，其 cluster/device 与 claim 相等、generation=1、state=active、
-`previous_view_hash=EMPTY_HASH_V1`。active view 的 identity SPKI、Membership/Responsibilities/grants/
-direction 及各 hash、endpoint bundle、config refs 与 `secret_artifact_refs_root` 必须逐字段来自同一
-prepared intent；leaf 的 endpoint hash/min reader version 也必须相等。它们是 future completion 的
-确定性 bytes：claim/reservation head 只承诺而不把 leaf 放进 active `device_views_root`；completion
-reducer 必须逐字节复用，任何重新 render 出的差异都使 completion 失败。
+二维码不内嵌完整 ingress catalog、Device intent 或 opening。它只携 token、短 capability、
+catalog/proof 的哈希、private Enrollment service ref 和 2–3 个多样化 distribution mirror。完整 catalog 从
+路径形如 /distribution/sha256/<digest> 的不可变对象下载；服务器不得根据 token 动态生成响应，
+客户端也不得把 token 放进 URL、header、cookie、referer 或 DNS name。
 
-claim head 的 reducer 只创建 `EnrollmentTransactionStateV1(status=reserved)`：claim 坐标取承载
-Head 的真实 recovery epoch/term/index，`reserved_at` 等于其 committed logical time，deadline 用 checked
-addition 唯一导出；completion/abort/replacement 字段都必须缺失。它同时把 invite 变为
-`claim_reserved` 并占用 Device ID、identity/wrapping SPKI、intent、artifact root 与待发布 view leaf，
-但 Membership 仍非 active，view/secret 不可向 Device 交付，孤立 CA certificate 也不构成身份。
+如果扫码介质无法容纳 descriptor，应用可传递同一协议对象的 .loom-invite 文件。该文件不是
+第二种授权语义；在线和离线载体必须产生相同 canonical descriptor hash。离线包可以携完整
+catalog/public proof，但不得携 intent opening，且仍必须执行期限、QC、floor 和 endpoint identity 验证。
 
-approval QC 形成后，任一 control 可提交唯一
-`EnrollmentCompletionOperationV1`；operation ID 必须等于上式由 request/invite/device 导出的值，
-expected state 必须是 matching reserved hash，attestation hash、claim intent 和三组 ID 必须逐字段
-相等。approval QC 是 detached authorization evidence：不同合法 signer subset 不进入 completion
-object identity；每个 current voter 都重验历史 claim head/config QC、issuance entry/profile proof 与
-approval quorum。candidate 必须仍在同一 recovery statement lineage、两种可信时间均不晚于
-`retry_not_after`，且当前 profile 未 revoked；若已 retired，只在 issuance coordinate 不晚于 cutoff 且
-`approved_at < status_changed_at` 时继续。满足后 completion 作为 special operation 进入 ordinary
-Head 的 operation tree并由当前 stable ControlSet config QC certified，原子完成
-`reserved→completed`、invite `claim_reserved→consumed`、Membership 激活、初始 view 发布与 artifact
-release。state 的 `completion_operation_id` 必须等于
-`EnrollmentCompletionOperationV1.body.operation_id == enrollment_completion_operation_id`，
-`completion_attestation_hash` 等于 approval attestation hash，abort/replacement 字段
-必须缺失；receipt 必须验证 completion leaf/path/head/QC 并携 matching completed state。到这一步之前
-API/UI 都只能显示“加入处理中”，不得返回 joined/ready。
+mirror 数不足 2 或超过 3 时必须拒绝创建 Invite，不存在单镜像例外。客户端可并行或顺序尝试
+2–3 个 mirror，但只能接收与 QR 中 catalog/proof hash
+完全相等的对象。任何 HTTP redirect 都失败关闭，避免 URL canonicalization、跨缓存层和秘密隔离
+语义分叉。
 
-无法完成的 reservation 不允许靠数据库删除。管理员以普通、ACL 有界的
-`ControlOperationV1(kind="abort_enrollment",payload_schema=1,payload_hash=enrollment_abort_intent_hash)`
-提交 `EnrollmentAbortIntentV1`；outer/payload operation ID 必须相等，expected state 必须仍是 reserved。
-`retry_expired` 只在 candidate logical time 与可信 wall clock 都晚于 deadline 时成立；
-`certificate_profile_revoked` 必须由 current registry exact state证明；`authority_invalidated` 必须证明
-recovery statement 已变化或原 approval authority 已按协议失效；`administrator_cancel` 依赖 matching
-admin scope。abort head 原子写 `reserved→aborted` 与 invite `claim_reserved→revoked`，释放未激活的
-Device ID/Membership/view，保留 transaction/invite/certificate/artifact tombstone 并把未交付 secret
-转入 §15 orphan retention。aborted state 只带 `abort_intent_hash`；之后只有 §11.1 的 exact reissue CAS
-可填一次 `replaced_by_invite_id` 并创建全新 token/request，旧 token、identity reservation、certificate
-与 artifacts 永不复用。这样 CA/profile变化、旧 enrollment quorum 不足或 retry 超时不会留下 active
-但永远拿不到 receipt 的 zombie Device。
+每个 `DistributionMirrorRefV1` 必须在其 `distribution_endpoint_set_hash` 的 exact
+`DistributionEndpointV1` 下唯一找到相同 endpoint ID 与 listener generation；该代必须是 advertised
+或 preferred，不能是 draining/tombstone。`base_url` 必须由该代的 canonical HTTPS
+`dial_target_fqdn/public_port` 和固定 distribution path prefix 重建后逐字节相等，mirror 的
+server name、WebPKI profile/pins 也必须等于该代
+transport identity projection；禁止 descriptor 用另一组 URL 或 identity 覆盖 EndpointSet。
 
-`secret_artifact_refs_root` 对每个 receipt 携带的 exact `SecretArtifactRefV2` 重算 §6.2 hash，构造
-`EnrollmentSecretArtifactRefLeafV1` 后按 `(purpose enum order,secret_id UTF-8 bytes,generation)`
-排序去重，并使用 §7.1 RFC 6962 leaf/node/empty-tree 规则。intent、attestation、approval QC 与
-receipt 的 root 必须相等；数组不得缺失/额外，leaf purpose/ID/generation 必须逐字段等于 ref。
-每个 ref 的 cluster/proposal/owner、availability policy/receipts/PoP 必须重新验证，且恰好满足
-Device intent 与初始 view 所需的 credential profile；receipt 是 Device-authenticated 私有载体，
-不得把这些 backend refs 发布到 distribution。这样 reader 能从 receipt bytes 重算 root，而不是
-相信 server 提供的一个 opaque 摘要。
-对本 enrollment receipt 中的每个 ref，`proposal_id` 必须逐字节等于
-`intent.request_id == claim_operation.body.operation_id`；owner 必须是 `kind=device` 且 device ID
-等于该 purpose 的 committed
-credential profile 所指定主体，不能复用其他 request/proposal 生成的 artifact。现有 CA issuer key
-等基础设施 ref 不放进这组 Device 交付数组，而由 certificate profile 的 exact hash 独立引用。
-凡该组中需要目标 Device 解封的 sealed ref，其 `recipient_key_versions[]` 必须恰含 request
-`DeviceWrappingKeyDescriptorV1` 的 `(device_id,generation,wrapping_key_id,profile)`，内嵌 policy/hash
-必须精确等于 descriptor profile 在 §6.2 映射的 canonical policy，且该 profile 必须属于 Device intent
-允许列表；缺 wrapping PoP、改用 CSR signing key 或加入另一 recipient
-一律拒绝。intent、approval attestation/QC 与 request 必须重算同一
-`wrapping_key_descriptor_hash`。
+`InviteProofBundleV2` 的验证顺序是固定的：先从 record head/QC 验 invite operation leaf
+的 index/tree size/audit path，再核对 record 中的 intent commitment、policy、catalog、service ref、
+issuer authorization hash 和 issuer-registry root。随包的 issuer authorization 必须按其
+leaf/index/tree size/audit path 重算到该 root，其 hash 必须等于 record 的 exact
+`bootstrap_issuer_authorization_hash`，且其 policy hash 必须等于 record 中的 exact
+`invite_issuance_policy_hash`。缺少任一
+exact bytes/hash/root/path/QC、重复 leaf key 或两个 head 不在已验连续 lineage 上均 fail closed。
 
-同一 request 的服务端派生输入先由 request-ID keyed first-result reservation 固定：leader 在请求
-token-validation signatures 前，把完整 `EnrollmentClaimPreparationV1` 作为**不产生 head、不给予
-外部 authority**的 `EnrollmentClaimPreparationLogEntryV1` 线性化提交并耐久复制到当前 stable
-quorum。entry 的 term/index/previous hash 按 §7.4 指向真实直接 log 前项，body 中 preparation/hash
-重算相等，`entry_hash=claim_preparation_log_entry_hash`。`preparation_authority_head_hash` 必须是该
-entry 入列时最新 stable certified head，body 的 recovery/control 坐标逐字段投影自它；存在尚未
-certified 的 committed HeadEntry 或 Joint authority 时不得提交 preparation。body
-`committed_logical_time == preparation.prepared_logical_time`，不得早于 authority head 或前一
-time-bearing log entry，且与每个 voter 可信墙钟的差不超过该 head 的 `max_clock_skew_seconds`。
-之后任一 Raft entry（包括 claim head）的
-`previous_log_entry_hash` 仍指向它当时的真实直接前项，不得跳过该 coordination entry。first writer
-固定 `prepared_logical_time`、intent、view leaf、secret refs 与 certificate TBS；后来 seed/leader 对
-相同 request-body hash 只能取回同一 preparation bytes，不同 body hash 直接报 idempotency conflict。
-该 entry 不能消费 token、签证、发布 view 或触发 executor。claim operation 绑定 preparation hash，
-其内嵌 request body/intent 必须逐字节等于 preparation；每个 voter 还要确认 reservation 已 committed
-且 invitation 在实际 claim head parent 仍 available，claim head 的 committed logical time 不得早于
-prepared time。claim operation 本身不再携 base-head 坐标；
-实际 parent/recovery/control authority 由 detached token proof 和承载它的 claim Head/QC 绑定。因此
-普通 head 在 preparation 后前进不会产生同 request ID 的第二个 object，依赖已失效则该 preparation
-明确失败并要求客户端生成新 request ID。
+### 11.3 Bootstrap tunnel capability
 
-certificate issuance intent 在 claim head **提交前**固定全部可变输入。`issuance_id` 必须等于
-`H(frame("loom-device-certificate-issuance-id-v1", JCS({schema:1,cluster_id,request_id,device_id})))`；
-CSR/SPKI 必须等于 claim，`certificate_profile_ref` 必须逐字段等于 exact
-`DeviceEnrollmentIntentV1.device_certificate_profile_ref`，并从 parent `ca_profile_root` 唯一解析到
-当前最新 `active` profile state；state 内 intent 的 issuer certificate/chain 分别重算
-`issuer_certificate_hash/issuer_chain_hash` 并与 intent 相等；SAN、EKU、policy OID 与 Device
-platform/responsibilities/profile 完全相等。数组按 DER/UTF-8
-canonical bytes 排序去重。serial 固定取
-`H(frame("loom-device-certificate-serial-v1", raw_issuance_id_bytes))` 前 20 bytes、清最高 bit，若结果全
-零则把末 byte 置 1；`not_before=preparation.prepared_logical_time`，`not_after` 是与 profile
-`validity_seconds` 的 checked addition，全部由 first-result preparation 固定。有效期还必须受 §7.5
-clock bounds 限制。intent 内嵌对象与 `tbs_certificate_der` 分别重算同名 hash后必须相等。
+bootstrap capability 是“允许建立受限临时 tunnel”的凭据，不是 Device identity，也不是
+Enrollment token。二者必须独立；任何把 token 直接用作 HY2/Trojan 密码的实现都不合规。
 
-`loom-device-x509-v1` 的 TBSCertificate 是 DER v3；signature AlgorithmIdentifier 固定为 RFC 8410
-`id-Ed25519` 且 parameters 缺失，issuer Name 逐字节取 exact issuer certificate，subject 是空 Name，
-SPKI 逐字节取 CSR。validity 精确到 UTC 秒并按 RFC 5280 的 2049 分界选择 canonical UTCTime/
-GeneralizedTime。SAN 是唯一、critical 的 URI `san_uri_prefix + canonical device_id`；BasicConstraints
-critical/CA=false、KeyUsage critical 且仅 digitalSignature，EKU 与 certificatePolicies 按 profile 的
-DER OID bytes 排序去重，SKI 从 subject SPKI SHA-256、AKI 从 issuer SPKI SHA-256 导出；extension 按
-`extension_order_oids[]` 排列，禁止 CSR 请求追加字段、重复 extension、未知 critical extension 或
-AlgorithmIdentifier `NULL` 参数。完整 `tbs_certificate_der` 是 commit 后 CA 的规范输入；voter 严格
-解析并重验上述投影与 raw hash。Go/Android/Windows/CA builder 必须共享 golden DER/hash vectors。
+~~~text
+BootstrapTunnelCapabilityBodyV1
+  schema = 1, cluster_id, invite_id
+  committed_invite_record_hash
+  invite_issuance_policy_hash
+  bootstrap_issuer_authorization_hash
+  bootstrap_issuer_registry_root
+  enrollment_service_ref_hash
+  mode                                # initial_claim | resume_committed_claim
+  resume_binding?                     # 仅 resume_committed_claim 必需
+  issued_at, not_before, expires_at
+  allowed_ingress_set_hash
+  allowed_service_id
+  allowed_destination_ip
+  allowed_destination_prefix_length  # 仅允许 IPv4 /32 或 IPv6 /128
+  allowed_destination_port
+  allowed_inside_transport = tcp
+  maximum_connection_attempts
+  maximum_concurrent_sessions = 1
+  maximum_session_seconds
+  maximum_total_bytes
+  issuer_epoch, issuer_key_id
 
-首个 v2 online Device CA profile 固定用 Ed25519 issuer 和唯一 DER builder：相同 exact TBS bytes 与
-issuer key version 必须产生逐字节相同证书。CA 在 claim head/config QC 后先线性化读取最新 stable
-certified authority head；若存在 committed-not-certified head/Joint、intent 的 profile ref 已非该
-head `ca_profile_root` 中同 ID 最新 state、状态非 active、超出 issuance window，或 exact issuer fence/
-key-unseal lease 不匹配，就不得签名。通过后以 `issuance_id` 做
-durable first-result CAS：不存在时签 exact intent 并原子保存
-`IssuedDeviceCertificateV1`，已存在时只返回同一 bytes；同 issuance ID 的不同 object hash 是安全
-故障并停止签发。该 CAS 以 `IssuedDeviceCertificateLogEntryV1` 进入当前 control Raft 的
-cluster-wide registry，不是 executor 本地文件：term/index/previous hash 指向真实直接 log 前项，
-object/hash 重算相等；entry 的 authority head/recovery/control/CA root/profile ref 必须逐字段等于
-上述 certified head。entry `committed_logical_time` 不得早于 authority head、preparation/claim head
-或前一 time-bearing log entry，必须落在 profile issuance window 与 leaf certificate 有效期内，并与
-每个 voter 可信墙钟满足 authority head 的 skew bound；approval attestation 的同名时间必须相等。
-该 entry 实际 apply 时再次执行同样的 latest-active/fence CAS。若 revocation
-或 retire head 抢先进入 log，迟到签名只能丢弃。entry hash 使用上式 domain；后继 entry 继续链接该
-hash。receipt 携带的 exact entry/object/hash 必须相等，approval voter 只在该 entry committed 后签名。
-issued object 的
-`certificate_chain_der[]` 必须逐字节等于 profile 的
-`issuer_chain_der[]`（顺序为 issuing intermediate 起逐级到但不重复 leaf；是否包含 trust anchor 由
-profile bytes 固定），不能附另一条也合法的链。enrollment voters 重验 DER chain、serial/time/SAN/
-EKU/OID/CSR-SPKI、issuer hashes，再从 receipt 的 issuance authority head/QC、issuance profile leaf 与
-RFC 6962 audit path 重算该 head 的 `ca_profile_root`。approval attestation 必须同时绑定
-`issued_device_certificate_hash`、`issued_device_certificate_log_entry_hash`、entry recovery epoch/
-term/index、issuance authority head hash 与 `approved_at`；receipt 中这些值及 entry 内 authority
-坐标必须逐字段相等，不能替换
-一个“同证书、不同 log 坐标”的 wrapper。每个 enrollment voter 签 approval 前还要线性化确认该
-profile 仍是最新 active 且 fence 未变；否则不得签 approval，reserved claim 必须经 certified abort
-后重新邀请。这样 executor 崩溃/换届不能为
-同一 claim 生成另一张“也合法”的证书，CA retire/revoke 后的迟到结果也不能取得 approval。
+BootstrapCapabilityResumeBindingV1
+  request_id
+  claim_operation_hash
+  admission_qc_hash
+  claim_core_hash, csr_hash
+  identity_key_hash, wrapping_key_hash
+  enrollment_transaction_state_hash
 
-`DeviceClaimFactsV1` 严格拒绝未知 platform/architecture，protocol version 是非负
-int64，build ID 是 1..128-byte 规范 UTF-8；整个 exact facts object 已纳入 claim intent
-hash，所以幂等重试不能替换其中任一字段。attestation 的
-`retry_not_after` 唯一导出为
-`claim_head.committed_logical_time + 3600 seconds`，按 §7.1 checked time arithmetic；其
-`platform` 必须等于 intent facts 和下述创建意图。
+BootstrapTunnelCapabilityV1
+  body
+  capability_id                       # 由 body 派生；body 内不回填 ID
+  signature                          # BootstrapIssuer purpose key
 
-验证器必须重算 intent/request-body/request-proof/attestation/token-proof/operation 各 hash。
-detached request 的 body 必须逐字节等于 operation 内嵌 body；其
-cluster/invite/request/device、record/token/device-intent、facts、CSR/SPKI/wrapping descriptor 必须与
-intent 逐字段相等；operation body 必须是
-`kind="claim_invite"`、`payload_schema=1`、`payload_hash=claim_intent_hash`、
-`cluster_id=intent.cluster_id`、`operation_id=intent.request_id`，并绑定所携 request-body/preparation
-hash；preparation 内嵌 intent 必须逐字节等于 operation payload。实际 parent 的全部
-recovery/control 坐标只从 token-validation attestation 与 claim Head/QC 取得并逐字段相等，不能由
-special operation 自报一套 base authority。
+BootstrapIssuerAuthorizationActiveV1
+  issuer_epoch, issuer_key_id
+  issuer_public_key
+  invite_issuance_policy_hash
+  valid_from, valid_until
+  maximum_capability_ttl_seconds
+  maximum_connection_attempts
+  maximum_concurrent_sessions
+  maximum_session_seconds
+  maximum_total_bytes
+  permitted_ingress_set_hashes[]
+  permitted_service_ids[]
+  permitted_modes[]                   # initial_claim | resume_committed_claim
 
-每个 token-validation voter 只通过 descriptor seed 接收节点转发的 authenticated control-peer RPC
-暂时取得 token preimage，重算 commitment，并确认 parent state 的 invite lifecycle 是未过期
-`available`、record/request/intent 完全匹配后才签 attestation；token bytes 不进入 attestation、
-operation、Raft log 或持久缓存。proof attestation 的全部 request/intent/invite/parent/authority 字段
-必须与 exact objects 相等。接收节点向 Raft proposal 携带至少一份完整 detached proof sidecar；每个
-voter 在接受 entry 前验证其 quorum、exact attestation equality 与 expiry，并把至少一份合法 proof
-作为该 committed claim 的 availability-critical immutable evidence 保存至 §18 waterline。该
-threshold proof只证明 quorum 检查过 bearer preimage，不消费 token；
-两个并发 proof 最终仍由 Raft lifecycle CAS 决定唯一 winner。
+BootstrapIssuerAuthorizationRevocationV1
+  revoked_authorization_hash
+  effective_at, reason
 
-`claim_head.parent_head_hash` 必须逐字节等于
-`token_validation_proof.attestation.parent_head_hash`，并在该 parent 的相同 authority 下作为
-`head_kind=ordinary`
-提交，并由该 stable ControlSet 的 `StableHeadReplicationQCV1` 认证；Joint/final head 或 joint QC
-均不可作 claim head。再以 `claim_operation_object_id` 构造 §7.1
-`ControlOperationLeafV1`，验证 index/tree size/audit path 精确落到 claim head 的
-`operation_root`。`EnrollmentClaimOperationV1` 是 token-authorized 特例，不含 admin cert、
-admin signature 或 ACL 扩权；客户端 CSR key 的 request signature、stable enrollment-key token proof、
-Raft config QC 三层缺一不可。attestation 的 lineage、ControlSet、Raft/head/QC 坐标与 intent 中重复的
-invite/request/device/CSR/SPKI/view/artifact 承诺必须和该 exact intent、HeadEntryV2 及其 config QC
-逐字段相等。enrollment voter 只有完成这些检查才签 approval。在线 CA 只有同时验证 claim head 的
-config QC 与其中已承诺的 exact issuance intent 后才可执行 first-result signing；enrollment voters
-随后把 issued-certificate hash 纳入 approval QC。再由 approval-QC-authorized completion operation 与
-current config QC 原子激活。Device 只有同时验证 claim config QC、issued object、enrollment approval
-QC 与 completion head/config QC 才接受身份；任何单节点 enrollment signature、仅有 claim config QC、
-仅有 CA certificate 或尚未 completion certified 都不能创建有效身份。
+BootstrapIssuerAuthorizationV1
+  schema = 1, cluster_id, authorization_id, generation
+  status                              # active | revoked
+  previous_authorization_hash?        # generation>1 必需；同 ID 上一代
+  active?: BootstrapIssuerAuthorizationActiveV1
+  revocation?: BootstrapIssuerAuthorizationRevocationV1
+  parent_head_hash
 
-该 parent record 重算的 `certified_record_hash` 必须等于 intent 的
-`certified_invite_record_hash`；其
-`device_intent_hash` 必须在 parent state 解决到 §11.1 exact
-`DeviceEnrollmentIntentV1`，并逐字节等于 intent 的
-`device_enrollment_intent_hash`。voter 必须重算该对象及 membership/responsibilities/
-grants/direction 四个子 hash，要求它们逐字节等于
-`EnrollmentApprovalIntentV1` 的四个字段，并要求 cluster/invite/device ID、
-`claim_facts.platform`、token commitment 与该 certified record/creation intent 全部相等。
-claim 只为 identity CSR/SPKI、独立 wrapping descriptor/PoP 和不改权的客户端事实填值；不能替换 platform、Membership、
-Responsibilities、grants 或 direction。
+BootstrapIssuerAuthorizationLeafV1
+  schema = 1, authorization_id, generation
+  authorization_hash
 
-1. Device 在 Keystore/CNG/root-only store 分别生成不可导出的 P-256 identity/CSR key 与按 intent
-   有界协商出的 P-256 或 RSA wrapping/PoP key；Android API 26–30 使用 RSA fallback，API 31+ 优先
-   P-256。
-2. 它只能从本次 `InviteBootstrapDescriptorV2.delivery_context` 直接携带的有界
-   `EndpointSet(role=enroll)` seeds 中选择；先验精确 URL、WebPKI 和
-   descriptor-carried SPKI pin，并按 §11.1 先无 token 获取/验证 proof bundle，再向其中任一入口提交同一
-   `EnrollmentClaimSubmissionV1{token, exact signed request(CSR,wrapping descriptor/PoP,device facts)}`；
-   验证失败前不得发送 token bytes。
-3. 接收节点执行线性化读取，经 control-peer mTLS 将 token preimage 仅暂时提供给当前 stable set 的
-   enrollment voters，取得上述多数 token-validation proof 后把它作为 detached sidecar 提交专用
-   claim operation；token 从
-   `available` 到 `claim_reserved` 是 Raft 串行 CAS，claim intent 与 reservation 在同一 head
-   commit/apply 并取得 replication QC 后才成为 certified；在此之前不得签证。reservation 不激活
-   Device、不发布 view，也不交付 secret。
-4. 同 token、exact request body（含 CSR、wrapping descriptor、request ID 与 facts）的重试只在
-   approval attestation 的
-   `retry_not_after` 内返回同一不可变 transaction facts/artifacts；receipt 可携带任一对相同
-   body/descriptor 有效的 claimant/wrapping detached proof，以及任一对相同 attestation 有效的
-   token-validation/head/approval QC envelope；签名字节/签名子集不属于业务幂等身份。
-   接收节点必须同时确认其最新
-   certified head logical time 和可信 wall clock 都不晚于该 deadline；wall clock 不可用时
-   fail closed。超时后 token 不再是 recovery credential，不同 facts 或 CSR 永久拒绝。
-5. identity/wrapping SPKI、Membership、职责、grants、满足 §6.2 availability/PoP 且只向该 wrapping
-   key 封装的 exact-version secret artifact root、exact Device certificate issuance intent 和初始 Device view leaf 在同一
-   claim 提交中绑定。
-6. 在线 CA 验证 certified claim head/config QC 与最新 active/fenced profile 后，以 issuance ID 执行
-   deterministic first-result signing并提交 cluster-wide issuance log；enrollment voters 验证 exact
-   certificate/log entry/profile proof 后把它们的 hash/坐标纳入独立 approval QC。
-7. 任一 control 用 approval QC 提交 deterministic completion；current config QC certified 后才原子
-   `claim_reserved→consumed`、激活 Membership/view 并授权 artifact release。响应附带绑定证书对象/
-   SPKI、invite、claim/completion 两个 head/QC、初始 leaf/root、floor 和 intent hash 的 enrollment
-   receipt。无法完成者必须 certified abort 后用全新 invite/request 重试。
-8. `ready` 只表示 certified completion、view 和必要制品已可取，不表示客户端已安装或在线。
+BootstrapIssuerAuthorizationProofV1
+  schema = 1, cluster_id
+  authorization: BootstrapIssuerAuthorizationV1
+  authorization_hash
+  leaf: BootstrapIssuerAuthorizationLeafV1
+  leaf_index, registry_tree_size, registry_audit_path[]
+  registry_root
 
-普通 X.509 证书不需要做非标准“多签”。它由受约束的在线 intermediate 签发，但验证端
-同时核对 certified registry/enrollment receipt；单个 CA executor 不能靠一张孤立证书
-创建有效成员。
+EnrollmentResumeDescriptorV1          # 带外一次性交付；不进 public mirror
+  schema = 1, cluster_id, invite_id, request_id, expires_at
+  resume_tunnel_capability: BootstrapTunnelCapabilityV1
+  claim_core_hash, claim_operation_hash, admission_qc_hash
+  enrollment_transaction_state_hash
+  bootstrap_catalog_hash
+  proof_bundle_hash
+  enrollment_service_ref: PrivateEnrollmentServiceRefV1
+  distribution_mirrors[]: DistributionMirrorRefV1
+~~~
 
-邀请 token 由创建端用 CSPRNG 生成；明文只存在于一次性创建响应的授权交付上下文、由用户保存的
-QR/加入文件/`loom://` URI，以及 `retry_not_after` 前该 exact 事务的 claim/retry
-body。它不进入 URL/header/cookie 或复制日志；客户端持久化 certified receipt/identity
-后立即清除。控制日志绑定 domain-separated commitment 与 §6.2
-sealed artifact hash/ref，只有获授权 invite-delivery renderer 能在 certified 后解封同一 token。
-需要同时交付给 Device 与 server 的数据面秘密，
-必须在 approval commit **之前**生成一次，并分别 sealed 给既定接收者，或写入能按不可变
-版本取回同一字节的 KMS/HSM；日志只提交 ciphertext hash/immutable secret ref。替任 executor
-只能重放同一 artifact，不能按 generation 临时再生一份新秘密。若 artifact 尚未满足 §6.2 的
-availability/PoP policy，事务不能 commit 或进入 `ready`；生成前、seal 后、commit 后任一点崩溃的
-重试都必须得到同一 artifact 或明确作废后创建更高 generation。
+capability signature 覆盖
+`frame("loom-bootstrap-tunnel-capability-signature-v1", JCS(BootstrapTunnelCapabilityBodyV1))`；
+`capability_body_hash` 与 authorization hash 分别使用独立同名 v1 domain；
+`capability_id = H(frame("loom-bootstrap-tunnel-capability-id-v1",`
+`JCS(BootstrapTunnelCapabilityBodyV1)))`。ID 只存在 envelope，必须重算后逐字节相等；
+不得将 ID 回填 body 再求 hash。authorization leaf 使用 §7.1 RFC 6962 规则，按
+`(authorization_id, generation)` 排序并拒绝重复；`bootstrap_issuer_registry_root` 必须由
+proof 的 leaf/index/tree size/path 重算。`authorization_hash` 使用
+`loom-bootstrap-issuer-authorization-v1`，leaf 使用
+`loom-bootstrap-issuer-authorization-leaf-v1`，resume descriptor 使用
+`loom-enrollment-resume-descriptor-v1` domain。descriptor 中 capability
+的 `allowed_ingress_set_hash` 必须等于所下载 catalog 的 `bootstrap_ingress_set_hash`，且必须出现在
+active authorization 的 `permitted_ingress_set_hashes[]`；其 `enrollment_service_ref_hash` 必须从
+descriptor 的 exact `PrivateEnrollmentServiceRefV1` 重算，service ID、目的 IP/前缀/端口也必须
+逐字段相等并在 authorization 的 service scope 内。
+只比较 service ID 而忽略实际 route tuple 不合法。
+resume descriptor 的 claim/core/admission/transaction hashes 还必须逐字段等于 capability 的
+`resume_binding`；任一重复字段不等都失败关闭。
 
-### 11.3 稳态端点
+authorization 是按 ID 的不可变链：generation 从 1 连续增加，首代缺
+`previous_authorization_hash`，后续代必须精确指向前代。`active` 必须只携 active body，
+`revoked` 必须只携 revocation body，并且其 `revoked_authorization_hash` 必须是该链上最近的
+active hash；revoked 后不得回到 active。每个 certified `HeadEntryPayloadV2` 都携
+`bootstrap_issuer_registry_root`，config attestation/QC 重复绑定该 root。Invite 记录的 root/proof
+证明 capability 签发时的 exact active authorization；公网 ingress 在每次建连时还必须从本机
+最新 certified head 重算当前 registry root，沿 same-ID previous-hash 链确认该 active hash 未被
+revocation 代取代。无法取得当前 certified root、root 回退、链断裂或已撤销都拒绝；
+不能因 capability 仍在时间有效期就继续放行。
 
-control API、Enrollment、Device config、Device report、静态 distribution 和 data ingress 是
-不同 EndpointSet role，wire enum 固定为
-`control_api | enroll | device_config | device_report | distribution | data_ingress`；不能从一个
-enrollment URL 替换路径或从同 hostname 猜出其他角色。v1 的 `report/data` 等别名只允许迁移
-renderer 显式映射，不进入 v2 wire。客户端从已验签
-Device view 得到多个 endpoint；失败时按 endpoint ID 切换，拒绝跳到集合外重定向。每个
-`control_api/enroll/device_config/device_report/distribution/data_ingress` endpoint 都绑定允许的
-hostname、协议和 transport
-identity pin set；有合法 WebPKI 证书但 pin 不匹配的服务器仍在发送凭据前被拒绝。
+Invite 必须先 commit 并取得 QC；随后才允许由 certified BootstrapIssuer 从该记录派生 capability。
+BootstrapIssuer 使用独立用途 key，其 authorization 由 ControlSet QC 约束。入口验证：
 
-Device 报告仍由 Device 自身签名，不要求每份报告取得 quorum。任一由 control 托管且已在
-EndpointSet 中授权的 `device_report` ingress 验证
-身份与当前 certified membership 后可接收，再用 CRDT 按
-`(device_id, observed_at, attestation_hash)` 去重传播。无法证明自己已追上撤权水位的落后
-副本不得向该 Device 返回受保护数据，应返回可重试错误让客户端换端点。
+1. 从 certified Invite record 取得 exact policy hash 和 issuer-registry root，重算 authorization
+   leaf/audit path，再核对 capability 中的 authorization hash/root/key/epoch；authorization 必须仍在有效期且未撤销；
+2. capability 的 invite/record/policy/service-ref hash、期限和 ingress set 与已验材料一致，且
+   ingress-set/service 均在 exact authorization scope 内；
+3. capability 的 TTL、流量、session、次数、并发和 ACL 同时不超过 exact authorization
+   与 InviteIssuancePolicy；descriptor 字节数、mirror 数/故障域和 transport 也必须满足该 policy；
+   initial capability 的 expires_at
+   还不得晚于 Invite expires_at，且不得带 resume binding；resume 模式必须逐字段绑定已 committed
+   的 claim/transaction，并不得授权新的 claim；
+4. 当前 endpoint 属于 allowed ingress set；
+5. 目的地址、端口和 transport 精确等于 capability，不接受客户端任意指定；
+6. capability 不在本入口的并发、次数、流量或速率封禁状态。
+
+initial/resume capability 默认有效期均为 15 分钟；policy 中两个 TTL 字段都必须在 5–30 分钟内，
+签发值还不得超过各自字段，协议硬上限均为 30 分钟。`maximum_reservation_retry_seconds` 默认
+1800 秒、必须为正且硬上限 86400 秒。新目标态不存在
+1 小时自动恢复窗口；旧 1 小时只属于 v1 compatibility，不能进入 v2 policy。已建立 session
+默认最多 180 秒、硬上限 300 秒，总流量默认 8 MiB，同一入口最多 3 次连接尝试且同一时刻最多
+1 个 session。来源 IP 只能作为滥用信号，不能作为身份；移动网络切换后仍可在期限和次数内重试。
+
+客户端自动重试只允许在当前 Invite 与 capability 都有效时进行。若 claim 已经 committed，事务为
+reserved、issued_provisional 或 completed，但客户端因响应丢失而等到 capability 过期，不能自动刷新，
+也不能创建新 request。
+管理员可在线性化读取 transaction 后，显式为同一 invite_id + request_id + claim/CSR/identity/
+wrapping-key hashes 重签一个短期 resume capability。它只恢复到同一个幂等事务：不延长原 Invite、
+不把 lifecycle 改回 available、不重置 reservation，也不再次消费 token；ControlSet 返回原有结果
+或继续原事务。任一绑定不同都必须拒绝并要求创建全新 Invite。
+
+这里“不延长 Invite”指 Invite 的 `available` 消费窗口仍在原 `expires_at` 截止；已 certified
+reservation 是独立事务状态，其 policy-bound `retry_not_after` 可以晚于 Invite expiry。超过 Invite
+expiry 后只能恢复该 exact committed transaction，绝不能以原 token 创建另一 claim、改变 core 或
+把 Invite 从 reserved/consumed 改回 available。
+
+重签结果只能是 `EnrollmentResumeDescriptorV1`。管理员必须经 private `control_api`、
+admin mTLS 和相应 ACL 请求；ControlSet 线性化核对 transaction 为 `reserved`、`issued_provisional`
+或 `completed`、
+original claim core 与全部 resume binding 后，才能在一次性响应中返回 descriptor。它不含 token，
+不进 public mirror/latest API，也不能被未入网客户自动刷新；管理员只可用新 QR 或
+`.loom-resume` 文件带外交给原设备。客户端必须验证 descriptor/capability/hash，重用原
+claim core 及 identity/wrapping keys，并对新 server nonce 重签 detached PoP。`expires_at` 不得超过
+capability、issuer authorization、policy、catalog、service ref 和 transaction `retry_not_after` 中最早的截止点。
+
+各公网 ingress 对次数/流量的记账可以是保守的本地或最终一致状态，因此它不是全局一次性安全
+边界。真正的一次性授权由 private Enrollment 对 token 做 Raft CAS。入口发现异常重放时可提前
+拒绝；不能因 ingress 间尚未同步就把 Invite 标记 consumed。
+
+临时 tunnel 的网络策略必须在 ingress 转发器和 private Enrollment 前防火墙两侧执行：
+
+- 只允许 capability 中一个 Enrollment /32 或 /128、一个 TCP 端口；
+- 禁止其他 overlay CIDR、control_api、Raft、SSH、DNS、ICMP、隧道内 UDP 和 Internet egress；
+- 禁止横向连接、端口扫描和 server-originated reverse connection；
+- session 结束或 capability 过期后立即撤销临时路由/状态；
+- 日志只记录 capability_id、endpoint_id、计数和结果，不记录 token、CSR 或内层明文。
+
+### 11.4 内层 TLS、token、Keystore PoP 与一次性提交
+
+第一次 Enrollment 默认使用**服务端认证的内层 TLS + token + Keystore PoP**，不要求尚不存在的
+正式 Device client certificate。服务端证书必须按 PrivateEnrollmentServiceRefV1 验 internal CA、
+overlay IP SAN 和/或 certified SPKI pin；不得关闭证书验证或接受任意 internal certificate。
+
+客户端在平台安全存储内生成身份 signing key 和 wrapping key。Android 私钥必须留在 Keystore；
+Windows/Linux 使用各自受保护的不可导出能力，确实无法做到时必须在平台 profile 中明确降级，
+不能把导出私钥伪装成硬件保护。
+
+~~~text
+EnrollmentClaimCoreV2                  # 幂等核心；不含 token/server nonce/PoP 签名
+  schema = 2, cluster_id, invite_id, request_id
+  certified_invite_record_hash
+  device_enrollment_intent_commitment_hash
+  device_enrollment_intent_opening_hash
+  accepted_device_enrollment_intent_hash
+  client_platform
+  base_recovery_epoch, base_control_epoch, base_control_set_hash, base_head_hash
+  device_identity_public_key
+  device_identity_key_profile
+  wrapping_public_key
+  wrapping_key_profile
+  csr_der
+  client_nonce
+
+EnrollmentPoPChallengeV1
+  schema = 1, cluster_id, invite_id, request_id
+  enrollment_service_id
+  claim_core_hash
+  server_nonce                         # 每次 inner-TLS 尝试新 32-byte CSPRNG
+  issued_at, expires_at
+
+EnrollmentPoPBodyV2
+  schema = 2, cluster_id, invite_id, request_id
+  claim_core_hash
+  token_commitment
+  challenge_hash
+
+EnrollmentClaimSubmissionV2           # 只在 inner TLS；不进 Raft/CRDT/log
+  schema = 2
+  token
+  claim_core: EnrollmentClaimCoreV2
+  challenge: EnrollmentPoPChallengeV1
+  pop_body: EnrollmentPoPBodyV2
+  proof_signature                      # identity key 对 exact pop_body 的 detached 签名
+
+EnrollmentAdmissionAttestationBodyV1  # 稳定；不含 challenge/signature bytes
+  schema = 1, attestation_type = "enrollment_admission"
+  cluster_id, invite_id, request_id
+  certified_invite_record_hash
+  device_enrollment_intent_commitment_hash
+  device_enrollment_intent_opening_hash
+  token_commitment, claim_core_hash
+  identity_key_hash, wrapping_key_hash, csr_hash
+  pop_verification_profile = "loom-enrollment-server-nonce-detached-v2"
+  base_recovery_epoch, base_control_epoch, base_control_set_hash, base_head_hash
+  admission_not_after, retry_not_after
+
+StableEnrollmentAdmissionQCV1
+  schema = 1, qc_type = "stable_enrollment_admission"
+  attestation: EnrollmentAdmissionAttestationBodyV1
+  signatures[]                        # ControlSet enrollment-purpose signatures
+  signer_refs[]
+
+EnrollmentClaimOperationV2            # admission-QC-authorized；operation log 不含 token 明文
+  schema = 2, cluster_id, operation_id, invite_id, request_id
+  certified_invite_record_hash
+  device_enrollment_intent_commitment_hash, device_enrollment_intent_opening_hash
+  token_commitment, claim_core_hash, admission_qc_hash
+  identity_key_hash, wrapping_key_hash, csr_hash
+  reserved_at, retry_not_after
+
+EnrollmentProvisionalIssuanceBodyV1    # control-private；completion 前不向 Device 释放
+  schema = 1, cluster_id, invite_id, request_id
+  claim_operation_hash
+  reservation_head_hash, reservation_head_qc_hash
+  device_certificate_hash, initial_device_view_hash, secret_artifact_refs_root
+  result_artifact_hash
+  device_certificate_profile_state_hash
+  issuance_log_coordinate: IssuanceLogCoordinateV1
+
+EnrollmentProvisionalIssuanceV1
+  body: EnrollmentProvisionalIssuanceBodyV1
+  ca_signature                         # active/fenced Device CA purpose key
+
+EnrollmentIssuanceRegistryLeafV1
+  schema = 1, claim_operation_hash, provisional_issuance_hash
+
+EnrollmentProvisionalIssuanceOperationV1 # CA-authorized first-result CAS
+  schema = 1, cluster_id, operation_id, invite_id, request_id
+  expected_transaction_state_hash
+  claim_operation_hash, provisional_issuance_hash
+  issuance_registry_leaf: EnrollmentIssuanceRegistryLeafV1
+  previous_issuance_registry_root, resulting_issuance_registry_root
+  issued_at
+
+EnrollmentApprovalAttestationBodyV2
+  schema = 2, attestation_type = "enrollment_approval"
+  cluster_id, invite_id, request_id
+  claim_operation_hash
+  provisional_issuance_operation_hash, provisional_issuance_hash
+  issuance_head_hash, issuance_head_qc_hash, resulting_issuance_registry_root
+  device_certificate_hash, initial_device_view_hash
+  secret_artifact_refs_root, result_artifact_hash
+
+StableEnrollmentApprovalQCV2
+  schema = 2, qc_type = "stable_enrollment_approval"
+  attestation: EnrollmentApprovalAttestationBodyV2
+  enrollment_signatures[]
+  signer_refs[]
+
+EnrollmentCompletionOperationV2       # approval-QC-authorized
+  schema = 2, cluster_id, operation_id, invite_id, request_id
+  expected_transaction_state_hash
+  claim_operation_hash
+  provisional_issuance_operation_hash, provisional_issuance_hash
+  resulting_issuance_registry_root
+  enrollment_approval_qc_hash
+  result_artifact_hash
+
+EnrollmentTransactionStateV2           # reducer 输出
+  schema = 2, cluster_id, invite_id, request_id
+  claim_core_hash, identity_key_hash, wrapping_key_hash
+  status                               # reserved | issued_provisional | completed | aborted
+  claim_operation_hash
+  provisional_issuance_operation_hash?, provisional_issuance_hash?
+  resulting_issuance_registry_root?
+  enrollment_approval_qc_hash?
+  completion_operation_hash?, result_artifact_hash?
+~~~
+
+`claim_core_hash`、`challenge_hash`、admission attestation/QC、claim operation、provisional
+issuance body/envelope/operation、issuance registry leaf、approval attestation/QC、completion operation
+和 transaction state 分别使用
+`loom-enrollment-claim-core-v2`、`loom-enrollment-pop-challenge-v1`、
+`loom-enrollment-admission-{attestation,qc}-v1`、`loom-enrollment-claim-operation-v2`、
+`loom-enrollment-provisional-issuance-{body,envelope,operation}-v1`、
+`loom-enrollment-issuance-registry-leaf-v1`、`loom-enrollment-approval-{attestation,qc}-v2`、
+`loom-enrollment-completion-operation-v2` 和 `loom-enrollment-transaction-state-v2` domain 计算内容哈希。
+issuance registry 对每个 claim operation 的唯一 first-result leaf 按 claim-operation hash bytes 排序，
+使用 §7.1 RFC 6962 tree；provisional operation 必须携与 previous root 比较后唯一可能的
+resulting root，相同 claim 的另一 issuance hash 是 CAS 冲突。
+
+`proof_signature` 精确覆盖
+`frame("loom-enrollment-pop-signature-v2", JCS(EnrollmentPoPBodyV2))`，由 claim core 中的 Device
+identity private key 签名。服务端在已认证 inner TLS 中为每次尝试生成新
+`server_nonce`；challenge 必须未过期、service ID 等于当前 private Enrollment、core hash 相等，
+且未在该 service 的有界 replay cache 中使用。`EnrollmentPoPBodyV2.challenge_hash` 必须从
+exact challenge 重算。CSR subject/key、声明 public key 和 PoP key 必须逐字段一致。
+token 只在已建立且验证过的内层 TLS 中发送；public ingress 只能看到外层 capability，
+不能看到 intent opening、token、CSR、Device ID 或签发结果。
+
+stable claim identity 是 `token_commitment + claim_core_hash`。`EnrollmentClaimCoreV2` 必须重算
+intent opening/commitment，并把 opening 的 exact intent hash、客户端平台、CSR/identity/wrapping key 及
+已验 base authority 固定。它不含 token、server nonce、challenge 或 detached signature，所以跨
+ingress 重试可以对新 challenge 重签 PoP，而不改变幂等 identity。
+
+预留前，当前 stable ControlSet 的每个 enrollment voter 必须在私有 peer RPC 上独立获得
+token preimage 和 exact submission，验 token commitment、intent opening、core、challenge/PoP、Invite 状态/
+期限及 base authority，然后对不含秘密/challenge 的同一
+`EnrollmentAdmissionAttestationBodyV1` 签名。`StableEnrollmentAdmissionQCV1` 必须满足该
+base ControlSet 的 q(N)，签名按 member ID/key ID 排序去重；单 ingress 的“token 对”不是
+admission。稳定的 `pop_verification_profile` 表示每个 signer 已对 exact core/key 验过至少一个
+仍新鲜的 server-nonce detached PoP；它不把某次可变 challenge/signature 伪装成事务 identity。
+`admission_not_after` 必须精确等于 certified Invite 的 `expires_at`；只有 Invite 仍为 available、
+未 revoked 且 reservation commit logical time 不晚于该值时，admission QC 才能授权首次 CAS。
+`retry_not_after` 必须精确等于
+`checked_add(admission_not_after, InviteIssuancePolicyV2.maximum_reservation_retry_seconds)`，因此可晚于
+Invite expiry，但只属于已 certified reservation。每个 voter 在签名前、reducer 在 apply 时都按
+exact certified record/policy 重算两个值并做 checked arithmetic；leader 不能自选或延长。
+claim operation 只引用 exact `admission_qc_hash`，其 `retry_not_after` 必须逐字节等于 admission
+attestation 的值；它不把 token 或可变 detached PoP 写入日志。
+
+ControlSet 对 claim 执行以下唯一顺序：
+
+~~~text
+available Invite + matching opening/token + valid detached PoP
+  → stable enrollment quorum signs exact admission attestation
+  → admission QC authorizes one claim-core reservation CAS
+  → Raft commit/apply/QC reservation head (Invite remains reserved, Device inactive)
+  → active/fenced CA creates exact provisional certificate/view/artifacts
+  → CA-authorized provisional-issuance operation performs issuance-registry first-result CAS
+  → Raft commit/apply/QC issuance head (nothing released to Device)
+  → stable enrollment quorum verifies issuance/profile/registry/head and signs approval QC
+  → approval-QC-authorized completion operation commits/applies/gets config QC
+  → atomically consume Invite, activate Membership/view, authorize exact artifact release
+~~~
+
+CA signature 覆盖 exact `EnrollmentProvisionalIssuanceBodyV1`，其 profile state 必须在 reservation
+和 issuance 时都 active、未过 issuance cutoff 且 fencing epoch 相等。provisional operation 只有在
+reservation head/QC、transaction state、claim operation 和 registry previous root 全部相等时才可 CAS。
+`StableEnrollmentApprovalQCV2` 必须满足 issuance head 的 stable ControlSet q(N)，逐字节绑定
+provisional issuance/operation、registry root、certificate、view、secret refs 和 result artifact；config head QC
+不能替代 admission/approval QC，三者也不能互换用途。
+
+同一 token 的合法自动重试必须复用完全相同的 claim core，因而 request ID、CSR、
+identity/wrapping keys、client nonce、intent opening 和 base authority 全部不变；只允许 server
+nonce/challenge 和 detached PoP signature 随尝试改变。自动重试仍受 Invite/capability 期限限制。
+超时 reservation/issuance 只可按 certified policy 恢复或 abort，不能由单副本本地释放或改写
+registry root。resume capability 到达时，private Enrollment 先按 binding 读取现有 transaction：
+completed 直接返回既有 result artifact，reserved/issued_provisional 只继续同一事务，aborted 拒绝；
+三者都不把 token 再做一次 available→reserved CAS。并发不同 core 只有一个能完成
+reservation CAS，失败者不得获知胜者的 Device 材料。
+
+QR 被复制后的主要风险是抢先消费。默认流程依靠高熵 token、短 capability、PoP 与管理员撤销；
+高安全环境可增加“管理员反向扫描设备公钥并提交 Invite binding”的显式模式。不得把可复制的
+临时客户端私钥塞进二维码。若合规规则强制首个业务请求使用 mTLS，可在 token+PoP 验证后签发
+invite-scoped 临时 client cert，再进行第二阶段事务；它不是默认流程，也绝不能称为正式 Device
+identity。
+
+### 11.5 稳态配置与报告
+
+Enrollment 完成后，客户端关闭 bootstrap listener、删除 descriptor/token/capability 的持久副本，
+并通过正式 Loom channel 使用 Device mTLS：
+
+- device_config 返回与 Device 授权相符的 Merkle-proofed private view；
+- device_report 接收 Device 签名的健康、版本和观测；
+- distribution 仍可从公开 mirror 拉取通用、无秘密、可验签制品；
+- control_api 只接受 admin cert；Device identity 不能提升为 admin；
+- Raft/peer RPC 只接受 control peer profile。
+
+这些应用服务不得挂到公网 Nginx。是否由一个 control 进程复用内部 socket 不影响协议角色；
+证书 EKU、ACL、端口和 handler 必须分别校验。报告失败不停止已安装数据面，配置不可达时继续
+使用 LKG；任何过期 bootstrap capability 都不能充当稳态恢复通道。
 
 ---
 
-## 12. 域名与公开证书管理
-
-### 12.1 管理边界
-
-Loom 自动管理已经委派给它的 DNS zone/subzone，不默认购买、转移或删除注册域名。
-注册商续费和账单只做读取、到期告警和显式批准任务。DNS provider 使用可替换 adapter；
-Gandi LiveDNS、Dynadot 或支持 RFC 2136 的权威 DNS 都只是实现，不进入客户端协议。
-
-推荐把独立子域委派给 Loom，例如：
-
-```text
-api.<node-label>.<managed-zone>       control_api（管理员/API）
-enroll.<node-label>.<managed-zone>    enroll（一次性加入）
-config.<node-label>.<managed-zone>    device_config（私有 Device view）
-report.<node-label>.<managed-zone>    device_report（签名上报）
-dist.<node-label>.<managed-zone>      distribution（公开静态制品）
-data.<node-label>.<managed-zone>      data_ingress（Hysteria2/Trojan 等）
-_acme-challenge.<managed-zone>        独立 DNS-01 validation zone
-```
-
-首个 v2 profile 要求六种 role 分离 hostname、CertificateIntent 与认证策略，避免把管理员 API、
-bearer-token Enrollment、Device mTLS、公开静态缓存和数据入口放进同一错误的反代/证书边界。
-不能仅靠 URL path 区分 role。control peer RPC 另由 head/QC 承诺的 private
-ControlPeerDirectory mTLS 地址管理，不进入
-上表。稳定 logical endpoint ID 与 Device ID 绑定；hostname label 经规范化和冲突检查后提交，
-一经分配不得因节点改名自动变化。
-
-### 12.2 目标模型
-
-```text
-ManagedZoneRefV1
-  zone_id, generation, managed_zone_hash
-
-DNSProviderProfileRefV1
-  profile_id, generation, dns_provider_profile_hash
-
-DNSProviderProfileV1
-  schema = 1, cluster_id, profile_id, generation
-  adapter_kind, api_base_url, provider_zone_handle
-  supports_record_cas, supports_rrset_union, supports_fencing
-
-ACMEDirectoryProfileRefV1
-  profile_id, generation, acme_directory_profile_hash
-
-ACMEDirectoryProfileV1
-  schema = 1, cluster_id, profile_id, generation
-  directory_url, directory_server_name
-  directory_webpki_profile_ref: WebPKIProfileRefV1
-  allowed_endpoint_origins[]                # canonical HTTPS origins，按 UTF-8 bytes 排序
-  redirect_policy = "forbid"
-  account_key_algorithm
-  allowed_challenge_types[]                 # 首版必须精确为 ["dns-01"]
-  maximum_order_lifetime_seconds
-
-CertificateIssuerProfileRefV1
-  profile_id, generation, certificate_issuer_profile_hash
-
-CertificateIssuerProfileV1
-  schema = 1, cluster_id, profile_id, generation
-  issuer_kind                              # public_acme
-  acme_directory_profile_ref: ACMEDirectoryProfileRefV1
-  allowed_roles[], allowed_dns_suffixes[]
-  maximum_validity_seconds, required_eku_oids[], required_policy_oids[]
-
-WebPKIProfileRefV1
-  profile_id, generation, webpki_profile_hash
-
-WebPKIProfileV1
-  schema = 1, cluster_id, profile_id, generation
-  client_trust_mode = "platform_public_webpki"
-  consensus_trust_anchor_der[], consensus_trust_anchor_set_hash
-  hostname_validation = "rfc6125_dns_id"
-  allowed_usages[]                         # acme_directory | endpoint_tls，按此 enum 顺序
-  allowed_roles[], minimum_tls_version      # 仅 endpoint_tls 使用，按 EndpointSet role enum
-  required_eku_oids[], required_policy_oids[]
-  consensus_revocation_mode = "none"
-  client_revocation_mode = "platform_default"
-
-AuthoritativeNameServerSetRefV1
-  nameserver_set_id, generation, authoritative_nameserver_set_hash
-
-AuthoritativeNameServerV1
-  nameserver_id, dns_name
-
-AuthoritativeNameServerSetV1
-  schema = 1, cluster_id, nameserver_set_id, generation, zone_id
-  nameservers[]                            # 按 nameserver_id UTF-8 bytes 排序去重，非空
-
-ManagedZoneV1
-  schema = 1, cluster_id, zone_id, generation
-  suffix, provider_profile_ref: DNSProviderProfileRefV1
-  authoritative_nameserver_set_ref: AuthoritativeNameServerSetRefV1
-  credential_artifact_hash
-  allowed_record_types[]                  # A | AAAA | CAA | CNAME | NS | TXT，按此 enum 顺序
-  default_ttl_seconds, naming_template, reserved_labels[]
-  acme_challenge_zone_ref?                 # ManagedZoneRefV1；必须是已存在的独立 validation zone
-  caa_policy_hash?
-
-DomainBindingIntentRefV1
-  binding_id, generation, domain_binding_intent_hash
-
-DomainBindingIntentV1
-  schema = 1, cluster_id, binding_id, generation
-  endpoint_id, owner_device_id, managed_zone_ref: ManagedZoneRefV1
-  fqdn, allowed_address_families[]          # ipv4 → ipv6 固定顺序，非空
-  address_rotation_policy_hash
-
-AddressClaimRefV1
-  claim_id, generation, address_claim_hash
-
-AddressTransportIdentityV1                 # exact tagged projection；必须且只能选择一个 variant
-  schema = 1, kind                         # tls | wireguard
-  tls?                                     # {protocol,server_name,
-                                           #  certificate_identity_projection_hash,spki_digest}
-  wireguard?                               # {peer_public_key_id,peer_public_key}
-
-AddressChallengeIntentV1
-  schema = 1, cluster_id, challenge_id
-  binding_id, binding_generation, endpoint_id, owner_device_id
-  address_family, expected_address, challenge_nonce_hash
-  expected_transport_identity: AddressTransportIdentityV1
-  expected_transport_identity_hash, issued_at, expires_at
-
-AddressChallengeLifecycleStateV1
-  schema = 1, cluster_id, challenge_id, challenge_intent_hash
-  status                                  # available | consumed | expired
-  consumed_by_claim_hash?
-
-AddressClaimBodyV1
-  schema = 1, cluster_id, claim_id, generation
-  binding_id, binding_generation, endpoint_id, owner_device_id
-  previous_claim_ref?                      # 同 family 首次 claim 时缺失，否则 exact AddressClaimRefV1
-  address_family, address                  # ipv4 | ipv6；RFC 5952 canonical literal
-  challenge_intent_hash, challenge_nonce_hash, observed_at, expires_at
-  expected_transport_identity: AddressTransportIdentityV1
-  expected_transport_identity_hash
-  owner_identity_key_id
-
-AddressClaimV1
-  body: AddressClaimBodyV1
-  owner_signature: AuthorityProofSignatureV1
-
-DNSAddressRotationPolicyV1
-  schema = 1, cluster_id, policy_id, generation
-  minimum_stability_seconds, minimum_overlap_seconds
-  propagation_safety_seconds, client_dns_cache_grace_seconds
-  max_claim_age_seconds, max_stability_sample_gap_seconds, external_vantage_count
-  vantages[]                                # DNSAddressVantageRefV1，按 vantage_id 排序
-
-DNSAddressVantageRefV1
-  vantage_id, device_id, identity_key_id, fault_domain
-  address_families[]                        # ipv4 → ipv6 固定顺序，非空
-
-DNSAddressPhaseOperationV1
-  schema = 1, cluster_id, operation_id, rotation_id, phase_seq
-  binding_ref: DomainBindingIntentRefV1
-  target_claim_ref: AddressClaimRefV1
-  replaced_claim_ref?                       # 首次地址缺失，否则同 family 旧代
-  parent_phase_operation_hash               # 首步为 EMPTY_OPERATION_HASH_V1
-  rotation_policy_hash, evidence_root
-  mode                                      # normal | cancel_unpreferred_target
-  reason
-  transitions[]                             # DNSAddressTransitionV1，按 claim generation 排序
-
-DNSAddressLeaseRenewalV1
-  schema = 1, cluster_id, operation_id
-  binding_ref: DomainBindingIntentRefV1
-  previous_claim_ref: AddressClaimRefV1
-  renewed_claim_ref: AddressClaimRefV1
-  expected_previous_lifecycle_state_hash, evidence_root, reason
-
-DNSAddressTransitionV1
-  claim_id, claim_generation, from_state, to_state # absent | preparing | overlapping | preferred |
-                                            # draining | retired
-
-DNSAddressLifecycleStateV1
-  schema = 1, cluster_id, binding_id, binding_generation, claim_id, claim_generation
-  address_claim_hash, state
-  last_transition_operation_hash, last_changed_control_revision
-  removal_authoritative_ttl_seconds?, remove_not_before?, retired_tombstone_hash?
-  terminal_reason?                           # dns_removed | lease_superseded；仅 retired
-
-DNSAddressEvidenceBodyV1
-  schema = 1, cluster_id, evidence_id
-  lineage_kind, lineage_id                  # rotation | lease_renewal；恰与承载 operation 匹配
-  binding_ref: DomainBindingIntentRefV1
-  claim_ref: AddressClaimRefV1
-  subject_role                              # target | replaced
-  observed_at
-  evidence_type                              # ownership_challenge | authoritative_rrset |
-                                             # public_rrset | transport_reachability |
-                                             # address_stability_window
-  detail                                     # exact tagged union：
-    ownership_challenge?                     # {transcript:AddressOwnershipChallengeTranscriptV1,
-                                             #  succeeded}
-    authoritative_rrset?                     # {nameserver_set_ref,nameserver_id,nameserver_dns_name,
-                                             #  responder_address,rrtype,values[],ttl_seconds,
-                                             #  response_transcript_hash}
-    public_rrset?                            # {vantage_id,fault_domain,rrtype,values[],ttl_seconds}
-    transport_reachability?                  # {vantage_id,fault_domain,address_family,
-                                             #  transcript_hash,succeeded}
-    address_stability_window?                # {vantage_id,fault_domain,window_start,window_end,
-                                             #  samples[]:DNSAddressStabilitySampleV1}
-
-DNSAddressStabilitySampleV1
-  sample_id, observed_at, address
-
-AddressOwnershipChallengeTranscriptV1
-  schema = 1, cluster_id, challenge_intent_hash
-  binding_id, binding_generation, endpoint_id, owner_device_id
-  address_family, address, expected_transport_identity_hash
-  nonce                                      # 32-byte CSPRNG，无 padding base64url
-  responder_identity_key_id, completed_at
-
-DNSAddressEvidenceV1
-  body: DNSAddressEvidenceBodyV1
-  reporter_key_id
-  reporter_signature: AuthorityProofSignatureV1
-
-DNSAddressEvidenceLeafV1
-  schema = 1, evidence_type, evidence_id, evidence_hash
-
-CertificateIdentityProjectionV1
-  schema = 1, cluster_id, certificate_intent_id, identity_generation, role
-  endpoint_ids[], dns_names[], issuer_profile_ref: CertificateIssuerProfileRefV1
-  key_owner_device_id, key_artifact_hash, spki_der, spki_hash
-
-TLSCertificateSigningRequestV1             # public-safe content-addressed exact preimage
-  schema = 1, cluster_id, certificate_intent_id, identity_generation, issuance_generation
-  identity_projection_hash, key_artifact_hash
-  csr_der, csr_der_hash, spki_der, spki_hash
-
-CertificateIntentV1
-  schema = 1, cluster_id, certificate_intent_id
-  identity_projection: CertificateIdentityProjectionV1
-  identity_projection_hash
-  certificate_signing_request: TLSCertificateSigningRequestV1
-  certificate_signing_request_hash
-  renew_before, issuance_generation
-
-PublicEndpointIntentV1
-  schema = 1, cluster_id, intent_id, generation, owner_device_id
-  role                                  # 与 EndpointSetV2 role enum 完全相同
-  exposure                              # public | private；public 必须由显式 proposal/QC 建立
-  protocol, address_or_domain_intent_hash, listener_policy_hash
-  firewall_mode, mapping_mode           # 各为 required | not_applicable
-  credential_artifact_hashes[], certificate_identity_projection_hashes[]?
-
-AddressOrDomainIntentV1                 # exact tagged union，必须且只能选择一个 variant
-  schema = 1, cluster_id, address_or_domain_intent_id, generation
-  kind                                 # managed_domain | explicit_address | managed_domain_with_address
-  managed_domain?                      # DomainBindingIntentRefV1
-  explicit_address?                    # AddressClaimRefV1
-  managed_domain_with_address?         # {domain_binding:DomainBindingIntentRefV1,
-                                        #  address_claim:AddressClaimRefV1}
-```
-
-`AddressOrDomainIntentV1` 的 tag 与 variant 必须一致，未选 variant 必须缺失；每个 ref 的 ID、
-generation 与 hash 都必须指向 candidate parent state 中唯一 exact 对象并重算成功。
-`DomainBindingIntentV1.managed_zone_ref` 同样绑定 zone generation/hash，不能让同一 zone ID 下的
-provider scope、credential、TTL 或命名模板漂移。binding 的 FQDN 必须是所属 zone suffix 的
-严格子域、canonical lower-case A-label，无通配符/空 label；其 owner/endpoint/cluster 必须与
-PublicEndpointIntent 一致。combined variant 的 claim 还必须属于同一 binding generation、owner
-和 endpoint，且其 family 属于 binding 的 allowed set。
-`credential_artifact_hashes[]` 按 hash bytes 排序、非空且拒绝重复，HTTPS/TLS 类
-protocol 的 `certificate_identity_projection_hashes[]` 必须按 hash bytes 排序去重、
-数量为 1 或 2，WireGuard 则必须缺失该数组。
-每个 credential hash 必须解析到 §6.2 exact `SecretArtifactRefV2`；purpose、owner、generation、
-公开 identity 与 endpoint role/protocol 的 credential profile 一致，且 availability/PoP 已满足。
-
-projection 的 endpoint/DNS 数组按 UTF-8 bytes 排序去重且非空，所有 endpoint 必须解析到同一
-role；projection 自身的 `role`、cluster、owner、hostname、issuer profile、key artifact/SPKI
-必须与 public/logical intent 及 transport identity 逐字节一致。六种公开 role 之间禁止共享
-projection、hostname 或 key artifact/SPKI；即便 issuer/profile 相同，也必须分别生成 role-bounded
-identity。`spki_der` 是无 padding base64url strict DER，`spki_hash=tls_spki_hash`；key artifact 必须
-解析到 §6.2 exact private-key ref，其 `public_key.public_key_spki_der` 逐字节相等。
-
-`TLSCertificateSigningRequestV1` 的 cluster/intent ID/identity generation/projection/key artifact/SPKI
-必须逐字段等于 enclosing CertificateIntent 与 projection，issuance generation 也必须相等。
-`csr_der` 是无 padding base64url strict DER PKCS #10：拒绝 trailing bytes、非最短 DER、无效
-self-signature、SPKI 不等、重复 attribute/extension、未知 critical extension；subject 固定为空，唯一
-extensionRequest 中 SAN 必须恰为 projection 排序后的 canonical DNS names，不能请求额外 EKU、role
-或 wildcard。CSR signature algorithm 必须由 key profile 唯一映射：Ed25519 OID parameters 缺失；
-P-256 为 ecdsa-with-SHA256 且 DER `(r,s)` 必须最短、正数并为 low-S；RSA 为 sha256WithRSAEncryption
-且 parameters 为 DER NULL。其他算法/parameters/编码失败关闭。`csr_der_hash=tls_csr_der_hash`，完整 object 重算
-`tls_certificate_signing_request_hash`。这些 public-safe bytes 随 intent 进入内容寻址状态，替任 ACME
-executor 只能恢复并提交同一 CSR；裸 `csr_hash`、本机文件或重新生成 CSR 都不构成依赖。
-
-摘要固定为：
-
-```text
-address_or_domain_intent_hash = H(frame(
-  "loom-address-or-domain-intent-v1", JCS(AddressOrDomainIntentV1)
-))
-dns_provider_profile_hash = H(frame(
-  "loom-dns-provider-profile-v1", JCS(DNSProviderProfileV1)
-))
-acme_directory_profile_hash = H(frame(
-  "loom-acme-directory-profile-v1", JCS(ACMEDirectoryProfileV1)
-))
-certificate_issuer_profile_hash = H(frame(
-  "loom-certificate-issuer-profile-v1", JCS(CertificateIssuerProfileV1)
-))
-webpki_profile_hash = H(frame(
-  "loom-webpki-profile-v1", JCS(WebPKIProfileV1)
-))
-consensus_trust_anchor_set_hash = H(frame(
-  "loom-webpki-consensus-trust-anchor-set-v1",
-  JCS({schema:1,trust_anchor_der:consensus_trust_anchor_der})
-))
-authoritative_nameserver_set_hash = H(frame(
-  "loom-authoritative-nameserver-set-v1", JCS(AuthoritativeNameServerSetV1)
-))
-managed_zone_hash = H(frame("loom-managed-zone-v1", JCS(ManagedZoneV1)))
-domain_binding_intent_hash = H(frame(
-  "loom-domain-binding-intent-v1", JCS(DomainBindingIntentV1)
-))
-address_challenge_intent_hash = H(frame(
-  "loom-address-challenge-intent-v1", JCS(AddressChallengeIntentV1)
-))
-address_transport_identity_hash = H(frame(
-  "loom-address-transport-identity-v1", JCS(AddressTransportIdentityV1)
-))
-challenge_nonce_hash = H(frame(
-  "loom-address-challenge-nonce-v1", raw_32_byte_nonce
-))
-ownership_challenge_transcript_hash = H(frame(
-  "loom-address-ownership-challenge-transcript-v1",
-  JCS(AddressOwnershipChallengeTranscriptV1)
-))
-address_claim_series_id = H(frame(
-  "loom-address-claim-series-id-v1",
-  JCS({schema:1,cluster_id,binding_id,binding_generation,address_family})
-))
-address_claim_hash = H(frame("loom-address-claim-v1", JCS(AddressClaimV1)))
-dns_address_rotation_policy_hash = H(frame(
-  "loom-dns-address-rotation-policy-v1", JCS(DNSAddressRotationPolicyV1)
-))
-dns_address_phase_operation_hash = H(frame(
-  "loom-dns-address-phase-operation-v1", JCS(DNSAddressPhaseOperationV1)
-))
-dns_address_lease_renewal_hash = H(frame(
-  "loom-dns-address-lease-renewal-v1", JCS(DNSAddressLeaseRenewalV1)
-))
-dns_address_lifecycle_state_hash = H(frame(
-  "loom-dns-address-lifecycle-state-v1", JCS(DNSAddressLifecycleStateV1)
-))
-dns_address_evidence_hash = H(frame(
-  "loom-dns-address-evidence-v1", JCS(DNSAddressEvidenceV1)
-))
-public_endpoint_intent_hash = H(frame(
-  "loom-public-endpoint-intent-v1", JCS(PublicEndpointIntentV1)
-))
-certificate_identity_projection_hash = H(frame(
-  "loom-certificate-identity-projection-v1", JCS(CertificateIdentityProjectionV1)
-))
-tls_csr_der_hash = H(frame("loom-tls-csr-der-v1", raw_csr_der))
-tls_spki_hash = H(frame("loom-tls-spki-v1", raw_spki_der))
-tls_certificate_signing_request_hash = H(frame(
-  "loom-tls-certificate-signing-request-v1", JCS(TLSCertificateSigningRequestV1)
-))
-certificate_intent_hash = H(frame(
-  "loom-certificate-intent-v1", JCS(CertificateIntentV1)
-))
-```
-
-`AddressClaimV1.owner_signature` 覆盖
-`frame("loom-address-claim-signature-v1", JCS(AddressClaimBodyV1))`。owner key 必须从 claim parent
-head 的 active Device identity 精确解析，body 的 owner/binding/endpoint、
-`address_family == challenge.address_family`、`address == challenge.expected_address`、nonce 与
-transport identity 必须和 `challenge_intent_hash` 指向的已 certified
-`AddressChallengeIntentV1` 相等；signature 的 algorithm/key ID 必须等于该 exact Device identity
-`AuthorityProofKeyV1`，并按 §6.2 的 canonical wire 规则验证；
-challenge 必须处于 `available`，candidate logical time 与 owner 可信墙钟都在其
-`issued_at..expires_at` 内。`submit_address_claim` 在同一 certified reducer step 原子把它改为
-`consumed` 并绑定 `consumed_by_claim_hash`；同 challenge 第二份 claim、expired 后重放或改地址均
-拒绝。`claim.expires_at <= challenge.expires_at`，且
-`0 < claim.expires_at - claim.observed_at <= policy.max_claim_age_seconds`，全部用 checked time
-arithmetic。`AddressChallengeLifecycleStateV1` 只从 issue/claim certified history 推导，`expired` 由首个
-晚于 expires_at 的 certified logical time 单调产生，不能复活。
-challenge/claim 内嵌的 `AddressTransportIdentityV1` 必须逐字节相等并重算同一 hash。TLS variant
-的 protocol/server name/projection/SPKI 必须从 parent certified
-`LogicalEndpointIntentV1.transport_identity` 与 matching `PublicEndpointIntentV1` 授权的 projection
-逐字段投影；WireGuard variant 同理必须等于 authorized peer-key projection。tag、protocol、key ID/
-bytes、projection hash 或 SPKI 任一不等都拒绝，opaque sender 自选 hash 不构成 transport ownership。
-ownership evidence 内嵌的 transcript 必须严格解码；nonce 必须解码为 32 bytes，并重算为 challenge/
-claim 的 `challenge_nonce_hash`，transcript 的 cluster/binding/endpoint/owner/family/address/transport
-identity 必须分别等于 challenge 与 claim，responder key 必须是 owner 当前 identity，completed_at
-在 challenge 有效窗内。验证器重算上式 transcript hash；只提交 opaque transcript hash、回显 nonce
-hash 或在另一地址完成握手都不成立。
-
-`DNSProviderProfileV1` 与 `AuthoritativeNameServerSetV1` 都是 immutable certified objects：同一 ID
-的 generation 从 1 连续递增，ref 的 ID/generation/hash 必须逐字段匹配。provider adapter 的
-kind/base URL/zone handle/capability 与 authoritative NS denominator 因而不能由 executor 按本地
-“latest”解释。每个 nameserver DNS name 必须是 canonical lower-case A-label FQDN；set 的 cluster/
-zone ID 必须与 `ManagedZoneV1` 相等。权威集合发生变化要先提交更高 set generation，再提交引用它的
-更高 ManagedZone generation；历史 phase 继续用冻结的旧 set bytes。
-`ACMEDirectoryProfileV1`、`CertificateIssuerProfileV1` 与 `WebPKIProfileV1` 同样以 exact
-generation/hash ref 解析；URL、trust mode、role/suffix/EKU/OID、TLS/revocation rule 任一改变都创建
-更高 generation，历史 order/projection/listener 冻结旧 bytes。role/enum 数组按本文固定 enum 顺序，
-DNS suffix 与 OID 数组按 canonical bytes 排序去重。`consensus_trust_anchor_der[]` 是完整 DER CA
-certificate bytes，按各自 `H(frame("loom-webpki-anchor-der-v1",raw_der))` 的 hash bytes 排序并拒绝
-重复；每张必须严格 DER、`BasicConstraints CA=true` 且可作为 path terminal。验证器重算
-`consensus_trust_anchor_set_hash`，control voter 对 ACME 证书、外部握手与安装证据只用这组冻结 anchors
-及 exact profile 的时间/EKU/policy/revocation 规则验链，不读取本机 trust store。若公共 CA 的有效
-anchor 集合改变，必须先提交更高 WebPKI profile generation，再创建引用新 profile 的 order/projection；
-旧历史仍按旧 anchors 验证。public endpoint 的 issuer 必须是 `public_acme`，其 ACME directory ref 与
-order 相等。directory profile 的 URL origin 必须在非空 `allowed_endpoint_origins[]` 内，server name
-与 URL host 的 canonical DNS name 相等，WebPKI ref 指向 `allowed_usages[]` 含 `acme_directory` 的
-exact profile；
-GET directory 及其返回的 new-account/new-order/authz/finalize/certificate URL 全部必须是列表内 HTTPS
-origin，禁止 redirect、scheme downgrade、userinfo、fragment 与 IP-host 替换。control 共识验链的
-revocation mode 首版固定为 `none`，只使用 candidate signed time 检查 exact DER validity；不得由某些
-voter临时查询 OCSP/CRL 而另一些不查。客户端对公网 listener 则按平台默认 revocation policy 验链，
-两者字段分离，后续若引入 committed OCSP/CRL proof 必须升级 schema。LogicalEndpoint/seed 的
-WebPKI ref 必须同时允许 `endpoint_tls` 和同一 role。客户端接收 endpoint 时仍必须同时
-通过其当前平台公共 WebPKI 验链、RFC 6125 hostname 和 signed SPKI pin；冻结的 consensus anchors
-只是让控制副本得到确定性判定，不会把客户端平台不信任的私有 root 提升成可接受 authority。任何裸
-profile ID、“system default”别名或 executor 本地 latest 都不能参与 voter/reader 判断。
-
-`DNSAddressRotationPolicyV1.vantages[]` 非空、按 vantage ID 排序去重，Device/key/fault
-domain 均非空且 key 必须等于 candidate parent 中 active Device 当前 identity；
-`2 <= external_vantage_count <= len(vantages)`，阈值只按不同 vantage 与 fault domain 同时去重后计算。
-
-`DNSAddressEvidenceV1.reporter_signature` 覆盖
-`frame("loom-dns-address-evidence-signature-v1", JCS(DNSAddressEvidenceBodyV1))`。ownership evidence
-只能由 binding owner 的 current Device identity 签，其余四类只能由 policy 中逐字段匹配
-`vantage_id/device_id/identity_key_id/fault_domain/address_family` 的 vantage key 签；evidence body
-不另带可自报的 Device ID，验证器由 key ref 反查唯一 vantage。未知/撤权 key、同 key 冒充不同
-vantage 或 family 不在 ref 中一律拒绝。`reporter_key_id` 和 signature 内的 algorithm/key ID 必须
-逐字段等于上述解析出的 exact `AuthorityProofKeyV1`，并按 §6.2 的 canonical wire 规则验证。
-stability samples 按 `(observed_at,sample_id)` 排序去重，
-每项 address 必须等于 target claim；window 满足 `window_start < window_end <= observed_at`，首末
-sample 覆盖两端，连续 sample 间隔不得超过 policy `max_stability_sample_gap_seconds`。至少
-`external_vantage_count` 个不同 vantage/fault-domain 的完整 window 都覆盖
-`minimum_stability_seconds`，才构成“连续稳定”；单个 claim age 或两个无连续性的点不能替代。
-phase evidence root 对按 `(evidence_type,evidence_id)` 排序去重的
-`DNSAddressEvidenceLeafV1` 使用 §7.1 RFC 6962 算法，leaf 必须从随 operation 交付的 exact 签名
-evidence 重算。vantage ID/key/fault-domain 必须解析到 policy 允许的不同 active Device，不能由
-reporter 自报；`values[]` 是 canonical IP literals，排序去重，RRtype 与 family 必须相符。
-
-上述对象只能由 §7.1 exact outer operation 承载；kind/payload/schema 映射固定为：
-
-| kind | payload | payload hash |
-|---|---|---|
-| `upsert_dns_provider_profile` | `DNSProviderProfileV1` | `dns_provider_profile_hash` |
-| `upsert_acme_directory_profile` | `ACMEDirectoryProfileV1` | `acme_directory_profile_hash` |
-| `upsert_certificate_issuer_profile` | `CertificateIssuerProfileV1` | `certificate_issuer_profile_hash` |
-| `upsert_webpki_profile` | `WebPKIProfileV1` | `webpki_profile_hash` |
-| `upsert_authoritative_nameserver_set` | `AuthoritativeNameServerSetV1` | `authoritative_nameserver_set_hash` |
-| `upsert_managed_zone` | `ManagedZoneV1` | `managed_zone_hash` |
-| `upsert_domain_binding_intent` | `DomainBindingIntentV1` | `domain_binding_intent_hash` |
-| `issue_address_challenge` | `AddressChallengeIntentV1` | `address_challenge_intent_hash` |
-| `submit_address_claim` | `AddressClaimV1` | `address_claim_hash` |
-| `upsert_dns_address_rotation_policy` | `DNSAddressRotationPolicyV1` | `dns_address_rotation_policy_hash` |
-| `dns_address_phase` | `DNSAddressPhaseOperationV1` | `dns_address_phase_operation_hash` |
-| `renew_dns_address_lease` | `DNSAddressLeaseRenewalV1` | `dns_address_lease_renewal_hash` |
-| `upsert_address_or_domain_intent` | `AddressOrDomainIntentV1` | `address_or_domain_intent_hash` |
-| `upsert_certificate_intent` | `CertificateIntentV1` | `certificate_intent_hash` |
-
-outer `payload_schema=1`，cluster 必须一致。每次 proposal 的 `ControlOperationBodyV1.operation_id`
-仍是 §7.1 独立、全局稳定的幂等 ID，绝不等于可跨 generation 复用的 zone/binding/claim/policy/
-intent ID；只有 `dns_address_phase` outer operation ID 必须等于其 payload 内本次 phase 的
-`operation_id`，`renew_dns_address_lease` 同样必须等于 renewal payload 的 `operation_id`。同一对象 ID
-的 generation（证书为 `issuance_generation`）必须从 1 连续递增；
-outer 通过 payload hash 绑定 exact object，旧 exact bytes 永久保留供
-proof/replay 使用，executor 不能把“latest”解析结果带进 reducer。
-
-每个 `(cluster,binding_id,binding_generation,address_family)` 的 `claim_id` 必须等于上式
-`address_claim_series_id`，generation 从 1 连续增加；首代缺 `previous_claim_ref`，后续 ref 必须
-指向同 series 的 generation-1 exact hash。phase 的 target/replaced ref 和每个 transition 的
-claim ID/generation 必须逐字段相等，数组按 `(claim_id UTF-8 bytes,generation)` 排序；因此两个
-series、同为 generation 1 的 claim 也不会混淆。
-
-DNS phase 的 `phase_seq` 从 1 连续递增、parent hash 精确指向同 rotation 前一步；binding、target、
-replaced claim refs 与 policy hash 在整个 lineage 不变。`mode=normal` 的首个 phase 只能
-`absent→preparing`；随后合法边只有 `preparing→overlapping`、`overlapping→preferred`、旧
-`preferred→overlapping`、旧 `overlapping→draining`、`draining→retired`。换址时 target 的
-`overlapping→preferred` 与旧 preferred 的 `preferred→overlapping` 必须在同一 operation 原子完成；
-首次地址则只提升 target。
-
-每个 `(binding_id,binding_generation,address_family)` 最多一个 active rotation lineage；首个
-`absent→preparing` 以 CAS 获取锁。首次地址在 target preferred 时释放；换址在 replaced claim
-retired 时释放。锁存在时第二个 rotation、修改 frozen binding/target/replaced/policy 或复活
-tombstone 都拒绝。若 target 尚未 preferred 而依赖失效，`mode=cancel_unpreferred_target` 只允许
-target 的 `preparing|overlapping→draining`，old listener/claim 必须仍是唯一 preferred；该 certified
-edge 才授权 provider 删除 target value，随后沿同一 lineage 用 `draining→retired` 完成 TTL/absence
-门槛并释放锁。cancel 不能直接删除、标 terminal 或改变 frozen refs，也不能在 target preferred 后
-替代正常 old drain。每个已发布 binding/family 始终恰有一个 preferred。
-
-各边的 predicate 使用 candidate head 的 `committed_logical_time` 和 exact evidence：
-
-| edge | 必需条件 |
-|---|---|
-| `absent→preparing` | owner challenge、claim 签名/新鲜度、至少 policy 数量且 fault-domain 去重的 transport success；地址已连续稳定 `minimum_stability_seconds` |
-| `preparing→overlapping` | 所有权威 NS 与至少 policy 数量公共视角均回答“现有非 retired values ∪ target”，TTL 取观测实际最大值；不得 replace/delete |
-| target `overlapping→preferred` | overlap 已持续 `minimum_overlap_seconds`；换址时与旧 preferred 降级原子发生 |
-| old `overlapping→draining` 或 cancelled target `preparing|overlapping→draining` | certified phase 才授权 provider 从 RRset 移除 subject value；同时把实际最大权威 TTL 固化为 `removal_authoritative_ttl_seconds` 并以 checked addition 导出 `remove_not_before` |
-| `draining→retired` | 所有权威 NS 与 policy 数量公共视角连续确认 subject value 不存在，且已到 `remove_not_before = drain_head_time + actual_ttl + propagation_safety + client_dns_cache_grace`；EndpointSet/offline view 和邀请引用门槛也已满足 |
-
-每份 phase evidence 的 `cluster_id/binding_ref` 必须逐字段等于 phase，且
-`lineage_kind="rotation",lineage_id=phase.rotation_id`；其 `claim_ref` 必须
-等于 `subject_role=target` 时的 target ref，或 `subject_role=replaced` 时的非空 replaced ref，其他
-组合失败关闭。`absent→preparing` 的 ownership/transport/stability 只接受 target；
-`preparing→overlapping` 的 authoritative/public RRset 只接受 target；prefer 的时间判断不接受用
-另一 lineage evidence 补门槛；正常 old drain/retire 只接受 replaced，cancelled target drain/retire
-只接受 target。每个 authoritative evidence 的 `nameserver_set_ref` 必须等于 frozen ManagedZone
-所指 set，ID/name 与 set member 相等；要求该 set **每个** member 各有一份 fresh success，不能由
-sender 自报“全部”。public evidence 则按 frozen policy 的 vantage/fault-domain denominator 计数。
-evidence 的 claim address/family、RRtype、values 与 phase target/replaced exact claim 重算，不得跨
-claim generation、binding generation 或 rotation 重放。
-
-`remove_not_before` 的四项用非负 int64 秒 checked addition，overflow 失败关闭。仍 available 且未
-过期的 invite，或 consumed 但 candidate logical time/可信墙钟仍未超过 `retry_not_after` 的 invite，
-若 context 引用依赖该 address claim 的 seed，则旧 claim 在相应 expiry/retry deadline 前不得 retire，
-除非同一 invite context 内另有不依赖它且仍保持可用/证书有效至相应 deadline 的 seed。迟到 provider
-请求必须携资源 lease/fencing 与 binding/claim generation CAS；否则只能 supervised，不能覆盖新
-RRset。`DNSAddressLifecycleStateV1` 完全由 certified phase/renewal transition history 归约，receipt
-本身无权改状态。
-
-同一地址续租不走“新旧值相同”的换址 drain。`renew_dns_address_lease` 只允许该 binding/family
-没有 active rotation、previous claim 正是唯一 `preferred` 且 candidate logical time/可信墙钟均未
-越过 previous expiry；renewed claim 必须是同 series 的 generation+1，`previous_claim_ref`、
-binding/endpoint/owner/family/address/transport identity 全部相等，并通过一份全新 one-time
-AddressChallenge、签名、新鲜度和外部稳定/连通 evidence。`expected_previous_lifecycle_state_hash`
-必须从 parent state 重算。renewal 的 `evidence_root` 使用同一 leaf/tree 规则，只接受
-`lineage_kind="lease_renewal",lineage_id=renewal.operation_id,subject_role="target"` 且 claim ref 等于
-renewed claim 的 ownership、transport、stability evidence；数量/fault-domain/window 门槛与 frozen
-policy 相同，跨 phase/renewal 证据拒绝。一个 certified reducer step 把 old claim 写为
-`retired(terminal_reason=lease_superseded,retired_tombstone_hash=renewal_hash)`，把 new claim 直接写为
-`preferred`，二者的 `last_transition_operation_hash=renewal_hash`；它不调用 provider、不删除 RR
-value，也不重新计 overlap。若 address 不同则必须走完整 rotation，不能伪装为 renewal。
-
-`explicit_address`、`managed_domain_with_address` 与 seed/listener render 对 claim expiry 使用完全相同
-规则：candidate head logical time及验证节点可信墙钟必须在 claim 有效窗内，任何新 EndpointSet/
-listener 都不得引用 expired claim。已有引用必须在 expiry 前由上述 renewal/换址替换，否则从新
-Device view 与新连接授权中移除并告警；不能让 explicit-address 绕过 managed-domain 的租约检查。
-
-`CertificateIntentV1.identity_projection_hash` 必须从其内嵌 exact projection 重算，
-projection 的 cluster/intent ID 必须与外层相等。PublicEndpointIntentV1、
-ListenerImmutableSpecV1 和最终 ListenerGeneration 的证书绑定必须逐字节一致：
-每个 listener 的单个 `certificate_identity_projection_hash` 必须是 public intent
-排序数组的成员，对应 `TlsSpkiPinV1` 必须携相同 projection hash，其 digest
-等于该 projection SPKI 的规范 hash，server name 与 LogicalEndpoint TLS transport
-identity 一致。LogicalEndpoint 的 pin 集合必须恰好覆盖 public intent 的所有
-projection：每个 projection 至少一个当前有效 pin，且不得有数组外 pin。同一
-projection 下仅 CSR、renew policy 或
-`issuance_generation` 变化会生成新 `certificate_intent_hash`，但不改 projection hash、
-PublicEndpointIntent 或 EndpointSet generation；改变 DNS name、issuer profile、owner、key artifact
-或 SPKI 必须提高 `identity_generation`、得到新 projection hash，并走新 listener/pin
-overlap。
-
-创建/更新 intent 必须由 §7.1 outer operation 以
-`kind="upsert_public_endpoint_intent", payload_schema=1,
-payload_hash=public_endpoint_intent_hash` 承载，outer 与 payload 的 cluster 必须相等；outer
-operation ID 是本次 proposal 的稳定幂等 ID，独立于可跨 generation 复用的 `intent_id`，两者不得
-误作 equality。同 `intent_id` 只能递增 generation；不得由 EndpointSet 或 executor 反向
-生成 intent。
-
-provider token、ACME account key 和 TLS private key 只存在秘密层。SSOT 保存 secret ref、
-公开 key/证书摘要、有效期和 generation，不保存秘密；所有 ref 必须满足 §6.2 的 exact-version
-schema 和 availability/PoP 门槛。TLS 私钥优先在实际终止 TLS 的 Device 本地生成；控制平面
-批准已绑定 key artifact 的 CSR 和 challenge，不集中生成所有节点私钥。
-
-只有管理员/自动化 principal 显式提交 `PublicEndpointIntentV1(exposure=public)` 才触发公网
-命名；拥有 `control` 投票能力本身不隐式暴露 control API，也不要求公网可达。planner 根据
-最新 certified `ManagedZone.naming_template` 和稳定 Device/endpoint ID 生成候选 label，避开
-保留名并在全局对象图中做唯一性校验；显示名、地域或一次网络测量不得成为域名身份。
-`generation` 对同 intent ID 严格递增，`address_or_domain_intent` 必须绑定上面 tagged union 的
-精确对象 hash/ref；executor 不得根据本机网卡、DNS 回答或 provider 默认值临时补地址。改变
-role、protocol、exposure、地址/域名 variant、provider scope、listener policy 或所绑定的
-credential artifact 发生变化都创建更高 generation；同 SPKI 的例行续证可只提高独立
-CertificateIntentV1 `issuance_generation`，不强迫 EndpointSet 换代。
-所有 safety-critical ref 只能解析 candidate 的 certified parent state；首版不定义 same-head
-dependency DAG，因而不能在一个 Head 中同时创建对象并让另一个 operation 引用它。无依赖的兄弟
-operation 可以同 head 按 operation ID 排序，存在依赖则必须依次取得 certified heads：ManagedZone/
-policy → DomainBinding 与 AddressClaim → AddressOrDomain/CertificateIntent → PublicEndpointIntent →
-LogicalEndpointIntent/rotation。任何“先按 operation ID apply，后让早项看见晚项”的实现都失败关闭，
-不得由各语言自行拓扑排序。
-
-每个基础 intent 经各自 Raft commit、apply/recompute 和 replication QC 后，只代表相应工作流已获
-授权。allocate、prepare、advertise 等每个可见状态转换仍各自形成更高
-revision 的 certified entry；对应 executor 只能执行该阶段允许的 DNS、ACME、listener 动作并
-回写 receipt，不能拿一次基础授权越过 §12.3～§14 的门槛。域名与证书因此可以自动配置，但
-购买/转移 zone、扩大 provider token scope 或产生未预授权费用仍需显式审批。
-
-### 12.3 DNS reconcile
-
-1. ManagedZoneV1、DomainBindingIntentV1、AddressClaimV1 与 DNSAddressRotationPolicyV1 的 exact
-   generation/hash，以及逐字段匹配它们的
-   `PublicEndpointIntentV1(exposure=public)` 经 Raft commit、apply/recompute 与 replication QC
-   成为 certified；缺任一对象或 hash/generation/owner/role 不匹配时不得调用 provider。
-2. 持有当前资源租约的 DNS reconciler 读取 certified head 和 provider 实际 RRset。
-3. 以稳定 idempotency key 执行 §15 允许的最小 RRset create/upsert；replace/delete 只有具备
-   精确 owner/generation CAS/fencing 才自动执行，不修改不归 Loom 所有的记录。
-4. 从权威 NS 读取，再从至少两个独立解析视角确认目标值和 TTL；结果作为签名事实进入 CRDT。
-5. 只有 DNS 已可见、证书有效且 listener 健康后，它才能进入 certified
-   `advertised` 状态。对已有 preferred 的已发布 endpoint，下一 EndpointSet 可同时携带它；
-   对首次创建的 endpoint，该 advertised listener 仍只在控制 view，直到达到 §14 门槛后以
-   `advertised→preferred` 和首次 EndpointSet 插入原子发布。
-6. reconcile 失败只标记 pending/degraded，不回滚 certified desired state，也不发布未经验证的入口。
-
-adapter 必须声明是否支持单 RRset 修改、批量原子更新、条件写和查询。只能“覆盖整区”的 API
-不得用于共享 zone；应改用 Loom 独占子区，否则校验直接拒绝。API 限流使用指数退避并尊重
-provider 重试提示，绝不把 token 放入 URL 日志。
-
-动态公网地址由 owner Device 签发短寿命 `AddressClaimV1`，绑定 endpoint/binding、地址族、地址、
-观测时间和同 family 前代 claim generation。提交前，control 先下发一次性 nonce，目标 Device 必须从
-所声明地址/预期 transport 返回以 Device identity 签名的 challenge；至少两个独立视角还要
-完成反向连通验证。控制节点再校验身份、地址类型、授权范围和新鲜度。节点不能更新别人的
-hostname，也不能借 DDNS 获得 control membership。为减少频繁抖动，地址实际变化且稳定超过
-策略窗口才生成新 binding；旧 A/AAAA 在 overlap 内保留。
-
-地址变更严格使用 §12.2 的 `DNSAddressPhaseOperationV1`/reducer，不能在一次 provider replace 中
-直接删旧地址：prepare 验证 claim/listener/identity，overlap 只做集合并，原子 prefer 后才 drain
-旧 value，最终满足 actual TTL、传播、cache、offline view 与 invite 引用门槛才写 retired tombstone。
-provider 无条件删除能力时按 §15 禁止无人值守清理，宁可暂留旧 value/资源并告警。
-
-DNS 是发现层，不是 authority：仅控制 DNS、返回旧 DNS 或给出不匹配的合法 WebPKI 证书，
-至多造成不可达；客户端仍拒绝未被 QR checkpoint/Device view 的 transport identity pin 和
-signed EndpointSet 同时授权的 controller、端口或配置。若被钉住的服务私钥本身也失陷，
-则进入对应 credential revocation/recovery 威胁模型，不能再声称只有 DoS。
-
-### 12.4 ACME
-
-公开证书默认用 ACME DNS-01，便于没有公网 80/TCP 的节点和独立 challenge 子区。完整 zone
-API 凭据不复制到所有服务器；使用最小权限 token，优先通过 NS 把 `_acme-challenge` 子区委派
-到专用 validation zone。首版 exact profile只实现 derived name 的直接权威 TXT/NS delegation；
-CNAME alias 必须等后续 wire profile定义 alias projection，不能静默启用。provider adapter 可以实现
-ACME DNS-01 以及 Gandi、Dynadot 等 DNS API，但实现时必须使用本节冻结的 profile/capability，不能把
-供应商 URL、账号或本机默认值写进通用示例。
-
-order URL/nonce 可以由 ACME provider 在执行期产生，但任何 DNS/安装/cleanup 副作用之前都要
-转换成以下 public checkpoint + control-private exact binding；不能只留 executor 本地状态，也不能把
-provider handle/backend locator 放进 public mirror：
-
-```text
-ACMEOrderRefV1
-  order_id, generation, acme_order_intent_hash
-
-ACMEOrderIntentV1
-  schema = 1, cluster_id, order_id, generation
-  certificate_intent_hash, identity_projection_hash, certificate_signing_request_hash
-  requested_dns_name                       # 首版每个 order 恰一个 canonical DNS name
-  acme_directory_profile_ref: ACMEDirectoryProfileRefV1
-  acme_account_artifact_hash
-  challenge_zone_ref: ManagedZoneRefV1
-  dns_rotation_policy_hash, port_evidence_policy_hash
-  requested_at, expires_at
-
-ACMEProviderOrderCheckpointV1              # public-safe certified object
-  schema = 1, cluster_id, order_ref: ACMEOrderRefV1
-  expected_checkpoint = "absent"
-  state_binding_hash, created_at
-
-ACMEProviderOrderStatePayloadV1            # sealed artifact 解密后的 strict plaintext
-  schema = 1, cluster_id, order_ref: ACMEOrderRefV1
-  acme_directory_profile_ref: ACMEDirectoryProfileRefV1
-  order_url, finalize_url, authorization_urls[]
-
-ACMEProviderOrderStateBindingV1            # control-private content-addressed object
-  schema = 1, cluster_id, order_ref: ACMEOrderRefV1
-  hiding_nonce                             # 32-byte CSPRNG，无 padding base64url
-  acme_account_artifact_hash
-  order_state_plaintext_hash
-  order_state_artifact_ref: SecretArtifactRefV2
-
-ACMEDNSChallengeRefV1
-  challenge_id, generation, acme_dns_challenge_intent_hash
-
-ACMEDNSChallengeIntentV1
-  schema = 1, cluster_id, challenge_id, generation
-  order_ref: ACMEOrderRefV1
-  provider_order_checkpoint_hash
-  fqdn, txt_value
-  introduced_at, expires_at
-
-ACMEIssuedCertificateV1
-  schema = 1, cluster_id, order_ref: ACMEOrderRefV1
-  challenge_ref: ACMEDNSChallengeRefV1
-  expected_issued_certificate = "absent"
-  certificate_der, certificate_chain_der[]
-
-ACMEChallengePhaseOperationV1
-  schema = 1, cluster_id, operation_id, order_ref, challenge_ref
-  phase_seq, parent_phase_operation_hash
-  from_state, to_state                     # absent | preparing | presented | validated |
-                                           # installed | cleanup_pending | retired | abandoned
-  mode                                     # normal | abort
-  issued_certificate_hash?, evidence_root
-  removal_authoritative_ttl_seconds?, remove_not_before?, reason
-                                             # normal edge 用对应进度枚举；abort 只允许
-                                             # executor_failure | administrator_cancel | expired
-
-ACMEChallengeEvidenceBodyV1
-  schema = 1, cluster_id, evidence_id
-  order_ref: ACMEOrderRefV1
-  challenge_ref: ACMEDNSChallengeRefV1
-  observed_at
-  evidence_type                            # authoritative_txt | public_txt | owner_install |
-                                           # external_tls_handshake | cleanup_absence | failure |
-                                           # admin_cancel
-  detail                                   # exact tagged union；恰有一个同名 variant：
-    authoritative_txt?                     # {vantage_id,fault_domain,nameserver_set_ref,nameserver_id,
-                                           #  nameserver_dns_name,responder_address,fqdn,
-                                           #  values[],ttl_seconds,response_transcript_hash}
-    public_txt?                            # {vantage_id,fault_domain,fqdn,values[],
-                                           #  ttl_seconds,response_transcript_hash}
-    owner_install?                         # {owner_device_id,identity_key_id,endpoint_id,
-                                           #  identity_projection_hash,issued_certificate_hash,
-                                           #  rendered_config_hash,installed}
-    external_tls_handshake?                # {vantage_id,fault_domain,endpoint_id,dial_target,
-                                           #  server_name,webpki_profile_ref,spki_digest,
-                                           #  issued_certificate_hash,transcript_hash,succeeded}
-    cleanup_absence?                       # {source_kind,authoritative?,public?}；source_kind
-                                           #  authoritative: {vantage_id,fault_domain,nameserver_set_ref,nameserver_id,
-                                           #    nameserver_dns_name,responder_address,fqdn,
-                                           #    values[],ttl_seconds,response_transcript_hash}
-                                           #  public: {vantage_id,fault_domain,fqdn,values[],
-                                           #    ttl_seconds,response_transcript_hash}
-    failure?                               # {source_kind,source_id,fault_domain?,
-                                           #  admin_authorization_hash?,admin_scope_hashes[]?,
-                                           #  failure_class,diagnostic_hash}；source_kind 只能为
-                                           #  owner_device | policy_vantage | automation_admin；
-                                           #  failure_class 只能为 provider_order_failed |
-                                           #  dns_publish_failed | dns_validation_failed |
-                                           #  certificate_finalize_failed | certificate_parse_failed |
-                                           #  owner_install_failed | external_tls_failed | expired
-    admin_cancel?                          # {admin_authorization_hash,admin_cert_digest,
-                                           #  admin_scope_hashes[],reason="administrator_cancel"}
-
-ACMEChallengeEvidenceV1
-  body: ACMEChallengeEvidenceBodyV1
-  reporter_key_id
-  reporter_signature: AuthorityProofSignatureV1
-
-ACMEChallengeEvidenceLeafV1
-  schema = 1, evidence_type, evidence_id, evidence_hash
-
-ACMEChallengeLifecycleStateV1              # certified reducer 输出
-  schema = 1, cluster_id, order_ref, challenge_ref, state
-  issued_certificate_hash?
-  removal_authoritative_ttl_seconds?, remove_not_before?
-  last_phase_operation_hash, terminal_tombstone_hash?
-```
-
-摘要与 operation mapping 固定为：
-
-```text
-acme_order_intent_hash = H(frame("loom-acme-order-intent-v1", JCS(ACMEOrderIntentV1)))
-acme_provider_order_state_plaintext_hash = H(frame(
-  "loom-acme-provider-order-state-plaintext-v1", JCS(ACMEProviderOrderStatePayloadV1)
-))
-acme_provider_order_state_binding_hash = H(frame(
-  "loom-acme-provider-order-state-binding-v1", JCS(ACMEProviderOrderStateBindingV1)
-))
-acme_provider_order_checkpoint_hash = H(frame(
-  "loom-acme-provider-order-checkpoint-v1", JCS(ACMEProviderOrderCheckpointV1)
-))
-acme_dns_challenge_intent_hash = H(frame(
-  "loom-acme-dns-challenge-intent-v1", JCS(ACMEDNSChallengeIntentV1)
-))
-acme_issued_certificate_hash = H(frame(
-  "loom-acme-issued-certificate-v1", JCS(ACMEIssuedCertificateV1)
-))
-acme_challenge_evidence_hash = H(frame(
-  "loom-acme-challenge-evidence-v1", JCS(ACMEChallengeEvidenceV1)
-))
-acme_challenge_phase_hash = H(frame(
-  "loom-acme-challenge-phase-v1", JCS(ACMEChallengePhaseOperationV1)
-))
-acme_challenge_lifecycle_state_hash = H(frame(
-  "loom-acme-challenge-lifecycle-state-v1", JCS(ACMEChallengeLifecycleStateV1)
-))
-```
-
-admin/automation `ControlOperationV1` 的 kind/payload 固定为：
-
-| kind | payload/hash |
-|---|---|
-| `upsert_acme_order_intent` | `ACMEOrderIntentV1` / `acme_order_intent_hash` |
-| `record_acme_provider_order_checkpoint` | `ACMEProviderOrderCheckpointV1` / `acme_provider_order_checkpoint_hash` |
-| `upsert_acme_dns_challenge_intent` | `ACMEDNSChallengeIntentV1` / `acme_dns_challenge_intent_hash` |
-| `record_acme_issued_certificate` | `ACMEIssuedCertificateV1` / `acme_issued_certificate_hash` |
-| `acme_challenge_phase` | `ACMEChallengePhaseOperationV1` / `acme_challenge_phase_hash` |
-
-payload schema 都为 1；outer operation ID 独立于可跨 generation 的 order/challenge ID，只有 phase
-outer ID 等于 phase payload operation ID。automation cert 的 ACL/scope 必须限定 exact zone、
-certificate projection 与这些 kind。provider checkpoint proposal 还必须私下携 matching
-`ACMEProviderOrderStateBindingV1`；全部 stable voters 在 checkpoint commit 前持久保存相同 binding
-hash/preimage，公开 operation/tree 只含 checkpoint。
-
-order/challenge generation 从 1 连续递增且 refs 重算 exact hash。首个 v2 ACME profile 明确限制为
-**一张证书、一个 DNS SAN、一个 order、一个 challenge**：`requested_dns_name` 必须逐字节等于
-role-bounded projection 唯一的 `dns_names[0]`；projection 若有多个名字必须拆成多个 identity/order，
-不能只验证其中一个。challenge `fqdn` 固定为 canonical lower-case A-label
-`"_acme-challenge." + requested_dns_name`，必须属于 exact `challenge_zone_ref`；CNAME alias 是后续
-独立 profile，首版不得由 executor临时改名。TXT 是 ACME 返回的规范 UTF-8 exact value。
-
-order 的 `requested_at < expires_at`，差值不超过 directory profile
-`maximum_order_lifetime_seconds`；commit 时 candidate logical time/可信墙钟都必须在 skew 内且早于
-expiry。challenge 必须满足 `order.requested_at <= introduced_at < expires_at <= order.expires_at`，所有
-`absent→preparing→presented→validated→installed` 边也必须在两种时间均未过期时发生；abort/
-cleanup 可在过期后继续。directory/account/issuer/zone/policy refs 必须从 exact parent state 解析，
-requested name、CSR/SPKI、role、suffix/EKU/OID 都在其 scope 内。
-
-provider checkpoint/binding 的 cluster/order ref 与 order intent 必须相等；binding hiding nonce 解码
-为 32 bytes，account artifact 等于 order，state artifact purpose 必须是 `acme_order_state` 并满足
-§6.2 availability。解封的 `ACMEProviderOrderStatePayloadV1` 必须重算 plaintext hash，directory ref
-相等，URL 都是 canonical HTTPS 且 origin 属于 directory profile 的 exact allowlist，authorization
-URLs 按 UTF-8 bytes 排序去重且非空；每次请求继续使用 frozen WebPKI profile/server name 且禁止
-redirect。替任 executor
-只从该 private binding恢复同一 order/finalize/authz URLs；不能凭 public hash新建另一个 order。
-
-checkpoint registry 的唯一键是 exact `(cluster_id,order_id,generation,acme_order_intent_hash)`。
-reducer 先按该键执行 durable first-result CAS：不存在时只接受
-`expected_checkpoint="absent"`，并要求 matching private binding 在同一提交前已由全部 stable voters
-持久保存；已存在且 checkpoint hash 相同是幂等重放并返回原 bytes，不同 hash/state binding 或第二个
-outer operation ID 一律冲突失败。provider `newOrder` 与 Raft commit 之间崩溃可能留下无 authority
-orphan order，只能按 §15 retention 清理；任何 DNS、finalize、install 或 cleanup 副作用都只能引用首个
-certified checkpoint，不能挑另一个外部 order。
-
-issued certificate object 的 order/challenge refs 必须 exact；leaf CSR public key、唯一 SAN、issuer
-profile、有效期和 SPKI 逐字段满足 CertificateIntent/projection/order，链用 exact WebPKI/issuer
-profile 验证，不能相信 executor 的 `validated` boolean。证书/链均为 DER 后无 padding base64url，
-chain 从 issuing intermediate 到 trust anchor 前一张排序且不得重复或夹无关证书。
-issued-certificate registry 的唯一键是 exact `(order_ref,challenge_ref)`，同样先执行
-`expected_issued_certificate="absent"` first-result CAS：同一 object hash 重放返回原 bytes，任何不同
-leaf/chain/hash 或 outer operation ID 冲突均失败关闭。只有该 first certified object 可满足 validated/
-installed phase；ACME provider 后续返回的另一张同样有效证书只能作为 orphan 留存，不能由 executor
-临时选中。
-
-evidence `detail` 的 tag 必须与唯一出现的 variant 相等，其余 variant 必须缺失；`values[]` 按 UTF-8
-bytes 排序去重，IP/hostname/dial target 用各自 canonical wire。每个 body 的 cluster/order ref/
-challenge ref 必须逐字段等于 phase，`observed_at` 在 policy max age/skew 内。signature 覆盖
-`frame("loom-acme-challenge-evidence-signature-v1", JCS(ACMEChallengeEvidenceBodyV1))`：
-`reporter_key_id` 和 signature 内的 algorithm/key ID 必须逐字段等于按下述分支解析出的 exact
-Device/admin `AuthorityProofKeyV1`，并按 §6.2 的长度、low-S 与 canonical base64url 规则验证；
-`owner_install` 只能由 projection owner current identity 签且 `installed=true`；authoritative/public/
-external/cleanup 只能由 order 所指 DNS/port policy 中 exact vantage key 签，detail 的 vantage/fault
-domain 必须等于 key ref。failure 的 `source_kind=owner_device` 只允许 projection owner key 且
-`source_id=owner_device_id`；`policy_vantage` 只允许 frozen policy 中 exact vantage key，source/fault
-domain 必须等于 ref；`automation_admin` 必须带 active exact `AdminAuthorizationV1` hash，reporter key、
-cert validity、`allowed_operation_kinds` 与按 hash bytes 排序去重的 `admin_scope_hashes[]` 必须共同覆盖
-本 order 的 endpoint、certificate projection 与 challenge zone。其他 source kind、failure class 或
-条件字段组合严格拒绝。`admin_cancel` 也只能由满足同一 exact ACL/scope 的 active admin key 签，
-`admin_cert_digest`、authorization hash、reporter key 和 scopes 必须逐字段对应；它不能由 owner、
-vantage 或 executor 自报替代。`installed/succeeded=false` 只能作为 failure，不能满足 success predicate。
-
-authoritative detail 的 nameserver-set ref 必须等于 challenge zone 的 frozen set，ID/name 等于 exact
-member；presented 与 cleanup absence 都要求 set 中**每个** member 的 fresh evidence，不能信 sender
-自报 denominator。public/TLS evidence 达到 frozen policy 的不同 vantage 与 fault-domain 门槛。
-`evidence_root` 对按 `(evidence_type,evidence_id)` 排序去重的
-`ACMEChallengeEvidenceLeafV1` 使用 §7.1 RFC 6962 规则；leaf hash从随 operation 交付的完整签名对象
-重算。跨 order/challenge generation、edge、过期或错误 reporter 的 evidence 全部拒绝。
-
-phase seq 从 1 连续递增，parent hash、order/challenge refs 全程冻结。normal reducer 只允许：
-`absent→preparing`（empty evidence root；certified 后才把 TXT 纳入 desired union）→ `presented`
-（所有权威 NS 与 policy 数量公共视角看到完整 active TXT union）→ `validated`（引用已 certified 的
-exact certificate object）→ `installed`（owner install + policy 数量 external TLS success）→
-`cleanup_pending`（固化全部权威回答的实际最大 TTL，certified 后才授权删除本 value）→ `retired`
-（权威/公共 absence、实际 TTL + propagation safety 已满足，写 terminal tombstone）。
-
-失败/取消不使用无出边的 `failed` state。`mode=abort` 只允许 `absent→abandoned`（TXT 从未获发布
-authority）或 `preparing|presented|validated|installed→cleanup_pending`（保留当前旧证书并走同一安全
-删除流程）；它不能直接删 TXT 或宣称 retired。`reason=executor_failure` 必须引用至少一份上述枚举
-failure 且不得包含 `admin_cancel`；`reason=administrator_cancel` 必须引用恰一份 matching
-`admin_cancel`，并拒绝 failure；`reason=expired` 只在 candidate 两种可信时间均晚于 challenge
-`expires_at` 时成立，evidence root 必须为空。除 expired 外 abort root 不得为空，且不得混合两种
-授权途径；与本次 edge 无关的 evidence 也必须拒绝。`abandoned/retired` 均为 terminal，
-`terminal_tombstone_hash` 等于使其进入终态的 phase hash。
-
-同一 FQDN 的 provider desired RRset 精确是 lifecycle state 为
-`preparing|presented|validated|installed` 的 certified challenge TXT value 并集；`absent`、
-`cleanup_pending`、`retired`、`abandoned` 均不在集合。cleanup 只以
-zone/order/challenge/generation/value CAS 删除本值，不得 replace 整组。进入 cleanup_pending 时用
-checked addition 导出 `remove_not_before`；retired 前再次证明本值缺失且其他 active values全部仍在。
-无 provider CAS/fencing 时 destructive cleanup 只能 supervised。备份/GC 在证书与审计 retention
-越过前不得删除 order、private state binding、challenge、certificate、evidence、phase 或 tombstone
-preimage。
-
-流程为：target 按 §6.2 生成 exact-version key/CSR/PoP → CertificateIntentV1 与逐字段匹配的
-`PublicEndpointIntentV1(exposure=public)` 被 Raft commit、apply/recompute 并取得 replication QC →
-order intent certified → ACME executor 创建一次 provider order、封装 private state并让 public
-checkpoint certified → challenge intent 与 `absent→preparing` phase certified → executor 展示 TXT →
-确认权威传播 → 完成签发 → target 原子安装完整链 → 平滑 reload → 外部握手验证 → CRDT 回报。
-并行 order 的 TXT 以 `(fqdn,order_id,value)` 分别归属，期望 RRset 是全部 active order value
-的并集；cleanup 只能按 owner/order/value 和 generation 条件删除本 order 的 value，禁止
-replace/清空其他 order 的 challenge；provider 无条件删除时按 §15 留存并转人工。
-
-续签窗口、失败阈值和证书到期是签名运行事实；renew 不修改 ControlSet。若沿用同一 SPKI，
-可在现有 pin 下换证；若换 key，必须先提交包含 old+new 两个
-`certificate_identity_projection_hashes` 的新 PublicEndpointIntent，再让包含两者 SPKI pin
-的 EndpointSet certified 并让 reader 获得 overlap，然后安装/切换新 listener。只有当没有
-published listener、available 未过期 invite、仍在 retry window 的 `claim_reserved|consumed` invite 或
-offline-compatible view 仍引用 old projection，且缓存/离线
-窗口均满足后，才能用新 PublicEndpointIntent 将数组收缩为 new 并移除 old pin。旧证书在新
-证书验证成功前保留，私钥和证书文件不得经静态分发树公开。
+## 12. 域名、公开服务与证书管理
+
+### 12.1 统一的 forward server 公网基线
+
+本章所称 forward server，是 active Device 的 responsibilities 包含 forward；internet_egress
+蕴含 forward。use_loom 是可叠加职责，不影响该判定。每个 active forward server 必须有：
+
+1. 一个稳定 FQDN，解析到其公网地址或 NAT 前端；
+2. 公网 Nginx HTTPS：TCP 443 可用时使用 443，否则使用 public profile 中的替代 TCP 端口；
+3. DNS-01 证书管理和节点本地 TLS private key；
+4. Hysteria2 UDP listener/可轮换端口池；
+5. WireGuard UDP listener，用于永久 L3/data 或 overlay link；
+6. 正式版的独立 Trojan/TLS TCP bootstrap fallback。
+
+FQDN 不携带端口。客户端拨号端口只能来自签名 EndpointSet/catalog，不能根据“有域名”推断为
+443。域名必须在 listener advertise 前已解析到正确公网前端并通过外部 transport probe。
+
+公开 Nginx 的允许面只有：
+
+~~~text
+GET/HEAD /                              → 静态 fake website
+GET/HEAD /distribution/sha256/<digest>  → 精确 immutable object
+~~~
+
+可选静态索引也必须自身内容寻址并由 descriptor/hash 引用。禁止动态 latest 选择、上传、cookie、
+按 token 变体、目录遍历、claim/control/config/report handler 和这些服务的 reverse proxy。
+响应应设置 immutable cache policy、固定 Content-Type、长度与 digest；客户端仍以内容 hash 和
+Loom signature/QC 为 authority。
+
+### 12.2 PublicAccessProfile 与三类部署
+
+公开期望与 provider/NAT 私有细节分离：
+
+~~~text
+ServerPublicAccessProfileV1
+  schema = 1, cluster_id, server_id, generation
+  fqdn
+  dns_zone_ref
+  address_family_policy
+  https_public_port                 # 443 或显式替代端口
+  deployment_kind                   # direct_standard | direct_alternate | nat_mapped
+  public_frontend_addresses[]
+  certificate_profile_ref
+  forward_listener_resources_hash
+
+ForwardServerListenerResourcesV1    # control-private aggregate；不是旧 ListenerResourceIntentV1
+  schema = 1, cluster_id, server_id, generation
+  nginx_local_tcp_port
+  hy2_local_udp_port_pool[]
+  wireguard_local_udp_ports[]
+  trojan_local_tcp_port_pool[]
+  mappings[]                        # 仅 nat_mapped
+
+PortMappingIntentV1
+  schema = 1, mapping_id
+  transport                         # tcp | udp
+  public_address, public_port_start, public_port_end
+  local_address, local_port_start, local_port_end
+  mapping_generation
+
+ServerPublicAccessStateV1            # reducer/reconciler projection；不由 intent sender 填写
+  schema = 1, cluster_id, server_id, generation
+  public_access_profile_hash
+  status                             # preparing | active | draining | disabled
+  last_verified_observation_hash?
+  last_changed_head_hash
+~~~
+
+profile、private resources、mapping 和派生 state 分别使用独立
+`loom-server-public-access-profile-v1`、`loom-forward-server-listener-resources-v1`、
+`loom-port-mapping-intent-v1`、`loom-server-public-access-state-v1` domain 计算 hash。公网 profile
+不得嵌入本地运行时 status；只有 certified intent 加验证 observation 后才能派生 active state。
+
+三种合法部署：
+
+| kind | DNS | Nginx | 数据 listener |
+|---|---|---|---|
+| direct_standard | FQDN → 公网服务器地址 | public TCP 443 → local Nginx | HY2/WG 独立 UDP tuple；Trojan 独立 TCP tuple或 L4 SNI |
+| direct_alternate | FQDN → 公网服务器地址 | public 替代 TCP 端口 → local Nginx | 各 transport 显式端口 |
+| nat_mapped | FQDN → NAT 公网前端 | public TCP 端口映射到 local Nginx | public UDP/TCP 池按 transport 映射到 local listener |
+
+示例只能使用文档地址和符号端口：
+
+~~~text
+demo-edge.example → 192.0.2.40
+HTTPS: <public-https-alt>/tcp → <nginx-local>/tcp
+HY2 pool: <public-udp-a..b>/udp → <local-udp-a..b>/udp
+WG: <public-wg>/udp → <local-wg>/udp
+~~~
+
+direct 部署不得伪造 NAT mapping；nat_mapped 部署必须声明公网/本地 tuple 和映射代次。外部与
+本地范围长度必须相等，协议必须一致，且验证器要拒绝重叠、反向范围、端口越界和同一 UDP
+tuple 同时分配给 HY2/WG。Nginx TCP 与 HY2 UDP 可以使用同一个数值端口，因为 L4 协议不同；
+Nginx 与 Trojan 同为 TCP，若共用 tuple 必须有显式 L4 SNI dispatcher，不得由 HTTP location
+分流。
+
+active forward profile 要求 Nginx local port、至少一个 HY2 UDP 资源和至少一个 WG UDP 资源；
+正式发布 profile 还要求至少一个 Trojan/TLS TCP fallback。preparing 阶段可暂缺尚未部署的资源，
+但 UI 必须列出缺口且 validator 不允许把它标 active。internet_egress responsibility 缺 forward
+responsibility、FQDN 或上述资源时同样失败关闭。
+
+不能使用 80/443 的服务器仍然必须有 FQDN，并通过 DNS-01 签证书；替代端口不是备案或供应商
+政策的绕过机制。executor 在激活前必须确认该公开方式在适用法律、供应商条款和本地网络中可用，
+否则保持 preparing。位于光猫/NAT 后的 server 除 DNS 指向外，还必须由 operator/provider 完成
+相应 TCP 与 UDP 映射。
+
+### 12.3 DNS 与证书 reconcile
+
+DNS/证书 provider adapter 接收的只是 certified desired state。推荐 DNS API 使用最小权限：
+
+- 仅能修改受管 zone 下指定 record 前缀和 ACME TXT；
+- 不能转移域名、修改注册联系人或扣款续费；
+- 凭据作为 secret artifact 只封装给当前 executor；
+- 所有写入带 provider CAS/version，并以 operation ID 幂等；
+- authoritative DNS 与至少两个外部 resolver 一致后才进入 listener verify。
+
+FQDN 分配必须先形成 certified `server_id → fqdn → public frontend` binding，再由 executor 写 DNS。
+label、冲突重试结果和 generation 都由 proposal preparation 注入；reducer/renderer 不查询 DNS、
+不读时钟也不随机选名字。同一 active server 的 FQDN 跨 listener/端口轮换保持稳定；换域名必须先
+让新旧 binding、证书和 EndpointSet 重叠，再按 reader floor 回收旧名。域名购买、续费支付、跨
+注册商转移继续要求显式 operator 批准，不因配置了 DNS API 自动授权。
+
+证书统一使用 DNS-01，不依赖公网 80。每个 forward server 在本地生成 private key/CSR；private
+key 不进入 SSOT、CRDT、distribution 或 control backup。ACME account 可由受约束 executor 管理，
+证书 artifact 只封装给目标 server。续签过程：
+
+~~~text
+cert prepare
+  → DNS-01 challenge
+  → issue
+  → local install without advertise
+  → external hostname/SNI/SPKI verification
+  → EndpointSet old+new pin overlap
+  → prefer new
+  → drain old
+  → remove old pin/key after floor
+~~~
+
+公开 WebPKI 只证明 transport identity，不能替代 catalog/head/QC。若 cert 自动续签但 SPKI 未被
+当前 certified endpoint generation 接受，listener 不得 advertise。紧急证书撤销也必须先发布
+可达替代入口，除非继续运行旧入口的风险高于失联风险。
+
+### 12.4 私有 control 服务没有公网域名依赖
+
+control_api、private Enrollment、device_config/report 按 private `ControlServiceDirectoryV1` 中的
+overlay IP 拨号；ControlSet membership 与 Raft/replication peer RPC 只按 private
+`ControlPeerDirectoryV1` 拨号。两者都使用 internal CA 的用途隔离证书，并且：
+
+- 不要求公网 FQDN、公开 WebPKI 或 NAT mapping；
+- 不写入 PublicAccessProfile、公开 EndpointSet 或 Nginx；
+- 不允许通过公网 IP 直连后关闭证书验证；
+- 可使用证书 IP SAN，或 directory 绑定的 service ID + SPKI pin；
+- 只有已入网 admin/Device/control，或持有效受限 bootstrap tunnel 的未入网客户端可达。
+
+一台物理 Device 同时具有 forward 与 control 职责时，公网和私网 listener 必须绑定不同地址或
+受防火墙严格隔离；公网 compromise 不得直接获得 control socket。
 
 ---
 
-## 13. EndpointSet 与公网端口模型
+## 13. EndpointSet、catalog 与公网端口模型
 
-单个 `public_endpoint + inbound_port` 无法表达轮换。目标模型把用户看到的逻辑入口和物理
-listener 分开：
+### 13.1 按用途拆分，不再使用公开 role=enroll/control
 
-```text
-EndpointSetV2
-  schema = 2, cluster_id, endpoint_set_id
-  generation
-  source: EndpointSetSourceV1
-  endpoints[]                  # 按 LogicalEndpoint.id UTF-8 bytes 排序、拒绝重复
-  digest
+一个通用 EndpointSet 里混装 distribution、Enrollment 和 control 会让 transport trust 扩权。
+独立的链路授权先使用以下逐边契约；EndpointSet 只投影客户端可拨入口，不能替 LinkIntent 创造
+server-to-server 边：
 
-EndpointSetSourceV1            # exact tagged union，恰有一个 variant
-  kind                         # genesis | operation
-  genesis?                     # {recovery_epoch}
-  operation?                   # {parent_head_hash,operation_id,control_revision}
+~~~text
+LinkIntentV1
+  schema = 1, cluster_id, link_id
+  from_device_id
+  to                              # tagged union: device_id | service_id
+  purpose                         # control_overlay | data_forward | bootstrap
+  allowed_transports[]            # wireguard | hysteria2 | trojan_tls；稳定排序
+  initiator                       # from | to；由可达性验证后经共识固化
+  listener_resource_refs[]
+  credential_refs[]
+  route_scope
+  generation, parent_head_hash
+~~~
 
-LogicalEndpointIntentV1
-  schema = 1, cluster_id, endpoint_id, generation
-  role, owner_device_id, protocol
-  public_endpoint_intent_hash, public_endpoint_intent_generation
-  address_or_domain_intent_hash
-  transport_identity           # 与下列 LogicalEndpoint 使用同一 exact tagged union
+LinkIntent 的发起方向不授予访问权限；一个 transport 可用也不允许将该边用于另一 purpose。目标
+wire 不含 Device-wide direction。既有“境外端主动向境内端建立 WG”只是一条 data_forward
+LinkIntent 的 initiator/transport 选择；同一逻辑数据边可在两端可达性、认证和 profile 均满足时
+改为 HY2，不代表全网切换。HY2 未实现并验收 L3-over-HY2 前不能替换 control overlay 的 WG，
+默认也不把 WG 套在 HY2 内。目标 EndpointSet/Directory 明确分为：
 
-LogicalEndpoint
-  id                         # 稳定；如 data_ingress/demo-a
-  logical_endpoint_intent_hash, logical_endpoint_intent_generation
-  role                       # control_api | enroll | device_config | device_report
-                             # | distribution | data_ingress
-  owner_device_id
-  protocol                   # https | hysteria2 | wireguard | trojan | ...
-  public_endpoint_intent_hash, public_endpoint_intent_generation
-  address_or_domain_intent_hash
-  transport_identity         # tagged union，必须与 protocol 匹配：
-    tls?                     # HTTPS/Hysteria2/Trojan：server_name + WebPKI profile
-      server_name, webpki_profile_ref: WebPKIProfileRefV1
-      spki_pins[]            # TlsSpkiPinV1；按 (pin_generation,digest) 排序
-    wireguard?               # WireGuard：peer key ID + 精确 public key/digest
-      peer_public_key_id, peer_public_key
-  listeners[]
-
-ListenerGeneration
-  generation
-  dial_target                # tagged union：dns_name | ip_literal，恰有一个
-  public_port
-  local_port?                # NAT/port-map 不同号时显式
-  address_families[]         # 非空子集；固定 ipv4 → ipv6 枚举顺序
-  https_base_url?            # protocol=https 时必需，否则必须缺失
-  credential_generation, credential_artifact_hashes[]
-  certificate_identity_projection_hash? # 不随同 SPKI 例行续签变化
-  introduction: ListenerIntroductionV1
-  retire_not_before?
-  published_state            # advertised | preferred | draining
+~~~text
+ListenerGenerationV2               # public；同一 logical endpoint 的一个可拨物理代次
+  schema = 2, listener_generation
+  published_state                   # advertised | preferred | draining
+  dial_target_fqdn                  # 必须等于该 forward server 的 certified 稳定 FQDN
+  public_port, address_families[]
+  transport_identity_refs[]         # WebPKI/pin、HY2/Trojan credential 或 WG peer ref
+  credential_generation
+  certificate_intent_hash?          # TLS transports 必需，WG 禁止
+  public_profile_generation, introduced_revision
+  valid_from, valid_until
+  retire_not_before?                # 可选的旧代最早物理退役时间；guard 仍是最终门槛
   rotation_operation_hash
 
-TlsSpkiPinV1
-  digest                     # "sha256:" + 64 位小写 hex，覆盖 DER SubjectPublicKeyInfo
-  pin_generation
-  credential_generation
-  certificate_identity_projection_hash
-  not_before, not_after      # RFC 3339 UTC/Z；not_before < not_after
-
-ListenerIntroductionV1        # exact tagged union，恰有一个 variant
-  kind                         # genesis | operation
-  genesis?                     # {recovery_epoch}
-  operation?                   # {parent_head_hash,operation_id}
-
-PortRotationPolicyV1
-  schema = 1, cluster_id, policy_id
-  pool_ref: PortPoolRefV1
-  trigger                          # tagged union：manual | periodic | degraded
-    manual?                        # exact empty object
-    periodic?                      # schedule_anchor, interval_seconds, window_start_minute_utc,
-                                   # window_end_minute_utc, jitter_max_seconds
-    degraded?                      # cooldown_seconds
-  minimum_lifetime_seconds, minimum_overlap_seconds
-  max_offline_compatibility_seconds, quiet_period_seconds
-  evidence_policy_hash
-  provisioning_principal_scope_hash, automatic_principal_scope_hash?, emergency_scope_hash
-
-PortRotationAuthorizationScopeV1
-  schema = 1, cluster_id, scope_id, generation
-  scope_kind                              # owner | provisioning | automatic | emergency
-  principals[]                           # PortRotationPrincipalRefV1，按 canonical ref bytes 排序
-  endpoint_ids[], owner_device_ids[], pool_ids[]
-  roles[], protocols[], trigger_kinds[], transition_edges[]
-
-PortRotationPrincipalRefV1               # exact tagged union，恰有一个 variant
-  kind                                    # device_identity | admin_certificate
-  device_identity?                       # {device_id,identity_key_id}
-  admin_certificate?                     # {admin_cert_digest,admin_key_id}
-
-PortRotationEvidencePolicyV1
-  schema = 1, cluster_id, policy_id
-  max_evidence_age_seconds
-  vantages[]                              # RotationVantageRefV1，按 vantage_id 排序
-  external_vantage_count_per_address_family # >= 2
-  transport_vantage_count                 # >= 2，与 external 门槛分开
-  prefer_min_attempts_per_window, prefer_max_attempts_per_window
-  prefer_min_success_basis_points
-  prefer_max_loss_basis_points, prefer_max_rtt_milliseconds
-  reader_ack_min_basis_points              # 0..10000
-  degraded_failure_vantage_count, degraded_failure_window_seconds
-  drain_no_new_handshakes_seconds, drain_zero_active_sessions_seconds
-
-RotationVantageRefV1
-  vantage_id, device_id, identity_key_id, fault_domain
-  address_families[]                       # 固定 ipv4 → ipv6 顺序，非空
-
-PortPoolRefV1
-  pool_id, generation, port_pool_hash
-
-PortPoolV1
-  schema = 1, cluster_id, pool_id, generation
-  protocol, transport_profile, network_namespace
-  owner_scope_hash
-  public_port_ranges[], local_port_ranges[] # PortRangeV1，按 (start,end) 排序
-  reserved_ports[]                          # 升序去重
-  reuse_quarantine_seconds
-
-PortRangeV1
-  start, end                                # 闭区间；1 <= start <= end <= 65535
-```
-
-所有 `*_seconds`、UTC minute 和 port/generation 都是非负 64 位整数；interval/minimum lifetime/
-overlap/quiet period 必须大于 0，UTC minute 在 0..1439，jitter 小于 interval。trigger union 恰有一个
-variant，非 periodic 时不得出现 window/jitter；window 跨午夜用 start > end 明确表示。
-Evidence policy 的所有时间/次数阈值是非负整数，vantage count 至少 2，basis points 在
-0..10000，RTT 使用整数毫秒，`prefer_min_attempts_per_window >= 1` 且不大于
-max。`vantages[]` 的 vantage/device/key/fault-domain 非空且各自按 schema 唯一；每个 key ID
-必须逐字节等于候选 parent certified Device identity 中的当前 key，被撤权/暂停
-Device 不得作为 vantage。因此 policy 承诺的是 exact authority refs，不是实现本地的
-观测者名单。两个 policy hash 固定为：
-
-```text
-port_rotation_policy_hash = H(frame(
-  "loom-port-rotation-policy-v1", JCS(PortRotationPolicyV1)
-))
-port_rotation_evidence_policy_hash = H(frame(
-  "loom-port-rotation-evidence-policy-v1", JCS(PortRotationEvidencePolicyV1)
-))
-port_rotation_authorization_scope_hash = H(frame(
-  "loom-port-rotation-authorization-scope-v1", JCS(PortRotationAuthorizationScopeV1)
-))
-port_pool_hash = H(frame("loom-port-pool-v1", JCS(PortPoolV1)))
-logical_endpoint_intent_hash = H(frame(
-  "loom-logical-endpoint-intent-v1", JCS(LogicalEndpointIntentV1)
-))
-listener_resource_intent_hash = H(frame(
-  "loom-listener-resource-intent-v1", JCS(ListenerResourceIntentV1)
-))
-```
-
-所有 `rotation_policy_hash/evidence_policy_hash` 必须由携带的 exact policy bytes 重算并匹配；
-`pool_ref`、scope hash 指向的对象也必须存在于 phase parent certified
-state，不能由 scheduler 本地补
-默认单位、门槛或窗口。PortPool 的 ranges 必须非空、已排序、区间内/区间间不
-重叠，每个 port 及 reserved port 都在 1..65535；public/local pool、protocol、transport
-profile、network namespace 和 owner scope 必须与 endpoint/target Device 精确匹配。
-`local_port` 缺失时它精确等于 public port；存在时必须分别落在 local/public ranges，
-  且两者都不在 reserved/current/transition/blocked 集合；默认也排除全部 quarantine。唯一例外是
-  phase_seq=1 的 `absent→allocated` 携带 exact `PortQuarantineReuseClaimV1`：old tombstone 必须属于
-  matching pool/namespace/protocol/ports，完整旧 lifecycle bytes 必须重算为
-  `old_listener_lifecycle_state_hash`，其状态仍为 quarantined、尚无
-  `reused_by_phase_operation_hash`，candidate time 已达到 `reuse_not_before`，且旧 client floor/
-  compatibility 门槛由 certified history 重新满足。claim 的 `reuse_evidence_ids[]` 必须恰好指向当前
-  phase root 中与 old lifecycle/namespace/protocol/ports 全部相等的 fresh `port_reuse_readback`
-  evidence：`socket` 必须一份；旧 spec 的 firewall/mapping requirement 为 required 时各必须一份，
-  存在 provider binding 时还必须一份 `provider_lease`，not-applicable 项不得伪造。每份都要求
-  `absent=true` 和非空 transcript hash；缺项、额外项、重复 check kind 或 ref/hash 不等均拒绝。
-  该同一 certified phase 原子
-  分配新 listener，并把 old tombstone 的 `reused_by_phase_operation_hash` 写为新 phase hash；竞争
-  reuse 只有一个 CAS 成功，历史 tombstone不删除。首版 blocked
-  tombstone 永久保留在排除集合，无解封 operation；需要重用时必须先升级协议并定义新
-  exact reducer edge，不能由当前 allocator 自行解除。
-  `pool_ref` 三字段必须等于
-所携 pool 并重算 hash；端口随机值在 proposal 前固定，voter 只校验授权与唯一性。
-
-scope 的所有数组均非空、按对应 enum/UTF-8 canonical bytes 排序并拒绝重复，
-`transition_edges[]` 只能使用本节定义的 `from_state->to_state`；没有 wildcard、前缀或本地
-ACL 别名。principal ref 必须在 parent head 解决到当前未撤权的 exact Device identity
-或 admin certificate/key，且现有 admin ACL 仍须允许 outer operation kind；scope 只能进一步
-收紧 ACL，不能扩权。`scope_kind=owner` 的 principals 必须全是
-`device_identity`；`provisioning|automatic|emergency` 的 principals 必须全是
-`admin_certificate`，因为 exact `ControlOperationV1` 只由 admin cert/key 签名。任何其他
-kind/signer 组合在 decode/validation 时拒绝。`PortPoolV1.owner_scope_hash` 必须解决到
-`scope_kind=owner` 且覆盖 pool ID、endpoint、owner Device、role 和 protocol；owner receipt
-的 Device principal 必须在其 `principals[]` 中。policy 的
-`provisioning_principal_scope_hash` 必须解决到 `scope_kind=provisioning`，只允许
-`initial_provision` 和初次建立 listener 所需的正常边。
-`automatic_principal_scope_hash` 存在时必须解决到 `scope_kind=automatic`，且自动
-proposal 的 admin-certificate principal、trigger、pool、endpoint 和每条 transition 都在其精确
-集合中；缺失即禁用自动调度。`emergency_scope_hash` 必须解决到
-`scope_kind=emergency`，`admin_override.scope_hash` 必须与它逐字节相等，报告者
-admin cert/key、endpoint、pool 和被跳过的 transition 必须全部在 scope 中。scope 内
-`cluster_id` 必须与 policy/pool/phase 相等；三种用途的 scope kind 不得互换。
-
-`LogicalEndpointIntentV1` 由通用 operation 以
-`kind="upsert_logical_endpoint_intent",payload_schema=1,payload_hash=logical_endpoint_intent_hash`
-提交，同 endpoint ID 的 generation 严格递增。其 public intent/address hash、owner、role、
-protocol 与 transport identity 必须与同 candidate 中已认证对象相等。客户端
-`LogicalEndpoint` 除 listeners/source 外的所有字节都必须从该 exact intent 投影，
-intent hash/generation 也必须相等；轮换 phase 不得自行补造 role、owner 或 identity。
-
-每个 listener 的实际拨号目标必须由同一个 `address_or_domain_intent_hash` 唯一决定，不能由
-executor、DNS 回答或本机网卡替换：
-
-- `managed_domain`：`dial_target.dns_name` 必须逐字节等于 resolved binding 的 `fqdn`，
-  `address_families[]` 必须逐字节等于其 `allowed_address_families[]`；
-- `explicit_address`：`dial_target.ip_literal` 必须等于 resolved claim 的 canonical `address`，
-  `address_families[]` 必须恰含该 claim 的一个 family；
-- `managed_domain_with_address`：仍以 binding `fqdn` 为 dial target，family 数组等于 binding allowed
-  set，且所携 claim 必须是该 binding 当前 `preferred|overlapping`、未过期的同 family value。
-
-因此改变 FQDN、显式地址或允许 family 必须创建更高 AddressOrDomain/PublicEndpoint/Listener
-generation；纯 DNS claim 轮换可保持 hostname listener 不变，但只能经 §12.2 reducer 改 RRset。
-`ListenerGeneration`、`ListenerImmutableSpecV1` 与 `InviteEnrollSeedV2` 的
-`credential_artifact_hashes[]` 必须逐字节相同、按 hash bytes 排序去重且非空，是
-PublicEndpointIntent 排序 credential 数组的子集；每个 hash 一一解析到完整
-`SecretArtifactRefV2`，purpose/owner/public identity 与 role、protocol、transport profile 一致。
-TLS listener 的 certificate projection role 必须等于 endpoint role，projection key artifact hash
-必须是该 listener credential 数组的成员，其 ref generation 等于 `credential_generation`；pin 的
-projection/digest/credential generation 也逐字段一致。任何 ref/hash/bytes 缺失都不能 render。
-
-同一 LogicalEndpoint 的 listener `generation` 必须唯一并升序，恰有一个 `preferred`，其余只能是
-`advertised` 或 `draining`；`address_families` 拒绝未知值与重复。TLS endpoint 的 pin 集合非空，
-`pin_generation`、`(credential_generation,digest)` 均唯一；每个可拨 listener 的
-`credential_generation` 至少对应一个在发布该 Device view 的当前 certified head
-`committed_logical_time` 有效的 pin。客户端用该 head（扫码前用 descriptor 中同值且硬封顶）的
-`max_clock_skew_seconds` 和本地可信墙钟判断：
-仅当 `not_before <= local_now + max_clock_skew` 且
-`local_now - max_clock_skew <= not_after` 才可接受；墙钟不可用或全部 pin 过期时，Enrollment
-token 和管理请求 fail closed，已有数据面仅按 LKG/离线策略处理。
-
-HTTPS listener 的 `https_base_url` 必须是规范化的
-`https://<server_name>:<public_port>/<prefix>/`：host 小写 IDNA ASCII、显式十进制 port、path 以
-`/` 开始和结束，禁止 userinfo、query、fragment、点段和 percent-encoded path separator；host 必须
-逐字节等于 TLS `server_name`。即使 `dial_target` 是 IP，连接也拨该 IP、但 SNI/HTTP Host 和 URL
-仍使用 server_name。首版 `role_route_profile="loom-https-role-v2"` 固定从 base URL 解析以下相对
-路径，服务端不得用重定向改 role：
-
-| role | 方法与相对路径 |
-|---|---|
-| `control_api` | 管理 operation 按版本化 API schema 使用 `operations`；Create Device 为 `POST devices` |
-| `enroll` | 无 token proof 下载为 `GET invites/{invite_id}/proof/{proof_bundle_hash_hex}`；claim 为 `POST claims` |
-| `device_config` | `GET devices/{device_id}/view` |
-| `device_report` | `POST devices/{device_id}/reports` |
-| `distribution` | `GET objects/{sha256_hex}` 与 `GET current` |
-
-相对路径变量只能使用 schema 规定的 canonical URL-safe ASCII，`*_hash_hex` 是去掉 `sha256:` 前缀的
-64 位小写 hex；RFC 3986 resolve 后的 URL 必须仍位于同一 origin 和 base path 下。`data_ingress`
-不填写 `https_base_url`，其握手由对应 transport profile 定义。
-
-首个 v2 profile 的 role×protocol 组合固定如下，未知或交叉组合在解析时失败：
-
-| role | 允许 protocol | 必需 transport identity |
-|---|---|---|
-| `control_api` / `enroll` / `device_config` / `device_report` / `distribution` | `https` | 精确 hostname + WebPKI + generation/overlap-bounded TLS SPKI pins |
-| `data_ingress` | `hysteria2` / `trojan` | 精确 server name + WebPKI + generation/overlap-bounded TLS SPKI pins |
-| `data_ingress`（专用后续 profile） | `wireguard` | 精确 peer public key；不得填写或验证为 TLS SPKI |
-
-WireGuard 组合只有在 §14 的双 interface/peer/key/address/route profile 完成后才能进入自动轮换；
-在此之前 EndpointSet 最多把它作为显式 disruptive maintenance 坐标。TLS union 与 WireGuard
-union 必须且只能出现一个，`dns_name` 与 `ip_literal` 也必须且只能出现一个。即使使用 IP dial
-target，TLS transport 仍须按 EndpointSet 中的 server name 验 hostname/WebPKI 和 SPKI；不能
-把 IP literal 当成跳过证书身份的开关。
-
-control voter 之间的 Raft/mTLS wire 地址只存在 private
-`ControlPeerDirectoryV1.members[].peer_endpoints[]`；目录先以 opaque `member_id` 与公开 ControlSet
-一一对应，再在私有字段中映射 owner Device ID。只有有权读取目录的管理 UI 才能显示
-`control.peer_rpc_endpoints`，不得把它序列化进公开 ControlSet、transition、邀请或 mirror。面向
-客户端的公开 API 地址只存在 `EndpointSet(role=control_api)` 并按 `owner_device_id` 关联；不能把
-一份 endpoint 列表同时当成员资格、peer 拨号目录与公网发现来源。
-
-每个公开 LogicalEndpoint 必须逐字段匹配同一 certified `PublicEndpointIntentV1` 的 hash、
-generation、owner、role、protocol 和 address/domain ref；`exposure=private`、intent 尚未
-certified 或实际入口超出 intent scope 时不得进入客户端 EndpointSet。EndpointSet digest 经
-D105 Device leaf 绑定，单个 executor 不能靠实际创建成功把新地址或角色追加进返回值。
-
-`EndpointSetSourceV1` 的 `operation` variant 以
-`parent_head_hash + operation_id + control_revision` 唯一指向使这份 EndpointSet **内容最后一次
-变化**的已提交 operation 及其坐标；`operation_id` 是提案前固定、且不从 EndpointSet bytes
-导出的 operation body ID：普通管理变化取 `ControlOperationBodyV1.operation_id`，首次 claim
-生成 Device 专属 EndpointSet 时允许取同一 head 的
-`EnrollmentClaimOperationBodyV1.operation_id`。两种 variant 都必须在该 head 的 operation tree 中
-存在且全局重复 ID 规则仍适用。不得把生成后才存在的当前 head hash、outer
-operation object hash 或由 EndpointSet digest 导出的 hash 写回 EndpointSet，否则会形成
-`EndpointSet → Device root → head/operation → EndpointSet` 循环。revision 单独不得作为跨
-recovery lineage 的标识。listener 的 `ListenerIntroductionV1.operation` 仍只允许 exact admin
-allocate operation：它携带提案的 parent head 与预先固定 operation ID，不携带 phase/object hash；
-claim operation 不能借此创建公网 listener。
-
-初始 v2 bootstrap 或 emergency Genesis 在没有前驱 operation 的同一 head 中生成新对象时，只能
-使用 `genesis{recovery_epoch}` variant；该对象还必须是相应 lineage 首个 head 所承诺 state 的一
-部分，其他 head 禁止伪用 genesis variant。这个不含自身 head/statement hash 的数值坐标避免
-自引用；cluster ID、endpoint/listener ID、generation 与 recovery epoch 共同区分对象。Genesis
-中首次就作为 `preferred` 发布的 listener 必须使用
-`rotation_operation_hash=EMPTY_OPERATION_HASH_V1`；任何 operation 后引入或变更过状态的 listener
-均禁止该 sentinel，必须指向实际 phase payload hash。端点 bytes
-未变时必须复用相同 generation、source provenance 和 digest；不能因无关 SSOT/审计提交重写它，
-否则会迫使相同 Device generation 出现不同 leaf。只有 canonical EndpointSet 内容变化才递增
-generation、把 source 更新为本次 operation 坐标，并推动所有引用它的 Device view 增加各自
-generation。
-EndpointSet 本体因此不重复放 recovery/control/head 坐标；这些坐标由 DeviceViewEnvelope 的
-certified head/floor 绑定。recovery 或 ControlSet 变化但端点授权内容不变时，可以在新 head
-中继续承诺完全相同的 EndpointSet bytes，而不会伪造一次 Device generation 变化。
-Device leaf 的 `endpoint_set_hash` 必须精确等于：
-
-```text
-digest = H(frame("loom-endpoint-set-v2", JCS(EndpointSetV2 excluding digest)))
-```
-
-计算前还必须确认 endpoint/listener/pin/address-family 数组满足上述排序、唯一性与枚举顺序；
-验证器拒绝 digest 自包含、未知 EndpointSet schema 或相同
-`endpoint_set_id/generation` 的不同 digest。
-
-每一轮端口变化由一个 `rotation_id` 串起，而不是让 reducer 根据 receipt 猜当前阶段：
-
-```text
-PortRotationPhaseOperationV1
-  schema = 1, cluster_id, operation_id, rotation_id, phase_seq
-  endpoint_id, logical_endpoint_intent_hash, target_generation, replaced_generation?
-  parent_phase_operation_hash       # 首步使用 EMPTY_OPERATION_HASH_V1
-  listener_spec_hash
-  listener_transitions[]            # PortRotationListenerTransitionV1，按 generation 排序
-  trigger_proof: PortRotationTriggerProofV1
-  quarantine_reuse_claim?           # PortQuarantineReuseClaimV1；仅首个 absent→allocated 可出现
-  rotation_policy_hash, evidence_root
-  reason
-
-PortRotationListenerTransitionV1
-  generation, from_state, to_state
-  disposition?                      # PortDispositionReasonV1；只在进入 retired/abandoned 时必需
-
-PortQuarantineReuseClaimV1
-  pool_ref: PortPoolRefV1
-  old_endpoint_id, old_listener_generation, old_listener_lifecycle_state_hash
-  network_namespace, protocol, public_port, local_port
-  reuse_evidence_ids[]              # 按 evidence ID UTF-8 bytes 排序去重，非空
-
-PortRotationCancellationV1
-  schema = 1, cluster_id, operation_id, rotation_id, endpoint_id
-  expected_last_phase_operation_hash, target_generation, listener_spec_hash
-  mode = "cancel_unpreferred_target"
-  reason                            # dependency_superseded | admin_cancel
-  changed_dependency_hash, replacement_dependency_hash?
-  target_transition: PortRotationListenerTransitionV1
-  evidence_root
-
-EndpointEmergencyWithdrawalV1      # 独立于是否存在 active rotation
-  schema = 1, cluster_id, operation_id, endpoint_id
-  expected_logical_endpoint_intent_hash, expected_public_endpoint_intent_hash
-  expected_listener_states_root
-  reason                            # credential_revoked | certificate_revoked |
-                                    # public_endpoint_revoked | administrative_block
-  revoked_dependency_hash?, emergency_scope_hash
-  listener_transitions[]            # PortRotationListenerTransitionV1，按 generation 排序
-  evidence_root
-
-EndpointWithdrawalListenerLeafV1
-  schema = 1, listener_generation, listener_spec_hash
-  state, last_phase_operation_hash
-
-EndpointWithdrawalEvidenceBodyV1
-  schema = 1, cluster_id, evidence_id, withdrawal_operation_id, endpoint_id
-  observed_at, admin_authorization_hash, admin_cert_digest, admin_key_id
-  emergency_scope_hash, reason
-  revoked_dependency_hash?
-
-EndpointWithdrawalEvidenceV1
-  body: EndpointWithdrawalEvidenceBodyV1
-  reporter_signature: AuthorityProofSignatureV1
-
-EndpointWithdrawalEvidenceLeafV1
-  schema = 1, evidence_id, evidence_hash
-
-PortRotationTriggerProofV1          # 整个 rotation lineage 逐字节不变
-  schema = 1
-  kind                              # initial_provision | manual | periodic | degraded
-  detail                            # exact tagged union：
-    initial_provision?              # exact empty object
-    manual?                         # exact empty object
-    periodic?                       # {period_number,chosen_jitter_seconds,scheduled_not_before}
-    degraded?                       # {failure_evidence_root}
-
-ListenerImmutableSpecV1
-  endpoint_id, generation, dial_target, public_port, local_port?
-  address_families[], https_base_url?
-  credential_generation, credential_artifact_hashes[], certificate_identity_projection_hash?
-  render_contract_id, rendered_config_hash
-  firewall_requirement: ListenerResourceRequirementV1
-  mapping_requirement: ListenerResourceRequirementV1
-  introduction: ListenerIntroductionV1
-  retire_not_before?
-
-ListenerResourceRequirementV1            # exact tagged union
-  mode                                    # required | not_applicable
-  required?                               # ListenerResourceIntentRefV1
-  not_applicable?                         # exact empty object
-
-ListenerResourceIntentRefV1
-  resource_kind, resource_intent_id, generation, resource_intent_hash
-
-ListenerResourceIntentV1
-  schema = 1, cluster_id, resource_intent_id, generation
-  resource_kind                           # firewall | mapping
-  endpoint_id, listener_generation, owner_device_id
-  network_namespace, protocol, public_port, local_port
-  executor_profile_id, provider_binding_hash?
-
-ListenerRuntimeRenderInputV1
-  schema = 1, cluster_id
-  logical_endpoint_intent: LogicalEndpointIntentV1
-  public_endpoint_intent: PublicEndpointIntentV1
-  address_or_domain_intent: AddressOrDomainIntentV1
-  domain_binding_intent?: DomainBindingIntentV1
-  address_claim?: AddressClaimV1
-  credential_artifact_refs[]: SecretArtifactRefV2
-  certificate_identity_projection?: CertificateIdentityProjectionV1
-  listener_spec_without_rendered_config_hash
-  resource_intents[]                     # exact ListenerResourceIntentV1，firewall → mapping 排序
-
-ListenerLifecycleStateV1             # reducer 在 certified control state 中保留
-  schema = 1, cluster_id, endpoint_id, listener_generation
-  logical_endpoint_intent_hash, listener_spec_hash
-  state                              # allocated | preparing | advertised | preferred |
-                                     # draining | retired | abandoned
-  port_disposition                   # in_use | quarantined | blocked
-  reuse_not_before?                  # 只在 quarantined 时必需
-  disposition_reason?                # PortDispositionReasonV1；只在非 in_use 时必需
-  reused_by_phase_operation_hash?    # 仅已被一次性复用的 quarantined tombstone 必需
-  last_phase_operation_hash
-  last_changed_control_revision
-
-PortDispositionReasonV1
-  code                               # normal_rotation | cancelled_before_publish | setup_failed |
-                                     # port_conflict | security_revocation |
-                                     # administrative_block | abuse_detected
-  evidence_ids[]?                    # 按 evidence ID UTF-8 bytes 排序去重
-
-PortRotationEvidenceBodyV1
-  schema = 1, cluster_id, evidence_id, rotation_id
-  endpoint_id, target_generation, observed_at
-  evidence_type                    # listener_ready | external_reachability | reader_ack |
-                                   # transport_window | connection_window | failure | admin_override |
-                                   # port_reuse_readback
-  detail                           # exact tagged union；恰与 evidence_type 对应：
-    listener_ready?                # {listener_spec_hash,config_hash,listener_bound,
-                                   #  credential_loaded,firewall:ListenerResourceReadyStatusV1,
-                                   #  mapping:ListenerResourceReadyStatusV1}
-    external_reachability?         # {vantage_id,fault_domain,address_family,
-                                   #  handshake_transcript_hash,succeeded}
-    reader_ack?                    # {device_id,device_generation,endpoint_set_digest,
-                                   #  listener_generation}
-    transport_window?              # {source_id,fault_domain,window_start,window_end,samples[]}
-    connection_window?             # {listener_generation,window_start,window_end,
-                                   #  new_handshakes,active_sessions}
-    failure?                       # {source_id,fault_domain,listener_generation,
-                                   #  failure_class,diagnostic_hash}；failure_class 只能为
-                                   # bind_failed | credential_failed | firewall_failed |
-                                   # mapping_failed | dns_unreachable | handshake_failed |
-                                   # loss_threshold | timeout | port_conflict |
-                                   # administrative_block | abuse_detected
-    admin_override?                # {admin_cert_digest,scope_hash,reason}
-    port_reuse_readback?           # {old_endpoint_id,old_listener_generation,
-                                   #  old_listener_lifecycle_state_hash,network_namespace,
-                                   #  protocol,public_port,local_port,check_kind,
-                                   #  resource_intent_hash?,provider_binding_hash?,
-                                   #  absent,readback_transcript_hash}；check_kind 只能为
-                                   #  socket | firewall | mapping | provider_lease
-
-PortRotationEvidenceV1
-  body: PortRotationEvidenceBodyV1
-  reporter_key_id
-  reporter_signature: AuthorityProofSignatureV1
-
-PortRotationEvidenceLeafV1
-  schema = 1, evidence_type, evidence_id, evidence_hash
-
-TransportAttemptSampleV1
-  sample_id, outcome               # success | failure
-  rtt_milliseconds?                # success 时必需；failure 时必须缺失
-
-ListenerResourceReadyStatusV1      # exact tagged union
-  mode                             # ready | not_applicable
-  ready?                           # {resource_intent_hash}
-  not_applicable?                  # exact empty object
-```
-
-`EMPTY_OPERATION_HASH_V1 = "sha256:" + 64 个 ASCII '0'`。对
-`parent_phase_operation_hash`，它只在一个 rotation lineage 的 `phase_seq=1` 表示没有前一
-phase；对 `ListenerGeneration.rotation_operation_hash`，它只在 §13 已定义的 Genesis
-preferred listener 上合法。它与 §7.4 的空 head predecessor 取相同字节值，但字段用途和
-允许位置分开校验，不能把普通缺失 hash 静默归一化为它。
-`listener_spec_hash = H(frame("loom-listener-immutable-spec-v1", JCS(ListenerImmutableSpecV1)))`，
-`listener_lifecycle_state_hash = H(frame("loom-listener-lifecycle-state-v1",`
-`JCS(ListenerLifecycleStateV1)))`，
-`phase_operation_hash = H(frame("loom-port-rotation-phase-operation-v1",`
-`JCS(PortRotationPhaseOperationV1)))`，
-`port_rotation_cancellation_hash = H(frame("loom-port-rotation-cancellation-v1",`
-`JCS(PortRotationCancellationV1)))`，
-`endpoint_emergency_withdrawal_hash = H(frame("loom-endpoint-emergency-withdrawal-v1",`
-`JCS(EndpointEmergencyWithdrawalV1)))`，
-`endpoint_withdrawal_evidence_hash = H(frame("loom-endpoint-withdrawal-evidence-v1",`
-`JCS(EndpointWithdrawalEvidenceV1)))`。同一 `rotation_id` 的 `phase_seq` 从 1 连续递增，parent 必须等于
-前一 certified phase operation hash；`target_generation`、`replaced_generation` 和 immutable
-spec hash 全程不变。
-listener 的 spec 字段一经 allocate 全部不可变，后续只能改变 state 与
-`rotation_operation_hash`；要改端口、地址、URL、credential、证书 identity 或 retire 下限必须分配
-新的 listener generation。
-
-allocate 时解析到的 logical/public/address/certificate/credential/policy/pool/resource exact hashes
-在 rotation lineage 内冻结；旧 bytes 保留供每一 phase 重算，绝不把同 ID 的 latest generation
-悄悄代入。任何普通 upsert/revoke 若会改变活动 rotation 引用的依赖，CAS 必须拒绝，直到该 lineage
-terminal；唯一例外是同一 certified head 携带下述 cancellation。cancellation 由 §7.1 outer operation
-以 `kind="cancel_port_rotation"`、`payload_schema=1`、上式 payload hash 承载，outer/payload operation
-ID 与 cluster 必须相等，并精确匹配 parent state 的 active rotation、last phase、target/spec。
-
-`cancel_unpreferred_target` 只允许 target 仍为 `allocated|preparing|advertised` 且另一个旧 listener
-仍是唯一 preferred。`target_transition.generation` 必须等于 target，from state 等于 parent，to state
-固定为 `abandoned`，disposition 固定为
-`PortDispositionReasonV1{code:"cancelled_before_publish"}` 且不得带 evidence IDs；`evidence_root` 必须是规范
-empty root。reducer 原子把 port disposition 写为 `quarantined`，并唯一导出
-`reuse_not_before = max(cancellation_head.committed_logical_time + PortPoolV1.reuse_quarantine_seconds,`
-`ListenerImmutableSpecV1.retire_not_before if present)`，
-`last_phase_operation_hash=port_rotation_cancellation_hash`，保留完整 tombstone，然后才
-允许 dependency 的更高 generation 生效。若 target 已被任一 available invite 或处于 retry window
-的 consumed invite context 固定，还必须按 §14 的 same-context seed survivability 找到替代 seed；
-系统中另有 preferred 但不在该 immutable context 并不够。target 已 preferred 后，正常
-supersede/admin cancel 必须
-等原 rotation 完成再开新 rotation，不能把旧依赖换进半条 lineage。
-`withdraw_endpoint` 只用于 credential/certificate/public-intent 的 certified security revocation，
-不再塞进要求 active rotation 的 cancellation schema。它使用独立 §7.1 outer operation：
-`kind="withdraw_endpoint"`、`payload_schema=1`、payload 为
-`EndpointEmergencyWithdrawalV1`/上式 hash，outer/payload cluster 与 operation ID 必须相等。
-`expected_listener_states_root` 对从 parent certified state 枚举出的全部非终态 listener 构造
-`EndpointWithdrawalListenerLeafV1`，按 listener generation 排序并使用 §7.1 RFC 6962 tree；空树
-也使用规范 empty root。logical/public intent、revoked dependency 与 emergency scope/admin ACL
-必须 exact 匹配；漏列、额外或任一 listener 状态/last phase 不等均 CAS 失败。
-
-withdrawal 必须携恰一份 `EndpointWithdrawalEvidenceV1`，其 leaf 构成 `evidence_root`。evidence 的
-signature 覆盖 `frame("loom-endpoint-withdrawal-evidence-signature-v1",`
-`JCS(EndpointWithdrawalEvidenceBodyV1))`；body 的 operation/endpoint/reason/dependency/scope 必须与
-payload 逐字段相等，reporter key、admin cert digest 与 authorization hash 必须解析到 parent head 中
-同一 active `AdminAuthorizationV1`，其有效期、operation kind 与 emergency scope 覆盖本 endpoint、
-owner、pool 和所有跳过的 transition；signature 的 algorithm/key ID 必须等于该 admin 的 exact
-`AuthorityProofKeyV1`，并按 §6.2 canonical wire 规则验证。前三种 revocation reason 必须携对应已 certified revocation
-对象的 `revoked_dependency_hash`，`administrative_block` 则必须缺失该字段。evidence 的
-`observed_at` 同时受 candidate logical time 与 §7.5 可信墙钟/skew 约束；相同 ID 不同 bytes、额外
-evidence 或 scope 不匹配均拒绝。
-`EndpointWithdrawalEvidenceLeafV1.evidence_hash` 必须等于重算的
-`endpoint_withdrawal_evidence_hash`；`evidence_root` 对仅此一个 leaf 使用 §7.1 RFC 6962 leaf/tree
-规则，不能拿 port-rotation evidence 的相同字符串 ID 或另一种 leaf schema 代替。
-
-`listener_transitions[]` 必须严格枚举 expected root 中每个且仅一个非终态 listener。withdraw reducer
-无论 endpoint 当前是否有 active rotation，都在同一 candidate 中从所有 Device EndpointSet 移除该
-logical endpoint：`allocated|preparing|advertised` 只能转到 `abandoned`，`preferred|draining` 只能
-转到 `retired`，每项 from state/spec generation 必须等于 parent。前三种 revocation reason 的每项
-disposition 固定为 `security_revocation`，administrative block 固定为 `administrative_block`；所有项
-`evidence_ids[]` 都恰好引用上述唯一 evidence。reducer 写入 blocked tombstone并关闭相关 active
-lineage/lock。executor 随后停止新会话并按 revocation
-profile 终止或排空旧会话。此路径明确允许中断且 UI 必须显示 emergency withdrawal，不能宣称
-无中断；旧 credential 不得因为没有轮换、或轮换尚未结束而继续获得 authority。
-`replacement_dependency_hash` 只在 cancel 的同一 head 已提交 replacement 时出现，否则必须缺失。
-
-`ListenerResourceRequirementV1` 的 tag 与 variant 必须一致。其 mode 必须逐字节等于
-resolved `PublicEndpointIntentV1` 中对应的 firewall/mapping mode；`not_applicable`
-不得带 ref。`required` ref 的 kind/ID/generation/hash 必须与 parent certified state
-的 exact `ListenerResourceIntentV1` 逐字节相等并重算 hash，其
-cluster/resource kind/endpoint/listener generation/owner/network namespace/protocol/ports 必须与
-listener spec、PortPool 和 logical intent 相等。resource intent 由 §7.1 outer operation 以
-`kind="upsert_listener_resource_intent",payload_schema=1,payload_hash=listener_resource_intent_hash`
-先行提交；provider binding 存在时也必须是 parent state 的 exact-version hash。
-
-`render_contract_id` 必须等于 candidate head 承诺且 voter 支持的确定性 listener
-render contract。`rendered_config_hash` 按
-`H(frame("loom-listener-rendered-config-v1", render(render_contract_id,`
-`ListenerRuntimeRenderInputV1)))` 重算。render input 必须内嵌从 parent state 解决的
-exact logical/public/address-or-domain intent objects、按 union 需要的 exact binding/claim、
-与 spec hashes 一一对应并按 hash bytes 排序的完整 `credential_artifact_refs[]`、TLS 时唯一
-certificate projection、除
-`rendered_config_hash` 外的完整 listener spec，以及每个 required requirement 指向的 exact
-resource intent；每个可选字段必须恰好按 variant/protocol 出现，它们的
-hash/cluster/owner/protocol/identity/credential refs 必须按上述链式校验逐字节一致。
-每个 credential ref 重算 hash 后的数组必须逐字节等于 spec 数组且属于 public intent 授权，不能
-只把 hash 字符串传给 renderer。`resource_intents[]` 只携
-required 对象，按 firewall→mapping 排序，不得额外或缺失。`render` 只输出规范化
-runtime bytes 和 exact-version secret/artifact ref，不读取秘密明文、本机环境或时钟。
-因而 voter 能在执行前重算同一期望值，owner 回执不能用另一份本地配置的
-hash 替代它。
-
-每个 phase payload 必须由 §7.1 的一个 exact outer `ControlOperationV1` 承载：outer body 的
-`kind="port_rotation_phase"`、`payload_schema=1`、`payload_hash=phase_operation_hash`，且 outer/payload
-的 `cluster_id` 与 `operation_id` 分别相等。Head 的操作树纳入 outer `object_id`；EndpointSet
-listener 的 `rotation_operation_hash` 始终指上述 **phase payload hash**，不指 outer object ID。
-每个 phase 的 `logical_endpoint_intent_hash` 必须在 outer parent head 的 certified state 中解决到
-唯一 exact `LogicalEndpointIntentV1`，其 cluster/endpoint/owner/protocol 必须与 listener spec、
-PublicEndpointIntentV1 和 PortPool 授权一致；同一 rotation 全程不得更换该 hash。
-其 `public_endpoint_intent_hash` 必须解决到同一 parent state 的 exact
-`PublicEndpointIntentV1`，且 phase `rotation_policy_hash` 必须逐字节等于该 public
-intent 的 `listener_policy_hash`；解决出的 `PortRotationPolicyV1.evidence_policy_hash`
-又必须逐字节等于 phase 交付并重算的 exact
-`PortRotationEvidencePolicyV1` hash。三层的 cluster/policy ID、pool ref、owner、role 与
-protocol 必须一致；不得从同一 candidate 挑选另一份更宽松的 policy 或 evidence
-policy。
-首个 `absent→allocated` payload 中，`ListenerIntroductionV1.operation.parent_head_hash/operation_id`
-必须分别等于 outer body 的 `parent_head_hash/operation_id`；它不能引用同一个 payload 的 phase
-hash，因此 `phase hash → listener spec → introduction → phase hash` 的环不存在。EndpointSet source
-的 operation ID 则等于最后实际改变其 published bytes 的 outer operation ID。
-
-`from_state` 不从 EndpointSet 或 receipt 猜测：reducer 必须对已排序的每个
-`listener_transitions[]` 先按 `(endpoint_id,transition.generation)` 在 phase parent effective
-state 独立查找 `ListenerLifecycleStateV1`，再一次性校验整个转换后向量。无对象时
-只有 target generation 的首步可以使用 `from_state=absent`；有对象时 from 必须等于其
-state，且已存 generation 沿用其 stored spec/intent，不得被 target spec 覆盖。
-`listener_spec_hash` 只创建/约束 `target_generation`；原子 prefer phase 中的旧 generation
-必须按自己已存 spec 从 `preferred→advertised`。每个 certified phase 对数组中每个
-generation 都以当前 phase hash/revision 更新对应 lifecycle，整个向量不满足“已发布
-endpoint 恰一 preferred”时原子拒绝。`retired/abandoned` 作为不可删除
-tombstone 继续参与端口冲突/重用检查。Genesis listener 同样物化该状态，
-`last_phase_operation_hash=EMPTY_OPERATION_HASH_V1`、`last_changed_control_revision=1`。因此首次
-prefer 可从 intent + immutable spec + lifecycle state 确定性构造完整 LogicalEndpoint，而不是在
-提交时临时补字段。
-
-`phase_seq=1` 还必须固定替换关系：初次 provisioning 的 `replaced_generation`
-必须缺失；其他 rotation 必须把 parent 已发布 LogicalEndpoint 中唯一
-`preferred` generation 写入 `replaced_generation`，且 `target_generation` 大于该 endpoint
-所有 lifecycle/tombstone generation。从第 1 阶段到结束，prefer phase 中的
-`preferred→advertised`、后续 `advertised→draining→retired` 只能作用于该
-`replaced_generation`，不得挑选其他 advertised/draining listener。同 endpoint 存在未结束
-rotation 时拒绝第二个 `phase_seq=1`；初次 lineage 在 target 进入 preferred 或 abandoned
-时结束，替换 lineage 只在 target abandoned，或 target preferred 且 frozen
-`replaced_generation` 进入 retired/blocked tombstone 时结束。该锁定关系由 certified history
-纯函数推导，不依赖 scheduler 本地任务列表。
-唯一反向边是旧代尚处于 `advertised`、还未进入 draining 时的紧急回切：一个携
-exact emergency-scope admin override 的同 lineage phase 必须原子提交 target
-`preferred→advertised` 与 frozen replaced `advertised→preferred`，不得涉及第三代。
-下一直接 phase 必须以匹配 target generation 的 failure 将 target
-`advertised→abandoned`，按 `setup_failed` quarantine，然后 lineage 结束。两个 phase
-之间禁止任何其他 edge 或新 rotation；旧代已进入 draining 后首版没有反向
-edge，不得由 scheduler 猜测回滚。
-
-disposition 也由 reducer 唯一导出：进入或留在
-`allocated|preparing|advertised|preferred|draining` 时必须是 `in_use`，且
-`reuse_not_before/disposition_reason` 均缺失。进入 `retired|abandoned` 的 transition 必须
-携 disposition，其 code 与导出结果固定为：
-
-| disposition code | 允许的终态 | lifecycle `port_disposition` | evidence 约束 |
-|---|---|---|---|
-| `normal_rotation` | `retired` | `quarantined` | `evidence_ids` 必须缺失，且 retire 的普通 predicate 全部成立 |
-| `cancelled_before_publish` | `abandoned` | `quarantined` | 仅 `cancel_unpreferred_target` 可用，`evidence_ids` 必须缺失且 cancellation root 为空 |
-| `setup_failed` | `abandoned` | `quarantined` | 恰一个 ID，指向当前 root 中相同 generation 且 class 为 `bind_failed|credential_failed|firewall_failed|mapping_failed|dns_unreachable|handshake_failed|loss_threshold|timeout` 的 failure |
-| `port_conflict` | `abandoned` | `blocked` | 恰一个 ID，指向当前 root 中 `failure_class=port_conflict` 的 owner evidence |
-| `security_revocation` | `retired` 或 `abandoned` | `blocked` | 仅 emergency withdrawal 前三种 reason 可用；恰一个 ID，指向 matching withdrawal evidence，dependency hash 必须相等 |
-| `administrative_block` | `retired` 或 `abandoned` | `blocked` | phase edge 时恰一个 exact emergency-scope admin override；withdrawal 时恰一个 matching withdrawal evidence；owner/vantage failure 不能永久封禁 |
-| `abuse_detected` | `retired` 或 `abandoned` | `blocked` | 一个 scope 匹配的 admin override ID，或至少 `degraded_failure_vantage_count` 个 vantage/fault-domain 去重且 class=abuse_detected 的 ID |
-
-`quarantined` 的
-`reuse_not_before = max(candidate_committed_logical_time + PortPoolV1.reuse_quarantine_seconds,`
-`ListenerImmutableSpecV1.retire_not_before if present)`；上述 retire predicate 已另外要求
-offline/reader/quiet 下限在退出前成立。`blocked` 必须缺失 `reuse_not_before`，且
-首版没有离开 blocked 的 reducer edge；它永久保留，不由 admin 现有 operation 或
-allocator 随时间清除。当前
-承载 operation 的 evidence root 中找不到 reason 指定的全部 exact evidence ID/hash，或
-code/state/evidence class 组合不在
-表中时，reducer 拒绝 candidate。tombstone 保留 spec 中的 public/local port、namespace、
-disposition、`reuse_not_before` 与 last phase hash，因而 PortPool 的
-current/transition/quarantine/blocked 集合是
-certified history 的纯函数。
-`reused_by_phase_operation_hash` 初始必须缺失，只能由上述 exact reuse allocation 的 reducer 写入
-一次；其值必须等于实际消费该 quarantine 的 phase hash。已写入者永久不可再次作为 reuse claim，
-blocked/非 quarantined state 带此字段也拒绝。这样隔离到期不会靠墙钟自动删除，但显式 certified
-proposal 有唯一可竞争的复用 edge。
-
-`trigger_proof` 在同一 rotation 所有 phase 逐字节相同。只当该 endpoint 在 parent
-certified state 中从未有过任何 lifecycle/tombstone 且 target generation 为 1 时，首步
-`absent→allocated` 必须使用 `kind=initial_provision`；它不与 policy 的 rotation trigger
-variant 比较，但 outer author 必须被 `provisioning_principal_scope_hash` 的 exact principal/
-endpoint/owner/pool/edge 授权。该 lineage 免旧 preferred listener minimum-lifetime 条件，且
-首步 evidence root 必须为空；一旦 endpoint 存在或曾存在任何 lifecycle state，
-`initial_provision` 必须拒绝。其他 rotation 的 `trigger_proof.kind` 必须等于
-`PortRotationPolicyV1.trigger` 的唯一 variant。manual 的 detail 为空；它不引入第四种
-PortRotationAuthorizationScope，outer admin cert 必须由 parent head 的 exact admin ACL 直接
-允许 `kind=port_rotation_phase`，且仍受 resolved public intent/policy/pool 和本节正常 edge
-predicate 约束。periodic 的 `period_number` 是非负整数，
-`0 <= chosen_jitter_seconds <= jitter_max_seconds`，且
-`scheduled_not_before == schedule_anchor + period_number*interval_seconds + chosen_jitter_seconds`；
-candidate 的 committed logical time 不得早于该值，其 UTC minute 必须落在半开
-`[window_start,window_end)`（start > end 时跨午夜）。对同
-`(endpoint_id,policy_id)`，period 必须是上一已 certified periodic rotation 加一；若从未执行，
-取同时不早于当前 preferred listener 的 minimum-lifetime 下限的最小 period。该分支
-只能在已有 preferred listener 时进入，初次建立不得伪造 periodic anchor。chosen
-jitter 由提案方在提交前一次生成并固化，voter 不重抽，但严格验范围、公式、窗口与
-未重放 period。
-
-degraded 的 `failure_evidence_root` 必须等于首个 phase 的 `evidence_root`，并且在
-`degraded_failure_window_seconds` 内包含至少 `degraded_failure_vantage_count >= 2` 个
-policy-authorized、vantage ID 与 fault domain 均去重的相关 failure。candidate logical time 还必须
-不早于上一自动 rotation certified head 的 logical time + cooldown。manual/periodic 的首步
-evidence root 必须为空；degraded 后续 phase 携带各阶段自己的 evidence root，但仍需从
-content-addressed store 取回并验证 trigger proof 指定的 failure tree。这些规则使“未提前轮换”
-和“确有多来源退化”都是 candidate bytes + certified history 的纯函数判定。
-
-Evidence object 的签名覆盖
-`frame("loom-port-rotation-evidence-signature-v1", JCS(PortRotationEvidenceBodyV1))`；完整 hash 为
-`evidence_hash = H(frame("loom-port-rotation-evidence-v1", JCS(PortRotationEvidenceV1)))`。ready、
-connection 只能由 owner Device identity key 报告；external/transport 只能由当前 certified
-evidence policy 的 exact vantage identity key 报告；reader ack 只能由该 Device identity key 报告；
-failure 可由 owner 或 exact vantage 报告，但 degraded 自动触发只计算 vantage；override
-只能由 candidate parent head ACL 允许 emergency scope 的 admin key 报告。所有 detail 布尔值、
-枚举、计数、时间和重复 common 字段必须精确校验，不能把无法解码的 opaque diagnostic 当成功。
-每份 evidence 的 `reporter_key_id` 必须逐字节等于上述规则解决出的当前
-Device/admin identity key，signature 内的 algorithm/key ID 也必须逐字段等于同一 exact
-`AuthorityProofKeyV1`，并按 §6.2 的长度、low-S 与 canonical base64url 规则验证；不能只验证“来自某个已知 key”。external 的
-`vantage_id/fault_domain`、transport 的 `source_id/fault_domain` 必须分别等于
-报告 key 在 evidence policy 中唯一 `RotationVantageRefV1` 的
-`vantage_id/fault_domain`。vantage 报告的 failure 使用同样绑定；owner 报告的 failure
-必须令 `source_id=owner_device_id`，`fault_domain` 等于 parent Device registry 中该
-owner 的 certified fault domain。只有 vantage 报告的
-`dns_unreachable|handshake_failed|loss_threshold|timeout` 可进入 degraded 多来源计数；
-本地 bind/credential/firewall/mapping、port conflict 以及 administrative/abuse 证据不计入
-该自动门槛。
-`port_reuse_readback` 的 common body 仍绑定新 rotation/endpoint/target generation，detail 则绑定被
-消费的旧 tombstone。`check_kind=socket` 只能由 old listener owner 的 active Device identity 签；
-`firewall|mapping|provider_lease` 由其 exact resource intent/provider binding 指定的执行主体签，首版
-该主体必须是 parent ACL 与 provisioning scope 同时允许的 active admin certificate。reporter key、
-resource/provider hash 与 check kind 必须逐字段解析，不能由 allocator 自报。readback 只证明提交前
-资源已释放，不授权先行 bind、开防火墙或创建映射；所有新副作用仍要等 reuse allocation head/QC
-certified 后执行。
-对每个 evidence，body 的 cluster/rotation/endpoint/target generation 必须等于 phase，
-`observed_at <= candidate.committed_logical_time + max_clock_skew_seconds` 且
-`candidate.committed_logical_time - observed_at <= max_evidence_age_seconds`。所有 window 必须满足
-`window_start < window_end <= observed_at`；整数计数在 0..2^63-1，basis points 用整数算术，
-越界/未来/过期对象拒绝。
-
-detail 的首版约束固定如下：`listener_ready` 的 `listener_spec_hash` 与
-`config_hash` 必须分别逐字节等于 phase spec hash 和该 spec 重算出的
-`rendered_config_hash`，listener/credential 两个 boolean 必须为 true。firewall/mapping status
-的 tag 必须与 spec requirement 一致：`ready` 必须回显同一 exact
-`resource_intent_hash`，`not_applicable` 只能对应不带 ref 的 `not_applicable`
-requirement；`external_reachability` 必须是 success、address
-family 属于 spec 且 vantage ID/key/fault domain/family 逐字节匹配 policy ref。
-`transport_window.samples[]` 按 sample ID 排序去重，数量在 policy min..max；success 样本
-的 RTT 是 0..600000 整数毫秒，failure 样本不得带 RTT。每个 window 独立重算
-`success_bp=floor(10000*successes/attempts)`、`loss_bp=10000-success_bp` 和 success RTT
-升序后 nearest-rank `P95 = values[ceil(0.95*n)-1]`；无 success 直接失败，不把多个已
-汇总 P95 再汇总。`reader_ack` 的 Device/view/digest/listener 必须等于 phase parent
-中该 Device 已认证 view，且 `listener_generation=target_generation`。ready 的 spec、
-external/transport 的 common body target 也只验证 `target_generation`。
-`connection_window.detail.listener_generation` 只能等于 frozen `replaced_generation`，且只在
-本 phase 要求该旧代的 `advertised→draining` 或 `draining→retired` predicate 时接受。
-failure 用于 target 的 `*→abandoned` 时，其 detail generation 必须等于 target；用于
-`replaced_generation` 的 disposition reason 时必须等于 replaced，并且该 generation
-必须实际出现在本 phase transition 的相应 edge。其他 listener generation 或未被本 phase
-predicate/reason 引用的 evidence 都作为 phase-unrelated 拒绝，不只是忽略。
-
-`evidence_root` 对按 `(evidence_type,evidence_id)` UTF-8 bytes 排序且去重的
-`PortRotationEvidenceLeafV1` 使用 §7.1 RFC 6962 规则；leaf 的 `evidence_hash` 必须从同时交付的 exact
-evidence object 重算，并要求 leaf `evidence_type/evidence_id` 逐字节等于 object body
-同名字段。空集合 root 固定为 §7.1 的 `SHA-256("")`。所有 voter 都针对 candidate 的
-`committed_logical_time`、所携带 `PortRotationEvidencePolicyV1` 与 parent certified state 验证同一
-组 predicate：
-
-| phase transition | 必需的确定性 evidence/predicate |
-|---|---|
-| 首次 `absent→allocated` | 必须使用 `initial_provision`，evidence 为空，校验 provisioning scope、端口池与 spec，免除不存在的旧 listener lifetime |
-| 已发布 endpoint 的 `absent→allocated` | manual/periodic 的首步 evidence 必须为空；degraded 首步必须等于 trigger proof 的 failure root；端口池、scope 与已有 listener minimum lifetime 由 certified state/policy 校验 |
-| `allocated→preparing` | initial/manual/periodic lineage 的 phase evidence 为空；degraded 可为空，但仍必须按 trigger proof 的 content-addressed root 重验首步 failure tree；from-state/spec/scope 必须匹配 |
-| `preparing→advertised` | 一份全部 ready/status 为 `true/ready/not_applicable` 的 owner receipt；每个 address family 至少达到 policy 数量、且 fault domain 去重的成功 external reachability；全部未超过 max age |
-| `advertised→preferred` | 至少 `transport_vantage_count` 个不同 vantage 且 fault-domain 去重的 window **各自**通过 attempts/success/loss/P95 门槛；已发布 endpoint 还要求 eligible reader 的有效 ack basis points 达标，首次发布因此前没有 EndpointSet 可 ack 而只免 reader 条件，不免 transport/reachability |
-| 旧 `preferred→advertised` 与新 `advertised→preferred` | 必须在同一 phase；证据按新 listener 的 prefer 条件计算，reducer 验证交换前后各恰有一个 preferred |
-| `advertised→draining` | 已达到 `minimum_overlap` 与 reader ack 门槛；旧代在最近 `drain_no_new_handshakes_seconds` 窗口的新握手为 0 |
-| `draining→retired` | 已达到 offline compatibility 与 `retire_not_before` 下限；连续 connection windows 覆盖 quiet/zero-active 两个 policy 时长，期间 new handshakes 与 active sessions 均为 0；所有仍可消费 invite 均满足下述 seed survivability |
-| `allocated|preparing|advertised→abandoned` | 至少一份有效 failure；若会使已发布 endpoint 失去唯一 preferred，则拒绝 |
-| emergency edge | 一份 scope 匹配的 admin override；UI/operation reason 必须显式列出被跳过的普通 predicate，仍不得绕过 commit/QC 或制造多个 preferred |
-
-eligible reader denominator 精确是 phase parent `device_views_root` 中 state=active、且其已认证
-DeviceView EndpointSet 包含该 endpoint ID 的不同 Device ID 数；ack 分子是其中通过上述
-view/digest/time/signature 校验的不同 Device ID 数，比率为
-`floor(10000*acked/eligible)`。非首次发布且分母为 0 时普通路径失败，只能经
-emergency override；address families、owner 与时间窗口也都从 candidate parent 的
-certified state 推导，sender 不得在 evidence 中自报更小分母。相同 evidence ID 不同 bytes、同一 reporter
-重复计数、过期窗口、相互重叠样本被重复计数或 phase 不相关 evidence 都拒绝。这样
-`evidence_root` 是可跨 Go/Kotlin/Windows 重算的输入，而不是让各 voter 自行解释的健康摘要。
-需要连续时间的 connection windows 按 `(window_start,window_end,evidence_id)` 排序，必须无
-重叠、无缺口，末段 `end >= candidate_time-max_clock_skew_seconds`，且首段
-`start <= last_end-required_duration`；所以连续序列自身的实际覆盖长度至少是
-`required_duration`，不会因 clock skew 大于 duration 而缩短。drain 的 required duration 取
-`drain_no_new_handshakes_seconds`；retire 对 new-handshake 取 `quiet_period_seconds`、对
-active-session 取 `drain_zero_active_sessions_seconds`，并在各自整个覆盖区间强制相应计数为 0。
-
-seed survivability 的 denominator 不是 reader ack：它精确枚举 candidate parent 中 status=`available`
-且 candidate logical time/可信墙钟均未超过 `expires_at`，以及 status=`claim_reserved|consumed` 且两种时间均未超过
-`retry_not_after` 的 invite lifecycle，并从每个
-record 的 `delivery_context_hash` 解析 exact context。若任一 context 引用待 retire 的
-`(endpoint_id,listener_generation)`，candidate post-state 中必须存在同一 context 的另一个 seed：
-其 listener 仍为 `advertised|preferred|draining`、不在本 operation 退役，PublicEndpoint/address
-依赖仍有效，且 hostname/WebPKI/SPKI pin 与 certificate projection 的授权至少覆盖到 invite
-对应 `expires_at` 或 `retry_not_after` 再加 `max_clock_skew_seconds`。找不到替代 seed（包括
-seed_count=1）就拒绝 retire，直到 available invite 被显式 revoke/过期，或 reserved/consumed invite 的
-retry window 结束。该判断完全基于 certified invite/context/lifecycle objects；Device ack、
-renderer 当前排名或“通常没人再扫码”不能缩小集合。
-
-`listener_transitions` 的 generation 必须严格升序且拒绝重复；每个 from state 必须等于 parent
-certified state。phase operation 本身不携带可由实现猜测的提交时间：其生效时间唯一取承载该
-operation 的 `HeadEntryPayloadV2.committed_logical_time`，所有 minimum lifetime/overlap/quiet-period
-判断都用该签名时间与下表指定的历史 certified phase/head 计算：
-
-| threshold | 唯一时间起点 |
-|---|---|
-| replacement `minimum_lifetime_seconds` | 当前旧 listener 最近一次进入 `preferred` 的 phase head；Genesis preferred 用 Genesis head |
-| `minimum_overlap_seconds` | 新 listener 的 `preparing→advertised` phase head；首次建立不用该值伪造旧代 overlap |
-| `max_offline_compatibility_seconds` | 原 preferred 在原子 prefer phase 中首次变为 `advertised` 的 phase head |
-| scheduler degraded `cooldown_seconds` | 上一个 automatic rotation 的 `phase_seq=1` head |
-| `reuse_quarantine_seconds` | 该 listener 进入 `retired|abandoned` 的 phase head，即 disposition 公式中的 candidate time |
-| quiet/zero-active windows | 本 phase candidate time 为右边界，并按上述连续覆盖公式验证原始 windows |
-
-起点 phase hash 必须沿 `parent_phase_operation_hash` 与 certified head predecessor 链唯一解决；
-目标 state 曾反复进入同一 enum 时取上表指定事件的最近一次。提案方不携可覆盖
-anchor 的时间字段，voter 也不得在 advertise/prefer/drain 中自选更晚的起点。
-
-合法正常边为 `absent→allocated→preparing→advertised→preferred`、切换时旧 listener 的
-`preferred→advertised`、随后 `advertised→draining→retired`；prepare/advertise 失败可在旧 preferred
-仍存在时走 `allocated|preparing|advertised→abandoned`。一次 prefer operation 必须在同一个有序
-`listener_transitions` 数组中把新代 `advertised→preferred` 和旧代 `preferred→advertised` 原子
-提交，任何**已经发布** endpoint 的中间状态都不得产生零个或多个 preferred。首次创建 logical
-endpoint 时没有旧 preferred：其 `allocated/preparing/advertised` 状态只存在控制 view，不得进入
-任何客户端 EndpointSet；首个 prefer operation 原子执行 `advertised→preferred` 并在同一 candidate
-中首次插入完整 LogicalEndpoint。于是客户端从未看见“已发布但零 preferred”的一代，也不需要
-伪造一个旧 listener。`allocated/preparing/abandoned/retired` 只在
-控制/历史 view；EndpointSet 中每个 listener 的 `rotation_operation_hash` 必须等于最后改变它的
-certified phase hash，并从该 operation 重算 published state。未知边、跳步、parent 缺口或 immutable
-spec 改写全部拒绝。
-
-`allocated / preparing / advertised / preferred / draining / retired / abandoned` 是 certified 轮换 operation 经 reducer
-产生的规范枚举；不是由 executor 随手写的多组布尔字段。`preparing` 只在控制/运维 view，
-对已经发布的 endpoint，`advertised/preferred/draining` 连同 operation hash 进入客户端
-EndpointSet，`retired` 留在历史 tombstone。每个已发布、可用 logical endpoint 必须恰有一个
-`preferred` listener，其余只能是
-`advertised` 或 `draining`；校验器拒绝零个/多个 preferred。overlap 时新旧两代同时发布，
-但仍只有一代是 preferred。因封锁/滥用而退出的端口进入 `blocked` 且默认永久禁用；
-正常轮换退出的端口进入有期限 `quarantined`。后者只有在隔离期、旧 client floor/兼容窗口、
-socket/NAT/provider 冲突检查均满足，并经显式新提案后才可复用，不能由分配器静默回收。
-
-public port 与 local listen port 必须分开建模，才能表达 NAT、云端口映射和四层负载均衡。
-端口池按 protocol/transport/network namespace 约束；分配器检查当前 listener、过渡 listener、
-退役历史、系统保留端口、其他 SSOT 资源和外部映射冲突。随机选择由提案方用 CSPRNG 生成并
-固化进 operation；校验/渲染仍为纯函数。
-
-轮换不是每次 render 随机换端口。scheduler 只根据 certified policy 和 certified logical tick 生成
-候选 operation：周期轮换在 `schedule_window` 内加 CSPRNG jitter，避免所有节点同时变化；
-`degraded` 触发需要满足有界、多来源失败证据，凭单次 ICMP 或某个客户端报告不能自动关端口。
-自动化 principal 只能在 policy 授予的 port pool/cadence scope 内签 proposal，实际生效仍需
-提交后 ControlSet QC。超范围、提前轮换和紧急关闭必须走人工高权限操作。
-
-所有经 certified `PublicEndpointIntentV1(exposure=public)` 授权的公网 listener（包括客户端
-data ingress 和 server↔server 公网直拨入口）在境内、境外 server 上都使用同一套模型。v1
-`public_data_ingress` 只能在迁移 renderer 中生成待审 intent，既不能自行开放端口，也不能代替
-EndpointSet 授权客户端候选。地域不会改变轮换协议，只影响 DNS provider、映射方式、探测视角和 rollout
-policy。首版自动无中断轮换范围
-限定为能真正并行监听的 Hysteria2/Trojan endpoint。服务器间稳定拓扑的 WireGuard 继续使用
-独立 tunnel generation；只有 renderer 支持双 interface、双 peer、独立 key/address/route mark
-并通过专门验收后，才可把它纳入相同的“无中断”产品承诺，不能只修改单接口 `ListenPort`。
+ListenerGenerationTombstoneV1      # public terminal fact；不再可拨
+  schema = 1, listener_generation
+  terminal_state                    # retired | revoked | abandoned
+  terminal_at, reason
+  rotation_operation_hash
+  last_listener_generation_hash
+
+DistributionEndpointV1
+  endpoint_id, logical_server_id
+  transport = https
+  distribution_path_prefix = "/distribution/sha256/"
+  listener_generations[]: ListenerGenerationV2
+  listener_tombstones[]: ListenerGenerationTombstoneV1
+
+DistributionEndpointSetV1          # public，可进 QR
+  schema = 1, cluster_id, endpoint_set_id, generation
+  valid_from, valid_until
+  endpoints[]: DistributionEndpointV1
+  parent_head_hash, config_qc
+
+BootstrapIngressEndpointV1
+  endpoint_id, logical_server_id
+  transport                         # hysteria2 | trojan_tls
+  hint_rank                         # 仅无实测时排序；不扩大 capability
+  listener_generations[]: ListenerGenerationV2
+  listener_tombstones[]: ListenerGenerationTombstoneV1
+
+BootstrapIngressEndpointSetV1      # public catalog；不含 token/capability
+  schema = 1, cluster_id, endpoint_set_id, generation
+  valid_from, valid_until
+  endpoints[]: BootstrapIngressEndpointV1
+  parent_head_hash, config_qc
+
+DataIngressEndpointV2
+  endpoint_id, logical_server_id
+  transport                         # hysteria2 | wireguard | trojan_tls
+  listener_generations[]: ListenerGenerationV2
+  listener_tombstones[]: ListenerGenerationTombstoneV1
+  path_capabilities[]
+
+DataIngressEndpointSetV2           # Device view；正式数据入口
+  schema = 2, cluster_id, endpoint_set_id, generation
+  valid_from, valid_until
+  endpoints[]: DataIngressEndpointV2
+  grants_root, parent_head_hash, config_qc
+
+ControlServiceDirectoryV1          # private；只走认证的 Loom channel
+  schema = 1, cluster_id, generation
+  services[]: PrivateControlServiceV1
+  control_set_hash, previous_directory_hash?
+  parent_head_hash, config_qc
+
+PrivateControlServiceV1
+  service_id
+  role                              # control_api | enroll | device_config |
+                                    # device_report
+  overlay_ip, port
+  certificate_profile_ref, spki_pins[]
+  authorized_subject_profiles[]
+~~~
+
+ControlServiceDirectoryV1 是 admin/Device/Enrollment 使用的私有 service directory；它与只供 voter
+建立 Raft/复制连接的 ControlPeerDirectoryV1 是两个对象，均不得公开。两者可引用同一 control
+Device，但不能复用证书 profile、ACL 或把 peer endpoint 下发给普通 Device。
+
+各对象唯一摘要使用以下 domain：
+
+~~~text
+link_intent_hash                 = H(frame("loom-link-intent-v1", JCS(LinkIntentV1)))
+listener_generation_hash        = H(frame("loom-listener-generation-v2",
+  JCS(ListenerGenerationV2)))
+listener_generation_tombstone_hash = H(frame("loom-listener-generation-tombstone-v1",
+  JCS(ListenerGenerationTombstoneV1)))
+distribution_endpoint_set_hash   = H(frame("loom-distribution-endpoint-set-v1",
+  JCS(DistributionEndpointSetV1)))
+bootstrap_ingress_set_hash       = H(frame("loom-bootstrap-ingress-endpoint-set-v1",
+  JCS(BootstrapIngressEndpointSetV1)))
+data_ingress_endpoint_set_hash   = H(frame("loom-data-ingress-endpoint-set-v2",
+  JCS(DataIngressEndpointSetV2)))
+control_service_directory_hash   = H(frame("loom-control-service-directory-v1",
+  JCS(ControlServiceDirectoryV1)))
+~~~
+
+公开材料不再出现 role=enroll 或 role=control_api 的 HTTPS seed。Bootstrap ingress 只提供受限
+transport，真正 enroll 是 ControlServiceDirectory 中的 private service。ControlServiceDirectory
+完整 preimage 不进入公开 mirror；Invite descriptor 只携完成该次 claim 所需的一个有界
+PrivateEnrollmentServiceRef。
+
+每个 set 的 `endpoint_id` 标识稳定逻辑入口，嵌套的 `listener_generation` 标识物理 listener 代次。
+同一 endpoint 内 generation 严格递增且唯一；同一代只能出现一次。`preparing` 只存在于 private
+rotation state，绝不发布；可拨数组只接受 advertised/preferred/draining，retired/revoked/abandoned 只接受
+tombstone。每个含可拨代的 logical endpoint 必须恰有一个 preferred 代；tombstone 必须引用该代最后发布 bytes 的
+hash，低于客户端已见 generation floor 的可拨代不得复活。端口变化不能生成新的 logical_server_id，
+也不能让客户端把同一 server 当成新的最终出口。
+三类公网 Endpoint 的每个 listener 都必须使用其 forward server 已认证的稳定 FQDN；公开 wire
+拒绝 IP literal。overlay IP 只出现在私有 service/peer directory 与本次邀请的有界 Enrollment ref。
+
+### 13.2 公网与本地资源的分离
+
+客户端可见 Endpoint 只包含它实际拨号的公网 tuple、transport identity、generation 与状态；
+local bind port、NAT 内部地址、provider mapping ID 和防火墙 handle 只存在于 private
+ForwardServerListenerResourcesV1。renderer/reconciler 必须证明以下链条后才 advertise：
+
+~~~text
+certified Endpoint public tuple
+  ↔ active PublicAccessProfile
+  ↔ verified DNS
+  ↔ installed local listener
+  ↔ direct reachability 或 exact transport-matching NAT mapping
+  ↔ external probe success
+~~~
+
+端点状态：
+
+| 状态 | 新拨号 | 已有会话 | 目录可见性 |
+|---|---:|---:|---|
+| preparing | 否 | 不适用 | private diagnostics only |
+| advertised | 可作为候选 | 保留 | 新旧并存 |
+| preferred | 优先 | 保留 | 正常 |
+| draining | 不再选 | 保留至 deadline | 保留给旧 session |
+| retired | 否 | 强制结束后清理 | 从新 set 移除 |
+| revoked | 否 | 立即终止 | 保留审计 tombstone |
+
+PublicAccessProfile 和 endpoint generation 必须一起被 certified head 引用；单独修改 DNS、NAT 或
+本机配置不能使端点生效。
+
+### 13.3 transport 与端口约束
+
+| transport | L4 | 公开证书 | 是否首版 bootstrap | 典型用途 |
+|---|---|---|---:|---|
+| Hysteria2 | UDP/QUIC | WebPKI + pin | 是，首选 | bootstrap、数据链路 |
+| Trojan/TLS | TCP/TLS | WebPKI + pin | 正式版 fallback | UDP 全阻断时 bootstrap、可选数据 |
+| WireGuard | UDP | WG peer key | 否 | Enrollment 后永久 L3/control/data link |
+| Nginx HTTPS | TCP/TLS | WebPKI + pin | 只下载 | fake website、immutable distribution |
+
+HY2 与 WG 都是 UDP，不能绑定同一个 address/port tuple；它们即使数值端口不同，也必须有各自
+listener ownership。Trojan 与 Nginx 都是 TCP，必须使用不同 tuple 或显式 L4 SNI dispatcher。
+外部 NAT mapping 必须保留 transport，TCP 映射不能满足 UDP endpoint，反之亦然。
+
+Hysteria2/Trojan 不要求固定在 443。所有客户端授权的数据入口都由当前签名 EndpointSet 明确
+给出 public port；客户端禁止扫描端口、从 DNS 猜端口或读取 provider 私有 mapping。
+
+### 13.4 客户端选择与测量边界
+
+未入网客户端：
+
+1. mirror hint 只决定 catalog 下载尝试顺序；
+2. 验证 catalog 后，对当前底层网络代中的授权 bootstrap endpoint 做一次有界、并行真实
+   transport probe；
+3. HY2 有可用候选时选择最佳 HY2；检测到 UDP 全阻断或 HY2 全失败时才尝试已发布 TCP fallback；
+4. 不探测未签地址、不做 Service × 路径扫描、不因 UI profile 切换重复测量；
+5. 主动 probe 只完成真实 outer transport/SNI 身份验证，不发送 bearer；选中入口后才出示
+   capability 建 tunnel，内层 TLS 完成后才发送 token。
+
+已入网 Windows/Android/Linux 继续遵守客户端统一 registry：同一底层网络代冻结授权入口快照，
+按地址/源接口去重且每入口最多主动探测一次；Direct 不花探测预算；Auto/指定出口复用观测。
+bootstrap registry 与稳态 data registry 生命周期分开，完成 Enrollment 后必须删除前者。
+
+服务器 Web 观测、控制面历史 RTT 和目录 priority 只能作为没有实测时的 hint。任何 UI 或 API
+不得把它们标为客户端端到端延迟、丢包或已验证可用性。
 
 ---
 
-## 14. 无中断端口轮换
+## 14. Listener 与端口无中断轮换
 
-本节首版规范的“计划内无中断”产品承诺只覆盖能够同时运行 generation-scoped listener 的
-Hysteria2/Trojan。EndpointSet 可以描述 WireGuard endpoint，但在 §13 的双 interface/peer、
-独立 key/address/fwmark/route 和跨平台泄漏测试全部实现前，scheduler 不得对 WireGuard 自动
-运行本状态机，UI/API 必须标记为 `disruptive_maintenance`，不得显示“无中断”。
+### 14.1 通用重叠状态机
 
-### 14.1 正常状态机
+HY2 和 Trojan/TLS 使用相同逻辑状态机：
 
-| 阶段 | certified 状态与动作 | 前进门槛 |
-|---|---|---|
-| 1. allocate | 为同一 logical endpoint 分配新 generation/port；旧端口仍 preferred | 唯一性校验、Raft commit 和 replication QC |
-| 2. prepare | 目标节点新增 listener、证书/凭据、防火墙和 NAT 映射；不下发给客户端 | 本机自检 + 外部至少两个视角连通证据 |
-| 3. advertise | 已发布 endpoint 的 EndpointSet 同时包含新旧 listener，旧 preferred；首次创建时新 listener 仍只在控制 view | 支持轮换的 server/client 已能读取该 view；首次创建则完成 listener/证书/外部连通验证 |
-| 4. prefer | 新连接优先新 listener，失败可回退旧 listener；旧会话不搬迁；首次创建在本步原子插入首个 preferred | 新端口成功率/延迟达策略门槛，关键节点已 ack；首次创建无旧代可回退，发布前必须满足独立可用性门槛 |
-| 5. drain | 新 view 将旧代标为 draining，已升级客户端不再首选；旧 listener 仍接受旧 view 客户端并维持既有会话 | 最小 overlap、reader 覆盖达标，且旧代在 `drain_no_new_handshakes_seconds` 连续窗口无新握手 |
-| 6. retire | certified tombstone 后关闭旧 listener、撤防火墙/映射并记入 retired history | offline compatibility 与 `retire_not_before` 已到，quiet/zero-active 连续窗口达标；QC + §15 fencing（否则 supervised），关闭后外部复核 |
+~~~text
+prepare
+  → install new listener/credential without advertise
+  → local self-check
+  → verify from required external fault domains
+  → advertise old + new
+  → wait client-reader propagation floor
+  → prefer new
+  → stop accepting new sessions on old
+  → drain old sessions until deadline
+  → retire old listener, credential and mapping
+~~~
 
-每一行的 desired transition 都必须先成为 certified entry，executor 才能执行该行列出的外部
-动作；健康检查、客户端 ack 或 CRDT receipt 只是下一状态的证据，不能自行推进状态。尤其
-`committed_not_certified` 的 allocate/prepare 不得开 listener、防火墙、NAT 或发布地址。
+每一步都写 operation ID、expected certified head、listener generation、deadline 和可重入完成证据。
+reconciler 重启后从外部事实恢复，而不是重做随机选择。端口选择由提交操作注入；纯 renderer
+不读时钟、不查询空闲端口、不产生随机数。
 
-每一步都是新的更高 control revision；失败停在当前安全阶段并可重试。不能把
-“新端口已监听”直接等同于“客户端已经切换”，也不能因为多数 Device 已 ack 就谎称所有长期
-离线 Device 都能继续连接。系统必须声明 `max_offline_compatibility`；超过该期限才上线的旧
-客户端需要先通过仍可用的 `device_config` endpoint 更新；`distribution` 只能搬运公开 QC、
-transition 或通用静态制品，`control_api` 不能充当 Device 配置通道。若已无受信
-`device_config` 路径，则必须明确重新 bootstrap。
+exact rotation wire 固定为：
 
-正常轮换不得强制迁移已建立 QUIC/TCP 会话。drain 期间仍可能有长期离线客户端按旧 view
-向旧端口发起新连接，所以 quiet period 必须分别观察“最后新握手”和“活动会话”；不能只看
-当前连接数或已升级客户端 ack。实现必须使用 generation-scoped 并行 listener、
-可排空 socket activation 或经实测能保留旧会话的等价机制；若运行时 reload 会杀死旧会话，
-它不能被标为无中断实现。只有旧 listener 的活动会话归零或达到管理员明确批准的最长排空
-期限后才关闭。
+~~~text
+ListenerRotationFrozenDependenciesV1
+  schema = 1, cluster_id
+  endpoint_kind                     # distribution | bootstrap | data
+  endpoint_set_id, endpoint_id, logical_server_id, transport
+  source_listener_generation?, source_listener_generation_hash?
+  target_listener_generation
+  logical_public_endpoint_intent_hash
+  public_access_profile_hash
+  dns_address_binding_hash
+  certificate_identity_projection_hash
+  credential_artifact_refs_root
+  render_contract_hash, evidence_policy_hash
+  port_pool_hash, firewall_policy_hash
+  forward_listener_resource_generation_hash
+  port_mapping_intent_hash?         # 仅 nat_mapped
+  link_intent_hashes[]              # 按 hash bytes 排序
 
-### 14.2 客户端行为
+ListenerRotationIntentV1
+  schema = 1, cluster_id, rotation_id, operation_id
+  base_head_hash, expected_endpoint_set_hash
+  frozen_dependencies: ListenerRotationFrozenDependenciesV1
+  frozen_dependencies_hash
+  advertise_not_before, prefer_not_before, drain_not_before, drain_not_after
+  retire_not_before                 # 必须 >= drain_not_after，且仍受 retirement guard 约束
+  minimum_reader_floor
 
-- Android/Windows/Linux 把 logical endpoint ID 映射到多代 listener，不把端口变化显示成
-  新出口或新路径。
-- Windows/Android 原生客户端为每个底层网络代维护 probe registry；Direct 不冻结候选也不
-  花预算。该网络代第一次进入 Auto/指定出口时原子冻结当时的候选集快照，仅对其中去重
-  后按地址与源接口去重的授权入口各做至多一次有界入口测量并并行；配置/EndpointSet 刷新、模式或出口切换、
-  隧道重连都不得清空本代 probe registry 或再次测量。
-- 同一网络代后来收到的新 advertised/preferred listener，Windows/Android 不主动 probe/预热；
-  只有真实业务需要新建连接时才按 certified preference 拨号、失败回退并被动记录结果。它在
-  下一底层网络代才进入新的首次候选集快照；始终不新增整条业务路径探测或周期轮询。
-- Linux access Agent 继续遵守既有 `tuning/window` 候选测量契约；端口轮换只把授权 listener
-  纳入原有预算和调度，不得另起 rotation probe loop、重复预热或新增整条业务路径扫描。
-- prefer 阶段的新连接先尝试新代，失败立即使用仍 advertised 的旧代并上报原因；现有连接
-  保持旧代直至自然结束。
-- 客户端耐久保存 EndpointSet digest/generation，但不能在服务端已 certified retire 后凭
-  本地缓存无限使用旧端口。
-- 更新 EndpointSet 失败时继续旧 active tunnel；若旧端口已被紧急关闭且新端口不可达，
-  代理模式 fail closed，不能静默 Direct。
-- Android 建立 control/data socket 时继续 `VpnService.protect()` 防回环；域名解析 bootstrap
-  与最终出口 DNS 语义保持分离。
+ListenerRetirementDependencyLeafV1  # control-private；按 (kind, object_hash) 排序
+  schema = 1
+  kind                              # endpoint_set | catalog | available_invite | initial_capability |
+                                    # resume_descriptor | reserved_transaction | device_view |
+                                    # certificate_pin_overlap | offline_lkg
+  object_hash, reference_not_after
 
-### 14.3 server 行为
+ListenerRetirementGuardV1
+  schema = 1, cluster_id, rotation_id
+  rotation_intent_hash, source_listener_generation_hash
+  reference_cutoff_head_hash         # 此 head 后禁止创建新的旧代引用
+  dependency_leaf_count, dependency_root
+  maximum_reference_not_after
+  minimum_reader_floor
+  offline_grace_not_before, quiet_not_before, backup_retain_until
 
-- 新旧 listener 复用同一逻辑授权与路由策略，但使用可区分的 generation tag 和运行指标。
-- credential rotation 与 port rotation 是正交代次；可以在一个显式联合 rollout 中协调，
-  不能因端口变化意外让旧凭据永久有效。
-- 防火墙、云安全组和 NAT 映射先开后关，且只有对应 listener 实际 ready 才上报成功。
-- 每代分别报告 handshake、会话数、最后新连接、丢包/错误和配置 revision；聚合视图不得掩盖
-  新端口完全无人使用。
+ListenerRotationStateV1             # reducer projection；不是 executor 自报权威
+  schema = 1, cluster_id, rotation_id
+  rotation_intent_hash, frozen_dependencies_hash
+  phase                              # allocated | preparing | advertised | preferred |
+                                     # draining | retired | abandoned | revoked
+  source_listener_generation?, target_listener_generation
+  retirement_guard_hash?             # draining/retired 必需
+  last_transition_head_hash
+  evidence_refs_root
+~~~
 
-### 14.4 紧急轮换
+以上四类对象分别使用 `loom-listener-rotation-frozen-dependencies-v1`、
+`loom-listener-rotation-intent-v1`、`loom-listener-retirement-dependency-leaf-v1`、
+`loom-listener-retirement-guard-v1` 和 `loom-listener-rotation-state-v1` domain 计算 hash。
+intent 的 dependency object 必须逐字节重算到 `frozen_dependencies_hash`；从 allocated 到任一 terminal
+phase，普通 reconcile/管理操作不得替换 logical/public intent、profile、地址绑定、证书身份投影、
+credential、render/evidence policy、port pool、防火墙、listener resource generation、mapping 或
+LinkIntent。确需变化时只能先安全 `abandoned` 再建新 rotation；安全事件可走
+显式 `revoked`，但必须报告中断而非改写原 intent。
 
-端口被封锁时，管理员可提交 `emergency` 操作跳过最小 overlap/ack 门槛，但 UI 必须列出会
-被中断的 Device/会话和理由，并要求更高权限。凭据泄露必须启动独立的 credential revoke /
-rotate 状态机；换端口只能作为并行降低暴露的措施，绝不能被显示成泄露已修复。两条路径仍
-需 Raft commit 和提交后 control QC；如果同时失去 quorum，只能维持旧数据面或走 recovery epoch，不能让某
-节点单独发布新端口/凭据。
+进入 draining 的 certified transition 同时建立 reference cutoff 和
+`ListenerRetirementGuardV1`：ControlSet 必须枚举所有仍可能使客户端拨旧代的 immutable catalog、
+available Invite、initial/resume capability、reserved transaction 的 `retry_not_after`、Device view、
+certificate-pin overlap 与离线 LKG，形成 exact private dependency leaves/root，
+并从 exact `reference_not_after` 求最大值。cutoff head 之后任何新对象引用 source generation 或包含
+它的旧 EndpointSet hash 都拒绝 commit。只有当前 head 不低于 `minimum_reader_floor`，全部 dependency
+期限、`drain_not_after`、`retire_not_before`、offline grace、quiet period 和 backup retention 均已过去，
+且相应 signed observation 已
+进入 operation 后，reducer 才接受 retired；executor 不得凭本地“没有连接”提前删除 frozen
+listener、credential 或 mapping。retired 只禁止拨号并解锁后续清理，审计 tombstone 仍需保留。
+
+“无中断”表示已建立在旧 listener 的 session 可活到 drain deadline，新连接逐步选择新 listener；
+不承诺单个 QUIC/TCP session 跨端口迁移。紧急撤销可以跳过 drain，但 UI/API 必须明确显示会断开
+旧会话。
+
+### 14.2 NAT 预映射池
+
+nat_mapped server 若预先建立一段一一对应的 public/local UDP 映射，HY2 可以在该池中选择下一
+个未占用端口并完成上述重叠，无需每次修改光猫/网关。必须满足：
+
+- certified private intent 记录池边界、transport 和 mapping generation；
+- 激活前从外部验证具体 public tuple，不能只相信网关配置；
+- HY2 active/draining 端口与 WG 固定/轮换端口不重叠；
+- 池耗尽、映射消失或 public/local offset 不一致时停止轮换并报警；
+- 客户端只看到当前 advertised/preferred public endpoints，不看到整段私有资源池。
+
+direct server 没有 PortMappingIntent，但仍要做 listener 与外部 reachability 验证。替代 HTTPS
+TCP 映射和 Trojan TCP 池按相同原则处理，不能从 UDP 池推导。
+
+### 14.3 客户端行为
+
+客户端接收同一 endpoint_id 的新旧 generation 后：
+
+1. 保持现有会话，不为观察到新 generation 立即重连；
+2. 新拨号优先 preferred generation；
+3. preferred 失败可在其仍 advertised 且未过期时回退旧 generation；
+4. 已见 floor 不接受更低 generation；
+5. retired 后不再新拨号；revoked 立即断开；
+6. 不把端口代次变化计为最终出口变化。
+
+离线客户端继续使用最后一个仍在有效/宽限期的 LKG endpoint。若离线跨过旧端口 retire deadline，
+恢复时必须先取得合法新 set；不能扫描旧端口周边。
+
+### 14.4 WireGuard 独立状态机
+
+WG 不自动继承 HY2 的 listener overlap 结论。若需要无中断 WG 轮换，必须实现双 interface/双 peer、
+独立地址/route ownership、old/new peer overlap、握手验证与 drain。只更新同一 interface 的 listen
+port 会影响现有 peer，不能宣称无中断。
+
+WG control overlay 的 key/peer 轮换属于 private `ControlPeerDirectoryV1` 与 ControlSet 变更，不进入
+public bootstrap port rotation。数据 WG endpoint 可进入 DataIngressEndpointSet，但仍使用专用
+generation/state machine。
 
 ---
 
 ## 15. 外部副作用与租约
 
-DNS、ACME、静态发布、云防火墙和 NAT provider API 不是事务数据库，通常也不提供 Loom
-可用的 fencing CAS。因此系统不宣称 exactly-once；采用“certified intent + 单活租约执行 +
-幂等 reconcile + 读回验证”的 at-least-once 模型。任何调用都必须等其完整 intent 和所引用的
-§6.2 secret artifact 所在 head certified；`committed_not_certified`、本地草稿、lease 或已存在
-provider credential 都不能提前执行。动作按**迟到重放的最坏结果**而不是 API 名称分类：
+DNS、ACME、NAT/provider、listener、防火墙和 publisher 都是 certified desired state 的幂等
+reconciler，不是 authority。每类资源按 resource_id + generation 获取短租约；租约绑定 Raft
+term/index、certified head 和有界 deadline。
 
-| 类别 | 例子 | 必须保护 |
-|---|---|---|
-| immutable/additive | 上传 hash 对象、增加 generation listener、增加本 order 的 TXT/value | generation/hash namespace、稳定幂等 key；不得覆盖其他 owner/代次 |
-| monotonic pointer/upsert | `current`、preferred generation、不含删除的 DNS/metadata upsert | 优先 provider CAS；无 CAS 时只限旧写无法取得密码学 authority、能读回并自动收敛的目标，且标记 degraded |
-| destructive/irreversible | 删除 RR/TXT、撤 NAT/防火墙、关闭 listener、删除 secret/key、释放唯一资源 | 新鲜 certified tombstone、精确 owner/generation、单调 fencing 和条件删除；无 CAS/fencing 禁止无人值守执行 |
+执行规则：
 
-```text
-ResourceLeaseV2
-  schema = 2, cluster_id, resource_id
-  holder_control_id
-  recovery_epoch + control_epoch + raft_term
-  acquired_index + desired_hash + fencing_token
-  expires_at
-```
+1. 只有持当前租约且已验证 head/QC 的 executor 能创建/修改外部资源；
+2. provider 支持 CAS 时必须使用；不支持时用 deterministic ownership tag 和 generation fencing；
+3. 超过时钟安全截止立即停止发新请求；
+4. 接管者先 read-after-write 观察，再继续未完成步骤；
+5. 外部失败写 observation/status，不反向生成另一份 SSOT；
+6. 删除动作必须晚于 reader propagation floor、drain deadline 和 backup retention；
+7. public Nginx 配置检查必须证明不存在动态 Enrollment/control/config/report route。
 
-租约和 fencing token 由 Raft commit + replication QC 签发；租约只协调执行者，不授予或扩展
-desired state。executor 每次调用前后都复核最新
-certified intent、epoch/term/index/desired hash，将
-`{cluster_id,resource_id,action,generation,desired_hash}` 作为 idempotency/fencing context；
-失去租约立即停止新动作，已经在网络中的迟到请求仍必须由 provider CAS/generation fencing
-限制。
-provider 支持条件写或原子 batch 时必须使用。静态发布先写不可变对象，最后才条件更新带
-revision 的 pointer；迟到 pointer 只能造成可检测的可用性回退，客户端 floor/QC 必须拒绝其
-成为旧 authority。受管节点上的 listener/firewall 由本地 Agent 对 certified generation 做
-CAS/fencing。`replace` 若会隐式移除任何集合元素，按 destructive 而不是 upsert 处理。外部
-provider 若不支持条件删除，就保留多余资源并告警；不得自动发送可能撤掉新 generation 的
-delete/close。管理员只有在重新读回精确对象、查看影响预览并二次确认后，才能执行有审计记录
-的 supervised cleanup。过期 executor 的迟到 upsert 由当前租约
-executor 读回、标记 degraded 并重新收敛；UI 必须展示这一限制。
+执行顺序必须尊重依赖：
 
-外部调用和读回产生的签名 receipt/CRDT observation 只证明“发生了什么”，不能反向改变
-desired state；要据此 advertise、prefer、retire 或清理仍须新 certified entry。executor 使用
-secret 时只能重放 intent 引用的 exact version，不能把 provider 自动生成的另一把 key、默认
-alias 或本地临时文件写回成既成事实。
+~~~text
+DNS/映射准备
+  → 证书签发
+  → local listener install
+  → firewall least privilege
+  → external verify
+  → EndpointSet advertise
+  → client floor
+  → prefer/drain/retire
+  → 回收旧证书、listener、mapping
+~~~
 
-executor 资格可以只是 ControlSet 的子集，因为并非每个 voter 都应持 DNS/云 API token。
-这不会形成第二个 authority：executor 不能产生新 desired state。若只有一个 executor，
-只是该副作用暂时没有 HA，控制状态本身仍是分布式的；需要副作用 HA 时至少配置两个不同
-故障域的 eligible executor，并使用独立、最小权限 credential。
+ControlSet 失去 quorum 时，不创建新端点、不轮换证书、不删除旧 listener；已有数据面和未过期
+LKG 继续运行。证书临近到期但无 quorum 是显式告警，不能让单 executor 绕过 QC 续写 authority。
 
 ---
 
 ## 16. UI 与 API
 
-任一 control Device 都可托管相同逻辑控制中心；管理客户端只展示已信 certified
-`EndpointSet(role=control_api)` 内的独立候选，不把 round-robin DNS 回答当成员表或新入口。
-人类在验证精确 transport identity 后通过 admin cert 登录，节点本地
-control peer cert 或普通运维口令不能自动获得写权限。
+UI 是模型的投影，必须把以下状态分开：
 
-所有写页面显示：
+- **ControlSet**：成员数、quorum、leader、certified head、replication freshness；只显示 private
+  overlay 服务，不出现“公网中控地址”；
+- **Server public access**：FQDN、direct/alternate/NAT、DNS/cert 状态、Nginx distribution、
+  HY2/WG/Trojan listener 与 mapping generation；
+- **Distribution**：镜像可达性、artifact hash、复制进度；不得显示 claim 请求或 token；
+- **Enrollment**：Invite committed/QC、capability 期限、bootstrap ingress、private service、
+  reserve/consumed 状态；不把 Nginx mirror 标为 Enrollment server；
+- **Device**：正式身份、配置 view、报告新鲜度和 LKG；
+- **Rotation**：prepare/verified/advertised/preferred/draining/retired 的每代证据。
 
-- 本地连接的 controller 和当前 leader/协调者（仅诊断）；
-- `control_epoch`、`N`、`q`、已响应 voter 和 fault domain；
-- `recovery_epoch/statement_hash/policy_hash`，计划 policy 轮换的旧 threshold 与 current QC 状态；
-- base head、proposal hash、`pending → committed_not_certified → certified → published/reconciled → device applied`；
-- 无 quorum 时的只读状态，不显示虚假的“已保存”；
-- 成员变化前后的 quorum/故障容忍差异；
-- PublicEndpointIntentV1 exposure/generation/address-or-domain ref，以及 DNS/证书/EndpointSet/端口
-  各代、secret availability/PoP 和阻塞证据。
+管理 API 仅在 private control_api 上接受 admin mTLS。写操作必须携 expected head 与 request ID，
+成功响应只返回已取得 QC 的结果。公开 Nginx 没有管理 API。UI 中“测试 mirror”只测试静态下载；
+“测试 bootstrap”必须测试真实 HY2/Trojan transport；“测试 Enrollment”在不发送 token 的前提下
+完成外层 tunnel 和内层 server TLS，不能用普通 HTTPS GET 冒充。
 
-读页面可以展示本副本持有的最终一致观测，但必须标出 source、observed_at、certified head
-和覆盖范围。Events 不再“只记在一台中控”：安全操作在 committed log 中；普通状态变化是
-内容寻址事件 CRDT，按 event hash 去重，在任意 control 副本读取。落后副本必须显示 stale，
-不能用本地缺失断言“没有问题”。
-
-管理 API 使用稳定资源 ID 和幂等 request ID。外部自动化只能向已信 certified
-`EndpointSet(role=control_api)` 内的入口提交，验证精确 transport identity 后，权限
-由 admin cert scope 决定；control membership、recovery、CA policy 和 emergency retire
-需要独立高权限 scope，不能与日常 Service 编辑共用。
+管理端创建预览可从 private intent 显示 expiry、目标 Device intent、mirror 数与 transport 支持；
+未入网客户端在 inner-TLS preflight 前只能显示 expiry、mirror/transport 和 opaque commitment，
+验过 opening 后才显示 exact intent 并要求确认。不得把 bearer token、capability 原文写进日志、
+DOM telemetry、截图诊断或分析事件。诊断导出默认脱敏 public host、
+端口、capability ID 和 Device identity。
 
 ---
 
@@ -5024,109 +3373,134 @@ control peer cert 或普通运维口令不能自动获得写权限。
 
 | 故障 | 必须行为 |
 |---|---|
-| 一个 control Device 离线但仍有 quorum | 自动换协调者，继续提交；管理客户端可切已信 `EndpointSet(role=control_api)` 内另一入口，Device pull 独立切 `role=device_config` 入口 |
-| 可达 control 少于 quorum | 只读/收草稿与观测；禁止安全关键写；数据面继续 LKG |
-| entry 已 commit 但 QC 未形成 | 标记 `committed_not_certified`；不出 QR、不发布、不执行外部副作用 |
-| 两个镜像代次不同 | 选择最高合法连续 QC；修复落后镜像 |
-| 同坐标不同 hash | 全部 fail closed，记录高优先级 fork 事件 |
-| controller DNS 被劫持 | TLS/ControlSet 验证失败；尝试其他 signed endpoint |
-| DNS provider 不可用 | 已发布 endpoint 继续工作；新绑定/续签 pending 并告警 |
-| ACME 续签失败 | 保留当前证书，按退避重试；在到期阈值前升级告警 |
-| secret artifact/PoP/availability 不完整 | 不 commit/ready；只重试同一 version 或显式作废后升 generation |
-| 新端口不可达 | 不进入 preferred；旧端口保持服务 |
-| prefer 后新端口退化 | 旧代尚 advertised 时允许客户端被动回退并冻结 drain；需恢复旧 preferred 时只能执行 §13 exact 两步 emergency 回切→abandon，lineage 结束后才能开始新轮换；旧代已 draining 时首版不猜测回滚 |
-| Device 长期离线错过 retire | 先更新 EndpointSet；超过兼容窗口时明确要求 rebootstrap |
-| WireGuard 未实现双 interface profile | 仅允许显式 disruptive maintenance，不进入自动无中断 scheduler |
-| 丢失 control quorum | 修复旧成员或用 recovery root 产生显式新 epoch |
-| recovery transition 已签但新 genesis 无 q(new) QC | 不激活 lineage、不出邀请/副作用；客户端继续 LKG |
-| 旧 recovery threshold 丢失 | 即使 control quorum 正常也只能新集群/带外重新锚定，不自授新根 |
+| 所有 distribution mirror 不可达 | 若有已验证离线包则继续，否则在发送任何秘密前失败；不从 DNS 猜新镜像 |
+| mirror 返回错误 hash/签名 | 丢弃并标记 mirror 不可信；不尝试解析其 endpoint |
+| HY2 全失败但 UDP 未确定阻断 | 有界重试其他已签 HY2；不扫描端口 |
+| UDP 完全阻断 | 正式版转 Trojan/TLS TCP fallback；未部署 fallback 时明确报告不支持 |
+| capability 过期/超限，claim 未 commit | 入口拒绝并要求新 Invite；客户端不能自动刷新或拿 token 直接拨号 |
+| capability/Invite 已过期，reservation 已 certified | `retry_not_after` 前管理员可按 exact transaction binding 重签短期 resume capability；不复活 Invite、不重置事务、不重消费 token |
+| bootstrap ingress 被攻陷 | 外层只能转发精确 Enrollment tuple；内层 TLS 阻止其读取/篡改 claim |
+| private Enrollment 无 quorum | 不消费 token；返回可重试状态，已 reserve 由 Raft 状态决定 |
+| claim 响应丢失 | 保持 exact claim core/key，对新 server challenge 重签 detached PoP；在期限内返回同一 artifact |
+| 同 token 不同 key/request | CAS 拒绝并产生安全事件 |
+| control_api 公网可达 | 严重配置错误；防火墙/reconciler fail closed |
+| Nginx 出现动态 claim/control route | 严重配置错误；不激活该 generation |
+| DNS 正确但端口不可达 | endpoint 保持 preparing，不 advertise |
+| NAT UDP 映射丢失 | 保留其他 generation；不把 TCP 健康视为 UDP 健康 |
+| cert 续签完成但 pin 未提交 | 新 listener 不 advertise，旧 listener继续服务 |
+| control quorum 丢失 | 停止新写和外部 destructive reconcile；数据面使用 LKG |
+| Device config/report 不可达 | 已安装 tunnel 不停止；缓存报告并按有界策略重试 |
+| 同 epoch/revision 出现冲突 QC | 全部 reader/publisher fail closed并报警 |
+
+所有错误必须指明是 distribution、bootstrap transport、inner TLS、claim transaction、control quorum
+还是 steady-state API；禁止统一显示“网络错误”导致操作者把 Nginx、HY2 和 Enrollment 混为一谈。
 
 ---
 
 ## 18. 备份、恢复与垃圾回收
 
-备份至少包含：最新 certified checkpoint/QC、其后的 committed log（显式区分未 certified
-entry）、从 checkpoint 起的操作/QC 链、ControlSet
-transition proof、Device identity registry、CA database/CRL、release 与 EndpointSet 历史、
-DNS/ACME intents、SecretArtifact exact refs/digests/availability receipts、所需 sealed ciphertext
-备份和 KMS/HSM exact-version 清单。每个 control Device 保存可验证
-副本；另有离线加密备份。恢复不能把 revision/epoch 重置为较小值。
+备份必须覆盖：
 
-CRDT tombstone、已消费 invite、已撤权证书、retired port 和旧 ControlSet 不能因副本晚归
-而复活。垃圾回收只有在 checkpoint/tombstone certified，确认所有保留副本已越过水位且满足审计/
-离线兼容期限后执行。不可变 snapshot 和合法 rollback 所需内容按 release retention policy
-保留，不以“当前没引用”直接删除；实际 delete 还必须满足 §15 的 generation fencing，无条件
-删除 API 不得无人值守运行。
+- Raft log/snapshot、certified heads、QC 和 ControlSet transition；
+- CRDT immutable objects 与 content-addressed distribution inventory；
+- private ControlServiceDirectory、Invite record/lifecycle 和 enrollment transaction；
+- encrypted secret artifacts、issuer authorization、recovery policy；
+- DNS/cert/listener/mapping desired generation 与外部 observation；
+- 每个 Device 的 view root/result artifact，但不包含 Device private key；
+- retention tombstone 和已消费 token commitment。
+
+不备份节点本地 private TLS/WG/Device key；恢复后由原节点证明持钥或走显式 replacement。公开
+distribution mirror 可由 signed immutable inventory 重建，不是 authority。
+
+垃圾回收只能追随 certified reachability graph。Invite token plaintext、descriptor 和 capability
+应在 consumed/revoked/expired 后尽快擦除；commitment/tombstone 保留到审计期限。旧 endpoint、
+证书和 mapping 只有在 reader floor、drain、离线宽限和 backup retention 全部满足后才删除。
+Emergency recovery 必须产生新 recovery epoch，不得通过恢复旧数据库回退 floor。
 
 ---
 
 ## 19. 从当前实现迁移
 
-迁移按兼容顺序进行，任何一步都不能把目标态写成已经部署：
+迁移按 M0–M7 进行。每个阶段都可单独验收；目标字段不能提前塞入严格 v1 wire schema。
 
-### M0 · 固化协议和测试
+### M0 · 协议、不变量与 golden
 
-- 固定 JCS/domain framing、Raft durable log/ReplicationAttestation QC、joint transition、Device view
-  Merkle proof、RecoveryPolicy/Transition、含 policy hash 的 floor 与跨 Go/Kotlin/Windows 黄金
-  测试向量；
-- 建立 bootstrap ceremony，提交初始 ControlSet、admin ACL、CA profile/online intermediate、
-  recovery anchor 和精确 v1 anchor root；当前平台公钥只签一次 BootstrapTransition，另由
-  部署专属 migration-anchor digest 独立钉住；
-- 离线保管 recovery root，不能把当前在线 key 永久升级成灾难恢复权威；
-- 保持现有 v1 current、Enrollment 和报告可运行。
+- 固化本文逐边 LinkIntent、三类公网 EndpointSet/两类私有 directory、listener generation、
+  PublicAccessProfile、Invite hiding/opening、capability/claim/admission/issuance wire；
+- 更新 decisions/design/client lifecycle 和客户端契约；
+- canonical bytes/hash/signature/QC、unknown-field、排序、过期和 anti-rollback golden；
+- 加入 repo safety 与“公开 Nginx 无动态 handler”静态检查。
 
-### M1 · 单成员 ControlSet
+**完成条件：** Go/Android/Windows/Linux 对同一向量产生相同 hash、签名验证和失败结果。
 
-- 把迁移输入中的指定控制节点表示为首条 recovery lineage 的
-  `ControlSet(epoch=0, N=1, q=1)`；
-- 运行完整单成员 Raft durable log；从同一 committed 语义状态分别物化严格 v1 payload + 单签，
-  以及独立 versioned v2 head/envelope + QC，绝不让两代共享 wire bytes；明确 N=1 不具备抗单节点失陷能力；
-- 发布 `current.v2.json` 或经兼容性证明的独立 v2 envelope，避免旧 reader 误解析。
+### M1 · 单成员私有 ControlSet
 
-### M2 · 先升级 reader
+- 把现有指定 control 迁移为 N=1、q=1 的 ControlSet；
+- control_api、Raft、Enrollment、config/report 只绑定 overlay IP/internal cert；
+- admin/control/Device/Enrollment EKU 与 listener 分离；
+- 保留 v1 compatibility transport，但目标 API 不再新增公网依赖。
 
-- Android、Windows、Linux 验证 BootstrapTransition、Device view inclusion proof、recovery
-  statement/policy/ControlSet/QC 链并保存完整 floor；
-- 支持带 transport pin 的多 seed endpoint、joint transition、EndpointSet 和旧/新 listener overlap；
-- 首次接受 v2 后原子写入 `v2_latched`；latch 后即使 v1 服务仍存在也永不接受 v1 authority。
+**完成条件：** 公网扫描无法访问 control 服务；overlay admin 可提交并取得 QC。
 
-### M3 · 增加 learner，再扩到多 voter
+### M2 · Reader、静态 distribution 与 bootstrap tunnel
 
-- 新 control Device 先同步和验证全量状态；
-- 用 joint transition 从 1 直接扩到目标集合，常见为 3；
-- 证明任一成员离线时仍可写、少数分区不能写。
+- 先升级 server 和全部客户端 reader，识别拆分后的 endpoint sets；
+- 每个 active forward server 建立 FQDN/PublicAccessProfile/Nginx static distribution；
+- 实现 HY2 capability validator、双层 tunnel ACL 和 private Enrollment TLS；
+- Android/Windows/Linux 实现紧凑 QR/文件、catalog 验签、真实 HY2 probe、Keystore/PoP；
+- 正式发布前补独立 Trojan/TLS TCP fallback。
 
-### M4 · 分布式 Enrollment、事件和发布
+**完成条件：** Nginx 收不到 token；UDP 可用时走 HY2，UDP 全阻断时走 TCP fallback；临时 tunnel
+不能访问除 Enrollment tuple 外的任何地址。
 
-- token 消费、registry、admin ACL 和 release head 进入强一致提交；
-- 报告/观测和不可变对象进入 CRDT anti-entropy；
-- 随机数据凭据在 commit 前形成满足 availability/PoP 的不可变 sealed artifact 或 exact
-  KMS/Keystore version；已信 certified `EndpointSet(role=control_api)` 内的任一入口可接收
-  管理请求，executor 接管只能重放同一 artifact。
+### M3 · 多 voter 与动态成员
 
-### M5 · 托管域名、ACME 与 EndpointSet
+- learner catch-up、joint consensus、FinalControlSet、private peer directory；
+- 从 N=1 在线扩到 N=3/5 或其他 1..N 集合，再安全缩容；
+- control 候选必须先是 enrolled Device；
+- 验证分区、leader 切换、key possession 和 directory hiding。
 
-- 先接 sandbox/测试 zone，完成 provider capability 与秘密隔离；
-- 先引入带 generation/address-or-domain union 的 PublicEndpointIntentV1，再为
-  `control_api/enroll/device_config/device_report/distribution/data_ingress` 建立明确 role；
-- 为 api/enroll/config/report/dist/data 六种 role 分配独立合成域名与证书策略，验证续签和 DNS 故障；
-- 把旧单 `public_endpoint/inbound_port` 映射为 generation 0 singleton；先发布 transport pin
-  overlap，再做任何 TLS key 切换。
+**完成条件：** 单副本不能越过 quorum 改安全关键状态，数据面在 control 故障时保持 LKG。
 
-### M6 · 双端口轮换
+### M4 · 分布式 Enrollment、Device API 与发布
 
-- Linux server 先支持 Hysteria2/Trojan 并行 listener 和会话排空；WireGuard 不在这一承诺内，
-  除非另行完成双 interface/peer 状态机；
-- Android/Windows/Linux reader 支持 advertise/prefer/drain/retire；
-- 真机/跨网络验证后才允许自动 retire。
+- Invite commit/QC、BootstrapIssuer authorization registry/root、token CAS、stable claim core、
+  admission QC、provisional issuance、approval/completion 与 exact-bound resume；
+- private device_config/report 与 per-Device proof；
+- immutable publisher/镜像接管、CRDT anti-entropy、certified current lineage；
+- secret artifact wrapping 与审批收敛。
 
-### M7 · 收口
+**完成条件：** 任一健康 control 可接续同一 claim/request；不同 key 重放失败；镜像失陷不能伪造
+Device view 或配置 authority。
 
-- 设置最低客户端版本，停止生成 v1 单签 current 和旧邀请；
-- 撤销旧在线 signing key，保留离线 recovery 能力；
-- 验证所有已迁移客户端均已 latch v2；丢失本地状态必须走可信 v2 checkpoint/rebootstrap，
-  不保留自动 v1 fallback；
-- 删除单机 SSOT 文件锁/本地 authority 作为协议真值的路径，但可保留本地 cache。
+### M5 · 域名、DNS-01、证书与三类公网部署
+
+- DNS provider adapter、最小权限 credential、domain allocation policy；
+- direct_standard、direct_alternate、nat_mapped reconcile；
+- 节点本地 CSR/private key、ACME DNS-01、SPKI overlap；
+- Nginx fake/static distribution 配置模板和外部 reachability verification。
+
+**完成条件：** 每个 active forward server 有已验证 FQDN/profile；不能用 443 或位于 NAT 后的
+server 通过签名 public port/mapping 正确发布，同时 control 服务保持私有。
+
+### M6 · HY2/Trojan 重叠轮换与 WG 独立轮换
+
+- listener port pool、frozen rotation intent、prepare/verify/advertise/prefer/drain/retire guard；
+- NAT 预映射范围与资源冲突校验；
+- 客户端同 logical endpoint generation overlap；
+- WG 双 interface/peer 状态机单独实现和验收。
+
+**完成条件：** 新连接迁移到新 listener，旧会话在 deadline 内保持；HY2/WG UDP tuple 不冲突；
+重启 reconciler 不会重复分配或提前删除。
+
+### M7 · 收口与废弃旧路径
+
+- 删除公开 enroll/control/config/report seed、handler、Nginx route 和 UI 文案；
+- v2 latch 后拒绝 v1 authority、旧 QR、旧 public role 和 v1 的 1 小时自动恢复窗口；
+- 完成 server/Linux/Windows/Android 全矩阵、升级/回滚/撤权/灾难恢复；
+- 发布运维手册、source/licence、签名制品与实测记录。
+
+**完成条件：** 仓库、部署和网络扫描均无旧公开控制路径；四平台使用同一目标 wire 与失败语义。
 
 ---
 
@@ -5134,169 +3508,159 @@ CRDT tombstone、已消费 invite、已撤权证书、retired port 和旧 Contro
 
 ### 20.1 共识与成员
 
-- N=1/2/3/4/5 的门槛计算与离线容忍；门槛绝不按在线数变化。
-- pre-QC leader 崩溃、不同候选在不同 term 留下未提交后缀后，按 Raft 覆盖规则仍能提交；
-  committed entry 永不被覆盖，冲突 QC/fork 全链失败关闭。
-- 1→3、3→5、5→3、3→1 的 `JointControlSet → FinalControlSet` 各步骤故障注入；旧、新 quorum 任一
-  不足都不激活，两个并发成员变更只有一个能进入 committed joint state。
-- learner 未追平、key proof 失败、版本不兼容、fault domain policy 失败均不能入组。
-- 丢失 quorum 不能普通删成员；recovery proof 产生新 epoch并压过仍活动旧 quorum 的后续
-  revision；相同 recovery epoch 不同 statement/policy hash，或同 previous statement 分叉到
-  不同新 epoch/transition，均永久拒绝。
-- RecoveryTransition 只有旧 threshold 签名、只有一个新 control 安装 genesis、`q(new)` 未
-  durable commit，或新集合 replication QC 缺失时，客户端/QR/publisher 都继续 LKG；完整
-  transition + q(new) genesis QC 才激活。
-- 计划 recovery policy 轮换必须同时验证旧 threshold 与当前 ControlSet QC、使用 `epoch+1`，
-  且与并行 joint/recovery transition 互斥；丢失旧 threshold 时 control quorum 不能自授新根。
+1. N=1、3、5 的 quorum 计算正确，不按在线成员缩小；
+2. candidate 必须已有 Device identity 和 overlay reachability；
+3. learner 未 catch-up 不投票；
+4. joint old/new 双多数与 Final QC 正确；
+5. leader 在 commit 后、QC 前崩溃可恢复相同 certified result；
+6. minority partition 不能创建 Invite、消费 token、改 ACL 或轮换 listener；
+7. control peer cert 不能调用 admin API，admin cert 不能参与 Raft；
+8. public FQDN/Nginx compromise 不能到达 control socket。
 
-### 20.2 CRDT 与 SSOT
+### 20.2 CRDT、SSOT 与 secret
 
-- 任意顺序、重复、断连重放操作对象得到相同对象集和 committed materialization。
-- 冲突草稿同时可见，不使用 LWW；未获 QC 的对象可以做无副作用 candidate render，但不改变
-  effective/published render、权限或外部副作用。
-- 撤权/tombstone/消费 token 在旧副本恢复后不复活。
-- 相同 committed input 在所有 control Device 产生逐字节一致 SSOT、view 和摘要。
+1. operation/object 顺序不同收敛到相同 root；
+2. 相同 key 的竞争写确定性处理；
+3. CRDT 草稿和 committed_not_certified 不驱动外部副作用；
+4. secret artifact 只有目标 Device 能解封；
+5. bootstrap issuer 不能签正式 Device cert/config head；
+6. backup restore 不回退 recovery/config/listener floor；
+7. renderer 输出确定性，无时钟、随机、网络查询。
+8. 新 Invite/Device view 出现节点级 direction 字段必须按 unknown field 拒绝；链路只读 certified LinkIntent。
 
-### 20.3 Enrollment 与客户端
+### 20.3 QR、distribution 与 catalog
 
-- 同 token 只能从同一 `InviteBootstrapDescriptorV2.delivery_context` 内有界
-  `EndpointSet(role=enroll)` 的不同 seed 并发 claim，只有一个 SPKI 成功；
-  精确重试在 attested `retry_not_after` 内得到同一 receipt，一小时后或改任一
-  token/request body（含 CSR、wrapping descriptor、request ID、facts）字段都被拒绝；对同一 body
-  重新产生的合法 ECDSA proof bytes 则保持同一幂等事务。
-- claim config QC 只产生 `claim_reserved`/reserved transaction，不得发布 active Membership、view 或
-  secret；CA issuance + approval QC + completion head/config QC 全部完成后才原子激活。approval 失败、
-  CA profile 撤销、旧 quorum 不足和超时都必须经 certified abort 留 tombstone，再以全新 invite/request
-  reissue；不得留下 active zombie Device 或复用旧 certificate/artifact。
-- Android API 31+ P-256 ECDH 与 API 26–30 RSA-OAEP fallback 都使用不可导出 Keystore key，并共享
-  descriptor PoP、SealingPolicy/Envelope 与拒绝路径 golden vectors；软件导出 ECDH、profile/hash
-  错配、OAEP 参数漂移、nonce/tag/recipient/SPKI 被改均失败。
-- proof bundle 中的 exact DeviceEnrollmentIntent 只要与 record hash、platform、
-  Membership/Responsibilities/grants/direction 四个 projection hash 任一不匹配就拒绝；
-  claim 不能把 Android/Windows 提升为 forward/egress，也不能追加 grant。
-- EnrollmentDirection 的跨平台黄金向量必须覆盖 Linux forward 的
-  `bidirectional/reverse_only/direct_only` 与非-forward `not_applicable`，并拒绝 Android/Windows
-  server direction、未知 enum、tag/variant 不一致。
-- 未消费 invite 的 create→reissue 原子状态转换必须证明旧 token 在新 head 立即失效、新 token
-  只在 QC 后交付；并发 reissue/revoke/claim 只能有一个 CAS 成功，consumed/revoked 不得复活。
-- invite 在 `pending/committed_not_certified` 时不能取得 token/可消费载体；只有 certified invite
-  才能在创建响应中一次性交付；claim reservation certified 后才可签证，只有 completion certified
-  才能消费完成并返回 joined/ready。
-- Raft log、CRDT、materialized SSOT、列表 API、operation status 与普通日志都不得出现 invite
-  明文 token；certified record 只保存 commitment 和 private token-artifact binding hash，exact ref
-  仅存在匹配的 control-private binding，且 commit 前已有 plaintext-validation receipts。交付
-  descriptor 的 token/commitment/context 与 proof bundle 的 record/head/QC 任一不匹配均拒绝，且不能重取。
-- 单 seed 故障、DNS 故障、重定向到集合外、旧 ControlSet、QC 不足均按契约处理；
-  hostname/WebPKI 或 descriptor-carried SPKI pin 不匹配时，在发送 token bytes 前失败。
-- DNS 指向持有效 WebPKI 证书但 SPKI/transport identity 未被钉住的服务时也在发送 token/数据
-  凭据前失败；新旧 pin overlap 后才能换 TLS key。
-- 篡改 Device view payload/leaf/index/sibling path/root/QC、EndpointSet bundle、config artifact 或
-  secret-ref root 任一字段均被拒绝；Enrollment 初始 view 必须证明属于 receipt 绑定的 completion
-  quorum head，而不是较早 claim head。
-- 客户端拒绝 recovery/control epoch 回退、同代异 hash、未知 signer、重复 signer和错误用途 key。
-- 邀请 descriptor/proof bundle、head、EndpointSet 或 durable floor 缺少/篡改 `recovery_policy_hash` 时失败；跨多次 policy
-  轮换只能沿 threshold-signed transition chain 前进。
-- 两份冲突 BootstrapTransition、v2 latch 后重放 v1 current/invite/recovery、清空非关键 cache
-  后诱导 v1 fallback 均失败关闭。
-- invite、证书和 lease 在允许/超出最大时钟偏差两侧均有测试；时间源不可信时不签新时效对象。
-- secret generator 在生成前、seal 后、commit 后崩溃，接替 executor 只能交付同一 artifact。
-- mutable KMS alias/`latest`、错误 ciphertext digest/recipient key version、缺 availability receipt
-  或 PoP 都不能 commit；executor 重试生成另一 secret/version 必须被检测并拒绝。
-- 同 hostname/pin 上把 `enroll` URL 改路径当 `device_config/device_report`，或把
-  `data_ingress` 当 `control_api` 均因 EndpointSet role 不符被拒绝。
-- 同一业务 FQDN 在两个最终出口返回不同 A/AAAA 时，Android/Windows TUN 与 Linux `socks5h`
-  都必须实际连接各自最终出口解析到的地址；Auto/指定出口不得使用接入侧解析结果，Direct
-  仍本地解析。EndpointSet transport hostname 则只走受保护 underlay resolver/cache，不进入
-  FakeIP/业务远端解析，启动不会形成 VPN 回环。
-- 所有已授权 `EndpointSet(role=device_config)` 入口离线时 Device 保持 LKG；
-  少数派响应不能让客户端接受新配置。
+1. QR 只含 2–3 mirror refs、hash、token/capability 和有界 private service ref；
+2. QR 大小上限、未知字段、重复 mirror、单故障域镜像按 policy 拒绝；
+3. .loom-invite 与 QR descriptor canonical hash 相同；
+4. Nginx 只接受 GET/HEAD fake/static hash path；
+5. POST claim、动态 token URL、cookie 和任何 redirect 全部拒绝；
+6. mirror 返回错误 digest/QC/floor/expired catalog 时客户端不发送 capability；
+7. mirror hints 只影响下载顺序，不决定真实 tunnel；
+8. 无 mirror 但有完整合法 offline package 可以继续；
+9. 静态 catalog 不含 token、capability、private ControlServiceDirectory 或 per-Device view；
+10. public proof 只能披露 hiding commitment，不含 Device intent/opening；客户端只在已验证 inner TLS
+    的 private preflight 取得 opening，commitment/opening/intent 任一不匹配即不发送 token。
 
-### 20.4 DNS 与证书
+### 20.4 Bootstrap transport 与 capability
 
-- provider API 超时、限流、重复请求、部分成功和 executor 换届后最终收敛同一 RRset。
-- 没有 certified `PublicEndpointIntentV1(exposure=public)` 时，即使 Device 有公网 IP、control/server
-  role、域名和 provider credential，也不能创建 DNS、证书、listener、防火墙或 NAT。
-- PublicEndpointIntentV1 generation 回退、未知 role、缺失/歧义
-  `address_or_domain_intent_hash`，以及
-  executor 临时发现并追加的地址均被拒绝。
-- 共享 zone 的越权 record 修改被拒绝；provider token、长期私钥和数据面秘密明文不进入日志、
-  SSOT、邀请载体或镜像；一次性 invite token 作为唯一例外，只允许出现在创建端一次性交付上下文、
-  用户保存的 QR/加入文件/`loom://` URI 和恢复窗口内的 exact claim/retry body。
-- A/AAAA prepare/overlap/drain/retire、权威/公共解析传播检查、实际 TTL + cache grace 门槛和
-  DNSSEC/CAA policy（启用时）可验证；迟到旧 provider 请求不能提前删除新 generation。
-- AddressChallenge 必须 one-time consume；AddressClaim 必须通过声明地址上的签名 challenge、
-  policy-bounded 多视角连通与无缺口稳定窗口，重放 nonce/过期 claim/伪造 vantage 均失败。
-- 两个并行 ACME DNS-01 order 的 TXT value 能并存，cleanup 只删本 order；续签失败保留旧证书；
-  完整链在 Android/Windows/Linux 验证。
-- TLS key 轮换必须通过 PublicEndpointIntent 的排序 old+new projection hashes、每 listener/pin
-  的单 projection 绑定和 EndpointSet exact pin union；仍有 listener/invite/offline view 引用 old
-  时收缩授权必须失败。
-- api/enroll/config/report/dist/data 的 hostname、CertificateIntent 与认证策略不能串用；若
-  certificate profile 使用自定义 policy OID/EKU 约束也必须匹配 role。公开 TLS 证书不能签配置。
-- 自动命名只使用稳定 ID/模板并拒绝碰撞；显示名变化不改 hostname，购买/扩权不被静默批准。
+1. HY2 是首选；首版 reader 对 WG bootstrap 明确报不支持；
+2. 客户端对当前网络代的每个授权 ingress 最多一次有界主动 probe；
+3. UDP 全阻断后选择独立 Trojan/TLS fallback；
+4. HTTP 200 或 Nginx RTT 不能标记 HY2/Trojan 可用；
+5. capability 必须引用 committed Invite，并 exact 绑定 policy、service ref、issuer authorization、
+   当前 registry root/audit path；capability ID 必须仅由 body 重算且无自引用；
+6. issuer authorization 的 previous/status/revocation 链异常，或 ingress/service 不在其 scope，均拒绝；
+7. 过期、未来签发、超 initial/resume TTL/流量/session/次数、错误 ingress set 全拒绝；
+8. tunnel 只能访问一个 Enrollment /32或/128 + TCP port；
+9. control_api、Raft、SSH、DNS、ICMP、UDP 和 Internet egress 均不可达；
+10. ingress 无法读取内层 opening/token/CSR/Device identity；
+11. 同 capability 并发 session 和异常重放受限，但不代替全局 token CAS；
+12. 网络切换后在有效期限/次数内可跨 ingress 重试；
+13. initial capability 不晚于 Invite 过期，客户端不能自动刷新过期 capability；
+14. committed claim 可由管理员签发 exact-bound `EnrollmentResumeDescriptorV1`；completed 返回原
+    result，reserved/issued_provisional 继续原事务，且 token consumption 计数不增加；
+15. resume 中 request/CSR/identity/wrapping/transaction 任一 hash 改变都拒绝；descriptor 只能经
+    private admin-authenticated control_api 一次性交付，v2 拒绝旧 1 小时窗口。
 
-### 20.5 端口轮换
+### 20.5 Enrollment transaction
 
-- 所有经 certified PublicEndpointIntentV1 授权的公网 Hysteria2/Trojan listener（包括客户端入口和 server↔server 直拨），
-  无论地域均能走完整六阶段；
-  WireGuard 若进入范围，必须另测双 interface/peer/key/address/route 的 overlap 与回滚。
-- 未实现上述 WireGuard 专用 profile 时，scheduler 拒绝自动轮换，UI/API 只能显示
-  `disruptive_maintenance`；单 interface 修改 `ListenPort` 绝不能通过无中断验收。
-- 新 listener 未外部验证时不 advertise；新端口失败时旧端口不关闭。
-- overlap 中新连接优先新代、失败回退旧代；旧 QUIC/TCP 会话持续到自然结束。
-- 客户端/reader 覆盖、离线兼容窗口、最后旧端口新握手 quiet period 和活动会话排空任一
-  不足时不自动 retire。
-- 仍 available 的单-seed invite 引用旧 listener 时不得 retire；多 seed 也必须逐 invite 证明另一
-  seed 的 listener/地址/证书授权覆盖到 expiry，不能用 reader ack 代替。
-- drain 期间长期离线客户端仍在旧 listener 发起新 handshake 会重置 quiet period；retire certified
-  前再次核对最后握手、活动会话和 reader/offline 窗口。
-- 防火墙/NAT 先开后关，外部读回；blocked port 不复用，quarantined port 未经显式提案不复用。
-- 首次 generation 1 只接受 `initial_provision`；已有 lifecycle/tombstone 后重放它、
-  将 phase 替换为未被 PublicEndpointIntent 绑定的更宽松 rotation/evidence policy、
-  或用错 owner/provisioning/automatic/emergency scope 均被拒绝。
-- owner ready 回执的 render hash、firewall/mapping exact resource intent 不匹配时不得
-  advertise；vantage key 伪造另一 `source_id/fault_domain` 不得参与多来源门槛。
-- 重放历史 phase 时，lifetime/overlap/offline/cooldown/quiet/quarantine 均从规范指定的
-  certified phase/head 时间重算；原子 prefer 同时更新新旧两个 lifecycle，tombstone
-  disposition 与 `reuse_not_before` 在所有 voter 得到同一 effective-state root。
-- 活动 rotation 的任一 frozen dependency 被普通 upsert 改动时 CAS 失败；prefer 前原子 cancel、
-  prefer 后等待终态、安全撤权走 emergency withdraw 的三条路径分别做并发/崩溃注入。
-- Android/Windows 的 Direct 不探测；每底层网络代首次进入 Auto/指定出口时，才对当时冻结
-  候选快照中按地址与源接口去重的入口各测一次；同代 EndpointSet
-  新增 listener、模式/出口切换和重连不 re-probe，仅从真实拨号取得被动样本。
-- Linux access Agent 只在既有 `tuning/window` 预算内纳入轮换 listener；测试证明没有第二套
-  rotation probe loop、重复预热或新增整路径扫描。
+1. internal TLS 验 CA、IP SAN/SPKI；错误 cert fail closed；
+2. token 只在内层 TLS 发送，日志/URL/telemetry 无 token；
+3. CSR key、声明 key 与 Keystore PoP key 完全一致；
+4. stable claim core 绑定 invite、request、record、intent opening、CSR 和 keys；每次 detached PoP
+   另绑定 fresh server nonce/challenge 与 token commitment；
+5. 同 claim core 可对新 server nonce 重签且仍返回相同 certificate/view artifact；
+6. 同 token 不同 request/key/body 只有一个 CAS 成功；
+7. 少数签名不能形成 admission QC；claim operation 的 `retry_not_after` 不等于 certified
+   policy/Invite/admission 推导值时 reducer 拒绝；
+8. leader 在 reservation、provisional issuance、approval、completion 各点崩溃均可恢复且不提前释放；
+9. Invite expiry 后的新 admission/reservation 被拒绝；expiry 前已 certified reservation 可在
+   `retry_not_after` 前用 exact resume 继续，但原 token 不能创建新 core；
+10. capability 过期不能调用稳态 API；
+11. Android private key 不可导出，卸载/清除数据后的身份恢复符合 policy；
+12. Enrollment 成功后临时 tunnel、token/capability 被擦除。
 
-### 20.6 运维与 UI
+### 20.6 DNS、证书与公开 profile
 
-- 管理工作站经已信 certified `EndpointSet(role=control_api)` 内任一 UI 入口
-  连接后看到相同 certified head；落后副本明确显示 stale。
-- 写操作展示 pending/committed_not_certified/certified/reconciled，不把本地保存或无 QC 的
-  Raft commit 冒充发布成功。
-- 3 个 voter 下关闭当前 leader，管理 API 自动经新协调者提交；数据面全程不断。
-- 少数分区只能收草稿/观测，所有安全关键写入口一致拒绝。
-- 迟到 executor 对旧 generation 的 pointer/delete/close 注入：有 CAS/fencing 时拒绝；没有时
-  禁止无人值守破坏性动作，旧 pointer 也不能绕过客户端 floor。
-- 对 `committed_not_certified` 的 DNS/ACME/listener/secret/QR 注入执行请求全部拒绝；receipt
-  只能更新观测，不能自行推进 advertise/prefer/retire。
-- 域名、证书、端口和 controller 页面均显示 generation、证据、阻塞原因和下一步。
+1. 每个 active forward server 都有 FQDN；纯 control/use_loom Device 不被错误要求公网域名；
+2. direct_standard 解析/443 正常；
+3. direct_alternate 的明确 public HTTPS port 正常，客户端不默认 443；
+4. nat_mapped 的 TCP/UDP public-local tuple 和 transport 正确；
+5. DNS-01 不依赖 80；
+6. provider credential 不能修改 zone 外记录或域名注册；
+7. private key 节点本地生成，不进入 snapshot/distribution；
+8. cert 续签先 old/new pin overlap；
+9. DNS 正确但实际端口不可达时不 advertise；
+10. Nginx 和 Trojan TCP tuple 冲突必须由独立端口或 L4 SNI 解决；
+11. HY2/WG UDP tuple 冲突被 validator 拒绝；
+12. direct server 不伪造 NAT mapping，NAT server 缺 mapping 不发布；
+13. 三类 public Endpoint listener 只接受已认证的 `dial_target_fqdn`，IP literal 失败关闭。
+
+### 20.7 轮换
+
+1. prepare 未通过 local/external verify 不 advertise；
+2. advertise 阶段新旧 generation 同时可拨；
+3. prefer 后新连接使用新 listener，旧会话保持；
+4. 新 view 不再选择 draining 代，但旧 view 的有界回退与既有会话可持续到 guard deadline；
+5. deadline 后 retire，客户端不扫描邻近端口；
+6. executor 重启/接管保持相同 operation/port；
+7. NAT 预映射池在范围内轮换无需每次网关变更；
+8. 池耗尽、映射消失、range offset 错误明确失败；
+9. 紧急 revoke 明确中断而非伪称无中断；
+10. WG 未实现双 interface/peer 前不能通过“无中断”验收；
+11. 同 endpoint ID 的 old/new listener generation 可同时发布，但每代 state 唯一且可拨 endpoint 恰有一个
+    preferred，retired/revoked/abandoned 只能以 tombstone 出现；
+12. frozen dependency 任一 hash 在 rotation 中途改变都需 abandon/restart；retire 前仍有效的 catalog、
+    Invite、capability、resume、Device view/LKG 引用，或 reader/drain/offline/backup guard 未满足均拒绝。
+
+### 20.8 客户端与移动可靠性
+
+1. Android、Windows、Linux 验同一 descriptor/catalog/QC vectors；
+2. Android VPN permission、前台服务、protect、防回环和 Keystore 正常；
+3. Wi-Fi/蜂窝切换创建新 network generation，旧代观测不污染新代；
+4. Direct 不主动探测；Auto/指定出口复用同代 registry；
+5. 锁屏、省电、进程回收、重启后恢复正式 LKG，不恢复 bootstrap token；
+6. 固定出口只更换入口/listener generation，不偷偷更换最终出口；
+7. DNS 在最终出口解析的既有数据面要求继续验收；
+8. UDP 丢包、MTU、QUIC、TCP fallback 分别有真实流量验收；
+9. 撤权后拒绝新 view/报告并按 policy 停止数据通道；
+10. 覆盖升级保持 Device key、anti-rollback floor 和签名连续性。
+
+### 20.9 运维、UI 与负面暴露
+
+1. UI 分开显示 mirror、bootstrap ingress、private Enrollment/control 和 data endpoint；
+2. read-only observation 不使用 Apply/切换文案；
+3. public scan 只能发现 fake/static distribution 与已发布 data/bootstrap transport；
+4. public HTTP path fuzz 无 claim/control/config/report handler；
+5. private API 要求正确 admin/Device/control cert profile；
+6. 日志和诊断包无 token、capability body、private key、真实拓扑；
+7. 无 quorum 时 UI 明确只读/LKG，reconciler 不删旧资源；
+8. safety checker 拒绝真实地址、域名、主机名、端口、指纹和指标进入仓库；
+9. 历史文档不用于推断当前部署，目标设计不被声称已实现；
+10. server、Linux、Windows、Android 的 issue 都引用同一 milestone 与验收编号。
 
 ---
 
 ## 21. 实现约束摘要
 
-1. wire protocol 不出现 `primary_controller` 或固定控制节点数。
-2. Raft 内部 membership/提交规则由最新 committed `JointControlSet` 或 `FinalControlSet` 决定：
-   Joint 阶段立即要求 old/new 双多数，Final 阶段使用新稳定集合。公开 materialization 只发布
-   opaque ControlSet、matching private-directory hash 与 joint-QC-certified Final authority；完整
-   `ControlPeerDirectoryV1` 仅进入经 control-peer 身份认证的 private operator projection。普通 SSOT
-   编辑不能自授 voter，quorum、成员数和在线状态均由 ledger/运行态推导。
-3. 权威对象使用固定 JCS canonical encoding、长度前缀 domain separation、内容 hash 和独立
-   签名用途；所有平台通过同一黄金向量。
-4. 所有安全关键写先 validate、Raft commit、apply/recompute 并取得 replication QC；只有
-   certified intent 才能发布/reconcile，失败不静默降级。
-5. 客户端永远验证 ControlSet/QC/floor；endpoint 选择不能改变 authority。
-6. provider adapter、Raft 实现库和静态镜像可替换，逻辑协议不绑定 Gandi、Dynadot 或某一台
-   Linux 主机；替换 Raft 协议语义必须升 protocol profile 并重新证明安全。
-7. 当前单控制实现作为迁移源保留明确标签，直至 M7 完成；文档和 UI 不得提前显示为
-   “分布式已启用”。
+实现者必须同时遵守：
+
+1. ControlSet 是已入网 Device 的 1..N 动态集合；control 服务只在 overlay IP + internal cert 上。
+2. CRDT 复制材料，Raft commit + apply + QC 才产生唯一 effective head。
+3. 每个 active forward server 有 FQDN/PublicAccessProfile、Nginx、证书管理、HY2 和 WG；
+   正式 bootstrap 另有独立 Trojan/TLS TCP fallback。
+4. Nginx 只给 fake website 与 immutable content-addressed distribution，绝不处理
+   Enrollment/control/config/report。
+5. QR 保持紧凑：token/capability、catalog/proof hash、2–3 mirror 和有界 private Enrollment ref；
+   完整无秘密 catalog 静态下载。
+6. bootstrap capability 只开短期、限地址/端口/流量/次数的 tunnel；token 只在内层 TLS 使用。
+7. 首次身份是 server-authenticated TLS + token + Keystore PoP；正式 Device cert 完成后销毁
+   bootstrap 状态。
+8. HY2 是首选 bootstrap，Trojan/TLS 是 UDP 全阻断 fallback；WG 是入网后的永久 L3/control
+   overlay，三者不混成一个隐式 tunnel。
+9. 公网 EndpointSet 按 distribution/bootstrap/data 拆分；私有 ControlServiceDirectory 与
+   ControlPeerDirectory 再按调用方分离，公网/local/NAT 资源分层。
+10. HY2/Trojan 用 overlap generation 轮换；WG 必须有独立双 peer/interface 设计才可称无中断。
+11. DNS、WebPKI、镜像和 executor 只提供可达性/副作用，不扩大 quorum、签名或 Device 权限。
+12. 任何尚未实现的 transport、证书 profile、轮换步骤或私有 API 必须显式失败，不得静默降级。

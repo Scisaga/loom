@@ -3,27 +3,39 @@
 > **Protocol contract:** v1 compatibility uses a strict invitation, a single platform-key current,
 > and an enrollment-derived report endpoint. V2 accepts only a certified head and Device view, and
 > adds ControlSet checkpoints/QCs; four durable rollback-floor groups for recovery (including
-> statement and policy hashes), ControlSet, head, and Device view; QR v2 multi-seeds; role-scoped
-> EndpointSets with WebPKI/SPKI pins; Hysteria2/Trojan listener overlap; a bootstrap transition hash;
+> statement and policy hashes), ControlSet, head, and Device view; a compact QR plus immutable
+> bootstrap catalog; purpose-scoped public EndpointSets and a private ControlServiceDirectoryV1;
+> restricted Hysteria2 bootstrap with a formal Trojan/TLS TCP fallback; Hysteria2/Trojan listener
+> overlap; a bootstrap transition hash;
 > WireGuard rotation remains disruptive until a dedicated dual-interface/peer profile is validated; and an
 > irreversible v2 latch. V2 resources are versioned and never extend strict v1 JSON in place. See
 > [the distributed control-plane design](../../docs/distributed-control-plane.md#19-从当前实现迁移).
 > Code, deployment, and native-acceptance progress is recorded only in
 > [the current status](../../docs/status/current.md).
 
-In the target v2 flow, an administrator reaches **Create Device** only through
-an exact transport-verified endpoint in a trusted certified
-`EndpointSet(role=control_api)` and authenticates with an admin certificate.
-The unjoined Windows client submits its claim only to the bounded
-`EndpointSet(role=enroll)` seeds carried directly by that invitation delivery
-envelope; it never substitutes a control API, redirect, or newly discovered URL.
+In the target v2 flow, an already-enrolled administrator reaches **Create Device**
+only over the Loom overlay through the certified private `control_api` service,
+verifies its internal certificate and overlay IP, and authenticates with admin
+mTLS. An unjoined Windows client verifies the compact descriptor's catalog and
+proof-bundle hashes and fetches both immutable objects without the token from one
+of the QR's 2–3 static distribution mirrors. It measures only the outer
+transport/SNI of the authorized Hysteria2 ingress (or the formal Trojan/TLS TCP
+fallback when UDP is blocked), without presenting a bearer, and presents its
+short-lived capability only to the selected ingress. After establishing the
+route-limited tunnel, it verifies server-authenticated inner TLS, retrieves the
+private exact Device intent and its hiding-commitment opening, and then sends the
+token, stable claim core, CSR, and an identity-key detached PoP over the server
+nonce. The wrapping key is separate and is never a PoP key. Public Nginx
+serves only the fake website and immutable distribution; it never receives or
+proxies a claim.
 
 For v2, Raft durable commit alone is never an activation or authorization signal.
 A `committed_not_certified` head cannot update mutable current, change grants,
 select an endpoint, or trigger an external side effect; the client continues its
 last-known-good profile. Before installation it verifies the bootstrap or recovery
 lineage (including `recovery_policy_hash`), the ControlSet transition, the post-commit
-replication QC, the Device inclusion proof, and the signed EndpointSet. It then
+replication QC, the Device inclusion proof, the public endpoint sets, and the
+private service-directory commitment. It then
 atomically advances all four durable floor groups:
 
 ```text
@@ -35,11 +47,14 @@ device_generation + device_leaf_hash + device_view_hash
 
 The first v2 install atomically persists those floors, the
 `bootstrap_transition_hash`, and `protocol_latch=v2`. After that latch, no v1
-current, invitation, view, or recovery statement can regain authority. Endpoint
-roles are not inferred from an enrollment URL: `device_config`, `device_report`,
-and `data_ingress` are distinct. Every HTTPS/Hysteria2/Trojan endpoint uses the
-exact signed server name plus WebPKI and its generation/overlap-bounded TLS SPKI
-pin set.
+current, invitation, view, or recovery statement can regain authority. Public
+`DistributionEndpointSet`, `BootstrapIngressEndpointSet`, and
+`DataIngressEndpointSet` are distinct and cannot authorize one another. Private
+`control_api`, Enrollment, `device_config`, and `device_report` entries are typed
+projections of `ControlServiceDirectoryV1`; they use overlay IP, internal
+certificate profiles and purpose-specific mTLS rather than public DNS/WebPKI.
+Public HTTPS/Hysteria2/Trojan endpoints use their exact signed server name,
+transport identity and generation/overlap-bounded pin set.
 
 `clients/windows` is the Windows-only client host. It does not compile the
 control-plane publisher, SSH provisioning, systemd lifecycle, or other Linux
@@ -339,8 +354,13 @@ without this fingerprint are rejected; already joined identities remain valid. S
   waits for QR import. Import or recovery then loads this trust anchor. The fixed
   sidecar is read once and its signature and architecture are checked before a
   one-time join code is submitted. New invitations carry only the SHA-256
-  fingerprint of that public key, allowing a local comparison before the claim
-  POST without adding another network or reverse-proxy dependency.
+  fingerprint of that public key, allowing a local comparison before the v1
+  claim POST without adding another network or reverse-proxy dependency. The v2
+  descriptor instead binds the transition/checkpoint, immutable catalog hash,
+  immutable proof-bundle hash, 2–3 token-free mirrors, a bounded private
+  Enrollment service reference, and the separate bootstrap capability. The
+  public proof bundle contains only a hiding commitment to the Device intent;
+  it contains no Device ID, responsibilities, grants, token, or commitment opening.
 - `internal/clientenroll` implements the private wire protocol used behind QR
   import; it binds an existing Device and is not a user registration command.
 - `internal/clientsecret` protects the join identity, secret vault, and hydrated
@@ -348,8 +368,9 @@ without this fingerprint are rejected; already joined identities remain valid. S
 - The v1 `internal/clientupdate` path verifies signed current state, its generation
   floor, snapshot signatures, and the Device bundle before activation. A future v2
   reader **must** additionally apply the certified-head gate, four durable floor
-  groups, bootstrap transition hash, irreversible latch, Device proof, and
-  EndpointSet WebPKI/SPKI pins described above; `committed_not_certified` must never
+  groups, bootstrap transition hash, irreversible latch, Device proof, public
+  EndpointSet pins and private service-directory commitment described above;
+  `committed_not_certified` must never
   become current. This is a target contract, not a claim that the current Windows
   implementation has shipped the v2 reader.
 - `internal/clientcomponent` verifies the bundled component signature, hashes,
@@ -361,8 +382,8 @@ without this fingerprint are rejected; already joined identities remain valid. S
   a TUN-only port-53 `hijack-dns` rule. For Auto/fixed-exit business traffic, the
   resulting FakeIP/domain mapping must restore and carry the FQDN through the
   selected chain so that the final egress resolver, not the Windows/access-side
-  resolver, chooses A/AAAA. Direct resolves locally. EndpointSet transport hostnames
-  use a separate protected underlay resolver/cache and never enter business FakeIP;
+  resolver, chooses A/AAAA. Direct resolves locally. Public distribution/bootstrap/data
+  transport hostnames use a separate protected underlay resolver/cache and never enter business FakeIP;
   otherwise bootstrap would loop through the tunnel it is trying to create. Merely
   sending system DNS to a configured resolver does not prove this contract. These
   local capture settings leave the signed egress rules, selectors and outbounds
@@ -375,8 +396,9 @@ without this fingerprint are rejected; already joined identities remain valid. S
   the v1 destination is the same-origin report URL derived from the validated
   enrollment URL; redirects are refused, and verified server observations may be
   returned in a bounded HTTP 200 response with compatibility for an empty HTTP 204.
-  After the latch, only a certified `EndpointSet(role=device_report)` supplies the
-  exact URL, hostname/WebPKI and SPKI pins; no path is inferred from enrollment.
+  After the latch, only the certified private `device_report` service supplies the
+  exact overlay IP, port, internal certificate profile and Device mTLS policy; no
+  path is inferred from distribution, bootstrap or enrollment.
   Candidates do not advance
   `applied`, and stopping the workload stops reports. Self-check checks local
   runtime listeners and the managed TUN adapter; it sends no business requests.
@@ -388,8 +410,14 @@ without this fingerprint are rejected; already joined identities remain valid. S
   subsequent atomic profile-index commit. Failed imports cannot start a partial
   client, and a ready identity remains recoverable if that index commit fails.
 - Until the join commits, the exact QR credential and generated identity are
-  protected with the edition's DPAPI scope. The control permits only the same token, CSR,
-  request ID, platform and Device facts during a one-hour recovery window. A
+  protected with the edition's DPAPI scope. In target v2, retries keep the same
+  token commitment, stable claim-core hash, request ID, identity/CSR and wrapping
+  key; a fresh server nonce may produce a new detached PoP without changing that
+  core. Retry is bounded by the Invite and capability validity. Once the bootstrap
+  capability expires, continuation requires an administrator-delivered, exact-bound
+  resume descriptor for the same pending transaction; it carries no fresh token and
+  cannot reset consumption, attempts, intent, or identity. The legacy one-hour
+  recovery rule applies only to the pre-latch v1 compatibility flow. A
   validated ready response is journaled separately before local installation;
   the pending token is scrubbed after `config\client.json` commits. Existing
   registered profiles retain their startup recovery behavior. A new add-profile
@@ -457,7 +485,8 @@ stand in for another:
   cleanup, process/host crash recovery, and fail-closed restoration.
 - V2 coverage includes the certified-only gate, four durable floor groups with
   recovery policy hash, bootstrap transition/latch persistence, Device proof,
-  role-separated EndpointSets, SPKI pin overlap, and rejection of every v1
+  split public EndpointSets/private service directory, SPKI pin overlap,
+  restricted HY2/TCP bootstrap, and rejection of every v1
   authority after the latch.
 - AMD64 and ARM64 require their own host evidence across supported network and
   display configurations. A database-valid MSI or cross-build is not host
