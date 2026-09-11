@@ -366,6 +366,15 @@ func VerifyDeviceViewEnvelopeWithPrevious(envelope *DeviceViewEnvelopeV2, set, p
 
 // AdvanceFloors 原子持久化前验证四组 floor；相同坐标不同 hash 一律视为 fork。
 func AdvanceFloors(current, candidate ClientFloorsV2) (ClientFloorsV2, error) {
+	return advanceFloors(current, candidate, floorAdvanceAuthority{})
+}
+
+type floorAdvanceAuthority struct {
+	recovery bool
+	control  bool
+}
+
+func advanceFloors(current, candidate ClientFloorsV2, authority floorAdvanceAuthority) (ClientFloorsV2, error) {
 	if err := validateClientFloors(candidate); err != nil {
 		return current, errors.New("[D106 floor] candidate floor 无效")
 	}
@@ -379,8 +388,12 @@ func AdvanceFloors(current, candidate ClientFloorsV2) (ClientFloorsV2, error) {
 	if candidate.AcceptedRecoveryEpoch < current.AcceptedRecoveryEpoch {
 		return current, errors.New("[D106 floor] recovery epoch 回退")
 	}
-	if candidate.AcceptedRecoveryEpoch > current.AcceptedRecoveryEpoch+1 {
+	nextRecoveryEpoch, addErr := CheckedAdd(current.AcceptedRecoveryEpoch, 1)
+	if addErr != nil || candidate.AcceptedRecoveryEpoch > nextRecoveryEpoch {
 		return current, errors.New("[D119 floor] recovery epoch 必须逐次增加，禁止跳号")
+	}
+	if candidate.AcceptedRecoveryEpoch > current.AcceptedRecoveryEpoch && !authority.recovery {
+		return current, errors.New("[D119 floor] recovery epoch 提升缺 transition proof")
 	}
 	if candidate.AcceptedRecoveryEpoch == current.AcceptedRecoveryEpoch {
 		if candidate.RecoveryStatementHash != current.RecoveryStatementHash || candidate.RecoveryPolicyHash != current.RecoveryPolicyHash {
@@ -388,6 +401,13 @@ func AdvanceFloors(current, candidate ClientFloorsV2) (ClientFloorsV2, error) {
 		}
 		if candidate.AcceptedControlEpoch < current.AcceptedControlEpoch {
 			return current, errors.New("[D106 floor] control epoch 回退")
+		}
+		nextControlEpoch, addErr := CheckedAdd(current.AcceptedControlEpoch, 1)
+		if addErr != nil || candidate.AcceptedControlEpoch > nextControlEpoch {
+			return current, errors.New("[D112 floor] control epoch 必须逐次增加，禁止跳号")
+		}
+		if candidate.AcceptedControlEpoch > current.AcceptedControlEpoch && !authority.control {
+			return current, errors.New("[D112 floor] control epoch 提升缺 Joint→Final transition proof")
 		}
 		if candidate.AcceptedControlEpoch == current.AcceptedControlEpoch {
 			if candidate.ControlSetHash != current.ControlSetHash {

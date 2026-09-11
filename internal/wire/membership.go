@@ -81,6 +81,13 @@ type ControlKeyPossessionProofV1 struct {
 	Signature ControlKeyPossessionSignatureV1 `json:"signature"`
 }
 
+type ControlKeyPossessionLeafV1 struct {
+	Schema                   int    `json:"schema"`
+	MemberID                 string `json:"member_id"`
+	KeyPurpose               string `json:"key_purpose"`
+	ControlKeyPossessionHash string `json:"control_key_possession_hash"`
+}
+
 // ValidateControlPeerDirectory 验证不随本机时钟变化的目录事实。参与 Raft 握手前还必须调用
 // ValidateControlPeerDirectoryAt，以 §7.5 提供的可信时间检查证书有效期（D124）。
 func ValidateControlPeerDirectory(set *ControlSetV1, directory *ControlPeerDirectoryV1) error {
@@ -327,6 +334,37 @@ func VerifyControlKeyPossessionProofs(set *ControlSetV1, proofs []ControlKeyPoss
 	return nil
 }
 
+func ControlKeyPossessionProofHash(proof *ControlKeyPossessionProofV1) (string, error) {
+	if proof == nil {
+		return "", errors.New("[D116 key PoP] proof 缺失")
+	}
+	return HashObject(DomainControlKeyPoP, proof)
+}
+
+// ControlKeyPossessionRoot 先要求恰好覆盖 ControlSet 的三类 key，再以同一
+// member/purpose 顺序计算 RFC 6962 root（D116）。
+func ControlKeyPossessionRoot(set *ControlSetV1, proofs []ControlKeyPossessionProofV1) (string, error) {
+	if err := VerifyControlKeyPossessionProofs(set, proofs); err != nil {
+		return "", err
+	}
+	leaves := make([][]byte, len(proofs))
+	for i := range proofs {
+		hash, err := ControlKeyPossessionProofHash(&proofs[i])
+		if err != nil {
+			return "", err
+		}
+		leaf := ControlKeyPossessionLeafV1{
+			Schema: 1, MemberID: proofs[i].Body.MemberID, KeyPurpose: proofs[i].Body.KeyPurpose,
+			ControlKeyPossessionHash: hash,
+		}
+		leaves[i], err = MarshalCanonical(leaf)
+		if err != nil {
+			return "", err
+		}
+	}
+	return "sha256:" + fmt.Sprintf("%x", MerkleRoot(leaves)), nil
+}
+
 func NewControlKeyPossessionProof(body ControlKeyPossessionProofBodyV1, privateKey ed25519.PrivateKey) (ControlKeyPossessionProofV1, error) {
 	public := privateKey.Public().(ed25519.PublicKey)
 	keyID, err := ControlKeyID(public)
@@ -381,6 +419,65 @@ func JointQuorum(oldSet, newSet *ControlSetV1, signerMemberIDs []string) error {
 	newQuorum, _ := Quorum(len(newSet.Members))
 	if count(oldSet) < oldQuorum || count(newSet) < newQuorum {
 		return fmt.Errorf("[D112 joint] 未同时达到 old %d/%d 与 new %d/%d 多数", oldQuorum, len(oldSet.Members), newQuorum, len(newSet.Members))
+	}
+	return nil
+}
+
+// ValidateControlSetSuccessorKeySeparation 允许同一 member 在相同 purpose 延续旧 key，
+// 但拒绝跨 purpose 或把既有 voter key 转交给另一 member（D116）。
+func ValidateControlSetSuccessorKeySeparation(oldSet, newSet *ControlSetV1) error {
+	if err := ValidateControlSet(oldSet); err != nil {
+		return err
+	}
+	if err := ValidateControlSet(newSet); err != nil {
+		return err
+	}
+	if oldSet.ClusterID != newSet.ClusterID {
+		return errors.New("[D116 key separation] old/new ControlSet cluster 不一致")
+	}
+	type owner struct{ memberID, purpose string }
+	oldOwners := make(map[string]owner, len(oldSet.Members)*3)
+	for _, member := range oldSet.Members {
+		oldOwners[member.MembershipPublicKey] = owner{member.MemberID, "membership"}
+		oldOwners[member.ConfigPublicKey] = owner{member.MemberID, "config"}
+		oldOwners[member.EnrollmentPublicKey] = owner{member.MemberID, "enrollment"}
+	}
+	for _, member := range newSet.Members {
+		for _, item := range []struct{ publicKey, purpose string }{
+			{member.MembershipPublicKey, "membership"},
+			{member.ConfigPublicKey, "config"},
+			{member.EnrollmentPublicKey, "enrollment"},
+		} {
+			if previous, found := oldOwners[item.publicKey]; found &&
+				(previous.memberID != member.MemberID || previous.purpose != item.purpose) {
+				return errors.New("[D116 key separation] control key 跨 member/purpose 复用")
+			}
+		}
+	}
+	return nil
+}
+
+// ValidateRecoveryControlKeySeparation 钉住 recovery 与在线 control authority 的用途隔离（D116）。
+func ValidateRecoveryControlKeySeparation(policy *RecoveryPolicyV1, set *ControlSetV1) error {
+	if err := ValidateRecoveryPolicy(policy); err != nil {
+		return err
+	}
+	if err := ValidateControlSet(set); err != nil {
+		return err
+	}
+	if policy.ClusterID != set.ClusterID {
+		return errors.New("[D116 key separation] recovery/control cluster 不一致")
+	}
+	controlKeys := make(map[string]struct{}, len(set.Members)*3)
+	for _, member := range set.Members {
+		controlKeys[member.MembershipPublicKey] = struct{}{}
+		controlKeys[member.ConfigPublicKey] = struct{}{}
+		controlKeys[member.EnrollmentPublicKey] = struct{}{}
+	}
+	for _, key := range policy.Keys {
+		if _, reused := controlKeys[key.PublicKey]; reused {
+			return errors.New("[D116 key separation] recovery key 与 control authority key 复用")
+		}
 	}
 	return nil
 }

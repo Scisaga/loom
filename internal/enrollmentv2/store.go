@@ -152,6 +152,9 @@ func (s *Store) Complete(operation CompletionOperationV2, approval *wire.StableE
 }
 
 func (s *Store) persistLocked(candidate durableState) error {
+	if err := validateDurableState(&candidate); err != nil {
+		return err
+	}
 	body, err := wire.MarshalCanonical(candidate)
 	if err != nil {
 		return err
@@ -160,18 +163,16 @@ func (s *Store) persistLocked(candidate durableState) error {
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return err
 	}
-	temporary := s.path + ".tmp"
-	file, err := os.OpenFile(temporary, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if errors.Is(err, os.ErrExist) {
-		if removeErr := os.Remove(temporary); removeErr != nil {
-			return fmt.Errorf("[D130 Enrollment] 清理遗留 transaction 临时文件失败: %w", removeErr)
-		}
-		file, err = os.OpenFile(temporary, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	}
+	file, err := os.CreateTemp(directory, filepath.Base(s.path)+".tmp-")
 	if err != nil {
 		return err
 	}
-	if _, err = file.Write(append(body, '\n')); err == nil {
+	temporary := file.Name()
+	defer os.Remove(temporary)
+	if err = file.Chmod(0o600); err == nil {
+		_, err = file.Write(body)
+	}
+	if err == nil {
 		err = file.Sync()
 	}
 	closeErr := file.Close()

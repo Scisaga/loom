@@ -109,8 +109,13 @@ func (s *Store) Prepare(entry wire.HeadEntryV2) error {
 		}
 		return errors.New("[D104 Raft] 前一 HeadEntry 尚未 certified/applied，禁止跳过")
 	}
-	s.state.Active = &OperationState{Entry: entry, Phase: PhasePending, CommitAcks: []string{}, Signatures: []wire.ControlConfigSignatureV1{}}
-	return s.persistLocked()
+	candidate := cloneState(s.state)
+	candidate.Active = &OperationState{Entry: entry, Phase: PhasePending, CommitAcks: []string{}, Signatures: []wire.ControlConfigSignatureV1{}}
+	if err := s.persistLocked(candidate); err != nil {
+		return err
+	}
+	s.state = candidate
+	return nil
 }
 
 // Commit 只接收 Raft 层已经 fsync 的 ack 身份，并始终按 committed ControlSet 算多数。
@@ -142,9 +147,14 @@ func (s *Store) Commit(entryHash string, ackMemberIDs []string) error {
 	if len(acks) < quorum {
 		return errors.New("[D104 Raft] 未达到 committed ControlSet 多数，不能 commit")
 	}
-	active.CommitAcks = acks
-	active.Phase = PhaseCommittedNotCertified
-	return s.persistLocked()
+	candidate := cloneState(s.state)
+	candidate.Active.CommitAcks = acks
+	candidate.Active.Phase = PhaseCommittedNotCertified
+	if err := s.persistLocked(candidate); err != nil {
+		return err
+	}
+	s.state = candidate
+	return nil
 }
 
 // AddAttestation 只在 commit 之后接受签名；达到门槛才公开 certified head。
@@ -169,25 +179,32 @@ func (s *Store) AddAttestation(entryHash string, signature wire.ControlConfigSig
 	if active.Phase != PhaseCommittedNotCertified {
 		return errors.New("[D104 QC] certified 后 signer 集合已冻结，不能改变 QC bytes")
 	}
-	active.Signatures = append(active.Signatures, signature)
-	sort.Slice(active.Signatures, func(i, j int) bool {
-		if active.Signatures[i].MemberID != active.Signatures[j].MemberID {
-			return active.Signatures[i].MemberID < active.Signatures[j].MemberID
+	candidate := cloneState(s.state)
+	candidateActive := candidate.Active
+	candidateActive.Signatures = append(candidateActive.Signatures, signature)
+	sort.Slice(candidateActive.Signatures, func(i, j int) bool {
+		if candidateActive.Signatures[i].MemberID != candidateActive.Signatures[j].MemberID {
+			return candidateActive.Signatures[i].MemberID < candidateActive.Signatures[j].MemberID
 		}
-		return active.Signatures[i].ConfigKeyID < active.Signatures[j].ConfigKeyID
+		return candidateActive.Signatures[i].ConfigKeyID < candidateActive.Signatures[j].ConfigKeyID
 	})
-	qc := wire.StableQC(&active.Entry, active.Signatures)
+	qc := wire.StableQC(&candidateActive.Entry, candidateActive.Signatures)
 	quorum, _ := wire.Quorum(len(s.state.ControlSet.Members))
-	if len(active.Signatures) >= quorum {
-		if err := wire.VerifyStableHeadQC(&active.Entry, &s.state.ControlSet, &qc); err != nil {
+	if len(candidateActive.Signatures) >= quorum {
+		if err := wire.VerifyStableHeadQC(&candidateActive.Entry, &candidate.ControlSet, &qc); err != nil {
 			return err
 		}
-		active.QC = &qc
-		active.Phase = PhaseCertified
-		s.state.CertifiedHead = &active.Entry
-		s.state.CertifiedQC = &qc
+		candidateActive.QC = &qc
+		candidateActive.Phase = PhaseCertified
+		entry := candidateActive.Entry
+		candidate.CertifiedHead = &entry
+		candidate.CertifiedQC = &qc
 	}
-	return s.persistLocked()
+	if err := s.persistLocked(candidate); err != nil {
+		return err
+	}
+	s.state = candidate
+	return nil
 }
 
 // RecoverCertification 在 commit→QC 崩溃后重算同一 attestation，不创建第二个结果。
@@ -234,9 +251,14 @@ func (s *Store) MarkReconciled(entryHash string, evidenceHashes []string) error 
 	if err := wire.CanonicalSortHashes(evidence); err != nil {
 		return err
 	}
-	active.ReconcileEvidence = evidence
-	active.Phase = PhaseReconciled
-	return s.persistLocked()
+	candidate := cloneState(s.state)
+	candidate.Active.ReconcileEvidence = evidence
+	candidate.Active.Phase = PhaseReconciled
+	if err := s.persistLocked(candidate); err != nil {
+		return err
+	}
+	s.state = candidate
+	return nil
 }
 
 func (s *Store) MarkApplied(entryHash string) error {
@@ -254,11 +276,12 @@ func (s *Store) MarkApplied(entryHash string) error {
 	}
 	// applied 结果已经由 CertifiedHead/QC 保留；同一次原子写清除 active，避免
 	// 崩溃停在“已 applied 但仍阻塞下一 head”的中间文件（D104）。
-	s.state.Active = nil
-	if err := s.persistLocked(); err != nil {
-		s.state.Active = active
+	candidate := cloneState(s.state)
+	candidate.Active = nil
+	if err := s.persistLocked(candidate); err != nil {
 		return err
 	}
+	s.state = candidate
 	return nil
 }
 
@@ -272,8 +295,11 @@ func (s *Store) active(entryHash string) (*OperationState, error) {
 	return s.state.Active, nil
 }
 
-func (s *Store) persistLocked() error {
-	canonical, err := wire.MarshalCanonical(s.state)
+func (s *Store) persistLocked(candidate State) error {
+	if err := validateState(&candidate); err != nil {
+		return err
+	}
+	canonical, err := wire.MarshalCanonical(candidate)
 	if err != nil {
 		return err
 	}
@@ -281,12 +307,16 @@ func (s *Store) persistLocked() error {
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return err
 	}
-	temporary := s.path + ".tmp"
-	file, err := os.OpenFile(temporary, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	file, err := os.CreateTemp(directory, filepath.Base(s.path)+".tmp-")
 	if err != nil {
 		return err
 	}
-	if _, err = file.Write(append(canonical, '\n')); err == nil {
+	temporary := file.Name()
+	defer os.Remove(temporary)
+	if err = file.Chmod(0o600); err == nil {
+		_, err = file.Write(canonical)
+	}
+	if err == nil {
 		err = file.Sync()
 	}
 	closeErr := file.Close()
@@ -309,6 +339,13 @@ func (s *Store) persistLocked() error {
 		return err
 	}
 	return closeErr
+}
+
+func cloneState(state State) State {
+	body, _ := json.Marshal(state)
+	var clone State
+	_ = json.Unmarshal(body, &clone)
+	return clone
 }
 
 func validateState(state *State) error {

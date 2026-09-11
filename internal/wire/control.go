@@ -489,10 +489,7 @@ func VerifyJointHeadQC(entry *HeadEntryV2, oldSet, newSet *ControlSetV1, qc *Joi
 	union := make(map[string]ControlMemberV1, len(oldSet.Members)+len(newSet.Members))
 	for _, set := range []*ControlSetV1{oldSet, newSet} {
 		for _, member := range set.Members {
-			if existing, ok := union[member.MemberID]; ok && (existing.ConfigKeyID != member.ConfigKeyID || existing.ConfigPublicKey != member.ConfigPublicKey) {
-				return errors.New("[D112 joint QC] 同一 member 在 old/new 使用冲突 config key")
-			}
-			union[member.MemberID] = member
+			union[member.MemberID+"\x00"+member.ConfigKeyID] = member
 		}
 	}
 	message, _ := Frame(DomainHeadReplicationAttestation, wantCanonical)
@@ -500,7 +497,7 @@ func VerifyJointHeadQC(entry *HeadEntryV2, oldSet, newSet *ControlSetV1, qc *Joi
 		if i > 0 && compareSigner(qc.Signatures[i-1].MemberID, qc.Signatures[i-1].ConfigKeyID, signature.MemberID, signature.ConfigKeyID) >= 0 {
 			return errors.New("[D112 joint QC] signatures 必须严格排序且不重复")
 		}
-		member, ok := union[signature.MemberID]
+		member, ok := union[signature.MemberID+"\x00"+signature.ConfigKeyID]
 		if !ok || signature.Algorithm != "ed25519" || signature.ConfigKeyID != member.ConfigKeyID {
 			return errors.New("[D112 joint QC] signer/key 无效")
 		}
@@ -516,7 +513,7 @@ func VerifyJointHeadQC(entry *HeadEntryV2, oldSet, newSet *ControlSetV1, qc *Joi
 	if err := verifyJointRefs(qc.NewSignerRefs, qc.Signatures, newSet); err != nil {
 		return err
 	}
-	return nil
+	return rejectUnprojectedConfigSignatures(qc.Signatures, qc.OldSignerRefs, qc.NewSignerRefs)
 }
 
 func verifyJointRefs(refs []ControlConfigSignerRefV1, signatures []ControlConfigSignatureV1, set *ControlSetV1) error {
@@ -528,12 +525,13 @@ func verifyJointRefs(refs []ControlConfigSignerRefV1, signatures []ControlConfig
 	for _, member := range set.Members {
 		members[member.MemberID] = member.ConfigKeyID
 	}
-	signed := make(map[string]string, len(signatures))
+	signed := make(map[string]struct{}, len(signatures))
 	for _, signature := range signatures {
-		signed[signature.MemberID] = signature.ConfigKeyID
+		signed[signature.MemberID+"\x00"+signature.ConfigKeyID] = struct{}{}
 	}
 	for i, ref := range refs {
-		if i > 0 && compareSigner(refs[i-1].MemberID, refs[i-1].ConfigKeyID, ref.MemberID, ref.ConfigKeyID) >= 0 || members[ref.MemberID] != ref.ConfigKeyID || signed[ref.MemberID] != ref.ConfigKeyID {
+		_, hasSignature := signed[ref.MemberID+"\x00"+ref.ConfigKeyID]
+		if i > 0 && compareSigner(refs[i-1].MemberID, refs[i-1].ConfigKeyID, ref.MemberID, ref.ConfigKeyID) >= 0 || members[ref.MemberID] != ref.ConfigKeyID || !hasSignature {
 			return errors.New("[D112 joint QC] signer refs 未排序、重复或未绑定 signature/set")
 		}
 	}
