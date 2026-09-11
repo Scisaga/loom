@@ -63,6 +63,21 @@ func TestN3MinorityCannotCommitOrDriveReconcile(t *testing.T) {
 	}
 }
 
+func TestN3CannotRecoverCertificationFromCentralizedPrivateKeys(t *testing.T) {
+	set, configKeys := testControlSet(t, 3)
+	store, _ := Open(filepath.Join(t.TempDir(), "control.json"), set)
+	entry := testControlHead(t, &set)
+	if err := store.Prepare(entry); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Commit(entry.EntryHash, []string{set.Members[0].MemberID, set.Members[1].MemberID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecoverCertification(configKeys); err == nil {
+		t.Fatal("N=3 executor 通过集中私钥绕过了 private peer attestation")
+	}
+}
+
 func TestCertifiedQCSignerSetCannotChange(t *testing.T) {
 	set, configKeys := testControlSet(t, 3)
 	store, _ := Open(filepath.Join(t.TempDir(), "control.json"), set)

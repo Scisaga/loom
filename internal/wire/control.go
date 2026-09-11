@@ -429,6 +429,44 @@ func VerifyStableHeadQC(entry *HeadEntryV2, set *ControlSetV1, qc *StableHeadRep
 	return nil
 }
 
+func VerifyHeadAttestationSignature(entry *HeadEntryV2, signature *ControlConfigSignatureV1,
+	set *ControlSetV1) error {
+	if entry == nil || signature == nil {
+		return errors.New("[D104 QC] head/signature 不能为空")
+	}
+	if err := ValidateHeadEntry(entry, nil); err != nil {
+		return err
+	}
+	if err := ValidateControlSet(set); err != nil {
+		return err
+	}
+	setHash, _ := ControlSetHash(set)
+	if entry.Body.Payload.ControlSetHash != setHash {
+		return errors.New("[D104 QC] attestation signature 使用错误 ControlSet")
+	}
+	var member *ControlMemberV1
+	for index := range set.Members {
+		if set.Members[index].MemberID == signature.MemberID {
+			member = &set.Members[index]
+			break
+		}
+	}
+	if member == nil || signature.Algorithm != "ed25519" || member.ConfigKeyID != signature.ConfigKeyID {
+		return errors.New("[D102 key] attestation signer/key purpose 无效")
+	}
+	canonical, _ := MarshalCanonical(AttestationForHead(entry))
+	message, _ := Frame(DomainHeadReplicationAttestation, canonical)
+	public, err := decodeRawURL(member.ConfigPublicKey, ed25519.PublicKeySize)
+	if err != nil {
+		return err
+	}
+	rawSignature, err := decodeRawURL(signature.Signature, ed25519.SignatureSize)
+	if err != nil || !ed25519.Verify(public, message, rawSignature) {
+		return errors.New("[D104 QC] config attestation signature 无效")
+	}
+	return nil
+}
+
 func StableQC(entry *HeadEntryV2, signatures []ControlConfigSignatureV1) StableHeadReplicationQCV1 {
 	sorted := append([]ControlConfigSignatureV1(nil), signatures...)
 	sort.Slice(sorted, func(i, j int) bool {

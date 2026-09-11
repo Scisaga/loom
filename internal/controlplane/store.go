@@ -207,12 +207,17 @@ func (s *Store) AddAttestation(entryHash string, signature wire.ControlConfigSig
 	return nil
 }
 
-// RecoverCertification 在 commit→QC 崩溃后重算同一 attestation，不创建第二个结果。
+// RecoverCertification 只保留 N=1 bootstrap/compatibility 恢复；多成员 ControlSet
+// 必须经 HeadAttestationCollector 逐 peer 取签，禁止把所有 config 私钥集中到 executor。
 func (s *Store) RecoverCertification(keys map[string]ed25519.PrivateKey) error {
 	s.mu.Lock()
 	if s.state.Active == nil || s.state.Active.Phase != PhaseCommittedNotCertified {
 		s.mu.Unlock()
 		return nil
+	}
+	if len(s.state.ControlSet.Members) != 1 {
+		s.mu.Unlock()
+		return errors.New("[D102 keys] 多成员 QC 恢复禁止集中持有 config 私钥")
 	}
 	entryHash := s.state.Active.Entry.EntryHash
 	attestation := wire.AttestationForHead(&s.state.Active.Entry)
