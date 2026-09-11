@@ -365,6 +365,15 @@ device_certificate_profile_intent_hash = H(frame(
 device_certificate_profile_state_hash = H(frame(
   "loom-device-certificate-profile-state-v1", JCS(DeviceCertificateProfileStateV1)
 ))
+device_issuer_certificate_hash = H(frame(
+  "loom-device-issuer-certificate-der-v1", raw_issuer_certificate_der
+))
+device_issuer_chain_hash = H(frame(
+  "loom-device-issuer-chain-v1", JCS({schema:1,issuer_chain_der})
+))
+device_certificate_hash = H(frame(
+  "loom-device-certificate-der-v1", raw_device_certificate_der
+))
 authority_registry_private_object_hash = H(frame(
   "loom-authority-registry-private-object-v1", JCS(AuthorityRegistryPrivateObjectV1)
 ))

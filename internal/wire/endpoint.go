@@ -403,13 +403,29 @@ func ValidateControlServiceDirectory(directory *ControlServiceDirectoryV1) error
 		if i > 0 && directory.Services[i-1].ServiceID >= service.ServiceID {
 			return errors.New("[D131 private control] services 必须严格排序且不重复")
 		}
-		address, err := netip.ParseAddr(service.OverlayIP)
-		if err != nil || address.String() != service.OverlayIP || !address.IsPrivate() ||
-			service.Port < 1 || service.Port > 65535 ||
-			!oneOf(service.Role, "control_api", "enroll", "device_config", "device_report") ||
-			!validIdentifier(service.ServiceID, 128) || !sortedUnique(service.SPKIPins) || len(service.SPKIPins) == 0 ||
-			!sortedUnique(service.AuthorizedSubjectProfiles) || len(service.AuthorizedSubjectProfiles) == 0 {
-			return errors.New("[D131 private control] service 必须使用私有 overlay tuple 和用途隔离 profile")
+		if err := ValidatePrivateControlService(&service); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ValidatePrivateControlService(service *PrivateControlServiceV1) error {
+	if service == nil {
+		return errors.New("[D131 private control] service 不能为空")
+	}
+	address, err := netip.ParseAddr(service.OverlayIP)
+	if err != nil || address.String() != service.OverlayIP || !address.IsPrivate() ||
+		service.Port < 1 || service.Port > 65535 ||
+		!oneOf(service.Role, "control_api", "enroll", "device_config", "device_report") ||
+		!validIdentifier(service.ServiceID, 128) || !validIdentifier(service.CertificateProfileRef, 128) ||
+		!sortedUnique(service.SPKIPins) || len(service.SPKIPins) == 0 ||
+		!sortedUnique(service.AuthorizedSubjectProfiles) || len(service.AuthorizedSubjectProfiles) == 0 {
+		return errors.New("[D131 private control] service 必须使用私有 overlay tuple 和用途隔离 profile")
+	}
+	for _, pin := range service.SPKIPins {
+		if _, err := ParseHash(pin); err != nil {
+			return errors.New("[D131 private control] service SPKI pin 无效")
 		}
 	}
 	return nil
