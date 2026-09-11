@@ -22,7 +22,8 @@ func TestCommitQCCrashRecoveryN1(t *testing.T) {
 	if err := store.Prepare(entry); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Commit(entry.EntryHash, []string{set.Members[0].MemberID}); err != nil {
+	raft := committedRaftForHead(t, set, 0, entry, nil)
+	if err := store.CommitFromRaft(raft, entry.EntryHash); err != nil {
 		t.Fatal(err)
 	}
 	if store.Snapshot().Active.Phase != PhaseCommittedNotCertified {
@@ -55,7 +56,8 @@ func TestN3MinorityCannotCommitOrDriveReconcile(t *testing.T) {
 	if err := store.Prepare(entry); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Commit(entry.EntryHash, []string{set.Members[0].MemberID}); err == nil {
+	raft := committedRaftForHead(t, set, 0, entry, map[string]int64{})
+	if err := store.CommitFromRaft(raft, entry.EntryHash); err == nil {
 		t.Fatal("minority commit accepted")
 	}
 	if err := store.MarkReconciled(entry.EntryHash, nil); err == nil {
@@ -70,7 +72,8 @@ func TestN3CannotRecoverCertificationFromCentralizedPrivateKeys(t *testing.T) {
 	if err := store.Prepare(entry); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Commit(entry.EntryHash, []string{set.Members[0].MemberID, set.Members[1].MemberID}); err != nil {
+	raft := committedRaftForHead(t, set, 0, entry, map[string]int64{set.Members[1].MemberID: 1})
+	if err := store.CommitFromRaft(raft, entry.EntryHash); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.RecoverCertification(configKeys); err == nil {
@@ -85,7 +88,8 @@ func TestCertifiedQCSignerSetCannotChange(t *testing.T) {
 	if err := store.Prepare(entry); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Commit(entry.EntryHash, []string{set.Members[0].MemberID, set.Members[1].MemberID}); err != nil {
+	raft := committedRaftForHead(t, set, 0, entry, map[string]int64{set.Members[1].MemberID: 1})
+	if err := store.CommitFromRaft(raft, entry.EntryHash); err != nil {
 		t.Fatal(err)
 	}
 	attestation := wire.AttestationForHead(&entry)
@@ -100,6 +104,25 @@ func TestCertifiedQCSignerSetCannotChange(t *testing.T) {
 	if err := store.AddAttestation(entry.EntryHash, thirdSignature); err == nil {
 		t.Fatal("certified 后接受了会改变 QC bytes 的额外 signer")
 	}
+}
+
+func committedRaftForHead(t *testing.T, set wire.ControlSetV1, memberIndex int, entry wire.HeadEntryV2,
+	matches map[string]int64) *RaftStorage {
+	t.Helper()
+	storage, err := OpenRaftStorage(filepath.Join(t.TempDir(), "raft.json"), set.Members[memberIndex].MemberID, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.StartElection(); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.AppendLocal(entry); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.AdvanceLeaderCommit(matches); err != nil {
+		t.Fatal(err)
+	}
+	return storage
 }
 
 func testControlSet(t *testing.T, count int) (wire.ControlSetV1, map[string]ed25519.PrivateKey) {

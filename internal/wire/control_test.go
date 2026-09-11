@@ -104,6 +104,40 @@ func TestSingleMemberControlSetCertifiesN1Head(t *testing.T) {
 	}
 }
 
+func TestHeadLineageAllowsInternalRaftBarrierGap(t *testing.T) {
+	member, _ := deterministicMember(t, 1)
+	set := &ControlSetV1{Schema: 1, ClusterID: "demo-cluster", Members: []ControlMemberV1{member}}
+	parent := testHead(t, set)
+	body := parent.Body
+	body.Payload.HeadKind = "ordinary"
+	body.Payload.RaftTerm = 2
+	body.Payload.RaftIndex = 3
+	body.Payload.ControlRevision = 3
+	body.Payload.PreviousLogEntryHash = HashRaw("test-v1", []byte("current-term-barrier"))
+	body.Payload.ParentHeadHash = parent.HeadHash
+	body.Payload.CommittedLogicalTime = "2026-09-11T12:01:00Z"
+	body.Payload.OperationRoot = HashRaw("test-v1", []byte("next-operation"))
+	body.Payload.TransitionContext, _ = json.Marshal(OrdinaryHeadContextV1{Schema: 1, Kind: "ordinary"})
+	next, err := NewHeadEntry(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateHeadEntry(&next, &parent); err != nil {
+		t.Fatalf("internal Raft entry gap 被错误拒绝: %v", err)
+	}
+
+	adjacentBody := body
+	adjacentBody.Payload.RaftIndex = 2
+	adjacentBody.Payload.ControlRevision = 2
+	adjacent, err := NewHeadEntry(adjacentBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateHeadEntry(&adjacent, &parent); err == nil {
+		t.Fatal("相邻 Head 接受了不指向 parent entry 的 previous_log_entry_hash")
+	}
+}
+
 func TestJointHeadQCRequiresOldAndNewMajority(t *testing.T) {
 	members := make(map[byte]ControlMemberV1)
 	keys := make(map[byte]ed25519.PrivateKey)

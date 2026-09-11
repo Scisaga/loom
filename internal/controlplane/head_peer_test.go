@@ -19,8 +19,9 @@ func TestPostCommitHeadAttestationQuorumRecoversAfterExecutorRestart(t *testing.
 	set, configKeys := testControlSet(t, 3)
 	entry := testControlHead(t, &set)
 	peers := make(map[string]HeadAttestationPeer, len(set.Members))
+	var commitStorage *RaftStorage
 	var recomputes atomic.Int32
-	for _, member := range set.Members {
+	for memberIndex, member := range set.Members {
 		storage, err := OpenRaftStorage(filepath.Join(t.TempDir(), member.MemberID+".json"), member.MemberID, set)
 		if err != nil {
 			t.Fatal(err)
@@ -39,6 +40,9 @@ func TestPostCommitHeadAttestationQuorumRecoversAfterExecutorRestart(t *testing.
 		}
 		if committed, err := storage.AdvanceLeaderCommit(matches); err != nil || committed != 1 {
 			t.Fatalf("member %s commit=%d err=%v", member.MemberID, committed, err)
+		}
+		if memberIndex == 0 {
+			commitStorage = storage
 		}
 		voter, err := NewHeadAttestationVoter(storage, set, member.MemberID, configKeys[member.MemberID],
 			func(_ context.Context, candidate wire.HeadEntryV2) error {
@@ -65,7 +69,7 @@ func TestPostCommitHeadAttestationQuorumRecoversAfterExecutorRestart(t *testing.
 	if err := store.Prepare(entry); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Commit(entry.EntryHash, []string{set.Members[0].MemberID, set.Members[1].MemberID}); err != nil {
+	if err := store.CommitFromRaft(commitStorage, entry.EntryHash); err != nil {
 		t.Fatal(err)
 	}
 	reopened, err := Open(controlPath, set)

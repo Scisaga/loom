@@ -96,14 +96,14 @@ func (voter *HeadAttestationVoter) VoteHeadAttestation(ctx context.Context,
 	}
 	record := snapshot.Log[request.RaftIndex-1]
 	setHash, _ := wire.ControlSetHash(&voter.set)
-	if record.EntryHash != request.EntryHash || record.Entry.EntryHash != request.EntryHash ||
-		record.Entry.Body.Payload.ControlSetHash != setHash {
+	if record.Kind != RaftRecordHead || record.Head == nil || record.EntryHash != request.EntryHash ||
+		record.Head.EntryHash != request.EntryHash || record.Head.Body.Payload.ControlSetHash != setHash {
 		return wire.ControlConfigSignatureV1{}, errors.New("[D104 QC peer] committed entry/hash/ControlSet binding 无效")
 	}
-	if err := voter.recompute(ctx, record.Entry); err != nil {
+	if err := voter.recompute(ctx, *record.Head); err != nil {
 		return wire.ControlConfigSignatureV1{}, errors.New("[D104 QC peer] deterministic recompute 拒绝 committed entry")
 	}
-	return wire.SignHeadAttestation(wire.AttestationForHead(&record.Entry), voter.member, voter.privateKey)
+	return wire.SignHeadAttestation(wire.AttestationForHead(record.Head), voter.member, voter.privateKey)
 }
 
 type HeadAttestationHTTPHandler struct {

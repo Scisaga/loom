@@ -315,10 +315,15 @@ func ValidateHeadEntry(entry *HeadEntryV2, parent *HeadEntryV2) error {
 		return fmt.Errorf("[D104 Raft] parent 无效: %w", err)
 	}
 	if payload.ClusterID != parent.Body.Payload.ClusterID || payload.ParentHeadHash != parent.HeadHash ||
-		payload.PreviousLogEntryHash != parent.EntryHash || payload.RaftIndex != parent.Body.Payload.RaftIndex+1 ||
+		payload.RaftIndex <= parent.Body.Payload.RaftIndex ||
 		payload.ControlRevision != payload.RaftIndex ||
 		payload.RaftTerm < parent.Body.Payload.RaftTerm {
 		return errors.New("[D104 Raft] head/entry hash chain 或 term/index 不连续")
+	}
+	// parent 是前一份 certified Head，而 previous_log_entry_hash 指向真实 Raft
+	// 直接前项；两份 Head 间允许存在 current-term barrier 等内部 entry（D104）。
+	if payload.RaftIndex == parent.Body.Payload.RaftIndex+1 && payload.PreviousLogEntryHash != parent.EntryHash {
+		return errors.New("[D104 Raft] 相邻 head 的 previous log hash 不匹配")
 	}
 	if payload.HeadKind == "ordinary" {
 		previous := &parent.Body.Payload

@@ -901,6 +901,12 @@ head_hash  = H(frame("loom-control-head-v2", JCS(HeadEntryBodyV2)))
 follower 先按 Raft 验证 term/日志前缀，把精确 entry `fsync` 后返回普通 AppendEntries ack；
 leader 仅按 Raft 当前-term规则和稳定配置多数（joint 时 old/new 双多数）推进 `commitIndex`。
 这些内部复制 ack 不作为客户端 QC，也不得脱离 Raft term/日志规则凑签名提交。
+新 leader 若日志非空，必须先追加并提交一个私有 `RaftNoOpEntryV1` current-term barrier，才能以
+当前任期规则确认并传播继承自旧任期的 committed prefix；该内部 entry 不产生 Head，但其 exact
+hash 是下一日志项的 `previous_log_entry_hash`。应用状态只可保存对本机已 fsync
+`{member_id,term,index,entry_hash}` committed record 的引用，禁止让调用者在 Raft 之外重新提交一组
+member ID 充当 durable ack 证据。进程重启后必须重新 pre-vote/election，不能从持久化 self-vote
+推导自己仍是 leader。
 
 voter 只有在得知该 entry 已 committed、按序 apply，并重算出逐字节相同的 roots/head 后，才用
 独立 config key 签以下两个互不兼容的 attestation 之一：
