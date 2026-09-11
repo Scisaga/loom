@@ -19,15 +19,15 @@ const (
 )
 
 type InviteContext struct {
-	ClusterID                            string
-	InviteID                             string
-	Status                               string
-	CertifiedInviteRecordHash            string
-	DeviceEnrollmentIntentCommitmentHash string
-	DeviceEnrollmentIntentOpeningHash    string
-	TokenCommitment                      string
-	ExpiresAt                            string
-	MaximumReservationRetrySeconds       int64
+	ClusterID                            string `json:"cluster_id"`
+	InviteID                             string `json:"invite_id"`
+	Status                               string `json:"status"`
+	CertifiedInviteRecordHash            string `json:"certified_invite_record_hash"`
+	DeviceEnrollmentIntentCommitmentHash string `json:"device_enrollment_intent_commitment_hash"`
+	DeviceEnrollmentIntentOpeningHash    string `json:"device_enrollment_intent_opening_hash"`
+	TokenCommitment                      string `json:"token_commitment"`
+	ExpiresAt                            string `json:"expires_at"`
+	MaximumReservationRetrySeconds       int64  `json:"maximum_reservation_retry_seconds"`
 }
 
 type ClaimOperationV2 struct {
@@ -50,17 +50,18 @@ type ClaimOperationV2 struct {
 }
 
 type ProvisionalIssuanceOperationV1 struct {
-	Schema                        int    `json:"schema"`
-	ClusterID                     string `json:"cluster_id"`
-	OperationID                   string `json:"operation_id"`
-	InviteID                      string `json:"invite_id"`
-	RequestID                     string `json:"request_id"`
-	ExpectedTransactionStateHash  string `json:"expected_transaction_state_hash"`
-	ClaimOperationHash            string `json:"claim_operation_hash"`
-	ProvisionalIssuanceHash       string `json:"provisional_issuance_hash"`
-	PreviousIssuanceRegistryRoot  string `json:"previous_issuance_registry_root"`
-	ResultingIssuanceRegistryRoot string `json:"resulting_issuance_registry_root"`
-	IssuedAt                      string `json:"issued_at"`
+	Schema                        int                                   `json:"schema"`
+	ClusterID                     string                                `json:"cluster_id"`
+	OperationID                   string                                `json:"operation_id"`
+	InviteID                      string                                `json:"invite_id"`
+	RequestID                     string                                `json:"request_id"`
+	ExpectedTransactionStateHash  string                                `json:"expected_transaction_state_hash"`
+	ClaimOperationHash            string                                `json:"claim_operation_hash"`
+	ProvisionalIssuanceHash       string                                `json:"provisional_issuance_hash"`
+	IssuanceRegistryLeaf          wire.EnrollmentIssuanceRegistryLeafV1 `json:"issuance_registry_leaf"`
+	PreviousIssuanceRegistryRoot  string                                `json:"previous_issuance_registry_root"`
+	ResultingIssuanceRegistryRoot string                                `json:"resulting_issuance_registry_root"`
+	IssuedAt                      string                                `json:"issued_at"`
 }
 
 type CompletionOperationV2 struct {
@@ -100,6 +101,9 @@ func Reserve(invite InviteContext, operation ClaimOperationV2, admission *wire.S
 	if invite.Status != "available" || invite.ClusterID != operation.ClusterID || invite.InviteID != operation.InviteID || operation.Schema != 2 || operation.OperationID == "" || operation.RequestID == "" {
 		return TransactionStateV2{}, errors.New("[D130 Enrollment] Invite 不可用或 claim identity 不匹配")
 	}
+	if set == nil {
+		return TransactionStateV2{}, errors.New("[D129 Enrollment] admission ControlSet 不能为空")
+	}
 	if err := wire.VerifyEnrollmentAdmissionQC(admission, set); err != nil {
 		return TransactionStateV2{}, err
 	}
@@ -133,11 +137,14 @@ func Reserve(invite InviteContext, operation ClaimOperationV2, admission *wire.S
 }
 
 func RecordProvisional(current TransactionStateV2, operation ProvisionalIssuanceOperationV1) (TransactionStateV2, error) {
-	if current.Status != "reserved" || operation.Schema != 1 || !sameTransaction(current, operation.ClusterID, operation.InviteID, operation.RequestID) {
+	if current.Status != "reserved" || operation.Schema != 1 || operation.OperationID == "" || !sameTransaction(current, operation.ClusterID, operation.InviteID, operation.RequestID) {
 		return TransactionStateV2{}, errors.New("[D130 Enrollment] provisional issuance 只能从 exact reserved transaction CAS")
 	}
 	currentHash, _ := TransactionHash(current)
-	if operation.ExpectedTransactionStateHash != currentHash || operation.ClaimOperationHash != current.ClaimOperationHash || operation.PreviousIssuanceRegistryRoot == operation.ResultingIssuanceRegistryRoot {
+	if operation.ExpectedTransactionStateHash != currentHash || operation.ClaimOperationHash != current.ClaimOperationHash || operation.PreviousIssuanceRegistryRoot == operation.ResultingIssuanceRegistryRoot ||
+		wire.ValidateEnrollmentIssuanceRegistryLeaf(&operation.IssuanceRegistryLeaf) != nil ||
+		operation.IssuanceRegistryLeaf.ClaimOperationHash != operation.ClaimOperationHash ||
+		operation.IssuanceRegistryLeaf.ProvisionalIssuanceHash != operation.ProvisionalIssuanceHash {
 		return TransactionStateV2{}, errors.New("[D130 Enrollment] provisional issuance CAS/registry root 无效")
 	}
 	for _, hash := range []string{operation.ProvisionalIssuanceHash, operation.PreviousIssuanceRegistryRoot, operation.ResultingIssuanceRegistryRoot} {
@@ -161,8 +168,11 @@ func RecordProvisional(current TransactionStateV2, operation ProvisionalIssuance
 }
 
 func Complete(current TransactionStateV2, operation CompletionOperationV2, approval *wire.StableEnrollmentApprovalQCV2, set *wire.ControlSetV1) (TransactionStateV2, error) {
-	if current.Status != "issued_provisional" || operation.Schema != 2 || !sameTransaction(current, operation.ClusterID, operation.InviteID, operation.RequestID) {
+	if current.Status != "issued_provisional" || operation.Schema != 2 || operation.OperationID == "" || !sameTransaction(current, operation.ClusterID, operation.InviteID, operation.RequestID) {
 		return TransactionStateV2{}, errors.New("[D130 Enrollment] completion 只能从 exact issued_provisional transaction CAS")
+	}
+	if set == nil {
+		return TransactionStateV2{}, errors.New("[D130 Enrollment] approval ControlSet 不能为空")
 	}
 	if err := wire.VerifyEnrollmentApprovalQC(approval, set); err != nil {
 		return TransactionStateV2{}, err

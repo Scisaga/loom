@@ -42,11 +42,16 @@ func TestEnrollmentFourStageCAS(t *testing.T) {
 		t.Fatal(err)
 	}
 	reservedHash, _ := TransactionHash(reserved)
+	registryLeaf := wire.EnrollmentIssuanceRegistryLeafV1{Schema: 1, ClaimOperationHash: reserved.ClaimOperationHash,
+		ProvisionalIssuanceHash: hash}
+	previousRegistryRoot, _ := wire.EnrollmentIssuanceRegistryRoot(nil)
+	resultingRegistryRoot, _ := wire.EnrollmentIssuanceRegistryRoot([]wire.EnrollmentIssuanceRegistryLeafV1{registryLeaf})
 	provisional := ProvisionalIssuanceOperationV1{
 		Schema: 1, ClusterID: "cluster", OperationID: "issue-op", InviteID: "invite", RequestID: "request",
 		ExpectedTransactionStateHash: reservedHash, ClaimOperationHash: reserved.ClaimOperationHash,
-		ProvisionalIssuanceHash: hash, PreviousIssuanceRegistryRoot: wire.EmptyHashV1,
-		ResultingIssuanceRegistryRoot: hash, IssuedAt: "2026-01-01T00:11:00Z",
+		ProvisionalIssuanceHash: hash, IssuanceRegistryLeaf: registryLeaf,
+		PreviousIssuanceRegistryRoot:  previousRegistryRoot,
+		ResultingIssuanceRegistryRoot: resultingRegistryRoot, IssuedAt: "2026-01-01T00:11:00Z",
 	}
 	issued, err := RecordProvisional(reserved, provisional)
 	if err != nil {
