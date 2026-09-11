@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"time"
 )
 
 const (
@@ -267,6 +268,26 @@ func VerifyRecoveryPolicyActivationBundle(bundle *RecoveryPolicyActivationBundle
 		activationHeadHash: activation.Head.HeadHash, activationControlRevision: activation.Head.Body.Payload.ControlRevision,
 		transitionProofHash: transitionHash,
 	}, nil
+}
+
+// VerifyAuthorizedRecoveryPolicyActivationBundle 是计划内 recovery policy 变更的
+// server-side 入口；旧 policy threshold 不能替代发起操作的 certified admin ACL（D116）。
+func VerifyAuthorizedRecoveryPolicyActivationBundle(bundle *RecoveryPolicyActivationBundleV1, previousPolicy *RecoveryPolicyV1,
+	set, previousSet *ControlSetV1, parent *HeadEntryV2, parentQC json.RawMessage,
+	peerCertificateDER []byte, trustedTime time.Time, authorizations []AdminAuthorizationV1,
+	profiles map[string]AdminCertificateProfileV1) (VerifiedRecoveryPolicyTransitionV1, VerifiedAdminOperationV1, error) {
+	verified, err := VerifyRecoveryPolicyActivationBundle(bundle, previousPolicy, set, parent)
+	if err != nil {
+		return VerifiedRecoveryPolicyTransitionV1{}, VerifiedAdminOperationV1{}, err
+	}
+	scope := AdminResourceScopeV1{ScopeKind: "recovery_policy", RecoveryPolicy: &struct{}{}}
+	admin, err := AuthorizeControlOperationAtHead(&bundle.IntentOperation, peerCertificateDER, &scope,
+		trustedTime, OperationSchemaRegistry{"recovery_policy_intent": 1}, parent, parentQC, set,
+		previousSet, authorizations, profiles)
+	if err != nil {
+		return VerifiedRecoveryPolicyTransitionV1{}, VerifiedAdminOperationV1{}, err
+	}
+	return verified, admin, nil
 }
 
 func verifyRecoveryPolicyIntentOperation(bundle *RecoveryPolicyActivationBundleV1, intentHash string, parent *HeadEntryV2) error {

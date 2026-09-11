@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"sort"
+	"time"
 )
 
 const (
@@ -530,6 +532,26 @@ func VerifyControlSetTransitionBundle(bundle *ControlSetTransitionBundleV1, pare
 		finalHeadHash: finalHead.HeadHash, finalControlRevision: finalHead.Body.Payload.ControlRevision,
 		transitionProofHash: transitionHash,
 	}, nil
+}
+
+// VerifyAuthorizedControlSetTransitionBundle 供 private control_api/voter 使用；公开
+// proof reader 不持有 admin ACL preimage，只能验证 quorum，而服务端必须额外验证
+// admin mTLS leaf、signature 与 control-membership scope（D104、D112）。
+func VerifyAuthorizedControlSetTransitionBundle(bundle *ControlSetTransitionBundleV1, parent *HeadEntryV2,
+	parentQC json.RawMessage, previousSet *ControlSetV1, peerCertificateDER []byte, trustedTime time.Time,
+	authorizations []AdminAuthorizationV1, profiles map[string]AdminCertificateProfileV1) (VerifiedControlSetTransitionV1, VerifiedAdminOperationV1, error) {
+	verified, err := VerifyControlSetTransitionBundle(bundle, parent)
+	if err != nil {
+		return VerifiedControlSetTransitionV1{}, VerifiedAdminOperationV1{}, err
+	}
+	scope := AdminResourceScopeV1{ScopeKind: "control_membership", ControlMembership: &struct{}{}}
+	admin, err := AuthorizeControlOperationAtHead(&bundle.MembershipApprovalProof.AdminIntentOperation,
+		peerCertificateDER, &scope, trustedTime, OperationSchemaRegistry{"control_set_transition_intent": 1},
+		parent, parentQC, &bundle.OldControlSet, previousSet, authorizations, profiles)
+	if err != nil {
+		return VerifiedControlSetTransitionV1{}, VerifiedAdminOperationV1{}, err
+	}
+	return verified, admin, nil
 }
 
 func jointMatchesIntent(joint *JointControlSetEntryBodyV1, intent *ControlSetTransitionIntentV1, approvalHash string) bool {

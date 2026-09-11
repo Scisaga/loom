@@ -109,3 +109,9 @@ func TestReconcileRejectsDuplicateResolverIdentity(t *testing.T) {
 		t.Fatal("重复 resolver identity 被计为两个外部观察点")
 	}
 }
+
+func TestReconcileRejectsNilResolverWithoutPanic(t *testing.T) {
+	if _, err := OpenReconciler(filepath.Join(t.TempDir(), "dns.json"), NewMemory(), []Resolver{nil, fixedResolver{id: "resolver-b"}}, func(*CertifiedRRSetIntentV1) error { return nil }); err == nil {
+		t.Fatal("nil resolver 被接受")
+	}
+}

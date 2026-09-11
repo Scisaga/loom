@@ -102,13 +102,15 @@ type StateV1 struct {
 }
 
 type Transition struct {
-	NextPhase         string
-	CertifiedHeadHash string
-	CertifiedAt       string
-	EvidenceRefs      []string
-	ReaderFloor       int64
-	Guard             *RetirementGuardV1
-	Emergency         bool
+	NextPhase                        string             `json:"next_phase"`
+	CertifiedHeadHash                string             `json:"certified_head_hash"`
+	CertifiedAt                      string             `json:"certified_at"`
+	EvidenceRefs                     []string           `json:"evidence_refs"`
+	LocalVerificationEvidenceHash    string             `json:"local_verification_evidence_hash,omitempty"`
+	ExternalVerificationEvidenceHash string             `json:"external_verification_evidence_hash,omitempty"`
+	ReaderFloor                      int64              `json:"reader_floor"`
+	Guard                            *RetirementGuardV1 `json:"guard,omitempty"`
+	Emergency                        bool               `json:"emergency"`
 }
 
 func Allocate(intent IntentV1, certifiedHeadHash string) (StateV1, error) {
@@ -154,8 +156,10 @@ func Advance(intent IntentV1, current StateV1, transition Transition) (StateV1, 
 		if err := notBefore(at, intent.AdvertiseNotBefore, "advertise"); err != nil {
 			return StateV1{}, err
 		}
-		if len(transition.EvidenceRefs) < 2 {
-			return StateV1{}, errors.New("[D120 rotation] advertise 前必须同时提交 local/external verify evidence")
+		if requireHash(transition.LocalVerificationEvidenceHash) != nil ||
+			requireHash(transition.ExternalVerificationEvidenceHash) != nil ||
+			transition.LocalVerificationEvidenceHash == transition.ExternalVerificationEvidenceHash {
+			return StateV1{}, errors.New("[D120 rotation] advertise 前必须提交独立的 local/external verify evidence")
 		}
 	}
 	if transition.NextPhase == "preferred" {
@@ -188,13 +192,19 @@ func Advance(intent IntentV1, current StateV1, transition Transition) (StateV1, 
 		if transition.ReaderFloor < transition.Guard.MinimumReaderFloor || transition.ReaderFloor < intent.MinimumReaderFloor {
 			return StateV1{}, errors.New("[D120 rotation] retire reader floor 未满足")
 		}
-		for label, deadline := range map[string]string{
-			"drain deadline": intent.DrainNotAfter, "retire deadline": intent.RetireNotBefore,
-			"dependency deadline": transition.Guard.MaximumReferenceNotAfter,
-			"offline grace":       transition.Guard.OfflineGraceNotBefore, "quiet window": transition.Guard.QuietNotBefore,
-			"backup retention": transition.Guard.BackupRetainUntil,
-		} {
-			if err := notBefore(at, deadline, label); err != nil {
+		deadlines := []struct {
+			label string
+			value string
+		}{
+			{label: "drain deadline", value: intent.DrainNotAfter},
+			{label: "retire deadline", value: intent.RetireNotBefore},
+			{label: "dependency deadline", value: transition.Guard.MaximumReferenceNotAfter},
+			{label: "offline grace", value: transition.Guard.OfflineGraceNotBefore},
+			{label: "quiet window", value: transition.Guard.QuietNotBefore},
+			{label: "backup retention", value: transition.Guard.BackupRetainUntil},
+		}
+		for _, deadline := range deadlines {
+			if err := notBefore(at, deadline.value, deadline.label); err != nil {
 				return StateV1{}, err
 			}
 		}
@@ -205,7 +215,14 @@ func Advance(intent IntentV1, current StateV1, transition Transition) (StateV1, 
 	if transition.NextPhase == "abandoned" && current.Phase == "preferred" {
 		return StateV1{}, errors.New("[D127 rotation] target preferred 后不能用普通 cancel 跳过 drain")
 	}
-	root, err := refsRoot(transition.EvidenceRefs)
+	evidenceRefs := append([]string(nil), transition.EvidenceRefs...)
+	if transition.LocalVerificationEvidenceHash != "" {
+		evidenceRefs = append(evidenceRefs, transition.LocalVerificationEvidenceHash)
+	}
+	if transition.ExternalVerificationEvidenceHash != "" {
+		evidenceRefs = append(evidenceRefs, transition.ExternalVerificationEvidenceHash)
+	}
+	root, err := refsRoot(evidenceRefs)
 	if err != nil {
 		return StateV1{}, err
 	}
@@ -371,7 +388,7 @@ func validateState(intent IntentV1, state StateV1) error {
 		state.SourceListenerGeneration != nil && *state.SourceListenerGeneration != *intent.FrozenDependencies.SourceListenerGeneration {
 		return errors.New("[D127 rotation] state 与 frozen intent 不匹配")
 	}
-	if !oneOf(state.Phase, "allocated", "preparing", "advertised", "preferred", "draining", "retired", "abandoned", "revoked") ||
+	if !oneOf(state.Phase, "allocated", "prepared", "advertised", "preferred", "draining", "retired", "abandoned", "revoked") ||
 		requireHash(state.LastTransitionHeadHash) != nil || requireHash(state.EvidenceRefsRoot) != nil {
 		return errors.New("[D120 rotation] state phase/head/evidence root 无效")
 	}
@@ -386,11 +403,11 @@ func allowedTransition(from, to string, emergency bool) bool {
 	if emergency {
 		return to == "revoked" && from != "retired" && from != "abandoned" && from != "revoked"
 	}
-	allowed := map[string]string{"allocated": "preparing", "preparing": "advertised", "advertised": "preferred", "preferred": "draining", "draining": "retired"}
+	allowed := map[string]string{"allocated": "prepared", "prepared": "advertised", "advertised": "preferred", "preferred": "draining", "draining": "retired"}
 	if allowed[from] == to {
 		return true
 	}
-	return to == "abandoned" && (from == "allocated" || from == "preparing" || from == "advertised")
+	return to == "abandoned" && (from == "allocated" || from == "prepared" || from == "advertised")
 }
 
 func notBefore(now time.Time, deadline, label string) error {

@@ -1,6 +1,7 @@
 package rotation
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 
@@ -39,11 +40,11 @@ func TestRotationRequiresEvidenceFloorAndGuard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state = mustAdvance(t, intent, state, Transition{NextPhase: "preparing", CertifiedHeadHash: testHash, CertifiedAt: "2026-01-01T00:00:00Z"})
-	if _, err := Advance(intent, state, Transition{NextPhase: "advertised", CertifiedHeadHash: testHash, CertifiedAt: "2026-01-01T00:00:00Z", EvidenceRefs: []string{testHash}}); err == nil {
+	state = mustAdvance(t, intent, state, Transition{NextPhase: "prepared", CertifiedHeadHash: testHash, CertifiedAt: "2026-01-01T00:00:00Z"})
+	if _, err := Advance(intent, state, Transition{NextPhase: "advertised", CertifiedHeadHash: testHash, CertifiedAt: "2026-01-01T00:00:00Z", LocalVerificationEvidenceHash: testHash}); err == nil {
 		t.Fatal("advertise without local+external evidence accepted")
 	}
-	state = mustAdvance(t, intent, state, Transition{NextPhase: "advertised", CertifiedHeadHash: testHash, CertifiedAt: "2026-01-01T00:00:00Z", EvidenceRefs: []string{testHash, strings.Replace(testHash, "11", "22", 1)}})
+	state = mustAdvance(t, intent, state, Transition{NextPhase: "advertised", CertifiedHeadHash: testHash, CertifiedAt: "2026-01-01T00:00:00Z", LocalVerificationEvidenceHash: testHash, ExternalVerificationEvidenceHash: strings.Replace(testHash, "11", "22", 1)})
 	if _, err := Advance(intent, state, Transition{NextPhase: "preferred", CertifiedHeadHash: testHash, CertifiedAt: "2026-01-01T00:01:00Z", ReaderFloor: 6}); err == nil {
 		t.Fatal("prefer below reader floor accepted")
 	}
@@ -70,7 +71,7 @@ func TestFrozenDependencyMutationRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	intent.FrozenDependencies.PortPoolHash = strings.Replace(testHash, "11", "33", 1)
-	if _, err := Advance(intent, state, Transition{NextPhase: "preparing", CertifiedHeadHash: testHash, CertifiedAt: "2026-01-01T00:00:00Z"}); err == nil {
+	if _, err := Advance(intent, state, Transition{NextPhase: "prepared", CertifiedHeadHash: testHash, CertifiedAt: "2026-01-01T00:00:00Z"}); err == nil {
 		t.Fatal("mutable latest dependency replaced frozen bytes")
 	}
 }
@@ -82,8 +83,8 @@ func TestNATPoolAndWGOwnership(t *testing.T) {
 		t.Fatalf("allocation failed: %#v %#v %v", public, local, err)
 	}
 	overlap := WireGuardOverlap{
-		Old: WireGuardGeneration{Generation: 1, InterfaceName: "wg-old", ListenTuple: Tuple{Transport: "udp", Address: "0.0.0.0", Port: 42000}, PrivateKeyRef: "key-old", PeerPublicKey: "peer-old", TunnelAddress: "10.1.0.1/32", RouteTable: 100, FwMark: 100, AllowedIPs: []string{"10.2.0.0/16"}, State: "draining"},
-		New: WireGuardGeneration{Generation: 2, InterfaceName: "wg-new", ListenTuple: Tuple{Transport: "udp", Address: "0.0.0.0", Port: 42001}, PrivateKeyRef: "key-new", PeerPublicKey: "peer-new", TunnelAddress: "10.1.0.2/32", RouteTable: 101, FwMark: 101, AllowedIPs: []string{"10.2.0.0/16"}, State: "active"},
+		Old: WireGuardGeneration{Generation: 1, InterfaceName: "wg-old", ListenTuple: Tuple{Transport: "udp", Address: "0.0.0.0", Port: 42000}, PrivateKeyRef: wire.HashRaw("test-wg-secret-v1", []byte("old")), PeerPublicKey: wgPublicKey(1), TunnelAddress: "10.1.0.1/32", RouteTable: 100, FwMark: 100, AllowedIPs: []string{"10.2.0.0/16"}, State: "draining"},
+		New: WireGuardGeneration{Generation: 2, InterfaceName: "wg-new", ListenTuple: Tuple{Transport: "udp", Address: "0.0.0.0", Port: 42001}, PrivateKeyRef: wire.HashRaw("test-wg-secret-v1", []byte("new")), PeerPublicKey: wgPublicKey(2), TunnelAddress: "10.1.0.2/32", RouteTable: 101, FwMark: 101, AllowedIPs: []string{"10.2.0.0/16"}, State: "active"},
 	}
 	if err := overlap.Validate(); err != nil {
 		t.Fatal(err)
@@ -92,6 +93,12 @@ func TestNATPoolAndWGOwnership(t *testing.T) {
 	if err := overlap.Validate(); err == nil {
 		t.Fatal("WG overlap sharing interface accepted")
 	}
+}
+
+func wgPublicKey(last byte) string {
+	key := make([]byte, 32)
+	key[len(key)-1] = last
+	return base64.StdEncoding.EncodeToString(key)
 }
 
 func TestGatesStayClosedWithoutWindowsEvidence(t *testing.T) {

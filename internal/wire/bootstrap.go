@@ -143,6 +143,26 @@ type EnrollmentIntentPreflightResponseV1 struct {
 	DeviceEnrollmentIntentOpening    DeviceEnrollmentIntentOpeningV1    `json:"device_enrollment_intent_opening"`
 }
 
+// VerifiedBootstrapCapabilityV1 只由完整 issuer registry/policy/time 验证产生；
+// ingress runtime 不接受调用方自行声明 capability 已验证（D115、D131）。
+type VerifiedBootstrapCapabilityV1 struct {
+	body         BootstrapTunnelCapabilityBodyV1
+	capabilityID string
+}
+
+func (verified VerifiedBootstrapCapabilityV1) Body() BootstrapTunnelCapabilityBodyV1 {
+	body := verified.body
+	if body.ResumeBinding != nil {
+		binding := *body.ResumeBinding
+		body.ResumeBinding = &binding
+	}
+	return body
+}
+
+func (verified VerifiedBootstrapCapabilityV1) CapabilityID() string {
+	return verified.capabilityID
+}
+
 func ValidateInviteIssuancePolicy(policy *InviteIssuancePolicyV2) error {
 	if policy == nil || policy.Schema != 2 || !validIdentifier(policy.ClusterID, 128) ||
 		!validIdentifier(policy.PolicyID, 128) || policy.Generation < 1 ||
@@ -435,6 +455,20 @@ func VerifyCapabilityAuthorization(capability *BootstrapTunnelCapabilityV1, proo
 		return errors.New("[D131 capability] capability validity 超出 issuer authorization")
 	}
 	return nil
+}
+
+func VerifyCapabilityAuthorizationEvidence(capability *BootstrapTunnelCapabilityV1,
+	proof *BootstrapIssuerAuthorizationProofV1, policy *InviteIssuancePolicyV2,
+	trustedTime time.Time) (VerifiedBootstrapCapabilityV1, error) {
+	if err := VerifyCapabilityAuthorization(capability, proof, policy, trustedTime); err != nil {
+		return VerifiedBootstrapCapabilityV1{}, err
+	}
+	body := capability.Body
+	if body.ResumeBinding != nil {
+		binding := *body.ResumeBinding
+		body.ResumeBinding = &binding
+	}
+	return VerifiedBootstrapCapabilityV1{body: body, capabilityID: capability.CapabilityID}, nil
 }
 
 // VerifyInviteDescriptorBindings 把 QR、certified record、policy、public commitment 与 issuer proof

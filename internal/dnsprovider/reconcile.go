@@ -74,9 +74,14 @@ func OpenReconciler(path string, provider Provider, resolvers []Resolver, verify
 		return nil, errors.New("[D125 DNS] reconciler path/provider/authority verifier/双 resolver 缺失")
 	}
 	resolverCopy := append([]Resolver(nil), resolvers...)
+	for _, resolver := range resolverCopy {
+		if resolver == nil {
+			return nil, errors.New("[D125 DNS] external resolver 不能为空")
+		}
+	}
 	sort.Slice(resolverCopy, func(i, j int) bool { return resolverCopy[i].ID() < resolverCopy[j].ID() })
 	for i, resolver := range resolverCopy {
-		if resolver == nil || !validAuditID(resolver.ID()) || i > 0 && resolverCopy[i-1].ID() == resolver.ID() {
+		if !validAuditID(resolver.ID()) || i > 0 && resolverCopy[i-1].ID() == resolver.ID() {
 			return nil, errors.New("[D125 DNS] external resolver ID 无效或重复")
 		}
 	}
