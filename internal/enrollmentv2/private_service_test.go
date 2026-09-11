@@ -120,6 +120,49 @@ func TestPrivateEnrollmentHTTPRequiresVerifiedOuterContextAndInnerTLS(t *testing
 	}
 }
 
+func TestAdmissionVoterIndependentlyVerifiesPrivateSubmission(t *testing.T) {
+	fixture := newPrivateServiceFixture(t)
+	attempt := verifiedPrivateAttempt(t, fixture)
+	attestation, err := attempt.AdmissionAttestation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, member, enrollmentKey := controlSet(t)
+	voter, err := NewAdmissionVoter(member.MemberID, set, enrollmentKey, func() time.Time { return fixture.now },
+		func(_ context.Context, clusterID, inviteID string) (InviteMaterialV2, error) {
+			if clusterID != fixture.material.Record.ClusterID || inviteID != fixture.material.Record.InviteID {
+				return InviteMaterialV2{}, context.Canceled
+			}
+			return fixture.material, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := EnrollmentAdmissionVoteRequestV1{Schema: 1, EnrollmentServiceID: "enrollment-service",
+		Submission: attempt.Submission(), Attestation: attestation}
+	signature, err := voter.VoteAdmission(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wire.VerifyEnrollmentAdmissionSignature(&attestation, &signature, &set); err != nil {
+		t.Fatal(err)
+	}
+	tampered := request
+	tampered.Submission.Token = base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x45}, 32))
+	if _, err := voter.VoteAdmission(context.Background(), tampered); err == nil {
+		t.Fatal("peer voter 信任 ingress，接受了不同 token preimage")
+	}
+	expired, err := NewAdmissionVoter(member.MemberID, set, enrollmentKey,
+		func() time.Time { return time.Date(2026, 9, 11, 11, 15, 0, 0, time.UTC) },
+		func(context.Context, string, string) (InviteMaterialV2, error) { return fixture.material, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := expired.VoteAdmission(context.Background(), request); err == nil {
+		t.Fatal("peer voter 在 Invite expiry 后签发了新 admission")
+	}
+}
+
 func newPrivateServiceFixture(t *testing.T) privateServiceFixture {
 	t.Helper()
 	now := time.Date(2026, 9, 11, 11, 5, 0, 0, time.UTC)
@@ -192,7 +235,16 @@ func newPrivateServiceFixture(t *testing.T) privateServiceFixture {
 	authorityHead := privateTestHead(t, setHash, bootstrapHead.EntryHash, bootstrapHead.HeadHash,
 		wire.HashRaw("private-service-test", []byte("authorization-operation")), authorizationRoot,
 		"ordinary", 2, "2026-09-11T11:00:01Z")
-	serviceHash := wire.HashRaw("private-service-test", []byte("service-ref"))
+	serviceRef := wire.PrivateEnrollmentServiceRefV1{
+		Schema: 1, ServiceID: "enrollment-service", OverlayIP: "10.30.0.1", TCPPort: 7444,
+		InternalCAProfileRef: "enrollment-internal-ca", ServerIdentitySPKIPins: []string{
+			wire.HashRaw("private-service-test", []byte("enrollment-service-spki")),
+		}, ServiceGeneration: 1,
+	}
+	serviceHash, err := wire.PrivateEnrollmentServiceRefHash(&serviceRef)
+	if err != nil {
+		t.Fatal(err)
+	}
 	record := wire.CertifiedInviteRecordV2{
 		Schema: 2, ClusterID: "cluster", InviteID: "invite", Generation: 1,
 		IssuedAt: "2026-09-11T11:00:00Z", ExpiresAt: "2026-09-11T11:15:00Z",
@@ -254,7 +306,8 @@ func newPrivateServiceFixture(t *testing.T) privateServiceFixture {
 	}
 	material := InviteMaterialV2{
 		Status: "available", Record: record, Policy: policy, Commitment: commitment, Opening: opening,
-		ParentHead: authorityHead, RecordHead: recordHead, RecordHeadQC: recordHeadQC, ControlSet: set, InviteOperationLeaf: operationLeaf,
+		EnrollmentServiceRef: serviceRef,
+		ParentHead:           authorityHead, RecordHead: recordHead, RecordHeadQC: recordHeadQC, ControlSet: set, InviteOperationLeaf: operationLeaf,
 		InviteLeafIndex: 0, InviteTreeSize: 1, InviteAuditPath: []string{},
 	}
 	processed := 0

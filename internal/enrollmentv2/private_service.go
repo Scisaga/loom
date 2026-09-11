@@ -20,20 +20,21 @@ const maximumPrivateRequestBytes = 4 << 20
 // InviteMaterialV2 是 private Enrollment 从本机 certified state 读取的 exact Invite
 // preimage 与包含证明。公网 distribution 不得提供 Opening（D115、D129、D131）。
 type InviteMaterialV2 struct {
-	Status              string
-	Record              wire.CertifiedInviteRecordV2
-	Policy              wire.InviteIssuancePolicyV2
-	Commitment          wire.DeviceEnrollmentIntentCommitmentV1
-	Opening             wire.DeviceEnrollmentIntentOpeningV1
-	ParentHead          wire.HeadEntryV2
-	RecordHead          wire.HeadEntryV2
-	RecordHeadQC        json.RawMessage
-	ControlSet          wire.ControlSetV1
-	PreviousControlSet  *wire.ControlSetV1
-	InviteOperationLeaf wire.ControlOperationLeafV1
-	InviteLeafIndex     int64
-	InviteTreeSize      int64
-	InviteAuditPath     []string
+	Status               string
+	Record               wire.CertifiedInviteRecordV2
+	Policy               wire.InviteIssuancePolicyV2
+	Commitment           wire.DeviceEnrollmentIntentCommitmentV1
+	Opening              wire.DeviceEnrollmentIntentOpeningV1
+	EnrollmentServiceRef wire.PrivateEnrollmentServiceRefV1
+	ParentHead           wire.HeadEntryV2
+	RecordHead           wire.HeadEntryV2
+	RecordHeadQC         json.RawMessage
+	ControlSet           wire.ControlSetV1
+	PreviousControlSet   *wire.ControlSetV1
+	InviteOperationLeaf  wire.ControlOperationLeafV1
+	InviteLeafIndex      int64
+	InviteTreeSize       int64
+	InviteAuditPath      []string
 }
 
 // InviteMaterialReader 必须做线性化读取；PrivateService 会再次验证所有 cryptographic
@@ -78,23 +79,31 @@ func (attempt VerifiedClaimAttemptV2) claimRecordHash() string {
 }
 
 func (attempt VerifiedClaimAttemptV2) AdmissionAttestation() (wire.EnrollmentAdmissionAttestationBodyV1, error) {
-	retryNotAfter, err := checkedAddSecondsForPrivate(attempt.material.Record.ExpiresAt, attempt.material.Policy.MaximumReservationRetrySeconds)
+	return admissionAttestationForVerified(&attempt.material, &attempt.submission, attempt.claim)
+}
+
+func admissionAttestationForVerified(material *InviteMaterialV2, submission *wire.EnrollmentClaimSubmissionV2,
+	claim wire.VerifiedEnrollmentClaimV2) (wire.EnrollmentAdmissionAttestationBodyV1, error) {
+	if material == nil || submission == nil {
+		return wire.EnrollmentAdmissionAttestationBodyV1{}, errors.New("[D129 Enrollment] admission material/submission 不能为空")
+	}
+	retryNotAfter, err := checkedAddSecondsForPrivate(material.Record.ExpiresAt, material.Policy.MaximumReservationRetrySeconds)
 	if err != nil {
 		return wire.EnrollmentAdmissionAttestationBodyV1{}, err
 	}
-	core := attempt.submission.ClaimCore
+	core := submission.ClaimCore
 	result := wire.EnrollmentAdmissionAttestationBodyV1{
 		Schema: 1, AttestationType: "enrollment_admission", ClusterID: core.ClusterID,
 		InviteID: core.InviteID, RequestID: core.RequestID,
 		CertifiedInviteRecordHash:            core.CertifiedInviteRecordHash,
 		DeviceEnrollmentIntentCommitmentHash: core.DeviceEnrollmentIntentCommitmentHash,
 		DeviceEnrollmentIntentOpeningHash:    core.DeviceEnrollmentIntentOpeningHash,
-		TokenCommitment:                      attempt.claim.TokenCommitment(), ClaimCoreHash: attempt.claim.ClaimCoreHash(),
-		IdentityKeyHash: attempt.claim.IdentityKeyHash(), WrappingKeyHash: attempt.claim.WrappingKeyHash(),
-		CSRHash: attempt.claim.CSRHash(), PoPVerificationProfile: "loom-enrollment-server-nonce-detached-v2",
+		TokenCommitment:                      claim.TokenCommitment(), ClaimCoreHash: claim.ClaimCoreHash(),
+		IdentityKeyHash: claim.IdentityKeyHash(), WrappingKeyHash: claim.WrappingKeyHash(),
+		CSRHash: claim.CSRHash(), PoPVerificationProfile: "loom-enrollment-server-nonce-detached-v2",
 		BaseRecoveryEpoch: core.BaseRecoveryEpoch, BaseControlEpoch: core.BaseControlEpoch,
 		BaseControlSetHash: core.BaseControlSetHash, BaseHeadHash: core.BaseHeadHash,
-		AdmissionNotAfter: attempt.material.Record.ExpiresAt, RetryNotAfter: retryNotAfter,
+		AdmissionNotAfter: material.Record.ExpiresAt, RetryNotAfter: retryNotAfter,
 	}
 	if err := wire.ValidateEnrollmentAdmission(&result); err != nil {
 		return wire.EnrollmentAdmissionAttestationBodyV1{}, err
@@ -240,20 +249,11 @@ func (service *PrivateService) SubmitClaim(ctx context.Context, capability wire.
 
 func (service *PrivateService) verifyCoreBindings(core *wire.EnrollmentClaimCoreV2,
 	capability wire.VerifiedBootstrapCapabilityV1, material *InviteMaterialV2) (string, error) {
-	coreHash, err := wire.EnrollmentClaimCoreHash(core)
+	coreHash, err := verifyCoreMaterialBindings(core, material)
 	if err != nil {
 		return "", err
 	}
-	openingHash, _ := wire.IntentOpeningHash(&material.Opening)
-	intentHash, _ := wire.EnrollmentIntentHash(&material.Opening.DeviceEnrollmentIntent)
-	payload := material.RecordHead.Body.Payload
-	setHash, _ := wire.ControlSetHash(&material.ControlSet)
-	if core.ClusterID != material.Record.ClusterID || core.InviteID != material.Record.InviteID ||
-		core.CertifiedInviteRecordHash != capability.Body().CommittedInviteRecordHash ||
-		core.DeviceEnrollmentIntentCommitmentHash != material.Record.DeviceEnrollmentIntentCommitmentHash ||
-		core.DeviceEnrollmentIntentOpeningHash != openingHash || core.AcceptedDeviceEnrollmentIntentHash != intentHash ||
-		core.ClientPlatform != material.Opening.DeviceEnrollmentIntent.Platform || core.BaseRecoveryEpoch != payload.RecoveryEpoch ||
-		core.BaseControlEpoch != payload.ControlEpoch || core.BaseControlSetHash != setHash || core.BaseHeadHash != material.RecordHead.HeadHash {
+	if core.CertifiedInviteRecordHash != capability.Body().CommittedInviteRecordHash {
 		return "", errors.New("[D129 Enrollment] claim core 未绑定 exact private intent/base authority")
 	}
 	if binding := capability.Body().ResumeBinding; binding != nil {
@@ -286,20 +286,20 @@ func (service *PrivateService) boundMaterial(ctx context.Context, capability wir
 		body.Mode == "resume_committed_claim" && material.Status == "available" {
 		return InviteMaterialV2{}, errors.New("[D130 Enrollment] Invite/transaction 状态不允许当前 capability mode")
 	}
-	if err := wire.ValidateCertifiedInviteRecord(&material.Record, &material.Policy); err != nil {
+	if err := validateCertifiedInviteMaterial(&material, clusterID, inviteID); err != nil {
 		return InviteMaterialV2{}, err
 	}
 	wantRecordHash, _ := wire.CertifiedInviteRecordHash(&material.Record, &material.Policy)
 	policyHash, _ := wire.InviteIssuancePolicyHash(&material.Policy)
-	setHash, _ := wire.ControlSetHash(&material.ControlSet)
-	payload := material.RecordHead.Body.Payload
+	serviceHash, _ := wire.PrivateEnrollmentServiceRefHash(&material.EnrollmentServiceRef)
 	if wantRecordHash != recordHash || material.Record.ClusterID != clusterID || material.Record.InviteID != inviteID ||
 		material.Record.InviteIssuancePolicyHash != policyHash || body.InviteIssuancePolicyHash != policyHash ||
 		material.Record.BootstrapIssuerAuthorizationHash != body.BootstrapIssuerAuthorizationHash ||
 		material.Record.BootstrapIssuerRegistryRoot != body.BootstrapIssuerRegistryRoot ||
-		material.Record.BootstrapIssuerRegistryRoot != payload.BootstrapIssuerRegistryRoot ||
-		material.Record.EnrollmentServiceRefHash != body.EnrollmentServiceRefHash ||
-		payload.ClusterID != clusterID || payload.ControlSetHash != setHash || material.Record.ParentHeadHash != payload.ParentHeadHash {
+		material.Record.EnrollmentServiceRefHash != body.EnrollmentServiceRefHash || serviceHash != body.EnrollmentServiceRefHash ||
+		material.EnrollmentServiceRef.ServiceID != service.serviceID ||
+		material.EnrollmentServiceRef.OverlayIP != body.AllowedDestinationIP ||
+		material.EnrollmentServiceRef.TCPPort != body.AllowedDestinationPort {
 		return InviteMaterialV2{}, errors.New("[D129 Enrollment] capability/record/policy/head binding 无效")
 	}
 	if body.Mode == "initial_claim" {
@@ -308,28 +308,104 @@ func (service *PrivateService) boundMaterial(ctx context.Context, capability wir
 			return InviteMaterialV2{}, errors.New("[D131 Enrollment] initial capability/Invite 已过期或期限越界")
 		}
 	}
+	return cloneInviteMaterial(material), nil
+}
+
+func validateCertifiedInviteMaterial(material *InviteMaterialV2, clusterID, inviteID string) error {
+	if material == nil || material.Record.ClusterID != clusterID || material.Record.InviteID != inviteID {
+		return errors.New("[D129 Enrollment] Invite material identity 无效")
+	}
+	if err := wire.ValidateCertifiedInviteRecord(&material.Record, &material.Policy); err != nil {
+		return err
+	}
+	wantRecordHash, _ := wire.CertifiedInviteRecordHash(&material.Record, &material.Policy)
+	policyHash, _ := wire.InviteIssuancePolicyHash(&material.Policy)
+	serviceHash, serviceErr := wire.PrivateEnrollmentServiceRefHash(&material.EnrollmentServiceRef)
+	setHash, _ := wire.ControlSetHash(&material.ControlSet)
+	payload := material.RecordHead.Body.Payload
+	if serviceErr != nil || material.Record.InviteIssuancePolicyHash != policyHash ||
+		material.Record.EnrollmentServiceRefHash != serviceHash || material.Record.BootstrapIssuerRegistryRoot != payload.BootstrapIssuerRegistryRoot ||
+		payload.ClusterID != clusterID || payload.ControlSetHash != setHash || material.Record.ParentHeadHash != payload.ParentHeadHash {
+		return errors.New("[D129 Enrollment] Invite record/policy/service/head binding 无效")
+	}
 	if err := wire.VerifyConfigQCAuthority(material.RecordHead.HeadHash, material.RecordHeadQC,
 		&material.RecordHead, &material.ControlSet, material.PreviousControlSet); err != nil {
-		return InviteMaterialV2{}, err
+		return err
 	}
 	if err := wire.ValidateHeadEntry(&material.RecordHead, &material.ParentHead); err != nil {
-		return InviteMaterialV2{}, errors.New("[D129 Enrollment] Invite record head 不在 exact parent 后")
+		return errors.New("[D129 Enrollment] Invite record head 不在 exact parent 后")
 	}
 	if material.InviteOperationLeaf.OperationID != material.Record.OperationID || material.InviteOperationLeaf.ObjectID != wantRecordHash ||
 		wire.VerifyControlOperationInclusion(&material.InviteOperationLeaf, material.InviteLeafIndex,
 			material.InviteTreeSize, material.InviteAuditPath, &material.RecordHead) != nil {
-		return InviteMaterialV2{}, errors.New("[D129 Enrollment] Invite 缺 exact committed inclusion proof")
+		return errors.New("[D129 Enrollment] Invite 缺 exact committed inclusion proof")
 	}
 	commitment, commitmentHash, err := wire.IntentCommitment(&material.Opening)
 	if err != nil || commitmentHash != material.Record.DeviceEnrollmentIntentCommitmentHash ||
 		!wire.EqualCanonical(commitment, material.Commitment) {
-		return InviteMaterialV2{}, errors.New("[D129 Enrollment] private opening 与 certified commitment 不匹配")
+		return errors.New("[D129 Enrollment] private opening 与 certified commitment 不匹配")
 	}
 	openingBytes, err := wire.MarshalCanonical(material.Opening)
 	if err != nil || int64(len(openingBytes)) > material.Policy.MaximumIntentOpeningBytes {
-		return InviteMaterialV2{}, errors.New("[D129 Enrollment] private opening 超出 certified policy")
+		return errors.New("[D129 Enrollment] private opening 超出 certified policy")
 	}
-	return cloneInviteMaterial(material), nil
+	return nil
+}
+
+func verifyCoreMaterialBindings(core *wire.EnrollmentClaimCoreV2, material *InviteMaterialV2) (string, error) {
+	if material == nil {
+		return "", errors.New("[D129 Enrollment] claim material 不能为空")
+	}
+	coreHash, err := wire.EnrollmentClaimCoreHash(core)
+	if err != nil {
+		return "", err
+	}
+	recordHash, _ := wire.CertifiedInviteRecordHash(&material.Record, &material.Policy)
+	openingHash, _ := wire.IntentOpeningHash(&material.Opening)
+	intentHash, _ := wire.EnrollmentIntentHash(&material.Opening.DeviceEnrollmentIntent)
+	payload := material.RecordHead.Body.Payload
+	setHash, _ := wire.ControlSetHash(&material.ControlSet)
+	if core.ClusterID != material.Record.ClusterID || core.InviteID != material.Record.InviteID ||
+		core.CertifiedInviteRecordHash != recordHash ||
+		core.DeviceEnrollmentIntentCommitmentHash != material.Record.DeviceEnrollmentIntentCommitmentHash ||
+		core.DeviceEnrollmentIntentOpeningHash != openingHash || core.AcceptedDeviceEnrollmentIntentHash != intentHash ||
+		core.ClientPlatform != material.Opening.DeviceEnrollmentIntent.Platform || core.BaseRecoveryEpoch != payload.RecoveryEpoch ||
+		core.BaseControlEpoch != payload.ControlEpoch || core.BaseControlSetHash != setHash || core.BaseHeadHash != material.RecordHead.HeadHash {
+		return "", errors.New("[D129 Enrollment] claim core 未绑定 exact private intent/base authority")
+	}
+	return coreHash, nil
+}
+
+// VerifyPeerAdmissionAttempt 供每个 enrollment voter 在 control-peer mTLS 后独立
+// 验证完整秘密提交；只返回错误，不暴露可持久化的 token/challenge/CSR 正文。
+func VerifyPeerAdmissionAttempt(material *InviteMaterialV2, submission *wire.EnrollmentClaimSubmissionV2,
+	attestation *wire.EnrollmentAdmissionAttestationBodyV1, enrollmentServiceID string, now time.Time) error {
+	if material == nil || submission == nil || attestation == nil || now.IsZero() || material.Status != "available" {
+		return errors.New("[D129 Enrollment] peer admission context/Invite 状态无效")
+	}
+	if err := validateCertifiedInviteMaterial(material, submission.ClaimCore.ClusterID, submission.ClaimCore.InviteID); err != nil {
+		return err
+	}
+	if material.EnrollmentServiceRef.ServiceID != enrollmentServiceID {
+		return errors.New("[D129 Enrollment] peer admission service 不属于 certified Invite")
+	}
+	expires, err := wire.ParseTimeZ(material.Record.ExpiresAt)
+	if err != nil || !now.Before(expires) {
+		return errors.New("[D130 Enrollment] Invite expiry 后禁止新的 admission")
+	}
+	verified, err := wire.VerifyEnrollmentClaimSubmission(submission, &material.Record, &material.Policy,
+		&material.Opening, enrollmentServiceID, now)
+	if err != nil {
+		return err
+	}
+	if _, err := verifyCoreMaterialBindings(&submission.ClaimCore, material); err != nil {
+		return err
+	}
+	want, err := admissionAttestationForVerified(material, submission, verified)
+	if err != nil || !wire.EqualCanonical(want, *attestation) {
+		return errors.New("[D129 Enrollment] peer admission attestation 未绑定 exact verified submission")
+	}
+	return nil
 }
 
 // ServeHTTP 永远拒绝缺少 outer capability verifier 的直接挂载。bootstrap ingress 必须
@@ -435,6 +511,7 @@ func cloneInviteMaterial(value InviteMaterialV2) InviteMaterialV2 {
 	result.Policy = clonePrivateValue(value.Policy)
 	result.Commitment = clonePrivateValue(value.Commitment)
 	result.Opening = clonePrivateValue(value.Opening)
+	result.EnrollmentServiceRef = clonePrivateValue(value.EnrollmentServiceRef)
 	result.ParentHead = clonePrivateValue(value.ParentHead)
 	result.RecordHead = clonePrivateValue(value.RecordHead)
 	result.ControlSet = clonePrivateValue(value.ControlSet)

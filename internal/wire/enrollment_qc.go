@@ -93,7 +93,7 @@ func SignEnrollmentAdmission(body EnrollmentAdmissionAttestationBodyV1, member C
 }
 
 func VerifyEnrollmentAdmissionQC(qc *StableEnrollmentAdmissionQCV1, set *ControlSetV1) error {
-	if qc == nil || qc.Schema != 1 || qc.QCType != "stable_enrollment_admission" {
+	if qc == nil || set == nil || qc.Schema != 1 || qc.QCType != "stable_enrollment_admission" {
 		return errors.New("[D129 Enrollment] admission QC type/schema 无效")
 	}
 	if err := ValidateEnrollmentAdmission(&qc.Attestation); err != nil {
@@ -103,6 +103,14 @@ func VerifyEnrollmentAdmissionQC(qc *StableEnrollmentAdmissionQCV1, set *Control
 		return errors.New("[D129 Enrollment] admission QC cluster 不匹配")
 	}
 	return verifyEnrollmentSignatures(DomainEnrollmentAdmissionSignature, qc.Attestation, qc.Signatures, qc.SignerRefs, set)
+}
+
+func VerifyEnrollmentAdmissionSignature(body *EnrollmentAdmissionAttestationBodyV1,
+	signature *ControlEnrollmentSignatureV1, set *ControlSetV1) error {
+	if err := ValidateEnrollmentAdmission(body); err != nil {
+		return err
+	}
+	return verifyOneEnrollmentSignature(DomainEnrollmentAdmissionSignature, *body, signature, set)
 }
 
 func EnrollmentAdmissionQCHash(qc *StableEnrollmentAdmissionQCV1) (string, error) {
@@ -141,7 +149,7 @@ func SignEnrollmentApproval(body EnrollmentApprovalAttestationBodyV2, member Con
 }
 
 func VerifyEnrollmentApprovalQC(qc *StableEnrollmentApprovalQCV2, set *ControlSetV1) error {
-	if qc == nil || qc.Schema != 2 || qc.QCType != "stable_enrollment_approval" {
+	if qc == nil || set == nil || qc.Schema != 2 || qc.QCType != "stable_enrollment_approval" {
 		return errors.New("[D130 Enrollment] approval QC type/schema 无效")
 	}
 	if err := ValidateEnrollmentApproval(&qc.Attestation); err != nil {
@@ -151,6 +159,14 @@ func VerifyEnrollmentApprovalQC(qc *StableEnrollmentApprovalQCV2, set *ControlSe
 		return errors.New("[D130 Enrollment] approval QC cluster 不匹配")
 	}
 	return verifyEnrollmentSignatures(DomainEnrollmentApprovalSignature, qc.Attestation, qc.Signatures, qc.SignerRefs, set)
+}
+
+func VerifyEnrollmentApprovalSignature(body *EnrollmentApprovalAttestationBodyV2,
+	signature *ControlEnrollmentSignatureV1, set *ControlSetV1) error {
+	if err := ValidateEnrollmentApproval(body); err != nil {
+		return err
+	}
+	return verifyOneEnrollmentSignature(DomainEnrollmentApprovalSignature, *body, signature, set)
 }
 
 func EnrollmentApprovalQCHash(qc *StableEnrollmentApprovalQCV2) (string, error) {
@@ -204,12 +220,6 @@ func verifyEnrollmentSignatures(domain string, body any, signatures []ControlEnr
 	}) {
 		return errors.New("[D129 Enrollment] enrollment signatures 未规范排序")
 	}
-	members := make(map[string]ControlMemberV1, len(set.Members))
-	for _, member := range set.Members {
-		members[member.MemberID] = member
-	}
-	canonical, _ := MarshalCanonical(body)
-	message, _ := Frame(domain, canonical)
 	seen := make(map[string]struct{}, len(signatures))
 	for index, signature := range signatures {
 		ref := refs[index]
@@ -218,22 +228,47 @@ func verifyEnrollmentSignatures(domain string, body any, signatures []ControlEnr
 				refs[index-1].MemberID == ref.MemberID && refs[index-1].EnrollmentKeyID >= ref.EnrollmentKeyID) {
 			return errors.New("[D129 Enrollment] signer refs 必须与 signatures 同序同字段")
 		}
-		member, ok := members[signature.MemberID]
-		if !ok || signature.Algorithm != "ed25519" || signature.EnrollmentKeyID != member.EnrollmentKeyID {
-			return errors.New("[D129 Enrollment] enrollment signer/key purpose 无效")
-		}
 		if _, duplicate := seen[signature.MemberID]; duplicate {
 			return errors.New("[D129 Enrollment] enrollment signer 重复")
 		}
 		seen[signature.MemberID] = struct{}{}
-		public, err := decodeRawURL(member.EnrollmentPublicKey, ed25519.PublicKeySize)
-		if err != nil {
-			return errors.New("[D102 keys] enrollment public key 无效")
+		if err := verifyOneEnrollmentSignature(domain, body, &signature, set); err != nil {
+			return err
 		}
-		rawSignature, err := decodeRawURL(signature.Signature, ed25519.SignatureSize)
-		if err != nil || !ed25519.Verify(ed25519.PublicKey(public), message, rawSignature) {
-			return errors.New("[D129 Enrollment] enrollment signature 无效")
+	}
+	return nil
+}
+
+func verifyOneEnrollmentSignature(domain string, body any, signature *ControlEnrollmentSignatureV1,
+	set *ControlSetV1) error {
+	if signature == nil {
+		return errors.New("[D129 Enrollment] enrollment signature 不能为空")
+	}
+	if err := ValidateControlSet(set); err != nil {
+		return err
+	}
+	var member *ControlMemberV1
+	for index := range set.Members {
+		if set.Members[index].MemberID == signature.MemberID {
+			member = &set.Members[index]
+			break
 		}
+	}
+	if member == nil || signature.Algorithm != "ed25519" || signature.EnrollmentKeyID != member.EnrollmentKeyID {
+		return errors.New("[D129 Enrollment] enrollment signer/key purpose 无效")
+	}
+	canonical, err := MarshalCanonical(body)
+	if err != nil {
+		return err
+	}
+	message, _ := Frame(domain, canonical)
+	public, err := decodeRawURL(member.EnrollmentPublicKey, ed25519.PublicKeySize)
+	if err != nil {
+		return errors.New("[D102 keys] enrollment public key 无效")
+	}
+	rawSignature, err := decodeRawURL(signature.Signature, ed25519.SignatureSize)
+	if err != nil || !ed25519.Verify(ed25519.PublicKey(public), message, rawSignature) {
+		return errors.New("[D129 Enrollment] enrollment signature 无效")
 	}
 	return nil
 }
