@@ -269,9 +269,8 @@ func VerifyDeviceViewEnvelope(envelope *DeviceViewEnvelopeV2, set *ControlSetV1)
 	return VerifyDeviceViewEnvelopeWithPrevious(envelope, set, nil)
 }
 
-// VerifyDeviceViewEnvelopeWithPrevious accepts stable heads and exact joint
-// Final heads. previousSet is required only for joint_head and cannot be
-// inferred from DNS, online peers or the new set (D112、D118).
+// VerifyDeviceViewEnvelopeWithPrevious 接受 stable head 与精确 joint Final head。
+// joint_head 必须显式提供 previousSet，不能从 DNS、在线 peer 或新集合推导（D112、D118）。
 func VerifyDeviceViewEnvelopeWithPrevious(envelope *DeviceViewEnvelopeV2, set, previousSet *ControlSetV1) (ClientFloorsV2, error) {
 	if envelope == nil || envelope.Schema != 2 || envelope.SignedCurrent.Schema != 2 {
 		return ClientFloorsV2{}, errors.New("[D105 Device view] envelope/current schema 无效")
@@ -328,6 +327,9 @@ func VerifyDeviceViewEnvelopeWithPrevious(envelope *DeviceViewEnvelopeV2, set, p
 	if envelope.Payload.State == "active" {
 		if leaf.EndpointSetHash != envelope.Payload.Active.EndpointBundleHash || envelope.SecretArtifactRefs == nil {
 			return ClientFloorsV2{}, errors.New("[D105 Device view] active endpoint/secret refs 不一致")
+		}
+		if err := VerifySecretArtifactRefsRoot(envelope.SecretArtifactRefs, envelope.Payload.Active.SecretArtifactRefsRoot); err != nil {
+			return ClientFloorsV2{}, err
 		}
 	} else if leaf.EndpointSetHash != EmptyHashV1 || envelope.SecretArtifactRefs != nil {
 		return ClientFloorsV2{}, errors.New("[D105 Device view] tombstone 禁止 endpoint/secret refs")

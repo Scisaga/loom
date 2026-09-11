@@ -710,6 +710,12 @@ secret_artifact_ref_hash = H(frame(
 hash 从同时交付的 receipt 重算。ref 的 policy/proof/root 必须分别等于上述重算结果；缺失、额外、
 重复、过期或 fault-domain 不足都在包含 ref 的 proposal commit 前失败关闭。
 
+`secret_artifact_refs[]` 的 exact 排序键固定为 `(purpose 的上述 enum ordinal,
+secret_id UTF-8 bytes,generation,proposal_id UTF-8 bytes)`，严格升序且不得重复；其 root 对每个 ref 的
+`JCS(SecretArtifactRefV2)` 直接作为 §7.1 RFC 6962 leaf 输入，空数组使用 RFC 6962 空树 root。
+这一定义同时用于 Device view 和所有写作 `*_artifact_refs_root` 的字段，不允许各 consumer 另造 leaf
+wrapper 或按摘要字符串排序。
+
 所有写作 `credential_artifact_hash(es)` 或 `key_artifact_hash` 的 v2 exact 字段都必须解析到本节
 定义的完整 immutable ref 并重算该 hash；invite 的 `token_artifact_binding_hash` 则先解析
 control-private InviteTokenArtifactBindingV2，再从中解析同一类完整 token ref。字段名不会创造
