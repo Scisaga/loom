@@ -26,10 +26,16 @@ SECRET_PATTERNS = {
     "Enrollment invitation": re.compile(
         rb"loom://enroll" rb"#[A-Za-z0-9_-]{20,}"
     ),
+    "v2 Enrollment invitation": re.compile(
+        rb"loom://(?:enroll-v2|join)" rb"#[A-Za-z0-9_-]{20,}"
+    ),
     "credentialed URL": re.compile(rb"https?://[^/@\s]+:[^/@\s]+@"),
 }
 
 IPV4 = re.compile(r"(?<![0-9])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9])")
+# X.509 EKU/policy OID 至少含六个 arc；先移除它们，避免把中间四个 arc
+# 误报为公网 IPv4。四段地址仍完整进入 IPV4 检查。
+OBJECT_IDENTIFIER = re.compile(r"(?<![0-9.])[0-2](?:\.[0-9]+){5,}(?![0-9.])")
 DOCUMENTATION_NETWORKS = tuple(
     ipaddress.ip_network(value)
     for value in ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24")
@@ -63,6 +69,7 @@ APPROVED_DOMAIN_BASES = {
     "gradle.org",  # Official Gradle wrapper distribution host.
     "gstatic.com",
     "gnu.org",  # GPL license text and canonical license reference.
+    "gandi.net",  # Official LiveDNS API documentation and endpoint.
     "ipify.org",
     "microsoft.com",  # Windows manifest schema namespaces.
     "oaistatic.com",
@@ -91,6 +98,11 @@ SITE_LIKE_ID = re.compile(
 APPROVED_SITE_EXAMPLES = {"gw01", "sh01"}
 IPV6_NETWORK_LITERAL = re.compile(
     r"(?<![\w:./%\[\]@-])[0-9A-Fa-f:]+/[0-9]{1,3}(?![\w:./%\[\]@-])"
+)
+PUBLIC_NGINX_DYNAMIC = re.compile(
+    r"\b(?:proxy_pass|fastcgi_pass|uwsgi_pass|grpc_pass)\b|"
+    r"\blocation\s+[^;{]*(?:enroll|claim|control|config|report|raft|device_config|device_report)",
+    re.IGNORECASE,
 )
 
 
@@ -165,11 +177,16 @@ def main() -> int:
                 failures.append((relative, line_number(data, match.start()), category))
 
         text = data.decode("utf-8", errors="ignore")
+        if "nginx" in relative.lower() and path.suffix.lower() in {".conf", ".nginx", ".tmpl", ".template"}:
+            for match in PUBLIC_NGINX_DYNAMIC.finditer(text):
+                failures.append((relative, line_number(data, len(text[:match.start()].encode())),
+                                 "public Nginx dynamic/control route"))
         for line_no, line in enumerate(text.splitlines(), 1):
             # Manifest assembly versions have four parts but are not endpoints.
             ip_line = line
             if path.suffix == ".manifest":
                 ip_line = re.sub(r'\bversion="[0-9]+(?:\.[0-9]+){3}"', "", line)
+            ip_line = OBJECT_IDENTIFIER.sub("", ip_line)
             for match in IPV4.finditer(ip_line):
                 if not approved_ip(match.group(0)):
                     failures.append((relative, line_no, "unapproved public IPv4 address"))

@@ -40,6 +40,14 @@ class RepositorySafetyTests(unittest.TestCase):
         result, _ = self.scan("config.txt", f'version="{self.assembly_version}"')
         self.assertEqual(result, 1)
 
+    def test_x509_object_identifier_is_not_treated_as_ipv4(self):
+        result, _ = self.scan("profile.go", 'eku := "1.3.6.1.5.5.7.3.2"')
+        self.assertEqual(result, 0)
+
+        address = ".".join(("6", "0", "0", "1"))
+        result, _ = self.scan("profile.go", f'endpoint := "{address}"')
+        self.assertEqual(result, 1)
+
     def test_unknown_domains_and_device_ids_are_rejected(self):
         for value, category in (("https://private-deployment" + ".net", "unapproved public domain"),
                                 ("xy" + "42", "site-like device identifier")):
@@ -55,6 +63,18 @@ class RepositorySafetyTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("credentialed URL", output)
         self.assertNotIn(value, output)
+
+    def test_v2_invitation_is_redacted(self):
+        value = "loom://join#" + "A" * 48
+        result, output = self.scan("invite.txt", value)
+        self.assertEqual(result, 1)
+        self.assertIn("v2 Enrollment invitation", output)
+        self.assertNotIn(value, output)
+
+    def test_public_nginx_dynamic_route_is_rejected(self):
+        result, output = self.scan("public-nginx.conf", "location /device_report { proxy_pass http://backend; }")
+        self.assertEqual(result, 1)
+        self.assertIn("public Nginx dynamic/control route", output)
 
     def test_kotlin_import_is_not_treated_as_endpoint(self):
         content = "package io.example.client\nimport android." + "net.Network\nval scope = Dispatchers." + "IO\n"

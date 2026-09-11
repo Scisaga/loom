@@ -1,0 +1,424 @@
+package wire
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+)
+
+const (
+	DomainDeviceConfigArtifact = "loom-device-config-artifact-bytes-v1"
+	DomainDeviceEndpointBundle = "loom-device-endpoint-bundle-v1"
+	DomainDeviceView           = "loom-device-view-v2"
+)
+
+type DeviceConfigArtifactRefV1 struct {
+	ArtifactID       string `json:"artifact_id"`
+	Generation       int64  `json:"generation"`
+	Platform         string `json:"platform"`
+	MediaType        string `json:"media_type"`
+	RenderContractID string `json:"render_contract_id"`
+	SizeBytes        int64  `json:"size_bytes"`
+	ContentHash      string `json:"content_hash"`
+}
+
+type DeviceDataIngressBindingV1 struct {
+	EndpointSetID   string                   `json:"endpoint_set_id"`
+	EndpointSet     DataIngressEndpointSetV2 `json:"endpoint_set"`
+	EndpointSetHash string                   `json:"endpoint_set_hash"`
+}
+
+type DeviceEndpointBundleV1 struct {
+	Schema           int                          `json:"schema"`
+	ClusterID        string                       `json:"cluster_id"`
+	DeviceID         string                       `json:"device_id"`
+	DeviceGeneration int64                        `json:"device_generation"`
+	DataIngressSets  []DeviceDataIngressBindingV1 `json:"data_ingress_sets"`
+}
+
+type DeviceActiveViewV1 struct {
+	IdentitySPKIHash       string                        `json:"identity_spki_hash"`
+	Membership             EnrollmentMembershipV1        `json:"membership"`
+	MembershipHash         string                        `json:"membership_hash"`
+	Responsibilities       EnrollmentResponsibilitiesV1  `json:"responsibilities"`
+	ResponsibilitiesHash   string                        `json:"responsibilities_hash"`
+	Grants                 EnrollmentDestinationGrantsV1 `json:"grants"`
+	GrantsHash             string                        `json:"grants_hash"`
+	EndpointBundle         DeviceEndpointBundleV1        `json:"endpoint_bundle"`
+	EndpointBundleHash     string                        `json:"endpoint_bundle_hash"`
+	ConfigArtifactRefs     []DeviceConfigArtifactRefV1   `json:"config_artifact_refs"`
+	SecretArtifactRefsRoot string                        `json:"secret_artifact_refs_root"`
+}
+
+type DeviceTombstoneViewV1 struct {
+	Reason string `json:"reason"`
+}
+
+type DeviceViewPayloadV2 struct {
+	Schema           int                    `json:"schema"`
+	ClusterID        string                 `json:"cluster_id"`
+	DeviceID         string                 `json:"device_id"`
+	DeviceGeneration int64                  `json:"device_generation"`
+	State            string                 `json:"state"`
+	Active           *DeviceActiveViewV1    `json:"active,omitempty"`
+	Tombstone        *DeviceTombstoneViewV1 `json:"tombstone,omitempty"`
+}
+
+type DeviceViewLeafV2 struct {
+	Schema            int    `json:"schema"`
+	ClusterID         string `json:"cluster_id"`
+	ViewSchemaVersion int64  `json:"view_schema_version"`
+	DeviceID          string `json:"device_id"`
+	DeviceGeneration  int64  `json:"device_generation"`
+	State             string `json:"state"`
+	PayloadHash       string `json:"payload_hash"`
+	PreviousViewHash  string `json:"previous_view_hash"`
+	EndpointSetHash   string `json:"endpoint_set_hash"`
+	MinReaderVersion  int64  `json:"min_reader_version"`
+}
+
+type SignedCurrentV2 struct {
+	Schema            int             `json:"schema"`
+	Head              HeadEntryV2     `json:"head"`
+	QuorumCertificate json.RawMessage `json:"quorum_certificate"`
+	PublishedAt       string          `json:"published_at"`
+}
+
+type DeviceViewEnvelopeV2 struct {
+	Schema             int                 `json:"schema"`
+	Payload            DeviceViewPayloadV2 `json:"payload"`
+	Leaf               DeviceViewLeafV2    `json:"leaf"`
+	LeafIndex          int64               `json:"leaf_index"`
+	TreeSize           int64               `json:"tree_size"`
+	AuditPath          []string            `json:"audit_path"`
+	SignedCurrent      SignedCurrentV2     `json:"signed_current"`
+	SecretArtifactRefs []json.RawMessage   `json:"secret_artifact_refs,omitempty"`
+}
+
+// MarshalJSON 保留 nil 与空数组的协议差异：active 的空 secret refs 必须编码为
+// []，tombstone 的 nil 必须完全省略，不能被 omitempty 合并成同一 wire（D105）。
+func (envelope DeviceViewEnvelopeV2) MarshalJSON() ([]byte, error) {
+	type alias DeviceViewEnvelopeV2
+	if envelope.SecretArtifactRefs == nil {
+		return json.Marshal(alias(envelope))
+	}
+	return json.Marshal(struct {
+		alias
+		SecretArtifactRefs []json.RawMessage `json:"secret_artifact_refs"`
+	}{alias: alias(envelope), SecretArtifactRefs: envelope.SecretArtifactRefs})
+}
+
+// UnmarshalJSON 同时拒绝 null 与未知字段，避免自定义 decoder 绕过 DecodeStrict
+// 的 unknown-field 规则（D104、D105）。
+func (envelope *DeviceViewEnvelopeV2) UnmarshalJSON(body []byte) error {
+	if envelope == nil {
+		return errors.New("[D105 Device view] envelope target 不能为空")
+	}
+	type alias DeviceViewEnvelopeV2
+	decoded := struct {
+		alias
+		SecretArtifactRefs json.RawMessage `json:"secret_artifact_refs"`
+	}{}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return errors.New("[D105 Device view] envelope 含尾随 JSON")
+	}
+	*envelope = DeviceViewEnvelopeV2(decoded.alias)
+	if len(decoded.SecretArtifactRefs) == 0 {
+		envelope.SecretArtifactRefs = nil
+		return nil
+	}
+	if bytes.Equal(decoded.SecretArtifactRefs, []byte("null")) {
+		return errors.New("[D105 Device view] secret_artifact_refs 禁止 null")
+	}
+	var refs []json.RawMessage
+	if err := json.Unmarshal(decoded.SecretArtifactRefs, &refs); err != nil || refs == nil {
+		return errors.New("[D105 Device view] secret_artifact_refs 必须是数组")
+	}
+	envelope.SecretArtifactRefs = refs
+	return nil
+}
+
+type ClientFloorsV2 struct {
+	Schema                  int    `json:"schema"`
+	ClusterID               string `json:"cluster_id"`
+	AcceptedRecoveryEpoch   int64  `json:"accepted_recovery_epoch"`
+	RecoveryStatementHash   string `json:"recovery_statement_hash"`
+	RecoveryPolicyHash      string `json:"recovery_policy_hash"`
+	AcceptedControlEpoch    int64  `json:"accepted_control_epoch"`
+	ControlSetHash          string `json:"control_set_hash"`
+	AcceptedControlRevision int64  `json:"accepted_control_revision"`
+	HeadHash                string `json:"head_hash"`
+	DeviceGeneration        int64  `json:"device_generation"`
+	DeviceLeafHash          string `json:"device_leaf_hash"`
+	DeviceViewHash          string `json:"device_view_hash"`
+	BootstrapTransitionHash string `json:"bootstrap_transition_hash"`
+	V2Latched               bool   `json:"v2_latched"`
+}
+
+func DeviceConfigArtifactContentHash(raw []byte) (string, error) {
+	return HashCanonical(DomainDeviceConfigArtifact, raw)
+}
+
+func DeviceEndpointBundleHash(bundle *DeviceEndpointBundleV1) (string, error) {
+	if err := ValidateDeviceEndpointBundle(bundle); err != nil {
+		return "", err
+	}
+	return HashObject(DomainDeviceEndpointBundle, bundle)
+}
+
+func ValidateDeviceEndpointBundle(bundle *DeviceEndpointBundleV1) error {
+	if bundle == nil || bundle.Schema != 1 || !validIdentifier(bundle.ClusterID, 128) ||
+		!validIdentifier(bundle.DeviceID, 128) || bundle.DeviceGeneration < 1 {
+		return errors.New("[D105 Device view] endpoint bundle header 无效")
+	}
+	for i := range bundle.DataIngressSets {
+		binding := &bundle.DataIngressSets[i]
+		if i > 0 && bundle.DataIngressSets[i-1].EndpointSetID >= binding.EndpointSetID {
+			return errors.New("[D105 Device view] endpoint bindings 必须严格排序且不重复")
+		}
+		if binding.EndpointSetID != binding.EndpointSet.EndpointSetID || binding.EndpointSet.ClusterID != bundle.ClusterID {
+			return errors.New("[D105 Device view] endpoint binding identity 不一致")
+		}
+		hash, err := DataIngressSetHash(&binding.EndpointSet)
+		if err != nil || hash != binding.EndpointSetHash {
+			return errors.New("[D105 Device view] endpoint set hash 不匹配")
+		}
+	}
+	return nil
+}
+
+func DeviceViewHash(payload *DeviceViewPayloadV2) (string, error) {
+	if err := ValidateDeviceViewPayload(payload); err != nil {
+		return "", err
+	}
+	return HashObject(DomainDeviceView, payload)
+}
+
+func ValidateDeviceViewPayload(payload *DeviceViewPayloadV2) error {
+	if payload == nil || payload.Schema != 2 || !validIdentifier(payload.ClusterID, 128) ||
+		!validIdentifier(payload.DeviceID, 128) || payload.DeviceGeneration < 1 ||
+		!oneOf(payload.State, "active", "revoked", "decommissioned") {
+		return errors.New("[D105 Device view] payload header/state 无效")
+	}
+	if payload.State == "active" {
+		if payload.Active == nil || payload.Tombstone != nil {
+			return errors.New("[D105 Device view] active tagged union 无效")
+		}
+		active := payload.Active
+		if active.EndpointBundle.ClusterID != payload.ClusterID || active.EndpointBundle.DeviceID != payload.DeviceID ||
+			active.EndpointBundle.DeviceGeneration != payload.DeviceGeneration {
+			return errors.New("[D105 Device view] active endpoint bundle identity 不一致")
+		}
+		if _, err := ParseHash(active.IdentitySPKIHash); err != nil {
+			return err
+		}
+		membershipHash, err := HashObject("loom-enrollment-membership-v1", active.Membership)
+		if err != nil || membershipHash != active.MembershipHash {
+			return errors.New("[D105 Device view] membership hash 不匹配")
+		}
+		responsibilitiesHash, err := HashObject("loom-enrollment-responsibilities-v1", active.Responsibilities)
+		if err != nil || responsibilitiesHash != active.ResponsibilitiesHash {
+			return errors.New("[D105 Device view] responsibilities hash 不匹配")
+		}
+		grantsHash, err := HashObject("loom-enrollment-destination-grants-v1", active.Grants)
+		if err != nil || grantsHash != active.GrantsHash {
+			return errors.New("[D105 Device view] grants hash 不匹配")
+		}
+		bundleHash, err := DeviceEndpointBundleHash(&active.EndpointBundle)
+		if err != nil || bundleHash != active.EndpointBundleHash {
+			return errors.New("[D105 Device view] endpoint bundle hash 不匹配")
+		}
+		for i, ref := range active.ConfigArtifactRefs {
+			if ref.Generation < 1 || ref.SizeBytes < 0 || !validIdentifier(ref.ArtifactID, 128) ||
+				!oneOf(ref.Platform, "windows-desktop", "android", "linux-server") ||
+				!oneOf(ref.MediaType, "application/vnd.loom.config+json", "application/vnd.loom.sing-box+json") {
+				return errors.New("[D105 Device view] config artifact ref 无效")
+			}
+			if i > 0 {
+				previous := active.ConfigArtifactRefs[i-1]
+				if previous.ArtifactID > ref.ArtifactID || previous.ArtifactID == ref.ArtifactID && previous.Generation >= ref.Generation {
+					return errors.New("[D105 Device view] config refs 必须按 artifact/generation 严格排序")
+				}
+			}
+			if _, err := ParseHash(ref.ContentHash); err != nil {
+				return err
+			}
+		}
+		if _, err := ParseHash(active.SecretArtifactRefsRoot); err != nil {
+			return err
+		}
+		return nil
+	}
+	if payload.Active != nil || payload.Tombstone == nil ||
+		(payload.State == "revoked" && payload.Tombstone.Reason != "revoked") ||
+		(payload.State == "decommissioned" && payload.Tombstone.Reason != "decommissioned") {
+		return errors.New("[D105 Device view] tombstone tagged union 无效")
+	}
+	return nil
+}
+
+func VerifyDeviceViewEnvelope(envelope *DeviceViewEnvelopeV2, set *ControlSetV1) (ClientFloorsV2, error) {
+	return VerifyDeviceViewEnvelopeWithPrevious(envelope, set, nil)
+}
+
+// VerifyDeviceViewEnvelopeWithPrevious accepts stable heads and exact joint
+// Final heads. previousSet is required only for joint_head and cannot be
+// inferred from DNS, online peers or the new set (D112、D118).
+func VerifyDeviceViewEnvelopeWithPrevious(envelope *DeviceViewEnvelopeV2, set, previousSet *ControlSetV1) (ClientFloorsV2, error) {
+	if envelope == nil || envelope.Schema != 2 || envelope.SignedCurrent.Schema != 2 {
+		return ClientFloorsV2{}, errors.New("[D105 Device view] envelope/current schema 无效")
+	}
+	if _, err := ParseTimeZ(envelope.SignedCurrent.PublishedAt); err != nil {
+		return ClientFloorsV2{}, err
+	}
+	var tag struct {
+		QCType string `json:"qc_type"`
+	}
+	if _, err := CanonicalizeStrict(envelope.SignedCurrent.QuorumCertificate); err != nil {
+		return ClientFloorsV2{}, err
+	}
+	if err := json.Unmarshal(envelope.SignedCurrent.QuorumCertificate, &tag); err != nil {
+		return ClientFloorsV2{}, errors.New("[D105 Device view] head QC tag 无效")
+	}
+	switch tag.QCType {
+	case "stable_head":
+		var qc StableHeadReplicationQCV1
+		if _, err := DecodeStrict(envelope.SignedCurrent.QuorumCertificate, 1<<20, &qc); err != nil {
+			return ClientFloorsV2{}, err
+		}
+		if err := VerifyStableHeadQC(&envelope.SignedCurrent.Head, set, &qc); err != nil {
+			return ClientFloorsV2{}, err
+		}
+	case "joint_head":
+		if previousSet == nil {
+			return ClientFloorsV2{}, errors.New("[D112 Device view] joint head 缺 previous exact ControlSet")
+		}
+		var qc JointHeadReplicationQCV1
+		if _, err := DecodeStrict(envelope.SignedCurrent.QuorumCertificate, 1<<20, &qc); err != nil {
+			return ClientFloorsV2{}, err
+		}
+		if err := VerifyJointHeadQC(&envelope.SignedCurrent.Head, previousSet, set, &qc); err != nil {
+			return ClientFloorsV2{}, err
+		}
+	default:
+		return ClientFloorsV2{}, errors.New("[D105 Device view] 未知 certified head QC type")
+	}
+	payloadHash, err := DeviceViewHash(&envelope.Payload)
+	if err != nil {
+		return ClientFloorsV2{}, err
+	}
+	leaf := &envelope.Leaf
+	if leaf.Schema != 2 || leaf.ViewSchemaVersion != 2 || leaf.MinReaderVersion < 1 ||
+		leaf.ClusterID != envelope.Payload.ClusterID || leaf.DeviceID != envelope.Payload.DeviceID ||
+		leaf.DeviceGeneration != envelope.Payload.DeviceGeneration || leaf.State != envelope.Payload.State ||
+		leaf.PayloadHash != payloadHash {
+		return ClientFloorsV2{}, errors.New("[D105 Device view] payload/leaf 字段不一致")
+	}
+	if _, err := ParseHash(leaf.PreviousViewHash); err != nil {
+		return ClientFloorsV2{}, err
+	}
+	if envelope.Payload.State == "active" {
+		if leaf.EndpointSetHash != envelope.Payload.Active.EndpointBundleHash || envelope.SecretArtifactRefs == nil {
+			return ClientFloorsV2{}, errors.New("[D105 Device view] active endpoint/secret refs 不一致")
+		}
+	} else if leaf.EndpointSetHash != EmptyHashV1 || envelope.SecretArtifactRefs != nil {
+		return ClientFloorsV2{}, errors.New("[D105 Device view] tombstone 禁止 endpoint/secret refs")
+	}
+	canonicalLeaf, err := MarshalCanonical(leaf)
+	if err != nil {
+		return ClientFloorsV2{}, err
+	}
+	audit := make([][]byte, len(envelope.AuditPath))
+	for i, hash := range envelope.AuditPath {
+		audit[i], err = ParseHash(hash)
+		if err != nil {
+			return ClientFloorsV2{}, err
+		}
+	}
+	root, _ := ParseHash(envelope.SignedCurrent.Head.Body.Payload.DeviceViewsRoot)
+	if err := VerifyMerkleInclusion(canonicalLeaf, envelope.LeafIndex, envelope.TreeSize, audit, root); err != nil {
+		return ClientFloorsV2{}, err
+	}
+	leafRaw := MerkleLeafHash(canonicalLeaf)
+	leafHash := "sha256:" + fmt.Sprintf("%x", leafRaw)
+	head := envelope.SignedCurrent.Head
+	return ClientFloorsV2{
+		Schema: 2, ClusterID: leaf.ClusterID,
+		AcceptedRecoveryEpoch: head.Body.Payload.RecoveryEpoch,
+		RecoveryStatementHash: head.Body.Payload.RecoveryStatementHash,
+		RecoveryPolicyHash:    head.Body.Payload.RecoveryPolicyHash,
+		AcceptedControlEpoch:  head.Body.Payload.ControlEpoch, ControlSetHash: head.Body.Payload.ControlSetHash,
+		AcceptedControlRevision: head.Body.Payload.ControlRevision, HeadHash: head.HeadHash,
+		DeviceGeneration: leaf.DeviceGeneration, DeviceLeafHash: leafHash, DeviceViewHash: payloadHash,
+		BootstrapTransitionHash: head.Body.TransitionProofHash, V2Latched: true,
+	}, nil
+}
+
+// AdvanceFloors 原子持久化前验证四组 floor；相同坐标不同 hash 一律视为 fork。
+func AdvanceFloors(current, candidate ClientFloorsV2) (ClientFloorsV2, error) {
+	if err := validateClientFloors(candidate); err != nil {
+		return current, errors.New("[D106 floor] candidate floor 无效")
+	}
+	if current.Schema == 0 {
+		return candidate, nil
+	}
+	if current.Schema != 2 || !current.V2Latched || current.ClusterID != candidate.ClusterID ||
+		current.BootstrapTransitionHash != candidate.BootstrapTransitionHash {
+		return current, errors.New("[D106 latch] v2 latch/cluster/bootstrap transition 不匹配")
+	}
+	if candidate.AcceptedRecoveryEpoch < current.AcceptedRecoveryEpoch {
+		return current, errors.New("[D106 floor] recovery epoch 回退")
+	}
+	if candidate.AcceptedRecoveryEpoch > current.AcceptedRecoveryEpoch+1 {
+		return current, errors.New("[D119 floor] recovery epoch 必须逐次增加，禁止跳号")
+	}
+	if candidate.AcceptedRecoveryEpoch == current.AcceptedRecoveryEpoch {
+		if candidate.RecoveryStatementHash != current.RecoveryStatementHash || candidate.RecoveryPolicyHash != current.RecoveryPolicyHash {
+			return current, errors.New("[D106 floor] 相同 recovery epoch 出现分叉")
+		}
+		if candidate.AcceptedControlEpoch < current.AcceptedControlEpoch {
+			return current, errors.New("[D106 floor] control epoch 回退")
+		}
+		if candidate.AcceptedControlEpoch == current.AcceptedControlEpoch {
+			if candidate.ControlSetHash != current.ControlSetHash {
+				return current, errors.New("[D106 floor] 相同 control epoch 出现 ControlSet 分叉")
+			}
+			if candidate.AcceptedControlRevision < current.AcceptedControlRevision {
+				return current, errors.New("[D106 floor] control revision 回退")
+			}
+			if candidate.AcceptedControlRevision == current.AcceptedControlRevision && candidate.HeadHash != current.HeadHash {
+				return current, errors.New("[D106 floor] 相同 control revision 出现 head 分叉")
+			}
+		}
+	}
+	if candidate.DeviceGeneration < current.DeviceGeneration {
+		return current, errors.New("[D106 floor] Device generation 回退")
+	}
+	if candidate.DeviceGeneration == current.DeviceGeneration &&
+		(!bytes.Equal([]byte(candidate.DeviceLeafHash), []byte(current.DeviceLeafHash)) || candidate.DeviceViewHash != current.DeviceViewHash) {
+		return current, errors.New("[D106 floor] 相同 Device generation 出现 view 分叉")
+	}
+	return candidate, nil
+}
+
+func validateClientFloors(floor ClientFloorsV2) error {
+	if floor.Schema != 2 || !floor.V2Latched || !validIdentifier(floor.ClusterID, 128) ||
+		floor.AcceptedRecoveryEpoch < 0 || floor.AcceptedControlEpoch < 0 || floor.AcceptedControlRevision < 1 || floor.DeviceGeneration < 1 {
+		return errors.New("floor coordinates invalid")
+	}
+	for _, hash := range []string{floor.RecoveryStatementHash, floor.RecoveryPolicyHash, floor.ControlSetHash,
+		floor.HeadHash, floor.DeviceLeafHash, floor.DeviceViewHash, floor.BootstrapTransitionHash} {
+		if _, err := ParseHash(hash); err != nil {
+			return err
+		}
+	}
+	return nil
+}

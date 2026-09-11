@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "vectors": [
+    {
+      "name": "utf16-key-order-and-unicode",
+      "input": "{\"b\":\"世界\",\"a\":1}",
+      "canonical": "{\"a\":1,\"b\":\"世界\"}",
+      "domain": "loom-golden-v1",
+      "hash": "sha256:8d52df8c87b528de320b581923c10e20b3c8ccf030ae79d57afe94dfdf315ed0"
+    },
+    {
+      "name": "array-null-and-control-escape",
+      "input": "{\"z\":\"line\\n\",\"a\":[1,true,null]}",
+      "canonical": "{\"a\":[1,true,null],\"z\":\"line\\n\"}",
+      "domain": "loom-golden-v1",
+      "hash": "sha256:df93a8a573e3f1d9a3d991b22890400a0da99abc87ecab218feaef429c2c7a02"
+    }
+  ],
+  "malicious": [
+    {"name": "duplicate-key", "input": "{\"a\":1,\"a\":2}"},
+    {"name": "float", "input": "{\"a\":1.0}"},
+    {"name": "exponent", "input": "{\"a\":1e3}"},
+    {"name": "int64-overflow", "input": "{\"a\":9223372036854775808}"},
+    {"name": "lone-surrogate", "input": "{\"a\":\"\\ud800\"}"},
+    {"name": "trailing-value", "input": "{}{}"}
+  ]
+}

@@ -572,17 +572,17 @@ ciphertext hash/ref，绝不含 plaintext。
 
 | policy_id / recipient_key_profile | key_wrap variant | 用途 |
 |---|---|---|
-| `sealed-p256-v1` / `p256-keystore-sign-ecdh-v1` | 上式 `p256_ecdh` 全部 literal | Android API 31+、Windows、Linux 与 control custodian 可用的不可导出 P-256 key |
-| `sealed-rsa2048-v1` / `rsa2048-keystore-sign-decrypt-v1` | 上式 `rsa_oaep` 全部 literal | Android API 26–30 及需要同等 Keystore fallback 的实现 |
+| `sealed-p256-v1` / `p256-keystore-ecdh-v1` | 上式 `p256_ecdh` 全部 literal | Android API 31+ 可用的不可导出、仅 ECDH P-256 wrapping key；软件或其他平台使用各自明确 profile |
+| `sealed-rsa2048-v1` / `rsa2048-keystore-decrypt-v1` | 上式 `rsa_oaep` 全部 literal | Android API 26–30 的不可导出、仅解密 fallback |
 
 表中未选 variant 必须缺失；所有共同字段必须等于 schema 中的 literal，不能用 provider 默认值改写。
 `sealing_policy_hash=H(frame("loom-sealing-policy-v1",JCS(SealingPolicyV1)))`；profile 到 policy 是上表
 一对一映射，未知 profile/policy 或错配 hash 失败关闭。RSA fallback 的 wrapping key 是独立的
-Android Keystore RSA-2048 key，生成用途只含 SIGN 与 DECRYPT；PoP 使用
-RSASSA-PKCS1-v1_5/SHA-256，解封使用 RSA-OAEP SHA-256、MGF1-SHA-1、空 label。它不把私钥导出到
-进程，也不允许充当 Device identity/signing key。P-256 profile 则只允许 ECDSA PoP + ECDH，且在
-Android 上要求 API 31 的 `PURPOSE_AGREE_KEY`；低版本必须选择 record 已授权的 RSA profile，不能
-退化为软件 ECDH。
+Android Keystore RSA-2048 key，生成用途只含 DECRYPT；解封使用 RSA-OAEP SHA-256、MGF1-SHA-1、
+空 label。它不把私钥导出到进程，也不允许充当 Device identity/signing key。P-256 profile 只允许
+ECDH，且在 Android 上要求 API 31 的 `PURPOSE_AGREE_KEY`；低版本必须选择 record 已授权的 RSA
+profile，不能退化为软件 ECDH。Enrollment identity 对包含 wrapping SPKI/profile 的 stable claim
+core 作 PoP，wrapping key 本身不取得签名权限。
 
 封装先生成一次 32-byte CSPRNG CEK。`recipient_set_hash=H(frame(
 "loom-sealed-secret-recipient-set-v1",JCS(recipient_key_versions)))`；由 artifact 坐标、owner、policy
