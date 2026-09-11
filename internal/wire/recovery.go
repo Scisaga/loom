@@ -414,6 +414,12 @@ func RecoveryStatementHash(statement any) (string, error) {
 		if err := validateRecoveryTransitionBody(typed); err != nil {
 			return "", err
 		}
+	case RecoveryPolicyTransitionBodyV1:
+		return RecoveryStatementHash(&typed)
+	case *RecoveryPolicyTransitionBodyV1:
+		if err := validateRecoveryPolicyTransitionBody(typed); err != nil {
+			return "", err
+		}
 	default:
 		return "", errors.New("[D119 recovery] statement type 未获协议授权")
 	}

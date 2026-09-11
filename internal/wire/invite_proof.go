@@ -52,15 +52,15 @@ func (verified VerifiedInviteProofV2) CertifiedInviteRecordHash() string {
 }
 
 func (verified VerifiedInviteProofV2) Head() HeadEntryV2 {
-	return verified.head
+	return cloneInviteProofValue(verified.head)
 }
 
 func (verified VerifiedInviteProofV2) ControlSet() ControlSetV1 {
-	return verified.controlSet
+	return cloneInviteProofValue(verified.controlSet)
 }
 
 func (verified VerifiedInviteProofV2) RecoveryPolicy() RecoveryPolicyV1 {
-	return verified.recoveryPolicy
+	return cloneInviteProofValue(verified.recoveryPolicy)
 }
 
 func InviteProofBundleHash(bundle *InviteProofBundleV2) (string, error) {
@@ -126,6 +126,17 @@ func VerifyInviteProofBundle(bundle *InviteProofBundleV2, descriptor *InviteBoot
 			currentPolicy = recoveryTransition.NewRecoveryPolicy
 			continue
 		}
+		var policyTransition RecoveryPolicyActivationBundleV1
+		if _, decodeErr := DecodeStrict(raw, 64<<20, &policyTransition); decodeErr == nil {
+			verified, verifyErr := VerifyRecoveryPolicyActivationBundle(&policyTransition, &currentPolicy, &currentSet, &currentHead)
+			if verifyErr != nil {
+				return VerifiedInviteProofV2{}, verifyErr
+			}
+			transitionHashes = append(transitionHashes, verified.TransitionProofHash())
+			currentHead = policyTransition.Activation.Head
+			currentPolicy = policyTransition.NewRecoveryPolicy
+			continue
+		}
 		return VerifiedInviteProofV2{}, errors.New("[D115 Invite proof] authority transition union 未获协议授权（index 非法）")
 	}
 	if descriptor.MinimumRecoveryEpoch > currentHead.Body.Payload.RecoveryEpoch {
@@ -171,6 +182,14 @@ func VerifyInviteProofBundle(bundle *InviteProofBundleV2, descriptor *InviteBoot
 		&bundle.DeviceEnrollmentIntentCommitment, &bundle.BootstrapIssuerAuthorizationProof, trustedTime); err != nil {
 		return VerifiedInviteProofV2{}, err
 	}
-	return VerifiedInviteProofV2{recordHash: recordHash, head: bundle.RecordHead, controlSet: currentSet,
-		recoveryPolicy: currentPolicy, transitionHashes: transitionHashes}, nil
+	return VerifiedInviteProofV2{recordHash: recordHash, head: cloneInviteProofValue(bundle.RecordHead),
+		controlSet: cloneInviteProofValue(currentSet), recoveryPolicy: cloneInviteProofValue(currentPolicy),
+		transitionHashes: append([]string(nil), transitionHashes...)}, nil
+}
+
+func cloneInviteProofValue[T any](value T) T {
+	body, _ := MarshalCanonical(value)
+	var clone T
+	_, _ = DecodeStrict(body, 64<<20, &clone)
+	return clone
 }
