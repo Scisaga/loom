@@ -20,6 +20,7 @@ type deviceCertificateFixture struct {
 	intent       DeviceCertificateProfileIntentV1
 	leafDER      []byte
 	identityHash string
+	issuerKey    ed25519.PrivateKey
 	now          time.Time
 }
 
@@ -205,7 +206,7 @@ func newDeviceCertificateFixture(t *testing.T) deviceCertificateFixture {
 	}
 	identityHash, _ := HashBytes(DomainEnrollmentIdentitySPKI, leaf.RawSubjectPublicKeyInfo)
 	return deviceCertificateFixture{
-		now: now, leafDER: leafDER, identityHash: identityHash,
+		now: now, leafDER: leafDER, identityHash: identityHash, issuerKey: issuerPrivate,
 		intent: DeviceCertificateProfileIntentV1{
 			Schema: 1, ClusterID: "demo-cluster", ProfileID: "device-profile-1", Generation: 1,
 			TargetStatus: "staged", IssuerID: "issuer-1", IssuerGeneration: 1, IssuerFencingEpoch: 1,
