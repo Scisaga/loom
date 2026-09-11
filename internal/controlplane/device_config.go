@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"net"
@@ -40,6 +41,7 @@ type DeviceIdentityAuthorityV1 struct {
 	PreviousControlSet        *wire.ControlSetV1
 	AdminCertificateProfiles  []wire.AdminCertificateProfileV1
 	DeviceCertificateProfiles []wire.DeviceCertificateProfileStateV1
+	CurrentDeviceView         wire.DeviceViewEnvelopeV2
 }
 
 type DeviceIdentityReader func(context.Context, string) (DeviceIdentityAuthorityV1, error)
@@ -47,8 +49,9 @@ type DeviceIdentityReader func(context.Context, string) (DeviceIdentityAuthority
 // VerifiedDeviceIdentityV1 只有 exact Device certificate/profile/registry record 全部
 // 通过后才能产生；config reader 不接受裸 Device ID 或调用方自报的 active 布尔值（D102、D131）。
 type VerifiedDeviceIdentityV1 struct {
-	record    DeviceIdentityRecordV1
-	authority DeviceIdentityAuthorityV1
+	record      DeviceIdentityRecordV1
+	authority   DeviceIdentityAuthorityV1
+	certificate *x509.Certificate
 }
 
 func (verified VerifiedDeviceIdentityV1) DeviceID() string {
@@ -67,32 +70,25 @@ func (verified VerifiedDeviceIdentityV1) CertificateHash() string {
 	return verified.record.CertificateHash
 }
 
-type DeviceConfigMaterialV1 struct {
-	Envelope wire.DeviceViewEnvelopeV2
-}
-
-type DeviceConfigReader func(context.Context, VerifiedDeviceIdentityV1) (DeviceConfigMaterialV1, error)
-
 type PrivateDeviceConfigService struct {
 	localAddress    string
 	allowedProfiles []string
 	identities      DeviceIdentityReader
-	read            DeviceConfigReader
 	now             func() time.Time
 }
 
 func NewPrivateDeviceConfigService(endpoint wire.PrivateControlServiceV1, identities DeviceIdentityReader,
-	read DeviceConfigReader, now func() time.Time) (*PrivateDeviceConfigService, error) {
+	now func() time.Time) (*PrivateDeviceConfigService, error) {
 	if err := wire.ValidatePrivateControlService(&endpoint); err != nil {
 		return nil, err
 	}
-	if endpoint.Role != "device_config" || identities == nil || read == nil || now == nil {
+	if endpoint.Role != "device_config" || identities == nil || now == nil {
 		return nil, errors.New("[D131 device_config] service role/dependencies 无效")
 	}
 	return &PrivateDeviceConfigService{
 		localAddress:    net.JoinHostPort(endpoint.OverlayIP, strconv.FormatInt(endpoint.Port, 10)),
 		allowedProfiles: append([]string(nil), endpoint.AuthorizedSubjectProfiles...),
-		identities:      identities, read: read, now: now,
+		identities:      identities, now: now,
 	}, nil
 }
 
@@ -118,27 +114,7 @@ func (service *PrivateDeviceConfigService) ServeHTTP(writer http.ResponseWriter,
 		writePrivateControlError(writer, http.StatusForbidden, "[D131 device_config] Device identity 被拒绝")
 		return
 	}
-	material, err := service.read(request.Context(), identity)
-	if err != nil {
-		writePrivateControlError(writer, http.StatusServiceUnavailable, "[D131 device_config] certified view 暂不可用")
-		return
-	}
-	authority := &identity.authority
-	if !wire.EqualCanonical(material.Envelope.SignedCurrent.Head, authority.Head) ||
-		!bytes.Equal(material.Envelope.SignedCurrent.QuorumCertificate, authority.ConfigQC) {
-		writePrivateControlError(writer, http.StatusInternalServerError, "[D105 device_config] view current 未绑定认证 authority")
-		return
-	}
-	if _, err := wire.VerifyDeviceViewEnvelopeWithPrevious(&material.Envelope, &authority.ControlSet,
-		authority.PreviousControlSet); err != nil || material.Envelope.Payload.DeviceID != identity.DeviceID() ||
-		material.Envelope.Payload.ClusterID != identity.record.ProfileState.ClusterID ||
-		(material.Envelope.Payload.State == "active" &&
-			material.Envelope.Payload.Active.IdentitySPKIHash != identity.IdentitySPKIHash()) ||
-		(identity.IdentityStatus() == "revocation_pending" && material.Envelope.Payload.State == "active") {
-		writePrivateControlError(writer, http.StatusInternalServerError, "[D105 device_config] view identity/QC/inclusion 校验失败")
-		return
-	}
-	body, err := wire.MarshalCanonical(material.Envelope)
+	body, err := wire.MarshalCanonical(identity.authority.CurrentDeviceView)
 	if err != nil {
 		writePrivateControlError(writer, http.StatusInternalServerError, "[D105 device_config] view 编码失败")
 		return
@@ -152,15 +128,20 @@ func (service *PrivateDeviceConfigService) ServeHTTP(writer http.ResponseWriter,
 
 func (service *PrivateDeviceConfigService) authenticate(ctx context.Context, certificateDER []byte,
 	trustedTime time.Time) (VerifiedDeviceIdentityV1, error) {
+	return authenticateDeviceIdentity(ctx, certificateDER, trustedTime, service.allowedProfiles, service.identities)
+}
+
+func authenticateDeviceIdentity(ctx context.Context, certificateDER []byte, trustedTime time.Time,
+	allowedProfiles []string, identities DeviceIdentityReader) (VerifiedDeviceIdentityV1, error) {
 	certificateHash, err := wire.DeviceCertificateHash(certificateDER)
 	if err != nil {
 		return VerifiedDeviceIdentityV1{}, err
 	}
-	authority, err := service.identities(ctx, certificateHash)
+	authority, err := identities(ctx, certificateHash)
 	record := &authority.Record
 	if err != nil || record.Schema != 1 || record.CertificateHash != certificateHash ||
 		!oneOfDeviceStatus(record.IdentityStatus, "active", "revocation_pending") ||
-		!containsString(service.allowedProfiles, record.ProfileRef.ProfileID) {
+		!containsString(allowedProfiles, record.ProfileRef.ProfileID) {
 		return VerifiedDeviceIdentityV1{}, errors.New("[D102 Device identity] registry record 不存在或未获 service profile 授权")
 	}
 	if err := wire.VerifyConfigQCAuthority(authority.Head.HeadHash, authority.ConfigQC, &authority.Head,
@@ -179,12 +160,30 @@ func (service *PrivateDeviceConfigService) authenticate(ctx context.Context, cer
 	if err != nil {
 		return VerifiedDeviceIdentityV1{}, err
 	}
-	_, err = wire.VerifyDeviceCertificateAt(certificateDER, &record.ProfileState, record.DeviceID,
+	certificate, err := wire.VerifyDeviceCertificateAt(certificateDER, &record.ProfileState, record.DeviceID,
 		record.IdentitySPKIHash, record.Platform, record.Responsibilities, record.Issuance, approvedAt, trustedTime)
 	if err != nil {
 		return VerifiedDeviceIdentityV1{}, err
 	}
-	return VerifiedDeviceIdentityV1{record: *record, authority: authority}, nil
+	view := &authority.CurrentDeviceView
+	if !wire.EqualCanonical(view.SignedCurrent.Head, authority.Head) ||
+		!bytes.Equal(view.SignedCurrent.QuorumCertificate, authority.ConfigQC) {
+		return VerifiedDeviceIdentityV1{}, errors.New("[D105 Device identity] current view 未绑定认证 authority")
+	}
+	if _, err := wire.VerifyDeviceViewEnvelopeWithPrevious(view, &authority.ControlSet,
+		authority.PreviousControlSet); err != nil || view.Payload.DeviceID != record.DeviceID ||
+		view.Payload.ClusterID != record.ProfileState.ClusterID {
+		return VerifiedDeviceIdentityV1{}, errors.New("[D105 Device identity] current view QC/inclusion/Device binding 无效")
+	}
+	if record.IdentityStatus == "active" {
+		if view.Payload.State != "active" || view.Payload.Active.IdentitySPKIHash != record.IdentitySPKIHash ||
+			!wire.EqualCanonical(view.Payload.Active.Responsibilities.Values, record.Responsibilities) {
+			return VerifiedDeviceIdentityV1{}, errors.New("[D105 Device identity] active registry record 与 current view 不一致")
+		}
+	} else if view.Payload.State == "active" {
+		return VerifiedDeviceIdentityV1{}, errors.New("[D105 Device identity] revocation_pending identity 缺 tombstone view")
+	}
+	return VerifiedDeviceIdentityV1{record: *record, authority: authority, certificate: certificate}, nil
 }
 
 func containsExactDeviceProfile(profiles []wire.DeviceCertificateProfileStateV1,

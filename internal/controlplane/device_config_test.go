@@ -25,11 +25,13 @@ import (
 )
 
 type deviceConfigFixture struct {
-	service  *PrivateDeviceConfigService
-	leaf     *x509.Certificate
-	envelope wire.DeviceViewEnvelopeV2
-	reads    *int
-	record   *DeviceIdentityRecordV1
+	service     *PrivateDeviceConfigService
+	leaf        *x509.Certificate
+	identityKey *ecdsa.PrivateKey
+	identities  DeviceIdentityReader
+	envelope    wire.DeviceViewEnvelopeV2
+	reads       *int
+	record      *DeviceIdentityRecordV1
 }
 
 func TestPrivateDeviceConfigReturnsOnlyExactMTLSDeviceView(t *testing.T) {
@@ -53,7 +55,7 @@ func TestPrivateDeviceConfigRejectsPublicListenerAndUncertifiedIdentity(t *testi
 	}
 	fixture.record.IdentitySPKIHash = wire.HashRaw("device-config-test", []byte("wrong-identity"))
 	wrongIdentity := serveDeviceConfig(t, fixture, "10.50.0.2:7445", true)
-	if wrongIdentity.Code != http.StatusForbidden || *fixture.reads != 0 {
+	if wrongIdentity.Code != http.StatusForbidden || *fixture.reads != 1 {
 		t.Fatalf("wrong registry SPKI reached reader: status=%d reads=%d", wrongIdentity.Code, *fixture.reads)
 	}
 }
@@ -62,7 +64,7 @@ func TestPrivateDeviceConfigDoesNotServeActiveViewToRevocationPendingIdentity(t 
 	fixture := newDeviceConfigFixture(t)
 	fixture.record.IdentityStatus = "revocation_pending"
 	response := serveDeviceConfig(t, fixture, "10.50.0.2:7445", true)
-	if response.Code != http.StatusInternalServerError || *fixture.reads != 1 {
+	if response.Code != http.StatusForbidden || *fixture.reads != 1 {
 		t.Fatalf("revocation-pending active response=%d reads=%d", response.Code, *fixture.reads)
 	}
 }
@@ -83,7 +85,7 @@ func newDeviceConfigFixture(t *testing.T) deviceConfigFixture {
 	t.Helper()
 	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
 	set, configKeys := testControlSet(t, 1)
-	leaf, state, ref, identityHash := controlplaneDeviceCertificate(t, set.ClusterID, now)
+	leaf, identityKey, state, ref, identityHash := controlplaneDeviceCertificate(t, set.ClusterID, now)
 	certificateHash, _ := wire.DeviceCertificateHash(leaf.Raw)
 	record := &DeviceIdentityRecordV1{
 		Schema: 1, CertificateHash: certificateHash, DeviceID: "device-1", IdentitySPKIHash: identityHash,
@@ -99,32 +101,28 @@ func newDeviceConfigFixture(t *testing.T) deviceConfigFixture {
 		SPKIPins:                  []string{wire.HashRaw("device-config-test", []byte("service-pin"))},
 		AuthorizedSubjectProfiles: []string{state.ProfileID},
 	}
-	service, err := NewPrivateDeviceConfigService(endpoint,
-		func(_ context.Context, requestedHash string) (DeviceIdentityAuthorityV1, error) {
-			if requestedHash != certificateHash {
-				return DeviceIdentityAuthorityV1{}, context.Canceled
-			}
-			return DeviceIdentityAuthorityV1{
-				Record: *record, Head: envelope.SignedCurrent.Head,
-				ConfigQC: envelope.SignedCurrent.QuorumCertificate, ControlSet: set,
-				DeviceCertificateProfiles: []wire.DeviceCertificateProfileStateV1{record.ProfileState},
-			}, nil
-		},
-		func(_ context.Context, identity VerifiedDeviceIdentityV1) (DeviceConfigMaterialV1, error) {
-			reads++
-			if identity.DeviceID() != record.DeviceID || identity.CertificateHash() != certificateHash {
-				t.Fatal("view reader 收到未绑定 registry record 的 identity")
-			}
-			return DeviceConfigMaterialV1{Envelope: envelope}, nil
-		}, func() time.Time { return now.Add(time.Minute) })
+	identities := func(_ context.Context, requestedHash string) (DeviceIdentityAuthorityV1, error) {
+		reads++
+		if requestedHash != certificateHash {
+			return DeviceIdentityAuthorityV1{}, context.Canceled
+		}
+		return DeviceIdentityAuthorityV1{
+			Record: *record, Head: envelope.SignedCurrent.Head,
+			ConfigQC: envelope.SignedCurrent.QuorumCertificate, ControlSet: set,
+			DeviceCertificateProfiles: []wire.DeviceCertificateProfileStateV1{record.ProfileState},
+			CurrentDeviceView:         envelope,
+		}, nil
+	}
+	service, err := NewPrivateDeviceConfigService(endpoint, identities, func() time.Time { return now.Add(time.Minute) })
 	if err != nil {
 		t.Fatal(err)
 	}
-	return deviceConfigFixture{service: service, leaf: leaf, envelope: envelope, reads: &reads, record: record}
+	return deviceConfigFixture{service: service, leaf: leaf, identityKey: identityKey, identities: identities,
+		envelope: envelope, reads: &reads, record: record}
 }
 
 func controlplaneDeviceCertificate(t *testing.T, clusterID string, now time.Time) (*x509.Certificate,
-	wire.DeviceCertificateProfileStateV1, wire.DeviceCertificateProfileRefV1, string) {
+	*ecdsa.PrivateKey, wire.DeviceCertificateProfileStateV1, wire.DeviceCertificateProfileRefV1, string) {
 	t.Helper()
 	rootPublic, rootPrivate, _ := ed25519.GenerateKey(rand.Reader)
 	rootTemplate := &x509.Certificate{
@@ -208,7 +206,7 @@ func controlplaneDeviceCertificate(t *testing.T, clusterID string, now time.Time
 	ref := wire.DeviceCertificateProfileRefV1{ProfileID: active.ProfileID, Generation: active.Generation,
 		DeviceCertificateProfileIntentHash: intentHash, DeviceCertificateProfileStateHash: stateHash}
 	identityHash, _ := wire.HashBytes(wire.DomainEnrollmentIdentitySPKI, leaf.RawSubjectPublicKeyInfo)
-	return leaf, active, ref, identityHash
+	return leaf, identity, active, ref, identityHash
 }
 
 func controlplaneDeviceEnvelope(t *testing.T, set wire.ControlSetV1, configKey ed25519.PrivateKey,

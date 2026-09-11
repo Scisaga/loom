@@ -2809,6 +2809,33 @@ Enrollment 完成后，客户端关闭 bootstrap listener、删除 descriptor/to
 - control_api 只接受 admin cert；Device identity 不能提升为 admin；
 - Raft/peer RPC 只接受 control peer profile。
 
+`device_report` 的首版 exact envelope 为：
+
+```text
+DeviceReportBodyV2
+  schema = 2, cluster_id, device_id, report_id, report_sequence
+  generated_at
+  accepted_floors: ClientFloorsV2
+  kind, payload_schema, payload_hash
+
+DeviceReportSignatureV1
+  algorithm = "ecdsa-p256-sha256"
+  identity_spki_hash
+  signature                         # canonical DER、low-S、无 padding base64url
+
+DeviceReportEnvelopeV2
+  schema = 2
+  body: DeviceReportBodyV2
+  payload                           # 按 kind/schema 严格解码的 canonical JSON object
+  signature: DeviceReportSignatureV1
+```
+
+`payload_hash=H(frame("loom-device-report-payload-v2",payload_bytes))`；签名覆盖
+`frame("loom-device-report-signature-v2",JCS(DeviceReportBodyV2))`。私有服务在交给 report sink 前必须
+同时验证 Device mTLS、certified CA profile registry、当前 Device view/QC/inclusion、exact floors、
+payload reader contract、freshness 和 identity signature。sink 以 `(Device ID,certificate hash)` 为 key
+原子推进 `report_sequence`；同序号仅接受 exact report 的幂等重试，拒绝内容冲突或回退。
+
 这些应用服务不得挂到公网 Nginx。是否由一个 control 进程复用内部 socket 不影响协议角色；
 证书 EKU、ACL、端口和 handler 必须分别校验。报告失败不停止已安装数据面，配置不可达时继续
 使用 LKG；任何过期 bootstrap capability 都不能充当稳态恢复通道。
