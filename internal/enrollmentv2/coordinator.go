@@ -18,6 +18,7 @@ type ProvisionalPlanV1 struct {
 	Operation ProvisionalIssuanceOperationV1
 	Issuance  wire.EnrollmentProvisionalIssuanceV1
 	Profile   wire.DeviceCertificateProfileStateV1
+	Result    wire.EnrollmentResultArtifactV1
 }
 
 type CompletionPlanV2 struct {
@@ -42,10 +43,10 @@ type WorkflowBackend interface {
 // Store 是同一确定性状态机的本地耐久实现，可用于单成员集和故障恢复测试。
 type TransactionRepository interface {
 	SnapshotRecord(string) (DurableRecord, bool)
-	Reserve(InviteContext, ClaimOperationV2, *wire.StableEnrollmentAdmissionQCV1,
+	Reserve(InviteContext, ClaimPrivateEvidenceV1, ClaimOperationV2, *wire.StableEnrollmentAdmissionQCV1,
 		*wire.ControlSetV1, string) (TransactionStateV2, error)
 	RecordProvisional(ProvisionalIssuanceOperationV1, wire.EnrollmentProvisionalIssuanceV1,
-		wire.DeviceCertificateProfileStateV1) (TransactionStateV2, error)
+		wire.DeviceCertificateProfileStateV1, wire.EnrollmentResultArtifactV1) (TransactionStateV2, error)
 	Complete(CompletionOperationV2, *wire.StableEnrollmentApprovalQCV2,
 		*wire.ControlSetV1) (TransactionStateV2, error)
 }
@@ -98,7 +99,7 @@ func (coordinator *Coordinator) ProcessClaim(ctx context.Context,
 		if err != nil {
 			return wire.EnrollmentClaimResultV2{}, err
 		}
-		if _, err := coordinator.repository.Reserve(attempt.InviteContext(), operation, &admission,
+		if _, err := coordinator.repository.Reserve(attempt.InviteContext(), attempt.PrivateClaimEvidence(), operation, &admission,
 			&attempt.material.ControlSet, plan.CommittedAt); err != nil {
 			return wire.EnrollmentClaimResultV2{}, err
 		}
@@ -116,7 +117,7 @@ func (coordinator *Coordinator) ProcessClaim(ctx context.Context,
 		if err != nil {
 			return wire.EnrollmentClaimResultV2{}, err
 		}
-		if _, err := coordinator.repository.RecordProvisional(plan.Operation, plan.Issuance, plan.Profile); err != nil {
+		if _, err := coordinator.repository.RecordProvisional(plan.Operation, plan.Issuance, plan.Profile, plan.Result); err != nil {
 			return wire.EnrollmentClaimResultV2{}, err
 		}
 		record, found = coordinator.repository.SnapshotRecord(record.InviteID)
@@ -223,7 +224,8 @@ func validateAttemptAgainstRecord(attempt VerifiedClaimAttemptV2, record *Durabl
 		invite.MaximumReservationRetrySeconds != record.Invite.MaximumReservationRetrySeconds ||
 		claim.ClaimCoreHash() != record.State.ClaimCoreHash || claim.IdentityKeyHash() != record.State.IdentityKeyHash ||
 		claim.WrappingKeyHash() != record.State.WrappingKeyHash || claim.CSRHash() != record.ClaimOperation.CSRHash ||
-		attempt.submission.ClaimCore.RequestID != record.State.RequestID {
+		attempt.submission.ClaimCore.RequestID != record.State.RequestID ||
+		!wire.EqualCanonical(attempt.PrivateClaimEvidence(), record.ClaimEvidence) {
 		return errors.New("[D130 Enrollment] resume attempt 与 durable stable claim/core/key 不匹配")
 	}
 	return nil

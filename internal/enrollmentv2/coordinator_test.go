@@ -16,6 +16,7 @@ type workflowBackendFixture struct {
 	enrollmentKey    ed25519.PrivateKey
 	profile          wire.DeviceCertificateProfileStateV1
 	issuerKey        ed25519.PrivateKey
+	resultArtifact   wire.EnrollmentResultArtifactV1
 	committedAt      string
 	pendingProvision bool
 	admissionCalls   int
@@ -29,13 +30,14 @@ func TestCoordinatorResumesReservedTransactionAndFreezesCompletedResult(t *testi
 	attempt := verifiedPrivateAttempt(t, private)
 	set, member, enrollmentKey := controlSet(t)
 	profile, issuerKey := activeEnrollmentProfile(t)
+	resultArtifact := enrollmentResultArtifactFixture(t)
 	path := filepath.Join(t.TempDir(), "workflow.json")
 	store, err := OpenStore(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	firstBackend := &workflowBackendFixture{set: set, member: member, enrollmentKey: enrollmentKey,
-		profile: profile, issuerKey: issuerKey, committedAt: private.now.Format("2006-01-02T15:04:05Z"),
+		profile: profile, issuerKey: issuerKey, resultArtifact: resultArtifact, committedAt: private.now.Format("2006-01-02T15:04:05Z"),
 		pendingProvision: true}
 	coordinator, err := NewCoordinator(store, firstBackend)
 	if err != nil {
@@ -51,7 +53,7 @@ func TestCoordinatorResumesReservedTransactionAndFreezesCompletedResult(t *testi
 		t.Fatal(err)
 	}
 	secondBackend := &workflowBackendFixture{set: set, member: member, enrollmentKey: enrollmentKey,
-		profile: profile, issuerKey: issuerKey, committedAt: private.now.Format("2006-01-02T15:04:05Z")}
+		profile: profile, issuerKey: issuerKey, resultArtifact: resultArtifact, committedAt: private.now.Format("2006-01-02T15:04:05Z")}
 	recoveredCoordinator, _ := NewCoordinator(reopened, secondBackend)
 	completed, err := recoveredCoordinator.ProcessClaim(context.Background(), attempt)
 	if err != nil || completed.Status != "completed" || completed.ResultArtifactHash == "" {
@@ -63,7 +65,7 @@ func TestCoordinatorResumesReservedTransactionAndFreezesCompletedResult(t *testi
 	}
 
 	frozenBackend := &workflowBackendFixture{set: set, member: member, enrollmentKey: enrollmentKey,
-		profile: profile, issuerKey: issuerKey, committedAt: secondBackend.committedAt}
+		profile: profile, issuerKey: issuerKey, resultArtifact: resultArtifact, committedAt: secondBackend.committedAt}
 	frozenCoordinator, _ := NewCoordinator(reopened, frozenBackend)
 	replayed, err := frozenCoordinator.ProcessClaim(context.Background(), attempt)
 	if err != nil || !wire.EqualCanonical(replayed, completed) {
@@ -79,8 +81,9 @@ func TestCoordinatorRejectsBackendAdmissionForDifferentCore(t *testing.T) {
 	attempt := verifiedPrivateAttempt(t, private)
 	set, member, enrollmentKey := controlSet(t)
 	profile, issuerKey := activeEnrollmentProfile(t)
+	resultArtifact := enrollmentResultArtifactFixture(t)
 	backend := &workflowBackendFixture{set: set, member: member, enrollmentKey: enrollmentKey,
-		profile: profile, issuerKey: issuerKey, committedAt: private.now.Format("2006-01-02T15:04:05Z")}
+		profile: profile, issuerKey: issuerKey, resultArtifact: resultArtifact, committedAt: private.now.Format("2006-01-02T15:04:05Z")}
 	store, _ := OpenStore(filepath.Join(t.TempDir(), "workflow.json"))
 	coordinator, _ := NewCoordinator(store, admissionTamperingBackend{WorkflowBackend: backend})
 	if _, err := coordinator.ProcessClaim(context.Background(), attempt); err == nil {
@@ -118,11 +121,20 @@ func (backend *workflowBackendFixture) Provision(_ context.Context, _ VerifiedCl
 		return ProvisionalPlanV1{}, ErrEnrollmentProgressPending
 	}
 	profileHash, _ := wire.DeviceCertificateProfileStateHash(&backend.profile)
+	certificateDER, err := wire.EnrollmentResultCertificateDER(&backend.resultArtifact)
+	if err != nil {
+		return ProvisionalPlanV1{}, err
+	}
+	certificateHash, _ := wire.DeviceCertificateHash(certificateDER)
+	viewHash, _ := wire.DeviceViewHash(&backend.resultArtifact.InitialDeviceView)
+	resultHash, _ := wire.EnrollmentResultArtifactHash(&backend.resultArtifact)
 	body := wire.EnrollmentProvisionalIssuanceBodyV1{
 		Schema: 1, ClusterID: record.State.ClusterID, InviteID: record.State.InviteID,
 		RequestID: record.State.RequestID, ClaimOperationHash: record.State.ClaimOperationHash,
-		ReservationHeadHash: hash, ReservationHeadQCHash: hash, DeviceCertificateHash: hash,
-		InitialDeviceViewHash: hash, SecretArtifactRefsRoot: hash, ResultArtifactHash: hash,
+		ReservationHeadHash: hash, ReservationHeadQCHash: hash, DeviceCertificateHash: certificateHash,
+		InitialDeviceViewHash:             viewHash,
+		SecretArtifactRefsRoot:            backend.resultArtifact.InitialDeviceView.Active.SecretArtifactRefsRoot,
+		ResultArtifactHash:                resultHash,
 		DeviceCertificateProfileStateHash: profileHash,
 		IssuanceLogCoordinate:             wire.IssuanceLogCoordinateV1{RecoveryEpoch: 0, RaftIndex: 2},
 	}
@@ -144,7 +156,8 @@ func (backend *workflowBackendFixture) Provision(_ context.Context, _ VerifiedCl
 		PreviousIssuanceRegistryRoot: previousRoot, ResultingIssuanceRegistryRoot: resultingRoot,
 		IssuedAt: backend.committedAt,
 	}
-	return ProvisionalPlanV1{Operation: operation, Issuance: issuance, Profile: backend.profile}, nil
+	return ProvisionalPlanV1{Operation: operation, Issuance: issuance, Profile: backend.profile,
+		Result: backend.resultArtifact}, nil
 }
 
 func (backend *workflowBackendFixture) CollectApproval(_ context.Context, _ VerifiedClaimAttemptV2,

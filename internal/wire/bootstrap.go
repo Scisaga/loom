@@ -253,11 +253,7 @@ func ValidateBootstrapEndpointCatalog(catalog *BootstrapEndpointCatalogV1) error
 	if err != nil || setHash != catalog.BootstrapIngressSetHash {
 		return errors.New("[D131 bootstrap catalog] ingress set hash 不匹配")
 	}
-	qcCanonical, err := CanonicalizeStrict(catalog.BootstrapIngressSet.ConfigQC)
-	if err != nil {
-		return err
-	}
-	qcHash, err := HashCanonical(DomainQuorumCertificate, qcCanonical)
+	qcHash, err := ConfigQCHash(catalog.BootstrapIngressSet.ConfigQC)
 	if err != nil || qcHash != catalog.ConfigQCHash {
 		return errors.New("[D131 bootstrap catalog] config QC hash 不匹配")
 	}

@@ -703,6 +703,19 @@ func VerifyConfigQCAuthority(parentHeadHash string, raw json.RawMessage, head *H
 	}
 }
 
+// ConfigQCHash 对 exact config QC wire 使用统一 purpose domain；调用方不能把
+// admission/approval QC 或任意 JSON 的摘要冒充 Head authority（D104、D130）。
+func ConfigQCHash(raw json.RawMessage) (string, error) {
+	if err := validateConfigQCShape(raw); err != nil {
+		return "", err
+	}
+	canonical, err := CanonicalizeStrict(raw)
+	if err != nil {
+		return "", err
+	}
+	return HashCanonical(DomainQuorumCertificate, canonical)
+}
+
 func validateConfigQCShape(raw json.RawMessage) error {
 	qcType, err := configQCType(raw)
 	if err != nil {

@@ -2634,6 +2634,11 @@ EnrollmentClaimSubmissionV2           # 只在 inner TLS；不进 Raft/CRDT/log
   pop_body: EnrollmentPoPBodyV2
   proof_signature                      # identity key 对 exact pop_body 的 detached 签名
 
+ClaimPrivateEvidenceV1                 # control-private replicated transaction material；不进 operation log
+  schema = 1
+  opening: DeviceEnrollmentIntentOpeningV1
+  wrapping_public_key, wrapping_key_profile
+
 EnrollmentAdmissionAttestationBodyV1  # 稳定；不含 challenge/signature bytes
   schema = 1, attestation_type = "enrollment_admission"
   cluster_id, invite_id, request_id
@@ -2659,6 +2664,12 @@ EnrollmentClaimOperationV2            # admission-QC-authorized；operation log 
   token_commitment, claim_core_hash, admission_qc_hash
   identity_key_hash, wrapping_key_hash, csr_hash
   reserved_at, retry_not_after
+
+EnrollmentResultArtifactV1            # control-private；completion commit 前禁止释放
+  schema = 1, cluster_id, invite_id, request_id
+  device_certificate_der
+  initial_device_view: DeviceViewPayloadV2
+  secret_artifact_refs[]               # exact typed refs；仅 device/data-plane credential 或已授权 TLS key
 
 EnrollmentProvisionalIssuanceBodyV1    # control-private；completion 前不向 Device 释放
   schema = 1, cluster_id, invite_id, request_id
@@ -2720,12 +2731,13 @@ EnrollmentTransactionStateV2           # reducer 输出
 ~~~
 
 `claim_core_hash`、`challenge_hash`、admission attestation/QC、claim operation、provisional
-issuance body/envelope/operation、issuance registry leaf、approval attestation/QC、completion operation
+issuance body/envelope/operation、issuance registry leaf、result artifact、approval attestation/QC、completion operation
 和 transaction state 分别使用
 `loom-enrollment-claim-core-v2`、`loom-enrollment-pop-challenge-v1`、
 `loom-enrollment-admission-{attestation,qc}-v1`、`loom-enrollment-claim-operation-v2`、
 `loom-enrollment-provisional-issuance-{body,envelope,operation}-v1`、
-`loom-enrollment-issuance-registry-leaf-v1`、`loom-enrollment-approval-{attestation,qc}-v2`、
+`loom-enrollment-issuance-registry-leaf-v1`、`loom-enrollment-result-artifact-v1`、
+`loom-enrollment-approval-{attestation,qc}-v2`、
 `loom-enrollment-completion-operation-v2` 和 `loom-enrollment-transaction-state-v2` domain 计算内容哈希。
 issuance registry 对每个 claim operation 的唯一 first-result leaf 按 claim-operation hash bytes 排序，
 使用 §7.1 RFC 6962 tree；provisional operation 必须携与 previous root 比较后唯一可能的
@@ -2739,6 +2751,10 @@ identity private key 签名。服务端在已认证 inner TLS 中为每次尝试
 exact challenge 重算。CSR subject/key、声明 public key 和 PoP key 必须逐字段一致。
 token 只在已建立且验证过的内层 TLS 中发送；public ingress 只能看到外层 capability，
 不能看到 intent opening、token、CSR、Device ID 或签发结果。
+admission 成功后只把 exact opening 与 wrapping public-key/profile 作为 private transaction evidence
+耐久复制，以便另一 control 能重验后续 secret recipient；raw token、CSR、challenge 和 PoP bytes 仍不得
+进入该证据或 operation log。`wrapping_public_key` 必须重算为 claim operation 已固定的
+`wrapping_key_hash`，result 中每个 Device-owned sealed secret 必须存在绑定同一 Device ID 与该 SPKI 的 recipient。
 
 stable claim identity 是 `token_commitment + claim_core_hash`。`EnrollmentClaimCoreV2` 必须重算
 intent opening/commitment，并把 opening 的 exact intent hash、客户端平台、CSR/identity/wrapping key 及
@@ -2782,6 +2798,10 @@ reservation head/QC、transaction state、claim operation 和 registry previous 
 `StableEnrollmentApprovalQCV2` 必须满足 issuance head 的 stable ControlSet q(N)，逐字节绑定
 provisional issuance/operation、registry root、certificate、view、secret refs 和 result artifact；config head QC
 不能替代 admission/approval QC，三者也不能互换用途。
+approval peer RPC 只发送稳定 attestation；每个 voter 必须从本机线性化的 replicated private state
+取得上述完整 preimage、operation inclusion proof、Head/QC、两时点 CA registry 与 registry previous-root
+preimage，全部独立重算后才用自己的 enrollment-purpose key 签名。leader 携带的裸 hash 或私有制品副本
+不能替代 voter 的本地读取。
 
 同一 token 的合法自动重试必须复用完全相同的 claim core，因而 request ID、CSR、
 identity/wrapping keys、client nonce、intent opening 和 base authority 全部不变；只允许 server

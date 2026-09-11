@@ -17,12 +17,14 @@ type DurableRecord struct {
 	InviteID                 string                                `json:"invite_id"`
 	TokenCommitment          string                                `json:"token_commitment"`
 	Invite                   InviteContext                         `json:"invite"`
+	ClaimEvidence            ClaimPrivateEvidenceV1                `json:"claim_evidence"`
 	ClaimOperation           ClaimOperationV2                      `json:"claim_operation"`
 	AdmissionQC              wire.StableEnrollmentAdmissionQCV1    `json:"admission_qc"`
 	AdmissionControlSet      wire.ControlSetV1                     `json:"admission_control_set"`
 	ProvisionalOperation     *ProvisionalIssuanceOperationV1       `json:"provisional_operation,omitempty"`
 	ProvisionalIssuance      *wire.EnrollmentProvisionalIssuanceV1 `json:"provisional_issuance,omitempty"`
 	DeviceCertificateProfile *wire.DeviceCertificateProfileStateV1 `json:"device_certificate_profile,omitempty"`
+	ResultArtifact           *wire.EnrollmentResultArtifactV1      `json:"result_artifact,omitempty"`
 	ApprovalQC               *wire.StableEnrollmentApprovalQCV2    `json:"approval_qc,omitempty"`
 	ApprovalControlSet       *wire.ControlSetV1                    `json:"approval_control_set,omitempty"`
 	CompletionOperation      *CompletionOperationV2                `json:"completion_operation,omitempty"`
@@ -85,9 +87,13 @@ func (s *Store) SnapshotRecord(inviteID string) (DurableRecord, bool) {
 	return cloneDurableRecord(s.state.Records[index]), true
 }
 
-func (s *Store) Reserve(invite InviteContext, operation ClaimOperationV2, admission *wire.StableEnrollmentAdmissionQCV1, set *wire.ControlSetV1, committedAt string) (TransactionStateV2, error) {
+func (s *Store) Reserve(invite InviteContext, evidence ClaimPrivateEvidenceV1, operation ClaimOperationV2,
+	admission *wire.StableEnrollmentAdmissionQCV1, set *wire.ControlSetV1, committedAt string) (TransactionStateV2, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := validateClaimPrivateEvidence(&evidence, &operation); err != nil {
+		return TransactionStateV2{}, err
+	}
 	next, err := Reserve(invite, operation, admission, set, committedAt)
 	if err != nil {
 		return TransactionStateV2{}, err
@@ -96,7 +102,8 @@ func (s *Store) Reserve(invite InviteContext, operation ClaimOperationV2, admiss
 	if found {
 		existing := s.state.Records[index]
 		if existing.TokenCommitment == invite.TokenCommitment && sameStableClaim(existing.State, next) &&
-			wire.EqualCanonical(existing.Invite, invite) && wire.EqualCanonical(existing.ClaimOperation, operation) &&
+			wire.EqualCanonical(existing.Invite, invite) && wire.EqualCanonical(existing.ClaimEvidence, evidence) &&
+			wire.EqualCanonical(existing.ClaimOperation, operation) &&
 			wire.EqualCanonical(existing.AdmissionQC, *admission) && wire.EqualCanonical(existing.AdmissionControlSet, *set) {
 			return existing.State, nil
 		}
@@ -110,7 +117,8 @@ func (s *Store) Reserve(invite InviteContext, operation ClaimOperationV2, admiss
 	candidate := cloneDurableState(s.state)
 	candidate.Records = append(candidate.Records, DurableRecord{
 		InviteID: invite.InviteID, TokenCommitment: invite.TokenCommitment, Invite: invite,
-		ClaimOperation: operation, AdmissionQC: *admission, AdmissionControlSet: *set, State: next,
+		ClaimEvidence: evidence, ClaimOperation: operation, AdmissionQC: *admission,
+		AdmissionControlSet: *set, State: next,
 	})
 	sort.Slice(candidate.Records, func(i, j int) bool { return candidate.Records[i].InviteID < candidate.Records[j].InviteID })
 	if err := s.persistLocked(candidate); err != nil {
@@ -122,7 +130,8 @@ func (s *Store) Reserve(invite InviteContext, operation ClaimOperationV2, admiss
 
 func (s *Store) RecordProvisional(operation ProvisionalIssuanceOperationV1,
 	issuance wire.EnrollmentProvisionalIssuanceV1,
-	profile wire.DeviceCertificateProfileStateV1) (TransactionStateV2, error) {
+	profile wire.DeviceCertificateProfileStateV1,
+	result wire.EnrollmentResultArtifactV1) (TransactionStateV2, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	index, found := findRecord(s.state.Records, operation.InviteID)
@@ -135,9 +144,11 @@ func (s *Store) RecordProvisional(operation ProvisionalIssuanceOperationV1,
 		existing := s.state.Records[index]
 		if err == nil && current.ProvisionalIssuanceOperationHash == operationHash &&
 			existing.ProvisionalOperation != nil && existing.ProvisionalIssuance != nil &&
-			existing.DeviceCertificateProfile != nil && wire.EqualCanonical(*existing.ProvisionalOperation, operation) &&
+			existing.DeviceCertificateProfile != nil && existing.ResultArtifact != nil &&
+			wire.EqualCanonical(*existing.ProvisionalOperation, operation) &&
 			wire.EqualCanonical(*existing.ProvisionalIssuance, issuance) &&
-			wire.EqualCanonical(*existing.DeviceCertificateProfile, profile) {
+			wire.EqualCanonical(*existing.DeviceCertificateProfile, profile) &&
+			wire.EqualCanonical(*existing.ResultArtifact, result) {
 			return current, nil
 		}
 		return TransactionStateV2{}, errors.New("[D130 Enrollment] 同一 claim 已有不同 provisional first-result")
@@ -146,7 +157,7 @@ func (s *Store) RecordProvisional(operation ProvisionalIssuanceOperationV1,
 	if err != nil {
 		return TransactionStateV2{}, err
 	}
-	if err := validateProvisionalEvidence(&operation, &issuance, &profile); err != nil {
+	if err := validateProvisionalEvidence(&operation, &issuance, &profile, &result); err != nil {
 		return TransactionStateV2{}, err
 	}
 	previousLeaves := issuanceRegistryLeaves(s.state.Records)
@@ -163,6 +174,7 @@ func (s *Store) RecordProvisional(operation ProvisionalIssuanceOperationV1,
 	candidate.Records[index].ProvisionalOperation = &operation
 	candidate.Records[index].ProvisionalIssuance = &issuance
 	candidate.Records[index].DeviceCertificateProfile = &profile
+	candidate.Records[index].ResultArtifact = &result
 	if err := s.persistLocked(candidate); err != nil {
 		return TransactionStateV2{}, err
 	}
@@ -303,6 +315,9 @@ func cloneDurableRecord(record DurableRecord) DurableRecord {
 }
 
 func validateDurableRecord(record *DurableRecord) error {
+	if err := validateClaimPrivateEvidence(&record.ClaimEvidence, &record.ClaimOperation); err != nil {
+		return err
+	}
 	reserved, err := Reserve(record.Invite, record.ClaimOperation, &record.AdmissionQC,
 		&record.AdmissionControlSet, record.ClaimOperation.ReservedAt)
 	if err != nil {
@@ -310,7 +325,7 @@ func validateDurableRecord(record *DurableRecord) error {
 	}
 	if record.State.Status == "reserved" {
 		if record.ProvisionalOperation != nil || record.ProvisionalIssuance != nil ||
-			record.DeviceCertificateProfile != nil || record.ApprovalQC != nil ||
+			record.DeviceCertificateProfile != nil || record.ResultArtifact != nil || record.ApprovalQC != nil ||
 			record.ApprovalControlSet != nil || record.CompletionOperation != nil ||
 			!wire.EqualCanonical(reserved, record.State) {
 			return errors.New("[D130 Enrollment] reserved durable record tagged union 无效")
@@ -320,11 +335,12 @@ func validateDurableRecord(record *DurableRecord) error {
 	if record.State.Status != "issued_provisional" && record.State.Status != "completed" {
 		return errors.New("[D130 Enrollment] durable store 不接受未携 certified abort evidence 的状态")
 	}
-	if record.ProvisionalOperation == nil || record.ProvisionalIssuance == nil || record.DeviceCertificateProfile == nil {
+	if record.ProvisionalOperation == nil || record.ProvisionalIssuance == nil ||
+		record.DeviceCertificateProfile == nil || record.ResultArtifact == nil {
 		return errors.New("[D130 Enrollment] issued durable record 缺 provisional stable artifacts")
 	}
 	if err := validateProvisionalEvidence(record.ProvisionalOperation, record.ProvisionalIssuance,
-		record.DeviceCertificateProfile); err != nil {
+		record.DeviceCertificateProfile, record.ResultArtifact); err != nil {
 		return err
 	}
 	issued, err := RecordProvisional(reserved, *record.ProvisionalOperation)
@@ -355,8 +371,9 @@ func validateDurableRecord(record *DurableRecord) error {
 }
 
 func validateProvisionalEvidence(operation *ProvisionalIssuanceOperationV1,
-	issuance *wire.EnrollmentProvisionalIssuanceV1, profile *wire.DeviceCertificateProfileStateV1) error {
-	if operation == nil || issuance == nil || profile == nil {
+	issuance *wire.EnrollmentProvisionalIssuanceV1, profile *wire.DeviceCertificateProfileStateV1,
+	result *wire.EnrollmentResultArtifactV1) error {
+	if operation == nil || issuance == nil || profile == nil || result == nil {
 		return errors.New("[D130 Enrollment] provisional evidence 不完整")
 	}
 	if err := wire.VerifyEnrollmentProvisionalIssuance(issuance, profile); err != nil {
@@ -367,11 +384,19 @@ func validateProvisionalEvidence(operation *ProvisionalIssuanceOperationV1,
 		return err
 	}
 	body := issuance.Body
+	resultHash, resultErr := wire.EnrollmentResultArtifactHash(result)
+	certificateDER, certificateErr := wire.EnrollmentResultCertificateDER(result)
+	certificateHash, certificateHashErr := wire.DeviceCertificateHash(certificateDER)
+	viewHash, viewErr := wire.DeviceViewHash(&result.InitialDeviceView)
 	if operation.ProvisionalIssuanceHash != issuanceHash || operation.ClusterID != body.ClusterID ||
 		operation.InviteID != body.InviteID || operation.RequestID != body.RequestID ||
 		operation.ClaimOperationHash != body.ClaimOperationHash ||
 		operation.IssuanceRegistryLeaf.ClaimOperationHash != operation.ClaimOperationHash ||
-		operation.IssuanceRegistryLeaf.ProvisionalIssuanceHash != issuanceHash {
+		operation.IssuanceRegistryLeaf.ProvisionalIssuanceHash != issuanceHash ||
+		resultErr != nil || certificateErr != nil || certificateHashErr != nil || viewErr != nil ||
+		result.ClusterID != body.ClusterID || result.InviteID != body.InviteID || result.RequestID != body.RequestID ||
+		resultHash != body.ResultArtifactHash || certificateHash != body.DeviceCertificateHash ||
+		viewHash != body.InitialDeviceViewHash || result.InitialDeviceView.Active.SecretArtifactRefsRoot != body.SecretArtifactRefsRoot {
 		return errors.New("[D130 Enrollment] provisional operation/envelope/registry leaf exact binding 不匹配")
 	}
 	issuedAt, issuedErr := wire.ParseTimeZ(operation.IssuedAt)
@@ -386,7 +411,8 @@ func validateProvisionalEvidence(operation *ProvisionalIssuanceOperationV1,
 }
 
 func validateApprovalAgainstIssuance(record *DurableRecord, approval *wire.StableEnrollmentApprovalQCV2) error {
-	if record == nil || record.ProvisionalIssuance == nil || record.ProvisionalOperation == nil || approval == nil {
+	if record == nil || record.ProvisionalIssuance == nil || record.ProvisionalOperation == nil ||
+		record.ResultArtifact == nil || approval == nil {
 		return errors.New("[D130 Enrollment] approval 缺 exact provisional evidence")
 	}
 	body := record.ProvisionalIssuance.Body
@@ -399,6 +425,10 @@ func validateApprovalAgainstIssuance(record *DurableRecord, approval *wire.Stabl
 	if err != nil {
 		return err
 	}
+	resultHash, err := wire.EnrollmentResultArtifactHash(record.ResultArtifact)
+	if err != nil {
+		return err
+	}
 	if attestation.ClusterID != body.ClusterID || attestation.InviteID != body.InviteID ||
 		attestation.RequestID != body.RequestID || attestation.ClaimOperationHash != body.ClaimOperationHash ||
 		attestation.ProvisionalIssuanceOperationHash != operationHash ||
@@ -407,7 +437,7 @@ func validateApprovalAgainstIssuance(record *DurableRecord, approval *wire.Stabl
 		attestation.DeviceCertificateHash != body.DeviceCertificateHash ||
 		attestation.InitialDeviceViewHash != body.InitialDeviceViewHash ||
 		attestation.SecretArtifactRefsRoot != body.SecretArtifactRefsRoot ||
-		attestation.ResultArtifactHash != body.ResultArtifactHash {
+		attestation.ResultArtifactHash != body.ResultArtifactHash || resultHash != body.ResultArtifactHash {
 		return errors.New("[D130 Enrollment] approval QC 未逐字段绑定 exact provisional issuance")
 	}
 	return nil
