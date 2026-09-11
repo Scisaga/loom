@@ -488,39 +488,14 @@ func VerifyControlSetTransitionBundle(bundle *ControlSetTransitionBundleV1, pare
 	if bundle == nil || bundle.Schema != 1 || bundle.Final.Schema != 1 || parent == nil {
 		return VerifiedControlSetTransitionV1{}, errors.New("[D112 joint] transition bundle/parent 无效")
 	}
-	if err := VerifyControlMembershipApprovalProof(&bundle.MembershipApprovalProof, &bundle.OldControlSet, &bundle.NewControlSet, parent); err != nil {
+	transitionHash, err := VerifyControlSetFinalCandidate(&bundle.OldControlSet, &bundle.NewControlSet,
+		&bundle.MembershipApprovalProof, &bundle.JointProof, &bundle.Final.Head, parent)
+	if err != nil {
 		return VerifiedControlSetTransitionV1{}, err
 	}
-	approvalHash, _ := ControlMembershipApprovalProofHash(&bundle.MembershipApprovalProof)
 	intent := &bundle.MembershipApprovalProof.Intent
-	joint := &bundle.JointProof.JointBody
-	if !jointMatchesIntent(joint, intent, approvalHash) {
-		return VerifiedControlSetTransitionV1{}, errors.New("[D112 joint] Joint entry 未 exact-bind intent/approval")
-	}
-	parentTime, _ := ParseTimeZ(parent.Body.Payload.CommittedLogicalTime)
-	jointTime, err := ParseTimeZ(joint.CommittedLogicalTime)
-	nextJointIndex, indexErr := CheckedAdd(parent.Body.Payload.RaftIndex, 1)
-	if err != nil || indexErr != nil || !jointTime.After(parentTime) || joint.RaftTerm < parent.Body.Payload.RaftTerm ||
-		joint.RaftIndex != nextJointIndex || joint.PreviousLogEntryHash != parent.EntryHash {
-		return VerifiedControlSetTransitionV1{}, errors.New("[D112 joint] Joint entry 未直接连续 parent certified head")
-	}
-	jointProofHash, err := JointControlSetProofHash(&bundle.JointProof, &bundle.OldControlSet, &bundle.NewControlSet)
-	if err != nil {
-		return VerifiedControlSetTransitionV1{}, err
-	}
-	proof := ControlSetTransitionProofV1{Schema: 1, JointProofHash: jointProofHash, FinalPayload: bundle.Final.Head.Body.Payload}
-	transitionHash, err := ControlSetTransitionProofHash(&proof)
-	if err != nil {
-		return VerifiedControlSetTransitionV1{}, err
-	}
 	finalHead := &bundle.Final.Head
-	if finalHead.Body.TransitionProofHash != transitionHash || ValidateHeadEntry(finalHead, nil) != nil {
-		return VerifiedControlSetTransitionV1{}, errors.New("[D112 joint] Final head/transition proof hash 无效")
-	}
 	if err := VerifyJointHeadQC(finalHead, &bundle.OldControlSet, &bundle.NewControlSet, &bundle.Final.FinalJointReplicationQC); err != nil {
-		return VerifiedControlSetTransitionV1{}, err
-	}
-	if err := validateFinalControlSetPayload(&finalHead.Body.Payload, parent, joint, intent, approvalHash, bundle.JointProof.JointEntryHash, jointProofHash); err != nil {
 		return VerifiedControlSetTransitionV1{}, err
 	}
 	return VerifiedControlSetTransitionV1{
@@ -532,6 +507,67 @@ func VerifyControlSetTransitionBundle(bundle *ControlSetTransitionBundleV1, pare
 		finalHeadHash: finalHead.HeadHash, finalControlRevision: finalHead.Body.Payload.ControlRevision,
 		transitionProofHash: transitionHash,
 	}, nil
+}
+
+// VerifyJointControlSetCandidate 是写入 config log 前的 exact 验证边界；它验证
+// membership approval、PoP、parent lineage 与紧邻 Raft 坐标，但不把尚未提交的
+// Joint entry 冒充成已经具备 replication QC 的公开 proof（D112）。
+func VerifyJointControlSetCandidate(oldSet, newSet *ControlSetV1,
+	approval *ControlMembershipApprovalProofV1, joint *JointControlSetEntryBodyV1,
+	parent *HeadEntryV2) (string, error) {
+	if err := VerifyControlMembershipApprovalProof(approval, oldSet, newSet, parent); err != nil {
+		return "", err
+	}
+	approvalHash, err := ControlMembershipApprovalProofHash(approval)
+	if err != nil || !jointMatchesIntent(joint, &approval.Intent, approvalHash) {
+		return "", errors.New("[D112 joint] Joint entry 未 exact-bind intent/approval")
+	}
+	parentTime, _ := ParseTimeZ(parent.Body.Payload.CommittedLogicalTime)
+	jointTime, timeErr := ParseTimeZ(joint.CommittedLogicalTime)
+	nextJointIndex, indexErr := CheckedAdd(parent.Body.Payload.RaftIndex, 1)
+	if timeErr != nil || indexErr != nil || !jointTime.After(parentTime) ||
+		joint.RaftTerm < parent.Body.Payload.RaftTerm || joint.RaftIndex != nextJointIndex ||
+		joint.PreviousLogEntryHash != parent.EntryHash {
+		return "", errors.New("[D112 joint] Joint entry 未直接连续 parent certified head")
+	}
+	return JointControlSetEntryHash(joint)
+}
+
+// VerifyControlSetFinalCandidate 供 joint-finalization-only 运行时在追加 Final 前使用。
+// 它要求 Joint 已有 old/new 双多数 QC，并钉住 Final 的 proof hash、直接相邻日志坐标
+// 与不夹带业务状态的 reducer 输出；Final 自身的 joint head QC 在 commit 后另行收集（D112）。
+func VerifyControlSetFinalCandidate(oldSet, newSet *ControlSetV1,
+	approval *ControlMembershipApprovalProofV1, jointProof *JointControlSetProofV1,
+	final *HeadEntryV2, parent *HeadEntryV2) (string, error) {
+	if final == nil || jointProof == nil {
+		return "", errors.New("[D112 joint] Final candidate/Joint proof 缺失")
+	}
+	jointEntryHash, err := VerifyJointControlSetCandidate(oldSet, newSet, approval,
+		&jointProof.JointBody, parent)
+	if err != nil {
+		return "", err
+	}
+	if jointProof.JointEntryHash != jointEntryHash {
+		return "", errors.New("[D112 joint] Joint proof entry hash 与 candidate 不一致")
+	}
+	jointProofHash, err := JointControlSetProofHash(jointProof, oldSet, newSet)
+	if err != nil {
+		return "", err
+	}
+	proof := ControlSetTransitionProofV1{Schema: 1, JointProofHash: jointProofHash, FinalPayload: final.Body.Payload}
+	transitionHash, err := ControlSetTransitionProofHash(&proof)
+	if err != nil {
+		return "", err
+	}
+	if final.Body.TransitionProofHash != transitionHash || ValidateHeadEntry(final, nil) != nil {
+		return "", errors.New("[D112 joint] Final head/transition proof hash 无效")
+	}
+	approvalHash, _ := ControlMembershipApprovalProofHash(approval)
+	if err := validateFinalControlSetPayload(&final.Body.Payload, parent, &jointProof.JointBody,
+		&approval.Intent, approvalHash, jointEntryHash, jointProofHash); err != nil {
+		return "", err
+	}
+	return transitionHash, nil
 }
 
 // VerifyAuthorizedControlSetTransitionBundle 供 private control_api/voter 使用；公开

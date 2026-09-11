@@ -68,6 +68,9 @@ func TestControlSetTransitionRequiresMembershipJointAndFinalQuorums(t *testing.T
 		CommittedLogicalTime: "2026-09-11T00:00:02Z",
 	}
 	jointEntryHash, _ := JointControlSetEntryHash(&jointBody)
+	if candidateHash, err := VerifyJointControlSetCandidate(&oldSet, &newSet, &approval, &jointBody, &parent); err != nil || candidateHash != jointEntryHash {
+		t.Fatalf("合法 Joint candidate 未通过 pre-commit 验证: hash=%q err=%v", candidateHash, err)
+	}
 	jointAttestation := JointConfigAttestationForEntry(&jointBody, jointEntryHash)
 	oldJointSignature, _ := SignJointConfigAttestation(jointAttestation, oldSet.Members[0], oldConfigPrivate)
 	newJointSignature, _ := SignJointConfigAttestation(jointAttestation, newSet.Members[0], newConfigPrivate)
@@ -105,6 +108,10 @@ func TestControlSetTransitionRequiresMembershipJointAndFinalQuorums(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	if candidateHash, err := VerifyControlSetFinalCandidate(&oldSet, &newSet, &approval, &jointProof,
+		&finalHead, &parent); err != nil || candidateHash != transitionHash {
+		t.Fatalf("合法 Final candidate 未通过 pre-commit 验证: hash=%q err=%v", candidateHash, err)
+	}
 	oldFinalSignature, _ := SignHeadAttestation(AttestationForHead(&finalHead), oldSet.Members[0], oldConfigPrivate)
 	newFinalSignature, _ := SignHeadAttestation(AttestationForHead(&finalHead), newSet.Members[0], newConfigPrivate)
 	bundle := ControlSetTransitionBundleV1{
@@ -141,6 +148,17 @@ func TestControlSetTransitionRequiresMembershipJointAndFinalQuorums(t *testing.T
 	tampered.JointProof.JointReplicationQC.Attestation.NewControlPeerDirectoryHash = recoveryTestHash("spliced-directory")
 	if _, err := VerifyControlSetTransitionBundle(&tampered, &parent); err == nil {
 		t.Fatal("接受了 Joint entry 与 QC 的拼接")
+	}
+	tamperedFinal := finalHead
+	tamperedFinal.Body.Payload.OperationRoot = recoveryTestHash("spliced-operation")
+	tamperedProofHash, _ := ControlSetTransitionProofHash(&ControlSetTransitionProofV1{
+		Schema: 1, JointProofHash: jointProofHash, FinalPayload: tamperedFinal.Body.Payload,
+	})
+	tamperedFinal.Body.TransitionProofHash = tamperedProofHash
+	tamperedFinal, _ = NewHeadEntry(tamperedFinal.Body)
+	if _, err := VerifyControlSetFinalCandidate(&oldSet, &newSet, &approval, &jointProof,
+		&tamperedFinal, &parent); err == nil {
+		t.Fatal("pre-commit verifier 接受了 Final 夹带的普通业务状态")
 	}
 }
 
