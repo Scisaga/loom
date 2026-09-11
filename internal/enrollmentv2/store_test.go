@@ -179,7 +179,7 @@ func activeEnrollmentProfile(t *testing.T) (wire.DeviceCertificateProfileStateV1
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	rootPublic, rootKey, _ := ed25519.GenerateKey(rand.Reader)
 	rootTemplate := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "root"},
-		NotBefore: now.Add(-24 * time.Hour), NotAfter: now.Add(30 * 24 * time.Hour), IsCA: true,
+		NotBefore: now.Add(-24 * time.Hour), NotAfter: now.Add(800 * 24 * time.Hour), IsCA: true,
 		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature}
 	rootDER, err := x509.CreateCertificate(rand.Reader, rootTemplate, rootTemplate, rootPublic, rootKey)
 	if err != nil {
@@ -188,7 +188,7 @@ func activeEnrollmentProfile(t *testing.T) (wire.DeviceCertificateProfileStateV1
 	root, _ := x509.ParseCertificate(rootDER)
 	issuerPublic, issuerKey, _ := ed25519.GenerateKey(rand.Reader)
 	issuerTemplate := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "issuer"},
-		NotBefore: now.Add(-24 * time.Hour), NotAfter: now.Add(20 * 24 * time.Hour), IsCA: true,
+		NotBefore: now.Add(-24 * time.Hour), NotAfter: now.Add(500 * 24 * time.Hour), IsCA: true,
 		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature}
 	issuerDER, err := x509.CreateCertificate(rand.Reader, issuerTemplate, root, issuerPublic, rootKey)
 	if err != nil {
@@ -203,7 +203,7 @@ func activeEnrollmentProfile(t *testing.T) (wire.DeviceCertificateProfileStateV1
 	intent := wire.DeviceCertificateProfileIntentV1{
 		Schema: 1, ClusterID: "cluster", ProfileID: "profile", Generation: 1, TargetStatus: "active",
 		IssuerID: "issuer", IssuerGeneration: 1, IssuerFencingEpoch: 1,
-		IssuanceNotBefore: "2026-01-01T00:00:00Z", IssuanceNotAfter: "2026-01-02T00:00:00Z",
+		IssuanceNotBefore: "2026-01-01T00:00:00Z", IssuanceNotAfter: "2026-12-31T00:00:00Z",
 		ProfileKind: "loom-device-x509-v1", IssuerCertificateDER: chain[0], IssuerCertificateHash: issuerHash,
 		IssuerChainDER: chain, IssuerChainHash: chainHash, IssuerKeyArtifactHash: hash,
 		AllowedPlatforms: []string{"linux-server"}, AllowedResponsibilities: []string{"use_loom"},
