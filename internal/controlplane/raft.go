@@ -407,7 +407,7 @@ func (s *RaftStorage) persistRaftStateLocked(state *RaftPersistentStateV1) error
 		_ = temporary.Close()
 		return err
 	}
-	if _, err = temporary.Write(append(canonical, '\n')); err == nil {
+	if _, err = temporary.Write(canonical); err == nil {
 		err = temporary.Sync()
 	}
 	closeErr := temporary.Close()

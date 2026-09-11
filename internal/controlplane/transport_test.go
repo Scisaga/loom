@@ -81,6 +81,13 @@ func TestRaftHTTPHandlerBindsMessageIdentityToMTLSMember(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("valid peer response=%d %s", response.Code, response.Body.String())
 	}
+	wantResponse, err := wire.MarshalCanonical(VoteResultV1{Term: 1, Granted: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(response.Body.Bytes(), wantResponse) {
+		t.Fatalf("Raft response 不是 exact canonical bytes: got=%q want=%q", response.Body.Bytes(), wantResponse)
+	}
 
 	message.CandidateID = set.Members[2].MemberID
 	body, _ = wire.MarshalCanonical(message)

@@ -37,14 +37,11 @@ func TestStaticHandlerRejectsPathFuzzAndWrites(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("fake"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	digest := strings.Repeat("a", 64)
-	path := filepath.Join(root, "distribution", "sha256")
-	if err := os.MkdirAll(path, 0o700); err != nil {
+	artifactPath, err := PublishArtifact(root, []byte("artifact"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(path, digest), []byte("artifact"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	digest := strings.TrimPrefix(artifactPath, "/distribution/sha256/")
 	handler, err := StaticHandler(root)
 	if err != nil {
 		t.Fatal(err)
@@ -67,5 +64,27 @@ func TestStaticHandlerRejectsPathFuzzAndWrites(t *testing.T) {
 		if response.Code != test.status {
 			t.Errorf("%s %s = %d, want %d", test.method, test.path, response.Code, test.status)
 		}
+	}
+}
+
+func TestStaticHandlerRejectsMislabeledArtifact(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "distribution", "sha256")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	digest := strings.Repeat("a", 64)
+	if err := os.WriteFile(filepath.Join(directory, digest), []byte("wrong bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := StaticHandler(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/distribution/sha256/"+digest, nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("错误 digest 的 artifact 返回 %d", response.Code)
 	}
 }

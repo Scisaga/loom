@@ -51,6 +51,25 @@ func TestSameLogicalIDDifferentBytesFailsClosed(t *testing.T) {
 	}
 }
 
+func TestMergeConflictRejectsWholeBatch(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "objects.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	existing, _ := NewObject("same", "draft", []byte(`{"value":1}`))
+	beforeConflict, _ := NewObject("before", "draft", []byte(`{"value":2}`))
+	conflict, _ := NewObject("same", "draft", []byte(`{"value":3}`))
+	if err := store.Add(existing); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Merge([]Object{beforeConflict, conflict}); err == nil {
+		t.Fatal("conflicting batch was accepted")
+	}
+	if got := store.Snapshot(); len(got) != 1 || got[0].ID != "same" || got[0].ObjectID != existing.ObjectID {
+		t.Fatalf("冲突 batch 泄漏了部分对象: %#v", got)
+	}
+}
+
 func TestStoreReopensAndRejectsNonCanonicalPayload(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "objects.json")
 	store, err := Open(path)

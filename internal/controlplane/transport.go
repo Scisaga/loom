@@ -241,7 +241,7 @@ func writeRaftCanonical(response http.ResponseWriter, value any) {
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("X-Content-Type-Options", "nosniff")
 	response.WriteHeader(http.StatusOK)
-	_, _ = response.Write(append(body, '\n'))
+	_, _ = response.Write(body)
 }
 
 func writeRaftError(response http.ResponseWriter, status int, message string) {
@@ -250,5 +250,5 @@ func writeRaftError(response http.ResponseWriter, status int, message string) {
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("X-Content-Type-Options", "nosniff")
 	response.WriteHeader(status)
-	_, _ = response.Write(append(body, '\n'))
+	_, _ = response.Write(body)
 }

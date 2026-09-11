@@ -105,3 +105,74 @@ func TestAdminCertificateRejectsWrongRoleEKU(t *testing.T) {
 		t.Fatal("accepted server-only certificate as an admin client")
 	}
 }
+
+func TestPrivateControlAuthorizationBindsTLSLeafHeadQCAndACLRoot(t *testing.T) {
+	profile, authorization, adminKey := adminFixture(t, x509.ExtKeyUsageClientAuth)
+	member, configKey := deterministicMember(t, 1)
+	set := ControlSetV1{Schema: 1, ClusterID: member.ClusterID, Members: []ControlMemberV1{member}}
+	profile.ClusterID = set.ClusterID
+	profileHash, err := AdminCertificateProfileHash(&profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorization.ClusterID = set.ClusterID
+	authorization.CertificateProfileRef.AdminCertificateProfileHash = profileHash
+	profiles := map[string]AdminCertificateProfileV1{profile.ProfileID: profile}
+	authorizations := []AdminAuthorizationV1{authorization}
+	aclRoot, err := AdminACLRoot(authorizations, profiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := testHead(t, &set)
+	headBody := head.Body
+	headBody.Payload.AdminACLRoot = aclRoot
+	head, err = NewHeadEntry(headBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature, err := SignHeadAttestation(AttestationForHead(&head), member, configKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	qc := StableQC(&head, []ControlConfigSignatureV1{signature})
+	qcRaw, err := MarshalCanonical(qc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := testOperationBody()
+	body.ClusterID = set.ClusterID
+	body.AuthorID = authorization.AdminID
+	body.AdminCertDigest = authorization.AdminCertificateDigest
+	body.BaseRecoveryEpoch = head.Body.Payload.RecoveryEpoch
+	body.BaseRecoveryStatementHash = head.Body.Payload.RecoveryStatementHash
+	body.BaseRecoveryPolicyHash = head.Body.Payload.RecoveryPolicyHash
+	body.BaseControlEpoch = head.Body.Payload.ControlEpoch
+	body.BaseControlSetHash = head.Body.Payload.ControlSetHash
+	body.BaseControlRevision = head.Body.Payload.ControlRevision
+	body.ParentHeadHash = head.HeadHash
+	schemas := OperationSchemaRegistry{"create_invite": 2}
+	operation, err := NewControlOperation(body, adminKey, schemas)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peerDER, err := base64.RawURLEncoding.DecodeString(authorization.AdminCertificateDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := AuthorizeControlOperationAtHead(&operation, peerDER, &authorization.Scopes[0],
+		time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC), schemas, &head, qcRaw, &set, nil, authorizations, profiles)
+	if err != nil || verified.HeadHash() != head.HeadHash {
+		t.Fatalf("private control authorization failed: %#v err=%v", verified, err)
+	}
+	splicedHead := head
+	splicedHead.Body.Payload.AdminACLRoot = HashRaw("test-admin-root-v1", []byte("other"))
+	splicedHead, _ = NewHeadEntry(splicedHead.Body)
+	if _, err := AuthorizeControlOperationAtHead(&operation, peerDER, &authorization.Scopes[0],
+		time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC), schemas, &splicedHead, qcRaw, &set, nil, authorizations, profiles); err == nil {
+		t.Fatal("接受了未绑定 QC/ACL root 的 spliced head")
+	}
+	if _, err := AuthorizeControlOperationAtHead(&operation, []byte("not-an-admin-certificate"), &authorization.Scopes[0],
+		time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC), schemas, &head, qcRaw, &set, nil, authorizations, profiles); err == nil {
+		t.Fatal("接受了错误角色/未知 TLS leaf")
+	}
+}

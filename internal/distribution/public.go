@@ -2,6 +2,8 @@
 package distribution
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -120,11 +122,76 @@ func StaticHandler(root string) (http.Handler, error) {
 			http.NotFound(response, request)
 			return
 		}
+		if digestPath.MatchString(request.URL.Path) {
+			digest := sha256.Sum256(body)
+			if hex.EncodeToString(digest[:]) != strings.TrimPrefix(request.URL.Path, "/distribution/sha256/") {
+				http.NotFound(response, request)
+				return
+			}
+		}
 		response.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
 		if request.Method == http.MethodGet {
 			_, _ = response.Write(body)
 		}
 	}), nil
+}
+
+// PublishArtifact 以原始制品 SHA-256 命名并原子落盘；重复发布相同 bytes 幂等，
+// 已存在但内容不同则视为镜像损坏，不能覆盖后继续服务（D131）。
+func PublishArtifact(root string, body []byte) (string, error) {
+	if !safeAbsolutePath(root) {
+		return "", errors.New("[D131 distribution] static root 必须是规范绝对路径")
+	}
+	digest := sha256.Sum256(body)
+	hexDigest := hex.EncodeToString(digest[:])
+	directory := filepath.Join(root, "distribution", "sha256")
+	path := filepath.Join(directory, hexDigest)
+	if existing, err := os.ReadFile(path); err == nil {
+		if string(existing) != string(body) {
+			return "", errors.New("[D131 distribution] digest path 已存在不同内容")
+		}
+		return "/distribution/sha256/" + hexDigest, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		return "", err
+	}
+	temporary, err := os.CreateTemp(directory, ".artifact-*")
+	if err != nil {
+		return "", err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err = temporary.Chmod(0o644); err == nil {
+		_, err = temporary.Write(body)
+	}
+	if err == nil {
+		err = temporary.Sync()
+	}
+	closeErr := temporary.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return "", err
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return "", err
+	}
+	directoryHandle, err := os.Open(directory)
+	if err != nil {
+		return "", err
+	}
+	err = directoryHandle.Sync()
+	closeErr = directoryHandle.Close()
+	if err != nil {
+		return "", err
+	}
+	if closeErr != nil {
+		return "", closeErr
+	}
+	return "/distribution/sha256/" + hexDigest, nil
 }
 
 func safeAbsolutePath(path string) bool {

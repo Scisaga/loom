@@ -117,10 +117,27 @@ func (s *Store) Merge(objects []Object) error {
 	ordered := append([]Object(nil), objects...)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID })
 	for i := range ordered {
-		if err := s.Add(ordered[i]); err != nil {
+		if err := validateObject(ordered[i]); err != nil {
 			return err
 		}
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	candidate := cloneObjects(s.objects)
+	for i := range ordered {
+		object := ordered[i]
+		if existing, ok := candidate[object.ID]; ok {
+			if existing.ObjectID == object.ObjectID && bytes.Equal(existing.Payload, object.Payload) && existing.Kind == object.Kind {
+				continue
+			}
+			return errors.New("[D101 CRDT] 同一 logical ID 出现不同 bytes，整批 merge 已拒绝")
+		}
+		candidate[object.ID] = cloneObject(object)
+	}
+	if err := s.persistObjectsLocked(candidate); err != nil {
+		return err
+	}
+	s.objects = candidate
 	return nil
 }
 
@@ -187,7 +204,11 @@ func (s *Store) snapshotLocked() []Object {
 }
 
 func (s *Store) persistLocked() error {
-	body, err := wire.MarshalCanonical(diskState{Schema: 1, Objects: s.snapshotLocked()})
+	return s.persistObjectsLocked(s.objects)
+}
+
+func (s *Store) persistObjectsLocked(objects map[string]Object) error {
+	body, err := wire.MarshalCanonical(diskState{Schema: 1, Objects: snapshotObjects(objects)})
 	if err != nil {
 		return err
 	}
@@ -225,6 +246,23 @@ func (s *Store) persistLocked() error {
 	}
 	defer directory.Close()
 	return directory.Sync()
+}
+
+func cloneObjects(objects map[string]Object) map[string]Object {
+	result := make(map[string]Object, len(objects))
+	for id, object := range objects {
+		result[id] = cloneObject(object)
+	}
+	return result
+}
+
+func snapshotObjects(objects map[string]Object) []Object {
+	result := make([]Object, 0, len(objects))
+	for _, object := range objects {
+		result = append(result, cloneObject(object))
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	return result
 }
 
 func cloneObject(object Object) Object {

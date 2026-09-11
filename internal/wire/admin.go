@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/asn1"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"sort"
 	"strconv"
@@ -91,6 +92,26 @@ type AdminACLLeafV1 struct {
 	AuthorizationID        string `json:"authorization_id"`
 	Generation             int64  `json:"generation"`
 	AdminAuthorizationHash string `json:"admin_authorization_hash"`
+}
+
+// VerifiedAdminOperationV1 是私有 control_api 完成 mTLS、base-head 与 certified
+// ACL 验证后的不透明结果；reducer 不接受调用方自行拼接的“已授权”布尔值（D104）。
+type VerifiedAdminOperationV1 struct {
+	operation ControlOperationV1
+	headHash  string
+	scopeHash string
+}
+
+func (verified VerifiedAdminOperationV1) Operation() ControlOperationV1 {
+	return verified.operation
+}
+
+func (verified VerifiedAdminOperationV1) HeadHash() string {
+	return verified.headHash
+}
+
+func (verified VerifiedAdminOperationV1) ScopeHash() string {
+	return verified.scopeHash
 }
 
 func ValidateAdminResourceScope(scope *AdminResourceScopeV1) error {
@@ -381,6 +402,70 @@ func AuthorizeControlOperation(operation *ControlOperationV1, authorization *Adm
 	certificateDER, _ := decodeCanonicalBase64URL(authorization.AdminCertificateDER)
 	certificate, _ := x509.ParseCertificate(certificateDER)
 	return VerifyControlOperation(operation, certificate.RawSubjectPublicKeyInfo, trustedTime, schemas)
+}
+
+// AuthorizeControlOperationAtHead 是 private control_api 的完整授权边界：TLS leaf、
+// exact base head、ControlSet 与 certified ACL root 必须同时匹配，任一角色证书都不能
+// 仅凭可验证签名越权提交管理操作（D104）。
+func AuthorizeControlOperationAtHead(operation *ControlOperationV1, peerCertificateDER []byte,
+	resourceScope *AdminResourceScopeV1, trustedTime time.Time, schemas OperationSchemaRegistry,
+	head *HeadEntryV2, configQC json.RawMessage, set, previousSet *ControlSetV1, authorizations []AdminAuthorizationV1,
+	profiles map[string]AdminCertificateProfileV1) (VerifiedAdminOperationV1, error) {
+	if operation == nil || head == nil || set == nil || len(peerCertificateDER) == 0 {
+		return VerifiedAdminOperationV1{}, errors.New("[D104 admin ACL] private control request 缺 operation/TLS leaf/base authority")
+	}
+	if err := ValidateControlSet(set); err != nil {
+		return VerifiedAdminOperationV1{}, err
+	}
+	if err := VerifyConfigQCAuthority(head.HeadHash, configQC, head, set, previousSet); err != nil {
+		return VerifiedAdminOperationV1{}, errors.New("[D104 admin ACL] base head 缺有效 replication QC")
+	}
+	setHash, _ := ControlSetHash(set)
+	payload := head.Body.Payload
+	body := operation.Body
+	if body.ClusterID != payload.ClusterID || body.BaseRecoveryEpoch != payload.RecoveryEpoch ||
+		body.BaseRecoveryStatementHash != payload.RecoveryStatementHash || body.BaseRecoveryPolicyHash != payload.RecoveryPolicyHash ||
+		body.BaseControlEpoch != payload.ControlEpoch || body.BaseControlSetHash != payload.ControlSetHash ||
+		body.BaseControlRevision != payload.ControlRevision || body.ParentHeadHash != head.HeadHash || payload.ControlSetHash != setHash {
+		return VerifiedAdminOperationV1{}, errors.New("[D104 admin ACL] operation base 与 exact certified head/ControlSet 不一致")
+	}
+	root, err := AdminACLRoot(authorizations, profiles)
+	if err != nil || root != payload.AdminACLRoot {
+		return VerifiedAdminOperationV1{}, errors.New("[D104 admin ACL] ACL view 未绑定 base head root")
+	}
+	peerDigest, err := AdminCertificateDigest(peerCertificateDER)
+	if err != nil {
+		return VerifiedAdminOperationV1{}, err
+	}
+	var authorization *AdminAuthorizationV1
+	var profile *AdminCertificateProfileV1
+	for i := range authorizations {
+		candidate := &authorizations[i]
+		if candidate.AdminCertificateDigest != peerDigest || candidate.AdminID != body.AuthorID {
+			continue
+		}
+		if authorization != nil {
+			return VerifiedAdminOperationV1{}, errors.New("[D104 admin ACL] TLS leaf 对应多个 authorization")
+		}
+		selectedProfile, ok := profiles[candidate.CertificateProfileRef.ProfileID]
+		if !ok {
+			return VerifiedAdminOperationV1{}, errors.New("[D104 admin ACL] authorization 缺 certificate profile")
+		}
+		authorization = candidate
+		profile = &selectedProfile
+	}
+	if authorization == nil || profile == nil {
+		return VerifiedAdminOperationV1{}, errors.New("[D104 admin ACL] TLS leaf 未获 base ACL 授权")
+	}
+	encodedDER, err := decodeCanonicalBase64URL(authorization.AdminCertificateDER)
+	if err != nil || !bytes.Equal(encodedDER, peerCertificateDER) {
+		return VerifiedAdminOperationV1{}, errors.New("[D104 admin ACL] TLS leaf 与 authorization exact DER 不一致")
+	}
+	if err := AuthorizeControlOperation(operation, authorization, profile, resourceScope, trustedTime, schemas); err != nil {
+		return VerifiedAdminOperationV1{}, err
+	}
+	scopeHash, _ := AdminResourceScopeHash(resourceScope)
+	return VerifiedAdminOperationV1{operation: *operation, headHash: head.HeadHash, scopeHash: scopeHash}, nil
 }
 
 func parseAdminIssuerChain(profile *AdminCertificateProfileV1) ([]*x509.Certificate, error) {

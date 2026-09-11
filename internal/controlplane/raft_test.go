@@ -1,7 +1,9 @@
 package controlplane
 
 import (
+	"bytes"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -87,6 +89,29 @@ func TestRaftCurrentTermCommitRuleAndCrashRecovery(t *testing.T) {
 	state := reopened.SnapshotRaft()
 	if state.CurrentTerm != 2 || state.CommitIndex != 2 || state.LastApplied != 2 || len(state.Log) != 2 {
 		t.Fatalf("persistent Raft state lost: %#v", state)
+	}
+}
+
+func TestRaftPersistentStateUsesExactCanonicalBytes(t *testing.T) {
+	set, _ := testControlSet(t, 1)
+	path := filepath.Join(t.TempDir(), "raft.json")
+	storage, err := OpenRaftStorage(path, set.Members[0].MemberID, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.StartElection(); err != nil {
+		t.Fatal(err)
+	}
+	want, err := wire.MarshalCanonical(storage.SnapshotRaft())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("persistent state 不是 exact canonical bytes: got=%q want=%q", got, want)
 	}
 }
 

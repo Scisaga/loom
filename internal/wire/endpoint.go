@@ -19,6 +19,7 @@ const (
 	DomainPublicAccessProfile     = "loom-server-public-access-profile-v1"
 	DomainForwardResources        = "loom-forward-server-listener-resources-v1"
 	DomainPortMappingIntent       = "loom-port-mapping-intent-v1"
+	DomainPublicAccessState       = "loom-server-public-access-state-v1"
 )
 
 type LinkIntentDestinationV1 struct {
@@ -193,6 +194,19 @@ type ForwardServerListenerResourcesV1 struct {
 	WireGuardLocalUDPPorts []int64               `json:"wireguard_local_udp_ports"`
 	TrojanLocalTCPPortPool []int64               `json:"trojan_local_tcp_port_pool"`
 	Mappings               []PortMappingIntentV1 `json:"mappings"`
+}
+
+// ServerPublicAccessStateV1 是 certified intent 与验证证据的派生投影；调用方不能
+// 仅凭 DNS/provider readback 把 preparing 提升为 active（D103、D125）。
+type ServerPublicAccessStateV1 struct {
+	Schema                      int    `json:"schema"`
+	ClusterID                   string `json:"cluster_id"`
+	ServerID                    string `json:"server_id"`
+	Generation                  int64  `json:"generation"`
+	PublicAccessProfileHash     string `json:"public_access_profile_hash"`
+	Status                      string `json:"status"`
+	LastVerifiedObservationHash string `json:"last_verified_observation_hash,omitempty"`
+	LastChangedHeadHash         string `json:"last_changed_head_hash"`
 }
 
 func ValidateLinkIntent(intent *LinkIntentV1) error {
@@ -406,6 +420,8 @@ func ValidatePublicAccess(profile *ServerPublicAccessProfileV1, resources *Forwa
 		profile.ClusterID != resources.ClusterID || profile.ServerID != resources.ServerID || profile.Generation != resources.Generation ||
 		!validIdentifier(profile.ClusterID, 128) || !validIdentifier(profile.ServerID, 128) || profile.Generation < 1 ||
 		!ValidFQDN(profile.FQDN) || profile.HTTPSPublicPort < 1 || profile.HTTPSPublicPort > 65535 ||
+		!validIdentifier(profile.DNSZoneRef, 128) || !validIdentifier(profile.CertificateProfileRef, 128) ||
+		!oneOf(profile.AddressFamilyPolicy, "ipv4_only", "ipv6_only", "dual_stack") ||
 		!oneOf(profile.DeploymentKind, "direct_standard", "direct_alternate", "nat_mapped") ||
 		resources.NginxLocalTCPPort < 1 || resources.NginxLocalTCPPort > 65535 {
 		return errors.New("[D103 public profile] profile/resources 字段或绑定无效")
@@ -419,11 +435,61 @@ func ValidatePublicAccess(profile *ServerPublicAccessProfileV1, resources *Forwa
 	if !sortedUnique(profile.PublicFrontendAddresses) || len(profile.PublicFrontendAddresses) == 0 {
 		return errors.New("[D103 public profile] public frontend addresses 缺失/未排序")
 	}
+	hasIPv4, hasIPv6 := false, false
 	for _, raw := range profile.PublicFrontendAddresses {
 		address, err := netip.ParseAddr(raw)
 		if err != nil || address.String() != raw || !address.IsGlobalUnicast() {
 			return errors.New("[D103 public profile] public frontend address 无效")
 		}
+		hasIPv4 = hasIPv4 || address.Is4()
+		hasIPv6 = hasIPv6 || address.Is6()
+	}
+	if profile.AddressFamilyPolicy == "ipv4_only" && (!hasIPv4 || hasIPv6) ||
+		profile.AddressFamilyPolicy == "ipv6_only" && (!hasIPv6 || hasIPv4) ||
+		profile.AddressFamilyPolicy == "dual_stack" && (!hasIPv4 || !hasIPv6) {
+		return errors.New("[D103 public profile] address family policy 与 frontend addresses 不一致")
+	}
+	if err := ValidateForwardServerListenerResources(resources); err != nil {
+		return err
+	}
+	if profile.DeploymentKind == "nat_mapped" && len(resources.Mappings) == 0 {
+		return errors.New("[D103 public profile] nat_mapped 必须声明映射")
+	}
+	if profile.DeploymentKind != "nat_mapped" && len(resources.Mappings) != 0 {
+		return errors.New("[D103 public profile] direct profile 禁止伪造 NAT mapping")
+	}
+	if profile.DeploymentKind == "nat_mapped" {
+		if !mappingContains(resources.Mappings, "tcp", profile.HTTPSPublicPort, resources.NginxLocalTCPPort) {
+			return errors.New("[D103 NAT] HTTPS public/local tuple 缺 exact mapping")
+		}
+		for _, port := range resources.HY2LocalUDPPortPool {
+			if !mappingContainsLocal(resources.Mappings, "udp", port) {
+				return errors.New("[D103 NAT] HY2 local listener 缺 UDP mapping")
+			}
+		}
+		for _, port := range resources.WireGuardLocalUDPPorts {
+			if !mappingContainsLocal(resources.Mappings, "udp", port) {
+				return errors.New("[D103 NAT] WireGuard local listener 缺 UDP mapping")
+			}
+		}
+		for _, port := range resources.TrojanLocalTCPPortPool {
+			if !mappingContainsLocal(resources.Mappings, "tcp", port) {
+				return errors.New("[D103 NAT] Trojan local listener 缺 TCP mapping")
+			}
+		}
+	}
+	resourcesHash, err := HashObject(DomainForwardResources, resources)
+	if err != nil || resourcesHash != profile.ForwardListenerResourcesHash {
+		return errors.New("[D125 dependency] forward listener resources hash 不匹配")
+	}
+	return nil
+}
+
+func ValidateForwardServerListenerResources(resources *ForwardServerListenerResourcesV1) error {
+	if resources == nil || resources.Schema != 1 || !validIdentifier(resources.ClusterID, 128) ||
+		!validIdentifier(resources.ServerID, 128) || resources.Generation < 1 ||
+		resources.NginxLocalTCPPort < 1 || resources.NginxLocalTCPPort > 65535 {
+		return errors.New("[D103 public profile] private listener resources header 无效")
 	}
 	if err := validatePorts(resources.HY2LocalUDPPortPool, "HY2"); err != nil {
 		return err
@@ -443,12 +509,6 @@ func ValidatePublicAccess(profile *ServerPublicAccessProfileV1, resources *Forwa
 	if containsPort(resources.TrojanLocalTCPPortPool, resources.NginxLocalTCPPort) {
 		return errors.New("[D103 tuple] Nginx 与 Trojan 不能占用同一 TCP tuple（未声明 L4 SNI dispatcher）")
 	}
-	if profile.DeploymentKind == "nat_mapped" && len(resources.Mappings) == 0 {
-		return errors.New("[D103 public profile] nat_mapped 必须声明映射")
-	}
-	if profile.DeploymentKind != "nat_mapped" && len(resources.Mappings) != 0 {
-		return errors.New("[D103 public profile] direct profile 禁止伪造 NAT mapping")
-	}
 	for i := range resources.Mappings {
 		if i > 0 && resources.Mappings[i-1].MappingID >= resources.Mappings[i].MappingID {
 			return errors.New("[D103 public profile] mappings 必须按 ID 严格排序")
@@ -456,12 +516,63 @@ func ValidatePublicAccess(profile *ServerPublicAccessProfileV1, resources *Forwa
 		if err := ValidatePortMapping(&resources.Mappings[i]); err != nil {
 			return err
 		}
-	}
-	resourcesHash, err := HashObject(DomainForwardResources, resources)
-	if err != nil || resourcesHash != profile.ForwardListenerResourcesHash {
-		return errors.New("[D125 dependency] forward listener resources hash 不匹配")
+		for j := 0; j < i; j++ {
+			if mappingsOverlap(resources.Mappings[j], resources.Mappings[i]) {
+				return errors.New("[D103 NAT] mapping public/local range 重叠")
+			}
+		}
 	}
 	return nil
+}
+
+func ValidateServerPublicAccessState(state *ServerPublicAccessStateV1) error {
+	if state == nil || state.Schema != 1 || !validIdentifier(state.ClusterID, 128) ||
+		!validIdentifier(state.ServerID, 128) || state.Generation < 1 ||
+		!oneOf(state.Status, "preparing", "active", "draining", "disabled") {
+		return errors.New("[D103 public profile] public access state header/status 无效")
+	}
+	for _, hash := range []string{state.PublicAccessProfileHash, state.LastChangedHeadHash} {
+		if _, err := ParseHash(hash); err != nil {
+			return err
+		}
+	}
+	if state.Status == "active" && state.LastVerifiedObservationHash == "" {
+		return errors.New("[D125 reconcile] active public access 缺 external verification evidence")
+	}
+	if state.LastVerifiedObservationHash != "" {
+		if _, err := ParseHash(state.LastVerifiedObservationHash); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ServerPublicAccessProfileHash(value *ServerPublicAccessProfileV1, resources *ForwardServerListenerResourcesV1) (string, error) {
+	if err := ValidatePublicAccess(value, resources); err != nil {
+		return "", err
+	}
+	return HashObject(DomainPublicAccessProfile, value)
+}
+
+func ForwardServerListenerResourcesHash(value *ForwardServerListenerResourcesV1) (string, error) {
+	if err := ValidateForwardServerListenerResources(value); err != nil {
+		return "", err
+	}
+	return HashObject(DomainForwardResources, value)
+}
+
+func PortMappingIntentHash(value *PortMappingIntentV1) (string, error) {
+	if err := ValidatePortMapping(value); err != nil {
+		return "", err
+	}
+	return HashObject(DomainPortMappingIntent, value)
+}
+
+func ServerPublicAccessStateHash(value *ServerPublicAccessStateV1) (string, error) {
+	if err := ValidateServerPublicAccessState(value); err != nil {
+		return "", err
+	}
+	return HashObject(DomainPublicAccessState, value)
 }
 
 func ValidatePortMapping(mapping *PortMappingIntentV1) error {
@@ -709,6 +820,37 @@ func overlap(left, right []int64) bool {
 func containsPort(values []int64, port int64) bool {
 	for _, value := range values {
 		if value == port {
+			return true
+		}
+	}
+	return false
+}
+
+func mappingsOverlap(left, right PortMappingIntentV1) bool {
+	publicOverlap := left.Transport == right.Transport && left.PublicAddress == right.PublicAddress &&
+		rangesOverlap(left.PublicPortStart, left.PublicPortEnd, right.PublicPortStart, right.PublicPortEnd)
+	localOverlap := left.Transport == right.Transport && left.LocalAddress == right.LocalAddress &&
+		rangesOverlap(left.LocalPortStart, left.LocalPortEnd, right.LocalPortStart, right.LocalPortEnd)
+	return publicOverlap || localOverlap
+}
+
+func rangesOverlap(leftStart, leftEnd, rightStart, rightEnd int64) bool {
+	return leftStart <= rightEnd && rightStart <= leftEnd
+}
+
+func mappingContains(mappings []PortMappingIntentV1, transport string, publicPort, localPort int64) bool {
+	for _, mapping := range mappings {
+		if mapping.Transport == transport && publicPort >= mapping.PublicPortStart && publicPort <= mapping.PublicPortEnd &&
+			localPort == mapping.LocalPortStart+publicPort-mapping.PublicPortStart {
+			return true
+		}
+	}
+	return false
+}
+
+func mappingContainsLocal(mappings []PortMappingIntentV1, transport string, localPort int64) bool {
+	for _, mapping := range mappings {
+		if mapping.Transport == transport && localPort >= mapping.LocalPortStart && localPort <= mapping.LocalPortEnd {
 			return true
 		}
 	}
