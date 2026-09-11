@@ -270,14 +270,14 @@ func newPrivateServiceFixture(t *testing.T) privateServiceFixture {
 			}
 			return material, nil
 		},
-		func(_ context.Context, attempt VerifiedClaimAttemptV2) (EnrollmentClaimResultV2, error) {
+		func(_ context.Context, attempt VerifiedClaimAttemptV2) (wire.EnrollmentClaimResultV2, error) {
 			processed++
 			attestation, err := attempt.AdmissionAttestation()
 			if err != nil || attestation.ClaimCoreHash != attempt.Claim().ClaimCoreHash() ||
 				attestation.IdentityKeyHash != attempt.Claim().IdentityKeyHash() {
 				t.Fatalf("admission attestation 未绑定 verified claim: %#v err=%v", attestation, err)
 			}
-			return EnrollmentClaimResultV2{Schema: 2, Status: "reserved",
+			return wire.EnrollmentClaimResultV2{Schema: 2, Status: "reserved",
 				TransactionStateHash: wire.HashRaw("private-service-test", []byte("transaction"))}, nil
 		})
 	if err != nil {

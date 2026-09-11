@@ -40,13 +40,6 @@ type InviteMaterialV2 struct {
 // binding，reader 返回的状态字符串本身不能替代 head/QC/inclusion proof。
 type InviteMaterialReader func(context.Context, string, string) (InviteMaterialV2, error)
 
-type EnrollmentClaimResultV2 struct {
-	Schema               int    `json:"schema"`
-	Status               string `json:"status"`
-	TransactionStateHash string `json:"transaction_state_hash"`
-	ResultArtifactHash   string `json:"result_artifact_hash,omitempty"`
-}
-
 // VerifiedClaimAttemptV2 只能由 PrivateService 在验 token/opening/core、服务端签发
 // challenge 和 detached PoP 后产生。processor 可以把 exact submission 发给 enrollment voters，
 // 但不得把其中 token、challenge、CSR 或签名字节写入 Raft/CRDT/log（D129、D130）。
@@ -109,7 +102,7 @@ func (attempt VerifiedClaimAttemptV2) AdmissionAttestation() (wire.EnrollmentAdm
 	return result, nil
 }
 
-type ClaimProcessor func(context.Context, VerifiedClaimAttemptV2) (EnrollmentClaimResultV2, error)
+type ClaimProcessor func(context.Context, VerifiedClaimAttemptV2) (wire.EnrollmentClaimResultV2, error)
 
 type PrivateService struct {
 	clusterID    string
@@ -211,36 +204,36 @@ func (service *PrivateService) Challenge(ctx context.Context, capability wire.Ve
 }
 
 func (service *PrivateService) SubmitClaim(ctx context.Context, capability wire.VerifiedBootstrapCapabilityV1,
-	submission *wire.EnrollmentClaimSubmissionV2) (EnrollmentClaimResultV2, error) {
+	submission *wire.EnrollmentClaimSubmissionV2) (wire.EnrollmentClaimResultV2, error) {
 	if submission == nil {
-		return EnrollmentClaimResultV2{}, errors.New("[D129 Enrollment] submission 不能为空")
+		return wire.EnrollmentClaimResultV2{}, errors.New("[D129 Enrollment] submission 不能为空")
 	}
 	core := &submission.ClaimCore
 	material, err := service.boundMaterial(ctx, capability, core.ClusterID, core.InviteID,
 		core.CertifiedInviteRecordHash, capability.CapabilityID())
 	if err != nil {
-		return EnrollmentClaimResultV2{}, err
+		return wire.EnrollmentClaimResultV2{}, err
 	}
 	if _, err := service.verifyCoreBindings(core, capability, &material); err != nil {
-		return EnrollmentClaimResultV2{}, err
+		return wire.EnrollmentClaimResultV2{}, err
 	}
 	now := service.now().UTC().Truncate(time.Second)
 	verified, err := wire.VerifyEnrollmentClaimSubmission(submission, &material.Record, &material.Policy,
 		&material.Opening, service.serviceID, now)
 	if err != nil {
-		return EnrollmentClaimResultV2{}, err
+		return wire.EnrollmentClaimResultV2{}, err
 	}
 	if err := service.replay.Consume(verified.ChallengeHash(), submission.Challenge.ExpiresAt, now); err != nil {
-		return EnrollmentClaimResultV2{}, err
+		return wire.EnrollmentClaimResultV2{}, err
 	}
 	result, err := service.processClaim(ctx, VerifiedClaimAttemptV2{
 		capability: capability, claim: verified, submission: clonePrivateValue(*submission), material: material,
 	})
 	if err != nil {
-		return EnrollmentClaimResultV2{}, err
+		return wire.EnrollmentClaimResultV2{}, err
 	}
-	if err := validateClaimResult(&result); err != nil {
-		return EnrollmentClaimResultV2{}, err
+	if err := wire.ValidateEnrollmentClaimResult(&result); err != nil {
+		return wire.EnrollmentClaimResultV2{}, err
 	}
 	return result, nil
 }
@@ -339,24 +332,6 @@ func (service *PrivateService) boundMaterial(ctx context.Context, capability wir
 	return cloneInviteMaterial(material), nil
 }
 
-func validateClaimResult(result *EnrollmentClaimResultV2) error {
-	if result == nil || result.Schema != 2 || !oneOf(result.Status, "reserved", "issued_provisional", "completed") {
-		return errors.New("[D130 Enrollment] claim processor result schema/status 无效")
-	}
-	if _, err := wire.ParseHash(result.TransactionStateHash); err != nil {
-		return err
-	}
-	if (result.Status == "completed") != (result.ResultArtifactHash != "") {
-		return errors.New("[D130 Enrollment] completed/result artifact tagged union 无效")
-	}
-	if result.ResultArtifactHash != "" {
-		if _, err := wire.ParseHash(result.ResultArtifactHash); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // ServeHTTP 永远拒绝缺少 outer capability verifier 的直接挂载。bootstrap ingress 必须
 // 在验签、revocation、ACL 与 usage budget 后调用 ServeVerifiedHTTP（D131）。
 func (service *PrivateService) ServeHTTP(writer http.ResponseWriter, _ *http.Request) {
@@ -398,7 +373,7 @@ func (service *PrivateService) ServeVerifiedHTTP(writer http.ResponseWriter, req
 	case "/v2/enrollment/claim":
 		var value wire.EnrollmentClaimSubmissionV2
 		if _, err = wire.DecodeStrict(body, maximumPrivateRequestBytes, &value); err == nil {
-			var result EnrollmentClaimResultV2
+			var result wire.EnrollmentClaimResultV2
 			result, err = service.SubmitClaim(request.Context(), capability, &value)
 			response = result
 			if err == nil && result.Status != "completed" {

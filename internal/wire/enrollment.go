@@ -242,6 +242,13 @@ type EnrollmentClaimSubmissionV2 struct {
 	ProofSignature string                   `json:"proof_signature"`
 }
 
+type EnrollmentClaimResultV2 struct {
+	Schema               int    `json:"schema"`
+	Status               string `json:"status"`
+	TransactionStateHash string `json:"transaction_state_hash"`
+	ResultArtifactHash   string `json:"result_artifact_hash,omitempty"`
+}
+
 type VerifiedEnrollmentClaimV2 struct {
 	claimCoreHash   string
 	challengeHash   string
@@ -651,6 +658,24 @@ func EnrollmentClaimBinaryHashes(core *EnrollmentClaimCoreV2) (identityKeyHash, 
 	}
 	csrHash, err = HashBytes(DomainEnrollmentCSRDER, csrDER)
 	return identityKeyHash, wrappingKeyHash, csrHash, err
+}
+
+func ValidateEnrollmentClaimResult(result *EnrollmentClaimResultV2) error {
+	if result == nil || result.Schema != 2 || !oneOf(result.Status, "reserved", "issued_provisional", "completed") {
+		return errors.New("[D130 Enrollment] claim result schema/status 无效")
+	}
+	if _, err := ParseHash(result.TransactionStateHash); err != nil {
+		return err
+	}
+	if (result.Status == "completed") != (result.ResultArtifactHash != "") {
+		return errors.New("[D130 Enrollment] completed/result artifact tagged union 无效")
+	}
+	if result.ResultArtifactHash != "" {
+		if _, err := ParseHash(result.ResultArtifactHash); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func EnrollmentChallengeHash(challenge *EnrollmentPoPChallengeV1, coreHash string, now time.Time) (string, error) {
