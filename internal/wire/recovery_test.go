@@ -147,6 +147,10 @@ func TestAdvanceFloorsRequiresVerifiedRecoveryTransition(t *testing.T) {
 }
 
 func bootstrapBundleFixture(t *testing.T) (BootstrapTransitionBundleV1ToV2, ed25519.PublicKey, string, string) {
+	return bootstrapBundleFixtureWithIssuerRoot(t, recoveryTestHash("issuer-1"))
+}
+
+func bootstrapBundleFixtureWithIssuerRoot(t *testing.T, issuerRoot string) (BootstrapTransitionBundleV1ToV2, ed25519.PublicKey, string, string) {
 	t.Helper()
 	policy, _, recoveryPoPs := recoveryPolicyFixture(t, "recovery-policy-1", 1, 0x31)
 	policyHash, _ := RecoveryPolicyHash(&policy)
@@ -160,7 +164,7 @@ func bootstrapBundleFixture(t *testing.T) (BootstrapTransitionBundleV1ToV2, ed25
 		InitialControlSetHash: setHash, InitialControlPeerDirectoryHash: recoveryTestHash("directory-1"),
 		InitialControlKeyPoPRoot: controlPoPRoot, InitialAdminACLHash: recoveryTestHash("admin-1"),
 		InternalCAProfileAndAnchorHash:     recoveryTestHash("ca-1"),
-		InitialBootstrapIssuerRegistryRoot: recoveryTestHash("issuer-1"),
+		InitialBootstrapIssuerRegistryRoot: issuerRoot,
 	}
 	statementHash, _ := RecoveryStatementHash(&statement)
 	initialPayload := InitialV2HeadPayloadV1{

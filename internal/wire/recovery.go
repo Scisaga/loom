@@ -477,18 +477,38 @@ func VerifyBootstrapTransitionBundle(bundle *BootstrapTransitionBundleV1ToV2, pl
 	if bundle == nil || bundle.Schema != 1 || len(platformKey) != ed25519.PublicKeySize {
 		return "", errors.New("[D111 bootstrap] transition bundle/platform key 无效")
 	}
-	proof, body := &bundle.TransitionProof, &bundle.TransitionProof.Body
-	publicDigestRaw := sha256.Sum256(platformKey)
-	publicDigest := "sha256:" + fmt.Sprintf("%x", publicDigestRaw[:])
-	if body.V1PlatformKeyID != expectedPlatformKeyID || body.V1PlatformKeyDigest != publicDigest ||
-		body.V1PlatformKeyDigest != expectedMigrationAnchorDigest || proof.V1PlatformSignature.KeyID != expectedPlatformKeyID {
-		return "", errors.New("[D111 bootstrap] platform key/migration anchor 不匹配")
+	return verifyBootstrapTransitionBundle(bundle, platformKey, expectedPlatformKeyID, expectedMigrationAnchorDigest, "")
+}
+
+// VerifyBootstrapTransitionBundleFromCheckpoint 供全新 v2 Device 使用二维码内的
+// trusted checkpoint 建立初始信任；checkpoint 必须是 exact initial certified head hash（D111）。
+func VerifyBootstrapTransitionBundleFromCheckpoint(bundle *BootstrapTransitionBundleV1ToV2, expectedInitialHeadHash string) (string, error) {
+	if bundle == nil || bundle.Schema != 1 {
+		return "", errors.New("[D111 bootstrap] transition bundle 无效")
 	}
-	canonicalBody, _ := MarshalCanonical(*body)
-	message, _ := Frame(DomainBootstrapTransitionSignature, canonicalBody)
-	signature, _ := decodeRawURL(proof.V1PlatformSignature.Signature, ed25519.SignatureSize)
-	if !ed25519.Verify(platformKey, message, signature) {
-		return "", errors.New("[D111 bootstrap] v1 platform transition signature 无效")
+	if _, err := ParseHash(expectedInitialHeadHash); err != nil || bundle.InitialHeadEntry.Head.HeadHash != expectedInitialHeadHash {
+		return "", errors.New("[D111 bootstrap] trusted checkpoint 未绑定 initial certified head")
+	}
+	return verifyBootstrapTransitionBundle(bundle, nil, "", "", expectedInitialHeadHash)
+}
+
+func verifyBootstrapTransitionBundle(bundle *BootstrapTransitionBundleV1ToV2, platformKey ed25519.PublicKey, expectedPlatformKeyID, expectedMigrationAnchorDigest, expectedInitialHeadHash string) (string, error) {
+	proof, body := &bundle.TransitionProof, &bundle.TransitionProof.Body
+	if len(platformKey) != 0 {
+		publicDigestRaw := sha256.Sum256(platformKey)
+		publicDigest := "sha256:" + fmt.Sprintf("%x", publicDigestRaw[:])
+		if body.V1PlatformKeyID != expectedPlatformKeyID || body.V1PlatformKeyDigest != publicDigest ||
+			body.V1PlatformKeyDigest != expectedMigrationAnchorDigest || proof.V1PlatformSignature.KeyID != expectedPlatformKeyID {
+			return "", errors.New("[D111 bootstrap] platform key/migration anchor 不匹配")
+		}
+		canonicalBody, _ := MarshalCanonical(*body)
+		message, _ := Frame(DomainBootstrapTransitionSignature, canonicalBody)
+		signature, _ := decodeRawURL(proof.V1PlatformSignature.Signature, ed25519.SignatureSize)
+		if !ed25519.Verify(platformKey, message, signature) {
+			return "", errors.New("[D111 bootstrap] v1 platform transition signature 无效")
+		}
+	} else if expectedInitialHeadHash == "" {
+		return "", errors.New("[D111 bootstrap] 缺 platform anchor 或 trusted checkpoint")
 	}
 	transitionHash, err := BootstrapTransitionProofHash(proof)
 	if err != nil {
