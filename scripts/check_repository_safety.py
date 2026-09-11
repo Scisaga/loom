@@ -33,9 +33,12 @@ SECRET_PATTERNS = {
 }
 
 IPV4 = re.compile(r"(?<![0-9])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9])")
-# X.509 EKU/policy OID 至少含六个 arc；先移除它们，避免把中间四个 arc
-# 误报为公网 IPv4。四段地址仍完整进入 IPV4 检查。
+# X.509 EKU/policy OID 通常至少含六个 arc；标准扩展 OID 只有四个 arc，
+# 只能精确列出仓库使用的 RFC 5280 扩展，不能把任意四段数字豁免成 OID。
 OBJECT_IDENTIFIER = re.compile(r"(?<![0-9.])[0-2](?:\.[0-9]+){5,}(?![0-9.])")
+X509_EXTENSION_OBJECT_IDENTIFIER = re.compile(
+    r"(?<![0-9.])2\.5\.29\.(?:15|17|19|32|37)(?![0-9.])"
+)
 DOCUMENTATION_NETWORKS = tuple(
     ipaddress.ip_network(value)
     for value in ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24")
@@ -106,9 +109,9 @@ PUBLIC_NGINX_DYNAMIC = re.compile(
 )
 
 
-def tracked_files() -> list[Path]:
+def repository_files() -> list[Path]:
     result = subprocess.run(
-        ["git", "ls-files", "-z"],
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
         cwd=ROOT,
         check=True,
         stdout=subprocess.PIPE,
@@ -164,7 +167,7 @@ def line_number(data: bytes, offset: int) -> int:
 
 def main() -> int:
     failures: list[tuple[str, int, str]] = []
-    for path in tracked_files():
+    for path in repository_files():
         if not path.is_file() or path.stat().st_size > 5_000_000:
             continue
         data = path.read_bytes()
@@ -187,6 +190,7 @@ def main() -> int:
             if path.suffix == ".manifest":
                 ip_line = re.sub(r'\bversion="[0-9]+(?:\.[0-9]+){3}"', "", line)
             ip_line = OBJECT_IDENTIFIER.sub("", ip_line)
+            ip_line = X509_EXTENSION_OBJECT_IDENTIFIER.sub("", ip_line)
             for match in IPV4.finditer(ip_line):
                 if not approved_ip(match.group(0)):
                     failures.append((relative, line_no, "unapproved public IPv4 address"))
