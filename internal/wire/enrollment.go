@@ -32,6 +32,9 @@ const (
 	DomainEnrollmentClaimCore          = "loom-enrollment-claim-core-v2"
 	DomainEnrollmentPoPChallenge       = "loom-enrollment-pop-challenge-v1"
 	DomainEnrollmentPoPSignature       = "loom-enrollment-pop-signature-v2"
+	DomainEnrollmentIdentitySPKI       = "loom-enrollment-identity-spki-v1"
+	DomainEnrollmentWrappingSPKI       = "loom-enrollment-wrapping-spki-v1"
+	DomainEnrollmentCSRDER             = "loom-enrollment-csr-der-v1"
 )
 
 type InviteTokenCommitmentInputV2 struct {
@@ -240,13 +243,26 @@ type EnrollmentClaimSubmissionV2 struct {
 }
 
 type VerifiedEnrollmentClaimV2 struct {
-	ClaimCoreHash   string
-	ChallengeHash   string
-	IntentHash      string
-	OpeningHash     string
-	CommitmentHash  string
-	TokenCommitment string
+	claimCoreHash   string
+	challengeHash   string
+	intentHash      string
+	openingHash     string
+	commitmentHash  string
+	tokenCommitment string
+	identityKeyHash string
+	wrappingKeyHash string
+	csrHash         string
 }
+
+func (verified VerifiedEnrollmentClaimV2) ClaimCoreHash() string   { return verified.claimCoreHash }
+func (verified VerifiedEnrollmentClaimV2) ChallengeHash() string   { return verified.challengeHash }
+func (verified VerifiedEnrollmentClaimV2) IntentHash() string      { return verified.intentHash }
+func (verified VerifiedEnrollmentClaimV2) OpeningHash() string     { return verified.openingHash }
+func (verified VerifiedEnrollmentClaimV2) CommitmentHash() string  { return verified.commitmentHash }
+func (verified VerifiedEnrollmentClaimV2) TokenCommitment() string { return verified.tokenCommitment }
+func (verified VerifiedEnrollmentClaimV2) IdentityKeyHash() string { return verified.identityKeyHash }
+func (verified VerifiedEnrollmentClaimV2) WrappingKeyHash() string { return verified.wrappingKeyHash }
+func (verified VerifiedEnrollmentClaimV2) CSRHash() string         { return verified.csrHash }
 
 func TokenCommitment(clusterID, inviteID, token string) (string, error) {
 	if !validIdentifier(clusterID, 128) || !validIdentifier(inviteID, 128) {
@@ -616,6 +632,27 @@ func EnrollmentClaimCoreHash(core *EnrollmentClaimCoreV2) (string, error) {
 	return HashObject(DomainEnrollmentClaimCore, core)
 }
 
+// EnrollmentClaimBinaryHashes 固定 admission/resume 使用的三种二进制摘要。
+// 它先复用完整 core 校验，防止调用方对未绑定 CSR 或错误 key profile 求出可用摘要（D129）。
+func EnrollmentClaimBinaryHashes(core *EnrollmentClaimCoreV2) (identityKeyHash, wrappingKeyHash, csrHash string, err error) {
+	if _, err = EnrollmentClaimCoreHash(core); err != nil {
+		return "", "", "", err
+	}
+	identityDER, _ := decodeCanonicalBase64URL(core.DeviceIdentityPublicKey)
+	wrappingDER, _ := decodeCanonicalBase64URL(core.WrappingPublicKey)
+	csrDER, _ := decodeCanonicalBase64URL(core.CSRDER)
+	identityKeyHash, err = HashBytes(DomainEnrollmentIdentitySPKI, identityDER)
+	if err != nil {
+		return "", "", "", err
+	}
+	wrappingKeyHash, err = HashBytes(DomainEnrollmentWrappingSPKI, wrappingDER)
+	if err != nil {
+		return "", "", "", err
+	}
+	csrHash, err = HashBytes(DomainEnrollmentCSRDER, csrDER)
+	return identityKeyHash, wrappingKeyHash, csrHash, err
+}
+
 func EnrollmentChallengeHash(challenge *EnrollmentPoPChallengeV1, coreHash string, now time.Time) (string, error) {
 	if challenge == nil || challenge.Schema != 1 || !validIdentifier(challenge.ClusterID, 128) ||
 		!validIdentifier(challenge.InviteID, 128) || !validIdentifier(challenge.RequestID, 128) ||
@@ -796,9 +833,14 @@ func VerifyEnrollmentClaimSubmission(submission *EnrollmentClaimSubmissionV2, re
 	if err := VerifyEnrollmentPoPP256(pop, identityKey, submission.ProofSignature); err != nil {
 		return VerifiedEnrollmentClaimV2{}, err
 	}
+	identityKeyHash, wrappingKeyHash, csrHash, err := EnrollmentClaimBinaryHashes(core)
+	if err != nil {
+		return VerifiedEnrollmentClaimV2{}, err
+	}
 	return VerifiedEnrollmentClaimV2{
-		ClaimCoreHash: coreHash, ChallengeHash: challengeHash, IntentHash: intentHash,
-		OpeningHash: openingHash, CommitmentHash: commitmentHash, TokenCommitment: tokenCommitment,
+		claimCoreHash: coreHash, challengeHash: challengeHash, intentHash: intentHash,
+		openingHash: openingHash, commitmentHash: commitmentHash, tokenCommitment: tokenCommitment,
+		identityKeyHash: identityKeyHash, wrappingKeyHash: wrappingKeyHash, csrHash: csrHash,
 	}, nil
 }
 

@@ -78,7 +78,7 @@ func TestEnrollmentSubmissionBindsTokenOpeningCoreChallengeAndP256PoP(t *testing
 	signature, _ := SignEnrollmentPoPP256(&pop, identityKey)
 	submission := &EnrollmentClaimSubmissionV2{Schema: 2, Token: token, ClaimCore: core, Challenge: challenge, PoPBody: pop, ProofSignature: signature}
 	verified, err := VerifyEnrollmentClaimSubmission(submission, &record, &policy, &opening, "enrollment-service-1", now)
-	if err != nil || verified.ClaimCoreHash != coreHash {
+	if err != nil || verified.ClaimCoreHash() != coreHash || verified.IdentityKeyHash() == "" || verified.WrappingKeyHash() == "" || verified.CSRHash() == "" {
 		t.Fatalf("verified=%#v err=%v", verified, err)
 	}
 	submission.PoPBody.TokenCommitment = hash("other-token")
