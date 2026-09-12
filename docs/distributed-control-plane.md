@@ -3405,7 +3405,9 @@ capability，不能重新接收手写的 `listen`、SNI 或 pin。direct 部署�
 `PortMappingIntent` 的 public/local offset 与 L4 transport。实际 socket 的 `LocalAddr`、TLS SNI、
 叶证书 SPKI 和 capability registry 的 ingress-set hash 都要在 accept/auth 前与该 capability 精确相等。
 `prepared` listener 可在公开有效期前完成不携 bearer 的 outer self-check；任何携 transport
-credential 的认证只在 catalog 与 listener validity 交集内开放。
+credential 的认证只在 catalog 与 listener validity 交集内开放。adapter 必须把同一 generation 的
+全部 certified tuple 当作一个运行批次：全部 bind 成功后才启动 accept，部分失败关闭已建 socket；
+运行中任一 listener 意外退出则取消并关闭整批，禁止把部分地址族覆盖误报成完整安装。
 
 进入 draining 的 certified transition 同时建立 reference cutoff 和
 `ListenerRetirementGuardV1`：ControlSet 必须枚举所有仍可能使客户端拨旧代的 immutable catalog、

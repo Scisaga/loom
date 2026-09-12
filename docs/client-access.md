@@ -289,7 +289,9 @@ QR 只携带 token/commitment、trust checkpoint、`bootstrap_catalog_hash`、
 解析已签 hostname，不能把任意新地址加入集合；合法 WebPKI 证书也不能替代已签 transport identity。
 服务器侧同样不能靠手写 `listen` 或一张合法证书扩大入口：HY2/Trojan socket 必须逐项匹配
 certified EndpointSet、PublicAccessProfile、frozen rotation tuple、资源池/NAT mapping、SNI 与
-SPKI pin，且 transport credential 只在 catalog/listener 有效期交集内接受。
+SPKI pin，且 transport credential 只在 catalog/listener 有效期交集内接受。同一 listener generation
+的全部本地 tuple 必须先全部 bind 成功再开始 accept；任一 bind 失败要关闭本批已创建的 socket，
+运行中任一 listener 异常退出则取消并关闭整批，不能留下只覆盖部分地址族的活跃 generation。
 
 首版 Hysteria2/Trojan 数据入口使用稳定 logical endpoint ID 和多个 listener generation。正常 overlap 中旧、新
 端口同时可用：新连接在 `prefer` 阶段先试新端口、失败立即回退仍 advertised 的旧端口；

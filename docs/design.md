@@ -2134,7 +2134,9 @@ PublicAccessProfile 和 listener resources 联合生成的 opaque binding；实�
 证书 SPKI pin 与 capability ingress-set hash 任一不等即失败关闭。NAT 必须命中 frozen mapping 的
 同 transport public/local offset，direct 也只能使用 frozen plan 已拥有且覆盖 certified address
 family 的 tuple。准备阶段允许不发送 bearer 的 outer transport 验证，但真正 capability auth 只能
-发生在 catalog/listener 有效期交集内。
+发生在 catalog/listener 有效期交集内。同一 generation 的 socket 以批次方式先全部 bind、再共同
+进入 accept；部分 bind 失败必须回滚整批，运行中任一 listener 意外退出也必须取消整批，避免只安装
+一部分地址族或 NAT tuple 却被当作 generation 已就绪。
 
 ---
 
