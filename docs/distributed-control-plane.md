@@ -2945,6 +2945,14 @@ payload reader contract、freshness 和 identity signature。sink 以 `(Device I
 证书 EKU、ACL、端口和 handler 必须分别校验。报告失败不停止已安装数据面，配置不可达时继续
 使用 LKG；任何过期 bootstrap capability 都不能充当稳态恢复通道。
 
+Linux 稳态客户端只从已原子安装的 identity/certificate/LKG 组装 Device mTLS，
+且只拨号 private directory 中的 exact overlay tuple。它同时校验 TLS 1.3、internal CA、
+overlay IP SAN 和 SPKI pin。现有 `config_qc` 是 parent Head 的 QC，不单独承诺
+`ControlServiceDirectoryV1` 的 bytes；因此 Linux 路径还必须从 root-owned 配置接收
+exact `control_service_directory_hash`，禁止将目录和其自带 QC 从同一不可信输入中自我证明。
+Device view 只有重新验过 QC/Merkle/identity/floors 后才替换 LKG。报告签名后如果响应丢失，
+重试必须持久化并复用 exact envelope，不得在同一 `report_sequence` 上重新签名。
+
 ---
 
 ## 12. 域名、公开服务与证书管理
