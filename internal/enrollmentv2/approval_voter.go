@@ -53,6 +53,7 @@ type EnrollmentApprovalEvidenceV1 struct {
 	AdmissionControlSet            wire.ControlSetV1                       `json:"admission_control_set"`
 	ReservationBaseHead            wire.HeadEntryV2                        `json:"reservation_base_head"`
 	BaseToReservationHeads         []wire.HeadEntryV2                      `json:"base_to_reservation_heads,omitempty"`
+	BaseToReservationTransitions   []wire.ControlSetTransitionBundleV1     `json:"base_to_reservation_transitions,omitempty"`
 	Reservation                    CertifiedEnrollmentOperationProofV1     `json:"reservation"`
 	ReservationCARegistry          CARegistryPreimageV1                    `json:"reservation_ca_registry"`
 	ProvisionalOperation           ProvisionalIssuanceOperationV1          `json:"provisional_operation"`
@@ -60,6 +61,7 @@ type EnrollmentApprovalEvidenceV1 struct {
 	DeviceCertificateProfile       wire.DeviceCertificateProfileStateV1    `json:"device_certificate_profile"`
 	PreviousIssuanceRegistryLeaves []wire.EnrollmentIssuanceRegistryLeafV1 `json:"previous_issuance_registry_leaves"`
 	IntermediateHeads              []wire.HeadEntryV2                      `json:"intermediate_heads"`
+	ControlSetTransitions          []wire.ControlSetTransitionBundleV1     `json:"control_set_transitions,omitempty"`
 	Issuance                       CertifiedEnrollmentOperationProofV1     `json:"issuance"`
 	IssuanceCARegistry             CARegistryPreimageV1                    `json:"issuance_ca_registry"`
 	ResultArtifact                 wire.EnrollmentResultArtifactV1         `json:"result_artifact"`
@@ -164,7 +166,7 @@ func approvalAttestationForEvidence(evidence *EnrollmentApprovalEvidenceV1,
 		return wire.EnrollmentApprovalAttestationBodyV2{}, wire.ControlSetV1{}, err
 	}
 	if err := validateReservationHeadLineage(&evidence.ReservationBaseHead,
-		evidence.BaseToReservationHeads, &evidence.Reservation,
+		evidence.BaseToReservationHeads, evidence.BaseToReservationTransitions, &evidence.Reservation,
 		&evidence.AdmissionQC, &evidence.AdmissionControlSet); err != nil {
 		return wire.EnrollmentApprovalAttestationBodyV2{}, wire.ControlSetV1{}, err
 	}
@@ -187,8 +189,8 @@ func approvalAttestationForEvidence(evidence *EnrollmentApprovalEvidenceV1,
 	if err := verifyCARegistryAtHead(profile, &evidence.ReservationCARegistry, &evidence.Reservation.Head); err != nil {
 		return wire.EnrollmentApprovalAttestationBodyV2{}, wire.ControlSetV1{}, err
 	}
-	if err := verifyApprovalHeadLineage(&evidence.Reservation.Head, evidence.IntermediateHeads,
-		&evidence.Issuance.Head); err != nil {
+	if err := VerifyEnrollmentHeadLineage(&evidence.Reservation.Head, evidence.IntermediateHeads,
+		evidence.ControlSetTransitions, &evidence.Issuance.Head, &evidence.Issuance.ControlSet); err != nil {
 		return wire.EnrollmentApprovalAttestationBodyV2{}, wire.ControlSetV1{}, err
 	}
 	if evidence.Issuance.PreviousControlSet != nil {
@@ -279,22 +281,60 @@ func containsString(values []string, wanted string) bool {
 	return false
 }
 
-func verifyApprovalHeadLineage(reservation *wire.HeadEntryV2, intermediate []wire.HeadEntryV2,
-	issuance *wire.HeadEntryV2) error {
-	if reservation == nil || issuance == nil || len(intermediate) > 4096 ||
-		issuance.Body.Payload.RaftIndex <= reservation.Body.Payload.RaftIndex {
-		return errors.New("[D130 Enrollment peer] reservation→issuance Head lineage 无效")
+// VerifyEnrollmentHeadLineage 验证两个 Enrollment stage 之间的完整 Head 链。
+// ordinary Head 只延续既有 authority；每个 control_set_final 必须携完整 Joint→Final
+// bundle，不能只凭新集合对后续 Head 的自签 QC 改写 control authority（D112、D130）。
+func VerifyEnrollmentHeadLineage(from *wire.HeadEntryV2, intermediate []wire.HeadEntryV2,
+	transitions []wire.ControlSetTransitionBundleV1, to *wire.HeadEntryV2,
+	targetSet *wire.ControlSetV1) error {
+	if from == nil || to == nil || targetSet == nil || len(intermediate) > 4096 ||
+		len(transitions) > 256 || to.Body.Payload.RaftIndex <= from.Body.Payload.RaftIndex {
+		return errors.New("[D130 Enrollment peer] Enrollment Head lineage 无效")
 	}
-	parent := *reservation
+	currentSetHash := from.Body.Payload.ControlSetHash
+	transitionIndex := 0
+	parent := *from
 	for index := 0; index <= len(intermediate); index++ {
-		next := issuance
+		next := to
 		if index < len(intermediate) {
 			next = &intermediate[index]
 		}
 		if err := wire.ValidateHeadEntry(next, &parent); err != nil {
-			return errors.New("[D130 Enrollment peer] reservation→issuance Head lineage 不连续")
+			return errors.New("[D130 Enrollment peer] Enrollment Head lineage 不连续")
+		}
+		switch next.Body.Payload.HeadKind {
+		case "ordinary":
+			if next.Body.Payload.ControlSetHash != currentSetHash {
+				return errors.New("[D130 Enrollment peer] ordinary Head 改写 ControlSet")
+			}
+		case "control_set_final":
+			if transitionIndex >= len(transitions) {
+				return errors.New("[D112 Enrollment peer] ControlSet Final 缺 transition bundle")
+			}
+			bundle := &transitions[transitionIndex]
+			if !wire.EqualCanonical(bundle.Final.Head, *next) {
+				return errors.New("[D112 Enrollment peer] transition bundle 未绑定 lineage Final Head")
+			}
+			if _, err := wire.VerifyControlSetTransitionBundle(bundle, &parent); err != nil {
+				return err
+			}
+			oldHash, oldErr := wire.ControlSetHash(&bundle.OldControlSet)
+			newHash, newErr := wire.ControlSetHash(&bundle.NewControlSet)
+			if oldErr != nil || newErr != nil || oldHash != currentSetHash ||
+				newHash != next.Body.Payload.ControlSetHash {
+				return errors.New("[D112 Enrollment peer] transition bundle authority 链不连续")
+			}
+			currentSetHash = newHash
+			transitionIndex++
+		default:
+			return errors.New("[D130 Enrollment peer] Enrollment stage 不接受未证明的 recovery authority transition")
 		}
 		parent = *next
+	}
+	targetHash, err := wire.ControlSetHash(targetSet)
+	if err != nil || targetHash != currentSetHash || targetHash != to.Body.Payload.ControlSetHash ||
+		transitionIndex != len(transitions) {
+		return errors.New("[D112 Enrollment peer] Enrollment Head lineage target ControlSet 无效")
 	}
 	return nil
 }

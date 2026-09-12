@@ -31,6 +31,11 @@ type EnrollmentHeadProjectionV1 struct {
 type EnrollmentHeadProjector func(context.Context, wire.HeadEntryV2,
 	enrollmentv2.EnrollmentCommitCoordinateV1, enrollmentv2.EnrollmentHeadMutationV1) (EnrollmentHeadProjectionV1, error)
 
+// EnrollmentControlSetTransitionResolver 从本机线性化 membership ledger 读取
+// exact Joint→Final bundle。只有 lineage 实际跨越 control_set_final 时才会调用。
+type EnrollmentControlSetTransitionResolver func(context.Context,
+	wire.HeadEntryV2) (wire.ControlSetTransitionBundleV1, error)
+
 type enrollmentCommitJournalRecordV1 struct {
 	OperationID string                                         `json:"operation_id"`
 	ObjectID    string                                         `json:"object_id"`
@@ -177,22 +182,24 @@ func (journal *EnrollmentCommitJournal) persistLocked(candidate enrollmentCommit
 }
 
 type StableEnrollmentOperationSequencer struct {
-	mu        sync.Mutex
-	storage   *RaftStorage
-	store     *Store
-	leader    *StableRaftLeader
-	collector *HeadAttestationCollector
-	journal   *EnrollmentCommitJournal
-	project   EnrollmentHeadProjector
-	recompute HeadRecomputer
-	now       func() time.Time
-	set       wire.ControlSetV1
+	mu                sync.Mutex
+	storage           *RaftStorage
+	store             *Store
+	leader            *StableRaftLeader
+	collector         *HeadAttestationCollector
+	journal           *EnrollmentCommitJournal
+	project           EnrollmentHeadProjector
+	recompute         HeadRecomputer
+	resolveTransition EnrollmentControlSetTransitionResolver
+	now               func() time.Time
+	set               wire.ControlSetV1
 }
 
 func NewStableEnrollmentOperationSequencer(storage *RaftStorage, store *Store,
 	leader *StableRaftLeader, collector *HeadAttestationCollector,
 	journal *EnrollmentCommitJournal, project EnrollmentHeadProjector,
-	recompute HeadRecomputer, now func() time.Time) (*StableEnrollmentOperationSequencer, error) {
+	recompute HeadRecomputer, resolveTransition EnrollmentControlSetTransitionResolver,
+	now func() time.Time) (*StableEnrollmentOperationSequencer, error) {
 	if storage == nil || store == nil || leader == nil || collector == nil || journal == nil ||
 		project == nil || recompute == nil || now == nil || leader.storage != storage {
 		return nil, errors.New("[D130 Enrollment] stable sequencer dependencies 不完整")
@@ -212,7 +219,7 @@ func NewStableEnrollmentOperationSequencer(storage *RaftStorage, store *Store,
 	}
 	return &StableEnrollmentOperationSequencer{storage: storage, store: store, leader: leader,
 		collector: collector, journal: journal, project: project, recompute: recompute,
-		now: now, set: state.ControlSet}, nil
+		resolveTransition: resolveTransition, now: now, set: state.ControlSet}, nil
 }
 
 func (sequencer *StableEnrollmentOperationSequencer) CommitEnrollmentOperation(ctx context.Context,
@@ -356,8 +363,18 @@ func (sequencer *StableEnrollmentOperationSequencer) CommitEnrollmentOperation(c
 	if err != nil {
 		return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
 	}
+	transitions, err := sequencer.resolveControlSetTransitions(ctx, intermediate)
+	if err != nil {
+		return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
+	}
+	if lineageFrom != nil {
+		if err := enrollmentv2.VerifyEnrollmentHeadLineage(lineageFrom, intermediate,
+			transitions, &entry, &sequencer.set); err != nil {
+			return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
+		}
+	}
 	result := enrollmentv2.EnrollmentOperationCommitResultV1{Certification: proof,
-		IntermediateHeads: intermediate}
+		IntermediateHeads: intermediate, ControlSetTransitions: transitions}
 	if mutation.InitialDeviceView != nil {
 		if projection.DeviceViewLeaf == nil {
 			return enrollmentv2.EnrollmentOperationCommitResultV1{},
@@ -383,6 +400,28 @@ func (sequencer *StableEnrollmentOperationSequencer) CommitEnrollmentOperation(c
 		return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
 	}
 	return cloneEnrollmentCommitResult(result), nil
+}
+
+func (sequencer *StableEnrollmentOperationSequencer) resolveControlSetTransitions(ctx context.Context,
+	heads []wire.HeadEntryV2) ([]wire.ControlSetTransitionBundleV1, error) {
+	result := make([]wire.ControlSetTransitionBundleV1, 0)
+	for index := range heads {
+		if heads[index].Body.Payload.HeadKind != "control_set_final" {
+			continue
+		}
+		if sequencer.resolveTransition == nil {
+			return nil, errors.New("[D112 Enrollment] ControlSet lineage 缺本地 transition bundle resolver")
+		}
+		bundle, err := sequencer.resolveTransition(ctx, heads[index])
+		if err != nil {
+			return nil, err
+		}
+		if !wire.EqualCanonical(bundle.Final.Head, heads[index]) {
+			return nil, errors.New("[D112 Enrollment] resolver 返回了错误 Final transition bundle")
+		}
+		result = append(result, bundle)
+	}
+	return result, nil
 }
 
 func (sequencer *StableEnrollmentOperationSequencer) nextCoordinate(raft *RaftPersistentStateV1,
@@ -578,19 +617,14 @@ func validateEnrollmentCommitJournalRecord(record *enrollmentCommitJournalRecord
 		return err
 	}
 	if record.LineageFrom == nil {
-		if len(record.Result.IntermediateHeads) != 0 {
+		if len(record.Result.IntermediateHeads) != 0 || len(record.Result.ControlSetTransitions) != 0 {
 			return errors.New("[D130 Enrollment] 无 lineage 起点却携 intermediate Heads")
 		}
 	} else {
-		parent := *record.LineageFrom
-		for index := range record.Result.IntermediateHeads {
-			if err := wire.ValidateHeadEntry(&record.Result.IntermediateHeads[index], &parent); err != nil {
-				return errors.New("[D130 Enrollment] journal intermediate Head lineage 断裂")
-			}
-			parent = record.Result.IntermediateHeads[index]
-		}
-		if err := wire.ValidateHeadEntry(&record.Result.Certification.Head, &parent); err != nil {
-			return errors.New("[D130 Enrollment] journal target Head lineage 断裂")
+		if err := enrollmentv2.VerifyEnrollmentHeadLineage(record.LineageFrom,
+			record.Result.IntermediateHeads, record.Result.ControlSetTransitions,
+			&record.Result.Certification.Head, set); err != nil {
+			return err
 		}
 	}
 	if envelope := record.Result.DeviceViewEnvelope; envelope != nil {

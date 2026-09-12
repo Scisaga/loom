@@ -36,9 +36,10 @@ type EnrollmentHeadMutationV1 struct {
 }
 
 type EnrollmentOperationCommitResultV1 struct {
-	Certification      CertifiedEnrollmentOperationProofV1 `json:"certification"`
-	IntermediateHeads  []wire.HeadEntryV2                  `json:"intermediate_heads,omitempty"`
-	DeviceViewEnvelope *wire.DeviceViewEnvelopeV2          `json:"device_view_envelope,omitempty"`
+	Certification         CertifiedEnrollmentOperationProofV1 `json:"certification"`
+	IntermediateHeads     []wire.HeadEntryV2                  `json:"intermediate_heads,omitempty"`
+	ControlSetTransitions []wire.ControlSetTransitionBundleV1 `json:"control_set_transitions,omitempty"`
+	DeviceViewEnvelope    *wire.DeviceViewEnvelopeV2          `json:"device_view_envelope,omitempty"`
 }
 
 type EnrollmentOperationBuilder func(EnrollmentCommitCoordinateV1) (EnrollmentHeadMutationV1, error)
@@ -145,19 +146,21 @@ func (backend *DistributedWorkflowBackend) PlanReservation(ctx context.Context,
 		return ReservationPlanV2{}, err
 	}
 	plan := ReservationPlanV2{OperationID: operationID,
-		CommittedAt:       result.Certification.Head.Body.Payload.CommittedLogicalTime,
-		BaseHead:          baseHead,
-		IntermediateHeads: append([]wire.HeadEntryV2(nil), result.IntermediateHeads...),
-		Certification:     result.Certification}
+		CommittedAt:           result.Certification.Head.Body.Payload.CommittedLogicalTime,
+		BaseHead:              baseHead,
+		IntermediateHeads:     append([]wire.HeadEntryV2(nil), result.IntermediateHeads...),
+		ControlSetTransitions: cloneControlSetTransitions(result.ControlSetTransitions),
+		Certification:         result.Certification}
 	operation, err := claimOperationForAdmission(&admission, plan)
 	if err != nil {
 		return ReservationPlanV2{}, err
 	}
 	if err := validateOperationCertification(&plan.Certification, operation.OperationID,
-		DomainClaimOperation, operation, &attempt.material.ControlSet, operation.ReservedAt); err != nil {
+		DomainClaimOperation, operation, &plan.Certification.ControlSet, operation.ReservedAt); err != nil {
 		return ReservationPlanV2{}, err
 	}
 	if err := validateReservationHeadLineage(&plan.BaseHead, plan.IntermediateHeads,
+		plan.ControlSetTransitions,
 		&plan.Certification, &admission, &attempt.material.ControlSet); err != nil {
 		return ReservationPlanV2{}, err
 	}
@@ -209,7 +212,8 @@ func (backend *DistributedWorkflowBackend) Provision(ctx context.Context,
 	}
 	return ProvisionalPlanV1{Operation: prepared.Operation, Issuance: prepared.Issuance,
 		Profile: prepared.Profile, Result: prepared.Result, Certification: result.Certification,
-		IntermediateHeads: append([]wire.HeadEntryV2(nil), result.IntermediateHeads...)}, nil
+		IntermediateHeads:     append([]wire.HeadEntryV2(nil), result.IntermediateHeads...),
+		ControlSetTransitions: cloneControlSetTransitions(result.ControlSetTransitions)}, nil
 }
 
 func (backend *DistributedWorkflowBackend) CollectApproval(ctx context.Context,
@@ -276,10 +280,11 @@ func (backend *DistributedWorkflowBackend) CommitCompletion(ctx context.Context,
 		return CompletionCertificationV1{}, errors.New("[D130 Enrollment] completion sequencer 缺同 Head Device view proof")
 	}
 	certification := CompletionCertificationV1{Schema: 1, Operation: result.Certification,
-		IntermediateHeads:  append([]wire.HeadEntryV2(nil), result.IntermediateHeads...),
-		DeviceViewEnvelope: clonePrivateValue(*result.DeviceViewEnvelope)}
+		IntermediateHeads:     append([]wire.HeadEntryV2(nil), result.IntermediateHeads...),
+		ControlSetTransitions: cloneControlSetTransitions(result.ControlSetTransitions),
+		DeviceViewEnvelope:    clonePrivateValue(*result.DeviceViewEnvelope)}
 	if _, err := validateCompletionCertification(&record, &operation,
-		&result.Certification.ControlSet, &certification, &completed); err != nil {
+		&certification, &completed); err != nil {
 		return CompletionCertificationV1{}, err
 	}
 	return certification, nil
@@ -357,11 +362,13 @@ func validateApprovalEvidenceRecord(evidence *EnrollmentApprovalEvidenceV1, reco
 		!wire.EqualCanonical(evidence.AdmissionControlSet, record.AdmissionControlSet) ||
 		!wire.EqualCanonical(evidence.ReservationBaseHead, record.ReservationBaseHead) ||
 		!equalHeadSequences(evidence.BaseToReservationHeads, record.BaseToReservationHeads) ||
+		!equalControlSetTransitionSequences(evidence.BaseToReservationTransitions, record.BaseToReservationTransitions) ||
 		!wire.EqualCanonical(evidence.Reservation, record.ReservationCertification) ||
 		!wire.EqualCanonical(evidence.ProvisionalOperation, *record.ProvisionalOperation) ||
 		!wire.EqualCanonical(evidence.ProvisionalIssuance, *record.ProvisionalIssuance) ||
 		!wire.EqualCanonical(evidence.DeviceCertificateProfile, *record.DeviceCertificateProfile) ||
 		!equalHeadSequences(evidence.IntermediateHeads, record.ReservationToIssuanceHeads) ||
+		!equalControlSetTransitionSequences(evidence.ControlSetTransitions, record.ReservationToIssuanceTransitions) ||
 		!wire.EqualCanonical(evidence.Issuance, *record.ProvisionalCertification) ||
 		!wire.EqualCanonical(evidence.ResultArtifact, *record.ResultArtifact) {
 		return errors.New("[D130 Enrollment] approval reader 未返回 exact durable transaction evidence")
@@ -379,6 +386,29 @@ func equalHeadSequences(left, right []wire.HeadEntryV2) bool {
 		}
 	}
 	return true
+}
+
+func equalControlSetTransitionSequences(left, right []wire.ControlSetTransitionBundleV1) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if !wire.EqualCanonical(left[index], right[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+func cloneControlSetTransitions(values []wire.ControlSetTransitionBundleV1) []wire.ControlSetTransitionBundleV1 {
+	if values == nil {
+		return nil
+	}
+	result := make([]wire.ControlSetTransitionBundleV1, len(values))
+	for index := range values {
+		result[index] = clonePrivateValue(values[index])
+	}
+	return result
 }
 
 func validateCommitCoordinate(coordinate *EnrollmentCommitCoordinateV1, clusterID string) error {

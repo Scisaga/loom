@@ -31,7 +31,7 @@ func TestDurableStoreMakesReservationReplayIdempotent(t *testing.T) {
 	tamperedCertification := clonePrivateValue(reservationCertification)
 	tamperedCertification.OperationLeaf.ObjectID = wire.EmptyHashV1
 	if _, err := store.Reserve(invite, evidence, claim, admission, &set,
-		baseHead, nil, tamperedCertification); err == nil {
+		baseHead, nil, nil, tamperedCertification); err == nil {
 		t.Fatal("未证明 claim operation inclusion 就写入 reservation")
 	}
 	if _, found := store.SnapshotRecord(invite.InviteID); found {
@@ -41,11 +41,11 @@ func TestDurableStoreMakesReservationReplayIdempotent(t *testing.T) {
 		wire.HashRaw("enrollment-store-test", []byte("unrelated-base")), hash,
 		"2026-01-01T00:00:00Z")
 	if _, err := store.Reserve(invite, evidence, claim, admission, &set,
-		unrelatedBase, nil, reservationCertification); err == nil {
+		unrelatedBase, nil, nil, reservationCertification); err == nil {
 		t.Fatal("接受了不等于 admission base_head_hash 的 reservation lineage")
 	}
 	first, err := store.Reserve(invite, evidence, claim, admission, &set,
-		baseHead, nil, reservationCertification)
+		baseHead, nil, nil, reservationCertification)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,14 +54,14 @@ func TestDurableStoreMakesReservationReplayIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	replayed, err := reopened.Reserve(invite, evidence, claim, admission, &set,
-		baseHead, nil, reservationCertification)
+		baseHead, nil, nil, reservationCertification)
 	if err != nil || !wire.EqualCanonical(first, replayed) {
 		t.Fatalf("相同 reservation 重启重放未返回同一结果: %#v, %v", replayed, err)
 	}
 	competing := claim
 	competing.RequestID = "different-request"
 	if _, err := reopened.Reserve(invite, evidence, competing, admission, &set,
-		baseHead, nil, reservationCertification); err == nil {
+		baseHead, nil, nil, reservationCertification); err == nil {
 		t.Fatal("同一 token 的不同 request 绕过耐久 CAS")
 	}
 }
@@ -73,10 +73,10 @@ func TestDurableStoreRejectsCorruptOrdering(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "transactions.json")
 	store, _ := OpenStore(path)
 	if _, err := store.Reserve(invite, evidence, claim, admission, &set,
-		baseHead, nil, reservationCertification); err != nil {
+		baseHead, nil, nil, reservationCertification); err != nil {
 		t.Fatal(err)
 	}
-	body, err := wire.MarshalCanonical(durableState{Schema: 5, Records: []DurableRecord{
+	body, err := wire.MarshalCanonical(durableState{Schema: 6, Records: []DurableRecord{
 		{InviteID: "z", TokenCommitment: hash, State: TransactionStateV2{Schema: 2, ClusterID: "cluster", InviteID: "z", RequestID: "r", Status: "reserved", ClaimCoreHash: hash, IdentityKeyHash: hash, WrappingKeyHash: hash, ClaimOperationHash: hash}},
 		{InviteID: "a", TokenCommitment: wire.EmptyHashV1, State: TransactionStateV2{Schema: 2, ClusterID: "cluster", InviteID: "a", RequestID: "r", Status: "reserved", ClaimCoreHash: hash, IdentityKeyHash: hash, WrappingKeyHash: hash, ClaimOperationHash: hash}},
 	}})
@@ -91,9 +91,9 @@ func TestDurableStoreRejectsCorruptOrdering(t *testing.T) {
 	}
 }
 
-func TestDurableStoreMigratesOnlyEmptySchemaFour(t *testing.T) {
-	emptyPath := filepath.Join(t.TempDir(), "empty-schema-four.json")
-	emptyBody, err := wire.MarshalCanonical(durableState{Schema: 4, Records: []DurableRecord{}})
+func TestDurableStoreMigratesOnlyEmptySchemaFive(t *testing.T) {
+	emptyPath := filepath.Join(t.TempDir(), "empty-schema-five.json")
+	emptyBody, err := wire.MarshalCanonical(durableState{Schema: 5, Records: []DurableRecord{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestDurableStoreMigratesOnlyEmptySchemaFour(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := OpenStore(emptyPath); err != nil {
-		t.Fatalf("空 schema 4 transaction store 未迁移: %v", err)
+		t.Fatalf("空 schema 5 transaction store 未迁移: %v", err)
 	}
 	migratedBody, err := os.ReadFile(emptyPath)
 	if err != nil {
@@ -111,12 +111,12 @@ func TestDurableStoreMigratesOnlyEmptySchemaFour(t *testing.T) {
 	if _, err := wire.DecodeStrict(migratedBody, 1<<20, &migrated); err != nil {
 		t.Fatal(err)
 	}
-	if migrated.Schema != 5 || migrated.Records == nil || len(migrated.Records) != 0 {
-		t.Fatalf("空 schema 4 transaction store 迁移结果错误: %#v", migrated)
+	if migrated.Schema != 6 || migrated.Records == nil || len(migrated.Records) != 0 {
+		t.Fatalf("空 schema 5 transaction store 迁移结果错误: %#v", migrated)
 	}
 
-	nonEmptyPath := filepath.Join(t.TempDir(), "non-empty-schema-four.json")
-	nonEmptyBody, err := wire.MarshalCanonical(durableState{Schema: 4,
+	nonEmptyPath := filepath.Join(t.TempDir(), "non-empty-schema-five.json")
+	nonEmptyBody, err := wire.MarshalCanonical(durableState{Schema: 5,
 		Records: []DurableRecord{{InviteID: "legacy"}}})
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +125,7 @@ func TestDurableStoreMigratesOnlyEmptySchemaFour(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := OpenStore(nonEmptyPath); err == nil {
-		t.Fatal("非空 schema 4 transaction store 在缺少 Base Head proof 时被迁移")
+		t.Fatal("非空 schema 5 transaction store 在缺少 ControlSet transition proof 时被迁移")
 	}
 }
 
@@ -139,7 +139,7 @@ func TestDurableStoreRecoversExactProvisionalAndCompletionArtifacts(t *testing.T
 		t.Fatal(err)
 	}
 	reserved, err := store.Reserve(invite, evidence, claim, admission, &set,
-		baseHead, nil, reservationCertification)
+		baseHead, nil, nil, reservationCertification)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,14 +181,14 @@ func TestDurableStoreRecoversExactProvisionalAndCompletionArtifacts(t *testing.T
 	tamperedProvisionalCertification := clonePrivateValue(provisionalCertification)
 	tamperedProvisionalCertification.OperationLeaf.ObjectID = wire.EmptyHashV1
 	if _, err := store.RecordProvisional(provisional, issuance, profile, resultArtifact,
-		tamperedProvisionalCertification, nil); err == nil {
+		tamperedProvisionalCertification, nil, nil); err == nil {
 		t.Fatal("未证明 provisional operation inclusion 就写入 issuance")
 	}
 	if state, _ := store.Snapshot(invite.InviteID); state.Status != "reserved" {
 		t.Fatalf("无效 issuance certification 产生了部分状态切换: %#v", state)
 	}
 	issued, err := store.RecordProvisional(provisional, issuance, profile, resultArtifact,
-		provisionalCertification, nil)
+		provisionalCertification, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,11 +218,28 @@ func TestDurableStoreRecoversExactProvisionalAndCompletionArtifacts(t *testing.T
 		ProvisionalIssuanceHash: issuanceHash, ResultingIssuanceRegistryRoot: resultingRoot,
 		EnrollmentApprovalQCHash: approvalHash, ResultArtifactHash: body.ResultArtifactHash,
 	}
-	certification := completionCertificationFixture(t, set, member, completion, resultArtifact,
-		&provisionalCertification.Head)
-	unrelatedCertification := completionCertificationFixture(t, set, member, completion, resultArtifact, nil)
+	completionSet := clonePrivateValue(set)
+	completionSet.Members[0].MinimumControlProtocol++
+	transitionBundle := enrollmentControlSetTransitionFixture(t, provisionalCertification.Head,
+		set, completionSet)
+	certification := completionCertificationFixture(t, completionSet, completionSet.Members[0],
+		completion, resultArtifact, &transitionBundle.Final.Head)
+	certification.IntermediateHeads = []wire.HeadEntryV2{transitionBundle.Final.Head}
+	certification.ControlSetTransitions = []wire.ControlSetTransitionBundleV1{transitionBundle}
+	unrelatedCertification := completionCertificationFixture(t, completionSet,
+		completionSet.Members[0], completion, resultArtifact, nil)
 	if _, err := store.Complete(completion, &approval, &set, unrelatedCertification); err == nil {
 		t.Fatal("接受了不从 issuance Head 延续的 completion certification")
+	}
+	missingTransition := clonePrivateValue(certification)
+	missingTransition.ControlSetTransitions = nil
+	if _, err := store.Complete(completion, &approval, &set, missingTransition); err == nil {
+		t.Fatal("跨 ControlSet completion 未携 Joint→Final bundle 仍被接受")
+	}
+	tamperedTransition := clonePrivateValue(certification)
+	tamperedTransition.ControlSetTransitions[0].Final.FinalJointReplicationQC.Attestation.HeadHash = hash
+	if _, err := store.Complete(completion, &approval, &set, tamperedTransition); err == nil {
+		t.Fatal("跨 ControlSet completion 接受了损坏的 Final joint QC")
 	}
 	tamperedCertification := clonePrivateValue(certification)
 	tamperedCertification.Operation.OperationLeaf.ObjectID = wire.EmptyHashV1
@@ -254,6 +271,9 @@ func TestDurableStoreRecoversExactProvisionalAndCompletionArtifacts(t *testing.T
 		record.CompletionProjection.ResultReleaseStatus != "authorized" {
 		t.Fatalf("completion 未原子形成 consume/activate/release: %#v", record.CompletionProjection)
 	}
+	if wire.EqualCanonical(*record.ApprovalControlSet, record.CompletionCertification.Operation.ControlSet) {
+		t.Fatal("跨 ControlSet completion 错把 issuance approval authority 当成 completion config authority")
+	}
 	tamperedProjection := cloneDurableState(reopened.state)
 	tamperedProjection.Records[0].CompletionProjection.ResultReleaseStatus = "authorized_early"
 	if err := validateDurableState(&tamperedProjection); err == nil {
@@ -268,6 +288,153 @@ func TestDurableStoreRecoversExactProvisionalAndCompletionArtifacts(t *testing.T
 	if _, err := OpenStore(path); err == nil {
 		t.Fatal("重启接受了与 provisional hash 不一致的 result artifact")
 	}
+}
+
+func enrollmentControlSetTransitionFixture(t *testing.T, parent wire.HeadEntryV2,
+	oldSet, newSet wire.ControlSetV1) wire.ControlSetTransitionBundleV1 {
+	t.Helper()
+	oldHash := mustSetHash(t, &oldSet)
+	newHash := mustSetHash(t, &newSet)
+	newDirectoryHash := wire.HashRaw("enrollment-store-test", []byte("next-control-directory"))
+	intent := wire.ControlSetTransitionIntentV1{
+		Schema: 1, ClusterID: oldSet.ClusterID, TransitionID: "enrollment-control-transition",
+		RecoveryEpoch:         parent.Body.Payload.RecoveryEpoch,
+		RecoveryStatementHash: parent.Body.Payload.RecoveryStatementHash,
+		RecoveryPolicyHash:    parent.Body.Payload.RecoveryPolicyHash,
+		OldControlEpoch:       parent.Body.Payload.ControlEpoch, OldControlSetHash: oldHash,
+		OldControlPeerDirectoryHash: parent.Body.Payload.ControlPeerDirectoryHash,
+		TargetControlEpoch:          parent.Body.Payload.ControlEpoch + 1, NewControlSetHash: newHash,
+		NewControlPeerDirectoryHash: newDirectoryHash, ParentCertifiedHeadHash: parent.HeadHash,
+		OperationID: "enrollment-control-transition-operation", Reason: "rotate control protocol floor",
+	}
+	intentHash, err := wire.ControlSetTransitionIntentHash(&intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := wire.NewControlOperation(wire.ControlOperationBodyV1{
+		Schema: 1, ClusterID: intent.ClusterID, OperationID: intent.OperationID,
+		AuthorID: "demo-admin", AdminCertDigest: wire.HashRaw("enrollment-store-test", []byte("admin-cert")),
+		CreatedAt: "2026-01-01T00:11:01Z", BaseRecoveryEpoch: intent.RecoveryEpoch,
+		BaseRecoveryStatementHash: intent.RecoveryStatementHash,
+		BaseRecoveryPolicyHash:    intent.RecoveryPolicyHash, BaseControlEpoch: intent.OldControlEpoch,
+		BaseControlSetHash:  intent.OldControlSetHash,
+		BaseControlRevision: parent.Body.Payload.ControlRevision, ParentHeadHash: parent.HeadHash,
+		Kind: "control_set_transition_intent", PayloadSchema: 1, PayloadHash: intentHash,
+		Reason: intent.Reason,
+	}, privateEd25519(9), wire.OperationSchemaRegistry{"control_set_transition_intent": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	member := newSet.Members[0]
+	proofInputs := []struct {
+		purpose, keyID, publicKey string
+		private                   ed25519.PrivateKey
+	}{
+		{"membership", member.MembershipKeyID, member.MembershipPublicKey, privateEd25519(1)},
+		{"config", member.ConfigKeyID, member.ConfigPublicKey, privateEd25519(2)},
+		{"enrollment", member.EnrollmentKeyID, member.EnrollmentPublicKey, privateEd25519(3)},
+	}
+	possession := make([]wire.ControlKeyPossessionProofV1, 0, len(proofInputs))
+	for _, input := range proofInputs {
+		proof, err := wire.NewControlKeyPossessionProof(wire.ControlKeyPossessionProofBodyV1{
+			Schema: 1, ClusterID: newSet.ClusterID, ControlSetHash: newHash, MemberID: member.MemberID,
+			KeyPurpose: input.purpose, KeyID: input.keyID, PublicKey: input.publicKey,
+		}, input.private)
+		if err != nil {
+			t.Fatal(err)
+		}
+		possession = append(possession, proof)
+	}
+	membershipSignature, err := wire.SignControlMembershipApproval(intent,
+		oldSet.Members[0], privateEd25519(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	membershipRef := wire.ControlMembershipSignerRefV1{MemberID: member.MemberID,
+		MembershipKeyID: member.MembershipKeyID}
+	approval := wire.ControlMembershipApprovalProofV1{Schema: 1, Intent: intent,
+		AdminIntentOperation: operation, NewControlKeyPossessionProofs: possession,
+		Signatures:    []wire.ControlMembershipSignatureV1{membershipSignature},
+		OldSignerRefs: []wire.ControlMembershipSignerRefV1{membershipRef},
+		NewSignerRefs: []wire.ControlMembershipSignerRefV1{membershipRef}}
+	approvalHash, err := wire.ControlMembershipApprovalProofHash(&approval)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joint := wire.JointControlSetEntryBodyV1{Schema: 1, ClusterID: intent.ClusterID,
+		TransitionID: intent.TransitionID, RecoveryEpoch: intent.RecoveryEpoch,
+		RecoveryStatementHash: intent.RecoveryStatementHash, RecoveryPolicyHash: intent.RecoveryPolicyHash,
+		OldControlEpoch: intent.OldControlEpoch, OldControlSetHash: oldHash,
+		OldControlPeerDirectoryHash: intent.OldControlPeerDirectoryHash,
+		TargetControlEpoch:          intent.TargetControlEpoch, NewControlSetHash: newHash,
+		NewControlPeerDirectoryHash: newDirectoryHash, ParentCertifiedHeadHash: parent.HeadHash,
+		MembershipApprovalProofHash: approvalHash, RaftTerm: parent.Body.Payload.RaftTerm,
+		RaftIndex: parent.Body.Payload.RaftIndex + 1, PreviousLogEntryHash: parent.EntryHash,
+		OperationID: intent.OperationID, Reason: intent.Reason, CommittedLogicalTime: "2026-01-01T00:11:02Z"}
+	jointHash, err := wire.JointControlSetEntryHash(&joint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jointAttestation := wire.JointConfigAttestationForEntry(&joint, jointHash)
+	jointSignature, err := wire.SignJointConfigAttestation(jointAttestation,
+		oldSet.Members[0], privateEd25519(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	jointProof := wire.JointControlSetProofV1{Schema: 1, JointBody: joint, JointEntryHash: jointHash,
+		JointReplicationQC: wire.JointConfigQC(jointAttestation,
+			[]wire.ControlConfigSignatureV1{jointSignature}, &oldSet, &newSet)}
+	jointProofHash, err := wire.JointControlSetProofHash(&jointProof, &oldSet, &newSet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	context, err := wire.MarshalCanonical(wire.FinalControlSetContextV1{Schema: 1,
+		Kind: "control_set_final", TransitionID: intent.TransitionID,
+		OldControlEpoch: intent.OldControlEpoch, OldControlSetHash: oldHash,
+		OldControlPeerDirectoryHash: intent.OldControlPeerDirectoryHash,
+		NewControlEpoch:             intent.TargetControlEpoch, NewControlSetHash: newHash,
+		NewControlPeerDirectoryHash: newDirectoryHash, MembershipApprovalProofHash: approvalHash,
+		JointEntryHash: jointHash, JointProofHash: jointProofHash})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := parent.Body.Payload
+	payload.HeadKind = "control_set_final"
+	payload.ControlEpoch = intent.TargetControlEpoch
+	payload.ControlSetHash = newHash
+	payload.ControlPeerDirectoryHash = newDirectoryHash
+	payload.RaftIndex = joint.RaftIndex + 1
+	payload.PreviousLogEntryHash = jointHash
+	payload.ControlRevision = payload.RaftIndex
+	payload.ParentHeadHash = parent.HeadHash
+	payload.SnapshotHash = wire.HashRaw("enrollment-store-test", []byte("transition-snapshot"))
+	payload.EffectiveSSOTHash = wire.HashRaw("enrollment-store-test", []byte("transition-ssot"))
+	payload.CommittedLogicalTime = "2026-01-01T00:11:03Z"
+	payload.TransitionContext = context
+	transitionProofHash, err := wire.ControlSetTransitionProofHash(&wire.ControlSetTransitionProofV1{
+		Schema: 1, JointProofHash: jointProofHash, FinalPayload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalHead, err := wire.NewHeadEntry(wire.HeadEntryBodyV2{Payload: payload,
+		TransitionProofHash: transitionProofHash})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalSignature, err := wire.SignHeadAttestation(wire.AttestationForHead(&finalHead),
+		oldSet.Members[0], privateEd25519(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := wire.ControlSetTransitionBundleV1{Schema: 1, OldControlSet: oldSet,
+		NewControlSet: newSet, MembershipApprovalProof: approval, JointProof: jointProof,
+		Final: wire.FinalControlSetHeadV1{Schema: 1, Head: finalHead,
+			FinalJointReplicationQC: wire.JointHeadQC(&finalHead,
+				[]wire.ControlConfigSignatureV1{finalSignature}, &oldSet, &newSet)}}
+	if _, err := wire.VerifyControlSetTransitionBundle(&bundle, &parent); err != nil {
+		t.Fatal(err)
+	}
+	return bundle
 }
 
 func enrollmentResultArtifactFixture(t *testing.T) wire.EnrollmentResultArtifactV1 {

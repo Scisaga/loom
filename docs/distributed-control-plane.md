@@ -2837,6 +2837,9 @@ private claim 响应才可返回由 `result_artifact_hash` 锁定的 exact `Enro
 Raft no-op 只体现在 index/previous-log hash 中。稳定 sequencer 在清除 active Head 前先按 operation ID
 耐久写入 certified first-result journal，因此 commit/apply/QC 后但 transaction CAS 或响应前崩溃时，
 新 executor 只能恢复同一份结果，不能重新选号、重新签发或追加第二份 operation。
+若 lineage 跨过 `control_set_final`，还必须逐个携带并验证完整 Joint→Final transition bundle；approval
+仍由 issuance Head 的 stable ControlSet 形成，而 completion operation/config QC 使用完成时的当前 stable
+ControlSet。不得要求两者相同，也不得仅凭新集合自签的后续 Head 跳过 membership transition proof。
 CA/result preparer 也必须在提交 provisional operation 前，以确定性 operation ID、完整 reserved
 transaction hash 和 sequencer coordinate 为键耐久冻结 first-result；进程重启只能返回同一证书、
 初始 view 与密封 secret refs，不能再次调用签发器生成另一份候选。

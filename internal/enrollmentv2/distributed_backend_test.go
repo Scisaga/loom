@@ -105,7 +105,8 @@ func TestDistributedBackendCommitsDeterministicCertifiedReservation(t *testing.T
 	operation, _ := claimOperationForAdmission(&qc, plan)
 	store, _ := OpenStore(filepath.Join(t.TempDir(), "transactions.json"))
 	if _, err := store.Reserve(attempt.InviteContext(), attempt.PrivateClaimEvidence(), operation,
-		&qc, &set, plan.BaseHead, plan.IntermediateHeads, plan.Certification); err != nil {
+		&qc, &set, plan.BaseHead, plan.IntermediateHeads,
+		plan.ControlSetTransitions, plan.Certification); err != nil {
 		t.Fatalf("distributed reservation 不能由 durable reducer 重验: %v", err)
 	}
 }
@@ -122,9 +123,10 @@ func TestDistributedBackendProvisionsAgainstExactReservationCoordinate(t *testin
 		TokenCommitment: evidence.Invite.TokenCommitment, Invite: evidence.Invite,
 		ClaimEvidence: evidence.ClaimEvidence, ClaimOperation: evidence.ClaimOperation,
 		AdmissionQC: evidence.AdmissionQC, AdmissionControlSet: evidence.AdmissionControlSet,
-		ReservationBaseHead:      fixture.baseHead,
-		BaseToReservationHeads:   append([]wire.HeadEntryV2(nil), evidence.BaseToReservationHeads...),
-		ReservationCertification: evidence.Reservation, State: reserved}
+		ReservationBaseHead:          fixture.baseHead,
+		BaseToReservationHeads:       append([]wire.HeadEntryV2(nil), evidence.BaseToReservationHeads...),
+		BaseToReservationTransitions: cloneControlSetTransitions(evidence.BaseToReservationTransitions),
+		ReservationCertification:     evidence.Reservation, State: reserved}
 	operationID, _ := ProvisionalOperationID(&record)
 	prepared := PreparedProvisionalV1{Operation: evidence.ProvisionalOperation,
 		Issuance: evidence.ProvisionalIssuance, Profile: evidence.DeviceCertificateProfile,
@@ -164,11 +166,12 @@ func TestDistributedBackendProvisionsAgainstExactReservationCoordinate(t *testin
 	store, _ := OpenStore(filepath.Join(t.TempDir(), "transactions.json"))
 	if _, err := store.Reserve(record.Invite, record.ClaimEvidence, record.ClaimOperation,
 		&record.AdmissionQC, &record.AdmissionControlSet, record.ReservationBaseHead,
-		record.BaseToReservationHeads, record.ReservationCertification); err != nil {
+		record.BaseToReservationHeads, record.BaseToReservationTransitions,
+		record.ReservationCertification); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.RecordProvisional(plan.Operation, plan.Issuance, plan.Profile, plan.Result,
-		plan.Certification, plan.IntermediateHeads); err != nil {
+		plan.Certification, plan.IntermediateHeads, plan.ControlSetTransitions); err != nil {
 		t.Fatalf("distributed issuance 不能由 durable reducer 重验: %v", err)
 	}
 }
@@ -231,7 +234,7 @@ func TestDistributedBackendRecomputesApprovalAndCommitsAtomicCompletion(t *testi
 		t.Fatal(err)
 	}
 	completed, _ := Complete(record.State, operation, &qc, &set)
-	if _, err := validateCompletionCertification(&record, &operation, &set,
+	if _, err := validateCompletionCertification(&record, &operation,
 		&certification, &completed); err != nil {
 		t.Fatalf("distributed completion 不能由原子 reducer 重验: %v", err)
 	}
@@ -257,12 +260,14 @@ func durableRecordForApprovalFixture(t *testing.T, fixture approvalEvidenceFixtu
 	return DurableRecord{InviteID: evidence.Invite.InviteID, TokenCommitment: evidence.Invite.TokenCommitment,
 		Invite: evidence.Invite, ClaimEvidence: evidence.ClaimEvidence, ClaimOperation: evidence.ClaimOperation,
 		AdmissionQC: evidence.AdmissionQC, AdmissionControlSet: evidence.AdmissionControlSet,
-		ReservationBaseHead:      fixture.baseHead,
-		BaseToReservationHeads:   append([]wire.HeadEntryV2(nil), evidence.BaseToReservationHeads...),
-		ReservationCertification: evidence.Reservation, ProvisionalOperation: &provisional,
+		ReservationBaseHead:          fixture.baseHead,
+		BaseToReservationHeads:       append([]wire.HeadEntryV2(nil), evidence.BaseToReservationHeads...),
+		BaseToReservationTransitions: cloneControlSetTransitions(evidence.BaseToReservationTransitions),
+		ReservationCertification:     evidence.Reservation, ProvisionalOperation: &provisional,
 		ProvisionalIssuance: &issuance, DeviceCertificateProfile: &profile, ResultArtifact: &result,
-		ProvisionalCertification:   &certification,
-		ReservationToIssuanceHeads: append([]wire.HeadEntryV2(nil), evidence.IntermediateHeads...), State: issued}
+		ProvisionalCertification:         &certification,
+		ReservationToIssuanceHeads:       append([]wire.HeadEntryV2(nil), evidence.IntermediateHeads...),
+		ReservationToIssuanceTransitions: cloneControlSetTransitions(evidence.ControlSetTransitions), State: issued}
 }
 
 func mustDistributedBackend(t *testing.T, admission EnrollmentAdmissionQuorum,

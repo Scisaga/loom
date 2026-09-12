@@ -10,11 +10,12 @@ import (
 var ErrEnrollmentProgressPending = errors.New("enrollment progress pending")
 
 type ReservationPlanV2 struct {
-	OperationID       string
-	CommittedAt       string
-	BaseHead          wire.HeadEntryV2
-	IntermediateHeads []wire.HeadEntryV2
-	Certification     CertifiedEnrollmentOperationProofV1
+	OperationID           string
+	CommittedAt           string
+	BaseHead              wire.HeadEntryV2
+	IntermediateHeads     []wire.HeadEntryV2
+	ControlSetTransitions []wire.ControlSetTransitionBundleV1
+	Certification         CertifiedEnrollmentOperationProofV1
 }
 
 type ProvisionalPlanV1 struct {
@@ -23,9 +24,10 @@ type ProvisionalPlanV1 struct {
 	Profile       wire.DeviceCertificateProfileStateV1
 	Result        wire.EnrollmentResultArtifactV1
 	Certification CertifiedEnrollmentOperationProofV1
-	// IntermediateHeads 只携 reservation 与 issuance 之间的 data-bearing Head；
-	// Raft no-op 不产生 Head，也不得伪造成这里的元素（D104、D130）。
-	IntermediateHeads []wire.HeadEntryV2
+	// IntermediateHeads 携 reservation 与 issuance 之间的全部 Head；Raft no-op
+	// 不产生 Head。跨 ControlSet 时必须另携对应 Joint→Final bundle（D104、D112、D130）。
+	IntermediateHeads     []wire.HeadEntryV2
+	ControlSetTransitions []wire.ControlSetTransitionBundleV1
 }
 
 // WorkflowBackend 把跨 control 的签名收集、Raft 坐标分配与 CA 私钥操作留在
@@ -47,11 +49,12 @@ type WorkflowBackend interface {
 type TransactionRepository interface {
 	SnapshotRecord(string) (DurableRecord, bool)
 	Reserve(InviteContext, ClaimPrivateEvidenceV1, ClaimOperationV2, *wire.StableEnrollmentAdmissionQCV1,
-		*wire.ControlSetV1, wire.HeadEntryV2, []wire.HeadEntryV2,
+		*wire.ControlSetV1, wire.HeadEntryV2, []wire.HeadEntryV2, []wire.ControlSetTransitionBundleV1,
 		CertifiedEnrollmentOperationProofV1) (TransactionStateV2, error)
 	RecordProvisional(ProvisionalIssuanceOperationV1, wire.EnrollmentProvisionalIssuanceV1,
 		wire.DeviceCertificateProfileStateV1, wire.EnrollmentResultArtifactV1,
-		CertifiedEnrollmentOperationProofV1, []wire.HeadEntryV2) (TransactionStateV2, error)
+		CertifiedEnrollmentOperationProofV1, []wire.HeadEntryV2,
+		[]wire.ControlSetTransitionBundleV1) (TransactionStateV2, error)
 	Complete(CompletionOperationV2, *wire.StableEnrollmentApprovalQCV2,
 		*wire.ControlSetV1, CompletionCertificationV1) (TransactionStateV2, error)
 }
@@ -105,7 +108,8 @@ func (coordinator *Coordinator) ProcessClaim(ctx context.Context,
 			return wire.EnrollmentClaimResultV2{}, err
 		}
 		if _, err := coordinator.repository.Reserve(attempt.InviteContext(), attempt.PrivateClaimEvidence(), operation, &admission,
-			&attempt.material.ControlSet, plan.BaseHead, plan.IntermediateHeads, plan.Certification); err != nil {
+			&attempt.material.ControlSet, plan.BaseHead, plan.IntermediateHeads,
+			plan.ControlSetTransitions, plan.Certification); err != nil {
 			return wire.EnrollmentClaimResultV2{}, err
 		}
 		record, found = coordinator.repository.SnapshotRecord(operation.InviteID)
@@ -123,7 +127,7 @@ func (coordinator *Coordinator) ProcessClaim(ctx context.Context,
 			return wire.EnrollmentClaimResultV2{}, err
 		}
 		if _, err := coordinator.repository.RecordProvisional(plan.Operation, plan.Issuance, plan.Profile, plan.Result,
-			plan.Certification, plan.IntermediateHeads); err != nil {
+			plan.Certification, plan.IntermediateHeads, plan.ControlSetTransitions); err != nil {
 			return wire.EnrollmentClaimResultV2{}, err
 		}
 		record, found = coordinator.repository.SnapshotRecord(record.InviteID)

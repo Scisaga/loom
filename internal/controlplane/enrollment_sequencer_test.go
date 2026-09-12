@@ -155,7 +155,7 @@ func TestStableEnrollmentSequencerCommitsJournalsAndReplaysExactResult(t *testin
 	}
 	reopenedSequencer, err := NewStableEnrollmentOperationSequencer(fixture.storage, fixture.store,
 		fixture.leader, fixture.collector, reopenedJournal, fixture.projector.Project,
-		fixture.recompute, fixture.now)
+		fixture.recompute, nil, fixture.now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestStableEnrollmentSequencerRetriesExactUncommittedTail(t *testing.T) {
 	journal, _ := OpenEnrollmentCommitJournal(filepath.Join(directory, "journal.json"), set)
 	projector := newEnrollmentProjectorFixture()
 	sequencer, err := NewStableEnrollmentOperationSequencer(storages[0], store, leader, collector,
-		journal, projector.Project, recompute,
+		journal, projector.Project, recompute, nil,
 		func() time.Time { return time.Date(2026, 9, 11, 0, 1, 0, 0, time.UTC) })
 	if err != nil {
 		t.Fatal(err)
@@ -377,7 +377,7 @@ func newStableEnrollmentSequencerFixture(t *testing.T) stableEnrollmentSequencer
 	projector := newEnrollmentProjectorFixture()
 	now := func() time.Time { return time.Date(2026, 9, 11, 0, 1, 0, 0, time.UTC) }
 	sequencer, err := NewStableEnrollmentOperationSequencer(storage, store, leader, collector,
-		journal, projector.Project, recompute, now)
+		journal, projector.Project, recompute, nil, now)
 	if err != nil {
 		t.Fatal(err)
 	}

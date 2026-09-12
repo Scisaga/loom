@@ -13,10 +13,11 @@ const DomainCompletionOperationID = "loom-enrollment-completion-operation-id-v1"
 // CompletionCertificationV1 证明 exact completion operation 与首次 active Device view
 // 同时进入同一份 certified Head；只有该证据存在时才能消费 Invite 和释放结果（D130）。
 type CompletionCertificationV1 struct {
-	Schema             int                                 `json:"schema"`
-	Operation          CertifiedEnrollmentOperationProofV1 `json:"operation"`
-	IntermediateHeads  []wire.HeadEntryV2                  `json:"intermediate_heads,omitempty"`
-	DeviceViewEnvelope wire.DeviceViewEnvelopeV2           `json:"device_view_envelope"`
+	Schema                int                                 `json:"schema"`
+	Operation             CertifiedEnrollmentOperationProofV1 `json:"operation"`
+	IntermediateHeads     []wire.HeadEntryV2                  `json:"intermediate_heads,omitempty"`
+	ControlSetTransitions []wire.ControlSetTransitionBundleV1 `json:"control_set_transitions,omitempty"`
+	DeviceViewEnvelope    wire.DeviceViewEnvelopeV2           `json:"device_view_envelope"`
 }
 
 // CompletionProjectionV1 是一次原子 apply 的显式结果：Invite、Device 与 artifact
@@ -64,16 +65,15 @@ func completionOperationID(record DurableRecord, approval *wire.StableEnrollment
 }
 
 func validateCompletionCertification(record *DurableRecord, operation *CompletionOperationV2,
-	set *wire.ControlSetV1, certification *CompletionCertificationV1,
-	completed *TransactionStateV2) (CompletionProjectionV1, error) {
-	if record == nil || operation == nil || set == nil || certification == nil || completed == nil ||
+	certification *CompletionCertificationV1, completed *TransactionStateV2) (CompletionProjectionV1, error) {
+	if record == nil || operation == nil || certification == nil || completed == nil ||
 		record.ResultArtifact == nil || certification.Schema != 1 {
 		return CompletionProjectionV1{}, errors.New("[D130 Enrollment] completion certification 输入不完整")
 	}
-	if !wire.EqualCanonical(certification.Operation.ControlSet, *set) ||
-		certification.Operation.PreviousControlSet != nil {
-		return CompletionProjectionV1{}, errors.New("[D130 Enrollment] completion 必须使用 exact stable approval ControlSet")
+	if certification.Operation.PreviousControlSet != nil {
+		return CompletionProjectionV1{}, errors.New("[D130 Enrollment] completion operation 必须由 stable ControlSet 认证")
 	}
+	completionSet := &certification.Operation.ControlSet
 	operationHash, err := wire.HashObject(DomainCompletionOperation, *operation)
 	if err != nil {
 		return CompletionProjectionV1{}, err
@@ -86,8 +86,9 @@ func validateCompletionCertification(record *DurableRecord, operation *Completio
 	if record.ProvisionalCertification == nil {
 		return CompletionProjectionV1{}, errors.New("[D130 Enrollment] completion 缺 issuance Head certification")
 	}
-	if err := verifyApprovalHeadLineage(&record.ProvisionalCertification.Head,
-		certification.IntermediateHeads, &certification.Operation.Head); err != nil {
+	if err := VerifyEnrollmentHeadLineage(&record.ProvisionalCertification.Head,
+		certification.IntermediateHeads, certification.ControlSetTransitions,
+		&certification.Operation.Head, completionSet); err != nil {
 		return CompletionProjectionV1{}, errors.New("[D130 Enrollment] issuance→completion Head lineage 不连续")
 	}
 	envelope := &certification.DeviceViewEnvelope
@@ -101,7 +102,7 @@ func validateCompletionCertification(record *DurableRecord, operation *Completio
 	if err != nil || !equalRawMessages(envelope.SecretArtifactRefs, wantRefs) {
 		return CompletionProjectionV1{}, errors.New("[D124 secret artifact] completion view 未携 exact result secret refs")
 	}
-	floors, err := wire.VerifyDeviceViewEnvelope(envelope, set)
+	floors, err := wire.VerifyDeviceViewEnvelope(envelope, completionSet)
 	if err != nil {
 		return CompletionProjectionV1{}, err
 	}
