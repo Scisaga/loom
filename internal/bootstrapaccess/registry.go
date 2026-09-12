@@ -1,6 +1,8 @@
 package bootstrapaccess
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"sort"
 	"sync"
@@ -8,12 +10,12 @@ import (
 	"loom/internal/wire"
 )
 
-// CredentialBindingV1 是 transport adapter 可见的最小认证投影。Credential 只可
-// 交给协议认证器，不得进入日志、状态文件或 diagnostics（D115、D131）。
-type CredentialBindingV1 struct {
-	CapabilityID string
-	Credential   string
-	Verified     wire.VerifiedBootstrapCapabilityV1
+// credentialBinding 是 transport adapter 可见的最小认证投影。字段保持私有，
+// 防止调用方把短期 bearer 整体格式化进日志或 diagnostics（D115、D131）。
+type credentialBinding struct {
+	capabilityID string
+	credential   string
+	verified     wire.VerifiedBootstrapCapabilityV1
 }
 
 // CredentialRegistry 保存一个 certified ingress set 当前允许的 capability 集合。
@@ -21,8 +23,11 @@ type CredentialBindingV1 struct {
 type CredentialRegistry struct {
 	mu             sync.RWMutex
 	ingressSetHash string
-	byCredential   map[string]CredentialBindingV1
+	byCredential   map[string]credentialBinding
+	byTrojanKey    map[[trojanKeyLength]byte]credentialBinding
 }
+
+const trojanKeyLength = sha256.Size224 * 2
 
 func NewCredentialRegistry(ingressSetHash string,
 	capabilities []wire.VerifiedBootstrapCapabilityV1) (*CredentialRegistry, error) {
@@ -48,7 +53,8 @@ func (registry *CredentialRegistry) replace(ingressSetHash string,
 	if _, err := wire.ParseHash(ingressSetHash); err != nil {
 		return errors.New("[D131 capability] credential registry ingress set hash 无效")
 	}
-	candidate := make(map[string]CredentialBindingV1, len(capabilities))
+	candidate := make(map[string]credentialBinding, len(capabilities))
+	trojanCandidate := make(map[[trojanKeyLength]byte]credentialBinding, len(capabilities))
 	seenIDs := make(map[string]struct{}, len(capabilities))
 	for _, verified := range capabilities {
 		body := verified.Body()
@@ -65,26 +71,58 @@ func (registry *CredentialRegistry) replace(ingressSetHash string,
 			return errors.New("[D131 capability] credential registry transport credential 冲突")
 		}
 		seenIDs[capabilityID] = struct{}{}
-		candidate[credential] = CredentialBindingV1{
-			CapabilityID: capabilityID, Credential: credential, Verified: verified,
+		binding := credentialBinding{
+			capabilityID: capabilityID, credential: credential, verified: verified,
 		}
+		key := trojanCredentialKey(credential)
+		if _, exists := trojanCandidate[key]; exists {
+			return errors.New("[D131 capability] credential registry Trojan key 冲突")
+		}
+		candidate[credential] = binding
+		trojanCandidate[key] = binding
 	}
 	registry.mu.Lock()
 	registry.ingressSetHash = ingressSetHash
 	registry.byCredential = candidate
+	registry.byTrojanKey = trojanCandidate
 	registry.mu.Unlock()
 	return nil
 }
 
-// Authenticate 的 bool 是唯一认证结果；调用方不得记录 credential 本身。
-func (registry *CredentialRegistry) Authenticate(credential string) (CredentialBindingV1, bool) {
+// openTrojanSession 在同一个 registry read lock 下完成 key lookup 与 durable
+// OpenSession。Replace 一旦返回，任何尚未落盘的新连接都不可能再使用旧表（D131）。
+func (registry *CredentialRegistry) openTrojanSession(manager *Manager,
+	key [trojanKeyLength]byte, sessionID string) (*Session, error) {
+	if registry == nil || manager == nil {
+		return nil, errors.New("[D131 capability] Trojan credential/session manager 缺失")
+	}
+	registry.mu.RLock()
+	binding, ok := registry.byTrojanKey[key]
+	if !ok {
+		registry.mu.RUnlock()
+		return nil, errors.New("[D131 capability] Trojan transport credential 无效")
+	}
+	session, err := manager.OpenSession(binding.verified, sessionID, registry.ingressSetHash)
+	registry.mu.RUnlock()
+	return session, err
+}
+
+func trojanCredentialKey(credential string) [trojanKeyLength]byte {
+	digest := sha256.Sum224([]byte(credential))
+	var key [trojanKeyLength]byte
+	hex.Encode(key[:], digest[:])
+	return key
+}
+
+// authenticate 的 bool 是唯一认证结果；调用方不得记录 credential 本身。
+func (registry *CredentialRegistry) authenticate(credential string) (wire.VerifiedBootstrapCapabilityV1, bool) {
 	if registry == nil || credential == "" {
-		return CredentialBindingV1{}, false
+		return wire.VerifiedBootstrapCapabilityV1{}, false
 	}
 	registry.mu.RLock()
 	binding, ok := registry.byCredential[credential]
 	registry.mu.RUnlock()
-	return binding, ok
+	return binding.verified, ok
 }
 
 func (registry *CredentialRegistry) IngressSetHash() string {
@@ -96,17 +134,17 @@ func (registry *CredentialRegistry) IngressSetHash() string {
 	return registry.ingressSetHash
 }
 
-// Snapshot 返回稳定排序的 adapter 输入；不应把返回值序列化或输出到 diagnostics。
-func (registry *CredentialRegistry) Snapshot() []CredentialBindingV1 {
+// snapshot 返回稳定排序的 adapter 输入；不得把返回值序列化或输出到 diagnostics。
+func (registry *CredentialRegistry) snapshot() []credentialBinding {
 	if registry == nil {
 		return nil
 	}
 	registry.mu.RLock()
-	values := make([]CredentialBindingV1, 0, len(registry.byCredential))
+	values := make([]credentialBinding, 0, len(registry.byCredential))
 	for _, binding := range registry.byCredential {
 		values = append(values, binding)
 	}
 	registry.mu.RUnlock()
-	sort.Slice(values, func(i, j int) bool { return values[i].CapabilityID < values[j].CapabilityID })
+	sort.Slice(values, func(i, j int) bool { return values[i].capabilityID < values[j].capabilityID })
 	return values
 }

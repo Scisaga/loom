@@ -1739,6 +1739,13 @@ CIDR、DNS、ICMP、隧道内 UDP、`control_api`、Raft、配置和报告；入
 必须双重执行 ACL。入口的 `capability_id` 计数是抗滥用边界，真正一次性消费由 ControlSet 的 token
 Raft CAS 决定。
 
+HY2/Trojan 的认证串由完整已签 capability 的 canonical bytes 通过
+`loom-bootstrap-transport-credential-v1` domain-separated SHA-256 派生，不是 token，也不能只用
+公开的 `capability_id`。HY2 使用该值本身；Trojan 按协议再计算 SHA-224 lowercase-hex key。
+入口仅从完整通过 registry inclusion/policy/signature/time/scope 验证的 opaque evidence 建认证表；
+更新时整表原子替换，并在同一旧表读锁内完成 credential lookup 与 durable attempt 落盘，保证撤销
+返回后旧 credential 不能新开 session。认证串与原 capability 都禁止写入日志或 diagnostics。
+
 BootstrapIssuer 本身必须通过 certified authorization registry leaf/inclusion proof 和对应 head/QC
 获得授权；authorization 有 ID、generation、前代 hash、有效期、active/revoked 状态，并列出 TTL、
 session、bytes、attempts、concurrency、service 与 ingress scope 的全部上界。

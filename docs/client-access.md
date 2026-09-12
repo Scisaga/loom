@@ -806,6 +806,11 @@ bootstrap/recovery/ControlSet transition、record/head/QC、
 
 只在选定入口时才出示 bootstrap capability。入口验签、限制并发/时间/流量，并将隧道
 路由限制为 descriptor 认证的 `PrivateEnrollmentServiceRefV1` overlay IP 和 TLS port。
+客户端与入口都从已验完整 `BootstrapTunnelCapabilityV1` 派生
+`HashObject("loom-bootstrap-transport-credential-v1", capability)`；HY2 使用该值，Trojan 使用其
+标准 SHA-224 key。不得用 enrollment token 或仅用 public `capability_id` 代替，也不得把派生值写入
+日志、诊断或持久配置。入口在认证成功后、解析目标前即耐久消耗一次 attempt，随后仍须拒绝 DNS、
+UDP 及任何非 exact Enrollment IP:port 的请求。
 客户端再验证内层 server-auth TLS，先使用不含 token/CSR/key 的
 `EnrollmentIntentPreflightRequestV1` 取得 `EnrollmentIntentPreflightResponseV1` 中的 exact
 `DeviceEnrollmentIntentOpeningV1`，重算 hiding commitment 并验证平台、职责和 grants。

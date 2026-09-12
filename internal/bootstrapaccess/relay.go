@@ -35,6 +35,21 @@ func (m *Manager) RelayTCP(ctx context.Context, verified wire.VerifiedBootstrapC
 	if err != nil {
 		return err
 	}
+	return session.relayTCP(ctx, requestedNetwork, requestedAddress, incoming, dial)
+}
+
+// relayTCP 只供已经原子完成 transport credential lookup + OpenSession 的 adapter
+// 使用；保持它不导出可避免调用方绕开 CredentialRegistry（D131）。
+func (s *Session) relayTCP(ctx context.Context, requestedNetwork, requestedAddress string,
+	incoming net.Conn, dial DialContext) error {
+	if incoming == nil {
+		return errors.New("[D131 capability] relay context/connection/dialer 缺失")
+	}
+	defer incoming.Close()
+	if ctx == nil || dial == nil {
+		return errors.New("[D131 capability] relay context/connection/dialer 缺失")
+	}
+	session := s
 	defer session.Close()
 	if err := session.AuthorizeDial(requestedNetwork, requestedAddress); err != nil {
 		return err

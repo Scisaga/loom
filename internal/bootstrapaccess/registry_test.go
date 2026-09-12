@@ -18,11 +18,11 @@ func TestCredentialRegistryAcceptsOnlyVerifierEvidenceForExactIngress(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, ok := registry.Authenticate(verified.TransportCredential())
-	if !ok || binding.CapabilityID != verified.CapabilityID() || binding.Verified.CapabilityID() != verified.CapabilityID() {
-		t.Fatalf("认证结果未保留 verified evidence:%+v ok=%v", binding, ok)
+	authenticated, ok := registry.authenticate(verified.TransportCredential())
+	if !ok || authenticated.CapabilityID() != verified.CapabilityID() {
+		t.Fatalf("认证结果未保留 verified evidence:ok=%v", ok)
 	}
-	if _, ok := registry.Authenticate(verified.CapabilityID()); ok {
+	if _, ok := registry.authenticate(verified.CapabilityID()); ok {
 		t.Fatal("public capability ID 被当作 transport bearer")
 	}
 	if _, err := NewCredentialRegistry(wire.HashRaw("test-ingress", []byte("other")),
@@ -38,7 +38,7 @@ func TestCredentialRegistryAcceptsOnlyVerifierEvidenceForExactIngress(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err := manager.OpenSession(binding.Verified, "session-1", registry.IngressSetHash())
+	session, err := manager.OpenSession(authenticated, "session-1", registry.IngressSetHash())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,13 +56,13 @@ func TestCredentialRegistryReplaceIsAtomicAndSorted(t *testing.T) {
 	if err := registry.Replace(wrongHash, []wire.VerifiedBootstrapCapabilityV1{verified}); err == nil {
 		t.Fatal("无效 replace 被接受")
 	}
-	if _, ok := registry.Authenticate(verified.TransportCredential()); !ok || registry.IngressSetHash() != ingressHash {
+	if _, ok := registry.authenticate(verified.TransportCredential()); !ok || registry.IngressSetHash() != ingressHash {
 		t.Fatal("失败 replace 改坏旧认证表")
 	}
 	if err := registry.Replace(ingressHash, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := registry.Authenticate(verified.TransportCredential()); ok || len(registry.Snapshot()) != 0 {
+	if _, ok := registry.authenticate(verified.TransportCredential()); ok || len(registry.snapshot()) != 0 {
 		t.Fatal("空 certified set 未原子撤销旧 credential")
 	}
 }

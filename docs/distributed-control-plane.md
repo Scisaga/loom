@@ -2426,6 +2426,13 @@ exact bytes/hash/root/path/QC、重复 leaf key 或两个 head 不在已验连�
 
 bootstrap capability 是“允许建立受限临时 tunnel”的凭据，不是 Device identity，也不是
 Enrollment token。二者必须独立；任何把 token 直接用作 HY2/Trojan 密码的实现都不合规。
+transport 认证串固定为
+`HashObject("loom-bootstrap-transport-credential-v1", BootstrapTunnelCapabilityV1)`；
+只有完整验证 issuer registry inclusion、certified policy、签名、时间和 exact scope 后，入口与
+客户端才可使用该派生值。HY2 直接把它作为 password，Trojan 再使用协议规定的 SHA-224
+lowercase-hex key。入口只原子注册当前 certified capability 集合；认证表替换与 durable attempt
+落盘之间不得留出旧 credential 新开 session 的竞态。该派生值、原 capability 和 enrollment token
+均不得进入日志、diagnostics 或公开 catalog。
 
 ~~~text
 BootstrapTunnelCapabilityBodyV1

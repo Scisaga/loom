@@ -171,6 +171,15 @@ func (verified VerifiedBootstrapCapabilityV1) TransportCredential() string {
 	return verified.transportCredential
 }
 
+// String/GoString 防止把 opaque evidence 直接交给日志格式化时泄露短期 bearer。
+func (verified VerifiedBootstrapCapabilityV1) String() string {
+	return fmt.Sprintf("VerifiedBootstrapCapabilityV1{capability_id:%q}", verified.capabilityID)
+}
+
+func (verified VerifiedBootstrapCapabilityV1) GoString() string {
+	return verified.String()
+}
+
 func ValidateInviteIssuancePolicy(policy *InviteIssuancePolicyV2) error {
 	if policy == nil || policy.Schema != 2 || !validIdentifier(policy.ClusterID, 128) ||
 		!validIdentifier(policy.PolicyID, 128) || policy.Generation < 1 ||
