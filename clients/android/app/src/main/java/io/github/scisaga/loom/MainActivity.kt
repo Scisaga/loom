@@ -201,7 +201,7 @@ private fun LoomHome(
         diagnostics = withContext(Dispatchers.IO) {
             runCatching {
                 Stage1Config.load(context)
-                val key = DeviceKeyStore().proveBinding()
+                val key = DeviceKeyStore().identityStatus()
                 "libbox ${Libbox.version()} · core ${Loomcore.version()}\nKeystore $key"
             }.getOrElse { "自检失败：${it.message}" }
         }

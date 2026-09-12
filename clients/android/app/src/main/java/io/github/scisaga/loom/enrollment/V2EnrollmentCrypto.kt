@@ -21,6 +21,105 @@ internal class V2EnrollmentCrypto(
 
     fun claimCoreHash(canonicalCore: ByteArray): String = Loomcore.enrollmentClaimCoreHashV2(canonicalCore)
 
+    fun preparePreflight(
+        canonicalDescriptor: ByteArray,
+        canonicalProofBundle: ByteArray,
+        trustedTime: String,
+    ): ByteArray = Loomcore.prepareAndroidEnrollmentV2Preflight(
+        canonicalDescriptor,
+        canonicalProofBundle,
+        trustedTime,
+    )
+
+    /** #14：这个验证返回成功之前不得调用 ensureIdentity/ensureWrapping。 */
+    fun verifyPreflightBeforeKeys(
+        canonicalDescriptor: ByteArray,
+        canonicalProofBundle: ByteArray,
+        canonicalResponse: ByteArray,
+        trustedTime: String,
+    ): ByteArray = Loomcore.verifyAndroidEnrollmentV2Preflight(
+        canonicalDescriptor,
+        canonicalProofBundle,
+        canonicalResponse,
+        trustedTime,
+    )
+
+    fun prepareStableClaimCore(
+        canonicalDescriptor: ByteArray,
+        canonicalProofBundle: ByteArray,
+        canonicalPreflightResponse: ByteArray,
+        requestID: String,
+        clientNonce: ByteArray,
+        trustedTime: String,
+    ): ByteArray {
+        // 先单独复验 token-free opening，再创建不可导出 key。
+        verifyPreflightBeforeKeys(
+            canonicalDescriptor,
+            canonicalProofBundle,
+            canonicalPreflightResponse,
+            trustedTime,
+        )
+        val identity = keys.ensureIdentity()
+        val wrapping = keys.ensureWrapping()
+        val csr = keys.createCSRDER(requestID)
+        return Loomcore.prepareAndroidEnrollmentV2ClaimCore(
+            canonicalDescriptor,
+            canonicalProofBundle,
+            canonicalPreflightResponse,
+            requestID,
+            identity,
+            csr,
+            wrapping.subjectPublicKeyInfo,
+            wrapping.profile,
+            clientNonce,
+            trustedTime,
+        )
+    }
+
+    fun preparePoPBody(
+        canonicalDescriptor: ByteArray,
+        canonicalProofBundle: ByteArray,
+        canonicalPreflightResponse: ByteArray,
+        canonicalClaimCore: ByteArray,
+        canonicalChallenge: ByteArray,
+        trustedTime: String,
+    ): ByteArray = Loomcore.prepareAndroidEnrollmentV2PoPBody(
+        canonicalDescriptor,
+        canonicalProofBundle,
+        canonicalPreflightResponse,
+        canonicalClaimCore,
+        canonicalChallenge,
+        trustedTime,
+    )
+
+    fun assembleClaimSubmission(
+        canonicalDescriptor: ByteArray,
+        canonicalProofBundle: ByteArray,
+        canonicalPreflightResponse: ByteArray,
+        canonicalClaimCore: ByteArray,
+        canonicalChallenge: ByteArray,
+        trustedTime: String,
+    ): ByteArray {
+        val pop = preparePoPBody(
+            canonicalDescriptor,
+            canonicalProofBundle,
+            canonicalPreflightResponse,
+            canonicalClaimCore,
+            canonicalChallenge,
+            trustedTime,
+        )
+        return Loomcore.assembleAndroidEnrollmentV2ClaimSubmission(
+            canonicalDescriptor,
+            canonicalProofBundle,
+            canonicalPreflightResponse,
+            canonicalClaimCore,
+            canonicalChallenge,
+            pop,
+            signPoP(pop),
+            trustedTime,
+        )
+    }
+
     fun signPoP(canonicalPoPBody: ByteArray): String {
         val exactMessage = Loomcore.enrollmentPoPMessageV2(canonicalPoPBody)
         val signature = keys.signCanonicalV2(exactMessage)

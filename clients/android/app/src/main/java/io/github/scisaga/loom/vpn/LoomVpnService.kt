@@ -228,10 +228,10 @@ class LoomVpnService : VpnService(), PlatformInterface {
         )
         updateNotification("正在连接…")
         try {
-            DeviceKeyStore().proveBinding()
             val manager = EnrollmentManager.get(this)
             val candidate = manager.candidateProfile()
             if (candidate != null) {
+                DeviceKeyStore().proveBinding()
                 try {
                     val probe = activateWithoutBusinessProbe(candidate)
                     ensureConnectionWanted()
@@ -258,6 +258,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
 
             val current = manager.currentProfile()
             if (current != null) {
+                DeviceKeyStore().proveBinding()
                 val (active, probe) = activateManagedWithFallback(current, manager)
                 ensureConnectionWanted()
                 connected(active, probe, "已激活验签配置 · snapshot ${active.snapshot}")

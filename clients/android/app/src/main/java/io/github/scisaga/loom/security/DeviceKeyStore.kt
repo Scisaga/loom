@@ -25,6 +25,14 @@ data class WrappingPublicKey(
 class DeviceKeyStore {
     private val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
 
+    /** 诊断路径只读既有 alias，不能在 v2 token-free preflight 前创建 identity。 */
+    fun identityStatus(): String {
+        if (!keyStore.containsAlias(IDENTITY_ALIAS)) return "尚未生成（等待 v2 preflight）"
+        val entry = keyStore.getEntry(IDENTITY_ALIAS, null) as KeyStore.PrivateKeyEntry
+        check(entry.privateKey.encoded == null) { "Android Keystore identity 私钥竟可导出" }
+        return "non-exportable P-256"
+    }
+
     fun ensureIdentity(): ByteArray {
         if (!keyStore.containsAlias(IDENTITY_ALIAS)) {
             val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, ANDROID_KEYSTORE)

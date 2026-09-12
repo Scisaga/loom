@@ -122,7 +122,7 @@ internal object HttpTransport {
         }
     }
 
-    private fun underlyingNetworks(context: Context): List<Network> {
+    internal fun underlyingNetworks(context: Context): List<Network> {
         val connectivity = context.getSystemService(ConnectivityManager::class.java) ?: return emptyList()
         fun eligible(network: Network): Boolean {
             val capabilities = connectivity.getNetworkCapabilities(network) ?: return false
