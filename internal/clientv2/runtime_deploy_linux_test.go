@@ -181,6 +181,66 @@ func TestPrepareLinuxRuntimeDecommissionRequiresCertifiedTombstoneAndRemovesOnly
 	}
 }
 
+func TestPrepareLinuxRuntimeLocalUninstallRemovesOnlyRuntimeAndPreservesDeviceState(t *testing.T) {
+	statePath, runtimeStatePath, installStatePath, linkRaw, runtimeRaw := linuxRuntimeDeploymentFixture(t)
+	activePlan, err := PrepareLinuxRuntimeDeployment(installStatePath, statePath, runtimeStatePath,
+		linkRaw, runtimeRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var installed LinuxRuntimeInstallStateV1
+	if _, err := wire.DecodeStrict([]byte(activePlan.Files[installStatePath]),
+		maximumLinuxRuntimeInstallStateBytes, &installed); err != nil {
+		t.Fatal(err)
+	}
+	if err := persistProtectedCanonical(installStatePath, &installed); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := PrepareLinuxRuntimeLocalUninstall(installStatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.InventoryGuard == nil || plan.InventoryGuard.Absent || plan.InventoryGuard.SHA256 == "" ||
+		!containsString(plan.Remove, installStatePath) || len(plan.Remove) != len(installed.InstalledFiles)+1 {
+		t.Fatalf("local uninstall transaction 不完整: remove=%v guard=%+v", plan.Remove, plan.InventoryGuard)
+	}
+	for _, preserved := range []string{statePath, runtimeStatePath,
+		filepath.Join(filepath.Dir(statePath), "identity.json"),
+		filepath.Join(filepath.Dir(statePath), "pending.json")} {
+		if containsString(plan.Remove, preserved) {
+			t.Fatalf("local uninstall 不得删除 Device identity/LKG: %s", preserved)
+		}
+	}
+	for _, path := range plan.Remove {
+		if path != installStatePath && !validLinuxV2InstalledPath(path) {
+			t.Fatalf("local uninstall 删除越出 runtime inventory: %s", path)
+		}
+	}
+
+	if err := os.Remove(installStatePath); err != nil {
+		t.Fatal(err)
+	}
+	empty, err := PrepareLinuxRuntimeLocalUninstall(installStatePath)
+	if err != nil || len(empty.Remove) != 0 || empty.InventoryGuard != nil {
+		t.Fatalf("重复 local uninstall 应幂等: plan=%+v err=%v", empty, err)
+	}
+}
+
+func TestPrepareLinuxRuntimeLocalUninstallRejectsUnsafeInventory(t *testing.T) {
+	directory := t.TempDir()
+	installStatePath := filepath.Join(directory, LinuxRuntimeInstallStateName)
+	if err := os.WriteFile(installStatePath, []byte(`{"schema":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PrepareLinuxRuntimeLocalUninstall(installStatePath); err == nil {
+		t.Fatal("local uninstall 接受了非 canonical/不完整 inventory")
+	}
+	if _, err := PrepareLinuxRuntimeLocalUninstall(filepath.Join(directory, "other.json")); err == nil {
+		t.Fatal("local uninstall 接受了非固定 inventory 路径")
+	}
+}
+
 func linuxRuntimeDeploymentFixture(t *testing.T) (string, string, string, []byte, []byte) {
 	t.Helper()
 	now := time.Date(2026, 9, 12, 9, 30, 0, 0, time.UTC)

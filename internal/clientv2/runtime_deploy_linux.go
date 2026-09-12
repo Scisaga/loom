@@ -191,12 +191,49 @@ func PrepareLinuxRuntimeDecommission(installStatePath, deviceStatePath string) (
 	return plan, nil
 }
 
+// PrepareLinuxRuntimeLocalUninstall 为 root 发起的本机软件卸载生成与 certified
+// tombstone 下线相同的 inventory/CAS 删除事务，但不把本机动作冒充控制面撤权。
+// Device identity、正式 LKG、floors 和报告 journal 都不在 runtime inventory 中，
+// 因而默认保留，重装后仍只能按当前 certified Device view 恢复（D106、D131）。
+func PrepareLinuxRuntimeLocalUninstall(installStatePath string) (*deploy.Plan, error) {
+	if err := validateLinuxRuntimeInstallStatePath(installStatePath); err != nil {
+		return nil, err
+	}
+	previous, previousBody, err := readLinuxRuntimeInstallState(installStatePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return &deploy.Plan{Node: "linux-v2-local-uninstall", Files: map[string]string{},
+			Triggers: map[string][]string{}}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := secureEnrollmentDirectory(filepath.Dir(installStatePath)); err != nil {
+		return nil, err
+	}
+	plan := &deploy.Plan{Node: previous.DeviceID, Files: map[string]string{},
+		Triggers: map[string][]string{}}
+	plan.Remove = append(append([]string(nil), previous.InstalledFiles...), installStatePath)
+	sort.Strings(plan.Remove)
+	sum := sha256.Sum256(previousBody)
+	plan.InventoryGuard = &deploy.InventoryGuard{
+		Path: installStatePath, SHA256: hex.EncodeToString(sum[:]),
+	}
+	return plan, nil
+}
+
 func validateLinuxRuntimeInstallPaths(installStatePath, deviceStatePath string) error {
-	if installStatePath == "" || deviceStatePath == "" ||
-		filepath.Base(installStatePath) != LinuxRuntimeInstallStateName ||
+	if deviceStatePath == "" || validateLinuxRuntimeInstallStatePath(installStatePath) != nil ||
 		filepath.Dir(installStatePath) != filepath.Dir(deviceStatePath) ||
-		!filepath.IsAbs(installStatePath) || filepath.Clean(installStatePath) != installStatePath {
+		!filepath.IsAbs(deviceStatePath) || filepath.Clean(deviceStatePath) != deviceStatePath {
 		return errors.New("[D131 Linux runtime] install/device state path 无效")
+	}
+	return nil
+}
+
+func validateLinuxRuntimeInstallStatePath(installStatePath string) error {
+	if installStatePath == "" || filepath.Base(installStatePath) != LinuxRuntimeInstallStateName ||
+		!filepath.IsAbs(installStatePath) || filepath.Clean(installStatePath) != installStatePath {
+		return errors.New("[D131 Linux runtime] install state path 无效")
 	}
 	return nil
 }

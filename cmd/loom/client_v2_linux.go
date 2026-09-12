@@ -441,6 +441,55 @@ func cmdClientAcceptV2Runtime(args []string) error {
 	return nil
 }
 
+func cmdClientUninstallV2Runtime(args []string) error {
+	fs := flag.NewFlagSet("client uninstall-v2-runtime", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	stateDirectory := fs.String("state-dir", "/var/lib/loom/client-v2", "root-owned v2 identity/LKG 目录")
+	installStatePath := fs.String("install-state", "", "root-only installed runtime inventory/CAS LKG")
+	applyRuntime := fs.Bool("apply", false, "事务停止服务并删除 inventory 中的 v2 runtime")
+	dryRun := fs.Bool("dry-run", false, "只显示受影响的 v2 runtime，不修改本机")
+	timeout := fs.Duration("timeout", 2*time.Minute, "本机事务卸载超时")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *applyRuntime == *dryRun {
+		return errors.New("用法: loom client uninstall-v2-runtime <-apply|-dry-run> [-state-dir <dir>] [-timeout <duration>]")
+	}
+	if *timeout < time.Second || *timeout > 10*time.Minute {
+		return errors.New("[D131 Linux runtime] uninstall timeout 输入无效")
+	}
+	if *applyRuntime && os.Geteuid() != 0 {
+		return errors.New("[D131 Linux runtime] uninstall -apply 必须由 root 在目标 Linux 节点执行")
+	}
+	if *stateDirectory == "" || !filepath.IsAbs(*stateDirectory) ||
+		filepath.Clean(*stateDirectory) != *stateDirectory {
+		return errors.New("[D131 Linux runtime] state-dir 必须是规范绝对路径")
+	}
+	if *installStatePath == "" {
+		*installStatePath = filepath.Join(*stateDirectory, clientv2.LinuxRuntimeInstallStateName)
+	}
+	if !filepath.IsAbs(*installStatePath) || filepath.Clean(*installStatePath) != *installStatePath ||
+		filepath.Dir(*installStatePath) != *stateDirectory {
+		return errors.New("[D131 Linux runtime] uninstall install-state 必须位于 state-dir")
+	}
+	plan, err := clientv2.PrepareLinuxRuntimeLocalUninstall(*installStatePath)
+	if err != nil {
+		return err
+	}
+	if *dryRun {
+		fmt.Printf("  dry-run      remove=%d services=%d（未改动；Device identity/LKG/floors 保留）\n",
+			len(plan.Remove), len(plan.Services()))
+		return nil
+	}
+	if len(plan.Remove) == 0 {
+		fmt.Println("✓ Linux v2 本机 runtime 已处于卸载状态；Device identity/LKG/floors 保留")
+		return nil
+	}
+	runID := "client-v2-local-uninstall-" + time.Now().UTC().Format("20060102T150405.000000000Z")
+	if err := runScript(plan.Node, deploy.Script(plan, runID), "", true, *timeout); err != nil {
+		return err
+	}
+	fmt.Println("✓ Linux v2 本机 runtime 已事务卸载；Device identity/LKG/floors 保留，控制面授权未改变")
+	return nil
+}
+
 func addLinuxPrivateDeviceFlags(fs *flag.FlagSet, flags *linuxPrivateDeviceFlags) {
 	flags.stateDirectory = "/var/lib/loom/client-v2"
 	flags.timeout = 30 * time.Second

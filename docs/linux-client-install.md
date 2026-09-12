@@ -227,6 +227,19 @@ Device view 进入 certified `revoked` 或 `decommissioned` tombstone 后，同�
 CAS/回滚事务中先停服务，再删除该 inventory 内的固定 v2 文件和 inventory 自身。active Device
 不能调用这条下线路径，terminal Device 也不能靠命令行重新注入 runtime 或 authority。
 
+操作者卸载本机 v2 软件运行面时使用发行包中的固定入口：
+
+```bash
+sudo ./uninstall.sh
+```
+
+它调用 `loom client uninstall-v2-runtime -apply`，同样只按 root-owned installed inventory
+先停用 unit/WireGuard interface，再以 CAS/回滚事务删除固定 v2 runtime 文件。这个本机动作不冒充
+控制面撤权，也不删除 Device identity、正式 LKG、四组 floor 或报告 journal；重装后仍按 current
+certified policy 恢复。Gate B 前 `/usr/local/bin/{loom,sing-box}` 和平台 trust 仍与 v1 兼容路径
+共享，因此卸载脚本明确保留这些文件。需要移出网络时，管理员仍必须先完成 certified
+暂停/撤权/decommission，不能用本机卸载替代。
+
 开发门禁可一键运行，并把不含域名、IP、Device ID、证书或 secret 的结构化结果写到忽略目录：
 
 ```bash
@@ -293,6 +306,12 @@ loom client verify \
 中控发布人员从待发布的干净 commit 运行 `scripts/build-linux-client.sh`；脚本只构建
 一次 Loom 二进制，用同一字节生成并验签客户端包，最后将 archive 作为提交标记原子
 发布到 `/var/lib/loom/client-dist/`。脏工作树构建默认会被拒绝。
+
+包内 `install.sh` 在修改本机前先核对全部 checksums，并分别执行候选 Loom selfcheck 与
+sing-box version 检查。三个共享 package 文件在同一 `deploy.lock` 下替换；每次变更前把旧文件
+和固定目标写入 root-only transaction manifest 并持久化。普通失败/信号立即恢复旧文件；若在
+进程无法捕获的中断点退出，下一次安装会先恢复唯一未完成事务，再开始新安装。安装成功前不会
+把 v1 state directory 当成 v2 副作用创建。
 
 ## 3. 转发职责先声明可达事实
 

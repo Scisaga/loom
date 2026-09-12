@@ -81,3 +81,18 @@ func TestLinuxClientV2CommandsRejectAmbiguousCarriers(t *testing.T) {
 		t.Fatal("resume-v2 accepted missing descriptor")
 	}
 }
+
+func TestLinuxClientV2RuntimeUninstallRequiresExplicitModeAndBoundedState(t *testing.T) {
+	if err := cmdClientUninstallV2Runtime(nil); err == nil {
+		t.Fatal("runtime uninstall accepted an implicit destructive mode")
+	}
+	if err := cmdClientUninstallV2Runtime([]string{"-apply", "-dry-run"}); err == nil {
+		t.Fatal("runtime uninstall accepted conflicting modes")
+	}
+	if err := cmdClientUninstallV2Runtime([]string{"-dry-run", "-state-dir", "relative"}); err == nil {
+		t.Fatal("runtime uninstall accepted a relative state directory")
+	}
+	if err := cmdClientUninstallV2Runtime([]string{"-dry-run", "-state-dir", t.TempDir()}); err != nil {
+		t.Fatalf("idempotent dry-run without an installed runtime failed: %v", err)
+	}
+}

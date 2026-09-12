@@ -43,6 +43,8 @@ const clientUsage = `loom client —— 客户端加入与交付
                                                持久化并发送 Linux v2 Device report
   loom client accept-v2-runtime [-apply|-dry-run]
                                                验收 certified Linux runtime；可事务安装或预览
+  loom client uninstall-v2-runtime <-apply|-dry-run>
+                                               只卸载本机 v2 runtime；保留 Device identity/LKG/floors
   loom client package -sing-box <二进制>     生成可重现、已签名的 Linux 客户端包
   loom client verify  -archive <tar.gz> -pubkey <公钥>
                                                验签并检查包内全部文件
@@ -117,6 +119,8 @@ func cmdClient(args []string) error {
 		return cmdClientReportV2(args[1:])
 	case "accept-v2-runtime":
 		return cmdClientAcceptV2Runtime(args[1:])
+	case "uninstall-v2-runtime":
+		return cmdClientUninstallV2Runtime(args[1:])
 	case "package":
 		return cmdClientPackage(args[1:])
 	case "verify":

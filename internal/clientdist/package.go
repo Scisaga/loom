@@ -138,6 +138,7 @@ func Build(in BuildInput) (Artifact, error) {
 		{path: "platform.pub", mode: 0o644, body: publicBody},
 		{path: "sing-box", mode: 0o755, body: append([]byte(nil), in.SingBox...)},
 		{path: "systemd/README.md", mode: 0o644, body: []byte(systemdReadme)},
+		{path: "uninstall.sh", mode: 0o755, body: []byte(uninstallScript)},
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
 
@@ -411,7 +412,7 @@ func verifyArchive(body []byte, pub ed25519.PublicKey) (Manifest, error) {
 		files[rel], modes[rel] = content, h.Mode&0o777
 	}
 	required := []string{"README.md", "checksums.txt", "install.sh", "licenses/LOOM-LICENSE", "licenses/LOOM-NOTICE",
-		"licenses/SING-BOX-LICENSE", "licenses/THIRD-PARTY-NOTICES.md", "loom", "manifest.json", "platform.pub", "sing-box", "systemd/README.md"}
+		"licenses/SING-BOX-LICENSE", "licenses/THIRD-PARTY-NOTICES.md", "loom", "manifest.json", "platform.pub", "sing-box", "systemd/README.md", "uninstall.sh"}
 	if len(files) != len(required) {
 		return zero, fmt.Errorf("客户端包文件数是 %d，期望 %d", len(files), len(required))
 	}
@@ -507,6 +508,16 @@ shell history:
     cd loom-client-linux-amd64
     sudo ./install.sh --invite-v2-file ../client.loom-invite
 
+Remove only this host's installed v2 runtime and services with:
+
+    sudo ./uninstall.sh
+
+The uninstall keeps Device identity, certified LKG, anti-rollback floors and
+the shared Loom/sing-box binaries.  Keeping those files is intentional before
+Gate B: reinstall can resume the same Device, and a coexisting v1 runtime must
+not be damaged by a v2 uninstall.  It does not revoke the Device in the control
+plane.
+
 The historical v1 command remains available as --invite-file. The two modes
 use separate state directories and are never auto-detected from bearer bytes.
 
@@ -546,6 +557,7 @@ or started. That state is provisioning, not online.
 
 const installScript = `#!/bin/sh
 set -eu
+umask 077
 
 usage() {
     echo "usage: sudo ./install.sh --invite-v2-file PATH [--v2-state-dir PATH] [--secret-envelope-dir PATH]" >&2
@@ -600,23 +612,170 @@ for file in loom sing-box platform.pub; do
     }
 done
 
-install -d -m 0755 /usr/local/bin /etc/loom/trust
-install -d -m 0700 /etc/loom/secrets "$state_dir" "$v2_state_dir" /var/lib/loom
+"$base/loom" selfcheck >/dev/null
+"$base/sing-box" version >/dev/null
+
+install -d -m 0755 /usr/local/bin /etc/loom/trust /var/lib/loom
+install -d -m 0700 /etc/loom/secrets
+if [ -n "$invite_file" ]; then
+    install -d -m 0700 "$state_dir"
+else
+    install -d -m 0700 "$v2_state_dir"
+fi
+command -v flock >/dev/null || { echo "flock is required for transactional install" >&2; exit 1; }
+exec 9>/var/lib/loom/deploy.lock
+flock -x 9
+
+active_tmp=
 
 install_atomic() {
     src=$1
     dst=$2
     mode=$3
-    tmp=$(mktemp "${dst}.tmp.XXXXXX")
-    trap 'rm -f "$tmp"' EXIT HUP INT TERM
-    install -m "$mode" "$src" "$tmp"
-    mv -f "$tmp" "$dst"
-    trap - EXIT HUP INT TERM
+    active_tmp=$(mktemp "${dst}.tmp.XXXXXX")
+    install -m "$mode" "$src" "$active_tmp"
+    mv -f "$active_tmp" "$dst"
+    active_tmp=
 }
 
-install_atomic "$base/loom" /usr/local/bin/loom 0755
-install_atomic "$base/sing-box" /usr/local/bin/sing-box 0755
-install_atomic "$base/platform.pub" /etc/loom/trust/platform.pub 0644
+recover_install_transaction() {
+    recovery_dir=$1
+    recovery_manifest=$recovery_dir/manifest
+    [ -d "$recovery_dir" ] && [ ! -L "$recovery_dir" ] || {
+        echo "unsafe Linux package recovery directory" >&2
+        return 1
+    }
+    if [ ! -e "$recovery_manifest" ]; then
+        # install_owned persists the manifest before touching a target.  No
+        # manifest therefore proves this interrupted transaction never mutated
+        # an installed package file.
+        rm -rf "$recovery_dir"
+        sync -f /var/lib/loom
+        return 0
+    fi
+    [ -f "$recovery_manifest" ] && [ ! -L "$recovery_manifest" ] || {
+        echo "unsafe Linux package recovery manifest" >&2
+        return 1
+    }
+    last_byte=$(tail -c 1 "$recovery_manifest" | od -An -tuC | tr -d ' ')
+    [ "$last_byte" = 10 ] || {
+        echo "truncated Linux package recovery manifest" >&2
+        return 1
+    }
+    seen_loom=0
+    seen_sing_box=0
+    seen_platform=0
+    while IFS='|' read -r target saved mode; do
+        case "$target|$saved|$mode" in
+            /usr/local/bin/loom\|loom\|0755)
+                [ "$seen_loom" -eq 0 ] || return 1
+                seen_loom=1
+                [ -f "$recovery_dir/$saved" ] && [ ! -L "$recovery_dir/$saved" ] || return 1
+                install_atomic "$recovery_dir/$saved" "$target" "$mode"
+                ;;
+            /usr/local/bin/loom\|NEW\|0755)
+                [ "$seen_loom" -eq 0 ] || return 1
+                seen_loom=1
+                rm -f "$target"
+                ;;
+            /usr/local/bin/sing-box\|sing-box\|0755)
+                [ "$seen_sing_box" -eq 0 ] || return 1
+                seen_sing_box=1
+                [ -f "$recovery_dir/$saved" ] && [ ! -L "$recovery_dir/$saved" ] || return 1
+                install_atomic "$recovery_dir/$saved" "$target" "$mode"
+                ;;
+            /usr/local/bin/sing-box\|NEW\|0755)
+                [ "$seen_sing_box" -eq 0 ] || return 1
+                seen_sing_box=1
+                rm -f "$target"
+                ;;
+            /etc/loom/trust/platform.pub\|platform.pub\|0644)
+                [ "$seen_platform" -eq 0 ] || return 1
+                seen_platform=1
+                [ -f "$recovery_dir/$saved" ] && [ ! -L "$recovery_dir/$saved" ] || return 1
+                install_atomic "$recovery_dir/$saved" "$target" "$mode"
+                ;;
+            /etc/loom/trust/platform.pub\|NEW\|0644)
+                [ "$seen_platform" -eq 0 ] || return 1
+                seen_platform=1
+                rm -f "$target"
+                ;;
+            *)
+                echo "invalid Linux package recovery target" >&2
+                return 1
+                ;;
+        esac
+    done < "$recovery_manifest"
+    rm -f /usr/local/bin/loom.tmp.* /usr/local/bin/sing-box.tmp.* /etc/loom/trust/platform.pub.tmp.*
+    sync -f /usr/local/bin /etc/loom/trust
+    rm -rf "$recovery_dir"
+    sync -f /var/lib/loom
+}
+
+set -- /var/lib/loom/.loom-client-install.*
+if [ -e "$1" ]; then
+    [ "$#" -eq 1 ] || { echo "multiple unfinished Linux package transactions" >&2; exit 1; }
+    recover_install_transaction "$1"
+fi
+
+rollback_dir=$(mktemp -d /var/lib/loom/.loom-client-install.XXXXXX)
+rollback_manifest=$rollback_dir/manifest
+sync -f /var/lib/loom
+committed=0
+
+rollback_install() {
+    status=$?
+    [ "$status" -ne 0 ] || status=1
+    trap - EXIT HUP INT TERM
+    [ -z "$active_tmp" ] || rm -f "$active_tmp"
+    if [ "$committed" -eq 0 ] && [ -f "$rollback_manifest" ]; then
+        while IFS='|' read -r target saved mode; do
+            if [ "$saved" = NEW ]; then
+                rm -f "$target"
+            else
+                install_atomic "$rollback_dir/$saved" "$target" "$mode" || :
+            fi
+        done < "$rollback_manifest"
+        sync -f /usr/local/bin /etc/loom/trust >/dev/null 2>&1 || :
+    fi
+    rm -rf "$rollback_dir"
+    exit "$status"
+}
+trap rollback_install EXIT HUP INT TERM
+
+install_owned() {
+    src=$1
+    dst=$2
+    mode=$3
+    saved=$4
+    if [ -e "$dst" ]; then
+        [ -f "$dst" ] && [ ! -L "$dst" ] || {
+            echo "unsafe installed package target: $dst" >&2
+            return 1
+        }
+        if cmp -s "$src" "$dst"; then
+            return 0
+        fi
+        cp -p "$dst" "$rollback_dir/$saved"
+        printf '%s|%s|%s\n' "$dst" "$saved" "$mode" >> "$rollback_manifest"
+    else
+        printf '%s|NEW|%s\n' "$dst" "$mode" >> "$rollback_manifest"
+    fi
+    sync -f "$rollback_dir"
+    install_atomic "$src" "$dst" "$mode"
+}
+
+install_owned "$base/loom" /usr/local/bin/loom 0755 loom
+install_owned "$base/sing-box" /usr/local/bin/sing-box 0755 sing-box
+install_owned "$base/platform.pub" /etc/loom/trust/platform.pub 0644 platform.pub
+/usr/local/bin/loom selfcheck >/dev/null
+/usr/local/bin/sing-box version >/dev/null
+sync -f /usr/local/bin /etc/loom/trust
+committed=1
+trap - EXIT HUP INT TERM
+rm -rf "$rollback_dir"
+sync -f /var/lib/loom
+flock -u 9
 
 if [ "$no_enroll" -eq 1 ]; then
     echo "Installed binaries only; no Device identity was bound and no service was started."
@@ -636,4 +795,49 @@ else
     [ -z "$secret_envelope_dir" ] || set -- "$@" -secret-envelope-dir "$secret_envelope_dir"
     /usr/local/bin/loom "$@"
 fi
+`
+
+const uninstallScript = `#!/bin/sh
+set -eu
+
+usage() {
+    echo "usage: sudo ./uninstall.sh [--state-dir PATH] [--timeout DURATION]" >&2
+    exit 2
+}
+
+state_dir=/var/lib/loom/client-v2
+timeout=2m
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --state-dir) [ "$#" -ge 2 ] || usage; state_dir=$2; shift 2 ;;
+        --timeout) [ "$#" -ge 2 ] || usage; timeout=$2; shift 2 ;;
+        -h|--help) usage ;;
+        *) usage ;;
+    esac
+done
+
+[ "$(id -u)" -eq 0 ] || { echo "uninstall.sh must run as root" >&2; exit 1; }
+case "$state_dir" in /*) ;; *) echo "state-dir must be an absolute path" >&2; exit 1 ;; esac
+
+base=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+(cd "$base" && sha256sum -c checksums.txt)
+for file in loom sing-box platform.pub; do
+    [ -f "$base/$file" ] && [ ! -L "$base/$file" ] || {
+        echo "unsafe or missing package file: $file" >&2
+        exit 1
+    }
+done
+
+installed=/usr/local/bin/loom
+[ -f "$installed" ] && [ ! -L "$installed" ] || {
+    echo "installed Loom binary is missing or unsafe" >&2
+    exit 1
+}
+cmp -s "$base/loom" "$installed" || {
+    echo "installed Loom does not match this archive; use the matching package to uninstall" >&2
+    exit 1
+}
+
+"$installed" client uninstall-v2-runtime -apply -state-dir "$state_dir" -timeout "$timeout"
+echo "Preserved Device identity/LKG/floors and shared v1-compatible package files; control-plane authorization is unchanged."
 `

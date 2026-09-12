@@ -23,3 +23,7 @@ func cmdClientReportV2([]string) error {
 func cmdClientAcceptV2Runtime([]string) error {
 	return errors.New("Linux v2 runtime 命令只能在 Linux 客户端运行")
 }
+
+func cmdClientUninstallV2Runtime([]string) error {
+	return errors.New("Linux v2 runtime 卸载命令只能在 Linux 客户端运行")
+}
