@@ -109,6 +109,11 @@ android {
         jniLibs.useLegacyPackaging = false
         resources.excludes += setOf("META-INF/LICENSE*", "META-INF/NOTICE*")
     }
+    dependenciesInfo {
+        // #14：AGP 每次以新随机量加密这份重复的 SDK 索引；已审计的确定性 SPDX 才是依赖 SSOT。
+        includeInApk = false
+        includeInBundle = false
+    }
     sourceSets.getByName("main").assets.srcDir(rootProject.file("third_party"))
     sourceSets.getByName("androidTest").assets.srcDir(rootProject.file("../../testdata"))
 }

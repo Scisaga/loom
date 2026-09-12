@@ -326,6 +326,14 @@ private signed APK with:
 ANDROID_HOME=/path/to/android-sdk ./scripts/build-release.sh
 ```
 
+Before handing an APK to physical acceptance, the same signing environment can
+also prove that two clean builds produce byte-identical signed APK and SPDX
+bytes:
+
+```bash
+ANDROID_HOME=/path/to/android-sdk ./scripts/verify-reproducible-release.sh
+```
+
 Provisioning creates an encrypted PKCS12 upgrade key and a root-only environment
 file in the ignored deployment directory. It refuses to replace either file and
 does not make a backup. The build helper caps Gradle at four workers, runs unit
