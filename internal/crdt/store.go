@@ -164,9 +164,24 @@ func (s *Store) Missing(peerObjectIDs []string) []Object {
 
 // Root 仅用于 anti-entropy 完整性比较，不代表任何对象已获授权。
 func (s *Store) Root() (string, error) {
-	objects := s.Snapshot()
+	return SnapshotRoot(s.Snapshot())
+}
+
+// SnapshotRoot 验证并计算规范对象快照的 Merkle root。网络 anti-entropy
+// 必须对收到的完整 snapshot 使用同一函数，不能信任 peer 自报 root（D101）。
+func SnapshotRoot(objects []Object) (string, error) {
+	if objects == nil {
+		return "", errors.New("[D101 CRDT] snapshot objects 不能为 null")
+	}
 	leaves := make([][]byte, len(objects))
-	for i, object := range objects {
+	for i := range objects {
+		object := objects[i]
+		if err := validateObject(object); err != nil {
+			return "", err
+		}
+		if i > 0 && objects[i-1].ID >= object.ID {
+			return "", errors.New("[D101 CRDT] snapshot 未按 logical ID 严格排序")
+		}
 		canonical, err := wire.MarshalCanonical(object)
 		if err != nil {
 			return "", err

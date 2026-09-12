@@ -89,3 +89,17 @@ func TestStoreReopensAndRejectsNonCanonicalPayload(t *testing.T) {
 		t.Fatal("non-canonical payload accepted")
 	}
 }
+
+func TestSnapshotRootRequiresCanonicalLogicalOrder(t *testing.T) {
+	a, _ := NewObject("a", "proposal", []byte(`{"value":1}`))
+	b, _ := NewObject("b", "proposal", []byte(`{"value":2}`))
+	if _, err := SnapshotRoot([]Object{b, a}); err == nil {
+		t.Fatal("anti-entropy root 接受了非规范 object 顺序")
+	}
+	if _, err := SnapshotRoot(nil); err == nil {
+		t.Fatal("anti-entropy root 把 null objects 当成空集合")
+	}
+	if root, err := SnapshotRoot([]Object{}); err != nil || root == "" {
+		t.Fatalf("规范空集合 root 无效: root=%q err=%v", root, err)
+	}
+}

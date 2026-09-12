@@ -820,6 +820,15 @@ approval-QC-authorized `EnrollmentCompletionOperationV2`。每个 leaf
 不得用 last-write-wins 静默解决两份管理员修改。冲突草稿可以都存在，但必须由管理员选择
 或生成一个合并提案，最终对精确 hash 取得提交后 quorum attestation/QC。
 
+首版 control 间 anti-entropy 使用 private peer 路径
+`POST /private/v2/crdt/anti-entropy`：只接受当前 stable ControlSet，或 Joint 期间 old/new
+directory 并集内的 exact control-peer mTLS leaf 与 TLS 1.3。请求和响应都携带不超过 64 MiB 的
+完整、按 logical ID 严格排序的 object snapshot 及其 Merkle root；接收端重算 root，并在原子
+merge 前按每个 object 的 kind/schema 重放 typed verifier，同一 logical ID 不同 bytes 整批拒绝。
+响应返回 merge 后的 snapshot，发起端再次重算 root、执行相同 typed verifier 后再 merge；任一侧
+返回或落盘这些材料都不表示它们已生效，外部副作用仍只读取 Raft committed、apply/recompute 且
+取得 QC 的 certified head。
+
 ### 7.3 哪些状态必须串行提交
 
 - ControlSet、信任根、admin 权限和证书 profile；
