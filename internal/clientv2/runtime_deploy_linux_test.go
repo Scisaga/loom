@@ -103,6 +103,12 @@ func TestLinuxRuntimeDeployPlanStartsWireGuardBeforeSingBoxAndAgent(t *testing.T
 		t.Fatalf("WG precheck/inventory/unit dependency 缺失: checks=%v installed=%v",
 			plan.PreCheck, installed)
 	}
+	wgCheck := linuxWireGuardPreCheck("/etc/wireguard/lmv2-deadbeef00.conf")
+	if !containsString(plan.PreCheck, wgCheck) ||
+		strings.Contains(wgCheck, "wg-quick strip "+linuxRuntimeStagingPath("/etc/wireguard/lmv2-deadbeef00.conf")) ||
+		!strings.HasSuffix(wgCheck, "wg-quick strip "+deploy.StagingRoot+"lmv2-deadbeef00.conf") {
+		t.Fatalf("WireGuard precheck 未保留合法接口 basename: %q", wgCheck)
+	}
 }
 
 func TestLinuxRuntimeWireGuardConfigRejectsHooksAndIncompleteKeySections(t *testing.T) {

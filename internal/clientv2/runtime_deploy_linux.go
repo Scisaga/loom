@@ -613,7 +613,7 @@ func linuxRuntimeDeployPlan(deviceID string, hydrated map[string]string) (*deplo
 		default:
 			unit := "wg-quick@" + strings.TrimSuffix(filepath.Base(path), ".conf")
 			plan.Triggers[absolute] = []string{unit}
-			plan.PreCheck = append(plan.PreCheck, "/usr/bin/wg-quick strip "+linuxRuntimeStagingPath(absolute))
+			plan.PreCheck = append(plan.PreCheck, linuxWireGuardPreCheck(absolute))
 			wgUnits = append(wgUnits, unit)
 		}
 	}
@@ -651,6 +651,18 @@ func linuxV2RuntimeTarget(relative, absolute string) bool {
 
 func linuxRuntimeStagingPath(absolute string) string {
 	return deploy.StagingRoot + strings.ReplaceAll(strings.TrimPrefix(absolute, "/"), "/", "%")
+}
+
+// wg-quick derives the interface name from the config basename even in strip
+// mode. The deploy transaction intentionally flattens staged absolute paths
+// with '%' separators, so passing that encoded filename directly makes every
+// valid Loom interface fail the 15-byte Linux name check. A stage-local alias
+// preserves the certified basename; the deploy lock serializes creation and
+// the transaction cleanup removes the alias on both success and rollback.
+func linuxWireGuardPreCheck(absolute string) string {
+	staged := linuxRuntimeStagingPath(absolute)
+	alias := deploy.StagingRoot + filepath.Base(absolute)
+	return "/bin/ln -s " + staged + " " + alias + " && /usr/bin/wg-quick strip " + alias
 }
 
 func linuxV2SingBoxUnit(wgUnits []string) string {
