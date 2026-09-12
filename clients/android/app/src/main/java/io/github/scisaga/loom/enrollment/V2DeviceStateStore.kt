@@ -3,6 +3,7 @@ package io.github.scisaga.loom.enrollment
 import android.content.Context
 import io.github.scisaga.loom.security.EncryptedStore
 import io.github.scisaga.loomcore.Loomcore
+import org.json.JSONObject
 
 /** #14：view 与四组 floor 放进同一个 Keystore-wrapped 原子 blob。首次 latch 与后续更新严格分路。 */
 class V2DeviceStateStore(context: Context) {
@@ -68,6 +69,27 @@ class V2DeviceStateStore(context: Context) {
 
     @Synchronized
     fun current(): ByteArray? = protected.get(STATE)?.also(Loomcore::validateAndroidV2DeviceState)
+
+    /** Issue #14：hydrate 后秘密只作为同一 VpnService 的内存启动参数。 */
+    @Synchronized
+    fun runtimeProfile(): ManagedProfile? = protected.get(STATE)?.let { state ->
+        Loomcore.validateAndroidV2DeviceState(state)
+        val runtime = JSONObject(Loomcore.prepareAndroidV2Runtime(state).decodeToString())
+        check(runtime.getInt("schema") == 1) { "v2 Android runtime projection schema 无效" }
+        val headHash = runtime.getString("head_hash")
+        ManagedProfile(
+            nodeID = runtime.getString("device_id"),
+            snapshot = headHash,
+            generation = runtime.getLong("device_generation"),
+            config = runtime.getString("sing_box_config"),
+            routePlan = runtime.optString("route_plan").takeIf(String::isNotBlank),
+            certificatePEM = ByteArray(0),
+            caPEM = ByteArray(0),
+            reportEndpoint = "",
+            recordID = "v2:$headHash",
+            protocol = 2,
+        )
+    }
 
     @Synchronized
     fun floors(): ByteArray? = protected.get(STATE)?.let(Loomcore::v2DeviceStateFloors)

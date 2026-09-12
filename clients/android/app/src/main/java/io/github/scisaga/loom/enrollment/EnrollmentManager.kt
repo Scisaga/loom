@@ -103,6 +103,10 @@ class EnrollmentManager private constructor(context: Context) {
         activeJob = scope.launch {
             transaction.withLock {
                 guarded("配置更新失败") {
+                    v2StateStore.runtimeProfile()?.let {
+                        ready(it, "v2 Device 已使用当前 certified LKG")
+                        return@guarded
+                    }
                     candidateProfile()?.let {
                         awaitingActivation(it)
                         requestCandidateActivationIfConnected(it)
@@ -134,22 +138,26 @@ class EnrollmentManager private constructor(context: Context) {
         }
     }
 
-    fun candidateProfile(): ManagedProfile? = try {
-        store.loadCandidate()
-    } catch (error: Exception) {
-        // A candidate has never been promoted. It is therefore safe to remove
-        // a corrupt candidate and retain current/previous plus the latched
-        // release floor; the same or newer signed payload can be fetched again.
-        val current = runCatching { loadCurrentWithRecovery() }.getOrNull()
-        if (current != null) {
-            ready(current, "未激活候选校验失败；已隔离并沿用最后可用配置")
-        } else {
-            throw IllegalStateException("未激活候选校验失败，已隔离；请重新拉取", error)
+    fun candidateProfile(): ManagedProfile? {
+        if (v2StateStore.current() != null) return null
+        return try {
+            store.loadCandidate()
+        } catch (error: Exception) {
+            // A candidate has never been promoted. It is therefore safe to remove
+            // a corrupt candidate and retain current/previous plus the latched
+            // release floor; the same or newer signed payload can be fetched again.
+            val current = runCatching { loadCurrentWithRecovery() }.getOrNull()
+            if (current != null) {
+                ready(current, "未激活候选校验失败；已隔离并沿用最后可用配置")
+            } else {
+                throw IllegalStateException("未激活候选校验失败，已隔离；请重新拉取", error)
+            }
+            null
         }
-        null
     }
 
     fun candidateActivated(profile: ManagedProfile): ManagedProfile {
+        check(profile.protocol == 1) { "v2 LKG 不经 v1 candidate slot 提交" }
         val committed = store.commitCandidate(profile.recordID)
         store.clearReady()
         ready(committed, "正式入网完成；候选已通过本地 TUN/libbox 启动并成为当前配置")
@@ -157,6 +165,7 @@ class EnrollmentManager private constructor(context: Context) {
     }
 
     fun candidateRejected(profile: ManagedProfile, reason: String): ManagedProfile? {
+        check(profile.protocol == 1) { "v2 LKG 不允许回退到 v1 candidate" }
         check(store.discardCandidate(profile.recordID)) { "候选在失败恢复期间发生变化" }
         return runCatching { currentProfile() }.getOrNull()?.also {
             ready(it, "候选激活失败，继续沿用最后可用配置：$reason")
@@ -164,6 +173,7 @@ class EnrollmentManager private constructor(context: Context) {
     }
 
     fun currentProfile(): ManagedProfile? {
+        v2StateStore.runtimeProfile()?.let { return it }
         val current = loadCurrentWithRecovery()
         check(current != null || store.ready() == null && store.loadCandidate() == null) {
             "正式身份尚无可激活的验签配置"
@@ -172,6 +182,7 @@ class EnrollmentManager private constructor(context: Context) {
     }
 
     private fun loadCurrentWithRecovery(): ManagedProfile? {
+        v2StateStore.runtimeProfile()?.let { return it }
         try {
             store.loadCurrent()?.let { return it }
         } catch (currentError: Throwable) {
@@ -189,9 +200,9 @@ class EnrollmentManager private constructor(context: Context) {
         return null
     }
 
-    fun previousProfile(): ManagedProfile? = store.loadPrevious()
+    fun previousProfile(): ManagedProfile? = if (v2StateStore.current() == null) store.loadPrevious() else null
 
-    fun promotePrevious(): ManagedProfile? = store.restorePrevious()?.also {
+    fun promotePrevious(): ManagedProfile? = if (v2StateStore.current() != null) null else store.restorePrevious()?.also {
         ready(it, "新配置激活失败；已恢复 previous 验签配置")
     }
 
@@ -200,15 +211,6 @@ class EnrollmentManager private constructor(context: Context) {
     }
 
     private suspend fun resumeUnlocked() {
-        candidateProfile()?.let {
-            awaitingActivation(it)
-            requestCandidateActivationIfConnected(it)
-            return
-        }
-        loadCurrentWithRecovery()?.let {
-            ready(it, "已重放签名链并加载最后可用配置")
-            return
-        }
         v2StateStore.current()?.let { installed ->
             store.pending()?.let { pendingBytes ->
                 val pending = V2PendingEnrollment.decode(pendingBytes)
@@ -219,10 +221,17 @@ class EnrollmentManager private constructor(context: Context) {
                 )
                 store.clearPending()
             }
-            mutableStatus.value = EnrollmentStatus(
-                EnrollmentPhase.PULLING,
-                "v2 正式身份已原子安装；主连接将在签名 Device 配置可激活后开放",
-            )
+            val profile = checkNotNull(v2StateStore.runtimeProfile()) { "v2 已安装状态缺可启动 runtime" }
+            ready(profile, "已重放 v2 Device LKG 并加载正式 WG/Data runtime")
+            return
+        }
+        candidateProfile()?.let {
+            awaitingActivation(it)
+            requestCandidateActivationIfConnected(it)
+            return
+        }
+        loadCurrentWithRecovery()?.let {
+            ready(it, "已重放签名链并加载最后可用配置")
             return
         }
         if (
@@ -477,11 +486,10 @@ class EnrollmentManager private constructor(context: Context) {
                     session.completionConfigFetchPlan(),
                 )
                 val released = session.fetchReleasedArtifacts(Instant.now().toString())
-                installV2Completion(pending, result, verifiedResult, released, installedConfigs, crypto)
-                mutableStatus.value = EnrollmentStatus(
-                    EnrollmentPhase.PULLING,
-                    "v2 正式身份、Device view、配置与凭据已原子安装",
+                val profile = installV2Completion(
+                    pending, result, verifiedResult, released, installedConfigs, crypto,
                 )
+                ready(profile, "v2 正式身份、Device view、配置与凭据已原子安装")
                 return
             }
             mutableStatus.value = EnrollmentStatus(
@@ -601,10 +609,8 @@ class EnrollmentManager private constructor(context: Context) {
                 val installed = prepareV2InstalledCredentials(verifiedResult, released, crypto)
                 val state = session.prepareResumeInstallationStateWithConfigs(installed, installedConfigs)
                 v2StateStore.installCompletion(state, store::clearPending)
-                mutableStatus.value = EnrollmentStatus(
-                    EnrollmentPhase.PULLING,
-                    "v2 正式身份、配置与凭据已由 exact-bound resume 原子安装",
-                )
+                val profile = checkNotNull(v2StateStore.runtimeProfile()) { "v2 resume 安装后缺 runtime" }
+                ready(profile, "v2 正式身份、配置与凭据已由 exact-bound resume 原子安装")
                 return
             }
             mutableStatus.value = EnrollmentStatus(
@@ -626,7 +632,7 @@ class EnrollmentManager private constructor(context: Context) {
         releasedArtifacts: ByteArray,
         installedConfigs: ByteArray,
         crypto: V2EnrollmentCrypto,
-    ) {
+    ): ManagedProfile {
         val installedCanonical = prepareV2InstalledCredentials(verifiedResult, releasedArtifacts, crypto)
         val state = Loomcore.prepareAndroidV2EnrollmentInstallationStateWithConfigs(
             pending.descriptor,
@@ -639,6 +645,7 @@ class EnrollmentManager private constructor(context: Context) {
             Instant.now().toString(),
         )
         v2StateStore.installCompletion(state, store::clearPending)
+        return checkNotNull(v2StateStore.runtimeProfile()) { "v2 completion 安装后缺 runtime" }
     }
 
     private fun prepareV2InstalledCredentials(

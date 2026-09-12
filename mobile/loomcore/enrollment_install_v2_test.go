@@ -193,8 +193,22 @@ func TestAndroidEnrollmentInstallationIsSingleReplayableState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, err := wire.MarshalCanonical(bundleWire{Owner: "android-device-1", Files: map[string]string{
-		"sing-box/config.json": `{"log":{"level":"warn"}}`,
+	deviceID := preflight.DeviceEnrollmentIntentOpening.DeviceEnrollmentIntent.DeviceID
+	secretRef, secretEnvelope, secret := androidSealedSecretFixtureFor(t, deviceID,
+		"runtime-password", "data_plane_credential", []byte("runtime-secret"))
+	secretRefJSON, _ := wire.MarshalCanonical(secretRef)
+	secretEnvelopeJSON, _ := wire.MarshalCanonical(secretEnvelope)
+	installedSecretJSON, err := PrepareAndroidInstalledSecretV2(secretRefJSON, secretEnvelopeJSON, secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var installedSecret androidInstalledSecretV1
+	if err := decodeExactAndroidV2(installedSecretJSON, 1<<20, &installedSecret,
+		"installed runtime secret"); err != nil {
+		t.Fatal(err)
+	}
+	config, err := wire.MarshalCanonical(bundleWire{Owner: deviceID, Files: map[string]string{
+		"sing-box/config.json": `{"outbounds":[{"password":"${secret:runtime-password}","tag":"data","type":"trojan"}]}`,
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -216,8 +230,8 @@ func TestAndroidEnrollmentInstallationIsSingleReplayableState(t *testing.T) {
 		t.Fatal(err)
 	}
 	set, envelope := androidV2EnvelopeFixtureForArtifacts(t,
-		preflight.DeviceEnrollmentIntentOpening.DeviceEnrollmentIntent.DeviceID,
-		identityHash, []wire.SecretArtifactRefV2{}, []wire.DeviceConfigArtifactRefV1{configRef})
+		deviceID, identityHash, []wire.SecretArtifactRefV2{secretRef},
+		[]wire.DeviceConfigArtifactRefV1{configRef})
 	certificateTemplate := &x509.Certificate{SerialNumber: big.NewInt(1),
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
 		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature}
@@ -230,7 +244,7 @@ func TestAndroidEnrollmentInstallationIsSingleReplayableState(t *testing.T) {
 		Schema: 1, ClusterID: envelope.Payload.ClusterID,
 		InviteID: core.InviteID, RequestID: core.RequestID,
 		DeviceCertificateDER: base64.RawURLEncoding.EncodeToString(certificateDER),
-		InitialDeviceView:    envelope.Payload, SecretArtifactRefs: []wire.SecretArtifactRefV2{},
+		InitialDeviceView:    envelope.Payload, SecretArtifactRefs: []wire.SecretArtifactRefV2{secretRef},
 	}
 	artifactHash, err := wire.EnrollmentResultArtifactHash(&artifact)
 	if err != nil {
@@ -243,7 +257,7 @@ func TestAndroidEnrollmentInstallationIsSingleReplayableState(t *testing.T) {
 		IdentityKeyHash: identityHash, WrappingKeyHash: wrappingHash,
 		TransactionStateHash: wire.HashRaw("android-install-test", []byte("transaction")),
 		ResultArtifactHash:   artifactHash, DeviceCertificateHash: certificateHash,
-		ResultArtifact: artifact, Credentials: []androidInstalledSecretV1{},
+		ResultArtifact: artifact, Credentials: []androidInstalledSecretV1{installedSecret},
 		Configs: []androidInstalledConfigV1{installedConfig},
 	}
 	floors, err := wire.VerifyDeviceViewEnvelope(&envelope, &set)
@@ -251,13 +265,26 @@ func TestAndroidEnrollmentInstallationIsSingleReplayableState(t *testing.T) {
 		t.Fatal(err)
 	}
 	stateJSON, err := marshalAndroidV2DeviceState(androidV2DeviceState{
-		Schema: 1, Floors: floors, Envelope: envelope, Enrollment: installation,
+		Schema: 1, Floors: floors, Envelope: envelope, ControlSet: &set, Enrollment: installation,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := ValidateAndroidV2DeviceState(stateJSON); err != nil {
 		t.Fatal(err)
+	}
+	runtimeJSON, err := PrepareAndroidV2Runtime(stateJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var runtime preparedAndroidV2Runtime
+	if err := decodeExactAndroidV2(runtimeJSON, 4<<20, &runtime, "v2 runtime"); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.DeviceID != deviceID || runtime.HeadHash != floors.HeadHash ||
+		!strings.Contains(runtime.SingBoxConfig, `"password":"runtime-secret"`) ||
+		strings.Contains(runtime.SingBoxConfig, "${secret:") {
+		t.Fatalf("v2 runtime 未从原子状态 hydrate: %+v", runtime)
 	}
 	envelopeJSON, _ := wire.MarshalCanonical(envelope)
 	setJSON, _ := wire.MarshalCanonical(set)
@@ -283,7 +310,7 @@ func TestAndroidEnrollmentInstallationIsSingleReplayableState(t *testing.T) {
 	}
 	installation.DeviceCertificateHash = wire.HashRaw("android-install-test", []byte("other-cert"))
 	corrupted, _ := wire.MarshalCanonical(androidV2DeviceState{
-		Schema: 1, Floors: floors, Envelope: envelope, Enrollment: installation,
+		Schema: 1, Floors: floors, Envelope: envelope, ControlSet: &set, Enrollment: installation,
 	})
 	if err := ValidateAndroidV2DeviceState(corrupted); err == nil {
 		t.Fatal("certificate hash 被替换的 durable installation 仍通过回读")
@@ -291,7 +318,7 @@ func TestAndroidEnrollmentInstallationIsSingleReplayableState(t *testing.T) {
 	installation.DeviceCertificateHash = certificateHash
 	installation.Configs[0].Config = json.RawMessage(`{"owner":"other"}`)
 	corrupted, _ = wire.MarshalCanonical(androidV2DeviceState{
-		Schema: 1, Floors: floors, Envelope: envelope, Enrollment: installation,
+		Schema: 1, Floors: floors, Envelope: envelope, ControlSet: &set, Enrollment: installation,
 	})
 	if err := ValidateAndroidV2DeviceState(corrupted); err == nil {
 		t.Fatal("config bytes 被替换的 durable installation 仍通过回读")
@@ -300,6 +327,13 @@ func TestAndroidEnrollmentInstallationIsSingleReplayableState(t *testing.T) {
 
 func androidSealedSecretFixture(t *testing.T) (wire.SecretArtifactRefV2,
 	wire.SealedSecretEnvelopeV1, []byte,
+) {
+	return androidSealedSecretFixtureFor(t, "demo-android", "credential-1",
+		"device_credential", []byte("demo-android-secret"))
+}
+
+func androidSealedSecretFixtureFor(t *testing.T, deviceID, secretID, purpose string, secret []byte) (
+	wire.SecretArtifactRefV2, wire.SealedSecretEnvelopeV1, []byte,
 ) {
 	t.Helper()
 	private, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -311,18 +345,17 @@ func androidSealedSecretFixture(t *testing.T) (wire.SecretArtifactRefV2,
 	key := wire.AuthorityProofKeyV1{Algorithm: "ecdsa-p256-sha256",
 		PublicKeySPKIDER: base64.RawURLEncoding.EncodeToString(spki), KeyID: keyID}
 	recipient := wire.SealedBlobRecipientKeyRefV1{
-		RecipientID: "demo-android", RecipientKeyGeneration: 1, RecipientKeyID: keyID,
+		RecipientID: deviceID, RecipientKeyGeneration: 1, RecipientKeyID: keyID,
 		RecipientKeyProfile: "p256-keystore-ecdh-v1", RecipientPublicKey: key,
 	}
 	policy := wire.P256SealingPolicyV1()
 	owner := wire.SecretArtifactOwnerV1{Kind: "device",
 		Device: &wire.SecretArtifactDeviceOwnerV1{DeviceID: recipient.RecipientID}}
-	contextValue, err := wire.NewSealedSecretContext("demo-cluster", "proposal-1", "credential-1",
-		"device_credential", owner, 1, &policy, []wire.SealedBlobRecipientKeyRefV1{recipient})
+	contextValue, err := wire.NewSealedSecretContext("demo-cluster", "proposal-1", secretID,
+		purpose, owner, 1, &policy, []wire.SealedBlobRecipientKeyRefV1{recipient})
 	if err != nil {
 		t.Fatal(err)
 	}
-	secret := []byte("demo-android-secret")
 	envelope, err := wire.SealSecret(rand.Reader, contextValue, &policy,
 		[]wire.SealedBlobRecipientKeyRefV1{recipient}, secret)
 	if err != nil {
@@ -333,7 +366,7 @@ func androidSealedSecretFixture(t *testing.T) (wire.SecretArtifactRefV2,
 	ref := wire.SecretArtifactRefV2{
 		Schema: 2, ClusterID: contextValue.ClusterID, ProposalID: contextValue.ProposalID,
 		SecretID: contextValue.SecretID, Purpose: contextValue.Purpose, Owner: owner, Generation: 1,
-		ImmutableRef: "blob:sha256:demo-android-credential-1", BackendKind: "sealed_blob",
+		ImmutableRef: "blob:sha256:" + secretID + "-1", BackendKind: "sealed_blob",
 		SealedBlob: &wire.SealedBlobRefV1{CiphertextDigest: digest, SealingPolicy: policy,
 			SealingPolicyHash: policyHash, RecipientKeyVersions: []wire.SealedBlobRecipientKeyRefV1{recipient}},
 		AvailabilityPolicyHash:   wire.HashRaw("android-secret-test", []byte("availability")),

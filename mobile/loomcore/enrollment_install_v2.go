@@ -23,16 +23,18 @@ const (
 // Keystore identity 私钥不在这里；证书、stable core、首次 view 与全部解封凭据
 // 必须和 floors 一起由 EncryptedStore 原子替换（D106、D124、D130）。
 type androidEnrollmentInstallationV1 struct {
-	Schema                int                             `json:"schema"`
-	ClaimCore             wire.EnrollmentClaimCoreV2      `json:"claim_core"`
-	ClaimCoreHash         string                          `json:"claim_core_hash"`
-	IdentityKeyHash       string                          `json:"identity_key_hash"`
-	WrappingKeyHash       string                          `json:"wrapping_key_hash"`
-	TransactionStateHash  string                          `json:"transaction_state_hash"`
-	ResultArtifactHash    string                          `json:"result_artifact_hash"`
-	DeviceCertificateHash string                          `json:"device_certificate_hash"`
-	ResultArtifact        wire.EnrollmentResultArtifactV1 `json:"result_artifact"`
-	Credentials           []androidInstalledSecretV1      `json:"credentials"`
+	Schema                int                                   `json:"schema"`
+	ClaimCore             wire.EnrollmentClaimCoreV2            `json:"claim_core"`
+	ClaimCoreHash         string                                `json:"claim_core_hash"`
+	IdentityKeyHash       string                                `json:"identity_key_hash"`
+	WrappingKeyHash       string                                `json:"wrapping_key_hash"`
+	TransactionStateHash  string                                `json:"transaction_state_hash"`
+	ResultArtifactHash    string                                `json:"result_artifact_hash"`
+	DeviceCertificateHash string                                `json:"device_certificate_hash"`
+	DeviceProfileHash     string                                `json:"device_profile_hash,omitempty"`
+	DeviceProfile         *wire.DeviceCertificateProfileStateV1 `json:"device_profile,omitempty"`
+	ResultArtifact        wire.EnrollmentResultArtifactV1       `json:"result_artifact"`
+	Credentials           []androidInstalledSecretV1            `json:"credentials"`
 	// Configs 在旧版已安装 blob 中可缺省；新 Enrollment 不得走该兼容路径。
 	Configs []androidInstalledConfigV1 `json:"configs,omitempty"`
 }
@@ -199,6 +201,11 @@ func prepareAndroidEnrollmentInstallationState(core wire.EnrollmentClaimCoreV2,
 	if err != nil {
 		return nil, err
 	}
+	profile := completion.DeviceCertificateProfile()
+	profileHash, err := wire.DeviceCertificateProfileStateHash(&profile)
+	if err != nil {
+		return nil, err
+	}
 	envelope, set := completion.DeviceViewEnvelope(), completion.ControlSet()
 	state, err := prepareInitialAndroidV2DeviceStateFromVerified(
 		envelope, set, proof, result.ResultArtifact.InitialDeviceView.DeviceID, identityHash,
@@ -210,7 +217,8 @@ func prepareAndroidEnrollmentInstallationState(core wire.EnrollmentClaimCoreV2,
 		Schema: 1, ClaimCore: core, ClaimCoreHash: claimCoreHash,
 		IdentityKeyHash: identityHash, WrappingKeyHash: wrappingHash,
 		TransactionStateHash: result.TransactionStateHash, ResultArtifactHash: result.ResultArtifactHash,
-		DeviceCertificateHash: certificateHash, ResultArtifact: *result.ResultArtifact,
+		DeviceCertificateHash: certificateHash, DeviceProfileHash: profileHash,
+		DeviceProfile: &profile, ResultArtifact: *result.ResultArtifact,
 		Credentials: credentials, Configs: configs,
 	}
 	return marshalAndroidV2DeviceState(state)
@@ -294,6 +302,17 @@ func validateAndroidEnrollmentInstallation(installation *androidEnrollmentInstal
 	certificate, parseErr := x509.ParseCertificate(certificateDER)
 	if err != nil || parseErr != nil || certificateHash != installation.DeviceCertificateHash {
 		return errors.New("[D102 Android] durable certificate/hash 无效")
+	}
+	if (installation.DeviceProfile == nil) != (installation.DeviceProfileHash == "") {
+		return errors.New("[D102 Android] durable Device certificate profile 不完整")
+	}
+	if installation.DeviceProfile != nil {
+		profileHash, profileErr := wire.DeviceCertificateProfileStateHash(installation.DeviceProfile)
+		if profileErr != nil || profileHash != installation.DeviceProfileHash ||
+			installation.DeviceProfile.ClusterID != envelope.Payload.ClusterID ||
+			installation.DeviceProfile.Status != "active" {
+			return errors.New("[D102 Android] durable Device certificate profile/hash 无效")
+		}
 	}
 	certificateIdentityHash, err := wire.HashBytes(
 		wire.DomainEnrollmentIdentitySPKI, certificate.RawSubjectPublicKeyInfo,

@@ -390,7 +390,13 @@ class LoomVpnService : VpnService(), PlatformInterface {
         profile?.let {
             activeManagedProfile = it
             startRouteSession(it)
-            startReporter(it, probe)
+            if (it.protocol == 1) {
+                startReporter(it, probe)
+            } else {
+                VpnRuntime.transform { status ->
+                    status.copy(trustedReport = "v2 Device report 尚未发送")
+                }
+            }
         }
     }
 

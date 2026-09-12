@@ -23,6 +23,7 @@ data class ManagedProfile(
     val caPEM: ByteArray,
     val reportEndpoint: String,
     internal val recordID: String,
+    val protocol: Int = 1,
 )
 
 internal fun validateAndroidRuntimeComponents(

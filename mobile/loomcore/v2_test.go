@@ -39,7 +39,9 @@ func TestAndroidV2StateRequiresInviteLatchAndExactSelfConsistentLKG(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	current, err := marshalAndroidV2DeviceState(androidV2DeviceState{Schema: 1, Floors: floors, Envelope: envelope})
+	current, err := marshalAndroidV2DeviceState(androidV2DeviceState{
+		Schema: 1, Floors: floors, Envelope: envelope, ControlSet: &set,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,6 +49,13 @@ func TestAndroidV2StateRequiresInviteLatchAndExactSelfConsistentLKG(t *testing.T
 		identityHash, current)
 	if err != nil || !bytes.Equal(replayed, current) {
 		t.Fatalf("exact Device LKG replay 失败: equal=%v err=%v", bytes.Equal(replayed, current), err)
+	}
+	var persisted androidV2DeviceState
+	if err := decodeExactAndroidV2(current, 64<<20, &persisted, "persisted v2 state"); err != nil {
+		t.Fatal(err)
+	}
+	if persisted.ControlSet == nil || !wire.EqualCanonical(*persisted.ControlSet, set) {
+		t.Fatal("protected v2 state 未原子保存 exact ControlSet")
 	}
 	if _, err := PrepareV2DeviceState(append([]byte{' '}, envelopeJSON...), setJSON,
 		envelope.Payload.DeviceID, identityHash, current); err == nil || !strings.Contains(err.Error(), "exact canonical") {

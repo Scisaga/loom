@@ -24,10 +24,12 @@ type canonicalGolden struct {
 }
 
 type androidV2DeviceState struct {
-	Schema     int                              `json:"schema"`
-	Floors     wire.ClientFloorsV2              `json:"floors"`
-	Envelope   wire.DeviceViewEnvelopeV2        `json:"envelope"`
-	Enrollment *androidEnrollmentInstallationV1 `json:"enrollment,omitempty"`
+	Schema             int                              `json:"schema"`
+	Floors             wire.ClientFloorsV2              `json:"floors"`
+	Envelope           wire.DeviceViewEnvelopeV2        `json:"envelope"`
+	ControlSet         *wire.ControlSetV1               `json:"control_set,omitempty"`
+	PreviousControlSet *wire.ControlSetV1               `json:"previous_control_set,omitempty"`
+	Enrollment         *androidEnrollmentInstallationV1 `json:"enrollment,omitempty"`
 }
 
 // CanonicalizeV2/HashCanonicalV2 向 Kotlin 暴露同一 Go verifier，避免 Android
@@ -111,12 +113,24 @@ func PrepareV2DeviceStateWithPrevious(envelopeJSON, controlSetJSON, previousCont
 			current.Envelope.Payload.Active.IdentitySPKIHash != expectedIdentitySPKIHash {
 		return nil, errors.New("[D106 Android] protected v2 state 与本机 Keystore identity 不匹配")
 	}
+	nextSetHash, _ := wire.ControlSetHash(&set)
+	if current.ControlSet != nil && nextSetHash != current.Floors.ControlSetHash &&
+		(previousSet == nil || !wire.EqualCanonical(*current.ControlSet, *previousSet)) {
+		return nil, errors.New("[D118 Android] ControlSet 过渡未延续 protected current set")
+	}
 	nextFloors, err := wire.AdvanceFloors(current.Floors, floors)
 	if err != nil {
 		return nil, err
 	}
+	setCopy := set
+	var previousCopy *wire.ControlSetV1
+	if previousSet != nil {
+		copied := *previousSet
+		previousCopy = &copied
+	}
 	return marshalAndroidV2DeviceState(androidV2DeviceState{
-		Schema: 1, Floors: nextFloors, Envelope: envelope, Enrollment: current.Enrollment,
+		Schema: 1, Floors: nextFloors, Envelope: envelope, ControlSet: &setCopy,
+		PreviousControlSet: previousCopy, Enrollment: current.Enrollment,
 	})
 }
 
@@ -191,7 +205,9 @@ func prepareInitialAndroidV2DeviceStateFromVerified(envelope wire.DeviceViewEnve
 		floors.AcceptedControlRevision < proofHead.Body.Payload.ControlRevision {
 		return androidV2DeviceState{}, errors.New("[D115 Android] initial Device view 未延续 verified Invite authority")
 	}
-	return androidV2DeviceState{Schema: 1, Floors: floors, Envelope: envelope}, nil
+	setCopy := set
+	return androidV2DeviceState{Schema: 1, Floors: floors, Envelope: envelope,
+		ControlSet: &setCopy}, nil
 }
 
 func V2DeviceStateFloors(stateJSON []byte) ([]byte, error) {
@@ -263,6 +279,25 @@ func validateAndroidV2DeviceState(state *androidV2DeviceState) error {
 	}
 	if _, err := wire.AdvanceFloors(wire.ClientFloorsV2{}, floors); err != nil {
 		return errors.New("[D106 Android] protected floors wire 无效")
+	}
+	if state.ControlSet != nil {
+		setHash, err := wire.ControlSetHash(state.ControlSet)
+		if err != nil || setHash != floors.ControlSetHash ||
+			state.ControlSet.ClusterID != floors.ClusterID {
+			return errors.New("[D106 Android] protected ControlSet 与 floors 不一致")
+		}
+		if state.PreviousControlSet != nil {
+			if err := wire.ValidateControlSet(state.PreviousControlSet); err != nil ||
+				state.PreviousControlSet.ClusterID != floors.ClusterID {
+				return errors.New("[D118 Android] protected previous ControlSet 无效")
+			}
+		}
+		verifiedFloors, verifyErr := wire.VerifyDeviceViewEnvelopeWithPrevious(
+			envelope, state.ControlSet, state.PreviousControlSet,
+		)
+		if verifyErr != nil || !wire.EqualCanonical(verifiedFloors, floors) {
+			return errors.New("[D106 Android] protected Device view/ControlSet/QC 不可重放")
+		}
 	}
 	if state.Enrollment != nil {
 		if err := validateAndroidEnrollmentInstallation(state.Enrollment, envelope); err != nil {
