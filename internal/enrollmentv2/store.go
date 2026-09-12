@@ -21,6 +21,8 @@ type DurableRecord struct {
 	ClaimOperation             ClaimOperationV2                      `json:"claim_operation"`
 	AdmissionQC                wire.StableEnrollmentAdmissionQCV1    `json:"admission_qc"`
 	AdmissionControlSet        wire.ControlSetV1                     `json:"admission_control_set"`
+	ReservationBaseHead        wire.HeadEntryV2                      `json:"reservation_base_head"`
+	BaseToReservationHeads     []wire.HeadEntryV2                    `json:"base_to_reservation_heads,omitempty"`
 	ReservationCertification   CertifiedEnrollmentOperationProofV1   `json:"reservation_certification"`
 	ProvisionalOperation       *ProvisionalIssuanceOperationV1       `json:"provisional_operation,omitempty"`
 	ProvisionalIssuance        *wire.EnrollmentProvisionalIssuanceV1 `json:"provisional_issuance,omitempty"`
@@ -53,7 +55,7 @@ func OpenStore(path string) (*Store, error) {
 	if path == "" {
 		return nil, errors.New("[D130 Enrollment] transaction store path 不能为空")
 	}
-	store := &Store{path: path, state: durableState{Schema: 4, Records: []DurableRecord{}}}
+	store := &Store{path: path, state: durableState{Schema: 5, Records: []DurableRecord{}}}
 	body, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return store, nil
@@ -65,11 +67,11 @@ func OpenStore(path string) (*Store, error) {
 	if _, err := wire.DecodeStrict(body, 32<<20, &state); err != nil {
 		return nil, fmt.Errorf("[D130 Enrollment] transaction store 非规范或损坏: %w", err)
 	}
-	if state.Schema == 2 || state.Schema == 3 {
+	if state.Schema == 2 || state.Schema == 3 || state.Schema == 4 {
 		if len(state.Records) != 0 {
-			return nil, errors.New("[D130 Enrollment] 旧 transaction record 缺 reservation/issuance Head proof，禁止迁移")
+			return nil, errors.New("[D130 Enrollment] 旧 transaction record 缺 base/reservation/issuance Head proof，禁止迁移")
 		}
-		state.Schema = 4
+		state.Schema = 5
 		if err := store.persistLocked(state); err != nil {
 			return nil, err
 		}
@@ -103,6 +105,7 @@ func (s *Store) SnapshotRecord(inviteID string) (DurableRecord, bool) {
 
 func (s *Store) Reserve(invite InviteContext, evidence ClaimPrivateEvidenceV1, operation ClaimOperationV2,
 	admission *wire.StableEnrollmentAdmissionQCV1, set *wire.ControlSetV1,
+	baseHead wire.HeadEntryV2, intermediateHeads []wire.HeadEntryV2,
 	certification CertifiedEnrollmentOperationProofV1) (TransactionStateV2, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -111,6 +114,10 @@ func (s *Store) Reserve(invite InviteContext, evidence ClaimPrivateEvidenceV1, o
 	}
 	if err := validateOperationCertification(&certification, operation.OperationID,
 		DomainClaimOperation, operation, set, operation.ReservedAt); err != nil {
+		return TransactionStateV2{}, err
+	}
+	if err := validateReservationHeadLineage(&baseHead, intermediateHeads,
+		&certification, admission, set); err != nil {
 		return TransactionStateV2{}, err
 	}
 	next, err := Reserve(invite, operation, admission, set, operation.ReservedAt)
@@ -124,6 +131,8 @@ func (s *Store) Reserve(invite InviteContext, evidence ClaimPrivateEvidenceV1, o
 			wire.EqualCanonical(existing.Invite, invite) && wire.EqualCanonical(existing.ClaimEvidence, evidence) &&
 			wire.EqualCanonical(existing.ClaimOperation, operation) &&
 			wire.EqualCanonical(existing.AdmissionQC, *admission) && wire.EqualCanonical(existing.AdmissionControlSet, *set) &&
+			wire.EqualCanonical(existing.ReservationBaseHead, baseHead) &&
+			equalHeadSequences(existing.BaseToReservationHeads, intermediateHeads) &&
 			wire.EqualCanonical(existing.ReservationCertification, certification) {
 			return existing.State, nil
 		}
@@ -138,7 +147,9 @@ func (s *Store) Reserve(invite InviteContext, evidence ClaimPrivateEvidenceV1, o
 	candidate.Records = append(candidate.Records, DurableRecord{
 		InviteID: invite.InviteID, TokenCommitment: invite.TokenCommitment, Invite: invite,
 		ClaimEvidence: evidence, ClaimOperation: operation, AdmissionQC: *admission,
-		AdmissionControlSet: *set, ReservationCertification: certification, State: next,
+		AdmissionControlSet: *set, ReservationBaseHead: baseHead,
+		BaseToReservationHeads:   append([]wire.HeadEntryV2(nil), intermediateHeads...),
+		ReservationCertification: certification, State: next,
 	})
 	sort.Slice(candidate.Records, func(i, j int) bool { return candidate.Records[i].InviteID < candidate.Records[j].InviteID })
 	if err := s.persistLocked(candidate); err != nil {
@@ -335,7 +346,7 @@ func cloneDurableState(state durableState) durableState {
 }
 
 func validateDurableState(state *durableState) error {
-	if state == nil || state.Schema != 4 || state.Records == nil {
+	if state == nil || state.Schema != 5 || state.Records == nil {
 		return errors.New("[D130 Enrollment] transaction store schema 无效")
 	}
 	seenTokens := make(map[string]struct{}, len(state.Records))
@@ -381,6 +392,11 @@ func validateDurableRecord(record *DurableRecord) error {
 	if err := validateOperationCertification(&record.ReservationCertification,
 		record.ClaimOperation.OperationID, DomainClaimOperation, record.ClaimOperation,
 		&record.AdmissionControlSet, record.ClaimOperation.ReservedAt); err != nil {
+		return err
+	}
+	if err := validateReservationHeadLineage(&record.ReservationBaseHead,
+		record.BaseToReservationHeads, &record.ReservationCertification,
+		&record.AdmissionQC, &record.AdmissionControlSet); err != nil {
 		return err
 	}
 	if record.State.Status == "reserved" {
@@ -474,6 +490,31 @@ func validateOperationCertification(certification *CertifiedEnrollmentOperationP
 	}
 	if _, err := verifyCertifiedEnrollmentOperation(certification, operationID, objectID); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateReservationHeadLineage(baseHead *wire.HeadEntryV2, intermediate []wire.HeadEntryV2,
+	certification *CertifiedEnrollmentOperationProofV1,
+	admission *wire.StableEnrollmentAdmissionQCV1, set *wire.ControlSetV1) error {
+	if baseHead == nil || certification == nil || admission == nil || set == nil {
+		return errors.New("[D130 Enrollment] reservation Head lineage 输入不完整")
+	}
+	attestation := &admission.Attestation
+	setHash, err := wire.ControlSetHash(set)
+	if err != nil || baseHead.HeadHash != attestation.BaseHeadHash ||
+		baseHead.Body.Payload.ClusterID != attestation.ClusterID ||
+		baseHead.Body.Payload.RecoveryEpoch != attestation.BaseRecoveryEpoch ||
+		baseHead.Body.Payload.ControlEpoch != attestation.BaseControlEpoch ||
+		baseHead.Body.Payload.ControlSetHash != attestation.BaseControlSetHash ||
+		baseHead.Body.Payload.ControlSetHash != setHash {
+		return errors.New("[D130 Enrollment] reservation base Head 未绑定 admission authority")
+	}
+	if err := wire.ValidateHeadEntry(baseHead, nil); err != nil {
+		return err
+	}
+	if err := verifyApprovalHeadLineage(baseHead, intermediate, &certification.Head); err != nil {
+		return errors.New("[D130 Enrollment] base→reservation Head lineage 不连续")
 	}
 	return nil
 }

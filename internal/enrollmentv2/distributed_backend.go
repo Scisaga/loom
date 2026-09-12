@@ -61,10 +61,10 @@ type EnrollmentApprovalQuorum interface {
 }
 
 type PreparedProvisionalV1 struct {
-	Operation ProvisionalIssuanceOperationV1
-	Issuance  wire.EnrollmentProvisionalIssuanceV1
-	Profile   wire.DeviceCertificateProfileStateV1
-	Result    wire.EnrollmentResultArtifactV1
+	Operation ProvisionalIssuanceOperationV1       `json:"operation"`
+	Issuance  wire.EnrollmentProvisionalIssuanceV1 `json:"issuance"`
+	Profile   wire.DeviceCertificateProfileStateV1 `json:"profile"`
+	Result    wire.EnrollmentResultArtifactV1      `json:"result"`
 }
 
 // DurableProvisionalPreparer 隔离 CA/secret 私钥。实现必须先耐久化 exact first-result，
@@ -116,7 +116,8 @@ func (backend *DistributedWorkflowBackend) PlanReservation(ctx context.Context,
 	if err != nil {
 		return ReservationPlanV2{}, err
 	}
-	result, err := backend.sequencer.CommitEnrollmentOperation(ctx, operationID, nil,
+	baseHead := clonePrivateValue(attempt.material.RecordHead)
+	result, err := backend.sequencer.CommitEnrollmentOperation(ctx, operationID, &baseHead,
 		func(coordinate EnrollmentCommitCoordinateV1) (EnrollmentHeadMutationV1, error) {
 			plan := ReservationPlanV2{OperationID: operationID, CommittedAt: coordinate.CommittedLogicalTime}
 			operation, err := claimOperationForAdmission(&admission, plan)
@@ -144,14 +145,20 @@ func (backend *DistributedWorkflowBackend) PlanReservation(ctx context.Context,
 		return ReservationPlanV2{}, err
 	}
 	plan := ReservationPlanV2{OperationID: operationID,
-		CommittedAt:   result.Certification.Head.Body.Payload.CommittedLogicalTime,
-		Certification: result.Certification}
+		CommittedAt:       result.Certification.Head.Body.Payload.CommittedLogicalTime,
+		BaseHead:          baseHead,
+		IntermediateHeads: append([]wire.HeadEntryV2(nil), result.IntermediateHeads...),
+		Certification:     result.Certification}
 	operation, err := claimOperationForAdmission(&admission, plan)
 	if err != nil {
 		return ReservationPlanV2{}, err
 	}
 	if err := validateOperationCertification(&plan.Certification, operation.OperationID,
 		DomainClaimOperation, operation, &attempt.material.ControlSet, operation.ReservedAt); err != nil {
+		return ReservationPlanV2{}, err
+	}
+	if err := validateReservationHeadLineage(&plan.BaseHead, plan.IntermediateHeads,
+		&plan.Certification, &admission, &attempt.material.ControlSet); err != nil {
 		return ReservationPlanV2{}, err
 	}
 	return plan, nil
@@ -348,6 +355,8 @@ func validateApprovalEvidenceRecord(evidence *EnrollmentApprovalEvidenceV1, reco
 		!wire.EqualCanonical(evidence.ClaimOperation, record.ClaimOperation) ||
 		!wire.EqualCanonical(evidence.AdmissionQC, record.AdmissionQC) ||
 		!wire.EqualCanonical(evidence.AdmissionControlSet, record.AdmissionControlSet) ||
+		!wire.EqualCanonical(evidence.ReservationBaseHead, record.ReservationBaseHead) ||
+		!equalHeadSequences(evidence.BaseToReservationHeads, record.BaseToReservationHeads) ||
 		!wire.EqualCanonical(evidence.Reservation, record.ReservationCertification) ||
 		!wire.EqualCanonical(evidence.ProvisionalOperation, *record.ProvisionalOperation) ||
 		!wire.EqualCanonical(evidence.ProvisionalIssuance, *record.ProvisionalIssuance) ||

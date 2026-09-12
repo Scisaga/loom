@@ -51,6 +51,8 @@ type EnrollmentApprovalEvidenceV1 struct {
 	ClaimOperation                 ClaimOperationV2                        `json:"claim_operation"`
 	AdmissionQC                    wire.StableEnrollmentAdmissionQCV1      `json:"admission_qc"`
 	AdmissionControlSet            wire.ControlSetV1                       `json:"admission_control_set"`
+	ReservationBaseHead            wire.HeadEntryV2                        `json:"reservation_base_head"`
+	BaseToReservationHeads         []wire.HeadEntryV2                      `json:"base_to_reservation_heads,omitempty"`
 	Reservation                    CertifiedEnrollmentOperationProofV1     `json:"reservation"`
 	ReservationCARegistry          CARegistryPreimageV1                    `json:"reservation_ca_registry"`
 	ProvisionalOperation           ProvisionalIssuanceOperationV1          `json:"provisional_operation"`
@@ -159,6 +161,11 @@ func approvalAttestationForEvidence(evidence *EnrollmentApprovalEvidenceV1,
 	reservationQCHash, err := verifyCertifiedEnrollmentOperation(&evidence.Reservation,
 		evidence.ClaimOperation.OperationID, claimHash)
 	if err != nil {
+		return wire.EnrollmentApprovalAttestationBodyV2{}, wire.ControlSetV1{}, err
+	}
+	if err := validateReservationHeadLineage(&evidence.ReservationBaseHead,
+		evidence.BaseToReservationHeads, &evidence.Reservation,
+		&evidence.AdmissionQC, &evidence.AdmissionControlSet); err != nil {
 		return wire.EnrollmentApprovalAttestationBodyV2{}, wire.ControlSetV1{}, err
 	}
 	reserved, err := Reserve(evidence.Invite, evidence.ClaimOperation, &evidence.AdmissionQC,

@@ -23,6 +23,7 @@ import (
 type approvalEvidenceFixture struct {
 	evidence      EnrollmentApprovalEvidenceV1
 	attestation   wire.EnrollmentApprovalAttestationBodyV2
+	baseHead      wire.HeadEntryV2
 	set           wire.ControlSetV1
 	member        wire.ControlMemberV1
 	enrollmentKey ed25519.PrivateKey
@@ -71,6 +72,13 @@ func TestApprovalVoterRejectsArtifactOrCertifiedInclusionMismatch(t *testing.T) 
 			evidence.PreviousIssuanceRegistryLeaves = append(evidence.PreviousIssuanceRegistryLeaves,
 				wire.EnrollmentIssuanceRegistryLeafV1{Schema: 1, ClaimOperationHash: wire.HashRaw("approval-test", []byte("old-claim")),
 					ProvisionalIssuanceHash: wire.HashRaw("approval-test", []byte("old-issuance"))})
+		}},
+		{name: "reservation base lineage", mutate: func(evidence *EnrollmentApprovalEvidenceV1) {
+			evidence.ReservationBaseHead = approvalTestHead(t, nil,
+				evidence.ReservationBaseHead.Body.Payload.ControlSetHash,
+				wire.HashRaw("approval-test", []byte("unrelated-base-operations")),
+				evidence.ReservationBaseHead.Body.Payload.CAProfileRoot,
+				evidence.ReservationBaseHead.Body.Payload.CommittedLogicalTime)
 		}},
 	}
 	for _, test := range tests {
@@ -142,6 +150,13 @@ func newApprovalEvidenceFixture(t *testing.T) approvalEvidenceFixture {
 	}
 	openingHash, _ := wire.IntentOpeningHash(&opening)
 	setHash, _ := wire.ControlSetHash(&set)
+	caRoot, err := wire.CAProfileRoot(nil, []wire.DeviceCertificateProfileStateV1{profile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap := approvalTestHead(t, nil, setHash,
+		wire.HashRaw("approval-test", []byte("bootstrap-operations")),
+		caRoot, "2026-01-01T00:00:00Z")
 	baseHash := wire.HashRaw("approval-test", []byte("base"))
 	admissionBody := wire.EnrollmentAdmissionAttestationBodyV1{
 		Schema: 1, AttestationType: "enrollment_admission", ClusterID: "cluster", InviteID: "invite", RequestID: "request",
@@ -150,7 +165,7 @@ func newApprovalEvidenceFixture(t *testing.T) approvalEvidenceFixture {
 		ClaimCoreHash: wire.HashRaw("approval-test", []byte("core")), IdentityKeyHash: identityHash,
 		WrappingKeyHash: wrappingHash, CSRHash: wire.HashRaw("approval-test", []byte("csr")),
 		PoPVerificationProfile: "loom-enrollment-server-nonce-detached-v2", BaseRecoveryEpoch: 0,
-		BaseControlEpoch: 0, BaseControlSetHash: setHash, BaseHeadHash: baseHash,
+		BaseControlEpoch: 0, BaseControlSetHash: setHash, BaseHeadHash: bootstrap.HeadHash,
 		AdmissionNotAfter: "2026-01-01T00:10:00Z", RetryNotAfter: "2026-01-01T00:15:00Z",
 	}
 	admissionSignature, err := wire.SignEnrollmentAdmission(admissionBody, member, enrollmentKey)
@@ -172,12 +187,6 @@ func newApprovalEvidenceFixture(t *testing.T) approvalEvidenceFixture {
 	claimHash, _ := wire.HashObject(DomainClaimOperation, claim)
 	claimLeaf := wire.ControlOperationLeafV1{Schema: 1, OperationID: claim.OperationID, ObjectID: claimHash}
 	reservationRoot, _ := wire.ControlOperationRoot([]wire.ControlOperationLeafV1{claimLeaf})
-	caRoot, err := wire.CAProfileRoot(nil, []wire.DeviceCertificateProfileStateV1{profile})
-	if err != nil {
-		t.Fatal(err)
-	}
-	bootstrap := approvalTestHead(t, nil, setHash, wire.HashRaw("approval-test", []byte("bootstrap-operations")),
-		caRoot, "2026-01-01T00:00:00Z")
 	reservationHead := approvalTestHead(t, &bootstrap, setHash, reservationRoot, caRoot, claim.ReservedAt)
 	reservationQC := approvalHeadQC(t, reservationHead, member, configKey)
 	reservationQCRaw, _ := wire.MarshalCanonical(reservationQC)
@@ -243,6 +252,7 @@ func newApprovalEvidenceFixture(t *testing.T) approvalEvidenceFixture {
 		ClaimEvidence: ClaimPrivateEvidenceV1{Schema: 1, Opening: opening,
 			WrappingPublicKey: wrappingEncoded, WrappingKeyProfile: "p256-root-only-pkcs8-ecdh-v1"}, ClaimOperation: claim,
 		AdmissionQC: admissionQC, AdmissionControlSet: set,
+		ReservationBaseHead: bootstrap, BaseToReservationHeads: []wire.HeadEntryV2{},
 		Reservation: CertifiedEnrollmentOperationProofV1{Head: reservationHead, ConfigQC: reservationQCRaw,
 			ControlSet: set, OperationLeaf: claimLeaf, OperationLeafIndex: 0, OperationTreeSize: 1,
 			OperationAuditPath: []string{}},
@@ -263,7 +273,7 @@ func newApprovalEvidenceFixture(t *testing.T) approvalEvidenceFixture {
 	if !wire.EqualCanonical(approvalSet, set) {
 		t.Fatal("approval evidence 派生了错误 ControlSet")
 	}
-	return approvalEvidenceFixture{evidence: evidence, attestation: attestation, set: set,
+	return approvalEvidenceFixture{evidence: evidence, attestation: attestation, baseHead: bootstrap, set: set,
 		member: member, enrollmentKey: enrollmentKey, trustedTime: trustedTime}
 }
 

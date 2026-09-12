@@ -10,9 +10,11 @@ import (
 var ErrEnrollmentProgressPending = errors.New("enrollment progress pending")
 
 type ReservationPlanV2 struct {
-	OperationID   string
-	CommittedAt   string
-	Certification CertifiedEnrollmentOperationProofV1
+	OperationID       string
+	CommittedAt       string
+	BaseHead          wire.HeadEntryV2
+	IntermediateHeads []wire.HeadEntryV2
+	Certification     CertifiedEnrollmentOperationProofV1
 }
 
 type ProvisionalPlanV1 struct {
@@ -45,7 +47,8 @@ type WorkflowBackend interface {
 type TransactionRepository interface {
 	SnapshotRecord(string) (DurableRecord, bool)
 	Reserve(InviteContext, ClaimPrivateEvidenceV1, ClaimOperationV2, *wire.StableEnrollmentAdmissionQCV1,
-		*wire.ControlSetV1, CertifiedEnrollmentOperationProofV1) (TransactionStateV2, error)
+		*wire.ControlSetV1, wire.HeadEntryV2, []wire.HeadEntryV2,
+		CertifiedEnrollmentOperationProofV1) (TransactionStateV2, error)
 	RecordProvisional(ProvisionalIssuanceOperationV1, wire.EnrollmentProvisionalIssuanceV1,
 		wire.DeviceCertificateProfileStateV1, wire.EnrollmentResultArtifactV1,
 		CertifiedEnrollmentOperationProofV1, []wire.HeadEntryV2) (TransactionStateV2, error)
@@ -102,7 +105,7 @@ func (coordinator *Coordinator) ProcessClaim(ctx context.Context,
 			return wire.EnrollmentClaimResultV2{}, err
 		}
 		if _, err := coordinator.repository.Reserve(attempt.InviteContext(), attempt.PrivateClaimEvidence(), operation, &admission,
-			&attempt.material.ControlSet, plan.Certification); err != nil {
+			&attempt.material.ControlSet, plan.BaseHead, plan.IntermediateHeads, plan.Certification); err != nil {
 			return wire.EnrollmentClaimResultV2{}, err
 		}
 		record, found = coordinator.repository.SnapshotRecord(operation.InviteID)

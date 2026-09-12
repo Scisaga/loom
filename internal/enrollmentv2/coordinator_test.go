@@ -113,15 +113,18 @@ func (backend *workflowBackendFixture) CollectAdmission(_ context.Context, _ Ver
 	return wire.StableEnrollmentAdmissionQC(body, []wire.ControlEnrollmentSignatureV1{signature}), nil
 }
 
-func (backend *workflowBackendFixture) PlanReservation(_ context.Context, _ VerifiedClaimAttemptV2,
+func (backend *workflowBackendFixture) PlanReservation(_ context.Context, attempt VerifiedClaimAttemptV2,
 	admission wire.StableEnrollmentAdmissionQCV1) (ReservationPlanV2, error) {
-	plan := ReservationPlanV2{OperationID: "claim-operation", CommittedAt: backend.committedAt}
+	baseHead := attempt.material.RecordHead
+	plan := ReservationPlanV2{OperationID: "claim-operation", CommittedAt: backend.committedAt,
+		BaseHead: baseHead}
 	operation, err := claimOperationForAdmission(&admission, plan)
 	if err != nil {
 		return ReservationPlanV2{}, err
 	}
 	plan.Certification = certifiedOperationFixture(backend.t, backend.set, operation.OperationID,
-		DomainClaimOperation, operation, operation.ReservedAt, 2, nil)
+		DomainClaimOperation, operation, operation.ReservedAt,
+		baseHead.Body.Payload.RaftIndex+1, &baseHead)
 	return plan, nil
 }
 
@@ -143,6 +146,7 @@ func (backend *workflowBackendFixture) Provision(_ context.Context, _ VerifiedCl
 	if err != nil {
 		return ProvisionalPlanV1{}, err
 	}
+	issuanceIndex := record.ReservationCertification.Head.Body.Payload.RaftIndex + 1
 	body := wire.EnrollmentProvisionalIssuanceBodyV1{
 		Schema: 1, ClusterID: record.State.ClusterID, InviteID: record.State.InviteID,
 		RequestID: record.State.RequestID, ClaimOperationHash: record.State.ClaimOperationHash,
@@ -152,7 +156,7 @@ func (backend *workflowBackendFixture) Provision(_ context.Context, _ VerifiedCl
 		SecretArtifactRefsRoot:            backend.resultArtifact.InitialDeviceView.Active.SecretArtifactRefsRoot,
 		ResultArtifactHash:                resultHash,
 		DeviceCertificateProfileStateHash: profileHash,
-		IssuanceLogCoordinate:             wire.IssuanceLogCoordinateV1{RecoveryEpoch: 0, RaftIndex: 3},
+		IssuanceLogCoordinate:             wire.IssuanceLogCoordinateV1{RecoveryEpoch: 0, RaftIndex: issuanceIndex},
 	}
 	issuance, err := wire.SignEnrollmentProvisionalIssuance(body, &backend.profile, backend.issuerKey)
 	if err != nil {
@@ -173,7 +177,8 @@ func (backend *workflowBackendFixture) Provision(_ context.Context, _ VerifiedCl
 		IssuedAt: backend.committedAt,
 	}
 	certification := certifiedOperationFixture(backend.t, backend.set, operation.OperationID,
-		DomainProvisionalOperation, operation, operation.IssuedAt, 3, &record.ReservationCertification.Head)
+		DomainProvisionalOperation, operation, operation.IssuedAt, issuanceIndex,
+		&record.ReservationCertification.Head)
 	return ProvisionalPlanV1{Operation: operation, Issuance: issuance, Profile: backend.profile,
 		Result: backend.resultArtifact, Certification: certification}, nil
 }

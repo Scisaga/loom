@@ -59,12 +59,13 @@ func TestDistributedBackendCommitsDeterministicCertifiedReservation(t *testing.T
 	})
 	sequencer := operationSequencerFunc(func(_ context.Context, operationID string, lineageFrom *wire.HeadEntryV2,
 		build EnrollmentOperationBuilder) (EnrollmentOperationCommitResultV1, error) {
-		if lineageFrom != nil {
-			return EnrollmentOperationCommitResultV1{}, errors.New("reservation 不应伪造前序 stage")
+		if lineageFrom == nil || !wire.EqualCanonical(*lineageFrom, attempt.material.RecordHead) {
+			return EnrollmentOperationCommitResultV1{}, errors.New("reservation 缺 Invite base Head")
 		}
 		coordinate := EnrollmentCommitCoordinateV1{Schema: 1, ClusterID: set.ClusterID,
-			RecoveryEpoch: 0, RaftTerm: 1, RaftIndex: 2, PreviousLogEntryHash: hash,
-			ParentHeadHash: hash, CommittedLogicalTime: private.now.Format(time.RFC3339)}
+			RecoveryEpoch: 0, RaftTerm: 1,
+			RaftIndex: lineageFrom.Body.Payload.RaftIndex + 1, PreviousLogEntryHash: lineageFrom.EntryHash,
+			ParentHeadHash: lineageFrom.HeadHash, CommittedLogicalTime: private.now.Format(time.RFC3339)}
 		mutation, err := build(coordinate)
 		if err != nil {
 			return EnrollmentOperationCommitResultV1{}, err
@@ -78,7 +79,7 @@ func TestDistributedBackendCommitsDeterministicCertifiedReservation(t *testing.T
 			return EnrollmentOperationCommitResultV1{}, err
 		}
 		certification := certifiedOperationFixture(t, set, operationID, DomainClaimOperation,
-			operation, coordinate.CommittedLogicalTime, coordinate.RaftIndex, nil)
+			operation, coordinate.CommittedLogicalTime, coordinate.RaftIndex, lineageFrom)
 		return EnrollmentOperationCommitResultV1{Certification: certification}, nil
 	})
 	backend := mustDistributedBackend(t, admission, sequencer,
@@ -104,7 +105,7 @@ func TestDistributedBackendCommitsDeterministicCertifiedReservation(t *testing.T
 	operation, _ := claimOperationForAdmission(&qc, plan)
 	store, _ := OpenStore(filepath.Join(t.TempDir(), "transactions.json"))
 	if _, err := store.Reserve(attempt.InviteContext(), attempt.PrivateClaimEvidence(), operation,
-		&qc, &set, plan.Certification); err != nil {
+		&qc, &set, plan.BaseHead, plan.IntermediateHeads, plan.Certification); err != nil {
 		t.Fatalf("distributed reservation 不能由 durable reducer 重验: %v", err)
 	}
 }
@@ -121,6 +122,8 @@ func TestDistributedBackendProvisionsAgainstExactReservationCoordinate(t *testin
 		TokenCommitment: evidence.Invite.TokenCommitment, Invite: evidence.Invite,
 		ClaimEvidence: evidence.ClaimEvidence, ClaimOperation: evidence.ClaimOperation,
 		AdmissionQC: evidence.AdmissionQC, AdmissionControlSet: evidence.AdmissionControlSet,
+		ReservationBaseHead:      fixture.baseHead,
+		BaseToReservationHeads:   append([]wire.HeadEntryV2(nil), evidence.BaseToReservationHeads...),
 		ReservationCertification: evidence.Reservation, State: reserved}
 	operationID, _ := ProvisionalOperationID(&record)
 	prepared := PreparedProvisionalV1{Operation: evidence.ProvisionalOperation,
@@ -160,7 +163,8 @@ func TestDistributedBackendProvisionsAgainstExactReservationCoordinate(t *testin
 	}
 	store, _ := OpenStore(filepath.Join(t.TempDir(), "transactions.json"))
 	if _, err := store.Reserve(record.Invite, record.ClaimEvidence, record.ClaimOperation,
-		&record.AdmissionQC, &record.AdmissionControlSet, record.ReservationCertification); err != nil {
+		&record.AdmissionQC, &record.AdmissionControlSet, record.ReservationBaseHead,
+		record.BaseToReservationHeads, record.ReservationCertification); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.RecordProvisional(plan.Operation, plan.Issuance, plan.Profile, plan.Result,
@@ -253,6 +257,8 @@ func durableRecordForApprovalFixture(t *testing.T, fixture approvalEvidenceFixtu
 	return DurableRecord{InviteID: evidence.Invite.InviteID, TokenCommitment: evidence.Invite.TokenCommitment,
 		Invite: evidence.Invite, ClaimEvidence: evidence.ClaimEvidence, ClaimOperation: evidence.ClaimOperation,
 		AdmissionQC: evidence.AdmissionQC, AdmissionControlSet: evidence.AdmissionControlSet,
+		ReservationBaseHead:      fixture.baseHead,
+		BaseToReservationHeads:   append([]wire.HeadEntryV2(nil), evidence.BaseToReservationHeads...),
 		ReservationCertification: evidence.Reservation, ProvisionalOperation: &provisional,
 		ProvisionalIssuance: &issuance, DeviceCertificateProfile: &profile, ResultArtifact: &result,
 		ProvisionalCertification:   &certification,

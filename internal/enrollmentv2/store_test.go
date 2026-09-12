@@ -20,9 +20,9 @@ import (
 )
 
 func TestDurableStoreMakesReservationReplayIdempotent(t *testing.T) {
-	set, invite, evidence, claim, admission := reservationFixture(t)
+	set, invite, evidence, claim, admission, baseHead := reservationFixture(t)
 	reservationCertification := certifiedOperationFixture(t, set, claim.OperationID,
-		DomainClaimOperation, claim, claim.ReservedAt, 2, nil)
+		DomainClaimOperation, claim, claim.ReservedAt, 2, &baseHead)
 	path := filepath.Join(t.TempDir(), "transactions.json")
 	store, err := OpenStore(path)
 	if err != nil {
@@ -30,13 +30,22 @@ func TestDurableStoreMakesReservationReplayIdempotent(t *testing.T) {
 	}
 	tamperedCertification := clonePrivateValue(reservationCertification)
 	tamperedCertification.OperationLeaf.ObjectID = wire.EmptyHashV1
-	if _, err := store.Reserve(invite, evidence, claim, admission, &set, tamperedCertification); err == nil {
+	if _, err := store.Reserve(invite, evidence, claim, admission, &set,
+		baseHead, nil, tamperedCertification); err == nil {
 		t.Fatal("未证明 claim operation inclusion 就写入 reservation")
 	}
 	if _, found := store.SnapshotRecord(invite.InviteID); found {
 		t.Fatal("无效 reservation certification 产生了部分 durable record")
 	}
-	first, err := store.Reserve(invite, evidence, claim, admission, &set, reservationCertification)
+	unrelatedBase := approvalTestHead(t, nil, mustSetHash(t, &set),
+		wire.HashRaw("enrollment-store-test", []byte("unrelated-base")), hash,
+		"2026-01-01T00:00:00Z")
+	if _, err := store.Reserve(invite, evidence, claim, admission, &set,
+		unrelatedBase, nil, reservationCertification); err == nil {
+		t.Fatal("接受了不等于 admission base_head_hash 的 reservation lineage")
+	}
+	first, err := store.Reserve(invite, evidence, claim, admission, &set,
+		baseHead, nil, reservationCertification)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,27 +53,30 @@ func TestDurableStoreMakesReservationReplayIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	replayed, err := reopened.Reserve(invite, evidence, claim, admission, &set, reservationCertification)
+	replayed, err := reopened.Reserve(invite, evidence, claim, admission, &set,
+		baseHead, nil, reservationCertification)
 	if err != nil || !wire.EqualCanonical(first, replayed) {
 		t.Fatalf("相同 reservation 重启重放未返回同一结果: %#v, %v", replayed, err)
 	}
 	competing := claim
 	competing.RequestID = "different-request"
-	if _, err := reopened.Reserve(invite, evidence, competing, admission, &set, reservationCertification); err == nil {
+	if _, err := reopened.Reserve(invite, evidence, competing, admission, &set,
+		baseHead, nil, reservationCertification); err == nil {
 		t.Fatal("同一 token 的不同 request 绕过耐久 CAS")
 	}
 }
 
 func TestDurableStoreRejectsCorruptOrdering(t *testing.T) {
-	set, invite, evidence, claim, admission := reservationFixture(t)
+	set, invite, evidence, claim, admission, baseHead := reservationFixture(t)
 	reservationCertification := certifiedOperationFixture(t, set, claim.OperationID,
-		DomainClaimOperation, claim, claim.ReservedAt, 2, nil)
+		DomainClaimOperation, claim, claim.ReservedAt, 2, &baseHead)
 	path := filepath.Join(t.TempDir(), "transactions.json")
 	store, _ := OpenStore(path)
-	if _, err := store.Reserve(invite, evidence, claim, admission, &set, reservationCertification); err != nil {
+	if _, err := store.Reserve(invite, evidence, claim, admission, &set,
+		baseHead, nil, reservationCertification); err != nil {
 		t.Fatal(err)
 	}
-	body, err := wire.MarshalCanonical(durableState{Schema: 4, Records: []DurableRecord{
+	body, err := wire.MarshalCanonical(durableState{Schema: 5, Records: []DurableRecord{
 		{InviteID: "z", TokenCommitment: hash, State: TransactionStateV2{Schema: 2, ClusterID: "cluster", InviteID: "z", RequestID: "r", Status: "reserved", ClaimCoreHash: hash, IdentityKeyHash: hash, WrappingKeyHash: hash, ClaimOperationHash: hash}},
 		{InviteID: "a", TokenCommitment: wire.EmptyHashV1, State: TransactionStateV2{Schema: 2, ClusterID: "cluster", InviteID: "a", RequestID: "r", Status: "reserved", ClaimCoreHash: hash, IdentityKeyHash: hash, WrappingKeyHash: hash, ClaimOperationHash: hash}},
 	}})
@@ -79,16 +91,55 @@ func TestDurableStoreRejectsCorruptOrdering(t *testing.T) {
 	}
 }
 
+func TestDurableStoreMigratesOnlyEmptySchemaFour(t *testing.T) {
+	emptyPath := filepath.Join(t.TempDir(), "empty-schema-four.json")
+	emptyBody, err := wire.MarshalCanonical(durableState{Schema: 4, Records: []DurableRecord{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(emptyPath, append(emptyBody, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenStore(emptyPath); err != nil {
+		t.Fatalf("空 schema 4 transaction store 未迁移: %v", err)
+	}
+	migratedBody, err := os.ReadFile(emptyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var migrated durableState
+	if _, err := wire.DecodeStrict(migratedBody, 1<<20, &migrated); err != nil {
+		t.Fatal(err)
+	}
+	if migrated.Schema != 5 || migrated.Records == nil || len(migrated.Records) != 0 {
+		t.Fatalf("空 schema 4 transaction store 迁移结果错误: %#v", migrated)
+	}
+
+	nonEmptyPath := filepath.Join(t.TempDir(), "non-empty-schema-four.json")
+	nonEmptyBody, err := wire.MarshalCanonical(durableState{Schema: 4,
+		Records: []DurableRecord{{InviteID: "legacy"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(nonEmptyPath, append(nonEmptyBody, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenStore(nonEmptyPath); err == nil {
+		t.Fatal("非空 schema 4 transaction store 在缺少 Base Head proof 时被迁移")
+	}
+}
+
 func TestDurableStoreRecoversExactProvisionalAndCompletionArtifacts(t *testing.T) {
-	set, invite, evidence, claim, admission := reservationFixture(t)
+	set, invite, evidence, claim, admission, baseHead := reservationFixture(t)
 	reservationCertification := certifiedOperationFixture(t, set, claim.OperationID,
-		DomainClaimOperation, claim, claim.ReservedAt, 2, nil)
+		DomainClaimOperation, claim, claim.ReservedAt, 2, &baseHead)
 	path := filepath.Join(t.TempDir(), "transactions.json")
 	store, err := OpenStore(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reserved, err := store.Reserve(invite, evidence, claim, admission, &set, reservationCertification)
+	reserved, err := store.Reserve(invite, evidence, claim, admission, &set,
+		baseHead, nil, reservationCertification)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,7 +454,7 @@ func mustConfigQCHash(t *testing.T, raw json.RawMessage) string {
 }
 
 func reservationFixture(t *testing.T) (wire.ControlSetV1, InviteContext, ClaimPrivateEvidenceV1,
-	ClaimOperationV2, *wire.StableEnrollmentAdmissionQCV1) {
+	ClaimOperationV2, *wire.StableEnrollmentAdmissionQCV1, wire.HeadEntryV2) {
 	t.Helper()
 	set, member, enrollmentKey := controlSet(t)
 	intent := wire.DeviceEnrollmentIntentV1{Schema: 1, ClusterID: "cluster", InviteID: "invite",
@@ -431,12 +482,16 @@ func reservationFixture(t *testing.T) (wire.ControlSetV1, InviteContext, ClaimPr
 		DeviceEnrollmentIntentCommitmentHash: commitmentHash, DeviceEnrollmentIntentOpeningHash: openingHash,
 		TokenCommitment: hash, ExpiresAt: "2026-01-01T00:10:00Z", MaximumReservationRetrySeconds: 300,
 	}
+	setHash := mustSetHash(t, &set)
+	baseHead := approvalTestHead(t, nil, setHash,
+		wire.HashRaw("enrollment-store-test", []byte("base-operations")), hash,
+		"2026-01-01T00:00:00Z")
 	attestation := wire.EnrollmentAdmissionAttestationBodyV1{
 		Schema: 1, AttestationType: "enrollment_admission", ClusterID: "cluster", InviteID: "invite", RequestID: "request",
 		CertifiedInviteRecordHash: hash, DeviceEnrollmentIntentCommitmentHash: commitmentHash, DeviceEnrollmentIntentOpeningHash: openingHash,
 		TokenCommitment: hash, ClaimCoreHash: hash, IdentityKeyHash: hash, WrappingKeyHash: wrappingHash, CSRHash: hash,
 		PoPVerificationProfile: "loom-enrollment-server-nonce-detached-v2", BaseRecoveryEpoch: 0, BaseControlEpoch: 0,
-		BaseControlSetHash: mustSetHash(t, &set), BaseHeadHash: hash, AdmissionNotAfter: "2026-01-01T00:10:00Z", RetryNotAfter: "2026-01-01T00:15:00Z",
+		BaseControlSetHash: setHash, BaseHeadHash: baseHead.HeadHash, AdmissionNotAfter: "2026-01-01T00:10:00Z", RetryNotAfter: "2026-01-01T00:15:00Z",
 	}
 	signature, err := wire.SignEnrollmentAdmission(attestation, member, enrollmentKey)
 	if err != nil {
@@ -450,7 +505,7 @@ func reservationFixture(t *testing.T) (wire.ControlSetV1, InviteContext, ClaimPr
 		TokenCommitment: hash, ClaimCoreHash: hash, AdmissionQCHash: qcHash, IdentityKeyHash: hash, WrappingKeyHash: wrappingHash, CSRHash: hash,
 		ReservedAt: "2026-01-01T00:09:00Z", RetryNotAfter: "2026-01-01T00:15:00Z",
 	}
-	return set, invite, evidence, claim, &value
+	return set, invite, evidence, claim, &value, baseHead
 }
 
 func activeEnrollmentProfile(t *testing.T) (wire.DeviceCertificateProfileStateV1, ed25519.PrivateKey) {
