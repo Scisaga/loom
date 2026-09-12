@@ -366,9 +366,13 @@ func validateEnrollmentInstallation(installation *EnrollmentInstallationV1, enve
 		}
 	}
 	resultHash, err := wire.EnrollmentResultArtifactHash(&installation.ResultArtifact)
+	initialView := &installation.ResultArtifact.InitialDeviceView
 	if err != nil || resultHash != installation.ResultArtifactHash ||
-		!wire.EqualCanonical(installation.ResultArtifact.InitialDeviceView, envelope.Payload) {
-		return errors.New("[D130 Linux install] durable result artifact/view binding 无效")
+		initialView.ClusterID != envelope.Payload.ClusterID || initialView.DeviceID != envelope.Payload.DeviceID ||
+		initialView.DeviceGeneration > envelope.Payload.DeviceGeneration ||
+		initialView.DeviceGeneration == envelope.Payload.DeviceGeneration &&
+			!wire.EqualCanonical(*initialView, envelope.Payload) {
+		return errors.New("[D130 Linux install] durable initial result/current view lineage 无效")
 	}
 	claimCoreHash, err := wire.EnrollmentClaimCoreHash(&installation.ClaimCore)
 	if err != nil || claimCoreHash != installation.ClaimCoreHash {

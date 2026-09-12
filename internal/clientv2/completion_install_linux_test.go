@@ -121,12 +121,16 @@ func TestInitialInstallationIsOneDurableUnitAndSurvivesViewAdvance(t *testing.T)
 		!wire.EqualCanonical(reopened.Floors(), wantFloors) {
 		t.Fatalf("重启后丢失原子 installation: got=%#v floors=%#v", got, reopened.Floors())
 	}
-	if _, err := reopened.Accept(&envelope, &set, envelope.Payload.DeviceID,
+	advanced := advanceClientEnvelope(t, envelope, &set, key)
+	if _, err := reopened.Accept(&advanced, &set, envelope.Payload.DeviceID,
 		envelope.Payload.Active.IdentitySPKIHash); err != nil {
 		t.Fatal(err)
 	}
 	if got := reopened.Enrollment(); got == nil || !wire.EqualCanonical(*got, *installation) {
-		t.Fatal("后续 DeviceView accept 擦除了 enrollment installation")
+		t.Fatal("后续 DeviceView generation accept 擦除了 initial enrollment installation")
+	}
+	if got := reopened.Envelope(); got == nil || got.Payload.DeviceGeneration != 2 {
+		t.Fatalf("合法后续 DeviceView 未替换 LKG: %#v", got)
 	}
 }
 

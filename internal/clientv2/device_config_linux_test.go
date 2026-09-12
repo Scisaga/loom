@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
@@ -322,6 +323,12 @@ func mustDeviceFloors(t *testing.T, envelope *wire.DeviceViewEnvelopeV2,
 }
 
 func installedDeviceConfigState(t *testing.T, now time.Time) (string, string, wire.ControlSetV1, wire.DeviceViewEnvelopeV2) {
+	statePath, identityPath, set, envelope, _ := installedDeviceConfigStateWithKey(t, now)
+	return statePath, identityPath, set, envelope
+}
+
+func installedDeviceConfigStateWithKey(t *testing.T, now time.Time) (string, string, wire.ControlSetV1,
+	wire.DeviceViewEnvelopeV2, ed25519.PrivateKey) {
 	t.Helper()
 	directory := filepath.Join(t.TempDir(), "private")
 	if err := os.Mkdir(directory, 0o700); err != nil {
@@ -384,7 +391,7 @@ func installedDeviceConfigState(t *testing.T, now time.Time) (string, string, wi
 		identityHash, installation); err != nil {
 		t.Fatal(err)
 	}
-	return statePath, identityPath, set, envelope
+	return statePath, identityPath, set, envelope, configKey
 }
 
 func deviceConfigClientCertificate(t *testing.T, key *ecdsa.PrivateKey, now time.Time) []byte {

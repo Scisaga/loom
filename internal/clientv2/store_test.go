@@ -156,3 +156,52 @@ func clientEnvelopeWithIdentity(t *testing.T, set *wire.ControlSetV1, configKey 
 		SecretArtifactRefs: []json.RawMessage{},
 	}
 }
+
+func advanceClientEnvelope(t *testing.T, previous wire.DeviceViewEnvelopeV2,
+	set *wire.ControlSetV1, configKey ed25519.PrivateKey) wire.DeviceViewEnvelopeV2 {
+	t.Helper()
+	body, err := wire.MarshalCanonical(previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var next wire.DeviceViewEnvelopeV2
+	if _, err := wire.DecodeStrict(body, 32<<20, &next); err != nil {
+		t.Fatal(err)
+	}
+	previousViewHash, _ := wire.DeviceViewHash(&previous.Payload)
+	next.Payload.DeviceGeneration++
+	next.Payload.Active.EndpointBundle.DeviceGeneration = next.Payload.DeviceGeneration
+	next.Payload.Active.EndpointBundleHash, _ = wire.DeviceEndpointBundleHash(&next.Payload.Active.EndpointBundle)
+	next.Leaf.DeviceGeneration = next.Payload.DeviceGeneration
+	next.Leaf.PreviousViewHash = previousViewHash
+	next.Leaf.EndpointSetHash = next.Payload.Active.EndpointBundleHash
+	next.Leaf.PayloadHash, _ = wire.DeviceViewHash(&next.Payload)
+	leafBytes, _ := wire.MarshalCanonical(next.Leaf)
+	root := wire.MerkleRoot([][]byte{leafBytes})
+	headBody := previous.SignedCurrent.Head.Body
+	headBody.Payload.HeadKind = "ordinary"
+	headBody.Payload.RaftIndex++
+	headBody.Payload.ControlRevision = headBody.Payload.RaftIndex
+	headBody.Payload.PreviousLogEntryHash = previous.SignedCurrent.Head.EntryHash
+	headBody.Payload.ParentHeadHash = previous.SignedCurrent.Head.HeadHash
+	headBody.Payload.DeviceViewsRoot = "sha256:" + fmt.Sprintf("%x", root)
+	headBody.Payload.OperationRoot = wire.HashRaw("client-v2-test", []byte("advanced-operations"))
+	headBody.Payload.CommittedLogicalTime = "2026-09-11T00:01:00Z"
+	headBody.Payload.TransitionContext, _ = json.Marshal(wire.OrdinaryHeadContextV1{Schema: 1, Kind: "ordinary"})
+	head, err := wire.NewHeadEntry(headBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wire.ValidateHeadEntry(&head, &previous.SignedCurrent.Head); err != nil {
+		t.Fatal(err)
+	}
+	signature, err := wire.SignHeadAttestation(wire.AttestationForHead(&head), set.Members[0], configKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	qc := wire.StableQC(&head, []wire.ControlConfigSignatureV1{signature})
+	next.SignedCurrent.Head = head
+	next.SignedCurrent.QuorumCertificate, _ = wire.MarshalCanonical(qc)
+	next.SignedCurrent.PublishedAt = "2026-09-11T00:01:01Z"
+	return next
+}
