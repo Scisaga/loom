@@ -125,8 +125,13 @@ func TestRecoveryPolicyActivationRequiresIntentThresholdAndActivationQC(t *testi
 	candidate.AcceptedControlEpoch = 0
 	candidate.AcceptedControlRevision = activationHead.Body.Payload.ControlRevision
 	candidate.HeadHash = activationHead.HeadHash
-	if _, err := AdvanceFloorsWithRecoveryPolicy(current, candidate, verified); err != nil {
+	candidate.BootstrapTransitionHash = activationHead.Body.TransitionProofHash
+	next, err := AdvanceFloorsWithRecoveryPolicy(current, candidate, verified)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if next.BootstrapTransitionHash != current.BootstrapTransitionHash {
+		t.Fatal("recovery policy rotation 改写了 bootstrap latch")
 	}
 
 	tampered := bundle

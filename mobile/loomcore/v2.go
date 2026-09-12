@@ -207,6 +207,12 @@ func PrepareAndroidV2PrivateDeviceConfigUpdate(currentStateJSON, deliveryJSON,
 			!equalRawAndroidV2(envelope.SecretArtifactRefs, current.Envelope.SecretArtifactRefs)) {
 		return nil, errors.New("[D124 Android config] Device view artifact refs 已变化，必须原子取回后安装")
 	}
+	if envelope.Payload.State != "active" && current.Enrollment != nil {
+		current.Enrollment.Configs = nil
+		current.Enrollment.Credentials = []androidInstalledSecretV1{}
+		emptyRefs := []wire.SecretArtifactRefV2{}
+		current.Enrollment.CurrentSecretArtifactRefs = &emptyRefs
+	}
 	set := verified.ControlSet()
 	return marshalAndroidV2DeviceState(androidV2DeviceState{
 		Schema: 1, Floors: verified.Floors(), Envelope: envelope, ControlSet: &set,
@@ -227,18 +233,23 @@ func PrepareAndroidV2PrivateDeviceConfigUpdateWithConfigs(currentStateJSON, deli
 	if current.Enrollment == nil {
 		return nil, errors.New("[D124 Android config] enrollment installation 缺失")
 	}
-	var configs []androidInstalledConfigV1
-	if err := decodeExactAndroidV2(installedConfigsJSON, androidMaximumConfigTotalBytes+(4<<20),
-		&configs, "private installed configs"); err != nil || configs == nil {
-		return nil, errors.New("[D124 Android config] installed configs 不是 canonical array")
-	}
 	envelope := verified.Envelope()
-	if envelope.Payload.State == "active" &&
-		!equalRawAndroidV2(envelope.SecretArtifactRefs, current.Envelope.SecretArtifactRefs) {
-		return nil, errors.New("[D124 Android config] secret refs 已变化，必须先取回并原子解封")
-	}
-	if envelope.Payload.State == "tombstone" {
-		configs = nil
+	var configs []androidInstalledConfigV1
+	if envelope.Payload.State != "active" {
+		if len(installedConfigsJSON) != 0 {
+			return nil, errors.New("[D124 Android config] tombstone 禁止新 artifact")
+		}
+		current.Enrollment.Credentials = []androidInstalledSecretV1{}
+		emptyRefs := []wire.SecretArtifactRefV2{}
+		current.Enrollment.CurrentSecretArtifactRefs = &emptyRefs
+	} else {
+		if err := decodeExactAndroidV2(installedConfigsJSON, androidMaximumConfigTotalBytes+(4<<20),
+			&configs, "private installed configs"); err != nil || configs == nil {
+			return nil, errors.New("[D124 Android config] installed configs 不是 canonical array")
+		}
+		if !equalRawAndroidV2(envelope.SecretArtifactRefs, current.Envelope.SecretArtifactRefs) {
+			return nil, errors.New("[D124 Android config] secret refs 已变化，必须先取回并原子解封")
+		}
 	}
 	current.Enrollment.Configs = configs
 	set := verified.ControlSet()
@@ -263,11 +274,14 @@ func PrepareAndroidV2PrivateDeviceConfigUpdateWithArtifacts(currentStateJSON, de
 		return nil, errors.New("[D124 Android config] enrollment installation 缺失")
 	}
 	envelope := verified.Envelope()
-	if envelope.Payload.State == "tombstone" {
+	if envelope.Payload.State != "active" {
 		if len(installedConfigsJSON) != 0 || len(installedSecretsJSON) != 0 {
 			return nil, errors.New("[D124 Android config] tombstone 禁止新 artifact")
 		}
 		current.Enrollment.Configs = nil
+		current.Enrollment.Credentials = []androidInstalledSecretV1{}
+		emptyRefs := []wire.SecretArtifactRefV2{}
+		current.Enrollment.CurrentSecretArtifactRefs = &emptyRefs
 	} else {
 		if envelope.Payload.Active == nil || current.Envelope.Payload.Active == nil {
 			return nil, errors.New("[D124 Android config] active Device view 缺失")
@@ -509,7 +523,8 @@ func validateAndroidV2DeviceState(state *androidV2DeviceState) error {
 		floors.AcceptedControlRevision != head.Body.Payload.ControlRevision ||
 		floors.HeadHash != head.HeadHash || floors.DeviceGeneration != envelope.Payload.DeviceGeneration ||
 		floors.DeviceLeafHash != leafHash || floors.DeviceViewHash != payloadHash ||
-		floors.BootstrapTransitionHash != head.Body.TransitionProofHash {
+		head.Body.Payload.HeadKind == "bootstrap" &&
+			floors.BootstrapTransitionHash != head.Body.TransitionProofHash {
 		return errors.New("[D106 Android] protected floors 与同一 Device LKG 不一致")
 	}
 	if _, err := wire.AdvanceFloors(wire.ClientFloorsV2{}, floors); err != nil {
@@ -530,6 +545,9 @@ func validateAndroidV2DeviceState(state *androidV2DeviceState) error {
 		verifiedFloors, verifyErr := wire.VerifyDeviceViewEnvelopeWithPrevious(
 			envelope, state.ControlSet, state.PreviousControlSet,
 		)
+		if verifyErr == nil && head.Body.Payload.HeadKind != "bootstrap" {
+			verifiedFloors.BootstrapTransitionHash = floors.BootstrapTransitionHash
+		}
 		if verifyErr != nil || !wire.EqualCanonical(verifiedFloors, floors) {
 			return errors.New("[D106 Android] protected Device view/ControlSet/QC 不可重放")
 		}

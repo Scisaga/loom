@@ -2125,6 +2125,16 @@ floor **原子耐久写入**。latch 前只可接受满足 BootstrapTransition �
 丢失只能从可信备份、已钉住 v2 checkpoint/recovery 或带外 rebootstrap 恢复，禁止因“本地
 没有 floor”自动退回 v1。
 
+稳态 private `device_config` 的 retained window 必须以客户端 durable exact Head 为锚点，逐项使用
+严格 tagged union：普通 Head 不带 transition，成员变更带 `ControlSetTransitionBundleV1`，紧急恢复
+带 `EmergencyRecoveryBundleV1`，计划内恢复策略轮换带 `RecoveryPolicyActivationBundleV1`；同一项出现
+多个 transition tag 一律拒绝。窗口可携当前 recovery policy 的公开 preimage，但客户端必须先重算
+它与锚点 Head 的 `recovery_policy_hash` 相等，才能用其验证 old threshold。每类 authority transition
+先验证本次 transition proof/新 Head，再推进对应 floor；durable `bootstrap_transition_hash` 始终保留
+首次 v2 latch，不能被后续 Head 的 transition proof hash 覆盖。`revoked`/`decommissioned` 是合法
+tombstone state 名称；接受后客户端在同一状态事务中清除运行 config 与 data-plane credential，不能
+等待并不存在的字面 `state=tombstone`。
+
 ### 10.4 镜像
 
 静态镜像仍然不可信并保留多地址并行拉取。它们只复制公开的 immutable

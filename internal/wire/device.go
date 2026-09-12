@@ -449,6 +449,11 @@ func VerifyDeviceViewSuccessor(current, candidate *DeviceViewEnvelopeV2) error {
 
 // AdvanceFloors 原子持久化前验证四组 floor；相同坐标不同 hash 一律视为 fork。
 func AdvanceFloors(current, candidate ClientFloorsV2) (ClientFloorsV2, error) {
+	// DeviceView verifier 只能从 candidate Head 看见当前 authority transition；
+	// bootstrap latch 则是首次信任根，后续普通 Head 必须继承 durable 旧值。
+	if current.Schema == 2 {
+		candidate.BootstrapTransitionHash = current.BootstrapTransitionHash
+	}
 	return advanceFloors(current, candidate, floorAdvanceAuthority{})
 }
 

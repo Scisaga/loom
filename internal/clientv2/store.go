@@ -323,12 +323,15 @@ func (s *Store) acceptDeviceConfigDelivery(delivery *wire.DeviceConfigDeliveryV1
 		cloned := cloneStoreValue(*s.state.Enrollment)
 		installation = &cloned
 	}
-	if envelope.Payload.State == "tombstone" {
+	if envelope.Payload.State != "active" {
 		if configs != nil || credentials != nil {
 			return s.floorsLocked(), errors.New("[D124 Linux config] tombstone 禁止新 artifact")
 		}
 		if installation != nil {
 			installation.Configs = nil
+			installation.Credentials = []InstalledSecretV1{}
+			emptyRefs := []wire.SecretArtifactRefV2{}
+			installation.CurrentSecretArtifactRefs = &emptyRefs
 		}
 	} else {
 		if (configChanged || secretsChanged) && installation == nil {
@@ -374,7 +377,7 @@ func changedInstalledArtifactRefs(current, candidate *wire.DeviceViewEnvelopeV2)
 	if current == nil || candidate == nil {
 		return true, true
 	}
-	if candidate.Payload.State == "tombstone" {
+	if candidate.Payload.State != "active" {
 		return false, false
 	}
 	if current.Payload.State != "active" || current.Payload.Active == nil || candidate.Payload.Active == nil {
@@ -533,12 +536,16 @@ func validateStoredState(state *State) error {
 		floor.AcceptedControlEpoch != head.Body.Payload.ControlEpoch || floor.ControlSetHash != head.Body.Payload.ControlSetHash ||
 		floor.AcceptedControlRevision != head.Body.Payload.ControlRevision || floor.HeadHash != head.HeadHash ||
 		floor.DeviceGeneration != state.Envelope.Payload.DeviceGeneration || floor.DeviceLeafHash != leafHash ||
-		floor.DeviceViewHash != payloadHash || floor.BootstrapTransitionHash != head.Body.TransitionProofHash {
+		floor.DeviceViewHash != payloadHash ||
+		head.Body.Payload.HeadKind == "bootstrap" && floor.BootstrapTransitionHash != head.Body.TransitionProofHash {
 		return errors.New("[D106 Linux] durable floors 与同一 LKG envelope 不一致")
 	}
 	if state.ControlSet != nil {
 		verified, verifyErr := wire.VerifyDeviceViewEnvelopeWithPrevious(
 			&state.Envelope, state.ControlSet, state.PreviousControlSet)
+		if verifyErr == nil && head.Body.Payload.HeadKind != "bootstrap" {
+			verified.BootstrapTransitionHash = state.Floors.BootstrapTransitionHash
+		}
 		if verifyErr != nil || !wire.EqualCanonical(verified, state.Floors) {
 			return errors.New("[D106 Linux] durable Device view/ControlSet/QC 不可重放")
 		}

@@ -198,6 +198,28 @@ func TestLinuxDeviceArtifactsCommitAtomicallyWithCertifiedDelivery(t *testing.T)
 		!bytes.Equal(installation.Configs[0].Config, config) {
 		t.Fatalf("新 config/secret/view/floors 未原子保存: %#v", installation)
 	}
+
+	revoked := revokeClientEnvelope(t, secretNext, &set, configKey)
+	revocationDelivery := wire.DeviceConfigDeliveryV1{Schema: 1, ClusterID: current.Payload.ClusterID,
+		DeviceID: current.Payload.DeviceID, Updates: []wire.DeviceConfigUpdateV1{
+			{Schema: 1, Envelope: secretNext, ControlSet: set},
+			{Schema: 1, Envelope: revoked, ControlSet: set},
+		}}
+	if _, err := reopened.AcceptDeviceConfigDeliveryWithArtifacts(&revocationDelivery, nil, nil,
+		current.Payload.DeviceID, current.Payload.Active.IdentitySPKIHash, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	revokedStore, err := Open(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revokedInstallation := revokedStore.Enrollment()
+	if revokedStore.Envelope().Payload.State != "revoked" || revokedInstallation == nil ||
+		len(revokedInstallation.Configs) != 0 || len(revokedInstallation.Credentials) != 0 ||
+		revokedInstallation.CurrentSecretArtifactRefs == nil ||
+		len(*revokedInstallation.CurrentSecretArtifactRefs) != 0 {
+		t.Fatalf("revocation 未清除 data-plane artifacts: %#v", revokedInstallation)
+	}
 }
 
 func linuxDynamicSecretFixture(t *testing.T, identity *EnrollmentIdentityV1,

@@ -162,11 +162,16 @@ func TestControlSetTransitionRequiresMembershipJointAndFinalQuorums(t *testing.T
 	candidate.ControlSetHash = intent.NewControlSetHash
 	candidate.AcceptedControlRevision = finalPayload.ControlRevision
 	candidate.HeadHash = finalHead.HeadHash
+	candidate.BootstrapTransitionHash = finalHead.Body.TransitionProofHash
 	if _, err := AdvanceFloors(current, candidate); err == nil {
 		t.Fatal("未经 Joint→Final evidence 提高了 control floor")
 	}
-	if _, err := AdvanceFloorsWithControl(current, candidate, verified); err != nil {
+	next, err := AdvanceFloorsWithControl(current, candidate, verified)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if next.BootstrapTransitionHash != current.BootstrapTransitionHash {
+		t.Fatal("ControlSet transition 改写了 bootstrap latch")
 	}
 
 	tampered := bundle

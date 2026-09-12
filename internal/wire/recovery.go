@@ -796,8 +796,11 @@ func AdvanceFloorsWithRecovery(current, candidate ClientFloorsV2, verified Verif
 		candidate.AcceptedControlEpoch != verified.newControlEpoch ||
 		candidate.ControlSetHash != verified.newControlSetHash ||
 		candidate.AcceptedControlRevision != verified.newGenesisControlRevision ||
-		candidate.HeadHash != verified.newGenesisHeadHash {
+		candidate.HeadHash != verified.newGenesisHeadHash ||
+		candidate.BootstrapTransitionHash != verified.transitionProofHash &&
+			candidate.BootstrapTransitionHash != current.BootstrapTransitionHash {
 		return current, errors.New("[D119 floor] recovery evidence 与 old floor/Genesis candidate 不匹配")
 	}
+	candidate.BootstrapTransitionHash = current.BootstrapTransitionHash
 	return advanceFloors(current, candidate, floorAdvanceAuthority{recovery: true})
 }

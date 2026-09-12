@@ -128,8 +128,9 @@ func TestVerifyDeviceViewSuccessorRejectsGenerationGapAndTombstoneRevival(t *tes
 		t.Fatal("接受了跳过 generation 的 Device view")
 	}
 	tombstone := current
-	tombstone.Payload.State = "tombstone"
+	tombstone.Payload.State = "revoked"
 	tombstone.Payload.Active = nil
+	tombstone.Payload.Tombstone = &wire.DeviceTombstoneViewV1{Reason: "revoked"}
 	if err := wire.VerifyDeviceViewSuccessor(&tombstone, &next); err == nil {
 		t.Fatal("接受了 tombstone 后的 Device view 复活")
 	}
@@ -288,5 +289,58 @@ func advanceClientEnvelopeWithArtifacts(t *testing.T, previous wire.DeviceViewEn
 	next.SignedCurrent.Head = head
 	next.SignedCurrent.QuorumCertificate, _ = wire.MarshalCanonical(qc)
 	next.SignedCurrent.PublishedAt = "2026-09-11T00:01:01Z"
+	return next
+}
+
+func revokeClientEnvelope(t *testing.T, previous wire.DeviceViewEnvelopeV2,
+	set *wire.ControlSetV1, configKey ed25519.PrivateKey,
+) wire.DeviceViewEnvelopeV2 {
+	t.Helper()
+	body, err := wire.MarshalCanonical(previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var next wire.DeviceViewEnvelopeV2
+	if _, err := wire.DecodeStrict(body, 32<<20, &next); err != nil {
+		t.Fatal(err)
+	}
+	previousViewHash, _ := wire.DeviceViewHash(&previous.Payload)
+	next.Payload.DeviceGeneration++
+	next.Payload.State = "revoked"
+	next.Payload.Active = nil
+	next.Payload.Tombstone = &wire.DeviceTombstoneViewV1{Reason: "revoked"}
+	next.SecretArtifactRefs = nil
+	next.Leaf.DeviceGeneration = next.Payload.DeviceGeneration
+	next.Leaf.State = "revoked"
+	next.Leaf.PreviousViewHash = previousViewHash
+	next.Leaf.EndpointSetHash = wire.EmptyHashV1
+	next.Leaf.PayloadHash, _ = wire.DeviceViewHash(&next.Payload)
+	leafBytes, _ := wire.MarshalCanonical(next.Leaf)
+	root := wire.MerkleRoot([][]byte{leafBytes})
+	headBody := previous.SignedCurrent.Head.Body
+	headBody.Payload.HeadKind = "ordinary"
+	headBody.Payload.RaftIndex++
+	headBody.Payload.ControlRevision = headBody.Payload.RaftIndex
+	headBody.Payload.PreviousLogEntryHash = previous.SignedCurrent.Head.EntryHash
+	headBody.Payload.ParentHeadHash = previous.SignedCurrent.Head.HeadHash
+	headBody.Payload.DeviceViewsRoot = "sha256:" + fmt.Sprintf("%x", root)
+	headBody.Payload.OperationRoot = wire.HashRaw("client-v2-test", []byte("revocation-operation"))
+	headBody.Payload.CommittedLogicalTime = "2026-09-11T00:02:00Z"
+	headBody.Payload.TransitionContext, _ = json.Marshal(wire.OrdinaryHeadContextV1{Schema: 1, Kind: "ordinary"})
+	head, err := wire.NewHeadEntry(headBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wire.ValidateHeadEntry(&head, &previous.SignedCurrent.Head); err != nil {
+		t.Fatal(err)
+	}
+	signature, err := wire.SignHeadAttestation(wire.AttestationForHead(&head), set.Members[0], configKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	qc := wire.StableQC(&head, []wire.ControlConfigSignatureV1{signature})
+	next.SignedCurrent.Head = head
+	next.SignedCurrent.QuorumCertificate, _ = wire.MarshalCanonical(qc)
+	next.SignedCurrent.PublishedAt = "2026-09-11T00:02:01Z"
 	return next
 }

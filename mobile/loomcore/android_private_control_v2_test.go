@@ -288,6 +288,34 @@ func TestPrepareAndroidV2PrivateControlPlanBindsSealedDirectoryAndKeystoreIdenti
 		secretState.Enrollment.Configs[0].Generation != 2 {
 		t.Fatalf("新 secret/view/floors 未原子提交: state=%#v err=%v", secretState, err)
 	}
+	revokedEnvelope := revokeAndroidPrivateArtifactEnvelope(t, secretNextEnvelope, set)
+	revokedDeliveryJSON, _ := wire.MarshalCanonical(wire.DeviceConfigDeliveryV1{
+		Schema: 1, ClusterID: currentEnvelope.Payload.ClusterID, DeviceID: currentEnvelope.Payload.DeviceID,
+		Updates: []wire.DeviceConfigUpdateV1{
+			{Schema: 1, Envelope: secretNextEnvelope, ControlSet: set},
+			{Schema: 1, Envelope: revokedEnvelope, ControlSet: set},
+		},
+	})
+	revokedPlanJSON, err := PrepareAndroidV2PrivateDeviceConfigFetchPlan(
+		secretStateJSON, revokedDeliveryJSON, identitySPKI)
+	if err := decodeExactAndroidV2(revokedPlanJSON, 4<<20, &fetchPlan,
+		"revoked private artifact plan"); err != nil || fetchPlan.State != "tombstone" ||
+		len(fetchPlan.Refs) != 0 || len(fetchPlan.SecretRefs) != 0 {
+		t.Fatalf("revocation fetch plan 无效: plan=%#v err=%v", fetchPlan, err)
+	}
+	revokedStateJSON, err := PrepareAndroidV2PrivateDeviceConfigUpdateWithArtifacts(
+		secretStateJSON, revokedDeliveryJSON, nil, nil, identitySPKI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var revokedState androidV2DeviceState
+	if err := decodeExactAndroidV2(revokedStateJSON, 64<<20, &revokedState,
+		"revoked private state"); err != nil || revokedState.Envelope.Payload.State != "revoked" ||
+		len(revokedState.Enrollment.Configs) != 0 || len(revokedState.Enrollment.Credentials) != 0 ||
+		revokedState.Enrollment.CurrentSecretArtifactRefs == nil ||
+		len(*revokedState.Enrollment.CurrentSecretArtifactRefs) != 0 {
+		t.Fatalf("revocation 未清除 Android data-plane artifacts: state=%#v err=%v", revokedState, err)
+	}
 	rotatedPlanJSON, err := PrepareAndroidV2PrivateControlPlan(secretStateJSON, identitySPKI,
 		"device_config", "device-config-2", now.Add(3*time.Minute).Format(time.RFC3339))
 	if err != nil {
@@ -431,6 +459,57 @@ func advanceAndroidPrivateArtifactEnvelope(t *testing.T, previous wire.DeviceVie
 		wire.StableQC(&head, []wire.ControlConfigSignatureV1{signature}),
 	)
 	next.SignedCurrent.PublishedAt = "2026-09-11T12:01:01Z"
+	return next
+}
+
+func revokeAndroidPrivateArtifactEnvelope(t *testing.T, previous wire.DeviceViewEnvelopeV2,
+	set wire.ControlSetV1,
+) wire.DeviceViewEnvelopeV2 {
+	t.Helper()
+	body, _ := wire.MarshalCanonical(previous)
+	var next wire.DeviceViewEnvelopeV2
+	if _, err := wire.DecodeStrict(body, 32<<20, &next); err != nil {
+		t.Fatal(err)
+	}
+	previousViewHash, _ := wire.DeviceViewHash(&previous.Payload)
+	next.Payload.DeviceGeneration++
+	next.Payload.State = "revoked"
+	next.Payload.Active = nil
+	next.Payload.Tombstone = &wire.DeviceTombstoneViewV1{Reason: "revoked"}
+	next.SecretArtifactRefs = nil
+	next.Leaf.DeviceGeneration = next.Payload.DeviceGeneration
+	next.Leaf.State = "revoked"
+	next.Leaf.PreviousViewHash = previousViewHash
+	next.Leaf.EndpointSetHash = wire.EmptyHashV1
+	next.Leaf.PayloadHash, _ = wire.DeviceViewHash(&next.Payload)
+	leafBytes, _ := wire.MarshalCanonical(next.Leaf)
+	root := wire.MerkleRoot([][]byte{leafBytes})
+	headBody := previous.SignedCurrent.Head.Body
+	headBody.Payload.HeadKind = "ordinary"
+	headBody.Payload.RaftIndex++
+	headBody.Payload.ControlRevision = headBody.Payload.RaftIndex
+	headBody.Payload.PreviousLogEntryHash = previous.SignedCurrent.Head.EntryHash
+	headBody.Payload.ParentHeadHash = previous.SignedCurrent.Head.HeadHash
+	headBody.Payload.DeviceViewsRoot = "sha256:" + fmt.Sprintf("%x", root)
+	headBody.Payload.OperationRoot = wire.HashRaw("android-private-control-test", []byte("revocation"))
+	headBody.Payload.CommittedLogicalTime = "2026-09-11T12:02:00Z"
+	headBody.Payload.TransitionContext, _ = json.Marshal(wire.OrdinaryHeadContextV1{Schema: 1, Kind: "ordinary"})
+	head, err := wire.NewHeadEntry(headBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := make([]byte, ed25519.SeedSize)
+	seed[len(seed)-1] = 2
+	configKey := ed25519.NewKeyFromSeed(seed)
+	signature, err := wire.SignHeadAttestation(wire.AttestationForHead(&head), set.Members[0], configKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next.SignedCurrent.Head = head
+	next.SignedCurrent.QuorumCertificate, _ = wire.MarshalCanonical(
+		wire.StableQC(&head, []wire.ControlConfigSignatureV1{signature}),
+	)
+	next.SignedCurrent.PublishedAt = "2026-09-11T12:02:01Z"
 	return next
 }
 

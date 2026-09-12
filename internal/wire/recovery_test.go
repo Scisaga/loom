@@ -116,8 +116,41 @@ func TestEmergencyRecoveryRequiresOldThresholdAndNewQC(t *testing.T) {
 	candidate.RecoveryPolicyHash = newPolicyHash
 	candidate.ControlSetHash = newSetHash
 	candidate.HeadHash = bundle.Genesis.Head.HeadHash
-	if _, err := AdvanceFloorsWithRecovery(current, candidate, verified); err != nil {
+	candidate.BootstrapTransitionHash = bundle.Genesis.Head.Body.TransitionProofHash
+	next, err := AdvanceFloorsWithRecovery(current, candidate, verified)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if next.BootstrapTransitionHash != current.BootstrapTransitionHash {
+		t.Fatal("emergency recovery 改写了 bootstrap latch")
+	}
+	currentPayload := recoveryDeliveryPayload(t, body.ClusterID, "recovery-device", 1)
+	currentPayloadHash, _ := DeviceViewHash(&currentPayload)
+	candidatePayload := recoveryDeliveryPayload(t, body.ClusterID, "recovery-device", 2)
+	recoveryUpdate := DeviceConfigUpdateV1{
+		Schema: 1,
+		Envelope: DeviceViewEnvelopeV2{Payload: candidatePayload,
+			Leaf:          DeviceViewLeafV2{PreviousViewHash: currentPayloadHash},
+			SignedCurrent: SignedCurrentV2{Head: bundle.Genesis.Head}},
+		ControlSet: bundle.NewControlSet, RecoveryPolicy: &bundle.NewRecoveryPolicy,
+		EmergencyRecoveryTransition: &bundle,
+	}
+	_, deliveredSet, deliveredPrevious, _, deliveredPolicy, err := advanceDeviceConfigUpdate(
+		current, bootstrap.InitialControlSet, nil,
+		DeviceViewEnvelopeV2{Payload: currentPayload, SignedCurrent: SignedCurrentV2{Head: previousHead}},
+		&recoveryUpdate, &previousPolicy, candidate,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deliveredPrevious != nil || deliveredPolicy == nil ||
+		!EqualCanonical(deliveredSet, bundle.NewControlSet) ||
+		!EqualCanonical(*deliveredPolicy, bundle.NewRecoveryPolicy) {
+		t.Fatal("device_config 未原子切换 recovery policy/ControlSet")
+	}
+	recoveryUpdate.ControlSetTransition = &ControlSetTransitionBundleV1{}
+	if deviceConfigTransitionCount(&recoveryUpdate) != 2 {
+		t.Fatal("device_config authority transition union 未拒绝双重 tag")
 	}
 
 	wrongOldPolicy := previousPolicy
@@ -130,6 +163,20 @@ func TestEmergencyRecoveryRequiresOldThresholdAndNewQC(t *testing.T) {
 	if _, err := VerifyEmergencyRecoveryBundle(&tampered, &previousPolicy, &previousHead); err == nil {
 		t.Fatal("接受了 transition 与 Genesis 不同的 private directory hash")
 	}
+}
+
+func recoveryDeliveryPayload(t *testing.T, clusterID, deviceID string, generation int64) DeviceViewPayloadV2 {
+	t.Helper()
+	payload := validDeviceViewPayloadForResponsibilities(t)
+	payload.ClusterID, payload.DeviceID, payload.DeviceGeneration = clusterID, deviceID, generation
+	payload.Active.EndpointBundle.ClusterID = clusterID
+	payload.Active.EndpointBundle.DeviceID = deviceID
+	payload.Active.EndpointBundle.DeviceGeneration = generation
+	payload.Active.EndpointBundleHash, _ = DeviceEndpointBundleHash(&payload.Active.EndpointBundle)
+	if _, err := DeviceViewHash(&payload); err != nil {
+		t.Fatal(err)
+	}
+	return payload
 }
 
 func TestAdvanceFloorsRequiresVerifiedRecoveryTransition(t *testing.T) {

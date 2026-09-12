@@ -655,8 +655,11 @@ func AdvanceFloorsWithControl(current, candidate ClientFloorsV2, verified Verifi
 		current.AcceptedControlEpoch != verified.oldControlEpoch || current.ControlSetHash != verified.oldControlSetHash ||
 		current.HeadHash != verified.parentHeadHash || current.AcceptedControlRevision != verified.parentControlRevision ||
 		candidate.AcceptedControlEpoch != verified.newControlEpoch || candidate.ControlSetHash != verified.newControlSetHash ||
-		candidate.HeadHash != verified.finalHeadHash || candidate.AcceptedControlRevision != verified.finalControlRevision {
+		candidate.HeadHash != verified.finalHeadHash || candidate.AcceptedControlRevision != verified.finalControlRevision ||
+		candidate.BootstrapTransitionHash != verified.transitionProofHash &&
+			candidate.BootstrapTransitionHash != current.BootstrapTransitionHash {
 		return current, errors.New("[D112 floor] control evidence 与 parent/Final floor 不匹配")
 	}
+	candidate.BootstrapTransitionHash = current.BootstrapTransitionHash
 	return advanceFloors(current, candidate, floorAdvanceAuthority{control: true})
 }

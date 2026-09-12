@@ -37,7 +37,7 @@ func PrepareAndroidV2PrivateDeviceConfigFetchPlan(stateJSON, deliveryJSON,
 		return nil, err
 	}
 	envelope := verified.Envelope()
-	if envelope.Payload.State == "tombstone" {
+	if envelope.Payload.State != "active" {
 		return wire.MarshalCanonical(androidPrivateDeviceArtifactPlanV1{
 			Schema: 1, State: "tombstone", Mirrors: []wire.DistributionMirrorRefV1{},
 			Refs: []wire.DeviceConfigArtifactRefV1{}, SecretRefs: []json.RawMessage{},

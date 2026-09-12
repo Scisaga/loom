@@ -76,6 +76,9 @@ func AcceptLinuxLinkRuntimePlan(runtimeStatePath, deviceStatePath string,
 		return nil, errors.New("[D131 Linux runtime] durable ControlSet 缺失")
 	}
 	verifiedFloors, err := wire.VerifyDeviceViewEnvelopeWithPrevious(envelope, trustedSet, trustedPreviousSet)
+	if err == nil && envelope.SignedCurrent.Head.Body.Payload.HeadKind != "bootstrap" {
+		verifiedFloors.BootstrapTransitionHash = deviceStore.Floors().BootstrapTransitionHash
+	}
 	if err != nil || !wire.EqualCanonical(verifiedFloors, deviceStore.Floors()) {
 		return nil, errors.New("[D131 Linux runtime] candidate authority/floors 与 durable Device LKG 不一致")
 	}

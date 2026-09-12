@@ -42,6 +42,9 @@ type DeviceIdentityAuthorityV1 struct {
 	AdminCertificateProfiles  []wire.AdminCertificateProfileV1
 	DeviceCertificateProfiles []wire.DeviceCertificateProfileStateV1
 	CurrentDeviceView         wire.DeviceViewEnvelopeV2
+	// RecoveryPolicy 是 current Head 已承诺 hash 的 exact public preimage。
+	// recovery delivery 依赖它验证 old threshold；不含任何 recovery private key。
+	RecoveryPolicy *wire.RecoveryPolicyV1
 	// DeviceConfigUpdates 是从保留窗口锚点到 CurrentDeviceView 的逐 Head
 	// certified lineage；为空仅表示当前单步兼容响应（D112、D131）。
 	DeviceConfigUpdates []wire.DeviceConfigUpdateV1
@@ -148,6 +151,7 @@ func marshalDeviceConfigDelivery(identity VerifiedDeviceIdentityV1) ([]byte, err
 		updates = []wire.DeviceConfigUpdateV1{{
 			Schema: 1, Envelope: authority.CurrentDeviceView,
 			ControlSet: authority.ControlSet, PreviousControlSet: authority.PreviousControlSet,
+			RecoveryPolicy: authority.RecoveryPolicy,
 		}}
 	}
 	delivery := wire.DeviceConfigDeliveryV1{
@@ -161,10 +165,18 @@ func marshalDeviceConfigDelivery(identity VerifiedDeviceIdentityV1) ([]byte, err
 	last := &delivery.Updates[len(delivery.Updates)-1]
 	if !wire.EqualCanonical(last.Envelope, authority.CurrentDeviceView) ||
 		!wire.EqualCanonical(last.ControlSet, authority.ControlSet) ||
-		!equalOptionalControlSet(last.PreviousControlSet, authority.PreviousControlSet) {
+		!equalOptionalControlSet(last.PreviousControlSet, authority.PreviousControlSet) ||
+		!equalOptionalRecoveryPolicy(last.RecoveryPolicy, authority.RecoveryPolicy) {
 		return nil, errors.New("[D131 device_config] delivery final authority 与线性化读取不一致")
 	}
 	return wire.MarshalCanonical(delivery)
+}
+
+func equalOptionalRecoveryPolicy(left, right *wire.RecoveryPolicyV1) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return wire.EqualCanonical(*left, *right)
 }
 
 func equalOptionalControlSet(left, right *wire.ControlSetV1) bool {

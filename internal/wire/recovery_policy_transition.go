@@ -369,9 +369,12 @@ func AdvanceFloorsWithRecoveryPolicy(current, candidate ClientFloorsV2, verified
 		candidate.AcceptedRecoveryEpoch != verified.newRecoveryEpoch || candidate.RecoveryStatementHash != verified.newRecoveryStatementHash ||
 		candidate.RecoveryPolicyHash != verified.newRecoveryPolicyHash || candidate.AcceptedControlEpoch != verified.newControlEpoch ||
 		candidate.ControlSetHash != verified.controlSetHash || candidate.HeadHash != verified.activationHeadHash ||
-		candidate.AcceptedControlRevision != verified.activationControlRevision {
+		candidate.AcceptedControlRevision != verified.activationControlRevision ||
+		candidate.BootstrapTransitionHash != verified.transitionProofHash &&
+			candidate.BootstrapTransitionHash != current.BootstrapTransitionHash {
 		return current, errors.New("[D116 floor] policy rotation evidence 与 last head/Activation candidate 不匹配")
 	}
+	candidate.BootstrapTransitionHash = current.BootstrapTransitionHash
 	return advanceFloors(current, candidate, floorAdvanceAuthority{recovery: true})
 }
 
