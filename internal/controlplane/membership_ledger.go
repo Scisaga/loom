@@ -226,6 +226,7 @@ func (ledger *MembershipLedger) RecordJointCommitFromRaft(storage *RaftStorage,
 	return ledger.update(func(state *MembershipLedgerStateV1) error {
 		if state.Joint != nil {
 			reference, err := committedMembershipRecordReference(storage, &state.Candidate.OldControlSet,
+				&state.Candidate.NewControlSet,
 				body.RaftIndex, state.Joint.EntryHash, RaftRecordJointControlSet, nil, &body)
 			if err == nil && wire.EqualCanonical(state.Joint.Body, body) &&
 				state.Joint.RaftCommit != nil && wire.EqualCanonical(*state.Joint.RaftCommit, *reference) {
@@ -249,6 +250,7 @@ func (ledger *MembershipLedger) RecordJointCommitFromRaft(storage *RaftStorage,
 			return err
 		}
 		reference, err := committedMembershipRecordReference(storage, &state.Candidate.OldControlSet,
+			&state.Candidate.NewControlSet,
 			body.RaftIndex, entryHash, RaftRecordJointControlSet, nil, &body)
 		if err != nil {
 			return err
@@ -291,6 +293,7 @@ func (ledger *MembershipLedger) RecordFinalCommitFromRaft(storage *RaftStorage, 
 	return ledger.update(func(state *MembershipLedgerStateV1) error {
 		if state.Final != nil {
 			reference, err := committedMembershipRecordReference(storage, &state.Candidate.OldControlSet,
+				&state.Candidate.NewControlSet,
 				head.Body.Payload.RaftIndex, head.EntryHash, RaftRecordHead, &head, nil)
 			if err == nil && wire.EqualCanonical(state.Final.Head, head) && state.Final.RaftCommit != nil &&
 				wire.EqualCanonical(*state.Final.RaftCommit, *reference) &&
@@ -313,6 +316,7 @@ func (ledger *MembershipLedger) RecordFinalCommitFromRaft(storage *RaftStorage, 
 			return err
 		}
 		reference, err := committedMembershipRecordReference(storage, &state.Candidate.OldControlSet,
+			&state.Candidate.NewControlSet,
 			head.Body.Payload.RaftIndex, head.EntryHash, RaftRecordHead, &head, nil)
 		if err != nil {
 			return err
@@ -588,6 +592,7 @@ func validateMembershipJoint(state *MembershipLedgerStateV1) error {
 		return errors.New("[D112 joint] ledger Joint entry/hash 无效")
 	}
 	return validateMembershipCommitReference(state.Joint.RaftCommit, &state.Candidate.OldControlSet,
+		&state.Candidate.NewControlSet,
 		state.Joint.Body.RaftTerm, state.Joint.Body.RaftIndex, state.Joint.EntryHash)
 }
 
@@ -616,21 +621,23 @@ func validateMembershipFinal(state *MembershipLedgerStateV1) error {
 		return err
 	}
 	return validateMembershipCommitReference(state.Final.RaftCommit, &state.Candidate.OldControlSet,
+		&state.Candidate.NewControlSet,
 		state.Final.Head.Body.Payload.RaftTerm, state.Final.Head.Body.Payload.RaftIndex,
 		state.Final.Head.EntryHash)
 }
 
-func committedMembershipRecordReference(storage *RaftStorage, oldSet *wire.ControlSetV1,
+func committedMembershipRecordReference(storage *RaftStorage, oldSet, newSet *wire.ControlSetV1,
 	index int64, entryHash, kind string, head *wire.HeadEntryV2,
 	joint *wire.JointControlSetEntryBodyV1) (*RaftCommitReferenceV1, error) {
-	if storage == nil || oldSet == nil {
+	if storage == nil || oldSet == nil || newSet == nil {
 		return nil, errors.New("[D112 joint Raft] commit 必须绑定本机 Raft storage/old ControlSet")
 	}
 	raft := storage.SnapshotRaft()
 	oldHash, oldErr := wire.ControlSetHash(oldSet)
 	storageHash, storageErr := wire.ControlSetHash(&storage.set)
 	if oldErr != nil || storageErr != nil || oldHash != storageHash || raft.ClusterID != oldSet.ClusterID ||
-		!controlSetContains(oldSet, raft.MemberID) || index < 1 || index > raft.CommitIndex ||
+		!controlSetContains(oldSet, raft.MemberID) && !controlSetContains(newSet, raft.MemberID) ||
+		index < 1 || index > raft.CommitIndex ||
 		index > int64(len(raft.Log)) {
 		return nil, errors.New("[D112 joint Raft] membership entry 不在本机 committed prefix")
 	}
@@ -655,10 +662,11 @@ func committedMembershipRecordReference(storage *RaftStorage, oldSet *wire.Contr
 		Term: record.Term, Index: record.Index, EntryHash: record.EntryHash}, nil
 }
 
-func validateMembershipCommitReference(reference *RaftCommitReferenceV1, oldSet *wire.ControlSetV1,
+func validateMembershipCommitReference(reference *RaftCommitReferenceV1, oldSet, newSet *wire.ControlSetV1,
 	term, index int64, entryHash string) error {
 	if reference == nil || reference.Schema != 1 || reference.ClusterID != oldSet.ClusterID ||
-		!controlSetContains(oldSet, reference.MemberID) || reference.Term != term ||
+		!controlSetContains(oldSet, reference.MemberID) && !controlSetContains(newSet, reference.MemberID) ||
+		reference.Term != term ||
 		reference.Index != index || reference.EntryHash != entryHash {
 		return errors.New("[D112 joint Raft] durable commit reference 无效")
 	}

@@ -82,12 +82,112 @@ func NewControlPeerClientTLSConfig(remoteMemberID string, certificate tls.Certif
 	}, nil
 }
 
+// NewJointControlPeerServerTLSConfig 在 Joint 期间接受 old/new private directory
+// 并集，但每张证书仍必须唯一映射到同一个 member（D112、D124）。
+func NewJointControlPeerServerTLSConfig(localMemberID string, certificate tls.Certificate,
+	oldSet, newSet wire.ControlSetV1, oldDirectory, newDirectory wire.ControlPeerDirectoryV1,
+	now func() time.Time) (*tls.Config, error) {
+	if now == nil || len(certificate.Certificate) != 1 {
+		return nil, errors.New("[D124 joint mTLS] server certificate/可信时间源无效")
+	}
+	if err := validateJointPeerDirectories(&oldSet, &newSet, &oldDirectory, &newDirectory, now()); err != nil {
+		return nil, err
+	}
+	memberID, err := controlPeerMemberForJointCertificate(&oldSet, &newSet, &oldDirectory,
+		&newDirectory, certificate.Certificate[0], now())
+	if err != nil || memberID != localMemberID {
+		return nil, errors.New("[D124 joint mTLS] server certificate 不属于本机 Joint member")
+	}
+	return &tls.Config{
+		MinVersion:   tls.VersionTLS13,
+		MaxVersion:   tls.VersionTLS13,
+		Certificates: []tls.Certificate{certificate},
+		ClientAuth:   tls.RequireAnyClientCert,
+		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			if len(rawCerts) != 1 {
+				return errors.New("[D124 joint mTLS] client 必须只发送 exact 自签 leaf")
+			}
+			_, err := controlPeerMemberForJointCertificate(&oldSet, &newSet, &oldDirectory,
+				&newDirectory, rawCerts[0], now())
+			return err
+		},
+	}, nil
+}
+
+// NewJointControlPeerClientTLSConfig 对远端身份执行同一 union pin，不读取系统
+// trust store，也不允许 old/new directory 把同一证书解释成不同 member。
+func NewJointControlPeerClientTLSConfig(remoteMemberID string, certificate tls.Certificate,
+	oldSet, newSet wire.ControlSetV1, oldDirectory, newDirectory wire.ControlPeerDirectoryV1,
+	now func() time.Time) (*tls.Config, error) {
+	if now == nil || len(certificate.Certificate) != 1 {
+		return nil, errors.New("[D124 joint mTLS] client certificate/可信时间源无效")
+	}
+	if err := validateJointPeerDirectories(&oldSet, &newSet, &oldDirectory, &newDirectory, now()); err != nil {
+		return nil, err
+	}
+	if _, err := controlPeerMemberForJointCertificate(&oldSet, &newSet, &oldDirectory,
+		&newDirectory, certificate.Certificate[0], now()); err != nil {
+		return nil, errors.New("[D124 joint mTLS] client certificate 不在 Joint directory union")
+	}
+	if !controlSetContains(&oldSet, remoteMemberID) && !controlSetContains(&newSet, remoteMemberID) {
+		return nil, errors.New("[D124 joint mTLS] remote member 不在 Joint union")
+	}
+	return &tls.Config{
+		MinVersion:         tls.VersionTLS13,
+		MaxVersion:         tls.VersionTLS13,
+		Certificates:       []tls.Certificate{certificate},
+		InsecureSkipVerify: true, // 下面只接受 committed old/new directory union pin。
+		VerifyConnection: func(state tls.ConnectionState) error {
+			if len(state.PeerCertificates) != 1 {
+				return errors.New("[D124 joint mTLS] server 必须只发送 exact 自签 leaf")
+			}
+			memberID, err := controlPeerMemberForJointCertificate(&oldSet, &newSet, &oldDirectory,
+				&newDirectory, state.PeerCertificates[0].Raw, now())
+			if err != nil {
+				return err
+			}
+			if memberID != remoteMemberID {
+				return errors.New("[D124 joint mTLS] server certificate 绑定到错误 member")
+			}
+			return nil
+		},
+	}, nil
+}
+
+func validateJointPeerDirectories(oldSet, newSet *wire.ControlSetV1, oldDirectory,
+	newDirectory *wire.ControlPeerDirectoryV1, at time.Time) error {
+	if oldSet == nil || newSet == nil || oldDirectory == nil || newDirectory == nil ||
+		oldSet.ClusterID != newSet.ClusterID {
+		return errors.New("[D124 joint mTLS] old/new directory authority 无效")
+	}
+	if err := wire.ValidateControlPeerDirectoryAt(oldSet, oldDirectory, at); err != nil {
+		return err
+	}
+	return wire.ValidateControlPeerDirectoryAt(newSet, newDirectory, at)
+}
+
+func controlPeerMemberForJointCertificate(oldSet, newSet *wire.ControlSetV1, oldDirectory,
+	newDirectory *wire.ControlPeerDirectoryV1, raw []byte, at time.Time) (string, error) {
+	oldMember, oldErr := wire.ControlPeerMemberForCertificate(oldSet, oldDirectory, raw, at)
+	newMember, newErr := wire.ControlPeerMemberForCertificate(newSet, newDirectory, raw, at)
+	switch {
+	case oldErr == nil && newErr == nil && oldMember == newMember:
+		return oldMember, nil
+	case oldErr == nil && newErr != nil:
+		return oldMember, nil
+	case oldErr != nil && newErr == nil:
+		return newMember, nil
+	default:
+		return "", errors.New("[D124 joint mTLS] certificate 不属于唯一 Joint member")
+	}
+}
+
 type RaftHTTPHandler struct {
-	storage   *RaftStorage
-	set       wire.ControlSetV1
-	directory wire.ControlPeerDirectoryV1
-	now       func() time.Time
-	verify    RaftCandidateVerifier
+	storage  *RaftStorage
+	now      func() time.Time
+	identify func([]byte, time.Time) (string, error)
+	learner  bool
+	verify   RaftCandidateVerifier
 }
 
 // RaftCandidateVerifier 必须对 data-bearing record 重放其完整确定性验证；HTTP
@@ -102,8 +202,74 @@ func NewRaftHTTPHandler(storage *RaftStorage, set wire.ControlSetV1, directory w
 	if err := wire.ValidateControlPeerDirectoryAt(&set, &directory, now()); err != nil {
 		return nil, err
 	}
-	return &RaftHTTPHandler{storage: storage, set: set, directory: directory, now: now,
-		verify: verify}, nil
+	setHash, _ := wire.ControlSetHash(&set)
+	storageHash, _ := wire.ControlSetHash(&storage.set)
+	if storage.jointSet != nil || storage.SnapshotRaft().VotingDisabled || setHash != storageHash {
+		return nil, errors.New("[D104 Raft RPC] handler 与 stable Raft authority 不一致")
+	}
+	return newRaftHTTPHandler(storage, now, false, verify,
+		func(raw []byte, at time.Time) (string, error) {
+			return wire.ControlPeerMemberForCertificate(&set, &directory, raw, at)
+		}), nil
+}
+
+// NewRaftLearnerHTTPHandler 仅开放从 old stable peers 接收 AppendEntries；RequestVote
+// 永远拒绝，因此 learner catch-up 不能提前改变 quorum（D112）。
+func NewRaftLearnerHTTPHandler(storage *RaftStorage, oldSet wire.ControlSetV1,
+	oldDirectory wire.ControlPeerDirectoryV1, now func() time.Time,
+	verify RaftCandidateVerifier) (*RaftHTTPHandler, error) {
+	if storage == nil || now == nil || verify == nil || !storage.SnapshotRaft().VotingDisabled ||
+		storage.jointSet != nil {
+		return nil, errors.New("[D112 learner Raft RPC] storage/time/verifier 或 learner phase 无效")
+	}
+	if err := wire.ValidateControlPeerDirectoryAt(&oldSet, &oldDirectory, now()); err != nil {
+		return nil, err
+	}
+	oldHash, _ := wire.ControlSetHash(&oldSet)
+	storageHash, _ := wire.ControlSetHash(&storage.set)
+	if oldHash != storageHash {
+		return nil, errors.New("[D112 learner Raft RPC] old ControlSet 与 learner storage 不一致")
+	}
+	return newRaftHTTPHandler(storage, now, true, verify,
+		func(raw []byte, at time.Time) (string, error) {
+			return wire.ControlPeerMemberForCertificate(&oldSet, &oldDirectory, raw, at)
+		}), nil
+}
+
+// NewJointRaftHTTPHandler 只接受 old/new private directory 并集中的 exact peer
+// certificate；同一证书若映射到不同 member 会按歧义身份拒绝（D112、D124）。
+func NewJointRaftHTTPHandler(storage *RaftStorage, oldSet, newSet wire.ControlSetV1,
+	oldDirectory, newDirectory wire.ControlPeerDirectoryV1, now func() time.Time,
+	verify RaftCandidateVerifier) (*RaftHTTPHandler, error) {
+	if storage == nil || now == nil || verify == nil || storage.jointSet == nil ||
+		storage.SnapshotRaft().VotingDisabled {
+		return nil, errors.New("[D112 joint Raft RPC] storage/time/verifier 或 joint phase 无效")
+	}
+	if err := wire.ValidateControlPeerDirectoryAt(&oldSet, &oldDirectory, now()); err != nil {
+		return nil, err
+	}
+	if err := wire.ValidateControlPeerDirectoryAt(&newSet, &newDirectory, now()); err != nil {
+		return nil, err
+	}
+	oldHash, _ := wire.ControlSetHash(&oldSet)
+	storageHash, _ := wire.ControlSetHash(&storage.set)
+	newHash, _ := wire.ControlSetHash(&newSet)
+	activeHash, _ := wire.ControlSetHash(storage.jointSet)
+	if oldHash != storageHash || newHash != activeHash {
+		return nil, errors.New("[D112 joint Raft RPC] old/new 与 active Joint 不一致")
+	}
+	identify := func(raw []byte, at time.Time) (string, error) {
+		return controlPeerMemberForJointCertificate(&oldSet, &newSet, &oldDirectory,
+			&newDirectory, raw, at)
+	}
+	return newRaftHTTPHandler(storage, now, false, verify, identify), nil
+}
+
+func newRaftHTTPHandler(storage *RaftStorage, now func() time.Time, learner bool,
+	verify RaftCandidateVerifier,
+	identify func([]byte, time.Time) (string, error)) *RaftHTTPHandler {
+	return &RaftHTTPHandler{storage: storage, now: now, identify: identify,
+		learner: learner, verify: verify}
 }
 
 func (handler *RaftHTTPHandler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
@@ -121,7 +287,7 @@ func (handler *RaftHTTPHandler) ServeHTTP(response http.ResponseWriter, request 
 		writeRaftError(response, http.StatusUnsupportedMediaType, "只接受 application/json")
 		return
 	}
-	peerMemberID, err := wire.ControlPeerMemberForCertificate(&handler.set, &handler.directory, request.TLS.PeerCertificates[0].Raw, handler.now())
+	peerMemberID, err := handler.identify(request.TLS.PeerCertificates[0].Raw, handler.now())
 	if err != nil {
 		writeRaftError(response, http.StatusForbidden, "control-peer identity 未获当前 directory 授权")
 		return
@@ -133,6 +299,10 @@ func (handler *RaftHTTPHandler) ServeHTTP(response http.ResponseWriter, request 
 	}
 	switch request.URL.Path {
 	case RaftVotePath:
+		if handler.learner {
+			writeRaftError(response, http.StatusForbidden, "learner 不参与 RequestVote")
+			return
+		}
 		var message VoteRequestV1
 		canonical, err := wire.DecodeStrict(body, raftRPCMaxBody, &message)
 		if err != nil || !bytes.Equal(canonical, body) || message.CandidateID != peerMemberID {
@@ -156,7 +326,12 @@ func (handler *RaftHTTPHandler) ServeHTTP(response http.ResponseWriter, request 
 			writeRaftError(response, http.StatusBadRequest, err.Error())
 			return
 		}
-		result, err := handler.storage.HandleAppendEntries(message)
+		var result AppendEntriesResultV1
+		if handler.learner {
+			result, err = handler.storage.HandleLearnerAppendEntries(message)
+		} else {
+			result, err = handler.storage.HandleAppendEntries(message)
+		}
 		if err != nil {
 			writeRaftError(response, http.StatusBadRequest, err.Error())
 			return
@@ -218,17 +393,7 @@ type RaftPeerClient struct {
 }
 
 func NewRaftPeerClient(endpointURL, remoteMemberID string, certificate tls.Certificate, set wire.ControlSetV1, directory wire.ControlPeerDirectoryV1, now func() time.Time) (*RaftPeerClient, error) {
-	found := false
-	for _, member := range directory.Members {
-		if member.MemberID != remoteMemberID {
-			continue
-		}
-		for _, endpoint := range member.PeerEndpoints {
-			if endpoint.URL == endpointURL {
-				found = true
-			}
-		}
-	}
+	found := controlPeerDirectoryHasEndpoint(&directory, remoteMemberID, endpointURL)
 	parsed, err := url.ParseRequestURI(endpointURL)
 	if err != nil || parsed == nil || parsed.Scheme != "https" || parsed.Path != "" || parsed.RawQuery != "" || !found {
 		return nil, errors.New("[D124 control mTLS] endpoint 不属于目标 member 的 private directory")
@@ -237,6 +402,30 @@ func NewRaftPeerClient(endpointURL, remoteMemberID string, certificate tls.Certi
 	if err != nil {
 		return nil, err
 	}
+	return newRaftPeerClient(endpointURL, tlsConfig), nil
+}
+
+// NewJointRaftPeerClient 只允许目标 member 在 old/new directory 中明确声明的
+// exact endpoint，并使用 Joint union TLS pin（D112、D124）。
+func NewJointRaftPeerClient(endpointURL, remoteMemberID string, certificate tls.Certificate,
+	oldSet, newSet wire.ControlSetV1, oldDirectory, newDirectory wire.ControlPeerDirectoryV1,
+	now func() time.Time) (*RaftPeerClient, error) {
+	found := controlPeerDirectoryHasEndpoint(&oldDirectory, remoteMemberID, endpointURL) ||
+		controlPeerDirectoryHasEndpoint(&newDirectory, remoteMemberID, endpointURL)
+	parsed, err := url.ParseRequestURI(endpointURL)
+	if err != nil || parsed == nil || parsed.Scheme != "https" || parsed.Path != "" ||
+		parsed.RawQuery != "" || !found {
+		return nil, errors.New("[D124 joint mTLS] endpoint 不属于目标 Joint member")
+	}
+	tlsConfig, err := NewJointControlPeerClientTLSConfig(remoteMemberID, certificate, oldSet,
+		newSet, oldDirectory, newDirectory, now)
+	if err != nil {
+		return nil, err
+	}
+	return newRaftPeerClient(endpointURL, tlsConfig), nil
+}
+
+func newRaftPeerClient(endpointURL string, tlsConfig *tls.Config) *RaftPeerClient {
 	transport := &http.Transport{
 		Proxy:              nil,
 		TLSClientConfig:    tlsConfig,
@@ -249,7 +438,25 @@ func NewRaftPeerClient(endpointURL, remoteMemberID string, certificate tls.Certi
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return errors.New("[D124 control mTLS] Raft RPC 禁止 redirect")
 		},
-	}}, nil
+	}}
+}
+
+func controlPeerDirectoryHasEndpoint(directory *wire.ControlPeerDirectoryV1, memberID,
+	endpointURL string) bool {
+	if directory == nil {
+		return false
+	}
+	for _, member := range directory.Members {
+		if member.MemberID != memberID {
+			continue
+		}
+		for _, endpoint := range member.PeerEndpoints {
+			if endpoint.URL == endpointURL {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (client *RaftPeerClient) RequestVote(ctx context.Context, request VoteRequestV1) (VoteResultV1, error) {

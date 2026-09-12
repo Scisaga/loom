@@ -262,7 +262,7 @@ func validateStableRaftPeers(storage *RaftStorage, set wire.ControlSetV1,
 	state := storage.SnapshotRaft()
 	wantHash, _ := wire.ControlSetHash(&set)
 	storageHash, _ := wire.ControlSetHash(&storage.set)
-	if state.VotingDisabled || state.ClusterID != set.ClusterID || wantHash != storageHash ||
+	if state.VotingDisabled || storage.jointSet != nil || state.ClusterID != set.ClusterID || wantHash != storageHash ||
 		len(peers) != len(set.Members)-1 {
 		return nil, errors.New("[D104 Raft] peer map 必须精确覆盖 committed ControlSet remotes")
 	}

@@ -43,6 +43,11 @@ func ApplyCommittedMembershipPrefix(ctx context.Context, storage *RaftStorage,
 			if err := ledger.RecordJointCommitFromRaft(storage, *record.JointControlSet); err != nil {
 				return applied, err
 			}
+			ledgerState := ledger.Snapshot()
+			if err := storage.ActivateJointControlSet(ledgerState.Candidate.OldControlSet,
+				ledgerState.Candidate.NewControlSet, record.EntryHash); err != nil {
+				return applied, err
+			}
 		case RaftRecordHead:
 			if record.Head == nil || record.Head.Body.Payload.HeadKind != "control_set_final" {
 				return applied, errors.New("[D112 joint apply] membership prefix 含非 Final Head")

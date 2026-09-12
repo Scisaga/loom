@@ -105,6 +105,14 @@ func TestMembershipLedgerRecoversJointAndFinalCommitBeforeQC(t *testing.T) {
 	if reopened.Snapshot().Phase != MembershipLedgerJointCommittedNotCertified {
 		t.Fatal("Joint commit→QC 崩溃恢复丢失")
 	}
+	if _, err := OpenRaftStorage(raft.path, fixture.oldSet.Members[0].MemberID, fixture.oldSet); err == nil {
+		t.Fatal("active Joint 在重启后退回了 stable Raft")
+	}
+	raft, err = OpenJointRaftStorage(raft.path, fixture.oldSet.Members[0].MemberID,
+		fixture.oldSet, fixture.newSet)
+	if err != nil {
+		t.Fatal(err)
+	}
 	jointHash, _ := wire.JointControlSetEntryHash(&jointBody)
 	jointAttestation := wire.JointConfigAttestationForEntry(&jointBody, jointHash)
 	jointSignatures := membershipConfigSignatures(t, fixture, func(member wire.ControlMemberV1,

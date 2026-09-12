@@ -84,10 +84,11 @@ type AppendEntriesResultV1 struct {
 
 // RaftStorage 实现 D104 要求的持久状态机边界；网络层只传递以上消息，不能绕过这里写日志。
 type RaftStorage struct {
-	mu    sync.Mutex
-	path  string
-	set   wire.ControlSetV1
-	state RaftPersistentStateV1
+	mu       sync.Mutex
+	path     string
+	set      wire.ControlSetV1
+	jointSet *wire.ControlSetV1
+	state    RaftPersistentStateV1
 }
 
 func OpenRaftStorage(path, memberID string, set wire.ControlSetV1) (*RaftStorage, error) {
@@ -130,10 +131,82 @@ func OpenRaftStorage(path, memberID string, set wire.ControlSetV1) (*RaftStorage
 	if err := validateRaftPersistentState(&state, &set); err != nil {
 		return nil, err
 	}
+	if activeJointRecord(&state) != nil {
+		return nil, errors.New("[D112 joint Raft] committed Joint 必须用 OpenJointRaftStorage 恢复")
+	}
 	if state.MemberID != memberID {
 		return nil, errors.New("[D104 Raft] 磁盘 member ID 与启动身份不一致")
 	}
 	storage.state = state
+	return storage, nil
+}
+
+// OpenRaftLearnerStorage 创建不具投票权的新 member 存储；它只能通过 learner
+// AppendEntries 追平 old stable prefix，直到 committed Joint 激活联合配置（D112）。
+func OpenRaftLearnerStorage(path, memberID string, oldSet wire.ControlSetV1) (*RaftStorage, error) {
+	if path == "" || memberID == "" || controlSetContains(&oldSet, memberID) {
+		return nil, errors.New("[D112 learner Raft] learner path/member 必须位于 old ControlSet 之外")
+	}
+	if err := wire.ValidateControlSet(&oldSet); err != nil {
+		return nil, err
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		if err == nil {
+			return nil, errors.New("[D112 learner Raft] learner storage 已存在，必须显式恢复")
+		}
+		return nil, err
+	}
+	storage := &RaftStorage{path: path, set: oldSet, state: RaftPersistentStateV1{
+		Schema: 3, ClusterID: oldSet.ClusterID, MemberID: memberID, VotingDisabled: true,
+		Log: []RaftLogRecordV1{},
+	}}
+	storage.state.ControlSetHash, _ = wire.ControlSetHash(&oldSet)
+	if err := storage.persistRaftStateLocked(&storage.state); err != nil {
+		return nil, err
+	}
+	return storage, nil
+}
+
+// OpenJointRaftStorage 从 committed Joint record 恢复 old/new 联合投票规则；仅传入
+// 一侧集合或错误 new set 都会失败关闭，不能重启后退回 old stable quorum（D112）。
+func OpenJointRaftStorage(path, memberID string, oldSet, newSet wire.ControlSetV1) (*RaftStorage, error) {
+	if err := wire.ValidateControlSet(&oldSet); err != nil {
+		return nil, err
+	}
+	if err := wire.ValidateControlSet(&newSet); err != nil {
+		return nil, err
+	}
+	if oldSet.ClusterID != newSet.ClusterID ||
+		!controlSetContains(&oldSet, memberID) && !controlSetContains(&newSet, memberID) {
+		return nil, errors.New("[D112 joint Raft] local member/old/new ControlSet 无效")
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var state RaftPersistentStateV1
+	if _, err := wire.DecodeStrict(body, 64<<20, &state); err != nil {
+		return nil, fmt.Errorf("[D112 joint Raft] persistent state 解码失败: %w", err)
+	}
+	joint := activeJointRecord(&state)
+	oldHash, _ := wire.ControlSetHash(&oldSet)
+	newHash, _ := wire.ControlSetHash(&newSet)
+	if joint == nil || state.ControlSetHash != oldHash || joint.OldControlSetHash != oldHash ||
+		joint.NewControlSetHash != newHash || state.MemberID != memberID {
+		return nil, errors.New("[D112 joint Raft] committed Joint 与启动 authority 不一致")
+	}
+	storage := &RaftStorage{path: path, set: oldSet, jointSet: cloneControlSetPointer(&newSet), state: state}
+	if err := validateRaftPersistentStateWithJoint(&state, &oldSet, &newSet); err != nil {
+		return nil, err
+	}
+	if state.VotingDisabled {
+		candidate := cloneRaftState(state)
+		candidate.VotingDisabled = false
+		candidate.VotedFor = ""
+		if err := storage.commitRaftStateLocked(candidate); err != nil {
+			return nil, err
+		}
+	}
 	return storage, nil
 }
 
@@ -190,7 +263,8 @@ func (s *RaftStorage) ObserveTerm(term int64) (bool, error) {
 func (s *RaftStorage) HandleVote(request VoteRequestV1) (VoteResultV1, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if request.Term < 1 || request.LastLogIndex < 0 || request.LastLogTerm < 0 || !controlSetContains(&s.set, request.CandidateID) {
+	if request.Term < 1 || request.LastLogIndex < 0 || request.LastLogTerm < 0 ||
+		!raftAuthorityContains(s, request.CandidateID) {
 		return VoteResultV1{}, errors.New("[D104 Raft] vote request 字段或 candidate 无效")
 	}
 	if s.state.VotingDisabled {
@@ -231,6 +305,9 @@ func (s *RaftStorage) AppendLocal(entry wire.HeadEntryV2) error {
 	if s.state.VotingDisabled {
 		return errors.New("[D112 joint Raft] 已移除 member 禁止追加日志")
 	}
+	if s.jointSet != nil && entry.Body.Payload.HeadKind != "control_set_final" {
+		return errors.New("[D112 joint Raft] joint-finalization-only 禁止追加普通 Head")
+	}
 	if entry.Body.Payload.ClusterID != s.state.ClusterID {
 		return errors.New("[D104 Raft] local entry cluster 不匹配")
 	}
@@ -268,6 +345,9 @@ func (s *RaftStorage) AppendLocalJointControlSet(body wire.JointControlSetEntryB
 	defer s.mu.Unlock()
 	if s.state.VotingDisabled {
 		return errors.New("[D112 joint Raft] 已移除 member 禁止追加 Joint")
+	}
+	if s.jointSet != nil {
+		return errors.New("[D112 joint Raft] 已有 active Joint，禁止追加第二个 transition")
 	}
 	oldHash, oldErr := wire.ControlSetHash(oldSet)
 	storageHash, storageErr := wire.ControlSetHash(&s.set)
@@ -325,13 +405,24 @@ func (s *RaftStorage) AppendLocalNoOp() (RaftLogRecordV1, error) {
 
 // HandleAppendEntries 实现 log matching，并禁止覆盖任何 committed prefix。
 func (s *RaftStorage) HandleAppendEntries(request AppendEntriesRequestV1) (AppendEntriesResultV1, error) {
+	return s.handleAppendEntries(request, false)
+}
+
+// HandleLearnerAppendEntries 只允许尚未进入 committed Joint 的 non-voter 从 old
+// stable leader 复制日志；它不开放 RequestVote，也不把 learner 算入 quorum（D112）。
+func (s *RaftStorage) HandleLearnerAppendEntries(request AppendEntriesRequestV1) (AppendEntriesResultV1, error) {
+	return s.handleAppendEntries(request, true)
+}
+
+func (s *RaftStorage) handleAppendEntries(request AppendEntriesRequestV1,
+	allowLearner bool) (AppendEntriesResultV1, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if request.Term < 1 || request.PrevLogIndex < 0 || request.PrevLogTerm < 0 || request.LeaderCommit < 0 ||
-		!controlSetContains(&s.set, request.LeaderID) {
+		!raftAuthorityContains(s, request.LeaderID) {
 		return AppendEntriesResultV1{}, errors.New("[D104 Raft] AppendEntries header/leader 无效")
 	}
-	if s.state.VotingDisabled {
+	if s.state.VotingDisabled && (!allowLearner || s.jointSet != nil || controlSetContains(&s.set, s.state.MemberID)) {
 		return AppendEntriesResultV1{Term: s.state.CurrentTerm}, nil
 	}
 	if request.Term < s.state.CurrentTerm {
@@ -396,7 +487,7 @@ func (s *RaftStorage) HandleAppendEntries(request AppendEntriesRequestV1) (Appen
 func (s *RaftStorage) AdvanceLeaderCommit(match map[string]int64) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.state.CurrentTerm < 1 || s.state.VotingDisabled {
+	if s.state.CurrentTerm < 1 || s.state.VotingDisabled || s.jointSet != nil {
 		return s.state.CommitIndex, errors.New("[D104 Raft] 尚无当前任期")
 	}
 	indices := make(map[string]int64, len(match)+1)
@@ -452,6 +543,13 @@ func (s *RaftStorage) AdvanceJointLeaderCommit(match map[string]int64,
 	storageHash, _ := wire.ControlSetHash(&s.set)
 	if oldHash != storageHash || oldSet.ClusterID != newSet.ClusterID || oldSet.ClusterID != s.state.ClusterID {
 		return s.state.CommitIndex, errors.New("[D112 joint Raft] old/new/storage authority 不一致")
+	}
+	if s.jointSet != nil {
+		activeHash, _ := wire.ControlSetHash(s.jointSet)
+		newHash, _ := wire.ControlSetHash(&newSet)
+		if activeHash != newHash {
+			return s.state.CommitIndex, errors.New("[D112 joint Raft] new ControlSet 与 active Joint 不一致")
+		}
 	}
 	indices := make(map[string]int64, len(match)+1)
 	for memberID, index := range match {
@@ -520,6 +618,56 @@ func (s *RaftStorage) CommittedAfter(index int64) ([]RaftLogRecordV1, error) {
 	return result, nil
 }
 
+// ActivateJointControlSet 从本机 committed prefix 恢复联合配置；new learner 到此
+// 才解除 voting_disabled，随后选举与提交必须同时满足 old/new 多数（D112）。
+func (s *RaftStorage) ActivateJointControlSet(oldSet, newSet wire.ControlSetV1,
+	jointEntryHash string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := wire.ValidateControlSet(&oldSet); err != nil {
+		return err
+	}
+	if err := wire.ValidateControlSet(&newSet); err != nil {
+		return err
+	}
+	oldHash, _ := wire.ControlSetHash(&oldSet)
+	newHash, _ := wire.ControlSetHash(&newSet)
+	storageHash, _ := wire.ControlSetHash(&s.set)
+	joint := activeJointRecord(&s.state)
+	if storageHash != oldHash || s.state.ControlSetHash != oldHash || oldSet.ClusterID != newSet.ClusterID ||
+		joint == nil || joint.OldControlSetHash != oldHash || joint.NewControlSetHash != newHash {
+		return errors.New("[D112 joint Raft] committed Joint 与 old/new authority 不一致")
+	}
+	index := joint.RaftIndex
+	if index < 1 || index > s.state.CommitIndex || index > int64(len(s.state.Log)) ||
+		s.state.Log[index-1].EntryHash != jointEntryHash {
+		return errors.New("[D112 joint Raft] Joint entry/hash 尚未 committed")
+	}
+	if !controlSetContains(&oldSet, s.state.MemberID) && !controlSetContains(&newSet, s.state.MemberID) {
+		return errors.New("[D112 joint Raft] 本机不在 Joint union")
+	}
+	if s.jointSet != nil {
+		activeHash, _ := wire.ControlSetHash(s.jointSet)
+		if activeHash == newHash && !s.state.VotingDisabled {
+			return nil
+		}
+		return errors.New("[D112 joint Raft] 已激活 Joint authority 冲突")
+	}
+	candidate := cloneRaftState(s.state)
+	candidate.VotingDisabled = false
+	if candidate.VotedFor != "" && !controlSetContains(&oldSet, candidate.VotedFor) &&
+		!controlSetContains(&newSet, candidate.VotedFor) {
+		candidate.VotedFor = ""
+	}
+	if err := s.persistRaftStateForAuthorityLocked(&candidate, &oldSet, &newSet); err != nil {
+		return err
+	}
+	s.state = candidate
+	s.set = oldSet
+	s.jointSet = cloneControlSetPointer(&newSet)
+	return nil
+}
+
 // ActivateFinalControlSet 只在 exact Final 已由 joint quorum 提交后切换本机稳定配置。
 // 被移除的节点不能调用该方法继续参选；它应在观察到 certified Final 后停止（D112）。
 func (s *RaftStorage) ActivateFinalControlSet(newSet wire.ControlSetV1, finalEntryHash string) error {
@@ -563,18 +711,41 @@ func (s *RaftStorage) ActivateFinalControlSet(newSet wire.ControlSetV1, finalEnt
 	}
 	s.state = candidate
 	s.set = newSet
+	s.jointSet = nil
 	return nil
 }
 
 func validateRaftPersistentState(state *RaftPersistentStateV1, set *wire.ControlSetV1) error {
+	return validateRaftPersistentStateAuthority(state, set, nil)
+}
+
+func validateRaftPersistentStateWithJoint(state *RaftPersistentStateV1, oldSet,
+	newSet *wire.ControlSetV1) error {
+	return validateRaftPersistentStateAuthority(state, oldSet, newSet)
+}
+
+func validateRaftPersistentStateAuthority(state *RaftPersistentStateV1, set,
+	jointSet *wire.ControlSetV1) error {
 	setHash, setErr := wire.ControlSetHash(set)
+	memberAuthorized := controlSetContains(set, state.MemberID)
+	if jointSet != nil {
+		jointHash, jointErr := wire.ControlSetHash(jointSet)
+		joint := activeJointRecord(state)
+		if jointErr != nil || joint == nil || joint.OldControlSetHash != setHash ||
+			joint.NewControlSetHash != jointHash || jointSet.ClusterID != set.ClusterID {
+			return errors.New("[D112 joint Raft] persistent Joint authority 无效")
+		}
+		memberAuthorized = memberAuthorized || controlSetContains(jointSet, state.MemberID)
+	}
 	if state.Schema != 3 || setErr != nil || state.ControlSetHash != setHash ||
-		state.ClusterID != set.ClusterID || !state.VotingDisabled && !controlSetContains(set, state.MemberID) ||
+		state.ClusterID != set.ClusterID || !state.VotingDisabled && !memberAuthorized ||
 		state.CurrentTerm < 0 || state.CommitIndex < 0 || state.LastApplied < 0 ||
 		state.LastApplied > state.CommitIndex || state.CommitIndex > int64(len(state.Log)) {
 		return errors.New("[D104 Raft] persistent state header/floors 无效")
 	}
-	if state.VotingDisabled && state.VotedFor != "" || state.VotedFor != "" && !controlSetContains(set, state.VotedFor) {
+	voteAuthorized := state.VotedFor == "" || controlSetContains(set, state.VotedFor) ||
+		jointSet != nil && controlSetContains(jointSet, state.VotedFor)
+	if state.VotingDisabled && state.VotedFor != "" || !voteAuthorized {
 		return errors.New("[D104 Raft] voted_for 不在 committed ControlSet")
 	}
 	for i := range state.Log {
@@ -590,6 +761,27 @@ func validateRaftPersistentState(state *RaftPersistentStateV1, set *wire.Control
 		}
 	}
 	return nil
+}
+
+func activeJointRecord(state *RaftPersistentStateV1) *wire.JointControlSetEntryBodyV1 {
+	if state == nil || state.CommitIndex < 1 || state.CommitIndex > int64(len(state.Log)) {
+		return nil
+	}
+	var joint *wire.JointControlSetEntryBodyV1
+	for index := int64(1); index <= state.CommitIndex; index++ {
+		record := &state.Log[index-1]
+		if record.Kind == RaftRecordJointControlSet && record.JointControlSet != nil {
+			copy := *record.JointControlSet
+			joint = &copy
+			continue
+		}
+		if joint != nil && record.Kind == RaftRecordHead && record.Head != nil &&
+			record.Head.Body.Payload.HeadKind == "control_set_final" &&
+			state.ControlSetHash == record.Head.Body.Payload.ControlSetHash {
+			joint = nil
+		}
+	}
+	return joint
 }
 
 func recordForEntry(entry wire.HeadEntryV2) RaftLogRecordV1 {
@@ -626,6 +818,11 @@ func matchesPrevious(log []RaftLogRecordV1, index, term int64, hash string) bool
 func controlSetContains(set *wire.ControlSetV1, memberID string) bool {
 	position := sort.Search(len(set.Members), func(i int) bool { return set.Members[i].MemberID >= memberID })
 	return position < len(set.Members) && set.Members[position].MemberID == memberID
+}
+
+func raftAuthorityContains(storage *RaftStorage, memberID string) bool {
+	return storage != nil && (controlSetContains(&storage.set, memberID) ||
+		storage.jointSet != nil && controlSetContains(storage.jointSet, memberID))
 }
 
 func cloneRaftState(state RaftPersistentStateV1) RaftPersistentStateV1 {
@@ -782,12 +979,17 @@ func (s *RaftStorage) commitRaftStateLocked(candidate RaftPersistentStateV1) err
 }
 
 func (s *RaftStorage) persistRaftStateLocked(state *RaftPersistentStateV1) error {
-	return s.persistRaftStateForSetLocked(state, &s.set)
+	return s.persistRaftStateForAuthorityLocked(state, &s.set, s.jointSet)
 }
 
 func (s *RaftStorage) persistRaftStateForSetLocked(state *RaftPersistentStateV1,
 	set *wire.ControlSetV1) error {
-	if err := validateRaftPersistentState(state, set); err != nil {
+	return s.persistRaftStateForAuthorityLocked(state, set, nil)
+}
+
+func (s *RaftStorage) persistRaftStateForAuthorityLocked(state *RaftPersistentStateV1,
+	set, jointSet *wire.ControlSetV1) error {
+	if err := validateRaftPersistentStateAuthority(state, set, jointSet); err != nil {
 		return err
 	}
 	canonical, err := wire.MarshalCanonical(state)

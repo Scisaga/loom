@@ -147,6 +147,94 @@ func TestRaftHTTPRejectsCandidateBeforeFsyncButPersistsHigherTerm(t *testing.T) 
 	}
 }
 
+func TestRaftLearnerHTTPReplicatesButNeverVotes(t *testing.T) {
+	oldSet, _ := testControlSet(t, 1)
+	newSet, _ := testControlSet(t, 3)
+	directory, certificates := raftDirectoryFixture(t, oldSet)
+	now := func() time.Time { return time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC) }
+	storage, err := OpenRaftLearnerStorage(filepath.Join(t.TempDir(), "learner.json"),
+		newSet.Members[1].MemberID, oldSet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified := 0
+	handler, err := NewRaftLearnerHTTPHandler(storage, oldSet, directory, now,
+		func(_ context.Context, record RaftLogRecordV1) error {
+			if record.Kind != RaftRecordHead {
+				t.Fatal("learner verifier 收到错误 record kind")
+			}
+			verified++
+			return nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vote := VoteRequestV1{Term: 1, CandidateID: oldSet.Members[0].MemberID}
+	body, _ := wire.MarshalCanonical(vote)
+	request := httptest.NewRequest(http.MethodPost, "https://10.20.0.1:7443"+RaftVotePath,
+		bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.TLS = &tls.ConnectionState{HandshakeComplete: true, Version: tls.VersionTLS13,
+		PeerCertificates: []*x509.Certificate{certificates[oldSet.Members[0].MemberID].Leaf}}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || storage.SnapshotRaft().CurrentTerm != 0 {
+		t.Fatalf("learner vote response=%d state=%#v", response.Code, storage.SnapshotRaft())
+	}
+
+	head := testControlHead(t, &oldSet)
+	appendRequest := AppendEntriesRequestV1{Term: 1, LeaderID: oldSet.Members[0].MemberID,
+		PrevLogHash: wire.EmptyHashV1, Entries: []RaftLogRecordV1{recordForEntry(head)}, LeaderCommit: 1}
+	body, _ = wire.MarshalCanonical(appendRequest)
+	request = httptest.NewRequest(http.MethodPost, "https://10.20.0.1:7443"+RaftAppendPath,
+		bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.TLS = &tls.ConnectionState{HandshakeComplete: true, Version: tls.VersionTLS13,
+		PeerCertificates: []*x509.Certificate{certificates[oldSet.Members[0].MemberID].Leaf}}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	state := storage.SnapshotRaft()
+	if response.Code != http.StatusOK || verified != 1 || state.CommitIndex != 1 || len(state.Log) != 1 ||
+		!state.VotingDisabled {
+		t.Fatalf("learner append response=%d verified=%d state=%#v body=%s",
+			response.Code, verified, state, response.Body.String())
+	}
+}
+
+func TestJointControlPeerTLSAcceptsExactOldNewDirectoryUnion(t *testing.T) {
+	oldSet, _ := testControlSet(t, 1)
+	newSet, _ := testControlSet(t, 3)
+	oldDirectory, oldCertificates := raftDirectoryFixture(t, oldSet)
+	newDirectory, newCertificates := raftDirectoryFixture(t, newSet)
+	now := func() time.Time { return time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC) }
+	serverConfig, err := NewJointControlPeerServerTLSConfig(oldSet.Members[0].MemberID,
+		oldCertificates[oldSet.Members[0].MemberID], oldSet, newSet, oldDirectory, newDirectory, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newOnlyMember := newSet.Members[1].MemberID
+	if err := serverConfig.VerifyPeerCertificate([][]byte{
+		newCertificates[newOnlyMember].Certificate[0],
+	}, nil); err != nil {
+		t.Fatalf("server 拒绝 new-side exact peer cert: %v", err)
+	}
+	clientConfig, err := NewJointControlPeerClientTLSConfig(newOnlyMember,
+		oldCertificates[oldSet.Members[0].MemberID], oldSet, newSet, oldDirectory, newDirectory, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := clientConfig.VerifyConnection(tls.ConnectionState{PeerCertificates: []*x509.Certificate{
+		newCertificates[newOnlyMember].Leaf,
+	}}); err != nil {
+		t.Fatalf("client 拒绝 new-side exact remote cert: %v", err)
+	}
+	if err := clientConfig.VerifyConnection(tls.ConnectionState{PeerCertificates: []*x509.Certificate{
+		newCertificates[newSet.Members[2].MemberID].Leaf,
+	}}); err == nil {
+		t.Fatal("client 接受了错误 Joint remote member cert")
+	}
+}
+
 func TestControlPeerTLSConfigUsesTLS13AndExactRemoteMember(t *testing.T) {
 	set, _ := testControlSet(t, 3)
 	directory, certificates := raftDirectoryFixture(t, set)
