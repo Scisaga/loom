@@ -37,8 +37,12 @@ type androidEnrollmentInstallationV1 struct {
 	DeviceApprovedAt      string                                `json:"device_approved_at,omitempty"`
 	ResultArtifact        wire.EnrollmentResultArtifactV1       `json:"result_artifact"`
 	Credentials           []androidInstalledSecretV1            `json:"credentials"`
+	// CurrentSecretArtifactRefs 与首次 ResultArtifact 证据分离；nil 仅表示
+	// 旧版安装 blob，指向空 slice 则表示已合法轮换为零凭据。
+	CurrentSecretArtifactRefs *[]wire.SecretArtifactRefV2 `json:"current_secret_artifact_refs,omitempty"`
 	// Configs 在旧版已安装 blob 中可缺省；新 Enrollment 不得走该兼容路径。
-	Configs []androidInstalledConfigV1 `json:"configs,omitempty"`
+	Configs             []androidInstalledConfigV1     `json:"configs,omitempty"`
+	DistributionMirrors []wire.DistributionMirrorRefV1 `json:"distribution_mirrors,omitempty"`
 }
 
 type androidInstalledSecretV1 struct {
@@ -176,12 +180,13 @@ func prepareAndroidV2EnrollmentInstallationStateInputs(descriptorJSON, proofBund
 		return nil, errors.New("[D124 Android] installed configs 必须是 canonical array")
 	}
 	return prepareAndroidEnrollmentInstallationState(core, result, *completion,
-		inputs.verified, credentials, configs)
+		inputs.verified, inputs.descriptor.DistributionMirrors, credentials, configs)
 }
 
 func prepareAndroidEnrollmentInstallationState(core wire.EnrollmentClaimCoreV2,
 	result wire.EnrollmentClaimResultV2, completion enrollmentv2.VerifiedEnrollmentCompletionV1,
-	proof wire.VerifiedInviteProofV2, credentials []androidInstalledSecretV1,
+	proof wire.VerifiedInviteProofV2, mirrors []wire.DistributionMirrorRefV1,
+	credentials []androidInstalledSecretV1,
 	configs []androidInstalledConfigV1,
 ) ([]byte, error) {
 	if result.ResultArtifact == nil || credentials == nil {
@@ -224,6 +229,9 @@ func prepareAndroidEnrollmentInstallationState(core wire.EnrollmentClaimCoreV2,
 		DeviceProfile: &profile, DeviceIssuance: &issuance,
 		DeviceApprovedAt: completion.DeviceCertificateApprovedAt(), ResultArtifact: *result.ResultArtifact,
 		Credentials: credentials, Configs: configs,
+		CurrentSecretArtifactRefs: cloneAndroidSecretArtifactRefs(
+			result.ResultArtifact.SecretArtifactRefs),
+		DistributionMirrors: append([]wire.DistributionMirrorRefV1(nil), mirrors...),
 	}
 	return marshalAndroidV2DeviceState(state)
 }
@@ -336,6 +344,9 @@ func validateAndroidEnrollmentInstallation(installation *androidEnrollmentInstal
 		return errors.New("[D102 Android] durable certificate 未绑定 Keystore identity")
 	}
 	refs := installation.ResultArtifact.SecretArtifactRefs
+	if installation.CurrentSecretArtifactRefs != nil {
+		refs = *installation.CurrentSecretArtifactRefs
+	}
 	if len(refs) != len(installation.Credentials) ||
 		envelope.Payload.Active != nil && len(refs) != len(envelope.SecretArtifactRefs) {
 		return errors.New("[D124 Android] durable credentials/refs 数量不匹配")
@@ -348,7 +359,10 @@ func validateAndroidEnrollmentInstallation(installation *androidEnrollmentInstal
 			canonicalEnvelopeRef, envelopeErr = wire.CanonicalizeStrict(envelope.SecretArtifactRefs[index])
 		}
 		credential := &installation.Credentials[index]
-		if refErr != nil || envelopeErr != nil || !bytes.Equal(canonicalRef, canonicalEnvelopeRef) ||
+		if refErr != nil || wire.ValidateSecretArtifactRef(&refs[index]) != nil ||
+			refs[index].ClusterID != envelope.Payload.ClusterID || refs[index].Owner.Kind != "device" ||
+			refs[index].Owner.Device == nil || refs[index].Owner.Device.DeviceID != envelope.Payload.DeviceID ||
+			envelopeErr != nil || !bytes.Equal(canonicalRef, canonicalEnvelopeRef) ||
 			credential.SecretID != refs[index].SecretID || credential.Purpose != refs[index].Purpose ||
 			credential.Generation != refs[index].Generation || credential.ImmutableRef != refs[index].ImmutableRef {
 			return errors.New("[D124 Android] durable credential 未绑定 exact secret ref")
@@ -374,7 +388,17 @@ func validateAndroidEnrollmentInstallation(installation *androidEnrollmentInstal
 			return err
 		}
 	}
+	if installation.DistributionMirrors != nil {
+		if err := wire.ValidateDistributionMirrorRefs(installation.DistributionMirrors); err != nil {
+			return errors.New("[D124 Android] durable distribution mirrors 无效")
+		}
+	}
 	return nil
+}
+
+func cloneAndroidSecretArtifactRefs(refs []wire.SecretArtifactRefV2) *[]wire.SecretArtifactRefV2 {
+	cloned := append([]wire.SecretArtifactRefV2(nil), refs...)
+	return &cloned
 }
 
 func validateAndroidInstalledConfigs(configs []androidInstalledConfigV1,

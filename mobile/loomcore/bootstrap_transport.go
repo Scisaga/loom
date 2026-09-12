@@ -632,7 +632,8 @@ func (session *AndroidV2BootstrapSession) PrepareResumeInstallationStateWithConf
 		return nil, err
 	}
 	return prepareAndroidEnrollmentInstallationState(*session.core, result,
-		*session.completedEvidence, session.resume.verified, credentials, configs)
+		*session.completedEvidence, session.resume.verified,
+		session.resume.descriptor.DistributionMirrors, credentials, configs)
 }
 
 func (session *AndroidV2BootstrapSession) resumePoPBodyAt(now time.Time) (wire.EnrollmentPoPBodyV2, error) {

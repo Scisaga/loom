@@ -91,6 +91,37 @@ class V2DeviceStateStore(context: Context) {
         return commitExact(next)
     }
 
+    /** #14 / D124：新 config bytes 与 delivery/floors 在同一 protected blob 原子提交。 */
+    @Synchronized
+    internal fun acceptPrivateDeliveryWithConfigs(delivery: ByteArray, configs: ByteArray): ByteArray {
+        val current = checkNotNull(protected.get(STATE)) { "[D131 Android config] v2 Device state 尚未安装" }
+        val next = Loomcore.prepareAndroidV2PrivateDeviceConfigUpdateWithConfigs(
+            current,
+            delivery,
+            configs,
+            keys.ensureIdentity(),
+        )
+        return commitExact(next)
+    }
+
+    /** #14 / D124：配置与解封凭据只能与对应 final view 一起原子提交。 */
+    @Synchronized
+    internal fun acceptPrivateDeliveryWithArtifacts(
+        delivery: ByteArray,
+        configs: ByteArray,
+        credentials: ByteArray,
+    ): ByteArray {
+        val current = checkNotNull(protected.get(STATE)) { "[D131 Android config] v2 Device state 尚未安装" }
+        val next = Loomcore.prepareAndroidV2PrivateDeviceConfigUpdateWithArtifacts(
+            current,
+            delivery,
+            configs,
+            credentials,
+            keys.ensureIdentity(),
+        )
+        return commitExact(next)
+    }
+
     /** Issue #14：hydrate 后秘密只作为同一 VpnService 的内存启动参数。 */
     @Synchronized
     fun runtimeProfile(): ManagedProfile? = protected.get(STATE)?.let { state ->

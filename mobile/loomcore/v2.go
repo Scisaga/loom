@@ -194,24 +194,8 @@ func PrepareAndroidV2PrivateDeviceViewUpdate(currentStateJSON, envelopeJSON,
 func PrepareAndroidV2PrivateDeviceConfigUpdate(currentStateJSON, deliveryJSON,
 	identitySPKIDER []byte,
 ) ([]byte, error) {
-	current, err := decodeAndroidV2DeviceState(currentStateJSON)
-	if err != nil {
-		return nil, err
-	}
-	if current.ControlSet == nil || current.Enrollment == nil {
-		return nil, errors.New("[D131 Android config] protected ControlSet/Enrollment 不完整")
-	}
-	identityHash, err := wire.HashBytes(wire.DomainEnrollmentIdentitySPKI, identitySPKIDER)
-	if err != nil || identityHash != current.Enrollment.IdentityKeyHash {
-		return nil, errors.New("[D131 Android config] Keystore identity 与 protected state 不匹配")
-	}
-	var delivery wire.DeviceConfigDeliveryV1
-	if err := decodeExactAndroidV2(deliveryJSON, 32<<20, &delivery, "private Device delivery"); err != nil {
-		return nil, err
-	}
-	verified, err := wire.VerifyDeviceConfigDeliveryFromProtected(&delivery, &current.Envelope,
-		current.Floors, current.ControlSet, current.PreviousControlSet,
-		current.Envelope.Payload.DeviceID, identityHash)
+	current, _, verified, err := verifyAndroidV2PrivateDeviceConfigDelivery(
+		currentStateJSON, deliveryJSON, identitySPKIDER)
 	if err != nil {
 		return nil, err
 	}
@@ -228,6 +212,149 @@ func PrepareAndroidV2PrivateDeviceConfigUpdate(currentStateJSON, deliveryJSON,
 		Schema: 1, Floors: verified.Floors(), Envelope: envelope, ControlSet: &set,
 		PreviousControlSet: verified.PreviousControlSet(), Enrollment: current.Enrollment,
 	})
+}
+
+// PrepareAndroidV2PrivateDeviceConfigUpdateWithConfigs 在全部新 config 已由 ref
+// 重绑后，把 configs 与 final view/floors/ControlSet 放入同一个 EncryptedStore blob。
+func PrepareAndroidV2PrivateDeviceConfigUpdateWithConfigs(currentStateJSON, deliveryJSON,
+	installedConfigsJSON, identitySPKIDER []byte,
+) ([]byte, error) {
+	current, _, verified, err := verifyAndroidV2PrivateDeviceConfigDelivery(
+		currentStateJSON, deliveryJSON, identitySPKIDER)
+	if err != nil {
+		return nil, err
+	}
+	if current.Enrollment == nil {
+		return nil, errors.New("[D124 Android config] enrollment installation 缺失")
+	}
+	var configs []androidInstalledConfigV1
+	if err := decodeExactAndroidV2(installedConfigsJSON, androidMaximumConfigTotalBytes+(4<<20),
+		&configs, "private installed configs"); err != nil || configs == nil {
+		return nil, errors.New("[D124 Android config] installed configs 不是 canonical array")
+	}
+	envelope := verified.Envelope()
+	if envelope.Payload.State == "active" &&
+		!equalRawAndroidV2(envelope.SecretArtifactRefs, current.Envelope.SecretArtifactRefs) {
+		return nil, errors.New("[D124 Android config] secret refs 已变化，必须先取回并原子解封")
+	}
+	if envelope.Payload.State == "tombstone" {
+		configs = nil
+	}
+	current.Enrollment.Configs = configs
+	set := verified.ControlSet()
+	return marshalAndroidV2DeviceState(androidV2DeviceState{
+		Schema: 1, Floors: verified.Floors(), Envelope: envelope, ControlSet: &set,
+		PreviousControlSet: verified.PreviousControlSet(), Enrollment: current.Enrollment,
+	})
+}
+
+// PrepareAndroidV2PrivateDeviceConfigUpdateWithArtifacts 是动态 artifact 轮换的
+// 唯一提交边界：只有已重绑的 config/credential 全部到齐，才与 final
+// view、floors 和 ControlSet 一起替换 protected blob（D106、D124）。
+func PrepareAndroidV2PrivateDeviceConfigUpdateWithArtifacts(currentStateJSON, deliveryJSON,
+	installedConfigsJSON, installedSecretsJSON, identitySPKIDER []byte,
+) ([]byte, error) {
+	current, _, verified, err := verifyAndroidV2PrivateDeviceConfigDelivery(
+		currentStateJSON, deliveryJSON, identitySPKIDER)
+	if err != nil {
+		return nil, err
+	}
+	if current.Enrollment == nil {
+		return nil, errors.New("[D124 Android config] enrollment installation 缺失")
+	}
+	envelope := verified.Envelope()
+	if envelope.Payload.State == "tombstone" {
+		if len(installedConfigsJSON) != 0 || len(installedSecretsJSON) != 0 {
+			return nil, errors.New("[D124 Android config] tombstone 禁止新 artifact")
+		}
+		current.Enrollment.Configs = nil
+	} else {
+		if envelope.Payload.Active == nil || current.Envelope.Payload.Active == nil {
+			return nil, errors.New("[D124 Android config] active Device view 缺失")
+		}
+		configChanged := !wire.EqualCanonical(envelope.Payload.Active.ConfigArtifactRefs,
+			current.Envelope.Payload.Active.ConfigArtifactRefs)
+		secretsChanged := !equalRawAndroidV2(envelope.SecretArtifactRefs,
+			current.Envelope.SecretArtifactRefs)
+		if configChanged {
+			var configs []androidInstalledConfigV1
+			if err := decodeExactAndroidV2(installedConfigsJSON,
+				androidMaximumConfigTotalBytes+(4<<20), &configs,
+				"private installed configs"); err != nil || configs == nil {
+				return nil, errors.New("[D124 Android config] 新 installed configs 不是 canonical array")
+			}
+			current.Enrollment.Configs = configs
+		} else if len(installedConfigsJSON) != 0 {
+			return nil, errors.New("[D124 Android config] config refs 未变更却提交了 artifact")
+		}
+		if secretsChanged {
+			var credentials []androidInstalledSecretV1
+			if err := decodeExactAndroidV2(installedSecretsJSON, 16<<20, &credentials,
+				"private installed credentials"); err != nil || credentials == nil {
+				return nil, errors.New("[D124 Android config] 新 installed credentials 不是 canonical array")
+			}
+			refs, err := decodeAndroidSecretArtifactRefs(envelope.SecretArtifactRefs)
+			if err != nil {
+				return nil, err
+			}
+			current.Enrollment.Credentials = credentials
+			current.Enrollment.CurrentSecretArtifactRefs = cloneAndroidSecretArtifactRefs(refs)
+		} else if len(installedSecretsJSON) != 0 {
+			return nil, errors.New("[D124 Android config] secret refs 未变更却提交了 credential")
+		}
+	}
+	set := verified.ControlSet()
+	return marshalAndroidV2DeviceState(androidV2DeviceState{
+		Schema: 1, Floors: verified.Floors(), Envelope: envelope, ControlSet: &set,
+		PreviousControlSet: verified.PreviousControlSet(), Enrollment: current.Enrollment,
+	})
+}
+
+func decodeAndroidSecretArtifactRefs(raw []json.RawMessage) ([]wire.SecretArtifactRefV2, error) {
+	refs := make([]wire.SecretArtifactRefV2, len(raw))
+	for index := range raw {
+		if err := decodeExactAndroidV2(raw[index], 4<<20, &refs[index],
+			"private secret artifact ref"); err != nil {
+			return nil, err
+		}
+	}
+	return refs, nil
+}
+
+func verifyAndroidV2PrivateDeviceConfigDelivery(currentStateJSON, deliveryJSON,
+	identitySPKIDER []byte,
+) (androidV2DeviceState, wire.DeviceConfigDeliveryV1,
+	wire.VerifiedDeviceConfigDeliveryV1, error,
+) {
+	current, err := decodeAndroidV2DeviceState(currentStateJSON)
+	if err != nil {
+		return androidV2DeviceState{}, wire.DeviceConfigDeliveryV1{},
+			wire.VerifiedDeviceConfigDeliveryV1{}, err
+	}
+	if current.ControlSet == nil || current.Enrollment == nil {
+		return androidV2DeviceState{}, wire.DeviceConfigDeliveryV1{},
+			wire.VerifiedDeviceConfigDeliveryV1{},
+			errors.New("[D131 Android config] protected ControlSet/Enrollment 不完整")
+	}
+	identityHash, err := wire.HashBytes(wire.DomainEnrollmentIdentitySPKI, identitySPKIDER)
+	if err != nil || identityHash != current.Enrollment.IdentityKeyHash {
+		return androidV2DeviceState{}, wire.DeviceConfigDeliveryV1{},
+			wire.VerifiedDeviceConfigDeliveryV1{},
+			errors.New("[D131 Android config] Keystore identity 与 protected state 不匹配")
+	}
+	var delivery wire.DeviceConfigDeliveryV1
+	if err := decodeExactAndroidV2(deliveryJSON, 32<<20, &delivery, "private Device delivery"); err != nil {
+		return androidV2DeviceState{}, wire.DeviceConfigDeliveryV1{},
+			wire.VerifiedDeviceConfigDeliveryV1{}, err
+	}
+	verified, err := wire.VerifyDeviceConfigDeliveryFromProtected(&delivery, &current.Envelope,
+		current.Floors, current.ControlSet, current.PreviousControlSet,
+		current.Envelope.Payload.DeviceID, identityHash)
+	if err != nil {
+		return androidV2DeviceState{}, wire.DeviceConfigDeliveryV1{},
+			wire.VerifiedDeviceConfigDeliveryV1{}, err
+	}
+	return current, delivery, verified, nil
 }
 
 func equalRawAndroidV2(left, right []json.RawMessage) bool {

@@ -381,6 +381,17 @@ func VerifyDeviceViewProjection(payload *DeviceViewPayloadV2, leaf *DeviceViewLe
 			payload.Active.SecretArtifactRefsRoot); err != nil {
 			return "", err
 		}
+		refs, err := decodeSecretArtifactRefs(secretArtifactRefs)
+		if err != nil {
+			return "", err
+		}
+		for index := range refs {
+			ref := &refs[index]
+			if ref.ClusterID != payload.ClusterID || ref.Owner.Kind != "device" ||
+				ref.Owner.Device == nil || ref.Owner.Device.DeviceID != payload.DeviceID {
+				return "", errors.New("[D124 Device view] secret ref 未绑定当前 Device/cluster")
+			}
+		}
 	} else if leaf.EndpointSetHash != EmptyHashV1 || secretArtifactRefs != nil {
 		return "", errors.New("[D105 Device view] tombstone 禁止 endpoint/secret refs")
 	}

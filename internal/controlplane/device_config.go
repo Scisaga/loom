@@ -45,6 +45,9 @@ type DeviceIdentityAuthorityV1 struct {
 	// DeviceConfigUpdates 是从保留窗口锚点到 CurrentDeviceView 的逐 Head
 	// certified lineage；为空仅表示当前单步兼容响应（D112、D131）。
 	DeviceConfigUpdates []wire.DeviceConfigUpdateV1
+	// DeviceSecretEnvelopes 可在 final refs 变化时返回只封装给该 Device wrapping key
+	// 的 exact immutable envelopes；不得包含明文（D124）。
+	DeviceSecretEnvelopes []wire.SealedSecretEnvelopeV1
 }
 
 type DeviceIdentityReader func(context.Context, string) (DeviceIdentityAuthorityV1, error)
@@ -150,6 +153,7 @@ func marshalDeviceConfigDelivery(identity VerifiedDeviceIdentityV1) ([]byte, err
 	delivery := wire.DeviceConfigDeliveryV1{
 		Schema: 1, ClusterID: identity.record.ProfileState.ClusterID,
 		DeviceID: identity.record.DeviceID, Updates: updates,
+		SecretEnvelopes: authority.DeviceSecretEnvelopes,
 	}
 	if err := wire.ValidateDeviceConfigDelivery(&delivery); err != nil {
 		return nil, err

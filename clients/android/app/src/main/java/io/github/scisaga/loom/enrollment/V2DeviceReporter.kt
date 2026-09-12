@@ -5,6 +5,7 @@ import io.github.scisaga.loom.BuildConfig
 import io.github.scisaga.loom.security.DeviceKeyStore
 import io.github.scisaga.loom.security.EncryptedStore
 import io.github.scisaga.loomcore.Loomcore
+import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
 import java.util.Base64
@@ -20,6 +21,8 @@ internal class V2DeviceReporter(
     private val client: V2PrivateControlClient = V2PrivateControlClient(keys),
 ) {
     private val protected = EncryptedStore(context.applicationContext)
+    private val mirrorFetcher = V2MirrorFetcher(context.applicationContext)
+    private val crypto = V2EnrollmentCrypto(keys)
 
     @Synchronized
     fun hasPending(deviceID: String): Boolean = loadJournal(deviceID)?.pending != null
@@ -29,8 +32,54 @@ internal class V2DeviceReporter(
         val now = Instant.now().toString()
         val plans = stateStore.privateControlPlans("device_config", now)
         val delivery = client.getFirst(plans)
-        stateStore.acceptPrivateDelivery(delivery)
+        val state = checkNotNull(stateStore.current()) { "[D131 Android config] v2 Device state 尚未安装" }
+        val fetchPlan = Loomcore.prepareAndroidV2PrivateDeviceConfigFetchPlan(
+            state,
+            delivery,
+            keys.ensureIdentity(),
+        )
+        val plan = JSONObject(fetchPlan.decodeToString())
+        val configState = plan.getString("state")
+        when (configState) {
+            "unchanged" -> stateStore.acceptPrivateDelivery(delivery)
+            "tombstone" -> stateStore.acceptPrivateDeliveryWithArtifacts(
+                delivery, ByteArray(0), ByteArray(0),
+            )
+            "active" -> {
+                val configs = if (plan.getBoolean("config_changed")) {
+                    mirrorFetcher.fetchCompletionConfigs(fetchPlan)
+                } else {
+                    ByteArray(0)
+                }
+                val credentials = if (plan.getBoolean("secrets_changed")) {
+                    unsealRotatedCredentials(plan, state)
+                } else {
+                    ByteArray(0)
+                }
+                stateStore.acceptPrivateDeliveryWithArtifacts(delivery, configs, credentials)
+            }
+            else -> error("[D124 Android config] fetch plan state 无效")
+        }
         return stateStore.runtimeProfile()
+    }
+
+    private fun unsealRotatedCredentials(plan: JSONObject, state: ByteArray): ByteArray {
+        val refs = plan.getJSONArray("secret_refs")
+        val envelopes = plan.getJSONArray("secret_envelopes")
+        check(refs.length() == envelopes.length()) { "[D124 Android config] secret envelope 未 exact 覆盖 refs" }
+        val deviceID = JSONObject(state.decodeToString())
+            .getJSONObject("envelope").getJSONObject("payload").getString("device_id")
+        val installed = JSONArray()
+        for (index in 0 until refs.length()) {
+            val ref = Loomcore.canonicalizeV2(
+                refs.getJSONObject(index).toString().encodeToByteArray(),
+            )
+            val envelope = Loomcore.canonicalizeV2(
+                envelopes.getJSONObject(index).toString().encodeToByteArray(),
+            )
+            installed.put(JSONObject(crypto.unsealInstalledSecret(ref, envelope, deviceID).decodeToString()))
+        }
+        return Loomcore.canonicalizeV2(installed.toString().encodeToByteArray())
     }
 
     @Synchronized

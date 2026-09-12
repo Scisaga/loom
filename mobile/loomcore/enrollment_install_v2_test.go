@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -335,6 +336,12 @@ func androidSealedSecretFixture(t *testing.T) (wire.SecretArtifactRefV2,
 func androidSealedSecretFixtureFor(t *testing.T, deviceID, secretID, purpose string, secret []byte) (
 	wire.SecretArtifactRefV2, wire.SealedSecretEnvelopeV1, []byte,
 ) {
+	return androidSealedSecretFixtureForGeneration(t, deviceID, secretID, purpose, 1, secret)
+}
+
+func androidSealedSecretFixtureForGeneration(t *testing.T, deviceID, secretID, purpose string,
+	generation int64, secret []byte,
+) (wire.SecretArtifactRefV2, wire.SealedSecretEnvelopeV1, []byte) {
 	t.Helper()
 	private, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -352,7 +359,7 @@ func androidSealedSecretFixtureFor(t *testing.T, deviceID, secretID, purpose str
 	owner := wire.SecretArtifactOwnerV1{Kind: "device",
 		Device: &wire.SecretArtifactDeviceOwnerV1{DeviceID: recipient.RecipientID}}
 	contextValue, err := wire.NewSealedSecretContext("demo-cluster", "proposal-1", secretID,
-		purpose, owner, 1, &policy, []wire.SealedBlobRecipientKeyRefV1{recipient})
+		purpose, owner, generation, &policy, []wire.SealedBlobRecipientKeyRefV1{recipient})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,8 +372,8 @@ func androidSealedSecretFixtureFor(t *testing.T, deviceID, secretID, purpose str
 	policyHash, _ := wire.SealingPolicyHash(&policy)
 	ref := wire.SecretArtifactRefV2{
 		Schema: 2, ClusterID: contextValue.ClusterID, ProposalID: contextValue.ProposalID,
-		SecretID: contextValue.SecretID, Purpose: contextValue.Purpose, Owner: owner, Generation: 1,
-		ImmutableRef: "blob:sha256:" + secretID + "-1", BackendKind: "sealed_blob",
+		SecretID: contextValue.SecretID, Purpose: contextValue.Purpose, Owner: owner, Generation: generation,
+		ImmutableRef: fmt.Sprintf("blob:sha256:%s-%d", secretID, generation), BackendKind: "sealed_blob",
 		SealedBlob: &wire.SealedBlobRefV1{CiphertextDigest: digest, SealingPolicy: policy,
 			SealingPolicyHash: policyHash, RecipientKeyVersions: []wire.SealedBlobRecipientKeyRefV1{recipient}},
 		AvailabilityPolicyHash:   wire.HashRaw("android-secret-test", []byte("availability")),

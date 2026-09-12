@@ -1,6 +1,7 @@
 package loomcore
 
 import (
+	"encoding/json"
 	"errors"
 
 	"loom/internal/wire"
@@ -8,8 +9,84 @@ import (
 
 type androidCompletionConfigFetchPlanV1 struct {
 	Schema  int                              `json:"schema"`
+	State   string                           `json:"state"`
 	Mirrors []wire.DistributionMirrorRefV1   `json:"mirrors"`
 	Refs    []wire.DeviceConfigArtifactRefV1 `json:"refs"`
+}
+
+type androidPrivateDeviceArtifactPlanV1 struct {
+	Schema          int                              `json:"schema"`
+	State           string                           `json:"state"`
+	ConfigChanged   bool                             `json:"config_changed"`
+	SecretsChanged  bool                             `json:"secrets_changed"`
+	Mirrors         []wire.DistributionMirrorRefV1   `json:"mirrors"`
+	Refs            []wire.DeviceConfigArtifactRefV1 `json:"refs"`
+	SecretRefs      []json.RawMessage                `json:"secret_refs"`
+	SecretEnvelopes []wire.SealedSecretEnvelopeV1    `json:"secret_envelopes"`
+}
+
+// PrepareAndroidV2PrivateDeviceConfigFetchPlan 先从 protected exact Head 验证
+// delivery lineage，再只投影 final Device view 承诺的 Android refs 和 Enrollment
+// 时钉住的 public mirrors。尚未下载制品时不会推进任何 floor（D106、D124）。
+func PrepareAndroidV2PrivateDeviceConfigFetchPlan(stateJSON, deliveryJSON,
+	identitySPKIDER []byte,
+) ([]byte, error) {
+	state, delivery, verified, err := verifyAndroidV2PrivateDeviceConfigDelivery(
+		stateJSON, deliveryJSON, identitySPKIDER)
+	if err != nil {
+		return nil, err
+	}
+	envelope := verified.Envelope()
+	if envelope.Payload.State == "tombstone" {
+		return wire.MarshalCanonical(androidPrivateDeviceArtifactPlanV1{
+			Schema: 1, State: "tombstone", Mirrors: []wire.DistributionMirrorRefV1{},
+			Refs: []wire.DeviceConfigArtifactRefV1{}, SecretRefs: []json.RawMessage{},
+			SecretEnvelopes: []wire.SealedSecretEnvelopeV1{},
+		})
+	}
+	if envelope.Payload.Active == nil || state.Envelope.Payload.Active == nil {
+		return nil, errors.New("[D124 Android config] active Device view 缺失")
+	}
+	configChanged := !wire.EqualCanonical(envelope.Payload.Active.ConfigArtifactRefs,
+		state.Envelope.Payload.Active.ConfigArtifactRefs)
+	secretsChanged := !equalRawAndroidV2(envelope.SecretArtifactRefs,
+		state.Envelope.SecretArtifactRefs)
+	plan := androidPrivateDeviceArtifactPlanV1{
+		Schema: 1, State: "unchanged", ConfigChanged: configChanged,
+		SecretsChanged: secretsChanged, Mirrors: []wire.DistributionMirrorRefV1{},
+		Refs: []wire.DeviceConfigArtifactRefV1{}, SecretRefs: []json.RawMessage{},
+		SecretEnvelopes: []wire.SealedSecretEnvelopeV1{},
+	}
+	if !configChanged && !secretsChanged {
+		return wire.MarshalCanonical(plan)
+	}
+	plan.State = "active"
+	if configChanged && (state.Enrollment == nil || state.Enrollment.DistributionMirrors == nil) {
+		return nil, errors.New("[D124 Android config] durable distribution mirrors 缺失")
+	}
+	if configChanged {
+		plan.Mirrors = append([]wire.DistributionMirrorRefV1(nil),
+			state.Enrollment.DistributionMirrors...)
+		plan.Refs = append([]wire.DeviceConfigArtifactRefV1(nil),
+			envelope.Payload.Active.ConfigArtifactRefs...)
+	}
+	if secretsChanged {
+		if len(delivery.SecretEnvelopes) != len(envelope.SecretArtifactRefs) {
+			return nil, errors.New("[D124 Android config] 轮换凭据未 exact 覆盖 final refs")
+		}
+		plan.SecretRefs = cloneAndroidRawMessages(envelope.SecretArtifactRefs)
+		plan.SecretEnvelopes = append([]wire.SealedSecretEnvelopeV1(nil),
+			delivery.SecretEnvelopes...)
+	}
+	return wire.MarshalCanonical(plan)
+}
+
+func cloneAndroidRawMessages(values []json.RawMessage) []json.RawMessage {
+	cloned := make([]json.RawMessage, len(values))
+	for index := range values {
+		cloned[index] = append(json.RawMessage(nil), values[index]...)
+	}
+	return cloned
 }
 
 // CompletionConfigFetchPlan 只在同一 session 已验完整 completion receipt 后
@@ -72,7 +149,7 @@ func prepareAndroidCompletionConfigFetchPlan(envelope wire.DeviceViewEnvelopeV2,
 		}
 	}
 	return wire.MarshalCanonical(androidCompletionConfigFetchPlanV1{
-		Schema: 1, Mirrors: append([]wire.DistributionMirrorRefV1(nil), mirrors...),
+		Schema: 1, State: "active", Mirrors: append([]wire.DistributionMirrorRefV1(nil), mirrors...),
 		Refs: append([]wire.DeviceConfigArtifactRefV1(nil), refs...),
 	})
 }

@@ -12,6 +12,7 @@ import (
 	"encoding/asn1"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"net/url"
 	"testing"
@@ -118,6 +119,19 @@ func TestPrepareAndroidV2PrivateControlPlanBindsSealedDirectoryAndKeystoreIdenti
 	certificateHash, _ := wire.DeviceCertificateHash(certificateDER)
 	profileHash, _ := wire.DeviceCertificateProfileStateHash(&profile)
 	issuance := wire.IssuanceLogCoordinateV1{RecoveryEpoch: 0, RaftIndex: 2}
+	mirrorHash := func(value string) string {
+		return wire.HashRaw("android-private-control-mirror-test", []byte(value))
+	}
+	mirrors := []wire.DistributionMirrorRefV1{
+		{Schema: 1, EndpointID: "mirror-1", DistributionEndpointSetHash: mirrorHash("set-1"),
+			ListenerGeneration: 1, BaseURL: "https://mirror-a.example.test:443/distribution/sha256/",
+			ServerName: "mirror-a.example.test", WebPKIProfileRef: "webpki-v1",
+			SPKIPins: []string{mirrorHash("pin-1")}, HintRank: 0},
+		{Schema: 1, EndpointID: "mirror-2", DistributionEndpointSetHash: mirrorHash("set-2"),
+			ListenerGeneration: 1, BaseURL: "https://mirror-b.example.test:443/distribution/sha256/",
+			ServerName: "mirror-b.example.test", WebPKIProfileRef: "webpki-v1",
+			SPKIPins: []string{mirrorHash("pin-2")}, HintRank: 1},
+	}
 	installation := &androidEnrollmentInstallationV1{
 		Schema: 1, ClaimCore: core, ClaimCoreHash: claimHash,
 		IdentityKeyHash: identityHash, WrappingKeyHash: expectedWrappingHash,
@@ -125,8 +139,9 @@ func TestPrepareAndroidV2PrivateControlPlanBindsSealedDirectoryAndKeystoreIdenti
 		ResultArtifactHash:   artifactHash, DeviceCertificateHash: certificateHash,
 		DeviceProfileHash: profileHash, DeviceProfile: &profile, DeviceIssuance: &issuance,
 		DeviceApprovedAt: now.Format(time.RFC3339), ResultArtifact: artifact,
-		Credentials: []androidInstalledSecretV1{installedSecret},
-		Configs:     []androidInstalledConfigV1{installedConfig},
+		Credentials:         []androidInstalledSecretV1{installedSecret},
+		Configs:             []androidInstalledConfigV1{installedConfig},
+		DistributionMirrors: mirrors,
 	}
 	floors, err := wire.VerifyDeviceViewEnvelope(&currentEnvelope, &set)
 	if err != nil {
@@ -151,6 +166,114 @@ func TestPrepareAndroidV2PrivateControlPlanBindsSealedDirectoryAndKeystoreIdenti
 	if err != nil || !bytes.Equal(replayedState, stateJSON) {
 		t.Fatalf("private device_config delivery exact LKG replay 失败: equal=%v err=%v",
 			bytes.Equal(replayedState, stateJSON), err)
+	}
+	fetchPlanJSON, err := PrepareAndroidV2PrivateDeviceConfigFetchPlan(stateJSON, deliveryJSON, identitySPKI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fetchPlan androidPrivateDeviceArtifactPlanV1
+	if err := decodeExactAndroidV2(fetchPlanJSON, 4<<20, &fetchPlan, "private config fetch plan"); err != nil ||
+		fetchPlan.State != "unchanged" || len(fetchPlan.Refs) != 0 || len(fetchPlan.Mirrors) != 0 {
+		t.Fatalf("private config fetch plan 无效: plan=%#v err=%v", fetchPlan, err)
+	}
+	installedConfigsJSON, _ := wire.MarshalCanonical([]androidInstalledConfigV1{installedConfig})
+	replayedState, err = PrepareAndroidV2PrivateDeviceConfigUpdateWithConfigs(
+		stateJSON, deliveryJSON, installedConfigsJSON, identitySPKI)
+	if err != nil || !bytes.Equal(replayedState, stateJSON) {
+		t.Fatalf("private configs 未与 delivery 原子重放: equal=%v err=%v",
+			bytes.Equal(replayedState, stateJSON), err)
+	}
+	nextConfig, _ := wire.MarshalCanonical(bundleWire{Owner: credential.DeviceID, Files: map[string]string{
+		"sing-box/config.json": `{"log":{"level":"info"}}`,
+	}})
+	nextConfigHash, _ := wire.DeviceConfigArtifactContentHash(nextConfig)
+	nextConfigRef := configRef
+	nextConfigRef.Generation, nextConfigRef.SizeBytes, nextConfigRef.ContentHash =
+		2, int64(len(nextConfig)), nextConfigHash
+	nextEnvelope := advanceAndroidPrivateArtifactEnvelope(t, currentEnvelope, set,
+		[]wire.DeviceConfigArtifactRefV1{nextConfigRef}, []wire.SecretArtifactRefV2{secretRef})
+	nextDeliveryJSON, _ := wire.MarshalCanonical(wire.DeviceConfigDeliveryV1{
+		Schema: 1, ClusterID: currentEnvelope.Payload.ClusterID, DeviceID: currentEnvelope.Payload.DeviceID,
+		Updates: []wire.DeviceConfigUpdateV1{
+			{Schema: 1, Envelope: currentEnvelope, ControlSet: set},
+			{Schema: 1, Envelope: nextEnvelope, ControlSet: set},
+		},
+	})
+	if _, err := PrepareAndroidV2PrivateDeviceConfigUpdate(stateJSON, nextDeliveryJSON, identitySPKI); err == nil {
+		t.Fatal("config refs 变化时未取回 artifact 就推进了 floors")
+	}
+	nextFetchPlanJSON, err := PrepareAndroidV2PrivateDeviceConfigFetchPlan(
+		stateJSON, nextDeliveryJSON, identitySPKI)
+	if err := decodeExactAndroidV2(nextFetchPlanJSON, 4<<20, &fetchPlan, "next private config fetch plan"); err != nil || fetchPlan.State != "active" || len(fetchPlan.Refs) != 1 || len(fetchPlan.Mirrors) != 2 {
+		t.Fatalf("变化后的 private config fetch plan 无效: plan=%#v err=%v", fetchPlan, err)
+	}
+	nextRefJSON, _ := wire.MarshalCanonical(nextConfigRef)
+	nextInstalledJSON, err := PrepareAndroidInstalledConfigV2(nextRefJSON, nextConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextConfigsJSON, _ := wire.MarshalCanonical([]json.RawMessage{nextInstalledJSON})
+	nextStateJSON, err := PrepareAndroidV2PrivateDeviceConfigUpdateWithConfigs(
+		stateJSON, nextDeliveryJSON, nextConfigsJSON, identitySPKI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nextState androidV2DeviceState
+	if err := decodeExactAndroidV2(nextStateJSON, 64<<20, &nextState, "next private config state"); err != nil ||
+		nextState.Floors.DeviceGeneration != 2 || nextState.Enrollment.Configs[0].Generation != 2 {
+		t.Fatalf("新 config/view/floors 未原子提交: state=%#v err=%v", nextState, err)
+	}
+	rotatedRef, rotatedEnvelope, _ := androidSealedSecretFixtureForGeneration(t,
+		credential.DeviceID, wire.DevicePrivateControlCredentialSecretIDV1,
+		"device_credential", 2, credentialJSON)
+	secretNextEnvelope := advanceAndroidPrivateArtifactEnvelope(t, nextEnvelope, set,
+		[]wire.DeviceConfigArtifactRefV1{nextConfigRef}, []wire.SecretArtifactRefV2{rotatedRef})
+	secretDelivery := wire.DeviceConfigDeliveryV1{
+		Schema: 1, ClusterID: currentEnvelope.Payload.ClusterID, DeviceID: currentEnvelope.Payload.DeviceID,
+		Updates: []wire.DeviceConfigUpdateV1{
+			{Schema: 1, Envelope: currentEnvelope, ControlSet: set},
+			{Schema: 1, Envelope: nextEnvelope, ControlSet: set},
+			{Schema: 1, Envelope: secretNextEnvelope, ControlSet: set},
+		},
+		SecretEnvelopes: []wire.SealedSecretEnvelopeV1{rotatedEnvelope},
+	}
+	secretDeliveryJSON, _ := wire.MarshalCanonical(secretDelivery)
+	secretPlanJSON, err := PrepareAndroidV2PrivateDeviceConfigFetchPlan(
+		nextStateJSON, secretDeliveryJSON, identitySPKI)
+	if err := decodeExactAndroidV2(secretPlanJSON, 8<<20, &fetchPlan,
+		"secret private artifact plan"); err != nil || fetchPlan.State != "active" ||
+		fetchPlan.ConfigChanged || !fetchPlan.SecretsChanged || len(fetchPlan.SecretRefs) != 1 ||
+		len(fetchPlan.SecretEnvelopes) != 1 {
+		t.Fatalf("轮换 secret fetch plan 无效: plan=%#v err=%v", fetchPlan, err)
+	}
+	rotatedRefJSON, _ := wire.MarshalCanonical(rotatedRef)
+	rotatedEnvelopeJSON, _ := wire.MarshalCanonical(rotatedEnvelope)
+	rotatedInstalledJSON, err := PrepareAndroidInstalledSecretV2(
+		rotatedRefJSON, rotatedEnvelopeJSON, credentialJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotatedCredentialsJSON, _ := wire.MarshalCanonical([]json.RawMessage{rotatedInstalledJSON})
+	secretStateJSON, err := PrepareAndroidV2PrivateDeviceConfigUpdateWithArtifacts(
+		nextStateJSON, secretDeliveryJSON, nil, rotatedCredentialsJSON, identitySPKI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var secretState androidV2DeviceState
+	if err := decodeExactAndroidV2(secretStateJSON, 64<<20, &secretState,
+		"rotated private secret state"); err != nil || secretState.Floors.DeviceGeneration != 3 ||
+		secretState.Enrollment.CurrentSecretArtifactRefs == nil ||
+		(*secretState.Enrollment.CurrentSecretArtifactRefs)[0].Generation != 2 ||
+		secretState.Enrollment.Credentials[0].Generation != 2 ||
+		secretState.Enrollment.Configs[0].Generation != 2 {
+		t.Fatalf("新 secret/view/floors 未原子提交: state=%#v err=%v", secretState, err)
+	}
+	missingEnvelope := secretDelivery
+	missingEnvelope.SecretEnvelopes = nil
+	missingEnvelopeJSON, _ := wire.MarshalCanonical(missingEnvelope)
+	if _, err := PrepareAndroidV2PrivateDeviceConfigFetchPlan(
+		nextStateJSON, missingEnvelopeJSON, identitySPKI); err == nil {
+		t.Fatal("轮换 secret 缺少 sealed envelope 仍生成 fetch plan")
 	}
 	planJSON, err := PrepareAndroidV2PrivateControlPlan(stateJSON, identitySPKI,
 		"device_config", "device-config-1", now.Add(time.Minute).Format(time.RFC3339))
@@ -223,6 +346,61 @@ func TestPrepareAndroidV2PrivateControlPlanBindsSealedDirectoryAndKeystoreIdenti
 		now.Add(2*time.Minute).Format(time.RFC3339)); err == nil {
 		t.Fatal("篡改后的 pending Android report 被接受")
 	}
+}
+
+func advanceAndroidPrivateArtifactEnvelope(t *testing.T, previous wire.DeviceViewEnvelopeV2,
+	set wire.ControlSetV1, refs []wire.DeviceConfigArtifactRefV1,
+	secretRefs []wire.SecretArtifactRefV2,
+) wire.DeviceViewEnvelopeV2 {
+	t.Helper()
+	body, _ := wire.MarshalCanonical(previous)
+	var next wire.DeviceViewEnvelopeV2
+	if _, err := wire.DecodeStrict(body, 32<<20, &next); err != nil {
+		t.Fatal(err)
+	}
+	previousViewHash, _ := wire.DeviceViewHash(&previous.Payload)
+	next.Payload.DeviceGeneration++
+	next.Payload.Active.EndpointBundle.DeviceGeneration = next.Payload.DeviceGeneration
+	next.Payload.Active.EndpointBundleHash, _ = wire.DeviceEndpointBundleHash(&next.Payload.Active.EndpointBundle)
+	next.Payload.Active.ConfigArtifactRefs = append([]wire.DeviceConfigArtifactRefV1(nil), refs...)
+	next.Payload.Active.SecretArtifactRefsRoot, _ = wire.SecretArtifactRefsRoot(secretRefs)
+	next.SecretArtifactRefs = make([]json.RawMessage, len(secretRefs))
+	for index := range secretRefs {
+		next.SecretArtifactRefs[index], _ = wire.MarshalCanonical(secretRefs[index])
+	}
+	next.Leaf.DeviceGeneration = next.Payload.DeviceGeneration
+	next.Leaf.PreviousViewHash = previousViewHash
+	next.Leaf.EndpointSetHash = next.Payload.Active.EndpointBundleHash
+	next.Leaf.PayloadHash, _ = wire.DeviceViewHash(&next.Payload)
+	leafBytes, _ := wire.MarshalCanonical(next.Leaf)
+	root := wire.MerkleRoot([][]byte{leafBytes})
+	headBody := previous.SignedCurrent.Head.Body
+	headBody.Payload.HeadKind = "ordinary"
+	headBody.Payload.RaftIndex++
+	headBody.Payload.ControlRevision = headBody.Payload.RaftIndex
+	headBody.Payload.PreviousLogEntryHash = previous.SignedCurrent.Head.EntryHash
+	headBody.Payload.ParentHeadHash = previous.SignedCurrent.Head.HeadHash
+	headBody.Payload.DeviceViewsRoot = "sha256:" + fmt.Sprintf("%x", root)
+	headBody.Payload.OperationRoot = wire.HashRaw("android-private-control-test", []byte("config-update"))
+	headBody.Payload.CommittedLogicalTime = "2026-09-11T12:01:00Z"
+	headBody.Payload.TransitionContext, _ = json.Marshal(wire.OrdinaryHeadContextV1{Schema: 1, Kind: "ordinary"})
+	head, err := wire.NewHeadEntry(headBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := make([]byte, ed25519.SeedSize)
+	seed[len(seed)-1] = 2
+	configKey := ed25519.NewKeyFromSeed(seed)
+	signature, err := wire.SignHeadAttestation(wire.AttestationForHead(&head), set.Members[0], configKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next.SignedCurrent.Head = head
+	next.SignedCurrent.QuorumCertificate, _ = wire.MarshalCanonical(
+		wire.StableQC(&head, []wire.ControlConfigSignatureV1{signature}),
+	)
+	next.SignedCurrent.PublishedAt = "2026-09-11T12:01:01Z"
+	return next
 }
 
 func androidDeviceCertificateProfileFixture(t *testing.T, identity *ecdsa.PrivateKey,

@@ -1,6 +1,9 @@
 package wire
 
-import "errors"
+import (
+	"bytes"
+	"errors"
+)
 
 const DeviceConfigDeliveryMediaTypeV1 = "application/vnd.loom.device-config-delivery.v1+json"
 
@@ -16,10 +19,11 @@ type DeviceConfigUpdateV1 struct {
 }
 
 type DeviceConfigDeliveryV1 struct {
-	Schema    int                    `json:"schema"`
-	ClusterID string                 `json:"cluster_id"`
-	DeviceID  string                 `json:"device_id"`
-	Updates   []DeviceConfigUpdateV1 `json:"updates"`
+	Schema          int                      `json:"schema"`
+	ClusterID       string                   `json:"cluster_id"`
+	DeviceID        string                   `json:"device_id"`
+	Updates         []DeviceConfigUpdateV1   `json:"updates"`
+	SecretEnvelopes []SealedSecretEnvelopeV1 `json:"secret_envelopes,omitempty"`
 }
 
 // VerifiedDeviceConfigDeliveryV1 的字段不导出，调用方不能跳过完整 lineage 验证
@@ -80,6 +84,27 @@ func ValidateDeviceConfigDelivery(delivery *DeviceConfigDeliveryV1) error {
 		)
 		if err != nil {
 			return err
+		}
+	}
+	return validateDeviceConfigDeliverySecrets(delivery)
+}
+
+func validateDeviceConfigDeliverySecrets(delivery *DeviceConfigDeliveryV1) error {
+	if len(delivery.SecretEnvelopes) == 0 {
+		return nil
+	}
+	last := &delivery.Updates[len(delivery.Updates)-1].Envelope
+	if last.Payload.State != "active" || len(last.SecretArtifactRefs) != len(delivery.SecretEnvelopes) {
+		return errors.New("[D124 device_config] sealed envelopes 未 exact 覆盖 final refs")
+	}
+	for index := range delivery.SecretEnvelopes {
+		var ref SecretArtifactRefV2
+		canonical, err := DecodeStrict(last.SecretArtifactRefs[index], 4<<20, &ref)
+		if err != nil || !bytes.Equal(canonical, last.SecretArtifactRefs[index]) ||
+			ref.ClusterID != delivery.ClusterID || ref.Owner.Kind != "device" ||
+			ref.Owner.Device == nil || ref.Owner.Device.DeviceID != delivery.DeviceID ||
+			VerifySealedSecretBinding(&ref, &delivery.SecretEnvelopes[index]) != nil {
+			return errors.New("[D124 device_config] sealed envelope 未绑定 final exact Device ref")
 		}
 	}
 	return nil
