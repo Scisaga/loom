@@ -51,11 +51,17 @@ func TestOfficialSingBoxHysteria2BootstrapInterop(t *testing.T) {
 	}
 	serverName := "bootstrap.example"
 	_, tlsConfig, certificate := trojanCertificate(t, serverName)
+	packetConnection, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := testListenerBinding(t, "hysteria2", ingressHash, serverName,
+		packetConnection.LocalAddr(), certificate)
 	var targetDialed sync.Once
 	var targetDialCalls atomic.Int64
 	outgoing, enrollment := net.Pipe()
 	server, err := NewHysteria2Server(manager, registry, Hysteria2ServerOptions{
-		ServerName: serverName, TLSConfig: tlsConfig, HandshakeTimeout: 5 * time.Second,
+		Listener: binding, TLSConfig: tlsConfig, HandshakeTimeout: 5 * time.Second,
 		IdleTimeout: 2 * time.Second, MaximumConcurrentConnections: 8, MaximumStreamsPerConnection: 4,
 		Dial: func(_ context.Context, network, address string) (net.Conn, error) {
 			targetDialCalls.Add(1)
@@ -71,10 +77,7 @@ func TestOfficialSingBoxHysteria2BootstrapInterop(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatal(err)
-	}
-	packetConnection, err := net.ListenPacket("udp4", "127.0.0.1:0")
-	if err != nil {
+		_ = packetConnection.Close()
 		t.Fatal(err)
 	}
 	serverPort := packetConnection.LocalAddr().(*net.UDPAddr).Port

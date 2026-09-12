@@ -163,25 +163,48 @@ func TestNewTrojanTLSServerRejectsUncertifiedConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, certificate, _ := trojanCertificate(t, "bootstrap.example")
+	_, certificate, certificateLeaf := trojanCertificate(t, "bootstrap.example")
 	_, wrongCertificate, _ := trojanCertificate(t, "other.example")
-	base := TrojanTLSServerOptions{ServerName: "bootstrap.example", TLSConfig: certificate,
+	_, unpinnedCertificate, _ := trojanCertificate(t, "bootstrap.example")
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	binding := testListenerBinding(t, "trojan_tls", ingressHash, "bootstrap.example",
+		listener.Addr(), certificateLeaf)
+	base := TrojanTLSServerOptions{Listener: binding, TLSConfig: certificate,
 		HandshakeTimeout: 5 * time.Second, MaximumConcurrentConnections: 4,
 		Dial: func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("unused") }}
 	invalid := []TrojanTLSServerOptions{
-		{ServerName: "192.0.2.10", TLSConfig: base.TLSConfig, HandshakeTimeout: base.HandshakeTimeout,
+		{TLSConfig: base.TLSConfig, HandshakeTimeout: base.HandshakeTimeout,
 			MaximumConcurrentConnections: base.MaximumConcurrentConnections, Dial: base.Dial},
-		{ServerName: "Bootstrap.example", TLSConfig: base.TLSConfig, HandshakeTimeout: base.HandshakeTimeout,
+		{Listener: func() VerifiedBootstrapListenerV1 { value := binding; value.bindingHash = ""; return value }(),
+			TLSConfig: base.TLSConfig, HandshakeTimeout: base.HandshakeTimeout,
 			MaximumConcurrentConnections: base.MaximumConcurrentConnections, Dial: base.Dial},
-		{ServerName: base.ServerName, TLSConfig: &tls.Config{}, HandshakeTimeout: base.HandshakeTimeout,
+		{Listener: binding, TLSConfig: &tls.Config{}, HandshakeTimeout: base.HandshakeTimeout,
 			MaximumConcurrentConnections: base.MaximumConcurrentConnections, Dial: base.Dial},
-		{ServerName: base.ServerName, TLSConfig: wrongCertificate, HandshakeTimeout: base.HandshakeTimeout,
+		{Listener: binding, TLSConfig: wrongCertificate, HandshakeTimeout: base.HandshakeTimeout,
+			MaximumConcurrentConnections: base.MaximumConcurrentConnections, Dial: base.Dial},
+		{Listener: binding, TLSConfig: unpinnedCertificate, HandshakeTimeout: base.HandshakeTimeout,
 			MaximumConcurrentConnections: base.MaximumConcurrentConnections, Dial: base.Dial},
 	}
 	for index, options := range invalid {
 		if _, err := NewTrojanTLSServer(manager, registry, options); err == nil {
 			t.Fatalf("无效 Trojan/TLS 配置 #%d 被接受", index)
 		}
+	}
+	server, err := NewTrojanTLSServer(manager, registry, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongTuple, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer wrongTuple.Close()
+	if err := server.Serve(context.Background(), wrongTuple); err == nil {
+		t.Fatal("Trojan server 接受了非 frozen tuple listener")
 	}
 }
 
@@ -211,14 +234,15 @@ func newTrojanServerFixture(t *testing.T, dial DialContext) *trojanServerFixture
 	}
 	serverName := "bootstrap.example"
 	roots, tlsConfig, certificate := trojanCertificate(t, serverName)
-	server, err := NewTrojanTLSServer(manager, registry, TrojanTLSServerOptions{
-		ServerName: serverName, TLSConfig: tlsConfig, HandshakeTimeout: 5 * time.Second,
-		MaximumConcurrentConnections: 8, Dial: dial, Random: cryptorand.Reader,
-	})
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	binding := testListenerBinding(t, "trojan_tls", ingressHash, serverName, listener.Addr(), certificate)
+	server, err := NewTrojanTLSServer(manager, registry, TrojanTLSServerOptions{
+		Listener: binding, TLSConfig: tlsConfig, HandshakeTimeout: 5 * time.Second,
+		MaximumConcurrentConnections: 8, Dial: dial, Random: cryptorand.Reader,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

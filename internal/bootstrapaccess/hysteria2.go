@@ -35,7 +35,7 @@ const (
 )
 
 type Hysteria2ServerOptions struct {
-	ServerName                   string
+	Listener                     VerifiedBootstrapListenerV1
 	TLSConfig                    *tls.Config
 	HandshakeTimeout             time.Duration
 	IdleTimeout                  time.Duration
@@ -50,6 +50,7 @@ type Hysteria2ServerOptions struct {
 type Hysteria2Server struct {
 	manager          *Manager
 	registry         *CredentialRegistry
+	listener         VerifiedBootstrapListenerV1
 	tlsConfig        *tls.Config
 	handshakeTimeout time.Duration
 	idleTimeout      time.Duration
@@ -63,49 +64,26 @@ type Hysteria2Server struct {
 func NewHysteria2Server(manager *Manager, registry *CredentialRegistry,
 	options Hysteria2ServerOptions) (*Hysteria2Server, error) {
 	if manager == nil || registry == nil || options.TLSConfig == nil || options.Dial == nil ||
-		!validCertifiedServerName(options.ServerName) || options.HandshakeTimeout < time.Second ||
+		!options.Listener.valid() || options.Listener.Transport() != "hysteria2" ||
+		registry.IngressSetHash() != options.Listener.IngressSetHash() ||
+		options.HandshakeTimeout < time.Second ||
 		options.HandshakeTimeout > 30*time.Second || options.IdleTimeout < time.Second ||
 		options.IdleTimeout > 5*time.Minute || options.MaximumConcurrentConnections < 1 ||
 		options.MaximumConcurrentConnections > 4096 || options.MaximumStreamsPerConnection < 1 ||
 		options.MaximumStreamsPerConnection > 64 {
 		return nil, errors.New("[D115 bootstrap ingress] Hysteria2 server 配置无效")
 	}
-	base := options.TLSConfig.Clone()
-	if len(base.Certificates) == 0 && base.GetCertificate == nil && base.GetConfigForClient == nil {
-		return nil, errors.New("[D115 bootstrap ingress] Hysteria2 certificate 缺失")
-	}
-	if len(base.Certificates) > 0 && base.GetCertificate == nil && base.GetConfigForClient == nil &&
-		!fixedTLSConfigServesName(base, options.ServerName) {
-		return nil, errors.New("[D115 bootstrap ingress] Hysteria2 certificate 不覆盖 certified FQDN")
-	}
-	base.MinVersion = tls.VersionTLS13
-	base.MaxVersion = tls.VersionTLS13
-	base.ClientAuth = tls.NoClientCert
-	expectedServerName := options.ServerName
-	originalGetConfig := base.GetConfigForClient
-	base.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
-		if hello == nil || hello.ServerName != expectedServerName {
-			return nil, errors.New("[D115 bootstrap ingress] Hysteria2 SNI 不属于 certified listener")
-		}
-		if originalGetConfig == nil {
-			return nil, nil
-		}
-		selected, err := originalGetConfig(hello)
-		if err != nil || selected == nil {
-			return selected, err
-		}
-		strict := selected.Clone()
-		strict.MinVersion = tls.VersionTLS13
-		strict.MaxVersion = tls.VersionTLS13
-		strict.ClientAuth = tls.NoClientCert
-		return strict, nil
+	base, err := certifiedTLSConfig(options.TLSConfig, options.Listener)
+	if err != nil {
+		return nil, err
 	}
 	random := options.Random
 	if random == nil {
 		random = cryptorand.Reader
 	}
 	return &Hysteria2Server{
-		manager: manager, registry: registry, tlsConfig: http3.ConfigureTLSConfig(base),
+		manager: manager, registry: registry, listener: options.Listener,
+		tlsConfig:        http3.ConfigureTLSConfig(base),
 		handshakeTimeout: options.HandshakeTimeout, idleTimeout: options.IdleTimeout,
 		maximumStreams: options.MaximumStreamsPerConnection, dial: options.Dial, random: random,
 		pending: make(chan struct{}, options.MaximumConcurrentConnections),
@@ -115,7 +93,8 @@ func NewHysteria2Server(manager *Manager, registry *CredentialRegistry,
 // Serve 接管一个已经绑定到 certified HY2/UDP tuple 的 PacketConn。返回时连接已关闭；
 // 调用方不得把同一 UDP tuple 同时交给 WG 或另一 listener（D127、D131）。
 func (server *Hysteria2Server) Serve(ctx context.Context, packetConnection net.PacketConn) error {
-	if server == nil || ctx == nil || packetConnection == nil {
+	if server == nil || ctx == nil || packetConnection == nil ||
+		!server.listener.matchesLocalAddr(packetConnection.LocalAddr(), "hysteria2") {
 		return errors.New("[D115 bootstrap ingress] Hysteria2 serve 输入不完整")
 	}
 	listener, err := quic.Listen(packetConnection, server.tlsConfig, &quic.Config{
@@ -207,6 +186,10 @@ type hysteria2Connection struct {
 func (session *hysteria2Connection) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if request == nil || request.Method != http.MethodPost || request.Host != hysteria2AuthHost ||
 		request.URL.Path != hysteria2AuthPath || request.URL.RawPath != "" || request.URL.RawQuery != "" {
+		writeHysteria2AuthFailure(writer)
+		return
+	}
+	if !session.server.listener.acceptsAt(session.server.manager.now()) {
 		writeHysteria2AuthFailure(writer)
 		return
 	}

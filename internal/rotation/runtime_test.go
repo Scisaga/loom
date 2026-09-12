@@ -68,6 +68,55 @@ func TestRuntimeReconcilerConvergesCertifiedStateIdempotently(t *testing.T) {
 	}
 }
 
+func TestAuthorizeRuntimePlanReplaysAuthorityAndNarrowsGenerationTuples(t *testing.T) {
+	intent, certified, verify := preparedRuntimeState(t)
+	plan := runtimeExecutionPlan(intent)
+	frozen := freezeRuntimeExecutionPlan(t, intent, plan)
+	authorized, err := AuthorizeRuntimePlan(certified, frozen, verify)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, tuples, ok := authorized.GenerationTuples(intent.FrozenDependencies.TargetListenerGeneration)
+	if !ok || state != "prepared" || !wire.EqualCanonical(tuples, plan.TargetTuples) {
+		t.Fatalf("target runtime authorization=%q/%#v/%t", state, tuples, ok)
+	}
+	sourceState, sourceTuples, ok := authorized.GenerationTuples(*intent.FrozenDependencies.SourceListenerGeneration)
+	if !ok || sourceState != "preferred" || !wire.EqualCanonical(sourceTuples, plan.SourceTuples) {
+		t.Fatalf("source runtime authorization=%q/%#v/%t", sourceState, sourceTuples, ok)
+	}
+	if _, _, ok := authorized.GenerationTuples(99); ok {
+		t.Fatal("未获 rotation ownership 的 generation 返回了 tuple")
+	}
+
+	// getter 必须返回副本，不能反向改写 opaque authority。
+	gotIntent := authorized.Intent()
+	gotIntent.FrozenDependencies.Transport = "trojan_tls"
+	if authorized.Intent().FrozenDependencies.Transport != "hysteria2" {
+		t.Fatal("Intent getter 泄露了内部可变状态")
+	}
+	gotProjection := authorized.Projection()
+	gotProjection.OwnedTuples[0].Port++
+	if authorized.Projection().OwnedTuples[0].Port == gotProjection.OwnedTuples[0].Port {
+		t.Fatal("Projection getter 泄露了内部可变状态")
+	}
+}
+
+func TestAuthorizeRuntimePlanRejectsUnreplayedOrSubstitutedState(t *testing.T) {
+	intent, certified, verify := preparedRuntimeState(t)
+	frozen := freezeRuntimeExecutionPlan(t, intent, runtimeExecutionPlan(intent))
+	forged := cloneDurableState(certified)
+	forged.Current.Phase = "preferred"
+	if _, err := AuthorizeRuntimePlan(forged, frozen, verify); err == nil {
+		t.Fatal("伪造 current phase 获得了 runtime authority")
+	}
+	if _, err := AuthorizeRuntimePlan(certified, frozen, nil); err == nil {
+		t.Fatal("缺 authority verifier 仍获得 runtime authority")
+	}
+	if _, err := AuthorizeRuntimePlan(certified, FrozenExecutionPlanV1{}, verify); err == nil {
+		t.Fatal("替换 durable frozen execution plan 仍获得 runtime authority")
+	}
+}
+
 func TestRuntimeReconcilerRejectsForgedRetirementAndNonConvergence(t *testing.T) {
 	intent, certified, verify := preparedRuntimeState(t)
 	plan := runtimeExecutionPlan(intent)

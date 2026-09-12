@@ -4,7 +4,6 @@ import (
 	"context"
 	cryptorand "crypto/rand"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -26,7 +25,7 @@ const (
 )
 
 type TrojanTLSServerOptions struct {
-	ServerName                   string
+	Listener                     VerifiedBootstrapListenerV1
 	TLSConfig                    *tls.Config
 	HandshakeTimeout             time.Duration
 	MaximumConcurrentConnections int
@@ -40,6 +39,7 @@ type TrojanTLSServerOptions struct {
 type TrojanTLSServer struct {
 	manager          *Manager
 	registry         *CredentialRegistry
+	listener         VerifiedBootstrapListenerV1
 	tlsConfig        *tls.Config
 	handshakeTimeout time.Duration
 	dial             DialContext
@@ -51,47 +51,23 @@ type TrojanTLSServer struct {
 func NewTrojanTLSServer(manager *Manager, registry *CredentialRegistry,
 	options TrojanTLSServerOptions) (*TrojanTLSServer, error) {
 	if manager == nil || registry == nil || options.TLSConfig == nil || options.Dial == nil ||
-		!validCertifiedServerName(options.ServerName) || options.HandshakeTimeout < time.Second ||
+		!options.Listener.valid() || options.Listener.Transport() != "trojan_tls" ||
+		registry.IngressSetHash() != options.Listener.IngressSetHash() ||
+		options.HandshakeTimeout < time.Second ||
 		options.HandshakeTimeout > 30*time.Second || options.MaximumConcurrentConnections < 1 ||
 		options.MaximumConcurrentConnections > 4096 {
 		return nil, errors.New("[D115 bootstrap ingress] Trojan/TLS server 配置无效")
 	}
-	base := options.TLSConfig.Clone()
-	if len(base.Certificates) == 0 && base.GetCertificate == nil && base.GetConfigForClient == nil {
-		return nil, errors.New("[D115 bootstrap ingress] Trojan/TLS certificate 缺失")
-	}
-	if len(base.Certificates) > 0 && base.GetCertificate == nil && base.GetConfigForClient == nil &&
-		!fixedTLSConfigServesName(base, options.ServerName) {
-		return nil, errors.New("[D115 bootstrap ingress] Trojan/TLS certificate 不覆盖 certified FQDN")
-	}
-	base.MinVersion = tls.VersionTLS13
-	base.MaxVersion = tls.VersionTLS13
-	base.ClientAuth = tls.NoClientCert
-	expectedServerName := options.ServerName
-	originalGetConfig := base.GetConfigForClient
-	base.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
-		if hello == nil || hello.ServerName != expectedServerName {
-			return nil, errors.New("[D115 bootstrap ingress] Trojan/TLS SNI 不属于 certified listener")
-		}
-		if originalGetConfig == nil {
-			return nil, nil
-		}
-		selected, err := originalGetConfig(hello)
-		if err != nil || selected == nil {
-			return selected, err
-		}
-		strict := selected.Clone()
-		strict.MinVersion = tls.VersionTLS13
-		strict.MaxVersion = tls.VersionTLS13
-		strict.ClientAuth = tls.NoClientCert
-		return strict, nil
+	base, err := certifiedTLSConfig(options.TLSConfig, options.Listener)
+	if err != nil {
+		return nil, err
 	}
 	random := options.Random
 	if random == nil {
 		random = cryptorand.Reader
 	}
 	return &TrojanTLSServer{
-		manager: manager, registry: registry, tlsConfig: base,
+		manager: manager, registry: registry, listener: options.Listener, tlsConfig: base,
 		handshakeTimeout: options.HandshakeTimeout, dial: options.Dial, random: random,
 		pending: make(chan struct{}, options.MaximumConcurrentConnections),
 	}, nil
@@ -100,7 +76,8 @@ func NewTrojanTLSServer(manager *Manager, registry *CredentialRegistry,
 // Serve 接受调用方已经绑定到 certified Trojan/TCP tuple 的 listener。它不会创建
 // Nginx route，也不会把失败连接转发到 fake website（D115、D131）。
 func (server *TrojanTLSServer) Serve(ctx context.Context, listener net.Listener) error {
-	if server == nil || ctx == nil || listener == nil {
+	if server == nil || ctx == nil || listener == nil ||
+		!server.listener.matchesLocalAddr(listener.Addr(), "trojan_tls") {
 		return errors.New("[D115 bootstrap ingress] Trojan/TLS serve 输入不完整")
 	}
 	stopAccept := context.AfterFunc(ctx, func() { _ = listener.Close() })
@@ -146,6 +123,9 @@ func (server *TrojanTLSServer) handle(ctx context.Context, raw net.Conn) error {
 	var key [trojanKeyLength]byte
 	if _, err := io.ReadFull(connection, key[:]); err != nil {
 		return errors.New("[D131 capability] Trojan credential header 不完整")
+	}
+	if !server.listener.acceptsAt(server.manager.now()) {
+		return errors.New("[D131 bootstrap ingress] certified catalog 已过期或尚未生效")
 	}
 	sessionID, err := server.sessionID()
 	if err != nil {
@@ -250,21 +230,4 @@ func validCertifiedServerName(value string) bool {
 		}
 	}
 	return true
-}
-
-func fixedTLSConfigServesName(config *tls.Config, serverName string) bool {
-	for _, certificate := range config.Certificates {
-		leaf := certificate.Leaf
-		if leaf == nil && len(certificate.Certificate) > 0 {
-			parsed, err := x509.ParseCertificate(certificate.Certificate[0])
-			if err != nil {
-				continue
-			}
-			leaf = parsed
-		}
-		if leaf != nil && leaf.VerifyHostname(serverName) == nil {
-			return true
-		}
-	}
-	return false
 }

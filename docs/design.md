@@ -2128,6 +2128,14 @@ EndpointSet 只看可拨的 public tuple，不能泄露 CPE 内部细节。若�
 外部验证，不必每次重配 CPE；仍须分别为 HY2/WG 保留不重叠端口，并把退役端口进入
 cooldown/quarantine 后才可复用。
 
+服务进程不得从普通本地配置重建公网 listener authority。HY2/Trojan adapter 只接受由完整重放的
+certified rotation history、耐久 frozen execution plan、exact bootstrap EndpointSet/config QC、
+PublicAccessProfile 和 listener resources 联合生成的 opaque binding；实际 socket tuple、SNI、
+证书 SPKI pin 与 capability ingress-set hash 任一不等即失败关闭。NAT 必须命中 frozen mapping 的
+同 transport public/local offset，direct 也只能使用 frozen plan 已拥有且覆盖 certified address
+family 的 tuple。准备阶段允许不发送 bearer 的 outer transport 验证，但真正 capability auth 只能
+发生在 catalog/listener 有效期交集内。
+
 ---
 
 ### 14.4 节点生命周期:四个状态,加和删要对称

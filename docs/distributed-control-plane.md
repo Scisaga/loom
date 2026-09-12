@@ -3398,6 +3398,15 @@ history，再按 phase 计算 source/target desired state；每次 apply 后必�
 否则不生成成功 evidence。`retired` 前始终保留 source tuple，`abandoned`/`revoked` 回收 target tuple，
 防止失败路径留下旁路 listener。
 
+HY2/Trojan transport adapter 还必须把上述 runtime ownership 与 exact bootstrap catalog、其 parent
+Head/config QC、`ServerPublicAccessProfile` 和 private listener resources 合成不可伪造的本地 listener
+capability，不能重新接收手写的 `listen`、SNI 或 pin。direct 部署的 bind tuple 必须覆盖 catalog
+声明的地址族且端口属于相应 HY2/Trojan pool；NAT 部署必须逐项命中 frozen
+`PortMappingIntent` 的 public/local offset 与 L4 transport。实际 socket 的 `LocalAddr`、TLS SNI、
+叶证书 SPKI 和 capability registry 的 ingress-set hash 都要在 accept/auth 前与该 capability 精确相等。
+`prepared` listener 可在公开有效期前完成不携 bearer 的 outer self-check；任何携 transport
+credential 的认证只在 catalog 与 listener validity 交集内开放。
+
 进入 draining 的 certified transition 同时建立 reference cutoff 和
 `ListenerRetirementGuardV1`：ControlSet 必须枚举所有仍可能使客户端拨旧代的 immutable catalog、
 available Invite、initial/resume capability、reserved transaction 的 `retry_not_after`、Device view、

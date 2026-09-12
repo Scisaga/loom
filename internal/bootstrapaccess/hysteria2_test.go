@@ -49,25 +49,50 @@ func TestNewHysteria2ServerRejectsUncertifiedConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, certificate, _ := trojanCertificate(t, "bootstrap.example")
+	_, certificate, certificateLeaf := trojanCertificate(t, "bootstrap.example")
 	_, wrongCertificate, _ := trojanCertificate(t, "other.example")
+	_, unpinnedCertificate, _ := trojanCertificate(t, "bootstrap.example")
+	packetConnection, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer packetConnection.Close()
+	binding := testListenerBinding(t, "hysteria2", ingressHash, "bootstrap.example",
+		packetConnection.LocalAddr(), certificateLeaf)
 	base := Hysteria2ServerOptions{
-		ServerName: "bootstrap.example", TLSConfig: certificate, HandshakeTimeout: 5 * time.Second,
+		Listener: binding, TLSConfig: certificate, HandshakeTimeout: 5 * time.Second,
 		IdleTimeout: 30 * time.Second, MaximumConcurrentConnections: 4, MaximumStreamsPerConnection: 4,
 		Dial: func(context.Context, string, string) (net.Conn, error) { return nil, net.ErrClosed },
 	}
 	invalid := []Hysteria2ServerOptions{
-		{ServerName: "192.0.2.10", TLSConfig: base.TLSConfig, HandshakeTimeout: base.HandshakeTimeout,
+		{TLSConfig: base.TLSConfig, HandshakeTimeout: base.HandshakeTimeout,
 			IdleTimeout: base.IdleTimeout, MaximumConcurrentConnections: 4, MaximumStreamsPerConnection: 4, Dial: base.Dial},
-		{ServerName: base.ServerName, TLSConfig: &tls.Config{}, HandshakeTimeout: base.HandshakeTimeout,
+		{Listener: func() VerifiedBootstrapListenerV1 { value := binding; value.bindingHash = ""; return value }(),
+			TLSConfig: base.TLSConfig, HandshakeTimeout: base.HandshakeTimeout,
 			IdleTimeout: base.IdleTimeout, MaximumConcurrentConnections: 4, MaximumStreamsPerConnection: 4, Dial: base.Dial},
-		{ServerName: base.ServerName, TLSConfig: wrongCertificate, HandshakeTimeout: base.HandshakeTimeout,
+		{Listener: binding, TLSConfig: &tls.Config{}, HandshakeTimeout: base.HandshakeTimeout,
+			IdleTimeout: base.IdleTimeout, MaximumConcurrentConnections: 4, MaximumStreamsPerConnection: 4, Dial: base.Dial},
+		{Listener: binding, TLSConfig: wrongCertificate, HandshakeTimeout: base.HandshakeTimeout,
+			IdleTimeout: base.IdleTimeout, MaximumConcurrentConnections: 4, MaximumStreamsPerConnection: 4, Dial: base.Dial},
+		{Listener: binding, TLSConfig: unpinnedCertificate, HandshakeTimeout: base.HandshakeTimeout,
 			IdleTimeout: base.IdleTimeout, MaximumConcurrentConnections: 4, MaximumStreamsPerConnection: 4, Dial: base.Dial},
 	}
 	for index, options := range invalid {
 		if _, err := NewHysteria2Server(manager, registry, options); err == nil {
 			t.Fatalf("无效 Hysteria2 配置 #%d 被接受", index)
 		}
+	}
+	server, err := NewHysteria2Server(manager, registry, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongTuple, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer wrongTuple.Close()
+	if err := server.Serve(context.Background(), wrongTuple); err == nil {
+		t.Fatal("Hysteria2 server 接受了非 frozen tuple PacketConn")
 	}
 }
 

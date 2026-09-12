@@ -60,6 +60,81 @@ type ReconcileEvidenceV1 struct {
 	Changed            bool   `json:"changed"`
 }
 
+// AuthorizedRuntimePlanV1 是完整重放 certified rotation history 并核对 durable
+// frozen execution plan 后得到的不透明运行凭据。listener driver 只能消费这个值，
+// 不能把磁盘里的 phase 或 tuple JSON 直接当成当前 ownership（D120、D127）。
+type AuthorizedRuntimePlanV1 struct {
+	intent     IntentV1
+	state      StateV1
+	plan       ExecutionPlanV1
+	projection RuntimeProjectionV1
+}
+
+// AuthorizeRuntimePlan 把 Store 与 ExecutionPlanStore 的两个耐久边界重新合并验证。
+// 这样独立进程重启后也必须重放每个 certified transition，且不能换用另一份端口计划。
+func AuthorizeRuntimePlan(certified DurableStateV1, frozen FrozenExecutionPlanV1,
+	verify CertifiedAuthorityVerifier) (AuthorizedRuntimePlanV1, error) {
+	if verify == nil {
+		return AuthorizedRuntimePlanV1{}, errors.New("[D120 rotation] runtime authority verifier 缺失")
+	}
+	if err := validateDurableState(&certified, verify); err != nil {
+		return AuthorizedRuntimePlanV1{}, errors.New("[D120 rotation] runtime 拒绝未经 certified replay 的 state")
+	}
+	if certified.Intent == nil || certified.Current == nil {
+		return AuthorizedRuntimePlanV1{}, errors.New("[D120 rotation] runtime 缺已分配 rotation")
+	}
+	plan, err := validateFrozenExecutionPlan(certified.Intent, frozen)
+	if err != nil {
+		return AuthorizedRuntimePlanV1{}, err
+	}
+	projection, err := desiredRuntimeProjection(*certified.Intent, *certified.Current, plan)
+	if err != nil {
+		return AuthorizedRuntimePlanV1{}, err
+	}
+	return AuthorizedRuntimePlanV1{
+		intent: cloneIntent(*certified.Intent), state: cloneState(*certified.Current),
+		plan: cloneExecutionPlan(plan), projection: cloneRuntimeProjection(projection),
+	}, nil
+}
+
+// Intent 返回 frozen dependency 的副本；返回值只能用于再次收窄，不能据此构造
+// 新 AuthorizedRuntimePlanV1。
+func (authorized AuthorizedRuntimePlanV1) Intent() IntentV1 {
+	return cloneIntent(authorized.intent)
+}
+
+func (authorized AuthorizedRuntimePlanV1) State() StateV1 {
+	return cloneState(authorized.state)
+}
+
+func (authorized AuthorizedRuntimePlanV1) Projection() RuntimeProjectionV1 {
+	return cloneRuntimeProjection(authorized.projection)
+}
+
+// GenerationTuples 只返回当前 phase 实际拥有的 source/target tuple。retired、
+// revoked、abandoned 或尚未 prepare 的代次不会意外重新获得 listener（D120）。
+func (authorized AuthorizedRuntimePlanV1) GenerationTuples(generation int64) (string, []Tuple, bool) {
+	if authorized.intent.Schema != 1 || authorized.state.Schema != 1 || authorized.plan.Schema != 1 ||
+		authorized.projection.Schema != 1 || generation < 1 {
+		return "", nil, false
+	}
+	if authorized.state.SourceListenerGeneration != nil && generation == *authorized.state.SourceListenerGeneration {
+		state := authorized.projection.SourceState
+		if state == "absent" || state == "retired" || state == "revoked" {
+			return state, nil, false
+		}
+		return state, append([]Tuple(nil), authorized.plan.SourceTuples...), true
+	}
+	if generation == authorized.state.TargetListenerGeneration {
+		state := authorized.projection.TargetState
+		if state == "absent" || state == "retired" || state == "revoked" || state == "abandoned" {
+			return state, nil, false
+		}
+		return state, append([]Tuple(nil), authorized.plan.TargetTuples...), true
+	}
+	return "", nil, false
+}
+
 type RuntimeDriver interface {
 	Observe(context.Context, IntentV1, ExecutionPlanV1) (RuntimeObservationV1, error)
 	Apply(context.Context, IntentV1, ExecutionPlanV1, RuntimeProjectionV1) error
@@ -353,6 +428,27 @@ func validateCanonicalTuples(tuples []Tuple) error {
 
 func sortTuples(tuples []Tuple) {
 	sort.Slice(tuples, func(left, right int) bool { return tupleLess(tuples[left], tuples[right]) })
+}
+
+func cloneIntent(intent IntentV1) IntentV1 {
+	body, _ := wire.MarshalCanonical(intent)
+	var clone IntentV1
+	_, _ = wire.DecodeStrict(body, 4<<20, &clone)
+	return clone
+}
+
+func cloneState(state StateV1) StateV1 {
+	body, _ := wire.MarshalCanonical(state)
+	var clone StateV1
+	_, _ = wire.DecodeStrict(body, 4<<20, &clone)
+	return clone
+}
+
+func cloneRuntimeProjection(projection RuntimeProjectionV1) RuntimeProjectionV1 {
+	body, _ := wire.MarshalCanonical(projection)
+	var clone RuntimeProjectionV1
+	_, _ = wire.DecodeStrict(body, 4<<20, &clone)
+	return clone
 }
 
 func tupleLess(left, right Tuple) bool {
