@@ -106,6 +106,7 @@ android {
         jniLibs.useLegacyPackaging = false
         resources.excludes += setOf("META-INF/LICENSE*", "META-INF/NOTICE*")
     }
+    sourceSets.getByName("androidTest").assets.srcDir(rootProject.file("../../testdata"))
 }
 
 dependencies {

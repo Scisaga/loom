@@ -3,6 +3,7 @@
 package loomcore
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -13,6 +14,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"math/big"
 	"strings"
 	"unicode"
 )
@@ -71,6 +73,38 @@ func VerifyP256Signature(publicKeySPKI, message, signatureDER []byte) error {
 	return nil
 }
 
+// NormalizeP256Signature 把 Android provider 可能返回的 high-S ECDSA 签名
+// 收敛为唯一 canonical DER low-S bytes，并在返回前复验（D129）。
+func NormalizeP256Signature(publicKeySPKI, message, signatureDER []byte) ([]byte, error) {
+	parsedKey, err := x509.ParsePKIXPublicKey(publicKeySPKI)
+	publicKey, ok := parsedKey.(*ecdsa.PublicKey)
+	if err != nil || !ok || publicKey.Curve != elliptic.P256() {
+		return nil, errors.New("[D129 Android] identity public key 必须是 P-256 SPKI")
+	}
+	var signature struct{ R, S *big.Int }
+	rest, err := asn1.Unmarshal(signatureDER, &signature)
+	if err != nil || len(rest) != 0 || signature.R == nil || signature.S == nil || signature.R.Sign() <= 0 || signature.S.Sign() <= 0 {
+		return nil, errors.New("[D129 Android] Keystore ECDSA signature DER 无效")
+	}
+	canonical, err := asn1.Marshal(signature)
+	if err != nil || !bytes.Equal(canonical, signatureDER) {
+		return nil, errors.New("[D129 Android] Keystore ECDSA signature 不是 canonical DER")
+	}
+	digest := sha256.Sum256(message)
+	if !ecdsa.Verify(publicKey, digest[:], signature.R, signature.S) {
+		return nil, errors.New("[D129 Android] Keystore ECDSA signature 验证失败")
+	}
+	halfOrder := new(big.Int).Rsh(new(big.Int).Set(publicKey.Params().N), 1)
+	if signature.S.Cmp(halfOrder) > 0 {
+		signature.S.Sub(publicKey.Params().N, signature.S)
+	}
+	canonical, err = asn1.Marshal(signature)
+	if err != nil {
+		return nil, err
+	}
+	return canonical, nil
+}
+
 // PrepareCSR returns an RFC 2986 CertificationRequestInfo. Android signs these
 // exact bytes with SHA256withECDSA in Keystore, so the identity private key is
 // non-exportable from its first use onward.
@@ -112,6 +146,15 @@ func PrepareCSR(requestID string, publicKeySPKI []byte) ([]byte, error) {
 // AssembleCSR validates the external signature and returns the sole PEM CSR
 // accepted by enrollment. No private key crosses this API.
 func AssembleCSR(infoDER, signatureDER []byte) ([]byte, error) {
+	der, err := AssembleCSRDER(infoDER, signatureDER)
+	if err != nil {
+		return nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}), nil
+}
+
+// AssembleCSRDER 为 v2 claim 返回 exact DER；v1 PEM API 仍调用同一验证路径（D129）。
+func AssembleCSRDER(infoDER, signatureDER []byte) ([]byte, error) {
 	info, err := parseCSRInfo(infoDER)
 	if err != nil {
 		return nil, err
@@ -141,7 +184,7 @@ func AssembleCSR(infoDER, signatureDER []byte) ([]byte, error) {
 	if err != nil || csr.CheckSignature() != nil {
 		return nil, errors.New("[§4.3 设备绑定] 组装后的 CSR 签名无效")
 	}
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}), nil
+	return der, nil
 }
 
 func parseCSRInfo(infoDER []byte) (certificationRequestInfo, error) {

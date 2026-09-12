@@ -7,7 +7,9 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/asn1"
 	"encoding/pem"
+	"math/big"
 	"testing"
 )
 
@@ -90,5 +92,30 @@ func TestCSRRejectsWrongExternalKeyAndTamper(t *testing.T) {
 	}
 	if _, err := PrepareCSR(" bad\n", publicKey); err == nil {
 		t.Fatal("无效 request_id 被接受")
+	}
+}
+
+func TestNormalizeP256SignatureProducesCanonicalLowS(t *testing.T) {
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	publicKey, _ := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	message := []byte("v2-pop")
+	digest := sha256.Sum256(message)
+	r, s, _ := ecdsa.Sign(rand.Reader, key, digest[:])
+	halfOrder := new(big.Int).Rsh(new(big.Int).Set(key.Params().N), 1)
+	if s.Cmp(halfOrder) <= 0 {
+		s.Sub(key.Params().N, s)
+	}
+	highDER, _ := asn1.Marshal(struct{ R, S *big.Int }{R: r, S: s})
+	normalized, err := NormalizeP256Signature(publicKey, message, highDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct{ R, S *big.Int }
+	_, _ = asn1.Unmarshal(normalized, &parsed)
+	if parsed.S.Cmp(halfOrder) > 0 {
+		t.Fatal("normalizer 仍返回 high-S")
+	}
+	if err := VerifyP256Signature(publicKey, message, normalized); err != nil {
+		t.Fatal(err)
 	}
 }

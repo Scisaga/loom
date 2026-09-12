@@ -63,7 +63,8 @@ esac
 rm -rf -- "$shared_dir"
 mkdir -p "$shared_dir/internal"
 cp -a "$repo_dir/internal/attest" "$repo_dir/internal/clientroute" \
-    "$repo_dir/internal/observation" "$repo_dir/internal/version" "$shared_dir/internal/"
+    "$repo_dir/internal/observation" "$repo_dir/internal/version" \
+    "$repo_dir/internal/wire" "$shared_dir/internal/"
 printf 'module loom\n\ngo 1.27.0\n' >"$shared_dir/go.mod"
 
 env GOTOOLCHAIN="$go_toolchain" GOBIN="$go_bin" GOPATH="$go_path" GOCACHE="$go_cache" \
