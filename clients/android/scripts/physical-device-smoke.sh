@@ -65,7 +65,8 @@ wait_runtime() {
     for _ in $(seq 1 45); do
         status=$(status_data io.github.scisaga.loom.debug.RUNTIME_STATUS)
         if [[ "$status" == *"phase=$expected"* ]]; then
-            if [[ "$require_report" == "0" || "$status" == *'report=成功（HTTP 200）'* ]]; then
+            if [[ "$require_report" == "0" ||
+                "$status" == *'report=成功（sequence '* && "$status" == *'，HTTP 204）'* ]]; then
                 printf '%s\n' "$status"
                 return 0
             fi
@@ -121,8 +122,9 @@ case "$EXPECTED_UNDERLAY" in
 esac || { echo "当前默认网络不是声明的 $EXPECTED_UNDERLAY" >&2; exit 1; }
 
 enrollment=$(status_data io.github.scisaga.loom.debug.ENROLLMENT_STATUS)
-[[ "$enrollment" == *'phase=READY'* && "$enrollment" == *'snapshot=true'* ]] || {
-    echo "真机没有可启动的正式验签配置" >&2
+[[ "$enrollment" == *'phase=READY'* && "$enrollment" == *'snapshot=true'* &&
+    "$enrollment" == *'protocol=2'* ]] || {
+    echo "真机没有可启动的正式 v2 验签配置" >&2
     exit 1
 }
 
@@ -162,7 +164,7 @@ printf 'physical_device=true\n'
 printf 'api_31_plus=true\n'
 printf 'underlay=%s\n' "$EXPECTED_UNDERLAY"
 printf 'managed_v2_runtime=true\n'
-printf 'private_report_http_200=true\n'
+printf 'private_report_http_204=true\n'
 printf 'business_probe_activation_gate=false\n'
 printf 'same_generation_reconnect_reused_entry_evidence=true\n'
 printf 'idempotent_disconnect=true\n'

@@ -67,6 +67,7 @@ data class EnrollmentStatus(
     val nodeID: String = "",
     val snapshot: String = "",
     val generation: Long = 0,
+    val protocol: Int = 0,
     val canAbandonPending: Boolean = false,
     val canImportResume: Boolean = false,
     val diagnostic: String = "",
@@ -921,6 +922,7 @@ class EnrollmentManager private constructor(context: Context) {
             nodeID = profile.nodeID,
             snapshot = profile.snapshot,
             generation = profile.generation,
+            protocol = profile.protocol,
         )
     }
 
@@ -942,6 +944,7 @@ class EnrollmentManager private constructor(context: Context) {
             nodeID = profile.nodeID,
             snapshot = profile.snapshot,
             generation = profile.generation,
+            protocol = profile.protocol,
         )
     }
 
@@ -958,6 +961,7 @@ class EnrollmentManager private constructor(context: Context) {
             detail = "Device $label；已禁止数据连接、旧配置恢复与 Debug Direct",
             nodeID = installed.nodeID,
             generation = installed.generation,
+            protocol = 2,
         )
         runCatching {
             ContextCompat.startForegroundService(

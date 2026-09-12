@@ -37,6 +37,7 @@ class DebugVpnControlReceiver : BroadcastReceiver() {
                 append(";abandonable=").append(status.canAbandonPending)
                 append(";snapshot=").append(status.snapshot.isNotEmpty())
                 append(";generation=").append(status.generation)
+                append(";protocol=").append(status.protocol)
                 append(";diagnostic=").append(status.diagnostic.ifEmpty { "none" })
             }
             return
