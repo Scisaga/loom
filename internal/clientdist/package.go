@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -67,10 +68,13 @@ type Manifest struct {
 // BuildInput contains all bytes that affect the output. The builder never
 // reads the clock, environment, network, or source paths (design.md §12).
 type BuildInput struct {
-	Loom       []byte
-	SingBox    []byte
-	PrivateKey ed25519.PrivateKey
-	AllowDirty bool
+	Loom           []byte
+	SingBox        []byte
+	LoomLicense    []byte
+	LoomNotice     []byte
+	SingBoxLicense []byte
+	PrivateKey     ed25519.PrivateKey
+	AllowDirty     bool
 }
 
 // Artifact contains the exact archive and detached verification material.
@@ -110,6 +114,15 @@ func Build(in BuildInput) (Artifact, error) {
 	if err != nil {
 		return Artifact{}, err
 	}
+	if err := validateLicenseMaterial("Loom LICENSE", in.LoomLicense); err != nil {
+		return Artifact{}, err
+	}
+	if err := validateLicenseMaterial("Loom NOTICE", in.LoomNotice); err != nil {
+		return Artifact{}, err
+	}
+	if err := validateLicenseMaterial("sing-box LICENSE", in.SingBoxLicense); err != nil {
+		return Artifact{}, err
+	}
 	publicKey := in.PrivateKey.Public().(ed25519.PublicKey)
 	publicBody := append([]byte(base64.StdEncoding.EncodeToString(publicKey)), '\n')
 
@@ -117,6 +130,10 @@ func Build(in BuildInput) (Artifact, error) {
 	files := []archiveFile{
 		{path: "README.md", mode: 0o644, body: []byte(readme)},
 		{path: "install.sh", mode: 0o755, body: []byte(installScript)},
+		{path: "licenses/LOOM-LICENSE", mode: 0o644, body: append([]byte(nil), in.LoomLicense...)},
+		{path: "licenses/LOOM-NOTICE", mode: 0o644, body: append([]byte(nil), in.LoomNotice...)},
+		{path: "licenses/SING-BOX-LICENSE", mode: 0o644, body: append([]byte(nil), in.SingBoxLicense...)},
+		{path: "licenses/THIRD-PARTY-NOTICES.md", mode: 0o644, body: []byte(singBoxSourceNotice(singBox))},
 		{path: "loom", mode: 0o755, body: append([]byte(nil), in.Loom...)},
 		{path: "platform.pub", mode: 0o644, body: publicBody},
 		{path: "sing-box", mode: 0o755, body: append([]byte(nil), in.SingBox...)},
@@ -169,6 +186,25 @@ func Build(in BuildInput) (Artifact, error) {
 		Checksum:  []byte(fmt.Sprintf("%s  %s\n", hash, name)),
 		Signature: append(envelopeBody, '\n'), Manifest: manifest,
 	}, nil
+}
+
+func validateLicenseMaterial(name string, body []byte) error {
+	if len(body) == 0 || len(body) > 1<<20 || !utf8.Valid(body) || bytes.IndexByte(body, 0) >= 0 || body[len(body)-1] != '\n' {
+		return fmt.Errorf("[§12 可重现制品] %s 必须是有界 UTF-8 文本且以换行结尾", name)
+	}
+	return nil
+}
+
+func singBoxSourceNotice(component Component) string {
+	return fmt.Sprintf(`# Third-party source information
+
+This package contains a sing-box executable reported by its Go build metadata
+as version %s. sing-box is distributed under the terms in
+SING-BOX-LICENSE.
+
+Corresponding upstream source:
+https://github.com/SagerNet/sing-box/tree/%s
+`, component.Version, component.Version)
 }
 
 func inspectLoom(body []byte, allowDirty bool) (Component, string, string, error) {
@@ -254,7 +290,7 @@ func buildArchive(root string, files []archiveFile) ([]byte, error) {
 	gz.Header.OS = 255
 	tw := tar.NewWriter(gz)
 	epoch := time.Unix(0, 0).UTC()
-	dirs := []string{root + "/", root + "/systemd/"}
+	dirs := []string{root + "/", root + "/licenses/", root + "/systemd/"}
 	for _, name := range dirs {
 		if err := tw.WriteHeader(&tar.Header{Name: name, Typeflag: tar.TypeDir, Mode: 0o755, ModTime: epoch, Format: tar.FormatUSTAR}); err != nil {
 			return nil, err
@@ -374,7 +410,8 @@ func verifyArchive(body []byte, pub ed25519.PublicKey) (Manifest, error) {
 		total += h.Size
 		files[rel], modes[rel] = content, h.Mode&0o777
 	}
-	required := []string{"README.md", "checksums.txt", "install.sh", "loom", "manifest.json", "platform.pub", "sing-box", "systemd/README.md"}
+	required := []string{"README.md", "checksums.txt", "install.sh", "licenses/LOOM-LICENSE", "licenses/LOOM-NOTICE",
+		"licenses/SING-BOX-LICENSE", "licenses/THIRD-PARTY-NOTICES.md", "loom", "manifest.json", "platform.pub", "sing-box", "systemd/README.md"}
 	if len(files) != len(required) {
 		return zero, fmt.Errorf("客户端包文件数是 %d，期望 %d", len(files), len(required))
 	}
@@ -409,6 +446,14 @@ func verifyArchive(body []byte, pub ed25519.PublicKey) (Manifest, error) {
 	}
 	if len(seen) != len(required)-2 {
 		return zero, fmt.Errorf("manifest 文件清单不完整")
+	}
+	for _, name := range []string{"licenses/LOOM-LICENSE", "licenses/LOOM-NOTICE", "licenses/SING-BOX-LICENSE"} {
+		if err := validateLicenseMaterial(name, files[name]); err != nil {
+			return zero, err
+		}
+	}
+	if !bytes.Equal(files["licenses/THIRD-PARTY-NOTICES.md"], []byte(singBoxSourceNotice(manifest.SingBox))) {
+		return zero, fmt.Errorf("[§12 可重现制品] sing-box source information 与 build metadata 不匹配")
 	}
 	if err := verifyChecksums(files); err != nil {
 		return zero, err

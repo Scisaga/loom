@@ -411,6 +411,9 @@ func cmdClientPackage(args []string) error {
 	fs.SetOutput(io.Discard)
 	loomPath := fs.String("loom", stagedBinary, "要嵌入的 Loom 二进制")
 	singBoxPath := fs.String("sing-box", "/usr/local/bin/sing-box", "要嵌入的真实 sing-box 二进制")
+	loomLicensePath := fs.String("loom-license", "LICENSE", "Loom LICENSE 文本")
+	loomNoticePath := fs.String("loom-notice", "NOTICE", "Loom NOTICE 文本")
+	singBoxLicensePath := fs.String("sing-box-license", "clients/android/third_party/sing-box/LICENSE", "sing-box LICENSE 文本")
 	keyPath := fs.String("key", "deploy/keys/platform-signing.key", "平台 Ed25519 签名私钥")
 	outPath := fs.String("o", "", "输出 tar.gz；默认 deploy/staging/loom-client-linux-<arch>.tar.gz")
 	allowDirty := fs.Bool("allow-dirty", false, "允许无法追溯到干净 commit 的 Loom 候选")
@@ -428,12 +431,25 @@ func cmdClientPackage(args []string) error {
 	if err != nil {
 		return err
 	}
+	loomLicense, err := readRegularClientInput(*loomLicensePath, false)
+	if err != nil {
+		return err
+	}
+	loomNotice, err := readRegularClientInput(*loomNoticePath, false)
+	if err != nil {
+		return err
+	}
+	singBoxLicense, err := readRegularClientInput(*singBoxLicensePath, false)
+	if err != nil {
+		return err
+	}
 	privateKey, err := readKey(*keyPath, ed25519.PrivateKeySize)
 	if err != nil {
 		return fmt.Errorf("读平台签名私钥:%w", err)
 	}
 	artifact, err := clientdist.Build(clientdist.BuildInput{
-		Loom: loomBody, SingBox: singBoxBody, PrivateKey: ed25519.PrivateKey(privateKey), AllowDirty: *allowDirty,
+		Loom: loomBody, SingBox: singBoxBody, LoomLicense: loomLicense, LoomNotice: loomNotice,
+		SingBoxLicense: singBoxLicense, PrivateKey: ed25519.PrivateKey(privateKey), AllowDirty: *allowDirty,
 	})
 	if err != nil {
 		return err

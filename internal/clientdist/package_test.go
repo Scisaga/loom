@@ -19,7 +19,7 @@ func TestBuildIsReproducibleAndVerifiable(t *testing.T) {
 	loom, singBox := buildClientFixtures(t)
 	seed := bytes.Repeat([]byte{0x42}, ed25519.SeedSize)
 	privateKey := ed25519.NewKeyFromSeed(seed)
-	in := BuildInput{Loom: loom, SingBox: singBox, PrivateKey: privateKey, AllowDirty: true}
+	in := fixtureBuildInput(loom, singBox, privateKey)
 	one, err := Build(in)
 	if err != nil {
 		t.Fatal(err)
@@ -38,6 +38,16 @@ func TestBuildIsReproducibleAndVerifiable(t *testing.T) {
 	}
 	if manifest.Lifecycle != "signed-node-bundle" || manifest.SingBox.Version != "v1.11.4" {
 		t.Fatalf("unexpected manifest: %+v", manifest)
+	}
+	for _, name := range []string{"licenses/LOOM-LICENSE", "licenses/LOOM-NOTICE",
+		"licenses/SING-BOX-LICENSE", "licenses/THIRD-PARTY-NOTICES.md"} {
+		found := false
+		for _, file := range manifest.Files {
+			found = found || file.Path == name
+		}
+		if !found {
+			t.Fatalf("manifest 缺许可证文件 %s", name)
+		}
 	}
 	dir := t.TempDir()
 	archivePath := filepath.Join(dir, one.Name)
@@ -80,7 +90,7 @@ func TestVerifyRejectsTamperAndWrongTrustRoot(t *testing.T) {
 	}
 	loom, singBox := buildClientFixtures(t)
 	privateKey := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x11}, ed25519.SeedSize))
-	artifact, err := Build(BuildInput{Loom: loom, SingBox: singBox, PrivateKey: privateKey, AllowDirty: true})
+	artifact, err := Build(fixtureBuildInput(loom, singBox, privateKey))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,6 +102,27 @@ func TestVerifyRejectsTamperAndWrongTrustRoot(t *testing.T) {
 	wrong := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x22}, ed25519.SeedSize))
 	if _, err := Verify(artifact.Archive, artifact.Checksum, artifact.Signature, wrong.Public().(ed25519.PublicKey)); err == nil {
 		t.Fatal("wrong trust root was accepted")
+	}
+}
+
+func TestBuildRejectsMissingLicenseMaterial(t *testing.T) {
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		t.Skip("fixture builder currently exercises the production linux/amd64 package")
+	}
+	loom, singBox := buildClientFixtures(t)
+	privateKey := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x31}, ed25519.SeedSize))
+	input := fixtureBuildInput(loom, singBox, privateKey)
+	input.SingBoxLicense = nil
+	if _, err := Build(input); err == nil || !strings.Contains(err.Error(), "sing-box LICENSE") {
+		t.Fatalf("缺少第三方许可证仍可构建: %v", err)
+	}
+}
+
+func fixtureBuildInput(loom, singBox []byte, privateKey ed25519.PrivateKey) BuildInput {
+	return BuildInput{
+		Loom: loom, SingBox: singBox, LoomLicense: []byte("Apache-2.0 test license\n"),
+		LoomNotice: []byte("Loom test notice\n"), SingBoxLicense: []byte("GPL-3.0 test license\n"),
+		PrivateKey: privateKey, AllowDirty: true,
 	}
 }
 

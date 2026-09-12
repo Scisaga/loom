@@ -102,7 +102,12 @@ SSH 不是另一种 Enrollment，也不由 Loom 中控保存主机地址、账�
 
 ## 2. 下载并核对客户端包
 
-在 Devices 页下载 `loom-client-linux-amd64.tar.gz`。中控只在使用其独立的
+目标 v2 同时发布 `loom-client-linux-amd64.tar.gz` 与 `loom-client-linux-arm64.tar.gz`；
+二者由对应架构的 Loom/sing-box ELF 作为全部输入确定性生成。包内 manifest/checksums 必须覆盖
+Loom `LICENSE`/`NOTICE`、sing-box license 与由实际 Go build version 生成的对应源码地址，缺少法律材料
+时 builder 和 verifier 都失败关闭。
+
+在 Devices 页下载与目标架构一致的归档。中控只在使用其独立的
 `/etc/loom/trust/platform.pub` 验证 detached signature、archive 哈希和包内文件后
 才提供下载；下载响应本身不把同目录公钥当成信任根。
 
@@ -217,7 +222,8 @@ ALL_PROXY=socks5h://127.0.0.1:1080 your-command
 
 ## v1 运行手册边界
 
-- 本手册只定义 Linux amd64 `tar.gz`；deb/rpm、Linux GUI 与通用卸载器不属于该 v1 契约；
+- 本手册的历史命令示例仍以 Linux amd64 为准；目标 v2 的同构可重现包覆盖 amd64/arm64。
+  deb/rpm、Linux GUI 与通用卸载器不属于该 v1 契约；
 - 加入码消费/身份绑定不等于在线，Devices 列表中的数据面健康必须来自后续可信报告；
 - access-only 的安全回收必须同时完成 signed decommission、移除/吊销、秘密清理与 purge
   canary；服务器职责和其他平台同样必须同时撤销控制面与数据面授权，不能仅用删除列表
