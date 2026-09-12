@@ -175,6 +175,24 @@ func (client *PrivateEnrollmentClient) SubmitClaim(ctx context.Context,
 	return result, nil
 }
 
+// SubmitResume 使用与 initial claim 相同的私有路径，但 wire schema 不含 token；
+// outer ingress/server 会按已验 capability mode 严格选择解码器（D130）。
+func (client *PrivateEnrollmentClient) SubmitResume(ctx context.Context,
+	submission wire.EnrollmentResumeSubmissionV1) (wire.EnrollmentClaimResultV2, error) {
+	var result wire.EnrollmentClaimResultV2
+	if err := client.postCanonicalAnyStatus(ctx, "/v2/enrollment/claim", submission,
+		[]int{http.StatusOK, http.StatusAccepted}, &result); err != nil {
+		return wire.EnrollmentClaimResultV2{}, err
+	}
+	if err := wire.ValidateEnrollmentClaimResult(&result); err != nil {
+		return wire.EnrollmentClaimResultV2{}, err
+	}
+	if result.Status != "completed" && len(result.ProgressReceipt) == 0 {
+		return wire.EnrollmentClaimResultV2{}, errors.New("[D130 client] private Enrollment resume 响应缺 progress receipt")
+	}
+	return result, nil
+}
+
 func (client *PrivateEnrollmentClient) postCanonical(ctx context.Context, path string, value any,
 	expectedStatus int, target any) error {
 	return client.postCanonicalAnyStatus(ctx, path, value, []int{expectedStatus}, target)

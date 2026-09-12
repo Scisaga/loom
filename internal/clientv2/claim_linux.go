@@ -74,6 +74,51 @@ func OpenOrCreatePendingClaim(path string, identity *EnrollmentIdentityV1, input
 }
 
 func loadPendingClaim(path string, identity *EnrollmentIdentityV1, input ClaimCoreInputV2) (*PendingClaimV2, error) {
+	pending, err := readPendingClaim(path)
+	if err != nil {
+		return nil, err
+	}
+	if !claimCoreMatchesInput(pending.ClaimCore, input) {
+		return nil, errors.New("[D129 Linux] pending claim 与本次 Invite/authority 不一致")
+	}
+	if err := validatePendingIdentity(pending, identity); err != nil {
+		return nil, err
+	}
+	return pending, nil
+}
+
+// LoadPendingClaimForResume 在共享锁下读取已 committed 的本机 claim。resume 必须
+// 已有经 progress receipt 固化的 binding，不能从只有 core 的未提交状态猜测事务（D130）。
+func LoadPendingClaimForResume(path string, identity *EnrollmentIdentityV1) (*PendingClaimV2, error) {
+	if path == "" || filepath.Clean(path) != path || !filepath.IsAbs(path) || identity == nil {
+		return nil, errors.New("[D130 Linux resume] pending/identity 输入无效")
+	}
+	if err := secureEnrollmentDirectory(filepath.Dir(path)); err != nil {
+		return nil, err
+	}
+	lock, err := openPrivateLock(path + ".lock")
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Close()
+	if err := unix.Flock(int(lock.Fd()), unix.LOCK_SH); err != nil {
+		return nil, err
+	}
+	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+	pending, err := readPendingClaim(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := validatePendingIdentity(pending, identity); err != nil {
+		return nil, err
+	}
+	if pending.Progress == nil {
+		return nil, errors.New("[D130 Linux resume] pending claim 缺 verified progress binding")
+	}
+	return pending, nil
+}
+
+func readPendingClaim(path string) (*PendingClaimV2, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
@@ -97,23 +142,27 @@ func loadPendingClaim(path string, identity *EnrollmentIdentityV1, input ClaimCo
 	if err != nil || coreHash != pending.ClaimCoreHash {
 		return nil, errors.New("[D129 Linux] pending claim core hash 不匹配")
 	}
-	if !claimCoreMatchesInput(pending.ClaimCore, input) {
-		return nil, errors.New("[D129 Linux] pending claim 与本次 Invite/authority 不一致")
+	if err := validatePendingProgress(&pending); err != nil {
+		return nil, err
+	}
+	return &pending, nil
+}
+
+func validatePendingIdentity(pending *PendingClaimV2, identity *EnrollmentIdentityV1) error {
+	if pending == nil || identity == nil {
+		return errors.New("[D129 Linux] pending/identity context 无效")
 	}
 	identityKey, wrappingKey, err := identity.keys()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	identitySPKI, _ := x509.MarshalPKIXPublicKey(&identityKey.PublicKey)
 	wrappingSPKI, _ := x509.MarshalPKIXPublicKey(&wrappingKey.PublicKey)
 	if pending.ClaimCore.DeviceIdentityPublicKey != base64.RawURLEncoding.EncodeToString(identitySPKI) ||
 		pending.ClaimCore.WrappingPublicKey != base64.RawURLEncoding.EncodeToString(wrappingSPKI) {
-		return nil, errors.New("[D129 Linux] pending claim 不属于当前 identity/wrapping keys")
+		return errors.New("[D129 Linux] pending claim 不属于当前 identity/wrapping keys")
 	}
-	if err := validatePendingProgress(&pending); err != nil {
-		return nil, err
-	}
-	return &pending, nil
+	return nil
 }
 
 // RecordPendingProgress 只接受完整 progress receipt verifier 产生的 opaque

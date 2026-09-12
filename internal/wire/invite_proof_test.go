@@ -34,7 +34,7 @@ func TestInviteProofBundlePinsLineageBeforeDescriptorSecrets(t *testing.T) {
 		Schema: 1, ClusterID: "demo-cluster", Authorization: authorization, AuthorizationHash: authorizationHash,
 		Leaf: authorizationLeaf, LeafIndex: 0, RegistryTreeSize: 1, RegistryAuditPath: []string{}, RegistryRoot: issuerRoot,
 	}
-	bootstrap, _, _, _ := bootstrapBundleFixtureWithIssuerRoot(t, issuerRoot)
+	bootstrap, platformPublic, platformID, platformDigest := bootstrapBundleFixtureWithIssuerRoot(t, issuerRoot)
 	parent := bootstrap.InitialHeadEntry.Head
 
 	intent := DeviceEnrollmentIntentV1{
@@ -134,6 +134,49 @@ func TestInviteProofBundlePinsLineageBeforeDescriptorSecrets(t *testing.T) {
 	}
 	if verified.CertifiedInviteRecordHash() != recordHash || verified.Head().HeadHash != recordHead.HeadHash {
 		t.Fatal("verified Invite proof 未返回 exact record/head")
+	}
+
+	resumeBody := capabilityBody
+	resumeBody.Mode = "resume_committed_claim"
+	resumeBody.IssuedAt = "2026-09-11T11:16:00Z"
+	resumeBody.NotBefore = resumeBody.IssuedAt
+	resumeBody.ExpiresAt = "2026-09-11T11:20:00Z"
+	resumeBody.ResumeBinding = &BootstrapCapabilityResumeBindingV1{
+		RequestID: "request-1", ClaimOperationHash: recoveryTestHash("claim-operation"),
+		AdmissionQCHash: recoveryTestHash("admission-qc"), ClaimCoreHash: recoveryTestHash("claim-core"),
+		CSRHash: recoveryTestHash("csr"), IdentityKeyHash: recoveryTestHash("identity"),
+		WrappingKeyHash:                recoveryTestHash("wrapping"),
+		EnrollmentTransactionStateHash: recoveryTestHash("transaction"),
+	}
+	resumeCapability, err := SignBootstrapCapability(resumeBody, issuerPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumeDescriptor := EnrollmentResumeDescriptorV1{
+		Schema: 1, ClusterID: record.ClusterID, InviteID: record.InviteID,
+		RequestID: "request-1", ExpiresAt: "2026-09-11T11:20:00Z",
+		ResumeTunnelCapability: resumeCapability, ClaimCoreHash: resumeBody.ResumeBinding.ClaimCoreHash,
+		ClaimOperationHash:             resumeBody.ResumeBinding.ClaimOperationHash,
+		AdmissionQCHash:                resumeBody.ResumeBinding.AdmissionQCHash,
+		EnrollmentTransactionStateHash: resumeBody.ResumeBinding.EnrollmentTransactionStateHash,
+		BootstrapCatalogHash:           record.BootstrapCatalogHash, ProofBundleHash: descriptor.ProofBundleHash,
+		EnrollmentServiceRef: service, DistributionMirrors: descriptor.DistributionMirrors,
+	}
+	resumeVerified, err := VerifyResumeInviteProofBundle(&bundle, &resumeDescriptor,
+		time.Date(2026, 9, 11, 11, 16, 30, 0, time.UTC), InviteProofTrustV2{
+			V1PlatformKey: platformPublic, V1PlatformKeyID: platformID,
+			V1MigrationAnchorDigest: platformDigest,
+		})
+	if err != nil || resumeVerified.CertifiedInviteRecordHash() != recordHash {
+		t.Fatalf("Invite 过期后的 resume proof 未从 v1 root 重验: evidence=%#v err=%v", resumeVerified, err)
+	}
+	if head, set, previous, ok := resumeVerified.AuthorityForHead(parent.HeadHash); !ok ||
+		head.HeadHash != parent.HeadHash || set.ClusterID != record.ClusterID || previous != nil {
+		t.Fatal("resume proof 未保留 catalog parent Head authority")
+	}
+	if _, err := VerifyResumeInviteProofBundle(&bundle, &resumeDescriptor,
+		time.Date(2026, 9, 11, 11, 16, 30, 0, time.UTC), InviteProofTrustV2{}); err == nil {
+		t.Fatal("resume proof 接受了 descriptor 自报 trust root")
 	}
 
 	tampered := bundle

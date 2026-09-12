@@ -37,8 +37,9 @@ type EnrollmentProgressExpectedV1 struct {
 }
 
 type VerifiedEnrollmentProgressV1 struct {
-	status   string
-	expected wire.EnrollmentResumeExpectedV1
+	status                 string
+	expected               wire.EnrollmentResumeExpectedV1
+	transactionStateHashes []string
 }
 
 func (verified VerifiedEnrollmentProgressV1) Status() string {
@@ -47,6 +48,15 @@ func (verified VerifiedEnrollmentProgressV1) Status() string {
 
 func (verified VerifiedEnrollmentProgressV1) ResumeExpected() wire.EnrollmentResumeExpectedV1 {
 	return verified.expected
+}
+
+func (verified VerifiedEnrollmentProgressV1) IncludesTransactionStateHash(hash string) bool {
+	for _, candidate := range verified.transactionStateHashes {
+		if candidate == hash {
+			return true
+		}
+	}
+	return false
 }
 
 func progressReceiptForRecord(record *DurableRecord) ([]byte, error) {
@@ -160,6 +170,11 @@ func VerifyEnrollmentProgressReceipt(raw []byte, result *wire.EnrollmentClaimRes
 		&receipt.AdmissionControlSet); err != nil {
 		return VerifiedEnrollmentProgressV1{}, err
 	}
+	reservedHash, err := TransactionHash(reserved)
+	if err != nil {
+		return VerifiedEnrollmentProgressV1{}, err
+	}
+	transactionStateHashes := []string{reservedHash}
 	state := reserved
 	if result.Status == "reserved" {
 		if receipt.ProvisionalOperation != nil || receipt.ProvisionalCertification != nil ||
@@ -186,6 +201,11 @@ func VerifyEnrollmentProgressReceipt(raw []byte, result *wire.EnrollmentClaimRes
 			&receipt.ProvisionalCertification.ControlSet); err != nil {
 			return VerifiedEnrollmentProgressV1{}, err
 		}
+		issuedHash, hashErr := TransactionHash(state)
+		if hashErr != nil {
+			return VerifiedEnrollmentProgressV1{}, hashErr
+		}
+		transactionStateHashes = append(transactionStateHashes, issuedHash)
 	}
 	stateHash, err := TransactionHash(state)
 	if err != nil || stateHash != result.TransactionStateHash {
@@ -199,5 +219,5 @@ func VerifyEnrollmentProgressReceipt(raw []byte, result *wire.EnrollmentClaimRes
 		ClaimOperationHash: claimOperationHash, AdmissionQCHash: admissionQCHash,
 		CSRHash: csrHash, IdentityKeyHash: identityHash, WrappingKeyHash: wrappingHash,
 		EnrollmentTransactionStateHash: stateHash, RetryNotAfter: receipt.ClaimOperation.RetryNotAfter,
-	}}, nil
+	}, transactionStateHashes: transactionStateHashes}, nil
 }

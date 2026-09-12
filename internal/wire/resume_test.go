@@ -87,6 +87,18 @@ func TestEnrollmentResumeDescriptorBindsPendingTransactionAndHasNoToken(t *testi
 	if err := VerifyEnrollmentResumeDescriptorBindings(&descriptor, expected, catalog, &proof, &policy, trustedTime, 2); err != nil {
 		t.Fatal(err)
 	}
+	olderFloor := expected
+	olderFloor.EnrollmentTransactionStateHash = hash("earlier-reserved-floor")
+	if err := VerifyEnrollmentResumeDescriptorBindings(&descriptor, olderFloor, catalog,
+		&proof, &policy, trustedTime, 2); err != nil {
+		t.Fatalf("服务端已前进后的 signed resume target 未被接受: %v", err)
+	}
+	tooFewMirrors := descriptor
+	tooFewMirrors.DistributionMirrors = tooFewMirrors.DistributionMirrors[:1]
+	if err := VerifyEnrollmentResumeDescriptorBindings(&tooFewMirrors, expected, catalog,
+		&proof, &policy, trustedTime, 2); err == nil {
+		t.Fatal("resume descriptor 绕过了 certified mirror count")
+	}
 	expected.WrappingKeyHash = hash("another-wrapping-key")
 	if err := VerifyEnrollmentResumeDescriptorBindings(&descriptor, expected, catalog, &proof, &policy, trustedTime, 2); err == nil {
 		t.Fatal("resume descriptor 接受了另一把本机 wrapping key")

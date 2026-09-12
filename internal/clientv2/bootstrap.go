@@ -165,6 +165,66 @@ func (fetcher MirrorFetcher) FetchAndVerifyInviteProof(ctx context.Context, desc
 	return &bundle, verified, nil
 }
 
+// FetchAndVerifyResumeInviteProof 从 descriptor 指定的公共镜像取 exact proof bundle，
+// 但只把本机 v1 migration root 当作 trust root；`.loom-resume` 自报的 hash 不能自行授权（D115、D130）。
+func (fetcher MirrorFetcher) FetchAndVerifyResumeInviteProof(ctx context.Context,
+	descriptor *wire.EnrollmentResumeDescriptorV1, now time.Time,
+	trust wire.InviteProofTrustV2) (*wire.InviteProofBundleV2, wire.VerifiedInviteProofV2, error) {
+	if descriptor == nil {
+		return nil, wire.VerifiedInviteProofV2{}, errors.New("[D130 Linux resume] descriptor 不能为空")
+	}
+	body, err := fetcher.FetchCanonicalObject(ctx, descriptor.DistributionMirrors,
+		descriptor.ProofBundleHash, DomainInviteProofBundle, MaximumBootstrapObjectSize)
+	if err != nil {
+		return nil, wire.VerifiedInviteProofV2{}, err
+	}
+	var bundle wire.InviteProofBundleV2
+	canonical, err := wire.DecodeStrict(body, MaximumBootstrapObjectSize, &bundle)
+	if err != nil || !bytes.Equal(canonical, body) {
+		return nil, wire.VerifiedInviteProofV2{}, errors.New("[D130 Linux resume] Invite proof 必须是 exact canonical wire")
+	}
+	verified, err := wire.VerifyResumeInviteProofBundle(&bundle, descriptor, now, trust)
+	if err != nil {
+		return nil, wire.VerifiedInviteProofV2{}, err
+	}
+	return &bundle, verified, nil
+}
+
+// FetchResumeBootstrapCatalog 验证 resume 指向的 catalog 及其 config QC。QC 的
+// exact parent Head/ControlSet 必须来自刚刚重放的 Invite proof lineage（D107、D115、D130）。
+func (fetcher MirrorFetcher) FetchResumeBootstrapCatalog(ctx context.Context,
+	descriptor *wire.EnrollmentResumeDescriptorV1, now time.Time, clientProtocol int64,
+	proof wire.VerifiedInviteProofV2) (*wire.BootstrapEndpointCatalogV1, error) {
+	if descriptor == nil {
+		return nil, errors.New("[D130 Linux resume] descriptor 不能为空")
+	}
+	body, err := fetcher.FetchCanonicalObject(ctx, descriptor.DistributionMirrors,
+		descriptor.BootstrapCatalogHash, wire.DomainBootstrapEndpointCatalog, MaximumBootstrapObjectSize)
+	if err != nil {
+		return nil, err
+	}
+	var catalog wire.BootstrapEndpointCatalogV1
+	canonical, err := wire.DecodeStrict(body, MaximumBootstrapObjectSize, &catalog)
+	if err != nil || !bytes.Equal(canonical, body) {
+		return nil, errors.New("[D130 Linux resume] bootstrap catalog 必须是 exact canonical wire")
+	}
+	if err := wire.ValidateBootstrapEndpointCatalogAt(&catalog, now, clientProtocol); err != nil {
+		return nil, err
+	}
+	catalogHash, err := wire.BootstrapEndpointCatalogHash(&catalog)
+	if err != nil || catalogHash != descriptor.BootstrapCatalogHash ||
+		catalog.ClusterID != descriptor.ClusterID ||
+		catalog.BootstrapIngressSetHash != descriptor.ResumeTunnelCapability.Body.AllowedIngressSetHash {
+		return nil, errors.New("[D130 Linux resume] descriptor/capability/catalog binding 不匹配")
+	}
+	head, current, previous, ok := proof.AuthorityForHead(catalog.ParentHeadHash)
+	if !ok || wire.VerifyConfigQCAuthority(catalog.ParentHeadHash,
+		catalog.BootstrapIngressSet.ConfigQC, &head, &current, previous) != nil {
+		return nil, errors.New("[D130 Linux resume] catalog parent Head/QC 不在已验 Invite lineage")
+	}
+	return &catalog, nil
+}
+
 func fetchMirrorObject(ctx context.Context, mirror wire.DistributionMirrorRefV1, digest string, maximum int64, roots *x509.CertPool, timeout time.Duration, dialContext func(context.Context, string, string) (net.Conn, error)) ([]byte, error) {
 	base, err := url.ParseRequestURI(mirror.BaseURL)
 	if err != nil || base == nil || base.String() != mirror.BaseURL || base.Scheme != "https" || base.RawQuery != "" ||

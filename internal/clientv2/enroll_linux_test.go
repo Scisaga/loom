@@ -101,6 +101,13 @@ func TestLinuxEnrollmentOrdersPreflightBeforeKeysAndReusesStableCore(t *testing.
 	if identityInfo.Mode().Perm() != 0o600 {
 		t.Fatalf("identity state 未按 0600 持久化: %#o", identityInfo.Mode().Perm())
 	}
+	identity, err := LoadEnrollmentIdentityForResume(attempt.IdentityPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadPendingClaimForResume(attempt.PendingPath, identity); err == nil {
+		t.Fatal("尚无 verified progress 的 pending claim 被用于 resume")
+	}
 }
 
 func TestLinuxEnrollmentPreflightFailureCreatesNoIdentity(t *testing.T) {
@@ -164,6 +171,10 @@ func TestLinuxPendingProgressPersistsResumeBindingAndRejectsRollback(t *testing.
 	issued.EnrollmentTransactionStateHash = wire.HashRaw("linux-progress-test", []byte("issued"))
 	if _, err := recordPendingProgress(attempt.PendingPath, identity, input, "issued_provisional", issued); err != nil {
 		t.Fatalf("reserved→issued progress 被拒绝: %v", err)
+	}
+	resumable, err := LoadPendingClaimForResume(attempt.PendingPath, identity)
+	if err != nil || resumable.Progress == nil || resumable.Progress.Status != "issued_provisional" {
+		t.Fatalf("已固化 progress 的 pending claim 不可恢复: pending=%#v err=%v", resumable, err)
 	}
 	if _, err := recordPendingProgress(attempt.PendingPath, identity, input, "reserved", expected); err == nil {
 		t.Fatal("较旧 reserved progress 覆盖了 issued floor")

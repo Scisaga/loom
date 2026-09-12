@@ -34,6 +34,26 @@ func TestPrivateEnrollmentClientPinsInnerTLSAndKeepsPreflightTokenFree(t *testin
 	}
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		body, _ := io.ReadAll(request.Body)
+		if request.URL.Path == "/v2/enrollment/claim" {
+			if bytes.Contains(body, []byte(`"token"`)) {
+				t.Error("resume submission 泄漏 Invite token field")
+			}
+			var resume wire.EnrollmentResumeSubmissionV1
+			if _, err := wire.DecodeStrict(body, 1<<20, &resume); err != nil {
+				t.Error(err)
+				response.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			result := wire.EnrollmentClaimResultV2{Schema: 2, Status: "reserved",
+				TransactionStateHash: wire.HashRaw("private-client-test", []byte("resume-transaction")),
+				ProgressReceipt:      []byte(`{"schema":1}`)}
+			encoded, _ := wire.MarshalCanonical(result)
+			response.Header().Set("Content-Type", "application/json")
+			response.Header().Set("Cache-Control", "no-store")
+			response.WriteHeader(http.StatusAccepted)
+			_, _ = response.Write(encoded)
+			return
+		}
 		if bytes.Contains(body, []byte(`"token"`)) || bytes.Contains(body, []byte(`"csr_der"`)) ||
 			bytes.Contains(body, []byte(`"device_identity_public_key"`)) {
 			t.Error("preflight 泄漏 token/CSR/key")
@@ -77,6 +97,10 @@ func TestPrivateEnrollmentClientPinsInnerTLSAndKeepsPreflightTokenFree(t *testin
 	result, err := client.Preflight(context.Background(), request, commitmentHash)
 	if err != nil || !wire.EqualCanonical(result.DeviceEnrollmentIntentOpening, opening) {
 		t.Fatalf("preflight result=%#v err=%v", result, err)
+	}
+	resumeResult, err := client.SubmitResume(context.Background(), wire.EnrollmentResumeSubmissionV1{Schema: 1})
+	if err != nil || resumeResult.Status != "reserved" || len(resumeResult.ProgressReceipt) == 0 {
+		t.Fatalf("token-free resume transport 失败: result=%#v err=%v", resumeResult, err)
 	}
 
 	wrong := ref

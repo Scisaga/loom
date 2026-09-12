@@ -2594,6 +2594,13 @@ initial 与 resume wire，且在进入 Coordinator 后再次将 capability 中�
 和 transaction-state hashes 与 durable record 逐字段核对。resume 不重新执行 admission、不再次消费
 token，也不得用 resume capability 提交带 token 的 initial claim wire。`expires_at` 不得超过
 capability、issuer authorization、policy、catalog、service ref 和 transaction `retry_not_after` 中最早的截止点。
+客户端导入 resume 时必须从 descriptor 的 mirror refs 取得 exact proof bundle/catalog，并从本机
+v1 platform key + migration anchor 重放 Invite authority；resume 没有可作为替代 trust root 的自报
+checkpoint。catalog config QC 的 parent Head/ControlSet 必须能在该已验 lineage 中精确定位，随后再把
+descriptor/capability 与受保护 pending progress 的 core/key/admission/retry binding 合并验证。本机保存的
+transaction hash 是最后已验 floor，descriptor 绑定签发时服务端当前 state：两者可因响应丢失而不同，
+但返回的 progress/completion receipt 必须从原 claim 重放出 descriptor state 或其同请求内后继，且
+本机持久化规则继续拒绝同阶段分叉与回退。
 签发器必须以已 certified 的管理员 operation_id 为 first-result key，把 exact request hash、issuer
 public key、descriptor hash 与完整 descriptor 原子写入 control-private 存储后再响应；同一 operation_id
 的进程内重试和崩溃恢复只能逐字节返回第一次结果，request、transaction state 或签名 body 有任何变化

@@ -95,6 +95,27 @@ func OpenOrCreateEnrollmentIdentity(path string) (*EnrollmentIdentityV1, error) 
 	return loadEnrollmentIdentity(path)
 }
 
+// LoadEnrollmentIdentityForResume 只读取既有 key，不会在恢复路径生成替代 identity。
+// 缺失或损坏必须失败关闭，否则 descriptor 可能被错误地绑定到新设备（D129、D130）。
+func LoadEnrollmentIdentityForResume(path string) (*EnrollmentIdentityV1, error) {
+	if path == "" || filepath.Clean(path) != path || !filepath.IsAbs(path) {
+		return nil, errors.New("[D130 Linux resume] identity path 必须是规范绝对路径")
+	}
+	if err := secureEnrollmentDirectory(filepath.Dir(path)); err != nil {
+		return nil, err
+	}
+	lock, err := openPrivateLock(path + ".lock")
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Close()
+	if err := unix.Flock(int(lock.Fd()), unix.LOCK_SH); err != nil {
+		return nil, err
+	}
+	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+	return loadEnrollmentIdentity(path)
+}
+
 func (state *EnrollmentIdentityV1) PrepareClaimCore(input ClaimCoreInputV2) (wire.EnrollmentClaimCoreV2, string, error) {
 	identityKey, wrappingKey, err := state.keys()
 	if err != nil {

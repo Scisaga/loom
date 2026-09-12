@@ -126,7 +126,8 @@ func EnrollmentResumeDescriptorHash(descriptor *EnrollmentResumeDescriptorV1, is
 }
 
 // VerifyEnrollmentResumeDescriptorBindings 把带外 descriptor 绑定到本机 pending core、
-// certified issuer scope 与 exact catalog；任何一项变化都不能成为一次新 claim（D130）。
+// certified issuer scope 与 exact catalog。本机 transaction hash 是已验 floor；descriptor
+// 绑定的是签发时服务端当前状态，响应仍须用 progress/completion receipt 证明单调前进（D130）。
 func VerifyEnrollmentResumeDescriptorBindings(descriptor *EnrollmentResumeDescriptorV1, expected EnrollmentResumeExpectedV1,
 	catalog *BootstrapEndpointCatalogV1, proof *BootstrapIssuerAuthorizationProofV1,
 	policy *InviteIssuancePolicyV2, trustedTime time.Time, clientProtocol int64) error {
@@ -146,6 +147,12 @@ func VerifyEnrollmentResumeDescriptorBindings(descriptor *EnrollmentResumeDescri
 	if err := VerifyCapabilityAuthorization(&descriptor.ResumeTunnelCapability, proof, policy, trustedTime); err != nil {
 		return err
 	}
+	encoded, err := MarshalCanonical(descriptor)
+	if err != nil || int64(len(encoded)) > policy.MaximumDescriptorBytes ||
+		int64(len(descriptor.DistributionMirrors)) < policy.MinimumDistributionMirrors ||
+		int64(len(descriptor.DistributionMirrors)) > policy.MaximumDistributionMirrors {
+		return errors.New("[D130 resume] descriptor size/mirror count 超出 certified policy")
+	}
 	if err := ValidateBootstrapEndpointCatalogAt(catalog, trustedTime, clientProtocol); err != nil {
 		return err
 	}
@@ -158,10 +165,9 @@ func VerifyEnrollmentResumeDescriptorBindings(descriptor *EnrollmentResumeDescri
 	if expected.ClusterID != descriptor.ClusterID || expected.InviteID != descriptor.InviteID || expected.RequestID != descriptor.RequestID ||
 		expected.ClaimCoreHash != descriptor.ClaimCoreHash || expected.ClaimOperationHash != descriptor.ClaimOperationHash ||
 		expected.AdmissionQCHash != descriptor.AdmissionQCHash ||
-		expected.EnrollmentTransactionStateHash != descriptor.EnrollmentTransactionStateHash ||
 		expected.CSRHash != binding.CSRHash || expected.IdentityKeyHash != binding.IdentityKeyHash ||
 		expected.WrappingKeyHash != binding.WrappingKeyHash {
-		return errors.New("[D130 resume] descriptor 与本机 pending transaction 不匹配")
+		return errors.New("[D130 resume] descriptor 与本机 pending stable transaction 不匹配")
 	}
 	retryDeadline, err := ParseTimeZ(expected.RetryNotAfter)
 	if err != nil {

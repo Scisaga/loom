@@ -62,7 +62,8 @@ func TestCoordinatorResumesReservedTransactionAndFreezesCompletedResult(t *testi
 			BaseHead: private.material.RecordHead, BaseControlSet: private.material.ControlSet,
 		})
 	if err != nil || reservedProgress.Status() != "reserved" ||
-		reservedProgress.ResumeExpected().EnrollmentTransactionStateHash != reserved.TransactionStateHash {
+		reservedProgress.ResumeExpected().EnrollmentTransactionStateHash != reserved.TransactionStateHash ||
+		!reservedProgress.IncludesTransactionStateHash(reserved.TransactionStateHash) {
 		t.Fatalf("客户端不能验证 reserved progress: evidence=%#v err=%v", reservedProgress, err)
 	}
 	for _, item := range []struct{ label, secret string }{
@@ -115,7 +116,9 @@ func TestCoordinatorResumesReservedTransactionAndFreezesCompletedResult(t *testi
 			TrustedTime: private.now,
 		})
 	if err != nil || verifiedCompletion.TransactionStateHash() != completed.TransactionStateHash ||
-		verifiedCompletion.DeviceViewEnvelope().Payload.DeviceID != resultArtifact.InitialDeviceView.DeviceID {
+		verifiedCompletion.DeviceViewEnvelope().Payload.DeviceID != resultArtifact.InitialDeviceView.DeviceID ||
+		!verifiedCompletion.IncludesTransactionStateHash(reserved.TransactionStateHash) ||
+		!verifiedCompletion.IncludesTransactionStateHash(completed.TransactionStateHash) {
 		t.Fatalf("客户端不能独立重放 completed receipt: evidence=%#v err=%v", verifiedCompletion, err)
 	}
 	for _, item := range []struct{ label, secret string }{
@@ -194,7 +197,8 @@ func TestCoordinatorReturnsVerifiableIssuedProgress(t *testing.T) {
 			BaseHead: private.material.RecordHead, BaseControlSet: private.material.ControlSet,
 		})
 	if err != nil || verified.Status() != "issued_provisional" ||
-		verified.ResumeExpected().EnrollmentTransactionStateHash != issued.TransactionStateHash {
+		verified.ResumeExpected().EnrollmentTransactionStateHash != issued.TransactionStateHash ||
+		!verified.IncludesTransactionStateHash(issued.TransactionStateHash) {
 		t.Fatalf("客户端不能验证 issued progress: evidence=%#v err=%v", verified, err)
 	}
 }

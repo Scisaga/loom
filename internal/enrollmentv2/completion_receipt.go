@@ -49,9 +49,10 @@ type EnrollmentCompletionExpectedV1 struct {
 
 // VerifiedEnrollmentCompletionV1 是 Linux/Android 安装正式身份前必须取得的不透明证据。
 type VerifiedEnrollmentCompletionV1 struct {
-	envelope        wire.DeviceViewEnvelopeV2
-	controlSet      wire.ControlSetV1
-	transactionHash string
+	envelope               wire.DeviceViewEnvelopeV2
+	controlSet             wire.ControlSetV1
+	transactionHash        string
+	transactionStateHashes []string
 }
 
 func (verified VerifiedEnrollmentCompletionV1) DeviceViewEnvelope() wire.DeviceViewEnvelopeV2 {
@@ -64,6 +65,15 @@ func (verified VerifiedEnrollmentCompletionV1) ControlSet() wire.ControlSetV1 {
 
 func (verified VerifiedEnrollmentCompletionV1) TransactionStateHash() string {
 	return verified.transactionHash
+}
+
+func (verified VerifiedEnrollmentCompletionV1) IncludesTransactionStateHash(hash string) bool {
+	for _, candidate := range verified.transactionStateHashes {
+		if candidate == hash {
+			return true
+		}
+	}
+	return false
 }
 
 func completionReceiptForRecord(record *DurableRecord) ([]byte, error) {
@@ -175,6 +185,11 @@ func VerifyEnrollmentCompletionReceipt(raw []byte, result *wire.EnrollmentClaimR
 	if err != nil {
 		return VerifiedEnrollmentCompletionV1{}, err
 	}
+	reservedHash, reservedHashErr := TransactionHash(reserved)
+	issuedHash, issuedHashErr := TransactionHash(issued)
+	if reservedHashErr != nil || issuedHashErr != nil {
+		return VerifiedEnrollmentCompletionV1{}, errors.New("[D130 client] receipt 中间 transaction state 不可重放")
+	}
 	record := DurableRecord{
 		InviteID: receipt.Invite.InviteID, TokenCommitment: receipt.Invite.TokenCommitment,
 		Invite: receipt.Invite, ClaimEvidence: receipt.ClaimEvidence,
@@ -234,6 +249,7 @@ func VerifyEnrollmentCompletionReceipt(raw []byte, result *wire.EnrollmentClaimR
 	}
 	envelope := receipt.CompletionCertification.DeviceViewEnvelope
 	return VerifiedEnrollmentCompletionV1{envelope: clonePrivateValue(envelope),
-		controlSet:      clonePrivateValue(receipt.CompletionCertification.Operation.ControlSet),
-		transactionHash: completedHash}, nil
+		controlSet:             clonePrivateValue(receipt.CompletionCertification.Operation.ControlSet),
+		transactionHash:        completedHash,
+		transactionStateHashes: []string{reservedHash, issuedHash, completedHash}}, nil
 }
