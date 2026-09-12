@@ -15,21 +15,22 @@ import (
 const domainBootstrapListenerRuntimeBinding = "loom-bootstrap-listener-runtime-binding-v1"
 
 type bootstrapListenerRuntimeProjectionV1 struct {
-	Schema             int            `json:"schema"`
-	ClusterID          string         `json:"cluster_id"`
-	IngressSetHash     string         `json:"ingress_set_hash"`
-	EndpointSetID      string         `json:"endpoint_set_id"`
-	EndpointID         string         `json:"endpoint_id"`
-	LogicalServerID    string         `json:"logical_server_id"`
-	Transport          string         `json:"transport"`
-	ListenerGeneration int64          `json:"listener_generation"`
-	ListenerState      string         `json:"listener_state"`
-	ServerName         string         `json:"server_name"`
-	PublicPort         int64          `json:"public_port"`
-	BindTuple          rotation.Tuple `json:"bind_tuple"`
-	SPKIPins           []string       `json:"spki_pins"`
-	ValidFrom          string         `json:"valid_from"`
-	ValidUntil         string         `json:"valid_until"`
+	Schema             int              `json:"schema"`
+	ClusterID          string           `json:"cluster_id"`
+	IngressSetHash     string           `json:"ingress_set_hash"`
+	EndpointSetID      string           `json:"endpoint_set_id"`
+	EndpointID         string           `json:"endpoint_id"`
+	LogicalServerID    string           `json:"logical_server_id"`
+	Transport          string           `json:"transport"`
+	ListenerGeneration int64            `json:"listener_generation"`
+	ListenerState      string           `json:"listener_state"`
+	ServerName         string           `json:"server_name"`
+	PublicPort         int64            `json:"public_port"`
+	BindTuple          rotation.Tuple   `json:"bind_tuple"`
+	PublicTuples       []rotation.Tuple `json:"public_tuples"`
+	SPKIPins           []string         `json:"spki_pins"`
+	ValidFrom          string           `json:"valid_from"`
+	ValidUntil         string           `json:"valid_until"`
 }
 
 // VerifiedBootstrapListenerV1 只由 BuildBootstrapIngressRuntimePlan 从
@@ -60,6 +61,12 @@ func (verified VerifiedBootstrapListenerV1) ServerName() string {
 
 func (verified VerifiedBootstrapListenerV1) Tuple() rotation.Tuple {
 	return verified.projection.BindTuple
+}
+
+// PublicTuples 返回该本地 socket 经 direct/NAT binding 实际服务的 certified
+// public tuple；外部 verifier 只探测这些精确地址，不做 DNS 扩张或邻近端口扫描。
+func (verified VerifiedBootstrapListenerV1) PublicTuples() []rotation.Tuple {
+	return append([]rotation.Tuple(nil), verified.projection.PublicTuples...)
 }
 
 func (verified VerifiedBootstrapListenerV1) ListenerGeneration() int64 {
@@ -225,30 +232,33 @@ func deriveRuntimeBindings(catalog *wire.BootstrapEndpointCatalogV1,
 		}
 	}
 
-	covered := make(map[rotation.Tuple]bool, len(canonicalTuples))
+	publicByLocal := make(map[rotation.Tuple][]rotation.Tuple, len(canonicalTuples))
 	for _, rawAddress := range profile.PublicFrontendAddresses {
 		publicAddress, _ := netip.ParseAddr(rawAddress)
 		if !listenerAllowsFamily(listener, publicAddress) {
 			continue
 		}
-		matched := false
+		matches := make([]rotation.Tuple, 0, 1)
 		for _, tuple := range canonicalTuples {
 			if profile.DeploymentKind == "nat_mapped" {
 				if mappingServesTuple(resources.Mappings, l4, publicAddress.String(), listener.PublicPort,
 					tuple, pool, frozenMappingHash) {
-					covered[tuple], matched = true, true
+					matches = append(matches, tuple)
 				}
 			} else if directTupleServes(tuple, publicAddress, listener.PublicPort, pool) {
-				covered[tuple], matched = true, true
+				matches = append(matches, tuple)
 			}
 		}
-		if !matched {
-			return nil, errors.New("[D103 bootstrap runtime] certified public address/port 缺 exact local listener 或 NAT mapping")
+		if len(matches) != 1 {
+			return nil, errors.New("[D103 bootstrap runtime] certified public address/port 必须唯一命中 local listener/NAT mapping")
 		}
+		publicTuple := rotation.Tuple{Transport: l4, Address: publicAddress.String(), Port: listener.PublicPort}
+		publicByLocal[matches[0]] = append(publicByLocal[matches[0]], publicTuple)
 	}
 	bindings := make([]VerifiedBootstrapListenerV1, 0, len(canonicalTuples))
 	for _, tuple := range canonicalTuples {
-		if !covered[tuple] {
+		publicTuples := publicByLocal[tuple]
+		if len(publicTuples) == 0 {
 			return nil, errors.New("[D127 bootstrap runtime] frozen tuple 不服务任何 certified public frontend")
 		}
 		projection := bootstrapListenerRuntimeProjectionV1{
@@ -257,7 +267,8 @@ func deriveRuntimeBindings(catalog *wire.BootstrapEndpointCatalogV1,
 			LogicalServerID: endpoint.LogicalServerID, Transport: endpoint.Transport,
 			ListenerGeneration: listener.ListenerGeneration, ListenerState: listenerState,
 			ServerName: listener.DialTargetFQDN, PublicPort: listener.PublicPort,
-			BindTuple: tuple, SPKIPins: append([]string(nil), spkiPins...),
+			BindTuple: tuple, PublicTuples: append([]rotation.Tuple(nil), publicTuples...),
+			SPKIPins:  append([]string(nil), spkiPins...),
 			ValidFrom: validFrom, ValidUntil: validUntil,
 		}
 		hash, err := wire.HashObject(domainBootstrapListenerRuntimeBinding, projection)
@@ -345,7 +356,8 @@ func (verified VerifiedBootstrapListenerV1) valid() bool {
 		(projection.ListenerState != "prepared" && projection.ListenerState != "advertised" &&
 			projection.ListenerState != "preferred" && projection.ListenerState != "draining") ||
 		projection.ListenerGeneration < 1 || !validCertifiedServerName(projection.ServerName) ||
-		projection.PublicPort < 1 || projection.PublicPort > 65535 || len(projection.SPKIPins) == 0 {
+		projection.PublicPort < 1 || projection.PublicPort > 65535 || len(projection.PublicTuples) == 0 ||
+		len(projection.SPKIPins) == 0 {
 		return false
 	}
 	if _, err := wire.ParseHash(projection.IngressSetHash); err != nil {
@@ -374,8 +386,25 @@ func (verified VerifiedBootstrapListenerV1) valid() bool {
 		projection.Transport == "trojan_tls" && projection.BindTuple.Transport != "tcp" {
 		return false
 	}
+	for index, tuple := range projection.PublicTuples {
+		address, err := netip.ParseAddr(tuple.Address)
+		if err != nil || address.String() != tuple.Address || tuple.Transport != projection.BindTuple.Transport ||
+			tuple.Port != projection.PublicPort || index > 0 && !runtimeTupleLess(projection.PublicTuples[index-1], tuple) {
+			return false
+		}
+	}
 	want, err := wire.HashObject(domainBootstrapListenerRuntimeBinding, projection)
 	return err == nil && want == verified.bindingHash
+}
+
+func runtimeTupleLess(left, right rotation.Tuple) bool {
+	if left.Transport != right.Transport {
+		return left.Transport < right.Transport
+	}
+	if left.Address != right.Address {
+		return left.Address < right.Address
+	}
+	return left.Port < right.Port
 }
 
 func (verified VerifiedBootstrapListenerV1) acceptsAt(now time.Time) bool {

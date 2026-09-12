@@ -99,6 +99,26 @@ func TestBuildBootstrapIngressRuntimePlanRequiresExactNATMapping(t *testing.T) {
 	}
 }
 
+func TestDeriveRuntimeBindingsRejectsAmbiguousDirectCoverage(t *testing.T) {
+	fixture := newRuntimePlanFixture(t, "hysteria2", "direct_standard")
+	endpoint, listener, err := findBootstrapListener(&fixture.catalog, fixture.endpointID, fixture.generation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pins, err := bootstrapIdentityPins(listener.TransportIdentityRefs, fixture.profile.CertificateProfileRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tuples := []rotation.Tuple{
+		{Transport: "udp", Address: "0.0.0.0", Port: 24443},
+		{Transport: "udp", Address: "203.0.113.10", Port: 24443},
+	}
+	if _, err := deriveRuntimeBindings(&fixture.catalog, endpoint, listener, "preferred",
+		&fixture.profile, &fixture.resources, tuples, pins, ""); err == nil {
+		t.Fatal("同一 public tuple 同时命中 wildcard/exact local listener")
+	}
+}
+
 func TestBuildBootstrapIngressRuntimePlanRejectsSplicedAuthority(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -131,6 +151,11 @@ func TestBuildBootstrapIngressRuntimePlanRejectsSplicedAuthority(t *testing.T) {
 }
 
 func newRuntimePlanFixture(t *testing.T, transport, deployment string) runtimePlanFixture {
+	return newRuntimePlanFixtureWithEvidencePolicy(t, transport, deployment, runtimePlanHash("evidence"))
+}
+
+func newRuntimePlanFixtureWithEvidencePolicy(t *testing.T, transport, deployment,
+	evidencePolicyHash string) runtimePlanFixture {
 	t.Helper()
 	const clusterID = "demo-cluster"
 	now := time.Date(2026, 9, 11, 11, 1, 0, 0, time.UTC)
@@ -272,7 +297,7 @@ func newRuntimePlanFixture(t *testing.T, transport, deployment string) runtimePl
 		PublicAccessProfileHash:         profileHash, DNSAddressBindingHash: runtimePlanHash("dns"),
 		CertificateIdentityProjectionHash: runtimePlanHash("certificate-projection"),
 		CredentialArtifactRefsRoot:        runtimePlanHash("credentials"), RenderContractHash: runtimePlanHash("render"),
-		EvidencePolicyHash: runtimePlanHash("evidence"), PortPoolHash: runtimePlanHash("port-pool"),
+		EvidencePolicyHash: evidencePolicyHash, PortPoolHash: runtimePlanHash("port-pool"),
 		FirewallPolicyHash: runtimePlanHash("firewall"), ForwardListenerResourceGenerationHash: resourcesHash,
 		LinkIntentHashes: []string{},
 	}
@@ -389,9 +414,10 @@ func testListenerBinding(t *testing.T, transport, ingressSetHash, serverName str
 		EndpointSetID: "bootstrap-ingress", EndpointID: "bootstrap-edge",
 		LogicalServerID: "demo-edge", Transport: transport, ListenerGeneration: 1,
 		ListenerState: "preferred", ServerName: serverName, PublicPort: port,
-		BindTuple: rotation.Tuple{Transport: l4, Address: parsedAddress.String(), Port: port},
-		SPKIPins:  []string{"sha256:" + hex.EncodeToString(digest[:])},
-		ValidFrom: "2026-09-11T00:00:00Z", ValidUntil: "2026-09-12T00:00:00Z",
+		BindTuple:    rotation.Tuple{Transport: l4, Address: parsedAddress.String(), Port: port},
+		PublicTuples: []rotation.Tuple{{Transport: l4, Address: parsedAddress.String(), Port: port}},
+		SPKIPins:     []string{"sha256:" + hex.EncodeToString(digest[:])},
+		ValidFrom:    "2026-09-11T00:00:00Z", ValidUntil: "2026-09-12T00:00:00Z",
 	}
 	bindingHash, err := wire.HashObject(domainBootstrapListenerRuntimeBinding, projection)
 	if err != nil {

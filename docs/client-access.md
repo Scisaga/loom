@@ -292,6 +292,10 @@ certified EndpointSet、PublicAccessProfile、frozen rotation tuple、资源池/
 SPKI pin，且 transport credential 只在 catalog/listener 有效期交集内接受。同一 listener generation
 的全部本地 tuple 必须先全部 bind 成功再开始 accept；任一 bind 失败要关闭本批已创建的 socket，
 运行中任一 listener 异常退出则取消并关闭整批，不能留下只覆盖部分地址族的活跃 generation。
+external verify 使用从上述 opaque binding 导出的 exact public IP:port 计划，分别完成真实 HY2/QUIC
+或 Trojan/TLS outer handshake，只记录 TLS 1.3、ALPN 和 certified SPKI，不发送 capability；结果由
+rotation 冻结 policy 中足量、跨故障域的 Ed25519 observer 签名，重启后从完整 artifact 重验，不能用
+节点自报成功、DNS readback 或一个任意 evidence hash 代替。
 
 首版 Hysteria2/Trojan 数据入口使用稳定 logical endpoint ID 和多个 listener generation。正常 overlap 中旧、新
 端口同时可用：新连接在 `prefer` 阶段先试新端口、失败立即回退仍 advertised 的旧端口；

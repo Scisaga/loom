@@ -3407,7 +3407,11 @@ capability，不能重新接收手写的 `listen`、SNI 或 pin。direct 部署�
 `prepared` listener 可在公开有效期前完成不携 bearer 的 outer self-check；任何携 transport
 credential 的认证只在 catalog 与 listener validity 交集内开放。adapter 必须把同一 generation 的
 全部 certified tuple 当作一个运行批次：全部 bind 成功后才启动 accept，部分失败关闭已建 socket；
-运行中任一 listener 意外退出则取消并关闭整批，禁止把部分地址族覆盖误报成完整安装。
+运行中任一 listener 意外退出则取消并关闭整批，禁止把部分地址族覆盖误报成完整安装。external
+verification plan 只投影 certified public IP:port、FQDN、TLS identity 与 validity，不携任何 bearer；
+observer 必须真实完成 HY2/QUIC 或 Trojan/TLS 的 TLS 1.3/SNI/ALPN/SPKI handshake，并以 frozen
+evidence policy 指定的 Ed25519 key 签名。advertise 要满足 observer/failure-domain 阈值和短有效期，
+executor 重启或 control 接管时从完整 artifact 重验，不能把一个形状合法的任意 hash 当成可达证据。
 
 进入 draining 的 certified transition 同时建立 reference cutoff 和
 `ListenerRetirementGuardV1`：ControlSet 必须枚举所有仍可能使客户端拨旧代的 immutable catalog、

@@ -167,6 +167,7 @@ func TestBootstrapIngressRuntimeClosesPartialBindOnFailure(t *testing.T) {
 	second := testListenerBinding(t, "trojan_tls", ingressHash, "bootstrap.example",
 		secondAddress, certificate)
 	second.projection.PublicPort = first.projection.PublicPort
+	second.projection.PublicTuples[0].Port = first.projection.PublicPort
 	second.bindingHash, err = wire.HashObject(domainBootstrapListenerRuntimeBinding, second.projection)
 	if err != nil {
 		t.Fatal(err)
@@ -221,6 +222,7 @@ func TestBootstrapIngressRuntimeStopsGenerationAfterListenerFailure(t *testing.T
 	second := testListenerBinding(t, "trojan_tls", ingressHash, "bootstrap.example",
 		secondListener.Addr(), certificate)
 	second.projection.PublicPort = first.projection.PublicPort
+	second.projection.PublicTuples[0].Port = first.projection.PublicPort
 	second.bindingHash, err = wire.HashObject(domainBootstrapListenerRuntimeBinding, second.projection)
 	if err != nil {
 		t.Fatal(err)

@@ -2136,7 +2136,10 @@ PublicAccessProfile 和 listener resources 联合生成的 opaque binding；实�
 family 的 tuple。准备阶段允许不发送 bearer 的 outer transport 验证，但真正 capability auth 只能
 发生在 catalog/listener 有效期交集内。同一 generation 的 socket 以批次方式先全部 bind、再共同
 进入 accept；部分 bind 失败必须回滚整批，运行中任一 listener 意外退出也必须取消整批，避免只安装
-一部分地址族或 NAT tuple 却被当作 generation 已就绪。
+一部分地址族或 NAT tuple 却被当作 generation 已就绪。external verifier 从该 opaque plan 导出精确
+public IP:port，对 HY2/QUIC 或 Trojan/TLS 做不携 bearer 的 TLS 1.3/SNI/ALPN/SPKI 握手；每个结果由
+frozen evidence policy 指定的 Ed25519 observer 签名，并满足 observer/failure-domain 阈值及短期新鲜度。
+接管者必须重验完整签名 artifact，不能只信数据库中的 evidence hash。
 
 ---
 
