@@ -174,6 +174,10 @@ type BootstrapTunnelCapabilityV1 struct {
 	Signature    BootstrapIssuerSignatureV1      `json:"signature"`
 }
 
+// DomainBootstrapTransportCredential 把已签 capability 派生为 HY2/Trojan 的短期
+// transport bearer；它不替代 capability signature/authorization 验证（D131）。
+const DomainBootstrapTransportCredential = "loom-bootstrap-transport-credential-v1"
+
 type InviteBootstrapDescriptorV2 struct {
 	Schema                    int                           `json:"schema"`
 	ClusterID                 string                        `json:"cluster_id"`

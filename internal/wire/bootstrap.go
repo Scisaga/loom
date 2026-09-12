@@ -146,8 +146,9 @@ type EnrollmentIntentPreflightResponseV1 struct {
 // VerifiedBootstrapCapabilityV1 只由完整 issuer registry/policy/time 验证产生；
 // ingress runtime 不接受调用方自行声明 capability 已验证（D115、D131）。
 type VerifiedBootstrapCapabilityV1 struct {
-	body         BootstrapTunnelCapabilityBodyV1
-	capabilityID string
+	body                BootstrapTunnelCapabilityBodyV1
+	capabilityID        string
+	transportCredential string
 }
 
 func (verified VerifiedBootstrapCapabilityV1) Body() BootstrapTunnelCapabilityBodyV1 {
@@ -161,6 +162,13 @@ func (verified VerifiedBootstrapCapabilityV1) Body() BootstrapTunnelCapabilityBo
 
 func (verified VerifiedBootstrapCapabilityV1) CapabilityID() string {
 	return verified.capabilityID
+}
+
+// TransportCredential 只存在于完整 capability authorization 验证后的 evidence 中。
+// HY2 直接使用该短期 bearer；Trojan 再按其协议做 SHA-224。它与 Enrollment token
+// 完全无关，不能从 capability ID 或 public catalog 单独恢复（D115、D131）。
+func (verified VerifiedBootstrapCapabilityV1) TransportCredential() string {
+	return verified.transportCredential
 }
 
 func ValidateInviteIssuancePolicy(policy *InviteIssuancePolicyV2) error {
@@ -464,7 +472,12 @@ func VerifyCapabilityAuthorizationEvidence(capability *BootstrapTunnelCapability
 		binding := *body.ResumeBinding
 		body.ResumeBinding = &binding
 	}
-	return VerifiedBootstrapCapabilityV1{body: body, capabilityID: capability.CapabilityID}, nil
+	credential, err := HashObject(DomainBootstrapTransportCredential, capability)
+	if err != nil {
+		return VerifiedBootstrapCapabilityV1{}, err
+	}
+	return VerifiedBootstrapCapabilityV1{body: body, capabilityID: capability.CapabilityID,
+		transportCredential: credential}, nil
 }
 
 // VerifyInviteDescriptorBindings 把 QR、certified record、policy、public commitment 与 issuer proof
