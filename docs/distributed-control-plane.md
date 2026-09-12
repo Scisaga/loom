@@ -3470,6 +3470,13 @@ nat_mapped server 若预先建立一段一一对应的 public/local UDP 映射�
 - 池耗尽、映射消失或 public/local offset 不一致时停止轮换并报警；
 - 客户端只看到当前 advertised/preferred public endpoints，不看到整段私有资源池。
 
+control-private reducer 把 exact `PortMappingIntentV1` hash 与全部历史占用固定在
+`MappingReservationSetV1`。每条记录固定 rotation、listener generation、public/local tuple、
+allocation certified time/head；正常退役进入带确定 `reuse_not_before` 的 `quarantined`，端口冲突、
+管理封禁或滥用进入首版不可逆 `blocked`。分配只复用已到 certified deadline 的 quarantine，
+同一 rotation 重试返回原 first result，历史 tombstone 不删除；因此进程重启或 executor 接管不会
+根据当前 socket 空闲误判端口可复用。
+
 direct server 没有 PortMappingIntent，但仍要做 listener 与外部 reachability 验证。替代 HTTPS
 TCP 映射和 Trojan TCP 池按相同原则处理，不能从 UDP 池推导。
 
