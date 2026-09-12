@@ -169,6 +169,9 @@ func (client *PrivateEnrollmentClient) SubmitClaim(ctx context.Context,
 	if err := wire.ValidateEnrollmentClaimResult(&result); err != nil {
 		return wire.EnrollmentClaimResultV2{}, err
 	}
+	if result.Status != "completed" && len(result.ProgressReceipt) == 0 {
+		return wire.EnrollmentClaimResultV2{}, errors.New("[D130 client] private Enrollment pending 响应缺 progress receipt")
+	}
 	return result, nil
 }
 

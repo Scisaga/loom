@@ -114,6 +114,67 @@ func TestLinuxEnrollmentPreflightFailureCreatesNoIdentity(t *testing.T) {
 	}
 }
 
+func TestLinuxPendingProgressPersistsResumeBindingAndRejectsRollback(t *testing.T) {
+	attempt, inputs, fake := linuxEnrollmentAttemptFixture(t)
+	if _, err := runLinuxEnrollmentAttempt(context.Background(), attempt, inputs); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := OpenOrCreateEnrollmentIdentity(attempt.IdentityPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordHash, _ := wire.CertifiedInviteRecordHash(&inputs.record, &inputs.policy)
+	openingHash, _ := wire.IntentOpeningHash(&fake.opening)
+	intentHash, _ := wire.EnrollmentIntentHash(&fake.opening.DeviceEnrollmentIntent)
+	setHash, _ := wire.ControlSetHash(&inputs.set)
+	input := ClaimCoreInputV2{
+		ClusterID: inputs.record.ClusterID, InviteID: inputs.record.InviteID, RequestID: attempt.RequestID,
+		CertifiedInviteRecordHash:            recordHash,
+		DeviceEnrollmentIntentCommitmentHash: inputs.record.DeviceEnrollmentIntentCommitmentHash,
+		DeviceEnrollmentIntentOpeningHash:    openingHash, AcceptedDeviceEnrollmentIntentHash: intentHash,
+		BaseRecoveryEpoch:  inputs.head.Body.Payload.RecoveryEpoch,
+		BaseControlEpoch:   inputs.head.Body.Payload.ControlEpoch,
+		BaseControlSetHash: setHash, BaseHeadHash: inputs.head.HeadHash,
+	}
+	pending, err := loadPendingClaim(attempt.PendingPath, identity, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identityHash, wrappingHash, csrHash, err := wire.EnrollmentClaimBinaryHashes(&pending.ClaimCore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := wire.EnrollmentResumeExpectedV1{
+		ClusterID: pending.ClaimCore.ClusterID, InviteID: pending.ClaimCore.InviteID,
+		RequestID: pending.ClaimCore.RequestID, ClaimCoreHash: pending.ClaimCoreHash,
+		ClaimOperationHash: wire.HashRaw("linux-progress-test", []byte("claim")),
+		AdmissionQCHash:    wire.HashRaw("linux-progress-test", []byte("admission")),
+		CSRHash:            csrHash, IdentityKeyHash: identityHash, WrappingKeyHash: wrappingHash,
+		EnrollmentTransactionStateHash: wire.HashRaw("linux-progress-test", []byte("reserved")),
+		RetryNotAfter:                  fake.now.Add(30 * time.Minute).Format(time.RFC3339),
+	}
+	recorded, err := recordPendingProgress(attempt.PendingPath, identity, input, "reserved", expected)
+	if err != nil || recorded.Progress == nil || !wire.EqualCanonical(recorded.Progress.Expected, expected) {
+		t.Fatalf("reserved progress 未耐久化: progress=%#v err=%v", recorded.Progress, err)
+	}
+	if _, err := recordPendingProgress(attempt.PendingPath, identity, input, "reserved", expected); err != nil {
+		t.Fatalf("exact progress replay 非幂等: %v", err)
+	}
+	issued := expected
+	issued.EnrollmentTransactionStateHash = wire.HashRaw("linux-progress-test", []byte("issued"))
+	if _, err := recordPendingProgress(attempt.PendingPath, identity, input, "issued_provisional", issued); err != nil {
+		t.Fatalf("reserved→issued progress 被拒绝: %v", err)
+	}
+	if _, err := recordPendingProgress(attempt.PendingPath, identity, input, "reserved", expected); err == nil {
+		t.Fatal("较旧 reserved progress 覆盖了 issued floor")
+	}
+	fork := issued
+	fork.EnrollmentTransactionStateHash = wire.HashRaw("linux-progress-test", []byte("fork"))
+	if _, err := recordPendingProgress(attempt.PendingPath, identity, input, "issued_provisional", fork); err == nil {
+		t.Fatal("同一 issued stage 的不同 transaction hash 被接受")
+	}
+}
+
 func linuxEnrollmentAttemptFixture(t *testing.T) (LinuxEnrollmentAttemptV2, verifiedEnrollmentInputs, *fakePrivateEnrollmentAPI) {
 	t.Helper()
 	now := time.Date(2026, 9, 11, 11, 5, 0, 0, time.UTC)

@@ -32,6 +32,7 @@ type LinuxEnrollmentAttemptResultV2 struct {
 	ClaimCoreHash string
 	IdentityHash  string
 	Result        wire.EnrollmentClaimResultV2
+	Progress      enrollmentv2.VerifiedEnrollmentProgressV1
 	Completion    enrollmentv2.VerifiedEnrollmentCompletionV1
 }
 
@@ -163,6 +164,7 @@ func runLinuxEnrollmentAttempt(ctx context.Context, attempt LinuxEnrollmentAttem
 	if err != nil {
 		return LinuxEnrollmentAttemptResultV2{}, err
 	}
+	var progress enrollmentv2.VerifiedEnrollmentProgressV1
 	var completion enrollmentv2.VerifiedEnrollmentCompletionV1
 	if result.Status == "completed" {
 		completion, err = enrollmentv2.VerifyEnrollmentCompletionReceipt(result.CompletionReceipt, &result,
@@ -174,9 +176,31 @@ func runLinuxEnrollmentAttempt(ctx context.Context, attempt LinuxEnrollmentAttem
 		if err != nil {
 			return LinuxEnrollmentAttemptResultV2{}, err
 		}
+	} else if len(result.ProgressReceipt) != 0 {
+		progress, err = enrollmentv2.VerifyEnrollmentProgressReceipt(result.ProgressReceipt, &result,
+			enrollmentv2.EnrollmentProgressExpectedV1{
+				Record: inputs.record, Policy: inputs.policy,
+				Opening: preflight.DeviceEnrollmentIntentOpening, ClaimCore: pending.ClaimCore,
+				BaseHead: inputs.head, BaseControlSet: inputs.set,
+			})
+		if err != nil {
+			return LinuxEnrollmentAttemptResultV2{}, err
+		}
+		if _, err := RecordPendingProgress(attempt.PendingPath, identity, ClaimCoreInputV2{
+			ClusterID: inputs.record.ClusterID, InviteID: inputs.record.InviteID, RequestID: attempt.RequestID,
+			CertifiedInviteRecordHash:            recordHash,
+			DeviceEnrollmentIntentCommitmentHash: inputs.record.DeviceEnrollmentIntentCommitmentHash,
+			DeviceEnrollmentIntentOpeningHash:    openingHash,
+			AcceptedDeviceEnrollmentIntentHash:   intentHash,
+			BaseRecoveryEpoch:                    inputs.head.Body.Payload.RecoveryEpoch,
+			BaseControlEpoch:                     inputs.head.Body.Payload.ControlEpoch,
+			BaseControlSetHash:                   setHash, BaseHeadHash: inputs.head.HeadHash,
+		}, progress); err != nil {
+			return LinuxEnrollmentAttemptResultV2{}, err
+		}
 	}
 	return LinuxEnrollmentAttemptResultV2{ClaimCoreHash: pending.ClaimCoreHash, IdentityHash: identityHash,
-		Result: result, Completion: completion}, nil
+		Result: result, Progress: progress, Completion: completion}, nil
 }
 
 func clonePrivateClientValue[T any](value T) T {

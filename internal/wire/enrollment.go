@@ -249,6 +249,9 @@ type EnrollmentClaimResultV2 struct {
 	TransactionStateHash string                      `json:"transaction_state_hash"`
 	ResultArtifactHash   string                      `json:"result_artifact_hash,omitempty"`
 	ResultArtifact       *EnrollmentResultArtifactV1 `json:"result_artifact,omitempty"`
+	// ProgressReceipt 让 reserved/issued_provisional 的客户端取得可验证且可耐久
+	// 的 resume binding；兼容 reader 可忽略它，但生产 v2 client 必须验证（D130）。
+	ProgressReceipt json.RawMessage `json:"progress_receipt,omitempty"`
 	// CompletionReceipt 是由 enrollmentv2 定义并独立验证的 canonical proof
 	// envelope。wire 层保留 raw bytes，避免基础 wire 包反向依赖事务 reducer；
 	// completed 若没有它，客户端无法从 Invite Head 连续验证到 completion Head（D130）。
@@ -677,6 +680,17 @@ func ValidateEnrollmentClaimResult(result *EnrollmentClaimResultV2) error {
 	if completed != (result.ResultArtifactHash != "") || completed != (result.ResultArtifact != nil) ||
 		completed != (len(result.CompletionReceipt) != 0) {
 		return errors.New("[D130 Enrollment] completed/result artifact tagged union 无效")
+	}
+	if completed && len(result.ProgressReceipt) != 0 {
+		return errors.New("[D130 Enrollment] completed 禁止携 progress receipt")
+	}
+	if len(result.ProgressReceipt) != 0 {
+		canonical, err := CanonicalizeStrict(result.ProgressReceipt)
+		if err != nil || !bytes.Equal(canonical, result.ProgressReceipt) ||
+			len(result.ProgressReceipt) < 2 || result.ProgressReceipt[0] != '{' ||
+			result.ProgressReceipt[len(result.ProgressReceipt)-1] != '}' {
+			return errors.New("[D130 Enrollment] progress receipt 必须是 exact canonical object")
+		}
 	}
 	if completed {
 		canonical, err := CanonicalizeStrict(result.CompletionReceipt)

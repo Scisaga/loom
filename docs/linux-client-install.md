@@ -46,7 +46,11 @@
    `EnrollmentPoPBodyV2` 签名，再在 `EnrollmentClaimSubmissionV2` 中提交 token、core、
    challenge 与 detached PoP；当前 stable ControlSet 的 voters 先形成
    `StableEnrollmentAdmissionQCV1`，再以 Raft CAS 保证一次消费。
-6. ready 必须同时返回 result artifact 和 canonical completion receipt；Linux 从 Invite 已验 Head
+6. reserved/issued_provisional 响应必须携 canonical progress receipt；Linux 从 Invite 已验 Head
+   重放 admission QC、reservation/issuance operation 与 Head lineage 后，将 exact
+   claim-operation/admission-QC/transaction hashes 和 retry deadline 原子写入受保护 pending state，
+   作为后续 resume descriptor 不可回退、不可分叉的本机校验下限。ready 必须同时返回 result artifact
+   和 canonical completion receipt；Linux 从 Invite 已验 Head
    连续重放 reservation/issuance/completion Head、QC、operation/view inclusion，核对本机
    claim/core/key、CA profile、正式证书与 sealed recipient 后才原子安装 certificate/view/credentials。
    随后清除 token、capability、临时 profile/隧道，
@@ -58,7 +62,8 @@
 `EnrollmentClaimCoreV2`，可对新 server nonce 重签 detached PoP，但不得改 core/hash。claim 已 commit
 而 capability 过期时，管理员先经私有 `role=control_api` 服务线性化确认事务，
 再生成不含 token、exact-bound 的 `EnrollmentResumeDescriptorV1`，以 QR 或 `.loom-resume`
-带外交付；Linux 通过受保护文件或标准输入导入并与本机 pending core/identity 核对。
+带外交付；Linux 通过受保护文件或标准输入导入，并与 progress receipt 已固化的 pending
+core/identity/admission/transaction/retry binding 逐字段核对。
 该 descriptor 不经公网 mirror 动态发布，客户端不能自动刷新；ControlSet 只幂等
 继续/取回既有结果，不延长旧 capability、不重消费 token。
 

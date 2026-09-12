@@ -24,6 +24,7 @@ type workflowBackendFixture struct {
 	resultArtifact   wire.EnrollmentResultArtifactV1
 	committedAt      string
 	pendingProvision bool
+	pendingApproval  bool
 	admissionCalls   int
 	provisionCalls   int
 	approvalCalls    int
@@ -53,6 +54,46 @@ func TestCoordinatorResumesReservedTransactionAndFreezesCompletedResult(t *testi
 	if err != nil || reserved.Status != "reserved" || firstBackend.admissionCalls != 1 || firstBackend.provisionCalls != 1 {
 		t.Fatalf("首次推进未稳定停在 reserved: result=%#v backend=%#v err=%v", reserved, firstBackend, err)
 	}
+	submission := attempt.Submission()
+	reservedProgress, err := VerifyEnrollmentProgressReceipt(reserved.ProgressReceipt, &reserved,
+		EnrollmentProgressExpectedV1{
+			Record: private.material.Record, Policy: private.material.Policy,
+			Opening: private.material.Opening, ClaimCore: submission.ClaimCore,
+			BaseHead: private.material.RecordHead, BaseControlSet: private.material.ControlSet,
+		})
+	if err != nil || reservedProgress.Status() != "reserved" ||
+		reservedProgress.ResumeExpected().EnrollmentTransactionStateHash != reserved.TransactionStateHash {
+		t.Fatalf("客户端不能验证 reserved progress: evidence=%#v err=%v", reservedProgress, err)
+	}
+	for _, item := range []struct{ label, secret string }{
+		{label: "token", secret: submission.Token},
+		{label: "csr", secret: submission.ClaimCore.CSRDER},
+		{label: "challenge", secret: submission.Challenge.ServerNonce},
+		{label: "pop", secret: submission.ProofSignature},
+	} {
+		if bytes.Contains(reserved.ProgressReceipt, []byte(item.secret)) {
+			t.Fatalf("progress receipt 反射了 %s secret", item.label)
+		}
+	}
+	var tamperedProgress EnrollmentProgressReceiptV1
+	if _, err := wire.DecodeStrict(reserved.ProgressReceipt, 32<<20, &tamperedProgress); err != nil {
+		t.Fatal(err)
+	}
+	tamperedProgress.ClaimOperation.ClaimCoreHash = wire.EmptyHashV1
+	tamperedProgressRaw, err := wire.MarshalCanonical(tamperedProgress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tamperedProgressResult := reserved
+	tamperedProgressResult.ProgressReceipt = tamperedProgressRaw
+	if _, err := VerifyEnrollmentProgressReceipt(tamperedProgressRaw, &tamperedProgressResult,
+		EnrollmentProgressExpectedV1{
+			Record: private.material.Record, Policy: private.material.Policy,
+			Opening: private.material.Opening, ClaimCore: submission.ClaimCore,
+			BaseHead: private.material.RecordHead, BaseControlSet: private.material.ControlSet,
+		}); err == nil {
+		t.Fatal("客户端接受了改写 stable claim 的 progress receipt")
+	}
 
 	reopened, err := OpenStore(path)
 	if err != nil {
@@ -66,7 +107,6 @@ func TestCoordinatorResumesReservedTransactionAndFreezesCompletedResult(t *testi
 		completed.ResultArtifact == nil || len(completed.CompletionReceipt) == 0 {
 		t.Fatalf("另一 coordinator 未从 reserved 恢复完成: result=%#v err=%v", completed, err)
 	}
-	submission := attempt.Submission()
 	verifiedCompletion, err := VerifyEnrollmentCompletionReceipt(completed.CompletionReceipt, &completed,
 		EnrollmentCompletionExpectedV1{
 			Record: private.material.Record, Policy: private.material.Policy,
@@ -122,6 +162,40 @@ func TestCoordinatorResumesReservedTransactionAndFreezesCompletedResult(t *testi
 	}
 	if frozenBackend.admissionCalls+frozenBackend.provisionCalls+frozenBackend.approvalCalls+frozenBackend.completionCalls != 0 {
 		t.Fatalf("completed replay 触发了外部副作用: %#v", frozenBackend)
+	}
+}
+
+func TestCoordinatorReturnsVerifiableIssuedProgress(t *testing.T) {
+	private := newPrivateServiceFixture(t)
+	attempt := verifiedPrivateAttempt(t, private)
+	set, member, enrollmentKey := controlSet(t)
+	resultArtifact := enrollmentResultArtifactFixture(t)
+	bindResultArtifactToAttempt(t, &resultArtifact, attempt, private.deviceProfile,
+		private.deviceIssuerKey, private.identity, private.now)
+	backend := &workflowBackendFixture{t: t, set: set, member: member,
+		enrollmentKey: enrollmentKey, profile: private.deviceProfile,
+		issuerKey: private.deviceIssuerKey, resultArtifact: resultArtifact,
+		committedAt: private.now.Format("2006-01-02T15:04:05Z"), pendingApproval: true}
+	store, err := OpenStore(filepath.Join(t.TempDir(), "workflow.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator, _ := NewCoordinator(store, backend)
+	issued, err := coordinator.ProcessClaim(context.Background(), attempt)
+	if err != nil || issued.Status != "issued_provisional" || len(issued.ProgressReceipt) == 0 ||
+		issued.ResultArtifact != nil {
+		t.Fatalf("issued progress/result union 无效: result=%#v err=%v", issued, err)
+	}
+	submission := attempt.Submission()
+	verified, err := VerifyEnrollmentProgressReceipt(issued.ProgressReceipt, &issued,
+		EnrollmentProgressExpectedV1{
+			Record: private.material.Record, Policy: private.material.Policy,
+			Opening: private.material.Opening, ClaimCore: submission.ClaimCore,
+			BaseHead: private.material.RecordHead, BaseControlSet: private.material.ControlSet,
+		})
+	if err != nil || verified.Status() != "issued_provisional" ||
+		verified.ResumeExpected().EnrollmentTransactionStateHash != issued.TransactionStateHash {
+		t.Fatalf("客户端不能验证 issued progress: evidence=%#v err=%v", verified, err)
 	}
 }
 
@@ -232,6 +306,9 @@ func (backend *workflowBackendFixture) Provision(_ context.Context, _ VerifiedCl
 func (backend *workflowBackendFixture) CollectApproval(_ context.Context, _ VerifiedClaimAttemptV2,
 	record DurableRecord) (wire.StableEnrollmentApprovalQCV2, wire.ControlSetV1, error) {
 	backend.approvalCalls++
+	if backend.pendingApproval {
+		return wire.StableEnrollmentApprovalQCV2{}, wire.ControlSetV1{}, ErrEnrollmentProgressPending
+	}
 	if record.ProvisionalIssuance == nil || record.ProvisionalOperation == nil {
 		return wire.StableEnrollmentApprovalQCV2{}, wire.ControlSetV1{}, errors.New("缺 provisional evidence")
 	}

@@ -2567,6 +2567,11 @@ initial/resume capability 默认有效期均为 15 分钟；policy 中两个 TTL
 客户端自动重试只允许在当前 Invite 与 capability 都有效时进行。若 claim 已经 committed，事务为
 reserved、issued_provisional 或 completed，但客户端因响应丢失而等到 capability 过期，不能自动刷新，
 也不能创建新 request。
+reserved/issued_provisional 的私有响应必须携 canonical progress receipt；客户端以原 Invite proof、
+本机 opening/claim core 和 base Head/ControlSet 重放 admission QC、reservation/issuance operation 与
+完整 Head lineage，只有 transaction hash 精确相等才把 claim-operation/admission-QC/transaction hashes
+及 retry deadline 原子写入受保护 pending state。该状态只允许 exact replay 或
+reserved→issued_provisional 前进，禁止同阶段分叉和回退；receipt 不含 token、CSR、challenge 或 PoP bytes。
 管理员可在线性化读取 transaction 后，显式为同一 invite_id + request_id + claim/CSR/identity/
 wrapping-key hashes 重签一个短期 resume capability。它只恢复到同一个幂等事务：不延长原 Invite、
 不把 lifecycle 改回 available、不重置 reservation，也不再次消费 token；ControlSet 返回原有结果

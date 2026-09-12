@@ -59,17 +59,17 @@ type EnrollmentResumeDescriptorV1 struct {
 
 // EnrollmentResumeExpectedV1 是客户端受保护 pending state 的本机投影，不进入 wire。
 type EnrollmentResumeExpectedV1 struct {
-	ClusterID                      string
-	InviteID                       string
-	RequestID                      string
-	ClaimCoreHash                  string
-	ClaimOperationHash             string
-	AdmissionQCHash                string
-	CSRHash                        string
-	IdentityKeyHash                string
-	WrappingKeyHash                string
-	EnrollmentTransactionStateHash string
-	RetryNotAfter                  string
+	ClusterID                      string `json:"cluster_id"`
+	InviteID                       string `json:"invite_id"`
+	RequestID                      string `json:"request_id"`
+	ClaimCoreHash                  string `json:"claim_core_hash"`
+	ClaimOperationHash             string `json:"claim_operation_hash"`
+	AdmissionQCHash                string `json:"admission_qc_hash"`
+	CSRHash                        string `json:"csr_hash"`
+	IdentityKeyHash                string `json:"identity_key_hash"`
+	WrappingKeyHash                string `json:"wrapping_key_hash"`
+	EnrollmentTransactionStateHash string `json:"enrollment_transaction_state_hash"`
+	RetryNotAfter                  string `json:"retry_not_after"`
 }
 
 func ValidateEnrollmentResumeDescriptor(descriptor *EnrollmentResumeDescriptorV1, issuerPublicKey ed25519.PublicKey) error {

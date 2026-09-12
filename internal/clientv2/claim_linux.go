@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"golang.org/x/sys/unix"
+	"loom/internal/enrollmentv2"
 	"loom/internal/wire"
 )
 
@@ -20,6 +21,13 @@ type PendingClaimV2 struct {
 	Schema        int                        `json:"schema"`
 	ClaimCore     wire.EnrollmentClaimCoreV2 `json:"claim_core"`
 	ClaimCoreHash string                     `json:"claim_core_hash"`
+	Progress      *PendingProgressV1         `json:"progress,omitempty"`
+}
+
+type PendingProgressV1 struct {
+	Schema   int                             `json:"schema"`
+	Status   string                          `json:"status"`
+	Expected wire.EnrollmentResumeExpectedV1 `json:"expected"`
 }
 
 // OpenOrCreatePendingClaim 保证 CSR/client nonce/core 只生成一次；跨 ingress 重试只重签新 challenge。
@@ -102,7 +110,96 @@ func loadPendingClaim(path string, identity *EnrollmentIdentityV1, input ClaimCo
 		pending.ClaimCore.WrappingPublicKey != base64.RawURLEncoding.EncodeToString(wrappingSPKI) {
 		return nil, errors.New("[D129 Linux] pending claim 不属于当前 identity/wrapping keys")
 	}
+	if err := validatePendingProgress(&pending); err != nil {
+		return nil, err
+	}
 	return &pending, nil
+}
+
+// RecordPendingProgress 只接受完整 progress receipt verifier 产生的 opaque
+// projection。reserved→issued_provisional 可以前进；同一阶段不同 hash 或倒退永久
+// 失败，防止旧 ingress 响应覆盖较新的 resume binding（D130）。
+func RecordPendingProgress(path string, identity *EnrollmentIdentityV1, input ClaimCoreInputV2,
+	verified enrollmentv2.VerifiedEnrollmentProgressV1) (*PendingClaimV2, error) {
+	status, expected := verified.Status(), verified.ResumeExpected()
+	return recordPendingProgress(path, identity, input, status, expected)
+}
+
+func recordPendingProgress(path string, identity *EnrollmentIdentityV1, input ClaimCoreInputV2,
+	status string, expected wire.EnrollmentResumeExpectedV1) (*PendingClaimV2, error) {
+	if path == "" || filepath.Clean(path) != path || !filepath.IsAbs(path) || identity == nil ||
+		(status != "reserved" && status != "issued_provisional") {
+		return nil, errors.New("[D130 Linux] pending progress 输入无效")
+	}
+	if err := secureEnrollmentDirectory(filepath.Dir(path)); err != nil {
+		return nil, err
+	}
+	lock, err := openPrivateLock(path + ".lock")
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Close()
+	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
+		return nil, err
+	}
+	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+	pending, err := loadPendingClaim(path, identity, input)
+	if err != nil {
+		return nil, err
+	}
+	next := PendingProgressV1{Schema: 1, Status: status, Expected: expected}
+	candidate := *pending
+	candidate.Progress = &next
+	if err := validatePendingProgress(&candidate); err != nil {
+		return nil, err
+	}
+	if pending.Progress != nil {
+		if wire.EqualCanonical(*pending.Progress, next) {
+			return pending, nil
+		}
+		if pending.Progress.Status != "reserved" || status != "issued_provisional" ||
+			!sameResumeIdentity(pending.Progress.Expected, expected) {
+			return nil, errors.New("[D130 Linux] pending progress 回退、分叉或改写 stable binding")
+		}
+	}
+	if err := persistProtectedCanonical(path, &candidate); err != nil {
+		return nil, err
+	}
+	return loadPendingClaim(path, identity, input)
+}
+
+func validatePendingProgress(pending *PendingClaimV2) error {
+	if pending == nil || pending.Progress == nil {
+		return nil
+	}
+	progress := pending.Progress
+	expected := progress.Expected
+	if progress.Schema != 1 || (progress.Status != "reserved" && progress.Status != "issued_provisional") ||
+		expected.ClusterID != pending.ClaimCore.ClusterID || expected.InviteID != pending.ClaimCore.InviteID ||
+		expected.RequestID != pending.ClaimCore.RequestID || expected.ClaimCoreHash != pending.ClaimCoreHash {
+		return errors.New("[D130 Linux] pending progress header/core binding 无效")
+	}
+	identityHash, wrappingHash, csrHash, err := wire.EnrollmentClaimBinaryHashes(&pending.ClaimCore)
+	if err != nil || expected.IdentityKeyHash != identityHash || expected.WrappingKeyHash != wrappingHash ||
+		expected.CSRHash != csrHash {
+		return errors.New("[D130 Linux] pending progress identity/wrapping/CSR binding 无效")
+	}
+	for _, hash := range []string{expected.ClaimOperationHash, expected.AdmissionQCHash,
+		expected.EnrollmentTransactionStateHash} {
+		if _, err := wire.ParseHash(hash); err != nil {
+			return err
+		}
+	}
+	if _, err := wire.ParseTimeZ(expected.RetryNotAfter); err != nil {
+		return err
+	}
+	return nil
+}
+
+func sameResumeIdentity(left, right wire.EnrollmentResumeExpectedV1) bool {
+	left.EnrollmentTransactionStateHash = ""
+	right.EnrollmentTransactionStateHash = ""
+	return wire.EqualCanonical(left, right)
 }
 
 func claimCoreMatchesInput(core wire.EnrollmentClaimCoreV2, input ClaimCoreInputV2) bool {

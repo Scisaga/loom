@@ -254,7 +254,13 @@ func enrollmentResult(record DurableRecord) (wire.EnrollmentClaimResultV2, error
 	}
 	result := wire.EnrollmentClaimResultV2{Schema: 2, Status: record.State.Status,
 		TransactionStateHash: stateHash, ResultArtifactHash: record.State.ResultArtifactHash}
-	if record.State.Status == "completed" {
+	if record.State.Status != "completed" {
+		receipt, err := progressReceiptForRecord(&record)
+		if err != nil {
+			return wire.EnrollmentClaimResultV2{}, err
+		}
+		result.ProgressReceipt = receipt
+	} else {
 		if err := validateDurableRecord(&record); err != nil || record.ResultArtifact == nil ||
 			record.CompletionProjection == nil || record.CompletionProjection.ResultReleaseStatus != "authorized" {
 			return wire.EnrollmentClaimResultV2{}, errors.New("[D130 Enrollment] completed result 尚未获得原子 release authorization")

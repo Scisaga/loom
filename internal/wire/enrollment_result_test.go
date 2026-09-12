@@ -79,6 +79,22 @@ func TestEnrollmentResultArtifactBindsCertificateViewAndSecretRefs(t *testing.T)
 	if err := ValidateEnrollmentClaimResult(&premature); err == nil {
 		t.Fatal("provisional result 提前携带了私有 artifact")
 	}
+	pending := EnrollmentClaimResultV2{Schema: 2, Status: "reserved",
+		TransactionStateHash: completed.TransactionStateHash,
+		ProgressReceipt:      json.RawMessage(`{"schema":1}`)}
+	if err := ValidateEnrollmentClaimResult(&pending); err != nil {
+		t.Fatalf("canonical pending progress receipt 被拒绝: %v", err)
+	}
+	nonCanonicalProgress := pending
+	nonCanonicalProgress.ProgressReceipt = json.RawMessage(`{ "schema": 1 }`)
+	if err := ValidateEnrollmentClaimResult(&nonCanonicalProgress); err == nil {
+		t.Fatal("非 canonical progress receipt 被接受")
+	}
+	completedWithProgress := completed
+	completedWithProgress.ProgressReceipt = pending.ProgressReceipt
+	if err := ValidateEnrollmentClaimResult(&completedWithProgress); err == nil {
+		t.Fatal("completed result 同时携 progress receipt 被接受")
+	}
 	tampered := artifact
 	tampered.InitialDeviceView = artifact.InitialDeviceView
 	tampered.InitialDeviceView.Active = new(DeviceActiveViewV1)
