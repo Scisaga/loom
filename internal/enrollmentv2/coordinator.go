@@ -261,6 +261,11 @@ func enrollmentResult(record DurableRecord) (wire.EnrollmentClaimResultV2, error
 		}
 		artifact := clonePrivateValue(*record.ResultArtifact)
 		result.ResultArtifact = &artifact
+		receipt, err := completionReceiptForRecord(&record)
+		if err != nil {
+			return wire.EnrollmentClaimResultV2{}, err
+		}
+		result.CompletionReceipt = receipt
 	}
 	if err := wire.ValidateEnrollmentClaimResult(&result); err != nil {
 		return wire.EnrollmentClaimResultV2{}, err

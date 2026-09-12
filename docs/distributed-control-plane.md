@@ -2838,6 +2838,10 @@ completion reducer 必须同时验证 operation inclusion 与 initial active Dev
 certified Head；随后把 Invite=`consumed`、Device=`active`、artifact release=`authorized` 和 completed
 transaction 一次原子落盘。`reserved`/`issued_provisional` 响应禁止携 artifact；只有上述原子写成功后，
 private claim 响应才可返回由 `result_artifact_hash` 锁定的 exact `EnrollmentResultArtifactV1`。
+`completed` 响应还必须携 canonical `EnrollmentCompletionReceiptV1`：从客户端已验 Invite Head 开始的
+reservation/issuance/completion Head lineage、三类 QC、各 operation inclusion、CA profile、同 Head
+Device view proof 与原子 completion projection 必须齐全。客户端用本机 stable claim/core/key 重放 reducer，
+验证正式证书及 sealed recipient 后才能安装；只有 artifact 而没有 receipt 必须失败关闭。
 
 生产 Coordinator 不接受只返回 operation ID、逻辑时间或裸 Raft ack 的 planner。reservation、issuance
 和 completion 每一步都必须返回并耐久保存 exact operation leaf、累计树 inclusion path、Head、config QC

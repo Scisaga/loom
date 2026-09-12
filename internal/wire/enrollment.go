@@ -11,6 +11,7 @@ import (
 	"crypto/x509"
 	"encoding/asn1"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -248,6 +249,10 @@ type EnrollmentClaimResultV2 struct {
 	TransactionStateHash string                      `json:"transaction_state_hash"`
 	ResultArtifactHash   string                      `json:"result_artifact_hash,omitempty"`
 	ResultArtifact       *EnrollmentResultArtifactV1 `json:"result_artifact,omitempty"`
+	// CompletionReceipt 是由 enrollmentv2 定义并独立验证的 canonical proof
+	// envelope。wire 层保留 raw bytes，避免基础 wire 包反向依赖事务 reducer；
+	// completed 若没有它，客户端无法从 Invite Head 连续验证到 completion Head（D130）。
+	CompletionReceipt json.RawMessage `json:"completion_receipt,omitempty"`
 }
 
 type VerifiedEnrollmentClaimV2 struct {
@@ -669,8 +674,17 @@ func ValidateEnrollmentClaimResult(result *EnrollmentClaimResultV2) error {
 		return err
 	}
 	completed := result.Status == "completed"
-	if completed != (result.ResultArtifactHash != "") || completed != (result.ResultArtifact != nil) {
+	if completed != (result.ResultArtifactHash != "") || completed != (result.ResultArtifact != nil) ||
+		completed != (len(result.CompletionReceipt) != 0) {
 		return errors.New("[D130 Enrollment] completed/result artifact tagged union 无效")
+	}
+	if completed {
+		canonical, err := CanonicalizeStrict(result.CompletionReceipt)
+		if err != nil || !bytes.Equal(canonical, result.CompletionReceipt) ||
+			len(result.CompletionReceipt) < 2 || result.CompletionReceipt[0] != '{' ||
+			result.CompletionReceipt[len(result.CompletionReceipt)-1] != '}' {
+			return errors.New("[D130 Enrollment] completion receipt 必须是 exact canonical object")
+		}
 	}
 	if result.ResultArtifactHash != "" {
 		artifactHash, err := EnrollmentResultArtifactHash(result.ResultArtifact)

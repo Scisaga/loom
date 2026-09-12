@@ -1,11 +1,15 @@
 package enrollmentv2
 
 import (
+	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"encoding/base64"
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"loom/internal/wire"
 )
@@ -30,9 +34,9 @@ func TestCoordinatorResumesReservedTransactionAndFreezesCompletedResult(t *testi
 	private := newPrivateServiceFixture(t)
 	attempt := verifiedPrivateAttempt(t, private)
 	set, member, enrollmentKey := controlSet(t)
-	profile, issuerKey := activeEnrollmentProfile(t)
+	profile, issuerKey := private.deviceProfile, private.deviceIssuerKey
 	resultArtifact := enrollmentResultArtifactFixture(t)
-	bindResultArtifactToAttempt(&resultArtifact, attempt)
+	bindResultArtifactToAttempt(t, &resultArtifact, attempt, profile, issuerKey, private.identity, private.now)
 	path := filepath.Join(t.TempDir(), "workflow.json")
 	store, err := OpenStore(path)
 	if err != nil {
@@ -59,8 +63,50 @@ func TestCoordinatorResumesReservedTransactionAndFreezesCompletedResult(t *testi
 	recoveredCoordinator, _ := NewCoordinator(reopened, secondBackend)
 	completed, err := recoveredCoordinator.ProcessClaim(context.Background(), attempt)
 	if err != nil || completed.Status != "completed" || completed.ResultArtifactHash == "" ||
-		completed.ResultArtifact == nil {
+		completed.ResultArtifact == nil || len(completed.CompletionReceipt) == 0 {
 		t.Fatalf("另一 coordinator 未从 reserved 恢复完成: result=%#v err=%v", completed, err)
+	}
+	submission := attempt.Submission()
+	verifiedCompletion, err := VerifyEnrollmentCompletionReceipt(completed.CompletionReceipt, &completed,
+		EnrollmentCompletionExpectedV1{
+			Record: private.material.Record, Policy: private.material.Policy,
+			Opening: private.material.Opening, ClaimCore: submission.ClaimCore,
+			BaseHead: private.material.RecordHead, BaseControlSet: private.material.ControlSet,
+			TrustedTime: private.now,
+		})
+	if err != nil || verifiedCompletion.TransactionStateHash() != completed.TransactionStateHash ||
+		verifiedCompletion.DeviceViewEnvelope().Payload.DeviceID != resultArtifact.InitialDeviceView.DeviceID {
+		t.Fatalf("客户端不能独立重放 completed receipt: evidence=%#v err=%v", verifiedCompletion, err)
+	}
+	for _, item := range []struct{ label, secret string }{
+		{label: "token", secret: submission.Token},
+		{label: "csr", secret: submission.ClaimCore.CSRDER},
+		{label: "challenge", secret: submission.Challenge.ServerNonce},
+		{label: "pop", secret: submission.ProofSignature},
+	} {
+		if bytes.Contains(completed.CompletionReceipt, []byte(item.secret)) {
+			t.Fatalf("completion receipt 反射了 %s secret", item.label)
+		}
+	}
+	var tamperedReceipt EnrollmentCompletionReceiptV1
+	if _, err := wire.DecodeStrict(completed.CompletionReceipt, 32<<20, &tamperedReceipt); err != nil {
+		t.Fatal(err)
+	}
+	tamperedReceipt.ClaimOperation.ClaimCoreHash = wire.EmptyHashV1
+	tamperedRaw, err := wire.MarshalCanonical(tamperedReceipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tamperedResult := completed
+	tamperedResult.CompletionReceipt = tamperedRaw
+	if _, err := VerifyEnrollmentCompletionReceipt(tamperedRaw, &tamperedResult,
+		EnrollmentCompletionExpectedV1{
+			Record: private.material.Record, Policy: private.material.Policy,
+			Opening: private.material.Opening, ClaimCore: submission.ClaimCore,
+			BaseHead: private.material.RecordHead, BaseControlSet: private.material.ControlSet,
+			TrustedTime: private.now,
+		}); err == nil {
+		t.Fatal("客户端接受了改写 stable claim 的 completion receipt")
 	}
 	if secondBackend.admissionCalls != 0 || secondBackend.provisionCalls != 1 ||
 		secondBackend.approvalCalls != 1 || secondBackend.completionCalls != 1 {
@@ -83,9 +129,9 @@ func TestCoordinatorRejectsBackendAdmissionForDifferentCore(t *testing.T) {
 	private := newPrivateServiceFixture(t)
 	attempt := verifiedPrivateAttempt(t, private)
 	set, member, enrollmentKey := controlSet(t)
-	profile, issuerKey := activeEnrollmentProfile(t)
+	profile, issuerKey := private.deviceProfile, private.deviceIssuerKey
 	resultArtifact := enrollmentResultArtifactFixture(t)
-	bindResultArtifactToAttempt(&resultArtifact, attempt)
+	bindResultArtifactToAttempt(t, &resultArtifact, attempt, profile, issuerKey, private.identity, private.now)
 	backend := &workflowBackendFixture{t: t, set: set, member: member, enrollmentKey: enrollmentKey,
 		profile: profile, issuerKey: issuerKey, resultArtifact: resultArtifact, committedAt: private.now.Format("2006-01-02T15:04:05Z")}
 	store, _ := OpenStore(filepath.Join(t.TempDir(), "workflow.json"))
@@ -233,8 +279,13 @@ func verifiedPrivateAttempt(t *testing.T, fixture privateServiceFixture) Verifie
 		submission: submission, material: fixture.material}
 }
 
-func bindResultArtifactToAttempt(result *wire.EnrollmentResultArtifactV1, attempt VerifiedClaimAttemptV2) {
+func bindResultArtifactToAttempt(t *testing.T, result *wire.EnrollmentResultArtifactV1,
+	attempt VerifiedClaimAttemptV2, profile wire.DeviceCertificateProfileStateV1,
+	issuerKey ed25519.PrivateKey, identity *ecdsa.PrivateKey, issuedAt time.Time) {
+	t.Helper()
 	deviceID := attempt.material.Opening.DeviceEnrollmentIntent.DeviceID
+	result.DeviceCertificateDER = base64.RawURLEncoding.EncodeToString(
+		approvalDeviceCertificate(t, profile, issuerKey, identity, deviceID, issuedAt))
 	result.InitialDeviceView.DeviceID = deviceID
 	result.InitialDeviceView.Active.IdentitySPKIHash = attempt.Claim().IdentityKeyHash()
 	result.InitialDeviceView.Active.EndpointBundle.DeviceID = deviceID

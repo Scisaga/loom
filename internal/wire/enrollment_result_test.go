@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/json"
 	"math/big"
 	"testing"
 	"time"
@@ -58,7 +59,8 @@ func TestEnrollmentResultArtifactBindsCertificateViewAndSecretRefs(t *testing.T)
 	}
 	completed := EnrollmentClaimResultV2{Schema: 2, Status: "completed",
 		TransactionStateHash: HashRaw("result-test", []byte("transaction")),
-		ResultArtifactHash:   first, ResultArtifact: &artifact}
+		ResultArtifactHash:   first, ResultArtifact: &artifact,
+		CompletionReceipt: json.RawMessage(`{"schema":1}`)}
 	if err := ValidateEnrollmentClaimResult(&completed); err != nil {
 		t.Fatal(err)
 	}
@@ -66,6 +68,11 @@ func TestEnrollmentResultArtifactBindsCertificateViewAndSecretRefs(t *testing.T)
 	withoutArtifact.ResultArtifact = nil
 	if err := ValidateEnrollmentClaimResult(&withoutArtifact); err == nil {
 		t.Fatal("completed result 未携 exact artifact 仍被接受")
+	}
+	withoutReceipt := completed
+	withoutReceipt.CompletionReceipt = nil
+	if err := ValidateEnrollmentClaimResult(&withoutReceipt); err == nil {
+		t.Fatal("completed result 未携可重放 receipt 仍被接受")
 	}
 	premature := EnrollmentClaimResultV2{Schema: 2, Status: "issued_provisional",
 		TransactionStateHash: completed.TransactionStateHash, ResultArtifactHash: first, ResultArtifact: &artifact}

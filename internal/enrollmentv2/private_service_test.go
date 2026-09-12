@@ -31,6 +31,8 @@ type privateServiceFixture struct {
 	identity             *ecdsa.PrivateKey
 	issuerPrivate        ed25519.PrivateKey
 	issuerProof          wire.BootstrapIssuerAuthorizationProofV1
+	deviceProfile        wire.DeviceCertificateProfileStateV1
+	deviceIssuerKey      ed25519.PrivateKey
 	bootstrapCatalog     wire.BootstrapEndpointCatalogV1
 	bootstrapCatalogHead wire.HeadEntryV2
 	token                string
@@ -170,6 +172,11 @@ func TestAdmissionVoterIndependentlyVerifiesPrivateSubmission(t *testing.T) {
 func newPrivateServiceFixture(t *testing.T) privateServiceFixture {
 	t.Helper()
 	now := time.Date(2026, 9, 11, 11, 5, 0, 0, time.UTC)
+	deviceProfile, deviceIssuerKey := activeEnrollmentProfile(t)
+	deviceProfileHash, err := wire.DeviceCertificateProfileStateHash(&deviceProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
 	set, member, _ := controlSet(t)
 	setHash := mustSetHash(t, &set)
 	bootstrapHead := privateTestHead(t, setHash, wire.EmptyHashV1, wire.EmptyHashV1,
@@ -232,9 +239,9 @@ func newPrivateServiceFixture(t *testing.T) privateServiceFixture {
 	intent := wire.DeviceEnrollmentIntentV1{
 		Schema: 1, ClusterID: "cluster", InviteID: "invite", DeviceID: "linux-device", Platform: "linux-server",
 		DeviceCertificateProfileRef: wire.DeviceCertificateProfileRefV1{
-			ProfileID: "device-profile", Generation: 1,
-			DeviceCertificateProfileIntentHash: wire.HashRaw("private-service-test", []byte("profile-intent")),
-			DeviceCertificateProfileStateHash:  wire.HashRaw("private-service-test", []byte("profile-state")),
+			ProfileID: deviceProfile.ProfileID, Generation: deviceProfile.Generation,
+			DeviceCertificateProfileIntentHash: deviceProfile.DeviceCertificateProfileIntentHash,
+			DeviceCertificateProfileStateHash:  deviceProfileHash,
 		},
 		WrappingKeyProfiles: []string{"p256-root-only-pkcs8-ecdh-v1"},
 		Membership:          wire.EnrollmentMembershipV1{Schema: 1, DesiredState: "active_on_completion"},
@@ -385,6 +392,7 @@ func newPrivateServiceFixture(t *testing.T) privateServiceFixture {
 	}
 	return privateServiceFixture{now: now, service: service, capability: verifiedCapability, material: material,
 		core: core, identity: identity, issuerPrivate: issuerPrivate, issuerProof: authorizationProof,
+		deviceProfile: deviceProfile, deviceIssuerKey: deviceIssuerKey,
 		bootstrapCatalog: bootstrapCatalog, bootstrapCatalogHead: bootstrapHead, token: token, processed: &processed}
 }
 

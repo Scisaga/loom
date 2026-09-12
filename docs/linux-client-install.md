@@ -46,7 +46,10 @@
    `EnrollmentPoPBodyV2` 签名，再在 `EnrollmentClaimSubmissionV2` 中提交 token、core、
    challenge 与 detached PoP；当前 stable ControlSet 的 voters 先形成
    `StableEnrollmentAdmissionQCV1`，再以 Raft CAS 保证一次消费。
-6. ready 后原子安装正式 certificate/view/credentials，清除 token、capability、临时 profile/隧道，
+6. ready 必须同时返回 result artifact 和 canonical completion receipt；Linux 从 Invite 已验 Head
+   连续重放 reservation/issuance/completion Head、QC、operation/view inclusion，核对本机
+   claim/core/key、CA profile、正式证书与 sealed recipient 后才原子安装 certificate/view/credentials。
+   随后清除 token、capability、临时 profile/隧道，
    然后由同一 Linux 客户端宿主建立正式 WG control/L3 overlay；配置与报告继续访问
    `ControlServiceDirectoryV1` 中分用途的 `device_config`/`device_report` 私有服务。
 

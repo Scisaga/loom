@@ -7,6 +7,7 @@ import (
 	"errors"
 	"time"
 
+	"loom/internal/enrollmentv2"
 	"loom/internal/wire"
 )
 
@@ -31,6 +32,7 @@ type LinuxEnrollmentAttemptResultV2 struct {
 	ClaimCoreHash string
 	IdentityHash  string
 	Result        wire.EnrollmentClaimResultV2
+	Completion    enrollmentv2.VerifiedEnrollmentCompletionV1
 }
 
 type verifiedEnrollmentInputs struct {
@@ -161,7 +163,20 @@ func runLinuxEnrollmentAttempt(ctx context.Context, attempt LinuxEnrollmentAttem
 	if err != nil {
 		return LinuxEnrollmentAttemptResultV2{}, err
 	}
-	return LinuxEnrollmentAttemptResultV2{ClaimCoreHash: pending.ClaimCoreHash, IdentityHash: identityHash, Result: result}, nil
+	var completion enrollmentv2.VerifiedEnrollmentCompletionV1
+	if result.Status == "completed" {
+		completion, err = enrollmentv2.VerifyEnrollmentCompletionReceipt(result.CompletionReceipt, &result,
+			enrollmentv2.EnrollmentCompletionExpectedV1{
+				Record: inputs.record, Policy: inputs.policy,
+				Opening: preflight.DeviceEnrollmentIntentOpening, ClaimCore: pending.ClaimCore,
+				BaseHead: inputs.head, BaseControlSet: inputs.set, TrustedTime: now,
+			})
+		if err != nil {
+			return LinuxEnrollmentAttemptResultV2{}, err
+		}
+	}
+	return LinuxEnrollmentAttemptResultV2{ClaimCoreHash: pending.ClaimCoreHash, IdentityHash: identityHash,
+		Result: result, Completion: completion}, nil
 }
 
 func clonePrivateClientValue[T any](value T) T {
