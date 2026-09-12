@@ -143,6 +143,15 @@ func TestPrepareAndroidV2PrivateControlPlanBindsSealedDirectoryAndKeystoreIdenti
 	if err != nil || !bytes.Equal(replayedState, stateJSON) {
 		t.Fatalf("private device_config exact LKG replay 失败: equal=%v err=%v", bytes.Equal(replayedState, stateJSON), err)
 	}
+	deliveryJSON, _ := wire.MarshalCanonical(wire.DeviceConfigDeliveryV1{
+		Schema: 1, ClusterID: currentEnvelope.Payload.ClusterID, DeviceID: currentEnvelope.Payload.DeviceID,
+		Updates: []wire.DeviceConfigUpdateV1{{Schema: 1, Envelope: currentEnvelope, ControlSet: set}},
+	})
+	replayedState, err = PrepareAndroidV2PrivateDeviceConfigUpdate(stateJSON, deliveryJSON, identitySPKI)
+	if err != nil || !bytes.Equal(replayedState, stateJSON) {
+		t.Fatalf("private device_config delivery exact LKG replay 失败: equal=%v err=%v",
+			bytes.Equal(replayedState, stateJSON), err)
+	}
 	planJSON, err := PrepareAndroidV2PrivateControlPlan(stateJSON, identitySPKI,
 		"device_config", "device-config-1", now.Add(time.Minute).Format(time.RFC3339))
 	if err != nil {

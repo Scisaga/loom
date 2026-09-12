@@ -56,12 +56,12 @@ internal class V2PrivateControlClient(
         check(plan.role == "device_config" && plan.path == DEVICE_CONFIG_PATH) { "[D131 Android control] config plan 无效" }
         val connection = connection(plan, "GET")
         return try {
-            connection.setRequestProperty("Accept", "application/json")
+            connection.setRequestProperty("Accept", DEVICE_CONFIG_DELIVERY_MEDIA_TYPE)
             val status = connection.responseCode
             verifyPeerPin(connection, plan.serverSPKIPins)
             check(status == 200) { "[D131 Android control] private device_config 被拒绝（HTTP $status）" }
             check(connection.contentEncoding.isNullOrEmpty()) { "[D131 Android control] private device_config 禁止压缩" }
-            check(connection.contentType?.substringBefore(';')?.trim() == "application/json") {
+            check(connection.contentType?.substringBefore(';')?.trim() == DEVICE_CONFIG_DELIVERY_MEDIA_TYPE) {
                 "[D131 Android control] private device_config Content-Type 无效"
             }
             readBounded(connection.inputStream, connection.contentLengthLong, maximumBytes)
@@ -144,6 +144,8 @@ internal class V2PrivateControlClient(
     companion object {
         private const val DEVICE_CONFIG_PATH = "/private/v2/device/config"
         private const val DEVICE_REPORT_PATH = "/private/v2/device/report"
+        private const val DEVICE_CONFIG_DELIVERY_MEDIA_TYPE =
+            "application/vnd.loom.device-config-delivery.v1+json"
         private const val CONNECT_TIMEOUT_MS = 15_000
         private const val READ_TIMEOUT_MS = 30_000
         private const val MAX_DEVICE_VIEW_BYTES = 32 shl 20

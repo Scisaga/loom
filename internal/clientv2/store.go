@@ -15,10 +15,12 @@ import (
 )
 
 type State struct {
-	Schema     int                       `json:"schema"`
-	Floors     wire.ClientFloorsV2       `json:"floors"`
-	Envelope   wire.DeviceViewEnvelopeV2 `json:"envelope"`
-	Enrollment *EnrollmentInstallationV1 `json:"enrollment,omitempty"`
+	Schema             int                       `json:"schema"`
+	Floors             wire.ClientFloorsV2       `json:"floors"`
+	Envelope           wire.DeviceViewEnvelopeV2 `json:"envelope"`
+	ControlSet         *wire.ControlSetV1        `json:"control_set,omitempty"`
+	PreviousControlSet *wire.ControlSetV1        `json:"previous_control_set,omitempty"`
+	Enrollment         *EnrollmentInstallationV1 `json:"enrollment,omitempty"`
 }
 
 // EnrollmentInstallationV1 是 Linux 首次 v2 身份的单文件提交单元。证书、
@@ -124,6 +126,21 @@ func (s *Store) Enrollment() *EnrollmentInstallationV1 {
 	return &copy
 }
 
+func (s *Store) ControlSets() (*wire.ControlSetV1, *wire.ControlSetV1) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state == nil || s.state.ControlSet == nil {
+		return nil, nil
+	}
+	current := cloneStoreValue(*s.state.ControlSet)
+	var previous *wire.ControlSetV1
+	if s.state.PreviousControlSet != nil {
+		value := cloneStoreValue(*s.state.PreviousControlSet)
+		previous = &value
+	}
+	return &current, previous
+}
+
 func (s *Store) Accept(envelope *wire.DeviceViewEnvelopeV2, set *wire.ControlSetV1, expectedDeviceID, expectedIdentitySPKIHash string) (wire.ClientFloorsV2, error) {
 	return s.AcceptWithPrevious(envelope, set, nil, expectedDeviceID, expectedIdentitySPKIHash)
 }
@@ -207,11 +224,21 @@ func (s *Store) acceptWithAdvance(envelope *wire.DeviceViewEnvelopeV2, set, prev
 	if envelope.Payload.State == "active" && envelope.Payload.Active.IdentitySPKIHash != expectedIdentitySPKIHash {
 		return s.floorsLocked(), errors.New("[D105 Linux] Device view identity SPKI 与本机 key 不匹配")
 	}
+	if s.state != nil {
+		if err := wire.VerifyDeviceViewSuccessor(&s.state.Envelope, envelope); err != nil {
+			return s.floorsLocked(), err
+		}
+	}
 	next, err := advance(s.floorsLocked(), floors)
 	if err != nil {
 		return s.floorsLocked(), err
 	}
-	state := State{Schema: 1, Floors: next, Envelope: *envelope}
+	setCopy := cloneStoreValue(*set)
+	state := State{Schema: 1, Floors: next, Envelope: cloneStoreValue(*envelope), ControlSet: &setCopy}
+	if previousSet != nil {
+		value := cloneStoreValue(*previousSet)
+		state.PreviousControlSet = &value
+	}
 	if s.state != nil && s.state.Enrollment != nil {
 		state.Enrollment = s.state.Enrollment
 	}
@@ -220,6 +247,70 @@ func (s *Store) acceptWithAdvance(envelope *wire.DeviceViewEnvelopeV2, set, prev
 	}
 	s.state = &state
 	return next, nil
+}
+
+// AcceptDeviceConfigDelivery 从 durable exact Head 定位 delivery 窗口，并在内存中
+// 完整重放后一次性提交 final floors/view/ControlSet。任何中间失败都保留原 LKG（D106、D112、D131）。
+func (s *Store) AcceptDeviceConfigDelivery(delivery *wire.DeviceConfigDeliveryV1,
+	fallbackSet, fallbackPreviousSet *wire.ControlSetV1,
+	expectedDeviceID, expectedIdentitySPKIHash string,
+) (wire.ClientFloorsV2, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state == nil || delivery == nil || expectedDeviceID == "" || expectedIdentitySPKIHash == "" {
+		return s.floorsLocked(), errors.New("[D131 Linux config] delivery/protected state/identity 不完整")
+	}
+	currentSet, currentPreviousSet := s.state.ControlSet, s.state.PreviousControlSet
+	if currentSet == nil {
+		currentSet, currentPreviousSet = fallbackSet, fallbackPreviousSet
+	}
+	if currentSet == nil {
+		return s.floorsLocked(), errors.New("[D131 Linux config] protected ControlSet 缺失")
+	}
+	verified, err := wire.VerifyDeviceConfigDeliveryFromProtected(delivery, &s.state.Envelope,
+		s.state.Floors, currentSet, currentPreviousSet, expectedDeviceID, expectedIdentitySPKIHash)
+	if err != nil {
+		return s.floorsLocked(), err
+	}
+	envelope := verified.Envelope()
+	if !sameInstalledArtifactRefs(&s.state.Envelope, &envelope) {
+		return s.floorsLocked(), errors.New("[D124 Linux config] Device view artifact refs 已变化，必须原子取回后安装")
+	}
+	set := verified.ControlSet()
+	state := State{Schema: 1, Floors: verified.Floors(), Envelope: envelope, ControlSet: &set,
+		Enrollment: s.state.Enrollment}
+	state.PreviousControlSet = verified.PreviousControlSet()
+	if err := persist(s.path, state); err != nil {
+		return s.floorsLocked(), err
+	}
+	s.state = &state
+	return state.Floors, nil
+}
+
+func sameInstalledArtifactRefs(current, candidate *wire.DeviceViewEnvelopeV2) bool {
+	if current == nil || candidate == nil {
+		return false
+	}
+	if candidate.Payload.State == "tombstone" {
+		return true
+	}
+	if current.Payload.State != "active" {
+		return false
+	}
+	if current.Payload.State == "active" &&
+		(current.Payload.Active == nil || candidate.Payload.Active == nil ||
+			!wire.EqualCanonical(current.Payload.Active.ConfigArtifactRefs, candidate.Payload.Active.ConfigArtifactRefs)) {
+		return false
+	}
+	if len(current.SecretArtifactRefs) != len(candidate.SecretArtifactRefs) {
+		return false
+	}
+	for index := range current.SecretArtifactRefs {
+		if !bytes.Equal(current.SecretArtifactRefs[index], candidate.SecretArtifactRefs[index]) {
+			return false
+		}
+	}
+	return true
 }
 
 // acceptInitialInstallation 提交已经由 completion receipt 与本机 wrapping key
@@ -255,7 +346,9 @@ func (s *Store) acceptInitialInstallation(envelope *wire.DeviceViewEnvelopeV2, s
 	if _, err := wire.DecodeStrict(installationBody, 32<<20, &installedCopy); err != nil {
 		return wire.ClientFloorsV2{}, err
 	}
-	state := State{Schema: 1, Floors: floors, Envelope: *envelope, Enrollment: &installedCopy}
+	setCopy := cloneStoreValue(*set)
+	state := State{Schema: 1, Floors: floors, Envelope: cloneStoreValue(*envelope),
+		ControlSet: &setCopy, Enrollment: &installedCopy}
 	if err := validateStoredState(&state); err != nil {
 		return wire.ClientFloorsV2{}, err
 	}
@@ -346,12 +439,28 @@ func validateStoredState(state *State) error {
 		floor.DeviceViewHash != payloadHash || floor.BootstrapTransitionHash != head.Body.TransitionProofHash {
 		return errors.New("[D106 Linux] durable floors 与同一 LKG envelope 不一致")
 	}
+	if state.ControlSet != nil {
+		verified, verifyErr := wire.VerifyDeviceViewEnvelopeWithPrevious(
+			&state.Envelope, state.ControlSet, state.PreviousControlSet)
+		if verifyErr != nil || !wire.EqualCanonical(verified, state.Floors) {
+			return errors.New("[D106 Linux] durable Device view/ControlSet/QC 不可重放")
+		}
+	} else if state.PreviousControlSet != nil {
+		return errors.New("[D106 Linux] durable previous ControlSet 缺 current authority")
+	}
 	if state.Enrollment != nil {
 		if err := validateEnrollmentInstallation(state.Enrollment, &state.Envelope); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func cloneStoreValue[T any](value T) T {
+	body, _ := wire.MarshalCanonical(value)
+	var cloned T
+	_, _ = wire.DecodeStrict(body, 64<<20, &cloned)
+	return cloned
 }
 
 func validateEnrollmentInstallation(installation *EnrollmentInstallationV1, envelope *wire.DeviceViewEnvelopeV2) error {
@@ -391,13 +500,17 @@ func validateEnrollmentInstallation(installation *EnrollmentInstallationV1, enve
 		return errors.New("[D102 Linux install] durable certificate hash 不匹配")
 	}
 	refs := installation.ResultArtifact.SecretArtifactRefs
-	if len(refs) != len(installation.Credentials) || len(refs) != len(envelope.SecretArtifactRefs) {
+	if len(refs) != len(installation.Credentials) ||
+		envelope.Payload.Active != nil && len(refs) != len(envelope.SecretArtifactRefs) {
 		return errors.New("[D124 Linux install] durable credentials/refs 数量不匹配")
 	}
 	totalSecretBytes := 0
 	for index := range refs {
 		canonicalRef, refErr := wire.MarshalCanonical(refs[index])
-		canonicalEnvelopeRef, envelopeErr := wire.CanonicalizeStrict(envelope.SecretArtifactRefs[index])
+		canonicalEnvelopeRef, envelopeErr := canonicalRef, refErr
+		if envelope.Payload.Active != nil {
+			canonicalEnvelopeRef, envelopeErr = wire.CanonicalizeStrict(envelope.SecretArtifactRefs[index])
+		}
 		credential := &installation.Credentials[index]
 		if refErr != nil || envelopeErr != nil || !bytes.Equal(canonicalRef, canonicalEnvelopeRef) ||
 			credential.SecretID != refs[index].SecretID || credential.Purpose != refs[index].Purpose ||

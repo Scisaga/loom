@@ -28,8 +28,8 @@ internal class V2DeviceReporter(
     fun refreshConfiguration(): ManagedProfile? {
         val now = Instant.now().toString()
         val plans = stateStore.privateControlPlans("device_config", now)
-        val envelope = client.getFirst(plans)
-        stateStore.acceptPrivateView(envelope)
+        val delivery = client.getFirst(plans)
+        stateStore.acceptPrivateDelivery(delivery)
         return stateStore.runtimeProfile()
     }
 

@@ -68,6 +68,71 @@ func TestAcceptPersistsAndReopensExactEmptySecretRefs(t *testing.T) {
 	if got := reopened.Envelope(); got == nil || got.SecretArtifactRefs == nil || len(got.SecretArtifactRefs) != 0 {
 		t.Fatalf("重启后未保留 exact empty secret refs: %#v", got)
 	}
+	currentSet, previousSet := reopened.ControlSets()
+	if currentSet == nil || !wire.EqualCanonical(*currentSet, set) || previousSet != nil {
+		t.Fatalf("重启后未保留 exact ControlSet: current=%#v previous=%#v", currentSet, previousSet)
+	}
+}
+
+func TestAcceptDeviceConfigDeliveryReplaysCompleteWindowAtomically(t *testing.T) {
+	set, key := clientControlSet(t)
+	current := clientEnvelope(t, &set, key)
+	next := advanceClientEnvelope(t, current, &set, key)
+	directory := filepath.Join(t.TempDir(), "private")
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(filepath.Join(directory, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	identityHash := current.Payload.Active.IdentitySPKIHash
+	if _, err := store.acceptWithAdvance(&current, &set, nil, current.Payload.DeviceID,
+		identityHash, wire.AdvanceFloors); err != nil {
+		t.Fatal(err)
+	}
+	delivery := wire.DeviceConfigDeliveryV1{Schema: 1, ClusterID: current.Payload.ClusterID,
+		DeviceID: current.Payload.DeviceID, Updates: []wire.DeviceConfigUpdateV1{
+			{Schema: 1, Envelope: current, ControlSet: set},
+			{Schema: 1, Envelope: next, ControlSet: set},
+		}}
+	floors, err := store.AcceptDeviceConfigDelivery(&delivery, nil, nil,
+		current.Payload.DeviceID, identityHash)
+	if err != nil || floors.DeviceGeneration != 2 || store.Envelope().Payload.DeviceGeneration != 2 {
+		t.Fatalf("完整 delivery 未原子推进: floors=%#v err=%v", floors, err)
+	}
+
+	broken := delivery
+	broken.Updates = append([]wire.DeviceConfigUpdateV1(nil), delivery.Updates...)
+	broken.Updates[1].Envelope.Leaf.PreviousViewHash = wire.HashRaw("client-v2-test", []byte("fork"))
+	before := store.Floors()
+	if _, err := store.AcceptDeviceConfigDelivery(&broken, nil, nil,
+		current.Payload.DeviceID, identityHash); err == nil {
+		t.Fatal("接受了断裂的 previous_view_hash")
+	}
+	if after := store.Floors(); !wire.EqualCanonical(before, after) {
+		t.Fatalf("失败 delivery 改写了 LKG: before=%#v after=%#v", before, after)
+	}
+}
+
+func TestVerifyDeviceViewSuccessorRejectsGenerationGapAndTombstoneRevival(t *testing.T) {
+	set, key := clientControlSet(t)
+	current := clientEnvelope(t, &set, key)
+	next := advanceClientEnvelope(t, current, &set, key)
+	if err := wire.VerifyDeviceViewSuccessor(&current, &next); err != nil {
+		t.Fatal(err)
+	}
+	gapped := next
+	gapped.Payload.DeviceGeneration++
+	if err := wire.VerifyDeviceViewSuccessor(&current, &gapped); err == nil {
+		t.Fatal("接受了跳过 generation 的 Device view")
+	}
+	tombstone := current
+	tombstone.Payload.State = "tombstone"
+	tombstone.Payload.Active = nil
+	if err := wire.VerifyDeviceViewSuccessor(&tombstone, &next); err == nil {
+		t.Fatal("接受了 tombstone 后的 Device view 复活")
+	}
 }
 
 func clientControlSet(t *testing.T) (wire.ControlSetV1, ed25519.PrivateKey) {

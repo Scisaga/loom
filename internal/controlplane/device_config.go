@@ -42,6 +42,9 @@ type DeviceIdentityAuthorityV1 struct {
 	AdminCertificateProfiles  []wire.AdminCertificateProfileV1
 	DeviceCertificateProfiles []wire.DeviceCertificateProfileStateV1
 	CurrentDeviceView         wire.DeviceViewEnvelopeV2
+	// DeviceConfigUpdates 是从保留窗口锚点到 CurrentDeviceView 的逐 Head
+	// certified lineage；为空仅表示当前单步兼容响应（D112、D131）。
+	DeviceConfigUpdates []wire.DeviceConfigUpdateV1
 }
 
 type DeviceIdentityReader func(context.Context, string) (DeviceIdentityAuthorityV1, error)
@@ -114,16 +117,57 @@ func (service *PrivateDeviceConfigService) ServeHTTP(writer http.ResponseWriter,
 		writePrivateControlError(writer, http.StatusForbidden, "[D131 device_config] Device identity 被拒绝")
 		return
 	}
-	body, err := wire.MarshalCanonical(identity.authority.CurrentDeviceView)
+	var body []byte
+	if request.Header.Get("Accept") == wire.DeviceConfigDeliveryMediaTypeV1 {
+		body, err = marshalDeviceConfigDelivery(identity)
+	} else {
+		body, err = wire.MarshalCanonical(identity.authority.CurrentDeviceView)
+	}
 	if err != nil {
 		writePrivateControlError(writer, http.StatusInternalServerError, "[D105 device_config] view 编码失败")
 		return
 	}
-	writer.Header().Set("Content-Type", "application/json")
+	contentType := "application/json"
+	if request.Header.Get("Accept") == wire.DeviceConfigDeliveryMediaTypeV1 {
+		contentType = wire.DeviceConfigDeliveryMediaTypeV1
+	}
+	writer.Header().Set("Content-Type", contentType)
 	writer.Header().Set("Cache-Control", "no-store")
 	writer.Header().Set("X-Content-Type-Options", "nosniff")
 	writer.WriteHeader(http.StatusOK)
 	_, _ = writer.Write(body)
+}
+
+func marshalDeviceConfigDelivery(identity VerifiedDeviceIdentityV1) ([]byte, error) {
+	authority := &identity.authority
+	updates := authority.DeviceConfigUpdates
+	if len(updates) == 0 {
+		updates = []wire.DeviceConfigUpdateV1{{
+			Schema: 1, Envelope: authority.CurrentDeviceView,
+			ControlSet: authority.ControlSet, PreviousControlSet: authority.PreviousControlSet,
+		}}
+	}
+	delivery := wire.DeviceConfigDeliveryV1{
+		Schema: 1, ClusterID: identity.record.ProfileState.ClusterID,
+		DeviceID: identity.record.DeviceID, Updates: updates,
+	}
+	if err := wire.ValidateDeviceConfigDelivery(&delivery); err != nil {
+		return nil, err
+	}
+	last := &delivery.Updates[len(delivery.Updates)-1]
+	if !wire.EqualCanonical(last.Envelope, authority.CurrentDeviceView) ||
+		!wire.EqualCanonical(last.ControlSet, authority.ControlSet) ||
+		!equalOptionalControlSet(last.PreviousControlSet, authority.PreviousControlSet) {
+		return nil, errors.New("[D131 device_config] delivery final authority 与线性化读取不一致")
+	}
+	return wire.MarshalCanonical(delivery)
+}
+
+func equalOptionalControlSet(left, right *wire.ControlSetV1) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return wire.EqualCanonical(*left, *right)
 }
 
 func (service *PrivateDeviceConfigService) authenticate(ctx context.Context, certificateDER []byte,

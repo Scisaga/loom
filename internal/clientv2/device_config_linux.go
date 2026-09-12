@@ -57,8 +57,13 @@ func SyncLinuxDeviceView(ctx context.Context,
 	if current == nil || installation == nil || current.Payload.Active == nil {
 		return store.Floors(), errors.New("[D131 Linux config] 正式 active enrollment/LKG 尚未安装")
 	}
+	currentSet, currentPreviousSet := store.ControlSets()
+	if currentSet == nil {
+		// 兼容尚未持久化 authority 的旧 LKG；首次成功 delivery 后即迁入 durable state。
+		currentSet, currentPreviousSet = &options.ControlSet, options.PreviousControlSet
+	}
 	if err := VerifyControlServiceDirectory(&options.Directory, options.PinnedDirectoryHash,
-		&current.SignedCurrent.Head, &options.ControlSet, options.PreviousControlSet); err != nil {
+		&current.SignedCurrent.Head, currentSet, currentPreviousSet); err != nil {
 		return store.Floors(), err
 	}
 	service, err := SelectPrivateControlService(&options.Directory, "device_config", options.ServiceID)
@@ -96,11 +101,11 @@ func SyncLinuxDeviceView(ctx context.Context,
 		return store.Floors(), err
 	}
 	defer client.CloseIdleConnections()
-	envelope, err := client.fetchDeviceView(ctx)
+	delivery, err := client.fetchDeviceConfigDelivery(ctx)
 	if err != nil {
 		return store.Floors(), err
 	}
-	return store.AcceptWithPrevious(&envelope, &options.ControlSet, options.PreviousControlSet,
+	return store.AcceptDeviceConfigDelivery(&delivery, &options.ControlSet, options.PreviousControlSet,
 		current.Payload.DeviceID, identityHash)
 }
 
@@ -229,37 +234,37 @@ func newPrivateDeviceHTTPClient(service wire.PrivateControlServiceV1, expectedRo
 		}}, baseURL: baseURL}, nil
 }
 
-func (client *privateDeviceHTTPClient) fetchDeviceView(ctx context.Context) (wire.DeviceViewEnvelopeV2, error) {
+func (client *privateDeviceHTTPClient) fetchDeviceConfigDelivery(ctx context.Context) (wire.DeviceConfigDeliveryV1, error) {
 	if client == nil || client.client == nil {
-		return wire.DeviceViewEnvelopeV2{}, errors.New("[D131 Linux config] private client 缺失")
+		return wire.DeviceConfigDeliveryV1{}, errors.New("[D131 Linux config] private client 缺失")
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		client.baseURL+"/private/v2/device/config", nil)
 	if err != nil {
-		return wire.DeviceViewEnvelopeV2{}, err
+		return wire.DeviceConfigDeliveryV1{}, err
 	}
-	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Accept", wire.DeviceConfigDeliveryMediaTypeV1)
 	response, err := client.client.Do(request)
 	if err != nil {
-		return wire.DeviceViewEnvelopeV2{}, fmt.Errorf("[D131 Linux config] private device_config 请求失败: %w", err)
+		return wire.DeviceConfigDeliveryV1{}, fmt.Errorf("[D131 Linux config] private device_config 请求失败: %w", err)
 	}
 	defer response.Body.Close()
 	mediaType, _, mediaErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
-	if response.StatusCode != http.StatusOK || mediaErr != nil || mediaType != "application/json" ||
+	if response.StatusCode != http.StatusOK || mediaErr != nil || mediaType != wire.DeviceConfigDeliveryMediaTypeV1 ||
 		response.Header.Get("Content-Encoding") != "" || response.ContentLength > maximumPrivateDeviceViewBytes {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-		return wire.DeviceViewEnvelopeV2{}, errors.New("[D131 Linux config] private device_config 响应状态/类型/大小无效")
+		return wire.DeviceConfigDeliveryV1{}, errors.New("[D131 Linux config] private device_config 响应状态/类型/大小无效")
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, maximumPrivateDeviceViewBytes+1))
 	if err != nil || len(body) == 0 || len(body) > maximumPrivateDeviceViewBytes {
-		return wire.DeviceViewEnvelopeV2{}, errors.New("[D131 Linux config] private device_config 响应读取/大小无效")
+		return wire.DeviceConfigDeliveryV1{}, errors.New("[D131 Linux config] private device_config 响应读取/大小无效")
 	}
-	var envelope wire.DeviceViewEnvelopeV2
-	canonical, err := wire.DecodeStrict(body, maximumPrivateDeviceViewBytes, &envelope)
+	var delivery wire.DeviceConfigDeliveryV1
+	canonical, err := wire.DecodeStrict(body, maximumPrivateDeviceViewBytes, &delivery)
 	if err != nil || !bytes.Equal(canonical, body) {
-		return wire.DeviceViewEnvelopeV2{}, errors.New("[D131 Linux config] private Device view 不是 exact canonical wire")
+		return wire.DeviceConfigDeliveryV1{}, errors.New("[D131 Linux config] private Device delivery 不是 exact canonical wire")
 	}
-	return envelope, nil
+	return delivery, nil
 }
 
 func (client *privateDeviceHTTPClient) CloseIdleConnections() {

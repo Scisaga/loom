@@ -36,18 +36,23 @@ func TestSyncLinuxDeviceViewUsesPinnedPrivateDirectoryAndDeviceMTLS(t *testing.T
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		requests++
 		if request.URL.Path != "/private/v2/device/config" || request.Host != "10.50.0.2:7445" ||
+			request.Header.Get("Accept") != wire.DeviceConfigDeliveryMediaTypeV1 ||
 			request.TLS == nil || request.TLS.Version != tls.VersionTLS13 || len(request.TLS.PeerCertificates) != 1 {
 			t.Errorf("private request 未使用 exact route/Device mTLS: host=%q tls=%#v", request.Host, request.TLS)
 			writer.WriteHeader(http.StatusForbidden)
 			return
 		}
-		body, err := wire.MarshalCanonical(envelope)
+		delivery := wire.DeviceConfigDeliveryV1{Schema: 1, ClusterID: envelope.Payload.ClusterID,
+			DeviceID: envelope.Payload.DeviceID, Updates: []wire.DeviceConfigUpdateV1{{
+				Schema: 1, Envelope: envelope, ControlSet: set,
+			}}}
+		body, err := wire.MarshalCanonical(delivery)
 		if err != nil {
 			t.Error(err)
 			writer.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		writer.Header().Set("Content-Type", "application/json")
+		writer.Header().Set("Content-Type", wire.DeviceConfigDeliveryMediaTypeV1)
 		writer.Header().Set("Cache-Control", "no-store")
 		_, _ = writer.Write(body)
 	}))

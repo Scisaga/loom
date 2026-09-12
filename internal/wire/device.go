@@ -405,6 +405,37 @@ func VerifyDeviceViewProjection(payload *DeviceViewPayloadV2, leaf *DeviceViewLe
 	return payloadHash, nil
 }
 
+// VerifyDeviceViewSuccessor 钉住 per-Device hash chain。离线客户端必须逐个重放
+// generation，不能靠一个更大整数跳过撤权 tombstone，也不能从 tombstone 复活（D105、D106）。
+func VerifyDeviceViewSuccessor(current, candidate *DeviceViewEnvelopeV2) error {
+	if current == nil || candidate == nil || current.Payload.ClusterID != candidate.Payload.ClusterID ||
+		current.Payload.DeviceID != candidate.Payload.DeviceID {
+		return errors.New("[D105 Device view] successor Device/cluster binding 无效")
+	}
+	if candidate.Payload.DeviceGeneration < current.Payload.DeviceGeneration {
+		return errors.New("[D106 Device view] Device generation 回退")
+	}
+	if candidate.Payload.DeviceGeneration == current.Payload.DeviceGeneration {
+		currentHash, currentErr := DeviceViewHash(&current.Payload)
+		candidateHash, candidateErr := DeviceViewHash(&candidate.Payload)
+		if currentErr != nil || candidateErr != nil || currentHash != candidateHash ||
+			candidate.Leaf.PreviousViewHash != current.Leaf.PreviousViewHash {
+			return errors.New("[D106 Device view] 同 generation 出现 view 分叉")
+		}
+		return nil
+	}
+	next, err := CheckedAdd(current.Payload.DeviceGeneration, 1)
+	currentHash, hashErr := DeviceViewHash(&current.Payload)
+	if err != nil || hashErr != nil || candidate.Payload.DeviceGeneration != next ||
+		candidate.Leaf.PreviousViewHash != currentHash {
+		return errors.New("[D105 Device view] successor 必须逐代绑定 previous_view_hash")
+	}
+	if current.Payload.State != "active" {
+		return errors.New("[D105 Device view] tombstone Device 禁止恢复为后继 view")
+	}
+	return nil
+}
+
 // AdvanceFloors 原子持久化前验证四组 floor；相同坐标不同 hash 一律视为 fork。
 func AdvanceFloors(current, candidate ClientFloorsV2) (ClientFloorsV2, error) {
 	return advanceFloors(current, candidate, floorAdvanceAuthority{})

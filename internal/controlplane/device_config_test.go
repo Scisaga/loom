@@ -43,6 +43,28 @@ func TestPrivateDeviceConfigReturnsOnlyExactMTLSDeviceView(t *testing.T) {
 	}
 }
 
+func TestPrivateDeviceConfigNegotiatesVerifiedDeliveryWithoutBreakingLegacyView(t *testing.T) {
+	fixture := newDeviceConfigFixture(t)
+	request := httptest.NewRequest(http.MethodGet,
+		"https://10.50.0.2:7445"+PrivateDeviceConfigPath, nil)
+	request.Header.Set("Accept", wire.DeviceConfigDeliveryMediaTypeV1)
+	request = request.WithContext(context.WithValue(request.Context(), http.LocalAddrContextKey,
+		stringAddress("10.50.0.2:7445")))
+	request.TLS = &tls.ConnectionState{Version: tls.VersionTLS13,
+		PeerCertificates: []*x509.Certificate{fixture.leaf}}
+	response := httptest.NewRecorder()
+	fixture.service.ServeHTTP(response, request)
+	var delivery wire.DeviceConfigDeliveryV1
+	canonical, err := wire.DecodeStrict(response.Body.Bytes(), 32<<20, &delivery)
+	if err != nil || !bytes.Equal(canonical, response.Body.Bytes()) ||
+		wire.ValidateDeviceConfigDelivery(&delivery) != nil || len(delivery.Updates) != 1 ||
+		!wire.EqualCanonical(delivery.Updates[0].Envelope, fixture.envelope) ||
+		response.Header().Get("Content-Type") != wire.DeviceConfigDeliveryMediaTypeV1 {
+		t.Fatalf("device_config delivery 无效: status=%d content-type=%q err=%v",
+			response.Code, response.Header().Get("Content-Type"), err)
+	}
+}
+
 func TestPrivateDeviceConfigRejectsPublicListenerAndUncertifiedIdentity(t *testing.T) {
 	fixture := newDeviceConfigFixture(t)
 	public := serveDeviceConfig(t, fixture, "203.0.113.20:7445", true)

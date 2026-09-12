@@ -114,6 +114,9 @@ func PrepareV2DeviceStateWithPrevious(envelopeJSON, controlSetJSON, previousCont
 			current.Envelope.Payload.Active.IdentitySPKIHash != expectedIdentitySPKIHash {
 		return nil, errors.New("[D106 Android] protected v2 state 与本机 Keystore identity 不匹配")
 	}
+	if err := wire.VerifyDeviceViewSuccessor(&current.Envelope, &envelope); err != nil {
+		return nil, err
+	}
 	nextSetHash, _ := wire.ControlSetHash(&set)
 	if current.ControlSet != nil && nextSetHash != current.Floors.ControlSetHash &&
 		(previousSet == nil || !wire.EqualCanonical(*current.ControlSet, *previousSet)) {
@@ -183,6 +186,48 @@ func PrepareAndroidV2PrivateDeviceViewUpdate(currentStateJSON, envelopeJSON,
 	}
 	return PrepareV2DeviceStateWithPrevious(envelopeJSON, setJSON, previousJSON,
 		current.Envelope.Payload.DeviceID, identityHash, currentStateJSON)
+}
+
+// PrepareAndroidV2PrivateDeviceConfigUpdate 从 protected exact Head 重放服务端
+// 保留窗口，并一次性返回 final view/floors/ControlSet。artifact refs 变化仍须由
+// 后续“取回全部 artifact 后一起提交”的事务处理（D106、D112、D124、D131）。
+func PrepareAndroidV2PrivateDeviceConfigUpdate(currentStateJSON, deliveryJSON,
+	identitySPKIDER []byte,
+) ([]byte, error) {
+	current, err := decodeAndroidV2DeviceState(currentStateJSON)
+	if err != nil {
+		return nil, err
+	}
+	if current.ControlSet == nil || current.Enrollment == nil {
+		return nil, errors.New("[D131 Android config] protected ControlSet/Enrollment 不完整")
+	}
+	identityHash, err := wire.HashBytes(wire.DomainEnrollmentIdentitySPKI, identitySPKIDER)
+	if err != nil || identityHash != current.Enrollment.IdentityKeyHash {
+		return nil, errors.New("[D131 Android config] Keystore identity 与 protected state 不匹配")
+	}
+	var delivery wire.DeviceConfigDeliveryV1
+	if err := decodeExactAndroidV2(deliveryJSON, 32<<20, &delivery, "private Device delivery"); err != nil {
+		return nil, err
+	}
+	verified, err := wire.VerifyDeviceConfigDeliveryFromProtected(&delivery, &current.Envelope,
+		current.Floors, current.ControlSet, current.PreviousControlSet,
+		current.Envelope.Payload.DeviceID, identityHash)
+	if err != nil {
+		return nil, err
+	}
+	envelope := verified.Envelope()
+	if envelope.Payload.State == "active" &&
+		(current.Envelope.Payload.Active == nil || envelope.Payload.Active == nil ||
+			!wire.EqualCanonical(envelope.Payload.Active.ConfigArtifactRefs,
+				current.Envelope.Payload.Active.ConfigArtifactRefs) ||
+			!equalRawAndroidV2(envelope.SecretArtifactRefs, current.Envelope.SecretArtifactRefs)) {
+		return nil, errors.New("[D124 Android config] Device view artifact refs 已变化，必须原子取回后安装")
+	}
+	set := verified.ControlSet()
+	return marshalAndroidV2DeviceState(androidV2DeviceState{
+		Schema: 1, Floors: verified.Floors(), Envelope: envelope, ControlSet: &set,
+		PreviousControlSet: verified.PreviousControlSet(), Enrollment: current.Enrollment,
+	})
 }
 
 func equalRawAndroidV2(left, right []json.RawMessage) bool {

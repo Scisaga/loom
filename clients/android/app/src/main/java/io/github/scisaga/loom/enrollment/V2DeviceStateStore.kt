@@ -85,9 +85,9 @@ class V2DeviceStateStore(context: Context) {
 
     /** #14 / D105：private device_config 的响应经共享 QC/Merkle/floor verifier 后才原子替换 LKG。 */
     @Synchronized
-    internal fun acceptPrivateView(envelope: ByteArray): ByteArray {
+    internal fun acceptPrivateDelivery(delivery: ByteArray): ByteArray {
         val current = checkNotNull(protected.get(STATE)) { "[D131 Android config] v2 Device state 尚未安装" }
-        val next = Loomcore.prepareAndroidV2PrivateDeviceViewUpdate(current, envelope, keys.ensureIdentity())
+        val next = Loomcore.prepareAndroidV2PrivateDeviceConfigUpdate(current, delivery, keys.ensureIdentity())
         return commitExact(next)
     }
 
