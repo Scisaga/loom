@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
@@ -67,7 +68,8 @@ func TestRaftHTTPHandlerBindsMessageIdentityToMTLSMember(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewRaftHTTPHandler(storage, set, directory, now)
+	handler, err := NewRaftHTTPHandler(storage, set, directory, now,
+		func(context.Context, wire.HeadEntryV2) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +77,8 @@ func TestRaftHTTPHandlerBindsMessageIdentityToMTLSMember(t *testing.T) {
 	body, _ := wire.MarshalCanonical(message)
 	request := httptest.NewRequest(http.MethodPost, "https://10.20.0.1:7443"+RaftVotePath, bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
-	request.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{certificates[set.Members[1].MemberID].Leaf}}
+	request.TLS = &tls.ConnectionState{HandshakeComplete: true, Version: tls.VersionTLS13,
+		PeerCertificates: []*x509.Certificate{certificates[set.Members[1].MemberID].Leaf}}
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
@@ -93,11 +96,54 @@ func TestRaftHTTPHandlerBindsMessageIdentityToMTLSMember(t *testing.T) {
 	body, _ = wire.MarshalCanonical(message)
 	request = httptest.NewRequest(http.MethodPost, "https://10.20.0.1:7443"+RaftVotePath, bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
-	request.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{certificates[set.Members[1].MemberID].Leaf}}
+	request.TLS = &tls.ConnectionState{HandshakeComplete: true, Version: tls.VersionTLS13,
+		PeerCertificates: []*x509.Certificate{certificates[set.Members[1].MemberID].Leaf}}
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("spoofed member response=%d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestRaftHTTPRejectsCandidateBeforeFsyncButPersistsHigherTerm(t *testing.T) {
+	set, _ := testControlSet(t, 3)
+	directory, certificates := raftDirectoryFixture(t, set)
+	now := func() time.Time { return time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC) }
+	path := filepath.Join(t.TempDir(), "raft.json")
+	storage, err := OpenRaftStorage(path, set.Members[0].MemberID, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recomputed := 0
+	handler, err := NewRaftHTTPHandler(storage, set, directory, now,
+		func(_ context.Context, _ wire.HeadEntryV2) error {
+			recomputed++
+			return context.Canceled
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := retermGenesis(t, testControlHead(t, &set), 2)
+	message := AppendEntriesRequestV1{Term: 2, LeaderID: set.Members[1].MemberID,
+		PrevLogHash: wire.EmptyHashV1, Entries: []RaftLogRecordV1{recordForEntry(head)}}
+	body, _ := wire.MarshalCanonical(message)
+	request := httptest.NewRequest(http.MethodPost,
+		"https://10.20.0.1:7443"+RaftAppendPath, bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.TLS = &tls.ConnectionState{HandshakeComplete: true, Version: tls.VersionTLS13,
+		PeerCertificates: []*x509.Certificate{certificates[set.Members[1].MemberID].Leaf}}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || recomputed != 1 {
+		t.Fatalf("invalid candidate response=%d recomputed=%d body=%s", response.Code, recomputed, response.Body.String())
+	}
+	reopened, err := OpenRaftStorage(path, set.Members[0].MemberID, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := reopened.SnapshotRaft()
+	if state.CurrentTerm != 2 || len(state.Log) != 0 {
+		t.Fatalf("candidate 拒绝边界未保持 term/log 原子性: %#v", state)
 	}
 }
 

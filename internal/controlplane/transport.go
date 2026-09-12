@@ -87,26 +87,29 @@ type RaftHTTPHandler struct {
 	set       wire.ControlSetV1
 	directory wire.ControlPeerDirectoryV1
 	now       func() time.Time
+	recompute HeadRecomputer
 }
 
-func NewRaftHTTPHandler(storage *RaftStorage, set wire.ControlSetV1, directory wire.ControlPeerDirectoryV1, now func() time.Time) (*RaftHTTPHandler, error) {
-	if storage == nil || now == nil {
-		return nil, errors.New("[D104 Raft RPC] storage/可信时间源不能为空")
+func NewRaftHTTPHandler(storage *RaftStorage, set wire.ControlSetV1, directory wire.ControlPeerDirectoryV1,
+	now func() time.Time, recompute HeadRecomputer) (*RaftHTTPHandler, error) {
+	if storage == nil || now == nil || recompute == nil {
+		return nil, errors.New("[D104 Raft RPC] storage/可信时间源/recomputer 不能为空")
 	}
 	if err := wire.ValidateControlPeerDirectoryAt(&set, &directory, now()); err != nil {
 		return nil, err
 	}
-	return &RaftHTTPHandler{storage: storage, set: set, directory: directory, now: now}, nil
+	return &RaftHTTPHandler{storage: storage, set: set, directory: directory, now: now,
+		recompute: recompute}, nil
 }
 
 func (handler *RaftHTTPHandler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
-	if request.URL.RawQuery != "" || request.Method != http.MethodPost ||
+	if request == nil || request.URL.RawPath != "" || request.URL.RawQuery != "" || request.URL.Fragment != "" ||
+		request.Method != http.MethodPost || request.TLS == nil || !request.TLS.HandshakeComplete ||
+		request.TLS.Version != tls.VersionTLS13 || len(request.TLS.PeerCertificates) != 1 ||
+		request.Header.Get("Authorization") != "" || request.Header.Get("Cookie") != "" ||
+		request.Header.Get("Referer") != "" || request.Header.Get("Content-Encoding") != "" ||
 		(request.URL.Path != RaftVotePath && request.URL.Path != RaftAppendPath) {
 		http.NotFound(response, request)
-		return
-	}
-	if request.TLS == nil || len(request.TLS.PeerCertificates) != 1 {
-		writeRaftError(response, http.StatusForbidden, "需要 control-peer mTLS exact leaf")
 		return
 	}
 	contentType := strings.TrimSpace(strings.Split(request.Header.Get("Content-Type"), ";")[0])
@@ -127,7 +130,8 @@ func (handler *RaftHTTPHandler) ServeHTTP(response http.ResponseWriter, request 
 	switch request.URL.Path {
 	case RaftVotePath:
 		var message VoteRequestV1
-		if _, err := wire.DecodeStrict(body, raftRPCMaxBody, &message); err != nil || message.CandidateID != peerMemberID {
+		canonical, err := wire.DecodeStrict(body, raftRPCMaxBody, &message)
+		if err != nil || !bytes.Equal(canonical, body) || message.CandidateID != peerMemberID {
 			writeRaftError(response, http.StatusBadRequest, "vote body 或 mTLS member binding 无效")
 			return
 		}
@@ -139,8 +143,13 @@ func (handler *RaftHTTPHandler) ServeHTTP(response http.ResponseWriter, request 
 		writeRaftCanonical(response, result)
 	case RaftAppendPath:
 		var message AppendEntriesRequestV1
-		if _, err := wire.DecodeStrict(body, raftRPCMaxBody, &message); err != nil || message.LeaderID != peerMemberID {
+		canonical, err := wire.DecodeStrict(body, raftRPCMaxBody, &message)
+		if err != nil || !bytes.Equal(canonical, body) || message.LeaderID != peerMemberID {
 			writeRaftError(response, http.StatusBadRequest, "append body 或 mTLS member binding 无效")
+			return
+		}
+		if err := handler.validateAppendCandidates(request.Context(), message); err != nil {
+			writeRaftError(response, http.StatusBadRequest, err.Error())
 			return
 		}
 		result, err := handler.storage.HandleAppendEntries(message)
@@ -150,6 +159,45 @@ func (handler *RaftHTTPHandler) ServeHTTP(response http.ResponseWriter, request 
 		}
 		writeRaftCanonical(response, result)
 	}
+}
+
+// validateAppendCandidates 在任何新 Head fsync 前独立重算。更高 term 仍先落盘，
+// 避免因为应用 candidate 无效而在崩溃后回到旧 term 再投票（D104）。
+func (handler *RaftHTTPHandler) validateAppendCandidates(ctx context.Context,
+	message AppendEntriesRequestV1) error {
+	if message.Term < 1 || message.PrevLogIndex < 0 || message.PrevLogTerm < 0 || message.LeaderCommit < 0 {
+		return errors.New("[D104 Raft RPC] AppendEntries header 无效")
+	}
+	state := handler.storage.SnapshotRaft()
+	if message.Term > state.CurrentTerm {
+		if _, err := handler.storage.ObserveTerm(message.Term); err != nil {
+			return err
+		}
+	}
+	if message.Term < state.CurrentTerm {
+		return nil
+	}
+	for index := range message.Entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		record := &message.Entries[index]
+		if record.Index >= 1 && record.Index <= int64(len(state.Log)) &&
+			wire.EqualCanonical(state.Log[record.Index-1], *record) {
+			continue
+		}
+		switch record.Kind {
+		case RaftRecordHead:
+			if record.Head == nil || handler.recompute(ctx, *record.Head) != nil {
+				return errors.New("[D104 Raft RPC] deterministic candidate recompute 失败")
+			}
+		case RaftRecordNoOp:
+			// no-op 没有应用 payload，exact hash/lineage 由 RaftStorage 重算。
+		default:
+			return errors.New("[D104 Raft RPC] 未知 Raft record kind")
+		}
+	}
+	return nil
 }
 
 type RaftPeerClient struct {
@@ -227,8 +275,15 @@ func (client *RaftPeerClient) post(ctx context.Context, path string, value, targ
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("[D104 Raft RPC] peer 返回 HTTP %d", response.StatusCode)
 	}
-	_, err = wire.DecodeStrict(responseBody, 1<<20, target)
-	return err
+	if response.Header.Get("Content-Type") != "application/json" || response.Header.Get("Content-Encoding") != "" ||
+		len(response.Cookies()) != 0 || response.Request.URL.String() != client.baseURL+path {
+		return errors.New("[D104 Raft RPC] response metadata 无效")
+	}
+	canonical, err := wire.DecodeStrict(responseBody, 1<<20, target)
+	if err != nil || !bytes.Equal(canonical, responseBody) {
+		return errors.New("[D104 Raft RPC] response 不是 exact canonical wire")
+	}
+	return nil
 }
 
 func writeRaftCanonical(response http.ResponseWriter, value any) {
