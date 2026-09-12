@@ -50,7 +50,7 @@ func TestFetchLinuxDeviceConfigArtifactsUsesPinnedContentAddressedMirrors(t *tes
 		}}
 	ref := wire.DeviceConfigArtifactRefV1{
 		ArtifactID: LinuxLinkIntentArtifactID, Generation: 2, Platform: "linux-server",
-		MediaType: "application/vnd.loom.config+json", RenderContractID: "linux-link-intents-v1",
+		MediaType: "application/vnd.loom.config+json", RenderContractID: wire.LinuxLinkIntentRenderContract,
 		SizeBytes: int64(len(body)), ContentHash: contentHash,
 	}
 	configs, err := FetchLinuxDeviceConfigArtifacts(context.Background(), mirrors,

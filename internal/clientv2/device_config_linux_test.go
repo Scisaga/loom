@@ -120,7 +120,7 @@ func TestLinuxDeviceArtifactsCommitAtomicallyWithCertifiedDelivery(t *testing.T)
 	configHash, _ := wire.DeviceConfigArtifactContentHash(config)
 	configRef := wire.DeviceConfigArtifactRefV1{
 		ArtifactID: LinuxLinkIntentArtifactID, Generation: 1, Platform: "linux-server",
-		MediaType: "application/vnd.loom.config+json", RenderContractID: "linux-link-intents-v1",
+		MediaType: "application/vnd.loom.config+json", RenderContractID: wire.LinuxLinkIntentRenderContract,
 		SizeBytes: int64(len(config)), ContentHash: configHash,
 	}
 	configNext := advanceClientEnvelopeWithArtifacts(t, current, &set, configKey,

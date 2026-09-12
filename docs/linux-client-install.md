@@ -192,6 +192,11 @@ sudo loom client accept-v2-runtime \
 与 view 原子保存的 current/previous ControlSet 及正式 enrollment installation 内已安装的
 credential ID，并钉住 artifact 的 size、content hash、
 render contract、Device generation、EndpointSet transport 及已见 listener generation floor。
+`linux-link-intents` 不是客户端临时拼出的 JSON：服务端必须在生成下一张 Device view 前，按
+`linux-link-intents-v1` 合约确定性生成并发布 exact canonical artifact。artifact 的
+`authority_head_hash` 固定为待生成 Head 的 parent，随后返回的 typed content ref 才进入 Device
+view；Linux reader 会同时核对该 parent binding，避免 artifact content hash 与引用它的 Head
+形成循环，也拒绝把无关 Device 或 bootstrap edge 混入稳态运行面。
 包含 `control_overlay` 时还必须传入 `-control-peer-directory`；joint Head 必须同时传入
 `-previous-control-set`。验证失败不会覆盖已有的
 `/var/lib/loom/client-v2/link-runtime-state.json`。

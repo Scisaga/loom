@@ -8,18 +8,9 @@ import (
 	"loom/internal/wire"
 )
 
-const LinuxLinkIntentArtifactID = "linux-link-intents"
+const LinuxLinkIntentArtifactID = wire.LinuxLinkIntentArtifactID
 
-type LinuxLinkIntentArtifactV1 struct {
-	Schema            int                 `json:"schema"`
-	ClusterID         string              `json:"cluster_id"`
-	DeviceID          string              `json:"device_id"`
-	DeviceGeneration  int64               `json:"device_generation"`
-	Generation        int64               `json:"generation"`
-	RenderContractID  string              `json:"render_contract_id"`
-	AuthorityHeadHash string              `json:"authority_head_hash"`
-	LinkIntents       []wire.LinkIntentV1 `json:"link_intents"`
-}
+type LinuxLinkIntentArtifactV1 = wire.LinuxLinkIntentArtifactV1
 
 type LinuxLinkDialCandidateV1 struct {
 	EndpointID         string `json:"endpoint_id"`
@@ -204,26 +195,12 @@ func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previou
 
 func validateLinuxLinkIntentArtifact(artifact *LinuxLinkIntentArtifactV1,
 	envelope *wire.DeviceViewEnvelopeV2) error {
-	if artifact == nil || envelope == nil || artifact.Schema != 1 || artifact.Generation < 1 ||
-		artifact.LinkIntents == nil || artifact.ClusterID != envelope.Payload.ClusterID ||
+	if artifact == nil || envelope == nil || artifact.ClusterID != envelope.Payload.ClusterID ||
 		artifact.DeviceID != envelope.Payload.DeviceID || artifact.DeviceGeneration != envelope.Payload.DeviceGeneration ||
-		artifact.RenderContractID == "" {
+		artifact.AuthorityHeadHash != envelope.SignedCurrent.Head.Body.Payload.ParentHeadHash {
 		return errors.New("[D131 Linux runtime] LinkIntent artifact header/view binding 无效")
 	}
-	if _, err := wire.ParseHash(artifact.AuthorityHeadHash); err != nil {
-		return err
-	}
-	for index := range artifact.LinkIntents {
-		intent := &artifact.LinkIntents[index]
-		if err := wire.ValidateLinkIntent(intent); err != nil {
-			return err
-		}
-		if intent.ClusterID != artifact.ClusterID || intent.ParentHeadHash != artifact.AuthorityHeadHash ||
-			(index > 0 && artifact.LinkIntents[index-1].LinkID >= intent.LinkID) {
-			return errors.New("[D131 Linux runtime] LinkIntents 必须绑定 artifact authority 并按 link_id 严格排序")
-		}
-	}
-	return nil
+	return wire.ValidateLinuxLinkIntentArtifact(artifact)
 }
 
 func bindLinuxLinkIntentArtifactRef(artifact *LinuxLinkIntentArtifactV1, raw []byte,

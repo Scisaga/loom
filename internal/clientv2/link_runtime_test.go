@@ -59,7 +59,7 @@ func TestLinuxLinkRuntimePlanIsDrivenByCertifiedViewArtifactAndGenerationFloor(t
 	artifact := LinuxLinkIntentArtifactV1{
 		Schema: 1, ClusterID: set.ClusterID, DeviceID: envelope.Payload.DeviceID,
 		DeviceGeneration: envelope.Payload.DeviceGeneration, Generation: 1,
-		RenderContractID: "linux-link-runtime-v1", AuthorityHeadHash: envelope.SignedCurrent.Head.HeadHash,
+		RenderContractID: wire.LinuxLinkIntentRenderContract, AuthorityHeadHash: envelope.SignedCurrent.Head.HeadHash,
 		LinkIntents: []wire.LinkIntentV1{{
 			Schema: 1, ClusterID: set.ClusterID, LinkID: "link-a", FromDeviceID: envelope.Payload.DeviceID,
 			To: wire.LinkIntentDestinationV1{ServiceID: "service-a"}, Purpose: "data_forward",
@@ -97,7 +97,7 @@ func TestLinuxLinkRuntimeRejectsLocalResponsibilityOrControlEscalation(t *testin
 	envelope := clientEnvelope(t, &set, key)
 	artifact := LinuxLinkIntentArtifactV1{
 		Schema: 1, ClusterID: set.ClusterID, DeviceID: envelope.Payload.DeviceID,
-		DeviceGeneration: 1, Generation: 1, RenderContractID: "linux-link-runtime-v1",
+		DeviceGeneration: 1, Generation: 1, RenderContractID: wire.LinuxLinkIntentRenderContract,
 		AuthorityHeadHash: envelope.SignedCurrent.Head.HeadHash,
 		LinkIntents: []wire.LinkIntentV1{{
 			Schema: 1, ClusterID: set.ClusterID, LinkID: "control-a", FromDeviceID: envelope.Payload.DeviceID,
@@ -118,6 +118,10 @@ func TestLinuxLinkRuntimeRejectsLocalResponsibilityOrControlEscalation(t *testin
 func bindRuntimeArtifactToEnvelope(t *testing.T, envelope *wire.DeviceViewEnvelopeV2,
 	set *wire.ControlSetV1, key ed25519.PrivateKey, artifact LinuxLinkIntentArtifactV1) []byte {
 	t.Helper()
+	artifact.AuthorityHeadHash = envelope.SignedCurrent.Head.Body.Payload.ParentHeadHash
+	for index := range artifact.LinkIntents {
+		artifact.LinkIntents[index].ParentHeadHash = artifact.AuthorityHeadHash
+	}
 	raw, err := wire.MarshalCanonical(artifact)
 	if err != nil {
 		t.Fatal(err)

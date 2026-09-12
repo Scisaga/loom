@@ -20,7 +20,7 @@ func TestLinuxLinkRuntimeStateCommitsOnlyFromDurableDeviceLKG(t *testing.T) {
 	artifact := LinuxLinkIntentArtifactV1{
 		Schema: 1, ClusterID: set.ClusterID, DeviceID: envelope.Payload.DeviceID,
 		DeviceGeneration: envelope.Payload.DeviceGeneration, Generation: 1,
-		RenderContractID: "linux-link-runtime-v1", AuthorityHeadHash: envelope.SignedCurrent.Head.HeadHash,
+		RenderContractID: wire.LinuxLinkIntentRenderContract, AuthorityHeadHash: envelope.SignedCurrent.Head.HeadHash,
 		LinkIntents: []wire.LinkIntentV1{},
 	}
 	artifactRaw := bindRuntimeArtifactToEnvelope(t, &envelope, &set, key, artifact)
@@ -78,7 +78,7 @@ func TestLinuxLinkRuntimeStateRejectsDeviceStateWithoutFormalEnrollment(t *testi
 	artifact := LinuxLinkIntentArtifactV1{
 		Schema: 1, ClusterID: set.ClusterID, DeviceID: envelope.Payload.DeviceID,
 		DeviceGeneration: envelope.Payload.DeviceGeneration, Generation: 1,
-		RenderContractID: "linux-link-runtime-v1", AuthorityHeadHash: envelope.SignedCurrent.Head.HeadHash,
+		RenderContractID: wire.LinuxLinkIntentRenderContract, AuthorityHeadHash: envelope.SignedCurrent.Head.HeadHash,
 		LinkIntents: []wire.LinkIntentV1{},
 	}
 	artifactRaw := bindRuntimeArtifactToEnvelope(t, &envelope, &set, key, artifact)

@@ -20,7 +20,23 @@ const (
 	DomainForwardResources        = "loom-forward-server-listener-resources-v1"
 	DomainPortMappingIntent       = "loom-port-mapping-intent-v1"
 	DomainPublicAccessState       = "loom-server-public-access-state-v1"
+	LinuxLinkIntentArtifactID     = "linux-link-intents"
+	LinuxLinkIntentRenderContract = "linux-link-intents-v1"
 )
+
+// LinuxLinkIntentArtifactV1 是服务端在生成下一张 Device view 前固化的
+// Device 专属逐边运行授权。AuthorityHeadHash 是下一张 Head 的 parent，
+// 因而不会与该 artifact 自身的 content hash 形成循环承诺（D105、D131）。
+type LinuxLinkIntentArtifactV1 struct {
+	Schema            int            `json:"schema"`
+	ClusterID         string         `json:"cluster_id"`
+	DeviceID          string         `json:"device_id"`
+	DeviceGeneration  int64          `json:"device_generation"`
+	Generation        int64          `json:"generation"`
+	RenderContractID  string         `json:"render_contract_id"`
+	AuthorityHeadHash string         `json:"authority_head_hash"`
+	LinkIntents       []LinkIntentV1 `json:"link_intents"`
+}
 
 type LinkIntentDestinationV1 struct {
 	DeviceID  string `json:"device_id,omitempty"`
@@ -243,6 +259,34 @@ func ValidateLinkIntent(intent *LinkIntentV1) error {
 	}
 	_, err := ParseHash(intent.ParentHeadHash)
 	return err
+}
+
+// ValidateLinuxLinkIntentArtifact 是 producer 与 Linux reader 共用的 exact
+// artifact 边界。只允许当前 Device 参与的正式 control/data 边；bootstrap
+// capability 生命周期结束后不能重新进入稳态运行面（D120、D131）。
+func ValidateLinuxLinkIntentArtifact(artifact *LinuxLinkIntentArtifactV1) error {
+	if artifact == nil || artifact.Schema != 1 || artifact.Generation < 1 ||
+		artifact.DeviceGeneration < 1 || artifact.LinkIntents == nil ||
+		!validIdentifier(artifact.ClusterID, 128) || !validIdentifier(artifact.DeviceID, 128) ||
+		artifact.RenderContractID != LinuxLinkIntentRenderContract {
+		return errors.New("[D131 Linux runtime] LinkIntent artifact header 无效")
+	}
+	if _, err := ParseHash(artifact.AuthorityHeadHash); err != nil {
+		return err
+	}
+	for index := range artifact.LinkIntents {
+		intent := &artifact.LinkIntents[index]
+		if err := ValidateLinkIntent(intent); err != nil {
+			return err
+		}
+		if intent.ClusterID != artifact.ClusterID || intent.ParentHeadHash != artifact.AuthorityHeadHash ||
+			intent.Purpose == "bootstrap" ||
+			intent.FromDeviceID != artifact.DeviceID && intent.To.DeviceID != artifact.DeviceID ||
+			(index > 0 && artifact.LinkIntents[index-1].LinkID >= intent.LinkID) {
+			return errors.New("[D131 Linux runtime] LinkIntents 必须绑定 authority parent/本 Device 并按 link_id 严格排序")
+		}
+	}
+	return nil
 }
 
 func ValidateListenerGeneration(generation *ListenerGenerationV2, transport string) error {
