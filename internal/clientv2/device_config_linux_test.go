@@ -234,6 +234,83 @@ func TestSendLinuxDeviceReportSignsDurableFloorsOverPinnedMTLSRoute(t *testing.T
 	}
 }
 
+func TestDurableLinuxDeviceReportJournalReplaysExactPendingBeforeAdvancing(t *testing.T) {
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	statePath, identityPath, set, current := installedDeviceConfigState(t, now)
+	serverCertificate, roots, serverPin := privateEnrollmentCertificate(t, now, "10.50.0.5")
+	requests := 0
+	var bodies [][]byte
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests++
+		body, _ := io.ReadAll(request.Body)
+		bodies = append(bodies, append([]byte(nil), body...))
+		if requests == 1 {
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	server.TLS = &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
+		Certificates: []tls.Certificate{serverCertificate}, ClientAuth: tls.RequireAnyClientCert,
+		NextProtos: []string{"http/1.1"}}
+	server.StartTLS()
+	defer server.Close()
+	setHash, _ := wire.ControlSetHash(&set)
+	directory := wire.ControlServiceDirectoryV1{
+		Schema: 1, ClusterID: set.ClusterID, Generation: 1, ControlSetHash: setHash,
+		ParentHeadHash: current.SignedCurrent.Head.HeadHash,
+		ConfigQC:       append([]byte(nil), current.SignedCurrent.QuorumCertificate...),
+		Services: []wire.PrivateControlServiceV1{{
+			ServiceID: "device-report-primary", Role: "device_report", OverlayIP: "10.50.0.5", Port: 7446,
+			CertificateProfileRef: "internal-device-report-server", SPKIPins: []string{serverPin},
+			AuthorizedSubjectProfiles: []string{"device-profile"},
+		}},
+	}
+	directoryHash, _ := wire.ControlServiceDirectoryHash(&directory)
+	dial := func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
+	}
+	options := LinuxDeviceReportOptions{
+		StatePath: statePath, IdentityPath: identityPath, Directory: directory,
+		PinnedDirectoryHash: directoryHash, ControlSet: set, Roots: roots, Dial: dial,
+		Now: func() time.Time { return now }, Timeout: 5 * time.Second,
+		Kind: "health", PayloadSchema: 1, Payload: json.RawMessage(`{"healthy":true}`),
+		Schemas: wire.DeviceReportSchemaRegistry{"health": 1},
+	}
+	journalPath := filepath.Join(filepath.Dir(statePath), "device-report-journal.json")
+	first, err := SendLinuxDeviceReportDurable(context.Background(), journalPath, options)
+	if err == nil || first.Body.ReportSequence != 1 || requests != 1 {
+		t.Fatalf("首次失败未保留 sequence 1: report=%#v requests=%d err=%v", first, requests, err)
+	}
+	journal, err := readLinuxDeviceReportJournal(journalPath)
+	if err != nil || journal.Pending == nil || journal.NextSequence != 1 ||
+		!wire.EqualCanonical(*journal.Pending, first) {
+		t.Fatalf("首次失败后 journal=%#v err=%v", journal, err)
+	}
+	info, _ := os.Stat(journalPath)
+	if info == nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("journal mode=%v", info)
+	}
+
+	// 即使本次观测已变，也必须先重放已落盘的 sequence 1，不能同序号重签。
+	options.Payload = json.RawMessage(`{"healthy":false}`)
+	second, err := SendLinuxDeviceReportDurable(context.Background(), journalPath, options)
+	if err != nil || requests != 2 || !wire.EqualCanonical(first, second) ||
+		len(bodies) != 2 || !bytes.Equal(bodies[0], bodies[1]) {
+		t.Fatalf("pending exact replay 失败: requests=%d same=%v err=%v",
+			requests, wire.EqualCanonical(first, second), err)
+	}
+	journal, err = readLinuxDeviceReportJournal(journalPath)
+	if err != nil || journal.Pending != nil || journal.LastAcceptedSequence != 1 || journal.NextSequence != 2 ||
+		journal.LastAcceptedEnvelopeHash == "" {
+		t.Fatalf("sequence 1 成功后 journal=%#v err=%v", journal, err)
+	}
+	third, err := SendLinuxDeviceReportDurable(context.Background(), journalPath, options)
+	if err != nil || third.Body.ReportSequence != 2 || requests != 3 || bytes.Equal(bodies[1], bodies[2]) {
+		t.Fatalf("sequence 2 未使用新 payload: report=%#v requests=%d err=%v", third, requests, err)
+	}
+}
+
 func mustDeviceFloors(t *testing.T, envelope *wire.DeviceViewEnvelopeV2,
 	set *wire.ControlSetV1) wire.ClientFloorsV2 {
 	t.Helper()

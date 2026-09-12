@@ -2952,6 +2952,9 @@ overlay IP SAN 和 SPKI pin。现有 `config_qc` 是 parent Head 的 QC，不单
 exact `control_service_directory_hash`，禁止将目录和其自带 QC 从同一不可信输入中自我证明。
 Device view 只有重新验过 QC/Merkle/identity/floors 后才替换 LKG。报告签名后如果响应丢失，
 重试必须持久化并复用 exact envelope，不得在同一 `report_sequence` 上重新签名。
+Linux reporter 在网络发送前先将 pending envelope 原子写入 0600 journal；只有收到
+`204 No Content` 后才清除 pending 并推进 sequence。因此在请求、服务端 CAS 或客户端落盘边界
+崩溃时，重启只会发送旧 exact bytes，不会用新观测改写已占用序号。
 
 ---
 
