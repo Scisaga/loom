@@ -296,6 +296,10 @@ external verify 使用从上述 opaque binding 导出的 exact public IP:port �
 或 Trojan/TLS outer handshake，只记录 TLS 1.3、ALPN 和 certified SPKI，不发送 capability；结果由
 rotation 冻结 policy 中足量、跨故障域的 Ed25519 observer 签名，重启后从完整 artifact 重验，不能用
 节点自报成功、DNS readback 或一个任意 evidence hash 代替。
+外部 observer 使用 `loom bootstrap probe-outer -plan <canonical-json> -observer-id <id>
+-key <0600-ed25519-key> -ca <roots.pem> -o <observation.json>` 执行这一步；命令拒绝非 canonical plan、
+symlink/权限过宽私钥和混杂内容的 CA bundle，失败不改写既有报告，成功只原子写出 canonical 签名
+observation。省略 `-ca` 时明确使用运行 observer 的系统 trust store，仍须同时命中 certified SPKI pin。
 
 首版 Hysteria2/Trojan 数据入口使用稳定 logical endpoint ID 和多个 listener generation。正常 overlap 中旧、新
 端口同时可用：新连接在 `prefer` 阶段先试新端口、失败立即回退仍 advertised 的旧端口；

@@ -3412,6 +3412,9 @@ verification plan 只投影 certified public IP:port、FQDN、TLS identity 与 v
 observer 必须真实完成 HY2/QUIC 或 Trojan/TLS 的 TLS 1.3/SNI/ALPN/SPKI handshake，并以 frozen
 evidence policy 指定的 Ed25519 key 签名。advertise 要满足 observer/failure-domain 阈值和短有效期，
 executor 重启或 control 接管时从完整 artifact 重验，不能把一个形状合法的任意 hash 当成可达证据。
+部署在各外部故障域的 observer 通过 `loom bootstrap probe-outer` 消费 exact canonical plan；入口只接收
+本地 0600 Ed25519 私钥与显式 CA bundle/系统 trust store，并原子输出 canonical signed observation。
+命令没有 capability/token 参数，也不做 hostname DNS expansion，因而无法把外部验活偷换成 Enrollment。
 
 进入 draining 的 certified transition 同时建立 reference cutoff 和
 `ListenerRetirementGuardV1`：ControlSet 必须枚举所有仍可能使客户端拨旧代的 immutable catalog、

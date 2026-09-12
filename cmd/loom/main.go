@@ -74,6 +74,7 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
                                          打包秘密层与内部 CA(丢了就得全网重来的那些)
   loom restore  <备份文件> -o <目录>       解开备份到一个目录,不覆盖原位置
   loom client   <enroll|package|verify>     Linux 加入兼容命令与客户端交付
+  loom bootstrap probe-outer               从外部执行无 bearer 的 bootstrap transport 探测
   loom device   <decommission|remove|purge-revoked>
                                          回收 access-only Enrollment Device
 
@@ -152,6 +153,8 @@ func main() {
 		err = cmdRestore(args)
 	case "client":
 		err = cmdClient(args)
+	case "bootstrap":
+		err = cmdBootstrap(args)
 	case "device":
 		err = cmdDevice(args)
 	case "-h", "--help", "help":
