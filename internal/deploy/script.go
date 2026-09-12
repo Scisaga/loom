@@ -21,6 +21,8 @@ func Mode(abs string) string {
 		return "0600" // 控制端点与探测入口的口令
 	case strings.HasPrefix(abs, "/var/lib/loom/client-v2/"):
 		return "0600" // Device LKG、installed inventory 与 sealed material
+	case strings.HasSuffix(abs, "/runtime-install-state.json"):
+		return "0600" // client -state-dir 可自定义；runtime inventory 仍必须私有
 	default:
 		return "0644"
 	}

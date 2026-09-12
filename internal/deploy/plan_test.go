@@ -97,6 +97,7 @@ func TestSecretFilesAre0600(t *testing.T) {
 		"/etc/loom/agent/config.json",
 		"/etc/loom/agent/v2/config.json",
 		"/var/lib/loom/client-v2/runtime-install-state.json",
+		"/var/lib/loom/custom-device/runtime-install-state.json",
 	} {
 		if Mode(p) != "0600" {
 			t.Errorf("%s 的权限是 %s,含秘密的必须 0600", p, Mode(p))
