@@ -500,12 +500,15 @@ a separate trusted channel:
 
     loom client verify -archive loom-client-linux-amd64.tar.gz -pubkey /trusted/platform-signing.pub
 
-Install and consume the downloaded invitation file without putting its bearer
-token in shell history:
+Install and consume a v2 invitation file without putting its bearer token in
+shell history:
 
     tar -xzf loom-client-linux-amd64.tar.gz
     cd loom-client-linux-amd64
-    sudo ./install.sh --invite-file ../client.loom-invite
+    sudo ./install.sh --invite-v2-file ../client.loom-invite
+
+The historical v1 command remains available as --invite-file. The two modes
+use separate state directories and are never auto-detected from bearer bytes.
 
 If the invitation pins a forwarding/server purpose, declare the real public
 endpoint before running the installer:
@@ -545,18 +548,32 @@ const installScript = `#!/bin/sh
 set -eu
 
 usage() {
-    echo "usage: sudo ./install.sh --invite-file PATH [--state-dir PATH]" >&2
+    echo "usage: sudo ./install.sh --invite-v2-file PATH [--v2-state-dir PATH] [--secret-envelope-dir PATH]" >&2
+    echo "       sudo ./install.sh --resume-v2-file PATH --v1-platform-key-id ID --v1-migration-anchor SHA256 [--v2-state-dir PATH] [--secret-envelope-dir PATH]" >&2
+    echo "       sudo ./install.sh --invite-file PATH [--state-dir PATH]  # v1 compatibility" >&2
     echo "       sudo ./install.sh --no-enroll" >&2
     exit 2
 }
 
 invite_file=
+invite_v2_file=
+resume_v2_file=
 state_dir=/etc/loom/client
+v2_state_dir=/var/lib/loom/client-v2
+secret_envelope_dir=
+v1_platform_key_id=
+v1_migration_anchor=
 no_enroll=0
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --invite-file) [ "$#" -ge 2 ] || usage; invite_file=$2; shift 2 ;;
+        --invite-v2-file) [ "$#" -ge 2 ] || usage; invite_v2_file=$2; shift 2 ;;
+        --resume-v2-file) [ "$#" -ge 2 ] || usage; resume_v2_file=$2; shift 2 ;;
         --state-dir) [ "$#" -ge 2 ] || usage; state_dir=$2; shift 2 ;;
+        --v2-state-dir) [ "$#" -ge 2 ] || usage; v2_state_dir=$2; shift 2 ;;
+        --secret-envelope-dir) [ "$#" -ge 2 ] || usage; secret_envelope_dir=$2; shift 2 ;;
+        --v1-platform-key-id) [ "$#" -ge 2 ] || usage; v1_platform_key_id=$2; shift 2 ;;
+        --v1-migration-anchor) [ "$#" -ge 2 ] || usage; v1_migration_anchor=$2; shift 2 ;;
         --no-enroll) no_enroll=1; shift ;;
         -h|--help) usage ;;
         *) usage ;;
@@ -564,8 +581,15 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ "$(id -u)" -eq 0 ] || { echo "install.sh must run as root" >&2; exit 1; }
-[ "$no_enroll" -eq 1 ] || [ -n "$invite_file" ] || usage
-[ "$no_enroll" -eq 0 ] || [ -z "$invite_file" ] || usage
+mode_count=0
+[ -z "$invite_file" ] || mode_count=$((mode_count + 1))
+[ -z "$invite_v2_file" ] || mode_count=$((mode_count + 1))
+[ -z "$resume_v2_file" ] || mode_count=$((mode_count + 1))
+[ "$no_enroll" -eq 0 ] || mode_count=$((mode_count + 1))
+[ "$mode_count" -eq 1 ] || usage
+[ -z "$resume_v2_file" ] || { [ -n "$v1_platform_key_id" ] && [ -n "$v1_migration_anchor" ]; } || usage
+[ -n "$resume_v2_file" ] || { [ -z "$v1_platform_key_id" ] && [ -z "$v1_migration_anchor" ]; } || usage
+[ -z "$secret_envelope_dir" ] || { [ -n "$invite_v2_file" ] || [ -n "$resume_v2_file" ]; } || usage
 
 base=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 (cd "$base" && sha256sum -c checksums.txt)
@@ -577,7 +601,7 @@ for file in loom sing-box platform.pub; do
 done
 
 install -d -m 0755 /usr/local/bin /etc/loom/trust
-install -d -m 0700 /etc/loom/secrets "$state_dir" /var/lib/loom
+install -d -m 0700 /etc/loom/secrets "$state_dir" "$v2_state_dir" /var/lib/loom
 
 install_atomic() {
     src=$1
@@ -599,5 +623,17 @@ if [ "$no_enroll" -eq 1 ]; then
     exit 0
 fi
 
-/usr/local/bin/loom client enroll -invite-file "$invite_file" -state-dir "$state_dir"
+if [ -n "$invite_file" ]; then
+    /usr/local/bin/loom client enroll -invite-file "$invite_file" -state-dir "$state_dir"
+elif [ -n "$invite_v2_file" ]; then
+    set -- client enroll-v2 -invite-file "$invite_v2_file" -state-dir "$v2_state_dir"
+    [ -z "$secret_envelope_dir" ] || set -- "$@" -secret-envelope-dir "$secret_envelope_dir"
+    /usr/local/bin/loom "$@"
+else
+    set -- client resume-v2 -resume-file "$resume_v2_file" -state-dir "$v2_state_dir" \
+        -v1-platform-pubkey /etc/loom/trust/platform.pub \
+        -v1-platform-key-id "$v1_platform_key_id" -v1-migration-anchor "$v1_migration_anchor"
+    [ -z "$secret_envelope_dir" ] || set -- "$@" -secret-envelope-dir "$secret_envelope_dir"
+    /usr/local/bin/loom "$@"
+fi
 `

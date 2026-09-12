@@ -28,6 +28,8 @@ const clientUsage = `loom client —— 客户端加入与交付
 
 用法:
   loom client enroll  -invite-file <文件>       Linux 兼容命令：生成本机身份并消费一次性加入码
+  loom client enroll-v2 -invite-file <文件>    Linux v2：认证 mirror/bootstrap 后执行私有 Enrollment
+  loom client resume-v2 -resume-file <文件>    Linux v2：用 exact resume descriptor 恢复已提交事务
   loom client accept-v2-view -view <json> -control-set <json>
                                                严格验收 private Device view 并更新 Linux v2 LKG/floors
   loom client package -sing-box <二进制>     生成可重现、已签名的 Linux 客户端包
@@ -92,6 +94,10 @@ func cmdClient(args []string) error {
 	switch args[0] {
 	case "enroll":
 		return cmdClientEnroll(args[1:])
+	case "enroll-v2":
+		return cmdClientEnrollV2(args[1:])
+	case "resume-v2":
+		return cmdClientResumeV2(args[1:])
 	case "accept-v2-view":
 		return cmdClientAcceptV2(args[1:])
 	case "package":

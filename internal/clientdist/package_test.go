@@ -62,6 +62,25 @@ func TestBuildIsReproducibleAndVerifiable(t *testing.T) {
 	}
 }
 
+func TestLinuxInstallerExposesV2WithoutRemovingV1Compatibility(t *testing.T) {
+	for _, expected := range []string{
+		"--invite-v2-file", "client enroll-v2", "--resume-v2-file", "client resume-v2",
+		"--secret-envelope-dir", "--invite-file", "client enroll",
+	} {
+		if !strings.Contains(installScript, expected) {
+			t.Fatalf("install script 缺少 %q", expected)
+		}
+	}
+	if strings.Contains(installScript, "eval ") {
+		t.Fatal("install script 不得用 eval 重建含私有路径的参数")
+	}
+	command := exec.Command("/bin/sh", "-n")
+	command.Stdin = strings.NewReader(installScript)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("install script shell syntax: %v: %s", err, output)
+	}
+}
+
 func TestReadRegularBoundedRejectsLinks(t *testing.T) {
 	dir := t.TempDir()
 	original := filepath.Join(dir, "original")

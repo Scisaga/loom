@@ -139,6 +139,41 @@ func (fetcher MirrorFetcher) FetchBootstrapCatalog(ctx context.Context, descript
 	return &catalog, nil
 }
 
+// FetchBootstrapCatalogFromInviteProof 使用刚验证出的 Invite lineage 选择 catalog
+// 的 exact parent authority；调用方无需猜测 catalog 与 record 是否共享同一个 Head（D115、D131）。
+func (fetcher MirrorFetcher) FetchBootstrapCatalogFromInviteProof(ctx context.Context,
+	descriptor *wire.InviteBootstrapDescriptorV2, now time.Time, clientProtocol int64,
+	proof wire.VerifiedInviteProofV2) (*wire.BootstrapEndpointCatalogV1, error) {
+	if descriptor == nil {
+		return nil, errors.New("[D131 Linux bootstrap] descriptor 不能为空")
+	}
+	body, err := fetcher.FetchCanonicalObject(ctx, descriptor.DistributionMirrors,
+		descriptor.BootstrapCatalogHash, wire.DomainBootstrapEndpointCatalog, MaximumBootstrapObjectSize)
+	if err != nil {
+		return nil, err
+	}
+	var catalog wire.BootstrapEndpointCatalogV1
+	canonical, err := wire.DecodeStrict(body, MaximumBootstrapObjectSize, &catalog)
+	if err != nil || !bytes.Equal(canonical, body) {
+		return nil, errors.New("[D131 Linux bootstrap] bootstrap catalog 必须是 exact canonical wire")
+	}
+	if err := wire.ValidateBootstrapEndpointCatalogAt(&catalog, now, clientProtocol); err != nil {
+		return nil, err
+	}
+	catalogHash, err := wire.BootstrapEndpointCatalogHash(&catalog)
+	if err != nil || catalogHash != descriptor.BootstrapCatalogHash ||
+		catalog.ClusterID != descriptor.ClusterID ||
+		catalog.BootstrapIngressSetHash != descriptor.BootstrapTunnelCapability.Body.AllowedIngressSetHash {
+		return nil, errors.New("[D131 Linux bootstrap] descriptor/capability/catalog binding 不匹配")
+	}
+	head, current, previous, ok := proof.AuthorityForHead(catalog.ParentHeadHash)
+	if !ok || wire.VerifyConfigQCAuthority(catalog.ParentHeadHash,
+		catalog.BootstrapIngressSet.ConfigQC, &head, &current, previous) != nil {
+		return nil, errors.New("[D131 Linux bootstrap] catalog parent Head/QC 不在已验 Invite lineage")
+	}
+	return &catalog, nil
+}
+
 func (fetcher MirrorFetcher) FetchInviteProofBytes(ctx context.Context, descriptor *wire.InviteBootstrapDescriptorV2) ([]byte, error) {
 	if descriptor == nil {
 		return nil, errors.New("[D115 Linux] descriptor 不能为空")

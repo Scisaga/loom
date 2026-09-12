@@ -1,9 +1,11 @@
 # Loom Linux 客户端安装
 
-> **适用范围：v1 安装流程契约。** 本文描述单 control、v1 invite、平台公钥、
-> `public_endpoint + inbound_port` 和 signed pull 的兼容命令。目标 v2 的紧凑 QR、
+> **适用范围：v2 当前实现与 v1 兼容流程。** v2 已提供严格 Invite/Resume carrier、
+> mirror/catalog/proof/QC verifier、HY2 主入口与 Trojan/TLS fallback、私有 Enrollment、
+> pending 恢复和完成态原子安装命令。本文后半仍保留单 control、v1 invite、平台公钥、
+> `public_endpoint + inbound_port` 和 signed pull 的兼容说明。v2 的紧凑 QR、
 > 静态 distribution catalog、bootstrap tunnel、ControlSet/QC、托管域名、EndpointSet 和 listener generation 见
-> [分布式控制平面设计](distributed-control-plane.md)；迁移完成前不要混用两代字段。
+> [分布式控制平面设计](distributed-control-plane.md)；两代状态目录和输入不可混用。
 > 目标 v2 的 Create Device 只由已入网管理端经 overlay 访问
 > `ControlServiceDirectoryV1` 中 `role=control_api` 的私有服务并使用 admin cert 提交；
 > Linux bootstrap claim 从已验公网 transport 建立限路由临时隧道，只访问 QR 中
@@ -25,7 +27,7 @@
 - 在 v1 指定 control 登录运维会话。v1 契约中只有该写入口能创建 Device、生成加入码和下载已验证的客户端包；
 - 目标机上有 `tar` 和 `sha256sum`。Loom 与 sing-box 已包含在分发包内。
 
-## v2 目标加入过程（不是下文 v1 命令）
+## v2 加入过程
 
 1. 紧凑 QR/URI 的 exact descriptor 携带 schema/cluster/invite/expiry、token/commitment、
    minimum recovery/trusted checkpoint、`bootstrap_catalog_hash`、`proof_bundle_hash`、2～3 个静态
@@ -76,6 +78,68 @@ Invite proof/catalog，以本机 v1 platform key 与 migration anchor 重放 aut
 catalog parent Head 对应的 ControlSet 验 config QC；descriptor 自报 hash 不能充当 trust root。
 该 descriptor 不经公网 mirror 动态发布，客户端不能自动刷新；ControlSet 只幂等
 继续/取回既有结果，不延长旧 capability、不重消费 token。
+
+### v2 Linux 命令
+
+签名客户端包可直接安装并执行同一条 v2 路径：
+
+```bash
+sudo ./install.sh --invite-v2-file ../client.loom-invite
+```
+
+在 root 身份下从标准输入或普通 exact canonical `.loom-invite` 文件执行初次加入：
+
+```bash
+sudo loom client enroll-v2 \
+  -invite-file /path/from/private-channel/device.loom-invite
+```
+
+也可使用 `-invite-uri 'loom://enroll/v2#d=…'`，但 URI 会进入 shell history，生产环境不推荐。
+命令只访问 descriptor 中的 2～3 个认证 mirror；验证 proof 与 catalog 后，先尝试真实
+HY2/QUIC tunnel，UDP 不可用才尝试 catalog 中独立的 Trojan/TLS generation。outer WebPKI、
+SPKI pin、inner overlay IP SAN 和 private service SPKI 均会验证，任何一层都不能关闭校验。
+
+若本轮只到 `reserved` 或 `issued_provisional`，命令以成功提交状态退出，并保留同一个
+`/var/lib/loom/client-v2/pending.json`、identity、CSR 与 request ID。不要删除该目录或换 key。
+管理员线性化确认后私下交付 `.loom-resume`，Linux 使用原 v1 migration trust root 恢复：
+
+```bash
+sudo loom client resume-v2 \
+  -resume-file /path/from/private-channel/device.loom-resume \
+  -v1-platform-pubkey /etc/loom/trust/platform.pub \
+  -v1-platform-key-id '<certified-key-id>' \
+  -v1-migration-anchor 'sha256:<digest>'
+```
+
+若完成态引用 sealed secret artifact，调用方可把私有 artifact store 取得的 exact canonical
+envelope 放入 root-only 目录；文件名为 ref 中 ciphertext SHA-256 的 64 位小写十六进制加
+`.json`，命令按 result ref 自动取用，不扫描其他文件：
+
+```bash
+sudo loom client resume-v2 \
+  -resume-file device.loom-resume \
+  -v1-platform-pubkey /etc/loom/trust/platform.pub \
+  -v1-platform-key-id '<certified-key-id>' \
+  -v1-migration-anchor 'sha256:<digest>' \
+  -secret-envelope-dir /run/loom-enrollment-artifacts
+```
+
+也可按 result ref 的规范顺序重复使用 `-secret-envelope <file>`；两种输入不能混用。
+
+客户端会逐项核对 envelope digest、owner、recipient key 与 result refs，解封后把 certificate、
+Device view、floors、stable claim 摘要和 credentials 一次提交到 root-only `state.json`，成功后
+才删除 pending。原始 Invite/Resume carrier 和 sealed envelope 由交付方负责在受控存储中销毁；
+Loom 不会擅自删除调用者提供的文件。
+
+开发门禁可一键运行，并把不含域名、IP、Device ID、证书或 secret 的结构化结果写到忽略目录：
+
+```bash
+scripts/test-linux-v2-development.sh
+```
+
+该结果只证明 Linux 双架构可构建及 wire/client/control 单元与集成套件通过，字段明确标记
+`real_host_acceptance=false`、`gate_b=false`；它不能替代 #12 的干净主机、真实网络、职责流量、
+故障注入或 #10 Gate B。
 
 ## 1. 创建 Device 和加入码
 
