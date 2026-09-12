@@ -353,7 +353,7 @@ private fun LoomHome(
                 )
                 InfoCard(
                     "网络诊断",
-                    "DNS/HTTPS 激活门禁：${status.dnsProbe} / ${status.httpsProbe}\n" +
+                    "业务 DNS/HTTPS（不作为激活门禁）：${status.dnsProbe} / ${status.httpsProbe}\n" +
                         "可信上报：${status.trustedReport}\n服务器观测：${route.observationDetail}",
                 )
                 InfoCard("信任边界", diagnostics)

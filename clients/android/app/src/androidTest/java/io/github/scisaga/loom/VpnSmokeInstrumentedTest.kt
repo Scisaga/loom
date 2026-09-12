@@ -26,23 +26,16 @@ class VpnSmokeInstrumentedTest {
     }
 
     @Test
-    fun connectProbeDisconnectAndReconnect() = runBlocking {
+    fun connectDisconnectAndReconnectWithoutBusinessActivationGate() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         check(VpnService.prepare(context) == null) {
             "模拟器尚未授权 VPN；请通过 emulator-smoke.sh 执行可回滚的 ACTIVATE_VPN 授权"
         }
         send(LoomVpnService.ACTION_CONNECT)
         await(ConnectionPhase.CONNECTED)
-        val probeDeadline = System.nanoTime() + 40_000_000_000
-        while ((!VpnRuntime.status.value.dnsProbe.startsWith("成功") ||
-                !VpnRuntime.status.value.httpsProbe.startsWith("成功")) &&
-            System.nanoTime() < probeDeadline
-        ) {
-            delay(250)
-        }
-        check(VpnRuntime.status.value.dnsProbe.startsWith("成功") &&
-            VpnRuntime.status.value.httpsProbe.startsWith("成功")) {
-            "穿过 TUN 的探测失败: ${VpnRuntime.status.value}"
+        check(VpnRuntime.status.value.dnsProbe.startsWith("未执行") &&
+            VpnRuntime.status.value.httpsProbe.startsWith("未执行")) {
+            "启动路径仍在发送业务 DNS/HTTPS: ${VpnRuntime.status.value}"
         }
 
         send(LoomVpnService.ACTION_DISCONNECT)

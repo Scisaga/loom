@@ -116,6 +116,9 @@ class RouteManager private constructor(context: Context) {
     @Volatile private var runningRecordID: String? = null
     private var runningInputs = ByteArray(0)
     private var runningEntries = ByteArray(0)
+    private var runningProbeRegistry: UnderlayProbeRegistry? = null
+    private var runningProbeSource = ""
+    private var runningProbeGeneration: Long? = null
     private var pendingObservations: ByteArray? = null
     @Volatile private var lastDecisions: List<RouteDecision> = emptyList()
 
@@ -183,6 +186,22 @@ class RouteManager private constructor(context: Context) {
                     val application = evaluate(profile, next)
                     check(!application.blocked) { application.blockReason }
                     val running = runningRecordID == profile.recordID
+                    if (running && application.mode != RouteMode.DIRECT &&
+                        runningProbeGeneration == null && runningInputs.isNotEmpty() &&
+                        runningProbeSource.isNotBlank()
+                    ) {
+                        val registry = checkNotNull(runningProbeRegistry) {
+                            "当前连接代缺少 service-lifetime 入口 registry"
+                        }
+                        val measured = registry.entries(
+                            runningInputs,
+                            runningProbeSource,
+                            AndroidEntryProbe::measure,
+                            AndroidEntryProbe::reuse,
+                        )
+                        runningEntries = measured.entries
+                        runningProbeGeneration = measured.generation
+                    }
                     val actual = if (running) {
                         SelectorClient(profile.routePlan).let { selector ->
                             selector.apply(application.selectors)
@@ -247,15 +266,26 @@ class RouteManager private constructor(context: Context) {
         }
     }
 
-    /** §16.1.2：当前物理网络代只执行一轮并行入口测量。 */
-    suspend fun beginRouteSession(profile: ManagedProfile, source: String) {
+    /** #14：只由 service-lifetime registry 在当前底层网络代执行一轮并行入口测量。 */
+    internal suspend fun beginRouteSession(profile: ManagedProfile, source: String, registry: UnderlayProbeRegistry) {
         val plan = profile.routePlan ?: return
         val inputs = Loomcore.androidRoutingInputs(profile.config.encodeToByteArray(), plan.encodeToByteArray())
-        val entries = AndroidEntryProbe.measure(inputs, source)
+        val application = evaluate(profile)
+        // Direct 既不冻结候选，也不消耗任何主动 probe 预算。
+        val snapshot = registry.entriesIfEnabled(
+            application.mode != RouteMode.DIRECT,
+            inputs,
+            source,
+            AndroidEntryProbe::measure,
+            AndroidEntryProbe::reuse,
+        )
         operation.withLock {
             if (runningRecordID != profile.recordID) throw CancellationException("隧道会话已经结束")
             runningInputs = inputs
-            runningEntries = entries
+            runningEntries = snapshot?.entries ?: AndroidEntryProbe.empty(source)
+            runningProbeRegistry = registry
+            runningProbeSource = source
+            runningProbeGeneration = snapshot?.generation
             val latest = pendingObservations
             pendingObservations = null
             runRouteTickLocked(profile, latest)
@@ -376,6 +406,9 @@ class RouteManager private constructor(context: Context) {
         runningRecordID = null
         runningInputs = ByteArray(0)
         runningEntries = ByteArray(0)
+        runningProbeRegistry = null
+        runningProbeSource = ""
+        runningProbeGeneration = null
         pendingObservations = null
         lastDecisions = emptyList()
         mutableStatus.value = mutableStatus.value.copy(running = false, busy = false)

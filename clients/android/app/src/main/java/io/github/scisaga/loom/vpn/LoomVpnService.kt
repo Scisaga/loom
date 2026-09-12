@@ -36,6 +36,7 @@ import io.github.scisaga.loom.enrollment.ManagedProfile
 import io.github.scisaga.loom.enrollment.HealthReporter
 import io.github.scisaga.loom.security.DeviceKeyStore
 import io.github.scisaga.loom.route.RouteManager
+import io.github.scisaga.loom.route.UnderlayProbeRegistry
 import io.github.scisaga.loom.stage1.Stage1Config
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
@@ -102,6 +103,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
     private val monitors = ConcurrentHashMap<InterfaceUpdateListener, UnderlyingMonitor>()
     private val underlyingPublicationLock = Any()
     private val underlyingPublication = UnderlyingPublicationTracker<Network>()
+    private val underlayProbes = UnderlayProbeRegistry()
     private val connectivity by lazy { getSystemService<ConnectivityManager>()!! }
     private var boxService: BoxService? = null
     @Volatile private var tunnel: ParcelFileDescriptor? = null
@@ -110,7 +112,6 @@ class LoomVpnService : VpnService(), PlatformInterface {
     @Volatile private var sessionID = 0L
     private var lastUseEmulatorProxy = false
     @Volatile private var desiredConnected = false
-    @Volatile private var activeProbe: ProbeSession? = null
     @Volatile private var selectedUnderlyingNetwork: Network? = null
     @Volatile private var activeManagedProfile: ManagedProfile? = null
 
@@ -166,7 +167,6 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 } else {
                     desiredConnected = false
                     VpnConnectionPreference(this).setDesiredConnected(false)
-                    activeProbe?.cancel()
                     scope.launch { stopTunnel(stopStartId = startId) }
                 }
             }
@@ -181,7 +181,6 @@ class LoomVpnService : VpnService(), PlatformInterface {
     override fun onRevoke() {
         desiredConnected = false
         VpnConnectionPreference(this).setDesiredConnected(false)
-        activeProbe?.cancel()
         scope.launch {
             stopTunnel()
             stopSelf()
@@ -190,7 +189,6 @@ class LoomVpnService : VpnService(), PlatformInterface {
 
     override fun onDestroy() {
         desiredConnected = false
-        activeProbe?.cancel()
         runBlocking(Dispatchers.IO) { stopTunnel() }
         scope.cancel()
         super.onDestroy()
@@ -235,7 +233,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
             val candidate = manager.candidateProfile()
             if (candidate != null) {
                 try {
-                    val probe = activateAndProbe(candidate)
+                    val probe = activateWithoutBusinessProbe(candidate)
                     ensureConnectionWanted()
                     val committed = manager.candidateActivated(candidate)
                     connected(committed, probe, "已验证并激活 snapshot ${committed.snapshot}")
@@ -247,7 +245,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
                     Log.e(TAG, "candidate activation rejected", candidateError)
                     closeResources()
                     ensureConnectionWanted()
-                    val fallback = manager.candidateRejected(candidate, "真实 DNS/HTTPS 未通过")
+                    val fallback = manager.candidateRejected(candidate, "本地 TUN/libbox 激活失败")
                     if (fallback != null) {
                         val (restored, probe) = activateManagedWithFallback(fallback, manager)
                         ensureConnectionWanted()
@@ -270,7 +268,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 "请先扫描中控二维码完成正式入网"
             }
             val config = Stage1Config.load(this, useEmulatorProxy).content
-            val probe = activateAndProbe(config)
+            val probe = activateWithoutBusinessProbe(config)
             ensureConnectionWanted()
             val route = if (useEmulatorProxy) "Debug Emulator 数据面" else "Debug Direct 数据面"
             connected(null, probe, route)
@@ -297,7 +295,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         manager: EnrollmentManager,
     ): Pair<ManagedProfile, ProbeResult> {
         try {
-            return current to activateAndProbe(current)
+            return current to activateWithoutBusinessProbe(current)
         } catch (cancelled: CancellationException) {
             closeResources()
             throw cancelled
@@ -310,7 +308,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 ?.takeIf { it.recordID != current.recordID }
                 ?: throw currentError
             return try {
-                val probe = activateAndProbe(previous)
+                val probe = activateWithoutBusinessProbe(previous)
                 val promoted = checkNotNull(manager.promotePrevious()) { "previous 配置在恢复时消失" }
                 promoted to probe
             } catch (cancelled: CancellationException) {
@@ -324,23 +322,16 @@ class LoomVpnService : VpnService(), PlatformInterface {
         }
     }
 
-    private suspend fun activateAndProbe(profile: ManagedProfile): ProbeResult =
-        activateAndProbe(profile.config, profile)
+    private suspend fun activateWithoutBusinessProbe(profile: ManagedProfile): ProbeResult =
+        activateWithoutBusinessProbe(profile.config, profile)
 
-    private suspend fun activateAndProbe(config: String, profile: ManagedProfile? = null): ProbeResult {
+    private suspend fun activateWithoutBusinessProbe(config: String, profile: ManagedProfile? = null): ProbeResult {
         activate(config)
         profile?.let { RouteManager.get(this).applyToRunning(it) }
-        val probeSession = ProbeSession()
-        activeProbe = probeSession
-        val probe = try {
-            NetworkProbe.run(probeSession)
-        } finally {
-            if (activeProbe === probeSession) activeProbe = null
-        }
         ensureConnectionWanted()
-        VpnRuntime.transform { it.copy(dnsProbe = probe.dns, httpsProbe = probe.https) }
-        check(probe.healthy) { "TUN 已启动，但真实 DNS/HTTPS 端到端探测未通过" }
-        return probe
+        // #14：启动只验证本地 TUN/libbox 成功。业务 DNS/HTTPS 既不属于 transport
+        // probe，也不能阻塞连接或冒充服务端 observation。
+        return ProbeResult.notRunAtActivation()
     }
 
     private fun ensureConnectionWanted() {
@@ -409,16 +400,20 @@ class LoomVpnService : VpnService(), PlatformInterface {
         }
     }
 
-    private fun startRouteSession(profile: ManagedProfile, sourceOverride: String? = null) {
+    private fun startRouteSession(profile: ManagedProfile, underlayOverride: UnderlayGeneration? = null) {
         routeJob?.cancel()
         val routeSession = sessionID
+        val underlay = underlayOverride ?: selectedUnderlyingNetwork.let { network ->
+            UnderlayGeneration(
+                identity = network?.toString(),
+                source = network?.let { connectivity.getLinkProperties(it)?.interfaceName }.orEmpty(),
+            )
+        }
         routeJob = scope.launch {
             val manager = RouteManager.get(this@LoomVpnService)
-            val source = sourceOverride ?: selectedUnderlyingNetwork?.let {
-                connectivity.getLinkProperties(it)?.interfaceName
-            }.orEmpty()
             try {
-                manager.beginRouteSession(profile, source)
+                underlayProbes.observeDefaultNetwork(underlay.identity, underlay.source)
+                manager.beginRouteSession(profile, underlay.source, underlayProbes)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
@@ -449,8 +444,6 @@ class LoomVpnService : VpnService(), PlatformInterface {
 
     private fun closeResources() {
         sessionID++
-        activeProbe?.cancel()
-        activeProbe = null
         reportJob?.cancel()
         reportJob = null
         routeJob?.cancel()
@@ -571,6 +564,9 @@ class LoomVpnService : VpnService(), PlatformInterface {
     }
 
     private data class TunAddressFamilies(val ipv4: Boolean, val ipv6: Boolean)
+
+    /** identity/source 在 ConnectivityManager 的同一次选择中冻结，禁止串代。 */
+    private data class UnderlayGeneration(val identity: String?, val source: String)
 
     override fun useProcFS(): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
 
@@ -723,8 +719,13 @@ class LoomVpnService : VpnService(), PlatformInterface {
         monitor.notified = true
         monitor.lastSelection = selected
         if (!selectionChanged) return@synchronized
-        if (selected != null) {
-            activeManagedProfile?.let { profile -> startRouteSession(profile, selected.name) }
+        // 只有确认选中的默认 Network identity/source 改变才建立新代；profile、
+        // config、mode 与同代 reconnect 都只会命中已有 frozen results。
+        activeManagedProfile?.let { profile ->
+            startRouteSession(
+                profile,
+                UnderlayGeneration(selected?.network?.toString(), selected?.name.orEmpty()),
+            )
         }
         if (selected == null) {
             listener.updateDefaultInterface("", -1, false, false)

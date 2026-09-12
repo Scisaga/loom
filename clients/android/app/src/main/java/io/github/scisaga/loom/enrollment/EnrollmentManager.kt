@@ -137,7 +137,7 @@ class EnrollmentManager private constructor(context: Context) {
     fun candidateActivated(profile: ManagedProfile): ManagedProfile {
         val committed = store.commitCandidate(profile.recordID)
         store.clearReady()
-        ready(committed, "正式入网完成；候选已通过真实 DNS/HTTPS 并成为当前配置")
+        ready(committed, "正式入网完成；候选已通过本地 TUN/libbox 启动并成为当前配置")
         return committed
     }
 
@@ -422,7 +422,7 @@ class EnrollmentManager private constructor(context: Context) {
     private fun awaitingActivation(profile: ManagedProfile) {
         mutableStatus.value = EnrollmentStatus(
             phase = EnrollmentPhase.PULLING,
-            detail = "签名链与 libbox 预检通过；连接后执行真实 DNS/HTTPS 再原子激活",
+            detail = "签名链与 libbox 预检通过；连接后以本地 TUN/runtime 启动结果原子激活",
             nodeID = profile.nodeID,
             snapshot = profile.snapshot,
             generation = profile.generation,

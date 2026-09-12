@@ -19,8 +19,15 @@ data class ProbeResult(
         get() = dns.startsWith("成功") && https.startsWith("成功")
 
     fun problems(): List<String> = buildList {
-        if (!dns.startsWith("成功")) add("Android TUN DNS 端到端探测失败")
-        if (!https.startsWith("成功")) add("Android TUN HTTPS 端到端探测失败")
+        if (dns.startsWith("失败")) add("Android TUN DNS 端到端探测失败")
+        if (https.startsWith("失败")) add("Android TUN HTTPS 端到端探测失败")
+    }
+
+    companion object {
+        fun notRunAtActivation() = ProbeResult(
+            dns = "未执行（启动不以业务 DNS 为门禁）",
+            https = "未执行（启动不以业务 HTTPS 为门禁）",
+        )
     }
 }
 

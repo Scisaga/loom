@@ -58,6 +58,53 @@ internal object AndroidEntryProbe {
             .encodeToByteArray()
     }
 
+    fun empty(source: String): ByteArray = JSONObject()
+        .put("schema", 1)
+        .apply { if (source.isNotBlank()) put("source", source) }
+        .put("measurements", JSONArray())
+        .toString()
+        .encodeToByteArray()
+
+    /** 同一 underlay generation 只复用 address+source 已测值；新增入口保持 unknown。 */
+    fun reuse(routingInputs: ByteArray, frozenEntries: ByteArray, source: String): ByteArray {
+        val inputs = JSONObject(routingInputs.decodeToString())
+        val frozen = JSONObject(frozenEntries.decodeToString())
+        check(inputs.getInt("schema") == 1 && frozen.getInt("schema") == 1) { "入口 registry schema 无效" }
+        check(frozen.optString("source") == source) { "入口 registry source 不匹配" }
+        val byAddress = frozen.getJSONArray("measurements").objects()
+            .groupBy { it.getString("address") }
+            .mapValues { (_, values) -> values.first() }
+        val timestamp = java.time.Instant.now().toString()
+        return JSONObject()
+            .put("schema", 1)
+            .put("source", source)
+            .put(
+                "measurements",
+                JSONArray().apply {
+                    inputs.getJSONArray("entries").objects().sortedBy { it.getString("node") }.forEach { target ->
+                        val node = target.getString("node")
+                        val address = target.getString("address")
+                        val previous = byAddress[address]
+                        put(
+                            JSONObject()
+                                .put("node", node)
+                                .put("address", address)
+                                .put("ts", previous?.getString("ts") ?: timestamp)
+                                .apply {
+                                    when {
+                                        previous == null -> put("error", "当前底层网络代未主动探测；仅接受真实拨号被动证据")
+                                        previous.has("rtt_ms") -> put("rtt_ms", previous.getLong("rtt_ms"))
+                                        else -> put("error", previous.getString("error"))
+                                    }
+                                },
+                        )
+                    }
+                },
+            )
+            .toString()
+            .encodeToByteArray()
+    }
+
     private fun pingOnce(address: String, source: String): EntryProbeValue {
         if (source.isBlank()) return EntryProbeValue(null, "没有可绑定的底层网络")
         check(source.length <= 128 && source.none { it == '\r' || it == '\n' || it == '\u0000' }) {
