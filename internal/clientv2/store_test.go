@@ -97,6 +97,13 @@ func clientControlSet(t *testing.T) (wire.ControlSetV1, ed25519.PrivateKey) {
 func clientEnvelope(t *testing.T, set *wire.ControlSetV1, configKey ed25519.PrivateKey) wire.DeviceViewEnvelopeV2 {
 	t.Helper()
 	hash := func(value string) string { return wire.HashRaw("client-v2-test", []byte(value)) }
+	return clientEnvelopeWithIdentity(t, set, configKey, hash("identity"))
+}
+
+func clientEnvelopeWithIdentity(t *testing.T, set *wire.ControlSetV1, configKey ed25519.PrivateKey,
+	identityHash string) wire.DeviceViewEnvelopeV2 {
+	t.Helper()
+	hash := func(value string) string { return wire.HashRaw("client-v2-test", []byte(value)) }
 	membership := wire.EnrollmentMembershipV1{Schema: 1, DesiredState: "active_on_completion"}
 	responsibilities := wire.EnrollmentResponsibilitiesV1{Schema: 1, Values: []string{"use_loom"}}
 	grants := wire.EnrollmentDestinationGrantsV1{Schema: 1, Values: []wire.EnrollmentDestinationGrantV1{}}
@@ -109,7 +116,7 @@ func clientEnvelope(t *testing.T, set *wire.ControlSetV1, configKey ed25519.Priv
 	payload := wire.DeviceViewPayloadV2{
 		Schema: 2, ClusterID: set.ClusterID, DeviceID: bundle.DeviceID, DeviceGeneration: 1, State: "active",
 		Active: &wire.DeviceActiveViewV1{
-			IdentitySPKIHash: hash("identity"), Membership: membership, MembershipHash: membershipHash,
+			IdentitySPKIHash: identityHash, Membership: membership, MembershipHash: membershipHash,
 			Responsibilities: responsibilities, ResponsibilitiesHash: responsibilitiesHash, Grants: grants, GrantsHash: grantsHash,
 			EndpointBundle: bundle, EndpointBundleHash: bundleHash, ConfigArtifactRefs: []wire.DeviceConfigArtifactRefV1{},
 			SecretArtifactRefsRoot: secretRefsRoot,

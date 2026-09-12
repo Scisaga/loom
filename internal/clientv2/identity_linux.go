@@ -7,11 +7,9 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -157,8 +155,7 @@ func (state *EnrollmentIdentityV1) IdentitySPKIHash() (string, error) {
 		return "", err
 	}
 	spki, _ := x509.MarshalPKIXPublicKey(&identityKey.PublicKey)
-	digest := sha256.Sum256(spki)
-	return "sha256:" + hex.EncodeToString(digest[:]), nil
+	return wire.HashBytes(wire.DomainEnrollmentIdentitySPKI, spki)
 }
 
 func loadEnrollmentIdentity(path string) (*EnrollmentIdentityV1, error) {

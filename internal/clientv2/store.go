@@ -4,6 +4,7 @@ package clientv2
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -14,9 +15,35 @@ import (
 )
 
 type State struct {
-	Schema   int                       `json:"schema"`
-	Floors   wire.ClientFloorsV2       `json:"floors"`
-	Envelope wire.DeviceViewEnvelopeV2 `json:"envelope"`
+	Schema     int                       `json:"schema"`
+	Floors     wire.ClientFloorsV2       `json:"floors"`
+	Envelope   wire.DeviceViewEnvelopeV2 `json:"envelope"`
+	Enrollment *EnrollmentInstallationV1 `json:"enrollment,omitempty"`
+}
+
+// EnrollmentInstallationV1 是 Linux 首次 v2 身份的单文件提交单元。证书、
+// DeviceView/floors 与解封后的 Device credentials 必须一起出现，不能靠多个
+// rename 假装成跨文件原子事务（D106、D124、D130）。
+type EnrollmentInstallationV1 struct {
+	Schema                int                             `json:"schema"`
+	ClaimCore             wire.EnrollmentClaimCoreV2      `json:"claim_core"`
+	ClaimCoreHash         string                          `json:"claim_core_hash"`
+	IdentityKeyHash       string                          `json:"identity_key_hash"`
+	WrappingKeyHash       string                          `json:"wrapping_key_hash"`
+	TransactionStateHash  string                          `json:"transaction_state_hash"`
+	ResultArtifactHash    string                          `json:"result_artifact_hash"`
+	DeviceCertificateHash string                          `json:"device_certificate_hash"`
+	ResultArtifact        wire.EnrollmentResultArtifactV1 `json:"result_artifact"`
+	Credentials           []InstalledSecretV1             `json:"credentials"`
+}
+
+type InstalledSecretV1 struct {
+	SecretID     string `json:"secret_id"`
+	Purpose      string `json:"purpose"`
+	Generation   int64  `json:"generation"`
+	ImmutableRef string `json:"immutable_ref"`
+	SecretBytes  string `json:"secret_bytes"`
+	SecretDigest string `json:"secret_digest"`
 }
 
 type Store struct {
@@ -81,6 +108,18 @@ func (s *Store) Envelope() *wire.DeviceViewEnvelopeV2 {
 	}
 	body, _ := wire.MarshalCanonical(s.state.Envelope)
 	var copy wire.DeviceViewEnvelopeV2
+	_, _ = wire.DecodeStrict(body, 32<<20, &copy)
+	return &copy
+}
+
+func (s *Store) Enrollment() *EnrollmentInstallationV1 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state == nil || s.state.Enrollment == nil {
+		return nil
+	}
+	body, _ := wire.MarshalCanonical(s.state.Enrollment)
+	var copy EnrollmentInstallationV1
 	_, _ = wire.DecodeStrict(body, 32<<20, &copy)
 	return &copy
 }
@@ -173,11 +212,58 @@ func (s *Store) acceptWithAdvance(envelope *wire.DeviceViewEnvelopeV2, set, prev
 		return s.floorsLocked(), err
 	}
 	state := State{Schema: 1, Floors: next, Envelope: *envelope}
+	if s.state != nil && s.state.Enrollment != nil {
+		state.Enrollment = s.state.Enrollment
+	}
 	if err := persist(s.path, state); err != nil {
 		return s.floorsLocked(), err
 	}
 	s.state = &state
 	return next, nil
+}
+
+// acceptInitialInstallation 提交已经由 completion receipt 与本机 wrapping key
+// 验过的首次身份。上层必须先完成 opaque evidence 绑定和全部 secret 解封；这里
+// 只负责一个 durable 原子点以及 exact replay 幂等（D106、D130）。
+func (s *Store) acceptInitialInstallation(envelope *wire.DeviceViewEnvelopeV2, set *wire.ControlSetV1,
+	expectedDeviceID, expectedIdentitySPKIHash string, installation *EnrollmentInstallationV1) (wire.ClientFloorsV2, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if envelope == nil || set == nil || installation == nil || expectedDeviceID == "" || expectedIdentitySPKIHash == "" {
+		return s.floorsLocked(), errors.New("[D130 Linux install] completion installation 输入不完整")
+	}
+	if s.state != nil {
+		if s.state.Enrollment != nil && wire.EqualCanonical(s.state.Envelope, *envelope) &&
+			wire.EqualCanonical(*s.state.Enrollment, *installation) {
+			return s.floorsLocked(), nil
+		}
+		return s.floorsLocked(), errors.New("[D106 Linux install] 首次 Enrollment 已由不同状态占用")
+	}
+	floors, err := wire.VerifyDeviceViewEnvelope(envelope, set)
+	if err != nil {
+		return wire.ClientFloorsV2{}, err
+	}
+	if envelope.Payload.DeviceID != expectedDeviceID || envelope.Payload.Active == nil ||
+		envelope.Payload.Active.IdentitySPKIHash != expectedIdentitySPKIHash {
+		return wire.ClientFloorsV2{}, errors.New("[D105 Linux install] completion view 不属于本机 identity")
+	}
+	installationBody, err := wire.MarshalCanonical(installation)
+	if err != nil {
+		return wire.ClientFloorsV2{}, err
+	}
+	var installedCopy EnrollmentInstallationV1
+	if _, err := wire.DecodeStrict(installationBody, 32<<20, &installedCopy); err != nil {
+		return wire.ClientFloorsV2{}, err
+	}
+	state := State{Schema: 1, Floors: floors, Envelope: *envelope, Enrollment: &installedCopy}
+	if err := validateStoredState(&state); err != nil {
+		return wire.ClientFloorsV2{}, err
+	}
+	if err := persist(s.path, state); err != nil {
+		return wire.ClientFloorsV2{}, err
+	}
+	s.state = &state
+	return floors, nil
 }
 
 func persist(path string, state State) error {
@@ -259,6 +345,71 @@ func validateStoredState(state *State) error {
 		floor.DeviceGeneration != state.Envelope.Payload.DeviceGeneration || floor.DeviceLeafHash != leafHash ||
 		floor.DeviceViewHash != payloadHash || floor.BootstrapTransitionHash != head.Body.TransitionProofHash {
 		return errors.New("[D106 Linux] durable floors 与同一 LKG envelope 不一致")
+	}
+	if state.Enrollment != nil {
+		if err := validateEnrollmentInstallation(state.Enrollment, &state.Envelope); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateEnrollmentInstallation(installation *EnrollmentInstallationV1, envelope *wire.DeviceViewEnvelopeV2) error {
+	if installation == nil || envelope == nil || installation.Schema != 1 || installation.Credentials == nil {
+		return errors.New("[D130 Linux install] durable installation header 无效")
+	}
+	for _, hash := range []string{installation.ClaimCoreHash, installation.IdentityKeyHash,
+		installation.WrappingKeyHash, installation.TransactionStateHash, installation.ResultArtifactHash,
+		installation.DeviceCertificateHash} {
+		if _, err := wire.ParseHash(hash); err != nil {
+			return err
+		}
+	}
+	resultHash, err := wire.EnrollmentResultArtifactHash(&installation.ResultArtifact)
+	if err != nil || resultHash != installation.ResultArtifactHash ||
+		!wire.EqualCanonical(installation.ResultArtifact.InitialDeviceView, envelope.Payload) {
+		return errors.New("[D130 Linux install] durable result artifact/view binding 无效")
+	}
+	claimCoreHash, err := wire.EnrollmentClaimCoreHash(&installation.ClaimCore)
+	if err != nil || claimCoreHash != installation.ClaimCoreHash {
+		return errors.New("[D130 Linux install] durable stable claim core/hash 不匹配")
+	}
+	identityHash, wrappingHash, _, err := wire.EnrollmentClaimBinaryHashes(&installation.ClaimCore)
+	if err != nil || identityHash != installation.IdentityKeyHash || wrappingHash != installation.WrappingKeyHash {
+		return errors.New("[D130 Linux install] durable stable claim/key binding 无效")
+	}
+	certificateDER, err := wire.EnrollmentResultCertificateDER(&installation.ResultArtifact)
+	if err != nil {
+		return err
+	}
+	certificateHash, err := wire.DeviceCertificateHash(certificateDER)
+	if err != nil || certificateHash != installation.DeviceCertificateHash {
+		return errors.New("[D102 Linux install] durable certificate hash 不匹配")
+	}
+	refs := installation.ResultArtifact.SecretArtifactRefs
+	if len(refs) != len(installation.Credentials) || len(refs) != len(envelope.SecretArtifactRefs) {
+		return errors.New("[D124 Linux install] durable credentials/refs 数量不匹配")
+	}
+	totalSecretBytes := 0
+	for index := range refs {
+		canonicalRef, refErr := wire.MarshalCanonical(refs[index])
+		canonicalEnvelopeRef, envelopeErr := wire.CanonicalizeStrict(envelope.SecretArtifactRefs[index])
+		credential := &installation.Credentials[index]
+		if refErr != nil || envelopeErr != nil || !bytes.Equal(canonicalRef, canonicalEnvelopeRef) ||
+			credential.SecretID != refs[index].SecretID || credential.Purpose != refs[index].Purpose ||
+			credential.Generation != refs[index].Generation || credential.ImmutableRef != refs[index].ImmutableRef {
+			return errors.New("[D124 Linux install] durable credential 未绑定 exact secret ref")
+		}
+		secret, decodeErr := base64.RawURLEncoding.DecodeString(credential.SecretBytes)
+		if decodeErr != nil || len(secret) == 0 || base64.RawURLEncoding.EncodeToString(secret) != credential.SecretBytes ||
+			wire.HashRaw("loom-linux-installed-secret-v1", secret) != credential.SecretDigest {
+			return errors.New("[D124 Linux install] durable credential bytes/digest 无效")
+		}
+		totalSecretBytes += len(secret)
+		clear(secret)
+		if totalSecretBytes > 8<<20 {
+			return errors.New("[D124 Linux install] durable credentials 超过 bootstrap 总预算")
+		}
 	}
 	return nil
 }

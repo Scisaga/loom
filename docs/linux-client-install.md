@@ -52,8 +52,11 @@
    作为后续 resume descriptor 不可回退、不可分叉的本机校验下限。ready 必须同时返回 result artifact
    和 canonical completion receipt；Linux 从 Invite 已验 Head
    连续重放 reservation/issuance/completion Head、QC、operation/view inclusion，核对本机
-   claim/core/key、CA profile、正式证书与 sealed recipient 后才原子安装 certificate/view/credentials。
-   随后清除 token、capability、临时 profile/隧道，
+   claim/core/key、CA profile、正式证书与 sealed recipient，按每个 exact immutable ref 取得 canonical
+   envelope 并用独立 wrapping key 解封。证书、完整 DeviceView、durable floors、stable claim 摘要与
+   credentials 必须写入同一个 root-only canonical installation state 后才算安装完成，不能用多个文件的
+   依次 rename 冒充跨文件原子提交。随后才清除 pending、token、capability、临时 profile/隧道；清理失败
+   保留 pending 供 exact replay，正式 identity key 永不进入清理集合。
    然后由同一 Linux 客户端宿主建立正式 WG control/L3 overlay；配置与报告继续访问
    `ControlServiceDirectoryV1` 中分用途的 `device_config`/`device_report` 私有服务。
 

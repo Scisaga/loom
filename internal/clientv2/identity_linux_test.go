@@ -60,6 +60,12 @@ func TestLinuxEnrollmentIdentityIsDurableDistinctAndProducesP256PoP(t *testing.T
 	if err := wire.VerifyEnrollmentPoPP256(pop, &identityKey.PublicKey, signature); err != nil {
 		t.Fatal(err)
 	}
+	identityHash, err := identity.IdentitySPKIHash()
+	wantIdentityHash, _, _, hashErr := wire.EnrollmentClaimBinaryHashes(&core)
+	if err != nil || hashErr != nil || identityHash != wantIdentityHash {
+		t.Fatalf("identity hash 未使用 enrollment typed domain: got=%q want=%q err=%v/%v",
+			identityHash, wantIdentityHash, err, hashErr)
+	}
 }
 
 func TestLinuxEnrollmentIdentityRejectsLoosePermissions(t *testing.T) {

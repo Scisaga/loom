@@ -53,6 +53,13 @@ type VerifiedEnrollmentCompletionV1 struct {
 	controlSet             wire.ControlSetV1
 	transactionHash        string
 	transactionStateHashes []string
+	resultArtifactHash     string
+	claimCoreHash          string
+	identityKeyHash        string
+	wrappingKeyHash        string
+	certifiedInviteHash    string
+	baseHeadHash           string
+	baseControlSetHash     string
 }
 
 func (verified VerifiedEnrollmentCompletionV1) DeviceViewEnvelope() wire.DeviceViewEnvelopeV2 {
@@ -74,6 +81,47 @@ func (verified VerifiedEnrollmentCompletionV1) IncludesTransactionStateHash(hash
 		}
 	}
 	return false
+}
+
+// VerifyInstallationContext 把 completion verifier 的不透明结论重新绑定到客户端
+// 即将落盘的 exact result、stable core 与 Invite proof。安装层不得从 result 或
+// receipt 的公开字段自行拼装一个“已验证”状态（D115、D124、D130）。
+func (verified VerifiedEnrollmentCompletionV1) VerifyInstallationContext(result *wire.EnrollmentClaimResultV2,
+	claimCore *wire.EnrollmentClaimCoreV2, proof wire.VerifiedInviteProofV2) error {
+	if result == nil || claimCore == nil || verified.transactionHash == "" ||
+		verified.resultArtifactHash == "" || verified.claimCoreHash == "" ||
+		verified.identityKeyHash == "" || verified.wrappingKeyHash == "" ||
+		verified.certifiedInviteHash == "" || verified.baseHeadHash == "" ||
+		verified.baseControlSetHash == "" {
+		return errors.New("[D130 client] completion installation evidence 不完整")
+	}
+	if err := wire.ValidateEnrollmentClaimResult(result); err != nil {
+		return err
+	}
+	resultHash, err := wire.EnrollmentResultArtifactHash(result.ResultArtifact)
+	if err != nil || result.Status != "completed" || result.TransactionStateHash != verified.transactionHash ||
+		result.ResultArtifactHash != verified.resultArtifactHash || resultHash != verified.resultArtifactHash {
+		return errors.New("[D130 client] installation result 未绑定 verified completion")
+	}
+	coreHash, err := wire.EnrollmentClaimCoreHash(claimCore)
+	if err != nil || coreHash != verified.claimCoreHash {
+		return errors.New("[D130 client] installation core 未绑定 verified completion")
+	}
+	identityHash, wrappingHash, _, err := wire.EnrollmentClaimBinaryHashes(claimCore)
+	if err != nil || identityHash != verified.identityKeyHash || wrappingHash != verified.wrappingKeyHash {
+		return errors.New("[D130 client] installation keys 未绑定 verified completion")
+	}
+	proofHead := proof.Head()
+	proofSet := proof.ControlSet()
+	proofSetHash, err := wire.ControlSetHash(&proofSet)
+	if err != nil || proof.CertifiedInviteRecordHash() != verified.certifiedInviteHash ||
+		proofHead.HeadHash != verified.baseHeadHash || proofSetHash != verified.baseControlSetHash {
+		return errors.New("[D115 client] installation 未延续 exact verified Invite authority")
+	}
+	if !wire.EqualCanonical(result.ResultArtifact.InitialDeviceView, verified.envelope.Payload) {
+		return errors.New("[D130 client] installation Device view 未绑定 result artifact")
+	}
+	return nil
 }
 
 func completionReceiptForRecord(record *DurableRecord) ([]byte, error) {
@@ -251,5 +299,12 @@ func VerifyEnrollmentCompletionReceipt(raw []byte, result *wire.EnrollmentClaimR
 	return VerifiedEnrollmentCompletionV1{envelope: clonePrivateValue(envelope),
 		controlSet:             clonePrivateValue(receipt.CompletionCertification.Operation.ControlSet),
 		transactionHash:        completedHash,
-		transactionStateHashes: []string{reservedHash, issuedHash, completedHash}}, nil
+		transactionStateHashes: []string{reservedHash, issuedHash, completedHash},
+		resultArtifactHash:     resultHash,
+		claimCoreHash:          coreHash,
+		identityKeyHash:        identityHash,
+		wrappingKeyHash:        wrappingHash,
+		certifiedInviteHash:    recordHash,
+		baseHeadHash:           expected.BaseHead.HeadHash,
+		baseControlSetHash:     baseSetHash}, nil
 }
