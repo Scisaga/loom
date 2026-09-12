@@ -1,9 +1,12 @@
 package io.github.scisaga.loom.enrollment
 
+import android.os.Build
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -90,6 +93,44 @@ class V2PendingEnrollmentInstrumentedTest {
         }
         assertThrows(IllegalStateException::class.java) {
             replay.advanceAttempt("unknown", 2)
+        }
+    }
+
+    @Test
+    fun protectedPendingSurvivesStoreRecreationAndRejectsRollback() {
+        assumeTrue(Build.HARDWARE == "ranchu" || Build.HARDWARE == "goldfish")
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val store = ManagedProfileStore(context)
+        store.clearPending()
+        try {
+            val pending = V2PendingEnrollment(
+                descriptor = """{"bootstrap_tunnel_capability":{"capability_id":"capability-1"}}"""
+                    .encodeToByteArray(),
+                proofBundle = "{}".encodeToByteArray(),
+                bootstrapCatalog = "{}".encodeToByteArray(),
+            )
+                .withStableCoordinates()
+                .withSelection("network-1", "{\"transport\":\"hysteria2\"}".encodeToByteArray())
+                .withPreflight("{\"schema\":1}".encodeToByteArray())
+                .withClaimCore("{\"schema\":2}".encodeToByteArray())
+                .advanceAttempt("capability-1", 1)
+            store.putV2Pending(pending)
+
+            val recreated = ManagedProfileStore(context)
+            val replay = V2PendingEnrollment.decode(checkNotNull(recreated.pending()))
+            assertEquals(pending.requestID, replay.requestID)
+            assertArrayEquals(pending.clientNonce, replay.clientNonce)
+            assertArrayEquals(pending.claimCore, replay.claimCore)
+            assertEquals(1L, replay.connectionAttempts)
+            assertThrows(IllegalStateException::class.java) {
+                recreated.putV2Pending(replay.copy(connectionAttempts = 0))
+            }
+            assertThrows(IllegalStateException::class.java) {
+                recreated.putV2Pending(replay.copy(claimCore = "{\"schema\":3}".encodeToByteArray()))
+            }
+            assertArrayEquals(pending.encode(), checkNotNull(recreated.pending()))
+        } finally {
+            store.clearPending()
         }
     }
 }
