@@ -259,7 +259,7 @@ func newRuntimePlanFixtureWithEvidencePolicy(t *testing.T, transport, deployment
 		DialTargetFQDN: profile.FQDN, PublicPort: publicPort, AddressFamilies: []string{"ipv4"},
 		TransportIdentityRefs: []string{"profile:" + profile.CertificateProfileRef,
 			"sha256:" + hex.EncodeToString(certificateDigest[:])},
-		CredentialGeneration: 1, CertificateIntentHash: runtimePlanHash("certificate-intent"),
+		CredentialGeneration: 1, CertificateIdentityProjectionHash: runtimePlanHash("certificate-projection"),
 		PublicProfileGeneration: profile.Generation, IntroducedRevision: 2,
 		ValidFrom: "2026-09-11T00:00:00Z", ValidUntil: "2026-09-13T00:00:00Z",
 		RotationOperationHash: runtimePlanHash("rotation-operation"),

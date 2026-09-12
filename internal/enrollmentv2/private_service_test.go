@@ -263,7 +263,7 @@ func newPrivateServiceFixture(t *testing.T) privateServiceFixture {
 		Schema: 2, ListenerGeneration: 1, PublishedState: "preferred", DialTargetFQDN: "bootstrap.example.test",
 		PublicPort: 8443, AddressFamilies: []string{"ipv4"},
 		TransportIdentityRefs: []string{"profile:bootstrap-webpki-v1", wire.HashRaw("private-service-test", []byte("bootstrap-spki"))},
-		CredentialGeneration:  1, CertificateIntentHash: wire.HashRaw("private-service-test", []byte("bootstrap-certificate")),
+		CredentialGeneration:  1, CertificateIdentityProjectionHash: wire.HashRaw("private-service-test", []byte("bootstrap-certificate")),
 		PublicProfileGeneration: 1, IntroducedRevision: 1, ValidFrom: "2026-09-11T11:00:00Z",
 		ValidUntil: "2026-09-12T11:00:00Z", RotationOperationHash: wire.HashRaw("private-service-test", []byte("bootstrap-rotation")),
 	}

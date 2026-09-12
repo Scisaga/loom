@@ -3133,7 +3133,7 @@ ListenerGenerationV2               # public；同一 logical endpoint 的一个�
   public_port, address_families[]
   transport_identity_refs[]         # WebPKI/pin、HY2/Trojan credential 或 WG peer ref
   credential_generation
-  certificate_intent_hash?          # TLS transports 必需，WG 禁止
+  certificate_identity_projection_hash? # TLS transports 必需，WG 禁止；例行续签不改变稳定身份
   public_profile_generation, introduced_revision
   valid_from, valid_until
   retire_not_before?                # 可选的旧代最早物理退役时间；guard 仍是最终门槛

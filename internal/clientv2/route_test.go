@@ -14,7 +14,7 @@ func TestDialOrderPreferredThenAdvertisedNeverDraining(t *testing.T) {
 		return wire.ListenerGenerationV2{
 			Schema: 2, ListenerGeneration: number, PublishedState: state, DialTargetFQDN: "edge.example.test",
 			PublicPort: 443 + number, AddressFamilies: []string{"ipv4"}, TransportIdentityRefs: []string{"spki:v1"},
-			CredentialGeneration: number, CertificateIntentHash: routeHash, PublicProfileGeneration: 1,
+			CredentialGeneration: number, CertificateIdentityProjectionHash: routeHash, PublicProfileGeneration: 1,
 			IntroducedRevision: number, ValidFrom: "2026-01-01T00:00:00Z", ValidUntil: "2027-01-01T00:00:00Z",
 			RotationOperationHash: routeHash,
 		}

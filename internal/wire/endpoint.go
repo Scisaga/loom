@@ -44,21 +44,21 @@ type LinkIntentV1 struct {
 }
 
 type ListenerGenerationV2 struct {
-	Schema                  int      `json:"schema"`
-	ListenerGeneration      int64    `json:"listener_generation"`
-	PublishedState          string   `json:"published_state"`
-	DialTargetFQDN          string   `json:"dial_target_fqdn"`
-	PublicPort              int64    `json:"public_port"`
-	AddressFamilies         []string `json:"address_families"`
-	TransportIdentityRefs   []string `json:"transport_identity_refs"`
-	CredentialGeneration    int64    `json:"credential_generation"`
-	CertificateIntentHash   string   `json:"certificate_intent_hash,omitempty"`
-	PublicProfileGeneration int64    `json:"public_profile_generation"`
-	IntroducedRevision      int64    `json:"introduced_revision"`
-	ValidFrom               string   `json:"valid_from"`
-	ValidUntil              string   `json:"valid_until"`
-	RetireNotBefore         string   `json:"retire_not_before,omitempty"`
-	RotationOperationHash   string   `json:"rotation_operation_hash"`
+	Schema                            int      `json:"schema"`
+	ListenerGeneration                int64    `json:"listener_generation"`
+	PublishedState                    string   `json:"published_state"`
+	DialTargetFQDN                    string   `json:"dial_target_fqdn"`
+	PublicPort                        int64    `json:"public_port"`
+	AddressFamilies                   []string `json:"address_families"`
+	TransportIdentityRefs             []string `json:"transport_identity_refs"`
+	CredentialGeneration              int64    `json:"credential_generation"`
+	CertificateIdentityProjectionHash string   `json:"certificate_identity_projection_hash,omitempty"`
+	PublicProfileGeneration           int64    `json:"public_profile_generation"`
+	IntroducedRevision                int64    `json:"introduced_revision"`
+	ValidFrom                         string   `json:"valid_from"`
+	ValidUntil                        string   `json:"valid_until"`
+	RetireNotBefore                   string   `json:"retire_not_before,omitempty"`
+	RotationOperationHash             string   `json:"rotation_operation_hash"`
 }
 
 type ListenerGenerationTombstoneV1 struct {
@@ -254,12 +254,12 @@ func ValidateListenerGeneration(generation *ListenerGenerationV2, transport stri
 		}
 	}
 	if oneOf(transport, "https", "hysteria2", "trojan_tls") {
-		if _, err := ParseHash(generation.CertificateIntentHash); err != nil {
-			return errors.New("[D122 TLS] TLS transport 必须绑定 certificate intent hash")
+		if _, err := ParseHash(generation.CertificateIdentityProjectionHash); err != nil {
+			return errors.New("[D122 TLS] TLS transport 必须绑定 certificate identity projection hash")
 		}
 	} else if transport == "wireguard" {
-		if generation.CertificateIntentHash != "" {
-			return errors.New("[D107 EndpointSet] WireGuard listener 禁止 certificate_intent_hash")
+		if generation.CertificateIdentityProjectionHash != "" {
+			return errors.New("[D107 EndpointSet] WireGuard listener 禁止 certificate identity projection")
 		}
 	} else {
 		return errors.New("[D107 EndpointSet] transport 无效")

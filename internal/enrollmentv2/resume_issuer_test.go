@@ -255,7 +255,7 @@ func resumeDistributionFixture(t *testing.T, head wire.HeadEntryV2,
 		listener := wire.ListenerGenerationV2{
 			Schema: 2, ListenerGeneration: 1, PublishedState: "preferred", DialTargetFQDN: serverName,
 			PublicPort: port, AddressFamilies: []string{"ipv4"}, TransportIdentityRefs: []string{pin, "webpki-v1"},
-			CredentialGeneration: 1, CertificateIntentHash: wire.HashRaw("resume-issuer-test", []byte(marker+"-certificate")),
+			CredentialGeneration: 1, CertificateIdentityProjectionHash: wire.HashRaw("resume-issuer-test", []byte(marker+"-certificate")),
 			PublicProfileGeneration: 1, IntroducedRevision: 1, ValidFrom: "2026-09-11T11:00:00Z",
 			ValidUntil: "2026-09-12T11:00:00Z", RotationOperationHash: wire.HashRaw("resume-issuer-test", []byte(marker+"-rotation")),
 		}

@@ -34,7 +34,7 @@ func testBootstrapCatalog(t *testing.T) (*BootstrapEndpointCatalogV1, *ControlSe
 		Schema: 2, ListenerGeneration: 1, PublishedState: "preferred", DialTargetFQDN: "edge.example.test",
 		PublicPort: 8443, AddressFamilies: []string{"ipv4"},
 		TransportIdentityRefs: []string{"profile:webpki-v1", "sha256:1111111111111111111111111111111111111111111111111111111111111111"},
-		CredentialGeneration:  1, CertificateIntentHash: HashRaw("test-certificate-v1", []byte("cert")),
+		CredentialGeneration:  1, CertificateIdentityProjectionHash: HashRaw("test-certificate-v1", []byte("cert")),
 		PublicProfileGeneration: 1, IntroducedRevision: 1,
 		ValidFrom: "2026-09-11T00:00:00Z", ValidUntil: "2026-09-12T00:00:00Z",
 		RotationOperationHash: HashRaw("test-rotation-v1", []byte("rotation")),
