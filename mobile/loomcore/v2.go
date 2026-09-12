@@ -24,9 +24,10 @@ type canonicalGolden struct {
 }
 
 type androidV2DeviceState struct {
-	Schema   int                       `json:"schema"`
-	Floors   wire.ClientFloorsV2       `json:"floors"`
-	Envelope wire.DeviceViewEnvelopeV2 `json:"envelope"`
+	Schema     int                              `json:"schema"`
+	Floors     wire.ClientFloorsV2              `json:"floors"`
+	Envelope   wire.DeviceViewEnvelopeV2        `json:"envelope"`
+	Enrollment *androidEnrollmentInstallationV1 `json:"enrollment,omitempty"`
 }
 
 // CanonicalizeV2/HashCanonicalV2 向 Kotlin 暴露同一 Go verifier，避免 Android
@@ -114,7 +115,9 @@ func PrepareV2DeviceStateWithPrevious(envelopeJSON, controlSetJSON, previousCont
 	if err != nil {
 		return nil, err
 	}
-	return marshalAndroidV2DeviceState(androidV2DeviceState{Schema: 1, Floors: nextFloors, Envelope: envelope})
+	return marshalAndroidV2DeviceState(androidV2DeviceState{
+		Schema: 1, Floors: nextFloors, Envelope: envelope, Enrollment: current.Enrollment,
+	})
 }
 
 // PrepareInitialV2DeviceStateFromInvite 是 fresh Android Enrollment 的唯一首次
@@ -244,6 +247,11 @@ func validateAndroidV2DeviceState(state *androidV2DeviceState) error {
 	}
 	if _, err := wire.AdvanceFloors(wire.ClientFloorsV2{}, floors); err != nil {
 		return errors.New("[D106 Android] protected floors wire 无效")
+	}
+	if state.Enrollment != nil {
+		if err := validateAndroidEnrollmentInstallation(state.Enrollment, envelope); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -28,8 +28,7 @@ class V2DeviceStateStore(context: Context) {
             identitySPKIHash,
             trustedTime,
         )
-        protected.put(STATE, next)
-        return next
+        return commitExact(next)
     }
 
     @Synchronized
@@ -49,15 +48,38 @@ class V2DeviceStateStore(context: Context) {
             identitySPKIHash,
             current,
         )
-        protected.put(STATE, next)
-        return next
+        return commitExact(next)
     }
 
     @Synchronized
-    fun current(): ByteArray? = protected.get(STATE)
+    fun installCompletion(next: ByteArray, clearPending: () -> Unit): ByteArray {
+        Loomcore.validateAndroidV2DeviceState(next)
+        val existing = protected.get(STATE)
+        val durable = when {
+            existing == null -> commitExact(next)
+            existing.contentEquals(next) -> existing.also(Loomcore::validateAndroidV2DeviceState)
+            else -> error("另一份 v2 Device state 已 latch；completion 不得覆盖")
+        }
+        // 删除 pending 是提交后的清理；若进程在此之前崩溃，启动时只允许
+        // exact core/result 与 durable installation 匹配后继续清理（D130）。
+        clearPending()
+        return durable
+    }
+
+    @Synchronized
+    fun current(): ByteArray? = protected.get(STATE)?.also(Loomcore::validateAndroidV2DeviceState)
 
     @Synchronized
     fun floors(): ByteArray? = protected.get(STATE)?.let(Loomcore::v2DeviceStateFloors)
+
+    private fun commitExact(next: ByteArray): ByteArray {
+        Loomcore.validateAndroidV2DeviceState(next)
+        protected.put(STATE, next)
+        val replay = checkNotNull(protected.get(STATE)) { "v2 Device state 未能持久保存" }
+        check(replay.contentEquals(next)) { "v2 Device state 持久化回读不一致" }
+        Loomcore.validateAndroidV2DeviceState(replay)
+        return replay
+    }
 
     companion object {
         private const val STATE = "device-v2-state"

@@ -107,6 +107,14 @@ type AndroidV2BootstrapSession struct {
 	preflight *wire.EnrollmentIntentPreflightResponseV1
 	core      *wire.EnrollmentClaimCoreV2
 	challenge *wire.EnrollmentPoPChallengeV1
+	// completedResult 只有完整 completion receipt 与 installation context 已由
+	// 共享 verifier 通过后才设置；artifact fetch 不接受宿主传入的 result/ref。
+	completedResult []byte
+}
+
+type androidReleasedArtifactsV1 struct {
+	Schema    int                           `json:"schema"`
+	Envelopes []wire.SealedSecretEnvelopeV1 `json:"envelopes"`
 }
 
 // NewAndroidV2BootstrapSession 只接受完整通过 Invite/catalog/capability authority
@@ -332,17 +340,80 @@ func (session *AndroidV2BootstrapSession) SubmitClaim(canonicalSubmission []byte
 	if err != nil {
 		return nil, err
 	}
-	var result wire.EnrollmentClaimResultV2
-	if err := decodeExactAndroidV2(body, androidBootstrapHTTPMaximum, &result, "Enrollment claim result"); err != nil {
+	_, result, completion, err := verifyAndroidEnrollmentV2ClaimResult(
+		session.inputs, *session.preflight, *session.core, body, now,
+	)
+	if err != nil {
 		return nil, err
 	}
-	if err := wire.ValidateEnrollmentClaimResult(&result); err != nil {
-		return nil, err
-	}
-	if result.Status != "completed" && len(result.ProgressReceipt) == 0 {
-		return nil, errors.New("[D130 Android] pending claim 缺 progress receipt")
+	if result.Status == "completed" {
+		if completion == nil {
+			return nil, errors.New("[D130 Android] completed claim 缺 verified completion evidence")
+		}
+		if len(session.completedResult) != 0 && !bytes.Equal(session.completedResult, body) {
+			return nil, errors.New("[D130 Android] completed result 的 exact replay 发生冲突")
+		}
+		session.completedResult = append(session.completedResult[:0], body...)
+	} else if len(session.completedResult) != 0 {
+		return nil, errors.New("[D130 Android] completed transaction 禁止回退为 pending")
 	}
 	return body, nil
+}
+
+// FetchReleasedArtifacts 只使用同一 session 内已经完整验证的 completed result，
+// 并按其中 exact canonical refs 的顺序读取 immutable ciphertext。宿主不能注入
+// 路径、digest 或 result 来扩张 capability tunnel 的读取范围（D124、D130、D131）。
+func (session *AndroidV2BootstrapSession) FetchReleasedArtifacts(trustedTime string) ([]byte, error) {
+	session.flowMu.Lock()
+	defer session.flowMu.Unlock()
+	if _, err := session.readyAt(trustedTime); err != nil {
+		return nil, err
+	}
+	if len(session.completedResult) == 0 {
+		return nil, errors.New("[D124 Android] released artifact fetch 前尚无 verified completed result")
+	}
+	var result wire.EnrollmentClaimResultV2
+	if err := decodeExactAndroidV2(session.completedResult, 32<<20, &result, "verified completed result"); err != nil {
+		return nil, err
+	}
+	if result.Status != "completed" || result.ResultArtifact == nil {
+		return nil, errors.New("[D124 Android] verified completed result/artifact 不完整")
+	}
+	refs := result.ResultArtifact.SecretArtifactRefs
+	envelopes := make([]wire.SealedSecretEnvelopeV1, len(refs))
+	totalBytes := 0
+	for index := range refs {
+		ref := &refs[index]
+		if ref.BackendKind != "sealed_blob" || ref.SealedBlob == nil {
+			return nil, errors.New("[D124 Android] Enrollment result 含不可由 Device 拉取的 secret backend")
+		}
+		digest, err := wire.ParseHash(ref.SealedBlob.CiphertextDigest)
+		if err != nil {
+			return nil, err
+		}
+		path := "/v2/enrollment/artifacts/sha256/" + hex.EncodeToString(digest)
+		body, err := session.getCanonical(path)
+		if err != nil {
+			return nil, fmt.Errorf("[D124 Android] sealed artifact[%d] 获取失败: %w", index, err)
+		}
+		totalBytes += len(body)
+		if totalBytes > 8<<20 {
+			return nil, errors.New("[D124 Android] released artifacts 超过 bootstrap 总预算")
+		}
+		var envelope wire.SealedSecretEnvelopeV1
+		if err := decodeExactAndroidV2(body, androidBootstrapHTTPMaximum, &envelope,
+			"sealed secret envelope"); err != nil {
+			return nil, err
+		}
+		if err := wire.ValidateSealedSecretEnvelope(&envelope); err != nil {
+			return nil, err
+		}
+		if err := wire.VerifySealedSecretBinding(ref, &envelope); err != nil {
+			return nil, err
+		}
+		envelopes[index] = envelope
+	}
+	return wire.MarshalCanonical(androidReleasedArtifactsV1{Schema: 1, Envelopes: envelopes})
 }
 
 func (session *AndroidV2BootstrapSession) ConnectionAttempts() int64 {
@@ -407,6 +478,34 @@ func (session *AndroidV2BootstrapSession) postCanonical(path string, body []byte
 	if response.Header.Get("Content-Type") != "application/json" || response.Header.Get("Content-Encoding") != "" ||
 		len(response.Cookies()) != 0 || response.Request.URL.String() != session.baseURL+path {
 		return nil, errors.New("[D129 Android] private Enrollment response metadata 无效")
+	}
+	return responseBody, nil
+}
+
+func (session *AndroidV2BootstrapSession) getCanonical(path string) ([]byte, error) {
+	requestContext, cancel := context.WithTimeout(session.context, 45*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(requestContext, http.MethodGet, session.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("User-Agent", "Loom-Android/0.3")
+	response, err := session.client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	responseBody, readErr := io.ReadAll(io.LimitReader(response.Body, androidBootstrapHTTPMaximum+1))
+	if readErr != nil || len(responseBody) == 0 || len(responseBody) > androidBootstrapHTTPMaximum {
+		return nil, errors.New("[D124 Android] sealed artifact response 读取失败或过大")
+	}
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("[D124 Android] sealed artifact 返回 HTTP %d", response.StatusCode)
+	}
+	if response.Header.Get("Content-Type") != "application/json" || response.Header.Get("Content-Encoding") != "" ||
+		len(response.Cookies()) != 0 || response.Request.URL.String() != session.baseURL+path {
+		return nil, errors.New("[D124 Android] sealed artifact response metadata 无效")
 	}
 	return responseBody, nil
 }

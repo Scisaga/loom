@@ -171,6 +171,26 @@ internal class V2EnrollmentCrypto(
         }
     }
 
+    /** 解封明文只在此栈帧存活；持久格式由 Go 重新绑定 exact ref/envelope 后生成。 */
+    fun unsealInstalledSecret(
+        canonicalRef: ByteArray,
+        canonicalEnvelope: ByteArray,
+        recipientID: String,
+        recipientKeyGeneration: Long = 1,
+    ): ByteArray {
+        val secret = unsealSecret(
+            canonicalRef,
+            canonicalEnvelope,
+            recipientID,
+            recipientKeyGeneration,
+        )
+        return try {
+            Loomcore.prepareAndroidInstalledSecretV2(canonicalRef, canonicalEnvelope, secret)
+        } finally {
+            secret.fill(0)
+        }
+    }
+
     private fun unsealP256(
         ref: ByteArray,
         envelope: ByteArray,

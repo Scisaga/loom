@@ -54,6 +54,7 @@ data class EnrollmentStatus(
 class EnrollmentManager private constructor(context: Context) {
     private val appContext = context.applicationContext
     private val store = ManagedProfileStore(appContext)
+    private val v2StateStore = V2DeviceStateStore(appContext)
     private val keys = DeviceKeyStore()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val transaction = Mutex()
@@ -119,7 +120,9 @@ class EnrollmentManager private constructor(context: Context) {
         activeJob = scope.launch {
             transaction.withLock {
                 guarded("无法放弃待加入事务") {
-                    check(store.loadCurrent() == null && store.ready() == null) { "设备已经加入；不会删除正式身份" }
+                    check(
+                        store.loadCurrent() == null && store.ready() == null && v2StateStore.current() == null,
+                    ) { "设备已经加入；不会删除正式身份" }
                     store.clearPending()
                     mutableStatus.value = EnrollmentStatus(
                         EnrollmentPhase.NOT_JOINED,
@@ -205,6 +208,22 @@ class EnrollmentManager private constructor(context: Context) {
             ready(it, "已重放签名链并加载最后可用配置")
             return
         }
+        v2StateStore.current()?.let { installed ->
+            store.pending()?.let { pendingBytes ->
+                val pending = V2PendingEnrollment.decode(pendingBytes)
+                Loomcore.validateAndroidV2InstalledPending(
+                    installed,
+                    checkNotNull(pending.claimCore) { "durable v2 installation 对应的 pending 缺 stable core" },
+                    checkNotNull(pending.claimResult) { "durable v2 installation 对应的 pending 缺 completed result" },
+                )
+                store.clearPending()
+            }
+            mutableStatus.value = EnrollmentStatus(
+                EnrollmentPhase.PULLING,
+                "v2 正式身份已原子安装；主连接将在签名 Device 配置可激活后开放",
+            )
+            return
+        }
         if (
             resumeReadyAfterPendingCleanup(
                 ready = store.ready(),
@@ -241,7 +260,9 @@ class EnrollmentManager private constructor(context: Context) {
     }
 
     private suspend fun beginV1Join(raw: String) {
-        check(store.loadCurrent() == null && store.ready() == null) { "设备已经加入；不会覆盖现有身份" }
+        check(store.loadCurrent() == null && store.ready() == null && v2StateStore.current() == null) {
+            "设备已经加入；不会覆盖现有身份"
+        }
         val canonicalInvite = Loomcore.parseEnrollmentInvite(raw)
         TrustAnchor.validateEnrollmentInvite(canonicalInvite)
         val expiresAt = JSONObject(canonicalInvite.decodeToString()).getString("expires_at")
@@ -269,7 +290,9 @@ class EnrollmentManager private constructor(context: Context) {
     }
 
     private suspend fun beginV2Join(canonicalDescriptor: ByteArray) {
-        check(store.loadCurrent() == null && store.ready() == null) { "设备已经加入；不会覆盖现有身份" }
+        check(store.loadCurrent() == null && store.ready() == null && v2StateStore.current() == null) {
+            "设备已经加入；不会覆盖现有身份"
+        }
         store.pending()?.let { existing ->
             val pending = V2PendingEnrollment.decode(existing)
             check(pending.descriptor.contentEquals(canonicalDescriptor)) {
@@ -386,19 +409,68 @@ class EnrollmentManager private constructor(context: Context) {
                 .withClaimResult(result)
             store.putV2Pending(pending)
             val status = JSONObject(verifiedResult.decodeToString()).getString("status")
+            if (status == "completed") {
+                mutableStatus.value = EnrollmentStatus(
+                    EnrollmentPhase.PULLING,
+                    "正在按完成回执取回并解封密封凭据…",
+                )
+                val released = session.fetchReleasedArtifacts(Instant.now().toString())
+                installV2Completion(pending, result, verifiedResult, released, crypto)
+                mutableStatus.value = EnrollmentStatus(
+                    EnrollmentPhase.PULLING,
+                    "v2 正式身份、Device view 与凭据已原子安装；主连接等待签名 Device 配置",
+                )
+                return
+            }
             mutableStatus.value = EnrollmentStatus(
                 EnrollmentPhase.WAITING,
-                if (status == "completed") {
-                    "v2 claim 已完成；正在等待原子安装正式 Device view 与密封凭据"
-                } else {
-                    "v2 claim 已耐久预约；等待 quorum 完成，重试将复用同一 stable core"
-                },
+                "v2 claim 已耐久预约；等待 quorum 完成，重试将复用同一 stable core",
                 canAbandonPending = true,
             )
         } finally {
             session.close()
             service.finishBootstrapNetwork()
         }
+    }
+
+    private fun installV2Completion(
+        pending: V2PendingEnrollment,
+        result: ByteArray,
+        verifiedResult: ByteArray,
+        releasedArtifacts: ByteArray,
+        crypto: V2EnrollmentCrypto,
+    ) {
+        val verified = JSONObject(verifiedResult.decodeToString())
+        check(verified.getInt("schema") == 1 && verified.getString("status") == "completed") {
+            "v2 completion projection 无效"
+        }
+        val artifact = verified.getJSONObject("result_artifact")
+        val refs = artifact.getJSONArray("secret_artifact_refs")
+        val released = JSONObject(releasedArtifacts.decodeToString())
+        check(released.getInt("schema") == 1) { "released artifact bundle schema 无效" }
+        val envelopes = released.getJSONArray("envelopes")
+        check(refs.length() == envelopes.length()) { "released artifacts 未 exact 覆盖 result refs" }
+        val recipientID = artifact.getJSONObject("initial_device_view").getString("device_id")
+        val installed = JSONArray()
+        for (index in 0 until refs.length()) {
+            val ref = Loomcore.canonicalizeV2(refs.getJSONObject(index).toString().encodeToByteArray())
+            val envelope = Loomcore.canonicalizeV2(
+                envelopes.getJSONObject(index).toString().encodeToByteArray(),
+            )
+            val credential = crypto.unsealInstalledSecret(ref, envelope, recipientID)
+            installed.put(JSONObject(credential.decodeToString()))
+        }
+        val installedCanonical = Loomcore.canonicalizeV2(installed.toString().encodeToByteArray())
+        val state = Loomcore.prepareAndroidV2EnrollmentInstallationState(
+            pending.descriptor,
+            pending.proofBundle,
+            checkNotNull(pending.preflightResponse),
+            checkNotNull(pending.claimCore),
+            result,
+            installedCanonical,
+            Instant.now().toString(),
+        )
+        v2StateStore.installCompletion(state, store::clearPending)
     }
 
     private suspend fun claimUntilReady(pendingBytes: ByteArray) {

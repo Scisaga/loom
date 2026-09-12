@@ -64,6 +64,13 @@ func TestAndroidV2StateRequiresInviteLatchAndExactSelfConsistentLKG(t *testing.T
 }
 
 func androidV2EnvelopeFixture(t *testing.T) (wire.ControlSetV1, wire.DeviceViewEnvelopeV2) {
+	return androidV2EnvelopeFixtureFor(t, "demo-android",
+		wire.HashRaw("android-v2-test", []byte("identity")), []wire.SecretArtifactRefV2{})
+}
+
+func androidV2EnvelopeFixtureFor(t *testing.T, deviceID, identityHash string,
+	secretRefs []wire.SecretArtifactRefV2,
+) (wire.ControlSetV1, wire.DeviceViewEnvelopeV2) {
 	t.Helper()
 	seed := make([]byte, ed25519.SeedSize)
 	seed[len(seed)-1] = 1
@@ -95,15 +102,15 @@ func androidV2EnvelopeFixture(t *testing.T) (wire.ControlSetV1, wire.DeviceViewE
 	responsibilities := wire.EnrollmentResponsibilitiesV1{Schema: 1, Values: []string{"use_loom"}}
 	grants := wire.EnrollmentDestinationGrantsV1{Schema: 1, Values: []wire.EnrollmentDestinationGrantV1{}}
 	bundle := wire.DeviceEndpointBundleV1{Schema: 1, ClusterID: set.ClusterID,
-		DeviceID: "demo-android", DeviceGeneration: 1, DataIngressSets: []wire.DeviceDataIngressBindingV1{}}
+		DeviceID: deviceID, DeviceGeneration: 1, DataIngressSets: []wire.DeviceDataIngressBindingV1{}}
 	membershipHash, _ := wire.HashObject("loom-enrollment-membership-v1", membership)
 	responsibilitiesHash, _ := wire.HashObject("loom-enrollment-responsibilities-v1", responsibilities)
 	grantsHash, _ := wire.HashObject("loom-enrollment-destination-grants-v1", grants)
 	bundleHash, _ := wire.DeviceEndpointBundleHash(&bundle)
-	secretRoot, _ := wire.SecretArtifactRefsRoot([]wire.SecretArtifactRefV2{})
+	secretRoot, _ := wire.SecretArtifactRefsRoot(secretRefs)
 	payload := wire.DeviceViewPayloadV2{Schema: 2, ClusterID: set.ClusterID, DeviceID: bundle.DeviceID,
 		DeviceGeneration: 1, State: "active", Active: &wire.DeviceActiveViewV1{
-			IdentitySPKIHash: hash("identity"), Membership: membership, MembershipHash: membershipHash,
+			IdentitySPKIHash: identityHash, Membership: membership, MembershipHash: membershipHash,
 			Responsibilities: responsibilities, ResponsibilitiesHash: responsibilitiesHash,
 			Grants: grants, GrantsHash: grantsHash, EndpointBundle: bundle, EndpointBundleHash: bundleHash,
 			ConfigArtifactRefs: []wire.DeviceConfigArtifactRefV1{}, SecretArtifactRefsRoot: secretRoot,
@@ -137,8 +144,12 @@ func androidV2EnvelopeFixture(t *testing.T) (wire.ControlSetV1, wire.DeviceViewE
 	}
 	qc := wire.StableQC(&head, []wire.ControlConfigSignatureV1{signature})
 	qcBytes, _ := wire.MarshalCanonical(qc)
+	rawRefs := make([]json.RawMessage, len(secretRefs))
+	for index := range secretRefs {
+		rawRefs[index], _ = wire.MarshalCanonical(secretRefs[index])
+	}
 	return set, wire.DeviceViewEnvelopeV2{Schema: 2, Payload: payload, Leaf: leaf,
 		LeafIndex: 0, TreeSize: 1, AuditPath: []string{}, SignedCurrent: wire.SignedCurrentV2{
 			Schema: 2, Head: head, QuorumCertificate: qcBytes, PublishedAt: "2026-09-11T00:00:01Z",
-		}, SecretArtifactRefs: []json.RawMessage{}}
+		}, SecretArtifactRefs: rawRefs}
 }

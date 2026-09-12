@@ -3,6 +3,7 @@ package loomcore
 import (
 	"encoding/json"
 	"errors"
+	"time"
 
 	"loom/internal/enrollmentv2"
 	"loom/internal/wire"
@@ -39,12 +40,29 @@ func VerifyAndroidEnrollmentV2ClaimResult(descriptorJSON, proofBundleJSON, prefl
 	if err := validateAndroidEnrollmentClaimCoreV2(inputs, preflight, &core); err != nil {
 		return nil, err
 	}
-	var result wire.EnrollmentClaimResultV2
-	if err := decodeExactAndroidV2(resultJSON, 32<<20, &result, "Enrollment claim result"); err != nil {
+	now, _ := wire.ParseTimeZ(trustedTime)
+	projection, _, _, err := verifyAndroidEnrollmentV2ClaimResult(inputs, preflight, core, resultJSON, now)
+	if err != nil {
 		return nil, err
 	}
+	return wire.MarshalCanonical(projection)
+}
+
+// verifyAndroidEnrollmentV2ClaimResult 是 transport session 与公开 binding 共用的
+// receipt 边界。这样 released artifact fetch 只能由同一个已验证 completed result
+// 解锁，不能由 Kotlin 或任意 result 字段单独授权（D124、D130）。
+func verifyAndroidEnrollmentV2ClaimResult(inputs androidEnrollmentInputsV2,
+	preflight wire.EnrollmentIntentPreflightResponseV1, core wire.EnrollmentClaimCoreV2,
+	resultJSON []byte, now time.Time,
+) (androidVerifiedEnrollmentResultV2, wire.EnrollmentClaimResultV2,
+	*enrollmentv2.VerifiedEnrollmentCompletionV1, error,
+) {
+	var result wire.EnrollmentClaimResultV2
+	if err := decodeExactAndroidV2(resultJSON, 32<<20, &result, "Enrollment claim result"); err != nil {
+		return androidVerifiedEnrollmentResultV2{}, wire.EnrollmentClaimResultV2{}, nil, err
+	}
 	if err := wire.ValidateEnrollmentClaimResult(&result); err != nil {
-		return nil, err
+		return androidVerifiedEnrollmentResultV2{}, wire.EnrollmentClaimResultV2{}, nil, err
 	}
 	projection := androidVerifiedEnrollmentResultV2{
 		Schema: 1, Status: result.Status, ExactResult: append(json.RawMessage(nil), resultJSON...),
@@ -59,13 +77,12 @@ func VerifyAndroidEnrollmentV2ClaimResult(descriptorJSON, proofBundleJSON, prefl
 			result.ProgressReceipt, &result, expectedProgress,
 		)
 		if verifyErr != nil {
-			return nil, verifyErr
+			return androidVerifiedEnrollmentResultV2{}, wire.EnrollmentClaimResultV2{}, nil, verifyErr
 		}
 		resume := verified.ResumeExpected()
 		projection.ResumeExpected = &resume
-		return wire.MarshalCanonical(projection)
+		return projection, result, nil, nil
 	}
-	now, _ := wire.ParseTimeZ(trustedTime)
 	verified, err := enrollmentv2.VerifyEnrollmentCompletionReceipt(
 		result.CompletionReceipt,
 		&result,
@@ -76,18 +93,19 @@ func VerifyAndroidEnrollmentV2ClaimResult(descriptorJSON, proofBundleJSON, prefl
 		},
 	)
 	if err != nil {
-		return nil, err
+		return androidVerifiedEnrollmentResultV2{}, wire.EnrollmentClaimResultV2{}, nil, err
 	}
 	if err := verified.VerifyInstallationContext(&result, &core, inputs.verified); err != nil {
-		return nil, err
+		return androidVerifiedEnrollmentResultV2{}, wire.EnrollmentClaimResultV2{}, nil, err
 	}
 	if result.ResultArtifact == nil {
-		return nil, errors.New("[D130 Android] verified completion 缺 result artifact")
+		return androidVerifiedEnrollmentResultV2{}, wire.EnrollmentClaimResultV2{}, nil,
+			errors.New("[D130 Android] verified completion 缺 result artifact")
 	}
 	envelope, set := verified.DeviceViewEnvelope(), verified.ControlSet()
 	artifact := *result.ResultArtifact
 	projection.DeviceViewEnvelope = &envelope
 	projection.ControlSet = &set
 	projection.ResultArtifact = &artifact
-	return wire.MarshalCanonical(projection)
+	return projection, result, &verified, nil
 }
