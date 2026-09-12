@@ -30,6 +30,7 @@ import io.github.scisaga.libbox.PlatformInterface
 import io.github.scisaga.libbox.TunOptions
 import io.github.scisaga.libbox.WIFIState
 import io.github.scisaga.loom.MainActivity
+import io.github.scisaga.loom.LoomApplication
 import io.github.scisaga.loom.R
 import io.github.scisaga.loom.enrollment.EnrollmentManager
 import io.github.scisaga.loom.enrollment.HttpTransport
@@ -108,7 +109,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
     private val monitors = ConcurrentHashMap<InterfaceUpdateListener, UnderlyingMonitor>()
     private val underlyingPublicationLock = Any()
     private val underlyingPublication = UnderlyingPublicationTracker<Network>()
-    private val underlayProbes = UnderlayProbeRegistry()
+    private val underlayProbes by lazy { (application as LoomApplication).underlayProbeRegistry }
     private val connectivity by lazy { getSystemService<ConnectivityManager>()!! }
     private var boxService: BoxService? = null
     @Volatile private var tunnel: ParcelFileDescriptor? = null

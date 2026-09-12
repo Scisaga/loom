@@ -2,7 +2,7 @@
 
 import unittest
 
-from install_confirmation import find_confirmation
+from install_confirmation import SafetyCountdown, find_confirmation
 
 
 def screen(app_label: str, actions: str) -> str:
@@ -44,7 +44,25 @@ class InstallConfirmationTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             find_confirmation(ambiguous)
 
+    def test_waits_for_vendor_install_countdown_to_finish(self):
+        counting_down = screen(
+            "io.github.scisaga.loom.test",
+            '<node text="继续安装" clickable="true" enabled="true" bounds="[0,0][10,10]" />'
+            '<node text="拒绝（8）" clickable="true" enabled="true" bounds="[20,0][30,10]" />',
+        )
+        with self.assertRaises(SafetyCountdown) as raised:
+            find_confirmation(counting_down)
+        self.assertEqual(8, raised.exception.seconds)
+        self.assertEqual((5, 5), (raised.exception.x, raised.exception.y))
+
+        positive_countdown = screen(
+            "Loom",
+            '<node text="Continue (3)" clickable="true" enabled="true" bounds="[0,0][10,10]" />',
+        )
+        with self.assertRaises(SafetyCountdown) as positive:
+            find_confirmation(positive_countdown)
+        self.assertEqual(3, positive.exception.seconds)
+
 
 if __name__ == "__main__":
     unittest.main()
-

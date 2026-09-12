@@ -173,7 +173,9 @@ candidate snapshot and sends at most one lightweight probe per authorized entry 
 by address and source interface in that snapshot,
 in parallel, then reuses fresh canonical v5 server observations returned by the
 existing health-report cycle. Configuration refreshes, mode or exit changes, and
-reconnects within the same generation do not probe again. Entries introduced later
+reconnects within the same generation do not probe again. The registry belongs to
+the Application process, so recreating the `VpnService` also cannot reset that
+budget. Entries introduced later
 in that generation receive no active probe; real dial/fallback attempts may only
 produce passive evidence. Missing, expired, out-of-scope or invalid evidence stays
 unknown, and neither the one-shot entry round nor server evidence gates data-plane
@@ -413,11 +415,42 @@ INSTALL_EVIDENCE_DIR=/tmp/loom-install-evidence \
 ./scripts/install-device-apk.sh "$apk" "$apk_sha"
 ```
 
+The same fail-closed helper accepts the separately built instrumentation APK
+only when it targets `io.github.scisaga.loom`, uses the expected runner, and has
+the same signing certificate as the already installed app:
+
+```bash
+test_apk=app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+test_sha=$(sha256sum "$test_apk" | awk '{print $1}')
+ANDROID_SERIAL=device-serial \
+LOOM_AUTO_CONFIRM_INSTALL=1 \
+INSTALL_EVIDENCE_DIR=/tmp/loom-test-install-evidence \
+./scripts/install-device-apk.sh "$test_apk" "$test_sha" android-test
+```
+
 This is intentionally not a general system-dialog clicker. A missing Loom
 label, ambiguous/disabled button, unexpected foreground package, certificate
 mismatch, emulator target, or changed APK bytes fails closed.
 
-The script installs the debug APK and starts the opt-in instrumented smoke
+After the enrolled debug APK is installed and Android VPN consent has been
+granted once, run the physical-device smoke once on Wi-Fi and once on cellular.
+It never switches the device network itself. It binds the run to the installed
+APK hash, requires a ready managed profile and private report HTTP 200, checks
+idempotent disconnect/reconnect, and proves that reconnecting in the same
+underlying-network generation reuses the exact entry evidence. Output contains
+only booleans and the declared transport:
+
+```bash
+apk=app/build/outputs/apk/debug/app-debug.apk
+apk_sha=$(sha256sum "$apk" | awk '{print $1}')
+ANDROID_SERIAL=device-serial \
+LOOM_PHYSICAL_ACCEPTANCE=1 \
+LOOM_EXPECTED_APK_SHA256="$apk_sha" \
+EXPECTED_UNDERLAY=wifi \
+./scripts/physical-device-smoke.sh
+```
+
+The emulator script installs the debug APK and starts the opt-in instrumented smoke
 test. Success requires the signed fixture and libbox config checks, a
 non-exportable Keystore P-256 key, local TUN/route/selector lifecycle without a
 business DNS/HTTPS probe, an idempotent disconnect, a second connect, and the

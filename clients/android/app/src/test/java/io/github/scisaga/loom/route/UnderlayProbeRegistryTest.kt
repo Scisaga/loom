@@ -39,12 +39,15 @@ class UnderlayProbeRegistryTest {
 
         val first = registry.entries("config-a".encodeToByteArray(), "wlan0", ::measure, ::reuse)
         assertFalse(first.reused)
+        val firstDebug = registry.debugState()
+        assertEquals(64, firstDebug.frozenFingerprint.length)
         // 同代 profile/config/reconnect 不得清空，也不得主动测新增 candidate。
         assertFalse(registry.observeDefaultNetwork("network-1", "wlan0"))
         val second = registry.entries("config-b".encodeToByteArray(), "wlan0", ::measure, ::reuse)
         assertTrue(second.reused)
         assertEquals(1, probes)
         assertTrue(second.entries.decodeToString().startsWith("reused:config-b:measured:config-a"))
+        assertEquals(firstDebug, registry.debugState())
     }
 
     @Test
@@ -60,9 +63,12 @@ class UnderlayProbeRegistryTest {
         registry.observeDefaultNetwork("network-1", "wlan0")
         val first = registry.entries(byteArrayOf(1), "wlan0", ::measure, reuse)
         registry.observeDefaultNetwork("network-2", "rmnet0")
+        assertTrue(registry.debugState().frozenFingerprint.isEmpty())
         val second = registry.entries(byteArrayOf(2), "rmnet0", ::measure, reuse)
         assertEquals(2, probes)
         assertEquals(first.generation + 1, second.generation)
+        assertEquals(second.generation, registry.debugState().generation)
+        assertTrue(registry.debugState().frozenFingerprint.isNotEmpty())
     }
 
     @Test

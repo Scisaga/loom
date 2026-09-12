@@ -4,17 +4,24 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.security.MessageDigest
 
 /**
- * #14：registry 的生命周期与 LoomVpnService 相同，而不是 profile/config/连接相同。
- * 只有 ConnectivityManager 确认默认 Network identity 改变才清空本代冻结候选。
+ * #14：registry 的生命周期与 Application 进程相同，而不是 Service/profile/config/连接相同。
+ * 只有 ConnectivityManager 确认默认 Network identity 改变才清空本代冻结候选；Service 重建只复用。
  */
 internal class UnderlayProbeRegistry {
+    internal data class DebugState(
+        val generation: Long,
+        val frozenFingerprint: String,
+    )
+
     private val lock = Mutex()
     private var networkIdentity: String? = null
     private var sourceInterface: String = ""
     private var generation: Long = 0
     private var frozen: Frozen? = null
+    @Volatile private var debugState = DebugState(0, "")
 
     internal data class Snapshot(
         val generation: Long,
@@ -33,8 +40,12 @@ internal class UnderlayProbeRegistry {
         sourceInterface = source
         generation++
         frozen = null
+        debugState = DebugState(generation, "")
         true
     }
+
+    /** #15：debug receiver 只导出脱敏指纹，用于证明同代重连没有再次测量。 */
+    internal fun debugState(): DebugState = debugState
 
     suspend fun entriesIfEnabled(
         enabled: Boolean,
@@ -60,9 +71,14 @@ internal class UnderlayProbeRegistry {
                 return@withLock Snapshot(generation, reuse(inputs, it.entries, it.source), reused = true)
             }
             // 取消 profile/config/reconnect job 不能让同一代再次发主动 probe；本轮最多
-            // 1.5 秒且继续到 exact 结果落入 service-lifetime registry。
+            // 1.5 秒且继续到 exact 结果落入 process-lifetime registry。
             val measured = measure(inputs, source)
             frozen = Frozen(source, measured.copyOf())
+            debugState = DebugState(
+                generation,
+                MessageDigest.getInstance("SHA-256").digest(measured)
+                    .joinToString("") { "%02x".format(it.toInt() and 0xff) },
+            )
             Snapshot(generation, measured, reused = false)
         }
     }

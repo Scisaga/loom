@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
 import io.github.scisaga.loom.BuildConfig
+import io.github.scisaga.loom.LoomApplication
 import io.github.scisaga.loom.enrollment.EnrollmentManager
 import io.github.scisaga.loom.readBounded
 import io.github.scisaga.loom.route.RouteManager
@@ -64,6 +65,15 @@ class DebugVpnControlReceiver : BroadcastReceiver() {
             }
             return
         }
+        if (intent.action == ACTION_PROBE_REGISTRY_STATUS) {
+            val status = (context.applicationContext as LoomApplication).underlayProbeRegistry.debugState()
+            resultData = buildString {
+                append("generation=").append(status.generation)
+                append(";frozen=").append(status.frozenFingerprint.isNotEmpty())
+                append(";fingerprint=").append(status.frozenFingerprint.ifEmpty { "none" })
+            }
+            return
+        }
         if (intent.action == ACTION_ROUTE_DIRECT || intent.action == ACTION_ROUTE_AUTO) {
             RouteManager.get(context).select(
                 if (intent.action == ACTION_ROUTE_DIRECT) RouteMode.DIRECT else RouteMode.AUTO,
@@ -114,6 +124,7 @@ class DebugVpnControlReceiver : BroadcastReceiver() {
         const val ACTION_ENROLLMENT_STATUS = "io.github.scisaga.loom.debug.ENROLLMENT_STATUS"
         const val ACTION_ROUTE_STATUS = "io.github.scisaga.loom.debug.ROUTE_STATUS"
         const val ACTION_RUNTIME_STATUS = "io.github.scisaga.loom.debug.RUNTIME_STATUS"
+        const val ACTION_PROBE_REGISTRY_STATUS = "io.github.scisaga.loom.debug.PROBE_REGISTRY_STATUS"
         const val ACTION_ROUTE_DIRECT = "io.github.scisaga.loom.debug.ROUTE_DIRECT"
         const val ACTION_ROUTE_AUTO = "io.github.scisaga.loom.debug.ROUTE_AUTO"
         private const val PENDING_INVITE = "pending.loom-invite"

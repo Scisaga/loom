@@ -191,7 +191,7 @@ class RouteManager private constructor(context: Context) {
                         runningProbeSource.isNotBlank()
                     ) {
                         val registry = checkNotNull(runningProbeRegistry) {
-                            "当前连接代缺少 service-lifetime 入口 registry"
+                            "当前连接代缺少 process-lifetime 入口 registry"
                         }
                         val measured = registry.entries(
                             runningInputs,
@@ -266,7 +266,7 @@ class RouteManager private constructor(context: Context) {
         }
     }
 
-    /** #14：只由 service-lifetime registry 在当前底层网络代执行一轮并行入口测量。 */
+    /** #14：只由 process-lifetime registry 在当前底层网络代执行一轮并行入口测量。 */
     internal suspend fun beginRouteSession(profile: ManagedProfile, source: String, registry: UnderlayProbeRegistry) {
         val plan = profile.routePlan ?: return
         val inputs = Loomcore.androidRoutingInputs(profile.config.encodeToByteArray(), plan.encodeToByteArray())
