@@ -17,6 +17,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -67,6 +68,73 @@ func TestLinuxBootstrapCandidatesPreferHY2AndCurrentPreferred(t *testing.T) {
 	for index := range want {
 		if candidates[index].selection != want[index] {
 			t.Fatalf("candidate[%d]=%#v want=%#v", index, candidates[index].selection, want[index])
+		}
+	}
+}
+
+func TestLinuxBootstrapProbeRunsOnceInParallelAndKeepsHY2Preference(t *testing.T) {
+	candidates := []linuxBootstrapCandidate{
+		{selection: LinuxBootstrapSelection{EndpointID: "hy2-b", Transport: "hysteria2", ListenerGeneration: 1}, hintRank: 2},
+		{selection: LinuxBootstrapSelection{EndpointID: "tcp-a", Transport: "trojan_tls", ListenerGeneration: 1}},
+		{selection: LinuxBootstrapSelection{EndpointID: "hy2-a", Transport: "hysteria2", ListenerGeneration: 1}, hintRank: 1},
+	}
+	started := make(chan struct{}, len(candidates))
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	var mu sync.Mutex
+	calls := make(map[string]int)
+	dialer := &LinuxBootstrapTunnelDialer{
+		candidates: candidates, timeout: time.Second, probeTimeout: 500 * time.Millisecond,
+		probeCandidate: func(ctx context.Context, candidate linuxBootstrapCandidate) error {
+			mu.Lock()
+			calls[candidate.selection.EndpointID]++
+			mu.Unlock()
+			started <- struct{}{}
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			if candidate.selection.EndpointID == "hy2-b" {
+				return errors.New("synthetic unreachable HY2")
+			}
+			return nil
+		},
+	}
+	type probeOutcome struct {
+		results []linuxBootstrapProbeResult
+		err     error
+	}
+	done := make(chan probeOutcome, 1)
+	go func() {
+		results, err := dialer.probeCandidates(context.Background())
+		done <- probeOutcome{results: results, err: err}
+	}()
+	for range candidates {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("Linux bootstrap transport probe 仍在串行等待候选")
+		}
+	}
+	releaseOnce.Do(func() { close(release) })
+	outcome := <-done
+	if outcome.err != nil {
+		t.Fatal(outcome.err)
+	}
+	if len(outcome.results) != 2 || outcome.results[0].candidate.selection.EndpointID != "hy2-a" ||
+		outcome.results[1].candidate.selection.EndpointID != "tcp-a" {
+		t.Fatalf("viable probe order=%#v", outcome.results)
+	}
+	if _, err := dialer.probeCandidates(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, candidate := range candidates {
+		if calls[candidate.selection.EndpointID] != 1 {
+			t.Fatalf("endpoint %q probe calls=%d", candidate.selection.EndpointID, calls[candidate.selection.EndpointID])
 		}
 	}
 }
@@ -213,6 +281,9 @@ func TestLinuxHysteria2BootstrapTunnelInteroperatesWithWireProtocol(t *testing.T
 			config *quic.Config) (quic.Connection, error) {
 			if address != "bootstrap.example:443" {
 				return nil, errors.New("拨号目标不是 certified tuple")
+			}
+			if config.InitialPacketSize != linuxBootstrapQUICInitialPacket {
+				return nil, errors.New("HY2 Initial packet 未约束到小 MTU 安全值")
 			}
 			return quic.DialAddr(ctx, packetConnection.LocalAddr().String(), tlsConfig, config)
 		},

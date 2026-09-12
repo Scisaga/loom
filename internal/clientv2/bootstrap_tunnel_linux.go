@@ -35,6 +35,8 @@ const (
 	linuxBootstrapHysteriaTCPFrame   = uint64(0x401)
 	linuxBootstrapMaximumMessage     = 2048
 	linuxBootstrapMaximumPadding     = 4096
+	linuxBootstrapQUICInitialPacket  = 1200
+	linuxBootstrapProbeTimeout       = 3 * time.Second
 )
 
 // LinuxBootstrapSelection 是可公开进入诊断证据的最小选择结果；它不包含 FQDN、
@@ -54,6 +56,11 @@ type linuxBootstrapCandidate struct {
 	preferred  bool
 }
 
+type linuxBootstrapProbeResult struct {
+	candidate linuxBootstrapCandidate
+	rtt       time.Duration
+}
+
 // LinuxBootstrapTunnelDialer 只拨 capability 允许的 exact private Enrollment tuple。
 // 每次实际 outer dial 都计入 capability attempt budget；不会扫描 catalog 外端口。
 type LinuxBootstrapTunnelDialer struct {
@@ -65,11 +72,15 @@ type LinuxBootstrapTunnelDialer struct {
 	maximumAttempts int64
 	attempts        int64
 	selected        *LinuxBootstrapSelection
+	probed          bool
+	viable          []linuxBootstrapProbeResult
 	roots           *x509.CertPool
 	timeout         time.Duration
+	probeTimeout    time.Duration
 
-	tcpDial  func(context.Context, string, string) (net.Conn, error)
-	quicDial func(context.Context, string, *tls.Config, *quic.Config) (quic.Connection, error)
+	tcpDial        func(context.Context, string, string) (net.Conn, error)
+	quicDial       func(context.Context, string, *tls.Config, *quic.Config) (quic.Connection, error)
+	probeCandidate func(context.Context, linuxBootstrapCandidate) error
 }
 
 // NewLinuxBootstrapTunnelDialer 把 Invite lineage、catalog QC 与 capability authorization
@@ -114,12 +125,100 @@ func NewLinuxBootstrapTunnelDialer(catalog *wire.BootstrapEndpointCatalogV1,
 	return &LinuxBootstrapTunnelDialer{
 		candidates: candidates, credential: verified.TransportCredential(), destination: destination,
 		maximumAttempts: body.MaximumConnectionAttempts, roots: roots, timeout: 12 * time.Second,
-		tcpDial: dialer.DialContext,
+		probeTimeout: linuxBootstrapProbeTimeout,
+		tcpDial:      dialer.DialContext,
 		quicDial: func(ctx context.Context, address string, tlsConfig *tls.Config,
 			config *quic.Config) (quic.Connection, error) {
 			return quic.DialAddr(ctx, address, tlsConfig, config)
 		},
 	}, nil
+}
+
+// probeCandidates 对当前 catalog 的授权入口只做一轮并行、无 bearer 的 outer
+// TLS/QUIC handshake。UDP 全阻断的等待因此有固定上限，不再随 HY2 候选数线性增长；
+// capability credential 与 attempt budget 只留给随后选中的真实 tunnel（D131、Issue #11）。
+func (dialer *LinuxBootstrapTunnelDialer) probeCandidates(ctx context.Context) ([]linuxBootstrapProbeResult, error) {
+	if dialer.probed {
+		if len(dialer.viable) == 0 {
+			return nil, errors.New("[D131 Linux bootstrap] 已冻结的 transport probe 无可达入口")
+		}
+		return append([]linuxBootstrapProbeResult(nil), dialer.viable...), nil
+	}
+	timeout := dialer.probeTimeout
+	if timeout <= 0 || timeout > dialer.timeout {
+		timeout = dialer.timeout
+	}
+	probe := dialer.probeCandidate
+	if probe == nil {
+		probe = dialer.probeTransport
+	}
+	type outcome struct {
+		result linuxBootstrapProbeResult
+		err    error
+	}
+	outcomes := make(chan outcome, len(dialer.candidates))
+	for _, candidate := range dialer.candidates {
+		candidate := candidate
+		go func() {
+			attemptContext, cancel := context.WithTimeout(ctx, timeout)
+			defer cancel()
+			started := time.Now()
+			err := probe(attemptContext, candidate)
+			outcomes <- outcome{result: linuxBootstrapProbeResult{candidate: candidate, rtt: time.Since(started)}, err: err}
+		}()
+	}
+	viable := make([]linuxBootstrapProbeResult, 0, len(dialer.candidates))
+	for range dialer.candidates {
+		result := <-outcomes
+		if result.err == nil {
+			viable = append(viable, result.result)
+		}
+	}
+	sort.SliceStable(viable, func(left, right int) bool {
+		l, r := viable[left], viable[right]
+		if l.candidate.selection.Transport != r.candidate.selection.Transport {
+			return l.candidate.selection.Transport == "hysteria2"
+		}
+		if l.rtt != r.rtt {
+			return l.rtt < r.rtt
+		}
+		if l.candidate.hintRank != r.candidate.hintRank {
+			return l.candidate.hintRank < r.candidate.hintRank
+		}
+		if l.candidate.selection.EndpointID != r.candidate.selection.EndpointID {
+			return l.candidate.selection.EndpointID < r.candidate.selection.EndpointID
+		}
+		if l.candidate.preferred != r.candidate.preferred {
+			return l.candidate.preferred
+		}
+		return l.candidate.selection.ListenerGeneration > r.candidate.selection.ListenerGeneration
+	})
+	dialer.probed, dialer.viable = true, viable
+	if len(viable) == 0 {
+		return nil, errors.New("[D131 Linux bootstrap] 当前 underlay 没有通过身份验证的 HY2/Trojan transport")
+	}
+	return append([]linuxBootstrapProbeResult(nil), viable...), nil
+}
+
+func (dialer *LinuxBootstrapTunnelDialer) probeTransport(ctx context.Context,
+	candidate linuxBootstrapCandidate) error {
+	address := net.JoinHostPort(candidate.serverName, strconv.Itoa(int(candidate.publicPort)))
+	if candidate.selection.Transport == "hysteria2" {
+		connection, err := dialer.quicDial(ctx, address,
+			linuxBootstrapTLSConfig(candidate.serverName, candidate.spkiPins, dialer.roots, true),
+			linuxBootstrapQUICConfig(dialer.probeTimeout))
+		if err != nil {
+			return err
+		}
+		return connection.CloseWithError(0, "")
+	}
+	raw, err := dialer.tcpDial(ctx, "tcp", address)
+	if err != nil {
+		return err
+	}
+	defer raw.Close()
+	connection := tls.Client(raw, linuxBootstrapTLSConfig(candidate.serverName, candidate.spkiPins, dialer.roots, false))
+	return connection.HandshakeContext(ctx)
 }
 
 func capabilityDestination(body wire.BootstrapTunnelCapabilityBodyV1) (string, error) {
@@ -214,10 +313,15 @@ func (dialer *LinuxBootstrapTunnelDialer) DialContext(ctx context.Context,
 	}
 	dialer.mu.Lock()
 	defer dialer.mu.Unlock()
-	for _, candidate := range dialer.candidates {
+	viable, err := dialer.probeCandidates(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, result := range viable {
 		if dialer.attempts >= dialer.maximumAttempts {
 			break
 		}
+		candidate := result.candidate
 		dialer.attempts++
 		attemptContext, cancel := context.WithTimeout(ctx, dialer.timeout)
 		var connection net.Conn
@@ -308,8 +412,7 @@ func (dialer *LinuxBootstrapTunnelDialer) dialHysteria2(ctx context.Context,
 	candidate linuxBootstrapCandidate) (net.Conn, error) {
 	address := net.JoinHostPort(candidate.serverName, strconv.Itoa(int(candidate.publicPort)))
 	tlsConfig := linuxBootstrapTLSConfig(candidate.serverName, candidate.spkiPins, dialer.roots, true)
-	config := &quic.Config{HandshakeIdleTimeout: dialer.timeout, MaxIdleTimeout: 2 * time.Minute,
-		KeepAlivePeriod: 20 * time.Second, EnableDatagrams: false, Allow0RTT: false}
+	config := linuxBootstrapQUICConfig(dialer.timeout)
 	connection, err := dialer.quicDial(ctx, address, tlsConfig, config)
 	if err != nil {
 		return nil, err
@@ -339,6 +442,16 @@ func (dialer *LinuxBootstrapTunnelDialer) dialHysteria2(ctx context.Context,
 	}
 	return &linuxHysteria2TunnelConn{Stream: stream, connection: connection,
 		destination: dialer.destination}, nil
+}
+
+func linuxBootstrapQUICConfig(timeout time.Duration) *quic.Config {
+	config := &quic.Config{HandshakeIdleTimeout: timeout, MaxIdleTimeout: 2 * time.Minute,
+		KeepAlivePeriod: 20 * time.Second, EnableDatagrams: false, Allow0RTT: false}
+	// quic-go 默认用 1280-byte QUIC payload，叠加 IPv4/IPv6 与 UDP header 后会超过
+	// 常见的 1280-byte 小 MTU，并在握手前来不及完成 PMTU discovery（Issue #12）。
+	// QUIC 允许的最小 Initial packet 能同时覆盖 IPv4/IPv6 的该边界。
+	config.InitialPacketSize = linuxBootstrapQUICInitialPacket
+	return config
 }
 
 func linuxBootstrapTLSConfig(serverName string, pins []string, roots *x509.CertPool,
