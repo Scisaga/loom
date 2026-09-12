@@ -243,7 +243,8 @@ func ValidateDeviceViewPayload(payload *DeviceViewPayloadV2) error {
 			return errors.New("[D105 Device view] endpoint bundle hash 不匹配")
 		}
 		for i, ref := range active.ConfigArtifactRefs {
-			if ref.Generation < 1 || ref.SizeBytes < 0 || !validIdentifier(ref.ArtifactID, 128) ||
+			if ref.Generation < 1 || ref.SizeBytes < 1 || !validIdentifier(ref.ArtifactID, 128) ||
+				!validIdentifier(ref.RenderContractID, 128) ||
 				!oneOf(ref.Platform, "windows-desktop", "android", "linux-server") ||
 				!oneOf(ref.MediaType, "application/vnd.loom.config+json", "application/vnd.loom.sing-box+json") {
 				return errors.New("[D105 Device view] config artifact ref 无效")

@@ -3158,6 +3158,14 @@ LinkIntent 的 initiator/transport 选择；同一逻辑数据边可在两端可
 改为 HY2，不代表全网切换。HY2 未实现并验收 L3-over-HY2 前不能替换 control overlay 的 WG，
 默认也不把 WG 套在 HY2 内。目标 EndpointSet/Directory 明确分为：
 
+Linux reader 不接受命令行现造的 LinkIntent。它只读取 current Device view 中
+`linux-link-intents` config ref 按 size/content hash/render contract 承诺的 exact canonical artifact，
+再将每条 intent 与 Device responsibilities/grants、已安装 credential ID、endpoint transport 和
+listener generation floor 交叉验证。`control_overlay` 只允许 WireGuard，且本机与对端都必须出现在
+Head 的 `control_peer_directory_hash` 绑定的 exact private directory；active 运行面一律拒绝 bootstrap intent。
+新连接只按 preferred→advertised 取当前可拨代，draining/过期/低于已见 floor 的代均不进入计划，
+也不会扫描相邻端口。
+
 ~~~text
 ListenerGenerationV2               # public；同一 logical endpoint 的一个可拨物理代次
   schema = 2, listener_generation

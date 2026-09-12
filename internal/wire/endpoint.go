@@ -213,18 +213,33 @@ func ValidateLinkIntent(intent *LinkIntentV1) error {
 	if intent == nil || intent.Schema != 1 || !validIdentifier(intent.ClusterID, 128) ||
 		!validIdentifier(intent.LinkID, 128) || !validIdentifier(intent.FromDeviceID, 128) ||
 		intent.Generation < 1 || !oneOf(intent.Purpose, "control_overlay", "data_forward", "bootstrap") ||
-		!oneOf(intent.Initiator, "from", "to") {
+		!oneOf(intent.Initiator, "from", "to") || !validIdentifier(intent.RouteScope, 128) {
 		return errors.New("[D131 LinkIntent] schema/identity/purpose/initiator 无效")
 	}
 	if (intent.To.DeviceID == "") == (intent.To.ServiceID == "") {
 		return errors.New("[D131 LinkIntent] to 必须且只能选择 device_id/service_id")
 	}
+	if intent.To.DeviceID != "" && (!validIdentifier(intent.To.DeviceID, 128) || intent.To.DeviceID == intent.FromDeviceID) ||
+		intent.To.ServiceID != "" && !validIdentifier(intent.To.ServiceID, 128) {
+		return errors.New("[D131 LinkIntent] destination identity 无效或自环")
+	}
 	if !sortedEnum(intent.AllowedTransports, []string{"wireguard", "hysteria2", "trojan_tls"}, true) ||
-		!sortedUnique(intent.ListenerResourceRefs) || !sortedUnique(intent.CredentialRefs) {
+		!sortedUnique(intent.ListenerResourceRefs) || len(intent.ListenerResourceRefs) == 0 ||
+		!sortedUnique(intent.CredentialRefs) || len(intent.CredentialRefs) == 0 {
 		return errors.New("[D131 LinkIntent] transports/refs 必须按规范稳定排序且不重复")
 	}
-	if intent.Purpose == "bootstrap" && contains(intent.AllowedTransports, "wireguard") {
-		return errors.New("[D131 LinkIntent] 首版 bootstrap 明确不支持 WireGuard")
+	for _, ref := range append(append([]string(nil), intent.ListenerResourceRefs...), intent.CredentialRefs...) {
+		if !validIdentifier(ref, 128) {
+			return errors.New("[D131 LinkIntent] listener/credential ref 无效")
+		}
+	}
+	if intent.Purpose == "control_overlay" && (intent.To.DeviceID == "" ||
+		len(intent.AllowedTransports) != 1 || intent.AllowedTransports[0] != "wireguard") {
+		return errors.New("[D131 LinkIntent] permanent control overlay 必须是 Device 间独立 WireGuard")
+	}
+	if intent.Purpose == "bootstrap" && (intent.To.ServiceID == "" || intent.Initiator != "from" ||
+		contains(intent.AllowedTransports, "wireguard")) {
+		return errors.New("[D131 LinkIntent] bootstrap 只允许 from 发起的非 WireGuard service 边")
 	}
 	_, err := ParseHash(intent.ParentHeadHash)
 	return err
