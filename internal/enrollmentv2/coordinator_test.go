@@ -117,6 +117,8 @@ func TestCoordinatorResumesReservedTransactionAndFreezesCompletedResult(t *testi
 		})
 	if err != nil || verifiedCompletion.TransactionStateHash() != completed.TransactionStateHash ||
 		!wire.EqualCanonical(verifiedCompletion.DeviceCertificateProfile(), profile) ||
+		verifiedCompletion.DeviceCertificateIssuance().RaftIndex < 1 ||
+		verifiedCompletion.DeviceCertificateApprovedAt() != private.now.Format(time.RFC3339) ||
 		verifiedCompletion.ResumeExpected().EnrollmentTransactionStateHash != completed.TransactionStateHash ||
 		verifiedCompletion.ResumeExpected().ClaimCoreHash != reservedProgress.ResumeExpected().ClaimCoreHash ||
 		verifiedCompletion.ResumeExpected().ClaimOperationHash != reservedProgress.ResumeExpected().ClaimOperationHash ||

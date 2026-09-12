@@ -2,6 +2,7 @@ package loomcore
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -132,6 +133,68 @@ func PrepareV2DeviceStateWithPrevious(envelopeJSON, controlSetJSON, previousCont
 		Schema: 1, Floors: nextFloors, Envelope: envelope, ControlSet: &setCopy,
 		PreviousControlSet: previousCopy, Enrollment: current.Enrollment,
 	})
+}
+
+// PrepareAndroidV2PrivateDeviceViewUpdate 只接受当前 protected ControlSet 能独立
+// 验证、且无需尚未获取 artifact 的 private Device view。配置/secret 变化必须走
+// “先验证 refs、取回并原子安装”事务，不能先推进 floor（D105、D124）。
+func PrepareAndroidV2PrivateDeviceViewUpdate(currentStateJSON, envelopeJSON,
+	identitySPKIDER []byte,
+) ([]byte, error) {
+	current, err := decodeAndroidV2DeviceState(currentStateJSON)
+	if err != nil {
+		return nil, err
+	}
+	if current.ControlSet == nil || current.Enrollment == nil {
+		return nil, errors.New("[D131 Android config] protected ControlSet/Enrollment 不完整")
+	}
+	identityHash, err := wire.HashBytes(wire.DomainEnrollmentIdentitySPKI, identitySPKIDER)
+	if err != nil || identityHash != current.Enrollment.IdentityKeyHash {
+		return nil, errors.New("[D131 Android config] Keystore identity 与 protected state 不匹配")
+	}
+	var envelope wire.DeviceViewEnvelopeV2
+	if err := decodeExactAndroidV2(envelopeJSON, 32<<20, &envelope, "private Device view"); err != nil {
+		return nil, err
+	}
+	if envelope.Payload.State == "active" {
+		if current.Envelope.Payload.Active == nil || envelope.Payload.Active == nil ||
+			!wire.EqualCanonical(envelope.Payload.Active.ConfigArtifactRefs,
+				current.Envelope.Payload.Active.ConfigArtifactRefs) ||
+			!equalRawAndroidV2(envelope.SecretArtifactRefs, current.Envelope.SecretArtifactRefs) {
+			return nil, errors.New("[D124 Android config] Device view artifact refs 已变化，必须原子取回后安装")
+		}
+	}
+	setJSON, err := wire.MarshalCanonical(current.ControlSet)
+	if err != nil {
+		return nil, err
+	}
+	var previousJSON []byte
+	var qcTag struct {
+		QCType string `json:"qc_type"`
+	}
+	if err := json.Unmarshal(envelope.SignedCurrent.QuorumCertificate, &qcTag); err != nil {
+		return nil, errors.New("[D105 Android config] Device view QC tag 无效")
+	}
+	if qcTag.QCType == "joint_head" && current.PreviousControlSet != nil {
+		previousJSON, err = wire.MarshalCanonical(current.PreviousControlSet)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return PrepareV2DeviceStateWithPrevious(envelopeJSON, setJSON, previousJSON,
+		current.Envelope.Payload.DeviceID, identityHash, currentStateJSON)
+}
+
+func equalRawAndroidV2(left, right []json.RawMessage) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if !bytes.Equal(left[index], right[index]) {
+			return false
+		}
+	}
+	return true
 }
 
 // PrepareInitialV2DeviceStateFromInvite 是 fresh Android Enrollment 的唯一首次

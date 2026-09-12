@@ -52,6 +52,8 @@ type VerifiedEnrollmentCompletionV1 struct {
 	envelope               wire.DeviceViewEnvelopeV2
 	controlSet             wire.ControlSetV1
 	deviceProfile          wire.DeviceCertificateProfileStateV1
+	deviceIssuance         wire.IssuanceLogCoordinateV1
+	deviceApprovedAt       string
 	resumeExpected         wire.EnrollmentResumeExpectedV1
 	transactionHash        string
 	transactionStateHashes []string
@@ -74,6 +76,14 @@ func (verified VerifiedEnrollmentCompletionV1) ControlSet() wire.ControlSetV1 {
 
 func (verified VerifiedEnrollmentCompletionV1) DeviceCertificateProfile() wire.DeviceCertificateProfileStateV1 {
 	return clonePrivateValue(verified.deviceProfile)
+}
+
+func (verified VerifiedEnrollmentCompletionV1) DeviceCertificateIssuance() wire.IssuanceLogCoordinateV1 {
+	return verified.deviceIssuance
+}
+
+func (verified VerifiedEnrollmentCompletionV1) DeviceCertificateApprovedAt() string {
+	return verified.deviceApprovedAt
 }
 
 func (verified VerifiedEnrollmentCompletionV1) TransactionStateHash() string {
@@ -317,8 +327,10 @@ func VerifyEnrollmentCompletionReceipt(raw []byte, result *wire.EnrollmentClaimR
 	}
 	envelope := receipt.CompletionCertification.DeviceViewEnvelope
 	return VerifiedEnrollmentCompletionV1{envelope: clonePrivateValue(envelope),
-		controlSet:    clonePrivateValue(receipt.CompletionCertification.Operation.ControlSet),
-		deviceProfile: clonePrivateValue(receipt.DeviceCertificateProfile),
+		controlSet:       clonePrivateValue(receipt.CompletionCertification.Operation.ControlSet),
+		deviceProfile:    clonePrivateValue(receipt.DeviceCertificateProfile),
+		deviceIssuance:   receipt.ProvisionalIssuance.Body.IssuanceLogCoordinate,
+		deviceApprovedAt: issuanceTime.Format(time.RFC3339),
 		resumeExpected: wire.EnrollmentResumeExpectedV1{
 			ClusterID: expected.ClaimCore.ClusterID, InviteID: expected.ClaimCore.InviteID,
 			RequestID: expected.ClaimCore.RequestID, ClaimCoreHash: coreHash,

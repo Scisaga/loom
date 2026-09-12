@@ -104,7 +104,16 @@ class EnrollmentManager private constructor(context: Context) {
             transaction.withLock {
                 guarded("配置更新失败") {
                     v2StateStore.runtimeProfile()?.let {
-                        ready(it, "v2 Device 已使用当前 certified LKG")
+                        if (VpnRuntime.status.value.phase == ConnectionPhase.CONNECTED) {
+                            ContextCompat.startForegroundService(
+                                appContext,
+                                Intent(appContext, LoomVpnService::class.java)
+                                    .setAction(LoomVpnService.ACTION_REFRESH_V2),
+                            )
+                            ready(it, "已请求经 private device_config 刷新；失败时继续沿用 certified LKG")
+                        } else {
+                            ready(it, "v2 Device 已使用当前 certified LKG；连接后才能访问 private device_config")
+                        }
                         return@guarded
                     }
                     candidateProfile()?.let {

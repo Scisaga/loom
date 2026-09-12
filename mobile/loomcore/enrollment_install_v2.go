@@ -33,6 +33,8 @@ type androidEnrollmentInstallationV1 struct {
 	DeviceCertificateHash string                                `json:"device_certificate_hash"`
 	DeviceProfileHash     string                                `json:"device_profile_hash,omitempty"`
 	DeviceProfile         *wire.DeviceCertificateProfileStateV1 `json:"device_profile,omitempty"`
+	DeviceIssuance        *wire.IssuanceLogCoordinateV1         `json:"device_issuance,omitempty"`
+	DeviceApprovedAt      string                                `json:"device_approved_at,omitempty"`
 	ResultArtifact        wire.EnrollmentResultArtifactV1       `json:"result_artifact"`
 	Credentials           []androidInstalledSecretV1            `json:"credentials"`
 	// Configs 在旧版已安装 blob 中可缺省；新 Enrollment 不得走该兼容路径。
@@ -207,6 +209,7 @@ func prepareAndroidEnrollmentInstallationState(core wire.EnrollmentClaimCoreV2,
 		return nil, err
 	}
 	envelope, set := completion.DeviceViewEnvelope(), completion.ControlSet()
+	issuance := completion.DeviceCertificateIssuance()
 	state, err := prepareInitialAndroidV2DeviceStateFromVerified(
 		envelope, set, proof, result.ResultArtifact.InitialDeviceView.DeviceID, identityHash,
 	)
@@ -218,7 +221,8 @@ func prepareAndroidEnrollmentInstallationState(core wire.EnrollmentClaimCoreV2,
 		IdentityKeyHash: identityHash, WrappingKeyHash: wrappingHash,
 		TransactionStateHash: result.TransactionStateHash, ResultArtifactHash: result.ResultArtifactHash,
 		DeviceCertificateHash: certificateHash, DeviceProfileHash: profileHash,
-		DeviceProfile: &profile, ResultArtifact: *result.ResultArtifact,
+		DeviceProfile: &profile, DeviceIssuance: &issuance,
+		DeviceApprovedAt: completion.DeviceCertificateApprovedAt(), ResultArtifact: *result.ResultArtifact,
 		Credentials: credentials, Configs: configs,
 	}
 	return marshalAndroidV2DeviceState(state)
@@ -303,15 +307,26 @@ func validateAndroidEnrollmentInstallation(installation *androidEnrollmentInstal
 	if err != nil || parseErr != nil || certificateHash != installation.DeviceCertificateHash {
 		return errors.New("[D102 Android] durable certificate/hash 无效")
 	}
-	if (installation.DeviceProfile == nil) != (installation.DeviceProfileHash == "") {
+	profileContextMissing := installation.DeviceProfile == nil && installation.DeviceProfileHash == "" &&
+		installation.DeviceIssuance == nil && installation.DeviceApprovedAt == ""
+	profileContextComplete := installation.DeviceProfile != nil && installation.DeviceProfileHash != "" &&
+		installation.DeviceIssuance != nil && installation.DeviceApprovedAt != ""
+	if !profileContextMissing && !profileContextComplete {
 		return errors.New("[D102 Android] durable Device certificate profile 不完整")
 	}
-	if installation.DeviceProfile != nil {
+	if profileContextComplete {
 		profileHash, profileErr := wire.DeviceCertificateProfileStateHash(installation.DeviceProfile)
-		if profileErr != nil || profileHash != installation.DeviceProfileHash ||
+		approvedAt, timeErr := wire.ParseTimeZ(installation.DeviceApprovedAt)
+		if profileErr != nil || timeErr != nil || profileHash != installation.DeviceProfileHash ||
 			installation.DeviceProfile.ClusterID != envelope.Payload.ClusterID ||
 			installation.DeviceProfile.Status != "active" {
 			return errors.New("[D102 Android] durable Device certificate profile/hash 无效")
+		}
+		if _, verifyErr := wire.VerifyDeviceCertificateAt(certificateDER, installation.DeviceProfile,
+			initialView.DeviceID, installation.IdentityKeyHash, installation.ClaimCore.ClientPlatform,
+			initialView.Active.Responsibilities.Values, *installation.DeviceIssuance,
+			approvedAt, approvedAt); verifyErr != nil {
+			return errors.New("[D102 Android] durable Device certificate verification context 无效")
 		}
 	}
 	certificateIdentityHash, err := wire.HashBytes(
@@ -321,13 +336,17 @@ func validateAndroidEnrollmentInstallation(installation *androidEnrollmentInstal
 		return errors.New("[D102 Android] durable certificate 未绑定 Keystore identity")
 	}
 	refs := installation.ResultArtifact.SecretArtifactRefs
-	if len(refs) != len(installation.Credentials) || len(refs) != len(envelope.SecretArtifactRefs) {
+	if len(refs) != len(installation.Credentials) ||
+		envelope.Payload.Active != nil && len(refs) != len(envelope.SecretArtifactRefs) {
 		return errors.New("[D124 Android] durable credentials/refs 数量不匹配")
 	}
 	totalSecretBytes := 0
 	for index := range refs {
 		canonicalRef, refErr := wire.MarshalCanonical(refs[index])
-		canonicalEnvelopeRef, envelopeErr := wire.CanonicalizeStrict(envelope.SecretArtifactRefs[index])
+		canonicalEnvelopeRef, envelopeErr := canonicalRef, refErr
+		if envelope.Payload.Active != nil {
+			canonicalEnvelopeRef, envelopeErr = wire.CanonicalizeStrict(envelope.SecretArtifactRefs[index])
+		}
 		credential := &installation.Credentials[index]
 		if refErr != nil || envelopeErr != nil || !bytes.Equal(canonicalRef, canonicalEnvelopeRef) ||
 			credential.SecretID != refs[index].SecretID || credential.Purpose != refs[index].Purpose ||
@@ -347,8 +366,11 @@ func validateAndroidEnrollmentInstallation(installation *androidEnrollmentInstal
 		}
 	}
 	if installation.Configs != nil {
-		if err := validateAndroidInstalledConfigs(installation.Configs,
-			initialView.Active.ConfigArtifactRefs); err != nil {
+		configRefs := initialView.Active.ConfigArtifactRefs
+		if envelope.Payload.Active != nil {
+			configRefs = envelope.Payload.Active.ConfigArtifactRefs
+		}
+		if err := validateAndroidInstalledConfigs(installation.Configs, configRefs); err != nil {
 			return err
 		}
 	}

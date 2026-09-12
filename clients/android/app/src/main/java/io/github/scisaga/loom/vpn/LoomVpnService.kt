@@ -35,6 +35,7 @@ import io.github.scisaga.loom.enrollment.EnrollmentManager
 import io.github.scisaga.loom.enrollment.HttpTransport
 import io.github.scisaga.loom.enrollment.ManagedProfile
 import io.github.scisaga.loom.enrollment.HealthReporter
+import io.github.scisaga.loom.enrollment.V2DeviceReporter
 import io.github.scisaga.loom.security.DeviceKeyStore
 import io.github.scisaga.loom.route.RouteManager
 import io.github.scisaga.loom.route.UnderlayProbeRegistry
@@ -101,6 +102,7 @@ internal class UnderlyingPublicationTracker<T> {
 class LoomVpnService : VpnService(), PlatformInterface {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val lifecycle = Mutex()
+    private val v2Control = Mutex()
     private val monitors = ConcurrentHashMap<InterfaceUpdateListener, UnderlyingMonitor>()
     private val underlyingPublicationLock = Any()
     private val underlyingPublication = UnderlyingPublicationTracker<Network>()
@@ -144,6 +146,17 @@ class LoomVpnService : VpnService(), PlatformInterface {
             ACTION_RELOAD -> {
                 val candidateID = intent?.getStringExtra(EXTRA_CANDIDATE_ID).orEmpty()
                 scope.launch { reloadTunnel(candidateID, startId) }
+            }
+            ACTION_REFRESH_V2 -> {
+                val profile = activeManagedProfile
+                if (boxService != null && profile?.protocol == 2) {
+                    scope.launch {
+                        val next = runV2ControlRound(V2DeviceReporter(this@LoomVpnService), profile)
+                        if (next == null) stopForV2Tombstone()
+                    }
+                } else {
+                    stopIdleForeground(startId)
+                }
             }
             ACTION_ENROLLMENT_KEEPALIVE -> {
                 desiredConnected = false
@@ -396,6 +409,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 VpnRuntime.transform { status ->
                     status.copy(trustedReport = "v2 Device report 尚未发送")
                 }
+                startV2Reporter(it)
             }
         }
     }
@@ -441,6 +455,74 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 delay(REPORT_INTERVAL_MS)
             }
         }
+    }
+
+    /** #14：private config/report 与数据面共用当前 TUN/WG；失败只保留 LKG，不能停数据面。 */
+    private fun startV2Reporter(profile: ManagedProfile) {
+        reportJob?.cancel()
+        val reporterSession = sessionID
+        reportJob = scope.launch {
+            val reporter = V2DeviceReporter(this@LoomVpnService)
+            var current = profile
+            while (isActive && reporterSession == sessionID) {
+                val next = runV2ControlRound(reporter, current)
+                if (!isActive || reporterSession != sessionID) return@launch
+                if (next == null) {
+                    stopForV2Tombstone()
+                    return@launch
+                }
+                current = next
+                delay(REPORT_INTERVAL_MS)
+            }
+        }
+    }
+
+    private suspend fun runV2ControlRound(
+        reporter: V2DeviceReporter,
+        profile: ManagedProfile,
+    ): ManagedProfile? = v2Control.withLock {
+        var current = activeManagedProfile?.takeIf { it.protocol == 2 } ?: profile
+        if (!reporter.hasPending(current.nodeID)) {
+            try {
+                val refreshed = reporter.refreshConfiguration() ?: return@withLock null
+                val changed = refreshed.recordID != current.recordID
+                current = refreshed
+                activeManagedProfile = refreshed
+                if (changed) {
+                    // Artifact refs 未变，因此不重建 libbox；只把更高 floors/profile
+                    // 交给调度层。同一 service-lifetime registry 会复用既有冻结结果。
+                    RouteManager.get(this).applyToRunning(refreshed)
+                    startRouteSession(refreshed)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                Log.w(TAG, "Android v2 private config refresh failed; retaining LKG", error)
+                VpnRuntime.transform { it.copy(trustedReport = "配置暂不可达；沿用 LKG") }
+            }
+        }
+        try {
+            val sequence = reporter.sendHealth(current, healthy = !RouteManager.get(this).status.value.blocked)
+            VpnRuntime.transform { it.copy(trustedReport = "成功（sequence $sequence，HTTP 204）") }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            Log.w(TAG, "Android v2 private report failed; pending envelope retained", error)
+            VpnRuntime.transform { it.copy(trustedReport = "失败；已保留 exact pending 并将重试") }
+        }
+        current
+    }
+
+    private fun stopForV2Tombstone() {
+        desiredConnected = false
+        VpnConnectionPreference(this).setDesiredConnected(false)
+        VpnRuntime.transform {
+            it.copy(phase = ConnectionPhase.ERROR, detail = "Device 已撤权；已停止数据连接与报告")
+        }
+        updateNotification("Device 已撤权")
+        closeResources()
+        stopForegroundCompat()
+        stopSelf()
     }
 
     private fun startRouteSession(profile: ManagedProfile, underlayOverride: UnderlayGeneration? = null) {
@@ -965,6 +1047,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         private const val REPORT_INTERVAL_MS = 60_000L
         const val ACTION_CONNECT = "io.github.scisaga.loom.action.CONNECT"
         const val ACTION_RELOAD = "io.github.scisaga.loom.action.RELOAD"
+        const val ACTION_REFRESH_V2 = "io.github.scisaga.loom.action.REFRESH_V2"
         const val ACTION_ENROLLMENT_KEEPALIVE = "io.github.scisaga.loom.action.ENROLLMENT_KEEPALIVE"
         const val ACTION_SYNC_SYSTEM_POLICY = "io.github.scisaga.loom.action.SYNC_SYSTEM_POLICY"
         const val ACTION_DISCONNECT = "io.github.scisaga.loom.action.DISCONNECT"

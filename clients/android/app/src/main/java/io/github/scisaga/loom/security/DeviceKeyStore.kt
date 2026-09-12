@@ -8,6 +8,7 @@ import io.github.scisaga.loomcore.Loomcore
 import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.KeyStore
+import java.security.PrivateKey
 import java.security.Signature
 import java.security.spec.ECGenParameterSpec
 import java.security.spec.MGF1ParameterSpec
@@ -63,6 +64,14 @@ class DeviceKeyStore {
 
     fun signCanonicalV2(message: ByteArray): ByteArray =
         Loomcore.normalizeP256Signature(ensureIdentity(), message, sign(message))
+
+    /** #14：TLS 只能取得 AndroidKeyStore handle；private key bytes 永远不跨进 Go 或应用存储。 */
+    internal fun identityPrivateKey(): PrivateKey {
+        ensureIdentity()
+        val entry = keyStore.getEntry(IDENTITY_ALIAS, null) as KeyStore.PrivateKeyEntry
+        check(entry.privateKey.encoded == null) { "Android Keystore identity 私钥竟可导出" }
+        return entry.privateKey
+    }
 
     fun proveBinding(): String {
         val publicKey = ensureIdentity()
