@@ -23,6 +23,7 @@ class UnderlayProbeRegistryTest {
         assertFalse(checkNotNull(registry.entriesIfEnabled(true, byteArrayOf(1), "wlan0", measure, reuse)).reused)
         assertTrue(checkNotNull(registry.entriesIfEnabled(true, byteArrayOf(2), "wlan0", measure, reuse)).reused)
         assertEquals(1, probes)
+        assertEquals(1, registry.debugState().activeProbeRounds)
     }
 
     @Test
@@ -68,7 +69,26 @@ class UnderlayProbeRegistryTest {
         assertEquals(2, probes)
         assertEquals(first.generation + 1, second.generation)
         assertEquals(second.generation, registry.debugState().generation)
+        assertEquals(1, registry.debugState().activeProbeRounds)
         assertTrue(registry.debugState().frozenFingerprint.isNotEmpty())
+    }
+
+    @Test
+    fun failedFirstRoundStillConsumesGenerationBudget() = runBlocking {
+        val registry = UnderlayProbeRegistry()
+        registry.observeDefaultNetwork("network-1", "wlan0")
+        var attempts = 0
+        val measure = { _: ByteArray, _: String ->
+            attempts++
+            error("synthetic measurement failure")
+        }
+        val reuse = { _: ByteArray, frozen: ByteArray, _: String -> frozen }
+
+        assertTrue(runCatching { registry.entries(byteArrayOf(1), "wlan0", measure, reuse) }.isFailure)
+        assertTrue(runCatching { registry.entries(byteArrayOf(1), "wlan0", measure, reuse) }.isFailure)
+        assertEquals(1, attempts)
+        assertEquals(1, registry.debugState().activeProbeRounds)
+        assertTrue(registry.debugState().frozenFingerprint.isEmpty())
     }
 
     @Test
@@ -81,5 +101,6 @@ class UnderlayProbeRegistryTest {
         }
         assertTrue(failed.isFailure)
         assertEquals(0, probes)
+        assertEquals(0, registry.debugState().activeProbeRounds)
     }
 }

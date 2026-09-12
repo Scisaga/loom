@@ -78,12 +78,13 @@ wait_runtime() {
 }
 
 wait_route() {
-    local status
+    local expected_mode=${1:-} status
     for _ in $(seq 1 30); do
         status=$(status_data io.github.scisaga.loom.debug.ROUTE_STATUS)
         if [[ "$status" == *'available=true'* && "$status" == *'running=true'* &&
             "$status" == *'busy=false'* && "$status" == *'blocked=false'* &&
-            "$status" != *'paths=0;'* ]]; then
+            "$status" != *'paths=0;'* &&
+            ( -z "$expected_mode" || "$status" == *"mode=$expected_mode"* ) ]]; then
             printf '%s\n' "$status"
             return 0
         fi
@@ -93,11 +94,26 @@ wait_route() {
     return 1
 }
 
+wait_route_preference() {
+    local expected_mode=$1 status
+    for _ in $(seq 1 30); do
+        status=$(status_data io.github.scisaga.loom.debug.ROUTE_STATUS)
+        if [[ "$status" == *'available=true'* && "$status" == *'busy=false'* &&
+            "$status" == *'blocked=false'* && "$status" == *"mode=$expected_mode"* ]]; then
+            return 0
+        fi
+        sleep 1
+    done
+    echo "等待 route preference=$expected_mode 超时" >&2
+    return 1
+}
+
 wait_probe_registry() {
     local status
     for _ in $(seq 1 30); do
         status=$(status_data io.github.scisaga.loom.debug.PROBE_REGISTRY_STATUS)
-        if [[ "$status" == *'frozen=true'* && "$status" != *'fingerprint=none'* ]]; then
+        if [[ "$status" == *'activeProbeRounds=1'* && "$status" == *'frozen=true'* &&
+            "$status" != *'fingerprint=none'* ]]; then
             printf '%s\n' "$status"
             return 0
         fi
@@ -105,6 +121,11 @@ wait_probe_registry() {
     done
     echo "等待当前底层网络代入口证据超时" >&2
     return 1
+}
+
+probe_field() {
+    local status=$1 field=$2
+    sed -n "s/.*${field}=\([^;]*\).*/\1/p" <<<"$status"
 }
 
 # 先释放旧会话，再读取系统当前默认的非 VPN 底层网络。
@@ -128,21 +149,55 @@ enrollment=$(status_data io.github.scisaga.loom.debug.ENROLLMENT_STATUS)
     exit 1
 }
 
+# Direct 必须在当前代保持主动探测预算不变。若连接首次建立了新的默认
+# Network generation，该代也必须从零轮开始。
+pre_direct_probe=$(status_data io.github.scisaga.loom.debug.PROBE_REGISTRY_STATUS)
+send io.github.scisaga.loom.debug.ROUTE_DIRECT
+wait_route_preference direct
 send io.github.scisaga.loom.debug.CONNECT
-first_runtime=$(wait_runtime CONNECTED 1)
-[[ "$first_runtime" == *'dns=未执行（启动不以业务 DNS 为门禁）'* &&
-    "$first_runtime" == *'https=未执行（启动不以业务 HTTPS 为门禁）'* ]] || {
+direct_runtime=$(wait_runtime CONNECTED 1)
+[[ "$direct_runtime" == *'dns=未执行（启动不以业务 DNS 为门禁）'* &&
+    "$direct_runtime" == *'https=未执行（启动不以业务 HTTPS 为门禁）'* ]] || {
     echo "启动路径错误地执行了业务探测" >&2
     exit 1
 }
-wait_route >/dev/null
+wait_route direct >/dev/null
+direct_probe=$(status_data io.github.scisaga.loom.debug.PROBE_REGISTRY_STATUS)
+pre_generation=$(probe_field "$pre_direct_probe" generation)
+pre_rounds=$(probe_field "$pre_direct_probe" activeProbeRounds)
+direct_generation=$(probe_field "$direct_probe" generation)
+direct_rounds=$(probe_field "$direct_probe" activeProbeRounds)
+[[ "$direct_rounds" == "0" || "$direct_rounds" == "1" ]] || {
+    echo "Direct 后入口主动探测轮数无效：$direct_probe" >&2
+    exit 1
+}
+if [[ "$pre_generation" == "$direct_generation" ]]; then
+    [[ "$pre_rounds" == "$direct_rounds" ]] || {
+        echo "Direct 消耗了当前底层网络代的主动探测预算" >&2
+        exit 1
+    }
+else
+    [[ "$direct_rounds" == "0" ]] || {
+        echo "Direct 在新底层网络代执行了主动探测" >&2
+        exit 1
+    }
+fi
+
+# 当前连接从 Direct 切到 Auto：未测过的代恰好执行一轮；已经冻结的代复用
+# 原结果。两种情况都必须最终保持 rounds=1，且不得执行业务路径探测。
+send io.github.scisaga.loom.debug.ROUTE_AUTO
+wait_route auto >/dev/null
 first_probe=$(wait_probe_registry)
+[[ "$(probe_field "$first_probe" generation)" == "$direct_generation" ]] || {
+    echo "Direct/Auto 切换期间底层网络代发生变化，不能作为同代探测证据" >&2
+    exit 1
+}
 
 send io.github.scisaga.loom.debug.DISCONNECT
 wait_runtime DISCONNECTED >/dev/null
 send io.github.scisaga.loom.debug.CONNECT
 second_runtime=$(wait_runtime CONNECTED 1)
-wait_route >/dev/null
+wait_route auto >/dev/null
 second_probe=$(status_data io.github.scisaga.loom.debug.PROBE_REGISTRY_STATUS)
 [[ "$second_runtime" == *'dns=未执行（启动不以业务 DNS 为门禁）'* &&
     "$second_runtime" == *'https=未执行（启动不以业务 HTTPS 为门禁）'* ]] || {
@@ -166,5 +221,7 @@ printf 'underlay=%s\n' "$EXPECTED_UNDERLAY"
 printf 'managed_v2_runtime=true\n'
 printf 'private_report_http_204=true\n'
 printf 'business_probe_activation_gate=false\n'
+printf 'direct_active_probe_rounds_unchanged=true\n'
+printf 'auto_active_probe_rounds_at_most_one=true\n'
 printf 'same_generation_reconnect_reused_entry_evidence=true\n'
 printf 'idempotent_disconnect=true\n'

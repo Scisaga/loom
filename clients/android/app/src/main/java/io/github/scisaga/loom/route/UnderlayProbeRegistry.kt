@@ -13,6 +13,7 @@ import java.security.MessageDigest
 internal class UnderlayProbeRegistry {
     internal data class DebugState(
         val generation: Long,
+        val activeProbeRounds: Int,
         val frozenFingerprint: String,
     )
 
@@ -20,8 +21,9 @@ internal class UnderlayProbeRegistry {
     private var networkIdentity: String? = null
     private var sourceInterface: String = ""
     private var generation: Long = 0
+    private var activeProbeAttempted = false
     private var frozen: Frozen? = null
-    @Volatile private var debugState = DebugState(0, "")
+    @Volatile private var debugState = DebugState(0, 0, "")
 
     internal data class Snapshot(
         val generation: Long,
@@ -39,8 +41,9 @@ internal class UnderlayProbeRegistry {
         networkIdentity = identity
         sourceInterface = source
         generation++
+        activeProbeAttempted = false
         frozen = null
-        debugState = DebugState(generation, "")
+        debugState = DebugState(generation, 0, "")
         true
     }
 
@@ -70,12 +73,20 @@ internal class UnderlayProbeRegistry {
             frozen?.let {
                 return@withLock Snapshot(generation, reuse(inputs, it.entries, it.source), reused = true)
             }
+            check(!activeProbeAttempted) {
+                "当前底层网络代的入口主动探测预算已经消耗；首次测量失败后禁止重试"
+            }
             // 取消 profile/config/reconnect job 不能让同一代再次发主动 probe；本轮最多
             // 1.5 秒且继续到 exact 结果落入 process-lifetime registry。
+            // 在调用 measure 前即消耗预算：即使首轮部分发包后异常，也不能由重连
+            // 再次进入主动探测。
+            activeProbeAttempted = true
+            debugState = DebugState(generation, 1, "")
             val measured = measure(inputs, source)
             frozen = Frozen(source, measured.copyOf())
             debugState = DebugState(
                 generation,
+                1,
                 MessageDigest.getInstance("SHA-256").digest(measured)
                     .joinToString("") { "%02x".format(it.toInt() and 0xff) },
             )

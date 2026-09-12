@@ -448,9 +448,11 @@ granted once, run the physical-device smoke once on Wi-Fi and once on cellular.
 It never switches the device network itself. It binds the run to the installed
 APK hash, requires an explicitly latched v2 managed profile and a sequenced
 private `device_report` HTTP 204 receipt, checks idempotent disconnect/reconnect,
-and proves that reconnecting in the same underlying-network generation reuses
-the exact entry evidence. A legacy v1 HTTP 200 observation response cannot satisfy
-this v2 acceptance gate. Output contains only booleans and the declared transport:
+proves that Direct leaves the current generation's active-probe round count
+unchanged, that switching to Auto consumes no more than one round, and that
+reconnecting in the same generation reuses the exact entry evidence. A legacy
+v1 HTTP 200 observation response cannot satisfy this v2 acceptance gate. Output
+contains only booleans and the declared transport:
 
 ```bash
 apk=app/build/outputs/apk/debug/app-debug.apk

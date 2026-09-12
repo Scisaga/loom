@@ -70,6 +70,7 @@ class DebugVpnControlReceiver : BroadcastReceiver() {
             val status = (context.applicationContext as LoomApplication).underlayProbeRegistry.debugState()
             resultData = buildString {
                 append("generation=").append(status.generation)
+                append(";activeProbeRounds=").append(status.activeProbeRounds)
                 append(";frozen=").append(status.frozenFingerprint.isNotEmpty())
                 append(";fingerprint=").append(status.frozenFingerprint.ifEmpty { "none" })
             }
