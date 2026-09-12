@@ -11,3 +11,11 @@ func cmdClientEnrollV2([]string) error {
 func cmdClientResumeV2([]string) error {
 	return errors.New("Linux v2 Enrollment 恢复命令只能在 Linux 客户端运行")
 }
+
+func cmdClientSyncV2([]string) error {
+	return errors.New("Linux v2 private device_config 命令只能在 Linux 客户端运行")
+}
+
+func cmdClientReportV2([]string) error {
+	return errors.New("Linux v2 private device_report 命令只能在 Linux 客户端运行")
+}

@@ -137,6 +137,40 @@ Device view、floors、stable claim 摘要和 credentials 一次提交到 root-o
 才删除 pending。原始 Invite/Resume carrier 和 sealed envelope 由交付方负责在受控存储中销毁；
 Loom 不会擅自删除调用者提供的文件。
 
+## v2 稳态 private config 与 report
+
+Enrollment 完成并且正式 control overlay 已可动后，由 private admin 交付当前
+`ControlServiceDirectoryV1`、exact ControlSet、internal CA PEM 和通过独立可信通道核对的
+directory hash。这些文件不得从 public mirror 的未认证 `latest` 位置取得。
+
+```bash
+sudo loom client sync-v2-view \
+  -directory /etc/loom/client-v2/control-services.json \
+  -directory-hash 'sha256:<pinned-digest>' \
+  -control-set /etc/loom/client-v2/control-set.json \
+  -internal-ca /etc/loom/client-v2/internal-ca.pem
+```
+
+命令只拨号 directory 中的 exact overlay tuple，验证 TLS 1.3、internal CA、IP SAN、
+SPKI pin 和 Device mTLS，并在 QC/Merkle/identity/floor 全部通过后才替换 LKG。
+joint Head 还必须传入 `-previous-control-set`。
+
+上报 payload 必须是与服务端 reader contract 一致的 exact canonical JSON object：
+
+```bash
+sudo loom client report-v2 \
+  -directory /etc/loom/client-v2/control-services.json \
+  -directory-hash 'sha256:<pinned-digest>' \
+  -control-set /etc/loom/client-v2/control-set.json \
+  -internal-ca /etc/loom/client-v2/internal-ca.pem \
+  -payload /run/loom/device-health.json \
+  -kind health -payload-schema 1
+```
+
+reporter 在网络发送前先把已签 exact envelope 写入
+`/var/lib/loom/client-v2/device-report-journal.json`。请求或进程中断后，下次运行先重放该
+pending bytes；收到 `204` 前不会推进 sequence。
+
 开发门禁可一键运行，并把不含域名、IP、Device ID、证书或 secret 的结构化结果写到忽略目录：
 
 ```bash

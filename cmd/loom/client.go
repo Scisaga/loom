@@ -32,6 +32,15 @@ const clientUsage = `loom client —— 客户端加入与交付
   loom client resume-v2 -resume-file <文件>    Linux v2：用 exact resume descriptor 恢复已提交事务
   loom client accept-v2-view -view <json> -control-set <json>
                                                严格验收 private Device view 并更新 Linux v2 LKG/floors
+  loom client sync-v2-view -directory <json> -directory-hash <sha256:...>
+                                               经 Device mTLS 同步 Linux v2 private view
+  loom client report-v2 -payload <json> -kind <kind> -payload-schema <n>
+                                               持久化并发送 Linux v2 Device report
+  loom client sync-v2-view -directory <json> -directory-hash <sha256:...>
+      -control-set <json> -internal-ca <pem>    经 Device mTLS 私有通道同步 Linux v2 LKG
+  loom client report-v2 -directory <json> -directory-hash <sha256:...>
+      -control-set <json> -internal-ca <pem> -payload <json> -kind <kind> -payload-schema <n>
+                                               持久化并发送 Linux v2 Device report
   loom client package -sing-box <二进制>     生成可重现、已签名的 Linux 客户端包
   loom client verify  -archive <tar.gz> -pubkey <公钥>
                                                验签并检查包内全部文件
@@ -100,6 +109,10 @@ func cmdClient(args []string) error {
 		return cmdClientResumeV2(args[1:])
 	case "accept-v2-view":
 		return cmdClientAcceptV2(args[1:])
+	case "sync-v2-view":
+		return cmdClientSyncV2(args[1:])
+	case "report-v2":
+		return cmdClientReportV2(args[1:])
 	case "package":
 		return cmdClientPackage(args[1:])
 	case "verify":

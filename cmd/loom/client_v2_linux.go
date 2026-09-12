@@ -3,10 +3,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -40,6 +44,29 @@ type linuxClientV2CommonFlags struct {
 	secretEnvelopes         repeatedFlag
 	secretEnvelopeDirectory string
 	timeout                 time.Duration
+}
+
+type linuxPrivateDeviceFlags struct {
+	stateDirectory         string
+	directoryPath          string
+	pinnedDirectoryHash    string
+	controlSetPath         string
+	previousControlSetPath string
+	internalCAPath         string
+	serviceID              string
+	timeout                time.Duration
+}
+
+type linuxPrivateDeviceInputs struct {
+	statePath           string
+	identityPath        string
+	directory           wire.ControlServiceDirectoryV1
+	pinnedDirectoryHash string
+	controlSet          wire.ControlSetV1
+	previousControlSet  *wire.ControlSetV1
+	roots               *x509.CertPool
+	serviceID           string
+	timeout             time.Duration
 }
 
 func cmdClientEnrollV2(args []string) error {
@@ -179,6 +206,186 @@ func cmdClientResumeV2(args []string) error {
 		return err
 	}
 	return finishLinuxClientV2Enrollment(ctx, common, result, verifiedProof, tunnel, api)
+}
+
+func cmdClientSyncV2(args []string) error {
+	fs := flag.NewFlagSet("client sync-v2-view", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var private linuxPrivateDeviceFlags
+	addLinuxPrivateDeviceFlags(fs, &private)
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
+		return errors.New("用法: loom client sync-v2-view -directory <json> -directory-hash <sha256:...> -control-set <json> -internal-ca <pem> [-state-dir <dir>]")
+	}
+	inputs, err := readLinuxPrivateDeviceInputs(private)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), inputs.timeout)
+	defer cancel()
+	floors, err := clientv2.SyncLinuxDeviceView(ctx, clientv2.LinuxDeviceViewSyncOptions{
+		StatePath: inputs.statePath, IdentityPath: inputs.identityPath,
+		Directory: inputs.directory, PinnedDirectoryHash: inputs.pinnedDirectoryHash,
+		ControlSet: inputs.controlSet, PreviousControlSet: inputs.previousControlSet,
+		ServiceID: inputs.serviceID, Roots: inputs.roots, Now: time.Now, Timeout: inputs.timeout,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Println("✓ Linux v2 private Device view 已同步并原子替换 LKG")
+	fmt.Printf("  floors       recovery=%d control=%d revision=%d device=%d\n",
+		floors.AcceptedRecoveryEpoch, floors.AcceptedControlEpoch,
+		floors.AcceptedControlRevision, floors.DeviceGeneration)
+	return nil
+}
+
+func cmdClientReportV2(args []string) error {
+	fs := flag.NewFlagSet("client report-v2", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var private linuxPrivateDeviceFlags
+	addLinuxPrivateDeviceFlags(fs, &private)
+	payloadPath := fs.String("payload", "", "exact canonical Device report JSON object")
+	kind := fs.String("kind", "", "certified reader contract kind")
+	payloadSchema := fs.Int64("payload-schema", 0, "certified reader contract schema")
+	journalPath := fs.String("journal", "", "root-only report sequence/pending journal")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *payloadPath == "" ||
+		*kind == "" || *payloadSchema < 1 {
+		return errors.New("用法: loom client report-v2 -directory <json> -directory-hash <sha256:...> -control-set <json> -internal-ca <pem> -payload <json> -kind <kind> -payload-schema <n> [-state-dir <dir>]")
+	}
+	inputs, err := readLinuxPrivateDeviceInputs(private)
+	if err != nil {
+		return err
+	}
+	payload, err := readV2RegularFile(*payloadPath, 1<<20)
+	if err != nil {
+		return err
+	}
+	if _, err := wire.DeviceReportPayloadHash(json.RawMessage(payload)); err != nil {
+		return err
+	}
+	if *journalPath == "" {
+		*journalPath = filepath.Join(private.stateDirectory, "device-report-journal.json")
+	}
+	if !filepath.IsAbs(*journalPath) || filepath.Clean(*journalPath) != *journalPath {
+		return errors.New("[D131 Linux report] journal 必须是规范绝对路径")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), inputs.timeout)
+	defer cancel()
+	report, err := clientv2.SendLinuxDeviceReportDurable(ctx, *journalPath, clientv2.LinuxDeviceReportOptions{
+		StatePath: inputs.statePath, IdentityPath: inputs.identityPath,
+		Directory: inputs.directory, PinnedDirectoryHash: inputs.pinnedDirectoryHash,
+		ControlSet: inputs.controlSet, PreviousControlSet: inputs.previousControlSet,
+		ServiceID: inputs.serviceID, Roots: inputs.roots, Now: time.Now, Timeout: inputs.timeout,
+		Kind: *kind, PayloadSchema: *payloadSchema, Payload: json.RawMessage(payload),
+		Schemas: wire.DeviceReportSchemaRegistry{*kind: *payloadSchema},
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Println("✓ Linux v2 Device report 已持久化并获 private service 接受")
+	fmt.Printf("  report       id=%s sequence=%d\n", report.Body.ReportID, report.Body.ReportSequence)
+	return nil
+}
+
+func addLinuxPrivateDeviceFlags(fs *flag.FlagSet, flags *linuxPrivateDeviceFlags) {
+	flags.stateDirectory = "/var/lib/loom/client-v2"
+	flags.timeout = 30 * time.Second
+	fs.StringVar(&flags.stateDirectory, "state-dir", flags.stateDirectory, "root-owned v2 identity/LKG 目录")
+	fs.StringVar(&flags.directoryPath, "directory", "", "exact canonical private ControlServiceDirectoryV1")
+	fs.StringVar(&flags.pinnedDirectoryHash, "directory-hash", "", "root-owned exact directory hash pin")
+	fs.StringVar(&flags.controlSetPath, "control-set", "", "已验证的 exact ControlSetV1")
+	fs.StringVar(&flags.previousControlSetPath, "previous-control-set", "", "joint Head 所需 previous ControlSetV1")
+	fs.StringVar(&flags.internalCAPath, "internal-ca", "", "private service internal CA PEM")
+	fs.StringVar(&flags.serviceID, "service-id", "", "directory 含多个同 role service 时的 exact ID")
+	fs.DurationVar(&flags.timeout, "timeout", flags.timeout, "private request timeout")
+}
+
+func readLinuxPrivateDeviceInputs(flags linuxPrivateDeviceFlags) (linuxPrivateDeviceInputs, error) {
+	if flags.stateDirectory == "" || !filepath.IsAbs(flags.stateDirectory) ||
+		filepath.Clean(flags.stateDirectory) != flags.stateDirectory || flags.directoryPath == "" ||
+		flags.controlSetPath == "" || flags.internalCAPath == "" || flags.pinnedDirectoryHash == "" ||
+		flags.timeout < time.Second || flags.timeout > 5*time.Minute {
+		return linuxPrivateDeviceInputs{}, errors.New("[D131 Linux private] directory/hash/ControlSet/internal CA/state/timeout 输入不完整")
+	}
+	if _, err := wire.ParseHash(flags.pinnedDirectoryHash); err != nil {
+		return linuxPrivateDeviceInputs{}, errors.New("[D131 Linux private] directory hash pin 无效")
+	}
+	var directory wire.ControlServiceDirectoryV1
+	if err := readExactLinuxV2JSON(flags.directoryPath, 4<<20, &directory); err != nil {
+		return linuxPrivateDeviceInputs{}, err
+	}
+	var set wire.ControlSetV1
+	if err := readExactLinuxV2JSON(flags.controlSetPath, 1<<20, &set); err != nil {
+		return linuxPrivateDeviceInputs{}, err
+	}
+	var previousSet *wire.ControlSetV1
+	if flags.previousControlSetPath != "" {
+		var decoded wire.ControlSetV1
+		if err := readExactLinuxV2JSON(flags.previousControlSetPath, 1<<20, &decoded); err != nil {
+			return linuxPrivateDeviceInputs{}, err
+		}
+		previousSet = &decoded
+	}
+	caBody, err := readV2RegularFile(flags.internalCAPath, 1<<20)
+	if err != nil {
+		return linuxPrivateDeviceInputs{}, err
+	}
+	roots, err := linuxInternalCAPool(caBody)
+	if err != nil {
+		return linuxPrivateDeviceInputs{}, err
+	}
+	return linuxPrivateDeviceInputs{
+		statePath:    filepath.Join(flags.stateDirectory, "state.json"),
+		identityPath: filepath.Join(flags.stateDirectory, "identity.json"),
+		directory:    directory, pinnedDirectoryHash: flags.pinnedDirectoryHash,
+		controlSet: set, previousControlSet: previousSet, roots: roots,
+		serviceID: flags.serviceID, timeout: flags.timeout,
+	}, nil
+}
+
+func readExactLinuxV2JSON(path string, maximum int64, target any) error {
+	body, err := readV2RegularFile(path, maximum)
+	if err != nil {
+		return err
+	}
+	canonical, err := wire.DecodeStrict(body, int(maximum), target)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(canonical, body) {
+		return errors.New("[D104 Linux private] 输入不是 exact canonical JSON")
+	}
+	return nil
+}
+
+func linuxInternalCAPool(body []byte) (*x509.CertPool, error) {
+	roots := x509.NewCertPool()
+	count := 0
+	remaining := body
+	for len(remaining) != 0 {
+		if !bytes.HasPrefix(remaining, []byte("-----BEGIN CERTIFICATE-----\n")) {
+			return nil, errors.New("[D131 Linux private] internal CA PEM 必须使用 exact canonical encoding")
+		}
+		block, rest := pem.Decode(remaining)
+		if block == nil || block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
+			return nil, errors.New("[D131 Linux private] internal CA PEM 含非证书或非规范 block")
+		}
+		consumed := len(remaining) - len(rest)
+		if !bytes.Equal(remaining[:consumed], pem.EncodeToMemory(block)) {
+			return nil, errors.New("[D131 Linux private] internal CA PEM 必须使用 exact canonical encoding")
+		}
+		certificate, err := x509.ParseCertificate(block.Bytes)
+		if err != nil || !certificate.IsCA || !certificate.BasicConstraintsValid ||
+			certificate.KeyUsage&x509.KeyUsageCertSign == 0 || len(certificate.UnhandledCriticalExtensions) != 0 {
+			return nil, errors.New("[D131 Linux private] internal CA certificate profile 无效")
+		}
+		roots.AddCert(certificate)
+		count++
+		remaining = rest
+	}
+	if count == 0 {
+		return nil, errors.New("[D131 Linux private] internal CA PEM 为空")
+	}
+	return roots, nil
 }
 
 func addLinuxClientV2Flags(fs *flag.FlagSet, common *linuxClientV2CommonFlags) {
