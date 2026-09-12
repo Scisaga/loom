@@ -214,7 +214,7 @@ func cmdClientSyncV2(args []string) error {
 	var private linuxPrivateDeviceFlags
 	addLinuxPrivateDeviceFlags(fs, &private)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
-		return errors.New("用法: loom client sync-v2-view -directory <json> -directory-hash <sha256:...> -control-set <json> -internal-ca <pem> [-state-dir <dir>]")
+		return errors.New("用法: loom client sync-v2-view [-state-dir <dir>] [-service-id <id>]（旧安装可另给 -directory/-directory-hash/-control-set/-internal-ca）")
 	}
 	inputs, err := readLinuxPrivateDeviceInputs(private)
 	if err != nil {
@@ -249,7 +249,7 @@ func cmdClientReportV2(args []string) error {
 	journalPath := fs.String("journal", "", "root-only report sequence/pending journal")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *payloadPath == "" ||
 		*kind == "" || *payloadSchema < 1 {
-		return errors.New("用法: loom client report-v2 -directory <json> -directory-hash <sha256:...> -control-set <json> -internal-ca <pem> -payload <json> -kind <kind> -payload-schema <n> [-state-dir <dir>]")
+		return errors.New("用法: loom client report-v2 -payload <json> -kind <kind> -payload-schema <n> [-state-dir <dir>]（旧安装可另给 private directory 参数）")
 	}
 	inputs, err := readLinuxPrivateDeviceInputs(private)
 	if err != nil {
@@ -295,8 +295,8 @@ func cmdClientAcceptV2Runtime(args []string) error {
 	controlSetPath := fs.String("control-set", "", "current exact ControlSetV1")
 	previousControlSetPath := fs.String("previous-control-set", "", "joint Head 所需 previous exact ControlSetV1")
 	peerDirectoryPath := fs.String("control-peer-directory", "", "control LinkIntent 所需 private directory object")
-	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *artifactPath == "" || *controlSetPath == "" {
-		return errors.New("用法: loom client accept-v2-runtime -link-intents <json> -control-set <json> [-previous-control-set <json>] [-control-peer-directory <json>] [-state-dir <dir>] [-runtime-state <path>]")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *artifactPath == "" {
+		return errors.New("用法: loom client accept-v2-runtime -link-intents <json> [-control-peer-directory <json>] [-state-dir <dir>] [-runtime-state <path>]（旧 LKG 可另给 -control-set）")
 	}
 	if *stateDirectory == "" || !filepath.IsAbs(*stateDirectory) || filepath.Clean(*stateDirectory) != *stateDirectory {
 		return errors.New("[D131 Linux runtime] state-dir 必须是规范绝对路径")
@@ -307,9 +307,13 @@ func cmdClientAcceptV2Runtime(args []string) error {
 	if !filepath.IsAbs(*runtimeStatePath) || filepath.Clean(*runtimeStatePath) != *runtimeStatePath {
 		return errors.New("[D131 Linux runtime] runtime-state 必须是规范绝对路径")
 	}
-	var set wire.ControlSetV1
-	if err := readExactLinuxV2JSON(*controlSetPath, 1<<20, &set); err != nil {
-		return err
+	var set *wire.ControlSetV1
+	if *controlSetPath != "" {
+		var decoded wire.ControlSetV1
+		if err := readExactLinuxV2JSON(*controlSetPath, 1<<20, &decoded); err != nil {
+			return err
+		}
+		set = &decoded
 	}
 	var previousSet *wire.ControlSetV1
 	if *previousControlSetPath != "" {
@@ -341,7 +345,7 @@ func cmdClientAcceptV2Runtime(args []string) error {
 		return errors.New("[D131 Linux runtime] durable Device LKG 缺失")
 	}
 	runtimeState, err := clientv2.AcceptLinuxLinkRuntimePlan(*runtimeStatePath, statePath,
-		envelope, &set, previousSet, peerDirectory, artifactRaw, time.Now().UTC())
+		envelope, set, previousSet, peerDirectory, artifactRaw, time.Now().UTC())
 	if err != nil {
 		return err
 	}
@@ -356,21 +360,40 @@ func addLinuxPrivateDeviceFlags(fs *flag.FlagSet, flags *linuxPrivateDeviceFlags
 	flags.stateDirectory = "/var/lib/loom/client-v2"
 	flags.timeout = 30 * time.Second
 	fs.StringVar(&flags.stateDirectory, "state-dir", flags.stateDirectory, "root-owned v2 identity/LKG 目录")
-	fs.StringVar(&flags.directoryPath, "directory", "", "exact canonical private ControlServiceDirectoryV1")
-	fs.StringVar(&flags.pinnedDirectoryHash, "directory-hash", "", "root-owned exact directory hash pin")
-	fs.StringVar(&flags.controlSetPath, "control-set", "", "已验证的 exact ControlSetV1")
+	fs.StringVar(&flags.directoryPath, "directory", "", "旧安装迁移用 exact private ControlServiceDirectoryV1")
+	fs.StringVar(&flags.pinnedDirectoryHash, "directory-hash", "", "旧安装迁移用 root-owned directory hash pin")
+	fs.StringVar(&flags.controlSetPath, "control-set", "", "旧安装迁移用 exact ControlSetV1")
 	fs.StringVar(&flags.previousControlSetPath, "previous-control-set", "", "joint Head 所需 previous ControlSetV1")
-	fs.StringVar(&flags.internalCAPath, "internal-ca", "", "private service internal CA PEM")
+	fs.StringVar(&flags.internalCAPath, "internal-ca", "", "旧安装迁移用 private service internal CA PEM")
 	fs.StringVar(&flags.serviceID, "service-id", "", "directory 含多个同 role service 时的 exact ID")
 	fs.DurationVar(&flags.timeout, "timeout", flags.timeout, "private request timeout")
 }
 
 func readLinuxPrivateDeviceInputs(flags linuxPrivateDeviceFlags) (linuxPrivateDeviceInputs, error) {
 	if flags.stateDirectory == "" || !filepath.IsAbs(flags.stateDirectory) ||
-		filepath.Clean(flags.stateDirectory) != flags.stateDirectory || flags.directoryPath == "" ||
-		flags.controlSetPath == "" || flags.internalCAPath == "" || flags.pinnedDirectoryHash == "" ||
+		filepath.Clean(flags.stateDirectory) != flags.stateDirectory ||
 		flags.timeout < time.Second || flags.timeout > 5*time.Minute {
-		return linuxPrivateDeviceInputs{}, errors.New("[D131 Linux private] directory/hash/ControlSet/internal CA/state/timeout 输入不完整")
+		return linuxPrivateDeviceInputs{}, errors.New("[D131 Linux private] state/timeout 输入无效")
+	}
+	externalCount := 0
+	for _, value := range []string{flags.directoryPath, flags.pinnedDirectoryHash,
+		flags.controlSetPath, flags.internalCAPath} {
+		if value != "" {
+			externalCount++
+		}
+	}
+	if externalCount == 0 {
+		if flags.previousControlSetPath != "" {
+			return linuxPrivateDeviceInputs{}, errors.New("[D131 Linux private] previous ControlSet 缺完整旧安装迁移上下文")
+		}
+		return linuxPrivateDeviceInputs{
+			statePath:    filepath.Join(flags.stateDirectory, "state.json"),
+			identityPath: filepath.Join(flags.stateDirectory, "identity.json"),
+			serviceID:    flags.serviceID, timeout: flags.timeout,
+		}, nil
+	}
+	if externalCount != 4 {
+		return linuxPrivateDeviceInputs{}, errors.New("[D131 Linux private] 旧安装迁移必须同时提供 directory/hash/ControlSet/internal CA")
 	}
 	if _, err := wire.ParseHash(flags.pinnedDirectoryHash); err != nil {
 		return linuxPrivateDeviceInputs{}, errors.New("[D131 Linux private] directory hash pin 无效")

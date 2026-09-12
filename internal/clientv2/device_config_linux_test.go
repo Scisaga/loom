@@ -144,6 +144,54 @@ func TestSyncLinuxDeviceViewRejectsWrongCertifiedSPKIPin(t *testing.T) {
 	}
 }
 
+func TestInstalledLinuxPrivateControlCredentialReplacesOperatorNetworkInputs(t *testing.T) {
+	now := time.Date(2026, 9, 12, 10, 30, 0, 0, time.UTC)
+	_, _, set, envelope := installedDeviceConfigState(t, now)
+	serverCertificate, _, serverPin := privateEnrollmentCertificate(t, now, "10.50.0.8")
+	setHash, _ := wire.ControlSetHash(&set)
+	directory := wire.ControlServiceDirectoryV1{
+		Schema: 1, ClusterID: set.ClusterID, Generation: 1, ControlSetHash: setHash,
+		ParentHeadHash: envelope.SignedCurrent.Head.HeadHash,
+		ConfigQC:       append([]byte(nil), envelope.SignedCurrent.QuorumCertificate...),
+		Services: []wire.PrivateControlServiceV1{{
+			ServiceID: "device-config-installed", Role: "device_config", OverlayIP: "10.50.0.8", Port: 7445,
+			CertificateProfileRef: "internal-device-config-server", SPKIPins: []string{serverPin},
+			AuthorizedSubjectProfiles: []string{"device-profile"},
+		}},
+	}
+	directoryHash, _ := wire.ControlServiceDirectoryHash(&directory)
+	credential := wire.DevicePrivateControlCredentialV1{
+		Schema: 1, ClusterID: set.ClusterID, DeviceID: envelope.Payload.DeviceID,
+		ParentHead: envelope.SignedCurrent.Head, ControlSet: set,
+		ControlServiceDirectory: directory, ControlServiceDirectoryHash: directoryHash,
+		InternalCARootsDER: []string{base64.RawURLEncoding.EncodeToString(serverCertificate.Certificate[1])},
+	}
+	body, err := wire.MarshalCanonical(credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installation := &EnrollmentInstallationV1{
+		ClaimCore: wire.EnrollmentClaimCoreV2{BaseHeadHash: envelope.SignedCurrent.Head.HeadHash,
+			BaseControlSetHash: setHash},
+		Credentials: []InstalledSecretV1{{
+			SecretID: wire.DevicePrivateControlCredentialSecretIDV1, Purpose: "device_credential", Generation: 1,
+			SecretBytes:  base64.RawURLEncoding.EncodeToString(body),
+			SecretDigest: wire.HashRaw("loom-linux-installed-secret-v1", body),
+		}},
+	}
+	context, found, err := installedLinuxPrivateControlContext(installation,
+		envelope.Payload.ClusterID, envelope.Payload.DeviceID)
+	if err != nil || !found || context.directoryHash != directoryHash ||
+		!wire.EqualCanonical(context.directory, directory) || context.roots == nil {
+		t.Fatalf("installed private context 未恢复: found=%v context=%#v err=%v", found, context, err)
+	}
+	installation.Credentials[0].SecretDigest = wire.HashRaw("device-config-test", []byte("tampered"))
+	if _, found, err := installedLinuxPrivateControlContext(installation,
+		envelope.Payload.ClusterID, envelope.Payload.DeviceID); err == nil || !found {
+		t.Fatalf("损坏 installed credential 未 fail closed: found=%v err=%v", found, err)
+	}
+}
+
 func TestSendLinuxDeviceReportSignsDurableFloorsOverPinnedMTLSRoute(t *testing.T) {
 	now := time.Date(2026, 9, 12, 11, 0, 0, 0, time.UTC)
 	statePath, identityPath, set, current := installedDeviceConfigState(t, now)

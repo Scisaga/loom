@@ -67,7 +67,15 @@ func AcceptLinuxLinkRuntimePlan(runtimeStatePath, deviceStatePath string,
 	if envelope == nil || trustedEnvelope == nil || !wire.EqualCanonical(*envelope, *trustedEnvelope) {
 		return nil, errors.New("[D131 Linux runtime] candidate view 不是 durable Device LKG exact 当前值")
 	}
-	verifiedFloors, err := wire.VerifyDeviceViewEnvelopeWithPrevious(envelope, set, previousSet)
+	trustedSet, trustedPreviousSet := deviceStore.ControlSets()
+	if trustedSet == nil {
+		// 仅兼容旧 LKG；新 installation/sync 已把 authority 与 view 原子持久化。
+		trustedSet, trustedPreviousSet = set, previousSet
+	}
+	if trustedSet == nil {
+		return nil, errors.New("[D131 Linux runtime] durable ControlSet 缺失")
+	}
+	verifiedFloors, err := wire.VerifyDeviceViewEnvelopeWithPrevious(envelope, trustedSet, trustedPreviousSet)
 	if err != nil || !wire.EqualCanonical(verifiedFloors, deviceStore.Floors()) {
 		return nil, errors.New("[D131 Linux runtime] candidate authority/floors 与 durable Device LKG 不一致")
 	}
@@ -86,7 +94,7 @@ func AcceptLinuxLinkRuntimePlan(runtimeStatePath, deviceStatePath string,
 			minimums[floor.EndpointID] = floor.MinimumListenerGeneration
 		}
 	}
-	plan, err := BuildLinuxLinkRuntimePlan(envelope, set, previousSet, peerDirectory, artifactRaw,
+	plan, err := BuildLinuxLinkRuntimePlan(envelope, trustedSet, trustedPreviousSet, peerDirectory, artifactRaw,
 		installation.Credentials, now, minimums)
 	if err != nil {
 		return nil, err

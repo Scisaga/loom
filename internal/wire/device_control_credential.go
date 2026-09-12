@@ -6,6 +6,8 @@ import (
 	"errors"
 )
 
+const DevicePrivateControlCredentialSecretIDV1 = "device-private-control"
+
 // DevicePrivateControlCredentialV1 是 Enrollment 通过 Device-owned sealed secret
 // 私下交付的稳态控制入口。它不进入 public mirror；目录 hash pin 与 internal CA roots
 // 来自同一份已被 Device view secret refs root 承诺的 plaintext（D124、D131）。

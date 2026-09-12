@@ -62,11 +62,20 @@ func SyncLinuxDeviceView(ctx context.Context,
 		// 兼容尚未持久化 authority 的旧 LKG；首次成功 delivery 后即迁入 durable state。
 		currentSet, currentPreviousSet = &options.ControlSet, options.PreviousControlSet
 	}
-	if err := VerifyControlServiceDirectory(&options.Directory, options.PinnedDirectoryHash,
+	directory, directoryHash, roots := options.Directory, options.PinnedDirectoryHash, options.Roots
+	installedContext, foundInstalledContext, err := installedLinuxPrivateControlContext(
+		installation, current.Payload.ClusterID, current.Payload.DeviceID)
+	if err != nil {
+		return store.Floors(), err
+	}
+	if foundInstalledContext {
+		directory, directoryHash, roots = installedContext.directory,
+			installedContext.directoryHash, installedContext.roots
+	} else if err := VerifyControlServiceDirectory(&directory, directoryHash,
 		&current.SignedCurrent.Head, currentSet, currentPreviousSet); err != nil {
 		return store.Floors(), err
 	}
-	service, err := SelectPrivateControlService(&options.Directory, "device_config", options.ServiceID)
+	service, err := SelectPrivateControlService(&directory, "device_config", options.ServiceID)
 	if err != nil {
 		return store.Floors(), err
 	}
@@ -96,7 +105,7 @@ func SyncLinuxDeviceView(ctx context.Context,
 		now = time.Now
 	}
 	client, err := newPrivateDeviceHTTPClient(service, "device_config", certificateDER, identityKey,
-		options.Roots, options.Dial, now, options.Timeout)
+		roots, options.Dial, now, options.Timeout)
 	if err != nil {
 		return store.Floors(), err
 	}

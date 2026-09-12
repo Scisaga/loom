@@ -139,30 +139,29 @@ Loom 不会擅自删除调用者提供的文件。
 
 ## v2 稳态 private config 与 report
 
-Enrollment 完成并且正式 control overlay 已可动后，由 private admin 交付当前
-`ControlServiceDirectoryV1`、exact ControlSet、internal CA PEM 和通过独立可信通道核对的
-directory hash。这些文件不得从 public mirror 的未认证 `latest` 位置取得。
+Enrollment completion 的 certified Device view 必须承诺并释放
+`secret_id=device-private-control`、`purpose=device_credential` 的 sealed credential；其中把
+`ControlServiceDirectoryV1`、exact ControlSet、directory hash 与 internal CA roots 绑定到
+Enrollment base authority。客户端解封后与正式 certificate/view/floors 一起写入 0600 state，
+稳态命令只从该 durable credential 选 private overlay tuple，不接受公网 `latest` 作为替代。
 
 ```bash
 sudo loom client sync-v2-view \
-  -directory /etc/loom/client-v2/control-services.json \
-  -directory-hash 'sha256:<pinned-digest>' \
-  -control-set /etc/loom/client-v2/control-set.json \
-  -internal-ca /etc/loom/client-v2/internal-ca.pem
+  -state-dir /var/lib/loom/client-v2
 ```
 
 命令只拨号 directory 中的 exact overlay tuple，验证 TLS 1.3、internal CA、IP SAN、
 SPKI pin 和 Device mTLS，并在 QC/Merkle/identity/floor 全部通过后才替换 LKG。
-joint Head 还必须传入 `-previous-control-set`。
+旧版 installation 尚未包含该 sealed credential 时，迁移期才允许同时传入
+`-directory`、`-directory-hash`、`-control-set` 与 `-internal-ca` 四项；部分提供会失败关闭。
+首次成功同步后 current/previous ControlSet 进入 durable state，后续动态 ControlSet 更新由
+private delivery 的完整保留窗口验证，不再要求操作者逐次替换 ControlSet 文件。
 
 上报 payload 必须是与服务端 reader contract 一致的 exact canonical JSON object：
 
 ```bash
 sudo loom client report-v2 \
-  -directory /etc/loom/client-v2/control-services.json \
-  -directory-hash 'sha256:<pinned-digest>' \
-  -control-set /etc/loom/client-v2/control-set.json \
-  -internal-ca /etc/loom/client-v2/internal-ca.pem \
+  -state-dir /var/lib/loom/client-v2 \
   -payload /run/loom/device-health.json \
   -kind health -payload-schema 1
 ```
@@ -176,12 +175,12 @@ pending bytes；收到 `204` 前不会推进 sequence。
 
 ```bash
 sudo loom client accept-v2-runtime \
-  -link-intents /etc/loom/client-v2/linux-link-intents.json \
-  -control-set /etc/loom/client-v2/control-set.json
+  -link-intents /etc/loom/client-v2/linux-link-intents.json
 ```
 
 命令重新打开 durable Device LKG，不接受命令行自报 Device 职责、grants 或 credential；只使用
-正式 enrollment installation 内已安装的 credential ID，并钉住 artifact 的 size、content hash、
+与 view 原子保存的 current/previous ControlSet 及正式 enrollment installation 内已安装的
+credential ID，并钉住 artifact 的 size、content hash、
 render contract、Device generation、EndpointSet transport 及已见 listener generation floor。
 包含 `control_overlay` 时还必须传入 `-control-peer-directory`；joint Head 必须同时传入
 `-previous-control-set`。验证失败不会覆盖已有的

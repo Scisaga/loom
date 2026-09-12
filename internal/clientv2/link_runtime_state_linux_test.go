@@ -41,7 +41,7 @@ func TestLinuxLinkRuntimeStateCommitsOnlyFromDurableDeviceLKG(t *testing.T) {
 	}
 	directory := filepath.Dir(deviceStatePath)
 	runtimeStatePath := filepath.Join(directory, "runtime-state.json")
-	state, err := AcceptLinuxLinkRuntimePlan(runtimeStatePath, deviceStatePath, &envelope, &set,
+	state, err := AcceptLinuxLinkRuntimePlan(runtimeStatePath, deviceStatePath, &envelope, nil,
 		nil, nil, artifactRaw, now)
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +62,7 @@ func TestLinuxLinkRuntimeStateCommitsOnlyFromDurableDeviceLKG(t *testing.T) {
 	before, _ := os.ReadFile(runtimeStatePath)
 	otherEnvelope := envelope
 	otherEnvelope.Payload.DeviceID = "other-device"
-	if _, err := AcceptLinuxLinkRuntimePlan(runtimeStatePath, deviceStatePath, &otherEnvelope, &set,
+	if _, err := AcceptLinuxLinkRuntimePlan(runtimeStatePath, deviceStatePath, &otherEnvelope, nil,
 		nil, nil, artifactRaw, now); err == nil {
 		t.Fatal("未持久化的候选 Device view 进入 runtime state")
 	}

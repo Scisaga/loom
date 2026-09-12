@@ -104,15 +104,30 @@ func SubmitLinuxDeviceReport(ctx context.Context, options LinuxDeviceReportOptio
 	if ctx == nil {
 		return errors.New("[D131 Linux report] context 缺失")
 	}
-	store, current, _, identityKey, identityHash, certificateDER, err := linuxDeviceReportIdentity(options)
+	store, current, installation, identityKey, identityHash, certificateDER, err := linuxDeviceReportIdentity(options)
 	if err != nil {
 		return err
 	}
-	if err := VerifyControlServiceDirectory(&options.Directory, options.PinnedDirectoryHash,
-		&current.SignedCurrent.Head, &options.ControlSet, options.PreviousControlSet); err != nil {
+	directory, directoryHash, roots := options.Directory, options.PinnedDirectoryHash, options.Roots
+	installedContext, foundInstalledContext, err := installedLinuxPrivateControlContext(
+		installation, current.Payload.ClusterID, current.Payload.DeviceID)
+	if err != nil {
 		return err
 	}
-	service, err := SelectPrivateControlService(&options.Directory, "device_report", options.ServiceID)
+	if foundInstalledContext {
+		directory, directoryHash, roots = installedContext.directory,
+			installedContext.directoryHash, installedContext.roots
+	} else {
+		currentSet, currentPreviousSet := store.ControlSets()
+		if currentSet == nil {
+			currentSet, currentPreviousSet = &options.ControlSet, options.PreviousControlSet
+		}
+		if err := VerifyControlServiceDirectory(&directory, directoryHash,
+			&current.SignedCurrent.Head, currentSet, currentPreviousSet); err != nil {
+			return err
+		}
+	}
+	service, err := SelectPrivateControlService(&directory, "device_report", options.ServiceID)
 	if err != nil {
 		return err
 	}
@@ -127,7 +142,7 @@ func SubmitLinuxDeviceReport(ctx context.Context, options LinuxDeviceReportOptio
 		return errors.New("[D131 Linux report] envelope 与当前 identity/floors/schema 不一致")
 	}
 	client, err := newPrivateDeviceHTTPClient(service, "device_report", certificateDER, identityKey,
-		options.Roots, options.Dial, now, options.Timeout)
+		roots, options.Dial, now, options.Timeout)
 	if err != nil {
 		return err
 	}

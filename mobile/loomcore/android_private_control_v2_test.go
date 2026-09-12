@@ -73,7 +73,7 @@ func TestPrepareAndroidV2PrivateControlPlanBindsSealedDirectoryAndKeystoreIdenti
 		t.Fatal(err)
 	}
 	secretRef, sealedEnvelope, _ := androidSealedSecretFixtureFor(t, credential.DeviceID,
-		androidPrivateControlCredentialSecretID, "device_credential", credentialJSON)
+		wire.DevicePrivateControlCredentialSecretIDV1, "device_credential", credentialJSON)
 	secretRefJSON, _ := wire.MarshalCanonical(secretRef)
 	sealedJSON, _ := wire.MarshalCanonical(sealedEnvelope)
 	installedSecretJSON, err := PrepareAndroidInstalledSecretV2(secretRefJSON, sealedJSON, credentialJSON)

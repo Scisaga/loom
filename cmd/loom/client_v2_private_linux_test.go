@@ -64,14 +64,30 @@ func TestReadExactLinuxV2JSONRejectsEquivalentNoncanonicalInput(t *testing.T) {
 	}
 }
 
-func TestLinuxPrivateV2CommandsRequirePinnedAuthorityInputs(t *testing.T) {
+func TestLinuxPrivateV2CommandsRequireInstalledCredentialOrCompleteMigrationInputs(t *testing.T) {
 	for _, args := range [][]string{{"sync-v2-view"}, {"report-v2"}} {
 		if err := cmdClient(args); err == nil ||
-			(!strings.Contains(err.Error(), "用法") && !strings.Contains(err.Error(), "[D131 Linux private]")) {
-			t.Fatalf("%v 缺 authority 输入未失败关闭: %v", args, err)
+			(!strings.Contains(err.Error(), "用法") && !strings.Contains(err.Error(), "[D131 Linux")) {
+			t.Fatalf("%v 缺 installed state/credential 未失败关闭: %v", args, err)
 		}
 	}
 	if err := cmdClient([]string{"accept-v2-runtime"}); err == nil || !strings.Contains(err.Error(), "用法") {
 		t.Fatalf("accept-v2-runtime 缺 certified artifact/ControlSet 未失败关闭: %v", err)
+	}
+}
+
+func TestLinuxPrivateInputsUseInstalledCredentialByDefaultAndRejectPartialMigration(t *testing.T) {
+	stateDirectory := t.TempDir()
+	inputs, err := readLinuxPrivateDeviceInputs(linuxPrivateDeviceFlags{
+		stateDirectory: stateDirectory, timeout: 30 * time.Second,
+	})
+	if err != nil || inputs.statePath != filepath.Join(stateDirectory, "state.json") ||
+		inputs.identityPath != filepath.Join(stateDirectory, "identity.json") || inputs.roots != nil {
+		t.Fatalf("installed-credential 默认输入无效: inputs=%#v err=%v", inputs, err)
+	}
+	if _, err := readLinuxPrivateDeviceInputs(linuxPrivateDeviceFlags{
+		stateDirectory: stateDirectory, timeout: 30 * time.Second, directoryPath: "/tmp/directory.json",
+	}); err == nil || !strings.Contains(err.Error(), "必须同时提供") {
+		t.Fatalf("partial migration inputs 未 fail closed: %v", err)
 	}
 }

@@ -11,8 +11,6 @@ import (
 	"loom/internal/wire"
 )
 
-const androidPrivateControlCredentialSecretID = "device-private-control"
-
 type androidPrivateControlPlanV1 struct {
 	Schema                    int      `json:"schema"`
 	Role                      string   `json:"role"`
@@ -148,7 +146,7 @@ func androidPrivateControlCredential(credentials []androidInstalledSecretV1,
 	var selected *androidInstalledSecretV1
 	for index := range credentials {
 		candidate := &credentials[index]
-		if candidate.SecretID != androidPrivateControlCredentialSecretID ||
+		if candidate.SecretID != wire.DevicePrivateControlCredentialSecretIDV1 ||
 			candidate.Purpose != "device_credential" {
 			continue
 		}
