@@ -62,28 +62,32 @@ func TestOfficialTUNServiceRouting(t *testing.T) {
 				rules := route["rules"].([]any)
 				route["rules"] = append(rules[:1], rules[2:]...)
 			}
-			// §7.2.1：只将测试地址送入隔离 TUN；回环上的目标和 DNS 不进入接管。
-			config["inbounds"].([]any)[0].(map[string]any)["route_address"] = []string{"192.0.2.0/24"}
 			body, _ = json.Marshal(config)
 			stop := runRoutingSingBox(t, executable, body)
 			defer stop()
+			link, err := exec.Command("ip", "-o", "link", "show", "dev", "loom-test-tun").CombinedOutput()
+			if err != nil || !strings.Contains(string(link), " mtu 1280 ") {
+				t.Fatalf("[§7.2.1] TUN MTU 未按配置生效：%v %s", err, link)
+			}
 			want := "default"
 			if fixed {
 				want = "service"
 			}
 			for _, probe := range []struct {
-				name, scheme, host string
-				port               string
-				mixed              bool
-				want               string
+				name, scheme, host, target string
+				port                       string
+				mixed                      bool
+				want                       string
 			}{
-				{"mixed_domain", "http", "demo-service.example", httpPort, true, "service"},
-				{"tun_http_host", "http", "demo-service.example", httpPort, false, want},
-				{"tun_tls_sni", "https", "demo-service.example", tlsPort, false, want},
-				{"tun_without_domain_evidence", "https", "192.0.2.17", tlsPort, false, "default"},
+				{"mixed_domain", "http", "demo-service.example", "", httpPort, true, "service"},
+				{"tun_http_host", "http", "demo-service.example", "192.0.2.17", httpPort, false, want},
+				{"tun_tls_sni", "https", "demo-service.example", "192.0.2.17", tlsPort, false, want},
+				{"tun_ipv6_http_host", "http", "demo-service.example", "2001:db8::17", httpPort, false, want},
+				{"tun_ipv6_tls_sni", "https", "demo-service.example", "2001:db8::17", tlsPort, false, want},
+				{"tun_without_domain_evidence", "https", "192.0.2.17", "192.0.2.17", tlsPort, false, "default"},
 			} {
 				t.Run(probe.name, func(t *testing.T) {
-					if got := routingRequest(t, probe.scheme, probe.host, probe.port, probe.mixed); got != probe.want {
+					if got := routingRequest(t, probe.scheme, probe.host, probe.target, probe.port, probe.mixed); got != probe.want {
 						t.Fatalf("[§7.2.1] 实际请求进入 %q，预期 %q", got, probe.want)
 					}
 				})
@@ -98,8 +102,15 @@ func TestOfficialTUNServiceRouting(t *testing.T) {
 				t.Fatalf("[§7.2.1] 受管 TUN DNS 查询失败：%v %v", addresses, err)
 			}
 			// §7.2.1：TLS ClientHello 没有 SNI；唯有此前经过 TUN 的 DNS 证据可恢复域名。
-			if got := routingRequest(t, "https", "192.0.2.17", tlsPort, false); got != want {
+			if got := routingRequest(t, "https", "192.0.2.17", "192.0.2.17", tlsPort, false); got != want {
 				t.Fatalf("[§7.2.1] DNS 映射后的无 SNI 连接进入 %q，预期 %q", got, want)
+			}
+			addresses, err = resolver.LookupIP(ctx, "ip6", "demo-service.example")
+			if err != nil || len(addresses) != 1 || addresses[0].String() != "2001:db8::17" {
+				t.Fatalf("[§7.2.1] 受管 TUN IPv6 DNS 查询失败：%v %v", addresses, err)
+			}
+			if got := routingRequest(t, "https", "2001:db8::17", "2001:db8::17", tlsPort, false); got != want {
+				t.Fatalf("[§7.2.1] IPv6 DNS 映射后的无 SNI 连接进入 %q，预期 %q", got, want)
 			}
 		})
 	}
@@ -130,6 +141,21 @@ func routingTUNConfig(t *testing.T, dnsAddress string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 本测试验证 Linux 上的正式 sing-box，而不是扩张 Windows source schema；
+	// 因此只在本地隔离 fixture 中补 Linux TUN 的双栈、route_address 与 MTU。
+	var runtimeConfig map[string]any
+	if err := json.Unmarshal(body, &runtimeConfig); err != nil {
+		t.Fatal(err)
+	}
+	tun := runtimeConfig["inbounds"].([]any)[0].(map[string]any)
+	tun["address"] = []string{"172.19.0.1/30", "fdfe:dcba:9876::1/126"}
+	tun["interface_name"] = "loom-test-tun"
+	tun["mtu"] = 1280
+	tun["route_address"] = []string{"192.0.2.0/24", "2001:db8::/64"}
+	body, err = json.Marshal(runtimeConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return body
 }
 
@@ -157,7 +183,7 @@ func routingTargetPair(t *testing.T, encrypted bool) string {
 	return port
 }
 
-func routingRequest(t *testing.T, scheme, host, port string, mixed bool) string {
+func routingRequest(t *testing.T, scheme, host, target, port string, mixed bool) string {
 	t.Helper()
 	transport := &http.Transport{
 		DisableKeepAlives: true,
@@ -168,7 +194,7 @@ func routingRequest(t *testing.T, scheme, host, port string, mixed bool) string 
 		transport.Proxy = http.ProxyURL(&url.URL{Scheme: "http", Host: "127.0.0.1:1080"})
 	} else {
 		transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort("192.0.2.17", port))
+			return (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(target, port))
 		}
 	}
 	defer transport.CloseIdleConnections()
@@ -249,7 +275,17 @@ func routingDNSServer(t *testing.T) string {
 				end += int(packet[end]) + 1
 			}
 			end += 5
-			if end > n || binary.BigEndian.Uint16(packet[end-4:end-2]) != 1 {
+			if end > n {
+				continue
+			}
+			queryType := binary.BigEndian.Uint16(packet[end-4 : end-2])
+			var answer []byte
+			switch queryType {
+			case 1:
+				answer = []byte{192, 0, 2, 17}
+			case 28:
+				answer = []byte{32, 1, 13, 184, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 23}
+			default:
 				continue
 			}
 			response := append([]byte(nil), packet[:end]...)
@@ -257,7 +293,9 @@ func routingDNSServer(t *testing.T) string {
 			binary.BigEndian.PutUint16(response[6:8], 1)
 			binary.BigEndian.PutUint16(response[8:10], 0)
 			binary.BigEndian.PutUint16(response[10:12], 0)
-			response = append(response, 0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 192, 0, 2, 17)
+			response = append(response, 0xc0, 0x0c, byte(queryType>>8), byte(queryType), 0, 1, 0, 0, 0, 60,
+				byte(len(answer)>>8), byte(len(answer)))
+			response = append(response, answer...)
 			_, _ = listener.WriteTo(response, peer)
 		}
 	}()

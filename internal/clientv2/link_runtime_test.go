@@ -5,12 +5,56 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"loom/internal/wire"
 )
+
+func TestLinuxLinkRuntimeResponsibilityMatrix(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		values           []string
+		useLoom, forward bool
+		internetEgress   bool
+	}{
+		{"use_loom", []string{"use_loom"}, true, false, false},
+		{"forward", []string{"forward"}, false, true, false},
+		{"forward_egress", []string{"forward", "internet_egress"}, false, true, true},
+		{"use_loom_forward", []string{"use_loom", "forward"}, true, true, false},
+		{"use_loom_forward_egress", []string{"use_loom", "forward", "internet_egress"}, true, true, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			set, key := clientControlSet(t)
+			envelope := clientEnvelope(t, &set, key)
+			envelope.Payload.Active.Responsibilities = wire.EnrollmentResponsibilitiesV1{
+				Schema: 1, Values: append([]string(nil), test.values...),
+			}
+			envelope.Payload.Active.ResponsibilitiesHash, _ = wire.HashObject(
+				"loom-enrollment-responsibilities-v1", envelope.Payload.Active.Responsibilities)
+			artifact := LinuxLinkIntentArtifactV1{
+				Schema: 1, ClusterID: set.ClusterID, DeviceID: envelope.Payload.DeviceID,
+				DeviceGeneration: envelope.Payload.DeviceGeneration, Generation: 1,
+				RenderContractID:  wire.LinuxLinkIntentRenderContract,
+				AuthorityHeadHash: envelope.SignedCurrent.Head.HeadHash,
+				LinkIntents:       []wire.LinkIntentV1{},
+			}
+			raw := bindRuntimeArtifactToEnvelope(t, &envelope, &set, key, artifact)
+			plan, err := BuildLinuxLinkRuntimePlan(&envelope, &set, nil, nil, raw, nil,
+				time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := []bool{plan.EnableTUN, plan.EnableMixed, plan.ServeForward, plan.ServeInternetEgress}
+			want := []bool{test.useLoom, test.useLoom, test.forward, test.internetEgress}
+			if !reflect.DeepEqual(got, want) || plan.CertifiedControl || len(plan.Actions) != 0 {
+				t.Fatalf("responsibilities %v produced unexpected plan: %#v", test.values, plan)
+			}
+		})
+	}
+}
 
 func TestLinuxLinkRuntimePlanIsDrivenByCertifiedViewArtifactAndGenerationFloor(t *testing.T) {
 	set, key := clientControlSet(t)
