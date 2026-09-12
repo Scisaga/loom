@@ -36,6 +36,7 @@ import io.github.scisaga.loom.enrollment.HttpTransport
 import io.github.scisaga.loom.enrollment.ManagedProfile
 import io.github.scisaga.loom.enrollment.HealthReporter
 import io.github.scisaga.loom.enrollment.V2DeviceReporter
+import io.github.scisaga.loom.enrollment.V2TerminalDeviceException
 import io.github.scisaga.loom.enrollment.requiresV2RouteApplication
 import io.github.scisaga.loom.security.DeviceKeyStore
 import io.github.scisaga.loom.route.RouteManager
@@ -172,6 +173,12 @@ class LoomVpnService : VpnService(), PlatformInterface {
                     val detail = VpnRuntime.status.value.detail
                     updateNotification(if (alwaysOn) "始终开启 · $detail" else detail)
                 }
+            }
+            ACTION_V2_TERMINAL -> {
+                // D131：certified tombstone 优先于用户连接意图与 always-on 策略。
+                desiredConnected = false
+                runCatching { VpnConnectionPreference(this).setDesiredConnected(false) }
+                scope.launch { stopForV2Tombstone() }
             }
             ACTION_DISCONNECT -> {
                 if (!shouldOfferAppDisconnect(alwaysOnEnabled())) {
@@ -325,6 +332,10 @@ class LoomVpnService : VpnService(), PlatformInterface {
             connected(null, probe, route)
         } catch (error: Throwable) {
             Log.e(TAG, "start tunnel", error)
+            if (error is V2TerminalDeviceException) {
+                stopForV2TombstoneLocked()
+                return
+            }
             closeResources()
             if (!desiredConnected) {
                 VpnRuntime.update(VpnStatus())
@@ -603,13 +614,17 @@ class LoomVpnService : VpnService(), PlatformInterface {
         committed
     }
 
-    private fun stopForV2Tombstone() {
+    private suspend fun stopForV2Tombstone() = lifecycle.withLock {
+        stopForV2TombstoneLocked()
+    }
+
+    private fun stopForV2TombstoneLocked() {
         desiredConnected = false
-        VpnConnectionPreference(this).setDesiredConnected(false)
+        runCatching { VpnConnectionPreference(this).setDesiredConnected(false) }
         VpnRuntime.transform {
-            it.copy(phase = ConnectionPhase.ERROR, detail = "Device 已撤权；已停止数据连接与报告")
+            it.copy(phase = ConnectionPhase.ERROR, detail = "Device 已终止；已停止数据连接与报告")
         }
-        updateNotification("Device 已撤权")
+        updateNotification("Device 已终止")
         closeResources()
         stopForegroundCompat()
         stopSelf()
@@ -1142,6 +1157,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         const val ACTION_REFRESH_V2 = "io.github.scisaga.loom.action.REFRESH_V2"
         const val ACTION_ENROLLMENT_KEEPALIVE = "io.github.scisaga.loom.action.ENROLLMENT_KEEPALIVE"
         const val ACTION_SYNC_SYSTEM_POLICY = "io.github.scisaga.loom.action.SYNC_SYSTEM_POLICY"
+        const val ACTION_V2_TERMINAL = "io.github.scisaga.loom.action.V2_TERMINAL"
         const val ACTION_DISCONNECT = "io.github.scisaga.loom.action.DISCONNECT"
         const val EXTRA_CANDIDATE_ID = "io.github.scisaga.loom.extra.CANDIDATE_ID"
         const val EXTRA_EMULATOR_PROXY = "io.github.scisaga.loom.extra.EMULATOR_PROXY"

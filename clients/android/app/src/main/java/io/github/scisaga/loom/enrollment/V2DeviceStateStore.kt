@@ -7,6 +7,14 @@ import io.github.scisaga.libbox.Libbox
 import io.github.scisaga.loomcore.Loomcore
 import org.json.JSONObject
 
+internal data class V2InstalledDeviceState(
+    val encoded: ByteArray,
+    val lifecycleState: String,
+    val nodeID: String,
+    val generation: Long,
+    val runtimeProfile: ManagedProfile?,
+)
+
 /** #14：view 与四组 floor 放进同一个 Keystore-wrapped 原子 blob。首次 latch 与后续更新严格分路。 */
 class V2DeviceStateStore(context: Context) {
     private val protected = EncryptedStore(context.applicationContext)
@@ -72,6 +80,25 @@ class V2DeviceStateStore(context: Context) {
 
     @Synchronized
     fun current(): ByteArray? = protected.get(STATE)?.also(Loomcore::validateAndroidV2DeviceState)
+
+    /** #14 / D131：生命周期与 runtime 必须来自同一个 protected blob；tombstone 仍保持 v2 latch。 */
+    @Synchronized
+    internal fun installed(): V2InstalledDeviceState? = protected.get(STATE)?.let { state ->
+        Loomcore.validateAndroidV2DeviceState(state)
+        val payload = JSONObject(state.decodeToString()).getJSONObject("envelope").getJSONObject("payload")
+        val lifecycleState = payload.getString("state")
+        val profile = runtimeProfile(state)
+        check((lifecycleState == "active") == (profile != null)) {
+            "[D131 Android runtime] Device lifecycle 与 runtime 投影不一致"
+        }
+        V2InstalledDeviceState(
+            encoded = state,
+            lifecycleState = lifecycleState,
+            nodeID = payload.getString("device_id"),
+            generation = payload.getLong("device_generation"),
+            runtimeProfile = profile,
+        )
+    }
 
     /** #14 / D131：只从 protected state 投影当前获权的 private overlay replicas。 */
     @Synchronized

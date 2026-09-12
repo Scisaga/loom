@@ -230,6 +230,7 @@ private fun LoomHome(
                 Text(
                     when {
                         join.phase == EnrollmentPhase.READY -> "已加入 · signed snapshot ${join.snapshot}"
+                        join.phase == EnrollmentPhase.TERMINAL -> "Device 已终止；数据连接已锁定关闭"
                         join.snapshot.isNotEmpty() -> "候选已验签 · 连接后完成激活"
                         else -> "等待扫码完成正式入网"
                     },
@@ -304,6 +305,7 @@ private fun LoomHome(
                                         ConnectionPhase.CONNECTED,
                                     ) -> "由系统保持连接"
                                     status.phase in setOf(ConnectionPhase.CONNECTED, ConnectionPhase.STARTING) -> "断开"
+                                    join.phase == EnrollmentPhase.TERMINAL -> "Device 已停用"
                                     hasManagedProfile -> "连接"
                                     else -> "请先扫码加入"
                                 },
@@ -312,7 +314,7 @@ private fun LoomHome(
                     }
                 }
 
-                if (BuildConfig.DEBUG && !hasManagedProfile) {
+                if (BuildConfig.DEBUG && !hasManagedProfile && join.phase != EnrollmentPhase.TERMINAL) {
                     DebugDirectCard(status = status, onToggle = onToggle)
                 }
 
@@ -547,6 +549,7 @@ private fun enrollmentTitle(phase: EnrollmentPhase): String = when (phase) {
     EnrollmentPhase.WAITING -> "已绑定，等待配置"
     EnrollmentPhase.PULLING -> "正在拉取签名配置"
     EnrollmentPhase.READY -> "正式入网就绪"
+    EnrollmentPhase.TERMINAL -> "Device 已终止"
     EnrollmentPhase.ERROR -> "加入需要处理"
 }
 

@@ -9,6 +9,7 @@ import io.github.scisaga.loom.route.RouteManager
 import io.github.scisaga.loom.vpn.ConnectionPhase
 import io.github.scisaga.loom.vpn.BootstrapServiceRegistry
 import io.github.scisaga.loom.vpn.LoomVpnService
+import io.github.scisaga.loom.vpn.VpnConnectionPreference
 import io.github.scisaga.loom.vpn.VpnRuntime
 import io.github.scisaga.loomcore.Loomcore
 import kotlinx.coroutines.CancellationException
@@ -39,7 +40,26 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.SSLException
 
-enum class EnrollmentPhase { CHECKING, NOT_JOINED, CLAIMING, WAITING, PULLING, READY, ERROR }
+enum class EnrollmentPhase { CHECKING, NOT_JOINED, CLAIMING, WAITING, PULLING, READY, TERMINAL, ERROR }
+
+internal class V2TerminalDeviceException(val lifecycleState: String) : IllegalStateException(
+    "[D131 Android runtime] Device 已 $lifecycleState；durable v2 latch 禁止恢复旧配置或 Debug Direct",
+)
+
+/** #14 / D131：durable v2 tombstone 独占运行时决策，不得落回 v1。 */
+internal fun <T> selectLatchedRuntime(
+    lifecycleState: String?,
+    v2Runtime: T?,
+    loadLegacy: () -> T?,
+): T? = when (lifecycleState) {
+    null -> {
+        check(v2Runtime == null) { "[D131 Android runtime] 未 latch v2 Device 却存在 v2 runtime" }
+        loadLegacy()
+    }
+    "active" -> checkNotNull(v2Runtime) { "[D131 Android runtime] active v2 Device 缺可启动 runtime" }
+    "revoked", "decommissioned" -> throw V2TerminalDeviceException(lifecycleState)
+    else -> error("[D131 Android runtime] v2 Device lifecycle 无效：$lifecycleState")
+}
 
 data class EnrollmentStatus(
     val phase: EnrollmentPhase = EnrollmentPhase.CHECKING,
@@ -103,16 +123,21 @@ class EnrollmentManager private constructor(context: Context) {
         activeJob = scope.launch {
             transaction.withLock {
                 guarded("配置更新失败") {
-                    v2StateStore.runtimeProfile()?.let {
+                    v2StateStore.installed()?.let { installed ->
+                        val profile = installed.runtimeProfile
+                        if (profile == null) {
+                            terminal(installed)
+                            return@guarded
+                        }
                         if (VpnRuntime.status.value.phase == ConnectionPhase.CONNECTED) {
                             ContextCompat.startForegroundService(
                                 appContext,
                                 Intent(appContext, LoomVpnService::class.java)
                                     .setAction(LoomVpnService.ACTION_REFRESH_V2),
                             )
-                            ready(it, "已请求经 private device_config 刷新；失败时继续沿用 certified LKG")
+                            ready(profile, "已请求经 private device_config 刷新；失败时继续沿用 certified LKG")
                         } else {
-                            ready(it, "v2 Device 已使用当前 certified LKG；连接后才能访问 private device_config")
+                            ready(profile, "v2 Device 已使用当前 certified LKG；连接后才能访问 private device_config")
                         }
                         return@guarded
                     }
@@ -176,13 +201,19 @@ class EnrollmentManager private constructor(context: Context) {
     fun candidateRejected(profile: ManagedProfile, reason: String): ManagedProfile? {
         check(profile.protocol == 1) { "v2 LKG 不允许回退到 v1 candidate" }
         check(store.discardCandidate(profile.recordID)) { "候选在失败恢复期间发生变化" }
-        return runCatching { currentProfile() }.getOrNull()?.also {
+        val current = try {
+            currentProfile()
+        } catch (terminal: V2TerminalDeviceException) {
+            throw terminal
+        } catch (_: Throwable) {
+            null
+        }
+        return current?.also {
             ready(it, "候选激活失败，继续沿用最后可用配置：$reason")
         }
     }
 
     fun currentProfile(): ManagedProfile? {
-        v2StateStore.runtimeProfile()?.let { return it }
         val current = loadCurrentWithRecovery()
         check(current != null || store.ready() == null && store.loadCandidate() == null) {
             "正式身份尚无可激活的验签配置"
@@ -191,7 +222,18 @@ class EnrollmentManager private constructor(context: Context) {
     }
 
     private fun loadCurrentWithRecovery(): ManagedProfile? {
-        v2StateStore.runtimeProfile()?.let { return it }
+        val installed = v2StateStore.installed()
+        return try {
+            selectLatchedRuntime(installed?.lifecycleState, installed?.runtimeProfile) {
+                loadLegacyCurrentWithRecovery()
+            }
+        } catch (error: V2TerminalDeviceException) {
+            terminal(checkNotNull(installed))
+            throw error
+        }
+    }
+
+    private fun loadLegacyCurrentWithRecovery(): ManagedProfile? {
         try {
             store.loadCurrent()?.let { return it }
         } catch (currentError: Throwable) {
@@ -220,17 +262,21 @@ class EnrollmentManager private constructor(context: Context) {
     }
 
     private suspend fun resumeUnlocked() {
-        v2StateStore.current()?.let { installed ->
+        v2StateStore.installed()?.let { installed ->
             store.pending()?.let { pendingBytes ->
                 val pending = V2PendingEnrollment.decode(pendingBytes)
                 Loomcore.validateAndroidV2InstalledPending(
-                    installed,
+                    installed.encoded,
                     checkNotNull(pending.claimCore) { "durable v2 installation 对应的 pending 缺 stable core" },
                     checkNotNull(pending.claimResult) { "durable v2 installation 对应的 pending 缺 completed result" },
                 )
                 store.clearPending()
             }
-            val profile = checkNotNull(v2StateStore.runtimeProfile()) { "v2 已安装状态缺可启动 runtime" }
+            val profile = installed.runtimeProfile
+            if (profile == null) {
+                terminal(installed)
+                return
+            }
             ready(profile, "已重放 v2 Device LKG 并加载正式 WG/Data runtime")
             return
         }
@@ -897,6 +943,28 @@ class EnrollmentManager private constructor(context: Context) {
             snapshot = profile.snapshot,
             generation = profile.generation,
         )
+    }
+
+    private fun terminal(installed: V2InstalledDeviceState) {
+        // D131：清理失败不能遮蔽供 VpnService fail-closed 的终止态信号。
+        runCatching { VpnConnectionPreference(appContext).setDesiredConnected(false) }
+        val label = when (installed.lifecycleState) {
+            "revoked" -> "已撤权"
+            "decommissioned" -> "已退役"
+            else -> error("v2 Device 终止态无效：${installed.lifecycleState}")
+        }
+        mutableStatus.value = EnrollmentStatus(
+            phase = EnrollmentPhase.TERMINAL,
+            detail = "Device $label；已禁止数据连接、旧配置恢复与 Debug Direct",
+            nodeID = installed.nodeID,
+            generation = installed.generation,
+        )
+        runCatching {
+            ContextCompat.startForegroundService(
+                appContext,
+                Intent(appContext, LoomVpnService::class.java).setAction(LoomVpnService.ACTION_V2_TERMINAL),
+            )
+        }
     }
 
     private fun fail(prefix: String, error: Throwable) {

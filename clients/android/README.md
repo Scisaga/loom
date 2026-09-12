@@ -205,6 +205,11 @@ available. Debug builds expose the bundled stage-1 Direct fixture in a separate
 `Debug Direct TUN` diagnostic card; that action proves only local libbox, TUN,
 route and selector plumbing and must never be presented as enrollment, trusted
 reporting or business-path health.
+Once a durable v2 Device state is latched, its lifecycle owns every runtime
+decision. A certified `revoked` or `decommissioned` tombstone clears the saved
+connection intent, stops the single `VpnService` even under always-on policy,
+and disables both legacy-profile recovery and Debug Direct. Restart, refresh,
+manual Connect, and a stale boot restore cannot cross that terminal latch.
 Cancelling Android's VPN consent is reported as an explicit connection error
 instead of silently returning to the disconnected screen.
 
