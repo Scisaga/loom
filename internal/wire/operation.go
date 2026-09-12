@@ -196,6 +196,44 @@ func ControlOperationRoot(leaves []ControlOperationLeafV1) (string, error) {
 	return "sha256:" + hex.EncodeToString(MerkleRoot(canonicalLeaves)), nil
 }
 
+// ControlOperationInclusionProof 使用与 ControlOperationRoot 完全相同的排序和
+// canonical leaf bytes，避免 proposer/voter 各自实现 tree index 语义（D104）。
+func ControlOperationInclusionProof(leaves []ControlOperationLeafV1,
+	operationID string) (ControlOperationLeafV1, int64, int64, []string, error) {
+	ordered := append([]ControlOperationLeafV1(nil), leaves...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].OperationID < ordered[j].OperationID })
+	canonicalLeaves := make([][]byte, len(ordered))
+	found := -1
+	for i := range ordered {
+		leaf := &ordered[i]
+		if leaf.Schema != 1 || !validIdentifier(leaf.OperationID, 128) {
+			return ControlOperationLeafV1{}, 0, 0, nil, errors.New("[D104 operation] operation leaf 无效")
+		}
+		if _, err := ParseHash(leaf.ObjectID); err != nil {
+			return ControlOperationLeafV1{}, 0, 0, nil, err
+		}
+		if i > 0 && ordered[i-1].OperationID == leaf.OperationID {
+			return ControlOperationLeafV1{}, 0, 0, nil, errors.New("[D104 operation] operation_id 冲突或重复")
+		}
+		canonicalLeaves[i], _ = MarshalCanonical(leaf)
+		if leaf.OperationID == operationID {
+			found = i
+		}
+	}
+	if found < 0 {
+		return ControlOperationLeafV1{}, 0, 0, nil, errors.New("[D104 operation] requested operation leaf 不存在")
+	}
+	path, err := MerkleInclusionPath(canonicalLeaves, int64(found))
+	if err != nil {
+		return ControlOperationLeafV1{}, 0, 0, nil, err
+	}
+	encodedPath := make([]string, len(path))
+	for i := range path {
+		encodedPath[i] = "sha256:" + hex.EncodeToString(path[i])
+	}
+	return ordered[found], int64(found), int64(len(ordered)), encodedPath, nil
+}
+
 func VerifyControlOperationInclusion(leaf *ControlOperationLeafV1, index, treeSize int64, auditPath []string, head *HeadEntryV2) error {
 	if leaf == nil || head == nil || leaf.Schema != 1 || !validIdentifier(leaf.OperationID, 128) {
 		return errors.New("[D104 operation] inclusion leaf/head 无效")

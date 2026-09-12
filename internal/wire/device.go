@@ -310,45 +310,14 @@ func VerifyDeviceViewEnvelopeWithPrevious(envelope *DeviceViewEnvelopeV2, set, p
 	default:
 		return ClientFloorsV2{}, errors.New("[D105 Device view] 未知 certified head QC type")
 	}
-	payloadHash, err := DeviceViewHash(&envelope.Payload)
-	if err != nil {
-		return ClientFloorsV2{}, err
-	}
 	leaf := &envelope.Leaf
-	if leaf.Schema != 2 || leaf.ViewSchemaVersion != 2 || leaf.MinReaderVersion < 1 ||
-		leaf.ClusterID != envelope.Payload.ClusterID || leaf.DeviceID != envelope.Payload.DeviceID ||
-		leaf.DeviceGeneration != envelope.Payload.DeviceGeneration || leaf.State != envelope.Payload.State ||
-		leaf.PayloadHash != payloadHash {
-		return ClientFloorsV2{}, errors.New("[D105 Device view] payload/leaf 字段不一致")
-	}
-	if _, err := ParseHash(leaf.PreviousViewHash); err != nil {
-		return ClientFloorsV2{}, err
-	}
-	if envelope.Payload.State == "active" {
-		if leaf.EndpointSetHash != envelope.Payload.Active.EndpointBundleHash || envelope.SecretArtifactRefs == nil {
-			return ClientFloorsV2{}, errors.New("[D105 Device view] active endpoint/secret refs 不一致")
-		}
-		if err := VerifySecretArtifactRefsRoot(envelope.SecretArtifactRefs, envelope.Payload.Active.SecretArtifactRefsRoot); err != nil {
-			return ClientFloorsV2{}, err
-		}
-	} else if leaf.EndpointSetHash != EmptyHashV1 || envelope.SecretArtifactRefs != nil {
-		return ClientFloorsV2{}, errors.New("[D105 Device view] tombstone 禁止 endpoint/secret refs")
-	}
-	canonicalLeaf, err := MarshalCanonical(leaf)
+	payloadHash, err := VerifyDeviceViewProjection(&envelope.Payload, leaf, envelope.LeafIndex,
+		envelope.TreeSize, envelope.AuditPath, envelope.SecretArtifactRefs,
+		envelope.SignedCurrent.Head.Body.Payload.DeviceViewsRoot)
 	if err != nil {
 		return ClientFloorsV2{}, err
 	}
-	audit := make([][]byte, len(envelope.AuditPath))
-	for i, hash := range envelope.AuditPath {
-		audit[i], err = ParseHash(hash)
-		if err != nil {
-			return ClientFloorsV2{}, err
-		}
-	}
-	root, _ := ParseHash(envelope.SignedCurrent.Head.Body.Payload.DeviceViewsRoot)
-	if err := VerifyMerkleInclusion(canonicalLeaf, envelope.LeafIndex, envelope.TreeSize, audit, root); err != nil {
-		return ClientFloorsV2{}, err
-	}
+	canonicalLeaf, _ := MarshalCanonical(leaf)
 	leafRaw := MerkleLeafHash(canonicalLeaf)
 	leafHash := "sha256:" + fmt.Sprintf("%x", leafRaw)
 	head := envelope.SignedCurrent.Head
@@ -362,6 +331,59 @@ func VerifyDeviceViewEnvelopeWithPrevious(envelope *DeviceViewEnvelopeV2, set, p
 		DeviceGeneration: leaf.DeviceGeneration, DeviceLeafHash: leafHash, DeviceViewHash: payloadHash,
 		BootstrapTransitionHash: head.Body.TransitionProofHash, V2Latched: true,
 	}, nil
+}
+
+// VerifyDeviceViewProjection 在 Head 获得 QC 前先验证 payload/leaf/root/secret refs
+// 的完整投影；这样 proposer 不会先提交一份客户端永远无法接受的 Device root（D105）。
+func VerifyDeviceViewProjection(payload *DeviceViewPayloadV2, leaf *DeviceViewLeafV2,
+	leafIndex, treeSize int64, auditPath []string, secretArtifactRefs []json.RawMessage,
+	deviceViewsRoot string) (string, error) {
+	if payload == nil || leaf == nil {
+		return "", errors.New("[D105 Device view] projection payload/leaf 不能为空")
+	}
+	payloadHash, err := DeviceViewHash(payload)
+	if err != nil {
+		return "", err
+	}
+	if leaf.Schema != 2 || leaf.ViewSchemaVersion != 2 || leaf.MinReaderVersion < 1 ||
+		leaf.ClusterID != payload.ClusterID || leaf.DeviceID != payload.DeviceID ||
+		leaf.DeviceGeneration != payload.DeviceGeneration || leaf.State != payload.State ||
+		leaf.PayloadHash != payloadHash {
+		return "", errors.New("[D105 Device view] payload/leaf 字段不一致")
+	}
+	if _, err := ParseHash(leaf.PreviousViewHash); err != nil {
+		return "", err
+	}
+	if payload.State == "active" {
+		if leaf.EndpointSetHash != payload.Active.EndpointBundleHash || secretArtifactRefs == nil {
+			return "", errors.New("[D105 Device view] active endpoint/secret refs 不一致")
+		}
+		if err := VerifySecretArtifactRefsRoot(secretArtifactRefs,
+			payload.Active.SecretArtifactRefsRoot); err != nil {
+			return "", err
+		}
+	} else if leaf.EndpointSetHash != EmptyHashV1 || secretArtifactRefs != nil {
+		return "", errors.New("[D105 Device view] tombstone 禁止 endpoint/secret refs")
+	}
+	canonicalLeaf, err := MarshalCanonical(leaf)
+	if err != nil {
+		return "", err
+	}
+	audit := make([][]byte, len(auditPath))
+	for i, hash := range auditPath {
+		audit[i], err = ParseHash(hash)
+		if err != nil {
+			return "", err
+		}
+	}
+	root, err := ParseHash(deviceViewsRoot)
+	if err != nil {
+		return "", err
+	}
+	if err := VerifyMerkleInclusion(canonicalLeaf, leafIndex, treeSize, audit, root); err != nil {
+		return "", err
+	}
+	return payloadHash, nil
 }
 
 // AdvanceFloors 原子持久化前验证四组 floor；相同坐标不同 hash 一律视为 fork。

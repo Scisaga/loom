@@ -278,10 +278,7 @@ func completionCertificationFixture(t *testing.T, set wire.ControlSetV1, member 
 	setHash, _ := wire.ControlSetHash(&set)
 	transition, _ := json.Marshal(wire.OrdinaryHeadContextV1{Schema: 1, Kind: "ordinary"})
 	previousLogEntryHash, parentHeadHash := hash, hash
-	if parent != nil {
-		previousLogEntryHash, parentHeadHash = parent.EntryHash, parent.HeadHash
-	}
-	head, err := wire.NewHeadEntry(wire.HeadEntryBodyV2{Payload: wire.HeadEntryPayloadV2{
+	payload := wire.HeadEntryPayloadV2{
 		Schema: 2, HeadKind: "ordinary", ClusterID: set.ClusterID, RecoveryEpoch: 0,
 		RecoveryStatementHash: hash, RecoveryPolicyHash: hash, ControlEpoch: 0,
 		ControlSetHash: setHash, ControlPeerDirectoryHash: hash, RaftTerm: 1, RaftIndex: 4,
@@ -291,7 +288,25 @@ func completionCertificationFixture(t *testing.T, set wire.ControlSetV1, member 
 		BootstrapIssuerRegistryRoot: hash, RenderContractVersion: 2, MinReaderVersion: 2,
 		CommittedLogicalTime: "2026-01-01T00:12:00Z", MaxClockSkewSeconds: 30,
 		TransitionContext: transition,
-	}, TransitionProofHash: hash})
+	}
+	transitionProofHash := hash
+	if parent != nil {
+		previousLogEntryHash, parentHeadHash = parent.EntryHash, parent.HeadHash
+		payload = parent.Body.Payload
+		payload.HeadKind = "ordinary"
+		payload.RaftTerm = 1
+		payload.RaftIndex = parent.Body.Payload.RaftIndex + 1
+		payload.PreviousLogEntryHash = previousLogEntryHash
+		payload.ControlRevision = payload.RaftIndex
+		payload.ParentHeadHash = parentHeadHash
+		payload.OperationRoot = operationRoot
+		payload.DeviceViewsRoot = viewRoot
+		payload.CommittedLogicalTime = "2026-01-01T00:12:00Z"
+		payload.TransitionContext = transition
+		transitionProofHash = parent.Body.TransitionProofHash
+	}
+	head, err := wire.NewHeadEntry(wire.HeadEntryBodyV2{Payload: payload,
+		TransitionProofHash: transitionProofHash})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,19 +348,33 @@ func certifiedOperationFixture(t *testing.T, set wire.ControlSetV1, operationID,
 	setHash, _ := wire.ControlSetHash(&set)
 	transition, _ := json.Marshal(wire.OrdinaryHeadContextV1{Schema: 1, Kind: "ordinary"})
 	previousLogEntryHash, parentHeadHash := hash, hash
-	if parent != nil {
-		previousLogEntryHash, parentHeadHash = parent.EntryHash, parent.HeadHash
-	}
-	head, err := wire.NewHeadEntry(wire.HeadEntryBodyV2{Payload: wire.HeadEntryPayloadV2{
+	payload := wire.HeadEntryPayloadV2{
 		Schema: 2, HeadKind: "ordinary", ClusterID: set.ClusterID, RecoveryEpoch: 0,
 		RecoveryStatementHash: hash, RecoveryPolicyHash: hash, ControlEpoch: 0,
 		ControlSetHash: setHash, ControlPeerDirectoryHash: hash, RaftTerm: 1, RaftIndex: raftIndex,
-		PreviousLogEntryHash: previousLogEntryHash, ControlRevision: raftIndex, ParentHeadHash: parentHeadHash,
+		PreviousLogEntryHash: hash, ControlRevision: raftIndex, ParentHeadHash: hash,
 		OperationRoot: root, SnapshotHash: hash, EffectiveSSOTHash: hash, DeviceViewsRoot: hash,
 		AdminACLRoot: hash, CAProfileRoot: hash, BootstrapIssuerRegistryRoot: hash,
 		RenderContractVersion: 2, MinReaderVersion: 2, CommittedLogicalTime: committedAt,
 		MaxClockSkewSeconds: 30, TransitionContext: transition,
-	}, TransitionProofHash: hash})
+	}
+	transitionProofHash := hash
+	if parent != nil {
+		previousLogEntryHash, parentHeadHash = parent.EntryHash, parent.HeadHash
+		payload = parent.Body.Payload
+		payload.HeadKind = "ordinary"
+		payload.RaftTerm = 1
+		payload.RaftIndex = raftIndex
+		payload.PreviousLogEntryHash = previousLogEntryHash
+		payload.ControlRevision = raftIndex
+		payload.ParentHeadHash = parentHeadHash
+		payload.OperationRoot = root
+		payload.CommittedLogicalTime = committedAt
+		payload.TransitionContext = transition
+		transitionProofHash = parent.Body.TransitionProofHash
+	}
+	head, err := wire.NewHeadEntry(wire.HeadEntryBodyV2{Payload: payload,
+		TransitionProofHash: transitionProofHash})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2831,6 +2831,13 @@ certified Head；随后把 Invite=`consumed`、Device=`active`、artifact releas
 transaction 一次原子落盘。`reserved`/`issued_provisional` 响应禁止携 artifact；只有上述原子写成功后，
 private claim 响应才可返回由 `result_artifact_hash` 锁定的 exact `EnrollmentResultArtifactV1`。
 
+生产 Coordinator 不接受只返回 operation ID、逻辑时间或裸 Raft ack 的 planner。reservation、issuance
+和 completion 每一步都必须返回并耐久保存 exact operation leaf、累计树 inclusion path、Head、config QC
+及该步使用的 stable ControlSet；相邻阶段若隔着其他 data-bearing Head，还必须保存完整 Head lineage，
+Raft no-op 只体现在 index/previous-log hash 中。稳定 sequencer 在清除 active Head 前先按 operation ID
+耐久写入 certified first-result journal，因此 commit/apply/QC 后但 transaction CAS 或响应前崩溃时，
+新 executor 只能恢复同一份结果，不能重新选号、重新签发或追加第二份 operation。
+
 同一 token 的合法自动重试必须复用完全相同的 claim core，因而 request ID、CSR、
 identity/wrapping keys、client nonce、intent opening 和 base authority 全部不变；只允许 server
 nonce/challenge 和 detached PoP signature 随尝试改变。自动重试仍受 Invite/capability 期限限制。

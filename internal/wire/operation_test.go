@@ -74,3 +74,28 @@ func TestControlOperationExpiryAndRootConflict(t *testing.T) {
 		t.Fatal("accepted two objects with the same operation ID")
 	}
 }
+
+func TestControlOperationInclusionProofUsesCanonicalOperationOrder(t *testing.T) {
+	leaves := []ControlOperationLeafV1{
+		{Schema: 1, OperationID: "operation-z", ObjectID: HashRaw("test-operation-v1", []byte("z"))},
+		{Schema: 1, OperationID: "operation-a", ObjectID: HashRaw("test-operation-v1", []byte("a"))},
+		{Schema: 1, OperationID: "operation-m", ObjectID: HashRaw("test-operation-v1", []byte("m"))},
+	}
+	root, err := ControlOperationRoot(leaves)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, operationID := range []string{"operation-a", "operation-m", "operation-z"} {
+		leaf, index, size, path, err := ControlOperationInclusionProof(leaves, operationID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		head := HeadEntryV2{Body: HeadEntryBodyV2{Payload: HeadEntryPayloadV2{OperationRoot: root}}}
+		if err := VerifyControlOperationInclusion(&leaf, index, size, path, &head); err != nil {
+			t.Fatalf("operation %s inclusion failed: %v", operationID, err)
+		}
+	}
+	if _, _, _, _, err := ControlOperationInclusionProof(leaves, "missing"); err == nil {
+		t.Fatal("returned a proof for a missing operation")
+	}
+}

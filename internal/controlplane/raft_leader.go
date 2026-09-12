@@ -109,8 +109,21 @@ func (leader *StableRaftLeader) ReplicateHead(ctx context.Context, store *Store,
 	if wantSetHash != controlSetHash || state.LastApplied != state.CommitIndex || control.Active != nil {
 		return StableRaftCommitResult{}, errors.New("[D104 Raft] 前一 committed Head 尚未 apply/certify，禁止追加下一 Head")
 	}
+	// 同一 leader 在少数派超时后可重发本机尚未 committed 的 exact tail；此时
+	// authority parent 是它之前的 certified Head，而不是 tail 自己（D104）。
+	targetAlreadyLogged := false
+	scanFrom := len(state.Log) - 1
+	entryIndex := entry.Body.Payload.RaftIndex
+	if entryIndex >= 1 && entryIndex <= int64(len(state.Log)) {
+		record := state.Log[entryIndex-1]
+		if record.Kind == RaftRecordHead && record.Head != nil && record.EntryHash == entry.EntryHash &&
+			wire.EqualCanonical(*record.Head, entry) {
+			targetAlreadyLogged = true
+			scanFrom = int(entryIndex) - 2
+		}
+	}
 	var lastHead *wire.HeadEntryV2
-	for index := len(state.Log) - 1; index >= 0; index-- {
+	for index := scanFrom; index >= 0; index-- {
 		if state.Log[index].Kind == RaftRecordHead && state.Log[index].Head != nil {
 			lastHead = state.Log[index].Head
 			break
@@ -119,6 +132,9 @@ func (leader *StableRaftLeader) ReplicateHead(ctx context.Context, store *Store,
 	if lastHead != nil && (control.CertifiedHead == nil ||
 		!wire.EqualCanonical(*control.CertifiedHead, *lastHead)) {
 		return StableRaftCommitResult{}, errors.New("[D104 Raft] control store 未持有前一 certified Head")
+	}
+	if targetAlreadyLogged && entryIndex != int64(len(state.Log)) {
+		return StableRaftCommitResult{}, errors.New("[D104 Raft] 只允许重试 exact uncommitted tail Head")
 	}
 	if err := leader.storage.AppendLocal(entry); err != nil {
 		return StableRaftCommitResult{}, err

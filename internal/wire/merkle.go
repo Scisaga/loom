@@ -27,6 +27,19 @@ func MerkleRoot(canonicalLeaves [][]byte) []byte {
 	return merkleHash(hashes)
 }
 
+// MerkleInclusionPath 为 RFC 6962 树生成自叶到根的 sibling 序列。调用方必须
+// 先按各 registry 的规范 key 排序；这里不猜业务排序或替调用方去重（D105）。
+func MerkleInclusionPath(canonicalLeaves [][]byte, index int64) ([][]byte, error) {
+	if len(canonicalLeaves) == 0 || index < 0 || index >= int64(len(canonicalLeaves)) {
+		return nil, errors.New("[D105 Merkle] inclusion path index/tree size 无效")
+	}
+	hashes := make([][]byte, len(canonicalLeaves))
+	for i := range canonicalLeaves {
+		hashes[i] = MerkleLeafHash(canonicalLeaves[i])
+	}
+	return merkleInclusionPath(hashes, int(index)), nil
+}
+
 // VerifyMerkleInclusion 验证 RFC 6962 inclusion path，并拒绝多余或缺失节点。
 func VerifyMerkleInclusion(canonicalLeaf []byte, index, size int64, auditPath [][]byte, root []byte) error {
 	if index < 0 || size <= 0 || index >= size || len(root) != sha256.Size {
@@ -72,6 +85,19 @@ func merkleHash(hashes [][]byte) []byte {
 	}
 	k := largestPowerOfTwoLessThan(len(hashes))
 	return merkleNode(merkleHash(hashes[:k]), merkleHash(hashes[k:]))
+}
+
+func merkleInclusionPath(hashes [][]byte, index int) [][]byte {
+	if len(hashes) == 1 {
+		return [][]byte{}
+	}
+	k := largestPowerOfTwoLessThan(len(hashes))
+	if index < k {
+		path := merkleInclusionPath(hashes[:k], index)
+		return append(path, merkleHash(hashes[k:]))
+	}
+	path := merkleInclusionPath(hashes[k:], index-k)
+	return append(path, merkleHash(hashes[:k]))
 }
 
 func merkleNode(left, right []byte) []byte {

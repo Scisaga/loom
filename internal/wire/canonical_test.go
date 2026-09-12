@@ -63,6 +63,28 @@ func TestMerkleUsesRFC6962ShapeAndExactAuditPath(t *testing.T) {
 	}
 }
 
+func TestMerkleInclusionPathRoundTripsEveryRFC6962Shape(t *testing.T) {
+	for size := 1; size <= 17; size++ {
+		leaves := make([][]byte, size)
+		for index := range leaves {
+			leaves[index] = []byte{byte(size), byte(index)}
+		}
+		root := MerkleRoot(leaves)
+		for index := range leaves {
+			path, err := MerkleInclusionPath(leaves, int64(index))
+			if err != nil {
+				t.Fatalf("size=%d index=%d path: %v", size, index, err)
+			}
+			if err := VerifyMerkleInclusion(leaves[index], int64(index), int64(size), path, root); err != nil {
+				t.Fatalf("size=%d index=%d verify: %v", size, index, err)
+			}
+		}
+	}
+	if _, err := MerkleInclusionPath(nil, 0); err == nil {
+		t.Fatal("accepted inclusion path for an empty tree")
+	}
+}
+
 func TestCheckedArithmeticDoesNotWrap(t *testing.T) {
 	if _, err := CheckedAdd(1<<63-1, 1); err == nil {
 		t.Fatal("accepted overflowing addition")
