@@ -304,6 +304,8 @@ rotation 冻结 policy 中足量、跨故障域的 Ed25519 observer 签名，重
 symlink/权限过宽私钥和混杂内容的 CA bundle，失败不改写既有报告，成功只原子写出 canonical 签名
 observation。省略 `-ca` 时明确使用运行 observer 的系统 trust store，仍须同时命中 certified SPKI pin。
 `advertised` transition 必须同时通过 local 与 external verified artifact 校验，不能只填两枚形状合法的 hash。
+服务端以单一 prepared-generation handle 串起启动、local evidence、外部计划与签名聚合；local verify 失败
+会等待整批 listener 关闭，listener 提前退出后该 handle 也不能继续产出 external evidence 或放行 advertise。
 
 首版 Hysteria2/Trojan 数据入口使用稳定 logical endpoint ID 和多个 listener generation。正常 overlap 中旧、新
 端口同时可用：新连接在 `prefer` 阶段先试新端口、失败立即回退仍 advertised 的旧端口；

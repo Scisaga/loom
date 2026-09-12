@@ -3419,6 +3419,8 @@ executor 重启或 control 接管时从完整 artifact 重验，不能把一个�
 对每个 exact bind tuple 做同样的 TLS/QUIC identity handshake（wildcard 只映射同族 loopback），生成绑定
 prepared certified state 且最长一分钟有效的 opaque evidence。advertise validator 必须同时接收这份
 verified local evidence 与达到 frozen policy 阈值的 verified external evidence，拒绝任意 hash 占位。
+上述步骤由同一个 prepared-generation handle 串联；local verify 失败必须同步回滚全批 listener，运行批次
+终止后 handle 不再接受 observer report，也不能继续验证 advertise。
 
 进入 draining 的 certified transition 同时建立 reference cutoff 和
 `ListenerRetirementGuardV1`：ControlSet 必须枚举所有仍可能使客户端拨旧代的 immutable catalog、
