@@ -201,6 +201,10 @@ func (service *PrivateService) Challenge(ctx context.Context, capability wire.Ve
 		return wire.EnrollmentPoPChallengeV1{}, err
 	}
 	now := service.now().UTC().Truncate(time.Second)
+	// issued_at 按已认证 Head 声明的最大时钟偏差回溯，使时钟略慢的 Device
+	// 不会把服务端刚签发的 nonce 误判为“尚未生效”。expires 与 replay store
+	// 仍从服务端真实时间计算，不能借偏差窗口延长 challenge 寿命（D129）。
+	issued := now.Add(-time.Duration(material.RecordHead.Body.Payload.MaxClockSkewSeconds) * time.Second)
 	expires := now.Add(service.challengeTTL)
 	capabilityExpiry, _ := wire.ParseTimeZ(capability.Body().ExpiresAt)
 	if expires.After(capabilityExpiry) {
@@ -222,7 +226,7 @@ func (service *PrivateService) Challenge(ctx context.Context, capability wire.Ve
 	challenge := wire.EnrollmentPoPChallengeV1{
 		Schema: 1, ClusterID: core.ClusterID, InviteID: core.InviteID, RequestID: core.RequestID,
 		EnrollmentServiceID: service.serviceID, ClaimCoreHash: coreHash,
-		ServerNonce: base64.RawURLEncoding.EncodeToString(nonce), IssuedAt: now.Format(time.RFC3339),
+		ServerNonce: base64.RawURLEncoding.EncodeToString(nonce), IssuedAt: issued.Format(time.RFC3339),
 		ExpiresAt: expires.Format(time.RFC3339),
 	}
 	challengeHash, err := wire.EnrollmentChallengeHash(&challenge, coreHash, now)

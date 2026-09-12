@@ -88,6 +88,29 @@ func TestPrivateEnrollmentRejectsClientChosenChallenge(t *testing.T) {
 	}
 }
 
+func TestPrivateEnrollmentChallengeHonorsCertifiedClockSkew(t *testing.T) {
+	fixture := newPrivateServiceFixture(t)
+	challenge, err := fixture.service.Challenge(context.Background(), fixture.capability, &fixture.core)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coreHash, err := wire.EnrollmentClaimCoreHash(&fixture.core)
+	if err != nil {
+		t.Fatal(err)
+	}
+	skew := time.Duration(fixture.material.RecordHead.Body.Payload.MaxClockSkewSeconds) * time.Second
+	if _, err := wire.EnrollmentChallengeHash(&challenge, coreHash, fixture.now.Add(-skew)); err != nil {
+		t.Fatalf("certified clock skew 内的 Linux client 拒绝了刚签发 challenge: %v", err)
+	}
+	expires, err := wire.ParseTimeZ(challenge.ExpiresAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !expires.Equal(fixture.now.Add(time.Minute)) {
+		t.Fatalf("clock skew 意外延长 challenge expiry: got=%s", challenge.ExpiresAt)
+	}
+}
+
 func TestPrivateEnrollmentResumesCommittedClaimWithoutTokenAfterInviteExpiry(t *testing.T) {
 	fixture := newPrivateServiceFixture(t)
 	resumeNow := time.Date(2026, 9, 11, 11, 16, 0, 0, time.UTC)
