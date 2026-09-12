@@ -387,9 +387,9 @@ func VerifyBootstrapOuterReachabilityEvidence(policy *BootstrapOuterEvidencePoli
 	return verified, nil
 }
 
-// ValidateAdvertiseTransition 防止已验外部证据被晚于有效期重放到另一次
+// validateAdvertiseTransition 防止已验外部证据被晚于有效期重放到另一次
 // advertise；本地验证证据仍须由 node executor 独立产生并使用不同 hash。
-func (verified VerifiedBootstrapOuterReachabilityV1) ValidateAdvertiseTransition(
+func (verified VerifiedBootstrapOuterReachabilityV1) validateAdvertiseTransition(
 	authorized rotation.AuthorizedRuntimePlanV1, transition *rotation.Transition) error {
 	intent := authorized.Intent()
 	if verified.hash == "" || verified.evidence.Schema != 1 || transition == nil ||

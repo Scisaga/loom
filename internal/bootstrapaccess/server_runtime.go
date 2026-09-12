@@ -40,6 +40,7 @@ type bootstrapRuntimeServer struct {
 type BootstrapIngressRuntime struct {
 	mu        sync.Mutex
 	running   bool
+	ready     bool
 	servers   []bootstrapRuntimeServer
 	listenTCP TCPListenFunc
 	listenUDP UDPListenFunc
@@ -112,20 +113,38 @@ func (runtime *BootstrapIngressRuntime) Serve(ctx context.Context) error {
 	if runtime == nil || ctx == nil {
 		return errors.New("[D127 bootstrap runtime] runtime/context 缺失")
 	}
+	if err := ctx.Err(); err != nil {
+		return nil
+	}
+	done, err := runtime.Start(ctx)
+	if err != nil {
+		return err
+	}
+	return <-done
+}
+
+// Start 同步完成同代全部 bind 并启动 transport goroutine 后才返回。调用方因此
+// 可以在不猜测 sleep/readiness 的情况下执行 local verify；ctx 取消负责关闭整批（D120、D127）。
+func (runtime *BootstrapIngressRuntime) Start(ctx context.Context) (<-chan error, error) {
+	if runtime == nil || ctx == nil {
+		return nil, errors.New("[D127 bootstrap runtime] runtime/context 缺失")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	runtime.mu.Lock()
 	if runtime.running {
 		runtime.mu.Unlock()
-		return errors.New("[D127 bootstrap runtime] runtime 已在运行")
+		return nil, errors.New("[D127 bootstrap runtime] runtime 已在运行")
 	}
 	runtime.running = true
+	runtime.ready = false
 	runtime.mu.Unlock()
-	defer func() {
+	resetRunning := func() {
 		runtime.mu.Lock()
 		runtime.running = false
+		runtime.ready = false
 		runtime.mu.Unlock()
-	}()
-	if err := ctx.Err(); err != nil {
-		return nil
 	}
 
 	instances := make([]bootstrapRuntimeInstance, 0, len(runtime.servers))
@@ -138,18 +157,21 @@ func (runtime *BootstrapIngressRuntime) Serve(ctx context.Context) error {
 		network, address, err := runtimeBindAddress(server.binding)
 		if err != nil {
 			closeInstances()
-			return err
+			resetRunning()
+			return nil, err
 		}
 		if server.trojan != nil {
 			listener, err := runtime.listenTCP(ctx, network, address)
 			if err != nil {
 				closeInstances()
-				return fmt.Errorf("[D127 bootstrap runtime] certified TCP tuple bind 失败: %w", err)
+				resetRunning()
+				return nil, fmt.Errorf("[D127 bootstrap runtime] certified TCP tuple bind 失败: %w", err)
 			}
 			if !server.binding.matchesLocalAddr(listener.Addr(), "trojan_tls") {
 				_ = listener.Close()
 				closeInstances()
-				return errors.New("[D127 bootstrap runtime] TCP listener 未绑定 requested certified tuple")
+				resetRunning()
+				return nil, errors.New("[D127 bootstrap runtime] TCP listener 未绑定 requested certified tuple")
 			}
 			trojanServer := server.trojan
 			tcpListener := listener
@@ -162,12 +184,14 @@ func (runtime *BootstrapIngressRuntime) Serve(ctx context.Context) error {
 		packetConnection, err := runtime.listenUDP(ctx, network, address)
 		if err != nil {
 			closeInstances()
-			return fmt.Errorf("[D127 bootstrap runtime] certified UDP tuple bind 失败: %w", err)
+			resetRunning()
+			return nil, fmt.Errorf("[D127 bootstrap runtime] certified UDP tuple bind 失败: %w", err)
 		}
 		if !server.binding.matchesLocalAddr(packetConnection.LocalAddr(), "hysteria2") {
 			_ = packetConnection.Close()
 			closeInstances()
-			return errors.New("[D127 bootstrap runtime] UDP listener 未绑定 requested certified tuple")
+			resetRunning()
+			return nil, errors.New("[D127 bootstrap runtime] UDP listener 未绑定 requested certified tuple")
 		}
 		hysteriaServer := server.hysteria
 		udpConnection := packetConnection
@@ -176,32 +200,56 @@ func (runtime *BootstrapIngressRuntime) Serve(ctx context.Context) error {
 			close: packetConnection.Close,
 		})
 	}
-	defer closeInstances()
-
 	runContext, cancel := context.WithCancel(ctx)
-	defer cancel()
 	results := make(chan error, len(instances))
 	for _, instance := range instances {
 		instance := instance
 		go func() { results <- instance.serve(runContext) }()
 	}
-	var firstError error
-	for range instances {
-		err := <-results
-		if err != nil && firstError == nil {
-			firstError = err
-			cancel()
-			closeInstances()
-		} else if err == nil && runContext.Err() == nil && firstError == nil {
-			firstError = errors.New("[D127 bootstrap runtime] listener 未经取消提前退出")
-			cancel()
-			closeInstances()
+	runtime.mu.Lock()
+	runtime.ready = true
+	runtime.mu.Unlock()
+	done := make(chan error, 1)
+	go func() {
+		defer resetRunning()
+		defer closeInstances()
+		defer cancel()
+		var firstError error
+		for range instances {
+			err := <-results
+			if err != nil && firstError == nil {
+				firstError = err
+				cancel()
+				closeInstances()
+			} else if err == nil && runContext.Err() == nil && firstError == nil {
+				firstError = errors.New("[D127 bootstrap runtime] listener 未经取消提前退出")
+				cancel()
+				closeInstances()
+			}
 		}
+		if ctx.Err() != nil {
+			firstError = nil
+		}
+		done <- firstError
+		close(done)
+	}()
+	return done, nil
+}
+
+func (runtime *BootstrapIngressRuntime) runningPlan() (BootstrapIngressRuntimePlanV1, error) {
+	if runtime == nil {
+		return BootstrapIngressRuntimePlanV1{}, errors.New("[D120 local verify] runtime 缺失")
 	}
-	if ctx.Err() != nil {
-		return nil
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	if !runtime.running || !runtime.ready {
+		return BootstrapIngressRuntimePlanV1{}, errors.New("[D120 local verify] listener generation 尚未完成全批启动")
 	}
-	return firstError
+	bindings := make([]VerifiedBootstrapListenerV1, 0, len(runtime.servers))
+	for _, server := range runtime.servers {
+		bindings = append(bindings, server.binding)
+	}
+	return BootstrapIngressRuntimePlanV1{bindings: bindings}, nil
 }
 
 type bootstrapRuntimeInstance struct {

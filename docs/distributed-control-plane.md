@@ -3415,6 +3415,10 @@ executor 重启或 control 接管时从完整 artifact 重验，不能把一个�
 部署在各外部故障域的 observer 通过 `loom bootstrap probe-outer` 消费 exact canonical plan；入口只接收
 本地 0600 Ed25519 私钥与显式 CA bundle/系统 trust store，并原子输出 canonical signed observation。
 命令没有 capability/token 参数，也不做 hostname DNS expansion，因而无法把外部验活偷换成 Enrollment。
+本机 runtime 的 `Start` 只在全批 socket 已 bind 且 transport goroutine 已启动后返回；local verifier 随即
+对每个 exact bind tuple 做同样的 TLS/QUIC identity handshake（wildcard 只映射同族 loopback），生成绑定
+prepared certified state 且最长一分钟有效的 opaque evidence。advertise validator 必须同时接收这份
+verified local evidence 与达到 frozen policy 阈值的 verified external evidence，拒绝任意 hash 占位。
 
 进入 draining 的 certified transition 同时建立 reference cutoff 和
 `ListenerRetirementGuardV1`：ControlSet 必须枚举所有仍可能使客户端拨旧代的 immutable catalog、

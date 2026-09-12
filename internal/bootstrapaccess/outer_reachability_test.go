@@ -173,7 +173,7 @@ func TestBootstrapOuterReachabilityRequiresFrozenMultiDomainEvidence(t *testing.
 		LocalVerificationEvidenceHash:    runtimePlanHash("local-verification"),
 		ExternalVerificationEvidenceHash: verified.EvidenceHash(),
 	}
-	if err := verified.ValidateAdvertiseTransition(fixture.authorized, &transition); err != nil {
+	if err := verified.validateAdvertiseTransition(fixture.authorized, &transition); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := rotation.Advance(fixture.authorized.Intent(), fixture.authorized.State(), transition); err != nil {
@@ -197,7 +197,7 @@ func TestBootstrapOuterReachabilityRequiresFrozenMultiDomainEvidence(t *testing.
 	}
 	late := transition
 	late.CertifiedAt = stored.ValidUntil
-	if err := verified.ValidateAdvertiseTransition(fixture.authorized, &late); err == nil {
+	if err := verified.validateAdvertiseTransition(fixture.authorized, &late); err == nil {
 		t.Fatal("evidence expiry 时仍允许 advertise")
 	}
 }
