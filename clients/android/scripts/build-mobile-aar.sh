@@ -67,7 +67,7 @@ done
 mkdir -p "$shared_dir/internal" "$core_dir"
 cp -a "$repo_dir/internal/attest" "$repo_dir/internal/clientroute" \
     "$repo_dir/internal/enrollmentv2" "$repo_dir/internal/observation" "$repo_dir/internal/version" \
-    "$repo_dir/internal/wire" "$shared_dir/internal/"
+    "$repo_dir/internal/secret" "$repo_dir/internal/wire" "$shared_dir/internal/"
 printf 'module loom\n\ngo 1.27.0\n' >"$shared_dir/go.mod"
 # gomobile 会对 replacement module 执行自己的 module 加载。使用隔离源码视图
 # 可以防止它反写工作树 go.mod；这里又把 QUIC 与 sing-box 固定到同一版本，

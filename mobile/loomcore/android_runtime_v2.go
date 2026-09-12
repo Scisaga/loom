@@ -57,6 +57,12 @@ func PrepareAndroidV2Runtime(stateJSON []byte) ([]byte, error) {
 	if prepared.Schema != 1 {
 		return nil, errors.New("[D131 Android runtime] prepared runtime schema 无效")
 	}
+	if prepared.RoutePlan == "" {
+		return nil, errors.New("[D131 Android runtime] android-runtime 缺移动 route plan")
+	}
+	if err := validateAndroidV2RuntimeHost([]byte(prepared.SingBoxConfig)); err != nil {
+		return nil, err
+	}
 	return wire.MarshalCanonical(preparedAndroidV2Runtime{
 		Schema: 1, DeviceID: state.Envelope.Payload.DeviceID,
 		HeadHash: state.Floors.HeadHash, DeviceGeneration: state.Floors.DeviceGeneration,

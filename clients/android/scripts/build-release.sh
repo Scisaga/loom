@@ -48,6 +48,16 @@ fi
 command -v unzip >/dev/null || { echo "Android release verification requires unzip" >&2; exit 1; }
 command -v cmp >/dev/null || { echo "Android release verification requires cmp" >&2; exit 1; }
 
+aar="$android_root/app/libs/loom-box.aar"
+notice="$android_root/third_party/NOTICE.md"
+[[ -f "$aar" ]] || { echo "Android native AAR is missing; run scripts/build-mobile-aar.sh" >&2; exit 1; }
+expected_aar_sha=$(awk -F'`' '/Verified local AAR SHA-256/ {print $2}' "$notice")
+actual_aar_sha=$(sha256sum "$aar" | awk '{print $1}')
+if [[ ! "$expected_aar_sha" =~ ^[0-9a-f]{64}$ || "$actual_aar_sha" != "$expected_aar_sha" ]]; then
+    echo "Android native AAR does not match the audited NOTICE digest" >&2
+    exit 1
+fi
+
 workers=${LOOM_ANDROID_GRADLE_WORKERS:-4}
 if [[ ! "$workers" =~ ^[1-4]$ ]]; then
     echo "LOOM_ANDROID_GRADLE_WORKERS must be between 1 and 4" >&2

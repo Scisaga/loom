@@ -68,7 +68,7 @@ cd "$android_dir"
 "${adb[@]}" shell appops set io.github.scisaga.loom ACTIVATE_VPN allow
 instrument_output=$("${adb[@]}" shell am instrument -w \
     -e emulatorProxy "$emulator_proxy" \
-    -e class io.github.scisaga.loom.HomeUiInstrumentedTest,io.github.scisaga.loom.SecurityInstrumentedTest,io.github.scisaga.loom.Stage1ConfigInstrumentedTest,io.github.scisaga.loom.V2KeyStoreInstrumentedTest,io.github.scisaga.loom.V2WireGoldenInstrumentedTest,io.github.scisaga.loom.enrollment.V2PendingEnrollmentInstrumentedTest,io.github.scisaga.loom.VpnSmokeInstrumentedTest \
+    -e class io.github.scisaga.loom.HomeUiInstrumentedTest,io.github.scisaga.loom.SecurityInstrumentedTest,io.github.scisaga.loom.Stage1ConfigInstrumentedTest,io.github.scisaga.loom.V2KeyStoreInstrumentedTest,io.github.scisaga.loom.V2SingleHostRuntimeInstrumentedTest,io.github.scisaga.loom.V2WireGoldenInstrumentedTest,io.github.scisaga.loom.enrollment.V2PendingEnrollmentInstrumentedTest,io.github.scisaga.loom.VpnSmokeInstrumentedTest \
     io.github.scisaga.loom.test/androidx.test.runner.AndroidJUnitRunner)
 printf '%s\n' "$instrument_output"
 if grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' <<<"$instrument_output"; then

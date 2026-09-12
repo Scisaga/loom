@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "node": "android-v2",
+  "api": "127.0.0.1:61800",
+  "api_secret": "${secret:api/android-v2}",
+  "probe": "127.0.0.1:61801",
+  "probe_secret": "${secret:probe/android-v2}",
+  "declarations": [],
+  "selectors": [
+    {
+      "selector": "decl:default",
+      "default": "route-direct",
+      "candidates": [
+        {
+          "tag": "route-direct",
+          "probe_user": "probe-direct"
+        }
+      ]
+    }
+  ]
+}

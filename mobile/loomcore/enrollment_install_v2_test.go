@@ -195,25 +195,27 @@ func TestAndroidEnrollmentInstallationIsSingleReplayableState(t *testing.T) {
 		t.Fatal(err)
 	}
 	deviceID := preflight.DeviceEnrollmentIntentOpening.DeviceEnrollmentIntent.DeviceID
-	secretRef, secretEnvelope, secret := androidSealedSecretFixtureFor(t, deviceID,
-		"runtime-password", "data_plane_credential", []byte("runtime-secret"))
-	secretRefJSON, _ := wire.MarshalCanonical(secretRef)
-	secretEnvelopeJSON, _ := wire.MarshalCanonical(secretEnvelope)
-	installedSecretJSON, err := PrepareAndroidInstalledSecretV2(secretRefJSON, secretEnvelopeJSON, secret)
-	if err != nil {
-		t.Fatal(err)
+	var secretRefs []wire.SecretArtifactRefV2
+	var installedSecrets []androidInstalledSecretV1
+	for _, fixture := range androidV2RuntimeFixtureSecrets(deviceID) {
+		secretRef, secretEnvelope, secret := androidSealedSecretFixtureFor(t, deviceID,
+			fixture.id, "data_plane_credential", fixture.value)
+		secretRefJSON, _ := wire.MarshalCanonical(secretRef)
+		secretEnvelopeJSON, _ := wire.MarshalCanonical(secretEnvelope)
+		installedSecretJSON, err := PrepareAndroidInstalledSecretV2(
+			secretRefJSON, secretEnvelopeJSON, secret)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var installedSecret androidInstalledSecretV1
+		if err := decodeExactAndroidV2(installedSecretJSON, 1<<20, &installedSecret,
+			"installed runtime secret"); err != nil {
+			t.Fatal(err)
+		}
+		secretRefs = append(secretRefs, secretRef)
+		installedSecrets = append(installedSecrets, installedSecret)
 	}
-	var installedSecret androidInstalledSecretV1
-	if err := decodeExactAndroidV2(installedSecretJSON, 1<<20, &installedSecret,
-		"installed runtime secret"); err != nil {
-		t.Fatal(err)
-	}
-	config, err := wire.MarshalCanonical(bundleWire{Owner: deviceID, Files: map[string]string{
-		"sing-box/config.json": `{"outbounds":[{"password":"${secret:runtime-password}","tag":"data","type":"trojan"}]}`,
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	config := androidV2RuntimeBundleFixture(t, deviceID)
 	configHash, _ := wire.DeviceConfigArtifactContentHash(config)
 	configRef := wire.DeviceConfigArtifactRefV1{
 		ArtifactID: "android-runtime", Generation: 1, Platform: "android",
@@ -231,7 +233,7 @@ func TestAndroidEnrollmentInstallationIsSingleReplayableState(t *testing.T) {
 		t.Fatal(err)
 	}
 	set, envelope := androidV2EnvelopeFixtureForArtifacts(t,
-		deviceID, identityHash, []wire.SecretArtifactRefV2{secretRef},
+		deviceID, identityHash, secretRefs,
 		[]wire.DeviceConfigArtifactRefV1{configRef})
 	certificateTemplate := &x509.Certificate{SerialNumber: big.NewInt(1),
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
@@ -245,7 +247,7 @@ func TestAndroidEnrollmentInstallationIsSingleReplayableState(t *testing.T) {
 		Schema: 1, ClusterID: envelope.Payload.ClusterID,
 		InviteID: core.InviteID, RequestID: core.RequestID,
 		DeviceCertificateDER: base64.RawURLEncoding.EncodeToString(certificateDER),
-		InitialDeviceView:    envelope.Payload, SecretArtifactRefs: []wire.SecretArtifactRefV2{secretRef},
+		InitialDeviceView:    envelope.Payload, SecretArtifactRefs: secretRefs,
 	}
 	artifactHash, err := wire.EnrollmentResultArtifactHash(&artifact)
 	if err != nil {
@@ -258,7 +260,7 @@ func TestAndroidEnrollmentInstallationIsSingleReplayableState(t *testing.T) {
 		IdentityKeyHash: identityHash, WrappingKeyHash: wrappingHash,
 		TransactionStateHash: wire.HashRaw("android-install-test", []byte("transaction")),
 		ResultArtifactHash:   artifactHash, DeviceCertificateHash: certificateHash,
-		ResultArtifact: artifact, Credentials: []androidInstalledSecretV1{installedSecret},
+		ResultArtifact: artifact, Credentials: installedSecrets,
 		Configs: []androidInstalledConfigV1{installedConfig},
 	}
 	floors, err := wire.VerifyDeviceViewEnvelope(&envelope, &set)
@@ -283,7 +285,7 @@ func TestAndroidEnrollmentInstallationIsSingleReplayableState(t *testing.T) {
 		t.Fatal(err)
 	}
 	if runtime.DeviceID != deviceID || runtime.HeadHash != floors.HeadHash ||
-		!strings.Contains(runtime.SingBoxConfig, `"password":"runtime-secret"`) ||
+		!strings.Contains(runtime.SingBoxConfig, `"type": "wireguard"`) || runtime.RoutePlan == "" ||
 		strings.Contains(runtime.SingBoxConfig, "${secret:") {
 		t.Fatalf("v2 runtime 未从原子状态 hydrate: %+v", runtime)
 	}

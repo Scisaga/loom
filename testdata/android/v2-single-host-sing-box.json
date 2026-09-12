@@ -1,0 +1,128 @@
+{
+  "log": {
+    "level": "warn"
+  },
+  "dns": {
+    "servers": [
+      {
+        "tag": "dns-bootstrap",
+        "address": "192.0.2.53",
+        "detour": "dns-out"
+      },
+      {
+        "tag": "dns-fakeip",
+        "address": "fakeip"
+      }
+    ],
+    "rules": [
+      {
+        "inbound": ["tun-in"],
+        "query_type": ["A", "AAAA"],
+        "server": "dns-fakeip"
+      }
+    ],
+    "reverse_mapping": true,
+    "independent_cache": true,
+    "fakeip": {
+      "enabled": true,
+      "inet4_range": "198.18.0.0/15",
+      "inet6_range": "2001:db8:8000::/49"
+    }
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "address": ["172.19.0.1/30", "2001:db8::1/126"],
+      "auto_route": true,
+      "stack": "system",
+      "mtu": 1500
+    },
+    {
+      "type": "mixed",
+      "tag": "probe-in",
+      "listen": "127.0.0.1",
+      "listen_port": 61801,
+      "users": [
+        {
+          "username": "probe-direct",
+          "password": "${secret:probe/android-v2}"
+        }
+      ]
+    }
+  ],
+  "endpoints": [
+    {
+      "type": "wireguard",
+      "tag": "control-wg-g1",
+      "system": false,
+      "mtu": 1408,
+      "address": ["10.31.0.10/32", "fdaa::10/128"],
+      "private_key": "${secret:wg/android-v2}",
+      "peers": [
+        {
+          "address": "192.0.2.10",
+          "port": 51820,
+          "public_key": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=",
+          "allowed_ips": ["10.31.0.0/24", "fdaa::/64"],
+          "persistent_keepalive_interval": 25
+        }
+      ]
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "selector",
+      "tag": "decl:default",
+      "outbounds": ["route-direct"],
+      "default": "route-direct"
+    },
+    {
+      "type": "direct",
+      "tag": "route-direct"
+    },
+    {
+      "type": "direct",
+      "tag": "dns-out"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "ip_cidr": ["10.31.0.0/24", "fdaa::/64"],
+        "outbound": "control-wg-g1"
+      },
+      {
+        "inbound": ["probe-in"],
+        "auth_user": ["probe-direct"],
+        "outbound": "route-direct"
+      },
+      {
+        "inbound": ["tun-in"],
+        "port": [53],
+        "action": "hijack-dns"
+      },
+      {
+        "inbound": ["tun-in"],
+        "outbound": "decl:default"
+      }
+    ],
+    "final": "block",
+    "auto_detect_interface": true
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "path": "cache.db",
+      "store_fakeip": true
+    },
+    "clash_api": {
+      "external_controller": "127.0.0.1:61800",
+      "secret": "${secret:api/android-v2}"
+    }
+  }
+}

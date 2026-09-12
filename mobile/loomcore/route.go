@@ -63,7 +63,9 @@ type androidRoutePlan struct {
 }
 
 type androidSingBox struct {
+	DNS          *androidRuntimeDNS `json:"dns"`
 	Inbounds     []androidInbound   `json:"inbounds"`
+	Endpoints    []androidEndpoint  `json:"endpoints"`
 	Outbounds    []androidOutbound  `json:"outbounds"`
 	Route        androidRoute       `json:"route"`
 	Experimental *androidExperiment `json:"experimental"`
@@ -75,6 +77,10 @@ type androidInbound struct {
 	Listen     string        `json:"listen"`
 	ListenPort int           `json:"listen_port"`
 	Users      []androidUser `json:"users"`
+	Address    []string      `json:"address"`
+	AutoRoute  bool          `json:"auto_route"`
+	Stack      string        `json:"stack"`
+	MTU        int           `json:"mtu"`
 }
 
 type androidUser struct {
@@ -93,22 +99,70 @@ type androidOutbound struct {
 }
 
 type androidRoute struct {
-	Rules []androidRule `json:"rules"`
+	Rules               []androidRule `json:"rules"`
+	Final               string        `json:"final"`
+	AutoDetectInterface bool          `json:"auto_detect_interface"`
 }
 
 type androidRule struct {
 	Inbound  []string `json:"inbound"`
 	AuthUser []string `json:"auth_user"`
+	IPCIDR   []string `json:"ip_cidr"`
+	Port     []int    `json:"port"`
 	Outbound string   `json:"outbound"`
+	Action   string   `json:"action"`
 }
 
 type androidExperiment struct {
-	ClashAPI *androidClashAPI `json:"clash_api"`
+	CacheFile *androidCacheFile `json:"cache_file"`
+	ClashAPI  *androidClashAPI  `json:"clash_api"`
 }
 
 type androidClashAPI struct {
 	ExternalController string `json:"external_controller"`
 	Secret             string `json:"secret"`
+}
+
+type androidRuntimeDNS struct {
+	Rules            []androidRuntimeDNSRule `json:"rules"`
+	ReverseMapping   bool                    `json:"reverse_mapping"`
+	IndependentCache bool                    `json:"independent_cache"`
+	FakeIP           *androidRuntimeFakeIP   `json:"fakeip"`
+}
+
+type androidRuntimeDNSRule struct {
+	Inbound   []string `json:"inbound"`
+	QueryType []string `json:"query_type"`
+	Server    string   `json:"server"`
+}
+
+type androidRuntimeFakeIP struct {
+	Enabled    bool   `json:"enabled"`
+	Inet4Range string `json:"inet4_range"`
+	Inet6Range string `json:"inet6_range"`
+}
+
+type androidCacheFile struct {
+	Enabled     bool   `json:"enabled"`
+	Path        string `json:"path"`
+	StoreFakeIP bool   `json:"store_fakeip"`
+}
+
+type androidEndpoint struct {
+	Type       string                 `json:"type"`
+	Tag        string                 `json:"tag"`
+	System     bool                   `json:"system"`
+	MTU        int                    `json:"mtu"`
+	Address    []string               `json:"address"`
+	PrivateKey string                 `json:"private_key"`
+	Peers      []androidWireGuardPeer `json:"peers"`
+}
+
+type androidWireGuardPeer struct {
+	Address   string   `json:"address"`
+	Port      int      `json:"port"`
+	PublicKey string   `json:"public_key"`
+	AllowedIP []string `json:"allowed_ips"`
 }
 
 type androidRoutePreference struct {

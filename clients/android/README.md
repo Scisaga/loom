@@ -104,6 +104,15 @@ with `VpnService.protect()` before the temporary TUN becomes active. Mirror HTTP
 latency may order downloads but never substitutes for measuring the actual tunnel
 transport.
 
+The v2 `android-runtime-v1` reader rejects a certified artifact unless that one
+libbox configuration contains exactly one dual-stack TUN, persistent dual-stack
+FakeIP/FQDN recovery, a signed bounded TUN MTU, at least one userspace WireGuard
+endpoint, an overlay route covered by that peer's `allowed_ips`, automatic
+interface control for Android socket protection, and the matching mobile route
+plan. Multiple userspace WireGuard endpoints may coexist during a certified
+generation overlap; a system WireGuard interface, missing route plan, or a
+separate VPN host is not a compatibility fallback.
+
 The capability is derived from a certified Invite and signed by a dedicated
 ControlSet-authorized bootstrap issuer. Its ACL allows only the certified private
 Enrollment `/32` or `/128` and TLS TCP port—never general overlay routes, Internet
