@@ -178,7 +178,12 @@ case "$op" in
     rm -f "$disabled"
     if printf '%s\n' "$*" | grep -q -- --runtime; then printf 'enabled-runtime\n' > "$enabled_state"; else printf 'enabled\n' > "$enabled_state"; fi
     [ "$now" = 0 ] || rm -f "$inactive" ;;
-  daemon-reload|reset-failed) ;;
+  daemon-reload) ;;
+  reset-failed)
+    if [ -e "$active_state" ] && [ "$(cat "$active_state")" = failed ]; then
+      : > "$inactive"
+      printf 'inactive\n' > "$active_state"
+    fi ;;
   *) echo "unexpected systemctl operation:$op" >&2; exit 2 ;;
 esac
 `
@@ -750,7 +755,7 @@ func TestPendingRollbackAcceptsNotFoundInactiveAfterStopError(t *testing.T) {
 		failUnit:          unit,
 		failOnce:          true,
 		enabledStates:     map[string]string{unit: "not-found"},
-		activeStates:      map[string]string{unit: "inactive"},
+		activeStates:      map[string]string{unit: "failed"},
 		beforeRun: func(paths scriptPaths) {
 			if err := os.MkdirAll(paths.previousRoot, 0o700); err != nil {
 				t.Fatal(err)
@@ -770,7 +775,7 @@ func TestPendingRollbackAcceptsNotFoundInactiveAfterStopError(t *testing.T) {
 		t.Fatalf("recovery 后的预检应失败:\n%s", r.output)
 	}
 	if !strings.Contains(r.output, "上一份部署已完整恢复") || strings.Contains(r.output, "回滚不完整") {
-		t.Fatalf("not-found/inactive exact 状态被 stop 错误误判:\n%s\nsystemctl:\n%s", r.output, r.log)
+		t.Fatalf("not-found/failed 缓存未恢复到原 inactive 状态:\n%s\nsystemctl:\n%s", r.output, r.log)
 	}
 }
 
