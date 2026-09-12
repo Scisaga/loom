@@ -60,7 +60,7 @@ func PrepareAndroidV2Runtime(stateJSON []byte) ([]byte, error) {
 	if prepared.RoutePlan == "" {
 		return nil, errors.New("[D131 Android runtime] android-runtime 缺移动 route plan")
 	}
-	if err := validateAndroidV2RuntimeHost([]byte(prepared.SingBoxConfig)); err != nil {
+	if err := ValidateAndroidV2RuntimeHost([]byte(prepared.SingBoxConfig)); err != nil {
 		return nil, err
 	}
 	return wire.MarshalCanonical(preparedAndroidV2Runtime{

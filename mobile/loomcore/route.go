@@ -124,10 +124,18 @@ type androidClashAPI struct {
 }
 
 type androidRuntimeDNS struct {
-	Rules            []androidRuntimeDNSRule `json:"rules"`
-	ReverseMapping   bool                    `json:"reverse_mapping"`
-	IndependentCache bool                    `json:"independent_cache"`
-	FakeIP           *androidRuntimeFakeIP   `json:"fakeip"`
+	Servers          []androidRuntimeDNSServer `json:"servers"`
+	Rules            []json.RawMessage         `json:"rules"`
+	ReverseMapping   bool                      `json:"reverse_mapping"`
+	IndependentCache bool                      `json:"independent_cache"`
+	Final            string                    `json:"final"`
+	FakeIP           *androidRuntimeFakeIP     `json:"fakeip"`
+}
+
+type androidRuntimeDNSServer struct {
+	Tag     string `json:"tag"`
+	Address string `json:"address"`
+	Detour  string `json:"detour"`
 }
 
 type androidRuntimeDNSRule struct {

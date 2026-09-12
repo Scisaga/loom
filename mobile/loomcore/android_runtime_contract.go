@@ -9,6 +9,13 @@ import (
 	"strings"
 )
 
+// ValidateAndroidV2RuntimeHost 暴露 PrepareAndroidV2Runtime 使用的同一份
+// 平台契约，使 instrumentation 直接验收已打包的 Go reader，而不是在 Kotlin
+// 重写 DNS/TUN/WG 语义（D131）。
+func ValidateAndroidV2RuntimeHost(singBox []byte) error {
+	return validateAndroidV2RuntimeHost(singBox)
+}
+
 // validateAndroidV2RuntimeHost pins the platform-owned parts of
 // android-runtime-v1. The artifact itself is certified, so deployment values
 // such as MTU and overlay prefixes remain data; this only requires the one
@@ -61,26 +68,42 @@ func validateAndroidV2FakeIP(dns *androidRuntimeDNS, experimental *androidExperi
 		!dns.FakeIP.Enabled {
 		return errors.New("[D131 Android runtime] dual-stack FakeIP/FQDN 恢复未启用")
 	}
+	if len(dns.Servers) < 2 || dns.Servers[0].Tag == "" || dns.Servers[0].Address == "" ||
+		dns.Servers[0].Address == "fakeip" {
+		return errors.New("[D131 Android runtime] bootstrap 默认 DNS 必须独立于 FakeIP")
+	}
+	serverAddresses := make(map[string]string, len(dns.Servers))
+	for _, server := range dns.Servers {
+		if server.Tag == "" || server.Address == "" {
+			return errors.New("[D131 Android runtime] DNS server tag/address 不能为空")
+		}
+		if _, exists := serverAddresses[server.Tag]; exists {
+			return errors.New("[D131 Android runtime] DNS server tag 重复")
+		}
+		serverAddresses[server.Tag] = server.Address
+	}
 	v4, err4 := netip.ParsePrefix(dns.FakeIP.Inet4Range)
 	v6, err6 := netip.ParsePrefix(dns.FakeIP.Inet6Range)
 	if err4 != nil || err6 != nil || !v4.Addr().Is4() || !v6.Addr().Is6() ||
 		v4.String() != dns.FakeIP.Inet4Range || v6.String() != dns.FakeIP.Inet6Range {
 		return errors.New("[D131 Android runtime] FakeIP 地址池不是规范双栈前缀")
 	}
-	fakeServer := ""
-	for _, rule := range dns.Rules {
-		if containsAndroidString(rule.Inbound, "tun-in") &&
-			containsAndroidString(rule.QueryType, "A") && containsAndroidString(rule.QueryType, "AAAA") {
-			fakeServer = rule.Server
-		}
+	var fakeRule androidRuntimeDNSRule
+	if len(dns.Rules) == 0 || decodeStrictJSON(dns.Rules[0], maxBundleBytes, &fakeRule) != nil ||
+		len(fakeRule.Inbound) != 1 || fakeRule.Inbound[0] != "tun-in" ||
+		len(fakeRule.QueryType) != 2 || !containsAndroidString(fakeRule.QueryType, "A") ||
+		!containsAndroidString(fakeRule.QueryType, "AAAA") {
+		return errors.New("[D131 Android runtime] 首条 DNS 规则必须只把 TUN A/AAAA 交给 FakeIP")
 	}
+	fakeServer := fakeRule.Server
 	var cache *androidCacheFile
 	if experimental != nil {
 		cache = experimental.CacheFile
 	}
-	if fakeServer == "" || cache == nil || !cache.Enabled || !cache.StoreFakeIP ||
+	if fakeServer == "" || serverAddresses[fakeServer] != "fakeip" || dns.Final == fakeServer ||
+		cache == nil || !cache.Enabled || !cache.StoreFakeIP ||
 		!validAndroidPrivateRelativePath(cache.Path) {
-		return errors.New("[D131 Android runtime] TUN A/AAAA FakeIP 规则或持久缓存无效")
+		return errors.New("[D131 Android runtime] TUN FakeIP server 绑定、默认 DNS 或持久缓存无效")
 	}
 	return nil
 }

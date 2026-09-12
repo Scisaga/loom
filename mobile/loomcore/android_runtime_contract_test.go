@@ -109,6 +109,32 @@ func TestAndroidV2RuntimeContractRequiresSingleHostDataPlane(t *testing.T) {
 		{name: "missing FQDN recovery", change: func(document map[string]any) {
 			document["dns"].(map[string]any)["reverse_mapping"] = false
 		}},
+		{name: "FakeIP rule uses real DNS", change: func(document map[string]any) {
+			document["dns"].(map[string]any)["rules"].([]any)[0].(map[string]any)["server"] = "dns-bootstrap"
+		}},
+		{name: "FakeIP rule is shadowed", change: func(document map[string]any) {
+			dns := document["dns"].(map[string]any)
+			rules := dns["rules"].([]any)
+			dns["rules"] = append([]any{map[string]any{"server": "dns-bootstrap"}}, rules...)
+		}},
+		{name: "FakeIP rule captures non-TUN queries", change: func(document map[string]any) {
+			document["dns"].(map[string]any)["rules"].([]any)[0].(map[string]any)["inbound"] =
+				[]any{"tun-in", "probe-in"}
+		}},
+		{name: "FakeIP rule is narrowed by hidden matcher", change: func(document map[string]any) {
+			document["dns"].(map[string]any)["rules"].([]any)[0].(map[string]any)["domain_suffix"] =
+				[]any{"example.test"}
+		}},
+		{name: "FakeIP server is not FakeIP", change: func(document map[string]any) {
+			document["dns"].(map[string]any)["servers"].([]any)[1].(map[string]any)["address"] = "192.0.2.54"
+		}},
+		{name: "bootstrap defaults to FakeIP", change: func(document map[string]any) {
+			servers := document["dns"].(map[string]any)["servers"].([]any)
+			document["dns"].(map[string]any)["servers"] = []any{servers[1], servers[0]}
+		}},
+		{name: "explicit DNS final uses FakeIP", change: func(document map[string]any) {
+			document["dns"].(map[string]any)["final"] = "dns-fakeip"
+		}},
 		{name: "overlay bypasses WireGuard", change: func(document map[string]any) {
 			document["route"].(map[string]any)["rules"].([]any)[0].(map[string]any)["outbound"] = "route-direct"
 		}},

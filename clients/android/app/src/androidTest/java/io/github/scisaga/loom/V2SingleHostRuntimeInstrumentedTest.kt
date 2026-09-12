@@ -47,6 +47,39 @@ class V2SingleHostRuntimeInstrumentedTest {
         assertEquals("wireguard", endpoints.getJSONObject(0).getString("type"))
         assertFalse(endpoints.getJSONObject(0).getBoolean("system"))
         assertTrue(config.getJSONObject("route").getBoolean("auto_detect_interface"))
+        Loomcore.validateAndroidV2RuntimeHost(config.toString().encodeToByteArray())
         Libbox.checkConfig(config.toString())
+    }
+
+    @Test
+    fun shippedGoRuntimeRejectsRetargetedOrNarrowedFakeIPRule() {
+        val assets = InstrumentationRegistry.getInstrumentation().context.assets
+        val singBox = assets.open("android/v2-single-host-sing-box.json").use { it.reader().readText() }
+
+        fun rejection(change: (JSONObject) -> Unit): Throwable? {
+            val config = JSONObject(singBox)
+            change(config)
+            return runCatching {
+                Loomcore.validateAndroidV2RuntimeHost(config.toString().encodeToByteArray())
+            }.exceptionOrNull()
+        }
+
+        val retargeted = rejection { config ->
+            config.getJSONObject("dns").getJSONArray("rules").getJSONObject(0)
+                .put("server", "dns-bootstrap")
+        }
+        assertTrue(
+            "改指普通 DNS 未被 AAR 拒绝：${retargeted?.javaClass?.name}: ${retargeted?.message}",
+            retargeted != null,
+        )
+
+        val narrowed = rejection { config ->
+            config.getJSONObject("dns").getJSONArray("rules").getJSONObject(0)
+                .put("domain_suffix", org.json.JSONArray().put("example.test"))
+        }
+        assertTrue(
+            "隐藏 matcher 未被 AAR 拒绝：${narrowed?.javaClass?.name}: ${narrowed?.message}",
+            narrowed != null,
+        )
     }
 }
