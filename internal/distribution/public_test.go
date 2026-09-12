@@ -26,10 +26,21 @@ func TestRenderNginxHasOnlyFakeAndImmutableSurface(t *testing.T) {
 	if strings.Contains(string(config), "proxy_pass") || strings.Contains(string(config), "POST") {
 		t.Fatalf("dynamic public surface leaked:\n%s", config)
 	}
+	if !strings.Contains(string(config), `location ~ "^/distribution/sha256/[0-9a-f]{64}$"`) {
+		t.Fatalf("Nginx regex containing braces must be quoted:\n%s", config)
+	}
+	if strings.Count(string(config), `if ($args != "") { return 404; }`) != 2 {
+		t.Fatalf("fake/static Nginx locations must reject query strings:\n%s", config)
+	}
+	if err := ValidatePublicNginx(append(append([]byte(nil), config...), config...)); err != nil {
+		t.Fatalf("multiple generated public servers must remain valid: %v", err)
+	}
 	for _, malicious := range []string{
 		string(config) + "\nproxy_pass http://127.0.0.1:9000;",
 		string(config) + "\nlocation /claim { return 200; }",
 		string(config) + "\nlocation /current.json { alias /tmp/current; }",
+		strings.Replace(string(config), "limit_except GET HEAD", "", 1),
+		strings.Replace(string(config), `if ($args != "") { return 404; }`, "", 1),
 	} {
 		if err := ValidatePublicNginx([]byte(malicious)); err == nil {
 			t.Fatal("accepted dynamic handler in public Nginx")

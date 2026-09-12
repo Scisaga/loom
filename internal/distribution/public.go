@@ -42,14 +42,16 @@ func RenderNginx(input NginxInput) ([]byte, error) {
 
     location = / {
         root %s;
+        if ($args != "") { return 404; }
         limit_except GET HEAD { deny all; }
         try_files /index.html =404;
         add_header Cache-Control "no-store" always;
         add_header X-Content-Type-Options "nosniff" always;
     }
 
-    location ~ ^/distribution/sha256/[0-9a-f]{64}$ {
+    location ~ "^/distribution/sha256/[0-9a-f]{64}$" {
         root %s;
+        if ($args != "") { return 404; }
         disable_symlinks on from=$document_root;
         limit_except GET HEAD { deny all; }
         try_files $uri =404;
@@ -79,10 +81,15 @@ func ValidatePublicNginx(config []byte) error {
 			return fmt.Errorf("[D131 public surface] 公网 Nginx 含禁止能力 %q", forbidden)
 		}
 	}
-	if !strings.Contains(lower, "limit_except get head") ||
-		!strings.Contains(lower, "^/distribution/sha256/[0-9a-f]{64}$") ||
-		!strings.Contains(lower, "disable_symlinks on") ||
-		!strings.Contains(lower, "location / { return 404; }") {
+	rootLocations := strings.Count(lower, "location = / {")
+	staticLocations := strings.Count(lower, `location ~ "^/distribution/sha256/[0-9a-f]{64}$"`)
+	queryGuards := strings.Count(lower, `if ($args != "") { return 404; }`)
+	methodGuards := strings.Count(lower, "limit_except get head")
+	symlinkGuards := strings.Count(lower, "disable_symlinks on")
+	if rootLocations < 1 ||
+		staticLocations != rootLocations || queryGuards != rootLocations+staticLocations ||
+		methodGuards != rootLocations+staticLocations || symlinkGuards != staticLocations ||
+		strings.Count(lower, "location / { return 404; }") != rootLocations {
 		return errors.New("[D131 public surface] Nginx 未固定 GET/HEAD + immutable hash path + default 404")
 	}
 	return nil
