@@ -111,8 +111,46 @@ func TestLinuxRuntimeGenerationFloorsRetainObservedAndTombstonedMaximum(t *testi
 			ListenerTombstones:  []wire.ListenerGenerationTombstoneV1{{ListenerGeneration: 4}},
 		}}},
 	}}}
-	mergeLinuxEndpointGenerationFloors(floors, bundle)
-	if floors["edge"] != 4 || floors["removed-endpoint"] != 9 {
+	if err := mergeLinuxEndpointGenerationFloors(floors, bundle); err != nil {
+		t.Fatal(err)
+	}
+	if floors["edge"] != 5 || floors["removed-endpoint"] != 9 {
 		t.Fatalf("generation floors 未保留历史最大值: %#v", floors)
+	}
+	overflow := wire.DeviceEndpointBundleV1{DataIngressSets: []wire.DeviceDataIngressBindingV1{{
+		EndpointSet: wire.DataIngressEndpointSetV2{Endpoints: []wire.DataIngressEndpointV2{{
+			EndpointID: "edge", ListenerTombstones: []wire.ListenerGenerationTombstoneV1{{ListenerGeneration: 1<<63 - 1}},
+		}}},
+	}}}
+	if err := mergeLinuxEndpointGenerationFloors(map[string]int64{}, overflow); err == nil {
+		t.Fatal("max-int tombstone 被允许溢出 generation floor")
+	}
+}
+
+func TestLinuxRuntimeGenerationFloorKeepsOverlapAcrossReaccept(t *testing.T) {
+	statePath, runtimeStatePath, installStatePath, linkRaw, runtimeRaw := linuxRuntimeDeploymentFixture(t)
+	before, err := LoadLinuxLinkRuntimeState(runtimeStatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before.GenerationFloors) != 1 || before.GenerationFloors[0].MinimumListenerGeneration != 1 ||
+		len(before.Plan.Actions) != 1 || len(before.Plan.Actions[0].DialCandidates) != 2 {
+		t.Fatalf("首次 overlap plan/floor 无效: %#v", before)
+	}
+	store, err := Open(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := AcceptLinuxLinkRuntimePlan(runtimeStatePath, statePath, store.Envelope(), nil,
+		nil, nil, linkRaw, time.Date(2026, 9, 12, 9, 30, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !wire.EqualCanonical(*before, *after) {
+		t.Fatalf("同一 overlap view 重验改变 runtime LKG: before=%#v after=%#v", before, after)
+	}
+	if _, err := PrepareLinuxRuntimeDeployment(installStatePath, statePath, runtimeStatePath,
+		linkRaw, runtimeRaw); err != nil {
+		t.Fatalf("重验后的 overlap runtime artifact 无法部署: %v", err)
 	}
 }

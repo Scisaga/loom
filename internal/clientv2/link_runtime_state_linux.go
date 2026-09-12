@@ -97,12 +97,17 @@ func AcceptLinuxLinkRuntimePlan(runtimeStatePath, deviceStatePath string,
 			minimums[floor.EndpointID] = floor.MinimumListenerGeneration
 		}
 	}
+	// 当前 EndpointSet 也必须在生成 plan 前抬 floor：最低仍可拨代保留
+	// overlap fallback，tombstone 则立即阻止已退役代复活。不能把当前最大
+	// 可拨代当 floor，否则第二次验收同一 overlap view 会错误丢掉旧代。
+	if err := mergeLinuxEndpointGenerationFloors(minimums, envelope.Payload.Active.EndpointBundle); err != nil {
+		return nil, err
+	}
 	plan, err := BuildLinuxLinkRuntimePlan(envelope, trustedSet, trustedPreviousSet, peerDirectory, artifactRaw,
 		installation.Credentials, now, minimums)
 	if err != nil {
 		return nil, err
 	}
-	mergeLinuxEndpointGenerationFloors(minimums, envelope.Payload.Active.EndpointBundle)
 	generationFloors := make([]LinuxEndpointGenerationFloorV1, 0, len(minimums))
 	for endpointID, generation := range minimums {
 		generationFloors = append(generationFloors, LinuxEndpointGenerationFloorV1{
@@ -213,25 +218,31 @@ func validateLinuxLinkRuntimeState(state *LinuxLinkRuntimeStateV1) error {
 	return nil
 }
 
-func mergeLinuxEndpointGenerationFloors(floors map[string]int64, bundle wire.DeviceEndpointBundleV1) {
+func mergeLinuxEndpointGenerationFloors(floors map[string]int64, bundle wire.DeviceEndpointBundleV1) error {
 	for _, binding := range bundle.DataIngressSets {
 		for _, endpoint := range binding.EndpointSet.Endpoints {
-			maximum := floors[endpoint.EndpointID]
-			for _, generation := range endpoint.ListenerGenerations {
-				if generation.ListenerGeneration > maximum {
-					maximum = generation.ListenerGeneration
+			minimum := floors[endpoint.EndpointID]
+			if len(endpoint.ListenerGenerations) > 0 {
+				lowestDialable := endpoint.ListenerGenerations[0].ListenerGeneration
+				if lowestDialable > minimum {
+					minimum = lowestDialable
 				}
 			}
 			for _, tombstone := range endpoint.ListenerTombstones {
-				if tombstone.ListenerGeneration > maximum {
-					maximum = tombstone.ListenerGeneration
+				if tombstone.ListenerGeneration == 1<<63-1 {
+					return errors.New("[D120 Linux runtime] listener tombstone generation 无法形成后继 floor")
+				}
+				tombstoneFloor := tombstone.ListenerGeneration + 1
+				if tombstoneFloor > minimum {
+					minimum = tombstoneFloor
 				}
 			}
-			if maximum > 0 {
-				floors[endpoint.EndpointID] = maximum
+			if minimum > 0 {
+				floors[endpoint.EndpointID] = minimum
 			}
 		}
 	}
+	return nil
 }
 
 func validateLinuxRuntimeAuthorityAdvance(current, candidate wire.ClientFloorsV2) error {
