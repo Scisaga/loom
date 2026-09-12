@@ -2,6 +2,7 @@
 package distribution
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -122,13 +123,9 @@ func StaticHandler(root string) (http.Handler, error) {
 			http.NotFound(response, request)
 			return
 		}
-		if digestPath.MatchString(request.URL.Path) {
-			digest := sha256.Sum256(body)
-			if hex.EncodeToString(digest[:]) != strings.TrimPrefix(request.URL.Path, "/distribution/sha256/") {
-				http.NotFound(response, request)
-				return
-			}
-		}
+		// 公开路径同时承载 raw SHA-256 blob 与 domain-separated canonical
+		// object。后者不能由无上下文的镜像自行重算；它只负责返回 immutable
+		// bytes，最终消费者必须按已认证 ref 中的 domain/hash 重新验证。
 		response.Header().Set("Content-Length", fmt.Sprintf("%d", len(body)))
 		if request.Method == http.MethodGet {
 			_, _ = response.Write(body)
@@ -144,12 +141,83 @@ func PublishArtifact(root string, body []byte) (string, error) {
 	}
 	digest := sha256.Sum256(body)
 	hexDigest := hex.EncodeToString(digest[:])
+	return publishAtDigest(root, hexDigest, body)
+}
+
+// PublishCanonicalObject 发布由协议 domain 分隔的 exact canonical JSON。
+// URL 使用 typed hash，而不是原始 bytes 的 SHA-256；这与 bootstrap/config
+// reader 的 FetchCanonicalObject 契约一致（D104、D124、D131）。
+func PublishCanonicalObject(root, domain string, body []byte) (string, string, error) {
+	if !safeAbsolutePath(root) {
+		return "", "", errors.New("[D131 distribution] static root 必须是规范绝对路径")
+	}
+	typedHash, hexDigest, err := canonicalObjectHash(domain, body)
+	if err != nil {
+		return "", "", err
+	}
+	path, err := publishAtDigest(root, hexDigest, body)
+	if err != nil {
+		return "", "", err
+	}
+	return typedHash, path, nil
+}
+
+func canonicalObjectHash(domain string, body []byte) (string, string, error) {
+	if domain == "" || len(body) == 0 {
+		return "", "", errors.New("[D104 distribution] canonical object domain/body 缺失")
+	}
+	canonical, err := wire.CanonicalizeStrict(body)
+	if err != nil || !bytes.Equal(canonical, body) {
+		return "", "", errors.New("[D104 distribution] object 不是 exact canonical JSON")
+	}
+	typedHash, err := wire.HashCanonical(domain, body)
+	if err != nil {
+		return "", "", err
+	}
+	digest, err := wire.ParseHash(typedHash)
+	if err != nil {
+		return "", "", err
+	}
+	return typedHash, hex.EncodeToString(digest), nil
+}
+
+// PublishDeviceConfigArtifact 把 renderer 产出的无秘密 canonical config 放到
+// public immutable surface，并返回可直接进入 certified Device view 的 exact ref。
+func PublishDeviceConfigArtifact(root, artifactID, platform, mediaType, renderContractID string,
+	generation int64, body []byte,
+) (wire.DeviceConfigArtifactRefV1, string, error) {
+	if !safeAbsolutePath(root) {
+		return wire.DeviceConfigArtifactRefV1{}, "", errors.New("[D131 distribution] static root 必须是规范绝对路径")
+	}
+	typedHash, hexDigest, err := canonicalObjectHash(wire.DomainDeviceConfigArtifact, body)
+	if err != nil {
+		return wire.DeviceConfigArtifactRefV1{}, "", err
+	}
+	ref := wire.DeviceConfigArtifactRefV1{
+		ArtifactID: artifactID, Generation: generation, Platform: platform,
+		MediaType: mediaType, RenderContractID: renderContractID,
+		SizeBytes: int64(len(body)), ContentHash: typedHash,
+	}
+	if err := wire.ValidateDeviceConfigArtifactRef(&ref); err != nil {
+		return wire.DeviceConfigArtifactRefV1{}, "", err
+	}
+	path, err := publishAtDigest(root, hexDigest, body)
+	if err != nil {
+		return wire.DeviceConfigArtifactRefV1{}, "", err
+	}
+	return ref, path, nil
+}
+
+func publishAtDigest(root, hexDigest string, body []byte) (string, error) {
+	if !safeAbsolutePath(root) || len(hexDigest) != sha256.Size*2 {
+		return "", errors.New("[D131 distribution] publish root/digest 无效")
+	}
+	if _, err := hex.DecodeString(hexDigest); err != nil {
+		return "", errors.New("[D131 distribution] publish digest 无效")
+	}
 	directory := filepath.Join(root, "distribution", "sha256")
 	path := filepath.Join(directory, hexDigest)
-	if existing, err := os.ReadFile(path); err == nil {
-		if string(existing) != string(body) {
-			return "", errors.New("[D131 distribution] digest path 已存在不同内容")
-		}
+	if err := verifyExistingArtifact(path, body); err == nil {
 		return "/distribution/sha256/" + hexDigest, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", err
@@ -176,7 +244,17 @@ func PublishArtifact(root string, body []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.Rename(temporaryPath, path); err != nil {
+	// link(2) 的 no-replace 语义避免并发 publisher 越过上面的预检后覆盖
+	// 已发布内容；竞争者只能接受 exact bytes，不能把冲突隐藏成成功。
+	if err := os.Link(temporaryPath, path); err != nil {
+		if !errors.Is(err, os.ErrExist) {
+			return "", err
+		}
+		if err := verifyExistingArtifact(path, body); err != nil {
+			return "", err
+		}
+	}
+	if err := os.Remove(temporaryPath); err != nil {
 		return "", err
 	}
 	directoryHandle, err := os.Open(directory)
@@ -192,6 +270,24 @@ func PublishArtifact(root string, body []byte) (string, error) {
 		return "", closeErr
 	}
 	return "/distribution/sha256/" + hexDigest, nil
+}
+
+func verifyExistingArtifact(path string, body []byte) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("[D131 distribution] digest path 已被非普通文件占用")
+	}
+	existing, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(existing, body) {
+		return errors.New("[D131 distribution] digest path 已存在不同内容")
+	}
+	return nil
 }
 
 func safeAbsolutePath(path string) bool {

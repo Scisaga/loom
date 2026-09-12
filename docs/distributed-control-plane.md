@@ -2984,8 +2984,10 @@ GET/HEAD /distribution/sha256/<digest>  → 精确 immutable object
 
 可选静态索引也必须自身内容寻址并由 descriptor/hash 引用。禁止动态 latest 选择、上传、cookie、
 按 token 变体、目录遍历、claim/control/config/report handler 和这些服务的 reverse proxy。
-响应应设置 immutable cache policy、固定 Content-Type、长度与 digest；客户端仍以内容 hash 和
-Loom signature/QC 为 authority。
+响应应设置 immutable cache policy、固定 Content-Type 与长度。`<digest>` 对二进制 blob 是 raw
+SHA-256，对 canonical wire object 是协议 domain-separated typed hash；无上下文的 Nginx/镜像不能
+自行把后者当 raw SHA-256 复算。publisher 必须按对应 domain 生成路径，客户端仍以 certified ref
+中的 domain、size、typed hash 和 Loom signature/QC 为最终 authority。
 
 ### 12.2 PublicAccessProfile 与三类部署
 

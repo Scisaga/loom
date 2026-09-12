@@ -1,12 +1,17 @@
 package distribution
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"loom/internal/wire"
 )
 
 func TestRenderNginxHasOnlyFakeAndImmutableSurface(t *testing.T) {
@@ -67,7 +72,7 @@ func TestStaticHandlerRejectsPathFuzzAndWrites(t *testing.T) {
 	}
 }
 
-func TestStaticHandlerRejectsMislabeledArtifact(t *testing.T) {
+func TestStaticHandlerIsTransportNotHashAuthority(t *testing.T) {
 	root := t.TempDir()
 	directory := filepath.Join(root, "distribution", "sha256")
 	if err := os.MkdirAll(directory, 0o700); err != nil {
@@ -84,7 +89,53 @@ func TestStaticHandlerRejectsMislabeledArtifact(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/distribution/sha256/"+digest, nil)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusNotFound {
-		t.Fatalf("错误 digest 的 artifact 返回 %d", response.Code)
+	if response.Code != http.StatusOK || response.Body.String() != "wrong bytes" {
+		t.Fatalf("静态镜像未按 opaque typed-hash 路径返回 bytes: status=%d body=%q",
+			response.Code, response.Body.String())
+	}
+	if hash, err := wire.HashCanonical(wire.DomainDeviceConfigArtifact, []byte("wrong bytes")); err == nil && hash == "sha256:"+digest {
+		t.Fatal("consumer-side canonical/typed hash rejection 未生效")
+	}
+}
+
+func TestPublishDeviceConfigArtifactUsesTypedHashAndIsFetchable(t *testing.T) {
+	root := t.TempDir()
+	body := []byte(`{"files":{"sing-box/config.json":"{}"},"owner":"android-a"}`)
+	ref, artifactPath, err := PublishDeviceConfigArtifact(root, "android-runtime", "android",
+		"application/vnd.loom.config+json", "android-runtime-v1", 7, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantHash, err := wire.DeviceConfigArtifactContentHash(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := sha256.Sum256(body)
+	if ref.ContentHash != wantHash || ref.ContentHash == "sha256:"+hex.EncodeToString(raw[:]) ||
+		ref.SizeBytes != int64(len(body)) || ref.Generation != 7 {
+		t.Fatalf("config ref 未使用 exact typed hash: %+v", ref)
+	}
+	digest, _ := wire.ParseHash(wantHash)
+	if artifactPath != "/distribution/sha256/"+hex.EncodeToString(digest) {
+		t.Fatalf("artifact path=%q", artifactPath)
+	}
+	handler, err := StaticHandler(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, artifactPath, nil))
+	if response.Code != http.StatusOK || !bytes.Equal(response.Body.Bytes(), body) {
+		t.Fatalf("typed artifact response status=%d body=%q", response.Code, response.Body.Bytes())
+	}
+
+	if _, _, err := PublishDeviceConfigArtifact(root, "android-runtime", "android",
+		"application/vnd.loom.config+json", "android-runtime-v1", 8,
+		[]byte("{\n  \"schema\": 1\n}\n")); err == nil {
+		t.Fatal("接受了非 exact canonical config artifact")
+	}
+	if _, _, err := PublishDeviceConfigArtifact(root, "android-runtime", "ios",
+		"application/vnd.loom.config+json", "android-runtime-v1", 8, body); err == nil {
+		t.Fatal("接受了 artifact contract/platform 不一致")
 	}
 }
