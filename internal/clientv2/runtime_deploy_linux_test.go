@@ -205,6 +205,10 @@ func TestPrepareLinuxRuntimeLocalUninstallRemovesOnlyRuntimeAndPreservesDeviceSt
 		!containsString(plan.Remove, installStatePath) || len(plan.Remove) != len(installed.InstalledFiles)+1 {
 		t.Fatalf("local uninstall transaction 不完整: remove=%v guard=%+v", plan.Remove, plan.InventoryGuard)
 	}
+	if got, want := strings.Join(plan.RetireServices(), ","),
+		"loom-client-v2-sing-box,loom-client-v2-agent"; got != want {
+		t.Fatalf("local uninstall 待停服务=%q want %q", got, want)
+	}
 	for _, preserved := range []string{statePath, runtimeStatePath,
 		filepath.Join(filepath.Dir(statePath), "identity.json"),
 		filepath.Join(filepath.Dir(statePath), "pending.json")} {

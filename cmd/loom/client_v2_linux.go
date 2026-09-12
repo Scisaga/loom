@@ -376,8 +376,8 @@ func cmdClientAcceptV2Runtime(args []string) error {
 			return err
 		}
 		if *dryRun {
-			fmt.Printf("  dry-run      terminal=%s remove=%d services=%d（未改动服务）\n",
-				envelope.Payload.State, len(plan.Remove), len(plan.Services()))
+			fmt.Printf("  dry-run      terminal=%s remove=%d retire-services=%d（未改动服务）\n",
+				envelope.Payload.State, len(plan.Remove), len(plan.RetireServices()))
 			return nil
 		}
 		if len(plan.Remove) == 0 {
@@ -474,8 +474,8 @@ func cmdClientUninstallV2Runtime(args []string) error {
 		return err
 	}
 	if *dryRun {
-		fmt.Printf("  dry-run      remove=%d services=%d（未改动；Device identity/LKG/floors 保留）\n",
-			len(plan.Remove), len(plan.Services()))
+		fmt.Printf("  dry-run      remove=%d retire-services=%d（未改动；Device identity/LKG/floors 保留）\n",
+			len(plan.Remove), len(plan.RetireServices()))
 		return nil
 	}
 	if len(plan.Remove) == 0 {

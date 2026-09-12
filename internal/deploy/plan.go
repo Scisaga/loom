@@ -208,6 +208,28 @@ func (p *Plan) Services() []string {
 	return out
 }
 
+// RetireServices 返回 Remove 路径在删除前必须停用的服务。它与 Services
+// 分开：前者是卸载/收敛动作，后者是新配置变化后可能需要重启的服务。
+func (p *Plan) RetireServices() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, path := range p.Remove {
+		service := UnitFor(path)
+		if service == "" || seen[service] {
+			continue
+		}
+		seen[service] = true
+		out = append(out, service)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if a, b := restartOrder(out[i]), restartOrder(out[j]); a != b {
+			return a < b
+		}
+		return out[i] < out[j]
+	})
+	return out
+}
+
 // stagingPath 是文件在暂存目录里的位置。
 //
 // 先装到暂存目录、检查通过再挪到位:直接覆盖线上文件的话,检查失败时
