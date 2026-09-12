@@ -23,14 +23,18 @@ import (
 )
 
 type privateServiceFixture struct {
-	now        time.Time
-	service    *PrivateService
-	capability wire.VerifiedBootstrapCapabilityV1
-	material   InviteMaterialV2
-	core       wire.EnrollmentClaimCoreV2
-	identity   *ecdsa.PrivateKey
-	token      string
-	processed  *int
+	now                  time.Time
+	service              *PrivateService
+	capability           wire.VerifiedBootstrapCapabilityV1
+	material             InviteMaterialV2
+	core                 wire.EnrollmentClaimCoreV2
+	identity             *ecdsa.PrivateKey
+	issuerPrivate        ed25519.PrivateKey
+	issuerProof          wire.BootstrapIssuerAuthorizationProofV1
+	bootstrapCatalog     wire.BootstrapEndpointCatalogV1
+	bootstrapCatalogHead wire.HeadEntryV2
+	token                string
+	processed            *int
 }
 
 func TestPrivateEnrollmentPreflightChallengeClaimAndReplayBoundary(t *testing.T) {
@@ -171,6 +175,49 @@ func newPrivateServiceFixture(t *testing.T) privateServiceFixture {
 	bootstrapHead := privateTestHead(t, setHash, wire.EmptyHashV1, wire.EmptyHashV1,
 		wire.HashRaw("private-service-test", []byte("bootstrap-operations")),
 		wire.HashRaw("private-service-test", []byte("issuer-root")), "bootstrap", 1, "2026-09-11T11:00:00Z")
+	bootstrapSignature, err := wire.SignHeadAttestation(wire.AttestationForHead(&bootstrapHead), member, privateEd25519(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrapQC, err := wire.MarshalCanonical(wire.StableQC(&bootstrapHead,
+		[]wire.ControlConfigSignatureV1{bootstrapSignature}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrapListener := wire.ListenerGenerationV2{
+		Schema: 2, ListenerGeneration: 1, PublishedState: "preferred", DialTargetFQDN: "bootstrap.example.test",
+		PublicPort: 8443, AddressFamilies: []string{"ipv4"},
+		TransportIdentityRefs: []string{"profile:bootstrap-webpki-v1", wire.HashRaw("private-service-test", []byte("bootstrap-spki"))},
+		CredentialGeneration:  1, CertificateIntentHash: wire.HashRaw("private-service-test", []byte("bootstrap-certificate")),
+		PublicProfileGeneration: 1, IntroducedRevision: 1, ValidFrom: "2026-09-11T11:00:00Z",
+		ValidUntil: "2026-09-12T11:00:00Z", RotationOperationHash: wire.HashRaw("private-service-test", []byte("bootstrap-rotation")),
+	}
+	bootstrapIngress := wire.BootstrapIngressEndpointSetV1{
+		Schema: 1, ClusterID: "cluster", EndpointSetID: "bootstrap-ingress", Generation: 1,
+		ValidFrom: "2026-09-11T11:00:00Z", ValidUntil: "2026-09-12T11:00:00Z",
+		Endpoints: []wire.BootstrapIngressEndpointV1{{EndpointID: "bootstrap-edge", LogicalServerID: "bootstrap-server",
+			Transport: "hysteria2", HintRank: 0, ListenerGenerations: []wire.ListenerGenerationV2{bootstrapListener},
+			ListenerTombstones: []wire.ListenerGenerationTombstoneV1{}}},
+		ParentHeadHash: bootstrapHead.HeadHash, ConfigQC: bootstrapQC,
+	}
+	bootstrapIngressHash, err := wire.BootstrapIngressSetHash(&bootstrapIngress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrapQCHash, err := wire.ConfigQCHash(bootstrapQC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrapCatalog := wire.BootstrapEndpointCatalogV1{
+		Schema: 1, ClusterID: "cluster", CatalogGeneration: 1,
+		ValidFrom: "2026-09-11T11:00:00Z", ValidUntil: "2026-09-12T11:00:00Z",
+		BootstrapIngressSet: bootstrapIngress, BootstrapIngressSetHash: bootstrapIngressHash,
+		RequiredClientProtocol: 2, ParentHeadHash: bootstrapHead.HeadHash, ConfigQCHash: bootstrapQCHash,
+	}
+	bootstrapCatalogHash, err := wire.BootstrapEndpointCatalogHash(&bootstrapCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	policy := wire.InviteIssuancePolicyV2{
 		Schema: 2, ClusterID: "cluster", PolicyID: "invite-policy", Generation: 1,
@@ -210,7 +257,7 @@ func newPrivateServiceFixture(t *testing.T) privateServiceFixture {
 	issuerPrivate := ed25519.NewKeyFromSeed(issuerSeed)
 	issuerPublic := issuerPrivate.Public().(ed25519.PublicKey)
 	issuerKeyID, _ := wire.ControlKeyID(issuerPublic)
-	ingressHash := wire.HashRaw("private-service-test", []byte("ingress"))
+	ingressHash := bootstrapIngressHash
 	authorization := wire.BootstrapIssuerAuthorizationV1{
 		Schema: 1, ClusterID: "cluster", AuthorizationID: "bootstrap-issuer", Generation: 1, Status: "active",
 		Active: &wire.BootstrapIssuerAuthorizationActiveV1{
@@ -251,7 +298,7 @@ func newPrivateServiceFixture(t *testing.T) privateServiceFixture {
 		DeviceEnrollmentIntentCommitmentHash: commitmentHash, TokenCommitment: tokenCommitment,
 		TokenArtifactBindingHash: wire.HashRaw("private-service-test", []byte("token-artifact")),
 		InviteIssuancePolicyHash: policyHash, BootstrapIssuerAuthorizationHash: authorizationHash,
-		BootstrapIssuerRegistryRoot: authorizationRoot, BootstrapCatalogHash: wire.HashRaw("private-service-test", []byte("catalog")),
+		BootstrapIssuerRegistryRoot: authorizationRoot, BootstrapCatalogHash: bootstrapCatalogHash,
 		EnrollmentServiceRefHash: serviceHash, OperationID: "invite-operation", ParentHeadHash: authorityHead.HeadHash,
 	}
 	recordHash, _ := wire.CertifiedInviteRecordHash(&record, &policy)
@@ -337,7 +384,8 @@ func newPrivateServiceFixture(t *testing.T) privateServiceFixture {
 		t.Fatal(err)
 	}
 	return privateServiceFixture{now: now, service: service, capability: verifiedCapability, material: material,
-		core: core, identity: identity, token: token, processed: &processed}
+		core: core, identity: identity, issuerPrivate: issuerPrivate, issuerProof: authorizationProof,
+		bootstrapCatalog: bootstrapCatalog, bootstrapCatalogHead: bootstrapHead, token: token, processed: &processed}
 }
 
 func signedPrivateSubmission(t *testing.T, fixture privateServiceFixture,

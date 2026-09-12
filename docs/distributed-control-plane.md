@@ -2585,6 +2585,10 @@ original claim core 与全部 resume binding 后，才能在一次性响应中�
 `.loom-resume` 文件带外交给原设备。客户端必须验证 descriptor/capability/hash，重用原
 claim core 及 identity/wrapping keys，并对新 server nonce 重签 detached PoP。`expires_at` 不得超过
 capability、issuer authorization、policy、catalog、service ref 和 transaction `retry_not_after` 中最早的截止点。
+签发器必须以已 certified 的管理员 operation_id 为 first-result key，把 exact request hash、issuer
+public key、descriptor hash 与完整 descriptor 原子写入 control-private 存储后再响应；同一 operation_id
+的进程内重试和崩溃恢复只能逐字节返回第一次结果，request、transaction state 或签名 body 有任何变化
+都必须失败关闭，且不得重新读取后用较新的 transaction/catalog 拼装第二份结果。
 
 各公网 ingress 对次数/流量的记账可以是保守的本地或最终一致状态，因此它不是全局一次性安全
 边界。真正的一次性授权由 private Enrollment 对 token 做 Raft CAS。入口发现异常重放时可提前

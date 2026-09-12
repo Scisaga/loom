@@ -545,15 +545,31 @@ func VerifyEnrollmentIntentPreflight(response *EnrollmentIntentPreflightResponse
 
 // ValidateDescriptorMirrorBindings 禁止 descriptor 用另一组 URL/pin 覆盖 certified EndpointSet。
 func ValidateDescriptorMirrorBindings(descriptor *InviteBootstrapDescriptorV2, endpointSets map[string]DistributionEndpointSetV1) error {
-	seenServers := make(map[string]struct{}, len(descriptor.DistributionMirrors))
-	seenNames := make(map[string]struct{}, len(descriptor.DistributionMirrors))
-	for _, mirror := range descriptor.DistributionMirrors {
+	if descriptor == nil {
+		return errors.New("[D115 Invite] descriptor 不能为空")
+	}
+	return ValidateDistributionMirrorBindings(descriptor.ClusterID, descriptor.DistributionMirrors, endpointSets)
+}
+
+// ValidateDistributionMirrorBindings 同时供 initial 与 resume descriptor 复用，
+// 确保 URL/pin/listener generation 来自 exact certified EndpointSet（D115、D130）。
+func ValidateDistributionMirrorBindings(clusterID string, mirrors []DistributionMirrorRefV1,
+	endpointSets map[string]DistributionEndpointSetV1) error {
+	if !validIdentifier(clusterID, 128) {
+		return errors.New("[D115 Invite] mirror cluster identity 无效")
+	}
+	if err := ValidateDistributionMirrorRefs(mirrors); err != nil {
+		return err
+	}
+	seenServers := make(map[string]struct{}, len(mirrors))
+	seenNames := make(map[string]struct{}, len(mirrors))
+	for _, mirror := range mirrors {
 		set, ok := endpointSets[mirror.DistributionEndpointSetHash]
 		if !ok {
 			return errors.New("[D115 Invite] mirror 缺 exact DistributionEndpointSet")
 		}
 		setHash, err := DistributionEndpointSetHash(&set)
-		if err != nil || setHash != mirror.DistributionEndpointSetHash || set.ClusterID != descriptor.ClusterID {
+		if err != nil || setHash != mirror.DistributionEndpointSetHash || set.ClusterID != clusterID {
 			return errors.New("[D115 Invite] mirror EndpointSet hash/cluster 不匹配")
 		}
 		matched := false
