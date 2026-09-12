@@ -70,13 +70,13 @@ type MembershipLedgerCandidateV1 struct {
 type MembershipJointCommitV1 struct {
 	Body       wire.JointControlSetEntryBodyV1 `json:"body"`
 	EntryHash  string                          `json:"entry_hash"`
-	CommitAcks []string                        `json:"commit_acks"`
+	RaftCommit *RaftCommitReferenceV1          `json:"raft_commit"`
 	Proof      *wire.JointControlSetProofV1    `json:"proof,omitempty"`
 }
 
 type MembershipFinalCommitV1 struct {
 	Head                      wire.HeadEntryV2               `json:"head"`
-	CommitAcks                []string                       `json:"commit_acks"`
+	RaftCommit                *RaftCommitReferenceV1         `json:"raft_commit"`
 	ExpectedSnapshotHash      string                         `json:"expected_snapshot_hash"`
 	ExpectedEffectiveSSOTHash string                         `json:"expected_effective_ssot_hash"`
 	QC                        *wire.JointHeadReplicationQCV1 `json:"qc,omitempty"`
@@ -134,7 +134,7 @@ func CreateMembershipLedger(path string, parent wire.SignedCurrentV2, parentPrev
 	if err != nil {
 		return nil, err
 	}
-	state := MembershipLedgerStateV1{Schema: 1, Phase: MembershipLedgerCandidate,
+	state := MembershipLedgerStateV1{Schema: 2, Phase: MembershipLedgerCandidate,
 		Candidate: MembershipLedgerCandidateV1{
 			Schema: 1, ValidatedAt: trustedTime.UTC().Format(time.RFC3339Nano), ParentCurrent: parent,
 			ParentPreviousControlSet: cloneControlSetPointer(parentPreviousSet), OldControlSet: oldSet,
@@ -221,11 +221,14 @@ func (ledger *MembershipLedger) MarkLearnerCaughtUp(memberID, checkpointHash str
 	})
 }
 
-func (ledger *MembershipLedger) RecordJointCommit(body wire.JointControlSetEntryBodyV1, ackMemberIDs []string) error {
+func (ledger *MembershipLedger) RecordJointCommitFromRaft(storage *RaftStorage,
+	body wire.JointControlSetEntryBodyV1) error {
 	return ledger.update(func(state *MembershipLedgerStateV1) error {
 		if state.Joint != nil {
-			acks, err := canonicalJointMembers(&state.Candidate, ackMemberIDs)
-			if err == nil && wire.EqualCanonical(state.Joint.Body, body) && equalStrings(state.Joint.CommitAcks, acks) {
+			reference, err := committedMembershipRecordReference(storage, &state.Candidate.OldControlSet,
+				body.RaftIndex, state.Joint.EntryHash, RaftRecordJointControlSet, nil, &body)
+			if err == nil && wire.EqualCanonical(state.Joint.Body, body) &&
+				state.Joint.RaftCommit != nil && wire.EqualCanonical(*state.Joint.RaftCommit, *reference) {
 				return nil
 			}
 			return errors.New("[D112 joint] 已记录的 Joint commit 不能被改写")
@@ -245,11 +248,12 @@ func (ledger *MembershipLedger) RecordJointCommit(body wire.JointControlSetEntry
 		if err != nil {
 			return err
 		}
-		acks, err := canonicalJointMembers(&state.Candidate, ackMemberIDs)
+		reference, err := committedMembershipRecordReference(storage, &state.Candidate.OldControlSet,
+			body.RaftIndex, entryHash, RaftRecordJointControlSet, nil, &body)
 		if err != nil {
 			return err
 		}
-		state.Joint = &MembershipJointCommitV1{Body: body, EntryHash: entryHash, CommitAcks: acks}
+		state.Joint = &MembershipJointCommitV1{Body: body, EntryHash: entryHash, RaftCommit: reference}
 		state.Phase = MembershipLedgerJointCommittedNotCertified
 		return nil
 	})
@@ -282,12 +286,14 @@ func (ledger *MembershipLedger) CertifyJoint(signatures []wire.ControlConfigSign
 	})
 }
 
-func (ledger *MembershipLedger) RecordFinalCommit(head wire.HeadEntryV2, ackMemberIDs []string,
+func (ledger *MembershipLedger) RecordFinalCommitFromRaft(storage *RaftStorage, head wire.HeadEntryV2,
 	expectedSnapshotHash, expectedEffectiveSSOTHash string) error {
 	return ledger.update(func(state *MembershipLedgerStateV1) error {
 		if state.Final != nil {
-			acks, err := canonicalJointMembers(&state.Candidate, ackMemberIDs)
-			if err == nil && wire.EqualCanonical(state.Final.Head, head) && equalStrings(state.Final.CommitAcks, acks) &&
+			reference, err := committedMembershipRecordReference(storage, &state.Candidate.OldControlSet,
+				head.Body.Payload.RaftIndex, head.EntryHash, RaftRecordHead, &head, nil)
+			if err == nil && wire.EqualCanonical(state.Final.Head, head) && state.Final.RaftCommit != nil &&
+				wire.EqualCanonical(*state.Final.RaftCommit, *reference) &&
 				state.Final.ExpectedSnapshotHash == expectedSnapshotHash &&
 				state.Final.ExpectedEffectiveSSOTHash == expectedEffectiveSSOTHash {
 				return nil
@@ -306,11 +312,12 @@ func (ledger *MembershipLedger) RecordFinalCommit(head wire.HeadEntryV2, ackMemb
 			expectedEffectiveSSOTHash); err != nil {
 			return err
 		}
-		acks, err := canonicalJointMembers(&state.Candidate, ackMemberIDs)
+		reference, err := committedMembershipRecordReference(storage, &state.Candidate.OldControlSet,
+			head.Body.Payload.RaftIndex, head.EntryHash, RaftRecordHead, &head, nil)
 		if err != nil {
 			return err
 		}
-		state.Final = &MembershipFinalCommitV1{Head: head, CommitAcks: acks,
+		state.Final = &MembershipFinalCommitV1{Head: head, RaftCommit: reference,
 			ExpectedSnapshotHash: expectedSnapshotHash, ExpectedEffectiveSSOTHash: expectedEffectiveSSOTHash}
 		state.Phase = MembershipLedgerFinalCommittedNotCertified
 		return nil
@@ -409,7 +416,7 @@ func certifyLearners(parent wire.SignedCurrentV2, oldSet, newSet wire.ControlSet
 }
 
 func validateMembershipLedgerState(state *MembershipLedgerStateV1) error {
-	if state == nil || state.Schema != 1 || !validMembershipLedgerPhase(state.Phase) {
+	if state == nil || state.Schema != 2 || !validMembershipLedgerPhase(state.Phase) {
 		return errors.New("[D112 membership ledger] state header/phase 无效")
 	}
 	if err := validateMembershipLedgerCandidate(&state.Candidate); err != nil {
@@ -571,7 +578,7 @@ func validateMembershipDirectory(set *wire.ControlSetV1, object *wire.ControlPee
 }
 
 func validateMembershipJoint(state *MembershipLedgerStateV1) error {
-	if state.Joint == nil {
+	if state.Joint == nil || state.Joint.RaftCommit == nil {
 		return errors.New("[D112 joint] ledger 缺 Joint commit")
 	}
 	entryHash, err := wire.VerifyJointControlSetCandidate(&state.Candidate.OldControlSet,
@@ -580,8 +587,8 @@ func validateMembershipJoint(state *MembershipLedgerStateV1) error {
 	if err != nil || entryHash != state.Joint.EntryHash {
 		return errors.New("[D112 joint] ledger Joint entry/hash 无效")
 	}
-	_, err = canonicalJointMembers(&state.Candidate, state.Joint.CommitAcks)
-	return err
+	return validateMembershipCommitReference(state.Joint.RaftCommit, &state.Candidate.OldControlSet,
+		state.Joint.Body.RaftTerm, state.Joint.Body.RaftIndex, state.Joint.EntryHash)
 }
 
 func validateMembershipJointProof(state *MembershipLedgerStateV1) error {
@@ -596,7 +603,7 @@ func validateMembershipJointProof(state *MembershipLedgerStateV1) error {
 }
 
 func validateMembershipFinal(state *MembershipLedgerStateV1) error {
-	if state.Final == nil {
+	if state.Final == nil || state.Final.RaftCommit == nil {
 		return errors.New("[D112 Final] ledger 缺 Final commit")
 	}
 	if _, err := wire.VerifyControlSetFinalCandidate(&state.Candidate.OldControlSet,
@@ -608,8 +615,54 @@ func validateMembershipFinal(state *MembershipLedgerStateV1) error {
 		state.Final.ExpectedSnapshotHash, state.Final.ExpectedEffectiveSSOTHash); err != nil {
 		return err
 	}
-	_, err := canonicalJointMembers(&state.Candidate, state.Final.CommitAcks)
-	return err
+	return validateMembershipCommitReference(state.Final.RaftCommit, &state.Candidate.OldControlSet,
+		state.Final.Head.Body.Payload.RaftTerm, state.Final.Head.Body.Payload.RaftIndex,
+		state.Final.Head.EntryHash)
+}
+
+func committedMembershipRecordReference(storage *RaftStorage, oldSet *wire.ControlSetV1,
+	index int64, entryHash, kind string, head *wire.HeadEntryV2,
+	joint *wire.JointControlSetEntryBodyV1) (*RaftCommitReferenceV1, error) {
+	if storage == nil || oldSet == nil {
+		return nil, errors.New("[D112 joint Raft] commit 必须绑定本机 Raft storage/old ControlSet")
+	}
+	raft := storage.SnapshotRaft()
+	oldHash, oldErr := wire.ControlSetHash(oldSet)
+	storageHash, storageErr := wire.ControlSetHash(&storage.set)
+	if oldErr != nil || storageErr != nil || oldHash != storageHash || raft.ClusterID != oldSet.ClusterID ||
+		!controlSetContains(oldSet, raft.MemberID) || index < 1 || index > raft.CommitIndex ||
+		index > int64(len(raft.Log)) {
+		return nil, errors.New("[D112 joint Raft] membership entry 不在本机 committed prefix")
+	}
+	record := raft.Log[index-1]
+	if record.Kind != kind || record.Term < 1 || record.Index != index || record.EntryHash != entryHash {
+		return nil, errors.New("[D112 joint Raft] committed membership record 坐标/hash/kind 不匹配")
+	}
+	switch kind {
+	case RaftRecordJointControlSet:
+		if joint == nil || record.JointControlSet == nil || !wire.EqualCanonical(*record.JointControlSet, *joint) {
+			return nil, errors.New("[D112 joint Raft] committed Joint payload 不匹配")
+		}
+	case RaftRecordHead:
+		if head == nil || record.Head == nil || head.Body.Payload.HeadKind != "control_set_final" ||
+			!wire.EqualCanonical(*record.Head, *head) {
+			return nil, errors.New("[D112 joint Raft] committed Final payload 不匹配")
+		}
+	default:
+		return nil, errors.New("[D112 joint Raft] membership commit record kind 无效")
+	}
+	return &RaftCommitReferenceV1{Schema: 1, ClusterID: raft.ClusterID, MemberID: raft.MemberID,
+		Term: record.Term, Index: record.Index, EntryHash: record.EntryHash}, nil
+}
+
+func validateMembershipCommitReference(reference *RaftCommitReferenceV1, oldSet *wire.ControlSetV1,
+	term, index int64, entryHash string) error {
+	if reference == nil || reference.Schema != 1 || reference.ClusterID != oldSet.ClusterID ||
+		!controlSetContains(oldSet, reference.MemberID) || reference.Term != term ||
+		reference.Index != index || reference.EntryHash != entryHash {
+		return errors.New("[D112 joint Raft] durable commit reference 无效")
+	}
+	return nil
 }
 
 func canonicalJointMembers(candidate *MembershipLedgerCandidateV1, memberIDs []string) ([]string, error) {

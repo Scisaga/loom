@@ -69,7 +69,7 @@ func TestRaftHTTPHandlerBindsMessageIdentityToMTLSMember(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler, err := NewRaftHTTPHandler(storage, set, directory, now,
-		func(context.Context, wire.HeadEntryV2) error { return nil })
+		func(context.Context, RaftLogRecordV1) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestRaftHTTPRejectsCandidateBeforeFsyncButPersistsHigherTerm(t *testing.T) 
 	}
 	recomputed := 0
 	handler, err := NewRaftHTTPHandler(storage, set, directory, now,
-		func(_ context.Context, _ wire.HeadEntryV2) error {
+		func(_ context.Context, _ RaftLogRecordV1) error {
 			recomputed++
 			return context.Canceled
 		})

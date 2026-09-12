@@ -1282,7 +1282,9 @@ QC 的 `signatures` 也按 `(member_id,key_id)` 排序且每个 ref 只保存一
 同一 member 在同一侧永远只计一票。Joint config 与 Final head 分别使用 §7.4 的 tagged QC，
 不得共用或省略 attestation body。`target_control_epoch` 和 `new_control_epoch` 都必须等于
 `old_control_epoch + 1`。Final payload/context 必须精确引用同一 membership proof 以及已提交
-Joint 的 entry/proof hash，且其 Raft index/previous-log hash 紧接 Joint；
+Joint 的 entry/proof hash。正常情况下其 Raft index/previous-log hash 紧接 Joint；若 Joint 后发生
+leader 更替，只允许插入 §7.4 的 current-term `RaftNoOpEntryV1` barrier，Final 坐标必须紧接真实
+hash-chained Raft 前项，同时仍以 Joint entry/proof hash 绑定同一 transition；
 `control_transition_proof_hash` 在 Final head 之前已经固定，不含 `HeadEntryBodyV2`、entry/head hash
 或 QC，因而没有自引用。Final 的 `HeadEntryV2.body.payload` 必须逐字节等于 proof 中的
 `final_payload`，`Final.head.body.transition_proof_hash` 必须等于重算的
@@ -1301,9 +1303,11 @@ Final payload/context 与 Joint/intent 的重复承诺必须逐字段相等：pa
 `new_control_epoch/new_control_set_hash`，不能让 transition 批准的集合与 Head authority 字段分离。
 payload 的 `control_peer_directory_hash` 还必须等于 context 的
 `new_control_peer_directory_hash`。
-Final payload 的
-`raft_index == Joint.raft_index + 1`、`previous_log_entry_hash == joint_entry_hash`；任一不等都
-必须拒绝，不能仅因 joint proof 本身有效就把它拼接到另一 lineage、parent 或目标 epoch。
+Final payload 的 `raft_index` 必须大于 Joint index。两者相邻时
+`previous_log_entry_hash == joint_entry_hash`；存在 index gap 时两者必须不等，且 control voter
+必须从本机 committed Raft prefix 验证 gap 恰由 hash-chained current-term no-op barrier 构成。
+Joint 相对 parent certified Head 使用同一规则。任一 data-bearing entry、错误直接引用或日志断链
+都必须拒绝，不能仅因 joint proof 本身有效就把它拼接到另一 lineage、parent 或目标 epoch。
 
 Final membership transition 不授权夹带普通业务、ACL、CA 或 reader-policy 修改。确定性 Final
 reducer 从 `parent_certified_head_hash` 的 materialized state 出发，只把 private operator
@@ -1334,11 +1338,12 @@ state equality 检查。缺 private directory 的节点可验证公开 proof，�
    `q_old` 和 `q_new` 的 durable ack 才提交，apply 后的 replication QC 也必须分别满足两边
    多数。未提交的竞争成员变更按日志冲突规则丢弃。
 5. `JointControlSet` 生效后，选举必须同时取得 old/new 多数；状态机进入
-   `joint_finalization_only(transition_id)`，除与该 transition 精确匹配的 Final 外，不得追加或提交
-   普通 head、另一 membership/recovery operation 或外部副作用 intent。期间收到的普通提案只留在
-   CRDT/pending 层，等待 Final certified 后基于新 head 重新做 CAS；不得插到 Joint 与 Final 之间。
+   `joint_finalization_only(transition_id)`，除与该 transition 精确匹配的 Final 及 leader 更替必需的
+   current-term no-op barrier 外，不得追加或提交普通 head、另一 membership/recovery operation或
+   外部副作用 intent。期间收到的普通提案只留在 CRDT/pending 层，等待 Final certified 后基于新
+   head 重新做 CAS；不得把 data-bearing entry 插到 Joint 与 Final 之间。
    重叠 voter 在两边各计一次成员资格，但 QC 必须分别证明两边都达门槛。
-6. 在 joint 规则下紧接 Joint 提交并以 old/new 双多数 QC 认证
+6. 在 joint 规则下紧接 Joint（或紧接 leader 更替所需的 no-op barrier）提交并以 old/new 双多数 QC 认证
    `FinalControlSet(transition_id,C_new,new_epoch)`；Raft commit/apply Final 就切换内部 epoch 和
    voter rules，从该 entry **之后**只由 `C_new` 选举、提交；只有 Final 的 old/new joint QC
    形成后才物化/发布新 `control` projection 与客户端 transition。

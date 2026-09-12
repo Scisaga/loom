@@ -71,6 +71,16 @@ func TestControlSetTransitionRequiresMembershipJointAndFinalQuorums(t *testing.T
 	if candidateHash, err := VerifyJointControlSetCandidate(&oldSet, &newSet, &approval, &jointBody, &parent); err != nil || candidateHash != jointEntryHash {
 		t.Fatalf("合法 Joint candidate 未通过 pre-commit 验证: hash=%q err=%v", candidateHash, err)
 	}
+	gappedJoint := jointBody
+	gappedJoint.RaftIndex++
+	gappedJoint.PreviousLogEntryHash = recoveryTestHash("current-term-no-op")
+	if _, err := VerifyJointControlSetCandidate(&oldSet, &newSet, &approval, &gappedJoint, &parent); err != nil {
+		t.Fatalf("current-term no-op 后的 Joint candidate 被拒绝: %v", err)
+	}
+	gappedJoint.PreviousLogEntryHash = parent.EntryHash
+	if _, err := VerifyJointControlSetCandidate(&oldSet, &newSet, &approval, &gappedJoint, &parent); err == nil {
+		t.Fatal("带 index gap 的 Joint 仍伪称直接引用 parent log entry")
+	}
 	jointAttestation := JointConfigAttestationForEntry(&jointBody, jointEntryHash)
 	oldJointSignature, _ := SignJointConfigAttestation(jointAttestation, oldSet.Members[0], oldConfigPrivate)
 	newJointSignature, _ := SignJointConfigAttestation(jointAttestation, newSet.Members[0], newConfigPrivate)
@@ -111,6 +121,21 @@ func TestControlSetTransitionRequiresMembershipJointAndFinalQuorums(t *testing.T
 	if candidateHash, err := VerifyControlSetFinalCandidate(&oldSet, &newSet, &approval, &jointProof,
 		&finalHead, &parent); err != nil || candidateHash != transitionHash {
 		t.Fatalf("合法 Final candidate 未通过 pre-commit 验证: hash=%q err=%v", candidateHash, err)
+	}
+	gappedFinalPayload := finalPayload
+	gappedFinalPayload.RaftIndex++
+	gappedFinalPayload.ControlRevision = gappedFinalPayload.RaftIndex
+	gappedFinalPayload.PreviousLogEntryHash = recoveryTestHash("joint-finalization-no-op")
+	gappedTransitionHash, _ := ControlSetTransitionProofHash(&ControlSetTransitionProofV1{
+		Schema: 1, JointProofHash: jointProofHash, FinalPayload: gappedFinalPayload})
+	gappedFinal, err := NewHeadEntry(HeadEntryBodyV2{Payload: gappedFinalPayload,
+		TransitionProofHash: gappedTransitionHash})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyControlSetFinalCandidate(&oldSet, &newSet, &approval, &jointProof,
+		&gappedFinal, &parent); err != nil {
+		t.Fatalf("current-term no-op 后的 Final candidate 被拒绝: %v", err)
 	}
 	oldFinalSignature, _ := SignHeadAttestation(AttestationForHead(&finalHead), oldSet.Members[0], oldConfigPrivate)
 	newFinalSignature, _ := SignHeadAttestation(AttestationForHead(&finalHead), newSet.Members[0], newConfigPrivate)

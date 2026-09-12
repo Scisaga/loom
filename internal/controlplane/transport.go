@@ -87,19 +87,23 @@ type RaftHTTPHandler struct {
 	set       wire.ControlSetV1
 	directory wire.ControlPeerDirectoryV1
 	now       func() time.Time
-	recompute HeadRecomputer
+	verify    RaftCandidateVerifier
 }
 
+// RaftCandidateVerifier 必须对 data-bearing record 重放其完整确定性验证；HTTP
+// follower 在调用 RaftStorage fsync 之前执行它，不能只信 leader 的 hash（D104、D112）。
+type RaftCandidateVerifier func(context.Context, RaftLogRecordV1) error
+
 func NewRaftHTTPHandler(storage *RaftStorage, set wire.ControlSetV1, directory wire.ControlPeerDirectoryV1,
-	now func() time.Time, recompute HeadRecomputer) (*RaftHTTPHandler, error) {
-	if storage == nil || now == nil || recompute == nil {
-		return nil, errors.New("[D104 Raft RPC] storage/可信时间源/recomputer 不能为空")
+	now func() time.Time, verify RaftCandidateVerifier) (*RaftHTTPHandler, error) {
+	if storage == nil || now == nil || verify == nil {
+		return nil, errors.New("[D104 Raft RPC] storage/可信时间源/candidate verifier 不能为空")
 	}
 	if err := wire.ValidateControlPeerDirectoryAt(&set, &directory, now()); err != nil {
 		return nil, err
 	}
 	return &RaftHTTPHandler{storage: storage, set: set, directory: directory, now: now,
-		recompute: recompute}, nil
+		verify: verify}, nil
 }
 
 func (handler *RaftHTTPHandler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
@@ -188,13 +192,21 @@ func (handler *RaftHTTPHandler) validateAppendCandidates(ctx context.Context,
 		}
 		switch record.Kind {
 		case RaftRecordHead:
-			if record.Head == nil || handler.recompute(ctx, *record.Head) != nil {
-				return errors.New("[D104 Raft RPC] deterministic candidate recompute 失败")
+			if record.Head == nil {
+				return errors.New("[D104 Raft RPC] Head candidate 缺 payload")
+			}
+		case RaftRecordJointControlSet:
+			if record.JointControlSet == nil {
+				return errors.New("[D112 joint Raft] Joint candidate 缺 payload")
 			}
 		case RaftRecordNoOp:
 			// no-op 没有应用 payload，exact hash/lineage 由 RaftStorage 重算。
+			continue
 		default:
 			return errors.New("[D104 Raft RPC] 未知 Raft record kind")
+		}
+		if err := handler.verify(ctx, cloneRaftRecord(*record)); err != nil {
+			return errors.New("[D104 Raft RPC] deterministic candidate recompute 失败")
 		}
 	}
 	return nil

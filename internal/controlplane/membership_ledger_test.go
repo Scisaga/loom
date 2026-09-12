@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
@@ -26,8 +27,7 @@ type membershipLedgerFixture struct {
 func TestMembershipLedgerRecoversJointAndFinalCommitBeforeQC(t *testing.T) {
 	fixture := newMembershipLedgerFixture(t)
 	jointBody := membershipJointBody(t, fixture)
-	acks := []string{fixture.newSet.Members[0].MemberID, fixture.newSet.Members[1].MemberID}
-	if err := fixture.ledger.RecordJointCommit(jointBody, acks); err == nil {
+	if err := fixture.ledger.RecordJointCommitFromRaft(nil, jointBody); err == nil {
 		t.Fatal("learners 尚未 catch-up 就提交了 Joint")
 	}
 	if err := fixture.ledger.BeginLearners(); err != nil {
@@ -39,10 +39,63 @@ func TestMembershipLedgerRecoversJointAndFinalCommitBeforeQC(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := fixture.ledger.RecordJointCommit(jointBody, acks[1:]); err == nil {
-		t.Fatal("new-side 单票绕过了 old/new 双多数")
+	raft, err := OpenRaftStorage(filepath.Join(t.TempDir(), "raft.json"),
+		fixture.oldSet.Members[0].MemberID, fixture.oldSet)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := fixture.ledger.RecordJointCommit(jointBody, acks); err != nil {
+	if _, err := raft.StartElection(); err != nil {
+		t.Fatal(err)
+	}
+	if err := raft.AppendLocal(fixture.parent.Head); err != nil {
+		t.Fatal(err)
+	}
+	if commit, err := raft.AdvanceLeaderCommit(nil); err != nil || commit != 1 {
+		t.Fatalf("parent commit=%d err=%v", commit, err)
+	}
+	if err := raft.MarkRaftApplied(1); err != nil {
+		t.Fatal(err)
+	}
+	barrier, err := raft.AppendLocalNoOp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if commit, err := raft.AdvanceLeaderCommit(nil); err != nil || commit != barrier.Index {
+		t.Fatalf("pre-Joint current-term barrier commit=%d err=%v", commit, err)
+	}
+	if err := raft.MarkRaftApplied(barrier.Index); err != nil {
+		t.Fatal(err)
+	}
+	jointBody.RaftIndex = barrier.Index + 1
+	jointBody.PreviousLogEntryHash = barrier.EntryHash
+	if err := raft.AppendLocalJointControlSet(jointBody, &fixture.oldSet, &fixture.newSet,
+		&fixture.approval, &fixture.parent.Head); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raft.AdvanceLeaderCommit(map[string]int64{
+		fixture.newSet.Members[1].MemberID: jointBody.RaftIndex,
+	}); err == nil {
+		t.Fatal("stable quorum 路径提交了 Joint entry")
+	}
+	if commit, err := raft.AdvanceJointLeaderCommit(nil, fixture.oldSet, fixture.newSet); err != nil || commit != barrier.Index {
+		t.Fatalf("new-side 单票绕过了 old/new 双多数: commit=%d err=%v", commit, err)
+	}
+	if err := fixture.ledger.RecordJointCommitFromRaft(raft, jointBody); err == nil {
+		t.Fatal("未 committed 的 Joint entry 进入了 membership ledger")
+	}
+	if commit, err := raft.AdvanceJointLeaderCommit(map[string]int64{
+		fixture.newSet.Members[1].MemberID: jointBody.RaftIndex,
+	}, fixture.oldSet, fixture.newSet); err != nil || commit != jointBody.RaftIndex {
+		t.Fatalf("Joint 双多数未提交: commit=%d err=%v", commit, err)
+	}
+	if applied, err := ApplyCommittedMembershipPrefix(context.Background(), raft, fixture.ledger,
+		func(context.Context, wire.HeadEntryV2) (string, string, error) {
+			t.Fatal("Joint apply 不应调用 Final materializer")
+			return "", "", nil
+		}); err != nil || applied != 1 {
+		t.Fatalf("Joint apply=%d err=%v", applied, err)
+	}
+	if err := fixture.ledger.RecordJointCommitFromRaft(raft, jointBody); err != nil {
 		t.Fatal(err)
 	}
 	reopened, err := OpenMembershipLedger(fixture.path)
@@ -66,9 +119,45 @@ func TestMembershipLedgerRecoversJointAndFinalCommitBeforeQC(t *testing.T) {
 		t.Fatal(err)
 	}
 	finalHead := membershipFinalHead(t, fixture, reopened.Snapshot())
-	if err := reopened.RecordFinalCommit(finalHead, acks, finalHead.Body.Payload.SnapshotHash,
+	if err := raft.AppendLocal(finalHead); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raft.AdvanceLeaderCommit(map[string]int64{
+		fixture.newSet.Members[1].MemberID: finalHead.Body.Payload.RaftIndex,
+	}); err == nil {
+		t.Fatal("stable quorum 路径提交了 Final entry")
+	}
+	if commit, err := raft.AdvanceJointLeaderCommit(map[string]int64{
+		fixture.newSet.Members[1].MemberID: finalHead.Body.Payload.RaftIndex,
+	}, fixture.oldSet, fixture.newSet); err != nil || commit != finalHead.Body.Payload.RaftIndex {
+		t.Fatalf("Final 双多数未提交: commit=%d err=%v", commit, err)
+	}
+	if err := reopened.RecordFinalCommitFromRaft(raft, finalHead, finalHead.Body.Payload.SnapshotHash,
 		finalHead.Body.Payload.EffectiveSSOTHash); err != nil {
 		t.Fatal(err)
+	}
+	if err := raft.ActivateFinalControlSet(fixture.newSet, finalHead.EntryHash); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenRaftStorage(raft.path, fixture.oldSet.Members[0].MemberID, fixture.oldSet); err == nil {
+		t.Fatal("Final 激活后仍以 old ControlSet 打开 Raft storage")
+	}
+	reopenedRaft, err := OpenRaftStorage(raft.path, fixture.newSet.Members[0].MemberID, fixture.newSet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied, err := ApplyCommittedMembershipPrefix(context.Background(), reopenedRaft, reopened,
+		func(_ context.Context, candidate wire.HeadEntryV2) (string, string, error) {
+			if !wire.EqualCanonical(candidate, finalHead) {
+				t.Fatal("materializer 收到错误 Final")
+			}
+			return finalHead.Body.Payload.SnapshotHash,
+				finalHead.Body.Payload.EffectiveSSOTHash, nil
+		}); err != nil || applied != 1 {
+		t.Fatalf("Final apply=%d err=%v", applied, err)
+	}
+	if reopenedRaft.SnapshotRaft().ControlSetHash != finalHead.Body.Payload.ControlSetHash {
+		t.Fatal("Final ControlSet authority 未耐久恢复")
 	}
 	reopened, err = OpenMembershipLedger(fixture.path)
 	if err != nil {

@@ -510,7 +510,7 @@ func VerifyControlSetTransitionBundle(bundle *ControlSetTransitionBundleV1, pare
 }
 
 // VerifyJointControlSetCandidate 是写入 config log 前的 exact 验证边界；它验证
-// membership approval、PoP、parent lineage 与紧邻 Raft 坐标，但不把尚未提交的
+// membership approval、PoP、parent lineage 与 Raft 坐标，但不把尚未提交的
 // Joint entry 冒充成已经具备 replication QC 的公开 proof（D112）。
 func VerifyJointControlSetCandidate(oldSet, newSet *ControlSetV1,
 	approval *ControlMembershipApprovalProofV1, joint *JointControlSetEntryBodyV1,
@@ -525,16 +525,17 @@ func VerifyJointControlSetCandidate(oldSet, newSet *ControlSetV1,
 	parentTime, _ := ParseTimeZ(parent.Body.Payload.CommittedLogicalTime)
 	jointTime, timeErr := ParseTimeZ(joint.CommittedLogicalTime)
 	nextJointIndex, indexErr := CheckedAdd(parent.Body.Payload.RaftIndex, 1)
+	adjacent := joint.RaftIndex == nextJointIndex
 	if timeErr != nil || indexErr != nil || !jointTime.After(parentTime) ||
-		joint.RaftTerm < parent.Body.Payload.RaftTerm || joint.RaftIndex != nextJointIndex ||
-		joint.PreviousLogEntryHash != parent.EntryHash {
-		return "", errors.New("[D112 joint] Joint entry 未直接连续 parent certified head")
+		joint.RaftTerm < parent.Body.Payload.RaftTerm || joint.RaftIndex < nextJointIndex ||
+		adjacent != (joint.PreviousLogEntryHash == parent.EntryHash) {
+		return "", errors.New("[D112 joint] Joint entry 未连续绑定 parent/内部 Raft lineage")
 	}
 	return JointControlSetEntryHash(joint)
 }
 
 // VerifyControlSetFinalCandidate 供 joint-finalization-only 运行时在追加 Final 前使用。
-// 它要求 Joint 已有 old/new 双多数 QC，并钉住 Final 的 proof hash、直接相邻日志坐标
+// 它要求 Joint 已有 old/new 双多数 QC，并钉住 Final 的 proof hash、连续日志坐标
 // 与不夹带业务状态的 reducer 输出；Final 自身的 joint head QC 在 commit 后另行收集（D112）。
 func VerifyControlSetFinalCandidate(oldSet, newSet *ControlSetV1,
 	approval *ControlMembershipApprovalProofV1, jointProof *JointControlSetProofV1,
@@ -610,9 +611,10 @@ func validateFinalControlSetPayload(payload *HeadEntryPayloadV2, parent *HeadEnt
 	nextIndex, indexErr := CheckedAdd(joint.RaftIndex, 1)
 	jointTime, jointTimeErr := ParseTimeZ(joint.CommittedLogicalTime)
 	finalTime, finalTimeErr := ParseTimeZ(payload.CommittedLogicalTime)
+	adjacent := payload.RaftIndex == nextIndex
 	p := &parent.Body.Payload
-	if indexErr != nil || jointTimeErr != nil || finalTimeErr != nil || !finalTime.After(jointTime) || payload.RaftIndex != nextIndex ||
-		payload.PreviousLogEntryHash != jointEntryHash || payload.RaftTerm < joint.RaftTerm || payload.ControlRevision != payload.RaftIndex ||
+	if indexErr != nil || jointTimeErr != nil || finalTimeErr != nil || !finalTime.After(jointTime) || payload.RaftIndex < nextIndex ||
+		adjacent != (payload.PreviousLogEntryHash == jointEntryHash) || payload.RaftTerm < joint.RaftTerm || payload.ControlRevision != payload.RaftIndex ||
 		payload.HeadKind != "control_set_final" || payload.ClusterID != intent.ClusterID ||
 		payload.RecoveryEpoch != intent.RecoveryEpoch || payload.RecoveryStatementHash != intent.RecoveryStatementHash ||
 		payload.RecoveryPolicyHash != intent.RecoveryPolicyHash || payload.ControlEpoch != intent.TargetControlEpoch ||
