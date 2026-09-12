@@ -56,6 +56,22 @@ func TestEnrollmentResultArtifactBindsCertificateViewAndSecretRefs(t *testing.T)
 	if err != nil || first != second {
 		t.Fatalf("result artifact hash 不稳定: first=%s second=%s err=%v", first, second, err)
 	}
+	completed := EnrollmentClaimResultV2{Schema: 2, Status: "completed",
+		TransactionStateHash: HashRaw("result-test", []byte("transaction")),
+		ResultArtifactHash:   first, ResultArtifact: &artifact}
+	if err := ValidateEnrollmentClaimResult(&completed); err != nil {
+		t.Fatal(err)
+	}
+	withoutArtifact := completed
+	withoutArtifact.ResultArtifact = nil
+	if err := ValidateEnrollmentClaimResult(&withoutArtifact); err == nil {
+		t.Fatal("completed result 未携 exact artifact 仍被接受")
+	}
+	premature := EnrollmentClaimResultV2{Schema: 2, Status: "issued_provisional",
+		TransactionStateHash: completed.TransactionStateHash, ResultArtifactHash: first, ResultArtifact: &artifact}
+	if err := ValidateEnrollmentClaimResult(&premature); err == nil {
+		t.Fatal("provisional result 提前携带了私有 artifact")
+	}
 	tampered := artifact
 	tampered.InitialDeviceView = artifact.InitialDeviceView
 	tampered.InitialDeviceView.Active = new(DeviceActiveViewV1)

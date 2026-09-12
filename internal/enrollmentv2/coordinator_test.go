@@ -11,6 +11,7 @@ import (
 )
 
 type workflowBackendFixture struct {
+	t                *testing.T
 	set              wire.ControlSetV1
 	member           wire.ControlMemberV1
 	enrollmentKey    ed25519.PrivateKey
@@ -31,12 +32,13 @@ func TestCoordinatorResumesReservedTransactionAndFreezesCompletedResult(t *testi
 	set, member, enrollmentKey := controlSet(t)
 	profile, issuerKey := activeEnrollmentProfile(t)
 	resultArtifact := enrollmentResultArtifactFixture(t)
+	bindResultArtifactToAttempt(&resultArtifact, attempt)
 	path := filepath.Join(t.TempDir(), "workflow.json")
 	store, err := OpenStore(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstBackend := &workflowBackendFixture{set: set, member: member, enrollmentKey: enrollmentKey,
+	firstBackend := &workflowBackendFixture{t: t, set: set, member: member, enrollmentKey: enrollmentKey,
 		profile: profile, issuerKey: issuerKey, resultArtifact: resultArtifact, committedAt: private.now.Format("2006-01-02T15:04:05Z"),
 		pendingProvision: true}
 	coordinator, err := NewCoordinator(store, firstBackend)
@@ -52,11 +54,12 @@ func TestCoordinatorResumesReservedTransactionAndFreezesCompletedResult(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondBackend := &workflowBackendFixture{set: set, member: member, enrollmentKey: enrollmentKey,
+	secondBackend := &workflowBackendFixture{t: t, set: set, member: member, enrollmentKey: enrollmentKey,
 		profile: profile, issuerKey: issuerKey, resultArtifact: resultArtifact, committedAt: private.now.Format("2006-01-02T15:04:05Z")}
 	recoveredCoordinator, _ := NewCoordinator(reopened, secondBackend)
 	completed, err := recoveredCoordinator.ProcessClaim(context.Background(), attempt)
-	if err != nil || completed.Status != "completed" || completed.ResultArtifactHash == "" {
+	if err != nil || completed.Status != "completed" || completed.ResultArtifactHash == "" ||
+		completed.ResultArtifact == nil {
 		t.Fatalf("另一 coordinator 未从 reserved 恢复完成: result=%#v err=%v", completed, err)
 	}
 	if secondBackend.admissionCalls != 0 || secondBackend.provisionCalls != 1 ||
@@ -64,7 +67,7 @@ func TestCoordinatorResumesReservedTransactionAndFreezesCompletedResult(t *testi
 		t.Fatalf("恢复重跑了已 durable 的 admission: %#v", secondBackend)
 	}
 
-	frozenBackend := &workflowBackendFixture{set: set, member: member, enrollmentKey: enrollmentKey,
+	frozenBackend := &workflowBackendFixture{t: t, set: set, member: member, enrollmentKey: enrollmentKey,
 		profile: profile, issuerKey: issuerKey, resultArtifact: resultArtifact, committedAt: secondBackend.committedAt}
 	frozenCoordinator, _ := NewCoordinator(reopened, frozenBackend)
 	replayed, err := frozenCoordinator.ProcessClaim(context.Background(), attempt)
@@ -82,7 +85,8 @@ func TestCoordinatorRejectsBackendAdmissionForDifferentCore(t *testing.T) {
 	set, member, enrollmentKey := controlSet(t)
 	profile, issuerKey := activeEnrollmentProfile(t)
 	resultArtifact := enrollmentResultArtifactFixture(t)
-	backend := &workflowBackendFixture{set: set, member: member, enrollmentKey: enrollmentKey,
+	bindResultArtifactToAttempt(&resultArtifact, attempt)
+	backend := &workflowBackendFixture{t: t, set: set, member: member, enrollmentKey: enrollmentKey,
 		profile: profile, issuerKey: issuerKey, resultArtifact: resultArtifact, committedAt: private.now.Format("2006-01-02T15:04:05Z")}
 	store, _ := OpenStore(filepath.Join(t.TempDir(), "workflow.json"))
 	coordinator, _ := NewCoordinator(store, admissionTamperingBackend{WorkflowBackend: backend})
@@ -185,10 +189,11 @@ func (backend *workflowBackendFixture) CollectApproval(_ context.Context, _ Veri
 	return wire.StableEnrollmentApprovalQC(attestation, []wire.ControlEnrollmentSignatureV1{signature}), backend.set, nil
 }
 
-func (backend *workflowBackendFixture) PlanCompletion(_ context.Context, _ VerifiedClaimAttemptV2,
-	_ DurableRecord, _ wire.StableEnrollmentApprovalQCV2) (CompletionPlanV2, error) {
+func (backend *workflowBackendFixture) CommitCompletion(_ context.Context, _ VerifiedClaimAttemptV2,
+	record DurableRecord, _ wire.StableEnrollmentApprovalQCV2,
+	operation CompletionOperationV2) (CompletionCertificationV1, error) {
 	backend.completionCalls++
-	return CompletionPlanV2{OperationID: "completion-operation"}, nil
+	return completionCertificationFixture(backend.t, backend.set, backend.member, operation, *record.ResultArtifact), nil
 }
 
 func verifiedPrivateAttempt(t *testing.T, fixture privateServiceFixture) VerifiedClaimAttemptV2 {
@@ -205,4 +210,13 @@ func verifiedPrivateAttempt(t *testing.T, fixture privateServiceFixture) Verifie
 	}
 	return VerifiedClaimAttemptV2{capability: fixture.capability, claim: verified,
 		submission: submission, material: fixture.material}
+}
+
+func bindResultArtifactToAttempt(result *wire.EnrollmentResultArtifactV1, attempt VerifiedClaimAttemptV2) {
+	deviceID := attempt.material.Opening.DeviceEnrollmentIntent.DeviceID
+	result.InitialDeviceView.DeviceID = deviceID
+	result.InitialDeviceView.Active.IdentitySPKIHash = attempt.Claim().IdentityKeyHash()
+	result.InitialDeviceView.Active.EndpointBundle.DeviceID = deviceID
+	result.InitialDeviceView.Active.EndpointBundleHash, _ = wire.DeviceEndpointBundleHash(
+		&result.InitialDeviceView.Active.EndpointBundle)
 }

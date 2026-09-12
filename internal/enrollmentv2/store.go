@@ -28,6 +28,8 @@ type DurableRecord struct {
 	ApprovalQC               *wire.StableEnrollmentApprovalQCV2    `json:"approval_qc,omitempty"`
 	ApprovalControlSet       *wire.ControlSetV1                    `json:"approval_control_set,omitempty"`
 	CompletionOperation      *CompletionOperationV2                `json:"completion_operation,omitempty"`
+	CompletionCertification  *CompletionCertificationV1            `json:"completion_certification,omitempty"`
+	CompletionProjection     *CompletionProjectionV1               `json:"completion_projection,omitempty"`
 	State                    TransactionStateV2                    `json:"state"`
 }
 
@@ -48,7 +50,7 @@ func OpenStore(path string) (*Store, error) {
 	if path == "" {
 		return nil, errors.New("[D130 Enrollment] transaction store path 不能为空")
 	}
-	store := &Store{path: path, state: durableState{Schema: 2, Records: []DurableRecord{}}}
+	store := &Store{path: path, state: durableState{Schema: 3, Records: []DurableRecord{}}}
 	body, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return store, nil
@@ -59,6 +61,17 @@ func OpenStore(path string) (*Store, error) {
 	var state durableState
 	if _, err := wire.DecodeStrict(body, 32<<20, &state); err != nil {
 		return nil, fmt.Errorf("[D130 Enrollment] transaction store 非规范或损坏: %w", err)
+	}
+	if state.Schema == 2 {
+		for index := range state.Records {
+			if state.Records[index].State.Status == "completed" {
+				return nil, errors.New("[D130 Enrollment] 旧 completed record 缺 completion Head/QC，禁止迁移并释放 artifact")
+			}
+		}
+		state.Schema = 3
+		if err := store.persistLocked(state); err != nil {
+			return nil, err
+		}
 	}
 	if err := validateDurableState(&state); err != nil {
 		return nil, err
@@ -182,7 +195,11 @@ func (s *Store) RecordProvisional(operation ProvisionalIssuanceOperationV1,
 	return next, nil
 }
 
-func (s *Store) Complete(operation CompletionOperationV2, approval *wire.StableEnrollmentApprovalQCV2, set *wire.ControlSetV1) (TransactionStateV2, error) {
+func (s *Store) Complete(operation CompletionOperationV2, approval *wire.StableEnrollmentApprovalQCV2,
+	set *wire.ControlSetV1, certification CompletionCertificationV1) (TransactionStateV2, error) {
+	if approval == nil || set == nil {
+		return TransactionStateV2{}, errors.New("[D130 Enrollment] completion approval/ControlSet 不能为空")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	index, found := findRecord(s.state.Records, operation.InviteID)
@@ -195,8 +212,10 @@ func (s *Store) Complete(operation CompletionOperationV2, approval *wire.StableE
 		existing := s.state.Records[index]
 		if err == nil && current.CompletionOperationHash == operationHash && existing.ApprovalQC != nil &&
 			existing.ApprovalControlSet != nil && existing.CompletionOperation != nil &&
+			existing.CompletionCertification != nil && existing.CompletionProjection != nil &&
 			wire.EqualCanonical(*existing.ApprovalQC, *approval) && wire.EqualCanonical(*existing.ApprovalControlSet, *set) &&
-			wire.EqualCanonical(*existing.CompletionOperation, operation) {
+			wire.EqualCanonical(*existing.CompletionOperation, operation) &&
+			wire.EqualCanonical(*existing.CompletionCertification, certification) {
 			return current, nil
 		}
 		return TransactionStateV2{}, errors.New("[D130 Enrollment] completed transaction 不接受不同 completion")
@@ -208,11 +227,18 @@ func (s *Store) Complete(operation CompletionOperationV2, approval *wire.StableE
 	if err := validateApprovalAgainstIssuance(&s.state.Records[index], approval); err != nil {
 		return TransactionStateV2{}, err
 	}
+	projection, err := validateCompletionCertification(&s.state.Records[index], &operation, set,
+		&certification, &next)
+	if err != nil {
+		return TransactionStateV2{}, err
+	}
 	candidate := cloneDurableState(s.state)
 	candidate.Records[index].State = next
 	candidate.Records[index].ApprovalQC = approval
 	candidate.Records[index].ApprovalControlSet = set
 	candidate.Records[index].CompletionOperation = &operation
+	candidate.Records[index].CompletionCertification = &certification
+	candidate.Records[index].CompletionProjection = &projection
 	if err := s.persistLocked(candidate); err != nil {
 		return TransactionStateV2{}, err
 	}
@@ -280,7 +306,7 @@ func cloneDurableState(state durableState) durableState {
 }
 
 func validateDurableState(state *durableState) error {
-	if state == nil || state.Schema != 2 || state.Records == nil {
+	if state == nil || state.Schema != 3 || state.Records == nil {
 		return errors.New("[D130 Enrollment] transaction store schema 无效")
 	}
 	seenTokens := make(map[string]struct{}, len(state.Records))
@@ -327,6 +353,7 @@ func validateDurableRecord(record *DurableRecord) error {
 		if record.ProvisionalOperation != nil || record.ProvisionalIssuance != nil ||
 			record.DeviceCertificateProfile != nil || record.ResultArtifact != nil || record.ApprovalQC != nil ||
 			record.ApprovalControlSet != nil || record.CompletionOperation != nil ||
+			record.CompletionCertification != nil || record.CompletionProjection != nil ||
 			!wire.EqualCanonical(reserved, record.State) {
 			return errors.New("[D130 Enrollment] reserved durable record tagged union 无效")
 		}
@@ -349,12 +376,14 @@ func validateDurableRecord(record *DurableRecord) error {
 	}
 	if record.State.Status == "issued_provisional" {
 		if record.ApprovalQC != nil || record.ApprovalControlSet != nil || record.CompletionOperation != nil ||
+			record.CompletionCertification != nil || record.CompletionProjection != nil ||
 			!wire.EqualCanonical(issued, record.State) {
 			return errors.New("[D130 Enrollment] issued durable record tagged union 无效")
 		}
 		return nil
 	}
-	if record.ApprovalQC == nil || record.ApprovalControlSet == nil || record.CompletionOperation == nil {
+	if record.ApprovalQC == nil || record.ApprovalControlSet == nil || record.CompletionOperation == nil ||
+		record.CompletionCertification == nil || record.CompletionProjection == nil {
 		return errors.New("[D130 Enrollment] completed durable record 缺 approval/completion stable artifacts")
 	}
 	if err := validateApprovalAgainstIssuance(record, record.ApprovalQC); err != nil {
@@ -366,6 +395,11 @@ func validateDurableRecord(record *DurableRecord) error {
 	}
 	if !wire.EqualCanonical(completed, record.State) {
 		return errors.New("[D130 Enrollment] completed durable record 与 stable artifacts 不匹配")
+	}
+	projection, err := validateCompletionCertification(record, record.CompletionOperation,
+		record.ApprovalControlSet, record.CompletionCertification, &completed)
+	if err != nil || !wire.EqualCanonical(projection, *record.CompletionProjection) {
+		return errors.New("[D130 Enrollment] completed durable record 的 consume/activate/release 投影无效")
 	}
 	return nil
 }

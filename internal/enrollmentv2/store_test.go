@@ -8,6 +8,8 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -50,7 +52,7 @@ func TestDurableStoreRejectsCorruptOrdering(t *testing.T) {
 	if _, err := store.Reserve(invite, evidence, claim, admission, &set, claim.ReservedAt); err != nil {
 		t.Fatal(err)
 	}
-	body, err := wire.MarshalCanonical(durableState{Schema: 2, Records: []DurableRecord{
+	body, err := wire.MarshalCanonical(durableState{Schema: 3, Records: []DurableRecord{
 		{InviteID: "z", TokenCommitment: hash, State: TransactionStateV2{Schema: 2, ClusterID: "cluster", InviteID: "z", RequestID: "r", Status: "reserved", ClaimCoreHash: hash, IdentityKeyHash: hash, WrappingKeyHash: hash, ClaimOperationHash: hash}},
 		{InviteID: "a", TokenCommitment: wire.EmptyHashV1, State: TransactionStateV2{Schema: 2, ClusterID: "cluster", InviteID: "a", RequestID: "r", Status: "reserved", ClaimCoreHash: hash, IdentityKeyHash: hash, WrappingKeyHash: hash, ClaimOperationHash: hash}},
 	}})
@@ -136,7 +138,16 @@ func TestDurableStoreRecoversExactProvisionalAndCompletionArtifacts(t *testing.T
 		ProvisionalIssuanceHash: issuanceHash, ResultingIssuanceRegistryRoot: resultingRoot,
 		EnrollmentApprovalQCHash: approvalHash, ResultArtifactHash: body.ResultArtifactHash,
 	}
-	completed, err := store.Complete(completion, &approval, &set)
+	certification := completionCertificationFixture(t, set, member, completion, resultArtifact)
+	tamperedCertification := clonePrivateValue(certification)
+	tamperedCertification.Operation.OperationLeaf.ObjectID = wire.EmptyHashV1
+	if _, err := store.Complete(completion, &approval, &set, tamperedCertification); err == nil {
+		t.Fatal("未证明 completion operation inclusion 就消费 Invite/激活 Device")
+	}
+	if state, _ := store.Snapshot(invite.InviteID); state.Status != "issued_provisional" {
+		t.Fatalf("无效 completion evidence 产生了部分状态切换: %#v", state)
+	}
+	completed, err := store.Complete(completion, &approval, &set, certification)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,10 +158,21 @@ func TestDurableStoreRecoversExactProvisionalAndCompletionArtifacts(t *testing.T
 	record, found := reopened.SnapshotRecord(invite.InviteID)
 	if !found || !wire.EqualCanonical(record.State, completed) || record.ProvisionalIssuance == nil ||
 		record.ResultArtifact == nil || record.CompletionOperation == nil ||
+		record.CompletionCertification == nil || record.CompletionProjection == nil ||
 		!wire.EqualCanonical(record.ClaimEvidence, evidence) ||
 		!wire.EqualCanonical(*record.ProvisionalIssuance, issuance) ||
 		!wire.EqualCanonical(*record.ResultArtifact, resultArtifact) {
 		t.Fatalf("重启未恢复 exact enrollment artifacts: found=%v record=%#v", found, record)
+	}
+	if record.CompletionProjection.InviteStatus != "consumed" ||
+		record.CompletionProjection.DeviceStatus != "active" ||
+		record.CompletionProjection.ResultReleaseStatus != "authorized" {
+		t.Fatalf("completion 未原子形成 consume/activate/release: %#v", record.CompletionProjection)
+	}
+	tamperedProjection := cloneDurableState(reopened.state)
+	tamperedProjection.Records[0].CompletionProjection.ResultReleaseStatus = "authorized_early"
+	if err := validateDurableState(&tamperedProjection); err == nil {
+		t.Fatal("耐久恢复接受了与 certified completion 不一致的 release projection")
 	}
 	corrupt := cloneDurableState(reopened.state)
 	corrupt.Records[0].ResultArtifact.InitialDeviceView.DeviceID = "other-device"
@@ -191,11 +213,70 @@ func enrollmentResultArtifactFixture(t *testing.T) wire.EnrollmentResultArtifact
 		DeviceCertificateDER: base64.RawURLEncoding.EncodeToString(certificateDER),
 		InitialDeviceView: wire.DeviceViewPayloadV2{Schema: 2, ClusterID: "cluster", DeviceID: "device",
 			DeviceGeneration: 1, State: "active", Active: &wire.DeviceActiveViewV1{
-				IdentitySPKIHash: wire.HashRaw("store-test", []byte("identity")), Membership: membership,
+				IdentitySPKIHash: hash, Membership: membership,
 				MembershipHash: membershipHash, Responsibilities: responsibilities, ResponsibilitiesHash: responsibilitiesHash,
 				Grants: grants, GrantsHash: grantsHash, EndpointBundle: endpointBundle, EndpointBundleHash: endpointHash,
 				ConfigArtifactRefs: []wire.DeviceConfigArtifactRefV1{}, SecretArtifactRefsRoot: secretRoot}},
 		SecretArtifactRefs: secretRefs}
+}
+
+func completionCertificationFixture(t *testing.T, set wire.ControlSetV1, member wire.ControlMemberV1,
+	operation CompletionOperationV2, result wire.EnrollmentResultArtifactV1) CompletionCertificationV1 {
+	t.Helper()
+	operationHash, err := wire.HashObject(DomainCompletionOperation, operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operationLeaf := wire.ControlOperationLeafV1{Schema: 1, OperationID: operation.OperationID, ObjectID: operationHash}
+	operationBytes, _ := wire.MarshalCanonical(operationLeaf)
+	operationRoot := "sha256:" + hex.EncodeToString(wire.MerkleRoot([][]byte{operationBytes}))
+	viewHash, err := wire.DeviceViewHash(&result.InitialDeviceView)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewLeaf := wire.DeviceViewLeafV2{Schema: 2, ClusterID: result.ClusterID, ViewSchemaVersion: 2,
+		DeviceID: result.InitialDeviceView.DeviceID, DeviceGeneration: result.InitialDeviceView.DeviceGeneration,
+		State: result.InitialDeviceView.State, PayloadHash: viewHash, PreviousViewHash: wire.EmptyHashV1,
+		EndpointSetHash: result.InitialDeviceView.Active.EndpointBundleHash, MinReaderVersion: 2}
+	viewLeafBytes, _ := wire.MarshalCanonical(viewLeaf)
+	viewRoot := "sha256:" + hex.EncodeToString(wire.MerkleRoot([][]byte{viewLeafBytes}))
+	setHash, _ := wire.ControlSetHash(&set)
+	transition, _ := json.Marshal(wire.OrdinaryHeadContextV1{Schema: 1, Kind: "ordinary"})
+	head, err := wire.NewHeadEntry(wire.HeadEntryBodyV2{Payload: wire.HeadEntryPayloadV2{
+		Schema: 2, HeadKind: "ordinary", ClusterID: set.ClusterID, RecoveryEpoch: 0,
+		RecoveryStatementHash: hash, RecoveryPolicyHash: hash, ControlEpoch: 0,
+		ControlSetHash: setHash, ControlPeerDirectoryHash: hash, RaftTerm: 1, RaftIndex: 4,
+		PreviousLogEntryHash: hash, ControlRevision: 4, ParentHeadHash: hash,
+		OperationRoot: operationRoot, SnapshotHash: hash, EffectiveSSOTHash: hash,
+		DeviceViewsRoot: viewRoot, AdminACLRoot: hash, CAProfileRoot: hash,
+		BootstrapIssuerRegistryRoot: hash, RenderContractVersion: 2, MinReaderVersion: 2,
+		CommittedLogicalTime: "2026-01-01T00:12:00Z", MaxClockSkewSeconds: 30,
+		TransitionContext: transition,
+	}, TransitionProofHash: hash})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configKey := privateEd25519(2)
+	signature, err := wire.SignHeadAttestation(wire.AttestationForHead(&head), member, configKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	qc := wire.StableQC(&head, []wire.ControlConfigSignatureV1{signature})
+	qcBytes, _ := wire.MarshalCanonical(qc)
+	refs, err := resultSecretRefsRaw(result.SecretArtifactRefs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope := wire.DeviceViewEnvelopeV2{Schema: 2, Payload: result.InitialDeviceView,
+		Leaf: viewLeaf, LeafIndex: 0, TreeSize: 1, AuditPath: []string{},
+		SignedCurrent: wire.SignedCurrentV2{Schema: 2, Head: head,
+			QuorumCertificate: qcBytes, PublishedAt: "2026-01-01T00:12:01Z"},
+		SecretArtifactRefs: refs}
+	return CompletionCertificationV1{Schema: 1,
+		Operation: CertifiedEnrollmentOperationProofV1{OperationLeaf: operationLeaf,
+			OperationLeafIndex: 0, OperationTreeSize: 1, OperationAuditPath: []string{},
+			Head: head, ConfigQC: qcBytes, ControlSet: set},
+		DeviceViewEnvelope: envelope}
 }
 
 func reservationFixture(t *testing.T) (wire.ControlSetV1, InviteContext, ClaimPrivateEvidenceV1,

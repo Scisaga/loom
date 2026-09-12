@@ -33,7 +33,7 @@ func ValidateEnrollmentResultArtifact(artifact *EnrollmentResultArtifactV1) erro
 	if err := ValidateDeviceViewPayload(view); err != nil {
 		return err
 	}
-	if view.ClusterID != artifact.ClusterID || view.State != "active" || view.Active == nil {
+	if view.ClusterID != artifact.ClusterID || view.DeviceGeneration != 1 || view.State != "active" || view.Active == nil {
 		return errors.New("[D130 Enrollment] result artifact 只允许 exact initial active view")
 	}
 	if root, err := SecretArtifactRefsRoot(artifact.SecretArtifactRefs); err != nil ||

@@ -243,10 +243,11 @@ type EnrollmentClaimSubmissionV2 struct {
 }
 
 type EnrollmentClaimResultV2 struct {
-	Schema               int    `json:"schema"`
-	Status               string `json:"status"`
-	TransactionStateHash string `json:"transaction_state_hash"`
-	ResultArtifactHash   string `json:"result_artifact_hash,omitempty"`
+	Schema               int                         `json:"schema"`
+	Status               string                      `json:"status"`
+	TransactionStateHash string                      `json:"transaction_state_hash"`
+	ResultArtifactHash   string                      `json:"result_artifact_hash,omitempty"`
+	ResultArtifact       *EnrollmentResultArtifactV1 `json:"result_artifact,omitempty"`
 }
 
 type VerifiedEnrollmentClaimV2 struct {
@@ -667,10 +668,15 @@ func ValidateEnrollmentClaimResult(result *EnrollmentClaimResultV2) error {
 	if _, err := ParseHash(result.TransactionStateHash); err != nil {
 		return err
 	}
-	if (result.Status == "completed") != (result.ResultArtifactHash != "") {
+	completed := result.Status == "completed"
+	if completed != (result.ResultArtifactHash != "") || completed != (result.ResultArtifact != nil) {
 		return errors.New("[D130 Enrollment] completed/result artifact tagged union 无效")
 	}
 	if result.ResultArtifactHash != "" {
+		artifactHash, err := EnrollmentResultArtifactHash(result.ResultArtifact)
+		if err != nil || artifactHash != result.ResultArtifactHash {
+			return errors.New("[D130 Enrollment] claim result artifact/hash 不匹配")
+		}
 		if _, err := ParseHash(result.ResultArtifactHash); err != nil {
 			return err
 		}

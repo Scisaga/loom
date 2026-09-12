@@ -2645,6 +2645,18 @@ ClaimPrivateEvidenceV1                 # control-private replicated transaction 
   opening: DeviceEnrollmentIntentOpeningV1
   wrapping_public_key, wrapping_key_profile
 
+CompletionCertificationV1             # control-private durable apply evidence
+  schema = 1
+  operation: exact completion operation inclusion + Head/QC/ControlSet
+  device_view_envelope: same Head/QC 下的 initial active view inclusion
+
+CompletionProjectionV1                # 与 completed transaction 同一次原子落盘
+  invite_status = "consumed"
+  device_status = "active"
+  result_release_status = "authorized"
+  invite/request/token/claim/completion hashes
+  completion head/QC、Device certificate/view、result artifact、completed transaction hashes
+
 EnrollmentAdmissionAttestationBodyV1  # 稳定；不含 challenge/signature bytes
   schema = 1, attestation_type = "enrollment_admission"
   cluster_id, invite_id, request_id
@@ -2808,6 +2820,11 @@ approval peer RPC 只发送稳定 attestation；每个 voter 必须从本机线�
 取得上述完整 preimage、operation inclusion proof、Head/QC、两时点 CA registry 与 registry previous-root
 preimage，全部独立重算后才用自己的 enrollment-purpose key 签名。leader 携带的裸 hash 或私有制品副本
 不能替代 voter 的本地读取。
+completion operation ID 必须从 exact transaction 与 approval QC 确定性派生，换 leader 后不能另选号。
+completion reducer 必须同时验证 operation inclusion 与 initial active Device view inclusion 指向同一份
+certified Head；随后把 Invite=`consumed`、Device=`active`、artifact release=`authorized` 和 completed
+transaction 一次原子落盘。`reserved`/`issued_provisional` 响应禁止携 artifact；只有上述原子写成功后，
+private claim 响应才可返回由 `result_artifact_hash` 锁定的 exact `EnrollmentResultArtifactV1`。
 
 同一 token 的合法自动重试必须复用完全相同的 claim core，因而 request ID、CSR、
 identity/wrapping keys、client nonce、intent opening 和 base authority 全部不变；只允许 server

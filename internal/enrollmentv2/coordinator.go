@@ -21,10 +21,6 @@ type ProvisionalPlanV1 struct {
 	Result    wire.EnrollmentResultArtifactV1
 }
 
-type CompletionPlanV2 struct {
-	OperationID string
-}
-
 // WorkflowBackend 把跨 control 的签名收集、Raft 坐标分配与 CA 私钥操作留在
 // 各自 purpose-separated 服务；Coordinator 只接受随后能由 reducer 独立重验的制品。
 type WorkflowBackend interface {
@@ -35,8 +31,8 @@ type WorkflowBackend interface {
 	Provision(context.Context, VerifiedClaimAttemptV2, DurableRecord) (ProvisionalPlanV1, error)
 	CollectApproval(context.Context, VerifiedClaimAttemptV2,
 		DurableRecord) (wire.StableEnrollmentApprovalQCV2, wire.ControlSetV1, error)
-	PlanCompletion(context.Context, VerifiedClaimAttemptV2, DurableRecord,
-		wire.StableEnrollmentApprovalQCV2) (CompletionPlanV2, error)
+	CommitCompletion(context.Context, VerifiedClaimAttemptV2, DurableRecord,
+		wire.StableEnrollmentApprovalQCV2, CompletionOperationV2) (CompletionCertificationV1, error)
 }
 
 // TransactionRepository 的生产实现必须把每次 CAS 接入 replicated Raft apply；文件
@@ -48,7 +44,7 @@ type TransactionRepository interface {
 	RecordProvisional(ProvisionalIssuanceOperationV1, wire.EnrollmentProvisionalIssuanceV1,
 		wire.DeviceCertificateProfileStateV1, wire.EnrollmentResultArtifactV1) (TransactionStateV2, error)
 	Complete(CompletionOperationV2, *wire.StableEnrollmentApprovalQCV2,
-		*wire.ControlSetV1) (TransactionStateV2, error)
+		*wire.ControlSetV1, CompletionCertificationV1) (TransactionStateV2, error)
 }
 
 type Coordinator struct {
@@ -76,7 +72,7 @@ func (coordinator *Coordinator) ProcessClaim(ctx context.Context,
 			return wire.EnrollmentClaimResultV2{}, err
 		}
 		if record.State.Status == "completed" {
-			return enrollmentResult(record.State)
+			return enrollmentResult(record)
 		}
 	} else {
 		attestation, err := attempt.AdmissionAttestation()
@@ -112,7 +108,7 @@ func (coordinator *Coordinator) ProcessClaim(ctx context.Context,
 	if record.State.Status == "reserved" {
 		plan, err := coordinator.backend.Provision(ctx, attempt, record)
 		if errors.Is(err, ErrEnrollmentProgressPending) {
-			return enrollmentResult(record.State)
+			return enrollmentResult(record)
 		}
 		if err != nil {
 			return wire.EnrollmentClaimResultV2{}, err
@@ -129,7 +125,7 @@ func (coordinator *Coordinator) ProcessClaim(ctx context.Context,
 	if record.State.Status == "issued_provisional" {
 		approval, set, err := coordinator.backend.CollectApproval(ctx, attempt, record)
 		if errors.Is(err, ErrEnrollmentProgressPending) {
-			return enrollmentResult(record.State)
+			return enrollmentResult(record)
 		}
 		if err != nil {
 			return wire.EnrollmentClaimResultV2{}, err
@@ -140,24 +136,26 @@ func (coordinator *Coordinator) ProcessClaim(ctx context.Context,
 		if err := wire.VerifyEnrollmentApprovalQC(&approval, &set); err != nil {
 			return wire.EnrollmentClaimResultV2{}, err
 		}
-		plan, err := coordinator.backend.PlanCompletion(ctx, attempt, record, approval)
+		operation, err := completionOperationForRecord(record, &approval)
+		if err != nil {
+			return wire.EnrollmentClaimResultV2{}, err
+		}
+		certification, err := coordinator.backend.CommitCompletion(ctx, attempt, record, approval, operation)
 		if errors.Is(err, ErrEnrollmentProgressPending) {
-			return enrollmentResult(record.State)
+			return enrollmentResult(record)
 		}
 		if err != nil {
 			return wire.EnrollmentClaimResultV2{}, err
 		}
-		operation, err := completionOperationForRecord(record, &approval, plan)
-		if err != nil {
+		if _, err := coordinator.repository.Complete(operation, &approval, &set, certification); err != nil {
 			return wire.EnrollmentClaimResultV2{}, err
 		}
-		state, err := coordinator.repository.Complete(operation, &approval, &set)
-		if err != nil {
-			return wire.EnrollmentClaimResultV2{}, err
+		record, found = coordinator.repository.SnapshotRecord(record.InviteID)
+		if !found || record.State.Status != "completed" {
+			return wire.EnrollmentClaimResultV2{}, errors.New("[D130 Enrollment] completion apply 后缺 durable completed record")
 		}
-		record.State = state
 	}
-	return enrollmentResult(record.State)
+	return enrollmentResult(record)
 }
 
 func claimOperationForAdmission(admission *wire.StableEnrollmentAdmissionQCV1,
@@ -186,10 +184,14 @@ func claimOperationForAdmission(admission *wire.StableEnrollmentAdmissionQCV1,
 	}, nil
 }
 
-func completionOperationForRecord(record DurableRecord, approval *wire.StableEnrollmentApprovalQCV2,
-	plan CompletionPlanV2) (CompletionOperationV2, error) {
-	if plan.OperationID == "" || record.ProvisionalOperation == nil {
-		return CompletionOperationV2{}, errors.New("[D130 Enrollment] completion plan/provisional operation 无效")
+func completionOperationForRecord(record DurableRecord,
+	approval *wire.StableEnrollmentApprovalQCV2) (CompletionOperationV2, error) {
+	if record.ProvisionalOperation == nil {
+		return CompletionOperationV2{}, errors.New("[D130 Enrollment] completion provisional operation 无效")
+	}
+	operationID, err := completionOperationID(record, approval)
+	if err != nil {
+		return CompletionOperationV2{}, err
 	}
 	stateHash, err := TransactionHash(record.State)
 	if err != nil {
@@ -200,7 +202,7 @@ func completionOperationForRecord(record DurableRecord, approval *wire.StableEnr
 		return CompletionOperationV2{}, err
 	}
 	return CompletionOperationV2{
-		Schema: 2, ClusterID: record.State.ClusterID, OperationID: plan.OperationID,
+		Schema: 2, ClusterID: record.State.ClusterID, OperationID: operationID,
 		InviteID: record.State.InviteID, RequestID: record.State.RequestID,
 		ExpectedTransactionStateHash: stateHash, ClaimOperationHash: record.State.ClaimOperationHash,
 		ProvisionalIssuanceOperationHash: record.State.ProvisionalIssuanceOperationHash,
@@ -231,13 +233,21 @@ func validateAttemptAgainstRecord(attempt VerifiedClaimAttemptV2, record *Durabl
 	return nil
 }
 
-func enrollmentResult(state TransactionStateV2) (wire.EnrollmentClaimResultV2, error) {
-	stateHash, err := TransactionHash(state)
+func enrollmentResult(record DurableRecord) (wire.EnrollmentClaimResultV2, error) {
+	stateHash, err := TransactionHash(record.State)
 	if err != nil {
 		return wire.EnrollmentClaimResultV2{}, err
 	}
-	result := wire.EnrollmentClaimResultV2{Schema: 2, Status: state.Status,
-		TransactionStateHash: stateHash, ResultArtifactHash: state.ResultArtifactHash}
+	result := wire.EnrollmentClaimResultV2{Schema: 2, Status: record.State.Status,
+		TransactionStateHash: stateHash, ResultArtifactHash: record.State.ResultArtifactHash}
+	if record.State.Status == "completed" {
+		if err := validateDurableRecord(&record); err != nil || record.ResultArtifact == nil ||
+			record.CompletionProjection == nil || record.CompletionProjection.ResultReleaseStatus != "authorized" {
+			return wire.EnrollmentClaimResultV2{}, errors.New("[D130 Enrollment] completed result 尚未获得原子 release authorization")
+		}
+		artifact := clonePrivateValue(*record.ResultArtifact)
+		result.ResultArtifact = &artifact
+	}
 	if err := wire.ValidateEnrollmentClaimResult(&result); err != nil {
 		return wire.EnrollmentClaimResultV2{}, err
 	}
