@@ -3346,7 +3346,7 @@ ListenerRetirementGuardV1
 ListenerRotationStateV1             # reducer projection；不是 executor 自报权威
   schema = 1, cluster_id, rotation_id
   rotation_intent_hash, frozen_dependencies_hash
-  phase                              # allocated | preparing | advertised | preferred |
+  phase                              # allocated | prepared | advertised | preferred |
                                      # draining | retired | abandoned | revoked
   source_listener_generation?, target_listener_generation
   retirement_guard_hash?             # draining/retired 必需
@@ -3362,6 +3362,14 @@ phase，普通 reconcile/管理操作不得替换 logical/public intent、profil
 credential、render/evidence policy、port pool、防火墙、listener resource generation、mapping 或
 LinkIntent。确需变化时只能先安全 `abandoned` 再建新 rotation；安全事件可走
 显式 `revoked`，但必须报告中断而非改写原 intent。
+
+executor 使用单独的 `ExecutionPlanV1` 固定 source/target 的全部 L4 tuple；WireGuard 还必须固定
+独立 old/new interface、key ref、tunnel address、route table 与 fwmark。plan 在任何外部 apply 前以
+rotation_id 为 first-result key 原子写入 0600 control-private store，重启后不同 plan/port 一律冲突。
+runtime reconciler 只接受该 store 返回的不透明 frozen plan，并先完整重放验证 certified rotation
+history，再按 phase 计算 source/target desired state；每次 apply 后必须重新 observe 且完全收敛，
+否则不生成成功 evidence。`retired` 前始终保留 source tuple，`abandoned`/`revoked` 回收 target tuple，
+防止失败路径留下旁路 listener。
 
 进入 draining 的 certified transition 同时建立 reference cutoff 和
 `ListenerRetirementGuardV1`：ControlSet 必须枚举所有仍可能使客户端拨旧代的 immutable catalog、
@@ -3415,6 +3423,10 @@ port 会影响现有 peer，不能宣称无中断。
 WG control overlay 的 key/peer 轮换属于 private `ControlPeerDirectoryV1` 与 ControlSet 变更，不进入
 public bootstrap port rotation。数据 WG endpoint 可进入 DataIngressEndpointSet，但仍使用专用
 generation/state machine。
+
+Gate 输入是按 component 严格排序的 `GateEvidenceReportV1`，每项携 artifact hash、certified Head
+hash、passed/failed 与 observation time，再确定性派生 `GateStatus`；调用方不能直接手填布尔值冒充
+证据。缺 Windows evidence 只保持全端 Gate A/B 关闭，不影响 server/Linux/Android 独立完成里程碑。
 
 ---
 

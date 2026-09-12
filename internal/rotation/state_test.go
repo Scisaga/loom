@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+	"time"
 
 	"loom/internal/wire"
 )
@@ -108,6 +109,57 @@ func TestGatesStayClosedWithoutWindowsEvidence(t *testing.T) {
 	}
 	if gates.GateA() || gates.GateB() {
 		t.Fatal("Gate A/B opened without Windows evidence")
+	}
+}
+
+func TestGateEvidenceDerivesIndependentMilestoneWithoutWindows(t *testing.T) {
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	evidence := func(component string) GateEvidenceV1 {
+		return GateEvidence(component, true,
+			wire.HashRaw("rotation-gate-test", []byte(component)),
+			wire.HashRaw("rotation-gate-test", []byte("head-"+component)), now.Add(-time.Minute))
+	}
+	report := GateEvidenceReportV1{Schema: 1, ClusterID: "cluster", EvaluatedAt: now.Format(time.RFC3339),
+		Evidence: []GateEvidenceV1{
+			evidence("android_acceptance"), evidence("android_v2_reader"), evidence("linux_acceptance"),
+			evidence("linux_v2_reader"), evidence("recoverable_backup"), evidence("server_overlap_guard"),
+		}}
+	status, err := EvaluateGateEvidence(&report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.ServerLinuxAndroidReady() || status.GateA() || status.GateB() {
+		t.Fatalf("Windows evidence 缺席时 gate 派生错误: %#v", status)
+	}
+	if _, err := GateEvidenceReportHash(&report); err != nil {
+		t.Fatal(err)
+	}
+	report.Evidence = append(report.Evidence, evidence("linux_v2_reader"))
+	if _, err := EvaluateGateEvidence(&report); err == nil {
+		t.Fatal("未拒绝乱序/重复 gate evidence")
+	}
+}
+
+func TestGateBEvidenceRequiresEveryPlatformAndDestructiveProof(t *testing.T) {
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	components := []string{
+		"android_acceptance", "android_v2_reader", "linux_acceptance", "linux_v2_reader",
+		"no_v1_callers", "recoverable_backup", "server_overlap_guard", "windows_acceptance", "windows_v2_reader",
+	}
+	report := GateEvidenceReportV1{Schema: 1, ClusterID: "cluster", EvaluatedAt: now.Format(time.RFC3339)}
+	for _, component := range components {
+		report.Evidence = append(report.Evidence, GateEvidence(component, true,
+			wire.HashRaw("rotation-gate-test", []byte(component)),
+			wire.HashRaw("rotation-gate-test", []byte("head-"+component)), now))
+	}
+	status, err := EvaluateGateEvidence(&report)
+	if err != nil || !status.GateA() || !status.GateB() {
+		t.Fatalf("完整 evidence 未开启 Gate A/B: %#v err=%v", status, err)
+	}
+	report.Evidence[4].Outcome = "failed"
+	status, err = EvaluateGateEvidence(&report)
+	if err != nil || !status.GateA() || status.GateB() {
+		t.Fatalf("no-v1 evidence 失败时 Gate B 未独立关闭: %#v err=%v", status, err)
 	}
 }
 
