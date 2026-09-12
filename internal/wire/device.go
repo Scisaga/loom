@@ -220,6 +220,12 @@ func ValidateDeviceViewPayload(payload *DeviceViewPayloadV2) error {
 		if _, err := ParseHash(active.IdentitySPKIHash); err != nil {
 			return err
 		}
+		if err := ValidateEnrollmentResponsibilities(&active.Responsibilities); err != nil {
+			return err
+		}
+		if err := ValidateEnrollmentDestinationGrants(&active.Grants); err != nil {
+			return err
+		}
 		membershipHash, err := HashObject("loom-enrollment-membership-v1", active.Membership)
 		if err != nil || membershipHash != active.MembershipHash {
 			return errors.New("[D105 Device view] membership hash 不匹配")

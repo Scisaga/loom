@@ -311,10 +311,14 @@ func ValidateEnrollmentIntent(intent *DeviceEnrollmentIntentV1) error {
 		!validIdentifier(intent.InviteID, 128) || !validIdentifier(intent.DeviceID, 128) ||
 		!oneOf(intent.Platform, "windows-desktop", "android", "linux-server") ||
 		intent.Membership.Schema != 1 || intent.Membership.DesiredState != "active_on_completion" ||
-		intent.Responsibilities.Schema != 1 || intent.Grants.Schema != 1 ||
-		!sortedEnum(intent.Responsibilities.Values, []string{"use_loom", "forward", "internet_egress"}, true) ||
 		!sortedUnique(intent.WrappingKeyProfiles) || len(intent.WrappingKeyProfiles) == 0 {
 		return errors.New("[D123 Enrollment] intent identity/platform/responsibilities 无效")
+	}
+	if err := ValidateEnrollmentResponsibilities(&intent.Responsibilities); err != nil {
+		return err
+	}
+	if err := ValidateEnrollmentDestinationGrants(&intent.Grants); err != nil {
+		return err
 	}
 	if intent.DeviceCertificateProfileRef.Generation < 1 || !validIdentifier(intent.DeviceCertificateProfileRef.ProfileID, 128) {
 		return errors.New("[D123 Enrollment] Device certificate profile ref 无效")
@@ -324,12 +328,33 @@ func ValidateEnrollmentIntent(intent *DeviceEnrollmentIntentV1) error {
 			return err
 		}
 	}
-	for i, grant := range intent.Grants.Values {
+	return nil
+}
+
+// ValidateEnrollmentResponsibilities 是服务端 intent 与所有平台 Device view reader
+// 共用的职责语义。control 从不属于 Device 自报职责；internet_egress 必须同时
+// 承担 forward，不能让签名但语义非法的 view 驱动本机扩大运行面（Issue #11）。
+func ValidateEnrollmentResponsibilities(value *EnrollmentResponsibilitiesV1) error {
+	if value == nil || value.Schema != 1 ||
+		!sortedEnum(value.Values, []string{"use_loom", "forward", "internet_egress"}, true) {
+		return errors.New("[D123 Enrollment] responsibilities schema/order/value 无效")
+	}
+	if contains(value.Values, "internet_egress") && !contains(value.Values, "forward") {
+		return errors.New("[D123 Enrollment] internet_egress 必须同时包含 forward")
+	}
+	return nil
+}
+
+func ValidateEnrollmentDestinationGrants(value *EnrollmentDestinationGrantsV1) error {
+	if value == nil || value.Schema != 1 || value.Values == nil {
+		return errors.New("[D123 Enrollment] destination grants schema 无效")
+	}
+	for i, grant := range value.Values {
 		if !oneOf(grant.Kind, "service", "egress") || !validIdentifier(grant.TargetID, 128) {
 			return errors.New("[D123 Enrollment] destination grant 无效")
 		}
 		if i > 0 {
-			previous := intent.Grants.Values[i-1]
+			previous := value.Values[i-1]
 			if previous.Kind > grant.Kind || previous.Kind == grant.Kind && previous.TargetID >= grant.TargetID {
 				return errors.New("[D123 Enrollment] grants 必须按 kind/target_id 严格排序")
 			}
