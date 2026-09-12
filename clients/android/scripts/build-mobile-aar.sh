@@ -39,7 +39,11 @@ mkdir -p "$build_dir" "$go_bin" "$go_path" "$go_cache" "$android_dir/app/libs"
 if [[ ! -d "$source_dir/.git" ]]; then
     git clone --filter=blob:none --no-checkout https://github.com/SagerNet/sing-box.git "$source_dir"
 fi
-git -C "$source_dir" fetch --depth=1 origin "$sing_box_commit"
+if ! git -C "$source_dir" cat-file -e "$sing_box_commit^{commit}" 2>/dev/null; then
+    git -C "$source_dir" fetch --depth=1 origin "$sing_box_commit"
+else
+    echo "Using cached sing-box source commit $sing_box_commit"
+fi
 git -C "$source_dir" checkout --detach "$sing_box_commit"
 test "$(git -C "$source_dir" rev-parse HEAD)" = "$sing_box_commit"
 if ! git -C "$source_dir" diff --quiet "$sing_box_commit" -- . ':(exclude)go.mod' ':(exclude)go.sum'; then

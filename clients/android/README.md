@@ -6,8 +6,8 @@
 > hashes), ControlSet, head, and Device view; a compact QR descriptor, immutable bootstrap catalog,
 > restricted bootstrap tunnel, three purpose-scoped public EndpointSets, a private
 > `ControlServiceDirectoryV1`, overlapping Hysteria2/Trojan
-> listener generations, and a bootstrap transition hash;
-> WireGuard rotation remains disruptive until a dedicated dual-interface/peer profile is validated; and an irreversible
+> listener generations, a bounded set of userspace WireGuard endpoints for certified
+> generation overlap, a bootstrap transition hash, and an irreversible
 > v2 latch. V2 resources are versioned and never extend strict v1 JSON in place. See
 > [the distributed control-plane design](../../docs/distributed-control-plane.md#19-从当前实现迁移).
 > Code, deployment, and device-acceptance progress is recorded only in

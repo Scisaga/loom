@@ -119,11 +119,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         notificationsAllowed = notificationPermissionGranted()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            !notificationsAllowed
-        ) {
-            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
+        val requestNotificationPermission =
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !notificationsAllowed
         enrollment.initialize()
         setContent {
             LoomHome(
@@ -133,6 +130,13 @@ class MainActivity : ComponentActivity() {
                 notificationsAllowed = notificationsAllowed,
                 onOpenNotificationSettings = ::openNotificationSettings,
             )
+        }
+        if (requestNotificationPermission) {
+            window.decorView.post {
+                if (!isFinishing && !notificationPermissionGranted()) {
+                    notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }
         }
     }
 
