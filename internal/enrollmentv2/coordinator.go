@@ -87,6 +87,10 @@ func (coordinator *Coordinator) ProcessClaim(ctx context.Context,
 			return enrollmentResult(record)
 		}
 	} else {
+		if attempt.capability.Body().Mode == "resume_committed_claim" {
+			return wire.EnrollmentClaimResultV2{},
+				errors.New("[D130 Enrollment] resume capability 缺 exact durable transaction")
+		}
 		attestation, err := attempt.AdmissionAttestation()
 		if err != nil {
 			return wire.EnrollmentClaimResultV2{}, err
@@ -243,6 +247,14 @@ func validateAttemptAgainstRecord(attempt VerifiedClaimAttemptV2, record *Durabl
 		attempt.submission.ClaimCore.RequestID != record.State.RequestID ||
 		!wire.EqualCanonical(attempt.PrivateClaimEvidence(), record.ClaimEvidence) {
 		return errors.New("[D130 Enrollment] resume attempt 与 durable stable claim/core/key 不匹配")
+	}
+	if binding := attempt.capability.Body().ResumeBinding; binding != nil {
+		stateHash, stateErr := TransactionHash(record.State)
+		if stateErr != nil || binding.ClaimOperationHash != record.State.ClaimOperationHash ||
+			binding.AdmissionQCHash != record.ClaimOperation.AdmissionQCHash ||
+			binding.EnrollmentTransactionStateHash != stateHash {
+			return errors.New("[D130 Enrollment] resume capability 不属于 exact durable transaction state")
+		}
 	}
 	return nil
 }

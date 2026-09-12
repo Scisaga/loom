@@ -1,6 +1,7 @@
 package wire
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -80,6 +81,30 @@ func TestEnrollmentSubmissionBindsTokenOpeningCoreChallengeAndP256PoP(t *testing
 	verified, err := VerifyEnrollmentClaimSubmission(submission, &record, &policy, &opening, "enrollment-service-1", now)
 	if err != nil || verified.ClaimCoreHash() != coreHash || verified.IdentityKeyHash() == "" || verified.WrappingKeyHash() == "" || verified.CSRHash() == "" {
 		t.Fatalf("verified=%#v err=%v", verified, err)
+	}
+	binding := BootstrapCapabilityResumeBindingV1{
+		RequestID: core.RequestID, ClaimOperationHash: hash("claim-operation"),
+		AdmissionQCHash: hash("admission-qc"), ClaimCoreHash: coreHash,
+		CSRHash: verified.CSRHash(), IdentityKeyHash: verified.IdentityKeyHash(),
+		WrappingKeyHash: verified.WrappingKeyHash(), EnrollmentTransactionStateHash: hash("transaction"),
+	}
+	resume := &EnrollmentResumeSubmissionV1{
+		Schema: 1, ClaimCore: core, Challenge: challenge, PoPBody: pop, ProofSignature: signature,
+	}
+	resumed, err := VerifyEnrollmentResumeSubmission(resume, &binding, &record, &policy,
+		&opening, "enrollment-service-1", now)
+	if err != nil || resumed.ClaimCoreHash() != coreHash || resumed.TokenCommitment() != record.TokenCommitment {
+		t.Fatalf("token-free resume 未验证: verified=%#v err=%v", resumed, err)
+	}
+	resumeWire, err := MarshalCanonical(resume)
+	if err != nil || bytes.Contains(resumeWire, []byte(`"token"`)) {
+		t.Fatalf("resume wire 携带 token field: %s err=%v", resumeWire, err)
+	}
+	wrongBinding := binding
+	wrongBinding.EnrollmentTransactionStateHash = "not-a-hash"
+	if _, err := VerifyEnrollmentResumeSubmission(resume, &wrongBinding, &record, &policy,
+		&opening, "enrollment-service-1", now); err == nil {
+		t.Fatal("resume 接受了无效 transaction binding")
 	}
 	submission.PoPBody.TokenCommitment = hash("other-token")
 	if _, err := VerifyEnrollmentClaimSubmission(submission, &record, &policy, &opening, "enrollment-service-1", now); err == nil {

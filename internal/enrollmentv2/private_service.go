@@ -41,9 +41,10 @@ type InviteMaterialV2 struct {
 // binding，reader 返回的状态字符串本身不能替代 head/QC/inclusion proof。
 type InviteMaterialReader func(context.Context, string, string) (InviteMaterialV2, error)
 
-// VerifiedClaimAttemptV2 只能由 PrivateService 在验 token/opening/core、服务端签发
-// challenge 和 detached PoP 后产生。processor 可以把 exact submission 发给 enrollment voters，
-// 但不得把其中 token、challenge、CSR 或签名字节写入 Raft/CRDT/log（D129、D130）。
+// VerifiedClaimAttemptV2 只能由 PrivateService 在验 initial token 或 exact resume
+// binding、opening/core、服务端签发 challenge 和 detached PoP 后产生。processor 可以把 initial
+// exact submission 发给 enrollment voters，但不得把其中 token、challenge、CSR 或签名字节写入
+// Raft/CRDT/log；resume 永远不触发新的 admission（D129、D130）。
 type VerifiedClaimAttemptV2 struct {
 	capability wire.VerifiedBootstrapCapabilityV1
 	claim      wire.VerifiedEnrollmentClaimV2
@@ -217,6 +218,9 @@ func (service *PrivateService) SubmitClaim(ctx context.Context, capability wire.
 	if submission == nil {
 		return wire.EnrollmentClaimResultV2{}, errors.New("[D129 Enrollment] submission 不能为空")
 	}
+	if capability.Body().Mode != "initial_claim" {
+		return wire.EnrollmentClaimResultV2{}, errors.New("[D130 Enrollment] resume capability 禁止携 token claim")
+	}
 	core := &submission.ClaimCore
 	material, err := service.boundMaterial(ctx, capability, core.ClusterID, core.InviteID,
 		core.CertifiedInviteRecordHash, capability.CapabilityID())
@@ -232,11 +236,52 @@ func (service *PrivateService) SubmitClaim(ctx context.Context, capability wire.
 	if err != nil {
 		return wire.EnrollmentClaimResultV2{}, err
 	}
-	if err := service.replay.Consume(verified.ChallengeHash(), submission.Challenge.ExpiresAt, now); err != nil {
+	return service.finishVerifiedClaim(ctx, capability, verified, clonePrivateValue(*submission),
+		submission.Challenge.ExpiresAt, material, now)
+}
+
+// SubmitResume 只接受没有 token 字段的恢复 wire；原 Invite 即使已经过期，也只能在
+// capability/retry deadline 内继续 descriptor 精确绑定的 committed transaction（D130）。
+func (service *PrivateService) SubmitResume(ctx context.Context, capability wire.VerifiedBootstrapCapabilityV1,
+	submission *wire.EnrollmentResumeSubmissionV1) (wire.EnrollmentClaimResultV2, error) {
+	if submission == nil || capability.Body().Mode != "resume_committed_claim" ||
+		capability.Body().ResumeBinding == nil {
+		return wire.EnrollmentClaimResultV2{}, errors.New("[D130 resume] submission/capability mode 无效")
+	}
+	core := &submission.ClaimCore
+	material, err := service.boundMaterial(ctx, capability, core.ClusterID, core.InviteID,
+		core.CertifiedInviteRecordHash, capability.CapabilityID())
+	if err != nil {
+		return wire.EnrollmentClaimResultV2{}, err
+	}
+	if _, err := service.verifyCoreBindings(core, capability, &material); err != nil {
+		return wire.EnrollmentClaimResultV2{}, err
+	}
+	now := service.now().UTC().Truncate(time.Second)
+	verified, err := wire.VerifyEnrollmentResumeSubmission(submission,
+		capability.Body().ResumeBinding, &material.Record, &material.Policy,
+		&material.Opening, service.serviceID, now)
+	if err != nil {
+		return wire.EnrollmentClaimResultV2{}, err
+	}
+	stable := wire.EnrollmentClaimSubmissionV2{
+		Schema: 2, ClaimCore: clonePrivateValue(submission.ClaimCore),
+		Challenge: clonePrivateValue(submission.Challenge), PoPBody: clonePrivateValue(submission.PoPBody),
+		ProofSignature: submission.ProofSignature,
+	}
+	return service.finishVerifiedClaim(ctx, capability, verified, stable,
+		submission.Challenge.ExpiresAt, material, now)
+}
+
+func (service *PrivateService) finishVerifiedClaim(ctx context.Context,
+	capability wire.VerifiedBootstrapCapabilityV1, verified wire.VerifiedEnrollmentClaimV2,
+	submission wire.EnrollmentClaimSubmissionV2, challengeExpiresAt string,
+	material InviteMaterialV2, now time.Time) (wire.EnrollmentClaimResultV2, error) {
+	if err := service.replay.Consume(verified.ChallengeHash(), challengeExpiresAt, now); err != nil {
 		return wire.EnrollmentClaimResultV2{}, err
 	}
 	result, err := service.processClaim(ctx, VerifiedClaimAttemptV2{
-		capability: capability, claim: verified, submission: clonePrivateValue(*submission), material: material,
+		capability: capability, claim: verified, submission: submission, material: material,
 	})
 	if err != nil {
 		return wire.EnrollmentClaimResultV2{}, err
@@ -447,14 +492,21 @@ func (service *PrivateService) ServeVerifiedHTTP(writer http.ResponseWriter, req
 			response, err = service.Challenge(request.Context(), capability, &value)
 		}
 	case "/v2/enrollment/claim":
-		var value wire.EnrollmentClaimSubmissionV2
-		if _, err = wire.DecodeStrict(body, maximumPrivateRequestBytes, &value); err == nil {
-			var result wire.EnrollmentClaimResultV2
-			result, err = service.SubmitClaim(request.Context(), capability, &value)
-			response = result
-			if err == nil && result.Status != "completed" {
-				status = http.StatusAccepted
+		var result wire.EnrollmentClaimResultV2
+		if capability.Body().Mode == "resume_committed_claim" {
+			var value wire.EnrollmentResumeSubmissionV1
+			if _, err = wire.DecodeStrict(body, maximumPrivateRequestBytes, &value); err == nil {
+				result, err = service.SubmitResume(request.Context(), capability, &value)
 			}
+		} else {
+			var value wire.EnrollmentClaimSubmissionV2
+			if _, err = wire.DecodeStrict(body, maximumPrivateRequestBytes, &value); err == nil {
+				result, err = service.SubmitClaim(request.Context(), capability, &value)
+			}
+		}
+		response = result
+		if err == nil && result.Status != "completed" {
+			status = http.StatusAccepted
 		}
 	default:
 		writePrivateError(writer, http.StatusNotFound)

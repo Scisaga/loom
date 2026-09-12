@@ -243,6 +243,16 @@ type EnrollmentClaimSubmissionV2 struct {
 	ProofSignature string                   `json:"proof_signature"`
 }
 
+// EnrollmentResumeSubmissionV1 只证明仍持有原 identity key，并重用已 committed
+// stable core。它刻意没有 token 字段，避免恢复既有事务时重新出示或消费 Invite bearer（D130）。
+type EnrollmentResumeSubmissionV1 struct {
+	Schema         int                      `json:"schema"`
+	ClaimCore      EnrollmentClaimCoreV2    `json:"claim_core"`
+	Challenge      EnrollmentPoPChallengeV1 `json:"challenge"`
+	PoPBody        EnrollmentPoPBodyV2      `json:"pop_body"`
+	ProofSignature string                   `json:"proof_signature"`
+}
+
 type EnrollmentClaimResultV2 struct {
 	Schema               int                         `json:"schema"`
 	Status               string                      `json:"status"`
@@ -832,13 +842,55 @@ func VerifyEnrollmentClaimSubmission(submission *EnrollmentClaimSubmissionV2, re
 		!validIdentifier(enrollmentServiceID, 128) {
 		return VerifiedEnrollmentClaimV2{}, errors.New("[D129 Enrollment] submission context 无效")
 	}
-	recordHash, err := CertifiedInviteRecordHash(record, policy)
-	if err != nil {
-		return VerifiedEnrollmentClaimV2{}, err
-	}
 	tokenCommitment, err := TokenCommitment(record.ClusterID, record.InviteID, submission.Token)
 	if err != nil || tokenCommitment != record.TokenCommitment {
 		return VerifiedEnrollmentClaimV2{}, errors.New("[D129 Enrollment] token commitment 不匹配")
+	}
+	return verifyEnrollmentAttempt(&submission.ClaimCore, &submission.Challenge, &submission.PoPBody,
+		submission.ProofSignature, record, policy, opening, enrollmentServiceID, now, tokenCommitment)
+}
+
+// VerifyEnrollmentResumeSubmission 验证无 token 的恢复尝试。capability binding 必须先由
+// caller 完整验签；本函数再把 fresh PoP、原 core/key/CSR 与该 exact binding 合并验证（D130、D131）。
+func VerifyEnrollmentResumeSubmission(submission *EnrollmentResumeSubmissionV1,
+	binding *BootstrapCapabilityResumeBindingV1, record *CertifiedInviteRecordV2,
+	policy *InviteIssuancePolicyV2, opening *DeviceEnrollmentIntentOpeningV1,
+	enrollmentServiceID string, now time.Time) (VerifiedEnrollmentClaimV2, error) {
+	if submission == nil || submission.Schema != 1 || binding == nil || record == nil || opening == nil ||
+		now.IsZero() || !validIdentifier(enrollmentServiceID, 128) {
+		return VerifiedEnrollmentClaimV2{}, errors.New("[D130 resume] submission context 无效")
+	}
+	verified, err := verifyEnrollmentAttempt(&submission.ClaimCore, &submission.Challenge,
+		&submission.PoPBody, submission.ProofSignature, record, policy, opening,
+		enrollmentServiceID, now, record.TokenCommitment)
+	if err != nil {
+		return VerifiedEnrollmentClaimV2{}, err
+	}
+	for _, hash := range []string{binding.ClaimOperationHash, binding.AdmissionQCHash,
+		binding.EnrollmentTransactionStateHash} {
+		if _, err := ParseHash(hash); err != nil {
+			return VerifiedEnrollmentClaimV2{}, err
+		}
+	}
+	if binding.RequestID != submission.ClaimCore.RequestID ||
+		binding.ClaimCoreHash != verified.ClaimCoreHash() || binding.CSRHash != verified.CSRHash() ||
+		binding.IdentityKeyHash != verified.IdentityKeyHash() ||
+		binding.WrappingKeyHash != verified.WrappingKeyHash() {
+		return VerifiedEnrollmentClaimV2{}, errors.New("[D130 resume] submission 与 exact committed binding 不匹配")
+	}
+	return verified, nil
+}
+
+func verifyEnrollmentAttempt(core *EnrollmentClaimCoreV2, challenge *EnrollmentPoPChallengeV1,
+	pop *EnrollmentPoPBodyV2, proofSignature string, record *CertifiedInviteRecordV2,
+	policy *InviteIssuancePolicyV2, opening *DeviceEnrollmentIntentOpeningV1,
+	enrollmentServiceID string, now time.Time, tokenCommitment string) (VerifiedEnrollmentClaimV2, error) {
+	if core == nil || challenge == nil || pop == nil || tokenCommitment != record.TokenCommitment {
+		return VerifiedEnrollmentClaimV2{}, errors.New("[D129 Enrollment] attempt/token commitment context 无效")
+	}
+	recordHash, err := CertifiedInviteRecordHash(record, policy)
+	if err != nil {
+		return VerifiedEnrollmentClaimV2{}, err
 	}
 	intentHash, err := EnrollmentIntentHash(&opening.DeviceEnrollmentIntent)
 	if err != nil {
@@ -853,11 +905,10 @@ func VerifyEnrollmentClaimSubmission(submission *EnrollmentClaimSubmissionV2, re
 	if err != nil || commitmentHash != record.DeviceEnrollmentIntentCommitmentHash {
 		return VerifiedEnrollmentClaimV2{}, errors.New("[D129 Enrollment] private opening 与 public commitment 不匹配")
 	}
-	coreHash, err := EnrollmentClaimCoreHash(&submission.ClaimCore)
+	coreHash, err := EnrollmentClaimCoreHash(core)
 	if err != nil {
 		return VerifiedEnrollmentClaimV2{}, err
 	}
-	core := &submission.ClaimCore
 	if core.ClusterID != record.ClusterID || core.InviteID != record.InviteID ||
 		core.CertifiedInviteRecordHash != recordHash ||
 		core.DeviceEnrollmentIntentCommitmentHash != commitmentHash ||
@@ -866,7 +917,6 @@ func VerifyEnrollmentClaimSubmission(submission *EnrollmentClaimSubmissionV2, re
 		!contains(opening.DeviceEnrollmentIntent.WrappingKeyProfiles, core.WrappingKeyProfile) {
 		return VerifiedEnrollmentClaimV2{}, errors.New("[D129 Enrollment] stable claim core 与 record/opening/platform 不匹配")
 	}
-	challenge := &submission.Challenge
 	if challenge.ClusterID != core.ClusterID || challenge.InviteID != core.InviteID || challenge.RequestID != core.RequestID ||
 		challenge.EnrollmentServiceID != enrollmentServiceID {
 		return VerifiedEnrollmentClaimV2{}, errors.New("[D129 Enrollment] challenge 与 claim/service identity 不匹配")
@@ -875,7 +925,6 @@ func VerifyEnrollmentClaimSubmission(submission *EnrollmentClaimSubmissionV2, re
 	if err != nil {
 		return VerifiedEnrollmentClaimV2{}, err
 	}
-	pop := &submission.PoPBody
 	if pop.ClusterID != core.ClusterID || pop.InviteID != core.InviteID || pop.RequestID != core.RequestID ||
 		pop.ClaimCoreHash != coreHash || pop.TokenCommitment != tokenCommitment || pop.ChallengeHash != challengeHash {
 		return VerifiedEnrollmentClaimV2{}, errors.New("[D129 Enrollment] PoP body 与 core/token/challenge 不匹配")
@@ -889,7 +938,7 @@ func VerifyEnrollmentClaimSubmission(submission *EnrollmentClaimSubmissionV2, re
 	if err != nil || !ok {
 		return VerifiedEnrollmentClaimV2{}, errors.New("[D129 Enrollment] identity SPKI 不是 P-256")
 	}
-	if err := VerifyEnrollmentPoPP256(pop, identityKey, submission.ProofSignature); err != nil {
+	if err := VerifyEnrollmentPoPP256(pop, identityKey, proofSignature); err != nil {
 		return VerifiedEnrollmentClaimV2{}, err
 	}
 	identityKeyHash, wrappingKeyHash, csrHash, err := EnrollmentClaimBinaryHashes(core)

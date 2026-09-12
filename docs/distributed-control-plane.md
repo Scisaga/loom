@@ -2588,7 +2588,11 @@ admin mTLS 和相应 ACL 请求；ControlSet 线性化核对 transaction 为 `re
 original claim core 与全部 resume binding 后，才能在一次性响应中返回 descriptor。它不含 token，
 不进 public mirror/latest API，也不能被未入网客户自动刷新；管理员只可用新 QR 或
 `.loom-resume` 文件带外交给原设备。客户端必须验证 descriptor/capability/hash，重用原
-claim core 及 identity/wrapping keys，并对新 server nonce 重签 detached PoP。`expires_at` 不得超过
+claim core 及 identity/wrapping keys，并对新 server nonce 重签 detached PoP。恢复请求使用不含
+token 字段的 `EnrollmentResumeSubmissionV1`；private Enrollment 必须按 capability mode 严格区分
+initial 与 resume wire，且在进入 Coordinator 后再次将 capability 中的 claim-operation、admission-QC
+和 transaction-state hashes 与 durable record 逐字段核对。resume 不重新执行 admission、不再次消费
+token，也不得用 resume capability 提交带 token 的 initial claim wire。`expires_at` 不得超过
 capability、issuer authorization、policy、catalog、service ref 和 transaction `retry_not_after` 中最早的截止点。
 签发器必须以已 certified 的管理员 operation_id 为 first-result key，把 exact request hash、issuer
 public key、descriptor hash 与完整 descriptor 原子写入 control-private 存储后再响应；同一 operation_id

@@ -63,7 +63,8 @@
 而 capability 过期时，管理员先经私有 `role=control_api` 服务线性化确认事务，
 再生成不含 token、exact-bound 的 `EnrollmentResumeDescriptorV1`，以 QR 或 `.loom-resume`
 带外交付；Linux 通过受保护文件或标准输入导入，并与 progress receipt 已固化的 pending
-core/identity/admission/transaction/retry binding 逐字段核对。
+core/identity/admission/transaction/retry binding 逐字段核对；恢复时发送无 token 的
+`EnrollmentResumeSubmissionV1`，只用原 identity key 对 fresh server nonce 重签 detached PoP。
 该 descriptor 不经公网 mirror 动态发布，客户端不能自动刷新；ControlSet 只幂等
 继续/取回既有结果，不延长旧 capability、不重消费 token。
 

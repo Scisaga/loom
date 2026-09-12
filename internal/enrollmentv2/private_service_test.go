@@ -88,6 +88,74 @@ func TestPrivateEnrollmentRejectsClientChosenChallenge(t *testing.T) {
 	}
 }
 
+func TestPrivateEnrollmentResumesCommittedClaimWithoutTokenAfterInviteExpiry(t *testing.T) {
+	fixture := newPrivateServiceFixture(t)
+	resumeNow := time.Date(2026, 9, 11, 11, 16, 0, 0, time.UTC)
+	material := cloneInviteMaterial(fixture.material)
+	material.Status = "reserved"
+	coreHash, _ := wire.EnrollmentClaimCoreHash(&fixture.core)
+	identityHash, wrappingHash, csrHash, err := wire.EnrollmentClaimBinaryHashes(&fixture.core)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := fixture.capability.Body()
+	body.Mode = "resume_committed_claim"
+	body.ResumeBinding = &wire.BootstrapCapabilityResumeBindingV1{
+		RequestID:          fixture.core.RequestID,
+		ClaimOperationHash: wire.HashRaw("private-service-test", []byte("resume-claim-operation")),
+		AdmissionQCHash:    wire.HashRaw("private-service-test", []byte("resume-admission-qc")),
+		ClaimCoreHash:      coreHash, CSRHash: csrHash, IdentityKeyHash: identityHash,
+		WrappingKeyHash: wrappingHash, EnrollmentTransactionStateHash: wire.HashRaw("private-service-test", []byte("resume-transaction")),
+	}
+	body.IssuedAt = resumeNow.Format(time.RFC3339)
+	body.NotBefore = body.IssuedAt
+	body.ExpiresAt = resumeNow.Add(5 * time.Minute).Format(time.RFC3339)
+	capability, err := wire.SignBootstrapCapability(body, fixture.issuerPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifiedCapability, err := wire.VerifyCapabilityAuthorizationEvidence(&capability,
+		&fixture.issuerProof, &material.Policy, resumeNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	processed := 0
+	replay, err := OpenChallengeReplayStore(filepath.Join(t.TempDir(), "resume-challenge.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewPrivateService("cluster", "enrollment-service", func() time.Time { return resumeNow },
+		bytes.NewReader(bytes.Repeat([]byte{0x42}, 256)), time.Minute, replay,
+		func(context.Context, string, string) (InviteMaterialV2, error) { return material, nil },
+		func(_ context.Context, attempt VerifiedClaimAttemptV2) (wire.EnrollmentClaimResultV2, error) {
+			processed++
+			if attempt.Submission().Token != "" || attempt.Claim().TokenCommitment() != material.Record.TokenCommitment {
+				t.Fatal("token-free resume attempt 未保持 commitment 或仍携 token")
+			}
+			return wire.EnrollmentClaimResultV2{Schema: 2, Status: "reserved",
+				TransactionStateHash: body.ResumeBinding.EnrollmentTransactionStateHash}, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	challenge, err := service.Challenge(context.Background(), verifiedCapability, &fixture.core)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resume := signedPrivateResumeSubmission(t, fixture, challenge, resumeNow)
+	result, err := service.SubmitResume(context.Background(), verifiedCapability, &resume)
+	if err != nil || result.Status != "reserved" || processed != 1 {
+		t.Fatalf("过期 Invite 的 exact resume 未继续: result=%#v processed=%d err=%v", result, processed, err)
+	}
+	initial := wire.EnrollmentClaimSubmissionV2{
+		Schema: 2, Token: fixture.token, ClaimCore: resume.ClaimCore,
+		Challenge: resume.Challenge, PoPBody: resume.PoPBody, ProofSignature: resume.ProofSignature,
+	}
+	if _, err := service.SubmitClaim(context.Background(), verifiedCapability, &initial); err == nil {
+		t.Fatal("resume capability 接受了重新出示 token 的 initial claim wire")
+	}
+}
+
 func TestPrivateEnrollmentHTTPRequiresVerifiedOuterContextAndInnerTLS(t *testing.T) {
 	fixture := newPrivateServiceFixture(t)
 	value := wire.EnrollmentIntentPreflightRequestV1{
@@ -417,6 +485,32 @@ func signedPrivateSubmission(t *testing.T, fixture privateServiceFixture,
 	}
 	return wire.EnrollmentClaimSubmissionV2{
 		Schema: 2, Token: fixture.token, ClaimCore: fixture.core, Challenge: challenge, PoPBody: pop, ProofSignature: signature,
+	}
+}
+
+func signedPrivateResumeSubmission(t *testing.T, fixture privateServiceFixture,
+	challenge wire.EnrollmentPoPChallengeV1, now time.Time) wire.EnrollmentResumeSubmissionV1 {
+	t.Helper()
+	coreHash, err := wire.EnrollmentClaimCoreHash(&fixture.core)
+	if err != nil {
+		t.Fatal(err)
+	}
+	challengeHash, err := wire.EnrollmentChallengeHash(&challenge, coreHash, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pop := wire.EnrollmentPoPBodyV2{
+		Schema: 2, ClusterID: fixture.core.ClusterID, InviteID: fixture.core.InviteID,
+		RequestID: fixture.core.RequestID, ClaimCoreHash: coreHash,
+		TokenCommitment: fixture.material.Record.TokenCommitment, ChallengeHash: challengeHash,
+	}
+	signature, err := wire.SignEnrollmentPoPP256(&pop, fixture.identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return wire.EnrollmentResumeSubmissionV1{
+		Schema: 1, ClaimCore: fixture.core, Challenge: challenge,
+		PoPBody: pop, ProofSignature: signature,
 	}
 }
 

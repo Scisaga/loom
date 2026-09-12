@@ -199,6 +199,77 @@ func TestCoordinatorReturnsVerifiableIssuedProgress(t *testing.T) {
 	}
 }
 
+func TestCoordinatorRejectsResumeCapabilityForStaleTransactionState(t *testing.T) {
+	fixture, _, material := resumeIssuerFixture(t)
+	record := material.Transaction
+	coreHash, err := wire.EnrollmentClaimCoreHash(&fixture.core)
+	if err != nil {
+		t.Fatal(err)
+	}
+	challenge := wire.EnrollmentPoPChallengeV1{
+		Schema: 1, ClusterID: fixture.core.ClusterID, InviteID: fixture.core.InviteID,
+		RequestID: fixture.core.RequestID, EnrollmentServiceID: "enrollment-service",
+		ClaimCoreHash: coreHash, ServerNonce: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x71}, 32)),
+		IssuedAt: fixture.now.Format(time.RFC3339), ExpiresAt: fixture.now.Add(time.Minute).Format(time.RFC3339),
+	}
+	submission := signedPrivateSubmission(t, fixture, challenge)
+	claim, err := wire.VerifyEnrollmentClaimSubmission(&submission, &fixture.material.Record,
+		&fixture.material.Policy, &fixture.material.Opening, "enrollment-service", fixture.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt := VerifiedClaimAttemptV2{capability: fixture.capability, claim: claim,
+		submission: submission, material: fixture.material}
+	body := fixture.capability.Body()
+	body.Mode = "resume_committed_claim"
+	stateHash, err := TransactionHash(record.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body.ResumeBinding = &wire.BootstrapCapabilityResumeBindingV1{
+		RequestID: record.State.RequestID, ClaimOperationHash: record.State.ClaimOperationHash,
+		AdmissionQCHash: record.ClaimOperation.AdmissionQCHash, ClaimCoreHash: record.State.ClaimCoreHash,
+		CSRHash: record.ClaimOperation.CSRHash, IdentityKeyHash: record.State.IdentityKeyHash,
+		WrappingKeyHash: record.State.WrappingKeyHash, EnrollmentTransactionStateHash: stateHash,
+	}
+	capability, err := wire.SignBootstrapCapability(body, fixture.issuerPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt.capability, err = wire.VerifyCapabilityAuthorizationEvidence(&capability,
+		&fixture.issuerProof, &fixture.material.Policy, fixture.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateAttemptAgainstRecord(attempt, &record); err != nil {
+		t.Fatalf("exact resume binding 被拒绝: %v", err)
+	}
+	emptyStore, err := OpenStore(filepath.Join(t.TempDir(), "empty-resume.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptyCoordinator, err := NewCoordinator(emptyStore, &workflowBackendFixture{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := emptyCoordinator.ProcessClaim(context.Background(), attempt); err == nil {
+		t.Fatal("resume capability 在 durable transaction 缺失时创建了新 admission")
+	}
+	body.ResumeBinding.EnrollmentTransactionStateHash = wire.HashRaw("coordinator-test", []byte("stale-state"))
+	stale, err := wire.SignBootstrapCapability(body, fixture.issuerPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt.capability, err = wire.VerifyCapabilityAuthorizationEvidence(&stale,
+		&fixture.issuerProof, &fixture.material.Policy, fixture.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateAttemptAgainstRecord(attempt, &record); err == nil {
+		t.Fatal("stale transaction resume capability 被接受")
+	}
+}
+
 func TestCoordinatorRejectsBackendAdmissionForDifferentCore(t *testing.T) {
 	private := newPrivateServiceFixture(t)
 	attempt := verifiedPrivateAttempt(t, private)
