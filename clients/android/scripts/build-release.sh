@@ -48,9 +48,17 @@ if [[ ! "$workers" =~ ^[1-4]$ ]]; then
 fi
 
 cd -- "$android_root"
-./gradlew --no-daemon --max-workers="$workers" testDebugUnitTest lintRelease assembleRelease
+if [[ -z "${SOURCE_DATE_EPOCH:-}" ]]; then
+    SOURCE_DATE_EPOCH=$(git -C "$repo_root" show -s --format=%ct HEAD)
+    export SOURCE_DATE_EPOCH
+fi
+./gradlew --no-daemon --max-workers="$workers" testDebugUnitTest lintRelease assembleRelease generateAndroidSbom
 
 apk="$android_root/app/build/outputs/apk/release/app-release.apk"
+sbom="$android_root/app/build/reports/sbom/loom-android-release.spdx.json"
 [[ -f "$apk" ]] || { echo "signed release APK was not produced" >&2; exit 1; }
+[[ -f "$sbom" ]] || { echo "Android release SBOM was not produced" >&2; exit 1; }
 "$apksigner" verify --verbose --print-certs "$apk"
-sha256sum "$apk"
+unzip -p "$apk" assets/NOTICE.md | cmp - "$android_root/third_party/NOTICE.md"
+unzip -p "$apk" assets/sing-box/LICENSE | cmp - "$android_root/third_party/sing-box/LICENSE"
+sha256sum "$apk" "$sbom"

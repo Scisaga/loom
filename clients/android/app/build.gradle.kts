@@ -1,4 +1,7 @@
 import java.util.Base64 as JvmBase64
+import groovy.json.JsonOutput
+import java.security.MessageDigest
+import java.time.Instant
 
 plugins {
     id("com.android.application")
@@ -106,6 +109,7 @@ android {
         jniLibs.useLegacyPackaging = false
         resources.excludes += setOf("META-INF/LICENSE*", "META-INF/NOTICE*")
     }
+    sourceSets.getByName("main").assets.srcDir(rootProject.file("third_party"))
     sourceSets.getByName("androidTest").assets.srcDir(rootProject.file("../../testdata"))
 }
 
@@ -136,4 +140,133 @@ dependencies {
     androidTestImplementation("androidx.test:rules:1.6.1")
     androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+}
+
+tasks.register("generateAndroidSbom") {
+    val runtime = configurations.named("releaseRuntimeClasspath")
+    val nativeAar = layout.projectDirectory.file("libs/loom-box.aar")
+    val output = layout.buildDirectory.file("reports/sbom/loom-android-release.spdx.json")
+    inputs.files(runtime)
+    inputs.file(nativeAar)
+    inputs.property("sourceDateEpoch", providers.environmentVariable("SOURCE_DATE_EPOCH").orElse("0"))
+    outputs.file(output)
+
+    doLast {
+        fun sha256(file: File): String {
+            val digest = MessageDigest.getInstance("SHA-256")
+            file.inputStream().buffered().use { input ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    digest.update(buffer, 0, count)
+                }
+            }
+            return digest.digest().joinToString("") { "%02x".format(it) }
+        }
+
+        val artifacts = runtime.get().resolvedConfiguration.resolvedArtifacts
+            .sortedBy {
+                val id = it.moduleVersion.id
+                "${id.group}:${id.name}:${id.version}:${it.name}:${it.classifier.orEmpty()}:${it.extension}"
+            }
+        val dependencyRecords = artifacts.mapIndexed { index, artifact ->
+            val id = artifact.moduleVersion.id
+            val packageName = "${id.group}:${id.name}"
+            val spdxID = "SPDXRef-Maven-${index + 1}"
+            val digest = sha256(artifact.file)
+            val sbomPackage = linkedMapOf<String, Any>(
+                "name" to packageName,
+                "SPDXID" to spdxID,
+                "versionInfo" to id.version,
+                "downloadLocation" to "NOASSERTION",
+                "filesAnalyzed" to false,
+                "checksums" to listOf(
+                    mapOf("algorithm" to "SHA256", "checksumValue" to digest),
+                ),
+                "licenseConcluded" to "NOASSERTION",
+                "licenseDeclared" to "NOASSERTION",
+                "copyrightText" to "NOASSERTION",
+                "externalRefs" to listOf(
+                    mapOf(
+                        "referenceCategory" to "PACKAGE-MANAGER",
+                        "referenceType" to "purl",
+                        "referenceLocator" to "pkg:maven/${id.group}/${id.name}@${id.version}",
+                    ),
+                ),
+            )
+            Triple(sbomPackage, "$packageName\u0000${id.version}\u0000$digest", spdxID)
+        }
+        val nativeDigest = sha256(nativeAar.asFile)
+        val nativePackage = linkedMapOf<String, Any>(
+            "name" to "sing-box-libbox",
+            "SPDXID" to "SPDXRef-Native-Libbox",
+            "versionInfo" to "1.11.4",
+            "downloadLocation" to "NOASSERTION",
+            "filesAnalyzed" to false,
+            "checksums" to listOf(
+                mapOf("algorithm" to "SHA256", "checksumValue" to nativeDigest),
+            ),
+            "licenseConcluded" to "GPL-3.0-or-later",
+            "licenseDeclared" to "GPL-3.0-or-later",
+            "copyrightText" to "NOASSERTION",
+            "externalRefs" to listOf(
+                mapOf(
+                    "referenceCategory" to "OTHER",
+                    "referenceType" to "vcs",
+                    "referenceLocator" to
+                        "git+https://github.com/SagerNet/sing-box@eb07c7a79eeca943370eafea601e87da76c0e57e",
+                ),
+            ),
+        )
+        val inventory = (dependencyRecords.map { it.second } +
+            "sing-box-libbox\u00001.11.4\u0000$nativeDigest").joinToString("\n")
+        val inventoryDigest = MessageDigest.getInstance("SHA-256")
+            .digest(inventory.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        val appPackage = linkedMapOf<String, Any>(
+            "name" to "Loom Android",
+            "SPDXID" to "SPDXRef-Loom-Android",
+            "versionInfo" to checkNotNull(android.defaultConfig.versionName),
+            "downloadLocation" to "NOASSERTION",
+            "filesAnalyzed" to false,
+            "licenseConcluded" to "NOASSERTION",
+            "licenseDeclared" to "NOASSERTION",
+            "copyrightText" to "NOASSERTION",
+        )
+        val packages = listOf(appPackage, nativePackage) + dependencyRecords.map { it.first }
+        val relationships = mutableListOf<Map<String, String>>(
+            mapOf(
+                "spdxElementId" to "SPDXRef-DOCUMENT",
+                "relationshipType" to "DESCRIBES",
+                "relatedSpdxElement" to "SPDXRef-Loom-Android",
+            ),
+        )
+        (listOf("SPDXRef-Native-Libbox") + dependencyRecords.map { it.third }).forEach { dependencyID ->
+            relationships += mapOf(
+                "spdxElementId" to "SPDXRef-Loom-Android",
+                "relationshipType" to "DEPENDS_ON",
+                "relatedSpdxElement" to dependencyID,
+            )
+        }
+        val created = Instant.ofEpochSecond(
+            providers.environmentVariable("SOURCE_DATE_EPOCH").orElse("0").get().toLong(),
+        ).toString()
+        val document = linkedMapOf<String, Any>(
+            "spdxVersion" to "SPDX-2.3",
+            "dataLicense" to "CC0-1.0",
+            "SPDXID" to "SPDXRef-DOCUMENT",
+            "name" to "Loom Android release SBOM",
+            "documentNamespace" to "https://github.com/Scisaga/loom/sbom/android/$inventoryDigest",
+            "creationInfo" to mapOf(
+                "created" to created,
+                "creators" to listOf("Tool: Loom Gradle generateAndroidSbom"),
+            ),
+            "packages" to packages,
+            "relationships" to relationships,
+        )
+        val destination = output.get().asFile
+        destination.parentFile.mkdirs()
+        destination.writeText(JsonOutput.prettyPrint(JsonOutput.toJson(document)) + "\n")
+    }
 }

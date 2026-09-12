@@ -284,7 +284,10 @@ NDK 28.0.13004108 and either an arm64 device or an x86_64 emulator. Set
 The first command checks out the exact sing-box commit recorded in
 `third_party/NOTICE.md`, binds libbox and `mobile/loomcore` into one AAR,
 verifies its two ABIs and prints its SHA-256. Gradle outputs the installable
-debug APK under `app/build/outputs/apk/debug/`.
+debug APK under `app/build/outputs/apk/debug/`. The app package includes the
+pinned native NOTICE and sing-box license under `assets/`; release construction
+verifies those exact bytes and emits a deterministic SPDX 2.3 dependency SBOM at
+`app/build/reports/sbom/loom-android-release.spdx.json`.
 
 An APK that can enroll must embed the deployment Ed25519 public key. Gradle
 uses the first available value from:
