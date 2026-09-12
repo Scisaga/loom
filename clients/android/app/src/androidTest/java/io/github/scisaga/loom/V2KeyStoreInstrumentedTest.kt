@@ -39,8 +39,15 @@ class V2KeyStoreInstrumentedTest {
     fun identitySignatureStillVerifiesAfterWrappingKeyCreation() {
         val keys = DeviceKeyStore()
         keys.ensureWrapping()
-        val message = "android-v2-identity-binding".encodeToByteArray()
-        Loomcore.verifyP256Signature(keys.ensureIdentity(), message, keys.sign(message))
+        val identity = keys.ensureIdentity()
+        Loomcore.verifyCSRIdentity(keys.createCSRDER("demo-android-request"), identity)
+
+        val hash = "sha256:" + "00".repeat(32)
+        val popBody = """
+            {"challenge_hash":"$hash","claim_core_hash":"$hash","cluster_id":"demo-cluster","invite_id":"demo-invite","request_id":"demo-request","schema":2,"token_commitment":"$hash"}
+        """.trimIndent().encodeToByteArray()
+        val message = Loomcore.enrollmentPoPMessageV2(popBody)
+        Loomcore.verifyP256Signature(identity, message, keys.signCanonicalV2(message))
     }
 
     @Test

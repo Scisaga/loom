@@ -187,6 +187,31 @@ func AssembleCSRDER(infoDER, signatureDER []byte) ([]byte, error) {
 	return der, nil
 }
 
+// VerifyCSRIdentity 在 CSR 离开 Android Keystore callback 后再次钉住 exact
+// identity SPKI。这样 CSR 与后续 PoP 即使由不同宿主步骤触发，也不能悄悄换 key（D129）。
+func VerifyCSRIdentity(csrDER, identitySPKI []byte) error {
+	csr, err := x509.ParseCertificateRequest(csrDER)
+	if err != nil || !bytes.Equal(csr.Raw, csrDER) || csr.CheckSignature() != nil {
+		return errors.New("[D129 Android] CSR DER/自签名无效")
+	}
+	identity, err := x509.ParsePKIXPublicKey(identitySPKI)
+	identityP256, ok := identity.(*ecdsa.PublicKey)
+	if err != nil || !ok || identityP256.Curve != elliptic.P256() ||
+		!identityP256.Curve.IsOnCurve(identityP256.X, identityP256.Y) {
+		return errors.New("[D129 Android] identity SPKI 必须是 P-256")
+	}
+	canonicalIdentity, err := x509.MarshalPKIXPublicKey(identityP256)
+	if err != nil || !bytes.Equal(canonicalIdentity, identitySPKI) {
+		return errors.New("[D129 Android] identity SPKI 不是 canonical DER")
+	}
+	csrKey, ok := csr.PublicKey.(*ecdsa.PublicKey)
+	if !ok || csrKey.Curve != elliptic.P256() ||
+		csrKey.X.Cmp(identityP256.X) != 0 || csrKey.Y.Cmp(identityP256.Y) != 0 {
+		return errors.New("[D129 Android] CSR 与 Keystore identity 不一致")
+	}
+	return nil
+}
+
 func parseCSRInfo(infoDER []byte) (certificationRequestInfo, error) {
 	var info certificationRequestInfo
 	rest, err := asn1.Unmarshal(infoDER, &info)

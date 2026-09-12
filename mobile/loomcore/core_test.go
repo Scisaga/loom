@@ -75,6 +75,9 @@ func TestKeystoreStyleSignatureAndCSR(t *testing.T) {
 	if err != nil || csr.CheckSignature() != nil || csr.Subject.CommonName != "demo-request" {
 		t.Fatalf("组装的 CSR 无效: csr=%+v err=%v", csr, err)
 	}
+	if err := VerifyCSRIdentity(block.Bytes, publicKey); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestCSRRejectsWrongExternalKeyAndTamper(t *testing.T) {
@@ -92,6 +95,29 @@ func TestCSRRejectsWrongExternalKeyAndTamper(t *testing.T) {
 	}
 	if _, err := PrepareCSR(" bad\n", publicKey); err == nil {
 		t.Fatal("无效 request_id 被接受")
+	}
+}
+
+func TestVerifyCSRIdentityRejectsDifferentIdentityAndNonExactDER(t *testing.T) {
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	other, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	identity, _ := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	otherIdentity, _ := x509.MarshalPKIXPublicKey(&other.PublicKey)
+	info, err := PrepareCSR("demo-request", identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(info)
+	signature, _ := ecdsa.SignASN1(rand.Reader, key, digest[:])
+	csr, err := AssembleCSRDER(info, signature)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyCSRIdentity(csr, otherIdentity); err == nil {
+		t.Fatal("CSR 被错误的 identity 接受")
+	}
+	if err := VerifyCSRIdentity(append(append([]byte(nil), csr...), 0), identity); err == nil {
+		t.Fatal("含尾随字节的 CSR 被接受")
 	}
 }
 

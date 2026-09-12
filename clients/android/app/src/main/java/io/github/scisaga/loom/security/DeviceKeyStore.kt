@@ -86,8 +86,11 @@ class DeviceKeyStore {
     }
 
     fun createCSRDER(requestID: String): ByteArray {
-        val info = Loomcore.prepareCSR(requestID, ensureIdentity())
-        return Loomcore.assembleCSRDER(info, sign(info))
+        val identity = ensureIdentity()
+        val info = Loomcore.prepareCSR(requestID, identity)
+        return Loomcore.assembleCSRDER(info, sign(info)).also { csr ->
+            Loomcore.verifyCSRIdentity(csr, identity)
+        }
     }
 
     /** #14：wrapping key 与 identity alias 分离，不能被 Device identity/operation signer 调用。 */
