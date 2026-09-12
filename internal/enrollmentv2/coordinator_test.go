@@ -114,8 +114,15 @@ func (backend *workflowBackendFixture) CollectAdmission(_ context.Context, _ Ver
 }
 
 func (backend *workflowBackendFixture) PlanReservation(_ context.Context, _ VerifiedClaimAttemptV2,
-	_ wire.StableEnrollmentAdmissionQCV1) (ReservationPlanV2, error) {
-	return ReservationPlanV2{OperationID: "claim-operation", CommittedAt: backend.committedAt}, nil
+	admission wire.StableEnrollmentAdmissionQCV1) (ReservationPlanV2, error) {
+	plan := ReservationPlanV2{OperationID: "claim-operation", CommittedAt: backend.committedAt}
+	operation, err := claimOperationForAdmission(&admission, plan)
+	if err != nil {
+		return ReservationPlanV2{}, err
+	}
+	plan.Certification = certifiedOperationFixture(backend.t, backend.set, operation.OperationID,
+		DomainClaimOperation, operation, operation.ReservedAt, 2, nil)
+	return plan, nil
 }
 
 func (backend *workflowBackendFixture) Provision(_ context.Context, _ VerifiedClaimAttemptV2,
@@ -132,15 +139,20 @@ func (backend *workflowBackendFixture) Provision(_ context.Context, _ VerifiedCl
 	certificateHash, _ := wire.DeviceCertificateHash(certificateDER)
 	viewHash, _ := wire.DeviceViewHash(&backend.resultArtifact.InitialDeviceView)
 	resultHash, _ := wire.EnrollmentResultArtifactHash(&backend.resultArtifact)
+	reservationQCHash, err := wire.ConfigQCHash(record.ReservationCertification.ConfigQC)
+	if err != nil {
+		return ProvisionalPlanV1{}, err
+	}
 	body := wire.EnrollmentProvisionalIssuanceBodyV1{
 		Schema: 1, ClusterID: record.State.ClusterID, InviteID: record.State.InviteID,
 		RequestID: record.State.RequestID, ClaimOperationHash: record.State.ClaimOperationHash,
-		ReservationHeadHash: hash, ReservationHeadQCHash: hash, DeviceCertificateHash: certificateHash,
+		ReservationHeadHash:   record.ReservationCertification.Head.HeadHash,
+		ReservationHeadQCHash: reservationQCHash, DeviceCertificateHash: certificateHash,
 		InitialDeviceViewHash:             viewHash,
 		SecretArtifactRefsRoot:            backend.resultArtifact.InitialDeviceView.Active.SecretArtifactRefsRoot,
 		ResultArtifactHash:                resultHash,
 		DeviceCertificateProfileStateHash: profileHash,
-		IssuanceLogCoordinate:             wire.IssuanceLogCoordinateV1{RecoveryEpoch: 0, RaftIndex: 2},
+		IssuanceLogCoordinate:             wire.IssuanceLogCoordinateV1{RecoveryEpoch: 0, RaftIndex: 3},
 	}
 	issuance, err := wire.SignEnrollmentProvisionalIssuance(body, &backend.profile, backend.issuerKey)
 	if err != nil {
@@ -160,8 +172,10 @@ func (backend *workflowBackendFixture) Provision(_ context.Context, _ VerifiedCl
 		PreviousIssuanceRegistryRoot: previousRoot, ResultingIssuanceRegistryRoot: resultingRoot,
 		IssuedAt: backend.committedAt,
 	}
+	certification := certifiedOperationFixture(backend.t, backend.set, operation.OperationID,
+		DomainProvisionalOperation, operation, operation.IssuedAt, 3, &record.ReservationCertification.Head)
 	return ProvisionalPlanV1{Operation: operation, Issuance: issuance, Profile: backend.profile,
-		Result: backend.resultArtifact}, nil
+		Result: backend.resultArtifact, Certification: certification}, nil
 }
 
 func (backend *workflowBackendFixture) CollectApproval(_ context.Context, _ VerifiedClaimAttemptV2,
@@ -177,7 +191,8 @@ func (backend *workflowBackendFixture) CollectApproval(_ context.Context, _ Veri
 		Schema: 2, AttestationType: "enrollment_approval", ClusterID: body.ClusterID,
 		InviteID: body.InviteID, RequestID: body.RequestID, ClaimOperationHash: body.ClaimOperationHash,
 		ProvisionalIssuanceOperationHash: operationHash, ProvisionalIssuanceHash: issuanceHash,
-		IssuanceHeadHash: hash, IssuanceHeadQCHash: hash,
+		IssuanceHeadHash:              record.ProvisionalCertification.Head.HeadHash,
+		IssuanceHeadQCHash:            mustConfigQCHash(backend.t, record.ProvisionalCertification.ConfigQC),
 		ResultingIssuanceRegistryRoot: record.ProvisionalOperation.ResultingIssuanceRegistryRoot,
 		DeviceCertificateHash:         body.DeviceCertificateHash, InitialDeviceViewHash: body.InitialDeviceViewHash,
 		SecretArtifactRefsRoot: body.SecretArtifactRefsRoot, ResultArtifactHash: body.ResultArtifactHash,
@@ -193,7 +208,8 @@ func (backend *workflowBackendFixture) CommitCompletion(_ context.Context, _ Ver
 	record DurableRecord, _ wire.StableEnrollmentApprovalQCV2,
 	operation CompletionOperationV2) (CompletionCertificationV1, error) {
 	backend.completionCalls++
-	return completionCertificationFixture(backend.t, backend.set, backend.member, operation, *record.ResultArtifact), nil
+	return completionCertificationFixture(backend.t, backend.set, backend.member, operation,
+		*record.ResultArtifact, &record.ProvisionalCertification.Head), nil
 }
 
 func verifiedPrivateAttempt(t *testing.T, fixture privateServiceFixture) VerifiedClaimAttemptV2 {

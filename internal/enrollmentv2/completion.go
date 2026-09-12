@@ -15,6 +15,7 @@ const DomainCompletionOperationID = "loom-enrollment-completion-operation-id-v1"
 type CompletionCertificationV1 struct {
 	Schema             int                                 `json:"schema"`
 	Operation          CertifiedEnrollmentOperationProofV1 `json:"operation"`
+	IntermediateHeads  []wire.HeadEntryV2                  `json:"intermediate_heads,omitempty"`
 	DeviceViewEnvelope wire.DeviceViewEnvelopeV2           `json:"device_view_envelope"`
 }
 
@@ -81,6 +82,13 @@ func validateCompletionCertification(record *DurableRecord, operation *Completio
 		operation.OperationID, operationHash)
 	if err != nil {
 		return CompletionProjectionV1{}, err
+	}
+	if record.ProvisionalCertification == nil {
+		return CompletionProjectionV1{}, errors.New("[D130 Enrollment] completion 缺 issuance Head certification")
+	}
+	if err := verifyApprovalHeadLineage(&record.ProvisionalCertification.Head,
+		certification.IntermediateHeads, &certification.Operation.Head); err != nil {
+		return CompletionProjectionV1{}, errors.New("[D130 Enrollment] issuance→completion Head lineage 不连续")
 	}
 	envelope := &certification.DeviceViewEnvelope
 	operationProof := &certification.Operation
