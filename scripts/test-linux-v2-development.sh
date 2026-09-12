@@ -13,7 +13,7 @@ esac
 temporary=$(mktemp -d)
 trap 'rm -rf "$temporary"' EXIT HUP INT TERM
 
-go test ./internal/wire ./internal/clientv2 ./internal/clientcomponent ./internal/controlplane -count=1
+go test ./internal/wire ./internal/clientv2 ./internal/clientcomponent ./internal/controlplane ./internal/deploy -count=1
 for architecture in amd64 arm64; do
     CGO_ENABLED=0 GOOS=linux GOARCH="$architecture" go build -trimpath -o "$temporary/loom-linux-$architecture" ./cmd/loom
     test -s "$temporary/loom-linux-$architecture"
@@ -49,6 +49,7 @@ evidence = {
         "loom/internal/clientv2",
         "loom/internal/clientcomponent",
         "loom/internal/controlplane",
+        "loom/internal/deploy",
     ],
     "scope": "development_only",
     "real_host_acceptance": False,

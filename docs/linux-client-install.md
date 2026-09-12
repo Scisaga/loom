@@ -178,15 +178,25 @@ reporter 在网络发送前先把已签 exact envelope 写入
 pending bytes；收到 `204` 前不会推进 sequence。
 
 同步 Device view 后，默认使用与 view 原子保存的 `linux-link-intents` exact canonical
-artifact 提交本机 runtime LKG：
+artifact 提交本机 runtime LKG。先验收 runtime LKG 并预览完整安装事务（不安装配置或改动服务）：
 
 ```bash
 sudo loom client accept-v2-runtime \
-  -state-dir /var/lib/loom/client-v2
+  -state-dir /var/lib/loom/client-v2 \
+  -dry-run
+```
+
+确认后执行同一条验证路径并安装：
+
+```bash
+sudo loom client accept-v2-runtime \
+  -state-dir /var/lib/loom/client-v2 \
+  -apply
 ```
 
 仅旧 installation 迁移时需要显式给出
-`-link-intents /etc/loom/client-v2/linux-link-intents.json`。
+`-link-intents /etc/loom/client-v2/linux-link-intents.json` 与
+`-runtime-artifact /etc/loom/client-v2/linux-runtime.json`。
 
 命令重新打开 durable Device LKG，不接受命令行自报 Device 职责、grants 或 credential；只使用
 与 view 原子保存的 current/previous ControlSet 及正式 enrollment installation 内已安装的
@@ -197,9 +207,19 @@ render contract、Device generation、EndpointSet transport 及已见 listener g
 `authority_head_hash` 固定为待生成 Head 的 parent，随后返回的 typed content ref 才进入 Device
 view；Linux reader 会同时核对该 parent binding，避免 artifact content hash 与引用它的 Head
 形成循环，也拒绝把无关 Device 或 bootstrap edge 混入稳态运行面。
+第二个 `linux-runtime-v1` artifact 只携不含秘密的 renderer output，并同时绑定上述 LinkIntent 的
+exact content hash/generation、每条 action、每个 listener generation、固定 config path 与 runtime
+tag。客户端只允许 LinkIntent 已授权的 credential placeholder，在节点上从原子安装的 sealed
+credentials 注入；密钥不会进入命令行、公开 artifact 或输出。
 包含 `control_overlay` 时还必须传入 `-control-peer-directory`；joint Head 必须同时传入
 `-previous-control-set`。验证失败不会覆盖已有的
 `/var/lib/loom/client-v2/link-runtime-state.json`。
+
+`-apply` 使用同一个部署事务先在 staging 目录执行 `sing-box check`/`wg-quick strip`，再以
+WG → sing-box → Agent 的顺序替换、启动并验证；任一步失败会恢复旧文件和旧 unit 状态。
+installed inventory 以 CAS 保护，删除仅限该 inventory 中的固定 v2 路径。v2 使用
+`/etc/loom/{sing-box,agent}/v2/`、`lmv2-*` WireGuard interface 及
+`loom-client-v2-{sing-box,agent}.service`，不会覆盖或停用 v1 路径；Gate B 前两套可并存。
 
 开发门禁可一键运行，并把不含域名、IP、Device ID、证书或 secret 的结构化结果写到忽略目录：
 

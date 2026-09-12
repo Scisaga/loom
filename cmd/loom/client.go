@@ -41,8 +41,8 @@ const clientUsage = `loom client —— 客户端加入与交付
   loom client report-v2 -directory <json> -directory-hash <sha256:...>
       -control-set <json> -internal-ca <pem> -payload <json> -kind <kind> -payload-schema <n>
                                                持久化并发送 Linux v2 Device report
-  loom client accept-v2-runtime -link-intents <json> -control-set <json>
-                                               验收 certified LinkIntent 并提交 Linux runtime LKG
+  loom client accept-v2-runtime [-apply|-dry-run]
+                                               验收 certified Linux runtime；可事务安装或预览
   loom client package -sing-box <二进制>     生成可重现、已签名的 Linux 客户端包
   loom client verify  -archive <tar.gz> -pubkey <公钥>
                                                验签并检查包内全部文件

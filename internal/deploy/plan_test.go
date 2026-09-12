@@ -93,7 +93,10 @@ func TestSecretFilesAre0600(t *testing.T) {
 	for _, p := range []string{
 		"/etc/wireguard/wg-edge-a.conf",
 		"/etc/loom/sing-box/config.json",
+		"/etc/loom/sing-box/v2/config.json",
 		"/etc/loom/agent/config.json",
+		"/etc/loom/agent/v2/config.json",
+		"/var/lib/loom/client-v2/runtime-install-state.json",
 	} {
 		if Mode(p) != "0600" {
 			t.Errorf("%s 的权限是 %s,含秘密的必须 0600", p, Mode(p))
@@ -321,7 +324,9 @@ func TestUnitFor(t *testing.T) {
 		{"/etc/systemd/system/loom-agent.service", "loom-agent"},
 		{"/etc/systemd/system/loom-pull.timer", "loom-pull.timer"},
 		{"/etc/loom/sing-box/config.json", "sing-box"},
+		{"/etc/loom/sing-box/v2/config.json", "loom-client-v2-sing-box"},
 		{"/etc/loom/agent/config.json", "loom-agent"},
+		{"/etc/loom/agent/v2/config.json", "loom-client-v2-agent"},
 		{"/etc/loom/report/config.json", "loom-report"},
 		{"/etc/systemd/system/some.conf", ""}, // 不是 unit
 		{"/random/path", ""},

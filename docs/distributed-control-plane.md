@@ -3181,6 +3181,15 @@ Head 的 `control_peer_directory_hash` 绑定的 exact private directory；activ
 新连接只按 preferred→advertised 取当前可拨代，draining/过期/低于已见 floor 的代均不进入计划，
 也不会扫描相邻端口。
 
+Linux 的第二级 `linux-runtime-v1` config artifact 是服务端 renderer 对上述授权计划的确定性投影。
+它必须绑定 exact `linux-link-intents` content hash/generation，并逐项声明
+`link_id/link_generation/mode/transport/endpoint_id/listener_generation/config_path/runtime_tag`；客户端
+将其与已经落盘的 runtime plan 作集合级 exact 比较，不能靠数组顺序、相邻端口或本机角色补全。
+artifact 只能写固定的 sing-box/Agent/WireGuard v2 目标，内容仍保留 LinkIntent 授权的
+`${secret:...}` 引用。Linux 在本机 hydrate 后检查 JSON/WireGuard hook、certified FQDN/port/TLS 与
+TUN/mixed 语义，再通过受 inventory CAS 保护的 staging/precheck/install/restart/verify/rollback
+事务启用。生成的 systemd unit 固定在客户端代码中，服务端 artifact 无权下发任意 ExecStart。
+
 ~~~text
 ListenerGenerationV2               # public；同一 logical endpoint 的一个可拨物理代次
   schema = 2, listener_generation

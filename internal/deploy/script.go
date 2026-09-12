@@ -15,10 +15,12 @@ func Mode(abs string) string {
 	switch {
 	case strings.HasPrefix(abs, "/etc/wireguard/"):
 		return "0600" // 私钥引用 + 对端公钥
-	case abs == "/etc/loom/sing-box/config.json":
+	case strings.HasPrefix(abs, "/etc/loom/sing-box/"):
 		return "0600" // 凭据明文在里面
-	case abs == "/etc/loom/agent/config.json":
+	case strings.HasPrefix(abs, "/etc/loom/agent/"):
 		return "0600" // 控制端点与探测入口的口令
+	case strings.HasPrefix(abs, "/var/lib/loom/client-v2/"):
+		return "0600" // Device LKG、installed inventory 与 sealed material
 	default:
 		return "0644"
 	}

@@ -75,6 +75,10 @@ func TestLinuxPrivateV2CommandsRequireInstalledCredentialOrCompleteMigrationInpu
 		!strings.Contains(err.Error(), "durable Device LKG 缺失") {
 		t.Fatalf("accept-v2-runtime 缺 durable Device LKG 未失败关闭: %v", err)
 	}
+	if err := cmdClient([]string{"accept-v2-runtime", "-apply", "-dry-run"}); err == nil ||
+		!strings.Contains(err.Error(), "apply/dry-run") {
+		t.Fatalf("accept-v2-runtime 同时 apply/dry-run 未失败关闭: %v", err)
+	}
 }
 
 func TestLinuxPrivateInputsUseInstalledCredentialByDefaultAndRejectPartialMigration(t *testing.T) {

@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"bytes"
 	"errors"
 
 	"loom/internal/distribution"
@@ -17,6 +18,108 @@ type LinuxLinkIntentProjectionV1 struct {
 	Generation       int64
 	ParentHeadHash   string
 	LinkIntents      []wire.LinkIntentV1
+}
+
+type LinuxRuntimeProjectionV1 struct {
+	ClusterID        string
+	DeviceID         string
+	DeviceGeneration int64
+	Generation       int64
+	LinkIntentRaw    []byte
+	Bindings         []wire.LinuxRuntimeBindingV1
+	Files            []wire.LinuxRuntimeFileV1
+}
+
+// BuildLinuxRuntimeArtifact 把 renderer output 绑定到先前生成的 exact
+// linux-link-intents bytes。调用方不能自报 LinkIntent hash/generation。
+func BuildLinuxRuntimeArtifact(input LinuxRuntimeProjectionV1) ([]byte, error) {
+	var linkArtifact wire.LinuxLinkIntentArtifactV1
+	canonical, err := wire.DecodeStrict(input.LinkIntentRaw, 4<<20, &linkArtifact)
+	if err != nil || !bytes.Equal(canonical, input.LinkIntentRaw) ||
+		wire.ValidateLinuxLinkIntentArtifact(&linkArtifact) != nil {
+		return nil, errors.New("[D131 Linux artifact] runtime 未绑定 exact LinkIntent artifact")
+	}
+	if input.ClusterID != linkArtifact.ClusterID || input.DeviceID != linkArtifact.DeviceID ||
+		input.DeviceGeneration != linkArtifact.DeviceGeneration {
+		return nil, errors.New("[D131 Linux artifact] runtime/LinkIntent Device binding 不一致")
+	}
+	linkHash, err := wire.DeviceConfigArtifactContentHash(input.LinkIntentRaw)
+	if err != nil {
+		return nil, err
+	}
+	artifact := wire.LinuxRuntimeArtifactV1{
+		Schema: 1, ClusterID: input.ClusterID, DeviceID: input.DeviceID,
+		DeviceGeneration: input.DeviceGeneration, Generation: input.Generation,
+		LinkIntentGeneration: linkArtifact.Generation, LinkIntentContentHash: linkHash,
+		Bindings: append([]wire.LinuxRuntimeBindingV1(nil), input.Bindings...),
+		Files:    append([]wire.LinuxRuntimeFileV1(nil), input.Files...),
+	}
+	if err := wire.ValidateLinuxRuntimeArtifact(&artifact); err != nil {
+		return nil, err
+	}
+	if err := validateLinuxRuntimeProjectionBindings(&linkArtifact, artifact.Bindings); err != nil {
+		return nil, err
+	}
+	if err := wire.ValidateLinuxRuntimeRedaction(&artifact, &linkArtifact); err != nil {
+		return nil, err
+	}
+	return wire.MarshalCanonical(artifact)
+}
+
+func PublishLinuxRuntimeArtifact(staticRoot string,
+	input LinuxRuntimeProjectionV1,
+) (wire.DeviceConfigArtifactRefV1, string, error) {
+	body, err := BuildLinuxRuntimeArtifact(input)
+	if err != nil {
+		return wire.DeviceConfigArtifactRefV1{}, "", err
+	}
+	return distribution.PublishDeviceConfigArtifact(staticRoot,
+		wire.LinuxRuntimeArtifactID, "linux-server", "application/vnd.loom.config+json",
+		wire.LinuxRuntimeRenderContract, input.Generation, body)
+}
+
+func validateLinuxRuntimeProjectionBindings(linkArtifact *wire.LinuxLinkIntentArtifactV1,
+	bindings []wire.LinuxRuntimeBindingV1,
+) error {
+	if linkArtifact == nil {
+		return errors.New("[D131 Linux artifact] LinkIntent 缺失")
+	}
+	byLink := make(map[string][]wire.LinuxRuntimeBindingV1, len(linkArtifact.LinkIntents))
+	for _, binding := range bindings {
+		byLink[binding.LinkID] = append(byLink[binding.LinkID], binding)
+	}
+	for _, intent := range linkArtifact.LinkIntents {
+		selected := byLink[intent.LinkID]
+		if len(selected) == 0 {
+			return errors.New("[D131 Linux artifact] runtime bindings 未覆盖每条 LinkIntent")
+		}
+		mode := "listen"
+		if intent.Initiator == "from" && intent.FromDeviceID == linkArtifact.DeviceID ||
+			intent.Initiator == "to" && intent.To.DeviceID == linkArtifact.DeviceID {
+			mode = "dial"
+		}
+		for _, binding := range selected {
+			if binding.LinkGeneration != intent.Generation || binding.Mode != mode ||
+				!containsLinuxArtifactValue(intent.AllowedTransports, binding.Transport) ||
+				!containsLinuxArtifactValue(intent.ListenerResourceRefs, binding.EndpointID) {
+				return errors.New("[D131 Linux artifact] runtime binding 扩大或偏离 LinkIntent")
+			}
+		}
+		delete(byLink, intent.LinkID)
+	}
+	if len(byLink) != 0 {
+		return errors.New("[D131 Linux artifact] runtime binding 引用了未知 LinkIntent")
+	}
+	return nil
+}
+
+func containsLinuxArtifactValue(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func BuildLinuxLinkIntentArtifact(input LinuxLinkIntentProjectionV1) ([]byte, error) {

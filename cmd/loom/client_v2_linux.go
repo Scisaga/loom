@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"loom/internal/clientv2"
+	"loom/internal/deploy"
 	"loom/internal/wire"
 )
 
@@ -294,11 +295,25 @@ func cmdClientAcceptV2Runtime(args []string) error {
 	stateDirectory := fs.String("state-dir", "/var/lib/loom/client-v2", "root-owned v2 identity/LKG 目录")
 	runtimeStatePath := fs.String("runtime-state", "", "root-only runtime plan/floors LKG")
 	artifactPath := fs.String("link-intents", "", "current Device view 承诺的 exact LinkIntent artifact")
+	runtimeArtifactPath := fs.String("runtime-artifact", "", "current Device view 承诺的 exact Linux runtime artifact")
+	installStatePath := fs.String("install-state", "", "root-only installed runtime inventory/CAS LKG")
 	controlSetPath := fs.String("control-set", "", "current exact ControlSetV1")
 	previousControlSetPath := fs.String("previous-control-set", "", "joint Head 所需 previous exact ControlSetV1")
 	peerDirectoryPath := fs.String("control-peer-directory", "", "control LinkIntent 所需 private directory object")
+	applyRuntime := fs.Bool("apply", false, "验收后在本机事务安装 runtime")
+	dryRun := fs.Bool("dry-run", false, "验收并构造事务，但不安装配置或改动服务")
+	timeout := fs.Duration("timeout", 2*time.Minute, "本机事务安装超时")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
-		return errors.New("用法: loom client accept-v2-runtime [-link-intents <json>] [-control-peer-directory <json>] [-state-dir <dir>] [-runtime-state <path>]（旧 LKG 可另给 -control-set）")
+		return errors.New("用法: loom client accept-v2-runtime [-apply|-dry-run] [-link-intents <json>] [-runtime-artifact <json>] [-control-peer-directory <json>] [-state-dir <dir>]（旧 LKG 可另给 -control-set）")
+	}
+	if *applyRuntime && *dryRun || *timeout < time.Second || *timeout > 10*time.Minute {
+		return errors.New("[D131 Linux runtime] apply/dry-run/timeout 输入无效")
+	}
+	if !*applyRuntime && !*dryRun && (*runtimeArtifactPath != "" || *installStatePath != "") {
+		return errors.New("[D131 Linux runtime] runtime-artifact/install-state 仅与 apply 或 dry-run 同用")
+	}
+	if *applyRuntime && os.Geteuid() != 0 {
+		return errors.New("[D131 Linux runtime] -apply 必须由 root 在目标 Linux 节点执行")
 	}
 	if *stateDirectory == "" || !filepath.IsAbs(*stateDirectory) || filepath.Clean(*stateDirectory) != *stateDirectory {
 		return errors.New("[D131 Linux runtime] state-dir 必须是规范绝对路径")
@@ -308,6 +323,12 @@ func cmdClientAcceptV2Runtime(args []string) error {
 	}
 	if !filepath.IsAbs(*runtimeStatePath) || filepath.Clean(*runtimeStatePath) != *runtimeStatePath {
 		return errors.New("[D131 Linux runtime] runtime-state 必须是规范绝对路径")
+	}
+	if *installStatePath == "" {
+		*installStatePath = filepath.Join(*stateDirectory, clientv2.LinuxRuntimeInstallStateName)
+	}
+	if !filepath.IsAbs(*installStatePath) || filepath.Clean(*installStatePath) != *installStatePath {
+		return errors.New("[D131 Linux runtime] install-state 必须是规范绝对路径")
 	}
 	var set *wire.ControlSetV1
 	if *controlSetPath != "" {
@@ -361,6 +382,34 @@ func cmdClientAcceptV2Runtime(args []string) error {
 	fmt.Printf("  generation   device=%d artifact=%d actions=%d\n",
 		runtimeState.Plan.DeviceGeneration, runtimeState.Plan.ArtifactGeneration,
 		len(runtimeState.Plan.Actions))
+	if !*applyRuntime && !*dryRun {
+		return nil
+	}
+	var runtimeRaw []byte
+	if *runtimeArtifactPath != "" {
+		runtimeRaw, err = readV2RegularFile(*runtimeArtifactPath, 16<<20)
+	} else {
+		runtimeRaw, err = clientv2.LinuxInstalledConfigArtifact(
+			deviceStore.Enrollment(), wire.LinuxRuntimeArtifactID)
+	}
+	if err != nil {
+		return err
+	}
+	plan, err := clientv2.PrepareLinuxRuntimeDeployment(*installStatePath, statePath,
+		*runtimeStatePath, artifactRaw, runtimeRaw)
+	if err != nil {
+		return err
+	}
+	if *dryRun {
+		fmt.Printf("  dry-run      files=%d remove=%d prechecks=%d services=%d（runtime LKG 已验收；未安装配置或改动服务）\n",
+			len(plan.Files), len(plan.Remove), len(plan.PreCheck), len(plan.Services()))
+		return nil
+	}
+	runID := "client-v2-" + time.Now().UTC().Format("20060102T150405.000000000Z")
+	if err := runScript(runtimeState.DeviceID, deploy.Script(plan, runID), "", true, *timeout); err != nil {
+		return err
+	}
+	fmt.Println("✓ Linux v2 runtime 已通过预检并事务安装；失败路径保留旧 LKG")
 	return nil
 }
 
