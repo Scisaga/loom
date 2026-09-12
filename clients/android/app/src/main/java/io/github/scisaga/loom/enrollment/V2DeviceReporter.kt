@@ -10,6 +10,24 @@ import org.json.JSONObject
 import java.time.Instant
 import java.util.Base64
 
+internal data class V2ConfigurationRefresh(
+    val profile: ManagedProfile?,
+    val staged: Boolean,
+    val requiresRuntimeActivation: Boolean,
+)
+
+internal fun requiresV2RuntimeActivation(current: ManagedProfile, candidate: ManagedProfile): Boolean {
+    check(current.protocol == 2 && candidate.protocol == 2) { "v2 runtime 比较拒绝其他协议" }
+    check(current.nodeID == candidate.nodeID) { "v2 runtime candidate 属于另一 Device" }
+    return current.config != candidate.config
+}
+
+internal fun requiresV2RouteApplication(current: ManagedProfile, candidate: ManagedProfile): Boolean {
+    check(current.protocol == 2 && candidate.protocol == 2) { "v2 route 比较拒绝其他协议" }
+    check(current.nodeID == candidate.nodeID) { "v2 route candidate 属于另一 Device" }
+    return current.routePlan != candidate.routePlan
+}
+
 /**
  * #14 / D131：pending signed envelope 在网络发送前进入 Keystore-wrapped 原子 journal。
  * HTTP 响应丢失或进程死亡后只能重放 exact bytes；收到 204 后才推进 sequence。
@@ -28,11 +46,12 @@ internal class V2DeviceReporter(
     fun hasPending(deviceID: String): Boolean = loadJournal(deviceID)?.pending != null
 
     /** 配置响应只在共享 verifier 完成 QC/Merkle/floor 检查后进入 protected LKG。 */
-    fun refreshConfiguration(): ManagedProfile? {
+    fun refreshConfiguration(): V2ConfigurationRefresh {
         val now = Instant.now().toString()
         val plans = stateStore.privateControlPlans("device_config", now)
         val delivery = client.getFirst(plans)
         val state = checkNotNull(stateStore.current()) { "[D131 Android config] v2 Device state 尚未安装" }
+        val currentProfile = checkNotNull(stateStore.runtimeProfile()) { "[D131 Android config] active state 缺 runtime" }
         val fetchPlan = Loomcore.prepareAndroidV2PrivateDeviceConfigFetchPlan(
             state,
             delivery,
@@ -40,9 +59,9 @@ internal class V2DeviceReporter(
         )
         val plan = JSONObject(fetchPlan.decodeToString())
         val configState = plan.getString("state")
-        when (configState) {
-            "unchanged" -> stateStore.acceptPrivateDelivery(delivery)
-            "tombstone" -> stateStore.acceptPrivateDeliveryWithArtifacts(
+        val next = when (configState) {
+            "unchanged" -> stateStore.preparePrivateDelivery(delivery)
+            "tombstone" -> stateStore.preparePrivateDeliveryWithArtifacts(
                 delivery, ByteArray(0), ByteArray(0),
             )
             "active" -> {
@@ -56,11 +75,33 @@ internal class V2DeviceReporter(
                 } else {
                     ByteArray(0)
                 }
-                stateStore.acceptPrivateDeliveryWithArtifacts(delivery, configs, credentials)
+                stateStore.preparePrivateDeliveryWithArtifacts(delivery, configs, credentials)
             }
             else -> error("[D124 Android config] fetch plan state 无效")
         }
-        return stateStore.runtimeProfile()
+        if (configState == "tombstone") {
+            stateStore.commitTombstone(next)
+            return V2ConfigurationRefresh(profile = null, staged = false, requiresRuntimeActivation = false)
+        }
+        val candidate = stateStore.stageRuntimeCandidate(next)
+        if (candidate.recordID == currentProfile.recordID) {
+            return V2ConfigurationRefresh(currentProfile, staged = false, requiresRuntimeActivation = false)
+        }
+        return V2ConfigurationRefresh(
+            candidate,
+            staged = true,
+            requiresRuntimeActivation = requiresV2RuntimeActivation(currentProfile, candidate),
+        )
+    }
+
+    fun commitConfigurationCandidate(profile: ManagedProfile): ManagedProfile {
+        check(profile.protocol == 2)
+        return stateStore.commitRuntimeCandidate(profile.recordID)
+    }
+
+    fun discardConfigurationCandidate(profile: ManagedProfile): Boolean {
+        check(profile.protocol == 2)
+        return stateStore.discardRuntimeCandidate(profile.recordID)
     }
 
     private fun unsealRotatedCredentials(plan: JSONObject, state: ByteArray): ByteArray {

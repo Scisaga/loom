@@ -3,6 +3,7 @@ package io.github.scisaga.loom.enrollment
 import android.content.Context
 import io.github.scisaga.loom.security.EncryptedStore
 import io.github.scisaga.loom.security.DeviceKeyStore
+import io.github.scisaga.libbox.Libbox
 import io.github.scisaga.loomcore.Loomcore
 import org.json.JSONObject
 
@@ -83,57 +84,106 @@ class V2DeviceStateStore(context: Context) {
         )
     }
 
-    /** #14 / D105：private device_config 的响应经共享 QC/Merkle/floor verifier 后才原子替换 LKG。 */
+    /** Verify a delivery without moving the durable current pointer. */
     @Synchronized
-    internal fun acceptPrivateDelivery(delivery: ByteArray): ByteArray {
+    internal fun preparePrivateDelivery(delivery: ByteArray): ByteArray {
         val current = checkNotNull(protected.get(STATE)) { "[D131 Android config] v2 Device state 尚未安装" }
-        val next = Loomcore.prepareAndroidV2PrivateDeviceConfigUpdate(current, delivery, keys.ensureIdentity())
-        return commitExact(next)
+        return Loomcore.prepareAndroidV2PrivateDeviceConfigUpdate(current, delivery, keys.ensureIdentity())
+            .also(Loomcore::validateAndroidV2DeviceState)
     }
 
-    /** #14 / D124：新 config bytes 与 delivery/floors 在同一 protected blob 原子提交。 */
+    /** #14 / D124：配置与解封凭据先与对应 final view 组成候选，不直接推进 current。 */
     @Synchronized
-    internal fun acceptPrivateDeliveryWithConfigs(delivery: ByteArray, configs: ByteArray): ByteArray {
-        val current = checkNotNull(protected.get(STATE)) { "[D131 Android config] v2 Device state 尚未安装" }
-        val next = Loomcore.prepareAndroidV2PrivateDeviceConfigUpdateWithConfigs(
-            current,
-            delivery,
-            configs,
-            keys.ensureIdentity(),
-        )
-        return commitExact(next)
-    }
-
-    /** #14 / D124：配置与解封凭据只能与对应 final view 一起原子提交。 */
-    @Synchronized
-    internal fun acceptPrivateDeliveryWithArtifacts(
+    internal fun preparePrivateDeliveryWithArtifacts(
         delivery: ByteArray,
         configs: ByteArray,
         credentials: ByteArray,
     ): ByteArray {
         val current = checkNotNull(protected.get(STATE)) { "[D131 Android config] v2 Device state 尚未安装" }
-        val next = Loomcore.prepareAndroidV2PrivateDeviceConfigUpdateWithArtifacts(
+        return Loomcore.prepareAndroidV2PrivateDeviceConfigUpdateWithArtifacts(
             current,
             delivery,
             configs,
             credentials,
             keys.ensureIdentity(),
-        )
-        return commitExact(next)
+        ).also(Loomcore::validateAndroidV2DeviceState)
+    }
+
+    /**
+     * Persist an active candidate without changing current. libbox structural
+     * preflight happens before the candidate slot becomes eligible for service
+     * activation; a crash therefore restarts from the unchanged current LKG.
+     */
+    @Synchronized
+    internal fun stageRuntimeCandidate(next: ByteArray): ManagedProfile {
+        Loomcore.validateAndroidV2DeviceState(next)
+        val current = checkNotNull(protected.get(STATE)) { "[D131 Android config] v2 Device state 尚未安装" }
+        if (current.contentEquals(next)) {
+            runCatching { protected.remove(CANDIDATE_STATE) }
+            return checkNotNull(runtimeProfile(next)) { "[D131 Android runtime] active state 缺 runtime" }
+        }
+        val profile = checkNotNull(runtimeProfile(next)) { "[D131 Android runtime] tombstone 不能进入 runtime candidate" }
+        protected.put(CANDIDATE_STATE, next)
+        val replay = checkNotNull(protected.get(CANDIDATE_STATE)) { "[D131 Android runtime] candidate 未持久保存" }
+        check(replay.contentEquals(next)) { "[D131 Android runtime] candidate 持久化回读不一致" }
+        check(runtimeProfile(replay)?.recordID == profile.recordID) { "[D131 Android runtime] candidate 回读不一致" }
+        return profile
+    }
+
+    /** Move only the exact candidate that has already started successfully. */
+    @Synchronized
+    internal fun commitRuntimeCandidate(recordID: String): ManagedProfile {
+        val candidate = checkNotNull(protected.get(CANDIDATE_STATE)) { "[D131 Android runtime] candidate 已不存在" }
+        val profile = checkNotNull(runtimeProfile(candidate)) { "[D131 Android runtime] candidate 已变为 tombstone" }
+        check(profile.recordID == recordID) { "[D131 Android runtime] candidate 在启动期间发生变化" }
+        protected.put(STATE, candidate)
+        val replay = checkNotNull(protected.get(STATE)) { "[D131 Android runtime] current 提交失败" }
+        check(replay.contentEquals(candidate)) { "[D131 Android runtime] current 提交回读不一致" }
+        runCatching { protected.remove(CANDIDATE_STATE) }
+        return profile
+    }
+
+    @Synchronized
+    internal fun discardRuntimeCandidate(recordID: String): Boolean {
+        val candidate = try {
+            protected.get(CANDIDATE_STATE)
+        } catch (_: Throwable) {
+            runCatching { protected.remove(CANDIDATE_STATE) }
+            return false
+        } ?: return true
+        val profile = runCatching { runtimeProfile(candidate) }.getOrNull()
+        if (profile?.recordID != recordID) {
+            if (profile == null) runCatching { protected.remove(CANDIDATE_STATE) }
+            return false
+        }
+        protected.remove(CANDIDATE_STATE)
+        return true
+    }
+
+    /** Tombstone has no process candidate to start, so its verified state is terminally committed. */
+    @Synchronized
+    internal fun commitTombstone(next: ByteArray) {
+        Loomcore.validateAndroidV2DeviceState(next)
+        val payload = JSONObject(next.decodeToString()).getJSONObject("envelope").getJSONObject("payload")
+        check(payload.getString("state") != "active") { "[D131 Android runtime] active state 不能走 tombstone commit" }
+        commitExact(next)
+        runCatching { protected.remove(CANDIDATE_STATE) }
     }
 
     /** Issue #14：hydrate 后秘密只作为同一 VpnService 的内存启动参数。 */
     @Synchronized
-    fun runtimeProfile(): ManagedProfile? = protected.get(STATE)?.let { state ->
+    fun runtimeProfile(): ManagedProfile? = protected.get(STATE)?.let(::runtimeProfile)
+
+    private fun runtimeProfile(state: ByteArray): ManagedProfile? {
         Loomcore.validateAndroidV2DeviceState(state)
         val persisted = JSONObject(state.decodeToString())
         if (persisted.getJSONObject("envelope").getJSONObject("payload").getString("state") != "active") {
-            return@let null
+            return null
         }
         val runtime = JSONObject(Loomcore.prepareAndroidV2Runtime(state).decodeToString())
         check(runtime.getInt("schema") == 1) { "v2 Android runtime projection schema 无效" }
         val headHash = runtime.getString("head_hash")
-        ManagedProfile(
+        val profile = ManagedProfile(
             nodeID = runtime.getString("device_id"),
             snapshot = headHash,
             generation = runtime.getLong("device_generation"),
@@ -145,6 +195,8 @@ class V2DeviceStateStore(context: Context) {
             recordID = "v2:$headHash",
             protocol = 2,
         )
+        Libbox.checkConfig(profile.config)
+        return profile
     }
 
     @Synchronized
@@ -161,5 +213,6 @@ class V2DeviceStateStore(context: Context) {
 
     companion object {
         private const val STATE = "device-v2-state"
+        private const val CANDIDATE_STATE = "device-v2-state-candidate"
     }
 }

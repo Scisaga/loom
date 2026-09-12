@@ -36,6 +36,7 @@ import io.github.scisaga.loom.enrollment.HttpTransport
 import io.github.scisaga.loom.enrollment.ManagedProfile
 import io.github.scisaga.loom.enrollment.HealthReporter
 import io.github.scisaga.loom.enrollment.V2DeviceReporter
+import io.github.scisaga.loom.enrollment.requiresV2RouteApplication
 import io.github.scisaga.loom.security.DeviceKeyStore
 import io.github.scisaga.loom.route.RouteManager
 import io.github.scisaga.loom.route.UnderlayProbeRegistry
@@ -484,16 +485,15 @@ class LoomVpnService : VpnService(), PlatformInterface {
         var current = activeManagedProfile?.takeIf { it.protocol == 2 } ?: profile
         if (!reporter.hasPending(current.nodeID)) {
             try {
-                val refreshed = reporter.refreshConfiguration() ?: return@withLock null
-                val changed = refreshed.recordID != current.recordID
-                current = refreshed
-                activeManagedProfile = refreshed
-                if (changed) {
-                    // Artifact refs 未变，因此不重建 libbox；只把更高 floors/profile
-                    // 交给调度层。同一 service-lifetime registry 会复用既有冻结结果。
-                    RouteManager.get(this).applyToRunning(refreshed)
-                    startRouteSession(refreshed)
+                val refresh = reporter.refreshConfiguration()
+                val refreshed = refresh.profile ?: return@withLock null
+                if (refresh.requiresRuntimeActivation) {
+                    return@withLock activateV2RuntimeCandidate(reporter, current, refreshed)
                 }
+                current = if (refresh.staged) {
+                    commitV2LiveCandidate(reporter, current, refreshed)
+                } else refreshed
+                activeManagedProfile = current
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
@@ -511,6 +511,96 @@ class LoomVpnService : VpnService(), PlatformInterface {
             VpnRuntime.transform { it.copy(trustedReport = "失败；已保留 exact pending 并将重试") }
         }
         current
+    }
+
+    /** Apply route-only changes before advancing floors; authority-only changes need no libbox restart. */
+    private suspend fun commitV2LiveCandidate(
+        reporter: V2DeviceReporter,
+        current: ManagedProfile,
+        candidate: ManagedProfile,
+    ): ManagedProfile = lifecycle.withLock {
+        check(desiredConnected && activeManagedProfile?.recordID == current.recordID) {
+            "v2 live candidate 的 active LKG 已变化"
+        }
+        val routeChanged = requiresV2RouteApplication(current, candidate)
+        try {
+            if (routeChanged) RouteManager.get(this).applyToRunning(candidate)
+            val committed = reporter.commitConfigurationCandidate(candidate)
+            activeManagedProfile = committed
+            if (routeChanged) startRouteSession(committed)
+            committed
+        } catch (candidateError: Throwable) {
+            val discarded = runCatching { reporter.discardConfigurationCandidate(candidate) }.getOrDefault(false)
+            if (routeChanged) {
+                runCatching { RouteManager.get(this).applyToRunning(current) }
+                    .onFailure(candidateError::addSuppressed)
+            }
+            if (!discarded) {
+                candidateError.addSuppressed(IllegalStateException("v2 live candidate 在失败恢复期间发生变化"))
+            }
+            throw candidateError
+        }
+    }
+
+    /**
+     * A changed android-runtime remains in the protected candidate slot until
+     * the exact libbox config has started and selector state has been read
+     * back. Failure restarts the still-current LKG before the candidate is
+     * discarded, so a verified download cannot silently strand the VPN on old
+     * bytes or advance durable floors ahead of the running data plane.
+     */
+    private suspend fun activateV2RuntimeCandidate(
+        reporter: V2DeviceReporter,
+        current: ManagedProfile,
+        candidate: ManagedProfile,
+    ): ManagedProfile = lifecycle.withLock {
+        check(desiredConnected && activeManagedProfile?.recordID == current.recordID) {
+            "v2 runtime candidate 的 active LKG 已变化"
+        }
+        closeResources(cancelReporter = false)
+        val committed = try {
+            activate(candidate.config)
+            RouteManager.get(this).applyToRunning(candidate)
+            ensureConnectionWanted()
+            reporter.commitConfigurationCandidate(candidate)
+        } catch (candidateError: Throwable) {
+            val discarded = runCatching { reporter.discardConfigurationCandidate(candidate) }.getOrDefault(false)
+            closeResources(cancelReporter = false)
+            try {
+                ensureConnectionWanted()
+                activate(current.config)
+                RouteManager.get(this).applyToRunning(current)
+                activeManagedProfile = current
+                startRouteSession(current)
+                VpnRuntime.transform {
+                    it.copy(
+                        phase = ConnectionPhase.CONNECTED,
+                        detail = "新 v2 runtime 启动失败；沿用 certified LKG ${current.generation}",
+                    )
+                }
+                updateNotification("已连接 · 沿用 v2 LKG ${current.generation}")
+                startV2Reporter(current)
+            } catch (restoreError: Throwable) {
+                candidateError.addSuppressed(restoreError)
+                closeResources(cancelReporter = false)
+            }
+            if (!discarded) {
+                candidateError.addSuppressed(IllegalStateException("v2 runtime candidate 在失败恢复期间发生变化"))
+            }
+            throw candidateError
+        }
+        activeManagedProfile = committed
+        startRouteSession(committed)
+        VpnRuntime.transform {
+            it.copy(
+                phase = ConnectionPhase.CONNECTED,
+                detail = "已激活 v2 Device/runtime ${committed.generation}",
+            )
+        }
+        runCatching { updateNotification("已连接 · v2 runtime ${committed.generation}") }
+            .onFailure { Log.w(TAG, "update v2 runtime notification", it) }
+        startV2Reporter(committed)
+        committed
     }
 
     private fun stopForV2Tombstone() {
@@ -567,10 +657,12 @@ class LoomVpnService : VpnService(), PlatformInterface {
         }
     }
 
-    private fun closeResources() {
+    private fun closeResources(cancelReporter: Boolean = true) {
         sessionID++
-        reportJob?.cancel()
-        reportJob = null
+        if (cancelReporter) {
+            reportJob?.cancel()
+            reportJob = null
+        }
         routeJob?.cancel()
         routeJob = null
         activeManagedProfile = null

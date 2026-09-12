@@ -702,6 +702,10 @@ Kotlin 宿主只负责生命周期、Direct 不探测、每底层网络代首次
 客户端原子保存 ControlSet checkpoint/transition、QC、
 recovery/control/head/Device view 四组 floor（含 recovery policy hash）、bootstrap transition hash、
 `protocol_latch=v2` 和带 TLS SPKI pin generation/overlap 的 EndpointSet，不要求清除身份或重新扫码。
+稳态 private `device_config` 若只提升 authority 或 route plan，先在 candidate 槽应用 selector 再提交；
+若 `android-runtime` bytes 改变，则先持久化 candidate、通过内嵌 libbox `checkConfig`，再由同一
+`VpnService` 启动新 TUN/runtime 并读回 selector，最后才推进 current/floors。启动失败会删除
+candidate 并重新启动仍为 current 的旧 LKG；进程在提交前中断也只会从旧 current 恢复。
 原生宿主、服务端纵向测试、Emulator 和真机
 的实际完成范围只见[当前状态](status/current.md)；开发签名 APK、模拟器成功或 HTTP 204
 不能冒充生产手机已经入网和可靠性验收。
