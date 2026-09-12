@@ -399,6 +399,14 @@ Create an API 35 Google APIs x86_64 AVD with KVM, boot it headless, then run:
 ANDROID_SERIAL=emulator-5554 ./scripts/emulator-smoke.sh
 ```
 
+API 26–30 uses a separate emulator run because its wrapping key must be a
+non-exportable, decrypt-only RSA-2048 key. The test performs an exact
+SHA-256/MGF1-SHA1 OAEP round trip through Android Keystore:
+
+```bash
+ANDROID_SERIAL=emulator-5556 ./scripts/legacy-keystore-smoke.sh
+```
+
 For a physically remote Android device whose vendor UI requires an extra USB
 installation confirmation, use the narrowly scoped installer helper. It only
 accepts the Loom package, an exact caller-supplied APK hash, a physical device,

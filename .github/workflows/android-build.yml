@@ -52,6 +52,7 @@ jobs:
           clients/android/scripts/test-emulator-smoke-preflight.sh
           python3 clients/android/scripts/test_install_confirmation.py
           bash -n clients/android/scripts/install-device-apk.sh
+          bash -n clients/android/scripts/legacy-keystore-smoke.sh
           bash -n clients/android/scripts/physical-device-smoke.sh
       - name: Build combined libbox and Loom AAR
         working-directory: clients/android

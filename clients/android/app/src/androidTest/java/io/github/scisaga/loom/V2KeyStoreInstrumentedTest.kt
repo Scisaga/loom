@@ -4,8 +4,17 @@ import android.os.Build
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.scisaga.loom.security.DeviceKeyStore
 import io.github.scisaga.loomcore.Loomcore
+import java.security.KeyFactory
+import java.security.interfaces.RSAPublicKey
+import java.security.spec.MGF1ParameterSpec
+import java.security.spec.X509EncodedKeySpec
+import javax.crypto.Cipher
+import javax.crypto.spec.OAEPParameterSpec
+import javax.crypto.spec.PSource
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -32,5 +41,27 @@ class V2KeyStoreInstrumentedTest {
         keys.ensureWrapping()
         val message = "android-v2-identity-binding".encodeToByteArray()
         Loomcore.verifyP256Signature(keys.ensureIdentity(), message, keys.sign(message))
+    }
+
+    @Test
+    fun api26To30RsaFallbackUsesExactOaepProfile() {
+        assumeTrue(Build.VERSION.SDK_INT in Build.VERSION_CODES.O until Build.VERSION_CODES.S)
+        val keys = DeviceKeyStore()
+        val wrapping = keys.ensureWrapping()
+        assertTrue(wrapping.profile == "rsa2048-keystore-decrypt-v1")
+        val publicKey = KeyFactory.getInstance("RSA")
+            .generatePublic(X509EncodedKeySpec(wrapping.subjectPublicKeyInfo)) as RSAPublicKey
+        assertTrue(publicKey.modulus.bitLength() == 2048)
+        val plaintext = "android-api26-30-rsa-oaep".encodeToByteArray()
+        val ciphertext = Cipher.getInstance("RSA/ECB/OAEPPadding").run {
+            init(
+                Cipher.ENCRYPT_MODE,
+                publicKey,
+                OAEPParameterSpec("SHA-256", "MGF1", MGF1ParameterSpec.SHA1, PSource.PSpecified.DEFAULT),
+            )
+            doFinal(plaintext)
+        }
+
+        assertArrayEquals(plaintext, keys.decryptWrappingRSAOAEP(ciphertext))
     }
 }
