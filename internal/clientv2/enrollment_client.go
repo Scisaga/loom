@@ -193,6 +193,75 @@ func (client *PrivateEnrollmentClient) SubmitResume(ctx context.Context,
 	return result, nil
 }
 
+// FetchReleasedArtifacts 只在 completed receipt 已返回后，按 result ref 的规范顺序
+// 经同一 capability-limited tunnel 读取 ciphertext-addressed envelope。服务端 release
+// authorization 与客户端 exact ref binding 缺一不可（D124、D130、D131）。
+func (client *PrivateEnrollmentClient) FetchReleasedArtifacts(ctx context.Context,
+	result wire.EnrollmentClaimResultV2) ([]wire.SealedSecretEnvelopeV1, error) {
+	if client == nil || client.client == nil || result.Status != "completed" || result.ResultArtifact == nil {
+		return nil, errors.New("[D124 client] completed result/artifact client 不完整")
+	}
+	if err := wire.ValidateEnrollmentClaimResult(&result); err != nil {
+		return nil, err
+	}
+	refs := result.ResultArtifact.SecretArtifactRefs
+	envelopes := make([]wire.SealedSecretEnvelopeV1, len(refs))
+	for index := range refs {
+		ref := &refs[index]
+		if ref.BackendKind != "sealed_blob" || ref.SealedBlob == nil {
+			return nil, errors.New("[D124 client] Enrollment result 含不可由 Device 拉取的 secret backend")
+		}
+		digest, err := wire.ParseHash(ref.SealedBlob.CiphertextDigest)
+		if err != nil {
+			return nil, err
+		}
+		path := "/v2/enrollment/artifacts/sha256/" + hex.EncodeToString(digest)
+		envelope, err := client.getReleasedArtifact(ctx, path)
+		if err != nil {
+			return nil, fmt.Errorf("[D124 client] sealed artifact[%d] 获取失败: %w", index, err)
+		}
+		if err := wire.VerifySealedSecretBinding(ref, &envelope); err != nil {
+			return nil, err
+		}
+		envelopes[index] = envelope
+	}
+	return envelopes, nil
+}
+
+func (client *PrivateEnrollmentClient) getReleasedArtifact(ctx context.Context,
+	path string) (wire.SealedSecretEnvelopeV1, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+path, nil)
+	if err != nil {
+		return wire.SealedSecretEnvelopeV1{}, err
+	}
+	request.Header.Set("Accept", "application/json")
+	response, err := client.client.Do(request)
+	if err != nil {
+		return wire.SealedSecretEnvelopeV1{}, err
+	}
+	defer response.Body.Close()
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, maximumPrivateEnrollmentResponse+1))
+	if readErr != nil || len(body) == 0 || len(body) > maximumPrivateEnrollmentResponse {
+		return wire.SealedSecretEnvelopeV1{}, errors.New("[D124 client] sealed artifact response 读取失败或过大")
+	}
+	if response.StatusCode != http.StatusOK {
+		return wire.SealedSecretEnvelopeV1{}, fmt.Errorf("[D124 client] sealed artifact 返回 HTTP %d", response.StatusCode)
+	}
+	if response.Header.Get("Content-Type") != "application/json" || response.Header.Get("Content-Encoding") != "" ||
+		len(response.Cookies()) != 0 || response.Request.URL.String() != client.baseURL+path {
+		return wire.SealedSecretEnvelopeV1{}, errors.New("[D124 client] sealed artifact response metadata 无效")
+	}
+	var envelope wire.SealedSecretEnvelopeV1
+	canonical, err := wire.DecodeStrict(body, maximumPrivateEnrollmentResponse, &envelope)
+	if err != nil || !bytes.Equal(canonical, body) {
+		return wire.SealedSecretEnvelopeV1{}, errors.New("[D124 client] sealed artifact response 不是 exact canonical wire")
+	}
+	if err := wire.ValidateSealedSecretEnvelope(&envelope); err != nil {
+		return wire.SealedSecretEnvelopeV1{}, err
+	}
+	return envelope, nil
+}
+
 func (client *PrivateEnrollmentClient) postCanonical(ctx context.Context, path string, value any,
 	expectedStatus int, target any) error {
 	return client.postCanonicalAnyStatus(ctx, path, value, []int{expectedStatus}, target)

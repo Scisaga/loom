@@ -10,12 +10,16 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"loom/internal/wire"
 )
 
-const maximumPrivateRequestBytes = 4 << 20
+const (
+	maximumPrivateRequestBytes          = 4 << 20
+	PrivateEnrollmentArtifactPathPrefix = "/v2/enrollment/artifacts/sha256/"
+)
 
 // InviteMaterialV2 是 private Enrollment 从本机 certified state 读取的 exact Invite
 // preimage 与包含证明。公网 distribution 不得提供 Opening（D115、D129、D131）。
@@ -123,6 +127,24 @@ type PrivateService struct {
 	replay       *ChallengeReplayStore
 	readInvite   InviteMaterialReader
 	processClaim ClaimProcessor
+	readArtifact ReleasedEnrollmentArtifactReader
+}
+
+// NewPrivateServiceWithReleasedArtifacts 在原 Enrollment API 上增加同一临时
+// tunnel 内的 completion-authorized immutable artifact 读取；它不会新增公网 role（D124、D131）。
+func NewPrivateServiceWithReleasedArtifacts(clusterID, serviceID string, now func() time.Time, random io.Reader,
+	challengeTTL time.Duration, replay *ChallengeReplayStore, readInvite InviteMaterialReader,
+	processClaim ClaimProcessor, readArtifact ReleasedEnrollmentArtifactReader) (*PrivateService, error) {
+	if readArtifact == nil {
+		return nil, errors.New("[D124 Enrollment] released artifact reader 不能为空")
+	}
+	service, err := NewPrivateService(clusterID, serviceID, now, random, challengeTTL,
+		replay, readInvite, processClaim)
+	if err != nil {
+		return nil, err
+	}
+	service.readArtifact = readArtifact
+	return service, nil
 }
 
 func NewPrivateService(clusterID, serviceID string, now func() time.Time, random io.Reader,
@@ -461,10 +483,18 @@ func (service *PrivateService) ServeHTTP(writer http.ResponseWriter, _ *http.Req
 
 func (service *PrivateService) ServeVerifiedHTTP(writer http.ResponseWriter, request *http.Request,
 	capability wire.VerifiedBootstrapCapabilityV1) {
-	if request == nil || request.TLS == nil || !request.TLS.HandshakeComplete || request.TLS.Version < tls.VersionTLS12 ||
-		request.Method != http.MethodPost || request.URL.RawPath != "" || request.URL.RawQuery != "" || request.URL.Fragment != "" ||
-		request.Header.Get("Authorization") != "" || request.Header.Get("Cookie") != "" || request.Header.Get("Referer") != "" ||
-		request.Body == nil || request.Header.Get("Content-Encoding") != "" || request.Header.Get("Content-Type") != "application/json" {
+	if request == nil || request.TLS == nil || !request.TLS.HandshakeComplete || request.TLS.Version != tls.VersionTLS13 ||
+		request.URL.RawPath != "" || request.URL.RawQuery != "" || request.URL.Fragment != "" ||
+		request.Header.Get("Authorization") != "" || request.Header.Get("Cookie") != "" ||
+		request.Header.Get("Referer") != "" || request.Header.Get("Content-Encoding") != "" {
+		writePrivateError(writer, http.StatusForbidden)
+		return
+	}
+	if request.Method == http.MethodGet {
+		service.serveReleasedArtifact(writer, request, capability)
+		return
+	}
+	if request.Method != http.MethodPost || request.Body == nil || request.Header.Get("Content-Type") != "application/json" {
 		writePrivateError(writer, http.StatusForbidden)
 		return
 	}
@@ -525,6 +555,54 @@ func (service *PrivateService) ServeVerifiedHTTP(writer http.ResponseWriter, req
 	writer.Header().Set("Cache-Control", "no-store")
 	writer.Header().Set("X-Content-Type-Options", "nosniff")
 	writer.WriteHeader(status)
+	_, _ = writer.Write(encoded)
+}
+
+func (service *PrivateService) serveReleasedArtifact(writer http.ResponseWriter, request *http.Request,
+	capability wire.VerifiedBootstrapCapabilityV1) {
+	if service.readArtifact == nil || request.ContentLength != 0 || len(request.TransferEncoding) != 0 ||
+		request.Header.Get("Content-Type") != "" ||
+		request.Header.Get("Accept") != "application/json" ||
+		!strings.HasPrefix(request.URL.Path, PrivateEnrollmentArtifactPathPrefix) {
+		writePrivateError(writer, http.StatusNotFound)
+		return
+	}
+	hexDigest := strings.TrimPrefix(request.URL.Path, PrivateEnrollmentArtifactPathPrefix)
+	digest := "sha256:" + hexDigest
+	if len(hexDigest) != 64 {
+		writePrivateError(writer, http.StatusNotFound)
+		return
+	}
+	if _, err := wire.ParseHash(digest); err != nil {
+		writePrivateError(writer, http.StatusNotFound)
+		return
+	}
+	body := capability.Body()
+	material, err := service.boundMaterial(request.Context(), capability, body.ClusterID, body.InviteID,
+		body.CommittedInviteRecordHash, capability.CapabilityID())
+	if err != nil || material.Status != "completed" {
+		writePrivateError(writer, http.StatusForbidden)
+		return
+	}
+	envelope, err := service.readArtifact(request.Context(), body.ClusterID, body.InviteID, digest)
+	if err != nil {
+		writePrivateError(writer, http.StatusForbidden)
+		return
+	}
+	wantDigest, err := wire.SealedSecretEnvelopeHash(&envelope)
+	if err != nil || wantDigest != digest {
+		writePrivateError(writer, http.StatusInternalServerError)
+		return
+	}
+	encoded, err := wire.MarshalCanonical(envelope)
+	if err != nil || len(encoded) == 0 || len(encoded) > maximumSealedArtifactBytes {
+		writePrivateError(writer, http.StatusInternalServerError)
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json")
+	writer.Header().Set("Cache-Control", "no-store")
+	writer.Header().Set("X-Content-Type-Options", "nosniff")
+	writer.WriteHeader(http.StatusOK)
 	_, _ = writer.Write(encoded)
 }
 

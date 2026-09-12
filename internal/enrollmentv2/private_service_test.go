@@ -194,6 +194,63 @@ func TestPrivateEnrollmentHTTPRequiresVerifiedOuterContextAndInnerTLS(t *testing
 	}
 }
 
+func TestPrivateEnrollmentArtifactReleaseRequiresCompletedCapabilityContext(t *testing.T) {
+	fixture := newPrivateServiceFixture(t)
+	attempt := verifiedPrivateAttempt(t, fixture)
+	ref, envelope := sealedArtifactForAttempt(t, attempt)
+	material := cloneInviteMaterial(fixture.material)
+	material.Status = "completed"
+	replay, err := OpenChallengeReplayStore(filepath.Join(t.TempDir(), "artifact-challenges.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	service, err := NewPrivateServiceWithReleasedArtifacts("cluster", "enrollment-service",
+		func() time.Time { return fixture.now }, bytes.NewReader(bytes.Repeat([]byte{0x65}, 128)),
+		time.Minute, replay,
+		func(context.Context, string, string) (InviteMaterialV2, error) { return material, nil },
+		func(context.Context, VerifiedClaimAttemptV2) (wire.EnrollmentClaimResultV2, error) {
+			return wire.EnrollmentClaimResultV2{}, context.Canceled
+		},
+		func(_ context.Context, clusterID, inviteID, digest string) (wire.SealedSecretEnvelopeV1, error) {
+			reads++
+			if clusterID != "cluster" || inviteID != "invite" || digest != ref.SealedBlob.CiphertextDigest {
+				return wire.SealedSecretEnvelopeV1{}, context.Canceled
+			}
+			return envelope, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, _ := wire.ParseHash(ref.SealedBlob.CiphertextDigest)
+	path := PrivateEnrollmentArtifactPathPrefix + hex.EncodeToString(digest)
+	request := httptest.NewRequest(http.MethodGet, "https://10.30.0.1"+path, nil)
+	request.Header.Set("Accept", "application/json")
+	request.TLS = &tls.ConnectionState{HandshakeComplete: true, Version: tls.VersionTLS13}
+	response := httptest.NewRecorder()
+	service.ServeVerifiedHTTP(response, request, fixture.capability)
+	if response.Code != http.StatusOK || reads != 1 || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("completed artifact release status=%d reads=%d body=%s", response.Code, reads, response.Body.String())
+	}
+	var got wire.SealedSecretEnvelopeV1
+	canonical, err := wire.DecodeStrict(response.Body.Bytes(), maximumSealedArtifactBytes, &got)
+	if err != nil || !bytes.Equal(canonical, response.Body.Bytes()) || !wire.EqualCanonical(got, envelope) {
+		t.Fatalf("artifact response 不是 exact envelope: value=%#v err=%v", got, err)
+	}
+
+	material.Status = "issued_provisional"
+	denied := httptest.NewRecorder()
+	service.ServeVerifiedHTTP(denied, request.Clone(request.Context()), fixture.capability)
+	if denied.Code != http.StatusForbidden || reads != 1 {
+		t.Fatalf("completion 前读取未被拒绝: status=%d reads=%d", denied.Code, reads)
+	}
+	direct := httptest.NewRecorder()
+	service.ServeHTTP(direct, request.Clone(request.Context()))
+	if direct.Code != http.StatusForbidden {
+		t.Fatalf("未经过 outer verifier 的 artifact 返回 %d", direct.Code)
+	}
+}
+
 func TestAdmissionVoterIndependentlyVerifiesPrivateSubmission(t *testing.T) {
 	fixture := newPrivateServiceFixture(t)
 	attempt := verifiedPrivateAttempt(t, fixture)

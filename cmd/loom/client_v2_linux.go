@@ -116,7 +116,7 @@ func cmdClientEnrollV2(args []string) error {
 	if err != nil {
 		return err
 	}
-	return finishLinuxClientV2Enrollment(common, result, verifiedProof, tunnel)
+	return finishLinuxClientV2Enrollment(ctx, common, result, verifiedProof, tunnel, api)
 }
 
 func cmdClientResumeV2(args []string) error {
@@ -178,7 +178,7 @@ func cmdClientResumeV2(args []string) error {
 	if err != nil {
 		return err
 	}
-	return finishLinuxClientV2Enrollment(common, result, verifiedProof, tunnel)
+	return finishLinuxClientV2Enrollment(ctx, common, result, verifiedProof, tunnel, api)
 }
 
 func addLinuxClientV2Flags(fs *flag.FlagSet, common *linuxClientV2CommonFlags) {
@@ -278,9 +278,9 @@ func linuxClientV2Installed(paths linuxClientV2Paths, clusterID, inviteID string
 	return true, nil
 }
 
-func finishLinuxClientV2Enrollment(common linuxClientV2CommonFlags,
+func finishLinuxClientV2Enrollment(ctx context.Context, common linuxClientV2CommonFlags,
 	result clientv2.LinuxEnrollmentAttemptResultV2, proof wire.VerifiedInviteProofV2,
-	tunnel *clientv2.LinuxBootstrapTunnelDialer) error {
+	tunnel *clientv2.LinuxBootstrapTunnelDialer, api *clientv2.PrivateEnrollmentClient) error {
 	selection, ok := tunnel.Selection()
 	if !ok {
 		return errors.New("[D131 Linux bootstrap] Enrollment 未产生真实 ingress 选择")
@@ -293,8 +293,14 @@ func finishLinuxClientV2Enrollment(common linuxClientV2CommonFlags,
 		fmt.Printf("  resume state %s\n", common.paths.pending)
 		return nil
 	}
-	envelopes, err := readLinuxClientV2Envelopes(common.secretEnvelopes,
-		common.secretEnvelopeDirectory, result.Result.ResultArtifact.SecretArtifactRefs)
+	var envelopes []wire.SealedSecretEnvelopeV1
+	var err error
+	if len(common.secretEnvelopes) == 0 && common.secretEnvelopeDirectory == "" {
+		envelopes, err = api.FetchReleasedArtifacts(ctx, result.Result)
+	} else {
+		envelopes, err = readLinuxClientV2Envelopes(common.secretEnvelopes,
+			common.secretEnvelopeDirectory, result.Result.ResultArtifact.SecretArtifactRefs)
+	}
 	if err != nil {
 		return err
 	}

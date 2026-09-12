@@ -111,9 +111,14 @@ sudo loom client resume-v2 \
   -v1-migration-anchor 'sha256:<digest>'
 ```
 
-若完成态引用 sealed secret artifact，调用方可把私有 artifact store 取得的 exact canonical
-envelope 放入 root-only 目录；文件名为 ref 中 ciphertext SHA-256 的 64 位小写十六进制加
-`.json`，命令按 result ref 自动取用，不扫描其他文件：
+若完成态引用 sealed secret artifact，默认命令会在清理临时 capability/tunnel 之前，从同一个
+private Enrollment 服务按 ciphertext SHA-256 自动取得 completion 已授权的 exact canonical
+envelope；服务端同时核对 cluster、Invite、completed transaction 与 result ref，客户端再逐项
+核对 digest、owner、recipient key 与 result refs。该读取不会经过公网 distribution，也不需要
+额外 bearer。
+
+受控离线恢复时，也可把 private artifact store 导出的 envelope 放入 root-only 目录；文件名为
+ref 中 ciphertext SHA-256 的 64 位小写十六进制加 `.json`，命令按 result ref 取用，不扫描其他文件：
 
 ```bash
 sudo loom client resume-v2 \
@@ -124,7 +129,8 @@ sudo loom client resume-v2 \
   -secret-envelope-dir /run/loom-enrollment-artifacts
 ```
 
-也可按 result ref 的规范顺序重复使用 `-secret-envelope <file>`；两种输入不能混用。
+也可按 result ref 的规范顺序重复使用 `-secret-envelope <file>`；两种离线输入不能混用，提供任一
+离线输入时不会同时联网拉取 artifact。
 
 客户端会逐项核对 envelope digest、owner、recipient key 与 result refs，解封后把 certificate、
 Device view、floors、stable claim 摘要和 credentials 一次提交到 root-only `state.json`，成功后
