@@ -108,6 +108,7 @@ func TestPrepareAndroidV2PrivateControlPlanBindsSealedDirectoryAndKeystoreIdenti
 	if !wire.EqualCanonical(set, inputs.set) {
 		t.Fatal("private-control fixture ControlSet 不一致")
 	}
+	currentEnvelope = rechainAndroidPrivateArtifactEnvelope(t, currentEnvelope, baseEnvelope, set)
 	artifact := wire.EnrollmentResultArtifactV1{
 		Schema: 1, ClusterID: inputs.set.ClusterID, InviteID: core.InviteID, RequestID: core.RequestID,
 		DeviceCertificateDER: base64.RawURLEncoding.EncodeToString(certificateDER),
@@ -223,9 +224,28 @@ func TestPrepareAndroidV2PrivateControlPlanBindsSealedDirectoryAndKeystoreIdenti
 		nextState.Floors.DeviceGeneration != 2 || nextState.Enrollment.Configs[0].Generation != 2 {
 		t.Fatalf("新 config/view/floors 未原子提交: state=%#v err=%v", nextState, err)
 	}
+	rotatedDirectory := credential.ControlServiceDirectory
+	rotatedDirectory.Generation = 2
+	rotatedDirectory.ParentHeadHash = nextEnvelope.SignedCurrent.Head.HeadHash
+	rotatedDirectory.ConfigQC = append(json.RawMessage(nil), nextEnvelope.SignedCurrent.QuorumCertificate...)
+	rotatedDirectory.Services = append([]wire.PrivateControlServiceV1(nil), rotatedDirectory.Services...)
+	rotatedDirectory.Services[0].ServiceID = "device-config-2"
+	rotatedDirectory.Services[0].OverlayIP = "10.31.0.9"
+	rotatedDirectoryHash, err := wire.ControlServiceDirectoryHash(&rotatedDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotatedCredential := credential
+	rotatedCredential.ParentHead = nextEnvelope.SignedCurrent.Head
+	rotatedCredential.ControlServiceDirectory = rotatedDirectory
+	rotatedCredential.ControlServiceDirectoryHash = rotatedDirectoryHash
+	rotatedCredentialJSON, err := wire.MarshalCanonical(rotatedCredential)
+	if err != nil {
+		t.Fatal(err)
+	}
 	rotatedRef, rotatedEnvelope, _ := androidSealedSecretFixtureForGeneration(t,
 		credential.DeviceID, wire.DevicePrivateControlCredentialSecretIDV1,
-		"device_credential", 2, credentialJSON)
+		"device_credential", 2, rotatedCredentialJSON)
 	secretNextEnvelope := advanceAndroidPrivateArtifactEnvelope(t, nextEnvelope, set,
 		[]wire.DeviceConfigArtifactRefV1{nextConfigRef}, []wire.SecretArtifactRefV2{rotatedRef})
 	secretDelivery := wire.DeviceConfigDeliveryV1{
@@ -249,7 +269,7 @@ func TestPrepareAndroidV2PrivateControlPlanBindsSealedDirectoryAndKeystoreIdenti
 	rotatedRefJSON, _ := wire.MarshalCanonical(rotatedRef)
 	rotatedEnvelopeJSON, _ := wire.MarshalCanonical(rotatedEnvelope)
 	rotatedInstalledJSON, err := PrepareAndroidInstalledSecretV2(
-		rotatedRefJSON, rotatedEnvelopeJSON, credentialJSON)
+		rotatedRefJSON, rotatedEnvelopeJSON, rotatedCredentialJSON)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,6 +287,17 @@ func TestPrepareAndroidV2PrivateControlPlanBindsSealedDirectoryAndKeystoreIdenti
 		secretState.Enrollment.Credentials[0].Generation != 2 ||
 		secretState.Enrollment.Configs[0].Generation != 2 {
 		t.Fatalf("新 secret/view/floors 未原子提交: state=%#v err=%v", secretState, err)
+	}
+	rotatedPlanJSON, err := PrepareAndroidV2PrivateControlPlan(secretStateJSON, identitySPKI,
+		"device_config", "device-config-2", now.Add(3*time.Minute).Format(time.RFC3339))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rotatedPlan androidPrivateControlPlanV1
+	if err := decodeExactAndroidV2(rotatedPlanJSON, 1<<20, &rotatedPlan,
+		"rotated private control plan"); err != nil || rotatedPlan.DirectoryGeneration != 2 ||
+		rotatedPlan.DirectoryHash != rotatedDirectoryHash || rotatedPlan.OverlayIP != "10.31.0.9" {
+		t.Fatalf("轮换后的 private directory 未生效: plan=%#v err=%v", rotatedPlan, err)
 	}
 	missingEnvelope := secretDelivery
 	missingEnvelope.SecretEnvelopes = nil
@@ -401,6 +432,39 @@ func advanceAndroidPrivateArtifactEnvelope(t *testing.T, previous wire.DeviceVie
 	)
 	next.SignedCurrent.PublishedAt = "2026-09-11T12:01:01Z"
 	return next
+}
+
+func rechainAndroidPrivateArtifactEnvelope(t *testing.T, candidate, parent wire.DeviceViewEnvelopeV2,
+	set wire.ControlSetV1,
+) wire.DeviceViewEnvelopeV2 {
+	t.Helper()
+	headBody := parent.SignedCurrent.Head.Body
+	headBody.Payload.HeadKind = "ordinary"
+	headBody.Payload.RaftIndex++
+	headBody.Payload.ControlRevision++
+	headBody.Payload.PreviousLogEntryHash = parent.SignedCurrent.Head.EntryHash
+	headBody.Payload.ParentHeadHash = parent.SignedCurrent.Head.HeadHash
+	headBody.Payload.DeviceViewsRoot = candidate.SignedCurrent.Head.Body.Payload.DeviceViewsRoot
+	headBody.Payload.OperationRoot = wire.HashRaw("android-private-control-test", []byte("completion"))
+	headBody.Payload.CommittedLogicalTime = "2026-09-11T12:00:00Z"
+	headBody.Payload.TransitionContext, _ = json.Marshal(wire.OrdinaryHeadContextV1{Schema: 1, Kind: "ordinary"})
+	head, err := wire.NewHeadEntry(headBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := make([]byte, ed25519.SeedSize)
+	seed[len(seed)-1] = 2
+	configKey := ed25519.NewKeyFromSeed(seed)
+	signature, err := wire.SignHeadAttestation(wire.AttestationForHead(&head), set.Members[0], configKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate.SignedCurrent.Head = head
+	candidate.SignedCurrent.QuorumCertificate, _ = wire.MarshalCanonical(
+		wire.StableQC(&head, []wire.ControlConfigSignatureV1{signature}),
+	)
+	candidate.SignedCurrent.PublishedAt = "2026-09-11T12:00:01Z"
+	return candidate
 }
 
 func androidDeviceCertificateProfileFixture(t *testing.T, identity *ecdsa.PrivateKey,

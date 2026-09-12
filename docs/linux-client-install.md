@@ -144,7 +144,9 @@ Loom 不会擅自删除调用者提供的文件。
 Enrollment completion 的 certified Device view 必须承诺并释放
 `secret_id=device-private-control`、`purpose=device_credential` 的 sealed credential；其中把
 `ControlServiceDirectoryV1`、exact ControlSet、directory hash 与 internal CA roots 绑定到
-Enrollment base authority。客户端解封后与正式 certificate/view/floors 一起写入 0600 state，
+一个已认证且不高于 Device view durable floor 的 Head。首次交付通常绑定 Enrollment base
+authority；后续目录/CA 或 ControlSet 轮换由新 Device-owned sealed credential 原子替换，旧
+recovery/control epoch、未来 Head 与同坐标分叉均失败关闭。客户端解封后与正式 certificate/view/floors 一起写入 0600 state，
 稳态命令只从该 durable credential 选 private overlay tuple，不接受公网 `latest` 作为替代。
 
 ```bash

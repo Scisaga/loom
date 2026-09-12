@@ -285,7 +285,7 @@ func TestSyncLinuxDeviceViewRejectsWrongCertifiedSPKIPin(t *testing.T) {
 
 func TestInstalledLinuxPrivateControlCredentialReplacesOperatorNetworkInputs(t *testing.T) {
 	now := time.Date(2026, 9, 12, 10, 30, 0, 0, time.UTC)
-	_, _, set, envelope := installedDeviceConfigState(t, now)
+	_, _, set, envelope, configKey := installedDeviceConfigStateWithKey(t, now)
 	serverCertificate, _, serverPin := privateEnrollmentCertificate(t, now, "10.50.0.8")
 	setHash, _ := wire.ControlSetHash(&set)
 	directory := wire.ControlServiceDirectoryV1{
@@ -319,14 +319,47 @@ func TestInstalledLinuxPrivateControlCredentialReplacesOperatorNetworkInputs(t *
 		}},
 	}
 	context, found, err := installedLinuxPrivateControlContext(installation,
-		envelope.Payload.ClusterID, envelope.Payload.DeviceID)
+		mustDeviceFloors(t, &envelope, &set), envelope.Payload.DeviceID)
 	if err != nil || !found || context.directoryHash != directoryHash ||
 		!wire.EqualCanonical(context.directory, directory) || context.roots == nil {
 		t.Fatalf("installed private context 未恢复: found=%v context=%#v err=%v", found, context, err)
 	}
+	parent := advanceClientEnvelopeWithArtifacts(t, envelope, &set, configKey,
+		envelope.Payload.Active.ConfigArtifactRefs, []wire.SecretArtifactRefV2{})
+	current := advanceClientEnvelopeWithArtifacts(t, parent, &set, configKey,
+		parent.Payload.Active.ConfigArtifactRefs, []wire.SecretArtifactRefV2{})
+	rotatedDirectory := directory
+	rotatedDirectory.Generation = 2
+	rotatedDirectory.ParentHeadHash = parent.SignedCurrent.Head.HeadHash
+	rotatedDirectory.ConfigQC = append(json.RawMessage(nil), parent.SignedCurrent.QuorumCertificate...)
+	rotatedDirectoryHash, err := wire.ControlServiceDirectoryHash(&rotatedDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotatedCredential := credential
+	rotatedCredential.ParentHead = parent.SignedCurrent.Head
+	rotatedCredential.ControlServiceDirectory = rotatedDirectory
+	rotatedCredential.ControlServiceDirectoryHash = rotatedDirectoryHash
+	rotatedBody, err := wire.MarshalCanonical(rotatedCredential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installation.Credentials[0].Generation = 2
+	installation.Credentials[0].SecretBytes = base64.RawURLEncoding.EncodeToString(rotatedBody)
+	installation.Credentials[0].SecretDigest = wire.HashRaw("loom-linux-installed-secret-v1", rotatedBody)
+	context, found, err = installedLinuxPrivateControlContext(installation,
+		mustDeviceFloors(t, &current, &set), envelope.Payload.DeviceID)
+	if err != nil || !found || context.directoryHash != rotatedDirectoryHash ||
+		context.directory.Generation != 2 {
+		t.Fatalf("轮换后的 private context 未绑定新 Head: found=%v context=%#v err=%v", found, context, err)
+	}
+	if _, found, err := installedLinuxPrivateControlContext(installation,
+		mustDeviceFloors(t, &envelope, &set), envelope.Payload.DeviceID); err == nil || !found {
+		t.Fatalf("未来 private credential 未 fail closed: found=%v err=%v", found, err)
+	}
 	installation.Credentials[0].SecretDigest = wire.HashRaw("device-config-test", []byte("tampered"))
 	if _, found, err := installedLinuxPrivateControlContext(installation,
-		envelope.Payload.ClusterID, envelope.Payload.DeviceID); err == nil || !found {
+		mustDeviceFloors(t, &current, &set), envelope.Payload.DeviceID); err == nil || !found {
 		t.Fatalf("损坏 installed credential 未 fail closed: found=%v err=%v", found, err)
 	}
 }

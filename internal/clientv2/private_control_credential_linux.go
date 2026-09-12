@@ -20,7 +20,7 @@ type linuxInstalledPrivateControlContext struct {
 }
 
 func installedLinuxPrivateControlContext(installation *EnrollmentInstallationV1,
-	clusterID, deviceID string,
+	floors wire.ClientFloorsV2, deviceID string,
 ) (linuxInstalledPrivateControlContext, bool, error) {
 	if installation == nil {
 		return linuxInstalledPrivateControlContext{}, false,
@@ -50,17 +50,14 @@ func installedLinuxPrivateControlContext(installation *EnrollmentInstallationV1,
 	defer clear(plaintext)
 	var credential wire.DevicePrivateControlCredentialV1
 	canonical, err := wire.DecodeStrict(plaintext, 1<<20, &credential)
-	if err != nil || !bytes.Equal(canonical, plaintext) ||
-		wire.ValidateDevicePrivateControlCredential(&credential) != nil {
+	if err != nil || !bytes.Equal(canonical, plaintext) {
 		return linuxInstalledPrivateControlContext{}, true,
 			errors.New("[D131 Linux private] installed private-control credential wire 无效")
 	}
-	setHash, _ := wire.ControlSetHash(&credential.ControlSet)
-	if credential.ClusterID != clusterID || credential.DeviceID != deviceID ||
-		credential.ParentHead.HeadHash != installation.ClaimCore.BaseHeadHash ||
-		setHash != installation.ClaimCore.BaseControlSetHash {
+	if credential.DeviceID != deviceID ||
+		wire.ValidateDevicePrivateControlCredentialAtFloor(&credential, floors) != nil {
 		return linuxInstalledPrivateControlContext{}, true,
-			errors.New("[D131 Linux private] installed private-control credential 未延续 Enrollment base authority")
+			errors.New("[D131 Linux private] installed private-control credential 未绑定 durable authority")
 	}
 	roots := x509.NewCertPool()
 	for _, encoded := range credential.InternalCARootsDER {

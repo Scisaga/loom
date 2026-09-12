@@ -73,3 +73,36 @@ func ValidateDevicePrivateControlCredential(credential *DevicePrivateControlCred
 	}
 	return nil
 }
+
+// ValidateDevicePrivateControlCredentialAtFloor 把已解封的 private-control
+// credential 约束在客户端已经持久化的 authority floor 内。credential 的 parent
+// 可以是同一 recovery/control epoch 中较早的 ordinary Head（否则目录更新会与引用
+// 它的 Device view 形成内容哈希环），但不能跨 recovery/ControlSet 继续使用，也不能
+// 指向客户端尚未接受的未来 Head 或同 revision 分叉。
+func ValidateDevicePrivateControlCredentialAtFloor(credential *DevicePrivateControlCredentialV1,
+	floor ClientFloorsV2,
+) error {
+	if err := ValidateDevicePrivateControlCredential(credential); err != nil {
+		return err
+	}
+	if err := validateClientFloors(floor); err != nil {
+		return errors.New("[D131 Device control] durable authority floor 无效")
+	}
+	payload := credential.ParentHead.Body.Payload
+	if credential.ClusterID != floor.ClusterID ||
+		payload.RecoveryEpoch != floor.AcceptedRecoveryEpoch ||
+		payload.RecoveryStatementHash != floor.RecoveryStatementHash ||
+		payload.RecoveryPolicyHash != floor.RecoveryPolicyHash ||
+		payload.ControlEpoch != floor.AcceptedControlEpoch ||
+		payload.ControlSetHash != floor.ControlSetHash {
+		return errors.New("[D131 Device control] private credential 未绑定 durable recovery/ControlSet authority")
+	}
+	if payload.ControlRevision > floor.AcceptedControlRevision {
+		return errors.New("[D131 Device control] private credential 指向尚未接受的未来 Head")
+	}
+	if payload.ControlRevision == floor.AcceptedControlRevision &&
+		credential.ParentHead.HeadHash != floor.HeadHash {
+		return errors.New("[D131 Device control] private credential 与 durable Head 同坐标分叉")
+	}
+	return nil
+}

@@ -99,10 +99,8 @@ func prepareAndroidV2PrivateControlPlans(stateJSON, identitySPKIDER []byte,
 	if err != nil {
 		return nil, err
 	}
-	setHash, _ := wire.ControlSetHash(&credential.ControlSet)
-	if credential.ParentHead.HeadHash != state.Enrollment.ClaimCore.BaseHeadHash ||
-		setHash != state.Enrollment.ClaimCore.BaseControlSetHash {
-		return nil, errors.New("[D131 Android control] private credential 未延续 Enrollment base authority")
+	if err := wire.ValidateDevicePrivateControlCredentialAtFloor(&credential, state.Floors); err != nil {
+		return nil, errors.New("[D131 Android control] private credential 未绑定 durable authority")
 	}
 	services, err := selectAndroidPrivateControlServices(&credential.ControlServiceDirectory, role, serviceID)
 	if err != nil {

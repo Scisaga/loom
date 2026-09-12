@@ -110,7 +110,7 @@ func SubmitLinuxDeviceReport(ctx context.Context, options LinuxDeviceReportOptio
 	}
 	directory, directoryHash, roots := options.Directory, options.PinnedDirectoryHash, options.Roots
 	installedContext, foundInstalledContext, err := installedLinuxPrivateControlContext(
-		installation, current.Payload.ClusterID, current.Payload.DeviceID)
+		installation, store.Floors(), current.Payload.DeviceID)
 	if err != nil {
 		return err
 	}
