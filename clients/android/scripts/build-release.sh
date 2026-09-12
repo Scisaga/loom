@@ -40,6 +40,13 @@ if [[ ! -x "$apksigner" ]]; then
     echo "pinned apksigner is unavailable: $apksigner" >&2
     exit 1
 fi
+apkanalyzer="$android_sdk/cmdline-tools/latest/bin/apkanalyzer"
+if [[ ! -x "$apkanalyzer" ]]; then
+    echo "Android release verification requires apkanalyzer: $apkanalyzer" >&2
+    exit 1
+fi
+command -v unzip >/dev/null || { echo "Android release verification requires unzip" >&2; exit 1; }
+command -v cmp >/dev/null || { echo "Android release verification requires cmp" >&2; exit 1; }
 
 workers=${LOOM_ANDROID_GRADLE_WORKERS:-4}
 if [[ ! "$workers" =~ ^[1-4]$ ]]; then
@@ -59,6 +66,14 @@ sbom="$android_root/app/build/reports/sbom/loom-android-release.spdx.json"
 [[ -f "$apk" ]] || { echo "signed release APK was not produced" >&2; exit 1; }
 [[ -f "$sbom" ]] || { echo "Android release SBOM was not produced" >&2; exit 1; }
 "$apksigner" verify --verbose --print-certs "$apk"
+if "$apkanalyzer" manifest print "$apk" | grep -F 'io.github.scisaga.loom.debug.' >/dev/null; then
+    echo "release manifest contains the debug-only control surface" >&2
+    exit 1
+fi
+if "$apkanalyzer" dex packages "$apk" | grep -F 'io.github.scisaga.loom.debug.' >/dev/null; then
+    echo "release DEX contains the debug-only control package" >&2
+    exit 1
+fi
 unzip -p "$apk" assets/NOTICE.md | cmp - "$android_root/third_party/NOTICE.md"
 unzip -p "$apk" assets/sing-box/LICENSE | cmp - "$android_root/third_party/sing-box/LICENSE"
 sha256sum "$apk" "$sbom"
