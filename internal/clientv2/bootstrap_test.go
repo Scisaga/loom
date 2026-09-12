@@ -27,10 +27,10 @@ func mirrorTLSTestFixture(t *testing.T, handler http.Handler) (*httptest.Server,
 	if err != nil {
 		t.Fatal(err)
 	}
-	now := time.Date(2026, 9, 11, 0, 0, 0, 0, time.UTC)
 	caTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "mirror test CA"},
-		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour), IsCA: true,
+		NotBefore: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
+		NotAfter:  time.Date(2035, 1, 1, 0, 0, 0, 0, time.UTC), IsCA: true,
 		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
 	}
 	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, caPublic, caPrivate)
@@ -41,8 +41,9 @@ func mirrorTLSTestFixture(t *testing.T, handler http.Handler) (*httptest.Server,
 	leafPublic, leafPrivate, _ := ed25519.GenerateKey(rand.Reader)
 	leafTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "a.example.test"}, DNSNames: []string{"a.example.test", "b.example.test"},
-		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
-		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		NotBefore: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
+		NotAfter:  time.Date(2035, 1, 1, 0, 0, 0, 0, time.UTC),
+		KeyUsage:  x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, ca, leafPublic, caPrivate)
 	if err != nil {
