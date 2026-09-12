@@ -738,6 +738,42 @@ func TestPendingCommittedTransactionIsCleanedWithoutRollback(t *testing.T) {
 	}
 }
 
+func TestPendingRollbackAcceptsNotFoundInactiveAfterStopError(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "new.conf")
+	unit := "new.service"
+	r := executeScript(t, &Plan{
+		Node: "n1", Files: map[string]string{target: "next\n"}, PreCheck: []string{"false"},
+	}, scriptRunOptions{
+		allowedTargetRoot: dir,
+		failOperation:     "stop",
+		failUnit:          unit,
+		failOnce:          true,
+		enabledStates:     map[string]string{unit: "not-found"},
+		activeStates:      map[string]string{unit: "inactive"},
+		beforeRun: func(paths scriptPaths) {
+			if err := os.MkdirAll(paths.previousRoot, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for name, body := range map[string]string{
+				".state":    "active\n",
+				".manifest": target + "|NEW\n",
+				".units":    unit + "|not-found|inactive\n",
+			} {
+				if err := os.WriteFile(filepath.Join(paths.previousRoot, name), []byte(body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+		},
+	})
+	if r.err == nil {
+		t.Fatalf("recovery 后的预检应失败:\n%s", r.output)
+	}
+	if !strings.Contains(r.output, "上一份部署已完整恢复") || strings.Contains(r.output, "回滚不完整") {
+		t.Fatalf("not-found/inactive exact 状态被 stop 错误误判:\n%s\nsystemctl:\n%s", r.output, r.log)
+	}
+}
+
 func TestRollbackRestartsEarlierUnitWithRestoredConfig(t *testing.T) {
 	dir := t.TempDir()
 	a := filepath.Join(dir, "a.conf")

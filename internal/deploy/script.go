@@ -309,7 +309,9 @@ func script(p *Plan, runID string, layout scriptPaths) string {
 	// start 一个已经 active 的服务是 no-op；若它刚用新配置 restart 成功、
 	// 随后别的单元失败，回滚文件后必须再次 restart 才真正加载旧配置。
 	w("    active) restart_one \"$unit\" >/dev/null 2>&1 || unit_failed=1 ;;")
-	w("    inactive) systemctl stop \"$unit\" >/dev/null 2>&1 || unit_failed=1 ;;")
+	// stop 对已经 inactive 且 unit 文件已被回滚删除的单元可能返回 not-found。
+	// 最终 exact 状态检查才是权威；若它仍 active，下面仍会把恢复判为失败。
+	w("    inactive) systemctl stop \"$unit\" >/dev/null 2>&1 || : ;;")
 	w("    failed|activating|deactivating|reloading|unknown) : ;;")
 	w("    *) unit_failed=1 ;;")
 	w("  esac")
