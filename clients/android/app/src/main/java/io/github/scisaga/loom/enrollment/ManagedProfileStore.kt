@@ -157,7 +157,57 @@ internal class ManagedProfileStore(private val context: Context) {
     fun pending(): ByteArray? = protected.get(PENDING)
 
     @Synchronized
+    fun putV2Pending(pending: V2PendingEnrollment) {
+        protected.get(PENDING)?.let { previousBytes ->
+            val previousJSON = JSONObject(previousBytes.decodeToString())
+            if (previousJSON.optInt("schema") == 2) {
+                val previous = V2PendingEnrollment.decode(previousBytes)
+                check(
+                    previous.descriptor.contentEquals(pending.descriptor) &&
+                        previous.proofBundle.contentEquals(pending.proofBundle) &&
+                        previous.bootstrapCatalog.contentEquals(pending.bootstrapCatalog),
+                ) { "v2 pending transaction identity 禁止替换" }
+                check(pending.connectionAttempts >= previous.connectionAttempts) {
+                    "v2 bootstrap attempt 计数禁止回退"
+                }
+                check(preservesV2Exact(previous.preflightResponse, pending.preflightResponse) &&
+                    preservesV2Exact(previous.clientNonce, pending.clientNonce) &&
+                    preservesV2Exact(previous.claimCore, pending.claimCore)) {
+                    "v2 pending 已固定阶段禁止回退或替换"
+                }
+                check(previous.requestID == null || previous.requestID == pending.requestID) {
+                    "v2 pending request identity 禁止回退或替换"
+                }
+                check(previous.claimResult == null || pending.claimResult != null) {
+                    "v2 pending claim result 禁止回退"
+                }
+                if (previous.selectedUnderlay == pending.selectedUnderlay) {
+                    check(preservesV2Exact(previous.selectedTransport, pending.selectedTransport)) {
+                        "同一 underlay 的 bootstrap probe plan 禁止替换"
+                    }
+                }
+            }
+        }
+        val body = pending.encode()
+        protected.put(PENDING, body)
+        val replay = checkNotNull(protected.get(PENDING)) { "v2 pending transaction 未能持久保存" }
+        check(replay.contentEquals(body)) { "v2 pending transaction 持久化回读不一致" }
+        V2PendingEnrollment.decode(replay)
+    }
+
+    @Synchronized
+    fun recordV2ConnectionAttempt(capabilityID: String, attempt: Long) {
+        val current = V2PendingEnrollment.decode(
+            checkNotNull(protected.get(PENDING)) { "bootstrap attempt 缺少 pending transaction" },
+        )
+        putV2Pending(current.advanceAttempt(capabilityID, attempt))
+    }
+
+    @Synchronized
     fun clearPending() = protected.remove(PENDING)
+
+    private fun preservesV2Exact(previous: ByteArray?, candidate: ByteArray?): Boolean =
+        previous == null || candidate != null && previous.contentEquals(candidate)
 
     @Synchronized
     fun putReady(body: ByteArray) = protected.put(READY, body)

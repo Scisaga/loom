@@ -7,6 +7,7 @@ repo_dir=$(CDPATH= cd -- "$android_dir/../.." && pwd)
 build_dir="$android_dir/.build"
 source_dir="$build_dir/sing-box"
 shared_dir="$build_dir/loom-shared"
+core_dir="$build_dir/loomcore"
 go_bin="$build_dir/go/bin"
 go_path="$build_dir/go/path"
 go_cache="$build_dir/go/cache"
@@ -56,16 +57,30 @@ git -C "$source_dir" show "$sing_box_commit:go.sum" >"$source_dir/go.sum"
 
 # §14.1：从精确共享信任/选路源码生成依赖收敛视图。若直接替换整个根模块，
 # 无关的新 x/* 版本会经 MVS 覆盖 sing-box 1.11.4 的依赖并破坏钉住的数据面。
-case "$shared_dir" in
-    "$android_dir"/.build/*) ;;
-    *) echo "拒绝清理非 Android 构建目录: $shared_dir" >&2; exit 1 ;;
-esac
-rm -rf -- "$shared_dir"
-mkdir -p "$shared_dir/internal"
+for generated_dir in "$shared_dir" "$core_dir"; do
+    case "$generated_dir" in
+        "$android_dir"/.build/*) ;;
+        *) echo "拒绝清理非 Android 构建目录: $generated_dir" >&2; exit 1 ;;
+    esac
+    rm -rf -- "$generated_dir"
+done
+mkdir -p "$shared_dir/internal" "$core_dir"
 cp -a "$repo_dir/internal/attest" "$repo_dir/internal/clientroute" \
-    "$repo_dir/internal/observation" "$repo_dir/internal/version" \
+    "$repo_dir/internal/enrollmentv2" "$repo_dir/internal/observation" "$repo_dir/internal/version" \
     "$repo_dir/internal/wire" "$shared_dir/internal/"
 printf 'module loom\n\ngo 1.27.0\n' >"$shared_dir/go.mod"
+# gomobile 会对 replacement module 执行自己的 module 加载。使用隔离源码视图
+# 可以防止它反写工作树 go.mod；这里又把 QUIC 与 sing-box 固定到同一版本，
+# 避免根模块较新的 x/net 覆盖 1.11.4 的 linkname ABI（Issue #14）。
+cp -a "$repo_dir/mobile/loomcore/." "$core_dir/"
+rm -f -- "$core_dir/go.mod" "$core_dir/go.sum"
+printf '%s\n' \
+    'module loom/mobile/loomcore' '' \
+    'go 1.27.0' '' \
+    'require (' \
+    '    github.com/sagernet/quic-go v0.49.0-beta.1' \
+    '    loom v0.0.0' \
+    ')' >"$core_dir/go.mod"
 
 env GOTOOLCHAIN="$go_toolchain" GOBIN="$go_bin" GOPATH="$go_path" GOCACHE="$go_cache" \
     go install "github.com/sagernet/gomobile/cmd/gomobile@$gomobile_version"
@@ -82,7 +97,7 @@ GOWORK=off GOTOOLCHAIN="$go_toolchain" go -C "$source_dir" mod tidy
 # 和一个 Go runtime。共享核心复用仓库内 canonical v5 verifier 与客户端
 # 分段选路包，因此两个临时 replace 都必须固定到当前 checkout。
 GOWORK=off GOTOOLCHAIN="$go_toolchain" go -C "$source_dir" mod edit \
-    -replace="loom/mobile/loomcore=$repo_dir/mobile/loomcore" \
+    -replace="loom/mobile/loomcore=$core_dir" \
     -replace="loom=$shared_dir"
 GOWORK=off GOTOOLCHAIN="$go_toolchain" go -C "$source_dir" get loom/mobile/loomcore@v0.0.0
 # 根模块会在首次上游 tidy 后提高已选 x/* 版本；应用两个本地 replace 后刷新摘要。

@@ -7,6 +7,7 @@ import io.github.scisaga.loom.security.DeviceKeyStore
 import io.github.scisaga.loom.security.TrustAnchor
 import io.github.scisaga.loom.route.RouteManager
 import io.github.scisaga.loom.vpn.ConnectionPhase
+import io.github.scisaga.loom.vpn.BootstrapServiceRegistry
 import io.github.scisaga.loom.vpn.LoomVpnService
 import io.github.scisaga.loom.vpn.VpnRuntime
 import io.github.scisaga.loomcore.Loomcore
@@ -23,6 +24,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.EOFException
@@ -70,6 +72,15 @@ class EnrollmentManager private constructor(context: Context) {
         activeJob = scope.launch {
             transaction.withLock {
                 guarded("加入失败") { beginJoin(raw) }
+            }
+        }
+    }
+
+    fun importInviteFile(raw: ByteArray) {
+        activeJob?.cancel()
+        activeJob = scope.launch {
+            transaction.withLock {
+                guarded("加入失败") { beginJoinFile(raw) }
             }
         }
     }
@@ -201,14 +212,35 @@ class EnrollmentManager private constructor(context: Context) {
                 continuePull = ::pullAndActivate,
             )
         ) return
-        store.pending()?.let {
-            claimUntilReady(it)
+        store.pending()?.let { pending ->
+            if (JSONObject(pending.decodeToString()).optInt("schema") == 2) {
+                claimV2UntilResult(V2PendingEnrollment.decode(pending))
+            } else {
+                claimUntilReady(pending)
+            }
             return
         }
         mutableStatus.value = EnrollmentStatus(EnrollmentPhase.NOT_JOINED, "扫描中控二维码或导入加入文件")
     }
 
     private suspend fun beginJoin(raw: String) {
+        if (raw.startsWith(V2_INVITE_URI_PREFIX)) {
+            beginV2Join(Loomcore.decodeAndroidV2InviteURI(raw))
+            return
+        }
+        beginV1Join(raw)
+    }
+
+    private suspend fun beginJoinFile(raw: ByteArray) {
+        val schema = runCatching { JSONObject(raw.decodeToString()).optInt("schema") }.getOrDefault(0)
+        if (schema == 2) {
+            beginV2Join(Loomcore.decodeAndroidV2InviteFile(raw))
+        } else {
+            beginV1Join(raw.decodeToString())
+        }
+    }
+
+    private suspend fun beginV1Join(raw: String) {
         check(store.loadCurrent() == null && store.ready() == null) { "设备已经加入；不会覆盖现有身份" }
         val canonicalInvite = Loomcore.parseEnrollmentInvite(raw)
         TrustAnchor.validateEnrollmentInvite(canonicalInvite)
@@ -234,6 +266,139 @@ class EnrollmentManager private constructor(context: Context) {
             .encodeToByteArray()
         store.putPending(pending)
         claimUntilReady(pending)
+    }
+
+    private suspend fun beginV2Join(canonicalDescriptor: ByteArray) {
+        check(store.loadCurrent() == null && store.ready() == null) { "设备已经加入；不会覆盖现有身份" }
+        store.pending()?.let { existing ->
+            val pending = V2PendingEnrollment.decode(existing)
+            check(pending.descriptor.contentEquals(canonicalDescriptor)) {
+                "已有另一笔未完成 v2 加入；不会覆盖一次性凭据"
+            }
+            claimV2UntilResult(pending)
+            return
+        }
+        val trustedTime = Instant.now().toString()
+        mutableStatus.value = EnrollmentStatus(EnrollmentPhase.CLAIMING, "正在下载并验证公开 bootstrap 证明…")
+        val artifacts = V2MirrorFetcher(appContext).fetch(canonicalDescriptor, trustedTime)
+        val pending = V2PendingEnrollment(
+            descriptor = canonicalDescriptor,
+            proofBundle = artifacts.proofBundle,
+            bootstrapCatalog = artifacts.bootstrapCatalog,
+        )
+        store.putV2Pending(pending)
+        claimV2UntilResult(pending)
+    }
+
+    private suspend fun claimV2UntilResult(initial: V2PendingEnrollment) {
+        var pending = initial
+        ContextCompat.startForegroundService(
+            appContext,
+            Intent(appContext, LoomVpnService::class.java).setAction(LoomVpnService.ACTION_ENROLLMENT_KEEPALIVE),
+        )
+        val service = withTimeout(BOOTSTRAP_SERVICE_TIMEOUT_MS) { BootstrapServiceRegistry.await() }
+        val network = service.prepareBootstrapNetwork(store::recordV2ConnectionAttempt)
+        val trustedTime = Instant.now().toString()
+        val session = try {
+            Loomcore.newAndroidV2BootstrapSession(
+                pending.descriptor,
+                pending.proofBundle,
+                pending.bootstrapCatalog,
+                trustedTime,
+                pending.connectionAttempts,
+                network,
+            )
+        } catch (error: Throwable) {
+            service.finishBootstrapNetwork()
+            throw error
+        }
+        try {
+            val underlayIdentity = network.underlayIdentity()
+            val selection = if (
+                pending.selectedUnderlay == underlayIdentity && pending.selectedTransport != null
+            ) {
+                mutableStatus.value = EnrollmentStatus(EnrollmentPhase.CLAIMING, "正在恢复当前网络已验证的注册入口…")
+                session.restoreProbe(pending.selectedTransport, Instant.now().toString())
+            } else {
+                mutableStatus.value = EnrollmentStatus(EnrollmentPhase.CLAIMING, "正在验证当前网络的 HY2/Trojan 注册入口…")
+                session.probe(Instant.now().toString())
+            }
+            pending = pending.withSelection(underlayIdentity, selection)
+            store.putV2Pending(pending)
+
+            val crypto = V2EnrollmentCrypto(keys)
+            val preflightRequest = crypto.preparePreflight(
+                pending.descriptor,
+                pending.proofBundle,
+                Instant.now().toString(),
+            )
+            mutableStatus.value = EnrollmentStatus(EnrollmentPhase.CLAIMING, "正在私有隧道内核对设备授权…")
+            val preflight = session.preflight(preflightRequest, Instant.now().toString())
+            crypto.verifyPreflightBeforeKeys(
+                pending.descriptor,
+                pending.proofBundle,
+                preflight,
+                Instant.now().toString(),
+            )
+            pending = pending
+                .withConnectionAttempts(session.connectionAttempts())
+                .withPreflight(preflight)
+            store.putV2Pending(pending)
+
+            // request ID/nonce 先于 Keystore/CSR 生成落盘；server 一旦见到 core，
+            // 后续所有重试都复用这里的 exact bytes（D129、D130）。
+            pending = pending.withStableCoordinates()
+            store.putV2Pending(pending)
+            val core = pending.claimCore ?: crypto.prepareStableClaimCore(
+                pending.descriptor,
+                pending.proofBundle,
+                checkNotNull(pending.preflightResponse),
+                checkNotNull(pending.requestID),
+                checkNotNull(pending.clientNonce),
+                Instant.now().toString(),
+            )
+            pending = pending.withClaimCore(core)
+            store.putV2Pending(pending)
+
+            val challenge = session.challenge(core, Instant.now().toString())
+            pending = pending.withConnectionAttempts(session.connectionAttempts())
+            store.putV2Pending(pending)
+            val submission = crypto.assembleClaimSubmission(
+                pending.descriptor,
+                pending.proofBundle,
+                checkNotNull(pending.preflightResponse),
+                core,
+                challenge,
+                Instant.now().toString(),
+            )
+            mutableStatus.value = EnrollmentStatus(EnrollmentPhase.CLAIMING, "正在提交一次性 token 与 Keystore PoP…")
+            val result = session.submitClaim(submission, Instant.now().toString())
+            val verifiedResult = crypto.verifyClaimResult(
+                pending.descriptor,
+                pending.proofBundle,
+                checkNotNull(pending.preflightResponse),
+                core,
+                result,
+                Instant.now().toString(),
+            )
+            pending = pending
+                .withConnectionAttempts(session.connectionAttempts())
+                .withClaimResult(result)
+            store.putV2Pending(pending)
+            val status = JSONObject(verifiedResult.decodeToString()).getString("status")
+            mutableStatus.value = EnrollmentStatus(
+                EnrollmentPhase.WAITING,
+                if (status == "completed") {
+                    "v2 claim 已完成；正在等待原子安装正式 Device view 与密封凭据"
+                } else {
+                    "v2 claim 已耐久预约；等待 quorum 完成，重试将复用同一 stable core"
+                },
+                canAbandonPending = true,
+            )
+        } finally {
+            session.close()
+            service.finishBootstrapNetwork()
+        }
     }
 
     private suspend fun claimUntilReady(pendingBytes: ByteArray) {
@@ -483,6 +648,8 @@ class EnrollmentManager private constructor(context: Context) {
         private const val MANIFEST_LIMIT = 4 * 1024 * 1024
         private const val SIGNATURE_LIMIT = 1024
         private const val BUNDLE_LIMIT = 16 * 1024 * 1024
+        private const val BOOTSTRAP_SERVICE_TIMEOUT_MS = 10_000L
+        private const val V2_INVITE_URI_PREFIX = "loom://enroll/v2#d="
         private const val FIRST_ATTEMPTED_AT = "first_attempted_at"
         private const val CLAIMED_CLIENT_ID = "claimed_client_id"
         private const val CLAIMED_AT = "claimed_at"

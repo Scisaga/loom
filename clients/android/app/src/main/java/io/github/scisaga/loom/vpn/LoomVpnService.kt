@@ -32,6 +32,7 @@ import io.github.scisaga.libbox.WIFIState
 import io.github.scisaga.loom.MainActivity
 import io.github.scisaga.loom.R
 import io.github.scisaga.loom.enrollment.EnrollmentManager
+import io.github.scisaga.loom.enrollment.HttpTransport
 import io.github.scisaga.loom.enrollment.ManagedProfile
 import io.github.scisaga.loom.enrollment.HealthReporter
 import io.github.scisaga.loom.security.DeviceKeyStore
@@ -114,9 +115,11 @@ class LoomVpnService : VpnService(), PlatformInterface {
     @Volatile private var desiredConnected = false
     @Volatile private var selectedUnderlyingNetwork: Network? = null
     @Volatile private var activeManagedProfile: ManagedProfile? = null
+    private var bootstrapSessions = 0
 
     override fun onCreate() {
         super.onCreate()
+        BootstrapServiceRegistry.attach(this)
         createNotificationChannel()
         VpnRuntime.transform { it.copy(alwaysOn = alwaysOnEnabled()) }
     }
@@ -188,6 +191,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
     }
 
     override fun onDestroy() {
+        BootstrapServiceRegistry.detach(this)
         desiredConnected = false
         runBlocking(Dispatchers.IO) { stopTunnel() }
         scope.cancel()
@@ -199,6 +203,41 @@ class LoomVpnService : VpnService(), PlatformInterface {
         if (boxService != null) return@withLock
         lastUseEmulatorProxy = useEmulatorProxy
         startTunnelLocked(useEmulatorProxy, startId)
+    }
+
+    /** #14：注册 transport 与正式 TUN 共用这个 VpnService 的 protect 权限。 */
+    internal suspend fun prepareBootstrapNetwork(
+        recordAttempt: (String, Long) -> Unit,
+    ): AndroidBootstrapNetworkController = lifecycle.withLock {
+        desiredConnected = false
+        VpnConnectionPreference(this).setDesiredConnected(false)
+        if (boxService != null || tunnel != null) closeResources()
+        startForeground(NOTIFICATION_ID, foregroundNotification("正在建立受限注册隧道…"))
+        val network = HttpTransport.underlyingNetworks(this).firstOrNull() ?: run {
+            selectedUnderlyingNetwork = null
+            stopForegroundCompat()
+            stopSelf()
+            error("没有可用于 bootstrap 的已验证底层 Network")
+        }
+        selectedUnderlyingNetwork = network
+        bootstrapSessions++
+        updateNotification("正在验证 HY2/Trojan 注册入口…")
+        AndroidBootstrapNetworkController(this, network, recordAttempt)
+    }
+
+    internal fun finishBootstrapNetwork() {
+        scope.launch {
+            lifecycle.withLock {
+                check(bootstrapSessions > 0) { "bootstrap session 生命周期不平衡" }
+                bootstrapSessions--
+                if (bootstrapSessions != 0 || boxService != null || tunnel != null || desiredConnected) {
+                    return@withLock
+                }
+                selectedUnderlyingNetwork = null
+                stopForegroundCompat()
+                stopSelf()
+            }
+        }
     }
 
     private suspend fun reloadTunnel(candidateID: String, startId: Int) = lifecycle.withLock {
@@ -219,13 +258,12 @@ class LoomVpnService : VpnService(), PlatformInterface {
         // A queued disconnect may have removed foreground state while a newer
         // connect command was waiting for the lifecycle mutex.
         startForeground(NOTIFICATION_ID, foregroundNotification("正在准备…"))
-        VpnRuntime.update(
-            VpnStatus(
-                phase = ConnectionPhase.STARTING,
-                detail = "正在验签并建立 TUN…",
-                alwaysOn = alwaysOnEnabled(),
-            ),
+        val preparingStatus = VpnStatus(
+            phase = ConnectionPhase.STARTING,
+            detail = "正在验签并建立 TUN…",
+            alwaysOn = alwaysOnEnabled(),
         )
+        VpnRuntime.update(preparingStatus)
         updateNotification("正在连接…")
         try {
             val manager = EnrollmentManager.get(this)
@@ -246,13 +284,11 @@ class LoomVpnService : VpnService(), PlatformInterface {
                     closeResources()
                     ensureConnectionWanted()
                     val fallback = manager.candidateRejected(candidate, "本地 TUN/libbox 激活失败")
-                    if (fallback != null) {
-                        val (restored, probe) = activateManagedWithFallback(fallback, manager)
-                        ensureConnectionWanted()
-                        connected(restored, probe, "候选失败，沿用 snapshot ${restored.snapshot}")
-                        return
-                    }
-                    throw candidateError
+                        ?: throw candidateError
+                    val (restored, probe) = activateManagedWithFallback(fallback, manager)
+                    ensureConnectionWanted()
+                    connected(restored, probe, "候选失败，沿用 snapshot ${restored.snapshot}")
+                    return
                 }
             }
 
@@ -628,8 +664,9 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 refreshUnderlyingNetwork(listener, monitor, network = network, capabilities = capabilities)
             }
 
-            override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) =
+            override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
                 refreshUnderlyingNetwork(listener, monitor, network = network, linkProperties = linkProperties)
+            }
 
             override fun onLost(network: Network) {
                 refreshUnderlyingNetwork(listener, monitor, lost = network)

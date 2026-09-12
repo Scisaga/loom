@@ -110,8 +110,8 @@ class MainActivity : ComponentActivity() {
                 val body = contentResolver.openInputStream(uri)?.use { stream ->
                     readBounded(stream, MAX_INVITE_BYTES)
                 } ?: error("无法读取加入文件")
-                require(body.isNotEmpty() && body.size <= MAX_INVITE_BYTES) { "加入文件必须小于 16 KiB" }
-                enrollment.importInvite(body.decodeToString())
+                require(body.isNotEmpty() && body.size <= MAX_INVITE_BYTES) { "加入文件必须不超过 1 MiB" }
+                enrollment.importInviteFile(body)
             }.onFailure(enrollment::reportImportError)
         }
     }
@@ -177,7 +177,7 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
-        private const val MAX_INVITE_BYTES = 16 * 1024
+        private const val MAX_INVITE_BYTES = 1024 * 1024
     }
 }
 
@@ -516,11 +516,11 @@ internal fun readBounded(input: InputStream, maximum: Int): ByteArray {
         if (read == 0) {
             val one = input.read()
             if (one < 0) break
-            require(output.size() < maximum) { "加入文件必须小于 16 KiB" }
+            require(output.size() < maximum) { "读取内容超过允许边界" }
             output.write(one)
             continue
         }
-        require(output.size() + read <= maximum) { "加入文件必须小于 16 KiB" }
+        require(output.size() + read <= maximum) { "读取内容超过允许边界" }
         output.write(buffer, 0, read)
     }
     return output.toByteArray()

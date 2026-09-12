@@ -120,6 +120,22 @@ internal class V2EnrollmentCrypto(
         )
     }
 
+    fun verifyClaimResult(
+        canonicalDescriptor: ByteArray,
+        canonicalProofBundle: ByteArray,
+        canonicalPreflightResponse: ByteArray,
+        canonicalClaimCore: ByteArray,
+        canonicalResult: ByteArray,
+        trustedTime: String,
+    ): ByteArray = Loomcore.verifyAndroidEnrollmentV2ClaimResult(
+        canonicalDescriptor,
+        canonicalProofBundle,
+        canonicalPreflightResponse,
+        canonicalClaimCore,
+        canonicalResult,
+        trustedTime,
+    )
+
     fun signPoP(canonicalPoPBody: ByteArray): String {
         val exactMessage = Loomcore.enrollmentPoPMessageV2(canonicalPoPBody)
         val signature = keys.signCanonicalV2(exactMessage)
