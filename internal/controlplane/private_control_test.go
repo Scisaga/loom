@@ -27,6 +27,10 @@ type privateControlFixture struct {
 	peer          *x509.Certificate
 	committed     *int
 	invalidResult *bool
+	read          ControlAuthorityReader
+	commit        ControlOperationCommitter
+	schemas       wire.OperationSchemaRegistry
+	now           time.Time
 }
 
 func TestPrivateControlServiceReturnsOnlyCertifiedIncludedOperation(t *testing.T) {
@@ -99,9 +103,19 @@ func (address stringAddress) String() string  { return string(address) }
 
 func newPrivateControlFixture(t *testing.T) privateControlFixture {
 	t.Helper()
+	return newPrivateControlFixtureForOperation(t, "create_invite", 2,
+		wire.HashRaw("private-control-test", []byte("invite-payload")),
+		wire.AdminResourceScopeV1{ScopeKind: "cluster", Cluster: &struct{}{}})
+}
+
+func newPrivateControlFixtureForOperation(t *testing.T, kind string, payloadSchema int64,
+	payloadHash string, scope wire.AdminResourceScopeV1) privateControlFixture {
+	t.Helper()
 	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
 	set, configKeys := testControlSet(t, 1)
 	profile, authorization, adminKey, peer := privateAdminFixture(t, now)
+	authorization.AllowedOperationKinds = []string{kind}
+	authorization.Scopes = []wire.AdminResourceScopeV1{scope}
 	profiles := map[string]wire.AdminCertificateProfileV1{profile.ProfileID: profile}
 	authorizations := []wire.AdminAuthorizationV1{authorization}
 	aclRoot, err := wire.AdminACLRoot(authorizations, profiles)
@@ -131,68 +145,69 @@ func newPrivateControlFixture(t *testing.T) privateControlFixture {
 		BaseRecoveryStatementHash: base.Body.Payload.RecoveryStatementHash,
 		BaseRecoveryPolicyHash:    base.Body.Payload.RecoveryPolicyHash, BaseControlEpoch: base.Body.Payload.ControlEpoch,
 		BaseControlSetHash: base.Body.Payload.ControlSetHash, BaseControlRevision: base.Body.Payload.ControlRevision,
-		ParentHeadHash: base.HeadHash, Kind: "create_invite", PayloadSchema: 2,
-		PayloadHash: wire.HashRaw("private-control-test", []byte("invite-payload")), Reason: "create invite",
+		ParentHeadHash: base.HeadHash, Kind: kind, PayloadSchema: payloadSchema,
+		PayloadHash: payloadHash, Reason: "test private control operation",
 	}
-	schemas := wire.OperationSchemaRegistry{"create_invite": 2}
+	schemas := wire.OperationSchemaRegistry{kind: payloadSchema}
 	operation, err := wire.NewControlOperation(operationBody, adminKey, schemas)
 	if err != nil {
 		t.Fatal(err)
 	}
 	committed := 0
 	invalidResult := false
-	service, err := NewPrivateControlService("10.40.0.2", 7444,
-		func(context.Context) (ControlAuthoritySnapshotV1, error) {
-			return ControlAuthoritySnapshotV1{Head: base, ConfigQC: baseQC, ControlSet: set,
-				Authorizations: authorizations, Profiles: profiles}, nil
-		},
+	read := func(context.Context) (ControlAuthoritySnapshotV1, error) {
+		return ControlAuthoritySnapshotV1{Head: base, ConfigQC: baseQC, ControlSet: set,
+			Authorizations: authorizations, Profiles: profiles}, nil
+	}
+	commit := func(_ context.Context, verified wire.VerifiedAdminOperationV1) (CertifiedControlOperationV1, error) {
+		committed++
+		if !wire.EqualCanonical(verified.Operation(), operation) || verified.HeadHash() != base.HeadHash {
+			t.Fatal("committer 未收到 exact opaque verified operation")
+		}
+		if invalidResult {
+			return CertifiedControlOperationV1{Schema: 1, Status: "certified", Head: base}, nil
+		}
+		objectID, objectErr := wire.ControlOperationObjectID(&operation, peer.RawSubjectPublicKeyInfo, now, schemas)
+		if objectErr != nil {
+			t.Fatal(objectErr)
+		}
+		leaf := wire.ControlOperationLeafV1{Schema: 1, OperationID: operation.Body.OperationID, ObjectID: objectID}
+		root, rootErr := wire.ControlOperationRoot([]wire.ControlOperationLeafV1{leaf})
+		if rootErr != nil {
+			t.Fatal(rootErr)
+		}
+		nextBody := base.Body
+		nextBody.Payload.HeadKind = "ordinary"
+		nextBody.Payload.RaftIndex++
+		nextBody.Payload.ControlRevision = nextBody.Payload.RaftIndex
+		nextBody.Payload.PreviousLogEntryHash = base.EntryHash
+		nextBody.Payload.ParentHeadHash = base.HeadHash
+		nextBody.Payload.OperationRoot = root
+		nextBody.Payload.CommittedLogicalTime = "2026-09-11T12:00:01Z"
+		nextBody.Payload.TransitionContext = json.RawMessage(`{"schema":1,"kind":"ordinary"}`)
+		nextHead, nextErr := wire.NewHeadEntry(nextBody)
+		if nextErr != nil {
+			t.Fatal(nextErr)
+		}
+		signature, signErr := wire.SignHeadAttestation(wire.AttestationForHead(&nextHead), member, configKeys[member.MemberID])
+		if signErr != nil {
+			t.Fatal(signErr)
+		}
+		qc, marshalErr := wire.MarshalCanonical(wire.StableQC(&nextHead, []wire.ControlConfigSignatureV1{signature}))
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		return CertifiedControlOperationV1{Schema: 1, Status: "certified", Head: nextHead, ConfigQC: qc,
+			OperationLeaf: leaf, OperationLeafIndex: 0, OperationTreeSize: 1, OperationAuditPath: []string{}}, nil
+	}
+	service, err := NewPrivateControlService("10.40.0.2", 7444, read,
 		func(_ context.Context, submitted wire.ControlOperationV1) (wire.AdminResourceScopeV1, error) {
 			if !wire.EqualCanonical(submitted, operation) {
 				return wire.AdminResourceScopeV1{}, context.Canceled
 			}
-			return authorization.Scopes[0], nil
+			return scope, nil
 		},
-		func(_ context.Context, verified wire.VerifiedAdminOperationV1) (CertifiedControlOperationV1, error) {
-			committed++
-			if !wire.EqualCanonical(verified.Operation(), operation) || verified.HeadHash() != base.HeadHash {
-				t.Fatal("committer 未收到 exact opaque verified operation")
-			}
-			if invalidResult {
-				return CertifiedControlOperationV1{Schema: 1, Status: "certified", Head: base}, nil
-			}
-			objectID, objectErr := wire.ControlOperationObjectID(&operation, peer.RawSubjectPublicKeyInfo, now, schemas)
-			if objectErr != nil {
-				t.Fatal(objectErr)
-			}
-			leaf := wire.ControlOperationLeafV1{Schema: 1, OperationID: operation.Body.OperationID, ObjectID: objectID}
-			root, rootErr := wire.ControlOperationRoot([]wire.ControlOperationLeafV1{leaf})
-			if rootErr != nil {
-				t.Fatal(rootErr)
-			}
-			nextBody := base.Body
-			nextBody.Payload.HeadKind = "ordinary"
-			nextBody.Payload.RaftIndex++
-			nextBody.Payload.ControlRevision = nextBody.Payload.RaftIndex
-			nextBody.Payload.PreviousLogEntryHash = base.EntryHash
-			nextBody.Payload.ParentHeadHash = base.HeadHash
-			nextBody.Payload.OperationRoot = root
-			nextBody.Payload.CommittedLogicalTime = "2026-09-11T12:00:01Z"
-			nextBody.Payload.TransitionContext = json.RawMessage(`{"schema":1,"kind":"ordinary"}`)
-			nextHead, nextErr := wire.NewHeadEntry(nextBody)
-			if nextErr != nil {
-				t.Fatal(nextErr)
-			}
-			signature, signErr := wire.SignHeadAttestation(wire.AttestationForHead(&nextHead), member, configKeys[member.MemberID])
-			if signErr != nil {
-				t.Fatal(signErr)
-			}
-			qc, marshalErr := wire.MarshalCanonical(wire.StableQC(&nextHead, []wire.ControlConfigSignatureV1{signature}))
-			if marshalErr != nil {
-				t.Fatal(marshalErr)
-			}
-			return CertifiedControlOperationV1{Schema: 1, Status: "certified", Head: nextHead, ConfigQC: qc,
-				OperationLeaf: leaf, OperationLeafIndex: 0, OperationTreeSize: 1, OperationAuditPath: []string{}}, nil
-		}, schemas, func() time.Time { return now })
+		commit, schemas, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,6 +216,7 @@ func newPrivateControlFixture(t *testing.T) privateControlFixture {
 		request: privateControlOperationRequestV1{Schema: 1, ExpectedHeadHash: base.HeadHash,
 			RequestID: operation.Body.OperationID, Operation: operation},
 		peer: peer, committed: &committed, invalidResult: &invalidResult,
+		read: read, commit: commit, schemas: schemas, now: now,
 	}
 }
 

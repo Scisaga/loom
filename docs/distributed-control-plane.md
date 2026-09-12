@@ -2589,6 +2589,10 @@ capability、issuer authorization、policy、catalog、service ref 和 transacti
 public key、descriptor hash 与完整 descriptor 原子写入 control-private 存储后再响应；同一 operation_id
 的进程内重试和崩溃恢复只能逐字节返回第一次结果，request、transaction state 或签名 body 有任何变化
 都必须失败关闭，且不得重新读取后用较新的 transaction/catalog 拼装第二份结果。
+该私有入口固定为 `POST /private/v2/control/enrollment/resume`；请求中的
+`issue_enrollment_resume` schema-1 operation 必须承诺 exact authorization payload hash，并按其中
+`device_id` 走 device scope ACL。响应同时携带 operation 的 Head/QC/inclusion proof 与一次性 descriptor，
+且必须使用 `Cache-Control: no-store`。
 
 各公网 ingress 对次数/流量的记账可以是保守的本地或最终一致状态，因此它不是全局一次性安全
 边界。真正的一次性授权由 private Enrollment 对 token 做 Raft CAS。入口发现异常重放时可提前

@@ -26,6 +26,7 @@ type ResumeIssueRequestV1 struct {
 	ClusterID                    string `json:"cluster_id"`
 	InviteID                     string `json:"invite_id"`
 	RequestID                    string `json:"request_id"`
+	DeviceID                     string `json:"device_id"`
 	ExpectedTransactionStateHash string `json:"expected_transaction_state_hash"`
 	IssuedAt                     string `json:"issued_at"`
 	ExpiresAt                    string `json:"expires_at"`
@@ -134,8 +135,12 @@ func (issuer *DurableResumeIssuer) Issue(ctx context.Context,
 	if err != nil {
 		return wire.EnrollmentResumeDescriptorV1{}, errors.New("[D130 resume] transaction material 不可用")
 	}
-	now := issuer.now().UTC().Truncate(time.Second)
-	publicKey, body, err := validateResumeIssuanceMaterial(&request, &material, now)
+	trustedTime := issuer.now().UTC().Truncate(time.Second)
+	issuedAt, _ := wire.ParseTimeZ(request.IssuedAt)
+	if issuedAt.After(trustedTime) {
+		trustedTime = issuedAt
+	}
+	publicKey, body, err := validateResumeIssuanceMaterial(&request, &material, trustedTime)
 	if err != nil {
 		return wire.EnrollmentResumeDescriptorV1{}, err
 	}
@@ -144,7 +149,7 @@ func (issuer *DurableResumeIssuer) Issue(ctx context.Context,
 		return wire.EnrollmentResumeDescriptorV1{}, err
 	}
 	if !wire.EqualCanonical(capability.Body, body) ||
-		wire.VerifyCapabilityAuthorization(&capability, &material.IssuerAuthorizationProof, &material.Invite.Policy, now) != nil {
+		wire.VerifyCapabilityAuthorization(&capability, &material.IssuerAuthorizationProof, &material.Invite.Policy, trustedTime) != nil {
 		return wire.EnrollmentResumeDescriptorV1{}, errors.New("[D130 resume] signer 返回错误 capability first-result")
 	}
 	descriptor := wire.EnrollmentResumeDescriptorV1{
@@ -199,7 +204,8 @@ func validateResumeIssuanceMaterial(request *ResumeIssueRequestV1,
 		material.Invite.Status != record.State.Status || record.State.ClusterID != request.ClusterID ||
 		record.State.InviteID != request.InviteID || record.State.RequestID != request.RequestID ||
 		record.ClaimOperation.ClusterID != request.ClusterID || record.ClaimOperation.InviteID != request.InviteID ||
-		record.ClaimOperation.RequestID != request.RequestID {
+		record.ClaimOperation.RequestID != request.RequestID ||
+		material.Invite.Opening.DeviceEnrollmentIntent.DeviceID != request.DeviceID {
 		return nil, wire.BootstrapTunnelCapabilityBodyV1{}, errors.New("[D130 resume] transaction identity/status 不允许 resume")
 	}
 	stateHash, err := TransactionHash(record.State)
@@ -295,7 +301,7 @@ func validateResumeIssuanceMaterial(request *ResumeIssueRequestV1,
 	authorizationUntil, _ := wire.ParseTimeZ(proof.Authorization.Active.ValidUntil)
 	maximumTTL := minInt64(proof.Authorization.Active.MaximumCapabilityTTLSeconds,
 		material.Invite.Policy.MaximumResumeCapabilityTTLSeconds)
-	if issuedAt.After(now) || issuedAt.Before(catalogFrom) || issuedAt.Before(authorizationFrom) ||
+	if issuedAt.Before(catalogFrom) || issuedAt.Before(authorizationFrom) ||
 		!now.Before(expiresAt) || int64(expiresAt.Sub(issuedAt)/time.Second) > maximumTTL ||
 		expiresAt.After(retryNotAfter) || expiresAt.After(catalogUntil) || expiresAt.After(authorizationUntil) {
 		return nil, wire.BootstrapTunnelCapabilityBodyV1{}, errors.New("[D130 resume] capability validity 超出 certified deadline")
@@ -341,7 +347,7 @@ func validateResumeIssuanceMaterial(request *ResumeIssueRequestV1,
 
 func resumeIssueRequestHash(request *ResumeIssueRequestV1) (string, error) {
 	if request == nil || request.Schema != 1 || request.OperationID == "" || request.ClusterID == "" ||
-		request.InviteID == "" || request.RequestID == "" {
+		request.InviteID == "" || request.RequestID == "" || request.DeviceID == "" {
 		return "", errors.New("[D130 resume] issue request identity 无效")
 	}
 	if _, err := wire.ParseHash(request.ExpectedTransactionStateHash); err != nil {

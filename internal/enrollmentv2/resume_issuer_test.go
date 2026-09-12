@@ -236,8 +236,9 @@ func resumeIssuerFixture(t *testing.T) (privateServiceFixture, ResumeIssueReques
 	}
 	request := ResumeIssueRequestV1{
 		Schema: 1, OperationID: "issue-resume-operation", ClusterID: state.ClusterID,
-		InviteID: state.InviteID, RequestID: state.RequestID, ExpectedTransactionStateHash: stateHash,
-		IssuedAt: fixture.now.Format(time.RFC3339), ExpiresAt: fixture.now.Add(9 * time.Minute).Format(time.RFC3339),
+		InviteID: state.InviteID, RequestID: state.RequestID, DeviceID: "linux-device",
+		ExpectedTransactionStateHash: stateHash,
+		IssuedAt:                     fixture.now.Format(time.RFC3339), ExpiresAt: fixture.now.Add(9 * time.Minute).Format(time.RFC3339),
 	}
 	return fixture, request, material
 }

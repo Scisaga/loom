@@ -6,7 +6,37 @@ import (
 	"time"
 )
 
-const DomainEnrollmentResumeDescriptor = "loom-enrollment-resume-descriptor-v1"
+const (
+	DomainEnrollmentResumeDescriptor    = "loom-enrollment-resume-descriptor-v1"
+	DomainEnrollmentResumeAuthorization = "loom-enrollment-resume-authorization-v1"
+)
+
+// EnrollmentResumeAuthorizationV1 是管理员 control operation 的 exact payload。
+// operation certification 负责授权，签发器再线性核对 transaction state（D104、D130）。
+type EnrollmentResumeAuthorizationV1 struct {
+	Schema                       int    `json:"schema"`
+	ClusterID                    string `json:"cluster_id"`
+	InviteID                     string `json:"invite_id"`
+	RequestID                    string `json:"request_id"`
+	DeviceID                     string `json:"device_id"`
+	ExpectedTransactionStateHash string `json:"expected_transaction_state_hash"`
+	ExpiresAt                    string `json:"expires_at"`
+}
+
+func EnrollmentResumeAuthorizationHash(value *EnrollmentResumeAuthorizationV1) (string, error) {
+	if value == nil || value.Schema != 1 || !validIdentifier(value.ClusterID, 128) ||
+		!validIdentifier(value.InviteID, 128) || !validIdentifier(value.RequestID, 128) ||
+		!validIdentifier(value.DeviceID, 128) {
+		return "", errors.New("[D130 resume] admin authorization identity 无效")
+	}
+	if _, err := ParseHash(value.ExpectedTransactionStateHash); err != nil {
+		return "", err
+	}
+	if _, err := ParseTimeZ(value.ExpiresAt); err != nil {
+		return "", err
+	}
+	return HashObject(DomainEnrollmentResumeAuthorization, value)
+}
 
 // EnrollmentResumeDescriptorV1 只恢复一个已 certified reservation；它没有 token，
 // 也不能授权另一份 claim core 或另一组本机 key（D129、D130）。
