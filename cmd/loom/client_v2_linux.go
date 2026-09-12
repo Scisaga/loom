@@ -674,7 +674,7 @@ func linuxClientV2RequestID(paths linuxClientV2Paths, clusterID, inviteID string
 		if err != nil {
 			return "", err
 		}
-		pending, err := clientv2.LoadPendingClaimForResume(paths.pending, identity)
+		pending, err := clientv2.LoadPendingClaimForEnrollmentRetry(paths.pending, identity)
 		if err != nil {
 			return "", err
 		}

@@ -87,6 +87,36 @@ func loadPendingClaim(path string, identity *EnrollmentIdentityV1, input ClaimCo
 	return pending, nil
 }
 
+// LoadPendingClaimForEnrollmentRetry reads an existing stable claim so the
+// original Invite can retry after a local crash. Unlike descriptor-based
+// resume, this path may precede the first verified progress receipt: the full
+// Invite proof and preflight opening are rebound before the claim is reused.
+func LoadPendingClaimForEnrollmentRetry(path string, identity *EnrollmentIdentityV1) (*PendingClaimV2, error) {
+	if path == "" || filepath.Clean(path) != path || !filepath.IsAbs(path) || identity == nil {
+		return nil, errors.New("[D129 Linux] pending/identity retry 输入无效")
+	}
+	if err := secureEnrollmentDirectory(filepath.Dir(path)); err != nil {
+		return nil, err
+	}
+	lock, err := openPrivateLock(path + ".lock")
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Close()
+	if err := unix.Flock(int(lock.Fd()), unix.LOCK_SH); err != nil {
+		return nil, err
+	}
+	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+	pending, err := readPendingClaim(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := validatePendingIdentity(pending, identity); err != nil {
+		return nil, err
+	}
+	return pending, nil
+}
+
 // LoadPendingClaimForResume 在共享锁下读取已 committed 的本机 claim。resume 必须
 // 已有经 progress receipt 固化的 binding，不能从只有 core 的未提交状态猜测事务（D130）。
 func LoadPendingClaimForResume(path string, identity *EnrollmentIdentityV1) (*PendingClaimV2, error) {

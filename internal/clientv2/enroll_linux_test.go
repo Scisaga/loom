@@ -105,6 +105,10 @@ func TestLinuxEnrollmentOrdersPreflightBeforeKeysAndReusesStableCore(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	retry, err := LoadPendingClaimForEnrollmentRetry(attempt.PendingPath, identity)
+	if err != nil || retry.ClaimCore.RequestID != attempt.RequestID || retry.Progress != nil {
+		t.Fatalf("首次 progress 前的 Enrollment retry state 不可复用: pending=%#v err=%v", retry, err)
+	}
 	if _, err := LoadPendingClaimForResume(attempt.PendingPath, identity); err == nil {
 		t.Fatal("尚无 verified progress 的 pending claim 被用于 resume")
 	}
