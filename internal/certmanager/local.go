@@ -1,5 +1,5 @@
-// Package certmanager 管理 TLS 终止节点本地的 key/CSR 与 ACME DNS-01 TXT。
-// private key 永不进入 ControlSet、CRDT 或公开 distribution（D103、D122）。
+// Package certmanager 管理 TLS 终止节点本地 key/CSR、可恢复 ACME DNS-01
+// 签发和证书 LKG/overlap。private key 永不进入 ControlSet、CRDT 或公开 distribution（D103、D122）。
 package certmanager
 
 import (
@@ -14,6 +14,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -46,7 +47,7 @@ func EnsureLocalIdentity(privateKeyPath, fqdn string) (LocalIdentity, error) {
 		return LocalIdentity{}, err
 	}
 	csrPath := privateKeyPath + ".csr"
-	csrDER, err := os.ReadFile(csrPath)
+	csrDER, err := readRegularFile(csrPath, 256<<10, false)
 	if errors.Is(err, os.ErrNotExist) {
 		csrDER, err = x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: fqdn}, DNSNames: []string{fqdn}, SignatureAlgorithm: x509.ECDSAWithSHA256}, privateKey)
 		if err == nil {
@@ -67,12 +68,25 @@ func EnsureLocalIdentity(privateKeyPath, fqdn string) (LocalIdentity, error) {
 }
 
 func loadP256(path string) (*ecdsa.PrivateKey, error) {
-	body, err := os.ReadFile(path)
+	before, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
 	}
-	if info, err := os.Stat(path); err != nil || info.Mode().Perm()&0o077 != 0 {
+	if !before.Mode().IsRegular() || before.Mode().Perm()&0o077 != 0 {
 		return nil, errors.New("[D122 TLS] private key 文件权限必须不宽于 0600")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	after, err := file.Stat()
+	if err != nil || !after.Mode().IsRegular() || after.Mode().Perm()&0o077 != 0 || !os.SameFile(before, after) {
+		return nil, errors.New("[D122 TLS] private key 文件在打开期间被替换或不是安全 regular file")
+	}
+	body, err := io.ReadAll(io.LimitReader(file, 64<<10))
+	if err != nil || len(body) == 64<<10 {
+		return nil, errors.New("[D122 TLS] private key 文件读取失败或超过 64KiB")
 	}
 	block, rest := pem.Decode(body)
 	if block == nil || block.Type != "PRIVATE KEY" || len(bytes.TrimSpace(rest)) != 0 {

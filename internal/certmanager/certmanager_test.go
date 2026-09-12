@@ -50,3 +50,10 @@ func TestDNS01OnlyDeletesOwnedValue(t *testing.T) {
 		t.Fatalf("parallel order was removed: %#v err=%v", got, err)
 	}
 }
+
+func TestDNS01CleanupIsIdempotentWhenRecordAlreadyAbsent(t *testing.T) {
+	dns01 := DNS01{Provider: dnsprovider.NewMemory(), Zone: "example.test", TTL: 60}
+	if err := dns01.Cleanup(context.Background(), "edge.example.test", "finished-order"); err != nil {
+		t.Fatalf("crash 恢复重复 cleanup 应视为已收敛: %v", err)
+	}
+}

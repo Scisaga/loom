@@ -3076,6 +3076,19 @@ cert prepare
   → remove old pin/key after floor
 ~~~
 
+节点本地执行器把 `CertificateIdentityProjectionV1` 与 `CertificateIntentV1` 分开：前者绑定
+logical intent、endpoint/DNS names、issuer profile、key owner、key artifact 和 SPKI；后者只增加
+CSR、renew/overlap policy 与 issuance generation。listener 只引用 projection hash，因此同一 key
+的例行续签不会无故制造 EndpointSet identity 变化，换 key 则必须先形成下一 identity generation。
+
+ACME adapter 使用节点本地 P-256 account key，并固定 HTTPS directory origin、禁用环境代理和
+redirect。order 返回后，authorization/finalize URL、已拥有的 DNS-01 TXT value 与本地 key/CSR
+路径会在 DNS 或 finalize 副作用前写入 0600 状态；重启只能续跑同一 pending order。CA 返回的 leaf 必须与
+exact CSR/SPKI 和完整 DNS SAN set 相同、用途仅为 server auth，并通过配置的 WebPKI roots 验链，
+随后才原子写入本地 certificate artifact。签发失败不替换 active LKG。换 key 成功后状态同时保留
+old/new certificate 与严格排序 pin；仅带 certified head、rotation guard 和 reader floor 的退役授权，
+且最短 overlap 已结束时才能收缩旧 pin，旧 key/cert 仍留待 backup retention 回收。
+
 公开 WebPKI 只证明 transport identity，不能替代 catalog/head/QC。若 cert 自动续签但 SPKI 未被
 当前 certified endpoint generation 接受，listener 不得 advertise。紧急证书撤销也必须先发布
 可达替代入口，除非继续运行旧入口的风险高于失联风险。

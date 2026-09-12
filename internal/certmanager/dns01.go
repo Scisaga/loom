@@ -42,6 +42,10 @@ func (d DNS01) Cleanup(ctx context.Context, fqdn, value string) error {
 		return err
 	}
 	readback, err := d.Provider.Read(ctx, d.Zone, name, "TXT")
+	if errors.Is(err, dnsprovider.ErrNotFound) {
+		// crash 恢复时 TXT 可能已经被上次 cleanup 删除；absent 与 desired cleanup 等价（D103）。
+		return nil
+	}
 	if err != nil {
 		return err
 	}
