@@ -143,7 +143,8 @@ func cmdClientEnrollV2(args []string) error {
 	if err != nil {
 		return err
 	}
-	return finishLinuxClientV2Enrollment(ctx, common, result, verifiedProof, tunnel, api)
+	return finishLinuxClientV2Enrollment(ctx, common, result, verifiedProof,
+		descriptor.DistributionMirrors, tunnel, api)
 }
 
 func cmdClientResumeV2(args []string) error {
@@ -205,7 +206,8 @@ func cmdClientResumeV2(args []string) error {
 	if err != nil {
 		return err
 	}
-	return finishLinuxClientV2Enrollment(ctx, common, result, verifiedProof, tunnel, api)
+	return finishLinuxClientV2Enrollment(ctx, common, result, verifiedProof,
+		descriptor.DistributionMirrors, tunnel, api)
 }
 
 func cmdClientSyncV2(args []string) error {
@@ -295,8 +297,8 @@ func cmdClientAcceptV2Runtime(args []string) error {
 	controlSetPath := fs.String("control-set", "", "current exact ControlSetV1")
 	previousControlSetPath := fs.String("previous-control-set", "", "joint Head 所需 previous exact ControlSetV1")
 	peerDirectoryPath := fs.String("control-peer-directory", "", "control LinkIntent 所需 private directory object")
-	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *artifactPath == "" {
-		return errors.New("用法: loom client accept-v2-runtime -link-intents <json> [-control-peer-directory <json>] [-state-dir <dir>] [-runtime-state <path>]（旧 LKG 可另给 -control-set）")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
+		return errors.New("用法: loom client accept-v2-runtime [-link-intents <json>] [-control-peer-directory <json>] [-state-dir <dir>] [-runtime-state <path>]（旧 LKG 可另给 -control-set）")
 	}
 	if *stateDirectory == "" || !filepath.IsAbs(*stateDirectory) || filepath.Clean(*stateDirectory) != *stateDirectory {
 		return errors.New("[D131 Linux runtime] state-dir 必须是规范绝对路径")
@@ -331,10 +333,6 @@ func cmdClientAcceptV2Runtime(args []string) error {
 		}
 		peerDirectory = &decoded
 	}
-	artifactRaw, err := readV2RegularFile(*artifactPath, 4<<20)
-	if err != nil {
-		return err
-	}
 	statePath := filepath.Join(*stateDirectory, "state.json")
 	deviceStore, err := clientv2.Open(statePath)
 	if err != nil {
@@ -343,6 +341,16 @@ func cmdClientAcceptV2Runtime(args []string) error {
 	envelope := deviceStore.Envelope()
 	if envelope == nil {
 		return errors.New("[D131 Linux runtime] durable Device LKG 缺失")
+	}
+	var artifactRaw []byte
+	if *artifactPath != "" {
+		artifactRaw, err = readV2RegularFile(*artifactPath, 4<<20)
+	} else {
+		artifactRaw, err = clientv2.LinuxInstalledConfigArtifact(
+			deviceStore.Enrollment(), clientv2.LinuxLinkIntentArtifactID)
+	}
+	if err != nil {
+		return err
 	}
 	runtimeState, err := clientv2.AcceptLinuxLinkRuntimePlan(*runtimeStatePath, statePath,
 		envelope, set, previousSet, peerDirectory, artifactRaw, time.Now().UTC())
@@ -576,6 +584,7 @@ func linuxClientV2Installed(paths linuxClientV2Paths, clusterID, inviteID string
 
 func finishLinuxClientV2Enrollment(ctx context.Context, common linuxClientV2CommonFlags,
 	result clientv2.LinuxEnrollmentAttemptResultV2, proof wire.VerifiedInviteProofV2,
+	mirrors []wire.DistributionMirrorRefV1,
 	tunnel *clientv2.LinuxBootstrapTunnelDialer, api *clientv2.PrivateEnrollmentClient) error {
 	selection, ok := tunnel.Selection()
 	if !ok {
@@ -605,9 +614,19 @@ func finishLinuxClientV2Enrollment(ctx context.Context, common linuxClientV2Comm
 		return fmt.Errorf("[D124 Linux install] completion 需要 %d 个 exact sealed envelope，得到 %d 个；正式 state 尚未提交",
 			wantEnvelopeCount, len(envelopes))
 	}
+	if result.Result.ResultArtifact == nil || result.Result.ResultArtifact.InitialDeviceView.Active == nil {
+		return errors.New("[D124 Linux install] completed result 缺 active config refs")
+	}
+	configs, err := clientv2.FetchLinuxDeviceConfigArtifacts(ctx, mirrors,
+		result.Result.ResultArtifact.InitialDeviceView.Active.ConfigArtifactRefs,
+		clientv2.MirrorFetcher{Timeout: linuxClientV2NetworkTimeout(common.timeout)})
+	if err != nil {
+		return err
+	}
 	floors, err := clientv2.InstallLinuxEnrollmentCompletion(clientv2.LinuxEnrollmentCompletionInstallV1{
 		StatePath: common.paths.state, IdentityPath: common.paths.identity, PendingPath: common.paths.pending,
-		Result: result.Result, Completion: result.Completion, VerifiedProof: proof, SecretEnvelopes: envelopes,
+		Result: result.Result, Completion: result.Completion, VerifiedProof: proof,
+		SecretEnvelopes: envelopes, Configs: configs, DistributionMirrors: mirrors,
 	})
 	if err != nil {
 		return err

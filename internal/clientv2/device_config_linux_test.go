@@ -109,6 +109,145 @@ func TestSyncLinuxDeviceViewUsesPinnedPrivateDirectoryAndDeviceMTLS(t *testing.T
 	}
 }
 
+func TestLinuxDeviceArtifactsCommitAtomicallyWithCertifiedDelivery(t *testing.T) {
+	now := time.Date(2026, 9, 12, 9, 30, 0, 0, time.UTC)
+	statePath, identityPath, set, current, configKey := installedDeviceConfigStateWithKey(t, now)
+	store, err := Open(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := []byte(`{"schema":1}`)
+	configHash, _ := wire.DeviceConfigArtifactContentHash(config)
+	configRef := wire.DeviceConfigArtifactRefV1{
+		ArtifactID: LinuxLinkIntentArtifactID, Generation: 1, Platform: "linux-server",
+		MediaType: "application/vnd.loom.config+json", RenderContractID: "linux-link-intents-v1",
+		SizeBytes: int64(len(config)), ContentHash: configHash,
+	}
+	configNext := advanceClientEnvelopeWithArtifacts(t, current, &set, configKey,
+		[]wire.DeviceConfigArtifactRefV1{configRef}, []wire.SecretArtifactRefV2{})
+	configDelivery := wire.DeviceConfigDeliveryV1{Schema: 1, ClusterID: current.Payload.ClusterID,
+		DeviceID: current.Payload.DeviceID, Updates: []wire.DeviceConfigUpdateV1{
+			{Schema: 1, Envelope: current, ControlSet: set},
+			{Schema: 1, Envelope: configNext, ControlSet: set},
+		}}
+	installedConfigs := []InstalledConfigV1{{
+		ArtifactID: configRef.ArtifactID, Generation: configRef.Generation, Platform: configRef.Platform,
+		MediaType: configRef.MediaType, RenderContractID: configRef.RenderContractID,
+		SizeBytes: configRef.SizeBytes, ContentHash: configRef.ContentHash,
+		Config: append(json.RawMessage(nil), config...),
+	}}
+	before := store.Floors()
+	if _, err := store.AcceptDeviceConfigDelivery(&configDelivery, nil, nil,
+		current.Payload.DeviceID, current.Payload.Active.IdentitySPKIHash); err == nil {
+		t.Fatal("config artifact 未到齐却推进了 delivery")
+	}
+	if !wire.EqualCanonical(before, store.Floors()) {
+		t.Fatal("config artifact 失败改写了 floors")
+	}
+	if _, err := store.AcceptDeviceConfigDeliveryWithArtifacts(&configDelivery, nil, nil,
+		current.Payload.DeviceID, current.Payload.Active.IdentitySPKIHash,
+		&installedConfigs, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	identity, err := LoadEnrollmentIdentityForResume(identityPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretRef, sealed, secret := linuxDynamicSecretFixture(t, identity,
+		current.Payload.ClusterID, current.Payload.DeviceID, 2)
+	secretNext := advanceClientEnvelopeWithArtifacts(t, configNext, &set, configKey,
+		[]wire.DeviceConfigArtifactRefV1{configRef}, []wire.SecretArtifactRefV2{secretRef})
+	secretDelivery := wire.DeviceConfigDeliveryV1{Schema: 1, ClusterID: current.Payload.ClusterID,
+		DeviceID: current.Payload.DeviceID, Updates: []wire.DeviceConfigUpdateV1{
+			{Schema: 1, Envelope: configNext, ControlSet: set},
+			{Schema: 1, Envelope: secretNext, ControlSet: set},
+		}, SecretEnvelopes: []wire.SealedSecretEnvelopeV1{sealed}}
+	_, wrappingPrivate, err := identity.keys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentials, err := installLinuxSecrets([]wire.SecretArtifactRefV2{secretRef},
+		[]wire.SealedSecretEnvelopeV1{sealed}, current.Payload.DeviceID,
+		identity.WrappingPublicKeySPKI, wrappingPrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing := secretDelivery
+	missing.SecretEnvelopes = nil
+	before = store.Floors()
+	if _, err := store.AcceptDeviceConfigDeliveryWithArtifacts(&missing, nil, nil,
+		current.Payload.DeviceID, current.Payload.Active.IdentitySPKIHash,
+		nil, &credentials); err == nil || !wire.EqualCanonical(before, store.Floors()) {
+		t.Fatalf("缺 sealed envelope 的轮换未原子失败: %v", err)
+	}
+	if _, err := store.AcceptDeviceConfigDeliveryWithArtifacts(&secretDelivery, nil, nil,
+		current.Payload.DeviceID, current.Payload.Active.IdentitySPKIHash,
+		nil, &credentials); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installation := reopened.Enrollment()
+	gotSecret, _ := base64.RawURLEncoding.DecodeString(installation.Credentials[0].SecretBytes)
+	if reopened.Floors().DeviceGeneration != 3 || installation.CurrentSecretArtifactRefs == nil ||
+		(*installation.CurrentSecretArtifactRefs)[0].Generation != 2 ||
+		!bytes.Equal(gotSecret, secret) || len(installation.Configs) != 1 ||
+		!bytes.Equal(installation.Configs[0].Config, config) {
+		t.Fatalf("新 config/secret/view/floors 未原子保存: %#v", installation)
+	}
+}
+
+func linuxDynamicSecretFixture(t *testing.T, identity *EnrollmentIdentityV1,
+	clusterID, deviceID string, generation int64,
+) (wire.SecretArtifactRefV2, wire.SealedSecretEnvelopeV1, []byte) {
+	t.Helper()
+	_, wrappingPrivate, err := identity.keys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spki, _ := x509.MarshalPKIXPublicKey(&wrappingPrivate.PublicKey)
+	keyID, _ := wire.AuthorityProofKeyID(spki)
+	recipient := wire.SealedBlobRecipientKeyRefV1{
+		RecipientID: deviceID, RecipientKeyGeneration: 1, RecipientKeyID: keyID,
+		RecipientKeyProfile: "p256-keystore-ecdh-v1",
+		RecipientPublicKey: wire.AuthorityProofKeyV1{Algorithm: "ecdsa-p256-sha256",
+			PublicKeySPKIDER: identity.WrappingPublicKeySPKI, KeyID: keyID},
+	}
+	policy := wire.P256SealingPolicyV1()
+	owner := wire.SecretArtifactOwnerV1{Kind: "device",
+		Device: &wire.SecretArtifactDeviceOwnerV1{DeviceID: deviceID}}
+	contextValue, err := wire.NewSealedSecretContext(clusterID, "proposal-rotate",
+		"runtime-password", "data_plane_credential", owner, generation, &policy,
+		[]wire.SealedBlobRecipientKeyRefV1{recipient})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := []byte("rotated-linux-secret")
+	envelope, err := wire.SealSecret(rand.Reader, contextValue, &policy,
+		[]wire.SealedBlobRecipientKeyRefV1{recipient}, secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, _ := wire.SealedSecretEnvelopeHash(&envelope)
+	policyHash, _ := wire.SealingPolicyHash(&policy)
+	ref := wire.SecretArtifactRefV2{
+		Schema: 2, ClusterID: clusterID, ProposalID: contextValue.ProposalID,
+		SecretID: contextValue.SecretID, Purpose: contextValue.Purpose, Owner: owner,
+		Generation: generation, ImmutableRef: "blob:sha256:runtime-password-2", BackendKind: "sealed_blob",
+		SealedBlob: &wire.SealedBlobRefV1{CiphertextDigest: digest, SealingPolicy: policy,
+			SealingPolicyHash: policyHash, RecipientKeyVersions: []wire.SealedBlobRecipientKeyRefV1{recipient}},
+		AvailabilityPolicyHash:   wire.HashRaw("linux-dynamic-secret-test", []byte("availability")),
+		AvailabilityReceiptsRoot: wire.HashRaw("linux-dynamic-secret-test", []byte("receipts")),
+	}
+	if err := wire.VerifySealedSecretBinding(&ref, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	return ref, envelope, secret
+}
+
 func TestSyncLinuxDeviceViewRejectsWrongCertifiedSPKIPin(t *testing.T) {
 	now := time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC)
 	statePath, identityPath, set, envelope := installedDeviceConfigState(t, now)

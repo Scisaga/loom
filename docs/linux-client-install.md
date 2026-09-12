@@ -133,7 +133,9 @@ sudo loom client resume-v2 \
 离线输入时不会同时联网拉取 artifact。
 
 客户端会逐项核对 envelope digest、owner、recipient key 与 result refs，解封后把 certificate、
-Device view、floors、stable claim 摘要和 credentials 一次提交到 root-only `state.json`，成功后
+Device view 承诺的 Linux config 会同时从原 descriptor 钉住的 public mirrors 以无 token
+content-addressed GET 取回，并与 floors、stable claim 摘要和 credentials 一次提交到
+root-only `state.json`，成功后
 才删除 pending。原始 Invite/Resume carrier 和 sealed envelope 由交付方负责在受控存储中销毁；
 Loom 不会擅自删除调用者提供的文件。
 
@@ -152,6 +154,9 @@ sudo loom client sync-v2-view \
 
 命令只拨号 directory 中的 exact overlay tuple，验证 TLS 1.3、internal CA、IP SAN、
 SPKI pin 和 Device mTLS，并在 QC/Merkle/identity/floor 全部通过后才替换 LKG。
+如 final Device view 的 config/secret refs 改变，同步会先从 durable mirror refs 取回全部
+Linux config，再用本机 wrapping key 解封 delivery 中的 exact Device envelopes；任一制品失败
+都不推进 floor，全部到齐后才与 final view/ControlSet 原子提交。
 旧版 installation 尚未包含该 sealed credential 时，迁移期才允许同时传入
 `-directory`、`-directory-hash`、`-control-set` 与 `-internal-ca` 四项；部分提供会失败关闭。
 首次成功同步后 current/previous ControlSet 进入 durable state，后续动态 ControlSet 更新由
@@ -170,13 +175,16 @@ reporter 在网络发送前先把已签 exact envelope 写入
 `/var/lib/loom/client-v2/device-report-journal.json`。请求或进程中断后，下次运行先重放该
 pending bytes；收到 `204` 前不会推进 sequence。
 
-同步 Device view 后，将其中 `linux-link-intents` config ref 对应的 exact canonical artifact
-提交为本机 runtime LKG：
+同步 Device view 后，默认使用与 view 原子保存的 `linux-link-intents` exact canonical
+artifact 提交本机 runtime LKG：
 
 ```bash
 sudo loom client accept-v2-runtime \
-  -link-intents /etc/loom/client-v2/linux-link-intents.json
+  -state-dir /var/lib/loom/client-v2
 ```
+
+仅旧 installation 迁移时需要显式给出
+`-link-intents /etc/loom/client-v2/linux-link-intents.json`。
 
 命令重新打开 durable Device LKG，不接受命令行自报 Device 职责、grants 或 credential；只使用
 与 view 原子保存的 current/previous ControlSet 及正式 enrollment installation 内已安装的

@@ -225,6 +225,19 @@ func clientEnvelopeWithIdentity(t *testing.T, set *wire.ControlSetV1, configKey 
 func advanceClientEnvelope(t *testing.T, previous wire.DeviceViewEnvelopeV2,
 	set *wire.ControlSetV1, configKey ed25519.PrivateKey) wire.DeviceViewEnvelopeV2 {
 	t.Helper()
+	secretRefs, err := decodeLinuxSecretArtifactRefs(previous.SecretArtifactRefs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return advanceClientEnvelopeWithArtifacts(t, previous, set, configKey,
+		previous.Payload.Active.ConfigArtifactRefs, secretRefs)
+}
+
+func advanceClientEnvelopeWithArtifacts(t *testing.T, previous wire.DeviceViewEnvelopeV2,
+	set *wire.ControlSetV1, configKey ed25519.PrivateKey,
+	configRefs []wire.DeviceConfigArtifactRefV1, secretRefs []wire.SecretArtifactRefV2,
+) wire.DeviceViewEnvelopeV2 {
+	t.Helper()
 	body, err := wire.MarshalCanonical(previous)
 	if err != nil {
 		t.Fatal(err)
@@ -237,6 +250,13 @@ func advanceClientEnvelope(t *testing.T, previous wire.DeviceViewEnvelopeV2,
 	next.Payload.DeviceGeneration++
 	next.Payload.Active.EndpointBundle.DeviceGeneration = next.Payload.DeviceGeneration
 	next.Payload.Active.EndpointBundleHash, _ = wire.DeviceEndpointBundleHash(&next.Payload.Active.EndpointBundle)
+	next.Payload.Active.ConfigArtifactRefs = make([]wire.DeviceConfigArtifactRefV1, len(configRefs))
+	copy(next.Payload.Active.ConfigArtifactRefs, configRefs)
+	next.Payload.Active.SecretArtifactRefsRoot, _ = wire.SecretArtifactRefsRoot(secretRefs)
+	next.SecretArtifactRefs = make([]json.RawMessage, len(secretRefs))
+	for index := range secretRefs {
+		next.SecretArtifactRefs[index], _ = wire.MarshalCanonical(secretRefs[index])
+	}
 	next.Leaf.DeviceGeneration = next.Payload.DeviceGeneration
 	next.Leaf.PreviousViewHash = previousViewHash
 	next.Leaf.EndpointSetHash = next.Payload.Active.EndpointBundleHash

@@ -5,6 +5,7 @@ package clientv2
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,13 @@ import (
 	"sync"
 
 	"loom/internal/wire"
+)
+
+const (
+	maximumLinuxV2StateBytes     = 64 << 20
+	maximumLinuxConfigArtifacts  = 16
+	maximumLinuxConfigArtifact   = 16 << 20
+	maximumLinuxConfigTotalBytes = 32 << 20
 )
 
 type State struct {
@@ -37,6 +45,10 @@ type EnrollmentInstallationV1 struct {
 	DeviceCertificateHash string                          `json:"device_certificate_hash"`
 	ResultArtifact        wire.EnrollmentResultArtifactV1 `json:"result_artifact"`
 	Credentials           []InstalledSecretV1             `json:"credentials"`
+	// nil 仅表示旧版 installation；指向空 slice 表示已轮换为零凭据。
+	CurrentSecretArtifactRefs *[]wire.SecretArtifactRefV2    `json:"current_secret_artifact_refs,omitempty"`
+	Configs                   []InstalledConfigV1            `json:"configs,omitempty"`
+	DistributionMirrors       []wire.DistributionMirrorRefV1 `json:"distribution_mirrors,omitempty"`
 }
 
 type InstalledSecretV1 struct {
@@ -46,6 +58,17 @@ type InstalledSecretV1 struct {
 	ImmutableRef string `json:"immutable_ref"`
 	SecretBytes  string `json:"secret_bytes"`
 	SecretDigest string `json:"secret_digest"`
+}
+
+type InstalledConfigV1 struct {
+	ArtifactID       string          `json:"artifact_id"`
+	Generation       int64           `json:"generation"`
+	Platform         string          `json:"platform"`
+	MediaType        string          `json:"media_type"`
+	RenderContractID string          `json:"render_contract_id"`
+	SizeBytes        int64           `json:"size_bytes"`
+	ContentHash      string          `json:"content_hash"`
+	Config           json.RawMessage `json:"config"`
 }
 
 type Store struct {
@@ -75,7 +98,7 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	var state State
-	canonical, err := wire.DecodeStrict(body, 32<<20, &state)
+	canonical, err := wire.DecodeStrict(body, maximumLinuxV2StateBytes, &state)
 	if err != nil {
 		return nil, fmt.Errorf("[D106 Linux] v2 LKG state 无效: %w", err)
 	}
@@ -110,7 +133,7 @@ func (s *Store) Envelope() *wire.DeviceViewEnvelopeV2 {
 	}
 	body, _ := wire.MarshalCanonical(s.state.Envelope)
 	var copy wire.DeviceViewEnvelopeV2
-	_, _ = wire.DecodeStrict(body, 32<<20, &copy)
+	_, _ = wire.DecodeStrict(body, maximumLinuxV2StateBytes, &copy)
 	return &copy
 }
 
@@ -122,7 +145,7 @@ func (s *Store) Enrollment() *EnrollmentInstallationV1 {
 	}
 	body, _ := wire.MarshalCanonical(s.state.Enrollment)
 	var copy EnrollmentInstallationV1
-	_, _ = wire.DecodeStrict(body, 32<<20, &copy)
+	_, _ = wire.DecodeStrict(body, maximumLinuxV2StateBytes, &copy)
 	return &copy
 }
 
@@ -255,6 +278,27 @@ func (s *Store) AcceptDeviceConfigDelivery(delivery *wire.DeviceConfigDeliveryV1
 	fallbackSet, fallbackPreviousSet *wire.ControlSetV1,
 	expectedDeviceID, expectedIdentitySPKIHash string,
 ) (wire.ClientFloorsV2, error) {
+	return s.acceptDeviceConfigDelivery(delivery, fallbackSet, fallbackPreviousSet,
+		expectedDeviceID, expectedIdentitySPKIHash, nil, nil)
+}
+
+// AcceptDeviceConfigDeliveryWithArtifacts 要求变更的 config/secret 全量到齐，
+// 并与 final view/floors/ControlSet 在同一个 0600 state 文件中原子替换。
+// nil 表示对应 refs 未变；指向空 slice 表示 certified refs 已变为空。
+func (s *Store) AcceptDeviceConfigDeliveryWithArtifacts(delivery *wire.DeviceConfigDeliveryV1,
+	fallbackSet, fallbackPreviousSet *wire.ControlSetV1,
+	expectedDeviceID, expectedIdentitySPKIHash string,
+	configs *[]InstalledConfigV1, credentials *[]InstalledSecretV1,
+) (wire.ClientFloorsV2, error) {
+	return s.acceptDeviceConfigDelivery(delivery, fallbackSet, fallbackPreviousSet,
+		expectedDeviceID, expectedIdentitySPKIHash, configs, credentials)
+}
+
+func (s *Store) acceptDeviceConfigDelivery(delivery *wire.DeviceConfigDeliveryV1,
+	fallbackSet, fallbackPreviousSet *wire.ControlSetV1,
+	expectedDeviceID, expectedIdentitySPKIHash string,
+	configs *[]InstalledConfigV1, credentials *[]InstalledSecretV1,
+) (wire.ClientFloorsV2, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.state == nil || delivery == nil || expectedDeviceID == "" || expectedIdentitySPKIHash == "" {
@@ -273,12 +317,51 @@ func (s *Store) AcceptDeviceConfigDelivery(delivery *wire.DeviceConfigDeliveryV1
 		return s.floorsLocked(), err
 	}
 	envelope := verified.Envelope()
-	if !sameInstalledArtifactRefs(&s.state.Envelope, &envelope) {
-		return s.floorsLocked(), errors.New("[D124 Linux config] Device view artifact refs 已变化，必须原子取回后安装")
+	configChanged, secretsChanged := changedInstalledArtifactRefs(&s.state.Envelope, &envelope)
+	var installation *EnrollmentInstallationV1
+	if s.state.Enrollment != nil {
+		cloned := cloneStoreValue(*s.state.Enrollment)
+		installation = &cloned
+	}
+	if envelope.Payload.State == "tombstone" {
+		if configs != nil || credentials != nil {
+			return s.floorsLocked(), errors.New("[D124 Linux config] tombstone 禁止新 artifact")
+		}
+		if installation != nil {
+			installation.Configs = nil
+		}
+	} else {
+		if (configChanged || secretsChanged) && installation == nil {
+			return s.floorsLocked(), errors.New("[D124 Linux config] artifact 轮换缺 durable enrollment")
+		}
+		if configChanged {
+			if configs == nil {
+				return s.floorsLocked(), errors.New("[D124 Linux config] config refs 已变化但 artifact 未到齐")
+			}
+			installation.Configs = cloneStoreValue(*configs)
+		} else if configs != nil {
+			return s.floorsLocked(), errors.New("[D124 Linux config] config refs 未变却提交了 artifact")
+		}
+		if secretsChanged {
+			if credentials == nil {
+				return s.floorsLocked(), errors.New("[D124 Linux config] secret refs 已变化但 credential 未到齐")
+			}
+			if len(delivery.SecretEnvelopes) != len(envelope.SecretArtifactRefs) {
+				return s.floorsLocked(), errors.New("[D124 Linux config] sealed envelopes 未 exact 覆盖 final refs")
+			}
+			refs, err := decodeLinuxSecretArtifactRefs(envelope.SecretArtifactRefs)
+			if err != nil {
+				return s.floorsLocked(), err
+			}
+			installation.Credentials = cloneStoreValue(*credentials)
+			installation.CurrentSecretArtifactRefs = cloneLinuxSecretArtifactRefs(refs)
+		} else if credentials != nil {
+			return s.floorsLocked(), errors.New("[D124 Linux config] secret refs 未变却提交了 credential")
+		}
 	}
 	set := verified.ControlSet()
 	state := State{Schema: 1, Floors: verified.Floors(), Envelope: envelope, ControlSet: &set,
-		Enrollment: s.state.Enrollment}
+		Enrollment: installation}
 	state.PreviousControlSet = verified.PreviousControlSet()
 	if err := persist(s.path, state); err != nil {
 		return s.floorsLocked(), err
@@ -287,30 +370,41 @@ func (s *Store) AcceptDeviceConfigDelivery(delivery *wire.DeviceConfigDeliveryV1
 	return state.Floors, nil
 }
 
-func sameInstalledArtifactRefs(current, candidate *wire.DeviceViewEnvelopeV2) bool {
+func changedInstalledArtifactRefs(current, candidate *wire.DeviceViewEnvelopeV2) (bool, bool) {
 	if current == nil || candidate == nil {
-		return false
+		return true, true
 	}
 	if candidate.Payload.State == "tombstone" {
-		return true
+		return false, false
 	}
-	if current.Payload.State != "active" {
-		return false
+	if current.Payload.State != "active" || current.Payload.Active == nil || candidate.Payload.Active == nil {
+		return true, true
 	}
-	if current.Payload.State == "active" &&
-		(current.Payload.Active == nil || candidate.Payload.Active == nil ||
-			!wire.EqualCanonical(current.Payload.Active.ConfigArtifactRefs, candidate.Payload.Active.ConfigArtifactRefs)) {
-		return false
-	}
-	if len(current.SecretArtifactRefs) != len(candidate.SecretArtifactRefs) {
-		return false
-	}
+	configChanged := !wire.EqualCanonical(current.Payload.Active.ConfigArtifactRefs,
+		candidate.Payload.Active.ConfigArtifactRefs)
+	secretsChanged := len(current.SecretArtifactRefs) != len(candidate.SecretArtifactRefs)
 	for index := range current.SecretArtifactRefs {
-		if !bytes.Equal(current.SecretArtifactRefs[index], candidate.SecretArtifactRefs[index]) {
-			return false
+		if !secretsChanged && !bytes.Equal(current.SecretArtifactRefs[index], candidate.SecretArtifactRefs[index]) {
+			secretsChanged = true
 		}
 	}
-	return true
+	return configChanged, secretsChanged
+}
+
+func decodeLinuxSecretArtifactRefs(raw []json.RawMessage) ([]wire.SecretArtifactRefV2, error) {
+	refs := make([]wire.SecretArtifactRefV2, len(raw))
+	for index := range raw {
+		canonical, err := wire.DecodeStrict(raw[index], 4<<20, &refs[index])
+		if err != nil || !bytes.Equal(canonical, raw[index]) {
+			return nil, errors.New("[D124 Linux config] secret ref 不是 exact canonical wire")
+		}
+	}
+	return refs, nil
+}
+
+func cloneLinuxSecretArtifactRefs(refs []wire.SecretArtifactRefV2) *[]wire.SecretArtifactRefV2 {
+	cloned := cloneStoreValue(refs)
+	return &cloned
 }
 
 // acceptInitialInstallation 提交已经由 completion receipt 与本机 wrapping key
@@ -343,7 +437,7 @@ func (s *Store) acceptInitialInstallation(envelope *wire.DeviceViewEnvelopeV2, s
 		return wire.ClientFloorsV2{}, err
 	}
 	var installedCopy EnrollmentInstallationV1
-	if _, err := wire.DecodeStrict(installationBody, 32<<20, &installedCopy); err != nil {
+	if _, err := wire.DecodeStrict(installationBody, maximumLinuxV2StateBytes, &installedCopy); err != nil {
 		return wire.ClientFloorsV2{}, err
 	}
 	setCopy := cloneStoreValue(*set)
@@ -366,6 +460,9 @@ func persist(path string, state State) error {
 	body, err := wire.MarshalCanonical(state)
 	if err != nil {
 		return err
+	}
+	if len(body) > maximumLinuxV2StateBytes {
+		return errors.New("[D106 Linux] v2 LKG 超过文件大小边界")
 	}
 	directory := filepath.Dir(path)
 	if err := os.MkdirAll(directory, 0o700); err != nil {
@@ -410,7 +507,7 @@ func validatePrivateStateFile(info os.FileInfo) error {
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 || !ownedByCurrentUser(info) {
 		return errors.New("[D106 Linux] v2 LKG 必须是服务账号持有的 0600 普通文件")
 	}
-	if info.Size() < 1 || info.Size() > 32<<20 {
+	if info.Size() < 1 || info.Size() > maximumLinuxV2StateBytes {
 		return errors.New("[D106 Linux] v2 LKG 文件大小越界")
 	}
 	return nil
@@ -500,6 +597,9 @@ func validateEnrollmentInstallation(installation *EnrollmentInstallationV1, enve
 		return errors.New("[D102 Linux install] durable certificate hash 不匹配")
 	}
 	refs := installation.ResultArtifact.SecretArtifactRefs
+	if installation.CurrentSecretArtifactRefs != nil {
+		refs = *installation.CurrentSecretArtifactRefs
+	}
 	if len(refs) != len(installation.Credentials) ||
 		envelope.Payload.Active != nil && len(refs) != len(envelope.SecretArtifactRefs) {
 		return errors.New("[D124 Linux install] durable credentials/refs 数量不匹配")
@@ -512,7 +612,10 @@ func validateEnrollmentInstallation(installation *EnrollmentInstallationV1, enve
 			canonicalEnvelopeRef, envelopeErr = wire.CanonicalizeStrict(envelope.SecretArtifactRefs[index])
 		}
 		credential := &installation.Credentials[index]
-		if refErr != nil || envelopeErr != nil || !bytes.Equal(canonicalRef, canonicalEnvelopeRef) ||
+		if refErr != nil || wire.ValidateSecretArtifactRef(&refs[index]) != nil ||
+			refs[index].ClusterID != envelope.Payload.ClusterID || refs[index].Owner.Kind != "device" ||
+			refs[index].Owner.Device == nil || refs[index].Owner.Device.DeviceID != envelope.Payload.DeviceID ||
+			envelopeErr != nil || !bytes.Equal(canonicalRef, canonicalEnvelopeRef) ||
 			credential.SecretID != refs[index].SecretID || credential.Purpose != refs[index].Purpose ||
 			credential.Generation != refs[index].Generation || credential.ImmutableRef != refs[index].ImmutableRef {
 			return errors.New("[D124 Linux install] durable credential 未绑定 exact secret ref")
@@ -526,6 +629,54 @@ func validateEnrollmentInstallation(installation *EnrollmentInstallationV1, enve
 		clear(secret)
 		if totalSecretBytes > 8<<20 {
 			return errors.New("[D124 Linux install] durable credentials 超过 bootstrap 总预算")
+		}
+	}
+	if installation.Configs != nil {
+		configRefs := initialView.Active.ConfigArtifactRefs
+		if envelope.Payload.Active != nil {
+			configRefs = envelope.Payload.Active.ConfigArtifactRefs
+		}
+		if err := validateLinuxInstalledConfigs(installation.Configs, configRefs); err != nil {
+			return err
+		}
+	}
+	if installation.DistributionMirrors != nil {
+		if err := wire.ValidateDistributionMirrorRefs(installation.DistributionMirrors); err != nil {
+			return errors.New("[D124 Linux install] durable distribution mirrors 无效")
+		}
+	}
+	return nil
+}
+
+func validateLinuxInstalledConfigs(configs []InstalledConfigV1,
+	refs []wire.DeviceConfigArtifactRefV1,
+) error {
+	if len(refs) > maximumLinuxConfigArtifacts || len(configs) != len(refs) {
+		return errors.New("[D124 Linux config] installed configs 未 exact 覆盖 Device view refs")
+	}
+	totalBytes := 0
+	for index := range refs {
+		ref, installed := &refs[index], &configs[index]
+		if err := wire.ValidateDeviceConfigArtifactRef(ref); err != nil {
+			return err
+		}
+		if ref.Platform != "linux-server" || ref.SizeBytes > maximumLinuxConfigArtifact ||
+			installed.ArtifactID != ref.ArtifactID || installed.Generation != ref.Generation ||
+			installed.Platform != ref.Platform || installed.MediaType != ref.MediaType ||
+			installed.RenderContractID != ref.RenderContractID || installed.SizeBytes != ref.SizeBytes ||
+			installed.ContentHash != ref.ContentHash {
+			return errors.New("[D124 Linux config] installed config 未绑定 exact ref")
+		}
+		raw := []byte(installed.Config)
+		canonical, canonicalErr := wire.CanonicalizeStrict(raw)
+		hash, hashErr := wire.DeviceConfigArtifactContentHash(raw)
+		if len(raw) != int(ref.SizeBytes) || canonicalErr != nil || !bytes.Equal(canonical, raw) ||
+			hashErr != nil || hash != ref.ContentHash {
+			return errors.New("[D124 Linux config] installed config bytes/hash 无效")
+		}
+		totalBytes += len(raw)
+		if totalBytes > maximumLinuxConfigTotalBytes {
+			return errors.New("[D124 Linux config] installed configs 超过总预算")
 		}
 	}
 	return nil

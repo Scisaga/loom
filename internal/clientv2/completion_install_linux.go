@@ -3,6 +3,7 @@
 package clientv2
 
 import (
+	"crypto/ecdsa"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -18,14 +19,16 @@ import (
 // TemporaryPaths 只能位于 PendingPath 的 root-only 目录，用于清理临时
 // capability/profile/tunnel 文件；identity 是正式私钥，永远不在清理集合中。
 type LinuxEnrollmentCompletionInstallV1 struct {
-	StatePath       string
-	IdentityPath    string
-	PendingPath     string
-	TemporaryPaths  []string
-	Result          wire.EnrollmentClaimResultV2
-	Completion      enrollmentv2.VerifiedEnrollmentCompletionV1
-	VerifiedProof   wire.VerifiedInviteProofV2
-	SecretEnvelopes []wire.SealedSecretEnvelopeV1
+	StatePath           string
+	IdentityPath        string
+	PendingPath         string
+	TemporaryPaths      []string
+	Result              wire.EnrollmentClaimResultV2
+	Completion          enrollmentv2.VerifiedEnrollmentCompletionV1
+	VerifiedProof       wire.VerifiedInviteProofV2
+	SecretEnvelopes     []wire.SealedSecretEnvelopeV1
+	Configs             []InstalledConfigV1
+	DistributionMirrors []wire.DistributionMirrorRefV1
 }
 
 // InstallLinuxEnrollmentCompletion 先用 opaque completion evidence、本机 stable
@@ -76,7 +79,8 @@ func InstallLinuxEnrollmentCompletion(input LinuxEnrollmentCompletionInstallV1) 
 	if err := input.Completion.VerifyInstallationContext(&input.Result, &pending.ClaimCore, input.VerifiedProof); err != nil {
 		return wire.ClientFloorsV2{}, err
 	}
-	installation, err := prepareLinuxEnrollmentInstallation(identity, pending, &input.Result, input.SecretEnvelopes)
+	installation, err := prepareLinuxEnrollmentInstallation(identity, pending, &input.Result,
+		input.SecretEnvelopes, input.Configs, input.DistributionMirrors)
 	if err != nil {
 		return wire.ClientFloorsV2{}, err
 	}
@@ -126,8 +130,11 @@ func validateCompletionInstallPaths(input LinuxEnrollmentCompletionInstallV1) er
 }
 
 func prepareLinuxEnrollmentInstallation(identity *EnrollmentIdentityV1, pending *PendingClaimV2,
-	result *wire.EnrollmentClaimResultV2, envelopes []wire.SealedSecretEnvelopeV1) (*EnrollmentInstallationV1, error) {
-	if identity == nil || pending == nil || result == nil || result.ResultArtifact == nil {
+	result *wire.EnrollmentClaimResultV2, envelopes []wire.SealedSecretEnvelopeV1,
+	configs []InstalledConfigV1, mirrors []wire.DistributionMirrorRefV1,
+) (*EnrollmentInstallationV1, error) {
+	if identity == nil || pending == nil || result == nil || result.ResultArtifact == nil ||
+		result.ResultArtifact.InitialDeviceView.Active == nil {
 		return nil, errors.New("[D130 Linux install] result/pending/identity 不完整")
 	}
 	refs := result.ResultArtifact.SecretArtifactRefs
@@ -142,31 +149,21 @@ func prepareLinuxEnrollmentInstallation(identity *EnrollmentIdentityV1, pending 
 	if err != nil {
 		return nil, err
 	}
-	credentials := make([]InstalledSecretV1, len(refs))
-	for index := range refs {
-		ref := &refs[index]
-		envelope := &envelopes[index]
-		if err := wire.VerifySealedSecretBinding(ref, envelope); err != nil {
-			return nil, err
-		}
-		recipient, err := linuxWrappingRecipient(ref, result.ResultArtifact.InitialDeviceView.DeviceID,
-			identity.WrappingPublicKeySPKI)
-		if err != nil {
-			return nil, err
-		}
-		secret, err := wire.UnsealSecretP256(envelope, recipient, wrappingPrivate)
-		if err != nil {
-			return nil, err
-		}
-		if len(secret) == 0 {
-			return nil, errors.New("[D124 Linux install] 解封 credential 不能为空")
-		}
-		credentials[index] = InstalledSecretV1{
-			SecretID: ref.SecretID, Purpose: ref.Purpose, Generation: ref.Generation,
-			ImmutableRef: ref.ImmutableRef, SecretBytes: base64.RawURLEncoding.EncodeToString(secret),
-			SecretDigest: wire.HashRaw("loom-linux-installed-secret-v1", secret),
-		}
-		clear(secret)
+	credentials, err := installLinuxSecrets(refs, envelopes,
+		result.ResultArtifact.InitialDeviceView.DeviceID, identity.WrappingPublicKeySPKI,
+		wrappingPrivate)
+	if err != nil {
+		return nil, err
+	}
+	if configs == nil || len(configs) != len(result.ResultArtifact.InitialDeviceView.Active.ConfigArtifactRefs) {
+		return nil, errors.New("[D124 Linux install] config artifacts 未 exact 覆盖 initial view refs")
+	}
+	if err := validateLinuxInstalledConfigs(configs,
+		result.ResultArtifact.InitialDeviceView.Active.ConfigArtifactRefs); err != nil {
+		return nil, err
+	}
+	if err := wire.ValidateDistributionMirrorRefs(mirrors); err != nil {
+		return nil, errors.New("[D124 Linux install] distribution mirrors 无效")
 	}
 	certificateDER, err := wire.EnrollmentResultCertificateDER(result.ResultArtifact)
 	if err != nil {
@@ -182,8 +179,55 @@ func prepareLinuxEnrollmentInstallation(identity *EnrollmentIdentityV1, pending 
 		WrappingKeyHash: wrappingHash, TransactionStateHash: result.TransactionStateHash,
 		ResultArtifactHash: result.ResultArtifactHash, DeviceCertificateHash: certificateHash,
 		ResultArtifact: clonePrivateClientValue(*result.ResultArtifact), Credentials: credentials,
+		CurrentSecretArtifactRefs: cloneLinuxSecretArtifactRefs(refs),
+		Configs:                   cloneStoreValue(configs),
+		DistributionMirrors:       append([]wire.DistributionMirrorRefV1(nil), mirrors...),
 	}
 	return installation, nil
+}
+
+func installLinuxSecrets(refs []wire.SecretArtifactRefV2,
+	envelopes []wire.SealedSecretEnvelopeV1, deviceID, wrappingSPKI string,
+	wrappingPrivate *ecdsa.PrivateKey,
+) ([]InstalledSecretV1, error) {
+	if refs == nil || len(refs) != len(envelopes) || wrappingPrivate == nil {
+		return nil, errors.New("[D124 Linux install] sealed envelopes 未 exact 覆盖 refs")
+	}
+	credentials := make([]InstalledSecretV1, len(refs))
+	totalBytes := 0
+	for index := range refs {
+		ref, envelope := &refs[index], &envelopes[index]
+		if err := wire.VerifySealedSecretBinding(ref, envelope); err != nil {
+			return nil, err
+		}
+		if ref.ClusterID != envelope.Context.ClusterID || ref.Owner.Kind != "device" ||
+			ref.Owner.Device == nil || ref.Owner.Device.DeviceID != deviceID {
+			return nil, errors.New("[D124 Linux install] secret 未绑定当前 Device/cluster")
+		}
+		recipient, err := linuxWrappingRecipient(ref, deviceID, wrappingSPKI)
+		if err != nil {
+			return nil, err
+		}
+		secret, err := wire.UnsealSecretP256(envelope, recipient, wrappingPrivate)
+		if err != nil {
+			return nil, err
+		}
+		if len(secret) == 0 {
+			return nil, errors.New("[D124 Linux install] 解封 credential 不能为空")
+		}
+		totalBytes += len(secret)
+		if totalBytes > 8<<20 {
+			clear(secret)
+			return nil, errors.New("[D124 Linux install] credentials 超过总预算")
+		}
+		credentials[index] = InstalledSecretV1{
+			SecretID: ref.SecretID, Purpose: ref.Purpose, Generation: ref.Generation,
+			ImmutableRef: ref.ImmutableRef, SecretBytes: base64.RawURLEncoding.EncodeToString(secret),
+			SecretDigest: wire.HashRaw("loom-linux-installed-secret-v1", secret),
+		}
+		clear(secret)
+	}
+	return credentials, nil
 }
 
 func linuxWrappingRecipient(ref *wire.SecretArtifactRefV2, deviceID, wrappingSPKI string) (wire.SealedBlobRecipientKeyRefV1, error) {

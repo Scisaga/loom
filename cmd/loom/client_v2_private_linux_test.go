@@ -71,8 +71,9 @@ func TestLinuxPrivateV2CommandsRequireInstalledCredentialOrCompleteMigrationInpu
 			t.Fatalf("%v 缺 installed state/credential 未失败关闭: %v", args, err)
 		}
 	}
-	if err := cmdClient([]string{"accept-v2-runtime"}); err == nil || !strings.Contains(err.Error(), "用法") {
-		t.Fatalf("accept-v2-runtime 缺 certified artifact/ControlSet 未失败关闭: %v", err)
+	if err := cmdClient([]string{"accept-v2-runtime"}); err == nil ||
+		!strings.Contains(err.Error(), "durable Device LKG 缺失") {
+		t.Fatalf("accept-v2-runtime 缺 durable Device LKG 未失败关闭: %v", err)
 	}
 }
 

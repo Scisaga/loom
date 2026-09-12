@@ -38,6 +38,7 @@ type LinuxDeviceViewSyncOptions struct {
 	Dial                TunnelDialContext
 	Now                 func() time.Time
 	Timeout             time.Duration
+	MirrorFetcher       MirrorFetcher
 }
 
 // SyncLinuxDeviceView 经已安装的正式 Device mTLS identity 访问 certified private
@@ -83,7 +84,7 @@ func SyncLinuxDeviceView(ctx context.Context,
 	if err != nil {
 		return store.Floors(), err
 	}
-	identityKey, _, err := identity.keys()
+	identityKey, wrappingPrivate, err := identity.keys()
 	if err != nil {
 		return store.Floors(), err
 	}
@@ -114,8 +115,47 @@ func SyncLinuxDeviceView(ctx context.Context,
 	if err != nil {
 		return store.Floors(), err
 	}
-	return store.AcceptDeviceConfigDelivery(&delivery, &options.ControlSet, options.PreviousControlSet,
-		current.Payload.DeviceID, identityHash)
+	verified, err := wire.VerifyDeviceConfigDeliveryFromProtected(&delivery, current,
+		store.Floors(), currentSet, currentPreviousSet, current.Payload.DeviceID, identityHash)
+	if err != nil {
+		return store.Floors(), err
+	}
+	finalEnvelope := verified.Envelope()
+	configChanged, secretsChanged := changedInstalledArtifactRefs(current, &finalEnvelope)
+	var configs *[]InstalledConfigV1
+	var credentials *[]InstalledSecretV1
+	if finalEnvelope.Payload.State == "active" {
+		if configChanged {
+			if installation.DistributionMirrors == nil {
+				return store.Floors(), errors.New("[D124 Linux config] durable distribution mirrors 缺失")
+			}
+			fetcher := options.MirrorFetcher
+			if fetcher.Timeout == 0 {
+				fetcher.Timeout = options.Timeout
+			}
+			installed, err := FetchLinuxDeviceConfigArtifacts(ctx,
+				installation.DistributionMirrors, finalEnvelope.Payload.Active.ConfigArtifactRefs,
+				fetcher)
+			if err != nil {
+				return store.Floors(), err
+			}
+			configs = &installed
+		}
+		if secretsChanged {
+			refs, err := decodeLinuxSecretArtifactRefs(finalEnvelope.SecretArtifactRefs)
+			if err != nil {
+				return store.Floors(), err
+			}
+			installed, err := installLinuxSecrets(refs, delivery.SecretEnvelopes,
+				current.Payload.DeviceID, identity.WrappingPublicKeySPKI, wrappingPrivate)
+			if err != nil {
+				return store.Floors(), err
+			}
+			credentials = &installed
+		}
+	}
+	return store.AcceptDeviceConfigDeliveryWithArtifacts(&delivery, &options.ControlSet,
+		options.PreviousControlSet, current.Payload.DeviceID, identityHash, configs, credentials)
 }
 
 // VerifyControlServiceDirectory 要求 root-owned 配置里的 exact directory hash pin，

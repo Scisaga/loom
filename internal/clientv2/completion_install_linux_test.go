@@ -35,8 +35,9 @@ func TestPrepareLinuxEnrollmentInstallationUnsealsExactCredentials(t *testing.T)
 		t.Fatal(err)
 	}
 	result, envelope, secret := linuxCompletionResultFixture(t, identity, pending)
+	mirrors := linuxCompletionTestMirrors()
 	installation, err := prepareLinuxEnrollmentInstallation(identity, pending, &result,
-		[]wire.SealedSecretEnvelopeV1{envelope})
+		[]wire.SealedSecretEnvelopeV1{envelope}, []InstalledConfigV1{}, mirrors)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,8 +56,22 @@ func TestPrepareLinuxEnrollmentInstallationUnsealsExactCredentials(t *testing.T)
 	tampered := envelope
 	tampered.CiphertextAndTag = base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x42}, 32))
 	if _, err := prepareLinuxEnrollmentInstallation(identity, pending, &result,
-		[]wire.SealedSecretEnvelopeV1{tampered}); err == nil {
+		[]wire.SealedSecretEnvelopeV1{tampered}, []InstalledConfigV1{}, mirrors); err == nil {
 		t.Fatal("接受了与 immutable ref 不匹配的 sealed credential")
+	}
+}
+
+func linuxCompletionTestMirrors() []wire.DistributionMirrorRefV1 {
+	hash := func(value string) string { return wire.HashRaw("linux-completion-mirror-test", []byte(value)) }
+	return []wire.DistributionMirrorRefV1{
+		{Schema: 1, EndpointID: "mirror-1", DistributionEndpointSetHash: hash("set-1"),
+			ListenerGeneration: 1, BaseURL: "https://mirror-a.example.test:443/distribution/sha256/",
+			ServerName: "mirror-a.example.test", WebPKIProfileRef: "webpki-v1",
+			SPKIPins: []string{hash("pin-1")}, HintRank: 0},
+		{Schema: 1, EndpointID: "mirror-2", DistributionEndpointSetHash: hash("set-2"),
+			ListenerGeneration: 1, BaseURL: "https://mirror-b.example.test:443/distribution/sha256/",
+			ServerName: "mirror-b.example.test", WebPKIProfileRef: "webpki-v1",
+			SPKIPins: []string{hash("pin-2")}, HintRank: 1},
 	}
 }
 

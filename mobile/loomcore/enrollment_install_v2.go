@@ -397,7 +397,8 @@ func validateAndroidEnrollmentInstallation(installation *androidEnrollmentInstal
 }
 
 func cloneAndroidSecretArtifactRefs(refs []wire.SecretArtifactRefV2) *[]wire.SecretArtifactRefV2 {
-	cloned := append([]wire.SecretArtifactRefV2(nil), refs...)
+	cloned := make([]wire.SecretArtifactRefV2, len(refs))
+	copy(cloned, refs)
 	return &cloned
 }
 
