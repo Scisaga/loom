@@ -20,13 +20,29 @@ device_api=$("${adb[@]}" shell getprop ro.build.version.sdk | tr -d '\r')
 
 cd "$android_dir"
 ./gradlew --no-daemon assembleDebug assembleDebugAndroidTest
-"${adb[@]}" install -r app/build/outputs/apk/debug/app-debug.apk
-"${adb[@]}" install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-instrument_output=$("${adb[@]}" shell am instrument -w \
-    -e class io.github.scisaga.loom.V2KeyStoreInstrumentedTest \
-    io.github.scisaga.loom.test/androidx.test.runner.AndroidJUnitRunner)
-printf '%s\n' "$instrument_output"
-if grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' <<<"$instrument_output"; then
-    exit 1
-fi
-grep -Eq '^OK \([0-9]+ tests?\)$' <<<"$instrument_output"
+app_apk=app/build/outputs/apk/debug/app-debug.apk
+test_apk=app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+"${adb[@]}" install -r "$app_apk"
+"${adb[@]}" install -r "$test_apk"
+
+run_instrumentation() {
+    local class_name=$1 phase=${2:-} instrument_output
+    local arguments=(-e class "$class_name")
+    if [[ -n "$phase" ]]; then arguments+=(-e phase "$phase"); fi
+    instrument_output=$("${adb[@]}" shell am instrument -w \
+        "${arguments[@]}" io.github.scisaga.loom.test/androidx.test.runner.AndroidJUnitRunner)
+    printf '%s\n' "$instrument_output"
+    if grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' <<<"$instrument_output"; then
+        return 1
+    fi
+    grep -Eq '^OK \([0-9]+ tests?\)$' <<<"$instrument_output"
+}
+
+run_instrumentation io.github.scisaga.loom.V2KeyStoreInstrumentedTest
+run_instrumentation io.github.scisaga.loom.V2KeyStoreRestartInstrumentedTest seed
+"${adb[@]}" shell am force-stop io.github.scisaga.loom
+# 同签名覆盖安装必须保留 target app data 与 AndroidKeyStore alias；测试 APK
+# 也重新覆盖，避免把旧 instrumentation bytes 当作当前验收证据。
+"${adb[@]}" install -r "$app_apk"
+"${adb[@]}" install -r "$test_apk"
+run_instrumentation io.github.scisaga.loom.V2KeyStoreRestartInstrumentedTest verify

@@ -413,7 +413,10 @@ ANDROID_SERIAL=emulator-5554 ./scripts/emulator-smoke.sh
 
 API 26–30 uses a separate emulator run because its wrapping key must be a
 non-exportable, decrypt-only RSA-2048 key. The test performs an exact
-SHA-256/MGF1-SHA1 OAEP round trip through Android Keystore:
+SHA-256/MGF1-SHA1 OAEP round trip, records only public keys in app-private
+storage, force-stops the process, overwrites both same-signed APKs, and then
+proves that the same identity and wrapping aliases still sign/decrypt before
+removing the test record:
 
 ```bash
 ANDROID_SERIAL=emulator-5556 ./scripts/legacy-keystore-smoke.sh
