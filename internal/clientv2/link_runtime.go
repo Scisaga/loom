@@ -63,14 +63,14 @@ type LinuxLinkRuntimePlanV1 struct {
 // BuildLinuxLinkRuntimePlan 只把 current Device view 承诺的 exact artifact
 // 转为本机运行计划。LinkIntent 不能通过本地参数、可拨端口或
 // Device 自报职责产生；control 还必须存在于 Head 绑定的 private peer directory（D105、D131）。
-func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set *wire.ControlSetV1,
+func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previousSet *wire.ControlSetV1,
 	peerDirectory *wire.ControlPeerDirectoryPrivateObjectV1, artifactRaw []byte,
 	credentials []InstalledSecretV1, now time.Time,
 	minimumGenerations map[string]int64) (LinuxLinkRuntimePlanV1, error) {
 	if envelope == nil || set == nil || now.IsZero() {
 		return LinuxLinkRuntimePlanV1{}, errors.New("[D131 Linux runtime] view/ControlSet/time 缺失")
 	}
-	if _, err := wire.VerifyDeviceViewEnvelope(envelope, set); err != nil {
+	if _, err := wire.VerifyDeviceViewEnvelopeWithPrevious(envelope, set, previousSet); err != nil {
 		return LinuxLinkRuntimePlanV1{}, err
 	}
 	if envelope.Payload.State != "active" || envelope.Payload.Active == nil {

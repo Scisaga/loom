@@ -171,6 +171,22 @@ reporter 在网络发送前先把已签 exact envelope 写入
 `/var/lib/loom/client-v2/device-report-journal.json`。请求或进程中断后，下次运行先重放该
 pending bytes；收到 `204` 前不会推进 sequence。
 
+同步 Device view 后，将其中 `linux-link-intents` config ref 对应的 exact canonical artifact
+提交为本机 runtime LKG：
+
+```bash
+sudo loom client accept-v2-runtime \
+  -link-intents /etc/loom/client-v2/linux-link-intents.json \
+  -control-set /etc/loom/client-v2/control-set.json
+```
+
+命令重新打开 durable Device LKG，不接受命令行自报 Device 职责、grants 或 credential；只使用
+正式 enrollment installation 内已安装的 credential ID，并钉住 artifact 的 size、content hash、
+render contract、Device generation、EndpointSet transport 及已见 listener generation floor。
+包含 `control_overlay` 时还必须传入 `-control-peer-directory`；joint Head 必须同时传入
+`-previous-control-set`。验证失败不会覆盖已有的
+`/var/lib/loom/client-v2/link-runtime-state.json`。
+
 开发门禁可一键运行，并把不含域名、IP、Device ID、证书或 secret 的结构化结果写到忽略目录：
 
 ```bash

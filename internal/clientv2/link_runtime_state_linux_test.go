@@ -42,7 +42,7 @@ func TestLinuxLinkRuntimeStateCommitsOnlyFromDurableDeviceLKG(t *testing.T) {
 	directory := filepath.Dir(deviceStatePath)
 	runtimeStatePath := filepath.Join(directory, "runtime-state.json")
 	state, err := AcceptLinuxLinkRuntimePlan(runtimeStatePath, deviceStatePath, &envelope, &set,
-		nil, artifactRaw, now)
+		nil, nil, artifactRaw, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestLinuxLinkRuntimeStateCommitsOnlyFromDurableDeviceLKG(t *testing.T) {
 	otherEnvelope := envelope
 	otherEnvelope.Payload.DeviceID = "other-device"
 	if _, err := AcceptLinuxLinkRuntimePlan(runtimeStatePath, deviceStatePath, &otherEnvelope, &set,
-		nil, artifactRaw, now); err == nil {
+		nil, nil, artifactRaw, now); err == nil {
 		t.Fatal("未持久化的候选 Device view 进入 runtime state")
 	}
 	after, _ := os.ReadFile(runtimeStatePath)
@@ -96,7 +96,7 @@ func TestLinuxLinkRuntimeStateRejectsDeviceStateWithoutFormalEnrollment(t *testi
 		t.Fatal(err)
 	}
 	_, err = AcceptLinuxLinkRuntimePlan(filepath.Join(directory, "runtime.json"), deviceStatePath,
-		&envelope, &set, nil, artifactRaw, time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC))
+		&envelope, &set, nil, nil, artifactRaw, time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC))
 	if err == nil || !strings.Contains(err.Error(), "enrollment installation") {
 		t.Fatalf("未正式 enrollment 的 Device 生成 runtime LKG: %v", err)
 	}

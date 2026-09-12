@@ -69,7 +69,7 @@ func TestLinuxLinkRuntimePlanIsDrivenByCertifiedViewArtifactAndGenerationFloor(t
 		}},
 	}
 	raw := bindRuntimeArtifactToEnvelope(t, &envelope, &set, key, artifact)
-	plan, err := BuildLinuxLinkRuntimePlan(&envelope, &set, nil, raw,
+	plan, err := BuildLinuxLinkRuntimePlan(&envelope, &set, nil, nil, raw,
 		[]InstalledSecretV1{{SecretID: "credential-a"}}, now, map[string]int64{"edge-a": 1})
 	if err != nil {
 		t.Fatal(err)
@@ -81,12 +81,12 @@ func TestLinuxLinkRuntimePlanIsDrivenByCertifiedViewArtifactAndGenerationFloor(t
 		plan.Actions[0].DialCandidates[1].ListenerGeneration != 1 {
 		t.Fatalf("unexpected Linux runtime plan: %#v", plan)
 	}
-	if _, err := BuildLinuxLinkRuntimePlan(&envelope, &set, nil, raw,
+	if _, err := BuildLinuxLinkRuntimePlan(&envelope, &set, nil, nil, raw,
 		[]InstalledSecretV1{{SecretID: "credential-a"}}, now, map[string]int64{"edge-a": 3}); err == nil {
 		t.Fatal("已见 generation floor 之下的 endpoint 被恢复")
 	}
 	tampered := bytes.Replace(raw, []byte("service-a"), []byte("service-b"), 1)
-	if _, err := BuildLinuxLinkRuntimePlan(&envelope, &set, nil, tampered,
+	if _, err := BuildLinuxLinkRuntimePlan(&envelope, &set, nil, nil, tampered,
 		[]InstalledSecretV1{{SecretID: "credential-a"}}, now, nil); err == nil {
 		t.Fatal("未被 Device view content hash 承诺的 LinkIntent artifact 被接受")
 	}
@@ -108,7 +108,7 @@ func TestLinuxLinkRuntimeRejectsLocalResponsibilityOrControlEscalation(t *testin
 		}},
 	}
 	raw := bindRuntimeArtifactToEnvelope(t, &envelope, &set, key, artifact)
-	_, err := BuildLinuxLinkRuntimePlan(&envelope, &set, nil, raw,
+	_, err := BuildLinuxLinkRuntimePlan(&envelope, &set, nil, nil, raw,
 		[]InstalledSecretV1{{SecretID: "credential-a"}}, time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC), nil)
 	if err == nil || !strings.Contains(err.Error(), "ControlSet") {
 		t.Fatalf("本机参数把普通 Device 提升为 control: %v", err)

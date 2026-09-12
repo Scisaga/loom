@@ -19,3 +19,7 @@ func cmdClientSyncV2([]string) error {
 func cmdClientReportV2([]string) error {
 	return errors.New("Linux v2 private device_report 命令只能在 Linux 客户端运行")
 }
+
+func cmdClientAcceptV2Runtime([]string) error {
+	return errors.New("Linux v2 runtime 命令只能在 Linux 客户端运行")
+}

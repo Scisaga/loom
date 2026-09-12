@@ -71,4 +71,7 @@ func TestLinuxPrivateV2CommandsRequirePinnedAuthorityInputs(t *testing.T) {
 			t.Fatalf("%v 缺 authority 输入未失败关闭: %v", args, err)
 		}
 	}
+	if err := cmdClient([]string{"accept-v2-runtime"}); err == nil || !strings.Contains(err.Error(), "用法") {
+		t.Fatalf("accept-v2-runtime 缺 certified artifact/ControlSet 未失败关闭: %v", err)
+	}
 }

@@ -286,6 +286,72 @@ func cmdClientReportV2(args []string) error {
 	return nil
 }
 
+func cmdClientAcceptV2Runtime(args []string) error {
+	fs := flag.NewFlagSet("client accept-v2-runtime", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	stateDirectory := fs.String("state-dir", "/var/lib/loom/client-v2", "root-owned v2 identity/LKG 目录")
+	runtimeStatePath := fs.String("runtime-state", "", "root-only runtime plan/floors LKG")
+	artifactPath := fs.String("link-intents", "", "current Device view 承诺的 exact LinkIntent artifact")
+	controlSetPath := fs.String("control-set", "", "current exact ControlSetV1")
+	previousControlSetPath := fs.String("previous-control-set", "", "joint Head 所需 previous exact ControlSetV1")
+	peerDirectoryPath := fs.String("control-peer-directory", "", "control LinkIntent 所需 private directory object")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *artifactPath == "" || *controlSetPath == "" {
+		return errors.New("用法: loom client accept-v2-runtime -link-intents <json> -control-set <json> [-previous-control-set <json>] [-control-peer-directory <json>] [-state-dir <dir>] [-runtime-state <path>]")
+	}
+	if *stateDirectory == "" || !filepath.IsAbs(*stateDirectory) || filepath.Clean(*stateDirectory) != *stateDirectory {
+		return errors.New("[D131 Linux runtime] state-dir 必须是规范绝对路径")
+	}
+	if *runtimeStatePath == "" {
+		*runtimeStatePath = filepath.Join(*stateDirectory, "link-runtime-state.json")
+	}
+	if !filepath.IsAbs(*runtimeStatePath) || filepath.Clean(*runtimeStatePath) != *runtimeStatePath {
+		return errors.New("[D131 Linux runtime] runtime-state 必须是规范绝对路径")
+	}
+	var set wire.ControlSetV1
+	if err := readExactLinuxV2JSON(*controlSetPath, 1<<20, &set); err != nil {
+		return err
+	}
+	var previousSet *wire.ControlSetV1
+	if *previousControlSetPath != "" {
+		var decoded wire.ControlSetV1
+		if err := readExactLinuxV2JSON(*previousControlSetPath, 1<<20, &decoded); err != nil {
+			return err
+		}
+		previousSet = &decoded
+	}
+	var peerDirectory *wire.ControlPeerDirectoryPrivateObjectV1
+	if *peerDirectoryPath != "" {
+		var decoded wire.ControlPeerDirectoryPrivateObjectV1
+		if err := readExactLinuxV2JSON(*peerDirectoryPath, 4<<20, &decoded); err != nil {
+			return err
+		}
+		peerDirectory = &decoded
+	}
+	artifactRaw, err := readV2RegularFile(*artifactPath, 4<<20)
+	if err != nil {
+		return err
+	}
+	statePath := filepath.Join(*stateDirectory, "state.json")
+	deviceStore, err := clientv2.Open(statePath)
+	if err != nil {
+		return err
+	}
+	envelope := deviceStore.Envelope()
+	if envelope == nil {
+		return errors.New("[D131 Linux runtime] durable Device LKG 缺失")
+	}
+	runtimeState, err := clientv2.AcceptLinuxLinkRuntimePlan(*runtimeStatePath, statePath,
+		envelope, &set, previousSet, peerDirectory, artifactRaw, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	fmt.Println("✓ Linux v2 LinkIntent 已验收并原子替换 runtime LKG")
+	fmt.Printf("  generation   device=%d artifact=%d actions=%d\n",
+		runtimeState.Plan.DeviceGeneration, runtimeState.Plan.ArtifactGeneration,
+		len(runtimeState.Plan.Actions))
+	return nil
+}
+
 func addLinuxPrivateDeviceFlags(fs *flag.FlagSet, flags *linuxPrivateDeviceFlags) {
 	flags.stateDirectory = "/var/lib/loom/client-v2"
 	flags.timeout = 30 * time.Second
