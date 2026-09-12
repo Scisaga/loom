@@ -171,29 +171,46 @@ func waitLocalTCP(t *testing.T, address string, timeout time.Duration) {
 
 func socks5ConnectIPv4(t *testing.T, proxyAddress string, address [4]byte, port uint16) net.Conn {
 	t.Helper()
+	connection, reply, err := socks5ConnectIPv4Result(proxyAddress, address, port)
+	if err != nil || reply != 0 {
+		if connection != nil {
+			_ = connection.Close()
+		}
+		t.Fatalf("sing-box SOCKS CONNECT 失败:reply=%d err=%v", reply, err)
+	}
+	return connection
+}
+
+func socks5ConnectIPv4Result(proxyAddress string, address [4]byte, port uint16) (net.Conn, byte, error) {
 	connection, err := net.DialTimeout("tcp4", proxyAddress, 2*time.Second)
 	if err != nil {
-		t.Fatal(err)
+		return nil, 0xff, err
 	}
 	_ = connection.SetDeadline(time.Now().Add(5 * time.Second))
 	if _, err := connection.Write([]byte{5, 1, 0}); err != nil {
 		_ = connection.Close()
-		t.Fatal(err)
+		return nil, 0xff, err
 	}
 	var greeting [2]byte
 	if _, err := io.ReadFull(connection, greeting[:]); err != nil || greeting != [2]byte{5, 0} {
 		_ = connection.Close()
-		t.Fatalf("sing-box SOCKS greeting 失败:%v", err)
+		if err == nil {
+			err = errors.New("sing-box SOCKS greeting 无效")
+		}
+		return nil, 0xff, err
 	}
 	request := []byte{5, 1, 0, 1, address[0], address[1], address[2], address[3], byte(port >> 8), byte(port)}
 	if _, err := connection.Write(request); err != nil {
 		_ = connection.Close()
-		t.Fatal(err)
+		return nil, 0xff, err
 	}
 	var response [4]byte
-	if _, err := io.ReadFull(connection, response[:]); err != nil || response[0] != 5 || response[1] != 0 {
+	if _, err := io.ReadFull(connection, response[:]); err != nil || response[0] != 5 {
 		_ = connection.Close()
-		t.Fatalf("sing-box SOCKS CONNECT 失败:reply=%d err=%v", response[1], err)
+		if err == nil {
+			err = errors.New("sing-box SOCKS reply version 无效")
+		}
+		return nil, response[1], err
 	}
 	var addressBytes int
 	switch response[3] {
@@ -205,17 +222,21 @@ func socks5ConnectIPv4(t *testing.T, proxyAddress string, address [4]byte, port 
 		var length [1]byte
 		if _, err := io.ReadFull(connection, length[:]); err != nil {
 			_ = connection.Close()
-			t.Fatal(err)
+			return nil, response[1], err
 		}
 		addressBytes = int(length[0])
 	default:
 		_ = connection.Close()
-		t.Fatal("sing-box SOCKS reply address type 无效")
+		return nil, response[1], errors.New("sing-box SOCKS reply address type 无效")
 	}
 	if _, err := io.CopyN(io.Discard, connection, int64(addressBytes+2)); err != nil {
 		_ = connection.Close()
-		t.Fatal(err)
+		return nil, response[1], err
+	}
+	if response[1] != 0 {
+		_ = connection.Close()
+		return nil, response[1], nil
 	}
 	_ = connection.SetDeadline(time.Time{})
-	return connection
+	return connection, 0, nil
 }

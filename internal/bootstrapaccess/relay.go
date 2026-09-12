@@ -42,29 +42,40 @@ func (m *Manager) RelayTCP(ctx context.Context, verified wire.VerifiedBootstrapC
 // 使用；保持它不导出可避免调用方绕开 CredentialRegistry（D131）。
 func (s *Session) relayTCP(ctx context.Context, requestedNetwork, requestedAddress string,
 	incoming net.Conn, dial DialContext) error {
+	defer s.Close()
+	return s.relayStreamTCP(ctx, requestedNetwork, requestedAddress, incoming, dial)
+}
+
+// relayStreamTCP 允许一个已经打开的 outer capability session 承载 HY2 stream；
+// outer session 的 owner 在 QUIC connection 关闭时统一 Close（D131）。
+func (s *Session) relayStreamTCP(ctx context.Context, requestedNetwork, requestedAddress string,
+	incoming net.Conn, dial DialContext) error {
 	if incoming == nil {
 		return errors.New("[D131 capability] relay context/connection/dialer 缺失")
 	}
 	defer incoming.Close()
 	if ctx == nil || dial == nil {
+		relayHandshakeFailure(incoming)
 		return errors.New("[D131 capability] relay context/connection/dialer 缺失")
 	}
-	session := s
-	defer session.Close()
-	if err := session.AuthorizeDial(requestedNetwork, requestedAddress); err != nil {
+	if err := s.AuthorizeDial(requestedNetwork, requestedAddress); err != nil {
+		relayHandshakeFailure(incoming)
 		return err
 	}
-	remaining, err := session.remaining()
+	remaining, err := s.remaining()
 	if err != nil {
+		relayHandshakeFailure(incoming)
 		return err
 	}
 	relayContext, cancel := context.WithTimeout(ctx, remaining)
 	defer cancel()
 	outgoing, err := dial(relayContext, requestedNetwork, requestedAddress)
 	if err != nil {
+		relayHandshakeFailure(incoming)
 		return fmt.Errorf("[D131 capability] Enrollment tuple 拨号失败: %w", err)
 	}
 	if outgoing == nil {
+		relayHandshakeFailure(incoming)
 		return errors.New("[D131 capability] Enrollment tuple 拨号返回空连接")
 	}
 	defer outgoing.Close()
@@ -73,10 +84,17 @@ func (s *Session) relayTCP(ctx context.Context, requestedNetwork, requestedAddre
 	// 交给操作系统；测试时钟和受保护时钟不必等于主机 wall clock（D131）。
 	socketDeadline := time.Now().Add(remaining)
 	if err := incoming.SetDeadline(socketDeadline); err != nil {
+		relayHandshakeFailure(incoming)
 		return fmt.Errorf("[D131 capability] 设置 ingress deadline 失败: %w", err)
 	}
 	if err := outgoing.SetDeadline(socketDeadline); err != nil {
+		relayHandshakeFailure(incoming)
 		return fmt.Errorf("[D131 capability] 设置 Enrollment deadline 失败: %w", err)
+	}
+	if handshaker, ok := incoming.(relayHandshakeSuccess); ok {
+		if err := handshaker.HandshakeSuccess(); err != nil {
+			return fmt.Errorf("[D131 capability] transport success response 失败: %w", err)
+		}
 	}
 
 	stop := context.AfterFunc(relayContext, func() {
@@ -91,12 +109,12 @@ func (s *Session) relayTCP(ctx context.Context, requestedNetwork, requestedAddre
 	}
 	results := make(chan transferResult, 2)
 	go func() {
-		err := session.copyAccounted(outgoing, incoming)
+		err := s.copyAccounted(outgoing, incoming)
 		closeWrite(outgoing)
 		results <- transferResult{direction: "client_to_enrollment", err: err}
 	}()
 	go func() {
-		err := session.copyAccounted(incoming, outgoing)
+		err := s.copyAccounted(incoming, outgoing)
 		closeWrite(incoming)
 		results <- transferResult{direction: "enrollment_to_client", err: err}
 	}()
@@ -173,6 +191,20 @@ func (s *Session) copyAccounted(destination io.Writer, source io.Reader) error {
 
 type closeWriter interface {
 	CloseWrite() error
+}
+
+type relayHandshakeSuccess interface {
+	HandshakeSuccess() error
+}
+
+type relayHandshakeFailureWriter interface {
+	HandshakeFailure() error
+}
+
+func relayHandshakeFailure(connection net.Conn) {
+	if handshaker, ok := connection.(relayHandshakeFailureWriter); ok {
+		_ = handshaker.HandshakeFailure()
+	}
 }
 
 func closeWrite(connection io.Writer) {

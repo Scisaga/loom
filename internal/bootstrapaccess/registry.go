@@ -107,6 +107,24 @@ func (registry *CredentialRegistry) openTrojanSession(manager *Manager,
 	return session, err
 }
 
+// openHysteria2Session 与 Trojan 路径共享同一个撤销竞态边界，但 HY2 的认证
+// header 能直接携带 transport credential，不需要协议 SHA-224 key（D131）。
+func (registry *CredentialRegistry) openHysteria2Session(manager *Manager,
+	credential, sessionID string) (*Session, error) {
+	if registry == nil || manager == nil || credential == "" {
+		return nil, errors.New("[D131 capability] Hysteria2 credential/session manager 缺失")
+	}
+	registry.mu.RLock()
+	binding, ok := registry.byCredential[credential]
+	if !ok {
+		registry.mu.RUnlock()
+		return nil, errors.New("[D131 capability] Hysteria2 transport credential 无效")
+	}
+	session, err := manager.OpenSession(binding.verified, sessionID, registry.ingressSetHash)
+	registry.mu.RUnlock()
+	return session, err
+}
+
 func trojanCredentialKey(credential string) [trojanKeyLength]byte {
 	digest := sha256.Sum224([]byte(credential))
 	var key [trojanKeyLength]byte

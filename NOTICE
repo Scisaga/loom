@@ -7,3 +7,7 @@ See LICENSE for the full terms.
 Third-party components retain their own copyright notices and licenses.
 Windows distributions include these notices in the licenses directory and
 inside windows-dataplane.zip. The Loom license does not replace them.
+
+The server bootstrap ingress includes the SagerNet fork of quic-go, based on
+quic-go by the quic-go authors and Google, Inc., under the MIT License. See
+third_party/licenses/SAGERNET-QUIC-GO-LICENSE.
