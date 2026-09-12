@@ -14,6 +14,29 @@ temporary=$(mktemp -d)
 trap 'rm -rf "$temporary"' EXIT HUP INT TERM
 
 go test ./internal/wire ./internal/clientv2 ./internal/clientcomponent ./internal/controlplane ./internal/deploy -count=1
+
+# 在无宿主权限、仅 loopback 的 user+network namespace 中启动固定版本
+# sing-box，真实覆盖 TUN 域名恢复、DNS/HTTP/TLS 与停止生命周期。
+tun_executable=${LOOM_TUN_ROUTING_EXECUTABLE:-}
+if [ -z "$tun_executable" ]; then
+    tun_executable=$(command -v sing-box)
+fi
+test -x "$tun_executable"
+command -v unshare >/dev/null
+command -v ip >/dev/null
+tun_test="$temporary/clientruntime-tun.test"
+go test -c -o "$tun_test" ./internal/clientruntime
+chmod 0755 "$temporary" "$tun_test"
+if [ "$(id -u)" -eq 0 ]; then
+    LOOM_TUN_ROUTING_EXECUTABLE="$tun_executable" \
+        unshare --user --map-users=65534,0,1 --map-groups=65534,0,1 \
+        --setuid 0 --setgid 0 --net "$tun_test" \
+        -test.run '^TestOfficialTUNServiceRouting$'
+else
+    LOOM_TUN_ROUTING_EXECUTABLE="$tun_executable" \
+        unshare -Urn "$tun_test" -test.run '^TestOfficialTUNServiceRouting$'
+fi
+
 for architecture in amd64 arm64; do
     CGO_ENABLED=0 GOOS=linux GOARCH="$architecture" go build -trimpath -o "$temporary/loom-linux-$architecture" ./cmd/loom
     test -s "$temporary/loom-linux-$architecture"
@@ -50,7 +73,9 @@ evidence = {
         "loom/internal/clientcomponent",
         "loom/internal/controlplane",
         "loom/internal/deploy",
+        "loom/internal/clientruntime:TestOfficialTUNServiceRouting(namespace)",
     ],
+    "network_namespace_tun": True,
     "scope": "development_only",
     "real_host_acceptance": False,
     "gate_b": False,

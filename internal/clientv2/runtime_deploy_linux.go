@@ -50,10 +50,7 @@ type LinuxRuntimeInstallStateV1 struct {
 func PrepareLinuxRuntimeDeployment(installStatePath, deviceStatePath, runtimeStatePath string,
 	linkIntentRaw, runtimeRaw []byte,
 ) (*deploy.Plan, error) {
-	if installStatePath == "" || deviceStatePath == "" || runtimeStatePath == "" ||
-		filepath.Base(installStatePath) != LinuxRuntimeInstallStateName ||
-		filepath.Dir(installStatePath) != filepath.Dir(deviceStatePath) ||
-		!filepath.IsAbs(installStatePath) || filepath.Clean(installStatePath) != installStatePath {
+	if runtimeStatePath == "" || validateLinuxRuntimeInstallPaths(installStatePath, deviceStatePath) != nil {
 		return nil, errors.New("[D131 Linux runtime] install/device/runtime state path 无效")
 	}
 	if err := secureEnrollmentDirectory(filepath.Dir(installStatePath)); err != nil {
@@ -153,6 +150,55 @@ func PrepareLinuxRuntimeDeployment(installStatePath, deviceStatePath, runtimeSta
 	}
 	plan.Files[installStatePath] = string(nextBody)
 	return plan, nil
+}
+
+// PrepareLinuxRuntimeDecommission 只接受 durable Device tombstone，并只删除
+// 上一次 runtime install inventory 记录的固定 v2 文件及 inventory 自身。
+// deploy.Script 会在同一 CAS/备份/回滚事务中先停 unit 再删除文件。
+func PrepareLinuxRuntimeDecommission(installStatePath, deviceStatePath string) (*deploy.Plan, error) {
+	if err := validateLinuxRuntimeInstallPaths(installStatePath, deviceStatePath); err != nil {
+		return nil, err
+	}
+	if err := secureEnrollmentDirectory(filepath.Dir(installStatePath)); err != nil {
+		return nil, err
+	}
+	deviceStore, err := Open(deviceStatePath)
+	if err != nil {
+		return nil, err
+	}
+	envelope := deviceStore.Envelope()
+	if envelope == nil || (envelope.Payload.State != "revoked" && envelope.Payload.State != "decommissioned") ||
+		envelope.Payload.Active != nil || envelope.Payload.Tombstone == nil {
+		return nil, errors.New("[D131 Linux runtime] 只有 certified Device tombstone 可触发 runtime 下线")
+	}
+	plan := &deploy.Plan{Node: envelope.Payload.DeviceID, Files: map[string]string{},
+		Triggers: map[string][]string{}}
+	previous, previousBody, err := readLinuxRuntimeInstallState(installStatePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return plan, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if previous.ClusterID != envelope.Payload.ClusterID || previous.DeviceID != envelope.Payload.DeviceID ||
+		validateLinuxRuntimeAuthorityAdvance(previous.AuthorityFloors, deviceStore.Floors()) != nil {
+		return nil, errors.New("[D106 Linux runtime] tombstone 与 installed runtime authority 分叉")
+	}
+	plan.Remove = append(append([]string(nil), previous.InstalledFiles...), installStatePath)
+	sort.Strings(plan.Remove)
+	sum := sha256.Sum256(previousBody)
+	plan.InventoryGuard = &deploy.InventoryGuard{Path: installStatePath, SHA256: hex.EncodeToString(sum[:])}
+	return plan, nil
+}
+
+func validateLinuxRuntimeInstallPaths(installStatePath, deviceStatePath string) error {
+	if installStatePath == "" || deviceStatePath == "" ||
+		filepath.Base(installStatePath) != LinuxRuntimeInstallStateName ||
+		filepath.Dir(installStatePath) != filepath.Dir(deviceStatePath) ||
+		!filepath.IsAbs(installStatePath) || filepath.Clean(installStatePath) != installStatePath {
+		return errors.New("[D131 Linux runtime] install/device state path 无效")
+	}
+	return nil
 }
 
 func bindLinuxRuntimeArtifactRef(artifact *wire.LinuxRuntimeArtifactV1, raw []byte,

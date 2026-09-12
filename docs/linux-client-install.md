@@ -219,13 +219,22 @@ credentials 注入；密钥不会进入命令行、公开 artifact 或输出。
 WG → sing-box → Agent 的顺序替换、启动并验证；任一步失败会恢复旧文件和旧 unit 状态。
 installed inventory 以 CAS 保护，删除仅限该 inventory 中的固定 v2 路径。v2 使用
 `/etc/loom/{sing-box,agent}/v2/`、`lmv2-*` WireGuard interface 及
-`loom-client-v2-{sing-box,agent}.service`，不会覆盖或停用 v1 路径；Gate B 前两套可并存。
+`loom-client-v2-{sing-box,agent}.service`，不会覆盖或停用 v1 路径。若新旧监听资源冲突，
+v2 启动验证失败并恢复旧状态；Gate B 前不会自动退役 v1。
+
+Device view 进入 certified `revoked` 或 `decommissioned` tombstone 后，同一命令不再读取已被
+清除的 runtime/secret artifact。`-dry-run` 只展示受影响的旧 v2 inventory；`-apply` 在相同
+CAS/回滚事务中先停服务，再删除该 inventory 内的固定 v2 文件和 inventory 自身。active Device
+不能调用这条下线路径，terminal Device 也不能靠命令行重新注入 runtime 或 authority。
 
 开发门禁可一键运行，并把不含域名、IP、Device ID、证书或 secret 的结构化结果写到忽略目录：
 
 ```bash
 scripts/test-linux-v2-development.sh
 ```
+
+该入口要求固定的 sing-box 1.11.4、`unshare` 与 `ip`；它会在隔离的 user/network namespace
+中实际启动 TUN 数据面，覆盖域名恢复、UDP DNS、HTTP/TLS 与进程停止，再执行双架构构建。
 
 该结果只证明 Linux 双架构可构建及 wire/client/control 单元与集成套件通过，字段明确标记
 `real_host_acceptance=false`、`gate_b=false`；它不能替代 #12 的干净主机、真实网络、职责流量、

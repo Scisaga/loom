@@ -3189,6 +3189,9 @@ artifact 只能写固定的 sing-box/Agent/WireGuard v2 目标，内容仍保留
 `${secret:...}` 引用。Linux 在本机 hydrate 后检查 JSON/WireGuard hook、certified FQDN/port/TLS 与
 TUN/mixed 语义，再通过受 inventory CAS 保护的 staging/precheck/install/restart/verify/rollback
 事务启用。生成的 systemd unit 固定在客户端代码中，服务端 artifact 无权下发任意 ExecStart。
+Device view 进入 `revoked`/`decommissioned` tombstone 后，Linux 只按上次受保护 inventory 做
+CAS 约束的事务下线；先停对应 v2 unit，再删除自身安装过的固定路径。terminal view 已清除的
+artifact/secret 不得由命令行补回，active view 也不能调用 tombstone 下线入口。
 
 ~~~text
 ListenerGenerationV2               # public；同一 logical endpoint 的一个可拨物理代次

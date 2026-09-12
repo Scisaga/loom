@@ -363,6 +363,34 @@ func cmdClientAcceptV2Runtime(args []string) error {
 	if envelope == nil {
 		return errors.New("[D131 Linux runtime] durable Device LKG 缺失")
 	}
+	if envelope.Payload.State != "active" {
+		if *artifactPath != "" || *runtimeArtifactPath != "" || *peerDirectoryPath != "" ||
+			*controlSetPath != "" || *previousControlSetPath != "" {
+			return errors.New("[D131 Linux runtime] terminal Device 下线不接受 runtime/authority 外部输入")
+		}
+		if !*applyRuntime && !*dryRun {
+			return errors.New("[D131 Linux runtime] Device 已 terminal；使用 -dry-run 或 -apply 收敛本机 runtime")
+		}
+		plan, err := clientv2.PrepareLinuxRuntimeDecommission(*installStatePath, statePath)
+		if err != nil {
+			return err
+		}
+		if *dryRun {
+			fmt.Printf("  dry-run      terminal=%s remove=%d services=%d（未改动服务）\n",
+				envelope.Payload.State, len(plan.Remove), len(plan.Services()))
+			return nil
+		}
+		if len(plan.Remove) == 0 {
+			fmt.Printf("✓ Linux v2 runtime 已处于下线状态（Device %s）\n", envelope.Payload.State)
+			return nil
+		}
+		runID := "client-v2-terminal-" + time.Now().UTC().Format("20060102T150405.000000000Z")
+		if err := runScript(envelope.Payload.DeviceID, deploy.Script(plan, runID), "", true, *timeout); err != nil {
+			return err
+		}
+		fmt.Printf("✓ Linux v2 runtime 已按 certified Device %s 事务下线\n", envelope.Payload.State)
+		return nil
+	}
 	var artifactRaw []byte
 	if *artifactPath != "" {
 		artifactRaw, err = readV2RegularFile(*artifactPath, 4<<20)

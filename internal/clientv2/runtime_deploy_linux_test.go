@@ -121,6 +121,66 @@ func TestLinuxRuntimeWireGuardConfigRejectsHooksAndIncompleteKeySections(t *test
 	}
 }
 
+func TestPrepareLinuxRuntimeDecommissionRequiresCertifiedTombstoneAndRemovesOnlyInventory(t *testing.T) {
+	statePath, runtimeStatePath, installStatePath, linkRaw, runtimeRaw := linuxRuntimeDeploymentFixture(t)
+	activePlan, err := PrepareLinuxRuntimeDeployment(installStatePath, statePath, runtimeStatePath,
+		linkRaw, runtimeRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PrepareLinuxRuntimeDecommission(installStatePath, statePath); err == nil {
+		t.Fatal("active Device 被允许下线 runtime")
+	}
+	var installed LinuxRuntimeInstallStateV1
+	if _, err := wire.DecodeStrict([]byte(activePlan.Files[installStatePath]),
+		maximumLinuxRuntimeInstallStateBytes, &installed); err != nil {
+		t.Fatal(err)
+	}
+	if err := persistProtectedCanonical(installStatePath, &installed); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := *store.Envelope()
+	set, configKey := clientControlSet(t)
+	revoked := revokeClientEnvelope(t, current, &set, configKey)
+	delivery := wire.DeviceConfigDeliveryV1{
+		Schema: 1, ClusterID: current.Payload.ClusterID, DeviceID: current.Payload.DeviceID,
+		Updates: []wire.DeviceConfigUpdateV1{
+			{Schema: 1, Envelope: current, ControlSet: set},
+			{Schema: 1, Envelope: revoked, ControlSet: set},
+		},
+	}
+	if _, err := store.AcceptDeviceConfigDeliveryWithArtifacts(&delivery, nil, nil,
+		current.Payload.DeviceID, current.Payload.Active.IdentitySPKIHash, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PrepareLinuxRuntimeDecommission(installStatePath, statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.InventoryGuard == nil || plan.InventoryGuard.Absent || plan.InventoryGuard.SHA256 == "" ||
+		!containsString(plan.Remove, installStatePath) ||
+		!containsString(plan.Remove, linuxV2SingBoxConfigPath) ||
+		!containsString(plan.Remove, linuxV2AgentConfigPath) ||
+		!containsString(plan.Remove, linuxV2SingBoxUnitPath) ||
+		!containsString(plan.Remove, linuxV2AgentUnitPath) {
+		t.Fatalf("terminal runtime transaction 不完整: remove=%v guard=%+v", plan.Remove, plan.InventoryGuard)
+	}
+	for _, path := range plan.Remove {
+		if path != installStatePath && !validLinuxV2InstalledPath(path) {
+			t.Fatalf("terminal runtime 删除越出自身 inventory: %s", path)
+		}
+	}
+	if _, err := PrepareLinuxRuntimeDeployment(installStatePath, statePath, runtimeStatePath,
+		linkRaw, runtimeRaw); err == nil {
+		t.Fatal("terminal Device 仍可准备 active runtime")
+	}
+}
+
 func linuxRuntimeDeploymentFixture(t *testing.T) (string, string, string, []byte, []byte) {
 	t.Helper()
 	now := time.Date(2026, 9, 12, 9, 30, 0, 0, time.UTC)
