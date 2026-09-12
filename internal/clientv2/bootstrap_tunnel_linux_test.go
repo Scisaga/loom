@@ -72,6 +72,20 @@ func TestLinuxBootstrapCandidatesPreferHY2AndCurrentPreferred(t *testing.T) {
 	}
 }
 
+func TestLinuxBootstrapCapabilityUsesWireTCPForInnerTLS(t *testing.T) {
+	body := wire.BootstrapTunnelCapabilityBodyV1{
+		AllowedIngressSetHash:  bootstrapTunnelTestHash(0x40),
+		AllowedInsideTransport: "tcp",
+	}
+	if !linuxBootstrapCapabilityBindsCatalog(body, body.AllowedIngressSetHash) {
+		t.Fatal("合法 wire TCP capability 被 Linux bootstrap dialer 拒绝")
+	}
+	body.AllowedInsideTransport = "tls_tcp"
+	if linuxBootstrapCapabilityBindsCatalog(body, body.AllowedIngressSetHash) {
+		t.Fatal("wire schema 不存在的 tls_tcp 被 Linux bootstrap dialer 接受")
+	}
+}
+
 func TestLinuxBootstrapProbeRunsOnceInParallelAndKeepsHY2Preference(t *testing.T) {
 	candidates := []linuxBootstrapCandidate{
 		{selection: LinuxBootstrapSelection{EndpointID: "hy2-b", Transport: "hysteria2", ListenerGeneration: 1}, hintRank: 2},

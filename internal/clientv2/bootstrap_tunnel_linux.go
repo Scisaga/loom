@@ -109,8 +109,7 @@ func NewLinuxBootstrapTunnelDialer(catalog *wire.BootstrapEndpointCatalogV1,
 		return nil, err
 	}
 	body := verified.Body()
-	if body.AllowedIngressSetHash != catalog.BootstrapIngressSetHash ||
-		body.AllowedInsideTransport != "tls_tcp" {
+	if !linuxBootstrapCapabilityBindsCatalog(body, catalog.BootstrapIngressSetHash) {
 		return nil, errors.New("[D131 Linux bootstrap] capability 未绑定 catalog 或 inner TLS/TCP")
 	}
 	destination, err := capabilityDestination(body)
@@ -132,6 +131,13 @@ func NewLinuxBootstrapTunnelDialer(catalog *wire.BootstrapEndpointCatalogV1,
 			return quic.DialAddr(ctx, address, tlsConfig, config)
 		},
 	}, nil
+}
+
+func linuxBootstrapCapabilityBindsCatalog(body wire.BootstrapTunnelCapabilityBodyV1,
+	ingressSetHash string) bool {
+	// Capability 只授权 ingress 转发 TCP；Enrollment 客户端随后在这条受限 TCP
+	// stream 内独立强制 TLS。wire schema 从未定义 tls_tcp 枚举（D131）。
+	return body.AllowedIngressSetHash == ingressSetHash && body.AllowedInsideTransport == "tcp"
 }
 
 // probeCandidates 对当前 catalog 的授权入口只做一轮并行、无 bearer 的 outer
