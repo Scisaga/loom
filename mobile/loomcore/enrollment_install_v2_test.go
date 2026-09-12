@@ -45,6 +45,81 @@ func TestPrepareAndroidInstalledSecretBindsExactReleasedEnvelope(t *testing.T) {
 	}
 }
 
+func TestPrepareAndroidInstalledConfigBindsExactCertifiedRef(t *testing.T) {
+	config, err := wire.MarshalCanonical(bundleWire{Owner: "demo-android", Files: map[string]string{
+		"sing-box/config.json": `{"log":{"level":"warn"}}`,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	contentHash, _ := wire.DeviceConfigArtifactContentHash(config)
+	ref := wire.DeviceConfigArtifactRefV1{
+		ArtifactID: "android-runtime", Generation: 1, Platform: "android",
+		MediaType: "application/vnd.loom.config+json", RenderContractID: "android-runtime-v1",
+		SizeBytes: int64(len(config)), ContentHash: contentHash,
+	}
+	refJSON, _ := wire.MarshalCanonical(ref)
+	installedJSON, err := PrepareAndroidInstalledConfigV2(refJSON, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var installed androidInstalledConfigV1
+	if err := decodeExactAndroidV2(installedJSON, 1<<20, &installed, "installed config"); err != nil {
+		t.Fatal(err)
+	}
+	if installed.ContentHash != ref.ContentHash || !bytes.Equal(installed.Config, config) {
+		t.Fatalf("installed config 未绑定 exact ref/bytes: %+v", installed)
+	}
+	if _, err := PrepareAndroidInstalledConfigV2(refJSON,
+		append(append([]byte(nil), config...), '\n')); err == nil {
+		t.Fatal("非 canonical config 被接受")
+	}
+	mutated := ref
+	mutated.ContentHash = wire.HashRaw("android-config-test", []byte("other"))
+	mutatedJSON, _ := wire.MarshalCanonical(mutated)
+	if _, err := PrepareAndroidInstalledConfigV2(mutatedJSON, config); err == nil {
+		t.Fatal("content hash 不匹配的 config 被接受")
+	}
+}
+
+func TestAndroidCompletionConfigPlanIsPinnedAndBounded(t *testing.T) {
+	config := []byte(`{"owner":"demo-android"}`)
+	contentHash, _ := wire.DeviceConfigArtifactContentHash(config)
+	ref := wire.DeviceConfigArtifactRefV1{
+		ArtifactID: "android-runtime", Generation: 1, Platform: "android",
+		MediaType: "application/vnd.loom.config+json", RenderContractID: "android-runtime-v1",
+		SizeBytes: int64(len(config)), ContentHash: contentHash,
+	}
+	_, envelope := androidV2EnvelopeFixtureForArtifacts(t, "demo-android",
+		wire.HashRaw("android-config-plan-test", []byte("identity")), nil,
+		[]wire.DeviceConfigArtifactRefV1{ref})
+	hash := func(value string) string { return wire.HashRaw("android-config-plan-test", []byte(value)) }
+	mirrors := []wire.DistributionMirrorRefV1{
+		{Schema: 1, EndpointID: "mirror-1", DistributionEndpointSetHash: hash("set-1"), ListenerGeneration: 1,
+			BaseURL: "https://mirror-a.example.test:443/distribution/sha256/", ServerName: "mirror-a.example.test",
+			WebPKIProfileRef: "webpki-v1", SPKIPins: []string{hash("pin-1")}, HintRank: 0},
+		{Schema: 1, EndpointID: "mirror-2", DistributionEndpointSetHash: hash("set-2"), ListenerGeneration: 1,
+			BaseURL: "https://mirror-b.example.test:443/distribution/sha256/", ServerName: "mirror-b.example.test",
+			WebPKIProfileRef: "webpki-v1", SPKIPins: []string{hash("pin-2")}, HintRank: 1},
+	}
+	planJSON, err := prepareAndroidCompletionConfigFetchPlan(envelope, mirrors)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plan androidCompletionConfigFetchPlanV1
+	if err := decodeExactAndroidV2(planJSON, 4<<20, &plan, "config fetch plan"); err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Refs) != 1 || !wire.EqualCanonical(plan.Refs[0], ref) || len(plan.Mirrors) != 2 {
+		t.Fatalf("config plan 丢失 exact refs/mirrors: %+v", plan)
+	}
+	nonAndroid := envelope
+	nonAndroid.Payload.Active.ConfigArtifactRefs[0].Platform = "linux-server"
+	if _, err := prepareAndroidCompletionConfigFetchPlan(nonAndroid, mirrors); err == nil {
+		t.Fatal("非 Android config ref 被投影")
+	}
+}
+
 func TestAndroidReleasedArtifactFetchRequiresVerifiedSessionResultAndExactPath(t *testing.T) {
 	ref, envelope, _ := androidSealedSecretFixture(t)
 	envelopeJSON, _ := wire.MarshalCanonical(envelope)
@@ -118,9 +193,31 @@ func TestAndroidEnrollmentInstallationIsSingleReplayableState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	set, envelope := androidV2EnvelopeFixtureFor(t,
+	config, err := wire.MarshalCanonical(bundleWire{Owner: "android-device-1", Files: map[string]string{
+		"sing-box/config.json": `{"log":{"level":"warn"}}`,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configHash, _ := wire.DeviceConfigArtifactContentHash(config)
+	configRef := wire.DeviceConfigArtifactRefV1{
+		ArtifactID: "android-runtime", Generation: 1, Platform: "android",
+		MediaType: "application/vnd.loom.config+json", RenderContractID: "android-runtime-v1",
+		SizeBytes: int64(len(config)), ContentHash: configHash,
+	}
+	configRefJSON, _ := wire.MarshalCanonical(configRef)
+	installedConfigJSON, err := PrepareAndroidInstalledConfigV2(configRefJSON, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var installedConfig androidInstalledConfigV1
+	if err := decodeExactAndroidV2(installedConfigJSON, 1<<20, &installedConfig,
+		"installed config"); err != nil {
+		t.Fatal(err)
+	}
+	set, envelope := androidV2EnvelopeFixtureForArtifacts(t,
 		preflight.DeviceEnrollmentIntentOpening.DeviceEnrollmentIntent.DeviceID,
-		identityHash, []wire.SecretArtifactRefV2{})
+		identityHash, []wire.SecretArtifactRefV2{}, []wire.DeviceConfigArtifactRefV1{configRef})
 	certificateTemplate := &x509.Certificate{SerialNumber: big.NewInt(1),
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
 		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature}
@@ -147,6 +244,7 @@ func TestAndroidEnrollmentInstallationIsSingleReplayableState(t *testing.T) {
 		TransactionStateHash: wire.HashRaw("android-install-test", []byte("transaction")),
 		ResultArtifactHash:   artifactHash, DeviceCertificateHash: certificateHash,
 		ResultArtifact: artifact, Credentials: []androidInstalledSecretV1{},
+		Configs: []androidInstalledConfigV1{installedConfig},
 	}
 	floors, err := wire.VerifyDeviceViewEnvelope(&envelope, &set)
 	if err != nil {
@@ -189,6 +287,14 @@ func TestAndroidEnrollmentInstallationIsSingleReplayableState(t *testing.T) {
 	})
 	if err := ValidateAndroidV2DeviceState(corrupted); err == nil {
 		t.Fatal("certificate hash 被替换的 durable installation 仍通过回读")
+	}
+	installation.DeviceCertificateHash = certificateHash
+	installation.Configs[0].Config = json.RawMessage(`{"owner":"other"}`)
+	corrupted, _ = wire.MarshalCanonical(androidV2DeviceState{
+		Schema: 1, Floors: floors, Envelope: envelope, Enrollment: installation,
+	})
+	if err := ValidateAndroidV2DeviceState(corrupted); err == nil {
+		t.Fatal("config bytes 被替换的 durable installation 仍通过回读")
 	}
 }
 

@@ -2,6 +2,7 @@ package io.github.scisaga.loom.enrollment
 
 import android.content.Context
 import io.github.scisaga.loomcore.Loomcore
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -71,6 +72,34 @@ internal class V2MirrorFetcher(context: Context) {
             )
         }
         return V2PublicArtifacts(proof.copyOf(), catalog.copyOf())
+    }
+
+    /** D124：完成回执只放行 Device view 承诺的 exact Android 制品。 */
+    fun fetchCompletionConfigs(planBytes: ByteArray): ByteArray {
+        val canonicalPlan = Loomcore.canonicalizeV2(planBytes)
+        check(canonicalPlan.contentEquals(planBytes)) { "v2 completion config plan 不规范" }
+        val plan = JSONObject(planBytes.decodeToString())
+        check(plan.getInt("schema") == 1) { "v2 completion config plan schema 无效" }
+        val mirrors = parseMirrors(plan)
+        val refs = plan.getJSONArray("refs")
+        check(refs.length() > 0) { "v2 completion 未承诺 Android config" }
+        val installed = JSONArray()
+        var totalBytes = 0L
+        for (index in 0 until refs.length()) {
+            val refObject = refs.getJSONObject(index)
+            check(refObject.getString("platform") == "android") { "completion 含非 Android config ref" }
+            val size = refObject.getLong("size_bytes")
+            check(size in 1..CONFIG_LIMIT.toLong()) { "completion config 大小超限" }
+            totalBytes += size
+            check(totalBytes <= CONFIG_TOTAL_LIMIT) { "completion configs 超过总预算" }
+            val ref = Loomcore.canonicalizeV2(refObject.toString().encodeToByteArray())
+            var verified: ByteArray? = null
+            fetchObject(mirrors, refObject.getString("content_hash"), size.toInt()) { body ->
+                verified = Loomcore.prepareAndroidInstalledConfigV2(ref, body)
+            }
+            installed.put(JSONObject(checkNotNull(verified).decodeToString()))
+        }
+        return Loomcore.canonicalizeV2(installed.toString().encodeToByteArray())
     }
 
     private fun parseMirrors(plan: JSONObject): List<V2Mirror> =
@@ -175,6 +204,8 @@ internal class V2MirrorFetcher(context: Context) {
         const val CLIENT_PROTOCOL = 2L
         const val PROOF_LIMIT = 16 * 1024 * 1024
         const val CATALOG_LIMIT = 16 * 1024 * 1024
+        const val CONFIG_LIMIT = 16 * 1024 * 1024
+        const val CONFIG_TOTAL_LIMIT = 32L * 1024 * 1024
         const val CONNECT_TIMEOUT_MS = 10_000
         const val READ_TIMEOUT_MS = 20_000
     }

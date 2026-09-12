@@ -123,7 +123,9 @@ func verifyAndroidEnrollmentResultExpected(expected enrollmentv2.EnrollmentProgr
 			errors.New("[D130 Android] verified completion 缺 result artifact")
 	}
 	envelope, set := verified.DeviceViewEnvelope(), verified.ControlSet()
+	resume := verified.ResumeExpected()
 	artifact := *result.ResultArtifact
+	projection.ResumeExpected = &resume
 	projection.DeviceViewEnvelope = &envelope
 	projection.ControlSet = &set
 	projection.ResultArtifact = &artifact

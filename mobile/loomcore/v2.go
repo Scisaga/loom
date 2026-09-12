@@ -211,7 +211,7 @@ func marshalAndroidV2DeviceState(state androidV2DeviceState) ([]byte, error) {
 
 func decodeAndroidV2DeviceState(body []byte) (androidV2DeviceState, error) {
 	var state androidV2DeviceState
-	if err := decodeExactAndroidV2(body, 32<<20, &state, "protected v2 state"); err != nil {
+	if err := decodeExactAndroidV2(body, 64<<20, &state, "protected v2 state"); err != nil {
 		return state, err
 	}
 	if err := validateAndroidV2DeviceState(&state); err != nil {

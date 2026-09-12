@@ -73,6 +73,21 @@ func TestAndroidV2PendingProgressOnlyAdvancesMonotonically(t *testing.T) {
 		"issued_provisional", issuedJSON); err != nil {
 		t.Fatalf("reserved→issued_provisional 被拒绝: %v", err)
 	}
+	completed := issued
+	completed.EnrollmentTransactionStateHash = hash("completed")
+	completedJSON, _ := wire.MarshalCanonical(completed)
+	if err := AdvanceAndroidV2PendingProgress(coreJSON, "reserved", reservedJSON,
+		"completed", completedJSON); err != nil {
+		t.Fatalf("reserved→completed 被拒绝: %v", err)
+	}
+	if err := AdvanceAndroidV2PendingProgress(coreJSON, "issued_provisional", issuedJSON,
+		"completed", completedJSON); err != nil {
+		t.Fatalf("issued_provisional→completed 被拒绝: %v", err)
+	}
+	if err := AdvanceAndroidV2PendingProgress(coreJSON, "completed", completedJSON,
+		"issued_provisional", issuedJSON); err == nil {
+		t.Fatal("completed progress 回退被接受")
+	}
 	if err := AdvanceAndroidV2PendingProgress(coreJSON, "issued_provisional", issuedJSON,
 		"reserved", reservedJSON); err == nil {
 		t.Fatal("pending progress 回退被接受")

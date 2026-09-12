@@ -471,13 +471,16 @@ class EnrollmentManager private constructor(context: Context) {
             if (status == "completed") {
                 mutableStatus.value = EnrollmentStatus(
                     EnrollmentPhase.PULLING,
-                    "正在按完成回执取回并解封密封凭据…",
+                    "正在按完成回执取回 exact 配置与密封凭据…",
+                )
+                val installedConfigs = V2MirrorFetcher(appContext).fetchCompletionConfigs(
+                    session.completionConfigFetchPlan(),
                 )
                 val released = session.fetchReleasedArtifacts(Instant.now().toString())
-                installV2Completion(pending, result, verifiedResult, released, crypto)
+                installV2Completion(pending, result, verifiedResult, released, installedConfigs, crypto)
                 mutableStatus.value = EnrollmentStatus(
                     EnrollmentPhase.PULLING,
-                    "v2 正式身份、Device view 与凭据已原子安装；主连接等待签名 Device 配置",
+                    "v2 正式身份、Device view、配置与凭据已原子安装",
                 )
                 return
             }
@@ -589,15 +592,18 @@ class EnrollmentManager private constructor(context: Context) {
             if (verified.getString("status") == "completed") {
                 mutableStatus.value = EnrollmentStatus(
                     EnrollmentPhase.PULLING,
-                    "resume 已完成；正在取回并解封密封凭据…",
+                    "resume 已完成；正在取回 exact 配置与密封凭据…",
+                )
+                val installedConfigs = V2MirrorFetcher(appContext).fetchCompletionConfigs(
+                    session.completionConfigFetchPlan(),
                 )
                 val released = session.fetchReleasedArtifacts(Instant.now().toString())
                 val installed = prepareV2InstalledCredentials(verifiedResult, released, crypto)
-                val state = session.prepareResumeInstallationState(installed)
+                val state = session.prepareResumeInstallationStateWithConfigs(installed, installedConfigs)
                 v2StateStore.installCompletion(state, store::clearPending)
                 mutableStatus.value = EnrollmentStatus(
                     EnrollmentPhase.PULLING,
-                    "v2 正式身份已由 exact-bound resume 原子安装；主连接等待签名 Device 配置",
+                    "v2 正式身份、配置与凭据已由 exact-bound resume 原子安装",
                 )
                 return
             }
@@ -618,16 +624,18 @@ class EnrollmentManager private constructor(context: Context) {
         result: ByteArray,
         verifiedResult: ByteArray,
         releasedArtifacts: ByteArray,
+        installedConfigs: ByteArray,
         crypto: V2EnrollmentCrypto,
     ) {
         val installedCanonical = prepareV2InstalledCredentials(verifiedResult, releasedArtifacts, crypto)
-        val state = Loomcore.prepareAndroidV2EnrollmentInstallationState(
+        val state = Loomcore.prepareAndroidV2EnrollmentInstallationStateWithConfigs(
             pending.descriptor,
             pending.proofBundle,
             checkNotNull(pending.preflightResponse),
             checkNotNull(pending.claimCore),
             result,
             installedCanonical,
+            installedConfigs,
             Instant.now().toString(),
         )
         v2StateStore.installCompletion(state, store::clearPending)

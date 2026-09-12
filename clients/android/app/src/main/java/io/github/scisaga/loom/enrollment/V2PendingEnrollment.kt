@@ -125,14 +125,11 @@ internal data class V2PendingEnrollment(
         val previousCompleted = claimResult?.let {
             JSONObject(it.decodeToString()).optString("status") == "completed"
         } == true
-        if (status == "completed") {
-            if (previousCompleted) check(checkNotNull(claimResult).contentEquals(result)) {
-                "v2 completed result exact replay 发生冲突"
-            }
-            return copy(claimResult = result.copyOf())
-        }
-        check(!previousCompleted && status in setOf("reserved", "issued_provisional")) {
+        check(status in setOf("reserved", "issued_provisional", "completed")) {
             "v2 pending result 状态无效或发生回退"
+        }
+        if (previousCompleted) check(checkNotNull(claimResult).contentEquals(result)) {
+            "v2 completed result exact replay 发生冲突"
         }
         val expected = Loomcore.canonicalizeV2(
             verified.getJSONObject("resume_expected").toString().encodeToByteArray(),

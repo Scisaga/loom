@@ -243,11 +243,8 @@ func ValidateDeviceViewPayload(payload *DeviceViewPayloadV2) error {
 			return errors.New("[D105 Device view] endpoint bundle hash 不匹配")
 		}
 		for i, ref := range active.ConfigArtifactRefs {
-			if ref.Generation < 1 || ref.SizeBytes < 1 || !validIdentifier(ref.ArtifactID, 128) ||
-				!validIdentifier(ref.RenderContractID, 128) ||
-				!oneOf(ref.Platform, "windows-desktop", "android", "linux-server") ||
-				!oneOf(ref.MediaType, "application/vnd.loom.config+json", "application/vnd.loom.sing-box+json") {
-				return errors.New("[D105 Device view] config artifact ref 无效")
+			if err := ValidateDeviceConfigArtifactRef(&ref); err != nil {
+				return err
 			}
 			if i > 0 {
 				previous := active.ConfigArtifactRefs[i-1]
@@ -268,6 +265,21 @@ func ValidateDeviceViewPayload(payload *DeviceViewPayloadV2) error {
 		(payload.State == "revoked" && payload.Tombstone.Reason != "revoked") ||
 		(payload.State == "decommissioned" && payload.Tombstone.Reason != "decommissioned") {
 		return errors.New("[D105 Device view] tombstone tagged union 无效")
+	}
+	return nil
+}
+
+// ValidateDeviceConfigArtifactRef 是 Device view 与客户端制品安装共用的
+// 单项边界；顺序与去重仍由所属 Device view 检查（D105、D124）。
+func ValidateDeviceConfigArtifactRef(ref *DeviceConfigArtifactRefV1) error {
+	if ref == nil || ref.Generation < 1 || ref.SizeBytes < 1 ||
+		!validIdentifier(ref.ArtifactID, 128) || !validIdentifier(ref.RenderContractID, 128) ||
+		!oneOf(ref.Platform, "windows-desktop", "android", "linux-server") ||
+		!oneOf(ref.MediaType, "application/vnd.loom.config+json", "application/vnd.loom.sing-box+json") {
+		return errors.New("[D105 Device view] config artifact ref 无效")
+	}
+	if _, err := ParseHash(ref.ContentHash); err != nil {
+		return err
 	}
 	return nil
 }

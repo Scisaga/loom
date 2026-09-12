@@ -51,6 +51,7 @@ type EnrollmentCompletionExpectedV1 struct {
 type VerifiedEnrollmentCompletionV1 struct {
 	envelope               wire.DeviceViewEnvelopeV2
 	controlSet             wire.ControlSetV1
+	resumeExpected         wire.EnrollmentResumeExpectedV1
 	transactionHash        string
 	transactionStateHashes []string
 	resultArtifactHash     string
@@ -72,6 +73,13 @@ func (verified VerifiedEnrollmentCompletionV1) ControlSet() wire.ControlSetV1 {
 
 func (verified VerifiedEnrollmentCompletionV1) TransactionStateHash() string {
 	return verified.transactionHash
+}
+
+// ResumeExpected 允许 Device 在 completion 已提交、正式状态尚未原子落盘的
+// 崩溃窗中接受管理员显式签发的 exact-bound resume。它不复活 Invite/token，
+// 只投影刚刚由完整 receipt 重放得到的 completed transaction（D130）。
+func (verified VerifiedEnrollmentCompletionV1) ResumeExpected() wire.EnrollmentResumeExpectedV1 {
+	return verified.resumeExpected
 }
 
 func (verified VerifiedEnrollmentCompletionV1) IncludesTransactionStateHash(hash string) bool {
@@ -271,6 +279,13 @@ func VerifyEnrollmentCompletionReceipt(raw []byte, result *wire.EnrollmentClaimR
 		receipt.CompletionProjection.CompletedTransactionStateHash != completedHash {
 		return VerifiedEnrollmentCompletionV1{}, errors.New("[D130 client] completed transaction state hash 不可重放")
 	}
+	claimOperationHash, claimHashErr := wire.HashObject(DomainClaimOperation, receipt.ClaimOperation)
+	admissionQCHash, admissionHashErr := wire.EnrollmentAdmissionQCHash(&receipt.AdmissionQC)
+	if claimHashErr != nil || admissionHashErr != nil ||
+		claimOperationHash != completed.ClaimOperationHash ||
+		admissionQCHash != receipt.ClaimOperation.AdmissionQCHash {
+		return VerifiedEnrollmentCompletionV1{}, errors.New("[D130 client] completed resume binding 不可重放")
+	}
 	resultHash, err := wire.EnrollmentResultArtifactHash(result.ResultArtifact)
 	if err != nil || result.ResultArtifactHash != resultHash ||
 		receipt.CompletionProjection.ResultArtifactHash != resultHash {
@@ -297,7 +312,15 @@ func VerifyEnrollmentCompletionReceipt(raw []byte, result *wire.EnrollmentClaimR
 	}
 	envelope := receipt.CompletionCertification.DeviceViewEnvelope
 	return VerifiedEnrollmentCompletionV1{envelope: clonePrivateValue(envelope),
-		controlSet:             clonePrivateValue(receipt.CompletionCertification.Operation.ControlSet),
+		controlSet: clonePrivateValue(receipt.CompletionCertification.Operation.ControlSet),
+		resumeExpected: wire.EnrollmentResumeExpectedV1{
+			ClusterID: expected.ClaimCore.ClusterID, InviteID: expected.ClaimCore.InviteID,
+			RequestID: expected.ClaimCore.RequestID, ClaimCoreHash: coreHash,
+			ClaimOperationHash: claimOperationHash, AdmissionQCHash: admissionQCHash,
+			CSRHash: csrHash, IdentityKeyHash: identityHash, WrappingKeyHash: wrappingHash,
+			EnrollmentTransactionStateHash: completedHash,
+			RetryNotAfter:                  receipt.ClaimOperation.RetryNotAfter,
+		},
 		transactionHash:        completedHash,
 		transactionStateHashes: []string{reservedHash, issuedHash, completedHash},
 		resultArtifactHash:     resultHash,

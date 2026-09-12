@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 
 	"loom/internal/enrollmentv2"
@@ -11,6 +12,12 @@ import (
 )
 
 const androidInstalledSecretDomainV1 = "loom-android-installed-secret-v1"
+
+const (
+	androidMaximumConfigArtifacts     = 16
+	androidMaximumConfigArtifactBytes = 16 << 20
+	androidMaximumConfigTotalBytes    = 32 << 20
+)
 
 // androidEnrollmentInstallationV1 是 Android 首次 v2 身份的单 blob 提交单元。
 // Keystore identity 私钥不在这里；证书、stable core、首次 view 与全部解封凭据
@@ -26,6 +33,8 @@ type androidEnrollmentInstallationV1 struct {
 	DeviceCertificateHash string                          `json:"device_certificate_hash"`
 	ResultArtifact        wire.EnrollmentResultArtifactV1 `json:"result_artifact"`
 	Credentials           []androidInstalledSecretV1      `json:"credentials"`
+	// Configs 在旧版已安装 blob 中可缺省；新 Enrollment 不得走该兼容路径。
+	Configs []androidInstalledConfigV1 `json:"configs,omitempty"`
 }
 
 type androidInstalledSecretV1 struct {
@@ -35,6 +44,17 @@ type androidInstalledSecretV1 struct {
 	ImmutableRef string `json:"immutable_ref"`
 	SecretBytes  string `json:"secret_bytes"`
 	SecretDigest string `json:"secret_digest"`
+}
+
+type androidInstalledConfigV1 struct {
+	ArtifactID       string          `json:"artifact_id"`
+	Generation       int64           `json:"generation"`
+	Platform         string          `json:"platform"`
+	MediaType        string          `json:"media_type"`
+	RenderContractID string          `json:"render_contract_id"`
+	SizeBytes        int64           `json:"size_bytes"`
+	ContentHash      string          `json:"content_hash"`
+	Config           json.RawMessage `json:"config"`
 }
 
 // PrepareAndroidInstalledSecretV2 在 Kotlin 解封后立即重绑 exact ref/envelope，
@@ -62,11 +82,50 @@ func PrepareAndroidInstalledSecretV2(refJSON, envelopeJSON, secret []byte) ([]by
 	})
 }
 
-// PrepareAndroidV2EnrollmentInstallationState 重放 completion receipt 与 exact
-// Invite authority，把宿主返回的 credentials 逐项绑定 result/view refs，最后只返回
-// 一个可原子持久化的状态。任何局部产物都不足以建立正式 Device 身份（D115、D124、D130）。
-func PrepareAndroidV2EnrollmentInstallationState(descriptorJSON, proofBundleJSON,
-	preflightJSON, claimCoreJSON, resultJSON, installedSecretsJSON []byte, trustedTime string,
+// PrepareAndroidInstalledConfigV2 将公开 mirror 返回的 exact canonical 制品
+// 重新绑定到 certified Device view ref。Kotlin 不能自行认定 hash/大小/平台（D105、D124）。
+func PrepareAndroidInstalledConfigV2(refJSON, config []byte) ([]byte, error) {
+	var ref wire.DeviceConfigArtifactRefV1
+	if err := decodeExactAndroidV2(refJSON, 1<<20, &ref, "config artifact ref"); err != nil {
+		return nil, err
+	}
+	if err := wire.ValidateDeviceConfigArtifactRef(&ref); err != nil {
+		return nil, err
+	}
+	if ref.Platform != "android" || ref.SizeBytes > androidMaximumConfigArtifactBytes ||
+		len(config) != int(ref.SizeBytes) {
+		return nil, errors.New("[D124 Android] config artifact 平台或大小无效")
+	}
+	canonical, err := wire.CanonicalizeStrict(config)
+	if err != nil || !bytes.Equal(canonical, config) {
+		return nil, errors.New("[D124 Android] config artifact 不是 exact canonical JSON")
+	}
+	contentHash, err := wire.DeviceConfigArtifactContentHash(config)
+	if err != nil || contentHash != ref.ContentHash {
+		return nil, errors.New("[D124 Android] config artifact content hash 不匹配")
+	}
+	return wire.MarshalCanonical(androidInstalledConfigV1{
+		ArtifactID: ref.ArtifactID, Generation: ref.Generation, Platform: ref.Platform,
+		MediaType: ref.MediaType, RenderContractID: ref.RenderContractID,
+		SizeBytes: ref.SizeBytes, ContentHash: ref.ContentHash,
+		Config: append(json.RawMessage(nil), config...),
+	})
+}
+
+// PrepareAndroidV2EnrollmentInstallationStateWithConfigs 是新版生产安装边界：
+// certificate/view/config/credentials/floors 只会作为同一 protected blob 提交（Issue #14、D124、D130）。
+func PrepareAndroidV2EnrollmentInstallationStateWithConfigs(descriptorJSON, proofBundleJSON,
+	preflightJSON, claimCoreJSON, resultJSON, installedSecretsJSON, installedConfigsJSON []byte,
+	trustedTime string,
+) ([]byte, error) {
+	return prepareAndroidV2EnrollmentInstallationStateInputs(descriptorJSON, proofBundleJSON,
+		preflightJSON, claimCoreJSON, resultJSON, installedSecretsJSON, installedConfigsJSON,
+		trustedTime)
+}
+
+func prepareAndroidV2EnrollmentInstallationStateInputs(descriptorJSON, proofBundleJSON,
+	preflightJSON, claimCoreJSON, resultJSON, installedSecretsJSON, installedConfigsJSON []byte,
+	trustedTime string,
 ) ([]byte, error) {
 	inputs, err := loadAndroidEnrollmentInputsV2(descriptorJSON, proofBundleJSON, trustedTime)
 	if err != nil {
@@ -104,13 +163,22 @@ func PrepareAndroidV2EnrollmentInstallationState(descriptorJSON, proofBundleJSON
 	if credentials == nil {
 		return nil, errors.New("[D124 Android] installed credentials 必须是 canonical array")
 	}
+	var configs []androidInstalledConfigV1
+	if err := decodeExactAndroidV2(installedConfigsJSON, androidMaximumConfigTotalBytes+(4<<20),
+		&configs, "installed configs"); err != nil {
+		return nil, err
+	}
+	if configs == nil {
+		return nil, errors.New("[D124 Android] installed configs 必须是 canonical array")
+	}
 	return prepareAndroidEnrollmentInstallationState(core, result, *completion,
-		inputs.verified, credentials)
+		inputs.verified, credentials, configs)
 }
 
 func prepareAndroidEnrollmentInstallationState(core wire.EnrollmentClaimCoreV2,
 	result wire.EnrollmentClaimResultV2, completion enrollmentv2.VerifiedEnrollmentCompletionV1,
 	proof wire.VerifiedInviteProofV2, credentials []androidInstalledSecretV1,
+	configs []androidInstalledConfigV1,
 ) ([]byte, error) {
 	if result.ResultArtifact == nil || credentials == nil {
 		return nil, errors.New("[D130 Android] enrollment installation 输入不完整")
@@ -143,7 +211,7 @@ func prepareAndroidEnrollmentInstallationState(core wire.EnrollmentClaimCoreV2,
 		IdentityKeyHash: identityHash, WrappingKeyHash: wrappingHash,
 		TransactionStateHash: result.TransactionStateHash, ResultArtifactHash: result.ResultArtifactHash,
 		DeviceCertificateHash: certificateHash, ResultArtifact: *result.ResultArtifact,
-		Credentials: credentials,
+		Credentials: credentials, Configs: configs,
 	}
 	return marshalAndroidV2DeviceState(state)
 }
@@ -257,6 +325,56 @@ func validateAndroidEnrollmentInstallation(installation *androidEnrollmentInstal
 		clear(secret)
 		if totalSecretBytes > 8<<20 {
 			return errors.New("[D124 Android] durable credentials 超过 bootstrap 总预算")
+		}
+	}
+	if installation.Configs != nil {
+		if err := validateAndroidInstalledConfigs(installation.Configs,
+			initialView.Active.ConfigArtifactRefs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateAndroidInstalledConfigs(configs []androidInstalledConfigV1,
+	refs []wire.DeviceConfigArtifactRefV1,
+) error {
+	androidRefs := make([]wire.DeviceConfigArtifactRefV1, 0, len(refs))
+	for index := range refs {
+		if err := wire.ValidateDeviceConfigArtifactRef(&refs[index]); err != nil {
+			return err
+		}
+		if refs[index].Platform != "android" {
+			return errors.New("[D124 Android] Device view 含非 Android config artifact")
+		}
+		androidRefs = append(androidRefs, refs[index])
+	}
+	if len(androidRefs) == 0 || len(androidRefs) > androidMaximumConfigArtifacts ||
+		len(configs) != len(androidRefs) {
+		return errors.New("[D124 Android] installed configs 未 exact 覆盖 Device view refs")
+	}
+	totalBytes := 0
+	for index := range androidRefs {
+		ref, installed := &androidRefs[index], &configs[index]
+		if ref.SizeBytes > androidMaximumConfigArtifactBytes ||
+			installed.ArtifactID != ref.ArtifactID || installed.Generation != ref.Generation ||
+			installed.Platform != ref.Platform || installed.MediaType != ref.MediaType ||
+			installed.RenderContractID != ref.RenderContractID || installed.SizeBytes != ref.SizeBytes ||
+			installed.ContentHash != ref.ContentHash {
+			return errors.New("[D124 Android] installed config 未绑定 exact ref")
+		}
+		raw := []byte(installed.Config)
+		if len(raw) != int(ref.SizeBytes) {
+			return errors.New("[D124 Android] installed config bytes/size 无效")
+		}
+		canonical, canonicalErr := wire.CanonicalizeStrict(raw)
+		hash, hashErr := wire.DeviceConfigArtifactContentHash(raw)
+		if canonicalErr != nil || !bytes.Equal(canonical, raw) || hashErr != nil || hash != ref.ContentHash {
+			return errors.New("[D124 Android] installed config canonical bytes/hash 无效")
+		}
+		totalBytes += len(raw)
+		if totalBytes > androidMaximumConfigTotalBytes {
+			return errors.New("[D124 Android] installed configs 超过总预算")
 		}
 	}
 	return nil

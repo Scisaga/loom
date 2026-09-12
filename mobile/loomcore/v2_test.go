@@ -71,6 +71,12 @@ func androidV2EnvelopeFixture(t *testing.T) (wire.ControlSetV1, wire.DeviceViewE
 func androidV2EnvelopeFixtureFor(t *testing.T, deviceID, identityHash string,
 	secretRefs []wire.SecretArtifactRefV2,
 ) (wire.ControlSetV1, wire.DeviceViewEnvelopeV2) {
+	return androidV2EnvelopeFixtureForArtifacts(t, deviceID, identityHash, secretRefs, nil)
+}
+
+func androidV2EnvelopeFixtureForArtifacts(t *testing.T, deviceID, identityHash string,
+	secretRefs []wire.SecretArtifactRefV2, configRefs []wire.DeviceConfigArtifactRefV1,
+) (wire.ControlSetV1, wire.DeviceViewEnvelopeV2) {
 	t.Helper()
 	seed := make([]byte, ed25519.SeedSize)
 	seed[len(seed)-1] = 1
@@ -113,7 +119,8 @@ func androidV2EnvelopeFixtureFor(t *testing.T, deviceID, identityHash string,
 			IdentitySPKIHash: identityHash, Membership: membership, MembershipHash: membershipHash,
 			Responsibilities: responsibilities, ResponsibilitiesHash: responsibilitiesHash,
 			Grants: grants, GrantsHash: grantsHash, EndpointBundle: bundle, EndpointBundleHash: bundleHash,
-			ConfigArtifactRefs: []wire.DeviceConfigArtifactRefV1{}, SecretArtifactRefsRoot: secretRoot,
+			ConfigArtifactRefs:     append([]wire.DeviceConfigArtifactRefV1(nil), configRefs...),
+			SecretArtifactRefsRoot: secretRoot,
 		}}
 	payloadHash, _ := wire.DeviceViewHash(&payload)
 	leaf := wire.DeviceViewLeafV2{Schema: 2, ClusterID: set.ClusterID, ViewSchemaVersion: 2,

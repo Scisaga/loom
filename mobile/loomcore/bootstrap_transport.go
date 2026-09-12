@@ -594,8 +594,10 @@ func (session *AndroidV2BootstrapSession) SubmitResume(canonicalSubmission []byt
 	return wire.MarshalCanonical(projection)
 }
 
-func (session *AndroidV2BootstrapSession) PrepareResumeInstallationState(
-	installedSecretsJSON []byte,
+// PrepareResumeInstallationStateWithConfigs 与首次 completion 共用同一原子
+// 安装语义，resume 不得把 config 留成独立、可部分提交的状态（Issue #14、D130）。
+func (session *AndroidV2BootstrapSession) PrepareResumeInstallationStateWithConfigs(
+	installedSecretsJSON, installedConfigsJSON []byte,
 ) ([]byte, error) {
 	session.flowMu.Lock()
 	defer session.flowMu.Unlock()
@@ -616,13 +618,21 @@ func (session *AndroidV2BootstrapSession) PrepareResumeInstallationState(
 	if credentials == nil {
 		return nil, errors.New("[D124 Android resume] installed credentials 必须是 canonical array")
 	}
+	var configs []androidInstalledConfigV1
+	if err := decodeExactAndroidV2(installedConfigsJSON, androidMaximumConfigTotalBytes+(4<<20),
+		&configs, "installed configs"); err != nil {
+		return nil, err
+	}
+	if configs == nil {
+		return nil, errors.New("[D124 Android resume] installed configs 必须是 canonical array")
+	}
 	if err := session.completedEvidence.VerifyInstallationContext(
 		&result, session.core, session.resume.verified,
 	); err != nil {
 		return nil, err
 	}
 	return prepareAndroidEnrollmentInstallationState(*session.core, result,
-		*session.completedEvidence, session.resume.verified, credentials)
+		*session.completedEvidence, session.resume.verified, credentials, configs)
 }
 
 func (session *AndroidV2BootstrapSession) resumePoPBodyAt(now time.Time) (wire.EnrollmentPoPBodyV2, error) {

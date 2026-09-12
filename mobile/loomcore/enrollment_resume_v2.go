@@ -159,7 +159,8 @@ func ValidateAndroidV2PendingProgress(claimCoreJSON []byte, status string,
 }
 
 // AdvanceAndroidV2PendingProgress 只允许 exact replay 或
-// reserved→issued_provisional，稳定 binding 不得被旧 ingress 响应改写（D130）。
+// reserved→issued_provisional→completed 的单调推进，稳定 binding 不得被旧
+// ingress 响应改写（D130）。
 func AdvanceAndroidV2PendingProgress(claimCoreJSON []byte, previousStatus string,
 	previousExpectedJSON []byte, candidateStatus string, candidateExpectedJSON []byte,
 ) error {
@@ -183,7 +184,10 @@ func AdvanceAndroidV2PendingProgress(claimCoreJSON []byte, previousStatus string
 	oldStable, nextStable := previous, candidate
 	oldStable.EnrollmentTransactionStateHash = ""
 	nextStable.EnrollmentTransactionStateHash = ""
-	if previousStatus != "reserved" || candidateStatus != "issued_provisional" ||
+	allowed := previousStatus == "reserved" &&
+		(candidateStatus == "issued_provisional" || candidateStatus == "completed") ||
+		previousStatus == "issued_provisional" && candidateStatus == "completed"
+	if !allowed ||
 		!wire.EqualCanonical(oldStable, nextStable) {
 		return errors.New("[D130 Android] pending progress 回退、分叉或改写 stable binding")
 	}
@@ -400,7 +404,8 @@ func decodeAndroidPendingProgress(claimCoreJSON []byte, status string,
 func validateAndroidPendingProgress(core *wire.EnrollmentClaimCoreV2, status string,
 	expected *wire.EnrollmentResumeExpectedV1,
 ) error {
-	if core == nil || expected == nil || (status != "reserved" && status != "issued_provisional") {
+	if core == nil || expected == nil ||
+		(status != "reserved" && status != "issued_provisional" && status != "completed") {
 		return errors.New("[D130 Android] pending progress header 无效")
 	}
 	coreHash, err := wire.EnrollmentClaimCoreHash(core)
