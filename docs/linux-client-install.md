@@ -253,6 +253,34 @@ scripts/test-linux-v2-development.sh
 `real_host_acceptance=false`、`gate_b=false`；它不能替代 #12 的干净主机、真实网络、职责流量、
 故障注入或 #10 Gate B。
 
+### #12 验收资产复用与续跑
+
+#12 的真实主机验收可能跨多次会话。开始下载镜像、拉取容器或新建 VM 前，必须先检查当前
+验收宿主已有的受控资产，避免重复下载或把上一次留下的可写客机误当成干净系统：
+
+```bash
+docker image inspect loom/linux-acceptance-base:ubuntu-24.04-amd64 >/dev/null
+docker image inspect ubuntu:24.04 >/dev/null
+docker ps -a --filter 'name=^/loom-accept-' --format '{{.Names}} {{.Image}} {{.Status}}'
+find /var/cache/loom/acceptance -maxdepth 2 -type f \
+  \( -name '*.qcow2' -o -name '*cloudimg*.img' \) -print 2>/dev/null
+```
+
+这些命令只做本机资产发现；任何一项不存在都不能靠 `docker run` 的隐式 pull 或未校验 URL
+自动补齐。确需下载时，先记录发行方、版本、架构和预期 SHA-256，再显式下载并验签/验摘要。
+临时目录（包括 `/tmp`、`/var/tmp`）会被清理，不是可跨会话依赖的镜像缓存。
+
+本机约定的 amd64 不可变基础镜像标签是
+`loom/linux-acceptance-base:ubuntu-24.04-amd64`。它只含干净 Ubuntu 与验收工具；每个场景都从
+该标签创建新的可写容器/VM，先证明 `/etc/loom`、`/var/lib/loom` 和 Loom unit 不存在。跑过
+安装或 Enrollment 的实例只能用于同一场景续跑，不能重新标记为干净基础镜像。
+
+每次续跑先在受控证据库记录并核对：Loom commit、制品 SHA-256、基础镜像 ID/digest、
+`uname -m`、`/etc/os-release`、虚拟化类型、场景状态和可写实例是否已销毁。真实地址、域名、
+Device ID、证书、token、密钥、原始抓包和 SSH inventory 仍只进入忽略目录或外部受控证据库；
+仓库只提交脱敏摘要。amd64 与 arm64 分别出具结果，某一架构延期时必须明确记为未验收，
+不能用交叉编译或另一架构结果代替。
+
 ## 1. 创建 Device 和加入码
 
 在中控打开 **Devices → Create Device**，选择 Linux 平台并直接勾选职责：
