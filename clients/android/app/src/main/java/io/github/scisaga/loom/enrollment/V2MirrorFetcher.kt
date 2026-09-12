@@ -31,7 +31,50 @@ internal class V2MirrorFetcher(context: Context) {
     fun fetch(descriptor: ByteArray, trustedTime: String): V2PublicArtifacts {
         val plan = JSONObject(Loomcore.prepareAndroidV2MirrorFetchPlan(descriptor, trustedTime).decodeToString())
         check(plan.getInt("schema") == 1) { "v2 mirror plan schema 无效" }
-        val mirrors = plan.getJSONArray("mirrors").let { values ->
+        val mirrors = parseMirrors(plan)
+        val proof = fetchObject(mirrors, plan.getString("proof_hash"), PROOF_LIMIT) {
+            Loomcore.verifyAndroidV2InviteProof(descriptor, it, trustedTime)
+        }
+        val catalog = fetchObject(mirrors, plan.getString("catalog_hash"), CATALOG_LIMIT) {
+            Loomcore.verifyAndroidV2BootstrapCatalog(descriptor, proof, it, trustedTime, CLIENT_PROTOCOL)
+        }
+        return V2PublicArtifacts(proof.copyOf(), catalog.copyOf())
+    }
+
+    /** D130：resume mirror 请求仍只携带 content hash；APK root 验签发生在返回前。 */
+    fun fetchResume(
+        descriptor: ByteArray,
+        pinnedPlatformKey: ByteArray,
+        trustedTime: String,
+    ): V2PublicArtifacts {
+        val plan = JSONObject(
+            Loomcore.prepareAndroidV2ResumeMirrorFetchPlan(descriptor, trustedTime).decodeToString(),
+        )
+        check(plan.getInt("schema") == 1) { "v2 resume mirror plan schema 无效" }
+        val mirrors = parseMirrors(plan)
+        val proof = fetchObject(mirrors, plan.getString("proof_hash"), PROOF_LIMIT) {
+            Loomcore.verifyAndroidV2ResumeInviteProof(
+                descriptor,
+                it,
+                pinnedPlatformKey,
+                trustedTime,
+            )
+        }
+        val catalog = fetchObject(mirrors, plan.getString("catalog_hash"), CATALOG_LIMIT) {
+            Loomcore.verifyAndroidV2ResumeBootstrapCatalog(
+                descriptor,
+                proof,
+                it,
+                pinnedPlatformKey,
+                trustedTime,
+                CLIENT_PROTOCOL,
+            )
+        }
+        return V2PublicArtifacts(proof.copyOf(), catalog.copyOf())
+    }
+
+    private fun parseMirrors(plan: JSONObject): List<V2Mirror> =
+        plan.getJSONArray("mirrors").let { values ->
             (0 until values.length()).map { index ->
                 val item = values.getJSONObject(index)
                 V2Mirror(
@@ -44,14 +87,6 @@ internal class V2MirrorFetcher(context: Context) {
                 )
             }.sortedWith(compareBy(V2Mirror::hintRank, V2Mirror::endpointID))
         }
-        val proof = fetchObject(mirrors, plan.getString("proof_hash"), PROOF_LIMIT) {
-            Loomcore.verifyAndroidV2InviteProof(descriptor, it, trustedTime)
-        }
-        val catalog = fetchObject(mirrors, plan.getString("catalog_hash"), CATALOG_LIMIT) {
-            Loomcore.verifyAndroidV2BootstrapCatalog(descriptor, proof, it, trustedTime, CLIENT_PROTOCOL)
-        }
-        return V2PublicArtifacts(proof.copyOf(), catalog.copyOf())
-    }
 
     private fun fetchObject(
         mirrors: List<V2Mirror>,

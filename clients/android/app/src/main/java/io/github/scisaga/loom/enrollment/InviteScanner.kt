@@ -127,13 +127,13 @@ fun InviteScanner(
                         }
                     }
                     Text(
-                        "将中控的一次性加入二维码放入方框。二维码不会写入相册或诊断。",
+                        "将中控的一次性加入或显式事务恢复二维码放入方框。二维码不会写入相册或诊断。",
                         color = ScannerMuted,
                         fontSize = 13.sp,
                     )
                 } else if (!granted) {
                     Text(
-                        "扫码需要相机权限；也可以返回后导入 .loom-invite 文件。",
+                        "扫码需要相机权限；也可以返回后导入 .loom-invite / .loom-resume 文件。",
                         color = ScannerMuted,
                         fontSize = 13.sp,
                     )
@@ -144,7 +144,7 @@ fun InviteScanner(
                     ) { Text("允许相机") }
                 } else {
                     Text(
-                        "无法启动相机。请返回并导入 .loom-invite 文件，或稍后重新打开扫码。",
+                        "无法启动相机。请返回并导入 .loom-invite / .loom-resume 文件，或稍后重新打开扫码。",
                         color = ScannerMuted,
                         fontSize = 13.sp,
                         modifier = Modifier.testTag("invite-camera-error"),

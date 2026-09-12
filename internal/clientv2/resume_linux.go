@@ -234,6 +234,10 @@ func RunLinuxResumeAttempt(ctx context.Context,
 		Record: bundle.CertifiedInviteRecord, Policy: bundle.InviteIssuancePolicy,
 		Opening: opening, ClaimCore: core, BaseHead: verifiedHead, BaseControlSet: verifiedSet,
 	}
+	requiredTransactionFloors := []string{
+		pending.Progress.Expected.EnrollmentTransactionStateHash,
+		descriptor.EnrollmentTransactionStateHash,
+	}
 	if result.Status == "completed" {
 		completion, err = enrollmentv2.VerifyEnrollmentCompletionReceipt(result.CompletionReceipt,
 			&result, enrollmentv2.EnrollmentCompletionExpectedV1{
@@ -241,8 +245,10 @@ func RunLinuxResumeAttempt(ctx context.Context,
 				ClaimCore: proofExpected.ClaimCore, BaseHead: proofExpected.BaseHead,
 				BaseControlSet: proofExpected.BaseControlSet, TrustedTime: resultNow,
 			})
-		if err == nil && !completion.IncludesTransactionStateHash(descriptor.EnrollmentTransactionStateHash) {
-			err = errors.New("[D130 Linux resume] completion receipt 不包含 descriptor transaction state")
+		for _, required := range requiredTransactionFloors {
+			if err == nil && !completion.IncludesTransactionStateHash(required) {
+				err = errors.New("[D130 Linux resume] completion receipt 不包含本机与 descriptor transaction floor")
+			}
 		}
 	} else {
 		if len(result.ProgressReceipt) == 0 {
@@ -250,8 +256,10 @@ func RunLinuxResumeAttempt(ctx context.Context,
 		}
 		progress, err = enrollmentv2.VerifyEnrollmentProgressReceipt(result.ProgressReceipt,
 			&result, proofExpected)
-		if err == nil && !progress.IncludesTransactionStateHash(descriptor.EnrollmentTransactionStateHash) {
-			err = errors.New("[D130 Linux resume] progress receipt 不包含 descriptor transaction state")
+		for _, required := range requiredTransactionFloors {
+			if err == nil && !progress.IncludesTransactionStateHash(required) {
+				err = errors.New("[D130 Linux resume] progress receipt 不包含本机与 descriptor transaction floor")
+			}
 		}
 		if err == nil {
 			_, err = RecordPendingProgress(attempt.PendingPath, identity,

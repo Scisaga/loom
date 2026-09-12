@@ -57,6 +57,19 @@ func verifyAndroidEnrollmentV2ClaimResult(inputs androidEnrollmentInputsV2,
 ) (androidVerifiedEnrollmentResultV2, wire.EnrollmentClaimResultV2,
 	*enrollmentv2.VerifiedEnrollmentCompletionV1, error,
 ) {
+	expected := enrollmentv2.EnrollmentProgressExpectedV1{
+		Record: inputs.bundle.CertifiedInviteRecord, Policy: inputs.bundle.InviteIssuancePolicy,
+		Opening: preflight.DeviceEnrollmentIntentOpening, ClaimCore: core,
+		BaseHead: inputs.head, BaseControlSet: inputs.set,
+	}
+	return verifyAndroidEnrollmentResultExpected(expected, inputs.verified, resultJSON, now, nil)
+}
+
+func verifyAndroidEnrollmentResultExpected(expected enrollmentv2.EnrollmentProgressExpectedV1,
+	proof wire.VerifiedInviteProofV2, resultJSON []byte, now time.Time, requiredTransactionHashes []string,
+) (androidVerifiedEnrollmentResultV2, wire.EnrollmentClaimResultV2,
+	*enrollmentv2.VerifiedEnrollmentCompletionV1, error,
+) {
 	var result wire.EnrollmentClaimResultV2
 	if err := decodeExactAndroidV2(resultJSON, 32<<20, &result, "Enrollment claim result"); err != nil {
 		return androidVerifiedEnrollmentResultV2{}, wire.EnrollmentClaimResultV2{}, nil, err
@@ -67,17 +80,18 @@ func verifyAndroidEnrollmentV2ClaimResult(inputs androidEnrollmentInputsV2,
 	projection := androidVerifiedEnrollmentResultV2{
 		Schema: 1, Status: result.Status, ExactResult: append(json.RawMessage(nil), resultJSON...),
 	}
-	expectedProgress := enrollmentv2.EnrollmentProgressExpectedV1{
-		Record: inputs.bundle.CertifiedInviteRecord, Policy: inputs.bundle.InviteIssuancePolicy,
-		Opening: preflight.DeviceEnrollmentIntentOpening, ClaimCore: core,
-		BaseHead: inputs.head, BaseControlSet: inputs.set,
-	}
 	if result.Status != "completed" {
 		verified, verifyErr := enrollmentv2.VerifyEnrollmentProgressReceipt(
-			result.ProgressReceipt, &result, expectedProgress,
+			result.ProgressReceipt, &result, expected,
 		)
 		if verifyErr != nil {
 			return androidVerifiedEnrollmentResultV2{}, wire.EnrollmentClaimResultV2{}, nil, verifyErr
+		}
+		for _, required := range requiredTransactionHashes {
+			if required != "" && !verified.IncludesTransactionStateHash(required) {
+				return androidVerifiedEnrollmentResultV2{}, wire.EnrollmentClaimResultV2{}, nil,
+					errors.New("[D130 Android] progress receipt 不包含 resume transaction floor")
+			}
 		}
 		resume := verified.ResumeExpected()
 		projection.ResumeExpected = &resume
@@ -87,15 +101,21 @@ func verifyAndroidEnrollmentV2ClaimResult(inputs androidEnrollmentInputsV2,
 		result.CompletionReceipt,
 		&result,
 		enrollmentv2.EnrollmentCompletionExpectedV1{
-			Record: inputs.bundle.CertifiedInviteRecord, Policy: inputs.bundle.InviteIssuancePolicy,
-			Opening: preflight.DeviceEnrollmentIntentOpening, ClaimCore: core,
-			BaseHead: inputs.head, BaseControlSet: inputs.set, TrustedTime: now,
+			Record: expected.Record, Policy: expected.Policy, Opening: expected.Opening,
+			ClaimCore: expected.ClaimCore, BaseHead: expected.BaseHead,
+			BaseControlSet: expected.BaseControlSet, TrustedTime: now,
 		},
 	)
 	if err != nil {
 		return androidVerifiedEnrollmentResultV2{}, wire.EnrollmentClaimResultV2{}, nil, err
 	}
-	if err := verified.VerifyInstallationContext(&result, &core, inputs.verified); err != nil {
+	for _, required := range requiredTransactionHashes {
+		if required != "" && !verified.IncludesTransactionStateHash(required) {
+			return androidVerifiedEnrollmentResultV2{}, wire.EnrollmentClaimResultV2{}, nil,
+				errors.New("[D130 Android] completion receipt 不包含 resume transaction floor")
+		}
+	}
+	if err := verified.VerifyInstallationContext(&result, &expected.ClaimCore, proof); err != nil {
 		return androidVerifiedEnrollmentResultV2{}, wire.EnrollmentClaimResultV2{}, nil, err
 	}
 	if result.ResultArtifact == nil {

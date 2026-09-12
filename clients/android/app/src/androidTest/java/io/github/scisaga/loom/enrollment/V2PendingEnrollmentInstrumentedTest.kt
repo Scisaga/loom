@@ -56,4 +56,40 @@ class V2PendingEnrollmentInstrumentedTest {
                 .selectedTransport,
         )
     }
+
+    @Test
+    fun resumeAttemptJournalIsIndependentAndDurable() {
+        val pending = V2PendingEnrollment(
+            descriptor = """{"bootstrap_tunnel_capability":{"capability_id":"initial-1"}}"""
+                .encodeToByteArray(),
+            proofBundle = "{}".encodeToByteArray(),
+            bootstrapCatalog = "{}".encodeToByteArray(),
+            preflightResponse = "{}".encodeToByteArray(),
+            requestID = "request-1",
+            clientNonce = ByteArray(32),
+            claimCore = "{}".encodeToByteArray(),
+            claimResult = """{"status":"reserved"}""".encodeToByteArray(),
+            progressStatus = "reserved",
+            resumeExpected = "{}".encodeToByteArray(),
+            resumeDescriptor = """{"resume_tunnel_capability":{"capability_id":"resume-1"}}"""
+                .encodeToByteArray(),
+            resumeProofBundle = "{}".encodeToByteArray(),
+            resumeBootstrapCatalog = "{}".encodeToByteArray(),
+        )
+            .advanceAttempt("initial-1", 1)
+            .advanceAttempt("resume-1", 1)
+            .withResumeSelection("network-1", "{}".encodeToByteArray())
+        val replay = V2PendingEnrollment.decode(pending.encode())
+
+        assertEquals(1L, replay.connectionAttempts)
+        assertEquals(1L, replay.resumeConnectionAttempts)
+        assertEquals("network-1", replay.resumeSelectedUnderlay)
+        assertArrayEquals(pending.resumeDescriptor, replay.resumeDescriptor)
+        assertThrows(IllegalStateException::class.java) {
+            replay.advanceAttempt("resume-1", 3)
+        }
+        assertThrows(IllegalStateException::class.java) {
+            replay.advanceAttempt("unknown", 2)
+        }
+    }
 }

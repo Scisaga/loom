@@ -26,6 +26,7 @@ import (
 	quic "github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
 	"github.com/sagernet/quic-go/quicvarint"
+	"loom/internal/enrollmentv2"
 	"loom/internal/wire"
 )
 
@@ -107,9 +108,11 @@ type AndroidV2BootstrapSession struct {
 	preflight *wire.EnrollmentIntentPreflightResponseV1
 	core      *wire.EnrollmentClaimCoreV2
 	challenge *wire.EnrollmentPoPChallengeV1
+	resume    *androidEnrollmentResumeInputsV1
 	// completedResult 只有完整 completion receipt 与 installation context 已由
 	// 共享 verifier 通过后才设置；artifact fetch 不接受宿主传入的 result/ref。
-	completedResult []byte
+	completedResult   []byte
+	completedEvidence *enrollmentv2.VerifiedEnrollmentCompletionV1
 }
 
 type androidReleasedArtifactsV1 struct {
@@ -162,8 +165,8 @@ func newAndroidV2BootstrapSession(descriptorJSON, proofBundleJSON, catalogJSON [
 		return nil, err
 	}
 	body := verifiedCapability.Body()
-	if body.Mode != "initial_claim" || body.AllowedIngressSetHash != catalog.BootstrapIngressSetHash ||
-		body.AllowedInsideTransport != "tls_tcp" {
+	if err := validateAndroidBootstrapCapabilityMode(body, "initial_claim",
+		catalog.BootstrapIngressSetHash); err != nil {
 		return nil, errors.New("[D131 Android] initial capability 未绑定 catalog/inner TLS TCP")
 	}
 	destination, err := androidBootstrapDestination(body)
@@ -200,6 +203,96 @@ func newAndroidV2BootstrapSession(descriptorJSON, proofBundleJSON, catalogJSON [
 	}
 	session.setTrustedTime(now)
 	return session, nil
+}
+
+// NewAndroidV2ResumeSession 只恢复本机已经耐久保存的 stable core/progress。
+// descriptor 不含 token，且必须由 APK platform root、Invite lineage、当前 catalog
+// 与本机 expected transaction 一起验证后才建立 tunnel（D115、D130、D131）。
+func NewAndroidV2ResumeSession(descriptorJSON, proofBundleJSON, catalogJSON,
+	claimCoreJSON, resumeExpectedJSON, pinnedPlatformKey []byte, progressStatus, trustedTime string,
+	priorAttempts int64, network AndroidBootstrapNetwork,
+) (*AndroidV2BootstrapSession, error) {
+	return newAndroidV2ResumeSession(descriptorJSON, proofBundleJSON, catalogJSON,
+		claimCoreJSON, resumeExpectedJSON, pinnedPlatformKey, progressStatus, trustedTime,
+		priorAttempts, network, nil)
+}
+
+func newAndroidV2ResumeSession(descriptorJSON, proofBundleJSON, catalogJSON,
+	claimCoreJSON, resumeExpectedJSON, pinnedPlatformKey []byte, progressStatus, trustedTime string,
+	priorAttempts int64, network AndroidBootstrapNetwork, outerRoots *x509.CertPool,
+) (*AndroidV2BootstrapSession, error) {
+	if network == nil {
+		return nil, errors.New("[D131 Android resume] bootstrap Network controller 不能为空")
+	}
+	underlayIdentity := network.UnderlayIdentity()
+	if underlayIdentity == "" || len(underlayIdentity) > 256 || strings.TrimSpace(underlayIdentity) != underlayIdentity {
+		return nil, errors.New("[D131 Android resume] frozen underlay identity 无效")
+	}
+	inputs, err := loadAndroidEnrollmentResumeInputsV1(descriptorJSON, proofBundleJSON, catalogJSON,
+		claimCoreJSON, resumeExpectedJSON, pinnedPlatformKey, progressStatus, trustedTime)
+	if err != nil {
+		return nil, err
+	}
+	now, _ := wire.ParseTimeZ(trustedTime)
+	verifiedCapability, err := wire.VerifyCapabilityAuthorizationEvidence(
+		&inputs.descriptor.ResumeTunnelCapability,
+		&inputs.bundle.BootstrapIssuerAuthorizationProof,
+		&inputs.bundle.InviteIssuancePolicy,
+		now,
+	)
+	if err != nil {
+		return nil, err
+	}
+	body := verifiedCapability.Body()
+	if err := validateAndroidBootstrapCapabilityMode(body, "resume_committed_claim",
+		inputs.catalog.BootstrapIngressSetHash); err != nil {
+		return nil, errors.New("[D131 Android resume] capability 未绑定 catalog/inner TLS TCP")
+	}
+	destination, err := androidBootstrapDestination(body)
+	if err != nil {
+		return nil, err
+	}
+	candidates, err := androidBootstrapCandidates(&inputs.catalog, now)
+	if err != nil {
+		return nil, err
+	}
+	if priorAttempts < 0 || priorAttempts > body.MaximumConnectionAttempts {
+		return nil, errors.New("[D131 Android resume] 已用 connection attempt 数无效")
+	}
+	rootContext, cancel := context.WithCancel(context.Background())
+	dialer := &androidBootstrapDialer{
+		network: network, candidates: candidates, credential: verifiedCapability.TransportCredential(),
+		capabilityID: verifiedCapability.CapabilityID(), destination: destination,
+		maximumAttempts: body.MaximumConnectionAttempts, attempts: priorAttempts,
+		maximumSession:    time.Duration(body.MaximumSessionSeconds) * time.Second,
+		maximumTotalBytes: body.MaximumTotalBytes, roots: outerRoots, timeout: 12 * time.Second,
+		notBefore: mustAndroidBootstrapTime(body.NotBefore), expiresAt: mustAndroidBootstrapTime(body.ExpiresAt),
+	}
+	transport, client, baseURL, err := newAndroidPrivateEnrollmentHTTP(
+		dialer, inputs.descriptor.EnrollmentServiceRef,
+		func() time.Time { return time.Unix(0, dialer.trustedNow.Load()).UTC() },
+	)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	core := inputs.core
+	session := &AndroidV2BootstrapSession{
+		network: network, dialer: dialer, client: client, transport: transport, baseURL: baseURL,
+		context: rootContext, cancel: cancel, resume: &inputs, core: &core,
+	}
+	session.setTrustedTime(now)
+	return session, nil
+}
+
+func validateAndroidBootstrapCapabilityMode(body wire.BootstrapTunnelCapabilityBodyV1,
+	mode, ingressSetHash string,
+) error {
+	if body.Mode != mode || body.AllowedIngressSetHash != ingressSetHash ||
+		body.AllowedInsideTransport != "tcp" {
+		return errors.New("[D131 Android] capability mode/ingress/inside transport 无效")
+	}
+	return nil
 }
 
 // Probe 对每个已验 listener/address 最多做一次无 bearer TLS/QUIC handshake；
@@ -249,7 +342,12 @@ func (session *AndroidV2BootstrapSession) Preflight(canonicalRequest []byte, tru
 	if err := decodeExactAndroidV2(canonicalRequest, 1<<20, &request, "Enrollment preflight request"); err != nil {
 		return nil, err
 	}
-	expected := androidEnrollmentPreflightRequestV2(session.inputs)
+	var expected wire.EnrollmentIntentPreflightRequestV1
+	if session.resume != nil {
+		expected = androidEnrollmentResumePreflightRequest(*session.resume)
+	} else {
+		expected = androidEnrollmentPreflightRequestV2(session.inputs)
+	}
 	if !wire.EqualCanonical(request, expected) {
 		return nil, errors.New("[D129 Android] preflight request 不是已验 Invite 的 exact 投影")
 	}
@@ -257,7 +355,12 @@ func (session *AndroidV2BootstrapSession) Preflight(canonicalRequest []byte, tru
 	if err != nil {
 		return nil, err
 	}
-	verified, err := verifyAndroidEnrollmentPreflightV2(session.inputs, body)
+	var verified wire.EnrollmentIntentPreflightResponseV1
+	if session.resume != nil {
+		verified, err = verifyAndroidEnrollmentResumePreflight(*session.resume, body)
+	} else {
+		verified, err = verifyAndroidEnrollmentPreflightV2(session.inputs, body)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -281,8 +384,14 @@ func (session *AndroidV2BootstrapSession) Challenge(canonicalCore []byte, truste
 	if err := decodeExactAndroidV2(canonicalCore, 4<<20, &core, "Enrollment claim core"); err != nil {
 		return nil, err
 	}
-	if err := validateAndroidEnrollmentClaimCoreV2(session.inputs, *session.preflight, &core); err != nil {
-		return nil, err
+	if session.resume != nil {
+		if !wire.EqualCanonical(core, session.resume.core) {
+			return nil, errors.New("[D130 Android resume] challenge 未复用 protected stable core")
+		}
+	} else {
+		if err := validateAndroidEnrollmentClaimCoreV2(session.inputs, *session.preflight, &core); err != nil {
+			return nil, err
+		}
 	}
 	if session.core != nil && !wire.EqualCanonical(*session.core, core) {
 		return nil, errors.New("[D130 Android] 同一 pending transaction 禁止替换 stable core")
@@ -296,9 +405,10 @@ func (session *AndroidV2BootstrapSession) Challenge(canonicalCore []byte, truste
 		return nil, err
 	}
 	coreHash, _ := wire.EnrollmentClaimCoreHash(&core)
+	serviceID := session.enrollmentServiceID()
 	if challenge.ClusterID != core.ClusterID || challenge.InviteID != core.InviteID ||
 		challenge.RequestID != core.RequestID ||
-		challenge.EnrollmentServiceID != session.inputs.descriptor.EnrollmentServiceRef.ServiceID {
+		challenge.EnrollmentServiceID != serviceID {
 		return nil, errors.New("[D129 Android] challenge 与 stable core/private service 不匹配")
 	}
 	if _, err := wire.EnrollmentChallengeHash(&challenge, coreHash, now); err != nil {
@@ -307,6 +417,13 @@ func (session *AndroidV2BootstrapSession) Challenge(canonicalCore []byte, truste
 	coreCopy, challengeCopy := core, challenge
 	session.core, session.challenge = &coreCopy, &challengeCopy
 	return body, nil
+}
+
+func (session *AndroidV2BootstrapSession) enrollmentServiceID() string {
+	if session.resume != nil {
+		return session.resume.descriptor.EnrollmentServiceRef.ServiceID
+	}
+	return session.inputs.descriptor.EnrollmentServiceRef.ServiceID
 }
 
 // SubmitClaim 是 initial flow 中唯一会把 Invite token 送入 inner TLS 的方法。
@@ -320,6 +437,9 @@ func (session *AndroidV2BootstrapSession) SubmitClaim(canonicalSubmission []byte
 	}
 	if session.preflight == nil || session.core == nil || session.challenge == nil {
 		return nil, errors.New("[D129 Android] claim 顺序无效")
+	}
+	if session.resume != nil {
+		return nil, errors.New("[D130 Android resume] resume session 禁止提交含 token 的 initial claim")
 	}
 	var submission wire.EnrollmentClaimSubmissionV2
 	if err := decodeExactAndroidV2(canonicalSubmission, 4<<20, &submission, "Enrollment claim submission"); err != nil {
@@ -346,18 +466,220 @@ func (session *AndroidV2BootstrapSession) SubmitClaim(canonicalSubmission []byte
 	if err != nil {
 		return nil, err
 	}
-	if result.Status == "completed" {
-		if completion == nil {
-			return nil, errors.New("[D130 Android] completed claim 缺 verified completion evidence")
-		}
-		if len(session.completedResult) != 0 && !bytes.Equal(session.completedResult, body) {
-			return nil, errors.New("[D130 Android] completed result 的 exact replay 发生冲突")
-		}
-		session.completedResult = append(session.completedResult[:0], body...)
-	} else if len(session.completedResult) != 0 {
-		return nil, errors.New("[D130 Android] completed transaction 禁止回退为 pending")
+	if err := session.acceptVerifiedEnrollmentResult(body, result, completion); err != nil {
+		return nil, err
 	}
 	return body, nil
+}
+
+func (session *AndroidV2BootstrapSession) ResumePreflightRequest(trustedTime string) ([]byte, error) {
+	session.flowMu.Lock()
+	defer session.flowMu.Unlock()
+	now, err := session.readyAt(trustedTime)
+	if err != nil {
+		return nil, err
+	}
+	if session.resume == nil {
+		return nil, errors.New("[D130 Android resume] initial session 没有 resume preflight")
+	}
+	if err := session.verifyResumeDescriptorAt(now); err != nil {
+		return nil, err
+	}
+	return wire.MarshalCanonical(androidEnrollmentResumePreflightRequest(*session.resume))
+}
+
+// PrepareResumePoPBody/AssembleResumeSubmission 把 fresh challenge 的签名边界
+// 留在 Keystore；返回的 submission schema 没有 token 字段（D129、D130）。
+func (session *AndroidV2BootstrapSession) PrepareResumePoPBody(trustedTime string) ([]byte, error) {
+	session.flowMu.Lock()
+	defer session.flowMu.Unlock()
+	now, err := session.readyAt(trustedTime)
+	if err != nil {
+		return nil, err
+	}
+	body, err := session.resumePoPBodyAt(now)
+	if err != nil {
+		return nil, err
+	}
+	return wire.MarshalCanonical(body)
+}
+
+func (session *AndroidV2BootstrapSession) AssembleResumeSubmission(canonicalPoPBody []byte,
+	proofSignature, trustedTime string,
+) ([]byte, error) {
+	session.flowMu.Lock()
+	defer session.flowMu.Unlock()
+	now, err := session.readyAt(trustedTime)
+	if err != nil {
+		return nil, err
+	}
+	var supplied wire.EnrollmentPoPBodyV2
+	if err := decodeExactAndroidV2(canonicalPoPBody, 1<<20, &supplied,
+		"resume Enrollment PoP body"); err != nil {
+		return nil, err
+	}
+	expected, err := session.resumePoPBodyAt(now)
+	if err != nil {
+		return nil, err
+	}
+	if !wire.EqualCanonical(supplied, expected) {
+		return nil, errors.New("[D130 Android resume] PoP body 未绑定当前 fresh challenge")
+	}
+	submission := wire.EnrollmentResumeSubmissionV1{
+		Schema: 1, ClaimCore: *session.core, Challenge: *session.challenge,
+		PoPBody: supplied, ProofSignature: proofSignature,
+	}
+	if _, err := wire.VerifyEnrollmentResumeSubmission(&submission,
+		session.resume.descriptor.ResumeTunnelCapability.Body.ResumeBinding,
+		&session.resume.bundle.CertifiedInviteRecord, &session.resume.bundle.InviteIssuancePolicy,
+		&session.preflight.DeviceEnrollmentIntentOpening,
+		session.resume.descriptor.EnrollmentServiceRef.ServiceID, now); err != nil {
+		return nil, err
+	}
+	return wire.MarshalCanonical(submission)
+}
+
+// SubmitResume 只接受无 token schema，并在返回给 Kotlin 前验证 progress/completion
+// receipt 必须包含 descriptor 所绑定的 transaction state（D130）。
+func (session *AndroidV2BootstrapSession) SubmitResume(canonicalSubmission []byte,
+	trustedTime string,
+) ([]byte, error) {
+	session.flowMu.Lock()
+	defer session.flowMu.Unlock()
+	now, err := session.readyAt(trustedTime)
+	if err != nil {
+		return nil, err
+	}
+	if session.resume == nil || session.preflight == nil || session.core == nil || session.challenge == nil {
+		return nil, errors.New("[D130 Android resume] submission 顺序无效")
+	}
+	if err := session.verifyResumeDescriptorAt(now); err != nil {
+		return nil, err
+	}
+	var submission wire.EnrollmentResumeSubmissionV1
+	if err := decodeExactAndroidV2(canonicalSubmission, 4<<20, &submission,
+		"Enrollment resume submission"); err != nil {
+		return nil, err
+	}
+	if !wire.EqualCanonical(submission.ClaimCore, *session.core) ||
+		!wire.EqualCanonical(submission.Challenge, *session.challenge) {
+		return nil, errors.New("[D130 Android resume] submission 未复用 protected core/fresh challenge")
+	}
+	if _, err := wire.VerifyEnrollmentResumeSubmission(&submission,
+		session.resume.descriptor.ResumeTunnelCapability.Body.ResumeBinding,
+		&session.resume.bundle.CertifiedInviteRecord, &session.resume.bundle.InviteIssuancePolicy,
+		&session.preflight.DeviceEnrollmentIntentOpening,
+		session.resume.descriptor.EnrollmentServiceRef.ServiceID, now); err != nil {
+		return nil, err
+	}
+	body, err := session.postCanonical("/v2/enrollment/claim", canonicalSubmission,
+		[]int{http.StatusOK, http.StatusAccepted})
+	if err != nil {
+		return nil, err
+	}
+	projection, result, completion, err := verifyAndroidEnrollmentResultExpected(
+		androidResumeProgressExpected(*session.resume, *session.preflight),
+		session.resume.verified, body, now,
+		[]string{
+			session.resume.expected.EnrollmentTransactionStateHash,
+			session.resume.descriptor.EnrollmentTransactionStateHash,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	if err := session.acceptVerifiedEnrollmentResult(body, result, completion); err != nil {
+		return nil, err
+	}
+	return wire.MarshalCanonical(projection)
+}
+
+func (session *AndroidV2BootstrapSession) PrepareResumeInstallationState(
+	installedSecretsJSON []byte,
+) ([]byte, error) {
+	session.flowMu.Lock()
+	defer session.flowMu.Unlock()
+	if session == nil || session.closed.Load() || session.resume == nil ||
+		len(session.completedResult) == 0 || session.completedEvidence == nil {
+		return nil, errors.New("[D130 Android resume] 尚无可安装的 verified completion")
+	}
+	var result wire.EnrollmentClaimResultV2
+	if err := decodeExactAndroidV2(session.completedResult, 32<<20, &result,
+		"verified resume completion"); err != nil {
+		return nil, err
+	}
+	var credentials []androidInstalledSecretV1
+	if err := decodeExactAndroidV2(installedSecretsJSON, 16<<20, &credentials,
+		"installed credentials"); err != nil {
+		return nil, err
+	}
+	if credentials == nil {
+		return nil, errors.New("[D124 Android resume] installed credentials 必须是 canonical array")
+	}
+	if err := session.completedEvidence.VerifyInstallationContext(
+		&result, session.core, session.resume.verified,
+	); err != nil {
+		return nil, err
+	}
+	return prepareAndroidEnrollmentInstallationState(*session.core, result,
+		*session.completedEvidence, session.resume.verified, credentials)
+}
+
+func (session *AndroidV2BootstrapSession) resumePoPBodyAt(now time.Time) (wire.EnrollmentPoPBodyV2, error) {
+	if session.resume == nil || session.preflight == nil || session.core == nil || session.challenge == nil {
+		return wire.EnrollmentPoPBodyV2{}, errors.New("[D130 Android resume] PoP 顺序无效")
+	}
+	if err := session.verifyResumeDescriptorAt(now); err != nil {
+		return wire.EnrollmentPoPBodyV2{}, err
+	}
+	coreHash, err := wire.EnrollmentClaimCoreHash(session.core)
+	if err != nil {
+		return wire.EnrollmentPoPBodyV2{}, err
+	}
+	challengeHash, err := wire.EnrollmentChallengeHash(session.challenge, coreHash, now)
+	if err != nil {
+		return wire.EnrollmentPoPBodyV2{}, err
+	}
+	body := wire.EnrollmentPoPBodyV2{
+		Schema: 2, ClusterID: session.core.ClusterID, InviteID: session.core.InviteID,
+		RequestID: session.core.RequestID, ClaimCoreHash: coreHash,
+		TokenCommitment: session.resume.bundle.CertifiedInviteRecord.TokenCommitment,
+		ChallengeHash:   challengeHash,
+	}
+	if _, err := wire.EnrollmentPoPMessage(&body); err != nil {
+		return wire.EnrollmentPoPBodyV2{}, err
+	}
+	return body, nil
+}
+
+func (session *AndroidV2BootstrapSession) verifyResumeDescriptorAt(now time.Time) error {
+	if session.resume == nil {
+		return errors.New("[D130 Android resume] session mode 无效")
+	}
+	return wire.VerifyEnrollmentResumeDescriptorBindings(
+		&session.resume.descriptor, session.resume.expected, &session.resume.catalog,
+		&session.resume.bundle.BootstrapIssuerAuthorizationProof,
+		&session.resume.bundle.InviteIssuancePolicy, now, androidBootstrapClientProtocol,
+	)
+}
+
+func (session *AndroidV2BootstrapSession) acceptVerifiedEnrollmentResult(body []byte,
+	result wire.EnrollmentClaimResultV2, completion *enrollmentv2.VerifiedEnrollmentCompletionV1,
+) error {
+	if result.Status == "completed" {
+		if completion == nil {
+			return errors.New("[D130 Android] completed claim 缺 verified completion evidence")
+		}
+		if len(session.completedResult) != 0 && !bytes.Equal(session.completedResult, body) {
+			return errors.New("[D130 Android] completed result 的 exact replay 发生冲突")
+		}
+		session.completedResult = append(session.completedResult[:0], body...)
+		evidence := *completion
+		session.completedEvidence = &evidence
+	} else if len(session.completedResult) != 0 {
+		return errors.New("[D130 Android] completed transaction 禁止回退为 pending")
+	}
+	return nil
 }
 
 // FetchReleasedArtifacts 只使用同一 session 内已经完整验证的 completed result，

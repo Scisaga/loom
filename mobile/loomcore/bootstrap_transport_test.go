@@ -23,6 +23,7 @@ import (
 	quic "github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
 	"github.com/sagernet/quic-go/quicvarint"
+	"loom/internal/wire"
 )
 
 type androidBootstrapNetworkFixture struct {
@@ -62,6 +63,38 @@ func (fixture *androidBootstrapNetworkFixture) snapshot() (int, []int64) {
 	fixture.mu.Lock()
 	defer fixture.mu.Unlock()
 	return fixture.protected, append([]int64(nil), fixture.attempts...)
+}
+
+func TestAndroidBootstrapCapabilityUsesWireTCPValue(t *testing.T) {
+	body := wire.BootstrapTunnelCapabilityBodyV1{
+		Mode: "initial_claim", AllowedIngressSetHash: "ingress-1", AllowedInsideTransport: "tcp",
+	}
+	if err := validateAndroidBootstrapCapabilityMode(body, "initial_claim", "ingress-1"); err != nil {
+		t.Fatalf("wire 规范的 tcp 被拒绝: %v", err)
+	}
+	body.AllowedInsideTransport = "tls_tcp"
+	if err := validateAndroidBootstrapCapabilityMode(body, "initial_claim", "ingress-1"); err == nil {
+		t.Fatal("wire schema 不存在的 tls_tcp 被接受")
+	}
+}
+
+func TestAndroidBootstrapChallengeUsesDescriptorForActiveMode(t *testing.T) {
+	initial := &AndroidV2BootstrapSession{inputs: androidEnrollmentInputsV2{
+		descriptor: wire.InviteBootstrapDescriptorV2{EnrollmentServiceRef: wire.PrivateEnrollmentServiceRefV1{
+			ServiceID: "initial-service",
+		}},
+	}}
+	if got := initial.enrollmentServiceID(); got != "initial-service" {
+		t.Fatalf("initial service=%q", got)
+	}
+	resume := &AndroidV2BootstrapSession{resume: &androidEnrollmentResumeInputsV1{
+		descriptor: wire.EnrollmentResumeDescriptorV1{EnrollmentServiceRef: wire.PrivateEnrollmentServiceRefV1{
+			ServiceID: "resume-service",
+		}},
+	}}
+	if got := resume.enrollmentServiceID(); got != "resume-service" {
+		t.Fatalf("resume service=%q", got)
+	}
 }
 
 func TestAndroidTrojanProbeIsTokenFreeAndActualDialIsJournaled(t *testing.T) {

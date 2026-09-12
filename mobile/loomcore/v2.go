@@ -152,18 +152,34 @@ func PrepareInitialV2DeviceStateFromInvite(envelopeJSON, controlSetJSON, descrip
 	if err != nil {
 		return nil, err
 	}
+	state, err := prepareInitialAndroidV2DeviceStateFromVerified(
+		envelope, set, verified, expectedDeviceID, expectedIdentitySPKIHash,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return marshalAndroidV2DeviceState(state)
+}
+
+func prepareInitialAndroidV2DeviceStateFromVerified(envelope wire.DeviceViewEnvelopeV2,
+	set wire.ControlSetV1, verified wire.VerifiedInviteProofV2,
+	expectedDeviceID, expectedIdentitySPKIHash string,
+) (androidV2DeviceState, error) {
+	if expectedDeviceID == "" || expectedIdentitySPKIHash == "" {
+		return androidV2DeviceState{}, errors.New("[D105 Android] initial Device/identity binding 缺失")
+	}
 	proofSet, proofHead := verified.ControlSet(), verified.Head()
 	if verified.CertifiedInviteRecordHash() == "" || !wire.EqualCanonical(proofSet, set) {
-		return nil, errors.New("[D115 Android] initial ControlSet 未绑定 verified Invite proof")
+		return androidV2DeviceState{}, errors.New("[D115 Android] initial ControlSet 未绑定 verified Invite proof")
 	}
 	floors, err := wire.VerifyDeviceViewEnvelope(&envelope, &set)
 	if err != nil {
-		return nil, err
+		return androidV2DeviceState{}, err
 	}
 	if envelope.Payload.DeviceID != expectedDeviceID || envelope.Payload.State != "active" ||
 		envelope.Payload.DeviceGeneration != 1 || envelope.Payload.Active == nil ||
 		envelope.Payload.Active.IdentitySPKIHash != expectedIdentitySPKIHash {
-		return nil, errors.New("[D105 Android] initial Device view 与 Enrollment identity 不匹配")
+		return androidV2DeviceState{}, errors.New("[D105 Android] initial Device view 与 Enrollment identity 不匹配")
 	}
 	if floors.ClusterID != proofHead.Body.Payload.ClusterID ||
 		floors.AcceptedRecoveryEpoch != proofHead.Body.Payload.RecoveryEpoch ||
@@ -173,9 +189,9 @@ func PrepareInitialV2DeviceStateFromInvite(envelopeJSON, controlSetJSON, descrip
 		floors.ControlSetHash != proofHead.Body.Payload.ControlSetHash ||
 		floors.BootstrapTransitionHash != proofHead.Body.TransitionProofHash ||
 		floors.AcceptedControlRevision < proofHead.Body.Payload.ControlRevision {
-		return nil, errors.New("[D115 Android] initial Device view 未延续 verified Invite authority")
+		return androidV2DeviceState{}, errors.New("[D115 Android] initial Device view 未延续 verified Invite authority")
 	}
-	return marshalAndroidV2DeviceState(androidV2DeviceState{Schema: 1, Floors: floors, Envelope: envelope})
+	return androidV2DeviceState{Schema: 1, Floors: floors, Envelope: envelope}, nil
 }
 
 func V2DeviceStateFloors(stateJSON []byte) ([]byte, error) {

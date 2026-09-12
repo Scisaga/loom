@@ -48,6 +48,7 @@ data class EnrollmentStatus(
     val snapshot: String = "",
     val generation: Long = 0,
     val canAbandonPending: Boolean = false,
+    val canImportResume: Boolean = false,
     val diagnostic: String = "",
 )
 
@@ -233,7 +234,14 @@ class EnrollmentManager private constructor(context: Context) {
         ) return
         store.pending()?.let { pending ->
             if (JSONObject(pending.decodeToString()).optInt("schema") == 2) {
-                claimV2UntilResult(V2PendingEnrollment.decode(pending))
+                val transaction = V2PendingEnrollment.decode(pending)
+                if (transaction.resumeDescriptor != null) {
+                    resumeV2UntilResult(transaction)
+                } else if (transaction.progressStatus != null) {
+                    awaitExplicitV2Resume()
+                } else {
+                    claimV2UntilResult(transaction)
+                }
             } else {
                 claimUntilReady(pending)
             }
@@ -243,19 +251,29 @@ class EnrollmentManager private constructor(context: Context) {
     }
 
     private suspend fun beginJoin(raw: String) {
-        if (raw.startsWith(V2_INVITE_URI_PREFIX)) {
-            beginV2Join(Loomcore.decodeAndroidV2InviteURI(raw))
-            return
+        when {
+            raw.startsWith(V2_RESUME_URI_PREFIX) -> {
+                beginV2Resume(Loomcore.decodeAndroidV2ResumeURI(raw))
+                return
+            }
+
+            raw.startsWith(V2_INVITE_URI_PREFIX) -> {
+                beginV2Join(Loomcore.decodeAndroidV2InviteURI(raw))
+                return
+            }
         }
         beginV1Join(raw)
     }
 
     private suspend fun beginJoinFile(raw: ByteArray) {
-        val schema = runCatching { JSONObject(raw.decodeToString()).optInt("schema") }.getOrDefault(0)
-        if (schema == 2) {
-            beginV2Join(Loomcore.decodeAndroidV2InviteFile(raw))
-        } else {
-            beginV1Join(raw.decodeToString())
+        val carrier = runCatching { JSONObject(raw.decodeToString()) }.getOrNull()
+        when {
+            carrier?.has("resume_tunnel_capability") == true -> {
+                beginV2Resume(Loomcore.decodeAndroidV2ResumeFile(raw))
+            }
+
+            carrier?.optInt("schema") == 2 -> beginV2Join(Loomcore.decodeAndroidV2InviteFile(raw))
+            else -> beginV1Join(raw.decodeToString())
         }
     }
 
@@ -298,7 +316,11 @@ class EnrollmentManager private constructor(context: Context) {
             check(pending.descriptor.contentEquals(canonicalDescriptor)) {
                 "已有另一笔未完成 v2 加入；不会覆盖一次性凭据"
             }
-            claimV2UntilResult(pending)
+            if (pending.progressStatus != null) {
+                awaitExplicitV2Resume()
+            } else {
+                claimV2UntilResult(pending)
+            }
             return
         }
         val trustedTime = Instant.now().toString()
@@ -313,7 +335,44 @@ class EnrollmentManager private constructor(context: Context) {
         claimV2UntilResult(pending)
     }
 
+    private suspend fun beginV2Resume(canonicalDescriptor: ByteArray) {
+        check(store.loadCurrent() == null && store.ready() == null && v2StateStore.current() == null) {
+            "设备已经加入；resume 不会覆盖现有正式身份"
+        }
+        val pendingBytes = checkNotNull(store.pending()) {
+            "本机没有可由 resume 恢复的 pending transaction"
+        }
+        check(JSONObject(pendingBytes.decodeToString()).optInt("schema") == 2) {
+            "resume 不能恢复 v1 pending transaction"
+        }
+        var pending = V2PendingEnrollment.decode(pendingBytes)
+        check(pending.claimCore != null && pending.progressStatus != null && pending.resumeExpected != null) {
+            "本机 pending 尚未取得 certified reservation；不能使用 resume"
+        }
+        val trustedTime = Instant.now().toString()
+        mutableStatus.value = EnrollmentStatus(
+            EnrollmentPhase.CLAIMING,
+            "正在下载并验证带外 resume authority…",
+        )
+        val artifacts = V2MirrorFetcher(appContext).fetchResume(
+            canonicalDescriptor,
+            TrustAnchor.platformPublicKey(),
+            trustedTime,
+        )
+        pending = pending.withResume(
+            canonicalDescriptor,
+            artifacts.proofBundle,
+            artifacts.bootstrapCatalog,
+            trustedTime,
+        )
+        store.putV2Resume(pending)
+        resumeV2UntilResult(pending)
+    }
+
     private suspend fun claimV2UntilResult(initial: V2PendingEnrollment) {
+        check(initial.progressStatus == null && initial.resumeDescriptor == null) {
+            "已预约的 v2 transaction 只能用显式 exact-bound resume capability 恢复"
+        }
         var pending = initial
         ContextCompat.startForegroundService(
             appContext,
@@ -406,7 +465,7 @@ class EnrollmentManager private constructor(context: Context) {
             )
             pending = pending
                 .withConnectionAttempts(session.connectionAttempts())
-                .withClaimResult(result)
+                .withVerifiedClaimResult(result, verifiedResult)
             store.putV2Pending(pending)
             val status = JSONObject(verifiedResult.decodeToString()).getString("status")
             if (status == "completed") {
@@ -424,8 +483,129 @@ class EnrollmentManager private constructor(context: Context) {
             }
             mutableStatus.value = EnrollmentStatus(
                 EnrollmentPhase.WAITING,
-                "v2 claim 已耐久预约；等待 quorum 完成，重试将复用同一 stable core",
+                "v2 claim 已耐久预约；继续前需导入管理员显式签发的 exact-bound resume",
                 canAbandonPending = true,
+                canImportResume = true,
+            )
+        } finally {
+            session.close()
+            service.finishBootstrapNetwork()
+        }
+    }
+
+    private fun awaitExplicitV2Resume() {
+        mutableStatus.value = EnrollmentStatus(
+            EnrollmentPhase.WAITING,
+            "本机已保存 certified reservation；请扫码或导入管理员显式签发的 .loom-resume",
+            canAbandonPending = true,
+            canImportResume = true,
+        )
+    }
+
+    private suspend fun resumeV2UntilResult(initial: V2PendingEnrollment) {
+        var pending = initial
+        val descriptor = checkNotNull(pending.resumeDescriptor) { "v2 resume descriptor 缺失" }
+        val proof = checkNotNull(pending.resumeProofBundle) { "v2 resume proof 缺失" }
+        val catalog = checkNotNull(pending.resumeBootstrapCatalog) { "v2 resume catalog 缺失" }
+        val core = checkNotNull(pending.claimCore) { "v2 resume stable core 缺失" }
+        val progressStatus = checkNotNull(pending.progressStatus) { "v2 resume progress status 缺失" }
+        val expected = checkNotNull(pending.resumeExpected) { "v2 resume expected transaction 缺失" }
+        ContextCompat.startForegroundService(
+            appContext,
+            Intent(appContext, LoomVpnService::class.java).setAction(LoomVpnService.ACTION_ENROLLMENT_KEEPALIVE),
+        )
+        val service = withTimeout(BOOTSTRAP_SERVICE_TIMEOUT_MS) { BootstrapServiceRegistry.await() }
+        val network = service.prepareBootstrapNetwork(store::recordV2ConnectionAttempt)
+        val session = try {
+            Loomcore.newAndroidV2ResumeSession(
+                descriptor,
+                proof,
+                catalog,
+                core,
+                expected,
+                TrustAnchor.platformPublicKey(),
+                progressStatus,
+                Instant.now().toString(),
+                pending.resumeConnectionAttempts,
+                network,
+            )
+        } catch (error: Throwable) {
+            service.finishBootstrapNetwork()
+            throw error
+        }
+        try {
+            val underlayIdentity = network.underlayIdentity()
+            val selection = if (
+                pending.resumeSelectedUnderlay == underlayIdentity &&
+                pending.resumeSelectedTransport != null
+            ) {
+                mutableStatus.value = EnrollmentStatus(
+                    EnrollmentPhase.CLAIMING,
+                    "正在恢复当前网络已验证的 resume 入口…",
+                )
+                session.restoreProbe(pending.resumeSelectedTransport, Instant.now().toString())
+            } else {
+                mutableStatus.value = EnrollmentStatus(
+                    EnrollmentPhase.CLAIMING,
+                    "正在验证当前网络的 HY2/Trojan resume 入口…",
+                )
+                session.probe(Instant.now().toString())
+            }
+            pending = pending.withResumeSelection(underlayIdentity, selection)
+            store.putV2Pending(pending)
+
+            val preflightRequest = session.resumePreflightRequest(Instant.now().toString())
+            mutableStatus.value = EnrollmentStatus(
+                EnrollmentPhase.CLAIMING,
+                "正在私有隧道内恢复 exact committed opening…",
+            )
+            session.preflight(preflightRequest, Instant.now().toString())
+            pending = pending.withResumeConnectionAttempts(session.connectionAttempts())
+            store.putV2Pending(pending)
+
+            session.challenge(core, Instant.now().toString())
+            pending = pending.withResumeConnectionAttempts(session.connectionAttempts())
+            store.putV2Pending(pending)
+            val crypto = V2EnrollmentCrypto(keys)
+            val pop = session.prepareResumePoPBody(Instant.now().toString())
+            val submission = session.assembleResumeSubmission(
+                pop,
+                crypto.signPoP(pop),
+                Instant.now().toString(),
+            )
+            mutableStatus.value = EnrollmentStatus(
+                EnrollmentPhase.CLAIMING,
+                "正在以 Keystore 新鲜 PoP 恢复原注册事务…",
+            )
+            val verifiedResult = session.submitResume(submission, Instant.now().toString())
+            val verified = JSONObject(verifiedResult.decodeToString())
+            val result = Loomcore.canonicalizeV2(
+                verified.getJSONObject("exact_result").toString().encodeToByteArray(),
+            )
+            pending = pending
+                .withResumeConnectionAttempts(session.connectionAttempts())
+                .withVerifiedClaimResult(result, verifiedResult)
+            store.putV2Pending(pending)
+            if (verified.getString("status") == "completed") {
+                mutableStatus.value = EnrollmentStatus(
+                    EnrollmentPhase.PULLING,
+                    "resume 已完成；正在取回并解封密封凭据…",
+                )
+                val released = session.fetchReleasedArtifacts(Instant.now().toString())
+                val installed = prepareV2InstalledCredentials(verifiedResult, released, crypto)
+                val state = session.prepareResumeInstallationState(installed)
+                v2StateStore.installCompletion(state, store::clearPending)
+                mutableStatus.value = EnrollmentStatus(
+                    EnrollmentPhase.PULLING,
+                    "v2 正式身份已由 exact-bound resume 原子安装；主连接等待签名 Device 配置",
+                )
+                return
+            }
+            mutableStatus.value = EnrollmentStatus(
+                EnrollmentPhase.WAITING,
+                "resume 已验证事务继续等待 quorum；不会自动取得新 capability",
+                canAbandonPending = true,
+                canImportResume = true,
             )
         } finally {
             session.close()
@@ -440,6 +620,24 @@ class EnrollmentManager private constructor(context: Context) {
         releasedArtifacts: ByteArray,
         crypto: V2EnrollmentCrypto,
     ) {
+        val installedCanonical = prepareV2InstalledCredentials(verifiedResult, releasedArtifacts, crypto)
+        val state = Loomcore.prepareAndroidV2EnrollmentInstallationState(
+            pending.descriptor,
+            pending.proofBundle,
+            checkNotNull(pending.preflightResponse),
+            checkNotNull(pending.claimCore),
+            result,
+            installedCanonical,
+            Instant.now().toString(),
+        )
+        v2StateStore.installCompletion(state, store::clearPending)
+    }
+
+    private fun prepareV2InstalledCredentials(
+        verifiedResult: ByteArray,
+        releasedArtifacts: ByteArray,
+        crypto: V2EnrollmentCrypto,
+    ): ByteArray {
         val verified = JSONObject(verifiedResult.decodeToString())
         check(verified.getInt("schema") == 1 && verified.getString("status") == "completed") {
             "v2 completion projection 无效"
@@ -460,17 +658,7 @@ class EnrollmentManager private constructor(context: Context) {
             val credential = crypto.unsealInstalledSecret(ref, envelope, recipientID)
             installed.put(JSONObject(credential.decodeToString()))
         }
-        val installedCanonical = Loomcore.canonicalizeV2(installed.toString().encodeToByteArray())
-        val state = Loomcore.prepareAndroidV2EnrollmentInstallationState(
-            pending.descriptor,
-            pending.proofBundle,
-            checkNotNull(pending.preflightResponse),
-            checkNotNull(pending.claimCore),
-            result,
-            installedCanonical,
-            Instant.now().toString(),
-        )
-        v2StateStore.installCompletion(state, store::clearPending)
+        return Loomcore.canonicalizeV2(installed.toString().encodeToByteArray())
     }
 
     private suspend fun claimUntilReady(pendingBytes: ByteArray) {
@@ -688,15 +876,25 @@ class EnrollmentManager private constructor(context: Context) {
     }
 
     private fun fail(prefix: String, error: Throwable) {
-        val hasPending = try {
-            store.pending() != null
+        val pending = try {
+            store.pending()
         } catch (_: Throwable) {
+            null
+        }
+        val canImportResume = runCatching {
+            pending != null && JSONObject(pending.decodeToString()).optInt("schema") == 2 &&
+                V2PendingEnrollment.decode(pending).progressStatus != null
+        }.getOrDefault(false)
+        val hasPending = if (pending != null) {
             true
+        } else {
+            runCatching { store.pending() != null }.getOrDefault(true)
         }
         mutableStatus.value = EnrollmentStatus(
             EnrollmentPhase.ERROR,
             "$prefix：${error.message ?: error.javaClass.simpleName}",
             canAbandonPending = hasPending,
+            canImportResume = canImportResume,
         )
     }
 
@@ -722,6 +920,7 @@ class EnrollmentManager private constructor(context: Context) {
         private const val BUNDLE_LIMIT = 16 * 1024 * 1024
         private const val BOOTSTRAP_SERVICE_TIMEOUT_MS = 10_000L
         private const val V2_INVITE_URI_PREFIX = "loom://enroll/v2#d="
+        private const val V2_RESUME_URI_PREFIX = "loom://enroll/resume/v1#d="
         private const val FIRST_ATTEMPTED_AT = "first_attempted_at"
         private const val CLAIMED_CLIENT_ID = "claimed_client_id"
         private const val CLAIMED_AT = "claimed_at"

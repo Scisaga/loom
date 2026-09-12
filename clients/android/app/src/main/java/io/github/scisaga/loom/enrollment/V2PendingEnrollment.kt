@@ -1,5 +1,7 @@
 package io.github.scisaga.loom.enrollment
 
+import io.github.scisaga.loom.security.TrustAnchor
+import io.github.scisaga.loomcore.Loomcore
 import org.json.JSONObject
 import java.security.SecureRandom
 import java.util.Base64
@@ -21,6 +23,14 @@ internal data class V2PendingEnrollment(
     val clientNonce: ByteArray? = null,
     val claimCore: ByteArray? = null,
     val claimResult: ByteArray? = null,
+    val progressStatus: String? = null,
+    val resumeExpected: ByteArray? = null,
+    val resumeDescriptor: ByteArray? = null,
+    val resumeProofBundle: ByteArray? = null,
+    val resumeBootstrapCatalog: ByteArray? = null,
+    val resumeConnectionAttempts: Long = 0,
+    val resumeSelectedUnderlay: String? = null,
+    val resumeSelectedTransport: ByteArray? = null,
 ) {
     init {
         require(descriptor.isNotEmpty() && proofBundle.isNotEmpty() && bootstrapCatalog.isNotEmpty()) {
@@ -41,6 +51,35 @@ internal data class V2PendingEnrollment(
             "v2 claim core 缺少 preflight/stable coordinates"
         }
         require(claimResult == null || claimCore != null) { "v2 claim result 缺少 stable core" }
+        require((progressStatus == null) == (resumeExpected == null)) {
+            "v2 pending progress status/expected 不完整"
+        }
+        require(progressStatus == null || claimCore != null && claimResult != null) {
+            "v2 pending progress 缺少 stable core/result"
+        }
+        val resumeParts = listOf(resumeDescriptor, resumeProofBundle, resumeBootstrapCatalog)
+        require(resumeParts.all { it == null } || resumeParts.all { it != null }) {
+            "v2 resume descriptor/proof/catalog 不完整"
+        }
+        require(resumeConnectionAttempts >= 0) { "v2 resume connection attempt 无效" }
+        require((resumeSelectedUnderlay == null) == (resumeSelectedTransport == null)) {
+            "v2 resume underlay/selection 不完整"
+        }
+        resumeSelectedUnderlay?.let {
+            require(it.isNotBlank() && it.length <= 256 && it.trim() == it) {
+                "v2 resume underlay identity 无效"
+            }
+        }
+        if (resumeDescriptor == null) {
+            require(
+                resumeConnectionAttempts == 0L && resumeSelectedUnderlay == null &&
+                    resumeSelectedTransport == null,
+            ) { "v2 resume journal 缺少 descriptor" }
+        } else {
+            require(claimCore != null && progressStatus != null && resumeExpected != null) {
+                "v2 resume 缺少已验 pending progress"
+            }
+        }
     }
 
     fun withSelection(underlayIdentity: String, selection: ByteArray): V2PendingEnrollment {
@@ -68,9 +107,112 @@ internal data class V2PendingEnrollment(
     fun withClaimCore(core: ByteArray): V2PendingEnrollment =
         copy(claimCore = bindExact(claimCore, core, "stable claim core"))
 
-    fun withClaimResult(result: ByteArray): V2PendingEnrollment {
+    fun withVerifiedClaimResult(result: ByteArray, projection: ByteArray): V2PendingEnrollment {
         require(result.isNotEmpty()) { "v2 claim result 不能为空" }
-        return copy(claimResult = result.copyOf())
+        val verified = JSONObject(projection.decodeToString())
+        check(verified.getInt("schema") == 1) { "v2 claim result projection schema 无效" }
+        val status = verified.getString("status")
+        val canonicalResult = Loomcore.canonicalizeV2(result)
+        val projectedResult = Loomcore.canonicalizeV2(
+            verified.getJSONObject("exact_result").toString().encodeToByteArray(),
+        )
+        check(canonicalResult.contentEquals(result) && projectedResult.contentEquals(result)) {
+            "v2 claim result 未绑定 verifier 的 exact result"
+        }
+        check(JSONObject(result.decodeToString()).getString("status") == status) {
+            "v2 claim result/projection status 不匹配"
+        }
+        val previousCompleted = claimResult?.let {
+            JSONObject(it.decodeToString()).optString("status") == "completed"
+        } == true
+        if (status == "completed") {
+            if (previousCompleted) check(checkNotNull(claimResult).contentEquals(result)) {
+                "v2 completed result exact replay 发生冲突"
+            }
+            return copy(claimResult = result.copyOf())
+        }
+        check(!previousCompleted && status in setOf("reserved", "issued_provisional")) {
+            "v2 pending result 状态无效或发生回退"
+        }
+        val expected = Loomcore.canonicalizeV2(
+            verified.getJSONObject("resume_expected").toString().encodeToByteArray(),
+        )
+        Loomcore.validateAndroidV2PendingProgress(checkNotNull(claimCore), status, expected)
+        if (progressStatus != null) {
+            Loomcore.advanceAndroidV2PendingProgress(
+                checkNotNull(claimCore),
+                progressStatus,
+                checkNotNull(resumeExpected),
+                status,
+                expected,
+            )
+        }
+        return copy(
+            claimResult = result.copyOf(),
+            progressStatus = status,
+            resumeExpected = expected,
+        )
+    }
+
+    /** D130：显式导入可替换旧 resume 窗口，但不能改变本机 transaction floor。 */
+    fun withResume(
+        descriptor: ByteArray,
+        proofBundle: ByteArray,
+        bootstrapCatalog: ByteArray,
+        trustedTime: String,
+    ): V2PendingEnrollment {
+        val core = checkNotNull(claimCore) { "v2 resume 缺少 stable core" }
+        val status = checkNotNull(progressStatus) { "v2 resume 缺少 verified progress" }
+        val expected = checkNotNull(resumeExpected) { "v2 resume 缺少 expected transaction" }
+        Loomcore.validateAndroidV2ResumeInputs(
+            descriptor,
+            proofBundle,
+            bootstrapCatalog,
+            core,
+            expected,
+            TrustAnchor.platformPublicKey(),
+            status,
+            trustedTime,
+        )
+        val exactReplay = resumeDescriptor?.contentEquals(descriptor) == true &&
+            resumeProofBundle?.contentEquals(proofBundle) == true &&
+            resumeBootstrapCatalog?.contentEquals(bootstrapCatalog) == true
+        if (exactReplay) return this
+        return copy(
+            resumeDescriptor = descriptor.copyOf(),
+            resumeProofBundle = proofBundle.copyOf(),
+            resumeBootstrapCatalog = bootstrapCatalog.copyOf(),
+            resumeConnectionAttempts = 0,
+            resumeSelectedUnderlay = null,
+            resumeSelectedTransport = null,
+        )
+    }
+
+    fun withResumeSelection(underlayIdentity: String, selection: ByteArray): V2PendingEnrollment {
+        check(resumeDescriptor != null) { "v2 resume selection 缺少 descriptor" }
+        require(underlayIdentity.isNotBlank() && underlayIdentity.length <= 256 && underlayIdentity.trim() == underlayIdentity) {
+            "v2 resume underlay identity 无效"
+        }
+        require(selection.isNotEmpty()) { "v2 resume transport selection 不能为空" }
+        if (resumeSelectedUnderlay == underlayIdentity) {
+            return copy(
+                resumeSelectedTransport = bindExact(
+                    resumeSelectedTransport,
+                    selection,
+                    "v2 resume transport selection",
+                ),
+            )
+        }
+        return copy(
+            resumeSelectedUnderlay = underlayIdentity,
+            resumeSelectedTransport = selection.copyOf(),
+        )
+    }
+
+    fun withResumeConnectionAttempts(observed: Long): V2PendingEnrollment {
+        check(resumeDescriptor != null) { "v2 resume attempt 缺少 descriptor" }
+        check(observed >= resumeConnectionAttempts) { "v2 resume attempt 计数禁止回退" }
+        return copy(resumeConnectionAttempts = observed)
     }
 
     fun withConnectionAttempts(observed: Long): V2PendingEnrollment {
@@ -79,12 +221,21 @@ internal data class V2PendingEnrollment(
     }
 
     fun advanceAttempt(capabilityID: String, attempt: Long): V2PendingEnrollment {
-        val expectedCapability = JSONObject(descriptor.decodeToString())
+        val initialCapability = JSONObject(descriptor.decodeToString())
             .getJSONObject("bootstrap_tunnel_capability")
             .getString("capability_id")
-        check(capabilityID == expectedCapability) { "bootstrap attempt capability 已切换" }
-        check(attempt == connectionAttempts + 1) { "bootstrap attempt journal 必须严格单调" }
-        return copy(connectionAttempts = attempt)
+        if (capabilityID == initialCapability) {
+            check(attempt == connectionAttempts + 1) { "bootstrap attempt journal 必须严格单调" }
+            return copy(connectionAttempts = attempt)
+        }
+        val resumeCapability = resumeDescriptor?.let {
+            JSONObject(it.decodeToString())
+                .getJSONObject("resume_tunnel_capability")
+                .getString("capability_id")
+        }
+        check(capabilityID == resumeCapability) { "bootstrap attempt capability 已切换" }
+        check(attempt == resumeConnectionAttempts + 1) { "resume attempt journal 必须严格单调" }
+        return copy(resumeConnectionAttempts = attempt)
     }
 
     fun encode(): ByteArray {
@@ -102,6 +253,14 @@ internal data class V2PendingEnrollment(
         clientNonce?.let { root.put("client_nonce", Base64.getUrlEncoder().withoutPadding().encodeToString(it)) }
         claimCore?.let { root.put("claim_core", it.decodeToString()) }
         claimResult?.let { root.put("claim_result", it.decodeToString()) }
+        progressStatus?.let { root.put("progress_status", it) }
+        resumeExpected?.let { root.put("resume_expected", it.decodeToString()) }
+        resumeDescriptor?.let { root.put("resume_descriptor", it.decodeToString()) }
+        resumeProofBundle?.let { root.put("resume_proof_bundle", it.decodeToString()) }
+        resumeBootstrapCatalog?.let { root.put("resume_bootstrap_catalog", it.decodeToString()) }
+        if (resumeDescriptor != null) root.put("resume_connection_attempts", resumeConnectionAttempts)
+        resumeSelectedUnderlay?.let { root.put("resume_selected_underlay", it) }
+        resumeSelectedTransport?.let { root.put("resume_selected_transport", it.decodeToString()) }
         return root.toString().encodeToByteArray()
     }
 
@@ -122,6 +281,14 @@ internal data class V2PendingEnrollment(
             "client_nonce",
             "claim_core",
             "claim_result",
+            "progress_status",
+            "resume_expected",
+            "resume_descriptor",
+            "resume_proof_bundle",
+            "resume_bootstrap_catalog",
+            "resume_connection_attempts",
+            "resume_selected_underlay",
+            "resume_selected_transport",
         )
         private val FIELDS = OPTIONAL_FIELDS + setOf(
             "schema",
@@ -153,6 +320,18 @@ internal data class V2PendingEnrollment(
                 clientNonce = nonce,
                 claimCore = optionalBytes(root, "claim_core"),
                 claimResult = optionalBytes(root, "claim_result"),
+                progressStatus = root.optString("progress_status").takeIf(String::isNotBlank),
+                resumeExpected = optionalBytes(root, "resume_expected"),
+                resumeDescriptor = optionalBytes(root, "resume_descriptor"),
+                resumeProofBundle = optionalBytes(root, "resume_proof_bundle"),
+                resumeBootstrapCatalog = optionalBytes(root, "resume_bootstrap_catalog"),
+                resumeConnectionAttempts = if (root.has("resume_connection_attempts")) {
+                    root.getLong("resume_connection_attempts")
+                } else {
+                    0
+                },
+                resumeSelectedUnderlay = root.optString("resume_selected_underlay").takeIf(String::isNotBlank),
+                resumeSelectedTransport = optionalBytes(root, "resume_selected_transport"),
             )
         }
 

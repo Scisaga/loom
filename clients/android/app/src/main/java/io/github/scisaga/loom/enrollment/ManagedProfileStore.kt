@@ -158,6 +158,19 @@ internal class ManagedProfileStore(private val context: Context) {
 
     @Synchronized
     fun putV2Pending(pending: V2PendingEnrollment) {
+        putV2PendingLocked(pending, allowResumeReplacement = false)
+    }
+
+    /** D130：只有用户显式导入并经共享 verifier 验证的 carrier 能替换 resume 窗口。 */
+    @Synchronized
+    fun putV2Resume(pending: V2PendingEnrollment) {
+        putV2PendingLocked(pending, allowResumeReplacement = true)
+    }
+
+    private fun putV2PendingLocked(
+        pending: V2PendingEnrollment,
+        allowResumeReplacement: Boolean,
+    ) {
         protected.get(PENDING)?.let { previousBytes ->
             val previousJSON = JSONObject(previousBytes.decodeToString())
             if (previousJSON.optInt("schema") == 2) {
@@ -181,9 +194,61 @@ internal class ManagedProfileStore(private val context: Context) {
                 check(previous.claimResult == null || pending.claimResult != null) {
                     "v2 pending claim result 禁止回退"
                 }
+                validateV2ProgressAdvance(previous, pending)
+                validateV2ResultAdvance(previous, pending)
                 if (previous.selectedUnderlay == pending.selectedUnderlay) {
                     check(preservesV2Exact(previous.selectedTransport, pending.selectedTransport)) {
                         "同一 underlay 的 bootstrap probe plan 禁止替换"
+                    }
+                }
+                if (allowResumeReplacement) {
+                    check(pending.resumeDescriptor != null) { "显式 resume 更新缺少 descriptor" }
+                    check(previous.connectionAttempts == pending.connectionAttempts) {
+                        "resume carrier 导入不得改写 initial attempt journal"
+                    }
+                    check(sameV2Exact(previous.selectedTransport, pending.selectedTransport) &&
+                        previous.selectedUnderlay == pending.selectedUnderlay &&
+                        sameV2Exact(previous.preflightResponse, pending.preflightResponse) &&
+                        previous.requestID == pending.requestID &&
+                        sameV2Exact(previous.clientNonce, pending.clientNonce) &&
+                        sameV2Exact(previous.claimCore, pending.claimCore) &&
+                        sameV2Exact(previous.claimResult, pending.claimResult) &&
+                        previous.progressStatus == pending.progressStatus &&
+                        sameV2Exact(previous.resumeExpected, pending.resumeExpected)) {
+                        "resume carrier 导入不得改写 pending transaction"
+                    }
+                    val replaced = !sameV2Exact(previous.resumeDescriptor, pending.resumeDescriptor) ||
+                        !sameV2Exact(previous.resumeProofBundle, pending.resumeProofBundle) ||
+                        !sameV2Exact(previous.resumeBootstrapCatalog, pending.resumeBootstrapCatalog)
+                    if (replaced) {
+                        check(
+                            pending.resumeConnectionAttempts == 0L &&
+                                pending.resumeSelectedUnderlay == null &&
+                                pending.resumeSelectedTransport == null,
+                        ) { "新 resume capability 必须从独立 attempt journal 开始" }
+                    } else {
+                        check(pending.resumeConnectionAttempts >= previous.resumeConnectionAttempts) {
+                            "v2 resume attempt 计数禁止回退"
+                        }
+                        if (previous.resumeSelectedUnderlay == pending.resumeSelectedUnderlay) {
+                            check(preservesV2Exact(previous.resumeSelectedTransport, pending.resumeSelectedTransport)) {
+                                "同一 underlay 的 resume probe plan 禁止替换"
+                            }
+                        }
+                    }
+                } else {
+                    check(preservesV2Exact(previous.resumeDescriptor, pending.resumeDescriptor) &&
+                        preservesV2Exact(previous.resumeProofBundle, pending.resumeProofBundle) &&
+                        preservesV2Exact(previous.resumeBootstrapCatalog, pending.resumeBootstrapCatalog)) {
+                        "v2 resume authority 只能由显式 carrier 替换"
+                    }
+                    check(pending.resumeConnectionAttempts >= previous.resumeConnectionAttempts) {
+                        "v2 resume attempt 计数禁止回退"
+                    }
+                    if (previous.resumeSelectedUnderlay == pending.resumeSelectedUnderlay) {
+                        check(preservesV2Exact(previous.resumeSelectedTransport, pending.resumeSelectedTransport)) {
+                            "同一 underlay 的 resume probe plan 禁止替换"
+                        }
                     }
                 }
             }
@@ -193,6 +258,48 @@ internal class ManagedProfileStore(private val context: Context) {
         val replay = checkNotNull(protected.get(PENDING)) { "v2 pending transaction 未能持久保存" }
         check(replay.contentEquals(body)) { "v2 pending transaction 持久化回读不一致" }
         V2PendingEnrollment.decode(replay)
+    }
+
+    private fun validateV2ProgressAdvance(
+        previous: V2PendingEnrollment,
+        candidate: V2PendingEnrollment,
+    ) {
+        candidate.progressStatus?.let { status ->
+            Loomcore.validateAndroidV2PendingProgress(
+                checkNotNull(candidate.claimCore),
+                status,
+                checkNotNull(candidate.resumeExpected),
+            )
+        }
+        previous.progressStatus?.let { status ->
+            Loomcore.advanceAndroidV2PendingProgress(
+                checkNotNull(previous.claimCore),
+                status,
+                checkNotNull(previous.resumeExpected),
+                checkNotNull(candidate.progressStatus) { "v2 pending progress 禁止回退" },
+                checkNotNull(candidate.resumeExpected) { "v2 pending expected 禁止回退" },
+            )
+        }
+    }
+
+    private fun validateV2ResultAdvance(
+        previous: V2PendingEnrollment,
+        candidate: V2PendingEnrollment,
+    ) {
+        val oldResult = previous.claimResult ?: return
+        val newResult = checkNotNull(candidate.claimResult)
+        val oldStatus = JSONObject(oldResult.decodeToString()).getString("status")
+        val newStatus = JSONObject(newResult.decodeToString()).getString("status")
+        if (oldStatus == "completed" || oldStatus == newStatus) {
+            check(oldResult.contentEquals(newResult)) {
+                "v2 claim result 同阶段必须 exact replay"
+            }
+            return
+        }
+        check(oldStatus == "reserved" && newStatus in setOf("issued_provisional", "completed") ||
+            oldStatus == "issued_provisional" && newStatus == "completed") {
+            "v2 claim result 禁止回退或跨事务改写"
+        }
     }
 
     @Synchronized
@@ -208,6 +315,9 @@ internal class ManagedProfileStore(private val context: Context) {
 
     private fun preservesV2Exact(previous: ByteArray?, candidate: ByteArray?): Boolean =
         previous == null || candidate != null && previous.contentEquals(candidate)
+
+    private fun sameV2Exact(left: ByteArray?, right: ByteArray?): Boolean =
+        left == null && right == null || left != null && right != null && left.contentEquals(right)
 
     @Synchronized
     fun putReady(body: ByteArray) = protected.put(READY, body)

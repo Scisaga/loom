@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 
+	"loom/internal/enrollmentv2"
 	"loom/internal/wire"
 )
 
@@ -103,6 +104,17 @@ func PrepareAndroidV2EnrollmentInstallationState(descriptorJSON, proofBundleJSON
 	if credentials == nil {
 		return nil, errors.New("[D124 Android] installed credentials 必须是 canonical array")
 	}
+	return prepareAndroidEnrollmentInstallationState(core, result, *completion,
+		inputs.verified, credentials)
+}
+
+func prepareAndroidEnrollmentInstallationState(core wire.EnrollmentClaimCoreV2,
+	result wire.EnrollmentClaimResultV2, completion enrollmentv2.VerifiedEnrollmentCompletionV1,
+	proof wire.VerifiedInviteProofV2, credentials []androidInstalledSecretV1,
+) ([]byte, error) {
+	if result.ResultArtifact == nil || credentials == nil {
+		return nil, errors.New("[D130 Android] enrollment installation 输入不完整")
+	}
 	identityHash, wrappingHash, _, err := wire.EnrollmentClaimBinaryHashes(&core)
 	if err != nil {
 		return nil, err
@@ -120,22 +132,9 @@ func PrepareAndroidV2EnrollmentInstallationState(descriptorJSON, proofBundleJSON
 		return nil, err
 	}
 	envelope, set := completion.DeviceViewEnvelope(), completion.ControlSet()
-	envelopeJSON, err := wire.MarshalCanonical(envelope)
-	if err != nil {
-		return nil, err
-	}
-	setJSON, err := wire.MarshalCanonical(set)
-	if err != nil {
-		return nil, err
-	}
-	initialStateJSON, err := PrepareInitialV2DeviceStateFromInvite(
-		envelopeJSON, setJSON, descriptorJSON, proofBundleJSON,
-		result.ResultArtifact.InitialDeviceView.DeviceID, identityHash, trustedTime,
+	state, err := prepareInitialAndroidV2DeviceStateFromVerified(
+		envelope, set, proof, result.ResultArtifact.InitialDeviceView.DeviceID, identityHash,
 	)
-	if err != nil {
-		return nil, err
-	}
-	state, err := decodeAndroidV2DeviceState(initialStateJSON)
 	if err != nil {
 		return nil, err
 	}

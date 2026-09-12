@@ -477,6 +477,20 @@ private fun EnrollmentCard(
                     fontSize = 12.sp,
                 )
             }
+            if (status.canImportResume && status.phase != EnrollmentPhase.NOT_JOINED) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Button(onClick = onScan, modifier = Modifier.weight(1f).testTag("scan-resume")) {
+                        Text("扫码恢复")
+                    }
+                    OutlinedButton(
+                        onClick = onImportFile,
+                        modifier = Modifier.weight(1f).testTag("import-resume"),
+                    ) { Text("导入 .loom-resume") }
+                }
+            }
             when (status.phase) {
                 EnrollmentPhase.NOT_JOINED -> Row(
                     modifier = Modifier.fillMaxWidth(),
