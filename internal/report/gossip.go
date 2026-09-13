@@ -19,6 +19,9 @@ type table struct {
 	mu sync.Mutex
 	by map[string]*Observation
 	h  *history
+	// changed 是代际广播 channel。写入一份更新的可信观测时关闭当前代（§16.4），
+	// WebSocket 订阅者醒来后重取同一份 View，再订阅下一代。
+	changed chan struct{}
 
 	// errors 是最近一轮拒收的观测。签名/时间异常不能只写 journal：它们
 	// 必须进入 /status，影响 OK，并被事件检测器看见。
@@ -34,11 +37,28 @@ type table struct {
 }
 
 func newTable(minVersion ...int) *table {
-	t := &table{by: map[string]*Observation{}, h: newHistory()}
+	t := &table{by: map[string]*Observation{}, h: newHistory(), changed: make(chan struct{})}
 	if len(minVersion) > 0 {
 		t.minAttestationVersion = minVersion[0]
 	}
 	return t
+}
+
+func (t *table) changes() <-chan struct{} {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.changed
+}
+
+func (t *table) notifyLocked() {
+	close(t.changed)
+	t.changed = make(chan struct{})
+}
+
+func (t *table) notify() {
+	t.mu.Lock()
+	t.notifyLocked()
+	t.mu.Unlock()
 }
 
 // put 收下一份观测。先校验时间边界与签名，再允许它参与 Node 最新值竞争。
@@ -147,6 +167,7 @@ func (t *table) put(o *Observation, now time.Time, maxAge time.Duration) error {
 		if !observationNeedsVerification(old, 0) && observationNeedsVerification(o, 0) {
 			cp := *o
 			t.by[o.Node] = &cp
+			t.notifyLocked()
 			return nil
 		}
 		oldTS, oldErr := time.Parse(time.RFC3339, old.TS)
@@ -156,6 +177,7 @@ func (t *table) put(o *Observation, now time.Time, maxAge time.Duration) error {
 	}
 	cp := *o
 	t.by[o.Node] = &cp
+	t.notifyLocked()
 	return nil
 }
 

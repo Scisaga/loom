@@ -100,9 +100,13 @@ func sameClientPackageFileState(a, b []os.FileInfo) bool {
 
 type clientProvisionFunc func(client clientregistry.Client, csrPEM string) (*webui.ClientBootstrap, error)
 
-func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.ClientControlDeps {
+func newClientControlDeps(c *Control, provision clientProvisionFunc, onChange ...func()) *webui.ClientControlDeps {
 	if c == nil || strings.TrimSpace(c.ClientRegistryPath) == "" {
 		return nil
+	}
+	changed := func() {}
+	if len(onChange) > 0 && onChange[0] != nil {
+		changed = onChange[0]
 	}
 	store := clientregistry.Store{Path: c.ClientRegistryPath}
 	platformPublicKeyPath := "/etc/loom/trust/platform.pub"
@@ -278,13 +282,19 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 			}
 			return inventory, nil
 		},
-		DiscardPending: store.DiscardPending,
+		DiscardPending: func(id string) error {
+			err := store.DiscardPending(id)
+			if err == nil {
+				changed()
+			}
+			return err
+		},
 		PurgeRevoked: func(id string) error {
 			id = strings.TrimSpace(id)
 			if !model.ValidNodeID(id) {
 				return &clientregistry.Error{Code: clientregistry.CodeInvalid, Msg: "Device id is malformed"}
 			}
-			return withSSOTLock(c.SSOTPath, func() error {
+			err := withSSOTLock(c.SSOTPath, func() error {
 				snapshot, err := readSSOTSnapshot(c.SSOTPath)
 				if err != nil {
 					return err
@@ -301,16 +311,24 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 				}
 				return store.PurgeRevoked(id)
 			})
+			if err == nil {
+				changed()
+			}
+			return err
 		},
 		SetDevicePaused: func(id string, paused bool) error {
-			return setDevicePaused(c, store, id, paused)
+			err := setDevicePaused(c, store, id, paused)
+			if err == nil {
+				changed()
+			}
+			return err
 		},
 		DeleteDevice: func(id string) error {
 			id = strings.TrimSpace(id)
 			if !model.ValidNodeID(id) {
 				return &clientregistry.Error{Code: clientregistry.CodeInvalid, Msg: "Device id is malformed"}
 			}
-			return withSSOTLock(c.SSOTPath, func() error {
+			err := withSSOTLock(c.SSOTPath, func() error {
 				snapshot, err := readSSOTSnapshot(c.SSOTPath)
 				if err != nil {
 					return err
@@ -362,6 +380,10 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 				_, err = store.Revoke(id)
 				return err
 			})
+			if err == nil {
+				changed()
+			}
+			return err
 		},
 		RenewInvite: func(id string) (webui.ClientInviteView, error) {
 			// 先核对公开签发信息，避免入口配置损坏时先让旧二维码失效。
@@ -372,6 +394,7 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 			if err != nil {
 				return webui.ClientInviteView{}, err
 			}
+			changed()
 			return inviteView(created)
 		},
 		ReplaceDevice: func(id string) (webui.ClientInviteView, error) {
@@ -414,6 +437,7 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 			if err != nil {
 				return webui.ClientInviteView{}, err
 			}
+			changed()
 			return inviteView(created)
 		},
 		CreateInvite: func(input webui.ClientInviteInput) (webui.ClientInviteView, error) {
@@ -431,6 +455,7 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 			if err != nil {
 				return webui.ClientInviteView{}, err
 			}
+			changed()
 			uri, err := inviteURI(created.Token, created.Invite.ExpiresAt)
 			if err != nil {
 				return webui.ClientInviteView{}, err
@@ -495,6 +520,7 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 			if err != nil {
 				return webui.ClientClaimResult{}, err
 			}
+			changed()
 			result := webui.ClientClaimResult{
 				Schema: 1, ClientID: claimed.Client.ID,
 				Status: "provisioning", EnrolledAt: claimed.Client.EnrolledAt,
@@ -517,6 +543,7 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc) *webui.Clie
 			if _, err := store.MarkReady(claimed.Client.ID); err != nil {
 				return webui.ClientClaimResult{}, err
 			}
+			changed()
 			result.Status = "ready"
 			result.Configuration = "ready"
 			result.Next = "pull"

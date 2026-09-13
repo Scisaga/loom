@@ -322,6 +322,16 @@ func TestControlRuntimeBrowserUIUsesOptionalExactAdminCertificate(t *testing.T) 
 		t.Fatalf("forwarded same-origin admin POST = %d headers=%v body=%s",
 			response.Code, response.Header(), response.Body.String())
 	}
+	if response := serveRuntimeUIWebSocket(t, runtime, loopbackAddress, "", "same-origin"); response.Code != http.StatusForbidden {
+		t.Fatalf("WebSocket without Origin = %d body=%s", response.Code, response.Body.String())
+	}
+	if response := serveRuntimeUIWebSocket(t, runtime, loopbackAddress, "https://cross-site.example", "cross-site"); response.Code != http.StatusForbidden {
+		t.Fatalf("cross-site WebSocket = %d body=%s", response.Code, response.Body.String())
+	}
+	if response := serveRuntimeUIWebSocket(t, runtime, loopbackAddress, "https://"+loopbackAddress, "same-origin"); response.Code != http.StatusOK || response.Header().Get("X-Loom-Test-UI") != "read-only" {
+		t.Fatalf("same-origin WebSocket routing = %d headers=%v body=%s",
+			response.Code, response.Header(), response.Body.String())
+	}
 
 	// Expiry is checked against the certified authorization on every request;
 	// an exact but expired leaf degrades to read-only and can never write.
@@ -423,6 +433,26 @@ func serveRuntimeUIAt(t *testing.T, runtime *controlRuntime, address, method, pa
 	if peer != nil {
 		request.TLS.PeerCertificates = []*x509.Certificate{peer}
 	}
+	if origin != "" {
+		request.Header.Set("Origin", origin)
+	}
+	if fetchSite != "" {
+		request.Header.Set("Sec-Fetch-Site", fetchSite)
+	}
+	response := httptest.NewRecorder()
+	runtime.controlHandler().ServeHTTP(response, request)
+	return response
+}
+
+func serveRuntimeUIWebSocket(t *testing.T, runtime *controlRuntime, address, origin, fetchSite string) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet,
+		"https://"+address+"/api/control/device-inventory/live", nil)
+	request = request.WithContext(context.WithValue(request.Context(), http.LocalAddrContextKey,
+		controlTestAddress(address)))
+	request.TLS = &tls.ConnectionState{Version: tls.VersionTLS13, HandshakeComplete: true}
+	request.Header.Set("Connection", "keep-alive, Upgrade")
+	request.Header.Set("Upgrade", "websocket")
 	if origin != "" {
 		request.Header.Set("Origin", origin)
 	}

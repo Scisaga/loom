@@ -33,7 +33,26 @@ func pageDevices(d Deps, state clientPageState, isAuthed bool) string {
 		state.Package, state.PackageError = clientLinuxPackage(d, state.Package, state.PackageError)
 	}
 
-	inventory, inventoryErr := loadDeviceInventory(d)
+	inventory, archived, inventoryErr := loadDeviceInventoryPage(d, state.Archived)
+	var b strings.Builder
+	if state.Error != "" {
+		fmt.Fprintf(&b, `<div class="card notice badline"><b>Device operation failed</b><br><span class=small>%s</span></div>`, esc(state.Error))
+	}
+	if inventoryErr != nil {
+		fmt.Fprintf(&b, `<div class="card notice badline"><b>Device inventory unavailable</b><br><span class=small>%s</span></div>`, esc(inventoryErr.Error()))
+	}
+	b.WriteString(renderDeviceInventorySummary(inventory))
+	b.WriteString(`<div class=clients-layout>`)
+	b.WriteString(renderDeviceInventoryList(d, inventory, archived, state.Archived, isAuthed, inventoryErr))
+	if !state.Archived {
+		writeLinuxDelivery(&b, state.Package, state.PackageError)
+	}
+	b.WriteString(`</div>`)
+	return shell(d, "Devices", b.String(), isAuthed)
+}
+
+func loadDeviceInventoryPage(d Deps, showArchived bool) (ClientInventory, int, error) {
+	inventory, err := loadDeviceInventory(d)
 	archived := 0
 	visible := make([]ClientView, 0, len(inventory.Clients))
 	for _, device := range inventory.Clients {
@@ -41,12 +60,15 @@ func pageDevices(d Deps, state clientPageState, isAuthed bool) string {
 		if isArchived {
 			archived++
 		}
-		if isArchived == state.Archived {
+		if isArchived == showArchived {
 			visible = append(visible, device)
 		}
 	}
 	inventory.Clients = visible
+	return inventory, archived, err
+}
 
+func renderDeviceInventorySummary(inventory ClientInventory) string {
 	total, members, pending := len(inventory.Clients), 0, 0
 	for _, device := range inventory.Clients {
 		switch device.Membership {
@@ -56,28 +78,24 @@ func pageDevices(d Deps, state clientPageState, isAuthed bool) string {
 			pending++
 		}
 	}
-	var b strings.Builder
-	if state.Error != "" {
-		fmt.Fprintf(&b, `<div class="card notice badline"><b>Device operation failed</b><br><span class=small>%s</span></div>`, esc(state.Error))
-	}
-	if inventoryErr != nil {
-		fmt.Fprintf(&b, `<div class="card notice badline"><b>Device inventory unavailable</b><br><span class=small>%s</span></div>`, esc(inventoryErr.Error()))
-	}
-	fmt.Fprintf(&b, `<section class="card clients-summary" aria-label="Device inventory summary">
+	return fmt.Sprintf(`<section class="card clients-summary" data-device-live-summary aria-label="Device inventory summary">
 <div class=clients-summary-item><div class=label>Devices</div><div class=metric>%d</div><div class=dim>one identity inventory across all responsibilities</div></div>
 <div class=clients-summary-item><div class=label>Members</div><div class="metric ok">%d</div><div class=dim>present in current desired state; not necessarily online</div></div>
 <div class=clients-summary-item><div class=label>Waiting to join</div><div class=metric>%d <small>devices</small></div><div class=dim>%d unused join codes</div></div>
 </section>`, total, members, pending, inventory.ActiveInvites)
+}
 
-	b.WriteString(`<div class=clients-layout><section class="card clients-list-card"><div class=clients-card-head><div><h2>Device inventory</h2><p class=dim>Identity, desired membership and runtime evidence remain separate facts.</p></div>`)
+func renderDeviceInventoryList(d Deps, inventory ClientInventory, archived int, showArchived, isAuthed bool, inventoryErr error) string {
+	var b strings.Builder
+	b.WriteString(`<section class="card clients-list-card" data-device-live-list><div class=clients-card-head><div><h2>Device inventory</h2><p class=dim>Identity, desired membership and runtime evidence remain separate facts.</p></div><span class="device-live-state tiny dim sp" data-device-live-state role=status aria-live=polite><span class=dot></span>Snapshot</span>`)
 	control := deviceControl(d)
-	if state.Archived {
-		b.WriteString(`<a class="button sp" href="/devices">Current devices</a><span class=dim>Archived devices</span>`)
+	if showArchived {
+		b.WriteString(`<a class=button href="/devices">Current devices</a><span class=dim>Archived devices</span>`)
 	} else if archived > 0 {
-		fmt.Fprintf(&b, `<a class="button sp" href="/devices?archived=1">Archived devices (%d)</a>`, archived)
+		fmt.Fprintf(&b, `<a class=button href="/devices?archived=1">Archived devices (%d)</a>`, archived)
 	}
 	if isAuthed && control != nil && control.CreateInvite != nil {
-		b.WriteString(`<a class="button primary sp" href="/devices?new=1">＋ Create Device</a>`)
+		b.WriteString(`<a class="button primary" href="/devices?new=1">＋ Create Device</a>`)
 	}
 	b.WriteString(`</div>`)
 	if inventoryErr == nil && len(inventory.Clients) == 0 {
@@ -91,23 +109,19 @@ func pageDevices(d Deps, state clientPageState, isAuthed bool) string {
 			if device.Legacy {
 				identityNote = ` · <span class="tiny warn">Identity not indexed</span>`
 			}
-			fmt.Fprintf(&b, `<tr><td><div class=client-name><b><a href="/devices/%s">%s</a></b><span class="mono dim">%s%s</span></div><td><div class=device-membership><b>%s</b>%s</div><td>%s<td>%s<td><span class="client-status %s"><span class=dot></span>%s</span><span class="client-runtime-detail tiny dim">%s</span><td>%s</tr>`,
-				url.PathEscape(device.ID), esc(device.ID), esc(identityMeta), identityNote,
+			fmt.Fprintf(&b, `<tr data-device-id="%s"><td><div class=client-name><b><a href="/devices/%s">%s</a></b><span class="mono dim">%s%s</span></div><td><div class=device-membership><b>%s</b>%s</div><td>%s<td>%s<td><span class="client-status %s"><span class=dot></span>%s</span><span class="client-runtime-detail tiny dim">%s</span><td>%s</tr>`,
+				esc(device.ID), url.PathEscape(device.ID), esc(device.ID), esc(identityMeta), identityNote,
 				esc(orDash(device.Membership)), devicePauseAction(d, device, isAuthed), deviceTagList(device.Responsibilities),
 				deviceTagList(device.DestinationGrants), statusClass, esc(statusLabel),
 				esc(clientRuntimeDetail(device)), clientTableTime(device.LastSeenAt))
 		}
 		b.WriteString(`</tbody></table></div>`)
 	}
-	if !state.Archived && control != nil && control.SetDevicePaused != nil {
+	if !showArchived && control != nil && control.SetDevicePaused != nil {
 		b.WriteString(`<p class="clients-list-note tiny dim">Pause / Resume is available only for devices whose sole responsibility is use_loom. It changes Loom forwarding access after servers apply the signed configuration. Identity and grants are retained; the client stays installed and local direct traffic is unaffected.</p>`)
 	}
 	b.WriteString(`</section>`)
-	if !state.Archived {
-		writeLinuxDelivery(&b, state.Package, state.PackageError)
-	}
-	b.WriteString(`</div>`)
-	return shell(d, "Devices", b.String(), isAuthed)
+	return b.String()
 }
 
 func deviceListIdentityMeta(device ClientView) string {
@@ -572,7 +586,9 @@ func clientStatusPresentation(status string) (className, label string) {
 	}
 }
 
-const clientRuntimeStaleAfter = 5 * time.Minute
+// Android 和其他当前 producer 每分钟提交一次可信健康陈述。连续两个周期没有
+// 新陈述就不能继续展示 Online；仍标 Stale，不能伪造已证明的 Offline（§16.4）。
+const clientRuntimeStaleAfter = 2 * time.Minute
 
 // mergeClientRuntime 只改页面使用的切片副本。registry/SSOT 仍分别保存身份与
 // 期望态；Online 必须来自当前 View 中直连或验签后的健康证据。

@@ -44,6 +44,10 @@ type Deps struct {
 
 	// Snapshot 返回当前的全网视图。
 	Snapshot func() View
+	// DeviceChanges 返回一个在 Device identity、期望态或可信运行态变化时（§16.4）
+	// 关闭的代际 channel。调用方收到关闭后重新调用即可订阅下一代；这样
+	// 浏览器列表由事件唤醒，不需要用 HTTP 轮询制造额外采集。
+	DeviceChanges func() <-chan struct{}
 	// TrafficSnapshot returns a gossip-cycle cache for /traffic.json. Scrapers
 	// must not trigger Collect, signature verification and a retention query on
 	// every request. When nil, the handler falls back to Snapshot for backwards
@@ -1240,6 +1244,7 @@ func Handler(d Deps) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, inventory)
 	})
+	mux.Handle("/api/control/device-inventory/live", deviceInventoryLiveHandler(d))
 	mux.HandleFunc("/api/control/devices", func(w http.ResponseWriter, r *http.Request) {
 		clientJSONHeaders(w)
 		if r.Method != http.MethodGet {
@@ -1768,7 +1773,9 @@ func writeHTML(w http.ResponseWriter, body string) {
 	deviceEnrollmentHash := base64.StdEncoding.EncodeToString(deviceEnrollmentDigest[:])
 	copyValueDigest := sha256.Sum256([]byte(copyValueScript))
 	copyValueHash := base64.StdEncoding.EncodeToString(copyValueDigest[:])
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'sha256-"+progressHash+"' 'sha256-"+topologyHash+"' 'sha256-"+deviceEnrollmentHash+"' 'sha256-"+copyValueHash+"'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'")
+	deviceInventoryLiveDigest := sha256.Sum256([]byte(deviceInventoryLiveScript))
+	deviceInventoryLiveHash := base64.StdEncoding.EncodeToString(deviceInventoryLiveDigest[:])
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'sha256-"+progressHash+"' 'sha256-"+topologyHash+"' 'sha256-"+deviceEnrollmentHash+"' 'sha256-"+copyValueHash+"' 'sha256-"+deviceInventoryLiveHash+"'; connect-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	fmt.Fprint(w, body)
 }

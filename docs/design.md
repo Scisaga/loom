@@ -2951,6 +2951,13 @@ v1 Events 页的兼容契约允许按节点、类型、级别与文本筛选，�
 决策器必须共用这条可信度边界，不能出现“页面不信、selector 却已经照做”。
 **静态拓扑图价值有限，带观测与决策的实时候选集视图才是排障入口。**
 
+Device inventory 也必须投影同一可信边界：SSR 只负责首屏与无脚本降级，已打开的列表经
+private HTTPS 同源 WebSocket 接收服务端推送，不用浏览器轮询制造第二条采集路径。当前
+Windows/Android producer 每分钟报告一次；连续两个周期没有新可信陈述时，`Online` lease
+到期并显示 `Stale`，同时保留签名陈述的原始 last-seen。没有新陈述不等于收到离线回执，
+所以不能把这一状态写成已证实的 `Offline`。服务端须按 lease deadline 主动唤醒 WebSocket，
+不能等待下一份报告才让旧 Online 失效。
+
 流量历史只使用柱状表达离散时间桶，不画暗示连续插值的曲线。Overview 的柱高是
 fleet node-interface RX+TX delta，Node detail 用并列 RX/TX 柱，Topology 用链路
 TX-only 总量比较条；reset 与长 gap 位置保留空槽并标出质量原因。柱高为零只有在

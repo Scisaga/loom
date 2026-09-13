@@ -259,6 +259,11 @@ func TestMisakaRoutesAndNavigationContract(t *testing.T) {
 	if strings.Contains(body, "translateY(") {
 		t.Error("page entry animation must not shift content during refresh")
 	}
+	approvedLiveScript := `<script>` + deviceInventoryLiveScript + `</script>`
+	if strings.Count(body, approvedLiveScript) != 1 {
+		t.Fatal("Device inventory must contain exactly one approved live-update script")
+	}
+	body = strings.Replace(body, approvedLiveScript, "", 1)
 	for _, forbidden := range []string{
 		"avatar", "profile-photo", "<img", "<script", "</script", `href="http`, `src="http`, "@import",
 		`"Intel One Mono"`,

@@ -25,6 +25,30 @@ func TestTableRejectsFuturePoisonBeforeIndexing(t *testing.T) {
 	}
 }
 
+func TestTableBroadcastsOnlyAcceptedObservationChanges(t *testing.T) {
+	now := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
+	tbl := newTable()
+	firstGeneration := tbl.changes()
+	if err := tbl.put(&Observation{Node: "demo-phone", TS: now.Format(time.RFC3339)}, now, 10*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-firstGeneration:
+	default:
+		t.Fatal("accepted Device observation did not wake live inventory subscribers")
+	}
+
+	secondGeneration := tbl.changes()
+	if err := tbl.put(&Observation{Node: "demo-phone", TS: now.Add(-time.Second).Format(time.RFC3339)}, now, 10*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-secondGeneration:
+		t.Fatal("ignored older observation emitted a false Device inventory change")
+	default:
+	}
+}
+
 func TestTablePhaseBRejectsUnsignedDowngrade(t *testing.T) {
 	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
 	tbl := newTable(5)

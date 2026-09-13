@@ -58,10 +58,11 @@ func TestPageIsSelfContained(t *testing.T) {
 		}
 	}
 	csp := w.Header().Get("Content-Security-Policy")
-	if !strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "img-src 'self' data:") {
+	if !strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "img-src 'self' data:") ||
+		!strings.Contains(csp, "connect-src 'self'") {
 		t.Errorf("没有为内嵌导航图标设置自包含 CSP:%q", csp)
 	}
-	for _, script := range []string{progressSubmitScript, topologyInteractionScript, deviceEnrollmentScript, copyValueScript} {
+	for _, script := range []string{progressSubmitScript, topologyInteractionScript, deviceEnrollmentScript, copyValueScript, deviceInventoryLiveScript} {
 		digest := sha256.Sum256([]byte(script))
 		want := "'sha256-" + base64.StdEncoding.EncodeToString(digest[:]) + "'"
 		if !strings.Contains(csp, want) {

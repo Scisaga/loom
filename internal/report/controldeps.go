@@ -26,10 +26,14 @@ import (
 //
 // 界面唯一能做的写操作是**改 SSOT**。发布是自动的 —— 发布器盯着同一个文件,
 // 存盘之后 30 秒内接管(§14.2.3)。
-func controlDeps(c *Control) *webui.ControlDeps {
+func controlDeps(c *Control, onDeviceChange ...func()) *webui.ControlDeps {
 	// HTTP handler 可能同时收到多个保存。原子 rename 能保证读者不会看到
 	// 半截 YAML,这把锁则让同一个中控进程内的“校验 + 替换”成为一个串行事务。
 	var saveMu sync.Mutex
+	deviceChanged := func() {}
+	if len(onDeviceChange) > 0 && onDeviceChange[0] != nil {
+		deviceChanged = onDeviceChange[0]
+	}
 
 	revision := func(content []byte) string {
 		sum := sha256.Sum256(content)
@@ -154,7 +158,7 @@ func controlDeps(c *Control) *webui.ControlDeps {
 			CACertPEM:         bootstrap.CACertPEM, NodeCertPEM: bootstrap.NodeCertPEM,
 		}, nil
 	}
-	deviceDeps := newClientControlDeps(c, clientProvision)
+	deviceDeps := newClientControlDeps(c, clientProvision, deviceChanged)
 	return &webui.ControlDeps{
 		SSOTPath: c.SSOTPath,
 		Enrich: func(v *webui.View) error {
@@ -191,10 +195,18 @@ func controlDeps(c *Control) *webui.ControlDeps {
 			// **保存前自己再校验一次。** 界面上的校验按钮只是给人看的:
 			// 表单可以被直接 POST,而一份坏 SSOT 存进去之后,发布器会拒绝
 			// 发布,线上停在旧快照 —— 症状是"改了没生效",很难查。
-			return save([]byte(content), "", false)
+			err := save([]byte(content), "", false)
+			if err == nil {
+				deviceChanged()
+			}
+			return err
 		},
 		SaveIfRevision: func(content, expected string) error {
-			return save([]byte(content), expected, true)
+			err := save([]byte(content), expected, true)
+			if err == nil {
+				deviceChanged()
+			}
+			return err
 		},
 		Services: &webui.ServiceControlDeps{
 			Upsert: func(input webui.ServiceInput, expected string) error {

@@ -53,7 +53,7 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 	//
 	// **它们必须同源** —— 界面自己去采一遍的话,"页面上说的"和"接口返回的"
 	// 会在某个时刻不一致,而那种不一致极难查。
-	deps := webui.Deps{Node: cfg.Node, Now: now}
+	deps := webui.Deps{Node: cfg.Node, Now: now, DeviceChanges: tbl.changes}
 	decorateView := func(v *webui.View, at time.Time) {
 		if v == nil {
 			return
@@ -118,7 +118,7 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 			// 人会误以为只是浏览器没有提交管理员证书。
 			fmt.Fprintf(logw, "! 中控配置有问题,写操作关闭:%v\n", controlErr)
 		}
-		deps.Control = controlDeps(ctl)
+		deps.Control = controlDeps(ctl, tbl.notify)
 		// 事件只在中控记。每个节点都有同样的视图(靠转述),记 N 份只会
 		// 让人不知道该看哪份 —— 但代价是**中控停了就不记事件**。
 		det = newDetector(EventsPath, 30*24*time.Hour)
