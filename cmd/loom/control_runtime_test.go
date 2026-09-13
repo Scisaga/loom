@@ -203,6 +203,16 @@ func TestControlRuntimeBrowserUIUsesOptionalExactAdminCertificate(t *testing.T) 
 		"https://10.40.0.2:19444", "same-origin"); response.Code != http.StatusForbidden {
 		t.Fatalf("expired admin POST = %d body=%s", response.Code, response.Body.String())
 	}
+
+	runtime.now = clock
+	runtime.config.Authorizations[0].Status = "revoked"
+	if response := serveRuntimeUI(t, runtime, http.MethodGet, "/", admin, "", ""); response.Code != http.StatusOK || response.Header().Get("X-Loom-Test-UI") != "read-only" {
+		t.Fatalf("revoked admin GET = %d headers=%v", response.Code, response.Header())
+	}
+	if response := serveRuntimeUI(t, runtime, http.MethodPost, "/devices/create", admin,
+		"https://10.40.0.2:19444", "same-origin"); response.Code != http.StatusForbidden {
+		t.Fatalf("revoked admin POST = %d body=%s", response.Code, response.Body.String())
+	}
 }
 
 func TestControlRuntimeBrowserUIRejectsNonUIAndWrongListener(t *testing.T) {
