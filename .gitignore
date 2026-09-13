@@ -35,3 +35,4 @@ measurements.jsonl
 /deploy/
 /docs/status.md
 /docs/status/
+.env
