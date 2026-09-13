@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -44,10 +45,15 @@ func TestControlRuntimeN1AdminCommitAndRestart(t *testing.T) {
 	if err := readCanonicalFile(filepath.Join(adminDir, controlEndpointName), 4<<20, &endpoint); err != nil {
 		t.Fatal(err)
 	}
-	internalRoot := readAdminTestCertificate(t, filepath.Join(adminDir, controlInternalRootName))
+	browserRoot := readAdminTestCertificate(t, filepath.Join(adminDir, controlInternalRootName))
 	encodedInternalRoot, err := base64.RawURLEncoding.DecodeString(endpoint.InternalRootDER)
-	if err != nil || !bytes.Equal(internalRoot.Raw, encodedInternalRoot) {
-		t.Fatalf("browser trust root differs from endpoint authority: %v", err)
+	if err != nil || bytes.Equal(browserRoot.Raw, encodedInternalRoot) {
+		t.Fatalf("browser compatibility root was not separated from native endpoint authority: %v", err)
+	}
+	_, _, browserStateRoot, err := loadControlBrowserTLS(filepath.Join(stateDir, controlBrowserTLSName),
+		"runtime-test", "10.40.0.2", now)
+	if err != nil || !bytes.Equal(browserRoot.Raw, browserStateRoot.Raw) {
+		t.Fatalf("delivered browser trust root differs from browser TLS authority: %v", err)
 	}
 	submitted, err := newControlPingRequest(adminDir, endpoint, status, "runtime integration", now)
 	if err != nil {
@@ -90,10 +96,6 @@ func TestControlRuntimeEnableLoopbackPreservesAuthorityAndIsIdempotent(t *testin
 		"00000000000000000000000000", "device-test", "10.40.0.2", 17944, 17945, clock); err != nil {
 		t.Fatal(err)
 	}
-	var config controlDiskConfigV1
-	if err := readCanonicalFile(filepath.Join(stateDir, controlConfigName), 8<<20, &config); err != nil {
-		t.Fatal(err)
-	}
 	var secrets controlDiskSecretsV1
 	secretsPath := filepath.Join(stateDir, controlSecretsName)
 	if err := readCanonicalFile(secretsPath, 8<<20, &secrets); err != nil {
@@ -104,71 +106,98 @@ func TestControlRuntimeEnableLoopbackPreservesAuthorityAndIsIdempotent(t *testin
 	if err != nil || len(controlTLS.Certificate) != 2 {
 		t.Fatalf("bootstrap control TLS: chain=%d err=%v", len(controlTLS.Certificate), err)
 	}
-	issuer, err := x509.ParseCertificate(controlTLS.Certificate[1])
+	internalRoot, err := x509.ParseCertificate(controlTLS.Certificate[1])
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverKey, err := parsePrivateKeyPKCS8PEM([]byte(secrets.ControlTLSPrivateKey))
-	if err != nil {
+	if err := os.Remove(filepath.Join(stateDir, controlBrowserTLSName)); err != nil {
 		t.Fatal(err)
 	}
-	issuerKey, err := parsePrivateKeyPKCS8PEM([]byte(secrets.InternalCAPrivateKeyPKCS8PEM))
-	if err != nil {
+	if err := writeBytesAtomic(filepath.Join(adminDir, controlInternalRootName),
+		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: internalRoot.Raw}), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	legacyPEM, legacyDER, err := signControlServerCertificate(config.ClusterID,
-		[]net.IP{net.ParseIP(config.OverlayIP)}, issuer, issuerKey, serverKey, now)
+	secretsBefore, err := os.ReadFile(secretsPath)
 	if err != nil {
-		t.Fatal(err)
-	}
-	legacyLeaf, err := x509.ParseCertificate(legacyDER)
-	if err != nil || legacyLeaf.VerifyHostname(controlLoopbackIP) == nil {
-		t.Fatalf("legacy leaf unexpectedly authorizes loopback: %v", err)
-	}
-	secrets.ControlTLSCertificate = string(append(legacyPEM,
-		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: issuer.Raw})...))
-	if err := writeCanonicalAtomic(secretsPath, secrets, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	stateBefore, err := os.ReadFile(filepath.Join(stateDir, controlStateName))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := enableControlLoopback(stateDir, clock); err != nil {
+	if err := enableControlLoopback(stateDir, adminDir, clock); err != nil {
 		t.Fatal(err)
 	}
 	stateAfter, err := os.ReadFile(filepath.Join(stateDir, controlStateName))
 	if err != nil || !bytes.Equal(stateBefore, stateAfter) {
 		t.Fatalf("certificate migration changed certified state: %v", err)
 	}
-	var migrated controlDiskSecretsV1
-	if err := readCanonicalFile(secretsPath, 8<<20, &migrated); err != nil {
-		t.Fatal(err)
+	secretsAfter, err := os.ReadFile(secretsPath)
+	if err != nil || !bytes.Equal(secretsBefore, secretsAfter) {
+		t.Fatalf("browser migration changed native control secrets: %v", err)
 	}
-	if migrated.ControlTLSPrivateKey != secrets.ControlTLSPrivateKey {
-		t.Fatal("certificate migration changed the pinned server private key")
-	}
-	migratedTLS, err := tls.X509KeyPair([]byte(migrated.ControlTLSCertificate),
-		[]byte(migrated.ControlTLSPrivateKey))
+	_, browserTLS, browserRoot, err := loadControlBrowserTLS(filepath.Join(stateDir, controlBrowserTLSName),
+		"runtime-loopback-test", "10.40.0.2", now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	migratedLeaf, err := x509.ParseCertificate(migratedTLS.Certificate[0])
-	if err != nil || migratedLeaf.VerifyHostname(config.OverlayIP) != nil ||
-		migratedLeaf.VerifyHostname(controlLoopbackIP) != nil ||
-		!bytes.Equal(migratedLeaf.RawSubjectPublicKeyInfo, legacyLeaf.RawSubjectPublicKeyInfo) {
-		t.Fatalf("migrated leaf identity invalid: %v", err)
+	browserLeaf, err := x509.ParseCertificate(browserTLS.Certificate[0])
+	if err != nil || browserLeaf.PublicKeyAlgorithm != x509.ECDSA ||
+		browserLeaf.SignatureAlgorithm != x509.ECDSAWithSHA256 ||
+		browserRoot.PublicKeyAlgorithm != x509.ECDSA ||
+		browserRoot.SignatureAlgorithm != x509.ECDSAWithSHA256 ||
+		browserLeaf.VerifyHostname(controlLoopbackIP) != nil {
+		t.Fatalf("migrated browser leaf identity invalid: %v", err)
 	}
-	firstMigration, err := os.ReadFile(secretsPath)
+	deliveredRoot := readAdminTestCertificate(t, filepath.Join(adminDir, controlInternalRootName))
+	if !bytes.Equal(deliveredRoot.Raw, browserRoot.Raw) || bytes.Equal(deliveredRoot.Raw, internalRoot.Raw) {
+		t.Fatal("browser migration did not replace only the delivered browser trust root")
+	}
+	firstMigration, err := os.ReadFile(filepath.Join(stateDir, controlBrowserTLSName))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := enableControlLoopback(stateDir, clock); err != nil {
+	firstRoot, err := os.ReadFile(filepath.Join(adminDir, controlInternalRootName))
+	if err != nil {
 		t.Fatal(err)
 	}
-	secondMigration, err := os.ReadFile(secretsPath)
+	if err := enableControlLoopback(stateDir, adminDir, clock); err != nil {
+		t.Fatal(err)
+	}
+	secondMigration, err := os.ReadFile(filepath.Join(stateDir, controlBrowserTLSName))
 	if err != nil || !bytes.Equal(firstMigration, secondMigration) {
-		t.Fatalf("idempotent migration rewrote secrets: %v", err)
+		t.Fatalf("idempotent migration rewrote browser TLS state: %v", err)
+	}
+	secondRoot, err := os.ReadFile(filepath.Join(adminDir, controlInternalRootName))
+	if err != nil || !bytes.Equal(firstRoot, secondRoot) {
+		t.Fatalf("idempotent migration rewrote browser trust root: %v", err)
+	}
+}
+
+func TestControlRuntimeEnableLoopbackRejectsUnrelatedAdminDelivery(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now().UTC().Truncate(time.Second)
+	clock := func() time.Time { return now }
+	stateDir := filepath.Join(root, "state")
+	adminDir := filepath.Join(root, "admin")
+	if err := bootstrapControlRuntime(stateDir, adminDir, "runtime-loopback-a",
+		"00000000000000000000000000", "device-a", "10.40.0.2", 17944, 17945, clock); err != nil {
+		t.Fatal(err)
+	}
+	otherStateDir := filepath.Join(root, "other-state")
+	otherAdminDir := filepath.Join(root, "other-admin")
+	if err := bootstrapControlRuntime(otherStateDir, otherAdminDir, "runtime-loopback-b",
+		"00000000000000000000000001", "device-b", "10.40.0.3", 18944, 18945, clock); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(stateDir, controlBrowserTLSName)); err != nil {
+		t.Fatal(err)
+	}
+	if err := enableControlLoopback(stateDir, otherAdminDir, clock); err == nil {
+		t.Fatal("unrelated admin delivery unexpectedly authorized browser TLS migration")
+	}
+	if _, err := os.Lstat(filepath.Join(stateDir, controlBrowserTLSName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("rejected migration wrote browser TLS state: %v", err)
 	}
 }
 
@@ -238,7 +267,7 @@ func TestControlRuntimeBrowserUIUsesOptionalExactAdminCertificate(t *testing.T) 
 		writer.WriteHeader(http.StatusOK)
 	})
 
-	tlsConfig := runtime.controlServerTLSConfig()
+	tlsConfig := runtime.controlServerTLSConfig(runtime.browserTLS)
 	if tlsConfig.ClientAuth != tls.RequestClientCert || tlsConfig.MinVersion != tls.VersionTLS13 ||
 		tlsConfig.MaxVersion != tls.VersionTLS13 || tlsConfig.ClientCAs == nil ||
 		len(tlsConfig.ClientCAs.Subjects()) == 0 {

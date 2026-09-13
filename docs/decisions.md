@@ -3869,3 +3869,25 @@ pin、trust root、admin leaf/private key、certified ACL 或 Head。因此原 `
 端口转发本身不授予管理权：无客户端证书仍只读；写入仍必须由当前 certified
 Admin ACL 精确授权的 leaf、TLS 1.3 和 same-origin 共同通过。不恢复 UI 密码、Cookie
 或 header 身份，也不把 SSH 通道当作 native Device/control protocol 的替代。
+
+### D135 · 浏览器 loopback TLS 与 native control identity 分离
+
+**日期** 2026-09-13 · **状态** 生效 · **相关** D104、D132、D134
+
+实际浏览器握手证明，部分受平台密码策略约束的客户端不在 TLS `signature_algorithms` 中声明
+Ed25519；若 loopback 与 native control 共用 Ed25519 server key，Go 服务端会在发送证书前以
+`peer doesn't support any of the certificate's signature algorithms` 终止握手。浏览器把该失败显示为
+`ERR_SSL_VERSION_OR_CIPHER_MISMATCH`，它与端口转发、根证书信任或 TLS 版本无关。
+
+因此 exact `127.0.0.1:<control-api-port>` listener 使用独立 P-256 ECDSA root/leaf，交付目录中的
+`control-root.crt` 对应这条 browser-only 链；overlay listener 继续使用 `endpoint.json` 承诺的
+Ed25519 internal root、server SPKI pin 和原 private-service identity。两条 listener 复用端口号但按
+local address 选择证书和 handler：loopback 不能调用 native status/operation，overlay identity 也不因
+浏览器兼容而换 key 或改 pin。
+
+一次性 `control enable-loopback` 必须同时给出状态目录和原管理员交付目录，先验证
+`endpoint.json`、native chain 与 certified service pin 属于同一 authority，再生成并持久化 browser
+TLS state、更新公开的 `control-root.crt`。迁移不改变 admin leaf/private key、certified Admin ACL、
+ControlSet、Raft、Head 或任何原生 Device 通道，重复执行也不轮换 browser authority。D134 中“共用
+原 server key/internal root”及“原 control-root 不变”的迁移细节由本决定取代；D134 的 exact
+loopback/Host/Origin 与 UI-only 边界继续有效。

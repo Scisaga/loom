@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
@@ -42,6 +44,7 @@ const (
 	controlJournalName      = "operations.json"
 	controlRaftName         = "raft.json"
 	controlStateName        = "control-state.json"
+	controlBrowserTLSName   = "browser-tls.json"
 	controlAdminCertName    = "admin.crt"
 	controlAdminKeyName     = "admin.key"
 	controlAdminRootName    = "admin-root.crt"
@@ -94,6 +97,13 @@ type controlDiskSecretsV1 struct {
 	PeerTLSPrivateKey            string `json:"peer_tls_private_key"`
 	InternalCAPrivateKeyPKCS8PEM string `json:"internal_ca_private_key_pkcs8_pem"`
 	AdminCAPrivateKeyPKCS8PEM    string `json:"admin_ca_private_key_pkcs8_pem"`
+}
+
+type controlBrowserTLSV1 struct {
+	Schema                 int    `json:"schema"`
+	CertificateChainPEM    string `json:"certificate_chain_pem"`
+	PrivateKeyPKCS8PEM     string `json:"private_key_pkcs8_pem"`
+	RootPrivateKeyPKCS8PEM string `json:"root_private_key_pkcs8_pem"`
 }
 
 type controlOperationRecordV1 struct {
@@ -163,6 +173,7 @@ type controlRuntime struct {
 	journal    controlOperationJournalV1
 	configKey  ed25519.PrivateKey
 	controlTLS tls.Certificate
+	browserTLS tls.Certificate
 	peerTLS    tls.Certificate
 	storage    *controlplane.RaftStorage
 	store      *controlplane.Store
@@ -196,13 +207,14 @@ func cmdControl(args []string) error {
 func cmdControlEnableLoopback(args []string) error {
 	fs := flag.NewFlagSet("control enable-loopback", flag.ContinueOnError)
 	dir := fs.String("state-dir", "/var/lib/loom-control", "控制面状态目录")
+	adminDir := fs.String("admin-dir", "", "包含 endpoint.json 的管理员交付目录")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() != 0 {
-		return errors.New("control enable-loopback 不接受位置参数")
+	if fs.NArg() != 0 || *adminDir == "" {
+		return errors.New("control enable-loopback 必须指定 -admin-dir，且不接受位置参数")
 	}
-	return enableControlLoopback(*dir, time.Now)
+	return enableControlLoopback(*dir, *adminDir, time.Now)
 }
 
 func cmdControlBootstrap(args []string) error {
@@ -310,7 +322,7 @@ func cmdControlRequest(args []string) error {
 	return nil
 }
 
-func enableControlLoopback(dir string, now func() time.Time) error {
+func enableControlLoopback(dir, adminDir string, now func() time.Time) error {
 	if now == nil {
 		return errors.New("control loopback 证书迁移需要可信时间源")
 	}
@@ -327,16 +339,11 @@ func enableControlLoopback(dir string, now func() time.Time) error {
 	}
 
 	var secrets controlDiskSecretsV1
-	secretsPath := filepath.Join(dir, controlSecretsName)
-	if err := readCanonicalFile(secretsPath, 8<<20, &secrets); err != nil {
+	if err := readCanonicalFile(filepath.Join(dir, controlSecretsName), 8<<20, &secrets); err != nil {
 		return err
 	}
 	if secrets.Schema != 1 {
 		return errors.New("control secrets schema 无效")
-	}
-	originalSecrets, err := wire.MarshalCanonical(secrets)
-	if err != nil {
-		return err
 	}
 	controlTLS, err := tls.X509KeyPair([]byte(secrets.ControlTLSCertificate),
 		[]byte(secrets.ControlTLSPrivateKey))
@@ -351,21 +358,16 @@ func enableControlLoopback(dir string, now func() time.Time) error {
 	if err != nil {
 		return fmt.Errorf("control TLS internal root: %w", err)
 	}
-	serverKey, err := parsePrivateKeyPKCS8PEM([]byte(secrets.ControlTLSPrivateKey))
-	if err != nil {
-		return fmt.Errorf("control TLS private key: %w", err)
-	}
 	issuerKey, err := parsePrivateKeyPKCS8PEM([]byte(secrets.InternalCAPrivateKeyPKCS8PEM))
 	if err != nil {
 		return fmt.Errorf("internal CA private key: %w", err)
 	}
 	issuerPublic, issuerIsEd25519 := issuer.PublicKey.(ed25519.PublicKey)
-	leafPublic, leafIsEd25519 := leaf.PublicKey.(ed25519.PublicKey)
+	_, leafIsEd25519 := leaf.PublicKey.(ed25519.PublicKey)
 	if !issuer.IsCA || !issuerIsEd25519 || !leafIsEd25519 ||
 		!bytes.Equal(issuerPublic, issuerKey.Public().(ed25519.PublicKey)) ||
-		!bytes.Equal(leafPublic, serverKey.Public().(ed25519.PublicKey)) ||
 		issuer.CheckSignatureFrom(issuer) != nil || leaf.CheckSignatureFrom(issuer) != nil {
-		return errors.New("control TLS leaf/key/internal CA authority 不一致")
+		return errors.New("control TLS leaf/internal CA authority 不一致")
 	}
 	instant := now().UTC()
 	roots := x509.NewCertPool()
@@ -379,38 +381,76 @@ func enableControlLoopback(dir string, now func() time.Time) error {
 	if !containsText(config.ControlService.SPKIPins, pin) {
 		return errors.New("既有 control TLS leaf 不在 certified service pin set")
 	}
-	if leaf.VerifyHostname(controlLoopbackIP) == nil {
-		fmt.Printf("✓ control TLS 已支持 https://%s:%d，未改写 authority\n",
-			controlLoopbackIP, config.ControlPort)
-		return nil
+
+	var endpoint controlAdminEndpointV1
+	if err := readCanonicalFile(filepath.Join(adminDir, controlEndpointName), 4<<20, &endpoint); err != nil {
+		return err
+	}
+	endpointRoot, err := base64.RawURLEncoding.DecodeString(endpoint.InternalRootDER)
+	if err != nil || endpoint.Schema != 1 || endpoint.ClusterID != config.ClusterID ||
+		!wire.EqualCanonical(endpoint.Service, config.ControlService) || !bytes.Equal(endpointRoot, issuer.Raw) {
+		return errors.New("admin 交付目录与 control internal authority 不一致")
+	}
+	browserRootPath := filepath.Join(adminDir, controlInternalRootName)
+	existingRoot, rootReadErr := readOwnerOnlyFile(browserRootPath, 1<<20)
+	if rootReadErr != nil && !errors.Is(rootReadErr, os.ErrNotExist) {
+		return rootReadErr
 	}
 
-	certificatePEM, certificateDER, err := signControlServerCertificate(config.ClusterID,
-		[]net.IP{net.ParseIP(config.OverlayIP), net.ParseIP(controlLoopbackIP)}, issuer, issuerKey,
-		serverKey, instant)
-	if err != nil {
-		return err
+	browserPath := filepath.Join(dir, controlBrowserTLSName)
+	var browserRoot *x509.Certificate
+	created := false
+	if _, statErr := os.Lstat(browserPath); errors.Is(statErr, os.ErrNotExist) {
+		browserState, _, generatedRoot, makeErr := makeControlBrowserTLS(config.ClusterID,
+			config.OverlayIP, instant)
+		if makeErr != nil {
+			return makeErr
+		}
+		if len(existingRoot) > 0 {
+			existingCertificate, parseErr := parseSingleCertificatePEM(existingRoot)
+			if parseErr != nil || !bytes.Equal(existingCertificate.Raw, issuer.Raw) {
+				return errors.New("既有浏览器 trust root 不是当前 internal root，拒绝覆盖")
+			}
+		}
+		if _, raceErr := os.Lstat(browserPath); !errors.Is(raceErr, os.ErrNotExist) {
+			return errors.New("browser TLS state 在迁移期间发生并发变化")
+		}
+		if err := writeCanonicalAtomic(browserPath, browserState, 0o600); err != nil {
+			return err
+		}
+		browserRoot = generatedRoot
+		created = true
+	} else if statErr != nil {
+		return statErr
+	} else {
+		_, _, loadedRoot, loadErr := loadControlBrowserTLS(browserPath, config.ClusterID,
+			config.OverlayIP, instant)
+		if loadErr != nil {
+			return loadErr
+		}
+		browserRoot = loadedRoot
 	}
-	newLeaf, err := x509.ParseCertificate(certificateDER)
-	if err != nil || newLeaf.VerifyHostname(config.OverlayIP) != nil ||
-		newLeaf.VerifyHostname(controlLoopbackIP) != nil ||
-		!bytes.Equal(newLeaf.RawSubjectPublicKeyInfo, leaf.RawSubjectPublicKeyInfo) {
-		return errors.New("control TLS loopback leaf 自验证失败")
+
+	rootPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: browserRoot.Raw})
+	if len(existingRoot) == 0 || !bytes.Equal(existingRoot, rootPEM) {
+		if len(existingRoot) > 0 {
+			existingCertificate, parseErr := parseSingleCertificatePEM(existingRoot)
+			if parseErr != nil || (!bytes.Equal(existingCertificate.Raw, issuer.Raw) &&
+				!bytes.Equal(existingCertificate.Raw, browserRoot.Raw)) {
+				return errors.New("浏览器 trust root 在迁移期间发生冲突，拒绝覆盖")
+			}
+		}
+		if err := writeBytesAtomic(browserRootPath, rootPEM, 0o600); err != nil {
+			return err
+		}
+		created = true
 	}
-	currentSecrets, err := readOwnerOnlyFile(secretsPath, 8<<20)
-	if err != nil {
-		return err
+	if created {
+		fmt.Printf("✓ P-256 browser TLS identity 已就绪并更新 %s；重启 control 后生效\n",
+			browserRootPath)
+	} else {
+		fmt.Printf("✓ P-256 browser TLS identity 已存在，未改写 authority\n")
 	}
-	if !bytes.Equal(currentSecrets, originalSecrets) {
-		return errors.New("control secrets 在证书迁移期间发生并发变化，拒绝覆盖")
-	}
-	secrets.ControlTLSCertificate = string(append(certificatePEM,
-		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: issuer.Raw})...))
-	if err := writeCanonicalAtomic(secretsPath, secrets, 0o600); err != nil {
-		return err
-	}
-	fmt.Printf("✓ control TLS 保留原 SPKI pin 并增加 https://%s:%d；重启 control 后生效\n",
-		controlLoopbackIP, config.ControlPort)
 	return nil
 }
 
@@ -514,6 +554,10 @@ func bootstrapControlRuntime(dir, adminOut, clusterID, memberID, deviceID, overl
 	if err := wire.ValidatePrivateControlService(&service); err != nil {
 		return err
 	}
+	browserState, _, browserRoot, err := makeControlBrowserTLS(clusterID, overlayIP, instant)
+	if err != nil {
+		return err
+	}
 
 	adminRootPEM, adminRoot, adminRootKey, err := makeCertificateAuthority(
 		"Loom v2 admin root", instant.Add(-5*time.Minute), instant.Add(5*365*24*time.Hour))
@@ -562,11 +606,14 @@ func bootstrapControlRuntime(dir, adminOut, clusterID, memberID, deviceID, overl
 	if err := writeCanonicalAtomic(filepath.Join(dir, controlSecretsName), secrets, 0o600); err != nil {
 		return err
 	}
+	if err := writeCanonicalAtomic(filepath.Join(dir, controlBrowserTLSName), browserState, 0o600); err != nil {
+		return err
+	}
 	if err := writeCanonicalAtomic(filepath.Join(dir, controlJournalName),
 		controlOperationJournalV1{Schema: 1, Records: []controlOperationRecordV1{}}, 0o600); err != nil {
 		return err
 	}
-	if err := writeAdminDelivery(adminOut, config, internalRoot.Raw, adminCertPEM, adminKeyPEM,
+	if err := writeAdminDelivery(adminOut, config, internalRoot.Raw, browserRoot.Raw, adminCertPEM, adminKeyPEM,
 		adminRootPEM); err != nil {
 		return err
 	}
@@ -689,6 +736,11 @@ func openControlRuntime(dir string, now func() time.Time) (*controlRuntime, erro
 	if err != nil {
 		return nil, fmt.Errorf("control TLS keypair: %w", err)
 	}
+	_, browserTLS, _, err := loadControlBrowserTLS(filepath.Join(dir, controlBrowserTLSName),
+		config.ClusterID, config.OverlayIP, now().UTC())
+	if err != nil {
+		return nil, fmt.Errorf("control browser TLS: %w", err)
+	}
 	peerTLS, err := tls.X509KeyPair([]byte(secrets.PeerTLSCertificate), []byte(secrets.PeerTLSPrivateKey))
 	if err != nil {
 		return nil, fmt.Errorf("peer TLS keypair: %w", err)
@@ -709,7 +761,7 @@ func openControlRuntime(dir string, now func() time.Time) (*controlRuntime, erro
 		return nil, err
 	}
 	runtime := &controlRuntime{dir: dir, config: config, journal: journal,
-		configKey: decodedKeys[1], controlTLS: controlTLS, peerTLS: peerTLS,
+		configKey: decodedKeys[1], controlTLS: controlTLS, browserTLS: browserTLS, peerTLS: peerTLS,
 		storage: storage, store: store, now: now}
 	// A restart never reuses an old leadership assertion. N=1 still campaigns and
 	// commits a current-term barrier before serving writes.
@@ -991,12 +1043,12 @@ func (runtime *controlRuntime) serve() error {
 	controlAddress := net.JoinHostPort(runtime.config.OverlayIP, fmt.Sprint(runtime.config.ControlPort))
 	loopbackAddress := net.JoinHostPort(controlLoopbackIP, fmt.Sprint(runtime.config.ControlPort))
 	raftAddress := net.JoinHostPort(runtime.config.OverlayIP, fmt.Sprint(runtime.config.RaftPort))
-	if len(runtime.controlTLS.Certificate) < 1 {
-		return errors.New("control TLS leaf 缺失")
+	if len(runtime.browserTLS.Certificate) < 1 {
+		return errors.New("control browser TLS leaf 缺失")
 	}
-	controlLeaf, err := x509.ParseCertificate(runtime.controlTLS.Certificate[0])
-	if err != nil || controlLeaf.VerifyHostname(controlLoopbackIP) != nil {
-		return errors.New("control TLS leaf 未授权 127.0.0.1；请先执行 control enable-loopback")
+	browserLeaf, err := x509.ParseCertificate(runtime.browserTLS.Certificate[0])
+	if err != nil || browserLeaf.VerifyHostname(controlLoopbackIP) != nil {
+		return errors.New("control browser TLS leaf 未授权 127.0.0.1；请先执行 control enable-loopback")
 	}
 	controlListener, err := net.Listen("tcp", controlAddress)
 	if err != nil {
@@ -1013,7 +1065,8 @@ func (runtime *controlRuntime) serve() error {
 		return fmt.Errorf("listen Raft %s: %w", raftAddress, err)
 	}
 	defer raftListener.Close()
-	controlTLSConfig := runtime.controlServerTLSConfig()
+	controlTLSConfig := runtime.controlServerTLSConfig(runtime.controlTLS)
+	loopbackTLSConfig := runtime.controlServerTLSConfig(runtime.browserTLS)
 	raftTLSConfig, err := controlplane.NewControlPeerServerTLSConfig(runtime.config.MemberID,
 		runtime.peerTLS, runtime.config.ControlSet, runtime.config.PeerDirectory, runtime.now)
 	if err != nil {
@@ -1039,7 +1092,7 @@ func (runtime *controlRuntime) serve() error {
 		ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	errorsOut := make(chan error, 3)
 	go func() { errorsOut <- controlServer.Serve(tls.NewListener(controlListener, controlTLSConfig)) }()
-	go func() { errorsOut <- loopbackServer.Serve(tls.NewListener(loopbackListener, controlTLSConfig)) }()
+	go func() { errorsOut <- loopbackServer.Serve(tls.NewListener(loopbackListener, loopbackTLSConfig)) }()
 	go func() { errorsOut <- raftServer.Serve(tls.NewListener(raftListener, raftTLSConfig)) }()
 	fmt.Printf("✓ v2 control_api 监听 %s；浏览器转发入口监听 %s；Raft 监听 %s；ControlSet N=1 q=1\n",
 		controlAddress, loopbackAddress, raftAddress)
@@ -1080,7 +1133,7 @@ func (runtime *controlRuntime) controlHandler() http.Handler {
 	})
 }
 
-func (runtime *controlRuntime) controlServerTLSConfig() *tls.Config {
+func (runtime *controlRuntime) controlServerTLSConfig(certificate tls.Certificate) *tls.Config {
 	acceptable := x509.NewCertPool()
 	for _, profile := range runtime.config.AdminProfiles {
 		for _, encoded := range profile.IssuerChainDER {
@@ -1095,7 +1148,7 @@ func (runtime *controlRuntime) controlServerTLSConfig() *tls.Config {
 		}
 	}
 	return &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
-		Certificates: []tls.Certificate{runtime.controlTLS}, ClientAuth: tls.RequestClientCert,
+		Certificates: []tls.Certificate{certificate}, ClientAuth: tls.RequestClientCert,
 		ClientCAs: acceptable}
 }
 
@@ -1560,6 +1613,157 @@ func signControlServerCertificate(clusterID string, ipAddresses []net.IP, issuer
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), der, nil
 }
 
+func makeControlBrowserTLS(clusterID, overlayIP string, now time.Time) (controlBrowserTLSV1,
+	tls.Certificate, *x509.Certificate, error) {
+	var empty controlBrowserTLSV1
+	overlay := net.ParseIP(overlayIP)
+	if clusterID == "" || overlay == nil {
+		return empty, tls.Certificate{}, nil, errors.New("browser TLS cluster/overlay identity 无效")
+	}
+	rootKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return empty, tls.Certificate{}, nil, err
+	}
+	rootSerial, err := randomCertificateSerial()
+	if err != nil {
+		return empty, tls.Certificate{}, nil, err
+	}
+	instant := now.UTC()
+	rootTemplate := &x509.Certificate{SerialNumber: rootSerial,
+		Subject:   pkix.Name{CommonName: "Loom browser control CA " + clusterID},
+		NotBefore: instant.Add(-5 * time.Minute), NotAfter: instant.Add(5 * 365 * 24 * time.Hour),
+		IsCA: true, BasicConstraintsValid: true,
+		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature}
+	rootDER, err := x509.CreateCertificate(rand.Reader, rootTemplate, rootTemplate,
+		&rootKey.PublicKey, rootKey)
+	if err != nil {
+		return empty, tls.Certificate{}, nil, err
+	}
+	root, err := x509.ParseCertificate(rootDER)
+	if err != nil {
+		return empty, tls.Certificate{}, nil, err
+	}
+	serverKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return empty, tls.Certificate{}, nil, err
+	}
+	serverSerial, err := randomCertificateSerial()
+	if err != nil {
+		return empty, tls.Certificate{}, nil, err
+	}
+	serverTemplate := &x509.Certificate{SerialNumber: serverSerial,
+		Subject:   pkix.Name{CommonName: "control-browser." + clusterID},
+		NotBefore: instant.Add(-5 * time.Minute), NotAfter: instant.Add(365 * 24 * time.Hour),
+		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses: []net.IP{overlay, net.ParseIP(controlLoopbackIP)}}
+	serverDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, root,
+		&serverKey.PublicKey, rootKey)
+	if err != nil {
+		return empty, tls.Certificate{}, nil, err
+	}
+	serverKeyPEM, err := ecdsaPrivateKeyPKCS8PEM(serverKey)
+	if err != nil {
+		return empty, tls.Certificate{}, nil, err
+	}
+	rootKeyPEM, err := ecdsaPrivateKeyPKCS8PEM(rootKey)
+	if err != nil {
+		return empty, tls.Certificate{}, nil, err
+	}
+	chain := append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverDER}),
+		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: rootDER})...)
+	state := controlBrowserTLSV1{Schema: 1, CertificateChainPEM: string(chain),
+		PrivateKeyPKCS8PEM: string(serverKeyPEM), RootPrivateKeyPKCS8PEM: string(rootKeyPEM)}
+	pair, err := tls.X509KeyPair(chain, serverKeyPEM)
+	if err != nil {
+		return empty, tls.Certificate{}, nil, err
+	}
+	return state, pair, root, nil
+}
+
+func loadControlBrowserTLS(path, clusterID, overlayIP string, now time.Time) (controlBrowserTLSV1,
+	tls.Certificate, *x509.Certificate, error) {
+	var state controlBrowserTLSV1
+	if err := readCanonicalFile(path, 4<<20, &state); err != nil {
+		return state, tls.Certificate{}, nil, err
+	}
+	if state.Schema != 1 {
+		return state, tls.Certificate{}, nil, errors.New("browser TLS state schema 无效")
+	}
+	pair, err := tls.X509KeyPair([]byte(state.CertificateChainPEM), []byte(state.PrivateKeyPKCS8PEM))
+	if err != nil || len(pair.Certificate) != 2 {
+		return state, tls.Certificate{}, nil, errors.New("browser TLS 必须是精确的 P-256 leaf + root chain")
+	}
+	leaf, leafErr := x509.ParseCertificate(pair.Certificate[0])
+	root, rootErr := x509.ParseCertificate(pair.Certificate[1])
+	if leafErr != nil || rootErr != nil {
+		return state, tls.Certificate{}, nil, errors.New("browser TLS certificate chain 无效")
+	}
+	rootKey, rootKeyErr := parseECDSAPrivateKeyPKCS8PEM([]byte(state.RootPrivateKeyPKCS8PEM))
+	serverKey, serverKeyErr := parseECDSAPrivateKeyPKCS8PEM([]byte(state.PrivateKeyPKCS8PEM))
+	rootPublic, rootPublicOK := root.PublicKey.(*ecdsa.PublicKey)
+	leafPublic, leafPublicOK := leaf.PublicKey.(*ecdsa.PublicKey)
+	if rootKeyErr != nil || serverKeyErr != nil || !rootPublicOK || !leafPublicOK ||
+		rootPublic.Curve != elliptic.P256() || leafPublic.Curve != elliptic.P256() ||
+		!rootPublic.Equal(rootKey.Public()) || !leafPublic.Equal(serverKey.Public()) || !root.IsCA ||
+		root.CheckSignatureFrom(root) != nil || leaf.CheckSignatureFrom(root) != nil ||
+		root.Subject.CommonName != "Loom browser control CA "+clusterID ||
+		leaf.PublicKeyAlgorithm != x509.ECDSA || leaf.Subject.CommonName != "control-browser."+clusterID ||
+		len(leaf.DNSNames) != 0 || !exactControlBrowserIPs(leaf.IPAddresses, overlayIP) {
+		return state, tls.Certificate{}, nil, errors.New("browser TLS P-256 leaf/key/root authority 无效")
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(root)
+	if _, err := leaf.Verify(x509.VerifyOptions{DNSName: overlayIP, Roots: roots,
+		CurrentTime: now.UTC(), KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err != nil ||
+		leaf.VerifyHostname(controlLoopbackIP) != nil {
+		return state, tls.Certificate{}, nil, errors.New("browser TLS overlay/loopback identity 无效")
+	}
+	return state, pair, root, nil
+}
+
+func exactControlBrowserIPs(addresses []net.IP, overlayIP string) bool {
+	if len(addresses) != 2 {
+		return false
+	}
+	overlay := net.ParseIP(overlayIP)
+	loopback := net.ParseIP(controlLoopbackIP)
+	return (addresses[0].Equal(overlay) && addresses[1].Equal(loopback)) ||
+		(addresses[0].Equal(loopback) && addresses[1].Equal(overlay))
+}
+
+func ecdsaPrivateKeyPKCS8PEM(privateKey *ecdsa.PrivateKey) ([]byte, error) {
+	if privateKey == nil || privateKey.Curve != elliptic.P256() {
+		return nil, errors.New("browser TLS private key 必须是 P-256")
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		return nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), nil
+}
+
+func parseECDSAPrivateKeyPKCS8PEM(encoded []byte) (*ecdsa.PrivateKey, error) {
+	block, trailing := pem.Decode(encoded)
+	if block == nil || block.Type != "PRIVATE KEY" || len(bytes.TrimSpace(trailing)) != 0 {
+		return nil, errors.New("必须是单一 PKCS#8 PEM")
+	}
+	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	privateKey, ok := parsed.(*ecdsa.PrivateKey)
+	if err != nil || !ok || privateKey.Curve != elliptic.P256() {
+		return nil, errors.New("必须是 P-256 private key")
+	}
+	return privateKey, nil
+}
+
+func parseSingleCertificatePEM(encoded []byte) (*x509.Certificate, error) {
+	block, trailing := pem.Decode(encoded)
+	if block == nil || block.Type != "CERTIFICATE" || len(bytes.TrimSpace(trailing)) != 0 {
+		return nil, errors.New("必须是单一 certificate PEM")
+	}
+	return x509.ParseCertificate(block.Bytes)
+}
+
 func makeControlPeerCertificate(clusterID, memberID, overlayIP string, now time.Time) ([]byte,
 	[]byte, []byte, error) {
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
@@ -1710,7 +1914,7 @@ func newControlMemberID() (string, error) {
 	return string(encoded), nil
 }
 
-func writeAdminDelivery(dir string, config controlDiskConfigV1, internalRootDER []byte,
+func writeAdminDelivery(dir string, config controlDiskConfigV1, internalRootDER, browserRootDER []byte,
 	adminCertPEM, adminKeyPEM, adminRootPEM []byte) error {
 	if _, err := os.Lstat(dir); err == nil {
 		return fmt.Errorf("admin 交付目录 %s 已存在，拒绝覆盖", dir)
@@ -1732,7 +1936,7 @@ func writeAdminDelivery(dir string, config controlDiskConfigV1, internalRootDER 
 		body []byte
 		mode os.FileMode
 	}{{controlAdminCertName, adminCertPEM, 0o600}, {controlAdminKeyName, adminKeyPEM, 0o600},
-		{controlInternalRootName, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: internalRootDER}), 0o600},
+		{controlInternalRootName, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: browserRootDER}), 0o600},
 		{controlAdminRootName, adminRootPEM, 0o600}} {
 		if err := writeBytesAtomic(filepath.Join(dir, file.name), file.body, file.mode); err != nil {
 			return err

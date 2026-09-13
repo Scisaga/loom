@@ -6,9 +6,12 @@
 ## 边界
 
 - `control` 是 Device 的正交职责。初始部署为 `N=1,q=1`，不改变普通转发职责。
-- `control_api` 与 Raft 分别绑定私有 overlay IP 和不同端口；两者不经公网 Nginx。同端口的
-  IPv4 loopback 只提供浏览器 UI，便于通过已认证的 SSH/开发机端口转发访问；
-  private status/operation 仍只接受 overlay listener。
+- `control_api` 与 Raft 分别绑定私有 overlay IP 和不同端口；两者不经公网 Nginx。同一
+  `control_api` 端口在 IPv4 loopback 另有一个只提供浏览器 UI 的 listener，便于通过已认证的
+  SSH/开发机端口转发访问；private status/operation 仍只接受 overlay listener。
+- overlay listener 保留 certified Ed25519 server identity 与 SPKI pin；loopback listener 使用独立的
+  P-256 ECDSA browser identity。二者同端口但按 exact local address 隔离，浏览器兼容性不会改变
+  Linux、Android 或 CLI 的原生控制协议身份。
 - 管理员证书、control peer 证书、control API server 证书使用不同 key 和用途 profile。
 - 同一 private HTTPS `control_api` 同时承载浏览器 UI：未提交客户端证书时只能读取脱敏视图；
   提交当前 certified ACL 精确授权的管理员 leaf 时才启用配置处理器。不存在 UI 口令或登录 Cookie。
@@ -51,8 +54,8 @@ sudo systemctl enable --now loom-control.service
 - `admin.crt`：管理员 mTLS leaf；
 - `admin.key`：同一 Ed25519 key，也对 `ControlOperationBodyV1` 签名；
 - `admin-root.crt`：管理员 profile 的审计根；
-- `control-root.crt`：浏览器验证 private control HTTPS 服务端证书所需的公开 trust anchor；
-- `endpoint.json`：private service tuple、server SPKI pin、internal CA anchor 与文件绑定。
+- `control-root.crt`：浏览器验证 loopback HTTPS 服务端证书所需的公开 P-256 trust anchor；
+- `endpoint.json`：原生 private service tuple、Ed25519 server SPKI pin 与 internal CA anchor。
 
 目录应在加密介质上保持 `0700`，文件保持 `0600`。不要把它放进仓库、聊天、工单附件或分发镜像。
 访问端可直接路由到 `<overlay-ip>`，也可经已认证的 SSH/开发机会话把本地同号端口转发到
@@ -61,22 +64,26 @@ control Device 的 `127.0.0.1:<control-api-port>`。不能改用公网地址，�
 
 ### 浏览器证书包
 
-直连时浏览器访问 `https://<overlay-ip>:<control-api-port>/`。端口转发时，远端目标必须是
-`127.0.0.1:<control-api-port>`，本地使用同一端口并显式访问
-`https://127.0.0.1:<control-api-port>/`；不要使用 `http://` 或 `localhost`。服务端 leaf 只包含
-exact overlay IP 和 `127.0.0.1` SAN。`control-root.crt` 与
+浏览器的规范入口是端口转发：远端目标必须是 `127.0.0.1:<control-api-port>`，本地使用同一端口并
+显式访问 `https://127.0.0.1:<control-api-port>/`；不要使用 `http://` 或 `localhost`。overlay
+tuple 上仍是供 Linux、Android 和 CLI 使用的 certified native identity，不要把浏览器兼容根用于替代
+`endpoint.json` 的原生 pin/root 验证。`control-root.crt` 与
 `admin.p12` 用途不同：前者只让浏览器信任 Loom 的 HTTPS 服务端；后者包含管理员 leaf 和对应私钥，
 让 TLS 客户端认证获得配置权限。Root CA **私钥**永远不进入浏览器。
 
-从早期只有 overlay SAN 的安装升级时，先执行一次幂等迁移，再重启服务：
+从早期共用 Ed25519 server identity 的安装升级时，先执行一次幂等迁移，再重启服务：
 
 ```bash
-sudo /usr/local/bin/loom control enable-loopback -state-dir /var/lib/loom-control
+sudo /usr/local/bin/loom control enable-loopback \
+  -state-dir /var/lib/loom-control \
+  -admin-dir <offline-admin-directory>
 sudo systemctl restart loom-control.service
 ```
 
-迁移只用既有 internal CA 给原 control server 公钥重签 leaf；不更换服务端私钥、SPKI pin、
-trust root、admin 材料或 certified Head。已包含 loopback SAN 时命令不改写文件。
+迁移生成独立的 P-256 browser root/leaf，原子写入 control 状态并把交付目录中的
+`control-root.crt` 更新为浏览器根。它先核对 `endpoint.json` 与既有 native authority，且不改写
+native server 私钥/证书/SPKI pin、admin leaf/private key、certified ACL、Raft 或 Head；重复执行不
+重新生成 authority。该拆分用于兼容不声明 Ed25519 TLS 签名算法的浏览器。
 
 首次为已有 `admin.crt` / `admin.key` 生成浏览器包时，在管理员交付目录执行：
 
@@ -125,7 +132,7 @@ reducer 仍只登记 `control_ping`，不能把兼容 UI 的成功响应误报�
 ## 重启、备份和避免重复工作
 
 - 正常重启只运行 `control serve`。每次启动重新 campaign，并在已有日志上提交 current-term barrier；
-  不重新 bootstrap，不重新生成证书。`enable-loopback` 只是旧 leaf 的一次性、幂等迁移。
+  不重新 bootstrap，不重新生成证书。`enable-loopback` 只是 browser TLS 的一次性、幂等迁移。
 - 备份 `/var/lib/loom-control` 的 Raft、control state、operation journal 和服务端密钥；管理员交付目录
   单独离线备份。恢复必须是整组原子恢复，不能混用两次 bootstrap 的文件。
 - 发布前记录 exact Git commit、二进制 SHA-256、signed-current generation、ControlSet hash、certified
