@@ -77,6 +77,8 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
   loom bootstrap probe-outer               从外部执行无 bearer 的 bootstrap transport 探测
   loom device   <decommission|remove|purge-revoked>
                                          回收 access-only Enrollment Device
+  loom control  <bootstrap|serve|status|request>
+                                         N=1 私有 v2 控制面与管理员客户端
 
 `
 
@@ -157,6 +159,8 @@ func main() {
 		err = cmdBootstrap(args)
 	case "device":
 		err = cmdDevice(args)
+	case "control":
+		err = cmdControl(args)
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return
