@@ -102,17 +102,17 @@ func wgPublicKey(last byte) string {
 	return base64.StdEncoding.EncodeToString(key)
 }
 
-func TestGatesStayClosedWithoutWindowsEvidence(t *testing.T) {
+func TestGatesUseOnlyActiveLinuxAndroidPlatforms(t *testing.T) {
 	gates := GateStatus{Schema: 1, ServerOverlapGuard: true, LinuxV2Reader: true, AndroidV2Reader: true, LinuxAcceptance: true, AndroidAcceptance: true, NoV1CallersEvidence: true, RecoverableBackupProof: true}
-	if !gates.ServerLinuxAndroidReady() {
-		t.Fatal("Windows 条件错误地阻塞了服务端/Linux/Android 独立完成里程碑")
+	if !gates.ActivePlatformsReady() {
+		t.Fatal("当前 Linux/Android 平台证据没有打开 active-platform milestone")
 	}
-	if gates.GateA() || gates.GateB() {
-		t.Fatal("Gate A/B opened without Windows evidence")
+	if !gates.GateA() || !gates.GateB() {
+		t.Fatal("未部署的 Windows 错误阻塞 Gate A/B")
 	}
 }
 
-func TestGateEvidenceDerivesIndependentMilestoneWithoutWindows(t *testing.T) {
+func TestGateEvidenceDerivesActivePlatformMilestone(t *testing.T) {
 	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
 	evidence := func(component string) GateEvidenceV1 {
 		return GateEvidence(component, true,
@@ -128,8 +128,8 @@ func TestGateEvidenceDerivesIndependentMilestoneWithoutWindows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !status.ServerLinuxAndroidReady() || status.GateA() || status.GateB() {
-		t.Fatalf("Windows evidence 缺席时 gate 派生错误: %#v", status)
+	if !status.ActivePlatformsReady() || !status.GateA() || status.GateB() {
+		t.Fatalf("active platform gate 派生错误: %#v", status)
 	}
 	if _, err := GateEvidenceReportHash(&report); err != nil {
 		t.Fatal(err)
@@ -140,11 +140,11 @@ func TestGateEvidenceDerivesIndependentMilestoneWithoutWindows(t *testing.T) {
 	}
 }
 
-func TestGateBEvidenceRequiresEveryPlatformAndDestructiveProof(t *testing.T) {
+func TestGateBEvidenceRequiresActivePlatformsAndDestructiveProof(t *testing.T) {
 	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
 	components := []string{
 		"android_acceptance", "android_v2_reader", "linux_acceptance", "linux_v2_reader",
-		"no_v1_callers", "recoverable_backup", "server_overlap_guard", "windows_acceptance", "windows_v2_reader",
+		"no_v1_callers", "recoverable_backup", "server_overlap_guard",
 	}
 	report := GateEvidenceReportV1{Schema: 1, ClusterID: "cluster", EvaluatedAt: now.Format(time.RFC3339)}
 	for _, component := range components {
@@ -160,6 +160,19 @@ func TestGateBEvidenceRequiresEveryPlatformAndDestructiveProof(t *testing.T) {
 	status, err = EvaluateGateEvidence(&report)
 	if err != nil || !status.GateA() || status.GateB() {
 		t.Fatalf("no-v1 evidence 失败时 Gate B 未独立关闭: %#v err=%v", status, err)
+	}
+}
+
+func TestGateEvidenceRejectsUndeployedWindowsComponents(t *testing.T) {
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	for _, component := range []string{"windows_acceptance", "windows_v2_reader"} {
+		report := GateEvidenceReportV1{Schema: 1, ClusterID: "cluster", EvaluatedAt: now.Format(time.RFC3339),
+			Evidence: []GateEvidenceV1{GateEvidence(component, true,
+				wire.HashRaw("rotation-gate-test", []byte(component)),
+				wire.HashRaw("rotation-gate-test", []byte("head-"+component)), now)}}
+		if _, err := EvaluateGateEvidence(&report); err == nil {
+			t.Fatalf("未部署平台 evidence %q 被协议接受", component)
+		}
 	}
 }
 

@@ -18,7 +18,7 @@ type GateEvidenceV1 struct {
 }
 
 // GateEvidenceReportV1 是自动化只能追加、不能手填布尔值的 gate 输入。
-// Windows evidence 可以缺席，此时服务端/Linux/Android 里程碑仍可独立成立（Issue #10）。
+// D133 后只登记当前实际部署的 Linux/Android；未部署平台不能形成虚假门禁。
 type GateEvidenceReportV1 struct {
 	Schema      int              `json:"schema"`
 	ClusterID   string           `json:"cluster_id"`
@@ -26,35 +26,33 @@ type GateEvidenceReportV1 struct {
 	Evidence    []GateEvidenceV1 `json:"evidence"`
 }
 
-// GateStatus 是机器可读的两道门禁。Windows 在另一开发机完成前，调用方只能
-// 上报 false，因此 Gate A/Gate B 不会被本仓库代码自行越过（Issue #10）。
+// GateStatus 是机器可读的两道门禁。每一项都必须由 evidence 派生，不能由调用方
+// 直接声明 Gate 已打开（D120、D133）。
 type GateStatus struct {
 	Schema                 int  `json:"schema"`
 	ServerOverlapGuard     bool `json:"server_overlap_guard"`
 	LinuxV2Reader          bool `json:"linux_v2_reader"`
-	WindowsV2Reader        bool `json:"windows_v2_reader"`
 	AndroidV2Reader        bool `json:"android_v2_reader"`
 	LinuxAcceptance        bool `json:"linux_acceptance"`
-	WindowsAcceptance      bool `json:"windows_acceptance"`
 	AndroidAcceptance      bool `json:"android_acceptance"`
 	NoV1CallersEvidence    bool `json:"no_v1_callers_evidence"`
 	RecoverableBackupProof bool `json:"recoverable_backup_proof"`
 }
 
-// ServerLinuxAndroidReady 是本仓库当前交付顺序的非破坏性里程碑：它允许服务端、
-// Linux、Android 完成开发和各自验收，但绝不授权开始全端正式轮换或删除 v1。
-// Windows 留在另一开发机，不会反向阻塞这三部分（Issue #10）。
-func (g GateStatus) ServerLinuxAndroidReady() bool {
+// ActivePlatformsReady 是开始 listener 轮换的非破坏性门禁。破坏性退役还需要
+// Linux/Android 实测、无旧调用方扫描和可恢复备份三类额外证据（D120、D133）。
+func (g GateStatus) ActivePlatformsReady() bool {
 	return g.Schema == 1 && g.ServerOverlapGuard && g.LinuxV2Reader && g.AndroidV2Reader &&
 		g.LinuxAcceptance && g.AndroidAcceptance
 }
 
 func (g GateStatus) GateA() bool {
-	return g.Schema == 1 && g.ServerOverlapGuard && g.LinuxV2Reader && g.WindowsV2Reader && g.AndroidV2Reader
+	return g.Schema == 1 && g.ServerOverlapGuard && g.LinuxV2Reader && g.AndroidV2Reader
 }
 
 func (g GateStatus) GateB() bool {
-	return g.GateA() && g.LinuxAcceptance && g.WindowsAcceptance && g.AndroidAcceptance && g.NoV1CallersEvidence && g.RecoverableBackupProof
+	return g.GateA() && g.LinuxAcceptance && g.AndroidAcceptance &&
+		g.NoV1CallersEvidence && g.RecoverableBackupProof
 }
 
 func EvaluateGateEvidence(report *GateEvidenceReportV1) (GateStatus, error) {
@@ -100,10 +98,6 @@ func EvaluateGateEvidence(report *GateEvidenceReportV1) (GateStatus, error) {
 			status.RecoverableBackupProof = passed
 		case "server_overlap_guard":
 			status.ServerOverlapGuard = passed
-		case "windows_acceptance":
-			status.WindowsAcceptance = passed
-		case "windows_v2_reader":
-			status.WindowsV2Reader = passed
 		default:
 			return GateStatus{}, errors.New("[D120 gate] evidence component 未获协议授权")
 		}
