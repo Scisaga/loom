@@ -1018,7 +1018,7 @@ func clientProvisionFixture(t *testing.T) (*Control, clientProvisionPaths) {
 	if err := os.WriteFile(filepath.Join(root, ".ssh_config"), []byte("Host *\n  BatchMode yes\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	control := &Control{SSOTPath: filepath.Join(deployDir, "ssot.yaml"), OperatorRef: "ui/cn-bj"}
+	control := &Control{SSOTPath: filepath.Join(deployDir, "ssot.yaml"), Node: "cn-bj"}
 	paths, err := clientPaths(control)
 	if err != nil {
 		t.Fatal(err)

@@ -232,7 +232,8 @@ signed decommission，也不代替服务器/隧道节点的退休迁移或通用
 设备列表直接提供 **Pause / Resume**，只对当前职责恰好为 `use_loom`、已加入且未下线的
 Device 开放；包含 `forward`、`internet_egress`，或存在 FinalControlSet `control` 投影的
 Device 不能使用此快捷操作。
-未登录时，设备列表不显示添加或管理的登录提示按钮；登录后，暂停/恢复使用图标按钮，
+没有有效管理员客户端证书时，设备列表不显示添加或管理表单；通过当前 certified Admin ACL
+授权的证书访问后，暂停/恢复使用图标按钮，
 与 `active` / `paused` 状态同行显示，并提供操作提示及无障碍名称。
 `nodes[].paused` 是独立的可恢复 SSOT 状态；它不吊销 identity、不改 Destination grants
 和秘密，也不停掉客户端或配置拉取。服务器应用签名配置后停止接受该设备的全部数据面

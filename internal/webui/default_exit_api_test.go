@@ -9,12 +9,10 @@ import (
 	"time"
 )
 
-func TestDefaultExitAPIRequiresOperatorSessionAndUsesRevisionedJSON(t *testing.T) {
+func TestDefaultExitAPIRequiresAdminCertificateAndUsesRevisionedJSON(t *testing.T) {
 	d := Deps{
-		Operator: "operator-secret",
-		Now:      func() time.Time { return time.Unix(1_700_000_000, 0) },
-		Snapshot: func() View { return View{} },
-		Control:  &ControlDeps{},
+		Admin: true, Now: func() time.Time { return time.Unix(1_700_000_000, 0) },
+		Snapshot: func() View { return View{} }, Control: &ControlDeps{},
 	}
 	getCalls := 0
 	var setNode, setDeclaration, setRevision string
@@ -34,8 +32,10 @@ func TestDefaultExitAPIRequiresOperatorSessionAndUsesRevisionedJSON(t *testing.T
 	handler := Handler(d)
 
 	unauthorized := httptest.NewRecorder()
-	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/control/default-exit?node=win01", nil))
-	if unauthorized.Code != http.StatusUnauthorized || getCalls != 0 ||
+	readOnly := d
+	readOnly.Admin = false
+	Handler(readOnly).ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/control/default-exit?node=win01", nil))
+	if unauthorized.Code != http.StatusForbidden || getCalls != 0 ||
 		!strings.Contains(unauthorized.Header().Get("Content-Type"), "application/json") {
 		t.Fatalf("unauthorized GET = %d calls=%d headers=%v", unauthorized.Code, getCalls, unauthorized.Header())
 	}
@@ -73,8 +73,7 @@ func TestDefaultExitAPIRequiresOperatorSessionAndUsesRevisionedJSON(t *testing.T
 
 func TestDefaultExitAPIMapsRevisionConflictAndRejectsOtherMethods(t *testing.T) {
 	d := Deps{
-		Operator: "operator-secret",
-		Now:      func() time.Time { return time.Unix(1_700_000_000, 0) },
+		Admin: true, Now: func() time.Time { return time.Unix(1_700_000_000, 0) },
 		Snapshot: func() View { return View{} },
 		Control: &ControlDeps{DefaultExits: &DefaultExitControlDeps{
 			Get: func(string) (DefaultExitState, error) { return DefaultExitState{}, nil },
@@ -104,10 +103,9 @@ type jsonRequest struct {
 	recorder *httptest.ResponseRecorder
 }
 
-func authenticatedJSONRequest(t *testing.T, d Deps, method, target, body string) jsonRequest {
+func authenticatedJSONRequest(t *testing.T, _ Deps, method, target, body string) jsonRequest {
 	t.Helper()
 	request := httptest.NewRequest(method, target, strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
-	request.AddCookie(&http.Cookie{Name: cookieName, Value: mintToken(d)})
 	return jsonRequest{request: request, recorder: httptest.NewRecorder()}
 }

@@ -760,9 +760,9 @@ func validateClientProvisionSSHMetadata(info os.FileInfo, label string, privateK
 }
 
 func controlNodeID(c *Control) (string, error) {
-	_, id, ok := strings.Cut(strings.TrimSpace(c.OperatorRef), "/")
-	if !ok || !model.ValidNodeID(id) {
-		return "", fmt.Errorf("operator_ref %q does not identify the control node", c.OperatorRef)
+	id := strings.TrimSpace(c.Node)
+	if !model.ValidNodeID(id) {
+		return "", fmt.Errorf("report node %q does not identify the control Device", c.Node)
 	}
 	return id, nil
 }

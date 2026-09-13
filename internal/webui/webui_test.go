@@ -15,7 +15,7 @@ var at = time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC)
 
 func deps(op string, acts map[string]func() (string, error)) Deps {
 	return Deps{
-		Node: "n1", Operator: op, Actions: acts,
+		Node: "n1", Admin: op != "", Actions: acts,
 		Now: func() time.Time { return at },
 		Snapshot: func() View {
 			return View{Self: "n1", IntentSource: "serving node applied inventory", Nodes: []NodeView{
@@ -322,20 +322,21 @@ func TestFocusedTopologyMetricsDoNotOverlapForSixNodeMesh(t *testing.T) {
 	}
 }
 
-// 没登录不许写。任何节点都能到任何节点的隧道地址,一台被拿下就能去动别人。
-func TestWriteRequiresAuth(t *testing.T) {
+// 网络只读 handler 永远不能因 Cookie 或表单内容获得写权限。
+func TestWriteRequiresAdminCertificateBoundary(t *testing.T) {
 	ran := false
-	h := Handler(deps("pw", map[string]func() (string, error){
+	h := Handler(deps("", map[string]func() (string, error){
 		"重启": func() (string, error) { ran = true; return "", nil },
 	}))
 	r := httptest.NewRequest("POST", "/act/重启", nil)
+	r.AddCookie(&http.Cookie{Name: "loom_session", Value: "forged"})
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	if ran {
-		t.Fatal("没登录就执行了动作")
+		t.Fatal("没有管理员证书就执行了动作")
 	}
-	if w.Code != http.StatusSeeOther {
-		t.Errorf("期望跳转到登录,得到 %d", w.Code)
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "admin.p12") {
+		t.Errorf("期望证书拒绝,得到 %d %q", w.Code, w.Body.String())
 	}
 }
 
@@ -347,55 +348,31 @@ func TestActionsRejectGET(t *testing.T) {
 	}
 }
 
-// 没配口令时,写操作一律拒绝 —— 不是"不需要认证"。
-func TestNoOperatorMeansNoWrites(t *testing.T) {
+func TestReadOnlyHandlerNeverAuthenticatesFromCookie(t *testing.T) {
 	d := deps("", map[string]func() (string, error){"x": func() (string, error) { return "", nil }})
 	if authed(d, httptest.NewRequest("GET", "/", nil)) {
-		t.Error("没配口令却算已认证")
+		t.Error("只读 handler 被当成管理员")
 	}
-	// 伪造一个用空口令签的票也不行。
 	r := httptest.NewRequest("GET", "/", nil)
-	r.AddCookie(&http.Cookie{Name: cookieName, Value: mintToken(d)})
+	r.AddCookie(&http.Cookie{Name: "loom_session", Value: "legacy-or-forged"})
 	if authed(d, r) {
-		t.Error("空口令签出来的票被接受了")
+		t.Error("旧 Cookie 绕过了证书边界")
 	}
 }
 
-// 票过期就失效,而且改一个字节就验不过。
-func TestTokenExpiryAndTamper(t *testing.T) {
+func TestAdminSocketHandlerHasWriteAuthority(t *testing.T) {
 	d := deps("pw", nil)
-	tok := mintToken(d)
-	r := httptest.NewRequest("GET", "/", nil)
-	r.AddCookie(&http.Cookie{Name: cookieName, Value: tok})
-	if !authed(d, r) {
-		t.Fatal("刚签出来的票就验不过")
-	}
-	// 过期
-	later := d
-	later.Now = func() time.Time { return at.Add(sessionTTL + time.Minute) }
-	if authed(later, r) {
-		t.Error("过期的票还能用")
-	}
-	// 改签名
-	bad := httptest.NewRequest("GET", "/", nil)
-	bad.AddCookie(&http.Cookie{Name: cookieName, Value: tok[:len(tok)-1] + "x"})
-	if authed(d, bad) {
-		t.Error("改过的票还能用")
-	}
-	// 换口令 —— 已发出去的票必须立刻全失效
-	other := deps("newpw", nil)
-	other.Now = d.Now
-	if authed(other, r) {
-		t.Error("换了口令,旧票还能用")
+	if !authed(d, httptest.NewRequest("GET", "/", nil)) {
+		t.Fatal("root-only admin handler 没有获得写权限")
 	}
 }
 
 // 只读机器上不该出现登录入口:一个点进去只会说"没配口令"的链接,
 // 只会让人以为自己配错了。
-func TestNoLoginLinkWhenNothingToAuthorize(t *testing.T) {
+func TestNoPasswordLoginSurface(t *testing.T) {
 	body := get(t, Handler(deps("", nil)), "/", nil).Body.String()
-	if strings.Contains(body, `href="/login"`) {
-		t.Error("只读机器上出现了登录入口")
+	if strings.Contains(body, `href="/login"`) || strings.Contains(body, `type=password`) {
+		t.Error("页面仍然暴露口令登录")
 	}
 	if !strings.Contains(body, "只读") {
 		t.Error("没有标明这是只读的")
@@ -500,8 +477,8 @@ func TestOnlyOverviewAutoRefreshes(t *testing.T) {
 			t.Fatalf("总览没有诚实说明近实时节奏:%q", want)
 		}
 	}
-	if body := get(t, h, "/login", nil).Body.String(); strings.Contains(body, `http-equiv=refresh`) {
-		t.Fatal("登录页不应自动刷新")
+	if response := get(t, h, "/login", nil); response.Code != http.StatusNotFound {
+		t.Fatalf("旧登录路由仍然存在: %d", response.Code)
 	}
 }
 

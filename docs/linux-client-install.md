@@ -24,7 +24,8 @@
 - 目标机是 Linux amd64，能够通过 HTTPS 访问加入码中写明的 v1 control 加入端点，并能访问
   其下发的分发地址；
 - 具有 root/sudo 权限；
-- 在 v1 指定 control 登录运维会话。v1 契约中只有该写入口能创建 Device、生成加入码和下载已验证的客户端包；
+- 在 Loom overlay 内打开 private control HTTPS；导入 `admin.p12` 后才能创建 Device、生成加入码和
+  下载已验证的客户端包。没有管理员证书时 UI 仅提供只读信息，不存在 UI 密码登录；
 - 目标机上有 `tar` 和 `sha256sum`。Loom 与 sing-box 已包含在分发包内。
 
 ## v2 加入过程

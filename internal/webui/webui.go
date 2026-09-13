@@ -1,21 +1,18 @@
-// Package webui 是节点上的操作界面。
+// Package webui 是节点上的状态与兼容操作界面。
 //
 // **每个节点都跑一份,但权限不一样。**
 //
-//	看 + 本机操作   每个节点都有。因为有转述(§16.1.2),随便打开哪一台看到的
-//	                都是整张网,不是它自己那一角 —— 于是没有单点,也没有
-//	                "控制面所在的机器挂了就看不见它挂了"的循环。
-//	签发            恰好一台。它拿着签名私钥;两个签发者等于两份真相,
-//	                和 D11 是同一个道理。
+//	看              每个节点都有。因为有转述(§16.1.2),随便打开哪一台看到的
+//	                都是整张网,不是它自己那一角。
+//	兼容写          恰好一台 control 节点具备处理能力，并且只通过 private
+//	                HTTPS 对 admin mTLS 验证后选中的 root-only Unix socket 到达。
 //
-// 进入路径只有两条:在 loom 网里(隧道地址),或者 ssh 端口转发到回环。
-// **不开任何公网面。**
+// 节点 TCP/HTTP listener 始终只读；配置入口位于 private control_api。
+// 两者都不开任何公网面，也不使用 UI 口令或 Cookie 提权。
 package webui
 
 import (
-	"crypto/hmac"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/csv"
 	"encoding/json"
@@ -28,7 +25,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	qrcode "github.com/skip2/go-qrcode"
 )
@@ -40,9 +36,11 @@ type Deps struct {
 	// Now 由调用方注入,便于测试。
 	Now func() time.Time
 
-	// Operator 是写操作的口令。空则**所有写操作一律拒绝** ——
-	// 不是"不需要认证",是"没配就不许写"。
-	Operator string
+	// Admin 只由本机 root-only Unix socket 上的管理 handler 设置。
+	// 网络 listener 一律保持 false；外层 private control_api 在核对
+	// admin mTLS leaf 与 certified ACL 后才会把请求转到该 socket。
+	// 这个边界不接受 Cookie、口令或客户端可伪造的 HTTP header。
+	Admin bool
 
 	// Snapshot 返回当前的全网视图。
 	Snapshot func() View
@@ -811,7 +809,7 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		if !authed(d, r) {
-			http.Redirect(w, r, loginURL("/devices"), http.StatusSeeOther)
+			adminCertificateRequired(w)
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
@@ -863,7 +861,7 @@ func Handler(d Deps) http.Handler {
 				return
 			}
 			if !authed(d, r) {
-				http.Redirect(w, r, loginURL("/devices"), http.StatusSeeOther)
+				adminCertificateRequired(w)
 				return
 			}
 			control := deviceControl(d)
@@ -896,7 +894,7 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		if !authed(d, r) {
-			http.Redirect(w, r, loginURL("/devices"), http.StatusSeeOther)
+			adminCertificateRequired(w)
 			return
 		}
 		control := deviceControl(d)
@@ -932,7 +930,7 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		if !authed(d, r) {
-			http.Redirect(w, r, loginURL("/devices?archived=1"), http.StatusSeeOther)
+			adminCertificateRequired(w)
 			return
 		}
 		control := deviceControl(d)
@@ -968,7 +966,7 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		if !authed(d, r) {
-			http.Redirect(w, r, loginURL("/devices"), http.StatusSeeOther)
+			adminCertificateRequired(w)
 			return
 		}
 		control := deviceControl(d)
@@ -994,14 +992,14 @@ func Handler(d Deps) http.Handler {
 	})
 	mux.HandleFunc("/devices/invites/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && !authed(d, r) {
-			http.Redirect(w, r, loginURL(r.URL.RequestURI()), http.StatusSeeOther)
+			adminCertificateRequired(w)
 			return
 		}
 		serveRouteAlias(w, r, "/devices/invites/", "/clients/invites/")
 	})
 	mux.HandleFunc("/devices/download/linux-amd64", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && !authed(d, r) {
-			http.Redirect(w, r, loginURL(r.URL.RequestURI()), http.StatusSeeOther)
+			adminCertificateRequired(w)
 			return
 		}
 		serveRouteAlias(w, r, "/devices/download/linux-amd64", "/clients/download/linux-amd64")
@@ -1101,7 +1099,7 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		if !authed(d, r) {
-			http.Redirect(w, r, loginURL("/devices?new=1"), http.StatusSeeOther)
+			adminCertificateRequired(w)
 			return
 		}
 		control := deviceControl(d)
@@ -1149,7 +1147,7 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		if !authed(d, r) {
-			http.Redirect(w, r, loginURL(r.URL.RequestURI()), http.StatusSeeOther)
+			adminCertificateRequired(w)
 			return
 		}
 		control := deviceControl(d)
@@ -1190,7 +1188,7 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		if !authed(d, r) {
-			http.Redirect(w, r, loginURL(r.URL.RequestURI()), http.StatusSeeOther)
+			adminCertificateRequired(w)
 			return
 		}
 		control := deviceControl(d)
@@ -1227,7 +1225,7 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		if !authed(d, r) {
-			writeJSONError(w, http.StatusUnauthorized, "需要中控运维会话")
+			writeJSONError(w, http.StatusForbidden, "需要有效管理员客户端证书")
 			return
 		}
 		control := deviceControl(d)
@@ -1250,7 +1248,7 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		if !authed(d, r) {
-			writeJSONError(w, http.StatusUnauthorized, "需要中控运维会话")
+			writeJSONError(w, http.StatusForbidden, "需要有效管理员客户端证书")
 			return
 		}
 		inventory, err := loadDeviceInventory(d)
@@ -1270,7 +1268,7 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		if !authed(d, r) {
-			writeJSONError(w, http.StatusUnauthorized, "需要中控运维会话")
+			writeJSONError(w, http.StatusForbidden, "需要有效管理员客户端证书")
 			return
 		}
 		control := deviceControl(d)
@@ -1299,7 +1297,7 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		if !authed(d, r) {
-			http.Error(w, "需要中控运维会话", http.StatusUnauthorized)
+			http.Error(w, "需要有效管理员客户端证书", http.StatusForbidden)
 			return
 		}
 		control := deviceControl(d)
@@ -1437,7 +1435,7 @@ func Handler(d Deps) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		if !authed(d, r) {
-			writeJSONError(w, http.StatusUnauthorized, "需要中控运维会话")
+			writeJSONError(w, http.StatusForbidden, "需要有效管理员客户端证书")
 			return
 		}
 		if d.Control == nil || d.Control.DefaultExits == nil {
@@ -1520,7 +1518,7 @@ func Handler(d Deps) http.Handler {
 			return
 		}
 		if !authed(d, r) {
-			http.Redirect(w, r, loginURL("/services"), http.StatusSeeOther)
+			adminCertificateRequired(w)
 			return
 		}
 		if d.Control == nil || d.Control.Services == nil {
@@ -1573,50 +1571,13 @@ func Handler(d Deps) http.Handler {
 		}
 		writeHTML(w, pageOverview(d, authed(d, r)))
 	})
-	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-store")
-		if r.Method != http.MethodGet && r.Method != http.MethodPost {
-			w.Header().Set("Allow", "GET, POST")
-			http.Error(w, "只接受 GET 或 POST", http.StatusMethodNotAllowed)
-			return
-		}
-		next := safeLoginReturnTo(r.FormValue("next"))
-		if r.Method == http.MethodGet {
-			if authed(d, r) {
-				http.Redirect(w, r, next, http.StatusSeeOther)
-				return
-			}
-			writeHTML(w, pageLogin(d, "", next))
-			return
-		}
-		// 口令比较用常数时间:普通的 == 会因为提前返回而泄露前缀长度。
-		if d.Operator == "" {
-			writeHTML(w, pageLogin(d, "这台机器没有配置运维口令,写操作全部关闭", next))
-			return
-		}
-		if subtle.ConstantTimeCompare([]byte(r.FormValue("password")), []byte(d.Operator)) != 1 {
-			writeHTML(w, pageLogin(d, "口令不对", next))
-			return
-		}
-		http.SetCookie(w, &http.Cookie{
-			Name: cookieName, Value: mintToken(d), Path: "/",
-			HttpOnly: true, SameSite: http.SameSiteStrictMode,
-			MaxAge: int(sessionTTL.Seconds()),
-		})
-		http.Redirect(w, r, next, http.StatusSeeOther)
-	})
-	mux.HandleFunc("/logout", func(w http.ResponseWriter, r *http.Request) {
-		http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", MaxAge: -1})
-		http.Redirect(w, r, "/", http.StatusSeeOther)
-	})
-
 	mux.HandleFunc("/act/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "只接受 POST", http.StatusMethodNotAllowed)
 			return
 		}
 		if !authed(d, r) {
-			http.Redirect(w, r, loginURL("/"), http.StatusSeeOther)
+			adminCertificateRequired(w)
 			return
 		}
 		name := strings.TrimPrefix(r.URL.Path, "/act/")
@@ -1656,7 +1617,11 @@ func Handler(d Deps) http.Handler {
 	if d.Control != nil {
 		serveSSOT := func(w http.ResponseWriter, r *http.Request) {
 			if !authed(d, r) {
-				http.Redirect(w, r, loginURL("/settings"), http.StatusSeeOther)
+				if r.Method == http.MethodGet {
+					writeHTML(w, pageAdminCertificateRequired(d))
+				} else {
+					adminCertificateRequired(w)
+				}
 				return
 			}
 			if r.Method != http.MethodPost {
@@ -1715,90 +1680,12 @@ func eventFilterFromRequest(r *http.Request) eventFilter {
 	}
 }
 
-const (
-	cookieName = "loom_session"
-	sessionTTL = 12 * time.Hour
-)
+func authed(d Deps, _ *http.Request) bool { return d.Admin }
 
-// safeLoginReturnTo accepts only known, read-only, same-origin UI targets.
-// Login never replays a protected POST, and a caller-controlled next value can
-// never turn the control plane into an open redirect.
-func safeLoginReturnTo(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || len(raw) > 2048 || !strings.HasPrefix(raw, "/") ||
-		strings.HasPrefix(raw, "//") || strings.Contains(raw, "\\") ||
-		strings.IndexFunc(raw, unicode.IsControl) >= 0 {
-		return "/"
-	}
-	u, err := url.ParseRequestURI(raw)
-	if err != nil || u.IsAbs() || u.Host != "" || u.User != nil || u.Fragment != "" ||
-		strings.HasPrefix(u.Path, "//") || strings.Contains(u.Path, "\\") ||
-		strings.IndexFunc(u.Path, unicode.IsControl) >= 0 || u.Path == "/nodes/add" ||
-		strings.HasPrefix(u.Path, "/nodes/add/") ||
-		(u.Path == "/devices" && u.Query().Get("legacy") != "") || !loginReturnPathAllowed(u.Path) {
-		return "/"
-	}
-	return u.RequestURI()
-}
-
-func loginReturnPathAllowed(path string) bool {
-	switch path {
-	case "/", "/devices", "/devices/download/linux-amd64", "/clients", "/clients/download/linux-amd64", "/nodes",
-		"/topology", "/services", "/routing",
-		"/deployments", "/events", "/settings":
-		return true
-	}
-	return safeSinglePathSegment(path, "/devices/invites/") ||
-		(path != "/devices/create" && path != "/devices/replace" && path != "/devices/renew-invite" && path != "/devices/discard-pending" && safeSinglePathSegment(path, "/devices/")) ||
-		safeSinglePathSegment(path, "/clients/invites/") ||
-		safeSinglePathSegment(path, "/nodes/")
-}
-
-func safeSinglePathSegment(path, prefix string) bool {
-	if !strings.HasPrefix(path, prefix) {
-		return false
-	}
-	segment := strings.TrimPrefix(path, prefix)
-	return segment != "" && segment != "." && segment != ".." && !strings.Contains(segment, "/")
-}
-
-func loginURL(returnTo string) string {
-	return "/login?next=" + url.QueryEscape(safeLoginReturnTo(returnTo))
-}
-
-// mintToken 签一个带过期时间的会话票。
-//
-// 用 HMAC 而不是随机 token + 服务端表:上报者是无状态的,重启一次所有人
-// 都得重登。密钥就是运维口令本身 —— 口令换了,已发出去的票立刻全失效,
-// 这正是想要的。
-func mintToken(d Deps) string {
-	exp := d.Now().Add(sessionTTL).Unix()
-	body := strconv.FormatInt(exp, 10)
-	mac := hmac.New(sha256.New, []byte(d.Operator))
-	mac.Write([]byte(body))
-	return body + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-}
-
-func authed(d Deps, r *http.Request) bool {
-	if d.Operator == "" {
-		return false
-	}
-	c, err := r.Cookie(cookieName)
-	if err != nil {
-		return false
-	}
-	body, sig, ok := strings.Cut(c.Value, ".")
-	if !ok {
-		return false
-	}
-	mac := hmac.New(sha256.New, []byte(d.Operator))
-	mac.Write([]byte(body))
-	want := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	if subtle.ConstantTimeCompare([]byte(sig), []byte(want)) != 1 {
-		return false
-	}
-	exp, err := strconv.ParseInt(body, 10, 64)
-	return err == nil && d.Now().Unix() < exp
+func adminCertificateRequired(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	http.Error(w, "需要有效的管理员客户端证书（admin.p12）", http.StatusForbidden)
 }
 
 func clientJSONHeaders(w http.ResponseWriter) {

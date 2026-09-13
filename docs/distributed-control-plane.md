@@ -3605,8 +3605,12 @@ UI 是模型的投影，必须把以下状态分开：
 - **Device**：正式身份、配置 view、报告新鲜度和 LKG；
 - **Rotation**：prepare/verified/advertised/preferred/draining/retired 的每代证据。
 
-管理 API 仅在 private control_api 上接受 admin mTLS。写操作必须携 expected head 与 request ID，
-成功响应只返回已取得 QC 的结果。公开 Nginx 没有管理 API。UI 中“测试 mirror”只测试静态下载；
+管理 API 仅在 private control_api 上接受 admin mTLS。浏览器 UI 也只由该 private HTTPS tuple 提供：
+未提交客户端证书时只能读取脱敏状态，只有当前 certified Admin ACL 精确授权且仍有效的 leaf 才能
+进入配置处理器；不得以 UI 密码、Cookie 或调用方可伪造的 HTTP header 提权。用于验证服务端的
+internal CA 公共证书与包含 admin leaf/private key 的 PKCS#12 客户端身份必须分开，任何 Root CA
+私钥都不得导入浏览器。写操作必须携 expected head 与 request ID，成功响应只返回已取得 QC 的结果。
+公开 Nginx 没有管理 API。UI 中“测试 mirror”只测试静态下载；
 “测试 bootstrap”必须测试真实 HY2/Trojan transport；“测试 Enrollment”在不发送 token 的前提下
 完成外层 tunnel 和内层 server TLS，不能用普通 HTTPS GET 冒充。
 

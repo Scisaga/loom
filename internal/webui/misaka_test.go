@@ -92,7 +92,7 @@ func misakaDeps() Deps {
 		},
 	}
 	return Deps{
-		Node: "demo-d", Now: func() time.Time { return now }, Operator: "operator-secret",
+		Node: "demo-d", Now: func() time.Time { return now },
 		Snapshot: func() View { return view },
 		Events: func(limit int) []EventView {
 			if limit > len(events) {
@@ -201,9 +201,7 @@ func misakaRequest(t *testing.T, d Deps, method, target string, form url.Values,
 	if form != nil {
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
-	if authenticated {
-		r.AddCookie(&http.Cookie{Name: cookieName, Value: mintToken(d)})
-	}
+	d.Admin = authenticated
 	w := httptest.NewRecorder()
 	Handler(d).ServeHTTP(w, r)
 	return w
@@ -302,8 +300,8 @@ func TestMisakaServiceWritesAreAuthenticatedStructuredTransactions(t *testing.T)
 		"addresses":   {"api.example.com\n.example.net, cdn.example.org\r\n"},
 	}
 
-	if w := misakaRequest(t, d, http.MethodPost, "/services/save", form, false); w.Code != http.StatusSeeOther {
-		t.Fatalf("unauthenticated save = %d, want redirect", w.Code)
+	if w := misakaRequest(t, d, http.MethodPost, "/services/save", form, false); w.Code != http.StatusForbidden {
+		t.Fatalf("unauthenticated save = %d, want certificate rejection", w.Code)
 	}
 	if len(upserts) != 0 {
 		t.Fatal("unauthenticated Service save called the structured callback")
@@ -334,8 +332,8 @@ func TestMisakaServiceWritesAreAuthenticatedStructuredTransactions(t *testing.T)
 	}
 
 	deleteForm := url.Values{"id": {"intl-api"}, "revision": {"revision-delete-4"}}
-	if w := misakaRequest(t, d, http.MethodPost, "/services/delete", deleteForm, false); w.Code != http.StatusSeeOther {
-		t.Fatalf("unauthenticated delete = %d, want redirect", w.Code)
+	if w := misakaRequest(t, d, http.MethodPost, "/services/delete", deleteForm, false); w.Code != http.StatusForbidden {
+		t.Fatalf("unauthenticated delete = %d, want certificate rejection", w.Code)
 	}
 	if len(deletes) != 0 {
 		t.Fatal("unauthenticated Service delete called the callback")

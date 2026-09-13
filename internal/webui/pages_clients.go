@@ -188,7 +188,7 @@ func pageDeviceDetail(d Deps, deviceID string, isAuthed bool) string {
 			if isAuthed {
 				fmt.Fprintf(&b, `<form method=post action="/devices/discard-pending"><input type=hidden name=id value="%s"><button class=danger-button>Delete Device</button></form>`, esc(device.ID))
 			} else {
-				fmt.Fprintf(&b, `<a class=button href="%s">Sign in to delete</a>`, esc(loginURL("/devices/"+url.PathEscape(device.ID))))
+				fmt.Fprintf(&b, `<span class=button>Admin certificate required to delete</span>`)
 			}
 			b.WriteString(`</div>`)
 		}
@@ -246,7 +246,7 @@ func writeDeviceJoinActions(b *strings.Builder, d Deps, device ClientView, isAut
 		b.WriteString(`<p>Use this after deleting the client's local identity and configuration. The replacement gets a new Device ID with the same name and purpose. The old identity is archived; its access is revoked as the network applies the signed update.</p>`)
 	}
 	if !isAuthed {
-		fmt.Fprintf(b, `<a class=button href="%s">Sign in to manage join QR</a>`, esc(loginURL("/devices/"+url.PathEscape(device.ID))))
+		fmt.Fprintf(b, `<span class=button>Admin certificate required to manage join QR</span>`)
 	} else if pending {
 		fmt.Fprintf(b, `<form method=post action="/devices/renew-invite"><input type=hidden name=id value="%s"><button class="button primary">Generate new join code</button></form>`, esc(device.ID))
 	} else {
@@ -262,7 +262,7 @@ func writeDeviceDeleteAction(b *strings.Builder, d Deps, device ClientView, isAu
 	}
 	b.WriteString(`<div class=service-danger><div><b>Remove Device</b><span>Immediately remove this access-only Device from the desired network and revoke its identity. The client may not receive a shutdown notification.</span></div>`)
 	if !isAuthed {
-		fmt.Fprintf(b, `<a class=button href="%s">Sign in to remove</a>`, esc(loginURL("/devices/"+url.PathEscape(device.ID))))
+		fmt.Fprintf(b, `<span class=button>Admin certificate required to remove</span>`)
 	} else {
 		fmt.Fprintf(b, `<form class=device-delete-form data-submit-progress method=post action="/devices/delete"><input type=hidden name=id value="%s"><label class=device-delete-confirm><input type=checkbox name=confirm value=yes required><span>I understand that local client files are not erased.</span></label><button class=danger-button>Remove Device</button></form>`, esc(device.ID))
 	}
@@ -276,7 +276,7 @@ func writeDevicePurgeAction(b *strings.Builder, d Deps, device ClientView, isAut
 	}
 	b.WriteString(`<div class=service-danger><div><b>Delete archived record</b><span>Permanently remove this revoked identity and its old invitation records. The replacement Device is not affected.</span></div>`)
 	if !isAuthed {
-		fmt.Fprintf(b, `<a class=button href="%s">Sign in to delete</a>`, esc(loginURL("/devices/"+url.PathEscape(device.ID))))
+		fmt.Fprintf(b, `<span class=button>Admin certificate required to delete</span>`)
 	} else {
 		fmt.Fprintf(b, `<form class=device-delete-form data-submit-progress method=post action="/devices/purge-revoked"><input type=hidden name=id value="%s"><label class=device-delete-confirm><input type=checkbox name=confirm value=yes required><span>I understand that this archived record will be permanently removed.</span></label><button class=danger-button>Delete record</button></form>`, esc(device.ID))
 	}
@@ -341,7 +341,7 @@ func pageDeviceEnrollment(d Deps, state clientPageState, isAuthed bool) string {
 		return shell(d, "Devices", b.String(), isAuthed)
 	}
 	if !isAuthed {
-		fmt.Fprintf(&b, `<div class=client-add-grid><section class="card client-form-card"><h2>Operator session required</h2><p class=dim>Creating a Device and its one-time join code changes control-plane state.</p><a class="button primary" href="%s">Sign in</a></section></div>`, esc(loginURL("/devices?new=1")))
+		b.WriteString(`<div class=client-add-grid><section class="card client-form-card"><h2>Administrator certificate required</h2><p class=dim>Import admin.p12 and reconnect to the private HTTPS control UI before creating a Device or one-time join code.</p></section></div>`)
 		return shell(d, "Devices", b.String(), false)
 	}
 	state.Package, state.PackageError = clientLinuxPackage(d, state.Package, state.PackageError)

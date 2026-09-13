@@ -114,13 +114,7 @@ func pageServices(d Deps, selected string, create bool, message string, failed b
 		if d.Control == nil {
 			b.WriteString(`<p class="small warn service-editor-access">Structured writes are available only on the control node.</p>`)
 		} else if !isAuthed {
-			returnTo := "/services"
-			if create {
-				returnTo = "/services?new=1"
-			} else if svc.ID != "" {
-				returnTo = "/services?service=" + queryEscape(svc.ID)
-			}
-			fmt.Fprintf(&b, `<p class="small service-editor-access"><a class="button primary" href="%s">Sign in to edit</a></p>`, esc(loginURL(returnTo)))
+			b.WriteString(`<p class="small service-editor-access"><span class="button">Admin certificate required to edit</span></p>`)
 		} else if d.Control.Services == nil {
 			b.WriteString(`<p class="small service-editor-access"><a class=button href="/settings">Open validated SSOT editor</a> <span class=dim>Structured Service transactions are unavailable in this build.</span></p>`)
 		}

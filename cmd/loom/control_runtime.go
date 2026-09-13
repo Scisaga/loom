@@ -20,9 +20,11 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/netip"
 	"os"
 	"os/signal"
+	pathpkg "path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -30,22 +32,24 @@ import (
 	"time"
 
 	"loom/internal/controlplane"
+	"loom/internal/webui"
 	"loom/internal/wire"
 )
 
 const (
-	controlConfigName      = "config.json"
-	controlSecretsName     = "secrets.json"
-	controlJournalName     = "operations.json"
-	controlRaftName        = "raft.json"
-	controlStateName       = "control-state.json"
-	controlAdminCertName   = "admin.crt"
-	controlAdminKeyName    = "admin.key"
-	controlAdminRootName   = "admin-root.crt"
-	controlEndpointName    = "endpoint.json"
-	privateControlStatus   = "/private/v2/control/status"
-	controlPingKind        = "control_ping"
-	controlMaxResponseSize = 8 << 20
+	controlConfigName       = "config.json"
+	controlSecretsName      = "secrets.json"
+	controlJournalName      = "operations.json"
+	controlRaftName         = "raft.json"
+	controlStateName        = "control-state.json"
+	controlAdminCertName    = "admin.crt"
+	controlAdminKeyName     = "admin.key"
+	controlAdminRootName    = "admin-root.crt"
+	controlInternalRootName = "control-root.crt"
+	controlEndpointName     = "endpoint.json"
+	privateControlStatus    = "/private/v2/control/status"
+	controlPingKind         = "control_ping"
+	controlMaxResponseSize  = 8 << 20
 )
 
 var controlOperationSchemas = wire.OperationSchemaRegistry{controlPingKind: 1}
@@ -163,6 +167,8 @@ type controlRuntime struct {
 	store      *controlplane.Store
 	leader     *controlplane.StableRaftLeader
 	service    *controlplane.PrivateControlService
+	uiReadOnly http.Handler
+	uiAdmin    http.Handler
 	now        func() time.Time
 }
 
@@ -604,6 +610,8 @@ func openControlRuntime(dir string, now func() time.Time) (*controlRuntime, erro
 		return nil, err
 	}
 	runtime.service = service
+	runtime.uiReadOnly = newControlUIProxy(webui.ReadOnlySocketPath)
+	runtime.uiAdmin = newControlUIProxy(webui.AdminSocketPath)
 	return runtime, nil
 }
 
@@ -873,8 +881,7 @@ func (runtime *controlRuntime) serve() error {
 		return fmt.Errorf("listen Raft %s: %w", raftAddress, err)
 	}
 	defer raftListener.Close()
-	controlTLSConfig := &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
-		Certificates: []tls.Certificate{runtime.controlTLS}, ClientAuth: tls.RequireAnyClientCert}
+	controlTLSConfig := runtime.controlServerTLSConfig()
 	raftTLSConfig, err := controlplane.NewControlPeerServerTLSConfig(runtime.config.MemberID,
 		runtime.peerTLS, runtime.config.ControlSet, runtime.config.PeerDirectory, runtime.now)
 	if err != nil {
@@ -926,9 +933,100 @@ func (runtime *controlRuntime) controlHandler() http.Handler {
 		case controlplane.PrivateControlOperationPath:
 			runtime.service.ServeHTTP(writer, request)
 		default:
-			http.NotFound(writer, request)
+			runtime.serveControlUI(writer, request)
 		}
 	})
+}
+
+func (runtime *controlRuntime) controlServerTLSConfig() *tls.Config {
+	acceptable := x509.NewCertPool()
+	for _, profile := range runtime.config.AdminProfiles {
+		for _, encoded := range profile.IssuerChainDER {
+			der, err := base64.RawURLEncoding.DecodeString(encoded)
+			if err != nil {
+				continue
+			}
+			certificate, err := x509.ParseCertificate(der)
+			if err == nil {
+				acceptable.AddCert(certificate)
+			}
+		}
+	}
+	return &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
+		Certificates: []tls.Certificate{runtime.controlTLS}, ClientAuth: tls.RequestClientCert,
+		ClientCAs: acceptable}
+}
+
+func newControlUIProxy(socketPath string) http.Handler {
+	transport := &http.Transport{Proxy: nil, DisableCompression: true,
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "unix", socketPath)
+		}}
+	return &httputil.ReverseProxy{
+		Director: func(request *http.Request) {
+			request.URL.Scheme = "http"
+			request.URL.Host = "loom-control-ui.local"
+			request.Host = "loom-control-ui.local"
+			request.Header.Del("Authorization")
+			request.Header.Del("Cookie")
+			request.Header.Del("X-Forwarded-For")
+			request.Header.Del("X-Forwarded-Host")
+			request.Header.Del("X-Forwarded-Proto")
+		},
+		Transport: transport,
+		ErrorHandler: func(writer http.ResponseWriter, _ *http.Request, _ error) {
+			writer.Header().Set("Cache-Control", "no-store")
+			http.Error(writer, "控制 UI 暂不可用", http.StatusServiceUnavailable)
+		},
+	}
+}
+
+func (runtime *controlRuntime) serveControlUI(writer http.ResponseWriter, request *http.Request) {
+	address := net.JoinHostPort(runtime.config.OverlayIP, fmt.Sprint(runtime.config.ControlPort))
+	local, ok := request.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	if request.URL.RawPath != "" || pathpkg.Clean(request.URL.Path) != request.URL.Path ||
+		!controlUIPathAllowed(request.URL.Path) || !ok || local.String() != address ||
+		request.Host != address || request.TLS == nil || !request.TLS.HandshakeComplete ||
+		request.TLS.Version != tls.VersionTLS13 || request.Header.Get("Authorization") != "" {
+		http.NotFound(writer, request)
+		return
+	}
+	admin := false
+	if len(request.TLS.PeerCertificates) > 0 {
+		runtime.mu.Lock()
+		admin = runtime.adminCertificateAuthorizedLocked(request.TLS.PeerCertificates[0].Raw)
+		runtime.mu.Unlock()
+	}
+	if request.Method != http.MethodGet && request.Method != http.MethodHead {
+		if !admin {
+			writeControlRuntimeError(writer, http.StatusForbidden, "需要有效的管理员客户端证书（admin.p12）")
+			return
+		}
+		if request.Header.Get("Origin") != "https://"+address ||
+			(request.Header.Get("Sec-Fetch-Site") != "" && request.Header.Get("Sec-Fetch-Site") != "same-origin") {
+			writeControlRuntimeError(writer, http.StatusForbidden, "管理 UI 写请求的 same-origin 证据无效")
+			return
+		}
+	}
+	if admin {
+		runtime.uiAdmin.ServeHTTP(writer, request)
+		return
+	}
+	runtime.uiReadOnly.ServeHTTP(writer, request)
+}
+
+func controlUIPathAllowed(path string) bool {
+	switch path {
+	case "/", "/favicon.svg", "/traffic.json", "/devices", "/clients", "/nodes", "/topology",
+		"/services", "/routing", "/deployments", "/events", "/events.csv", "/settings", "/ssot":
+		return true
+	}
+	for _, prefix := range []string{"/devices/", "/clients/", "/nodes/", "/api/control/", "/act/"} {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (runtime *controlRuntime) serveStatus(writer http.ResponseWriter, request *http.Request) {
@@ -936,7 +1034,7 @@ func (runtime *controlRuntime) serveStatus(writer http.ResponseWriter, request *
 	local, ok := request.Context().Value(http.LocalAddrContextKey).(net.Addr)
 	if request.Method != http.MethodGet || request.URL.RawQuery != "" || !ok || local.String() != expectedAddress ||
 		request.Host != expectedAddress || request.TLS == nil || request.TLS.Version != tls.VersionTLS13 ||
-		len(request.TLS.PeerCertificates) != 1 || request.Header.Get("Authorization") != "" ||
+		len(request.TLS.PeerCertificates) < 1 || request.Header.Get("Authorization") != "" ||
 		request.Header.Get("Cookie") != "" {
 		writeControlRuntimeError(writer, http.StatusForbidden, "private admin status transport 被拒绝")
 		return
@@ -1446,6 +1544,7 @@ func writeAdminDelivery(dir string, config controlDiskConfigV1, internalRootDER 
 		body []byte
 		mode os.FileMode
 	}{{controlAdminCertName, adminCertPEM, 0o600}, {controlAdminKeyName, adminKeyPEM, 0o600},
+		{controlInternalRootName, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: internalRootDER}), 0o600},
 		{controlAdminRootName, adminRootPEM, 0o600}} {
 		if err := writeBytesAtomic(filepath.Join(dir, file.name), file.body, file.mode); err != nil {
 			return err

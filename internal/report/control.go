@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-
-	"loom/internal/secret"
 )
 
 // ControlPath 是中控角色的本机配置。
@@ -20,14 +18,13 @@ const ControlPath = "/etc/loom/control.json"
 // 只有一台机器该有它。写操作收敛到一处,是因为任何节点都能到任何节点的
 // 隧道地址 —— 五个写入口意味着一台被拿下就能去动其他四台。
 type Control struct {
+	// Node 由 report 配置注入，不在 bootstrap JSON 里再维护一份。
+	Node string `json:"-"`
+
 	// SSOTPath 是发布器盯着的那个文件。界面改的就是它,改完存盘,
 	// 发布器 30 秒内接管 —— 所以界面上**没有"发布"按钮**。
 	SSOTPath string `json:"ssot_path"`
 
-	// Secrets / OperatorRef 指出运维口令从哪来。复用已有的秘密层,
-	// 不新增一套凭据机制。
-	Secrets     string `json:"secrets"`
-	OperatorRef string `json:"operator_ref"`
 	// BootstrapSSHKey 是中控范围唯一的 SSH bootstrap 私钥路径。它不在
 	// SSOT，也不下发给节点；UI 只能导出相邻的 .pub。
 	BootstrapSSHKey string `json:"bootstrap_ssh_key,omitempty"`
@@ -64,20 +61,20 @@ type Control struct {
 
 // LoadControl 读中控配置。文件不存在返回 (nil, nil) —— 绝大多数节点不是中控,
 // 那不是错误。
-func LoadControl(path string) (*Control, string, error) {
+func LoadControl(path string) (*Control, error) {
 	b, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return nil, "", nil
+		return nil, nil
 	}
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	var c Control
 	if err := json.Unmarshal(b, &c); err != nil {
-		return nil, "", fmt.Errorf("解析 %s:%w", path, err)
+		return nil, fmt.Errorf("解析 %s:%w", path, err)
 	}
 	if c.SSOTPath == "" {
-		return nil, "", fmt.Errorf("%s 缺 ssot_path", path)
+		return nil, fmt.Errorf("%s 缺 ssot_path", path)
 	}
 	if c.BootstrapSSHKey == "" {
 		c.BootstrapSSHKey = "/etc/loom/control-bootstrap"
@@ -92,31 +89,18 @@ func LoadControl(path string) (*Control, string, error) {
 		c.ClientLinuxPackagePath = "/var/lib/loom/client-dist/loom-client-linux-amd64.tar.gz"
 	}
 	if _, err := readSSOTSnapshot(c.SSOTPath); err != nil {
-		return nil, "", fmt.Errorf("ssot_path 指向 %s,但读不到:%w", c.SSOTPath, err)
+		return nil, fmt.Errorf("ssot_path 指向 %s,但读不到:%w", c.SSOTPath, err)
 	}
 	if c.ClientEnrollmentURL != "" {
 		if _, err := validClientEnrollmentURL(c.ClientEnrollmentURL); err != nil {
-			return &c, "", fmt.Errorf("%s client_enrollment_url 无效:%w", path, err)
+			return &c, fmt.Errorf("%s client_enrollment_url 无效:%w", path, err)
 		}
 	}
 	if c.ClientPublicBaseURL != "" {
 		if _, err := validClientPublicBaseURL(c.ClientPublicBaseURL); err != nil {
-			return &c, "", fmt.Errorf("%s client_public_base_url 无效:%w", path, err)
+			return &c, fmt.Errorf("%s client_public_base_url 无效:%w", path, err)
 		}
 	}
 
-	// 口令拿不到就**不给写权限**,而不是退化成"不需要认证"。
-	// 后者是那种没有任何症状、直到出事才发现的配置错误。
-	if c.Secrets == "" || c.OperatorRef == "" {
-		return &c, "", fmt.Errorf("中控配置缺 secrets / operator_ref —— 写操作将全部关闭")
-	}
-	all, err := secret.Load(c.Secrets)
-	if err != nil {
-		return &c, "", fmt.Errorf("读秘密层:%w", err)
-	}
-	pw := all[c.OperatorRef]
-	if pw == "" {
-		return &c, "", fmt.Errorf("秘密层里没有 %s —— 写操作将全部关闭", c.OperatorRef)
-	}
-	return &c, pw, nil
+	return &c, nil
 }

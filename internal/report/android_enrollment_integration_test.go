@@ -71,23 +71,11 @@ func TestAndroidEnrollmentServerVerticalSlice(t *testing.T) {
 	}
 	deviceControl := newClientControlDeps(control, provision)
 	ui := webui.Deps{
-		Node: "cn-bj", Operator: "operator-secret", Now: func() time.Time { return now },
+		Node: "cn-bj", Admin: true, Now: func() time.Time { return now },
 		Snapshot: func() webui.View { return webui.View{} },
 		Control:  &webui.ControlDeps{Devices: deviceControl},
 	}
 	handler := webui.Handler(ui)
-
-	login := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(url.Values{
-		"password": {ui.Operator}, "next": {"/devices?new=1"},
-	}.Encode()))
-	login.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	loginResponse := httptest.NewRecorder()
-	handler.ServeHTTP(loginResponse, login)
-	loginResult := loginResponse.Result()
-	if loginResponse.Code != http.StatusSeeOther || len(loginResult.Cookies()) != 1 {
-		t.Fatalf("operator login=%d headers=%v", loginResponse.Code, loginResponse.Header())
-	}
-	session := loginResult.Cookies()[0]
 
 	create := httptest.NewRequest(http.MethodPost, "/devices/create", strings.NewReader(url.Values{
 		"name":              {"Android integration phone"},
@@ -96,7 +84,6 @@ func TestAndroidEnrollmentServerVerticalSlice(t *testing.T) {
 		"destination_grant": {"best-egress"},
 	}.Encode()))
 	create.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	create.AddCookie(session)
 	createResponse := httptest.NewRecorder()
 	handler.ServeHTTP(createResponse, create)
 	location := createResponse.Header().Get("Location")
@@ -110,7 +97,6 @@ func TestAndroidEnrollmentServerVerticalSlice(t *testing.T) {
 		t.Fatalf("Android invitation=%+v err=%v", artifact, err)
 	}
 	invitePage := httptest.NewRequest(http.MethodGet, location, nil)
-	invitePage.AddCookie(session)
 	invitePageResponse := httptest.NewRecorder()
 	handler.ServeHTTP(invitePageResponse, invitePage)
 	if invitePageResponse.Code != http.StatusOK ||

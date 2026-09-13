@@ -13,8 +13,8 @@ import (
 func TestClientAPIUsesSameTrustedRuntimeMergeAsHTML(t *testing.T) {
 	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	d := Deps{
-		Operator: "operator-secret",
-		Now:      func() time.Time { return now },
+		Admin: true,
+		Now:   func() time.Time { return now },
 		Snapshot: func() View {
 			return View{Nodes: []NodeView{
 				{
@@ -73,7 +73,7 @@ func TestClientAPIUsesSameTrustedRuntimeMergeAsHTML(t *testing.T) {
 
 func TestDeviceAPIIsCanonicalAndDoesNotRequireCompatibilityAlias(t *testing.T) {
 	d := Deps{
-		Operator: "operator-secret",
+		Admin:    true,
 		Now:      func() time.Time { return time.Unix(1_700_000_000, 0) },
 		Snapshot: func() View { return View{} },
 		Control: &ControlDeps{Devices: &ClientControlDeps{List: func() (ClientInventory, error) {
@@ -94,7 +94,7 @@ func TestDeviceAPIIsCanonicalAndDoesNotRequireCompatibilityAlias(t *testing.T) {
 
 func TestClientAPIBoundsOperatorAndPublicClaimSurfaces(t *testing.T) {
 	d := Deps{
-		Operator: "operator-secret",
+		Admin:    true,
 		Now:      func() time.Time { return time.Unix(1_700_000_000, 0) },
 		Snapshot: func() View { return View{} },
 		Control:  &ControlDeps{},
@@ -129,8 +129,10 @@ func TestClientAPIBoundsOperatorAndPublicClaimSurfaces(t *testing.T) {
 	}
 	handler := Handler(d)
 	unauthorized := httptest.NewRecorder()
-	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/control/clients", nil))
-	if unauthorized.Code != http.StatusUnauthorized {
+	readOnly := d
+	readOnly.Admin = false
+	Handler(readOnly).ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/control/clients", nil))
+	if unauthorized.Code != http.StatusForbidden {
 		t.Fatalf("unauthorized clients status=%d", unauthorized.Code)
 	}
 
@@ -143,7 +145,7 @@ func TestClientAPIBoundsOperatorAndPublicClaimSurfaces(t *testing.T) {
 		t.Fatalf("create=%d name=%q body=%s headers=%v", create.recorder.Code, createdName, create.recorder.Body.String(), create.recorder.Header())
 	}
 
-	// Claim is intentionally not operator-session authenticated. Its random
+	// Claim is intentionally not admin-certificate authenticated. Its random
 	// invitation token is the one-use credential.
 	claim := httptest.NewRequest(http.MethodPost, "/api/client/enroll", strings.NewReader(
 		`{"token":"opaque-token","platform":"linux-server","csr_pem":"CSR","request_id":"install-1","server":{"public_endpoint":"edge.example.net","inbound_port":61698,"direction":"bidirectional","wg_public_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","country":"CN","city":"Beijing","provider":"example"}}`))
@@ -187,7 +189,7 @@ func TestClientAPIBoundsOperatorAndPublicClaimSurfaces(t *testing.T) {
 
 func TestClientInviteArtifactsAreAuthenticatedNoStoreAndScannable(t *testing.T) {
 	d := Deps{
-		Operator: "operator-secret", Now: func() time.Time { return time.Unix(1_700_000_000, 0) },
+		Admin: true, Now: func() time.Time { return time.Unix(1_700_000_000, 0) },
 		Snapshot: func() View { return View{} }, Control: &ControlDeps{Clients: &ClientControlDeps{
 			InviteArtifact: func(id string) (ClientInviteArtifact, error) {
 				return ClientInviteArtifact{InviteURI: "loom://enroll#" + id}, nil
@@ -197,8 +199,10 @@ func TestClientInviteArtifactsAreAuthenticatedNoStoreAndScannable(t *testing.T) 
 	handler := Handler(d)
 
 	unauthorized := httptest.NewRecorder()
-	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/control/client-invites/i1/qr.png", nil))
-	if unauthorized.Code != http.StatusUnauthorized {
+	readOnly := d
+	readOnly.Admin = false
+	Handler(readOnly).ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/control/client-invites/i1/qr.png", nil))
+	if unauthorized.Code != http.StatusForbidden {
 		t.Fatalf("unauthorized qr=%d", unauthorized.Code)
 	}
 

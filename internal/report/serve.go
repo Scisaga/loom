@@ -108,16 +108,16 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 	var det *detector
 
 	// 中控角色是本机 bootstrap 配置,不是渲染产物 —— 绝大多数节点没有它。
-	ctl, pw, controlErr := LoadControl(ControlPath)
+	ctl, controlErr := LoadControl(ControlPath)
 	if ctl != nil {
+		ctl.Node = cfg.Node
 		trafficHistoryStatus = "unavailable"
 		cfg.PublisherHealth = PublisherHealthPath
 		if controlErr != nil {
 			// 声明了中控角色却配不全,必须看得见。悄悄退化成只读的话,
-			// 人会以为是自己没登录。
+			// 人会误以为只是浏览器没有提交管理员证书。
 			fmt.Fprintf(logw, "! 中控配置有问题,写操作关闭:%v\n", controlErr)
 		}
-		deps.Operator = pw
 		deps.Control = controlDeps(ctl)
 		// 事件只在中控记。每个节点都有同样的视图(靠转述),记 N 份只会
 		// 让人不知道该看哪份 —— 但代价是**中控停了就不记事件**。
@@ -174,7 +174,58 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
+	type privateUIServer struct {
+		path     string
+		listener net.Listener
+		server   *http.Server
+	}
+	var privateUI []privateUIServer
+	if ctl != nil {
+		adminDeps := deps
+		adminDeps.Admin = true
+		for _, candidate := range []struct {
+			path    string
+			handler http.Handler
+		}{
+			{webui.ReadOnlySocketPath, webui.Handler(deps)},
+			{webui.AdminSocketPath, webui.Handler(adminDeps)},
+		} {
+			listener, err := listenControlUISocket(candidate.path)
+			if err != nil {
+				for _, opened := range privateUI {
+					_ = opened.listener.Close()
+					removeControlUISocket(opened.path)
+				}
+				return fmt.Errorf("初始化私有控制 UI: %w", err)
+			}
+			privateUI = append(privateUI, privateUIServer{path: candidate.path, listener: listener,
+				server: &http.Server{Handler: candidate.handler, ReadHeaderTimeout: 5 * time.Second}})
+			fmt.Fprintf(logw, "监听私有 UI Unix socket %s\n", candidate.path)
+		}
+	}
+	defer func() {
+		for _, local := range privateUI {
+			removeControlUISocket(local.path)
+		}
+	}()
+
+	var mu sync.Mutex
+	var firstErr error
 	var wg sync.WaitGroup
+	for index := range privateUI {
+		local := &privateUI[index]
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := local.server.Serve(local.listener); err != nil && err != http.ErrServerClosed {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				mu.Unlock()
+			}
+		}()
+	}
 	// 后台观测与转述。先跑一轮再进循环,免得刚起来那一分钟交出空表。
 	wg.Add(1)
 	go func() {
@@ -229,8 +280,6 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 		}
 	}()
 
-	var mu sync.Mutex
-	var firstErr error
 	started := 0
 
 	for _, addr := range cfg.Listen {
@@ -299,6 +348,9 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutCtx)
+	for _, local := range privateUI {
+		_ = local.server.Shutdown(shutCtx)
+	}
 	if reflectorSrv != nil {
 		_ = reflectorSrv.Shutdown(shutCtx)
 	}

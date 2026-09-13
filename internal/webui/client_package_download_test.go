@@ -23,7 +23,7 @@ func TestLinuxClientDownloadRequiresAuthAndServesOnlyVerifiedBytes(t *testing.T)
 	}
 
 	unauthorized := misakaRequest(t, d, http.MethodGet, "/devices/download/linux-amd64", nil, false)
-	if unauthorized.Code != http.StatusSeeOther || called != 0 {
+	if unauthorized.Code != http.StatusForbidden || called != 0 {
 		t.Fatalf("unauthorized status=%d called=%d", unauthorized.Code, called)
 	}
 	authorized := misakaRequest(t, d, http.MethodGet, "/devices/download/linux-amd64", nil, true)
@@ -52,7 +52,7 @@ func TestLinuxClientDownloadRejectsCallbackMismatch(t *testing.T) {
 	}
 }
 
-func TestPublicDeviceDistributionDoesNotRequireOperatorSession(t *testing.T) {
+func TestPublicDeviceDistributionDoesNotRequireAdminCertificate(t *testing.T) {
 	d := clientUIDeps()
 	d.Control.Clients.PublicLinuxArtifact = func(name string) (PublicDeviceArtifact, error) {
 		if name != "loom-client-linux-amd64.tar.gz.sha256" {

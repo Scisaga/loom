@@ -3809,3 +3809,26 @@ withdraw/revoke 并承认中断。
 - 保留 D99 的“WG 发起方向不等于公网 data ingress”、D120 的 exact listener state machine、
   D129 的 claim 授权域及 D130 的原子 Enrollment 状态机；D129 的 proof 承载形状按本决定的
   external admission QC + operation hash reference 解释。
+
+### D132 · 浏览器控制中心采用 optional client certificate 的只读/管理双边界
+
+**日期** 2026-09-13 · **状态** 当前入口已实现，v2 业务 reducer 仍待完成 · **相关** D36、D104、
+D131、[分布式控制平面 §16](distributed-control-plane.md#16-ui-与-api)
+
+private control HTTPS 在 TLS 1.3 握手中请求但不强制客户端证书。未提交证书、提交未知证书，或证书
+已过期/revoked 时，连接只被路由到脱敏只读 UI；只有 leaf 字节与当前 certified Admin ACL 的 active
+authorization 精确一致、profile/有效期仍通过验证时，才路由到配置 UI。旧的 UI 密码、登录路由、
+HMAC Cookie 和 `operator_ref` 配置被删除，调用方也不能用 HTTP header 自报管理员身份。
+
+只读和管理 handler 分别监听两个 `0600` root-only Unix socket，由 control runtime 在完成证书与 ACL
+验证后选择，避免同一 HTTP handler 因漏验一个路由而提权。非 GET/HEAD 的浏览器写请求还必须携带
+与 exact overlay IP/port 相同的 `Origin`，并拒绝显式 cross-site Fetch Metadata；旧节点 HTTP listener
+始终只读。允许无证书只读不等于公开访问：listener 仍只绑定 private overlay tuple，公网 Nginx 不代理。
+
+浏览器材料也分权：`control-root.crt` 只是验证 private HTTPS 服务端的公开 trust anchor；
+`admin.p12` 只封装既有 admin leaf/private key，PKCS#12 导入密码仅保护该文件。`admin-root.crt` 用于
+审计 issuer profile，所有 Root CA 私钥都留在 root-only control 状态，不导入浏览器、不进入 `.p12`。
+
+此入口复用现有 v1 compatibility 的 SSOT/Device/Service 写处理器，因此“证书已放行”只证明访问门禁，
+不证明业务变更已经过 v2 Raft/QC。Gate B 前这些处理器继续保留；只有迁移到登记的 v2 reducer、写入
+expected head/request ID 并返回 certified QC 后，UI 才能把操作显示为 v2 certified。

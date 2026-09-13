@@ -24,7 +24,7 @@ func TestDeviceJoinRecoveryRequiresOperatorPOSTAndExplicitIdentityLoss(t *testin
 			t.Fatal("GET performed Device recovery")
 		}
 		response = misakaRequest(t, d, http.MethodPost, path, url.Values{"id": {"demo-client"}, "identity_deleted": {"yes"}}, false)
-		if response.Code != http.StatusSeeOther || called != "" {
+		if response.Code != http.StatusForbidden || called != "" {
 			t.Fatal("anonymous request performed Device recovery")
 		}
 	}
@@ -69,13 +69,13 @@ func TestJoinedAccessOnlyDeviceRemovalRequiresAuthenticatedConfirmedPost(t *test
 		t.Fatalf("joined access Device lacks safe removal or overflow handling: status=%d", detail.Code)
 	}
 	publicDetail := misakaRequest(t, d, http.MethodGet, "/devices/demo-joined", nil, false)
-	if !strings.Contains(publicDetail.Body.String(), `Sign in to remove`) || strings.Contains(publicDetail.Body.String(), `action="/devices/delete"`) {
+	if !strings.Contains(publicDetail.Body.String(), `Admin certificate required to remove`) || strings.Contains(publicDetail.Body.String(), `action="/devices/delete"`) {
 		t.Fatal("unauthenticated detail exposed a removal form")
 	}
 	if response := misakaRequest(t, d, http.MethodGet, "/devices/delete", nil, true); response.Code != http.StatusMethodNotAllowed || removed != "" {
 		t.Fatal("GET performed Device removal")
 	}
-	if response := misakaRequest(t, d, http.MethodPost, "/devices/delete", url.Values{"id": {"demo-joined"}, "confirm": {"yes"}}, false); response.Code != http.StatusSeeOther || removed != "" {
+	if response := misakaRequest(t, d, http.MethodPost, "/devices/delete", url.Values{"id": {"demo-joined"}, "confirm": {"yes"}}, false); response.Code != http.StatusForbidden || removed != "" {
 		t.Fatal("anonymous request performed Device removal")
 	}
 	for _, values := range []url.Values{
@@ -144,7 +144,7 @@ func TestUnauthenticatedDeviceCreationDoesNotLoadLinuxPackage(t *testing.T) {
 		return LinuxClientPackageView{}, nil
 	}
 	body := pageDevices(d, clientPageState{Create: true}, false)
-	if packageLoads != 0 || !strings.Contains(body, "Operator session required") {
+	if packageLoads != 0 || !strings.Contains(body, "admin.p12") {
 		t.Fatalf("unauthenticated creation loaded Linux package: loads=%d", packageLoads)
 	}
 }
@@ -171,13 +171,13 @@ func TestRevokedDevicePurgeRequiresAuthenticatedConfirmedPost(t *testing.T) {
 		t.Fatal("revoked Device detail lacks purge action, closed runtime semantics, or card spacing")
 	}
 	publicDetail := misakaRequest(t, d, http.MethodGet, "/devices/demo-old", nil, false)
-	if !strings.Contains(publicDetail.Body.String(), `Sign in to delete`) || strings.Contains(publicDetail.Body.String(), `action="/devices/purge-revoked"`) {
+	if !strings.Contains(publicDetail.Body.String(), `Admin certificate required to delete`) || strings.Contains(publicDetail.Body.String(), `action="/devices/purge-revoked"`) {
 		t.Fatal("unauthenticated detail exposed archived record purge")
 	}
 	if response := misakaRequest(t, d, http.MethodGet, "/devices/purge-revoked", nil, true); response.Code != http.StatusMethodNotAllowed || purged != "" {
 		t.Fatal("GET purged an archived Device")
 	}
-	if response := misakaRequest(t, d, http.MethodPost, "/devices/purge-revoked", url.Values{"id": {"demo-old"}, "confirm": {"yes"}}, false); response.Code != http.StatusSeeOther || purged != "" {
+	if response := misakaRequest(t, d, http.MethodPost, "/devices/purge-revoked", url.Values{"id": {"demo-old"}, "confirm": {"yes"}}, false); response.Code != http.StatusForbidden || purged != "" {
 		t.Fatal("anonymous request purged an archived Device")
 	}
 	if response := misakaRequest(t, d, http.MethodPost, "/devices/purge-revoked?confirm=yes", url.Values{"id": {"demo-old"}}, true); response.Code != http.StatusBadRequest || purged != "" {

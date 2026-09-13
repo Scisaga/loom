@@ -115,7 +115,7 @@ func (service *PrivateControlService) ServeHTTP(writer http.ResponseWriter, requ
 		return
 	}
 	if !service.matchesPrivateListener(request) || request.TLS == nil || request.TLS.Version != tls.VersionTLS13 ||
-		len(request.TLS.PeerCertificates) != 1 {
+		len(request.TLS.PeerCertificates) < 1 {
 		writePrivateControlError(writer, http.StatusForbidden, "[D104 private control] 私有传输身份被拒绝")
 		return
 	}

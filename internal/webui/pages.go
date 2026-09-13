@@ -96,16 +96,14 @@ func shell(d Deps, title, body string, isAuthed bool, evidence ...View) string {
 	if d.Control != nil {
 		role = "Control plane"
 	}
-	// 这台机器上没有任何写操作时不显示登录入口 —— 一个点进去只会说
-	// "没配口令"的链接,只会让人以为自己配错了。
+	// 管理身份由 private control_api 在 TLS 层核对。页面只显示
+	// 已经确定的权限结果，不提供口令、Cookie 或网页内的权限提升入口。
 	auth := `<span class=dim>Read-only view<span class=sr-only>只读</span></span>`
 	switch {
 	case isAuthed:
-		auth = `Signed in · <a href="/logout">Sign out</a>`
-	case title == "登录":
-		auth = `<span class=dim>Operator access</span>`
-	case d.Operator != "" && (len(d.Actions) > 0 || d.Control != nil):
-		auth = `<a href="` + esc(loginURL(shellLoginReturnTo(d, title))) + `">Operator sign in</a>`
+		auth = `<span class=ok>Admin certificate · configuration enabled</span>`
+	case len(d.Actions) > 0 || d.Control != nil:
+		auth = `<span class=dim>Read-only · admin.p12 required for changes</span>`
 	}
 	active := navActive(title)
 	nav := primaryNavigation(d)
@@ -132,7 +130,7 @@ func shell(d Deps, title, body string, isAuthed bool, evidence ...View) string {
 	}
 	refresh := ""
 	if title == "总览" {
-		// 纯 SSR 不靠 JavaScript；只让实时总览定时重取。编辑、登录和结果页
+		// 纯 SSR 不靠 JavaScript；只让实时总览定时重取。编辑和结果页
 		// 不能自动刷新，否则会丢表单或重复操作。
 		refresh = `<meta http-equiv=refresh content=30>`
 	}
@@ -161,22 +159,6 @@ func shell(d Deps, title, body string, isAuthed bool, evidence ...View) string {
 <main class="main %s"><div class=top><div><div class=eyebrow>%s</div><h1>%s</h1><div class=subtitle>%s</div></div><div class=sp>%s</div></div>%s</main></div>%s`,
 		esc(heading), refresh, style, logoSVG(), navHTML.String(), auth,
 		esc(pageClass), esc(eyebrow), esc(heading), esc(subtitle), esc(d.Node)+` · `+esc(role), body, pageScripts)
-}
-
-func shellLoginReturnTo(d Deps, title string) string {
-	if strings.HasPrefix(title, "Node · ") {
-		nodeID := strings.TrimSpace(strings.TrimPrefix(title, "Node · "))
-		if nodeID != "" {
-			return "/nodes/" + url.PathEscape(nodeID)
-		}
-	}
-	active := navActive(title)
-	for _, item := range primaryNavigation(d) {
-		if item.key == active {
-			return item.href
-		}
-	}
-	return "/"
 }
 
 // evidenceBanner keeps control-plane read failures visible on every page that
@@ -277,8 +259,6 @@ func pageHeading(d Deps, title string) (string, string, string) {
 		switch title {
 		case "总览":
 			return "LOCAL NODE / STATUS", "Local overview", d.Node + " · direct local status with newest trusted network observations"
-		case "登录":
-			return "LOCAL NODE / ACCESS", "Operator sign in", "Local maintenance actions require an authenticated node session"
 		case "事件":
 			return "LOCAL NODE / UNAVAILABLE", "Events unavailable", "The event journal is retained on the control node"
 		case "改 SSOT", "Settings":
@@ -298,8 +278,8 @@ func pageHeading(d Deps, title string) (string, string, string) {
 		return "FLEET / DEVICES", "Devices", "Compatibility view for the unified Device inventory"
 	case "改 SSOT":
 		return "ADVANCED / SSOT", "Advanced / SSOT", "Validate and atomically save the declarative source of truth"
-	case "登录":
-		return "CONTROL / ACCESS", "Operator sign in", "Write operations require a local control-plane session"
+	case "管理员证书":
+		return "CONTROL / READ ONLY", "Administrator certificate required", "Import admin.p12 and reconnect to enable configuration"
 	default:
 		return strings.ToUpper(strings.ReplaceAll(title, " ", " / ")), title, d.Node + " control plane"
 	}
@@ -316,22 +296,13 @@ func faviconSVG() string {
 	return faviconAsset
 }
 
-func pageLogin(d Deps, errMsg, returnTo string) string {
-	msg := ""
-	if errMsg != "" {
-		msg = `<p class=bad>` + esc(errMsg) + `</p>`
-	}
-	return shell(d, "登录", fmt.Sprintf(`
+func pageAdminCertificateRequired(d Deps) string {
+	return shell(d, "管理员证书", `
 <div class=card>
-%s<form method=post action=/login>
-<input type=hidden name=next value="%s">
-<input type=password name=password placeholder="运维口令" autofocus> <button>登录</button>
-</form>
-<p class=small>Sign-in will return to <code>%s</code>.</p>
-<p class=dim>口令来自本机秘密层的 <code>ui/%s</code>。<br>
-读页面不需要登录 —— 能连到这里,你已经过了 WireGuard 或 ssh 那一关。<br>
-<b>写操作需要</b>:任何节点都能到任何节点的隧道地址,一台被拿下就能去动别人。</p>
-</div>`, msg, esc(returnTo), esc(returnTo), esc(d.Node)), false)
+<p class=bad>当前连接没有通过有效的管理员客户端证书认证，配置功能已关闭。</p>
+<p>导入 <code>admin.p12</code> 后重新建立 HTTPS 连接。导入密码只用于保护证书包，不是 UI 登录密码。</p>
+<p class=dim>只读状态仍可浏览；Root CA 私钥绝不应导入浏览器。</p>
+</div>`, false)
 }
 
 func pageResult(d Deps, name, out string, err error) string {

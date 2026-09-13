@@ -150,7 +150,7 @@ go run ./cmd/loom verify   /tmp/out -pubkey /tmp/keys/platform-signing.pub
 | `internal/version/` | 版本坐标:commit(Go 的 VCS 戳自动带入)+ 二进制 sha256 |
 | `internal/netx/` | 不依赖机器全局设置的 HTTP 客户端(不读 HTTP_PROXY、自带 DNS) |
 | `internal/events/` | 状态变化历史。**只记变化,不记状态**；v1 compatibility 记在指定 control，目标以不可变事件 CRDT 复制 |
-| `internal/webui/` | v1 compatibility：节点只读、指定 control 写；目标为已入网管理员设备经 overlay IP、internal service certificate 与 admin mTLS 访问私有 `control_api`，Raft commit/apply 后取得 replication QC，并显示副本新鲜度；公网 Nginx 不代理控制 UI/API |
+| `internal/webui/` | 节点 HTTP listener 始终只读；指定 control 的 private HTTPS 在无客户端证书时给脱敏只读页，只有 certified Admin ACL 精确授权的 admin mTLS leaf 才能进入 v1 compatibility 写处理器，且没有 UI 密码/Cookie；原生 v2 写仍须 Raft commit/apply 后取得 replication QC；公网 Nginx 不代理控制 UI/API |
 | `internal/secret/` | 秘密层:占位符解析与替换、两步轮换。**合并发生在节点上**,分发树里只有占位符 |
 | `cmd/loom/` | CLI:`validate` / `render` / `diff` / `snapshot` / `verify` / `keygen` / `firewall` / `hydrate` / `probe` / `agent` / `report` / `selfcheck` / `status` / `apply` / `publish` / `publisher` / `pull` / `secrets` / `backup` / `restore` / `pin` / `rollback` / `snapshots` / `rotate-tunnel` / `version` / `release` |
 | `testdata/matrix/` | 参考 SSOT(4 国内云机 + 2 境外 VPS)与 golden |

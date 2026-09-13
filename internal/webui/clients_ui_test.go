@@ -417,11 +417,11 @@ func TestClientEnrollmentUIAndInvitationArtifacts(t *testing.T) {
 		t.Fatal("create redirect leaked the bearer invitation in its response body")
 	}
 	unauthenticatedCreate := misakaRequest(t, d, http.MethodPost, "/devices/create", url.Values{"name": {"Other"}}, false)
-	if unauthenticatedCreate.Code != http.StatusSeeOther || unauthenticatedCreate.Header().Get("Location") != loginURL("/devices?new=1") || createdInvites != 1 {
+	if unauthenticatedCreate.Code != http.StatusForbidden || !strings.Contains(unauthenticatedCreate.Body.String(), "admin.p12") || createdInvites != 1 {
 		t.Fatalf("unauthenticated create = %d location=%q calls=%d", unauthenticatedCreate.Code, unauthenticatedCreate.Header().Get("Location"), createdInvites)
 	}
 	unauthenticatedResult := misakaRequest(t, d, http.MethodGet, created.Header().Get("Location"), nil, false)
-	if unauthenticatedResult.Code != http.StatusSeeOther || unauthenticatedResult.Header().Get("Location") != loginURL(created.Header().Get("Location")) {
+	if unauthenticatedResult.Code != http.StatusForbidden || !strings.Contains(unauthenticatedResult.Body.String(), "admin.p12") {
 		t.Fatalf("unauthenticated result = %d location=%q", unauthenticatedResult.Code, unauthenticatedResult.Header().Get("Location"))
 	}
 
@@ -462,8 +462,8 @@ func TestClientEnrollmentUIAndInvitationArtifacts(t *testing.T) {
 		t.Fatalf("invitation download = %d headers=%v body=%q", download.Code, download.Header(), download.Body.String())
 	}
 	unauthorized := misakaRequest(t, d, http.MethodGet, "/api/control/device-invites/invite-ui/download", nil, false)
-	if unauthorized.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthorized invitation download = %d, want 401", unauthorized.Code)
+	if unauthorized.Code != http.StatusForbidden {
+		t.Fatalf("unauthorized invitation download = %d, want 403", unauthorized.Code)
 	}
 }
 
@@ -480,12 +480,12 @@ func TestUnclaimedDeviceCanBeDiscardedButOnlyFromAuthenticatedPOST(t *testing.T)
 		t.Fatalf("pending Device detail lacks cleanup action: status=%d body=%s", detail.Code, detail.Body.String())
 	}
 	publicDetail := misakaRequest(t, d, http.MethodGet, "/devices/client-phone01", nil, false)
-	if !strings.Contains(publicDetail.Body.String(), `href="/login?next=%2Fdevices%2Fclient-phone01"`) ||
+	if !strings.Contains(publicDetail.Body.String(), `Admin certificate required to delete`) ||
 		strings.Contains(publicDetail.Body.String(), `action="/devices/discard-pending"`) {
-		t.Fatal("unauthed Device detail must explain how to sign in without exposing a delete form")
+		t.Fatal("unauthed Device detail must require an admin certificate without exposing a delete form")
 	}
 	unauthorized := misakaRequest(t, d, http.MethodPost, "/devices/discard-pending", url.Values{"id": {"client-phone01"}}, false)
-	if unauthorized.Code != http.StatusSeeOther || discarded != "" {
+	if unauthorized.Code != http.StatusForbidden || discarded != "" {
 		t.Fatalf("unauthorized discard status=%d discarded=%q", unauthorized.Code, discarded)
 	}
 	response := misakaRequest(t, d, http.MethodPost, "/devices/discard-pending", url.Values{"id": {"client-phone01"}}, true)
