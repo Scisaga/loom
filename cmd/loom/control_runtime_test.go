@@ -80,6 +80,98 @@ func TestControlRuntimeN1AdminCommitAndRestart(t *testing.T) {
 	}
 }
 
+func TestControlRuntimeEnableLoopbackPreservesAuthorityAndIsIdempotent(t *testing.T) {
+	root := t.TempDir()
+	stateDir := filepath.Join(root, "state")
+	adminDir := filepath.Join(root, "admin")
+	now := time.Now().UTC().Truncate(time.Second)
+	clock := func() time.Time { return now }
+	if err := bootstrapControlRuntime(stateDir, adminDir, "runtime-loopback-test",
+		"00000000000000000000000000", "device-test", "10.40.0.2", 17944, 17945, clock); err != nil {
+		t.Fatal(err)
+	}
+	var config controlDiskConfigV1
+	if err := readCanonicalFile(filepath.Join(stateDir, controlConfigName), 8<<20, &config); err != nil {
+		t.Fatal(err)
+	}
+	var secrets controlDiskSecretsV1
+	secretsPath := filepath.Join(stateDir, controlSecretsName)
+	if err := readCanonicalFile(secretsPath, 8<<20, &secrets); err != nil {
+		t.Fatal(err)
+	}
+	controlTLS, err := tls.X509KeyPair([]byte(secrets.ControlTLSCertificate),
+		[]byte(secrets.ControlTLSPrivateKey))
+	if err != nil || len(controlTLS.Certificate) != 2 {
+		t.Fatalf("bootstrap control TLS: chain=%d err=%v", len(controlTLS.Certificate), err)
+	}
+	issuer, err := x509.ParseCertificate(controlTLS.Certificate[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverKey, err := parsePrivateKeyPKCS8PEM([]byte(secrets.ControlTLSPrivateKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuerKey, err := parsePrivateKeyPKCS8PEM([]byte(secrets.InternalCAPrivateKeyPKCS8PEM))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyPEM, legacyDER, err := signControlServerCertificate(config.ClusterID,
+		[]net.IP{net.ParseIP(config.OverlayIP)}, issuer, issuerKey, serverKey, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyLeaf, err := x509.ParseCertificate(legacyDER)
+	if err != nil || legacyLeaf.VerifyHostname(controlLoopbackIP) == nil {
+		t.Fatalf("legacy leaf unexpectedly authorizes loopback: %v", err)
+	}
+	secrets.ControlTLSCertificate = string(append(legacyPEM,
+		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: issuer.Raw})...))
+	if err := writeCanonicalAtomic(secretsPath, secrets, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stateBefore, err := os.ReadFile(filepath.Join(stateDir, controlStateName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := enableControlLoopback(stateDir, clock); err != nil {
+		t.Fatal(err)
+	}
+	stateAfter, err := os.ReadFile(filepath.Join(stateDir, controlStateName))
+	if err != nil || !bytes.Equal(stateBefore, stateAfter) {
+		t.Fatalf("certificate migration changed certified state: %v", err)
+	}
+	var migrated controlDiskSecretsV1
+	if err := readCanonicalFile(secretsPath, 8<<20, &migrated); err != nil {
+		t.Fatal(err)
+	}
+	if migrated.ControlTLSPrivateKey != secrets.ControlTLSPrivateKey {
+		t.Fatal("certificate migration changed the pinned server private key")
+	}
+	migratedTLS, err := tls.X509KeyPair([]byte(migrated.ControlTLSCertificate),
+		[]byte(migrated.ControlTLSPrivateKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	migratedLeaf, err := x509.ParseCertificate(migratedTLS.Certificate[0])
+	if err != nil || migratedLeaf.VerifyHostname(config.OverlayIP) != nil ||
+		migratedLeaf.VerifyHostname(controlLoopbackIP) != nil ||
+		!bytes.Equal(migratedLeaf.RawSubjectPublicKeyInfo, legacyLeaf.RawSubjectPublicKeyInfo) {
+		t.Fatalf("migrated leaf identity invalid: %v", err)
+	}
+	firstMigration, err := os.ReadFile(secretsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := enableControlLoopback(stateDir, clock); err != nil {
+		t.Fatal(err)
+	}
+	secondMigration, err := os.ReadFile(secretsPath)
+	if err != nil || !bytes.Equal(firstMigration, secondMigration) {
+		t.Fatalf("idempotent migration rewrote secrets: %v", err)
+	}
+}
+
 func TestControlRuntimeRejectsWrongAdminCertificate(t *testing.T) {
 	root := t.TempDir()
 	stateDir := filepath.Join(root, "state")
@@ -156,6 +248,10 @@ func TestControlRuntimeBrowserUIUsesOptionalExactAdminCertificate(t *testing.T) 
 	if response := serveRuntimeUI(t, runtime, http.MethodGet, "/", nil, "", ""); response.Code != http.StatusOK || response.Header().Get("X-Loom-Test-UI") != "read-only" {
 		t.Fatalf("no-certificate GET = %d headers=%v", response.Code, response.Header())
 	}
+	loopbackAddress := net.JoinHostPort(controlLoopbackIP, fmt.Sprint(runtime.config.ControlPort))
+	if response := serveRuntimeUIAt(t, runtime, loopbackAddress, http.MethodGet, "/", nil, "", ""); response.Code != http.StatusOK || response.Header().Get("X-Loom-Test-UI") != "read-only" {
+		t.Fatalf("forwarded no-certificate GET = %d headers=%v", response.Code, response.Header())
+	}
 	if response := serveRuntimeUI(t, runtime, http.MethodGet, "/settings", admin, "", ""); response.Code != http.StatusOK || response.Header().Get("X-Loom-Test-UI") != "admin" {
 		t.Fatalf("admin-certificate GET = %d headers=%v", response.Code, response.Header())
 	}
@@ -190,6 +286,11 @@ func TestControlRuntimeBrowserUIUsesOptionalExactAdminCertificate(t *testing.T) 
 	if response := serveRuntimeUI(t, runtime, http.MethodPost, "/devices/create", admin,
 		"https://10.40.0.2:19444", "same-origin"); response.Code != http.StatusOK || response.Header().Get("X-Loom-Test-UI") != "admin" {
 		t.Fatalf("same-origin admin POST = %d headers=%v body=%s",
+			response.Code, response.Header(), response.Body.String())
+	}
+	if response := serveRuntimeUIAt(t, runtime, loopbackAddress, http.MethodPost, "/devices/create", admin,
+		"https://"+loopbackAddress, "same-origin"); response.Code != http.StatusOK || response.Header().Get("X-Loom-Test-UI") != "admin" {
+		t.Fatalf("forwarded same-origin admin POST = %d headers=%v body=%s",
 			response.Code, response.Header(), response.Body.String())
 	}
 
@@ -260,12 +361,32 @@ func TestControlRuntimeBrowserUIRejectsNonUIAndWrongListener(t *testing.T) {
 	if statusResponse.Code != http.StatusForbidden {
 		t.Fatalf("private status without admin certificate = %d", statusResponse.Code)
 	}
+
+	admin := readAdminTestCertificate(t, filepath.Join(adminDir, controlAdminCertName))
+	loopbackAddress := net.JoinHostPort(controlLoopbackIP, fmt.Sprint(runtime.config.ControlPort))
+	forwardedStatus := httptest.NewRequest(http.MethodGet,
+		"https://"+loopbackAddress+privateControlStatus, nil)
+	forwardedStatus = forwardedStatus.WithContext(context.WithValue(forwardedStatus.Context(),
+		http.LocalAddrContextKey, controlTestAddress(loopbackAddress)))
+	forwardedStatus.TLS = &tls.ConnectionState{Version: tls.VersionTLS13,
+		HandshakeComplete: true, PeerCertificates: []*x509.Certificate{admin}}
+	forwardedResponse := httptest.NewRecorder()
+	runtime.controlHandler().ServeHTTP(forwardedResponse, forwardedStatus)
+	if forwardedResponse.Code != http.StatusForbidden {
+		t.Fatalf("private status escaped onto browser loopback = %d", forwardedResponse.Code)
+	}
 }
 
 func serveRuntimeUI(t *testing.T, runtime *controlRuntime, method, path string,
 	peer *x509.Certificate, origin, fetchSite string) *httptest.ResponseRecorder {
 	t.Helper()
 	address := net.JoinHostPort(runtime.config.OverlayIP, fmt.Sprint(runtime.config.ControlPort))
+	return serveRuntimeUIAt(t, runtime, address, method, path, peer, origin, fetchSite)
+}
+
+func serveRuntimeUIAt(t *testing.T, runtime *controlRuntime, address, method, path string,
+	peer *x509.Certificate, origin, fetchSite string) *httptest.ResponseRecorder {
+	t.Helper()
 	request := httptest.NewRequest(method, "https://"+address+path, nil)
 	request = request.WithContext(context.WithValue(request.Context(), http.LocalAddrContextKey,
 		controlTestAddress(address)))

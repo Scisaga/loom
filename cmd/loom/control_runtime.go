@@ -50,6 +50,7 @@ const (
 	privateControlStatus    = "/private/v2/control/status"
 	controlPingKind         = "control_ping"
 	controlMaxResponseSize  = 8 << 20
+	controlLoopbackIP       = "127.0.0.1"
 )
 
 var controlOperationSchemas = wire.OperationSchemaRegistry{controlPingKind: 1}
@@ -174,11 +175,13 @@ type controlRuntime struct {
 
 func cmdControl(args []string) error {
 	if len(args) == 0 {
-		return errors.New("control 需要 bootstrap、serve、status 或 request")
+		return errors.New("control 需要 bootstrap、enable-loopback、serve、status 或 request")
 	}
 	switch args[0] {
 	case "bootstrap":
 		return cmdControlBootstrap(args[1:])
+	case "enable-loopback":
+		return cmdControlEnableLoopback(args[1:])
 	case "serve":
 		return cmdControlServe(args[1:])
 	case "status":
@@ -188,6 +191,18 @@ func cmdControl(args []string) error {
 	default:
 		return fmt.Errorf("未知 control 子命令 %q", args[0])
 	}
+}
+
+func cmdControlEnableLoopback(args []string) error {
+	fs := flag.NewFlagSet("control enable-loopback", flag.ContinueOnError)
+	dir := fs.String("state-dir", "/var/lib/loom-control", "控制面状态目录")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("control enable-loopback 不接受位置参数")
+	}
+	return enableControlLoopback(*dir, time.Now)
 }
 
 func cmdControlBootstrap(args []string) error {
@@ -292,6 +307,110 @@ func cmdControlRequest(args []string) error {
 	}
 	body, _ := json.MarshalIndent(result, "", "  ")
 	fmt.Println(string(body))
+	return nil
+}
+
+func enableControlLoopback(dir string, now func() time.Time) error {
+	if now == nil {
+		return errors.New("control loopback 证书迁移需要可信时间源")
+	}
+	var config controlDiskConfigV1
+	if err := readCanonicalFile(filepath.Join(dir, controlConfigName), 8<<20, &config); err != nil {
+		return err
+	}
+	if config.Schema != 1 || config.ClusterID == "" || config.OverlayIP != config.ControlService.OverlayIP ||
+		config.ControlPort != config.ControlService.Port || net.ParseIP(config.OverlayIP) == nil {
+		return errors.New("control config header/authority 不一致")
+	}
+	if err := wire.ValidatePrivateControlService(&config.ControlService); err != nil {
+		return err
+	}
+
+	var secrets controlDiskSecretsV1
+	secretsPath := filepath.Join(dir, controlSecretsName)
+	if err := readCanonicalFile(secretsPath, 8<<20, &secrets); err != nil {
+		return err
+	}
+	if secrets.Schema != 1 {
+		return errors.New("control secrets schema 无效")
+	}
+	originalSecrets, err := wire.MarshalCanonical(secrets)
+	if err != nil {
+		return err
+	}
+	controlTLS, err := tls.X509KeyPair([]byte(secrets.ControlTLSCertificate),
+		[]byte(secrets.ControlTLSPrivateKey))
+	if err != nil || len(controlTLS.Certificate) != 2 {
+		return errors.New("control TLS 必须是精确的 leaf + internal root chain")
+	}
+	leaf, err := x509.ParseCertificate(controlTLS.Certificate[0])
+	if err != nil {
+		return fmt.Errorf("control TLS leaf: %w", err)
+	}
+	issuer, err := x509.ParseCertificate(controlTLS.Certificate[1])
+	if err != nil {
+		return fmt.Errorf("control TLS internal root: %w", err)
+	}
+	serverKey, err := parsePrivateKeyPKCS8PEM([]byte(secrets.ControlTLSPrivateKey))
+	if err != nil {
+		return fmt.Errorf("control TLS private key: %w", err)
+	}
+	issuerKey, err := parsePrivateKeyPKCS8PEM([]byte(secrets.InternalCAPrivateKeyPKCS8PEM))
+	if err != nil {
+		return fmt.Errorf("internal CA private key: %w", err)
+	}
+	issuerPublic, issuerIsEd25519 := issuer.PublicKey.(ed25519.PublicKey)
+	leafPublic, leafIsEd25519 := leaf.PublicKey.(ed25519.PublicKey)
+	if !issuer.IsCA || !issuerIsEd25519 || !leafIsEd25519 ||
+		!bytes.Equal(issuerPublic, issuerKey.Public().(ed25519.PublicKey)) ||
+		!bytes.Equal(leafPublic, serverKey.Public().(ed25519.PublicKey)) ||
+		issuer.CheckSignatureFrom(issuer) != nil || leaf.CheckSignatureFrom(issuer) != nil {
+		return errors.New("control TLS leaf/key/internal CA authority 不一致")
+	}
+	instant := now().UTC()
+	roots := x509.NewCertPool()
+	roots.AddCert(issuer)
+	if _, err := leaf.Verify(x509.VerifyOptions{DNSName: config.OverlayIP, Roots: roots,
+		CurrentTime: instant, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err != nil {
+		return fmt.Errorf("既有 control TLS leaf 无法验证 overlay identity: %w", err)
+	}
+	spki := sha256.Sum256(leaf.RawSubjectPublicKeyInfo)
+	pin := "sha256:" + hex.EncodeToString(spki[:])
+	if !containsText(config.ControlService.SPKIPins, pin) {
+		return errors.New("既有 control TLS leaf 不在 certified service pin set")
+	}
+	if leaf.VerifyHostname(controlLoopbackIP) == nil {
+		fmt.Printf("✓ control TLS 已支持 https://%s:%d，未改写 authority\n",
+			controlLoopbackIP, config.ControlPort)
+		return nil
+	}
+
+	certificatePEM, certificateDER, err := signControlServerCertificate(config.ClusterID,
+		[]net.IP{net.ParseIP(config.OverlayIP), net.ParseIP(controlLoopbackIP)}, issuer, issuerKey,
+		serverKey, instant)
+	if err != nil {
+		return err
+	}
+	newLeaf, err := x509.ParseCertificate(certificateDER)
+	if err != nil || newLeaf.VerifyHostname(config.OverlayIP) != nil ||
+		newLeaf.VerifyHostname(controlLoopbackIP) != nil ||
+		!bytes.Equal(newLeaf.RawSubjectPublicKeyInfo, leaf.RawSubjectPublicKeyInfo) {
+		return errors.New("control TLS loopback leaf 自验证失败")
+	}
+	currentSecrets, err := readOwnerOnlyFile(secretsPath, 8<<20)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(currentSecrets, originalSecrets) {
+		return errors.New("control secrets 在证书迁移期间发生并发变化，拒绝覆盖")
+	}
+	secrets.ControlTLSCertificate = string(append(certificatePEM,
+		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: issuer.Raw})...))
+	if err := writeCanonicalAtomic(secretsPath, secrets, 0o600); err != nil {
+		return err
+	}
+	fmt.Printf("✓ control TLS 保留原 SPKI pin 并增加 https://%s:%d；重启 control 后生效\n",
+		controlLoopbackIP, config.ControlPort)
 	return nil
 }
 
@@ -870,12 +989,25 @@ func (runtime *controlRuntime) persistJournalLocked() error {
 
 func (runtime *controlRuntime) serve() error {
 	controlAddress := net.JoinHostPort(runtime.config.OverlayIP, fmt.Sprint(runtime.config.ControlPort))
+	loopbackAddress := net.JoinHostPort(controlLoopbackIP, fmt.Sprint(runtime.config.ControlPort))
 	raftAddress := net.JoinHostPort(runtime.config.OverlayIP, fmt.Sprint(runtime.config.RaftPort))
+	if len(runtime.controlTLS.Certificate) < 1 {
+		return errors.New("control TLS leaf 缺失")
+	}
+	controlLeaf, err := x509.ParseCertificate(runtime.controlTLS.Certificate[0])
+	if err != nil || controlLeaf.VerifyHostname(controlLoopbackIP) != nil {
+		return errors.New("control TLS leaf 未授权 127.0.0.1；请先执行 control enable-loopback")
+	}
 	controlListener, err := net.Listen("tcp", controlAddress)
 	if err != nil {
 		return fmt.Errorf("listen control_api %s: %w", controlAddress, err)
 	}
 	defer controlListener.Close()
+	loopbackListener, err := net.Listen("tcp4", loopbackAddress)
+	if err != nil {
+		return fmt.Errorf("listen control browser loopback %s: %w", loopbackAddress, err)
+	}
+	defer loopbackListener.Close()
 	raftListener, err := net.Listen("tcp", raftAddress)
 	if err != nil {
 		return fmt.Errorf("listen Raft %s: %w", raftAddress, err)
@@ -898,26 +1030,36 @@ func (runtime *controlRuntime) serve() error {
 	if err != nil {
 		return err
 	}
-	controlServer := &http.Server{Handler: runtime.controlHandler(), ReadHeaderTimeout: 5 * time.Second,
+	controlHandler := runtime.controlHandler()
+	controlServer := &http.Server{Handler: controlHandler, ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	loopbackServer := &http.Server{Handler: controlHandler, ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	raftServer := &http.Server{Handler: raftHandler, ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
-	errorsOut := make(chan error, 2)
+	errorsOut := make(chan error, 3)
 	go func() { errorsOut <- controlServer.Serve(tls.NewListener(controlListener, controlTLSConfig)) }()
+	go func() { errorsOut <- loopbackServer.Serve(tls.NewListener(loopbackListener, controlTLSConfig)) }()
 	go func() { errorsOut <- raftServer.Serve(tls.NewListener(raftListener, raftTLSConfig)) }()
-	fmt.Printf("✓ v2 control_api 监听 %s；Raft 监听 %s；ControlSet N=1 q=1\n", controlAddress, raftAddress)
+	fmt.Printf("✓ v2 control_api 监听 %s；浏览器转发入口监听 %s；Raft 监听 %s；ControlSet N=1 q=1\n",
+		controlAddress, loopbackAddress, raftAddress)
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(stop)
-	select {
-	case sig := <-stop:
+	shutdown := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		_ = controlServer.Shutdown(ctx)
+		_ = loopbackServer.Shutdown(ctx)
 		_ = raftServer.Shutdown(ctx)
+	}
+	select {
+	case sig := <-stop:
+		shutdown()
 		fmt.Printf("control runtime 收到 %s，已停止\n", sig)
 		return nil
 	case serveErr := <-errorsOut:
+		shutdown()
 		if errors.Is(serveErr, http.ErrServerClosed) {
 			return nil
 		}
@@ -982,11 +1124,10 @@ func newControlUIProxy(socketPath string) http.Handler {
 }
 
 func (runtime *controlRuntime) serveControlUI(writer http.ResponseWriter, request *http.Request) {
-	address := net.JoinHostPort(runtime.config.OverlayIP, fmt.Sprint(runtime.config.ControlPort))
-	local, ok := request.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	address, exactListener := runtime.controlUIAddress(request)
 	if request.URL.RawPath != "" || pathpkg.Clean(request.URL.Path) != request.URL.Path ||
-		!controlUIPathAllowed(request.URL.Path) || !ok || local.String() != address ||
-		request.Host != address || request.TLS == nil || !request.TLS.HandshakeComplete ||
+		!controlUIPathAllowed(request.URL.Path) || !exactListener ||
+		request.TLS == nil || !request.TLS.HandshakeComplete ||
 		request.TLS.Version != tls.VersionTLS13 || request.Header.Get("Authorization") != "" {
 		http.NotFound(writer, request)
 		return
@@ -1013,6 +1154,22 @@ func (runtime *controlRuntime) serveControlUI(writer http.ResponseWriter, reques
 		return
 	}
 	runtime.uiReadOnly.ServeHTTP(writer, request)
+}
+
+func (runtime *controlRuntime) controlUIAddress(request *http.Request) (string, bool) {
+	local, ok := request.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	if !ok {
+		return "", false
+	}
+	for _, address := range []string{
+		net.JoinHostPort(runtime.config.OverlayIP, fmt.Sprint(runtime.config.ControlPort)),
+		net.JoinHostPort(controlLoopbackIP, fmt.Sprint(runtime.config.ControlPort)),
+	} {
+		if local.String() == address && request.Host == address {
+			return address, true
+		}
+	}
+	return "", false
 }
 
 func controlUIPathAllowed(path string) bool {
@@ -1343,11 +1500,7 @@ func makeCertificateAuthority(commonName string, notBefore, notAfter time.Time) 
 
 func makeControlServerCertificate(clusterID, overlayIP string, issuer *x509.Certificate,
 	issuerKey ed25519.PrivateKey, now time.Time) ([]byte, []byte, []byte, error) {
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	serial, err := randomCertificateSerial()
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -1355,12 +1508,8 @@ func makeControlServerCertificate(clusterID, overlayIP string, issuer *x509.Cert
 	if ip == nil {
 		return nil, nil, nil, errors.New("control overlay IP 无效")
 	}
-	template := &x509.Certificate{SerialNumber: serial,
-		Subject: pkix.Name{CommonName: "control-api." + clusterID}, NotBefore: now.Add(-5 * time.Minute),
-		NotAfter: now.Add(365 * 24 * time.Hour), BasicConstraintsValid: true,
-		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		IPAddresses: []net.IP{ip}}
-	der, err := x509.CreateCertificate(rand.Reader, template, issuer, publicKey, issuerKey)
+	certificatePEM, der, err := signControlServerCertificate(clusterID,
+		[]net.IP{ip, net.ParseIP(controlLoopbackIP)}, issuer, issuerKey, privateKey, now)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -1368,8 +1517,47 @@ func makeControlServerCertificate(clusterID, overlayIP string, issuer *x509.Cert
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+	return certificatePEM,
 		pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), der, nil
+}
+
+func signControlServerCertificate(clusterID string, ipAddresses []net.IP, issuer *x509.Certificate,
+	issuerKey, privateKey ed25519.PrivateKey, now time.Time) ([]byte, []byte, error) {
+	if clusterID == "" || issuer == nil || len(issuerKey) != ed25519.PrivateKeySize ||
+		len(privateKey) != ed25519.PrivateKeySize || len(ipAddresses) == 0 {
+		return nil, nil, errors.New("control server certificate authority/key/IP 无效")
+	}
+	addresses := make([]net.IP, len(ipAddresses))
+	for index, ip := range ipAddresses {
+		if ip == nil {
+			return nil, nil, errors.New("control server certificate IP 无效")
+		}
+		addresses[index] = append(net.IP(nil), ip...)
+	}
+	serial, err := randomCertificateSerial()
+	if err != nil {
+		return nil, nil, err
+	}
+	notBefore := now.UTC().Add(-5 * time.Minute)
+	if issuer.NotBefore.After(notBefore) {
+		notBefore = issuer.NotBefore
+	}
+	notAfter := now.UTC().Add(365 * 24 * time.Hour)
+	if issuer.NotAfter.Before(notAfter) {
+		notAfter = issuer.NotAfter
+	}
+	if !notAfter.After(now.UTC()) {
+		return nil, nil, errors.New("control server certificate issuer 已过期")
+	}
+	template := &x509.Certificate{SerialNumber: serial,
+		Subject: pkix.Name{CommonName: "control-api." + clusterID}, NotBefore: notBefore,
+		NotAfter: notAfter, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, IPAddresses: addresses}
+	der, err := x509.CreateCertificate(rand.Reader, template, issuer, privateKey.Public(), issuerKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), der, nil
 }
 
 func makeControlPeerCertificate(clusterID, memberID, overlayIP string, now time.Time) ([]byte,

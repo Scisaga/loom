@@ -3848,3 +3848,24 @@ expected head/request ID 并返回 certified QC 后，UI 才能把操作显示�
 v2 latch、轮换、撤权和真实流量仍须通过。`61802` 在服务器节点上暂时保留的 `/status`/gossip 是本机
 运行态依赖，不是 Windows 兼容；浏览器页面立即退出，客户端兼容 handler 在 Linux/Android 完成迁移且
 扫描确认无活跃引用后删除。
+
+### D134 · 浏览器入口增加 exact loopback 端口转发边界
+
+**日期** 2026-09-13 · **状态** 生效 · **相关** D104、D132、
+[分布式控制平面 §16](distributed-control-plane.md#16-ui-与-api)
+
+D132 只绑定 overlay tuple 使通用 SSH/开发机端口转发落到 control Device 的
+`127.0.0.1` 时无服务可接，而把浏览器 URL 改成 loopback 也会同时失败于服务端证书
+SAN 和 exact Host 校验。control runtime 因此在同一 control port 额外绑定 exact IPv4
+loopback，但该 listener 只放行既有浏览器 UI 路由。native private status 和 operation 仍根据
+local address 只接受 overlay tuple；不增加 wildcard/public bind，公网 Nginx 也不代理。
+
+浏览器转发 URL 必须使用 `https://127.0.0.1:<control-api-port>/`，HTTP Host、local
+listener 和非读请求 Origin 继续 exact 一致。服务端 leaf 的 IP SAN 只增加 `127.0.0.1`；
+对旧安装的幂等迁移用既有 internal CA 和原 server key 重签 leaf，不改变 SPKI
+pin、trust root、admin leaf/private key、certified ACL 或 Head。因此原 `control-root.crt` 和
+`admin.p12` 仍是唯一需要的浏览器材料。
+
+端口转发本身不授予管理权：无客户端证书仍只读；写入仍必须由当前 certified
+Admin ACL 精确授权的 leaf、TLS 1.3 和 same-origin 共同通过。不恢复 UI 密码、Cookie
+或 header 身份，也不把 SSH 通道当作 native Device/control protocol 的替代。

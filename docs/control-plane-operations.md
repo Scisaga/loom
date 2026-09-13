@@ -6,7 +6,9 @@
 ## 边界
 
 - `control` 是 Device 的正交职责。初始部署为 `N=1,q=1`，不改变普通转发职责。
-- `control_api` 与 Raft 分别绑定私有 overlay IP 和不同端口；两者不经公网 Nginx。
+- `control_api` 与 Raft 分别绑定私有 overlay IP 和不同端口；两者不经公网 Nginx。同端口的
+  IPv4 loopback 只提供浏览器 UI，便于通过已认证的 SSH/开发机端口转发访问；
+  private status/operation 仍只接受 overlay listener。
 - 管理员证书、control peer 证书、control API server 证书使用不同 key 和用途 profile。
 - 同一 private HTTPS `control_api` 同时承载浏览器 UI：未提交客户端证书时只能读取脱敏视图；
   提交当前 certified ACL 精确授权的管理员 leaf 时才启用配置处理器。不存在 UI 口令或登录 Cookie。
@@ -53,13 +55,28 @@ sudo systemctl enable --now loom-control.service
 - `endpoint.json`：private service tuple、server SPKI pin、internal CA anchor 与文件绑定。
 
 目录应在加密介质上保持 `0700`，文件保持 `0600`。不要把它放进仓库、聊天、工单附件或分发镜像。
-访问端必须能路由到 `<overlay-ip>`；没有 overlay 路由时不能改用公网地址。
+访问端可直接路由到 `<overlay-ip>`，也可经已认证的 SSH/开发机会话把本地同号端口转发到
+control Device 的 `127.0.0.1:<control-api-port>`。不能改用公网地址，也不能把 loopback
+改成 wildcard/public bind。
 
 ### 浏览器证书包
 
-浏览器访问地址为 `https://<overlay-ip>:<control-api-port>/`。`control-root.crt` 与
+直连时浏览器访问 `https://<overlay-ip>:<control-api-port>/`。端口转发时，远端目标必须是
+`127.0.0.1:<control-api-port>`，本地使用同一端口并显式访问
+`https://127.0.0.1:<control-api-port>/`；不要使用 `http://` 或 `localhost`。服务端 leaf 只包含
+exact overlay IP 和 `127.0.0.1` SAN。`control-root.crt` 与
 `admin.p12` 用途不同：前者只让浏览器信任 Loom 的 HTTPS 服务端；后者包含管理员 leaf 和对应私钥，
 让 TLS 客户端认证获得配置权限。Root CA **私钥**永远不进入浏览器。
+
+从早期只有 overlay SAN 的安装升级时，先执行一次幂等迁移，再重启服务：
+
+```bash
+sudo /usr/local/bin/loom control enable-loopback -state-dir /var/lib/loom-control
+sudo systemctl restart loom-control.service
+```
+
+迁移只用既有 internal CA 给原 control server 公钥重签 leaf；不更换服务端私钥、SPKI pin、
+trust root、admin 材料或 certified Head。已包含 loopback SAN 时命令不改写文件。
 
 首次为已有 `admin.crt` / `admin.key` 生成浏览器包时，在管理员交付目录执行：
 
@@ -108,7 +125,7 @@ reducer 仍只登记 `control_ping`，不能把兼容 UI 的成功响应误报�
 ## 重启、备份和避免重复工作
 
 - 正常重启只运行 `control serve`。每次启动重新 campaign，并在已有日志上提交 current-term barrier；
-  不重新 bootstrap，不重新生成证书。
+  不重新 bootstrap，不重新生成证书。`enable-loopback` 只是旧 leaf 的一次性、幂等迁移。
 - 备份 `/var/lib/loom-control` 的 Raft、control state、operation journal 和服务端密钥；管理员交付目录
   单独离线备份。恢复必须是整组原子恢复，不能混用两次 bootstrap 的文件。
 - 发布前记录 exact Git commit、二进制 SHA-256、signed-current generation、ControlSet hash、certified
@@ -118,7 +135,8 @@ reducer 仍只登记 `control_ping`，不能把兼容 UI 的成功响应误报�
 
 ## 验收清单
 
-1. `systemctl is-active loom-control` 为 `active`，监听仅出现于已登记 overlay tuple。
+1. `systemctl is-active loom-control` 为 `active`；control/Raft 监听出现于已登记 overlay tuple，
+   浏览器入口额外出现于 exact IPv4 loopback 同号端口，不出现 wildcard/public bind。
 2. 无客户端证书的 HTTPS UI 为只读；带正确管理员材料的 UI 启用配置；随机、过期或 revoked
    client certificate 的写请求返回 `403`。
 3. `control_ping` 推进 certified Head，Raft `commit_index == last_applied`，operation tree size 单调增加。
@@ -126,3 +144,5 @@ reducer 仍只登记 `control_ping`，不能把兼容 UI 的成功响应误报�
 5. 从公网接口探测 control/Raft 端口不可达。
 6. compatibility 写处理器仍可用但只经过 private HTTPS/admin mTLS 到达；迁移为 v2 reducer 前不得删除。
    Windows 不再是门禁；Linux/Android 私有通道通过且扫描无活跃旧引用后退役对应旧路径。
+7. 经 loopback 可读 UI 且管理员同源写入仍要求 `admin.p12`；private status/operation
+   经 loopback 必须拒绝，经 overlay 的 CLI 路径仍通过。
