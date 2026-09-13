@@ -10,8 +10,8 @@
 - 管理员证书、control peer 证书、control API server 证书使用不同 key 和用途 profile。
 - 同一 private HTTPS `control_api` 同时承载浏览器 UI：未提交客户端证书时只能读取脱敏视图；
   提交当前 certified ACL 精确授权的管理员 leaf 时才启用配置处理器。不存在 UI 口令或登录 Cookie。
-- Windows 验收只阻止 Gate B（删除 v1 compatibility），不阻止兼容的服务端/Linux/Android发布或
-  `N=1` v2 控制面启动。
+- 当前没有部署中的 Windows Device；Windows 源码保持不动，其 compatibility/验收不再阻止
+  服务端、Linux、Android 发布或 Gate B。Gate B 只按实际活跃调用方和扫描证据判断。
 - 当前生产 reducer 只登记 `control_ping`，用于验证管理员签名、Raft commit、QC 和 inclusion proof。
   未实现的 operation kind 会失败关闭，不会返回伪造的“成功”。
 
@@ -124,5 +124,5 @@ reducer 仍只登记 `control_ping`，不能把兼容 UI 的成功响应误报�
 3. `control_ping` 推进 certified Head，Raft `commit_index == last_applied`，operation tree size 单调增加。
 4. 重启服务后 certified Head 不变，再次 `control_ping` 成功且 term/index 前进。
 5. 从公网接口探测 control/Raft 端口不可达。
-6. v1 compatibility 写处理器仍可用但只经过 private HTTPS/admin mTLS 到达；在 Linux、Windows、Android
-   全部满足 Gate B 前不得删除。
+6. compatibility 写处理器仍可用但只经过 private HTTPS/admin mTLS 到达；迁移为 v2 reducer 前不得删除。
+   Windows 不再是门禁；Linux/Android 私有通道通过且扫描无活跃旧引用后退役对应旧路径。

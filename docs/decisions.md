@@ -773,9 +773,10 @@ Headscale 因此仍然是**独立可选项**,不在主线上。
 界面能触发的只有**收敛**(立刻拉一次、重新应用一遍),不能制造**分歧**。
 真要临时动手,用 ssh —— 那条路本来就在,而且看得出是人为干预。
 
-推论:界面按能力分两层。**读**在每个节点上都有(数据本来就在同一个端口上
-无认证提供,换成 HTML 不增加任何面);**写**只在中控一台上。原本"一个运维
-五道门"的顾虑,因为写操作收敛到一台而消失了。
+推论:界面按能力分两层。历史实现曾让每个节点的明文报告端口同时提供只读 HTML，
+现在由 [D132](#d132--浏览器控制中心采用-optional-client-certificate-的只读管理双边界)
+和 D133 收敛为同一个 private HTTPS 浏览器入口：无管理员证书只读，有证书才可写。
+节点报告端口只保留机器接口，不再形成第二套浏览器入口。
 
 ---
 
@@ -3823,7 +3824,7 @@ HMAC Cookie 和 `operator_ref` 配置被删除，调用方也不能用 HTTP head
 只读和管理 handler 分别监听两个 `0600` root-only Unix socket，由 control runtime 在完成证书与 ACL
 验证后选择，避免同一 HTTP handler 因漏验一个路由而提权。非 GET/HEAD 的浏览器写请求还必须携带
 与 exact overlay IP/port 相同的 `Origin`，并拒绝显式 cross-site Fetch Metadata；旧节点 HTTP listener
-始终只读。允许无证书只读不等于公开访问：listener 仍只绑定 private overlay tuple，公网 Nginx 不代理。
+不再提供 HTML 页面。允许无证书只读不等于公开访问：listener 仍只绑定 private overlay tuple，公网 Nginx 不代理。
 
 浏览器材料也分权：`control-root.crt` 只是验证 private HTTPS 服务端的公开 trust anchor；
 `admin.p12` 只封装既有 admin leaf/private key，PKCS#12 导入密码仅保护该文件。`admin-root.crt` 用于
@@ -3832,3 +3833,18 @@ HMAC Cookie 和 `operator_ref` 配置被删除，调用方也不能用 HTTP head
 此入口复用现有 v1 compatibility 的 SSOT/Device/Service 写处理器，因此“证书已放行”只证明访问门禁，
 不证明业务变更已经过 v2 Raft/QC。Gate B 前这些处理器继续保留；只有迁移到登记的 v2 reducer、写入
 expected head/request ID 并返回 certified QC 后，UI 才能把操作显示为 v2 certified。
+
+### D133 · 未部署的 Windows 不再阻塞活跃平台迁移或 v1 退役
+
+**日期** 2026-09-13 · **状态** 生效 · **相关** D131、D132、[#9](https://github.com/Scisaga/loom/issues/9)、
+[#10](https://github.com/Scisaga/loom/issues/10)
+
+当前没有在用的 Windows Device。Windows 源码继续保持不动，但 Windows compatibility 与 Windows
+验收证据不再是 server、Linux、Android 私有通道上线或 Gate B 的输入；旧 Issue 中“四端全部通过”
+的门禁被操作者本决定取代。Gate B 只统计当前实际部署的平台与服务端引用，不能为了无人使用的客户端
+保留公开 Enrollment/report、旧 QR 或浏览器入口。
+
+这不授权伪造完成证据：Linux 与 Android 各自的 private Enrollment、Device mTLS config/report、
+v2 latch、轮换、撤权和真实流量仍须通过。`61802` 在服务器节点上暂时保留的 `/status`/gossip 是本机
+运行态依赖，不是 Windows 兼容；浏览器页面立即退出，客户端兼容 handler 在 Linux/Android 完成迁移且
+扫描确认无活跃引用后删除。

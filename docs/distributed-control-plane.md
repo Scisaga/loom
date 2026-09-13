@@ -3552,7 +3552,8 @@ generation/state machine。
 
 Gate 输入是按 component 严格排序的 `GateEvidenceReportV1`，每项携 artifact hash、certified Head
 hash、passed/failed 与 observation time，再确定性派生 `GateStatus`；调用方不能直接手填布尔值冒充
-证据。缺 Windows evidence 只保持全端 Gate A/B 关闭，不影响 server/Linux/Android 独立完成里程碑。
+证据。平台集合来自当前 certified deployment inventory；未部署的 Windows 不产生必需 evidence，
+也不阻塞 server/Linux/Android 或 Gate B。
 
 ---
 
@@ -3750,10 +3751,10 @@ server 通过签名 public port/mapping 正确发布，同时 control 服务保�
 
 - 删除公开 enroll/control/config/report seed、handler、Nginx route 和 UI 文案；
 - v2 latch 后拒绝 v1 authority、旧 QR、旧 public role 和 v1 的 1 小时自动恢复窗口；
-- 完成 server/Linux/Windows/Android 全矩阵、升级/回滚/撤权/灾难恢复；
+- 完成 server 与当前实际部署的 Linux/Android 全矩阵、升级/回滚/撤权/灾难恢复；
 - 发布运维手册、source/licence、签名制品与实测记录。
 
-**完成条件：** 仓库、部署和网络扫描均无旧公开控制路径；四平台使用同一目标 wire 与失败语义。
+**完成条件：** 仓库、部署和网络扫描均无旧公开控制路径；当前部署平台使用同一目标 wire 与失败语义。
 
 ---
 
@@ -3891,7 +3892,8 @@ server 通过签名 public port/mapping 正确发布，同时 control 服务保�
 7. 无 quorum 时 UI 明确只读/LKG，reconciler 不删旧资源；
 8. safety checker 拒绝真实地址、域名、主机名、端口、指纹和指标进入仓库；
 9. 历史文档不用于推断当前部署，目标设计不被声称已实现；
-10. server、Linux、Windows、Android 的 issue 都引用同一 milestone 与验收编号。
+10. server 与当前 deployment inventory 中实际启用的平台 issue 都引用同一 milestone 与验收编号；
+    未部署平台不构成虚假的关闭门禁。
 
 ---
 

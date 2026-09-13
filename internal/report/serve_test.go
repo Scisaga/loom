@@ -38,3 +38,22 @@ func TestPhaseAStatusDoesNotRequireV5Readiness(t *testing.T) {
 		}
 	}
 }
+
+func TestLegacyReportHTTPDoesNotExposeBrowserUI(t *testing.T) {
+	for _, path := range []string{"/", "/devices", "/settings", "/favicon.svg"} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		response := httptest.NewRecorder()
+		legacyReportHTTPNotFound(response, request)
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("legacy HTTP %s status=%d, want 404", path, response.Code)
+		}
+		if response.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("legacy HTTP %s 可被缓存", path)
+		}
+		for _, leaked := range []string{"Loom", "admin.p12", "Device", "Settings"} {
+			if strings.Contains(response.Body.String(), leaked) {
+				t.Fatalf("legacy HTTP %s 泄露 UI 文案 %q", path, leaked)
+			}
+		}
+	}
+}

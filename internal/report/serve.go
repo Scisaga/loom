@@ -157,7 +157,9 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 	if ctl != nil {
 		mux.Handle("/api/client/report", newClientReportReceiver(tbl, ctl, now, maxAge, logw))
 	}
-	mux.Handle("/", webui.Handler(deps))
+	// D132/D133:61802 只保留节点机器接口。浏览器 UI 只有 private HTTPS
+	// control listener 一个入口，避免同一套页面同时暴露为明文和 mTLS 两种边界。
+	mux.HandleFunc("/", legacyReportHTTPNotFound)
 
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		// 隧道健康和配置自检是**当场**算的,便宜。观测不是 —— 量一遍目标
@@ -358,6 +360,11 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 	mu.Lock()
 	defer mu.Unlock()
 	return firstErr
+}
+
+func legacyReportHTTPNotFound(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	http.NotFound(w, r)
 }
 
 const phaseBAttestationNotReady = "phase-B 尚未产生有效 canonical_version=5 本机观测"
