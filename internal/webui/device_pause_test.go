@@ -61,6 +61,12 @@ func TestDeviceListOffersPauseOnlyForPureAccessMembers(t *testing.T) {
 	if strings.Count(body, `class=device-pause-action`) != 2 {
 		t.Fatal("pause/resume exposed for a non-access-only or inactive identity")
 	}
+	if !strings.Contains(body, `class="clients-list-note tiny dim"`) {
+		t.Fatal("pause/resume explanation is missing its table-aligned layout class")
+	}
+	if !strings.Contains(style, `.clients-list-note{margin:0;padding:10px 16px 12px`) {
+		t.Fatal("pause/resume explanation is not aligned with the table content padding")
+	}
 	body = pageDevices(d, clientPageState{}, false)
 	if strings.Contains(body, `action="/devices/pause"`) || strings.Contains(body, `action="/devices/resume"`) {
 		t.Fatal("anonymous list exposed write forms")

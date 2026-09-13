@@ -100,7 +100,7 @@ func pageDevices(d Deps, state clientPageState, isAuthed bool) string {
 		b.WriteString(`</tbody></table></div>`)
 	}
 	if !state.Archived && control != nil && control.SetDevicePaused != nil {
-		b.WriteString(`<p class="tiny dim">Pause / Resume is available only for devices whose sole responsibility is use_loom. It changes Loom forwarding access after servers apply the signed configuration. Identity and grants are retained; the client stays installed and local direct traffic is unaffected.</p>`)
+		b.WriteString(`<p class="clients-list-note tiny dim">Pause / Resume is available only for devices whose sole responsibility is use_loom. It changes Loom forwarding access after servers apply the signed configuration. Identity and grants are retained; the client stays installed and local direct traffic is unaffected.</p>`)
 	}
 	b.WriteString(`</section>`)
 	if !state.Archived {
