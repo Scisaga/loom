@@ -65,7 +65,7 @@ sudo systemctl enable --now loom-control.service
 
 ```bash
 umask 077
-openssl rand -base64 24 -out admin.p12.password
+openssl rand -base64 -out admin.p12.password 24
 openssl pkcs12 -export \
   -inkey admin.key \
   -in admin.crt \
