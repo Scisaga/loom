@@ -18,6 +18,7 @@ import androidx.test.rule.GrantPermissionRule
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import kotlin.math.abs
 
 class HomeUiInstrumentedTest {
     @get:Rule(order = 0)
@@ -28,15 +29,26 @@ class HomeUiInstrumentedTest {
     val compose = createAndroidComposeRule<MainActivity>()
 
     @Test
-    fun approvedLogoAndStageThreeRouteEntrancesAreVisible() {
+    fun bottomTabsSeparateConnectionConfigurationAndDiagnostics() {
         compose.onNodeWithContentDescription("Loom").assertIsDisplayed()
+        val logoTop = compose.onNodeWithContentDescription("Loom").fetchSemanticsNode().boundsInRoot.top
+        val wordmarkTop = compose.onNodeWithText("LOOM").fetchSemanticsNode().boundsInRoot.top
+        val alignmentTolerance = compose.activity.resources.displayMetrics.density
+        assertTrue("LOOM 字标未与图标顶端对齐", abs(logoTop - wordmarkTop) <= alignmentTolerance)
+        compose.onNodeWithTag("home-tabs").assertIsDisplayed()
         compose.onNodeWithTag("connection-toggle").assertIsDisplayed().assertIsNotEnabled()
-        compose.onNodeWithTag("debug-direct-card").assertIsDisplayed()
-        compose.onNodeWithTag("debug-direct-toggle").assertIsDisplayed().assertIsEnabled()
+
+        compose.onNodeWithTag("tab-configuration").performClick()
+        compose.onNodeWithTag("enrollment-card").assertIsDisplayed()
         compose.onNodeWithTag("route-mode-card").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("route-direct").assertIsDisplayed().assertIsNotEnabled()
         compose.onNodeWithTag("route-auto").assertIsDisplayed().assertIsNotEnabled()
         compose.onNodeWithTag("route-fixed-exit").assertIsDisplayed().assertIsNotEnabled()
+
+        compose.onNodeWithTag("tab-diagnostics").performClick()
+        compose.onNodeWithTag("advanced-info-card").assertIsDisplayed()
+        compose.onNodeWithTag("debug-direct-card").assertIsDisplayed()
+        compose.onNodeWithTag("debug-direct-toggle").assertIsDisplayed().assertIsEnabled()
     }
 
     @Test
@@ -60,13 +72,17 @@ class HomeUiInstrumentedTest {
         assertTrue("首页截图不再是浅色主题", light * 100 >= samples * 70)
         assertTrue("首页截图出现大面积黑色窗口", nearBlack * 100 <= samples * 5)
 
-        val enrollment = compose.onNodeWithTag("enrollment-card").fetchSemanticsNode().boundsInRoot
-        val diagnostics = compose.onNodeWithTag("debug-direct-card").fetchSemanticsNode().boundsInRoot
         val minimumCardHeight = 96f * compose.activity.resources.displayMetrics.density
+
+        compose.onNodeWithTag("tab-configuration").performClick()
+        val enrollment = compose.onNodeWithTag("enrollment-card").fetchSemanticsNode().boundsInRoot
         assertTrue(
             "加入卡退化为横向长条：${enrollment.width}x${enrollment.height}",
             enrollment.height >= minimumCardHeight,
         )
+
+        compose.onNodeWithTag("tab-diagnostics").performClick()
+        val diagnostics = compose.onNodeWithTag("debug-direct-card").fetchSemanticsNode().boundsInRoot
         assertTrue(
             "诊断卡退化为横向长条：${diagnostics.width}x${diagnostics.height}",
             diagnostics.height >= minimumCardHeight,
@@ -74,11 +90,10 @@ class HomeUiInstrumentedTest {
     }
 
     @Test
-    fun diagnosticsStayCollapsedUntilExplicitlyOpened() {
-        compose.onNodeWithTag("advanced-info-card").performScrollTo().assertIsDisplayed()
+    fun diagnosticsStayOffConnectionPageAndRenderOnTheirOwnTab() {
         assertTrue(compose.onAllNodesWithText("网络诊断").fetchSemanticsNodes().isEmpty())
 
-        compose.onNodeWithTag("advanced-info-toggle").performClick()
+        compose.onNodeWithTag("tab-diagnostics").performClick()
 
         compose.onNodeWithText("网络诊断").assertIsDisplayed()
     }

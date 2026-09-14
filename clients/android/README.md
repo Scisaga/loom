@@ -203,17 +203,21 @@ authority by itself: a certified `PublicEndpointIntent` and this Device's
 never promoted into an intermediate relay. This keeps the reverse tunnel policy
 while avoiding unnecessary same-transport nesting for an authorized fixed exit.
 
-The Current Paths card is a read-only projection of libbox selector readback.
-On the narrow home screen, declarations with the same actual signed chain are
-grouped into at most two compact summaries; this is presentation-only
-and never merges their decisions or evidence. An inline disclosure inside the same
-card shows one declaration at a time and retains every candidate, entry ping,
-matching WireGuard or public data-ingress hop, exact target observation, reason,
-and source time without opening a dialog. Hysteria2-specific variation/rate
-evidence is shown only when that signed metric exists; Trojan is not assigned
-synthetic Hy2 telemetry. Diagnostics and trust metadata are collapsed by default.
-The UI does not infer measurements from candidate names or present segmented
-evidence as end-to-end P50/P95, business throughput, or whole-path health.
+The app uses three persistent bottom tabs. Connection owns only the primary VPN
+action and the Current Paths read-only projection; Configuration owns enrollment,
+signed configuration refresh, and Direct / Auto / fixed-exit selection; Diagnostics
+owns network evidence, trusted reporting, local trust metadata, and the debug-only
+Direct fixture. Each tab scrolls independently while the navigation remains fixed.
+On the Connection tab, declarations with the same actual signed chain are grouped
+into at most two compact summaries; this is presentation-only and never merges
+their decisions or evidence. An inline disclosure inside the same card shows one
+declaration at a time and retains every candidate, entry ping, matching WireGuard
+or public data-ingress hop, exact target observation, reason, and source time.
+Path browsing, fixed-exit selection, and pending-enrollment confirmation all stay
+inline instead of opening a dialog. Hysteria2-specific variation/rate evidence is
+shown only when that signed metric exists; Trojan is not assigned synthetic Hy2
+telemetry. The UI does not infer measurements from candidate names or present
+segmented evidence as end-to-end P50/P95, business throughput, or whole-path health.
 
 The primary Connect action stays disabled until a verified managed snapshot is
 available. Debug builds expose the bundled stage-1 Direct fixture in a separate

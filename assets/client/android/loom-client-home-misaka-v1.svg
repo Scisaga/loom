@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="430" height="932" viewBox="0 0 430 932"
      role="img" aria-labelledby="title description">
-  <title id="title">Loom Android compact connected home — self-contained SVG prototype</title>
-  <desc id="description">A compact Android VpnService home proposal with one primary connection action, three routing modes, grouped current-path summaries, and disclosure controls for per-service evidence and diagnostics.</desc>
+  <title id="title">Loom Android three-tab connection screen — self-contained SVG prototype</title>
+  <desc id="description">A compact Android VpnService proposal with persistent Connection, Configuration, and Diagnostics bottom tabs. The Connection tab contains only the primary action and grouped current-path summaries.</desc>
 
   <defs>
     <clipPath id="screen-clip"><rect x="12" y="12" width="406" height="908" rx="38"/></clipPath>
@@ -88,67 +88,51 @@
       <rect x="399" y="27" width="10" height="5" rx="1" fill="#181B1A"/>
     </g>
     <use href="#loom-mark" x="28" y="58" width="30" height="30"/>
-    <text class="ui wordmark" x="68" y="78">LOOM</text>
-    <text class="ui tiny muted" x="68" y="94">ANDROID</text>
+    <text class="ui wordmark" x="68" y="76">LOOM</text>
+    <text class="ui tiny muted" x="68" y="91">ANDROID</text>
 
-    <text class="ui heading" x="28" y="130">Mobile network</text>
-    <text class="ui body muted" x="28" y="153">Device joined · signed configuration verified</text>
-    <rect x="28" y="166" width="374" height="26" rx="13" class="chip-amber"/>
-    <circle cx="45" cy="179" r="3.5" fill="#D79B3B"/>
-    <text class="ui tiny amber" x="57" y="183">DESIGN PROPOSAL · SAMPLE DATA</text>
+    <text class="ui heading" x="28" y="132">Connection</text>
+    <text class="ui body muted" x="28" y="156">VPN status and currently applied paths</text>
+    <rect x="273" y="112" width="129" height="24" rx="12" class="chip-amber"/>
+    <text class="ui tiny amber" x="337.5" y="128" text-anchor="middle">SAMPLE DATA</text>
 
-    <!-- Connection is the single primary action. -->
-    <rect x="28" y="207" width="374" height="145" rx="20" fill="#F1F5F2"/>
+    <!-- Connection is the single primary action on this tab. -->
+    <rect x="28" y="178" width="374" height="145" rx="20" fill="#F1F5F2"/>
     <g class="ui">
-      <circle cx="49" cy="234" r="5" class="status-dot"/>
-      <text class="heading" x="64" y="242">Connected</text>
-      <text class="body muted" x="48" y="269">Loom VPN is running</text>
-      <rect x="48" y="291" width="334" height="43" rx="12" fill="#239B68"/>
-      <text class="body" x="215" y="318" fill="#FFFFFF" text-anchor="middle" font-weight="650">Disconnect</text>
+      <circle cx="49" cy="205" r="5" class="status-dot"/>
+      <text class="heading" x="64" y="213">Connected</text>
+      <text class="body muted" x="48" y="240">Loom VPN is running</text>
+      <rect x="48" y="262" width="334" height="43" rx="12" fill="#239B68"/>
+      <text class="body" x="215" y="289" fill="#FFFFFF" text-anchor="middle" font-weight="650">Disconnect</text>
     </g>
 
-    <!-- Three top-level modes remain visible and actionable. -->
-    <rect x="28" y="368" width="374" height="102" rx="16" class="panel"/>
+    <!-- Repeated declarations are grouped on the Connection tab. -->
+    <rect x="28" y="341" width="374" height="246" rx="16" class="panel"/>
     <g class="ui">
-      <text class="eyebrow muted" x="48" y="393">ROUTING MODE</text>
-      <rect x="48" y="408" width="334" height="36" rx="9" class="panel-soft"/>
-      <rect x="159" y="408" width="112" height="36" fill="#239B68"/>
-      <line class="rule" x1="159" y1="408" x2="159" y2="444"/>
-      <line class="rule" x1="271" y1="408" x2="271" y2="444"/>
-      <text class="small muted" x="103.5" y="431" text-anchor="middle">Direct</text>
-      <text class="small" x="215" y="431" fill="#FFFFFF" text-anchor="middle" font-weight="650">Auto</text>
-      <text class="small muted" x="326.5" y="431" text-anchor="middle">Fixed exit</text>
-      <text class="tiny muted" x="48" y="459">Auto is active</text>
+      <text class="section" x="48" y="371">Current paths</text>
+      <rect x="304" y="355" width="78" height="24" rx="12" class="chip-green"/>
+      <text class="tiny green" x="343" y="371" text-anchor="middle" font-weight="650">CURRENT</text>
+      <line class="rule" x1="48" y1="391" x2="382" y2="391"/>
+      <text class="subsection" x="48" y="418">web, messaging + 4 services</text>
+      <text class="small mono" x="48" y="443">local → demo-entry → demo-exit → destination</text>
+      <text class="tiny muted" x="48" y="465">Segment evidence 8/12 · missing remains unknown</text>
+      <line class="rule" x1="48" y1="485" x2="382" y2="485"/>
+      <text class="tiny muted" x="48" y="510">6 declarations share this signed chain</text>
+      <rect x="48" y="527" width="334" height="40" rx="11" fill="#FFFFFF" stroke="#AAB1AD"/>
+      <text class="small green" x="215" y="552" text-anchor="middle" font-weight="650">Browse 6 details inline</text>
     </g>
 
-    <!-- Repeated declarations are grouped on the home screen. -->
-    <rect x="28" y="486" width="374" height="198" rx="16" class="panel"/>
-    <g class="ui">
-      <text class="section" x="48" y="516">Current paths</text>
-      <rect x="304" y="500" width="78" height="24" rx="12" class="chip-green"/>
-      <text class="tiny green" x="343" y="516" text-anchor="middle" font-weight="650">CURRENT</text>
-      <line class="rule" x1="48" y1="536" x2="382" y2="536"/>
-      <text class="subsection" x="48" y="561">best-egress, web + 4 services</text>
-      <text class="small mono" x="48" y="584">local → demo-entry → demo-exit → destination</text>
-      <text class="tiny muted" x="48" y="604">Segment evidence 8/12 · missing remains unknown</text>
-      <rect x="48" y="624" width="334" height="40" rx="11" fill="#FFFFFF" stroke="#AAB1AD"/>
-      <text class="small green" x="215" y="649" text-anchor="middle" font-weight="650">Browse 6 path details inline</text>
-    </g>
-
-    <!-- Enrollment and diagnostics are secondary, compact disclosures. -->
-    <rect x="28" y="700" width="374" height="88" rx="16" class="panel"/>
-    <g class="ui">
-      <text class="eyebrow muted" x="48" y="725">DEVICE &amp; CONFIGURATION</text>
-      <text class="subsection" x="48" y="749">Joined · generation 184</text>
-      <text class="tiny mono muted" x="48" y="768">Device demo-android</text>
-      <text class="small green" x="382" y="749" text-anchor="end" font-weight="650">Check update</text>
-    </g>
-
-    <rect x="28" y="804" width="374" height="66" rx="16" class="panel"/>
-    <g class="ui">
-      <text class="subsection" x="48" y="832">Diagnostics &amp; trust</text>
-      <text class="tiny muted" x="48" y="851">Network evidence, reports, and local components</text>
-      <text class="small green" x="382" y="840" text-anchor="end" font-weight="650">Expand</text>
+    <!-- Persistent bottom navigation keeps operational areas separate. -->
+    <rect x="12" y="824" width="406" height="96" fill="#FFFFFF"/>
+    <line class="rule" x1="12" y1="824" x2="418" y2="824"/>
+    <rect x="46" y="840" width="76" height="34" rx="17" fill="#EAF6F0"/>
+    <use href="#icon-power" x="72" y="845" width="24" height="24" class="icon-green"/>
+    <use href="#icon-settings" x="203" y="845" width="24" height="24" class="icon"/>
+    <use href="#icon-activity" x="334" y="845" width="24" height="24" class="icon"/>
+    <g class="ui small" text-anchor="middle">
+      <text x="84" y="896" class="green" font-weight="650">Connection</text>
+      <text x="215" y="896" class="muted">Configuration</text>
+      <text x="346" y="896" class="muted">Diagnostics</text>
     </g>
   </g>
 

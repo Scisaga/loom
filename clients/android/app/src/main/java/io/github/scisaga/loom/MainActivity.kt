@@ -9,11 +9,14 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,11 +29,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -39,11 +45,17 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -81,6 +93,12 @@ private val Ink = Color(0xFF17211B)
 private val Muted = Color(0xFF647269)
 private val Paper = Color(0xFFFCFCFB)
 private val CardTint = Color(0xFFF1F5F2)
+
+private enum class HomeTab(val label: String) {
+    CONNECTION("连接"),
+    CONFIGURATION("配置"),
+    DIAGNOSTICS("诊断"),
+}
 
 class MainActivity : ComponentActivity() {
     private val enrollment by lazy { EnrollmentManager.get(this) }
@@ -201,6 +219,10 @@ private fun LoomHome(
     val hasManagedProfile = join.snapshot.isNotEmpty()
     var diagnostics by remember { mutableStateOf("正在检查…") }
     var scanning by remember { mutableStateOf(false) }
+    var selectedTab by rememberSaveable { mutableStateOf(HomeTab.CONNECTION) }
+    val connectionScroll = rememberScrollState()
+    val configurationScroll = rememberScrollState()
+    val diagnosticsScroll = rememberScrollState()
     LaunchedEffect(Unit) {
         diagnostics = withContext(Dispatchers.IO) {
             runCatching {
@@ -211,82 +233,223 @@ private fun LoomHome(
         }
     }
     MaterialTheme {
-        Surface(color = Paper, modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            containerColor = Paper,
+            bottomBar = {
+                HomeTabBar(
+                    selected = selectedTab,
+                    onSelect = {
+                        scanning = false
+                        selectedTab = it
+                    },
+                )
+            },
+        ) { contentPadding ->
             Column(
                 modifier = Modifier
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 22.dp, vertical = 28.dp),
-                verticalArrangement = Arrangement.spacedBy(18.dp),
+                    .fillMaxSize()
+                    .padding(contentPadding),
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Image(
-                        painter = painterResource(R.drawable.ic_loom),
-                        contentDescription = "Loom",
-                        colorFilter = ColorFilter.tint(Ink),
-                        modifier = Modifier.size(36.dp),
-                    )
-                    Column(Modifier.padding(start = 10.dp)) {
-                        Text("LOOM", color = Ink, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
-                        Text("ANDROID", color = Muted, fontSize = 10.sp, letterSpacing = 1.sp)
+                LoomHeader()
+                when (selectedTab) {
+                    HomeTab.CONNECTION -> HomePage(
+                        title = "连接",
+                        subtitle = "连接状态与当前生效路径",
+                        scrollState = connectionScroll,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        ConnectionCard(
+                            status = status,
+                            join = join,
+                            hasManagedProfile = hasManagedProfile,
+                            onToggle = onToggle,
+                        )
+                        if (!notificationsAllowed) {
+                            NotificationPermissionCard(onOpenNotificationSettings)
+                        }
+                        CurrentPathCard(paths = route.currentPaths, running = route.running)
+                    }
+
+                    HomeTab.CONFIGURATION -> HomePage(
+                        title = "配置",
+                        subtitle = enrollmentSummary(join),
+                        scrollState = configurationScroll,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        if (scanning) {
+                            InviteScanner(
+                                onScanned = {
+                                    scanning = false
+                                    enrollment.importInvite(it)
+                                },
+                                onCancel = { scanning = false },
+                            )
+                        } else if (join.phase == EnrollmentPhase.READY) {
+                            JoinedDeviceCard(join, enrollment::refreshConfiguration)
+                        } else {
+                            EnrollmentCard(
+                                status = join,
+                                onScan = { scanning = true },
+                                onImportFile = onImportFile,
+                                onRetry = enrollment::retry,
+                                onRefresh = enrollment::refreshConfiguration,
+                                onAbandonPending = enrollment::abandonPending,
+                            )
+                        }
+                        RouteModeCard(route, routeManager::select)
+                    }
+
+                    HomeTab.DIAGNOSTICS -> HomePage(
+                        title = "诊断",
+                        subtitle = "网络证据、可信上报与本机组件",
+                        scrollState = diagnosticsScroll,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        AdvancedInfoCard(status, route, diagnostics)
+                        if (BuildConfig.DEBUG && !hasManagedProfile && join.phase != EnrollmentPhase.TERMINAL) {
+                            DebugDirectCard(status = status, onToggle = onToggle)
+                        }
                     }
                 }
-                Text("移动网络", color = Ink, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-                Text(
-                    when {
-                        join.phase == EnrollmentPhase.READY -> "设备已加入 · 配置签名已验证"
-                        join.phase == EnrollmentPhase.TERMINAL -> "Device 已终止；数据连接已锁定关闭"
-                        join.snapshot.isNotEmpty() -> "候选已验签 · 连接后完成激活"
-                        else -> "等待扫码完成正式入网"
-                    },
-                    color = Muted,
-                )
-
-                if (scanning) {
-                    InviteScanner(
-                        onScanned = {
-                            scanning = false
-                            enrollment.importInvite(it)
-                        },
-                        onCancel = { scanning = false },
-                    )
-                } else if (join.phase != EnrollmentPhase.READY) {
-                    EnrollmentCard(
-                        status = join,
-                        onScan = { scanning = true },
-                        onImportFile = onImportFile,
-                        onRetry = enrollment::retry,
-                        onRefresh = enrollment::refreshConfiguration,
-                        onAbandonPending = enrollment::abandonPending,
-                    )
-                }
-
-                ConnectionCard(
-                    status = status,
-                    join = join,
-                    hasManagedProfile = hasManagedProfile,
-                    onToggle = onToggle,
-                )
-
-                if (BuildConfig.DEBUG && !hasManagedProfile && join.phase != EnrollmentPhase.TERMINAL) {
-                    DebugDirectCard(status = status, onToggle = onToggle)
-                }
-
-                if (!notificationsAllowed) {
-                    NotificationPermissionCard(onOpenNotificationSettings)
-                }
-
-                RouteModeCard(route, routeManager::select)
-                CurrentPathCard(
-                    paths = route.currentPaths,
-                    running = route.running,
-                )
-                if (!scanning && join.phase == EnrollmentPhase.READY) {
-                    JoinedDeviceCard(join, enrollment::refreshConfiguration)
-                }
-                AdvancedInfoCard(status, route, diagnostics)
             }
         }
     }
+}
+
+@Composable
+private fun LoomHeader() {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Image(
+            painter = painterResource(R.drawable.ic_loom),
+            contentDescription = "Loom",
+            colorFilter = ColorFilter.tint(Ink),
+            modifier = Modifier.size(32.dp),
+        )
+        Column(Modifier.padding(start = 9.dp)) {
+            Text(
+                "LOOM",
+                color = Ink,
+                fontSize = 18.sp,
+                lineHeight = 20.sp,
+                fontWeight = FontWeight.Black,
+                letterSpacing = 2.sp,
+            )
+            Text(
+                "ANDROID",
+                color = Muted,
+                fontSize = 9.sp,
+                lineHeight = 12.sp,
+                letterSpacing = 1.sp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun HomePage(
+    title: String,
+    subtitle: String,
+    scrollState: ScrollState,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .verticalScroll(scrollState)
+            .padding(horizontal = 22.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Text(title, color = Ink, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+        Text(subtitle, color = Muted, fontSize = 13.sp)
+        content()
+    }
+}
+
+@Composable
+private fun HomeTabBar(selected: HomeTab, onSelect: (HomeTab) -> Unit) {
+    NavigationBar(
+        containerColor = Color.White,
+        tonalElevation = 0.dp,
+        modifier = Modifier.testTag("home-tabs"),
+    ) {
+        HomeTab.entries.forEach { tab ->
+            NavigationBarItem(
+                selected = selected == tab,
+                onClick = { onSelect(tab) },
+                icon = { HomeTabIcon(tab, selected == tab) },
+                label = { Text(tab.label) },
+                modifier = Modifier.testTag("tab-${tab.name.lowercase()}"),
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = LoomGreen,
+                    selectedTextColor = LoomGreen,
+                    indicatorColor = Color(0xFFEAF6F0),
+                    unselectedIconColor = Muted,
+                    unselectedTextColor = Muted,
+                ),
+            )
+        }
+    }
+}
+
+@Composable
+private fun HomeTabIcon(tab: HomeTab, selected: Boolean) {
+    val color = if (selected) LoomGreen else Muted
+    Canvas(Modifier.size(22.dp)) {
+        val width = 1.8.dp.toPx()
+        val line = Stroke(width = width, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        when (tab) {
+            HomeTab.CONNECTION -> {
+                drawCircle(color = color, radius = size.minDimension * 0.33f, style = line)
+                drawLine(
+                    color = color,
+                    start = Offset(size.width * 0.5f, size.height * 0.08f),
+                    end = Offset(size.width * 0.5f, size.height * 0.46f),
+                    strokeWidth = width,
+                    cap = StrokeCap.Round,
+                )
+            }
+
+            HomeTab.CONFIGURATION -> {
+                val levels = listOf(0.25f to 0.35f, 0.5f to 0.68f, 0.75f to 0.45f)
+                levels.forEach { (y, knob) ->
+                    drawLine(
+                        color = color,
+                        start = Offset(size.width * 0.16f, size.height * y),
+                        end = Offset(size.width * 0.84f, size.height * y),
+                        strokeWidth = width,
+                        cap = StrokeCap.Round,
+                    )
+                    drawCircle(
+                        color = color,
+                        radius = size.minDimension * 0.09f,
+                        center = Offset(size.width * knob, size.height * y),
+                    )
+                }
+            }
+
+            HomeTab.DIAGNOSTICS -> {
+                val path = Path().apply {
+                    moveTo(size.width * 0.08f, size.height * 0.55f)
+                    lineTo(size.width * 0.28f, size.height * 0.55f)
+                    lineTo(size.width * 0.39f, size.height * 0.27f)
+                    lineTo(size.width * 0.54f, size.height * 0.76f)
+                    lineTo(size.width * 0.66f, size.height * 0.45f)
+                    lineTo(size.width * 0.92f, size.height * 0.45f)
+                }
+                drawPath(path = path, color = color, style = line)
+            }
+        }
+    }
+}
+
+private fun enrollmentSummary(join: EnrollmentStatus): String = when {
+    join.phase == EnrollmentPhase.READY -> "设备已加入 · 配置签名已验证"
+    join.phase == EnrollmentPhase.TERMINAL -> "Device 已终止 · 数据连接已锁定关闭"
+    join.snapshot.isNotEmpty() -> "候选已验签 · 连接后完成激活"
+    else -> "加入设备并管理签名配置与选路"
 }
 
 @Composable
@@ -507,48 +670,27 @@ private fun RouteDetail(path: RoutePathStatus) {
 
 @Composable
 private fun AdvancedInfoCard(status: VpnStatus, route: RouteStatus, diagnostics: String) {
-    var expanded by remember { mutableStateOf(false) }
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(16.dp),
         modifier = Modifier.fillMaxWidth().testTag("advanced-info-card"),
     ) {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("诊断与信任", color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                    Text("网络证据、上报与本机组件", color = Muted, fontSize = 12.sp)
-                }
-                TextButton(onClick = { expanded = !expanded }, modifier = Modifier.testTag("advanced-info-toggle")) {
-                    Text(if (expanded) "收起" else "展开")
-                }
-            }
-            if (expanded) {
-                Column(
-                    modifier = Modifier.padding(bottom = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE3E8E5)))
-                    Text("网络诊断", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Text(
-                        "业务 DNS/HTTPS（不作为激活门禁）：${status.dnsProbe} / ${status.httpsProbe}\n" +
-                            "可信上报：${status.trustedReport}\n服务器观测：${route.observationDetail}",
-                        color = Ink,
-                        fontSize = 13.sp,
-                    )
-                    Text("信任边界", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Text(diagnostics, color = Ink, fontSize = 13.sp)
-                    Text(
-                        "每个底层网络代只测量授权入口一次；入口之后复用可信服务器观测，不探测完整业务路径。",
-                        color = Muted,
-                        fontSize = 11.sp,
-                    )
-                }
-            }
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("网络诊断", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "业务 DNS/HTTPS（不作为激活门禁）：${status.dnsProbe} / ${status.httpsProbe}\n" +
+                    "可信上报：${status.trustedReport}\n服务器观测：${route.observationDetail}",
+                color = Ink,
+                fontSize = 13.sp,
+            )
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE3E8E5)))
+            Text("信任边界", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text(diagnostics, color = Ink, fontSize = 13.sp)
+            Text(
+                "每个底层网络代只测量授权入口一次；入口之后复用可信服务器观测，不探测完整业务路径。",
+                color = Muted,
+                fontSize = 11.sp,
+            )
         }
     }
 }
@@ -623,26 +765,6 @@ private fun EnrollmentCard(
     onAbandonPending: () -> Unit,
 ) {
     var confirmAbandon by remember(status.canAbandonPending) { mutableStateOf(false) }
-    if (confirmAbandon) {
-        AlertDialog(
-            onDismissRequest = { confirmAbandon = false },
-            title = { Text("放弃本机待加入事务？") },
-            text = {
-                Text("这会删除手机保存的一次性加入凭据，但不会删除 Keystore 设备密钥，也不会撤销或修复中控中的 Device。")
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        confirmAbandon = false
-                        onAbandonPending()
-                    },
-                ) { Text("确认放弃") }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmAbandon = false }) { Text("继续保留") }
-            },
-        )
-    }
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(16.dp),
@@ -674,6 +796,41 @@ private fun EnrollmentCard(
                         onClick = onImportFile,
                         modifier = Modifier.weight(1f).testTag("import-resume"),
                     ) { Text("导入 .loom-resume") }
+                }
+            }
+            if (confirmAbandon) {
+                Surface(
+                    color = Color(0xFFFFF7E8),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("abandon-confirmation-inline"),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("确认放弃本机待加入事务？", color = Ink, fontWeight = FontWeight.Bold)
+                        Text(
+                            "将删除一次性加入凭据，但保留 Keystore 设备密钥；不会撤销中控中的 Device。",
+                            color = Muted,
+                            fontSize = 12.sp,
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedButton(
+                                onClick = { confirmAbandon = false },
+                                modifier = Modifier.weight(1f),
+                            ) { Text("继续保留") }
+                            Button(
+                                onClick = {
+                                    confirmAbandon = false
+                                    onAbandonPending()
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) { Text("确认放弃") }
+                        }
+                    }
                 }
             }
             when (status.phase) {
@@ -739,32 +896,6 @@ private fun enrollmentTitle(phase: EnrollmentPhase): String = when (phase) {
 @Composable
 private fun RouteModeCard(status: RouteStatus, onSelect: (RouteMode, String) -> Unit) {
     var choosingExit by remember { mutableStateOf(false) }
-    if (choosingExit) {
-        AlertDialog(
-            onDismissRequest = { choosingExit = false },
-            title = { Text("选择固定出口") },
-            text = {
-                Column(
-                    modifier = Modifier.verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    status.exits.forEach { exit ->
-                        TextButton(
-                            onClick = {
-                                choosingExit = false
-                                onSelect(RouteMode.FIXED_EXIT, exit)
-                            },
-                            modifier = Modifier.fillMaxWidth().testTag("route-exit-$exit"),
-                        ) { Text(exit) }
-                    }
-                }
-            },
-            confirmButton = {},
-            dismissButton = {
-                TextButton(onClick = { choosingExit = false }) { Text("取消") }
-            },
-        )
-    }
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(16.dp),
@@ -803,6 +934,33 @@ private fun RouteModeCard(status: RouteStatus, onSelect: (RouteMode, String) -> 
                 color = if (status.blocked) Color(0xFFB33A3A) else Muted,
                 fontSize = 12.sp,
             )
+            if (choosingExit) {
+                Surface(
+                    color = CardTint,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("route-exits-inline"),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        Text("选择已授权出口", color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        status.exits.forEach { exit ->
+                            TextButton(
+                                onClick = {
+                                    choosingExit = false
+                                    onSelect(RouteMode.FIXED_EXIT, exit)
+                                },
+                                modifier = Modifier.fillMaxWidth().testTag("route-exit-$exit"),
+                            ) { Text(exit) }
+                        }
+                        TextButton(
+                            onClick = { choosingExit = false },
+                            modifier = Modifier.fillMaxWidth().testTag("route-exits-close"),
+                        ) { Text("收起") }
+                    }
+                }
+            }
         }
     }
 }
