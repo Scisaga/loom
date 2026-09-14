@@ -20,6 +20,22 @@
 - 当前生产 reducer 只登记 `control_ping`，用于验证管理员签名、Raft commit、QC 和 inclusion proof。
   未实现的 operation kind 会失败关闭，不会返回伪造的“成功”。
 
+## 操作阶段与恢复
+
+管理员页面的 `Control operations` 链接进入 `/control-operations`。该页面只接受当前 certified
+ACL 中的 admin mTLS；overlay 与浏览器 loopback 可读取页面，原生 API 仍只接受 exact overlay
+listener。`GET /private/v2/control/operations` 返回操作列表，追加 `/<request-id>` 可查询单个操作。
+页面与 API 使用同一份已耐久化进度，不等待正在提交操作的写锁，不在公网 Nginx 提供入口。
+
+阶段依次为 `pending → committed_not_certified → certified → reconciled → applied`。`certified`
+只说明 Head/QC 已成立；`reconciled` 对应该操作的执行工作结束，`applied` 表示结果已收口。当前
+`control_ping` 的 reconcile 是空操作，不能据此推断 Enrollment、配置发布或其他业务已经完成。
+旧 journal 未记录的阶段不会被补成虚构历史。
+
+进程在任一已耐久化阶段重启后恢复同一个 operation ID。已经提交的 Head/QC 保持原值；尚未
+append 到 Raft 的 pending 请求必须重新通过当前 admin/base 授权，才可在同一 base 下取得新 term
+的日志坐标。已改变的 base 不能被隐式替换，重放不能生成第二个操作结果。
+
 ## Gandi DNS 凭据
 
 本部署环境在仓库根目录被忽略的 `.env` 中声明 `GANDI_PAT_TOKEN`。它是 Gandi Personal

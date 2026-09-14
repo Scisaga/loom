@@ -32,6 +32,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -115,6 +116,7 @@ type controlOperationRecordV1 struct {
 	Candidate     wire.HeadEntryV2                   `json:"candidate"`
 	Result        *controlCertifiedOperationResultV1 `json:"result,omitempty"`
 	AdminRotation *controlAdminRotationV1            `json:"admin_rotation,omitempty"`
+	Phases        []controlplane.Phase               `json:"phases,omitempty"`
 }
 
 type controlOperationJournalV1 struct {
@@ -185,6 +187,9 @@ type controlRuntime struct {
 	uiReadOnly http.Handler
 	uiAdmin    http.Handler
 	now        func() time.Time
+	progress   atomic.Pointer[controlOperationReadState]
+	// checkpoint 在每个已耐久化阶段之后调用，用于故障注入验证恢复边界（D104）。
+	checkpoint func(controlplane.Phase) error
 }
 
 func cmdControl(args []string) error {
@@ -775,6 +780,7 @@ func openControlRuntime(dir string, now func() time.Time) (*controlRuntime, erro
 	runtime := &controlRuntime{dir: dir, config: config, journal: journal,
 		configKey: decodedKeys[1], controlTLS: controlTLS, browserTLS: browserTLS, peerTLS: peerTLS,
 		storage: storage, store: store, now: now}
+	runtime.publishOperationProgressLocked()
 	// A restart never reuses an old leadership assertion. N=1 still campaigns and
 	// commits a current-term barrier before serving writes.
 	leader, err := controlplane.CampaignStableRaft(context.Background(), storage, config.ControlSet,
@@ -784,6 +790,9 @@ func openControlRuntime(dir string, now func() time.Time) (*controlRuntime, erro
 	}
 	runtime.leader = leader
 	if err := runtime.recoverCommitted(); err != nil {
+		return nil, err
+	}
+	if err := runtime.recoverPendingOperations(); err != nil {
 		return nil, err
 	}
 	service, err := controlplane.NewPrivateControlService(config.OverlayIP, config.ControlPort,
@@ -852,15 +861,24 @@ func (runtime *controlRuntime) finishCommittedLocked() error {
 		runtime.verifyCommittedHead); err != nil {
 		return err
 	}
+	state := runtime.store.Snapshot()
+	if state.Active != nil && state.Active.Phase == controlplane.PhaseCommittedNotCertified {
+		if err := runtime.recordOperationPhaseLocked(state.Active.Entry.EntryHash, controlplane.PhaseCommittedNotCertified); err != nil {
+			return err
+		}
+	}
 	if err := runtime.store.RecoverCertification(map[string]ed25519.PrivateKey{
 		runtime.config.MemberID: runtime.configKey}); err != nil {
 		return err
 	}
-	state := runtime.store.Snapshot()
+	state = runtime.store.Snapshot()
 	if state.Active == nil {
-		return runtime.projectAdminRotations()
+		if err := runtime.projectAdminRotations(); err != nil {
+			return err
+		}
+		return runtime.recoverAppliedProgressLocked()
 	}
-	if state.Active.Phase != controlplane.PhaseCertified || state.Active.QC == nil {
+	if (state.Active.Phase != controlplane.PhaseCertified && state.Active.Phase != controlplane.PhaseReconciled) || state.Active.QC == nil {
 		return errors.New("N=1 committed Head 未形成 exact QC")
 	}
 	if state.Active.Entry.Body.Payload.HeadKind == "ordinary" {
@@ -868,10 +886,25 @@ func (runtime *controlRuntime) finishCommittedLocked() error {
 			return err
 		}
 	}
+	if state.Active.Phase == controlplane.PhaseCertified {
+		if err := runtime.recordOperationPhaseLocked(state.Active.Entry.EntryHash, controlplane.PhaseCertified); err != nil {
+			return err
+		}
+		// control_ping 没有外部副作用；空证据表示已完成该操作的全部 reconcile（D108）。
+		if err := runtime.store.MarkReconciled(state.Active.Entry.EntryHash, []string{}); err != nil {
+			return err
+		}
+	}
+	if err := runtime.recordOperationPhaseLocked(state.Active.Entry.EntryHash, controlplane.PhaseReconciled); err != nil {
+		return err
+	}
 	if err := runtime.store.MarkApplied(state.Active.Entry.EntryHash); err != nil {
 		return err
 	}
-	return runtime.projectAdminRotations()
+	if err := runtime.projectAdminRotations(); err != nil {
+		return err
+	}
+	return runtime.recordOperationPhaseLocked(state.Active.Entry.EntryHash, controlplane.PhaseApplied)
 }
 
 func (runtime *controlRuntime) verifyCommittedHead(_ context.Context, head wire.HeadEntryV2) error {
@@ -1027,10 +1060,15 @@ func (runtime *controlRuntime) commitOperation(_ context.Context,
 		return controlplane.CertifiedControlOperationV1{}, err
 	}
 	runtime.journal.Records = append(runtime.journal.Records, controlOperationRecordV1{Schema: 1,
-		Operation: operation, Leaf: leaf, Candidate: candidate})
+		Operation: operation, Leaf: leaf, Candidate: candidate, Phases: []controlplane.Phase{controlplane.PhasePending}})
 	if err := runtime.persistJournalLocked(); err != nil {
 		runtime.journal.Records = runtime.journal.Records[:len(runtime.journal.Records)-1]
 		return controlplane.CertifiedControlOperationV1{}, err
+	}
+	if runtime.checkpoint != nil {
+		if err := runtime.checkpoint(controlplane.PhasePending); err != nil {
+			return controlplane.CertifiedControlOperationV1{}, err
+		}
 	}
 	if _, err := runtime.leader.ReplicateHead(context.Background(), runtime.store, candidate); err != nil {
 		return controlplane.CertifiedControlOperationV1{}, err
@@ -1054,7 +1092,11 @@ func controlplaneResult(result *controlCertifiedOperationResultV1) (controlplane
 }
 
 func (runtime *controlRuntime) persistJournalLocked() error {
-	return writeCanonicalAtomic(filepath.Join(runtime.dir, controlJournalName), runtime.journal, 0o600)
+	if err := writeCanonicalAtomic(filepath.Join(runtime.dir, controlJournalName), runtime.journal, 0o600); err != nil {
+		return err
+	}
+	runtime.publishOperationProgressLocked()
+	return nil
 }
 
 func (runtime *controlRuntime) serve() error {
@@ -1144,9 +1186,17 @@ func (runtime *controlRuntime) controlHandler() http.Handler {
 		case privateControlStatus:
 			runtime.serveStatus(writer, request)
 		case controlplane.PrivateControlOperationPath:
-			runtime.service.ServeHTTP(writer, request)
+			if request.Method == http.MethodGet {
+				runtime.serveOperationProgress(writer, request, false)
+			} else {
+				runtime.service.ServeHTTP(writer, request)
+			}
 		default:
-			runtime.serveControlUI(writer, request)
+			if strings.HasPrefix(request.URL.Path, controlplane.PrivateControlOperationPath+"/") {
+				runtime.serveOperationProgress(writer, request, false)
+			} else {
+				runtime.serveControlUI(writer, request)
+			}
 		}
 	})
 }
@@ -1195,6 +1245,10 @@ func newControlUIProxy(socketPath string) http.Handler {
 }
 
 func (runtime *controlRuntime) serveControlUI(writer http.ResponseWriter, request *http.Request) {
+	if request.URL.Path == controlOperationsUIPath {
+		runtime.serveOperationProgress(writer, request, true)
+		return
+	}
 	address, exactListener := runtime.controlUIAddress(request)
 	if request.URL.RawPath != "" || pathpkg.Clean(request.URL.Path) != request.URL.Path ||
 		!controlUIPathAllowed(request.URL.Path) || !exactListener ||
@@ -1335,6 +1389,11 @@ func (runtime *controlRuntime) serveStatus(writer http.ResponseWriter, request *
 
 func (runtime *controlRuntime) adminCertificateAuthorizedLocked(raw []byte) bool {
 	state := runtime.store.Snapshot()
+	return controlAdminCertificateAuthorized(state, runtime.config.Authorizations, runtime.config.AdminProfiles, raw, runtime.now().UTC())
+}
+
+func controlAdminCertificateAuthorized(state controlplane.State, authorizations []wire.AdminAuthorizationV1,
+	profiles map[string]wire.AdminCertificateProfileV1, raw []byte, now time.Time) bool {
 	if state.CertifiedHead == nil || state.CertifiedQC == nil {
 		return false
 	}
@@ -1343,16 +1402,16 @@ func (runtime *controlRuntime) adminCertificateAuthorizedLocked(raw []byte) bool
 		state.CertifiedHead, &state.ControlSet, nil) != nil {
 		return false
 	}
-	root, err := wire.AdminACLRoot(runtime.config.Authorizations, runtime.config.AdminProfiles)
+	root, err := wire.AdminACLRoot(authorizations, profiles)
 	if err != nil || root != state.CertifiedHead.Body.Payload.AdminACLRoot {
 		return false
 	}
-	for index := range runtime.config.Authorizations {
-		authorization := &runtime.config.Authorizations[index]
-		profile, found := runtime.config.AdminProfiles[authorization.CertificateProfileRef.ProfileID]
+	for index := range authorizations {
+		authorization := &authorizations[index]
+		profile, found := profiles[authorization.CertificateProfileRef.ProfileID]
 		der, decodeErr := base64.RawURLEncoding.DecodeString(authorization.AdminCertificateDER)
 		if !found || decodeErr != nil || !bytes.Equal(der, raw) ||
-			wire.ValidateAdminAuthorizationAt(authorization, &profile, runtime.now().UTC()) != nil ||
+			wire.ValidateAdminAuthorizationAt(authorization, &profile, now) != nil ||
 			authorization.Status != "active" {
 			continue
 		}

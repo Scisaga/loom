@@ -106,6 +106,9 @@ func shell(d Deps, title, body string, isAuthed bool, evidence ...View) string {
 	switch {
 	case isAuthed:
 		auth = `<span class=ok>Admin certificate · configuration enabled</span>`
+		if d.Control != nil {
+			auth += ` <a href="/control-operations">Control operations</a>`
+		}
 	case len(d.Actions) > 0 || d.Control != nil:
 		auth = `<span class=dim>Read-only · admin.p12 required for changes</span>`
 	}
