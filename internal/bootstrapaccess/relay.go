@@ -15,6 +15,15 @@ import (
 // 生产实现应使用 net.Dialer.DialContext，不得读取代理环境变量（D115、D131）。
 type DialContext func(context.Context, string, string) (net.Conn, error)
 
+type relayCapabilityContextKey struct{}
+
+// RelayCapabilityID 仅在已认证 session 的 exact tuple/预算检查之后交给私有
+// relay dialer。它不是独立凭据；接收方还必须认证 ingress Device 并重验当前授权（D131）。
+func RelayCapabilityID(ctx context.Context) string {
+	value, _ := ctx.Value(relayCapabilityContextKey{}).(string)
+	return value
+}
+
 // RelayTCP 把已经由 transport 认证的一个 stream 接到 capability 精确允许的
 // Enrollment tuple。requestedNetwork/requestedAddress 必须来自 HY2/Trojan 请求本身；
 // 入口不能忽略客户端请求后偷偷改拨另一个目标（D131）。
@@ -69,6 +78,14 @@ func (s *Session) relayStreamTCP(ctx context.Context, requestedNetwork, requeste
 	}
 	relayContext, cancel := context.WithTimeout(ctx, remaining)
 	defer cancel()
+	s.manager.mu.Lock()
+	active, found := s.manager.sessions[s.id]
+	s.manager.mu.Unlock()
+	if !found {
+		relayHandshakeFailure(incoming)
+		return errors.New("[D131 capability] relay session 已结束")
+	}
+	relayContext = context.WithValue(relayContext, relayCapabilityContextKey{}, active.capabilityID)
 	outgoing, err := dial(relayContext, requestedNetwork, requestedAddress)
 	if err != nil {
 		relayHandshakeFailure(incoming)
