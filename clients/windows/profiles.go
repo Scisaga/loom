@@ -103,7 +103,8 @@ func loadConnectionProfiles(base string, writeFile func(string, []byte) error, c
 // pending 凭据保存在 identity.json.dpapi 中，ready 日志和已加入标记可独立存在。
 func (store *connectionProfileStore) hasLegacyJoinState() (bool, error) {
 	found := false
-	for _, relative := range []string{"join/identity.json.dpapi", "join/ready.json.dpapi", "config/client.json"} {
+	for _, relative := range []string{"join/identity.json.dpapi", "join/ready.json.dpapi", "config/client.json",
+		"join/identity-v2.json.dpapi", "join/enrollment-v2.json.dpapi", "state/client-v2.json.dpapi"} {
 		path := filepath.Join(store.base, filepath.FromSlash(relative))
 		if err := store.checkDirectory(filepath.Dir(path)); err != nil {
 			return false, err

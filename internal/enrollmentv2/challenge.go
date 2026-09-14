@@ -175,17 +175,8 @@ func (store *ChallengeReplayStore) persistLocked(candidate ChallengeReplayStateV
 	if err != nil {
 		return err
 	}
-	if err := os.Rename(temporaryPath, store.path); err != nil {
+	if err := replaceDurableFile(temporaryPath, store.path); err != nil {
 		return err
 	}
-	dir, err := os.Open(directory)
-	if err != nil {
-		return err
-	}
-	err = dir.Sync()
-	closeErr = dir.Close()
-	if err != nil {
-		return err
-	}
-	return closeErr
+	return syncDurableDirectory(directory)
 }

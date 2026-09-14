@@ -18,6 +18,7 @@ import (
 
 	"loom/internal/clientruntime"
 	"loom/internal/clientsecret"
+	"loom/internal/windowsv2"
 )
 
 // §7.3：只在显式实机验收时使用正常加入的身份，不创建或修补 Device。
@@ -29,9 +30,21 @@ func requireLiveTUN(t *testing.T) string {
 	if !windows.GetCurrentProcessToken().IsElevated() {
 		t.Fatal("TUN lifecycle acceptance requires elevation")
 	}
-	root, err := localAppDataRoot()
-	if err != nil {
-		t.Fatal(err)
+	root := os.Getenv("LOOM_ACCEPT_V2_PROFILE_ROOT")
+	if root == "" {
+		var err error
+		root, err = localAppDataRoot()
+		if err != nil {
+			t.Fatal(err)
+		}
+	} else if !filepath.IsAbs(root) || filepath.Clean(root) != root || !localWindowsPath(root) {
+		t.Fatal("LOOM_ACCEPT_V2_PROFILE_ROOT 必须是本机规范绝对路径")
+	}
+	if os.Getenv("LOOM_ACCEPT_WINDOWS_V2") == "1" {
+		state, err := windowsV2Installed(root, clientsecret.UserProtector{})
+		if err != nil || state == nil || state.Envelope.Payload.State != "active" {
+			t.Fatalf("Issue #13 TUN 验收要求 active Windows v2 profile: %v", err)
+		}
 	}
 	if _, err := ensureWindowsJoined(context.Background(), root, clientsecret.UserProtector{}, ""); err != nil {
 		t.Fatal("normal QR join is required before lifecycle acceptance")
@@ -59,9 +72,11 @@ func waitLiveTUN(t *testing.T, root string) int {
 		if iface := liveTUNInterface(); iface != nil {
 			_, body, err := activePortableRuntimeConfig(root)
 			if err == nil {
-				plan, err := clientruntime.BuildWindowsHealthPlan(body, clientruntime.WindowsPortableTUNProfile, windowsClientCAPath(root, editionPortableTUN))
+				caPath, caErr := liveTUNCAPath(root)
+				plan, err := clientruntime.BuildWindowsHealthPlan(body,
+					clientruntime.WindowsPortableTUNProfile, caPath)
 				clear(body)
-				if err == nil {
+				if caErr == nil && err == nil {
 					ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 					problems := clientruntime.CheckWindowsHealth(ctx, plan)
 					cancel()
@@ -75,6 +90,22 @@ func waitLiveTUN(t *testing.T, root string) int {
 	}
 	t.Fatal("TUN did not become healthy")
 	return 0
+}
+
+func liveTUNCAPath(root string) (string, error) {
+	if os.Getenv("LOOM_ACCEPT_WINDOWS_V2") != "1" {
+		return windowsClientCAPath(root, editionPortableTUN), nil
+	}
+	state, err := windowsV2Installed(root, clientsecret.UserProtector{})
+	if err != nil || state == nil {
+		return "", errors.Join(errors.New("Windows v2 TUN LKG 缺失"), err)
+	}
+	material, err := windowsv2.PrepareRuntimeMaterial(state)
+	if err != nil {
+		return "", err
+	}
+	defer material.Clear()
+	return windowsV2PublicCAPath(root, material.ContentHash)
 }
 
 func waitLiveTUNCleanup(t *testing.T, index int) {

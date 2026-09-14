@@ -66,6 +66,9 @@ func StartWindowsAgent(ctx context.Context, cfg *agent.Config, runtimeDir string
 	options := agent.ClientOptions{StatePath: a.statePath, Probe: pingWindowsEntry, Observations: a.observations}
 	if len(inputs) > 0 {
 		options.Entries = append([]agent.ClientEntry(nil), inputs[0].Entries...)
+		options.ProbeRegistry = inputs[0].ProbeRegistry
+		options.UnderlayGeneration = inputs[0].UnderlayGeneration
+		options.EntryProbesUnavailable = inputs[0].EntryProbesUnavailable
 		options.HopCarriers = map[string][]string{}
 		for tag, values := range inputs[0].HopCarriers {
 			options.HopCarriers[tag] = append([]string(nil), values...)

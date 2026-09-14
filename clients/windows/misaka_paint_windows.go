@@ -148,7 +148,7 @@ func (app *portableGUI) paintMisakaDraft(c *misakaCanvas, snapshot portableGUISn
 	field.bottom--
 	c.Fill(field, misakaWhite, s(5))
 	c.Text("加入邀请", misakaRect(x+s(24), y+s(102), w-s(48), s(23)), s(11), 600, misakaMuted, 0)
-	c.Text("二维码 PNG 或 .loom-invite 文件，也可从剪贴板粘贴。", misakaRect(x+s(24), y+s(126), w-s(48), s(20)), s(11), 400, misakaMuted, 0)
+	c.Text("二维码 PNG、.loom-invite 或 .loom-resume 文件，也可从剪贴板粘贴。", misakaRect(x+s(24), y+s(126), w-s(48), s(20)), s(11), 400, misakaMuted, 0)
 	text := app.skin.inviteLabel
 	if text == "" {
 		text = "尚未选择加入邀请。"

@@ -138,6 +138,28 @@ func TestProtectedJSONBudgetCoversMaximumJoinResponse(t *testing.T) {
 	}
 }
 
+func TestLargeProtectedStateIsExplicitAndPurposeBound(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v2-state.json.dpapi")
+	body := bytes.Repeat([]byte{0x5a}, defaultProtectedPlaintext+1)
+	if err := WriteProtected(path, "windows-v2-state-v1", body, testProtector{}); err == nil {
+		t.Fatal("普通 protected API 接受了 v2 大状态")
+	}
+	if err := WriteLargeProtected(path, "windows-v2-state-v1", body, testProtector{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadProtected(path, "windows-v2-state-v1", testProtector{}); err == nil {
+		t.Fatal("普通 protected API 读入了 v2 大状态")
+	}
+	got, err := ReadLargeProtected(path, "windows-v2-state-v1", testProtector{})
+	if err != nil || !bytes.Equal(got, body) {
+		t.Fatalf("large protected round trip: bytes=%d err=%v", len(got), err)
+	}
+	clear(got)
+	if _, err := ReadLargeProtected(path, "windows-v2-other-v1", testProtector{}); err == nil {
+		t.Fatal("large protected state 跨 purpose 被接受")
+	}
+}
+
 func TestReadRegularRejectsLinksAndOversizedFiles(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "protected.json")

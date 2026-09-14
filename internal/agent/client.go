@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"errors"
-	"sync"
 	"time"
 
 	"loom/internal/clientroute"
@@ -12,11 +11,14 @@ import (
 // ClientEntry 是从已验证数据面按候选链提取的入口，不增加配置协议（§5.1）。
 type ClientEntry struct{ Node, Address, Source string }
 type ClientOptions struct {
-	StatePath    string
-	Entries      []ClientEntry
-	Probe        func(context.Context, ClientEntry) (time.Duration, error)
-	Observations *ObservationCache
-	HopCarriers  map[string][]string
+	StatePath              string
+	Entries                []ClientEntry
+	Probe                  func(context.Context, ClientEntry) (time.Duration, error)
+	ProbeRegistry          *EntryProbeRegistry
+	UnderlayGeneration     string
+	EntryProbesUnavailable bool
+	Observations           *ObservationCache
+	HopCarriers            map[string][]string
 	// §7.3.3：仅供本地界面保留本轮入口结果，不进入报告协议。
 	OnEntries func([]ClientPathMeasurement)
 }
@@ -51,10 +53,7 @@ func RunClient(ctx context.Context, cfg *Config, opts ClientOptions) (retErr err
 		return err
 	}
 	entries := map[string]ClientEntryResult{}
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	// 同地址的多个授权身份也只发一个包；绝不按声明或完整候选重复测量。
-	byAddress := map[string][]ClientEntry{}
+	measuredNodes := map[string]bool{}
 	allowed := map[string]bool{}
 	for _, d := range cfg.Declarations {
 		for _, c := range d.Candidates {
@@ -67,29 +66,26 @@ func RunClient(ctx context.Context, cfg *Config, opts ClientOptions) (retErr err
 		if !allowed[e.Node] || e.Address == "" {
 			return errors.New("[§5.1] 入口探测超出当前授权候选")
 		}
-		byAddress[e.Address+"\x00"+e.Source] = append(byAddress[e.Address+"\x00"+e.Source], e)
 	}
-	for _, group := range byAddress {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			var r ClientEntryResult
-			probeCtx, cancel := context.WithTimeout(ctx, time.Second)
-			defer cancel()
-			if opts.Probe == nil {
-				r.Err = errors.New("入口探测不可用")
-			} else {
-				r.RTT, r.Err = opts.Probe(probeCtx, group[0])
+	if !opts.EntryProbesUnavailable {
+		registry := opts.ProbeRegistry
+		if registry == nil {
+			registry, err = NewEntryProbeRegistry(ctx)
+			if err != nil {
+				return err
 			}
-			r.At = time.Now()
-			mu.Lock()
-			defer mu.Unlock()
-			for _, e := range group {
-				entries[e.Node] = r
+			if opts.UnderlayGeneration == "" {
+				opts.UnderlayGeneration = "activation"
 			}
-		}()
+		}
+		entries, measuredNodes, err = registry.results(ctx, opts.UnderlayGeneration, opts.Entries, opts.Probe)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
 	}
-	wg.Wait()
 	if opts.OnEntries != nil {
 		var measured []ClientPathMeasurement
 		seen := map[string]bool{}
@@ -98,12 +94,16 @@ func RunClient(ctx context.Context, cfg *Config, opts ClientOptions) (retErr err
 				continue
 			}
 			seen[e.Node] = true
-			r := entries[e.Node]
-			m := ClientPathMeasurement{From: cfg.Node, To: e.Node, Kind: "entry", ObservedAt: r.At.UTC().Format(time.RFC3339), Samples: 1}
-			if r.Err == nil && r.RTT >= 0 {
+			r, wasMeasured := entries[e.Node]
+			m := ClientPathMeasurement{From: cfg.Node, To: e.Node, Kind: "entry"}
+			if !wasMeasured || !measuredNodes[e.Node] {
+				m.Error = "当前 underlay 代未主动探测此入口"
+			} else if r.Err == nil && r.RTT >= 0 {
+				m.ObservedAt, m.Samples = r.At.UTC().Format(time.RFC3339), 1
 				ms := r.RTT.Milliseconds()
 				m.DelayMS = &ms
 			} else {
+				m.ObservedAt, m.Samples = r.At.UTC().Format(time.RFC3339), 1
 				m.Failures = 1
 				m.Error = "单次 ping 未获响应"
 			}

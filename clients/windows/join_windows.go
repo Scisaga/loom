@@ -30,6 +30,7 @@ import (
 	"loom/internal/clientsecret"
 	"loom/internal/clientupdate"
 	"loom/internal/netx"
+	"loom/internal/windowsv2"
 )
 
 const (
@@ -98,6 +99,34 @@ func ensureWindowsJoined(ctx context.Context, root string, protector clientsecre
 func ensureWindowsJoinedInput(ctx context.Context, root string, protector clientsecret.Protector,
 	source string, provided *clientenroll.Invite, progress windowsJoinProgress) (windowsJoinResult, error) {
 	hasInput := strings.TrimSpace(source) != "" || provided != nil
+	var v2Carrier windowsv2.EnrollmentCarrier
+	v2Input := false
+	if provided == nil && strings.TrimSpace(source) != "" {
+		if carrier, carrierErr := windowsv2.ReadEnrollmentCarrier(source); carrierErr == nil {
+			v2Carrier, v2Input = carrier, true
+		}
+	}
+	if _, statErr := os.Lstat(windowsV2StatePath(root)); statErr == nil {
+		if hasInput && !v2Input {
+			return windowsJoinResult{}, errors.New("客户端已经加入 v2 网络；不能导入 v1 或另一份 Device 凭据")
+		}
+		return ensureWindowsV2Joined(ctx, root, protector, v2Carrier, progress)
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return windowsJoinResult{}, fmt.Errorf("inspect Windows v2 state: %w", statErr)
+	}
+	v2Recovery, recoveryErr := windowsV2RecoveryExists(root)
+	if recoveryErr != nil {
+		return windowsJoinResult{}, recoveryErr
+	}
+	if v2Recovery {
+		if hasInput && !v2Input {
+			return windowsJoinResult{}, errors.New("已有 Windows v2 加入事务；禁止回退到 v1 输入")
+		}
+		return ensureWindowsV2Joined(ctx, root, protector, v2Carrier, progress)
+	}
+	if v2Input {
+		return ensureWindowsV2Joined(ctx, root, protector, v2Carrier, progress)
+	}
 	configPath := filepath.Join(root, "config", "client.json")
 	if config, err := clientupdate.ReadConfig(configPath); err == nil {
 		if hasInput {

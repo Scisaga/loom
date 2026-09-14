@@ -12,12 +12,14 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/eventlog"
 
+	"loom/internal/agent"
 	"loom/internal/clientcomponent"
 	"loom/internal/clientcore"
 	"loom/internal/clientruntime"
@@ -28,6 +30,18 @@ import (
 )
 
 const serviceName = "LoomClient"
+
+var (
+	windowsProbeRegistryOnce sync.Once
+	windowsProbeRegistry     *agent.EntryProbeRegistry
+)
+
+func processWindowsProbeRegistry() *agent.EntryProbeRegistry {
+	windowsProbeRegistryOnce.Do(func() {
+		windowsProbeRegistry, _ = agent.NewEntryProbeRegistry(context.Background())
+	})
+	return windowsProbeRegistry
+}
 
 func main() {
 	edition, err := configuredEdition()
@@ -163,6 +177,13 @@ func prepareClientAt(root string, protector clientsecret.Protector, edition clie
 	if _, err := clientcore.EnsurePreference(preferencePath); err != nil {
 		return nil, fmt.Errorf("initialize local route preference: %w", err)
 	}
+	v2State, err := windowsV2Installed(root, protector)
+	if err != nil {
+		return nil, fmt.Errorf("验证 Windows v2 LKG: %w", err)
+	}
+	if v2State != nil {
+		return prepareWindowsV2ClientAt(root, protector, edition, v2State)
+	}
 
 	configPath := filepath.Join(root, "config", "client.json")
 	config, err := clientupdate.ReadConfig(configPath)
@@ -231,7 +252,8 @@ func prepareClientAt(root string, protector clientsecret.Protector, edition clie
 		}
 		return &clientActivation{
 			BaseConfig: runtimeConfig, Policy: plan, Preference: preference, AgentConfig: agentConfig,
-			Version: candidate.Version, SlotID: components.SlotID, Executable: components.SingBox,
+			ProbeRegistry: processWindowsProbeRegistry(),
+			Version:       candidate.Version, SlotID: components.SlotID, Executable: components.SingBox,
 			Config: filtered, RuntimeDir: filepath.Join(root, "runtime"), Profile: profile, CAPath: caPath, WaitForStart: true,
 			Health: health,
 		}, nil
@@ -326,6 +348,17 @@ func waitForJoinedClient(root string, protector clientsecret.Protector, edition 
 			case <-ctx.Done():
 				return nil
 			case <-ticker.C:
+				state, stateErr := windowsV2Installed(root, protector)
+				if stateErr != nil {
+					return fmt.Errorf("load joined Windows v2 state: %w", stateErr)
+				}
+				if state != nil {
+					workload, err := prepareWindowsV2ClientAt(root, protector, edition, state)
+					if err != nil {
+						return err
+					}
+					return workload(ctx)
+				}
 				if _, err := clientupdate.ReadConfig(configPath); errors.Is(err, os.ErrNotExist) {
 					continue
 				} else if err != nil {

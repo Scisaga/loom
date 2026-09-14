@@ -13,21 +13,22 @@ import (
 )
 
 type clientActivation struct {
-	BaseConfig   []byte
-	Policy       *clientruntime.WindowsSelectorPlan
-	Preference   clientcore.Preference
-	AgentConfig  *agent.Config
-	AgentRuntime *clientruntime.WindowsAgent
-	Version      clientruntime.CandidateVersion
-	SlotID       string
-	Executable   string
-	Config       []byte
-	RuntimeDir   string
-	Profile      clientruntime.WindowsRuntimeProfile
-	CAPath       string
-	WaitForStart bool
-	Started      func()
-	Health       *clientruntime.WindowsHealthPlan
+	BaseConfig    []byte
+	Policy        *clientruntime.WindowsSelectorPlan
+	Preference    clientcore.Preference
+	AgentConfig   *agent.Config
+	AgentRuntime  *clientruntime.WindowsAgent
+	ProbeRegistry *agent.EntryProbeRegistry
+	Version       clientruntime.CandidateVersion
+	SlotID        string
+	Executable    string
+	Config        []byte
+	RuntimeDir    string
+	Profile       clientruntime.WindowsRuntimeProfile
+	CAPath        string
+	WaitForStart  bool
+	Started       func()
+	Health        *clientruntime.WindowsHealthPlan
 }
 
 func (activation *clientActivation) key() string {

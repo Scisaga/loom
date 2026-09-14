@@ -326,19 +326,10 @@ func (s *Store) persistLocked(candidate durableState) error {
 		_ = os.Remove(temporary)
 		return err
 	}
-	if err := os.Rename(temporary, s.path); err != nil {
+	if err := replaceDurableFile(temporary, s.path); err != nil {
 		return err
 	}
-	directoryHandle, err := os.Open(directory)
-	if err != nil {
-		return err
-	}
-	err = directoryHandle.Sync()
-	closeErr = directoryHandle.Close()
-	if err != nil {
-		return err
-	}
-	return closeErr
+	return syncDurableDirectory(directory)
 }
 
 func cloneDurableState(state durableState) durableState {

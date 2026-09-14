@@ -22,6 +22,7 @@ import (
 	"loom/internal/clientenroll"
 	"loom/internal/clientjoin"
 	"loom/internal/clientsecret"
+	"loom/internal/windowsv2"
 )
 
 type portableGUIState uint8
@@ -41,6 +42,7 @@ const (
 type portableGUISnapshot struct {
 	state             portableGUIState
 	joined            bool
+	windowsV2         bool
 	deviceID          string
 	detail            string
 	hostname          string
@@ -59,7 +61,7 @@ type portableGUISnapshot struct {
 }
 
 func (s portableGUISnapshot) equal(other portableGUISnapshot) bool {
-	return s.state == other.state && s.joined == other.joined && s.deviceID == other.deviceID &&
+	return s.state == other.state && s.joined == other.joined && s.windowsV2 == other.windowsV2 && s.deviceID == other.deviceID &&
 		s.detail == other.detail && s.hostname == other.hostname &&
 		s.routeSelected == other.routeSelected && s.routeBusy == other.routeBusy &&
 		s.routeDetail == other.routeDetail && slices.Equal(s.routeOptions, other.routeOptions) &&
@@ -112,6 +114,7 @@ type portableGUI struct {
 	mu                  sync.RWMutex
 	state               portableGUIState
 	joined              bool
+	windowsV2           bool
 	deviceID            string
 	detail              string
 	hostname            string
@@ -232,8 +235,13 @@ func (app *portableGUI) initialize() {
 }
 
 func (app *portableGUI) afterJoin(deviceID string) {
+	_, windowsV2, err := windowsJoinedDeviceID(app.root, app.protector())
+	if err != nil {
+		windowsV2 = false
+	}
 	app.mu.Lock()
 	app.joined = true
+	app.windowsV2 = windowsV2
 	app.deviceID = deviceID
 	app.detail = ""
 	app.mu.Unlock()
@@ -250,6 +258,15 @@ func (app *portableGUI) afterJoin(deviceID string) {
 }
 
 func (app *portableGUI) importJoinArtifact(source string) {
+	if carrier, err := windowsv2.ReadEnrollmentCarrier(source); err == nil {
+		encoded, encodeErr := encodeWindowsV2Carrier(carrier)
+		if encodeErr != nil {
+			app.update(guiError, false, "", encodeErr.Error())
+			return
+		}
+		app.importWindowsV2Carrier(encoded)
+		return
+	}
 	if app.skin != nil && app.snapshot().profileDraft != nil {
 		invite, err := clientjoin.Read(source, nil)
 		app.acceptMisakaInvite(invite, err)
@@ -278,6 +295,32 @@ func (app *portableGUI) importJoinArtifact(source string) {
 	}
 	app.beginJoin(func() (windowsJoinResult, error) {
 		return app.joinInput(source, nil)
+	})
+}
+
+func (app *portableGUI) importWindowsV2Carrier(carrier string) {
+	if !validBrokerV2Carrier(carrier) {
+		app.update(guiError, false, "", "Windows v2 加入或续传凭据无效")
+		return
+	}
+	if app.skin != nil && app.snapshot().profileDraft != nil {
+		app.acceptMisakaV2Carrier(carrier, nil)
+		return
+	}
+	if app.profileHost && !app.brokerClient && app.profileManager() == nil {
+		return
+	}
+	if app.profileManager() != nil || app.snapshot().profilesReady {
+		app.profileCommand(brokerRequest{Operation: "join", V2Carrier: carrier,
+			ProfileID: app.snapshot().selectedProfile})
+		return
+	}
+	if app.brokerClient {
+		app.installedCommand(brokerRequest{Operation: "join", V2Carrier: carrier})
+		return
+	}
+	app.beginJoin(func() (windowsJoinResult, error) {
+		return app.joinInput(carrier, nil)
 	})
 }
 
@@ -595,6 +638,7 @@ func (app *portableGUI) deleteLocalDevice(expectedProfile string) {
 		}
 		app.mu.Lock()
 		app.joined = false
+		app.windowsV2 = false
 		app.deviceID = ""
 		app.state = guiNeedsJoin
 		app.detail = ""
@@ -625,6 +669,14 @@ func removeWindowsLocalDevice(root string, edition clientEdition) error {
 	}
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("状态目录不是普通目录")
+	}
+	var protector clientsecret.Protector = clientsecret.UserProtector{}
+	if edition == editionInstalled {
+		protector = clientsecret.MachineProtector{}
+	}
+	if err := windowsv2.DestroyIdentity(windowsV2IdentityPath(root), protector); err != nil &&
+		!errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("清理 Windows v2 CNG identity: %w", err)
 	}
 	if edition == editionInstalled {
 		// §13.5：保留安装器创建的 ACL 根目录，避免删除后由普通用户抢建。
@@ -689,12 +741,16 @@ func (app *portableGUI) pasteJoinArtifact() {
 	if snapshot.joined || (snapshot.state != guiNeedsJoin && snapshot.state != guiError) {
 		return
 	}
-	invite, err := readWindowsClipboardInvite(app.hwnd)
+	carrier, err := readWindowsClipboardCarrier(app.hwnd)
 	if err != nil {
 		showWindowsError("粘贴 Loom 二维码", err)
 		return
 	}
-	app.importJoinInvite(invite)
+	if carrier.v2Carrier != "" {
+		app.importWindowsV2Carrier(carrier.v2Carrier)
+	} else {
+		app.importJoinInvite(*carrier.invite)
+	}
 }
 
 func (app *portableGUI) acceptDroppedFiles(drop uintptr) {
@@ -705,7 +761,7 @@ func (app *portableGUI) acceptDroppedFiles(drop uintptr) {
 		return
 	}
 	if len(paths) != 1 {
-		showWindowsError("导入 Loom 二维码", errors.New("请一次只拖入一个二维码 PNG 或 .loom-invite 文件"))
+		showWindowsError("导入 Loom 二维码", errors.New("请一次只拖入一个二维码 PNG、.loom-invite 或 .loom-resume 文件"))
 		return
 	}
 	snapshot := app.snapshot()
@@ -768,6 +824,9 @@ func (app *portableGUI) update(state portableGUIState, joined bool, deviceID, de
 	if app.ctx.Err() == nil {
 		app.state = state
 		app.joined = joined
+		if !joined {
+			app.windowsV2 = false
+		}
 		if deviceID != "" {
 			app.deviceID = deviceID
 		}
@@ -795,7 +854,7 @@ func (app *portableGUI) snapshot() portableGUISnapshot {
 		detail += fmt.Sprintf("\r\n已用时 %d 分 %02d 秒", elapsed/60, elapsed%60)
 	}
 	return portableGUISnapshot{
-		state: app.state, joined: app.joined, deviceID: app.deviceID,
+		state: app.state, joined: app.joined, windowsV2: app.windowsV2, deviceID: app.deviceID,
 		detail: detail, hostname: app.hostname,
 		routeOptions:  append([]portableRouteOption(nil), app.routeOptions...),
 		routeSelected: app.routeSelected, routeBusy: app.routeBusy, routeDetail: app.routeDetail,
@@ -2069,7 +2128,7 @@ func (app *portableGUI) presentation(snapshot portableGUISnapshot) (state, messa
 		if !snapshot.profilesReady {
 			message = "导入加入邀请以连接 Loom 网络。"
 		}
-		return "此配置尚未加入", message + "\n支持二维码 PNG 或 .loom-invite 文件。", "选择邀请文件", true
+		return "此配置尚未加入", message + "\n支持二维码 PNG、.loom-invite 或 .loom-resume 文件。", "选择邀请文件", true
 	case guiJoining:
 		return "正在加入", detail, "正在加入…", false
 	case guiNeedsElevation:
@@ -2532,7 +2591,7 @@ func droppedFiles(drop uintptr) ([]string, error) {
 
 func openJoinArtifact(owner uintptr) (string, error) {
 	buffer := make([]uint16, 32768)
-	filterText := "二维码图片 (*.png)\x00*.png\x00Loom 加入文件 (*.loom-invite)\x00*.loom-invite\x00所有文件 (*.*)\x00*.*\x00"
+	filterText := "二维码图片 (*.png)\x00*.png\x00Loom 加入文件 (*.loom-invite;*.loom-resume)\x00*.loom-invite;*.loom-resume\x00所有文件 (*.*)\x00*.*\x00"
 	filter := append(utf16.Encode([]rune(filterText)), 0)
 	title, _ := windows.UTF16PtrFromString("导入中控生成的 Device 二维码")
 	dialog := portableOpenFileName{

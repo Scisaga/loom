@@ -19,11 +19,13 @@ import (
 
 	"loom/internal/clientcore"
 	"loom/internal/clientenroll"
+	"loom/internal/windowsv2"
 )
 
 type brokerRequest struct {
 	Operation  string                 `json:"operation"`
 	Invite     *clientenroll.Invite   `json:"invite,omitempty"`
+	V2Carrier  string                 `json:"v2_carrier,omitempty"`
 	Preference *clientcore.Preference `json:"preference,omitempty"`
 	ProfileID  string                 `json:"profile_id,omitempty"`
 	Name       string                 `json:"name,omitempty"`
@@ -33,6 +35,7 @@ type brokerRequest struct {
 type brokerSnapshot struct {
 	State             portableGUIState            `json:"state"`
 	Joined            bool                        `json:"joined"`
+	WindowsV2         bool                        `json:"windows_v2"`
 	DeviceID          string                      `json:"device_id"`
 	Detail            string                      `json:"detail"`
 	Routes            []portableRouteOption       `json:"routes,omitempty"`
@@ -56,7 +59,7 @@ type brokerResponse struct {
 
 func decodeBrokerRequest(body []byte) (brokerRequest, error) {
 	var req brokerRequest
-	if len(body) == 0 || len(body) > 16<<10 || !utf8.Valid(body) {
+	if len(body) == 0 || len(body) > maxBrokerMessage || !utf8.Valid(body) {
 		return req, errors.New("服务请求长度无效")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
@@ -80,27 +83,32 @@ func decodeBrokerRequest(body []byte) (brokerRequest, error) {
 	}
 	switch req.Operation {
 	case "cancel_add_profile":
-		if req.ProfileID != "" || req.Invite != nil || req.Preference != nil || req.Name != "" {
+		if req.ProfileID != "" || req.Invite != nil || req.V2Carrier != "" || req.Preference != nil || req.Name != "" {
 			return req, errors.New("关闭加入面板不接受附加参数")
 		}
 	case "join_profile":
-		if req.ProfileID != "" || req.Preference != nil || (req.Invite != nil && clientenroll.ValidateInvite(*req.Invite) != nil) {
+		if req.ProfileID != "" || req.Preference != nil ||
+			(req.Invite != nil && clientenroll.ValidateInvite(*req.Invite) != nil) ||
+			(req.V2Carrier != "" && !validBrokerV2Carrier(req.V2Carrier)) ||
+			(req.Invite != nil && req.V2Carrier != "") {
 			return req, errors.New("新增连接配置的加入参数无效")
 		}
 	case "status", "connect", "disconnect", "delete", "select_profile":
-		if req.Invite != nil || req.Preference != nil || req.Name != "" || (req.Operation == "status" && req.ProfileID != "") || (req.Operation == "select_profile" && req.ProfileID == "") {
+		if req.Invite != nil || req.V2Carrier != "" || req.Preference != nil || req.Name != "" || (req.Operation == "status" && req.ProfileID != "") || (req.Operation == "select_profile" && req.ProfileID == "") {
 			return req, errors.New("服务操作不接受附加参数")
 		}
 	case "join":
-		if req.Invite == nil || req.Preference != nil || req.Name != "" || clientenroll.ValidateInvite(*req.Invite) != nil {
+		if (req.Invite == nil) == (req.V2Carrier == "") || req.Preference != nil || req.Name != "" ||
+			(req.Invite != nil && clientenroll.ValidateInvite(*req.Invite) != nil) ||
+			(req.V2Carrier != "" && !validBrokerV2Carrier(req.V2Carrier)) {
 			return req, errors.New("加入二维码无效")
 		}
 	case "preference":
-		if req.Invite != nil || req.Preference == nil || req.Name != "" {
+		if req.Invite != nil || req.V2Carrier != "" || req.Preference == nil || req.Name != "" {
 			return req, errors.New("出口选择无效")
 		}
 	case "add_profile", "rename_profile":
-		if req.Invite != nil || req.Preference != nil || (req.Operation == "add_profile" && req.ProfileID != "") ||
+		if req.Invite != nil || req.V2Carrier != "" || req.Preference != nil || (req.Operation == "add_profile" && req.ProfileID != "") ||
 			(req.Operation == "rename_profile" && (req.ProfileID == "" || req.Name == "")) {
 			return req, errors.New("连接配置操作参数无效")
 		}
@@ -110,9 +118,14 @@ func decodeBrokerRequest(body []byte) (brokerRequest, error) {
 	return req, nil
 }
 
+func validBrokerV2Carrier(value string) bool {
+	carrier, err := windowsv2.DecodeEnrollmentCarrierText(value)
+	return err == nil && carrier.ValidateShape() == nil
+}
+
 func (app *portableGUI) brokerSnapshot() brokerSnapshot {
 	s := app.snapshot()
-	return brokerSnapshot{State: s.state, Joined: s.joined, DeviceID: s.deviceID, Detail: s.detail, Routes: s.routeOptions, RouteSelected: s.routeSelected,
+	return brokerSnapshot{State: s.state, Joined: s.joined, WindowsV2: s.windowsV2, DeviceID: s.deviceID, Detail: s.detail, Routes: s.routeOptions, RouteSelected: s.routeSelected,
 		RouteBusy: s.routeBusy, RouteDetail: s.routeDetail, Paths: s.paths, ProfilesReady: s.profilesReady, Profiles: s.profiles,
 		SelectedProfile: s.selectedProfile, ProfileName: s.profileName, ActiveProfile: s.activeProfile, ActiveProfileName: s.activeProfileName,
 		ProfileDraft: cloneProfileDraft(s.profileDraft)}
@@ -139,7 +152,11 @@ func (app *portableGUI) handleBrokerRequest(req brokerRequest) error {
 		if s.joined || (s.state != guiNeedsJoin && s.state != guiError) {
 			return errors.New("当前状态不能导入二维码")
 		}
-		app.importJoinInvite(*req.Invite)
+		if req.V2Carrier != "" {
+			app.importWindowsV2Carrier(req.V2Carrier)
+		} else {
+			app.importJoinInvite(*req.Invite)
+		}
 	case "connect":
 		if !s.joined || (s.state != guiStopped && s.state != guiError) {
 			return errors.New("当前状态不能连接")
@@ -164,7 +181,7 @@ func (app *portableGUI) handleBrokerRequest(req brokerRequest) error {
 			return errors.New("删除本机 Device 失败")
 		}
 		app.mu.Lock()
-		app.state, app.joined, app.deviceID, app.detail = guiNeedsJoin, false, "", ""
+		app.state, app.joined, app.windowsV2, app.deviceID, app.detail = guiNeedsJoin, false, false, "", ""
 		app.routeOptions, app.routeSelected, app.routeDetail = nil, -1, ""
 		app.mu.Unlock()
 	default:
@@ -321,7 +338,7 @@ func (app *portableGUI) exchangeInstalledBroker(request brokerRequest) {
 	}
 	s := response.Snapshot
 	app.mu.Lock()
-	app.state, app.joined, app.deviceID, app.detail = s.State, s.Joined, s.DeviceID, s.Detail
+	app.state, app.joined, app.windowsV2, app.deviceID, app.detail = s.State, s.Joined, s.WindowsV2, s.DeviceID, s.Detail
 	app.routeOptions, app.routeSelected, app.routeBusy, app.routeDetail = s.Routes, s.RouteSelected, s.RouteBusy, s.RouteDetail
 	app.paths = s.Paths
 	app.brokerProfilesReady, app.brokerProfiles = s.ProfilesReady, s.Profiles
