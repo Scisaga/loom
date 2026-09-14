@@ -173,7 +173,7 @@ func nextDeviceInventoryRefresh(inventory ClientInventory, now time.Time) time.D
 		if !ok {
 			continue
 		}
-		remaining := observed.Add(clientRuntimeStaleAfter).Sub(now)
+		remaining := observed.Add(clientRuntimeLease(device)).Sub(now)
 		if remaining <= 0 {
 			// 直连观测同步求值，不在这里到期；若嵌入方给了旧时间，等待下一次
 			// 有界同步即可，不能让过期定时器形成热循环（§16.4）。

@@ -14,7 +14,7 @@ import (
 func TestDeviceInventoryWebSocketPushesTrustedStateChanges(t *testing.T) {
 	observed := time.Date(2026, 9, 13, 22, 48, 35, 0, time.UTC)
 	var stateMu sync.Mutex
-	now := observed.Add(30 * time.Second)
+	now := observed.Add(3 * time.Second)
 	changes := make(chan struct{})
 	d := clientUIDeps()
 	d.Control.Clients.List = func() (ClientInventory, error) {
@@ -61,7 +61,7 @@ func TestDeviceInventoryWebSocketPushesTrustedStateChanges(t *testing.T) {
 	}
 
 	stateMu.Lock()
-	now = observed.Add(clientRuntimeStaleAfter + time.Second)
+	now = observed.Add(clientAndroidRuntimeStaleAfter + time.Second)
 	close(changes)
 	changes = make(chan struct{})
 	stateMu.Unlock()
@@ -114,10 +114,10 @@ func TestDeviceInventoryPageBootstrapsOnlyApprovedLiveScript(t *testing.T) {
 func TestDeviceInventorySchedulesOnlineLeaseExpiryWithoutAnotherReport(t *testing.T) {
 	now := time.Date(2026, 9, 13, 22, 50, 0, 0, time.UTC)
 	inventory := ClientInventory{Clients: []ClientView{{
-		ID: "demo-phone", DataPlaneStatus: "online",
-		LastSeenAt: now.Add(-90 * time.Second).Format(time.RFC3339),
+		ID: "demo-phone", Platform: "android", DataPlaneStatus: "online",
+		LastSeenAt: now.Add(-10 * time.Second).Format(time.RFC3339),
 	}}}
-	want := 30*time.Second + time.Millisecond
+	want := 5*time.Second + time.Millisecond
 	if got := nextDeviceInventoryRefresh(inventory, now); got != want {
 		t.Fatalf("next live Device expiry refresh = %s, want %s", got, want)
 	}

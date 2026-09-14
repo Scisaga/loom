@@ -17,7 +17,11 @@ internal class HealthReporter(
     private val context: Context,
     private val keys: DeviceKeyStore = DeviceKeyStore(),
 ) {
-    fun send(profile: ManagedProfile, problems: List<String>): HealthReportResult {
+    fun send(
+        profile: ManagedProfile,
+        problems: List<String>,
+        includeObservations: Boolean = true,
+    ): HealthReportResult {
         val timestamp = Instant.now().toString()
         val normalized = problems.distinct().sorted()
         val problemsJSON = JSONArray(normalized).toString().encodeToByteArray()
@@ -40,7 +44,13 @@ internal class HealthReporter(
             keys.sign(attestMessage),
             keys.sign(selfCheckMessage),
         )
-        val result = HttpTransport.postJSONWithObservations(context, profile.reportEndpoint, observation, MAX_RESPONSE)
+        // §16.4：五秒 presence 只提交同一份签名 Observation；服务器观测维持
+        // 一分钟读取周期，避免把 UI 新鲜度变成额外选路采集。
+        val result = if (includeObservations) {
+            HttpTransport.postJSONWithObservations(context, profile.reportEndpoint, observation, MAX_RESPONSE)
+        } else {
+            HttpTransport.postJSON(context, profile.reportEndpoint, observation, MAX_RESPONSE)
+        }
         return when (result.status) {
             204 -> {
                 check(result.body.isEmpty()) { "可信健康上报 204 携带了意外正文" }

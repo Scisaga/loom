@@ -403,10 +403,13 @@ remain scoped evidence and do not roll back a verified configuration. The curren
 implementation gaps are listed in `docs/status/current.md`. Reports use the same
 Keystore key through the existing canonical v5 and self-check v1 contracts;
 the canonical v5 claim also binds the actual selector, candidate and chain.
-Before the v2 latch, the same-origin v1 report POST requests `observations=1`:
-a compatible server may return a bounded JSON snapshot with HTTP 200, while an
-empty 204 remains a successful report with no new route evidence. After the
-latch, configuration and reporting use the role-separated `device_config` and
+Before the v2 latch, Android submits a signed lightweight health report every
+five seconds so Device inventory can expire silent presence within fifteen
+seconds. Only one report per minute requests `observations=1`: a compatible
+server may return a bounded JSON snapshot with HTTP 200, while the intervening
+presence reports use the same signed Observation contract and accept an empty
+204 without new route evidence. This cadence does not add probes or a second
+route-observation cycle. After the latch, configuration and reporting use the role-separated `device_config` and
 `device_report` services from private `ControlServiceDirectoryV1`, with Device
 mTLS. Neither service can be derived from a distribution, bootstrap, or
 enrollment URL.

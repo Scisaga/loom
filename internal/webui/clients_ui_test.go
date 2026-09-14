@@ -133,6 +133,25 @@ func TestClientsPageMergesOnlyTrustedCurrentNodeRuntime(t *testing.T) {
 	}
 }
 
+func TestAndroidRuntimeUsesSecondScaleSignedPresenceLease(t *testing.T) {
+	now := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)
+	inventory := ClientInventory{Clients: []ClientView{
+		{ID: "demo-android", Platform: "android", Status: "ready"},
+		{ID: "demo-windows", Platform: "windows-desktop", Status: "ready"},
+	}}
+	view := View{Nodes: []NodeView{
+		{ID: "demo-android", Declared: true, Health: "healthy", Source: "签名健康转述", ObservedAt: now.Add(-16 * time.Second).Format(time.RFC3339), AgeSec: 16},
+		{ID: "demo-windows", Declared: true, Health: "healthy", Source: "签名健康转述", ObservedAt: now.Add(-16 * time.Second).Format(time.RFC3339), AgeSec: 16},
+	}}
+	merged := mergeClientRuntime(inventory, view, now)
+	if got := merged.Clients[0]; got.Status != "stale" || got.DataPlaneStatus != "stale" {
+		t.Fatalf("Android 15-second presence lease did not expire: %+v", got)
+	}
+	if got := merged.Clients[1]; got.Status != "online" || got.DataPlaneStatus != "online" {
+		t.Fatalf("Windows minute reporter inherited Android lease: %+v", got)
+	}
+}
+
 func TestDeviceDetailShowsTrustedRuntimeProblemReason(t *testing.T) {
 	now := time.Date(2026, 9, 6, 14, 53, 51, 0, time.UTC)
 	d := clientUIDeps()

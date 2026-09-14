@@ -586,9 +586,21 @@ func clientStatusPresentation(status string) (className, label string) {
 	}
 }
 
-// Android 和其他当前 producer 每分钟提交一次可信健康陈述。连续两个周期没有
-// 新陈述就不能继续展示 Online；仍标 Stale，不能伪造已证明的 Offline（§16.4）。
-const clientRuntimeStaleAfter = 2 * time.Minute
+const (
+	// 服务器与 Windows 当前每分钟提交一次可信健康陈述；连续两个周期没有
+	// 新陈述就不能继续展示 Online（§16.4）。
+	clientRuntimeStaleAfter = 2 * time.Minute
+	// Android 用五秒轻量签名心跳维持在线证据；给一次网络抖动留出余量后，
+	// 十五秒仍无新证据即失效。失效只标 Stale，不能伪造 Offline（§16.4）。
+	clientAndroidRuntimeStaleAfter = 15 * time.Second
+)
+
+func clientRuntimeLease(device ClientView) time.Duration {
+	if strings.EqualFold(strings.TrimSpace(device.Platform), "android") {
+		return clientAndroidRuntimeStaleAfter
+	}
+	return clientRuntimeStaleAfter
+}
 
 // mergeClientRuntime 只改页面使用的切片副本。registry/SSOT 仍分别保存身份与
 // 期望态；Online 必须来自当前 View 中直连或验签后的健康证据。
@@ -658,8 +670,9 @@ func mergeClientNodeRuntime(client *ClientView, node NodeView, now time.Time) {
 	}
 	client.RuntimeProblems = append([]string(nil), node.Problems...)
 
-	stale := !direct && (!observedOK || node.AgeSec > int(clientRuntimeStaleAfter.Seconds()) ||
-		now.Sub(observed) > clientRuntimeStaleAfter || observed.After(now.Add(time.Minute)))
+	lease := clientRuntimeLease(*client)
+	stale := !direct && (!observedOK || node.AgeSec > int(lease.Seconds()) ||
+		now.Sub(observed) > lease || observed.After(now.Add(time.Minute)))
 	switch {
 	case !node.Declared:
 		client.DataPlaneStatus = "undeclared"

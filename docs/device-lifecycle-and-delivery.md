@@ -249,10 +249,11 @@ Archived devices 中已为 `revoked` 且不在当前 SSOT 的身份可从详情�
 Device inventory 首屏保留可独立阅读的 SSR 快照，随后经 private HTTPS 同源 WebSocket
 `/api/control/device-inventory/live` 接收完整列表投影；可信 Device report、gossip/本机观测或
 identity/SSOT 事务成功后由服务端唤醒连接，浏览器不轮询列表 API。连接中断时页面明确显示
-重连状态并按有界退避恢复，不能继续把旧画面标成实时。Windows/Android 当前健康周期为一分钟；
-连续两个周期没有新的可信陈述后，列表必须从 `Online` 转为 `Stale` 并保留原始 last-seen。
-缺少陈述只能证明“当前证据已陈旧”，不能伪造已经观测到的 `Offline`。服务端为这一过期边界
-设置定时唤醒，因此即使断开后不再产生新事件，已打开的列表也会自行更新。
+重连状态并按有界退避恢复，不能继续把旧画面标成实时。Android 在已连接期间每五秒提交轻量
+签名健康陈述，但只每分钟请求一次服务器观测；十五秒没有新陈述后，列表必须从 `Online` 转为
+`Stale`。Windows 与服务器的一分钟健康周期保留两周期 lease。所有状态都保留原始 last-seen；
+缺少陈述只能证明“当前证据已陈旧”，不能伪造已经观测到的 `Offline`。服务端为每种 producer
+的过期边界设置定时唤醒，因此即使断开后不再产生新事件，已打开的列表也会自行更新。
 
 概览和拓扑页的当前设备、连线及选路投影以当前 SSOT 成员为准。移除 Device 后，即使
 旧快照或 gossip 仍保留该设备的运行观测，也不再把它或引用它的路径显示为当前网络；

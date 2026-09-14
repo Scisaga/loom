@@ -37,4 +37,21 @@ class LoomVpnServicePolicyTest {
         assertEquals(false, shouldRestoreVpn(Intent.ACTION_BOOT_COMPLETED, true, false))
         assertEquals(false, shouldRestoreVpn("unexpected", true, true))
     }
+
+    @Test
+    fun healthPresenceDoesNotMultiplyServerObservationReads() {
+        val schedule = AndroidHealthReportSchedule()
+        assertEquals(true, schedule.includeObservations(1_000L))
+        schedule.recordSuccess(1_000L, includedObservations = true)
+        assertEquals(false, schedule.includeObservations(1_000L + ANDROID_HEALTH_REPORT_INTERVAL_MS))
+        assertEquals(false, schedule.includeObservations(60_999L))
+        assertEquals(true, schedule.includeObservations(61_000L))
+    }
+
+    @Test
+    fun failedObservationReadRemainsDue() {
+        val schedule = AndroidHealthReportSchedule()
+        assertEquals(true, schedule.includeObservations(1_000L))
+        assertEquals(true, schedule.includeObservations(1_000L + ANDROID_HEALTH_REPORT_INTERVAL_MS))
+    }
 }
