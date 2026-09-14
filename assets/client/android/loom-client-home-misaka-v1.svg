@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="430" height="932" viewBox="0 0 430 932"
      role="img" aria-labelledby="title description">
-  <title id="title">Loom Android client home — self-contained SVG prototype</title>
-  <desc id="description">An Android VpnService client proposal showing device-local Direct, Auto, and specific-exit routing modes, certified control rules, and an Agent-selected read-only current path.</desc>
+  <title id="title">Loom Android compact connected home — self-contained SVG prototype</title>
+  <desc id="description">A compact Android VpnService home proposal with one primary connection action, three routing modes, grouped current-path summaries, and disclosure controls for per-service evidence and diagnostics.</desc>
 
   <defs>
     <clipPath id="screen-clip"><rect x="12" y="12" width="406" height="908" rx="38"/></clipPath>
@@ -77,7 +77,7 @@
   <rect x="12" y="12" width="406" height="908" rx="38" fill="#FCFCFB"/>
 
   <g clip-path="url(#screen-clip)">
-    <!-- Android status bar. -->
+    <!-- Android status bar and the same compact brand header used by Compose. -->
     <rect x="12" y="12" width="406" height="38" fill="#FFFFFF"/>
     <g class="ui tiny">
       <text x="31" y="36" font-weight="650">9:41</text>
@@ -87,117 +87,71 @@
       <rect x="412" y="28" width="2" height="3" rx="1" fill="#181B1A"/>
       <rect x="399" y="27" width="10" height="5" rx="1" fill="#181B1A"/>
     </g>
+    <use href="#loom-mark" x="28" y="58" width="30" height="30"/>
+    <text class="ui wordmark" x="68" y="78">LOOM</text>
+    <text class="ui tiny muted" x="68" y="94">ANDROID</text>
 
-    <!-- App bar. -->
-    <rect x="12" y="50" width="406" height="60" fill="#FFFFFF"/>
-    <line class="rule" x1="12" y1="109.5" x2="418" y2="109.5"/>
-    <use href="#loom-mark" x="28" y="63" width="32" height="32"/>
-    <text class="ui wordmark" x="70" y="86">LOOM</text>
-    <text class="ui tiny muted" x="143" y="85">ANDROID</text>
-    <use href="#icon-settings" x="375" y="67" width="24" height="24" class="icon"/>
+    <text class="ui heading" x="28" y="130">Mobile network</text>
+    <text class="ui body muted" x="28" y="153">Device joined · signed configuration verified</text>
+    <rect x="28" y="166" width="374" height="26" rx="13" class="chip-amber"/>
+    <circle cx="45" cy="179" r="3.5" fill="#D79B3B"/>
+    <text class="ui tiny amber" x="57" y="183">DESIGN PROPOSAL · SAMPLE DATA</text>
 
-    <!-- Prototype banner. -->
-    <rect x="28" y="122" width="374" height="28" rx="14" class="chip-amber"/>
-    <circle cx="45" cy="136" r="3.5" fill="#D79B3B"/>
-    <text class="ui tiny amber" x="57" y="140">DESIGN PROPOSAL · SAMPLE DATA</text>
-
-    <!-- VPN state. -->
-    <rect x="28" y="164" width="374" height="230" rx="12" class="panel"/>
+    <!-- Connection is the single primary action. -->
+    <rect x="28" y="207" width="374" height="145" rx="20" fill="#F1F5F2"/>
     <g class="ui">
-      <text class="eyebrow green" x="48" y="191">ANDROID VPN SERVICE</text>
-      <circle cx="335" cy="187" r="4" class="status-dot"/>
-      <text class="tiny green" x="347" y="191">Running</text>
-
-      <circle cx="349" cy="230" r="30" fill="#EEF8F3" stroke="#B9DEC9"/>
-      <use href="#icon-power" x="337" y="218" width="24" height="24" class="icon-green"/>
-      <text class="heading" x="48" y="224">System tunnel active</text>
-      <text class="body muted" x="48" y="248">Local runtime ready · server evidence 14s ago</text>
-      <rect x="48" y="263" width="166" height="25" rx="12.5" class="chip-green"/>
-      <use href="#icon-shield" x="58" y="268" width="15" height="15" class="icon-green"/>
-      <text class="tiny green" x="80" y="279">Certified rules applied</text>
-
-      <line class="rule" x1="48" y1="303" x2="382" y2="303"/>
-      <text class="tiny muted" x="48" y="326">HOST</text>
-      <text class="subsection" x="48" y="345">App running</text>
-      <text class="tiny muted" x="211" y="326">TRAFFIC CAPTURE</text>
-      <text class="subsection" x="211" y="345">TUN active</text>
-      <text class="tiny muted" x="48" y="369">ENTRY EVIDENCE</text>
-      <text class="subsection green" x="48" y="386">92 ms · observed</text>
-      <text class="tiny muted" x="211" y="369">CONTROL SYNC</text>
-      <text class="subsection" x="211" y="386">22s ago</text>
+      <circle cx="49" cy="234" r="5" class="status-dot"/>
+      <text class="heading" x="64" y="242">Connected</text>
+      <text class="body muted" x="48" y="269">Loom VPN is running</text>
+      <rect x="48" y="291" width="334" height="43" rx="12" fill="#239B68"/>
+      <text class="body" x="215" y="318" fill="#FFFFFF" text-anchor="middle" font-weight="650">Disconnect</text>
     </g>
 
-    <!-- Current access. -->
-    <rect x="28" y="410" width="374" height="184" rx="12" class="panel"/>
+    <!-- Three top-level modes remain visible and actionable. -->
+    <rect x="28" y="368" width="374" height="102" rx="16" class="panel"/>
     <g class="ui">
-      <text class="section" x="48" y="439">Current access</text>
-      <rect x="301" y="423" width="81" height="24" rx="12" class="chip-green"/>
-      <circle cx="315" cy="435" r="3" class="status-dot"/>
-      <text class="tiny green" x="325" y="439">READ ONLY</text>
-      <text class="small muted" x="48" y="462">Auto mode · certified rule matched · path read-only</text>
-
-      <line class="rule" x1="48" y1="477" x2="382" y2="477"/>
-      <text class="tiny muted" x="48" y="499">APP / DOMAIN</text>
-      <text class="tiny muted" x="202" y="499">SERVICE</text>
-      <text class="tiny muted" x="310" y="499">POLICY</text>
-      <text class="subsection" x="48" y="522">ChatGPT</text>
-      <text class="tiny mono muted" x="48" y="540">api.openai.com</text>
-      <text class="subsection" x="202" y="522">llm-api</text>
-      <text class="subsection mono" x="310" y="522">llm-ttft</text>
-      <text class="body green" x="177" y="523" text-anchor="middle">→</text>
-      <text class="body green" x="286" y="523" text-anchor="middle">→</text>
-      <line class="rule" x1="48" y1="552" x2="382" y2="552"/>
-      <text class="tiny muted" x="48" y="573">LIVE PATH</text>
-      <text class="small mono" x="124" y="573">demo-b → demo-e</text>
-      <text class="small green" x="382" y="573" text-anchor="end">Partial evidence</text>
+      <text class="eyebrow muted" x="48" y="393">ROUTING MODE</text>
+      <rect x="48" y="408" width="334" height="36" rx="9" class="panel-soft"/>
+      <rect x="159" y="408" width="112" height="36" fill="#239B68"/>
+      <line class="rule" x1="159" y1="408" x2="159" y2="444"/>
+      <line class="rule" x1="271" y1="408" x2="271" y2="444"/>
+      <text class="small muted" x="103.5" y="431" text-anchor="middle">Direct</text>
+      <text class="small" x="215" y="431" fill="#FFFFFF" text-anchor="middle" font-weight="650">Auto</text>
+      <text class="small muted" x="326.5" y="431" text-anchor="middle">Fixed exit</text>
+      <text class="tiny muted" x="48" y="459">Auto is active</text>
     </g>
 
-    <!-- Signed profile. -->
-    <rect x="28" y="610" width="374" height="108" rx="12" class="panel"/>
+    <!-- Repeated declarations are grouped on the home screen. -->
+    <rect x="28" y="486" width="374" height="198" rx="16" class="panel"/>
     <g class="ui">
-      <use href="#icon-check" x="48" y="627" width="20" height="20" class="icon-green"/>
-      <text class="section" x="79" y="643">Signed profile verified</text>
-      <text class="tiny green" x="382" y="642" text-anchor="end">CURRENT</text>
-      <text class="tiny muted" x="48" y="670">SNAPSHOT</text>
-      <text class="small mono" x="48" y="691" font-weight="650">8cbf3e6a4d92</text>
-      <text class="tiny muted" x="199" y="670">GENERATION</text>
-      <text class="small" x="199" y="691" font-weight="650">184</text>
-      <text class="tiny muted" x="287" y="670">OFFLINE</text>
-      <text class="small" x="287" y="691" font-weight="650">Ready</text>
-      <text class="tiny muted" x="48" y="708">HTTPS transport · content independently signed</text>
+      <text class="section" x="48" y="516">Current paths</text>
+      <rect x="304" y="500" width="78" height="24" rx="12" class="chip-green"/>
+      <text class="tiny green" x="343" y="516" text-anchor="middle" font-weight="650">CURRENT</text>
+      <line class="rule" x1="48" y1="536" x2="382" y2="536"/>
+      <text class="subsection" x="48" y="561">best-egress, web + 4 services</text>
+      <text class="small mono" x="48" y="584">local → demo-entry → demo-exit → destination</text>
+      <text class="tiny muted" x="48" y="604">Segment evidence 8/12 · missing remains unknown</text>
+      <rect x="48" y="624" width="334" height="40" rx="11" fill="#FFFFFF" stroke="#AAB1AD"/>
+      <text class="small green" x="215" y="649" text-anchor="middle" font-weight="650">View all 6 path details</text>
     </g>
 
-    <!-- Top-level routing mode. -->
-    <rect x="28" y="734" width="374" height="82" rx="12" class="panel"/>
+    <!-- Enrollment and diagnostics are secondary, compact disclosures. -->
+    <rect x="28" y="700" width="374" height="88" rx="16" class="panel"/>
     <g class="ui">
-      <text class="section" x="48" y="760">Routing mode</text>
-      <text class="tiny green" x="382" y="759" text-anchor="end">ON DEVICE</text>
-      <rect x="48" y="773" width="334" height="31" rx="7" class="panel-soft"/>
-      <rect x="159" y="773" width="112" height="31" fill="#EEF8F3" stroke="#B9DEC9"/>
-      <line class="rule" x1="159" y1="773" x2="159" y2="804"/>
-      <line class="rule" x1="271" y1="773" x2="271" y2="804"/>
-      <text class="small muted" x="103.5" y="794" text-anchor="middle">Direct</text>
-      <text class="small green" x="215" y="794" text-anchor="middle" font-weight="650">Auto</text>
-      <text class="small muted" x="326.5" y="794" text-anchor="middle">Exit node</text>
+      <text class="eyebrow muted" x="48" y="725">DEVICE &amp; CONFIGURATION</text>
+      <text class="subsection" x="48" y="749">Joined · generation 184</text>
+      <text class="tiny mono muted" x="48" y="768">Device demo-android</text>
+      <text class="small green" x="382" y="749" text-anchor="end" font-weight="650">Check update</text>
     </g>
 
-    <!-- Bottom navigation. -->
-    <rect x="12" y="834" width="406" height="86" fill="#FFFFFF"/>
-    <line class="rule" x1="12" y1="834.5" x2="418" y2="834.5"/>
+    <rect x="28" y="804" width="374" height="66" rx="16" class="panel"/>
     <g class="ui">
-      <use href="#icon-home" x="71" y="849" width="25" height="25" class="icon-active"/>
-      <text class="tiny" x="83.5" y="891" text-anchor="middle" font-weight="650">Home</text>
-      <circle cx="83.5" cy="908" r="2.5" class="status-dot"/>
-
-      <use href="#icon-activity" x="202" y="849" width="25" height="25" class="icon"/>
-      <text class="tiny muted" x="214.5" y="891" text-anchor="middle">Activity</text>
-
-      <use href="#icon-settings" x="334" y="849" width="25" height="25" class="icon"/>
-      <text class="tiny muted" x="346.5" y="891" text-anchor="middle">Settings</text>
+      <text class="subsection" x="48" y="832">Diagnostics &amp; trust</text>
+      <text class="tiny muted" x="48" y="851">Network evidence, reports, and local components</text>
+      <text class="small green" x="382" y="840" text-anchor="end" font-weight="650">Expand</text>
     </g>
   </g>
 
-  <!-- Speaker slot and frame highlight. -->
   <rect x="177" y="18" width="76" height="5" rx="2.5" fill="#282C2A"/>
   <rect x="12.5" y="12.5" width="405" height="907" rx="37.5" fill="none" stroke="#343936"/>
 </svg>

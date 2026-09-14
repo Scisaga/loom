@@ -204,12 +204,15 @@ never promoted into an intermediate relay. This keeps the reverse tunnel policy
 while avoiding unnecessary same-transport nesting for an authorized fixed exit.
 
 The Current Paths card is a read-only projection of libbox selector readback.
-It shows the entry ping, each matching WireGuard or public data-ingress server hop
-with its actual protocol, and each exact target observation separately. Hysteria2-
-specific variation/rate evidence is shown only when that signed metric exists;
-Trojan is not assigned synthetic Hy2 telemetry. The card does not infer measurements
-from candidate names or present segmented evidence as end-to-end P50/P95,
-business throughput, or whole-path health.
+On the narrow home screen, declarations with the same actual signed chain are
+grouped into at most two compact summaries; this is presentation-only
+and never merges their decisions or evidence. A details dialog retains every
+declaration, candidate, entry ping, matching WireGuard or public data-ingress hop,
+exact target observation, reason, and source time. Hysteria2-specific variation/rate
+evidence is shown only when that signed metric exists; Trojan is not assigned
+synthetic Hy2 telemetry. Diagnostics and trust metadata are collapsed by default.
+The UI does not infer measurements from candidate names or present segmented
+evidence as end-to-end P50/P95, business throughput, or whole-path health.
 
 The primary Connect action stays disabled until a verified managed snapshot is
 available. Debug builds expose the bundled stage-1 Direct fixture in a separate
