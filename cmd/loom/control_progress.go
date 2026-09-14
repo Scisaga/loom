@@ -152,26 +152,34 @@ func (runtime *controlRuntime) recoverPendingOperationsLocked() error {
 		if state.Active != nil || state.CertifiedHead == nil || state.CertifiedHead.HeadHash != record.Operation.Body.ParentHeadHash {
 			return errors.New("[D104] pending operation 的 base 已改变，不能隐式改签或丢弃")
 		}
-		certificateDER, err := authorizedAdminCertificate(runtime.config.Authorizations, record.Operation.Body.AdminCertDigest)
-		if err != nil {
-			return err
-		}
-		certificate, err := x509.ParseCertificate(certificateDER)
-		if err != nil {
-			return err
-		}
-		scope, err := runtime.resolveScope(context.Background(), record.Operation)
-		if err != nil {
-			return err
-		}
-		qc, err := wire.MarshalCanonical(state.CertifiedQC)
-		if err != nil {
-			return err
-		}
-		if _, err := wire.AuthorizeControlOperationAtHead(&record.Operation, certificate.Raw, &scope,
-			runtime.now().UTC(), controlOperationSchemas, state.CertifiedHead, qc, &state.ControlSet, nil,
-			runtime.config.Authorizations, runtime.config.AdminProfiles); err != nil {
-			return err
+		if record.AdminRotation != nil {
+			// 本机维护轮换有独立的旧身份签名、新 key PoP 和权限不变验证；
+			// 它永远不能注册为网络管理 operation（D104、D132）。
+			if err := runtime.verifyAdminRotationRecord(index); err != nil {
+				return err
+			}
+		} else {
+			certificateDER, err := authorizedAdminCertificate(runtime.config.Authorizations, record.Operation.Body.AdminCertDigest)
+			if err != nil {
+				return err
+			}
+			certificate, err := x509.ParseCertificate(certificateDER)
+			if err != nil {
+				return err
+			}
+			scope, err := runtime.resolveScope(context.Background(), record.Operation)
+			if err != nil {
+				return err
+			}
+			qc, err := wire.MarshalCanonical(state.CertifiedQC)
+			if err != nil {
+				return err
+			}
+			if _, err := wire.AuthorizeControlOperationAtHead(&record.Operation, certificate.Raw, &scope,
+				runtime.now().UTC(), controlOperationSchemas, state.CertifiedHead, qc, &state.ControlSet, nil,
+				runtime.config.Authorizations, runtime.config.AdminProfiles); err != nil {
+				return err
+			}
 		}
 		raft := runtime.storage.SnapshotRaft()
 		if len(raft.Log) == 0 || raft.LastApplied != raft.CommitIndex || int64(len(raft.Log)) != raft.CommitIndex {
