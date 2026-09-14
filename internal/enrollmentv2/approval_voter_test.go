@@ -27,6 +27,7 @@ type approvalEvidenceFixture struct {
 	set           wire.ControlSetV1
 	member        wire.ControlMemberV1
 	enrollmentKey ed25519.PrivateKey
+	issuerKey     ed25519.PrivateKey
 	trustedTime   time.Time
 }
 
@@ -274,7 +275,7 @@ func newApprovalEvidenceFixture(t *testing.T) approvalEvidenceFixture {
 		t.Fatal("approval evidence 派生了错误 ControlSet")
 	}
 	return approvalEvidenceFixture{evidence: evidence, attestation: attestation, baseHead: bootstrap, set: set,
-		member: member, enrollmentKey: enrollmentKey, trustedTime: trustedTime}
+		member: member, enrollmentKey: enrollmentKey, issuerKey: issuerKey, trustedTime: trustedTime}
 }
 
 func approvalTestHead(t *testing.T, parent *wire.HeadEntryV2, setHash, operationRoot, caRoot,
