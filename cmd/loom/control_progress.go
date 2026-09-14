@@ -139,6 +139,10 @@ func (runtime *controlRuntime) recoverAppliedProgressLocked() error {
 func (runtime *controlRuntime) recoverPendingOperations() error {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
+	return runtime.recoverPendingOperationsLocked()
+}
+
+func (runtime *controlRuntime) recoverPendingOperationsLocked() error {
 	for index := range runtime.journal.Records {
 		record := &runtime.journal.Records[index]
 		if record.Result != nil {

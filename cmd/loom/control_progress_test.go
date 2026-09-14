@@ -156,6 +156,37 @@ func TestControlOperationProgressRejectsOtherListenersAndAnonymousReaders(t *tes
 	}
 }
 
+func TestControlPendingRequestCanRetryAndBlocksCompetingOperation(t *testing.T) {
+	runtime, adminDir := progressTestRuntime(t)
+	peer := readAdminTestCertificate(t, filepath.Join(adminDir, controlAdminCertName))
+	status := serveRuntimeStatus(t, runtime, peer)
+	var endpoint controlAdminEndpointV1
+	if err := readCanonicalFile(filepath.Join(adminDir, controlEndpointName), 4<<20, &endpoint); err != nil {
+		t.Fatal(err)
+	}
+	submitted, err := newControlPingRequest(adminDir, endpoint, status, "demo-original", runtime.now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.checkpoint = func(phase controlplane.Phase) error {
+		if phase == controlplane.PhasePending {
+			return errors.New("demo-before-append")
+		}
+		return nil
+	}
+	serveRuntimeOperation(t, runtime, peer, submitted, http.StatusServiceUnavailable)
+	runtime.checkpoint = nil
+	competing, err := newControlPingRequest(adminDir, endpoint, status, "demo-competing", runtime.now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	serveRuntimeOperation(t, runtime, peer, competing, http.StatusServiceUnavailable)
+	result := serveRuntimeOperation(t, runtime, peer, submitted, http.StatusOK)
+	if result.RequestID != submitted.RequestID || result.OperationTreeSize != 1 || len(runtime.journal.Records) != 1 {
+		t.Fatal("pending 重试重复提交，或竞争请求被夹带入同一 operation root")
+	}
+}
+
 func progressTestRuntime(t *testing.T) (*controlRuntime, string) {
 	t.Helper()
 	root := t.TempDir()

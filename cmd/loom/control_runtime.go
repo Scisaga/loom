@@ -1007,8 +1007,18 @@ func (runtime *controlRuntime) commitOperation(_ context.Context,
 			if err := runtime.finishCommittedLocked(); err != nil {
 				return controlplane.CertifiedControlOperationV1{}, err
 			}
+			if record.Result == nil {
+				if err := runtime.recoverPendingOperationsLocked(); err != nil {
+					return controlplane.CertifiedControlOperationV1{}, err
+				}
+			}
 		}
 		return controlplaneResult(record.Result)
+	}
+	for _, record := range runtime.journal.Records {
+		if record.Result == nil {
+			return controlplane.CertifiedControlOperationV1{}, errors.New("[D104] 先恢复已有 pending operation，不能将另一请求混入其 operation root")
+		}
 	}
 	state := runtime.store.Snapshot()
 	if state.CertifiedHead == nil || state.CertifiedQC == nil || state.Active != nil ||
