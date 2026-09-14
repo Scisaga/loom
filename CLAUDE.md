@@ -131,6 +131,8 @@ Windows 客户端加入与上报任务先完整阅读
   不复制缺少 issuer 的手工 `openssl pkcs12 -export` 命令。Root CA 私钥不得进入交付包。
 - 更换管理员证书必须经 [管理员轮换说明](docs/control-plane-operations.md) 的本机 N=1
   `control rotate-admin` 流程，使新证书进入 certified ACL；不得重新 bootstrap 或手工改 Head/ACL。
+- 新证书验证通过后，立即将证书、私钥、完整包、密码和端点文件整套替换回原交付路径，并清理
+  失效旧文件与临时目录。不得把失效包当作回滚备份，也不得只给用户新路径却留下原路径的失效文件。
 - 验收必须区分“包内材料正确”“真实 TLS 管理权限通过”“Windows Chrome 实机通过”。只读页面
   可打开、Go/OpenSSL 验签通过或测试中注入 TLS 字段，均不能当成浏览器管理员验收。
 - Windows 显示系统层错误/无效数字签名时，先查证书及 issuer 的算法、完整链和私钥匹配，不先

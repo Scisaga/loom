@@ -123,15 +123,15 @@ leaf + issuer 与唯一的管理员私钥。已有合格包保持字节和密码
 ### 既有管理员证书轮换
 
 先部署支持 P-256 管理员 profile 的版本，再在 **N=1 控制节点本机**执行以下维护。
-按运维流程备份控制状态与原管理员目录，停止控制 daemon；新目录必须与原目录不同。
+停止控制 daemon；原管理员目录用于轮换认证，输出目录必须另设为临时目录。
 不要重新 bootstrap 或手工改写 `config.json`、ACL root、Raft、Head。
 
 ```bash
 sudo systemctl stop loom-control.service
 sudo /usr/local/bin/loom control rotate-admin \
   -state-dir /var/lib/loom-control \
-  -admin-dir <old-admin-directory> \
-  -out-dir <new-admin-directory> \
+  -admin-dir <offline-admin-directory> \
+  -out-dir <temporary-admin-directory> \
   -reason 'Replace administrator certificate with a complete P-256 chain'
 sudo systemctl start loom-control.service
 ```
@@ -146,6 +146,12 @@ sudo systemctl start loom-control.service
 证书、ControlSet 与数据面配置保持原字节。新目录的 `rotation-receipt.json` 记录 certified Head、QC
 和 inclusion proof；CA 新私钥保存在控制状态下的 `admin-issuers/`。使用同一新目录重试可核验
 已完成结果，不能生成第二把 key 或扩大权限。失败后先按命令错误检查，不能回滚到已经失效的旧包。
+
+轮换与真实管理认证验证通过后，立即把完整交付目录替换回原 `<offline-admin-directory>`，包含
+`admin.crt`、`admin.key`、`admin-root.crt`、`admin.p12`、`admin.p12.password`、`control-root.crt`、
+`endpoint.json` 和 `rotation-receipt.json`；保持目录 `0700`、文件 `0600`，整套替换避免证书与密码混用。
+清理失效旧文件及临时目录，同步更新当前状态与交付说明。失效包没有回滚用途，不另作备份，
+不能让原路径继续指向它。交付与再次导出始终使用原固定路径。
 
 ### Windows Chrome / Edge 导入
 
