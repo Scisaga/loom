@@ -102,6 +102,18 @@ function Export-ZipEntry {
     try { $source.CopyTo($target) } finally { $target.Dispose(); $source.Dispose() }
 }
 
+function Read-ClientBuildInfo {
+    param([string]$Path, [string]$Name)
+    $stdout = Join-Path $temporaryRoot "$Name-build-info.json"
+    $stderr = Join-Path $temporaryRoot "$Name-build-info.err"
+    $process = Start-Process -FilePath $Path -ArgumentList '--build-info' -Wait -PassThru `
+        -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    if ($process.ExitCode -ne 0) { throw "Cannot read build info: $Name.exe" }
+    $text = (Get-Content -LiteralPath $stdout -Raw).Trim()
+    if (-not $text) { throw "Cannot read build info: $Name.exe" }
+    return ($text | ConvertFrom-Json)
+}
+
 function Read-ChecksumManifest {
     param([string]$Path, [string]$Pattern, [int]$ExpectedCount)
     $entries = @{}
@@ -256,9 +268,7 @@ try {
                 }
                 $componentHashes[$architecture] = $componentHash
                 if ($architecture -eq $hostArchitecture) {
-                    $buildInfoText = (& $exePath --build-info | Out-String).Trim()
-                    if ($LASTEXITCODE -ne 0 -or -not $buildInfoText) { throw "Cannot read build info: $base.exe" }
-                    $buildInfo = $buildInfoText | ConvertFrom-Json
+                    $buildInfo = Read-ClientBuildInfo $exePath $base
                     $binaryHash = (Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash.ToLowerInvariant()
                     if ($buildInfo.edition -cne $edition -or
                         $buildInfo.coordinate.platform -cne "windows/$architecture" -or
