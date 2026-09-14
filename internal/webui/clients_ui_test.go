@@ -133,7 +133,7 @@ func TestClientsPageMergesOnlyTrustedCurrentNodeRuntime(t *testing.T) {
 	}
 }
 
-func TestAndroidAndLinuxUseSignedPresenceWhileWindowsKeepsReportLease(t *testing.T) {
+func TestWindowsAndroidAndLinuxRequireSignedPresence(t *testing.T) {
 	now := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)
 	inventory := ClientInventory{Clients: []ClientView{
 		{ID: "demo-android", Platform: "android", Status: "ready"},
@@ -152,8 +152,8 @@ func TestAndroidAndLinuxUseSignedPresenceWhileWindowsKeepsReportLease(t *testing
 	if got := merged.Clients[1]; got.Status != "stale" || got.DataPlaneStatus != "stale" || got.PresenceStatus != "not yet reported" {
 		t.Fatalf("Linux 在从未提交心跳时错误兼容了完整 Observation: %+v", got)
 	}
-	if got := merged.Clients[2]; got.Status != "online" || got.PresenceStatus != "not used" {
-		t.Fatalf("Windows 被错误纳入本次客户端心跳协议: %+v", got)
+	if got := merged.Clients[2]; got.Status != "stale" || got.DataPlaneStatus != "stale" || got.PresenceStatus != "not yet reported" {
+		t.Fatalf("Windows 在从未提交心跳时错误沿用了完整 Observation lease: %+v", got)
 	}
 }
 

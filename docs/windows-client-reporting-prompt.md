@@ -1,7 +1,7 @@
 # Windows 客户端上报实测提示词
 
 > **用途：仅验收 v1 compatibility profile。** 本提示词固定了单 enrollment endpoint、同源 report URL、
-> 平台公钥和既有两签 Observation，不可作为 v2 ControlSet/EndpointSet 的实现规范。
+> 平台公钥、既有两签 Observation 和独立 `loom-presence-v1`，不可作为 v2 ControlSet/EndpointSet 的实现规范。
 > 开始分布式迁移时应按独立 v2 issue 和
 > [分布式控制平面设计](distributed-control-plane.md)执行；不得在此任务中顺手改变 wire schema。
 
@@ -19,6 +19,9 @@
 - 观测缺失保持未知，入口可达不能宣称业务全部可达；不要为健康绿灯生成额外探测。
   是否已完成替换只按 `docs/status/current.md` 核对；已替换时不得恢复旧完整路径 Agent。
 - 验证目标、次数、并发与启动等待是否符合要求；完成独立修改后及时本地提交。
+- 已注册 Windows Loom 进程立即并每 5 秒发送严格三字段 `node`、`ts`、`signature` 心跳；
+  它使用现有 DPAPI P-256 身份与精确 `presence=1`，不等待数据面或流量，也不触发或刷新
+  原一分钟完整 Observation。服务端按接收时间维持 15 秒 lease，不兼容旧心跳协议。
 
 ## 验收基线
 
@@ -35,11 +38,13 @@
    全部由客户端自动完成；不要求用户找私钥、恢复旧目录或沿用历史绑定。
 2. 启动真实客户端数据面，由现有 activation/recovery 成功路径提供 active snapshot。
    下载、验签、hydrate、preflight 和 candidate 都不能提前推进 `applied`。
-3. 上报实机验收检查读取观测时的 `200` 或旧契约的空正文 `204`，从中控核对当前
-   Device、`ts`、last-seen 和 `applied`。按本次改动选择相关验收，不为重复历史验收
+3. 先核对进程启动后的即时心跳、后续 5 秒节拍，以及停止后 15 秒内已打开 Device inventory
+   自动变为 `Stale`；再检查读取观测时的 `200` 或旧 Observation 契约的空正文 `204`，从中控核对当前
+   Device、两类 `ts`、last-seen 和 `applied`。按本次改动选择相关验收，不为重复历史验收
    添加业务探测、重新加入或等待五分钟 stale；未取得实机证据就如实标注未验证。
-4. 发现问题时沿该流程定位，只修改 Windows 客户端及必要的跨平台客户端包。
-   不修改服务端源码、部署配置，也不手工修补 SSOT、registry、证书或设备绑定。
+4. 发现问题时沿该流程定位，只修改 Windows 客户端、必要的共享客户端包与服务端验签/
+   Device inventory 在线投影；不修改 Android/Linux producer、部署配置，也不手工修补 SSOT、
+   registry、证书或设备绑定。
 5. 若修改代码，运行相关测试、vet 和 Windows amd64/arm64 交叉编译，再提交。
    报告提交号、修改文件、实际测试证据与未确认事项；不部署服务端。
 
@@ -57,8 +62,14 @@
   保存的同一身份；不生成 legacy Claim、`attest_extended` 或 self-check v2。
 - 从已验证并保存的 enrollment URL 同源推导 report URL；HTTPS、精确路径、拒绝重定向。
   不使用 `POST /status`。摘要、共同时间戳与 HTTP 结果规则以接入说明为准。
-- reporter 串行运行，UTC RFC3339Nano 时间严格递增。停止或无法恢复的退出后停止上报，
-  由已有报告老化；不新增生命周期协议、睡眠或网络 watcher、复杂重试状态机。
+- Observation reporter 维持原串行一分钟周期，UTC RFC3339Nano 时间严格递增；停止或无法恢复的
+  数据面退出后停止完整上报，由已有报告老化。
+- presence worker 与 Observation reporter 独立，随已注册 Windows Loom 进程启动/停止，立即发送
+  首包后保持 5 秒节拍；用 `loom-presence-v1` 对 node/ts 签名，正文不得出现证书、Observation 或
+  第四个字段。它只接受空正文 `204`，不跟随重定向、不降级旧协议；失败等下一 tick。
+- 服务端仅为当前 `ready`、SSOT 在役且平台匹配的 Windows/Android enrollment identity 验签；
+  旧或同时间戳包不能刷新接收时间。Windows UI 必须同时要求有效心跳和完整观测，心跳到达及
+  15 秒 lease 到期均推送 WebSocket 更新，无需刷新页面。
 - 健康结论只说明已有证据覆盖的范围，未知不能伪装成成功或失败。
   上报任务不授权新增业务探测，不新增未签名探测端点来制造绿灯。
 - 排查 TUN 联网时，确认派生配置已绑定默认网卡，并将 TUN 的 DNS 请求交给签名

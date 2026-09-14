@@ -19,12 +19,14 @@ import (
 	"loom/internal/clientsecret"
 	"loom/internal/clientupdate"
 	"loom/internal/netx"
+	"loom/internal/nodepresence"
 )
 
 type windowsReporter struct {
 	mu              sync.Mutex
 	state           clientRuntimeState
 	worker          *clientreport.Worker
+	presence        *windowsPresenceWorker
 	stop            func()
 	revision        uint64
 	sampledRevision uint64
@@ -80,7 +82,22 @@ func startWindowsReporter(root string, protector clientsecret.Protector, config 
 		}
 		client = netx.Client(dns, 5*time.Second)
 	}
+	lastPresenceError := ""
 	reporter := &windowsReporter{check: clientruntime.CheckWindowsHealth}
+	reporter.presence = newWindowsPresenceWorker(config.NodeID, identity.PrivateKeyPEM,
+		func(ctx context.Context, heartbeat *nodepresence.Heartbeat) clientreport.Result {
+			return clientreport.SendPresence(ctx, client, endpoint, heartbeat)
+		}, func(result clientreport.Result) {
+			if result.Err == nil {
+				lastPresenceError = ""
+				return
+			}
+			message := result.Err.Error()
+			if message != lastPresenceError {
+				log.Printf("Windows signed presence: %v", result.Err)
+			}
+			lastPresenceError = message
+		})
 	reporter.worker = clientreport.NewWorker(func(ctx context.Context, at time.Time) (*clientreport.Observation, error) {
 		state, problems, agentState, ok := reporter.sampleReport(ctx, filepath.Join(root, "state", "preference.json"), at)
 		if !ok {
@@ -135,9 +152,16 @@ func startWindowsReporter(root string, protector clientsecret.Protector, config 
 		}
 	})
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { defer close(done); reporter.worker.Run(ctx) }()
-	reporter.stop = func() { cancel(); <-done; clearPreparedIdentity(&identity); client.CloseIdleConnections() }
+	var workers sync.WaitGroup
+	workers.Add(2)
+	go func() { defer workers.Done(); reporter.worker.Run(ctx) }()
+	go func() { defer workers.Done(); reporter.presence.Run(ctx) }()
+	reporter.stop = func() {
+		cancel()
+		workers.Wait()
+		clearPreparedIdentity(&identity)
+		client.CloseIdleConnections()
+	}
 	retained = true
 	return reporter, nil
 }

@@ -5,9 +5,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"io"
 	"loom/internal/attest"
@@ -16,6 +19,7 @@ import (
 	"loom/internal/clientruntime"
 	"loom/internal/clientsecret"
 	"loom/internal/clientupdate"
+	"loom/internal/nodepresence"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -27,10 +31,34 @@ import (
 func TestWindowsDPAPIReportAfterInviteCleanup(t *testing.T) {
 	ca, caKey, caPEM := portableTestCA(t)
 	reports := make(chan clientreport.Observation, 16)
+	presences := make(chan nodepresence.Heartbeat, 16)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" || r.URL.Path != "/loom-client/report" || r.URL.RawQuery != "observations=1" {
+		if r.Method != "POST" || r.URL.Path != "/loom-client/report" {
 			t.Error("unexpected report endpoint")
 			w.WriteHeader(400)
+			return
+		}
+		if r.URL.RawQuery == "presence=1" {
+			body, _ := io.ReadAll(io.LimitReader(r.Body, nodepresence.MaxEnvelopeBytes+1))
+			var fields map[string]json.RawMessage
+			var heartbeat nodepresence.Heartbeat
+			if err := json.Unmarshal(body, &fields); err != nil || len(fields) != 3 {
+				t.Errorf("Windows presence 不是严格三字段:%s err=%v", body, err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if err := json.Unmarshal(body, &heartbeat); err != nil {
+				t.Error(err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			presences <- heartbeat
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.URL.RawQuery != "observations=1" {
+			t.Error("unexpected report query")
+			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		body, _ := io.ReadAll(io.LimitReader(r.Body, clientreport.MaxBody+1))
@@ -66,6 +94,18 @@ func TestWindowsDPAPIReportAfterInviteCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	cert, err := portableTestNodeCertificate(ca, caKey, string(identity.CSRPEM), "demo-client")
+	csrBlock, _ := pem.Decode(identity.CSRPEM)
+	if csrBlock == nil {
+		t.Fatal("Windows identity CSR 缺失")
+	}
+	csr, parseErr := x509.ParseCertificateRequest(csrBlock.Bytes)
+	if parseErr != nil {
+		t.Fatal(parseErr)
+	}
+	presenceKey, ok := csr.PublicKey.(*ecdsa.PublicKey)
+	if !ok {
+		t.Fatal("Windows identity 不是 P-256 ECDSA")
+	}
 	clearPreparedIdentity(&identity)
 	if err != nil {
 		t.Fatal(err)
@@ -92,6 +132,22 @@ func TestWindowsDPAPIReportAfterInviteCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reporter.stop()
+	select {
+	case heartbeat := <-presences:
+		if heartbeat.Node != config.NodeID {
+			t.Fatalf("启动心跳 node=%q, want %q", heartbeat.Node, config.NodeID)
+		}
+		if _, err := nodepresence.Verify(heartbeat, presenceKey, time.Now(), nodepresence.MaximumTransit); err != nil {
+			t.Fatalf("启动心跳没有复用已登记身份:%v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("已注册 Windows 进程启动后没有立即发送独立心跳")
+	}
+	select {
+	case <-reports:
+		t.Fatal("启动心跳错误生成了完整 Observation")
+	default:
+	}
 	results := make(chan clientreport.Result, 16)
 	reporter.worker.Result = func(result clientreport.Result) { results <- result }
 	next := func() clientreport.Observation {

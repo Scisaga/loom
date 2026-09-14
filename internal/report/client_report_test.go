@@ -163,27 +163,77 @@ func TestClientReportReceiverAcceptsAndroidDirectV5Observation(t *testing.T) {
 	}
 }
 
-func TestClientHeartbeatUpdatesPresenceWithoutRefreshingObservation(t *testing.T) {
-	h := newClientReportHarnessFor(t, "phone", "android")
-	changes := h.table.changes()
-	heartbeat, err := nodepresence.Sign(h.observation.Node, h.now, h.privateKey)
+func TestWindowsAndAndroidHeartbeatUpdatePresenceWithoutRefreshingObservation(t *testing.T) {
+	for _, test := range []struct {
+		name, node, platform string
+	}{
+		{name: "Windows", node: "workstation", platform: "windows-desktop"},
+		{name: "Android", node: "phone", platform: "android"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h := newClientReportHarnessFor(t, test.node, test.platform)
+			changes := h.table.changes()
+			heartbeat, err := nodepresence.Sign(h.observation.Node, h.now, h.privateKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := postClientReportURL(t, h.receiver, heartbeat, "/api/client/report?presence=1")
+			if response.Code != http.StatusNoContent || response.Body.Len() != 0 {
+				t.Fatalf("客户端心跳响应=%d %q", response.Code, response.Body.String())
+			}
+			select {
+			case <-changes:
+			default:
+				t.Fatal("可信心跳没有唤醒实时 Device inventory")
+			}
+			if got := h.table.presenceView()[heartbeat.Node]; got != heartbeat.TS {
+				t.Fatalf("在线心跳时间=%q, want %q", got, heartbeat.TS)
+			}
+			if learned := h.table.snapshot("control", h.now, 10*time.Minute); len(learned) != 0 {
+				t.Fatalf("心跳错误刷新或创建了完整 Observation:%+v", learned)
+			}
+		})
+	}
+}
+
+func TestWindowsHeartbeatReplayCannotRefreshAcceptedLease(t *testing.T) {
+	h := newClientReportHarness(t)
+	receivedAt := h.now
+	h.receiver.now = func() time.Time { return receivedAt }
+	heartbeat, err := nodepresence.Sign(h.observation.Node, h.now.Add(-10*time.Second), h.privateKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	response := postClientReportURL(t, h.receiver, heartbeat, "/api/client/report?presence=1")
-	if response.Code != http.StatusNoContent || response.Body.Len() != 0 {
-		t.Fatalf("客户端心跳响应=%d %q", response.Code, response.Body.String())
+	if got := postClientReportURL(t, h.receiver, heartbeat, "/api/client/report?presence=1"); got.Code != http.StatusNoContent {
+		t.Fatalf("首次 Windows 心跳响应=%d %q", got.Code, got.Body.String())
+	}
+	if got := h.table.presenceView()[heartbeat.Node]; got != h.now.Format(time.RFC3339Nano) {
+		t.Fatalf("lease 未使用首次接收时间:%q", got)
+	}
+
+	changes := h.table.changes()
+	receivedAt = h.now.Add(14 * time.Second)
+	if got := postClientReportURL(t, h.receiver, heartbeat, "/api/client/report?presence=1"); got.Code != http.StatusNoContent {
+		t.Fatalf("重放心跳响应=%d %q", got.Code, got.Body.String())
+	}
+	if got := h.table.presenceView()[heartbeat.Node]; got != h.now.Format(time.RFC3339Nano) {
+		t.Fatalf("重放错误刷新了接收时间:%q", got)
 	}
 	select {
 	case <-changes:
+		t.Fatal("重放错误唤醒了 Device inventory")
 	default:
-		t.Fatal("可信心跳没有唤醒实时 Device inventory")
 	}
-	if got := h.table.presenceView()[heartbeat.Node]; got != heartbeat.TS {
-		t.Fatalf("在线心跳时间=%q, want %q", got, heartbeat.TS)
+
+	newer, err := nodepresence.Sign(h.observation.Node, h.now.Add(-9*time.Second), h.privateKey)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if learned := h.table.snapshot("control", h.now, 10*time.Minute); len(learned) != 0 {
-		t.Fatalf("心跳错误刷新或创建了完整 Observation:%+v", learned)
+	if got := postClientReportURL(t, h.receiver, newer, "/api/client/report?presence=1"); got.Code != http.StatusNoContent {
+		t.Fatalf("新 Windows 心跳响应=%d %q", got.Code, got.Body.String())
+	}
+	if got := h.table.presenceView()[heartbeat.Node]; got != receivedAt.Format(time.RFC3339Nano) {
+		t.Fatalf("新心跳 lease 未使用最新接收时间:%q", got)
 	}
 }
 

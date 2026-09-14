@@ -592,7 +592,7 @@ const (
 	// 完整 Observation 保持原一分钟采集/同步语义；它过期后即使仍有心跳，
 	// 也不能把旧健康和配置证据继续展示为 Online（§16.4）。
 	clientRuntimeStaleAfter = 2 * time.Minute
-	// Android 与 Linux 每五秒发送独立最小心跳；漏掉三次后在线租约失效。
+	// Windows、Android 与 Linux 每五秒发送独立最小心跳；漏掉三次后在线租约失效。
 	// 它不刷新上面的完整 Observation 时钟（§16.4）。
 	clientPresenceStaleAfter = nodepresence.Lease
 )
@@ -638,8 +638,8 @@ func mergeClientNodeRuntime(client *ClientView, node NodeView, now time.Time) {
 		client.HeartbeatAt = ""
 	}
 	requiresPresence := clientRequiresPresence(*client)
-	// Android 与 Linux 的完整 Observation 不能充当心跳兼容层；Windows 不在
-	// 本次心跳协议范围内，仍由其原完整报告触发 WebSocket 更新（§16.4）。
+	// Windows、Android 与 Linux 的完整 Observation 都不能充当心跳兼容层；
+	// 从未提交 loom-presence-v1 的客户端不能沿用旧报告 lease（§16.4）。
 	heartbeatStale := requiresPresence && (!heartbeatOK || now.Sub(heartbeat) > clientPresenceStaleAfter ||
 		heartbeat.After(now.Add(time.Minute)))
 	if !requiresPresence {
@@ -715,7 +715,7 @@ func mergeClientNodeRuntime(client *ClientView, node NodeView, now time.Time) {
 
 func clientRequiresPresence(client ClientView) bool {
 	switch strings.ToLower(strings.TrimSpace(client.Platform)) {
-	case "android", "linux-server":
+	case "android", "linux-server", "windows-desktop":
 		return true
 	default:
 		return false
