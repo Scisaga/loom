@@ -402,6 +402,11 @@ without this fingerprint are rejected; already joined identities remain valid. S
   the v1 destination is the same-origin report URL derived from the validated
   enrollment URL; redirects are refused, and verified server observations may be
   returned in a bounded HTTP 200 response with compatibility for an empty HTTP 204.
+  An independent Windows presence worker starts as soon as that registered process
+  runs, sends an immediate `loom-presence-v1` pulse and then sends every five seconds
+  to the exact `presence=1` branch. Its JSON contains only `node`, `ts`, and
+  `signature`, uses the same DPAPI P-256 identity, accepts only an empty HTTP 204,
+  and never reads or refreshes the Observation or WireGuard/Hysteria traffic state.
   After the latch, only the certified private `device_report` service supplies the
   exact overlay IP, port, internal certificate profile and Device mTLS policy; no
   path is inferred from distribution, bootstrap or enrollment.

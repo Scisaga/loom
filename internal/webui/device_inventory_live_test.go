@@ -19,7 +19,7 @@ func TestDeviceInventoryWebSocketPushesTrustedStateChanges(t *testing.T) {
 	d := clientUIDeps()
 	d.Control.Clients.List = func() (ClientInventory, error) {
 		return ClientInventory{Clients: []ClientView{{
-			ID: "demo-phone", Name: "Phone", Platform: "android", Status: "ready", Membership: "active",
+			ID: "demo-windows", Name: "Windows", Platform: "windows-desktop", Status: "ready", Membership: "active",
 		}}}, nil
 	}
 	d.Now = func() time.Time {
@@ -29,7 +29,7 @@ func TestDeviceInventoryWebSocketPushesTrustedStateChanges(t *testing.T) {
 	}
 	d.Snapshot = func() View {
 		return View{Nodes: []NodeView{{
-			ID: "demo-phone", Declared: true, Health: "healthy", Source: "签名健康转述",
+			ID: "demo-windows", Declared: true, Health: "healthy", Source: "签名健康转述",
 			ObservedAt: observed.Format(time.RFC3339), PresenceAt: observed.Format(time.RFC3339),
 			AgeSec:  int(deviceNow(d).Sub(observed).Seconds()),
 			Applied: "snapshot-live-0123456789",
@@ -56,7 +56,7 @@ func TestDeviceInventoryWebSocketPushesTrustedStateChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	if initial.Type != "inventory" || !strings.Contains(initial.HTML, "Online") ||
-		!strings.Contains(initial.HTML, `data-device-id="demo-phone"`) ||
+		!strings.Contains(initial.HTML, `data-device-id="demo-windows"`) ||
 		!strings.Contains(initial.HTML, "data-device-live-summary") {
 		t.Fatalf("initial Device inventory update = %+v", initial)
 	}
@@ -74,6 +74,50 @@ func TestDeviceInventoryWebSocketPushesTrustedStateChanges(t *testing.T) {
 	if stale.Type != "inventory" || !strings.Contains(stale.HTML, "Stale") ||
 		strings.Contains(stale.HTML, ">Online<") {
 		t.Fatalf("stale Device inventory update = %+v", stale)
+	}
+}
+
+func TestWindowsDeviceInventoryWebSocketPushesLeaseExpiryWithoutAnotherEvent(t *testing.T) {
+	d := clientUIDeps()
+	d.Control.Clients.List = func() (ClientInventory, error) {
+		return ClientInventory{Clients: []ClientView{{
+			ID: "demo-windows", Name: "Windows", Platform: "windows-desktop", Status: "ready", Membership: "active",
+		}}}, nil
+	}
+	d.Now = time.Now
+	var firstSnapshot sync.Once
+	var observed time.Time
+	d.Snapshot = func() View {
+		firstSnapshot.Do(func() {
+			observed = time.Now().UTC().Add(-clientPresenceStaleAfter + 250*time.Millisecond)
+		})
+		return View{Nodes: []NodeView{{
+			ID: "demo-windows", Declared: true, Health: "healthy", Source: "签名健康转述",
+			ObservedAt: observed.Format(time.RFC3339Nano), PresenceAt: observed.Format(time.RFC3339Nano),
+			AgeSec: int(time.Since(observed).Seconds()), Applied: "snapshot-live-0123456789",
+		}}}
+	}
+
+	server := httptest.NewServer(Handler(d))
+	defer server.Close()
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/control/device-inventory/live"
+	connection, err := websocket.Dial(wsURL, "", server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	_ = connection.SetReadDeadline(time.Now().Add(2 * time.Second))
+
+	var initial deviceInventoryLiveMessage
+	if err := websocket.JSON.Receive(connection, &initial); err != nil ||
+		initial.Type != "inventory" || !strings.Contains(initial.HTML, "Online") {
+		t.Fatalf("Windows 初始在线更新=%+v err=%v", initial, err)
+	}
+	var expired deviceInventoryLiveMessage
+	if err := websocket.JSON.Receive(connection, &expired); err != nil ||
+		expired.Type != "inventory" || !strings.Contains(expired.HTML, "Stale") ||
+		strings.Contains(expired.HTML, ">Online<") {
+		t.Fatalf("Windows lease 到期更新=%+v err=%v", expired, err)
 	}
 }
 
@@ -115,7 +159,7 @@ func TestDeviceInventoryPageBootstrapsOnlyApprovedLiveScript(t *testing.T) {
 func TestDeviceInventorySchedulesOnlineLeaseExpiryWithoutAnotherReport(t *testing.T) {
 	now := time.Date(2026, 9, 13, 22, 50, 0, 0, time.UTC)
 	inventory := ClientInventory{Clients: []ClientView{{
-		ID: "demo-phone", Platform: "android", DataPlaneStatus: "online",
+		ID: "demo-windows", Platform: "windows-desktop", DataPlaneStatus: "online",
 		HeartbeatAt: now.Add(-10 * time.Second).Format(time.RFC3339),
 		LastSeenAt:  now.Add(-10 * time.Second).Format(time.RFC3339),
 	}}}

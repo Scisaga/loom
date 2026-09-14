@@ -162,9 +162,10 @@ func (h *clientReportReceiver) acceptHeartbeat(heartbeat nodepresence.Heartbeat,
 		return http.StatusServiceUnavailable, err
 	}
 	node := ssot.NodeByID()[heartbeat.Node]
-	if node == nil || node.Decommission || node.Access == nil || node.Access.Platform != model.Android ||
+	if node == nil || node.Decommission || node.Access == nil ||
+		(node.Access.Platform != model.WindowsDesktop && node.Access.Platform != model.Android) ||
 		identity.Platform != string(node.Access.Platform) {
-		return http.StatusForbidden, errors.New("客户端在线心跳节点不是在役 Android Device")
+		return http.StatusForbidden, errors.New("[§16.4 在线心跳] 节点不是在役 Windows/Android Device")
 	}
 	publicKey, err := nodepresence.ParsePublicKey(identity.PublicKey)
 	if err != nil {
