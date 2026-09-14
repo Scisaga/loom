@@ -504,9 +504,13 @@ label, ambiguous/disabled button, unexpected foreground package, certificate
 mismatch, emulator target, or changed APK bytes fails closed.
 
 After the enrolled debug APK is installed and Android VPN consent has been
-granted once, run the physical-device smoke once on Wi-Fi and once on cellular.
-It never switches the device network itself. It binds the run to the installed
-APK hash, requires an explicitly latched v2 managed profile and a sequenced
+granted once, run the main physical-device smoke on Wi-Fi. Cellular and
+Wi-Fi/cellular handover are tracked separately in
+[GitHub Issue #16](https://github.com/Scisaga/loom/issues/16) and require a
+telephony-capable physical device with active mobile data; they do not block the
+Wi-Fi acceptance gate. The script never switches the device network itself and
+still accepts `EXPECTED_UNDERLAY=cellular` for that dedicated run. It binds the
+run to the installed APK hash, requires an explicitly latched v2 managed profile and a sequenced
 private `device_report` HTTP 204 receipt, checks idempotent disconnect/reconnect,
 proves that Direct leaves the current generation's active-probe round count
 unchanged, that switching to Auto consumes no more than one round, and that

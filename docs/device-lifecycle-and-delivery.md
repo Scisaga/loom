@@ -177,6 +177,15 @@ pin 匹配的新 endpoint。
 - 服务器不依赖 control 节点 SSH push 作为安装或加入模型。`get.docker.com` 式脚本只负责获取
   通用包，随后仍导入同一加入码；管理员可以先 SSH 到目标机执行同一脚本，但控制平面不保存
   SSH 凭据，也不存在第二套 SSH Enrollment。
+- Linux 创建结果页把“已有管理 SSH/ProxyJump”与“SSH 不可达/未开放/NAT 后”作为同页内联
+  分支。前者由操作者自行建立会话；后者使用云控制台、串口/IPMI 或本地终端。两者都在目标机
+  运行相同 bootstrap，由节点主动取 immutable distribution 并进入私有 Enrollment；页面不弹出
+  SSH 凭据表单，也不从 `direction`、职责或 NAT profile 猜测管理可达性。
+- 软件/身份安装与 `forward` 公网就绪分开。Loom 不管理网关映射，只验证操作者已提供的 exact
+  public/local TCP/UDP tuple。出站 distribution/bootstrap 不可达时显示对应阶段并保持可重试；
+  公网 listener 或映射验证失败时 public access 保持 `preparing`、不 advertise，但不得撤销已经
+  正确安装的 identity。交互提示检查主机防火墙、确认既有映射，或重新创建不含 `forward` 的
+  Device；不扫描端口、不静默降级职责。
 
 `BootstrapTunnelCapabilityV1` 是已 certified Invite 的受限派生物，由 ControlSet 授权的
 专用 bootstrap issuer 签名，不能自行扩大 Invite 边界。默认 TTL 15 分钟，可配 5～30 分钟且

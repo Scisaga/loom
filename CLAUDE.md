@@ -123,6 +123,29 @@ Windows 客户端加入与上报任务先完整阅读
   设备序列号和真实设备信息只留在忽略的本机证据中，不写入回答、tracked 文档或 fixture。
 - Android 报告的 `arm64-v8a` 是手机 ABI，不得把它当作 Linux arm64 主机验收；反之亦然。
 
+### DNS 凭据、NAT 与 Linux 安装验收
+
+- 本环境的 Gandi LiveDNS Personal Access Token 由仓库根目录中被忽略的 `.env` 以
+  `GANDI_PAT_TOKEN` 提供，用于受限 DNS 记录管理和 ACME DNS-01。只检查进程环境会漏掉
+  尚未导出的 `.env`；需要该能力时先以
+  `grep -Eq '^[[:space:]]*(export[[:space:]]+)?GANDI_PAT_TOKEN=' .env` 仅判断声明是否存在，
+  再由目标进程的受保护 dotenv/环境加载边界注入。禁止输出值、开 `set -x`、放入命令参数、
+  tracked 文件、日志或证据。文档只能记录变量名、用途和来源边界。
+- NAT/光猫/路由器的管理权限不属于开发或验收范围。对操作者已经提供的映射，只从外部按
+  signed public/local address、port、transport 逐项验证并跑真实流量；不得尝试登录网关，
+  也不得调用 UPnP、NAT-PMP 或供应商接口创建、修改、删除映射。丢映射、池耗尽、协议或
+  offset 错误使用合成 intent 与 verifier/reconciler 故障注入验证。
+- Linux 的管理 SSH 与 Loom Enrollment 是两个独立事实。SSH/ProxyJump 可达时由操作者自行
+  打开会话并运行页面所示的同一 shell bootstrap；SSH 不可达、端口未开放或节点位于 NAT 后时，
+  改用云厂商控制台、串口/IPMI 或本地终端执行同一脚本，由节点主动访问 distribution、
+  bootstrap ingress 和私有 Enrollment。控制面不保存 SSH 地址、账号、私钥或口令，也不能从
+  `direction` 或 NAT 类型推断 SSH 可达性。
+- `forward` 节点的安装完成与公网 listener 就绪必须分开显示。所需公网 TCP/UDP tuple 未通过
+  外部验证时，身份/软件可以安装，但 public access 状态保持 `preparing`、endpoint 不 advertise；
+  交互只提示检查主机防火墙、确认既有映射，或重新创建不含 `forward` 的 Device，不静默降级、
+  不扫描邻近端口。当前 Linux 原生验收只要求 amd64；arm64 仍构建并做静态/交叉测试，不要求
+  arm64 实机。Android 蜂窝真机验收由 GitHub Issue #16 独立跟踪，不阻塞 Wi-Fi 主验收。
+
 ```bash
 go build ./...
 go test ./...

@@ -464,17 +464,21 @@ func writeClientInvite(b *strings.Builder, invite ClientInviteView, pkg LinuxCli
 		b.WriteString(`<section class="card client-setup"><div class=client-setup-head><div><div class=label>Android</div><h2>Open Loom, then scan the QR code</h2></div><p class=small>Scan the QR in the Android app, or import the downloaded <code>client.loom-invite</code> join file. Android enrollment is limited to use_loom.</p></div></section>`)
 		return
 	}
-	b.WriteString(`<section class="card client-setup" aria-labelledby=client-setup-title><div class=client-setup-head><div><div class=label>Linux</div><h2 id=client-setup-title>Local or SSH-assisted bootstrap</h2></div><p class=small>SSH only runs the same bootstrap on the target host; Loom does not store SSH credentials.</p></div>`)
+	b.WriteString(`<section class="card client-setup" aria-labelledby=client-setup-title><div class=client-setup-head><div><div class=label>Linux</div><h2 id=client-setup-title>Local or SSH-assisted bootstrap</h2></div><p class=small>Management access is separate from Loom Enrollment. No SSH credential is stored.</p></div>
+	<div class=client-setup-methods><section class=client-setup-method aria-labelledby=linux-ssh-path><div class=client-method-title><span class=client-step>A</span><div><h3 id=linux-ssh-path>SSH or ProxyJump is reachable</h3></div></div><p class="small dim">Open the management session yourself, then run the shell bootstrap shown below on the target.</p></section>
+	<section class=client-setup-method aria-labelledby=linux-console-path><div class=client-method-title><span class=client-step>B</span><div><h3 id=linux-console-path>SSH is closed, unreachable, or behind NAT</h3></div></div><p class="small dim">Use the provider console, serial/IPMI, or a local terminal. The target runs the same bootstrap and reaches distribution and Enrollment outbound.</p></section></div>
+	<div class=callout><b>No SSH probe is run.</b><br><span class=small>Loom does not infer management reachability from connection direction, responsibilities, or a NAT profile.</span></div>`)
 	if forward {
 		fmt.Fprintf(b, `<div class=client-setup-prepare><div><span class=client-step>1</span><div><b>Configure the server declaration before joining</b><span class="small dim">This declares data-plane reachability. Location does not determine direction.</span></div></div><code class=command-block>sudo install -d -m 0755 /etc/loom
 	sudoedit /etc/loom/device.yaml</code><code class=command-block>server:
 	  public_endpoint: edge.example.net
 	  inbound_port: 61698
-	  direction: %s</code><p class="small dim">For reverse_only, the Device initiates persistent WireGuard tunnels; inbound_port is reached through those tunnels. The public endpoint remains required by the current server declaration.</p></div>`, esc(invite.Direction))
+	  direction: %s</code><p class="small dim">For reverse_only, the Device initiates persistent WireGuard tunnels; inbound_port is reached through those tunnels. The public endpoint remains required by the current server declaration.</p></div>
+	<div class="callout warnline"><b>Public ports are a separate readiness gate.</b><br><span class=small>Installation may complete, but public access stays preparing and no endpoint is advertised until an external verifier confirms every signed TCP/UDP tuple. Loom never changes NAT mappings. If verification fails, check the host firewall or existing mapping, or abandon this invitation and create a Device without forward.</span></div>`, esc(invite.Direction))
 	}
 	if pkg.InstallerURL != "" {
 		fmt.Fprintf(b, `<div class=client-setup-prepare><div><span class=client-step>2</span><div><b>Shell bootstrap on the target</b><span class="small dim">Run these commands locally, or first open an SSH session yourself. No join code or Device configuration is embedded in the installer URL.</span></div></div><code class=command-block>curl -fsSL '%s' | sudo sh
-	sudo /usr/local/bin/loom client enroll -stdin</code><p class="small dim">SSH-assisted: run <code>ssh root@target-host</code>, then run the same two commands. Loom does not receive or store the SSH credential.</p></div>`, esc(pkg.InstallerURL))
+	sudo /usr/local/bin/loom client enroll -stdin</code><p class="small dim">SSH-assisted: open the target through your existing SSH inventory, then run the same two commands. Loom does not receive or store the SSH credential. A distribution or bootstrap egress failure must identify that stage and remain retryable; it is not evidence of a broken NAT mapping.</p></div>`, esc(pkg.InstallerURL))
 	}
 	if clientPackageAvailable(pkg) {
 		fmt.Fprintf(b, `<div class=client-setup-prepare><div><span class=client-step>⇩</span><div><b>Manual or offline package install</b><span class="small dim">Run these commands in the directory containing both downloads.</span></div></div><code class=command-block>printf '%%s  %%s\n' '%s' '%s' | sha256sum -c -

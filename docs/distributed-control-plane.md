@@ -3074,7 +3074,9 @@ responsibility、FQDN 或上述资源时同样失败关闭。
 不能使用 80/443 的服务器仍然必须有 FQDN，并通过 DNS-01 签证书；替代端口不是备案或供应商
 政策的绕过机制。executor 在激活前必须确认该公开方式在适用法律、供应商条款和本地网络中可用，
 否则保持 preparing。位于光猫/NAT 后的 server 除 DNS 指向外，还必须由 operator/provider 完成
-相应 TCP 与 UDP 映射。
+相应 TCP 与 UDP 映射。该映射是 Loom 之外由操作者提供的外部事实；Loom 不取得网关权限，
+不经 UPnP、NAT-PMP 或供应商接口创建、修改、删除映射，只记录 certified private intent 并从
+外部逐 transport 验证 exact public/local tuple。
 
 ### 12.3 DNS 与证书 reconcile
 
@@ -3507,8 +3509,9 @@ listener、credential 或 mapping。retired 只禁止拨号并解锁后续清理
 
 ### 14.2 NAT 预映射池
 
-nat_mapped server 若预先建立一段一一对应的 public/local UDP 映射，HY2 可以在该池中选择下一
-个未占用端口并完成上述重叠，无需每次修改光猫/网关。必须满足：
+nat_mapped server 若由操作者预先建立一段一一对应的 public/local UDP 映射，HY2 可以在该池中
+选择下一个未占用端口并完成上述重叠；这里的“分配”只分配 Loom 对既有 tuple 的 reservation，
+不修改光猫/网关。必须满足：
 
 - certified private intent 记录池边界、transport 和 mapping generation；
 - 激活前从外部验证具体 public tuple，不能只相信网关配置；
@@ -3525,6 +3528,9 @@ allocation certified time/head；正常退役进入带确定 `reuse_not_before` 
 
 direct server 没有 PortMappingIntent，但仍要做 listener 与外部 reachability 验证。替代 HTTPS
 TCP 映射和 Trojan TCP 池按相同原则处理，不能从 UDP 池推导。
+
+生产验收只需对操作者明确提供的映射执行正常路径外部验证和真实流量；mapping 消失、池耗尽、
+offset/transport 错误由合成 intent、verifier/reconciler 故障注入覆盖，不以更改真实网关为测试步骤。
 
 ### 14.3 客户端行为
 
@@ -3559,9 +3565,10 @@ hash、passed/failed 与 observation time，再确定性派生 `GateStatus`；�
 
 ## 15. 外部副作用与租约
 
-DNS、ACME、NAT/provider、listener、防火墙和 publisher 都是 certified desired state 的幂等
-reconciler，不是 authority。每类资源按 resource_id + generation 获取短租约；租约绑定 Raft
-term/index、certified head 和有界 deadline。
+DNS、ACME、listener、防火墙和 publisher 都是 certified desired state 的幂等 reconciler，不是
+authority。NAT mapping 是操作者提供的外部事实，Loom 的 reconciler 只对其 private intent、
+reservation 与外部 readback/evidence 收敛，不调用网关/provider 写接口。每类受管资源按
+resource_id + generation 获取短租约；租约绑定 Raft term/index、certified head 和有界 deadline。
 
 执行规则：
 
@@ -3576,7 +3583,7 @@ term/index、certified head 和有界 deadline。
 执行顺序必须尊重依赖：
 
 ~~~text
-DNS/映射准备
+DNS 写入 / 操作者提供的 mapping intent 与外部 readback 就绪
   → 证书签发
   → local listener install
   → firewall least privilege
@@ -3584,7 +3591,7 @@ DNS/映射准备
   → EndpointSet advertise
   → client floor
   → prefer/drain/retire
-  → 回收旧证书、listener、mapping
+  → 回收旧证书、listener 与 Loom mapping reservation（不改网关）
 ~~~
 
 ControlSet 失去 quorum 时，不创建新端点、不轮换证书、不删除旧 listener；已有数据面和未过期
@@ -3730,7 +3737,7 @@ Device view 或配置 authority。
 ### M5 · 域名、DNS-01、证书与三类公网部署
 
 - DNS provider adapter、最小权限 credential、domain allocation policy；
-- direct_standard、direct_alternate、nat_mapped reconcile；
+- direct_standard、direct_alternate，以及 nat_mapped intent/readback reconcile；
 - 节点本地 CSR/private key、ACME DNS-01、SPKI overlap；
 - Nginx fake/static distribution 配置模板和外部 reachability verification。
 
@@ -3859,8 +3866,8 @@ server 通过签名 public port/mapping 正确发布，同时 control 服务保�
 4. 新 view 不再选择 draining 代，但旧 view 的有界回退与既有会话可持续到 guard deadline；
 5. deadline 后 retire，客户端不扫描邻近端口；
 6. executor 重启/接管保持相同 operation/port；
-7. NAT 预映射池在范围内轮换无需每次网关变更；
-8. 池耗尽、映射消失、range offset 错误明确失败；
+7. NAT 在操作者预先提供的映射范围内轮换 Loom reservation，不修改网关；
+8. 已提供映射的正常路径做真实外部验证；池耗尽、映射消失、range offset 错误用合成故障明确失败；
 9. 紧急 revoke 明确中断而非伪称无中断；
 10. WG 未实现双 interface/peer 前不能通过“无中断”验收；
 11. 同 endpoint ID 的 old/new listener generation 可同时发布，但每代 state 唯一且可拨 endpoint 恰有一个
@@ -3872,7 +3879,8 @@ server 通过签名 public port/mapping 正确发布，同时 control 服务保�
 
 1. Android、Windows、Linux 验同一 descriptor/catalog/QC vectors；
 2. Android VPN permission、前台服务、protect、防回环和 Keystore 正常；
-3. Wi-Fi/蜂窝切换创建新 network generation，旧代观测不污染新代；
+3. Wi-Fi 默认 Network/AP 变化创建新 network generation，旧代观测不污染新代；蜂窝与
+   Wi-Fi 切换在独立 GitHub Issue #16 的具备 telephony 真机上验收，不阻塞 Wi-Fi 主矩阵；
 4. Direct 不主动探测；Auto/指定出口复用同代 registry；
 5. 锁屏、省电、进程回收、重启后恢复正式 LKG，不恢复 bootstrap token；
 6. 固定出口只更换入口/listener generation，不偷偷更换最终出口；

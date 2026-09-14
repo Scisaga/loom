@@ -2912,15 +2912,16 @@ provider 使用可替换 adapter，Gandi、Dynadot 或 RFC 2136 都不是协议 
 token、ACME account key 和 TLS private key 只在秘密层。
 
 FQDN、RRset、CertificateIntent、端口和 listener generation 先 quorum commit，再由持资源
-租约的 executor 幂等调用 DNS/ACME/防火墙/NAT API并读回验证。租约只协调副作用，不授予
+租约的 executor 幂等调用 DNS/ACME/防火墙 API 并读回验证；NAT mapping 按 D136 只验证
+操作者提供的外部事实，不调用写 API。租约只协调副作用，不授予
 desired-state authority；外部 API 不支持 CAS/fencing 时只承诺检测漂移后的最终收敛，不
 冒充 exactly-once。DNS 只负责发现，不能改变 ControlSet 或让 signed EndpointSet 外的地址
 获得信任。公开证书优先 ACME DNS-01，TLS key 在终止节点本地生成，新证书验证后才替换旧证书。
 
 单 `public_endpoint + inbound_port` 只作为 v1 generation 0 兼容。目标 EndpointSet 为同一
 logical ID 保存多个 listener generation，正常轮换固定为
-`allocate → prepare → advertise → prefer → drain → retire`：先开启新 listener、证书、
-防火墙和 NAT，外部验证后下发新旧两代；新连接优先新代并可回退，旧会话自然排空；满足
+`allocate → prepare → advertise → prefer → drain → retire`：先开启新 listener、证书与
+防火墙，并确认 D136 所述既有 NAT tuple，外部验证后下发新旧两代；新连接优先新代并可回退，旧会话自然排空；满足
 客户端 applied/兼容窗口/quiet period 后才关旧端口并写 retired tombstone。准备失败时旧端口
 始终 active。
 
@@ -3185,11 +3186,12 @@ reconcile 防护。
    metadata。优先强制 provider version/CAS；确无 CAS 时，只能在旧写不会获得密码学 authority、
    能读回检测并由新 lease 收敛的资源上自动执行，且必须暴露 stale/degraded。包含隐式删除的
    upsert 降级为 destructive。
-3. **destructive/irreversible**：删除 RR/TXT、关闭 listener、撤防火墙/NAT、删除 secret/key、
+3. **destructive/irreversible**：删除 RR/TXT、关闭 listener、撤防火墙、删除 secret/key、
    撤销或释放唯一资源。必须同时具备新鲜 certified tombstone、精确 owner/generation、单调
    fencing token 与 provider/local Agent 的条件删除。外部 API 若不能证明 CAS/fencing，禁止
    无人值守执行；系统宁可暂留资源并告警，只有管理员在读回精确对象、影响预览和二次确认后
-   才能走受审计的 supervised cleanup。
+   才能走受审计的 supervised cleanup。NAT 映射不在 Loom cleanup 权限内，按 D136 始终由
+   操作者在系统外管理。
 
 receipt 和 CRDT observation 只报告调用及读回事实，不能反向修改 desired state。secret 删除、
 端口释放和 DNS 清理都必须满足各自 retention/overlap 后再另行提交 tombstone；过期 executor
@@ -3891,3 +3893,26 @@ TLS state、更新公开的 `control-root.crt`。迁移不改变 admin leaf/priv
 ControlSet、Raft、Head 或任何原生 Device 通道，重复执行也不轮换 browser authority。D134 中“共用
 原 server key/internal root”及“原 control-root 不变”的迁移细节由本决定取代；D134 的 exact
 loopback/Host/Origin 与 UI-only 边界继续有效。
+
+### D136 · NAT 映射由操作者提供，SSH 与 Enrollment 分离
+
+**日期** 2026-09-14 · **状态** 生效 · **相关** D93、D103、D120、
+[分布式控制平面 §12、§14～§15](distributed-control-plane.md#12-域名公开服务与证书管理)
+
+项目不取得光猫、路由器或供应商 NAT 的管理权限，也不使用 UPnP/NAT-PMP 自动改映射。
+`nat_mapped` 的 public/local TCP/UDP tuple 与预映射池由操作者在 Loom 之外提供；Loom 只把
+它们作为 certified private intent，管理既有 tuple 的 reservation，并从外部按 exact transport
+验证 readback/真实流量。现网验收只验证已提供映射的正常路径；mapping 消失、池耗尽、
+offset/transport 错误由合成 intent 与 verifier/reconciler 故障注入覆盖。D103 中“executor 调用
+NAT API”的部分及 D120 中任何隐含网关写权限的解释由本决定取代；DNS、ACME 与明确受管的
+云防火墙仍保留各自的 executor 边界。
+
+Linux 管理 SSH 与 Loom Enrollment 是两个独立事实。创建结果页不扫描 SSH，也不从
+`direction`、职责或 NAT profile 推断可达性：已有 SSH/ProxyJump 时由操作者自行进入目标机；
+SSH 未开放、不可达或 NAT 后时，通过云控制台、串口/IPMI 或本地终端运行同一 shell bootstrap，
+由节点主动取 distribution、bootstrap ingress 和私有 Enrollment。控制面不接收 SSH 私钥或口令，
+两条路径也不产生第二套 Device/Enrollment。
+
+软件与 identity 安装成功不表示 `forward` 公网入口已就绪。external verify 未通过时，listener
+保持 `preparing` 且不 advertise；同页交互只显示具体失败层，提示检查主机防火墙、确认既有映射，
+或废弃邀请后创建不含 `forward` 的 Device。不得扫描端口、自动改网关或静默降级职责。

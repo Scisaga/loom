@@ -15,10 +15,29 @@
 - 管理员证书、control peer 证书、control API server 证书使用不同 key 和用途 profile。
 - 同一 private HTTPS `control_api` 同时承载浏览器 UI：未提交客户端证书时只能读取脱敏视图；
   提交当前 certified ACL 精确授权的管理员 leaf 时才启用配置处理器。不存在 UI 口令或登录 Cookie。
-- 当前没有部署中的 Windows Device；Windows 源码保持不动，其 compatibility/验收不再阻止
-  服务端、Linux、Android 发布或 Gate B。Gate B 只按实际活跃调用方和扫描证据判断。
+- Windows v2 客户端已有实现；是否有 Windows Device 参与 Gate B 必须从当前 certified deployment
+  inventory 与实际验收证据判断，不能根据本静态文档推断“未实现”或“未部署”。
 - 当前生产 reducer 只登记 `control_ping`，用于验证管理员签名、Raft commit、QC 和 inclusion proof。
   未实现的 operation kind 会失败关闭，不会返回伪造的“成功”。
+
+## Gandi DNS 凭据
+
+本部署环境在仓库根目录被忽略的 `.env` 中声明 `GANDI_PAT_TOKEN`。它是 Gandi Personal
+Access Token，仅用于 LiveDNS 记录操作和 ACME DNS-01，不是 Device、Enrollment、心跳或
+ControlSet token。tracked 文档只记录变量名和用途，不记录其值。
+
+运行 DNS/证书任务前，先用下面的只读检查确认 `.env` 中存在声明；只检查当前进程的
+`env` 不足以判定缺失，因为 `.env` 不会自动 export：
+
+```bash
+test -f .env &&
+  grep -Eq '^[[:space:]]*(export[[:space:]]+)?GANDI_PAT_TOKEN=' .env
+```
+
+实际值只由执行 DNS/ACME 操作的受保护进程通过 dotenv/环境边界读取。禁止 `echo`、调试 trace、
+命令行参数、日志、截图、证据或生成配置包含该值。Gandi adapter 仍须显式限制 zone 与允许的
+record name 前缀，拒绝重定向和 credential proxy，并在写后 readback；变量存在不等于凭据有效，
+认证或 scope 失败时只报告状态和失败层。
 
 ## 一次性初始化
 

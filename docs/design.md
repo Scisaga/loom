@@ -1361,6 +1361,8 @@ Nginx 共用一个 L4 SNI dispatcher，但不能由 Nginx 终止或转发 Enroll
 
 DNS 记录本身没有端口；客户端实际拨号 tuple 只从 signed EndpointSet 读取。直连公网部署没有
 “映射”可配置；NAT 部署必须把 public/local address、port 与 transport 分开建模并逐项验证。
+映射由操作者在 Loom 之外预先提供；Loom 不要求网关管理权限，不通过 UPnP、NAT-PMP 或供应商
+NAT API 创建、修改、删除映射，只管理对既有 tuple 的 reservation 与外部验证证据。
 替代端口是网络部署能力，不是绕过备案或供应商政策的法律方案。
 
 > 同一物理 Device 若兼任 `control`，public listeners 与 overlay-only control listeners 必须绑定
@@ -1845,6 +1847,18 @@ Agent pull 解决节点主动取回、NAT 下配置分发、控制平面可离�
 
 > 管理 SSH 的可达性来自中控本地 inventory，不能从 `direction` 推断。
 
+新 Linux Device 的创建结果页必须把管理 transport 与 Enrollment 分开，采用同页内联步骤而非
+弹窗：已有 SSH/ProxyJump 时，操作者自行打开会话后运行 shell bootstrap；SSH 未开放、不可达或
+目标位于 NAT 后时，操作者通过云控制台、串口/IPMI 或本地终端运行完全相同的脚本。后一条路径
+由目标节点主动取回 immutable distribution、建立 bootstrap tunnel 并访问私有 Enrollment，
+不要求中控反向连入，也不允许上传 SSH 私钥/口令。
+
+`forward` Device 的软件/identity 安装与 public access readiness 是两个状态。外部 observer 未能
+按 signed transport 验证 exact public/local TCP/UDP tuple 时，Device 可保持已安装，但 listener
+generation 只能是 `preparing` 且不得 advertise。界面逐项提示出站 distribution/bootstrap、
+本机 listener、防火墙或既有 NAT mapping 的失败层，并允许操作者修复后重验，或废弃该邀请并
+创建不含 `forward` 的 Device；不得扫描邻近端口、改网关或静默降级职责。
+
 ### 14.2.1 apply:五步,顺序不能换
 
 不论推还是拉,一次安装的语义是同一个:
@@ -2024,9 +2038,10 @@ publisher 同时负责首次写入和持续对账。镜像被清空、部分复�
 2. **commit/QC 先耐久，公开不可变正文其次，带 revision 条件写的 private current/view 最后。** 旧对象按保留策略保存。
 3. **写成功不等于取得到。** 发布后必须从声明的 Device/网络视角取回并逐层验证。
 
-DNS、ACME、云防火墙和 NAT 映射也使用同一“certified intent + 租约 executor + 幂等
-reconcile + 读回”边界；additive、monotonic pointer 与 destructive 动作分别处理，外部 API
-不能提供 generation CAS/fencing 时禁止无人值守 delete/close。详见
+DNS、ACME、云防火墙使用同一“certified intent + 租约 executor + 幂等 reconcile + 读回”
+边界；additive、monotonic pointer 与 destructive 动作分别处理。NAT 映射不由 Loom 写入：
+它是操作者预先提供的外部事实，Loom 只对 certified mapping intent、reservation 和外部验证
+证据收敛。受管外部 API 不能提供 generation CAS/fencing 时禁止无人值守 delete/close。详见
 [分布式控制平面 §15](distributed-control-plane.md#15-外部副作用与租约)。租约只减少重复
 副作用，不授予 authority，也不能在过期时触发删除。只有 v1 compatibility 仍向公开静态树
 写 mutable signed-current；目标 v2 不把它延续为公网发现机制。

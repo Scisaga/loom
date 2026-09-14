@@ -19,6 +19,10 @@
 内部协议或 Linux CLI 的兼容拼写，不表示还要创建或注册另一个客户端记录；产品动作
 始终是把客户端绑定到控制平面已创建的 Device 并加入网络。
 
+当前项目的 Linux 原生主机验收范围是 amd64。arm64 制品仍须可重复构建并通过静态、交叉
+编译和格式验证，但不要求提供 arm64 实机或原生主机，不能把手机的 `arm64-v8a` ABI 当作
+Linux arm64 验收环境。
+
 ## 准备条件
 
 - 目标机是 Linux amd64，能够通过 HTTPS 访问加入码中写明的 v1 control 加入端点，并能访问
@@ -279,8 +283,8 @@ find /var/cache/loom/acceptance -maxdepth 2 -type f \
 每次续跑先在受控证据库记录并核对：Loom commit、制品 SHA-256、基础镜像 ID/digest、
 `uname -m`、`/etc/os-release`、虚拟化类型、场景状态和可写实例是否已销毁。真实地址、域名、
 Device ID、证书、token、密钥、原始抓包和 SSH inventory 仍只进入忽略目录或外部受控证据库；
-仓库只提交脱敏摘要。amd64 与 arm64 分别出具结果，某一架构延期时必须明确记为未验收，
-不能用交叉编译或另一架构结果代替。
+仓库只提交脱敏摘要。amd64 原生结果与 arm64 构建/静态结果分别出具；当前范围不要求
+arm64 原生运行结果，也不能用 Android ABI 冒充 Linux 主机证据。
 
 ## 1. 创建 Device 和加入码
 
@@ -301,6 +305,27 @@ Device ID、证书、token、密钥、原始抓包和 SSH inventory 仍只进入
 `client.loom-invite`，供 Linux CLI 使用。
 
 SSH 不是另一种 Enrollment，也不由 Loom 中控保存主机地址、账号、私钥或口令。
+
+### 安装页面的可达性分支
+
+创建结果页必须在同一页面内联展示两个并列入口，不使用弹窗，也不让中控主动扫描 SSH：
+
+```text
+已有管理 SSH / ProxyJump 可达
+  → 操作者自行打开 SSH 会话
+  → 在目标机运行页面中的 shell bootstrap
+
+SSH 未开放、不可达或节点位于 NAT 后
+  → 使用云厂商控制台、串口/IPMI 或机器本地终端
+  → 运行完全相同的 shell bootstrap
+  → 节点主动访问 distribution、bootstrap ingress 和私有 Enrollment
+```
+
+页面不能从 `direction`、职责或 `nat_mapped` 推断 SSH 是否可达，也不提供要求上传 SSH
+私钥/口令的表单。若节点出站访问 distribution 或已签 bootstrap ingress 失败，安装器应保留
+可重试状态并明确显示失败阶段、目标角色和 transport；不得改用未签 URL、扫描其他端口，
+也不得把它误报成 NAT 映射失败。应先完成包下载与校验，再通过标准输入消费一次性 URI，
+避免在纯下载失败时浪费加入码。
 
 这些方式共享同一个短 TTL、一次性 token。普通重启、断线重连和配置更新不会再次加入。
 不要把加入 URI 放进 shell 参数、聊天记录或工单；它是有效期内的 bearer secret。
@@ -372,6 +397,14 @@ UDP tuple 上的 WG listener；正式版另有独立 Trojan/TLS TCP bootstrap fa
 这些由 certified `PublicEndpointIntent`、`ManagedZone` / `DomainBinding`、按用途拆分的 EndpointSet 和
 listener generation 表达，并通过新旧 listener overlap 轮换；
 DNS 解析结果和本机探测只能帮助选 endpoint，不能自行授权未签地址或端口。
+
+NAT 映射由操作者在 Loom 之外预先提供，Loom 不要求网关管理权限，也不通过 UPnP、
+NAT-PMP 或供应商接口改动映射。安装完成后，本机 listener 自检和公网就绪是两个状态：
+只有外部观察点对 signed public/local TCP/UDP tuple 逐项验证，并以真实跨节点流量确认
+transport 一致后，`forward` public access 才能从 `preparing` 进入 active/advertised。
+公网端口未开放或既有映射不匹配时，Device identity、软件和私有配置可以保留，但 UI 必须
+逐 transport 显示失败并给出三种明确动作：检查主机防火墙、让操作者确认既有映射，或放弃
+本次邀请并创建不含 `forward` 的 Device。不得自动改网关、扫描邻近端口或静默降级职责。
 
 客户端在本机创建或复用 `/etc/wireguard/node.key`，只把公钥随加入请求发给中控。缺少
 `/usr/bin/wg` 或 `/usr/bin/wg-quick` 时，会在消费加入码前通过受支持的 apt/dnf/yum/apk/

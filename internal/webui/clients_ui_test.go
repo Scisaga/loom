@@ -194,6 +194,9 @@ func TestClientInvitationShowsRealQRResourceAndLinuxLink(t *testing.T) {
 		`value="loom://enroll#test"`,
 		`Device created · join code ready`,
 		`Local or SSH-assisted bootstrap`,
+		`SSH or ProxyJump is reachable`,
+		`SSH is closed, unreachable, or behind NAT`,
+		`No SSH probe is run`,
 		`short-lived, single-use secret`,
 		`sudo ./install.sh --invite-file ../client.loom-invite`,
 		`sudo ./install.sh --no-enroll`,
@@ -320,12 +323,16 @@ func TestServerDeviceInvitationExplainsDeclarationBeforeJoin(t *testing.T) {
 		`public_endpoint: edge.example.net`, `inbound_port: 61698`, `direction: reverse_only`,
 		`Location does not determine direction`, `initiates persistent WireGuard tunnels`,
 		`Shell bootstrap on the target`, `SSH-assisted`, `No QR or join-file delivery`,
+		`SSH is closed, unreachable, or behind NAT`, `provider console, serial/IPMI, or a local terminal`,
+		`No SSH probe is run`, `Public ports are a separate readiness gate`,
+		`public access stays preparing`, `Loom never changes NAT mappings`,
+		`check the host firewall or existing mapping`, `distribution or bootstrap egress failure`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("server invitation missing %q", want)
 		}
 	}
-	for _, forbidden := range []string{`/qr.png`, `Download join file`} {
+	for _, forbidden := range []string{`/qr.png`, `Download join file`, `ssh root@target-host`} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("server invitation exposed access-only delivery %q", forbidden)
 		}
