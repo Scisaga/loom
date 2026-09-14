@@ -15,7 +15,7 @@ repository's `mobile/loomcore` package.
 | Android API floor | `26` |
 | ABIs | `arm64-v8a`, `x86_64` |
 | Build tags | `with_gvisor,with_quic,with_wireguard,with_ech,with_utls,with_clash_api` |
-| Verified local AAR SHA-256 | `7098ba31f23554e3aee020d9616b0f738a70b2d60849de435157daa08900cc19` |
+| Verified local AAR SHA-256 | `93ed22014a334d53284cf817544d0932a1eb51de58a644c644837640d0850a43` |
 
 `scripts/build-mobile-aar.sh` performs one `gomobile bind` invocation for both
 `experimental/libbox` and `loom/mobile/loomcore`; this is the enforced
