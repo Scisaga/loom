@@ -123,6 +123,19 @@ Windows 客户端加入与上报任务先完整阅读
   设备序列号和真实设备信息只留在忽略的本机证据中，不写入回答、tracked 文档或 fixture。
 - Android 报告的 `arm64-v8a` 是手机 ABI，不得把它当作 Linux arm64 主机验收；反之亦然。
 
+### 浏览器管理员证书
+
+- 管理员新证书必须使用完整 P-256 leaf/issuer 链，证书签名为 ECDSA/SHA-256，leaf 用途仅为
+  clientAuth；同一管理员 key 用于 mTLS 与控制操作签名。旧 Ed25519 身份仅用于历史验证和迁移。
+- 统一使用 `loom control export-admin` 打包，它核对完整链、私钥匹配、包内仅一个管理员 key；
+  不复制缺少 issuer 的手工 `openssl pkcs12 -export` 命令。Root CA 私钥不得进入交付包。
+- 更换管理员证书必须经 [管理员轮换说明](docs/control-plane-operations.md) 的本机 N=1
+  `control rotate-admin` 流程，使新证书进入 certified ACL；不得重新 bootstrap 或手工改 Head/ACL。
+- 验收必须区分“包内材料正确”“真实 TLS 管理权限通过”“Windows Chrome 实机通过”。只读页面
+  可打开、Go/OpenSSL 验签通过或测试中注入 TLS 字段，均不能当成浏览器管理员验收。
+- Windows 显示系统层错误/无效数字签名时，先查证书及 issuer 的算法、完整链和私钥匹配，不先
+  要求用户反复导入或重启。网站根 `control-root.crt` 与管理员签发根 `admin-root.crt` 分别说明。
+
 ### DNS 凭据、NAT 与 Linux 安装验收
 
 - 本环境的 Gandi LiveDNS Personal Access Token 由仓库根目录中被忽略的 `.env` 以

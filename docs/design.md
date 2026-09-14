@@ -1582,7 +1582,7 @@ service certificate/IP SAN 或 pinned SPKI，并使用 admin mTLS 提交带 base
 | **control peer mTLS cert/key** | **每个 control Device 各自生成** | 只持本 peer 私钥；只用于 Raft/anti-entropy transport identity |
 | **control membership/config/enrollment keys** | **每个 control Device 按用途分别生成三把** | 只持本成员对应私钥；三者互不复用，也不与 peer/Device/admin/CA/TLS/code-signing/recovery key 复用 |
 | **BootstrapIssuer key** | 受约束 control executor/HSM；按 epoch 轮换 | 只签 Invite/QC 派生且不越过 policy 上限的短期 tunnel capability；公开验证 key 经 ControlSet 认证 |
-| **admin 私钥** | 管理员终端/硬件 | 仅验证证书与 certified ACL |
+| **admin 私钥** | 管理员终端/硬件；新签发为 P-256，TLS 与操作签名共用 | 仅验证完整签发链与 certified ACL；换证见 D137 |
 | **internal service TLS key** | 每个 control Device 本地 | 只持本机 key；证书限定 control_api/Enrollment/Raft/config/report 的独立 EKU/profile 与 overlay IP SAN |
 | **公开 TLS/ACME 私钥** | TLS 终止 Device 本地 | 证书、SPKI 摘要和状态，不持有节点私钥 |
 | **客户端数据面凭据** | approval commit 前生成并 sealed 给既定接收者，或写入不可变版本 KMS | 只提交 ciphertext hash/secret ref；接替 executor 只能重放同一制品 |

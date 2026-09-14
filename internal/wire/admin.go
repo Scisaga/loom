@@ -173,7 +173,7 @@ func AdminResourceScopeHash(scope *AdminResourceScopeV1) (string, error) {
 func ValidateAdminCertificateProfile(profile *AdminCertificateProfileV1) error {
 	if profile == nil || profile.Schema != 1 || !validIdentifier(profile.ClusterID, 128) ||
 		!validIdentifier(profile.ProfileID, 128) || profile.Generation < 1 || len(profile.IssuerChainDER) == 0 ||
-		profile.SubjectKeyAlgorithm != "ed25519" || profile.OperationSignatureAlgorithm != "ed25519" ||
+		!validAdminAlgorithms(profile.SubjectKeyAlgorithm, profile.OperationSignatureAlgorithm) ||
 		profile.MaximumValiditySeconds < 1 || !sortedOIDStrings(profile.RequiredEKUOIDs) || len(profile.RequiredEKUOIDs) == 0 ||
 		!sortedOIDStrings(profile.RequiredPolicyOIDs) || len(profile.RequiredPolicyOIDs) == 0 {
 		return errors.New("[D104 admin ACL] admin certificate profile 无效")
@@ -186,7 +186,7 @@ func ValidateAdminCertificateProfile(profile *AdminCertificateProfileV1) error {
 		}
 		certificate, err := x509.ParseCertificate(der)
 		if err != nil || !bytes.Equal(certificate.Raw, der) || !certificate.BasicConstraintsValid || !certificate.IsCA ||
-			certificate.KeyUsage&x509.KeyUsageCertSign == 0 || certificate.PublicKeyAlgorithm != x509.Ed25519 ||
+			certificate.KeyUsage&x509.KeyUsageCertSign == 0 || !adminCertificateAlgorithm(certificate, profile) ||
 			len(certificate.UnhandledCriticalExtensions) != 0 {
 			return errors.New("[D104 admin ACL] issuer chain certificate profile 无效")
 		}
@@ -287,7 +287,7 @@ func validateAdminAuthorization(authorization *AdminAuthorizationV1, profile *Ad
 		return errors.New("[D104 admin ACL] admin certificate digest/key ID 不匹配")
 	}
 	if !certificate.BasicConstraintsValid || certificate.IsCA || certificate.KeyUsage != x509.KeyUsageDigitalSignature ||
-		certificate.PublicKeyAlgorithm != x509.Ed25519 || len(certificate.UnhandledCriticalExtensions) != 0 {
+		!adminCertificateAlgorithm(certificate, profile) || len(certificate.UnhandledCriticalExtensions) != 0 {
 		return errors.New("[D104 admin ACL] admin leaf CA/KeyUsage 无效")
 	}
 	if !exactCertificateOIDs(certificate, profile.RequiredEKUOIDs, profile.RequiredPolicyOIDs) {
@@ -324,6 +324,19 @@ func validateAdminAuthorization(authorization *AdminAuthorizationV1, profile *Ad
 		}
 	}
 	return nil
+}
+
+func validAdminAlgorithms(subject, signature string) bool {
+	return subject == "ed25519" && signature == "ed25519" ||
+		subject == "p256" && signature == "ecdsa-p256-sha256"
+}
+
+func adminCertificateAlgorithm(certificate *x509.Certificate, profile *AdminCertificateProfileV1) bool {
+	if adminSignatureAlgorithm(certificate.PublicKey) != profile.OperationSignatureAlgorithm {
+		return false
+	}
+	return profile.SubjectKeyAlgorithm == "ed25519" && certificate.SignatureAlgorithm == x509.PureEd25519 ||
+		profile.SubjectKeyAlgorithm == "p256" && certificate.SignatureAlgorithm == x509.ECDSAWithSHA256
 }
 
 func ValidateAdminAuthorizationSuccessor(previous, next *AdminAuthorizationV1, profile *AdminCertificateProfileV1, trustedTime time.Time) error {

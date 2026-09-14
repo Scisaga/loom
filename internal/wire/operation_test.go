@@ -1,11 +1,58 @@
 package wire
 
 import (
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
+	"encoding/base64"
+	"math/big"
 	"testing"
 	"time"
 )
+
+func TestControlOperationP256RejectsAlgorithmConfusionAndHighS(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spki, _ := x509.MarshalPKIXPublicKey(key.Public())
+	schemas := OperationSchemaRegistry{"create_invite": 2}
+	op, err := NewControlOperation(testOperationBody(), key, schemas)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	if err := VerifyControlOperation(&op, spki, now, schemas); err != nil {
+		t.Fatal(err)
+	}
+	if op.AuthorSignature.Algorithm != "ecdsa-p256-sha256" {
+		t.Fatal("P-256 算法标签错误")
+	}
+	bad := op
+	bad.AuthorSignature.Algorithm = "ed25519"
+	if VerifyControlOperation(&bad, spki, now, schemas) == nil {
+		t.Fatal("接受错误算法标签")
+	}
+	bad = op
+	raw, _ := base64.RawURLEncoding.DecodeString(op.AuthorSignature.Signature)
+	s := new(big.Int).SetBytes(raw[32:])
+	s.Sub(key.Params().N, s).FillBytes(raw[32:])
+	bad.AuthorSignature.Signature = base64.RawURLEncoding.EncodeToString(raw)
+	if VerifyControlOperation(&bad, spki, now, schemas) == nil {
+		t.Fatal("接受可塑的 high-S 签名")
+	}
+	bad = op
+	bad.Body.Reason = "changed"
+	if VerifyControlOperation(&bad, spki, now, schemas) == nil {
+		t.Fatal("接受篡改的操作")
+	}
+	wrong, _ := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	if _, err := NewControlOperation(testOperationBody(), wrong, schemas); err == nil {
+		t.Fatal("接受未登记的 P-384")
+	}
+}
 
 func testOperationBody() ControlOperationBodyV1 {
 	hash := func(value string) string { return HashRaw("test-operation-v1", []byte(value)) }

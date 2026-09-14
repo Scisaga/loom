@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -108,11 +109,12 @@ type controlBrowserTLSV1 struct {
 }
 
 type controlOperationRecordV1 struct {
-	Schema    int                                `json:"schema"`
-	Operation wire.ControlOperationV1            `json:"operation"`
-	Leaf      wire.ControlOperationLeafV1        `json:"leaf"`
-	Candidate wire.HeadEntryV2                   `json:"candidate"`
-	Result    *controlCertifiedOperationResultV1 `json:"result,omitempty"`
+	Schema        int                                `json:"schema"`
+	Operation     wire.ControlOperationV1            `json:"operation"`
+	Leaf          wire.ControlOperationLeafV1        `json:"leaf"`
+	Candidate     wire.HeadEntryV2                   `json:"candidate"`
+	Result        *controlCertifiedOperationResultV1 `json:"result,omitempty"`
+	AdminRotation *controlAdminRotationV1            `json:"admin_rotation,omitempty"`
 }
 
 type controlOperationJournalV1 struct {
@@ -187,13 +189,17 @@ type controlRuntime struct {
 
 func cmdControl(args []string) error {
 	if len(args) == 0 {
-		return errors.New("control 需要 bootstrap、enable-loopback、serve、status 或 request")
+		return errors.New("control 需要 bootstrap、enable-loopback、rotate-admin、export-admin、serve、status 或 request")
 	}
 	switch args[0] {
 	case "bootstrap":
 		return cmdControlBootstrap(args[1:])
 	case "enable-loopback":
 		return cmdControlEnableLoopback(args[1:])
+	case "rotate-admin":
+		return cmdControlRotateAdmin(args[1:])
+	case "export-admin":
+		return cmdControlExportAdmin(args[1:])
 	case "serve":
 		return cmdControlServe(args[1:])
 	case "status":
@@ -257,6 +263,11 @@ func cmdControlServe(args []string) error {
 	if fs.NArg() != 0 {
 		return errors.New("control serve 不接受位置参数")
 	}
+	unlock, err := lockControlState(*dir)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	runtime, err := openControlRuntime(*dir, time.Now)
 	if err != nil {
 		return err
@@ -560,7 +571,7 @@ func bootstrapControlRuntime(dir, adminOut, clusterID, memberID, deviceID, overl
 		return err
 	}
 
-	adminRootPEM, adminRoot, adminRootKey, err := makeCertificateAuthority(
+	adminRootPEM, adminRoot, adminRootKey, err := makeP256AdminCA(
 		"Loom v2 admin root", instant.Add(-5*time.Minute), instant.Add(5*365*24*time.Hour))
 	if err != nil {
 		return err
@@ -615,7 +626,7 @@ func bootstrapControlRuntime(dir, adminOut, clusterID, memberID, deviceID, overl
 		return err
 	}
 	if err := writeAdminDelivery(adminOut, config, internalRoot.Raw, browserRoot.Raw, adminCertPEM, adminKeyPEM,
-		adminRootPEM); err != nil {
+		adminRootPEM, instant); err != nil {
 		return err
 	}
 	runtime, err := openControlRuntime(dir, func() time.Time { return instant })
@@ -730,7 +741,7 @@ func openControlRuntime(dir string, now func() time.Time) (*controlRuntime, erro
 	if _, err := parsePrivateKeyPKCS8PEM([]byte(secrets.InternalCAPrivateKeyPKCS8PEM)); err != nil {
 		return nil, fmt.Errorf("internal CA private key: %w", err)
 	}
-	if _, err := parsePrivateKeyPKCS8PEM([]byte(secrets.AdminCAPrivateKeyPKCS8PEM)); err != nil {
+	if _, err := parseAdminPrivateKey([]byte(secrets.AdminCAPrivateKeyPKCS8PEM)); err != nil {
 		return nil, fmt.Errorf("admin CA private key: %w", err)
 	}
 	controlTLS, err := tls.X509KeyPair([]byte(secrets.ControlTLSCertificate), []byte(secrets.ControlTLSPrivateKey))
@@ -847,7 +858,7 @@ func (runtime *controlRuntime) finishCommittedLocked() error {
 	}
 	state := runtime.store.Snapshot()
 	if state.Active == nil {
-		return nil
+		return runtime.projectAdminRotations()
 	}
 	if state.Active.Phase != controlplane.PhaseCertified || state.Active.QC == nil {
 		return errors.New("N=1 committed Head 未形成 exact QC")
@@ -857,7 +868,10 @@ func (runtime *controlRuntime) finishCommittedLocked() error {
 			return err
 		}
 	}
-	return runtime.store.MarkApplied(state.Active.Entry.EntryHash)
+	if err := runtime.store.MarkApplied(state.Active.Entry.EntryHash); err != nil {
+		return err
+	}
+	return runtime.projectAdminRotations()
 }
 
 func (runtime *controlRuntime) verifyCommittedHead(_ context.Context, head wire.HeadEntryV2) error {
@@ -877,6 +891,9 @@ func (runtime *controlRuntime) verifyCommittedHead(_ context.Context, head wire.
 			root, err := wire.ControlOperationRoot(leaves)
 			if err != nil || root != head.Body.Payload.OperationRoot {
 				return errors.New("operation journal 与 committed Head root 不匹配")
+			}
+			if record.AdminRotation != nil {
+				return runtime.verifyAdminRotationRecord(index)
 			}
 			return nil
 		}
@@ -1480,9 +1497,9 @@ func newControlPingRequest(adminDir string, endpoint controlAdminEndpointV1,
 		return controlOperationRequestV1{}, errors.New("admin private key PEM 无效")
 	}
 	parsedKey, err := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
-	privateKey, ok := parsedKey.(ed25519.PrivateKey)
+	privateKey, ok := parsedKey.(crypto.Signer)
 	if err != nil || !ok {
-		return controlOperationRequestV1{}, errors.New("admin private key 必须是 PKCS#8 Ed25519")
+		return controlOperationRequestV1{}, errors.New("admin private key 必须是 PKCS#8 signer")
 	}
 	digest, _ := wire.AdminCertificateDigest(certificate.Raw)
 	nonce := make([]byte, 16)
@@ -1837,8 +1854,8 @@ func makeControlPeerCertificate(clusterID, memberID, overlayIP string, now time.
 }
 
 func makeAdminCertificate(clusterID, adminID string, issuer *x509.Certificate,
-	issuerKey ed25519.PrivateKey, now time.Time) ([]byte, []byte, []byte, error) {
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	issuerKey crypto.Signer, now time.Time) ([]byte, []byte, []byte, error) {
+	privateKey, err := generateAdminKey(issuerKey.Public())
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -1856,7 +1873,7 @@ func makeAdminCertificate(clusterID, adminID string, issuer *x509.Certificate,
 		NotBefore: now.Add(-5 * time.Minute), NotAfter: now.Add(365 * 24 * time.Hour),
 		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, Policies: []x509.OID{policyOID}}
-	der, err := x509.CreateCertificate(rand.Reader, template, issuer, publicKey, issuerKey)
+	der, err := x509.CreateCertificate(rand.Reader, template, issuer, privateKey.Public(), issuerKey)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -1883,6 +1900,13 @@ func makeAdminAuthority(clusterID string, rootDER, adminDER []byte,
 		AdminIssuerChainHash: issuerHash, SubjectKeyAlgorithm: "ed25519",
 		OperationSignatureAlgorithm: "ed25519", RequiredEKUOIDs: []string{"1.3.6.1.5.5.7.3.2"},
 		RequiredPolicyOIDs: []string{"1.3.6.1.4.1.55555.1.1"}, MaximumValiditySeconds: 366 * 24 * 60 * 60}
+	adminLeaf, err := x509.ParseCertificate(adminDER)
+	if err != nil {
+		return profile, wire.AdminAuthorizationV1{}, err
+	}
+	if adminLeaf.PublicKeyAlgorithm == x509.ECDSA {
+		profile.SubjectKeyAlgorithm, profile.OperationSignatureAlgorithm = "p256", "ecdsa-p256-sha256"
+	}
 	profileHash, err := wire.AdminCertificateProfileHash(&profile)
 	if err != nil {
 		return profile, wire.AdminAuthorizationV1{}, err
@@ -1920,7 +1944,7 @@ func randomCertificateSerial() (*big.Int, error) {
 	return serial, nil
 }
 
-func privateKeyPKCS8PEM(privateKey ed25519.PrivateKey) ([]byte, error) {
+func privateKeyPKCS8PEM(privateKey crypto.Signer) ([]byte, error) {
 	der, err := x509.MarshalPKCS8PrivateKey(privateKey)
 	if err != nil {
 		return nil, err
@@ -1959,7 +1983,7 @@ func newControlMemberID() (string, error) {
 }
 
 func writeAdminDelivery(dir string, config controlDiskConfigV1, internalRootDER, browserRootDER []byte,
-	adminCertPEM, adminKeyPEM, adminRootPEM []byte) error {
+	adminCertPEM, adminKeyPEM, adminRootPEM []byte, now time.Time) error {
 	if _, err := os.Lstat(dir); err == nil {
 		return fmt.Errorf("admin 交付目录 %s 已存在，拒绝覆盖", dir)
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -1986,7 +2010,7 @@ func writeAdminDelivery(dir string, config controlDiskConfigV1, internalRootDER,
 			return err
 		}
 	}
-	return nil
+	return exportAdminPKCS12(dir, now)
 }
 
 func readCanonicalFile(path string, limit int64, value any) error {

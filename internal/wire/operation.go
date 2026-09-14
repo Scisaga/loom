@@ -1,12 +1,18 @@
 package wire
 
 import (
+	"crypto"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"math/big"
 	"sort"
 	"time"
 )
@@ -94,8 +100,8 @@ func AdminKeyID(rawSPKI []byte) (string, error) {
 	if err != nil {
 		return "", errors.New("[D104 operation] admin SPKI DER 无效")
 	}
-	if _, ok := publicKey.(ed25519.PublicKey); !ok {
-		return "", errors.New("[D104 operation] admin signing key 必须是 Ed25519")
+	if adminSignatureAlgorithm(publicKey) == "" {
+		return "", errors.New("[D104 operation] admin signing key 必须是 Ed25519 或 P-256")
 	}
 	digest := sha256.Sum256(rawSPKI)
 	return "sha256:" + hex.EncodeToString(digest[:]), nil
@@ -126,9 +132,8 @@ func VerifyControlOperation(operation *ControlOperationV1, adminSPKI []byte, tru
 	if err != nil {
 		return errors.New("[D104 operation] admin SPKI DER 无效")
 	}
-	ed25519Public, ok := public.(ed25519.PublicKey)
 	keyID, keyErr := AdminKeyID(adminSPKI)
-	if !ok || keyErr != nil || operation.AuthorSignature.Algorithm != "ed25519" ||
+	if keyErr != nil || operation.AuthorSignature.Algorithm != adminSignatureAlgorithm(public) ||
 		operation.AuthorSignature.AdminKeyID != keyID {
 		return errors.New("[D104 operation] admin signature profile/key ID 无效")
 	}
@@ -141,17 +146,33 @@ func VerifyControlOperation(operation *ControlOperationV1, adminSPKI []byte, tru
 		return err
 	}
 	message, err := Frame(DomainControlOperationSignature, canonical)
-	if err != nil || !ed25519.Verify(ed25519Public, message, signature) {
+	if err != nil {
+		return err
+	}
+	valid := false
+	switch key := public.(type) {
+	case ed25519.PublicKey:
+		valid = ed25519.Verify(key, message, signature)
+	case *ecdsa.PublicKey:
+		r, s := new(big.Int).SetBytes(signature[:32]), new(big.Int).SetBytes(signature[32:])
+		halfOrder := new(big.Int).Rsh(new(big.Int).Set(key.Params().N), 1)
+		digest := sha256.Sum256(message)
+		valid = s.Sign() > 0 && s.Cmp(halfOrder) <= 0 && ecdsa.Verify(key, digest[:], r, s)
+	}
+	if !valid {
 		return errors.New("[D104 operation] admin signature 无效")
 	}
 	return nil
 }
 
-func NewControlOperation(body ControlOperationBodyV1, privateKey ed25519.PrivateKey, schemas OperationSchemaRegistry) (ControlOperationV1, error) {
+func NewControlOperation(body ControlOperationBodyV1, privateKey crypto.Signer, schemas OperationSchemaRegistry) (ControlOperationV1, error) {
 	if err := ValidateControlOperationBody(&body, schemas); err != nil {
 		return ControlOperationV1{}, err
 	}
-	publicKey := privateKey.Public().(ed25519.PublicKey)
+	if privateKey == nil || adminSignatureAlgorithm(privateKey.Public()) == "" {
+		return ControlOperationV1{}, errors.New("[D104 operation] admin signer 无效")
+	}
+	publicKey := privateKey.Public()
 	rawSPKI, err := x509.MarshalPKIXPublicKey(publicKey)
 	if err != nil {
 		return ControlOperationV1{}, err
@@ -159,13 +180,55 @@ func NewControlOperation(body ControlOperationBodyV1, privateKey ed25519.Private
 	keyID, _ := AdminKeyID(rawSPKI)
 	canonical, _ := MarshalCanonical(body)
 	message, _ := Frame(DomainControlOperationSignature, canonical)
+	algorithm := adminSignatureAlgorithm(publicKey)
+	input, options := message, crypto.Hash(0)
+	if algorithm == "ecdsa-p256-sha256" {
+		digest := sha256.Sum256(message)
+		input, options = digest[:], crypto.SHA256
+	}
+	signature, err := privateKey.Sign(rand.Reader, input, options)
+	if err != nil {
+		return ControlOperationV1{}, err
+	}
+	if algorithm == "ecdsa-p256-sha256" {
+		var values struct{ R, S *big.Int }
+		rest, err := asn1.Unmarshal(signature, &values)
+		if err != nil || len(rest) != 0 || values.R == nil || values.S == nil {
+			return ControlOperationV1{}, errors.New("[D104 operation] signer 返回无效 ECDSA DER")
+		}
+		order := elliptic.P256().Params().N
+		if values.R.Sign() <= 0 || values.S.Sign() <= 0 || values.R.Cmp(order) >= 0 || values.S.Cmp(order) >= 0 {
+			return ControlOperationV1{}, errors.New("[D104 operation] signer 返回越界 ECDSA 值")
+		}
+		if values.S.Cmp(new(big.Int).Rsh(new(big.Int).Set(order), 1)) > 0 {
+			values.S.Sub(order, values.S)
+		}
+		signature = make([]byte, 64)
+		values.R.FillBytes(signature[:32])
+		values.S.FillBytes(signature[32:])
+	}
 	return ControlOperationV1{
 		Body: body,
 		AuthorSignature: AdminOperationSignatureV1{
-			Algorithm: "ed25519", AdminKeyID: keyID,
-			Signature: base64.RawURLEncoding.EncodeToString(ed25519.Sign(privateKey, message)),
+			Algorithm: algorithm, AdminKeyID: keyID,
+			Signature: base64.RawURLEncoding.EncodeToString(signature),
 		},
 	}, nil
+}
+
+// D104：管理员 TLS 与操作签名使用同一 key，算法由 certified profile 固定。
+func adminSignatureAlgorithm(public any) string {
+	switch key := public.(type) {
+	case ed25519.PublicKey:
+		if len(key) == ed25519.PublicKeySize {
+			return "ed25519"
+		}
+	case *ecdsa.PublicKey:
+		if key != nil && key.Curve == elliptic.P256() {
+			return "ecdsa-p256-sha256"
+		}
+	}
+	return ""
 }
 
 func ControlOperationObjectID(operation *ControlOperationV1, adminSPKI []byte, trustedTime time.Time, schemas OperationSchemaRegistry) (string, error) {

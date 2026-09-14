@@ -71,8 +71,8 @@ sudo systemctl enable --now loom-control.service
 `<offline-admin-directory>` 是完整客户端身份，不是普通 CA 下载目录：
 
 - `admin.crt`：管理员 mTLS leaf；
-- `admin.key`：同一 Ed25519 key，也对 `ControlOperationBodyV1` 签名；
-- `admin-root.crt`：管理员 profile 的审计根；
+- `admin.key`：同一 P-256 key，用于浏览器/CLI mTLS 与 `ControlOperationBodyV1` 签名；
+- `admin-root.crt`：P-256 管理员签发根，随完整证书链交付；
 - `control-root.crt`：浏览器验证 loopback HTTPS 服务端证书所需的公开 P-256 trust anchor；
 - `endpoint.json`：原生 private service tuple、Ed25519 server SPKI pin 与 internal CA anchor。
 
@@ -104,27 +104,77 @@ sudo systemctl restart loom-control.service
 native server 私钥/证书/SPKI pin、admin leaf/private key、certified ACL、Raft 或 Head；重复执行不
 重新生成 authority。该拆分用于兼容不声明 Ed25519 TLS 签名算法的浏览器。
 
-首次为已有 `admin.crt` / `admin.key` 生成浏览器包时，在管理员交付目录执行：
+### 生成与交付检查
+
+新 `control bootstrap` 自动生成 **P-256 管理员私钥、P-256 签发根、ECDSA/SHA-256
+clientAuth 证书与完整 `admin.p12`**。管理员 TLS 与操作签名使用同一身份。旧 Ed25519 profile
+仅用于读取历史和完成迁移，不能继续把旧包交付给 Windows Chrome/Edge。
+
+对已经生成的 P-256 身份，使用统一导出命令；不要复制缺少 `-certfile` 的手工 OpenSSL 命令：
 
 ```bash
-umask 077
-openssl rand -base64 -out admin.p12.password 24
-openssl pkcs12 -export \
-  -inkey admin.key \
-  -in admin.crt \
-  -name 'Loom control administrator' \
-  -passout file:admin.p12.password \
-  -out admin.p12
-openssl pkcs12 -info -noout -in admin.p12 -passin file:admin.p12.password
+loom control export-admin -admin-dir <offline-admin-directory>
 ```
 
-`admin.p12.password` 只是 PKCS#12 文件的导入/静态保护密码，不是 UI 密码。导入个人证书时读取它，
-不要在命令行参数、聊天或截图中写出密码。应分别保管/传输 `.p12` 与密码；导入后重新建立浏览器
-HTTPS 连接（必要时彻底关闭原连接或浏览器）。
+该命令校验证书用途、有效期、完整 P-256 链、私钥匹配和 PKCS#12 MAC，再核对包中精确的
+leaf + issuer 与唯一的管理员私钥。已有合格包保持字节和密码不变；旧算法、缺链、错 key
+或不合格已有包直接失败。Root CA 私钥只留在受保护的控制状态中，不进入交付目录或 `.p12`。
 
-没有 `admin.p12` 时，已在 Loom overlay 内且已信任 `control-root.crt` 的浏览器仍可看只读状态；
-创建 Device、下载邀请材料、修改 SSOT、Service、路由或执行动作都会返回 `403`。错误、过期、
-revoked 或不在当前 certified ACL 的证书同样只有只读权限。旧的节点 HTTP 页面始终只读。
+### 既有管理员证书轮换
+
+先部署支持 P-256 管理员 profile 的版本，再在 **N=1 控制节点本机**执行以下维护。
+按运维流程备份控制状态与原管理员目录，停止控制 daemon；新目录必须与原目录不同。
+不要重新 bootstrap 或手工改写 `config.json`、ACL root、Raft、Head。
+
+```bash
+sudo systemctl stop loom-control.service
+sudo /usr/local/bin/loom control rotate-admin \
+  -state-dir /var/lib/loom-control \
+  -admin-dir <old-admin-directory> \
+  -out-dir <new-admin-directory> \
+  -reason 'Replace administrator certificate with a complete P-256 chain'
+sudo systemctl start loom-control.service
+```
+
+命令要求状态目录独占锁、所有控制 listener 已释放、当前 certified 管理员的完整证书/私钥，
+并核对该身份属于当前控制面。旧 key 签署精确轮换内容，新 key 提供同一内容的持有证明；
+管理员 ID、允许的操作、capability、scope 与授权截止时间保持原值。
+`local_admin_certificate_rotation` 只用于本机维护，不在网络操作 registry 注册。
+
+轮换作为独立操作写入持久日志，经 Raft commit、状态机 apply 和 QC 后才启用新证书并使旧证书
+退出当前 ACL。重启从已认证的操作记录恢复有效身份；初始 config、原生服务证书、浏览器网站
+证书、ControlSet 与数据面配置保持原字节。新目录的 `rotation-receipt.json` 记录 certified Head、QC
+和 inclusion proof；CA 新私钥保存在控制状态下的 `admin-issuers/`。使用同一新目录重试可核验
+已完成结果，不能生成第二把 key 或扩大权限。失败后先按命令错误检查，不能回滚到已经失效的旧包。
+
+### Windows Chrome / Edge 导入
+
+在**运行浏览器的 Windows 用户账户**下操作：
+
+1. 将 `admin.p12`、`admin-root.crt`、`control-root.crt` 下载到管理员电脑。密码通过单独的
+   `admin.p12.password` 文件交付，在本机读取，不写入聊天、命令参数、截图或文档。
+2. 双击 `admin.p12`，选择“当前用户”，输入导入密码，将管理员证书放入“个人”。
+3. 将 `admin-root.crt` 安装到“当前用户 → 受信任的根证书颁发机构”，让 Windows 能验证管理员
+   证书的完整签发链。将 `control-root.crt` 安装到同一存储以信任控制中心网站；它们用途不同。
+   已经信任当前网站根时不必重复导入。
+4. `certmgr.msc` 的“个人 → 证书”中，新管理员证书应显示有对应私钥；“证书路径”应包含管理员
+   和签发根并显示有效。确认新证书后移除旧的个人证书，避免选择过期或已退出 ACL 的身份。
+5. 完全退出 Chrome/Edge 后重新打开 `https://127.0.0.1:<control-api-port>/`，保持 SSH/VS Code
+   转发连接；客户端证书选择框中选新管理员证书。只刷新页面可能复用旧 TLS 连接。
+
+Firefox 可在“设置 → 隐私与安全 → 证书 → 查看证书 → 您的证书”中导入 `.p12`；网站根由浏览器
+的信任设置处理。不得通过忽略 HTTPS 错误来完成验收。
+
+### 验收与故障定位
+
+- 包检查通过只证明生成与打包正确。还必须验证限制为 `ecdsa_secp256r1_sha256` 的真实 TLS 1.3
+  双向认证能到达管理员 UI；无证书、未知或旧证书仍为只读，写入仍受同源检查约束。
+- Windows 实机验收还需确认系统证书链有效、私钥可用、Chrome/Edge 选中新证书后进入管理态。
+  Go/OpenSSL 成功或手工注入 `request.TLS` 的测试不能宣称完成 Windows 浏览器验收。
+- “系统层错误 / 无效数字签名”：先检查 leaf 与 issuer 的公钥和签名算法、证书链是否完整、key
+  是否匹配，再检查 Windows 错误码。单凭中文错误不能断言文件损坏，也不能让用户反复重启。
+- 新旧证书选择错误、未提供客户端证书、过期/revoked 或未获当前 certified ACL 授权仍会只读。
+  `control-root.crt` 只解决网站信任；导入它不会赋予管理员权限。
 
 读取 certified 状态：
 

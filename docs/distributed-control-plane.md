@@ -283,8 +283,8 @@ AdminCertificateProfileRefV1
 AdminCertificateProfileV1
   schema = 1, cluster_id, profile_id, generation
   issuer_chain_der[], admin_issuer_chain_hash
-  subject_key_algorithm = "ed25519"
-  operation_signature_algorithm = "ed25519"
+  subject_key_algorithm = "p256"          # 既有历史 profile 可为 ed25519
+  operation_signature_algorithm = "ecdsa-p256-sha256" # 历史 ed25519 与 subject 配对
   required_eku_oids[], required_policy_oids[]
   maximum_validity_seconds
 
@@ -395,13 +395,22 @@ hash。两个 variant 不得互换摘要 domain。
 
 AdminAuthorization 同 ID generation 从 1 连续递增；首代无 previous，后续必须指向前代 hash。
 `revoked` 必须保留前代 cert/profile/permissions/capabilities/scopes bytes且不可回到 active；active cert 必须按 exact
-profile 验链/validity/EKU/OID，并要求 leaf SPKI 为 Ed25519。admin key ID 固定为 leaf DER SPKI 的
-小写 `sha256:` digest；operation signature 是 raw 64-byte Ed25519 signature。未知 subject/signature
+profile 验链/validity/EKU/OID，并要求 leaf SPKI 与 profile 的 subject 算法一致。新管理员使用 P-256
+leaf 与 P-256 issuer，证书签名为 ECDSA/SHA-256；历史 Ed25519 profile 继续验证。admin key ID 固定为
+leaf DER SPKI 的小写 `sha256:` digest；P-256 operation signature 为 SHA-256(frame) 上的 low-S raw
+`r || s` 64 bytes，历史 Ed25519 为 raw 64 bytes。未知或不配对的 subject/signature
 算法、非规范 key ID 或其他签名字节编码全部失败关闭。`scopes` tag 与唯一 variant 一致、数组非空
 （cluster exact-empty 除外）。
 校验 `ControlOperationV1` 时，从其 base head 的 private registry 解出唯一 active authorization，要求
 author/key/cert digest、可信时间、allowed kind 与 payload 的 exact resource scope 同时满足；new head
 里的 ACL 不能倒过来授权自己的 mutation。
+
+当前 N=1 runtime 的 `local_admin_certificate_rotation` 是单独的本机维护仪式：控制进程已停止，
+操作者独占 root-only 状态目录，出示当前 active 管理员私钥，下一 key 签署同一轮换内容作为 PoP。
+它仅允许同一管理员的 active → active 连续换证，权限与授权截止不变，旧 profile/authorization
+作为签名 preimage 留存；它不属于网络 API 的 allowed-kind 扩展，也不复用仅接受撤销的 successor
+校验。新 ACL 仍须正常 Raft commit/apply/QC 后才能生效。该运行时维护路径不替代多成员的正式
+admin/profile 变更 reducer。
 
 `DeviceCertificateProfileIntentV1` 同 ID generation 从 1 连续递增，后代的
 `expected_previous_profile_state_hash` 必须等于直接前代 state。后代唯一允许变化的字段是
@@ -769,15 +778,16 @@ ControlOperationV1
   author_signature: AdminOperationSignatureV1
 
 AdminOperationSignatureV1
-  algorithm = "ed25519", admin_key_id
+  algorithm = "ecdsa-p256-sha256" | "ed25519", admin_key_id
   signature                        # raw 64 bytes，无 padding base64url
 ```
 
 `author_signature.signature` 覆盖
 `frame("loom-control-operation-signature-v1", JCS(ControlOperationBodyV1))`；key ID 必须由 body 所指
 admin cert 的 DER SPKI 重算，并在 base head 的 admin ACL scope 内获准执行 exact `kind`。证书/profile、
-signature algorithm 和 wire 长度必须逐字段满足 §6.1 固定的 Ed25519 profile；不能从本机 provider
-默认值猜算法，也不接受 DER、ECDSA 或可变长度编码。
+signature algorithm 和 wire 长度必须逐字段满足 §6.1 的 exact admin profile；P-256 必须使用
+SHA-256 与规范 low-S raw64，不接受 DER、高 S 或算法标签替换。不能从本机 provider
+默认值猜算法，也不接受 DER 或可变长度编码。
 `object_id = H(frame("loom-control-operation-v1", JCS(ControlOperationV1)))`。每种 `kind` 必须在
 版本化 schema 中固定 payload bytes 和 payload hash domain；未知 kind/schema、额外字段、cert digest
 不匹配或相同 operation ID 的不同 object ID 全部拒绝。

@@ -3829,8 +3829,9 @@ HMAC Cookie 和 `operator_ref` 配置被删除，调用方也不能用 HTTP head
 不再提供 HTML 页面。允许无证书只读不等于公开访问：listener 仍只绑定 private overlay tuple，公网 Nginx 不代理。
 
 浏览器材料也分权：`control-root.crt` 只是验证 private HTTPS 服务端的公开 trust anchor；
-`admin.p12` 只封装既有 admin leaf/private key，PKCS#12 导入密码仅保护该文件。`admin-root.crt` 用于
-审计 issuer profile，所有 Root CA 私钥都留在 root-only control 状态，不导入浏览器、不进入 `.p12`。
+`admin.p12` 封装 admin leaf/private key 和公开 issuer chain（现行签发与导出见 D137）；PKCS#12
+导入密码仅保护该文件。`admin-root.crt` 用于验证管理员签发链。所有 Root CA 私钥都留在 root-only
+control 状态，不导入浏览器、不进入 `.p12`。
 
 此入口复用现有 v1 compatibility 的 SSOT/Device/Service 写处理器，因此“证书已放行”只证明访问门禁，
 不证明业务变更已经过 v2 Raft/QC。Gate B 前这些处理器继续保留；只有迁移到登记的 v2 reducer、写入
@@ -3916,3 +3917,26 @@ SSH 未开放、不可达或 NAT 后时，通过云控制台、串口/IPMI 或�
 软件与 identity 安装成功不表示 `forward` 公网入口已就绪。external verify 未通过时，listener
 保持 `preparing` 且不 advertise；同页交互只显示具体失败层，提示检查主机防火墙、确认既有映射，
 或废弃邀请后创建不含 `forward` 的 Device。不得扫描端口、自动改网关或静默降级职责。
+
+
+### D137 · 管理员证书统一签发完整 P-256 链并绑定认证轮换
+
+**日期** 2026-09-15 · **状态** 实现 · **相关** D104、D132、D135
+
+原管理员 PKCS#12 只封装 Ed25519 leaf/key，缺少 issuer；Windows 证书组件与 Chrome 客户端私钥
+路径无法正确使用它。此前只验证 OpenSSL 与 Go，遗漏了完整浏览器客户端认证链。
+
+新管理员统一使用 P-256 leaf/key 和 P-256 签发根，证书签名 ECDSA/SHA-256；clientAuth 与操作
+签名仍使用同一管理员身份。profile 精确绑定 `p256` / `ecdsa-p256-sha256`，操作签名采用
+SHA-256(frame) 上的 low-S raw r||s64。旧 Ed25519 profile 保留验证能力，不再生成浏览器交付包。
+
+导出命令自动携带公开 issuer，核验 key/leaf、证书用途和包内唯一管理员私钥；不能将“文件可导入”
+当成浏览器登录成功。D132 的 leaf-only 打包方式由本决定替代。
+
+当前 N=1 的轮换是需 root 独占控制状态、旧有效管理员 key 和新 key 持有证明的本机维护操作；不
+增加网络管理 API 权限。轮换仅改变 admin profile/ACL 及相应 CA root，并保持原权限和授权截止。
+它经 Raft commit/apply/QC 后激活，重启从已认证操作记录恢复；原始控制状态历史保持可验证。
+操作名 `local_admin_certificate_rotation` 不注册为普通远程操作，不用于多成员控制集合。
+
+验收包含旧身份迁移、重启恢复、旧证书失权、错 key/缺链/提权拒绝，以及只允许 P-256 的真实 TLS
+双向认证。Windows 证书链、私钥与 Chrome 实机选证书结果必须另行记录，不能由 Linux 测试推断。
