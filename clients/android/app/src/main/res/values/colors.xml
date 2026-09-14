@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="loom_titanium">#5B6166</color>
+    <color name="loom_gradient_start">#667EEA</color>
+    <color name="loom_gradient_end">#764BA2</color>
 </resources>

@@ -84,17 +84,20 @@ func TestFaviconUsesSimplifiedLoomMark(t *testing.T) {
 	}
 	body := w.Body.String()
 	if !strings.Contains(body, `<svg xmlns="http://www.w3.org/2000/svg"`) ||
+		!strings.Contains(body, `<linearGradient id="background-gradient"`) ||
 		!strings.Contains(body, `<path id="loom-outline"`) ||
 		!strings.Contains(body, `<path id="petal-opening" d="M628 1040C520 945 535 790 628 660C721 790 736 945 628 1040Z"/>`) {
-		t.Fatal("favicon does not contain the simplified Loom silhouette")
+		t.Fatal("favicon does not contain the v4 gradient and simplified Loom silhouette")
 	}
 	if strings.Contains(body, approvedLogoPath) || strings.Count(body, `<use href="#petal-opening"`) != 6 {
 		t.Fatal("favicon must use one simple opening for each of its six petals")
 	}
-	if strings.Contains(body, `<rect`) ||
-		!strings.Contains(body, `<use href="#loom-outline" fill="#111"/>`) ||
-		!strings.Contains(body, `<g fill="#fff">`) {
-		t.Fatal("favicon must use a transparent canvas with white petals and a black single-band mark")
+	if !strings.Contains(body, `stop-color="#667eea"`) ||
+		!strings.Contains(body, `stop-color="#764ba2"`) ||
+		!strings.Contains(body, `<mask id="loom-mark"`) ||
+		!strings.Contains(body, `fill="url(#background-gradient)" mask="url(#loom-mark)"`) ||
+		!strings.Contains(body, `scale(1 -1)" fill="#fafaf7">`) {
+		t.Fatal("favicon must use a transparent canvas with a v4-gradient mark and ivory petals")
 	}
 }
 

@@ -245,7 +245,7 @@ func TestMisakaRoutesAndNavigationContract(t *testing.T) {
 	body := misakaRequest(t, d, http.MethodGet, "/devices", nil, false).Body.String()
 	for _, want := range []string{
 		`<header class=header>`, `<nav class=nav`, `<span>LOOM</span>`,
-		`<link rel=icon href="/favicon.svg?v=9" type="image/svg+xml">`,
+		`<link rel=icon href="/favicon.svg?v=11" type="image/svg+xml">`,
 		`href="/"`, `href="/devices"`, `href="/topology"`, `href="/services"`,
 		`href="/routing"`, `href="/deployments"`, `href="/events"`, `href="/settings"`,
 		`--font-mono:"SFMono-Regular"`, `font-weight:400;font-synthesis:none`, `.navgroup{display:contents}`,
