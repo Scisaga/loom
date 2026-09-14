@@ -166,22 +166,27 @@ func deviceNow(d Deps) time.Time {
 func nextDeviceInventoryRefresh(inventory ClientInventory, now time.Time) time.Duration {
 	next := deviceInventoryResync
 	for _, device := range inventory.Clients {
-		if device.DataPlaneStatus != "online" {
-			continue
+		deadlines := []struct {
+			value string
+			lease time.Duration
+		}{
+			{device.HeartbeatAt, clientPresenceStaleAfter},
+			{device.LastSeenAt, clientRuntimeStaleAfter},
 		}
-		observed, ok := parseClientObservedAt(device.LastSeenAt)
-		if !ok {
-			continue
-		}
-		remaining := observed.Add(clientRuntimeLease(device)).Sub(now)
-		if remaining <= 0 {
-			// 直连观测同步求值，不在这里到期；若嵌入方给了旧时间，等待下一次
-			// 有界同步即可，不能让过期定时器形成热循环（§16.4）。
-			continue
-		}
-		remaining += time.Millisecond
-		if remaining < next {
-			next = remaining
+		for _, deadline := range deadlines {
+			observed, ok := parseClientObservedAt(deadline.value)
+			if !ok {
+				continue
+			}
+			remaining := observed.Add(deadline.lease).Sub(now)
+			if remaining <= 0 {
+				// 已经过期的嵌入快照不能形成热循环（§16.4）。
+				continue
+			}
+			remaining += time.Millisecond
+			if remaining < next {
+				next = remaining
+			}
 		}
 	}
 	return next

@@ -142,6 +142,10 @@ func TestReportingIdentityRequiresExactReadyEnrollmentKey(t *testing.T) {
 	if err != nil || got.ID != claimed.Client.ID {
 		t.Fatalf("ready reporting identity = %+v, %v", got, err)
 	}
+	heartbeat, err := store.HeartbeatIdentity(claimed.Client.ID)
+	if err != nil || heartbeat.PublicKey != claimed.Client.PublicKey {
+		t.Fatalf("ready heartbeat identity = %+v, %v", heartbeat, err)
+	}
 	if _, err := store.ReportingIdentity(claimed.Client.ID, "not-canonical-spki"); err == nil {
 		t.Fatal("wrong reporting key was authorized")
 	}
@@ -150,6 +154,9 @@ func TestReportingIdentityRequiresExactReadyEnrollmentKey(t *testing.T) {
 	}
 	if _, err := store.ReportingIdentity(claimed.Client.ID, claimed.Client.PublicKey); err == nil {
 		t.Fatal("revoked reporting identity was authorized")
+	}
+	if _, err := store.HeartbeatIdentity(claimed.Client.ID); err == nil {
+		t.Fatal("revoked heartbeat identity was authorized")
 	}
 }
 

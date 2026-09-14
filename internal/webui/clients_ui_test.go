@@ -48,7 +48,7 @@ func TestClientsPageSeparatesJoinProgressFromRuntimeHealth(t *testing.T) {
 		`href="/devices?new=1"`,
 		`Build server`, `client-linux01`, `Provisioning`,
 		`Phone`, `Waiting to join`, `Not reported`,
-		`data: not reported · config: not issued`,
+		`heartbeat: not yet reported · observation: not reported · config: not issued`,
 		`Identity, desired membership and runtime evidence remain separate facts.`,
 		`1 unused join codes`,
 		`href="/devices/download/linux-amd64"`,
@@ -82,13 +82,13 @@ func TestClientsPageMergesOnlyTrustedCurrentNodeRuntime(t *testing.T) {
 	}
 	d.Snapshot = func() View {
 		return View{Nodes: []NodeView{
-			{ID: "direct", Declared: true, Reached: true, Health: "healthy", Source: "直连 /status", ObservedAt: now.Add(-5 * time.Second).Format(time.RFC3339), Applied: "snapshot-direct-0123456789"},
-			{ID: "signed", Declared: true, Health: "healthy", Source: "签名健康转述", ObservedAt: now.Add(-20 * time.Second).Format(time.RFC3339), AgeSec: 20, Applied: "snapshot-signed-0123456789"},
-			{ID: "unsigned", Declared: true, Health: "healthy", Source: "未签名转述", ObservedAt: now.Add(-10 * time.Second).Format(time.RFC3339), Applied: "untrusted", Problems: []string{"must not be shown"}},
-			{ID: "stale", Declared: true, Health: "healthy", Source: "签名转述", ObservedAt: now.Add(-10 * time.Minute).Format(time.RFC3339), AgeSec: 600, Applied: "snapshot-stale"},
-			{ID: "broken", Declared: true, Reached: true, Health: "problem", Source: "直连 /status", ObservedAt: now.Add(-8 * time.Second).Format(time.RFC3339), Applied: "snapshot-broken", Problems: []string{"trusted runtime reason"}},
+			{ID: "direct", Declared: true, Reached: true, Health: "healthy", Source: "直连 /status", ObservedAt: now.Add(-5 * time.Second).Format(time.RFC3339), PresenceAt: now.Add(-2 * time.Second).Format(time.RFC3339), Applied: "snapshot-direct-0123456789"},
+			{ID: "signed", Declared: true, Health: "healthy", Source: "签名健康转述", ObservedAt: now.Add(-20 * time.Second).Format(time.RFC3339), PresenceAt: now.Add(-2 * time.Second).Format(time.RFC3339), AgeSec: 20, Applied: "snapshot-signed-0123456789"},
+			{ID: "unsigned", Declared: true, Health: "healthy", Source: "未签名转述", ObservedAt: now.Add(-10 * time.Second).Format(time.RFC3339), PresenceAt: now.Add(-2 * time.Second).Format(time.RFC3339), Applied: "untrusted", Problems: []string{"must not be shown"}},
+			{ID: "stale", Declared: true, Health: "healthy", Source: "签名转述", ObservedAt: now.Add(-10 * time.Minute).Format(time.RFC3339), PresenceAt: now.Add(-2 * time.Second).Format(time.RFC3339), AgeSec: 600, Applied: "snapshot-stale"},
+			{ID: "broken", Declared: true, Reached: true, Health: "problem", Source: "直连 /status", ObservedAt: now.Add(-8 * time.Second).Format(time.RFC3339), PresenceAt: now.Add(-2 * time.Second).Format(time.RFC3339), Applied: "snapshot-broken", Problems: []string{"trusted runtime reason"}},
 			{ID: "silent", Declared: true, Health: "unknown", Source: "中控 SSOT · 尚无观测"},
-			{ID: "revoked", Declared: true, Reached: true, Health: "healthy", Source: "直连 /status", ObservedAt: now.Format(time.RFC3339), Applied: "snapshot-revoked"},
+			{ID: "revoked", Declared: true, Reached: true, Health: "healthy", Source: "直连 /status", ObservedAt: now.Format(time.RFC3339), PresenceAt: now.Format(time.RFC3339), Applied: "snapshot-revoked"},
 		}}
 	}
 
@@ -133,22 +133,27 @@ func TestClientsPageMergesOnlyTrustedCurrentNodeRuntime(t *testing.T) {
 	}
 }
 
-func TestAndroidRuntimeUsesSecondScaleSignedPresenceLease(t *testing.T) {
+func TestAndroidAndLinuxUseSignedPresenceWhileWindowsKeepsReportLease(t *testing.T) {
 	now := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)
 	inventory := ClientInventory{Clients: []ClientView{
 		{ID: "demo-android", Platform: "android", Status: "ready"},
+		{ID: "demo-linux", Platform: "linux-server", Status: "ready"},
 		{ID: "demo-windows", Platform: "windows-desktop", Status: "ready"},
 	}}
 	view := View{Nodes: []NodeView{
-		{ID: "demo-android", Declared: true, Health: "healthy", Source: "签名健康转述", ObservedAt: now.Add(-16 * time.Second).Format(time.RFC3339), AgeSec: 16},
+		{ID: "demo-android", Declared: true, Health: "healthy", Source: "签名健康转述", ObservedAt: now.Add(-16 * time.Second).Format(time.RFC3339), PresenceAt: now.Add(-16 * time.Second).Format(time.RFC3339), AgeSec: 16},
+		{ID: "demo-linux", Declared: true, Health: "healthy", Source: "签名健康转述", ObservedAt: now.Add(-16 * time.Second).Format(time.RFC3339), AgeSec: 16},
 		{ID: "demo-windows", Declared: true, Health: "healthy", Source: "签名健康转述", ObservedAt: now.Add(-16 * time.Second).Format(time.RFC3339), AgeSec: 16},
 	}}
 	merged := mergeClientRuntime(inventory, view, now)
 	if got := merged.Clients[0]; got.Status != "stale" || got.DataPlaneStatus != "stale" {
 		t.Fatalf("Android 15-second presence lease did not expire: %+v", got)
 	}
-	if got := merged.Clients[1]; got.Status != "online" || got.DataPlaneStatus != "online" {
-		t.Fatalf("Windows minute reporter inherited Android lease: %+v", got)
+	if got := merged.Clients[1]; got.Status != "stale" || got.DataPlaneStatus != "stale" || got.PresenceStatus != "not yet reported" {
+		t.Fatalf("Linux 在从未提交心跳时错误兼容了完整 Observation: %+v", got)
+	}
+	if got := merged.Clients[2]; got.Status != "online" || got.PresenceStatus != "not used" {
+		t.Fatalf("Windows 被错误纳入本次客户端心跳协议: %+v", got)
 	}
 }
 
@@ -162,7 +167,7 @@ func TestDeviceDetailShowsTrustedRuntimeProblemReason(t *testing.T) {
 	d.Snapshot = func() View {
 		return View{Nodes: []NodeView{{
 			ID: "d-windows", Declared: true, Reached: true, Health: "problem", Source: "直连 /status",
-			ObservedAt: now.Add(-5 * time.Second).Format(time.RFC3339), Applied: "snapshot-current",
+			ObservedAt: now.Add(-5 * time.Second).Format(time.RFC3339), PresenceAt: now.Add(-2 * time.Second).Format(time.RFC3339), Applied: "snapshot-current",
 			Problems: []string{`Windows 数据面缺少可信的端到端健康证据 <detail>`},
 		}}}
 	}

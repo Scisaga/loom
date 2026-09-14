@@ -69,6 +69,45 @@ func (s Store) ReportingIdentity(id, publicKey string) (Client, error) {
 	return result, nil
 }
 
+// HeartbeatIdentity 返回 Device 当前登记的公钥，供无证书最小心跳验签。
+// 公网响应仍统一为“未获授权”，不能借心跳探测 registry 中是否存在某个 ID
+// （§16.4）。完整 Observation 继续走 ReportingIdentity 的精确证书公钥比较。
+func (s Store) HeartbeatIdentity(id string) (Client, error) {
+	s = s.defaults()
+	id = strings.TrimSpace(id)
+	unauthorized := func() error {
+		return &Error{Code: CodeConflict, Msg: "Device 在线心跳身份未获授权"}
+	}
+	if !model.ValidNodeID(id) {
+		return Client{}, unauthorized()
+	}
+
+	var result Client
+	err := s.withLock(false, func(st *fileState) error {
+		for _, client := range st.Clients {
+			if client.ID == id && client.Status == "ready" &&
+				client.IdentitySource == "enrollment" && client.PublicKey != "" {
+				result = client
+				return nil
+			}
+		}
+		return unauthorized()
+	})
+	if err != nil {
+		return Client{}, err
+	}
+	spki, err := base64.RawStdEncoding.Strict().DecodeString(result.PublicKey)
+	if err != nil || base64.RawStdEncoding.EncodeToString(spki) != result.PublicKey {
+		return Client{}, unauthorized()
+	}
+	parsed, err := x509.ParsePKIXPublicKey(spki)
+	key, ok := parsed.(*ecdsa.PublicKey)
+	if err != nil || !ok || key.Curve != elliptic.P256() {
+		return Client{}, unauthorized()
+	}
+	return result, nil
+}
+
 // RenewInvitation 为从未领取的 Device 签发新的短期加入码（§14.2.3）。
 // 保留身份预留和固定的入网职责；旧码立即失效，不能用重发绕过公钥绑定。
 func (s Store) RenewInvitation(clientID string) (CreateResult, error) {

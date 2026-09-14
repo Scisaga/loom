@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"loom/internal/nodepresence"
 )
 
 // table 是本节点持有的全网观测:观测者 → 它最新的那份观测。
@@ -22,6 +24,11 @@ type table struct {
 	// changed 是代际广播 channel。写入一份更新的可信观测时关闭当前代（§16.4），
 	// WebSocket 订阅者醒来后重取同一份 View，再订阅下一代。
 	changed chan struct{}
+	// presence 与完整观测分库存放。每五秒心跳只改变在线租约，不得刷新
+	// Observation 的 TS、健康、自检、配置或测量内容（§16.4）。
+	presence        map[string]presenceRecord
+	presencePending map[string]nodepresence.Heartbeat
+	presenceChanged chan struct{}
 
 	// errors 是最近一轮拒收的观测。签名/时间异常不能只写 journal：它们
 	// 必须进入 /status，影响 OK，并被事件检测器看见。
@@ -36,8 +43,17 @@ type table struct {
 	minAttestationVersion int
 }
 
+type presenceRecord struct {
+	heartbeat  nodepresence.Heartbeat
+	acceptedAt time.Time
+}
+
 func newTable(minVersion ...int) *table {
-	t := &table{by: map[string]*Observation{}, h: newHistory(), changed: make(chan struct{})}
+	t := &table{
+		by: map[string]*Observation{}, h: newHistory(), changed: make(chan struct{}),
+		presence: map[string]presenceRecord{}, presencePending: map[string]nodepresence.Heartbeat{},
+		presenceChanged: make(chan struct{}),
+	}
 	if len(minVersion) > 0 {
 		t.minAttestationVersion = minVersion[0]
 	}
@@ -53,6 +69,71 @@ func (t *table) changes() <-chan struct{} {
 func (t *table) notifyLocked() {
 	close(t.changed)
 	t.changed = make(chan struct{})
+}
+
+func (t *table) presenceChanges() <-chan struct{} {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.presenceChanged
+}
+
+// putPresenceVerified 只接收调用方已验签的心跳，并按签名时间单调推进。
+// 重放旧包既不能延长在线租约，也不会唤醒浏览器或转发环（§16.4）。
+func (t *table) putPresenceVerified(heartbeat nodepresence.Heartbeat, acceptedAt time.Time) bool {
+	at, err := time.Parse(time.RFC3339Nano, heartbeat.TS)
+	if err != nil || heartbeat.Node == "" || acceptedAt.IsZero() {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if old, ok := t.presence[heartbeat.Node]; ok {
+		oldAt, oldErr := time.Parse(time.RFC3339Nano, old.heartbeat.TS)
+		if oldErr == nil && !at.After(oldAt) {
+			return false
+		}
+	}
+	// 在线租约从本机真正接受到新签名包的时刻开始。使用节点自报时钟会让
+	// 合法时钟偏差把十五秒租约提前耗尽或额外延长（§16.4）。
+	t.presence[heartbeat.Node] = presenceRecord{heartbeat: heartbeat, acceptedAt: acceptedAt.UTC()}
+	t.presencePending[heartbeat.Node] = heartbeat
+	t.notifyLocked()
+	close(t.presenceChanged)
+	t.presenceChanged = make(chan struct{})
+	return true
+}
+
+func (t *table) presenceView() map[string]string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make(map[string]string, len(t.presence))
+	for node, record := range t.presence {
+		out[node] = record.acceptedAt.Format(time.RFC3339Nano)
+	}
+	return out
+}
+
+// takePendingPresences 只取还没转发过的新签名包；同一节点在拥塞期间产生
+// 多个包时保留最新一个，避免每次心跳都重复广播整张 presence 表（§16.4）。
+func (t *table) takePendingPresences(limit int) []nodepresence.Heartbeat {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if limit <= 0 || len(t.presencePending) == 0 {
+		return nil
+	}
+	nodes := make([]string, 0, len(t.presencePending))
+	for node := range t.presencePending {
+		nodes = append(nodes, node)
+	}
+	sort.Strings(nodes)
+	if len(nodes) > limit {
+		nodes = nodes[:limit]
+	}
+	out := make([]nodepresence.Heartbeat, 0, len(nodes))
+	for _, node := range nodes {
+		out = append(out, t.presencePending[node])
+		delete(t.presencePending, node)
+	}
+	return out
 }
 
 func (t *table) notify() {

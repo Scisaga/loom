@@ -2952,12 +2952,25 @@ v1 Events 页的兼容契约允许按节点、类型、级别与文本筛选，�
 **静态拓扑图价值有限，带观测与决策的实时候选集视图才是排障入口。**
 
 Device inventory 也必须投影同一可信边界：SSR 只负责首屏与无脚本降级，已打开的列表经
-private HTTPS 同源 WebSocket 接收服务端推送，不用浏览器轮询制造第二条采集路径。Android
-每五秒提交一份轻量签名健康陈述，服务器观测仍只按原一分钟周期随报告读取；十五秒没有新
-可信陈述时，`Online` lease 到期并显示 `Stale`。Windows 与服务器的一分钟 producer 保留两
-周期 lease。两者都保留签名陈述的原始 last-seen；没有新陈述不等于收到离线回执，所以不能
-把这一状态写成已证实的 `Offline`。服务端须按各 producer 的 lease deadline 主动唤醒
-WebSocket，不能等待下一份报告才让旧 Online 失效。
+private HTTPS 同源 WebSocket 接收服务端推送，不用浏览器轮询制造第二条采集路径。所有现行
+Linux 节点的 Loom report 进程及 Android Device 的已连接 VPN 服务每五秒发送独立的最小签名心跳，线
+正文严格只有 `node`、`ts`、`signature`；证书复用既有已登记身份或已验签 Observation，不在
+每包重复携带。Linux 心跳经 overlay 邻居转发，Android 心跳复用同源 HTTPS report 入口的
+`presence=1` 分支。连续十五秒没有新心跳时，`Online` lease 到期并显示 `Stale`。
+租约从接收端接受到新的、签名时间单调推进的心跳时开始，不直接使用设备时钟计算；
+旧签名包重放不能刷新该时刻。
+
+心跳不是节点观测：完整 Observation、服务器 gossip、健康/自检、配置、链路、测量、流量和
+服务器观测读取继续按各自原有周期与陈旧边界运行；心跳不得刷新 `ObservedAt`、健康结论或
+配置状态。列表与 API 分别保留 `Last heartbeat` 和 `Last observation`。因此在线同时要求当前
+心跳和仍有效的可信完整观测；只有心跳不能把旧观测变绿，只有旧观测也不能继续显示在线。
+没有新心跳不等于收到离线回执，所以不能写成已证实的 `Offline`。服务端须按心跳 lease deadline
+主动唤醒 WebSocket，不能等待下一份完整报告才让旧 Online 失效。
+不保留旧 Android/Linux 的滚动兼容租约：从未产生过 `loom-presence-v1` 的节点明确显示 heartbeat
+尚未上报并不得显示 `Online`，即使它刚提交过完整 Observation。这样 Observation 永远不会被
+改称或暗中充当心跳。
+Windows 客户端不在本次五秒心跳协议范围内；其原完整报告仍会在接受时立即唤醒同一 WebSocket，
+因此连接状态无需刷新页面即可出现，但失效继续遵守 Windows 原 Observation lease。
 
 流量历史只使用柱状表达离散时间桶，不画暗示连续插值的曲线。Overview 的柱高是
 fleet node-interface RX+TX delta，Node detail 用并列 RX/TX 柱，Topology 用链路

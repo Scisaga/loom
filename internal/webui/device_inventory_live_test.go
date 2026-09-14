@@ -30,7 +30,8 @@ func TestDeviceInventoryWebSocketPushesTrustedStateChanges(t *testing.T) {
 	d.Snapshot = func() View {
 		return View{Nodes: []NodeView{{
 			ID: "demo-phone", Declared: true, Health: "healthy", Source: "签名健康转述",
-			ObservedAt: observed.Format(time.RFC3339), AgeSec: int(deviceNow(d).Sub(observed).Seconds()),
+			ObservedAt: observed.Format(time.RFC3339), PresenceAt: observed.Format(time.RFC3339),
+			AgeSec:  int(deviceNow(d).Sub(observed).Seconds()),
 			Applied: "snapshot-live-0123456789",
 		}}}
 	}
@@ -61,7 +62,7 @@ func TestDeviceInventoryWebSocketPushesTrustedStateChanges(t *testing.T) {
 	}
 
 	stateMu.Lock()
-	now = observed.Add(clientAndroidRuntimeStaleAfter + time.Second)
+	now = observed.Add(clientPresenceStaleAfter + time.Second)
 	close(changes)
 	changes = make(chan struct{})
 	stateMu.Unlock()
@@ -115,7 +116,8 @@ func TestDeviceInventorySchedulesOnlineLeaseExpiryWithoutAnotherReport(t *testin
 	now := time.Date(2026, 9, 13, 22, 50, 0, 0, time.UTC)
 	inventory := ClientInventory{Clients: []ClientView{{
 		ID: "demo-phone", Platform: "android", DataPlaneStatus: "online",
-		LastSeenAt: now.Add(-10 * time.Second).Format(time.RFC3339),
+		HeartbeatAt: now.Add(-10 * time.Second).Format(time.RFC3339),
+		LastSeenAt:  now.Add(-10 * time.Second).Format(time.RFC3339),
 	}}}
 	want := 5*time.Second + time.Millisecond
 	if got := nextDeviceInventoryRefresh(inventory, now); got != want {

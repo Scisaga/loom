@@ -249,11 +249,18 @@ Archived devices 中已为 `revoked` 且不在当前 SSOT 的身份可从详情�
 Device inventory 首屏保留可独立阅读的 SSR 快照，随后经 private HTTPS 同源 WebSocket
 `/api/control/device-inventory/live` 接收完整列表投影；可信 Device report、gossip/本机观测或
 identity/SSOT 事务成功后由服务端唤醒连接，浏览器不轮询列表 API。连接中断时页面明确显示
-重连状态并按有界退避恢复，不能继续把旧画面标成实时。Android 在已连接期间每五秒提交轻量
-签名健康陈述，但只每分钟请求一次服务器观测；十五秒没有新陈述后，列表必须从 `Online` 转为
-`Stale`。Windows 与服务器的一分钟健康周期保留两周期 lease。所有状态都保留原始 last-seen；
-缺少陈述只能证明“当前证据已陈旧”，不能伪造已经观测到的 `Offline`。服务端为每种 producer
-的过期边界设置定时唤醒，因此即使断开后不再产生新事件，已打开的列表也会自行更新。
+重连状态并按有界退避恢复，不能继续把旧画面标成实时。所有 Linux 节点的 Loom report
+进程及 Android Device 的已连接 VPN 服务每五秒发送只含 `node`、`ts`、`signature` 的独立签名心跳；十五秒
+没有新心跳后，列表必须从 `Online` 转为 `Stale`。完整 Observation 与节点观测同步保留原有
+周期、正文和陈旧规则，心跳不能刷新健康、自检、配置、链路、流量、测量或服务器观测。
+十五秒租约以服务端接受新签名包的时刻计算；设备时钟偏差及旧包重放不能延长租约。
+页面分别显示 last heartbeat 与 last observation；两种证据不能互相替代。缺少心跳只能证明
+“当前在线证据已陈旧”，不能伪造已经观测到的 `Offline`。服务端为心跳过期边界设置定时
+唤醒，因此即使断开后不再产生新事件，已打开的列表也会自行更新。
+不保留旧 Android/Linux 的滚动兼容：从未提交过新协议心跳的节点显示 heartbeat 尚未上报，且不能因为
+完整 Observation 仍新鲜而显示 `Online`。完整报告在任何情况下都不能代替心跳。
+Windows 客户端保留原完整报告协议和租约；报告一经服务端接受仍会立即触发上述 WebSocket，
+不需要浏览器刷新。
 
 概览和拓扑页的当前设备、连线及选路投影以当前 SSOT 成员为准。移除 Device 后，即使
 旧快照或 gossip 仍保留该设备的运行观测，也不再把它或引用它的路径显示为当前网络；

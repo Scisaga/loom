@@ -15,7 +15,6 @@ import android.net.VpnService
 import android.os.Build
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
-import android.os.SystemClock
 import android.system.OsConstants
 import android.util.Log
 import androidx.annotation.RequiresApi
@@ -37,6 +36,7 @@ import io.github.scisaga.loom.enrollment.EnrollmentManager
 import io.github.scisaga.loom.enrollment.HttpTransport
 import io.github.scisaga.loom.enrollment.ManagedProfile
 import io.github.scisaga.loom.enrollment.HealthReporter
+import io.github.scisaga.loom.enrollment.PresenceReporter
 import io.github.scisaga.loom.enrollment.V2DeviceReporter
 import io.github.scisaga.loom.enrollment.V2TerminalDeviceException
 import io.github.scisaga.loom.enrollment.requiresV2RouteApplication
@@ -62,20 +62,9 @@ import java.net.NetworkInterface
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 
-// §16.4：Android 用轻量签名健康陈述维持秒级 presence；服务器观测仍按原
-// 一分钟周期读取，不能借“实时在线”恢复额外探测或放大观测响应流量。
-internal const val ANDROID_HEALTH_REPORT_INTERVAL_MS = 5_000L
-internal const val ANDROID_OBSERVATION_REFRESH_INTERVAL_MS = 60_000L
-
-internal class AndroidHealthReportSchedule {
-    private var nextObservationAtMillis = 0L
-
-    fun includeObservations(nowMillis: Long): Boolean = nowMillis >= nextObservationAtMillis
-
-    fun recordSuccess(nowMillis: Long, includedObservations: Boolean) {
-        if (includedObservations) nextObservationAtMillis = nowMillis + ANDROID_OBSERVATION_REFRESH_INTERVAL_MS
-    }
-}
+// §16.4：完整 Observation 保持原一分钟周期；独立三字段在线心跳每五秒发送。
+internal const val ANDROID_FULL_REPORT_INTERVAL_MS = 60_000L
+internal const val ANDROID_PRESENCE_INTERVAL_MS = 5_000L
 
 internal data class RankedUnderlying<T>(
     val value: T,
@@ -130,6 +119,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
     private var boxService: BoxService? = null
     @Volatile private var tunnel: ParcelFileDescriptor? = null
     private var reportJob: Job? = null
+    private var presenceJob: Job? = null
     private var routeJob: Job? = null
     @Volatile private var sessionID = 0L
     private var lastUseEmulatorProxy = false
@@ -455,21 +445,17 @@ class LoomVpnService : VpnService(), PlatformInterface {
 
     private fun startReporter(profile: ManagedProfile, initialProbe: ProbeResult) {
         reportJob?.cancel()
+        presenceJob?.cancel()
         val reporterSession = sessionID
         reportJob = scope.launch {
             val reporter = HealthReporter(this@LoomVpnService)
-            val schedule = AndroidHealthReportSchedule()
             while (isActive && reporterSession == sessionID) {
                 val status = VpnRuntime.status.value
                 if (status.phase != ConnectionPhase.CONNECTED) return@launch
-                val includeObservations = schedule.includeObservations(SystemClock.elapsedRealtime())
-                val report = runCatching {
-                    reporter.send(profile, initialProbe.problems(), includeObservations)
-                }
+                val report = runCatching { reporter.send(profile, initialProbe.problems()) }
                 if (!isActive || reporterSession != sessionID) return@launch
                 if (report.isSuccess) {
                     val result = report.getOrThrow()
-                    schedule.recordSuccess(SystemClock.elapsedRealtime(), includeObservations)
                     VpnRuntime.transform { it.copy(trustedReport = "成功（HTTP ${result.status}）") }
                     runCatching {
                         RouteManager.get(this@LoomVpnService).consumeObservations(
@@ -486,7 +472,16 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 } else {
                     VpnRuntime.transform { it.copy(trustedReport = "失败；将重试") }
                 }
-                delay(ANDROID_HEALTH_REPORT_INTERVAL_MS)
+                delay(ANDROID_FULL_REPORT_INTERVAL_MS)
+            }
+        }
+        presenceJob = scope.launch {
+            val reporter = PresenceReporter(this@LoomVpnService)
+            while (isActive && reporterSession == sessionID) {
+                if (VpnRuntime.status.value.phase != ConnectionPhase.CONNECTED) return@launch
+                runCatching { reporter.send(profile) }
+                if (!isActive || reporterSession != sessionID) return@launch
+                delay(ANDROID_PRESENCE_INTERVAL_MS)
             }
         }
     }
@@ -494,6 +489,8 @@ class LoomVpnService : VpnService(), PlatformInterface {
     /** #14：private config/report 与数据面共用当前 TUN/WG；失败只保留 LKG，不能停数据面。 */
     private fun startV2Reporter(profile: ManagedProfile) {
         reportJob?.cancel()
+        presenceJob?.cancel()
+        presenceJob = null
         val reporterSession = sessionID
         reportJob = scope.launch {
             val reporter = V2DeviceReporter(this@LoomVpnService)
@@ -699,6 +696,8 @@ class LoomVpnService : VpnService(), PlatformInterface {
         if (cancelReporter) {
             reportJob?.cancel()
             reportJob = null
+            presenceJob?.cancel()
+            presenceJob = null
         }
         routeJob?.cancel()
         routeJob = null

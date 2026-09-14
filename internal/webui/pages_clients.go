@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"loom/internal/nodepresence"
 )
 
 type clientPageState struct {
@@ -101,7 +103,7 @@ func renderDeviceInventoryList(d Deps, inventory ClientInventory, archived int, 
 	if inventoryErr == nil && len(inventory.Clients) == 0 {
 		b.WriteString(`<div class=client-empty><b>No Device records exist.</b><span class=dim>Create a Device when a machine is ready to join the network.</span></div>`)
 	} else if inventoryErr == nil {
-		b.WriteString(`<div class=clients-table-scroll role=region aria-label="Device records" tabindex=0><table class=clients-table><colgroup><col class=client-col-device><col class=client-col-membership><col class=client-col-responsibilities><col class=client-col-grants><col><col class=client-col-seen></colgroup><thead><tr><th>Device<th>Membership<th>Responsibilities<th>Destination grants<th>Runtime<th>Last seen <span class=client-time-zone>UTC</span></tr></thead><tbody>`)
+		b.WriteString(`<div class=clients-table-scroll role=region aria-label="Device records" tabindex=0><table class=clients-table><colgroup><col class=client-col-device><col class=client-col-membership><col class=client-col-responsibilities><col class=client-col-grants><col><col class=client-col-seen></colgroup><thead><tr><th>Device<th>Membership<th>Responsibilities<th>Destination grants<th>Runtime<th>Last heartbeat <span class=client-time-zone>UTC</span></tr></thead><tbody>`)
 		for _, device := range inventory.Clients {
 			statusClass, statusLabel := clientStatusPresentation(device.Status)
 			identityMeta := deviceListIdentityMeta(device)
@@ -113,7 +115,7 @@ func renderDeviceInventoryList(d Deps, inventory ClientInventory, archived int, 
 				esc(device.ID), url.PathEscape(device.ID), esc(device.ID), esc(identityMeta), identityNote,
 				esc(orDash(device.Membership)), devicePauseAction(d, device, isAuthed), deviceTagList(device.Responsibilities),
 				deviceTagList(device.DestinationGrants), statusClass, esc(statusLabel),
-				esc(clientRuntimeDetail(device)), clientTableTime(device.LastSeenAt))
+				esc(clientRuntimeDetail(device)), clientTableTime(device.HeartbeatAt))
 		}
 		b.WriteString(`</tbody></table></div>`)
 	}
@@ -187,14 +189,14 @@ func pageDeviceDetail(d Deps, deviceID string, isAuthed bool) string {
 	fmt.Fprintf(&b, `<div class=grid>
 	<section class="card span4"><div class=label>Identity</div><h2>%s</h2><dl class=kv><dt>Device ID<dd class=mono>%s<dt>Platform<dd>%s<dt>Identity source<dd>%s<dt>Key fingerprint<dd class=mono>%s</dl></section>
 <section class="card span4"><div class=label>Membership</div><div class=metric>%s</div><p class=dim>Desired membership is separate from join progress and runtime health.</p><dl class=kv><dt>Created<dd>%s<dt>Joined<dd>%s</dl></section>
-<section class="card span4"><div class=label>Runtime evidence</div><div class="client-status %s"><span class=dot></span>%s</div><p class=dim>%s</p>%s<dl class=kv><dt>Last seen<dd>%s</dl></section>
+<section class="card span4"><div class=label>Runtime evidence</div><div class="client-status %s"><span class=dot></span>%s</div><p class=dim>%s</p>%s<dl class=kv><dt>Last heartbeat<dd>%s<dt>Last observation<dd>%s</dl></section>
 </div>
 <div class=grid><section class="card span6"><div class=label>Responsibilities</div><h2>%s</h2><p class=dim>“use_loom” means traffic originating on this Device may use Loom. It does not imply forwarding, public ingress or egress.</p></section>
 <section class="card span6"><div class=label>Destination grants</div><h2>%s</h2><p class=dim>Explicit declaration references only; there is no blanket “network permission”.</p></section>%s</div>
 <div class=toolbar section><a class=button href="/devices">← Device inventory</a><a class=button href="/nodes/%s">Network diagnostics</a></div>`,
 		esc(device.Name), esc(device.ID), esc(orDash(device.Platform)), esc(identitySource), esc(orDash(device.KeyFingerprint)),
 		esc(orDash(device.Membership)), esc(clientTime(device.CreatedAt)), esc(clientTime(device.EnrolledAt)),
-		statusClass, esc(statusLabel), esc(clientRuntimeDetail(*device)), clientRuntimeProblems(*device), esc(clientTime(device.LastSeenAt)),
+		statusClass, esc(statusLabel), esc(clientRuntimeDetail(*device)), clientRuntimeProblems(*device), esc(clientTime(device.HeartbeatAt)), esc(clientTime(device.LastSeenAt)),
 		esc(deviceList(device.Responsibilities)), esc(deviceList(device.DestinationGrants)), serverDeclaration, url.PathEscape(device.ID))
 	if !device.Legacy && (device.Status == "pending" || device.Status == "invite_expired") {
 		if control := deviceControl(d); control != nil && control.DiscardPending != nil {
@@ -587,20 +589,13 @@ func clientStatusPresentation(status string) (className, label string) {
 }
 
 const (
-	// 服务器与 Windows 当前每分钟提交一次可信健康陈述；连续两个周期没有
-	// 新陈述就不能继续展示 Online（§16.4）。
+	// 完整 Observation 保持原一分钟采集/同步语义；它过期后即使仍有心跳，
+	// 也不能把旧健康和配置证据继续展示为 Online（§16.4）。
 	clientRuntimeStaleAfter = 2 * time.Minute
-	// Android 用五秒轻量签名心跳维持在线证据；给一次网络抖动留出余量后，
-	// 十五秒仍无新证据即失效。失效只标 Stale，不能伪造 Offline（§16.4）。
-	clientAndroidRuntimeStaleAfter = 15 * time.Second
+	// Android 与 Linux 每五秒发送独立最小心跳；漏掉三次后在线租约失效。
+	// 它不刷新上面的完整 Observation 时钟（§16.4）。
+	clientPresenceStaleAfter = nodepresence.Lease
 )
-
-func clientRuntimeLease(device ClientView) time.Duration {
-	if strings.EqualFold(strings.TrimSpace(device.Platform), "android") {
-		return clientAndroidRuntimeStaleAfter
-	}
-	return clientRuntimeStaleAfter
-}
 
 // mergeClientRuntime 只改页面使用的切片副本。registry/SSOT 仍分别保存身份与
 // 期望态；Online 必须来自当前 View 中直连或验签后的健康证据。
@@ -636,6 +631,27 @@ func mergeClientRuntime(inventory ClientInventory, view View, now time.Time) Cli
 
 func mergeClientNodeRuntime(client *ClientView, node NodeView, now time.Time) {
 	client.RuntimeProblems = nil
+	heartbeat, heartbeatOK := parseClientObservedAt(node.PresenceAt)
+	if heartbeatOK {
+		client.HeartbeatAt = heartbeat.Format(time.RFC3339Nano)
+	} else {
+		client.HeartbeatAt = ""
+	}
+	requiresPresence := clientRequiresPresence(*client)
+	// Android 与 Linux 的完整 Observation 不能充当心跳兼容层；Windows 不在
+	// 本次心跳协议范围内，仍由其原完整报告触发 WebSocket 更新（§16.4）。
+	heartbeatStale := requiresPresence && (!heartbeatOK || now.Sub(heartbeat) > clientPresenceStaleAfter ||
+		heartbeat.After(now.Add(time.Minute)))
+	if !requiresPresence {
+		client.PresenceStatus = "not used"
+		client.HeartbeatAt = ""
+	} else if !heartbeatOK {
+		client.PresenceStatus = "not yet reported"
+	} else if heartbeatStale {
+		client.PresenceStatus = "stale"
+	} else {
+		client.PresenceStatus = "live"
+	}
 	if node.IdentityError != "" {
 		client.DataPlaneStatus = "problem"
 		client.RuntimeProblems = []string{node.IdentityError}
@@ -670,9 +686,9 @@ func mergeClientNodeRuntime(client *ClientView, node NodeView, now time.Time) {
 	}
 	client.RuntimeProblems = append([]string(nil), node.Problems...)
 
-	lease := clientRuntimeLease(*client)
-	stale := !direct && (!observedOK || node.AgeSec > int(lease.Seconds()) ||
-		now.Sub(observed) > lease || observed.After(now.Add(time.Minute)))
+	observationStale := !direct && (!observedOK || node.AgeSec > int(clientRuntimeStaleAfter.Seconds()) ||
+		now.Sub(observed) > clientRuntimeStaleAfter || observed.After(now.Add(time.Minute)))
+	stale := observationStale || heartbeatStale
 	switch {
 	case !node.Declared:
 		client.DataPlaneStatus = "undeclared"
@@ -694,6 +710,15 @@ func mergeClientNodeRuntime(client *ClientView, node NodeView, now time.Time) {
 		if client.Status == "online" {
 			client.Status = "unknown"
 		}
+	}
+}
+
+func clientRequiresPresence(client ClientView) bool {
+	switch strings.ToLower(strings.TrimSpace(client.Platform)) {
+	case "android", "linux-server":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -735,15 +760,19 @@ func clientTableTime(value string) string {
 }
 
 func clientRuntimeDetail(client ClientView) string {
+	presence := strings.TrimSpace(client.PresenceStatus)
 	dataPlane := strings.TrimSpace(client.DataPlaneStatus)
 	config := strings.TrimSpace(client.ConfigState)
+	if presence == "" {
+		presence = "not yet reported"
+	}
 	if dataPlane == "" {
 		dataPlane = "not reported"
 	}
 	if config == "" {
 		config = "not issued"
 	}
-	return "data: " + dataPlane + " · config: " + config
+	return "heartbeat: " + presence + " · observation: " + dataPlane + " · config: " + config
 }
 
 func clientRuntimeProblems(client ClientView) string {

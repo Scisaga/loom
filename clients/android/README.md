@@ -403,13 +403,14 @@ remain scoped evidence and do not roll back a verified configuration. The curren
 implementation gaps are listed in `docs/status/current.md`. Reports use the same
 Keystore key through the existing canonical v5 and self-check v1 contracts;
 the canonical v5 claim also binds the actual selector, candidate and chain.
-Before the v2 latch, Android submits a signed lightweight health report every
-five seconds so Device inventory can expire silent presence within fifteen
-seconds. Only one report per minute requests `observations=1`: a compatible
-server may return a bounded JSON snapshot with HTTP 200, while the intervening
-presence reports use the same signed Observation contract and accept an empty
-204 without new route evidence. This cadence does not add probes or a second
-route-observation cycle. After the latch, configuration and reporting use the role-separated `device_config` and
+Before the v2 latch, Android sends a separate signed presence heartbeat every
+five seconds. Its JSON has exactly `node`, `ts`, and `signature`; it contains no
+certificate, configuration, Agent state, self-check, route, traffic, or server
+observation. The existing full Observation remains on its original one-minute
+cycle and continues to request `observations=1`, accepting either a bounded HTTP
+200 JSON snapshot or a compatible empty HTTP 204. A heartbeat never refreshes
+the Observation timestamp or its health/configuration evidence. After the latch,
+configuration and reporting use the role-separated `device_config` and
 `device_report` services from private `ControlServiceDirectoryV1`, with Device
 mTLS. Neither service can be derived from a distribution, bootstrap, or
 enrollment URL.

@@ -42,6 +42,33 @@ func TestAndroidReportCanonicalBytesMatchAuthoritativeContracts(t *testing.T) {
 	}
 }
 
+func TestAndroidPresenceAssemblyIsIndependentThreeFieldEnvelope(t *testing.T) {
+	privateKey, publicKeySPKI, _, _ := testP256Identity(t, "android-a")
+	message, err := PreparePresenceHeartbeat("android-a", reportFixtureTimestamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := AssemblePresenceHeartbeat(
+		"android-a", reportFixtureTimestamp, publicKeySPKI,
+		signP256Message(t, privateKey, message),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 3 || fields["node"] == nil || fields["ts"] == nil || fields["signature"] == nil {
+		t.Fatalf("Android 心跳不是三字段正文:%s", body)
+	}
+	for _, forbidden := range []string{"attest", "self_check", "certificate", "applied", "agent", "observations"} {
+		if strings.Contains(string(body), forbidden) {
+			t.Fatalf("Android 心跳夹带 %q:%s", forbidden, body)
+		}
+	}
+}
+
 func TestAssembleObservationProducesExistingFiveFieldWireShape(t *testing.T) {
 	privateKey, _, caPEM, certPEM := testP256Identity(t, "android-a")
 	problems := []byte(`["missing probe","configuration unknown","missing probe"]`)

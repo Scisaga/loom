@@ -20,7 +20,7 @@ func TestClientAPIUsesSameTrustedRuntimeMergeAsHTML(t *testing.T) {
 				{
 					ID: "trusted", Declared: true, Health: "healthy", Source: "签名健康转述",
 					ObservedAt: now.Add(-20 * time.Second).Format(time.RFC3339), AgeSec: 20,
-					Applied: "snapshot-trusted-0123456789",
+					PresenceAt: now.Add(-2 * time.Second).Format(time.RFC3339), Applied: "snapshot-trusted-0123456789",
 				},
 				{
 					ID: "unsigned", Declared: true, Health: "healthy", Source: "未签名转述",

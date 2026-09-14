@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"loom/internal/attest"
+	"loom/internal/nodepresence"
 	trustedobservation "loom/internal/observation"
 )
 
@@ -64,6 +65,28 @@ type minimalObservation struct {
 	Applied   string               `json:"applied"`
 	Attest    *minimalSignedAttest `json:"attest"`
 	SelfCheck *signedSelfCheck     `json:"self_check"`
+}
+
+// PreparePresenceHeartbeat 返回 Android Keystore 每五秒签一次的独立原文。
+// 它与完整 Observation 使用不同签名域，不能携带或刷新观测数据（§16.4）。
+func PreparePresenceHeartbeat(nodeID, timestamp string) ([]byte, error) {
+	return nodepresence.Message(nodeID, timestamp)
+}
+
+// AssemblePresenceHeartbeat 复验平台签名后只输出 node、ts、signature 三字段 JSON。
+func AssemblePresenceHeartbeat(nodeID, timestamp string, publicKeySPKI, signatureDER []byte) ([]byte, error) {
+	message, err := PreparePresenceHeartbeat(nodeID, timestamp)
+	if err != nil {
+		return nil, err
+	}
+	if err := VerifyP256Signature(publicKeySPKI, message, signatureDER); err != nil {
+		return nil, fmt.Errorf("[§16.4 在线心跳] 平台签名:%w", err)
+	}
+	heartbeat, err := nodepresence.Assemble(nodeID, timestamp, signatureDER)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(heartbeat)
 }
 
 // EmptyMeasurementsDigest 是 §16.1 Observation 省略 edges/targets 时的既有摘要：

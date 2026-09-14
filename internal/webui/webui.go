@@ -210,7 +210,9 @@ type ClientView struct {
 	KeyFingerprint    string   `json:"key_fingerprint,omitempty"`
 	CreatedAt         string   `json:"created_at,omitempty"`
 	EnrolledAt        string   `json:"claimed_at,omitempty"`
+	HeartbeatAt       string   `json:"heartbeat_at,omitempty"`
 	LastSeenAt        string   `json:"last_seen_at,omitempty"`
+	PresenceStatus    string   `json:"presence_status,omitempty"`
 	DataPlaneStatus   string   `json:"data_plane_status"`
 	RuntimeProblems   []string `json:"runtime_problems,omitempty"`
 	ConfigState       string   `json:"config_state"`
@@ -516,12 +518,15 @@ type NodeView struct {
 	Paused              bool
 	// Health 是 healthy / problem / unknown。空值也按 unknown 处理；
 	// 未签名转述和静默节点不能因为“没看到错误”就被冒充成健康。
-	Health        string
-	Self          bool
-	Reached       bool // 直接拉到的,还是听别人转述的
-	Applied       string
-	AgeSec        int
-	ObservedAt    string
+	Health     string
+	Self       bool
+	Reached    bool // 直接拉到的,还是听别人转述的
+	Applied    string
+	AgeSec     int
+	ObservedAt string
+	// PresenceAt 来自独立最小签名心跳。它只能决定在线租约，不能刷新
+	// ObservedAt 或任何健康、配置和测量事实（§16.4）。
+	PresenceAt    string
 	Source        string
 	Version       *VersionView
 	Rollout       *RolloutView

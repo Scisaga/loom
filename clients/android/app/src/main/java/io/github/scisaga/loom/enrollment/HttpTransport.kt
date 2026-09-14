@@ -36,7 +36,21 @@ internal object HttpTransport {
             requestBody = body,
             maximum = maximum,
             accept = "application/json",
-            observationQuery = true,
+            allowedQuery = "observations=1",
+        )
+    }
+
+    fun postPresence(context: Context, endpoint: String, body: ByteArray): HttpResult {
+        val base = URL(endpoint)
+        require(base.query == null) { "在线心跳基址不能预置 query" }
+        return request(
+            context = context,
+            endpoint = "$endpoint?presence=1",
+            method = "POST",
+            requestBody = body,
+            maximum = PRESENCE_MAXIMUM_RESPONSE,
+            accept = "application/json",
+            allowedQuery = "presence=1",
         )
     }
 
@@ -56,13 +70,13 @@ internal object HttpTransport {
         requestBody: ByteArray?,
         maximum: Int,
         accept: String,
-        observationQuery: Boolean = false,
+        allowedQuery: String? = null,
     ): HttpResult {
         require(maximum in 1..MAXIMUM_RESPONSE) { "HTTP 响应边界无效" }
         val url = URL(endpoint)
         require(
             url.protocol == "https" && url.userInfo == null && url.host.isNotBlank() &&
-                url.ref == null && (url.query == null || observationQuery && url.query == "observations=1"),
+                url.ref == null && (url.query == null || allowedQuery != null && url.query == allowedQuery),
         ) { "控制通道必须是无凭据、无未授权 query/fragment 的 HTTPS 地址" }
         val networks = underlyingNetworks(context)
         check(networks.isNotEmpty()) { "没有已验证且未被 VPN 接管的底层网络" }
@@ -148,4 +162,5 @@ internal object HttpTransport {
     private const val READ_TIMEOUT_MS = 20_000
     private const val MAXIMUM_REQUEST = 4 * 1024 * 1024
     private const val MAXIMUM_RESPONSE = 16 * 1024 * 1024
+    private const val PRESENCE_MAXIMUM_RESPONSE = 4096
 }

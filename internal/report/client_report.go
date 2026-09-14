@@ -19,6 +19,7 @@ import (
 
 	"loom/internal/clientregistry"
 	"loom/internal/model"
+	"loom/internal/nodepresence"
 )
 
 const clientReportMaxBody = 1 << 20
@@ -59,6 +60,15 @@ func (h *clientReportReceiver) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "客户端上报必须使用 application/json", http.StatusUnsupportedMediaType)
 		return
 	}
+	switch r.URL.RawQuery {
+	case "presence=1":
+		h.serveHeartbeat(w, r)
+		return
+	case "", "observations=1":
+	default:
+		http.Error(w, "客户端上报查询参数无效", http.StatusBadRequest)
+		return
+	}
 	if r.ContentLength > clientReportMaxBody {
 		http.Error(w, "客户端上报超过大小限制", http.StatusRequestEntityTooLarge)
 		return
@@ -78,7 +88,7 @@ func (h *clientReportReceiver) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	observations, status, err := h.accept(&observation, h.now().UTC(), r.URL.Query().Get("observations") == "1")
+	observations, status, err := h.accept(&observation, h.now().UTC(), r.URL.RawQuery == "observations=1")
 	if err != nil {
 		// 公网伪造输入只记在反代访问日志；本地状态不可读才进入服务日志，
 		// 避免攻击者用无效签名制造日志洪泛。
@@ -94,6 +104,77 @@ func (h *clientReportReceiver) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// serveHeartbeat 复用既有 HTTPS report 入口的身份边界，但线正文只有
+// node、ts、signature。证书、健康与观测内容不得进入五秒包（§16.4）。
+func (h *clientReportReceiver) serveHeartbeat(w http.ResponseWriter, r *http.Request) {
+	if r.ContentLength > nodepresence.MaxEnvelopeBytes {
+		http.Error(w, "[§16.4 在线心跳] 请求超过大小限制", http.StatusRequestEntityTooLarge)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, nodepresence.MaxEnvelopeBytes)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	var heartbeat nodepresence.Heartbeat
+	if err := decoder.Decode(&heartbeat); err != nil {
+		writeClientHeartbeatDecodeError(w, err)
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeClientHeartbeatDecodeError(w, errors.New("JSON 后还有额外值"))
+		return
+	}
+	status, err := h.acceptHeartbeat(heartbeat, h.now().UTC())
+	if err != nil {
+		if status == http.StatusServiceUnavailable {
+			fmt.Fprintf(h.logw, "! 客户端在线心跳入口不可用:%v\n", err)
+		}
+		http.Error(w, clientReportErrorText(status), status)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func writeClientHeartbeatDecodeError(w http.ResponseWriter, err error) {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		http.Error(w, "[§16.4 在线心跳] 请求超过大小限制", http.StatusRequestEntityTooLarge)
+		return
+	}
+	http.Error(w, "[§16.4 在线心跳] 格式错误", http.StatusBadRequest)
+}
+
+func (h *clientReportReceiver) acceptHeartbeat(heartbeat nodepresence.Heartbeat, at time.Time) (int, error) {
+	if h == nil || h.table == nil || h.control == nil || h.now == nil {
+		return http.StatusServiceUnavailable, errors.New("客户端在线心跳接收器配置不完整")
+	}
+	identity, err := (clientregistry.Store{Path: h.control.ClientRegistryPath}).HeartbeatIdentity(heartbeat.Node)
+	if err != nil {
+		var protocol *clientregistry.Error
+		if errors.As(err, &protocol) {
+			return http.StatusForbidden, err
+		}
+		return http.StatusServiceUnavailable, err
+	}
+	ssot, _, err := loadValidatedSSOTSnapshot(h.control.SSOTPath)
+	if err != nil {
+		return http.StatusServiceUnavailable, err
+	}
+	node := ssot.NodeByID()[heartbeat.Node]
+	if node == nil || node.Decommission || node.Access == nil || node.Access.Platform != model.Android ||
+		identity.Platform != string(node.Access.Platform) {
+		return http.StatusForbidden, errors.New("客户端在线心跳节点不是在役 Android Device")
+	}
+	publicKey, err := nodepresence.ParsePublicKey(identity.PublicKey)
+	if err != nil {
+		return http.StatusForbidden, err
+	}
+	if _, err := nodepresence.Verify(heartbeat, publicKey, at, nodepresence.MaximumTransit); err != nil {
+		return http.StatusForbidden, err
+	}
+	h.table.putPresenceVerified(heartbeat, at)
+	return http.StatusNoContent, nil
 }
 
 func writeClientReportDecodeError(w http.ResponseWriter, err error) {

@@ -14,6 +14,7 @@ import (
 
 	"loom/internal/attest"
 	"loom/internal/clientregistry"
+	"loom/internal/nodepresence"
 )
 
 type clientReportHarness struct {
@@ -22,6 +23,7 @@ type clientReportHarness struct {
 	observation  Observation
 	registryPath string
 	publicKey    string
+	privateKey   []byte
 	now          time.Time
 }
 
@@ -79,6 +81,7 @@ func newClientReportHarnessFor(t *testing.T, node, platform string) clientReport
 	return clientReportHarness{
 		receiver: receiver, table: tbl, observation: observation,
 		registryPath: registryPath, publicKey: publicKey, now: now,
+		privateKey: key,
 	}
 }
 
@@ -157,6 +160,58 @@ func TestClientReportReceiverAcceptsAndroidDirectV5Observation(t *testing.T) {
 	if len(learned) != 1 || learned[0].Node != "phone" || learned[0].Applied != h.observation.Applied ||
 		learned[0].SelfCheck == nil {
 		t.Fatalf("accepted Android report did not enter gossip table: %+v", learned)
+	}
+}
+
+func TestClientHeartbeatUpdatesPresenceWithoutRefreshingObservation(t *testing.T) {
+	h := newClientReportHarnessFor(t, "phone", "android")
+	changes := h.table.changes()
+	heartbeat, err := nodepresence.Sign(h.observation.Node, h.now, h.privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := postClientReportURL(t, h.receiver, heartbeat, "/api/client/report?presence=1")
+	if response.Code != http.StatusNoContent || response.Body.Len() != 0 {
+		t.Fatalf("客户端心跳响应=%d %q", response.Code, response.Body.String())
+	}
+	select {
+	case <-changes:
+	default:
+		t.Fatal("可信心跳没有唤醒实时 Device inventory")
+	}
+	if got := h.table.presenceView()[heartbeat.Node]; got != heartbeat.TS {
+		t.Fatalf("在线心跳时间=%q, want %q", got, heartbeat.TS)
+	}
+	if learned := h.table.snapshot("control", h.now, 10*time.Minute); len(learned) != 0 {
+		t.Fatalf("心跳错误刷新或创建了完整 Observation:%+v", learned)
+	}
+}
+
+func TestClientHeartbeatRejectsTamperRevocationAndExtraReportFields(t *testing.T) {
+	h := newClientReportHarnessFor(t, "phone", "android")
+	heartbeat, err := nodepresence.Sign(h.observation.Node, h.now, h.privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tampered := heartbeat
+	tampered.TS = h.now.Add(time.Second).Format(time.RFC3339)
+	if got := postClientReportURL(t, h.receiver, tampered, "/api/client/report?presence=1"); got.Code != http.StatusForbidden {
+		t.Fatalf("篡改心跳响应=%d %q", got.Code, got.Body.String())
+	}
+	extra := map[string]any{
+		"node": heartbeat.Node, "ts": heartbeat.TS, "signature": heartbeat.Signature,
+		"applied": "不应进入心跳",
+	}
+	if got := postClientReportURL(t, h.receiver, extra, "/api/client/report?presence=1"); got.Code != http.StatusBadRequest {
+		t.Fatalf("夹带完整报告字段的心跳响应=%d %q", got.Code, got.Body.String())
+	}
+	writeClientReportRegistryFor(t, h.registryPath, "phone", "android", "revoked", h.publicKey)
+	if got := postClientReportURL(t, h.receiver, heartbeat, "/api/client/report?presence=1"); got.Code != http.StatusForbidden {
+		t.Fatalf("已撤销心跳响应=%d %q", got.Code, got.Body.String())
+	}
+	if got := postClientReportURL(t, h.receiver, heartbeat, "/api/client/report?presence=1&observations=1"); got.Code != http.StatusBadRequest {
+		t.Fatalf("混合心跳/观测查询响应=%d %q", got.Code, got.Body.String())
 	}
 }
 

@@ -166,7 +166,7 @@ func TestRevokedDevicePurgeRequiresAuthenticatedConfirmedPost(t *testing.T) {
 	detail := misakaRequest(t, d, http.MethodGet, "/devices/demo-old", nil, true)
 	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), `class="card notice device-archive-notice"`) ||
 		!strings.Contains(detail.Body.String(), `action="/devices/purge-revoked"`) ||
-		!strings.Contains(detail.Body.String(), `data: not applicable · config: not applicable`) ||
+		!strings.Contains(detail.Body.String(), `heartbeat: not yet reported · observation: not applicable · config: not applicable`) ||
 		!strings.Contains(style, `.device-archive-notice{margin-bottom:14px}`) {
 		t.Fatal("revoked Device detail lacks purge action, closed runtime semantics, or card spacing")
 	}
