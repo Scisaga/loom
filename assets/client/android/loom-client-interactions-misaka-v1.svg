@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1040" viewBox="0 0 1280 1040" role="img" aria-labelledby="title description">
-<title id="title">三个页面，三件清楚的事。</title>
-<desc id="description">连接页做日常操作，路由页解释实际路径，设置页管理设备。 全部身份及状态均为示例，不对应实际部署。</desc>
+<title id="title">关键操作，都在当前页面完成。</title>
+<desc id="description">首次加入、选择出口、浏览路径；保留清楚的返回位置与状态反馈。 全部身份及状态均为示例，不对应实际部署。</desc>
 <defs>
 <symbol id="loom-mark" viewBox="127 112 1000 1000">
 <g xmlns="http://www.w3.org/2000/svg" transform="translate(0.000000,1254.000000) scale(1.000000,-1.000000)">
@@ -12,164 +12,37 @@
 <style>text { font-family: "Noto Sans CJK SC", "Microsoft YaHei", system-ui, sans-serif; }</style>
 <rect x="0" y="0" width="1280" height="1040" rx="0" fill="#EEF1EE" stroke="none"/>
 <text x="48" y="42" font-size="11" fill="#239B68" font-weight="700" text-anchor="start">LOOM / ANDROID</text>
-<text x="48" y="81" font-size="28" fill="#17211B" font-weight="700" text-anchor="start">三个页面，三件清楚的事。</text>
-<text x="48" y="110" font-size="14" fill="#647269" font-weight="400" text-anchor="start">连接页做日常操作，路由页解释实际路径，设置页管理设备。</text>
+<text x="48" y="81" font-size="28" fill="#17211B" font-weight="700" text-anchor="start">关键操作，都在当前页面完成。</text>
+<text x="48" y="110" font-size="14" fill="#647269" font-weight="400" text-anchor="start">首次加入、选择出口、浏览路径；保留清楚的返回位置与状态反馈。</text>
 <text x="1232" y="42" font-size="11" fill="#647269" font-weight="400" text-anchor="end">MISAKA · 多配置目标设计 · 演示数据</text>
-<text x="48" y="148" font-size="12" fill="#239B68" font-weight="600" text-anchor="start">01 / 连接与模式</text>
+<text x="48" y="148" font-size="12" fill="#239B68" font-weight="600" text-anchor="start">A / 添加并加入</text>
 <g transform="translate(48,166)">
 <rect x="0" y="0" width="360" height="780" rx="28" fill="#FCFCFB" stroke="#CBD3CD"/>
 <use href="#loom-mark" x="22" y="26" width="32" height="32"/>
 <text x="63" y="44" font-size="18" fill="#17211B" font-weight="900" text-anchor="start">LOOM</text>
 <text x="63" y="59" font-size="9" fill="#647269" font-weight="400" text-anchor="start">ANDROID</text>
 <rect x="184" y="18" width="154" height="48" rx="12" fill="white" stroke="#E3E8E5"/>
-<text x="200" y="47" font-size="13" fill="#17211B" font-weight="600" text-anchor="start">demo-home</text>
-<text x="318" y="46" font-size="16" fill="#647269" font-weight="400" text-anchor="middle">›</text>
-<text x="22" y="104" font-size="26" fill="#17211B" font-weight="700" text-anchor="start">连接</text>
-<text x="22" y="130" font-size="13" fill="#647269" font-weight="400" text-anchor="start">管理 VPN 连接与上网方式</text>
-<rect x="22" y="154" width="316" height="162" rx="20" fill="#F1F5F2" stroke="none"/>
-<circle cx="45" cy="187" r="5.5" fill="#239B68"/>
-<text x="59" y="195" font-size="20" fill="#17211B" font-weight="700" text-anchor="start">已连接</text>
-<text x="40" y="224" font-size="13" fill="#647269" font-weight="400" text-anchor="start">Loom VPN 正在运行</text>
-<rect x="40" y="250" width="280" height="48" rx="12" fill="#239B68" stroke="#239B68"/>
-<text x="180.0" y="279" font-size="14" fill="white" font-weight="600" text-anchor="middle">断开</text>
-<rect x="22" y="332" width="316" height="164" rx="16" fill="white" stroke="#E3E8E5"/>
-<text x="38" y="362" font-size="17" fill="#17211B" font-weight="700" text-anchor="start">连接模式</text>
-<rect x="38.0" y="380" width="89.33333333333333" height="48" rx="12" fill="white" stroke="#AEBBB2"/>
-<text x="82.66666666666666" y="409" font-size="14" fill="#17211B" font-weight="600" text-anchor="middle">Direct</text>
-<rect x="135.33333333333331" y="380" width="89.33333333333333" height="48" rx="12" fill="#239B68" stroke="#239B68"/>
-<text x="179.99999999999997" y="409" font-size="14" fill="white" font-weight="600" text-anchor="middle">Auto</text>
-<rect x="232.66666666666666" y="380" width="89.33333333333333" height="48" rx="12" fill="white" stroke="#AEBBB2"/>
-<text x="277.3333333333333" y="409" font-size="14" fill="#17211B" font-weight="600" text-anchor="middle">指定出口</text>
-<text x="38" y="453" font-size="12" fill="#647269" font-weight="400" text-anchor="start">按已下发规则自动选择各服务的路径。</text>
-<text x="38" y="476" font-size="12" fill="#239B68" font-weight="400" text-anchor="start">Auto · 已生效</text>
-<rect x="22" y="514" width="316" height="48" rx="12" fill="white" stroke="#AEBBB2"/>
-<text x="180.0" y="543" font-size="14" fill="#17211B" font-weight="600" text-anchor="middle">查看当前路径与网络状态</text>
-<path d="M1 704h358v48q0 27-27 27H28Q1 779 1 752Z" fill="white"/>
-<path d="M1 704h358" stroke="#E3E8E5"/>
-<rect x="29" y="714" width="62" height="30" rx="15" fill="#EAF6F0" stroke="none"/>
-<g transform="translate(48,717)" fill="none" stroke="#239B68" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-<path d="M12 2v9M6.2 5.8a8.5 8.5 0 1 0 11.6 0"/>
-</g>
-<text x="60" y="763" font-size="12" fill="#239B68" font-weight="600" text-anchor="middle">连接</text>
-<g transform="translate(168,717)" fill="none" stroke="#647269" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-<path d="m6 17 6-11 6 11"/>
-<g fill="white">
-<circle cx="6" cy="17" r="2.5"/>
-<circle cx="12" cy="6" r="2.5"/>
-<circle cx="18" cy="17" r="2.5"/>
-</g>
-</g>
-<text x="180" y="763" font-size="12" fill="#647269" font-weight="400" text-anchor="middle">路由</text>
-<g transform="translate(288,717)" fill="none" stroke="#647269" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-<path d="M4 6h16M4 12h16M4 18h16"/>
-<g fill="white">
-<circle cx="8" cy="6" r="2"/>
-<circle cx="16" cy="12" r="2"/>
-<circle cx="10" cy="18" r="2"/>
-</g>
-</g>
-<text x="300" y="763" font-size="12" fill="#647269" font-weight="400" text-anchor="middle">设置</text>
-</g>
-<text x="48" y="978" font-size="12" fill="#647269" font-weight="400" text-anchor="start">顶部选择要查看的配置，开关与三态集中在首页。</text>
-<text x="48" y="1000" font-size="12" fill="#647269" font-weight="400" text-anchor="start">一次只运行一份连接；出口选择在卡片内展开。</text>
-<text x="460" y="148" font-size="12" fill="#239B68" font-weight="600" text-anchor="start">02 / 路径与证据</text>
-<g transform="translate(460,166)">
-<rect x="0" y="0" width="360" height="780" rx="28" fill="#FCFCFB" stroke="#CBD3CD"/>
-<use href="#loom-mark" x="22" y="26" width="32" height="32"/>
-<text x="63" y="44" font-size="18" fill="#17211B" font-weight="900" text-anchor="start">LOOM</text>
-<text x="63" y="59" font-size="9" fill="#647269" font-weight="400" text-anchor="start">ANDROID</text>
-<rect x="184" y="18" width="154" height="48" rx="12" fill="white" stroke="#E3E8E5"/>
-<text x="200" y="47" font-size="13" fill="#17211B" font-weight="600" text-anchor="start">demo-home</text>
-<text x="318" y="46" font-size="16" fill="#647269" font-weight="400" text-anchor="middle">›</text>
-<text x="22" y="104" font-size="26" fill="#17211B" font-weight="700" text-anchor="start">路由</text>
-<text x="22" y="130" font-size="13" fill="#647269" font-weight="400" text-anchor="start">demo-home · 当前连接</text>
-<rect x="22" y="154" width="316" height="226" rx="16" fill="white" stroke="#E3E8E5"/>
-<text x="38" y="184" font-size="17" fill="#17211B" font-weight="700" text-anchor="start">当前路径</text>
-<rect x="249" y="166" width="73" height="25" rx="13" fill="#EAF6F0" stroke="none"/>
-<text x="285.5" y="183" font-size="11" fill="#239B68" font-weight="600" text-anchor="middle">当前连接</text>
-<path d="M38 204h284" stroke="#E3E8E5"/>
-<text x="38" y="232" font-size="14" fill="#17211B" font-weight="700" text-anchor="start">网页浏览、即时通讯等 3 项</text>
-<text x="38" y="258" font-size="13" fill="#17211B" font-weight="400" text-anchor="start">本机 → demo-entry → demo-exit</text>
-<text x="38" y="280" font-size="13" fill="#17211B" font-weight="400" text-anchor="start">→ 目标地址</text>
-<text x="38" y="304" font-size="12" fill="#647269" font-weight="400" text-anchor="start">分段观测见逐项详情</text>
-<rect x="38" y="316" width="284" height="48" rx="12" fill="white" stroke="#AEBBB2"/>
-<text x="180.0" y="345" font-size="14" fill="#17211B" font-weight="600" text-anchor="middle">查看 3 项详情</text>
-<rect x="22" y="396" width="316" height="264" rx="16" fill="white" stroke="#E3E8E5"/>
-<text x="38" y="426" font-size="17" fill="#17211B" font-weight="700" text-anchor="start">网络状态</text>
-<text x="38" y="461" font-size="12" fill="#647269" font-weight="400" text-anchor="start">DNS</text>
-<text x="322" y="461" font-size="12" fill="#17211B" font-weight="400" text-anchor="end">—</text>
-<path d="M38 476h284" stroke="#E3E8E5"/>
-<text x="38" y="501" font-size="12" fill="#647269" font-weight="400" text-anchor="start">HTTPS</text>
-<text x="322" y="501" font-size="12" fill="#17211B" font-weight="400" text-anchor="end">—</text>
-<path d="M38 516h284" stroke="#E3E8E5"/>
-<text x="38" y="541" font-size="12" fill="#647269" font-weight="400" text-anchor="start">可信上报</text>
-<text x="322" y="541" font-size="12" fill="#17211B" font-weight="400" text-anchor="end">已接收 · 示例状态</text>
-<path d="M38 556h284" stroke="#E3E8E5"/>
-<text x="38" y="581" font-size="12" fill="#647269" font-weight="400" text-anchor="start">服务器观测</text>
-<text x="322" y="581" font-size="12" fill="#17211B" font-weight="400" text-anchor="end">尚未读取</text>
-<text x="38" y="622" font-size="12" fill="#647269" font-weight="400" text-anchor="start">分段数据用于说明选路，</text>
-<text x="38" y="642" font-size="12" fill="#647269" font-weight="400" text-anchor="start">缺失时显示未知。</text>
-<path d="M1 704h358v48q0 27-27 27H28Q1 779 1 752Z" fill="white"/>
-<path d="M1 704h358" stroke="#E3E8E5"/>
-<g transform="translate(48,717)" fill="none" stroke="#647269" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-<path d="M12 2v9M6.2 5.8a8.5 8.5 0 1 0 11.6 0"/>
-</g>
-<text x="60" y="763" font-size="12" fill="#647269" font-weight="400" text-anchor="middle">连接</text>
-<rect x="149" y="714" width="62" height="30" rx="15" fill="#EAF6F0" stroke="none"/>
-<g transform="translate(168,717)" fill="none" stroke="#239B68" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-<path d="m6 17 6-11 6 11"/>
-<g fill="white">
-<circle cx="6" cy="17" r="2.5"/>
-<circle cx="12" cy="6" r="2.5"/>
-<circle cx="18" cy="17" r="2.5"/>
-</g>
-</g>
-<text x="180" y="763" font-size="12" fill="#239B68" font-weight="600" text-anchor="middle">路由</text>
-<g transform="translate(288,717)" fill="none" stroke="#647269" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-<path d="M4 6h16M4 12h16M4 18h16"/>
-<g fill="white">
-<circle cx="8" cy="6" r="2"/>
-<circle cx="16" cy="12" r="2"/>
-<circle cx="10" cy="18" r="2"/>
-</g>
-</g>
-<text x="300" y="763" font-size="12" fill="#647269" font-weight="400" text-anchor="middle">设置</text>
-</g>
-<text x="460" y="978" font-size="12" fill="#647269" font-weight="400" text-anchor="start">路径与证据归属于正在查看的配置。</text>
-<text x="460" y="1000" font-size="12" fill="#647269" font-weight="400" text-anchor="start">另一配置的连接不能冒充当前配置已连接。</text>
-<text x="872" y="148" font-size="12" fill="#239B68" font-weight="600" text-anchor="start">03 / 多配置管理</text>
-<g transform="translate(872,166)">
-<rect x="0" y="0" width="360" height="780" rx="28" fill="#FCFCFB" stroke="#CBD3CD"/>
-<use href="#loom-mark" x="22" y="26" width="32" height="32"/>
-<text x="63" y="44" font-size="18" fill="#17211B" font-weight="900" text-anchor="start">LOOM</text>
-<text x="63" y="59" font-size="9" fill="#647269" font-weight="400" text-anchor="start">ANDROID</text>
-<rect x="184" y="18" width="154" height="48" rx="12" fill="white" stroke="#E3E8E5"/>
-<text x="200" y="47" font-size="13" fill="#17211B" font-weight="600" text-anchor="start">demo-home</text>
+<text x="200" y="47" font-size="13" fill="#17211B" font-weight="600" text-anchor="start">新连接</text>
 <text x="318" y="46" font-size="16" fill="#647269" font-weight="400" text-anchor="middle">›</text>
 <text x="22" y="104" font-size="26" fill="#17211B" font-weight="700" text-anchor="start">设置</text>
-<text x="22" y="130" font-size="13" fill="#647269" font-weight="400" text-anchor="start">连接配置与本机设置</text>
-<rect x="22" y="154" width="316" height="230" rx="16" fill="white" stroke="#E3E8E5"/>
-<text x="38" y="184" font-size="17" fill="#17211B" font-weight="700" text-anchor="start">连接配置</text>
-<text x="322" y="184" font-size="13" fill="#239B68" font-weight="600" text-anchor="end">+ 添加</text>
-<rect x="34" y="204" width="292" height="62" rx="10" fill="#F1F5F2" stroke="none"/>
-<text x="46" y="228" font-size="14" fill="#17211B" font-weight="600" text-anchor="start">demo-home</text>
-<text x="46" y="251" font-size="12" fill="#239B68" font-weight="400" text-anchor="start">已连接</text>
-<text x="310" y="239" font-size="12" fill="#647269" font-weight="400" text-anchor="end">当前查看</text>
-<text x="46" y="298" font-size="14" fill="#17211B" font-weight="600" text-anchor="start">demo-work</text>
-<text x="46" y="321" font-size="12" fill="#647269" font-weight="400" text-anchor="start">未连接</text>
-<text x="310" y="309" font-size="12" fill="#647269" font-weight="400" text-anchor="end">查看</text>
-<text x="38" y="368" font-size="11" fill="#647269" font-weight="400" text-anchor="start">选择配置仅切换查看</text>
-<rect x="22" y="400" width="316" height="138" rx="16" fill="white" stroke="#E3E8E5"/>
-<text x="38" y="430" font-size="17" fill="#17211B" font-weight="700" text-anchor="start">demo-home</text>
-<text x="38" y="454" font-size="12" fill="#239B68" font-weight="400" text-anchor="start">已加入 · 当前配置已验证</text>
-<rect x="38" y="473" width="284" height="48" rx="12" fill="white" stroke="#AEBBB2"/>
-<text x="180.0" y="502" font-size="14" fill="#17211B" font-weight="600" text-anchor="middle">检查更新</text>
-<rect x="22" y="554" width="316" height="60" rx="16" fill="white" stroke="#E3E8E5"/>
-<text x="38" y="590" font-size="15" fill="#17211B" font-weight="600" text-anchor="start">连接通知</text>
-<text x="322" y="590" font-size="12" fill="#647269" font-weight="400" text-anchor="end">已允许 ›</text>
-<rect x="22" y="630" width="316" height="60" rx="16" fill="white" stroke="#E3E8E5"/>
-<text x="38" y="666" font-size="15" fill="#17211B" font-weight="600" text-anchor="start">关于此设备</text>
-<text x="322" y="666" font-size="12" fill="#647269" font-weight="400" text-anchor="end">版本与密钥 ›</text>
+<text x="22" y="130" font-size="13" fill="#647269" font-weight="400" text-anchor="start">为新连接导入邀请</text>
+<rect x="22" y="154" width="316" height="418" rx="16" fill="white" stroke="#E3E8E5"/>
+<text x="38" y="184" font-size="17" fill="#17211B" font-weight="700" text-anchor="start">添加连接</text>
+<text x="38" y="219" font-size="12" fill="#647269" font-weight="400" text-anchor="start">连接名称</text>
+<rect x="38" y="232" width="284" height="48" rx="10" fill="white" stroke="#AEBBB2"/>
+<text x="50" y="261" font-size="14" fill="#17211B" font-weight="400" text-anchor="start">demo-new</text>
+<text x="38" y="311" font-size="12" fill="#647269" font-weight="400" text-anchor="start">邀请</text>
+<text x="38" y="337" font-size="13" fill="#647269" font-weight="400" text-anchor="start">尚未选择邀请</text>
+<rect x="38" y="355" width="138" height="48" rx="12" fill="white" stroke="#AEBBB2"/>
+<text x="107.0" y="384" font-size="14" fill="#17211B" font-weight="600" text-anchor="middle">扫描二维码</text>
+<rect x="184" y="355" width="138" height="48" rx="12" fill="white" stroke="#AEBBB2"/>
+<text x="253.0" y="384" font-size="14" fill="#17211B" font-weight="600" text-anchor="middle">导入文件</text>
+<rect x="38" y="419" width="284" height="48" rx="12" fill="#E8EDE9" stroke="#E8EDE9"/>
+<text x="180.0" y="448" font-size="14" fill="#829086" font-weight="600" text-anchor="middle">加入并保存</text>
+<text x="180" y="501" font-size="14" fill="#239B68" font-weight="600" text-anchor="middle">取消</text>
+<text x="38" y="541" font-size="12" fill="#647269" font-weight="400" text-anchor="start">加入成功后可在列表中选择此连接。</text>
+<text x="22" y="606" font-size="13" fill="#239B68" font-weight="400" text-anchor="start">demo-home 正在连接</text>
+<text x="22" y="630" font-size="12" fill="#647269" font-weight="400" text-anchor="start">添加配置不会中断当前连接。</text>
 <path d="M1 704h358v48q0 27-27 27H28Q1 779 1 752Z" fill="white"/>
 <path d="M1 704h358" stroke="#E3E8E5"/>
 <g transform="translate(48,717)" fill="none" stroke="#647269" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
@@ -196,6 +69,137 @@
 </g>
 <text x="300" y="763" font-size="12" fill="#239B68" font-weight="600" text-anchor="middle">设置</text>
 </g>
-<text x="872" y="978" font-size="12" fill="#647269" font-weight="400" text-anchor="start">新增、重命名与删除围绕具体配置进行。</text>
-<text x="872" y="1000" font-size="12" fill="#647269" font-weight="400" text-anchor="start">通知和本机信息在同页展开；底部导航固定。</text>
+<text x="48" y="978" font-size="12" fill="#647269" font-weight="400" text-anchor="start">先填写名称并导入邀请，再加入并保存。</text>
+<text x="48" y="1000" font-size="12" fill="#647269" font-weight="400" text-anchor="start">新配置保持未连接，既有连接继续运行。</text>
+<text x="460" y="148" font-size="12" fill="#239B68" font-weight="600" text-anchor="start">B / 选择出口</text>
+<g transform="translate(460,166)">
+<rect x="0" y="0" width="360" height="780" rx="28" fill="#FCFCFB" stroke="#CBD3CD"/>
+<use href="#loom-mark" x="22" y="26" width="32" height="32"/>
+<text x="63" y="44" font-size="18" fill="#17211B" font-weight="900" text-anchor="start">LOOM</text>
+<text x="63" y="59" font-size="9" fill="#647269" font-weight="400" text-anchor="start">ANDROID</text>
+<rect x="184" y="18" width="154" height="48" rx="12" fill="white" stroke="#E3E8E5"/>
+<text x="200" y="47" font-size="13" fill="#17211B" font-weight="600" text-anchor="start">demo-home</text>
+<text x="318" y="46" font-size="16" fill="#647269" font-weight="400" text-anchor="middle">›</text>
+<text x="22" y="104" font-size="26" fill="#17211B" font-weight="700" text-anchor="start">连接</text>
+<text x="22" y="130" font-size="13" fill="#647269" font-weight="400" text-anchor="start">管理 VPN 连接与上网方式</text>
+<rect x="22" y="154" width="316" height="162" rx="20" fill="#F1F5F2" stroke="none"/>
+<circle cx="45" cy="187" r="5.5" fill="#239B68"/>
+<text x="59" y="195" font-size="20" fill="#17211B" font-weight="700" text-anchor="start">已连接</text>
+<text x="40" y="224" font-size="13" fill="#647269" font-weight="400" text-anchor="start">Loom VPN 正在运行</text>
+<rect x="40" y="250" width="280" height="48" rx="12" fill="#239B68" stroke="#239B68"/>
+<text x="180.0" y="279" font-size="14" fill="white" font-weight="600" text-anchor="middle">断开</text>
+<rect x="22" y="332" width="316" height="326" rx="16" fill="white" stroke="#E3E8E5"/>
+<text x="38" y="362" font-size="17" fill="#17211B" font-weight="700" text-anchor="start">连接模式</text>
+<rect x="38.0" y="380" width="89.33333333333333" height="48" rx="12" fill="white" stroke="#AEBBB2"/>
+<text x="82.66666666666666" y="409" font-size="14" fill="#17211B" font-weight="600" text-anchor="middle">Direct</text>
+<rect x="135.33333333333331" y="380" width="89.33333333333333" height="48" rx="12" fill="#239B68" stroke="#239B68"/>
+<text x="179.99999999999997" y="409" font-size="14" fill="white" font-weight="600" text-anchor="middle">Auto</text>
+<rect x="232.66666666666666" y="380" width="89.33333333333333" height="48" rx="12" fill="white" stroke="#AEBBB2"/>
+<text x="277.3333333333333" y="409" font-size="14" fill="#17211B" font-weight="600" text-anchor="middle">指定出口</text>
+<text x="38" y="453" font-size="12" fill="#647269" font-weight="400" text-anchor="start">按已下发规则自动选择各服务的路径。</text>
+<text x="38" y="476" font-size="12" fill="#239B68" font-weight="400" text-anchor="start">Auto · 已生效</text>
+<rect x="38" y="489" width="284" height="151" rx="12" fill="#F1F5F2" stroke="none"/>
+<text x="50" y="512" font-size="13" fill="#17211B" font-weight="700" text-anchor="start">选择已授权出口</text>
+<text x="50" y="533" font-size="11" fill="#647269" font-weight="400" text-anchor="start">选择后应用于新连接</text>
+<rect x="50" y="545" width="260" height="48" rx="12" fill="white" stroke="#AEBBB2"/>
+<text x="180.0" y="574" font-size="14" fill="#17211B" font-weight="600" text-anchor="middle">demo-exit</text>
+<text x="180" y="622" font-size="13" fill="#239B68" font-weight="600" text-anchor="middle">取消选择</text>
+<path d="M1 704h358v48q0 27-27 27H28Q1 779 1 752Z" fill="white"/>
+<path d="M1 704h358" stroke="#E3E8E5"/>
+<rect x="29" y="714" width="62" height="30" rx="15" fill="#EAF6F0" stroke="none"/>
+<g transform="translate(48,717)" fill="none" stroke="#239B68" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<path d="M12 2v9M6.2 5.8a8.5 8.5 0 1 0 11.6 0"/>
+</g>
+<text x="60" y="763" font-size="12" fill="#239B68" font-weight="600" text-anchor="middle">连接</text>
+<g transform="translate(168,717)" fill="none" stroke="#647269" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<path d="m6 17 6-11 6 11"/>
+<g fill="white">
+<circle cx="6" cy="17" r="2.5"/>
+<circle cx="12" cy="6" r="2.5"/>
+<circle cx="18" cy="17" r="2.5"/>
+</g>
+</g>
+<text x="180" y="763" font-size="12" fill="#647269" font-weight="400" text-anchor="middle">路由</text>
+<g transform="translate(288,717)" fill="none" stroke="#647269" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<path d="M4 6h16M4 12h16M4 18h16"/>
+<g fill="white">
+<circle cx="8" cy="6" r="2"/>
+<circle cx="16" cy="12" r="2"/>
+<circle cx="10" cy="18" r="2"/>
+</g>
+</g>
+<text x="300" y="763" font-size="12" fill="#647269" font-weight="400" text-anchor="middle">设置</text>
+</g>
+<text x="460" y="978" font-size="12" fill="#647269" font-weight="400" text-anchor="start">选择前仍显示已确认的 Auto；取消不改变模式。</text>
+<text x="460" y="1000" font-size="12" fill="#647269" font-weight="400" text-anchor="start">按钮至少高 48；窄屏、大字体时整组纵排。</text>
+<text x="872" y="148" font-size="12" fill="#239B68" font-weight="600" text-anchor="start">C / 逐项详情</text>
+<g transform="translate(872,166)">
+<rect x="0" y="0" width="360" height="780" rx="28" fill="#FCFCFB" stroke="#CBD3CD"/>
+<use href="#loom-mark" x="22" y="26" width="32" height="32"/>
+<text x="63" y="44" font-size="18" fill="#17211B" font-weight="900" text-anchor="start">LOOM</text>
+<text x="63" y="59" font-size="9" fill="#647269" font-weight="400" text-anchor="start">ANDROID</text>
+<rect x="184" y="18" width="154" height="48" rx="12" fill="white" stroke="#E3E8E5"/>
+<text x="200" y="47" font-size="13" fill="#17211B" font-weight="600" text-anchor="start">demo-home</text>
+<text x="318" y="46" font-size="16" fill="#647269" font-weight="400" text-anchor="middle">›</text>
+<text x="22" y="104" font-size="26" fill="#17211B" font-weight="700" text-anchor="start">路由</text>
+<text x="22" y="130" font-size="13" fill="#647269" font-weight="400" text-anchor="start">demo-home · 当前连接</text>
+<rect x="22" y="154" width="316" height="528" rx="16" fill="white" stroke="#E3E8E5"/>
+<text x="38" y="184" font-size="17" fill="#17211B" font-weight="700" text-anchor="start">当前路径</text>
+<text x="38" y="213" font-size="12" fill="#647269" font-weight="400" text-anchor="start">逐项详情 · 1 / 3</text>
+<text x="38" y="243" font-size="15" fill="#17211B" font-weight="700" text-anchor="start">网页浏览</text>
+<path d="M48 274v54" stroke="#B9CEBF"/>
+<circle cx="48" cy="274" r="4" fill="white" stroke="#77AB8B" stroke-width="2"/>
+<text x="66" y="279" font-size="13" fill="#17211B" font-weight="400" text-anchor="start">本机</text>
+<text x="66" y="300" font-size="11" fill="#647269" font-weight="400" text-anchor="start">入口测量 · —</text>
+<path d="M48 328v54" stroke="#B9CEBF"/>
+<circle cx="48" cy="328" r="4" fill="white" stroke="#77AB8B" stroke-width="2"/>
+<text x="66" y="333" font-size="13" fill="#17211B" font-weight="400" text-anchor="start">demo-entry</text>
+<text x="66" y="354" font-size="11" fill="#647269" font-weight="400" text-anchor="start">服务器分段观测 · —</text>
+<path d="M48 382v54" stroke="#B9CEBF"/>
+<circle cx="48" cy="382" r="4" fill="white" stroke="#77AB8B" stroke-width="2"/>
+<text x="66" y="387" font-size="13" fill="#17211B" font-weight="400" text-anchor="start">demo-exit</text>
+<text x="66" y="408" font-size="11" fill="#647269" font-weight="400" text-anchor="start">出口目标观测 · —</text>
+<circle cx="48" cy="436" r="4" fill="white" stroke="#77AB8B" stroke-width="2"/>
+<text x="66" y="441" font-size="13" fill="#17211B" font-weight="400" text-anchor="start">目标地址</text>
+<path d="M38 460h284" stroke="#E3E8E5"/>
+<text x="38" y="484" font-size="11" fill="#647269" font-weight="400" text-anchor="start">实际候选</text>
+<text x="38" y="507" font-size="13" fill="#17211B" font-weight="400" text-anchor="start">demo-candidate</text>
+<text x="38" y="534" font-size="11" fill="#647269" font-weight="400" text-anchor="start">选路说明</text>
+<text x="38" y="556" font-size="12" fill="#17211B" font-weight="400" text-anchor="start">当前使用已授权路径；</text>
+<text x="38" y="576" font-size="12" fill="#17211B" font-weight="400" text-anchor="start">分段数据尚未读取。</text>
+<text x="38" y="603" font-size="11" fill="#647269" font-weight="400" text-anchor="start">决策时间 · —</text>
+<rect x="38.0" y="618" width="89.33333333333333" height="48" rx="12" fill="#E8EDE9" stroke="#E8EDE9"/>
+<text x="82.66666666666666" y="647" font-size="14" fill="#829086" font-weight="600" text-anchor="middle">上一项</text>
+<rect x="135.33333333333331" y="618" width="89.33333333333333" height="48" rx="12" fill="white" stroke="#AEBBB2"/>
+<text x="179.99999999999997" y="647" font-size="14" fill="#17211B" font-weight="600" text-anchor="middle">收起</text>
+<rect x="232.66666666666666" y="618" width="89.33333333333333" height="48" rx="12" fill="white" stroke="#AEBBB2"/>
+<text x="277.3333333333333" y="647" font-size="14" fill="#17211B" font-weight="600" text-anchor="middle">下一项</text>
+<path d="M1 704h358v48q0 27-27 27H28Q1 779 1 752Z" fill="white"/>
+<path d="M1 704h358" stroke="#E3E8E5"/>
+<g transform="translate(48,717)" fill="none" stroke="#647269" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<path d="M12 2v9M6.2 5.8a8.5 8.5 0 1 0 11.6 0"/>
+</g>
+<text x="60" y="763" font-size="12" fill="#647269" font-weight="400" text-anchor="middle">连接</text>
+<rect x="149" y="714" width="62" height="30" rx="15" fill="#EAF6F0" stroke="none"/>
+<g transform="translate(168,717)" fill="none" stroke="#239B68" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<path d="m6 17 6-11 6 11"/>
+<g fill="white">
+<circle cx="6" cy="17" r="2.5"/>
+<circle cx="12" cy="6" r="2.5"/>
+<circle cx="18" cy="17" r="2.5"/>
+</g>
+</g>
+<text x="180" y="763" font-size="12" fill="#239B68" font-weight="600" text-anchor="middle">路由</text>
+<g transform="translate(288,717)" fill="none" stroke="#647269" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+<path d="M4 6h16M4 12h16M4 18h16"/>
+<g fill="white">
+<circle cx="8" cy="6" r="2"/>
+<circle cx="16" cy="12" r="2"/>
+<circle cx="10" cy="18" r="2"/>
+</g>
+</g>
+<text x="300" y="763" font-size="12" fill="#647269" font-weight="400" text-anchor="middle">设置</text>
+</g>
+<text x="872" y="978" font-size="12" fill="#647269" font-weight="400" text-anchor="start">一次展示一项，上一项 / 收起 / 下一项页内操作。</text>
+<text x="872" y="1000" font-size="12" fill="#647269" font-weight="400" text-anchor="start">真实实现保留来源、时间、原因及未知值。</text>
 </svg>

@@ -29,7 +29,7 @@ class HomeUiInstrumentedTest {
     val compose = createAndroidComposeRule<MainActivity>()
 
     @Test
-    fun bottomTabsSeparateConnectionConfigurationAndDiagnostics() {
+    fun bottomTabsSeparateConnectionRoutesAndSettings() {
         compose.onNodeWithContentDescription("Loom").assertIsDisplayed()
         val logoTop = compose.onNodeWithContentDescription("Loom").fetchSemanticsNode().boundsInRoot.top
         val wordmarkTop = compose.onNodeWithText("LOOM").fetchSemanticsNode().boundsInRoot.top
@@ -38,17 +38,22 @@ class HomeUiInstrumentedTest {
         compose.onNodeWithTag("home-tabs").assertIsDisplayed()
         compose.onNodeWithTag("connection-toggle").assertIsDisplayed().assertIsNotEnabled()
 
-        compose.onNodeWithTag("tab-configuration").performClick()
-        compose.onNodeWithTag("enrollment-card").assertIsDisplayed()
         compose.onNodeWithTag("route-mode-card").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("route-direct").assertIsDisplayed().assertIsNotEnabled()
         compose.onNodeWithTag("route-auto").assertIsDisplayed().assertIsNotEnabled()
         compose.onNodeWithTag("route-fixed-exit").assertIsDisplayed().assertIsNotEnabled()
 
-        compose.onNodeWithTag("tab-diagnostics").performClick()
-        compose.onNodeWithTag("advanced-info-card").assertIsDisplayed()
-        compose.onNodeWithTag("debug-direct-card").assertIsDisplayed()
-        compose.onNodeWithTag("debug-direct-toggle").assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithTag("go-to-routes").performScrollTo().performClick()
+        compose.onNodeWithTag("route-summary-card").assertIsDisplayed()
+        compose.onNodeWithTag("network-evidence-card").assertIsDisplayed()
+        compose.onNodeWithTag("route-mode-card").assertDoesNotExist()
+
+        compose.onNodeWithTag("tab-connection").performClick()
+        compose.onNodeWithTag("go-to-enrollment").performScrollTo().performClick()
+        compose.onNodeWithTag("enrollment-card").assertIsDisplayed()
+        compose.onNodeWithTag("device-info-card").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("debug-direct-card").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("debug-direct-toggle").performScrollTo().assertIsDisplayed().assertIsEnabled()
     }
 
     @Test
@@ -74,14 +79,14 @@ class HomeUiInstrumentedTest {
 
         val minimumCardHeight = 96f * compose.activity.resources.displayMetrics.density
 
-        compose.onNodeWithTag("tab-configuration").performClick()
+        compose.onNodeWithTag("tab-settings").performClick()
         val enrollment = compose.onNodeWithTag("enrollment-card").fetchSemanticsNode().boundsInRoot
         assertTrue(
             "加入卡退化为横向长条：${enrollment.width}x${enrollment.height}",
             enrollment.height >= minimumCardHeight,
         )
 
-        compose.onNodeWithTag("tab-diagnostics").performClick()
+        compose.onNodeWithTag("debug-direct-card").performScrollTo()
         val diagnostics = compose.onNodeWithTag("debug-direct-card").fetchSemanticsNode().boundsInRoot
         assertTrue(
             "诊断卡退化为横向长条：${diagnostics.width}x${diagnostics.height}",
@@ -90,11 +95,14 @@ class HomeUiInstrumentedTest {
     }
 
     @Test
-    fun diagnosticsStayOffConnectionPageAndRenderOnTheirOwnTab() {
-        assertTrue(compose.onAllNodesWithText("网络诊断").fetchSemanticsNodes().isEmpty())
+    fun networkEvidenceStaysWithRoutesAndDeviceInformationStaysInSettings() {
+        assertTrue(compose.onAllNodesWithText("网络状态").fetchSemanticsNodes().isEmpty())
 
-        compose.onNodeWithTag("tab-diagnostics").performClick()
+        compose.onNodeWithTag("tab-routes").performClick()
 
-        compose.onNodeWithText("网络诊断").assertIsDisplayed()
+        compose.onNodeWithText("网络状态").assertIsDisplayed()
+        compose.onNodeWithTag("device-info-card").assertDoesNotExist()
+        compose.onNodeWithTag("tab-settings").performClick()
+        compose.onNodeWithTag("network-evidence-card").assertDoesNotExist()
     }
 }

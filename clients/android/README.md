@@ -203,25 +203,38 @@ authority by itself: a certified `PublicEndpointIntent` and this Device's
 never promoted into an intermediate relay. This keeps the reverse tunnel policy
 while avoiding unnecessary same-transport nesting for an authorized fixed exit.
 
-The app uses three persistent bottom tabs. Connection owns only the primary VPN
-action and the Current Paths read-only projection; Configuration owns enrollment,
-signed configuration refresh, and Direct / Auto / fixed-exit selection; Diagnostics
-owns network evidence, trusted reporting, local trust metadata, and the debug-only
-Direct fixture. Each tab scrolls independently while the navigation remains fixed.
-On the Connection tab, declarations with the same actual signed chain are grouped
+The app uses three persistent bottom tabs: Connection, Routes, and Settings.
+Connection owns the primary VPN action, Direct / Auto / fixed-exit selection, and
+a shortcut to Routes. Routes groups Current Paths with segment evidence, network
+status, and trusted reporting. Settings owns enrollment, signed configuration
+refresh, notification settings, local trust metadata, and the debug-only Direct
+fixture. Each tab scrolls independently while the navigation remains fixed.
+Before enrollment, Connection links to Settings and keeps connection and mode
+actions disabled. Mode labels stay on one line with a minimum 48 dp touch height;
+the entire group stacks vertically when the measured labels cannot fit at the
+current width and font scale. See the [SVG prototypes](../../assets/client/android/README.md).
+The SVGs also specify multiple saved connection profiles, matching the Windows
+model: selecting changes the viewed profile, and connecting stops the previous
+workload before starting the selected one. Android currently still stores one
+enrollment identity and managed configuration; profile indexing, isolated identity
+storage, rename/delete, and cross-profile switching remain unimplemented. The
+current/previous/candidate records are versions of one configuration.
+On the Routes tab, declarations with the same actual signed chain are grouped
 into at most two compact summaries; this is presentation-only and never merges
 their decisions or evidence. An inline disclosure inside the same card shows one
 declaration at a time and retains every candidate, entry ping, matching WireGuard
 or public data-ingress hop, exact target observation, reason, and source time.
-Path browsing, fixed-exit selection, and pending-enrollment confirmation all stay
-inline instead of opening a dialog. Hysteria2-specific variation/rate evidence is
+Path browsing stays inline on Routes, fixed-exit selection on Connection, and
+pending-enrollment confirmation on Settings. Opening or cancelling exit selection
+does not change the confirmed mode; Direct and Auto close the picker. Disconnected
+paths show an empty state. Hysteria2-specific variation/rate evidence is
 shown only when that signed metric exists; Trojan is not assigned synthetic Hy2
 telemetry. The UI does not infer measurements from candidate names or present
 segmented evidence as end-to-end P50/P95, business throughput, or whole-path health.
 
 The primary Connect action stays disabled until a verified managed snapshot is
 available. Debug builds expose the bundled stage-1 Direct fixture in a separate
-`Debug Direct TUN` diagnostic card; that action proves only local libbox, TUN,
+`Debug Direct TUN` card in Settings; that action proves only local libbox, TUN,
 route and selector plumbing and must never be presented as enrollment, trusted
 reporting or business-path health.
 Once a durable v2 Device state is latched, its lifecycle owns every runtime

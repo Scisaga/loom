@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="730" viewBox="0 0 1280 730" role="img" aria-labelledby="title description">
+<title id="title">Android 三态按钮窄屏与大字体排版</title>
+<desc id="description">常规字号横排，宽度不足或字号放大时整组纵排。指定出口保持完整单行，不缩字、不截断。所有尺寸均为设计示意。</desc>
+<style>text { font-family: "Noto Sans CJK SC", "Microsoft YaHei", system-ui, sans-serif; }</style>
+<rect x="0" y="0" width="1280" height="730" rx="0" fill="#EEF1EE" stroke="none"/>
+<text x="48" y="42" font-size="11" fill="#239B68" font-weight="700" text-anchor="start">LOOM / ANDROID</text>
+<text x="48" y="81" font-size="28" fill="#17211B" font-weight="700" text-anchor="start">“指定出口”完整显示，布局跟随字号。</text>
+<text x="48" y="111" font-size="14" fill="#647269" font-weight="400" text-anchor="start">按实际字体测量三列所需宽度；空间不足时整组纵排，标签始终保持单行。</text>
+<text x="48" y="162" font-size="14" fill="#239B68" font-weight="600" text-anchor="start">360 dp · 常规字号</text>
+<rect x="48" y="180" width="360" height="412" rx="24" fill="#FCFCFB" stroke="#CBD3CD"/>
+<text x="70" y="221" font-size="17" fill="#17211B" font-weight="700" text-anchor="start">连接模式</text>
+<rect x="70" y="245" width="316" height="267" rx="16" fill="white" stroke="#E3E8E5"/>
+<rect x="86.0" y="263" width="89.33333333333333" height="48" rx="12" fill="white" stroke="#AEBBB2"/>
+<text x="130.66666666666666" y="292.04" font-size="14" fill="#17211B" font-weight="600" text-anchor="middle">Direct</text>
+<rect x="183.33333333333331" y="263" width="89.33333333333333" height="48" rx="12" fill="#239B68" stroke="#239B68"/>
+<text x="227.99999999999997" y="292.04" font-size="14" fill="white" font-weight="600" text-anchor="middle">Auto</text>
+<rect x="280.66666666666663" y="263" width="89.33333333333333" height="48" rx="12" fill="white" stroke="#AEBBB2"/>
+<text x="325.3333333333333" y="292.04" font-size="14" fill="#17211B" font-weight="600" text-anchor="middle">指定出口</text>
+<text x="86" y="487" font-size="12" fill="#647269" font-weight="400" text-anchor="start">按已下发规则自动选择路径。</text>
+<text x="70" y="548" font-size="12" fill="#647269" font-weight="400" text-anchor="start">单行标签 · 保留完整文字</text>
+<text x="70" y="572" font-size="12" fill="#647269" font-weight="400" text-anchor="start">等宽横排 · 按钮间距 8 dp</text>
+<text x="456" y="162" font-size="14" fill="#239B68" font-weight="600" text-anchor="start">320 dp · 三列空间不足时</text>
+<rect x="456" y="180" width="320" height="412" rx="24" fill="#FCFCFB" stroke="#CBD3CD"/>
+<text x="478" y="221" font-size="17" fill="#17211B" font-weight="700" text-anchor="start">连接模式</text>
+<rect x="478" y="245" width="276" height="267" rx="16" fill="white" stroke="#E3E8E5"/>
+<rect x="494" y="263" width="244" height="48" rx="12" fill="white" stroke="#AEBBB2"/>
+<text x="616.0" y="292.04" font-size="14" fill="#17211B" font-weight="600" text-anchor="middle">Direct</text>
+<rect x="494" y="319" width="244" height="48" rx="12" fill="#239B68" stroke="#239B68"/>
+<text x="616.0" y="348.04" font-size="14" fill="white" font-weight="600" text-anchor="middle">Auto</text>
+<rect x="494" y="375" width="244" height="48" rx="12" fill="white" stroke="#AEBBB2"/>
+<text x="616.0" y="404.04" font-size="14" fill="#17211B" font-weight="600" text-anchor="middle">指定出口</text>
+<text x="494" y="487" font-size="12" fill="#647269" font-weight="400" text-anchor="start">按已下发规则自动选择路径。</text>
+<text x="478" y="548" font-size="12" fill="#647269" font-weight="400" text-anchor="start">单行标签 · 保留完整文字</text>
+<text x="478" y="572" font-size="12" fill="#647269" font-weight="400" text-anchor="start">整组纵排</text>
+<text x="824" y="162" font-size="14" fill="#239B68" font-weight="600" text-anchor="start">360 dp · 按钮字号 150%</text>
+<rect x="824" y="180" width="360" height="412" rx="24" fill="#FCFCFB" stroke="#CBD3CD"/>
+<text x="846" y="221" font-size="25.5" fill="#17211B" font-weight="700" text-anchor="start">连接模式</text>
+<rect x="846" y="245" width="316" height="267" rx="16" fill="white" stroke="#E3E8E5"/>
+<rect x="862" y="263.0" width="284" height="54.0" rx="12" fill="white" stroke="#AEBBB2"/>
+<text x="1004.0" y="297.56" font-size="21.0" fill="#17211B" font-weight="600" text-anchor="middle">Direct</text>
+<rect x="862" y="325.0" width="284" height="54.0" rx="12" fill="#239B68" stroke="#239B68"/>
+<text x="1004.0" y="359.56" font-size="21.0" fill="white" font-weight="600" text-anchor="middle">Auto</text>
+<rect x="862" y="387.0" width="284" height="54.0" rx="12" fill="white" stroke="#AEBBB2"/>
+<text x="1004.0" y="421.56" font-size="21.0" fill="#17211B" font-weight="600" text-anchor="middle">指定出口</text>
+<text x="862" y="487" font-size="12" fill="#647269" font-weight="400" text-anchor="start">按已下发规则自动选择路径。</text>
+<text x="846" y="548" font-size="12" fill="#647269" font-weight="400" text-anchor="start">单行标签 · 保留完整文字</text>
+<text x="846" y="572" font-size="12" fill="#647269" font-weight="400" text-anchor="start">整组纵排</text>
+<text x="48" y="638" font-size="14" fill="#17211B" font-weight="600" text-anchor="start">页面边距 22 dp  /  卡片边距 16 dp  /  按钮水平内边距 10 dp  /  触摸高度至少 48 dp</text>
+<text x="48" y="674" font-size="13" fill="#647269" font-weight="400" text-anchor="start">三列阈值 = 3 ×（当前字体下最宽标签 + 两侧内边距）+ 两个间距。更宽屏幕继续横排；大字体允许纵向滚动。</text>
+</svg>
