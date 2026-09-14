@@ -232,6 +232,34 @@ manual Connect, and a stale boot restore cannot cross that terminal latch.
 Cancelling Android's VPN consent is reported as an explicit connection error
 instead of silently returning to the disconnected screen.
 
+### ADB discovery preflight
+
+Do not assume that `adb` is on `PATH`. In the project environment the default
+SDK is `/opt/android-sdk`; resolve and validate the SDK binary before deciding
+whether a device is present:
+
+```bash
+task_android_home=${ANDROID_HOME:-/opt/android-sdk}
+task_adb="$task_android_home/platform-tools/adb"
+[[ -x "$task_adb" ]] || { echo "Android platform-tools/adb is unavailable" >&2; exit 2; }
+"$task_adb" start-server
+"$task_adb" devices -l
+```
+
+Keep stderr visible during discovery. An unavailable ADB binary, an ADB server
+failure, an empty device list, `unauthorized`, and `offline` are distinct
+results. Empty stdout from a failed command is never evidence that the cable or
+phone was disconnected. If USB enumeration still sees an Android device while
+ADB has no `device` entry, report **USB visible, ADB session unavailable** and
+check authorization, udev access, the server/socket, or USB forwarding.
+
+Discovery is read-only: it must not install an APK, clear application data,
+change the active network, or start/stop the VPN. Mutation requires the explicit
+task and the fail-closed helpers below. Never select implicitly when multiple
+devices are listed, and never copy a real serial into tracked documentation or
+fixtures. Android `arm64-v8a` describes the phone ABI; it is not Linux arm64 host
+acceptance.
+
 For debug-APK acceptance on a locked but already ADB-authorized device, the
 debug source set includes `DebugVpnControlReceiver`. It is absent from release
 builds and its exported component requires the platform-only
