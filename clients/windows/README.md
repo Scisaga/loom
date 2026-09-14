@@ -120,7 +120,10 @@ size and rely on Windows to rescale it. Transparent canvas margins may be
 normalized without changing the favicon geometry, colors, or proportions. Connected state
 may overlay the Windows-native green shield in the lower-right corner, but the
 favicon beneath it remains unchanged. `assets/loom-logo-v4.svg` is reserved for
-the larger in-window brand area beside the product name.
+the larger in-window brand area beside the product name. That in-window tile is
+cropped with a small one-eighth-width corner radius when its DPI-specific ICO
+frames are generated; the source artwork and all application favicon frames
+remain unchanged.
 
 The left-hand list contains saved connection profiles. Single-clicking a row
 changes only the details being viewed. Double-click its name, press **F2**, or

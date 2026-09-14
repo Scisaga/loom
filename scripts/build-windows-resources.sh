@@ -36,7 +36,7 @@ for size in "${icon_sizes[@]}"; do
   brand_pngs+=("$brand_png")
 done
 go run "$repo_root/scripts/windows-ico" "$stage_dir/favicon.ico" "${favicon_pngs[@]}"
-go run "$repo_root/scripts/windows-ico" "$stage_dir/brand-v4.ico" "${brand_pngs[@]}"
+go run "$repo_root/scripts/windows-ico" -corner-radius 0.125 "$stage_dir/brand-v4.ico" "${brand_pngs[@]}"
 
 install -m 0644 "$stage_dir/favicon.ico" "$resource_dir/favicon.ico"
 install -m 0644 "$stage_dir/brand-v4.ico" "$resource_dir/loom-brand-v4.ico"

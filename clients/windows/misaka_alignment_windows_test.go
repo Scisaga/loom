@@ -173,7 +173,7 @@ func TestGUIMisakaPathLabelsStayUnderTheirNodesAtBothEdges(t *testing.T) {
 	}
 }
 
-func TestGUIMisakaBrandUsesExistingFullMark(t *testing.T) {
+func TestGUIMisakaBrandUsesRoundedFullMark(t *testing.T) {
 	app := newProfileGUITestWindow(t)
 	const width, height int32 = 360, 240
 	dc, pixels := misakaCanvasTestDC(t, width, height)
@@ -199,6 +199,15 @@ func TestGUIMisakaBrandUsesExistingFullMark(t *testing.T) {
 					t.Fatalf("[§7.2] DPI %d 品牌区与既有完整版图标不一致", dpi)
 				}
 			}
+		}
+		left, top, edge := s(16), s(misakaTitleHeight+18), s(40)-1
+		for _, corner := range []portablePoint{{left, top}, {left + edge, top}, {left, top + edge}, {left + edge, top + edge}} {
+			if got := misakaCanvasTestPixel(pixels, width, corner.x, corner.y); got != misakaSidebar {
+				t.Fatalf("[§7.2] DPI %d 品牌图圆角没有露出侧栏背景：位置=%+v 像素=%06x", dpi, corner, got)
+			}
+		}
+		if got := misakaCanvasTestPixel(pixels, width, left+s(20), top+s(20)); got == misakaSidebar {
+			t.Fatalf("[§7.2] DPI %d 品牌图中心意外透明", dpi)
 		}
 	}
 }
