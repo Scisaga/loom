@@ -13,7 +13,12 @@
 > Code, deployment, and native-acceptance progress is recorded only in
 > [the current status](../../docs/status/current.md).
 
-In the target v2 flow, an already-enrolled administrator reaches **Create Device**
+The v2 reader and Windows host path are implemented alongside the pre-latch v1
+compatibility path. Until Issue #13 is closed by Gate B evidence, v1 is not
+retired; once a profile durably commits `protocol_latch=v2`, that profile can
+never fall back to v1.
+
+In the implemented v2 flow, an already-enrolled administrator reaches **Create Device**
 only over the Loom overlay through the certified private `control_api` service,
 verifies its internal certificate and overlay IP, and authenticates with admin
 mTLS. An unjoined Windows client verifies the compact descriptor's catalog and
@@ -186,7 +191,8 @@ import/connect/disconnect action, and an explicit exit.
 
 Importing the QR never creates a second Device. In the Windows GUI, copy
 the QR image from the control page and press `Ctrl+V` (or click the paste action),
-select the downloaded QR PNG, or drag one local QR PNG or `.loom-invite` file
+select the downloaded QR PNG, or drag one local QR PNG, `.loom-invite`, or
+`.loom-resume` file
 onto the window. In the add-profile panel this reads the invitation; **加入并保存**
 starts the join. Clipboard images are decoded in memory and are not written to
 a temporary file. The executable does not accept join material as a command-line
@@ -206,10 +212,12 @@ timeouts are unchanged. These messages explain the wait; they do not shorten
 the control's publication process. Server-side work belongs in the server development
 environment; use the [enrollment latency prompt](../../docs/server-enrollment-latency-prompt.md).
 
-Internally, the QR import performs an identity handshake: the
-client generates its private key locally, binds the already-created Device,
-validates the returned certificate and signed bootstrap, and protects local
-secrets with DPAPI. This is an implementation detail of **Join network**, not a
+Internally, the QR import performs an identity handshake: the client creates a
+persistent, non-exportable P-256 identity in the Microsoft CNG software KSP,
+creates a distinct wrapping key, binds the already-created Device, validates the
+returned certificate and certified bootstrap, and protects the key descriptor,
+wrapping material and durable state with purpose-bound DPAPI. This is an
+implementation detail of **Join network**, not a
 second Device-registration workflow. The private key and permanent credentials
 are never placed in the QR code.
 
@@ -366,13 +374,11 @@ without this fingerprint are rejected; already joined identities remain valid. S
 - `internal/clientsecret` protects the join identity, secret vault, and hydrated
   candidates with edition-appropriate DPAPI scope.
 - The v1 `internal/clientupdate` path verifies signed current state, its generation
-  floor, snapshot signatures, and the Device bundle before activation. A future v2
-  reader **must** additionally apply the certified-head gate, four durable floor
-  groups, bootstrap transition hash, irreversible latch, Device proof, public
-  EndpointSet pins and private service-directory commitment described above;
-  `committed_not_certified` must never
-  become current. This is a target contract, not a claim that the current Windows
-  implementation has shipped the v2 reader.
+  floor, snapshot signatures, and the Device bundle before activation. The v2
+  reader verifies the certified head, post-commit QC, ControlSet transition,
+  Device inclusion proof, all four durable floor groups, bootstrap transition,
+  irreversible latch, public EndpointSet pins and private service-directory
+  commitment before activation. `committed_not_certified` never becomes current.
 - `internal/clientcomponent` verifies the bundled component signature, hashes,
   PE architecture, sing-box identity, and Wintun Authenticode before installing
   an immutable runtime slot.
@@ -405,23 +411,33 @@ without this fingerprint are rejected; already joined identities remain valid. S
   Business reachability remains unmeasured. Server observation errors are
   separate from local runtime health. See the
   [reporting contract](../../docs/windows-client-reporting.md).
-- Each profile's `config\client.json` is written last in the join core and is its
-  joined-state marker. A newly added profile becomes selectable only after a
-  subsequent atomic profile-index commit. Failed imports cannot start a partial
-  client, and a ready identity remains recoverable if that index commit fails.
+- Before the v2 latch, `config\client.json` remains the v1 joined-state marker.
+  V2 uses one purpose-bound DPAPI LKG at `state\client-v2.json.dpapi`; it commits
+  the verified Device envelope, ControlSet/QC replay context, floors, certificate,
+  secret refs and rendered artifacts together. Content-addressed CA files are
+  published only after candidate validation. A newly added profile becomes
+  selectable only after a subsequent atomic profile-index commit. Failed imports
+  cannot start a partial client, and a ready identity remains recoverable if that
+  index commit fails.
 - Until the join commits, the exact QR credential and generated identity are
-  protected with the edition's DPAPI scope. In target v2, retries keep the same
+  protected with the edition's DPAPI scope. In v2, retries keep the same
   token commitment, stable claim-core hash, request ID, identity/CSR and wrapping
   key; a fresh server nonce may produce a new detached PoP without changing that
   core. Retry is bounded by the Invite and capability validity. Once the bootstrap
   capability expires, continuation requires an administrator-delivered, exact-bound
   resume descriptor for the same pending transaction; it carries no fresh token and
   cannot reset consumption, attempts, intent, or identity. The legacy one-hour
-  recovery rule applies only to the pre-latch v1 compatibility flow. A
-  validated ready response is journaled separately before local installation;
-  the pending token is scrubbed after `config\client.json` commits. Existing
-  registered profiles retain their startup recovery behavior. A new add-profile
-  draft resumes when the user chooses **继续加入**, using its retained identity.
+  recovery rule applies only to the pre-latch v1 compatibility flow. V2 journals
+  the verified completion before local installation and removes the whole
+  token-bearing enrollment journal only after the DPAPI LKG write has been read
+  back. If the process stops between those two operations, the next active-state
+  load replays the protected LKG, identity and completed result binding before
+  finishing that deletion; a certified terminal state removes any residual
+  enrollment journal before destroying the CNG identity. The v1 compatibility
+  path retains its separate ready journal and scrubs
+  the pending token after `config\client.json` commits. Existing registered
+  profiles retain their startup recovery behavior. A new add-profile draft
+  resumes when the user chooses **继续加入**, using its retained identity.
 - `state\profile-draft.json` stores only a schema, random local profile ID and
   display name. The invitation and credentials stay in protected per-profile
   storage. Canceling a draft does not delete a pending or ready identity.
@@ -492,6 +508,42 @@ stand in for another:
   display configurations. A database-valid MSI or cross-build is not host
   acceptance. Formal release additionally requires a trusted Authenticode
   certificate and timestamp.
+
+Run the committed native evidence driver on each physical Windows architecture:
+
+```powershell
+.\scripts\test-windows-v2.ps1 `
+  -OutputDirectory .\out `
+  -PlatformPublicKey C:\path\to\platform-public-key `
+  -EvidencePath .\out\evidence\amd64-packages.json `
+  -RequirePackages -RequireMSI
+```
+
+Invite completion, committed `.loom-resume`, Installed lifecycle, Portable Mixed
+lifecycle, elevated Portable TUN lifecycle, user-scope tombstone, machine-scope
+tombstone, multi-profile UI, and underlay-generation-change evidence may require
+separate clean-state runs. In particular, `-InstalledInviteCarrier` and
+`-InstalledResumeCarrier` are intentionally mutually exclusive. Use the matching
+switches (`-RunInstalledLifecycle`, `-RunPortableMixedLifecycle`,
+`-RunPortableTUNLifecycle`, and `-TombstoneScope user|machine`) and bind the two
+human-inspected artifacts with `-MultiProfileEvidencePath` and
+`-UnderlayEvidencePath`. Evidence JSON contains only checks, source/build
+coordinates, and hashes/sizes of those artifacts; it never embeds carriers,
+identities, addresses, credentials, or runtime configuration.
+
+After all runs from both native architectures refer to the same clean commit,
+merge them into the release decision:
+
+```powershell
+.\scripts\confirm-windows-v2-gate-b.ps1 `
+  -Evidence (Get-ChildItem .\out\evidence\*.json).FullName `
+  -OutputPath .\out\windows-v2-gate-b.json
+```
+
+The merger fails closed unless every per-architecture native/lifecycle/UI/cleanup
+check, all six exact ZIPs, both exact MSI databases, and signed sidecar verification
+are present. Authenticode remains the separate, non-blocking Issue #5 gate and is
+checked only when `-RequireAuthenticode` is requested.
 
 Which items have evidence, and which remain open, is recorded only in
 [the current status](../../docs/status/current.md).

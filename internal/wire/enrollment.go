@@ -2,6 +2,7 @@ package wire
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -821,28 +822,60 @@ func SignEnrollmentPoPP256(body *EnrollmentPoPBodyV2, identityPrivateKey *ecdsa.
 	if identityPrivateKey == nil || identityPrivateKey.Curve != elliptic.P256() {
 		return "", errors.New("[D129 Enrollment] PoP identity private key 不是 P-256")
 	}
+	return SignEnrollmentPoPWithSigner(body, identityPrivateKey)
+}
+
+// SignEnrollmentPoPWithSigner 只把 SHA-256 digest 交给平台 signer，并把宿主
+// 返回的 ECDSA DER 归一化为协议唯一允许的 low-S 表示。共享 verifier 永远不接收
+// Windows CNG/DPAPI、Android Keystore 或其他宿主私钥材料（D129）。
+func SignEnrollmentPoPWithSigner(body *EnrollmentPoPBodyV2, signer crypto.Signer) (string, error) {
+	publicKey, ok := signerPublicP256(signer)
+	if !ok {
+		return "", errors.New("[D129 Enrollment] PoP signer 不是 P-256")
+	}
 	message, err := EnrollmentPoPMessage(body)
 	if err != nil {
 		return "", err
 	}
 	digest := sha256.Sum256(message)
-	r, s, err := ecdsa.Sign(rand.Reader, identityPrivateKey, digest[:])
+	raw, err := signer.Sign(rand.Reader, digest[:], crypto.SHA256)
 	if err != nil {
 		return "", err
 	}
-	halfOrder := new(big.Int).Rsh(new(big.Int).Set(identityPrivateKey.Params().N), 1)
-	if s.Cmp(halfOrder) > 0 {
-		s.Sub(identityPrivateKey.Params().N, s)
+	var signature struct{ R, S *big.Int }
+	rest, err := asn1.Unmarshal(raw, &signature)
+	if err != nil || len(rest) != 0 || signature.R == nil || signature.S == nil ||
+		signature.R.Sign() <= 0 || signature.S.Sign() <= 0 {
+		return "", errors.New("[D129 Enrollment] 平台 signer 返回的 ECDSA DER 无效")
 	}
-	der, err := asn1.Marshal(struct{ R, S *big.Int }{R: r, S: s})
+	canonical, err := asn1.Marshal(signature)
+	if err != nil || !bytes.Equal(canonical, raw) {
+		return "", errors.New("[D129 Enrollment] 平台 signer 返回的 ECDSA DER 非规范")
+	}
+	halfOrder := new(big.Int).Rsh(new(big.Int).Set(publicKey.Params().N), 1)
+	s := new(big.Int).Set(signature.S)
+	if s.Cmp(halfOrder) > 0 {
+		s.Sub(publicKey.Params().N, s)
+	}
+	der, err := asn1.Marshal(struct{ R, S *big.Int }{R: signature.R, S: s})
 	if err != nil {
 		return "", err
 	}
 	encoded := base64.RawURLEncoding.EncodeToString(der)
-	if err := VerifyEnrollmentPoPP256(body, &identityPrivateKey.PublicKey, encoded); err != nil {
+	if err := VerifyEnrollmentPoPP256(body, publicKey, encoded); err != nil {
 		return "", err
 	}
 	return encoded, nil
+}
+
+func signerPublicP256(signer crypto.Signer) (*ecdsa.PublicKey, bool) {
+	if signer == nil {
+		return nil, false
+	}
+	publicKey, ok := signer.Public().(*ecdsa.PublicKey)
+	return publicKey, ok && publicKey != nil && publicKey.Curve == elliptic.P256() &&
+		publicKey.X != nil && publicKey.Y != nil &&
+		publicKey.Curve.IsOnCurve(publicKey.X, publicKey.Y)
 }
 
 // EnrollmentPoPMessage 返回交给平台 Keystore callback 的 exact framed bytes；

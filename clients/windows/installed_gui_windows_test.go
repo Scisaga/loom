@@ -11,6 +11,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"loom/internal/windowsv2"
 )
 
 // §13.5：原生普通用户窗口导入中控 PNG，私钥只在 SCM 服务中生成和保存。
@@ -21,6 +23,12 @@ func TestInstalledGUIJoinLive(t *testing.T) {
 	}
 	if windows.GetCurrentProcessToken().IsElevated() {
 		t.Fatal("GUI join must run unprivileged")
+	}
+	carrier, carrierErr := windowsv2.ReadEnrollmentCarrier(qr)
+	if os.Getenv("LOOM_ACCEPT_WINDOWS_V2") == "1" {
+		if carrierErr != nil || carrier.Invite == nil && carrier.Resume == nil {
+			t.Fatal("Issue #13 验收要求 control-issued v2 Invite 或 resume carrier")
+		}
 	}
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
@@ -55,8 +63,9 @@ func TestInstalledGUIJoinLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	app.exchangeInstalledBroker(brokerRequest{Operation: "status"})
-	if s := app.snapshot(); s.joined || s.state != guiNeedsJoin {
-		t.Fatal("service must be waiting for its first join")
+	if s := app.snapshot(); s.joined || s.state != guiNeedsJoin &&
+		!(carrierErr == nil && carrier.Resume != nil && s.state == guiError) {
+		t.Fatal("service must be waiting for its first join or exact resume")
 	}
 	app.renderControls()
 	showPortableWindow(hwnd)
@@ -80,7 +89,13 @@ func TestInstalledGUIJoinLive(t *testing.T) {
 			if _, err := os.ReadDir(root); !os.IsPermission(err) {
 				t.Fatal("GUI gained access to machine state")
 			}
-			t.Log("ordinary native GUI imported QR; SCM service joined, activated TUN and exposed authorized route choices")
+			if carrierErr == nil && carrier.Resume != nil {
+				t.Log("ordinary native GUI imported exact v2 resume; SCM service restored the committed identity and activated TUN")
+			} else if carrierErr == nil && carrier.Invite != nil {
+				t.Log("ordinary native GUI imported v2 Invite; SCM service joined, activated TUN and exposed authorized route choices")
+			} else {
+				t.Log("ordinary native GUI imported QR; SCM service joined, activated TUN and exposed authorized route choices")
+			}
 			return
 		}
 		time.Sleep(250 * time.Millisecond)

@@ -1,5 +1,3 @@
-//go:build linux
-
 package clientv2
 
 import (
@@ -47,6 +45,10 @@ type LinuxBootstrapSelection struct {
 	ListenerGeneration int64
 }
 
+// BootstrapSelection 是各原生宿主共享的最小诊断投影。旧 Linux 名称保留为
+// 类型别名兼容已发布的 CLI；Windows 不另写 transport 选择语义（D131）。
+type BootstrapSelection = LinuxBootstrapSelection
+
 type linuxBootstrapCandidate struct {
 	selection  LinuxBootstrapSelection
 	hintRank   int64
@@ -82,6 +84,10 @@ type LinuxBootstrapTunnelDialer struct {
 	quicDial       func(context.Context, string, *tls.Config, *quic.Config) (quic.Connection, error)
 	probeCandidate func(context.Context, linuxBootstrapCandidate) error
 }
+
+// BootstrapTunnelDialer 是 Linux 与 Windows 共用的 capability-limited outer
+// transport。私有 Enrollment HTTP/TLS 仍在这个 dialer 之上独立验证。
+type BootstrapTunnelDialer = LinuxBootstrapTunnelDialer
 
 // NewLinuxBootstrapTunnelDialer 把 Invite lineage、catalog QC 与 capability authorization
 // 在同一入口重验，再产生只能送达 Enrollment service ref 的 dialer（D115、D131）。
@@ -131,6 +137,17 @@ func NewLinuxBootstrapTunnelDialer(catalog *wire.BootstrapEndpointCatalogV1,
 			return quic.DialAddr(ctx, address, tlsConfig, config)
 		},
 	}, nil
+}
+
+func NewBootstrapTunnelDialer(catalog *wire.BootstrapEndpointCatalogV1,
+	capability *wire.BootstrapTunnelCapabilityV1,
+	issuerProof *wire.BootstrapIssuerAuthorizationProofV1,
+	policy *wire.InviteIssuancePolicyV2,
+	proof wire.VerifiedInviteProofV2,
+	trustedTime time.Time, clientProtocol int64, roots *x509.CertPool,
+) (*BootstrapTunnelDialer, error) {
+	return NewLinuxBootstrapTunnelDialer(catalog, capability, issuerProof, policy,
+		proof, trustedTime, clientProtocol, roots)
 }
 
 func linuxBootstrapCapabilityBindsCatalog(body wire.BootstrapTunnelCapabilityBodyV1,

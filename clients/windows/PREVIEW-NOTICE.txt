@@ -5,9 +5,15 @@ Installed requires the matching MSI. Its ordinary-user GUI communicates with
 an ACL-restricted Service; machine credentials remain in protected ProgramData.
 Portable TUN still requests UAC before activation. Portable Mixed requires none.
 
-Windows amd64 acceptance covers native QR join, DPAPI, signed configuration,
-TUN DNS/HTTPS, signed health reporting, repeated stop/route cleanup and host
-crash recovery. ARM64 host and broader hardware acceptance remain external.
+The v2 client path includes certified-head/ControlSet/QC verification, durable
+rollback floors and latch, a non-exportable Microsoft CNG identity, distinct
+DPAPI-protected wrapping material, .loom-invite/.loom-resume recovery,
+Device-mTLS private config/report traffic, and three-edition runtime handling.
+
+Gate B is not established by a cross-build or by this notice. It requires the
+redacted acceptance evidence produced from independent native Windows amd64 and
+ARM64 hosts, including both user- and machine-scope tombstone cleanup. V1 remains
+available only before the v2 latch until Issue #13 is closed.
 
 Default builds are not Authenticode-signed release artifacts. A formal signed
 release requires the configured code-signing certificate and timestamp service.

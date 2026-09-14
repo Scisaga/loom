@@ -437,19 +437,10 @@ func (issuer *DurableResumeIssuer) persistLocked(candidate resumeFirstResultStat
 	if err != nil {
 		return err
 	}
-	if err := os.Rename(temporary, issuer.path); err != nil {
+	if err := replaceDurableFile(temporary, issuer.path); err != nil {
 		return err
 	}
-	directoryHandle, err := os.Open(directory)
-	if err != nil {
-		return err
-	}
-	err = directoryHandle.Sync()
-	closeErr = directoryHandle.Close()
-	if err != nil {
-		return err
-	}
-	return closeErr
+	return syncDurableDirectory(directory)
 }
 
 func cloneResumeDescriptor(value wire.EnrollmentResumeDescriptorV1) wire.EnrollmentResumeDescriptorV1 {

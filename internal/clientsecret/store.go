@@ -24,9 +24,14 @@ const (
 	// Secret maps stay within 1 MiB. Generic protected JSON also carries the
 	// validated ready response, whose wire protocol is bounded at 4 MiB; keep a
 	// small serialization margin so a legal response can always be journaled.
-	maxSecretPlaintext    = 1 << 20
-	maxProtectedPlaintext = 5 << 20
-	maxCiphertext         = 6 << 20
+	// Windows v2 的完整 LKG 另走显式 Large API；普通调用仍保持 5 MiB 边界。
+	maxSecretPlaintext        = 1 << 20
+	defaultProtectedPlaintext = 5 << 20
+	maxProtectedPlaintext     = 64 << 20
+	defaultCiphertext         = 6 << 20
+	defaultProtectedEnvelope  = 12 << 20
+	maxCiphertext             = 65 << 20
+	maxProtectedEnvelope      = 88 << 20
 )
 
 // Protector binds ciphertext to a purpose. Implementations must reject a blob
@@ -127,8 +132,28 @@ func WriteJSONProtected(path, purpose string, value any, protector Protector) er
 	return WriteProtected(path, purpose, body, protector)
 }
 
+// WriteLargeJSONProtected 仅供需要把认证 LKG 与凭据作为一个原子 DPAPI blob
+// 提交的客户端状态使用。普通 ready/vault API 不会自动放宽到这个边界。
+func WriteLargeJSONProtected(path, purpose string, value any, protector Protector) error {
+	body, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	defer clear(body)
+	return WriteLargeProtected(path, purpose, body, protector)
+}
+
 func ReadJSONProtected(path, purpose string, target any, protector Protector) error {
 	body, err := ReadProtected(path, purpose, protector)
+	if err != nil {
+		return err
+	}
+	defer clear(body)
+	return decodeStrict(body, defaultProtectedPlaintext, target)
+}
+
+func ReadLargeJSONProtected(path, purpose string, target any, protector Protector) error {
+	body, err := ReadLargeProtected(path, purpose, protector)
 	if err != nil {
 		return err
 	}
@@ -137,6 +162,14 @@ func ReadJSONProtected(path, purpose string, target any, protector Protector) er
 }
 
 func WriteProtected(path, purpose string, plaintext []byte, protector Protector) error {
+	return writeProtected(path, purpose, plaintext, defaultProtectedPlaintext, protector)
+}
+
+func WriteLargeProtected(path, purpose string, plaintext []byte, protector Protector) error {
+	return writeProtected(path, purpose, plaintext, maxProtectedPlaintext, protector)
+}
+
+func writeProtected(path, purpose string, plaintext []byte, maximum int, protector Protector) error {
 	if protector == nil {
 		return errors.New("secret protector is nil")
 	}
@@ -146,15 +179,16 @@ func WriteProtected(path, purpose string, plaintext []byte, protector Protector)
 	if err := validatePurpose(purpose); err != nil {
 		return err
 	}
-	if len(plaintext) == 0 || len(plaintext) > maxProtectedPlaintext {
-		return errors.New("protected plaintext must be between 1 byte and 5 MiB")
+	if maximum < 1 || maximum > maxProtectedPlaintext || len(plaintext) == 0 || len(plaintext) > maximum {
+		return fmt.Errorf("protected plaintext must be between 1 byte and %d bytes", maximum)
 	}
 	ciphertext, err := protector.Protect(purpose, plaintext)
 	if err != nil {
 		return fmt.Errorf("protect %s: %w", purpose, err)
 	}
 	defer clear(ciphertext)
-	if len(ciphertext) == 0 || len(ciphertext) > maxCiphertext {
+	ciphertextLimit, _ := protectedStorageLimits(maximum)
+	if len(ciphertext) == 0 || len(ciphertext) > ciphertextLimit {
 		return errors.New("protector returned invalid ciphertext size")
 	}
 	envelope := sealedEnvelope{
@@ -169,6 +203,14 @@ func WriteProtected(path, purpose string, plaintext []byte, protector Protector)
 }
 
 func ReadProtected(path, purpose string, protector Protector) ([]byte, error) {
+	return readProtected(path, purpose, defaultProtectedPlaintext, protector)
+}
+
+func ReadLargeProtected(path, purpose string, protector Protector) ([]byte, error) {
+	return readProtected(path, purpose, maxProtectedPlaintext, protector)
+}
+
+func readProtected(path, purpose string, maximum int, protector Protector) ([]byte, error) {
 	if protector == nil {
 		return nil, errors.New("secret protector is nil")
 	}
@@ -178,12 +220,16 @@ func ReadProtected(path, purpose string, protector Protector) ([]byte, error) {
 	if err := validatePurpose(purpose); err != nil {
 		return nil, err
 	}
-	body, err := readRegular(path, maxCiphertext*2)
+	if maximum < 1 || maximum > maxProtectedPlaintext {
+		return nil, errors.New("protected plaintext limit is invalid")
+	}
+	ciphertextLimit, envelopeLimit := protectedStorageLimits(maximum)
+	body, err := readRegular(path, int64(envelopeLimit))
 	if err != nil {
 		return nil, err
 	}
 	var envelope sealedEnvelope
-	if err := decodeStrict(body, maxCiphertext*2, &envelope); err != nil {
+	if err := decodeStrict(body, envelopeLimit, &envelope); err != nil {
 		return nil, fmt.Errorf("decode protected envelope: %w", err)
 	}
 	if envelope.Schema != EnvelopeSchema || envelope.Purpose != purpose {
@@ -191,7 +237,7 @@ func ReadProtected(path, purpose string, protector Protector) ([]byte, error) {
 	}
 	ciphertext, err := base64.StdEncoding.Strict().DecodeString(envelope.Ciphertext)
 	if err != nil || base64.StdEncoding.EncodeToString(ciphertext) != envelope.Ciphertext ||
-		len(ciphertext) == 0 || len(ciphertext) > maxCiphertext {
+		len(ciphertext) == 0 || len(ciphertext) > ciphertextLimit {
 		return nil, errors.New("protected envelope has invalid canonical ciphertext")
 	}
 	defer clear(ciphertext)
@@ -199,11 +245,18 @@ func ReadProtected(path, purpose string, protector Protector) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unprotect %s: %w", purpose, err)
 	}
-	if len(plaintext) == 0 || len(plaintext) > maxProtectedPlaintext {
+	if len(plaintext) == 0 || len(plaintext) > maximum {
 		clear(plaintext)
 		return nil, errors.New("protector returned invalid plaintext size")
 	}
 	return plaintext, nil
+}
+
+func protectedStorageLimits(maximum int) (int, int) {
+	if maximum <= defaultProtectedPlaintext {
+		return defaultCiphertext, defaultProtectedEnvelope
+	}
+	return maxCiphertext, maxProtectedEnvelope
 }
 
 func validateSecrets(secrets map[string]string) error {

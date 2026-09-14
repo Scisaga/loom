@@ -15,6 +15,7 @@ import (
 	"golang.org/x/sys/windows"
 
 	"loom/internal/clientcore"
+	"loom/internal/wire"
 )
 
 func TestBrokerRejectsUnboundedAuthority(t *testing.T) {
@@ -50,6 +51,34 @@ func TestBrokerRejectsUnboundedAuthority(t *testing.T) {
 	app := &portableGUI{state: guiStopped, joined: true, routeSelected: -1}
 	if err := app.setRoutePreference(clientcore.Preference{Schema: 1, Mode: clientcore.FixedExit, Exit: "demo-unauthorized"}); err == nil {
 		t.Fatal("broker accepted an exit outside the signed options")
+	}
+}
+
+func TestBrokerAcceptsExactlyOneBoundedV2Carrier(t *testing.T) {
+	carrier, err := wire.MarshalCanonical(wire.InviteBootstrapDescriptorV2{
+		Schema: 2, ClusterID: "demo-cluster", InviteID: "demo-invite",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := brokerRequest{Operation: "join", V2Carrier: string(carrier)}
+	body, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeBrokerRequest(body); err != nil {
+		t.Fatalf("bounded v2 carrier 被 broker 拒绝: %v", err)
+	}
+	request.Invite = profileDraftInvite()
+	body, _ = json.Marshal(request)
+	if _, err := decodeBrokerRequest(body); err == nil {
+		t.Fatal("broker 同时接受了 v1 Invite 与 v2 carrier")
+	}
+	request.Invite = nil
+	request.V2Carrier = strings.Repeat("x", 2<<20)
+	body, _ = json.Marshal(request)
+	if _, err := decodeBrokerRequest(body); err == nil {
+		t.Fatal("broker 接受了超出边界的 v2 carrier")
 	}
 }
 
@@ -106,7 +135,7 @@ func TestBrokerProfileDraftUsesBoundedActionsAndDisplayOnlySnapshot(t *testing.T
 
 func TestBrokerProfileSnapshotCarriesOnlyReadOnlyPaths(t *testing.T) {
 	app := &portableGUI{brokerProfilesReady: true, brokerProfiles: []windowsProfileDisplay{{ID: "legacy", Name: "演示连接", State: guiConnected}},
-		selectedProfile: "legacy", profileName: "演示连接", activeProfile: "legacy", activeProfileName: "演示连接", state: guiConnected, joined: true,
+		selectedProfile: "legacy", profileName: "演示连接", activeProfile: "legacy", activeProfileName: "演示连接", state: guiConnected, joined: true, windowsV2: true,
 		paths: []windowsPathDisplay{{Service: "demo-service", Candidate: "opaque-current", Chain: "本机 → demo-prefix → demo-exit → 目标", Health: "正常", SelectedQuality: "P50 25 ms", Reason: "改善达到切换门槛"}}}
 	body, err := json.Marshal(app.brokerSnapshot())
 	if err != nil {
@@ -116,7 +145,7 @@ func TestBrokerProfileSnapshotCarriesOnlyReadOnlyPaths(t *testing.T) {
 	if err := json.Unmarshal(body, &got); err != nil {
 		t.Fatal(err)
 	}
-	if !got.ProfilesReady || got.SelectedProfile != "legacy" || len(got.Profiles) != 1 || len(got.Paths) != 1 || got.Paths[0] != app.paths[0] {
+	if !got.WindowsV2 || !got.ProfilesReady || got.SelectedProfile != "legacy" || len(got.Profiles) != 1 || len(got.Paths) != 1 || got.Paths[0] != app.paths[0] {
 		t.Fatalf("配置和实际路径快照丢失: %s", body)
 	}
 	for _, secret := range []string{"private_key", "api_secret", "certificate_path", "runtime_dir"} {
@@ -233,10 +262,35 @@ func TestBrokerNativePipeLifecycle(t *testing.T) {
 		windows.CloseHandle(h)
 		callCancel()
 	}
+	// v2 carrier 可以超过旧 64 KiB 管道上限；内核缓冲区仍保持有界，读写循环
+	// 必须在其上分段传输，随后由严格 JSON decoder 拒绝未知字段。
+	largeCtx, largeCancel := context.WithTimeout(ctx, 3*time.Second)
+	h, err := connectBrokerPipe(largeCtx, name)
+	if err != nil {
+		largeCancel()
+		t.Fatal(err)
+	}
+	large := []byte(`{"operation":"status","padding":"` + strings.Repeat("a", 96<<10) + `"}`)
+	if err := writePipeMessage(largeCtx, h, large); err != nil {
+		t.Fatal(err)
+	}
+	body, err := readPipeMessage(largeCtx, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rejected brokerResponse
+	if err := json.Unmarshal(body, &rejected); err != nil || rejected.Error == "" {
+		t.Fatal("超过 64 KiB 的 broker 消息未完成有界传输与严格拒绝")
+	}
+	if err := pipeBytes(largeCtx, h, []byte{1}, true); err != nil {
+		t.Fatal(err)
+	}
+	windows.CloseHandle(h)
+	largeCancel()
 	// 客户端不发送消息时，SCM 停止也必须取消读操作并释放管道。
 	stallCtx, stallCancel := context.WithTimeout(ctx, time.Second)
 	defer stallCancel()
-	h, err := connectBrokerPipe(stallCtx, name)
+	h, err = connectBrokerPipe(stallCtx, name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,6 +338,9 @@ func TestInstalledServiceLive(t *testing.T) {
 	if response.Error != "" || response.Snapshot.State == guiNeedsElevation || response.Snapshot.State == guiError {
 		t.Fatalf("invalid service state: %+v", response)
 	}
+	if os.Getenv("LOOM_ACCEPT_WINDOWS_V2") == "1" && !response.Snapshot.WindowsV2 {
+		t.Fatal("Issue #13 Installed 验收要求服务当前选中的连接配置使用 active Windows v2 LKG")
+	}
 	app := &portableGUI{brokerClient: true, edition: editionInstalled, root: root, ctx: ctx, cancel: cancel, state: guiLoading}
 	app.exchangeInstalledBroker(brokerRequest{Operation: "status"})
 	if app.snapshot().state != response.Snapshot.State {
@@ -325,6 +382,12 @@ func TestInstalledConnectStopLive(t *testing.T) {
 		return brokerSnapshot{}
 	}
 	wait(guiConnected)
+	if os.Getenv("LOOM_ACCEPT_WINDOWS_V2") == "1" {
+		response, err := callInstalledBroker(ctx, brokerRequest{Operation: "status"})
+		if err != nil || response.Error != "" || !response.Snapshot.WindowsV2 {
+			t.Fatalf("Issue #13 Installed 生命周期没有运行 active Windows v2 LKG: %v %s", err, response.Error)
+		}
+	}
 	if path := os.Getenv("LOOM_ACCEPT_INSTALLED_PREFERENCE"); path != "" {
 		preference, err := clientcore.ReadPreference(path)
 		if err != nil {

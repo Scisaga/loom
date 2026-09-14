@@ -36,6 +36,8 @@
         <Directory Id="LicensesFolder" Name="licenses">
           <Component Id="Licenses" Guid="D450F757-947F-4893-8037-C50C7BD943FB" Bitness="always64">
             <File Source="$(var.SourceDir)\licenses\gozxing-LICENSE" KeyPath="yes" />
+            <File Source="$(var.SourceDir)\licenses\golang-x-net-LICENSE" />
+            <File Source="$(var.SourceDir)\licenses\golang-x-net-PATENTS" />
             <File Source="$(var.SourceDir)\licenses\golang-x-sys-LICENSE" />
             <File Source="$(var.SourceDir)\licenses\golang-x-sys-PATENTS" />
             <File Source="$(var.SourceDir)\licenses\golang-x-text-LICENSE" />

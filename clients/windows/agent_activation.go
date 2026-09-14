@@ -20,6 +20,15 @@ func runAgentDataPlane(ctx context.Context, a *clientActivation, start dataPlane
 	if err != nil {
 		return err
 	}
+	if a.AgentConfig != nil {
+		inputs.ProbeRegistry = a.ProbeRegistry
+		inputs.UnderlayGeneration, err = clientruntime.WindowsUnderlayGeneration()
+		if err != nil {
+			// 网卡快照不可读只会令本代入口证据保持 unknown；不得阻断已验
+			// 数据面的启动，也不得用 activation-local 探测冒充新 underlay。
+			inputs.EntryProbesUnavailable = true
+		}
+	}
 	wait := clientruntime.WaitWindowsAgentAPI
 	if len(readiness) > 0 {
 		wait = readiness[0]

@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"loom/internal/wire"
 )
 
 func TestOpenRejectsLooseOrNonCanonicalStateFile(t *testing.T) {
+	requireLinuxStateModeSemantics(t)
 	directory := filepath.Join(t.TempDir(), "private")
 	if err := os.Mkdir(directory, 0o700); err != nil {
 		t.Fatal(err)
@@ -43,6 +45,7 @@ func TestEnvelopeReturnsDeepCopy(t *testing.T) {
 }
 
 func TestAcceptPersistsAndReopensExactEmptySecretRefs(t *testing.T) {
+	requireLinuxStateModeSemantics(t)
 	set, key := clientControlSet(t)
 	envelope := clientEnvelope(t, &set, key)
 	directory := filepath.Join(t.TempDir(), "private")
@@ -75,6 +78,7 @@ func TestAcceptPersistsAndReopensExactEmptySecretRefs(t *testing.T) {
 }
 
 func TestAcceptDeviceConfigDeliveryReplaysCompleteWindowAtomically(t *testing.T) {
+	requireLinuxStateModeSemantics(t)
 	set, key := clientControlSet(t)
 	current := clientEnvelope(t, &set, key)
 	next := advanceClientEnvelope(t, current, &set, key)
@@ -112,6 +116,13 @@ func TestAcceptDeviceConfigDeliveryReplaysCompleteWindowAtomically(t *testing.T)
 	}
 	if after := store.Floors(); !wire.EqualCanonical(before, after) {
 		t.Fatalf("失败 delivery 改写了 LKG: before=%#v after=%#v", before, after)
+	}
+}
+
+func requireLinuxStateModeSemantics(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux LKG 文件测试依赖 uid 与 0600/0700 mode；Windows 使用独立 DPAPI StateStore")
 	}
 }
 

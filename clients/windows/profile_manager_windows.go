@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 	"unsafe"
@@ -17,7 +18,7 @@ import (
 	"loom/internal/clientenroll"
 	"loom/internal/clientruntime"
 	"loom/internal/clientsecret"
-	"loom/internal/clientupdate"
+	"loom/internal/windowsv2"
 )
 
 type windowsProfileDisplay struct {
@@ -44,6 +45,7 @@ type windowsProfileManager struct {
 	start            func(*portableGUI)
 	resume           func(*portableGUI) (windowsJoinResult, error)
 	joinDraft        func(*portableGUI, *clientenroll.Invite) (windowsJoinResult, error)
+	joinDraftV2      func(*portableGUI, string) (windowsJoinResult, error)
 	draft            *windowsProfileDraft
 	draftVisible     bool
 	workers          sync.WaitGroup
@@ -87,6 +89,9 @@ func newWindowsProfileManager(owner *portableGUI) (*windowsProfileManager, error
 		resume: func(child *portableGUI) (windowsJoinResult, error) { return child.joinInput("", nil) },
 		joinDraft: func(child *portableGUI, invite *clientenroll.Invite) (windowsJoinResult, error) {
 			return child.joinInput("", invite)
+		},
+		joinDraftV2: func(child *portableGUI, carrier string) (windowsJoinResult, error) {
+			return child.joinInput(carrier, nil)
 		}}
 	for _, p := range store.Snapshot().Profiles {
 		child, err := m.makeChild(p.ID)
@@ -117,9 +122,9 @@ func (m *windowsProfileManager) makeProfileChild(root string) *portableGUI {
 	ctx, cancel := context.WithCancel(m.owner.ctx)
 	child := &portableGUI{edition: m.owner.edition, root: root, ctx: ctx, cancel: cancel,
 		state: guiNeedsJoin, routeSelected: -1, profileChild: true, hostname: m.owner.hostname}
-	config, err := clientupdate.ReadConfig(filepath.Join(root, "config", "client.json"))
+	deviceID, windowsV2, err := windowsJoinedDeviceID(root, child.protector())
 	if err == nil {
-		child.joined, child.deviceID, child.state = true, config.NodeID, guiStopped
+		child.joined, child.windowsV2, child.deviceID, child.state = true, windowsV2, deviceID, guiStopped
 		child.detail = "已保存加入身份；尚未连接。"
 		child.loadOfflineProfileRoutes()
 	} else if !os.IsNotExist(err) {
@@ -147,6 +152,33 @@ func (app *portableGUI) loadOfflineProfileRoutes() {
 }
 
 func readWindowsLocalSelectorPlan(root string, protector clientsecret.Protector, edition clientEdition) (*clientruntime.WindowsSelectorPlan, error) {
+	state, err := windowsV2Installed(root, protector)
+	if err != nil {
+		return nil, err
+	}
+	if state != nil {
+		material, err := windowsv2.PrepareRuntimeMaterial(state)
+		if err != nil {
+			return nil, err
+		}
+		defer material.Clear()
+		profile, err := runtimeProfile(edition)
+		if err != nil {
+			return nil, err
+		}
+		caPath, err := windowsV2PublicCAPath(root, material.ContentHash)
+		if err != nil {
+			return nil, err
+		}
+		runtimeBody, err := clientruntime.DeriveWindowsRuntimeConfig(material.SingBoxConfig,
+			profile, caPath)
+		if err != nil {
+			return nil, err
+		}
+		defer clear(runtimeBody)
+		return clientruntime.BuildWindowsSelectorPlan(runtimeBody, material.AgentConfig,
+			profile, caPath)
+	}
 	files, _, err := clientruntime.ReadCandidateBundle(root, protector)
 	if err != nil {
 		return nil, err
@@ -529,7 +561,7 @@ func (m *windowsProfileManager) command(req brokerRequest) error {
 	m.mu.Unlock()
 	switch req.Operation {
 	case "join":
-		if child == nil || req.Invite == nil {
+		if child == nil || (req.Invite == nil && req.V2Carrier == "") {
 			return errors.New("请选择连接配置并导入加入二维码")
 		}
 		if _, err := m.store.ResolveRoot(req.ProfileID); err != nil {
@@ -539,7 +571,11 @@ func (m *windowsProfileManager) command(req brokerRequest) error {
 		if child.ctx.Err() != nil || s.joined || (s.state != guiNeedsJoin && s.state != guiError) {
 			return errors.New("当前配置不能导入二维码")
 		}
-		child.importJoinInvite(*req.Invite)
+		if req.V2Carrier != "" {
+			child.importWindowsV2Carrier(req.V2Carrier)
+		} else {
+			child.importJoinInvite(*req.Invite)
+		}
 		return nil
 	case "preference":
 		if child == nil || req.Preference == nil {
@@ -563,7 +599,8 @@ func (m *windowsProfileManager) command(req brokerRequest) error {
 		}
 		child.beginClose()
 		child.workers.Wait()
-		err := removeWindowsProfileDataWithCommit(m.owner.root, child.root, func() error { return m.store.Remove(req.ProfileID) })
+		err := removeWindowsProfileDataWithCommit(m.owner.root, child.root, child.protector(),
+			func() error { return m.store.Remove(req.ProfileID) })
 		m.mu.Lock()
 		delete(m.children, req.ProfileID)
 		m.mu.Unlock()
@@ -619,11 +656,13 @@ func (m *windowsProfileManager) close() {
 }
 
 // §13.5：旧根目录就地保留；删除旧身份也不能清掉其他配置或配置索引。
-func removeWindowsProfileData(base, root string) error {
-	return removeWindowsProfileDataWithCommit(base, root, nil)
+func removeWindowsProfileData(base, root string, protector clientsecret.Protector) error {
+	return removeWindowsProfileDataWithCommit(base, root, protector, nil)
 }
 
-func removeWindowsProfileDataWithCommit(base, root string, commit func() error) error {
+func removeWindowsProfileDataWithCommit(base, root string, protector clientsecret.Protector,
+	commit func() error,
+) error {
 	if root != base && (filepath.Dir(root) != filepath.Join(base, "profiles") || !validConnectionProfileID(filepath.Base(root))) {
 		return errors.New("拒绝删除未登记的连接配置目录")
 	}
@@ -689,12 +728,26 @@ func removeWindowsProfileDataWithCommit(base, root string, commit func() error) 
 			return err
 		}
 	}
+	identityPath := windowsV2IdentityPath(root)
+	if info, err := os.Lstat(identityPath); err == nil {
+		if protector == nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("Windows v2 identity 无法在删除事务中安全销毁")
+		}
+		identity, err := windowsv2.LoadIdentity(identityPath, protector)
+		if err != nil {
+			return fmt.Errorf("删除前验证 Windows v2 CNG identity: %w", err)
+		}
+		identity.Close()
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	staging, err := os.MkdirTemp(parent, ".delete-profile-")
 	if err != nil {
 		return err
 	}
 	type movedPath struct{ source, staged string }
 	var moved []movedPath
+	stagedIdentityPath := ""
 	rollback := func(cause error) error {
 		var restoreErrors []error
 		for i := len(moved) - 1; i >= 0; i-- {
@@ -714,10 +767,21 @@ func removeWindowsProfileDataWithCommit(base, root string, commit func() error) 
 			return rollback(err)
 		}
 		moved = append(moved, movedPath{source, staged})
+		if relative, relativeErr := filepath.Rel(source, identityPath); relativeErr == nil &&
+			(relative == "." || relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))) {
+			stagedIdentityPath = filepath.Join(staged, relative)
+		}
 	}
 	if commit != nil {
 		if err := commit(); err != nil {
 			return rollback(err)
+		}
+	}
+	if stagedIdentityPath != "" {
+		if err := windowsv2.DestroyIdentity(stagedIdentityPath, protector); err != nil &&
+			!errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("配置已从列表删除，但 CNG identity 未能安全销毁；暂存数据保留在 %q: %w",
+				staging, err)
 		}
 	}
 	if err := os.RemoveAll(staging); err != nil {
@@ -803,6 +867,9 @@ func (m *windowsProfileManager) resumePendingProfiles() {
 }
 
 func windowsProfileHasJoinRecovery(child *portableGUI) (bool, error) {
+	if found, err := windowsV2RecoveryExists(child.root); err != nil || found {
+		return found, err
+	}
 	path := windowsJoinReadyPath(child.root)
 	if info, err := os.Lstat(path); err == nil {
 		if !info.Mode().IsRegular() {

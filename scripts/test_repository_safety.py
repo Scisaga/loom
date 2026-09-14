@@ -19,7 +19,7 @@ class RepositorySafetyTests(unittest.TestCase):
             path.write_text(text)
             output = io.StringIO()
             with patch.object(safety, "ROOT", root), patch.object(
-                safety, "tracked_files", return_value=[path]
+                safety, "repository_files", return_value=[path]
             ), contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
                 result = safety.main()
             return result, output.getvalue()
@@ -120,7 +120,7 @@ class RepositorySafetyTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertEqual(output.count("site-like device identifier"), 1)
 
-    def test_tracked_files_includes_index_entries_before_commit(self):
+    def test_repository_files_includes_index_and_untracked_entries(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             subprocess.run(["git", "init", "-q", directory], check=True)
@@ -129,9 +129,9 @@ class RepositorySafetyTests(unittest.TestCase):
             untracked.write_text("# not staged\n")
             subprocess.run(["git", "add", staged.name], cwd=root, check=True)
             with patch.object(safety, "ROOT", root):
-                paths = safety.tracked_files()
+                paths = safety.repository_files()
             self.assertIn(staged, paths)
-            self.assertNotIn(untracked, paths)
+            self.assertIn(untracked, paths)
 
 
 if __name__ == "__main__":

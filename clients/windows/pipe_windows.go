@@ -16,7 +16,10 @@ import (
 )
 
 const installedPipeName = `\\.\pipe\LoomClient`
-const maxBrokerMessage = 64 << 10
+const (
+	maxBrokerMessage = 2 << 20
+	brokerPipeBuffer = 64 << 10
+)
 
 // §13.5：只授权安装时指定的用户收发；不给 FILE_CREATE_PIPE_INSTANCE，拒绝远程客户端。
 func createBrokerPipe(name, operatorSID string) (windows.Handle, error) {
@@ -35,7 +38,7 @@ func createBrokerPipe(name, operatorSID string) (windows.Handle, error) {
 	}
 	return windows.CreateNamedPipe(p, windows.PIPE_ACCESS_DUPLEX|windows.FILE_FLAG_OVERLAPPED|windows.FILE_FLAG_FIRST_PIPE_INSTANCE,
 		windows.PIPE_TYPE_BYTE|windows.PIPE_READMODE_BYTE|windows.PIPE_WAIT|windows.PIPE_REJECT_REMOTE_CLIENTS,
-		1, maxBrokerMessage+4, maxBrokerMessage+4, 0, sa)
+		1, brokerPipeBuffer, brokerPipeBuffer, 0, sa)
 }
 
 // §13.5：所有管道 I/O 都可取消；取消后等待内核释放 OVERLAPPED 和缓冲区。

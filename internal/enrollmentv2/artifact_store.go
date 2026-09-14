@@ -105,16 +105,7 @@ func (store *SealedArtifactStore) Put(ref *wire.SecretArtifactRefV2,
 		}
 		return nil
 	}
-	directory, err := os.Open(store.root)
-	if err != nil {
-		return err
-	}
-	err = directory.Sync()
-	closeErr = directory.Close()
-	if err != nil {
-		return err
-	}
-	return closeErr
+	return syncDurableDirectory(store.root)
 }
 
 func (store *SealedArtifactStore) Get(ciphertextDigest string) (wire.SealedSecretEnvelopeV1, error) {

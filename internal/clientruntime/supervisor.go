@@ -140,3 +140,9 @@ func cleanStaleRuntimeConfigs(runtimeDir string) error {
 	}
 	return nil
 }
+
+// CleanupWindowsRuntimeConfigs 供宿主在 certified tombstone 的启动恢复路径
+// 清理崩溃前遗留的短生命周期明文配置。它沿用启动前的同一普通文件边界。
+func CleanupWindowsRuntimeConfigs(runtimeDir string) error {
+	return cleanStaleRuntimeConfigs(runtimeDir)
+}

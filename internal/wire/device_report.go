@@ -2,6 +2,7 @@ package wire
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -94,6 +95,17 @@ func SignDeviceReport(body DeviceReportBodyV2, payload json.RawMessage, privateK
 	if privateKey == nil || privateKey.Curve != elliptic.P256() {
 		return DeviceReportEnvelopeV2{}, errors.New("[D131 device_report] identity private key 必须是 P-256")
 	}
+	return SignDeviceReportWithSigner(body, payload, privateKey, schemas)
+}
+
+// SignDeviceReportWithSigner 与 Enrollment PoP 共用平台 signer 边界；共享 wire
+// 只接收 public key 与签名回调，不要求 Windows 宿主导出 identity private key（D131）。
+func SignDeviceReportWithSigner(body DeviceReportBodyV2, payload json.RawMessage, signer crypto.Signer,
+	schemas DeviceReportSchemaRegistry) (DeviceReportEnvelopeV2, error) {
+	publicKey, ok := signerPublicP256(signer)
+	if !ok {
+		return DeviceReportEnvelopeV2{}, errors.New("[D131 device_report] identity signer 必须是 P-256")
+	}
 	payloadHash, err := DeviceReportPayloadHash(payload)
 	if err != nil {
 		return DeviceReportEnvelopeV2{}, err
@@ -105,17 +117,49 @@ func SignDeviceReport(body DeviceReportBodyV2, payload json.RawMessage, privateK
 	if err != nil {
 		return DeviceReportEnvelopeV2{}, err
 	}
-	spki, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	spki, err := x509.MarshalPKIXPublicKey(publicKey)
 	if err != nil {
 		return DeviceReportEnvelopeV2{}, err
 	}
 	identityHash, _ := HashBytes(DomainEnrollmentIdentitySPKI, spki)
-	signature, err := signP256LowS(message, privateKey)
+	signature, err := signP256LowSWithSigner(message, signer, publicKey)
 	if err != nil {
 		return DeviceReportEnvelopeV2{}, err
 	}
 	return DeviceReportEnvelopeV2{Schema: 2, Body: body, Payload: append(json.RawMessage(nil), payload...),
 		Signature: DeviceReportSignatureV1{Algorithm: "ecdsa-p256-sha256", IdentitySPKIHash: identityHash, Signature: signature}}, nil
+}
+
+func signP256LowSWithSigner(message []byte, signer crypto.Signer, publicKey *ecdsa.PublicKey) (string, error) {
+	digest := sha256.Sum256(message)
+	raw, err := signer.Sign(rand.Reader, digest[:], crypto.SHA256)
+	if err != nil {
+		return "", err
+	}
+	var signature struct{ R, S *big.Int }
+	rest, err := asn1.Unmarshal(raw, &signature)
+	if err != nil || len(rest) != 0 || signature.R == nil || signature.S == nil ||
+		signature.R.Sign() <= 0 || signature.S.Sign() <= 0 {
+		return "", errors.New("[D131 device_report] 平台 signer 返回的 ECDSA DER 无效")
+	}
+	canonical, err := asn1.Marshal(signature)
+	if err != nil || !bytes.Equal(canonical, raw) {
+		return "", errors.New("[D131 device_report] 平台 signer 返回的 ECDSA DER 非规范")
+	}
+	s := new(big.Int).Set(signature.S)
+	halfOrder := new(big.Int).Rsh(new(big.Int).Set(publicKey.Params().N), 1)
+	if s.Cmp(halfOrder) > 0 {
+		s.Sub(publicKey.Params().N, s)
+	}
+	der, err := asn1.Marshal(struct{ R, S *big.Int }{R: signature.R, S: s})
+	if err != nil {
+		return "", err
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(der)
+	if err := verifyP256LowS(message, publicKey, encoded); err != nil {
+		return "", err
+	}
+	return encoded, nil
 }
 
 func VerifyDeviceReport(envelope *DeviceReportEnvelopeV2, identityPublicKey *ecdsa.PublicKey,

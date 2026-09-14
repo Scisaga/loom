@@ -50,6 +50,8 @@ archive_bundle() {
     LICENSE
     NOTICE
     licenses/gozxing-LICENSE
+    licenses/golang-x-net-LICENSE
+    licenses/golang-x-net-PATENTS
     licenses/golang-x-sys-LICENSE
     licenses/golang-x-sys-PATENTS
     licenses/golang-x-text-LICENSE
@@ -90,6 +92,9 @@ install_module_notices() {
   local module_dir
   module_dir=$(go list -m -f '{{.Dir}}' github.com/makiuchi-d/gozxing)
   install -m 0644 "$module_dir/LICENSE" "$license_dir/gozxing-LICENSE"
+  module_dir=$(go list -m -f '{{.Dir}}' golang.org/x/net)
+  install -m 0644 "$module_dir/LICENSE" "$license_dir/golang-x-net-LICENSE"
+  install -m 0644 "$module_dir/PATENTS" "$license_dir/golang-x-net-PATENTS"
   module_dir=$(go list -m -f '{{.Dir}}' golang.org/x/sys)
   install -m 0644 "$module_dir/LICENSE" "$license_dir/golang-x-sys-LICENSE"
   install -m 0644 "$module_dir/PATENTS" "$license_dir/golang-x-sys-PATENTS"
