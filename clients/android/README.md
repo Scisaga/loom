@@ -206,9 +206,10 @@ while avoiding unnecessary same-transport nesting for an authorized fixed exit.
 The Current Paths card is a read-only projection of libbox selector readback.
 On the narrow home screen, declarations with the same actual signed chain are
 grouped into at most two compact summaries; this is presentation-only
-and never merges their decisions or evidence. A details dialog retains every
-declaration, candidate, entry ping, matching WireGuard or public data-ingress hop,
-exact target observation, reason, and source time. Hysteria2-specific variation/rate
+and never merges their decisions or evidence. An inline disclosure inside the same
+card shows one declaration at a time and retains every candidate, entry ping,
+matching WireGuard or public data-ingress hop, exact target observation, reason,
+and source time without opening a dialog. Hysteria2-specific variation/rate
 evidence is shown only when that signed metric exists; Trojan is not assigned
 synthetic Hy2 telemetry. Diagnostics and trust metadata are collapsed by default.
 The UI does not infer measurements from candidate names or present segmented

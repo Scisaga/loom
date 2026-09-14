@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -392,11 +391,9 @@ private fun JoinedDeviceCard(status: EnrollmentStatus, onRefresh: () -> Unit) {
 
 @Composable
 private fun CurrentPathCard(paths: List<RoutePathStatus>, running: Boolean) {
-    var showingDetails by remember { mutableStateOf(false) }
+    var showingDetails by remember(paths) { mutableStateOf(false) }
+    var selectedDetail by remember(paths) { mutableStateOf(0) }
     val summaries = remember(paths) { summarizeRoutePaths(paths) }
-    if (showingDetails) {
-        RouteDetailsDialog(paths = paths, onDismiss = { showingDetails = false })
-    }
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(16.dp),
@@ -436,36 +433,53 @@ private fun CurrentPathCard(paths: List<RoutePathStatus>, running: Boolean) {
                 if (summaries.size > 2) {
                     Text("另有 ${summaries.size - 2} 组实际路径", color = Muted, fontSize = 12.sp)
                 }
-                OutlinedButton(
-                    onClick = { showingDetails = true },
-                    modifier = Modifier.fillMaxWidth().testTag("route-details-open"),
-                ) {
-                    Text("查看 ${paths.size} 项完整详情")
+                if (showingDetails) {
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE3E8E5)))
+                    Column(
+                        modifier = Modifier.testTag("route-details-inline"),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            "逐项详情 · ${selectedDetail + 1}/${paths.size}",
+                            color = Muted,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        RouteDetail(paths[selectedDetail])
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedButton(
+                                onClick = { selectedDetail -= 1 },
+                                enabled = selectedDetail > 0,
+                                modifier = Modifier.weight(1f).testTag("route-details-previous"),
+                            ) { Text("上一项") }
+                            TextButton(
+                                onClick = { showingDetails = false },
+                                modifier = Modifier.weight(1f).testTag("route-details-close"),
+                            ) { Text("收起") }
+                            OutlinedButton(
+                                onClick = { selectedDetail += 1 },
+                                enabled = selectedDetail < paths.lastIndex,
+                                modifier = Modifier.weight(1f).testTag("route-details-next"),
+                            ) { Text("下一项") }
+                        }
+                    }
+                } else {
+                    OutlinedButton(
+                        onClick = {
+                            selectedDetail = 0
+                            showingDetails = true
+                        },
+                        modifier = Modifier.fillMaxWidth().testTag("route-details-open"),
+                    ) {
+                        Text("查看 ${paths.size} 项详情")
+                    }
                 }
             }
         }
     }
-}
-
-@Composable
-private fun RouteDetailsDialog(paths: List<RoutePathStatus>, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("路径详情 · ${paths.size} 项") },
-        text = {
-            Column(
-                modifier = Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState())
-                    .testTag("route-details-dialog"),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                paths.forEachIndexed { index, path ->
-                    if (index > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE3E8E5)))
-                    RouteDetail(path)
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("完成") } },
-    )
 }
 
 @Composable

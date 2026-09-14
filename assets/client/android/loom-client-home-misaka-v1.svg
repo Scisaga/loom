@@ -132,7 +132,7 @@
       <text class="small mono" x="48" y="584">local → demo-entry → demo-exit → destination</text>
       <text class="tiny muted" x="48" y="604">Segment evidence 8/12 · missing remains unknown</text>
       <rect x="48" y="624" width="334" height="40" rx="11" fill="#FFFFFF" stroke="#AAB1AD"/>
-      <text class="small green" x="215" y="649" text-anchor="middle" font-weight="650">View all 6 path details</text>
+      <text class="small green" x="215" y="649" text-anchor="middle" font-weight="650">Browse 6 path details inline</text>
     </g>
 
     <!-- Enrollment and diagnostics are secondary, compact disclosures. -->
