@@ -44,12 +44,13 @@ Windows 客户端采用原生浅色界面，支持多份连接配置、本地直
 
 <p align="center"><sub>Windows · Portable TUN 参考界面；连接、身份与测量值均为演示数据，不表示当前发行状态。</sub></p>
 
-Android 原型按“连接 / 路由 / 设置”组织：连接页集中 VPN 开关和三态选路，路由页展示实际路径
-与分段证据，设置页管理入网与设备。完整交互与窄屏排版见 [Android SVG 原型](assets/client/android/README.md)。
-原型同时补齐多配置管理；Android 当前实现仍为单配置，多身份隔离与切换尚待实现。
+Android 原型以 Windows 客户端的实际功能界面为参照：连接配置列表、所选配置状态、
+直连 / 自动 / 固定出口，以及逐服务的当前选路，在手机上组成一个可滚动的主界面。
+点配置只切换查看，连接按钮才启动或切换连接。添加、改名、删除和路径详情见
+[Android 原型](assets/client/android/loom-android.svg)。图中全部为演示数据；原型不代表原生功能已实现。
 
 <p align="center">
-  <img src="assets/client/android/loom-client-home-misaka-v1.svg" width="100%" alt="Loom Android 三页原型：连接、路由与设置；全部状态均为示例">
+  <img src="assets/client/android/loom-android.svg" width="100%" alt="Loom Android 原型：由 Windows 功能界面转换的主界面及操作状态">
 </p>
 
 Windows 交付设计包含三个 profile，并要求 x64（amd64）和 ARM64 共用同一套界面与加入流程；

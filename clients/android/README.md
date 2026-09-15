@@ -203,34 +203,36 @@ authority by itself: a certified `PublicEndpointIntent` and this Device's
 never promoted into an intermediate relay. This keeps the reverse tunnel policy
 while avoiding unnecessary same-transport nesting for an authorized fixed exit.
 
-The app uses three persistent bottom tabs: Connection, Routes, and Settings.
-Connection owns the primary VPN action, Direct / Auto / fixed-exit selection, and
-a shortcut to Routes. Routes groups Current Paths with segment evidence, network
-status, and trusted reporting. Settings owns enrollment, signed configuration
-refresh, notification settings, local trust metadata, and the debug-only Direct
-fixture. Each tab scrolls independently while the navigation remains fixed.
-Before enrollment, Connection links to Settings and keeps connection and mode
-actions disabled. Mode labels stay on one line with a minimum 48 dp touch height;
-the entire group stacks vertically when the measured labels cannot fit at the
-current width and font scale. See the [SVG prototypes](../../assets/client/android/README.md).
-The SVGs also specify multiple saved connection profiles, matching the Windows
-model: selecting changes the viewed profile, and connecting stops the previous
-workload before starting the selected one. Android currently still stores one
-enrollment identity and managed configuration; profile indexing, isolated identity
-storage, rename/delete, and cross-profile switching remain unimplemented. The
+The [Android prototype](../../assets/client/android/loom-android.svg) is rebuilt
+from the [current Windows interface](../../assets/client/windows/loom-client-windows-current.png)
+and its profile, route-mode, and path-detail behavior. A single scrolling main
+screen contains saved profiles, the selected profile's status and connection
+action, Direct / Auto / fixed exit, and actual Service paths. Selecting only changes
+the viewed profile; a separate active indicator identifies the profile carrying
+traffic. Connect or Switch connection stops the previous workload before starting
+the selected one. At most one VPN runs, and errors retain the operation's identity.
+
+The plus action opens the name and invitation form. Scan, image/file import, and
+paste feed the same join transaction. Joining saves a disconnected profile without
+interrupting the active connection. Continue later retains the original identity
+and recovery data. Rename edits the list entry inline; named deletion confirmation
+is available only for a stopped profile and removes only its local state.
+
+Direct and Auto submit on explicit selection. Fixed exit requires an authorized
+exit and confirmation; cancellation preserves the confirmed preference. Auto shows
+per-Service paths, fixed exit one shared internet path, and Direct the local path.
+Inline details retain actual selector readback, signed chains, segment protocols,
+sources, original observation times, and decision reasons. Missing evidence stays
+unknown; reading the UI never triggers probes or manufactures end-to-end quality.
+
+Credentials, preferences, configuration, and recovery state remain isolated per
+profile; the device's underlay-generation probe registry is shared without extra
+probes. Migration must preserve the existing identity. Content wraps or stacks for
+narrow screens and larger text, with touch areas of at least 48 dp.
+This revision changes prototypes and documentation only. The native app still
+uses Connection, Routes, and Settings and stores one enrollment identity and
+managed configuration. Multi-profile storage and the new layout are not implemented;
 current/previous/candidate records are versions of one configuration.
-On the Routes tab, declarations with the same actual signed chain are grouped
-into at most two compact summaries; this is presentation-only and never merges
-their decisions or evidence. An inline disclosure inside the same card shows one
-declaration at a time and retains every candidate, entry ping, matching WireGuard
-or public data-ingress hop, exact target observation, reason, and source time.
-Path browsing stays inline on Routes, fixed-exit selection on Connection, and
-pending-enrollment confirmation on Settings. Opening or cancelling exit selection
-does not change the confirmed mode; Direct and Auto close the picker. Disconnected
-paths show an empty state. Hysteria2-specific variation/rate evidence is
-shown only when that signed metric exists; Trojan is not assigned synthetic Hy2
-telemetry. The UI does not infer measurements from candidate names or present
-segmented evidence as end-to-end P50/P95, business throughput, or whole-path health.
 
 The primary Connect action stays disabled until a verified managed snapshot is
 available. Debug builds expose the bundled stage-1 Direct fixture in a separate

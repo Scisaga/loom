@@ -174,11 +174,11 @@ Windows 客户端适配只能使用 `agent.RunClient`，不得调用服务器完
 
 ## Windows / Android 拓扑显示
 
-Windows 的“当前选路”契约为一个白色面板，各 Service 用细线分隔；Android 使用固定底部
-“连接 / 配置 / 诊断”三页，并把单一“当前路径”卡片放在连接页。该卡片按相同实际签名 chain
-汇总为紧凑摘要，逐声明详情在原卡片内一次展开一项并以前后按钮切换，不使用弹窗或一次铺开
-完整列表。该汇总只是视觉分组，
-不合并 selector 决策、candidate 或证据。两端都把测量标在对应连线上，
+Windows 的“当前选路”契约为一个白色面板，各 Service 用细线分隔；Android 的
+[目标原型](../assets/client/android/loom-android.svg) 参照 Windows，在所选配置的连接状态与
+路由模式下展示当前选路，详细信息在原位置展开。Auto 按 Service 展示，FixedExit 只显示
+一条统一上网路径，Direct 显示本机直连。视觉分组不合并 selector 决策、candidate 或证据。
+两端都把测量标在对应连线上，
 不显示整条路径质量占位；业务证据缺失时明确显示未知。本机到入口显示该底层网络代的
 单次轻量探测；服务器段按实际承载显示对应方向的 RTT。
 公网 Hy2 有现成数据时追加该观测的 Δ（P95−P50）与固定响应探测速率；这不是
