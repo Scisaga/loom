@@ -48,6 +48,14 @@ func TestPrepareLinuxEnrollmentInstallationUnsealsExactCredentials(t *testing.T)
 	if err != nil || !bytes.Equal(got, secret) {
 		t.Fatalf("解封后的 credential 不匹配: got=%q err=%v", got, err)
 	}
+	ref := result.ResultArtifact.SecretArtifactRefs[0]
+	sealedRef := *ref.SealedBlob
+	sealedRef.RecipientKeyVersions = append([]wire.SealedBlobRecipientKeyRefV1(nil), sealedRef.RecipientKeyVersions...)
+	sealedRef.RecipientKeyVersions[0].RecipientKeyProfile = "p256-keystore-ecdh-v1"
+	ref.SealedBlob = &sealedRef
+	if _, err := linuxWrappingRecipient(&ref, result.ResultArtifact.InitialDeviceView.DeviceID, identity.WrappingPublicKeySPKI); err == nil {
+		t.Fatal("Linux 软件 wrapping key 接受了未声明的 Keystore profile")
+	}
 	viewEnvelope := wire.DeviceViewEnvelopeV2{Payload: result.ResultArtifact.InitialDeviceView,
 		SecretArtifactRefs: []json.RawMessage{mustCanonicalRaw(t, result.ResultArtifact.SecretArtifactRefs[0])}}
 	if err := validateEnrollmentInstallation(installation, &viewEnvelope); err != nil {
@@ -206,11 +214,11 @@ func linuxCompletionResultFixture(t *testing.T, identity *EnrollmentIdentityV1,
 	keyID, _ := wire.AuthorityProofKeyID(spki)
 	recipient := wire.SealedBlobRecipientKeyRefV1{
 		RecipientID: deviceID, RecipientKeyGeneration: 1, RecipientKeyID: keyID,
-		RecipientKeyProfile: "p256-keystore-ecdh-v1",
+		RecipientKeyProfile: "p256-root-only-pkcs8-ecdh-v1",
 		RecipientPublicKey: wire.AuthorityProofKeyV1{Algorithm: "ecdsa-p256-sha256",
 			PublicKeySPKIDER: base64.RawURLEncoding.EncodeToString(spki), KeyID: keyID},
 	}
-	policy := wire.P256SealingPolicyV1()
+	policy := wire.P256RootOnlySealingPolicyV1()
 	contextValue, err := wire.NewSealedSecretContext("cluster", "proposal", "credential", "device_credential",
 		owner, 1, &policy, []wire.SealedBlobRecipientKeyRefV1{recipient})
 	if err != nil {

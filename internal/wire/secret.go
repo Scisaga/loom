@@ -336,8 +336,9 @@ func ValidateSealingPolicy(policy *SealingPolicyV1) error {
 	switch policy.KeyWrapKind {
 	case "p256_ecdh":
 		p := policy.P256ECDH
-		if policy.RSAOAEP != nil || p == nil || policy.PolicyID != "sealed-p256-v1" ||
-			policy.RecipientKeyProfile != "p256-keystore-ecdh-v1" || p.Curve != "p256" ||
+		profileMatches := policy.PolicyID == "sealed-p256-v1" && policy.RecipientKeyProfile == "p256-keystore-ecdh-v1" ||
+			policy.PolicyID == "sealed-p256-root-only-v1" && policy.RecipientKeyProfile == "p256-root-only-pkcs8-ecdh-v1"
+		if policy.RSAOAEP != nil || p == nil || !profileMatches || p.Curve != "p256" ||
 			p.SharedSecret != "x-coordinate-be32" || p.KDF != "hkdf-sha256" ||
 			p.SaltProfile != "context-sha256-v1" || p.InfoProfile != "recipient-context-frame-v1" ||
 			p.WrapAEAD != "aes-256-gcm" || p.WrapNonceBytes != 12 {
@@ -373,7 +374,7 @@ func validateRecipientKeyRef(ref *SealedBlobRecipientKeyRefV1, profile string) e
 	if err != nil {
 		return err
 	}
-	if profile == "p256-keystore-ecdh-v1" {
+	if isP256SealingProfile(profile) {
 		if _, ok := public.(*ecdsa.PublicKey); !ok {
 			return errors.New("[D124 sealed secret] P-256 recipient profile/SPKI 不匹配")
 		}
@@ -381,8 +382,14 @@ func validateRecipientKeyRef(ref *SealedBlobRecipientKeyRefV1, profile string) e
 		if _, ok := public.(*rsa.PublicKey); !ok {
 			return errors.New("[D124 sealed secret] RSA recipient profile/SPKI 不匹配")
 		}
+	} else {
+		return errors.New("[D124 sealed secret] recipient key profile 未获协议授权")
 	}
 	return nil
+}
+
+func isP256SealingProfile(profile string) bool {
+	return oneOf(profile, "p256-keystore-ecdh-v1", "p256-root-only-pkcs8-ecdh-v1")
 }
 
 func ValidateSealedBlobRef(ref *SealedBlobRefV1) error {
@@ -489,9 +496,6 @@ func ValidateSecretArtifactRef(ref *SecretArtifactRefV2) error {
 		if ref.BackendKind != "sealed_blob" || ref.PublicKey != nil {
 			return errors.New("[D124 secret artifact] bearer secret backend/PoP 无效")
 		}
-	}
-	if oneOf(ref.Purpose, "ca_private_key", "acme_account_key") && ref.BackendKind != "kms_or_hardware_key" {
-		return errors.New("[D124 secret artifact] CA/ACME key 必须使用 exact KMS/HSM version")
 	}
 	return nil
 }
@@ -807,7 +811,7 @@ func ValidateSealedSecretEnvelope(envelope *SealedSecretEnvelopeV1) error {
 		switch entry.KeyWrapKind {
 		case "p256_ecdh":
 			value := entry.P256ECDH
-			if entry.RSAOAEP != nil || value == nil || entry.RecipientKey.RecipientKeyProfile != "p256-keystore-ecdh-v1" {
+			if entry.RSAOAEP != nil || value == nil || !isP256SealingProfile(entry.RecipientKey.RecipientKeyProfile) {
 				return errors.New("[D124 sealed secret] P-256 recipient envelope union 无效")
 			}
 			der, err := decodeCanonicalBase64URL(value.EphemeralSPKIDER)

@@ -234,11 +234,11 @@ func linuxDynamicSecretFixture(t *testing.T, identity *EnrollmentIdentityV1,
 	keyID, _ := wire.AuthorityProofKeyID(spki)
 	recipient := wire.SealedBlobRecipientKeyRefV1{
 		RecipientID: deviceID, RecipientKeyGeneration: 1, RecipientKeyID: keyID,
-		RecipientKeyProfile: "p256-keystore-ecdh-v1",
+		RecipientKeyProfile: "p256-root-only-pkcs8-ecdh-v1",
 		RecipientPublicKey: wire.AuthorityProofKeyV1{Algorithm: "ecdsa-p256-sha256",
 			PublicKeySPKIDER: identity.WrappingPublicKeySPKI, KeyID: keyID},
 	}
-	policy := wire.P256SealingPolicyV1()
+	policy := wire.P256RootOnlySealingPolicyV1()
 	owner := wire.SecretArtifactOwnerV1{Kind: "device",
 		Device: &wire.SecretArtifactDeviceOwnerV1{DeviceID: deviceID}}
 	contextValue, err := wire.NewSealedSecretContext(clusterID, "proposal-rotate",

@@ -477,7 +477,14 @@ head QC，但不能投票、验证 admin write 或执行 CA。
 ### 6.2 权威 secret artifact
 
 邀请 token、Device/数据面凭据、TLS/CA/provider key 等 authority-bearing secret 必须在引用
-它的 proposal **提交前只生成一次**，并固定成以下二选一的精确后端对象：
+它的 proposal **提交前只生成一次**。当前交付使用本地软件密钥和不可覆盖的 `sealed_blob`，
+不依赖 KMS/HSM。密钥目录权限为 `0700`、私钥文件为 `0600`，仅所属服务账号或 root 可读；
+软件密钥可在签发进程内使用，不能声称不可导出。需要备份或授权接管的密钥按下表接收者范围
+加密封装，日志只记录引用与证明；本地可覆盖 PEM 路径本身不能充当 certified immutable ref。
+
+KMS/HSM 强化单列为[后续扩展计划](kms-hsm-hardening-plan.md)，不是当前实现、部署或验收门禁。
+下列 wire 保留 `kms_or_hardware_key` variant 的严格解析边界；能验证该格式不表示已经接入托管
+服务，当前没有任何 purpose 必须选择它。Device/Android 已有的本地 Keystore 边界仍按各自 profile 执行。
 
 ```text
 SecretArtifactRefV2
@@ -488,7 +495,7 @@ SecretArtifactRefV2
   kms_or_hardware_key?     # provider/object_id, exact_version, policy_hash
   possession_proof_hash?, availability_policy_hash, availability_receipts_root
 
-SealingPolicyV1                         # exact tagged union；首版只接受下文两个 canonical object
+SealingPolicyV1                         # exact tagged union；只接受下文三个 canonical object
   schema = 1, policy_id, generation = 1
   recipient_key_profile
   plaintext_format = "jcs-sealed-secret-plaintext-v1"
@@ -577,20 +584,21 @@ ArtifactAvailabilityReceiptLeafV1
 `backend_kind` 必须与恰好一个同名 variant 对应，另一个必须缺失；`sealed_blob` 与
 `kms_or_hardware_key` 是互斥 union。`recipient_key_versions[]` 按 `(recipient_id UTF-8 bytes,
 recipient_key_generation,recipient_key_id bytes)` 排序去重且非空，envelope 数组必须逐字段投影同一
-refs 且同序。引用必须指向不可覆盖 blob 或精确
-KMS/HSM/Keystore version；`latest`、可变 alias、可覆盖文件路径和仅靠进程内缓存的 handle 均
-不合法。非导出私钥提交 exact `AuthorityProofKeyV1`、精确 key version 和 domain-separated
+refs 且同序。当前引用必须指向不可覆盖 blob；预留 provider version 的扩展约束见独立计划。
+`latest`、可变 alias、可覆盖文件路径和仅靠进程内缓存的 handle 均不合法。
+软件及非导出私钥都提交 exact `AuthorityProofKeyV1`、精确 key version 和 domain-separated
 `SecretPossessionProofV1`，并覆盖 cluster/proposal/secret/purpose/owner/generation、公开 key
 和 immutable ref，禁止把另一用途或 proposal 的 PoP 搬来复用；TLS 终止节点先生成 key/CSR，
 再提交 SPKI、CSR hash 和本机 availability
 receipt。sealed credential 按已提交的 recipient key version 分别封装，日志与 CRDT 只含
 ciphertext hash/ref，绝不含 plaintext。
 
-首版只接受两个逐字段固定的 `SealingPolicyV1`：
+只接受三个逐字段固定的 `SealingPolicyV1`：
 
 | policy_id / recipient_key_profile | key_wrap variant | 用途 |
 |---|---|---|
-| `sealed-p256-v1` / `p256-keystore-ecdh-v1` | 上式 `p256_ecdh` 全部 literal | Android API 31+ 可用的不可导出、仅 ECDH P-256 wrapping key；软件或其他平台使用各自明确 profile |
+| `sealed-p256-v1` / `p256-keystore-ecdh-v1` | 上式 `p256_ecdh` 全部 literal | Android API 31+ 可用的不可导出、仅 ECDH P-256 wrapping key |
+| `sealed-p256-root-only-v1` / `p256-root-only-pkcs8-ecdh-v1` | 同一 `p256_ecdh` 算法与 literal，独立 policy/profile/hash | Linux Device 与软件 executor 的本地 P-256 wrapping key，受保护 PKCS#8 文件；不声称硬件或不可导出 |
 | `sealed-rsa2048-v1` / `rsa2048-keystore-decrypt-v1` | 上式 `rsa_oaep` 全部 literal | Android API 26–30 的不可导出、仅解密 fallback |
 
 表中未选 variant 必须缺失；所有共同字段必须等于 schema 中的 literal，不能用 provider 默认值改写。
@@ -639,22 +647,23 @@ golden vectors，不能只用各自 provider round-trip 测试代替 wire 互操
 都必须是 `device`，recovery private key 必须是 `recovery_policy`。约束表也是
 normative：
 
-| purpose | backend | PoP / public identity | owner 与 recipient |
+| purpose | 当前交付 backend | PoP / public identity | owner 与 recipient |
 |---|---|---|---|
 | `invite_token` | `sealed_blob` | 二者必须缺失 | owner 为创建 principal 的 control Device；recipient 只能是 invite-delivery renderer key set |
-| `device_credential` | `sealed_blob` 或 Device `kms_or_hardware_key` | 非导出私钥必须 PoP+SPKI；纯对称凭据二者缺失 | owner 为目标 Device；sealed recipients 必须恰含该 Device 当前 wrapping key versions |
-| `data_plane_credential` | `sealed_blob` 或 owner hardware key | 私钥型必须 PoP+public key；对称型二者缺失 | owner 为 endpoint Device；recipients 等于 certified transport profile 的参与 Device 集合 |
-| `tls_private_key` | TLS 终止 Device 的 `kms_or_hardware_key`，仅 profile 明确允许时可 sealed | 必须 PoP+DER SPKI | owner/recipient 必须是终止 TLS 的 Device |
-| `ca_private_key` | `kms_or_hardware_key` | 必须 PoP+DER SPKI | owner 为 certified CA executor；不得 seal 给普通 control voter |
-| `dns_provider_credential` | `sealed_blob` 或 provider KMS exact version | 对称/API token 时二者缺失 | owner 为 DNS executor role；recipient scope 不得超出 ManagedZone provider adapter |
-| `acme_account_key` | `kms_or_hardware_key` | 必须 PoP+public key | owner 为 ACME executor role；不得复用 TLS key |
+| `device_credential` | `sealed_blob` | 私钥型必须 PoP+SPKI；纯对称凭据二者缺失 | owner 为目标 Device；sealed recipients 必须恰含该 Device 当前 wrapping key versions |
+| `data_plane_credential` | `sealed_blob` | 私钥型必须 PoP+public key；对称型二者缺失 | owner 为 endpoint Device；recipients 等于 certified transport profile 的参与 Device 集合 |
+| `tls_private_key` | `sealed_blob` | 必须 PoP+DER SPKI | owner/recipient 必须是终止 TLS 的 Device |
+| `ca_private_key` | `sealed_blob` | 必须 PoP+DER SPKI | owner 为 certified CA executor；recipients 仅含经认证授权执行或接管该 CA 的 wrapping key versions；普通 control voter 身份不授予解封权 |
+| `dns_provider_credential` | `sealed_blob` | 对称/API token 时二者缺失 | owner 为 DNS executor role；recipient scope 不得超出 ManagedZone provider adapter |
+| `acme_account_key` | `sealed_blob` | 必须 PoP+public key | owner 为 ACME executor role；recipients 仅含获授权 executor 的 wrapping key versions；不得复用 TLS key |
 | `acme_order_state` | `sealed_blob` | 二者必须缺失 | owner 为创建 order 的 ACME executor role；recipients 必须恰为该 certified executor pool 的 wrapping key versions |
-| `control_peer_identity` | peer Device `kms_or_hardware_key` | 必须 PoP+DER SPKI | owner/recipient 必须是该 private directory member 对应 Device |
-| `recovery_private_key` | `sealed_blob` 或 custodian HSM exact version | 必须 PoP+DER SPKI | owner 精确绑定 policy generation/key ID；sealed recipients 等于 custody custodian wrapping refs |
+| `control_peer_identity` | `sealed_blob` | 必须 PoP+DER SPKI | owner/recipient 必须是该 private directory member 对应 Device |
+| `recovery_private_key` | `sealed_blob` | 必须 PoP+DER SPKI | owner 精确绑定 policy generation/key ID；sealed recipients 等于 custody custodian wrapping refs |
 
 `allowed_purposes[]` 只可用此顺序的子序列。backend、PoP、identity、owner 或 recipients 与表及
-引用它的 certified profile 任一不符即拒绝；表中的“或”只能由 profile 的 exact tagged choice
-消歧，不能由 executor 临时选择。
+引用它的 certified profile 任一不符即拒绝。未来启用其他 backend 时须通过显式 profile/版本迁移，
+不能由 executor 临时切换。CA 执行者是可经认证变更的角色，不要求固定一台额外常驻签发服务；
+接管仍须校验同一密钥版本、当前 fencing 与首次签发结果，不能因换执行者重新生成身份。
 
 PoP signature 覆盖
 `frame("loom-secret-possession-proof-signature-v1", JCS(SecretPossessionProofBodyV1))`；
@@ -680,18 +689,17 @@ policy reporters 按 ID 排序、ID/key 唯一，allowed purposes 按固定 enum
 `1 <= required_receipt_count <= len(reporters)`、`1 <= required_fault_domain_count <=`
 `required_receipt_count`，max age 为正 int64 秒。receipt leaves 按 reporter ID 排序去重，receipt 和
 fault-domain 门槛都只按不同 reporter 计算；`observed_at` 不得晚于 candidate logical time 加 clock
-skew，且 age 不得超过 policy。sealed backend 的 receipt digest 必须等于 ciphertext digest，KMS/HSM
-backend 必须等于 provider 对 exact version 返回的 canonical version digest；recipient version 的
-存在/缺失也必须符合 backend/profile。
+skew，且 age 不得超过 policy。sealed backend 的 receipt digest 必须等于 ciphertext digest，
+recipient version 必须与 envelope/profile 相符；预留 provider backend 的 receipt 约束见独立扩展计划。
 
 voter 在把引用写入 Raft 前验证 artifact schema/hash、用途、owner、recipient/policy、PoP，
-以及 secret policy 要求数量和故障域的签名 availability receipt。receipt 证明相同不可变字节或
-精确 KMS version 已可取；它不授权在 approval 前向 Device 释放明文。未达 availability policy
+以及 secret policy 要求数量和故障域的签名 availability receipt。receipt 证明相同不可变制品已可取；
+它不授权在 approval 前向 Device 释放明文。未达 availability policy
 不得 commit/进入 `ready`。预生成后 proposal 失败留下的 orphan 没有 authority，必须隔离到
 显式 retention/tombstone 后再按 §15 清理，后续 proposal 不能用可变名字把它重新解释成新 secret。
 
 一旦引用所在 head certified，executor 只能取出并安装该 exact version；失败只重试同一 artifact。
-重新生成、换 recipient、换 KMS version 或“故障切换时再随机一次”都必须产生更高 generation
+重新生成、换 recipient、换 key version 或“故障切换时再随机一次”都必须产生更高 generation
 的新 artifact/proposal/QC。邀请 token 本身也先生成并封装为只供获授权 invite-delivery renderer
 读取的 immutable artifact；公开邀请 entry 同时绑定 domain-separated token commitment 和 private
 artifact-binding hash，exact ref/recipient policy 只在 control-private binding 中复制。QR 与
@@ -1425,7 +1433,7 @@ RecoveryCustodianRefV1
 RecoveryKeyCustodyArtifactV1       # control-private exact preimage
   schema = 1, cluster_id, policy_id, policy_generation, key_id, public_key
   hiding_nonce                     # 32-byte CSPRNG，无 padding base64url
-  key_artifact_ref: SecretArtifactRefV2   # purpose=recovery_private_key；sealed 或 HSM exact version
+  key_artifact_ref: SecretArtifactRefV2   # purpose=recovery_private_key；当前使用 sealed artifact
   custodians[]                     # RecoveryCustodianRefV1，按 custodian_id 排序
   required_receipt_count, required_fault_domain_count, max_receipt_age_seconds
 
@@ -1490,11 +1498,10 @@ policy_generation})))`，`secret_id=key_id`、`purpose=recovery_private_key`，o
 SPKI 提取的 raw 32-byte key 必须逐字节等于 policy/custody artifact 的 `public_key`。generic
 AuthorityProof key ID 按 §6.2 的 SPKI domain 重算，**不要求**等于从 raw key 计算的 recovery policy
 `key_id`：generic PoP 用前者，`RecoveryKeyPossessionProofV1` 与 threshold signature 用后者定位同一
-raw key，两种命名空间不得直接比较。immutable ref/KMS version 不得为
+raw key，两种命名空间不得直接比较。immutable ref 不得为
 `latest`、alias 或可覆盖路径；sealed ref 的 recipient refs 必须与 custodian refs 一一对应并满足 §6.2
-exact envelope，且每个 custodian/receipt 的 optional recipient key 都必须存在并相等；HSM ref 则
-必须缺失 sealed recipient set，并要求所有 custodian/receipt 的 optional recipient key 缺失（HSM
-access principal 由 exact provider policy处理，不伪装成 sealed recipient）。`custodians[]` 非空，custodian
+exact envelope，且每个 custodian/receipt 的 optional recipient key 都必须存在并相等；预留 provider
+ref 的 custody 约束见[独立扩展计划](kms-hsm-hardening-plan.md)。`custodians[]` 非空，custodian
 ID、receipt key 和 fault domain 均唯一；仅对存在的 recipient key ref 要求彼此唯一，每个 present
 recipient public key/profile/key ID
 按 §6.2 strict SPKI 与映射重算。receipt public key必须严格解码为 32-byte
@@ -1509,7 +1516,7 @@ Ed25519 raw key，`receipt_key_id` 等于其小写 `sha256:` digest，未知 alg
 `frame("loom-recovery-custody-key-test-v1",JCS({schema:1,custody_artifact_hash,custodian_id,observed_at}))`；
 wire 必须是 raw 64-byte Ed25519 signature。Recovery key PoP 与下述 threshold signature 也一律使用
 raw 64-byte Ed25519、无 padding base64url；未知/错误长度拒绝。所以单纯声称“blob 存在”不能替代
-一次真实 unseal/HSM-sign 测试。
+一次真实解封与签名测试。
 
 availability root 对按 custodian ID 排序的 `RecoveryKeyCustodyAvailabilityLeafV1`，custody root 对按
 key ID 排序的 `RecoveryKeyCustodyLeafV1`，都使用 §7.1 RFC 6962 规则；leaf 中 hash 必须由同行 exact
@@ -1704,7 +1711,7 @@ fork，即使它们选择不同的更高 epoch；客户端不得按更大数字�
 最高 authority。新 policy 先在离线环境产生 canonical
 `RecoveryPolicyV1{policy_id,generation,algorithm,key_ids_and_public_keys,threshold,`
 `private_key_custody_root,ceremony_profile}` 和每把 key/DKG transcript 的 proof-of-possession；私有 share 走
-§9.3 `RecoveryPrivateCustodyObjectV1` 的不可变 sealed/KMS exact version、真实 key-test 与离线
+§9.3 `RecoveryPrivateCustodyObjectV1` 的不可变 sealed artifact、真实 key-test 与离线
 availability policy，不能复制给普通 voter 解密，也不能只靠 PoP 冒充可恢复备份。
 
 首版 wire 固定为以下单向对象图；代码块中的 `body` 都是 exact schema，不得再内嵌一个含义不明

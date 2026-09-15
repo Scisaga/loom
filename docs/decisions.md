@@ -3150,6 +3150,9 @@ WireGuard 只有在 renderer 和目标主机支持两套同时工作的 interfac
 **日期** 2026-09-10 · **状态** 目标设计生效、尚未实现 · **相关** D74、D87、D102～D107、
 [分布式控制平面 §12、§15](distributed-control-plane.md)
 
+密钥后端的当前交付范围以 D139 为准：采用软件密钥与 sealed artifact；下文 KMS/硬件形式仅为
+预留扩展，不能作为上线前提。
+
 任何会决定邀请、Device、listener、CA、provider 或传输身份的 secret 都必须在引用它的 proposal
 提交前生成，并固定为不可覆盖的 sealed artifact、硬件/Keystore key version 或精确 KMS version。
 提交对象至少绑定 `secret_id/purpose/owner/generation/public_identity_or_spki/immutable_ref`，并按
@@ -3959,3 +3962,21 @@ SHA-256(frame) 上的 low-S raw r||s64。旧 Ed25519 profile 保留验证能力�
 实际运行的精确制品、生效配置和正常成功业务结果；负面拒绝、测试构造器或固定响应不能替代。
 用户已授权上线时继续完成发布激活，不受旧专项提示词“仅提交、不部署”的限制。具体执行规则
 见 `CLAUDE.md` 和[控制面实施提示词](control-plane-implementation-prompt.md)。
+
+### D139 · 软件密钥作为当前基线，KMS/HSM 单列后续强化
+
+**状态：已定（操作者要求，2026-09-15）。**
+
+取消设备 CA、ACME account、control peer 与 TLS key 必须使用 KMS/HSM 的要求。当前使用本地
+软件密钥及不可变 sealed artifact：受保护目录与文件、用途隔离、精确版本、SPKI/PoP、真实
+availability、授权接管、fencing、备份与恢复均保留。普通 control voter 身份不自动授予 CA 解封权。
+Device 身份与 WG 私钥仍由设备本地生成，不能借此扩大中控持钥范围；Android 已有 Keystore
+profile 不变。Linux/software executor 使用明确的软件 wrapping profile，不伪称硬件保护。
+
+本决定替代分布式控制平面 §6.2 的强制硬件后端及实施提示词中索要 KMS/HSM 配置的前置要求；
+D108 的先固化再提交、首次结果重放及用途/接收者约束继续生效。`crypto.Signer` 只是调用接口，
+不能据此声称不可导出或托管服务已接通。
+
+KMS/HSM 的价值、成本、后端条件与迁移验收单列于
+[后续强化计划](kms-hsm-hardening-plan.md)。该计划不计入当前 #7/#8/#9 完成门禁，不阻塞新版
+Enrollment/config/report 的实现、daemon 接线、生产替换或验收；这些实际交付工作仍须完成。

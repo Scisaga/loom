@@ -1592,11 +1592,11 @@ service certificate/IP SAN 或 pinned SPKI，并使用 admin mTLS 提交带 base
 | **Device 身份私钥** | **Device 本地** | 仅证书/SPKI 与 certified membership |
 | **control peer mTLS cert/key** | **每个 control Device 各自生成** | 只持本 peer 私钥；只用于 Raft/anti-entropy transport identity |
 | **control membership/config/enrollment keys** | **每个 control Device 按用途分别生成三把** | 只持本成员对应私钥；三者互不复用，也不与 peer/Device/admin/CA/TLS/code-signing/recovery key 复用 |
-| **BootstrapIssuer key** | 受约束 control executor/HSM；按 epoch 轮换 | 只签 Invite/QC 派生且不越过 policy 上限的短期 tunnel capability；公开验证 key 经 ControlSet 认证 |
+| **BootstrapIssuer key** | 受约束 control executor 本地生成；按 epoch 轮换 | 只签 Invite/QC 派生且不越过 policy 上限的短期 tunnel capability；公开验证 key 经 ControlSet 认证 |
 | **admin 私钥** | 管理员终端/硬件；新签发为 P-256，TLS 与操作签名共用 | 仅验证完整签发链与 certified ACL；换证见 D137 |
 | **internal service TLS key** | 每个 control Device 本地 | 只持本机 key；证书限定 control_api/Enrollment/Raft/config/report 的独立 EKU/profile 与 overlay IP SAN |
 | **公开 TLS/ACME 私钥** | TLS 终止 Device 本地 | 证书、SPKI 摘要和状态，不持有节点私钥 |
-| **客户端数据面凭据** | approval commit 前生成并 sealed 给既定接收者，或写入不可变版本 KMS | 只提交 ciphertext hash/secret ref；接替 executor 只能重放同一制品 |
+| **客户端数据面凭据** | approval commit 前生成并 sealed 给既定接收者 | 只提交 ciphertext hash/secret ref；接替 executor 只能重放同一制品 |
 | **混淆参数** | 提案方生成、随 certified proposal 固化 | 是公开参数，不是私钥 |
 | **recovery root** | 离线介质/可选多人门槛 | 日常 control Device 不持有 |
 
@@ -1622,6 +1622,11 @@ CA root 泄露会允许伪造其证书域，recovery root 泄露会允许在灾�
 所有签发与恢复写入不可变审计。公开 WebPKI、Device、control peer、admin 与配置投票
 签名不能共用证书或私钥。普通证书本身也不授予权限，接收方还要核对 certified
 registry/ACL/ControlSet。
+
+当前 CA、ACME 与 control 服务密钥使用本地软件保护和受限加密封装，不强制 KMS/HSM。
+密钥版本、用途隔离、PoP、备份恢复、授权接管与 fencing 仍按
+[分布式控制平面 §6.2](distributed-control-plane.md#62-权威-secret-artifact) 执行。
+KMS/HSM 仅列入[后续强化计划](kms-hsm-hardening-plan.md)，不构成当前上线依赖。
 
 ---
 
@@ -3405,7 +3410,7 @@ CertificateIntent              # 可按 issuance 变化的签发对象
 SecretArtifactRef              # 目标态；权威 secret 必须在引用它的 proposal 提交前固定
   cluster/proposal/secret/purpose/owner/generation, public_identity_or_spki, immutable_ref
   ciphertext_digest + sealing_policy/recipient key versions + availability receipts
-  # 或 exact kms/hardware key id + version + policy；禁止 latest/alias/可覆盖路径
+  # 当前使用 sealed 软件后端；禁止 latest/alias/可覆盖路径；托管硬件后端见独立后续计划
 
 ResourceLease                 # 目标态；协调外部副作用，不产生 desired-state authority
   resource_id, holder_control_id, recovery_epoch, control_epoch, raft_term
