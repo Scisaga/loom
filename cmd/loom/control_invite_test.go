@@ -6,8 +6,10 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -497,8 +499,15 @@ func controlInviteApplication(t *testing.T, runtime *controlRuntime) (controlApp
 func controlInviteDeviceProfile(t *testing.T, runtime *controlRuntime) wire.DeviceCertificateProfileStateV1 {
 	t.Helper()
 	now := runtime.now()
-	_, issuer, _, err := makeCertificateAuthority("demo-device-ca", now.Add(-time.Hour), now.Add(48*time.Hour))
+	_, issuer, issuerKey, err := makeCertificateAuthority("demo-device-ca", now.Add(-time.Hour), now.Add(48*time.Hour))
 	if err != nil {
+		t.Fatal(err)
+	}
+	issuerPKCS8, err := x509.MarshalPKCS8PrivateKey(issuerKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runtime.dir, "demo-device-ca.key"), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: issuerPKCS8}), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	chain := []string{base64.RawURLEncoding.EncodeToString(issuer.Raw)}
@@ -514,7 +523,7 @@ func controlInviteDeviceProfile(t *testing.T, runtime *controlRuntime) wire.Devi
 		IssuerKeyArtifactHash: wire.HashRaw("demo-secret-v1", []byte("device-ca")), AllowedPlatforms: []string{"linux-server"}, AllowedResponsibilities: []string{"use_loom"},
 		ValiditySeconds: 3600, AllowedSubjectKeyAlgorithm: "p256", SignatureAlgorithm: "ed25519", SubjectMode: "empty", SANURIPrefix: "spiffe://demo-cluster.example/device/",
 		KeyUsageBits: []string{"digital_signature"}, RequiredEKUOIDs: []string{"1.3.6.1.5.5.7.3.2"}, RequiredPolicyOIDs: []string{"1.3.6.1.4.1.55555.2"},
-		ExtensionOrderOIDs: []string{"2.5.29.15", "2.5.29.17", "2.5.29.19", "2.5.29.32", "2.5.29.37"}}
+		ExtensionOrderOIDs: []string{"2.5.29.15", "2.5.29.37", "2.5.29.19", "2.5.29.35", "2.5.29.17", "2.5.29.32"}}
 	hash, err := wire.DeviceCertificateProfileIntentHash(&intent)
 	if err != nil {
 		t.Fatal(err)

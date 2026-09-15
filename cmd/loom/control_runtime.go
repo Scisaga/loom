@@ -195,6 +195,7 @@ type controlRuntime struct {
 	now             func() time.Time
 	progress        atomic.Pointer[controlOperationReadState]
 	enrollmentStore *enrollmentv2.Store
+	enrollmentKey   ed25519.PrivateKey
 	// checkpoint 在每个已耐久化阶段之后调用，用于故障注入验证恢复边界（D104）。
 	checkpoint func(controlplane.Phase) error
 }
@@ -802,7 +803,7 @@ func openControlRuntime(dir string, now func() time.Time) (*controlRuntime, erro
 		return nil, err
 	}
 	runtime := &controlRuntime{dir: dir, config: config, journal: journal,
-		configKey: decodedKeys[1], controlTLS: controlTLS, browserTLS: browserTLS, peerTLS: peerTLS,
+		configKey: decodedKeys[1], enrollmentKey: decodedKeys[2], controlTLS: controlTLS, browserTLS: browserTLS, peerTLS: peerTLS,
 		storage: storage, store: store, now: now}
 	runtime.enrollmentStore, err = enrollmentv2.OpenStore(filepath.Join(dir, "enrollment-transactions.json"))
 	if err != nil {

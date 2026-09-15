@@ -30,9 +30,10 @@ type EnrollmentCommitCoordinateV1 struct {
 // EnrollmentHeadMutationV1 是交给全局 state projector 的最小 typed mutation。
 // 私有 result bytes 不进入 Raft；completion 只把 exact view/secret refs 交给私有投影器。
 type EnrollmentHeadMutationV1 struct {
-	OperationLeaf      wire.ControlOperationLeafV1 `json:"operation_leaf"`
-	InitialDeviceView  *wire.DeviceViewPayloadV2   `json:"initial_device_view,omitempty"`
-	SecretArtifactRefs []json.RawMessage           `json:"secret_artifact_refs,omitempty"`
+	OperationLeaf     wire.ControlOperationLeafV1 `json:"operation_leaf"`
+	InitialDeviceView *wire.DeviceViewPayloadV2   `json:"initial_device_view,omitempty"`
+	// completion 的 [] 是有效空集合，必须跨 journal 编解码保留，不能变成 nil。
+	SecretArtifactRefs []json.RawMessage `json:"secret_artifact_refs"`
 	// Preimage 只在认证的 control 副本间复制，不放进 Head 或公开分发。
 	// 它使 daemon 能独立重算 CAS，而不是相信调用方提供的 object hash。
 	Preimage *EnrollmentMutationPreimageV1 `json:"preimage,omitempty"`

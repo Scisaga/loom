@@ -414,13 +414,29 @@ func (runtime *controlRuntime) readInviteMaterialLocked(clusterID, inviteID stri
 	if clusterID != runtime.config.ClusterID || state.CertifiedHead == nil || state.CertifiedQC == nil || state.Active != nil {
 		return enrollmentv2.InviteMaterialV2{}, errors.New("[D130 Invite] 当前 authority 暂不可读")
 	}
-	application, err := runtime.applicationBefore(len(runtime.journal.Records))
+	application, err := runtime.certifiedApplicationLocked()
 	if err != nil || application == nil {
 		return enrollmentv2.InviteMaterialV2{}, errors.New("[D130 Invite] 当前入网状态不可用")
 	}
 	for _, invite := range application.Invites {
 		if invite.Record.InviteID != inviteID {
 			continue
+		}
+		status := invite.Status
+		if status == "reserved" || status == "consumed" {
+			transaction, found := runtime.enrollmentStore.SnapshotRecord(inviteID)
+			matching := false
+			for _, certified := range application.Transactions {
+				if certified.InviteID == inviteID && wire.EqualCanonical(certified, transaction.State) {
+					matching = true
+					break
+				}
+			}
+			if !found || !matching || status == "consumed" && transaction.State.Status != "completed" ||
+				status == "reserved" && transaction.State.Status != "reserved" && transaction.State.Status != "issued_provisional" {
+				return enrollmentv2.InviteMaterialV2{}, errors.New("[D130 Invite] 入网事务与认证投影不一致")
+			}
+			status = transaction.State.Status
 		}
 		for index, record := range runtime.journal.Records {
 			if record.Invite == nil || record.Result == nil || record.Invite.Record.InviteID != inviteID {
@@ -441,7 +457,7 @@ func (runtime *controlRuntime) readInviteMaterialLocked(clusterID, inviteID stri
 			if err != nil {
 				return enrollmentv2.InviteMaterialV2{}, err
 			}
-			return enrollmentv2.InviteMaterialV2{Status: invite.Status, Record: invite.Record, Policy: application.InvitePolicy,
+			return enrollmentv2.InviteMaterialV2{Status: status, Record: invite.Record, Policy: application.InvitePolicy,
 				Commitment: invite.Commitment, Opening: invite.Opening, EnrollmentServiceRef: application.EnrollmentService,
 				ParentHead: recordParent, RecordHead: record.Candidate, RecordHeadQC: append(json.RawMessage(nil), record.Result.ConfigQC...),
 				ControlSet: controlClone(runtime.config.ControlSet), InviteOperationLeaf: leaf, InviteLeafIndex: leafIndex,
