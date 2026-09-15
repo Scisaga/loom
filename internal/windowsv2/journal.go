@@ -132,11 +132,11 @@ func CleanupInstalledEnrollmentJournal(statePath, identityPath, journalPath stri
 }
 
 func installedEnrollmentJournalMatches(state *StateV1, journal *EnrollmentJournalV1) bool {
-	if state == nil || journal == nil || journal.Result == nil ||
+	if state == nil || state.Enrollment == nil || state.Migration != nil || journal == nil || journal.Result == nil ||
 		journal.Result.Status != "completed" || journal.Result.ResultArtifact == nil {
 		return false
 	}
-	installation, result := &state.Enrollment, journal.Result
+	installation, result := state.Enrollment, journal.Result
 	return installation.ClaimCoreHash == journal.ClaimCoreHash &&
 		wire.EqualCanonical(installation.ClaimCore, journal.ClaimCore) &&
 		installation.TransactionStateHash == result.TransactionStateHash &&

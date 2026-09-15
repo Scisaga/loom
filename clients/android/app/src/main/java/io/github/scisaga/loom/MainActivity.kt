@@ -154,10 +154,28 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private var migrationExportProfile: String? = null
+    private val migrationRequestFile = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        val profileID = migrationExportProfile ?: return@registerForActivityResult
+        if (uri == null) return@registerForActivityResult
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching {
+                val catalog = ProfileCatalog.get(this@MainActivity)
+                val request = EnrollmentManager.get(catalog.context(profileID)).exportMigrationRequest()
+                checkNotNull(contentResolver.openOutputStream(uri)) { "无法写入迁移请求文件" }.use {
+                    it.write(request)
+                }
+            }.onFailure { error -> withContext(Dispatchers.Main) { importError = error.message } }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         pendingConnectProfile = savedInstanceState?.getString("connect-profile")
         pendingImportProfile = savedInstanceState?.getString("import-profile")
+        migrationExportProfile = savedInstanceState?.getString("migration-export-profile")
         notificationsAllowed = notificationPermissionGranted()
         val requestNotificationPermission =
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !notificationsAllowed
@@ -169,6 +187,10 @@ class MainActivity : ComponentActivity() {
                 onImportFile = { profileId ->
                     pendingImportProfile = profileId
                     inviteFile.launch(arrayOf("*/*"))
+                },
+                onExportMigration = { profileID ->
+                    migrationExportProfile = profileID
+                    migrationRequestFile.launch("device.loom-migration-request")
                 },
                 importError = importError,
                 onDismissImportError = { importError = null },
@@ -199,6 +221,7 @@ class MainActivity : ComponentActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString("connect-profile", pendingConnectProfile)
         outState.putString("import-profile", pendingImportProfile)
+        outState.putString("migration-export-profile", migrationExportProfile)
         super.onSaveInstanceState(outState)
     }
 
@@ -240,6 +263,7 @@ private fun LoomHome(
     onConnect: (String) -> Unit,
     onDisconnect: () -> Unit,
     onImportFile: (String?) -> Unit,
+    onExportMigration: (String) -> Unit,
     importError: String?,
     onDismissImportError: () -> Unit,
     notificationsAllowed: Boolean,
@@ -343,6 +367,7 @@ private fun LoomHome(
                                 EnrollmentCard(join,
                                     onScan = { scanNew = false; scanProfile = profiles.selectedId; scanning = true },
                                     onImportFile = { onImportFile(profiles.selectedId) },
+                                    onExportMigration = { onExportMigration(profiles.selectedId) },
                                     onRetry = enrollment::retry, onRefresh = enrollment::refreshConfiguration,
                                     onAbandonPending = enrollment::abandonPending)
                             }
@@ -793,6 +818,7 @@ private fun EnrollmentCard(
     status: EnrollmentStatus,
     onScan: () -> Unit,
     onImportFile: () -> Unit,
+    onExportMigration: () -> Unit,
     onRetry: () -> Unit,
     onRefresh: () -> Unit,
     onAbandonPending: () -> Unit,
@@ -846,7 +872,14 @@ private fun EnrollmentCard(
                     Button(onClick = onScan, modifier = Modifier.weight(1f).testTag("scan-invite")) { Text("扫码加入") }
                     OutlinedButton(onClick = onImportFile, modifier = Modifier.weight(1f).testTag("import-invite")) { Text("导入文件") }
                 }
-                EnrollmentPhase.ERROR -> if (status.canAbandonPending) {
+                EnrollmentPhase.ERROR -> if (status.canMigrate) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = onExportMigration, modifier = Modifier.weight(1f)
+                            .testTag("export-migration")) { Text("导出迁移请求") }
+                        Button(onClick = onImportFile, modifier = Modifier.weight(1f)
+                            .testTag("import-migration")) { Text("导入迁移文件") }
+                    }
+                } else if (status.canAbandonPending) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),

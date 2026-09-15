@@ -19,30 +19,49 @@ const (
 	androidMaximumConfigTotalBytes    = 32 << 20
 )
 
-// androidEnrollmentInstallationV1 是 Android 首次 v2 身份的单 blob 提交单元。
-// Keystore identity 私钥不在这里；证书、stable core、首次 view 与全部解封凭据
-// 必须和 floors 一起由 EncryptedStore 原子替换。
+// 共同材料与 identity 的来源证明分开；迁移不伪造 Enrollment 事务。
+type androidDeviceInstallationV1 struct {
+	Schema                    int                                   `json:"schema"`
+	IdentityKeyHash           string                                `json:"identity_key_hash"`
+	WrappingKeyHash           string                                `json:"wrapping_key_hash"`
+	DeviceCertificateHash     string                                `json:"device_certificate_hash"`
+	DeviceProfileHash         string                                `json:"device_profile_hash,omitempty"`
+	DeviceProfile             *wire.DeviceCertificateProfileStateV1 `json:"device_profile,omitempty"`
+	DeviceIssuance            *wire.IssuanceLogCoordinateV1         `json:"device_issuance,omitempty"`
+	DeviceApprovedAt          string                                `json:"device_approved_at,omitempty"`
+	Credentials               []androidInstalledSecretV1            `json:"credentials"`
+	CurrentSecretArtifactRefs *[]wire.SecretArtifactRefV2           `json:"current_secret_artifact_refs,omitempty"`
+	Configs                   []androidInstalledConfigV1            `json:"configs,omitempty"`
+	DistributionMirrors       []wire.DistributionMirrorRefV1        `json:"distribution_mirrors,omitempty"`
+}
+
 type androidEnrollmentInstallationV1 struct {
-	Schema                int                                   `json:"schema"`
-	ClaimCore             wire.EnrollmentClaimCoreV2            `json:"claim_core"`
-	ClaimCoreHash         string                                `json:"claim_core_hash"`
-	IdentityKeyHash       string                                `json:"identity_key_hash"`
-	WrappingKeyHash       string                                `json:"wrapping_key_hash"`
-	TransactionStateHash  string                                `json:"transaction_state_hash"`
-	ResultArtifactHash    string                                `json:"result_artifact_hash"`
-	DeviceCertificateHash string                                `json:"device_certificate_hash"`
-	DeviceProfileHash     string                                `json:"device_profile_hash,omitempty"`
-	DeviceProfile         *wire.DeviceCertificateProfileStateV1 `json:"device_profile,omitempty"`
-	DeviceIssuance        *wire.IssuanceLogCoordinateV1         `json:"device_issuance,omitempty"`
-	DeviceApprovedAt      string                                `json:"device_approved_at,omitempty"`
-	ResultArtifact        wire.EnrollmentResultArtifactV1       `json:"result_artifact"`
-	Credentials           []androidInstalledSecretV1            `json:"credentials"`
-	// CurrentSecretArtifactRefs 与首次 ResultArtifact 证据分离；nil 仅表示
-	// 旧版安装 blob，指向空 slice 则表示已合法轮换为零凭据。
-	CurrentSecretArtifactRefs *[]wire.SecretArtifactRefV2 `json:"current_secret_artifact_refs,omitempty"`
-	// Configs 在旧版已安装 blob 中可缺省；新 Enrollment 不得走该兼容路径。
-	Configs             []androidInstalledConfigV1     `json:"configs,omitempty"`
-	DistributionMirrors []wire.DistributionMirrorRefV1 `json:"distribution_mirrors,omitempty"`
+	androidDeviceInstallationV1
+	ClaimCore            wire.EnrollmentClaimCoreV2      `json:"claim_core"`
+	ClaimCoreHash        string                          `json:"claim_core_hash"`
+	TransactionStateHash string                          `json:"transaction_state_hash"`
+	ResultArtifactHash   string                          `json:"result_artifact_hash"`
+	ResultArtifact       wire.EnrollmentResultArtifactV1 `json:"result_artifact"`
+}
+
+func (state *androidV2DeviceState) material() *androidDeviceInstallationV1 {
+	if state == nil || (state.Enrollment == nil) == (state.Migration == nil) {
+		return nil
+	}
+	if state.Enrollment != nil {
+		return &state.Enrollment.androidDeviceInstallationV1
+	}
+	return &state.Migration.androidDeviceInstallationV1
+}
+
+func (state *androidV2DeviceState) certificateDER() ([]byte, error) {
+	if state.material() == nil {
+		return nil, errors.New("[Android] 正式身份来源缺失或冲突")
+	}
+	if state.Enrollment != nil {
+		return wire.EnrollmentResultCertificateDER(&state.Enrollment.ResultArtifact)
+	}
+	return base64.RawURLEncoding.DecodeString(state.Migration.Package.DeviceCertificateDER)
 }
 
 type androidInstalledSecretV1 struct {
@@ -222,16 +241,17 @@ func prepareAndroidEnrollmentInstallationState(core wire.EnrollmentClaimCoreV2,
 		return nil, err
 	}
 	state.Enrollment = &androidEnrollmentInstallationV1{
-		Schema: 1, ClaimCore: core, ClaimCoreHash: claimCoreHash,
-		IdentityKeyHash: identityHash, WrappingKeyHash: wrappingHash,
+		ClaimCore: core, ClaimCoreHash: claimCoreHash,
 		TransactionStateHash: result.TransactionStateHash, ResultArtifactHash: result.ResultArtifactHash,
-		DeviceCertificateHash: certificateHash, DeviceProfileHash: profileHash,
-		DeviceProfile: &profile, DeviceIssuance: &issuance,
-		DeviceApprovedAt: completion.DeviceCertificateApprovedAt(), ResultArtifact: *result.ResultArtifact,
-		Credentials: credentials, Configs: configs,
-		CurrentSecretArtifactRefs: cloneAndroidSecretArtifactRefs(
-			result.ResultArtifact.SecretArtifactRefs),
-		DistributionMirrors: append([]wire.DistributionMirrorRefV1(nil), mirrors...),
+		ResultArtifact: *result.ResultArtifact,
+		androidDeviceInstallationV1: androidDeviceInstallationV1{Schema: 1, IdentityKeyHash: identityHash, WrappingKeyHash: wrappingHash,
+			DeviceCertificateHash: certificateHash, DeviceProfileHash: profileHash,
+			DeviceProfile: &profile, DeviceIssuance: &issuance,
+			DeviceApprovedAt: completion.DeviceCertificateApprovedAt(),
+			Credentials:      credentials, Configs: configs,
+			CurrentSecretArtifactRefs: cloneAndroidSecretArtifactRefs(
+				result.ResultArtifact.SecretArtifactRefs),
+			DistributionMirrors: append([]wire.DistributionMirrorRefV1(nil), mirrors...)},
 	}
 	return marshalAndroidV2DeviceState(state)
 }
@@ -310,6 +330,23 @@ func validateAndroidEnrollmentInstallation(installation *androidEnrollmentInstal
 	if err != nil {
 		return err
 	}
+	refs := installation.ResultArtifact.SecretArtifactRefs
+	if installation.CurrentSecretArtifactRefs != nil {
+		refs = *installation.CurrentSecretArtifactRefs
+	}
+	return validateAndroidDeviceMaterial(&installation.androidDeviceInstallationV1, certificateDER, initialView, envelope, refs)
+}
+
+func validateAndroidDeviceMaterial(installation *androidDeviceInstallationV1, certificateDER []byte,
+	initialView *wire.DeviceViewPayloadV2, envelope *wire.DeviceViewEnvelopeV2, refs []wire.SecretArtifactRefV2) error {
+	if installation == nil || initialView == nil || initialView.Active == nil || envelope == nil ||
+		installation.Schema != 1 || installation.Credentials == nil ||
+		initialView.ClusterID != envelope.Payload.ClusterID || initialView.DeviceID != envelope.Payload.DeviceID ||
+		initialView.DeviceGeneration > envelope.Payload.DeviceGeneration ||
+		initialView.Active.IdentitySPKIHash != installation.IdentityKeyHash ||
+		envelope.Payload.Active != nil && envelope.Payload.Active.IdentitySPKIHash != installation.IdentityKeyHash {
+		return errors.New("[Android] 正式材料与当前设备身份不匹配")
+	}
 	certificateHash, err := wire.DeviceCertificateHash(certificateDER)
 	certificate, parseErr := x509.ParseCertificate(certificateDER)
 	if err != nil || parseErr != nil || certificateHash != installation.DeviceCertificateHash {
@@ -331,7 +368,7 @@ func validateAndroidEnrollmentInstallation(installation *androidEnrollmentInstal
 			return errors.New("[Android] durable Device certificate profile/hash 无效")
 		}
 		if _, verifyErr := wire.VerifyDeviceCertificateAt(certificateDER, installation.DeviceProfile,
-			initialView.DeviceID, installation.IdentityKeyHash, installation.ClaimCore.ClientPlatform,
+			initialView.DeviceID, installation.IdentityKeyHash, "android",
 			initialView.Active.Responsibilities.Values, *installation.DeviceIssuance,
 			approvedAt, approvedAt); verifyErr != nil {
 			return errors.New("[Android] durable Device certificate verification context 无效")
@@ -343,10 +380,7 @@ func validateAndroidEnrollmentInstallation(installation *androidEnrollmentInstal
 	if err != nil || certificateIdentityHash != installation.IdentityKeyHash {
 		return errors.New("[Android] durable certificate 未绑定 Keystore identity")
 	}
-	refs := installation.ResultArtifact.SecretArtifactRefs
-	if installation.CurrentSecretArtifactRefs != nil {
-		refs = *installation.CurrentSecretArtifactRefs
-	}
+
 	if len(refs) != len(installation.Credentials) ||
 		envelope.Payload.Active != nil && len(refs) != len(envelope.SecretArtifactRefs) {
 		return errors.New("[Android] durable credentials/refs 数量不匹配")

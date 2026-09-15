@@ -32,6 +32,9 @@ func encodeWindowsV2Carrier(carrier windowsv2.EnrollmentCarrier) (string, error)
 	if carrier.Resume != nil {
 		value = carrier.Resume
 	}
+	if carrier.Migration != nil {
+		value = carrier.Migration
+	}
 	body, err := wire.MarshalCanonical(value)
 	if err != nil {
 		return "", err
@@ -61,7 +64,7 @@ func windowsV2Installed(root string, protector clientsecret.Protector) (*windows
 		return nil, err
 	}
 	state := store.Snapshot()
-	if state != nil && state.Envelope.Payload.State == "active" {
+	if state != nil && state.Enrollment != nil && state.Envelope.Payload.State == "active" {
 		if err := windowsv2.CleanupInstalledEnrollmentJournal(windowsV2StatePath(root),
 			windowsV2IdentityPath(root), windowsV2JournalPath(root), protector); err != nil {
 			return nil, fmt.Errorf("补完 Windows v2 enrollment journal 清理: %w", err)
@@ -116,7 +119,7 @@ func ensureWindowsV2Joined(ctx context.Context, root string, protector clientsec
 	if ctx == nil || protector == nil || root == "" || !filepath.IsAbs(root) || filepath.Clean(root) != root {
 		return windowsJoinResult{}, errors.New("Windows v2 加入依赖不完整")
 	}
-	hasCarrier := carrier.Invite != nil || carrier.Resume != nil
+	hasCarrier := carrier.Invite != nil || carrier.Resume != nil || carrier.Migration != nil
 	if hasCarrier {
 		if err := carrier.ValidateShape(); err != nil {
 			return windowsJoinResult{}, err
@@ -133,9 +136,15 @@ func ensureWindowsV2Joined(ctx context.Context, root string, protector clientsec
 		return windowsJoinResult{NodeID: state.Envelope.Payload.DeviceID}, nil
 	}
 	if _, err := os.Lstat(filepath.Join(root, "config", "client.json")); err == nil {
+		if carrier.Migration != nil {
+			return migrateWindowsDevice(ctx, root, protector, *carrier.Migration, progress)
+		}
 		return windowsJoinResult{}, errWindowsMigrationRequired
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return windowsJoinResult{}, err
+	}
+	if carrier.Migration != nil {
+		return windowsJoinResult{}, errors.New("本机没有原设备记录，不能安装迁移包")
 	}
 	if !hasCarrier {
 		pending, err := windowsV2RecoveryExists(root)

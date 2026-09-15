@@ -34,8 +34,8 @@ func PrepareRuntimeMaterial(state *StateV1) (RuntimeMaterialV1, error) {
 		return RuntimeMaterialV1{}, errors.New("[Windows runtime] tombstone Device 禁止启动数据面")
 	}
 	var selected *InstalledConfigV1
-	for index := range state.Enrollment.Configs {
-		config := &state.Enrollment.Configs[index]
+	for index := range state.material().Configs {
+		config := &state.material().Configs[index]
 		if config.ArtifactID != wire.WindowsRuntimeArtifactID {
 			continue
 		}
@@ -64,8 +64,8 @@ func PrepareRuntimeMaterial(state *StateV1) (RuntimeMaterialV1, error) {
 	secrets := make(map[string]string, len(artifact.CredentialRefs))
 	for _, ref := range artifact.CredentialRefs {
 		var credential *InstalledSecretV1
-		for index := range state.Enrollment.Credentials {
-			candidate := &state.Enrollment.Credentials[index]
+		for index := range state.material().Credentials {
+			candidate := &state.material().Credentials[index]
 			if candidate.SecretID == ref {
 				if credential != nil {
 					return RuntimeMaterialV1{}, errors.New("[Windows runtime] credential ID 不唯一")

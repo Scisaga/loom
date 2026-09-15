@@ -342,7 +342,7 @@ architecture, Go/VCS coordinate, and executable hash.
 
 ## Security and runtime boundaries
 
-- `internal/windowsv2` parses bounded compact QR, `.loom-invite` and `.loom-resume`
+- `internal/windowsv2` parses bounded compact QR, `.loom-invite`, `.loom-resume` and migration-file
   inputs. Invalid carriers fail before any enrollment request. The broker rejects
   the removed v1 `invite` field, including when a valid v2 carrier is present.
 - The embedded deployment public key verifies the bootstrap transition or existing
@@ -383,6 +383,23 @@ architecture, Go/VCS coordinate, and executable hash.
   recognized as migration inputs and preserved. They cannot start an old host,
   send an old report or retry a consumed legacy invitation. The verified migration
   installer must complete before that profile can reconnect.
+
+### Migrate an existing profile
+
+Run `loom-windows.exe --migration-request --out device.loom-migration-request`
+from the existing edition, optionally with `--profile <id>`. Installed requires
+its usual administrator context. This exports public keys and the protected
+local version floor, signed by the original identity. It imports that same P-256
+identity into non-exportable CNG storage and retains the original protected files;
+repeating export reuses the same identity and wrapping key.
+
+Import the administrator's certified migration file through the normal file,
+clipboard or broker entry. The installer checks the original platform signature,
+Device identity, local floor, migration proof, certificate, configuration and
+sealed credentials before atomically activating v2. A migration installation is
+stored separately from an Enrollment completion; it does not consume an invite
+or manufacture a claim. Actual server delivery and native Windows acceptance are
+separate requirements, recorded in the [implementation map](../../docs/development/implementation.md).
 
 ## 本地客户端选路目标契约
 

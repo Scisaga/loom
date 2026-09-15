@@ -2,9 +2,12 @@ package io.github.scisaga.loom.enrollment
 
 import android.content.Context
 import io.github.scisaga.loom.security.EncryptedStore
+import io.github.scisaga.loom.security.TrustAnchor
 import io.github.scisaga.loomcore.Loomcore
 import org.json.JSONObject
 import java.io.File
+import java.io.ByteArrayInputStream
+import java.security.cert.CertificateFactory
 
 data class ManagedProfile(
     val nodeID: String,
@@ -36,6 +39,29 @@ internal class ManagedProfileStore(context: Context) {
         val ready = protected.get(READY)
         if (current == null && previous == null && ready == null) return null
         return LegacyMigrationSource(current, previous, ready, protected.get(FLOOR))
+    }
+
+    @Synchronized
+    fun migrationContext(identitySPKI: ByteArray): LegacyMigrationContext {
+        val source = checkNotNull(legacyMigrationSource()) { "本机没有可迁移的原设备记录" }
+        val record = JSONObject(checkNotNull(source.current ?: source.previous) {
+            "本机尚无已安装的原设备配置，不能执行存量迁移"
+        }.decodeToString())
+        check(record.getInt("schema") == 2) { "原设备记录格式不支持迁移" }
+        val response = record.getJSONObject("enrollment").getJSONObject("response")
+        check(response.getString("configuration") == "ready") { "原设备没有已完成的加入记录" }
+        val bootstrap = response.getJSONObject("bootstrap")
+        val certificate = CertificateFactory.getInstance("X.509").generateCertificate(
+            ByteArrayInputStream(bootstrap.getString("node_cert_pem").encodeToByteArray()),
+        )
+        check(certificate.publicKey.encoded.contentEquals(identitySPKI)) {
+            "原设备证书与本机身份密钥不匹配"
+        }
+        return LegacyMigrationContext(
+            bootstrap.getString("node_id"),
+            checkNotNull(source.floor) { "原设备缺少受保护版本记录，拒绝降低版本后迁移" },
+            TrustAnchor.platformPublicKeyForBootstrap(bootstrap.getString("platform_public_key")),
+        )
     }
 
     @Synchronized
@@ -223,4 +249,10 @@ internal data class LegacyMigrationSource(
     val previous: ByteArray?,
     val ready: ByteArray?,
     val floor: ByteArray?,
+)
+
+internal data class LegacyMigrationContext(
+    val deviceID: String,
+    val floor: ByteArray,
+    val platformKey: ByteArray,
 )

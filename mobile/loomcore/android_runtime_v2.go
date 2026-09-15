@@ -32,16 +32,16 @@ func PrepareAndroidV2Runtime(stateJSON []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if state.ControlSet == nil || state.Enrollment == nil || state.Enrollment.Configs == nil ||
+	if state.ControlSet == nil || state.material() == nil || state.material().Configs == nil ||
 		state.Envelope.Payload.State != "active" || state.Envelope.Payload.Active == nil ||
 		!containsAndroidString(state.Envelope.Payload.Active.Responsibilities.Values, "use_loom") {
 		return nil, errors.New("[Android runtime] active Device/ControlSet/installation 不完整")
 	}
-	installed, err := selectAndroidRuntimeConfig(state.Enrollment.Configs)
+	installed, err := selectAndroidRuntimeConfig(state.material().Configs)
 	if err != nil {
 		return nil, err
 	}
-	secrets, err := androidRuntimeSecrets(state.Enrollment.Credentials)
+	secrets, err := androidRuntimeSecrets(state.material().Credentials)
 	if err != nil {
 		return nil, err
 	}

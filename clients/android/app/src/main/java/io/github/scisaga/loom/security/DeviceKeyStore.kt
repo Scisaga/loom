@@ -45,6 +45,14 @@ class DeviceKeyStore(private val namespace: String = "") {
         return "non-exportable P-256"
     }
 
+    /** 迁移读取必须有原 alias；缺失时禁止悄悄创建另一个身份。 */
+    fun existingIdentity(): ByteArray {
+        check(keyStore.containsAlias(identityAlias)) { "原设备身份密钥不存在，无法原地迁移" }
+        val entry = keyStore.getEntry(identityAlias, null) as KeyStore.PrivateKeyEntry
+        check(entry.privateKey.encoded == null) { "Android Keystore 身份私钥竟可导出" }
+        return entry.certificate.publicKey.encoded
+    }
+
     fun ensureIdentity(): ByteArray {
         if (!keyStore.containsAlias(identityAlias)) {
             val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, ANDROID_KEYSTORE)

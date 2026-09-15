@@ -155,7 +155,7 @@ func androidDeviceReportContext(stateJSON, identitySPKIDER []byte) (androidV2Dev
 	if err != nil {
 		return androidV2DeviceState{}, "", nil, err
 	}
-	if state.Enrollment == nil || state.Envelope.Payload.State != "active" ||
+	if state.material() == nil || state.Envelope.Payload.State != "active" ||
 		state.Envelope.Payload.Active == nil {
 		return androidV2DeviceState{}, "", nil,
 			errors.New("[Android report] active Device/Enrollment 不完整")
@@ -164,7 +164,7 @@ func androidDeviceReportContext(stateJSON, identitySPKIDER []byte) (androidV2Dev
 	identity, ok := parsed.(*ecdsa.PublicKey)
 	identityHash, hashErr := wire.HashBytes(wire.DomainEnrollmentIdentitySPKI, identitySPKIDER)
 	if err != nil || !ok || identity.Curve != elliptic.P256() || hashErr != nil ||
-		identityHash != state.Enrollment.IdentityKeyHash ||
+		identityHash != state.material().IdentityKeyHash ||
 		identityHash != state.Envelope.Payload.Active.IdentitySPKIHash {
 		return androidV2DeviceState{}, "", nil,
 			errors.New("[Android report] Keystore identity 与 protected Device 不一致")

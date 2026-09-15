@@ -25,12 +25,23 @@ const (
 )
 
 type EnrollmentCarrier struct {
-	Invite *wire.InviteBootstrapDescriptorV2
-	Resume *wire.EnrollmentResumeDescriptorV1
+	Invite    *wire.InviteBootstrapDescriptorV2
+	Resume    *wire.EnrollmentResumeDescriptorV1
+	Migration *wire.RuntimeDeviceMigrationPackageV1
 }
 
 func (carrier EnrollmentCarrier) ValidateShape() error {
-	if (carrier.Invite == nil) == (carrier.Resume == nil) {
+	count := 0
+	if carrier.Invite != nil {
+		count++
+	}
+	if carrier.Resume != nil {
+		count++
+	}
+	if carrier.Migration != nil {
+		count++
+	}
+	if count != 1 {
 		return invalidCarrier()
 	}
 	return nil
@@ -55,6 +66,11 @@ func DecodeEnrollmentCarrierText(raw string) (EnrollmentCarrier, error) {
 	}
 	if descriptor, err := decodeWindowsResumeDescriptor(body); err == nil {
 		return EnrollmentCarrier{Resume: &descriptor}, nil
+	}
+	var migration wire.RuntimeDeviceMigrationPackageV1
+	canonical, err := wire.DecodeStrict(body, maximumWindowsCarrierBytes, &migration)
+	if err == nil && bytes.Equal(canonical, body) && migration.Schema == 1 && migration.Migration.Schema == 1 {
+		return EnrollmentCarrier{Migration: &migration}, nil
 	}
 	return EnrollmentCarrier{}, invalidCarrier()
 }
@@ -194,5 +210,5 @@ func trimWindowsDroppedPath(value string) string {
 }
 
 func invalidCarrier() error {
-	return errors.New("Windows v2 加入二维码或 .loom-invite/.loom-resume 文件无效")
+	return errors.New("Windows v2 加入码、续传文件或设备迁移文件无效")
 }

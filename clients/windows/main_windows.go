@@ -53,6 +53,12 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "--migration-request" {
+		if err := exportWindowsMigrationRequest(edition, os.Args[2:]); err != nil {
+			showWindowsError("Loom", err)
+		}
+		return
+	}
 	if edition == editionInstalled {
 		isService, serviceErr := svc.IsWindowsService()
 		if serviceErr != nil {

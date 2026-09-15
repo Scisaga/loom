@@ -38,6 +38,7 @@ type RuntimeDeviceMigrationProofV1 struct {
 // 公开 activation bundle 只含根承诺，不公开设备证书、标识、目录或迁移记录。
 type RuntimeDeviceMigrationPackageV1 struct {
 	Schema                    int                               `json:"schema"`
+	LegacySignedCurrent       string                            `json:"legacy_signed_current,omitempty"`
 	Activation                RuntimeActivationBundleV1         `json:"activation"`
 	Migration                 RuntimeDeviceMigrationProofV1     `json:"migration"`
 	DeviceCertificateDER      string                            `json:"device_certificate_der"`

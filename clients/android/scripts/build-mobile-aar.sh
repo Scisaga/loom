@@ -69,7 +69,7 @@ for generated_dir in "$shared_dir" "$core_dir"; do
     rm -rf -- "$generated_dir"
 done
 mkdir -p "$shared_dir/internal" "$core_dir"
-cp -a "$repo_dir/internal/attest" "$repo_dir/internal/clientroute" \
+cp -a "$repo_dir/internal/attest" "$repo_dir/internal/clientmigration" "$repo_dir/internal/clientroute" \
     "$repo_dir/internal/enrollmentv2" "$repo_dir/internal/observation" "$repo_dir/internal/version" \
     "$repo_dir/internal/secret" "$repo_dir/internal/wire" "$shared_dir/internal/"
 printf 'module loom\n\ngo 1.27.0\n' >"$shared_dir/go.mod"

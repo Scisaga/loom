@@ -83,6 +83,54 @@ func OpenOrCreateIdentity(path string, protector clientsecret.Protector, random 
 	if err != nil {
 		return nil, err
 	}
+	return persistPlatformIdentity(path, protector, wrappingKey, identitySigner, identitySPKI, identityRecord)
+}
+
+// ImportIdentity 把原 DPAPI P-256 identity 原样导入 CNG。宿主持有 profile 锁；
+// 已存在不同 v2 identity 时拒绝覆盖。原文件由调用方保留作受保护迁移输入。
+func ImportIdentity(path string, protector clientsecret.Protector, original *ecdsa.PrivateKey,
+	random io.Reader) (*Identity, error) {
+	if err := validateProtectedPath(path); err != nil || protector == nil || original == nil ||
+		original.Curve != elliptic.P256() || !original.Curve.IsOnCurve(original.X, original.Y) {
+		return nil, errors.New("[Windows migration] 原 P-256 身份或存储边界无效")
+	}
+	expected, err := x509.MarshalPKIXPublicKey(&original.PublicKey)
+	if err != nil {
+		return nil, err
+	}
+	existing, err := LoadIdentity(path, protector)
+	if err == nil {
+		if !bytes.Equal(existing.IdentitySPKIDER(), expected) {
+			existing.Close()
+			return nil, errors.New("[Windows migration] 现有 v2 key 与原身份冲突，拒绝替换")
+		}
+		return existing, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	if random == nil {
+		random = rand.Reader
+	}
+	wrapping, err := ecdsa.GenerateKey(elliptic.P256(), random)
+	if err != nil {
+		return nil, err
+	}
+	defer zeroPrivateKey(wrapping)
+	signer, public, record, err := importPlatformIdentity(protector, random, original)
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(public, expected) {
+		closePlatformSigner(signer)
+		_ = destroyPlatformIdentity(record)
+		return nil, errors.New("[Windows migration] CNG 导入改变了原设备身份")
+	}
+	return persistPlatformIdentity(path, protector, wrapping, signer, public, record)
+}
+
+func persistPlatformIdentity(path string, protector clientsecret.Protector, wrappingKey *ecdsa.PrivateKey,
+	identitySigner crypto.Signer, identitySPKI []byte, identityRecord platformIdentityRecord) (*Identity, error) {
 	defer closePlatformSigner(identitySigner)
 	committed := false
 	defer func() {

@@ -34,27 +34,55 @@ type StateV1 struct {
 	Envelope           wire.DeviceViewEnvelopeV2 `json:"envelope"`
 	ControlSet         *wire.ControlSetV1        `json:"control_set"`
 	PreviousControlSet *wire.ControlSetV1        `json:"previous_control_set,omitempty"`
-	Enrollment         EnrollmentInstallationV1  `json:"enrollment"`
+	Enrollment         *EnrollmentInstallationV1 `json:"enrollment,omitempty"`
+	Migration          *MigrationInstallationV1  `json:"migration,omitempty"`
 }
 
-type EnrollmentInstallationV1 struct {
+// DeviceInstallationV1 保存共同运行材料；加入证明与存量迁移证明分别保存。
+// 历史 v2 enrollment blob 的字段保持原位置，升级不丢失已保存的配置与凭据。
+type DeviceInstallationV1 struct {
 	Schema                    int                                  `json:"schema"`
-	ClaimCore                 wire.EnrollmentClaimCoreV2           `json:"claim_core"`
-	ClaimCoreHash             string                               `json:"claim_core_hash"`
 	IdentityKeyHash           string                               `json:"identity_key_hash"`
 	WrappingKeyHash           string                               `json:"wrapping_key_hash"`
-	TransactionStateHash      string                               `json:"transaction_state_hash"`
-	ResultArtifactHash        string                               `json:"result_artifact_hash"`
 	DeviceCertificateHash     string                               `json:"device_certificate_hash"`
 	DeviceProfileHash         string                               `json:"device_profile_hash"`
 	DeviceProfile             wire.DeviceCertificateProfileStateV1 `json:"device_profile"`
 	DeviceIssuance            wire.IssuanceLogCoordinateV1         `json:"device_issuance"`
 	DeviceApprovedAt          string                               `json:"device_approved_at"`
-	ResultArtifact            wire.EnrollmentResultArtifactV1      `json:"result_artifact"`
 	Credentials               []InstalledSecretV1                  `json:"credentials"`
 	CurrentSecretArtifactRefs []wire.SecretArtifactRefV2           `json:"current_secret_artifact_refs"`
 	Configs                   []InstalledConfigV1                  `json:"configs"`
 	DistributionMirrors       []wire.DistributionMirrorRefV1       `json:"distribution_mirrors"`
+}
+
+type EnrollmentInstallationV1 struct {
+	DeviceInstallationV1
+	ClaimCore            wire.EnrollmentClaimCoreV2      `json:"claim_core"`
+	ClaimCoreHash        string                          `json:"claim_core_hash"`
+	TransactionStateHash string                          `json:"transaction_state_hash"`
+	ResultArtifactHash   string                          `json:"result_artifact_hash"`
+	ResultArtifact       wire.EnrollmentResultArtifactV1 `json:"result_artifact"`
+}
+
+// material 不会把迁移伪装成 Enrollment；两种证明不能同时占用本机身份。
+func (state *StateV1) material() *DeviceInstallationV1 {
+	if state == nil || (state.Enrollment == nil) == (state.Migration == nil) {
+		return nil
+	}
+	if state.Enrollment != nil {
+		return &state.Enrollment.DeviceInstallationV1
+	}
+	return &state.Migration.DeviceInstallationV1
+}
+
+func (state *StateV1) certificateDER() ([]byte, error) {
+	if state.material() == nil {
+		return nil, errors.New("[Windows] 正式身份来源缺失或冲突")
+	}
+	if state.Enrollment != nil {
+		return wire.EnrollmentResultCertificateDER(&state.Enrollment.ResultArtifact)
+	}
+	return base64.RawURLEncoding.DecodeString(state.Migration.Package.DeviceCertificateDER)
 }
 
 type InstalledSecretV1 struct {
@@ -307,14 +335,15 @@ func prepareInstallation(identity *Identity, journal *EnrollmentJournalV1,
 		mirrors = journal.ResumeDescriptor.DistributionMirrors
 	}
 	return EnrollmentInstallationV1{
-		Schema: 1, ClaimCore: cloneValue(journal.ClaimCore), ClaimCoreHash: journal.ClaimCoreHash,
-		IdentityKeyHash: identityHash, WrappingKeyHash: wrappingHash,
+		ClaimCore: cloneValue(journal.ClaimCore), ClaimCoreHash: journal.ClaimCoreHash,
 		TransactionStateHash: result.TransactionStateHash, ResultArtifactHash: result.ResultArtifactHash,
-		DeviceCertificateHash: certificateHash, DeviceProfileHash: profileHash,
-		DeviceProfile: profile, DeviceIssuance: input.Completion.DeviceCertificateIssuance(),
-		DeviceApprovedAt: input.Completion.DeviceCertificateApprovedAt(), ResultArtifact: cloneValue(*artifact),
-		Credentials: credentials, CurrentSecretArtifactRefs: cloneValue(artifact.SecretArtifactRefs),
-		Configs: cloneValue(input.Configs), DistributionMirrors: cloneValue(mirrors),
+		ResultArtifact: cloneValue(*artifact),
+		DeviceInstallationV1: DeviceInstallationV1{Schema: 1, IdentityKeyHash: identityHash, WrappingKeyHash: wrappingHash,
+			DeviceCertificateHash: certificateHash, DeviceProfileHash: profileHash,
+			DeviceProfile: profile, DeviceIssuance: input.Completion.DeviceCertificateIssuance(),
+			DeviceApprovedAt: input.Completion.DeviceCertificateApprovedAt(),
+			Credentials:      credentials, CurrentSecretArtifactRefs: cloneValue(artifact.SecretArtifactRefs),
+			Configs: cloneValue(input.Configs), DistributionMirrors: cloneValue(mirrors)},
 	}, nil
 }
 
@@ -347,7 +376,7 @@ func prepareInitialState(envelope wire.DeviceViewEnvelopeV2, set wire.ControlSet
 	}
 	setCopy := cloneValue(set)
 	state := StateV1{Schema: 1, Floors: floors, Envelope: cloneValue(envelope),
-		ControlSet: &setCopy, Enrollment: installation}
+		ControlSet: &setCopy, Enrollment: &installation}
 	if err := validateState(&state); err != nil {
 		return StateV1{}, err
 	}
@@ -495,8 +524,8 @@ func (store *StateStore) AcceptDeviceConfigDeliveryValidated(delivery *wire.Devi
 	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	if store.state == nil || store.state.ControlSet == nil ||
-		store.state.Enrollment.IdentityKeyHash != identityHash {
+	if store.state == nil || store.state.ControlSet == nil || store.state.material() == nil ||
+		store.state.material().IdentityKeyHash != identityHash {
 		return wire.ClientFloorsV2{}, errors.New("[Windows config] protected active identity/authority 缺失")
 	}
 	current := store.state
@@ -507,7 +536,8 @@ func (store *StateStore) AcceptDeviceConfigDeliveryValidated(delivery *wire.Devi
 		return current.Floors, err
 	}
 	finalEnvelope := verified.Envelope()
-	installation := cloneValue(current.Enrollment)
+	next := cloneValue(*current)
+	installation := next.material()
 	configChanged, secretChanged := artifactRefsChanged(&current.Envelope, &finalEnvelope)
 	if finalEnvelope.Payload.State != "active" {
 		if configs != nil || credentials != nil {
@@ -547,8 +577,8 @@ func (store *StateStore) AcceptDeviceConfigDeliveryValidated(delivery *wire.Devi
 		}
 	}
 	set := verified.ControlSet()
-	next := StateV1{Schema: 1, Floors: verified.Floors(), Envelope: finalEnvelope,
-		ControlSet: &set, PreviousControlSet: verified.PreviousControlSet(), Enrollment: installation}
+	next.Floors, next.Envelope = verified.Floors(), finalEnvelope
+	next.ControlSet, next.PreviousControlSet = &set, verified.PreviousControlSet()
 	if next.Envelope.Payload.State == "active" {
 		if err := validateCandidateWithoutMutation(&next, validateCandidate); err != nil {
 			return current.Floors, err
@@ -650,7 +680,13 @@ func validateState(state *StateV1) error {
 	if state.Floors.ClusterID != state.Envelope.Payload.ClusterID {
 		return errors.New("[Windows] durable floors cluster 分叉")
 	}
-	return validateInstallation(&state.Enrollment, &state.Envelope)
+	if state.material() == nil {
+		return errors.New("[Windows] 正式身份来源缺失或冲突")
+	}
+	if state.Enrollment != nil {
+		return validateInstallation(state.Enrollment, &state.Envelope)
+	}
+	return validateMigrationInstallation(state.Migration, &state.Envelope, state.Floors)
 }
 
 func validateInstallation(installation *EnrollmentInstallationV1,
@@ -684,18 +720,34 @@ func validateInstallation(installation *EnrollmentInstallationV1,
 		return errors.New("[Windows install] durable stable claim/key binding 无效")
 	}
 	certificateDER, err := wire.EnrollmentResultCertificateDER(&installation.ResultArtifact)
+	if err != nil {
+		return err
+	}
+	return validateDeviceMaterial(&installation.DeviceInstallationV1, certificateDER, initial, envelope)
+}
+
+func validateDeviceMaterial(installation *DeviceInstallationV1, certificateDER []byte,
+	initial *wire.DeviceViewPayloadV2, envelope *wire.DeviceViewEnvelopeV2) error {
+	if installation == nil || initial == nil || initial.Active == nil || envelope == nil ||
+		installation.Schema != 1 || installation.Credentials == nil || installation.CurrentSecretArtifactRefs == nil ||
+		installation.Configs == nil || initial.ClusterID != envelope.Payload.ClusterID ||
+		initial.DeviceID != envelope.Payload.DeviceID || initial.DeviceGeneration > envelope.Payload.DeviceGeneration ||
+		initial.Active.IdentitySPKIHash != installation.IdentityKeyHash ||
+		envelope.Payload.Active != nil && envelope.Payload.Active.IdentitySPKIHash != installation.IdentityKeyHash {
+		return errors.New("[Windows install] 正式材料与当前设备身份不匹配")
+	}
 	certificateHash, hashErr := wire.DeviceCertificateHash(certificateDER)
 	certificate, parseErr := x509.ParseCertificate(certificateDER)
 	profileHash, profileErr := wire.DeviceCertificateProfileStateHash(&installation.DeviceProfile)
 	approvedAt, timeErr := wire.ParseTimeZ(installation.DeviceApprovedAt)
-	if err != nil || hashErr != nil || parseErr != nil || profileErr != nil || timeErr != nil ||
+	if hashErr != nil || parseErr != nil || profileErr != nil || timeErr != nil ||
 		certificateHash != installation.DeviceCertificateHash || profileHash != installation.DeviceProfileHash ||
 		installation.DeviceProfile.ClusterID != envelope.Payload.ClusterID ||
 		installation.DeviceProfile.Status != "active" {
 		return errors.New("[Windows install] durable certificate/profile/hash 无效")
 	}
 	if _, err := wire.VerifyDeviceCertificateAt(certificateDER, &installation.DeviceProfile,
-		initial.DeviceID, installation.IdentityKeyHash, installation.ClaimCore.ClientPlatform,
+		initial.DeviceID, installation.IdentityKeyHash, "windows-desktop",
 		initial.Active.Responsibilities.Values, installation.DeviceIssuance, approvedAt, approvedAt); err != nil {
 		return errors.New("[Windows install] durable Device certificate verification context 无效")
 	}
@@ -754,12 +806,12 @@ func validateInstallation(installation *EnrollmentInstallationV1,
 // Credential 返回短生命周期明文副本；调用者使用后必须 clear。tombstone
 // 状态永远不会返回任何 credential。
 func (state *StateV1) Credential(secretID, purpose string) ([]byte, error) {
-	if state == nil || state.Envelope.Payload.State != "active" || state.Envelope.Payload.Active == nil {
+	if state == nil || state.material() == nil || state.Envelope.Payload.State != "active" || state.Envelope.Payload.Active == nil {
 		return nil, errors.New("[Windows] tombstone/inactive Device 禁止读取 credential")
 	}
 	var selected *InstalledSecretV1
-	for index := range state.Enrollment.Credentials {
-		candidate := &state.Enrollment.Credentials[index]
+	for index := range state.material().Credentials {
+		candidate := &state.material().Credentials[index]
 		if candidate.SecretID == secretID && candidate.Purpose == purpose {
 			if selected != nil {
 				return nil, errors.New("[Windows] credential 选择不唯一")
@@ -779,12 +831,12 @@ func (state *StateV1) Credential(secretID, purpose string) ([]byte, error) {
 }
 
 func (state *StateV1) Config(artifactID string) ([]byte, error) {
-	if state == nil || state.Envelope.Payload.State != "active" || state.Envelope.Payload.Active == nil {
+	if state == nil || state.material() == nil || state.Envelope.Payload.State != "active" || state.Envelope.Payload.Active == nil {
 		return nil, errors.New("[Windows] tombstone/inactive Device 禁止读取 config")
 	}
 	var selected *InstalledConfigV1
-	for index := range state.Enrollment.Configs {
-		candidate := &state.Enrollment.Configs[index]
+	for index := range state.material().Configs {
+		candidate := &state.material().Configs[index]
 		if candidate.ArtifactID == artifactID {
 			if selected != nil {
 				return nil, errors.New("[Windows] config artifact ID 不唯一")

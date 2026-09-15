@@ -472,7 +472,8 @@ chain error.
 
 ## Enrollment and activation transaction
 
-QR and file imports accept only the v2 invitation or an exact-bound resume carrier.
+QR imports accept v2 invitations; file imports also accept exact-bound resume or
+certified migration carriers.
 The app verifies the catalog and authority before generating a claim, and submits
 it only through the restricted bootstrap tunnel and inner Enrollment TLS. The
 Keystore identity, wrapping key and durable pending transaction remain scoped to
@@ -492,8 +493,13 @@ window, full Observation producer and independent presence producer are deleted.
 
 Existing v1 profiles require authenticated migration before connection. Their
 protected bytes, original Keystore aliases and rollback floors remain intact;
-opening a profile does not run the old protocol or replace its key. Production
-migration, service wiring and device delivery are tracked separately in
+opening a profile does not run the old protocol or replace its key. Such a profile
+offers **导出迁移请求** and **导入迁移文件**. Export signs public identity/wrapping
+keys and the local version floor with the original Keystore identity. Import
+verifies the old platform signature, local floor and certified migration proof,
+then validates/unseals the real v2 configuration before an atomic installation.
+The stored migration proof remains distinct from a new Enrollment transaction.
+Production migration, service wiring and device delivery are tracked separately in
 [the implementation map](../../docs/development/implementation.md).
 
 ## Emulator and device acceptance

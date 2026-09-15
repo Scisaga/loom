@@ -77,6 +77,7 @@ data class EnrollmentStatus(
     val protocol: Int = 0,
     val canAbandonPending: Boolean = false,
     val canImportResume: Boolean = false,
+    val canMigrate: Boolean = false,
     val diagnostic: String = "",
 )
 
@@ -119,6 +120,21 @@ class EnrollmentManager private constructor(context: Context) {
                 guarded("加入失败") { beginJoinFile(raw) }
             }
         }
+    }
+
+    /** 管理员据此迁移现有 Device，文件中只包含已签名的公开材料。 */
+    suspend fun exportMigrationRequest(): ByteArray = transaction.withLock {
+        check(v2StateStore.current() == null) { "设备已使用 v2，无需迁移" }
+        val identity = keys.existingIdentity()
+        val source = store.migrationContext(identity)
+        val wrapping = keys.ensureWrapping()
+        val body = Loomcore.prepareAndroidV2MigrationRequestBody(
+            source.deviceID, source.floor, source.platformKey, identity,
+            wrapping.subjectPublicKeyInfo, wrapping.profile,
+        )
+        Loomcore.assembleAndroidV2MigrationRequest(
+            body, keys.signCanonicalV2(Loomcore.androidV2MigrationRequestMessage(body)),
+        )
     }
 
     fun reportImportError(error: Throwable) = fail("读取加入文件失败", error)
@@ -201,7 +217,9 @@ class EnrollmentManager private constructor(context: Context) {
 
     private suspend fun resumeUnlocked(continuePending: Boolean = true) {
         v2StateStore.installed()?.let { installed ->
-            store.pending()?.let { pendingBytes ->
+            store.pending()?.takeIf {
+                !JSONObject(installed.encoded.decodeToString()).has("migration")
+            }?.let { pendingBytes ->
                 val pending = V2PendingEnrollment.decode(pendingBytes)
                 Loomcore.validateAndroidV2InstalledPending(
                     installed.encoded,
@@ -259,6 +277,7 @@ class EnrollmentManager private constructor(context: Context) {
     private suspend fun beginJoinFile(raw: ByteArray) {
         val carrier = runCatching { JSONObject(raw.decodeToString()) }.getOrNull()
         when {
+            carrier?.has("migration") == true -> beginV2Migration(raw)
             carrier?.has("resume_tunnel_capability") == true -> {
                 beginV2Resume(Loomcore.decodeAndroidV2ResumeFile(raw))
             }
@@ -266,6 +285,49 @@ class EnrollmentManager private constructor(context: Context) {
             carrier?.optInt("schema") == 2 -> beginV2Join(Loomcore.decodeAndroidV2InviteFile(raw))
             else -> error("加入文件格式无效；请使用中控当前生成的 v2 加入文件")
         }
+    }
+
+    private fun beginV2Migration(raw: ByteArray) {
+        check(v2StateStore.current() == null) { "设备已使用 v2，无需再次迁移" }
+        val identity = keys.existingIdentity()
+        val source = store.migrationContext(identity)
+        val wrapping = keys.ensureWrapping()
+        val canonical = Loomcore.canonicalizeV2(raw)
+        val verified = Loomcore.verifyAndroidV2MigrationPackage(
+            canonical, source.floor, source.platformKey, identity, wrapping.subjectPublicKeyInfo,
+            source.deviceID, Instant.now().toString(),
+        )
+        val delivery = JSONObject(verified.decodeToString())
+        val configuration = delivery.getJSONObject("configuration")
+        val updates = configuration.getJSONArray("updates")
+        val envelope = updates.getJSONObject(updates.length() - 1).getJSONObject("envelope")
+        val active = envelope.getJSONObject("payload").getJSONObject("active")
+        mutableStatus.value = EnrollmentStatus(EnrollmentPhase.PULLING, "正在验证并安装设备的 v2 配置…")
+        val plan = JSONObject().put("schema", 1)
+            .put("mirrors", delivery.getJSONArray("distribution_mirrors"))
+            .put("refs", active.getJSONArray("config_artifact_refs"))
+        val configs = V2MirrorFetcher(appContext).fetchCompletionConfigs(
+            Loomcore.canonicalizeV2(plan.toString().encodeToByteArray()),
+        )
+        val refs = envelope.getJSONArray("secret_artifact_refs")
+        val envelopes = configuration.getJSONArray("secret_envelopes")
+        check(refs.length() == envelopes.length()) { "迁移凭据未完整覆盖认证配置" }
+        val credentials = JSONArray()
+        val crypto = V2EnrollmentCrypto(keys)
+        for (index in 0 until refs.length()) {
+            credentials.put(JSONObject(crypto.unsealInstalledSecret(
+                Loomcore.canonicalizeV2(refs.getJSONObject(index).toString().encodeToByteArray()),
+                Loomcore.canonicalizeV2(envelopes.getJSONObject(index).toString().encodeToByteArray()),
+                source.deviceID,
+            ).decodeToString()))
+        }
+        val state = Loomcore.prepareAndroidV2MigrationInstallation(
+            verified, source.floor, source.platformKey, identity, wrapping.subjectPublicKeyInfo,
+            Loomcore.canonicalizeV2(credentials.toString().encodeToByteArray()), configs,
+            source.deviceID, Instant.now().toString(),
+        )
+        val profile = v2StateStore.installMigration(state)
+        ready(profile, "已保留原设备身份并切换到 v2；连接后读取私有配置并上报状态")
     }
 
     private suspend fun beginV2Join(canonicalDescriptor: ByteArray) {
@@ -685,10 +747,12 @@ class EnrollmentManager private constructor(context: Context) {
         } else {
             runCatching { store.pending() != null }.getOrDefault(true)
         }
+        val canMigrate = runCatching { v2StateStore.current() == null && store.hasLegacyIdentity() }.getOrDefault(false)
         mutableStatus.value = EnrollmentStatus(
             EnrollmentPhase.ERROR,
             "$prefix：${error.message ?: error.javaClass.simpleName}",
-            canAbandonPending = hasPending,
+            canAbandonPending = hasPending && !canMigrate,
+            canMigrate = canMigrate,
             canImportResume = canImportResume,
         )
     }

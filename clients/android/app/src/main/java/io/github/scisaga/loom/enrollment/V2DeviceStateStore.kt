@@ -80,6 +80,18 @@ class V2DeviceStateStore(context: Context) {
     }
 
     @Synchronized
+    internal fun installMigration(next: ByteArray): ManagedProfile {
+        Loomcore.validateAndroidV2DeviceState(next)
+        val parsed = JSONObject(next.decodeToString())
+        check(parsed.has("migration") && !parsed.has("enrollment")) { "设备迁移缺少独立认证证明" }
+        val profile = checkNotNull(runtimeProfile(next)) { "迁移包没有可运行的 v2 配置" }
+        val existing = protected.get(STATE)
+        check(existing == null || existing.contentEquals(next)) { "已安装的 v2 身份不能由迁移包覆盖" }
+        if (existing == null) commitExact(next)
+        return profile
+    }
+
+    @Synchronized
     fun current(): ByteArray? = protected.get(STATE)?.also(Loomcore::validateAndroidV2DeviceState)
 
     /** 生命周期与 runtime 必须来自同一个 protected blob；tombstone 仍保持 v2 latch。 */

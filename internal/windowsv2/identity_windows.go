@@ -46,6 +46,7 @@ var (
 	ncryptDLL                 = windows.NewLazySystemDLL("ncrypt.dll")
 	ncryptOpenStorageProvider = ncryptDLL.NewProc("NCryptOpenStorageProvider")
 	ncryptCreatePersistedKey  = ncryptDLL.NewProc("NCryptCreatePersistedKey")
+	ncryptImportKey           = ncryptDLL.NewProc("NCryptImportKey")
 	ncryptOpenKey             = ncryptDLL.NewProc("NCryptOpenKey")
 	ncryptSetProperty         = ncryptDLL.NewProc("NCryptSetProperty")
 	ncryptFinalizeKey         = ncryptDLL.NewProc("NCryptFinalizeKey")
@@ -62,6 +63,36 @@ type cngP256Signer struct {
 }
 
 func createPlatformIdentity(protector clientsecret.Protector, random io.Reader,
+) (crypto.Signer, []byte, platformIdentityRecord, error) {
+	return createOrImportWindowsIdentity(protector, random, nil)
+}
+
+// PKCS#8 导入允许在 finalize 前设置不可导出策略。密钥名称通过官方
+// NCryptImportKey 的 NCRYPTBUFFER_PKCS_KEY_NAME 参数持久保存。
+// https://learn.microsoft.com/windows/win32/api/ncrypt/nf-ncrypt-ncryptimportkey
+func importPlatformIdentity(protector clientsecret.Protector, random io.Reader, original *ecdsa.PrivateKey,
+) (crypto.Signer, []byte, platformIdentityRecord, error) {
+	der, err := x509.MarshalPKCS8PrivateKey(original)
+	if err != nil {
+		return nil, nil, platformIdentityRecord{}, err
+	}
+	defer clear(der)
+	return createOrImportWindowsIdentity(protector, random, der)
+}
+
+type windowsNCryptBuffer struct {
+	Size uint32
+	Type uint32
+	Data unsafe.Pointer
+}
+
+type windowsNCryptBufferDesc struct {
+	Version uint32
+	Count   uint32
+	Buffers *windowsNCryptBuffer
+}
+
+func createOrImportWindowsIdentity(protector clientsecret.Protector, random io.Reader, originalPKCS8 []byte,
 ) (crypto.Signer, []byte, platformIdentityRecord, error) {
 	if random == nil {
 		return nil, nil, platformIdentityRecord{}, errors.New("[Windows CNG] key-name random source 缺失")
@@ -87,9 +118,22 @@ func createPlatformIdentity(protector clientsecret.Protector, random io.Reader,
 		if machine {
 			flags |= ncryptMachineKeyFlag
 		}
-		status, _, _ := ncryptCreatePersistedKey.Call(provider,
-			uintptr(unsafe.Pointer(&key)), uintptr(unsafe.Pointer(algorithm)),
-			uintptr(unsafe.Pointer(nameUTF16)), 0, flags)
+		var status uintptr
+		if originalPKCS8 == nil {
+			status, _, _ = ncryptCreatePersistedKey.Call(provider,
+				uintptr(unsafe.Pointer(&key)), uintptr(unsafe.Pointer(algorithm)),
+				uintptr(unsafe.Pointer(nameUTF16)), 0, flags)
+		} else {
+			blobType, _ := windows.UTF16PtrFromString("PKCS8_PRIVATEKEY")
+			nameBuffer := windowsNCryptBuffer{Size: uint32((len(name) + 1) * 2), Type: 45, Data: unsafe.Pointer(nameUTF16)}
+			parameters := windowsNCryptBufferDesc{Version: 0, Count: 1, Buffers: &nameBuffer}
+			status, _, _ = ncryptImportKey.Call(provider, 0, uintptr(unsafe.Pointer(blobType)),
+				uintptr(unsafe.Pointer(&parameters)), uintptr(unsafe.Pointer(&key)),
+				uintptr(unsafe.Pointer(&originalPKCS8[0])), uintptr(len(originalPKCS8)), flags|0x400)
+			runtime.KeepAlive(parameters)
+			runtime.KeepAlive(nameUTF16)
+			runtime.KeepAlive(originalPKCS8)
+		}
 		if uint32(status) == nteExists {
 			continue
 		}
