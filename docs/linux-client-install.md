@@ -1,36 +1,23 @@
-# Loom Linux 客户端安装
+# Loom Linux v2 客户端安装
 
-> **适用范围：v2 当前实现与 v1 兼容流程。** v2 已提供严格 Invite/Resume carrier、
-> mirror/catalog/proof/QC verifier、HY2 主入口与 Trojan/TLS fallback、私有 Enrollment、
-> pending 恢复和完成态原子安装命令。本文后半仍保留单 control、v1 invite、平台公钥、
-> `public_endpoint + inbound_port` 和 signed pull 的兼容说明。v2 的紧凑 QR、
-> 静态 distribution catalog、bootstrap tunnel、ControlSet/QC、托管域名、EndpointSet 和 listener generation 见
-> [分布式控制平面设计](distributed-control-plane.md)；两代状态目录和输入不可混用。
-> 目标 v2 的 Create Device 只由已入网管理端经 overlay 访问
-> `ControlServiceDirectoryV1` 中 `role=control_api` 的私有服务并使用 admin cert 提交；
-> Linux bootstrap claim 从已验公网 transport 建立限路由临时隧道，只访问 QR 中
-> `PrivateEnrollmentServiceRefV1` 所指的私有 `role=enroll` 服务。下文的公网 v1 HTTPS claim 是历史兼容，
-> 不是目标安全边界。
+<a id="loom-linux-客户端安装"></a>
 
-本文面向安装 `linux/amd64` Device 的管理员。具有 `use_loom` 职责的 Device 使用本地
-`127.0.0.1:1080` mixed 入口，不接管宿主机路由表，也不会自动修改全局代理环境变量。
-加入和安装共用 v1 SSOT、publisher 与 signed pull，不创建另一套网络或选路规则。
-下文保留的 `Enrollment`、`loom://enroll`、`--no-enroll` 和 `loom client enroll` 都是
-内部协议或 Linux CLI 的兼容拼写，不表示还要创建或注册另一个客户端记录；产品动作
-始终是把客户端绑定到控制平面已创建的 Device 并加入网络。
+**类型：操作手册。** 适用于 Linux v2 客户端 CLI；协议由[控制面规范](distributed-control-plane.md)定义。
+源码提供 Invite/Resume 验证、bootstrap、安装及私有配置/报告客户端；正式服务端的接线缺口见
+[实现对照](implementation.md)。只有部署具备相应私有服务且交付有效输入时，才可完成以下正常流程。
+命令存在或开发检查通过不表示某环境已具备 v2 入网能力。
 
-当前项目的 Linux 原生主机验收范围是 amd64。arm64 制品仍须可重复构建并通过静态、交叉
-编译和格式验证，但不要求提供 arm64 实机或原生主机，不能把手机的 `arm64-v8a` ABI 当作
-Linux arm64 验收环境。
+当前使用 v1 身份与 signed pull 的部署，维护步骤见[v1 安装手册](operations/linux-v1-install.md)。
+两代状态与输入不可混用；已加入身份不因文档变更重新生成。管理端职责及 SSH/本地执行的分工见
+[本机部署说明](operations/local-deployment.md)。
 
 ## 准备条件
 
-- 目标机是 Linux amd64，能够通过 HTTPS 访问加入码中写明的 v1 control 加入端点，并能访问
-  其下发的分发地址；
-- 具有 root/sudo 权限；
-- 在 Loom overlay 内打开 private control HTTPS；导入 `admin.p12` 后才能创建 Device、生成加入码和
-  下载已验证的客户端包。没有管理员证书时 UI 仅提供只读信息，不存在 UI 密码登录；
-- 目标机上有 `tar` 和 `sha256sum`。Loom 与 sing-box 已包含在分发包内。
+- 目标机为 Linux amd64，有 root/sudo、`tar` 与 `sha256sum`；通用包提供 Loom 和固定版本 sing-box。
+- 使用正常管理流程交付的有效 v2 Invite/Resume；管理员已入网并能访问私有 control API。
+- 节点能访问 descriptor 的静态 distribution、bootstrap ingress，并经受限隧道到达私有 Enrollment。
+  公网 Nginx 不代理 claim；不依赖管理 SSH 是否可达来判断 Enrollment 能否使用。
+- Linux 原生主机验收要求 amd64；arm64 仍构建并做静态/交叉检查，不要求原生机器，也不以 Android ABI 代替。
 
 ## v2 加入过程
 
@@ -225,7 +212,8 @@ WG → sing-box → Agent 的顺序替换、启动并验证；任一步失败会
 installed inventory 以 CAS 保护，删除仅限该 inventory 中的固定 v2 路径。v2 使用
 `/etc/loom/{sing-box,agent}/v2/`、`lmv2-*` WireGuard interface 及
 `loom-client-v2-{sing-box,agent}.service`，不会覆盖或停用 v1 路径。若新旧监听资源冲突，
-v2 启动验证失败并恢复旧状态；Gate B 前不会自动退役 v1。
+v2 启动验证失败并恢复旧状态。当前启动器尚不负责退役 v1；这是完整迁移的缺口，
+新版接管须按[迁移验收](distributed-control-plane.md#19-从当前实现迁移)完成对应旧路径清理。
 
 Device view 进入 certified `revoked` 或 `decommissioned` tombstone 后，同一命令不再读取已被
 清除的 runtime/secret artifact。`-dry-run` 只展示受影响的旧 v2 inventory；`-apply` 在相同
@@ -241,11 +229,12 @@ sudo ./uninstall.sh
 它调用 `loom client uninstall-v2-runtime -apply`，同样只按 root-owned installed inventory
 先停用 unit/WireGuard interface，再以 CAS/回滚事务删除固定 v2 runtime 文件。这个本机动作不冒充
 控制面撤权，也不删除 Device identity、正式 LKG、四组 floor 或报告 journal；重装后仍按 current
-certified policy 恢复。Gate B 前 `/usr/local/bin/{loom,sing-box}` 和平台 trust 仍与 v1 兼容路径
-共享，因此卸载脚本明确保留这些文件。需要移出网络时，管理员仍必须先完成 certified
+certified policy 恢复。当前 `/usr/local/bin/{loom,sing-box}` 和平台 trust 仍与 v1 兼容路径
+共享，因此本机卸载脚本保留这些文件；存量迁移另须删除已替换的旧服务与调用路径。需要移出网络时，管理员仍必须先完成 certified
 暂停/撤权/decommission，不能用本机卸载替代。
 
-开发门禁可一键运行，并把不含域名、IP、Device ID、证书或 secret 的结构化结果写到忽略目录：
+开发检查可按需要运行，结构化结果默认写入忽略的 `deploy/evidence/`，不包含域名、IP、
+Device ID、证书或 secret：
 
 ```bash
 scripts/test-linux-v2-development.sh
@@ -258,9 +247,9 @@ scripts/test-linux-v2-development.sh
 `real_host_acceptance=false`、`gate_b=false`；它不能替代 #12 的干净主机、真实网络、职责流量、
 故障注入或 #10 Gate B。
 
-### #12 验收资产复用与续跑
+### 原生验收资产复用与续跑
 
-#12 的真实主机验收可能跨多次会话。开始下载镜像、拉取容器或新建 VM 前，必须先检查当前
+真实主机验收可能跨多次会话。开始下载镜像、拉取容器或新建 VM 前，必须先检查当前
 验收宿主已有的受控资产，避免重复下载或把上一次留下的可写客机误当成干净系统：
 
 ```bash
@@ -268,7 +257,7 @@ docker image inspect loom/linux-acceptance-base:ubuntu-24.04-amd64 >/dev/null
 docker image inspect ubuntu:24.04 >/dev/null
 docker ps -a --filter 'name=^/loom-accept-' --format '{{.Names}} {{.Image}} {{.Status}}'
 find /var/cache/loom/acceptance -maxdepth 2 -type f \
-  \( -name '*.qcow2' -o -name '*cloudimg*.img' \) -print 2>/dev/null
+  \( -name '*.qcow2' -o -name '*cloudimg*.img' \) -print
 ```
 
 这些命令只做本机资产发现；任何一项不存在都不能靠 `docker run` 的隐式 pull 或未校验 URL
@@ -286,193 +275,15 @@ Device ID、证书、token、密钥、原始抓包和 SSH inventory 仍只进入
 仓库只提交脱敏摘要。amd64 原生结果与 arm64 构建/静态结果分别出具；当前范围不要求
 arm64 原生运行结果，也不能用 Android ABI 冒充 Linux 主机证据。
 
-## 1. 创建 Device 和加入码
+## v1 原章节链接
 
-在中控打开 **Devices → Create Device**，选择 Linux 平台并直接勾选职责：
-`use_loom`、`forward`、`internet_egress`。`internet_egress` 必须与 `forward`
-同时选择；只有 `use_loom` 才选择允许访问的 Destination grants。不要填写出口节点或
-路径，路由仍由 active signed 控制规则和 Agent 决定。本节是 v1 兼容流程：平台、职责、grants
-和转发连接方向都固定在 v1 邀请中，客户端不能在 claim 时修改。目标 v2
-不携 Device-wide direction，只在 Enrollment 后由 certified LinkIntent 按边固定 initiator。
+以下链接仅用于保留旧引用，v1 操作不属于上述 v2 正常流程。
 
-创建成功页展示短时加入码。只含 `use_loom` 时可提供二维码和 `.loom-invite` 文件。
-所有 Linux 组合都通过 shell bootstrap 消费页面显示的一次性 `loom://enroll#…` 输入：
-
-- 在目标机本地执行页面给出的 shell bootstrap；
-- 或由管理员先 SSH 到目标机，再执行完全相同的 bootstrap。
-
-纯 `use_loom` Linux Device 也可单独点击 **Download join file** 下载
-`client.loom-invite`，供 Linux CLI 使用。
-
-SSH 不是另一种 Enrollment，也不由 Loom 中控保存主机地址、账号、私钥或口令。
-
-### 安装页面的可达性分支
-
-创建结果页必须在同一页面内联展示两个并列入口，不使用弹窗，也不让中控主动扫描 SSH：
-
-```text
-已有管理 SSH / ProxyJump 可达
-  → 操作者自行打开 SSH 会话
-  → 在目标机运行页面中的 shell bootstrap
-
-SSH 未开放、不可达或节点位于 NAT 后
-  → 使用云厂商控制台、串口/IPMI 或机器本地终端
-  → 运行完全相同的 shell bootstrap
-  → 节点主动访问 distribution、bootstrap ingress 和私有 Enrollment
-```
-
-页面不能从 `direction`、职责或 `nat_mapped` 推断 SSH 是否可达，也不提供要求上传 SSH
-私钥/口令的表单。若节点出站访问 distribution 或已签 bootstrap ingress 失败，安装器应保留
-可重试状态并明确显示失败阶段、目标角色和 transport；不得改用未签 URL、扫描其他端口，
-也不得把它误报成 NAT 映射失败。应先完成包下载与校验，再通过标准输入消费一次性 URI，
-避免在纯下载失败时浪费加入码。
-
-这些方式共享同一个短 TTL、一次性 token。普通重启、断线重连和配置更新不会再次加入。
-不要把加入 URI 放进 shell 参数、聊天记录或工单；它是有效期内的 bearer secret。
-
-## 2. 下载并核对客户端包
-
-目标 v2 同时发布 `loom-client-linux-amd64.tar.gz` 与 `loom-client-linux-arm64.tar.gz`；
-二者由对应架构的 Loom/sing-box ELF 作为全部输入确定性生成。包内 manifest/checksums 必须覆盖
-Loom `LICENSE`/`NOTICE`、sing-box license 与由实际 Go build version 生成的对应源码地址，缺少法律材料
-时 builder 和 verifier 都失败关闭。
-
-在 Devices 页下载与目标架构一致的归档。中控只在使用其独立的
-`/etc/loom/trust/platform.pub` 验证 detached signature、archive 哈希和包内文件后
-才提供下载；下载响应本身不把同目录公钥当成信任根。
-
-把页面显示的 SHA-256 与本地文件核对：
-
-```bash
-printf '%s  %s\n' '<页面显示的 SHA-256>' \
-  loom-client-linux-amd64.tar.gz | sha256sum -c -
-```
-
-不要只信随压缩包一起取得的公钥或校验值。如果需要在中控之外独立验签，应通过
-另一个可信通道取得平台 Ed25519 公钥以及同一制品的 `.sha256`、`.sig`，再运行：
-
-```bash
-loom client verify \
-  -archive loom-client-linux-amd64.tar.gz \
-  -pubkey /path/from/trusted/channel/platform-signing.pub
-```
-
-中控发布人员从待发布的干净 commit 运行 `scripts/build-linux-client.sh`；脚本只构建
-一次 Loom 二进制，用同一字节生成并验签客户端包，最后将 archive 作为提交标记原子
-发布到 `/var/lib/loom/client-dist/`。脏工作树构建默认会被拒绝。
-
-包内 `install.sh` 在修改本机前先核对全部 checksums，并分别执行候选 Loom selfcheck 与
-sing-box version 检查。三个共享 package 文件在同一 `deploy.lock` 下替换；每次变更前把旧文件
-和固定目标写入 root-only transaction manifest 并持久化。普通失败/信号立即恢复旧文件；若在
-进程无法捕获的中断点退出，下一次安装会先恢复唯一未完成事务，再开始新安装。安装成功前不会
-把 v1 state directory 当成 v2 副作用创建。
-
-## 3. 转发职责先声明可达事实
-
-只有所选 Responsibilities 包含 `forward` 时，才需要在消费加入码前创建严格的本地配置：
-
-```yaml
-# /etc/loom/device.yaml
-server:
-  public_endpoint: edge.example.net
-  inbound_port: 61698
-  # inbound_protocol: hysteria2 # 默认；也可显式选择 trojan
-  direction: bidirectional
-  # country: CN       # 可选
-  # city: Beijing     # 可选
-  # provider: example # 可选
-```
-
-`public_endpoint` 是不带 scheme/端口的 DNS 或 IP；`inbound_port` 使用的传输由
-`inbound_protocol` 决定：默认 Hysteria2/UDP，显式 `trojan` 时为 TCP，不能一律当作 UDP。
-`direction` 必须与中控邀请一致，只能是 `bidirectional`、`reverse_only` 或
-`direct_only`。在本文 v1 兼容契约中，`reverse_only` 由该 Device 主动建立并维持反向 WireGuard 隧道；它表达
-公网/NAT 可达性而不是地理位置。部署可以将境外服务器设为 `reverse_only`，但协议并不
-禁止境外 Device 承担接入或其他已授权职责。
-
-这两个静态字段只描述 v1 bootstrap 事实。目标 v2 中每个 `forward` server 均具有
-稳定 FQDN、只服务 fake/immutable distribution 的 Nginx、DNS-01 证书管理、HY2 UDP 和不同
-UDP tuple 上的 WG listener；正式版另有独立 Trojan/TLS TCP bootstrap fallback。直连服务器使用
-443 或 EndpointSet 中的替代 HTTPS 端口，NAT server 另显式区分 public/local port 并预配 TCP/UDP 映射。
-这些由 certified `PublicEndpointIntent`、`ManagedZone` / `DomainBinding`、按用途拆分的 EndpointSet 和
-listener generation 表达，并通过新旧 listener overlap 轮换；
-DNS 解析结果和本机探测只能帮助选 endpoint，不能自行授权未签地址或端口。
-
-NAT 映射由操作者在 Loom 之外预先提供，Loom 不要求网关管理权限，也不通过 UPnP、
-NAT-PMP 或供应商接口改动映射。安装完成后，本机 listener 自检和公网就绪是两个状态：
-只有外部观察点对 signed public/local TCP/UDP tuple 逐项验证，并以真实跨节点流量确认
-transport 一致后，`forward` public access 才能从 `preparing` 进入 active/advertised。
-公网端口未开放或既有映射不匹配时，Device identity、软件和私有配置可以保留，但 UI 必须
-逐 transport 显示失败并给出三种明确动作：检查主机防火墙、让操作者确认既有映射，或放弃
-本次邀请并创建不含 `forward` 的 Device。不得自动改网关、扫描邻近端口或静默降级职责。
-
-客户端在本机创建或复用 `/etc/wireguard/node.key`，只把公钥随加入请求发给中控。缺少
-`/usr/bin/wg` 或 `/usr/bin/wg-quick` 时，会在消费加入码前通过受支持的 apt/dnf/yum/apk/
-zypper 安装 `wireguard-tools` 并复检；失败不会建立 Device identity 或修改 SSOT。
-v1 的主动公网 LinkMetric 目前只定义 Hysteria2；Trojan 入口不得伪造或借用该指标，只能显示
-listener 自检与真实拨号证据，后续扩展须使用版本化观测 schema。不新增一套“再次拨入”循环。
-
-## 4. 安装并加入
-
-已经下载加入文件时：
-
-```bash
-tar -xzf loom-client-linux-amd64.tar.gz
-cd loom-client-linux-amd64
-sudo ./install.sh --invite-file ../client.loom-invite
-```
-
-只有复制的 URI 时，先安装二进制，再从标准输入粘贴一行 URI，最后按 `Ctrl-D`；这样
-不会把 token 留在 shell history：
-
-```bash
-tar -xzf loom-client-linux-amd64.tar.gz
-cd loom-client-linux-amd64
-sudo ./install.sh --no-enroll
-sudo /usr/local/bin/loom client enroll -stdin
-```
-
-客户端在本机生成 P-256 私钥和 PKCS#10 CSR，私钥不会发给中控。中控绑定身份后先
-生成并预置秘密、原子提交 SSOT，再等待 v1 publisher 发布精确版本；这段时间状态是
-`provisioning`，不是 online。ready bootstrap 完整返回后，客户端才落盘节点证书、
-CA、平台公钥、release authority 和本机秘密，并执行首次 signed pull。任何一步失败
-都不会用假配置启动服务。
-
-加入或首次 pull 因网络中断时，保留 `/etc/loom/client`，并用同一份加入输入重跑安装
-命令。相同 token、identity/CSR 与 request ID 的重试是幂等的；首次绑定仍受页面所示
-TTL 限制，已经绑定的事务只在 v1 control 的有限恢复窗口内允许精确重放。删除该目录会丢失
-设备私钥，不能作为普通重试手段。默认命令等待 provisioning 最长 5 分钟；恢复窗口
-过期后必须由运维人员明确处理原 Device；v1 契约禁止用新码静默改绑身份。
-
-## 5. 让应用使用 Loom
-
-安装完成后，只让需要接入的应用显式使用回环代理。例如：
-
-```bash
-ALL_PROXY=socks5h://127.0.0.1:1080 your-command
-```
-
-使用 `socks5h` 把业务 FQDN 交给 Loom；Auto/指定出口配置必须让它穿过所选服务器链并由
-最终出口的受管 resolver 解析，不能在本机或第一跳提前固化 A/AAAA。Direct 才在本机解析。
-控制/配置/报告/数据入口自身的 hostname 使用独立 underlay resolver 和已签 endpoint identity，
-不得借业务远端 DNS 建立隧道。不要把该变量无条件写入整机全局环境；这可能影响包管理、
-控制通道和无关服务。
-
-目标客户端的 Direct / Auto / 指定出口三个模式复用同一个 `1080` 入口。Auto 使用 active signed 控制平面
-下发的 `Host → Service → Policy → Agent`；指定出口只固定最后一跳，前置中继继续自动
-择优。v1 Linux 安装契约只要求加入、签名拉取和运行已下发配置；三态交互与独立 GUI
-属于客户端迁移目标，也不能以在 Current Paths 页面手选路径替代。实际覆盖范围只见
-[当前状态](status/current.md)。
-
-## v1 运行手册边界
-
-- 本手册的历史命令示例仍以 Linux amd64 为准；目标 v2 的同构可重现包覆盖 amd64/arm64。
-  deb/rpm、Linux GUI 与通用卸载器不属于该 v1 契约；
-- 加入码消费/身份绑定不等于在线，Devices 列表中的数据面健康必须来自后续可信报告；
-- access-only 的安全回收必须同时完成 signed decommission、移除/吊销、秘密清理与 purge
-  canary；服务器职责和其他平台同样必须同时撤销控制面与数据面授权，不能仅用删除列表
-  记录冒充凭据已经失效；
-- Windows 与 Android 客户端宿主不在这个分发包内。
-
-架构与安全边界见[客户端接入设计](client-access.md)，生产是否已经运行本版本见
-[当前状态](status/current.md)。
+<a id="1-创建-device-和加入码"></a>[1. 创建 Device 和加入码](operations/linux-v1-install.md#1-创建-device-和加入码)
+<a id="安装页面的可达性分支"></a>[安装页面的可达性分支](operations/linux-v1-install.md#安装页面的可达性分支)
+<a id="2-下载并核对客户端包"></a>[2. 下载并核对客户端包](operations/linux-v1-install.md#2-下载并核对客户端包)
+<a id="3-转发职责先声明可达事实"></a>[3. 转发职责先声明可达事实](operations/linux-v1-install.md#3-转发职责先声明可达事实)
+<a id="4-安装并加入"></a>[4. 安装并加入](operations/linux-v1-install.md#4-安装并加入)
+<a id="5-让应用使用-loom"></a>[5. 让应用使用 Loom](operations/linux-v1-install.md#5-让应用使用-loom)
+<a id="v1-运行手册边界"></a>[v1 运行手册边界](operations/linux-v1-install.md#v1-运行手册边界)
+<a id="12-验收资产复用与续跑"></a>[原生验收资产复用与续跑](#原生验收资产复用与续跑)

@@ -355,9 +355,10 @@ func defaultBackupSrcs() ([]backupSrc, error) {
 		// 拿它当必需项的话,一台刚起来的中控连备份都做不了 ——
 		// 而"做危险变更之前先备份"恰恰是最需要它能跑的时候。
 		{path: "deploy/ssot-history", optional: !signedEra},
-		// 当前状态与历史含真实地址,按约定不进 Git；因此它和 SSOT 源头
-		// 一样只能从原控制机或备份恢复。干净 clone 上允许还不存在,
-		// 但只要存在就必须把整棵 history 一起收进去。
-		{path: "docs/status", optional: true},
+		// §13.3：管理参数与精选验收证据不能从 Git 恢复；首次配置前允许
+		// 缺失。仍由本命令既有加密或显式明文边界保护，不备份临时代码。
+		{path: ".env", optional: true},
+		{path: ".ssh_config", optional: true},
+		{path: "deploy/evidence", optional: true},
 	}, nil
 }

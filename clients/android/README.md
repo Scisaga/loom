@@ -10,8 +10,9 @@
 > generation overlap, a bootstrap transition hash, and an irreversible
 > v2 latch. V2 resources are versioned and never extend strict v1 JSON in place. See
 > [the distributed control-plane design](../../docs/distributed-control-plane.md#19-从当前实现迁移).
-> Code, deployment, and device-acceptance progress is recorded only in
-> [the current status](../../docs/status/current.md).
+> This is a platform development and delivery guide. Protocol rules belong to the linked specifications.
+> Source entry points and gaps are listed in [the implementation map](../../docs/implementation.md);
+> installed artifacts and device results belong to [deployment evidence](../../docs/operations/local-deployment.md).
 
 In the target v2 flow, an already-enrolled administrator reaches **Create Device**
 only through a `role=control_api` service in the private
@@ -248,8 +249,8 @@ context. The service waits for the old report/route tasks, selector operations,
 libbox and TUN to stop before switching or deleting credentials. Viewing a pending
 profile reads its local journal without automatically resuming network enrollment.
 The saved connection intent names the connected profile independently of the
-profile currently being viewed. Device evidence and installed builds are recorded in
-[the current status](../../docs/status/current.md).
+profile currently being viewed. Installed variants and device results are recorded in
+[deployment evidence](../../docs/operations/local-deployment.md).
 
 The primary Connect action stays disabled until a verified managed snapshot is
 available. Debug builds expose the bundled stage-1 Direct fixture in a separate
@@ -345,7 +346,7 @@ state, the one-shot entry result, verified server observations, and passive
 feedback from actual connections and handshakes. Production self-checks must not
 send business DNS/HTTPS requests or probe complete paths; reachability outside
 the available evidence remains unknown. Remaining implementation gaps are
-tracked only in `docs/status/current.md`; this paragraph is not a completion claim.
+listed in [the implementation map](../../docs/implementation.md); host evidence remains separate.
 
 ## Reproducible Linux build
 
@@ -390,7 +391,7 @@ If installation is authorized, preserve device data, use a matching signer, and
 verify the installed APK hash. An existing Debug installation may require Debug
 for that upgrade; still deliver Release and explicitly name the installed variant.
 Never uninstall or clear app data merely to switch signing certificates. Store
-real acceptance evidence only under the ignored `docs/status/` directory.
+real acceptance receipts under ignored `deploy/evidence/`, referring to the formal APK and SBOM artifacts.
 
 Reuse `app/libs/loom-box.aar` when its native source/dependencies are unchanged
 and its digest matches the audited `third_party/NOTICE.md`. If missing or affected
@@ -510,7 +511,7 @@ must not wait for an entry probe or server observation or send a business
 DNS/HTTPS request as an activation gate. Only a local startup-transaction failure
 may restore the last verified profile; runtime connection/handshake failures
 remain scoped evidence and do not roll back a verified configuration. The current
-implementation gaps are listed in `docs/status/current.md`. Reports use the same
+implementation gaps are listed in [the implementation map](../../docs/implementation.md). Reports use the same
 Keystore key through the existing canonical v5 and self-check v1 contracts;
 the canonical v5 claim also binds the actual selector, candidate and chain.
 Before the v2 latch, Android sends a separate signed presence heartbeat every

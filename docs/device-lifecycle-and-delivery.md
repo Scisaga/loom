@@ -2,7 +2,8 @@
 
 > **状态：** 已确认的目标模型，分阶段迁移；不是当前生产能力说明。  
 > **范围：** Device 统一、Enrollment、授权边界、版本化对象图、设备配置交付。  
-> **当前事实：** 以 [当前状态](status/current.md) 为准；平台客户端细节见
+> **引用关系：** 本文定义产品生命周期与授权投影；wire 字段、认证及事务约束由控制面规范定义。
+> 源码接线见[实现对照](implementation.md)，运行结果见[部署证据](operations/local-deployment.md)。平台客户端细节见
 > [客户端接入设计](client-access.md)，局域网转发仍是独立的
 > [Local Network 专题](local-network.md)。动态 ControlSet、CRDT/QC、域名/证书和入口轮换
 > 见[分布式控制平面设计](distributed-control-plane.md)。
@@ -23,8 +24,8 @@
 
 E1 迁移基线包括统一 `/devices` 读模型、四分授权、一次性加入、公开通用包、逐 URL 发布
 证据、fail-closed 首次 pull 和 access-only Device 回收。这些是 v2 要兼容的协议起点，不是
-本文维护的运行状态。现网数量、版本、验收结果和部署细节只写入
-[当前状态](status/current.md)；提交记录由 Git 保留，不在架构文档复制容易过期的摘要。
+本文维护的运行状态。实现范围由[源码对照](implementation.md)确认；版本与验收结果按
+[部署记录](operations/local-deployment.md)核对。提交历史由 Git 保留，不在本页复制进度摘要。
 
 既有 Device 的 identity registry 迁移不重新 Enrollment，也不根据名称、hostname 或 IP
 猜身份：导入命令要求 Device 已存在于当前期望态，证书链通过 Loom CA，CN 与唯一 SAN 都
@@ -350,7 +351,7 @@ HY2 可承担符合发起/可达条件的数据转发 hop，不把全节点永�
 ### 5.2 v1 首次配置分发契约（迁移基线）
 
 v1 的 `readyBootstrap()` / Enrollment 分发适配器只有满足以下规则，才可作为 v2 迁移输入；
-实际部署是否满足只见[当前状态](status/current.md)：
+是否满足须核对相关[部署与验收记录](operations/local-deployment.md)：
 
 1. Enrollment 候选只来自部署配置的 `defaults.distribution_urls`，顺序表达运维偏好；
 2. publisher 对每个候选复用现有 `VerifyServed()`，记录 URL、snapshot、SSOT、验证时间、
@@ -520,7 +521,7 @@ v2 迁移以前必须具备以下基线；本节不记录完成状态：
 8. **真实端到端 canary：** 每个平台从创建 Device 和加入码、安装、内部 claim、首次 pull、
    apply 到可信 online 分别验收，不能用另一平台或模拟器替代。
 
-上述基线实际覆盖范围只见[当前状态](status/current.md)。E1 保留兼容存储、v1 SSOT 投影、
+上述基线的源码入口见[实现对照](implementation.md)，部署覆盖另以验收记录核对。E1 保留兼容存储、v1 SSOT 投影、
 签名/pull 和全局 snapshot/release generation，以免同时切换全部故障域；这些分别在 E2/E3
 迁移。全局 generation 是明确的迁移债务，UI/API 不得把它标成 Device generation，也不得
 宣称已经实现最小私有 view 或增量发布。

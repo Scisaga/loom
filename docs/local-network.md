@@ -1,16 +1,13 @@
 # Loom · Local Network 目标设计
 
-> **状态:** 目标提案；实施与部署进度只见 [status/current.md](status/current.md)，不得用本文解释生产能力
->
-> **日期:** 2026-09-01
+> **规范状态：** 待实施的独立提案；本文不声明功能已接通或部署
 >
 > **适用范围:** 通过受管 Device 显式访问其所在局域网中的 TCP/UDP 目标；不包含
 > 透明三层组网、租户划分或根据当前 Wi-Fi 自动切换策略
 >
-> **上位约束:** [设计文档](design.md)中的不变量、SSOT 与单一 Agent 决策边界
-> 仍是唯一事实来源；设备加入、Direct / Auto / 指定出口及平台接管方式服从
-> [客户端接入设计](client-access.md)。实际是否实现、发布或部署只看
-> [当前状态](status/current.md)。
+> **规范依据：** [架构](design.md)定义不变量、SSOT 与单一 Agent 决策边界；
+> [客户端接入规范](client-access.md)定义加入、路由偏好与平台接管。
+> 源码接线见[实现对照](implementation.md)，运行事实按[部署证据](operations/local-deployment.md)核实。
 
 ---
 
@@ -39,8 +36,8 @@ LocalNetwork + target
 客户端安装 LAN 路由，不接管系统 `ping`，不构造第二套选路器，也不要求改造现有
 WireGuard `/32` 隧道为站点到站点 VPN。
 
-本文以尚无 `LocalNetwork`、`network_id`、对应 CLI、协议级授权和端到端测试作为迁移
-基线；实际代码和部署进度只以 [当前状态](status/current.md) 为准。sing-box 的 Hysteria2
+本提案需要新增 `LocalNetwork`、`network_id`、对应 CLI、协议级授权与正常流程验收；
+底层转发能力不表示这些业务入口已经接通。sing-box 的 Hysteria2
 与 Trojan 出站都能承载 TCP/UDP，只说明底层原语可用，不能冒充 Loom 已经交付该功能：
 
 - [sing-box Hysteria2 outbound](https://sing-box.sagernet.org/configuration/outbound/hysteria2/)

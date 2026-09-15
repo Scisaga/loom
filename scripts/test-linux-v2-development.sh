@@ -4,7 +4,7 @@ set -eu
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo"
 
-output=${1:-docs/status/linux-v2-development-evidence.json}
+output=${1:-out/evidence/linux-v2-development.json}
 case "$output" in
     /*) ;;
     *) output="$repo/$output" ;;

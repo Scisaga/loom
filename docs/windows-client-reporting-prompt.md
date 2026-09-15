@@ -1,86 +1,44 @@
-# Windows 客户端上报实测提示词
+# Windows v1 上报验收规程
 
-> **用途：仅验收 v1 compatibility profile。** 本提示词固定了单 enrollment endpoint、同源 report URL、
-> 平台公钥、既有两签 Observation 和独立 `loom-presence-v1`，不可作为 v2 ControlSet/EndpointSet 的实现规范。
-> 开始分布式迁移时应按独立 v2 issue 和
-> [分布式控制平面设计](distributed-control-plane.md)执行；不得在此任务中顺手改变 wire schema。
->
-> **当前迁移边界：** 本文是旧 Windows 专项的历史验收说明，不是继续保留 v1 服务端功能的要求。
-> 用户已要求的新功能上线、现网迁移与旧实现删除按
-> [控制面实施提示词](control-plane-implementation-prompt.md)执行。下文“不部署服务端”等专项限制
-> 不撤销当前对话的上线授权；未部署的 Windows 不阻塞当前 Linux/Android 与服务端替换。
+**适用条件：** 当前任务明确涉及尚在使用 v1 身份的 Windows 加入、完整上报或进程心跳时使用。
+本文不自行启动验收，不延长 v1 服务端生命周期，也不限制其他任务已经获得的部署授权。
+v2 迁移使用[控制面实施规程](control-plane-implementation-prompt.md)，不向 v1 schema 填入新版字段。
 
-请继续 Loom Windows 客户端的正常二维码加入与最小 NAT Device 状态上报验收。
-先检查工作区状态，完整阅读 `docs/windows-client-reporting.md` 和
-`clients/windows/README.md`，并遵守 `CLAUDE.md` 的执行边界。旧实现不覆盖用户新要求。
+## 开始前
 
-## 当前任务的硬约束
+- 阅读[协议契约](windows-client-reporting.md)、[Windows 构建入口](../clients/windows/README.md)
+  与[源码能力对照](implementation.md)。实际部署及已有验收从 `.env` 指向的配置和
+  `deploy/evidence/` 对应记录核对，不从静态规范推断。
+- Windows 专项默认限于 Windows 客户端、必要的共享客户端包及当前明确要求的服务端验签/
+  在线投影；不顺手修改 Android/Linux producer 或部署配置。不手工修补 SSOT、registry、证书
+  或绑定使验收通过。更大的迁移/上线任务按当前对话范围执行。
+- 复用客户端已经保存的合法 DPAPI 身份；没有加入身份时才走二维码流程。私钥由客户端产生，
+  不要求用户查找私钥、恢复旧目录或清除已加入状态。
+- 客户端选路只按[消费边界](client-observation-reuse.md#客户端消费边界)验证。
+  不新增业务目标、整路径扫描、重复样本或启动等待。
 
-- 每个底层网络代维护跨 Agent/profile 重启的 probe registry；Direct 不探测，首次进入 Auto/指定
-  出口时冻结当时的授权入口快照，按地址与源接口去重后各并行探测至多一次；同代切换/重连不重测，后段
-  复用现有已验证服务器观测。
-- 不做客户端整条业务路径探测、Service × 路径扫描、样本预热、挑战者比较或等待观测。
-  不以后台健康验证、异步补样、兜底、旧 `min_samples` 或测试要求重新引入。
-- 观测缺失保持未知，入口可达不能宣称业务全部可达；不要为健康绿灯生成额外探测。
-  是否已完成替换只按 `docs/status/current.md` 核对；已替换时不得恢复旧完整路径 Agent。
-- 验证目标、次数、并发与启动等待是否符合要求；完成独立修改后及时本地提交。
-- 已注册 Windows Loom 进程立即并每 5 秒发送严格三字段 `node`、`ts`、`signature` 心跳；
-  它使用现有 DPAPI P-256 身份与精确 `presence=1`，不等待数据面或流量，也不触发或刷新
-  原一分钟完整 Observation。服务端按接收时间维持 15 秒 lease，不兼容旧心跳协议。
+## 正常流程与证据
 
-## 验收基线
+1. 未加入时，从当前中控正常生成有效 Windows 邀请，通过客户端二维码入口加入；已有身份则
+   直接使用。新码校验入口与指纹，服务端拒绝旧码不触发降级。观察本地检查、联系中控、等待配置、
+   验证保存各阶段；`pending` 不算已完成。服务端延迟按[分段排查](server-enrollment-latency-prompt.md)处理。
+2. 启动实际客户端。上报相关改动需确认真实 active snapshot，由 activation/recovery 成功提供；
+   下载成功或 candidate 不足以推进 `applied`。
+3. 心跳相关改动核对进程首包、五秒节拍、断开数据面仍发包，以及停止进程后十五秒 lease 到期时
+   已打开列表变为 `Stale`。该流程不触发完整 Observation，不新增网络故障注入。
+4. 完整上报相关改动取得客户端自动生成的两签报告 `200` 观测数组或旧服空正文 `204`，并从中控
+   核对同一身份、递增时间、last-seen 与实际 active snapshot。`applied` 与 active signed snapshot
+   一致才说明 v1 配置收敛；健康按实际证据范围判定。
+5. 观测复用相关改动核对真实来源观测已验签并进入当前 Agent；空数组或只改 report URL 不算复用。
+   检查后续原周期更新及两类状态隔离，按改动选择必要检查，不重复无关历史矩阵。
+6. 如修改代码，运行相关测试、vet 与 Windows amd64/arm64 交叉编译，提交相关实现；生产发布
+   仅在当前任务授权范围内执行。实机未验证就明确记录，不以 HTTP `403` 或手工报文代替。
 
-代码、部署和实机证据只从 `docs/status/current.md` 读取，不在提示词复制完成状态。若当前
-状态已有合法加入身份，应继续使用，不要求重新扫码、找私钥或恢复旧目录；若没有，才走
-正常二维码流程。无论历史版本做过什么，本任务都不得恢复每轮业务目标或完整路径探测；
-单个目标结果也不能概括所有网站和出口。
+## 排障与交接
 
-## 工作步骤
+TUN 连通问题分别核对默认网卡绑定、签名 DNS 配置、系统流量、TUN DNS 与本地代理。
+窗口显示连接或进程存活不代表流量成功；手工访问结果也不能直接成为自动健康证据。
+网络诊断复用客户端传输与配置 DNS；Windows 生产代码不依赖 `internal/report`。
 
-1. 先检查当前客户端是否已正常加入：已有成功提交的加入状态时，继续使用该客户端
-   保存的 DPAPI 身份，不要求重新扫码。尚未加入时才使用当前状态所声明的 v1 compatibility control 正常流程提供的有效
-   二维码导入；二维码失效按中控既有流程处理。私钥生成、证书验证和 DPAPI 保存
-   全部由客户端自动完成；不要求用户找私钥、恢复旧目录或沿用历史绑定。
-2. 启动真实客户端数据面，由现有 activation/recovery 成功路径提供 active snapshot。
-   下载、验签、hydrate、preflight 和 candidate 都不能提前推进 `applied`。
-3. 先核对进程启动后的即时心跳、后续 5 秒节拍，以及停止后 15 秒内已打开 Device inventory
-   自动变为 `Stale`；再检查读取观测时的 `200` 或旧 Observation 契约的空正文 `204`，从中控核对当前
-   Device、两类 `ts`、last-seen 和 `applied`。按本次改动选择相关验收，不为重复历史验收
-   添加业务探测、重新加入或等待五分钟 stale；未取得实机证据就如实标注未验证。
-4. 发现问题时沿该流程定位，只修改 Windows 客户端、必要的共享客户端包与服务端验签/
-   Device inventory 在线投影；不修改 Android/Linux producer、部署配置，也不手工修补 SSOT、
-   registry、证书或设备绑定。
-5. 若修改代码，运行相关测试、vet 和 Windows amd64/arm64 交叉编译，再提交。
-   报告提交号、修改文件、实际测试证据与未确认事项；不部署服务端。
-
-## 实现边界
-
-- 排查“正在加入”耗时，按客户端显示的本地检查、联系中控、等待配置发布、验证并保存
-  阶段区分原因。计时只用于反馈；`pending` 不能提前成为已加入、已连接或健康。
-  服务端发布耗时的优化交给服务端开发环境，使用
-  [加入耗时优化提示词](server-enrollment-latency-prompt.md)，不在 Windows 环境修改服务端。
-- Windows 邀请只允许 `windows-desktop + use_loom`，由中控固定职责。客户端只声明
-  Windows 平台，不提交 server 或职责字段，不迁移未消费的旧加入码。已加入身份继续
-  使用；新二维码必须包含与发行包匹配的指纹和精确的 HTTPS `/loom-client/enroll` 入口。
-- 复用最小 Observation：外层只有 `node`、`ts`、`applied`、`attest`、`self_check`。
-- 只有 `attest.Claim` canonical v5 与 self-check v1 两份签名，使用客户端本次正常加入
-  保存的同一身份；不生成 legacy Claim、`attest_extended` 或 self-check v2。
-- 从已验证并保存的 enrollment URL 同源推导 report URL；HTTPS、精确路径、拒绝重定向。
-  不使用 `POST /status`。摘要、共同时间戳与 HTTP 结果规则以接入说明为准。
-- Observation reporter 维持原串行一分钟周期，UTC RFC3339Nano 时间严格递增；停止或无法恢复的
-  数据面退出后停止完整上报，由已有报告老化。
-- presence worker 与 Observation reporter 独立，随已注册 Windows Loom 进程启动/停止，立即发送
-  首包后保持 5 秒节拍；用 `loom-presence-v1` 对 node/ts 签名，正文不得出现证书、Observation 或
-  第四个字段。它只接受空正文 `204`，不跟随重定向、不降级旧协议；失败等下一 tick。
-- 服务端仅为当前 `ready`、SSOT 在役且平台匹配的 Windows/Android enrollment identity 验签；
-  旧或同时间戳包不能刷新接收时间。Windows UI 必须同时要求有效心跳和完整观测，心跳到达及
-  15 秒 lease 到期均推送 WebSocket 更新，无需刷新页面。
-- 健康结论只说明已有证据覆盖的范围，未知不能伪装成成功或失败。
-  上报任务不授权新增业务探测，不新增未签名探测端点来制造绿灯。
-- 排查 TUN 联网时，确认派生配置已绑定默认网卡，并将 TUN 的 DNS 请求交给签名
-  DNS 模块；分别验证系统流量、TUN DNS 与本地代理。窗口显示已连接或进程存活
-  不能替代实际连通性结果，手工访问成功也不应直接变成自动上报的健康证据。
-- Windows 生产代码不依赖 `internal/report`。公网拒绝测试和手工报文不能替代正常
-  客户端验收；网络诊断使用客户端实际传输方式与配置的 DNS。
-
-真实端点、设备 ID 和实测记录只写入忽略的 `docs/status/`，不进入仓库示例。
+交接给出源码修改、已执行测试、实际客户端报告结果和仍未验证项。真实设备、端点、提交制品坐标
+与日志进入忽略的 `deploy/evidence/`；公开[实现对照](implementation.md)只更新源码和接线缺口。

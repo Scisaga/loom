@@ -10,15 +10,17 @@
 > WireGuard rotation remains disruptive until a dedicated dual-interface/peer profile is validated; and an
 > irreversible v2 latch. V2 resources are versioned and never extend strict v1 JSON in place. See
 > [the distributed control-plane design](../../docs/distributed-control-plane.md#19-从当前实现迁移).
-> Code, deployment, and native-acceptance progress is recorded only in
-> [the current status](../../docs/status/current.md).
+> This is a platform development and delivery guide. Protocol rules belong to the linked specifications.
+> Source entry points and gaps are listed in [the implementation map](../../docs/implementation.md);
+> native results and installed artifacts belong to [deployment evidence](../../docs/operations/local-deployment.md).
 
-The v2 reader and Windows host path are implemented alongside the pre-latch v1
-compatibility path. Until Issue #13 is closed by Gate B evidence, v1 is not
-retired; once a profile durably commits `protocol_latch=v2`, that profile can
-never fall back to v1.
+The source contains a v2 reader and Windows host path alongside pre-latch v1 code.
+A profile that durably commits `protocol_latch=v2` can never fall back to v1.
+Retiring replaced server paths follows the active migration scope and its
+acceptance conditions; an undeployed Windows profile does not authorize keeping
+old server functionality indefinitely.
 
-In the implemented v2 flow, an already-enrolled administrator reaches **Create Device**
+In the target v2 flow, an already-enrolled administrator reaches **Create Device**
 only over the Loom overlay through the certified private `control_api` service,
 verifies its internal certificate and overlay IP, and authenticates with admin
 mTLS. An unjoined Windows client verifies the compact descriptor's catalog and
@@ -353,8 +355,9 @@ architecture, Go/VCS coordinate, and executable hash.
 V1 compatibility QR codes include the SHA-256 fingerprint of the deployment platform key.
 The client compares it with its embedded key locally before sending the
 one-time code, so joining does not depend on an extra public trust route. QR codes
-without this fingerprint are rejected; already joined identities remain valid. See
-[`docs/status/current.md`](../../docs/status/current.md) before testing.
+without this fingerprint are rejected; already joined identities remain valid.
+Before native testing, identify the active build and reuse applicable evidence
+through [the deployment guide](../../docs/operations/local-deployment.md).
 
 ## Security and runtime boundaries
 
@@ -456,42 +459,20 @@ without this fingerprint are rejected; already joined identities remain valid. S
 
 ## 本地客户端选路目标契约（§5.6 / §7.3.3）
 
-Windows 宿主必须使用 `agent.RunClient`，从已验证配置与实际 detour 提取授权入口，并为每个底层
-网络代维护跨 Agent/profile 替换的 probe registry。Direct 不冻结候选也不探测；该网络代第一次
-进入 Auto/指定出口时原子冻结当时的候选快照，按地址与源接口去重并对快照内每个入口至多发一次轻量并行 ICMP。
-配置刷新、模式/出口切换和同一网络代内重连复用该结果，不重测；同代新出现的授权入口
-（目标 v2 中来自 signed EndpointSet）不加入主动探测集合，只能从真实拨号/回退取得被动
-证据，下一底层网络代才可进入新快照。探测不阻塞数据面激活，
-不发送业务 DNS/HTTPS，不调用服务器使用的
-完整路径 `agent.Run`，不扫描 Service × 候选路径，不等待样本或服务器观测。
+探测预算、网络代 registry、未知观测、分段估算和禁止行为统一由
+[客户端消费边界](../../docs/client-observation-reuse.md#客户端消费边界)定义。
+Windows 宿主使用 `agent.RunClient`，以进程级 registry 跨 Agent/profile 生命周期保存结果；
+接线见[代码映射](#agent-选路集成代码映射)。配置、偏好、重连与恢复通过同一激活事务交接 Agent。
 
-后段复用原上报响应中的已验签服务器观测。服务器结果更新只重算，不触发客户端探测。
-后段证据未到时沿用当前出口，只比较同出口候选的入口延迟；latency 使用入口 RTT、
-实际承载的服务器邻接/公网 data-ingress RTT 和出口已覆盖目标的首字节时间估算，沿用切换阈值。
-Hy2 专属的 Δ/固定响应速率只在对应已签 LinkMetric 存在时显示；Trojan 不借用或补造 Hy2 指标。
-同一声明的候选使用相同目标子集，未覆盖目标明确标注未知，不阻断其他已有数据。
-其他目标指标缺乏相应分段证据时明确说明，不能冒充已经优化。未覆盖目标保持未知。
+选择状态保存于受 Windows DACL 保护的 `runtime/agent/generation-*`，不读取旧完整路径测量历史。
+报告 GET 实际 selector，并用已签 plan 映射节点链；PUT 意图不表示已生效。原因继续进入 canonical
+v5 reason，界面和 self-check 都不发业务探测。
 
-Auto 保留授权的 Service 分流；FixedExit 从签名配置识别默认上网声明，保留到所选
-末跳的全部授权前缀，让受管上网流量共用一条 Agent 择优路径。独立私网或私网/公网
-混合规则无法安全合并时，拒绝固定出口并保留当前有效配置。Direct 停止选路 Agent。
-配置、偏好、重连和恢复继续使用同一激活事务，等待旧 Agent 退出再启动新代次。
-签名 bundle、DPAPI 身份、授权裁剪、回滚及服务器协议保持原契约。
-
-选择状态保存于受 Windows DACL 保护的 `runtime/agent/generation-*`，不再写入或消费
-完整路径 measurement 历史。报告每次 GET 实际 selector，并用签名 plan 映射节点链；
-PUT 意图不能冒充已生效路径。原因用已有 canonical v5 reason 签名，不新增线格式。
-
-界面显示入口单次延迟和服务器分段估算，业务健康标为未测。P50/P95 与完整路径样本
-不再由客户端填充。每轮 self-check 只检查本机监听、托管网卡及当前运行态，缺少
-业务目标不再被误报为设备断网。界面读取和健康上报均不触发业务探测。
-
-验收测试必须覆盖入口去重与并行、启动不等待服务器观测、同一网络代的配置刷新/模式/出口切换/重连不重测、授权限制、未知与过期
-证据、失败约束、实际 selector readback、固定末跳、代次取消及原签名绑定。
-Windows 原生验收还必须验证单次 ICMP API；设置 `LOOM_SING_BOX_EXECUTABLE` 后的目标用例为
-`TestOfficialWindowsClientSelectsEntryWithoutBusinessProbes`，使用官方数据面验证
-selector 已切换且目标及代理接收器始终没有收到业务探测请求。哪些用例已经通过、registry
-是否已跨 Agent/profile 生命周期实现，只见[Current status](../../docs/status/current.md)；本节不构成完成声明。
+修改选路时核对入口目标、次数、并发、启动等待、同代复用、授权、未知/过期证据和 selector 回读。
+Windows 原生测试另覆盖单次 ICMP API；设置 `LOOM_SING_BOX_EXECUTABLE` 后，运行
+`TestOfficialWindowsClientSelectsEntryWithoutBusinessProbes`，以官方数据面验证 selector 切换及
+目标/代理接收器未收到业务探测。代码是否接通见[实现对照](../../docs/implementation.md)，
+已执行的原生结果记录在[部署证据](../../docs/operations/local-deployment.md)。
 
 ## Acceptance contract
 
@@ -553,8 +534,9 @@ check, all six exact ZIPs, both exact MSI databases, and signed sidecar verifica
 are present. Authenticode remains the separate, non-blocking Issue #5 gate and is
 checked only when `-RequireAuthenticode` is requested.
 
-Which items have evidence, and which remain open, is recorded only in
-[the current status](../../docs/status/current.md).
+Record each native result with its exact source/artifacts under ignored
+`deploy/evidence/`, or reference its protected external receipt. Source integration
+gaps remain in [the implementation map](../../docs/implementation.md).
 
 ## Installed package
 

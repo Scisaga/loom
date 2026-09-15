@@ -1,7 +1,8 @@
 # 客户端复用现有签名 Observation
 
-本文定义服务端 Observation 读取适配，以及 Windows / Android 共用的客户端消费边界。
-遵循 design.md §7.3.3、§7.3.4、§16.1.2；不增加 SSOT 字段、测量协议或推荐路径表。
+> **类型与归属：** 本文是 Windows / Android 入口探测预算、签名观测消费、分段选路与展示的规范正文，
+> 同时定义现有 v1 Observation 读取适配；平台手册只补宿主接线。Linux Agent 的总体模型见
+> [架构总览](design.md)，本任务不增加 SSOT 字段、服务器测量协议或推荐路径表。
 
 > **协议代次：** v1 兼容契约使用同源 report POST、内存 gossip table 和
 > `200/204` 响应。目标 v2 保持 Observation 的生产者签名与原时间不变，但通过 certified
@@ -9,8 +10,8 @@
 > 认证，并将不可变报告按
 > `(device_id, observed_at, attestation_hash)` 在 control
 > 副本间 CRDT 去重；ControlSet QC 决定授权范围，CRDT 到达本身不能改变期望态。
-> 详见[分布式控制平面设计](distributed-control-plane.md)。代码、部署与验收进度只见
-> [当前状态](status/current.md)。
+> 服务发现、认证和持久信任状态由[分布式控制平面规范](distributed-control-plane.md)定义。
+> 源码入口见[实现对照](implementation.md)；生产与真机结论按[部署和证据规程](operations/local-deployment.md)核对。
 >
 > v2 授权门禁固定为 certified head 及其 Device view：Raft durable commit 后尚未
 > 取得 replication QC 的 `committed_not_certified` 不得改变 report endpoint、可读范围、
@@ -84,15 +85,9 @@ Content-Type: application/json
 
 ## 客户端消费边界
 
-v2 客户端在使用报告入口或其观测改变选路前，必须先验证 certified head、
-Device inclusion proof 及其绑定的 private `ControlServiceDirectoryV1`，并原子执行四组 durable floor：
-`recovery_epoch/recovery_statement_hash/recovery_policy_hash`、
-`control_epoch/control_set_hash`、`control_revision/head_hash` 和
-`device_generation/device_leaf_hash/device_view_hash`。首次 v2 安装还必须原子写入
-`bootstrap_transition_hash` 与不可逆 `protocol_latch=v2`；latch 后 v1 同源 URL 不再是 authority。
-`device_report` 的每个入口都按 private directory 核对精确 overlay IP、端口、internal CA/EKU
-和允许的 SPKI pin，并要求 Device mTLS、拒绝重定向。它不依赖公网 DNS/WebPKI，也不能由
-distribution、bootstrap 或 Enrollment URL 推导。
+v2 消费必须先通过[控制面规范](distributed-control-plane.md)定义的 certified head、Device proof、
+private service directory、四组 durable floor 与不可逆 latch 校验。报告入口使用认证后的
+`device_report` 私有服务，不从 distribution/bootstrap/Enrollment URL 推导，也不退回 v1 authority。
 
 1. 在现有报告周期内显式选择读取模式，并解析有大小上限的完整 Observation 数组；
    不增加独立轮询/探测周期。Windows 使用 `clientreport.SendWithObservations`，
@@ -112,12 +107,13 @@ distribution、bootstrap 或 Enrollment URL 推导。
    约束及决策原因，
    不按本机探测样本累计；旧 `observation_kind: derived` 记录不进入数值排名。
    不把来源节点的 Agent 选择当成客户端推荐路径。
-4. 每个底层网络代维护独立 probe registry；Direct 不冻结候选、不启动 route session、也不花
+4. 每个底层网络代由宿主持有独立 probe registry，不能因 Agent/profile 重启清空；Direct 不冻结候选、不启动 route session、也不花
    探测预算。该网络代第一次进入 Auto 或指定出口时原子冻结当时的候选快照，客户端只对其中
-   按地址与源接口去重后的授权入口各做至多一次轻量并行探测；同代后来出现的新入口不加入主动探测集合，入口之后
+   按地址与源接口去重后的授权入口各做至多一次轻量并行探测；同代后来出现的新入口只接收真实拨号/回退的被动证据，不加入主动探测集合，入口之后
    复用服务器观测；不再验证整条业务路径，也不以后台补样、健康验证或旧排名器的
    `min_samples` 要求恢复这些探测。配置刷新、模式/出口切换和同一网络代内重连
-   复用该结果，不重测。不等待入口或服务器观测才启动数据面。服务器报告未覆盖的
+   复用该结果，不重测。退出再进入代理模式不重新冻结；只有 OS 报告底层网络代变化后，首次代理模式才开启新一代预算。
+   不等待入口或服务器观测才启动数据面。服务器报告未覆盖的
    目标保持未知；客户端不为填空扩大探测面。服务器按上述明确的目标集合采集。
 
 共用 Go 决策包按实际失败率、受支持的目标指标与阻尼排序；Windows Agent 与 Android
@@ -148,11 +144,8 @@ Windows 客户端适配只能使用 `agent.RunClient`，不得调用服务器完
 入口是当前底层网络代的单次轻量探测，服务器段和精确目标来自原始签名观测；
 缺失显示 `—`。
 不再用整条路径“健康”或旧 P50/P95 占位概括这些不同来源。每轮健康上报只检查
-本机监听与托管网卡，业务可用性保持未测量。入口探测预算以
-`(底层网络代, 源接口, 首次代理模式候选快照中的去重入口地址)` 为键：Direct 不创建该快照；同代新引入入口不取得主动探测预算，只能
-从真实拨号/回退取得被动证据；激活、配置刷新、模式/出口切换和同一网络代内重连都不重置
-已用预算。退出再进入代理模式不重新冻结；只有底层网络代变化后首次进入代理模式才冻结
-新的候选快照并开启新一代预算。
+本机监听与托管网卡，业务可用性保持未测量。预算键为
+`(底层网络代, 源接口, 首次代理模式候选快照中的去重入口地址)`，生命周期遵守上面第 4 条。
 配置更新仍走验签与 certified 门禁，不改变服务器采集协议。
 
 ## 验证范围
@@ -170,7 +163,7 @@ Windows 客户端适配只能使用 `agent.RunClient`，不得调用服务器完
 - 实际 selector 读回、观测拒收/离线缓存与逐连线只读展示，且不把分段估算标为
   端到端实测。
 
-具体代码、测试与真机验收证据只见[当前状态](status/current.md)。
+源码及接线缺口见[实现对照](implementation.md)；具体制品和实机验收按[证据规程](operations/local-deployment.md)核对。
 
 ## Windows / Android 拓扑显示
 

@@ -146,10 +146,14 @@ func TestDefaultBackupSrcsCoverTheIrreplaceable(t *testing.T) {
 	if !got["deploy/ssot-history"] || !optional["deploy/ssot-history"] {
 		t.Error("deploy/ssot-history 应在清单里,且必须是可选的")
 	}
-	// docs/status 含真实部署坐标,有意不进 Git；没有这份本机状态,
-	// clean clone 无法恢复 current/history 这条运维事实链。
-	if !got["docs/status"] || !optional["docs/status"] {
-		t.Error("docs/status 应在清单里,且必须是可选的")
+	// §13.3：配置与精选证据按用途备份，已退役的文档杂物目录退出清单。
+	for _, path := range []string{".env", ".ssh_config", "deploy/evidence"} {
+		if !got[path] || !optional[path] {
+			t.Errorf("%s 应在清单里，且首次配置前允许缺失", path)
+		}
+	}
+	if got["docs/status"] {
+		t.Error("已退役的 docs/status 不应进入默认备份")
 	}
 }
 

@@ -1,9 +1,10 @@
-# Android 构建与交付提示词
+# Android 构建与交付规程
 
 用于 Android 客户端实现、修正及 APK 更新任务。先阅读
-[AGENTS.md](../AGENTS.md) 的执行边界、功能交付和 ADB 条款，以及
+[AGENTS.md](../AGENTS.md) 的执行边界与功能交付、
+[ADB 真机操作](operations/android-device.md)，以及
 [Android README 构建说明](../clients/android/README.md#reproducible-linux-build)。
-用户当前明确要求优先于旧文档和测试；已有安装授权继续有效。
+用户当前明确要求优先于旧文档和测试；当前对话已有安装授权继续有效，本文不自行授权安装。
 
 ## 任务范围与完成条件
 
@@ -48,7 +49,7 @@
 
 ## 已授权的安装与验收
 
-- 使用显式 `$ANDROID_HOME/platform-tools/adb`，按 `AGENTS.md` 解析并核对已授权目标设备。
+- 使用显式 `$ANDROID_HOME/platform-tools/adb`，按[真机操作规程](operations/android-device.md)解析并核对已授权目标设备。
   优先使用 `clients/android/scripts/install-device-apk.sh` 核对包名、哈希和现有签名后覆盖安装。
   所需参数和显式安装确认环境变量见
   [README 真机流程](../clients/android/README.md#emulator-and-device-acceptance)。
@@ -58,13 +59,14 @@
   Debug 还是 Release；Debug 的真机结果不证明 Release 已在真机安装或通过相同测试。
 - 按改动选择必要检查，需要设备插桩测试时才构建 `assembleDebugAndroidTest`。复用仍适用的证据；
   不为颜色/图标修正重复连接矩阵，不增加 VPN、业务路径或入口探测。
-  网络逻辑改动仍须遵守每底层网络代一次入口测量及服务器观测复用约束。
+  网络逻辑改动遵守[客户端消费边界](client-observation-reuse.md#客户端消费边界)。
 
 ## 交付回复与记录
 
 - 默认给出可点击的 **`app-release.apk`** 路径；Debug 链接如需提供，明确标注变体。
 - 分别说明 Debug/Release 是否已构建、Release 签名验证结果、设备实际安装的变体或尚未安装，
   以及与本次修改相关的验证结果和未完成项。不得用一句“已构建并安装”掩盖变体差异。
-- 真实设备信息、签名指纹和构建/验收记录只存忽略的 `docs/status/`，更新 `current.md` 的当前
-  制品与实机状态。后续文档提交可单独记录，不能改写已有 APK 的源码归属，也无需因此重建。
+- 真实设备信息、签名指纹、构建/验收回执存入忽略的 `deploy/evidence/`，关联正式 APK 与 SBOM
+  路径；源码接线变化更新[实现对照](implementation.md)。后续文档提交不能改写已有 APK 的源码
+  归属，也无需因此重建。部署配置与证据分工见[本机操作说明](operations/local-deployment.md)。
 - 运行仓库安全检查，按提交约定只提交本次相关文件。

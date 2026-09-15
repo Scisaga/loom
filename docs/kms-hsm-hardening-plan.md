@@ -1,10 +1,10 @@
 # KMS/HSM 密钥保护强化：后续扩展计划
 
-**状态：后续可选扩展，尚未安排实现或生产接入。** 当前交付采用本地软件密钥与不可变 sealed
-artifact，见 [D139](decisions.md#d139--软件密钥作为当前基线kmshsm-单列后续强化) 和
-[分布式控制平面 §6.2](distributed-control-plane.md#62-权威-secret-artifact)。本计划不是
-#7/#8/#9、私有入网服务、daemon 接线、存量迁移或旧路径删除的前置条件，不要求操作者现在
-提供 KMS/HSM 服务或配置。
+**规范状态：可选强化提案。** 已批准基线允许本地软件密钥与不可变 sealed artifact；
+约束由[控制面 §6.2](distributed-control-plane.md#62-权威-secret-artifact)定义，
+[D139](decisions.md#d139--软件密钥作为当前基线kmshsm-单列后续强化)解释选择理由。
+本计划不构成私有入网、daemon 接线、存量迁移或旧路径删除的前置条件。
+源码能力见[实现对照](implementation.md)，具体后端及部署结果由[部署记录](operations/local-deployment.md)核对。
 
 ## 当前基线与扩展边界
 
