@@ -18,21 +18,25 @@
 |---|---|---|
 | v1 模型、渲染与签名分发 | `loom validate/render/snapshot/release/publish/pull`；[模型](../../internal/model)、[渲染](../../internal/render)、[发布](../../internal/publish) | 既有严格 schema 和签名快照调用链存在；不能直接接收 v2 LinkIntent/ControlSet 字段。v2 替换必须保留存量身份与数据。 |
 | N=1 私有控制服务 | `loom control bootstrap/serve/status/request`；[daemon](../../cmd/loom/control_runtime.go) | `serve()` 启动 overlay control API、loopback 浏览器入口和 Raft。启动配置强制单成员；已提交 operation registry 与 `request` CLI 仅开放 `control_ping`。 |
+| 初始 v2 authority 与存量迁移 | [daemon bootstrap](../../cmd/loom/control_runtime.go)、[共享 bootstrap 验证器](../../internal/wire/recovery.go) | daemon 当前以 recovery/control epoch 1 初始化，并用小型运行配置和 cluster ID 派生占位承诺；目标初始 epoch 为 0。尚未生成连接旧 authority、真实存量状态、完整 PoP 与初始 Head/QC 的 `BootstrapTransitionBundleV1ToV2`，以及配套私有目录 preimage 和逐设备 v1 floor migration package；能完成 ping/QC 不证明客户端可接受其 bootstrap authority。 |
 | 管理员材料与浏览器入口 | `loom control export-admin/rotate-admin/enable-loopback`；[证书导出](../../cmd/loom/control_admin_certificate.go)、[轮换](../../cmd/loom/control_admin_rotation.go) | P-256 完整链、独立 browser TLS 和本机 N=1 certified 轮换有正式 CLI；浏览器实机通过须另有证据。 |
 | Device/邀请与配置界面 | 私有 HTTPS → Unix socket → [Web UI](../../internal/webui/webui.go) → [邀请回调](../../internal/report/clients.go) | 管理员门禁已接通；业务回调仍使用 v1 registry/SSOT，尚未成为 v2 五阶段事务。没有正常 v2 create-invite CLI。 |
 | v2 Enrollment 事务 | [私有服务](../../internal/enrollmentv2/private_service.go)、[Raft sequencer](../../internal/controlplane/enrollment_sequencer.go)、[首次签发持久化](../../internal/enrollmentv2/provisional_store.go) | 已有组件及测试；正式 `control serve` 未构造或启动 Enrollment 服务。真实 CA、封装、制品和共享认证状态仍需接入同一业务调用链。 |
 | v2 私有配置与报告 | [device_config](../../internal/controlplane/device_config.go)、[device_report](../../internal/controlplane/device_report.go)、[报告存储](../../internal/controlplane/device_report_store.go) | 服务组件存在；正式 daemon 未挂载。certified Device 到实际 render/reconcile、凭据安装、有效报告和 inventory 回读未构成完整正常流程。 |
 | Bootstrap ingress | [HY2/Trojan 服务组件](../../internal/bootstrapaccess)、[客户端 bootstrap](../../internal/clientv2/bootstrap.go) | 传输、受限 capability 和验证组件存在；正式静态 catalog/proof 发布与私有 Enrollment 的完整入网接线仍缺。旧公开动态入口的删除属于同一迁移。 |
+| 托管 DNS 与公开证书 | [DNS provider](../../internal/dnsprovider)、[DNS-01](../../internal/certmanager/dns01.go)、[证书组件](../../internal/certmanager) | 共享基线主要为组件，未接通正式非 control executor、七字符名称分配/预留、存量迁移、事件任务与删除接管。DNS-01 的先读后整集合写/删存在并行 TXT 丢失窗口；本地 generation 不能代替 provider 原子保证。 |
 | 动态 ControlSet | [成员账本](../../internal/controlplane/membership_ledger.go)、[joint leader](../../internal/controlplane/raft_joint_leader.go) | learner、成员和 quorum 组件存在；daemon 仍限制 N=1，没有正常晋升/移除入口，不能称多成员控制面已接通。 |
 | Linux v2 客户端 | [client 子命令分发](../../cmd/loom/client.go)、[Linux v2 加入及运行](../../cmd/loom/client_v2_linux.go) | 客户端 CLI 与私有协议消费代码存在；正常生产入网仍依赖上述服务端接线及存量迁移。当前要求 Linux amd64 原生验收；arm64 构建与静态检查另列。 |
 | Windows 客户端 | [v2 加入](../../clients/windows/v2_join_windows.go)、[v2 运行](../../clients/windows/v2_runtime_windows.go)、[v1 报告](../../clients/windows/report_windows.go)、[进程心跳](../../clients/windows/presence_windows.go) | v2 与 v1 消费代码均存在；v1 进程心跳和分钟级完整报告是独立 worker。是否属于部署验收范围取决于在用设备及当前任务，不能从源码推断。 |
 | Android 客户端 | [应用](../../clients/android/app/src)、[v2 配置安装](../../mobile/loomcore/enrollment_config_v2.go)、[v2 报告](../../mobile/loomcore/android_device_report_v2.go) | 原生 UI、多配置及协议桥接代码存在；v2 生产流程仍依赖正式服务端。Debug、Release 与实际安装分别核对，见[交付规程](../clients/android-delivery.md)。 |
-| 客户端选路 | [入口 registry](../../internal/agent/entry_registry.go)、[观测缓存](../../internal/agent/observation_cache.go)、[Windows 进程入口](../../clients/windows/main_windows.go) | 网络代 registry 和服务器观测消费实现存在；契约及跨平台入口见[观测复用说明](../clients/observations.md)。修改时核对目标、次数、并发与启动等待，不能以组件存在替代宿主验证。 |
+| 客户端选路 | [入口 registry](../../internal/agent/entry_registry.go)、[观测缓存](../../internal/agent/observation_cache.go)、[Windows 进程入口](../../clients/windows/main_windows.go) | Windows 进程已订阅 OS 网络变化事件并沿宿主调用链更新网络代，同代复用 registry；Windows 原生实机验收仍须单独完成。Android 从实际 ICMP reply 读取 RTT，运行中 Direct→代理先应用 selector，再单批异步更新并拒绝旧 runtime/config/网络代结果；旧阻塞入口已删除。测试、构建和各宿主实机验收分别核对，以[观测复用契约](../clients/observations.md)为准；这些选路修复不补齐上述 v2 服务端和入网缺口。 |
 | 兼容上报与实时列表 | [报告 handler](../../internal/report/client_report.go)、[presence](../../internal/report/presence.go)、[UI socket](../../internal/report/control_ui_socket.go) | v1 Observation、独立心跳和列表通知路径仍存在；其成功状态不证明 v2 private report/sequence 已运行。 |
 
 ## 控制面迁移的下一处实际工作
 
-在 `controlRuntime.serve()` 的正式生命周期内接入私有 Enrollment、device_config 和 device_report，
+先通过受验证的存量迁移构造共享 v2 reader 可接受的真实 bootstrap authority，固定初始 epoch、
+旧 authority/floor、原身份与数据、PoP、initial payload/transition/Head/QC；不能只修改 epoch 数值
+而继续使用占位承诺。随后在 `controlRuntime.serve()` 的正式生命周期内接入私有 Enrollment、device_config 和 device_report，
 由同一受保护状态提供真实 issuer、持久密钥、封装与制品依赖。同步将正常管理入口连接到认证事务，
 使 Device 配置实际生效并能回读有效报告。随后按[从当前实现迁移](../protocols/control-plane/migration.md#从当前实现迁移)
 完成在用客户端接续、精确发布和已替换路径删除。

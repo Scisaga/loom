@@ -92,7 +92,7 @@ profile、private resources、mapping 和派生 state 分别使用独立
 示例只能使用文档地址和符号端口：
 
 ~~~text
-demo-edge.example → 192.0.2.40
+k7v2m9q.example.com → 192.0.2.40
 HTTPS: <public-https-alt>/tcp → <nginx-local>/tcp
 HY2 pool: <public-udp-a..b>/udp → <local-udp-a..b>/udp
 WG: <public-wg>/udp → <local-wg>/udp
@@ -116,21 +116,108 @@ responsibility、FQDN 或上述资源时同样失败关闭。
 不经 UPnP、NAT-PMP 或供应商接口创建、修改、删除映射，只记录 certified private intent 并从
 外部逐 transport 验证 exact public/local tuple。
 
+### 托管域名的受理与执行
+
+托管 DNS 的目标和验收由本节定义，交付跟踪见 [DNS 生命周期 Issue](https://github.com/Scisaga/loom/issues/17)。
+DNS 管理输出 certified 名称/地址绑定、DNS 读回状态及受认证 DNS-01 接口；
+[公网入口与证书交付](https://github.com/Scisaga/loom/issues/8)消费这些输入，负责节点本地 CSR、
+ACME order、证书安装与 listener 验证，不自行分配名称、维护记录或持有 provider PAT。
+
+一次生命周期请求由一个 control 受理：准备名称、提交绑定/任务/删除状态并指定 executor；
+副作用只能在 Raft commit、apply 和提交后 QC 后执行。其他 control 复制认证事务，普通 SSOT/CRDT
+同步、配置发布或重启不重新派发任务。“一个 control 受理”不赋予其绕过 quorum 的权限。
+
+实际 DNS API 请求只由在役、具备 DNS 执行授权、可达 provider 的**非 control Device**在现有节点
+进程中执行。正式入网后满足资格的新节点可以维护自身记录，否则委派其他合格节点。
+兼任 control + forward 的物理节点可以需要公网域名，但不执行 Gandi API。缺少 executor 时显示
+具体待执行原因，不回退到 control/开发机，不新增固定全网 DNS 管理机或常驻抢占选主/轮询系统。
+
+### 名称分配与隐私
+
+自动主机标签严格为七字符小写 Base36：`^[a-z0-9]{7}$`，在 proposal preparation 使用密码学安全
+随机源均匀生成。根域从操作者已授权、无项目语义的 zone 池中选择；不使用 Device ID、显示名、
+地址、地区、职责、时间、顺序号及这些属性的可推导哈希，也不添加项目、网络或职责前缀。
+例如 `k7v2m9q.example.com`。不使用区分大小写的 Base62，不因冲突改变长度。
+
+- 以规范化完整 FQDN 为唯一性边界，准备阶段核对私有绑定、预留、退役记录和 provider 已有占用；
+  未知归属记录不覆盖。冲突有界重试，结果随 proposal 固化；reducer/renderer 不查询 DNS、不读时钟、不随机选号。
+- 重试和接管复用同一已提交绑定。提交后才发现外部冲突时，显式修订尚未启用的分配事务，不能直接换名重试副作用。
+- 重启、改显示名/职责、IP 变化、端口轮换和例行续证不改变 FQDN。修改域名池不自动改写既有绑定；
+  换域名通过显式迁移和新旧入口 overlap 完成。已提交名称退役后不复用给其他身份。
+- 完整 `Device → FQDN → 公网前端` 映射只进私有认证状态；普通 Device 只取得其授权连接需要的部分。
+  不把内部 Device/cluster ID、职责或全网映射写进公开 DNS 辅助 TXT、镜像或报告。
+- 随机标签不是认证秘密。共享根域、IP 与证书透明日志仍可能关联入口；可在已授权根域池分散分配，
+  不能声称网络不可枚举。证书不为方便而汇总多个节点名称或复用节点私钥。
+
+### 存量迁移、预留与删除
+
+首次迁移由管理员经现有私有 control UI/API 显式提交，复用 admin 鉴权、expected head 与 request ID。
+受理者读取已提交节点清单，生成可逐节点回读和恢复的计划；升级二进制不自动注册域名。
+
+| 原状态 | 迁移规则 |
+|---|---|
+| 只有公网 IP 或无可用域名 | 按同一规则分配七字符随机名称 |
+| 既有名称符合字符/长度、独立随机性、隐私与授权 zone 要求 | 验证真实归属后接管；外观或同 IP 不足以证明归属 |
+| 暴露身份/地区/职责或不符合规则的名称 | 分配新名并显式迁移入口，不能默认沿用 |
+| 旧名称不在托管 provider/范围 | 建立受管新名，迁移完成前保留旧入口，不越权修改旧 provider |
+| 离线、地址未知、缺执行者或凭据 | 记录对应待处理原因，保留原身份和可用配置，不阻塞其他节点任务 |
+
+迁移按“绑定/任务提交 → 授权 executor 写 DNS 并读回 → 证书/listener 准备与外部验证 → 新旧入口
+视图 → reader、DNS TTL/缓存、Invite 与退役 guard 满足 → 删除被替换入口和有权管理的旧记录”执行。
+复用原 Device/Enrollment 身份；不重装全网、清空 registry 或提前关闭旧入口。
+
+| 生命周期事件 | DNS 行为 |
+|---|---|
+| 创建需要公网服务的 Device/Invite | 预留名称并提交私有绑定；尚未入网或无服务地址时不创建 A/AAAA，不公开邀请映射 |
+| 正式入网且取得公网服务地址 | 沿同一事务派发 DNS 创建，身份安装与公网入口就绪分别显示 |
+| 公网 IP、NAT 前端或地址族变化 | 提交下一代地址绑定，保留名称；旧地址按 overlap/退役 guard 移除 |
+| 证书签发/续期 | 提交绑定 certified 域名与 exact ACME order 的 DNS-01 任务 |
+| 端口轮换、普通配置同步或短暂离线 | 无地址/challenge 变化时不写 DNS、不重新分配名称 |
+| 删除节点或撤销公网服务 | 提交撤下和删除状态，guard 满足后由仍在役的其他授权非 control executor 清理 |
+| 未使用 Invite 取消或预留作废 | 结束预留，已提交名称留下退役记忆，不回收给新身份，不删除其他事务记录 |
+
+公网服务地址来自目标节点自己的实际网络发现；不得取执行者、开发机、control、管理 SSH 或
+HTTP 代理的地址。已提供 NAT mapping 不可达只阻止 listener advertise，不阻止名称预留和正确 DNS
+配置；Loom 不登录或改动网关。被删除节点已销毁也须能由其他 executor 清理。旧节点恢复只能服从
+最新认证状态，不能靠本地旧配置、DNS 成功或旧回执重注册；恢复原身份也需新的显式授权。
+
+### DNS 任务、并发与凭据
+
+私有持久任务绑定 lifecycle/request ID、owner Device、FQDN、binding generation/desired hash、
+exact RRSet/order TXT value、action、指定 executor、授权代次/期限、执行阶段、读回结果与错误分类。
+最终 wire 仍须严格 schema/hash 设计，不能用本地 JSON 或 generation 文件充当 authority。
+同一绑定/RRSet 的冲突操作经现有事务机制串行；不同节点任务可以并行。重试、control/executor
+故障和回执丢失时恢复原事务并 read-after-write，不因其他副本新收到配置就重复派发。
+
+必须先核实真实 provider 的条件创建、更新、删除和逐值原子能力；支持 CAS/version 时必须使用。
+单 control、本地 generation、先读后写、ownership tag 或短租约都不能取消已发出的迟到 HTTP 请求，
+不能替代 provider 条件写/删。执行语义是可恢复的 at-least-once，不宣称 exactly-once。
+
+DNS-01 只增加/移除当前 order 拥有的精确 TXT 值，保留并行 order 和其他用途值。先 GET 再整集合
+Replace/Delete 不构成逐值原子保护。若 provider 不支持所需条件删除或等效防护，保留资源并显示
+“待清理”，提供受审计的清理路径；未解决迟到写/删与并行 TXT 防护前，不能宣称自动清理已完成。
+旧授权停止新请求，旧代/迟到回执不推进新状态；executor 自报成功不改变名称归属或产生另一份 SSOT。
+
+首个真实 adapter 使用 Gandi LiveDNS，保留 provider-neutral 接口和 fake provider。按 exact name/type
+操作，不重写整区。Gandi HTTPS 验证原站证书与主机名，PAT 不进入 redirect 或 CONNECT 握手；provider
+HTTP client 与节点公网地址发现 client 分离。实际能力、产品/zone scope、错误分类与撤权须分别验收：
+本地 record scope 校验不是 provider 隔离，能修改整个授权 zone 的 PAT 不能称为“仅能改本节点”。
+
+PAT 来源为忽略的 `.env` 中 `GANDI_PAT_TOKEN`。受保护交付端将其封装给获授权的非 control executor；
+运行时不依赖开发机 `.env`。control 只持 secret ref/密文和分发状态，不持有或解封 PAT 明文。
+forward/internet_egress 不自动授予 DNS 权限；候选可有多个，首次交付、executor 撤权或转为 control
+后的凭据收回与必要轮换必须可操作。PAT 不进日志、命令参数、Issue、文档或公开 artifacts。
+配置 PAT 不授权购买/续费/转移域名或修改注册信息。
+
+UI 分别显示名称预留、DNS 待执行/已核对、证书/入口准备、就绪、退役待清理和失败原因；
+迁移计划显示保留/新分配/替换/冲突/等待及逐节点结果。DNS API 成功不是公网入口就绪，
+只读状态不使用 Apply；失败重试继续原任务。authoritative DNS 与至少两个外部 resolver 一致后，
+才把 DNS 结果交给 listener verify；入口失败仍保持 preparing。
+
 ### DNS 与证书 reconcile
 
-DNS/证书 provider adapter 接收的只是 certified desired state。推荐 DNS API 使用最小权限：
-
-- 仅能修改受管 zone 下指定 record 前缀和 ACME TXT；
-- 不能转移域名、修改注册联系人或扣款续费；
-- 凭据作为 secret artifact 只封装给当前 executor；
-- 所有写入带 provider CAS/version，并以 operation ID 幂等；
-- authoritative DNS 与至少两个外部 resolver 一致后才进入 listener verify。
-
-FQDN 分配必须先形成 certified `server_id → fqdn → public frontend` binding，再由 executor 写 DNS。
-label、冲突重试结果和 generation 都由 proposal preparation 注入；reducer/renderer 不查询 DNS、
-不读时钟也不随机选名字。同一 active server 的 FQDN 跨 listener/端口轮换保持稳定；换域名必须先
-让新旧 binding、证书和 EndpointSet 重叠，再按 reader floor 回收旧名。域名购买、续费支付、跨
-注册商转移继续要求显式 operator 批准，不因配置了 DNS API 自动授权。
+证书流程只消费上面的认证绑定、DNS 状态及 DNS-01 接口；不在证书组件中直接调用 provider、
+维护 DNS 记录或持有 PAT。接口必须核对域名/order/任务授权，DNS 失败不推进证书或入口就绪。
 
 证书统一使用 DNS-01，不依赖公网 80。每个 forward server 在本地生成 private key/CSR；private
 key 不进入 SSOT、CRDT、distribution 或 control backup。ACME account 可由受约束 executor 管理，

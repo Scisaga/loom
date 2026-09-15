@@ -16,7 +16,10 @@ resource_id + generation 获取短租约；租约绑定 Raft term/index、certif
 执行规则：
 
 1. 只有持当前租约且已验证 head/QC 的 executor 能创建/修改外部资源；
-2. provider 支持 CAS 时必须使用；不支持时用 deterministic ownership tag 和 generation fencing；
+2. provider 支持 CAS 时必须使用；本地 ownership/generation fencing 只能约束本地执行，
+   不能隔离已发出的迟到远端请求。DNS 条件写/删及逐值 TXT 保护按
+   [DNS 任务、并发与凭据](public-access.md#dns-任务并发与凭据)执行；能力不足时保留资源并显示待清理，
+   不能用本地 generation 冒充 provider 原子保证；
 3. 超过时钟安全截止立即停止发新请求；
 4. 接管者先 read-after-write 观察，再继续未完成步骤；
 5. 外部失败写 observation/status，不反向生成另一份 SSOT；
@@ -36,6 +39,9 @@ DNS 写入 / 操作者提供的 mapping intent 与外部 readback 就绪
   → prefer/drain/retire
   → 回收旧证书、listener 与 Loom mapping reservation（不改网关）
 ~~~
+
+DNS 的受理 control 与非 control executor 分工、凭据和事件任务边界见
+[托管域名受理与执行](public-access.md#托管域名的受理与执行)，不得从本节通用租约规则推导全网 DNS 轮询。
 
 ControlSet 失去 quorum 时，不创建新端点、不轮换证书、不删除旧 listener；已有数据面和未过期
 LKG 继续运行。证书临近到期但无 quorum 是显式告警，不能让单 executor 绕过 QC 续写 authority。

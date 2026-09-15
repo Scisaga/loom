@@ -89,7 +89,10 @@ signed release/pull 继续提供持久记录、离线补齐与纠偏，快速发
   grep -Eq '^[[:space:]]*(export[[:space:]]+)?GANDI_PAT_TOKEN=' .env
   ```
 
-  实际值由目标进程的受保护 dotenv/环境边界注入，不输出、不启用 `set -x`，不放进命令参数、tracked 文件、日志或证据。
+  首次交付由受保护秘密边界封装给获授权的非 control executor，运行节点不依赖开发机 `.env`；
+  control 只保存秘密引用/密文，不持有或解封 PAT。真实 provider API 由授权非 control 节点执行，
+  不在开发机或 control 调用 Gandi。具体分工见[托管 DNS 规范](../protocols/control-plane/public-access.md#托管域名的受理与执行)。
+  实际值不输出、不启用 `set -x`，不放进命令参数、tracked 文件、日志或证据。
   代码发布工具不负责 DNS 修改，读取环境配置不意味着已接通 DNS provider。
 - NAT/光猫/路由器管理不属于开发或验收范围。只按操作者提供的 signed public/local tuple 从外部验证真实流量；
   禁止登录网关、调用 UPnP/NAT-PMP/供应商接口修改映射。丢映射、池耗尽、协议和 offset 错误使用合成 intent 与故障注入验证。

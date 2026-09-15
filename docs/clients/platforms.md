@@ -13,7 +13,7 @@ v2 认证、对象与事务以[控制面规范](../protocols/control-plane/READM
 Linux Server 是交付优先的无 GUI 客户端形态；它与 Windows/Android 遵守同一
 签名、授权、floor 和 certified 门禁。源码接线及具体缺口见[实现对照](../development/implementation.md)。
 
-**部署形态：**
+**v1 兼容部署形态：**
 
 - `loom` 静态二进制；
 - sing-box 固定版本；
@@ -29,11 +29,22 @@ Linux Server 是交付优先的无 GUI 客户端形态；它与 Windows/Android 
 Direct / Auto / 指定出口共用 `socks5h://127.0.0.1:1080`，不新增端口。指定出口
 可以是任一在役 `egress_capable` 节点，但前置路径仍由 Agent 自动择优。
 
-**交付契约：** Linux 使用可校验的 `tar.gz`，包含 Loom、钉住版本的
+**v1 交付契约：** Linux 使用可校验的 `tar.gz`，包含 Loom、钉住版本的
 sing-box、manifest、文件哈希与安装器。节点专属 systemd unit 不固化在通用包中，
 而是在加入完成后的首份签名 bundle 中通过事务安装。v1 不要求 deb/rpm、通用
 卸载器或独立客户端 GUI。实际制品状态由发布回执确认，操作见
-[Linux 客户端安装](linux-install.md)。
+[Linux v1 兼容安装](../operations/linux-v1-install.md)。
+
+**v2 职责运行面：** 由 certified Device view 决定 `use_loom`、`forward`、`internet_egress`
+及允许组合，`internet_egress` 蕴含 `forward`。其中 `use_loom` 同时提供签名规则下的 TUN 与
+mixed，真实承载 TCP/UDP、IPv4/IPv6 与 DNS；只承担 forward 的 Device 不因“Linux 客户端”
+这个发行名称而自动接管本机流量。永久 control/L3 overlay 按已认证逐边 LinkIntent 建立，
+control 能力只来自 ControlSet，不由安装参数授予。
+
+v1 的 mixed-only、“不创建 TUN”和旧 systemd 列表不能套到 v2。v2 的安装、私有配置/报告、
+运行和恢复命令见[Linux 安装与运行](linux-install.md)；Linux Agent 仍使用自身候选预算，
+不移植 Windows/Android 的网络代 registry。两版均复用既有身份及对应可信状态，
+按[迁移完成条件](../protocols/control-plane/migration.md)完成替换后删除对应旧业务入口。
 
 ### Windows
 

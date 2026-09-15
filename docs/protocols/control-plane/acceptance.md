@@ -99,6 +99,16 @@
 12. direct server 不伪造 NAT mapping，NAT server 缺 mapping 不发布；
 13. 三类 public Endpoint listener 只接受已认证的 `dial_target_fqdn`，IP literal 失败关闭。
 
+托管 DNS 还须按[名称与生命周期规范](public-access.md#托管域名的受理与执行)验收：
+
+- 七字符均匀随机标签、规范化唯一性、外部占用/退役名拒绝、准备冲突和提交重放；
+- 显式存量迁移、无地址预留、正式入网后创建、地址变更、Invite 取消与节点删除后的其他 executor 接管；
+- control 只受理/复制认证事务，真实 Gandi 请求只来自授权非 control executor，PAT 明文不在 control 解封；
+- provider 实际条件写/删能力、迟到请求、并发地址更新/删除、并行 order TXT 交错与失败读回；
+  无等效防护时保留资源并显示待清理，单机 generation 或顺序测试不能抵扣；
+- 初始 PAT 封装交付、实际 provider scope、executor 撤权/职责变化和必要轮换；
+- DNS 结果接入证书/listener 的正常成功流程，及 DNS 成功但端口失败仍 preparing 的独立状态。
+
 ### 轮换
 
 1. prepare 未通过 local/external verify 不 advertise；
@@ -122,7 +132,9 @@
 2. Android VPN permission、前台服务、protect、防回环和 Keystore 正常；
 3. Wi-Fi 默认 Network/AP 变化创建新 network generation，旧代观测不污染新代；蜂窝与
    Wi-Fi 切换在独立 GitHub Issue #16 的具备 telephony 真机上验收，不阻塞 Wi-Fi 主矩阵；
-4. Direct 不主动探测；Auto/指定出口复用同代 registry；
+4. Windows/Android 的 Direct 不主动探测；Auto/指定出口复用同代 registry。Android 运行中
+   Direct→代理先应用 selector，再按既定单批预算异步更新；RTT 来自实际 ICMP reply，
+   仅在 runtime/配置/网络代仍匹配时按当前最新模式/出口重算，迟到结果不能恢复旧模式或污染新代；
 5. 锁屏、省电、进程回收、重启后恢复正式 LKG，不恢复 bootstrap token；
 6. 固定出口只更换入口/listener generation，不偷偷更换最终出口；
 7. DNS 在最终出口解析的既有数据面要求继续验收；

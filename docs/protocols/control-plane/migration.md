@@ -41,7 +41,7 @@ Head/ACL、双写或静默回退绕过新协议。当前未完成事项只记录
 
 ### Reader、静态 distribution 与 bootstrap tunnel
 
-- 先升级 server 和全部客户端 reader，识别拆分后的 endpoint sets；
+- 先升级本次迁移实际在用的 server 和客户端 reader，识别拆分后的 endpoint sets；其他平台继续完成其实现要求，不成为现网替换的虚假门禁；
 - 每个 active forward server 建立 FQDN/PublicAccessProfile/Nginx static distribution；
 - 实现 HY2 capability validator、双层 tunnel ACL 和 private Enrollment TLS；
 - Android/Windows/Linux 实现紧凑 QR/文件、catalog 验签、真实 HY2 probe、Keystore/PoP；
@@ -74,7 +74,8 @@ Device view 或配置 authority。
 
 ### 域名、DNS-01、证书与三类公网部署
 
-- DNS provider adapter、最小权限 credential、domain allocation policy；
+- 按[托管 DNS 规范](public-access.md#托管域名的受理与执行)完成七字符名称、存量迁移/预留、
+  非 control executor、凭据封装与生命周期任务；provider 条件写/删及并行 TXT 不得由本地 generation 替代；
 - direct_standard、direct_alternate，以及 nat_mapped intent/readback reconcile；
 - 节点本地 CSR/private key、ACME DNS-01、SPKI overlap；
 - Nginx fake/static distribution 配置模板和外部 reachability verification。
