@@ -2,8 +2,8 @@ package enrollmentv2
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
@@ -41,7 +41,7 @@ type DeviceIssuanceContext struct {
 // IssueReservedDeviceCertificate 只生成 provisional leaf。调用方必须通过
 // DurableProvisionalService 先保存 first-result，再走 issuance/approval/completion QC；
 // CA 签名本身不赋予 Device 身份或配置访问权（D102、D130）。
-func IssueReservedDeviceCertificate(input DeviceIssuanceContext, issuerKey ed25519.PrivateKey, random io.Reader) ([]byte, error) {
+func IssueReservedDeviceCertificate(input DeviceIssuanceContext, issuerKey crypto.Signer, random io.Reader) ([]byte, error) {
 	record := &input.Reservation
 	if record.State.Status != "reserved" {
 		return nil, errors.New("[D130 Device CA] 只允许已认证 reservation 签发首次制品")
@@ -99,7 +99,7 @@ func IssueReservedDeviceCertificate(input DeviceIssuanceContext, issuerKey ed255
 		return nil, err
 	}
 	issuer, err := x509.ParseCertificate(issuerDER)
-	if err != nil || len(issuerKey) != ed25519.PrivateKeySize {
+	if err != nil || issuerKey == nil || issuer.PublicKeyAlgorithm != x509.Ed25519 {
 		return nil, errors.New("[D102 Device CA] issuer certificate/key 无效")
 	}
 	issuerSPKI, err := x509.MarshalPKIXPublicKey(issuerKey.Public())

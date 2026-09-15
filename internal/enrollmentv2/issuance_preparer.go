@@ -1,7 +1,7 @@
 package enrollmentv2
 
 import (
-	"crypto/ed25519"
+	"crypto"
 	"encoding/base64"
 	"errors"
 	"io"
@@ -14,7 +14,7 @@ import (
 // 替换已 admission 的身份、职责或 grants，不把生成制品当成完成入网（D124、D130）。
 func PrepareReservedDeviceIssuance(input DeviceIssuanceContext, view wire.DeviceViewPayloadV2,
 	secretRefs []wire.SecretArtifactRefV2, previousRegistry []wire.EnrollmentIssuanceRegistryLeafV1,
-	issuerKey ed25519.PrivateKey, random io.Reader) (PreparedProvisionalV1, error) {
+	issuerKey crypto.Signer, random io.Reader) (PreparedProvisionalV1, error) {
 	if err := wire.ValidateDeviceViewPayload(&view); err != nil {
 		return PreparedProvisionalV1{}, err
 	}

@@ -12,6 +12,7 @@ import (
 
 func TestRealDeviceIssuanceFirstResultSurvivesRestartWithoutResigning(t *testing.T) {
 	input, key := deviceIssuerFixture(t)
+	signer := &deviceIssuerHandle{public: key.Public(), sign: key.Sign}
 	view := issuerInitialView(t, input)
 	path := filepath.Join(t.TempDir(), "first-results.json")
 	calls := 0
@@ -19,7 +20,7 @@ func TestRealDeviceIssuanceFirstResultSurvivesRestartWithoutResigning(t *testing
 		func(_ context.Context, _ string, _ VerifiedClaimAttemptV2, record DurableRecord, coordinate EnrollmentCommitCoordinateV1) (PreparedProvisionalV1, error) {
 			calls++
 			input.Reservation, input.Coordinate = record, coordinate
-			return PrepareReservedDeviceIssuance(input, view, []wire.SecretArtifactRefV2{}, nil, key, nil)
+			return PrepareReservedDeviceIssuance(input, view, []wire.SecretArtifactRefV2{}, nil, signer, nil)
 		})
 	if err != nil {
 		t.Fatal(err)
@@ -32,7 +33,7 @@ func TestRealDeviceIssuanceFirstResultSurvivesRestartWithoutResigning(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if calls != 1 || wire.VerifyEnrollmentProvisionalIssuance(&first.Issuance, &first.Profile) != nil {
+	if calls != 1 || signer.calls != 2 || wire.VerifyEnrollmentProvisionalIssuance(&first.Issuance, &first.Profile) != nil {
 		t.Fatal("真实 CA first-result 不可验证")
 	}
 	recovered, err := ReadDurableProvisionalResults(path)

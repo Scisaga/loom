@@ -2,11 +2,14 @@ package enrollmentv2
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"errors"
+	"io"
 	"testing"
 
 	"loom/internal/wire"
@@ -14,7 +17,8 @@ import (
 
 func TestDeviceIssuerUsesAdmittedPublicKeyAndCurrentCertifiedProfile(t *testing.T) {
 	input, key := deviceIssuerFixture(t)
-	der, err := IssueReservedDeviceCertificate(input, key, rand.Reader)
+	signer := &deviceIssuerHandle{public: key.Public(), sign: key.Sign}
+	der, err := IssueReservedDeviceCertificate(input, signer, rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,6 +36,38 @@ func TestDeviceIssuerUsesAdmittedPublicKeyAndCurrentCertifiedProfile(t *testing.
 	if !bytes.Equal(leaf.RawSubjectPublicKeyInfo, input.IdentitySPKIDER) || leaf.IsCA ||
 		leaf.SignatureAlgorithm != x509.PureEd25519 || len(leaf.ExtKeyUsage) != 1 || leaf.ExtKeyUsage[0] != x509.ExtKeyUsageClientAuth {
 		t.Fatal("签发器改变了客户端持有的 identity 或 certificate role")
+	}
+	if signer.calls != 1 {
+		t.Fatalf("opaque signing handle calls=%d", signer.calls)
+	}
+}
+
+// Only the provider retains the private key; issuance receives a signing handle.
+type deviceIssuerHandle struct {
+	public crypto.PublicKey
+	sign   func(io.Reader, []byte, crypto.SignerOpts) ([]byte, error)
+	calls  int
+}
+
+func (handle *deviceIssuerHandle) Public() crypto.PublicKey { return handle.public }
+
+func (handle *deviceIssuerHandle) Sign(random io.Reader, message []byte, options crypto.SignerOpts) ([]byte, error) {
+	handle.calls++
+	if options.HashFunc() != crypto.Hash(0) {
+		return nil, errors.New("provider requires pure Ed25519")
+	}
+	return handle.sign(random, message, options)
+}
+
+func TestDeviceIssuerPreservesProviderFailureWithoutCertificate(t *testing.T) {
+	input, key := deviceIssuerFixture(t)
+	unavailable := errors.New("demo-exact-key-version-unavailable")
+	signer := &deviceIssuerHandle{public: key.Public(), sign: func(io.Reader, []byte, crypto.SignerOpts) ([]byte, error) {
+		return nil, unavailable
+	}}
+	der, err := IssueReservedDeviceCertificate(input, signer, rand.Reader)
+	if len(der) != 0 || !errors.Is(err, unavailable) || signer.calls != 1 {
+		t.Fatalf("provider failure bypassed: bytes=%d calls=%d err=%v", len(der), signer.calls, err)
 	}
 }
 
