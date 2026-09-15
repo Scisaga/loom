@@ -167,7 +167,8 @@ func controlDeps(c *Control, onDeviceChange ...func()) *webui.ControlDeps {
 				return err
 			}
 			enrichControlView(v, s, v.Self)
-			gateCurrentSSOTDirectEvidence(v, revision(body))
+			v.IntentRevision = revision(body)
+			gateCurrentSSOTDirectEvidence(v, v.IntentRevision)
 			return nil
 		},
 		Read: func() (string, error) {

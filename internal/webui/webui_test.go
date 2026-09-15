@@ -69,4 +69,3 @@ func TestFaviconUsesSimplifiedLoomMark(t *testing.T) {
 		t.Fatal("favicon must use a transparent canvas with a v4-gradient mark and ivory petals")
 	}
 }
-

@@ -123,6 +123,10 @@ function rows(id, items, key, render) {
 }
 
 function accept(data) {
+  const warning = document.querySelector('#evidence-warning'),
+    errors = [data.error, ...list(data.view.Warnings)].filter(Boolean);
+  warning.textContent = errors.join(' · ');
+  warning.hidden = errors.length === 0;
   for (const [id, traffic] of Object.entries(data.node_traffic || {})) {
     const next = trafficSample(traffic.current),
       previous = samples.get(id);
@@ -379,7 +383,7 @@ function updateOverview() {
     devices = list(snapshot.inventory.devices).filter(d => d.status !== 'revoked');
   setHTML(document.querySelector('#overview-stats'), [
     ['Devices', devices.length || v.Nodes.length],
-    ['Online', devices.filter(d => d.presence_status === 'live').length],
+    ['Online', caps.admin ? devices.filter(d => d.presence_status === 'live').length : '—'],
     ['Runtime problems', devices.filter(d => d.data_plane_status === 'problem').length],
     ['Observed paths', v.Routes.length]
   ].map(([label, value]) => `<div class="stat"><span class="muted">${label}</span><strong>${value}</strong></div>`).join(''));
@@ -588,6 +592,10 @@ async function render() {
     else a.removeAttribute('aria-current');
   }
   try {
+    if (!caps.admin && path !== '/') {
+      app.innerHTML = heading('Administrator certificate required', 'Import admin.p12 and reconnect to manage devices, services and releases.');
+      return;
+    }
     if (path === '/') overviewPage();
     else if (path === '/devices' || path === '/clients' || path === '/nodes') {
       if (query().get('new') === '1' && caps.create) await enrollmentPage(epoch);
@@ -611,6 +619,7 @@ bindDeviceActions();
 try {
   const boot = await api('/api/control/ui');
   caps = boot.capabilities;
+  for (const link of document.querySelectorAll('nav a')) link.hidden = !caps.admin && link.pathname !== '/';
   snapshot = boot.snapshot;
   accept(snapshot);
   await render();

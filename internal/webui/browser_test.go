@@ -288,3 +288,36 @@ func TestBrowserSnapshotMergesIndependentPresenceWithoutCollecting(t *testing.T)
 		t.Fatal("expired presence inherited observation freshness")
 	}
 }
+
+func TestBrowserEnrichmentPreservesCachedMetricsAndOwnsMutableSlices(t *testing.T) {
+	cached := View{IntentRevision: "demo-old", Nodes: []NodeView{{ID: "demo-node", Name: "Original"}}, Routes: []RouteView{{Node: "demo-node", ScopeID: "demo-old"}}, Links: []LinkView{{From: "demo-node", To: "demo-peer", RateSamples: 3, RecentTXBytes: 1024}}}
+	revision := "demo-old"
+	calls := 0
+	d := Deps{Admin: true, TrafficSnapshot: func() View { return cached }, PresenceSnapshot: func() map[string]string { return map[string]string{"demo-new": "demo-presence"} }, Control: &ControlDeps{Revision: func() (string, error) { return revision, nil }, Enrich: func(v *View) error {
+		calls++
+		v.Nodes[0].Name = "Changed"
+		v.Routes[0].ScopeID = "demo-new"
+		v.Nodes = append(v.Nodes, NodeView{ID: "demo-new"})
+		v.Links = nil
+		return nil
+	}}}
+	if v := browserView(d); calls != 0 || v.Links[0].RateSamples != 3 {
+		t.Fatal("unchanged SSOT erased cached link metrics")
+	}
+	revision = "demo-new"
+	v := browserView(d)
+	if calls != 1 || v.Nodes[1].PresenceAt != "demo-presence" {
+		t.Fatal("new declaration did not receive its current presence")
+	}
+	if cached.Nodes[0].Name != "Original" || cached.Routes[0].ScopeID != "demo-old" {
+		t.Fatal("browser wrote into shared cache")
+	}
+}
+func TestCachedDirectObservationExpiresIndependentlyOfPresence(t *testing.T) {
+	now := time.Now().UTC()
+	inventory := ClientInventory{Clients: []ClientView{{ID: "demo-node", Platform: "linux-server", Status: "ready"}}}
+	view := View{Nodes: []NodeView{{ID: "demo-node", Declared: true, Reached: true, Health: "healthy", PresenceAt: now.Format(time.RFC3339), ObservedAt: now.Add(-clientRuntimeStaleAfter - time.Second).Format(time.RFC3339)}}}
+	if mergeClientRuntime(inventory, view, now).Clients[0].DataPlaneStatus != "stale" {
+		t.Fatal("cached direct observation never expired")
+	}
+}

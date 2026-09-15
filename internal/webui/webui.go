@@ -345,8 +345,9 @@ type View struct {
 	// IntentSource names the inventory generation used by this view. A regular
 	// node only knows the inventory in its applied report config; the control
 	// node replaces it with the just-read current SSOT during enrichment.
-	IntentSource string
-	Nodes        []NodeView
+	IntentSource   string
+	IntentRevision string
+	Nodes          []NodeView
 	// TrafficHistory 是中控从相邻可信 WireGuard 计数器样本推导出的可选
 	// 时间桶。nil 明确表示当前 View 没有历史数据能力；webui 不会把当前
 	// 累计 counter 猜成曲线或时间桶。普通节点仍可只提供 Nodes.Tunnels

@@ -152,8 +152,8 @@ func mergeClientNodeRuntime(client *ClientView, node NodeView, now time.Time) {
 	}
 	client.RuntimeProblems = append([]string(nil), node.Problems...)
 
-	observationStale := !direct && (!observedOK || node.AgeSec > int(clientRuntimeStaleAfter.Seconds()) ||
-		now.Sub(observed) > clientRuntimeStaleAfter || observed.After(now.Add(time.Minute)))
+	observationStale := !observedOK || node.AgeSec > int(clientRuntimeStaleAfter.Seconds()) ||
+		now.Sub(observed) > clientRuntimeStaleAfter || observed.After(now.Add(time.Minute))
 	stale := observationStale || heartbeatStale
 	switch {
 	case !node.Declared:

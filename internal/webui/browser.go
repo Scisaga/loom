@@ -31,14 +31,6 @@ func browserView(d Deps) View {
 	} else if d.Snapshot != nil {
 		v = d.Snapshot()
 	}
-	if d.PresenceSnapshot != nil {
-		// 缓存包含共享切片，只复制投影后合入已验证的最新租约。
-		presence := d.PresenceSnapshot()
-		v.Nodes = append([]NodeView(nil), v.Nodes...)
-		for i := range v.Nodes {
-			v.Nodes[i].PresenceAt = presence[v.Nodes[i].ID]
-		}
-	}
 	if !d.Admin {
 		// 匿名私有页面只投影健康摘要，不交出连接资料、证书、完整报告或 SSOT。
 		nodes := make([]NodeView, 0, len(v.Nodes))
@@ -47,11 +39,35 @@ func browserView(d Deps) View {
 		}
 		return View{ObservedAt: v.ObservedAt, Nodes: nodes}
 	}
+	// enrichment 会原位调整节点、route scope 与 warnings，不能写入共享缓存。
+	v.Nodes = append([]NodeView(nil), v.Nodes...)
+	v.Routes = append([]RouteView(nil), v.Routes...)
+	v.Warnings = append([]string(nil), v.Warnings...)
 	if d.Control != nil && d.Control.Enrich != nil {
-		if err := d.Control.Enrich(&v); err != nil {
-			v.Warnings = append(v.Warnings, "SSOT metadata unavailable")
+		changed := true
+		if d.Control.Revision != nil && v.IntentRevision != "" {
+			revision, err := d.Control.Revision()
+			if err != nil {
+				v.Warnings = append(v.Warnings, "SSOT metadata unavailable")
+				changed = false
+			} else {
+				changed = revision != v.IntentRevision
+			}
+		}
+		// 同一份声明直接保留 gossip 缓存中的聚合指标；新声明重新生成拓扑。
+		if changed {
+			if err := d.Control.Enrich(&v); err != nil {
+				v.Warnings = append(v.Warnings, "SSOT metadata unavailable")
+			}
 		}
 	}
+	if d.PresenceSnapshot != nil {
+		presence := d.PresenceSnapshot()
+		for i := range v.Nodes {
+			v.Nodes[i].PresenceAt = presence[v.Nodes[i].ID]
+		}
+	}
+
 	return v
 }
 
