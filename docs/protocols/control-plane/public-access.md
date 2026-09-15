@@ -26,7 +26,7 @@
 
 1. 一个稳定 FQDN，解析到其公网地址或 NAT 前端；
 2. 公网 Nginx HTTPS：TCP 443 可用时使用 443，否则使用 public profile 中的替代 TCP 端口；
-3. DNS-01 证书管理和节点本地 TLS private key；
+3. 匹配认证域名/SPKI 的有效证书、完整链及节点本地 TLS private key；自动 DNS-01 签发与续期由 #17 跟踪；
 4. Hysteria2 UDP listener/可轮换端口池；
 5. WireGuard UDP listener，用于永久 L3/data 或 overlay link；
 6. 正式版的独立 Trojan/TLS TCP bootstrap fallback。
