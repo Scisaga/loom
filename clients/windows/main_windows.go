@@ -44,6 +44,7 @@ func processWindowsProbeRegistry() *agent.EntryProbeRegistry {
 }
 
 func main() {
+	defer clientruntime.CloseProcessWindowsUnderlay()
 	edition, err := configuredEdition()
 	if err != nil {
 		log.Fatal(err)

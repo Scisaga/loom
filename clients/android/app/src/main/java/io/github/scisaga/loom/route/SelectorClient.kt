@@ -10,7 +10,12 @@ import java.net.Socket
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-internal class SelectorClient(routePlan: String) {
+internal interface RouteSelector {
+    suspend fun apply(targets: List<AppliedSelector>)
+    suspend fun readCurrent(targets: List<AppliedSelector>): Map<String, String>
+}
+
+internal class SelectorClient(routePlan: String) : RouteSelector {
     private val root = JSONObject(routePlan)
     private val controller = root.getString("api").also {
         check(it == "127.0.0.1:61800") { "移动 selector 控制端点不是固定回环地址" }
@@ -21,7 +26,7 @@ internal class SelectorClient(routePlan: String) {
         }
     }
 
-    suspend fun apply(targets: List<AppliedSelector>) {
+    override suspend fun apply(targets: List<AppliedSelector>) {
         check(targets.isNotEmpty()) { "没有可应用的 selector" }
         val ordered = targets.sortedBy(AppliedSelector::selector)
         val current = readCurrent(ordered)
@@ -47,7 +52,7 @@ internal class SelectorClient(routePlan: String) {
     }
 
     /** 只读投影 libbox 的实际 selector 状态。 */
-    suspend fun readCurrent(targets: List<AppliedSelector>): Map<String, String> {
+    override suspend fun readCurrent(targets: List<AppliedSelector>): Map<String, String> {
         check(targets.isNotEmpty()) { "没有可读取的 selector" }
         return linkedMapOf<String, String>().apply {
             targets.sortedBy(AppliedSelector::selector).forEach { target ->

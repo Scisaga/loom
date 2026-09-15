@@ -17,8 +17,11 @@ type ClientOptions struct {
 	ProbeRegistry          *EntryProbeRegistry
 	UnderlayGeneration     string
 	EntryProbesUnavailable bool
-	Observations           *ObservationCache
-	HopCarriers            map[string][]string
+	EntryProbesError       string
+	// 底层网络变化或不可读时撤销旧代决定；同代 profile/reconnect 不置位。
+	ResetState   bool
+	Observations *ObservationCache
+	HopCarriers  map[string][]string
 	// 仅供本地界面保留本轮入口结果，不进入报告协议。
 	OnEntries func([]ClientPathMeasurement)
 }
@@ -48,9 +51,21 @@ func RunClient(ctx context.Context, cfg *Config, opts ClientOptions) (retErr err
 		<-ctx.Done()
 		return nil
 	}
-	states, err := newStateStore(ctx, opts.StatePath, cfg.Node, cfg.Declarations, time.Now())
+	statePath := opts.StatePath
+	if opts.ResetState {
+		// 新 underlay 不能在入口结果到达前继续展示上代 reason；同代
+		// 重连仍保留原状态语义，入口预算始终由宿主 registry 复用。
+		statePath = ""
+	}
+	states, err := newStateStore(ctx, statePath, cfg.Node, cfg.Declarations, time.Now())
 	if err != nil {
 		return err
+	}
+	if opts.ResetState {
+		states.path = opts.StatePath
+		if err := states.writeLocked(ctx, time.Now()); err != nil {
+			return err
+		}
 	}
 	entries := map[string]ClientEntryResult{}
 	measuredNodes := map[string]bool{}
@@ -98,6 +113,9 @@ func RunClient(ctx context.Context, cfg *Config, opts ClientOptions) (retErr err
 			m := ClientPathMeasurement{From: cfg.Node, To: e.Node, Kind: "entry"}
 			if !wasMeasured || !measuredNodes[e.Node] {
 				m.Error = "当前 underlay 代未主动探测此入口"
+				if opts.EntryProbesUnavailable && opts.EntryProbesError != "" {
+					m.Error = opts.EntryProbesError
+				}
 			} else if r.Err == nil && r.RTT >= 0 {
 				m.ObservedAt, m.Samples = r.At.UTC().Format(time.RFC3339), 1
 				ms := r.RTT.Milliseconds()

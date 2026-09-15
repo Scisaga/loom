@@ -67,8 +67,8 @@ func WindowsEntries(body []byte, cfg *agent.Config) ([]agent.ClientEntry, error)
 
 // renderer 的 NextHopAddr 只可能取隧道地址或同一节点的公网入口地址。
 // 对照实际出站与授权入口即可选择既有度量来源，无需服务端下发另一份拓扑。
-func WindowsRoutingInputs(body []byte, cfg *agent.Config) (agent.ClientOptions, error) {
-	var out agent.ClientOptions
+func WindowsRoutingInputs(body []byte, cfg *agent.Config) (WindowsAgentInputs, error) {
+	var out WindowsAgentInputs
 	entries, err := WindowsEntries(body, cfg)
 	if err != nil || cfg == nil {
 		return out, err

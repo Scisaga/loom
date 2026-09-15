@@ -57,7 +57,10 @@ class ManagedProfileDeviceInstrumentedTest {
             compose.onNodeWithTag("route-auto").performScrollTo().performClick()
             waitUntil { manager.status.value.mode == RouteMode.AUTO && !manager.status.value.busy &&
                 manager.status.value.currentPaths.isNotEmpty() }
-            waitUntil { registry.debugState().activeProbeRounds > before.activeProbeRounds }
+            // 模式生效不等待探测；比较复用证据时另等首轮结果完成。
+            waitUntil { registry.debugState().let {
+                it.activeProbeRounds > before.activeProbeRounds && it.frozenFingerprint.isNotEmpty()
+            } }
             val frozen = registry.debugState()
             assertEquals(before.activeProbeRounds + 1, frozen.activeProbeRounds)
             val exit = manager.status.value.exits.firstOrNull()

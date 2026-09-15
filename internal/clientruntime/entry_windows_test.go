@@ -23,8 +23,8 @@ func TestWindowsEntryNativeSinglePing(t *testing.T) {
 	if _, err := pingWindowsEntry(ctx, e); err == nil {
 		t.Fatal("canceled ping ran")
 	}
-	if ip := net.ParseIP(entrySource("127.0.0.1")); ip == nil || !ip.IsLoopback() {
-		t.Fatal("could not capture entry source")
+	if ip := net.ParseIP(entrySource("192.0.2.1")); ip != nil && (ip.IsLoopback() || ip.Equal(net.IPv4(172, 19, 0, 1))) {
+		t.Fatal("入口源地址来自 loopback 或 Loom TUN")
 	}
 }
 

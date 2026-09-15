@@ -33,7 +33,12 @@ type WindowsAgent struct {
 	hopCarriers   map[string][]string
 }
 
-func StartWindowsAgent(ctx context.Context, cfg *agent.Config, runtimeDir string, inputs ...agent.ClientOptions) (*WindowsAgent, error) {
+type WindowsAgentInputs struct {
+	agent.ClientOptions
+	Underlay *WindowsUnderlayMonitor
+}
+
+func StartWindowsAgent(ctx context.Context, cfg *agent.Config, runtimeDir string, inputs ...WindowsAgentInputs) (*WindowsAgent, error) {
 	if ctx == nil || cfg == nil {
 		return nil, errors.New("Agent 生命周期参数不完整")
 	}
@@ -64,11 +69,14 @@ func StartWindowsAgent(ctx context.Context, cfg *agent.Config, runtimeDir string
 		return nil, err
 	}
 	options := agent.ClientOptions{StatePath: a.statePath, Probe: pingWindowsEntry, Observations: a.observations}
+	var underlay *WindowsUnderlayMonitor
 	if len(inputs) > 0 {
+		underlay = inputs[0].Underlay
 		options.Entries = append([]agent.ClientEntry(nil), inputs[0].Entries...)
 		options.ProbeRegistry = inputs[0].ProbeRegistry
 		options.UnderlayGeneration = inputs[0].UnderlayGeneration
 		options.EntryProbesUnavailable = inputs[0].EntryProbesUnavailable
+		options.EntryProbesError = inputs[0].EntryProbesError
 		options.HopCarriers = map[string][]string{}
 		for tag, values := range inputs[0].HopCarriers {
 			options.HopCarriers[tag] = append([]string(nil), values...)
@@ -82,9 +90,47 @@ func StartWindowsAgent(ctx context.Context, cfg *agent.Config, runtimeDir string
 	}
 	go func() {
 		defer close(a.done)
-		a.err = agent.RunClient(child, cfg, options)
+		a.err = runWindowsClientUnderlay(child, cfg, options, underlay, agent.RunClient)
 	}()
 	return a, nil
+}
+
+// 底层网络代变化只替换决策回路，不重启数据面、报告周期或观测缓存。
+// 旧回路先 cancel/join，清空入口证据后才能用新代结果写 selector。
+func runWindowsClientUnderlay(ctx context.Context, cfg *agent.Config, base agent.ClientOptions,
+	monitor *WindowsUnderlayMonitor, run func(context.Context, *agent.Config, agent.ClientOptions) error,
+) error {
+	if monitor == nil {
+		return run(ctx, cfg, base)
+	}
+	resetState := false
+	for {
+		if ctx.Err() != nil {
+			return nil
+		}
+		options, changes := monitor.inputs(base)
+		options.ResetState = resetState
+		if options.OnEntries != nil {
+			options.OnEntries(nil)
+		}
+		child, cancel := context.WithCancel(ctx)
+		done := make(chan error, 1)
+		go func() { done <- run(child, cfg, options) }()
+		select {
+		case <-ctx.Done():
+			cancel()
+			return <-done
+		case err := <-done:
+			cancel()
+			return err
+		case <-changes:
+			cancel()
+			if err := <-done; err != nil {
+				return err
+			}
+			resetState = true
+		}
+	}
 }
 
 // PathMeasurements 只为当前实际候选组装本地显示数据，不改变 Report 线格式。

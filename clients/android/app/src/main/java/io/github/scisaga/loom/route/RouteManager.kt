@@ -10,6 +10,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -113,9 +114,13 @@ internal data class RouteMeasurement(
     val failures: Long,
 )
 
-class RouteManager private constructor(context: Context) {
+class RouteManager internal constructor(
+    context: Context,
+    private val selectorClient: (String) -> RouteSelector = ::SelectorClient,
+    private val measureEntries: suspend (ByteArray, String) -> ByteArray = AndroidEntryProbe::measure,
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+) {
     private val protected = EncryptedStore(context.applicationContext)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val operation = Mutex()
     private val mutableStatus = MutableStateFlow(RouteStatus())
     val status = mutableStatus.asStateFlow()
@@ -126,7 +131,9 @@ class RouteManager private constructor(context: Context) {
     private var runningEntries = ByteArray(0)
     private var runningProbeRegistry: UnderlayProbeRegistry? = null
     private var runningProbeSource = ""
-    private var runningProbeGeneration: Long? = null
+    private var runningProbeRequested = false
+    private var runningProbeJob: Job? = null
+    private var runningSession = Any()
     private var pendingObservations: ByteArray? = null
     @Volatile private var lastDecisions: List<RouteDecision> = emptyList()
 
@@ -151,6 +158,7 @@ class RouteManager private constructor(context: Context) {
     /** 只在 libbox 已启动带认证的回环 API 后调用。 */
     suspend fun applyToRunning(profile: ManagedProfile) = operation.withLock {
         availableProfile = profile
+        resetEntrySession()
         val routePlan = profile.routePlan
         if (routePlan == null) {
             runningRecordID = profile.recordID
@@ -162,7 +170,7 @@ class RouteManager private constructor(context: Context) {
         }
         val application = evaluate(profile)
         check(!application.blocked) { application.blockReason }
-        val selector = SelectorClient(routePlan)
+        val selector = selectorClient(routePlan)
         selector.apply(application.selectors)
         val actual = selector.readCurrent(application.selectors)
         protected.put(SELECTIONS, encodeSelections(application, actual))
@@ -195,24 +203,8 @@ class RouteManager private constructor(context: Context) {
                     val application = evaluate(profile, next)
                     check(!application.blocked) { application.blockReason }
                     val running = runningRecordID == profile.recordID
-                    if (running && application.mode != RouteMode.DIRECT &&
-                        runningProbeGeneration == null && runningInputs.isNotEmpty() &&
-                        runningProbeSource.isNotBlank()
-                    ) {
-                        val registry = checkNotNull(runningProbeRegistry) {
-                            "当前连接代缺少 process-lifetime 入口 registry"
-                        }
-                        val measured = registry.entries(
-                            runningInputs,
-                            runningProbeSource,
-                            AndroidEntryProbe::measure,
-                            AndroidEntryProbe::reuse,
-                        )
-                        runningEntries = measured.entries
-                        runningProbeGeneration = measured.generation
-                    }
                     val actual = if (running) {
-                        SelectorClient(profile.routePlan).let { selector ->
+                        selectorClient(profile.routePlan).let { selector ->
                             selector.apply(application.selectors)
                             selector.readCurrent(application.selectors)
                         }
@@ -226,7 +218,7 @@ class RouteManager private constructor(context: Context) {
                         if (running) {
                             runCatching {
                                 val rollback = evaluate(profile, previous ?: ByteArray(0))
-                                if (!rollback.blocked) SelectorClient(profile.routePlan).apply(rollback.selectors)
+                                if (!rollback.blocked) selectorClient(profile.routePlan).apply(rollback.selectors)
                             }
                         }
                         restore(PREFERENCE, previous)
@@ -240,7 +232,10 @@ class RouteManager private constructor(context: Context) {
                         if (running && runningInputs.isNotEmpty()) "路由偏好已生效；正在按当前分段证据重算" else if (running) "路由偏好已生效；等待当前连接代入口结果" else "偏好已保存；下次连接生效",
                         actual,
                     )
-                    if (running && runningInputs.isNotEmpty()) runRouteTickLocked(profile, null)
+                    if (running && runningInputs.isNotEmpty()) {
+                        runRouteTickLocked(profile, null)
+                        scheduleEntryProbeLocked(profile)
+                    }
                 } catch (error: Throwable) {
                     restore(PREFERENCE, previous)
                     restore(SELECTIONS, previousSelections)
@@ -251,7 +246,7 @@ class RouteManager private constructor(context: Context) {
                         val running = runningRecordID == profile.recordID
                         val actual = if (running) {
                             runCatching {
-                                SelectorClient(profile.routePlan).let { selector ->
+                                selectorClient(profile.routePlan).let { selector ->
                                     selector.apply(restored.selectors)
                                     selector.readCurrent(restored.selectors)
                                 }
@@ -280,26 +275,63 @@ class RouteManager private constructor(context: Context) {
     internal suspend fun beginRouteSession(profile: ManagedProfile, source: String, registry: UnderlayProbeRegistry) {
         val plan = profile.routePlan ?: return
         val inputs = Loomcore.androidRoutingInputs(profile.config.encodeToByteArray(), plan.encodeToByteArray())
-        val application = evaluate(profile)
-        // Direct 既不冻结候选，也不消耗任何主动 probe 预算。
-        val snapshot = registry.entriesIfEnabled(
-            application.mode != RouteMode.DIRECT,
-            inputs,
-            source,
-            AndroidEntryProbe::measure,
-            AndroidEntryProbe::reuse,
-        )
         operation.withLock {
             if (runningRecordID != profile.recordID) throw CancellationException("隧道会话已经结束")
+            resetEntrySession()
             runningInputs = inputs
-            runningEntries = snapshot?.entries ?: AndroidEntryProbe.empty(source)
+            runningEntries = AndroidEntryProbe.empty(source)
             runningProbeRegistry = registry
             runningProbeSource = source
-            runningProbeGeneration = snapshot?.generation
             val latest = pendingObservations
             pendingObservations = null
             runRouteTickLocked(profile, latest)
+            scheduleEntryProbeLocked(profile)
         }
+    }
+
+    /** 已授权 selector 先生效；唯一入口测量在 Application 中继续，不持有路由操作锁。 */
+    private suspend fun scheduleEntryProbeLocked(profile: ManagedProfile) {
+        if (runningProbeRequested || runningInputs.isEmpty() || runningProbeSource.isBlank() ||
+            evaluate(profile).mode == RouteMode.DIRECT
+        ) return
+        val registry = runningProbeRegistry ?: return
+        val session = runningSession
+        runningProbeRequested = true
+        val pending = try {
+            registry.beginEntries(runningInputs, runningProbeSource, measureEntries, AndroidEntryProbe::reuse)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            mutableStatus.value = mutableStatus.value.copy(detail = "路由已生效；入口测量不可用，质量保持未知")
+            return
+        }
+        runningProbeJob = scope.launch {
+            try {
+                val measured = pending.await()
+                operation.withLock {
+                    if (runningSession !== session || runningRecordID != profile.recordID ||
+                        !registry.isCurrent(measured.generation)
+                    ) return@withLock
+                    runningEntries = measured.entries
+                    runRouteTickLocked(profile, null)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                operation.withLock {
+                    if (runningSession === session && runningRecordID == profile.recordID) {
+                        mutableStatus.value = mutableStatus.value.copy(detail = "路由已生效；入口结果暂不可用，沿用当前路径")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun resetEntrySession() {
+        runningSession = Any()
+        runningProbeJob?.cancel()
+        runningProbeJob = null
+        runningProbeRequested = false
     }
 
     /** 仅在既有签名上报周期返回证据时重算，不新增轮询。 */
@@ -323,7 +355,7 @@ class RouteManager private constructor(context: Context) {
         val previousSelections = protected.get(SELECTIONS)
         val previousState = protected.get(SCHEDULER_STATE)
         val baseline = evaluate(profile)
-        val selector = SelectorClient(plan)
+        val selector = selectorClient(plan)
         val actual = selector.readCurrent(baseline.selectors)
         val actualBody = encodeSelections(baseline, actual)
         val body = Loomcore.runAndroidRouteTick(
@@ -421,13 +453,13 @@ class RouteManager private constructor(context: Context) {
         stopAndAwait()
     }
 
-    fun tunnelStopped() {
+    private fun tunnelStopped() {
+        resetEntrySession()
         runningRecordID = null
         runningInputs = ByteArray(0)
         runningEntries = ByteArray(0)
         runningProbeRegistry = null
         runningProbeSource = ""
-        runningProbeGeneration = null
         pendingObservations = null
         lastDecisions = emptyList()
         mutableStatus.value = mutableStatus.value.copy(running = false, busy = false, currentPaths = emptyList())

@@ -19,31 +19,13 @@ var icmpCreate = icmpDLL.NewProc("IcmpCreateFile")
 var icmpClose = icmpDLL.NewProc("IcmpCloseHandle")
 var icmpSend = icmpDLL.NewProc("IcmpSendEcho2Ex")
 
-// TUN 启动前只读系统路由，不改路由，也不发送探测包。
+// 激活与运行中切网共用同一 underlay 快照，TUN 不参与源接口选择。
 func entrySource(address string) string {
-	var dest windows.SockaddrInet4
-	if ip := net.ParseIP(address).To4(); ip != nil {
-		copy(dest.Addr[:], ip)
-	}
-	var index uint32
-	if windows.GetBestInterfaceEx(&dest, &index) != nil {
-		return ""
-	}
-	iface, err := net.InterfaceByIndex(int(index))
+	snapshot, err := readWindowsUnderlay()
 	if err != nil {
 		return ""
 	}
-	addrs, err := iface.Addrs()
-	if err != nil {
-		return ""
-	}
-	for _, a := range addrs {
-		ip, _, _ := net.ParseCIDR(a.String())
-		if ip.To4() != nil && !ip.Equal(net.IPv4(172, 19, 0, 1)) {
-			return ip.String()
-		}
-	}
-	return ""
+	return snapshot.source(address)
 }
 
 // 每入口只发一个 ICMP echo；失败保持未知，不重试或降级为业务探测。

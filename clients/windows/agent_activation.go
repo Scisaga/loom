@@ -16,18 +16,15 @@ func runWindowsAgentActivation(ctx context.Context, a *clientActivation) error {
 type dataPlaneStarter func(context.Context, string, []byte, string, clientruntime.WindowsRuntimeProfile, string, func()) error
 
 func runAgentDataPlane(ctx context.Context, a *clientActivation, start dataPlaneStarter, readiness ...func(context.Context, *agent.Config) error) error {
+	// 首次 Direct 激活也要监听 OS 代次，但不会启动 Agent 或冻结探测候选。
+	underlay := clientruntime.ProcessWindowsUnderlay()
 	inputs, err := clientruntime.WindowsRoutingInputs(a.Config, a.AgentConfig)
 	if err != nil {
 		return err
 	}
 	if a.AgentConfig != nil {
 		inputs.ProbeRegistry = a.ProbeRegistry
-		inputs.UnderlayGeneration, err = clientruntime.WindowsUnderlayGeneration()
-		if err != nil {
-			// 网卡快照不可读只会令本代入口证据保持 unknown；不得阻断已验
-			// 数据面的启动，也不得用 activation-local 探测冒充新 underlay。
-			inputs.EntryProbesUnavailable = true
-		}
+		inputs.Underlay = underlay
 	}
 	wait := clientruntime.WaitWindowsAgentAPI
 	if len(readiness) > 0 {

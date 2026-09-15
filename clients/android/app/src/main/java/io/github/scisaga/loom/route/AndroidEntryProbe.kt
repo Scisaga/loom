@@ -1,6 +1,5 @@
 package io.github.scisaga.loom.route
 
-import android.os.SystemClock
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -117,16 +116,28 @@ internal object AndroidEntryProbe {
         }
         var process: Process? = null
         return try {
-            val started = SystemClock.elapsedRealtimeNanos()
-            process = ProcessBuilder(arguments).redirectErrorStream(true).start()
+            process = ProcessBuilder(arguments).redirectErrorStream(true).apply {
+                environment()["LC_ALL"] = "C"
+            }.start()
             if (!process.waitFor(PROCESS_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
                 process.destroyForcibly()
                 EntryProbeValue(null, "入口 ping 超时")
             } else if (process.exitValue() != 0) {
                 EntryProbeValue(null, "入口 ping 未获响应")
             } else {
-                val elapsed = (SystemClock.elapsedRealtimeNanos() - started) / 1_000_000L
-                EntryProbeValue(elapsed.coerceAtLeast(0L), null)
+                val output = process.inputStream.use { stream ->
+                    val bytes = ByteArray(MAX_OUTPUT_BYTES + 1)
+                    var size = 0
+                    while (size < bytes.size) {
+                        val count = stream.read(bytes, size, bytes.size - size)
+                        if (count < 0) break
+                        size += count
+                    }
+                    if (size > MAX_OUTPUT_BYTES) null else bytes.decodeToString(0, size)
+                }
+                val rtt = output?.let(::icmpEchoReplyMillis)
+                if (rtt == null) EntryProbeValue(null, "入口 ping 未提供精确 RTT")
+                else EntryProbeValue(rtt, null)
             }
         } catch (cancelled: CancellationException) {
             process?.destroyForcibly()
@@ -141,5 +152,6 @@ internal object AndroidEntryProbe {
 
     private const val MAX_PARALLEL_PROBES = 4
     private const val PROCESS_TIMEOUT_MS = 1_500L
+    private const val MAX_OUTPUT_BYTES = 4_096
     private const val PING = "/system/bin/ping"
 }
