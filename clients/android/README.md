@@ -211,6 +211,14 @@ Tab screen. They retain the existing cards, Material 3 controls, and fixed botto
 navigation. The header uses the existing transparent mark filled with black and a medium-weight
 wordmark; light gray-green `#F0F4F1` separates the white panels from the page.
 
+The launcher and APK icon use the violet gradient and ivory mark from
+[`loom-logo-v4.svg`](../../assets/loom-logo-v4.svg), with a smaller mark and more
+padding. `python3 scripts/generate_android_launcher_icons.py` from the repository
+root regenerates the adaptive layers and the five PNG density variants embedded
+in the APK. The package's application icon points directly to PNG resources for
+APK previews; the launcher activity uses the native adaptive icon. The in-app
+header retains its transparent black mark.
+
 Connection expands actual route details within its current-path card, using phone,
 server, and destination icons joined by directional links. It retains the candidate,
 signed chain, segment protocols, observation sources and times,

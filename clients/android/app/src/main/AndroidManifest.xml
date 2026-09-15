@@ -22,6 +22,7 @@
         android:usesCleartextTraffic="false">
         <activity
             android:name=".MainActivity"
+            android:icon="@mipmap/ic_launcher_adaptive"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

@@ -1,4 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <solid android:color="@color/loom_launcher_background" />
-</shape>
+<!-- §7.2：中央可见区域保留 v4 渐变；自适应图标的外缘继续延伸背景。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:pathData="M0,0H108V108H0Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="18" android:startY="18"
+                android:endX="90" android:endY="90" android:tileMode="clamp"
+                android:startColor="@color/loom_launcher_gradient_start"
+                android:endColor="@color/loom_launcher_gradient_end" />
+        </aapt:attr>
+    </path>
+</vector>

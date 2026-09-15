@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- §7.2：保留 v4 画布留白；可见图案比原先紧裁切的前景缩小约 15%。 -->
 <inset xmlns:android="http://schemas.android.com/apk/res/android"
-    android:drawable="@drawable/ic_loom"
-    android:insetLeft="22%"
-    android:insetTop="22%"
-    android:insetRight="22%"
-    android:insetBottom="22%" />
+    android:drawable="@drawable/ic_loom_launcher_mark"
+    android:insetLeft="20%" android:insetTop="20%"
+    android:insetRight="20%" android:insetBottom="20%" />
