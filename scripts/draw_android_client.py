@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "assets/client/android"
 WIDTH, HEIGHT = 412, 940
 INK, MUTED, GREEN = "#17211B", "#647269", "#239B68"
-PAPER, CARD_TINT, LINE = "#FCFCFB", "#F1F5F2", "#E3E8E5"
+PAPER, CARD_TINT, LINE = "#E8EEEA", "#F7FBF8", "#E3E8E5"
 OUTLINE, OUTLINE_TEXT = "#857E8C", "#725AA8"
 FONT = "'Noto Sans CJK SC','Roboto',sans-serif"
 TABS = (("connection", "连接", "power"), ("configuration", "配置", "sliders"), ("diagnostics", "诊断", "pulse"))
@@ -95,7 +95,7 @@ def header(title, subtitle):
     out += rect(369, 8, 18, 10, "none", 2, INK) + rect(371, 10, 12, 6, INK, 1)
     out += '<path d="M389 11v4" stroke="#17211B" stroke-width="2"/>'
     out += '<use href="#brand" x="22" y="38" width="32" height="32"/>'
-    out += text(63, 54, "LOOM", 18, weight=900, spacing=2)
+    out += text(63, 54, "LOOM", 18, weight=500, spacing=2)
     out += text(63, 71, "ANDROID", 9, MUTED, spacing=1)
     out += text(22, 120, title, 26, weight=700)
     out += text(22, 156, subtitle, 13, MUTED)

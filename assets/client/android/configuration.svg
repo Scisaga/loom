@@ -8,7 +8,7 @@
       </g>
     </symbol>
   </defs>
-  <rect x="0" y="0" width="412" height="940" rx="0" fill="#FCFCFB" stroke="none" />
+  <rect x="0" y="0" width="412" height="940" rx="0" fill="#E8EEEA" stroke="none" />
   <g id="screen-configuration" font-family="'Noto Sans CJK SC','Roboto',sans-serif">
     <text x="22" y="19" font-size="12" fill="#17211B" font-weight="500" text-anchor="start" letter-spacing="0">12:00</text>
     <path d="M344 18v-4m5 4v-7m5 7V8" stroke="#17211B" stroke-width="2.4" />
@@ -16,7 +16,7 @@
     <rect x="371" y="10" width="12" height="6" rx="1" fill="#17211B" stroke="none" />
     <path d="M389 11v4" stroke="#17211B" stroke-width="2" />
     <use href="#brand" x="22" y="38" width="32" height="32" />
-    <text x="63" y="54" font-size="18" fill="#17211B" font-weight="900" text-anchor="start" letter-spacing="2">LOOM</text>
+    <text x="63" y="54" font-size="18" fill="#17211B" font-weight="500" text-anchor="start" letter-spacing="2">LOOM</text>
     <text x="63" y="71" font-size="9" fill="#647269" font-weight="400" text-anchor="start" letter-spacing="1">ANDROID</text>
     <text x="22" y="120" font-size="26" fill="#17211B" font-weight="700" text-anchor="start" letter-spacing="0">配置</text>
     <text x="22" y="156" font-size="13" fill="#647269" font-weight="400" text-anchor="start" letter-spacing="0">设备已加入 · 配置签名已验证</text>
