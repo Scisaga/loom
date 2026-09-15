@@ -75,6 +75,10 @@ func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previou
 	if err := validateLinuxLinkIntentArtifact(&artifact, envelope); err != nil {
 		return LinuxLinkRuntimePlanV1{}, err
 	}
+	if err := wire.VerifyConfigQCAuthority(artifact.AuthorityHeadHash, artifact.Authority.QC,
+		&artifact.Authority.Head, set, previousSet); err != nil {
+		return LinuxLinkRuntimePlanV1{}, err
+	}
 	if err := bindLinuxLinkIntentArtifactRef(&artifact, artifactRaw, envelope.Payload.Active.ConfigArtifactRefs); err != nil {
 		return LinuxLinkRuntimePlanV1{}, err
 	}
@@ -196,9 +200,17 @@ func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previou
 func validateLinuxLinkIntentArtifact(artifact *LinuxLinkIntentArtifactV1,
 	envelope *wire.DeviceViewEnvelopeV2) error {
 	if artifact == nil || envelope == nil || artifact.ClusterID != envelope.Payload.ClusterID ||
-		artifact.DeviceID != envelope.Payload.DeviceID || artifact.DeviceGeneration != envelope.Payload.DeviceGeneration ||
-		artifact.AuthorityHeadHash != envelope.SignedCurrent.Head.Body.Payload.ParentHeadHash {
-		return errors.New("[Linux runtime] LinkIntent artifact header/view binding 无效")
+		artifact.DeviceID != envelope.Payload.DeviceID || artifact.DeviceGeneration != envelope.Payload.DeviceGeneration {
+		return errors.New("[D131 Linux runtime] LinkIntent artifact header/view binding 无效")
+	}
+	base := artifact.Authority.Head.Body.Payload
+	current := envelope.SignedCurrent.Head.Body.Payload
+	if base.RecoveryEpoch != current.RecoveryEpoch || base.RecoveryStatementHash != current.RecoveryStatementHash ||
+		base.RecoveryPolicyHash != current.RecoveryPolicyHash || base.ControlEpoch != current.ControlEpoch ||
+		base.ControlSetHash != current.ControlSetHash || base.ControlRevision > current.ControlRevision ||
+		base.RaftTerm > current.RaftTerm || base.CommittedLogicalTime > current.CommittedLogicalTime ||
+		(base.ControlRevision == current.ControlRevision && artifact.AuthorityHeadHash != envelope.SignedCurrent.Head.HeadHash) {
+		return errors.New("[D131 Linux runtime] LinkIntent base 超出当前 certified authority 或同坐标分叉")
 	}
 	return wire.ValidateLinuxLinkIntentArtifact(artifact)
 }

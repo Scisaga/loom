@@ -183,6 +183,7 @@ func androidEnrollmentCoreFixture(t *testing.T) (androidEnrollmentInputsV2, wire
 	inputs := androidEnrollmentInputsV2{
 		descriptor: wire.InviteBootstrapDescriptorV2{
 			Schema: 2, ClusterID: set.ClusterID, InviteID: intent.InviteID,
+			Token:                     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 			BootstrapTunnelCapability: wire.BootstrapTunnelCapabilityV1{CapabilityID: hash("capability")},
 		},
 		bundle: wire.InviteProofBundleV2{
@@ -193,7 +194,10 @@ func androidEnrollmentCoreFixture(t *testing.T) (androidEnrollmentInputsV2, wire
 		},
 		recordHash: hash("record"), head: envelope.SignedCurrent.Head, set: set,
 	}
-	request := androidEnrollmentPreflightRequestV2(inputs)
+	request, err := androidEnrollmentPreflightRequestV2(inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
 	requestHash, err := wire.EnrollmentIntentPreflightRequestHash(&request)
 	if err != nil {
 		t.Fatal(err)

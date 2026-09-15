@@ -34,10 +34,10 @@ SECRET_PATTERNS = {
 
 IPV4 = re.compile(r"(?<![0-9])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9])")
 # X.509 EKU/policy OID 通常至少含六个 arc；标准扩展 OID 只有四个 arc，
-# 只能精确列出仓库使用的 RFC 5280 扩展，不能把任意四段数字豁免成 OID。
+# 只能精确列出仓库使用的 RFC 5280 扩展与 anyExtendedKeyUsage，不能把任意四段数字豁免成 OID。
 OBJECT_IDENTIFIER = re.compile(r"(?<![0-9.])[0-2](?:\.[0-9]+){5,}(?![0-9.])")
 X509_EXTENSION_OBJECT_IDENTIFIER = re.compile(
-    r"(?<![0-9.])2\.5\.29\.(?:15|17|19|32|37)(?![0-9.])"
+    r"(?<![0-9.])2\.5\.29\.(?:15|17|19|32|35|37(?:\.0)?)(?![0-9.])"
 )
 DOCUMENTATION_NETWORKS = tuple(
     ipaddress.ip_network(value)

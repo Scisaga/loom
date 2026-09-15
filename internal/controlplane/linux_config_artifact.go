@@ -9,15 +9,18 @@ import (
 )
 
 // LinuxLinkIntentProjectionV1 是 certified Device view 的前置确定性输入。
-// ParentHeadHash 必须是待生成 Head 的 parent；调用方把返回的 ref 放入
-// Device view 后再形成新 Head/QC，从而避免 artifact/head 自引用。
+// Authority 是生成配置时已认证的 Head；调用方把返回的 ref 放入 Device view，
+// 再形成 provisional/completion 或配置更新 Head，不能反向引用未来 Head（D105、D131）。
 type LinuxLinkIntentProjectionV1 struct {
-	ClusterID        string
-	DeviceID         string
-	DeviceGeneration int64
-	Generation       int64
-	ParentHeadHash   string
-	LinkIntents      []wire.LinkIntentV1
+	ClusterID          string
+	DeviceID           string
+	DeviceGeneration   int64
+	Generation         int64
+	ParentHeadHash     string
+	Authority          wire.CertifiedHeadV1
+	ControlSet         *wire.ControlSetV1
+	PreviousControlSet *wire.ControlSetV1
+	LinkIntents        []wire.LinkIntentV1
 }
 
 type LinuxRuntimeProjectionV1 struct {
@@ -126,11 +129,19 @@ func BuildLinuxLinkIntentArtifact(input LinuxLinkIntentProjectionV1) ([]byte, er
 	if input.LinkIntents == nil {
 		return nil, errors.New("[Linux artifact] LinkIntent projection 缺失")
 	}
+	if input.ControlSet == nil {
+		return nil, errors.New("[D131 Linux artifact] 缺已认证的 ControlSet")
+	}
+	if err := wire.VerifyConfigQCAuthority(input.ParentHeadHash, input.Authority.QC,
+		&input.Authority.Head, input.ControlSet, input.PreviousControlSet); err != nil {
+		return nil, err
+	}
 	artifact := wire.LinuxLinkIntentArtifactV1{
 		Schema: 1, ClusterID: input.ClusterID, DeviceID: input.DeviceID,
 		DeviceGeneration: input.DeviceGeneration, Generation: input.Generation,
 		RenderContractID:  wire.LinuxLinkIntentRenderContract,
 		AuthorityHeadHash: input.ParentHeadHash,
+		Authority:         input.Authority,
 		LinkIntents:       append([]wire.LinkIntentV1(nil), input.LinkIntents...),
 	}
 	if err := wire.ValidateLinuxLinkIntentArtifact(&artifact); err != nil {

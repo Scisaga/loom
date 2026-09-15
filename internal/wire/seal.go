@@ -225,7 +225,7 @@ func deriveRecipientKEK(private *ecdh.PrivateKey, public *ecdh.PublicKey, contex
 }
 
 // DeriveSealedSecretP256KEK 接收 profile 对应的软件或 Keystore ECDH 返回的
-// x-coordinate；此函数不接收私钥，HKDF 由共享 wire 实现。
+// x-coordinate；此函数不接收私钥，HKDF 由共享 wire 实现（D124）。
 func DeriveSealedSecretP256KEK(shared []byte, context RecipientWrapContextV1) ([]byte, error) {
 	if len(shared) != 32 || context.Schema != 1 {
 		return nil, errors.New("[sealed secret] P-256 shared secret/wrap context 无效")
@@ -234,7 +234,7 @@ func DeriveSealedSecretP256KEK(shared []byte, context RecipientWrapContextV1) ([
 		return nil, err
 	}
 	if !isP256SealingProfile(context.RecipientKey.RecipientKeyProfile) {
-		return nil, errors.New("[sealed secret] P-256 wrapping profile 无效")
+		return nil, errors.New("[D124 sealed secret] P-256 wrapping profile 无效")
 	}
 	if err := validateRecipientKeyRef(&context.RecipientKey, context.RecipientKey.RecipientKeyProfile); err != nil {
 		return nil, err
@@ -295,7 +295,7 @@ func UnsealSecretP256(envelope *SealedSecretEnvelopeV1, recipient SealedBlobReci
 		return nil, err
 	}
 	if private == nil || !isP256SealingProfile(recipient.RecipientKeyProfile) {
-		return nil, errors.New("[sealed secret] local P-256 recipient key 缺失")
+		return nil, errors.New("[D124 sealed secret] local P-256 recipient key 缺失")
 	}
 	entry := findRecipientEnvelope(envelope.RecipientEnvelopes, recipient)
 	if entry == nil || entry.P256ECDH == nil || entry.KeyWrapKind != "p256_ecdh" {

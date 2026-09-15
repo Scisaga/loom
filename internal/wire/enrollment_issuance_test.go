@@ -1,6 +1,11 @@
 package wire
 
-import "testing"
+import (
+	"crypto"
+	"errors"
+	"io"
+	"testing"
+)
 
 func TestProvisionalIssuanceBindsActiveProfileKeyAndFence(t *testing.T) {
 	fixture := newDeviceCertificateFixture(t)
@@ -50,6 +55,38 @@ func TestProvisionalIssuanceBindsActiveProfileKeyAndFence(t *testing.T) {
 	if _, err := SignEnrollmentProvisionalIssuance(body, &staged, fixture.issuerKey); err == nil {
 		t.Fatal("staged profile 签发了 provisional issuance")
 	}
+	providerError := errors.New("demo-provider-unavailable")
+	for _, test := range []struct {
+		name      string
+		signature []byte
+		failure   error
+	}{
+		{"provider-error", nil, providerError},
+		{"empty-signature", nil, nil},
+		{"invalid-signature", make([]byte, 64), nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			signer := failingIssuanceSigner{public: fixture.issuerKey.Public(), signature: test.signature, failure: test.failure}
+			result, err := SignEnrollmentProvisionalIssuance(body, &active, signer)
+			if err == nil || result.CASignature.Signature != "" {
+				t.Fatal("provider failure produced issuance result")
+			}
+			if test.failure != nil && !errors.Is(err, test.failure) {
+				t.Fatalf("provider error lost: %v", err)
+			}
+		})
+	}
+}
+
+type failingIssuanceSigner struct {
+	public    crypto.PublicKey
+	signature []byte
+	failure   error
+}
+
+func (signer failingIssuanceSigner) Public() crypto.PublicKey { return signer.public }
+func (signer failingIssuanceSigner) Sign(io.Reader, []byte, crypto.SignerOpts) ([]byte, error) {
+	return signer.signature, signer.failure
 }
 
 func TestEnrollmentIssuanceRegistryIsOrderIndependentAndFirstResultOnly(t *testing.T) {

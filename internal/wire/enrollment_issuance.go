@@ -2,7 +2,9 @@ package wire
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
@@ -79,12 +81,12 @@ func EnrollmentProvisionalIssuanceBodyHash(body *EnrollmentProvisionalIssuanceBo
 // SignEnrollmentProvisionalIssuance 只允许 exact current active profile 的 online
 // Ed25519 issuer key 签名；profile generation/fencing epoch 同时进入签名 envelope。
 func SignEnrollmentProvisionalIssuance(body EnrollmentProvisionalIssuanceBodyV1,
-	profile *DeviceCertificateProfileStateV1, privateKey ed25519.PrivateKey) (EnrollmentProvisionalIssuanceV1, error) {
+	profile *DeviceCertificateProfileStateV1, privateKey crypto.Signer) (EnrollmentProvisionalIssuanceV1, error) {
 	if err := validateEnrollmentIssuanceProfile(&body, profile); err != nil {
 		return EnrollmentProvisionalIssuanceV1{}, err
 	}
-	if len(privateKey) != ed25519.PrivateKeySize {
-		return EnrollmentProvisionalIssuanceV1{}, errors.New("[Device CA] provisional issuance private key 长度无效")
+	if privateKey == nil {
+		return EnrollmentProvisionalIssuanceV1{}, errors.New("[D102 Device CA] provisional issuance signer 缺失")
 	}
 	issuerDER, _ := decodeCanonicalBase64URL(profile.ProfileIntent.IssuerCertificateDER)
 	issuer, err := x509.ParseCertificate(issuerDER)
@@ -97,11 +99,20 @@ func SignEnrollmentProvisionalIssuance(body EnrollmentProvisionalIssuanceBodyV1,
 		return EnrollmentProvisionalIssuanceV1{}, err
 	}
 	message, _ := Frame(DomainEnrollmentProvisionalIssuanceSignature, canonical)
+	// Non-exportable KMS/HSM handles implement Signer; never request raw CA key bytes.
+	signature, err := privateKey.Sign(rand.Reader, message, crypto.Hash(0))
+	if err != nil {
+		return EnrollmentProvisionalIssuanceV1{}, err
+	}
+	publicKey, ok := issuer.PublicKey.(ed25519.PublicKey)
+	if !ok || len(signature) != ed25519.SignatureSize || !ed25519.Verify(publicKey, message, signature) {
+		return EnrollmentProvisionalIssuanceV1{}, errors.New("[D102 Device CA] signer 未返回 exact Ed25519 signature")
+	}
 	intent := profile.ProfileIntent
 	return EnrollmentProvisionalIssuanceV1{Body: body, CASignature: DeviceCAIssuanceSignatureV1{
 		Algorithm: "ed25519", IssuerID: intent.IssuerID, IssuerGeneration: intent.IssuerGeneration,
 		IssuerFencingEpoch: intent.IssuerFencingEpoch,
-		Signature:          base64.RawURLEncoding.EncodeToString(ed25519.Sign(privateKey, message)),
+		Signature:          base64.RawURLEncoding.EncodeToString(signature),
 	}}, nil
 }
 

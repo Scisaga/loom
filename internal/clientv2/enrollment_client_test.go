@@ -10,6 +10,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
 	"io"
@@ -93,6 +94,10 @@ func TestPrivateEnrollmentClientPinsInnerTLSAndKeepsPreflightTokenFree(t *testin
 		Schema: 1, ClusterID: "cluster", InviteID: "invite",
 		CertifiedInviteRecordHash: wire.HashRaw("private-client-test", []byte("record")),
 		CapabilityID:              wire.HashRaw("private-client-test", []byte("capability")),
+	}
+	request, err = wire.AuthorizeInitialEnrollmentPreflight(request, base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x42}, 32)))
+	if err != nil {
+		t.Fatal(err)
 	}
 	result, err := client.Preflight(context.Background(), request, commitmentHash)
 	if err != nil || !wire.EqualCanonical(result.DeviceEnrollmentIntentOpening, opening) {

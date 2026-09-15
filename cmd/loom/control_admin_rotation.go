@@ -251,6 +251,7 @@ func (runtime *controlRuntime) rotateAdminCertificate(adminDir, outDir, reason s
 	next.NotAfter = old.NotAfter
 	// 只有尚未进入任何 Raft log 的末尾准备记录可重建；已提交记录由恢复流程继续完成。
 	for i, record := range runtime.journal.Records {
+
 		if record.AdminRotation == nil || record.Result != nil ||
 			record.AdminRotation.Payload.NextAuthorization.AdminCertificateDER != next.AdminCertificateDER {
 			continue
@@ -295,12 +296,8 @@ func (runtime *controlRuntime) rotateAdminCertificate(adminDir, outDir, reason s
 	if err != nil {
 		return err
 	}
-	leaves := make([]wire.ControlOperationLeafV1, len(runtime.journal.Records)+1)
-	for i := range runtime.journal.Records {
-		leaves[i] = runtime.journal.Records[i].Leaf
-	}
 	leaf := wire.ControlOperationLeafV1{Schema: 1, OperationID: body.OperationID, ObjectID: objectID}
-	leaves[len(leaves)-1] = leaf
+	leaves := append(runtime.operationLeaves(len(runtime.journal.Records)), leaf)
 	operationRoot, err := wire.ControlOperationRoot(leaves)
 	if err != nil {
 		return err
@@ -314,8 +311,7 @@ func (runtime *controlRuntime) rotateAdminCertificate(adminDir, outDir, reason s
 	headBody.Payload.ParentHeadHash, headBody.Payload.OperationRoot = parent.HeadHash, operationRoot
 	headBody.Payload.CommittedLogicalTime = now.Format(time.RFC3339)
 	headBody.Payload.TransitionContext = json.RawMessage(`{"schema":1,"kind":"ordinary"}`)
-	headBody.Payload.AdminACLRoot, headBody.Payload.CAProfileRoot, err = runtime.adminRotationRoots(rotation.Payload)
-	if err != nil {
+	if err := runtime.applyAdminRotationRoots(&headBody, rotation.Payload, len(runtime.journal.Records)); err != nil {
 		return err
 	}
 	candidate, err := wire.NewHeadEntry(headBody)
@@ -365,11 +361,32 @@ func (runtime *controlRuntime) adminRotationRoots(payload controlAdminRotationPa
 	return acl, root, err
 }
 
+func (runtime *controlRuntime) applyAdminRotationRoots(body *wire.HeadEntryBodyV2, payload controlAdminRotationPayloadV1, index int) error {
+	application, err := runtime.applicationBefore(index)
+	if err != nil {
+		return err
+	}
+	if application == nil {
+		body.Payload.AdminACLRoot, body.Payload.CAProfileRoot, err = runtime.adminRotationRoots(payload)
+		return err
+	}
+	next, err := application.reduceAdminRotation(payload)
+	if err != nil {
+		return err
+	}
+	roots, err := next.roots()
+	if err != nil {
+		return err
+	}
+	controlApplyRoots(body, roots)
+	return nil
+}
+
 func (runtime *controlRuntime) verifyAdminRotationRecord(index int) error {
 	record := runtime.journal.Records[index]
 	rotation := record.AdminRotation
-	if rotation == nil {
-		return errors.New("[admin rotation] 缺轮换 preimage")
+	if rotation == nil || record.Activation != nil || record.Enrollment != nil || record.Invite != nil || len(record.AdditionalLeaves) != 0 {
+		return errors.New("[D104 admin rotation] 缺轮换 preimage")
 	}
 	p := rotation.Payload
 	at, err := wire.ParseTimeZ(record.Candidate.Body.Payload.CommittedLogicalTime)
@@ -445,10 +462,6 @@ func (runtime *controlRuntime) verifyAdminRotationRecord(index int) error {
 		body.BaseControlRevision != base.ControlRevision || body.ParentHeadHash != parent.HeadHash {
 		return errors.New("[admin rotation] operation 未绑定 exact parent")
 	}
-	acl, ca, err := runtime.adminRotationRoots(p)
-	if err != nil {
-		return err
-	}
 	expected := parent.Body
 	actual := record.Candidate.Body
 	expected.Payload.HeadKind = "ordinary"
@@ -458,7 +471,9 @@ func (runtime *controlRuntime) verifyAdminRotationRecord(index int) error {
 	expected.Payload.ParentHeadHash, expected.Payload.OperationRoot = parent.HeadHash, actual.Payload.OperationRoot
 	expected.Payload.CommittedLogicalTime = at.Format(time.RFC3339)
 	expected.Payload.TransitionContext = json.RawMessage(`{"schema":1,"kind":"ordinary"}`)
-	expected.Payload.AdminACLRoot, expected.Payload.CAProfileRoot = acl, ca
+	if err := runtime.applyAdminRotationRoots(&expected, p, index); err != nil {
+		return err
+	}
 	if !wire.EqualCanonical(expected, actual) {
 		return errors.New("[admin rotation] 轮换修改了证书授权之外的 Head 字段")
 	}
@@ -482,6 +497,21 @@ func (runtime *controlRuntime) projectAdminRotations() error {
 	}
 	profiles, authorizations := initial.AdminProfiles, initial.Authorizations
 	for i, record := range runtime.journal.Records {
+		if record.Activation != nil && record.Candidate.Body.Payload.RaftIndex <= state.CertifiedHead.Body.Payload.RaftIndex {
+			if record.Result == nil {
+				return errors.New("[D104 activation] 缺 certified receipt")
+			}
+			if err := runtime.verifyActivationRecord(i); err != nil {
+				return err
+			}
+			if err := wire.VerifyConfigQCAuthority(record.Candidate.HeadHash, record.Result.ConfigQC,
+				&record.Candidate, &state.ControlSet, nil); err != nil {
+				return err
+			}
+			profiles = record.Activation.Application.adminProfiles()
+			authorizations = append([]wire.AdminAuthorizationV1(nil), record.Activation.Application.Authorizations...)
+			continue
+		}
 		if record.AdminRotation == nil || record.Candidate.Body.Payload.RaftIndex > state.CertifiedHead.Body.Payload.RaftIndex {
 			continue
 		}

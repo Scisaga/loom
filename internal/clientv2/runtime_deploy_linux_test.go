@@ -304,6 +304,7 @@ func linuxRuntimeDeploymentFixture(t *testing.T) (string, string, string, []byte
 		Schema: 1, ClusterID: set.ClusterID, DeviceID: current.Payload.DeviceID,
 		DeviceGeneration: deviceGeneration, Generation: 1,
 		RenderContractID: wire.LinuxLinkIntentRenderContract, AuthorityHeadHash: parent,
+		Authority: wire.CertifiedHeadV1{Head: current.SignedCurrent.Head, QC: current.SignedCurrent.QuorumCertificate},
 		LinkIntents: []wire.LinkIntentV1{{
 			Schema: 1, ClusterID: set.ClusterID, LinkID: "link-a", FromDeviceID: current.Payload.DeviceID,
 			To: wire.LinkIntentDestinationV1{ServiceID: "service-a"}, Purpose: "data_forward",

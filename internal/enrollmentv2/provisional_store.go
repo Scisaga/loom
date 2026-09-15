@@ -1,9 +1,11 @@
 package enrollmentv2
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -20,6 +22,7 @@ type ProvisionalMaterialGenerator func(context.Context, string, VerifiedClaimAtt
 type provisionalFirstResultRecordV1 struct {
 	OperationID string                       `json:"operation_id"`
 	RequestHash string                       `json:"request_hash"`
+	Reservation DurableRecord                `json:"reservation"`
 	Coordinate  EnrollmentCommitCoordinateV1 `json:"coordinate"`
 	Prepared    PreparedProvisionalV1        `json:"prepared"`
 }
@@ -44,19 +47,12 @@ func OpenDurableProvisionalService(path string,
 		return nil, errors.New("[Enrollment] provisional store path/generator 不能为空")
 	}
 	service := &DurableProvisionalService{path: path, generate: generate,
-		state: provisionalFirstResultStateV1{Schema: 1, Records: []provisionalFirstResultRecordV1{}}}
-	body, err := os.ReadFile(path)
+		state: provisionalFirstResultStateV1{Schema: 2, Records: []provisionalFirstResultRecordV1{}}}
+	state, err := readProvisionalFirstResults(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return service, nil
 	}
 	if err != nil {
-		return nil, err
-	}
-	var state provisionalFirstResultStateV1
-	if _, err := wire.DecodeStrict(body, 64<<20, &state); err != nil {
-		return nil, fmt.Errorf("[Enrollment] provisional first-result store 非规范或损坏: %w", err)
-	}
-	if err := validateProvisionalFirstResultState(&state); err != nil {
 		return nil, err
 	}
 	service.state = state
@@ -107,7 +103,7 @@ func (service *DurableProvisionalService) PrepareProvisional(ctx context.Context
 		return PreparedProvisionalV1{}, err
 	}
 	firstResult := provisionalFirstResultRecordV1{OperationID: operationID,
-		RequestHash: requestHash, Coordinate: coordinate, Prepared: clonePreparedProvisional(prepared)}
+		RequestHash: requestHash, Reservation: cloneDurableRecord(record), Coordinate: coordinate, Prepared: clonePreparedProvisional(prepared)}
 	candidate := cloneProvisionalFirstResultState(service.state)
 	candidate.Records = append(candidate.Records, provisionalFirstResultRecordV1{})
 	copy(candidate.Records[index+1:], candidate.Records[index:])
@@ -170,8 +166,8 @@ func provisionalPreparationRequestHash(operationID string, record *DurableRecord
 }
 
 func validateProvisionalFirstResultState(state *provisionalFirstResultStateV1) error {
-	if state == nil || state.Schema != 1 || state.Records == nil {
-		return errors.New("[Enrollment] provisional first-result store schema 无效")
+	if state == nil || state.Schema != 2 || state.Records == nil {
+		return errors.New("[D130 Enrollment] provisional first-result store schema 无效")
 	}
 	for index := range state.Records {
 		record := &state.Records[index]
@@ -185,8 +181,79 @@ func validateProvisionalFirstResultState(state *provisionalFirstResultStateV1) e
 			&record.Coordinate); err != nil {
 			return err
 		}
+		if err := validateDurableRecord(&record.Reservation); err != nil {
+			return err
+		}
+		requestHash, err := provisionalPreparationRequestHash(record.OperationID, &record.Reservation, &record.Coordinate)
+		operationID, idErr := ProvisionalOperationID(&record.Reservation)
+		if err != nil || idErr != nil || requestHash != record.RequestHash || operationID != record.OperationID {
+			return errors.New("[D130 Enrollment] stored first-result reservation/request binding 无效")
+		}
+		if err := validatePreparedProvisional(&record.Prepared, record.OperationID, &record.Reservation, &record.Coordinate); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// ProvisionalRecoveryV1 保留首次签发时已经认证的 reservation 和冻结日志坐标。
+// daemon 在选举 barrier 之前恢复尚未写入 operation journal 的 first-result；
+// 不需要再持有 claim token/CSR，也不得再次调用 CA（D102、D130）。
+type ProvisionalRecoveryV1 struct {
+	Reservation DurableRecord
+	Coordinate  EnrollmentCommitCoordinateV1
+	Prepared    PreparedProvisionalV1
+}
+
+func ReadDurableProvisionalResults(path string) ([]ProvisionalRecoveryV1, error) {
+	state, err := readProvisionalFirstResults(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return []ProvisionalRecoveryV1{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	results := make([]ProvisionalRecoveryV1, len(state.Records))
+	for i, record := range state.Records {
+		results[i] = ProvisionalRecoveryV1{Reservation: record.Reservation, Coordinate: record.Coordinate, Prepared: record.Prepared}
+	}
+	return results, nil
+}
+
+func readProvisionalFirstResults(path string) (provisionalFirstResultStateV1, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return provisionalFirstResultStateV1{}, err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || info.Size() < 1 || info.Size() > 64<<20 {
+		return provisionalFirstResultStateV1{}, errors.New("[D130 Enrollment] first-result store 必须是 0600 有界普通文件")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return provisionalFirstResultStateV1{}, err
+	}
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		_ = file.Close()
+		return provisionalFirstResultStateV1{}, errors.New("[D130 Enrollment] first-result store 在读取时被替换")
+	}
+	body, err := io.ReadAll(io.LimitReader(file, (64<<20)+1))
+	closeErr := file.Close()
+	if err != nil {
+		return provisionalFirstResultStateV1{}, err
+	}
+	if closeErr != nil {
+		return provisionalFirstResultStateV1{}, closeErr
+	}
+	var state provisionalFirstResultStateV1
+	canonical, err := wire.DecodeStrict(body, 64<<20, &state)
+	if err != nil || len(body) > 64<<20 || !bytes.Equal(body, canonical) {
+		return provisionalFirstResultStateV1{}, fmt.Errorf("[D130 Enrollment] first-result store 非规范或损坏: %v", err)
+	}
+	if err := validateProvisionalFirstResultState(&state); err != nil {
+		return provisionalFirstResultStateV1{}, err
+	}
+	return state, nil
 }
 
 func validateStoredPreparedProvisional(prepared *PreparedProvisionalV1, operationID string,

@@ -127,11 +127,12 @@ type BootstrapIssuerAuthorizationProofV1 struct {
 }
 
 type EnrollmentIntentPreflightRequestV1 struct {
-	Schema                    int    `json:"schema"`
-	ClusterID                 string `json:"cluster_id"`
-	InviteID                  string `json:"invite_id"`
-	CertifiedInviteRecordHash string `json:"certified_invite_record_hash"`
-	CapabilityID              string `json:"capability_id"`
+	Schema                    int                                `json:"schema"`
+	ClusterID                 string                             `json:"cluster_id"`
+	InviteID                  string                             `json:"invite_id"`
+	CertifiedInviteRecordHash string                             `json:"certified_invite_record_hash"`
+	CapabilityID              string                             `json:"capability_id"`
+	Authorization             EnrollmentPreflightAuthorizationV1 `json:"authorization"`
 }
 
 type EnrollmentIntentPreflightResponseV1 struct {
@@ -531,13 +532,15 @@ func VerifyInviteDescriptorBindings(descriptor *InviteBootstrapDescriptorV2, rec
 }
 
 func EnrollmentIntentPreflightRequestHash(request *EnrollmentIntentPreflightRequestV1) (string, error) {
-	if request == nil || request.Schema != 1 || !validIdentifier(request.ClusterID, 128) || !validIdentifier(request.InviteID, 128) {
-		return "", errors.New("[Enrollment preflight] request identity 无效")
+	if _, err := EnrollmentPreflightAuthorizationMessage(request); err != nil {
+		return "", err
 	}
-	for _, hash := range []string{request.CertifiedInviteRecordHash, request.CapabilityID} {
-		if _, err := ParseHash(hash); err != nil {
+	if request.Authorization.Mode == "token_hmac_sha256" {
+		if _, err := preflightMACBytes(request.Authorization.TokenMAC); err != nil {
 			return "", err
 		}
+	} else if request.Authorization.ProofSignature == "" {
+		return "", errors.New("[D131 Enrollment preflight] resume 身份证明缺失")
 	}
 	return HashObject(DomainEnrollmentPreflightRequest, request)
 }

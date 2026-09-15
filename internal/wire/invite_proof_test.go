@@ -121,7 +121,7 @@ func TestInviteProofBundlePinsLineageBeforeDescriptorSecrets(t *testing.T) {
 		}, MinimumRecoveryEpoch: 0, TrustedCheckpointHash: parent.HeadHash,
 	}
 	bundle := InviteProofBundleV2{
-		Schema: 2, ClusterID: "demo-cluster", InviteID: "invite-1", BootstrapTransitionBundle: bootstrap,
+		Schema: 2, ClusterID: "demo-cluster", InviteID: "invite-1", BootstrapTransitionBundle: &bootstrap,
 		AuthorityTransitions: []json.RawMessage{}, CertifiedInviteRecord: record, InviteIssuancePolicy: policy,
 		DeviceEnrollmentIntentCommitment: commitment, InviteOperationLeaf: operationLeaf, InviteLeafIndex: 0,
 		InviteOperationTreeSize: 1, InviteOperationAuditPath: []string{}, RecordHead: recordHead,

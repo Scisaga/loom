@@ -30,9 +30,13 @@ type EnrollmentCommitCoordinateV1 struct {
 // EnrollmentHeadMutationV1 是交给全局 state projector 的最小 typed mutation。
 // 私有 result bytes 不进入 Raft；completion 只把 exact view/secret refs 交给私有投影器。
 type EnrollmentHeadMutationV1 struct {
-	OperationLeaf      wire.ControlOperationLeafV1 `json:"operation_leaf"`
-	InitialDeviceView  *wire.DeviceViewPayloadV2   `json:"initial_device_view,omitempty"`
-	SecretArtifactRefs []json.RawMessage           `json:"secret_artifact_refs,omitempty"`
+	OperationLeaf     wire.ControlOperationLeafV1 `json:"operation_leaf"`
+	InitialDeviceView *wire.DeviceViewPayloadV2   `json:"initial_device_view,omitempty"`
+	// completion 的 [] 是有效空集合，必须跨 journal 编解码保留，不能变成 nil。
+	SecretArtifactRefs []json.RawMessage `json:"secret_artifact_refs"`
+	// Preimage 只在认证的 control 副本间复制，不放进 Head 或公开分发。
+	// 它使 daemon 能独立重算 CAS，而不是相信调用方提供的 object hash。
+	Preimage *EnrollmentMutationPreimageV1 `json:"preimage,omitempty"`
 }
 
 type EnrollmentOperationCommitResultV1 struct {
@@ -140,7 +144,10 @@ func (backend *DistributedWorkflowBackend) PlanReservation(ctx context.Context,
 				return EnrollmentHeadMutationV1{}, err
 			}
 			return EnrollmentHeadMutationV1{OperationLeaf: wire.ControlOperationLeafV1{
-				Schema: 1, OperationID: operationID, ObjectID: objectID}}, nil
+				Schema: 1, OperationID: operationID, ObjectID: objectID},
+				Preimage: &EnrollmentMutationPreimageV1{Schema: 1, Kind: "reservation",
+					Reservation: &EnrollmentReservationPreimageV1{Material: cloneInviteMaterial(attempt.material),
+						Evidence: attempt.PrivateClaimEvidence(), Operation: operation, Admission: admission}}}, nil
 		})
 	if err != nil {
 		return ReservationPlanV2{}, err
@@ -190,7 +197,10 @@ func (backend *DistributedWorkflowBackend) Provision(ctx context.Context,
 				return EnrollmentHeadMutationV1{}, err
 			}
 			return EnrollmentHeadMutationV1{OperationLeaf: wire.ControlOperationLeafV1{
-				Schema: 1, OperationID: operationID, ObjectID: objectID}}, nil
+				Schema: 1, OperationID: operationID, ObjectID: objectID},
+				Preimage: &EnrollmentMutationPreimageV1{Schema: 1, Kind: "provisional",
+					Provisional: &EnrollmentProvisionalPreimageV1{Record: cloneDurableRecord(record),
+						Prepared: clonePreparedProvisional(value)}}}, nil
 		})
 	if err != nil {
 		return ProvisionalPlanV1{}, err
@@ -271,7 +281,10 @@ func (backend *DistributedWorkflowBackend) CommitCompletion(ctx context.Context,
 			view := clonePrivateValue(record.ResultArtifact.InitialDeviceView)
 			return EnrollmentHeadMutationV1{OperationLeaf: wire.ControlOperationLeafV1{
 				Schema: 1, OperationID: operation.OperationID, ObjectID: objectID},
-				InitialDeviceView: &view, SecretArtifactRefs: refs}, nil
+				InitialDeviceView: &view, SecretArtifactRefs: refs,
+				Preimage: &EnrollmentMutationPreimageV1{Schema: 1, Kind: "completion",
+					Completion: &EnrollmentCompletionPreimageV1{Record: cloneDurableRecord(record),
+						Operation: operation, Approval: approval}}}, nil
 		})
 	if err != nil {
 		return CompletionCertificationV1{}, err

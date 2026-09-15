@@ -11,12 +11,14 @@ import (
 const DomainInviteProofBundle = "loom-invite-proof-bundle-v2"
 
 // InviteProofBundleV2 只含 public-safe bytes。authority_transitions 使用严格 union：
-// 每项必须恰好解码为 ControlSet 或 emergency recovery bundle。
+// 每项必须恰好解码为普通 CertifiedHead 或已定义的 ControlSet/recovery/policy
+// transition bundle；普通项仍须连续 parent 与同 authority QC（D115、D119）。
 type InviteProofBundleV2 struct {
 	Schema                            int                                 `json:"schema"`
 	ClusterID                         string                              `json:"cluster_id"`
 	InviteID                          string                              `json:"invite_id"`
-	BootstrapTransitionBundle         BootstrapTransitionBundleV1ToV2     `json:"bootstrap_transition_bundle"`
+	BootstrapTransitionBundle         *BootstrapTransitionBundleV1ToV2    `json:"bootstrap_transition_bundle,omitempty"`
+	RuntimeActivationBundle           *RuntimeActivationBundleV1          `json:"runtime_activation_bundle,omitempty"`
 	AuthorityTransitions              []json.RawMessage                   `json:"authority_transitions"`
 	CertifiedInviteRecord             CertifiedInviteRecordV2             `json:"certified_invite_record"`
 	InviteIssuancePolicy              InviteIssuancePolicyV2              `json:"invite_issuance_policy"`
@@ -35,6 +37,19 @@ type InviteProofTrustV2 struct {
 	V1PlatformKey           ed25519.PublicKey
 	V1PlatformKeyID         string
 	V1MigrationAnchorDigest string
+}
+
+func (bundle *InviteProofBundleV2) PlatformKeyID() string {
+	if bundle == nil {
+		return ""
+	}
+	if bundle.BootstrapTransitionBundle != nil && bundle.RuntimeActivationBundle == nil {
+		return bundle.BootstrapTransitionBundle.TransitionProof.Body.V1PlatformKeyID
+	}
+	if bundle.RuntimeActivationBundle != nil && bundle.BootstrapTransitionBundle == nil {
+		return bundle.RuntimeActivationBundle.Proof.Statement.V1PlatformKeyID
+	}
+	return ""
 }
 
 // VerifiedInviteProofV2 保存后续 preflight/claim 所需的 exact authority 坐标；字段私有，
@@ -186,34 +201,65 @@ func verifyInviteProofAuthority(bundle *InviteProofBundleV2, clusterID, inviteID
 	if err != nil || bundleHash != expectedBundleHash {
 		return VerifiedInviteProofV2{}, errors.New("[Invite proof] descriptor 未绑定 exact proof bundle")
 	}
-	bootstrap := &bundle.BootstrapTransitionBundle
+	if (bundle.BootstrapTransitionBundle == nil) == (bundle.RuntimeActivationBundle == nil) {
+		return VerifiedInviteProofV2{}, errors.New("[D115 Invite proof] authority anchor 必须恰好一个")
+	}
 	var bootstrapHash string
-	if len(trust.V1PlatformKey) == ed25519.PublicKeySize {
-		bootstrapHash, err = VerifyBootstrapTransitionBundle(bootstrap, trust.V1PlatformKey,
-			trust.V1PlatformKeyID, trust.V1MigrationAnchorDigest)
-		if err == nil && trustedCheckpointHash != "" &&
-			trustedCheckpointHash != bootstrap.InitialHeadEntry.Head.HeadHash {
-			err = errors.New("[Invite proof] descriptor trusted checkpoint 与 v1-verified initial head 不一致")
+	var currentHead HeadEntryV2
+	var currentSet ControlSetV1
+	var currentPolicy RecoveryPolicyV1
+	if activation := bundle.RuntimeActivationBundle; activation != nil {
+		if requirePlatformRoot && len(trust.V1PlatformKey) != ed25519.PublicKeySize {
+			return VerifiedInviteProofV2{}, errors.New("[D130 resume] 缺 v1 platform key/migration anchor trust root")
 		}
-	} else if requirePlatformRoot {
-		err = errors.New("[resume] 缺 v1 platform key/migration anchor trust root")
+		bootstrapHash, err = VerifyRuntimeActivationBundle(activation, trust, "", trustedCheckpointHash)
+		currentHead, currentSet, currentPolicy = activation.Head, activation.ControlSet, activation.RecoveryPolicy
 	} else {
-		bootstrapHash, err = VerifyBootstrapTransitionBundleFromCheckpoint(bootstrap, trustedCheckpointHash)
+		bootstrap := bundle.BootstrapTransitionBundle
+		if len(trust.V1PlatformKey) == ed25519.PublicKeySize {
+			bootstrapHash, err = VerifyBootstrapTransitionBundle(bootstrap, trust.V1PlatformKey,
+				trust.V1PlatformKeyID, trust.V1MigrationAnchorDigest)
+			if err == nil && trustedCheckpointHash != "" &&
+				trustedCheckpointHash != bootstrap.InitialHeadEntry.Head.HeadHash {
+				err = errors.New("[D115 Invite proof] descriptor trusted checkpoint 与 v1-verified initial head 不一致")
+			}
+		} else if requirePlatformRoot {
+			err = errors.New("[D130 resume] 缺 v1 platform key/migration anchor trust root")
+		} else {
+			bootstrapHash, err = VerifyBootstrapTransitionBundleFromCheckpoint(bootstrap, trustedCheckpointHash)
+		}
+		currentHead, currentSet, currentPolicy = bootstrap.InitialHeadEntry.Head, bootstrap.InitialControlSet, bootstrap.InitialRecoveryPolicy
 	}
 	if err != nil {
 		return VerifiedInviteProofV2{}, err
 	}
-	currentHead := bootstrap.InitialHeadEntry.Head
-	currentSet := bootstrap.InitialControlSet
-	currentPolicy := bootstrap.InitialRecoveryPolicy
 	transitionHashes := []string{bootstrapHash}
 	authorities := []verifiedHeadAuthorityV2{{
 		head: cloneInviteProofValue(currentHead), currentSet: cloneInviteProofValue(currentSet),
 	}}
+	if activation := bundle.RuntimeActivationBundle; activation != nil {
+		// 迁移前最后一个已认证 Head 可承诺迁移时冻结的 catalog；不能把它
+		// 当成新 recovery epoch 的控制权，但可以验证其 exact distribution proof。
+		authorities = append([]verifiedHeadAuthorityV2{{head: cloneInviteProofValue(activation.Parent),
+			currentSet: cloneInviteProofValue(activation.ControlSet)}}, authorities...)
+	}
 	for _, raw := range bundle.AuthorityTransitions {
 		canonical, canonicalErr := CanonicalizeStrict(raw)
 		if canonicalErr != nil || !bytes.Equal(canonical, raw) {
 			return VerifiedInviteProofV2{}, errors.New("[Invite proof] authority transition 必须是 exact canonical JSON")
+		}
+		var ordinary CertifiedHeadV1
+		if _, decodeErr := DecodeStrict(raw, 4<<20, &ordinary); decodeErr == nil {
+			if ordinary.Head.Body.Payload.HeadKind != "ordinary" ||
+				ValidateHeadEntry(&ordinary.Head, &currentHead) != nil {
+				return VerifiedInviteProofV2{}, errors.New("[D115 Invite proof] ordinary lineage 不连续或改变 authority")
+			}
+			if err := VerifyConfigQCAuthority(ordinary.Head.HeadHash, ordinary.QC, &ordinary.Head, &currentSet, nil); err != nil {
+				return VerifiedInviteProofV2{}, err
+			}
+			currentHead = ordinary.Head
+			authorities = append(authorities, verifiedHeadAuthorityV2{head: cloneInviteProofValue(currentHead), currentSet: cloneInviteProofValue(currentSet)})
+			continue
 		}
 		var controlTransition ControlSetTransitionBundleV1
 		if _, decodeErr := DecodeStrict(raw, 32<<20, &controlTransition); decodeErr == nil {

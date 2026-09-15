@@ -48,6 +48,17 @@ class RepositorySafetyTests(unittest.TestCase):
         result, _ = self.scan("profile.go", f'endpoint := "{address}"')
         self.assertEqual(result, 1)
 
+    def test_any_extended_key_usage_exception_is_exact(self):
+        oid = "2.5.29.37.0"
+        result, _ = self.scan("profile.go", f'forbiddenEKU := "{oid}"')
+        self.assertEqual(result, 0)
+        address = ".".join(("6", "0", "0", "1"))
+        result, output = self.scan("profile.go", f'forbiddenEKU := "{oid}"; endpoint := "{address}"')
+        self.assertEqual(result, 1)
+        self.assertEqual(output.count("unapproved public IPv4 address"), 1)
+        result, _ = self.scan("profile.go", 'value := "' + ".".join(("2", "5", "29", "37", "1")) + '"')
+        self.assertEqual(result, 1)
+
     def test_unknown_domains_and_device_ids_are_rejected(self):
         for value, category in (("https://private-deployment" + ".net", "unapproved public domain"),
                                 ("xy" + "42", "site-like device identifier")):

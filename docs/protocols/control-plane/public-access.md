@@ -8,6 +8,17 @@
 
 ## 域名、公开服务与证书管理
 
+### 当前交付范围与独立 DNS 工作
+
+入口部署（Issue #8）使用现有可验证的域名／地址、有效证书链和节点本地私钥引用，完成
+静态分发、HY2／Trojan Bootstrap、Data listener、认证 catalog 和真实可达验证。
+现有绑定须从原网络受验证迁移或经管理操作认证；公开解析结果不产生控制权限。
+
+域名命名／存量迁移、provider/PAT、A/AAAA/TXT、DNS-01 challenge、ACME order、自动签发／
+续期及其恢复与联合验收统一由 Issue #17 承担，目前暂缓。#8 的完成条件不包含这些任务，
+也不等待 #17 完成。后续自动签发产生的证书复用相同安装接口；安装侧继续验证 SAN、完整链、
+有效期、私钥匹配和认证 SPKI。有效证书缺失时报告具体输入错误，不使用测试证书抵扣生产验收。
+
 ### 统一的 forward server 公网基线
 
 本章所称 forward server，是 active Device 的 responsibilities 包含 forward；internet_egress
