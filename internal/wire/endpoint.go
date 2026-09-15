@@ -24,18 +24,19 @@ const (
 	LinuxLinkIntentRenderContract = "linux-link-intents-v1"
 )
 
-// LinuxLinkIntentArtifactV1 是服务端在生成下一张 Device view 前固化的
-// Device 专属逐边运行授权。AuthorityHeadHash 是下一张 Head 的 parent，
-// 因而不会与该 artifact 自身的 content hash 形成循环承诺（D105、D131）。
+// LinuxLinkIntentArtifactV1 在配置生成时绑定已经认证的基准 Head。
+// 当前 Device view 再承诺整个 artifact；后续普通 Head 可继续引用同一内容，
+// 不要求基准是最新 Head 的直接 parent（D105、D131）。
 type LinuxLinkIntentArtifactV1 struct {
-	Schema            int            `json:"schema"`
-	ClusterID         string         `json:"cluster_id"`
-	DeviceID          string         `json:"device_id"`
-	DeviceGeneration  int64          `json:"device_generation"`
-	Generation        int64          `json:"generation"`
-	RenderContractID  string         `json:"render_contract_id"`
-	AuthorityHeadHash string         `json:"authority_head_hash"`
-	LinkIntents       []LinkIntentV1 `json:"link_intents"`
+	Schema            int             `json:"schema"`
+	ClusterID         string          `json:"cluster_id"`
+	DeviceID          string          `json:"device_id"`
+	DeviceGeneration  int64           `json:"device_generation"`
+	Generation        int64           `json:"generation"`
+	RenderContractID  string          `json:"render_contract_id"`
+	AuthorityHeadHash string          `json:"authority_head_hash"`
+	Authority         CertifiedHeadV1 `json:"authority"`
+	LinkIntents       []LinkIntentV1  `json:"link_intents"`
 }
 
 type LinkIntentDestinationV1 struct {
@@ -271,8 +272,11 @@ func ValidateLinuxLinkIntentArtifact(artifact *LinuxLinkIntentArtifactV1) error 
 		artifact.RenderContractID != LinuxLinkIntentRenderContract {
 		return errors.New("[D131 Linux runtime] LinkIntent artifact header 无效")
 	}
-	if _, err := ParseHash(artifact.AuthorityHeadHash); err != nil {
-		return err
+	if artifact.AuthorityHeadHash != artifact.Authority.Head.HeadHash ||
+		artifact.Authority.Head.Body.Payload.ClusterID != artifact.ClusterID ||
+		ValidateHeadEntry(&artifact.Authority.Head, nil) != nil ||
+		validateConfigQCShape(artifact.Authority.QC) != nil {
+		return errors.New("[D131 Linux runtime] LinkIntent artifact 缺 exact certified base Head")
 	}
 	for index := range artifact.LinkIntents {
 		intent := &artifact.LinkIntents[index]

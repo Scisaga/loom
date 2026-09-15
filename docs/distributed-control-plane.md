@@ -3272,10 +3272,18 @@ LinkIntent 的 initiator/transport 选择；同一逻辑数据边可在两端可
 Linux reader 不接受命令行现造的 LinkIntent。它只读取 current Device view 中
 `linux-link-intents` config ref 按 size/content hash/render contract 承诺的 exact canonical artifact，
 再将每条 intent 与 Device responsibilities/grants、已安装 credential ID、endpoint transport 和
-listener generation floor 交叉验证。服务端 producer 必须先以待生成 Head 的 parent hash 固化
-artifact，再把 typed artifact ref 纳入新 Device view/Head；reader 要求 artifact 的
-`authority_head_hash` 与 certified Head 的 `parent_head_hash` 精确相等，不能接受同一 Head 的循环
-自引用或只凭一个可解析 hash。`control_overlay` 只允许 WireGuard，且本机与对端都必须出现在
+listener generation floor 交叉验证。服务端 producer 以生成时已经认证的基准 Head 固化 artifact，
+在 `authority` 中携带该 Head 与完整 config QC，`authority_head_hash` 及每条 intent 的
+`parent_head_hash` 必须 exact 绑定这个基准；再把 typed artifact ref 纳入新 Device view/Head。
+基准不是“每次读取时最新 Head 的直接 parent”：Enrollment 在 provisional 前固化结果和配置，
+completion 才启用 Device view；后续普通操作也可以继续引用未变更的配置。要求最新直接 parent
+会导致 provisional/result 内容哈希环，并使普通操作之后的旧配置失效。
+reader 同时验证当前 view 的 QC/包含证明、exact artifact ref 和基准 config QC；基准必须属于当前
+recovery epoch/statement/policy 与 ControlSet epoch/hash，不得晚于当前 revision/term/logical time，
+同 revision 必须是同一 Head。基准 QC 不单独授予配置权限：实际生效内容仍由当前 Device view
+承诺，服务端每次生成配置时须从自己的已认证状态独立重算该基准与全部 link intents。跨 recovery
+或 ControlSet 切换必须重发对应配置，不能继续沿用旧 authority；不能用裸 hash、未来 Head 或
+同坐标分叉替代证明。`control_overlay` 只允许 WireGuard，且本机与对端都必须出现在
 Head 的 `control_peer_directory_hash` 绑定的 exact private directory；active 运行面一律拒绝 bootstrap intent。
 新连接只按 preferred→advertised 取当前可拨代，draining/过期/低于已见 floor 的代均不进入计划，
 也不会扫描相邻端口。

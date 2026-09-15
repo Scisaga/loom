@@ -21,6 +21,7 @@ func TestLinuxLinkRuntimeStateCommitsOnlyFromDurableDeviceLKG(t *testing.T) {
 		Schema: 1, ClusterID: set.ClusterID, DeviceID: envelope.Payload.DeviceID,
 		DeviceGeneration: envelope.Payload.DeviceGeneration, Generation: 1,
 		RenderContractID: wire.LinuxLinkIntentRenderContract, AuthorityHeadHash: envelope.SignedCurrent.Head.HeadHash,
+		Authority:   wire.CertifiedHeadV1{Head: initial.SignedCurrent.Head, QC: initial.SignedCurrent.QuorumCertificate},
 		LinkIntents: []wire.LinkIntentV1{},
 	}
 	artifactRaw := bindRuntimeArtifactToEnvelope(t, &envelope, &set, key, artifact)
