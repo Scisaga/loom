@@ -96,7 +96,7 @@ func PrepareRuntimeMaterial(state *StateV1) (RuntimeMaterialV1, error) {
 			return RuntimeMaterialV1{}, errors.New("[Windows runtime] hydrate 后仍缺 credential")
 		}
 		body := []byte(hydrated)
-		canonical, canonicalErr := wire.CanonicalizeStrict(body)
+		canonical, canonicalErr := wire.NormalizeRuntimeJSON(body)
 		var object map[string]json.RawMessage
 		if canonicalErr != nil || !bytes.Equal(canonical, body) ||
 			json.Unmarshal(body, &object) != nil || object == nil {

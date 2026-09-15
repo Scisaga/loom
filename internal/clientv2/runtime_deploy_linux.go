@@ -415,7 +415,7 @@ func hydrateLinuxRuntimeFiles(plan *LinuxLinkRuntimePlanV1, artifact *wire.Linux
 		}
 		switch file.Path {
 		case "sing-box/v2/config.json", "agent/v2/config.json":
-			canonical, err := wire.CanonicalizeStrict([]byte(content))
+			canonical, err := wire.NormalizeRuntimeJSON([]byte(content))
 			var object map[string]json.RawMessage
 			if err != nil || !bytes.Equal(canonical, []byte(content)) ||
 				json.Unmarshal([]byte(content), &object) != nil || object == nil {

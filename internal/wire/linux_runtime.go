@@ -131,7 +131,7 @@ func ValidateLinuxRuntimeRedaction(runtime *LinuxRuntimeArtifactV1,
 
 func validateLinuxRuntimeRedactedFile(file LinuxRuntimeFileV1) error {
 	if strings.HasSuffix(file.Path, ".json") {
-		canonical, err := CanonicalizeStrict([]byte(file.Content))
+		canonical, err := NormalizeRuntimeJSON([]byte(file.Content))
 		var object map[string]any
 		if err != nil || !bytes.Equal(canonical, []byte(file.Content)) ||
 			json.Unmarshal([]byte(file.Content), &object) != nil || object == nil {

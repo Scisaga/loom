@@ -66,7 +66,7 @@ func ValidateWindowsRuntimeArtifact(artifact *WindowsRuntimeArtifactV1) error {
 		if total > 12<<20 {
 			return errors.New("[Windows runtime] runtime files 超过总预算")
 		}
-		canonical, err := CanonicalizeStrict([]byte(file.Content))
+		canonical, err := NormalizeRuntimeJSON([]byte(file.Content))
 		var object map[string]any
 		if err != nil || !bytes.Equal(canonical, []byte(file.Content)) ||
 			json.Unmarshal([]byte(file.Content), &object) != nil || object == nil {

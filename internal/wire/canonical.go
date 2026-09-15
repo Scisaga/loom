@@ -30,6 +30,17 @@ const (
 // CanonicalizeStrict 把严格 I-JSON 整数子集编码为 RFC 8785 canonical bytes。
 // 输入歧义在规范化前失败，避免签名者与 reader 对同一字节作不同解释。
 func CanonicalizeStrict(body []byte) ([]byte, error) {
+	return normalizeJSON(body, false)
+}
+
+// NormalizeRuntimeJSON 只处理 artifact 内作为字符串保存的第三方运行配置。
+// Agent 的阈值等字段允许有限小数；保留 renderer 的原数值 token，规范对象
+// 键/字符串/空白。它不用于协议对象、Head、QC 或签名 preimage 的编码。
+func NormalizeRuntimeJSON(body []byte) ([]byte, error) {
+	return normalizeJSON(body, true)
+}
+
+func normalizeJSON(body []byte, runtimeNumbers bool) ([]byte, error) {
 	if len(body) == 0 || !utf8.Valid(body) {
 		return nil, errors.New("[wire] JSON 必须是非空 UTF-8")
 	}
@@ -38,7 +49,7 @@ func CanonicalizeStrict(body []byte) ([]byte, error) {
 	}
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.UseNumber()
-	value, err := decodeValue(dec, 0)
+	value, err := decodeValue(dec, 0, runtimeNumbers)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +151,7 @@ type objectMember struct {
 	value any
 }
 
-func decodeValue(dec *json.Decoder, depth int) (any, error) {
+func decodeValue(dec *json.Decoder, depth int, runtimeNumbers bool) (any, error) {
 	if depth > maxDepth {
 		return nil, errors.New("[wire] JSON 嵌套过深")
 	}
@@ -167,7 +178,7 @@ func decodeValue(dec *json.Decoder, depth int) (any, error) {
 					return nil, fmt.Errorf("[wire] JSON 含重复字段 %q", key)
 				}
 				seen[key] = struct{}{}
-				child, err := decodeValue(dec, depth+1)
+				child, err := decodeValue(dec, depth+1, runtimeNumbers)
 				if err != nil {
 					return nil, err
 				}
@@ -182,7 +193,7 @@ func decodeValue(dec *json.Decoder, depth int) (any, error) {
 		case '[':
 			items := make([]any, 0)
 			for dec.More() {
-				child, err := decodeValue(dec, depth+1)
+				child, err := decodeValue(dec, depth+1, runtimeNumbers)
 				if err != nil {
 					return nil, err
 				}
@@ -199,6 +210,12 @@ func decodeValue(dec *json.Decoder, depth int) (any, error) {
 	case json.Number:
 		lexical := value.String()
 		if bytes.ContainsAny([]byte(lexical), ".eE") {
+			if runtimeNumbers {
+				if _, err := strconv.ParseFloat(lexical, 64); err != nil {
+					return nil, errors.New("[runtime JSON] 小数超出可表示范围")
+				}
+				return value, nil
+			}
 			return nil, errors.New("[wire] v2 wire 禁止浮点数")
 		}
 		integer := new(big.Int)
@@ -239,6 +256,8 @@ func appendCanonical(out *bytes.Buffer, value any) {
 		appendJSONString(out, value)
 	case int64:
 		out.WriteString(strconv.FormatInt(value, 10))
+	case json.Number:
+		out.WriteString(value.String())
 	case bool:
 		out.WriteString(strconv.FormatBool(value))
 	case nil:
