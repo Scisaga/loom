@@ -92,16 +92,21 @@ export function currentNetwork(view) {
     Candidates: paths(view.Candidates)
   };
 }
+// 沿用现行拓扑的 direction 分环与半步错位；运行路径从不参与位置计算。
 export function topologyPositions(nodes) {
-  const sorted = [...nodes].sort((a, b) => a.ID.localeCompare(b.ID)),
-    inner = n => list(n.Responsibilities).length ? list(n.Responsibilities).includes('use_loom') && !list(n.Responsibilities).includes('forward') : list(n.Roles).includes('access') && !list(n.Roles).includes('server'),
-    groups = [sorted.filter(inner), sorted.filter(n => !inner(n))];
+  const sorted = [...nodes].sort((a, b) => Number(!!b.Self) - Number(!!a.Self) || a.ID.localeCompare(b.ID));
+  let inner = sorted.filter(n => n.Direction !== 'reverse_only'),
+    outer = sorted.filter(n => n.Direction === 'reverse_only').sort((a, b) => a.ID.localeCompare(b.ID));
+  if (!outer.length && inner.length > 1) outer = inner.splice(Math.ceil(inner.length / 2));
   const positions = new Map();
-  groups.forEach((group, ring) => group.forEach((n, i) => {
-    const angle = -Math.PI / 2 + i * 2 * Math.PI / group.length;
+  [inner, outer].forEach((group, ring) => group.forEach((n, i) => {
+    const angle = -90 + (ring ? 180 / group.length : 0) + i * 360 / group.length,
+      radians = angle * Math.PI / 180;
     positions.set(n.ID, {
-      x: 550 + (ring ? 410 : 225) * Math.cos(angle),
-      y: 300 + (ring ? 220 : 130) * Math.sin(angle)
+      x: 480 + (ring ? 310 : 170) * Math.cos(radians),
+      y: 180 + (ring ? 130 : 75) * Math.sin(radians),
+      angle,
+      ring: ring ? 'outer' : 'inner'
     });
   }));
   return positions;

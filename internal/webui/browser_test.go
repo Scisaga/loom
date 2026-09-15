@@ -182,6 +182,10 @@ const wait=async(fn)=>{for(let i=0;i<300;i++){if(fn())return;await new Promise(r
 try{
  await wait(()=>document.documentElement.dataset.ready==='true');
  const marker={};window.demoMarker=marker;
+ const topologyNode=document.querySelector('.topology-node');assert(topologyNode,'Direct Topology load missing graph');
+ const before=topologyNode.querySelector('.node').getAttribute('cx');topologyNode.dispatchEvent(new MouseEvent('click',{bubbles:true}));assert(topologyNode.getAttribute('aria-pressed')==='true','Node focus did not lock');
+ topologyNode.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert(topologyNode.getAttribute('aria-pressed')==='false','Escape did not clear focus');assert(topologyNode.querySelector('.node').getAttribute('cx')===before,'Focus moved topology nodes');
+
  document.querySelector('a[href="/devices"]').click();await wait(()=>document.querySelector('#devices-body'));
  assert(document.querySelectorAll('#devices-body tr').length===2,'initial device count');
  assert(!document.querySelector('#devices-body img'),'untrusted device name became markup');
@@ -231,7 +235,7 @@ try{
 			w.WriteHeader(204)
 			return
 		}
-		if r.URL.Path == "/" {
+		if r.URL.Path == "/topology" {
 			rec := httptest.NewRecorder()
 			handler.ServeHTTP(rec, r)
 			for k, v := range rec.Header() {
@@ -245,7 +249,7 @@ try{
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, browser, "--headless", "--no-sandbox", "--disable-gpu", "--no-proxy-server", "--no-first-run", "--disable-background-networking", "--user-data-dir="+t.TempDir(), "--dump-dom", "--virtual-time-budget=8000", server.URL)
+	command := exec.CommandContext(ctx, browser, "--headless", "--no-sandbox", "--disable-gpu", "--no-proxy-server", "--no-first-run", "--disable-background-networking", "--user-data-dir="+t.TempDir(), "--dump-dom", "--virtual-time-budget=8000", server.URL+"/topology")
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}

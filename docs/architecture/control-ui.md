@@ -149,3 +149,11 @@ presence 表示设备心跳租约，Loom 运行态来自独立可信报告，二
 Windows/Android 当前固定 `use_loom`，不显示不可用职责。只有 `use_loom` 时显示 grants；
 只有 `forward` 时显示方向及 `internet_egress`。隐藏控件禁用并从提交中排除，服务端仍做完整
 验证。保存中、校验未通过等暂时不可用的动作保留位置并说明原因。
+
+### 浏览器渲染与原型一致
+
+渲染机制迁移不构成视觉重设计。Overview 与 Topology 的布局、间距、颜色、品牌图形以
+[Overview 原型](../../assets/loom-control-center-overview-misaka-v1.svg)和
+[Topology 原型](../../assets/loom-control-center-topology-misaka-v1.svg)为准，真实观测替代示例数据。
+发布页按 Linux、Android、Windows 分页，平台标签和制品卡片使用对应图标；Windows 卡片标题
+显示 `installed`、`portable-tun`、`portable-mixed` 变体，架构单独标明。部署记录仍在 Releases 内独立分页。

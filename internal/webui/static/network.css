@@ -1,0 +1,195 @@
+.topology{width:100%;min-height:390px;display:block;background:transparent;overflow:visible}.topology path,.topology ellipse{vector-effect:non-scaling-stroke}.topology .topology-ring{fill:none;stroke:#edf0ee;stroke-width:1}.topology .topology-ring.inner{stroke-dasharray:3 5}.topology .ring-key{fill:var(--dim);font:500 9px Inter,ui-sans-serif,system-ui;letter-spacing:.035em}.topology .ring-dot{fill:#dfe5e1}.topology .topology-edge path{fill:none}.topology .topology-edge,.topology .topology-node,.topology .edge-metric{transition:opacity .16s ease}.topology .tunnel{stroke:#a5aaa8;stroke-width:1.25;opacity:.88;transition:stroke .16s ease,stroke-width .16s ease,opacity .16s ease}.topology .direct-hy2{stroke:#4f9b74;stroke-width:1.45;opacity:.9;transition:stroke .16s ease,stroke-width .16s ease,opacity .16s ease}.topology .candidate{stroke:#b9bebc;stroke-width:1.25;stroke-dasharray:5 6;opacity:.82;transition:stroke .16s ease,stroke-width .16s ease,opacity .16s ease}.topology .degraded{stroke:#d79b3b}.topology .failed{stroke:#c65a5a}.topology .unknown{stroke:#a5aaa8;stroke-dasharray:3 7;opacity:.62}.topology .edge-hit{stroke:transparent;stroke-width:13;pointer-events:stroke}.topology .topology-edge:hover .tunnel,.topology .topology-edge.is-related .tunnel,.topology .topology-edge:hover .direct-hy2,.topology .topology-edge.is-related .direct-hy2{stroke:#247b53;stroke-width:2.35;opacity:1}.topology .topology-edge.is-related .candidate{stroke:#69716d;stroke-width:1.8;opacity:1}.topology.has-focus .topology-edge.is-muted{opacity:.1}.topology.has-focus .topology-node.is-muted{opacity:.2}.topology .edge-metric{opacity:0;pointer-events:none}.topology .edge-metric.is-related{opacity:1}.topology .edge-metric text{fill:#4e5652;stroke:rgba(255,255,255,.96);stroke-width:4px;stroke-linejoin:round;paint-order:stroke;display:block;font:500 8.8px var(--font-mono);font-variant-numeric:tabular-nums}.topology .route{fill:none;stroke:var(--route);stroke-width:2.5;opacity:.96}.topology .route-ring{fill:none;stroke:var(--route);stroke-width:2;opacity:.3}.topology .topology-node{cursor:pointer;outline:none}.topology .node-focus{fill:none;stroke:var(--ok);stroke-width:2;opacity:0;transform-box:fill-box;transform-origin:center;transform:scale(.72);transition:opacity .16s ease,transform .16s ease}.topology .topology-node:hover .node-focus,.topology .topology-node:focus .node-focus,.topology .topology-node.is-preview .node-focus,.topology .topology-node.is-selected .node-focus{opacity:.28;transform:scale(1)}.topology .topology-node.is-selected .node-focus{opacity:.48}.topology .node{fill:var(--ok);stroke:#fff;stroke-width:3}.topology .node.problem{fill:var(--bad)}.topology .node.unknown{fill:#a5aaa8;stroke:#fff;stroke-dasharray:none}.topology .node.undeclared{fill:var(--warn);stroke:#fff}.topology .node.selected{fill:var(--ok);stroke:#fff;stroke-width:3}.topology .node-label{paint-order:stroke;stroke:#fff;stroke-width:4px;stroke-linejoin:round}.topology text{fill:var(--fg);font:500 12px var(--font-mono)}.topology .sub{fill:var(--dim);font:400 10px/1.4 Inter,ui-sans-serif,system-ui}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;color:var(--dim);font-size:11px}.key{display:inline-block;width:26px;border-top:2px solid #a5aaa8;vertical-align:middle;margin-right:6px}.key.direct-hy2{border-color:#4f9b74}.key.candidate{border-color:#b9bebc;border-top-style:dashed}.key.route{border-color:var(--route);border-width:3px}.key.degraded{border-color:#d79b3b}.key.failed{border-color:#c65a5a}
+.topology .route{stroke-width:3;opacity:.94}.topology .route-ring{stroke-width:2.4;opacity:.72}.topology .node.selected{stroke:var(--route);stroke-width:3.5}.topology .node.problem.selected{fill:var(--bad)}.topology .node.unknown.selected{fill:#a5aaa8}.topology .route-direct-label{fill:var(--route);stroke:#fff;stroke-width:3px;paint-order:stroke;font:650 9px Inter,ui-sans-serif,system-ui}
+.topology .route-local-exit{pointer-events:none;transition:opacity .16s ease}.topology .route-local-exit rect{stroke-width:1}.topology .route-local-exit text{fill:var(--route);stroke:none;font-family:Inter,ui-sans-serif,system-ui;font-size:8px;font-weight:700;letter-spacing:.045em}.topology.has-focus .route-local-exit{opacity:.12}
+:root {--fg:#181b1a;--dim:#717674;--faint:#9ba09e;--line2:#ccd2ce;--ok:#239b68;--bad:#b84c4c;--warn:#a66a14;--info:#477d9c;--route:#466fc2;--font-mono:"SFMono-Regular",Consolas,ui-monospace,monospace;--bg:#fcfcfb}
+header {height:51px;padding:0 18px;gap:18px}
+.brand {flex:0 0 253px;gap:10px;font-size:18px;letter-spacing:.08em;color:var(--ink)}
+.brand img {width:34px;height:34px}
+header nav {gap:0;scrollbar-width:none}
+header nav a {gap:7px;padding:0 10px;font-size:13px}
+.icon {width:18px;height:18px;display:inline-block;flex:0 0 auto;vertical-align:middle}
+header nav .icon {width:14px;height:14px}
+main {max-width:1586px;padding:28px 20px 44px}
+.network-page {font-size:13px;--line:#e2e6e3}
+.network-page .card {border-radius:8px;margin:0;padding:15px 18px;min-width:0}
+.network-page h1 {font-size:29px;line-height:1.25;letter-spacing:-.4px;margin:2px 0 4px}
+.network-page h2 {font-size:16px;line-height:1.4;margin:0;font-weight:700}
+.network-page h3 {margin:0;font-size:14px}
+.eyebrow {font-size:12px;letter-spacing:.11em;font-weight:750}
+.network-heading p {margin:4px 0 0}
+.dim {color:var(--dim)}
+.tiny {font-size:11px}
+.ok {color:var(--ok)}
+.bad {color:var(--bad)}
+.label {display:block;font-size:11px;color:var(--dim)}
+.metric {font-size:19px;line-height:1.3;font-weight:700;margin:3px 0}
+.metric small {font-size:12px;font-weight:400}
+.network-page a {color:var(--info)}
+.sectionhead {display:flex;align-items:center;gap:12px;margin-bottom:7px}
+.sectionhead>a:last-child {margin-left:auto;white-space:nowrap}
+.sectionhead>span:last-child {margin-left:auto}
+.dot {display:inline-block;width:7px;height:7px;border-radius:50%;background:#73c39d;flex:0 0 auto}
+.overview-health {display:flex;align-items:center;gap:8px;margin:12px 0 20px;height:18px}
+.status-check {display:inline-flex;align-items:center;justify-content:center;width:13px;height:13px;border:1.5px solid currentColor;border-radius:50%;font-size:9px;font-weight:800;color:var(--ok)}
+.status-check.warn {color:var(--warn)}
+.status-check.bad {color:var(--bad)}
+.steps {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));height:82px;border:1px solid var(--line);border-radius:8px;background:white;align-items:center}
+.step {padding:0 31px;min-width:0;border-right:1px solid var(--line)}
+.step:last-child {border-right:0}
+.step .label {font-size:13px;color:var(--fg)}
+.step b {display:block;font-size:17px;line-height:1.3;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.step small {font-size:12px;font-weight:400;display:inline;color:inherit}
+.step>.tiny {display:block;margin-top:2px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.snapshot-alert {display:flex;align-items:center;gap:16px;margin:12px 0 0;padding:8px 14px}
+.overview-primary {display:grid;grid-template-columns:minmax(0,1.868fr) minmax(340px,1fr);gap:16px;height:330px;margin-top:18px}
+.overview-primary .overview-topology-card {padding:12px 15px;height:330px}
+.overview-card-head {display:flex;align-items:center;gap:14px;min-height:24px}
+.overview-card-head .legend {margin:0 0 0 auto;font-size:11px;gap:15px}
+.overview-topology-card .topology {height:280px;min-height:0}
+.overview-side {display:grid;grid-template-rows:142px minmax(0,1fr);gap:14px}
+.overview-side .overview-compact-card {padding:11px 17px;overflow:hidden}
+.overview-compact-card .sectionhead {margin-bottom:9px}
+.overview-compact-card .tiny {font-size:10px}
+.traffic-compact-body {display:grid;grid-template-columns:150px minmax(0,1fr);align-items:end;gap:20px}
+.traffic-spark {display:block;width:100%;height:62px}
+.traffic-compact-scale {display:flex;justify-content:space-between;color:var(--dim);font-size:10px;margin-top:2px}
+.rollout-summary {font-size:13px;margin-top:8px;line-height:1.75}
+.rollout-stages {display:grid;grid-template-columns:repeat(4,1fr);margin:12px 0 10px;position:relative}
+.rollout-stages:before {content:"";position:absolute;top:4px;left:7%;right:7%;height:1px;background:#ccd2ce}
+.rollout-stage {position:relative;padding-top:16px;text-align:center;color:var(--dim);font-size:11px}
+.rollout-stage:before {content:"";position:absolute;top:0;left:calc(50% - 4px);width:8px;height:8px;background:#ccd2ce;border-radius:50%}
+.rollout-stage.done:before {background:var(--ok)}
+.overview-secondary {display:grid;grid-template-columns:minmax(0,1.185fr) minmax(0,1fr);gap:16px;margin-top:12px;min-height:203px}
+.overview-secondary .overview-list-card {padding:10px 18px;min-height:203px}
+.network-page .table-wrap {border:0;border-radius:0;background:transparent;margin:0;overflow:auto}
+.network-page table {font-size:12px}
+.network-page th {font-size:11px;text-transform:none;letter-spacing:0;font-weight:400;padding:3px 7px 4px 0;white-space:nowrap;background:none}
+.network-page td {padding:3px 7px 3px 0;height:26px;border-color:var(--line);white-space:nowrap}
+.network-page .badge {font-size:12px;white-space:nowrap}
+.overview-list-card td:first-child a {font-family:var(--font-mono);color:var(--fg)}
+.overview-list-card td:first-child a:before {content:"";display:inline-block;width:7px;height:7px;background:#73c39d;border-radius:50%;margin-right:10px}
+.overview-list-card td:nth-child(4) {font-family:var(--font-mono)}
+.overview-events {margin-top:12px!important;min-height:111px;padding:10px 18px!important}
+.overview-event-row {display:grid;grid-template-columns:46px 8px minmax(0,1fr);gap:7px;align-items:center;height:23px;font-size:12px}
+.overview-event-row time {color:var(--dim);font-family:var(--font-mono)}
+.clip {overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.overview-attention {margin-top:12px!important}
+.overview-attention p {margin-bottom:0}
+.network-history {margin:14px 0;color:var(--dim)}
+.network-history>summary {cursor:pointer;font-size:12px;padding:6px 0}
+.network-history[open]>summary {margin-bottom:10px}
+.topology-layout {display:grid;grid-template-columns:minmax(0,2.4fr) minmax(340px,1fr);gap:16px;align-items:stretch;margin-bottom:15px}
+.topology-stage {display:flex;flex-direction:column;min-height:478px;padding:15px 18px!important}
+.topology-card-head {display:flex;align-items:start;gap:14px}
+.topology-card-head p {font-size:12px;margin:2px 0 0}
+.topology-card-head .legend {margin:3px 0 0 auto;gap:12px;font-size:10px;justify-content:end}
+.topology-stage #topology {flex:1;display:flex;align-items:center;min-height:365px}
+.topology-stage .topology {min-height:0;height:auto;width:100%;max-height:400px}
+.topology-caption {font-size:11px;color:var(--dim);margin:9px 0 8px}
+.topology-side {display:grid;grid-template-rows:minmax(270px,1fr) 192px;gap:15px}
+.layer-carriers {padding:10px 0 13px;border-bottom:1px solid var(--line)}
+.topology-status-grid {display:grid;grid-template-columns:1fr 1fr;gap:15px;padding:12px 0 13px;border-bottom:1px solid var(--line)}
+.topology-status-grid .metric {font-size:18px;white-space:nowrap}
+.layer-routing {padding-top:11px}
+.layer-routing a {display:block;margin-top:3px;font-size:12px}
+.topology-traffic-card {padding:11px 18px!important}
+.topology-traffic-card p {margin:4px 0 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.link-traffic-body {display:grid;grid-template-columns:140px minmax(0,1fr);gap:15px}
+.link-spark {display:block;width:100%;height:80px}
+.link-traffic-body .metric {font-size:18px;margin:2px 0 5px}
+.topology-traffic-card>.tiny {display:block;margin-top:4px}
+.topology-edge-card {padding:11px 18px!important}
+.edge-panel-head {display:flex;align-items:center;gap:20px;margin-bottom:12px}
+.edge-panel-head>.dim {font-size:11px}
+#links-body tr {cursor:pointer}
+#links-body tr.inspected {background:#eff8f3;color:#197853}
+#links-body tr:focus-visible {outline:2px solid #63a286;outline-offset:-2px}
+.link-total {display:flex;align-items:center;gap:20px;min-width:260px}
+.link-total>span {width:74px;flex:0 0 auto}
+.link-total svg {width:230px;height:12px}
+.route-hop {display:flex;justify-content:space-between;gap:16px;padding:10px 16px;border-bottom:1px solid var(--line)}
+.topology .node-hit {fill:transparent;stroke:none}
+.topology .node-label {font-weight:600}
+.topology .sub {font-weight:400}
+.topology.has-focus .topology-route.is-muted {opacity:.12}
+.topology .ring-key {font-size:8px}
+.release-tabs {display:flex;gap:26px;border-bottom:1px solid var(--line);margin:0 0 20px}
+.release-tabs a {display:inline-flex;align-items:center;gap:8px;color:var(--muted);padding:10px 2px 12px;border-bottom:2px solid transparent;font-size:14px}
+.release-tabs a[aria-selected=true] {border-color:var(--green);color:var(--ink);font-weight:600}
+.release-tabs a:last-child {margin-left:auto}
+.release-tabs .icon {width:19px;height:19px}
+.package-grid {gap:18px}
+.package-heading {display:flex;align-items:center;gap:13px;margin-bottom:20px}
+.package-heading h3 {font-size:17px;margin:0 0 2px}
+.package-heading .tag {margin-left:auto;align-self:start}
+.platform-mark {display:inline-flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:10px;background:#f3f6f4;color:#3f594b;flex:0 0 auto}
+.platform-mark .icon {width:25px;height:25px}
+.platform-mark.android {color:#5c9470;background:#f0f7f2}
+.platform-mark.windows {color:#5486a4;background:#f0f5f9}
+.package .actions .icon {width:16px;height:16px}
+.package .artifact-source {margin:0 0 8px}
+.release-publication {font-size:12px;margin:0 0 20px}
+.developer-packages {margin:10px 0}
+.developer-packages .grid {margin-top:14px}
+@media(max-width:1250px) {
+  .brand {flex-basis:auto;margin-right:20px}
+  header nav a {padding:0 7px}
+  #connection {max-width:200px;overflow:hidden;text-overflow:ellipsis}
+  .overview-card-head .legend {gap:8px;font-size:9px}
+  .overview-card-head .key {width:18px}
+  .overview-primary {grid-template-columns:minmax(0,1.6fr) minmax(320px,1fr)}
+  .traffic-compact-body {grid-template-columns:110px minmax(0,1fr);gap:10px}
+  .topology-layout {grid-template-columns:minmax(0,1.9fr) minmax(320px,1fr)}
+  .topology-card-head .legend {max-width:210px;gap:5px 10px}
+  .link-traffic-body {grid-template-columns:115px minmax(0,1fr);gap:8px}
+}
+@media(max-width:960px) {
+  .overview-primary {height:auto;grid-template-columns:1fr}
+  .overview-side {grid-template-columns:1fr 1fr;grid-template-rows:180px}
+  .overview-primary .overview-topology-card {height:330px}
+  .overview-secondary {grid-template-columns:1fr}
+  .topology-layout {grid-template-columns:1fr}
+  .topology-side {grid-template-columns:1fr 1fr;grid-template-rows:270px}
+  .step {padding:0 14px}
+  .step>.tiny {font-size:9px}
+}
+@media(max-width:700px) {
+  header {height:auto;min-height:51px;flex-wrap:wrap;padding:7px 12px;gap:5px 14px}
+  header nav {order:3;width:100%;height:38px}
+  .brand {font-size:17px;margin-right:0}
+  #connection {font-size:10px}
+  main {padding:22px 12px 40px}
+  .steps {height:auto;grid-template-columns:1fr 1fr}
+  .step {padding:12px;border-bottom:1px solid var(--line)}
+  .step:nth-child(2n) {border-right:0}
+  .overview-side,.topology-side {grid-template-columns:1fr;grid-template-rows:auto}
+  .overview-side>.card {min-height:160px}
+  .topology-status-card {min-height:260px}
+  .topology-traffic-card {min-height:192px}
+  .overview-card-head,.topology-card-head {flex-wrap:wrap}
+  .overview-card-head .legend,.topology-card-head .legend {margin-left:0;max-width:none}
+  .topology-stage {min-height:350px;overflow:hidden}
+  .topology-stage #topology {min-height:240px}
+  .topology {overflow:visible}
+  .release-tabs {gap:14px;overflow:auto}
+  .release-tabs a {font-size:12px;gap:5px;white-space:nowrap}
+  .release-tabs a:last-child {margin-left:0}
+  .package-grid {grid-template-columns:1fr}
+  .edge-panel-head {flex-wrap:wrap;gap:5px}
+}
+.page-overview .overview-health {margin-top:10px;margin-bottom:16px}
+.page-overview .overview-list-card td {height:22px;padding-top:1px;padding-bottom:1px}
+.page-overview .overview-list-card .badge {line-height:1.35}
+.overview-event-row time {white-space:nowrap;font-size:10px}
+.overview-topology-card .topology {height:280px}
+.overview-topology-card .topology .node-label {font-size:13px}
+.overview-topology-card .topology .sub {font-size:10px}
+.topology .route-ring {opacity:0}
+.topology .node.selected {stroke:#fff;stroke-width:3}
+.page-topology {padding-top:22px}
+.page-topology .overview-health {margin-top:10px;margin-bottom:16px}
+.page-topology .topology-stage {height:478px}
+.page-topology .topology-stage #topology {min-height:0}
+.page-topology .topology-stage .topology {max-height:360px}
+@media(max-width:960px) {.page-topology .topology-stage {height:auto;min-height:440px}}
