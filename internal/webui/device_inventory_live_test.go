@@ -17,6 +17,7 @@ func TestDeviceInventoryWebSocketPushesTrustedStateChanges(t *testing.T) {
 	now := observed.Add(3 * time.Second)
 	changes := make(chan struct{})
 	d := clientUIDeps()
+	d.Admin = true
 	d.Control.Clients.List = func() (ClientInventory, error) {
 		return ClientInventory{Clients: []ClientView{{
 			ID: "demo-windows", Name: "Windows", Platform: "windows-desktop", Status: "ready", Membership: "active",
@@ -55,9 +56,7 @@ func TestDeviceInventoryWebSocketPushesTrustedStateChanges(t *testing.T) {
 	if err := websocket.JSON.Receive(connection, &initial); err != nil {
 		t.Fatal(err)
 	}
-	if initial.Type != "inventory" || !strings.Contains(initial.HTML, "Online") ||
-		!strings.Contains(initial.HTML, `data-device-id="demo-windows"`) ||
-		!strings.Contains(initial.HTML, "data-device-live-summary") {
+	if initial.Type != "snapshot" || initial.Snapshot == nil || initial.Snapshot.Inventory.Devices[0].DataPlaneStatus != "online" {
 		t.Fatalf("initial Device inventory update = %+v", initial)
 	}
 
@@ -71,14 +70,14 @@ func TestDeviceInventoryWebSocketPushesTrustedStateChanges(t *testing.T) {
 	if err := websocket.JSON.Receive(connection, &stale); err != nil {
 		t.Fatal(err)
 	}
-	if stale.Type != "inventory" || !strings.Contains(stale.HTML, "Stale") ||
-		strings.Contains(stale.HTML, ">Online<") {
+	if stale.Type != "snapshot" || stale.Snapshot == nil || stale.Snapshot.Inventory.Devices[0].DataPlaneStatus != "stale" {
 		t.Fatalf("stale Device inventory update = %+v", stale)
 	}
 }
 
 func TestWindowsDeviceInventoryWebSocketPushesLeaseExpiryWithoutAnotherEvent(t *testing.T) {
 	d := clientUIDeps()
+	d.Admin = true
 	d.Control.Clients.List = func() (ClientInventory, error) {
 		return ClientInventory{Clients: []ClientView{{
 			ID: "demo-windows", Name: "Windows", Platform: "windows-desktop", Status: "ready", Membership: "active",
@@ -110,19 +109,19 @@ func TestWindowsDeviceInventoryWebSocketPushesLeaseExpiryWithoutAnotherEvent(t *
 
 	var initial deviceInventoryLiveMessage
 	if err := websocket.JSON.Receive(connection, &initial); err != nil ||
-		initial.Type != "inventory" || !strings.Contains(initial.HTML, "Online") {
+		initial.Type != "snapshot" || initial.Snapshot == nil || initial.Snapshot.Inventory.Devices[0].DataPlaneStatus != "online" {
 		t.Fatalf("Windows 初始在线更新=%+v err=%v", initial, err)
 	}
 	var expired deviceInventoryLiveMessage
 	if err := websocket.JSON.Receive(connection, &expired); err != nil ||
-		expired.Type != "inventory" || !strings.Contains(expired.HTML, "Stale") ||
-		strings.Contains(expired.HTML, ">Online<") {
+		expired.Type != "snapshot" || expired.Snapshot == nil || expired.Snapshot.Inventory.Devices[0].DataPlaneStatus != "stale" {
 		t.Fatalf("Windows lease 到期更新=%+v err=%v", expired, err)
 	}
 }
 
 func TestDeviceInventoryWebSocketRejectsCrossOriginAndPlainHTTP(t *testing.T) {
 	d := clientUIDeps()
+	d.Admin = true
 	server := httptest.NewServer(Handler(d))
 	defer server.Close()
 	path := "/api/control/device-inventory/live"
@@ -141,18 +140,6 @@ func TestDeviceInventoryWebSocketRejectsCrossOriginAndPlainHTTP(t *testing.T) {
 	Handler(d).ServeHTTP(response, request)
 	if response.Code != http.StatusUpgradeRequired || response.Header().Get("Upgrade") != "websocket" {
 		t.Fatalf("plain Device inventory request = %d headers=%v", response.Code, response.Header())
-	}
-}
-
-func TestDeviceInventoryPageBootstrapsOnlyApprovedLiveScript(t *testing.T) {
-	body := pageDevices(clientUIDeps(), clientPageState{}, false)
-	if strings.Count(body, `<script>`+deviceInventoryLiveScript+`</script>`) != 1 ||
-		!strings.Contains(body, "data-device-live-list") ||
-		!strings.Contains(body, "data-device-live-state") {
-		t.Fatal("Device inventory did not bootstrap its same-origin WebSocket updater")
-	}
-	if strings.Contains(deviceInventoryLiveScript, "innerHTML") || strings.Contains(deviceInventoryLiveScript, "eval(") {
-		t.Fatal("Device inventory updater uses an unsafe HTML execution primitive")
 	}
 }
 

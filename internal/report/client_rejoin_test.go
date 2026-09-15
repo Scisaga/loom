@@ -177,17 +177,25 @@ func TestJoinedAccessDeviceRemovalRevokesIdentityAndDesiredCredentials(t *testin
 		if !retained {
 			t.Fatal("test lost the retained observation before page projection")
 		}
-		handler := webui.Handler(webui.Deps{
-			Node: cfg.Node, Now: func() time.Time { return now },
-			Snapshot: func() webui.View { return view },
-		})
-		for _, path := range []string{"/", "/topology"} {
-			recorder := httptest.NewRecorder()
-			handler.ServeHTTP(recorder, httptest.NewRequest("GET", path, nil))
-			if recorder.Code != 200 || strings.Contains(recorder.Body.String(), created.ClientID) != wantPresent {
-				t.Errorf("%s status=%d, device presence should be %v", path, recorder.Code, wantPresent)
+		handler := webui.Handler(webui.Deps{Node: cfg.Node, Admin: true, Now: func() time.Time { return now }, Snapshot: func() webui.View { return view }})
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest("GET", "/api/control/ui/snapshot", nil))
+		var data struct {
+			View webui.View `json:"view"`
+		}
+		if recorder.Code != 200 || json.Unmarshal(recorder.Body.Bytes(), &data) != nil {
+			t.Fatal("browser snapshot failed")
+		}
+		present := false
+		for _, node := range data.View.Nodes {
+			if node.ID == created.ClientID && node.Declared && !node.Paused {
+				present = true
 			}
 		}
+		if present != wantPresent {
+			t.Errorf("current browser membership=%v want %v", present, wantPresent)
+		}
+
 	}
 	assertLiveMembership(true)
 	for _, paused := range []bool{true, true, false, false} {

@@ -114,8 +114,8 @@ v1 Events 页的兼容契约允许按节点、类型、级别与文本筛选，�
 决策器必须共用这条可信度边界，不能出现“页面不信、selector 却已经照做”。
 **静态拓扑图价值有限，带观测与决策的实时候选集视图才是排障入口。**
 
-Device inventory 也必须投影同一可信边界：SSR 只负责首屏与无脚本降级，已打开的列表经
-private HTTPS 同源 WebSocket 接收服务端推送，不用浏览器轮询制造第二条采集路径。所有现行
+Device inventory 也必须投影同一可信边界：浏览器通过 JSON 快照完成首屏渲染，已打开的列表经
+private HTTPS 同源 WebSocket 接收结构化数据，在原行更新改变的单元格；不用浏览器轮询制造第二条采集路径。所有现行
 Linux 节点的 Loom report 进程、Android Device 的已连接 VPN 服务及已注册的 Windows Loom
 进程每五秒发送独立的最小签名心跳，线
 正文严格只有 `node`、`ts`、`signature`；证书复用既有已登记身份或已验签 Observation，不在

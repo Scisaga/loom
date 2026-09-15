@@ -1298,10 +1298,10 @@ func (runtime *controlRuntime) controlUIAddress(request *http.Request) (string, 
 func controlUIPathAllowed(path string) bool {
 	switch path {
 	case "/", "/favicon.svg", "/traffic.json", "/devices", "/clients", "/nodes", "/topology",
-		"/services", "/routing", "/deployments", "/events", "/events.csv", "/settings", "/ssot":
+		"/services", "/routing", "/releases", "/deployments", "/events", "/events.csv", "/settings", "/ssot":
 		return true
 	}
-	for _, prefix := range []string{"/devices/", "/clients/", "/nodes/", "/api/control/", "/act/"} {
+	for _, prefix := range []string{"/assets/", "/devices/", "/clients/", "/nodes/", "/api/control/", "/act/"} {
 		if strings.HasPrefix(path, prefix) {
 			return true
 		}

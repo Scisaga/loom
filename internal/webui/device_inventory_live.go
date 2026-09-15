@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -16,11 +17,11 @@ const (
 )
 
 type deviceInventoryLiveMessage struct {
-	Type string `json:"type"`
-	HTML string `json:"html,omitempty"`
+	Type     string           `json:"type"`
+	Snapshot *browserSnapshot `json:"snapshot,omitempty"`
 }
 
-// deviceInventoryLiveHandler 让浏览器投影与 SSR/JSON API 共用同一可信读取边界。
+// deviceInventoryLiveHandler 让浏览器投影与 JSON API 共用同一可信读取边界。
 // WebSocket 只负责交付，不能把 registry 字样或未签名观测提升为 Online。
 func deviceInventoryLiveHandler(d Deps) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -99,27 +100,24 @@ func streamDeviceInventory(ws *websocket.Conn, d Deps, showArchived bool) {
 	defer heartbeat.Stop()
 	refresh := time.NewTimer(time.Hour)
 	defer refresh.Stop()
-	lastHTML := ""
+	lastJSON := ""
 
 	sendInventory := func(force bool) bool {
-		inventory, archived, err := loadDeviceInventoryPage(d, showArchived)
+		snapshot := loadBrowserSnapshot(d)
+		inventory := ClientInventory{Clients: snapshot.Inventory.Devices}
+		encoded, err := json.Marshal(snapshot)
 		if err != nil {
-			lastHTML = ""
-			resetDeviceInventoryTimer(refresh, deviceInventoryResync)
-			_ = ws.SetWriteDeadline(time.Now().Add(deviceInventoryWriteWait))
-			return websocket.JSON.Send(ws, deviceInventoryLiveMessage{Type: "error"}) == nil
+			return false
 		}
-		html := renderDeviceInventorySummary(inventory) +
-			renderDeviceInventoryList(d, inventory, archived, showArchived, d.Admin, nil)
-		if !force && html == lastHTML {
+		if !force && string(encoded) == lastJSON {
 			resetDeviceInventoryTimer(refresh, nextDeviceInventoryRefresh(inventory, deviceNow(d)))
 			return true
 		}
 		_ = ws.SetWriteDeadline(time.Now().Add(deviceInventoryWriteWait))
-		if err := websocket.JSON.Send(ws, deviceInventoryLiveMessage{Type: "inventory", HTML: html}); err != nil {
+		if err := websocket.JSON.Send(ws, deviceInventoryLiveMessage{Type: "snapshot", Snapshot: &snapshot}); err != nil {
 			return false
 		}
-		lastHTML = html
+		lastJSON = string(encoded)
 		resetDeviceInventoryTimer(refresh, nextDeviceInventoryRefresh(inventory, deviceNow(d)))
 		return true
 	}

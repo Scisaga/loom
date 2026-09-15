@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -487,9 +488,14 @@ func cmdClientPackage(args []string) error {
 	if filepath.Base(*outPath) != artifact.Name {
 		return fmt.Errorf("[渲染目标必须显式] 输出文件必须名为 %s，得到 %s", artifact.Name, filepath.Base(*outPath))
 	}
-	if err := checkPackagedLoom(filepath.Dir(*outPath), loomBody); err != nil {
-		return err
+	if artifact.Manifest.OS == runtime.GOOS && artifact.Manifest.Arch == runtime.GOARCH {
+		if err := checkPackagedLoom(filepath.Dir(*outPath), loomBody); err != nil {
+			return err
+		}
+	} else {
+		fmt.Println("跨架构制品已完成静态校验；未执行该架构的原生 selfcheck。")
 	}
+
 	publicKey := ed25519.PrivateKey(privateKey).Public().(ed25519.PublicKey)
 	outputs := []struct {
 		path string

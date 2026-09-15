@@ -7,7 +7,7 @@ cd "$repo"
 client_arch=${GOARCH:-$(go env GOARCH)}
 sing_box=${SING_BOX_BINARY:-/usr/local/bin/sing-box}
 signing_key=${PLATFORM_SIGNING_KEY:-deploy/keys/platform-signing.key}
-staged=deploy/staging/loom
+staged=${LOOM_BINARY:-deploy/staging/loom}
 archive="deploy/staging/loom-client-linux-${client_arch}.tar.gz"
 client_dist_dir=${CLIENT_DIST_DIR:-/var/lib/loom/client-dist}
 
@@ -25,20 +25,24 @@ client_dist_dir=${CLIENT_DIST_DIR:-/var/lib/loom/client-dist}
 }
 
 mkdir -p deploy/staging
-tmp=$(mktemp deploy/staging/.loom-client-build.XXXXXX)
-trap 'rm -f "$tmp"' EXIT HUP INT TERM
-CGO_ENABLED=0 GOOS=linux GOARCH="$client_arch" go build -trimpath -o "$tmp" ./cmd/loom
-chmod 0755 "$tmp"
-mv -f "$tmp" "$staged"
-trap - EXIT HUP INT TERM
+if [ -z "${LOOM_BINARY:-}" ]; then
+    tmp=$(mktemp deploy/staging/.loom-client-build.XXXXXX)
+    trap 'rm -f "$tmp"' EXIT HUP INT TERM
+    CGO_ENABLED=0 GOOS=linux GOARCH="$client_arch" go build -trimpath -o "$tmp" ./cmd/loom
+    chmod 0755 "$tmp"
+    mv -f "$tmp" "$staged"
+    trap - EXIT HUP INT TERM
+fi
+
+package_tool=${LOOM_PACKAGE_TOOL:-$staged}
 
 set -- client package -loom "$staged" -sing-box "$sing_box" -key "$signing_key" -o "$archive"
 if [ "${ALLOW_DIRTY:-0}" = 1 ]; then
     set -- "$@" -allow-dirty
 fi
-"$staged" "$@"
+"$package_tool" "$@"
 
-"$staged" client verify -archive "$archive" -pubkey "${PLATFORM_SIGNING_PUB:-deploy/keys/platform-signing.pub}"
+"$package_tool" client verify -archive "$archive" -pubkey "${PLATFORM_SIGNING_PUB:-deploy/keys/platform-signing.pub}"
 
 [ ! -L "$client_dist_dir" ] || {
     echo "client distribution directory must not be a symlink: $client_dist_dir" >&2
