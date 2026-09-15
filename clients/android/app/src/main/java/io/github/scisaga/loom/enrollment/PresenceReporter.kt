@@ -1,5 +1,6 @@
 package io.github.scisaga.loom.enrollment
 
+import io.github.scisaga.loom.profiles.ProfileContext
 import android.content.Context
 import io.github.scisaga.loom.security.DeviceKeyStore
 import io.github.scisaga.loomcore.Loomcore
@@ -8,7 +9,7 @@ import java.time.Instant
 /** §16.4：在线心跳独立于完整健康报告，正文只能有 node、ts、signature。 */
 internal class PresenceReporter(
     private val context: Context,
-    private val keys: DeviceKeyStore = DeviceKeyStore(),
+    private val keys: DeviceKeyStore = DeviceKeyStore(ProfileContext.keySuffix(context)),
 ) {
     fun send(profile: ManagedProfile): Int {
         check(profile.protocol == 1) { "[§16.4 在线心跳] v1 入口拒绝其他协议" }

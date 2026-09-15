@@ -1,5 +1,6 @@
 package io.github.scisaga.loom.enrollment
 
+import io.github.scisaga.loom.profiles.ProfileContext
 import android.content.Context
 import io.github.scisaga.loom.security.EncryptedStore
 import io.github.scisaga.loom.security.DeviceKeyStore
@@ -18,7 +19,7 @@ internal data class V2InstalledDeviceState(
 /** #14：view 与四组 floor 放进同一个 Keystore-wrapped 原子 blob。首次 latch 与后续更新严格分路。 */
 class V2DeviceStateStore(context: Context) {
     private val protected = EncryptedStore(context.applicationContext)
-    private val keys = DeviceKeyStore()
+    private val keys = DeviceKeyStore(ProfileContext.keySuffix(context))
 
     @Synchronized
     fun acceptInitialFromInvite(

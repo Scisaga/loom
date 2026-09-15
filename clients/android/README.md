@@ -208,7 +208,8 @@ The prototypes use the currently installed Android layout as their baseline:
 [Configuration](../../assets/client/android/configuration.svg), and
 [Diagnostics](../../assets/client/android/diagnostics.svg). Each SVG contains one
 Tab screen. They retain the existing cards, Material 3 controls, and fixed bottom
-navigation. The header uses the existing transparent mark filled with black.
+navigation. The header uses the existing transparent mark filled with black and a medium-weight
+wordmark; light gray-green `#F0F4F1` separates the white panels from the page.
 
 Connection expands actual route details within its current-path card, using phone,
 server, and destination icons joined by directional links. It retains the candidate,
@@ -230,14 +231,21 @@ profile's local state. Credentials, configuration, preferences, and rollback flo
 remain isolated per profile; the device's underlay-generation probe registry is
 shared without extra probes. Migration preserves the existing identity.
 
-These are prototype changes. Multi-profile storage and native acceptance are
-separate implementation work; current/previous/candidate records are versions of
-one configuration. Installed and source UI versions are recorded separately in
+The native host follows these three screens. `ProfileCatalog` stores an encrypted
+profile index with stable local IDs. The original profile keeps its existing
+directory and Keystore aliases; new profiles use separate directories, encryption,
+identity and wrapping keys. Current/previous/candidate remain version slots inside
+each profile. Route managers and enrollment transactions bind to that profile's
+context. The service waits for the old report/route tasks, selector operations,
+libbox and TUN to stop before switching or deleting credentials. Viewing a pending
+profile reads its local journal without automatically resuming network enrollment.
+The saved connection intent names the connected profile independently of the
+profile currently being viewed. Device evidence and installed builds are recorded in
 [the current status](../../docs/status/current.md).
 
 The primary Connect action stays disabled until a verified managed snapshot is
 available. Debug builds expose the bundled stage-1 Direct fixture in a separate
-`Debug Direct TUN` card in Settings; that action proves only local libbox, TUN,
+`Debug Direct TUN` card in Diagnostics; that action proves only local libbox, TUN,
 route and selector plumbing and must never be presented as enrollment, trusted
 reporting or business-path health.
 Once a durable v2 Device state is latched, its lifecycle owns every runtime
@@ -502,6 +510,9 @@ INSTALL_EVIDENCE_DIR=/tmp/loom-install-evidence \
 ./scripts/install-device-apk.sh "$apk" "$apk_sha"
 ```
 
+The instrumentation APK carries the explicit label `Loom UI tests`, so vendor
+installation confirmations identify the exact test application.
+
 The same fail-closed helper accepts the separately built instrumentation APK
 only when it targets `io.github.scisaga.loom`, uses the expected runner, and has
 the same signing certificate as the already installed app:
@@ -518,6 +529,25 @@ INSTALL_EVIDENCE_DIR=/tmp/loom-test-install-evidence \
 This is intentionally not a general system-dialog clicker. A missing Loom
 label, ambiguous/disabled button, unexpected foreground package, certificate
 mismatch, emulator target, or changed APK bytes fails closed.
+
+The native UI acceptance covers the three tabs, panel contrast, rename dialogs,
+route icons and links, and temporary-profile identity/storage isolation and VPN
+switching. `managedProfile=true` also exercises the existing selected managed
+profile through Direct, Auto, authorized fixed exit, and reconnect, checking actual
+selector readback, successful reporting, and reuse of the underlay probe budget.
+It restores the original selection and mode, removes its temporary profiles, and
+leaves the VPN disconnected. `screenshots=true` saves each tab in the app's external
+files directory; those images can contain private device data and stay outside Git.
+
+```bash
+"${ANDROID_HOME:-/opt/android-sdk}/platform-tools/adb" -s "$ANDROID_SERIAL" shell am instrument -w -r \
+  -e managedProfile true -e screenshots true \
+  -e class io.github.scisaga.loom.HomeUiInstrumentedTest,io.github.scisaga.loom.ProfileIsolationInstrumentedTest,io.github.scisaga.loom.RouteDiagramInstrumentedTest,io.github.scisaga.loom.ManagedProfileDeviceInstrumentedTest \
+  io.github.scisaga.loom.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+This UI acceptance uses the installed profile's protocol. A successful v1 report
+does not satisfy the separate v2 lifecycle acceptance below.
 
 After the enrolled debug APK is installed and Android VPN consent has been
 granted once, run the main physical-device smoke on Wi-Fi. Cellular and

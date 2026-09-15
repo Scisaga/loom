@@ -12,6 +12,7 @@ data class VpnStatus(
     val httpsProbe: String = "未检查",
     val trustedReport: String = "未上报",
     val alwaysOn: Boolean = false,
+    val profileId: String = "",
 )
 
 object VpnRuntime {

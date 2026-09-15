@@ -8,7 +8,7 @@
       </g>
     </symbol>
   </defs>
-  <rect x="0" y="0" width="412" height="940" rx="0" fill="#E8EEEA" stroke="none" />
+  <rect x="0" y="0" width="412" height="940" rx="0" fill="#F0F4F1" stroke="none" />
   <g id="screen-configuration" font-family="'Noto Sans CJK SC','Roboto',sans-serif">
     <text x="22" y="19" font-size="12" fill="#17211B" font-weight="500" text-anchor="start" letter-spacing="0">12:00</text>
     <path d="M344 18v-4m5 4v-7m5 7V8" stroke="#17211B" stroke-width="2.4" />

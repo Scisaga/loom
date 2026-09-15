@@ -1,5 +1,6 @@
 package io.github.scisaga.loom.security
 
+import io.github.scisaga.loom.profiles.ProfileContext
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
@@ -13,6 +14,7 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 class EncryptedStore(context: Context) {
+    private val storageAlias = STORAGE_ALIAS + ProfileContext.keySuffix(context)
     private val directory = context.filesDir.resolve("protected").apply { mkdirs() }
     private val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
 
@@ -58,14 +60,19 @@ class EncryptedStore(context: Context) {
         if (file.exists()) check(file.delete()) { "无法清除受保护数据" }
     }
 
+    internal fun deleteStorageKey() {
+        check(storageAlias != STORAGE_ALIAS) { "原存储密钥仍保护全局配置目录" }
+        if (keyStore.containsAlias(storageAlias)) keyStore.deleteEntry(storageAlias)
+    }
+
     internal fun fileForTest(name: String): File = directory.resolve(name)
 
     private fun encryptionKey(): SecretKey {
-        if (!keyStore.containsAlias(STORAGE_ALIAS)) {
+        if (!keyStore.containsAlias(storageAlias)) {
             KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE).run {
                 init(
                     KeyGenParameterSpec.Builder(
-                        STORAGE_ALIAS,
+                        storageAlias,
                         KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
                     ).setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                         .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
@@ -75,7 +82,7 @@ class EncryptedStore(context: Context) {
                 generateKey()
             }
         }
-        return keyStore.getKey(STORAGE_ALIAS, null) as SecretKey
+        return keyStore.getKey(storageAlias, null) as SecretKey
     }
 
     private fun validateName(name: String) {

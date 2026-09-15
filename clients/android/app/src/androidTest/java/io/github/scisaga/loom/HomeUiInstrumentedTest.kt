@@ -1,108 +1,90 @@
 package io.github.scisaga.loom
 
-import android.Manifest
 import androidx.compose.ui.graphics.toPixelMap
-import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.assertIsNotEnabled
-import androidx.compose.ui.test.captureToImage
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onAllNodesWithText
-import androidx.compose.ui.test.onNodeWithContentDescription
-import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.onRoot
-import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
-import androidx.test.rule.GrantPermissionRule
+import androidx.compose.ui.test.*
+import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.activity.ComponentActivity
+import androidx.test.platform.app.InstrumentationRegistry
+import org.junit.Before
+import org.junit.After
+import io.github.scisaga.loom.profiles.ProfileCatalog
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
-import kotlin.math.abs
 
 class HomeUiInstrumentedTest {
-    @get:Rule(order = 0)
-    val notificationPermission: GrantPermissionRule =
-        GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)
-
-    @get:Rule(order = 1)
-    val compose = createAndroidComposeRule<MainActivity>()
+    @get:Rule val compose = createEmptyComposeRule()
+    private lateinit var activity: ComponentActivity
+    @Before fun launch() { activity = launchDeviceUi() }
+    @After fun finish() {
+        if (::activity.isInitialized) InstrumentationRegistry.getInstrumentation().runOnMainSync { activity.finish() }
+    }
 
     @Test
-    fun bottomTabsSeparateConnectionRoutesAndSettings() {
+    fun nativeTabsKeepPathsProfilesAndDiagnosticsInTheirOwnPages() {
         compose.onNodeWithContentDescription("Loom").assertIsDisplayed()
-        val logoTop = compose.onNodeWithContentDescription("Loom").fetchSemanticsNode().boundsInRoot.top
-        val wordmarkTop = compose.onNodeWithText("LOOM").fetchSemanticsNode().boundsInRoot.top
-        val alignmentTolerance = compose.activity.resources.displayMetrics.density
-        assertTrue("LOOM 字标未与图标顶端对齐", abs(logoTop - wordmarkTop) <= alignmentTolerance)
         compose.onNodeWithTag("home-tabs").assertIsDisplayed()
-        compose.onNodeWithTag("connection-toggle").assertIsDisplayed().assertIsNotEnabled()
-
+        val configuration = compose.onNodeWithTag("tab-configuration").fetchSemanticsNode().boundsInRoot
+        val diagnostics = compose.onNodeWithTag("tab-diagnostics").fetchSemanticsNode().boundsInRoot
+        assertTrue("配置页应在诊断页之前", configuration.left < diagnostics.left)
+        compose.onNodeWithTag("route-summary-card").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("profiles-card").assertDoesNotExist()
+        captureScreen("connection")
+        compose.onNodeWithTag("tab-configuration").performClick()
+        compose.onNodeWithTag("profiles-card").assertIsDisplayed()
         compose.onNodeWithTag("route-mode-card").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithTag("route-direct").assertIsDisplayed().assertIsNotEnabled()
-        compose.onNodeWithTag("route-auto").assertIsDisplayed().assertIsNotEnabled()
-        compose.onNodeWithTag("route-fixed-exit").assertIsDisplayed().assertIsNotEnabled()
-
-        compose.onNodeWithTag("go-to-routes").performScrollTo().performClick()
-        compose.onNodeWithTag("route-summary-card").assertIsDisplayed()
+        captureScreen("configuration")
+        compose.onNodeWithTag("tab-diagnostics").performClick()
         compose.onNodeWithTag("network-evidence-card").assertIsDisplayed()
-        compose.onNodeWithTag("route-mode-card").assertDoesNotExist()
-
-        compose.onNodeWithTag("tab-connection").performClick()
-        compose.onNodeWithTag("go-to-enrollment").performScrollTo().performClick()
-        compose.onNodeWithTag("enrollment-card").assertIsDisplayed()
         compose.onNodeWithTag("device-info-card").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithTag("debug-direct-card").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithTag("debug-direct-toggle").performScrollTo().assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithTag("route-mode-card").assertDoesNotExist()
+        captureScreen("diagnostics")
     }
 
     @Test
-    fun renderedHomeScreenshotRemainsLightAndCardsDoNotCollapseIntoStrips() {
+    fun renameCancelAndSaveUseNativeDialogWithoutChangingConnection() {
+        val catalog = ProfileCatalog.get(activity)
+        val selected = catalog.state.value.selected
+        val original = selected.name
+        val runtime = io.github.scisaga.loom.vpn.VpnRuntime.status.value
+        try {
+            compose.onNodeWithTag("tab-configuration").performClick()
+            compose.onNodeWithTag("profile-menu-${selected.id}").performScrollTo().performClick()
+            compose.onNodeWithText("重命名").performClick()
+            compose.onNodeWithTag("profile-name-input").performTextReplacement("demo-rename")
+            compose.onNodeWithText("取消").performClick()
+            assertTrue(catalog.state.value.selected.name == original)
+            compose.onNodeWithTag("profile-menu-${selected.id}").performClick()
+            compose.onNodeWithText("重命名").performClick()
+            compose.onNodeWithTag("profile-name-input").performTextReplacement("demo-rename")
+            compose.onNodeWithText("保存").performClick()
+            compose.waitUntil { catalog.state.value.selected.name == "demo-rename" }
+            assertTrue(io.github.scisaga.loom.vpn.VpnRuntime.status.value.profileId == runtime.profileId)
+        } finally { catalog.rename(selected.id, original) }
+    }
+
+    @Test
+    fun backgroundIsLightWithVisibleWhitePanels() {
+        compose.onNodeWithTag("tab-configuration").performClick()
         compose.waitForIdle()
-        val image = compose.onRoot().captureToImage()
-        val pixels = image.toPixelMap()
-        val stepX = maxOf(1, image.width / 120)
-        val stepY = maxOf(1, image.height / 120)
-        var samples = 0
-        var light = 0
-        var nearBlack = 0
-        for (y in 0 until image.height step stepY) {
-            for (x in 0 until image.width step stepX) {
-                val color = pixels[x, y]
-                samples++
-                if (color.red >= 0.85f && color.green >= 0.85f && color.blue >= 0.85f) light++
-                if (color.red <= 0.08f && color.green <= 0.08f && color.blue <= 0.08f) nearBlack++
-            }
+        val root = compose.onRoot().captureToImage().toPixelMap()
+        var background = 0
+        var white = 0
+        for (y in 0 until root.height step 8) for (x in 0 until root.width step 8) {
+            val pixel = root[x, y]
+            if (pixel.red in 0.92f..0.96f && pixel.green in 0.94f..0.98f && pixel.blue in 0.93f..0.97f) background++
+            if (pixel.red > 0.99f && pixel.green > 0.99f && pixel.blue > 0.99f) white++
         }
-        assertTrue("首页截图不再是浅色主题", light * 100 >= samples * 70)
-        assertTrue("首页截图出现大面积黑色窗口", nearBlack * 100 <= samples * 5)
-
-        val minimumCardHeight = 96f * compose.activity.resources.displayMetrics.density
-
-        compose.onNodeWithTag("tab-settings").performClick()
-        val enrollment = compose.onNodeWithTag("enrollment-card").fetchSemanticsNode().boundsInRoot
-        assertTrue(
-            "加入卡退化为横向长条：${enrollment.width}x${enrollment.height}",
-            enrollment.height >= minimumCardHeight,
-        )
-
-        compose.onNodeWithTag("debug-direct-card").performScrollTo()
-        val diagnostics = compose.onNodeWithTag("debug-direct-card").fetchSemanticsNode().boundsInRoot
-        assertTrue(
-            "诊断卡退化为横向长条：${diagnostics.width}x${diagnostics.height}",
-            diagnostics.height >= minimumCardHeight,
-        )
+        assertTrue("页面缺少浅色背景", background > 100)
+        assertTrue("白色面板未清楚呈现", white > 100)
     }
 
-    @Test
-    fun networkEvidenceStaysWithRoutesAndDeviceInformationStaysInSettings() {
-        assertTrue(compose.onAllNodesWithText("网络状态").fetchSemanticsNodes().isEmpty())
-
-        compose.onNodeWithTag("tab-routes").performClick()
-
-        compose.onNodeWithText("网络状态").assertIsDisplayed()
-        compose.onNodeWithTag("device-info-card").assertDoesNotExist()
-        compose.onNodeWithTag("tab-settings").performClick()
-        compose.onNodeWithTag("network-evidence-card").assertDoesNotExist()
+    private fun captureScreen(name: String) {
+        if (InstrumentationRegistry.getArguments().getString("screenshots") != "true") return
+        compose.waitForIdle()
+        val image = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+        activity.getExternalFilesDir(null)!!.resolve("ui-$name.png").outputStream().use {
+            image.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+        }
     }
 }

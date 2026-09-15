@@ -14,7 +14,8 @@ class VpnRestoreReceiver : BroadcastReceiver() {
         if (!shouldRestoreVpn(intent.action, desired, prepared)) return
         ContextCompat.startForegroundService(
             context,
-            Intent(context, LoomVpnService::class.java).setAction(LoomVpnService.ACTION_CONNECT),
+            Intent(context, LoomVpnService::class.java).setAction(LoomVpnService.ACTION_CONNECT)
+                .putExtra(LoomVpnService.EXTRA_PROFILE_ID, VpnConnectionPreference(context).profileId()),
         )
     }
 }

@@ -85,7 +85,7 @@ internal class ManagedProfileStore(private val context: Context) {
 
     /**
      * Stage without touching the active pointer. VpnService commits this exact
-     * record only after libbox starts and both end-to-end probes succeed.
+     * record only after the local libbox/TUN/selector startup succeeds; no business probe gates activation.
      */
     @Synchronized
     fun stageCandidate(

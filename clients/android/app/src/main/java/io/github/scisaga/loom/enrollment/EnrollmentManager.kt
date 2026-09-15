@@ -1,5 +1,7 @@
 package io.github.scisaga.loom.enrollment
 
+import io.github.scisaga.loom.profiles.ProfileContext
+import io.github.scisaga.loom.profiles.ProfileCatalog
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
@@ -15,6 +17,8 @@ import io.github.scisaga.loomcore.Loomcore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
@@ -77,13 +81,19 @@ class EnrollmentManager private constructor(context: Context) {
     private val appContext = context.applicationContext
     private val store = ManagedProfileStore(appContext)
     private val v2StateStore = V2DeviceStateStore(appContext)
-    private val keys = DeviceKeyStore()
+    private val keys = DeviceKeyStore(ProfileContext.keySuffix(context))
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val transaction = Mutex()
     private val started = AtomicBoolean(false)
     private var activeJob: Job? = null
     private val mutableStatus = MutableStateFlow(EnrollmentStatus())
     val status = mutableStatus.asStateFlow()
+
+    private suspend fun dispose() {
+        scope.cancel()
+        activeJob?.cancelAndJoin()
+        transaction.withLock { }
+    }
 
     fun initialize() {
         if (!started.compareAndSet(false, true)) return
@@ -130,11 +140,12 @@ class EnrollmentManager private constructor(context: Context) {
                             terminal(installed)
                             return@guarded
                         }
-                        if (VpnRuntime.status.value.phase == ConnectionPhase.CONNECTED) {
+                        if (isActiveProfile() && VpnRuntime.status.value.phase == ConnectionPhase.CONNECTED) {
                             ContextCompat.startForegroundService(
                                 appContext,
                                 Intent(appContext, LoomVpnService::class.java)
-                                    .setAction(LoomVpnService.ACTION_REFRESH_V2),
+                                    .setAction(LoomVpnService.ACTION_REFRESH_V2)
+                                    .putExtra(LoomVpnService.EXTRA_PROFILE_ID, ProfileContext.id(appContext)),
                             )
                             ready(profile, "已请求经 private device_config 刷新；失败时继续沿用 certified LKG")
                         } else {
@@ -259,10 +270,10 @@ class EnrollmentManager private constructor(context: Context) {
     }
 
     private suspend fun resumeInternal() = transaction.withLock {
-        guarded("恢复加入状态失败") { resumeUnlocked() }
+        guarded("恢复加入状态失败") { resumeUnlocked(continuePending = false) }
     }
 
-    private suspend fun resumeUnlocked() {
+    private suspend fun resumeUnlocked(continuePending: Boolean = true) {
         v2StateStore.installed()?.let { installed ->
             store.pending()?.let { pendingBytes ->
                 val pending = V2PendingEnrollment.decode(pendingBytes)
@@ -288,6 +299,17 @@ class EnrollmentManager private constructor(context: Context) {
         }
         loadCurrentWithRecovery()?.let {
             ready(it, "已重放签名链并加载最后可用配置")
+            return
+        }
+        // §7.2：查看配置只恢复本地状态，不启动注册隧道或接管当前连接。
+        if (!continuePending && (store.pending() != null || store.ready() != null)) {
+            val pending = store.pending()?.let { runCatching { V2PendingEnrollment.decode(it) }.getOrNull() }
+            mutableStatus.value = EnrollmentStatus(
+                phase = EnrollmentPhase.WAITING,
+                detail = "已有待完成的加入事务；点继续以复用原身份和恢复信息",
+                canAbandonPending = store.ready() == null,
+                canImportResume = pending?.progressStatus != null,
+            )
             return
         }
         if (
@@ -926,13 +948,17 @@ class EnrollmentManager private constructor(context: Context) {
         )
     }
 
+    private fun isActiveProfile(): Boolean = VpnRuntime.status.value.profileId == ProfileContext.id(appContext)
+
     private fun requestCandidateActivationIfConnected(profile: ManagedProfile) {
+        if (!isActiveProfile()) return
         if (VpnRuntime.status.value.phase !in setOf(ConnectionPhase.CONNECTED, ConnectionPhase.STARTING)) return
         ContextCompat.startForegroundService(
             appContext,
             Intent(appContext, LoomVpnService::class.java)
                 .setAction(LoomVpnService.ACTION_RELOAD)
-                .putExtra(LoomVpnService.EXTRA_CANDIDATE_ID, profile.recordID),
+                .putExtra(LoomVpnService.EXTRA_CANDIDATE_ID, profile.recordID)
+                .putExtra(LoomVpnService.EXTRA_PROFILE_ID, ProfileContext.id(appContext)),
         )
     }
 
@@ -950,7 +976,7 @@ class EnrollmentManager private constructor(context: Context) {
 
     private fun terminal(installed: V2InstalledDeviceState) {
         // D131：清理失败不能遮蔽供 VpnService fail-closed 的终止态信号。
-        runCatching { VpnConnectionPreference(appContext).setDesiredConnected(false) }
+        if (isActiveProfile()) runCatching { VpnConnectionPreference(appContext).setDesiredConnected(false) }
         val label = when (installed.lifecycleState) {
             "revoked" -> "已撤权"
             "decommissioned" -> "已退役"
@@ -963,10 +989,11 @@ class EnrollmentManager private constructor(context: Context) {
             generation = installed.generation,
             protocol = 2,
         )
-        runCatching {
+        if (isActiveProfile()) runCatching {
             ContextCompat.startForegroundService(
                 appContext,
-                Intent(appContext, LoomVpnService::class.java).setAction(LoomVpnService.ACTION_V2_TERMINAL),
+                Intent(appContext, LoomVpnService::class.java).setAction(LoomVpnService.ACTION_V2_TERMINAL)
+                    .putExtra(LoomVpnService.EXTRA_PROFILE_ID, ProfileContext.id(appContext)),
             )
         }
     }
@@ -1021,10 +1048,24 @@ class EnrollmentManager private constructor(context: Context) {
         private const val CLAIMED_CLIENT_ID = "claimed_client_id"
         private const val CLAIMED_AT = "claimed_at"
 
-        @Volatile private var instance: EnrollmentManager? = null
+        private val instances = mutableMapOf<String, EnrollmentManager>()
 
-        fun get(context: Context): EnrollmentManager = instance ?: synchronized(this) {
-            instance ?: EnrollmentManager(context).also { instance = it }
+        @Synchronized
+        fun get(context: Context): EnrollmentManager {
+            val scoped = ProfileCatalog.scoped(context)
+            return instances.getOrPut(scoped.filesDir.absolutePath) { EnrollmentManager(scoped) }
+        }
+
+        suspend fun remove(context: Context) {
+            val key = context.filesDir.absolutePath
+            val manager = synchronized(this) { instances[key] } ?: return
+            manager.dispose()
+        }
+
+        @Synchronized
+        fun forgetRemoved(context: Context) {
+            check(!ProfileCatalog.get(context).contains(ProfileContext.id(context))) { "配置尚未移除" }
+            instances.remove(context.filesDir.absolutePath)
         }
     }
 }

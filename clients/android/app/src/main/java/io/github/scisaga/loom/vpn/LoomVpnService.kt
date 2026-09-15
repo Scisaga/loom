@@ -4,6 +4,9 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import io.github.scisaga.loom.profiles.ProfileCatalog
+import io.github.scisaga.loom.profiles.ProfileContext
+import org.json.JSONObject
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.IpPrefix
@@ -48,6 +51,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -127,6 +134,12 @@ class LoomVpnService : VpnService(), PlatformInterface {
     @Volatile private var selectedUnderlyingNetwork: Network? = null
     @Volatile private var activeManagedProfile: ManagedProfile? = null
     private var bootstrapSessions = 0
+    @Volatile private var activeProfileId = ProfileContext.LEGACY_PROFILE
+    @Volatile private var desiredProfileId = ProfileContext.LEGACY_PROFILE
+    private val profileContext get() = ProfileCatalog.get(this).context(activeProfileId)
+    private fun matchesActive(intent: Intent): Boolean =
+        intent.getStringExtra(EXTRA_PROFILE_ID)?.let { it == activeProfileId } ?: true
+
 
     override fun onCreate() {
         super.onCreate()
@@ -141,26 +154,34 @@ class LoomVpnService : VpnService(), PlatformInterface {
             null, SERVICE_INTERFACE -> {
                 // §8.3：sticky 重建与系统 always-on 启动都没有应用自定义 action。
                 desiredConnected = true
-                scope.launch { startTunnel(useEmulatorProxy = false, startId) }
+                desiredProfileId = VpnConnectionPreference(this).profileId().takeIf { ProfileCatalog.get(this).contains(it) }
+                    ?: ProfileCatalog.get(this).state.value.selectedId
+                val requested = desiredProfileId
+                scope.launch { startTunnel(useEmulatorProxy = false, startId, requested) }
             }
             ACTION_CONNECT -> {
+                desiredProfileId = intent.getStringExtra(EXTRA_PROFILE_ID)
+                    ?: ProfileCatalog.get(this).state.value.selectedId
+                val requested = desiredProfileId
                 desiredConnected = true
                 VpnConnectionPreference(this).setDesiredConnected(true)
                 val useEmulatorProxy = intent?.getBooleanExtra(EXTRA_EMULATOR_PROXY, false) == true
                 check(!useEmulatorProxy || applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
                     "emulator proxy fixture is debug-only"
                 }
-                scope.launch { startTunnel(useEmulatorProxy, startId) }
+                scope.launch { startTunnel(useEmulatorProxy, startId, requested) }
             }
             ACTION_RELOAD -> {
+                if (!matchesActive(intent)) return vpnServiceRestartMode(desiredConnected)
                 val candidateID = intent?.getStringExtra(EXTRA_CANDIDATE_ID).orEmpty()
                 scope.launch { reloadTunnel(candidateID, startId) }
             }
             ACTION_REFRESH_V2 -> {
+                if (!matchesActive(intent)) return vpnServiceRestartMode(desiredConnected)
                 val profile = activeManagedProfile
                 if (boxService != null && profile?.protocol == 2) {
                     scope.launch {
-                        val next = runV2ControlRound(V2DeviceReporter(this@LoomVpnService), profile)
+                        val next = runV2ControlRound(V2DeviceReporter(profileContext), profile)
                         if (next == null) stopForV2Tombstone()
                     }
                 } else {
@@ -168,8 +189,11 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 }
             }
             ACTION_ENROLLMENT_KEEPALIVE -> {
-                desiredConnected = false
-                updateNotification("正在完成设备入网…")
+                if (boxService == null) updateNotification("正在完成设备入网…")
+            }
+            ACTION_DELETE_PROFILE -> {
+                val id = intent.getStringExtra(EXTRA_PROFILE_ID).orEmpty()
+                scope.launch { deleteProfile(id, startId) }
             }
             ACTION_SYNC_SYSTEM_POLICY -> {
                 val alwaysOn = alwaysOnEnabled()
@@ -182,6 +206,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 }
             }
             ACTION_V2_TERMINAL -> {
+                if (!matchesActive(intent)) return vpnServiceRestartMode(desiredConnected)
                 // D131：certified tombstone 优先于用户连接意图与 always-on 策略。
                 desiredConnected = false
                 runCatching { VpnConnectionPreference(this).setDesiredConnected(false) }
@@ -226,20 +251,65 @@ class LoomVpnService : VpnService(), PlatformInterface {
         super.onDestroy()
     }
 
-    private suspend fun startTunnel(useEmulatorProxy: Boolean, startId: Int) = lifecycle.withLock {
-        if (!desiredConnected) return@withLock
-        if (boxService != null) return@withLock
-        lastUseEmulatorProxy = useEmulatorProxy
-        startTunnelLocked(useEmulatorProxy, startId)
+    private suspend fun startTunnel(
+        useEmulatorProxy: Boolean, startId: Int, requested: String = desiredProfileId,
+    ) = lifecycle.withLock {
+        if (!desiredConnected || requested != desiredProfileId) return@withLock
+        try {
+            check(ProfileCatalog.get(this).contains(requested)) { "连接配置已删除" }
+            check(bootstrapSessions == 0) { "请先完成或取消正在进行的加入事务" }
+            if (boxService != null && activeProfileId == requested) return@withLock
+            if (boxService != null || tunnel != null) {
+                VpnRuntime.transform { it.copy(phase = ConnectionPhase.STOPPING, detail = "正在停止原配置…") }
+                closeResources()
+            }
+            if (!desiredConnected || requested != desiredProfileId) return@withLock
+            activeProfileId = requested
+            VpnConnectionPreference(this).setProfileId(requested)
+            lastUseEmulatorProxy = useEmulatorProxy
+            startTunnelLocked(useEmulatorProxy, startId)
+        } catch (error: Throwable) {
+            desiredConnected = false
+            VpnConnectionPreference(this).setDesiredConnected(false)
+            VpnRuntime.transform { it.copy(phase = ConnectionPhase.ERROR, detail = error.message.orEmpty()) }
+            stopIdleForeground(startId)
+        }
+    }
+
+    private suspend fun deleteProfile(id: String, startId: Int) = lifecycle.withLock {
+        try {
+            val catalog = ProfileCatalog.get(this)
+            val context = catalog.context(id)
+            check(!(alwaysOnEnabled() && id == activeProfileId)) { "请先关闭系统的始终开启 VPN" }
+            if (id == activeProfileId) {
+                desiredConnected = false
+                VpnConnectionPreference(this).setDesiredConnected(false)
+                closeResources()
+                VpnRuntime.update(VpnStatus())
+            }
+            EnrollmentManager.remove(context)
+            RouteManager.remove(context)
+            try {
+                catalog.removeStopped(id)
+            } finally {
+                if (!catalog.contains(id)) {
+                    EnrollmentManager.forgetRemoved(context)
+                    RouteManager.forgetRemoved(context)
+                }
+            }
+        } catch (error: Throwable) {
+            VpnRuntime.transform { it.copy(detail = "删除配置失败：${error.message}") }
+        }
+        stopIdleForeground(startId)
     }
 
     /** #14：注册 transport 与正式 TUN 共用这个 VpnService 的 protect 权限。 */
     internal suspend fun prepareBootstrapNetwork(
         recordAttempt: (String, Long) -> Unit,
     ): AndroidBootstrapNetworkController = lifecycle.withLock {
-        desiredConnected = false
-        VpnConnectionPreference(this).setDesiredConnected(false)
-        if (boxService != null || tunnel != null) closeResources()
+        check(!desiredConnected && boxService == null && tunnel == null && bootstrapSessions == 0) {
+            "请先断开当前连接并完成其他加入事务，再继续加入"
+        }
         startForeground(NOTIFICATION_ID, foregroundNotification("正在建立受限注册隧道…"))
         val network = HttpTransport.underlyingNetworks(this).firstOrNull() ?: run {
             selectedUnderlyingNetwork = null
@@ -273,7 +343,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
             stopIdleForeground(startId)
             return@withLock
         }
-        val pending = runCatching { EnrollmentManager.get(this).candidateProfile() }.getOrNull()
+        val pending = runCatching { EnrollmentManager.get(profileContext).candidateProfile() }.getOrNull()
         if (pending?.recordID != candidateID) {
             stopIdleForeground(startId)
             return@withLock
@@ -290,14 +360,15 @@ class LoomVpnService : VpnService(), PlatformInterface {
             phase = ConnectionPhase.STARTING,
             detail = "正在验签并建立 TUN…",
             alwaysOn = alwaysOnEnabled(),
+            profileId = activeProfileId,
         )
         VpnRuntime.update(preparingStatus)
         updateNotification("正在连接…")
         try {
-            val manager = EnrollmentManager.get(this)
+            val manager = EnrollmentManager.get(profileContext)
             val candidate = manager.candidateProfile()
             if (candidate != null) {
-                DeviceKeyStore().proveBinding()
+                DeviceKeyStore(ProfileContext.keySuffix(profileContext)).proveBinding()
                 try {
                     val probe = activateWithoutBusinessProbe(candidate)
                     ensureConnectionWanted()
@@ -322,7 +393,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
 
             val current = manager.currentProfile()
             if (current != null) {
-                DeviceKeyStore().proveBinding()
+                DeviceKeyStore(ProfileContext.keySuffix(profileContext)).proveBinding()
                 val (active, probe) = activateManagedWithFallback(current, manager)
                 ensureConnectionWanted()
                 connected(active, probe, "已激活验签配置 · snapshot ${active.snapshot}")
@@ -396,7 +467,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
 
     private suspend fun activateWithoutBusinessProbe(config: String, profile: ManagedProfile? = null): ProbeResult {
         activate(config)
-        profile?.let { RouteManager.get(this).applyToRunning(it) }
+        profile?.let { RouteManager.get(profileContext).applyToRunning(it) }
         ensureConnectionWanted()
         // #14：启动只验证本地 TUN/libbox 成功。业务 DNS/HTTPS 既不属于 transport
         // probe，也不能阻塞连接或冒充服务端 observation。
@@ -416,6 +487,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 dnsProbe = probe.dns,
                 httpsProbe = probe.https,
                 alwaysOn = alwaysOnEnabled(),
+            profileId = activeProfileId,
             ),
         )
         updateNotification("已连接 · $detail")
@@ -438,7 +510,13 @@ class LoomVpnService : VpnService(), PlatformInterface {
         // Publish the new generation first so those callbacks belong to this
         // service instance instead of becoming stale as soon as start returns.
         sessionID++
-        val candidate = Libbox.newService(config, this)
+        val runtime = JSONObject(config)
+        runtime.optJSONObject("experimental")?.optJSONObject("cache_file")?.let {
+            val cache = profileContext.filesDir.resolve("libbox/cache.db")
+            cache.parentFile!!.mkdirs()
+            it.put("path", cache.absolutePath)
+        }
+        val candidate = Libbox.newService(runtime.toString(), this)
         boxService = candidate
         candidate.start()
     }
@@ -448,7 +526,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         presenceJob?.cancel()
         val reporterSession = sessionID
         reportJob = scope.launch {
-            val reporter = HealthReporter(this@LoomVpnService)
+            val reporter = HealthReporter(profileContext)
             while (isActive && reporterSession == sessionID) {
                 val status = VpnRuntime.status.value
                 if (status.phase != ConnectionPhase.CONNECTED) return@launch
@@ -458,7 +536,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
                     val result = report.getOrThrow()
                     VpnRuntime.transform { it.copy(trustedReport = "成功（HTTP ${result.status}）") }
                     runCatching {
-                        RouteManager.get(this@LoomVpnService).consumeObservations(
+                        RouteManager.get(profileContext).consumeObservations(
                             profile,
                             result.observations,
                             result.observationError,
@@ -466,7 +544,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
                     }.onFailure { error ->
                         if (error !is CancellationException) {
                             Log.w(TAG, "Android server observation update failed", error)
-                            RouteManager.get(this@LoomVpnService).routeUpdateFailed(error)
+                            RouteManager.get(profileContext).routeUpdateFailed(error)
                         }
                     }
                 } else {
@@ -476,7 +554,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
             }
         }
         presenceJob = scope.launch {
-            val reporter = PresenceReporter(this@LoomVpnService)
+            val reporter = PresenceReporter(profileContext)
             while (isActive && reporterSession == sessionID) {
                 if (VpnRuntime.status.value.phase != ConnectionPhase.CONNECTED) return@launch
                 runCatching { reporter.send(profile) }
@@ -493,7 +571,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         presenceJob = null
         val reporterSession = sessionID
         reportJob = scope.launch {
-            val reporter = V2DeviceReporter(this@LoomVpnService)
+            val reporter = V2DeviceReporter(profileContext)
             var current = profile
             while (isActive && reporterSession == sessionID) {
                 val next = runV2ControlRound(reporter, current)
@@ -516,6 +594,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         if (!reporter.hasPending(current.nodeID)) {
             try {
                 val refresh = reporter.refreshConfiguration()
+                currentCoroutineContext().ensureActive()
                 val refreshed = refresh.profile ?: return@withLock null
                 if (refresh.requiresRuntimeActivation) {
                     return@withLock activateV2RuntimeCandidate(reporter, current, refreshed)
@@ -532,7 +611,8 @@ class LoomVpnService : VpnService(), PlatformInterface {
             }
         }
         try {
-            val sequence = reporter.sendHealth(current, healthy = !RouteManager.get(this).status.value.blocked)
+            val sequence = reporter.sendHealth(current, healthy = !RouteManager.get(profileContext).status.value.blocked)
+            currentCoroutineContext().ensureActive()
             VpnRuntime.transform { it.copy(trustedReport = "成功（sequence $sequence，HTTP 204）") }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -554,7 +634,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         }
         val routeChanged = requiresV2RouteApplication(current, candidate)
         try {
-            if (routeChanged) RouteManager.get(this).applyToRunning(candidate)
+            if (routeChanged) RouteManager.get(profileContext).applyToRunning(candidate)
             val committed = reporter.commitConfigurationCandidate(candidate)
             activeManagedProfile = committed
             if (routeChanged) startRouteSession(committed)
@@ -562,7 +642,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         } catch (candidateError: Throwable) {
             val discarded = runCatching { reporter.discardConfigurationCandidate(candidate) }.getOrDefault(false)
             if (routeChanged) {
-                runCatching { RouteManager.get(this).applyToRunning(current) }
+                runCatching { RouteManager.get(profileContext).applyToRunning(current) }
                     .onFailure(candidateError::addSuppressed)
             }
             if (!discarded) {
@@ -590,7 +670,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         closeResources(cancelReporter = false)
         val committed = try {
             activate(candidate.config)
-            RouteManager.get(this).applyToRunning(candidate)
+            RouteManager.get(profileContext).applyToRunning(candidate)
             ensureConnectionWanted()
             reporter.commitConfigurationCandidate(candidate)
         } catch (candidateError: Throwable) {
@@ -599,7 +679,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
             try {
                 ensureConnectionWanted()
                 activate(current.config)
-                RouteManager.get(this).applyToRunning(current)
+                RouteManager.get(profileContext).applyToRunning(current)
                 activeManagedProfile = current
                 startRouteSession(current)
                 VpnRuntime.transform {
@@ -637,7 +717,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         stopForV2TombstoneLocked()
     }
 
-    private fun stopForV2TombstoneLocked() {
+    private suspend fun stopForV2TombstoneLocked() {
         desiredConnected = false
         runCatching { VpnConnectionPreference(this).setDesiredConnected(false) }
         VpnRuntime.transform {
@@ -659,7 +739,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
             )
         }
         routeJob = scope.launch {
-            val manager = RouteManager.get(this@LoomVpnService)
+            val manager = RouteManager.get(profileContext)
             try {
                 underlayProbes.observeDefaultNetwork(underlay.identity, underlay.source)
                 manager.beginRouteSession(profile, underlay.source, underlayProbes)
@@ -674,6 +754,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
     }
 
     private suspend fun stopTunnel(stopStartId: Int? = null) = lifecycle.withLock {
+        if (stopStartId != null && desiredConnected) return@withLock
         if (boxService == null && tunnel == null) {
             VpnRuntime.update(VpnStatus())
         } else {
@@ -691,27 +772,31 @@ class LoomVpnService : VpnService(), PlatformInterface {
         }
     }
 
-    private fun closeResources(cancelReporter: Boolean = true) {
-        sessionID++
-        if (cancelReporter) {
-            reportJob?.cancel()
-            reportJob = null
-            presenceJob?.cancel()
-            presenceJob = null
+    private suspend fun closeResources(cancelReporter: Boolean = true) {
+        val caller = currentCoroutineContext()[Job]
+        withContext(NonCancellable) {
+            sessionID++
+            val jobs = buildList {
+                if (cancelReporter) { reportJob?.let(::add); presenceJob?.let(::add) }
+                routeJob?.let(::add)
+            }
+            jobs.filter { it != caller }.forEach { it.cancel() }
+            if (cancelReporter) { reportJob = null; presenceJob = null }
+            routeJob = null
+            // §7.2：等旧配置的报告、Agent 和 selector 操作退出，才可交接或删除密钥。
+            jobs.filter { it != caller }.forEach { it.join() }
+            activeManagedProfile = null
+            monitors.entries.toList().forEach { (listener, monitor) -> removeUnderlyingMonitor(listener, monitor) }
+            selectedUnderlyingNetwork = null
+            synchronized(underlyingPublicationLock) { underlyingPublication.clear() }
+            var closeError: Throwable? = null
+            try { boxService?.close(); boxService = null } catch (error: Throwable) { closeError = error }
+            try { tunnel?.close(); tunnel = null } catch (error: Throwable) { closeError = closeError ?: error }
+            if (ProfileCatalog.get(this@LoomVpnService).contains(activeProfileId)) {
+                RouteManager.get(profileContext).stopAndAwait()
+            }
+            closeError?.let { throw it }
         }
-        routeJob?.cancel()
-        routeJob = null
-        activeManagedProfile = null
-        monitors.entries.toList().forEach { (listener, monitor) ->
-            removeUnderlyingMonitor(listener, monitor)
-        }
-        selectedUnderlyingNetwork = null
-        synchronized(underlyingPublicationLock) { underlyingPublication.clear() }
-        runCatching { boxService?.close() }.onFailure { Log.w(TAG, "close libbox", it) }
-        boxService = null
-        runCatching { tunnel?.close() }.onFailure { Log.w(TAG, "close tun", it) }
-        tunnel = null
-        RouteManager.get(this).tunnelStopped()
     }
 
     private fun stopForegroundCompat() {
@@ -1180,6 +1265,8 @@ class LoomVpnService : VpnService(), PlatformInterface {
         const val ACTION_SYNC_SYSTEM_POLICY = "io.github.scisaga.loom.action.SYNC_SYSTEM_POLICY"
         const val ACTION_V2_TERMINAL = "io.github.scisaga.loom.action.V2_TERMINAL"
         const val ACTION_DISCONNECT = "io.github.scisaga.loom.action.DISCONNECT"
+        const val ACTION_DELETE_PROFILE = "io.github.scisaga.loom.action.DELETE_PROFILE"
+        const val EXTRA_PROFILE_ID = "io.github.scisaga.loom.extra.PROFILE_ID"
         const val EXTRA_CANDIDATE_ID = "io.github.scisaga.loom.extra.CANDIDATE_ID"
         const val EXTRA_EMULATOR_PROXY = "io.github.scisaga.loom.extra.EMULATOR_PROXY"
     }

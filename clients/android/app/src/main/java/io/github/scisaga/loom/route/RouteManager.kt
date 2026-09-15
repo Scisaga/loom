@@ -1,9 +1,12 @@
 package io.github.scisaga.loom.route
 
+import io.github.scisaga.loom.profiles.ProfileCatalog
+import io.github.scisaga.loom.profiles.ProfileContext
 import android.content.Context
 import io.github.scisaga.loom.enrollment.ManagedProfile
 import io.github.scisaga.loom.security.EncryptedStore
 import io.github.scisaga.loomcore.Loomcore
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -43,6 +46,8 @@ data class RoutePathStatus(
     val links: List<RouteLinkStatus>,
     val reason: String,
     val updatedAt: String,
+    val serverChain: List<String> = emptyList(),
+    val protocols: List<String> = emptyList(),
 )
 
 data class RouteLinkStatus(
@@ -50,6 +55,9 @@ data class RouteLinkStatus(
     val to: String,
     val label: String,
     val detail: String,
+    val hop: Int = -1,
+    val kind: String = "",
+    val protocol: String = "",
 )
 
 internal data class AppliedRoute(
@@ -125,6 +133,7 @@ class RouteManager private constructor(context: Context) {
     fun profileAvailable(profile: ManagedProfile) {
         scope.launch {
             operation.withLock {
+                if (runningRecordID != null) return@withLock
                 availableProfile = profile
                 try {
                     publish(evaluate(profile), runningRecordID == profile.recordID)
@@ -251,6 +260,7 @@ class RouteManager private constructor(context: Context) {
                                     busy = false,
                                     blocked = true,
                                     detail = "切换与回滚均失败：${message(error)}；${message(rollbackError)}",
+                                    currentPaths = emptyList(),
                                 )
                                 return@withLock
                             }
@@ -359,9 +369,11 @@ class RouteManager private constructor(context: Context) {
     }
 
     fun routeUpdateFailed(error: Throwable) {
+        lastDecisions = emptyList()
         mutableStatus.value = mutableStatus.value.copy(
             busy = false,
-            detail = "自动选路更新失败；保留实际路径：${message(error)}",
+            currentPaths = emptyList(),
+            detail = "当前路径未能确认：${message(error)}",
         )
     }
 
@@ -402,6 +414,13 @@ class RouteManager private constructor(context: Context) {
             .encodeToByteArray()
     }
 
+    suspend fun stopAndAwait() = operation.withLock { tunnelStopped() }
+
+    private suspend fun dispose() {
+        scope.cancel()
+        stopAndAwait()
+    }
+
     fun tunnelStopped() {
         runningRecordID = null
         runningInputs = ByteArray(0)
@@ -411,7 +430,7 @@ class RouteManager private constructor(context: Context) {
         runningProbeGeneration = null
         pendingObservations = null
         lastDecisions = emptyList()
-        mutableStatus.value = mutableStatus.value.copy(running = false, busy = false)
+        mutableStatus.value = mutableStatus.value.copy(running = false, busy = false, currentPaths = emptyList())
     }
 
     private fun evaluate(profile: ManagedProfile, preference: ByteArray? = null): AppliedRoute {
@@ -460,7 +479,9 @@ class RouteManager private constructor(context: Context) {
                 else -> "$label · 等待连接"
             },
             observationDetail = observationDetail,
-            currentPaths = buildRoutePaths(application, actualSelections, decisions),
+            currentPaths = if (running) buildRoutePaths(application, actualSelections, decisions).map { path ->
+                path.copy(protocols = availableProfile?.let { routeProtocols(it, path.candidate) }.orEmpty())
+            } else emptyList(),
             running = running,
         )
     }
@@ -568,10 +589,24 @@ class RouteManager private constructor(context: Context) {
         private const val PREFERENCE = "route-preference"
         private const val SELECTIONS = "route-selections"
         private const val SCHEDULER_STATE = "route-scheduler-state"
-        @Volatile private var instance: RouteManager? = null
+        private val instances = mutableMapOf<String, RouteManager>()
 
-        fun get(context: Context): RouteManager = instance ?: synchronized(this) {
-            instance ?: RouteManager(context).also { instance = it }
+        @Synchronized
+        fun get(context: Context): RouteManager {
+            val scoped = ProfileCatalog.scoped(context)
+            return instances.getOrPut(scoped.filesDir.absolutePath) { RouteManager(scoped) }
+        }
+
+        suspend fun remove(context: Context) {
+            val key = context.filesDir.absolutePath
+            val manager = synchronized(this) { instances[key] } ?: return
+            manager.dispose()
+        }
+
+        @Synchronized
+        fun forgetRemoved(context: Context) {
+            check(!ProfileCatalog.get(context).contains(ProfileContext.id(context))) { "配置尚未移除" }
+            instances.remove(context.filesDir.absolutePath)
         }
     }
 }
@@ -580,9 +615,10 @@ internal fun buildRoutePaths(
     application: AppliedRoute,
     actualSelections: Map<String, String>,
     decisions: List<RouteDecision>,
-): List<RoutePathStatus> = application.selectors.map { planned ->
-    val actual = actualSelections[planned.selector] ?: planned.candidate
+): List<RoutePathStatus> = application.selectors.mapNotNull { planned ->
+    val actual = actualSelections[planned.selector] ?: return@mapNotNull null
     val decision = decisions.firstOrNull { it.selector == planned.selector && it.choice == actual }
+    if (decision == null && actual != planned.candidate) return@mapNotNull null
     val chain = decision?.chain ?: planned.chain
     RoutePathStatus(
         service = decision?.declaration ?: planned.selector,
@@ -594,6 +630,7 @@ internal fun buildRoutePaths(
             else -> "实际 selector 已读回；当前连接代尚无可用分段选择证据"
         },
         updatedAt = decision?.updatedAt.orEmpty(),
+        serverChain = chain,
     )
 }
 
@@ -622,7 +659,14 @@ private fun routeLinkStatus(measurement: RouteMeasurement): RouteLinkStatus {
         if (measurement.failures > 0) append(" · 失败 ${measurement.failures}/${measurement.samples}")
         if (measurement.error.isNotBlank()) append(" · ${measurement.error}")
     }
-    return RouteLinkStatus(measurement.from, measurement.to, label, detail)
+    val protocol = when (measurement.kind) {
+        "entry" -> "入口 ping"
+        "neighbor" -> "WireGuard"
+        "public-hysteria2" -> "Hysteria2"
+        "target" -> runCatching { java.net.URI(measurement.to).scheme?.uppercase() }.getOrNull() ?: "目标首次响应"
+        else -> "协议未确认"
+    }
+    return RouteLinkStatus(measurement.from, measurement.to, label, detail, measurement.hop, measurement.kind, protocol)
 }
 
 private fun formatRate(bitsPerSecond: Double): String {
@@ -635,3 +679,31 @@ private fun formatRate(bitsPerSecond: Double): String {
     }
     return "%.1f %s".format(java.util.Locale.ROOT, value, unit)
 }
+
+/** §7.3：只解析已验签配置的 detour 链；不根据 tag 名字猜协议。 */
+private fun routeProtocols(profile: ManagedProfile, candidate: String): List<String> = runCatching {
+    val plan = profile.routePlan ?: return emptyList()
+    val inputs = JSONObject(Loomcore.androidRoutingInputs(profile.config.encodeToByteArray(), plan.encodeToByteArray()).decodeToString())
+    val rows = JSONObject(profile.config).optJSONArray("outbounds") ?: return emptyList()
+    val byTag = (0 until rows.length()).map(rows::getJSONObject).associateBy { it.getString("tag") }
+    val seen = mutableSetOf<String>()
+    var tag = candidate
+    var entry = ""
+    while (tag.isNotEmpty() && seen.add(tag)) {
+        val outbound = byTag[tag] ?: break
+        entry = when (outbound.optString("type")) {
+            "hysteria2" -> "Hysteria2"
+            "trojan" -> "Trojan / TLS"
+            else -> entry
+        }
+        tag = outbound.optString("detour")
+    }
+    val carriers = inputs.optJSONObject("hop_carriers")?.optJSONArray(candidate)
+    listOf(entry.ifBlank { "入口协议未确认" }) + (0 until (carriers?.length() ?: 0)).map {
+        when (carriers!!.getString(it)) {
+            "neighbor" -> "WireGuard"
+            "public-hysteria2" -> "Hysteria2"
+            else -> "协议未确认"
+        }
+    }
+}.getOrDefault(emptyList())

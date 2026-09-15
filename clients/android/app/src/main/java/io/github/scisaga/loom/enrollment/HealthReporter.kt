@@ -1,5 +1,6 @@
 package io.github.scisaga.loom.enrollment
 
+import io.github.scisaga.loom.profiles.ProfileContext
 import android.content.Context
 import io.github.scisaga.loom.security.DeviceKeyStore
 import io.github.scisaga.loom.route.RouteManager
@@ -15,7 +16,7 @@ internal data class HealthReportResult(
 
 internal class HealthReporter(
     private val context: Context,
-    private val keys: DeviceKeyStore = DeviceKeyStore(),
+    private val keys: DeviceKeyStore = DeviceKeyStore(ProfileContext.keySuffix(context)),
 ) {
     fun send(profile: ManagedProfile, problems: List<String>): HealthReportResult {
         val timestamp = Instant.now().toString()

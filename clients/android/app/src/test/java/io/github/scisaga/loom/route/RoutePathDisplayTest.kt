@@ -45,6 +45,14 @@ class RoutePathDisplayTest {
     }
 
     @Test
+    fun unreadOrUnmatchedSelectorNeverDisplaysAPlannedChainAsCurrent() {
+        val application = AppliedRoute("demo-scope", RouteMode.AUTO, "", false, "", true, emptyList(),
+            listOf(AppliedSelector("svc:demo-web", "demo-planned", listOf("demo-entry"))))
+        assertTrue(buildRoutePaths(application, emptyMap(), emptyList()).isEmpty())
+        assertTrue(buildRoutePaths(application, mapOf("svc:demo-web" to "demo-other"), emptyList()).isEmpty())
+    }
+
+    @Test
     fun directPathDoesNotInventLinkMeasurements() {
         val application = AppliedRoute(
             planScope = "scope",

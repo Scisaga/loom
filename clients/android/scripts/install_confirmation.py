@@ -16,10 +16,6 @@ POSITIVE_COUNTDOWN = re.compile(
     r"^(?:继续安装|安装|继续|install|continue)\s*[（(]\s*(\d+)\s*[）)]$",
     re.IGNORECASE,
 )
-SAFETY_COUNTDOWN = re.compile(
-    r"^(?:拒绝|取消|cancel|deny|reject)\s*[（(]\s*(\d+)\s*[）)]$",
-    re.IGNORECASE,
-)
 BOUNDS = re.compile(r"^\[(\d+),(\d+)\]\[(\d+),(\d+)\]$")
 
 
@@ -69,15 +65,10 @@ def find_confirmation(xml: str) -> tuple[int, int, str]:
     if len(candidates) != 1:
         raise ValueError("screen does not contain one unambiguous enabled install action")
     candidate = candidates.pop()
-    countdowns = positive_countdowns | {
-        int(match.group(1))
-        for node in nodes
-        for key in ("text", "content-desc")
-        if (value := node.attrib.get(key, "").strip())
-        if (match := SAFETY_COUNTDOWN.fullmatch(value))
-    }
+    # §7.2：确认按钮自身的倒计时才要求等待；“拒绝 (N)”是厂商的自动拒绝期限。
+    # 已授权安装仍须匹配 Loom、唯一的启用确认按钮与受信系统窗口。
+    countdowns = positive_countdowns
     if countdowns:
-        # HyperOS 会把视觉上仍禁用的确认按钮报告为 enabled；按钮文案中的倒计时才是门禁真值。
         if len(countdowns) != 1:
             raise ValueError("安装安全倒计时互相矛盾")
         x, y, label = candidate

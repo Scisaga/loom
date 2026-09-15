@@ -23,23 +23,34 @@ data class WrappingPublicKey(
     val subjectPublicKeyInfo: ByteArray,
 )
 
-class DeviceKeyStore {
+class DeviceKeyStore(private val namespace: String = "") {
+    private val identityAlias = "loom-device-identity-v1" + namespace
+    private val p256WrappingAlias = "loom-device-wrapping-ecdh-v1" + namespace
+    private val rsaWrappingAlias = "loom-device-wrapping-rsa2048-decrypt-v1" + namespace
+
+    /** §7.2：只在该配置的任务停止后移除其本机密钥。 */
+    fun deleteIdentity() {
+        listOf(identityAlias, p256WrappingAlias, rsaWrappingAlias).forEach { alias ->
+            if (keyStore.containsAlias(alias)) keyStore.deleteEntry(alias)
+        }
+    }
+
     private val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
 
     /** 诊断路径只读既有 alias，不能在 v2 token-free preflight 前创建 identity。 */
     fun identityStatus(): String {
-        if (!keyStore.containsAlias(IDENTITY_ALIAS)) return "尚未生成（等待 v2 preflight）"
-        val entry = keyStore.getEntry(IDENTITY_ALIAS, null) as KeyStore.PrivateKeyEntry
+        if (!keyStore.containsAlias(identityAlias)) return "尚未生成（等待 v2 preflight）"
+        val entry = keyStore.getEntry(identityAlias, null) as KeyStore.PrivateKeyEntry
         check(entry.privateKey.encoded == null) { "Android Keystore identity 私钥竟可导出" }
         return "non-exportable P-256"
     }
 
     fun ensureIdentity(): ByteArray {
-        if (!keyStore.containsAlias(IDENTITY_ALIAS)) {
+        if (!keyStore.containsAlias(identityAlias)) {
             val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, ANDROID_KEYSTORE)
             generator.initialize(
                 KeyGenParameterSpec.Builder(
-                    IDENTITY_ALIAS,
+                    identityAlias,
                     KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
                 ).setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
                     .setDigests(KeyProperties.DIGEST_SHA256)
@@ -47,14 +58,14 @@ class DeviceKeyStore {
             )
             generator.generateKeyPair()
         }
-        val entry = keyStore.getEntry(IDENTITY_ALIAS, null) as KeyStore.PrivateKeyEntry
+        val entry = keyStore.getEntry(identityAlias, null) as KeyStore.PrivateKeyEntry
         check(entry.privateKey.encoded == null) { "Android Keystore 身份私钥竟可导出" }
         return entry.certificate.publicKey.encoded
     }
 
     fun sign(message: ByteArray): ByteArray {
         ensureIdentity()
-        val entry = keyStore.getEntry(IDENTITY_ALIAS, null) as KeyStore.PrivateKeyEntry
+        val entry = keyStore.getEntry(identityAlias, null) as KeyStore.PrivateKeyEntry
         return Signature.getInstance("SHA256withECDSA").run {
             initSign(entry.privateKey)
             update(message)
@@ -68,7 +79,7 @@ class DeviceKeyStore {
     /** #14：TLS 只能取得 AndroidKeyStore handle；private key bytes 永远不跨进 Go 或应用存储。 */
     internal fun identityPrivateKey(): PrivateKey {
         ensureIdentity()
-        val entry = keyStore.getEntry(IDENTITY_ALIAS, null) as KeyStore.PrivateKeyEntry
+        val entry = keyStore.getEntry(identityAlias, null) as KeyStore.PrivateKeyEntry
         check(entry.privateKey.encoded == null) { "Android Keystore identity 私钥竟可导出" }
         return entry.privateKey
     }
@@ -106,7 +117,7 @@ class DeviceKeyStore {
         val peer = KeyFactory.getInstance(KeyProperties.KEY_ALGORITHM_EC)
             .generatePublic(X509EncodedKeySpec(ephemeralSubjectPublicKeyInfo))
         check(peer.algorithm == KeyProperties.KEY_ALGORITHM_EC) { "封装方 ephemeral key 不是 P-256 EC key" }
-        val entry = keyStore.getEntry(P256_WRAPPING_ALIAS, null) as KeyStore.PrivateKeyEntry
+        val entry = keyStore.getEntry(p256WrappingAlias, null) as KeyStore.PrivateKeyEntry
         check(entry.privateKey.encoded == null) { "Android Keystore wrapping 私钥竟可导出" }
         check(entry.certificate.publicKey.encoded.contentEquals(wrapping.subjectPublicKeyInfo)) {
             "Android Keystore wrapping public key 在派生前发生变化"
@@ -121,7 +132,7 @@ class DeviceKeyStore {
     fun decryptWrappingRSAOAEP(ciphertext: ByteArray): ByteArray {
         check(Build.VERSION.SDK_INT < Build.VERSION_CODES.S) { "API 31+ 必须使用独立 P-256 ECDH wrapping key" }
         ensureRSAWrapping()
-        val entry = keyStore.getEntry(RSA_WRAPPING_ALIAS, null) as KeyStore.PrivateKeyEntry
+        val entry = keyStore.getEntry(rsaWrappingAlias, null) as KeyStore.PrivateKeyEntry
         check(entry.privateKey.encoded == null) { "Android Keystore wrapping 私钥竟可导出" }
         return Cipher.getInstance(RSA_TRANSFORMATION).run {
             init(
@@ -136,7 +147,7 @@ class DeviceKeyStore {
     /** #14：由 AndroidKeyStore 返回的授权用途证明 wrapping alias 没有签名权限。 */
     fun wrappingHasSigningPurpose(): Boolean {
         ensureWrapping()
-        val alias = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) P256_WRAPPING_ALIAS else RSA_WRAPPING_ALIAS
+        val alias = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) p256WrappingAlias else rsaWrappingAlias
         val entry = keyStore.getEntry(alias, null) as KeyStore.PrivateKeyEntry
         val factory = KeyFactory.getInstance(entry.privateKey.algorithm, ANDROID_KEYSTORE)
         val info = factory.getKeySpec(entry.privateKey, KeyInfo::class.java)
@@ -145,11 +156,11 @@ class DeviceKeyStore {
 
     private fun ensureP256Wrapping(): WrappingPublicKey {
         check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) { "P-256 Keystore ECDH 需要 API 31+" }
-        if (!keyStore.containsAlias(P256_WRAPPING_ALIAS)) {
+        if (!keyStore.containsAlias(p256WrappingAlias)) {
             KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, ANDROID_KEYSTORE).run {
                 initialize(
                     KeyGenParameterSpec.Builder(
-                        P256_WRAPPING_ALIAS,
+                        p256WrappingAlias,
                         KeyProperties.PURPOSE_AGREE_KEY,
                     )
                         .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
@@ -158,7 +169,7 @@ class DeviceKeyStore {
                 generateKeyPair()
             }
         }
-        val entry = keyStore.getEntry(P256_WRAPPING_ALIAS, null) as KeyStore.PrivateKeyEntry
+        val entry = keyStore.getEntry(p256WrappingAlias, null) as KeyStore.PrivateKeyEntry
         check(entry.privateKey.encoded == null) { "Android Keystore wrapping 私钥竟可导出" }
         check(entry.privateKey.algorithm == KeyProperties.KEY_ALGORITHM_EC) { "wrapping key algorithm 被替换" }
         return WrappingPublicKey(P256_WRAPPING_PROFILE, entry.certificate.publicKey.encoded)
@@ -168,11 +179,11 @@ class DeviceKeyStore {
         check(Build.VERSION.SDK_INT in Build.VERSION_CODES.O until Build.VERSION_CODES.S) {
             "RSA-OAEP wrapping fallback 只允许 API 26–30"
         }
-        if (!keyStore.containsAlias(RSA_WRAPPING_ALIAS)) {
+        if (!keyStore.containsAlias(rsaWrappingAlias)) {
             KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_RSA, ANDROID_KEYSTORE).run {
                 initialize(
                     KeyGenParameterSpec.Builder(
-                        RSA_WRAPPING_ALIAS,
+                        rsaWrappingAlias,
                         KeyProperties.PURPOSE_DECRYPT,
                     )
                         .setKeySize(2048)
@@ -183,7 +194,7 @@ class DeviceKeyStore {
                 generateKeyPair()
             }
         }
-        val entry = keyStore.getEntry(RSA_WRAPPING_ALIAS, null) as KeyStore.PrivateKeyEntry
+        val entry = keyStore.getEntry(rsaWrappingAlias, null) as KeyStore.PrivateKeyEntry
         check(entry.privateKey.encoded == null) { "Android Keystore wrapping 私钥竟可导出" }
         check(entry.privateKey.algorithm == KeyProperties.KEY_ALGORITHM_RSA) { "wrapping key algorithm 被替换" }
         return WrappingPublicKey(RSA_WRAPPING_PROFILE, entry.certificate.publicKey.encoded)
@@ -191,9 +202,6 @@ class DeviceKeyStore {
 
     companion object {
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
-        private const val IDENTITY_ALIAS = "loom-device-identity-v1"
-        private const val P256_WRAPPING_ALIAS = "loom-device-wrapping-ecdh-v1"
-        private const val RSA_WRAPPING_ALIAS = "loom-device-wrapping-rsa2048-decrypt-v1"
         private const val P256_WRAPPING_PROFILE = "p256-keystore-ecdh-v1"
         private const val RSA_WRAPPING_PROFILE = "rsa2048-keystore-decrypt-v1"
         private const val RSA_TRANSFORMATION = "RSA/ECB/OAEPPadding"

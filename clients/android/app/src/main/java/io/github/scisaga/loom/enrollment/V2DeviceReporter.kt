@@ -1,5 +1,6 @@
 package io.github.scisaga.loom.enrollment
 
+import io.github.scisaga.loom.profiles.ProfileContext
 import android.content.Context
 import io.github.scisaga.loom.BuildConfig
 import io.github.scisaga.loom.security.DeviceKeyStore
@@ -35,7 +36,7 @@ internal fun requiresV2RouteApplication(current: ManagedProfile, candidate: Mana
 internal class V2DeviceReporter(
     context: Context,
     private val stateStore: V2DeviceStateStore = V2DeviceStateStore(context.applicationContext),
-    private val keys: DeviceKeyStore = DeviceKeyStore(),
+    private val keys: DeviceKeyStore = DeviceKeyStore(ProfileContext.keySuffix(context)),
     private val client: V2PrivateControlClient = V2PrivateControlClient(keys),
 ) {
     private val protected = EncryptedStore(context.applicationContext)
