@@ -281,7 +281,10 @@ func (l *localTarget) Push(t *Tree) error {
 			return err
 		}
 	}
-	return writeAtomicAt(rootFD, "current.json", t.Files["current.json"], 0o644)
+	if current, ok := t.Files["current.json"]; ok {
+		return writeAtomicAt(rootFD, "current.json", current, 0o644)
+	}
+	return nil
 }
 
 // writeAtomic 先写临时文件再 rename。
@@ -719,6 +722,9 @@ func (s *sshTarget) Push(t *Tree) error {
 	// 同样先落临时文件再 mv。**mv 在同一个文件系统上是原子的**,
 	// 所以临时文件必须和目标同目录 —— 放 /tmp 的话跨设备,mv 退化成
 	// copy+unlink,原子性就没了。
+	if _, ok := t.Files["current.json"]; !ok {
+		return nil
+	}
 	qcur := shellQuote("./current.json")
 	currentRemote := rootGuard + fmt.Sprintf(
 		"tmp=$(mktemp './.loom-current.XXXXXX'); "+

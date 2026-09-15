@@ -13,20 +13,18 @@ package webui
 
 import (
 	"crypto/sha256"
-	"encoding/base64"
-	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"mime"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	qrcode "github.com/skip2/go-qrcode"
+	"loom/internal/clientrelease"
 )
 
 // Deps 是界面需要外界提供的东西。用接口而不是具体类型,是为了让 report
@@ -194,6 +192,7 @@ type ClientControlDeps struct {
 	DownloadLinuxPackage func() (LinuxClientPackageView, []byte, error)
 	PublicLinuxArtifact  func(name string) (PublicDeviceArtifact, error)
 	LinuxInstallScript   func() ([]byte, error)
+	Releases             *clientrelease.Store
 }
 
 type ClientInventory struct {
@@ -782,15 +781,6 @@ func Handler(d Deps) http.Handler {
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(exported)
 	})
-	readPage := func(fn func(bool) string) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodGet {
-				http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
-				return
-			}
-			writeHTML(w, fn(authed(d, r)))
-		}
-	}
 	serveRouteAlias := func(w http.ResponseWriter, r *http.Request, from, to string) {
 		clone := r.Clone(r.Context())
 		u := *r.URL
@@ -798,221 +788,6 @@ func Handler(d Deps) http.Handler {
 		clone.URL = &u
 		mux.ServeHTTP(w, clone)
 	}
-	mux.HandleFunc("/devices", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
-			return
-		}
-		w.Header().Set("Cache-Control", "no-store")
-		writeHTML(w, pageDevices(d, clientPageState{Create: r.URL.Query().Get("new") == "1", Archived: r.URL.Query().Get("archived") == "1"}, authed(d, r)))
-	})
-	mux.HandleFunc("/devices/create", func(w http.ResponseWriter, r *http.Request) {
-		serveRouteAlias(w, r, "/devices/create", "/clients/create")
-	})
-	deviceInviteWrite := func(w http.ResponseWriter, r *http.Request, replace bool) {
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Referrer-Policy", "no-referrer")
-		if r.Method != http.MethodPost {
-			w.Header().Set("Allow", "POST")
-			http.Error(w, "只接受 POST", http.StatusMethodNotAllowed)
-			return
-		}
-		if !authed(d, r) {
-			adminCertificateRequired(w)
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "表单无法解析", http.StatusBadRequest)
-			return
-		}
-		id := strings.TrimSpace(r.PostForm.Get("id"))
-		if id == "" || strings.Contains(id, "/") {
-			http.Error(w, "Device id 无效", http.StatusBadRequest)
-			return
-		}
-		control := deviceControl(d)
-		if control == nil {
-			http.Error(w, "这台机器不能签发加入码", http.StatusNotImplemented)
-			return
-		}
-		action := control.RenewInvite
-		if replace {
-			if r.PostForm.Get("identity_deleted") != "yes" {
-				http.Error(w, "重新加入前须确认本机身份和配置已删除", http.StatusBadRequest)
-				return
-			}
-			action = control.ReplaceDevice
-		}
-		if action == nil {
-			http.Error(w, "这台机器没有此加入恢复能力", http.StatusNotImplemented)
-			return
-		}
-		invite, err := action(id)
-		if err != nil {
-			http.Error(w, err.Error(), clientProtocolStatus(err))
-			return
-		}
-		http.Redirect(w, r, "/devices/invites/"+url.PathEscape(invite.InviteID), http.StatusSeeOther)
-	}
-	mux.HandleFunc("/devices/renew-invite", func(w http.ResponseWriter, r *http.Request) {
-		deviceInviteWrite(w, r, false)
-	})
-	mux.HandleFunc("/devices/replace", func(w http.ResponseWriter, r *http.Request) {
-		deviceInviteWrite(w, r, true)
-	})
-	for _, action := range []string{"pause", "resume"} {
-		mux.HandleFunc("/devices/"+action, func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Cache-Control", "no-store")
-			if r.Method != http.MethodPost {
-				w.Header().Set("Allow", "POST")
-				http.Error(w, "只接受 POST", http.StatusMethodNotAllowed)
-				return
-			}
-			if !authed(d, r) {
-				adminCertificateRequired(w)
-				return
-			}
-			control := deviceControl(d)
-			if control == nil || control.SetDevicePaused == nil {
-				http.Error(w, "这台机器不能暂停/恢复 Device", http.StatusNotImplemented)
-				return
-			}
-			r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
-			if err := r.ParseForm(); err != nil {
-				http.Error(w, "表单无法解析", http.StatusBadRequest)
-				return
-			}
-			id := strings.TrimSpace(r.PostForm.Get("id"))
-			if id == "" || strings.Contains(id, "/") {
-				http.Error(w, "Device id 无效", http.StatusBadRequest)
-				return
-			}
-			if err := control.SetDevicePaused(id, action == "pause"); err != nil {
-				http.Error(w, err.Error(), clientProtocolStatus(err))
-				return
-			}
-			http.Redirect(w, r, "/devices", http.StatusSeeOther)
-		})
-	}
-	mux.HandleFunc("/devices/delete", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-store")
-		if r.Method != http.MethodPost {
-			w.Header().Set("Allow", "POST")
-			http.Error(w, "只接受 POST", http.StatusMethodNotAllowed)
-			return
-		}
-		if !authed(d, r) {
-			adminCertificateRequired(w)
-			return
-		}
-		control := deviceControl(d)
-		if control == nil || control.DeleteDevice == nil {
-			http.Error(w, "这台机器没有 Device removal 能力", http.StatusNotImplemented)
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "表单无法解析", http.StatusBadRequest)
-			return
-		}
-		id := strings.TrimSpace(r.PostForm.Get("id"))
-		if id == "" || strings.Contains(id, "/") {
-			http.Error(w, "Device id 无效", http.StatusBadRequest)
-			return
-		}
-		if r.PostForm.Get("confirm") != "yes" {
-			http.Error(w, "移除前须确认本机文件不会被中控删除", http.StatusBadRequest)
-			return
-		}
-		if err := control.DeleteDevice(id); err != nil {
-			http.Error(w, err.Error(), clientProtocolStatus(err))
-			return
-		}
-		http.Redirect(w, r, "/devices", http.StatusSeeOther)
-	})
-	mux.HandleFunc("/devices/purge-revoked", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-store")
-		if r.Method != http.MethodPost {
-			w.Header().Set("Allow", "POST")
-			http.Error(w, "只接受 POST", http.StatusMethodNotAllowed)
-			return
-		}
-		if !authed(d, r) {
-			adminCertificateRequired(w)
-			return
-		}
-		control := deviceControl(d)
-		if control == nil || control.PurgeRevoked == nil {
-			http.Error(w, "这台机器没有 archived Device cleanup 能力", http.StatusNotImplemented)
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "表单无法解析", http.StatusBadRequest)
-			return
-		}
-		id := strings.TrimSpace(r.PostForm.Get("id"))
-		if id == "" || strings.Contains(id, "/") {
-			http.Error(w, "Device id 无效", http.StatusBadRequest)
-			return
-		}
-		if r.PostForm.Get("confirm") != "yes" {
-			http.Error(w, "删除前须确认归档记录将永久移除", http.StatusBadRequest)
-			return
-		}
-		if err := control.PurgeRevoked(id); err != nil {
-			http.Error(w, err.Error(), clientProtocolStatus(err))
-			return
-		}
-		http.Redirect(w, r, "/devices?archived=1", http.StatusSeeOther)
-	})
-	mux.HandleFunc("/devices/discard-pending", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-store")
-		if r.Method != http.MethodPost {
-			w.Header().Set("Allow", "POST")
-			http.Error(w, "只接受 POST", http.StatusMethodNotAllowed)
-			return
-		}
-		if !authed(d, r) {
-			adminCertificateRequired(w)
-			return
-		}
-		control := deviceControl(d)
-		if control == nil || control.DiscardPending == nil {
-			http.Error(w, "这台机器没有 Device identity cleanup 能力", http.StatusNotImplemented)
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "表单无法解析", http.StatusBadRequest)
-			return
-		}
-		id := strings.TrimSpace(r.Form.Get("id"))
-		if id == "" || strings.Contains(id, "/") {
-			http.Error(w, "Device id 无效", http.StatusBadRequest)
-			return
-		}
-		if err := control.DiscardPending(id); err != nil {
-			http.Error(w, err.Error(), http.StatusConflict)
-			return
-		}
-		http.Redirect(w, r, "/devices", http.StatusSeeOther)
-	})
-	mux.HandleFunc("/devices/invites/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && !authed(d, r) {
-			adminCertificateRequired(w)
-			return
-		}
-		serveRouteAlias(w, r, "/devices/invites/", "/clients/invites/")
-	})
-	mux.HandleFunc("/devices/download/linux-amd64", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && !authed(d, r) {
-			adminCertificateRequired(w)
-			return
-		}
-		serveRouteAlias(w, r, "/devices/download/linux-amd64", "/clients/download/linux-amd64")
-	})
 	mux.HandleFunc("/device-dist/install.sh", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.Header().Set("Allow", "GET")
@@ -1066,129 +841,6 @@ func Handler(d Deps) http.Handler {
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, name))
 		w.Header().Set("Content-Length", strconv.Itoa(len(artifact.Body)))
 		_, _ = w.Write(artifact.Body)
-	})
-	mux.HandleFunc("/devices/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.Header().Set("Allow", "GET")
-			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
-			return
-		}
-		rawID := strings.TrimPrefix(r.URL.Path, "/devices/")
-		if rawID == "" || strings.Contains(rawID, "/") {
-			http.NotFound(w, r)
-			return
-		}
-		deviceID, err := url.PathUnescape(rawID)
-		if err != nil || deviceID == "" || strings.Contains(deviceID, "/") {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Cache-Control", "no-store")
-		writeHTML(w, pageDeviceDetail(d, deviceID, authed(d, r)))
-	})
-	mux.HandleFunc("/clients", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
-			return
-		}
-		target := "/devices"
-		if r.URL.RawQuery != "" {
-			target += "?" + r.URL.RawQuery
-		}
-		http.Redirect(w, r, target, http.StatusPermanentRedirect)
-	})
-	mux.HandleFunc("/clients/create", func(w http.ResponseWriter, r *http.Request) {
-		// Creation uses POST/Redirect/GET so refreshing the result page cannot
-		// silently create a second client and invitation. Validation errors still
-		// render from POST and therefore remain explicitly non-cacheable.
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Referrer-Policy", "no-referrer")
-		if r.Method != http.MethodPost {
-			http.Error(w, "只接受 POST", http.StatusMethodNotAllowed)
-			return
-		}
-		if !authed(d, r) {
-			adminCertificateRequired(w)
-			return
-		}
-		control := deviceControl(d)
-		if control == nil || control.CreateInvite == nil {
-			http.Error(w, "这台机器不能创建设备加入码", http.StatusNotImplemented)
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
-		if err := r.ParseForm(); err != nil {
-			writeHTML(w, pageClients(d, clientPageState{Create: true, Error: "表单无法解析"}, true))
-			return
-		}
-		name := strings.TrimSpace(r.Form.Get("name"))
-		input := ClientInviteInput{
-			Name: name, Platform: strings.TrimSpace(r.Form.Get("platform")),
-			Responsibilities:  append([]string(nil), r.Form["responsibility"]...),
-			DestinationGrants: append([]string(nil), r.Form["destination_grant"]...),
-			Direction:         strings.TrimSpace(r.Form.Get("direction")),
-		}
-		// Browsers omit disabled controls. Apply the same rule server-side so a
-		// stale or scriptless form cannot attach values from a hidden section.
-		if !deviceListContains(input.Responsibilities, "use_loom") {
-			input.DestinationGrants = nil
-		}
-		if !deviceListContains(input.Responsibilities, "forward") {
-			input.Direction = ""
-		}
-		invite, err := control.CreateInvite(input)
-		if err != nil {
-			writeHTML(w, pageClients(d, clientPageState{
-				Create: true, Submitted: true, SubmittedName: name, SubmittedPlatform: input.Platform,
-				SubmittedResponsibilities: input.Responsibilities, SubmittedGrants: input.DestinationGrants,
-				SubmittedDirection: input.Direction, Error: err.Error(),
-			}, true))
-			return
-		}
-		http.Redirect(w, r, "/devices/invites/"+url.PathEscape(invite.InviteID), http.StatusSeeOther)
-	})
-	mux.HandleFunc("/clients/invites/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Referrer-Policy", "no-referrer")
-		if r.Method != http.MethodGet {
-			w.Header().Set("Allow", "GET")
-			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
-			return
-		}
-		if !authed(d, r) {
-			adminCertificateRequired(w)
-			return
-		}
-		control := deviceControl(d)
-		if control == nil || control.InviteArtifact == nil {
-			http.NotFound(w, r)
-			return
-		}
-		rawID := strings.TrimPrefix(r.URL.Path, "/clients/invites/")
-		if rawID == "" || strings.Contains(rawID, "/") {
-			http.NotFound(w, r)
-			return
-		}
-		inviteID, err := url.PathUnescape(rawID)
-		if err != nil || inviteID == "" || strings.Contains(inviteID, "/") {
-			http.NotFound(w, r)
-			return
-		}
-		artifact, err := control.InviteArtifact(inviteID)
-		if err != nil {
-			http.Error(w, err.Error(), clientProtocolStatus(err))
-			return
-		}
-		invite := ClientInviteView{
-			InviteID: inviteID, ClientID: artifact.ClientID, ClientName: artifact.ClientName,
-			InviteURI: artifact.InviteURI, ExpiresAt: artifact.ExpiresAt,
-			Platform:          artifact.Platform,
-			Responsibilities:  append([]string(nil), artifact.Responsibilities...),
-			DestinationGrants: append([]string(nil), artifact.DestinationGrants...),
-			Direction:         artifact.Direction,
-			Replaces:          artifact.Replaces,
-		}
-		writeHTML(w, pageClients(d, clientPageState{Invite: &invite}, true))
 	})
 	mux.HandleFunc("/clients/download/linux-amd64", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -1403,44 +1055,6 @@ func Handler(d Deps) http.Handler {
 	mux.HandleFunc("/api/device/enroll", func(w http.ResponseWriter, r *http.Request) {
 		serveRouteAlias(w, r, "/api/device/enroll", "/api/client/enroll")
 	})
-	mux.HandleFunc("/nodes", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
-			return
-		}
-		writeHTML(w, pageNodes(d, authed(d, r), strings.TrimSpace(r.URL.Query().Get("added"))))
-	})
-	mux.HandleFunc("/nodes/add", http.NotFound)
-	mux.HandleFunc("/nodes/add/", http.NotFound)
-	mux.HandleFunc("/nodes/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
-			return
-		}
-		raw := strings.TrimPrefix(r.URL.Path, "/nodes/")
-		if raw == "" || strings.Contains(raw, "/") {
-			http.NotFound(w, r)
-			return
-		}
-		id, err := url.PathUnescape(raw)
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-		body, found := pageNodeDetail(d, id, authed(d, r))
-		if !found {
-			http.NotFound(w, r)
-			return
-		}
-		writeHTML(w, body)
-	})
-	mux.HandleFunc("/topology", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
-			return
-		}
-		writeHTML(w, pageTopology(d, authed(d, r), strings.TrimSpace(r.URL.Query().Get("entry"))))
-	})
 	mux.HandleFunc("/api/control/default-exit", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -1509,169 +1123,7 @@ func Handler(d Deps) http.Handler {
 			writeJSONError(w, http.StatusMethodNotAllowed, "只接受 GET 或 PUT")
 		}
 	})
-	mux.HandleFunc("/services", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
-			return
-		}
-		message := ""
-		if r.URL.Query().Get("saved") == "1" {
-			message = "Service saved to SSOT. Publishing remains automatic."
-		} else if r.URL.Query().Get("deleted") == "1" {
-			message = "Service removed from SSOT. Publishing remains automatic."
-		}
-		writeHTML(w, pageServices(d, r.URL.Query().Get("service"), r.URL.Query().Get("new") == "1", message, false, nil, authed(d, r)))
-	})
-	serviceWrite := func(w http.ResponseWriter, r *http.Request, deleting bool) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "只接受 POST", http.StatusMethodNotAllowed)
-			return
-		}
-		if !authed(d, r) {
-			adminCertificateRequired(w)
-			return
-		}
-		if d.Control == nil || d.Control.Services == nil {
-			http.Error(w, "这台机器没有结构化 Service 写能力", http.StatusNotImplemented)
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "表单过大或无法解析", http.StatusBadRequest)
-			return
-		}
-		id := strings.TrimSpace(r.Form.Get("id"))
-		revision := r.Form.Get("revision")
-		submitted := ServiceInput{
-			ID: id, Name: strings.TrimSpace(r.Form.Get("name")),
-			Declaration: strings.TrimSpace(r.Form.Get("declaration")),
-			Addresses:   serviceAddresses(r.Form.Get("addresses")),
-		}
-		var err error
-		if deleting {
-			err = d.Control.Services.Delete(id, revision)
-		} else {
-			err = d.Control.Services.Upsert(submitted, revision)
-		}
-		if err != nil {
-			writeHTML(w, pageServices(d, id, !deleting && !serviceExists(d.Snapshot(), id), err.Error(), true, &submitted, true))
-			return
-		}
-		if deleting {
-			http.Redirect(w, r, "/services?deleted=1", http.StatusSeeOther)
-			return
-		}
-		http.Redirect(w, r, "/services?service="+url.QueryEscape(id)+"&saved=1", http.StatusSeeOther)
-	}
-	mux.HandleFunc("/services/save", func(w http.ResponseWriter, r *http.Request) { serviceWrite(w, r, false) })
-	mux.HandleFunc("/services/delete", func(w http.ResponseWriter, r *http.Request) { serviceWrite(w, r, true) })
-	mux.HandleFunc("/routing", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
-			return
-		}
-		writeHTML(w, pageRouting(d, authed(d, r), strings.TrimSpace(r.URL.Query().Get("entry"))))
-	})
-	mux.HandleFunc("/deployments", readPage(func(ok bool) string { return pageDeployments(d, ok) }))
-
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		writeHTML(w, pageOverview(d, authed(d, r)))
-	})
-	mux.HandleFunc("/act/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "只接受 POST", http.StatusMethodNotAllowed)
-			return
-		}
-		if !authed(d, r) {
-			adminCertificateRequired(w)
-			return
-		}
-		name := strings.TrimPrefix(r.URL.Path, "/act/")
-		fn, ok := d.Actions[name]
-		if !ok {
-			http.Error(w, "未知动作", http.StatusNotFound)
-			return
-		}
-		out, err := fn()
-		writeHTML(w, pageResult(d, name, out, err))
-	})
-
-	mux.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
-			return
-		}
-		writeHTML(w, pageEvents(d, eventFilterFromRequest(r), authed(d, r)))
-	})
-	if d.Events != nil {
-		mux.HandleFunc("/events.csv", func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodGet {
-				http.Error(w, "只接受 GET", http.StatusMethodNotAllowed)
-				return
-			}
-			w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-			w.Header().Set("Content-Disposition", `attachment; filename="loom-events.csv"`)
-			w.Header().Set("X-Content-Type-Options", "nosniff")
-			cw := csv.NewWriter(w)
-			_ = cw.Write([]string{"timestamp", "node", "kind", "subject", "from", "to", "level", "duration", "ongoing", "detail"})
-			for _, e := range filterEvents(d.Events(10000), eventFilterFromRequest(r)) {
-				_ = cw.Write([]string{e.TS, e.Node, e.Kind, e.Subject, e.From, e.To, e.Level, e.Lasted, strconv.FormatBool(e.Ongoing), e.Detail})
-			}
-			cw.Flush()
-		})
-	}
-	if d.Control != nil {
-		serveSSOT := func(w http.ResponseWriter, r *http.Request) {
-			if !authed(d, r) {
-				if r.Method == http.MethodGet {
-					writeHTML(w, pageAdminCertificateRequired(d))
-				} else {
-					adminCertificateRequired(w)
-				}
-				return
-			}
-			if r.Method != http.MethodPost {
-				body, err := d.Control.Read()
-				revision := ""
-				if err == nil && d.Control.Revision != nil {
-					revision, err = d.Control.Revision()
-				}
-				writeHTML(w, pageSSOT(d, body, revision, "", err, false))
-				return
-			}
-			body := r.FormValue("content")
-			revision := r.FormValue("revision")
-			findings, err := d.Control.Validate(body)
-			// 只校验不保存:让人先看清楚改动会带来什么。
-			if r.FormValue("action") != "save" {
-				writeHTML(w, pageSSOT(d, body, revision, findings, err, false))
-				return
-			}
-			if err == nil && findings == "" {
-				if d.Control.SaveIfRevision != nil {
-					err = d.Control.SaveIfRevision(body, revision)
-				} else {
-					err = d.Control.Save(body)
-				}
-			}
-			saved := err == nil && findings == ""
-			if saved && d.Control.Revision != nil {
-				revision, err = d.Control.Revision()
-				saved = err == nil
-			}
-			writeHTML(w, pageSSOT(d, body, revision, findings, err, saved))
-		}
-		mux.HandleFunc("/ssot", serveSSOT)
-		mux.HandleFunc("/settings", serveSSOT)
-	} else {
-		mux.HandleFunc("/settings", readPage(func(ok bool) string {
-			return shell(d, "Settings", `<div class=empty>This node has no control role. SSOT writes and control keys are intentionally unavailable here.</div>`, ok)
-		}))
-	}
+	registerBrowserUI(mux, d)
 	return mux
 }
 
@@ -1764,26 +1216,4 @@ func writeJSONError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, struct {
 		Error string `json:"error"`
 	}{Error: message})
-}
-
-func writeHTML(w http.ResponseWriter, body string) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// 界面里没有任何外部资源,也不该有 —— 这些机器不一定能出网,而且
-	// ssh 端口转发进来时更没有。img-src 只允许静态样式里自带的导航 SVG。
-	progressDigest := sha256.Sum256([]byte(progressSubmitScript))
-	progressHash := base64.StdEncoding.EncodeToString(progressDigest[:])
-	topologyDigest := sha256.Sum256([]byte(topologyInteractionScript))
-	topologyHash := base64.StdEncoding.EncodeToString(topologyDigest[:])
-	deviceEnrollmentDigest := sha256.Sum256([]byte(deviceEnrollmentScript))
-	deviceEnrollmentHash := base64.StdEncoding.EncodeToString(deviceEnrollmentDigest[:])
-	copyValueDigest := sha256.Sum256([]byte(copyValueScript))
-	copyValueHash := base64.StdEncoding.EncodeToString(copyValueDigest[:])
-	deviceInventoryLiveDigest := sha256.Sum256([]byte(deviceInventoryLiveScript))
-	deviceInventoryLiveHash := base64.StdEncoding.EncodeToString(deviceInventoryLiveDigest[:])
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'sha256-"+progressHash+"' 'sha256-"+topologyHash+"' 'sha256-"+deviceEnrollmentHash+"' 'sha256-"+copyValueHash+"' 'sha256-"+deviceInventoryLiveHash+"'; connect-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'")
-	// no-referrer 会让浏览器普通表单 POST 的 Origin 变成 null，导致合法写入
-	// 被 private control 的同源门禁拒绝。same-origin 保留同源表单证据，
-	// 同时禁止向其他 origin 发送 Referer；邀请秘密仍不得进入 URL。
-	w.Header().Set("Referrer-Policy", "same-origin")
-	fmt.Fprint(w, body)
 }

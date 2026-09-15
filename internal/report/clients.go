@@ -19,6 +19,7 @@ import (
 
 	"loom/internal/clientdist"
 	"loom/internal/clientregistry"
+	"loom/internal/clientrelease"
 	"loom/internal/model"
 	"loom/internal/ssotedit"
 	"loom/internal/validate"
@@ -176,7 +177,9 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc, onChange ..
 			DestinationGrants: append([]string(nil), created.Client.DestinationGrants...),
 		}, nil
 	}
+	releaseKey, _ := clientrelease.PublicKey(platformPublicKeyPath)
 	deps := &webui.ClientControlDeps{
+		Releases: &clientrelease.Store{Root: filepath.Join(filepath.Dir(c.ClientLinuxPackagePath), "releases"), Key: releaseKey},
 		LinuxPackage: func() (webui.LinuxClientPackageView, error) {
 			view, _, err := loadLinuxPackage()
 			return view, err

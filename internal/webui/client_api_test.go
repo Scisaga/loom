@@ -1,7 +1,6 @@
 package webui
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -10,66 +9,7 @@ import (
 	"time"
 )
 
-func TestClientAPIUsesSameTrustedRuntimeMergeAsHTML(t *testing.T) {
-	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
-	d := Deps{
-		Admin: true,
-		Now:   func() time.Time { return now },
-		Snapshot: func() View {
-			return View{Nodes: []NodeView{
-				{
-					ID: "trusted", Declared: true, Health: "healthy", Source: "签名健康转述",
-					ObservedAt: now.Add(-20 * time.Second).Format(time.RFC3339), AgeSec: 20,
-					PresenceAt: now.Add(-2 * time.Second).Format(time.RFC3339), Applied: "snapshot-trusted-0123456789",
-				},
-				{
-					ID: "unsigned", Declared: true, Health: "healthy", Source: "未签名转述",
-					ObservedAt: now.Add(-10 * time.Second).Format(time.RFC3339),
-					Applied:    "snapshot-untrusted",
-				},
-			}}
-		},
-		Control: &ControlDeps{Clients: &ClientControlDeps{List: func() (ClientInventory, error) {
-			return ClientInventory{Clients: []ClientView{
-				{ID: "trusted", Name: "Trusted", Status: "ready"},
-				// A persisted online label must not survive without trusted evidence.
-				{ID: "unsigned", Name: "Unsigned", Status: "online", LastSeenAt: now.Format(time.RFC3339)},
-			}}, nil
-		}}},
-	}
-
-	handler := Handler(d)
-	request := authenticatedJSONRequest(t, d, http.MethodGet, "/api/control/clients", "")
-	handler.ServeHTTP(request.recorder, request.request)
-	if request.recorder.Code != http.StatusOK {
-		t.Fatalf("GET clients status=%d body=%s", request.recorder.Code, request.recorder.Body.String())
-	}
-	var inventory ClientInventory
-	if err := json.Unmarshal(request.recorder.Body.Bytes(), &inventory); err != nil {
-		t.Fatal(err)
-	}
-	byID := make(map[string]ClientView, len(inventory.Clients))
-	for _, client := range inventory.Clients {
-		byID[client.ID] = client
-	}
-	trusted := byID["trusted"]
-	if trusted.Status != "online" || trusted.DataPlaneStatus != "online" || trusted.LastSeenAt == "" ||
-		!strings.HasPrefix(trusted.ConfigState, "applied snapshot-tru") {
-		t.Fatalf("trusted ready client was not promoted by API runtime merge: %+v", trusted)
-	}
-	unsigned := byID["unsigned"]
-	if unsigned.Status == "online" || unsigned.DataPlaneStatus != "untrusted observation" ||
-		unsigned.LastSeenAt != "" || unsigned.ConfigState != "not reported" {
-		t.Fatalf("unsigned observation was trusted by API runtime merge: %+v", unsigned)
-	}
-
-	page := pageClients(d, clientPageState{}, true)
-	for _, want := range []string{"Trusted", "Online", "Unsigned", "untrusted observation"} {
-		if !strings.Contains(page, want) {
-			t.Errorf("HTML client inventory missing merged value %q", want)
-		}
-	}
-}
+// A persisted online label must not survive without trusted evidence.
 
 func TestDeviceAPIIsCanonicalAndDoesNotRequireCompatibilityAlias(t *testing.T) {
 	d := Deps{

@@ -36,6 +36,7 @@ type config struct {
 	hosts                                                                     []string
 	local                                                                     string
 	outputs                                                                   []string
+	clientReleases, clientStore                                               string
 }
 
 var defaults = map[string]string{
@@ -43,7 +44,8 @@ var defaults = map[string]string{
 	"LOOM_DEPLOY_SOURCE": "deploy/ssot.yaml", "LOOM_RELEASE_DIR": "deploy/released",
 	"LOOM_SIGNING_KEY": "deploy/keys/platform-signing.key", "LOOM_PUBLISH_OUTPUTS": "",
 	"LOOM_PUBLISH_HISTORY": "deploy/ssot-history", "LOOM_PIN_DIR": "deploy/pinned",
-	"LOOM_DEPLOY_COMMAND": "/usr/local/bin/loom",
+	"LOOM_DEPLOY_COMMAND":        "/usr/local/bin/loom",
+	"LOOM_CLIENT_RELEASE_SOURCE": "", "LOOM_CLIENT_RELEASE_STORE": "/var/lib/loom/client-dist/releases",
 }
 
 var aliasPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
@@ -132,6 +134,7 @@ func loadConfig(path string) (config, error) {
 	c.sshConfig, c.source = resolve("LOOM_SSH_CONFIG"), resolve("LOOM_DEPLOY_SOURCE")
 	c.releaseDir, c.signingKey = resolve("LOOM_RELEASE_DIR"), resolve("LOOM_SIGNING_KEY")
 	c.history, c.pinDir, c.command = resolve("LOOM_PUBLISH_HISTORY"), resolve("LOOM_PIN_DIR"), resolve("LOOM_DEPLOY_COMMAND")
+	c.clientReleases, c.clientStore = resolve("LOOM_CLIENT_RELEASE_SOURCE"), resolve("LOOM_CLIENT_RELEASE_STORE")
 	c.hosts, c.local = strings.Fields(values["LOOM_DEPLOY_HOSTS"]), values["LOOM_LOCAL_NODE"]
 	for _, path := range []string{c.sshConfig, c.source, c.releaseDir, c.signingKey, c.history, c.pinDir, c.command} {
 		if path == "" {
@@ -288,6 +291,11 @@ func runWith(args []string, output io.Writer, makeRunner func(string) runner, in
 	if info, err := os.Stat(c.command); err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
 		return fmt.Errorf("[发布] LOOM_DEPLOY_COMMAND 必须是可执行文件")
 	}
+	if c.clientReleases != "" {
+		if err := validateClientReleases(c, pub, *commit); err != nil {
+			return err
+		}
+	}
 	if *plan {
 		return json.NewEncoder(output).Encode(struct {
 			Mode   string   `json:"mode"`
@@ -332,6 +340,11 @@ func runWith(args []string, output io.Writer, makeRunner func(string) runner, in
 				if err := verifyDistribution(target, c.hosts, candidate, pub); err != nil {
 					return err
 				}
+			}
+		}
+		if c.clientReleases != "" {
+			if err := publishClientReleases(c, pub, output); err != nil {
+				return err
 			}
 		}
 		return activateAll(c, stable, candidate.SHA256, runCommand, output)
@@ -480,9 +493,9 @@ func activateAll(c config, stable, checksum string, command runner, output io.Wr
 		wg.Add(1)
 		go func(host string) {
 			defer wg.Done()
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 			defer cancel()
-			name, args := "scp", []string{"-F", c.sshConfig, "-o", "BatchMode=yes", stable, host + ":" + temporary}
+			name, args := "scp", []string{"-C", "-F", c.sshConfig, "-o", "BatchMode=yes", stable, host + ":" + temporary}
 			if host == c.local {
 				name, args = "install", []string{"-m", "0755", stable, temporary}
 			}

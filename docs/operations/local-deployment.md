@@ -34,6 +34,7 @@
 | `LOOM_SIGNING_KEY` | 既有平台签名私钥文件路径 |
 | `LOOM_PUBLISH_OUTPUTS` | JSON 字符串数组，沿用实际 publisher 的本地及 SSH 分发目标；至少有一个本地目录用于验签 |
 | `LOOM_PUBLISH_HISTORY` / `LOOM_PIN_DIR` | 与 publisher 相同的历史及 pin 目录 |
+| `LOOM_CLIENT_RELEASE_SOURCE` / `LOOM_CLIENT_RELEASE_STORE` | 已签名客户端目录输入，以及控制节点当前下载目录；source 为空时不发布客户端包 |
 | `LOOM_DEPLOY_COMMAND` | 执行正式 `release` / `publish` 的 Loom 程序路径 |
 
 `LOOM_ADMIN_DIR`、`LOOM_CONTROL_STATE_DIR`、`LOOM_ACCEPTANCE_DIR` 和 `LOOM_CONTROL_WORKTREE`
@@ -67,8 +68,9 @@ go run ./scripts/deploy-code --env .env --commit "$release_commit" \
 
 1. 用正式 `loom release` 放行指定制品，立即用一次性 `loom publish` 固化 signed current。
 2. 验证本地分发树的签名 current、节点 assignment、manifest 与制品绑定；pin 仍指向旧制品时拒绝直发。
-3. 对当前节点并行 SSH/SCP，写入 `/usr/local/bin/loom` 同目录临时文件，校验 SHA-256 后原子替换。
-4. 本机也安装同一制品；每个节点只重启实际运行的 Loom 常驻服务。哪个节点命令失败，就报告哪个节点。
+3. 配置了客户端目录时，将相同内容寻址制品增量推到 `LOOM_PUBLISH_OUTPUTS` 的 `client-releases/` 子目录；只在各分发位置校验通过后激活控制节点下载目录。
+4. 对当前节点并行 SSH/SCP，写入 `/usr/local/bin/loom` 同目录临时文件，校验 SHA-256 后原子替换。
+5. 本机也安装同一制品；每个节点只重启实际运行的 Loom 常驻服务。哪个节点命令失败，就报告哪个节点。
 
 发布完成后，工具在既有发布事务锁内重读 pin、放行记录及 signed current，再完成激活；
 如果授权已改变或另一个事务持锁，明确失败，不轮询等待，也不覆盖为过时制品。
@@ -79,6 +81,32 @@ v1 `reverse_only` 只约束相关 WireGuard 边的发起方向，v2 则按每条
 默认只等待 SSH/SCP/激活命令返回，不额外探测 SSH、不等 publisher/pull 轮询、不做全网收敛检查。
 变更要求的正常业务验收按本次范围执行；仅 favicon 等静态资源变化不默认启动 headless 浏览器。
 signed release/pull 继续提供持久记录、离线补齐与纠偏，快速发布不能绕过 SSOT、秘密或签名边界。
+
+## 跨平台客户端制品
+
+先构建或复用已经核对的真实制品。Linux 可以用 `LOOM_BINARY` 传入本次精确提交已经构建的
+程序；跨架构打包用 `LOOM_PACKAGE_TOOL` 指向本机可执行的同版程序，`SING_BOX_BINARY` 必须
+与目标架构匹配。打包器校验原生二进制坐标；跨架构仅声明静态校验，不伪称运行了原生 selfcheck。
+
+将输入列表作为本机 JSON 传给目录工具：
+
+```bash
+go run ./scripts/client-releases --input deploy/client-releases.json \
+  --output dist/client-releases --key deploy/keys/platform-signing.key
+```
+
+每项包含 `path`、`title`、`platform`、`arch`、`variant`、`version`、`source_commit`、`signing`，
+有 SBOM 时附 `sbom_path`。路径是本机输入，不能提交真实部署清单。不同平台可以来自不同精确
+提交；复用包保留原始版本，不能把服务端新版本写成未重编译客户端的版本。Android 默认展示已签名
+Release，Debug 放开发者区域；Windows 无 Authenticode 时明确标为预览。
+
+目录以既有平台密钥签名。Linux 包先经过原有 `clientdist` 验证，保留兼容的包签名；其余包另附
+平台制品摘要签名（`loom-client-releases-v1` 域）。平台目录验签不取代 Android APK 或 Windows
+OS 签名。发布页只从已验证的目录生成下载地址，下载再次校验实际字节，禁止路径越界。
+
+公网只复制 `bin/<sha256>` 和 `catalogs/<sha256>/catalog.json` / `catalog.sig`，本机 `current.json`
+与分发校验回执不公开。现有 distribution 静态路径应允许其 `client-releases/` 子目录，不新增公开
+动态管理 API。发布工具复用已存在且哈希匹配的 blob；失败保持旧目录，报告失败位置。
 
 ## DNS 凭据、NAT 与 Linux 安装
 

@@ -14,7 +14,6 @@ import (
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -77,34 +76,25 @@ func TestAndroidEnrollmentServerVerticalSlice(t *testing.T) {
 	}
 	handler := webui.Handler(ui)
 
-	create := httptest.NewRequest(http.MethodPost, "/devices/create", strings.NewReader(url.Values{
-		"name":              {"Android integration phone"},
-		"platform":          {string(model.Android)},
-		"responsibility":    {"use_loom"},
-		"destination_grant": {"best-egress"},
-	}.Encode()))
-	create.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	create := httptest.NewRequest(http.MethodPost, "/api/control/device-invites", strings.NewReader(`{"name":"Android integration phone","platform":"android","responsibilities":["use_loom"],"destination_grants":["best-egress"]}`))
+	create.Header.Set("Content-Type", "application/json")
 	createResponse := httptest.NewRecorder()
 	handler.ServeHTTP(createResponse, create)
-	location := createResponse.Header().Get("Location")
-	if createResponse.Code != http.StatusSeeOther || !strings.HasPrefix(location, "/devices/invites/") {
-		t.Fatalf("Android UI create=%d location=%q body=%s", createResponse.Code, location, createResponse.Body.String())
+	var created webui.ClientInviteView
+	if createResponse.Code != http.StatusCreated || json.Unmarshal(createResponse.Body.Bytes(), &created) != nil || created.InviteID == "" {
+		t.Fatalf("Android create: %d %s", createResponse.Code, createResponse.Body.String())
 	}
-	inviteID := strings.TrimPrefix(location, "/devices/invites/")
+	inviteID := created.InviteID
 	artifact, err := deviceControl.InviteArtifact(inviteID)
 	if err != nil || artifact.Platform != string(model.Android) ||
 		!slices.Equal(artifact.Responsibilities, []string{"use_loom"}) {
 		t.Fatalf("Android invitation=%+v err=%v", artifact, err)
 	}
-	invitePage := httptest.NewRequest(http.MethodGet, location, nil)
-	invitePageResponse := httptest.NewRecorder()
-	handler.ServeHTTP(invitePageResponse, invitePage)
-	if invitePageResponse.Code != http.StatusOK ||
-		!strings.Contains(invitePageResponse.Body.String(), "Open Loom, then scan the QR code") ||
-		strings.Contains(invitePageResponse.Body.String(), "Local or SSH-assisted bootstrap") ||
-		strings.Contains(invitePageResponse.Body.String(), "Download Linux package") {
-		t.Fatalf("Android invitation page crossed Linux package gate: status=%d body=%s",
-			invitePageResponse.Code, invitePageResponse.Body.String())
+	metadata := httptest.NewRecorder()
+	handler.ServeHTTP(metadata, httptest.NewRequest(http.MethodGet, "/api/control/ui/invites/"+inviteID, nil))
+	var returned webui.ClientInviteArtifact
+	if metadata.Code != 200 || json.Unmarshal(metadata.Body.Bytes(), &returned) != nil || returned.Platform != "android" {
+		t.Fatal("Android invitation metadata lost platform")
 	}
 
 	const requestID = "android-integration-request"

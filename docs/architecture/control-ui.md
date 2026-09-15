@@ -110,9 +110,42 @@ control 或 executor secret 时对应操作 fail closed，不退化为无认证�
 同理,节点 id 和错误信息都来自**别的机器**,一律转义 —— 一台被拿下的机器
 不该能往别人的界面里注入脚本。
 
-界面契约使用统一的 Misaka 风格服务端渲染壳层，页面不依赖头像、CDN、外部字体
-或外部脚本。需要显示提交进度的受认证表单只使用 CSP hash 精确锁定的内联脚本；
-脚本关闭时表单仍可提交。Overview 只放全网摘要和可折叠证据；顶层语义分为 Network
-（Nodes / Topology）、Traffic（Services / Live paths）、Operations
-（Deployments / Events）与 Advanced（SSOT）。URL 和后端领域边界保持独立，
-不把期望态 Service、运行态 Agent 决策、节点实体和拓扑关系揉成一张万能表。
+## 浏览器渲染与实时更新
+
+管理界面使用 Go 二进制内嵌的静态 HTML、CSS 和 JavaScript 模块。浏览器负责所有页面的
+渲染与同源导航；服务端只提供结构化数据和业务接口，不再生成页面正文或通过 WebSocket
+推送 HTML。生产环境不需要 Node 服务、CDN 或外部字体。CSP 仅允许同源脚本与样式。
+
+私有 HTTPS 仍在转入 Unix socket 前核对管理员 mTLS、certified ACL 与写请求 Origin。
+前端隐藏或禁用控件不是授权措施；匿名 JSON 只投影脱敏摘要，SSOT、邀请、管理操作及
+制品下载继续要求管理员身份。业务回调当前仍沿用实现对照中标明的 v1 事务；改为 JSON
+传输不代表已经迁移到 v2 certified operations。
+
+首次进入从 `/api/control/ui` 取得能力与快照，之后通过现有 WebSocket 交付结构化快照。
+运行态复用 report 的 gossip 周期缓存和现有独立 presence 租约，查看界面不追加主动测量。
+浏览器只更新改变的设备单元格，保留筛选、行顺序、展开内容和输入焦点；断线明确显示
+重连状态，旧证据不因连接恢复而变新。
+
+### 页面分工
+
+- **Overview**：当前网络、运行问题、自动选路与保留的流量时间桶。
+- **Devices**：设备身份、职责、presence、Loom 运行态、配置、版本与最近报告。
+  职责支持多选的任一/全部匹配，并与平台、运行状态和名称筛选共同保存在 URL。
+  名称为主标识；ID 与平台为辅助信息，授权列表按需展开。
+- **Topology / Live paths**：当前 View 生成的双环拓扑及只读 Agent 路径。
+  节点排序不依赖选中路径；缺少观测不画成实测可用。
+- **Services**：结构化期望态编辑；**SSOT**：完整原文与 revision 冲突保护。
+- **Releases**：客户端包与部署记录两个页签。设备列表不再承担通用安装面板；
+  邀请页只显示适合该平台的制品与安装步骤。
+- **Events**：状态变化、未解决问题与 CSV 导出。
+
+### 状态与控件语义
+
+presence 表示设备心跳租约，Loom 运行态来自独立可信报告，二者分别展示。
+现有 WireGuard 累计计数器和相邻同 epoch 样本可显示节点接口总量及区间平均速率；
+重置、缺失、过期或未签名样本不推导速率。它们不能被称为某个 Android/Windows 客户端
+的应用流量。历史时间桶只展示已接受的 counter delta，缺失桶与实测空闲零流量不同。
+
+Windows/Android 当前固定 `use_loom`，不显示不可用职责。只有 `use_loom` 时显示 grants；
+只有 `forward` 时显示方向及 `internet_egress`。隐藏控件禁用并从提交中排除，服务端仍做完整
+验证。保存中、校验未通过等暂时不可用的动作保留位置并说明原因。
