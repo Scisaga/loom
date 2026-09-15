@@ -928,7 +928,7 @@ func (runtime *controlRuntime) verifyCommittedHead(_ context.Context, head wire.
 			if record.AdminRotation != nil {
 				return runtime.verifyAdminRotationRecord(index)
 			}
-			return nil
+			return runtime.verifyPingRecord(index)
 		}
 	}
 	return errors.New("committed ordinary Head 缺 durable operation preimage")
@@ -1079,6 +1079,9 @@ func (runtime *controlRuntime) commitOperation(_ context.Context,
 		if err := runtime.checkpoint(controlplane.PhasePending); err != nil {
 			return controlplane.CertifiedControlOperationV1{}, err
 		}
+	}
+	if err := runtime.verifyCommittedHead(context.Background(), candidate); err != nil {
+		return controlplane.CertifiedControlOperationV1{}, err
 	}
 	if _, err := runtime.leader.ReplicateHead(context.Background(), runtime.store, candidate); err != nil {
 		return controlplane.CertifiedControlOperationV1{}, err
