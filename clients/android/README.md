@@ -203,36 +203,37 @@ authority by itself: a certified `PublicEndpointIntent` and this Device's
 never promoted into an intermediate relay. This keeps the reverse tunnel policy
 while avoiding unnecessary same-transport nesting for an authorized fixed exit.
 
-The [Android prototype](../../assets/client/android/loom-android.svg) is rebuilt
-from the [current Windows interface](../../assets/client/windows/loom-client-windows-current.png)
-and its profile, route-mode, and path-detail behavior. A single scrolling main
-screen contains saved profiles, the selected profile's status and connection
-action, Direct / Auto / fixed exit, and actual Service paths. Selecting only changes
-the viewed profile; a separate active indicator identifies the profile carrying
-traffic. Connect or Switch connection stops the previous workload before starting
-the selected one. At most one VPN runs, and errors retain the operation's identity.
+The prototypes use the currently installed Android layout as their baseline:
+[Connection](../../assets/client/android/connection.svg),
+[Configuration](../../assets/client/android/configuration.svg), and
+[Diagnostics](../../assets/client/android/diagnostics.svg). Each SVG contains one
+Tab screen. They retain the existing cards, Material 3 controls, and fixed bottom
+navigation. The header uses the existing transparent mark filled with black.
 
-The plus action opens the name and invitation form. Scan, image/file import, and
-paste feed the same join transaction. Joining saves a disconnected profile without
-interrupting the active connection. Continue later retains the original identity
-and recovery data. Rename edits the list entry inline; named deletion confirmation
-is available only for a stopped profile and removes only its local state.
+Connection expands actual route details within its current-path card, using phone,
+server, and destination icons joined by directional links. It retains the candidate,
+signed chain, segment protocols, observation sources and times,
+and decision reason. Missing evidence remains unknown; displayed paths belong to
+the actual active profile, and viewing details never triggers network probes.
+Configuration extends the device/configuration card into a saved-profile list,
+while keeping configuration updates and the route-mode card. Diagnostics retains
+network evidence and local trust information, with the relevant profile identified.
 
-Direct and Auto submit on explicit selection. Fixed exit requires an authorized
-exit and confirmation; cancellation preserves the confirmed preference. Auto shows
-per-Service paths, fixed exit one shared internet path, and Direct the local path.
-Inline details retain actual selector readback, signed chains, segment protocols,
-sources, original observation times, and decision reasons. Missing evidence stays
-unknown; reading the UI never triggers probes or manufactures end-to-end quality.
+Profile selection and invitation import use native bottom sheets; per-item actions
+use a menu, and rename/delete use native dialogs. Selecting changes the viewed
+profile without connecting. An explicit connection switch stops the previous
+workload before starting the selected one. The viewed and active profiles remain
+distinct, at most one VPN runs, and operations bind to a stable profile identity.
+Joined profiles stay disconnected until explicitly connected. Pending enrollment
+retains its original identity and recovery data. Deletion removes only a stopped
+profile's local state. Credentials, configuration, preferences, and rollback floors
+remain isolated per profile; the device's underlay-generation probe registry is
+shared without extra probes. Migration preserves the existing identity.
 
-Credentials, preferences, configuration, and recovery state remain isolated per
-profile; the device's underlay-generation probe registry is shared without extra
-probes. Migration must preserve the existing identity. Content wraps or stacks for
-narrow screens and larger text, with touch areas of at least 48 dp.
-This revision changes prototypes and documentation only. The native app still
-uses Connection, Routes, and Settings and stores one enrollment identity and
-managed configuration. Multi-profile storage and the new layout are not implemented;
-current/previous/candidate records are versions of one configuration.
+These are prototype changes. Multi-profile storage and native acceptance are
+separate implementation work; current/previous/candidate records are versions of
+one configuration. Installed and source UI versions are recorded separately in
+[the current status](../../docs/status/current.md).
 
 The primary Connect action stays disabled until a verified managed snapshot is
 available. Debug builds expose the bundled stage-1 Direct fixture in a separate

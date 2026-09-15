@@ -69,8 +69,9 @@ Windows 使用同一窄选路决策。客户端只测它独有的信息：当前
 - 在原健康周期读取 `200` 观测并兼容 `204`，验证签名、附件、范围、新鲜度和原时间；
 - selector 事务读回、回滚、计划作用域缓存与控制面离线沿用；
 - Keystore 外部签名绑定实际路径，控制平面能核对 canonical v5 选择事实；
-- 界面目标以 [Android 原型](../../assets/client/android/loom-android.svg) 为准，主界面按照
-  Windows 的配置列表、所选配置状态、路由模式与当前选路组织；原型与原生实现分别记录；
+- 界面目标保留已安装版的连接 / 配置 / 诊断 Tab，每页单独一张原型：
+  [连接](../../assets/client/android/connection.svg)、[配置](../../assets/client/android/configuration.svg)、
+  [诊断](../../assets/client/android/diagnostics.svg)；原型与原生实现分别记录；
 - 当前路径按 Auto / FixedExit / Direct 的实际语义展示，详细信息在原位置展开；
   逐声明、逐 candidate、逐连线保留完整证据，缺失保持未知；
 - 生产受管配置真实 `200`、入口故障、固定出口、控制面离线及 Wi-Fi 换代有真机证据；

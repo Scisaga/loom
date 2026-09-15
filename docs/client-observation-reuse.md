@@ -174,10 +174,10 @@ Windows 客户端适配只能使用 `agent.RunClient`，不得调用服务器完
 
 ## Windows / Android 拓扑显示
 
-Windows 的“当前选路”契约为一个白色面板，各 Service 用细线分隔；Android 的
-[目标原型](../assets/client/android/loom-android.svg) 参照 Windows，在所选配置的连接状态与
-路由模式下展示当前选路，详细信息在原位置展开。Auto 按 Service 展示，FixedExit 只显示
-一条统一上网路径，Direct 显示本机直连。视觉分组不合并 selector 决策、candidate 或证据。
+Windows 的“当前选路”契约为一个白色面板，各 Service 用细线分隔；Android 保留
+[连接 Tab](../assets/client/android/connection.svg) 的当前路径卡，在该卡内展开实际链与逐段详情。
+其余功能仍位于配置 / 诊断 Tab。Auto 按 Service 展示，FixedExit 只显示一条统一上网路径，
+Direct 显示本机直连；视觉分组不合并 selector 决策、candidate 或证据。
 两端都把测量标在对应连线上，
 不显示整条路径质量占位；业务证据缺失时明确显示未知。本机到入口显示该底层网络代的
 单次轻量探测；服务器段按实际承载显示对应方向的 RTT。

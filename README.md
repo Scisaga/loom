@@ -44,14 +44,13 @@ Windows 客户端采用原生浅色界面，支持多份连接配置、本地直
 
 <p align="center"><sub>Windows · Portable TUN 参考界面；连接、身份与测量值均为演示数据，不表示当前发行状态。</sub></p>
 
-Android 原型以 Windows 客户端的实际功能界面为参照：连接配置列表、所选配置状态、
-直连 / 自动 / 固定出口，以及逐服务的当前选路，在手机上组成一个可滚动的主界面。
-点配置只切换查看，连接按钮才启动或切换连接。添加、改名、删除和路径详情见
-[Android 原型](assets/client/android/loom-android.svg)。图中全部为演示数据；原型不代表原生功能已实现。
+Android 原型以当前安装版的“连接 / 配置 / 诊断”为底稿，保留原生卡片、按钮和固定底部 Tab，
+左上角使用透明底黑色图案。在现有路径卡片中展示选路详情，在配置页加入多配置管理。
+每个文件只画一个 Tab；全部为演示数据，原型不代表原生功能已实现。
 
-<p align="center">
-  <img src="assets/client/android/loom-android.svg" width="100%" alt="Loom Android 原型：由 Windows 功能界面转换的主界面及操作状态">
-</p>
+| [连接](assets/client/android/connection.svg) | [配置](assets/client/android/configuration.svg) | [诊断](assets/client/android/diagnostics.svg) |
+|---|---|---|
+| ![连接 Tab 原型](assets/client/android/connection.svg) | ![配置 Tab 原型](assets/client/android/configuration.svg) | ![诊断 Tab 原型](assets/client/android/diagnostics.svg) |
 
 Windows 交付设计包含三个 profile，并要求 x64（amd64）和 ARM64 共用同一套界面与加入流程；
 实际可下载的构建与签名状态只见发行说明和[当前状态](docs/status/current.md)：
