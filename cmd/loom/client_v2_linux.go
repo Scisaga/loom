@@ -396,7 +396,7 @@ func cmdClientAcceptV2Runtime(args []string) error {
 		artifactRaw, err = readV2RegularFile(*artifactPath, 4<<20)
 	} else {
 		artifactRaw, err = clientv2.LinuxInstalledConfigArtifact(
-			deviceStore.Enrollment(), clientv2.LinuxLinkIntentArtifactID)
+			deviceStore.Installation(), clientv2.LinuxLinkIntentArtifactID)
 	}
 	if err != nil {
 		return err
@@ -418,7 +418,7 @@ func cmdClientAcceptV2Runtime(args []string) error {
 		runtimeRaw, err = readV2RegularFile(*runtimeArtifactPath, 16<<20)
 	} else {
 		runtimeRaw, err = clientv2.LinuxInstalledConfigArtifact(
-			deviceStore.Enrollment(), wire.LinuxRuntimeArtifactID)
+			deviceStore.Installation(), wire.LinuxRuntimeArtifactID)
 	}
 	if err != nil {
 		return err

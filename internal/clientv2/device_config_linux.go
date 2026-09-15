@@ -54,7 +54,7 @@ func SyncLinuxDeviceView(ctx context.Context,
 		return wire.ClientFloorsV2{}, err
 	}
 	current := store.Envelope()
-	installation := store.Enrollment()
+	installation := store.Installation()
 	if current == nil || installation == nil || current.Payload.Active == nil {
 		return store.Floors(), errors.New("[Linux config] 正式 active enrollment/LKG 尚未安装")
 	}
@@ -93,7 +93,7 @@ func SyncLinuxDeviceView(ctx context.Context,
 		identityHash != current.Payload.Active.IdentitySPKIHash {
 		return store.Floors(), errors.New("[Linux config] 本机 identity 与 durable installation/view 不一致")
 	}
-	certificateDER, err := wire.EnrollmentResultCertificateDER(&installation.ResultArtifact)
+	certificateDER, err := installation.certificateDER()
 	if err != nil {
 		return store.Floors(), err
 	}

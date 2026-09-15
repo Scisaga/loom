@@ -82,6 +82,23 @@ func TestPrepareLinuxRuntimeDeploymentBindsDurableArtifactsAndBuildsIsolatedTran
 	}
 }
 
+func TestLinuxMigrationPreflightChecksCertifiedRuntimeBeforeIdentityInstall(t *testing.T) {
+	statePath, _, _, _, _ := linuxRuntimeDeploymentFixture(t)
+	store, err := Open(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := cloneStoreValue(*store.state)
+	state.Migration, state.Enrollment = state.Enrollment, nil
+	if err := ValidateLinuxMigrationRuntime(&state, nil, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	state.Migration.Configs = nil
+	if err := ValidateLinuxMigrationRuntime(&state, nil, time.Now().UTC()); err == nil {
+		t.Fatal("缺少实际配置也允许提交迁移身份")
+	}
+}
+
 func TestLinuxRuntimeDeployPlanStartsWireGuardBeforeSingBoxAndAgent(t *testing.T) {
 	plan, installed, err := linuxRuntimeDeployPlan("device-a", map[string]string{
 		"wireguard/lmv2-deadbeef00.conf": "[Interface]\n[Peer]\n",

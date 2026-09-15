@@ -151,13 +151,13 @@ func SubmitLinuxDeviceReport(ctx context.Context, options LinuxDeviceReportOptio
 }
 
 func linuxDeviceReportIdentity(options LinuxDeviceReportOptions) (*Store, *wire.DeviceViewEnvelopeV2,
-	*EnrollmentInstallationV1, *ecdsa.PrivateKey, string, []byte, error) {
+	*DeviceInstallationV1, *ecdsa.PrivateKey, string, []byte, error) {
 	store, err := Open(options.StatePath)
 	if err != nil {
 		return nil, nil, nil, nil, "", nil, err
 	}
 	current := store.Envelope()
-	installation := store.Enrollment()
+	installation := store.Installation()
 	if current == nil || installation == nil || current.Payload.Active == nil {
 		return nil, nil, nil, nil, "", nil, errors.New("[Linux report] 正式 active enrollment/LKG 尚未安装")
 	}
@@ -174,7 +174,7 @@ func linuxDeviceReportIdentity(options LinuxDeviceReportOptions) (*Store, *wire.
 		identityHash != current.Payload.Active.IdentitySPKIHash {
 		return nil, nil, nil, nil, "", nil, errors.New("[Linux report] 本机 identity 与 durable installation/view 不一致")
 	}
-	certificateDER, err := wire.EnrollmentResultCertificateDER(&installation.ResultArtifact)
+	certificateDER, err := installation.certificateDER()
 	if err != nil {
 		return nil, nil, nil, nil, "", nil, err
 	}

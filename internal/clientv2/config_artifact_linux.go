@@ -57,7 +57,7 @@ func FetchLinuxDeviceConfigArtifacts(ctx context.Context,
 
 // LinuxInstalledConfigArtifact 让 runtime 从与 Device view 同步原子保存的
 // config 取 bytes；旧 installation 仍可由 CLI 显式传入文件迁移。
-func LinuxInstalledConfigArtifact(installation *EnrollmentInstallationV1,
+func LinuxInstalledConfigArtifact(installation *DeviceInstallationV1,
 	artifactID string,
 ) ([]byte, error) {
 	if installation == nil || artifactID == "" {

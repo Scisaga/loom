@@ -19,7 +19,7 @@ type linuxInstalledPrivateControlContext struct {
 	roots         *x509.CertPool
 }
 
-func installedLinuxPrivateControlContext(installation *EnrollmentInstallationV1,
+func installedLinuxPrivateControlContext(installation *DeviceInstallationV1,
 	floors wire.ClientFloorsV2, deviceID string,
 ) (linuxInstalledPrivateControlContext, bool, error) {
 	if installation == nil {

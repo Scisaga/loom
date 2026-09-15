@@ -331,7 +331,7 @@ func TestInstalledLinuxPrivateControlCredentialReplacesOperatorNetworkInputs(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	installation := &EnrollmentInstallationV1{
+	installation := &DeviceInstallationV1{
 		ClaimCore: wire.EnrollmentClaimCoreV2{BaseHeadHash: envelope.SignedCurrent.Head.HeadHash,
 			BaseControlSetHash: setHash},
 		Credentials: []InstalledSecretV1{{
@@ -624,7 +624,7 @@ func installedDeviceConfigStateWithKey(t *testing.T, now time.Time) (string, str
 	if err != nil {
 		t.Fatal(err)
 	}
-	installation := &EnrollmentInstallationV1{
+	installation := &DeviceInstallationV1{
 		Schema: 1, ClaimCore: claimCore, ClaimCoreHash: claimCoreHash, IdentityKeyHash: identityHash,
 		WrappingKeyHash: wrappingHash, TransactionStateHash: hash("completed"), ResultArtifactHash: artifactHash,
 		DeviceCertificateHash: certificateHash, ResultArtifact: artifact, Credentials: []InstalledSecretV1{},

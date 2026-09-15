@@ -29,7 +29,7 @@ overlay；TUN/Installed 使用已激活数据面。失败不触发旧公开 URL 
 2. 从私有 `device_config` 获取并验证更新；验证候选数据面后原子保存，成功激活才采用新状态。
 3. 检查当前实际数据面，构造 `health` schema 1 正文：`healthy` 与已激活的版本标识 `version`。
 4. [durable reporter](../../internal/windowsv2/report_journal.go)先保存签名 envelope，再通过私有
-   `device_report` 发送。当前成功契约为 **空正文 204**；重试使用同一个序号、正文与签名。
+   `device_report` 发送。成功响应为 **空正文 204** 或 exact 绑定原报告的 **200 回执**；后者携带既有服务器观测，继续独立验签。重试复用原序号、正文与签名。
 
 Envelope 绑定 Device、证书、当前认证状态和序号；服务端验证签名、证书授权、状态坐标及
 序号持久化。相同序号只能重放原正文，不得覆盖成另一份报告。收到成功回执后推进最后确认序号；退休只消费序号并保留原签名，不冒充成功。

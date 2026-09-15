@@ -28,6 +28,10 @@ import (
 const clientUsage = `loom client —— 客户端加入与交付
 
 用法:
+  loom client export-migration-request -device <ID> -floor <文件> -out <文件>
+                                               用原设备身份导出本机迁移请求
+  loom client import-migration -device <ID> -floor <文件> -file <迁移包>
+                                               保留原身份接续 v2 并事务激活本机配置
   loom client enroll  -invite-file <文件>       Linux 兼容命令：生成本机身份并消费一次性加入码
   loom client enroll-v2 -invite-file <文件>    Linux v2：认证 mirror/bootstrap 后执行私有 Enrollment
   loom client resume-v2 -resume-file <文件>    Linux v2：用 exact resume descriptor 恢复已提交事务
@@ -106,6 +110,10 @@ func cmdClient(args []string) error {
 		return fmt.Errorf("%s", clientUsage)
 	}
 	switch args[0] {
+	case "export-migration-request":
+		return cmdClientExportMigrationRequest(args[1:])
+	case "import-migration":
+		return cmdClientImportMigration(args[1:])
 	case "enroll":
 		return cmdClientEnroll(args[1:])
 	case "enroll-v2":

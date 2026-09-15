@@ -61,7 +61,7 @@ func PrepareLinuxRuntimeDeployment(installStatePath, deviceStatePath, runtimeSta
 		return nil, err
 	}
 	envelope := deviceStore.Envelope()
-	installation := deviceStore.Enrollment()
+	installation := deviceStore.Installation()
 	if envelope == nil || installation == nil || envelope.Payload.State != "active" || envelope.Payload.Active == nil {
 		return nil, errors.New("[Linux runtime] active durable Device installation 缺失")
 	}

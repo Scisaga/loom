@@ -18,6 +18,40 @@
   公网 Nginx 不代理 claim；不依赖管理 SSH 是否可达来判断 Enrollment 能否使用。
 - Linux 原生主机验收要求 amd64；arm64 仍构建并做静态/交叉检查，不要求原生机器，也不以 Android ABI 代替。
 
+## 存量设备保留原身份迁移
+
+原设备不重新领取邀请。先在原节点导出原 P-256 身份签名的公共请求：
+
+```bash
+sudo loom client export-migration-request \
+  -device demo-server \
+  -floor /path/to/original/release-floor.json \
+  -out /path/to/private-channel/device-migration-request.json
+```
+
+默认读取 `/etc/loom/tls/` 中的原证书、私钥、CA，以及 `/etc/loom/platform-signing.pub`；
+实际路径不同时用命令对应参数指定。命令验证原证书与设备、私钥的绑定，只把原身份复制到
+root-only v2 存储并生成独立 wrapping key；原文件和 floor 不变。重复导出复用同一对 key。
+请求只含公钥、原 floor 与签名，交由管理员按原网络的认证迁移流程处理。
+
+管理员交付 `control export-migration` 导出的对应设备迁移包后，在原节点执行：
+
+```bash
+sudo loom client import-migration \
+  -device demo-server \
+  -floor /path/to/original/release-floor.json \
+  -file /path/to/private-channel/device-migration.json
+```
+
+导入先验证原平台签名、原身份、floor 与完整迁移证明，再从认证静态镜像下载精确运行制品，
+解封给本机 wrapping key 的凭据。完整 runtime 语义预检通过后，一次保存独立 migration state，
+随后执行正常 `accept-v2-runtime -apply` 事务。control 节点还须用
+`-control-peer-directory` 交付 Head 认证的私有 peer directory。
+
+`-dry-run` 只验证候选，不保存 migration state 或激活服务。若身份已保存而运行事务失败，错误
+会明确指出这一状态；修复主机条件后运行 `client accept-v2-runtime -apply`，不删身份、不降低
+floor、不重新入网。稳态配置与报告直接消费同一 v2 installation；迁移不会生成虚假的 Enrollment 记录。
+
 ## v2 加入过程
 
 1. 紧凑 QR/URI 的 exact descriptor 携带 schema/cluster/invite/expiry、token/commitment、

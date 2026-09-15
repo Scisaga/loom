@@ -28,22 +28,24 @@ type State struct {
 	Envelope           wire.DeviceViewEnvelopeV2 `json:"envelope"`
 	ControlSet         *wire.ControlSetV1        `json:"control_set,omitempty"`
 	PreviousControlSet *wire.ControlSetV1        `json:"previous_control_set,omitempty"`
-	Enrollment         *EnrollmentInstallationV1 `json:"enrollment,omitempty"`
+	Enrollment         *DeviceInstallationV1     `json:"enrollment,omitempty"`
+	Migration          *DeviceInstallationV1     `json:"migration,omitempty"`
 }
 
-// EnrollmentInstallationV1 是 Linux 首次 v2 身份的单文件提交单元。证书、
+// DeviceInstallationV1 是 Linux 首次 v2 身份的单文件提交单元。证书、
 // DeviceView/floors 与解封后的 Device credentials 必须一起出现，不能靠多个
 // rename 假装成跨文件原子事务。
-type EnrollmentInstallationV1 struct {
+type DeviceInstallationV1 struct {
+	MigrationProof        *LinuxMigrationEvidenceV1       `json:"migration_proof,omitempty"`
 	Schema                int                             `json:"schema"`
-	ClaimCore             wire.EnrollmentClaimCoreV2      `json:"claim_core"`
-	ClaimCoreHash         string                          `json:"claim_core_hash"`
+	ClaimCore             wire.EnrollmentClaimCoreV2      `json:"claim_core,omitzero"`
+	ClaimCoreHash         string                          `json:"claim_core_hash,omitempty"`
 	IdentityKeyHash       string                          `json:"identity_key_hash"`
 	WrappingKeyHash       string                          `json:"wrapping_key_hash"`
-	TransactionStateHash  string                          `json:"transaction_state_hash"`
-	ResultArtifactHash    string                          `json:"result_artifact_hash"`
+	TransactionStateHash  string                          `json:"transaction_state_hash,omitempty"`
+	ResultArtifactHash    string                          `json:"result_artifact_hash,omitempty"`
 	DeviceCertificateHash string                          `json:"device_certificate_hash"`
-	ResultArtifact        wire.EnrollmentResultArtifactV1 `json:"result_artifact"`
+	ResultArtifact        wire.EnrollmentResultArtifactV1 `json:"result_artifact,omitzero"`
 	Credentials           []InstalledSecretV1             `json:"credentials"`
 	// nil 仅表示旧版 installation；指向空 slice 表示已轮换为零凭据。
 	CurrentSecretArtifactRefs *[]wire.SecretArtifactRefV2    `json:"current_secret_artifact_refs,omitempty"`
@@ -137,14 +139,34 @@ func (s *Store) Envelope() *wire.DeviceViewEnvelopeV2 {
 	return &copy
 }
 
-func (s *Store) Enrollment() *EnrollmentInstallationV1 {
+func (state *State) installation() *DeviceInstallationV1 {
+	if state == nil {
+		return nil
+	}
+	if state.Migration != nil {
+		return state.Migration
+	}
+	return state.Enrollment
+}
+
+func (s *Store) Installation() *DeviceInstallationV1 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state.installation() == nil {
+		return nil
+	}
+	copy := cloneStoreValue(*s.state.installation())
+	return &copy
+}
+
+func (s *Store) Enrollment() *DeviceInstallationV1 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.state == nil || s.state.Enrollment == nil {
 		return nil
 	}
 	body, _ := wire.MarshalCanonical(s.state.Enrollment)
-	var copy EnrollmentInstallationV1
+	var copy DeviceInstallationV1
 	_, _ = wire.DecodeStrict(body, maximumLinuxV2StateBytes, &copy)
 	return &copy
 }
@@ -262,8 +284,8 @@ func (s *Store) acceptWithAdvance(envelope *wire.DeviceViewEnvelopeV2, set, prev
 		value := cloneStoreValue(*previousSet)
 		state.PreviousControlSet = &value
 	}
-	if s.state != nil && s.state.Enrollment != nil {
-		state.Enrollment = s.state.Enrollment
+	if s.state != nil {
+		state.Enrollment, state.Migration = s.state.Enrollment, s.state.Migration
 	}
 	if err := persist(s.path, state); err != nil {
 		return s.floorsLocked(), err
@@ -318,9 +340,9 @@ func (s *Store) acceptDeviceConfigDelivery(delivery *wire.DeviceConfigDeliveryV1
 	}
 	envelope := verified.Envelope()
 	configChanged, secretsChanged := changedInstalledArtifactRefs(&s.state.Envelope, &envelope)
-	var installation *EnrollmentInstallationV1
-	if s.state.Enrollment != nil {
-		cloned := cloneStoreValue(*s.state.Enrollment)
+	var installation *DeviceInstallationV1
+	if s.state.installation() != nil {
+		cloned := cloneStoreValue(*s.state.installation())
 		installation = &cloned
 	}
 	if envelope.Payload.State != "active" {
@@ -366,6 +388,9 @@ func (s *Store) acceptDeviceConfigDelivery(delivery *wire.DeviceConfigDeliveryV1
 	state := State{Schema: 1, Floors: verified.Floors(), Envelope: envelope, ControlSet: &set,
 		Enrollment: installation}
 	state.PreviousControlSet = verified.PreviousControlSet()
+	if s.state.Migration != nil {
+		state.Migration, state.Enrollment = installation, nil
+	}
 	if err := persist(s.path, state); err != nil {
 		return s.floorsLocked(), err
 	}
@@ -414,7 +439,7 @@ func cloneLinuxSecretArtifactRefs(refs []wire.SecretArtifactRefV2) *[]wire.Secre
 // 验过的首次身份。上层必须先完成 opaque evidence 绑定和全部 secret 解封；这里
 // 只负责一个 durable 原子点以及 exact replay 幂等。
 func (s *Store) acceptInitialInstallation(envelope *wire.DeviceViewEnvelopeV2, set *wire.ControlSetV1,
-	expectedDeviceID, expectedIdentitySPKIHash string, installation *EnrollmentInstallationV1) (wire.ClientFloorsV2, error) {
+	expectedDeviceID, expectedIdentitySPKIHash string, installation *DeviceInstallationV1) (wire.ClientFloorsV2, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if envelope == nil || set == nil || installation == nil || expectedDeviceID == "" || expectedIdentitySPKIHash == "" {
@@ -439,7 +464,7 @@ func (s *Store) acceptInitialInstallation(envelope *wire.DeviceViewEnvelopeV2, s
 	if err != nil {
 		return wire.ClientFloorsV2{}, err
 	}
-	var installedCopy EnrollmentInstallationV1
+	var installedCopy DeviceInstallationV1
 	if _, err := wire.DecodeStrict(installationBody, maximumLinuxV2StateBytes, &installedCopy); err != nil {
 		return wire.ClientFloorsV2{}, err
 	}
@@ -552,6 +577,15 @@ func validateStoredState(state *State) error {
 	} else if state.PreviousControlSet != nil {
 		return errors.New("[Linux] durable previous ControlSet 缺 current authority")
 	}
+	if state.Enrollment != nil && state.Migration != nil || state.Enrollment != nil && state.Enrollment.MigrationProof != nil ||
+		state.Migration != nil && state.Migration.MigrationProof == nil {
+		return errors.New("[Linux install] 迁移与 Enrollment 证据必须唯一且明确")
+	}
+	if state.Migration != nil {
+		if err := validateLinuxMigrationInstallation(state.Migration, &state.Envelope, state.Floors); err != nil {
+			return err
+		}
+	}
 	if state.Enrollment != nil {
 		if err := validateEnrollmentInstallation(state.Enrollment, &state.Envelope); err != nil {
 			return err
@@ -567,7 +601,7 @@ func cloneStoreValue[T any](value T) T {
 	return cloned
 }
 
-func validateEnrollmentInstallation(installation *EnrollmentInstallationV1, envelope *wire.DeviceViewEnvelopeV2) error {
+func validateEnrollmentInstallation(installation *DeviceInstallationV1, envelope *wire.DeviceViewEnvelopeV2) error {
 	if installation == nil || envelope == nil || installation.Schema != 1 || installation.Credentials == nil {
 		return errors.New("[Linux install] durable installation header 无效")
 	}
@@ -603,7 +637,11 @@ func validateEnrollmentInstallation(installation *EnrollmentInstallationV1, enve
 	if err != nil || certificateHash != installation.DeviceCertificateHash {
 		return errors.New("[Linux install] durable certificate hash 不匹配")
 	}
-	refs := installation.ResultArtifact.SecretArtifactRefs
+	return validateInstalledDeviceMaterial(installation, envelope, initialView, installation.ResultArtifact.SecretArtifactRefs)
+}
+
+func validateInstalledDeviceMaterial(installation *DeviceInstallationV1, envelope *wire.DeviceViewEnvelopeV2,
+	initialView *wire.DeviceViewPayloadV2, refs []wire.SecretArtifactRefV2) error {
 	if installation.CurrentSecretArtifactRefs != nil {
 		refs = *installation.CurrentSecretArtifactRefs
 	}

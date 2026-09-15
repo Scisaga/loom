@@ -4,6 +4,14 @@ package main
 
 import "errors"
 
+func cmdClientImportMigration([]string) error {
+	return errors.New("Linux 迁移导入命令只能在 Linux 客户端运行")
+}
+
+func cmdClientExportMigrationRequest([]string) error {
+	return errors.New("Linux 迁移请求命令只能在 Linux 客户端运行")
+}
+
 func cmdClientEnrollV2([]string) error {
 	return errors.New("Linux v2 Enrollment 命令只能在 Linux 客户端运行")
 }

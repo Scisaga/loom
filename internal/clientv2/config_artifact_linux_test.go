@@ -58,7 +58,7 @@ func TestFetchLinuxDeviceConfigArtifactsUsesPinnedContentAddressedMirrors(t *tes
 	if err != nil || len(configs) != 1 || !bytes.Equal(configs[0].Config, body) || requests != 1 {
 		t.Fatalf("config mirror fetch 无效: configs=%#v requests=%d err=%v", configs, requests, err)
 	}
-	got, err := LinuxInstalledConfigArtifact(&EnrollmentInstallationV1{Configs: configs},
+	got, err := LinuxInstalledConfigArtifact(&DeviceInstallationV1{Configs: configs},
 		LinuxLinkIntentArtifactID)
 	if err != nil || !bytes.Equal(got, body) {
 		t.Fatalf("durable config projection 无效: got=%q err=%v", got, err)
