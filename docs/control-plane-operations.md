@@ -17,8 +17,9 @@
   提交当前 certified ACL 精确授权的管理员 leaf 时才启用配置处理器。不存在 UI 口令或登录 Cookie。
 - Windows v2 客户端已有实现；是否有 Windows Device 参与 Gate B 必须从当前 certified deployment
   inventory 与实际验收证据判断，不能根据本静态文档推断“未实现”或“未部署”。
-- 当前生产 reducer 只登记 `control_ping`，用于验证管理员签名、Raft commit、QC 和 inclusion proof。
-  未实现的 operation kind 会失败关闭，不会返回伪造的“成功”。
+- `control_ping` 只用于验证管理员签名、Raft commit、QC 和 inclusion proof；它不能证明创建邀请、
+  入网、配置、上报或动态成员已完成。当前部署的 reducer 与剩余缺口只看 `status/current.md`。
+  未实现的 operation kind 必须失败关闭，不能返回伪造的“成功”。
 
 ## 操作阶段与恢复
 
@@ -220,9 +221,9 @@ loom control request \
 成功响应必须同时满足 `status=certified`、有效 Head QC 和 operation inclusion proof。错误管理员证书、
 错误 server pin、过期证书、过期 Head 或公网 listener 都应失败关闭。
 
-浏览器 UI 已经放到 v2 private HTTPS/admin-mTLS 入口之后，但其中现有 SSOT、Device 和 Service 写处理器
-仍是 Gate B 前的 v1 compatibility 实现；证书门禁不等于这些写入已经取得 v2 Raft/QC。当前原生 v2
-reducer 仍只登记 `control_ping`，不能把兼容 UI 的成功响应误报为 v2 certified operation。
+浏览器的 private HTTPS/admin-mTLS 门禁不等于业务写入已经取得 v2 Raft/QC。每个 SSOT、Device 和
+Service 写操作必须经实际 reducer 提交、认证并驱动相应生效；新版接管后删除对应旧写处理器。
+当前哪些入口仍未迁移只看 `status/current.md`，不能把门禁或兼容处理器的成功响应当作 v2 业务验收。
 
 ## 重启、备份和避免重复工作
 
@@ -237,6 +238,10 @@ reducer 仍只登记 `control_ping`，不能把兼容 UI 的成功响应误报�
 
 ## 验收清单
 
+以下连通与证书检查只是必要条件。功能交付还须逐项满足
+[分布式控制平面 §19–§20](distributed-control-plane.md#19-从当前实现迁移)；实施交接使用
+[正常流程与上线提示词](control-plane-implementation-prompt.md)。
+
 1. `systemctl is-active loom-control` 为 `active`；control/Raft 监听出现于已登记 overlay tuple，
    浏览器入口额外出现于 exact IPv4 loopback 同号端口，不出现 wildcard/public bind。
 2. 无客户端证书的 HTTPS UI 为只读；带正确管理员材料的 UI 启用配置；随机、过期或 revoked
@@ -244,7 +249,11 @@ reducer 仍只登记 `control_ping`，不能把兼容 UI 的成功响应误报�
 3. `control_ping` 推进 certified Head，Raft `commit_index == last_applied`，operation tree size 单调增加。
 4. 重启服务后 certified Head 不变，再次 `control_ping` 成功且 term/index 前进。
 5. 从公网接口探测 control/Raft 端口不可达。
-6. compatibility 写处理器仍可用但只经过 private HTTPS/admin mTLS 到达；迁移为 v2 reducer 前不得删除。
-   Windows 不再是门禁；Linux/Android 私有通道通过且扫描无活跃旧引用后退役对应旧路径。
+6. 正常创建邀请贯穿 private Enrollment、证书签发、配置获取/激活和签名上报，检查实际持久结果与
+   inventory，而非只检查成功状态码。所需服务由正式 daemon 挂载，业务变更有对应 Head/QC。
+   存量 Linux/Android 迁入新版后删除旧 handler、public proxy、配置和客户端回退；未部署 Windows
+   不阻塞清理。尚存必需旧调用即表示这项替换未完成。
 7. 经 loopback 可读 UI 且管理员同源写入仍要求 `admin.p12`；private status/operation
    经 loopback 必须拒绝，经 overlay 的 CLI 路径仍通过。
+8. 发布记录对应实际激活的精确提交/制品；核对生效的 unit、Nginx 配置和 listener，证明正常流程
+   使用新版且旧路径已退出。源码模板正确或未鉴权请求返回 `403` 不能替代此项。
