@@ -19,8 +19,6 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"loom/internal/clientenroll"
-	"loom/internal/clientjoin"
 	"loom/internal/clientsecret"
 	"loom/internal/windowsv2"
 )
@@ -222,7 +220,7 @@ func (app *portableGUI) initialize() {
 		app.initializeProfiles()
 		return
 	}
-	result, err := app.joinInput("", nil)
+	result, err := app.joinInput("")
 	if errors.Is(err, errWindowsJoinInputRequired) {
 		app.update(guiNeedsJoin, false, "", "")
 		return
@@ -258,44 +256,17 @@ func (app *portableGUI) afterJoin(deviceID string) {
 }
 
 func (app *portableGUI) importJoinArtifact(source string) {
-	if carrier, err := windowsv2.ReadEnrollmentCarrier(source); err == nil {
-		encoded, encodeErr := encodeWindowsV2Carrier(carrier)
-		if encodeErr != nil {
-			app.update(guiError, false, "", encodeErr.Error())
-			return
-		}
-		app.importWindowsV2Carrier(encoded)
+	carrier, err := windowsv2.ReadEnrollmentCarrier(source)
+	if err != nil {
+		app.profileError(err)
 		return
 	}
-	if app.skin != nil && app.snapshot().profileDraft != nil {
-		invite, err := clientjoin.Read(source, nil)
-		app.acceptMisakaInvite(invite, err)
+	encoded, err := encodeWindowsV2Carrier(carrier)
+	if err != nil {
+		app.profileError(err)
 		return
 	}
-	if app.profileHost && !app.brokerClient && app.profileManager() == nil {
-		return
-	}
-	if app.profileManager() != nil {
-		invite, err := clientjoin.Read(source, nil)
-		if err != nil {
-			app.profileError(err)
-			return
-		}
-		app.profileCommand(brokerRequest{Operation: "join", Invite: &invite, ProfileID: app.snapshot().selectedProfile})
-		return
-	}
-	if app.brokerClient {
-		invite, err := clientjoin.Read(source, nil)
-		if err != nil {
-			app.update(guiError, false, "", err.Error())
-			return
-		}
-		app.importJoinInvite(invite)
-		return
-	}
-	app.beginJoin(func() (windowsJoinResult, error) {
-		return app.joinInput(source, nil)
-	})
+	app.importWindowsV2Carrier(encoded)
 }
 
 func (app *portableGUI) importWindowsV2Carrier(carrier string) {
@@ -320,32 +291,11 @@ func (app *portableGUI) importWindowsV2Carrier(carrier string) {
 		return
 	}
 	app.beginJoin(func() (windowsJoinResult, error) {
-		return app.joinInput(carrier, nil)
+		return app.joinInput(carrier)
 	})
 }
 
-func (app *portableGUI) importJoinInvite(invite clientenroll.Invite) {
-	if app.skin != nil && app.snapshot().profileDraft != nil {
-		app.acceptMisakaInvite(invite, nil)
-		return
-	}
-	if app.profileHost && !app.brokerClient && app.profileManager() == nil {
-		return
-	}
-	if app.profileManager() != nil || app.snapshot().profilesReady {
-		app.profileCommand(brokerRequest{Operation: "join", Invite: &invite, ProfileID: app.snapshot().selectedProfile})
-		return
-	}
-	if app.brokerClient {
-		app.installedCommand(brokerRequest{Operation: "join", Invite: &invite})
-		return
-	}
-	app.beginJoin(func() (windowsJoinResult, error) {
-		return app.joinInput("", &invite)
-	})
-}
-
-func (app *portableGUI) joinInput(source string, invite *clientenroll.Invite) (windowsJoinResult, error) {
+func (app *portableGUI) joinInput(source string) (windowsJoinResult, error) {
 	// 网络请求期间也刷新等待时长；仅重绘，不增加请求或更改加入状态。
 	ctx, cancel := context.WithCancel(app.ctx)
 	done := make(chan struct{})
@@ -363,7 +313,7 @@ func (app *portableGUI) joinInput(source string, invite *clientenroll.Invite) (w
 		}
 	}()
 	defer func() { cancel(); <-done }()
-	return ensureWindowsJoinedInput(app.ctx, app.root, app.protector(), source, invite, app.joinProgress)
+	return ensureWindowsJoinedInput(app.ctx, app.root, app.protector(), source, app.joinProgress)
 }
 
 func (app *portableGUI) joinProgress(detail string) {
@@ -746,11 +696,7 @@ func (app *portableGUI) pasteJoinArtifact() {
 		showWindowsError("粘贴 Loom 二维码", err)
 		return
 	}
-	if carrier.v2Carrier != "" {
-		app.importWindowsV2Carrier(carrier.v2Carrier)
-	} else {
-		app.importJoinInvite(*carrier.invite)
-	}
+	app.importWindowsV2Carrier(carrier.v2Carrier)
 }
 
 func (app *portableGUI) acceptDroppedFiles(drop uintptr) {

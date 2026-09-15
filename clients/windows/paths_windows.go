@@ -12,7 +12,7 @@ import (
 
 	"loom/internal/agent"
 	"loom/internal/clientcore"
-	"loom/internal/clientreport"
+	"loom/internal/clientstatus"
 )
 
 // 只读显示是实际选路的投影，字符串值避免 GUI 和受限 IPC 共享可变测量对象。
@@ -41,7 +41,7 @@ type windowsPathReader struct {
 	state  clientRuntimeState
 	readAt time.Time
 	rows   []windowsPathDisplay
-	read   func(context.Context, clientRuntimeState, time.Time) (*clientreport.AgentState, error)
+	read   func(context.Context, clientRuntimeState, time.Time) (*clientstatus.AgentState, error)
 }
 
 // 后台观测只回填当前连接；停机或出口切换立即隐藏上一代路径。
@@ -151,14 +151,14 @@ func sameWindowsPathGeneration(a, b clientRuntimeState) bool {
 	return b.active() && a.Generation == b.Generation && a.Agent == b.Agent && a.Policy == b.Policy && a.Preference == b.Preference && a.Applied == b.Applied && a.Exited == b.Exited
 }
 
-func readWindowsPathReport(ctx context.Context, state clientRuntimeState, now time.Time) (*clientreport.AgentState, error) {
+func readWindowsPathReport(ctx context.Context, state clientRuntimeState, now time.Time) (*clientstatus.AgentState, error) {
 	if state.Preference.Mode == clientcore.Direct {
 		return state.Policy.ReadDirectPaths(ctx, now)
 	}
 	return state.Agent.Report(ctx, now)
 }
 
-func windowsPathsFromReport(report *clientreport.AgentState) []windowsPathDisplay {
+func windowsPathsFromReport(report *clientstatus.AgentState) []windowsPathDisplay {
 	rows := make([]windowsPathDisplay, 0, len(report.Selections))
 	for _, selection := range report.Selections {
 		chain := "本机 → 目标（直连）"
@@ -285,7 +285,7 @@ func windowsLinkMeasurement(m agent.ClientPathMeasurement) (string, string) {
 }
 
 // 次数、失败和覆盖来自已有测量摘要，不能把读取时间冒充最近探测时间。
-func windowsPathEvidence(health *clientreport.AgentCandidateHealth) (string, string) {
+func windowsPathEvidence(health *clientstatus.AgentCandidateHealth) (string, string) {
 	summary := "近期无有效测量"
 	if health.SelectedSamples > 0 {
 		summary = fmt.Sprintf("近期探测 %d 次 · 失败 %d", health.SelectedSamples, health.SelectedFailures)
@@ -304,7 +304,7 @@ func windowsPathEvidence(health *clientreport.AgentCandidateHealth) (string, str
 	return summary, comparison
 }
 
-func windowsSelectedPathQuality(health *clientreport.AgentCandidateHealth) string {
+func windowsSelectedPathQuality(health *clientstatus.AgentCandidateHealth) string {
 	if health.SelectedSamples-health.SelectedFailures == 1 && health.SelectedP50MS != nil {
 		quality := fmt.Sprintf("单个成功样本 %d ms", *health.SelectedP50MS)
 		if health.SelectedKBps != nil {
@@ -316,7 +316,7 @@ func windowsSelectedPathQuality(health *clientreport.AgentCandidateHealth) strin
 }
 
 // 最低延迟和最高吞吐可能来自不同候选，不将两个独立极值称为“最佳路径”。
-func windowsMeasuredPathQuality(health *clientreport.AgentCandidateHealth) string {
+func windowsMeasuredPathQuality(health *clientstatus.AgentCandidateHealth) string {
 	var metrics []string
 	if health.BestP50MS != nil {
 		metrics = append(metrics, fmt.Sprintf("最低中位延迟 %d ms", *health.BestP50MS))

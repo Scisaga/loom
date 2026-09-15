@@ -7,7 +7,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"loom/internal/clientreport"
+	"loom/internal/clientstatus"
 )
 
 func misakaDetailInkBounds(pixels []byte, width int32, area portableRect) (portableRect, int) {
@@ -150,10 +150,10 @@ func TestGUIMisakaPathDetailsCompactSyntheticCapture(t *testing.T) {
 func TestGUIMisakaPathDetailsRenderLimitedMeasurementEvidence(t *testing.T) {
 	app := newProfileGUITestWindow(t)
 	latency := 37
-	app.paths = windowsPathsFromReport(&clientreport.AgentState{Selections: []clientreport.AgentSelection{{
+	app.paths = windowsPathsFromReport(&clientstatus.AgentState{Selections: []clientstatus.AgentSelection{{
 		Declaration: "demo-service", Candidate: "demo-path", Chain: []string{"demo-entry", "demo-exit"},
 		UpdatedAt: "demo-read-time", Reason: "当前候选仅有一次近期探测，继续比较其余授权候选",
-		Health: &clientreport.AgentCandidateHealth{Candidates: 12, RecentSuccess: 1, RecentFailed: 1, Unknown: 9, Stale: 1,
+		Health: &clientstatus.AgentCandidateHealth{Candidates: 12, RecentSuccess: 1, RecentFailed: 1, Unknown: 9, Stale: 1,
 			SelectedState: "success", SelectedSamples: 1, SelectedP50MS: &latency, SelectedP95MS: &latency, BestP50MS: &latency},
 	}}})
 	app.pathsExpanded = true

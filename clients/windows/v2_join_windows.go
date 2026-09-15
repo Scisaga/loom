@@ -17,7 +17,6 @@ import (
 
 	"loom/internal/clientcomponent"
 	"loom/internal/clientsecret"
-	"loom/internal/clientupdate"
 	"loom/internal/clientv2"
 	"loom/internal/windowsv2"
 	"loom/internal/wire"
@@ -83,11 +82,12 @@ func windowsJoinedDeviceID(root string,
 		}
 		return state.Envelope.Payload.DeviceID, true, nil
 	}
-	config, err := clientupdate.ReadConfig(filepath.Join(root, "config", "client.json"))
-	if err != nil {
+	if _, err := os.Lstat(filepath.Join(root, "config", "client.json")); err == nil {
+		return "", false, errWindowsMigrationRequired
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", false, err
 	}
-	return config.NodeID, false, nil
+	return "", false, os.ErrNotExist
 }
 
 func windowsV2RecoveryExists(root string) (bool, error) {
@@ -133,9 +133,18 @@ func ensureWindowsV2Joined(ctx context.Context, root string, protector clientsec
 		return windowsJoinResult{NodeID: state.Envelope.Payload.DeviceID}, nil
 	}
 	if _, err := os.Lstat(filepath.Join(root, "config", "client.json")); err == nil {
-		return windowsJoinResult{}, errors.New("此配置已由 v1 Device 占用；关闭 Issue #13 前禁止原地迁移或覆盖")
+		return windowsJoinResult{}, errWindowsMigrationRequired
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return windowsJoinResult{}, err
+	}
+	if !hasCarrier {
+		pending, err := windowsV2RecoveryExists(root)
+		if err != nil {
+			return windowsJoinResult{}, err
+		}
+		if !pending {
+			return windowsJoinResult{}, errWindowsJoinInputRequired
+		}
 	}
 
 	lock, err := acquireWindowsJoinLock()
@@ -366,7 +375,7 @@ func windowsInviteProofTrust(bundle *wire.InviteProofBundleV2,
 	digest := sha256.Sum256(platformKey)
 	return wire.InviteProofTrustV2{
 		V1PlatformKey:           append(ed25519.PublicKey(nil), platformKey...),
-		V1PlatformKeyID:         bundle.BootstrapTransitionBundle.TransitionProof.Body.V1PlatformKeyID,
+		V1PlatformKeyID:         bundle.PlatformKeyID(),
 		V1MigrationAnchorDigest: "sha256:" + hex.EncodeToString(digest[:]),
 	}
 }

@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"loom/internal/clientenroll"
 	"loom/internal/windowsv2"
 )
 
@@ -103,20 +102,20 @@ func (m *windowsProfileManager) cancelProfileDraft() {
 	}
 }
 
-func (m *windowsProfileManager) prepareProfileDraft(req brokerRequest, expected *windowsProfileDraft, epoch uint64) (child *portableGUI, invite *clientenroll.Invite, v2Carrier string, retErr error) {
+func (m *windowsProfileManager) prepareProfileDraft(req brokerRequest, expected *windowsProfileDraft, epoch uint64) (child *portableGUI, v2Carrier string, retErr error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closing || m.owner.ctx.Err() != nil {
-		return nil, nil, "", context.Canceled
+		return nil, "", context.Canceled
 	}
 	if m.draft != expected || expected == nil || expected.epoch != epoch {
-		return nil, nil, "", context.Canceled
+		return nil, "", context.Canceled
 	}
 	if m.draft == nil || !m.draftVisible {
-		return nil, nil, "", errors.New("请先打开添加连接配置面板")
+		return nil, "", errors.New("请先打开添加连接配置面板")
 	}
 	if m.draft.display.Busy {
-		return nil, nil, "", errors.New("加入正在进行，请等待当前操作完成")
+		return nil, "", errors.New("加入正在进行，请等待当前操作完成")
 	}
 	defer func() {
 		if retErr != nil {
@@ -127,41 +126,35 @@ func (m *windowsProfileManager) prepareProfileDraft(req brokerRequest, expected 
 	if name == "" {
 		name = m.draft.display.Name
 	}
-	if req.Invite != nil {
-		if err := clientenroll.ValidateInvite(*req.Invite); err != nil {
-			return nil, nil, "", errors.New("加入二维码无效；请导入中控生成的二维码")
-		}
-	} else if req.V2Carrier != "" {
+	if req.V2Carrier != "" {
 		carrier, carrierErr := windowsv2.DecodeEnrollmentCarrierText(req.V2Carrier)
 		if carrierErr != nil || carrier.ValidateShape() != nil {
-			return nil, nil, "", errors.New("Windows v2 加入或续传凭据无效")
+			return nil, "", errors.New("Windows v2 加入或续传凭据无效")
 		}
 		if m.draft.display.Recoverable && carrier.Resume == nil {
-			return nil, nil, "", errors.New("已有 pending transaction；只能导入匹配的 .loom-resume")
+			return nil, "", errors.New("已有 pending transaction；只能导入匹配的 .loom-resume")
 		}
 	} else if !m.draft.display.Recoverable {
-		return nil, nil, "", errWindowsJoinInputRequired
+		return nil, "", errWindowsJoinInputRequired
 	}
-	if req.Invite != nil && m.draft.display.Recoverable {
-		return nil, nil, "", errors.New("已有待恢复的加入身份；不能导入另一张 v1 二维码")
-	}
+
 	if expected := m.draft.profile; expected != nil {
 		retained, err := m.store.Draft()
 		if err != nil {
-			return nil, nil, "", err
+			return nil, "", err
 		}
 		if retained == nil || retained.ID != expected.ID {
-			return nil, nil, "", errors.New("加入恢复记录已变化，拒绝重新创建身份")
+			return nil, "", errors.New("加入恢复记录已变化，拒绝重新创建身份")
 		}
 	}
 	profile, err := m.store.BeginDraft(name)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, "", err
 	}
 	m.draft.profile = &profile
 	root, err := m.store.ResolveDraftRoot(profile.ID)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, "", err
 	}
 	child = m.makeProfileChild(root)
 	child.mu.Lock()
@@ -170,7 +163,7 @@ func (m *windowsProfileManager) prepareProfileDraft(req brokerRequest, expected 
 	m.draft.child = child
 	m.draft.display.Name, m.draft.display.State, m.draft.display.Busy = name, guiJoining, true
 	m.owner.repaint()
-	return child, req.Invite, req.V2Carrier, nil
+	return child, req.V2Carrier, nil
 }
 
 func (m *windowsProfileManager) joinProfileDraft(req brokerRequest) error {
@@ -185,19 +178,14 @@ func (m *windowsProfileManager) joinProfileDraft(req brokerRequest) error {
 }
 
 func (m *windowsProfileManager) joinProfileDraftFor(req brokerRequest, draft *windowsProfileDraft, epoch uint64) error {
-	child, invite, v2Carrier, err := m.prepareProfileDraft(req, draft, epoch)
+	child, v2Carrier, err := m.prepareProfileDraft(req, draft, epoch)
 	if err != nil {
 		return err
 	}
-	var result windowsJoinResult
-	if v2Carrier != "" {
-		result, err = m.joinDraftV2(child, v2Carrier)
-	} else {
-		result, err = m.joinDraft(child, invite)
-	}
+	result, err := m.joinDraftV2(child, v2Carrier)
 	if err == nil {
 		var deviceID string
-		deviceID, _, err = windowsJoinedDeviceID(child.root, child.protector())
+		deviceID, _, err = m.readJoined(child.root, child.protector())
 		if err == nil && deviceID != result.NodeID {
 			err = errors.New("已完成加入的身份与配置不一致")
 		}
@@ -231,7 +219,7 @@ func (m *windowsProfileManager) joinProfileDraftFor(req brokerRequest, draft *wi
 }
 
 func windowsProfileDraftHasIdentity(root string) (bool, error) {
-	for _, path := range []string{windowsJoinIdentityPath(root), windowsJoinReadyPath(root),
+	for _, path := range []string{filepath.Join(root, "join", "identity.json.dpapi"), filepath.Join(root, "join", "ready.json.dpapi"),
 		filepath.Join(root, "config", "client.json"), windowsV2IdentityPath(root),
 		windowsV2JournalPath(root), windowsV2StatePath(root)} {
 		info, err := os.Lstat(path)

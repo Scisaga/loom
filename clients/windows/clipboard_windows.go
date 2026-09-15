@@ -12,8 +12,6 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"loom/internal/clientenroll"
-	"loom/internal/clientjoin"
 	"loom/internal/windowsv2"
 )
 
@@ -54,7 +52,6 @@ type windowsBitmapInfo struct {
 }
 
 type windowsClipboardCarrier struct {
-	invite    *clientenroll.Invite
 	v2Carrier string
 }
 
@@ -79,17 +76,6 @@ var (
 // readWindowsClipboardInvite accepts the image produced by copying the QR in
 // a browser, or the equivalent loom:// text. Clipboard bytes are decoded in
 // memory and are never written to a temporary file.
-func readWindowsClipboardInvite(owner uintptr) (clientenroll.Invite, error) {
-	carrier, err := readWindowsClipboardCarrier(owner)
-	if err != nil {
-		return clientenroll.Invite{}, err
-	}
-	if carrier.invite == nil || carrier.v2Carrier != "" {
-		return clientenroll.Invite{}, errors.New("剪贴板中不是 v1 加入二维码")
-	}
-	return *carrier.invite, nil
-}
-
 func readWindowsClipboardCarrier(owner uintptr) (windowsClipboardCarrier, error) {
 	if err := openWindowsClipboard(owner); err != nil {
 		return windowsClipboardCarrier{}, err
@@ -101,24 +87,24 @@ func readWindowsClipboardCarrier(owner uintptr) (windowsClipboardCarrier, error)
 		if err != nil {
 			return windowsClipboardCarrier{}, err
 		}
-		if carrier, carrierErr := windowsv2.ReadEnrollmentCarrierImage(decoded); carrierErr == nil {
-			encoded, encodeErr := encodeWindowsV2Carrier(carrier)
-			return windowsClipboardCarrier{v2Carrier: encoded}, encodeErr
+		carrier, err := windowsv2.ReadEnrollmentCarrierImage(decoded)
+		if err != nil {
+			return windowsClipboardCarrier{}, err
 		}
-		invite, err := clientjoin.ReadImage(decoded)
-		return windowsClipboardCarrier{invite: &invite}, err
+		encoded, err := encodeWindowsV2Carrier(carrier)
+		return windowsClipboardCarrier{v2Carrier: encoded}, err
 	}
 	if available, _, _ := procIsClipboardFormatAvailable.Call(windowsClipboardUnicodeText); available != 0 {
 		text, err := readWindowsClipboardTextValue()
 		if err != nil {
 			return windowsClipboardCarrier{}, err
 		}
-		if carrier, carrierErr := windowsv2.DecodeEnrollmentCarrierText(text); carrierErr == nil {
-			encoded, encodeErr := encodeWindowsV2Carrier(carrier)
-			return windowsClipboardCarrier{v2Carrier: encoded}, encodeErr
+		carrier, err := windowsv2.DecodeEnrollmentCarrierText(text)
+		if err != nil {
+			return windowsClipboardCarrier{}, err
 		}
-		invite, err := clientjoin.Read(text, nil)
-		return windowsClipboardCarrier{invite: &invite}, err
+		encoded, err := encodeWindowsV2Carrier(carrier)
+		return windowsClipboardCarrier{v2Carrier: encoded}, err
 	}
 	return windowsClipboardCarrier{}, errors.New("剪贴板中没有二维码图片；请先在中控页面复制二维码，再按 Ctrl+V")
 }
@@ -134,14 +120,6 @@ func openWindowsClipboard(owner uintptr) error {
 		time.Sleep(20 * time.Millisecond)
 	}
 	return fmt.Errorf("无法读取 Windows 剪贴板: %w", lastErr)
-}
-
-func readWindowsClipboardBitmap() (clientenroll.Invite, error) {
-	decoded, err := readWindowsClipboardBitmapImage()
-	if err != nil {
-		return clientenroll.Invite{}, err
-	}
-	return clientjoin.ReadImage(decoded)
 }
 
 func readWindowsClipboardBitmapImage() (image.Image, error) {
@@ -197,14 +175,6 @@ func readWindowsClipboardBitmapImage() (image.Image, error) {
 	}
 	runtime.KeepAlive(bitmap)
 	return decoded, nil
-}
-
-func readWindowsClipboardText() (clientenroll.Invite, error) {
-	text, err := readWindowsClipboardTextValue()
-	if err != nil {
-		return clientenroll.Invite{}, err
-	}
-	return clientjoin.Read(text, nil)
 }
 
 func readWindowsClipboardTextValue() (string, error) {

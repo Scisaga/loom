@@ -5,8 +5,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
@@ -16,7 +14,6 @@ import (
 	"time"
 
 	"loom/internal/clientcore"
-	"loom/internal/clientenroll"
 	"loom/internal/clientsecret"
 )
 
@@ -30,6 +27,10 @@ func newProfileManagerFixture(t *testing.T) *windowsProfileManager {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { cancel(); m.close() })
+	m.readJoined = readProfileFixtureIdentity
+	for _, child := range m.children {
+		child.joined, child.windowsV2, child.deviceID, child.state = true, true, "demo-client", guiStopped
+	}
 	return m
 }
 
@@ -65,6 +66,7 @@ func addProfileFixture(t *testing.T, m *windowsProfileManager) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	child.joined, child.windowsV2, child.deviceID, child.state = true, true, "demo-client", guiStopped
 	m.children[id] = child
 	return id
 }
@@ -454,106 +456,16 @@ func TestWindowsProfilesPreferenceDoesNotBlockSnapshotOrCancel(t *testing.T) {
 	m.workers.Wait()
 }
 
-func TestWindowsProfilesResumeOnlyExistingProtectedJoin(t *testing.T) {
-	for _, kind := range []string{"pending", "ready", "draft", "corrupt"} {
-		t.Run(kind, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			owner := &portableGUI{root: t.TempDir(), edition: editionPortableMixed, ctx: ctx, cancel: cancel}
-			// 旧版本已登记的未加入条目保留原恢复行为；全新根不再生成 legacy。
-			if err := os.Mkdir(filepath.Join(owner.root, "state"), 0o700); err != nil {
-				t.Fatal(err)
-			}
-			if err := writeWindowsJoinFile(filepath.Join(owner.root, "state", "profiles.json"), []byte(`{"schema":1,"profiles":[{"id":"legacy","name":"Loom 网络"}],"selected":"legacy","last_connected":"legacy"}`)); err != nil {
-				t.Fatal(err)
-			}
-			m, err := newWindowsProfileManager(owner)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { cancel(); m.close() })
-			child := m.children[legacyConnectionProfile]
-			switch kind {
-			case "pending":
-				invite := clientenroll.Invite{Endpoint: "https://control.example/api/client/enroll", Token: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x23}, 32)), ExpiresAt: time.Now().Add(time.Minute).Format(time.RFC3339)}
-				identity, err := loadOrCreateWindowsIdentity(child.root, invite, child.protector(), rand.Reader)
-				if err != nil {
-					t.Fatal(err)
-				}
-				clearPreparedIdentity(&identity)
-			case "ready":
-				if err := clientsecret.WriteJSONProtected(windowsJoinReadyPath(child.root), windowsJoinReadyPurpose, map[string]string{"configuration": "ready"}, child.protector()); err != nil {
-					t.Fatal(err)
-				}
-			case "corrupt":
-				if err := os.MkdirAll(filepath.Dir(windowsJoinIdentityPath(child.root)), 0o700); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(windowsJoinIdentityPath(child.root), []byte("demo-invalid-protected-material"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			var resumed, starts atomic.Int32
-			m.resume = func(got *portableGUI) (windowsJoinResult, error) {
-				resumed.Add(1)
-				if got != child {
-					return windowsJoinResult{}, errors.New("wrong recovery profile")
-				}
-				return windowsJoinResult{NodeID: "demo-client"}, nil
-			}
-			m.start = func(*portableGUI) { starts.Add(1) }
-			m.resumePendingProfiles()
-			child.workers.Wait()
-			if starts.Load() != 0 {
-				t.Fatal("join recovery automatically started a host")
-			}
-			s := child.snapshot()
-			if kind == "pending" || kind == "ready" {
-				if resumed.Load() != 1 || !s.joined || s.state != guiStopped {
-					t.Fatalf("protected join was not resumed into stopped state: %+v", s)
-				}
-			} else if resumed.Load() != 0 || s.joined || (kind == "corrupt" && s.state != guiError) {
-				t.Fatalf("draft or corrupt material entered recovery: %+v", s)
-			}
-		})
-	}
-}
-
-func TestWindowsProfilesCompletedJoinScrubsBearerKeepsIdentity(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	owner := &portableGUI{root: t.TempDir(), edition: editionPortableMixed, ctx: ctx, cancel: cancel}
-	writeProfileFixtureIdentity(t, owner.root)
-	if err := os.Remove(windowsJoinIdentityPath(owner.root)); err != nil {
-		t.Fatal(err)
-	}
-	invite := clientenroll.Invite{Endpoint: "https://control.example/api/client/enroll", Token: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x35}, 32)), ExpiresAt: time.Now().Add(time.Minute).Format(time.RFC3339)}
-	identity, err := loadOrCreateWindowsIdentity(owner.root, invite, owner.protector(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer clearPreparedIdentity(&identity)
-	m, err := newWindowsProfileManager(owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { cancel(); m.close() })
-	m.resume = func(*portableGUI) (windowsJoinResult, error) {
-		t.Error("completed join attempted network recovery")
-		return windowsJoinResult{}, nil
-	}
+func TestWindowsProfilesDoNotResumeLegacyJoin(t *testing.T) {
+	m := newProfileManagerFixture(t)
+	child := m.children[legacyConnectionProfile]
+	child.joined = false
+	var calls atomic.Int32
+	m.resume = func(*portableGUI) (windowsJoinResult, error) { calls.Add(1); return windowsJoinResult{}, nil }
 	m.resumePendingProfiles()
-	if _, err := readWindowsPendingInvite(owner.root, owner.protector()); !os.IsNotExist(err) {
-		t.Fatal("pending bearer remained", err)
-	}
-	after, err := readWindowsJoinIdentity(owner.root, owner.protector())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer clearPreparedIdentity(&after)
-	if identity.RequestID != after.RequestID || !bytes.Equal(identity.PrivateKeyPEM, after.PrivateKeyPEM) {
-		t.Fatal("completed join cleanup changed identity")
-	}
-	if !m.children[legacyConnectionProfile].snapshot().joined {
-		t.Fatal("completed join cleanup lost joined state")
+	child.workers.Wait()
+	if calls.Load() != 0 {
+		t.Fatal("legacy transaction reached normal join")
 	}
 }
 
@@ -574,7 +486,16 @@ func TestWindowsProfilesCorruptIndexDoesNotFallbackToLegacyHost(t *testing.T) {
 	if s := owner.snapshot(); s.state != guiError || s.joined || owner.profileManager() != nil || owner.runCancel != nil {
 		t.Fatalf("corrupt index fell back to legacy runtime: %+v", s)
 	}
-	if body, err := os.ReadFile(windowsJoinIdentityPath(owner.root)); err != nil || string(body) != "demo-protected-identity" {
+	if body, err := os.ReadFile(filepath.Join(owner.root, "join", "identity.json.dpapi")); err != nil || string(body) != "demo-protected-identity" {
 		t.Fatal("corrupt index changed legacy identity", err)
 	}
+}
+
+// 这里只模拟已加入状态的存储边界，不把 fixture 用于生产 reader 验收。
+func readProfileFixtureIdentity(root string, _ clientsecret.Protector) (string, bool, error) {
+	raw, err := os.ReadFile(filepath.Join(root, "state", "demo-joined"))
+	if err != nil {
+		return "", false, err
+	}
+	return string(raw), true, nil
 }

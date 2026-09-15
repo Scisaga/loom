@@ -18,13 +18,11 @@ import (
 	"golang.org/x/sys/windows/registry"
 
 	"loom/internal/clientcore"
-	"loom/internal/clientenroll"
 	"loom/internal/windowsv2"
 )
 
 type brokerRequest struct {
 	Operation  string                 `json:"operation"`
-	Invite     *clientenroll.Invite   `json:"invite,omitempty"`
 	V2Carrier  string                 `json:"v2_carrier,omitempty"`
 	Preference *clientcore.Preference `json:"preference,omitempty"`
 	ProfileID  string                 `json:"profile_id,omitempty"`
@@ -83,32 +81,29 @@ func decodeBrokerRequest(body []byte) (brokerRequest, error) {
 	}
 	switch req.Operation {
 	case "cancel_add_profile":
-		if req.ProfileID != "" || req.Invite != nil || req.V2Carrier != "" || req.Preference != nil || req.Name != "" {
+		if req.ProfileID != "" || req.V2Carrier != "" || req.Preference != nil || req.Name != "" {
 			return req, errors.New("关闭加入面板不接受附加参数")
 		}
 	case "join_profile":
 		if req.ProfileID != "" || req.Preference != nil ||
-			(req.Invite != nil && clientenroll.ValidateInvite(*req.Invite) != nil) ||
-			(req.V2Carrier != "" && !validBrokerV2Carrier(req.V2Carrier)) ||
-			(req.Invite != nil && req.V2Carrier != "") {
+			(req.V2Carrier != "" && !validBrokerV2Carrier(req.V2Carrier)) {
 			return req, errors.New("新增连接配置的加入参数无效")
 		}
 	case "status", "connect", "disconnect", "delete", "select_profile":
-		if req.Invite != nil || req.V2Carrier != "" || req.Preference != nil || req.Name != "" || (req.Operation == "status" && req.ProfileID != "") || (req.Operation == "select_profile" && req.ProfileID == "") {
+		if req.V2Carrier != "" || req.Preference != nil || req.Name != "" || (req.Operation == "status" && req.ProfileID != "") || (req.Operation == "select_profile" && req.ProfileID == "") {
 			return req, errors.New("服务操作不接受附加参数")
 		}
 	case "join":
-		if (req.Invite == nil) == (req.V2Carrier == "") || req.Preference != nil || req.Name != "" ||
-			(req.Invite != nil && clientenroll.ValidateInvite(*req.Invite) != nil) ||
+		if req.V2Carrier == "" || req.Preference != nil || req.Name != "" ||
 			(req.V2Carrier != "" && !validBrokerV2Carrier(req.V2Carrier)) {
 			return req, errors.New("加入二维码无效")
 		}
 	case "preference":
-		if req.Invite != nil || req.V2Carrier != "" || req.Preference == nil || req.Name != "" {
+		if req.V2Carrier != "" || req.Preference == nil || req.Name != "" {
 			return req, errors.New("出口选择无效")
 		}
 	case "add_profile", "rename_profile":
-		if req.Invite != nil || req.V2Carrier != "" || req.Preference != nil || (req.Operation == "add_profile" && req.ProfileID != "") ||
+		if req.V2Carrier != "" || req.Preference != nil || (req.Operation == "add_profile" && req.ProfileID != "") ||
 			(req.Operation == "rename_profile" && (req.ProfileID == "" || req.Name == "")) {
 			return req, errors.New("连接配置操作参数无效")
 		}
@@ -152,11 +147,7 @@ func (app *portableGUI) handleBrokerRequest(req brokerRequest) error {
 		if s.joined || (s.state != guiNeedsJoin && s.state != guiError) {
 			return errors.New("当前状态不能导入二维码")
 		}
-		if req.V2Carrier != "" {
-			app.importWindowsV2Carrier(req.V2Carrier)
-		} else {
-			app.importJoinInvite(*req.Invite)
-		}
+		app.importWindowsV2Carrier(req.V2Carrier)
 	case "connect":
 		if !s.joined || (s.state != guiStopped && s.state != guiError) {
 			return errors.New("当前状态不能连接")
