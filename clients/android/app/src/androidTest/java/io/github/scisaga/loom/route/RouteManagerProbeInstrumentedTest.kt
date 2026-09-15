@@ -38,7 +38,9 @@ class RouteManagerProbeInstrumentedTest {
             withTimeout(5_000) { test.probeStarted.await() }
             assertFalse(test.finishProbe.isCompleted)
             assertEquals("demo-via", test.selector.current.getValue("demo-selector"))
+            test.select(RouteMode.DIRECT)
             test.select(RouteMode.FIXED_EXIT, "demo-entry")
+            assertEquals("demo-via", test.selector.current.getValue("demo-selector"))
             test.select(RouteMode.DIRECT)
             assertEquals(1, test.probes.get())
             assertFalse(test.finishProbe.isCompleted)
@@ -57,6 +59,27 @@ class RouteManagerProbeInstrumentedTest {
             assertTrue(test.manager.status.value.currentPaths.isNotEmpty())
             assertTrue(test.manager.status.value.currentPaths.flatMap { it.links }
                 .any { it.kind == "entry" && it.label == "ping 23 ms" })
+        }
+    }
+
+    @Test
+    fun autoRestoresItsOwnAuthorizedDirectSelection() = runBlocking {
+        fixture { test ->
+            test.startDirect()
+            test.manager.stopAndAwait()
+            // 模拟上次 Auto 会话已持久化合法直连选择；该记忆不能被 Direct 模式修复全局清空。
+            test.store.put("route-preference", """{"schema":1,"mode":"auto"}""".encodeToByteArray())
+            test.manager.applyToRunning(test.profile)
+            test.manager.beginRouteSession(test.profile, "wlan0", test.registry)
+            withTimeout(5_000) { test.probeStarted.await() }
+            assertEquals(RouteMode.AUTO, test.manager.status.value.mode)
+            assertEquals("demo-direct", test.selector.current.getValue("demo-selector"))
+            test.select(RouteMode.AUTO)
+            assertEquals("demo-direct", test.selector.current.getValue("demo-selector"))
+            test.finishProbe.complete(Unit)
+            test.awaitProbeAndUpdates()
+            assertEquals("demo-direct", test.selector.current.getValue("demo-selector"))
+            assertEquals(1, test.probes.get())
         }
     }
 

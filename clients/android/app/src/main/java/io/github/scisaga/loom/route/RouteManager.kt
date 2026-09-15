@@ -200,7 +200,13 @@ class RouteManager internal constructor(
                 val previousDecisions = lastDecisions
                 val next = encodePreference(mode, exit)
                 try {
-                    val application = evaluate(profile, next)
+                    // 显式 Direct 的覆盖值不是 Auto 决策记忆；离开时恢复已签计划的合法默认值。
+                    val remembered = if (mode != RouteMode.DIRECT && evaluate(profile).mode == RouteMode.DIRECT) {
+                        ByteArray(0)
+                    } else {
+                        previousSelections
+                    }
+                    val application = evaluate(profile, next, remembered)
                     check(!application.blocked) { application.blockReason }
                     val running = runningRecordID == profile.recordID
                     val actual = if (running) {
@@ -465,7 +471,11 @@ class RouteManager internal constructor(
         mutableStatus.value = mutableStatus.value.copy(running = false, busy = false, currentPaths = emptyList())
     }
 
-    private fun evaluate(profile: ManagedProfile, preference: ByteArray? = null): AppliedRoute {
+    private fun evaluate(
+        profile: ManagedProfile,
+        preference: ByteArray? = null,
+        selections: ByteArray? = null,
+    ): AppliedRoute {
         val plan = profile.routePlan ?: return AppliedRoute(
             planScope = "",
             mode = RouteMode.AUTO,
@@ -479,7 +489,7 @@ class RouteManager internal constructor(
         val body = Loomcore.evaluateAndroidRoute(
             plan.encodeToByteArray(),
             preference ?: protected.get(PREFERENCE) ?: ByteArray(0),
-            protected.get(SELECTIONS) ?: ByteArray(0),
+            selections ?: protected.get(SELECTIONS) ?: ByteArray(0),
         )
         return decodeApplication(body)
     }
