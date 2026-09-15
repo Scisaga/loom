@@ -217,9 +217,7 @@ class V2DeviceStateStore(context: Context) {
             generation = runtime.getLong("device_generation"),
             config = runtime.getString("sing_box_config"),
             routePlan = runtime.optString("route_plan").takeIf(String::isNotBlank),
-            certificatePEM = ByteArray(0),
             caPEM = ByteArray(0),
-            reportEndpoint = "",
             recordID = "v2:$headHash",
             protocol = 2,
         )

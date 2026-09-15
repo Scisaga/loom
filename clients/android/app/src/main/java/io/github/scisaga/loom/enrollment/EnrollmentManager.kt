@@ -21,7 +21,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,7 +39,6 @@ import java.net.ProtocolException
 import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.time.Instant
-import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.SSLException
 
@@ -50,15 +48,20 @@ internal class V2TerminalDeviceException(val lifecycleState: String) : IllegalSt
     "[Android runtime] Device 已 $lifecycleState；durable v2 latch 禁止恢复旧配置或 Debug Direct",
 )
 
-/** durable v2 tombstone 独占运行时决策，不得落回 v1。 */
+internal class DeviceMigrationRequiredException : IllegalStateException(
+    "此连接需要完成认证迁移后才能使用；原 Device 身份与数据已保留",
+)
+
+/** 正式连接只消费 v2；旧记录只用于认证迁移，不能重新启动旧协议。 */
 internal fun <T> selectLatchedRuntime(
     lifecycleState: String?,
     v2Runtime: T?,
-    loadLegacy: () -> T?,
+    hasLegacyIdentity: Boolean,
 ): T? = when (lifecycleState) {
     null -> {
         check(v2Runtime == null) { "[Android runtime] 未 latch v2 Device 却存在 v2 runtime" }
-        loadLegacy()
+        if (hasLegacyIdentity) throw DeviceMigrationRequiredException()
+        null
     }
     "active" -> checkNotNull(v2Runtime) { "[Android runtime] active v2 Device 缺可启动 runtime" }
     "revoked", "decommissioned" -> throw V2TerminalDeviceException(lifecycleState)
@@ -153,14 +156,8 @@ class EnrollmentManager private constructor(context: Context) {
                         }
                         return@guarded
                     }
-                    candidateProfile()?.let {
-                        awaitingActivation(it)
-                        requestCandidateActivationIfConnected(it)
-                        return@guarded
-                    }
-                    val ready = store.ready() ?: currentEnrollment()
-                    checkNotNull(ready) { "设备尚未完成加入" }
-                    pullAndActivate(ready)
+                    if (store.hasLegacyIdentity()) throw DeviceMigrationRequiredException()
+                    error("设备尚未完成加入")
                 }
             }
         }
@@ -172,7 +169,7 @@ class EnrollmentManager private constructor(context: Context) {
             transaction.withLock {
                 guarded("无法放弃待加入事务") {
                     check(
-                        store.loadCurrent() == null && store.ready() == null && v2StateStore.current() == null,
+                        !store.hasLegacyIdentity() && v2StateStore.current() == null,
                     ) { "设备已经加入；不会删除正式身份" }
                     store.clearPending()
                     mutableStatus.value = EnrollmentStatus(
@@ -184,89 +181,18 @@ class EnrollmentManager private constructor(context: Context) {
         }
     }
 
-    fun candidateProfile(): ManagedProfile? {
-        if (v2StateStore.current() != null) return null
-        return try {
-            store.loadCandidate()
-        } catch (error: Exception) {
-            // A candidate has never been promoted. It is therefore safe to remove
-            // a corrupt candidate and retain current/previous plus the latched
-            // release floor; the same or newer signed payload can be fetched again.
-            val current = runCatching { loadCurrentWithRecovery() }.getOrNull()
-            if (current != null) {
-                ready(current, "未激活候选校验失败；已隔离并沿用最后可用配置")
-            } else {
-                throw IllegalStateException("未激活候选校验失败，已隔离；请重新拉取", error)
-            }
-            null
-        }
-    }
-
-    fun candidateActivated(profile: ManagedProfile): ManagedProfile {
-        check(profile.protocol == 1) { "v2 LKG 不经 v1 candidate slot 提交" }
-        val committed = store.commitCandidate(profile.recordID)
-        store.clearReady()
-        ready(committed, "正式入网完成；候选已通过本地 TUN/libbox 启动并成为当前配置")
-        return committed
-    }
-
-    fun candidateRejected(profile: ManagedProfile, reason: String): ManagedProfile? {
-        check(profile.protocol == 1) { "v2 LKG 不允许回退到 v1 candidate" }
-        check(store.discardCandidate(profile.recordID)) { "候选在失败恢复期间发生变化" }
-        val current = try {
-            currentProfile()
-        } catch (terminal: V2TerminalDeviceException) {
-            throw terminal
-        } catch (_: Throwable) {
-            null
-        }
-        return current?.also {
-            ready(it, "候选激活失败，继续沿用最后可用配置：$reason")
-        }
-    }
-
     fun currentProfile(): ManagedProfile? {
-        val current = loadCurrentWithRecovery()
-        check(current != null || store.ready() == null && store.loadCandidate() == null) {
-            "正式身份尚无可激活的验签配置"
-        }
-        return current
-    }
-
-    private fun loadCurrentWithRecovery(): ManagedProfile? {
         val installed = v2StateStore.installed()
         return try {
-            selectLatchedRuntime(installed?.lifecycleState, installed?.runtimeProfile) {
-                loadLegacyCurrentWithRecovery()
-            }
+            selectLatchedRuntime(
+                installed?.lifecycleState,
+                installed?.runtimeProfile,
+                installed == null && store.hasLegacyIdentity(),
+            )
         } catch (error: V2TerminalDeviceException) {
             terminal(checkNotNull(installed))
             throw error
         }
-    }
-
-    private fun loadLegacyCurrentWithRecovery(): ManagedProfile? {
-        try {
-            store.loadCurrent()?.let { return it }
-        } catch (currentError: Throwable) {
-            val previous = runCatching { store.restorePrevious() }.getOrNull()
-            if (previous != null) {
-                ready(previous, "当前缓存校验失败；已恢复 previous 验签配置")
-                return previous
-            }
-            throw currentError
-        }
-        store.restorePrevious()?.let {
-            ready(it, "当前缓存缺失；已恢复 previous 验签配置")
-            return it
-        }
-        return null
-    }
-
-    fun previousProfile(): ManagedProfile? = if (v2StateStore.current() == null) store.loadPrevious() else null
-
-    fun promotePrevious(): ManagedProfile? = if (v2StateStore.current() != null) null else store.restorePrevious()?.also {
-        ready(it, "新配置激活失败；已恢复 previous 验签配置")
     }
 
     private suspend fun resumeInternal() = transaction.withLock {
@@ -292,45 +218,23 @@ class EnrollmentManager private constructor(context: Context) {
             ready(profile, "已重放 v2 Device LKG 并加载正式 WG/Data runtime")
             return
         }
-        candidateProfile()?.let {
-            awaitingActivation(it)
-            requestCandidateActivationIfConnected(it)
-            return
-        }
-        loadCurrentWithRecovery()?.let {
-            ready(it, "已重放签名链并加载最后可用配置")
-            return
-        }
-        // 查看配置只恢复本地状态，不启动注册隧道或接管当前连接。
-        if (!continuePending && (store.pending() != null || store.ready() != null)) {
-            val pending = store.pending()?.let { runCatching { V2PendingEnrollment.decode(it) }.getOrNull() }
-            mutableStatus.value = EnrollmentStatus(
-                phase = EnrollmentPhase.WAITING,
-                detail = "已有待完成的加入事务；点继续以复用原身份和恢复信息",
-                canAbandonPending = store.ready() == null,
-                canImportResume = pending?.progressStatus != null,
-            )
-            return
-        }
-        if (
-            resumeReadyAfterPendingCleanup(
-                ready = store.ready(),
-                clearPending = store::clearPending,
-                continuePull = ::pullAndActivate,
-            )
-        ) return
-        store.pending()?.let { pending ->
-            if (JSONObject(pending.decodeToString()).optInt("schema") == 2) {
-                val transaction = V2PendingEnrollment.decode(pending)
-                if (transaction.resumeDescriptor != null) {
-                    resumeV2UntilResult(transaction)
-                } else if (transaction.progressStatus != null) {
-                    awaitExplicitV2Resume()
-                } else {
-                    claimV2UntilResult(transaction)
-                }
+        if (store.hasLegacyIdentity()) throw DeviceMigrationRequiredException()
+        store.pending()?.let { pendingBytes ->
+            val pending = V2PendingEnrollment.decode(pendingBytes)
+            // 查看配置只恢复本地状态，不启动注册隧道或接管当前连接。
+            if (!continuePending) {
+                mutableStatus.value = EnrollmentStatus(
+                    phase = EnrollmentPhase.WAITING,
+                    detail = "已有待完成的加入事务；点继续以复用原身份和恢复信息",
+                    canAbandonPending = true,
+                    canImportResume = pending.progressStatus != null,
+                )
+            } else if (pending.resumeDescriptor != null) {
+                resumeV2UntilResult(pending)
+            } else if (pending.progressStatus != null) {
+                awaitExplicitV2Resume()
             } else {
-                claimUntilReady(pending)
+                claimV2UntilResult(pending)
             }
             return
         }
@@ -349,7 +253,7 @@ class EnrollmentManager private constructor(context: Context) {
                 return
             }
         }
-        beginV1Join(raw)
+        error("加入码格式无效；请使用中控当前生成的 v2 加入码")
     }
 
     private suspend fun beginJoinFile(raw: ByteArray) {
@@ -360,42 +264,12 @@ class EnrollmentManager private constructor(context: Context) {
             }
 
             carrier?.optInt("schema") == 2 -> beginV2Join(Loomcore.decodeAndroidV2InviteFile(raw))
-            else -> beginV1Join(raw.decodeToString())
+            else -> error("加入文件格式无效；请使用中控当前生成的 v2 加入文件")
         }
-    }
-
-    private suspend fun beginV1Join(raw: String) {
-        check(store.loadCurrent() == null && store.ready() == null && v2StateStore.current() == null) {
-            "设备已经加入；不会覆盖现有身份"
-        }
-        val canonicalInvite = Loomcore.parseEnrollmentInvite(raw)
-        TrustAnchor.validateEnrollmentInvite(canonicalInvite)
-        val expiresAt = JSONObject(canonicalInvite.decodeToString()).getString("expires_at")
-        enrollmentAttemptWindow(expiresAt, null, Instant.now())
-        val existing = store.pending()
-        if (existing != null) {
-            val pendingInvite = JSONObject(existing.decodeToString()).getString("invite_json").encodeToByteArray()
-            check(pendingInvite.contentEquals(canonicalInvite)) { "已有另一笔未完成加入；不会覆盖一次性凭据" }
-            claimUntilReady(existing)
-            return
-        }
-        val requestID = UUID.randomUUID().toString()
-        val publicKey = keys.ensureIdentity()
-        val csr = keys.createCSR(requestID)
-        Loomcore.buildAndroidClaim(canonicalInvite, csr, publicKey, requestID)
-        val pending = JSONObject()
-            .put("schema", 1)
-            .put("invite_json", canonicalInvite.decodeToString())
-            .put("request_id", requestID)
-            .put("csr_pem", csr.decodeToString())
-            .toString()
-            .encodeToByteArray()
-        store.putPending(pending)
-        claimUntilReady(pending)
     }
 
     private suspend fun beginV2Join(canonicalDescriptor: ByteArray) {
-        check(store.loadCurrent() == null && store.ready() == null && v2StateStore.current() == null) {
+        check(!store.hasLegacyIdentity() && v2StateStore.current() == null) {
             "设备已经加入；不会覆盖现有身份"
         }
         store.pending()?.let { existing ->
@@ -423,7 +297,7 @@ class EnrollmentManager private constructor(context: Context) {
     }
 
     private suspend fun beginV2Resume(canonicalDescriptor: ByteArray) {
-        check(store.loadCurrent() == null && store.ready() == null && v2StateStore.current() == null) {
+        check(!store.hasLegacyIdentity() && v2StateStore.current() == null) {
             "设备已经加入；resume 不会覆盖现有正式身份"
         }
         val pendingBytes = checkNotNull(store.pending()) {
@@ -758,213 +632,7 @@ class EnrollmentManager private constructor(context: Context) {
         return Loomcore.canonicalizeV2(installed.toString().encodeToByteArray())
     }
 
-    private suspend fun claimUntilReady(pendingBytes: ByteArray) {
-        val pending = JSONObject(pendingBytes.decodeToString())
-        check(pending.getInt("schema") == 1) { "受保护的加入事务无效" }
-        val invite = pending.getString("invite_json").encodeToByteArray()
-        TrustAnchor.validateEnrollmentInvite(invite)
-        val requestID = pending.getString("request_id")
-        val csr = pending.getString("csr_pem").encodeToByteArray()
-        val endpoint = Loomcore.enrollmentEndpoint(invite)
-        val publicKey = keys.ensureIdentity()
-        val claim = Loomcore.buildAndroidClaim(invite, csr, publicKey, requestID)
-        val expiresAt = JSONObject(invite.decodeToString()).getString("expires_at")
-        val firstAttempt = pending.optString(FIRST_ATTEMPTED_AT).takeIf(String::isNotBlank)
-        val attemptNow = Instant.now()
-        val initialWindow = enrollmentAttemptWindow(expiresAt, firstAttempt, attemptNow)
-        if (initialWindow.markFirstAttempt) {
-            pending.put(FIRST_ATTEMPTED_AT, attemptNow.toString())
-            store.putPending(pending.toString().encodeToByteArray())
-        }
-        var retryDelay = INITIAL_RETRY_MS
-        while (true) {
-            enrollmentAttemptWindow(
-                expiresAt,
-                pending.optString(FIRST_ATTEMPTED_AT).takeIf(String::isNotBlank),
-                Instant.now(),
-            )
-            mutableStatus.value = EnrollmentStatus(EnrollmentPhase.CLAIMING, "正在提交 Keystore 设备身份…")
-            val result = try {
-                HttpTransport.postJSON(appContext, endpoint, claim, ENROLLMENT_RESPONSE_LIMIT)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Exception) {
-                mutableStatus.value = EnrollmentStatus(
-                    EnrollmentPhase.WAITING,
-                    "网络暂不可用；将安全重试同一身份",
-                    diagnostic = networkFailureKind(failure),
-                )
-                delay(retryDelay)
-                retryDelay = (retryDelay * 2).coerceAtMost(MAX_RETRY_MS)
-                continue
-            }
-            currentCoroutineContext().ensureActive()
-            if (result.status >= 500 || result.status == 429) {
-                mutableStatus.value = EnrollmentStatus(
-                    EnrollmentPhase.WAITING,
-                    "中控暂不可用；将安全重试同一身份",
-                    diagnostic = "http-${result.status}",
-                )
-                delay(retryDelay)
-                retryDelay = (retryDelay * 2).coerceAtMost(MAX_RETRY_MS)
-                continue
-            }
-            check(result.status == 200 || result.status == 202) { "中控拒绝加入（HTTP ${result.status}）" }
-            check(result.contentType?.substringBefore(';') == "application/json") { "中控加入响应不是 application/json" }
-            val validated = Loomcore.validateAndroidEnrollmentResponse(invite, result.body, publicKey, result.status.toLong())
-            val response = JSONObject(validated.decodeToString()).getJSONObject("response")
-            bindPendingResponse(pending, response)
-            if (response.getString("configuration") == "pending") {
-                mutableStatus.value = EnrollmentStatus(
-                    EnrollmentPhase.WAITING,
-                    "身份已绑定；正在等待中控发布首份签名配置…",
-                    nodeID = response.getString("client_id"),
-                )
-                delay(retryDelay)
-                retryDelay = (retryDelay * 2).coerceAtMost(MAX_RETRY_MS)
-                continue
-            }
-            store.putReady(validated)
-            store.clearPending()
-            pullAndActivate(validated)
-            return
-        }
-    }
-
-    private fun bindPendingResponse(pending: JSONObject, response: JSONObject) {
-        val clientID = response.getString("client_id")
-        val claimedAt = response.getString("claimed_at")
-        pending.optString(CLAIMED_CLIENT_ID).takeIf(String::isNotBlank)?.let {
-            check(it == clientID) { "加入重试返回了不同的 Device 身份" }
-        }
-        pending.optString(CLAIMED_AT).takeIf(String::isNotBlank)?.let {
-            check(it == claimedAt) { "加入重试返回了不同的 claimed_at" }
-        }
-        pending.put(CLAIMED_CLIENT_ID, clientID)
-        pending.put(CLAIMED_AT, claimedAt)
-        store.putPending(pending.toString().encodeToByteArray())
-    }
-
-    private fun currentEnrollment(): ByteArray? {
-        val current = store.currentRecord() ?: return null
-        return JSONObject(current.decodeToString()).getJSONObject("enrollment").toString().encodeToByteArray()
-    }
-
-    private suspend fun pullAndActivate(enrollmentBytes: ByteArray) {
-        val enrollment = JSONObject(enrollmentBytes.decodeToString())
-        val response = enrollment.getJSONObject("response")
-        val bootstrap = response.getJSONObject("bootstrap")
-        val nodeID = bootstrap.getString("node_id")
-        mutableStatus.value = EnrollmentStatus(EnrollmentPhase.PULLING, "正在验签并预检配置…", nodeID = nodeID)
-        val platformKey = TrustAnchor.platformPublicKeyForBootstrap(bootstrap.getString("platform_public_key"))
-        val expected = bootstrap.getString("release_authority").encodeToByteArray()
-        val oldFloor = store.floor()
-        val mirrors = bootstrap.getJSONArray("distribution_urls").strings()
-        val candidates = JSONArray()
-        mirrors.forEachIndexed { index, mirror ->
-            val result = fetch(mirror.trimEnd('/') + "/current.json", CURRENT_LIMIT)
-            if (result?.status == 200) {
-                candidates.put(JSONObject().put("id", index.toString()).put("current_json", result.body.decodeToString()))
-            }
-        }
-        check(candidates.length() > 0) { "所有配置镜像均不可用" }
-        val selected = Loomcore.selectVerifiedCurrents(
-            JSONObject().put("schema", 1).put("candidates", candidates).toString().encodeToByteArray(),
-            platformKey,
-            nodeID,
-            expected,
-            oldFloor,
-        )
-        val selection = JSONObject(selected.decodeToString())
-        val current = selection.getString("current_json").encodeToByteArray()
-        val snapshot = selection.getString("selected_snapshot")
-        val nextFloor = selection.getJSONObject("next_floor").toString().encodeToByteArray()
-        // The authenticated mutable decision is latched before any mirror is
-        // asked for immutable payload. A withheld payload cannot reopen an old generation.
-        currentCoroutineContext().ensureActive()
-        store.putFloor(nextFloor)
-
-        var acceptedManifest: ByteArray? = null
-        var acceptedSignature: ByteArray? = null
-        var acceptedBundle: ByteArray? = null
-        for (mirror in mirrors) {
-            val root = mirror.trimEnd('/') + "/$snapshot"
-            val manifest = fetch("$root/snapshot.json", MANIFEST_LIMIT)
-            val signature = fetch("$root/snapshot.sig", SIGNATURE_LIMIT)
-            val bundle = fetch("$root/nodes/$nodeID.json", BUNDLE_LIMIT)
-            if (manifest?.status != 200 || signature?.status != 200 || bundle?.status != 200) continue
-            val verified = runCatching {
-                Loomcore.verifyPull(
-                    current,
-                    manifest.body,
-                    signature.body,
-                    bundle.body,
-                    platformKey,
-                    nodeID,
-                    ByteArray(0),
-                    nextFloor,
-                )
-            }.getOrNull()
-            if (verified != null) {
-                acceptedManifest = manifest.body
-                acceptedSignature = signature.body
-                acceptedBundle = bundle.body
-                break
-            }
-        }
-        val manifest = checkNotNull(acceptedManifest) { "所有镜像的签名配置制品均被拒绝" }
-        val signature = checkNotNull(acceptedSignature)
-        val bundle = checkNotNull(acceptedBundle)
-        currentCoroutineContext().ensureActive()
-        val profile = store.stageCandidate(
-            enrollmentBytes,
-            current,
-            manifest,
-            signature,
-            bundle,
-            nextFloor,
-        )
-        awaitingActivation(profile)
-        requestCandidateActivationIfConnected(profile)
-    }
-
-    private suspend fun fetch(endpoint: String, maximum: Int): HttpResult? {
-        currentCoroutineContext().ensureActive()
-        val result = try {
-            HttpTransport.get(appContext, endpoint, maximum)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            null
-        }
-        currentCoroutineContext().ensureActive()
-        return result
-    }
-
-    private fun awaitingActivation(profile: ManagedProfile) {
-        mutableStatus.value = EnrollmentStatus(
-            phase = EnrollmentPhase.PULLING,
-            detail = "签名链与 libbox 预检通过；连接后以本地 TUN/runtime 启动结果原子激活",
-            nodeID = profile.nodeID,
-            snapshot = profile.snapshot,
-            generation = profile.generation,
-            protocol = profile.protocol,
-        )
-    }
-
     private fun isActiveProfile(): Boolean = VpnRuntime.status.value.profileId == ProfileContext.id(appContext)
-
-    private fun requestCandidateActivationIfConnected(profile: ManagedProfile) {
-        if (!isActiveProfile()) return
-        if (VpnRuntime.status.value.phase !in setOf(ConnectionPhase.CONNECTED, ConnectionPhase.STARTING)) return
-        ContextCompat.startForegroundService(
-            appContext,
-            Intent(appContext, LoomVpnService::class.java)
-                .setAction(LoomVpnService.ACTION_RELOAD)
-                .putExtra(LoomVpnService.EXTRA_CANDIDATE_ID, profile.recordID)
-                .putExtra(LoomVpnService.EXTRA_PROFILE_ID, ProfileContext.id(appContext)),
-        )
-    }
 
     private fun ready(profile: ManagedProfile, detail: String) {
         RouteManager.get(appContext).profileAvailable(profile)
@@ -1035,22 +703,10 @@ class EnrollmentManager private constructor(context: Context) {
         }
     }
 
-    private fun JSONArray.strings(): List<String> = (0 until length()).map(::getString)
-
     companion object {
-        private const val INITIAL_RETRY_MS = 2_000L
-        private const val MAX_RETRY_MS = 30_000L
-        private const val ENROLLMENT_RESPONSE_LIMIT = 4 * 1024 * 1024
-        private const val CURRENT_LIMIT = 1024 * 1024
-        private const val MANIFEST_LIMIT = 4 * 1024 * 1024
-        private const val SIGNATURE_LIMIT = 1024
-        private const val BUNDLE_LIMIT = 16 * 1024 * 1024
         private const val BOOTSTRAP_SERVICE_TIMEOUT_MS = 10_000L
         private const val V2_INVITE_URI_PREFIX = "loom://enroll/v2#d="
         private const val V2_RESUME_URI_PREFIX = "loom://enroll/resume/v1#d="
-        private const val FIRST_ATTEMPTED_AT = "first_attempted_at"
-        private const val CLAIMED_CLIENT_ID = "claimed_client_id"
-        private const val CLAIMED_AT = "claimed_at"
 
         private val instances = mutableMapOf<String, EnrollmentManager>()
 
@@ -1113,20 +769,4 @@ internal fun networkFailureKind(error: Throwable): String {
 private fun androidErrno(error: Throwable): Int? {
     if (error.javaClass.name != "android.system.ErrnoException") return null
     return runCatching { error.javaClass.getField("errno").getInt(error) }.getOrNull()
-}
-
-/**
- * A validated READY record no longer needs the one-time invitation. Keep the
- * deletion before pull so a process death after READY persistence cannot leave
- * the bearer token stranded when recovery later advances to candidate/current.
- */
-internal suspend fun <T> resumeReadyAfterPendingCleanup(
-    ready: T?,
-    clearPending: () -> Unit,
-    continuePull: suspend (T) -> Unit,
-): Boolean {
-    if (ready == null) return false
-    clearPending()
-    continuePull(ready)
-    return true
 }

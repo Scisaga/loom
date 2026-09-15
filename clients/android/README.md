@@ -1,15 +1,9 @@
-# Loom Android client — native host, v1 compatibility and v2 bootstrap
+# Loom Android client — v2 private enrollment and runtime
 
-> **Protocol contract:** v1 compatibility uses a strict invitation, a single platform-key current,
-> and same-origin reporting. V2 accepts only a certified head and Device view, and adds ControlSet
-> checkpoints/QCs; four durable rollback-floor groups for recovery (including statement and policy
-> hashes), ControlSet, head, and Device view; a compact QR descriptor, immutable bootstrap catalog,
-> restricted bootstrap tunnel, three purpose-scoped public EndpointSets, a private
-> `ControlServiceDirectoryV1`, overlapping Hysteria2/Trojan
-> listener generations, a bounded set of userspace WireGuard endpoints for certified
-> generation overlap, a bootstrap transition hash, and an irreversible
-> v2 latch. V2 resources are versioned and never extend strict v1 JSON in place. See
-> [the distributed control-plane design](../../docs/protocols/control-plane/migration.md#从当前实现迁移).
+> **Protocol contract:** the normal client accepts v2 invitations and consumes certified
+> Device views, private configuration and sequenced reports. It has no v1 enrollment,
+> public reporting or current-polling fallback. Existing identity keys and protected
+> records remain available for authenticated migration; old records cannot start a tunnel.
 > This is a platform development and delivery guide. Protocol rules belong to the linked specifications.
 > Source entry points and gaps are listed in [the implementation map](../../docs/development/implementation.md);
 > installed artifacts and device results belong to [deployment evidence](../../docs/operations/local-deployment.md).
@@ -31,8 +25,8 @@ immutable distribution; it never receives or proxies an enrollment claim.
 This directory defines the native Kotlin/Compose host and the pinned
 sing-box/Loom mobile binding. The Stage 2 contract covers the access-only
 enrollment path: QR or `.loom-invite` import, a non-exportable Android
-Keystore identity, signed pull with a durable anti-rollback floor, candidate
-activation/previous recovery, and signed health reporting. The Stage 3 contract covers the
+Keystore identity, certified configuration with durable anti-rollback floors, local runtime
+activation and private signed health reporting. The Stage 3 contract covers the
 signed mobile route plan, Direct / Auto / fixed-exit preference, authenticated
 loopback selector changes, one deduplicated entry-probe round per underlying
 network generation, verified server-observation reuse, threshold damping,
@@ -172,8 +166,7 @@ this prevents IPv6 FakeIP traffic from bypassing the VPN or becoming
 unreachable.
 
 The three route modes are enabled only after an activatable configuration carries
-a mobile route plan: a certified Device view for v2, or an explicitly verified
-v1 snapshot before the protocol latch. Direct requires a direct candidate for every selector;
+a mobile route plan from a certified Device view. Direct requires a direct candidate for every selector;
 fixed-exit choices are the exact intersection authorized by the signed plan.
 If a fixed exit is removed, the client blocks instead of silently falling back.
 Auto never probes a complete candidate or business path. Direct does not freeze a
@@ -181,8 +174,9 @@ candidate snapshot or spend probe budget. On the first transition into Auto or f
 mode in each underlying-network generation, the client atomically freezes the then-current
 candidate snapshot and sends at most one lightweight probe per authorized entry deduplicated
 by address and source interface in that snapshot,
-in parallel, then reuses fresh canonical v5 server observations returned by the
-existing health-report cycle. Configuration refreshes, mode or exit changes, and
+in parallel, then reuses available verified server observations. The private v2
+report currently carries health/version; server-observation delivery must be wired
+separately before claiming live observation reuse on v2. Configuration refreshes, mode or exit changes, and
 reconnects within the same generation do not probe again. The registry belongs to
 the Application process, so recreating the `VpnService` also cannot reset that
 budget. Entries introduced later
@@ -194,15 +188,9 @@ can switch immediately; at equal failure rate, removing a relay without adding
 estimated latency is not blocked by the improvement threshold. Same-hop
 replacements and added relays still require the configured improvement.
 
-The signed configuration pins the Android TUN MTU to 1500 instead of inheriting
-sing-box's 9000-byte default. Before the v2 latch, a server whose verified v1
-snapshot enables `public_data_ingress` may contribute a single-hop client candidate
-using its configured data-ingress transport (Hysteria2 or Trojan), even when its
-WireGuard direction remains `reverse_only`. After the latch, that Boolean has no
-authority by itself: a certified `PublicEndpointIntent` and this Device's
-`DataIngressEndpointSetV2` must authorize the candidate. Such an endpoint is
-never promoted into an intermediate relay. This keeps the reverse tunnel policy
-while avoiding unnecessary same-transport nesting for an authorized fixed exit.
+The signed configuration pins the Android TUN MTU to 1500. A certified
+`PublicEndpointIntent` and this Device's `DataIngressEndpointSetV2` must authorize
+a public data candidate. Such an endpoint is never promoted into an intermediate relay.
 
 The prototypes use the currently installed Android layout as their baseline:
 [Connection](../../assets/client/android/connection.svg),
@@ -484,47 +472,29 @@ chain error.
 
 ## Enrollment and activation transaction
 
-In the v1 compatibility transaction, the client compares the QR fingerprint with the embedded key before the first
-POST, persists the exact CSR/request identity and retries only within the
-bounded enrollment recovery window. A ready response must bind the returned
-certificate to the same Keystore P-256 key.
+QR and file imports accept only the v2 invitation or an exact-bound resume carrier.
+The app verifies the catalog and authority before generating a claim, and submits
+it only through the restricted bootstrap tunnel and inner Enrollment TLS. The
+Keystore identity, wrapping key and durable pending transaction remain scoped to
+the same profile across retries and process restarts.
 
-That direct public HTTPS POST is retained only by the strict v1 reader. It is not
-the v2 target and must not be retrofitted with v2 fields. V2 follows the compact
-QR, static distribution, measured HY2/TCP bootstrap, private inner TLS, token +
-identity-key Keystore PoP and Raft CAS flow above. Once ready is atomically installed, all
-temporary bootstrap material is deleted before the permanent overlay and private
-configuration/report channels become active.
+Completion installs the certified Device view, certificate, secret artifacts,
+configuration and all rollback floors atomically. Runtime activation verifies the
+local TUN/libbox/selector startup; it does not wait for server observations or send
+business DNS/HTTPS probes. A failed v2 update retains the current certified LKG;
+terminal Device state blocks all data connections, including Debug Direct.
 
-V1 signed `current.json`, snapshot manifest/signature and the exact node bundle
-are retained in Keystore-encrypted app storage. They are all reverified on
-restart against the platform key embedded in the currently running APK; a
-cached bootstrap cannot keep an older APK trust root alive after an upgrade.
-A verified Android manifest must declare exactly the sing-box version embedded
-in `Libbox.version()` and no server-only runtime component.
-A new pull first advances the authenticated generation floor, then
-enters a candidate slot. Its CA uses an immutable content-addressed path, so
-preflight cannot replace the active profile's trust file. `VpnService` must
-promote the candidate after static validation, bundle hydration, libbox
-configuration preflight, and successful local TUN/route/selector startup. It
-must not wait for an entry probe or server observation or send a business
-DNS/HTTPS request as an activation gate. Only a local startup-transaction failure
-may restore the last verified profile; runtime connection/handshake failures
-remain scoped evidence and do not roll back a verified configuration. The current
-implementation gaps are listed in [the implementation map](../../docs/development/implementation.md). Reports use the same
-Keystore key through the existing canonical v5 and self-check v1 contracts;
-the canonical v5 claim also binds the actual selector, candidate and chain.
-Before the v2 latch, Android sends a separate signed presence heartbeat every
-five seconds. Its JSON has exactly `node`, `ts`, and `signature`; it contains no
-certificate, configuration, Agent state, self-check, route, traffic, or server
-observation. The existing full Observation remains on its original one-minute
-cycle and continues to request `observations=1`, accepting either a bounded HTTP
-200 JSON snapshot or a compatible empty HTTP 204. A heartbeat never refreshes
-the Observation timestamp or its health/configuration evidence. After the latch,
-configuration and reporting use the role-separated `device_config` and
-`device_report` services from private `ControlServiceDirectoryV1`, with Device
-mTLS. Neither service can be derived from a distribution, bootstrap, or
-enrollment URL.
+Configuration and signed health/version reports use `device_config` and
+`device_report` from the private certified directory, with the same Device mTLS
+identity and durable report sequence. No endpoint is derived from a public
+invitation or distribution URL. The old public POST helpers, one-hour recovery
+window, full Observation producer and independent presence producer are deleted.
+
+Existing v1 profiles require authenticated migration before connection. Their
+protected bytes, original Keystore aliases and rollback floors remain intact;
+opening a profile does not run the old protocol or replace its key. Production
+migration, service wiring and device delivery are tracked separately in
+[the implementation map](../../docs/development/implementation.md).
 
 ## Emulator and device acceptance
 
@@ -597,8 +567,7 @@ files directory; those images can contain private device data and stay outside G
   io.github.scisaga.loom.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
-This UI acceptance uses the installed profile's protocol. A successful v1 report
-does not satisfy the separate v2 lifecycle acceptance below.
+UI acceptance and private v2 lifecycle acceptance verify distinct outcomes.
 
 After the enrolled debug APK is installed and Android VPN consent has been
 granted once, run the main physical-device smoke on Wi-Fi. Cellular and
@@ -642,8 +611,8 @@ one verified HTTPS distribution mirror must therefore be available. Private
 control, Enrollment, configuration and reporting use their purpose-specific
 TLS service over the temporary or permanent Loom overlay, not public Nginx.
 
-Enrollment acceptance requires a control-created Android Device and, for the
-v1 compatibility flow, an APK built with that deployment's public key. On vendor Android builds, keep the
+Enrollment acceptance requires a control-created Android Device and an APK built
+with that deployment's pinned public key. On vendor Android builds, keep the
 screen unlocked. ADB authorization alone may not authorize package
 installation; the constrained helper above can approve Loom's separate vendor
 confirmation when explicitly enabled.

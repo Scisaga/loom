@@ -142,8 +142,8 @@ class RouteManagerProbeInstrumentedTest {
         }, managerScope)
         val profile = ManagedProfile(
             nodeID = "demo-client", snapshot = "demo-snapshot", generation = 1,
-            config = CONFIG, routePlan = PLAN, certificatePEM = byteArrayOf(), caPEM = byteArrayOf(),
-            reportEndpoint = "https://report.example/", recordID = "demo-record",
+            config = CONFIG, routePlan = PLAN, caPEM = byteArrayOf(),
+            recordID = "demo-record",
         )
 
         suspend fun startDirect() {
