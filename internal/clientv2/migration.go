@@ -65,10 +65,14 @@ func validateLinuxMigrationInstallation(installation *DeviceInstallationV1, enve
 	if err != nil {
 		return err
 	}
+	trust, err := clientmigration.RuntimeActivationTrust(public)
+	if err != nil {
+		return err
+	}
 	verified, err := wire.VerifyRuntimeDeviceMigration(&proof.Package, wire.RuntimeDeviceMigrationExpectedV1{
 		DeviceID: envelope.Payload.DeviceID, Platform: "linux-server", IdentitySPKIDER: certificate.RawSubjectPublicKeyInfo,
 		WrappingKeyHash: installation.WrappingKeyHash, LegacyFloor: legacy},
-		wire.InviteProofTrustV2{V1PlatformKey: public, V1PlatformKeyID: proof.Package.Activation.Proof.Statement.V1PlatformKeyID}, at)
+		trust, at)
 	if err != nil {
 		return err
 	}

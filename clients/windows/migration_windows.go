@@ -210,7 +210,10 @@ func migrateWindowsDevice(ctx context.Context, root string, protector clientsecr
 	}
 	expected := wire.RuntimeDeviceMigrationExpectedV1{DeviceID: deviceID, Platform: "windows-desktop",
 		IdentitySPKIDER: identity.IdentitySPKIDER(), WrappingKeyHash: wrappingHash, LegacyFloor: legacy}
-	trust := wire.InviteProofTrustV2{V1PlatformKey: platform, V1PlatformKeyID: delivery.Activation.Proof.Statement.V1PlatformKeyID}
+	trust, err := clientmigration.RuntimeActivationTrust(platform)
+	if err != nil {
+		return windowsJoinResult{}, err
+	}
 	verified, err := wire.VerifyRuntimeDeviceMigration(&delivery, expected, trust, time.Now().UTC())
 	if err != nil {
 		return windowsJoinResult{}, err

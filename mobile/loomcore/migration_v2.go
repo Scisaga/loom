@@ -58,11 +58,14 @@ func verifyAndroidMigrationInputs(packageJSON, legacyFloorJSON, pinnedPlatformKe
 	if err != nil {
 		return delivery, verified, err
 	}
+	trust, err := clientmigration.RuntimeActivationTrust(pinnedPlatformKey)
+	if err != nil {
+		return delivery, verified, err
+	}
 	verified, err = wire.VerifyRuntimeDeviceMigration(&delivery, wire.RuntimeDeviceMigrationExpectedV1{
 		DeviceID: deviceID, Platform: "android", IdentitySPKIDER: identitySPKIDER,
 		WrappingKeyHash: wrappingHash, LegacyFloor: legacy,
-	}, wire.InviteProofTrustV2{V1PlatformKey: pinnedPlatformKey,
-		V1PlatformKeyID: delivery.Activation.Proof.Statement.V1PlatformKeyID}, now)
+	}, trust, now)
 	return delivery, verified, err
 }
 
@@ -144,11 +147,14 @@ func validateAndroidMigrationInstallation(installation *androidMigrationInstalla
 		return err
 	}
 	leaf := delivery.Migration.Leaf
+	trust, err := clientmigration.RuntimeActivationTrust(public)
+	if err != nil {
+		return err
+	}
 	verified, err := wire.VerifyRuntimeDeviceMigration(delivery, wire.RuntimeDeviceMigrationExpectedV1{
 		DeviceID: leaf.DeviceID, Platform: "android", IdentitySPKIDER: parsed.RawSubjectPublicKeyInfo,
 		WrappingKeyHash: installation.WrappingKeyHash, LegacyFloor: leaf.LegacyFloor,
-	}, wire.InviteProofTrustV2{V1PlatformKey: public,
-		V1PlatformKeyID: delivery.Activation.Proof.Statement.V1PlatformKeyID}, approvedAt)
+	}, trust, approvedAt)
 	if err != nil {
 		return err
 	}

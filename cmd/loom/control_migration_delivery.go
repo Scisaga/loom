@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"loom/internal/clientmigration"
 	"loom/internal/wire"
 )
 
@@ -92,10 +93,14 @@ func (runtime *controlRuntime) migrationDeliveryLocked(deviceID string) (wire.Ru
 	if err != nil {
 		return wire.RuntimeDeviceMigrationPackageV1{}, err
 	}
+	trust, err := clientmigration.RuntimeActivationTrust(public)
+	if err != nil {
+		return wire.RuntimeDeviceMigrationPackageV1{}, err
+	}
 	if _, err := wire.VerifyRuntimeDeviceMigration(&delivery, wire.RuntimeDeviceMigrationExpectedV1{
 		DeviceID: deviceID, Platform: proof.Leaf.Platform, IdentitySPKIDER: parsed.RawSubjectPublicKeyInfo,
 		WrappingKeyHash: proof.Leaf.WrappingKeyHash, LegacyFloor: proof.Leaf.LegacyFloor,
-	}, wire.InviteProofTrustV2{V1PlatformKey: public, V1PlatformKeyID: bundle.Proof.Statement.V1PlatformKeyID}, runtime.now().UTC()); err != nil {
+	}, trust, runtime.now().UTC()); err != nil {
 		return wire.RuntimeDeviceMigrationPackageV1{}, err
 	}
 	return controlClone(delivery), nil

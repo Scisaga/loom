@@ -99,7 +99,7 @@ func TestControlMigrationRefusesDroppingSourceDevices(t *testing.T) {
 	}
 }
 
-func controlMigratedDeviceRuntime(t *testing.T, change func(*controlApplicationV1, *controlRuntime)) (*controlRuntime, string, wire.RuntimeDeviceMigrationLeafV1, controlCertifiedOperationResultV1) {
+func controlMigratedDeviceRuntime(t *testing.T, change func(*controlApplicationV1, *controlRuntime), platformKeys ...ed25519.PrivateKey) (*controlRuntime, string, wire.RuntimeDeviceMigrationLeafV1, controlCertifiedOperationResultV1) {
 	t.Helper()
 	dir, admin := newAdminRotationFixture(t, true)
 	runtime, err := openControlRuntime(dir, time.Now)
@@ -144,6 +144,9 @@ func controlMigratedDeviceRuntime(t *testing.T, change func(*controlApplicationV
 	input := controlMigrationInputV1{Schema: 1, Application: application, RecoveryProofs: proofs}
 	inputHash, _ := wire.HashObject("loom-control-migration-input-v1", input)
 	_, private, _ := ed25519.GenerateKey(rand.Reader)
+	if len(platformKeys) == 1 {
+		private = platformKeys[0]
+	}
 	platform := filepath.Join(t.TempDir(), "platform.key")
 	if err := os.WriteFile(platform, []byte(base64.StdEncoding.EncodeToString(private)), 0600); err != nil {
 		t.Fatal(err)

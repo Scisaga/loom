@@ -147,11 +147,14 @@ func validateMigrationInstallation(installation *MigrationInstallationV1,
 		return err
 	}
 	leaf := delivery.Migration.Leaf
+	trust, err := clientmigration.RuntimeActivationTrust(public)
+	if err != nil {
+		return err
+	}
 	verified, err := wire.VerifyRuntimeDeviceMigration(delivery, wire.RuntimeDeviceMigrationExpectedV1{
 		DeviceID: leaf.DeviceID, Platform: "windows-desktop", IdentitySPKIDER: parsed.RawSubjectPublicKeyInfo,
 		WrappingKeyHash: installation.WrappingKeyHash, LegacyFloor: leaf.LegacyFloor,
-	}, wire.InviteProofTrustV2{V1PlatformKey: public,
-		V1PlatformKeyID: delivery.Activation.Proof.Statement.V1PlatformKeyID}, approvedAt)
+	}, trust, approvedAt)
 	if err != nil {
 		return err
 	}

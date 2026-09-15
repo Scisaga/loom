@@ -10,6 +10,7 @@ import (
 	"crypto/elliptic"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
@@ -62,6 +63,14 @@ func cmdClientExportMigrationRequest(args []string) error {
 	}
 	defer clear(keyPEM)
 	block, rest := pem.Decode(keyPEM)
+	if block != nil && block.Type == "EC PARAMETERS" {
+		var curve asn1.ObjectIdentifier
+		remaining, err := asn1.Unmarshal(block.Bytes, &curve)
+		if err != nil || len(remaining) != 0 || len(block.Headers) != 0 || !curve.Equal(asn1.ObjectIdentifier{1, 2, 840, 10045, 3, 1, 7}) {
+			return errors.New("[Linux migration] 原 EC PARAMETERS 不是 P-256 命名曲线")
+		}
+		block, rest = pem.Decode(rest)
+	}
 	if block == nil || len(bytes.TrimSpace(rest)) != 0 {
 		return errors.New("[Linux migration] 原私钥 PEM 无效")
 	}
@@ -98,9 +107,15 @@ func cmdClientExportMigrationRequest(args []string) error {
 	if !roots.AppendCertsFromPEM(ca) {
 		return errors.New("[Linux migration] 原 CA 无效")
 	}
+	if certificate.IsCA || len(certificate.DNSNames) != 1 || certificate.DNSNames[0] != *deviceID+".node.internal" ||
+		certificate.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
+		return errors.New("[Linux migration] 原证书不是指定设备的独立签名身份")
+	}
+	// 原服务器曾使用 serverAuth-only leaf。这里只证明原 key 归属；迁移后
+	// 私有服务另行核对 certified Device profile 的 clientAuth，不能混用。
 	if _, err := certificate.Verify(x509.VerifyOptions{Roots: roots, DNSName: *deviceID + ".node.internal",
-		CurrentTime: certificate.NotBefore.Add(time.Second), KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
-		return errors.New("[Linux migration] 原证书未证明指定设备身份")
+		CurrentTime: certificate.NotBefore.Add(time.Second), KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth}}); err != nil {
+		return fmt.Errorf("[Linux migration] 原证书未证明指定设备身份: %w", err)
 	}
 	identity, err := clientv2.ImportLinuxMigrationIdentity(filepath.Join(*dir, "identity.json"), key)
 	if err != nil {
@@ -182,8 +197,10 @@ func cmdClientImportMigration(args []string) error {
 	}
 	expected := wire.RuntimeDeviceMigrationExpectedV1{DeviceID: *deviceID, Platform: "linux-server",
 		IdentitySPKIDER: public, WrappingKeyHash: wrappingHash, LegacyFloor: legacyFloor}
-	trust := wire.InviteProofTrustV2{V1PlatformKey: platform,
-		V1PlatformKeyID: delivery.Activation.Proof.Statement.V1PlatformKeyID}
+	trust, err := clientmigration.RuntimeActivationTrust(platform)
+	if err != nil {
+		return err
+	}
 	now := time.Now().UTC()
 	verified, err := wire.VerifyRuntimeDeviceMigration(&delivery, expected, trust, now)
 	if err != nil {
