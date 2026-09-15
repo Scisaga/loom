@@ -226,6 +226,8 @@ func cmdControl(args []string) error {
 		return cmdControlCreateInvite(args[1:])
 	case "publish-device-config":
 		return cmdControlPublishDeviceConfig(args[1:])
+	case "publish-client-config":
+		return cmdControlPublishClientConfig(args[1:])
 	case "migrate":
 		return cmdControlMigrate(args[1:])
 	case "export-migration":
@@ -1266,6 +1268,8 @@ func (runtime *controlRuntime) controlHandler() http.Handler {
 			runtime.serveStatus(writer, request)
 		case privateControlInviteContextPath:
 			runtime.serveInviteContext(writer, request)
+		case privateControlPrepareClientPath:
+			runtime.servePrepareClientConfig(writer, request)
 		case controlplane.PrivateControlOperationPath:
 			if request.Method == http.MethodGet {
 				runtime.serveOperationProgress(writer, request, false)

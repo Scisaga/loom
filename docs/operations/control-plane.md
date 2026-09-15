@@ -145,7 +145,22 @@ loom control export-migration \
 生成的 `device.loom-migration` 由客户端正常文件导入入口消费。它绑定原平台、身份、
 wrapping key、旧 signed current 与实际 v2 Head；不能用新邀请替代迁移，也不能清除本机身份重试。
 
-设备后续配置使用 `control publish-device-config`。`<publication-file>` 保存生成器的规范配置、
+已迁入认证状态的 Android/Windows 设备可使用 `control publish-client-config`，从当前认证网络
+生成运行配置、封装原 wrapping key 对应的凭据，并提交管理员签名操作：
+
+```bash
+loom control publish-client-config \
+  -admin-dir <offline-admin-directory> -input <private-client-input> \
+  -request-id <proposal-id> -out <private-request-directory>
+```
+
+`<private-client-input>` 为 `0600` JSON 文件，字段定义见
+[生成入口](../../cmd/loom/control_prepare_client.go)。输入包含设备、原 wrapping 公钥、私有控制
+WireGuard 分配、固定 sing-box 版本、服务器观测 CA 和 exact 数据面凭据；它不接受另一份网络
+或权限清单。控制目的路由从认证服务目录推导。生成所用的本机 artifact reporter 必须已经获得
+当前 authority 授权。原始凭据不写入请求日志，响应丢失时复用输出目录和相同输入。
+
+已有生成器材料也可使用 `control publish-device-config`。`<publication-file>` 保存规范配置、
 密文与真实证据；`<proposal-id>` 必须与生成材料时的 ID 相同：
 
 ```bash
