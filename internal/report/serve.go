@@ -53,7 +53,7 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 	//
 	// **它们必须同源** —— 界面自己去采一遍的话,"页面上说的"和"接口返回的"
 	// 会在某个时刻不一致,而那种不一致极难查。
-	deps := webui.Deps{Node: cfg.Node, Now: now, DeviceChanges: tbl.changes}
+	deps := webui.Deps{Node: cfg.Node, Now: now, DeviceChanges: tbl.changes, PresenceSnapshot: tbl.presenceView}
 	decorateView := func(v *webui.View, at time.Time) {
 		if v == nil {
 			return

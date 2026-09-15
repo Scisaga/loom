@@ -267,3 +267,24 @@ try{
 		t.Fatal("normal create did not reach business dependency")
 	}
 }
+
+func TestBrowserSnapshotMergesIndependentPresenceWithoutCollecting(t *testing.T) {
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-time.Minute).Format(time.RFC3339)
+	cached := View{Nodes: []NodeView{{ID: "demo-device", Declared: true, Health: "healthy", Source: "签名健康转述", ObservedAt: now.Add(-time.Second).Format(time.RFC3339), PresenceAt: old}}}
+	presence := map[string]string{"demo-device": now.Format(time.RFC3339)}
+	d := Deps{Admin: true, Now: func() time.Time { return now }, Snapshot: func() View { t.Fatal("browser triggered collection"); return View{} }, TrafficSnapshot: func() View { return cached }, PresenceSnapshot: func() map[string]string { return presence }, Control: &ControlDeps{Devices: &ClientControlDeps{List: func() (ClientInventory, error) {
+		return ClientInventory{Clients: []ClientView{{ID: "demo-device", Platform: "linux-server", Status: "ready", Membership: "active"}}}, nil
+	}}}}
+	view := loadBrowserSnapshot(d)
+	if view.Inventory.Devices[0].PresenceStatus != "live" || view.Inventory.Devices[0].DataPlaneStatus != "online" {
+		t.Fatal("fresh independent presence was frozen in cached observation")
+	}
+	if cached.Nodes[0].PresenceAt != old {
+		t.Fatal("browser mutated shared cache")
+	}
+	presence["demo-device"] = old
+	if loadBrowserSnapshot(d).Inventory.Devices[0].DataPlaneStatus != "stale" {
+		t.Fatal("expired presence inherited observation freshness")
+	}
+}

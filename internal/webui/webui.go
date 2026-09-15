@@ -51,6 +51,8 @@ type Deps struct {
 	// every request. When nil, the handler falls back to Snapshot for backwards
 	// compatibility with small tests/embedders.
 	TrafficSnapshot func() View
+	// PresenceSnapshot 读取独立心跳租约；不能跟随完整观测缓存冻结。
+	PresenceSnapshot func() map[string]string
 
 	// Actions 是本机能执行的动作。键是动作名,值是执行函数。
 	// 只列白名单里的 —— 让界面能跑任意命令,等于把 root 挂到网上。

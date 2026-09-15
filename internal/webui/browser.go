@@ -31,6 +31,14 @@ func browserView(d Deps) View {
 	} else if d.Snapshot != nil {
 		v = d.Snapshot()
 	}
+	if d.PresenceSnapshot != nil {
+		// 缓存包含共享切片，只复制投影后合入已验证的最新租约。
+		presence := d.PresenceSnapshot()
+		v.Nodes = append([]NodeView(nil), v.Nodes...)
+		for i := range v.Nodes {
+			v.Nodes[i].PresenceAt = presence[v.Nodes[i].ID]
+		}
+	}
 	if !d.Admin {
 		// 匿名私有页面只投影健康摘要，不交出连接资料、证书、完整报告或 SSOT。
 		nodes := make([]NodeView, 0, len(v.Nodes))
