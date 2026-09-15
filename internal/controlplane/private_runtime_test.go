@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"loom/internal/clientv2"
 	"loom/internal/enrollmentv2"
 	"loom/internal/wire"
 )
@@ -25,6 +27,17 @@ import (
 // 这里经真实 TCP/TLS 进入生产服务组合，不给 request 伪造 TLS 状态（D131）。
 func TestPrivateRuntimeDeviceConfigAndReportOverMTLSSurviveRestart(t *testing.T) {
 	options, device, reports := privateRuntimeFixture(t)
+	// 回执传送原对象，不在传输层制造签名或健康结论；客户端观测 verifier 单独验签。
+	observation := json.RawMessage(`{"node":"demo-server","ts":"2026-09-11T12:00:00Z"}`)
+	reads := 0
+	options.Observations = func(ctx context.Context, report VerifiedDeviceReportV2) ([]json.RawMessage, error) {
+		store, err := OpenDeviceReportStore(reports, options.ReportSchemas)
+		if err != nil || len(store.Snapshot().Reports) != 1 {
+			t.Fatal("报告尚未耐久接受就读取观测", err)
+		}
+		reads++
+		return []json.RawMessage{observation}, nil
+	}
 	addresses := map[string]string{}
 	options.Listen = privateRuntimeLoopbackListen(addresses)
 	runtime, err := NewPrivateRuntime(options)
@@ -39,7 +52,7 @@ func TestPrivateRuntimeDeviceConfigAndReportOverMTLSSurviveRestart(t *testing.T)
 	}
 	t.Cleanup(func() { cancel(); <-done })
 	client := privateRuntimeClient(t, options, addresses, &tls.Certificate{
-		Certificate: [][]byte{device.leaf.Raw}, PrivateKey: device.identityKey,
+		Certificate: privateRuntimeDeviceChain(t, device), PrivateKey: device.identityKey,
 	})
 	response, err := client.Get("https://10.50.0.2:7445" + PrivateDeviceConfigPath)
 	if err != nil {
@@ -56,7 +69,7 @@ func TestPrivateRuntimeDeviceConfigAndReportOverMTLSSurviveRestart(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := json.RawMessage(`{"healthy":true}`)
+	payload := json.RawMessage(`{"healthy":true,"version":"demo-build"}`)
 	payloadHash, _ := wire.DeviceReportPayloadHash(payload)
 	report, err := wire.SignDeviceReport(wire.DeviceReportBodyV2{
 		Schema: 2, ClusterID: device.record.ProfileState.ClusterID, DeviceID: device.record.DeviceID,
@@ -66,14 +79,37 @@ func TestPrivateRuntimeDeviceConfigAndReportOverMTLSSurviveRestart(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, _ := wire.MarshalCanonical(report)
-	response, err = client.Post("https://10.50.0.2:7446"+PrivateDeviceReportPath, "application/json", bytes.NewReader(encoded))
+	// 使用生产客户端构造器及完整 Device 链，防止仅 leaf 的 fixture 掩盖宿主不互通。
+	roots := x509.NewCertPool()
+	for _, certificate := range options.Certificates {
+		leaf, _ := x509.ParseCertificate(certificate.Certificate[0])
+		roots.AddCert(leaf)
+	}
+	var reportService wire.PrivateControlServiceV1
+	for _, service := range options.Services {
+		if service.Role == "device_report" {
+			reportService = service
+		}
+	}
+	poster, err := clientv2.NewPrivateDeviceHTTPClient(reportService, "device_report", device.record.ProfileRef.ProfileID,
+		privateRuntimeDeviceChain(t, device), device.identityKey, roots,
+		func(ctx context.Context, network, address string) (net.Conn, error) {
+			local, found := addresses[address]
+			if !found {
+				return nil, errors.New("demo-unknown-tuple")
+			}
+			return (&net.Dialer{}).DialContext(ctx, network, local)
+		}, options.Now, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = response.Body.Close()
-	if response.StatusCode != http.StatusNoContent {
-		t.Fatalf("实际签名 report 被拒绝: %d", response.StatusCode)
+	defer poster.CloseIdleConnections()
+	observations, err := poster.PostDeviceReportWithObservations(ctx, &report)
+	if err != nil {
+		t.Fatal("实际完整链签名 report 被拒绝", err)
+	}
+	if reads != 1 || len(observations) != 1 || !bytes.Equal(observations[0], observation) {
+		t.Fatal("一次报告未返回原观测，或重复触发 reader")
 	}
 	reopened, err := OpenDeviceReportStore(reports, options.ReportSchemas)
 	if err != nil {
@@ -90,6 +126,18 @@ func TestPrivateRuntimeDeviceConfigAndReportOverMTLSSurviveRestart(t *testing.T)
 		_ = response.Body.Close()
 		t.Fatal("无 Device mTLS 连接通过 TLS listener")
 	}
+}
+
+func privateRuntimeDeviceChain(t *testing.T, device deviceConfigFixture) [][]byte {
+	chain := [][]byte{device.leaf.Raw}
+	for _, encoded := range device.record.ProfileState.ProfileIntent.IssuerChainDER {
+		der, err := base64.RawURLEncoding.DecodeString(encoded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		chain = append(chain, der)
+	}
+	return chain
 }
 
 func TestPrivateRuntimePartialBindRollbackAndCancellation(t *testing.T) {
@@ -203,13 +251,7 @@ func privateRuntimeFixture(t *testing.T) (PrivateRuntimeOptions, deviceConfigFix
 		},
 		Identities: identities, ReportSchemas: schemas, Now: func() time.Time { return now }, CommitReport: sink.Commit,
 		VerifyReport: func(kind string, schema int64, raw []byte) error {
-			if kind != "health" || schema != 1 {
-				return errors.New("demo-unknown-schema")
-			}
-			var payload struct {
-				Healthy bool `json:"healthy"`
-			}
-			_, err := wire.DecodeStrict(raw, 4096, &payload)
+			_, err := wire.DecodeDeviceHealthPayload(kind, schema, raw)
 			return err
 		},
 	}

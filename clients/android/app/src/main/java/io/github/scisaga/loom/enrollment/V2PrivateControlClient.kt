@@ -1,6 +1,7 @@
 package io.github.scisaga.loom.enrollment
 
 import io.github.scisaga.loom.security.DeviceKeyStore
+import io.github.scisaga.loomcore.Loomcore
 import org.json.JSONArray
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
@@ -38,6 +39,8 @@ internal data class V2PrivateControlPlan(
     val directoryHash: String,
 )
 
+internal data class V2ReportResponse(val statusCode: Int, val observations: ByteArray?)
+
 /**
  * 只拨共享 verifier 投影的 exact overlay tuple。这个 socket 故意不
  * protect，因此进入同一个 VpnService 的 TUN/WG；只有 bootstrap/public socket 绕过 TUN。
@@ -48,9 +51,8 @@ internal class V2PrivateControlClient(
     fun getFirst(plans: List<V2PrivateControlPlan>, maximumBytes: Int = MAX_DEVICE_VIEW_BYTES): ByteArray =
         tryEach(plans) { get(it, maximumBytes) }
 
-    fun postFirst(plans: List<V2PrivateControlPlan>, body: ByteArray) {
+    fun postFirst(plans: List<V2PrivateControlPlan>, body: ByteArray): V2ReportResponse =
         tryEach(plans) { post(it, body) }
-    }
 
     private fun get(plan: V2PrivateControlPlan, maximumBytes: Int): ByteArray {
         check(plan.role == "device_config" && plan.path == DEVICE_CONFIG_PATH) { "[Android control] config plan 无效" }
@@ -70,21 +72,30 @@ internal class V2PrivateControlClient(
         }
     }
 
-    private fun post(plan: V2PrivateControlPlan, body: ByteArray) {
+    private fun post(plan: V2PrivateControlPlan, body: ByteArray): V2ReportResponse {
         check(plan.role == "device_report" && plan.path == DEVICE_REPORT_PATH) { "[Android control] report plan 无效" }
         check(body.isNotEmpty() && body.size <= MAX_DEVICE_REPORT_BYTES) { "[Android report] envelope 大小无效" }
         val connection = connection(plan, "POST")
-        try {
+        return try {
             connection.doOutput = true
             connection.setFixedLengthStreamingMode(body.size)
-            connection.setRequestProperty("Accept", "application/json")
+            connection.setRequestProperty("Accept", DEVICE_REPORT_RECEIPT_MEDIA_TYPE)
             connection.setRequestProperty("Content-Type", "application/json")
             connection.outputStream.use { it.write(body) }
             val status = connection.responseCode
             verifyPeerPin(connection, plan.serverSPKIPins)
-            check(status == 204) { "[Android report] private device_report 被拒绝（HTTP $status）" }
             check(connection.contentEncoding.isNullOrEmpty()) { "[Android report] private device_report 禁止压缩" }
-            check(connection.inputStream.use { it.read() } == -1) { "[Android report] 204 携带正文" }
+            if (status == 204) {
+                check(connection.inputStream.use { it.read() } == -1) { "[Android report] 204 携带正文" }
+                V2ReportResponse(status, null)
+            } else {
+                check(status == 200) { "[Android report] private device_report 被拒绝（HTTP $status）" }
+                check(connection.contentType?.substringBefore(';')?.trim() == DEVICE_REPORT_RECEIPT_MEDIA_TYPE) {
+                    "[Android report] private receipt Content-Type 无效"
+                }
+                val receipt = readBounded(connection.inputStream, connection.contentLengthLong, MAX_DEVICE_REPORT_RECEIPT_BYTES)
+                V2ReportResponse(status, Loomcore.androidV2ReportReceiptObservations(body, receipt))
+            }
         } finally {
             connection.disconnect()
         }
@@ -146,10 +157,13 @@ internal class V2PrivateControlClient(
         private const val DEVICE_REPORT_PATH = "/private/v2/device/report"
         private const val DEVICE_CONFIG_DELIVERY_MEDIA_TYPE =
             "application/vnd.loom.device-config-delivery.v1+json"
+        private const val DEVICE_REPORT_RECEIPT_MEDIA_TYPE =
+            "application/vnd.loom.device-report-receipt.v1+json"
         private const val CONNECT_TIMEOUT_MS = 15_000
         private const val READ_TIMEOUT_MS = 30_000
         private const val MAX_DEVICE_VIEW_BYTES = 32 shl 20
         private const val MAX_DEVICE_REPORT_BYTES = 4 shl 20
+        private const val MAX_DEVICE_REPORT_RECEIPT_BYTES = (1 shl 20) + (16 shl 10)
 
         fun decodePlans(canonical: ByteArray, expectedRole: String): List<V2PrivateControlPlan> {
             val values = JSONArray(canonical.decodeToString())

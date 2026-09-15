@@ -25,14 +25,14 @@ overlay；TUN/Installed 使用已激活数据面。失败不触发旧公开 URL 
 
 宿主的[控制循环](../../clients/windows/v2_runtime_windows.go)在配置成功激活后运行：
 
-1. 先重放尚未得到成功响应的原报告；不能先推进配置 floors 使原 envelope 永久失效。
+1. 配置同步不被 pending 阻塞；认证新 floors 后，旧报告保留为退休记录并消费其已占用序号。
 2. 从私有 `device_config` 获取并验证更新；验证候选数据面后原子保存，成功激活才采用新状态。
 3. 检查当前实际数据面，构造 `health` schema 1 正文：`healthy` 与已激活的版本标识 `version`。
 4. [durable reporter](../../internal/windowsv2/report_journal.go)先保存签名 envelope，再通过私有
    `device_report` 发送。当前成功契约为 **空正文 204**；重试使用同一个序号、正文与签名。
 
 Envelope 绑定 Device、证书、当前认证状态和序号；服务端验证签名、证书授权、状态坐标及
-序号持久化。相同序号只能重放原正文，不得覆盖成另一份报告。收到成功响应后才清理 pending。
+序号持久化。相同序号只能重放原正文，不得覆盖成另一份报告。收到成功回执后推进最后确认序号；退休只消费序号并保留原签名，不冒充成功。
 实现与 wire 规则见[私有 Device 服务](../protocols/control-plane/device-services.md)。
 
 报告生命周期属于活动宿主。退出/撤权后停止报告并按认证终态清理运行凭据；下载成功、

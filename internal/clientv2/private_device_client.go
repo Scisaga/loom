@@ -10,6 +10,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -24,8 +25,7 @@ import (
 )
 
 const (
-	MaximumPrivateDeviceViewBytes          = 32 << 20
-	maximumSharedDeviceReportResponseBytes = 4096
+	MaximumPrivateDeviceViewBytes = 32 << 20
 )
 
 // VerifyPrivateControlDirectory 要求 directory 的 exact hash pin、parent Head、
@@ -244,33 +244,49 @@ func (client *PrivateDeviceHTTPClient) FetchDeviceConfigDelivery(ctx context.Con
 
 func (client *PrivateDeviceHTTPClient) PostDeviceReport(ctx context.Context,
 	envelope *wire.DeviceReportEnvelopeV2) error {
+	_, err := client.PostDeviceReportWithObservations(ctx, envelope)
+	return err
+}
+
+func (client *PrivateDeviceHTTPClient) PostDeviceReportWithObservations(ctx context.Context,
+	envelope *wire.DeviceReportEnvelopeV2) ([]json.RawMessage, error) {
 	if client == nil || client.client == nil || ctx == nil || envelope == nil {
-		return errors.New("[client] private report client/context/envelope 缺失")
+		return nil, errors.New("[client] private report client/context/envelope 缺失")
 	}
 	body, err := wire.MarshalCanonical(envelope)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		client.baseURL+"/private/v2/device/report", bytes.NewReader(body))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Accept", wire.DeviceReportReceiptMediaTypeV1)
 	response, err := client.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("[client] private device_report 请求失败: %w", err)
+		return nil, fmt.Errorf("[client] private device_report 请求失败: %w", err)
 	}
 	defer response.Body.Close()
 	responseBody, readErr := io.ReadAll(io.LimitReader(response.Body,
-		maximumSharedDeviceReportResponseBytes+1))
-	if readErr != nil || len(responseBody) > maximumSharedDeviceReportResponseBytes ||
-		response.StatusCode != http.StatusNoContent || len(responseBody) != 0 ||
+		wire.MaximumDeviceReportReceiptBytes+1))
+	if readErr != nil || len(responseBody) > wire.MaximumDeviceReportReceiptBytes ||
 		response.Header.Get("Content-Encoding") != "" {
-		return fmt.Errorf("[client] private device_report 未接受: status=%d", response.StatusCode)
+		return nil, fmt.Errorf("[client] private device_report 响应无效: status=%d", response.StatusCode)
 	}
-	return nil
+	if response.StatusCode == http.StatusNoContent && len(responseBody) == 0 {
+		return nil, nil
+	}
+	mediaType, _, mediaErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	if response.StatusCode != http.StatusOK || mediaErr != nil || mediaType != wire.DeviceReportReceiptMediaTypeV1 {
+		return nil, fmt.Errorf("[client] private device_report 未接受: status=%d", response.StatusCode)
+	}
+	receipt, err := wire.DecodeDeviceReportReceipt(responseBody, envelope)
+	if err != nil {
+		return nil, err
+	}
+	return receipt.Observations, nil
 }
 
 func (client *PrivateDeviceHTTPClient) CloseIdleConnections() {

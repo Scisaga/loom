@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net"
@@ -111,7 +112,7 @@ func (service *PrivateDeviceConfigService) ServeHTTP(writer http.ResponseWriter,
 		return
 	}
 	if !matchesExactPrivateListener(request, service.localAddress) || request.TLS == nil ||
-		request.TLS.Version != tls.VersionTLS13 || len(request.TLS.PeerCertificates) != 1 {
+		request.TLS.Version != tls.VersionTLS13 || len(request.TLS.PeerCertificates) < 1 || len(request.TLS.PeerCertificates) > 8 {
 		writePrivateControlError(writer, http.StatusForbidden, "[device_config] Device mTLS 被拒绝")
 		return
 	}
@@ -123,7 +124,7 @@ func (service *PrivateDeviceConfigService) ServeHTTP(writer http.ResponseWriter,
 	}
 	trustedTime := service.now().UTC()
 	identity, err := service.authenticate(request.Context(), request.TLS.PeerCertificates[0].Raw, trustedTime)
-	if err != nil {
+	if err != nil || !matchesDevicePresentedChain(identity, request.TLS.PeerCertificates) {
 		writePrivateControlError(writer, http.StatusForbidden, "[device_config] Device identity 被拒绝")
 		return
 	}
@@ -146,6 +147,25 @@ func (service *PrivateDeviceConfigService) ServeHTTP(writer http.ResponseWriter,
 	writer.Header().Set("X-Content-Type-Options", "nosniff")
 	writer.WriteHeader(http.StatusOK)
 	_, _ = writer.Write(body)
+}
+
+// Android/Windows 的标准 TLS key manager 会发送完整链。身份仍只由当前
+// certified profile 验证；附带的 issuer 必须逐张匹配该 profile，不能改变信任根。
+func matchesDevicePresentedChain(identity VerifiedDeviceIdentityV1, chain []*x509.Certificate) bool {
+	if identity.certificate == nil || len(chain) < 1 || len(chain) > 8 ||
+		chain[0] == nil || !bytes.Equal(chain[0].Raw, identity.certificate.Raw) {
+		return false
+	}
+	issuers := identity.record.ProfileState.ProfileIntent.IssuerChainDER
+	if len(chain)-1 > len(issuers) {
+		return false
+	}
+	for i, certificate := range chain[1:] {
+		if certificate == nil || base64.RawURLEncoding.EncodeToString(certificate.Raw) != issuers[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func marshalDeviceConfigDelivery(identity VerifiedDeviceIdentityV1) ([]byte, error) {

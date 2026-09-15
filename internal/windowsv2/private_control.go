@@ -215,6 +215,7 @@ type DeviceReportOptions struct {
 	PayloadSchema  int64
 	Payload        json.RawMessage
 	Schemas        wire.DeviceReportSchemaRegistry
+	Observations   func([]json.RawMessage)
 }
 
 func PrepareDeviceReport(options DeviceReportOptions) (wire.DeviceReportEnvelopeV2, error) {
@@ -313,9 +314,13 @@ func SubmitDeviceReport(ctx context.Context, options DeviceReportOptions,
 			submitErr = err
 			continue
 		}
-		submitErr = client.PostDeviceReport(ctx, envelope)
+		var observations []json.RawMessage
+		observations, submitErr = client.PostDeviceReportWithObservations(ctx, envelope)
 		client.CloseIdleConnections()
 		if submitErr == nil {
+			if options.Observations != nil && observations != nil {
+				options.Observations(observations)
+			}
 			return nil
 		}
 	}

@@ -193,7 +193,7 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 			path    string
 			handler http.Handler
 		}{
-			{webui.ReadOnlySocketPath, webui.Handler(deps)},
+			{webui.ReadOnlySocketPath, deviceObservationSocketHandler(webui.Handler(deps), tbl, now, maxAge)},
 			{webui.AdminSocketPath, webui.Handler(adminDeps)},
 		} {
 			listener, err := listenControlUISocket(candidate.path)

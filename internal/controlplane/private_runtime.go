@@ -29,6 +29,7 @@ type PrivateRuntimeOptions struct {
 	Identities     DeviceIdentityReader
 	VerifyReport   DeviceReportPayloadVerifier
 	CommitReport   DeviceReportCommitter
+	Observations   DeviceReportObservationReader
 	ReportSchemas  wire.DeviceReportSchemaRegistry
 	Now            func() time.Time
 	Listen         func(context.Context, string, string) (net.Listener, error)
@@ -112,8 +113,13 @@ func NewPrivateRuntime(options PrivateRuntimeOptions) (*PrivateRuntime, error) {
 		case "device_config":
 			handler, err = NewPrivateDeviceConfigService(service, options.Identities, options.Now)
 		case "device_report":
-			handler, err = NewPrivateDeviceReportService(service, options.Identities, options.VerifyReport,
+			var reports *PrivateDeviceReportService
+			reports, err = NewPrivateDeviceReportService(service, options.Identities, options.VerifyReport,
 				options.CommitReport, options.ReportSchemas, options.Now, 24*time.Hour, 5*time.Minute)
+			if err == nil {
+				reports.SetObservationReader(options.Observations)
+				handler = reports
+			}
 		}
 		if err != nil || handler == nil {
 			return nil, fmt.Errorf("[D131 runtime] private %s 初始化失败: %w", service.Role, err)

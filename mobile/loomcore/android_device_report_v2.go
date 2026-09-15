@@ -20,6 +20,45 @@ const (
 	maximumAndroidDeviceReportBytes  = 4 << 20
 )
 
+// HTTP/TLS 宿主验证服务身份后调用；确认本次报告的 exact 回执再把原始观测
+// 交给既有 route verifier。这里不测量、不签发服务器观测。
+func AndroidV2ReportReceiptObservations(reportJSON, receiptJSON []byte) ([]byte, error) {
+	var report wire.DeviceReportEnvelopeV2
+	if err := decodeExactAndroidV2(reportJSON, maximumAndroidDeviceReportBytes, &report, "Device report"); err != nil {
+		return nil, err
+	}
+	receipt, err := wire.DecodeDeviceReportReceipt(receiptJSON, &report)
+	if err != nil {
+		return nil, err
+	}
+	return wire.MarshalCanonical(receipt.Observations)
+}
+
+// RetireAndroidV2DeviceReport 只用重新验证的本机 state 退休旧报告，返回空 bytes 表示继续 exact 重试。
+func RetireAndroidV2DeviceReport(stateJSON, identitySPKIDER, reportJSON []byte, trustedTime string) ([]byte, error) {
+	state, identityHash, identity, err := androidDeviceReportContext(stateJSON, identitySPKIDER)
+	if err != nil {
+		return nil, err
+	}
+	instant, err := wire.ParseTimeZ(trustedTime)
+	if err != nil {
+		return nil, err
+	}
+	var envelope wire.DeviceReportEnvelopeV2
+	if err := decodeExactAndroidV2(reportJSON, maximumAndroidDeviceReportBytes, &envelope, "Device report"); err != nil {
+		return nil, err
+	}
+	retired, err := wire.RetireObsoleteDeviceReport(&envelope, state.Floors, identity,
+		state.Envelope.Payload.DeviceID, identityHash, instant, androidDeviceReportSchemas())
+	if err != nil {
+		return nil, err
+	}
+	if retired == nil {
+		return []byte{}, nil
+	}
+	return wire.MarshalCanonical(retired)
+}
+
 type androidDeviceReportDraftV1 struct {
 	Schema         int                     `json:"schema"`
 	Body           wire.DeviceReportBodyV2 `json:"body"`

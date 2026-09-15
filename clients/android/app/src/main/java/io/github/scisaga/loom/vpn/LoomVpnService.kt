@@ -459,7 +459,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         profile: ManagedProfile,
     ): ManagedProfile? = v2Control.withLock {
         var current = activeManagedProfile?.takeIf { it.protocol == 2 } ?: profile
-        if (!reporter.hasPending(current.nodeID)) {
+        run {
             try {
                 val refresh = reporter.refreshConfiguration()
                 currentCoroutineContext().ensureActive()
@@ -479,9 +479,17 @@ class LoomVpnService : VpnService(), PlatformInterface {
             }
         }
         try {
-            val sequence = reporter.sendHealth(current, healthy = !RouteManager.get(profileContext).status.value.blocked)
+            val accepted = reporter.sendHealth(current, healthy = !RouteManager.get(profileContext).status.value.blocked)
             currentCoroutineContext().ensureActive()
-            VpnRuntime.transform { it.copy(trustedReport = "成功（sequence $sequence，HTTP 204）") }
+            VpnRuntime.transform { it.copy(trustedReport = "成功（sequence ${accepted.sequence}，HTTP ${accepted.response.statusCode}）") }
+            try {
+                accepted.response.observations?.let { RouteManager.get(profileContext).consumeObservations(current, it) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                // 报告已接受；观测验签失败不应使该序号重发，也不追加主动探测。
+                Log.w(TAG, "Android v2 server observations were not adopted", error)
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {

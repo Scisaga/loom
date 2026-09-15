@@ -22,6 +22,7 @@ type preparedAndroidV2Runtime struct {
 	DeviceGeneration int64  `json:"device_generation"`
 	SingBoxConfig    string `json:"sing_box_config"`
 	RoutePlan        string `json:"route_plan,omitempty"`
+	ObservationCA    string `json:"observation_ca,omitempty"`
 }
 
 // PrepareAndroidV2Runtime 只从已原子安装且重新校验的 Device state
@@ -63,11 +64,35 @@ func PrepareAndroidV2Runtime(stateJSON []byte) ([]byte, error) {
 	if err := ValidateAndroidV2RuntimeHost([]byte(prepared.SingBoxConfig)); err != nil {
 		return nil, err
 	}
+	ca, err := androidObservationCA(state.material().Credentials)
+	if err != nil {
+		return nil, err
+	}
 	return wire.MarshalCanonical(preparedAndroidV2Runtime{
 		Schema: 1, DeviceID: state.Envelope.Payload.DeviceID,
 		HeadHash: state.Floors.HeadHash, DeviceGeneration: state.Floors.DeviceGeneration,
-		SingBoxConfig: prepared.SingBoxConfig, RoutePlan: prepared.RoutePlan,
+		SingBoxConfig: prepared.SingBoxConfig, RoutePlan: prepared.RoutePlan, ObservationCA: ca,
 	})
+}
+
+func androidObservationCA(credentials []androidInstalledSecretV1) (string, error) {
+	var selected *androidInstalledSecretV1
+	for i := range credentials {
+		credential := &credentials[i]
+		if credential.SecretID == wire.DeviceObservationCASecretIDV1 && credential.Purpose == "device_credential" &&
+			(selected == nil || credential.Generation > selected.Generation) {
+			selected = credential
+		}
+	}
+	// 未授权观测信任锚时保持未知，不能用 control CA 或 HTTP 成功代替验签。
+	if selected == nil {
+		return "", nil
+	}
+	value, err := base64.RawURLEncoding.DecodeString(selected.SecretBytes)
+	if err != nil || wire.ValidateRuntimeCABundle(string(value)) != nil {
+		return "", errors.New("[Android runtime] 服务器观测 CA 无效")
+	}
+	return string(value), nil
 }
 
 func selectAndroidRuntimeConfig(configs []androidInstalledConfigV1) (*androidInstalledConfigV1, error) {

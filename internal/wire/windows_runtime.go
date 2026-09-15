@@ -47,7 +47,7 @@ func ValidateWindowsRuntimeArtifact(artifact *WindowsRuntimeArtifactV1) error {
 		artifact.Files[0].Path != "agent/config.json" || artifact.Files[1].Path != "sing-box/config.json" {
 		return errors.New("[Windows runtime] artifact header/files 无效")
 	}
-	if err := validateWindowsRuntimeCABundle(artifact.CABundlePEM); err != nil {
+	if err := ValidateRuntimeCABundle(artifact.CABundlePEM); err != nil {
 		return err
 	}
 	for index, ref := range artifact.CredentialRefs {
@@ -90,7 +90,8 @@ func ValidateWindowsRuntimeArtifact(artifact *WindowsRuntimeArtifactV1) error {
 	return nil
 }
 
-func validateWindowsRuntimeCABundle(value string) error {
+// ValidateRuntimeCABundle 校验已认证运行配置中的公共 CA；不接收私钥或叶证书。
+func ValidateRuntimeCABundle(value string) error {
 	if value == "" || len(value) > 1<<20 || !utf8.ValidString(value) || strings.IndexByte(value, 0) >= 0 {
 		return errors.New("[Windows runtime] CA bundle 大小或编码无效")
 	}

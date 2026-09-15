@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -368,12 +369,18 @@ func reconcileWindowsV2Control(ctx context.Context, root string,
 		StatePath: windowsV2StatePath(root), IdentityPath: windowsV2IdentityPath(root),
 		Protector: protector, Dial: dial, Now: time.Now, Timeout: 30 * time.Second,
 		Schemas: wire.DeviceReportSchemaRegistry{"health": 1},
-	}
-	if _, _, err := windowsv2.RetryPendingDeviceReportDurable(ctx,
-		windowsV2ReportJournalPath(root), reportOptions); err != nil {
-		// 已签 envelope 必须在相同 floors 下 exact 重放；报告失败不停止
-		// 当前数据面，但本轮不能先推进 state pointer 令该序号永久冲突。
-		return err
+		Observations: func(observations []json.RawMessage) {
+			if manager.active == nil || manager.active.spec.AgentRuntime == nil {
+				return
+			}
+			ca, err := os.ReadFile(manager.active.spec.CAPath)
+			if err == nil {
+				err = manager.active.spec.AgentRuntime.IngestObservations(observations, ca, time.Now())
+			}
+			if err != nil {
+				log.Printf("Windows v2 服务器观测未采用: %v", err)
+			}
+		},
 	}
 	validate := func(candidate *windowsv2.StateV1) error {
 		return preflightWindowsV2RuntimeCandidate(ctx, root, candidate, edition)
