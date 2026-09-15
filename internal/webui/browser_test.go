@@ -163,7 +163,7 @@ func TestBrowserNormalNavigationFilteringAndDeviceCreation(t *testing.T) {
 		return View{Nodes: []NodeView{{ID: "demo-device", Declared: true, Health: []string{"healthy", "problem"}[generation], Source: "签名健康转述", ObservedAt: at, PresenceAt: at}}}
 	}
 	d.Control.Clients.List = func() (ClientInventory, error) {
-		return ClientInventory{Clients: []ClientView{{ID: "demo-device", Name: "Demo device", Platform: "linux-server", Responsibilities: []string{"use_loom", "forward"}, DestinationGrants: []string{"demo-grant"}, Membership: "active", Status: "ready"}, {ID: "demo-phone", Name: "<img src=x onerror=alert(1)>", Platform: "android", Responsibilities: []string{"use_loom"}, Membership: "active", Status: "ready"}}}, nil
+		return ClientInventory{Clients: []ClientView{{ID: "demo-device", Name: "Demo device", Platform: "linux-server", Responsibilities: []string{"use_loom", "forward"}, DestinationGrants: []string{"demo-grant"}, Membership: "active", Status: "ready"}, {ID: "demo-phone", Name: "<img src=x onerror=alert(1)>", Platform: "android", Responsibilities: []string{"use_loom"}, Membership: "active", Status: "ready", IdentitySource: "enrollment", KeyFingerprint: "demo-key", EnrolledAt: "2026-09-01T00:00:00Z"}, {ID: "demo-pending", Name: "Demo pending", Platform: "windows-desktop", Responsibilities: []string{"use_loom"}, Membership: "identity only", Status: "pending", IdentitySource: "enrollment"}}}, nil
 	}
 	created := make(chan ClientInviteInput, 1)
 	d.Control.Clients.CreateInvite = func(input ClientInviteInput) (ClientInviteView, error) {
@@ -173,21 +173,33 @@ func TestBrowserNormalNavigationFilteringAndDeviceCreation(t *testing.T) {
 	d.Control.Clients.InviteArtifact = func(id string) (ClientInviteArtifact, error) {
 		return ClientInviteArtifact{ClientID: "demo-created", Platform: "windows-desktop", InviteURI: "loom://demo-invite", ExpiresAt: time.Now().Add(time.Hour).Format(time.RFC3339)}, nil
 	}
+	renewed := make(chan string, 1)
+	d.Control.Clients.RenewInvite = func(id string) (ClientInviteView, error) {
+		renewed <- id
+		return ClientInviteView{InviteID: "demo-renewed-invite"}, nil
+	}
+	d.Control.Clients.ReplaceDevice = func(string) (ClientInviteView, error) {
+		return ClientInviteView{}, errors.New("取消的重新入网不应提交")
+	}
+	d.Control.Clients.DeleteDevice = func(string) error { return nil }
+	d.Control.Clients.DiscardPending = func(string) error { return nil }
 	result := make(chan string, 1)
 	handler := Handler(d)
 	script := `
-import {matchesDevice,trafficSample,trafficRate,bytes,topologyPositions,historyPoints} from '/assets/model.js';
+import {matchesDevice,trafficSample,trafficRate,bytes,topologyPositions,historyPoints,deviceActions} from '/assets/model.js';
 const assert=(value,message)=>{if(!value)throw Error(message)};
 const wait=async(fn)=>{for(let i=0;i<300;i++){if(fn())return;await new Promise(r=>setTimeout(r,20));}throw Error('Timed out: '+fn)};
 try{
  await wait(()=>document.documentElement.dataset.ready==='true');
  const marker={};window.demoMarker=marker;
+ const stage=document.querySelector('.topology-stage').getBoundingClientRect(),sidebar=document.querySelector('.topology-side').getBoundingClientRect();
+ assert(Math.abs(stage.top-sidebar.top)<2&&Math.abs(stage.bottom-sidebar.bottom)<2,'topology cards are not aligned');
  const topologyNode=document.querySelector('.topology-node');assert(topologyNode,'Direct Topology load missing graph');
  const before=topologyNode.querySelector('.node').getAttribute('cx');topologyNode.dispatchEvent(new MouseEvent('click',{bubbles:true}));assert(topologyNode.getAttribute('aria-pressed')==='true','Node focus did not lock');
  topologyNode.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert(topologyNode.getAttribute('aria-pressed')==='false','Escape did not clear focus');assert(topologyNode.querySelector('.node').getAttribute('cx')===before,'Focus moved topology nodes');
 
  document.querySelector('a[href="/devices"]').click();await wait(()=>document.querySelector('#devices-body'));
- assert(document.querySelectorAll('#devices-body tr').length===2,'initial device count');
+ assert(document.querySelectorAll('#devices-body tr').length===3,'initial device count');
  assert(!document.querySelector('#devices-body img'),'untrusted device name became markup');
  const role=document.querySelector('[name=role][value=forward]');role.checked=true;role.dispatchEvent(new Event('input',{bubbles:true}));
  assert(document.querySelectorAll('#devices-body tr').length===1,'responsibility filtering');assert(location.search.includes('role=forward'),'filter URL');
@@ -197,8 +209,29 @@ try{
  assert(row===document.querySelector('#devices-body tr'),'live update replaced device row');assert(grant.open,'live update lost expansion');assert(document.activeElement===search,'live update stole focus');
  for(const [path,selector] of [['/','#overview-nodes'],['/topology','#links-body'],['/routing','#routes-body'],['/services','#services-body'],['/releases','#release-content'],['/events','#events-body'],['/ssot','#ssot-form']]){document.querySelector('nav a[href="'+path+'"]').click();await wait(()=>document.querySelector(selector));assert(!document.querySelector('#retry-page'),'page failed: '+path);}
  document.querySelector('nav a[href="/devices"]').click();await wait(()=>document.querySelector('#devices-body'));
+
+ document.querySelector('a[href="/devices/demo-phone"]').click();await wait(()=>document.querySelector('#device-status'));
+ assert(!document.querySelector('[data-device-action=renew]'),'joined device offered a new join code');
+ assert(document.querySelector('#device-tunnels').hidden&&document.querySelector('#device-history').hidden,'phone showed empty WireGuard panels');
+ assert(document.querySelector('[data-device-action=replace]').textContent==='Rejoin device','unclear replacement label');
+ assert(document.querySelector('#device-actions').textContent.includes('new device ID'),'replacement effects missing');
+ let confirmation='';window.confirm=message=>{confirmation=message;return false};document.querySelector('[data-device-action=replace]').click();
+ assert(confirmation.includes('old local identity')&&confirmation.includes('revoked'),'rejoin confirmation omitted effects');
+ const admin={renew:true,replace:true,delete:true,discard:true,purge:true};
+ const joined={status:'stale',membership:'active',identity_source:'enrollment',claimed_at:'demo-time',key_fingerprint:'demo-key',responsibilities:['use_loom']};
+ assert(deviceActions(joined,admin).join(',')==='replace,delete','runtime state changed lifecycle actions');
+ for(const change of [{responsibilities:['use_loom','control']},{responsibilities:['use_loom','forward']},{identity_source:'existing_certificate'},{status:'provisioning'},{claimed_at:''}])assert(!deviceActions({...joined,...change},admin).includes('replace'),'unsupported replacement offered');
+ assert(!deviceActions({status:'revoked'},admin,{Declared:true}).includes('purge'),'declared archive offered purge');
+ document.querySelector('nav a[href="/devices"]').click();await wait(()=>document.querySelector('#devices-body'));
+ document.querySelector('a[href="/devices/demo-pending"]').click();await wait(()=>document.querySelector('[data-device-action=renew]'));
+ assert(!document.querySelector('[data-device-action=replace]')&&!document.querySelector('[data-device-action=delete]'),'pending device offered joined actions');
+ window.confirm=()=>true;document.querySelector('[data-device-action=renew]').click();
+ await wait(()=>location.pathname==='/devices/invites/demo-renewed-invite'&&document.querySelector('#invite-uri'));
+ document.querySelector('nav a[href="/devices"]').click();await wait(()=>document.querySelector('#devices-body'));
  document.querySelector('a[href="/devices?new=1"]').click();await wait(()=>document.querySelector('#enrollment-form'));
  const form=document.querySelector('#enrollment-form'),direction=document.querySelector('#direction-choice');
+ const settings=document.querySelector('.enrollment-settings').getBoundingClientRect(),grants=document.querySelector('.enrollment-access').getBoundingClientRect();
+ assert(grants.left>settings.right&&Math.abs(grants.top-settings.top)<2,'add device did not use both columns');
  assert(getComputedStyle(direction).display==='none','Windows direction visible');assert(document.querySelector('#role-choices').hidden,'Windows unsupported roles visible');
  form.elements.platform.value='linux-server';form.dispatchEvent(new Event('change',{bubbles:true}));const forward=form.querySelector('[value=forward]');forward.checked=true;forward.dispatchEvent(new Event('change',{bubbles:true}));
  assert(getComputedStyle(direction).display!=='none','forward direction unavailable');assert(!document.querySelector('#egress-choice').hidden,'forward egress option hidden');
@@ -249,7 +282,7 @@ try{
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, browser, "--headless", "--no-sandbox", "--disable-gpu", "--no-proxy-server", "--no-first-run", "--disable-background-networking", "--user-data-dir="+t.TempDir(), "--dump-dom", "--virtual-time-budget=8000", server.URL+"/topology")
+	command := exec.CommandContext(ctx, browser, "--headless", "--no-sandbox", "--disable-gpu", "--no-proxy-server", "--no-first-run", "--disable-background-networking", "--user-data-dir="+t.TempDir(), "--dump-dom", "--window-size=1586,992", "--virtual-time-budget=8000", server.URL+"/topology")
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -261,6 +294,14 @@ try{
 		}
 	case <-ctx.Done():
 		t.Fatal("浏览器测试未返回结果")
+	}
+	select {
+	case id := <-renewed:
+		if id != "demo-pending" {
+			t.Fatalf("错误的加入码重发对象: %s", id)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("未领取设备的正常重发未接通")
 	}
 	select {
 	case input := <-created:

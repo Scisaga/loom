@@ -147,7 +147,7 @@ wrapping key 只用于凭据包装。相同 token + stable core 的跨入口重�
 
 ### 二维码重发与本机身份丢失
 
-未领取的身份预留可在 Device 详情页**重新签发**加入码。名称、ID、平台、职责和 grants
+未领取的身份预留可在 Device 详情页通过 **New join code** 重新签发加入码。已领取、正在加入、已归档的设备不显示此按钮；运行时离线或缺少观测不改变这个条件。名称、ID、平台、职责和 grants
 保持原值；目标 v2 没有需要保持的 Device-wide direction。创建端先预生成并封存新 token/artifact，再用一个原子 proposal 同时撤销
 旧 record 并创建绑定新 commitment/private-binding hash 的 public record，完整 ref 仍只在
 control-private binding；取得 QC 后才一次性交付新载体。
@@ -158,7 +158,7 @@ control-private binding；取得 QC 后才一次性交付新载体。
 
 Windows 的“删除本机 Device”会清除本机身份和配置，不通知控制平面，也不自动撤销网络
 中的凭据。管理员确认本机身份已删除后，可对 Enrollment 生成的纯 `use_loom` Device
-使用“Rejoin Device”。控制平面提交移除旧成员及其专属凭据、将旧身份归档，并分配新 ID 与
+使用 **Rejoin device**。详情页及提交确认必须说明它用于本机身份丢失，会撤销旧身份、分配新 ID，保留名称、平台、职责与授权；正常重连继续使用保存的身份。服务器、控制设备和从既有证书导入的设备不显示此快捷操作。控制平面提交移除旧成员及其专属凭据、将旧身份归档，并分配新 ID 与
 新二维码；只有该替换取得对应 reader 协议要求的认证（v1 单签或 v2 replication QC）后才交付。
 名称、平台和原职责/授权保持不变。旧证书属于旧 ID，不能
 用于领取新身份。归档记录保留 `replaced_by`，新记录保留 `replaces`。
@@ -193,8 +193,8 @@ Archived devices 中已为 `revoked` 且不在当前 SSOT 的身份可从详情�
 归档 identity 与旧邀请记录，不重复撤销、轮换或影响 replacement Device；仍在 SSOT 的记录
 和非 revoked 身份由服务端拒绝删除。
 
-Device inventory 首屏保留可独立阅读的 SSR 快照，随后经 private HTTPS 同源 WebSocket
-`/api/control/device-inventory/live` 接收完整列表投影；可信 Device report、gossip/本机观测或
+Device inventory 由浏览器加载同源 JSON 快照，随后经 private HTTPS 同源 WebSocket
+`/api/control/device-inventory/live` 接收完整列表投影；页面切换不重新加载文档，筛选与展开状态保留。可信 Device report、gossip/本机观测或
 identity/SSOT 事务成功后由服务端唤醒连接，浏览器不轮询列表 API。连接中断时页面明确显示
 重连状态并按有界退避恢复，不能继续把旧画面标成实时。所有 Linux 节点的 Loom report
 进程及 Android Device 的已连接 VPN 服务每五秒发送只含 `node`、`ts`、`signature` 的独立签名心跳；十五秒
