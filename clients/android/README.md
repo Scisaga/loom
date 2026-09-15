@@ -350,21 +350,59 @@ tracked only in `docs/status/current.md`; this paragraph is not a completion cla
 ## Reproducible Linux build
 
 Required tools are OpenJDK 17, Android SDK platform 35, build-tools 35.0.1,
-NDK 28.0.13004108 and either an arm64 device or an x86_64 emulator. Set
-`ANDROID_HOME` and run:
+and NDK 28.0.13004108. Device acceptance additionally needs an arm64 device
+or an x86_64 emulator, as appropriate to the checks.
+
+**Default delivery includes both Debug and signed Release APKs.** Apply this to
+every change to Android source, resources, icons, manifest, build settings or
+native inputs, including small follow-up fixes, and to APK build/update requests.
+A successful Debug install does not update `app-release.apk`. Only an explicit
+user restriction permits a single-variant delivery; documentation/prototype-only
+changes do not require rebuilding APKs. Agents must also follow the
+[Android delivery prompt](../../docs/android-client-delivery-prompt.md).
+
+Run from `clients/android`, using the existing deployment signing environment
+and trust anchor described below. Prepare or verify `app/libs/loom-box.aar` as
+described below before running:
 
 ```bash
-./scripts/build-mobile-aar.sh
-./gradlew --no-daemon --max-workers=4 testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
+export ANDROID_HOME="${ANDROID_HOME:-/opt/android-sdk}"
+./gradlew --no-daemon --max-workers=4 lintDebug assembleDebug && \
+  ./scripts/build-release.sh
 ```
 
-The first command checks out the exact sing-box commit recorded in
-`third_party/NOTICE.md`, binds libbox and `mobile/loomcore` into one AAR,
-verifies its two ABIs and prints its SHA-256. Gradle outputs the installable
-debug APK under `app/build/outputs/apk/debug/`. The app package includes the
-pinned native NOTICE and sing-box license under `assets/`; release construction
-verifies those exact bytes and emits a deterministic SPDX 2.3 dependency SBOM at
-`app/build/reports/sbom/loom-android-release.spdx.json`.
+Keep application and native inputs unchanged between the two builds. The Release
+helper also runs `testDebugUnitTest`, `lintRelease` and `generateAndroidSbom`,
+verifies the APK signature, rejects debug-only control code, and checks bundled
+NOTICE/license bytes. These commands must complete successfully for both APKs;
+an old output file left by a failed build is not a current deliverable.
+
+| Deliverable | Path relative to `clients/android` |
+|---|---|
+| Debug APK, for development and compatible device upgrades | `app/build/outputs/apk/debug/app-debug.apk` |
+| Signed Release APK, the default download | `app/build/outputs/apk/release/app-release.apk` |
+| Release dependency SBOM (SPDX 2.3) | `app/build/reports/sbom/loom-android-release.spdx.json` |
+
+Record the actual application source commit, AAR digest and both APK hashes.
+Verify versions and packaged resources; icon changes require checking both the
+Application PNG resources used by APK previews and the launcher's adaptive icon.
+If installation is authorized, preserve device data, use a matching signer, and
+verify the installed APK hash. An existing Debug installation may require Debug
+for that upgrade; still deliver Release and explicitly name the installed variant.
+Never uninstall or clear app data merely to switch signing certificates. Store
+real acceptance evidence only under the ignored `docs/status/` directory.
+
+Reuse `app/libs/loom-box.aar` when its native source/dependencies are unchanged
+and its digest matches the audited `third_party/NOTICE.md`. If missing or affected
+by the change, run `./scripts/build-mobile-aar.sh` before either APK build and
+review/update the native provenance in `third_party/NOTICE.md`. That helper
+checks out the pinned sing-box commit, binds libbox and `mobile/loomcore` into one
+AAR, verifies its two ABIs and prints its SHA-256. A digest check alone does not
+prove that an old AAR contains newly changed native code.
+
+Build `assembleDebugAndroidTest` when the change needs instrumented acceptance.
+Choose device checks for the actual change; a color/icon correction does not
+require rerunning VPN or entry-probe acceptance.
 
 An APK that can enroll must embed the deployment Ed25519 public key. Gradle
 uses the first available value from:
@@ -386,17 +424,21 @@ environment variables:
 
 Keep the encrypted keystore and its credentials outside Git. The repository's
 ignored default credential file is `../../deploy/android/android-signing.env`;
-it can be overridden with `LOOM_ANDROID_SIGNING_ENV_FILE`. Build and verify a
-private signed APK with:
+it can be overridden with `LOOM_ANDROID_SIGNING_ENV_FILE`. The default build
+above loads this existing file automatically for Release. If credentials are
+missing, report the Release build as incomplete; do not substitute a Debug APK
+or an older Release.
+
+Only during initial signing setup, when no release identity exists, provision
+the upgrade key once:
 
 ```bash
 ./scripts/provision-release-key.sh # exactly once; refuses to overwrite
-ANDROID_HOME=/path/to/android-sdk ./scripts/build-release.sh
 ```
 
-Before handing an APK to physical acceptance, the same signing environment can
-also prove that two clean builds produce byte-identical signed APK and SPDX
-bytes:
+Provisioning is not a routine build step. For explicit reproducibility acceptance
+or changes that affect reproducibility, the same signing environment can prove
+that two clean builds produce byte-identical signed APK and SPDX bytes:
 
 ```bash
 ANDROID_HOME=/path/to/android-sdk ./scripts/verify-reproducible-release.sh

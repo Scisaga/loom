@@ -648,6 +648,10 @@ Android 必须提供应用宿主，因为只有应用可以通过 `VpnService` �
 原生宿主使用加密配置目录与各配置独立的 Keystore alias；原配置原位迁移。
 安装与真机验收证据只记录在当前状态中，原型不能代替运行验证。
 
+**APK 交付：** 每次影响安装包的改动默认同步构建 Debug 与已签名 Release，默认下载为
+`app-release.apk`；真机为保留已有签名和数据安装 Debug 时，仍须交付 Release 并明确安装变体。
+执行入口与完成判定见 [Android 构建与交付提示词](android-client-delivery-prompt.md)。
+
 Android App 包含：
 
 - 加入网络二维码扫描与 `.loom-invite` 文件导入；
