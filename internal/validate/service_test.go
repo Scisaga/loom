@@ -19,8 +19,7 @@ nodes:
   - {id: sg-v, public_endpoint: 192.0.2.3, server: {direction: reverse_only, inbound_port: 4433, egress_capable: true, wg_public_key: k3}}
 `
 
-// TestRejectsService 覆盖 §19"校验器必须拒绝的矛盾配置"表里依赖等价类与
-// 访问声明的那几条。
+// TestRejectsService 覆盖等价类与访问声明之间的矛盾配置。
 func TestRejectsService(t *testing.T) {
 	cases := []struct {
 		name string
@@ -28,7 +27,7 @@ func TestRejectsService(t *testing.T) {
 		yaml string
 	}{
 		{
-			name: "§1 把节点 id 写进等价类成员",
+			name: "把节点 id 写进等价类成员",
 			want: "目标不是节点",
 			yaml: topo + `
 equivalence_classes:
@@ -39,7 +38,7 @@ equivalence_classes:
       - {address: cn-a, access_contract: {}}`,
 		},
 		{
-			name: "§4.4 l4_direct 但成员契约不同构",
+			name: "l4_direct 但成员契约不同构",
 			want: "l7_gateway 承载",
 			yaml: topo + `
 equivalence_classes:
@@ -51,7 +50,7 @@ equivalence_classes:
       - {address: "https://b.example.net/v1", access_contract: {domain: b.example.net, cert_ca: webpki, credential: v2}}`,
 		},
 		{
-			name: "§4.4 l7_gateway 允许契约不同构",
+			name: "l7_gateway 允许契约不同构",
 			want: "",
 			yaml: topo + `
 equivalence_classes:
@@ -63,7 +62,7 @@ equivalence_classes:
       - {address: "https://b.example.net/v1", access_contract: {domain: b.example.net, cert_ca: webpki, credential: v2}}`,
 		},
 		{
-			name: "§16.2 objective ttft 但只有 L4 观测点",
+			name: "objective ttft 但只有 L4 观测点",
 			want: "不是 L4 能被动观测的量",
 			yaml: topo + `
 equivalence_classes:
@@ -75,7 +74,7 @@ declarations:
   - {id: d1, address_axis: "class:c1", egress_axis: any, objective: ttft, top_n: 2, tuning_period: 10m}`,
 		},
 		{
-			name: "§5.2 objective cost 但没有价格数据源",
+			name: "objective cost 但没有价格数据源",
 			want: "不会从度量里长出来",
 			yaml: topo + `
 equivalence_classes:
@@ -87,7 +86,7 @@ declarations:
   - {id: d1, address_axis: "class:c1", egress_axis: any, objective: cost, top_n: 2, tuning_period: 10m}`,
 		},
 		{
-			name: "§5.8 非 fail_closed fallback 当前不会执行",
+			name: "非 fail_closed fallback 当前不会执行",
 			want: "fallback=\"last_known_good\" 当前运行时未实现",
 			yaml: topo + `
 declarations:
@@ -99,7 +98,7 @@ declarations:
     fallback: last_known_good`,
 		},
 		{
-			name: "§5.1 constraints 当前不会执行",
+			name: "constraints 当前不会执行",
 			want: "当前运行时未实现候选过滤",
 			yaml: topo + `
 declarations:
@@ -113,42 +112,42 @@ declarations:
       - {kind: compliance, expr: 数据不出省}`,
 		},
 		{
-			name: "§5.5 地址由请求决定却配了 ranking_period",
+			name: "地址由请求决定却配了 ranking_period",
 			want: "排序周期无意义",
 			yaml: topo + `
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m, ranking_period: 30m}`,
 		},
 		{
-			name: "§4 address_axis 取值非法",
+			name: "address_axis 取值非法",
 			want: "address_axis 非法",
 			yaml: topo + `
 declarations:
   - {id: d1, address_axis: whatever, egress_axis: any, objective: latency, tuning_period: 10m}`,
 		},
 		{
-			name: "§4 egress_axis 钉死了不存在的节点",
+			name: "egress_axis 钉死了不存在的节点",
 			want: "钉死了不存在的节点",
 			yaml: topo + `
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: "pinned:ghost", objective: latency, tuning_period: 10m}`,
 		},
 		{
-			name: "§4 钉死的出口没有 egress_capable",
+			name: "钉死的出口没有 egress_capable",
 			want: "它出不了公网",
 			yaml: topo + `
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: "pinned:cn-b", objective: latency, tuning_period: 10m, allowed_servers: [cn-b]}`,
 		},
 		{
-			name: "§5.1 钉死的出口不在 allowed_servers 里",
+			name: "钉死的出口不在 allowed_servers 里",
 			want: "不在 allowed_servers 里",
 			yaml: topo + `
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: "pinned:sg-v", objective: latency, tuning_period: 10m, allowed_servers: [cn-a]}`,
 		},
 		{
-			name: "§5.6 地址从等价类里选却缺 top_n",
+			name: "地址从等价类里选却缺 top_n",
 			want: "显式声明 top_n",
 			yaml: topo + `
 equivalence_classes:
@@ -160,7 +159,7 @@ declarations:
   - {id: d1, address_axis: "class:c1", egress_axis: any, objective: latency, tuning_period: 10m}`,
 		},
 		{
-			name: "§7.2 Android 不应有 mixed_ports",
+			name: "Android 不应有 mixed_ports",
 			want: "只能走 TUN",
 			yaml: topo + `  - {id: p1, access: {platform: android, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}}
 declarations:
@@ -169,7 +168,7 @@ credentials:
   - {id: cr1, declaration: d1, secret_ref: v}`,
 		},
 		{
-			name: "§18 Android 多策略由 Service 匹配而非端口区分",
+			name: "Android 多策略由 Service 匹配而非端口区分",
 			want: "",
 			yaml: topo + `  - {id: p1, access: {platform: android, credentials: [cr1, cr2], default_declaration: d1}}
 declarations:
@@ -182,7 +181,7 @@ services:
   - {id: known, declaration: d2, addresses: [known.example]}`,
 		},
 		{
-			name: "§7.3 Linux managed mixed 可以声明设备默认出口",
+			name: "Linux managed mixed 可以声明设备默认出口",
 			want: "",
 			yaml: topo + `  - {id: p1, access: {platform: linux-server, credentials: [cr1, cr2], default_declaration: d2, mixed_ports: [{port: 1080, services: true}]}}
 declarations:
@@ -195,7 +194,7 @@ services:
   - {id: known, declaration: d1, addresses: [known.example]}`,
 		},
 		{
-			name: "§8.2 默认出口必须有本设备凭据",
+			name: "默认出口必须有本设备凭据",
 			want: "没有持有它的有效凭据",
 			yaml: topo + `  - {id: p1, access: {platform: linux-server, credentials: [cr1], default_declaration: d2, mixed_ports: [{port: 1080, services: true}]}}
 declarations:
@@ -207,7 +206,7 @@ services:
   - {id: known, declaration: d1, addresses: [known.example]}`,
 		},
 		{
-			name: "§4.5 设备默认出口不能改写到等价类地址",
+			name: "设备默认出口不能改写到等价类地址",
 			want: "address_axis 不是 from_request",
 			yaml: topo + `  - {id: p1, access: {platform: linux-server, credentials: [cr1], default_declaration: d1, mixed_ports: [{port: 1080, services: true}]}}
 equivalence_classes:
@@ -223,7 +222,7 @@ credentials:
   - {id: cr1, declaration: d1, secret_ref: v1}`,
 		},
 		{
-			name: "§7.3 Windows 固定为 TUN 加中控托管的 1080 mixed",
+			name: "Windows 固定为 TUN 加中控托管的 1080 mixed",
 			want: "",
 			yaml: topo + `  - {id: p1, access: {platform: windows-desktop, credentials: [cr1, cr2], default_declaration: d1, mixed_ports: [{port: 1080, services: true}]}}
 declarations:
@@ -236,7 +235,7 @@ services:
   - {id: known, declaration: d2, addresses: [known.example]}`,
 		},
 		{
-			name: "§7.2 旧 desktop 平台名必须拒绝",
+			name: "旧 desktop 平台名必须拒绝",
 			want: "写错 platform",
 			yaml: topo + `  - {id: p1, access: {platform: desktop, credentials: [cr1]}}
 declarations:
@@ -245,7 +244,7 @@ credentials:
   - {id: cr1, declaration: d1, secret_ref: v}`,
 		},
 		{
-			name: "§7.3 Windows 不接受声明级端口覆盖",
+			name: "Windows 不接受声明级端口覆盖",
 			want: "必须且只能声明一个 services:true 的 1080 mixed",
 			yaml: topo + `  - {id: p1, access: {platform: windows-desktop, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}}
 declarations:
@@ -254,7 +253,7 @@ credentials:
   - {id: cr1, declaration: d1, secret_ref: v}`,
 		},
 		{
-			name: "§7.2 linux-server 没有 mixed 端口就接管不到流量",
+			name: "linux-server 没有 mixed 端口就接管不到流量",
 			want: "接管不到任何流量",
 			yaml: topo + `  - {id: p1, access: {platform: linux-server, credentials: [cr1]}}
 declarations:
@@ -263,7 +262,7 @@ credentials:
   - {id: cr1, declaration: d1, secret_ref: v}`,
 		},
 		{
-			name: "§18 引用已吊销的凭据",
+			name: "引用已吊销的凭据",
 			want: "已吊销",
 			yaml: topo + `  - {id: p1, access: {platform: linux-server, credentials: [cr1], mixed_ports: [{port: 1080, declaration: d1}]}}
 declarations:
@@ -272,7 +271,7 @@ credentials:
   - {id: cr1, declaration: d1, secret_ref: v, revoked_at: "2026-01-01T00:00:00Z"}`,
 		},
 		{
-			name: "§18 expires_at 当前不会执行",
+			name: "expires_at 当前不会执行",
 			want: "当前运行时未实现按时移除凭据",
 			yaml: topo + `
 declarations:
@@ -281,14 +280,14 @@ credentials:
   - {id: cr1, declaration: d1, secret_ref: v, expires_at: "2026-09-01T00:00:00Z"}`,
 		},
 		{
-			name: "§8.2 凭据未绑定访问声明",
+			name: "凭据未绑定访问声明",
 			want: "凭据即访问声明",
 			yaml: topo + `
 credentials:
   - {id: cr1, secret_ref: v}`,
 		},
 		{
-			name: "§7.3 端口绑定了不存在的声明",
+			name: "端口绑定了不存在的声明",
 			want: "不存在的访问声明",
 			yaml: topo + `  - {id: p1, access: {platform: linux-server, credentials: [cr1], mixed_ports: [{port: 1080, declaration: ghost}]}}
 declarations:
@@ -297,14 +296,14 @@ credentials:
   - {id: cr1, declaration: d1, secret_ref: v}`,
 		},
 		{
-			name: "§5.1 allowed_servers 里的节点不是服务器",
+			name: "allowed_servers 里的节点不是服务器",
 			want: "不持有 server 能力",
 			yaml: topo + `  - {id: laptop, access: {}}
 declarations:
   - {id: d1, address_axis: from_request, egress_axis: any, objective: stability, tuning_period: 10m, allowed_servers: [laptop]}`,
 		},
 		{
-			name: "§5.5 缺少 tuning_period",
+			name: "缺少 tuning_period",
 			want: "缺少 tuning_period",
 			yaml: topo + `
 declarations:
@@ -332,7 +331,7 @@ declarations:
 	}
 }
 
-// TestPlatformDerivesTUN:接管方式由平台推导,不是独立配置项(§7.2)。
+// TestPlatformDerivesTUN:接管方式由平台推导,不是独立配置项。
 func TestPlatformDerivesTUN(t *testing.T) {
 	for _, tc := range []struct {
 		p              model.Platform
@@ -359,7 +358,7 @@ func TestPlatformDerivesTUN(t *testing.T) {
 // TestDeployConfigOnlyMissingKeys 钉住本地部署配置"还差什么"。
 //
 // deploy/ssot.yaml 是被 Git 忽略的本地 SSOT,`wg_public_key` 现在是空的 —— 公钥由
-// 节点本地生成并上报,bootstrap 之前拿不到(§13.1)。这个测试断言**除此之外
+// 节点本地生成并上报,bootstrap 之前拿不到。这个测试断言**除此之外
 // 没有别的问题**:一旦 bootstrap 完成、公钥填上,它就应当直接可用。
 //
 // 它同时是个反向保险:改了模型或校验规则后,本地配置如果因为别的原因失效,

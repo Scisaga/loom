@@ -3,7 +3,7 @@ package io.github.scisaga.loom.vpn
 import android.content.Context
 import io.github.scisaga.loom.profiles.ProfileContext
 
-/** §8.3：只保存非秘密的用户连接意图，身份和配置仍由 Keystore 保护。 */
+/** 只保存非秘密的用户连接意图，身份和配置仍由 Keystore 保护。 */
 class VpnConnectionPreference(context: Context) {
     private val preferences = ProfileContext.root(context).getSharedPreferences(FILE, Context.MODE_PRIVATE)
 

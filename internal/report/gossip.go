@@ -21,11 +21,11 @@ type table struct {
 	mu sync.Mutex
 	by map[string]*Observation
 	h  *history
-	// changed 是代际广播 channel。写入一份更新的可信观测时关闭当前代（§16.4），
+	// changed 是代际广播 channel。写入一份更新的可信观测时关闭当前代，
 	// WebSocket 订阅者醒来后重取同一份 View，再订阅下一代。
 	changed chan struct{}
 	// presence 与完整观测分库存放。每五秒心跳只改变在线租约，不得刷新
-	// Observation 的 TS、健康、自检、配置或测量内容（§16.4）。
+	// Observation 的 TS、健康、自检、配置或测量内容。
 	presence        map[string]presenceRecord
 	presencePending map[string]nodepresence.Heartbeat
 	presenceChanged chan struct{}
@@ -78,7 +78,7 @@ func (t *table) presenceChanges() <-chan struct{} {
 }
 
 // putPresenceVerified 只接收调用方已验签的心跳，并按签名时间单调推进。
-// 重放旧包既不能延长在线租约，也不会唤醒浏览器或转发环（§16.4）。
+// 重放旧包既不能延长在线租约，也不会唤醒浏览器或转发环。
 func (t *table) putPresenceVerified(heartbeat nodepresence.Heartbeat, acceptedAt time.Time) bool {
 	at, err := time.Parse(time.RFC3339Nano, heartbeat.TS)
 	if err != nil || heartbeat.Node == "" || acceptedAt.IsZero() {
@@ -93,7 +93,7 @@ func (t *table) putPresenceVerified(heartbeat nodepresence.Heartbeat, acceptedAt
 		}
 	}
 	// 在线租约从本机真正接受到新签名包的时刻开始。使用节点自报时钟会让
-	// 合法时钟偏差把十五秒租约提前耗尽或额外延长（§16.4）。
+	// 合法时钟偏差把十五秒租约提前耗尽或额外延长。
 	t.presence[heartbeat.Node] = presenceRecord{heartbeat: heartbeat, acceptedAt: acceptedAt.UTC()}
 	t.presencePending[heartbeat.Node] = heartbeat
 	t.notifyLocked()
@@ -113,7 +113,7 @@ func (t *table) presenceView() map[string]string {
 }
 
 // takePendingPresences 只取还没转发过的新签名包；同一节点在拥塞期间产生
-// 多个包时保留最新一个，避免每次心跳都重复广播整张 presence 表（§16.4）。
+// 多个包时保留最新一个，避免每次心跳都重复广播整张 presence 表。
 func (t *table) takePendingPresences(limit int) []nodepresence.Heartbeat {
 	t.mu.Lock()
 	defer t.mu.Unlock()

@@ -39,7 +39,7 @@ internal data class V2PrivateControlPlan(
 )
 
 /**
- * #14 / D131：只拨共享 verifier 投影的 exact overlay tuple。这个 socket 故意不
+ * 只拨共享 verifier 投影的 exact overlay tuple。这个 socket 故意不
  * protect，因此进入同一个 VpnService 的 TUN/WG；只有 bootstrap/public socket 绕过 TUN。
  */
 internal class V2PrivateControlClient(
@@ -53,16 +53,16 @@ internal class V2PrivateControlClient(
     }
 
     private fun get(plan: V2PrivateControlPlan, maximumBytes: Int): ByteArray {
-        check(plan.role == "device_config" && plan.path == DEVICE_CONFIG_PATH) { "[D131 Android control] config plan 无效" }
+        check(plan.role == "device_config" && plan.path == DEVICE_CONFIG_PATH) { "[Android control] config plan 无效" }
         val connection = connection(plan, "GET")
         return try {
             connection.setRequestProperty("Accept", DEVICE_CONFIG_DELIVERY_MEDIA_TYPE)
             val status = connection.responseCode
             verifyPeerPin(connection, plan.serverSPKIPins)
-            check(status == 200) { "[D131 Android control] private device_config 被拒绝（HTTP $status）" }
-            check(connection.contentEncoding.isNullOrEmpty()) { "[D131 Android control] private device_config 禁止压缩" }
+            check(status == 200) { "[Android control] private device_config 被拒绝（HTTP $status）" }
+            check(connection.contentEncoding.isNullOrEmpty()) { "[Android control] private device_config 禁止压缩" }
             check(connection.contentType?.substringBefore(';')?.trim() == DEVICE_CONFIG_DELIVERY_MEDIA_TYPE) {
-                "[D131 Android control] private device_config Content-Type 无效"
+                "[Android control] private device_config Content-Type 无效"
             }
             readBounded(connection.inputStream, connection.contentLengthLong, maximumBytes)
         } finally {
@@ -71,8 +71,8 @@ internal class V2PrivateControlClient(
     }
 
     private fun post(plan: V2PrivateControlPlan, body: ByteArray) {
-        check(plan.role == "device_report" && plan.path == DEVICE_REPORT_PATH) { "[D131 Android control] report plan 无效" }
-        check(body.isNotEmpty() && body.size <= MAX_DEVICE_REPORT_BYTES) { "[D131 Android report] envelope 大小无效" }
+        check(plan.role == "device_report" && plan.path == DEVICE_REPORT_PATH) { "[Android control] report plan 无效" }
+        check(body.isNotEmpty() && body.size <= MAX_DEVICE_REPORT_BYTES) { "[Android report] envelope 大小无效" }
         val connection = connection(plan, "POST")
         try {
             connection.doOutput = true
@@ -82,18 +82,18 @@ internal class V2PrivateControlClient(
             connection.outputStream.use { it.write(body) }
             val status = connection.responseCode
             verifyPeerPin(connection, plan.serverSPKIPins)
-            check(status == 204) { "[D131 Android report] private device_report 被拒绝（HTTP $status）" }
-            check(connection.contentEncoding.isNullOrEmpty()) { "[D131 Android report] private device_report 禁止压缩" }
-            check(connection.inputStream.use { it.read() } == -1) { "[D131 Android report] 204 携带正文" }
+            check(status == 204) { "[Android report] private device_report 被拒绝（HTTP $status）" }
+            check(connection.contentEncoding.isNullOrEmpty()) { "[Android report] private device_report 禁止压缩" }
+            check(connection.inputStream.use { it.read() } == -1) { "[Android report] 204 携带正文" }
         } finally {
             connection.disconnect()
         }
     }
 
     private fun connection(plan: V2PrivateControlPlan, method: String): HttpsURLConnection {
-        check(plan.port in 1..65535 && plan.overlayIP.isNotBlank()) { "[D131 Android control] overlay tuple 无效" }
+        check(plan.port in 1..65535 && plan.overlayIP.isNotBlank()) { "[Android control] overlay tuple 无效" }
         val address = InetAddress.getByName(plan.overlayIP)
-        check(address.hostAddress?.substringBefore('%') == plan.overlayIP) { "[D131 Android control] overlay IP 不是 canonical literal" }
+        check(address.hostAddress?.substringBefore('%') == plan.overlayIP) { "[Android control] overlay IP 不是 canonical literal" }
         val url = URI("https", null, plan.overlayIP, plan.port, plan.path, null, null).toURL()
         return (url.openConnection(Proxy.NO_PROXY) as HttpsURLConnection).apply {
             requestMethod = method
@@ -122,14 +122,14 @@ internal class V2PrivateControlClient(
 
     private fun verifyPeerPin(connection: HttpsURLConnection, pins: Set<String>) {
         val leaf = connection.serverCertificates.firstOrNull() as? X509Certificate
-            ?: error("[D131 Android control] private service 缺 X.509 leaf")
+            ?: error("[Android control] private service 缺 X.509 leaf")
         val digest = MessageDigest.getInstance("SHA-256").digest(leaf.publicKey.encoded)
         val pin = "sha256:" + digest.joinToString("") { "%02x".format(it.toInt() and 0xff) }
-        check(pin in pins) { "[D131 Android control] private service leaf SPKI 不在 certified pin set" }
+        check(pin in pins) { "[Android control] private service leaf SPKI 不在 certified pin set" }
     }
 
     private fun <T> tryEach(plans: List<V2PrivateControlPlan>, operation: (V2PrivateControlPlan) -> T): T {
-        check(plans.isNotEmpty()) { "[D131 Android control] private service plan 为空" }
+        check(plans.isNotEmpty()) { "[Android control] private service plan 为空" }
         var failure: Exception? = null
         for (plan in plans) {
             try {
@@ -138,7 +138,7 @@ internal class V2PrivateControlClient(
                 failure?.addSuppressed(error) ?: run { failure = error }
             }
         }
-        throw IllegalStateException("[D131 Android control] 全部 certified private ${plans.first().role} 副本不可用", failure)
+        throw IllegalStateException("[Android control] 全部 certified private ${plans.first().role} 副本不可用", failure)
     }
 
     companion object {
@@ -200,10 +200,10 @@ internal class V2PrivateControlClient(
                 while (true) {
                     val count = stream.read(buffer)
                     if (count < 0) break
-                    check(output.size() + count <= maximumBytes) { "[D131 Android control] private response 正文超限" }
+                    check(output.size() + count <= maximumBytes) { "[Android control] private response 正文超限" }
                     output.write(buffer, 0, count)
                 }
-                output.toByteArray().also { check(it.isNotEmpty()) { "[D131 Android control] private response 正文为空" } }
+                output.toByteArray().also { check(it.isNotEmpty()) { "[Android control] private response 正文为空" } }
             }
         }
     }

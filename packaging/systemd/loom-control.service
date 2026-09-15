@@ -1,6 +1,6 @@
 [Unit]
 Description=Loom private v2 control plane
-Documentation=file:/opt/loom/docs/control-plane-operations.md
+Documentation=file:/opt/loom/docs/operations/control-plane.md
 After=network-online.target
 Wants=network-online.target
 

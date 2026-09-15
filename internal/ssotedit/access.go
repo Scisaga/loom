@@ -10,7 +10,7 @@ import (
 
 // SetAccessDefaultDeclaration 更新一个接入节点的设备默认出口。declaration 为空
 // 表示显式选择 fail closed；编辑只触碰 access.default_declaration，并继续通过
-// 完整 SSOT 校验，避免设备偏好成为绕过 §12 唯一期望态的旁路。
+// 完整 SSOT 校验，避免设备偏好成为绕过唯一期望态的旁路。
 func SetAccessDefaultDeclaration(content []byte, nodeID, declaration string) ([]byte, error) {
 	nodeID = strings.TrimSpace(nodeID)
 	declaration = strings.TrimSpace(declaration)

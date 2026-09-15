@@ -1,11 +1,11 @@
 // Package snapshot 把一次渲染冻成不可变版本,并对它签名。
 //
 // 快照不是 git 提交。git 里放的是 SSOT —— 源头;快照是从源头**生成出来的
-// 成品**,打了版本号、签了名。三件事依赖它(§12.1、§15.2、§15.4):
+// 成品**,打了版本号、签了名。三件事依赖它:
 //
 //  1. 回滚需要一个"回到哪儿"的基准;
 //  2. 漂移检测需要一个"应该是什么样"的期望值;
-//  3. 配置经中继反代下发(§14.3),签名让**传输通道与内容真实性解耦** ——
+//  3. 配置经中继反代下发,签名让**传输通道与内容真实性解耦** ——
 //     即使中继被攻破也注入不了恶意配置。
 package snapshot
 
@@ -25,13 +25,13 @@ import (
 	"loom/internal/render"
 )
 
-// BundleRef 是一个配置包的内容哈希。只覆盖渲染层 —— 秘密层不在其中(§12.1)。
+// BundleRef 是一个配置包的内容哈希。只覆盖渲染层 —— 秘密层不在其中。
 type BundleRef struct {
 	Owner string `json:"owner"` // 节点 id 或客户端档案 id
 	Hash  string `json:"hash"`
 }
 
-// ComponentRef 钉住一台机器上各组件的版本(§15.4)。
+// ComponentRef 钉住一台机器上各组件的版本。
 //
 // **配置与二进制必须绑定回滚。** 新版可能不认旧配置,旧版也可能不认新配置;
 // 只回滚其一会得到起不来的节点。所以版本和配置冻在同一个快照里。
@@ -46,7 +46,7 @@ type ComponentRef struct {
 // SecretRef 记录一台机器秘密层的代次。
 //
 // **只记代次,不记私钥。** 回滚也不回滚秘密层:节点保留当前代次的私钥,
-// 代次对不上时应当告警,而不是悄悄换密钥(§12.1)。
+// 代次对不上时应当告警,而不是悄悄换密钥。
 type SecretRef struct {
 	Node       string `json:"node"`
 	Generation int    `json:"generation"`
@@ -65,7 +65,7 @@ type Manifest struct {
 
 	// Binaries 是这个快照配套的 Agent 二进制。
 	//
-	// **它必须和配置在同一个签名之下**(§15.4)。分开发的话,回滚配置会
+	// **它必须和配置在同一个签名之下**。分开发的话,回滚配置会
 	// 得到一个跑着不匹配二进制的节点 —— 新版可能不认旧配置,旧版也可能
 	// 不认新配置,而"回滚"最不该产生的就是起不来的节点。
 	Binaries []BinaryRef `json:"binaries,omitempty"`
@@ -98,12 +98,12 @@ type BinaryRef struct {
 func (b *BinaryRef) Path() string { return "bin/" + b.SHA256 }
 
 // Meta 是快照的外部输入。时间与作者由调用方给出,**不从包内读取** ——
-// 渲染与打包都必须是纯函数,否则 §12.1 的三个产物全都靠不住。
+// 渲染与打包都必须是纯函数,才能保证 diff、漂移检测与回滚可重复。
 type Meta struct {
 	CreatedAt string
 	Author    string
 	// Binaries 由调用方给出 —— 和时间、作者一样是外部输入,包内不去
-	// 文件系统上找二进制(§12 纯函数)。
+	// 文件系统上找二进制。
 	Binaries []BinaryRef
 }
 
@@ -212,7 +212,7 @@ var ErrNoSignature = errors.New("快照没有签名")
 
 // VerifySignature 校验签名。
 //
-// 这是 §14.3 那条"传输通道与配置真实性解耦"的落点:配置经中继反代下发,
+// 传输通道与配置真实性解耦:配置经中继反代下发,
 // 中继可以不可信,但内容必须可验证。
 func VerifySignature(manifestBytes, sig []byte, pub ed25519.PublicKey) error {
 	if len(sig) == 0 {
@@ -223,7 +223,7 @@ func VerifySignature(manifestBytes, sig []byte, pub ed25519.PublicKey) error {
 
 // VerifyBundles 比对 manifest 里记录的哈希与实际渲染出的内容。
 //
-// 这是 §15.3 漂移检测的核心比对逻辑:Agent 拿到快照后做的就是这件事。
+// 这是漂移检测的核心比对逻辑:Agent 拿到快照后做的就是这件事。
 func VerifyBundles(m *Manifest, res *render.Result) []string {
 	want := map[string]string{}
 	for _, b := range m.Bundles {
@@ -279,7 +279,7 @@ func hexSum(b []byte) string {
 //
 // **源头存档不进分发树。** 源头里有 `ssh_port` 这类字段 —— SSOT 自己的
 // 注释写着它们"记在这里是为了 bootstrap 与排障,不是为了被连" —— 而这些
-// 值不出现在任何渲染产物里。分发点在设计上是当作已被攻陷来对待的(D32),
+// 值不出现在任何渲染产物里。分发点在设计上是当作已被攻陷来对待的,
 // 把管理平面的信息主动送上去,签名是拦不住的那一类风险。
 //
 // 完整性不受影响:manifest 说了正确的哈希是多少,而 manifest 是签了名的。

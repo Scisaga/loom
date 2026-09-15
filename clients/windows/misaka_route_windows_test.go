@@ -42,7 +42,7 @@ func newMisakaRouteGUITestWindow(t *testing.T) (*portableGUI, *windowsProfileMan
 func assertMisakaRoutePickerVisible(t *testing.T, app *portableGUI, want bool) {
 	t.Helper()
 	if visible := profileGUIStyle(app.controls.routeCombo)&portableWSVisible != 0; visible != want {
-		t.Fatalf("[§7.2] 出口选择可见=%v，预期=%v；实际模式=%s", visible, want, misakaSelectedMode(app.snapshot()))
+		t.Fatalf("出口选择可见=%v，预期=%v；实际模式=%s", visible, want, misakaSelectedMode(app.snapshot()))
 	}
 }
 
@@ -50,11 +50,11 @@ func finishMisakaRouteTestRequest(t *testing.T, app *portableGUI, m *windowsProf
 	t.Helper()
 	sequence := app.skin.route.sequence
 	m.workers.Wait()
-	// §7.2：通过实际窗口消息交付完成通知，不把 worker 入队当成偏好提交。
+	// 通过实际窗口消息交付完成通知，不把 worker 入队当成偏好提交。
 	procSendMessage.Call(app.hwnd, misakaWMRouteAcknowledged, sequence, 0)
 	app.renderControls()
 	if app.skin.route.pending != nil {
-		t.Fatal("[§7.2] worker 完成后界面仍停留在待确认状态")
+		t.Fatal("worker 完成后界面仍停留在待确认状态")
 	}
 }
 
@@ -63,20 +63,20 @@ func TestGUIMisakaRouteFixedNavigationAndEscapeDoNotPersist(t *testing.T) {
 	procSendMessage.Call(app.hwnd, portableWMCommand, misakaControlFixed, app.controls.modeFixed)
 	assertMisakaRoutePickerVisible(t, app, true)
 	if len(app.routeVisible) != 1 || app.snapshot().routeOptions[app.routeVisible[0]].Preference.Mode != clientcore.FixedExit {
-		t.Fatal("[§7.2] Fixed 下拉混入了非签名出口选项")
+		t.Fatal("Fixed 下拉混入了非签名出口选项")
 	}
 	procSendMessage.Call(app.controls.routeCombo, portableCBSetCurSel, 0, 0)
 	procSendMessage.Call(app.hwnd, portableWMCommand, portableControlRoute|portableCBNSelChange<<16, app.controls.routeCombo)
 	m.workers.Wait()
 	if _, err := os.Stat(filepath.Join(child.root, "state", "preference.json")); !os.IsNotExist(err) {
-		t.Fatal("[§7.2] 导航候选提前写入了偏好")
+		t.Fatal("导航候选提前写入了偏好")
 	}
 	if !handlePortableRouteFilter(portableMSG{hwnd: app.controls.routeCombo, msg: portableWMKeyDown, wParam: portableVKEscape}) {
-		t.Fatal("[§7.2] 未输入过滤文字时 Esc 没有取消 Fixed 编辑")
+		t.Fatal("未输入过滤文字时 Esc 没有取消 Fixed 编辑")
 	}
 	assertMisakaRoutePickerVisible(t, app, false)
 	if app.skin.route.pending != nil || misakaSelectedMode(app.snapshot()) != clientcore.Auto {
-		t.Fatal("[§7.2] 取消 Fixed 改变了实际偏好")
+		t.Fatal("取消 Fixed 改变了实际偏好")
 	}
 }
 
@@ -89,36 +89,36 @@ func TestGUIMisakaRouteFixedDirectAutoHasOneCommitAndStablePolling(t *testing.T)
 		sequence := app.skin.route.sequence
 		procSendMessage.Call(app.hwnd, portableWMCommand, portableControlRoute|portableCBNSelEndOK<<16, app.controls.routeCombo)
 		if app.skin.route.sequence != sequence {
-			t.Fatal("[§7.2] 同一候选的重复通知提交了第二次写入")
+			t.Fatal("同一候选的重复通知提交了第二次写入")
 		}
 		finishMisakaRouteTestRequest(t, app, m)
 		assertMisakaRoutePickerVisible(t, app, true)
 		if misakaSelectedMode(app.snapshot()) != clientcore.FixedExit {
-			t.Fatal("[§7.2] Fixed 的真实偏好未保存")
+			t.Fatal("Fixed 的真实偏好未保存")
 		}
 		release := lockMisakaRouteWorker(t, child)
 		procSendMessage.Call(app.hwnd, portableWMCommand, misakaControlDirect, app.controls.modeDirect)
 		assertMisakaRoutePickerVisible(t, app, false)
-		// §7.2：后台写入被阻塞时，GUI 仍可完成快照、布局和焦点通知处理。
+		// 后台写入被阻塞时，GUI 仍可完成快照、布局和焦点通知处理。
 		app.renderControls()
 		procSendMessage.Call(app.hwnd, portableWMCommand, misakaControlFixed|7<<16, app.controls.modeFixed)
 		assertMisakaRoutePickerVisible(t, app, false)
 		sequence = app.skin.route.sequence
 		procSendMessage.Call(app.hwnd, misakaWMRouteAcknowledged, sequence, 0)
 		if app.skin.route.pending == nil || !app.snapshot().routeBusy {
-			t.Fatal("[§7.2] 后台仍忙时异步 ACK 被当成完成")
+			t.Fatal("后台仍忙时异步 ACK 被当成完成")
 		}
 		release()
 		finishMisakaRouteTestRequest(t, app, m)
 		assertMisakaRoutePickerVisible(t, app, false)
 		if misakaSelectedMode(app.snapshot()) != clientcore.Direct {
-			t.Fatal("[§7.2] Direct 的真实偏好未保存")
+			t.Fatal("Direct 的真实偏好未保存")
 		}
 		procSendMessage.Call(app.hwnd, portableWMCommand, misakaControlAuto, app.controls.modeAuto)
 		finishMisakaRouteTestRequest(t, app, m)
 		assertMisakaRoutePickerVisible(t, app, false)
 		if misakaSelectedMode(app.snapshot()) != clientcore.Auto {
-			t.Fatal("[§7.2] Auto 的真实偏好未保存")
+			t.Fatal("Auto 的真实偏好未保存")
 		}
 	}
 	writes := recordProfileGUIWrites(t, app)
@@ -126,7 +126,7 @@ func TestGUIMisakaRouteFixedDirectAutoHasOneCommitAndStablePolling(t *testing.T)
 		app.renderControls()
 	}
 	if len(*writes) != 0 {
-		t.Fatalf("[§7.2] 稳定轮询仍产生 %d 次无关原生写入", len(*writes))
+		t.Fatalf("稳定轮询仍产生 %d 次无关原生写入", len(*writes))
 	}
 }
 
@@ -139,11 +139,11 @@ func TestGUIMisakaRouteFailedSaveRestoresActualSelection(t *testing.T) {
 	finishMisakaRouteTestRequest(t, app, m)
 	assertMisakaRoutePickerVisible(t, app, false)
 	if misakaSelectedMode(app.snapshot()) != clientcore.Auto || app.snapshot().detail == "" {
-		t.Fatal("[§7.2] 写入失败被显示为已选 Direct，或缺少失败原因")
+		t.Fatal("写入失败被显示为已选 Direct，或缺少失败原因")
 	}
 	for _, control := range []uintptr{app.controls.modeAuto, app.controls.modeFixed, app.controls.modeDirect} {
 		if enabled, _, _ := procIsWindowEnabled.Call(control); enabled == 0 {
-			t.Fatal("[§7.2] 写入失败后模式按钮仍被锁住")
+			t.Fatal("写入失败后模式按钮仍被锁住")
 		}
 	}
 }
@@ -163,7 +163,7 @@ func TestGUIMisakaRouteFocusLossRestoresUnconfirmedExit(t *testing.T) {
 	m.workers.Wait()
 	selection, _, _ := procSendMessage.Call(app.controls.routeCombo, portableCBGetCurSel, 0, 0)
 	if selection != 0 || app.snapshot().routeSelected != 1 || app.skin.route.pending != nil {
-		t.Fatal("[§7.2] 离开下拉后保留了未确认的候选，或将导航误保存")
+		t.Fatal("离开下拉后保留了未确认的候选，或将导航误保存")
 	}
 	assertMisakaRoutePickerVisible(t, app, true)
 }
@@ -186,14 +186,14 @@ func TestGUIMisakaRouteLateCompletionCannotModifyAnotherProfile(t *testing.T) {
 	}
 	app.renderControls()
 	if app.skin.route.pending != nil || app.skin.route.sequence == oldSequence {
-		t.Fatal("[§7.2] 查看另一配置仍继承旧请求代次")
+		t.Fatal("查看另一配置仍继承旧请求代次")
 	}
 	release()
 	m.workers.Wait()
 	procSendMessage.Call(app.hwnd, misakaWMRouteAcknowledged, oldSequence, 0)
 	app.renderControls()
 	if snapshot := app.snapshot(); snapshot.selectedProfile != otherID || misakaSelectedMode(snapshot) != clientcore.Auto || app.skin.route.pending != nil {
-		t.Fatal("[§7.2] 迟到完成通知改变了另一份配置")
+		t.Fatal("迟到完成通知改变了另一份配置")
 	}
 	assertMisakaRoutePickerVisible(t, app, false)
 }
@@ -208,10 +208,10 @@ func TestGUIMisakaRouteRevokedFixedOptionsCloseTheEditor(t *testing.T) {
 	app.renderControls()
 	assertMisakaRoutePickerVisible(t, app, false)
 	if app.skin.route.picker || len(app.routeVisible) != 0 {
-		t.Fatal("[§7.2] 授权候选变化后仍显示已撤销出口")
+		t.Fatal("授权候选变化后仍显示已撤销出口")
 	}
 	if enabled, _, _ := procIsWindowEnabled.Call(app.controls.modeFixed); enabled != 0 {
-		t.Fatal("[§7.2] 当前签名配置没有 Fixed 候选却仍允许编辑")
+		t.Fatal("当前签名配置没有 Fixed 候选却仍允许编辑")
 	}
 }
 
@@ -229,28 +229,28 @@ func TestWindowsProfilePreferenceBusyCoversTheWholeWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !m.snapshot().routeBusy {
-		t.Fatal("[§7.2] broker 接收请求时没有同步发布 routeBusy")
+		t.Fatal("broker 接收请求时没有同步发布 routeBusy")
 	}
-	// §7.2：激活中途的 routeReady 不能让最终持久化或回滚前的状态被当作完成。
+	// 激活中途的 routeReady 不能让最终持久化或回滚前的状态被当作完成。
 	child.mu.Lock()
 	child.routeBusy = false
 	child.mu.Unlock()
 	if !m.snapshot().routeBusy {
-		t.Fatal("[§7.2] 中间 readback 清掉了整个偏好事务的忙状态")
+		t.Fatal("中间 readback 清掉了整个偏好事务的忙状态")
 	}
 	if err := m.dispatch(request); err == nil {
-		t.Fatal("[§7.2] 同一配置的未完成偏好请求允许重复入队")
+		t.Fatal("同一配置的未完成偏好请求允许重复入队")
 	}
 	select {
 	case <-done:
-		t.Fatal("[§7.2] worker 尚未执行就发出了完成通知")
+		t.Fatal("worker 尚未执行就发出了完成通知")
 	default:
 	}
 	release()
 	waitProfileSignal(t, done)
 	m.workers.Wait()
 	if snapshot := m.snapshot(); snapshot.routeBusy || misakaSelectedMode(snapshot) != clientcore.Direct {
-		t.Fatal("[§7.2] 最终完成没有发布真实偏好并清除忙状态")
+		t.Fatal("最终完成没有发布真实偏好并清除忙状态")
 	}
 }
 
@@ -261,7 +261,7 @@ func TestGUIMisakaRouteUnchangedGeometryDoesNotRelayoutOnClickOrAck(t *testing.T
 		app.misakaRouteCommand(misakaControlAuto)
 	}
 	if len(*writes) != 0 {
-		t.Fatal("[§7.2] 点击已经确认的模式仍重新布局或改写控件")
+		t.Fatal("点击已经确认的模式仍重新布局或改写控件")
 	}
 	release := lockMisakaRouteWorker(t, child)
 	app.misakaRouteCommand(misakaControlDirect)
@@ -270,10 +270,10 @@ func TestGUIMisakaRouteUnchangedGeometryDoesNotRelayoutOnClickOrAck(t *testing.T
 	finishMisakaRouteTestRequest(t, app, manager)
 	for _, write := range *writes {
 		if write.message == 0x0046 {
-			t.Fatal("[§7.2] Auto 到 Direct 的等待或 ACK 在几何不变时仍移动了控件")
+			t.Fatal("Auto 到 Direct 的等待或 ACK 在几何不变时仍移动了控件")
 		}
 	}
 	if misakaSelectedMode(app.snapshot()) != clientcore.Direct {
-		t.Fatal("[§7.2] 减少重绘丢失了实际模式确认")
+		t.Fatal("减少重绘丢失了实际模式确认")
 	}
 }

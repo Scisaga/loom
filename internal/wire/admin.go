@@ -95,7 +95,7 @@ type AdminACLLeafV1 struct {
 }
 
 // VerifiedAdminOperationV1 是私有 control_api 完成 mTLS、base-head 与 certified
-// ACL 验证后的不透明结果；reducer 不接受调用方自行拼接的“已授权”布尔值（D104）。
+// ACL 验证后的不透明结果；reducer 不接受调用方自行拼接的“已授权”布尔值。
 type VerifiedAdminOperationV1 struct {
 	operation ControlOperationV1
 	headHash  string
@@ -116,7 +116,7 @@ func (verified VerifiedAdminOperationV1) ScopeHash() string {
 
 func ValidateAdminResourceScope(scope *AdminResourceScopeV1) error {
 	if scope == nil {
-		return errors.New("[D104 admin ACL] resource scope 不能为空")
+		return errors.New("[admin ACL] resource scope 不能为空")
 	}
 	variants := 0
 	for _, present := range []bool{scope.Cluster != nil, scope.Device != nil, scope.Endpoint != nil,
@@ -126,39 +126,39 @@ func ValidateAdminResourceScope(scope *AdminResourceScopeV1) error {
 		}
 	}
 	if variants != 1 {
-		return errors.New("[D104 admin ACL] resource scope 必须恰有一个 variant")
+		return errors.New("[admin ACL] resource scope 必须恰有一个 variant")
 	}
 	switch scope.ScopeKind {
 	case "cluster":
 		if scope.Cluster == nil {
-			return errors.New("[D104 admin ACL] cluster scope tag 不匹配")
+			return errors.New("[admin ACL] cluster scope tag 不匹配")
 		}
 	case "device":
 		if scope.Device == nil || !sortedUnique(scope.Device.DeviceIDs) || len(scope.Device.DeviceIDs) == 0 {
-			return errors.New("[D104 admin ACL] device scope 无效")
+			return errors.New("[admin ACL] device scope 无效")
 		}
 	case "endpoint":
 		if scope.Endpoint == nil || !sortedUnique(scope.Endpoint.EndpointIDs) || len(scope.Endpoint.EndpointIDs) == 0 {
-			return errors.New("[D104 admin ACL] endpoint scope 无效")
+			return errors.New("[admin ACL] endpoint scope 无效")
 		}
 	case "managed_zone":
 		if scope.ManagedZone == nil || !sortedUnique(scope.ManagedZone.ZoneIDs) || len(scope.ManagedZone.ZoneIDs) == 0 {
-			return errors.New("[D104 admin ACL] managed-zone scope 无效")
+			return errors.New("[admin ACL] managed-zone scope 无效")
 		}
 	case "control_membership":
 		if scope.ControlMembership == nil {
-			return errors.New("[D104 admin ACL] control-membership scope tag 不匹配")
+			return errors.New("[admin ACL] control-membership scope tag 不匹配")
 		}
 	case "recovery_policy":
 		if scope.RecoveryPolicy == nil {
-			return errors.New("[D104 admin ACL] recovery-policy scope tag 不匹配")
+			return errors.New("[admin ACL] recovery-policy scope tag 不匹配")
 		}
 	case "ca_profile":
 		if scope.CAProfile == nil || !sortedUnique(scope.CAProfile.ProfileIDs) || len(scope.CAProfile.ProfileIDs) == 0 {
-			return errors.New("[D104 admin ACL] CA-profile scope 无效")
+			return errors.New("[admin ACL] CA-profile scope 无效")
 		}
 	default:
-		return errors.New("[D104 admin ACL] resource scope kind 未获协议授权")
+		return errors.New("[admin ACL] resource scope kind 未获协议授权")
 	}
 	return nil
 }
@@ -176,37 +176,37 @@ func ValidateAdminCertificateProfile(profile *AdminCertificateProfileV1) error {
 		!validAdminAlgorithms(profile.SubjectKeyAlgorithm, profile.OperationSignatureAlgorithm) ||
 		profile.MaximumValiditySeconds < 1 || !sortedOIDStrings(profile.RequiredEKUOIDs) || len(profile.RequiredEKUOIDs) == 0 ||
 		!sortedOIDStrings(profile.RequiredPolicyOIDs) || len(profile.RequiredPolicyOIDs) == 0 {
-		return errors.New("[D104 admin ACL] admin certificate profile 无效")
+		return errors.New("[admin ACL] admin certificate profile 无效")
 	}
 	certificates := make([]*x509.Certificate, len(profile.IssuerChainDER))
 	for i, encoded := range profile.IssuerChainDER {
 		der, err := decodeCanonicalBase64URL(encoded)
 		if err != nil {
-			return errors.New("[D104 admin ACL] issuer chain DER 编码无效")
+			return errors.New("[admin ACL] issuer chain DER 编码无效")
 		}
 		certificate, err := x509.ParseCertificate(der)
 		if err != nil || !bytes.Equal(certificate.Raw, der) || !certificate.BasicConstraintsValid || !certificate.IsCA ||
 			certificate.KeyUsage&x509.KeyUsageCertSign == 0 || !adminCertificateAlgorithm(certificate, profile) ||
 			len(certificate.UnhandledCriticalExtensions) != 0 {
-			return errors.New("[D104 admin ACL] issuer chain certificate profile 无效")
+			return errors.New("[admin ACL] issuer chain certificate profile 无效")
 		}
 		certificates[i] = certificate
 		if i > 0 && bytes.Equal(certificates[i-1].Raw, certificate.Raw) {
-			return errors.New("[D104 admin ACL] issuer chain certificate 重复")
+			return errors.New("[admin ACL] issuer chain certificate 重复")
 		}
 	}
 	for i := 0; i+1 < len(certificates); i++ {
 		if certificates[i].CheckSignatureFrom(certificates[i+1]) != nil {
-			return errors.New("[D104 admin ACL] issuer chain signature 断裂")
+			return errors.New("[admin ACL] issuer chain signature 断裂")
 		}
 	}
 	root := certificates[len(certificates)-1]
 	if !bytes.Equal(root.RawSubject, root.RawIssuer) || root.CheckSignature(root.SignatureAlgorithm, root.RawTBSCertificate, root.Signature) != nil {
-		return errors.New("[D104 admin ACL] issuer chain anchor 不是有效自签根")
+		return errors.New("[admin ACL] issuer chain anchor 不是有效自签根")
 	}
 	chainHash, err := adminIssuerChainHash(profile.IssuerChainDER)
 	if err != nil || chainHash != profile.AdminIssuerChainHash {
-		return errors.New("[D104 admin ACL] issuer chain hash 不匹配")
+		return errors.New("[admin ACL] issuer chain hash 不匹配")
 	}
 	return nil
 }
@@ -227,7 +227,7 @@ func AdminCertificateProfileHash(profile *AdminCertificateProfileV1) (string, er
 
 func AdminCertificateDigest(rawDER []byte) (string, error) {
 	if certificate, err := x509.ParseCertificate(rawDER); err != nil || !bytes.Equal(certificate.Raw, rawDER) {
-		return "", errors.New("[D104 admin ACL] admin certificate DER 无效")
+		return "", errors.New("[admin ACL] admin certificate DER 无效")
 	}
 	return HashBytes(DomainAdminCertificateDER, rawDER)
 }
@@ -247,7 +247,7 @@ func validateAdminAuthorization(authorization *AdminAuthorizationV1, profile *Ad
 		!oneOf(authorization.Status, "active", "revoked") || !sortedUnique(authorization.AllowedOperationKinds) ||
 		len(authorization.AllowedOperationKinds) == 0 || !sortedEnum(authorization.Capabilities,
 		[]string{"manage_admin_acl", "manage_ca_profiles"}, false) || len(authorization.Scopes) == 0 {
-		return errors.New("[D104 admin ACL] authorization header/permissions 无效")
+		return errors.New("[admin ACL] authorization header/permissions 无效")
 	}
 	if err := ValidateAdminCertificateProfile(profile); err != nil {
 		return err
@@ -255,10 +255,10 @@ func validateAdminAuthorization(authorization *AdminAuthorizationV1, profile *Ad
 	profileHash, _ := AdminCertificateProfileHash(profile)
 	if authorization.CertificateProfileRef.ProfileID != profile.ProfileID || authorization.CertificateProfileRef.Generation != profile.Generation ||
 		authorization.CertificateProfileRef.AdminCertificateProfileHash != profileHash {
-		return errors.New("[D104 admin ACL] certificate profile ref 不匹配")
+		return errors.New("[admin ACL] certificate profile ref 不匹配")
 	}
 	if (authorization.Generation == 1) != (authorization.PreviousAuthorizationHash == "") {
-		return errors.New("[D104 admin ACL] previous authorization hash/generation 无效")
+		return errors.New("[admin ACL] previous authorization hash/generation 无效")
 	}
 	if authorization.PreviousAuthorizationHash != "" {
 		if _, err := ParseHash(authorization.PreviousAuthorizationHash); err != nil {
@@ -269,29 +269,29 @@ func validateAdminAuthorization(authorization *AdminAuthorizationV1, profile *Ad
 	for i := range authorization.Scopes {
 		hash, err := AdminResourceScopeHash(&authorization.Scopes[i])
 		if err != nil || i > 0 && previousScopeHash >= hash {
-			return errors.New("[D104 admin ACL] scopes 必须按 scope hash 严格排序")
+			return errors.New("[admin ACL] scopes 必须按 scope hash 严格排序")
 		}
 		previousScopeHash = hash
 	}
 	certificateDER, err := decodeCanonicalBase64URL(authorization.AdminCertificateDER)
 	if err != nil {
-		return errors.New("[D104 admin ACL] admin certificate 编码无效")
+		return errors.New("[admin ACL] admin certificate 编码无效")
 	}
 	certificate, err := x509.ParseCertificate(certificateDER)
 	if err != nil || !bytes.Equal(certificate.Raw, certificateDER) {
-		return errors.New("[D104 admin ACL] admin certificate strict DER 无效")
+		return errors.New("[admin ACL] admin certificate strict DER 无效")
 	}
 	digest, _ := AdminCertificateDigest(certificateDER)
 	keyID, keyErr := AdminKeyID(certificate.RawSubjectPublicKeyInfo)
 	if digest != authorization.AdminCertificateDigest || keyErr != nil || keyID != authorization.AdminKeyID {
-		return errors.New("[D104 admin ACL] admin certificate digest/key ID 不匹配")
+		return errors.New("[admin ACL] admin certificate digest/key ID 不匹配")
 	}
 	if !certificate.BasicConstraintsValid || certificate.IsCA || certificate.KeyUsage != x509.KeyUsageDigitalSignature ||
 		!adminCertificateAlgorithm(certificate, profile) || len(certificate.UnhandledCriticalExtensions) != 0 {
-		return errors.New("[D104 admin ACL] admin leaf CA/KeyUsage 无效")
+		return errors.New("[admin ACL] admin leaf CA/KeyUsage 无效")
 	}
 	if !exactCertificateOIDs(certificate, profile.RequiredEKUOIDs, profile.RequiredPolicyOIDs) {
-		return errors.New("[D104 admin ACL] admin leaf EKU/policy OID 不匹配")
+		return errors.New("[admin ACL] admin leaf EKU/policy OID 不匹配")
 	}
 	notBefore, err := ParseTimeZ(authorization.NotBefore)
 	if err != nil {
@@ -300,27 +300,27 @@ func validateAdminAuthorization(authorization *AdminAuthorizationV1, profile *Ad
 	notAfter, err := ParseTimeZ(authorization.NotAfter)
 	if err != nil || !notBefore.Before(notAfter) || notBefore.Before(certificate.NotBefore) || notAfter.After(certificate.NotAfter) ||
 		int64(certificate.NotAfter.Sub(certificate.NotBefore)/time.Second) > profile.MaximumValiditySeconds {
-		return errors.New("[D104 admin ACL] authorization/certificate validity 无效")
+		return errors.New("[admin ACL] authorization/certificate validity 无效")
 	}
 	issuers, err := parseAdminIssuerChain(profile)
 	if err != nil || certificate.CheckSignatureFrom(issuers[0]) != nil {
-		return errors.New("[D104 admin ACL] admin leaf 不由 exact profile issuer 签发")
+		return errors.New("[admin ACL] admin leaf 不由 exact profile issuer 签发")
 	}
 	for _, issuer := range issuers {
 		if certificate.NotBefore.Before(issuer.NotBefore) || certificate.NotAfter.After(issuer.NotAfter) {
-			return errors.New("[D104 admin ACL] admin leaf validity 超出 exact issuer chain")
+			return errors.New("[admin ACL] admin leaf validity 超出 exact issuer chain")
 		}
 	}
 	if checkTrustedTime && authorization.Status == "active" {
 		instant := trustedTime.UTC()
 		for _, issuer := range issuers {
 			if instant.Before(issuer.NotBefore) || !instant.Before(issuer.NotAfter) {
-				return errors.New("[D104 admin ACL] issuer chain 在可信时间无效")
+				return errors.New("[admin ACL] issuer chain 在可信时间无效")
 			}
 		}
 		if instant.Before(notBefore) || !instant.Before(notAfter) ||
 			instant.Before(certificate.NotBefore) || !instant.Before(certificate.NotAfter) {
-			return errors.New("[D104 admin ACL] active authorization/certificate 已过期或尚未生效")
+			return errors.New("[admin ACL] active authorization/certificate 已过期或尚未生效")
 		}
 	}
 	return nil
@@ -355,7 +355,7 @@ func ValidateAdminAuthorizationSuccessor(previous, next *AdminAuthorizationV1, p
 		!EqualCanonical(previous.CertificateProfileRef, next.CertificateProfileRef) ||
 		!EqualCanonical(previous.AllowedOperationKinds, next.AllowedOperationKinds) ||
 		!EqualCanonical(previous.Capabilities, next.Capabilities) || !EqualCanonical(previous.Scopes, next.Scopes) {
-		return errors.New("[D104 admin ACL] authorization successor 非连续撤销或改变既有权限 bytes")
+		return errors.New("[admin ACL] authorization successor 非连续撤销或改变既有权限 bytes")
 	}
 	return nil
 }
@@ -374,11 +374,11 @@ func AdminACLRoot(authorizations []AdminAuthorizationV1, profiles map[string]Adm
 	for i := range ordered {
 		authorization := &ordered[i]
 		if i > 0 && ordered[i-1].AuthorizationID == authorization.AuthorizationID {
-			return "", errors.New("[D104 admin ACL] 每个 authorization ID 只能保留最新一代")
+			return "", errors.New("[admin ACL] 每个 authorization ID 只能保留最新一代")
 		}
 		profile, ok := profiles[authorization.CertificateProfileRef.ProfileID]
 		if !ok {
-			return "", errors.New("[D104 admin ACL] authorization 缺 exact certificate profile")
+			return "", errors.New("[admin ACL] authorization 缺 exact certificate profile")
 		}
 		hash, err := AdminAuthorizationHash(authorization, &profile)
 		if err != nil {
@@ -396,7 +396,7 @@ func AuthorizeControlOperation(operation *ControlOperationV1, authorization *Adm
 	}
 	if authorization.Status != "active" || operation.Body.AuthorID != authorization.AdminID ||
 		operation.Body.AdminCertDigest != authorization.AdminCertificateDigest || !contains(authorization.AllowedOperationKinds, operation.Body.Kind) {
-		return errors.New("[D104 admin ACL] operation author/cert/kind 未获 base ACL 授权")
+		return errors.New("[admin ACL] operation author/cert/kind 未获 base ACL 授权")
 	}
 	scopeHash, err := AdminResourceScopeHash(resourceScope)
 	if err != nil {
@@ -410,7 +410,7 @@ func AuthorizeControlOperation(operation *ControlOperationV1, authorization *Adm
 		}
 	}
 	if !allowed {
-		return errors.New("[D104 admin ACL] operation resource scope 未获授权")
+		return errors.New("[admin ACL] operation resource scope 未获授权")
 	}
 	certificateDER, _ := decodeCanonicalBase64URL(authorization.AdminCertificateDER)
 	certificate, _ := x509.ParseCertificate(certificateDER)
@@ -419,19 +419,19 @@ func AuthorizeControlOperation(operation *ControlOperationV1, authorization *Adm
 
 // AuthorizeControlOperationAtHead 是 private control_api 的完整授权边界：TLS leaf、
 // exact base head、ControlSet 与 certified ACL root 必须同时匹配，任一角色证书都不能
-// 仅凭可验证签名越权提交管理操作（D104）。
+// 仅凭可验证签名越权提交管理操作。
 func AuthorizeControlOperationAtHead(operation *ControlOperationV1, peerCertificateDER []byte,
 	resourceScope *AdminResourceScopeV1, trustedTime time.Time, schemas OperationSchemaRegistry,
 	head *HeadEntryV2, configQC json.RawMessage, set, previousSet *ControlSetV1, authorizations []AdminAuthorizationV1,
 	profiles map[string]AdminCertificateProfileV1) (VerifiedAdminOperationV1, error) {
 	if operation == nil || head == nil || set == nil || len(peerCertificateDER) == 0 {
-		return VerifiedAdminOperationV1{}, errors.New("[D104 admin ACL] private control request 缺 operation/TLS leaf/base authority")
+		return VerifiedAdminOperationV1{}, errors.New("[admin ACL] private control request 缺 operation/TLS leaf/base authority")
 	}
 	if err := ValidateControlSet(set); err != nil {
 		return VerifiedAdminOperationV1{}, err
 	}
 	if err := VerifyConfigQCAuthority(head.HeadHash, configQC, head, set, previousSet); err != nil {
-		return VerifiedAdminOperationV1{}, errors.New("[D104 admin ACL] base head 缺有效 replication QC")
+		return VerifiedAdminOperationV1{}, errors.New("[admin ACL] base head 缺有效 replication QC")
 	}
 	setHash, _ := ControlSetHash(set)
 	payload := head.Body.Payload
@@ -440,11 +440,11 @@ func AuthorizeControlOperationAtHead(operation *ControlOperationV1, peerCertific
 		body.BaseRecoveryStatementHash != payload.RecoveryStatementHash || body.BaseRecoveryPolicyHash != payload.RecoveryPolicyHash ||
 		body.BaseControlEpoch != payload.ControlEpoch || body.BaseControlSetHash != payload.ControlSetHash ||
 		body.BaseControlRevision != payload.ControlRevision || body.ParentHeadHash != head.HeadHash || payload.ControlSetHash != setHash {
-		return VerifiedAdminOperationV1{}, errors.New("[D104 admin ACL] operation base 与 exact certified head/ControlSet 不一致")
+		return VerifiedAdminOperationV1{}, errors.New("[admin ACL] operation base 与 exact certified head/ControlSet 不一致")
 	}
 	root, err := AdminACLRoot(authorizations, profiles)
 	if err != nil || root != payload.AdminACLRoot {
-		return VerifiedAdminOperationV1{}, errors.New("[D104 admin ACL] ACL view 未绑定 base head root")
+		return VerifiedAdminOperationV1{}, errors.New("[admin ACL] ACL view 未绑定 base head root")
 	}
 	peerDigest, err := AdminCertificateDigest(peerCertificateDER)
 	if err != nil {
@@ -458,21 +458,21 @@ func AuthorizeControlOperationAtHead(operation *ControlOperationV1, peerCertific
 			continue
 		}
 		if authorization != nil {
-			return VerifiedAdminOperationV1{}, errors.New("[D104 admin ACL] TLS leaf 对应多个 authorization")
+			return VerifiedAdminOperationV1{}, errors.New("[admin ACL] TLS leaf 对应多个 authorization")
 		}
 		selectedProfile, ok := profiles[candidate.CertificateProfileRef.ProfileID]
 		if !ok {
-			return VerifiedAdminOperationV1{}, errors.New("[D104 admin ACL] authorization 缺 certificate profile")
+			return VerifiedAdminOperationV1{}, errors.New("[admin ACL] authorization 缺 certificate profile")
 		}
 		authorization = candidate
 		profile = &selectedProfile
 	}
 	if authorization == nil || profile == nil {
-		return VerifiedAdminOperationV1{}, errors.New("[D104 admin ACL] TLS leaf 未获 base ACL 授权")
+		return VerifiedAdminOperationV1{}, errors.New("[admin ACL] TLS leaf 未获 base ACL 授权")
 	}
 	encodedDER, err := decodeCanonicalBase64URL(authorization.AdminCertificateDER)
 	if err != nil || !bytes.Equal(encodedDER, peerCertificateDER) {
-		return VerifiedAdminOperationV1{}, errors.New("[D104 admin ACL] TLS leaf 与 authorization exact DER 不一致")
+		return VerifiedAdminOperationV1{}, errors.New("[admin ACL] TLS leaf 与 authorization exact DER 不一致")
 	}
 	if err := AuthorizeControlOperation(operation, authorization, profile, resourceScope, trustedTime, schemas); err != nil {
 		return VerifiedAdminOperationV1{}, err

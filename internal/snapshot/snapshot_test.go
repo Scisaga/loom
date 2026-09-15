@@ -94,7 +94,7 @@ func TestSignVerifyRoundTrip(t *testing.T) {
 	}
 }
 
-// TestTamperedManifestFailsVerification 是 §14.3 那条不变量的落点:
+// TestTamperedManifestFailsVerification 验证配置真实性不依赖传输通道:
 // 配置经中继反代下发,中继可以不可信,但内容必须可验证。
 func TestTamperedManifestFailsVerification(t *testing.T) {
 	_, _, m := build(t, Meta{CreatedAt: "2026-08-21T00:00:00Z"})
@@ -140,7 +140,7 @@ func TestWrongKeyFailsVerification(t *testing.T) {
 	}
 }
 
-// TestVerifyBundlesDetectsDrift 是 §15.3 漂移检测的核心比对。
+// TestVerifyBundlesDetectsDrift 是漂移检测的核心比对。
 func TestVerifyBundlesDetectsDrift(t *testing.T) {
 	_, res, m := build(t, Meta{CreatedAt: "2026-08-21T00:00:00Z"})
 
@@ -182,8 +182,8 @@ func TestVerifyBundlesDetectsDrift(t *testing.T) {
 	})
 }
 
-// TestFreezesVersionsAndSecrets:§15.4 要求配置与二进制绑定回滚,
-// 所以版本必须和配置冻在同一个快照里;秘密层只冻代次(§12.1)。
+// TestFreezesVersionsAndSecrets:配置与二进制绑定回滚,
+// 所以版本必须和配置冻在同一个快照里;秘密层只冻代次。
 func TestFreezesVersionsAndSecrets(t *testing.T) {
 	s, _, m := build(t, Meta{CreatedAt: "2026-08-21T00:00:00Z"})
 
@@ -222,7 +222,7 @@ func TestFreezesVersionsAndSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 秘密层只记代次和公钥,私钥永不出现(§12.1、§13.1)。
+	// 秘密层只记代次和公钥,私钥永不出现。
 	for _, forbidden := range []string{"PrivateKey", "private_key", "secret_ref"} {
 		if strings.Contains(string(body), forbidden) {
 			t.Errorf("快照里出现了 %q —— 秘密层不该进快照", forbidden)

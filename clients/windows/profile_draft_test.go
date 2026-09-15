@@ -94,7 +94,7 @@ func TestProfileDraftIndexCommitFailurePreservesRecovery(t *testing.T) {
 	if _, err := store.CommitDraft(draft.ID); err != nil {
 		t.Fatal(err)
 	}
-	// §13.5：模拟索引提交后、草稿标记删除前崩溃；重启不能重复生成正式条目。
+	// 模拟索引提交后、草稿标记删除前崩溃；重启不能重复生成正式条目。
 	if err := os.WriteFile(store.draftPath(), marker, 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -13,7 +13,7 @@ import (
 	"loom/internal/report"
 )
 
-// §4.5、§16.1.2：多目标服务必须在各服务器得到相同采集集合，根路径不能重复采集。
+// 多目标服务必须在各服务器得到相同采集集合，根路径不能重复采集。
 func TestReporterIncludesConcreteServiceTargets(t *testing.T) {
 	s := load(t)
 	s.Declarations[0].ProbeURL = "https://demo-covered.example"
@@ -29,14 +29,14 @@ func TestReporterIncludesConcreteServiceTargets(t *testing.T) {
 	}
 	configs := reportConfigs(t, res)
 	if len(configs) == 0 {
-		t.Fatal("[§16.1.2] 未生成服务器采集配置")
+		t.Fatal("未生成服务器采集配置")
 	}
 	for owner, cfg := range configs {
 		if !reflect.DeepEqual(cfg.Targets, want) {
-			t.Errorf("[§16.1.2] %s 采集目标=%v，期望 %v", owner, cfg.Targets, want)
+			t.Errorf("%s 采集目标=%v，期望 %v", owner, cfg.Targets, want)
 		}
 		if !reflect.DeepEqual(cfg.UplinkTargets, s.NodeByID()[owner].ProbeTargets) {
-			t.Errorf("[§16.1.2] %s 将服务目标误作出网健康目标", owner)
+			t.Errorf("%s 将服务目标误作出网健康目标", owner)
 		}
 	}
 }

@@ -38,7 +38,7 @@ const (
 )
 
 // LinuxBootstrapSelection 是可公开进入诊断证据的最小选择结果；它不包含 FQDN、
-// public IP、pin、capability 或 transport credential（D131、Issue #11）。
+// public IP、pin、capability 或 transport credential（Issue #11）。
 type LinuxBootstrapSelection struct {
 	EndpointID         string
 	Transport          string
@@ -46,7 +46,7 @@ type LinuxBootstrapSelection struct {
 }
 
 // BootstrapSelection 是各原生宿主共享的最小诊断投影。旧 Linux 名称保留为
-// 类型别名兼容已发布的 CLI；Windows 不另写 transport 选择语义（D131）。
+// 类型别名兼容已发布的 CLI；Windows 不另写 transport 选择语义。
 type BootstrapSelection = LinuxBootstrapSelection
 
 type linuxBootstrapCandidate struct {
@@ -90,7 +90,7 @@ type LinuxBootstrapTunnelDialer struct {
 type BootstrapTunnelDialer = LinuxBootstrapTunnelDialer
 
 // NewLinuxBootstrapTunnelDialer 把 Invite lineage、catalog QC 与 capability authorization
-// 在同一入口重验，再产生只能送达 Enrollment service ref 的 dialer（D115、D131）。
+// 在同一入口重验，再产生只能送达 Enrollment service ref 的 dialer。
 func NewLinuxBootstrapTunnelDialer(catalog *wire.BootstrapEndpointCatalogV1,
 	capability *wire.BootstrapTunnelCapabilityV1,
 	issuerProof *wire.BootstrapIssuerAuthorizationProofV1,
@@ -100,7 +100,7 @@ func NewLinuxBootstrapTunnelDialer(catalog *wire.BootstrapEndpointCatalogV1,
 ) (*LinuxBootstrapTunnelDialer, error) {
 	if catalog == nil || capability == nil || issuerProof == nil || policy == nil ||
 		trustedTime.IsZero() || clientProtocol < 1 {
-		return nil, errors.New("[D131 Linux bootstrap] tunnel authority 输入不完整")
+		return nil, errors.New("[Linux bootstrap] tunnel authority 输入不完整")
 	}
 	if err := wire.ValidateBootstrapEndpointCatalogAt(catalog, trustedTime.UTC(), clientProtocol); err != nil {
 		return nil, err
@@ -108,7 +108,7 @@ func NewLinuxBootstrapTunnelDialer(catalog *wire.BootstrapEndpointCatalogV1,
 	head, set, previousSet, ok := proof.AuthorityForHead(catalog.ParentHeadHash)
 	if !ok || wire.VerifyConfigQCAuthority(catalog.ParentHeadHash,
 		catalog.BootstrapIngressSet.ConfigQC, &head, &set, previousSet) != nil {
-		return nil, errors.New("[D131 Linux bootstrap] catalog QC authority 未通过 Invite lineage")
+		return nil, errors.New("[Linux bootstrap] catalog QC authority 未通过 Invite lineage")
 	}
 	verified, err := wire.VerifyCapabilityAuthorizationEvidence(capability, issuerProof, policy, trustedTime.UTC())
 	if err != nil {
@@ -116,7 +116,7 @@ func NewLinuxBootstrapTunnelDialer(catalog *wire.BootstrapEndpointCatalogV1,
 	}
 	body := verified.Body()
 	if !linuxBootstrapCapabilityBindsCatalog(body, catalog.BootstrapIngressSetHash) {
-		return nil, errors.New("[D131 Linux bootstrap] capability 未绑定 catalog 或 inner TLS/TCP")
+		return nil, errors.New("[Linux bootstrap] capability 未绑定 catalog 或 inner TLS/TCP")
 	}
 	destination, err := capabilityDestination(body)
 	if err != nil {
@@ -153,17 +153,17 @@ func NewBootstrapTunnelDialer(catalog *wire.BootstrapEndpointCatalogV1,
 func linuxBootstrapCapabilityBindsCatalog(body wire.BootstrapTunnelCapabilityBodyV1,
 	ingressSetHash string) bool {
 	// Capability 只授权 ingress 转发 TCP；Enrollment 客户端随后在这条受限 TCP
-	// stream 内独立强制 TLS。wire schema 从未定义 tls_tcp 枚举（D131）。
+	// stream 内独立强制 TLS。wire schema 从未定义 tls_tcp 枚举。
 	return body.AllowedIngressSetHash == ingressSetHash && body.AllowedInsideTransport == "tcp"
 }
 
 // probeCandidates 对当前 catalog 的授权入口只做一轮并行、无 bearer 的 outer
 // TLS/QUIC handshake。UDP 全阻断的等待因此有固定上限，不再随 HY2 候选数线性增长；
-// capability credential 与 attempt budget 只留给随后选中的真实 tunnel（D131、Issue #11）。
+// capability credential 与 attempt budget 只留给随后选中的真实 tunnel（Issue #11）。
 func (dialer *LinuxBootstrapTunnelDialer) probeCandidates(ctx context.Context) ([]linuxBootstrapProbeResult, error) {
 	if dialer.probed {
 		if len(dialer.viable) == 0 {
-			return nil, errors.New("[D131 Linux bootstrap] 已冻结的 transport probe 无可达入口")
+			return nil, errors.New("[Linux bootstrap] 已冻结的 transport probe 无可达入口")
 		}
 		return append([]linuxBootstrapProbeResult(nil), dialer.viable...), nil
 	}
@@ -218,7 +218,7 @@ func (dialer *LinuxBootstrapTunnelDialer) probeCandidates(ctx context.Context) (
 	})
 	dialer.probed, dialer.viable = true, viable
 	if len(viable) == 0 {
-		return nil, errors.New("[D131 Linux bootstrap] 当前 underlay 没有通过身份验证的 HY2/Trojan transport")
+		return nil, errors.New("[Linux bootstrap] 当前 underlay 没有通过身份验证的 HY2/Trojan transport")
 	}
 	return append([]linuxBootstrapProbeResult(nil), viable...), nil
 }
@@ -248,7 +248,7 @@ func capabilityDestination(body wire.BootstrapTunnelCapabilityBodyV1) (string, e
 	address, err := netip.ParseAddr(body.AllowedDestinationIP)
 	if err != nil || address.String() != body.AllowedDestinationIP || !address.IsPrivate() ||
 		body.AllowedDestinationPort < 1 || body.AllowedDestinationPort > 65535 {
-		return "", errors.New("[D131 Linux bootstrap] capability Enrollment destination 无效")
+		return "", errors.New("[Linux bootstrap] capability Enrollment destination 无效")
 	}
 	return net.JoinHostPort(address.String(), strconv.Itoa(int(body.AllowedDestinationPort))), nil
 }
@@ -256,7 +256,7 @@ func capabilityDestination(body wire.BootstrapTunnelCapabilityBodyV1) (string, e
 func linuxBootstrapCandidates(catalog *wire.BootstrapEndpointCatalogV1,
 	now time.Time) ([]linuxBootstrapCandidate, error) {
 	if catalog == nil {
-		return nil, errors.New("[D131 Linux bootstrap] catalog 不能为空")
+		return nil, errors.New("[Linux bootstrap] catalog 不能为空")
 	}
 	var candidates []linuxBootstrapCandidate
 	for endpointIndex := range catalog.BootstrapIngressSet.Endpoints {
@@ -282,10 +282,10 @@ func linuxBootstrapCandidates(catalog *wire.BootstrapEndpointCatalogV1,
 		}
 	}
 	if len(candidates) == 0 {
-		return nil, errors.New("[D131 Linux bootstrap] catalog 没有当前可拨 generation")
+		return nil, errors.New("[Linux bootstrap] catalog 没有当前可拨 generation")
 	}
 	// UDP 可用时必须优先 HY2。hint 只在同 transport 内排序；每个 endpoint 的
-	// preferred 又先于 advertised overlap 代（Issue #11、D120）。
+	// preferred 又先于 advertised overlap 代（Issue #11）。
 	sort.SliceStable(candidates, func(left, right int) bool {
 		l, r := candidates[left], candidates[right]
 		if l.selection.Transport != r.selection.Transport {
@@ -311,18 +311,18 @@ func linuxBootstrapIdentityPins(refs []string) ([]string, error) {
 	for _, ref := range refs {
 		if strings.HasPrefix(ref, "profile:") {
 			if len(strings.TrimPrefix(ref, "profile:")) == 0 {
-				return nil, errors.New("[D122 Linux bootstrap] WebPKI profile ref 无效")
+				return nil, errors.New("[Linux bootstrap] WebPKI profile ref 无效")
 			}
 			profileCount++
 			continue
 		}
 		if _, err := wire.ParseHash(ref); err != nil {
-			return nil, errors.New("[D122 Linux bootstrap] transport identity ref 不是 SPKI pin")
+			return nil, errors.New("[Linux bootstrap] transport identity ref 不是 SPKI pin")
 		}
 		pins = append(pins, ref)
 	}
 	if profileCount != 1 || len(pins) == 0 || len(pins) > 2 {
-		return nil, errors.New("[D122 Linux bootstrap] listener 必须有一个 WebPKI profile 与一至两个 SPKI pin")
+		return nil, errors.New("[Linux bootstrap] listener 必须有一个 WebPKI profile 与一至两个 SPKI pin")
 	}
 	return pins, nil
 }
@@ -332,7 +332,7 @@ func linuxBootstrapIdentityPins(refs []string) ([]string, error) {
 func (dialer *LinuxBootstrapTunnelDialer) DialContext(ctx context.Context,
 	network, address string) (net.Conn, error) {
 	if dialer == nil || ctx == nil || network != "tcp" || address != dialer.destination {
-		return nil, errors.New("[D131 Linux bootstrap] tunnel 只允许 exact Enrollment TCP tuple")
+		return nil, errors.New("[Linux bootstrap] tunnel 只允许 exact Enrollment TCP tuple")
 	}
 	dialer.mu.Lock()
 	defer dialer.mu.Unlock()
@@ -362,7 +362,7 @@ func (dialer *LinuxBootstrapTunnelDialer) DialContext(ctx context.Context,
 		dialer.selected = &selected
 		return connection, nil
 	}
-	return nil, errors.New("[D131 Linux bootstrap] capability 预算内没有可达的授权 HY2/Trojan ingress")
+	return nil, errors.New("[Linux bootstrap] capability 预算内没有可达的授权 HY2/Trojan ingress")
 }
 
 func (dialer *LinuxBootstrapTunnelDialer) Selection() (LinuxBootstrapSelection, bool) {
@@ -408,12 +408,12 @@ func (dialer *LinuxBootstrapTunnelDialer) dialTrojan(ctx context.Context,
 func trojanBootstrapRequest(credential, destination string) ([]byte, error) {
 	host, portText, err := net.SplitHostPort(destination)
 	if err != nil {
-		return nil, errors.New("[D131 Linux bootstrap] Trojan destination 无效")
+		return nil, errors.New("[Linux bootstrap] Trojan destination 无效")
 	}
 	address, err := netip.ParseAddr(host)
 	port, portErr := strconv.ParseUint(portText, 10, 16)
 	if err != nil || portErr != nil || port == 0 {
-		return nil, errors.New("[D131 Linux bootstrap] Trojan destination tuple 无效")
+		return nil, errors.New("[Linux bootstrap] Trojan destination tuple 无效")
 	}
 	digest := sha256.Sum224([]byte(credential))
 	request := make([]byte, hex.EncodedLen(len(digest))+2, 96)
@@ -456,7 +456,7 @@ func (dialer *LinuxBootstrapTunnelDialer) dialHysteria2(ctx context.Context,
 	if response.StatusCode != linuxBootstrapHysteriaAuthOK ||
 		response.Header.Get("Hysteria-UDP") != "false" {
 		_ = connection.CloseWithError(0, "")
-		return nil, errors.New("[D131 Linux bootstrap] Hysteria2 capability auth 失败")
+		return nil, errors.New("[Linux bootstrap] Hysteria2 capability auth 失败")
 	}
 	stream, err := connection.OpenStreamSync(ctx)
 	if err != nil {
@@ -483,7 +483,7 @@ func linuxBootstrapTLSConfig(serverName string, pins []string, roots *x509.CertP
 		MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
 		VerifyConnection: func(state tls.ConnectionState) error {
 			if len(state.VerifiedChains) == 0 || len(state.PeerCertificates) == 0 {
-				return errors.New("[D122 Linux bootstrap] WebPKI chain 未验证")
+				return errors.New("[Linux bootstrap] WebPKI chain 未验证")
 			}
 			digest := sha256.Sum256(state.PeerCertificates[0].RawSubjectPublicKeyInfo)
 			actual := "sha256:" + hex.EncodeToString(digest[:])
@@ -492,7 +492,7 @@ func linuxBootstrapTLSConfig(serverName string, pins []string, roots *x509.CertP
 					return nil
 				}
 			}
-			return errors.New("[D122 Linux bootstrap] outer TLS SPKI pin 不匹配")
+			return errors.New("[Linux bootstrap] outer TLS SPKI pin 不匹配")
 		},
 	}
 	if http3Protocol {
@@ -518,7 +518,7 @@ func (connection *linuxHysteria2TunnelConn) Write(payload []byte) (int, error) {
 		return connection.Stream.Write(payload)
 	}
 	if len(connection.destination) == 0 || len(connection.destination) > 2048 {
-		return 0, errors.New("[D131 Linux bootstrap] Hysteria2 destination 长度无效")
+		return 0, errors.New("[Linux bootstrap] Hysteria2 destination 长度无效")
 	}
 	var request []byte
 	request = quicvarint.Append(request, linuxBootstrapHysteriaTCPFrame)
@@ -548,19 +548,19 @@ func (connection *linuxHysteria2TunnelConn) Read(payload []byte) (int, error) {
 func readLinuxHysteria2Response(reader io.Reader) error {
 	var status [1]byte
 	if _, err := io.ReadFull(reader, status[:]); err != nil || status[0] != 0 {
-		return errors.New("[D131 Linux bootstrap] Hysteria2 TCP relay 被拒绝")
+		return errors.New("[Linux bootstrap] Hysteria2 TCP relay 被拒绝")
 	}
 	variableReader := quicvarint.NewReader(reader)
 	messageLength, err := quicvarint.Read(variableReader)
 	if err != nil || messageLength > linuxBootstrapMaximumMessage {
-		return errors.New("[D131 Linux bootstrap] Hysteria2 response message 无效")
+		return errors.New("[Linux bootstrap] Hysteria2 response message 无效")
 	}
 	if _, err := io.CopyN(io.Discard, reader, int64(messageLength)); err != nil {
 		return err
 	}
 	paddingLength, err := quicvarint.Read(variableReader)
 	if err != nil || paddingLength > linuxBootstrapMaximumPadding {
-		return errors.New("[D131 Linux bootstrap] Hysteria2 response padding 无效")
+		return errors.New("[Linux bootstrap] Hysteria2 response padding 无效")
 	}
 	_, err = io.CopyN(io.Discard, reader, int64(paddingLength))
 	return err

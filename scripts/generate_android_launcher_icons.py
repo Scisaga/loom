@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""§7.2：从指定的 v4 SVG 生成桌面自适应图标与 APK 内的普通密度图标。"""
+"""从指定的 v4 SVG 生成桌面自适应图标与 APK 内的普通密度图标。"""
 
 from pathlib import Path
 import subprocess
@@ -21,7 +21,7 @@ def main():
     paths = group.findall(f"{{{SVG}}}path")
     assert paths[0].get("fill") == "#fafaf7"
     assert all(path.get("fill") == "#5b6166" for path in paths[1:])
-    # §7.2：v4 的背景色镂空转换为真实透明孔，缩放后仍与下层渐变连续。
+    # v4 的背景色镂空转换为真实透明孔，缩放后仍与下层渐变连续。
     compound = " ".join(" ".join(path.attrib["d"].split()) for path in paths)
     stops = gradient.findall(f"{{{SVG}}}stop")
     start, end = (stop.attrib["stop-color"].upper() for stop in stops)
@@ -47,14 +47,14 @@ def main():
 </vector>
 ''')
     (RES / "drawable/ic_loom_launcher_foreground.xml").write_text('''<?xml version="1.0" encoding="utf-8"?>
-<!-- §7.2：保留 v4 画布留白；可见图案比原先紧裁切的前景缩小约 15%。 -->
+<!-- 保留 v4 画布留白；可见图案比原先紧裁切的前景缩小约 15%。 -->
 <inset xmlns:android="http://schemas.android.com/apk/res/android"
     android:drawable="@drawable/ic_loom_launcher_mark"
     android:insetLeft="20%" android:insetTop="20%"
     android:insetRight="20%" android:insetBottom="20%" />
 ''')
     (RES / "drawable/ic_loom_launcher_background.xml").write_text('''<?xml version="1.0" encoding="utf-8"?>
-<!-- §7.2：中央可见区域保留 v4 渐变；自适应图标的外缘继续延伸背景。 -->
+<!-- 中央可见区域保留 v4 渐变；自适应图标的外缘继续延伸背景。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp" android:height="108dp"
@@ -70,7 +70,7 @@ def main():
 </vector>
 ''')
 
-    # §7.2：普通 PNG 与自适应图标的中央可见区域使用相同图案比例。
+    # 普通 PNG 与自适应图标的中央可见区域使用相同图案比例。
     normal_svg = f'''<svg xmlns="{SVG}" width="1254" height="1254" viewBox="0 0 1254 1254">
 <defs><linearGradient id="background" x1="0" y1="0" x2="1254" y2="1254" gradientUnits="userSpaceOnUse">
 <stop offset="0" stop-color="{start}"/><stop offset="1" stop-color="{end}"/>

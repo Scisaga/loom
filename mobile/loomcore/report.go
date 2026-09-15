@@ -68,7 +68,7 @@ type minimalObservation struct {
 }
 
 // PreparePresenceHeartbeat 返回 Android Keystore 每五秒签一次的独立原文。
-// 它与完整 Observation 使用不同签名域，不能携带或刷新观测数据（§16.4）。
+// 它与完整 Observation 使用不同签名域，不能携带或刷新观测数据。
 func PreparePresenceHeartbeat(nodeID, timestamp string) ([]byte, error) {
 	return nodepresence.Message(nodeID, timestamp)
 }
@@ -80,7 +80,7 @@ func AssemblePresenceHeartbeat(nodeID, timestamp string, publicKeySPKI, signatur
 		return nil, err
 	}
 	if err := VerifyP256Signature(publicKeySPKI, message, signatureDER); err != nil {
-		return nil, fmt.Errorf("[§16.4 在线心跳] 平台签名:%w", err)
+		return nil, fmt.Errorf("[在线心跳] 平台签名:%w", err)
 	}
 	heartbeat, err := nodepresence.Assemble(nodeID, timestamp, signatureDER)
 	if err != nil {
@@ -89,7 +89,7 @@ func AssemblePresenceHeartbeat(nodeID, timestamp string, publicKeySPKI, signatur
 	return json.Marshal(heartbeat)
 }
 
-// EmptyMeasurementsDigest 是 §16.1 Observation 省略 edges/targets 时的既有摘要：
+// EmptyMeasurementsDigest 是 Observation 省略 edges/targets 时的既有摘要：
 // {"edges":null,"targets":null} 的 SHA-256。
 func EmptyMeasurementsDigest() string { return emptyMeasurementsSHA256 }
 
@@ -154,7 +154,7 @@ func AssembleObservationWithAgent(nodeID, appliedSnapshot, timestamp string, pro
 	}
 	publicKey, ok := certificate.PublicKey.(*ecdsa.PublicKey)
 	if !ok || publicKey.Curve != elliptic.P256() {
-		return nil, errors.New("[§16.1 上报] 必须使用 P-256 身份")
+		return nil, errors.New("[上报] 必须使用 P-256 身份")
 	}
 	if err := verifyExternalReportSignature(publicKey, attestMessage, attestSignatureDER); err != nil {
 		return nil, fmt.Errorf("主陈述签名:%w", err)
@@ -207,11 +207,11 @@ func androidObservationClaim(nodeID, appliedSnapshot, timestamp string, agentJSO
 		return claim, fmt.Errorf("Android actual route state JSON: %w", err)
 	}
 	if state.Node != nodeID || state.TS != timestamp || len(state.Selections) == 0 || len(state.Selections) > 256 {
-		return claim, errors.New("[§16.1 上报] Android actual route state is not bound to this report")
+		return claim, errors.New("[上报] Android actual route state is not bound to this report")
 	}
 	parsed, _ := time.Parse(time.RFC3339, timestamp)
 	if problems := trustedobservation.ValidateAgentState(&state, nodeID, parsed); len(problems) > 0 {
-		return claim, fmt.Errorf("[§16.1 上报] Android actual route state is invalid: %s", problems[0])
+		return claim, fmt.Errorf("[上报] Android actual route state is invalid: %s", problems[0])
 	}
 	claim.Agent = &state
 	return claim, nil
@@ -260,10 +260,10 @@ func canonicalSelfCheck(claim selfCheckClaim) []byte {
 
 func validateMinimalObservationCoordinates(nodeID, appliedSnapshot, timestamp string) error {
 	if !validNodeID(nodeID) || !validLowerHex(appliedSnapshot, 12) {
-		return errors.New("[§16.1 上报] 节点或已激活快照无效")
+		return errors.New("[上报] 节点或已激活快照无效")
 	}
 	if _, err := time.Parse(time.RFC3339, timestamp); err != nil {
-		return errors.New("[§16.1 上报] 时间必须是 RFC3339")
+		return errors.New("[上报] 时间必须是 RFC3339")
 	}
 	return nil
 }
@@ -274,10 +274,10 @@ func normalizeProblems(body []byte) ([]string, error) {
 	}
 	var problems []string
 	if err := decodeStrictJSON(body, maxSelfCheckTotalSize, &problems); err != nil {
-		return nil, errors.New("[§16.1 上报] 自检问题 JSON 无效")
+		return nil, errors.New("[上报] 自检问题 JSON 无效")
 	}
 	if problems == nil {
-		return nil, errors.New("[§16.1 上报] 自检问题必须是 JSON 字符串数组")
+		return nil, errors.New("[上报] 自检问题必须是 JSON 字符串数组")
 	}
 	sort.Strings(problems)
 	compacted := problems[:0]
@@ -326,16 +326,16 @@ func validateSelfCheck(claim selfCheckClaim) error {
 func verifyReportCertificate(certPEM, caPEM []byte, nodeID string) (*x509.Certificate, error) {
 	certificate, err := parseSingleCertificate(certPEM)
 	if err != nil {
-		return nil, fmt.Errorf("[§16.1 上报] 节点证书格式错误:%w", err)
+		return nil, fmt.Errorf("[上报] 节点证书格式错误:%w", err)
 	}
 	roots := x509.NewCertPool()
 	if len(caPEM) == 0 || len(caPEM) > 64<<10 || !roots.AppendCertsFromPEM(caPEM) {
-		return nil, errors.New("[§16.1 上报] CA 证书无效")
+		return nil, errors.New("[上报] CA 证书无效")
 	}
 	if _, err := certificate.Verify(x509.VerifyOptions{
 		Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 	}); err != nil {
-		return nil, fmt.Errorf("[§16.1 上报] 节点证书链不到 CA:%w", err)
+		return nil, fmt.Errorf("[上报] 节点证书链不到 CA:%w", err)
 	}
 	wantedName := nodeID + ".node.internal"
 	nameMatches := certificate.Subject.CommonName == wantedName
@@ -343,7 +343,7 @@ func verifyReportCertificate(certPEM, caPEM []byte, nodeID string) (*x509.Certif
 		nameMatches = nameMatches || dnsName == wantedName
 	}
 	if !nameMatches {
-		return nil, errors.New("[§16.1 上报] 节点证书名称与报告 node 不匹配")
+		return nil, errors.New("[上报] 节点证书名称与报告 node 不匹配")
 	}
 	return certificate, nil
 }
@@ -359,7 +359,7 @@ func verifyExternalReportSignature(publicKey *ecdsa.PublicKey, message, signatur
 	return nil
 }
 
-// §16.1：编译期核对文档摘要对应的线格式，不能只信任复制的常量。
+// 编译期核对文档摘要对应的线格式，不能只信任复制的常量。
 func init() {
 	body := []byte(`{"edges":null,"targets":null}`)
 	digest := sha256.Sum256(body)

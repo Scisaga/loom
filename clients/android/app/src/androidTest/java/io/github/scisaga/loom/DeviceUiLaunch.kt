@@ -7,7 +7,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
 
-/** §7.2：厂商可能拦截测试进程的 Activity 启动；使用同一组件的正常 ADB 入口。 */
+/** 厂商可能拦截测试进程的 Activity 启动；使用同一组件的正常 ADB 入口。 */
 internal fun launchDeviceUi(): ComponentActivity {
     val instrumentation = InstrumentationRegistry.getInstrumentation()
     if (Build.VERSION.SDK_INT >= 33) {

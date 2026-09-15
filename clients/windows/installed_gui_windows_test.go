@@ -15,7 +15,7 @@ import (
 	"loom/internal/windowsv2"
 )
 
-// §13.5：原生普通用户窗口导入中控 PNG，私钥只在 SCM 服务中生成和保存。
+// 原生普通用户窗口导入中控 PNG，私钥只在 SCM 服务中生成和保存。
 func TestInstalledGUIJoinLive(t *testing.T) {
 	qr := os.Getenv("LOOM_ACCEPT_INSTALLED_QR")
 	if qr == "" {

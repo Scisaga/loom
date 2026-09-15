@@ -18,38 +18,38 @@ func certifiedTLSConfig(config *tls.Config,
 func prepareCertifiedTLSConfig(config *tls.Config, binding VerifiedBootstrapListenerV1,
 	allowConfigSelection bool) (*tls.Config, error) {
 	if config == nil || !binding.valid() {
-		return nil, errors.New("[D122 bootstrap ingress] TLS config/listener authority 无效")
+		return nil, errors.New("[bootstrap ingress] TLS config/listener authority 无效")
 	}
 	base := config.Clone()
 	originalGetCertificate := base.GetCertificate
 	originalGetConfig := base.GetConfigForClient
 	if len(base.Certificates) == 0 && originalGetCertificate == nil &&
 		(!allowConfigSelection || originalGetConfig == nil) {
-		return nil, errors.New("[D122 bootstrap ingress] TLS certificate 缺失")
+		return nil, errors.New("[bootstrap ingress] TLS certificate 缺失")
 	}
 	for index := range base.Certificates {
 		if !certificateMatchesListener(&base.Certificates[index], binding) {
-			return nil, errors.New("[D122 bootstrap ingress] fixed certificate 不属于 certified listener identity")
+			return nil, errors.New("[bootstrap ingress] fixed certificate 不属于 certified listener identity")
 		}
 	}
 	if originalGetCertificate != nil {
 		base.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 			if hello == nil || hello.ServerName != binding.ServerName() {
-				return nil, errors.New("[D122 bootstrap ingress] TLS SNI 不属于 certified listener")
+				return nil, errors.New("[bootstrap ingress] TLS SNI 不属于 certified listener")
 			}
 			certificate, err := originalGetCertificate(hello)
 			if err != nil || certificate == nil {
 				return certificate, err
 			}
 			if !certificateMatchesListener(certificate, binding) {
-				return nil, errors.New("[D122 bootstrap ingress] dynamic certificate 不属于 certified listener identity")
+				return nil, errors.New("[bootstrap ingress] dynamic certificate 不属于 certified listener identity")
 			}
 			return certificate, nil
 		}
 	}
 	base.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 		if hello == nil || hello.ServerName != binding.ServerName() {
-			return nil, errors.New("[D122 bootstrap ingress] TLS SNI 不属于 certified listener")
+			return nil, errors.New("[bootstrap ingress] TLS SNI 不属于 certified listener")
 		}
 		if originalGetConfig == nil || !allowConfigSelection {
 			return nil, nil

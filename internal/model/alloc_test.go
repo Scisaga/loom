@@ -25,8 +25,8 @@ tunnels:
 	return s
 }
 
-// 恰好一端是 reverse_only 时才需要隧道。两端都能被公网拨到的直接互拨(D29),
-// 两端都是 reverse_only 的建不起来(§2.2 真值表)。
+// 恰好一端是 reverse_only 时才需要隧道。两端都能被公网拨到的直接互拨,
+// 两端都是 reverse_only 的建不起来(真值表)。
 func TestNeedsTunnel(t *testing.T) {
 	s := allocSSOT(t)
 	n := s.NodeByID()

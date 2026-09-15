@@ -19,18 +19,18 @@ import (
 	"loom/internal/snapshot"
 )
 
-// cmdRollback 把整份系统退回某个历史快照(§12.1、§15.4)。
+// cmdRollback 把整份系统退回某个历史快照。
 //
 // **它同时动源头和二进制,而这正是它存在的理由。** `loom pin` 只管二进制,
-// 配置那一半原来只能回滚"上一次 apply"。两半分开回滚会得到 §15.4 明确要防
+// 配置那一半原来只能回滚"上一次 apply"。两半分开回滚会得到不兼容
 // 的那个组合:旧二进制配新配置,或者反过来。
 //
 // 做法上它刻意**不**引入"冻住分发点"这种粘性覆盖:源头一旦退回去,发布器
-// 每 30 秒一轮的收敛机制自己就会把线上带回那个快照(D33、D39)。少一个
+// 每 30 秒一轮的收敛机制自己就会把线上带回那个快照。少一个
 // 需要有人记得解除的状态,就少一个"我改了但没生效"的来源。
 //
 // 自证是这条命令的关键:源头与二进制取回本地之后**重算一遍快照 id**,
-// 算出来必须还是 X。渲染是纯函数(§12),所以这条等式成立;不成立就说明
+// 算出来必须还是 X。渲染是纯函数,所以这条等式成立;不成立就说明
 // 这个快照里还有别的东西没跟着回去,当场报出来而不是发一份"看起来回滚了"
 // 的配置。
 func cmdRollback(args []string) error {
@@ -110,7 +110,7 @@ func cmdRollback(args []string) error {
 	// --- 源头 -------------------------------------------------------------
 	//
 	// 从**中控本地存档**取,不从分发点下载:源头带着 `ssh_port` 这类不下发的
-	// 管理平面字段,而分发点在设计上是当作已被攻陷来对待的(D32、D61)。
+	// 管理平面字段,而分发点在设计上是当作已被攻陷来对待的。
 	//
 	// 权威仍然是签了名的 manifest —— 它说了正确的哈希是多少。本地存档只是
 	// 字节的来源,拿到之后照样核对。
@@ -122,7 +122,7 @@ func cmdRollback(args []string) error {
 	if err != nil {
 		// 两种情况给的建议不一样,合成一条会把人带偏。
 		//
-		// 不管哪种,都不退而求其次只回滚二进制:那正好是 §15.4 要防的
+		// 不管哪种,都不退而求其次只回滚二进制:那会得到不兼容的
 		// 半截回滚,而且它会**看起来成功**。
 		why := "这份存档的内容与它的哈希对不上 —— 被改过了。"
 		if errors.Is(err, os.ErrNotExist) {
@@ -133,7 +133,7 @@ func cmdRollback(args []string) error {
 			"  位置:%s\n"+
 			"  SSOT 没有别的版本历史(不在 git,中控界面是覆盖式保存),"+
 			"所以只能从 `loom backup` 的备份里取回这一版。\n"+
-			"  不会只回滚二进制 —— 那会得到「旧二进制 + 新配置」,正是 §15.4 要防的组合",
+			"  不会只回滚二进制 —— 那会得到可能不兼容的「旧二进制 + 新配置」组合",
 			short(id), why, publish.ArchivePath(*history, sum))
 	}
 	fmt.Printf("  源头   %s(%d 字节,本地存档)✅ 哈希相符\n", shortHash(man.SSOTHash), len(ssotBytes))
@@ -155,7 +155,7 @@ func cmdRollback(args []string) error {
 	if got := hexOf(binBody); got != want.SHA256 {
 		return fmt.Errorf("二进制哈希对不上(签名说 %s,实际 %s)", short(want.SHA256), short(got))
 	}
-	// 真跑一遍。回滚到一个跑不起来的二进制,等于把退路也堵死(同 D60)。
+	// 真跑一遍。回滚到一个跑不起来的二进制,等于把退路也堵死。
 	stage, cleanup, err := stageSelfcheckBinary(*dir, "rollback", binBody)
 	if err != nil {
 		return err
@@ -264,7 +264,7 @@ func commitRollbackState(ssotPath, pinDir string, pin *publish.Pin, binBody, tar
 // reportRollbackState 说清楚现在处在不处在回滚状态。
 //
 // 不带参数运行时的输出比命令本身更常被人看到 —— 回滚是个粘性状态,
-// 而看不见的粘性状态就是陷阱(D58、D60 的同一条道理)。
+// 而看不见的粘性状态就是陷阱。
 func reportRollbackState(dir, ssotPath, base, dns, history string) error {
 	p, _, err := publish.ReadPin(dir)
 	if err != nil {
@@ -306,7 +306,7 @@ func reportRollbackState(dir, ssotPath, base, dns, history string) error {
 	fmt.Printf("   钉于    %s  %s\n", p.PinnedAt, p.By)
 
 	// 钉住的快照与源头现在算出来的对不对得上,是这里唯一真正有信息量的一行:
-	// 对不上就意味着**旧二进制配着新配置**在发,正是 §15.4 要防的组合。
+	// 对不上就意味着**旧二进制配着新配置**在发,该组合可能不兼容。
 	body, rerr := os.ReadFile(ssotPath)
 	if rerr != nil {
 		fmt.Printf("   源头    读不到 %s:%v\n", ssotPath, rerr)
@@ -325,7 +325,7 @@ func reportRollbackState(dir, ssotPath, base, dns, history string) error {
 		fmt.Printf("   源头    ✅ 与钉住的快照一致(%s)\n", short(cur))
 	default:
 		fmt.Printf("\n   ⚠️ 源头已经不是 %s 那一版了(现在算出来是 %s)。\n", short(p.Snapshot), short(cur))
-		fmt.Printf("      发出去的是「%s 的二进制 + 当前源头的配置」—— §15.4 要防的正是这个组合。\n", short(p.Snapshot))
+		fmt.Printf("      发出去的是「%s 的二进制 + 当前源头的配置」—— 该组合可能不兼容。\n", short(p.Snapshot))
 		fmt.Printf("      要么把源头也退回去(loom rollback %s),要么解除钉住(loom pin -clear)。\n", short(p.Snapshot))
 	}
 	return nil

@@ -51,7 +51,7 @@
     </StandardDirectory>
     <StandardDirectory Id="CommonAppDataFolder">
       <Directory Id="StateFolder" Name="Loom">
-        <!-- §13.5：根目录保留到重装；普通用户不能读取机器 DPAPI 密文或运行配置。 -->
+        <!-- 根目录保留到重装；普通用户不能读取机器 DPAPI 密文或运行配置。 -->
         <Component Id="MachineState" Guid="3BD3B3DC-B574-49FC-B175-749DF4FE2135" Bitness="always64" Permanent="yes">
           <CreateFolder>
             <PermissionEx Sddl="O:SYG:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />

@@ -16,7 +16,7 @@ const (
 	maxSingBoxBytes        = 16 << 20
 )
 
-// WindowsRuntimeProfile 按 §7.2.1 从同一签名策略派生本地接管面。
+// WindowsRuntimeProfile 从同一签名策略派生本地接管面。
 // TUN 的 DNS 接管与底层网卡绑定不能改变出口授权。
 type WindowsRuntimeProfile string
 
@@ -127,7 +127,7 @@ func ValidateWindowsSingBox(body []byte) error {
 	return validateWindowsSingBox(body, WindowsInstalledProfile, WindowsInstalledCAPath, false)
 }
 
-// DeriveWindowsRuntimeConfig 按 §7.2.1 先验证完整签名策略，再派生本机接管面。
+// DeriveWindowsRuntimeConfig 先验证完整签名策略，再派生本机接管面。
 // Mixed 删除 TUN 及仅匹配 TUN 的规则，避免移除匹配条件后扩大规则范围。
 // TUN 将 DNS 交给签名配置中的解析器，并绑定默认网卡以防底层连接重新进入 TUN。
 func DeriveWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile, caPath string) ([]byte, error) {
@@ -172,7 +172,7 @@ func DeriveWindowsRuntimeConfig(body []byte, profile WindowsRuntimeProfile, caPa
 		config.Route.Rules = rules
 	} else {
 		config.Route.AutoDetectInterface = true
-		// §7.2.1：TUN 只收到目标 IP；复用受管 DNS 的域名映射，并从可见的
+		// TUN 只收到目标 IP；复用受管 DNS 的域名映射，并从可见的
 		// HTTP/TLS/QUIC 元数据补充域名，才能执行原签名 Service 规则。
 		config.DNS.ReverseMapping = true
 		config.Route.Rules = append([]singBoxRule{windowsTUNDNSRule(), windowsTUNSniffRule()}, config.Route.Rules...)
@@ -208,7 +208,7 @@ func isWindowsTUNDNSRule(rule singBoxRule) bool {
 }
 
 func windowsTUNSniffRule() singBoxRule {
-	// §7.2.1：1.11.4 的无 SNI TLS 嗅探会清空已恢复的 DNS 域名；只补充未知域名。
+	// 1.11.4 的无 SNI TLS 嗅探会清空已恢复的 DNS 域名；只补充未知域名。
 	return singBoxRule{Type: "logical", Mode: "and", Rules: []singBoxRule{
 		{Inbound: []string{"tun-in"}},
 		{DomainRegex: []string{".+"}, Invert: true},
@@ -223,7 +223,7 @@ func validateRuntimeTarget(profile WindowsRuntimeProfile, caPath string) error {
 	switch profile {
 	case WindowsInstalledProfile:
 		if !validInstalledWindowsCAPath(caPath) {
-			return errors.New("[§7.2.1 / §13.5] Installed CA 路径必须属于受保护的本地连接配置")
+			return errors.New("Installed CA 路径必须属于受保护的本地连接配置")
 		}
 	case WindowsPortableMixedProfile, WindowsPortableTUNProfile:
 		if !validAbsoluteWindowsPath(caPath) || !strings.HasSuffix(strings.ToLower(caPath), `\tls\ca.crt`) {
@@ -235,7 +235,7 @@ func validateRuntimeTarget(profile WindowsRuntimeProfile, caPath string) error {
 	return nil
 }
 
-// §13.5：签名源仍使用统一的 CA 占位路径；只有本机派生配置可定位到独立身份根。
+// 签名源仍使用统一的 CA 占位路径；只有本机派生配置可定位到独立身份根。
 // 用固定目录与精确标识校验，不将 GUI 名称、相对路径或规范化别名当作可信路径。
 func validInstalledWindowsCAPath(path string) bool {
 	if path == WindowsInstalledCAPath {
@@ -302,13 +302,13 @@ func validateWindowsSingBox(body []byte, profile WindowsRuntimeProfile, caPath s
 	}
 	localTUNCapture := derived && profile != WindowsPortableMixedProfile
 	if config.Route.AutoDetectInterface != localTUNCapture {
-		return errors.New("[§7.2.1] Windows 网卡绑定与本地接管形态不一致")
+		return errors.New("Windows 网卡绑定与本地接管形态不一致")
 	}
 	if config.DNS.ReverseMapping != localTUNCapture {
-		return errors.New("[§7.2.1] DNS 域名映射只属于本机 TUN 接管，不属于远端签名策略")
+		return errors.New("DNS 域名映射只属于本机 TUN 接管，不属于远端签名策略")
 	}
 	if localTUNCapture && (len(config.Route.Rules) < 2 || !isWindowsTUNDNSRule(config.Route.Rules[0]) || !isWindowsTUNSniffRule(config.Route.Rules[1])) {
-		return errors.New("[§7.2.1] Windows TUN 必须在出口规则之前接管 DNS 并识别域名")
+		return errors.New("Windows TUN 必须在出口规则之前接管 DNS 并识别域名")
 	}
 
 	inboundTags := map[string]bool{}
@@ -431,10 +431,10 @@ func validateWindowsSingBox(body []byte, profile WindowsRuntimeProfile, caPath s
 			if localTUNCapture && (index == 0 && isWindowsTUNDNSRule(rule) || index == 1 && isWindowsTUNSniffRule(rule)) {
 				continue
 			}
-			return fmt.Errorf("[§7.2.1] 路由规则 %d 包含非托管 action", index)
+			return fmt.Errorf("路由规则 %d 包含非托管 action", index)
 		}
 		if rule.Type != "" || rule.Mode != "" || len(rule.Rules) != 0 || len(rule.DomainRegex) != 0 || rule.Invert {
-			return fmt.Errorf("[§7.2.1] 路由规则 %d 包含本地接管专用匹配字段", index)
+			return fmt.Errorf("路由规则 %d 包含本地接管专用匹配字段", index)
 		}
 		if rule.Outbound == "" || !outboundTags[rule.Outbound] {
 			return fmt.Errorf("route rule %d references unknown outbound %q", index, rule.Outbound)

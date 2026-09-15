@@ -252,7 +252,7 @@ func (manager *activationManager) Done() <-chan error {
 	return manager.active.done
 }
 
-// §7.3、§12：优先恢复先前成功的配置；首次连接也可以重启当前已通过启动检查的配置。
+// 优先恢复先前成功的配置；首次连接也可以重启当前已通过启动检查的配置。
 // 只使用内存中的已验证激活，限制一分钟内最多三次恢复，持续崩溃明确停止。
 func (manager *activationManager) Recover(ctx context.Context, activeErr error) error {
 	if manager == nil || manager.active == nil {
@@ -261,7 +261,7 @@ func (manager *activationManager) Recover(ctx context.Context, activeErr error) 
 	previous := manager.active
 	failed := previous.spec
 	previous.cancel()
-	<-previous.exited // §5.5：旧 Agent、数据面与文件清理全部完成后才能启动新 generation。
+	<-previous.exited // 旧 Agent、数据面与文件清理全部完成后才能启动新 generation。
 	manager.active = nil
 	manager.report(false, nil)
 	if activeErr == nil {
@@ -288,13 +288,13 @@ func (manager *activationManager) Recover(ctx context.Context, activeErr error) 
 		manager.recoveryAt, manager.recoveries = now, 0
 	}
 	if manager.recoveries >= 3 {
-		return errors.Join(activeErr, errors.New("[§7.3] 数据面一分钟内恢复三次后仍退出，已停止；请检查后重新连接"))
+		return errors.Join(activeErr, errors.New("数据面一分钟内恢复三次后仍退出，已停止；请检查后重新连接"))
 	}
 	manager.recoveries++
 	if err := manager.preflight(ctx, recovery); err != nil {
 		return errors.Join(activeErr, fmt.Errorf("preflight recovery data plane: %w", err))
 	}
-	// §16.1：旧实例只能作为离线证据，新报告必须绑定新 Agent 和新 context。
+	// 旧实例只能作为离线证据，新报告必须绑定新 Agent 和新 context。
 	recovery.AgentRuntime = nil
 	if err := manager.start(ctx, recovery); err != nil {
 		return errors.Join(activeErr, fmt.Errorf("restore verified data plane: %w", err))

@@ -17,10 +17,14 @@ LINK = re.compile(r"\[[^\]\n]*\]\((<[^>\n]+>|[^\s)]+)(?:\s+[^)]+)?\)")
 REFERENCE = re.compile(r"^\s{0,3}\[([^\]]+)\]:\s*(<[^>]+>|\S+)", re.MULTILINE)
 EXPLICIT_ID = re.compile(r'<(?:a|span)\b[^>]*\bid=["\']([^"\']+)["\']', re.IGNORECASE)
 DOCUMENT_EXTENSIONS = {".md", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"}
+RETIRED_DIRECTORIES = {"status", "specs", "decisions", "archive"}
+NUMBERED_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(?:§\s*)?\d+(?:\.\d+)*(?:[.)、：:]|\s|$)", re.MULTILINE)
+LEGACY_REFERENCE = re.compile(r"§\s*\d|(?<![\w])D\d{1,3}(?![\w])")
+EMPTY_LINK = re.compile(r"(?<!!)\[\s*\]\(")
 
 
 def prose(source: str) -> str:
-    """§12：忽略示例代码，保留行数使检查位置能直接定位。"""
+    """忽略示例代码，保留行数使检查位置能直接定位。"""
     result: list[str] = []
     fence = ""
     for line in source.splitlines(keepends=True):
@@ -65,6 +69,16 @@ def check(root: Path, files: list[Path]) -> list[str]:
     cached_anchors = {p: anchors(source) for p, source in documents.items()}
     graph: dict[Path, set[Path]] = {p: set() for p in documents}
     for path, source in documents.items():
+        if path.is_relative_to(root / "docs"):
+            body = prose(source)
+            for pattern, reason in (
+                (NUMBERED_HEADING, "标题应按主题命名，不维护章节编号"),
+                (LEGACY_REFERENCE, "旧编号引用应改为主题链接或直接说明"),
+                (EMPTY_LINK, "链接文字为空，无法说明引用的主题"),
+            ):
+                for match in pattern.finditer(body):
+                    line = body.count("\n", 0, match.start()) + 1
+                    failures.append(f"{path.relative_to(root)}:{line}: {reason}")
         for line, dest in links(source):
             try:
                 parts = urlsplit(dest)
@@ -107,6 +121,13 @@ def check(root: Path, files: list[Path]) -> list[str]:
     if retired.exists() or retired.with_suffix(".md").exists():
         failures.append("docs/: 已退役的私有状态目录仍存在")
     for path in (root / "docs").rglob("*"):
+        relative = path.relative_to(root / "docs")
+        if path.is_dir() and relative.parts[0] in RETIRED_DIRECTORIES:
+            failures.append(f"docs/{relative.parts[0]}/: 已退役目录；有效正文应归入主题，历史查 Git")
+        if path.is_file() and path.parent == root / "docs" and path.name != "README.md":
+            failures.append(f"{path.relative_to(root)}: docs 根目录只保留 README.md 入口")
+        if path.is_file() and path.name.endswith("-prompt.md"):
+            failures.append(f"{path.relative_to(root)}: 会话提示词应整理为主题规范或操作规程")
         if path.is_file() and path.suffix.lower() not in DOCUMENT_EXTENSIONS:
             failures.append(f"{path.relative_to(root)}: 文档目录只接收正文与配图；代码和产物须归位")
     return sorted(set(failures))
@@ -124,7 +145,7 @@ def main() -> int:
     if failures:
         print(f"文档检查失败：{len(failures)} 项")
         return 1
-    print("文档入口、本地链接、章节锚点及目录边界检查通过")
+    print("文档层级、主题引用、本地链接及目录边界检查通过")
     return 0
 
 

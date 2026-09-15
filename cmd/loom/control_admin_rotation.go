@@ -40,7 +40,7 @@ func lockControlState(dir string) (func(), error) {
 		return nil, err
 	}
 	if !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
-		return nil, errors.New("[D104 admin rotation] state 必须是 owner-only 目录")
+		return nil, errors.New("[admin rotation] state 必须是 owner-only 目录")
 	}
 	absolute, err := filepath.Abs(dir)
 	if err != nil {
@@ -70,7 +70,7 @@ func cmdControlRotateAdmin(args []string) error {
 	if err := readCanonicalFile(filepath.Join(*dir, controlConfigName), 8<<20, &config); err != nil {
 		return err
 	}
-	// D104：旧 daemon 尚无进程锁；占住全部原 listener 才能进行离线维护，避免双 leader 写盘。
+	// 旧 daemon 尚无进程锁；占住全部原 listener 才能进行离线维护，避免双 leader 写盘。
 	var listeners []net.Listener
 	defer func() {
 		for _, listener := range listeners {
@@ -82,7 +82,7 @@ func cmdControlRotateAdmin(args []string) error {
 		net.JoinHostPort(config.OverlayIP, fmt.Sprint(config.RaftPort))} {
 		listener, err := net.Listen("tcp", address)
 		if err != nil {
-			return errors.New("[D104 admin rotation] 控制 listener 未释放；请先停止 loom-control.service")
+			return errors.New("[admin rotation] 控制 listener 未释放；请先停止 loom-control.service")
 		}
 		listeners = append(listeners, listener)
 	}
@@ -93,7 +93,7 @@ func cmdControlRotateAdmin(args []string) error {
 	return runtime.rotateAdminCertificate(*adminDir, *out, *reason)
 }
 
-// D104/D132：本机 root 维护仪式只替换自己的证书，要求旧身份签名与新 key PoP。
+// 本机 root 维护仪式只替换自己的证书，要求旧身份签名与新 key PoP。
 // 它不注册到网络管理 API，也不扩大旧 ACL 的任何 kind/capability/scope 或有效期。
 func (runtime *controlRuntime) rotateAdminCertificate(adminDir, outDir, reason string) error {
 	runtime.mu.Lock()
@@ -107,11 +107,11 @@ func (runtime *controlRuntime) rotateAdminCertificate(adminDir, outDir, reason s
 		return err
 	}
 	if oldAbs == newAbs {
-		return errors.New("[D104 admin rotation] 新旧交付目录不得相同")
+		return errors.New("[admin rotation] 新旧交付目录不得相同")
 	}
 	state := runtime.store.Snapshot()
 	if len(state.ControlSet.Members) != 1 || state.CertifiedHead == nil || state.CertifiedQC == nil || state.Active != nil {
-		return errors.New("[D104 admin rotation] 只允许稳定、已 certified 的 N=1 authority")
+		return errors.New("[admin rotation] 只允许稳定、已 certified 的 N=1 authority")
 	}
 	if encoded, err := readOwnerOnlyFile(filepath.Join(outDir, controlAdminCertName), 1<<20); err == nil {
 		leaf, err := parseSingleCertificatePEM(encoded)
@@ -134,7 +134,7 @@ func (runtime *controlRuntime) rotateAdminCertificate(adminDir, outDir, reason s
 	}
 	defer client.CloseIdleConnections()
 	if endpoint.ClusterID != runtime.config.ClusterID || !wire.EqualCanonical(endpoint.Service, runtime.config.ControlService) {
-		return errors.New("[D104 admin rotation] 原交付目录不属于当前 authority")
+		return errors.New("[admin rotation] 原交付目录不属于当前 authority")
 	}
 	oldPEM, err := readOwnerOnlyFile(filepath.Join(adminDir, controlAdminCertName), 1<<20)
 	if err != nil {
@@ -145,7 +145,7 @@ func (runtime *controlRuntime) rotateAdminCertificate(adminDir, outDir, reason s
 		return err
 	}
 	if !runtime.adminCertificateAuthorizedLocked(oldCertificate.Raw) {
-		return errors.New("[D104 admin rotation] 原证书未获当前 certified ACL 授权")
+		return errors.New("[admin rotation] 原证书未获当前 certified ACL 授权")
 	}
 	oldKeyPEM, err := readOwnerOnlyFile(filepath.Join(adminDir, controlAdminKeyName), 1<<20)
 	if err != nil {
@@ -249,18 +249,18 @@ func (runtime *controlRuntime) rotateAdminCertificate(adminDir, outDir, reason s
 		Generation: profile.Generation, AdminCertificateProfileHash: profileHash}
 	next.AllowedOperationKinds, next.Capabilities, next.Scopes = old.AllowedOperationKinds, old.Capabilities, old.Scopes
 	next.NotAfter = old.NotAfter
-	// D104：只有尚未进入任何 Raft log 的末尾准备记录可重建；已提交记录由恢复流程继续完成。
+	// 只有尚未进入任何 Raft log 的末尾准备记录可重建；已提交记录由恢复流程继续完成。
 	for i, record := range runtime.journal.Records {
 		if record.AdminRotation == nil || record.Result != nil ||
 			record.AdminRotation.Payload.NextAuthorization.AdminCertificateDER != next.AdminCertificateDER {
 			continue
 		}
 		if i != len(runtime.journal.Records)-1 {
-			return errors.New("[D104 admin rotation] 非末尾的未完成轮换")
+			return errors.New("[admin rotation] 非末尾的未完成轮换")
 		}
 		for _, log := range runtime.storage.SnapshotRaft().Log {
 			if log.Head != nil && log.Head.HeadHash == record.Candidate.HeadHash {
-				return errors.New("[D104 admin rotation] 轮换已进入 Raft；必须先完成原提交恢复")
+				return errors.New("[admin rotation] 轮换已进入 Raft；必须先完成原提交恢复")
 			}
 		}
 		runtime.journal.Records = runtime.journal.Records[:i]
@@ -339,7 +339,7 @@ func (runtime *controlRuntime) rotateAdminCertificate(adminDir, outDir, reason s
 	}
 	result := runtime.journal.Records[len(runtime.journal.Records)-1].Result
 	if result == nil || !runtime.adminCertificateAuthorizedLocked(nextLeaf.Raw) || runtime.adminCertificateAuthorizedLocked(oldCertificate.Raw) {
-		return errors.New("[D104 admin rotation] 新身份尚未取得 exclusive certified authority")
+		return errors.New("[admin rotation] 新身份尚未取得 exclusive certified authority")
 	}
 	if err := writeCanonicalAtomic(filepath.Join(outDir, "rotation-receipt.json"), result, 0o600); err != nil {
 		return err
@@ -355,7 +355,7 @@ func (runtime *controlRuntime) adminRotationRoots(payload controlAdminRotationPa
 		return "", "", err
 	}
 	if len(runtime.controlTLS.Certificate) != 2 {
-		return "", "", errors.New("[D104 admin rotation] native issuer chain 无效")
+		return "", "", errors.New("[admin rotation] native issuer chain 无效")
 	}
 	root, err := wire.HashObject("loom-runtime-ca-profiles-v1", struct {
 		Schema   int    `json:"schema"`
@@ -369,7 +369,7 @@ func (runtime *controlRuntime) verifyAdminRotationRecord(index int) error {
 	record := runtime.journal.Records[index]
 	rotation := record.AdminRotation
 	if rotation == nil {
-		return errors.New("[D104 admin rotation] 缺轮换 preimage")
+		return errors.New("[admin rotation] 缺轮换 preimage")
 	}
 	p := rotation.Payload
 	at, err := wire.ParseTimeZ(record.Candidate.Body.Payload.CommittedLogicalTime)
@@ -390,7 +390,7 @@ func (runtime *controlRuntime) verifyAdminRotationRecord(index int) error {
 		!wire.EqualCanonical(p.NextAuthorization.Scopes, p.PreviousAuthorization.Scopes) ||
 		!wire.EqualCanonical(p.NextAuthorization.Capabilities, p.PreviousAuthorization.Capabilities) ||
 		!wire.EqualCanonical(p.NextAuthorization.AllowedOperationKinds, p.PreviousAuthorization.AllowedOperationKinds) {
-		return errors.New("[D104 admin rotation] 轮换改变了既有管理员权限/有效期或代际")
+		return errors.New("[admin rotation] 轮换改变了既有管理员权限/有效期或代际")
 	}
 	for _, pair := range []struct {
 		a wire.AdminAuthorizationV1
@@ -407,7 +407,7 @@ func (runtime *controlRuntime) verifyAdminRotationRecord(index int) error {
 		record.Operation.Body.AdminCertDigest != p.PreviousAuthorization.AdminCertificateDigest ||
 		record.Operation.Body.AuthorID != p.PreviousAuthorization.AdminID ||
 		!wire.EqualCanonical(record.Operation.Body, rotation.NewKeyProof.Body) {
-		return errors.New("[D104 admin rotation] 身份/签名 payload 未精确绑定前后代")
+		return errors.New("[admin rotation] 身份/签名 payload 未精确绑定前后代")
 	}
 	for _, pair := range []struct {
 		op  wire.ControlOperationV1
@@ -431,19 +431,19 @@ func (runtime *controlRuntime) verifyAdminRotationRecord(index int) error {
 		}
 	}
 	if parent == nil {
-		return errors.New("[D104 admin rotation] 原 certified parent 不在持久日志")
+		return errors.New("[admin rotation] 原 certified parent 不在持久日志")
 	}
 	oldRoot, _ := wire.AdminACLRoot([]wire.AdminAuthorizationV1{p.PreviousAuthorization},
 		map[string]wire.AdminCertificateProfileV1{p.PreviousProfile.ProfileID: p.PreviousProfile})
 	if parent.Body.Payload.AdminACLRoot != oldRoot {
-		return errors.New("[D104 admin rotation] 旧身份与 parent ACL 不匹配")
+		return errors.New("[admin rotation] 旧身份与 parent ACL 不匹配")
 	}
 	body, base := record.Operation.Body, parent.Body.Payload
 	if body.ClusterID != base.ClusterID || body.BaseRecoveryEpoch != base.RecoveryEpoch ||
 		body.BaseRecoveryStatementHash != base.RecoveryStatementHash || body.BaseRecoveryPolicyHash != base.RecoveryPolicyHash ||
 		body.BaseControlEpoch != base.ControlEpoch || body.BaseControlSetHash != base.ControlSetHash ||
 		body.BaseControlRevision != base.ControlRevision || body.ParentHeadHash != parent.HeadHash {
-		return errors.New("[D104 admin rotation] operation 未绑定 exact parent")
+		return errors.New("[admin rotation] operation 未绑定 exact parent")
 	}
 	acl, ca, err := runtime.adminRotationRoots(p)
 	if err != nil {
@@ -460,13 +460,13 @@ func (runtime *controlRuntime) verifyAdminRotationRecord(index int) error {
 	expected.Payload.TransitionContext = json.RawMessage(`{"schema":1,"kind":"ordinary"}`)
 	expected.Payload.AdminACLRoot, expected.Payload.CAProfileRoot = acl, ca
 	if !wire.EqualCanonical(expected, actual) {
-		return errors.New("[D104 admin rotation] 轮换修改了证书授权之外的 Head 字段")
+		return errors.New("[admin rotation] 轮换修改了证书授权之外的 Head 字段")
 	}
 	oldDER, _ := base64.RawURLEncoding.DecodeString(p.PreviousAuthorization.AdminCertificateDER)
 	oldLeaf, _ := x509.ParseCertificate(oldDER)
 	objectID, err := wire.ControlOperationObjectID(&record.Operation, oldLeaf.RawSubjectPublicKeyInfo, at, controlAdminRotationSchemas)
 	if err != nil || record.Leaf.ObjectID != objectID || record.Leaf.OperationID != record.Operation.Body.OperationID {
-		return errors.New("[D104 admin rotation] 操作日志 leaf 与签名对象不一致")
+		return errors.New("[admin rotation] 操作日志 leaf 与签名对象不一致")
 	}
 	return nil
 }
@@ -486,7 +486,7 @@ func (runtime *controlRuntime) projectAdminRotations() error {
 			continue
 		}
 		if record.Result == nil {
-			return errors.New("[D104 admin rotation] 身份投影缺 certified receipt")
+			return errors.New("[admin rotation] 身份投影缺 certified receipt")
 		}
 		if err := runtime.verifyAdminRotationRecord(i); err != nil {
 			return err
@@ -498,14 +498,14 @@ func (runtime *controlRuntime) projectAdminRotations() error {
 		p := record.AdminRotation.Payload
 		if len(authorizations) != 1 || !wire.EqualCanonical(authorizations[0], p.PreviousAuthorization) ||
 			!wire.EqualCanonical(profiles[p.PreviousProfile.ProfileID], p.PreviousProfile) {
-			return errors.New("[D104 admin rotation] 持久轮换历史不是连续的 authority")
+			return errors.New("[admin rotation] 持久轮换历史不是连续的 authority")
 		}
 		profiles = map[string]wire.AdminCertificateProfileV1{p.NextProfile.ProfileID: p.NextProfile}
 		authorizations = []wire.AdminAuthorizationV1{p.NextAuthorization}
 	}
 	root, err := wire.AdminACLRoot(authorizations, profiles)
 	if err != nil || root != state.CertifiedHead.Body.Payload.AdminACLRoot {
-		return errors.New("[D104 admin rotation] 当前身份投影与 certified ACL root 不一致")
+		return errors.New("[admin rotation] 当前身份投影与 certified ACL root 不一致")
 	}
 	runtime.config.AdminProfiles, runtime.config.Authorizations = profiles, authorizations
 	return nil

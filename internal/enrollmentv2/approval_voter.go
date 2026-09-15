@@ -25,7 +25,7 @@ type ApprovalVotePeer interface {
 }
 
 // CertifiedEnrollmentOperationProofV1 证明一个 exact enrollment operation 已经进入
-// 某个 quorum-certified Head 的累计 operation tree（D104、D130）。
+// 某个 quorum-certified Head 的累计 operation tree。
 type CertifiedEnrollmentOperationProofV1 struct {
 	Head               wire.HeadEntryV2            `json:"head"`
 	ConfigQC           json.RawMessage             `json:"config_qc"`
@@ -43,7 +43,7 @@ type CARegistryPreimageV1 struct {
 }
 
 // EnrollmentApprovalEvidenceV1 是每个 voter 必须从本机 replicated private state
-// 读取的完整 preimage。peer RPC 不携这些 Device 私有制品（D124、D130）。
+// 读取的完整 preimage。peer RPC 不携这些 Device 私有制品。
 type EnrollmentApprovalEvidenceV1 struct {
 	Schema                         int                                     `json:"schema"`
 	Invite                         InviteContext                           `json:"invite"`
@@ -68,7 +68,7 @@ type EnrollmentApprovalEvidenceV1 struct {
 }
 
 // ApprovalEvidenceReader 必须做线性化本地读取并只返回本机已经复制、重算过的
-// issuance transaction/artifacts；leader 传来的 attestation 不能替代该读取（D130）。
+// issuance transaction/artifacts；leader 传来的 attestation 不能替代该读取。
 type ApprovalEvidenceReader func(context.Context, string, string, string) (EnrollmentApprovalEvidenceV1, error)
 
 type ApprovalVoter struct {
@@ -82,7 +82,7 @@ type ApprovalVoter struct {
 func NewApprovalVoter(memberID string, set wire.ControlSetV1, privateKey ed25519.PrivateKey,
 	now func() time.Time, read ApprovalEvidenceReader) (*ApprovalVoter, error) {
 	if memberID == "" || now == nil || read == nil || len(privateKey) != ed25519.PrivateKeySize {
-		return nil, errors.New("[D130 Enrollment peer] approval voter identity/key/time/reader 配置不完整")
+		return nil, errors.New("[Enrollment peer] approval voter identity/key/time/reader 配置不完整")
 	}
 	if err := wire.ValidateControlSet(&set); err != nil {
 		return nil, err
@@ -96,7 +96,7 @@ func NewApprovalVoter(memberID string, set wire.ControlSetV1, privateKey ed25519
 	}
 	keyID, err := wire.ControlKeyID(privateKey.Public().(ed25519.PublicKey))
 	if err != nil || member == nil || keyID != member.EnrollmentKeyID {
-		return nil, errors.New("[D102 keys] approval voter enrollment key 不属于 committed ControlSet member")
+		return nil, errors.New("[keys] approval voter enrollment key 不属于 committed ControlSet member")
 	}
 	return &ApprovalVoter{set: set, member: *member,
 		privateKey: append(ed25519.PrivateKey(nil), privateKey...), now: now, read: read}, nil
@@ -105,7 +105,7 @@ func NewApprovalVoter(memberID string, set wire.ControlSetV1, privateKey ed25519
 func (voter *ApprovalVoter) VoteApproval(ctx context.Context,
 	request EnrollmentApprovalVoteRequestV1) (wire.ControlEnrollmentSignatureV1, error) {
 	if voter == nil || request.Schema != 1 || wire.ValidateEnrollmentApproval(&request.Attestation) != nil {
-		return wire.ControlEnrollmentSignatureV1{}, errors.New("[D130 Enrollment peer] approval vote request header 无效")
+		return wire.ControlEnrollmentSignatureV1{}, errors.New("[Enrollment peer] approval vote request header 无效")
 	}
 	if err := ctx.Err(); err != nil {
 		return wire.ControlEnrollmentSignatureV1{}, err
@@ -113,7 +113,7 @@ func (voter *ApprovalVoter) VoteApproval(ctx context.Context,
 	attestation := request.Attestation
 	evidence, err := voter.read(ctx, attestation.ClusterID, attestation.InviteID, attestation.RequestID)
 	if err != nil {
-		return wire.ControlEnrollmentSignatureV1{}, errors.New("[D130 Enrollment peer] 本地 approval evidence 不可用")
+		return wire.ControlEnrollmentSignatureV1{}, errors.New("[Enrollment peer] 本地 approval evidence 不可用")
 	}
 	set, err := VerifyPeerApprovalEvidence(&evidence, &attestation, voter.now().UTC())
 	if err != nil {
@@ -122,7 +122,7 @@ func (voter *ApprovalVoter) VoteApproval(ctx context.Context,
 	wantSetHash, _ := wire.ControlSetHash(&voter.set)
 	gotSetHash, _ := wire.ControlSetHash(&set)
 	if wantSetHash != gotSetHash {
-		return wire.ControlEnrollmentSignatureV1{}, errors.New("[D130 Enrollment peer] issuance ControlSet 与 approval voter 配置不匹配")
+		return wire.ControlEnrollmentSignatureV1{}, errors.New("[Enrollment peer] issuance ControlSet 与 approval voter 配置不匹配")
 	}
 	return wire.SignEnrollmentApproval(attestation, voter.member, voter.privateKey)
 }
@@ -132,14 +132,14 @@ func (voter *ApprovalVoter) VoteApproval(ctx context.Context,
 func VerifyPeerApprovalEvidence(evidence *EnrollmentApprovalEvidenceV1,
 	attestation *wire.EnrollmentApprovalAttestationBodyV2, trustedTime time.Time) (wire.ControlSetV1, error) {
 	if attestation == nil {
-		return wire.ControlSetV1{}, errors.New("[D130 Enrollment peer] approval evidence/context 无效")
+		return wire.ControlSetV1{}, errors.New("[Enrollment peer] approval evidence/context 无效")
 	}
 	want, set, err := approvalAttestationForEvidence(evidence, trustedTime)
 	if err != nil {
 		return wire.ControlSetV1{}, err
 	}
 	if !wire.EqualCanonical(want, *attestation) {
-		return wire.ControlSetV1{}, errors.New("[D130 Enrollment peer] approval attestation 未绑定 exact locally verified evidence")
+		return wire.ControlSetV1{}, errors.New("[Enrollment peer] approval attestation 未绑定 exact locally verified evidence")
 	}
 	return set, nil
 }
@@ -154,7 +154,7 @@ func ApprovalAttestationForEvidence(evidence *EnrollmentApprovalEvidenceV1,
 func approvalAttestationForEvidence(evidence *EnrollmentApprovalEvidenceV1,
 	trustedTime time.Time) (wire.EnrollmentApprovalAttestationBodyV2, wire.ControlSetV1, error) {
 	if evidence == nil || evidence.Schema != 1 || trustedTime.IsZero() {
-		return wire.EnrollmentApprovalAttestationBodyV2{}, wire.ControlSetV1{}, errors.New("[D130 Enrollment peer] approval evidence/context 无效")
+		return wire.EnrollmentApprovalAttestationBodyV2{}, wire.ControlSetV1{}, errors.New("[Enrollment peer] approval evidence/context 无效")
 	}
 	claimHash, err := wire.HashObject(DomainClaimOperation, evidence.ClaimOperation)
 	if err != nil {
@@ -184,7 +184,7 @@ func approvalAttestationForEvidence(evidence *EnrollmentApprovalEvidenceV1,
 	profile := &evidence.DeviceCertificateProfile
 	intent := &evidence.ClaimEvidence.Opening.DeviceEnrollmentIntent
 	if profile.Status != "active" || wire.ValidateDeviceCertificateProfileRef(&intent.DeviceCertificateProfileRef, profile) != nil {
-		return wire.EnrollmentApprovalAttestationBodyV2{}, wire.ControlSetV1{}, errors.New("[D102 Device CA] approval intent 未绑定 exact active profile")
+		return wire.EnrollmentApprovalAttestationBodyV2{}, wire.ControlSetV1{}, errors.New("[Device CA] approval intent 未绑定 exact active profile")
 	}
 	if err := verifyCARegistryAtHead(profile, &evidence.ReservationCARegistry, &evidence.Reservation.Head); err != nil {
 		return wire.EnrollmentApprovalAttestationBodyV2{}, wire.ControlSetV1{}, err
@@ -194,7 +194,7 @@ func approvalAttestationForEvidence(evidence *EnrollmentApprovalEvidenceV1,
 		return wire.EnrollmentApprovalAttestationBodyV2{}, wire.ControlSetV1{}, err
 	}
 	if evidence.Issuance.PreviousControlSet != nil {
-		return wire.EnrollmentApprovalAttestationBodyV2{}, wire.ControlSetV1{}, errors.New("[D130 Enrollment peer] approval 只允许 stable issuance ControlSet")
+		return wire.EnrollmentApprovalAttestationBodyV2{}, wire.ControlSetV1{}, errors.New("[Enrollment peer] approval 只允许 stable issuance ControlSet")
 	}
 	provisionalHash, err := wire.HashObject(DomainProvisionalOperation, evidence.ProvisionalOperation)
 	if err != nil {
@@ -207,7 +207,7 @@ func approvalAttestationForEvidence(evidence *EnrollmentApprovalEvidenceV1,
 	}
 	issued, err := RecordProvisional(reserved, evidence.ProvisionalOperation)
 	if err != nil || issued.Status != "issued_provisional" {
-		return wire.EnrollmentApprovalAttestationBodyV2{}, wire.ControlSetV1{}, errors.New("[D130 Enrollment peer] provisional operation 不能重放为 exact issued state")
+		return wire.EnrollmentApprovalAttestationBodyV2{}, wire.ControlSetV1{}, errors.New("[Enrollment peer] provisional operation 不能重放为 exact issued state")
 	}
 	if err := verifyProvisionalApprovalEvidence(evidence, reservationQCHash,
 		trustedTime); err != nil {
@@ -234,7 +234,7 @@ func approvalAttestationForEvidence(evidence *EnrollmentApprovalEvidenceV1,
 func verifyCertifiedEnrollmentOperation(proof *CertifiedEnrollmentOperationProofV1,
 	operationID, objectID string) (string, error) {
 	if proof == nil || proof.Head.Body.Payload.HeadKind == "bootstrap" || operationID == "" {
-		return "", errors.New("[D130 Enrollment peer] certified operation proof header 无效")
+		return "", errors.New("[Enrollment peer] certified operation proof header 无效")
 	}
 	if err := wire.VerifyConfigQCAuthority(proof.Head.HeadHash, proof.ConfigQC, &proof.Head,
 		&proof.ControlSet, proof.PreviousControlSet); err != nil {
@@ -243,7 +243,7 @@ func verifyCertifiedEnrollmentOperation(proof *CertifiedEnrollmentOperationProof
 	if proof.OperationLeaf.OperationID != operationID || proof.OperationLeaf.ObjectID != objectID ||
 		wire.VerifyControlOperationInclusion(&proof.OperationLeaf, proof.OperationLeafIndex,
 			proof.OperationTreeSize, proof.OperationAuditPath, &proof.Head) != nil {
-		return "", errors.New("[D130 Enrollment peer] operation 缺 exact certified inclusion proof")
+		return "", errors.New("[Enrollment peer] operation 缺 exact certified inclusion proof")
 	}
 	return wire.ConfigQCHash(proof.ConfigQC)
 }
@@ -256,7 +256,7 @@ func verifyApprovalWrappingKey(evidence *EnrollmentApprovalEvidenceV1) error {
 	for index := range evidence.ResultArtifact.SecretArtifactRefs {
 		ref := &evidence.ResultArtifact.SecretArtifactRefs[index]
 		if ref.SealedBlob == nil {
-			return errors.New("[D124 secret artifact] Device result secret 未使用 sealed blob")
+			return errors.New("[secret artifact] Device result secret 未使用 sealed blob")
 		}
 		found := false
 		for _, recipient := range ref.SealedBlob.RecipientKeyVersions {
@@ -266,7 +266,7 @@ func verifyApprovalWrappingKey(evidence *EnrollmentApprovalEvidenceV1) error {
 			}
 		}
 		if !found {
-			return errors.New("[D124 secret artifact] result secret 未封装给 admitted wrapping key")
+			return errors.New("[secret artifact] result secret 未封装给 admitted wrapping key")
 		}
 	}
 	return nil
@@ -283,13 +283,13 @@ func containsString(values []string, wanted string) bool {
 
 // VerifyEnrollmentHeadLineage 验证两个 Enrollment stage 之间的完整 Head 链。
 // ordinary Head 只延续既有 authority；每个 control_set_final 必须携完整 Joint→Final
-// bundle，不能只凭新集合对后续 Head 的自签 QC 改写 control authority（D112、D130）。
+// bundle，不能只凭新集合对后续 Head 的自签 QC 改写 control authority。
 func VerifyEnrollmentHeadLineage(from *wire.HeadEntryV2, intermediate []wire.HeadEntryV2,
 	transitions []wire.ControlSetTransitionBundleV1, to *wire.HeadEntryV2,
 	targetSet *wire.ControlSetV1) error {
 	if from == nil || to == nil || targetSet == nil || len(intermediate) > 4096 ||
 		len(transitions) > 256 || to.Body.Payload.RaftIndex <= from.Body.Payload.RaftIndex {
-		return errors.New("[D130 Enrollment peer] Enrollment Head lineage 无效")
+		return errors.New("[Enrollment peer] Enrollment Head lineage 无效")
 	}
 	currentSetHash := from.Body.Payload.ControlSetHash
 	transitionIndex := 0
@@ -300,20 +300,20 @@ func VerifyEnrollmentHeadLineage(from *wire.HeadEntryV2, intermediate []wire.Hea
 			next = &intermediate[index]
 		}
 		if err := wire.ValidateHeadEntry(next, &parent); err != nil {
-			return errors.New("[D130 Enrollment peer] Enrollment Head lineage 不连续")
+			return errors.New("[Enrollment peer] Enrollment Head lineage 不连续")
 		}
 		switch next.Body.Payload.HeadKind {
 		case "ordinary":
 			if next.Body.Payload.ControlSetHash != currentSetHash {
-				return errors.New("[D130 Enrollment peer] ordinary Head 改写 ControlSet")
+				return errors.New("[Enrollment peer] ordinary Head 改写 ControlSet")
 			}
 		case "control_set_final":
 			if transitionIndex >= len(transitions) {
-				return errors.New("[D112 Enrollment peer] ControlSet Final 缺 transition bundle")
+				return errors.New("[Enrollment peer] ControlSet Final 缺 transition bundle")
 			}
 			bundle := &transitions[transitionIndex]
 			if !wire.EqualCanonical(bundle.Final.Head, *next) {
-				return errors.New("[D112 Enrollment peer] transition bundle 未绑定 lineage Final Head")
+				return errors.New("[Enrollment peer] transition bundle 未绑定 lineage Final Head")
 			}
 			if _, err := wire.VerifyControlSetTransitionBundle(bundle, &parent); err != nil {
 				return err
@@ -322,19 +322,19 @@ func VerifyEnrollmentHeadLineage(from *wire.HeadEntryV2, intermediate []wire.Hea
 			newHash, newErr := wire.ControlSetHash(&bundle.NewControlSet)
 			if oldErr != nil || newErr != nil || oldHash != currentSetHash ||
 				newHash != next.Body.Payload.ControlSetHash {
-				return errors.New("[D112 Enrollment peer] transition bundle authority 链不连续")
+				return errors.New("[Enrollment peer] transition bundle authority 链不连续")
 			}
 			currentSetHash = newHash
 			transitionIndex++
 		default:
-			return errors.New("[D130 Enrollment peer] Enrollment stage 不接受未证明的 recovery authority transition")
+			return errors.New("[Enrollment peer] Enrollment stage 不接受未证明的 recovery authority transition")
 		}
 		parent = *next
 	}
 	targetHash, err := wire.ControlSetHash(targetSet)
 	if err != nil || targetHash != currentSetHash || targetHash != to.Body.Payload.ControlSetHash ||
 		transitionIndex != len(transitions) {
-		return errors.New("[D112 Enrollment peer] Enrollment Head lineage target ControlSet 无效")
+		return errors.New("[Enrollment peer] Enrollment Head lineage target ControlSet 无效")
 	}
 	return nil
 }
@@ -342,11 +342,11 @@ func VerifyEnrollmentHeadLineage(from *wire.HeadEntryV2, intermediate []wire.Hea
 func verifyCARegistryAtHead(profile *wire.DeviceCertificateProfileStateV1,
 	registry *CARegistryPreimageV1, head *wire.HeadEntryV2) error {
 	if profile == nil || registry == nil || head == nil {
-		return errors.New("[D102 Device CA] CA registry evidence 不完整")
+		return errors.New("[Device CA] CA registry evidence 不完整")
 	}
 	root, err := wire.CAProfileRoot(registry.AdminProfiles, registry.DeviceProfiles)
 	if err != nil || root != head.Body.Payload.CAProfileRoot {
-		return errors.New("[D102 Device CA] CA registry preimage 与 certified Head root 不匹配")
+		return errors.New("[Device CA] CA registry preimage 与 certified Head root 不匹配")
 	}
 	profileHash, err := wire.DeviceCertificateProfileStateHash(profile)
 	if err != nil {
@@ -360,12 +360,12 @@ func verifyCARegistryAtHead(profile *wire.DeviceCertificateProfileStateV1,
 		}
 	}
 	if found != 1 {
-		return errors.New("[D102 Device CA] exact profile 不在 certified CA registry")
+		return errors.New("[Device CA] exact profile 不在 certified CA registry")
 	}
 	changedAt, _ := wire.ParseTimeZ(profile.StatusChangedAt)
 	committedAt, _ := wire.ParseTimeZ(head.Body.Payload.CommittedLogicalTime)
 	if committedAt.Before(changedAt) {
-		return errors.New("[D102 Device CA] Head 早于 profile activation")
+		return errors.New("[Device CA] Head 早于 profile activation")
 	}
 	return nil
 }
@@ -385,17 +385,17 @@ func verifyProvisionalApprovalEvidence(evidence *EnrollmentApprovalEvidenceV1,
 		body.IssuanceLogCoordinate.RecoveryEpoch != evidence.Issuance.Head.Body.Payload.RecoveryEpoch ||
 		body.IssuanceLogCoordinate.RaftIndex != evidence.Issuance.Head.Body.Payload.RaftIndex ||
 		evidence.ProvisionalOperation.IssuedAt != evidence.Issuance.Head.Body.Payload.CommittedLogicalTime {
-		return errors.New("[D130 Enrollment peer] provisional issuance/head/coordinate binding 无效")
+		return errors.New("[Enrollment peer] provisional issuance/head/coordinate binding 无效")
 	}
 	previousRoot, err := wire.EnrollmentIssuanceRegistryRoot(evidence.PreviousIssuanceRegistryLeaves)
 	if err != nil || previousRoot != evidence.ProvisionalOperation.PreviousIssuanceRegistryRoot {
-		return errors.New("[D130 Enrollment peer] issuance registry previous root preimage 无效")
+		return errors.New("[Enrollment peer] issuance registry previous root preimage 无效")
 	}
 	resulting := append([]wire.EnrollmentIssuanceRegistryLeafV1(nil), evidence.PreviousIssuanceRegistryLeaves...)
 	resulting = append(resulting, evidence.ProvisionalOperation.IssuanceRegistryLeaf)
 	resultingRoot, err := wire.EnrollmentIssuanceRegistryRoot(resulting)
 	if err != nil || resultingRoot != evidence.ProvisionalOperation.ResultingIssuanceRegistryRoot {
-		return errors.New("[D130 Enrollment peer] issuance registry first-result CAS preimage 无效")
+		return errors.New("[Enrollment peer] issuance registry first-result CAS preimage 无效")
 	}
 	if err := verifyCARegistryAtHead(&evidence.DeviceCertificateProfile, &evidence.IssuanceCARegistry,
 		&evidence.Issuance.Head); err != nil {
@@ -403,7 +403,7 @@ func verifyProvisionalApprovalEvidence(evidence *EnrollmentApprovalEvidenceV1,
 	}
 	resultHash, err := wire.EnrollmentResultArtifactHash(&evidence.ResultArtifact)
 	if err != nil || resultHash != body.ResultArtifactHash {
-		return errors.New("[D130 Enrollment peer] result artifact hash/preimage 不匹配")
+		return errors.New("[Enrollment peer] result artifact hash/preimage 不匹配")
 	}
 	certificateDER, err := wire.EnrollmentResultCertificateDER(&evidence.ResultArtifact)
 	if err != nil {
@@ -414,7 +414,7 @@ func verifyProvisionalApprovalEvidence(evidence *EnrollmentApprovalEvidenceV1,
 	if err != nil || viewErr != nil || certificateHash != body.DeviceCertificateHash ||
 		viewHash != body.InitialDeviceViewHash ||
 		evidence.ResultArtifact.InitialDeviceView.Active.SecretArtifactRefsRoot != body.SecretArtifactRefsRoot {
-		return errors.New("[D130 Enrollment peer] certificate/view/secret refs 未绑定 provisional issuance")
+		return errors.New("[Enrollment peer] certificate/view/secret refs 未绑定 provisional issuance")
 	}
 	intent := evidence.ClaimEvidence.Opening.DeviceEnrollmentIntent
 	view := evidence.ResultArtifact.InitialDeviceView
@@ -423,11 +423,11 @@ func verifyProvisionalApprovalEvidence(evidence *EnrollmentApprovalEvidenceV1,
 		!wire.EqualCanonical(active.Membership, intent.Membership) ||
 		!wire.EqualCanonical(active.Responsibilities, intent.Responsibilities) ||
 		!wire.EqualCanonical(active.Grants, intent.Grants) {
-		return errors.New("[D130 Enrollment peer] initial Device view 未投影 exact enrollment intent/key")
+		return errors.New("[Enrollment peer] initial Device view 未投影 exact enrollment intent/key")
 	}
 	approvedAt, err := wire.ParseTimeZ(evidence.Issuance.Head.Body.Payload.CommittedLogicalTime)
 	if err != nil || trustedTime.Before(approvedAt) {
-		return errors.New("[D130 Enrollment peer] approval trusted time 早于 issuance Head")
+		return errors.New("[Enrollment peer] approval trusted time 早于 issuance Head")
 	}
 	if _, err := wire.VerifyDeviceCertificateAt(certificateDER, &evidence.DeviceCertificateProfile,
 		intent.DeviceID, evidence.ClaimOperation.IdentityKeyHash, intent.Platform,

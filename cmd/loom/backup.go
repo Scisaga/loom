@@ -23,9 +23,9 @@ import (
 
 // backup 打包那些**丢了就得全网重来**的东西:秘密层、内部 CA、源头存档。
 //
-// 渲染产物不备份 —— 它们能从 SSOT 再生成一份,字节完全一样(§12 纯函数)。
+// 渲染产物不备份 —— 它们能从 SSOT 再生成一份,字节完全一样。
 // **但 SSOT 自己要备份。** 那句"能从 SSOT 再生成"一度默认了 SSOT 一直在,
-// 而它恰恰是唯一不可再生的输入(D61)。
+// 而它恰恰是唯一不可再生的输入。
 // 备份只针对不可再生的:凭据是随机生成的,CA 私钥签过的证书全网都在信任。
 //
 // **它只写文件,不往任何地方发。** 送到哪儿去由人决定。
@@ -50,7 +50,7 @@ func cmdBackup(args []string) error {
 		return fmt.Errorf("需要 -o 指定输出文件")
 	}
 	// 加不加密必须显式选。默认明文会让人在不知情的情况下把凭据放进网盘;
-	// 默认加密又会让人在没记口令时以为自己有备份(§ D3 的同一条道理:
+	// 默认加密又会让人在没记口令时以为自己有备份(因此必须明确恢复条件:
 	// 不完整的行为要显式报出,不静默选一个)。
 	if (*passFile == "") == !*plaintext {
 		return fmt.Errorf("要么给 -passphrase-file 加密,要么显式 -plaintext;两者必选其一")
@@ -331,8 +331,8 @@ func defaultBackupSrcs() ([]backupSrc, error) {
 	return []backupSrc{
 		// 平台签名私钥。**丢了它,全网就再也收不到任何新配置** ——
 		// 节点只认这把钥匙签出来的快照,换钥要逐台手工改 control.json。
-		// D38 和附录 C #15 都写着它"靠 loom backup 保存",而在此之前
-		// 这句话是假的:清单里只有 secrets.env / pki / ssot-history,
+		// 平台签名私钥必须随 loom backup 保存。此前清单里只有
+		// secrets.env / pki / ssot-history,
 		// 而 pki 是 CA 与节点证书,**是另一样东西**。
 		//
 		// 默认备份于是能"成功"却恢复不了签名能力,而这件事只有在
@@ -355,7 +355,7 @@ func defaultBackupSrcs() ([]backupSrc, error) {
 		// 拿它当必需项的话,一台刚起来的中控连备份都做不了 ——
 		// 而"做危险变更之前先备份"恰恰是最需要它能跑的时候。
 		{path: "deploy/ssot-history", optional: !signedEra},
-		// §13.3：管理参数与精选验收证据不能从 Git 恢复；首次配置前允许
+		// 管理参数与精选验收证据不能从 Git 恢复；首次配置前允许
 		// 缺失。仍由本命令既有加密或显式明文边界保护，不备份临时代码。
 		{path: ".env", optional: true},
 		{path: ".ssh_config", optional: true},

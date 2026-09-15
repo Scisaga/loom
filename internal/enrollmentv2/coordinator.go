@@ -25,7 +25,7 @@ type ProvisionalPlanV1 struct {
 	Result        wire.EnrollmentResultArtifactV1
 	Certification CertifiedEnrollmentOperationProofV1
 	// IntermediateHeads 携 reservation 与 issuance 之间的全部 Head；Raft no-op
-	// 不产生 Head。跨 ControlSet 时必须另携对应 Joint→Final bundle（D104、D112、D130）。
+	// 不产生 Head。跨 ControlSet 时必须另携对应 Joint→Final bundle。
 	IntermediateHeads     []wire.HeadEntryV2
 	ControlSetTransitions []wire.ControlSetTransitionBundleV1
 }
@@ -66,7 +66,7 @@ type Coordinator struct {
 
 func NewCoordinator(repository TransactionRepository, backend WorkflowBackend) (*Coordinator, error) {
 	if repository == nil || backend == nil {
-		return nil, errors.New("[D130 Enrollment] coordinator repository/backend 不能为空")
+		return nil, errors.New("[Enrollment] coordinator repository/backend 不能为空")
 	}
 	return &Coordinator{repository: repository, backend: backend}, nil
 }
@@ -89,7 +89,7 @@ func (coordinator *Coordinator) ProcessClaim(ctx context.Context,
 	} else {
 		if attempt.capability.Body().Mode == "resume_committed_claim" {
 			return wire.EnrollmentClaimResultV2{},
-				errors.New("[D130 Enrollment] resume capability 缺 exact durable transaction")
+				errors.New("[Enrollment] resume capability 缺 exact durable transaction")
 		}
 		attestation, err := attempt.AdmissionAttestation()
 		if err != nil {
@@ -101,7 +101,7 @@ func (coordinator *Coordinator) ProcessClaim(ctx context.Context,
 		}
 		if !wire.EqualCanonical(admission.Attestation, attestation) ||
 			wire.VerifyEnrollmentAdmissionQC(&admission, &attempt.material.ControlSet) != nil {
-			return wire.EnrollmentClaimResultV2{}, errors.New("[D129 Enrollment] backend admission QC 未绑定 exact verified attempt/base ControlSet")
+			return wire.EnrollmentClaimResultV2{}, errors.New("[Enrollment] backend admission QC 未绑定 exact verified attempt/base ControlSet")
 		}
 		plan, err := coordinator.backend.PlanReservation(ctx, attempt, admission)
 		if err != nil {
@@ -118,7 +118,7 @@ func (coordinator *Coordinator) ProcessClaim(ctx context.Context,
 		}
 		record, found = coordinator.repository.SnapshotRecord(operation.InviteID)
 		if !found {
-			return wire.EnrollmentClaimResultV2{}, errors.New("[D130 Enrollment] reservation CAS 后缺 durable record")
+			return wire.EnrollmentClaimResultV2{}, errors.New("[Enrollment] reservation CAS 后缺 durable record")
 		}
 	}
 
@@ -136,7 +136,7 @@ func (coordinator *Coordinator) ProcessClaim(ctx context.Context,
 		}
 		record, found = coordinator.repository.SnapshotRecord(record.InviteID)
 		if !found {
-			return wire.EnrollmentClaimResultV2{}, errors.New("[D130 Enrollment] provisional CAS 后缺 durable record")
+			return wire.EnrollmentClaimResultV2{}, errors.New("[Enrollment] provisional CAS 后缺 durable record")
 		}
 	}
 
@@ -170,7 +170,7 @@ func (coordinator *Coordinator) ProcessClaim(ctx context.Context,
 		}
 		record, found = coordinator.repository.SnapshotRecord(record.InviteID)
 		if !found || record.State.Status != "completed" {
-			return wire.EnrollmentClaimResultV2{}, errors.New("[D130 Enrollment] completion apply 后缺 durable completed record")
+			return wire.EnrollmentClaimResultV2{}, errors.New("[Enrollment] completion apply 后缺 durable completed record")
 		}
 	}
 	return enrollmentResult(record)
@@ -179,7 +179,7 @@ func (coordinator *Coordinator) ProcessClaim(ctx context.Context,
 func claimOperationForAdmission(admission *wire.StableEnrollmentAdmissionQCV1,
 	plan ReservationPlanV2) (ClaimOperationV2, error) {
 	if plan.OperationID == "" {
-		return ClaimOperationV2{}, errors.New("[D130 Enrollment] reservation operation ID 不能为空")
+		return ClaimOperationV2{}, errors.New("[Enrollment] reservation operation ID 不能为空")
 	}
 	if _, err := wire.ParseTimeZ(plan.CommittedAt); err != nil {
 		return ClaimOperationV2{}, err
@@ -205,7 +205,7 @@ func claimOperationForAdmission(admission *wire.StableEnrollmentAdmissionQCV1,
 func completionOperationForRecord(record DurableRecord,
 	approval *wire.StableEnrollmentApprovalQCV2) (CompletionOperationV2, error) {
 	if record.ProvisionalOperation == nil {
-		return CompletionOperationV2{}, errors.New("[D130 Enrollment] completion provisional operation 无效")
+		return CompletionOperationV2{}, errors.New("[Enrollment] completion provisional operation 无效")
 	}
 	operationID, err := completionOperationID(record, approval)
 	if err != nil {
@@ -232,7 +232,7 @@ func completionOperationForRecord(record DurableRecord,
 
 func validateAttemptAgainstRecord(attempt VerifiedClaimAttemptV2, record *DurableRecord) error {
 	if record == nil {
-		return errors.New("[D130 Enrollment] durable record 不能为空")
+		return errors.New("[Enrollment] durable record 不能为空")
 	}
 	invite := attempt.InviteContext()
 	claim := attempt.Claim()
@@ -246,14 +246,14 @@ func validateAttemptAgainstRecord(attempt VerifiedClaimAttemptV2, record *Durabl
 		claim.WrappingKeyHash() != record.State.WrappingKeyHash || claim.CSRHash() != record.ClaimOperation.CSRHash ||
 		attempt.submission.ClaimCore.RequestID != record.State.RequestID ||
 		!wire.EqualCanonical(attempt.PrivateClaimEvidence(), record.ClaimEvidence) {
-		return errors.New("[D130 Enrollment] resume attempt 与 durable stable claim/core/key 不匹配")
+		return errors.New("[Enrollment] resume attempt 与 durable stable claim/core/key 不匹配")
 	}
 	if binding := attempt.capability.Body().ResumeBinding; binding != nil {
 		stateHash, stateErr := TransactionHash(record.State)
 		if stateErr != nil || binding.ClaimOperationHash != record.State.ClaimOperationHash ||
 			binding.AdmissionQCHash != record.ClaimOperation.AdmissionQCHash ||
 			binding.EnrollmentTransactionStateHash != stateHash {
-			return errors.New("[D130 Enrollment] resume capability 不属于 exact durable transaction state")
+			return errors.New("[Enrollment] resume capability 不属于 exact durable transaction state")
 		}
 	}
 	return nil
@@ -275,7 +275,7 @@ func enrollmentResult(record DurableRecord) (wire.EnrollmentClaimResultV2, error
 	} else {
 		if err := validateDurableRecord(&record); err != nil || record.ResultArtifact == nil ||
 			record.CompletionProjection == nil || record.CompletionProjection.ResultReleaseStatus != "authorized" {
-			return wire.EnrollmentClaimResultV2{}, errors.New("[D130 Enrollment] completed result 尚未获得原子 release authorization")
+			return wire.EnrollmentClaimResultV2{}, errors.New("[Enrollment] completed result 尚未获得原子 release authorization")
 		}
 		artifact := clonePrivateValue(*record.ResultArtifact)
 		result.ResultArtifact = &artifact

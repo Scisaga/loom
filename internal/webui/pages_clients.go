@@ -215,7 +215,7 @@ func pageDeviceDetail(d Deps, deviceID string, isAuthed bool) string {
 	return shell(d, "Device · "+device.ID, b.String(), isAuthed)
 }
 
-// 暂停按当前 SSOT 职责开放，运行态离线不应妨碍管理员恢复设备(§14.4)。
+// 暂停按当前 SSOT 职责开放，运行态离线不应妨碍管理员恢复设备。
 func devicePauseAction(d Deps, device ClientView, isAuthed bool) string {
 	control := deviceControl(d)
 	if !isAuthed || control == nil || control.SetDevicePaused == nil ||
@@ -594,10 +594,10 @@ func clientStatusPresentation(status string) (className, label string) {
 
 const (
 	// 完整 Observation 保持原一分钟采集/同步语义；它过期后即使仍有心跳，
-	// 也不能把旧健康和配置证据继续展示为 Online（§16.4）。
+	// 也不能把旧健康和配置证据继续展示为 Online。
 	clientRuntimeStaleAfter = 2 * time.Minute
 	// Windows、Android 与 Linux 每五秒发送独立最小心跳；漏掉三次后在线租约失效。
-	// 它不刷新上面的完整 Observation 时钟（§16.4）。
+	// 它不刷新上面的完整 Observation 时钟。
 	clientPresenceStaleAfter = nodepresence.Lease
 )
 
@@ -643,7 +643,7 @@ func mergeClientNodeRuntime(client *ClientView, node NodeView, now time.Time) {
 	}
 	requiresPresence := clientRequiresPresence(*client)
 	// Windows、Android 与 Linux 的完整 Observation 都不能充当心跳兼容层；
-	// 从未提交 loom-presence-v1 的客户端不能沿用旧报告 lease（§16.4）。
+	// 从未提交 loom-presence-v1 的客户端不能沿用旧报告 lease。
 	heartbeatStale := requiresPresence && (!heartbeatOK || now.Sub(heartbeat) > clientPresenceStaleAfter ||
 		heartbeat.After(now.Add(time.Minute)))
 	if !requiresPresence {

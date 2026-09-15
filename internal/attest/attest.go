@@ -7,9 +7,8 @@
 // 数字,B 转述 C 的观测,可信度就是 B 的可信度,而观测本来就是尽力而为。
 //
 // **但身份不一样。** "C 跑的是 commit X"这句话如果只由 B 说,那么排障时
-// 恰恰不能假设 B 可信 —— 出问题的往往就是链路上某一环。所以 D71/D73
-// 的结论是"版本核不了转述来的节点",代价是 `loom status` 只能报
-// "3/5 台核对过",另外两台永远是空白。
+// 恰恰不能假设 B 可信 —— 出问题的往往就是链路上某一环。未经原节点签名的
+// 转述不能证明其版本,`loom status` 也就无法核对这类不可达节点。
 //
 // 签名把这条限制取消掉:**转述的是密文,不是信任**。B 转述 C 的签名陈述,
 // 篡改会被验签发现,伪造需要 C 的私钥。于是 C 够不够得到就不重要了。
@@ -473,7 +472,7 @@ func VerifyFresh(s *Signed, caPEM []byte, now time.Time, maxAge time.Duration) (
 	return c, nil
 }
 
-// nodeSuffix 是节点证书的命名约定(§13.3):`<节点 id>.node.internal`。
+// nodeSuffix 是节点证书的命名约定:`<节点 id>.node.internal`。
 const nodeSuffix = ".node.internal"
 
 func nameMatches(crt *x509.Certificate, node string) bool {

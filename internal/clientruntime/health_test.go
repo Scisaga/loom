@@ -26,7 +26,7 @@ func healthConfig(t *testing.T, profile WindowsRuntimeProfile, domains, suffixes
 	return derived
 }
 
-// §16.1：没有业务目标也能检查本机状态；不再派生需要主动访问的地址。
+// 没有业务目标也能检查本机状态；不再派生需要主动访问的地址。
 func TestWindowsHealthPlanDoesNotRequireBusinessTargets(t *testing.T) {
 	for _, profile := range []WindowsRuntimeProfile{WindowsInstalledProfile, WindowsPortableMixedProfile, WindowsPortableTUNProfile} {
 		for _, domains := range [][]string{nil, {"demo.example"}} {

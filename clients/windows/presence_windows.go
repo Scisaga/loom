@@ -14,7 +14,7 @@ import (
 const windowsPresenceSendTimeout = 4 * time.Second
 
 // windowsPresenceWorker 与分钟级 Observation worker 完全分离。它只依赖已登记
-// Device 身份和 HTTPS report 入口，不读取或等待 WireGuard/Hysteria 数据面（§16.4）。
+// Device 身份和 HTTPS report 入口，不读取或等待 WireGuard/Hysteria 数据面。
 type windowsPresenceWorker struct {
 	interval time.Duration
 	now      func() time.Time
@@ -41,7 +41,7 @@ func newWindowsPresenceWorker(node string, keyPEM []byte,
 func (worker *windowsPresenceWorker) Run(ctx context.Context) {
 	if worker == nil || worker.interval <= 0 || worker.now == nil || worker.sign == nil || worker.send == nil {
 		if worker != nil && worker.result != nil {
-			worker.result(clientreport.Result{Err: errors.New("[§16.4 Windows 在线心跳] worker 配置不完整")})
+			worker.result(clientreport.Result{Err: errors.New("[Windows 在线心跳] worker 配置不完整")})
 		}
 		return
 	}
@@ -54,7 +54,7 @@ func (worker *windowsPresenceWorker) Run(ctx context.Context) {
 		heartbeat, err := worker.sign(at)
 		result := clientreport.Result{}
 		if err != nil {
-			result.Err = errors.New("[§16.4 Windows 在线心跳] 无法使用已登记身份签名")
+			result.Err = errors.New("[Windows 在线心跳] 无法使用已登记身份签名")
 		} else {
 			// 成功构造就推进本 worker 的签名时间；传输失败时也不重放旧包。
 			previous = at
@@ -71,7 +71,7 @@ func (worker *windowsPresenceWorker) Run(ctx context.Context) {
 		return true
 	}
 
-	// 进程已启动且身份已登记时立即建立首个 lease；随后保持五秒节拍（§16.4）。
+	// 进程已启动且身份已登记时立即建立首个 lease；随后保持五秒节拍。
 	if !pulse() {
 		return
 	}

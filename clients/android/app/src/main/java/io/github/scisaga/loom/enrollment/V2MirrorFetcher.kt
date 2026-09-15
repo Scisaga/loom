@@ -25,7 +25,7 @@ private data class V2Mirror(
     val hintRank: Long,
 )
 
-/** #14：公开 mirror 只收到 descriptor 中的 content-addressed GET，绝不收 token/cookie。 */
+/** 公开 mirror 只收到 descriptor 中的 content-addressed GET，绝不收 token/cookie。 */
 internal class V2MirrorFetcher(context: Context) {
     private val appContext = context.applicationContext
 
@@ -42,7 +42,7 @@ internal class V2MirrorFetcher(context: Context) {
         return V2PublicArtifacts(proof.copyOf(), catalog.copyOf())
     }
 
-    /** D130：resume mirror 请求仍只携带 content hash；APK root 验签发生在返回前。 */
+    /** resume mirror 请求仍只携带 content hash；APK root 验签发生在返回前。 */
     fun fetchResume(
         descriptor: ByteArray,
         pinnedPlatformKey: ByteArray,
@@ -74,7 +74,7 @@ internal class V2MirrorFetcher(context: Context) {
         return V2PublicArtifacts(proof.copyOf(), catalog.copyOf())
     }
 
-    /** D124：完成回执只放行 Device view 承诺的 exact Android 制品。 */
+    /** 完成回执只放行 Device view 承诺的 exact Android 制品。 */
     fun fetchCompletionConfigs(planBytes: ByteArray): ByteArray {
         val canonicalPlan = Loomcore.canonicalizeV2(planBytes)
         check(canonicalPlan.contentEquals(planBytes)) { "v2 completion config plan 不规范" }

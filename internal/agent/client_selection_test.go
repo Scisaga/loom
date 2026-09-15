@@ -25,7 +25,7 @@ type clientRouteCase struct {
 	unknown  bool
 }
 
-// §5.5.1：通过实际 selector 读写验证减少中继，反向排列候选也不能改变结果。
+// 通过实际 selector 读写验证减少中继，反向排列候选也不能改变结果。
 func TestClientRemovesDominatedRelays(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
@@ -78,7 +78,7 @@ func TestClientRemovesDominatedRelays(t *testing.T) {
 	}
 }
 
-// §16.1.2：出口目标未知时，更近的入口不能凭空抵消未测的中继段。
+// 出口目标未知时，更近的入口不能凭空抵消未测的中继段。
 func TestClientMissingObservationsDoNotAddRelay(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	d := Decl{ID: "demo-service", Selector: "demo-selector", Objective: model.Latency, SwitchThreshold: 0.2,

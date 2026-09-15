@@ -250,7 +250,7 @@ func TestWindowsProfileDraftCancelAfterReadyDoesNotCommit(t *testing.T) {
 	m.joinDraft = func(child *portableGUI, invite *clientenroll.Invite) (windowsJoinResult, error) {
 		close(entered)
 		<-child.ctx.Done()
-		// §13.5：模拟取消与已返回的 ready 落盘竞态；正式索引仍不得越过取消屏障。
+		// 模拟取消与已返回的 ready 落盘竞态；正式索引仍不得越过取消屏障。
 		return completeProfileDraftFixture(t, child, invite)
 	}
 	if err := m.dispatch(brokerRequest{Operation: "add_profile", Name: "demo-canceled-ready"}); err != nil {

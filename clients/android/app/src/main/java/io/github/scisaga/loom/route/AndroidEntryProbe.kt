@@ -16,7 +16,7 @@ private data class EntryTarget(val node: String, val address: String)
 private data class EntryProbeValue(val rttMS: Long?, val error: String?)
 
 /**
- * §16.1.2：在当前物理接口上对每个签名入口地址只发一个 ICMP echo。
+ * 在当前物理接口上对每个签名入口地址只发一个 ICMP echo。
  * ProcessBuilder 不经过 shell；Go 核心会按签名数据面复核每个 node/address。
  */
 internal object AndroidEntryProbe {

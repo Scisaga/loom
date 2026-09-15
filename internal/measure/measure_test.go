@@ -60,7 +60,7 @@ func TestFailuresDoNotPolluteQuantiles(t *testing.T) {
 	}
 }
 
-// TestObservationPointIsRecorded:不同观测点的数据不可直接比较(§16.2),
+// TestObservationPointIsRecorded:不同观测点的数据不可直接比较,
 // 所以每条记录都必须带上它是从哪儿看到的。
 func TestObservationPointIsRecorded(t *testing.T) {
 	m := Measurement{Point: L4Tunnel, Kind: Active}

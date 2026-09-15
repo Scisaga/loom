@@ -128,7 +128,7 @@ func TestGUIDPIChanges(t *testing.T) {
 			button := guiWindowRect(t, app.controls.primaryButton)
 			buttonWidth := int32(100)
 			if !joined {
-				buttonWidth = 132 // §7.2：空配置的导入按钮与说明左对齐，容纳完整操作名。
+				buttonWidth = 132 // 空配置的导入按钮与说明左对齐，容纳完整操作名。
 			}
 			if button.right-button.left != buttonWidth*dpi/96 || button.bottom-button.top != 32*dpi/96 {
 				t.Errorf("DPI %d: button did not scale with its font: %+v", dpi, button)
@@ -220,7 +220,7 @@ func TestGUIStatusRefreshDoesNotRewriteUnchangedControls(t *testing.T) {
 	}
 	app.renderControls()
 
-	// §7.2：在真实 HWND 上记录引起闪烁的写消息，不能仅断言缓存变量相等。
+	// 在真实 HWND 上记录引起闪烁的写消息，不能仅断言缓存变量相等。
 	type write struct {
 		control uintptr
 		message uint32
@@ -264,7 +264,7 @@ func TestGUIStatusRefreshDoesNotRewriteUnchangedControls(t *testing.T) {
 	app.renderControls()
 	resets := 0
 	for _, event := range writes {
-		if event.message == 0x0046 { // §7.2：固定出口会展开出口输入，允许这次真实模式变化重排布局。
+		if event.message == 0x0046 { // 固定出口会展开出口输入，允许这次真实模式变化重排布局。
 			continue
 		}
 		if event.control != app.controls.routeCombo && event.control != app.controls.modeAuto &&
@@ -276,7 +276,7 @@ func TestGUIStatusRefreshDoesNotRewriteUnchangedControls(t *testing.T) {
 		}
 	}
 	selection, _, _ := procSendMessage.Call(app.controls.routeCombo, portableCBGetCurSel, 0, 0)
-	// §7.2：只改变实际选择时复用已有授权列表，不能为刷新读回值重建整个弹出层。
+	// 只改变实际选择时复用已有授权列表，不能为刷新读回值重建整个弹出层。
 	if resets != 0 || selection == ^uintptr(0) || int(selection) >= len(app.routeVisible) || app.routeVisible[selection] != app.routeSelected {
 		t.Fatal("real route change was lost")
 	}

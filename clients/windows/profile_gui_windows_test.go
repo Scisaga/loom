@@ -23,7 +23,7 @@ const (
 	profileGUIFixtureB = "ffeeddccbbaa99887766554433221100"
 )
 
-// §7.2：仅创建合成身份的原生窗口，不访问服务、真实身份或加入入口。
+// 仅创建合成身份的原生窗口，不访问服务、真实身份或加入入口。
 func newProfileGUITestWindow(t *testing.T) *portableGUI {
 	t.Helper()
 	runtime.LockOSThread()
@@ -186,7 +186,7 @@ func TestGUIProfilesSelectionAndActualServicePaths(t *testing.T) {
 		}
 	}
 	captureConfiguredProfileGUIState(t, app, "-expanded")
-	// §7.2：模拟 broker 返回正在查看的乙配置；实际连接仍是甲，不调用连接命令。
+	// 模拟 broker 返回正在查看的乙配置；实际连接仍是甲，不调用连接命令。
 	app.mu.Lock()
 	app.selectedProfile, app.profileName = profileGUIFixtureB, "演示网络乙"
 	app.deviceID, app.state, app.paths = "demo-device-b", guiStopped, nil
@@ -251,7 +251,7 @@ func TestGUIProfileConnectingTimerOnlyChangesStatusIcon(t *testing.T) {
 	app.brokerProfiles[0].State = guiStarting
 	app.paths = nil
 	app.renderControls()
-	// §7.2：隐藏或屏幕外 HWND 的更新区域可被 Windows 丢弃。
+	// 隐藏或屏幕外 HWND 的更新区域可被 Windows 丢弃。
 	// 仅显示本测试的合成窗口且禁止激活，完成初次绘制后再验证局部失效。
 	procSetWindowPos.Call(app.hwnd, 0, 0, 0, 0, 0, 0x0057)
 	portableUser32.NewProc("RedrawWindow").Call(app.hwnd, 0, 0, 0x0181)
@@ -265,7 +265,7 @@ func TestGUIProfileConnectingTimerOnlyChangesStatusIcon(t *testing.T) {
 	}
 	procKillTimer.Call(app.hwnd, portableStatusTimerID)
 	if !app.statusAnimating || profileGUIText(app.controls.stateValue) != "正在连接" || profileGUIStyle(app.controls.stateIcon)&0x1F != 0x000D {
-		t.Fatal("[§7.2] 连接状态缺少独立自绘动画图标或可访问文字")
+		t.Fatal("连接状态缺少独立自绘动画图标或可访问文字")
 	}
 	size := app.scale(38)
 	dc, pixels := misakaCanvasTestDC(t, size, size)
@@ -283,19 +283,19 @@ func TestGUIProfileConnectingTimerOnlyChangesStatusIcon(t *testing.T) {
 		validate.Call(app.controls.stateIcon, 0)
 		procSendMessage.Call(app.hwnd, 0x0113, portableStatusTimerID, 0)
 		if changed, _, _ := getUpdate.Call(app.controls.stateIcon, 0, 0); changed == 0 {
-			t.Fatalf("[§7.2] 第 %d 帧没有刷新独立状态图标", frame)
+			t.Fatalf("第 %d 帧没有刷新独立状态图标", frame)
 		}
 		if changed, _, _ := getUpdate.Call(app.hwnd, 0, 0); changed != 0 {
-			t.Fatalf("[§7.2] 第 %d 帧使整个窗口重绘", frame)
+			t.Fatalf("第 %d 帧使整个窗口重绘", frame)
 		}
 		current := drawFrame()
 		if slices.Equal(previous, current) {
-			t.Fatalf("[§7.2] 第 %d 帧实际进度像素没有变化", frame)
+			t.Fatalf("第 %d 帧实际进度像素没有变化", frame)
 		}
 		previous = current
 	}
 	if len(*writes) != 0 {
-		t.Fatalf("[§7.2] 图标动画重写了文字、布局或列表：%+v", *writes)
+		t.Fatalf("图标动画重写了文字、布局或列表：%+v", *writes)
 	}
 	app.state = guiStopped
 	app.brokerProfiles[0].State = guiStopped
@@ -305,9 +305,9 @@ func TestGUIProfileConnectingTimerOnlyChangesStatusIcon(t *testing.T) {
 	procSendMessage.Call(app.hwnd, 0x0113, portableStatusTimerID, 0)
 	changed, _, _ := getUpdate.Call(app.controls.stateIcon, 0, 0)
 	if app.statusAnimating || len(*writes) != 0 || changed != 0 {
-		t.Fatal("[§7.2] 停止状态仍残留进度动画刷新")
+		t.Fatal("停止状态仍残留进度动画刷新")
 	}
-	t.Log("[§7.2] 16 帧只刷新独立状态图标，实际像素变化且无整窗重绘；停止后不再刷新")
+	t.Log("16 帧只刷新独立状态图标，实际像素变化且无整窗重绘；停止后不再刷新")
 }
 
 func TestGUIProfileLayoutScalesWithoutOverlap(t *testing.T) {
@@ -341,7 +341,7 @@ func TestGUIProfileLayoutScalesWithoutOverlap(t *testing.T) {
 					t.Errorf("joined=%t DPI=%d control=%x exceeds client bounds: %+v inside %+v", joined, dpi, control, rect, client)
 				}
 				if control == app.controls.interfaceGroup || control == app.controls.localGroup {
-					continue // §7.2：分组边框有意包围其内容，不算相邻控件重叠。
+					continue // 分组边框有意包围其内容，不算相邻控件重叠。
 				}
 				for _, other := range occupied {
 					if rect.left < other.rect.right && other.rect.left < rect.right && rect.top < other.rect.bottom && other.rect.top < rect.bottom {
@@ -368,7 +368,7 @@ func TestGUIProfileLayoutScalesWithoutOverlap(t *testing.T) {
 	}
 }
 
-// §7.2：只捕获本测试的合成 HWND，不读取屏幕或其他客户端窗口。
+// 只捕获本测试的合成 HWND，不读取屏幕或其他客户端窗口。
 func readProfileGUITestWindow(t *testing.T, app *portableGUI) *image.NRGBA {
 	t.Helper()
 	rect := guiWindowRect(t, app.hwnd)
@@ -387,7 +387,7 @@ func readProfileGUITestWindow(t *testing.T, app *portableGUI) *image.NRGBA {
 	defer procDeleteObject.Call(bitmap)
 	previous, _, _ := procSelectObject.Call(dc, bitmap)
 	defer procSelectObject.Call(dc, previous)
-	// §7.2：隐藏测试窗口没有 DWM 表面；直接请求本窗口及子控件打印到内存 DC。
+	// 隐藏测试窗口没有 DWM 表面；直接请求本窗口及子控件打印到内存 DC。
 	procSendMessage.Call(app.hwnd, 0x0317, dc, 0x001e) // WM_PRINT: non-client, client, erase, children
 	portableGDI32.NewProc("GdiFlush").Call()
 	picture := image.NewNRGBA(image.Rect(0, 0, int(width), int(height)))

@@ -9,9 +9,9 @@
 > overlap; a bootstrap transition hash;
 > WireGuard rotation remains disruptive until a dedicated dual-interface/peer profile is validated; and an
 > irreversible v2 latch. V2 resources are versioned and never extend strict v1 JSON in place. See
-> [the distributed control-plane design](../../docs/distributed-control-plane.md#19-从当前实现迁移).
+> [the distributed control-plane design](../../docs/protocols/control-plane/migration.md#从当前实现迁移).
 > This is a platform development and delivery guide. Protocol rules belong to the linked specifications.
-> Source entry points and gaps are listed in [the implementation map](../../docs/implementation.md);
+> Source entry points and gaps are listed in [the implementation map](../../docs/development/implementation.md);
 > native results and installed artifacts belong to [deployment evidence](../../docs/operations/local-deployment.md).
 
 The source contains a v2 reader and Windows host path alongside pre-latch v1 code.
@@ -215,7 +215,7 @@ broker status response. A pending response does not mark the client joined or
 start the data plane. The existing three-second retry interval and request/overall
 timeouts are unchanged. These messages explain the wait; they do not shorten
 the control's publication process. Server-side work belongs in the server development
-environment; use the [enrollment latency prompt](../../docs/server-enrollment-latency-prompt.md).
+environment; use the [enrollment diagnostics guide](../../docs/operations/enrollment-diagnostics.md).
 
 Internally, the QR import performs an identity handshake: the client creates a
 persistent, non-exportable P-256 identity in the Microsoft CNG software KSP,
@@ -230,7 +230,7 @@ Reporting uses the identity created by this same join flow automatically. A
 user never needs to locate or import a private key. An unjoined client starts
 with a valid QR; restoring an old state directory is not a reporting-test
 prerequisite. Live reporting acceptance follows the normal GUI join and connect
-flow described in the [reporting contract](../../docs/windows-client-reporting.md).
+flow described in the [reporting contract](../../docs/clients/windows-reporting.md).
 
 Deleting a local profile clears that profile's identity and configuration; it does not notify
 the control plane. To join again, open the original Device in the control UI and
@@ -323,7 +323,7 @@ interrupted partial publication is rejected.
 
 MSI installers also install Loom's `LICENSE` and `NOTICE` alongside the executable.
 Third-party components keep their own licenses. See the
-[Code signing policy](../../docs/code-signing-policy.md) for the SignPath scope.
+[Code signing policy](../../docs/operations/code-signing.md) for the SignPath scope.
 
 Release builds strip Go symbol and DWARF tables with `-s -w`. Package size is
 still dominated by the signed data-plane sidecar: the amd64 sidecar is about
@@ -421,7 +421,7 @@ through [the deployment guide](../../docs/operations/local-deployment.md).
   runtime listeners and the managed TUN adapter; it sends no business requests.
   Business reachability remains unmeasured. Server observation errors are
   separate from local runtime health. See the
-  [reporting contract](../../docs/windows-client-reporting.md).
+  [reporting contract](../../docs/clients/windows-reporting.md).
 - Before the v2 latch, `config\client.json` remains the v1 joined-state marker.
   V2 uses one purpose-bound DPAPI LKG at `state\client-v2.json.dpapi`; it commits
   the verified Device envelope, ControlSet/QC replay context, floors, certificate,
@@ -457,10 +457,10 @@ through [the deployment guide](../../docs/operations/local-deployment.md).
   an update swaps child data planes, and the final joined-state commit never
   replaces an existing file.
 
-## 本地客户端选路目标契约（§5.6 / §7.3.3）
+## 本地客户端选路目标契约
 
 探测预算、网络代 registry、未知观测、分段估算和禁止行为统一由
-[客户端消费边界](../../docs/client-observation-reuse.md#客户端消费边界)定义。
+[客户端消费边界](../../docs/clients/observations.md#客户端消费边界)定义。
 Windows 宿主使用 `agent.RunClient`，以进程级 registry 跨 Agent/profile 生命周期保存结果；
 接线见[代码映射](#agent-选路集成代码映射)。配置、偏好、重连与恢复通过同一激活事务交接 Agent。
 
@@ -471,7 +471,7 @@ v5 reason，界面和 self-check 都不发业务探测。
 修改选路时核对入口目标、次数、并发、启动等待、同代复用、授权、未知/过期证据和 selector 回读。
 Windows 原生测试另覆盖单次 ICMP API；设置 `LOOM_SING_BOX_EXECUTABLE` 后，运行
 `TestOfficialWindowsClientSelectsEntryWithoutBusinessProbes`，以官方数据面验证 selector 切换及
-目标/代理接收器未收到业务探测。代码是否接通见[实现对照](../../docs/implementation.md)，
+目标/代理接收器未收到业务探测。代码是否接通见[实现对照](../../docs/development/implementation.md)，
 已执行的原生结果记录在[部署证据](../../docs/operations/local-deployment.md)。
 
 ## Acceptance contract
@@ -536,7 +536,7 @@ checked only when `-RequireAuthenticode` is requested.
 
 Record each native result with its exact source/artifacts under ignored
 `deploy/evidence/`, or reference its protected external receipt. Source integration
-gaps remain in [the implementation map](../../docs/implementation.md).
+gaps remain in [the implementation map](../../docs/development/implementation.md).
 
 ## Installed package
 

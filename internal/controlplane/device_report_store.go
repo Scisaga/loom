@@ -29,7 +29,7 @@ type DeviceReportStoreStateV1 struct {
 }
 
 // DeviceReportStore 是 report sink 的 durable latest/CAS 实现；报告先完整 fsync，
-// 才对 private handler 返回 204，进程崩溃不能使同一 sequence 接受冲突内容（D131）。
+// 才对 private handler 返回 204，进程崩溃不能使同一 sequence 接受冲突内容。
 type DeviceReportStore struct {
 	mu      sync.Mutex
 	path    string
@@ -39,12 +39,12 @@ type DeviceReportStore struct {
 
 func OpenDeviceReportStore(path string, schemas wire.DeviceReportSchemaRegistry) (*DeviceReportStore, error) {
 	if path == "" || len(schemas) == 0 {
-		return nil, errors.New("[D131 device_report] store path/reader contract 无效")
+		return nil, errors.New("[device_report] store path/reader contract 无效")
 	}
 	copySchemas := make(wire.DeviceReportSchemaRegistry, len(schemas))
 	for kind, schema := range schemas {
 		if kind == "" || schema < 1 {
-			return nil, errors.New("[D131 device_report] store reader contract 无效")
+			return nil, errors.New("[device_report] store reader contract 无效")
 		}
 		copySchemas[kind] = schema
 	}
@@ -59,11 +59,11 @@ func OpenDeviceReportStore(path string, schemas wire.DeviceReportSchemaRegistry)
 	}
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
-		return nil, errors.New("[D131 device_report] store 必须是 0600 普通文件")
+		return nil, errors.New("[device_report] store 必须是 0600 普通文件")
 	}
 	canonical, err := wire.CanonicalizeStrict(body)
 	if err != nil || !bytes.Equal(canonical, body) {
-		return nil, errors.New("[D131 device_report] store 不是 exact canonical JSON")
+		return nil, errors.New("[device_report] store 不是 exact canonical JSON")
 	}
 	var state DeviceReportStoreStateV1
 	if _, err := wire.DecodeStrict(body, 64<<20, &state); err != nil {
@@ -125,14 +125,14 @@ func storedDeviceReport(verified VerifiedDeviceReportV2,
 	body := verified.Body()
 	payload := verified.Payload()
 	if verified.DeviceID() == "" || body.DeviceID != verified.DeviceID() {
-		return StoredDeviceReportV1{}, errors.New("[D131 device_report] opaque identity/report Device 不一致")
+		return StoredDeviceReportV1{}, errors.New("[device_report] opaque identity/report Device 不一致")
 	}
 	if err := wire.ValidateDeviceReportBody(&body, schemas); err != nil {
 		return StoredDeviceReportV1{}, err
 	}
 	payloadHash, err := wire.DeviceReportPayloadHash(payload)
 	if err != nil || payloadHash != body.PayloadHash {
-		return StoredDeviceReportV1{}, errors.New("[D131 device_report] stored payload hash 不匹配")
+		return StoredDeviceReportV1{}, errors.New("[device_report] stored payload hash 不匹配")
 	}
 	certificateHash := verified.identity.CertificateHash()
 	if _, err := wire.ParseHash(certificateHash); err != nil {
@@ -151,28 +151,28 @@ func storedDeviceReport(verified VerifiedDeviceReportV2,
 
 func validateDeviceReportStoreState(state *DeviceReportStoreStateV1, schemas wire.DeviceReportSchemaRegistry) error {
 	if state == nil || state.Schema != 1 || state.Reports == nil {
-		return errors.New("[D131 device_report] store state header 无效")
+		return errors.New("[device_report] store state header 无效")
 	}
 	previousKey := ""
 	for i := range state.Reports {
 		record := &state.Reports[i]
 		key := deviceReportStoreKey(record.DeviceID, record.CertificateHash)
 		if key == "\x00" || i > 0 && previousKey >= key || record.Body.DeviceID != record.DeviceID {
-			return errors.New("[D131 device_report] stored reports 未排序、重复或 identity 不一致")
+			return errors.New("[device_report] stored reports 未排序、重复或 identity 不一致")
 		}
 		if _, err := wire.ParseHash(record.CertificateHash); err != nil {
 			return err
 		}
 		payloadHash, err := wire.DeviceReportPayloadHash(record.Payload)
 		if err != nil || payloadHash != record.Body.PayloadHash || wire.ValidateDeviceReportBody(&record.Body, schemas) != nil {
-			return errors.New("[D131 device_report] stored report body/payload 无效")
+			return errors.New("[device_report] stored report body/payload 无效")
 		}
 		wantHash, err := wire.HashObject(domainAcceptedDeviceReport, struct {
 			Body    wire.DeviceReportBodyV2 `json:"body"`
 			Payload json.RawMessage         `json:"payload"`
 		}{Body: record.Body, Payload: record.Payload})
 		if err != nil || wantHash != record.ReportHash {
-			return errors.New("[D131 device_report] stored report hash 不匹配")
+			return errors.New("[device_report] stored report hash 不匹配")
 		}
 		previousKey = key
 	}

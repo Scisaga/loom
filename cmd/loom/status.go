@@ -106,7 +106,7 @@ func cmdStatus(args []string) error {
 	bad := 0
 	bad += printPublisherHealth(publish.HealthPath, time.Now().UTC())
 	// obs 汇总全网观测:自己量的、拉到的、以及**别人转述的** ——
-	// 转述让够不到的节点也进得来(§16.1.2)。
+	// 转述让够不到的节点也进得来。
 	obs := map[string]report.Observation{}
 	// heard 记录“确实收到过”，与后续是否通过签名门禁分开。phase B 会从
 	// obs 删除不可信记录；若随后又把它报成“完全没听到”，同一故障会被
@@ -215,12 +215,12 @@ func cmdStatus(args []string) error {
 	}
 
 	// 快照一致不等于版本一致。**旧二进制配新配置正是发布器崩掉的那类
-	// 故障**(§15.4),而它在只看快照的表上完全看不出来。
+	// 故障**,而它在只看快照的表上完全看不出来。
 	//
 	// 分母取 SSOT 里的节点数,不取"听到过的"—— 一台彻底失联的机器必须
 	// 让分母变大,否则它会从统计里整个消失,而消失的样子和一切正常一样。
 	// 转述来的节点如果带了签名陈述,就地核对 —— 核过了它们就不再是
-	// "够不到所以不知道",而是和直接问到的一样可信(D81)。
+	// "够不到所以不知道",而是和直接问到的一样可信。
 	bad += printVersionSpread(vcs, answered, unverified, s)
 	bad += printRollouts(rolls, time.Now().UTC())
 
@@ -483,7 +483,7 @@ func problemLines(st *report.Status) []string {
 	return out
 }
 
-// printLifecycle 打出不在"正常"状态的节点,以及各自的下一步(§14.4)。
+// printLifecycle 打出不在"正常"状态的节点,以及各自的下一步。
 //
 // 四个状态里有两个是**过渡态** —— 排空和下线都不该长期停在那儿。而"停在
 // 那儿"没有任何症状:机器还在跑、隧道还通、校验也过。只有把"下一步是什么"
@@ -526,7 +526,7 @@ func printLifecycle(s *model.SSOT) {
 
 // credentialsHeldBy 列出一台服务器硬盘上留过哪些凭据的明文。
 //
-// **这是移除节点之后必须轮换的清单**(§14.4)。忘了轮换不会有任何症状,
+// **这是移除节点之后必须轮换的清单**。忘了轮换不会有任何症状,
 // 直到有人拿捡到的凭据连进来。
 //
 // 判据跟渲染器一致:一张凭据配在哪台机器上,取决于**候选链是否经过它**,
@@ -722,7 +722,7 @@ func versionFindings(vcs map[string]*version.Coordinate, answered map[string]boo
 
 // printPublisherHealth 报告**发布器自己**的死活,返回要计入 bad 的条数。
 //
-// 版本坐标(D69)覆盖不到它:`loom report` 报的是跑 report 那个二进制的
+// 版本坐标覆盖不到它:`loom report` 报的是跑 report 那个二进制的
 // commit,而发布器是另一个进程 —— 它可能还持着被换掉的旧 inode,
 // 一边显示 active 一边什么都发不出去。2026-08-24 就是这样过了 2 小时 17 分。
 func printPublisherHealth(path string, now time.Time) int {
@@ -750,23 +750,9 @@ func printPublisherHealth(path string, now time.Time) int {
 
 // stuckLimit 是"在同一个 rollout 阶段待多久算卡住"。
 //
-// **10 分钟这个数是量出来的,不是拍的。** 2026-08-26 那一轮五台机器的
-// 二进制下载耗时(13.4 MB,落在 activating 里):
-//
-//	demo-c 39s   demo-b 74s   demo-d 99s   demo-a 134s   demo-e 162s
-//
-// 最坏 2 分 42 秒,取约 3.7 倍余量。**别把它调到分钟以内** —— 无变化的
-// 轮次确实是毫秒级,但那不是最坏情况,拿它定阈值会让每次二进制升级都
-// 误报,而误报的面板等于没有面板(D64–D67)。
-// 这是阈值来源的历史测量；现在大二进制已在 deploy.lock/rollout 记录外
-// 预取，Activating 主要覆盖本地激活、配置事务与 continuation。先保留已有
-// 安全余量，等新阶段分布有实测数据后再收紧，不能靠代码路径变短来猜数字。
-//
-// 原来是 30 分钟,因为旧的两段式升级本来就要等一个 10 分钟的定时器。
-// 续跑落地之后(D80)那笔债还清了,阈值跟着还。
-//
-// 这里要抓的其实是**进程死在半路**留下的陈旧记录(OOM、被 kill、重启)。
-// 下载卡住有自己的停顿检测和按签名 size 算出的硬总时限,不靠这个数。
+// 它用于发现进程中断后留下的陈旧阶段记录。Activating 包含本地激活、配置
+// 事务与 continuation，阈值需要为这些操作留出余量，不能只按无变更轮次估算。
+// 二进制在进入安装事务前预取，下载另有停顿检测和按签名 size 计算的总时限。
 const stuckLimit = 10 * time.Minute
 
 // printRollouts 报告谁正在装、谁卡住了,返回要计入 bad 的条数。
@@ -790,7 +776,7 @@ func printRollouts(rolls map[string]*report.RolloutState, now time.Time) int {
 //
 // 三种情况的分类是这里唯一的实质逻辑,而分错的代价不对称:把"正在装"
 // 报成卡住是误报,把"卡了半小时"报成正在装是漏报。两种都要喂用例才
-// 看得出来 —— printVersionSpread 就是这么漏掉超时误诊的(D73)。
+// 看得出来 —— printVersionSpread 就是这么漏掉超时误诊的。
 func rolloutFindings(rolls map[string]*report.RolloutState, now time.Time) ([]string, int) {
 	if len(rolls) == 0 {
 		return nil, 0
@@ -847,14 +833,14 @@ func roughAge(d time.Duration) string {
 	}
 }
 
-// caPath 是校验节点签名陈述用的内部 CA(§13.3)。
+// caPath 是校验节点签名陈述用的内部 CA。
 const caPath = "/etc/loom/tls/ca.crt"
 
 // foldAttested 把**验过签的**转述节点并进快照、版本与 rollout
 // 表,返回仍然核不了的那些；phase B 还会剔除矩阵里所有未通过 v5 门禁的
 // observation。
 //
-// 这是 D81 相对 D73 的全部变化:够不到不再等于核不了。够不到的节点只要
+// 签名转述让不可达节点的版本也能核对。够不到的节点只要
 // 带着自己签的陈述,链路上谁转的都无所谓 —— 改一个字就验不过。
 //
 // **验不过和没签名一样,都算没核对过。** 不把它们分开是有意的:调用方

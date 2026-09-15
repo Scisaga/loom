@@ -26,7 +26,7 @@ type Options struct {
 	Retention time.Duration
 	// EventsPath 非空时,选路切换会记进事件历史。
 	EventsPath string
-	// §16.1.2：宿主复用现有报告响应喂入可信观测，不增加对端轮询。
+	// 宿主复用现有报告响应喂入可信观测，不增加对端轮询。
 	Observations *ObservationCache
 	// ShareEquivalentProbes lets a client reuse one physical observation across
 	// declarations for the same complete chain and equivalent target URL. It
@@ -39,7 +39,7 @@ type Options struct {
 	// 上线一个新的排序规则时,先用它看几轮"会怎么切"再放开。
 	DryRun bool
 	Log    io.Writer
-	// Now 由调用方注入,便于测试。渲染与打包不读时钟(§12),但 Agent 是
+	// Now 由调用方注入,便于测试。渲染与打包不读时钟,但 Agent 是
 	// 运行期组件 —— 它**必须**读时钟,只是入口收在这一处。
 	Now     func() time.Time
 	eventMu *sync.Mutex
@@ -222,7 +222,7 @@ func tick(ctx context.Context, cfg *Config, d *Decl, k *clash, st *store, select
 	// 剪枝:出口已知打不到这个目标的候选,不必再探。
 	//
 	// **同一个事实不该被反复发现。** "cn-a 到不了 Cloudflare"是关于 cn-a
-	// 一台机器的事实,由 cn-a 自己量一次(§16.1.2);而按整条路线去探的话,
+	// 一台机器的事实,由 cn-a 自己量一次;而按整条路线去探的话,
 	// 它会在每条经过 cn-a 的链上各被发现一次 —— 这里 15 条候选里有 9 条。
 	//
 	// 剪枝依据每轮都从新的观测重取,不是一次性判定:cn-a 什么时候恢复,
@@ -262,7 +262,7 @@ func tick(ctx context.Context, cfg *Config, d *Decl, k *clash, st *store, select
 		probe = append(probe, c)
 	}
 
-	// 当前选中的那条**每轮必探**。它变坏了要立刻知道 —— 这正是 D23
+	// 当前选中的那条**每轮必探**。它变坏了要立刻知道 —— 故障切换
 	// (停在死候选上不受阻尼保护)依赖的信号。
 	current, cerr := k.Now(ctx, d.Selector)
 	if cerr != nil {
@@ -272,7 +272,7 @@ func tick(ctx context.Context, cfg *Config, d *Decl, k *clash, st *store, select
 	if !found {
 		return fmt.Errorf("selector %s 当前值 %q 不在渲染候选中", d.Selector, current)
 	}
-	// §5.6 此时只有探测前读到的 selector，还没有本轮健康摘要；若先发布，
+	// 此时只有探测前读到的 selector，还没有本轮健康摘要；若先发布，
 	// 每轮探测期间都会用 Health=nil 覆盖上一份完整状态，让 report 正确但
 	// 反复地产生“证据不完整”漂移。下方各成功路径会把 selector 与本轮健康
 	// 一起原子发布。
@@ -288,7 +288,7 @@ func tick(ctx context.Context, cfg *Config, d *Decl, k *clash, st *store, select
 	var got []measure.Measurement
 	ok := 0
 
-	// §16.1.2：服务器出口失败是本轮候选约束，不是新的完整路径测量。
+	// 服务器出口失败是本轮候选约束，不是新的完整路径测量。
 	// 不追加 derived，避免同一签名时间在多个周期里被反复计数。
 	cands = probe
 	for _, c := range cands {
@@ -327,7 +327,7 @@ func tick(ctx context.Context, cfg *Config, d *Decl, k *clash, st *store, select
 	}
 
 	// 2. 聚合。窗口之外的不参与;整条候选最新样本超过 stale_after 的当作
-	//    没测过 —— 拿半小时前的数据当依据去切换,和瞎猜差不多(§5.8)。
+	//  没测过 —— 拿半小时前的数据当依据去切换,和瞎猜差不多。
 	all, err := st.load()
 	if err != nil {
 		return fmt.Errorf("读度量:%w", err)
@@ -532,7 +532,7 @@ func inWindow(ms []measure.Measurement, node, decl, scope string, now time.Time,
 	newest := map[string]time.Time{}
 	parsed := make([]time.Time, len(ms))
 	for i := range ms {
-		// §16.1.2：兼容旧日志，但服务端推论不能充作新的完整路径样本。
+		// 兼容旧日志，但服务端推论不能充作新的完整路径样本。
 		if ms[i].Kind == measure.Derived {
 			continue
 		}

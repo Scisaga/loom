@@ -144,7 +144,7 @@ type EnrollmentIntentPreflightResponseV1 struct {
 }
 
 // VerifiedBootstrapCapabilityV1 只由完整 issuer registry/policy/time 验证产生；
-// ingress runtime 不接受调用方自行声明 capability 已验证（D115、D131）。
+// ingress runtime 不接受调用方自行声明 capability 已验证。
 type VerifiedBootstrapCapabilityV1 struct {
 	body                BootstrapTunnelCapabilityBodyV1
 	capabilityID        string
@@ -166,7 +166,7 @@ func (verified VerifiedBootstrapCapabilityV1) CapabilityID() string {
 
 // TransportCredential 只存在于完整 capability authorization 验证后的 evidence 中。
 // HY2 直接使用该短期 bearer；Trojan 再按其协议做 SHA-224。它与 Enrollment token
-// 完全无关，不能从 capability ID 或 public catalog 单独恢复（D115、D131）。
+// 完全无关，不能从 capability ID 或 public catalog 单独恢复。
 func (verified VerifiedBootstrapCapabilityV1) TransportCredential() string {
 	return verified.transportCredential
 }
@@ -194,7 +194,7 @@ func ValidateInviteIssuancePolicy(policy *InviteIssuancePolicyV2) error {
 		policy.BootstrapSessionSeconds < 1 || policy.BootstrapSessionSeconds > 300 ||
 		policy.BootstrapTotalBytes < 1 || policy.BootstrapConnectionAttempts < 1 ||
 		policy.BootstrapMaxConcurrentSessions != 1 {
-		return errors.New("[D131 Invite policy] policy bounds/schema 无效")
+		return errors.New("[Invite policy] policy bounds/schema 无效")
 	}
 	return nil
 }
@@ -209,11 +209,11 @@ func InviteIssuancePolicyHash(policy *InviteIssuancePolicyV2) (string, error) {
 func ValidateCertifiedInviteRecord(record *CertifiedInviteRecordV2, policy *InviteIssuancePolicyV2) error {
 	if record == nil || policy == nil || record.Schema != 2 || record.ClusterID != policy.ClusterID ||
 		!validIdentifier(record.InviteID, 128) || !validIdentifier(record.OperationID, 128) || record.Generation < 1 {
-		return errors.New("[D114 Invite] certified record identity 无效")
+		return errors.New("[Invite] certified record identity 无效")
 	}
 	policyHash, err := InviteIssuancePolicyHash(policy)
 	if err != nil || policyHash != record.InviteIssuancePolicyHash {
-		return errors.New("[D114 Invite] certified record policy hash 不匹配")
+		return errors.New("[Invite] certified record policy hash 不匹配")
 	}
 	for _, hash := range []string{record.DeviceEnrollmentIntentCommitmentHash, record.TokenCommitment,
 		record.TokenArtifactBindingHash, record.BootstrapIssuerAuthorizationHash, record.BootstrapIssuerRegistryRoot,
@@ -228,11 +228,11 @@ func ValidateCertifiedInviteRecord(record *CertifiedInviteRecordV2, policy *Invi
 	}
 	expires, err := ParseTimeZ(record.ExpiresAt)
 	if err != nil || !issued.Before(expires) {
-		return errors.New("[D114 Invite] certified record validity 无效")
+		return errors.New("[Invite] certified record validity 无效")
 	}
 	ttl := int64(expires.Sub(issued) / time.Second)
 	if ttl < policy.MinimumTTLSeconds || ttl > policy.MaximumTTLSeconds {
-		return errors.New("[D114 Invite] Invite TTL 超出 certified policy")
+		return errors.New("[Invite] Invite TTL 超出 certified policy")
 	}
 	return nil
 }
@@ -248,7 +248,7 @@ func ValidateBootstrapEndpointCatalog(catalog *BootstrapEndpointCatalogV1) error
 	if catalog == nil || catalog.Schema != 1 || !validIdentifier(catalog.ClusterID, 128) ||
 		catalog.CatalogGeneration < 1 || catalog.RequiredClientProtocol < 2 ||
 		catalog.ClusterID != catalog.BootstrapIngressSet.ClusterID || catalog.ParentHeadHash != catalog.BootstrapIngressSet.ParentHeadHash {
-		return errors.New("[D131 bootstrap catalog] header/set identity 无效")
+		return errors.New("[bootstrap catalog] header/set identity 无效")
 	}
 	if err := ValidateBootstrapIngressSet(&catalog.BootstrapIngressSet); err != nil {
 		return err
@@ -259,20 +259,20 @@ func ValidateBootstrapEndpointCatalog(catalog *BootstrapEndpointCatalogV1) error
 	}
 	until, err := ParseTimeZ(catalog.ValidUntil)
 	if err != nil || !from.Before(until) {
-		return errors.New("[D131 bootstrap catalog] validity 无效")
+		return errors.New("[bootstrap catalog] validity 无效")
 	}
 	setFrom, _ := ParseTimeZ(catalog.BootstrapIngressSet.ValidFrom)
 	setUntil, _ := ParseTimeZ(catalog.BootstrapIngressSet.ValidUntil)
 	if from.Before(setFrom) || until.After(setUntil) {
-		return errors.New("[D131 bootstrap catalog] catalog validity 超出 ingress set")
+		return errors.New("[bootstrap catalog] catalog validity 超出 ingress set")
 	}
 	setHash, err := BootstrapIngressSetHash(&catalog.BootstrapIngressSet)
 	if err != nil || setHash != catalog.BootstrapIngressSetHash {
-		return errors.New("[D131 bootstrap catalog] ingress set hash 不匹配")
+		return errors.New("[bootstrap catalog] ingress set hash 不匹配")
 	}
 	qcHash, err := ConfigQCHash(catalog.BootstrapIngressSet.ConfigQC)
 	if err != nil || qcHash != catalog.ConfigQCHash {
-		return errors.New("[D131 bootstrap catalog] config QC hash 不匹配")
+		return errors.New("[bootstrap catalog] config QC hash 不匹配")
 	}
 	return nil
 }
@@ -289,13 +289,13 @@ func ValidateBootstrapEndpointCatalogAt(catalog *BootstrapEndpointCatalogV1, now
 		return err
 	}
 	if now.IsZero() || clientProtocol < catalog.RequiredClientProtocol {
-		return errors.New("[D131 bootstrap catalog] 可信时间/client protocol 无效")
+		return errors.New("[bootstrap catalog] 可信时间/client protocol 无效")
 	}
 	from, _ := ParseTimeZ(catalog.ValidFrom)
 	until, _ := ParseTimeZ(catalog.ValidUntil)
 	instant := now.UTC()
 	if instant.Before(from) || !instant.Before(until) {
-		return errors.New("[D131 bootstrap catalog] catalog 已过期或尚未生效")
+		return errors.New("[bootstrap catalog] catalog 已过期或尚未生效")
 	}
 	return nil
 }
@@ -311,13 +311,13 @@ func ValidateBootstrapIssuerAuthorization(authorization *BootstrapIssuerAuthoriz
 	if authorization == nil || authorization.Schema != 1 || !validIdentifier(authorization.ClusterID, 128) ||
 		!validIdentifier(authorization.AuthorizationID, 128) || authorization.Generation < 1 ||
 		!oneOf(authorization.Status, "active", "revoked") {
-		return errors.New("[D131 bootstrap issuer] authorization header 无效")
+		return errors.New("[bootstrap issuer] authorization header 无效")
 	}
 	if _, err := ParseHash(authorization.ParentHeadHash); err != nil {
 		return err
 	}
 	if (authorization.Generation == 1) != (authorization.PreviousAuthorizationHash == "") {
-		return errors.New("[D131 bootstrap issuer] previous hash/generation 不一致")
+		return errors.New("[bootstrap issuer] previous hash/generation 不一致")
 	}
 	if authorization.PreviousAuthorizationHash != "" {
 		if _, err := ParseHash(authorization.PreviousAuthorizationHash); err != nil {
@@ -326,7 +326,7 @@ func ValidateBootstrapIssuerAuthorization(authorization *BootstrapIssuerAuthoriz
 	}
 	if authorization.Status == "active" {
 		if authorization.Active == nil || authorization.Revocation != nil {
-			return errors.New("[D131 bootstrap issuer] active tagged union 无效")
+			return errors.New("[bootstrap issuer] active tagged union 无效")
 		}
 		active := authorization.Active
 		publicKey, err := decodeRawURL(active.IssuerPublicKey, ed25519.PublicKeySize)
@@ -338,7 +338,7 @@ func ValidateBootstrapIssuerAuthorization(authorization *BootstrapIssuerAuthoriz
 			!sortedUnique(active.PermittedIngressSetHashes) || len(active.PermittedIngressSetHashes) == 0 ||
 			!sortedUnique(active.PermittedServiceIDs) || len(active.PermittedServiceIDs) == 0 ||
 			!sortedEnum(active.PermittedModes, []string{"initial_claim", "resume_committed_claim"}, true) {
-			return errors.New("[D131 bootstrap issuer] active key/scope/limits 无效")
+			return errors.New("[bootstrap issuer] active key/scope/limits 无效")
 		}
 		for _, hash := range append([]string{active.InviteIssuancePolicyHash}, active.PermittedIngressSetHashes...) {
 			if _, err := ParseHash(hash); err != nil {
@@ -351,13 +351,13 @@ func ValidateBootstrapIssuerAuthorization(authorization *BootstrapIssuerAuthoriz
 		}
 		until, err := ParseTimeZ(active.ValidUntil)
 		if err != nil || !from.Before(until) {
-			return errors.New("[D131 bootstrap issuer] active validity 无效")
+			return errors.New("[bootstrap issuer] active validity 无效")
 		}
 		return nil
 	}
 	if authorization.Active != nil || authorization.Revocation == nil || authorization.Generation == 1 ||
 		authorization.Revocation.Reason == "" {
-		return errors.New("[D131 bootstrap issuer] revocation tagged union 无效")
+		return errors.New("[bootstrap issuer] revocation tagged union 无效")
 	}
 	if _, err := ParseHash(authorization.Revocation.RevokedAuthorizationHash); err != nil {
 		return err
@@ -377,25 +377,25 @@ func ValidateBootstrapIssuerAuthorizationSuccessor(previous, next *BootstrapIssu
 	if next.ClusterID != previous.ClusterID || next.AuthorizationID != previous.AuthorizationID ||
 		next.Generation != previous.Generation+1 || next.PreviousAuthorizationHash != previousHash ||
 		previous.Status == "revoked" {
-		return errors.New("[D131 bootstrap issuer] authorization lineage 断裂或 revoked 后仍有后代")
+		return errors.New("[bootstrap issuer] authorization lineage 断裂或 revoked 后仍有后代")
 	}
 	if next.Status == "revoked" && next.Revocation.RevokedAuthorizationHash != previousHash {
-		return errors.New("[D131 bootstrap issuer] revocation 未指向最近 active authorization")
+		return errors.New("[bootstrap issuer] revocation 未指向最近 active authorization")
 	}
 	return nil
 }
 
 func VerifyBootstrapIssuerAuthorizationProof(proof *BootstrapIssuerAuthorizationProofV1, trustedTime time.Time) error {
 	if proof == nil || proof.Schema != 1 || proof.ClusterID != proof.Authorization.ClusterID || trustedTime.IsZero() {
-		return errors.New("[D131 bootstrap issuer] proof header/可信时间无效")
+		return errors.New("[bootstrap issuer] proof header/可信时间无效")
 	}
 	authorizationHash, err := BootstrapIssuerAuthorizationHash(&proof.Authorization)
 	if err != nil || authorizationHash != proof.AuthorizationHash || proof.Authorization.Status != "active" {
-		return errors.New("[D131 bootstrap issuer] proof authorization hash/status 无效")
+		return errors.New("[bootstrap issuer] proof authorization hash/status 无效")
 	}
 	if proof.Leaf.Schema != 1 || proof.Leaf.AuthorizationID != proof.Authorization.AuthorizationID ||
 		proof.Leaf.Generation != proof.Authorization.Generation || proof.Leaf.AuthorizationHash != authorizationHash {
-		return errors.New("[D131 bootstrap issuer] registry leaf binding 无效")
+		return errors.New("[bootstrap issuer] registry leaf binding 无效")
 	}
 	root, err := ParseHash(proof.RegistryRoot)
 	if err != nil {
@@ -417,7 +417,7 @@ func VerifyBootstrapIssuerAuthorizationProof(proof *BootstrapIssuerAuthorization
 	until, _ := ParseTimeZ(active.ValidUntil)
 	instant := trustedTime.UTC()
 	if instant.Before(from) || !instant.Before(until) {
-		return errors.New("[D131 bootstrap issuer] issuer authorization 已过期或尚未生效")
+		return errors.New("[bootstrap issuer] issuer authorization 已过期或尚未生效")
 	}
 	return nil
 }
@@ -441,7 +441,7 @@ func VerifyCapabilityAuthorization(capability *BootstrapTunnelCapabilityV1, proo
 		active.InviteIssuancePolicyHash != policyHash || body.IssuerEpoch != active.IssuerEpoch ||
 		body.IssuerKeyID != active.IssuerKeyID || !contains(active.PermittedIngressSetHashes, body.AllowedIngressSetHash) ||
 		!contains(active.PermittedServiceIDs, body.AllowedServiceID) || !contains(active.PermittedModes, body.Mode) {
-		return errors.New("[D131 capability] issuer authorization exact binding/scope 无效")
+		return errors.New("[capability] issuer authorization exact binding/scope 无效")
 	}
 	issued, _ := ParseTimeZ(body.IssuedAt)
 	notBefore, _ := ParseTimeZ(body.NotBefore)
@@ -456,16 +456,16 @@ func VerifyCapabilityAuthorization(capability *BootstrapTunnelCapabilityV1, proo
 		body.MaximumConcurrentSessions > active.MaximumConcurrentSessions || body.MaximumConcurrentSessions > policy.BootstrapMaxConcurrentSessions ||
 		body.MaximumSessionSeconds > active.MaximumSessionSeconds || body.MaximumSessionSeconds > policy.BootstrapSessionSeconds ||
 		body.MaximumTotalBytes > active.MaximumTotalBytes || body.MaximumTotalBytes > policy.BootstrapTotalBytes {
-		return errors.New("[D131 capability] capability 超出 issuer/policy 限额")
+		return errors.New("[capability] capability 超出 issuer/policy 限额")
 	}
 	instant := trustedTime.UTC()
 	if instant.Before(notBefore) || !instant.Before(expires) {
-		return errors.New("[D131 capability] capability 已过期或尚未生效")
+		return errors.New("[capability] capability 已过期或尚未生效")
 	}
 	authorizationFrom, _ := ParseTimeZ(active.ValidFrom)
 	authorizationUntil, _ := ParseTimeZ(active.ValidUntil)
 	if issued.Before(authorizationFrom) || expires.After(authorizationUntil) {
-		return errors.New("[D131 capability] capability validity 超出 issuer authorization")
+		return errors.New("[capability] capability validity 超出 issuer authorization")
 	}
 	return nil
 }
@@ -493,7 +493,7 @@ func VerifyCapabilityAuthorizationEvidence(capability *BootstrapTunnelCapability
 // 合成一个不可拆分的校验步骤；record 的 operation inclusion/head QC 由 proof-bundle 的上一层验证。
 func VerifyInviteDescriptorBindings(descriptor *InviteBootstrapDescriptorV2, record *CertifiedInviteRecordV2, policy *InviteIssuancePolicyV2, commitment *DeviceEnrollmentIntentCommitmentV1, proof *BootstrapIssuerAuthorizationProofV1, trustedTime time.Time) error {
 	if descriptor == nil || record == nil || commitment == nil || proof == nil {
-		return errors.New("[D115 Invite] descriptor binding 输入不完整")
+		return errors.New("[Invite] descriptor binding 输入不完整")
 	}
 	if err := VerifyCapabilityAuthorization(&descriptor.BootstrapTunnelCapability, proof, policy, trustedTime); err != nil {
 		return err
@@ -504,7 +504,7 @@ func VerifyInviteDescriptorBindings(descriptor *InviteBootstrapDescriptorV2, rec
 	}
 	canonicalDescriptor, err := MarshalCanonical(descriptor)
 	if err != nil || int64(len(canonicalDescriptor)) > policy.MaximumDescriptorBytes {
-		return errors.New("[D115 Invite] descriptor 超出 certified policy 大小上限")
+		return errors.New("[Invite] descriptor 超出 certified policy 大小上限")
 	}
 	recordHash, err := CertifiedInviteRecordHash(record, policy)
 	if err != nil {
@@ -525,14 +525,14 @@ func VerifyInviteDescriptorBindings(descriptor *InviteBootstrapDescriptorV2, rec
 		body.InviteIssuancePolicyHash != record.InviteIssuancePolicyHash ||
 		body.BootstrapIssuerAuthorizationHash != record.BootstrapIssuerAuthorizationHash ||
 		body.BootstrapIssuerRegistryRoot != record.BootstrapIssuerRegistryRoot {
-		return errors.New("[D115 Invite] descriptor/record/policy/commitment/issuer exact binding 不匹配")
+		return errors.New("[Invite] descriptor/record/policy/commitment/issuer exact binding 不匹配")
 	}
 	return nil
 }
 
 func EnrollmentIntentPreflightRequestHash(request *EnrollmentIntentPreflightRequestV1) (string, error) {
 	if request == nil || request.Schema != 1 || !validIdentifier(request.ClusterID, 128) || !validIdentifier(request.InviteID, 128) {
-		return "", errors.New("[D131 Enrollment preflight] request identity 无效")
+		return "", errors.New("[Enrollment preflight] request identity 无效")
 	}
 	for _, hash := range []string{request.CertifiedInviteRecordHash, request.CapabilityID} {
 		if _, err := ParseHash(hash); err != nil {
@@ -549,18 +549,18 @@ func VerifyEnrollmentIntentPreflight(response *EnrollmentIntentPreflightResponse
 	}
 	if response == nil || response.Schema != 1 || response.ClusterID != request.ClusterID ||
 		response.InviteID != request.InviteID || response.RequestHash != requestHash {
-		return errors.New("[D131 Enrollment preflight] response/request identity 无效")
+		return errors.New("[Enrollment preflight] response/request identity 无效")
 	}
 	openingHash, err := IntentOpeningHash(&response.DeviceEnrollmentIntentOpening)
 	if err != nil || response.DeviceEnrollmentIntentCommitment.Schema != 1 ||
 		response.DeviceEnrollmentIntentCommitment.ClusterID != request.ClusterID ||
 		response.DeviceEnrollmentIntentCommitment.InviteID != request.InviteID ||
 		response.DeviceEnrollmentIntentCommitment.OpeningHash != openingHash {
-		return errors.New("[D131 Enrollment preflight] opening/commitment 不匹配")
+		return errors.New("[Enrollment preflight] opening/commitment 不匹配")
 	}
 	commitmentHash, err := HashObject(DomainEnrollmentIntentCommitment, response.DeviceEnrollmentIntentCommitment)
 	if err != nil || commitmentHash != expectedCommitmentHash {
-		return errors.New("[D131 Enrollment preflight] public commitment hash 不匹配")
+		return errors.New("[Enrollment preflight] public commitment hash 不匹配")
 	}
 	return nil
 }
@@ -568,17 +568,17 @@ func VerifyEnrollmentIntentPreflight(response *EnrollmentIntentPreflightResponse
 // ValidateDescriptorMirrorBindings 禁止 descriptor 用另一组 URL/pin 覆盖 certified EndpointSet。
 func ValidateDescriptorMirrorBindings(descriptor *InviteBootstrapDescriptorV2, endpointSets map[string]DistributionEndpointSetV1) error {
 	if descriptor == nil {
-		return errors.New("[D115 Invite] descriptor 不能为空")
+		return errors.New("[Invite] descriptor 不能为空")
 	}
 	return ValidateDistributionMirrorBindings(descriptor.ClusterID, descriptor.DistributionMirrors, endpointSets)
 }
 
 // ValidateDistributionMirrorBindings 同时供 initial 与 resume descriptor 复用，
-// 确保 URL/pin/listener generation 来自 exact certified EndpointSet（D115、D130）。
+// 确保 URL/pin/listener generation 来自 exact certified EndpointSet。
 func ValidateDistributionMirrorBindings(clusterID string, mirrors []DistributionMirrorRefV1,
 	endpointSets map[string]DistributionEndpointSetV1) error {
 	if !validIdentifier(clusterID, 128) {
-		return errors.New("[D115 Invite] mirror cluster identity 无效")
+		return errors.New("[Invite] mirror cluster identity 无效")
 	}
 	if err := ValidateDistributionMirrorRefs(mirrors); err != nil {
 		return err
@@ -588,11 +588,11 @@ func ValidateDistributionMirrorBindings(clusterID string, mirrors []Distribution
 	for _, mirror := range mirrors {
 		set, ok := endpointSets[mirror.DistributionEndpointSetHash]
 		if !ok {
-			return errors.New("[D115 Invite] mirror 缺 exact DistributionEndpointSet")
+			return errors.New("[Invite] mirror 缺 exact DistributionEndpointSet")
 		}
 		setHash, err := DistributionEndpointSetHash(&set)
 		if err != nil || setHash != mirror.DistributionEndpointSetHash || set.ClusterID != clusterID {
-			return errors.New("[D115 Invite] mirror EndpointSet hash/cluster 不匹配")
+			return errors.New("[Invite] mirror EndpointSet hash/cluster 不匹配")
 		}
 		matched := false
 		matchedServer := ""
@@ -605,29 +605,29 @@ func ValidateDistributionMirrorBindings(clusterID string, mirrors []Distribution
 					continue
 				}
 				if generation.PublishedState == "draining" || generation.DialTargetFQDN != mirror.ServerName {
-					return errors.New("[D115 Invite] mirror listener state/name/WebPKI profile 不匹配")
+					return errors.New("[Invite] mirror listener state/name/WebPKI profile 不匹配")
 				}
 				expectedIdentities := append([]string{mirror.WebPKIProfileRef}, mirror.SPKIPins...)
 				sort.Strings(expectedIdentities)
 				if !EqualCanonical(expectedIdentities, generation.TransportIdentityRefs) {
-					return errors.New("[D115 Invite] mirror WebPKI/SPKI identities 与 listener generation 不完全相等")
+					return errors.New("[Invite] mirror WebPKI/SPKI identities 与 listener generation 不完全相等")
 				}
 				expectedURL := "https://" + generation.DialTargetFQDN + ":" + strconv.FormatInt(generation.PublicPort, 10) + endpoint.DistributionPathPrefix
 				if mirror.BaseURL != expectedURL {
-					return fmt.Errorf("[D115 Invite] mirror base URL 应为 %s", expectedURL)
+					return fmt.Errorf("[Invite] mirror base URL 应为 %s", expectedURL)
 				}
 				matched = true
 				matchedServer = endpoint.LogicalServerID
 			}
 		}
 		if !matched {
-			return errors.New("[D115 Invite] mirror endpoint/listener generation 不存在")
+			return errors.New("[Invite] mirror endpoint/listener generation 不存在")
 		}
 		if _, duplicate := seenServers[matchedServer]; duplicate {
-			return errors.New("[D115 Invite] distribution mirrors 未跨 logical server 分散")
+			return errors.New("[Invite] distribution mirrors 未跨 logical server 分散")
 		}
 		if _, duplicate := seenNames[mirror.ServerName]; duplicate {
-			return errors.New("[D115 Invite] distribution mirrors 未跨 FQDN 分散")
+			return errors.New("[Invite] distribution mirrors 未跨 FQDN 分散")
 		}
 		seenServers[matchedServer], seenNames[mirror.ServerName] = struct{}{}, struct{}{}
 	}
@@ -637,11 +637,11 @@ func ValidateDistributionMirrorBindings(clusterID string, mirrors []Distribution
 func validateExplicitHTTPSBaseURL(raw, serverName string) error {
 	parsed, err := url.ParseRequestURI(raw)
 	if err != nil || parsed == nil || parsed.Scheme != "https" || parsed.Hostname() != serverName || parsed.Port() == "" {
-		return errors.New("[D115 Invite] mirror 必须携带显式 HTTPS port")
+		return errors.New("[Invite] mirror 必须携带显式 HTTPS port")
 	}
 	port, err := strconv.ParseUint(parsed.Port(), 10, 16)
 	if err != nil || port == 0 {
-		return errors.New("[D115 Invite] mirror HTTPS port 无效")
+		return errors.New("[Invite] mirror HTTPS port 无效")
 	}
 	return nil
 }

@@ -23,7 +23,7 @@ type DeviceRemovalPlan struct {
 	SecretRefs    []string
 }
 
-// SetAccessDevicePaused 只改可恢复的访问开关，不撤销身份或停掉 pull(§14.4)。
+// SetAccessDevicePaused 只改可恢复的访问开关，不撤销身份或停掉 pull。
 // 控制设备职责由调用方校验，因为 control 是中控本地事实。
 func SetAccessDevicePaused(content []byte, id string, paused bool) ([]byte, error) {
 	current, err := model.Load(content)

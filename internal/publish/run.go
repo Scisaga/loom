@@ -83,7 +83,7 @@ type Options struct {
 	Once     bool
 	Log      io.Writer
 	// Now 由调用方注入。发布器是运行期组件,它**必须**读时钟,
-	// 只是入口收在这一处(渲染与打包仍然不读,§12)。
+	// 只是入口收在这一处(渲染与打包仍然不读)。
 	Now func() time.Time
 
 	// beforeLock 只给包内回归测试精确构造“读旧输入→另一笔
@@ -113,7 +113,7 @@ func (o *Options) fill() {
 //  1. SSOT 变了 → 校验、渲染、签名、推送
 //  2. **分发点指向的快照与本地算出来的不一致 → 重推**
 //
-// 第二件是收敛(D33 的同一个道理):分发点被清空、推到一半断线、有人手工
+// 第二件是收敛:分发点被清空、推到一半断线、有人手工
 // 动过,都会让它和真相分叉。只在"文件变了"时才动作的发布器修不了这些。
 func Run(ctx context.Context, opts Options) error {
 	opts.fill()
@@ -169,12 +169,12 @@ func Run(ctx context.Context, opts Options) error {
 			// 精心构造同前缀的 SSOT 会被误判为 no-op。
 			cur := ssotSum
 
-			// 二进制也算输入的一部分:它变了,快照就该变(§15.4 绑定回滚)。
+			// 二进制也算输入的一部分:它变了,快照就该变(绑定回滚)。
 			//
 			// 发哪一份,优先级是 **钉住 > 放行 > (什么都不发)**:
 			//
 			//	钉住  救火状态,粘性覆盖。救火期间不该被一次 release 悄悄解开
-			//	放行  loom release 显式批准过的那一份(D77)
+			//	放行 loom release 显式批准过的那一份
 			//	都没有  只发配置。**不回落到本机二进制** —— 那正是要根治的
 			//	        "一次 go build 武装全网升级"
 			binPath := ""
@@ -297,7 +297,7 @@ func Run(ctx context.Context, opts Options) error {
 
 			served, serr := opts.Target.Current()
 			if serr != nil {
-				// current.json 损坏/截断正是 D33 要自修复的对象。它不是本地
+				// current.json 损坏/截断需要通过重推修复。它不是本地
 				// 安全门,不能因为读不到就拒绝 Push；把状态视为 unknown/diverged,
 				// 重新铺树并由 Push + 节点视角 Verify 决定最终成败。
 				logf("问不到分发点当前指向哪个快照:%v —— 按分叉处理并重推", serr)
@@ -307,7 +307,7 @@ func Run(ctx context.Context, opts Options) error {
 			// 二进制变了也算变 —— 包括**从"没有"变成"有"**。
 			//
 			// 原先写的是 `lastBin != "" && binSum != lastBin`,那个守卫在
-			// D77 之前无害:binPath 总是有值,binSum 永远非空。D77 让
+			// binPath 始终有值时无害,因为 binSum 永远非空。允许
 			// "没放行 = 不发二进制"成为合法状态之后,`"" → sha` 这个转换
 			// 就被守卫吞掉了 —— 发布器认了放行,却不重推。实测踩到。
 			//
@@ -337,8 +337,7 @@ func Run(ctx context.Context, opts Options) error {
 
 			if blocked != "" {
 				// **拦下来也要记进 Health。** 只打日志的话,这又变成一个
-				// "systemd 说 active 但发不出去"的静默故障 —— 正是 D72
-				// 要根治的形状。
+				// "systemd 说 active 但发不出去"的静默故障,健康投影必须显示发布失败。
 				logf("未发布:%s", blocked)
 				iterationErr = fmt.Errorf("%s", blocked)
 				recordFailure(iterationErr)

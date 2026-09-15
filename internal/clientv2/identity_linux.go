@@ -49,7 +49,7 @@ type ClaimCoreInputV2 struct {
 
 func OpenOrCreateEnrollmentIdentity(path string) (*EnrollmentIdentityV1, error) {
 	if path == "" || filepath.Clean(path) != path || !filepath.IsAbs(path) {
-		return nil, errors.New("[D129 Linux] identity path 必须是规范绝对路径")
+		return nil, errors.New("[Linux] identity path 必须是规范绝对路径")
 	}
 	if err := secureEnrollmentDirectory(filepath.Dir(path)); err != nil {
 		return nil, err
@@ -94,10 +94,10 @@ func OpenOrCreateEnrollmentIdentity(path string) (*EnrollmentIdentityV1, error) 
 }
 
 // LoadEnrollmentIdentityForResume 只读取既有 key，不会在恢复路径生成替代 identity。
-// 缺失或损坏必须失败关闭，否则 descriptor 可能被错误地绑定到新设备（D129、D130）。
+// 缺失或损坏必须失败关闭，否则 descriptor 可能被错误地绑定到新设备。
 func LoadEnrollmentIdentityForResume(path string) (*EnrollmentIdentityV1, error) {
 	if path == "" || filepath.Clean(path) != path || !filepath.IsAbs(path) {
-		return nil, errors.New("[D130 Linux resume] identity path 必须是规范绝对路径")
+		return nil, errors.New("[Linux resume] identity path 必须是规范绝对路径")
 	}
 	if err := secureEnrollmentDirectory(filepath.Dir(path)); err != nil {
 		return nil, err
@@ -164,10 +164,10 @@ func loadEnrollmentIdentity(path string) (*EnrollmentIdentityV1, error) {
 		return nil, err
 	}
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 || info.Size() < 1 || info.Size() > 64<<10 {
-		return nil, errors.New("[D129 Linux] identity state 必须是 0600 小型普通文件")
+		return nil, errors.New("[Linux] identity state 必须是 0600 小型普通文件")
 	}
 	if stat, ok := info.Sys().(*syscall.Stat_t); !ok || int(stat.Uid) != os.Geteuid() {
-		return nil, errors.New("[D129 Linux] identity state owner 不是当前服务账号")
+		return nil, errors.New("[Linux] identity state owner 不是当前服务账号")
 	}
 	body, err := os.ReadFile(path)
 	if err != nil {
@@ -176,7 +176,7 @@ func loadEnrollmentIdentity(path string) (*EnrollmentIdentityV1, error) {
 	var state EnrollmentIdentityV1
 	canonical, err := wire.DecodeStrict(body, 64<<10, &state)
 	if err != nil || !bytes.Equal(canonical, body) {
-		return nil, errors.New("[D129 Linux] identity state 必须是 exact canonical wire")
+		return nil, errors.New("[Linux] identity state 必须是 exact canonical wire")
 	}
 	if _, _, err := state.keys(); err != nil {
 		return nil, err
@@ -186,18 +186,18 @@ func loadEnrollmentIdentity(path string) (*EnrollmentIdentityV1, error) {
 
 func (state *EnrollmentIdentityV1) keys() (*ecdsa.PrivateKey, *ecdsa.PrivateKey, error) {
 	if state == nil || state.Schema != 1 || state.ProtectionProfile != LinuxSoftwareKeyProtectionProfile {
-		return nil, nil, errors.New("[D129 Linux] identity protection profile 无效")
+		return nil, nil, errors.New("[Linux] identity protection profile 无效")
 	}
 	identityKey, identitySPKI, err := decodeP256Key(state.IdentityPrivateKeyPKCS8, state.IdentityPublicKeySPKI)
 	if err != nil {
-		return nil, nil, fmt.Errorf("[D129 Linux] identity key: %w", err)
+		return nil, nil, fmt.Errorf("[Linux] identity key: %w", err)
 	}
 	wrappingKey, wrappingSPKI, err := decodeP256Key(state.WrappingPrivateKeyPKCS8, state.WrappingPublicKeySPKI)
 	if err != nil {
-		return nil, nil, fmt.Errorf("[D130 Linux] wrapping key: %w", err)
+		return nil, nil, fmt.Errorf("[Linux] wrapping key: %w", err)
 	}
 	if bytes.Equal(identitySPKI, wrappingSPKI) {
-		return nil, nil, errors.New("[D130 Linux] identity 与 wrapping key 禁止复用")
+		return nil, nil, errors.New("[Linux] identity 与 wrapping key 禁止复用")
 	}
 	return identityKey, wrappingKey, nil
 }

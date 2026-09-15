@@ -125,7 +125,7 @@ func TestDefaultBackupSrcsCoverTheIrreplaceable(t *testing.T) {
 	}
 
 	// 签名私钥丢了,全网再也收不到任何新配置 —— 换钥要逐台手工改
-	// control.json。D38 与附录 C #15 都写着它靠 loom backup 保存。
+	// control.json。平台签名私钥必须由 loom backup 保存。
 	// **deploy/pki 不顶替它**:那是 CA 与节点证书,是另一样东西。
 	for _, must := range []string{"deploy/keys", "deploy/secrets.env", "deploy/pki"} {
 		if !got[must] {
@@ -146,7 +146,7 @@ func TestDefaultBackupSrcsCoverTheIrreplaceable(t *testing.T) {
 	if !got["deploy/ssot-history"] || !optional["deploy/ssot-history"] {
 		t.Error("deploy/ssot-history 应在清单里,且必须是可选的")
 	}
-	// §13.3：配置与精选证据按用途备份，已退役的文档杂物目录退出清单。
+	// 配置与精选证据按用途备份，已退役的文档杂物目录退出清单。
 	for _, path := range []string{".env", ".ssh_config", "deploy/evidence"} {
 		if !got[path] || !optional[path] {
 			t.Errorf("%s 应在清单里，且首次配置前允许缺失", path)

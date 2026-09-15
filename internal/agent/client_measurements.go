@@ -7,7 +7,7 @@ import (
 )
 
 // ClientPathMeasurement 是本地拓扑连线的只读数据，不改变服务器签名或报告协议。
-// §16.1.2：Hop=0 是入口；最后一段可有多个目标，各自保留身份与原测量时间。
+// Hop=0 是入口；最后一段可有多个目标，各自保留身份与原测量时间。
 type ClientPathMeasurement struct {
 	Hop                               int
 	From, To, Kind, ObservedAt, Error string

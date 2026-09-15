@@ -120,7 +120,7 @@ func (app *portableGUI) drawMisakaBrand(dc uintptr, large bool) {
 	iconHeight := portableSystemMetricForDPI(portableSMCYSmallIcon, app.dpi())
 	procDrawIconEx.Call(dc, uintptr(s(15)), uintptr((s(misakaTitleHeight)-iconHeight)/2), icon, uintptr(iconWidth), uintptr(iconHeight), 0, 0, portableDrawIconNormal)
 	if large {
-		// §7.2：窗口内品牌区沿用完整版标志，系统小图标继续使用 favicon 原图。
+		// 窗口内品牌区沿用完整版标志，系统小图标继续使用 favicon 原图。
 		brand, _, _ := procLoadImage.Call(instance, portableIconBrand, portableImageIcon, uintptr(s(40)), uintptr(s(40)), portableLRShared)
 		procDrawIconEx.Call(dc, uintptr(s(16)), uintptr(s(misakaTitleHeight+18)), brand, uintptr(s(40)), uintptr(s(40)), 0, 0, portableDrawIconNormal)
 	}
@@ -131,7 +131,7 @@ func (app *portableGUI) paintMisakaDraft(c *misakaCanvas, snapshot portableGUISn
 	x, y, w := app.misakaDraftBounds()
 	c.Text("添加连接配置", misakaRect(x, s(57), w, s(31)), s(23), 600, misakaText, 0)
 	c.Text("保存后保持断开，现有连接继续运行。", misakaRect(x, s(88), w, s(20)), s(11), 400, misakaMuted, 0)
-	// §7.2：沿用首页的一层内容卡片，名称和邀请控件直接排列，不再嵌套上传面板。
+	// 沿用首页的一层内容卡片，名称和邀请控件直接排列，不再嵌套上传面板。
 	card := misakaRect(x, y, w, s(330))
 	c.Fill(card, misakaBorder, s(9))
 	card.left++
@@ -307,7 +307,7 @@ func (app *portableGUI) drawMisakaItem(item *portableDrawItem) bool {
 }
 
 func paintMisakaModeBackground(c *misakaCanvas, rect portableRect, scale func(int32) int32, first, last bool) {
-	// §7.2：首尾按钮各自绘制整段的外圆角，不能用矩形背景盖掉父画布的边角。
+	// 首尾按钮各自绘制整段的外圆角，不能用矩形背景盖掉父画布的边角。
 	c.Fill(rect, misakaBackground, 0)
 	radius := int32(0)
 	if first || last {
@@ -452,7 +452,7 @@ func (app *portableGUI) drawMisakaProfile(item *portableDrawItem) {
 	}
 }
 
-// §7.2：操作符号使用几何中心，避免系统字体的基线与字符留白改变可见位置。
+// 操作符号使用几何中心，避免系统字体的基线与字符留白改变可见位置。
 func paintMisakaAdd(c *misakaCanvas, bounds portableRect, scale func(int32) int32, color uint32) {
 	x, y := (bounds.left+bounds.right)/2, (bounds.top+bounds.bottom)/2
 	c.Fill(misakaCenteredRect(x, y, scale(12), scale(2)), color, 0)
@@ -474,7 +474,7 @@ func paintMisakaPathNode(c *misakaCanvas, x, y int32, index, count int, scale fu
 	c.Ellipse(cx, cy, inner, inner, fill)
 	stroke := max(int32(1), scale(1))
 	if index == count-1 {
-		// §1：目标地址使用地址球面符号，不把它绘成服务器。
+		// 目标地址使用地址球面符号，不把它绘成服务器。
 		radius, meridian := float32(scale(16))/2, float32(scale(8))/2
 		c.Ellipse(cx, cy, radius, radius, ink)
 		c.Ellipse(cx, cy, radius-float32(stroke), radius-float32(stroke), fill)
@@ -567,7 +567,7 @@ func (app *portableGUI) drawMisakaPath(item *portableDrawItem) {
 	r := item.rect
 	r.right -= s(3)
 	first, last := item.itemID == 0, int(item.itemID) == len(app.skin.lastPaths)-1
-	// §7.3.3：所有服务共用一个面板，只有首尾保留圆角，行间以细线分隔。
+	// 所有服务共用一个面板，只有首尾保留圆角，行间以细线分隔。
 	fillPanel := func(bounds portableRect, color uint32, radius int32) {
 		c.Fill(bounds, color, radius)
 		if !first {
@@ -624,7 +624,7 @@ func (app *portableGUI) drawMisakaPath(item *portableDrawItem) {
 		}
 		c.Text(healthLabel, health, s(10), 500, color, 1)
 	}
-	// §7.3.3：只拆分只读显示字符串用于布局，不由名称推导路径或操作 selector。
+	// 只拆分只读显示字符串用于布局，不由名称推导路径或操作 selector。
 	nodes := strings.Split(row.Chain, " → ")
 	if len(nodes) < 2 || row.Candidate == "" {
 		c.Text("实际路径未知", misakaRect(r.left+s(14), r.top+s(40), r.right-r.left-s(28), s(30)), s(12), 400, misakaMuted, 0)
@@ -632,7 +632,7 @@ func (app *portableGUI) drawMisakaPath(item *portableDrawItem) {
 		return
 	}
 	links := strings.Split(row.LinkLabels, "\n")
-	// §7.3.3：换行时重复衔接节点，跨行的那一段也必须有连线与测量。
+	// 换行时重复衔接节点，跨行的那一段也必须有连线与测量。
 	for start := 0; start < len(nodes)-1; start += 3 {
 		count := min(4, len(nodes)-start)
 		usable := r.right - r.left - s(84)
@@ -662,7 +662,7 @@ func (app *portableGUI) drawMisakaPath(item *portableDrawItem) {
 			}
 			fixed := start+index == len(nodes)-2 && misakaSelectedMode(app.snapshot()) == clientcore.FixedExit
 			paintMisakaPathNode(c, x, y, start+index, len(nodes), s, fixed)
-			// §7.2：两端标签按可用对称宽度收窄，不将文字挤离节点的中心轴。
+			// 两端标签按可用对称宽度收窄，不将文字挤离节点的中心轴。
 			labelWidth := min(s(120), step-s(6), (x-r.left-s(10))*2, (r.right-s(10)-x)*2)
 			left := x - labelWidth/2
 			label := nodes[start+index]

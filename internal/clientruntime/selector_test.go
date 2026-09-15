@@ -24,7 +24,7 @@ func pathPlanFixture(t *testing.T) ([]byte, []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// §5.6：故意用不可解析、与链无关的 opaque tag 验证没有名称排序选路。
+	// 故意用不可解析、与链无关的 opaque tag 验证没有名称排序选路。
 	candidates := []agent.Cand{
 		{Tag: "opaque:a@slow", Chain: []string{"demo-prefix-a", "demo-exit"}, ProbeUser: "demo-slow"},
 		{Tag: "opaque:z@fast", Chain: []string{"demo-prefix-b", "demo-exit"}, ProbeUser: "demo-fast"},
@@ -179,7 +179,7 @@ func TestWindowsFixedExitUsesDefaultInternetAuthorization(t *testing.T) {
 	}
 	_, fixed, err := plan.Derive(body, clientcore.Preference{Schema: 1, Mode: clientcore.FixedExit, Exit: "demo-exit"})
 	if err != nil || len(fixed.Declarations) != 1 || fixed.Declarations[0].Selector != cfg.Declarations[0].Selector {
-		t.Fatal("[§7.3] 固定出口没有只使用默认上网声明的授权", err)
+		t.Fatal("固定出口没有只使用默认上网声明的授权", err)
 	}
 	_, auto, err := plan.Derive(body, clientcore.Preference{Schema: 1, Mode: clientcore.Auto})
 	if err != nil {

@@ -20,7 +20,7 @@ import (
 	"loom/internal/model"
 )
 
-// §16.1 / D98：这是既有 Observation 的最小投影，不增加传输 envelope 或生命周期字段。
+// 这是既有 Observation 的最小投影，不增加传输 envelope 或生命周期字段。
 type Observation struct {
 	Agent     *AgentState             `json:"agent,omitempty"`
 	Node      string                  `json:"node"`
@@ -48,10 +48,10 @@ func Build(node, applied string, problems []string, at time.Time, key, cert, ca 
 	return BuildWithAgent(node, applied, problems, nil, at, key, cert, ca)
 }
 
-// §16.1：复用既有 AgentState、AgentClaim 和 canonical v5，两签仍由同一身份生成。
+// 复用既有 AgentState、AgentClaim 和 canonical v5，两签仍由同一身份生成。
 func BuildWithAgent(node, applied string, problems []string, state *AgentState, at time.Time, key, cert, ca []byte) (*Observation, error) {
 	if !model.ValidNodeID(node) || !snapshotID.MatchString(applied) {
-		return nil, errors.New("[§16.1 上报] 节点或已激活快照无效")
+		return nil, errors.New("[上报] 节点或已激活快照无效")
 	}
 	problems = append([]string(nil), problems...)
 	slices.Sort(problems)
@@ -63,7 +63,7 @@ func BuildWithAgent(node, applied string, problems []string, state *AgentState, 
 		MeasurementsSHA256: EmptyMeasurementsDigest()}
 	if state != nil {
 		if state.Node != node {
-			return nil, errors.New("[§16.1] Agent 节点与上报身份不一致")
+			return nil, errors.New("Agent 节点与上报身份不一致")
 		}
 		body, e := json.Marshal(state)
 		if e != nil {
@@ -94,11 +94,11 @@ func BuildWithAgent(node, applied string, problems []string, state *AgentState, 
 	return o, nil
 }
 
-// §13.1：不再实现客户端 Observation verifier；这里只核签名身份使用的密钥类型。
+// 不再实现客户端 Observation verifier；这里只核签名身份使用的密钥类型。
 func checkP256Certificate(cert []byte) error {
 	block, rest := pem.Decode(cert)
 	if block == nil || block.Type != "CERTIFICATE" || len(bytes.TrimSpace(rest)) != 0 {
-		return errors.New("[§16.1 上报] 证书格式错误")
+		return errors.New("[上报] 证书格式错误")
 	}
 	certificate, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
@@ -106,12 +106,12 @@ func checkP256Certificate(cert []byte) error {
 	}
 	public, ok := certificate.PublicKey.(*ecdsa.PublicKey)
 	if !ok || public.Curve != elliptic.P256() {
-		return errors.New("[§16.1 上报] 必须使用 P-256 身份")
+		return errors.New("[上报] 必须使用 P-256 身份")
 	}
 	return nil
 }
 
-// §16.1：report.AgentState 的客户端线格式投影；服务端兼容测试防止类型漂移。
+// report.AgentState 的客户端线格式投影；服务端兼容测试防止类型漂移。
 type AgentState struct {
 	Node string `json:"node"`
 	TS   string `json:"ts"`

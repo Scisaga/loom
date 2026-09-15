@@ -1,8 +1,7 @@
-// Package clientdist builds and verifies the reproducible Linux client archive.
+// Package clientdist 构建并验证可重复生成的 Linux 客户端安装包。
 //
-// The archive is bootstrap material, not a node configuration bundle.  Exact
-// systemd units and data-plane secrets still arrive through the signed pull
-// transaction described by design.md §14.2.
+// 安装包只携带引导材料；节点专属 systemd 配置与数据面秘密继续通过
+// 签名配置交付事务取得，不能打入通用安装包。
 package clientdist
 
 import (
@@ -66,7 +65,7 @@ type Manifest struct {
 }
 
 // BuildInput contains all bytes that affect the output. The builder never
-// reads the clock, environment, network, or source paths (design.md §12).
+// reads the clock, environment, network, or source paths .
 type BuildInput struct {
 	Loom           []byte
 	SingBox        []byte
@@ -104,7 +103,7 @@ type archiveFile struct {
 // emits a byte-for-byte reproducible gzip stream.
 func Build(in BuildInput) (Artifact, error) {
 	if len(in.PrivateKey) != ed25519.PrivateKeySize {
-		return Artifact{}, fmt.Errorf("[§4.3 签名高于传输信任] 平台签名私钥长度是 %d，期望 %d", len(in.PrivateKey), ed25519.PrivateKeySize)
+		return Artifact{}, fmt.Errorf("[签名高于传输信任] 平台签名私钥长度是 %d，期望 %d", len(in.PrivateKey), ed25519.PrivateKeySize)
 	}
 	loom, osName, arch, err := inspectLoom(in.Loom, in.AllowDirty)
 	if err != nil {
@@ -191,7 +190,7 @@ func Build(in BuildInput) (Artifact, error) {
 
 func validateLicenseMaterial(name string, body []byte) error {
 	if len(body) == 0 || len(body) > 1<<20 || !utf8.Valid(body) || bytes.IndexByte(body, 0) >= 0 || body[len(body)-1] != '\n' {
-		return fmt.Errorf("[§12 可重现制品] %s 必须是有界 UTF-8 文本且以换行结尾", name)
+		return fmt.Errorf("[可重现制品] %s 必须是有界 UTF-8 文本且以换行结尾", name)
 	}
 	return nil
 }
@@ -210,46 +209,46 @@ https://github.com/SagerNet/sing-box/tree/%s
 
 func inspectLoom(body []byte, allowDirty bool) (Component, string, string, error) {
 	if len(body) == 0 {
-		return Component{}, "", "", fmt.Errorf("[§15.4 二进制与配置兼容] Loom 二进制为空")
+		return Component{}, "", "", fmt.Errorf("[二进制与配置兼容] Loom 二进制为空")
 	}
 	bi, err := buildinfo.Read(bytes.NewReader(body))
 	if err != nil {
-		return Component{}, "", "", fmt.Errorf("[§15.4 二进制与配置兼容] Loom 不是可识别的 Go 二进制:%w", err)
+		return Component{}, "", "", fmt.Errorf("[二进制与配置兼容] Loom 不是可识别的 Go 二进制:%w", err)
 	}
 	if bi.Path != "loom/cmd/loom" {
-		return Component{}, "", "", fmt.Errorf("[§15.4 二进制与配置兼容] 候选程序入口是 %q，不是 loom/cmd/loom", bi.Path)
+		return Component{}, "", "", fmt.Errorf("[二进制与配置兼容] 候选程序入口是 %q，不是 loom/cmd/loom", bi.Path)
 	}
 	osName, arch, commit, dirty := buildCoordinates(bi)
 	if osName != "linux" || (arch != "amd64" && arch != "arm64") {
-		return Component{}, "", "", fmt.Errorf("[§10.2 渲染目标必须显式] Loom 平台是 %s/%s，当前只打包 linux/amd64 或 linux/arm64", osName, arch)
+		return Component{}, "", "", fmt.Errorf("[渲染目标必须显式] Loom 平台是 %s/%s，当前只打包 linux/amd64 或 linux/arm64", osName, arch)
 	}
 	if (commit == "" || dirty) && !allowDirty {
-		return Component{}, "", "", fmt.Errorf("[§12 可重现制品] Loom 候选无法追溯到干净 commit；提交后重新构建，或显式使用 -allow-dirty")
+		return Component{}, "", "", fmt.Errorf("[可重现制品] Loom 候选无法追溯到干净 commit；提交后重新构建，或显式使用 -allow-dirty")
 	}
 	return Component{Path: "loom", SHA256: sha256Hex(body), Size: len(body), Commit: commit, Dirty: dirty}, osName, arch, nil
 }
 
 func inspectSingBox(body []byte, wantArch string) (Component, error) {
 	if len(body) == 0 {
-		return Component{}, fmt.Errorf("[§4.1 数据平面只有一个实现] sing-box 二进制为空")
+		return Component{}, fmt.Errorf("[数据平面只有一个实现] sing-box 二进制为空")
 	}
 	ef, err := elf.NewFile(bytes.NewReader(body))
 	if err != nil {
-		return Component{}, fmt.Errorf("[§4.1 数据平面只有一个实现] sing-box 不是 Linux ELF 二进制:%w", err)
+		return Component{}, fmt.Errorf("[数据平面只有一个实现] sing-box 不是 Linux ELF 二进制:%w", err)
 	}
 	arch := elfArch(ef.Machine)
 	if arch == "" || arch != wantArch {
-		return Component{}, fmt.Errorf("[§10.2 渲染目标必须显式] sing-box 架构是 %q，Loom 架构是 %q", arch, wantArch)
+		return Component{}, fmt.Errorf("[渲染目标必须显式] sing-box 架构是 %q，Loom 架构是 %q", arch, wantArch)
 	}
 	bi, err := buildinfo.Read(bytes.NewReader(body))
 	if err != nil {
-		return Component{}, fmt.Errorf("[§4.1 数据平面只有一个实现] 读不出 sing-box 构建身份:%w", err)
+		return Component{}, fmt.Errorf("[数据平面只有一个实现] 读不出 sing-box 构建身份:%w", err)
 	}
 	if bi.Path != "github.com/sagernet/sing-box/cmd/sing-box" || bi.Main.Path != "github.com/sagernet/sing-box" {
-		return Component{}, fmt.Errorf("[§4.1 数据平面只有一个实现] 数据平面候选是 %q(%q)，不是真实 sing-box", bi.Path, bi.Main.Path)
+		return Component{}, fmt.Errorf("[数据平面只有一个实现] 数据平面候选是 %q(%q)，不是真实 sing-box", bi.Path, bi.Main.Path)
 	}
 	if bi.Main.Version == "" || bi.Main.Version == "(devel)" {
-		return Component{}, fmt.Errorf("[§12 可重现制品] sing-box 没有可追溯的固定版本")
+		return Component{}, fmt.Errorf("[可重现制品] sing-box 没有可追溯的固定版本")
 	}
 	return Component{Path: "sing-box", SHA256: sha256Hex(body), Size: len(body), Version: bi.Main.Version}, nil
 }
@@ -334,15 +333,15 @@ func sha256Hex(body []byte) string {
 func Verify(archive, checksum, signature []byte, pub ed25519.PublicKey) (Manifest, error) {
 	var zero Manifest
 	if len(archive) == 0 || len(archive) > maxArchiveBytes {
-		return zero, fmt.Errorf("[§4.3 签名高于传输信任] 客户端包大小 %d 超出边界", len(archive))
+		return zero, fmt.Errorf("[签名高于传输信任] 客户端包大小 %d 超出边界", len(archive))
 	}
 	hash := sha256Hex(archive)
 	fields := strings.Fields(string(checksum))
 	if len(fields) != 2 || fields[0] != hash || !strings.HasSuffix(fields[1], ".tar.gz") {
-		return zero, fmt.Errorf("[§4.3 签名高于传输信任] 客户端包 SHA-256 校验不一致")
+		return zero, fmt.Errorf("[签名高于传输信任] 客户端包 SHA-256 校验不一致")
 	}
 	if len(pub) != ed25519.PublicKeySize {
-		return zero, fmt.Errorf("[§4.3 签名高于传输信任] 可信公钥长度无效")
+		return zero, fmt.Errorf("[签名高于传输信任] 可信公钥长度无效")
 	}
 	var envelope signatureEnvelope
 	dec := json.NewDecoder(bytes.NewReader(signature))
@@ -351,11 +350,11 @@ func Verify(archive, checksum, signature []byte, pub ed25519.PublicKey) (Manifes
 		return zero, fmt.Errorf("解析客户端包签名:%w", err)
 	}
 	if dec.Decode(&struct{}{}) != io.EOF || envelope.Schema != Schema || envelope.Algorithm != "ed25519" || envelope.Domain != signatureDomain || envelope.SHA256 != hash {
-		return zero, fmt.Errorf("[§4.3 签名高于传输信任] 客户端包签名封装无效")
+		return zero, fmt.Errorf("[签名高于传输信任] 客户端包签名封装无效")
 	}
 	sig, err := base64.StdEncoding.DecodeString(envelope.Signature)
 	if err != nil || !ed25519.Verify(pub, signatureMessage(hash), sig) {
-		return zero, fmt.Errorf("[§4.3 签名高于传输信任] 客户端包 Ed25519 签名无效")
+		return zero, fmt.Errorf("[签名高于传输信任] 客户端包 Ed25519 签名无效")
 	}
 	return verifyArchive(archive, pub)
 }
@@ -382,20 +381,20 @@ func verifyArchive(body []byte, pub ed25519.PublicKey) (Manifest, error) {
 		}
 		clean := path.Clean(h.Name)
 		if clean == "." || clean != strings.TrimSuffix(h.Name, "/") || strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "../") || strings.Contains(clean, "/../") {
-			return zero, fmt.Errorf("[§10.3 原子安装] 客户端包含非法路径 %q", h.Name)
+			return zero, fmt.Errorf("[原子安装] 客户端包含非法路径 %q", h.Name)
 		}
 		parts := strings.Split(clean, "/")
 		if root == "" {
 			root = parts[0]
 		}
 		if parts[0] != root || !strings.HasPrefix(root, "loom-client-linux-") {
-			return zero, fmt.Errorf("[§10.2 渲染目标必须显式] 客户端包根目录 %q 无效", parts[0])
+			return zero, fmt.Errorf("[渲染目标必须显式] 客户端包根目录 %q 无效", parts[0])
 		}
 		if h.Typeflag == tar.TypeDir {
 			continue
 		}
 		if h.Typeflag != tar.TypeReg || len(parts) < 2 {
-			return zero, fmt.Errorf("[§10.3 原子安装] 客户端包不允许链接或特殊文件 %q", h.Name)
+			return zero, fmt.Errorf("[原子安装] 客户端包不允许链接或特殊文件 %q", h.Name)
 		}
 		rel := strings.Join(parts[1:], "/")
 		if _, exists := files[rel]; exists {
@@ -428,14 +427,14 @@ func verifyArchive(body []byte, pub ed25519.PublicKey) (Manifest, error) {
 		return zero, fmt.Errorf("解析 manifest.json 失败:%v", err)
 	}
 	if manifest.Schema != Schema || manifest.Kind != "linux-client-bootstrap" || manifest.OS != "linux" || manifest.SignatureDomain != signatureDomain || manifest.Lifecycle != "signed-node-bundle" {
-		return zero, fmt.Errorf("[§10.2 渲染目标必须显式] manifest 语义无效")
+		return zero, fmt.Errorf("[渲染目标必须显式] manifest 语义无效")
 	}
 	if root != "loom-client-linux-"+manifest.Arch {
 		return zero, fmt.Errorf("manifest 架构 %q 与目录 %q 不一致", manifest.Arch, root)
 	}
 	decodedPub, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(files["platform.pub"])))
 	if err != nil || !bytes.Equal(decodedPub, pub) || manifest.PlatformKeySHA256 != sha256Hex(pub) {
-		return zero, fmt.Errorf("[§4.3 签名高于传输信任] 包内平台公钥与带外可信公钥不一致")
+		return zero, fmt.Errorf("[签名高于传输信任] 包内平台公钥与带外可信公钥不一致")
 	}
 	seen := map[string]bool{}
 	for _, f := range manifest.Files {
@@ -454,7 +453,7 @@ func verifyArchive(body []byte, pub ed25519.PublicKey) (Manifest, error) {
 		}
 	}
 	if !bytes.Equal(files["licenses/THIRD-PARTY-NOTICES.md"], []byte(singBoxSourceNotice(manifest.SingBox))) {
-		return zero, fmt.Errorf("[§12 可重现制品] sing-box source information 与 build metadata 不匹配")
+		return zero, fmt.Errorf("[可重现制品] sing-box source information 与 build metadata 不匹配")
 	}
 	if err := verifyChecksums(files); err != nil {
 		return zero, err

@@ -50,7 +50,7 @@ type platformIdentityRecord struct {
 }
 
 // Identity 对外只暴露 public material、受限 crypto.Signer 与解封操作。
-// 调用者无法取得 DPAPI 解密后的 identity/wrapping private DER（D129、D130）。
+// 调用者无法取得 DPAPI 解密后的 identity/wrapping private DER。
 type Identity struct {
 	identity     crypto.Signer
 	wrapping     *ecdsa.PrivateKey
@@ -62,7 +62,7 @@ type Identity struct {
 // 与文件原子替换共同保证不同 profile/用途的 ciphertext 不能互换。
 func OpenOrCreateIdentity(path string, protector clientsecret.Protector, random io.Reader) (*Identity, error) {
 	if err := validateProtectedPath(path); err != nil || protector == nil {
-		return nil, errors.New("[D129 Windows] identity path/protector 无效")
+		return nil, errors.New("[Windows] identity path/protector 无效")
 	}
 	identity, err := LoadIdentity(path, protector)
 	if err == nil {
@@ -127,7 +127,7 @@ func OpenOrCreateIdentity(path string, protector clientsecret.Protector, random 
 // LoadIdentity 只恢复既有 identity；resume 路径绝不能在损坏/缺失时生成替代 key。
 func LoadIdentity(path string, protector clientsecret.Protector) (*Identity, error) {
 	if err := validateProtectedPath(path); err != nil || protector == nil {
-		return nil, errors.New("[D130 Windows resume] identity path/protector 无效")
+		return nil, errors.New("[Windows resume] identity path/protector 无效")
 	}
 	body, err := clientsecret.ReadProtected(path, IdentityPurpose, protector)
 	if err != nil {
@@ -135,12 +135,12 @@ func LoadIdentity(path string, protector clientsecret.Protector) (*Identity, err
 	}
 	defer clear(body)
 	if len(body) > maximumIdentityState {
-		return nil, errors.New("[D129 Windows] identity state 超过大小边界")
+		return nil, errors.New("[Windows] identity state 超过大小边界")
 	}
 	var state protectedIdentityV1
 	canonical, err := wire.DecodeStrict(body, maximumIdentityState, &state)
 	if err != nil || !bytes.Equal(canonical, body) {
-		return nil, errors.New("[D129 Windows] identity state 不是 exact canonical wire")
+		return nil, errors.New("[Windows] identity state 不是 exact canonical wire")
 	}
 	return decodeProtectedIdentity(state, protector)
 }
@@ -149,22 +149,22 @@ func decodeProtectedIdentity(state protectedIdentityV1,
 	protector clientsecret.Protector) (*Identity, error) {
 	if state.Schema != 1 || state.Platform != "windows-desktop" ||
 		state.ProtectionProfile != IdentityProtectionProfile {
-		return nil, errors.New("[D129 Windows] identity protection profile 无效")
+		return nil, errors.New("[Windows] identity protection profile 无效")
 	}
 	identitySigner, identitySPKI, err := loadPlatformIdentity(state, protector)
 	if err != nil {
-		return nil, fmt.Errorf("[D129 Windows] identity key: %w", err)
+		return nil, fmt.Errorf("[Windows] identity key: %w", err)
 	}
 	wrappingKey, wrappingSPKI, err := decodeP256Private(state.WrappingPrivateKeyPKCS8,
 		state.WrappingPublicKeySPKI)
 	if err != nil {
 		closePlatformSigner(identitySigner)
-		return nil, fmt.Errorf("[D130 Windows] wrapping key: %w", err)
+		return nil, fmt.Errorf("[Windows] wrapping key: %w", err)
 	}
 	if bytes.Equal(identitySPKI, wrappingSPKI) {
 		closePlatformSigner(identitySigner)
 		zeroPrivateKey(wrappingKey)
-		return nil, errors.New("[D130 Windows] identity 与 wrapping key 禁止复用")
+		return nil, errors.New("[Windows] identity 与 wrapping key 禁止复用")
 	}
 	return &Identity{identity: identitySigner, wrapping: wrappingKey,
 		identitySPKI: identitySPKI, wrappingSPKI: wrappingSPKI}, nil
@@ -225,7 +225,7 @@ type ClaimCoreInput struct {
 
 func (identity *Identity) PrepareClaimCore(input ClaimCoreInput, random io.Reader) (wire.EnrollmentClaimCoreV2, string, error) {
 	if identity == nil || identity.identity == nil || identity.wrapping == nil || len(input.ClientNonce) != 32 {
-		return wire.EnrollmentClaimCoreV2{}, "", errors.New("[D129 Windows] identity/core nonce 输入无效")
+		return wire.EnrollmentClaimCoreV2{}, "", errors.New("[Windows] identity/core nonce 输入无效")
 	}
 	if random == nil {
 		random = rand.Reader
@@ -278,7 +278,7 @@ func (signer *restrictedP256Signer) Public() crypto.PublicKey {
 func (signer *restrictedP256Signer) Sign(random io.Reader, digest []byte, options crypto.SignerOpts) ([]byte, error) {
 	if signer == nil || signer.key == nil || options == nil || options.HashFunc() != crypto.SHA256 ||
 		len(digest) != crypto.SHA256.Size() {
-		return nil, errors.New("[D129 Windows signer] 只允许 P-256 SHA-256 digest")
+		return nil, errors.New("[Windows signer] 只允许 P-256 SHA-256 digest")
 	}
 	if random == nil {
 		random = rand.Reader
@@ -316,14 +316,14 @@ func (identity *Identity) WrappingSPKIDER() []byte {
 
 func (identity *Identity) IdentitySPKIHash() (string, error) {
 	if identity == nil || len(identity.identitySPKI) == 0 {
-		return "", errors.New("[D129 Windows] identity 缺失")
+		return "", errors.New("[Windows] identity 缺失")
 	}
 	return wire.HashBytes(wire.DomainEnrollmentIdentitySPKI, identity.identitySPKI)
 }
 
 func (identity *Identity) WrappingSPKIHash() (string, error) {
 	if identity == nil || len(identity.wrappingSPKI) == 0 {
-		return "", errors.New("[D130 Windows] wrapping identity 缺失")
+		return "", errors.New("[Windows] wrapping identity 缺失")
 	}
 	return wire.HashBytes(wire.DomainEnrollmentWrappingSPKI, identity.wrappingSPKI)
 }
@@ -335,7 +335,7 @@ func (identity *Identity) SignEnrollmentPoP(body *wire.EnrollmentPoPBodyV2) (str
 func (identity *Identity) unsealSecret(envelope *wire.SealedSecretEnvelopeV1,
 	recipient wire.SealedBlobRecipientKeyRefV1) ([]byte, error) {
 	if identity == nil || identity.wrapping == nil {
-		return nil, errors.New("[D124 Windows] wrapping key 缺失")
+		return nil, errors.New("[Windows] wrapping key 缺失")
 	}
 	return wire.UnsealSecretP256(envelope, recipient, identity.wrapping)
 }
@@ -356,7 +356,7 @@ func (identity *Identity) Close() {
 // handle，不删除可恢复 identity；tombstone 与本机 Device 删除才调用本函数。
 func DestroyIdentity(path string, protector clientsecret.Protector) error {
 	if err := validateProtectedPath(path); err != nil || protector == nil {
-		return errors.New("[D129 Windows] destroy identity path/protector 无效")
+		return errors.New("[Windows] destroy identity path/protector 无效")
 	}
 	body, err := clientsecret.ReadProtected(path, IdentityPurpose, protector)
 	if err != nil {
@@ -366,7 +366,7 @@ func DestroyIdentity(path string, protector clientsecret.Protector) error {
 	var state protectedIdentityV1
 	canonical, err := wire.DecodeStrict(body, maximumIdentityState, &state)
 	if err != nil || !bytes.Equal(canonical, body) {
-		return errors.New("[D129 Windows] identity descriptor 损坏，拒绝猜测 CNG key")
+		return errors.New("[Windows] identity descriptor 损坏，拒绝猜测 CNG key")
 	}
 	if err := destroyPlatformIdentity(platformIdentityRecord{
 		Provider: state.IdentityProvider, KeyName: state.IdentityKeyName,

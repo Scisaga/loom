@@ -219,7 +219,7 @@ type androidRouteEntry struct {
 	Address string `json:"address"`
 }
 
-// AndroidRoutingInputs 按 §5.1 从已验证 sing-box 数据面推导入口目标和服务器段承载。
+// AndroidRoutingInputs 从已验证 sing-box 数据面推导入口目标和服务器段承载。
 // candidate tag 是不透明标识，Kotlin 不得按命名约定重建这些事实。
 func AndroidRoutingInputs(singBox, routePlan []byte) ([]byte, error) {
 	var plan androidRoutePlan

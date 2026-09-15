@@ -19,7 +19,7 @@ const (
 	androidMaxObservationSet = 256
 )
 
-// §16.1.2：schema 2 只保存原始、已验证的服务器观测。已删除的 schema 1 窗口
+// schema 2 只保存原始、已验证的服务器观测。已删除的 schema 1 窗口
 // 来自完整候选/业务探测，不能迁移进新的客户端证据模型。
 type androidScheduleState struct {
 	Schema       int               `json:"schema"`
@@ -65,7 +65,7 @@ type androidRouteDecision struct {
 	Measurements []androidPathMeasurement `json:"measurements,omitempty"`
 }
 
-// §7.3.3：androidPathMeasurement 是一条实际连线的只读显示证据，不增加上报字段
+// androidPathMeasurement 是一条实际连线的只读显示证据，不增加上报字段
 // 或探测；所有值都来自当前入口轮次或既有已验签观测缓存。
 type androidPathMeasurement struct {
 	Hop         int      `json:"hop"`
@@ -81,7 +81,7 @@ type androidPathMeasurement struct {
 	Failures    int64    `json:"failures,omitempty"`
 }
 
-// RunAndroidRouteTick 执行与 Windows 相同的 §5.5.1 窄决策：每个去重授权入口只
+// RunAndroidRouteTick 执行与 Windows 相同的窄决策：每个去重授权入口只
 // 消费调用方给出的一次结果，后段只用已验证服务器观测。它不执行网络 I/O、完整
 // 候选/业务路径探测或 min_samples 等待，也不为缺失证据编造数值。
 func RunAndroidRouteTick(routePlan, preference, savedSelections, routingInputs, actualSelections,

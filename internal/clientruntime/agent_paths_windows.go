@@ -9,7 +9,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// §13.5：Agent 证据只允许当前身份、SYSTEM 和管理员访问，子文件继承该 DACL。
+// Agent 证据只允许当前身份、SYSTEM 和管理员访问，子文件继承该 DACL。
 func protectAgentDirectory(path string) error {
 	for p := path; filepath.Dir(p) != p; p = filepath.Dir(p) {
 		wide, err := windows.UTF16PtrFromString(p)
@@ -21,7 +21,7 @@ func protectAgentDirectory(path string) error {
 			return err
 		}
 		if attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-			return errors.New("[§13.5] Agent 目录不能包含重解析点")
+			return errors.New("Agent 目录不能包含重解析点")
 		}
 	}
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()

@@ -21,24 +21,24 @@ type deviceInventoryLiveMessage struct {
 }
 
 // deviceInventoryLiveHandler 让浏览器投影与 SSR/JSON API 共用同一可信读取边界。
-// WebSocket 只负责交付，不能把 registry 字样或未签名观测提升为 Online（§16.4）。
+// WebSocket 只负责交付，不能把 registry 字样或未签名观测提升为 Online。
 func deviceInventoryLiveHandler(d Deps) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		if r.Method != http.MethodGet {
 			w.Header().Set("Allow", "GET")
-			http.Error(w, "[§16.4 实时设备列表] 只接受 GET", http.StatusMethodNotAllowed)
+			http.Error(w, "[实时设备列表] 只接受 GET", http.StatusMethodNotAllowed)
 			return
 		}
 		if r.URL.RawQuery != "" && r.URL.RawQuery != "archived=1" {
-			http.Error(w, "[§16.4 实时设备列表] 查询参数无效", http.StatusBadRequest)
+			http.Error(w, "[实时设备列表] 查询参数无效", http.StatusBadRequest)
 			return
 		}
 		if !headerContainsToken(r.Header.Get("Connection"), "upgrade") ||
 			!strings.EqualFold(strings.TrimSpace(r.Header.Get("Upgrade")), "websocket") {
 			w.Header().Set("Upgrade", "websocket")
-			http.Error(w, "[§16.4 实时设备列表] 需要 WebSocket upgrade", http.StatusUpgradeRequired)
+			http.Error(w, "[实时设备列表] 需要 WebSocket upgrade", http.StatusUpgradeRequired)
 			return
 		}
 
@@ -59,15 +59,15 @@ func deviceInventoryLiveHandler(d Deps) http.Handler {
 func deviceInventoryWebSocketHandshake(config *websocket.Config, r *http.Request) error {
 	origin, err := websocket.Origin(config, r)
 	if err != nil || origin == nil || origin.User != nil || origin.RawQuery != "" || origin.Fragment != "" {
-		return errors.New("[§16.4 实时设备列表] WebSocket Origin 无效")
+		return errors.New("[实时设备列表] WebSocket Origin 无效")
 	}
 	config.Origin = origin
 	// 生产请求已经由 private HTTPS listener 精确核对 Origin，再经 root-only
 	// Unix socket 转发并改写为这个内部 Host。直接嵌入 Handler 的调用方仍须
-	// 使用与请求完全同源的 Origin（§16.4）。
+	// 使用与请求完全同源的 Origin。
 	if r.Host == "loom-control-ui.local" {
 		if origin.Scheme != "https" || origin.Host == "" {
-			return errors.New("[§16.4 实时设备列表] WebSocket 必须来自 private HTTPS 页面")
+			return errors.New("[实时设备列表] WebSocket 必须来自 private HTTPS 页面")
 		}
 		return nil
 	}
@@ -76,7 +76,7 @@ func deviceInventoryWebSocketHandshake(config *websocket.Config, r *http.Request
 		wantScheme = "https"
 	}
 	if origin.Scheme != wantScheme || origin.Host != r.Host || (origin.Path != "" && origin.Path != "/") {
-		return errors.New("[§16.4 实时设备列表] WebSocket 必须同源")
+		return errors.New("[实时设备列表] WebSocket 必须同源")
 	}
 	return nil
 }
@@ -180,7 +180,7 @@ func nextDeviceInventoryRefresh(inventory ClientInventory, now time.Time) time.D
 			}
 			remaining := observed.Add(deadline.lease).Sub(now)
 			if remaining <= 0 {
-				// 已经过期的嵌入快照不能形成热循环（§16.4）。
+				// 已经过期的嵌入快照不能形成热循环。
 				continue
 			}
 			remaining += time.Millisecond

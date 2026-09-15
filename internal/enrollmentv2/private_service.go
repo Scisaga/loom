@@ -22,7 +22,7 @@ const (
 )
 
 // InviteMaterialV2 是 private Enrollment 从本机 certified state 读取的 exact Invite
-// preimage 与包含证明。公网 distribution 不得提供 Opening（D115、D129、D131）。
+// preimage 与包含证明。公网 distribution 不得提供 Opening。
 type InviteMaterialV2 struct {
 	Status               string
 	Record               wire.CertifiedInviteRecordV2
@@ -48,7 +48,7 @@ type InviteMaterialReader func(context.Context, string, string) (InviteMaterialV
 // VerifiedClaimAttemptV2 只能由 PrivateService 在验 initial token 或 exact resume
 // binding、opening/core、服务端签发 challenge 和 detached PoP 后产生。processor 可以把 initial
 // exact submission 发给 enrollment voters，但不得把其中 token、challenge、CSR 或签名字节写入
-// Raft/CRDT/log；resume 永远不触发新的 admission（D129、D130）。
+// Raft/CRDT/log；resume 永远不触发新的 admission。
 type VerifiedClaimAttemptV2 struct {
 	capability wire.VerifiedBootstrapCapabilityV1
 	claim      wire.VerifiedEnrollmentClaimV2
@@ -90,7 +90,7 @@ func (attempt VerifiedClaimAttemptV2) AdmissionAttestation() (wire.EnrollmentAdm
 func admissionAttestationForVerified(material *InviteMaterialV2, submission *wire.EnrollmentClaimSubmissionV2,
 	claim wire.VerifiedEnrollmentClaimV2) (wire.EnrollmentAdmissionAttestationBodyV1, error) {
 	if material == nil || submission == nil {
-		return wire.EnrollmentAdmissionAttestationBodyV1{}, errors.New("[D129 Enrollment] admission material/submission 不能为空")
+		return wire.EnrollmentAdmissionAttestationBodyV1{}, errors.New("[Enrollment] admission material/submission 不能为空")
 	}
 	retryNotAfter, err := checkedAddSecondsForPrivate(material.Record.ExpiresAt, material.Policy.MaximumReservationRetrySeconds)
 	if err != nil {
@@ -131,12 +131,12 @@ type PrivateService struct {
 }
 
 // NewPrivateServiceWithReleasedArtifacts 在原 Enrollment API 上增加同一临时
-// tunnel 内的 completion-authorized immutable artifact 读取；它不会新增公网 role（D124、D131）。
+// tunnel 内的 completion-authorized immutable artifact 读取；它不会新增公网 role。
 func NewPrivateServiceWithReleasedArtifacts(clusterID, serviceID string, now func() time.Time, random io.Reader,
 	challengeTTL time.Duration, replay *ChallengeReplayStore, readInvite InviteMaterialReader,
 	processClaim ClaimProcessor, readArtifact ReleasedEnrollmentArtifactReader) (*PrivateService, error) {
 	if readArtifact == nil {
-		return nil, errors.New("[D124 Enrollment] released artifact reader 不能为空")
+		return nil, errors.New("[Enrollment] released artifact reader 不能为空")
 	}
 	service, err := NewPrivateService(clusterID, serviceID, now, random, challengeTTL,
 		replay, readInvite, processClaim)
@@ -152,7 +152,7 @@ func NewPrivateService(clusterID, serviceID string, now func() time.Time, random
 	processClaim ClaimProcessor) (*PrivateService, error) {
 	if clusterID == "" || serviceID == "" || now == nil || replay == nil || readInvite == nil || processClaim == nil ||
 		challengeTTL < time.Second || challengeTTL > 2*time.Minute {
-		return nil, errors.New("[D129 Enrollment] private service 配置不完整或 challenge TTL 越界")
+		return nil, errors.New("[Enrollment] private service 配置不完整或 challenge TTL 越界")
 	}
 	if random == nil {
 		random = rand.Reader
@@ -164,7 +164,7 @@ func NewPrivateService(clusterID, serviceID string, now func() time.Time, random
 func (service *PrivateService) Preflight(ctx context.Context, capability wire.VerifiedBootstrapCapabilityV1,
 	request *wire.EnrollmentIntentPreflightRequestV1) (wire.EnrollmentIntentPreflightResponseV1, error) {
 	if request == nil {
-		return wire.EnrollmentIntentPreflightResponseV1{}, errors.New("[D131 Enrollment preflight] request 不能为空")
+		return wire.EnrollmentIntentPreflightResponseV1{}, errors.New("[Enrollment preflight] request 不能为空")
 	}
 	requestHash, err := wire.EnrollmentIntentPreflightRequestHash(request)
 	if err != nil {
@@ -189,7 +189,7 @@ func (service *PrivateService) Preflight(ctx context.Context, capability wire.Ve
 func (service *PrivateService) Challenge(ctx context.Context, capability wire.VerifiedBootstrapCapabilityV1,
 	core *wire.EnrollmentClaimCoreV2) (wire.EnrollmentPoPChallengeV1, error) {
 	if core == nil {
-		return wire.EnrollmentPoPChallengeV1{}, errors.New("[D129 Enrollment] claim core 不能为空")
+		return wire.EnrollmentPoPChallengeV1{}, errors.New("[Enrollment] claim core 不能为空")
 	}
 	material, err := service.boundMaterial(ctx, capability, core.ClusterID, core.InviteID,
 		core.CertifiedInviteRecordHash, capability.CapabilityID())
@@ -203,7 +203,7 @@ func (service *PrivateService) Challenge(ctx context.Context, capability wire.Ve
 	now := service.now().UTC().Truncate(time.Second)
 	// issued_at 按已认证 Head 声明的最大时钟偏差回溯，使时钟略慢的 Device
 	// 不会把服务端刚签发的 nonce 误判为“尚未生效”。expires 与 replay store
-	// 仍从服务端真实时间计算，不能借偏差窗口延长 challenge 寿命（D129）。
+	// 仍从服务端真实时间计算，不能借偏差窗口延长 challenge 寿命。
 	issued := now.Add(-time.Duration(material.RecordHead.Body.Payload.MaxClockSkewSeconds) * time.Second)
 	expires := now.Add(service.challengeTTL)
 	capabilityExpiry, _ := wire.ParseTimeZ(capability.Body().ExpiresAt)
@@ -217,11 +217,11 @@ func (service *PrivateService) Challenge(ctx context.Context, capability wire.Ve
 		}
 	}
 	if !now.Before(expires) {
-		return wire.EnrollmentPoPChallengeV1{}, errors.New("[D129 Enrollment] challenge 没有剩余有效期")
+		return wire.EnrollmentPoPChallengeV1{}, errors.New("[Enrollment] challenge 没有剩余有效期")
 	}
 	nonce := make([]byte, 32)
 	if _, err := io.ReadFull(service.random, nonce); err != nil {
-		return wire.EnrollmentPoPChallengeV1{}, errors.New("[D129 Enrollment] 生成 server nonce 失败")
+		return wire.EnrollmentPoPChallengeV1{}, errors.New("[Enrollment] 生成 server nonce 失败")
 	}
 	challenge := wire.EnrollmentPoPChallengeV1{
 		Schema: 1, ClusterID: core.ClusterID, InviteID: core.InviteID, RequestID: core.RequestID,
@@ -242,10 +242,10 @@ func (service *PrivateService) Challenge(ctx context.Context, capability wire.Ve
 func (service *PrivateService) SubmitClaim(ctx context.Context, capability wire.VerifiedBootstrapCapabilityV1,
 	submission *wire.EnrollmentClaimSubmissionV2) (wire.EnrollmentClaimResultV2, error) {
 	if submission == nil {
-		return wire.EnrollmentClaimResultV2{}, errors.New("[D129 Enrollment] submission 不能为空")
+		return wire.EnrollmentClaimResultV2{}, errors.New("[Enrollment] submission 不能为空")
 	}
 	if capability.Body().Mode != "initial_claim" {
-		return wire.EnrollmentClaimResultV2{}, errors.New("[D130 Enrollment] resume capability 禁止携 token claim")
+		return wire.EnrollmentClaimResultV2{}, errors.New("[Enrollment] resume capability 禁止携 token claim")
 	}
 	core := &submission.ClaimCore
 	material, err := service.boundMaterial(ctx, capability, core.ClusterID, core.InviteID,
@@ -267,12 +267,12 @@ func (service *PrivateService) SubmitClaim(ctx context.Context, capability wire.
 }
 
 // SubmitResume 只接受没有 token 字段的恢复 wire；原 Invite 即使已经过期，也只能在
-// capability/retry deadline 内继续 descriptor 精确绑定的 committed transaction（D130）。
+// capability/retry deadline 内继续 descriptor 精确绑定的 committed transaction。
 func (service *PrivateService) SubmitResume(ctx context.Context, capability wire.VerifiedBootstrapCapabilityV1,
 	submission *wire.EnrollmentResumeSubmissionV1) (wire.EnrollmentClaimResultV2, error) {
 	if submission == nil || capability.Body().Mode != "resume_committed_claim" ||
 		capability.Body().ResumeBinding == nil {
-		return wire.EnrollmentClaimResultV2{}, errors.New("[D130 resume] submission/capability mode 无效")
+		return wire.EnrollmentClaimResultV2{}, errors.New("[resume] submission/capability mode 无效")
 	}
 	core := &submission.ClaimCore
 	material, err := service.boundMaterial(ctx, capability, core.ClusterID, core.InviteID,
@@ -325,13 +325,13 @@ func (service *PrivateService) verifyCoreBindings(core *wire.EnrollmentClaimCore
 		return "", err
 	}
 	if core.CertifiedInviteRecordHash != capability.Body().CommittedInviteRecordHash {
-		return "", errors.New("[D129 Enrollment] claim core 未绑定 exact private intent/base authority")
+		return "", errors.New("[Enrollment] claim core 未绑定 exact private intent/base authority")
 	}
 	if binding := capability.Body().ResumeBinding; binding != nil {
 		identityHash, wrappingHash, csrHash, hashErr := wire.EnrollmentClaimBinaryHashes(core)
 		if hashErr != nil || binding.RequestID != core.RequestID || binding.ClaimCoreHash != coreHash ||
 			binding.IdentityKeyHash != identityHash || binding.WrappingKeyHash != wrappingHash || binding.CSRHash != csrHash {
-			return "", errors.New("[D131 Enrollment] resume capability 与 stable claim/key/CSR 不匹配")
+			return "", errors.New("[Enrollment] resume capability 与 stable claim/key/CSR 不匹配")
 		}
 	}
 	return coreHash, nil
@@ -347,15 +347,15 @@ func (service *PrivateService) boundMaterial(ctx context.Context, capability wir
 		clusterID != body.ClusterID || inviteID != body.InviteID || recordHash != body.CommittedInviteRecordHash ||
 		capabilityID == "" || capabilityID != capability.CapabilityID() || notBeforeErr != nil || expiresErr != nil ||
 		now.Before(notBefore) || !now.Before(expires) {
-		return InviteMaterialV2{}, errors.New("[D131 Enrollment] capability/request/service/time binding 无效")
+		return InviteMaterialV2{}, errors.New("[Enrollment] capability/request/service/time binding 无效")
 	}
 	material, err := service.readInvite(ctx, clusterID, inviteID)
 	if err != nil {
-		return InviteMaterialV2{}, errors.New("[D129 Enrollment] Invite material 不可用")
+		return InviteMaterialV2{}, errors.New("[Enrollment] Invite material 不可用")
 	}
 	if !oneOf(material.Status, "available", "reserved", "issued_provisional", "completed") ||
 		body.Mode == "resume_committed_claim" && material.Status == "available" {
-		return InviteMaterialV2{}, errors.New("[D130 Enrollment] Invite/transaction 状态不允许当前 capability mode")
+		return InviteMaterialV2{}, errors.New("[Enrollment] Invite/transaction 状态不允许当前 capability mode")
 	}
 	if err := validateCertifiedInviteMaterial(&material, clusterID, inviteID); err != nil {
 		return InviteMaterialV2{}, err
@@ -371,12 +371,12 @@ func (service *PrivateService) boundMaterial(ctx context.Context, capability wir
 		material.EnrollmentServiceRef.ServiceID != service.serviceID ||
 		material.EnrollmentServiceRef.OverlayIP != body.AllowedDestinationIP ||
 		material.EnrollmentServiceRef.TCPPort != body.AllowedDestinationPort {
-		return InviteMaterialV2{}, errors.New("[D129 Enrollment] capability/record/policy/head binding 无效")
+		return InviteMaterialV2{}, errors.New("[Enrollment] capability/record/policy/head binding 无效")
 	}
 	if body.Mode == "initial_claim" {
 		inviteExpiry, _ := wire.ParseTimeZ(material.Record.ExpiresAt)
 		if !now.Before(inviteExpiry) || expires.After(inviteExpiry) {
-			return InviteMaterialV2{}, errors.New("[D131 Enrollment] initial capability/Invite 已过期或期限越界")
+			return InviteMaterialV2{}, errors.New("[Enrollment] initial capability/Invite 已过期或期限越界")
 		}
 	}
 	return cloneInviteMaterial(material), nil
@@ -384,7 +384,7 @@ func (service *PrivateService) boundMaterial(ctx context.Context, capability wir
 
 func validateCertifiedInviteMaterial(material *InviteMaterialV2, clusterID, inviteID string) error {
 	if material == nil || material.Record.ClusterID != clusterID || material.Record.InviteID != inviteID {
-		return errors.New("[D129 Enrollment] Invite material identity 无效")
+		return errors.New("[Enrollment] Invite material identity 无效")
 	}
 	if err := wire.ValidateCertifiedInviteRecord(&material.Record, &material.Policy); err != nil {
 		return err
@@ -397,35 +397,35 @@ func validateCertifiedInviteMaterial(material *InviteMaterialV2, clusterID, invi
 	if serviceErr != nil || material.Record.InviteIssuancePolicyHash != policyHash ||
 		material.Record.EnrollmentServiceRefHash != serviceHash || material.Record.BootstrapIssuerRegistryRoot != payload.BootstrapIssuerRegistryRoot ||
 		payload.ClusterID != clusterID || payload.ControlSetHash != setHash || material.Record.ParentHeadHash != payload.ParentHeadHash {
-		return errors.New("[D129 Enrollment] Invite record/policy/service/head binding 无效")
+		return errors.New("[Enrollment] Invite record/policy/service/head binding 无效")
 	}
 	if err := wire.VerifyConfigQCAuthority(material.RecordHead.HeadHash, material.RecordHeadQC,
 		&material.RecordHead, &material.ControlSet, material.PreviousControlSet); err != nil {
 		return err
 	}
 	if err := wire.ValidateHeadEntry(&material.RecordHead, &material.ParentHead); err != nil {
-		return errors.New("[D129 Enrollment] Invite record head 不在 exact parent 后")
+		return errors.New("[Enrollment] Invite record head 不在 exact parent 后")
 	}
 	if material.InviteOperationLeaf.OperationID != material.Record.OperationID || material.InviteOperationLeaf.ObjectID != wantRecordHash ||
 		wire.VerifyControlOperationInclusion(&material.InviteOperationLeaf, material.InviteLeafIndex,
 			material.InviteTreeSize, material.InviteAuditPath, &material.RecordHead) != nil {
-		return errors.New("[D129 Enrollment] Invite 缺 exact committed inclusion proof")
+		return errors.New("[Enrollment] Invite 缺 exact committed inclusion proof")
 	}
 	commitment, commitmentHash, err := wire.IntentCommitment(&material.Opening)
 	if err != nil || commitmentHash != material.Record.DeviceEnrollmentIntentCommitmentHash ||
 		!wire.EqualCanonical(commitment, material.Commitment) {
-		return errors.New("[D129 Enrollment] private opening 与 certified commitment 不匹配")
+		return errors.New("[Enrollment] private opening 与 certified commitment 不匹配")
 	}
 	openingBytes, err := wire.MarshalCanonical(material.Opening)
 	if err != nil || int64(len(openingBytes)) > material.Policy.MaximumIntentOpeningBytes {
-		return errors.New("[D129 Enrollment] private opening 超出 certified policy")
+		return errors.New("[Enrollment] private opening 超出 certified policy")
 	}
 	return nil
 }
 
 func verifyCoreMaterialBindings(core *wire.EnrollmentClaimCoreV2, material *InviteMaterialV2) (string, error) {
 	if material == nil {
-		return "", errors.New("[D129 Enrollment] claim material 不能为空")
+		return "", errors.New("[Enrollment] claim material 不能为空")
 	}
 	coreHash, err := wire.EnrollmentClaimCoreHash(core)
 	if err != nil {
@@ -442,7 +442,7 @@ func verifyCoreMaterialBindings(core *wire.EnrollmentClaimCoreV2, material *Invi
 		core.DeviceEnrollmentIntentOpeningHash != openingHash || core.AcceptedDeviceEnrollmentIntentHash != intentHash ||
 		core.ClientPlatform != material.Opening.DeviceEnrollmentIntent.Platform || core.BaseRecoveryEpoch != payload.RecoveryEpoch ||
 		core.BaseControlEpoch != payload.ControlEpoch || core.BaseControlSetHash != setHash || core.BaseHeadHash != material.RecordHead.HeadHash {
-		return "", errors.New("[D129 Enrollment] claim core 未绑定 exact private intent/base authority")
+		return "", errors.New("[Enrollment] claim core 未绑定 exact private intent/base authority")
 	}
 	return coreHash, nil
 }
@@ -452,17 +452,17 @@ func verifyCoreMaterialBindings(core *wire.EnrollmentClaimCoreV2, material *Invi
 func VerifyPeerAdmissionAttempt(material *InviteMaterialV2, submission *wire.EnrollmentClaimSubmissionV2,
 	attestation *wire.EnrollmentAdmissionAttestationBodyV1, enrollmentServiceID string, now time.Time) error {
 	if material == nil || submission == nil || attestation == nil || now.IsZero() || material.Status != "available" {
-		return errors.New("[D129 Enrollment] peer admission context/Invite 状态无效")
+		return errors.New("[Enrollment] peer admission context/Invite 状态无效")
 	}
 	if err := validateCertifiedInviteMaterial(material, submission.ClaimCore.ClusterID, submission.ClaimCore.InviteID); err != nil {
 		return err
 	}
 	if material.EnrollmentServiceRef.ServiceID != enrollmentServiceID {
-		return errors.New("[D129 Enrollment] peer admission service 不属于 certified Invite")
+		return errors.New("[Enrollment] peer admission service 不属于 certified Invite")
 	}
 	expires, err := wire.ParseTimeZ(material.Record.ExpiresAt)
 	if err != nil || !now.Before(expires) {
-		return errors.New("[D130 Enrollment] Invite expiry 后禁止新的 admission")
+		return errors.New("[Enrollment] Invite expiry 后禁止新的 admission")
 	}
 	verified, err := wire.VerifyEnrollmentClaimSubmission(submission, &material.Record, &material.Policy,
 		&material.Opening, enrollmentServiceID, now)
@@ -474,13 +474,13 @@ func VerifyPeerAdmissionAttempt(material *InviteMaterialV2, submission *wire.Enr
 	}
 	want, err := admissionAttestationForVerified(material, submission, verified)
 	if err != nil || !wire.EqualCanonical(want, *attestation) {
-		return errors.New("[D129 Enrollment] peer admission attestation 未绑定 exact verified submission")
+		return errors.New("[Enrollment] peer admission attestation 未绑定 exact verified submission")
 	}
 	return nil
 }
 
 // ServeHTTP 永远拒绝缺少 outer capability verifier 的直接挂载。bootstrap ingress 必须
-// 在验签、revocation、ACL 与 usage budget 后调用 ServeVerifiedHTTP（D131）。
+// 在验签、revocation、ACL 与 usage budget 后调用 ServeVerifiedHTTP。
 func (service *PrivateService) ServeHTTP(writer http.ResponseWriter, _ *http.Request) {
 	writePrivateError(writer, http.StatusForbidden)
 }
@@ -621,7 +621,7 @@ func writePrivateError(writer http.ResponseWriter, status int) {
 func checkedAddSecondsForPrivate(value string, seconds int64) (string, error) {
 	parsed, err := wire.ParseTimeZ(value)
 	if err != nil || seconds < 1 || seconds > 86400 {
-		return "", errors.New("[D130 Enrollment] retry deadline 输入无效")
+		return "", errors.New("[Enrollment] retry deadline 输入无效")
 	}
 	return parsed.Add(time.Duration(seconds) * time.Second).UTC().Format(time.RFC3339), nil
 }

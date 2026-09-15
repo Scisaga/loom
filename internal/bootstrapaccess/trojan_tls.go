@@ -35,7 +35,7 @@ type TrojanTLSServerOptions struct {
 
 // TrojanTLSServer 是 UDP 完全不可用时的独立 TCP fallback。TLS 只证明 certified
 // public FQDN；随后 Trojan credential 才打开 capability session，二者都不承载
-// Enrollment token 或终止内层 Enrollment TLS（D115、D131）。
+// Enrollment token 或终止内层 Enrollment TLS。
 type TrojanTLSServer struct {
 	manager          *Manager
 	registry         *CredentialRegistry
@@ -56,7 +56,7 @@ func NewTrojanTLSServer(manager *Manager, registry *CredentialRegistry,
 		options.HandshakeTimeout < time.Second ||
 		options.HandshakeTimeout > 30*time.Second || options.MaximumConcurrentConnections < 1 ||
 		options.MaximumConcurrentConnections > 4096 {
-		return nil, errors.New("[D115 bootstrap ingress] Trojan/TLS server 配置无效")
+		return nil, errors.New("[bootstrap ingress] Trojan/TLS server 配置无效")
 	}
 	base, err := certifiedTLSConfig(options.TLSConfig, options.Listener)
 	if err != nil {
@@ -74,11 +74,11 @@ func NewTrojanTLSServer(manager *Manager, registry *CredentialRegistry,
 }
 
 // Serve 接受调用方已经绑定到 certified Trojan/TCP tuple 的 listener。它不会创建
-// Nginx route，也不会把失败连接转发到 fake website（D115、D131）。
+// Nginx route，也不会把失败连接转发到 fake website。
 func (server *TrojanTLSServer) Serve(ctx context.Context, listener net.Listener) error {
 	if server == nil || ctx == nil || listener == nil ||
 		!server.listener.matchesLocalAddr(listener.Addr(), "trojan_tls") {
-		return errors.New("[D115 bootstrap ingress] Trojan/TLS serve 输入不完整")
+		return errors.New("[bootstrap ingress] Trojan/TLS serve 输入不完整")
 	}
 	stopAccept := context.AfterFunc(ctx, func() { _ = listener.Close() })
 	defer stopAccept()
@@ -90,7 +90,7 @@ func (server *TrojanTLSServer) Serve(ctx context.Context, listener net.Listener)
 			if ctx.Err() != nil {
 				return nil
 			}
-			return fmt.Errorf("[D115 bootstrap ingress] Trojan/TLS accept 失败: %w", err)
+			return fmt.Errorf("[bootstrap ingress] Trojan/TLS accept 失败: %w", err)
 		}
 		select {
 		case server.pending <- struct{}{}:
@@ -118,14 +118,14 @@ func (server *TrojanTLSServer) handle(ctx context.Context, raw net.Conn) error {
 	err := connection.HandshakeContext(handshakeContext)
 	cancel()
 	if err != nil || connection.ConnectionState().Version != tls.VersionTLS13 {
-		return errors.New("[D115 bootstrap ingress] Trojan/TLS outer handshake 失败")
+		return errors.New("[bootstrap ingress] Trojan/TLS outer handshake 失败")
 	}
 	var key [trojanKeyLength]byte
 	if _, err := io.ReadFull(connection, key[:]); err != nil {
-		return errors.New("[D131 capability] Trojan credential header 不完整")
+		return errors.New("[capability] Trojan credential header 不完整")
 	}
 	if !server.listener.acceptsAt(server.manager.now()) {
-		return errors.New("[D131 bootstrap ingress] certified catalog 已过期或尚未生效")
+		return errors.New("[bootstrap ingress] certified catalog 已过期或尚未生效")
 	}
 	sessionID, err := server.sessionID()
 	if err != nil {
@@ -149,7 +149,7 @@ func (server *TrojanTLSServer) sessionID() (string, error) {
 	_, err := io.ReadFull(server.random, random[:])
 	server.randomMu.Unlock()
 	if err != nil {
-		return "", errors.New("[D131 capability] Trojan session identity 生成失败")
+		return "", errors.New("[capability] Trojan session identity 生成失败")
 	}
 	return "trojan-" + hex.EncodeToString(random[:]), nil
 }
@@ -160,11 +160,11 @@ func readTrojanTCPRequest(reader io.Reader) (string, string, error) {
 	}
 	var command [1]byte
 	if _, err := io.ReadFull(reader, command[:]); err != nil || command[0] != trojanCommandTCP {
-		return "", "", errors.New("[D131 capability] Trojan bootstrap 只允许 TCP command")
+		return "", "", errors.New("[capability] Trojan bootstrap 只允许 TCP command")
 	}
 	var addressType [1]byte
 	if _, err := io.ReadFull(reader, addressType[:]); err != nil {
-		return "", "", errors.New("[D131 capability] Trojan destination header 不完整")
+		return "", "", errors.New("[capability] Trojan destination header 不完整")
 	}
 	var address netip.Addr
 	var network string
@@ -172,29 +172,29 @@ func readTrojanTCPRequest(reader io.Reader) (string, string, error) {
 	case trojanAddressIPv4:
 		var raw [4]byte
 		if _, err := io.ReadFull(reader, raw[:]); err != nil {
-			return "", "", errors.New("[D131 capability] Trojan IPv4 destination 不完整")
+			return "", "", errors.New("[capability] Trojan IPv4 destination 不完整")
 		}
 		address = netip.AddrFrom4(raw)
 		network = "tcp4"
 	case trojanAddressIPv6:
 		var raw [16]byte
 		if _, err := io.ReadFull(reader, raw[:]); err != nil {
-			return "", "", errors.New("[D131 capability] Trojan IPv6 destination 不完整")
+			return "", "", errors.New("[capability] Trojan IPv6 destination 不完整")
 		}
 		address = netip.AddrFrom16(raw)
 		network = "tcp6"
 	case trojanAddressFQDN:
-		return "", "", errors.New("[D131 capability] Trojan bootstrap 禁止 DNS destination")
+		return "", "", errors.New("[capability] Trojan bootstrap 禁止 DNS destination")
 	default:
-		return "", "", errors.New("[D131 capability] Trojan address type 无效")
+		return "", "", errors.New("[capability] Trojan address type 无效")
 	}
 	var portBytes [2]byte
 	if _, err := io.ReadFull(reader, portBytes[:]); err != nil {
-		return "", "", errors.New("[D131 capability] Trojan destination port 不完整")
+		return "", "", errors.New("[capability] Trojan destination port 不完整")
 	}
 	port := binary.BigEndian.Uint16(portBytes[:])
 	if port == 0 {
-		return "", "", errors.New("[D131 capability] Trojan destination port 无效")
+		return "", "", errors.New("[capability] Trojan destination port 无效")
 	}
 	if err := readTrojanCRLF(reader); err != nil {
 		return "", "", err
@@ -205,7 +205,7 @@ func readTrojanTCPRequest(reader io.Reader) (string, string, error) {
 func readTrojanCRLF(reader io.Reader) error {
 	var delimiter [2]byte
 	if _, err := io.ReadFull(reader, delimiter[:]); err != nil || delimiter != [2]byte{'\r', '\n'} {
-		return errors.New("[D131 capability] Trojan request delimiter 无效")
+		return errors.New("[capability] Trojan request delimiter 无效")
 	}
 	return nil
 }

@@ -17,7 +17,7 @@ data class ProfileList(val profiles: List<ConnectionProfile>, val selectedId: St
     val selected: ConnectionProfile get() = profiles.first { it.id == selectedId }
 }
 
-/** §7.2：旧配置保留原目录和 Keystore alias，新增配置永远使用独立的命名空间。 */
+/** 旧配置保留原目录和 Keystore alias，新增配置永远使用独立的命名空间。 */
 class ProfileContext(context: Context, val profileId: String) : ContextWrapper(root(context)) {
     init { require(validProfileId(profileId)) { "配置标识无效" } }
 
@@ -103,7 +103,7 @@ class ProfileCatalog private constructor(context: Context) {
     @Synchronized
     fun contains(id: String): Boolean = mutable.value.profiles.any { it.id == id }
 
-    /** §7.2：调用者先等宿主和此配置的任务停止；删除不影响其他配置的身份。 */
+    /** 调用者先等宿主和此配置的任务停止；删除不影响其他配置的身份。 */
     @Synchronized
     internal fun removeStopped(id: String) {
         requireContains(id)

@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// §16.1：原 report 状态合法性规则与验签一起跨平台复用。
+// 原 report 状态合法性规则与验签一起跨平台复用。
 const AgentStateStaleAfter = 30 * time.Minute
 
 func ValidateAgentState(st *AgentState, node string, now time.Time) []string {

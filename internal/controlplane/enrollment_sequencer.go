@@ -27,7 +27,7 @@ type EnrollmentHeadProjectionV1 struct {
 }
 
 // EnrollmentHeadProjector 必须先把 exact private operation/view preimage 耐久暂存，
-// 再从当前全局状态确定性投影 candidate Head 与两棵 inclusion proof（D104、D130）。
+// 再从当前全局状态确定性投影 candidate Head 与两棵 inclusion proof。
 type EnrollmentHeadProjector func(context.Context, wire.HeadEntryV2,
 	enrollmentv2.EnrollmentCommitCoordinateV1, enrollmentv2.EnrollmentHeadMutationV1) (EnrollmentHeadProjectionV1, error)
 
@@ -61,7 +61,7 @@ type EnrollmentCommitJournal struct {
 
 func OpenEnrollmentCommitJournal(path string, set wire.ControlSetV1) (*EnrollmentCommitJournal, error) {
 	if path == "" {
-		return nil, errors.New("[D130 Enrollment] commit journal path 不能为空")
+		return nil, errors.New("[Enrollment] commit journal path 不能为空")
 	}
 	if err := wire.ValidateControlSet(&set); err != nil {
 		return nil, err
@@ -79,7 +79,7 @@ func OpenEnrollmentCommitJournal(path string, set wire.ControlSetV1) (*Enrollmen
 	}
 	var state enrollmentCommitJournalStateV1
 	if _, err := wire.DecodeStrict(body, 64<<20, &state); err != nil {
-		return nil, fmt.Errorf("[D130 Enrollment] commit journal 非规范或损坏: %w", err)
+		return nil, fmt.Errorf("[Enrollment] commit journal 非规范或损坏: %w", err)
 	}
 	if err := validateEnrollmentCommitJournal(&state, &set); err != nil {
 		return nil, err
@@ -101,7 +101,7 @@ func (journal *EnrollmentCommitJournal) lookup(operationID string,
 	record := journal.state.Records[index]
 	if !equalOptionalHead(record.LineageFrom, lineageFrom) {
 		return enrollmentv2.EnrollmentOperationCommitResultV1{}, false,
-			errors.New("[D130 Enrollment] 相同 operation ID 使用了不同 Head lineage 起点")
+			errors.New("[Enrollment] 相同 operation ID 使用了不同 Head lineage 起点")
 	}
 	return cloneEnrollmentCommitResult(record.Result), true, nil
 }
@@ -122,7 +122,7 @@ func (journal *EnrollmentCommitJournal) put(operationID, objectID string, lineag
 		if wire.EqualCanonical(journal.state.Records[index], record) {
 			return nil
 		}
-		return errors.New("[D130 Enrollment] commit journal 拒绝相同 operation ID 的不同 first-result")
+		return errors.New("[Enrollment] commit journal 拒绝相同 operation ID 的不同 first-result")
 	}
 	candidate := cloneEnrollmentCommitJournalState(journal.state)
 	candidate.Records = append(candidate.Records, enrollmentCommitJournalRecordV1{})
@@ -202,7 +202,7 @@ func NewStableEnrollmentOperationSequencer(storage *RaftStorage, store *Store,
 	now func() time.Time) (*StableEnrollmentOperationSequencer, error) {
 	if storage == nil || store == nil || leader == nil || collector == nil || journal == nil ||
 		project == nil || recompute == nil || now == nil || leader.storage != storage {
-		return nil, errors.New("[D130 Enrollment] stable sequencer dependencies 不完整")
+		return nil, errors.New("[Enrollment] stable sequencer dependencies 不完整")
 	}
 	state := store.Snapshot()
 	setHash, err := wire.ControlSetHash(&state.ControlSet)
@@ -215,7 +215,7 @@ func NewStableEnrollmentOperationSequencer(storage *RaftStorage, store *Store,
 	storageHash, _ := wire.ControlSetHash(&storage.set)
 	if storage.jointSet != nil || setHash != leaderHash || setHash != collectorHash ||
 		setHash != journalHash || setHash != storageHash {
-		return nil, errors.New("[D130 Enrollment] stable sequencer ControlSet authority 不一致")
+		return nil, errors.New("[Enrollment] stable sequencer ControlSet authority 不一致")
 	}
 	return &StableEnrollmentOperationSequencer{storage: storage, store: store, leader: leader,
 		collector: collector, journal: journal, project: project, recompute: recompute,
@@ -227,7 +227,7 @@ func (sequencer *StableEnrollmentOperationSequencer) CommitEnrollmentOperation(c
 	build enrollmentv2.EnrollmentOperationBuilder) (enrollmentv2.EnrollmentOperationCommitResultV1, error) {
 	if sequencer == nil || operationID == "" || build == nil {
 		return enrollmentv2.EnrollmentOperationCommitResultV1{},
-			errors.New("[D130 Enrollment] commit operation/build 无效")
+			errors.New("[Enrollment] commit operation/build 无效")
 	}
 	if err := ctx.Err(); err != nil {
 		return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
@@ -240,7 +240,7 @@ func (sequencer *StableEnrollmentOperationSequencer) CommitEnrollmentOperation(c
 		if active := sequencer.store.Snapshot().Active; active != nil {
 			if active.Entry.EntryHash != cached.Certification.Head.EntryHash {
 				return enrollmentv2.EnrollmentOperationCommitResultV1{},
-					errors.New("[D130 Enrollment] cached result 与 active Head 冲突")
+					errors.New("[Enrollment] cached result 与 active Head 冲突")
 			}
 			if err := sequencer.store.MarkApplied(active.Entry.EntryHash); err != nil {
 				return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
@@ -265,7 +265,7 @@ func (sequencer *StableEnrollmentOperationSequencer) CommitEnrollmentOperation(c
 	} else {
 		if control.CertifiedHead == nil {
 			return enrollmentv2.EnrollmentOperationCommitResultV1{},
-				errors.New("[D130 Enrollment] ordinary enrollment 缺 certified parent Head")
+				errors.New("[Enrollment] ordinary enrollment 缺 certified parent Head")
 		}
 		parent = *control.CertifiedHead
 	}
@@ -286,7 +286,7 @@ func (sequencer *StableEnrollmentOperationSequencer) CommitEnrollmentOperation(c
 		}
 		if !wire.EqualCanonical(projection.Head, entry) {
 			return enrollmentv2.EnrollmentOperationCommitResultV1{},
-				errors.New("[D130 Enrollment] active Head 不能由 exact staged operation 重算")
+				errors.New("[Enrollment] active Head 不能由 exact staged operation 重算")
 		}
 		if err := validateEnrollmentHeadProjection(&projection, &parent, &coordinate,
 			&mutation, &sequencer.set); err != nil {
@@ -297,7 +297,7 @@ func (sequencer *StableEnrollmentOperationSequencer) CommitEnrollmentOperation(c
 		raft := sequencer.storage.SnapshotRaft()
 		if raft.LastApplied != raft.CommitIndex {
 			return enrollmentv2.EnrollmentOperationCommitResultV1{},
-				errors.New("[D104 Raft] committed prefix 尚未完成 enrollment apply")
+				errors.New("[Raft] committed prefix 尚未完成 enrollment apply")
 		}
 		uncommitted, found, err := uncommittedHeadCandidate(&raft)
 		if err != nil {
@@ -326,7 +326,7 @@ func (sequencer *StableEnrollmentOperationSequencer) CommitEnrollmentOperation(c
 		}
 		if found && !wire.EqualCanonical(projection.Head, entry) {
 			return enrollmentv2.EnrollmentOperationCommitResultV1{},
-				errors.New("[D104 Raft] uncommitted Head 属于不同 operation")
+				errors.New("[Raft] uncommitted Head 属于不同 operation")
 		}
 		entry = projection.Head
 		commit, replicateErr := sequencer.leader.ReplicateHead(ctx, sequencer.store, entry)
@@ -345,7 +345,7 @@ func (sequencer *StableEnrollmentOperationSequencer) CommitEnrollmentOperation(c
 	if certified.Active == nil || certified.Active.Phase != PhaseCertified ||
 		certified.Active.QC == nil || certified.Active.Entry.EntryHash != entry.EntryHash {
 		return enrollmentv2.EnrollmentOperationCommitResultV1{},
-			errors.New("[D130 Enrollment] committed Head 未形成 exact durable config QC")
+			errors.New("[Enrollment] committed Head 未形成 exact durable config QC")
 	}
 	qcRaw, err := wire.MarshalCanonical(*certified.Active.QC)
 	if err != nil {
@@ -378,7 +378,7 @@ func (sequencer *StableEnrollmentOperationSequencer) CommitEnrollmentOperation(c
 	if mutation.InitialDeviceView != nil {
 		if projection.DeviceViewLeaf == nil {
 			return enrollmentv2.EnrollmentOperationCommitResultV1{},
-				errors.New("[D130 Enrollment] completion projection 缺 Device leaf")
+				errors.New("[Enrollment] completion projection 缺 Device leaf")
 		}
 		envelope := wire.DeviceViewEnvelopeV2{Schema: 2,
 			Payload: *mutation.InitialDeviceView, Leaf: *projection.DeviceViewLeaf,
@@ -410,14 +410,14 @@ func (sequencer *StableEnrollmentOperationSequencer) resolveControlSetTransition
 			continue
 		}
 		if sequencer.resolveTransition == nil {
-			return nil, errors.New("[D112 Enrollment] ControlSet lineage 缺本地 transition bundle resolver")
+			return nil, errors.New("[Enrollment] ControlSet lineage 缺本地 transition bundle resolver")
 		}
 		bundle, err := sequencer.resolveTransition(ctx, heads[index])
 		if err != nil {
 			return nil, err
 		}
 		if !wire.EqualCanonical(bundle.Final.Head, heads[index]) {
-			return nil, errors.New("[D112 Enrollment] resolver 返回了错误 Final transition bundle")
+			return nil, errors.New("[Enrollment] resolver 返回了错误 Final transition bundle")
 		}
 		result = append(result, bundle)
 	}
@@ -429,7 +429,7 @@ func (sequencer *StableEnrollmentOperationSequencer) nextCoordinate(raft *RaftPe
 	if raft == nil || parent == nil || raft.CurrentTerm != sequencer.leader.term ||
 		raft.VotedFor != raft.MemberID || len(raft.Log) != int(raft.CommitIndex) {
 		return enrollmentv2.EnrollmentCommitCoordinateV1{},
-			errors.New("[D104 Raft] enrollment sequencer leader/log 状态无效")
+			errors.New("[Raft] enrollment sequencer leader/log 状态无效")
 	}
 	previous := wire.EmptyHashV1
 	if len(raft.Log) > 0 {
@@ -439,7 +439,7 @@ func (sequencer *StableEnrollmentOperationSequencer) nextCoordinate(raft *RaftPe
 	parentTime, err := wire.ParseTimeZ(parent.Body.Payload.CommittedLogicalTime)
 	if err != nil || committedAt.Before(parentTime) {
 		return enrollmentv2.EnrollmentCommitCoordinateV1{},
-			errors.New("[D104 Raft] enrollment logical time 早于 certified parent")
+			errors.New("[Raft] enrollment logical time 早于 certified parent")
 	}
 	return enrollmentv2.EnrollmentCommitCoordinateV1{Schema: 1, ClusterID: raft.ClusterID,
 		RecoveryEpoch: parent.Body.Payload.RecoveryEpoch, RaftTerm: raft.CurrentTerm,
@@ -449,19 +449,19 @@ func (sequencer *StableEnrollmentOperationSequencer) nextCoordinate(raft *RaftPe
 
 func uncommittedHeadCandidate(raft *RaftPersistentStateV1) (wire.HeadEntryV2, bool, error) {
 	if raft == nil || raft.CommitIndex < 0 || raft.CommitIndex > int64(len(raft.Log)) {
-		return wire.HeadEntryV2{}, false, errors.New("[D104 Raft] persistent log/commitIndex 无效")
+		return wire.HeadEntryV2{}, false, errors.New("[Raft] persistent log/commitIndex 无效")
 	}
 	if raft.CommitIndex == int64(len(raft.Log)) {
 		return wire.HeadEntryV2{}, false, nil
 	}
 	if int64(len(raft.Log))-raft.CommitIndex != 1 {
 		return wire.HeadEntryV2{}, false,
-			errors.New("[D104 Raft] enrollment sequencer 不接受多个未提交日志项")
+			errors.New("[Raft] enrollment sequencer 不接受多个未提交日志项")
 	}
 	record := raft.Log[len(raft.Log)-1]
 	if record.Kind != RaftRecordHead || record.Head == nil {
 		return wire.HeadEntryV2{}, false,
-			errors.New("[D104 Raft] 未提交日志项不是可恢复 enrollment Head")
+			errors.New("[Raft] 未提交日志项不是可恢复 enrollment Head")
 	}
 	return *record.Head, true, nil
 }
@@ -470,7 +470,7 @@ func validateEnrollmentHeadProjection(projection *EnrollmentHeadProjectionV1,
 	parent *wire.HeadEntryV2, coordinate *enrollmentv2.EnrollmentCommitCoordinateV1,
 	mutation *enrollmentv2.EnrollmentHeadMutationV1, set *wire.ControlSetV1) error {
 	if projection == nil || parent == nil || coordinate == nil || mutation == nil || set == nil {
-		return errors.New("[D130 Enrollment] Head projection 输入不完整")
+		return errors.New("[Enrollment] Head projection 输入不完整")
 	}
 	head := &projection.Head
 	payload := &head.Body.Payload
@@ -481,7 +481,7 @@ func validateEnrollmentHeadProjection(projection *EnrollmentHeadProjectionV1,
 		payload.PreviousLogEntryHash != coordinate.PreviousLogEntryHash ||
 		payload.ParentHeadHash != coordinate.ParentHeadHash || payload.ParentHeadHash != parent.HeadHash ||
 		payload.CommittedLogicalTime != coordinate.CommittedLogicalTime || payload.ControlSetHash != setHash {
-		return errors.New("[D130 Enrollment] projected Head 未绑定 exact Raft coordinate/parent/ControlSet")
+		return errors.New("[Enrollment] projected Head 未绑定 exact Raft coordinate/parent/ControlSet")
 	}
 	if err := wire.ValidateHeadEntry(head, parent); err != nil {
 		return err
@@ -489,18 +489,18 @@ func validateEnrollmentHeadProjection(projection *EnrollmentHeadProjectionV1,
 	if mutation.OperationLeaf.OperationID == "" ||
 		wire.VerifyControlOperationInclusion(&mutation.OperationLeaf, projection.OperationLeafIndex,
 			projection.OperationTreeSize, projection.OperationAuditPath, head) != nil {
-		return errors.New("[D130 Enrollment] projected Head 缺 exact operation inclusion")
+		return errors.New("[Enrollment] projected Head 缺 exact operation inclusion")
 	}
 	if mutation.InitialDeviceView == nil {
 		if projection.DeviceViewLeaf != nil || projection.DeviceViewLeafIndex != 0 ||
 			projection.DeviceViewTreeSize != 0 || len(projection.DeviceViewAuditPath) != 0 ||
 			mutation.SecretArtifactRefs != nil {
-			return errors.New("[D130 Enrollment] 非 completion mutation 携带 Device projection")
+			return errors.New("[Enrollment] 非 completion mutation 携带 Device projection")
 		}
 		return nil
 	}
 	if projection.DeviceViewLeaf == nil {
-		return errors.New("[D130 Enrollment] completion mutation 缺 Device projection")
+		return errors.New("[Enrollment] completion mutation 缺 Device projection")
 	}
 	_, err := wire.VerifyDeviceViewProjection(mutation.InitialDeviceView, projection.DeviceViewLeaf,
 		projection.DeviceViewLeafIndex, projection.DeviceViewTreeSize,
@@ -513,19 +513,19 @@ func committedHeadLineage(storage *RaftStorage, from, to *wire.HeadEntryV2) ([]w
 		return nil, nil
 	}
 	if storage == nil || to == nil || to.Body.Payload.RaftIndex <= from.Body.Payload.RaftIndex {
-		return nil, errors.New("[D130 Enrollment] Head lineage endpoints 无效")
+		return nil, errors.New("[Enrollment] Head lineage endpoints 无效")
 	}
 	state := storage.SnapshotRaft()
 	if to.Body.Payload.RaftIndex > state.CommitIndex ||
 		from.Body.Payload.RaftIndex > int64(len(state.Log)) {
-		return nil, errors.New("[D130 Enrollment] Head lineage 不在本机 committed prefix")
+		return nil, errors.New("[Enrollment] Head lineage 不在本机 committed prefix")
 	}
 	fromRecord := state.Log[from.Body.Payload.RaftIndex-1]
 	toRecord := state.Log[to.Body.Payload.RaftIndex-1]
 	if fromRecord.Kind != RaftRecordHead || fromRecord.Head == nil ||
 		toRecord.Kind != RaftRecordHead || toRecord.Head == nil ||
 		!wire.EqualCanonical(*fromRecord.Head, *from) || !wire.EqualCanonical(*toRecord.Head, *to) {
-		return nil, errors.New("[D130 Enrollment] Head lineage endpoint 与 Raft log 不一致")
+		return nil, errors.New("[Enrollment] Head lineage endpoint 与 Raft log 不一致")
 	}
 	intermediate := make([]wire.HeadEntryV2, 0)
 	parent := *from
@@ -535,25 +535,25 @@ func committedHeadLineage(storage *RaftStorage, from, to *wire.HeadEntryV2) ([]w
 			continue
 		}
 		if record.Head == nil || wire.ValidateHeadEntry(record.Head, &parent) != nil {
-			return nil, errors.New("[D130 Enrollment] intermediate Head lineage 断裂")
+			return nil, errors.New("[Enrollment] intermediate Head lineage 断裂")
 		}
 		intermediate = append(intermediate, *record.Head)
 		parent = *record.Head
 	}
 	if err := wire.ValidateHeadEntry(to, &parent); err != nil {
-		return nil, errors.New("[D130 Enrollment] target Head lineage 断裂")
+		return nil, errors.New("[Enrollment] target Head lineage 断裂")
 	}
 	return intermediate, nil
 }
 
 func committedParentHead(storage *RaftStorage, entry *wire.HeadEntryV2) (wire.HeadEntryV2, error) {
 	if storage == nil || entry == nil || entry.Body.Payload.RaftIndex < 2 {
-		return wire.HeadEntryV2{}, errors.New("[D130 Enrollment] active ordinary Head parent 坐标无效")
+		return wire.HeadEntryV2{}, errors.New("[Enrollment] active ordinary Head parent 坐标无效")
 	}
 	state := storage.SnapshotRaft()
 	index := entry.Body.Payload.RaftIndex
 	if index > state.CommitIndex || index > int64(len(state.Log)) {
-		return wire.HeadEntryV2{}, errors.New("[D130 Enrollment] active Head 不在 committed Raft prefix")
+		return wire.HeadEntryV2{}, errors.New("[Enrollment] active Head 不在 committed Raft prefix")
 	}
 	for candidateIndex := index - 1; candidateIndex >= 1; candidateIndex-- {
 		record := state.Log[candidateIndex-1]
@@ -562,11 +562,11 @@ func committedParentHead(storage *RaftStorage, entry *wire.HeadEntryV2) (wire.He
 		}
 		if record.Head == nil || record.Head.HeadHash != entry.Body.Payload.ParentHeadHash ||
 			wire.ValidateHeadEntry(entry, record.Head) != nil {
-			return wire.HeadEntryV2{}, errors.New("[D130 Enrollment] active Head parent 与 committed log 不一致")
+			return wire.HeadEntryV2{}, errors.New("[Enrollment] active Head parent 与 committed log 不一致")
 		}
 		return *record.Head, nil
 	}
-	return wire.HeadEntryV2{}, errors.New("[D130 Enrollment] active Head 缺 committed parent")
+	return wire.HeadEntryV2{}, errors.New("[Enrollment] active Head 缺 committed parent")
 }
 
 func verifySequencedOperationProof(proof *enrollmentv2.CertifiedEnrollmentOperationProofV1,
@@ -574,7 +574,7 @@ func verifySequencedOperationProof(proof *enrollmentv2.CertifiedEnrollmentOperat
 	if proof == nil || set == nil || proof.PreviousControlSet != nil ||
 		proof.OperationLeaf.OperationID != operationID || proof.OperationLeaf.ObjectID != objectID ||
 		!wire.EqualCanonical(proof.ControlSet, *set) {
-		return errors.New("[D130 Enrollment] sequenced operation proof header 无效")
+		return errors.New("[Enrollment] sequenced operation proof header 无效")
 	}
 	if err := wire.VerifyConfigQCAuthority(proof.Head.HeadHash, proof.ConfigQC,
 		&proof.Head, set, nil); err != nil {
@@ -587,15 +587,15 @@ func verifySequencedOperationProof(proof *enrollmentv2.CertifiedEnrollmentOperat
 func validateEnrollmentCommitJournal(state *enrollmentCommitJournalStateV1,
 	set *wire.ControlSetV1) error {
 	if state == nil || set == nil || state.Schema != 1 || state.Records == nil {
-		return errors.New("[D130 Enrollment] commit journal schema 无效")
+		return errors.New("[Enrollment] commit journal schema 无效")
 	}
 	setHash, err := wire.ControlSetHash(set)
 	if err != nil || state.ClusterID != set.ClusterID || state.ControlSetHash != setHash {
-		return errors.New("[D130 Enrollment] commit journal ControlSet authority 无效")
+		return errors.New("[Enrollment] commit journal ControlSet authority 无效")
 	}
 	for index := range state.Records {
 		if index > 0 && state.Records[index-1].OperationID >= state.Records[index].OperationID {
-			return errors.New("[D130 Enrollment] commit journal operation ID 未严格排序")
+			return errors.New("[Enrollment] commit journal operation ID 未严格排序")
 		}
 		if err := validateEnrollmentCommitJournalRecord(&state.Records[index], set); err != nil {
 			return err
@@ -607,7 +607,7 @@ func validateEnrollmentCommitJournal(state *enrollmentCommitJournalStateV1,
 func validateEnrollmentCommitJournalRecord(record *enrollmentCommitJournalRecordV1,
 	set *wire.ControlSetV1) error {
 	if record == nil || record.OperationID == "" {
-		return errors.New("[D130 Enrollment] commit journal record header 无效")
+		return errors.New("[Enrollment] commit journal record header 无效")
 	}
 	if _, err := wire.ParseHash(record.ObjectID); err != nil {
 		return err
@@ -618,7 +618,7 @@ func validateEnrollmentCommitJournalRecord(record *enrollmentCommitJournalRecord
 	}
 	if record.LineageFrom == nil {
 		if len(record.Result.IntermediateHeads) != 0 || len(record.Result.ControlSetTransitions) != 0 {
-			return errors.New("[D130 Enrollment] 无 lineage 起点却携 intermediate Heads")
+			return errors.New("[Enrollment] 无 lineage 起点却携 intermediate Heads")
 		}
 	} else {
 		if err := enrollmentv2.VerifyEnrollmentHeadLineage(record.LineageFrom,
@@ -631,7 +631,7 @@ func validateEnrollmentCommitJournalRecord(record *enrollmentCommitJournalRecord
 		if !wire.EqualCanonical(envelope.SignedCurrent.Head, record.Result.Certification.Head) ||
 			!equalCanonicalRaw(envelope.SignedCurrent.QuorumCertificate,
 				record.Result.Certification.ConfigQC) {
-			return errors.New("[D130 Enrollment] journal Device view 未绑定 operation Head/QC")
+			return errors.New("[Enrollment] journal Device view 未绑定 operation Head/QC")
 		}
 		if _, err := wire.VerifyDeviceViewEnvelope(envelope, set); err != nil {
 			return err

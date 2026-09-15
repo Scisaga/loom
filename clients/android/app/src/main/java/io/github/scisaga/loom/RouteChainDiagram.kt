@@ -20,7 +20,7 @@ import androidx.compose.ui.unit.sp
 import io.github.scisaga.loom.route.RouteLinkStatus
 import io.github.scisaga.loom.route.RoutePathStatus
 
-/** §7.2：节点来自实际 chain，连线即使缺少观测也保留；读图不触发测量。 */
+/** 节点来自实际 chain，连线即使缺少观测也保留；读图不触发测量。 */
 @Composable
 internal fun RouteChainDiagram(path: RoutePathStatus) {
     Column(Modifier.fillMaxWidth().testTag("route-chain-diagram")) {

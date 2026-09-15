@@ -57,7 +57,7 @@ type windowsJoinOptions struct {
 	Progress      windowsJoinProgress
 }
 
-// §13.5：只传递本地阶段文案，不传递二维码、证书或服务端响应正文。
+// 只传递本地阶段文案，不传递二维码、证书或服务端响应正文。
 type windowsJoinProgress func(string)
 
 func (progress windowsJoinProgress) report(detail string) {
@@ -391,7 +391,7 @@ func prepareWindowsJoinComponent(options windowsJoinCommitOptions) ([]byte, *cli
 }
 
 func verifyWindowsInviteTrust(invite clientenroll.Invite, platformKey ed25519.PublicKey) error {
-	// §9.1 / D98：在提交一次性凭据前验证现行入口，避免加入成功后才发现无法上报。
+	// 在提交一次性凭据前验证现行入口，避免加入成功后才发现无法上报。
 	if _, err := clientreport.Endpoint(invite.Endpoint); err != nil {
 		return errors.New("加入二维码入口无效；请从中控重新创建 Windows Device 二维码")
 	}

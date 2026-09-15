@@ -21,7 +21,7 @@ import (
 	"loom/internal/windowsv2"
 )
 
-// §7.3：只在显式实机验收时使用正常加入的身份，不创建或修补 Device。
+// 只在显式实机验收时使用正常加入的身份，不创建或修补 Device。
 func requireLiveTUN(t *testing.T) string {
 	t.Helper()
 	if os.Getenv("LOOM_ACCEPT_TUN_LIFECYCLE") != "1" {
@@ -152,7 +152,7 @@ func TestWindowsTUNLifecycleLive(t *testing.T) {
 		}
 		t.Logf("cycle %d: real DNS/HTTPS healthy; adapter, routes, listener and runtime files cleaned", cycle+1)
 	}
-	// §7.3：杀死宿主，验证 Job Object 接管子进程，随后正常启动清理旧运行文件。
+	// 杀死宿主，验证 Job Object 接管子进程，随后正常启动清理旧运行文件。
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -199,7 +199,7 @@ func TestWindowsTUNCrashHelper(t *testing.T) {
 	<-ctx.Done()
 }
 
-// §7.2：实机验收只读运行配置，生产 UI 已不再从临时文件推断选路。
+// 实机验收只读运行配置，生产 UI 已不再从临时文件推断选路。
 func activePortableRuntimeConfig(root string) (string, []byte, error) {
 	paths, err := filepath.Glob(filepath.Join(root, "runtime", ".sing-box-active-*.json"))
 	if err != nil || len(paths) != 1 {

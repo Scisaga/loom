@@ -26,7 +26,7 @@ const (
 
 // LinuxLinkIntentArtifactV1 是服务端在生成下一张 Device view 前固化的
 // Device 专属逐边运行授权。AuthorityHeadHash 是下一张 Head 的 parent，
-// 因而不会与该 artifact 自身的 content hash 形成循环承诺（D105、D131）。
+// 因而不会与该 artifact 自身的 content hash 形成循环承诺。
 type LinuxLinkIntentArtifactV1 struct {
 	Schema            int            `json:"schema"`
 	ClusterID         string         `json:"cluster_id"`
@@ -213,7 +213,7 @@ type ForwardServerListenerResourcesV1 struct {
 }
 
 // ServerPublicAccessStateV1 是 certified intent 与验证证据的派生投影；调用方不能
-// 仅凭 DNS/provider readback 把 preparing 提升为 active（D103、D125）。
+// 仅凭 DNS/provider readback 把 preparing 提升为 active。
 type ServerPublicAccessStateV1 struct {
 	Schema                      int    `json:"schema"`
 	ClusterID                   string `json:"cluster_id"`
@@ -230,32 +230,32 @@ func ValidateLinkIntent(intent *LinkIntentV1) error {
 		!validIdentifier(intent.LinkID, 128) || !validIdentifier(intent.FromDeviceID, 128) ||
 		intent.Generation < 1 || !oneOf(intent.Purpose, "control_overlay", "data_forward", "bootstrap") ||
 		!oneOf(intent.Initiator, "from", "to") || !validIdentifier(intent.RouteScope, 128) {
-		return errors.New("[D131 LinkIntent] schema/identity/purpose/initiator 无效")
+		return errors.New("[LinkIntent] schema/identity/purpose/initiator 无效")
 	}
 	if (intent.To.DeviceID == "") == (intent.To.ServiceID == "") {
-		return errors.New("[D131 LinkIntent] to 必须且只能选择 device_id/service_id")
+		return errors.New("[LinkIntent] to 必须且只能选择 device_id/service_id")
 	}
 	if intent.To.DeviceID != "" && (!validIdentifier(intent.To.DeviceID, 128) || intent.To.DeviceID == intent.FromDeviceID) ||
 		intent.To.ServiceID != "" && !validIdentifier(intent.To.ServiceID, 128) {
-		return errors.New("[D131 LinkIntent] destination identity 无效或自环")
+		return errors.New("[LinkIntent] destination identity 无效或自环")
 	}
 	if !sortedEnum(intent.AllowedTransports, []string{"wireguard", "hysteria2", "trojan_tls"}, true) ||
 		!sortedUnique(intent.ListenerResourceRefs) || len(intent.ListenerResourceRefs) == 0 ||
 		!sortedUnique(intent.CredentialRefs) || len(intent.CredentialRefs) == 0 {
-		return errors.New("[D131 LinkIntent] transports/refs 必须按规范稳定排序且不重复")
+		return errors.New("[LinkIntent] transports/refs 必须按规范稳定排序且不重复")
 	}
 	for _, ref := range append(append([]string(nil), intent.ListenerResourceRefs...), intent.CredentialRefs...) {
 		if !validIdentifier(ref, 128) {
-			return errors.New("[D131 LinkIntent] listener/credential ref 无效")
+			return errors.New("[LinkIntent] listener/credential ref 无效")
 		}
 	}
 	if intent.Purpose == "control_overlay" && (intent.To.DeviceID == "" ||
 		len(intent.AllowedTransports) != 1 || intent.AllowedTransports[0] != "wireguard") {
-		return errors.New("[D131 LinkIntent] permanent control overlay 必须是 Device 间独立 WireGuard")
+		return errors.New("[LinkIntent] permanent control overlay 必须是 Device 间独立 WireGuard")
 	}
 	if intent.Purpose == "bootstrap" && (intent.To.ServiceID == "" || intent.Initiator != "from" ||
 		contains(intent.AllowedTransports, "wireguard")) {
-		return errors.New("[D131 LinkIntent] bootstrap 只允许 from 发起的非 WireGuard service 边")
+		return errors.New("[LinkIntent] bootstrap 只允许 from 发起的非 WireGuard service 边")
 	}
 	_, err := ParseHash(intent.ParentHeadHash)
 	return err
@@ -263,13 +263,13 @@ func ValidateLinkIntent(intent *LinkIntentV1) error {
 
 // ValidateLinuxLinkIntentArtifact 是 producer 与 Linux reader 共用的 exact
 // artifact 边界。只允许当前 Device 参与的正式 control/data 边；bootstrap
-// capability 生命周期结束后不能重新进入稳态运行面（D120、D131）。
+// capability 生命周期结束后不能重新进入稳态运行面。
 func ValidateLinuxLinkIntentArtifact(artifact *LinuxLinkIntentArtifactV1) error {
 	if artifact == nil || artifact.Schema != 1 || artifact.Generation < 1 ||
 		artifact.DeviceGeneration < 1 || artifact.LinkIntents == nil ||
 		!validIdentifier(artifact.ClusterID, 128) || !validIdentifier(artifact.DeviceID, 128) ||
 		artifact.RenderContractID != LinuxLinkIntentRenderContract {
-		return errors.New("[D131 Linux runtime] LinkIntent artifact header 无效")
+		return errors.New("[Linux runtime] LinkIntent artifact header 无效")
 	}
 	if _, err := ParseHash(artifact.AuthorityHeadHash); err != nil {
 		return err
@@ -283,7 +283,7 @@ func ValidateLinuxLinkIntentArtifact(artifact *LinuxLinkIntentArtifactV1) error 
 			intent.Purpose == "bootstrap" ||
 			intent.FromDeviceID != artifact.DeviceID && intent.To.DeviceID != artifact.DeviceID ||
 			(index > 0 && artifact.LinkIntents[index-1].LinkID >= intent.LinkID) {
-			return errors.New("[D131 Linux runtime] LinkIntents 必须绑定 authority parent/本 Device 并按 link_id 严格排序")
+			return errors.New("[Linux runtime] LinkIntents 必须绑定 authority parent/本 Device 并按 link_id 严格排序")
 		}
 	}
 	return nil
@@ -296,7 +296,7 @@ func ValidateListenerGeneration(generation *ListenerGenerationV2, transport stri
 		generation.CredentialGeneration < 1 || generation.PublicProfileGeneration < 1 || generation.IntroducedRevision < 1 ||
 		!sortedEnum(generation.AddressFamilies, []string{"ipv4", "ipv6"}, true) ||
 		!sortedUnique(generation.TransportIdentityRefs) || len(generation.TransportIdentityRefs) == 0 {
-		return errors.New("[D107 EndpointSet] listener generation 字段无效")
+		return errors.New("[EndpointSet] listener generation 字段无效")
 	}
 	from, err := ParseTimeZ(generation.ValidFrom)
 	if err != nil {
@@ -304,24 +304,24 @@ func ValidateListenerGeneration(generation *ListenerGenerationV2, transport stri
 	}
 	until, err := ParseTimeZ(generation.ValidUntil)
 	if err != nil || !from.Before(until) {
-		return errors.New("[D107 EndpointSet] listener validity 无效")
+		return errors.New("[EndpointSet] listener validity 无效")
 	}
 	if generation.RetireNotBefore != "" {
 		retire, err := ParseTimeZ(generation.RetireNotBefore)
 		if err != nil || retire.Before(from) {
-			return errors.New("[D120 rotation] retire_not_before 无效")
+			return errors.New("[rotation] retire_not_before 无效")
 		}
 	}
 	if oneOf(transport, "https", "hysteria2", "trojan_tls") {
 		if _, err := ParseHash(generation.CertificateIdentityProjectionHash); err != nil {
-			return errors.New("[D122 TLS] TLS transport 必须绑定 certificate identity projection hash")
+			return errors.New("[TLS] TLS transport 必须绑定 certificate identity projection hash")
 		}
 	} else if transport == "wireguard" {
 		if generation.CertificateIdentityProjectionHash != "" {
-			return errors.New("[D107 EndpointSet] WireGuard listener 禁止 certificate identity projection")
+			return errors.New("[EndpointSet] WireGuard listener 禁止 certificate identity projection")
 		}
 	} else {
-		return errors.New("[D107 EndpointSet] transport 无效")
+		return errors.New("[EndpointSet] transport 无效")
 	}
 	_, err = ParseHash(generation.RotationOperationHash)
 	return err
@@ -335,7 +335,7 @@ func validateGenerations(transport string, generations []ListenerGenerationV2, t
 			return err
 		}
 		if i > 0 && generations[i-1].ListenerGeneration >= generations[i].ListenerGeneration {
-			return errors.New("[D120 rotation] listener generations 必须严格递增")
+			return errors.New("[rotation] listener generations 必须严格递增")
 		}
 		seen[generations[i].ListenerGeneration] = struct{}{}
 		if generations[i].PublishedState == "preferred" {
@@ -346,7 +346,7 @@ func validateGenerations(transport string, generations []ListenerGenerationV2, t
 		tombstone := &tombstones[i]
 		if tombstone.Schema != 1 || tombstone.ListenerGeneration < 1 ||
 			!oneOf(tombstone.TerminalState, "retired", "revoked", "abandoned") || tombstone.Reason == "" {
-			return errors.New("[D120 rotation] listener tombstone 无效")
+			return errors.New("[rotation] listener tombstone 无效")
 		}
 		if _, err := ParseTimeZ(tombstone.TerminalAt); err != nil {
 			return err
@@ -358,15 +358,15 @@ func validateGenerations(transport string, generations []ListenerGenerationV2, t
 			return err
 		}
 		if i > 0 && tombstones[i-1].ListenerGeneration >= tombstone.ListenerGeneration {
-			return errors.New("[D120 rotation] listener tombstones 必须严格递增")
+			return errors.New("[rotation] listener tombstones 必须严格递增")
 		}
 		if _, duplicate := seen[tombstone.ListenerGeneration]; duplicate {
-			return errors.New("[D120 rotation] 同一 listener generation 不能同时可拨和 tombstone")
+			return errors.New("[rotation] 同一 listener generation 不能同时可拨和 tombstone")
 		}
 		seen[tombstone.ListenerGeneration] = struct{}{}
 	}
 	if len(generations) > 0 && preferred != 1 {
-		return errors.New("[D120 rotation] 可拨 logical endpoint 必须恰有一个 preferred generation")
+		return errors.New("[rotation] 可拨 logical endpoint 必须恰有一个 preferred generation")
 	}
 	return nil
 }
@@ -374,7 +374,7 @@ func validateGenerations(transport string, generations []ListenerGenerationV2, t
 func ValidateDistributionEndpointSet(set *DistributionEndpointSetV1) error {
 	if set == nil || set.Schema != 1 || len(set.Endpoints) == 0 ||
 		!validateSetHeader(set.ClusterID, set.EndpointSetID, set.Generation, set.ValidFrom, set.ValidUntil, set.ParentHeadHash) {
-		return errors.New("[D107 EndpointSet] distribution set header 无效")
+		return errors.New("[EndpointSet] distribution set header 无效")
 	}
 	if err := validateConfigQCShape(set.ConfigQC); err != nil {
 		return err
@@ -384,7 +384,7 @@ func ValidateDistributionEndpointSet(set *DistributionEndpointSetV1) error {
 		if !orderedEndpoint(i, endpoint.EndpointID, set.Endpoints, func(item DistributionEndpointV1) string { return item.EndpointID }) ||
 			endpoint.Transport != "https" || endpoint.DistributionPathPrefix != "/distribution/sha256/" ||
 			!validIdentifier(endpoint.LogicalServerID, 128) {
-			return errors.New("[D131 public surface] distribution endpoint 无效/未排序")
+			return errors.New("[public surface] distribution endpoint 无效/未排序")
 		}
 		if err := validateGenerations(endpoint.Transport, endpoint.ListenerGenerations, endpoint.ListenerTombstones); err != nil {
 			return err
@@ -396,7 +396,7 @@ func ValidateDistributionEndpointSet(set *DistributionEndpointSetV1) error {
 func ValidateBootstrapIngressSet(set *BootstrapIngressEndpointSetV1) error {
 	if set == nil || set.Schema != 1 || len(set.Endpoints) == 0 ||
 		!validateSetHeader(set.ClusterID, set.EndpointSetID, set.Generation, set.ValidFrom, set.ValidUntil, set.ParentHeadHash) {
-		return errors.New("[D107 EndpointSet] bootstrap set header 无效")
+		return errors.New("[EndpointSet] bootstrap set header 无效")
 	}
 	if err := validateConfigQCShape(set.ConfigQC); err != nil {
 		return err
@@ -406,7 +406,7 @@ func ValidateBootstrapIngressSet(set *BootstrapIngressEndpointSetV1) error {
 		if !orderedEndpoint(i, endpoint.EndpointID, set.Endpoints, func(item BootstrapIngressEndpointV1) string { return item.EndpointID }) ||
 			!oneOf(endpoint.Transport, "hysteria2", "trojan_tls") || endpoint.HintRank < 0 ||
 			!validIdentifier(endpoint.LogicalServerID, 128) {
-			return errors.New("[D131 bootstrap] bootstrap endpoint 无效/未排序")
+			return errors.New("[bootstrap] bootstrap endpoint 无效/未排序")
 		}
 		if err := validateGenerations(endpoint.Transport, endpoint.ListenerGenerations, endpoint.ListenerTombstones); err != nil {
 			return err
@@ -418,7 +418,7 @@ func ValidateBootstrapIngressSet(set *BootstrapIngressEndpointSetV1) error {
 func ValidateDataIngressSet(set *DataIngressEndpointSetV2) error {
 	if set == nil || set.Schema != 2 || len(set.Endpoints) == 0 ||
 		!validateSetHeader(set.ClusterID, set.EndpointSetID, set.Generation, set.ValidFrom, set.ValidUntil, set.ParentHeadHash) {
-		return errors.New("[D107 EndpointSet] data set header 无效")
+		return errors.New("[EndpointSet] data set header 无效")
 	}
 	if err := validateConfigQCShape(set.ConfigQC); err != nil {
 		return err
@@ -431,7 +431,7 @@ func ValidateDataIngressSet(set *DataIngressEndpointSetV2) error {
 		if !orderedEndpoint(i, endpoint.EndpointID, set.Endpoints, func(item DataIngressEndpointV2) string { return item.EndpointID }) ||
 			!oneOf(endpoint.Transport, "hysteria2", "trojan_tls", "wireguard") ||
 			!validIdentifier(endpoint.LogicalServerID, 128) || !sortedUnique(endpoint.PathCapabilities) {
-			return errors.New("[D107 EndpointSet] data endpoint 无效/未排序")
+			return errors.New("[EndpointSet] data endpoint 无效/未排序")
 		}
 		if err := validateGenerations(endpoint.Transport, endpoint.ListenerGenerations, endpoint.ListenerTombstones); err != nil {
 			return err
@@ -443,7 +443,7 @@ func ValidateDataIngressSet(set *DataIngressEndpointSetV2) error {
 func ValidateControlServiceDirectory(directory *ControlServiceDirectoryV1) error {
 	if directory == nil || directory.Schema != 1 || !validIdentifier(directory.ClusterID, 128) ||
 		directory.Generation < 1 || len(directory.Services) == 0 {
-		return errors.New("[D131 private control] directory header 无效")
+		return errors.New("[private control] directory header 无效")
 	}
 	if err := validateConfigQCShape(directory.ConfigQC); err != nil {
 		return err
@@ -460,7 +460,7 @@ func ValidateControlServiceDirectory(directory *ControlServiceDirectoryV1) error
 	}
 	for i, service := range directory.Services {
 		if i > 0 && directory.Services[i-1].ServiceID >= service.ServiceID {
-			return errors.New("[D131 private control] services 必须严格排序且不重复")
+			return errors.New("[private control] services 必须严格排序且不重复")
 		}
 		if err := ValidatePrivateControlService(&service); err != nil {
 			return err
@@ -471,7 +471,7 @@ func ValidateControlServiceDirectory(directory *ControlServiceDirectoryV1) error
 
 func ValidatePrivateControlService(service *PrivateControlServiceV1) error {
 	if service == nil {
-		return errors.New("[D131 private control] service 不能为空")
+		return errors.New("[private control] service 不能为空")
 	}
 	address, err := netip.ParseAddr(service.OverlayIP)
 	if err != nil || address.String() != service.OverlayIP || !address.IsPrivate() ||
@@ -480,11 +480,11 @@ func ValidatePrivateControlService(service *PrivateControlServiceV1) error {
 		!validIdentifier(service.ServiceID, 128) || !validIdentifier(service.CertificateProfileRef, 128) ||
 		!sortedUnique(service.SPKIPins) || len(service.SPKIPins) == 0 ||
 		!sortedUnique(service.AuthorizedSubjectProfiles) || len(service.AuthorizedSubjectProfiles) == 0 {
-		return errors.New("[D131 private control] service 必须使用私有 overlay tuple 和用途隔离 profile")
+		return errors.New("[private control] service 必须使用私有 overlay tuple 和用途隔离 profile")
 	}
 	for _, pin := range service.SPKIPins {
 		if _, err := ParseHash(pin); err != nil {
-			return errors.New("[D131 private control] service SPKI pin 无效")
+			return errors.New("[private control] service SPKI pin 无效")
 		}
 	}
 	return nil
@@ -499,22 +499,22 @@ func ValidatePublicAccess(profile *ServerPublicAccessProfileV1, resources *Forwa
 		!oneOf(profile.AddressFamilyPolicy, "ipv4_only", "ipv6_only", "dual_stack") ||
 		!oneOf(profile.DeploymentKind, "direct_standard", "direct_alternate", "nat_mapped") ||
 		resources.NginxLocalTCPPort < 1 || resources.NginxLocalTCPPort > 65535 {
-		return errors.New("[D103 public profile] profile/resources 字段或绑定无效")
+		return errors.New("[public profile] profile/resources 字段或绑定无效")
 	}
 	if profile.DeploymentKind == "direct_standard" && profile.HTTPSPublicPort != 443 {
-		return errors.New("[D103 public profile] direct_standard 必须使用 HTTPS 443")
+		return errors.New("[public profile] direct_standard 必须使用 HTTPS 443")
 	}
 	if profile.DeploymentKind == "direct_alternate" && profile.HTTPSPublicPort == 443 {
-		return errors.New("[D103 public profile] direct_alternate 必须显式使用替代端口")
+		return errors.New("[public profile] direct_alternate 必须显式使用替代端口")
 	}
 	if !sortedUnique(profile.PublicFrontendAddresses) || len(profile.PublicFrontendAddresses) == 0 {
-		return errors.New("[D103 public profile] public frontend addresses 缺失/未排序")
+		return errors.New("[public profile] public frontend addresses 缺失/未排序")
 	}
 	hasIPv4, hasIPv6 := false, false
 	for _, raw := range profile.PublicFrontendAddresses {
 		address, err := netip.ParseAddr(raw)
 		if err != nil || address.String() != raw || !address.IsGlobalUnicast() {
-			return errors.New("[D103 public profile] public frontend address 无效")
+			return errors.New("[public profile] public frontend address 无效")
 		}
 		hasIPv4 = hasIPv4 || address.Is4()
 		hasIPv6 = hasIPv6 || address.Is6()
@@ -522,40 +522,40 @@ func ValidatePublicAccess(profile *ServerPublicAccessProfileV1, resources *Forwa
 	if profile.AddressFamilyPolicy == "ipv4_only" && (!hasIPv4 || hasIPv6) ||
 		profile.AddressFamilyPolicy == "ipv6_only" && (!hasIPv6 || hasIPv4) ||
 		profile.AddressFamilyPolicy == "dual_stack" && (!hasIPv4 || !hasIPv6) {
-		return errors.New("[D103 public profile] address family policy 与 frontend addresses 不一致")
+		return errors.New("[public profile] address family policy 与 frontend addresses 不一致")
 	}
 	if err := ValidateForwardServerListenerResources(resources); err != nil {
 		return err
 	}
 	if profile.DeploymentKind == "nat_mapped" && len(resources.Mappings) == 0 {
-		return errors.New("[D103 public profile] nat_mapped 必须声明映射")
+		return errors.New("[public profile] nat_mapped 必须声明映射")
 	}
 	if profile.DeploymentKind != "nat_mapped" && len(resources.Mappings) != 0 {
-		return errors.New("[D103 public profile] direct profile 禁止伪造 NAT mapping")
+		return errors.New("[public profile] direct profile 禁止伪造 NAT mapping")
 	}
 	if profile.DeploymentKind == "nat_mapped" {
 		if !mappingContains(resources.Mappings, "tcp", profile.HTTPSPublicPort, resources.NginxLocalTCPPort) {
-			return errors.New("[D103 NAT] HTTPS public/local tuple 缺 exact mapping")
+			return errors.New("[NAT] HTTPS public/local tuple 缺 exact mapping")
 		}
 		for _, port := range resources.HY2LocalUDPPortPool {
 			if !mappingContainsLocal(resources.Mappings, "udp", port) {
-				return errors.New("[D103 NAT] HY2 local listener 缺 UDP mapping")
+				return errors.New("[NAT] HY2 local listener 缺 UDP mapping")
 			}
 		}
 		for _, port := range resources.WireGuardLocalUDPPorts {
 			if !mappingContainsLocal(resources.Mappings, "udp", port) {
-				return errors.New("[D103 NAT] WireGuard local listener 缺 UDP mapping")
+				return errors.New("[NAT] WireGuard local listener 缺 UDP mapping")
 			}
 		}
 		for _, port := range resources.TrojanLocalTCPPortPool {
 			if !mappingContainsLocal(resources.Mappings, "tcp", port) {
-				return errors.New("[D103 NAT] Trojan local listener 缺 TCP mapping")
+				return errors.New("[NAT] Trojan local listener 缺 TCP mapping")
 			}
 		}
 	}
 	resourcesHash, err := HashObject(DomainForwardResources, resources)
 	if err != nil || resourcesHash != profile.ForwardListenerResourcesHash {
-		return errors.New("[D125 dependency] forward listener resources hash 不匹配")
+		return errors.New("[dependency] forward listener resources hash 不匹配")
 	}
 	return nil
 }
@@ -564,7 +564,7 @@ func ValidateForwardServerListenerResources(resources *ForwardServerListenerReso
 	if resources == nil || resources.Schema != 1 || !validIdentifier(resources.ClusterID, 128) ||
 		!validIdentifier(resources.ServerID, 128) || resources.Generation < 1 ||
 		resources.NginxLocalTCPPort < 1 || resources.NginxLocalTCPPort > 65535 {
-		return errors.New("[D103 public profile] private listener resources header 无效")
+		return errors.New("[public profile] private listener resources header 无效")
 	}
 	if err := validatePorts(resources.HY2LocalUDPPortPool, "HY2"); err != nil {
 		return err
@@ -576,24 +576,24 @@ func ValidateForwardServerListenerResources(resources *ForwardServerListenerReso
 		return err
 	}
 	if len(resources.HY2LocalUDPPortPool) == 0 || len(resources.WireGuardLocalUDPPorts) == 0 || len(resources.TrojanLocalTCPPortPool) == 0 {
-		return errors.New("[D103 public profile] active forward 缺少 HY2/WG/Trojan listener 资源")
+		return errors.New("[public profile] active forward 缺少 HY2/WG/Trojan listener 资源")
 	}
 	if overlap(resources.HY2LocalUDPPortPool, resources.WireGuardLocalUDPPorts) {
-		return errors.New("[D103 tuple] HY2 与 WireGuard 不能占用同一 UDP tuple")
+		return errors.New("[tuple] HY2 与 WireGuard 不能占用同一 UDP tuple")
 	}
 	if containsPort(resources.TrojanLocalTCPPortPool, resources.NginxLocalTCPPort) {
-		return errors.New("[D103 tuple] Nginx 与 Trojan 不能占用同一 TCP tuple（未声明 L4 SNI dispatcher）")
+		return errors.New("[tuple] Nginx 与 Trojan 不能占用同一 TCP tuple（未声明 L4 SNI dispatcher）")
 	}
 	for i := range resources.Mappings {
 		if i > 0 && resources.Mappings[i-1].MappingID >= resources.Mappings[i].MappingID {
-			return errors.New("[D103 public profile] mappings 必须按 ID 严格排序")
+			return errors.New("[public profile] mappings 必须按 ID 严格排序")
 		}
 		if err := ValidatePortMapping(&resources.Mappings[i]); err != nil {
 			return err
 		}
 		for j := 0; j < i; j++ {
 			if mappingsOverlap(resources.Mappings[j], resources.Mappings[i]) {
-				return errors.New("[D103 NAT] mapping public/local range 重叠")
+				return errors.New("[NAT] mapping public/local range 重叠")
 			}
 		}
 	}
@@ -604,7 +604,7 @@ func ValidateServerPublicAccessState(state *ServerPublicAccessStateV1) error {
 	if state == nil || state.Schema != 1 || !validIdentifier(state.ClusterID, 128) ||
 		!validIdentifier(state.ServerID, 128) || state.Generation < 1 ||
 		!oneOf(state.Status, "preparing", "active", "draining", "disabled") {
-		return errors.New("[D103 public profile] public access state header/status 无效")
+		return errors.New("[public profile] public access state header/status 无效")
 	}
 	for _, hash := range []string{state.PublicAccessProfileHash, state.LastChangedHeadHash} {
 		if _, err := ParseHash(hash); err != nil {
@@ -612,7 +612,7 @@ func ValidateServerPublicAccessState(state *ServerPublicAccessStateV1) error {
 		}
 	}
 	if state.Status == "active" && state.LastVerifiedObservationHash == "" {
-		return errors.New("[D125 reconcile] active public access 缺 external verification evidence")
+		return errors.New("[reconcile] active public access 缺 external verification evidence")
 	}
 	if state.LastVerifiedObservationHash != "" {
 		if _, err := ParseHash(state.LastVerifiedObservationHash); err != nil {
@@ -656,15 +656,15 @@ func ValidatePortMapping(mapping *PortMappingIntentV1) error {
 		mapping.PublicPortStart < 1 || mapping.PublicPortEnd > 65535 || mapping.PublicPortStart > mapping.PublicPortEnd ||
 		mapping.LocalPortStart < 1 || mapping.LocalPortEnd > 65535 || mapping.LocalPortStart > mapping.LocalPortEnd ||
 		mapping.PublicPortEnd-mapping.PublicPortStart != mapping.LocalPortEnd-mapping.LocalPortStart {
-		return errors.New("[D103 NAT] mapping transport/range/generation 无效")
+		return errors.New("[NAT] mapping transport/range/generation 无效")
 	}
 	public, err := netip.ParseAddr(mapping.PublicAddress)
 	if err != nil || public.String() != mapping.PublicAddress || !public.IsGlobalUnicast() {
-		return errors.New("[D103 NAT] public address 无效")
+		return errors.New("[NAT] public address 无效")
 	}
 	local, err := netip.ParseAddr(mapping.LocalAddress)
 	if err != nil || local.String() != mapping.LocalAddress || !local.IsPrivate() {
-		return errors.New("[D103 NAT] local address 必须是规范私有地址")
+		return errors.New("[NAT] local address 必须是规范私有地址")
 	}
 	return nil
 }
@@ -729,10 +729,10 @@ func ControlServiceDirectoryHash(value *ControlServiceDirectoryV1) (string, erro
 }
 
 // VerifyConfigQCAuthority 验证 EndpointSet/private directory 所携 parent-head QC。
-// previousSet 仅在 joint QC 时允许且必需，不能把两侧 signer 合并计数（D112）。
+// previousSet 仅在 joint QC 时允许且必需，不能把两侧 signer 合并计数。
 func VerifyConfigQCAuthority(parentHeadHash string, raw json.RawMessage, head *HeadEntryV2, currentSet, previousSet *ControlSetV1) error {
 	if head == nil || head.HeadHash != parentHeadHash {
-		return errors.New("[D107 EndpointSet] config QC 未绑定 exact parent head")
+		return errors.New("[EndpointSet] config QC 未绑定 exact parent head")
 	}
 	qcType, err := configQCType(raw)
 	if err != nil {
@@ -741,7 +741,7 @@ func VerifyConfigQCAuthority(parentHeadHash string, raw json.RawMessage, head *H
 	switch qcType {
 	case "stable_head":
 		if previousSet != nil {
-			return errors.New("[D112 joint] stable QC 禁止附带 previous ControlSet")
+			return errors.New("[joint] stable QC 禁止附带 previous ControlSet")
 		}
 		var qc StableHeadReplicationQCV1
 		if _, err := DecodeStrict(raw, 4<<20, &qc); err != nil {
@@ -750,7 +750,7 @@ func VerifyConfigQCAuthority(parentHeadHash string, raw json.RawMessage, head *H
 		return VerifyStableHeadQC(head, currentSet, &qc)
 	case "joint_head":
 		if previousSet == nil {
-			return errors.New("[D112 joint] joint QC 缺 previous ControlSet")
+			return errors.New("[joint] joint QC 缺 previous ControlSet")
 		}
 		var qc JointHeadReplicationQCV1
 		if _, err := DecodeStrict(raw, 4<<20, &qc); err != nil {
@@ -758,12 +758,12 @@ func VerifyConfigQCAuthority(parentHeadHash string, raw json.RawMessage, head *H
 		}
 		return VerifyJointHeadQC(head, previousSet, currentSet, &qc)
 	default:
-		return errors.New("[D107 EndpointSet] config QC type 未获协议授权")
+		return errors.New("[EndpointSet] config QC type 未获协议授权")
 	}
 }
 
 // ConfigQCHash 对 exact config QC wire 使用统一 purpose domain；调用方不能把
-// admission/approval QC 或任意 JSON 的摘要冒充 Head authority（D104、D130）。
+// admission/approval QC 或任意 JSON 的摘要冒充 Head authority。
 func ConfigQCHash(raw json.RawMessage) (string, error) {
 	if err := validateConfigQCShape(raw); err != nil {
 		return "", err
@@ -778,21 +778,21 @@ func ConfigQCHash(raw json.RawMessage) (string, error) {
 func validateConfigQCShape(raw json.RawMessage) error {
 	qcType, err := configQCType(raw)
 	if err != nil {
-		return errors.New("[D107 EndpointSet] config_qc 缺失或 wire 无效")
+		return errors.New("[EndpointSet] config_qc 缺失或 wire 无效")
 	}
 	switch qcType {
 	case "stable_head":
 		var qc StableHeadReplicationQCV1
 		if _, err := DecodeStrict(raw, 4<<20, &qc); err != nil {
-			return errors.New("[D107 EndpointSet] stable config_qc wire 无效")
+			return errors.New("[EndpointSet] stable config_qc wire 无效")
 		}
 	case "joint_head":
 		var qc JointHeadReplicationQCV1
 		if _, err := DecodeStrict(raw, 4<<20, &qc); err != nil {
-			return errors.New("[D107 EndpointSet] joint config_qc wire 无效")
+			return errors.New("[EndpointSet] joint config_qc wire 无效")
 		}
 	default:
-		return errors.New("[D107 EndpointSet] config_qc schema/type 无效")
+		return errors.New("[EndpointSet] config_qc schema/type 无效")
 	}
 	return nil
 }
@@ -800,19 +800,19 @@ func validateConfigQCShape(raw json.RawMessage) error {
 func configQCType(raw json.RawMessage) (string, error) {
 	canonical, err := CanonicalizeStrict(raw)
 	if err != nil || len(canonical) > 4<<20 {
-		return "", errors.New("[D107 EndpointSet] config_qc JSON 无效")
+		return "", errors.New("[EndpointSet] config_qc JSON 无效")
 	}
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(canonical, &object); err != nil {
-		return "", errors.New("[D107 EndpointSet] config_qc 必须是 object")
+		return "", errors.New("[EndpointSet] config_qc 必须是 object")
 	}
 	var schema int
 	var qcType string
 	if err := json.Unmarshal(object["schema"], &schema); err != nil || schema != 1 {
-		return "", errors.New("[D107 EndpointSet] config_qc schema 无效")
+		return "", errors.New("[EndpointSet] config_qc schema 无效")
 	}
 	if err := json.Unmarshal(object["qc_type"], &qcType); err != nil {
-		return "", errors.New("[D107 EndpointSet] config_qc type 无效")
+		return "", errors.New("[EndpointSet] config_qc type 无效")
 	}
 	return qcType, nil
 }
@@ -886,7 +886,7 @@ func orderedEndpoint[T any](index int, current string, values []T, id func(T) st
 func validatePorts(ports []int64, name string) error {
 	for i, port := range ports {
 		if port < 1 || port > 65535 || (i > 0 && ports[i-1] >= port) {
-			return fmt.Errorf("[D103 tuple] %s ports 无效/未排序", name)
+			return fmt.Errorf("[tuple] %s ports 无效/未排序", name)
 		}
 	}
 	return nil

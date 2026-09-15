@@ -12,21 +12,21 @@ import (
 const androidV2InviteURIPrefix = "loom://enroll/v2#d="
 
 // DecodeAndroidV2InviteURI 只解码 QR carrier；descriptor 不因载体
-// 变成 trust root，后续仍必须下载并验证 proof（D115）。
+// 变成 trust root，后续仍必须下载并验证 proof。
 func DecodeAndroidV2InviteURI(raw string) ([]byte, error) {
 	if len(raw) <= len(androidV2InviteURIPrefix) || len(raw) > 1800 ||
 		!strings.HasPrefix(raw, androidV2InviteURIPrefix) {
-		return nil, errors.New("[D115 Android] v2 Invite URI 形状或大小无效")
+		return nil, errors.New("[Android] v2 Invite URI 形状或大小无效")
 	}
 	for index := range raw {
 		if raw[index] < 0x21 || raw[index] > 0x7e {
-			return nil, errors.New("[D115 Android] Invite URI 必须是无空白 ASCII")
+			return nil, errors.New("[Android] Invite URI 必须是无空白 ASCII")
 		}
 	}
 	encoded := strings.TrimPrefix(raw, androidV2InviteURIPrefix)
 	body, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil || base64.RawURLEncoding.EncodeToString(body) != encoded {
-		return nil, errors.New("[D115 Android] descriptor 必须是 canonical base64url")
+		return nil, errors.New("[Android] descriptor 必须是 canonical base64url")
 	}
 	return DecodeAndroidV2InviteFile(body)
 }
@@ -34,12 +34,12 @@ func DecodeAndroidV2InviteURI(raw string) ([]byte, error) {
 // DecodeAndroidV2InviteFile 只接受 `.loom-invite` 的 exact canonical object。
 func DecodeAndroidV2InviteFile(raw []byte) ([]byte, error) {
 	if len(raw) == 0 || len(raw) > 1<<20 {
-		return nil, errors.New("[D115 Android] Invite descriptor 大小无效")
+		return nil, errors.New("[Android] Invite descriptor 大小无效")
 	}
 	var descriptor wire.InviteBootstrapDescriptorV2
 	canonical, err := wire.DecodeStrict(raw, 1<<20, &descriptor)
 	if err != nil || !bytes.Equal(canonical, raw) || descriptor.Schema != 2 {
-		return nil, errors.New("[D115 Android] .loom-invite 必须是 exact canonical descriptor")
+		return nil, errors.New("[Android] .loom-invite 必须是 exact canonical descriptor")
 	}
 	return canonical, nil
 }
@@ -69,19 +69,19 @@ func PrepareAndroidV2MirrorFetchPlan(descriptorJSON []byte, trustedTime string) 
 	}
 	now, err := wire.ParseTimeZ(trustedTime)
 	if err != nil {
-		return nil, errors.New("[D115 Android] Invite trusted time 无效")
+		return nil, errors.New("[Android] Invite trusted time 无效")
 	}
 	if descriptor.Schema != 2 || descriptor.ClusterID == "" || descriptor.InviteID == "" ||
 		descriptor.MinimumRecoveryEpoch < 0 {
-		return nil, errors.New("[D115 Android] Invite descriptor header 无效")
+		return nil, errors.New("[Android] Invite descriptor header 无效")
 	}
 	descriptorExpiry, err := wire.ParseTimeZ(descriptor.ExpiresAt)
 	if err != nil || !now.Before(descriptorExpiry) {
-		return nil, errors.New("[D115 Android] Invite 已过期")
+		return nil, errors.New("[Android] Invite 已过期")
 	}
 	tokenCommitment, err := wire.TokenCommitment(descriptor.ClusterID, descriptor.InviteID, descriptor.Token)
 	if err != nil || tokenCommitment != descriptor.TokenCommitment {
-		return nil, errors.New("[D114 Android] Invite token commitment 不匹配")
+		return nil, errors.New("[Android] Invite token commitment 不匹配")
 	}
 	if err := wire.ValidateDistributionMirrorRefs(descriptor.DistributionMirrors); err != nil {
 		return nil, err
@@ -91,7 +91,7 @@ func PrepareAndroidV2MirrorFetchPlan(descriptorJSON []byte, trustedTime string) 
 	}
 	capabilityID, err := wire.CapabilityID(&descriptor.BootstrapTunnelCapability.Body)
 	if err != nil || capabilityID != descriptor.BootstrapTunnelCapability.CapabilityID {
-		return nil, errors.New("[D131 Android] bootstrap capability ID 无效")
+		return nil, errors.New("[Android] bootstrap capability ID 无效")
 	}
 	if err := wire.ValidatePrivateEnrollmentServiceRef(&descriptor.EnrollmentServiceRef); err != nil {
 		return nil, err
@@ -106,7 +106,7 @@ func PrepareAndroidV2MirrorFetchPlan(descriptorJSON []byte, trustedTime string) 
 		body.AllowedDestinationIP != descriptor.EnrollmentServiceRef.OverlayIP ||
 		body.AllowedDestinationPort != descriptor.EnrollmentServiceRef.TCPPort ||
 		now.Before(notBefore) || !now.Before(capabilityExpiry) || capabilityExpiry.After(descriptorExpiry) {
-		return nil, errors.New("[D131 Android] descriptor/capability/private Enrollment tuple 不匹配")
+		return nil, errors.New("[Android] descriptor/capability/private Enrollment tuple 不匹配")
 	}
 	for _, hash := range []string{descriptor.ProofBundleHash, descriptor.BootstrapCatalogHash,
 		descriptor.TrustedCheckpointHash} {
@@ -131,7 +131,7 @@ func VerifyAndroidV2InviteProof(descriptorJSON, proofBundleJSON []byte, trustedT
 }
 
 // VerifyAndroidV2BootstrapCatalog 把 catalog 的 typed hash、有效期、ingress
-// binding 和 config QC 绑到同一份已验 Invite lineage（D115、D131）。
+// binding 和 config QC 绑到同一份已验 Invite lineage。
 func VerifyAndroidV2BootstrapCatalog(descriptorJSON, proofBundleJSON, catalogJSON []byte,
 	trustedTime string, clientProtocol int64) ([]byte, error) {
 	inputs, err := loadAndroidEnrollmentInputsV2(descriptorJSON, proofBundleJSON, trustedTime)
@@ -150,18 +150,18 @@ func VerifyAndroidV2BootstrapCatalog(descriptorJSON, proofBundleJSON, catalogJSO
 	if err != nil || catalogHash != inputs.descriptor.BootstrapCatalogHash ||
 		catalog.ClusterID != inputs.descriptor.ClusterID ||
 		catalog.BootstrapIngressSetHash != inputs.descriptor.BootstrapTunnelCapability.Body.AllowedIngressSetHash {
-		return nil, errors.New("[D131 Android] descriptor/capability/catalog binding 不匹配")
+		return nil, errors.New("[Android] descriptor/capability/catalog binding 不匹配")
 	}
 	head, current, previous, ok := inputs.verified.AuthorityForHead(catalog.ParentHeadHash)
 	if !ok || wire.VerifyConfigQCAuthority(catalog.ParentHeadHash,
 		catalog.BootstrapIngressSet.ConfigQC, &head, &current, previous) != nil {
-		return nil, errors.New("[D131 Android] catalog parent Head/QC 不在已验 Invite lineage")
+		return nil, errors.New("[Android] catalog parent Head/QC 不在已验 Invite lineage")
 	}
 	return append([]byte(nil), catalogJSON...), nil
 }
 
 // PrepareAndroidEnrollmentV2Preflight 只投影不含 token/key/CSR 的 private
-// preflight request；所有字段都来自 exact descriptor 与已验证 proof（D115、D131）。
+// preflight request；所有字段都来自 exact descriptor 与已验证 proof。
 func PrepareAndroidEnrollmentV2Preflight(descriptorJSON, proofBundleJSON []byte, trustedTime string) ([]byte, error) {
 	inputs, err := loadAndroidEnrollmentInputsV2(descriptorJSON, proofBundleJSON, trustedTime)
 	if err != nil {
@@ -210,7 +210,7 @@ func buildAndroidEnrollmentClaimCoreV2(inputs androidEnrollmentInputsV2,
 	identitySPKIDER, csrDER, wrappingSPKIDER []byte, wrappingProfile string,
 	clientNonce []byte) (wire.EnrollmentClaimCoreV2, error) {
 	if len(clientNonce) != 32 {
-		return wire.EnrollmentClaimCoreV2{}, errors.New("[D129 Android] client nonce 必须是 32 bytes")
+		return wire.EnrollmentClaimCoreV2{}, errors.New("[Android] client nonce 必须是 32 bytes")
 	}
 	opening := &preflight.DeviceEnrollmentIntentOpening
 	openingHash, _ := wire.IntentOpeningHash(opening)
@@ -262,7 +262,7 @@ func PrepareAndroidEnrollmentV2PoPBody(descriptorJSON, proofBundleJSON, response
 }
 
 // AssembleAndroidEnrollmentV2ClaimSubmission 在 token 被发送前执行与
-// server voter 同义的完整本地验证，包括 Keystore low-S PoP（D129）。
+// server voter 同义的完整本地验证，包括 Keystore low-S PoP。
 func AssembleAndroidEnrollmentV2ClaimSubmission(descriptorJSON, proofBundleJSON, responseJSON,
 	claimCoreJSON, challengeJSON, popBodyJSON []byte, proofSignature, trustedTime string) ([]byte, error) {
 	inputs, preflight, core, challenge, _, _, err :=
@@ -294,7 +294,7 @@ func AssembleAndroidEnrollmentV2ClaimSubmission(descriptorJSON, proofBundleJSON,
 func loadAndroidEnrollmentInputsV2(descriptorJSON, proofBundleJSON []byte, trustedTime string) (androidEnrollmentInputsV2, error) {
 	now, err := wire.ParseTimeZ(trustedTime)
 	if err != nil {
-		return androidEnrollmentInputsV2{}, errors.New("[D115 Android] Enrollment trusted time 无效")
+		return androidEnrollmentInputsV2{}, errors.New("[Android] Enrollment trusted time 无效")
 	}
 	var descriptor wire.InviteBootstrapDescriptorV2
 	if err := decodeExactAndroidV2(descriptorJSON, 8<<20, &descriptor, "Invite descriptor"); err != nil {
@@ -313,7 +313,7 @@ func loadAndroidEnrollmentInputsV2(descriptorJSON, proofBundleJSON []byte, trust
 	setHash, setErr := wire.ControlSetHash(&set)
 	if err != nil || setErr != nil || recordHash != verified.CertifiedInviteRecordHash() ||
 		head.Body.Payload.ControlSetHash != setHash || !wire.EqualCanonical(head, bundle.RecordHead) {
-		return androidEnrollmentInputsV2{}, errors.New("[D115 Android] proof evidence 与 record authority 不匹配")
+		return androidEnrollmentInputsV2{}, errors.New("[Android] proof evidence 与 record authority 不匹配")
 	}
 	return androidEnrollmentInputsV2{
 		descriptor: descriptor, bundle: bundle, recordHash: recordHash, head: head, set: set,
@@ -342,7 +342,7 @@ func verifyAndroidEnrollmentPreflightV2(inputs androidEnrollmentInputsV2, respon
 	if response.DeviceEnrollmentIntentOpening.DeviceEnrollmentIntent.Platform != "android" ||
 		!wire.EqualCanonical(response.DeviceEnrollmentIntentCommitment,
 			inputs.bundle.DeviceEnrollmentIntentCommitment) {
-		return response, errors.New("[D129 Android] preflight intent/platform 与 certified Invite 不匹配")
+		return response, errors.New("[Android] preflight intent/platform 与 certified Invite 不匹配")
 	}
 	return response, nil
 }
@@ -350,7 +350,7 @@ func verifyAndroidEnrollmentPreflightV2(inputs androidEnrollmentInputsV2, respon
 func validateAndroidEnrollmentClaimCoreV2(inputs androidEnrollmentInputsV2,
 	preflight wire.EnrollmentIntentPreflightResponseV1, core *wire.EnrollmentClaimCoreV2) error {
 	if core == nil {
-		return errors.New("[D129 Android] stable claim core 缺失")
+		return errors.New("[Android] stable claim core 缺失")
 	}
 	if _, err := wire.EnrollmentClaimCoreHash(core); err != nil {
 		return err
@@ -367,7 +367,7 @@ func validateAndroidEnrollmentClaimCoreV2(inputs androidEnrollmentInputsV2,
 		core.BaseControlEpoch != inputs.head.Body.Payload.ControlEpoch || core.BaseControlSetHash != setHash ||
 		core.BaseHeadHash != inputs.head.HeadHash || !containsAndroidV2(
 		opening.DeviceEnrollmentIntent.WrappingKeyProfiles, core.WrappingKeyProfile) {
-		return errors.New("[D129 Android] stable claim core 与 verified record/opening/authority 不匹配")
+		return errors.New("[Android] stable claim core 与 verified record/opening/authority 不匹配")
 	}
 	return nil
 }
@@ -405,7 +405,7 @@ func loadAndroidEnrollmentAttemptV2(descriptorJSON, proofBundleJSON, responseJSO
 			return inputs, preflight, core, challenge, coreHash, "", err
 		}
 		return inputs, preflight, core, challenge, coreHash, "",
-			errors.New("[D129 Android] challenge 与 stable core/service 不匹配")
+			errors.New("[Android] challenge 与 stable core/service 不匹配")
 	}
 	return inputs, preflight, core, challenge, coreHash, challengeHash, nil
 }

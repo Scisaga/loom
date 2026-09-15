@@ -78,7 +78,7 @@ func TestWindowsDPAPIReportAfterInviteCleanup(t *testing.T) {
 		}
 		reports <- o
 		if o.SelfCheck.Healthy {
-			// §16.1.2：同一个既有上报周期兼容旧服204与读取模式200。
+			// 同一个既有上报周期兼容旧服204与读取模式200。
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte("[]"))
 			return
@@ -196,7 +196,7 @@ func TestWindowsDPAPIReportAfterInviteCleanup(t *testing.T) {
 	if !restoredAt.After(connectedAt) || restored.Applied != state.Applied {
 		t.Fatal("recovery lost restored snapshot or increasing timestamp")
 	}
-	// §16.1：同一设备身份的真实采集结论应能经历健康、故障、恢复，线上仍只有两签。
+	// 同一设备身份的真实采集结论应能经历健康、故障、恢复，线上仍只有两签。
 	for _, problems := range [][]string{nil, {"端到端探测 DNS 解析失败"}, nil} {
 		reporter.mu.Lock()
 		reporter.check = func(context.Context, *clientruntime.WindowsHealthPlan) []string { return problems }
@@ -226,7 +226,7 @@ func verifyNativeReport(o *clientreport.Observation, ca []byte) error {
 	if _, err := attest.VerifyFresh(o.Attest, ca, time.Now(), time.Minute); err != nil {
 		return err
 	}
-	// §16.1：原生测试也核对外层路径与 canonical v5 签名附件，避免只验证身份。
+	// 原生测试也核对外层路径与 canonical v5 签名附件，避免只验证身份。
 	wireAgent, err := json.Marshal(o.Agent)
 	if err != nil {
 		return err

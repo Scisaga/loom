@@ -10,7 +10,7 @@ const DevicePrivateControlCredentialSecretIDV1 = "device-private-control"
 
 // DevicePrivateControlCredentialV1 是 Enrollment 通过 Device-owned sealed secret
 // 私下交付的稳态控制入口。它不进入 public mirror；目录 hash pin 与 internal CA roots
-// 来自同一份已被 Device view secret refs root 承诺的 plaintext（D124、D131）。
+// 来自同一份已被 Device view secret refs root 承诺的 plaintext。
 type DevicePrivateControlCredentialV1 struct {
 	Schema                      int                       `json:"schema"`
 	ClusterID                   string                    `json:"cluster_id"`
@@ -27,7 +27,7 @@ func ValidateDevicePrivateControlCredential(credential *DevicePrivateControlCred
 	if credential == nil || credential.Schema != 1 || !validIdentifier(credential.ClusterID, 128) ||
 		!validIdentifier(credential.DeviceID, 128) || len(credential.InternalCARootsDER) == 0 ||
 		len(credential.InternalCARootsDER) > 16 {
-		return errors.New("[D131 Device control] private credential header/roots 无效")
+		return errors.New("[Device control] private credential header/roots 无效")
 	}
 	directory := &credential.ControlServiceDirectory
 	if err := ValidateControlServiceDirectory(directory); err != nil {
@@ -36,13 +36,13 @@ func ValidateDevicePrivateControlCredential(credential *DevicePrivateControlCred
 	directoryHash, err := ControlServiceDirectoryHash(directory)
 	if err != nil || directoryHash != credential.ControlServiceDirectoryHash ||
 		directory.ClusterID != credential.ClusterID || credential.ParentHead.HeadHash != directory.ParentHeadHash {
-		return errors.New("[D131 Device control] private directory 与 exact hash/cluster 不一致")
+		return errors.New("[Device control] private directory 与 exact hash/cluster 不一致")
 	}
 	setHash, err := ControlSetHash(&credential.ControlSet)
 	if err != nil || setHash != directory.ControlSetHash ||
 		credential.ControlSet.ClusterID != credential.ClusterID ||
 		credential.ParentHead.Body.Payload.ClusterID != credential.ClusterID {
-		return errors.New("[D131 Device control] private directory 与 exact ControlSet 不一致")
+		return errors.New("[Device control] private directory 与 exact ControlSet 不一致")
 	}
 	if err := VerifyConfigQCAuthority(directory.ParentHeadHash, directory.ConfigQC,
 		&credential.ParentHead, &credential.ControlSet, credential.PreviousControlSet); err != nil {
@@ -51,11 +51,11 @@ func ValidateDevicePrivateControlCredential(credential *DevicePrivateControlCred
 	totalBytes := 0
 	for index, encoded := range credential.InternalCARootsDER {
 		if index > 0 && credential.InternalCARootsDER[index-1] >= encoded {
-			return errors.New("[D131 Device control] internal CA roots 必须严格排序且不重复")
+			return errors.New("[Device control] internal CA roots 必须严格排序且不重复")
 		}
 		der, err := decodeCanonicalBase64URL(encoded)
 		if err != nil {
-			return errors.New("[D131 Device control] internal CA root 不是 canonical DER")
+			return errors.New("[Device control] internal CA root 不是 canonical DER")
 		}
 		totalBytes += len(der)
 		certificate, err := x509.ParseCertificate(der)
@@ -65,11 +65,11 @@ func ValidateDevicePrivateControlCredential(credential *DevicePrivateControlCred
 			!bytes.Equal(certificate.RawSubject, certificate.RawIssuer) ||
 			certificate.CheckSignature(certificate.SignatureAlgorithm,
 				certificate.RawTBSCertificate, certificate.Signature) != nil {
-			return errors.New("[D131 Device control] internal CA root profile/self-signature 无效")
+			return errors.New("[Device control] internal CA root profile/self-signature 无效")
 		}
 	}
 	if totalBytes > 128<<10 {
-		return errors.New("[D131 Device control] internal CA roots 超过大小预算")
+		return errors.New("[Device control] internal CA roots 超过大小预算")
 	}
 	return nil
 }
@@ -86,7 +86,7 @@ func ValidateDevicePrivateControlCredentialAtFloor(credential *DevicePrivateCont
 		return err
 	}
 	if err := validateClientFloors(floor); err != nil {
-		return errors.New("[D131 Device control] durable authority floor 无效")
+		return errors.New("[Device control] durable authority floor 无效")
 	}
 	payload := credential.ParentHead.Body.Payload
 	if credential.ClusterID != floor.ClusterID ||
@@ -95,14 +95,14 @@ func ValidateDevicePrivateControlCredentialAtFloor(credential *DevicePrivateCont
 		payload.RecoveryPolicyHash != floor.RecoveryPolicyHash ||
 		payload.ControlEpoch != floor.AcceptedControlEpoch ||
 		payload.ControlSetHash != floor.ControlSetHash {
-		return errors.New("[D131 Device control] private credential 未绑定 durable recovery/ControlSet authority")
+		return errors.New("[Device control] private credential 未绑定 durable recovery/ControlSet authority")
 	}
 	if payload.ControlRevision > floor.AcceptedControlRevision {
-		return errors.New("[D131 Device control] private credential 指向尚未接受的未来 Head")
+		return errors.New("[Device control] private credential 指向尚未接受的未来 Head")
 	}
 	if payload.ControlRevision == floor.AcceptedControlRevision &&
 		credential.ParentHead.HeadHash != floor.HeadHash {
-		return errors.New("[D131 Device control] private credential 与 durable Head 同坐标分叉")
+		return errors.New("[Device control] private credential 与 durable Head 同坐标分叉")
 	}
 	return nil
 }

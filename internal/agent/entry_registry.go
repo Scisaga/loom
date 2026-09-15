@@ -9,7 +9,7 @@ import (
 
 // EntryProbeRegistry 由 Windows 客户端宿主按 Service 生命周期持有。每个
 // underlay generation 的第一份授权入口快照会被冻结并并行探测一次；同代后续
-// 配置或 profile 只能复用该结果，新出现的候选保持 unknown（§5.6）。
+// 配置或 profile 只能复用该结果，新出现的候选保持 unknown。
 type EntryProbeRegistry struct {
 	ctx context.Context
 	mu  sync.Mutex
@@ -25,7 +25,7 @@ type entryProbeGeneration struct {
 
 func NewEntryProbeRegistry(ctx context.Context) (*EntryProbeRegistry, error) {
 	if ctx == nil {
-		return nil, errors.New("[§5.6] 入口探测注册表缺少 Service context")
+		return nil, errors.New("入口探测注册表缺少 Service context")
 	}
 	return &EntryProbeRegistry{ctx: ctx}, nil
 }
@@ -34,7 +34,7 @@ func (registry *EntryProbeRegistry) results(ctx context.Context, generation stri
 	entries []ClientEntry, probe func(context.Context, ClientEntry) (time.Duration, error),
 ) (map[string]ClientEntryResult, map[string]bool, error) {
 	if registry == nil || ctx == nil || generation == "" {
-		return nil, nil, errors.New("[§5.6] underlay probe generation 输入无效")
+		return nil, nil, errors.New("underlay probe generation 输入无效")
 	}
 	current, err := canonicalClientEntries(entries)
 	if err != nil {
@@ -71,10 +71,10 @@ func canonicalClientEntries(entries []ClientEntry) (map[string]ClientEntry, erro
 	out := make(map[string]ClientEntry, len(entries))
 	for _, entry := range entries {
 		if entry.Node == "" || entry.Address == "" {
-			return nil, errors.New("[§5.6] 授权入口 identity/address 不完整")
+			return nil, errors.New("授权入口 identity/address 不完整")
 		}
 		if previous, ok := out[entry.Node]; ok && previous != entry {
-			return nil, errors.New("[§5.6] 同一入口 identity 出现分叉坐标")
+			return nil, errors.New("同一入口 identity 出现分叉坐标")
 		}
 		out[entry.Node] = entry
 	}

@@ -60,7 +60,7 @@ func TestBrowserPageOmitsReferrerToOtherOrigins(t *testing.T) {
 }
 
 // 用真实浏览器从实际设备表单发出 POST，不能手工注入一个“正确”的 Origin
-// 掩盖 no-referrer 对普通 HTML form navigation 的影响（D104）。
+// 掩盖 no-referrer 对普通 HTML form navigation 的影响。
 func TestDeviceCreateBrowserFormPreservesOrigin(t *testing.T) {
 	browser := os.Getenv("LOOM_BROWSER_TEST_BINARY")
 	if browser == "" {

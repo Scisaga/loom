@@ -8,10 +8,10 @@ import (
 
 // systemd unit 也是渲染产物,不该手写。
 //
-// §12 说"所有节点上的配置文件都是 SSOT 的渲染输出";手写 unit 会立刻带来
-// 两个问题:各机器的启动参数悄悄分叉,以及 §15.3 的漂移检测覆盖不到它。
+// 所有节点上的配置文件都是 SSOT 的渲染输出;手写 unit 会立刻带来
+// 两个问题:各机器的启动参数悄悄分叉,以及漂移检测覆盖不到它。
 
-const singBoxUnit = `# 由 loom render 生成 —— 不要手工编辑(§12)
+const singBoxUnit = `# 由 loom render 生成 —— 不要手工编辑
 [Unit]
 Description=sing-box (Loom %s)
 After=network-online.target
@@ -33,7 +33,7 @@ WantedBy=multi-user.target
 
 // renderSingBoxUnit 生成 sing-box 的 systemd unit。
 //
-// 服务器要等隧道起来才有意义:它的出站要绑到 wg 接口上(§8.2),接口不在
+// 服务器要等隧道起来才有意义:它的出站要绑到 wg 接口上,接口不在
 // 时 sing-box 会启动失败并进入重启循环。用 After/Requires 把顺序钉死,
 // 比靠 Restart 兜底干净。
 func renderSingBoxUnit(s *model.SSOT, n *model.Node) File {

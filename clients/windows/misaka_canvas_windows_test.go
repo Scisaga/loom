@@ -12,14 +12,14 @@ func misakaCanvasTestDC(t *testing.T, width, height int32) (uintptr, []byte) {
 	t.Helper()
 	dc, _, _ := procCreateCompatibleDC.Call(0)
 	if dc == 0 {
-		t.Fatal("[§7.2] 创建离屏画布 DC 失败")
+		t.Fatal("创建离屏画布 DC 失败")
 	}
 	t.Cleanup(func() { procDeleteDC.Call(dc) })
 	header := portableBitmapInfoHeader{size: uint32(unsafe.Sizeof(portableBitmapInfoHeader{})), width: width, height: -height, planes: 1, bitCount: 32}
 	var pixels unsafe.Pointer
 	bitmap, _, _ := procCreateDIBSection.Call(dc, uintptr(unsafe.Pointer(&header)), portableDIBRGBColors, uintptr(unsafe.Pointer(&pixels)), 0, 0)
 	if bitmap == 0 || pixels == nil {
-		t.Fatal("[§7.2] 创建离屏画布位图失败")
+		t.Fatal("创建离屏画布位图失败")
 	}
 	previous, _, _ := procSelectObject.Call(dc, bitmap)
 	t.Cleanup(func() {
@@ -65,7 +65,7 @@ func TestMisakaCanvasRenderAndRebind(t *testing.T) {
 	if err := c.End(); err != nil {
 		t.Fatal(err)
 	}
-	// §7.2：绑定非零起点的列表项，但绘图仍传入 HDC 坐标，验证平移既不遗漏也不重复。
+	// 绑定非零起点的列表项，但绘图仍传入 HDC 坐标，验证平移既不遗漏也不重复。
 	item := portableRect{left: 30, top: 20, right: 310, bottom: 180}
 	if err := c.Begin(dc, item, 144); err != nil {
 		t.Fatal(err)
@@ -85,19 +85,19 @@ func TestMisakaCanvasRenderAndRebind(t *testing.T) {
 		rgb  uint32
 	}{{0, 0, 0xf8fafc}, {35, 25, 0xffffff}, {50, 40, 0xffffff}, {80, 60, 0x1c2541}, {10, 60, 0xf8fafc}, {319, 199, 0xf8fafc}} {
 		if got := misakaCanvasTestPixel(pixels, 320, check.x, check.y); got != check.rgb {
-			t.Errorf("[§7.2] 像素 (%d,%d)=%06x，预期 %06x", check.x, check.y, got, check.rgb)
+			t.Errorf("像素 (%d,%d)=%06x，预期 %06x", check.x, check.y, got, check.rgb)
 		}
 	}
 	for _, area := range []portableRect{latin, cjk} {
 		ink := misakaCanvasInkBounds(pixels, 320, area, 0xffffff)
 		if ink.right-ink.left < 20 || ink.bottom-ink.top < 8 {
-			t.Errorf("[§7.2] DirectWrite 未在 %+v 内绘出可读字形：%+v", area, ink)
+			t.Errorf("DirectWrite 未在 %+v 内绘出可读字形：%+v", area, ink)
 		}
 	}
-	// §7.2：丢弃设备资源不重建窗口，也不丢失文字格式；下一帧必须恢复绘制。
+	// 丢弃设备资源不重建窗口，也不丢失文字格式；下一帧必须恢复绘制。
 	c.releaseTarget()
 	if c.target != nil || len(c.brushes) != 0 {
-		t.Fatal("[§7.2] 绘制目标重置后仍保留设备资源")
+		t.Fatal("绘制目标重置后仍保留设备资源")
 	}
 	for _, dpi := range []int32{96, 120, 144, 168, 192, 96} {
 		if err := c.Begin(dc, full, dpi); err != nil {
@@ -112,12 +112,12 @@ func TestMisakaCanvasRenderAndRebind(t *testing.T) {
 	c.Close()
 	c.Close()
 	if c.target != nil || c.factory != nil || c.writeFactory != nil || len(c.formats) != 0 || len(c.brushes) != 0 {
-		t.Fatal("[§7.2] 关闭后仍保留 Direct2D/DirectWrite 资源")
+		t.Fatal("关闭后仍保留 Direct2D/DirectWrite 资源")
 	}
 	if err := c.Begin(dc, full, 96); err == nil {
-		t.Fatal("[§7.2] 已关闭的画布仍接受绘制")
+		t.Fatal("已关闭的画布仍接受绘制")
 	}
-	t.Log("[§7.2] 系统 Direct2D/DirectWrite 的圆角像素、中文、坐标平移、DPI 和目标重建通过")
+	t.Log("系统 Direct2D/DirectWrite 的圆角像素、中文、坐标平移、DPI 和目标重建通过")
 }
 
 func TestMisakaCanvasTextSizeAlignmentAndClip(t *testing.T) {
@@ -153,33 +153,33 @@ func TestMisakaCanvasTextSizeAlignmentAndClip(t *testing.T) {
 	for index, area := range aligned {
 		ink := misakaCanvasInkBounds(pixels, 360, area, 0xffffff)
 		if ink.right <= ink.left {
-			t.Fatalf("[§7.2] 对齐方式 %d 没有文字像素", index)
+			t.Fatalf("对齐方式 %d 没有文字像素", index)
 		}
 		offsets[index] = ink.left - area.left
 	}
 	if offsets[0] > 5 || offsets[1] < offsets[0]+10 || offsets[2] < offsets[1]+10 {
-		t.Errorf("[§7.2] 左／中／右对齐的偏移不正确：%v", offsets)
+		t.Errorf("左／中／右对齐的偏移不正确：%v", offsets)
 	}
 	smallInk := misakaCanvasInkBounds(pixels, 360, small, 0xffffff)
 	largeInk := misakaCanvasInkBounds(pixels, 360, large, 0xffffff)
 	smallHeight, largeHeight := smallInk.bottom-smallInk.top, largeInk.bottom-largeInk.top
 	if smallHeight < 5 || largeHeight < smallHeight*3/2 || largeHeight > smallHeight*3 {
-		t.Errorf("[§7.2] 12px／24px 字号未正确传入原生 ABI，字形高度 %d／%d", smallHeight, largeHeight)
+		t.Errorf("12px／24px 字号未正确传入原生 ABI，字形高度 %d／%d", smallHeight, largeHeight)
 	}
 	outside := misakaCanvasInkBounds(pixels, 360, portableRect{left: 31, top: 150, right: 350, bottom: 175}, 0xffffff)
 	if outside.right > outside.left {
-		t.Errorf("[§7.2] 文字超出裁剪矩形：%+v", outside)
+		t.Errorf("文字超出裁剪矩形：%+v", outside)
 	}
-	t.Logf("[§7.2] 原生 12px／24px 字号生成 %d／%dpx 字形；对齐偏移=%v；裁剪通过", smallHeight, largeHeight, offsets)
+	t.Logf("原生 12px／24px 字号生成 %d／%dpx 字形；对齐偏移=%v；裁剪通过", smallHeight, largeHeight, offsets)
 }
 
 func TestMisakaCanvasNativeLayouts(t *testing.T) {
 	if unsafe.Sizeof(misakaTargetProperties{}) != 28 || unsafe.Sizeof(misakaFloatRect{}) != 16 || unsafe.Sizeof(misakaRoundedRect{}) != 24 || unsafe.Sizeof(misakaTrimming{}) != 12 {
-		t.Fatal("[§7.2] Direct2D 原生结构布局发生变化")
+		t.Fatal("Direct2D 原生结构布局发生变化")
 	}
 	var args misakaTextFormatArgs
 	if unsafe.Sizeof(args) != 72 || unsafe.Offsetof(args.size) != 48 || unsafe.Offsetof(args.locale) != 56 || unsafe.Offsetof(args.output) != 64 {
-		t.Fatal("[§7.2] DirectWrite ABI 桥参数偏移发生变化")
+		t.Fatal("DirectWrite ABI 桥参数偏移发生变化")
 	}
 }
 
@@ -208,11 +208,11 @@ func TestMisakaCanvasEllipsisAndParagraph(t *testing.T) {
 	portableGDI32.NewProc("GdiFlush").Call()
 	ink := misakaCanvasInkBounds(pixels, 260, paragraph, 0xffffff)
 	if ink.bottom-ink.top < 40 || ink.top > paragraph.top+10 {
-		t.Errorf("[§7.2] 段落未从矩形顶部换行：%+v", ink)
+		t.Errorf("段落未从矩形顶部换行：%+v", ink)
 	}
 	outside := misakaCanvasInkBounds(pixels, 260, portableRect{left: 126, right: 250, bottom: 155}, 0xffffff)
 	if outside.right > outside.left {
-		t.Errorf("[§7.2] 换行或省略后的文字超出矩形：%+v", outside)
+		t.Errorf("换行或省略后的文字超出矩形：%+v", outside)
 	}
 	for style, format := range c.formats {
 		var trimming misakaTrimming
@@ -222,7 +222,7 @@ func TestMisakaCanvasEllipsisAndParagraph(t *testing.T) {
 			t.Fatal(err)
 		}
 		if trimming.granularity != 1 || sign == nil {
-			t.Errorf("[§7.2] 原生格式未配置省略号截断：%+v", trimming)
+			t.Errorf("原生格式未配置省略号截断：%+v", trimming)
 		}
 		misakaRelease(sign)
 		wantParagraph, wantWrap := uintptr(2), uintptr(1)
@@ -230,8 +230,8 @@ func TestMisakaCanvasEllipsisAndParagraph(t *testing.T) {
 			wantParagraph, wantWrap = 0, 0
 		}
 		if misakaCOMCall(format, 12) != wantParagraph || misakaCOMCall(format, 13) != wantWrap {
-			t.Errorf("[§7.2] 原生段落或换行属性与样式不符：%+v", style)
+			t.Errorf("原生段落或换行属性与样式不符：%+v", style)
 		}
 	}
-	t.Log("[§7.2] 两种格式均保留原生省略号；段落换行、顶部对齐及边界裁剪通过")
+	t.Log("两种格式均保留原生省略号；段落换行、顶部对齐及边界裁剪通过")
 }

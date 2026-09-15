@@ -31,7 +31,7 @@ import (
 	"loom/internal/clientcore"
 )
 
-// §5.6、§7.3.3：官方数据面读回实际 selector；业务目标及代理接收器验证零探测请求。
+// 官方数据面读回实际 selector；业务目标及代理接收器验证零探测请求。
 // 测试只绑定回环地址，不创建 TUN、改系统路由或读取已加入身份。
 func TestOfficialWindowsClientSelectsEntryWithoutBusinessProbes(t *testing.T) {
 	executable := os.Getenv("LOOM_SING_BOX_EXECUTABLE")
@@ -74,7 +74,7 @@ func TestOfficialWindowsClientSelectsEntryWithoutBusinessProbes(t *testing.T) {
 	if err := json.Unmarshal(planBody, &cfg); err != nil {
 		t.Fatal(err)
 	}
-	// §7.3：两条原本独立的 Service 规则故意指向不可达候选，统一路径必须覆盖实际请求。
+	// 两条原本独立的 Service 规则故意指向不可达候选，统一路径必须覆盖实际请求。
 	for i, targetURL := range []string{target.URL, otherTarget.URL} {
 		u, _ := url.Parse(targetURL)
 		port, _ := strconv.Atoi(u.Port())
@@ -137,7 +137,7 @@ func TestOfficialWindowsClientSelectsEntryWithoutBusinessProbes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(active.Declarations) != 1 || active.Declarations[0].Selector != cfg.Declarations[0].Selector {
-		t.Fatal("[§7.3] 固定出口仍启动了独立的 Service 决策")
+		t.Fatal("固定出口仍启动了独立的 Service 决策")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	done := make(chan error, 1)
@@ -157,7 +157,7 @@ func TestOfficialWindowsClientSelectsEntryWithoutBusinessProbes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// §5.6：只提供两次入口结果；目标接收器必须始终零请求。
+	// 只提供两次入口结果；目标接收器必须始终零请求。
 	opts := agent.ClientOptions{StatePath: filepath.Join(dir, "state.json"), Entries: []agent.ClientEntry{
 		{Node: "demo-prefix-a", Address: "192.0.2.1"}, {Node: "demo-prefix-b", Address: "192.0.2.2"},
 	}, Probe: func(_ context.Context, e agent.ClientEntry) (time.Duration, error) {

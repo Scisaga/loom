@@ -29,7 +29,7 @@ type androidPrivateControlPlanV1 struct {
 
 // PrepareAndroidV2PrivateControlPlan 只从已认证的 Device-owned sealed credential、
 // completion certificate/profile 和 protected LKG 投影一个 exact overlay mTLS 连接。
-// Kotlin 只持有 Keystore private-key handle；目录、CA 或 endpoint 都不能从公网 URL 推导（D131）。
+// Kotlin 只持有 Keystore private-key handle；目录、CA 或 endpoint 都不能从公网 URL 推导。
 func PrepareAndroidV2PrivateControlPlan(stateJSON, identitySPKIDER []byte,
 	role, serviceID, trustedTime string,
 ) ([]byte, error) {
@@ -38,13 +38,13 @@ func PrepareAndroidV2PrivateControlPlan(stateJSON, identitySPKIDER []byte,
 		return nil, err
 	}
 	if len(plans) != 1 {
-		return nil, errors.New("[D131 Android control] exact private service 选择不唯一")
+		return nil, errors.New("[Android control] exact private service 选择不唯一")
 	}
 	return wire.MarshalCanonical(plans[0])
 }
 
 // PrepareAndroidV2PrivateControlPlans 按 certified directory 顺序返回当前 Device
-// 获权的全部同 role 副本；宿主可逐个故障切换，但不能扫描或派生额外地址（D131）。
+// 获权的全部同 role 副本；宿主可逐个故障切换，但不能扫描或派生额外地址。
 func PrepareAndroidV2PrivateControlPlans(stateJSON, identitySPKIDER []byte,
 	role, trustedTime string,
 ) ([]byte, error) {
@@ -65,11 +65,11 @@ func prepareAndroidV2PrivateControlPlans(stateJSON, identitySPKIDER []byte,
 	if state.ControlSet == nil || state.Enrollment == nil || state.Envelope.Payload.State != "active" ||
 		state.Envelope.Payload.Active == nil || state.Enrollment.DeviceProfile == nil ||
 		state.Enrollment.DeviceIssuance == nil || state.Enrollment.DeviceApprovedAt == "" {
-		return nil, errors.New("[D131 Android control] active Device/identity/profile 不完整")
+		return nil, errors.New("[Android control] active Device/identity/profile 不完整")
 	}
 	now, err := wire.ParseTimeZ(trustedTime)
 	if err != nil {
-		return nil, errors.New("[D131 Android control] trusted time 无效")
+		return nil, errors.New("[Android control] trusted time 无效")
 	}
 	identityPublic, err := x509.ParsePKIXPublicKey(identitySPKIDER)
 	identity, ok := identityPublic.(*ecdsa.PublicKey)
@@ -77,7 +77,7 @@ func prepareAndroidV2PrivateControlPlans(stateJSON, identitySPKIDER []byte,
 	if err != nil || !ok || identity.Curve != elliptic.P256() || hashErr != nil ||
 		identityHash != state.Enrollment.IdentityKeyHash ||
 		identityHash != state.Envelope.Payload.Active.IdentitySPKIHash {
-		return nil, errors.New("[D131 Android control] Keystore identity 与 protected Device 不一致")
+		return nil, errors.New("[Android control] Keystore identity 与 protected Device 不一致")
 	}
 	certificateDER, err := wire.EnrollmentResultCertificateDER(&state.Enrollment.ResultArtifact)
 	if err != nil {
@@ -86,7 +86,7 @@ func prepareAndroidV2PrivateControlPlans(stateJSON, identitySPKIDER []byte,
 	certificate, err := x509.ParseCertificate(certificateDER)
 	approvedAt, approvedErr := wire.ParseTimeZ(state.Enrollment.DeviceApprovedAt)
 	if err != nil || approvedErr != nil || !bytes.Equal(certificate.RawSubjectPublicKeyInfo, identitySPKIDER) {
-		return nil, errors.New("[D131 Android control] Device certificate/Keystore identity 不匹配")
+		return nil, errors.New("[Android control] Device certificate/Keystore identity 不匹配")
 	}
 	if _, err := wire.VerifyDeviceCertificateAt(certificateDER, state.Enrollment.DeviceProfile,
 		state.Envelope.Payload.DeviceID, identityHash, state.Enrollment.ClaimCore.ClientPlatform,
@@ -100,7 +100,7 @@ func prepareAndroidV2PrivateControlPlans(stateJSON, identitySPKIDER []byte,
 		return nil, err
 	}
 	if err := wire.ValidateDevicePrivateControlCredentialAtFloor(&credential, state.Floors); err != nil {
-		return nil, errors.New("[D131 Android control] private credential 未绑定 durable authority")
+		return nil, errors.New("[Android control] private credential 未绑定 durable authority")
 	}
 	services, err := selectAndroidPrivateControlServices(&credential.ControlServiceDirectory, role, serviceID)
 	if err != nil {
@@ -117,7 +117,7 @@ func prepareAndroidV2PrivateControlPlans(stateJSON, identitySPKIDER []byte,
 	for _, service := range services {
 		if !containsAndroidString(service.AuthorizedSubjectProfiles, state.Enrollment.DeviceProfile.ProfileID) {
 			if serviceID != "" {
-				return nil, errors.New("[D131 Android control] Device certificate profile 未获 service 授权")
+				return nil, errors.New("[Android control] Device certificate profile 未获 service 授权")
 			}
 			continue
 		}
@@ -133,7 +133,7 @@ func prepareAndroidV2PrivateControlPlans(stateJSON, identitySPKIDER []byte,
 		})
 	}
 	if len(plans) == 0 {
-		return nil, errors.New("[D131 Android control] private directory 缺获权目标 service")
+		return nil, errors.New("[Android control] private directory 缺获权目标 service")
 	}
 	return plans, nil
 }
@@ -154,11 +154,11 @@ func androidPrivateControlCredential(credentials []androidInstalledSecretV1,
 	}
 	if selected == nil {
 		return wire.DevicePrivateControlCredentialV1{},
-			errors.New("[D131 Android control] 缺 exact Device private-control credential")
+			errors.New("[Android control] 缺 exact Device private-control credential")
 	}
 	plaintext, err := base64.RawURLEncoding.DecodeString(selected.SecretBytes)
 	if err != nil || base64.RawURLEncoding.EncodeToString(plaintext) != selected.SecretBytes {
-		return wire.DevicePrivateControlCredentialV1{}, errors.New("[D131 Android control] private credential 编码无效")
+		return wire.DevicePrivateControlCredentialV1{}, errors.New("[Android control] private credential 编码无效")
 	}
 	defer clear(plaintext)
 	var credential wire.DevicePrivateControlCredentialV1
@@ -170,7 +170,7 @@ func androidPrivateControlCredential(credentials []androidInstalledSecretV1,
 	}
 	if credential.ClusterID != clusterID || credential.DeviceID != deviceID {
 		return wire.DevicePrivateControlCredentialV1{},
-			errors.New("[D131 Android control] private credential Device/cluster 绑定无效")
+			errors.New("[Android control] private credential Device/cluster 绑定无效")
 	}
 	return credential, nil
 }
@@ -179,7 +179,7 @@ func selectAndroidPrivateControlServices(directory *wire.ControlServiceDirectory
 	role, serviceID string,
 ) ([]wire.PrivateControlServiceV1, error) {
 	if role != "device_config" && role != "device_report" {
-		return nil, errors.New("[D131 Android control] private service role 无效")
+		return nil, errors.New("[Android control] private service role 无效")
 	}
 	selected := make([]wire.PrivateControlServiceV1, 0)
 	for index := range directory.Services {
@@ -193,7 +193,7 @@ func selectAndroidPrivateControlServices(directory *wire.ControlServiceDirectory
 		selected = append(selected, copy)
 	}
 	if len(selected) == 0 {
-		return nil, errors.New("[D131 Android control] private directory 缺目标 service")
+		return nil, errors.New("[Android control] private directory 缺目标 service")
 	}
 	return selected, nil
 }

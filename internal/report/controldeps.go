@@ -25,7 +25,7 @@ import (
 // controlDeps 把中控配置接到界面上。
 //
 // 界面唯一能做的写操作是**改 SSOT**。发布是自动的 —— 发布器盯着同一个文件,
-// 存盘之后 30 秒内接管(§14.2.3)。
+// 存盘之后 30 秒内接管。
 func controlDeps(c *Control, onDeviceChange ...func()) *webui.ControlDeps {
 	// HTTP handler 可能同时收到多个保存。原子 rename 能保证读者不会看到
 	// 半截 YAML,这把锁则让同一个中控进程内的“校验 + 替换”成为一个串行事务。

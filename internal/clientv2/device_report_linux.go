@@ -42,7 +42,7 @@ type LinuxDeviceReportOptions struct {
 
 // SendLinuxDeviceReport 只用 durable LKG floors 和 Enrollment identity 签名，
 // 并经 pinned private directory 中的 device_report overlay service 发送。
-// report sequence 的原子 CAS 由服务端强制；重试时调用方必须复用返回的 exact envelope（D131）。
+// report sequence 的原子 CAS 由服务端强制；重试时调用方必须复用返回的 exact envelope。
 func SendLinuxDeviceReport(ctx context.Context,
 	options LinuxDeviceReportOptions) (wire.DeviceReportEnvelopeV2, error) {
 	envelope, err := PrepareLinuxDeviceReport(options)
@@ -56,7 +56,7 @@ func SendLinuxDeviceReport(ctx context.Context,
 }
 
 // PrepareLinuxDeviceReport 只从 root-only identity/LKG 生成可持久化的 exact
-// envelope。生产调用方必须先落盘，再调用 SubmitLinuxDeviceReport（D131）。
+// envelope。生产调用方必须先落盘，再调用 SubmitLinuxDeviceReport。
 func PrepareLinuxDeviceReport(options LinuxDeviceReportOptions) (wire.DeviceReportEnvelopeV2, error) {
 	store, current, _, identityKey, identityHash, _, err := linuxDeviceReportIdentity(options)
 	if err != nil {
@@ -68,7 +68,7 @@ func PrepareLinuxDeviceReport(options LinuxDeviceReportOptions) (wire.DeviceRepo
 	}
 	generatedAt := now().UTC().Truncate(time.Second)
 	if generatedAt.IsZero() {
-		return wire.DeviceReportEnvelopeV2{}, errors.New("[D131 Linux report] trusted time 无效")
+		return wire.DeviceReportEnvelopeV2{}, errors.New("[Linux report] trusted time 无效")
 	}
 	if options.RetryEnvelope != nil {
 		canonical, err := wire.MarshalCanonical(options.RetryEnvelope)
@@ -80,7 +80,7 @@ func PrepareLinuxDeviceReport(options LinuxDeviceReportOptions) (wire.DeviceRepo
 			!wire.EqualCanonical(envelope.Body.AcceptedFloors, store.Floors()) ||
 			wire.VerifyDeviceReport(&envelope, &identityKey.PublicKey, current.Payload.DeviceID,
 				identityHash, generatedAt, 24*time.Hour, 5*time.Minute, options.Schemas) != nil {
-			return wire.DeviceReportEnvelopeV2{}, errors.New("[D131 Linux report] retry envelope 与当前 identity/floors/schema 不一致")
+			return wire.DeviceReportEnvelopeV2{}, errors.New("[Linux report] retry envelope 与当前 identity/floors/schema 不一致")
 		}
 		return envelope, nil
 	}
@@ -102,7 +102,7 @@ func PrepareLinuxDeviceReport(options LinuxDeviceReportOptions) (wire.DeviceRepo
 func SubmitLinuxDeviceReport(ctx context.Context, options LinuxDeviceReportOptions,
 	envelope *wire.DeviceReportEnvelopeV2) error {
 	if ctx == nil {
-		return errors.New("[D131 Linux report] context 缺失")
+		return errors.New("[Linux report] context 缺失")
 	}
 	store, current, installation, identityKey, identityHash, certificateDER, err := linuxDeviceReportIdentity(options)
 	if err != nil {
@@ -139,7 +139,7 @@ func SubmitLinuxDeviceReport(ctx context.Context, options LinuxDeviceReportOptio
 	if envelope == nil || !wire.EqualCanonical(envelope.Body.AcceptedFloors, store.Floors()) ||
 		wire.VerifyDeviceReport(envelope, &identityKey.PublicKey, current.Payload.DeviceID,
 			identityHash, instant, 24*time.Hour, 5*time.Minute, options.Schemas) != nil {
-		return errors.New("[D131 Linux report] envelope 与当前 identity/floors/schema 不一致")
+		return errors.New("[Linux report] envelope 与当前 identity/floors/schema 不一致")
 	}
 	client, err := newPrivateDeviceHTTPClient(service, "device_report", certificateDER, identityKey,
 		roots, options.Dial, now, options.Timeout)
@@ -159,7 +159,7 @@ func linuxDeviceReportIdentity(options LinuxDeviceReportOptions) (*Store, *wire.
 	current := store.Envelope()
 	installation := store.Enrollment()
 	if current == nil || installation == nil || current.Payload.Active == nil {
-		return nil, nil, nil, nil, "", nil, errors.New("[D131 Linux report] 正式 active enrollment/LKG 尚未安装")
+		return nil, nil, nil, nil, "", nil, errors.New("[Linux report] 正式 active enrollment/LKG 尚未安装")
 	}
 	identity, err := LoadEnrollmentIdentityForResume(options.IdentityPath)
 	if err != nil {
@@ -172,7 +172,7 @@ func linuxDeviceReportIdentity(options LinuxDeviceReportOptions) (*Store, *wire.
 	identityHash, err := identity.IdentitySPKIHash()
 	if err != nil || identityHash != installation.IdentityKeyHash ||
 		identityHash != current.Payload.Active.IdentitySPKIHash {
-		return nil, nil, nil, nil, "", nil, errors.New("[D131 Linux report] 本机 identity 与 durable installation/view 不一致")
+		return nil, nil, nil, nil, "", nil, errors.New("[Linux report] 本机 identity 与 durable installation/view 不一致")
 	}
 	certificateDER, err := wire.EnrollmentResultCertificateDER(&installation.ResultArtifact)
 	if err != nil {
@@ -180,7 +180,7 @@ func linuxDeviceReportIdentity(options LinuxDeviceReportOptions) (*Store, *wire.
 	}
 	certificateHash, err := wire.DeviceCertificateHash(certificateDER)
 	if err != nil || certificateHash != installation.DeviceCertificateHash {
-		return nil, nil, nil, nil, "", nil, errors.New("[D131 Linux report] Device certificate 与 durable installation 不一致")
+		return nil, nil, nil, nil, "", nil, errors.New("[Linux report] Device certificate 与 durable installation 不一致")
 	}
 	return store, current, installation, identityKey, identityHash, certificateDER, nil
 }
@@ -188,7 +188,7 @@ func linuxDeviceReportIdentity(options LinuxDeviceReportOptions) (*Store, *wire.
 func (client *privateDeviceHTTPClient) postDeviceReport(ctx context.Context,
 	envelope *wire.DeviceReportEnvelopeV2) error {
 	if client == nil || client.client == nil || envelope == nil {
-		return errors.New("[D131 Linux report] private client/report 缺失")
+		return errors.New("[Linux report] private client/report 缺失")
 	}
 	body, err := wire.MarshalCanonical(envelope)
 	if err != nil {
@@ -203,17 +203,17 @@ func (client *privateDeviceHTTPClient) postDeviceReport(ctx context.Context,
 	request.Header.Set("Accept", "application/json")
 	response, err := client.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("[D131 Linux report] private device_report 请求失败: %w", err)
+		return fmt.Errorf("[Linux report] private device_report 请求失败: %w", err)
 	}
 	defer response.Body.Close()
 	responseBody, readErr := io.ReadAll(io.LimitReader(response.Body,
 		maximumPrivateDeviceReportResponseBytes+1))
 	if readErr != nil || len(responseBody) > maximumPrivateDeviceReportResponseBytes {
-		return errors.New("[D131 Linux report] private device_report 响应无效或过大")
+		return errors.New("[Linux report] private device_report 响应无效或过大")
 	}
 	if response.StatusCode != http.StatusNoContent || len(responseBody) != 0 ||
 		response.Header.Get("Content-Encoding") != "" {
-		return fmt.Errorf("[D131 Linux report] private device_report 未接受: status=%d", response.StatusCode)
+		return fmt.Errorf("[Linux report] private device_report 未接受: status=%d", response.StatusCode)
 	}
 	return nil
 }

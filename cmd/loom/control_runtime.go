@@ -1207,10 +1207,10 @@ func (runtime *controlRuntime) serveControlUI(writer http.ResponseWriter, reques
 	if websocketUpgrade {
 		if request.Method != http.MethodGet || request.Header.Get("Origin") != "https://"+address ||
 			(request.Header.Get("Sec-Fetch-Site") != "" && request.Header.Get("Sec-Fetch-Site") != "same-origin") {
-			writeControlRuntimeError(writer, http.StatusForbidden, "[§16.4 实时设备列表] WebSocket 的 same-origin 证据无效")
+			writeControlRuntimeError(writer, http.StatusForbidden, "[实时设备列表] WebSocket 的 same-origin 证据无效")
 			return
 		}
-		// net/http 的请求级读写 deadline 在 Hijack 后不会自动清除。WebSocket（§16.4）
+		// net/http 的请求级读写 deadline 在 Hijack 后不会自动清除。WebSocket
 		// 若沿用 control server 的 15s/30s deadline，会被误断成周期重连。
 		writer = &controlUIUpgradeResponseWriter{ResponseWriter: writer}
 	}

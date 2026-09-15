@@ -1,5 +1,5 @@
 // Package agent 是跑在接入节点上的调参回路:按 tuning_period 探测每条候选、
-// 按 objective 排序、带阻尼地切 selector(§5.5)。
+// 按 objective 排序、带阻尼地切 selector。
 //
 // 它是 SSOT 里那组调参字段的**唯一消费者**。在它出现之前,
 // switch_threshold / window / min_samples / stale_after 四个字段没有任何
@@ -7,7 +7,7 @@
 // 一个不存在的控制环。
 //
 // **节点上不放 SSOT。** Agent 读的是渲染出来的 agent/config.json,它由
-// SSOT 纯函数导出(§12),内容只够跑这个回路:探测哪些候选、打哪个目标、
+// SSOT 纯函数导出,内容只够跑这个回路:探测哪些候选、打哪个目标、
 // 多久一轮、什么时候允许切。
 package agent
 
@@ -30,11 +30,11 @@ type Config struct {
 	Schema int    `json:"schema,omitempty"`
 	Node   string `json:"node"`
 
-	// API 是 sing-box 的控制端点(§7.3.1)。selector 的当前选择由它设置。
+	// API 是 sing-box 的控制端点。selector 的当前选择由它设置。
 	API       string `json:"api"`
 	APISecret string `json:"api_secret"`
 
-	// Probe 是探测入口(§7.3.3):一个回环端口,用户名区分候选。
+	// Probe 是探测入口:一个回环端口,用户名区分候选。
 	Probe       string `json:"probe"`
 	ProbeSecret string `json:"probe_secret"`
 
@@ -46,7 +46,7 @@ type Config struct {
 	// 旧配置可以没有该字段；所有新渲染配置都会显式携带。
 	Selectors []SelectorPlan `json:"selectors,omitempty"`
 
-	// Peers 是本节点能顺着隧道直接够到的上报接口(§16.1)。
+	// Peers 是本节点能顺着隧道直接够到的上报接口。
 	//
 	// 覆盖面取决于拓扑:接入节点只和一部分服务器有隧道,而 AllowedIPs 是
 	// /32,拉不到隧道那头以外的地址。好在**握手年龄是对称的** —— 一条隧道
@@ -108,7 +108,7 @@ type Decl struct {
 
 	// Targets 是要探测的目标。**每条候选对每个目标各测一遍。**
 	//
-	// 服务的目标就是它自己的地址(§4.5)—— 不再需要"代表性目标"这种东西,
+	// 服务的目标就是它自己的地址—— 不再需要"代表性目标"这种东西,
 	// 因为真实目标本身就是被测对象。钉死出口的声明仍然用一个代表性目标,
 	// 因为那时候目标确实是未知的。
 	//
@@ -117,7 +117,7 @@ type Decl struct {
 	// 相对次序不变 —— 这正是想要的。
 	Targets []string `json:"targets"`
 
-	// 以下四个字段定义调参回路的节奏与阻尼(§5.5)。
+	// 以下四个字段定义调参回路的节奏与阻尼。
 	TuningPeriod    string  `json:"tuning_period"`
 	SwitchThreshold float64 `json:"switch_threshold"`
 	Window          string  `json:"window"`
@@ -127,7 +127,7 @@ type Decl struct {
 	// ProbeBudget 是每轮最多探几条候选。0 表示全探。
 	//
 	// **全探不可持续。** 候选数是 `1 + N + N(N-1)`,而现在每次探测还要读
-	// 正文才能算出吞吐(§16.2)—— 两个都涨的话,探测本身会变成网络上
+	// 正文才能算出吞吐—— 两个都涨的话,探测本身会变成网络上
 	// 最大的一股流量。
 	//
 	// 有界之后:当前选中的那条**每轮必探**(它变坏了要立刻知道),其余
@@ -145,23 +145,23 @@ type Cand struct {
 	// 不能再从 tag 反解析拓扑。空链明确表示 direct。
 	Chain []string `json:"chain,omitempty"`
 	// ProbeUser 是探测入口的用户名。**不是候选 tag** —— tag 含冒号,
-	// SOCKS5 客户端会在第一个冒号处切分 user:pass(§7.3.3)。
+	// SOCKS5 客户端会在第一个冒号处切分 user:pass。
 	ProbeUser string `json:"probe_user"`
 }
 
 // Supported 报告 Agent 能否为这个 objective 排序。
 //
 // **不能的必须显式报出,不许静默降级。** ttft 需要 L7 观测点、throughput
-// 需要批量传输探测、cost 需要价格源(§16.2、§5.2);拿 L4 首字节时间冒充
+// 需要批量传输探测、cost 需要价格源;拿 L4 首字节时间冒充
 // 这三个中的任何一个,产出的排序看着完全正常,却在优化另一件事。
 func Supported(o model.Objective) (bool, string) {
 	switch o {
 	case model.Latency, model.Stability, model.Throughput:
 		return true, ""
 	case model.TTFT:
-		return false, "ttft 只能由 L7 观测点产出(§16.2),Agent 现在只有 L4 首字节时间"
+		return false, "ttft 只能由 L7 观测点产出,Agent 现在只有 L4 首字节时间"
 	case model.Cost:
-		return false, "cost 需要价格数据源(§5.2),Agent 拿不到"
+		return false, "cost 需要价格数据源,Agent 拿不到"
 	}
 	return false, fmt.Sprintf("未知 objective:%q", o)
 }

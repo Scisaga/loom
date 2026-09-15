@@ -14,7 +14,7 @@ import (
 )
 
 // CheckClaimedIdentity 在 SSOT 事务内复核 claim，防止替换前已通过鉴权的
-// 请求排队后重新创建已撤销设备（§14.2.3）。调用者必须持有同一 SSOT 锁。
+// 请求排队后重新创建已撤销设备。调用者必须持有同一 SSOT 锁。
 func (s Store) CheckClaimedIdentity(id, publicKey string) error {
 	s = s.defaults()
 	return s.withLock(false, func(st *fileState) error {
@@ -70,8 +70,8 @@ func (s Store) ReportingIdentity(id, publicKey string) (Client, error) {
 }
 
 // HeartbeatIdentity 返回 Device 当前登记的公钥，供无证书最小心跳验签。
-// 公网响应仍统一为“未获授权”，不能借心跳探测 registry 中是否存在某个 ID
-// （§16.4）。完整 Observation 继续走 ReportingIdentity 的精确证书公钥比较。
+// 公网响应仍统一为“未获授权”，不能借心跳探测 registry 中是否存在某个 ID。
+// 完整 Observation 继续走 ReportingIdentity 的精确证书公钥比较。
 func (s Store) HeartbeatIdentity(id string) (Client, error) {
 	s = s.defaults()
 	id = strings.TrimSpace(id)
@@ -108,7 +108,7 @@ func (s Store) HeartbeatIdentity(id string) (Client, error) {
 	return result, nil
 }
 
-// RenewInvitation 为从未领取的 Device 签发新的短期加入码（§14.2.3）。
+// RenewInvitation 为从未领取的 Device 签发新的短期加入码。
 // 保留身份预留和固定的入网职责；旧码立即失效，不能用重发绕过公钥绑定。
 func (s Store) RenewInvitation(clientID string) (CreateResult, error) {
 	s = s.defaults()
@@ -180,7 +180,7 @@ func (s Store) newInvitation(client Client, existing []Invite) (Invite, string, 
 	}, token, nil
 }
 
-// ReplaceWithInvitation 为丢失本机身份的纯接入 Device 分配新身份（§14.2.3）。
+// ReplaceWithInvitation 为丢失本机身份的纯接入 Device 分配新身份。
 // retire 必须先撤销旧 SSOT 接入；持久化失败不返回二维码，重试可继续清理旧身份。
 // 不复用旧 ID，避免仍有效的旧证书被当作新设备的签名。
 func (s Store) ReplaceWithInvitation(clientID string, retire func(Client) error) (CreateResult, error) {

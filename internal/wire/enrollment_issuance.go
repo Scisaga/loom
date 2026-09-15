@@ -17,7 +17,7 @@ const (
 )
 
 // EnrollmentProvisionalIssuanceBodyV1 只引用私有 result artifact 的稳定摘要；
-// certificate、view 与 secret artifact 正文不得进入公开日志（D102、D130）。
+// certificate、view 与 secret artifact 正文不得进入公开日志。
 type EnrollmentProvisionalIssuanceBodyV1 struct {
 	Schema                            int                     `json:"schema"`
 	ClusterID                         string                  `json:"cluster_id"`
@@ -57,7 +57,7 @@ func ValidateEnrollmentProvisionalIssuanceBody(body *EnrollmentProvisionalIssuan
 	if body == nil || body.Schema != 1 || !validIdentifier(body.ClusterID, 128) ||
 		!validIdentifier(body.InviteID, 128) || !validIdentifier(body.RequestID, 128) ||
 		body.IssuanceLogCoordinate.RecoveryEpoch < 0 || body.IssuanceLogCoordinate.RaftIndex < 1 {
-		return errors.New("[D130 Enrollment] provisional issuance body identity/coordinate 无效")
+		return errors.New("[Enrollment] provisional issuance body identity/coordinate 无效")
 	}
 	for _, hash := range []string{body.ClaimOperationHash, body.ReservationHeadHash,
 		body.ReservationHeadQCHash, body.DeviceCertificateHash, body.InitialDeviceViewHash,
@@ -84,13 +84,13 @@ func SignEnrollmentProvisionalIssuance(body EnrollmentProvisionalIssuanceBodyV1,
 		return EnrollmentProvisionalIssuanceV1{}, err
 	}
 	if len(privateKey) != ed25519.PrivateKeySize {
-		return EnrollmentProvisionalIssuanceV1{}, errors.New("[D102 Device CA] provisional issuance private key 长度无效")
+		return EnrollmentProvisionalIssuanceV1{}, errors.New("[Device CA] provisional issuance private key 长度无效")
 	}
 	issuerDER, _ := decodeCanonicalBase64URL(profile.ProfileIntent.IssuerCertificateDER)
 	issuer, err := x509.ParseCertificate(issuerDER)
 	if err != nil || issuer.PublicKeyAlgorithm != x509.Ed25519 ||
 		!bytes.Equal(issuer.RawSubjectPublicKeyInfo, mustMarshalPKIX(privateKey.Public())) {
-		return EnrollmentProvisionalIssuanceV1{}, errors.New("[D102 Device CA] provisional issuance key 与 exact profile issuer 不匹配")
+		return EnrollmentProvisionalIssuanceV1{}, errors.New("[Device CA] provisional issuance key 与 exact profile issuer 不匹配")
 	}
 	canonical, err := MarshalCanonical(body)
 	if err != nil {
@@ -108,7 +108,7 @@ func SignEnrollmentProvisionalIssuance(body EnrollmentProvisionalIssuanceBodyV1,
 func VerifyEnrollmentProvisionalIssuance(issuance *EnrollmentProvisionalIssuanceV1,
 	profile *DeviceCertificateProfileStateV1) error {
 	if issuance == nil {
-		return errors.New("[D130 Enrollment] provisional issuance 不能为空")
+		return errors.New("[Enrollment] provisional issuance 不能为空")
 	}
 	if err := validateEnrollmentIssuanceProfile(&issuance.Body, profile); err != nil {
 		return err
@@ -118,29 +118,29 @@ func VerifyEnrollmentProvisionalIssuance(issuance *EnrollmentProvisionalIssuance
 	if signature.Algorithm != "ed25519" || signature.IssuerID != intent.IssuerID ||
 		signature.IssuerGeneration != intent.IssuerGeneration ||
 		signature.IssuerFencingEpoch != intent.IssuerFencingEpoch {
-		return errors.New("[D102 Device CA] provisional issuance signature purpose/fence 无效")
+		return errors.New("[Device CA] provisional issuance signature purpose/fence 无效")
 	}
 	rawSignature, err := decodeRawURL(signature.Signature, ed25519.SignatureSize)
 	if err != nil {
-		return errors.New("[D102 Device CA] provisional issuance signature 编码无效")
+		return errors.New("[Device CA] provisional issuance signature 编码无效")
 	}
 	issuerDER, _ := decodeCanonicalBase64URL(intent.IssuerCertificateDER)
 	issuer, err := x509.ParseCertificate(issuerDER)
 	if err != nil {
-		return errors.New("[D102 Device CA] provisional issuance issuer certificate 无效")
+		return errors.New("[Device CA] provisional issuance issuer certificate 无效")
 	}
 	publicKey, ok := issuer.PublicKey.(ed25519.PublicKey)
 	canonical, _ := MarshalCanonical(issuance.Body)
 	message, _ := Frame(DomainEnrollmentProvisionalIssuanceSignature, canonical)
 	if !ok || !ed25519.Verify(publicKey, message, rawSignature) {
-		return errors.New("[D102 Device CA] provisional issuance signature 无效")
+		return errors.New("[Device CA] provisional issuance signature 无效")
 	}
 	return nil
 }
 
 func EnrollmentProvisionalIssuanceHash(issuance *EnrollmentProvisionalIssuanceV1) (string, error) {
 	if issuance == nil || ValidateEnrollmentProvisionalIssuanceBody(&issuance.Body) != nil {
-		return "", errors.New("[D130 Enrollment] provisional issuance envelope 无效")
+		return "", errors.New("[Enrollment] provisional issuance envelope 无效")
 	}
 	return HashObject(DomainEnrollmentProvisionalIssuanceEnvelope, issuance)
 }
@@ -156,7 +156,7 @@ func validateEnrollmentIssuanceProfile(body *EnrollmentProvisionalIssuanceBodyV1
 	profileHash, _ := DeviceCertificateProfileStateHash(profile)
 	if profile.Status != "active" || profile.ClusterID != body.ClusterID ||
 		body.DeviceCertificateProfileStateHash != profileHash {
-		return errors.New("[D102 Device CA] provisional issuance 未绑定 exact active/fenced profile")
+		return errors.New("[Device CA] provisional issuance 未绑定 exact active/fenced profile")
 	}
 	return nil
 }
@@ -168,7 +168,7 @@ func mustMarshalPKIX(public any) []byte {
 
 func ValidateEnrollmentIssuanceRegistryLeaf(leaf *EnrollmentIssuanceRegistryLeafV1) error {
 	if leaf == nil || leaf.Schema != 1 {
-		return errors.New("[D130 Enrollment] issuance registry leaf schema 无效")
+		return errors.New("[Enrollment] issuance registry leaf schema 无效")
 	}
 	if _, err := ParseHash(leaf.ClaimOperationHash); err != nil {
 		return err
@@ -187,7 +187,7 @@ func EnrollmentIssuanceRegistryLeafHash(leaf *EnrollmentIssuanceRegistryLeafV1) 
 }
 
 // EnrollmentIssuanceRegistryRoot 按 claim-operation hash raw bytes 排序；同一 claim
-// 只允许一个 first-result leaf，避免输入顺序或字符串排序造成跨实现分歧（D130）。
+// 只允许一个 first-result leaf，避免输入顺序或字符串排序造成跨实现分歧。
 func EnrollmentIssuanceRegistryRoot(leaves []EnrollmentIssuanceRegistryLeafV1) (string, error) {
 	ordered := append([]EnrollmentIssuanceRegistryLeafV1(nil), leaves...)
 	for index := range ordered {
@@ -203,7 +203,7 @@ func EnrollmentIssuanceRegistryRoot(leaves []EnrollmentIssuanceRegistryLeafV1) (
 	canonical := make([][]byte, len(ordered))
 	for index := range ordered {
 		if index > 0 && ordered[index-1].ClaimOperationHash == ordered[index].ClaimOperationHash {
-			return "", errors.New("[D130 Enrollment] issuance registry 含重复 claim first-result")
+			return "", errors.New("[Enrollment] issuance registry 含重复 claim first-result")
 		}
 		canonical[index], _ = MarshalCanonical(ordered[index])
 	}

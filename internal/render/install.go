@@ -17,7 +17,7 @@ var installRoots = []struct{ prefix, root string }{
 	// systemd 不认 /etc/loom 下的 unit。
 	{"systemd/", "/etc/systemd/system/"},
 	// WireGuard 必须在 /etc/wireguard 下:Ubuntu 的 AppArmor 只允许 wg 读
-	// 这个目录,放别处 wg-quick 会失败却仍然 exit 0(D16)。
+	// 这个目录,放别处 wg-quick 会失败却仍然 exit 0。
 	{"wireguard/", "/etc/wireguard/"},
 }
 

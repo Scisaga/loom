@@ -12,12 +12,12 @@ import (
 )
 
 // DialContext 是 bootstrap ingress 到私有 Enrollment tuple 的直拨边界。
-// 生产实现应使用 net.Dialer.DialContext，不得读取代理环境变量（D115、D131）。
+// 生产实现应使用 net.Dialer.DialContext，不得读取代理环境变量。
 type DialContext func(context.Context, string, string) (net.Conn, error)
 
 // RelayTCP 把已经由 transport 认证的一个 stream 接到 capability 精确允许的
 // Enrollment tuple。requestedNetwork/requestedAddress 必须来自 HY2/Trojan 请求本身；
-// 入口不能忽略客户端请求后偷偷改拨另一个目标（D131）。
+// 入口不能忽略客户端请求后偷偷改拨另一个目标。
 //
 // attempt 在任何目标校验或拨号前先耐久计数。双向 payload 在写给对端前计入同一
 // durable byte budget；一旦超时、超额、取消或任一方向失败，两端 fd 都会关闭。
@@ -25,11 +25,11 @@ func (m *Manager) RelayTCP(ctx context.Context, verified wire.VerifiedBootstrapC
 	sessionID, ingressSetHash, requestedNetwork, requestedAddress string, incoming net.Conn,
 	dial DialContext) error {
 	if incoming == nil {
-		return errors.New("[D131 capability] relay context/connection/dialer 缺失")
+		return errors.New("[capability] relay context/connection/dialer 缺失")
 	}
 	defer incoming.Close()
 	if ctx == nil || dial == nil {
-		return errors.New("[D131 capability] relay context/connection/dialer 缺失")
+		return errors.New("[capability] relay context/connection/dialer 缺失")
 	}
 	session, err := m.OpenSession(verified, sessionID, ingressSetHash)
 	if err != nil {
@@ -39,7 +39,7 @@ func (m *Manager) RelayTCP(ctx context.Context, verified wire.VerifiedBootstrapC
 }
 
 // relayTCP 只供已经原子完成 transport credential lookup + OpenSession 的 adapter
-// 使用；保持它不导出可避免调用方绕开 CredentialRegistry（D131）。
+// 使用；保持它不导出可避免调用方绕开 CredentialRegistry。
 func (s *Session) relayTCP(ctx context.Context, requestedNetwork, requestedAddress string,
 	incoming net.Conn, dial DialContext) error {
 	defer s.Close()
@@ -47,16 +47,16 @@ func (s *Session) relayTCP(ctx context.Context, requestedNetwork, requestedAddre
 }
 
 // relayStreamTCP 允许一个已经打开的 outer capability session 承载 HY2 stream；
-// outer session 的 owner 在 QUIC connection 关闭时统一 Close（D131）。
+// outer session 的 owner 在 QUIC connection 关闭时统一 Close。
 func (s *Session) relayStreamTCP(ctx context.Context, requestedNetwork, requestedAddress string,
 	incoming net.Conn, dial DialContext) error {
 	if incoming == nil {
-		return errors.New("[D131 capability] relay context/connection/dialer 缺失")
+		return errors.New("[capability] relay context/connection/dialer 缺失")
 	}
 	defer incoming.Close()
 	if ctx == nil || dial == nil {
 		relayHandshakeFailure(incoming)
-		return errors.New("[D131 capability] relay context/connection/dialer 缺失")
+		return errors.New("[capability] relay context/connection/dialer 缺失")
 	}
 	if err := s.AuthorizeDial(requestedNetwork, requestedAddress); err != nil {
 		relayHandshakeFailure(incoming)
@@ -72,28 +72,28 @@ func (s *Session) relayStreamTCP(ctx context.Context, requestedNetwork, requeste
 	outgoing, err := dial(relayContext, requestedNetwork, requestedAddress)
 	if err != nil {
 		relayHandshakeFailure(incoming)
-		return fmt.Errorf("[D131 capability] Enrollment tuple 拨号失败: %w", err)
+		return fmt.Errorf("[capability] Enrollment tuple 拨号失败: %w", err)
 	}
 	if outgoing == nil {
 		relayHandshakeFailure(incoming)
-		return errors.New("[D131 capability] Enrollment tuple 拨号返回空连接")
+		return errors.New("[capability] Enrollment tuple 拨号返回空连接")
 	}
 	defer outgoing.Close()
 
 	// socket deadline 使用与可信时钟算出的剩余时长，而不是把可信绝对时间直接
-	// 交给操作系统；测试时钟和受保护时钟不必等于主机 wall clock（D131）。
+	// 交给操作系统；测试时钟和受保护时钟不必等于主机 wall clock。
 	socketDeadline := time.Now().Add(remaining)
 	if err := incoming.SetDeadline(socketDeadline); err != nil {
 		relayHandshakeFailure(incoming)
-		return fmt.Errorf("[D131 capability] 设置 ingress deadline 失败: %w", err)
+		return fmt.Errorf("[capability] 设置 ingress deadline 失败: %w", err)
 	}
 	if err := outgoing.SetDeadline(socketDeadline); err != nil {
 		relayHandshakeFailure(incoming)
-		return fmt.Errorf("[D131 capability] 设置 Enrollment deadline 失败: %w", err)
+		return fmt.Errorf("[capability] 设置 Enrollment deadline 失败: %w", err)
 	}
 	if handshaker, ok := incoming.(relayHandshakeSuccess); ok {
 		if err := handshaker.HandshakeSuccess(); err != nil {
-			return fmt.Errorf("[D131 capability] transport success response 失败: %w", err)
+			return fmt.Errorf("[capability] transport success response 失败: %w", err)
 		}
 	}
 
@@ -126,31 +126,31 @@ func (s *Session) relayStreamTCP(ctx context.Context, requestedNetwork, requeste
 	}
 	second := <-results
 	if first.err != nil {
-		return fmt.Errorf("[D131 capability] %s relay 失败: %w", first.direction, first.err)
+		return fmt.Errorf("[capability] %s relay 失败: %w", first.direction, first.err)
 	}
 	if second.err != nil {
-		return fmt.Errorf("[D131 capability] %s relay 失败: %w", second.direction, second.err)
+		return fmt.Errorf("[capability] %s relay 失败: %w", second.direction, second.err)
 	}
 	if err := relayContext.Err(); err != nil {
-		return fmt.Errorf("[D131 capability] relay session 已结束: %w", err)
+		return fmt.Errorf("[capability] relay session 已结束: %w", err)
 	}
 	return nil
 }
 
 func (s *Session) remaining() (time.Duration, error) {
 	if s == nil || s.manager == nil {
-		return 0, errors.New("[D131 capability] session 无效")
+		return 0, errors.New("[capability] session 无效")
 	}
 	s.manager.mu.Lock()
 	defer s.manager.mu.Unlock()
 	active, ok := s.manager.sessions[s.id]
 	if !ok {
-		return 0, errors.New("[D131 capability] session 不存在")
+		return 0, errors.New("[capability] session 不存在")
 	}
 	remaining := active.deadline.Sub(s.manager.now().UTC())
 	if remaining <= 0 {
 		delete(s.manager.sessions, s.id)
-		return 0, errors.New("[D131 capability] session 已超时")
+		return 0, errors.New("[capability] session 已超时")
 	}
 	return remaining, nil
 }
@@ -161,7 +161,7 @@ func (s *Session) copyAccounted(destination io.Writer, source io.Reader) error {
 		count, readErr := source.Read(buffer)
 		if count > 0 {
 			// 先耐久计数再把 payload 交给对端，进程崩溃只会保守消耗预算，
-			// 不会让已经转发的字节逃出总量限制（D131）。
+			// 不会让已经转发的字节逃出总量限制。
 			if err := s.AddTransferredBytes(int64(count)); err != nil {
 				return err
 			}

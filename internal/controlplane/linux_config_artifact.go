@@ -10,7 +10,7 @@ import (
 
 // LinuxLinkIntentProjectionV1 是 certified Device view 的前置确定性输入。
 // ParentHeadHash 必须是待生成 Head 的 parent；调用方把返回的 ref 放入
-// Device view 后再形成新 Head/QC，从而避免 artifact/head 自引用（D105、D131）。
+// Device view 后再形成新 Head/QC，从而避免 artifact/head 自引用。
 type LinuxLinkIntentProjectionV1 struct {
 	ClusterID        string
 	DeviceID         string
@@ -37,11 +37,11 @@ func BuildLinuxRuntimeArtifact(input LinuxRuntimeProjectionV1) ([]byte, error) {
 	canonical, err := wire.DecodeStrict(input.LinkIntentRaw, 4<<20, &linkArtifact)
 	if err != nil || !bytes.Equal(canonical, input.LinkIntentRaw) ||
 		wire.ValidateLinuxLinkIntentArtifact(&linkArtifact) != nil {
-		return nil, errors.New("[D131 Linux artifact] runtime 未绑定 exact LinkIntent artifact")
+		return nil, errors.New("[Linux artifact] runtime 未绑定 exact LinkIntent artifact")
 	}
 	if input.ClusterID != linkArtifact.ClusterID || input.DeviceID != linkArtifact.DeviceID ||
 		input.DeviceGeneration != linkArtifact.DeviceGeneration {
-		return nil, errors.New("[D131 Linux artifact] runtime/LinkIntent Device binding 不一致")
+		return nil, errors.New("[Linux artifact] runtime/LinkIntent Device binding 不一致")
 	}
 	linkHash, err := wire.DeviceConfigArtifactContentHash(input.LinkIntentRaw)
 	if err != nil {
@@ -82,7 +82,7 @@ func validateLinuxRuntimeProjectionBindings(linkArtifact *wire.LinuxLinkIntentAr
 	bindings []wire.LinuxRuntimeBindingV1,
 ) error {
 	if linkArtifact == nil {
-		return errors.New("[D131 Linux artifact] LinkIntent 缺失")
+		return errors.New("[Linux artifact] LinkIntent 缺失")
 	}
 	byLink := make(map[string][]wire.LinuxRuntimeBindingV1, len(linkArtifact.LinkIntents))
 	for _, binding := range bindings {
@@ -91,7 +91,7 @@ func validateLinuxRuntimeProjectionBindings(linkArtifact *wire.LinuxLinkIntentAr
 	for _, intent := range linkArtifact.LinkIntents {
 		selected := byLink[intent.LinkID]
 		if len(selected) == 0 {
-			return errors.New("[D131 Linux artifact] runtime bindings 未覆盖每条 LinkIntent")
+			return errors.New("[Linux artifact] runtime bindings 未覆盖每条 LinkIntent")
 		}
 		mode := "listen"
 		if intent.Initiator == "from" && intent.FromDeviceID == linkArtifact.DeviceID ||
@@ -102,13 +102,13 @@ func validateLinuxRuntimeProjectionBindings(linkArtifact *wire.LinuxLinkIntentAr
 			if binding.LinkGeneration != intent.Generation || binding.Mode != mode ||
 				!containsLinuxArtifactValue(intent.AllowedTransports, binding.Transport) ||
 				!containsLinuxArtifactValue(intent.ListenerResourceRefs, binding.EndpointID) {
-				return errors.New("[D131 Linux artifact] runtime binding 扩大或偏离 LinkIntent")
+				return errors.New("[Linux artifact] runtime binding 扩大或偏离 LinkIntent")
 			}
 		}
 		delete(byLink, intent.LinkID)
 	}
 	if len(byLink) != 0 {
-		return errors.New("[D131 Linux artifact] runtime binding 引用了未知 LinkIntent")
+		return errors.New("[Linux artifact] runtime binding 引用了未知 LinkIntent")
 	}
 	return nil
 }
@@ -124,7 +124,7 @@ func containsLinuxArtifactValue(values []string, wanted string) bool {
 
 func BuildLinuxLinkIntentArtifact(input LinuxLinkIntentProjectionV1) ([]byte, error) {
 	if input.LinkIntents == nil {
-		return nil, errors.New("[D131 Linux artifact] LinkIntent projection 缺失")
+		return nil, errors.New("[Linux artifact] LinkIntent projection 缺失")
 	}
 	artifact := wire.LinuxLinkIntentArtifactV1{
 		Schema: 1, ClusterID: input.ClusterID, DeviceID: input.DeviceID,

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// §16.1.2：从 report 的原校验入口提取；服务器与客户端共同使用，不改变 canonical 字节。
+// 从 report 的原校验入口提取；服务器与客户端共同使用，不改变 canonical 字节。
 // AttestationMaxAge 与默认 observation_stale 相同。签名证明来源，新鲜度
 // 证明这不是一条无限重放的旧事实。
 const AttestationMaxAge = 10 * time.Minute
@@ -279,7 +279,7 @@ func observationNeedsVerification(o *Observation, minVersion int) bool {
 	return o != nil && (minVersion > 0 || o.Attest != nil || o.AttestExtended != nil)
 }
 
-// VerifyAttachments 校验 §16.1 的独立附件；主签名不能替附件背书。
+// VerifyAttachments 校验独立附件；主签名不能替附件背书。
 func VerifyAttachments(o *Observation, ca []byte, now time.Time, maxAge time.Duration) error {
 	if _, err := VerifySelfCheckAttachment(o, ca, now, maxAge); err != nil {
 		return err

@@ -204,7 +204,7 @@ func newAdminRotationFixture(t *testing.T, legacy bool) (string, string) {
 	if !legacy {
 		return dir, admin
 	}
-	// D132 回归夹具重建升级前的 Ed25519 genesis，不触碰真实控制状态。
+	// 回归夹具重建升级前的 Ed25519 genesis，不触碰真实控制状态。
 	rootPEM, issuer, key, err := makeCertificateAuthority("demo legacy admin CA", now.Add(-5*time.Minute), now.Add(5*365*24*time.Hour))
 	if err != nil {
 		t.Fatal(err)

@@ -1,14 +1,14 @@
 # Linux v1 兼容安装与维护
 
 **适用条件：** 仍使用 v1 Invite、平台签名和 signed pull 的部署；本手册不要求继续保留已被新版替换的入口。
-v2 安装使用[Linux v2 手册](../linux-client-install.md)，源码范围见[实现对照](../implementation.md)。
+v2 安装使用[Linux v2 手册](../clients/linux-install.md)，源码范围见[实现对照](../development/implementation.md)。
 
 v1 的 `use_loom` Device 使用回环 mixed 入口，不接管宿主路由表或修改全局代理。
 加入共用 v1 SSOT/publisher/signed pull，只绑定控制面已创建的 Device，不再新建第二份身份记录。
 目标机须能访问已验证的 v1 加入端点和分发地址，具有 root/sudo、`tar` 与 `sha256sum`。
 管理员经私有 HTTPS 和有效管理员证书创建 Device；没有 UI 密码登录。
 
-## 1. 创建 Device 和加入码
+## 创建 Device 和加入码
 
 在中控打开 **Devices → Create Device**，选择 Linux 平台并直接勾选职责：
 `use_loom`、`forward`、`internet_egress`。`internet_egress` 必须与 `forward`
@@ -52,7 +52,7 @@ SSH 未开放、不可达或节点位于 NAT 后
 这些方式共享同一个短 TTL、一次性 token。普通重启、断线重连和配置更新不会再次加入。
 不要把加入 URI 放进 shell 参数、聊天记录或工单；它是有效期内的 bearer secret。
 
-## 2. 下载并核对客户端包
+## 下载并核对客户端包
 
 目标 v2 同时发布 `loom-client-linux-amd64.tar.gz` 与 `loom-client-linux-arm64.tar.gz`；
 二者由对应架构的 Loom/sing-box ELF 作为全部输入确定性生成。包内 manifest/checksums 必须覆盖
@@ -89,7 +89,7 @@ sing-box version 检查。三个共享 package 文件在同一 `deploy.lock` 下
 进程无法捕获的中断点退出，下一次安装会先恢复唯一未完成事务，再开始新安装。安装成功前不会
 把 v1 state directory 当成 v2 副作用创建。
 
-## 3. 转发职责先声明可达事实
+## 转发职责先声明可达事实
 
 只有所选 Responsibilities 包含 `forward` 时，才需要在消费加入码前创建严格的本地配置：
 
@@ -134,7 +134,7 @@ zypper 安装 `wireguard-tools` 并复检；失败不会建立 Device identity �
 v1 的主动公网 LinkMetric 目前只定义 Hysteria2；Trojan 入口不得伪造或借用该指标，只能显示
 listener 自检与真实拨号证据，后续扩展须使用版本化观测 schema。不新增一套“再次拨入”循环。
 
-## 4. 安装并加入
+## 安装并加入
 
 已经下载加入文件时：
 
@@ -166,7 +166,7 @@ TTL 限制，已经绑定的事务只在 v1 control 的有限恢复窗口内允�
 设备私钥，不能作为普通重试手段。默认命令等待 provisioning 最长 5 分钟；恢复窗口
 过期后必须由运维人员明确处理原 Device；v1 契约禁止用新码静默改绑身份。
 
-## 5. 让应用使用 Loom
+## 让应用使用 Loom
 
 安装完成后，只让需要接入的应用显式使用回环代理。例如：
 
@@ -184,7 +184,7 @@ ALL_PROXY=socks5h://127.0.0.1:1080 your-command
 下发的 `Host → Service → Policy → Agent`；指定出口只固定最后一跳，前置中继继续自动
 择优。v1 Linux 安装契约只要求加入、签名拉取和运行已下发配置；三态交互与独立 GUI
 属于客户端迁移目标，也不能以在 Current Paths 页面手选路径替代。源码接线及缺口见
-[实现对照](../implementation.md)。
+[实现对照](../development/implementation.md)。
 
 ## v1 运行手册边界
 
@@ -196,5 +196,5 @@ ALL_PROXY=socks5h://127.0.0.1:1080 your-command
   记录冒充凭据已经失效；
 - Windows 与 Android 客户端宿主不在这个分发包内。
 
-架构与安全边界见[客户端接入规范](../client-access.md)；实际制品与运行结果按
+架构与安全边界见[客户端接入规范](../clients/README.md)；实际制品与运行结果按
 [部署记录](local-deployment.md)核对。

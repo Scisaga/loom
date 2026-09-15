@@ -209,8 +209,8 @@ func ValidateInvite(invite Invite) error {
 }
 
 func invalidInvite() error {
-	// 错误不拼接原始 URI，否则 token 会进入终端/日志(§11 安全存储)。
-	return errors.New("[§9.1 加入二维码] 加入码无效；请重新获取，不要复制或记录其原始内容")
+	// 错误不拼接原始 URI，否则 token 会进入终端/日志(安全存储)。
+	return errors.New("[加入二维码] 加入码无效；请重新获取，不要复制或记录其原始内容")
 }
 
 // ReadInviteFile rejects links and bounds input before parsing it.
@@ -225,7 +225,7 @@ func ReadInviteFile(name string, stdin io.Reader) (Invite, error) {
 	before, err := os.Lstat(name)
 	if err != nil || !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 ||
 		before.Size() <= 0 || before.Size() > maxInviteBytes {
-		return Invite{}, fmt.Errorf("[§9.1 加入二维码] 加入文件必须是小于 16 KiB 的非链接普通文件")
+		return Invite{}, fmt.Errorf("[加入二维码] 加入文件必须是小于 16 KiB 的非链接普通文件")
 	}
 	file, err := os.Open(name)
 	if err != nil {
@@ -275,7 +275,7 @@ func ClaimWithServer(ctx context.Context, client *http.Client, invite Invite, st
 		return zero, err
 	}
 	if loadedMeta != meta {
-		return zero, errors.New("[§4.3 设备绑定] 本机身份在加入事务中发生变化")
+		return zero, errors.New("[设备绑定] 本机身份在加入事务中发生变化")
 	}
 	result, err := ClaimPrepared(ctx, client, invite, PreparedIdentity{
 		Schema: Schema, Platform: Platform, Endpoint: meta.Endpoint, RequestID: meta.RequestID,
@@ -297,26 +297,26 @@ func ClaimWithServer(ctx context.Context, client *http.Client, invite Invite, st
 
 func validateResponse(response Response, statusCode int) error {
 	if response.Schema != Schema || strings.TrimSpace(response.ClientID) == "" {
-		return errors.New("[§9.2 加入流程] 加入响应 schema/client_id 无效")
+		return errors.New("[加入流程] 加入响应 schema/client_id 无效")
 	}
 	if _, err := time.Parse(time.RFC3339, response.ClaimedAt); err != nil {
-		return errors.New("[§9.2 加入流程] 加入响应 claimed_at 无效")
+		return errors.New("[加入流程] 加入响应 claimed_at 无效")
 	}
 	switch response.Configuration {
 	case "pending":
 		if statusCode != http.StatusAccepted || response.Status != "provisioning" ||
 			response.Next != "wait_for_configuration" || response.Bootstrap != nil {
-			return errors.New("[§9.2 加入流程] pending 加入响应语义不一致")
+			return errors.New("[加入流程] pending 加入响应语义不一致")
 		}
 	case "ready":
 		if statusCode != http.StatusOK || response.Status != "ready" || response.Next != "pull" || response.Bootstrap == nil {
-			return errors.New("[§9.2 加入流程] ready 加入响应语义不一致")
+			return errors.New("[加入流程] ready 加入响应语义不一致")
 		}
 		if response.Bootstrap.NodeID != response.ClientID {
-			return errors.New("[§4.3 设备绑定] ready 加入响应的 client_id 与 node_id 不一致")
+			return errors.New("[设备绑定] ready 加入响应的 client_id 与 node_id 不一致")
 		}
 	default:
-		return fmt.Errorf("[§4.5 fail closed] 不识别加入配置状态 %q", response.Configuration)
+		return fmt.Errorf("[fail closed] 不识别加入配置状态 %q", response.Configuration)
 	}
 	return nil
 }
@@ -326,7 +326,7 @@ func validateResponse(response Response, statusCode int) error {
 // retry record and no service is activated until the caller's signed pull.
 func InstallReady(paths Paths, response Response) error {
 	if response.Configuration != "ready" || response.Bootstrap == nil {
-		return errors.New("[§10.3 原子安装] 没有完整 ready bootstrap，不安装")
+		return errors.New("[原子安装] 没有完整 ready bootstrap，不安装")
 	}
 	if err := validateInstallPaths(paths); err != nil {
 		return err
@@ -362,7 +362,7 @@ func InstallReady(paths Paths, response Response) error {
 	}
 	for _, file := range files {
 		if err := writePrivateAtomic(file.path, file.body, file.mode); err != nil {
-			return fmt.Errorf("[§10.3 原子安装] 写 %s:%w", file.path, err)
+			return fmt.Errorf("[原子安装] 写 %s:%w", file.path, err)
 		}
 	}
 	// Keep a non-secret link between the installed node identity and request.
@@ -392,26 +392,26 @@ type validatedBootstrap struct {
 func validateBootstrap(bootstrap Bootstrap, keyPEM []byte) (validatedBootstrap, error) {
 	var out validatedBootstrap
 	if !model.ValidNodeID(bootstrap.NodeID) {
-		return out, fmt.Errorf("[§10.2 渲染目标必须显式] bootstrap 节点 id %q 无效", bootstrap.NodeID)
+		return out, fmt.Errorf("[渲染目标必须显式] bootstrap 节点 id %q 无效", bootstrap.NodeID)
 	}
 	if len(bootstrap.DistributionURLs) == 0 {
-		return out, errors.New("[§14.2 节点自取] bootstrap 没有分发镜像")
+		return out, errors.New("[节点自取] bootstrap 没有分发镜像")
 	}
 	seenURL := map[string]bool{}
 	for _, raw := range bootstrap.DistributionURLs {
 		u, err := url.ParseRequestURI(raw)
 		if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-			return out, fmt.Errorf("[§14.2 节点自取] bootstrap 分发镜像无效:%q", raw)
+			return out, fmt.Errorf("[节点自取] bootstrap 分发镜像无效:%q", raw)
 		}
 		normalized := strings.TrimRight(raw, "/")
 		if seenURL[normalized] {
-			return out, fmt.Errorf("[§14.2 节点自取] bootstrap 分发镜像重复:%q", raw)
+			return out, fmt.Errorf("[节点自取] bootstrap 分发镜像重复:%q", raw)
 		}
 		seenURL[normalized] = true
 	}
 	for _, dns := range bootstrap.DNS {
 		if strings.TrimSpace(dns) == "" || strings.IndexFunc(dns, unicode.IsSpace) >= 0 || strings.IndexFunc(dns, unicode.IsControl) >= 0 {
-			return out, errors.New("[§7.3.2 DNS] bootstrap DNS 坐标无效")
+			return out, errors.New("[DNS] bootstrap DNS 坐标无效")
 		}
 	}
 	if err := validateSecrets(bootstrap.SecretsEnv); err != nil {
@@ -424,13 +424,13 @@ func validateBootstrap(bootstrap Bootstrap, keyPEM []byte) (validatedBootstrap, 
 	authority := []byte(bootstrap.ReleaseAuthority)
 	current, err := publish.DecodeDeploymentCurrent(authority)
 	if err != nil {
-		return out, fmt.Errorf("[§4.3 签名高于传输信任] bootstrap release authority 无效:%w", err)
+		return out, fmt.Errorf("[签名高于传输信任] bootstrap release authority 无效:%w", err)
 	}
 	if err := current.Verify(pub); err != nil {
-		return out, fmt.Errorf("[§4.3 签名高于传输信任] bootstrap release authority 验签失败:%w", err)
+		return out, fmt.Errorf("[签名高于传输信任] bootstrap release authority 验签失败:%w", err)
 	}
 	if _, err := current.Select(bootstrap.NodeID); err != nil {
-		return out, fmt.Errorf("[§4.3 设备绑定] signed current 未授权本设备:%w", err)
+		return out, fmt.Errorf("[设备绑定] signed current 未授权本设备:%w", err)
 	}
 	privateKey, err := parsePrivateKey(keyPEM)
 	if err != nil {
@@ -447,7 +447,7 @@ func validateBootstrap(bootstrap Bootstrap, keyPEM []byte) (validatedBootstrap, 
 
 func validateSecrets(body string) error {
 	if strings.TrimSpace(body) == "" || len(body) > 1<<20 {
-		return errors.New("[§4.2 配置与秘密分离] bootstrap 秘密层为空或过大")
+		return errors.New("[配置与秘密分离] bootstrap 秘密层为空或过大")
 	}
 	seen := map[string]bool{}
 	scanner := bufio.NewScanner(strings.NewReader(body))
@@ -459,12 +459,12 @@ func validateSecrets(body string) error {
 		key, _, ok := strings.Cut(text, "=")
 		key = strings.TrimSpace(key)
 		if !ok || key == "" || seen[key] || strings.IndexFunc(key, unicode.IsSpace) >= 0 || strings.IndexFunc(key, unicode.IsControl) >= 0 {
-			return fmt.Errorf("[§4.2 配置与秘密分离] bootstrap 秘密层第 %d 行无效", line)
+			return fmt.Errorf("[配置与秘密分离] bootstrap 秘密层第 %d 行无效", line)
 		}
 		seen[key] = true
 	}
 	if err := scanner.Err(); err != nil || len(seen) == 0 {
-		return errors.New("[§4.2 配置与秘密分离] bootstrap 秘密层无有效条目")
+		return errors.New("[配置与秘密分离] bootstrap 秘密层无有效条目")
 	}
 	return nil
 }
@@ -476,7 +476,7 @@ func decodePlatformKey(body string) (ed25519.PublicKey, error) {
 		key, err = base64.RawStdEncoding.DecodeString(raw)
 	}
 	if err != nil || len(key) != ed25519.PublicKeySize {
-		return nil, errors.New("[§4.3 签名高于传输信任] bootstrap 平台公钥无效")
+		return nil, errors.New("[签名高于传输信任] bootstrap 平台公钥无效")
 	}
 	return ed25519.PublicKey(key), nil
 }
@@ -484,15 +484,15 @@ func decodePlatformKey(body string) (ed25519.PublicKey, error) {
 func validateCertificates(caPEM, certPEM, nodeID string, privateKey *ecdsa.PrivateKey) error {
 	ca, err := parseOneCertificate(caPEM)
 	if err != nil || !ca.IsCA {
-		return errors.New("[§9.3 稳态认证] bootstrap CA 证书无效")
+		return errors.New("[稳态认证] bootstrap CA 证书无效")
 	}
 	cert, err := parseOneCertificate(certPEM)
 	if err != nil {
-		return errors.New("[§9.3 稳态认证] bootstrap 节点证书无效")
+		return errors.New("[稳态认证] bootstrap 节点证书无效")
 	}
 	publicKey, ok := cert.PublicKey.(*ecdsa.PublicKey)
 	if !ok || publicKey.Curve != elliptic.P256() || publicKey.X.Cmp(privateKey.X) != 0 || publicKey.Y.Cmp(privateKey.Y) != 0 {
-		return errors.New("[§4.3 设备绑定] 签发证书与本机私钥不匹配")
+		return errors.New("[设备绑定] 签发证书与本机私钥不匹配")
 	}
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
@@ -500,7 +500,7 @@ func validateCertificates(caPEM, certPEM, nodeID string, privateKey *ecdsa.Priva
 		Roots: roots, DNSName: nodeID + ".node.internal",
 		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}); err != nil {
-		return fmt.Errorf("[§9.3 稳态认证] 节点证书无法回溯到 bootstrap CA:%w", err)
+		return fmt.Errorf("[稳态认证] 节点证书无法回溯到 bootstrap CA:%w", err)
 	}
 	return nil
 }
@@ -522,7 +522,7 @@ func loadOrCreateIdentity(stateDir, endpoint string, random io.Reader) (identity
 			return identityMeta{}, nil, err
 		}
 		if meta.Endpoint != endpoint || meta.Platform != Platform {
-			return identityMeta{}, nil, errors.New("[§4.3 设备绑定] 已有设备身份绑定到另一控制中心；不会自动覆盖")
+			return identityMeta{}, nil, errors.New("[设备绑定] 已有设备身份绑定到另一控制中心；不会自动覆盖")
 		}
 		csr, err := readPrivateFile(filepath.Join(stateDir, identityCSRFile), 64<<10)
 		return meta, csr, err
@@ -602,7 +602,7 @@ func loadIdentity(stateDir string) ([]byte, identityMeta, error) {
 	dec := json.NewDecoder(bytes.NewReader(metaBody))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&meta); err != nil || dec.Decode(&struct{}{}) != io.EOF || meta.Schema != Schema || meta.Platform != Platform || meta.RequestID == "" {
-		return nil, identityMeta{}, errors.New("[§4.3 设备绑定] 本机 identity.json 无效")
+		return nil, identityMeta{}, errors.New("[设备绑定] 本机 identity.json 无效")
 	}
 	keyPEM, err := readPrivateFile(filepath.Join(stateDir, identityKeyFile), 64<<10)
 	if err != nil {
@@ -618,19 +618,19 @@ func loadIdentity(stateDir string) ([]byte, identityMeta, error) {
 	}
 	block, rest := pem.Decode(csrPEM)
 	if block == nil || block.Type != "CERTIFICATE REQUEST" || strings.TrimSpace(string(rest)) != "" {
-		return nil, identityMeta{}, errors.New("[§4.3 设备绑定] 本机 CSR 无效")
+		return nil, identityMeta{}, errors.New("[设备绑定] 本机 CSR 无效")
 	}
 	csr, err := x509.ParseCertificateRequest(block.Bytes)
 	if err != nil || csr.CheckSignature() != nil || len(csr.DNSNames)+len(csr.EmailAddresses)+len(csr.IPAddresses)+len(csr.URIs) != 0 {
-		return nil, identityMeta{}, errors.New("[§4.3 设备绑定] 本机 CSR 签名/SAN 无效")
+		return nil, identityMeta{}, errors.New("[设备绑定] 本机 CSR 签名/SAN 无效")
 	}
 	publicKey, ok := csr.PublicKey.(*ecdsa.PublicKey)
 	if !ok || publicKey.X.Cmp(key.X) != 0 || publicKey.Y.Cmp(key.Y) != 0 || meta.CSR != sha256Hex(csrPEM) {
-		return nil, identityMeta{}, errors.New("[§4.3 设备绑定] 本机 key/CSR/identity 不匹配")
+		return nil, identityMeta{}, errors.New("[设备绑定] 本机 key/CSR/identity 不匹配")
 	}
 	spki, _ := x509.MarshalPKIXPublicKey(&key.PublicKey)
 	if meta.PublicKey != sha256Hex(spki) {
-		return nil, identityMeta{}, errors.New("[§4.3 设备绑定] 本机公钥指纹不匹配")
+		return nil, identityMeta{}, errors.New("[设备绑定] 本机公钥指纹不匹配")
 	}
 	return keyPEM, meta, nil
 }
@@ -638,12 +638,12 @@ func loadIdentity(stateDir string) ([]byte, identityMeta, error) {
 func parsePrivateKey(body []byte) (*ecdsa.PrivateKey, error) {
 	block, rest := pem.Decode(body)
 	if block == nil || block.Type != "PRIVATE KEY" || strings.TrimSpace(string(rest)) != "" {
-		return nil, errors.New("[§11 安全存储] 设备私钥必须是单个 PKCS#8 PEM")
+		return nil, errors.New("[安全存储] 设备私钥必须是单个 PKCS#8 PEM")
 	}
 	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	key, ok := parsed.(*ecdsa.PrivateKey)
 	if err != nil || !ok || key.Curve != elliptic.P256() {
-		return nil, errors.New("[§11 安全存储] 设备私钥不是 P-256 PKCS#8")
+		return nil, errors.New("[安全存储] 设备私钥不是 P-256 PKCS#8")
 	}
 	return key, nil
 }
@@ -667,7 +667,7 @@ func validateInstallPaths(paths Paths) error {
 	for _, item := range ordered {
 		name, value := item.name, item.value
 		if value == "" || !filepath.IsAbs(value) || filepath.Clean(value) != value {
-			return fmt.Errorf("[§10.3 原子安装] %s 必须是绝对且已清理的路径:%q", name, value)
+			return fmt.Errorf("[原子安装] %s 必须是绝对且已清理的路径:%q", name, value)
 		}
 	}
 	return nil
@@ -692,7 +692,7 @@ func refuseIdentityReplacement(paths Paths, material validatedBootstrap, keyPEM 
 			return err
 		}
 		if !bytes.Equal(existing, check.want) {
-			return fmt.Errorf("[§4.3 设备绑定] %s 已存在且与本次 bootstrap 不同；不会自动覆盖", check.name)
+			return fmt.Errorf("[设备绑定] %s 已存在且与本次 bootstrap 不同；不会自动覆盖", check.name)
 		}
 	}
 	return nil

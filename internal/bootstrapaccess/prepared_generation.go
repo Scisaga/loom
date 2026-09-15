@@ -11,7 +11,7 @@ import (
 )
 
 // PreparedBootstrapGeneration 把 socket ownership、local readiness 与 external
-// evidence 聚合绑定到同一个仍在运行的 prepared generation（D120、D127）。
+// evidence 聚合绑定到同一个仍在运行的 prepared generation。
 type PreparedBootstrapGeneration struct {
 	mu          sync.Mutex
 	cancel      context.CancelFunc
@@ -24,12 +24,12 @@ type PreparedBootstrapGeneration struct {
 }
 
 // StartPreparedBootstrapGeneration 先同步启动全批 listener，再立即完成真实 local
-// verify；任一步失败都会取消并等待整批退出，不留下未验证的 prepared socket（D120）。
+// verify；任一步失败都会取消并等待整批退出，不留下未验证的 prepared socket。
 func StartPreparedBootstrapGeneration(parent context.Context, runtime *BootstrapIngressRuntime,
 	authorized rotation.AuthorizedRuntimePlanV1,
 	options BootstrapLocalReadinessOptions) (*PreparedBootstrapGeneration, error) {
 	if parent == nil || runtime == nil || authorized.State().Phase != "prepared" {
-		return nil, errors.New("[D120 bootstrap prepare] context/runtime/prepared authority 无效")
+		return nil, errors.New("[bootstrap prepare] context/runtime/prepared authority 无效")
 	}
 	ctx, cancel := context.WithCancel(parent)
 	runtimeDone, err := runtime.Start(ctx)
@@ -72,7 +72,7 @@ func StartPreparedBootstrapGeneration(parent context.Context, runtime *Bootstrap
 
 func (generation *PreparedBootstrapGeneration) ProbePlan() (BootstrapOuterProbePlanV1, error) {
 	if generation == nil {
-		return BootstrapOuterProbePlanV1{}, errors.New("[D120 bootstrap prepare] generation 缺失")
+		return BootstrapOuterProbePlanV1{}, errors.New("[bootstrap prepare] generation 缺失")
 	}
 	if err := generation.requireRunning(); err != nil {
 		return BootstrapOuterProbePlanV1{}, err
@@ -84,7 +84,7 @@ func (generation *PreparedBootstrapGeneration) ProbePlan() (BootstrapOuterProbeP
 
 func (generation *PreparedBootstrapGeneration) LocalEvidence() (BootstrapLocalReadinessEvidenceV1, string, error) {
 	if generation == nil {
-		return BootstrapLocalReadinessEvidenceV1{}, "", errors.New("[D120 bootstrap prepare] generation 缺失")
+		return BootstrapLocalReadinessEvidenceV1{}, "", errors.New("[bootstrap prepare] generation 缺失")
 	}
 	if err := generation.requireRunning(); err != nil {
 		return BootstrapLocalReadinessEvidenceV1{}, "", err
@@ -98,7 +98,7 @@ func (generation *PreparedBootstrapGeneration) VerifyExternal(policy *BootstrapO
 	observations []SignedBootstrapOuterProbeObservationV1,
 	trustedTime time.Time) (VerifiedBootstrapOuterReachabilityV1, error) {
 	if generation == nil {
-		return VerifiedBootstrapOuterReachabilityV1{}, errors.New("[D120 bootstrap prepare] generation 缺失")
+		return VerifiedBootstrapOuterReachabilityV1{}, errors.New("[bootstrap prepare] generation 缺失")
 	}
 	if err := generation.requireRunning(); err != nil {
 		return VerifiedBootstrapOuterReachabilityV1{}, err
@@ -113,7 +113,7 @@ func (generation *PreparedBootstrapGeneration) VerifyExternal(policy *BootstrapO
 func (generation *PreparedBootstrapGeneration) ValidateAdvertise(transition *rotation.Transition,
 	external VerifiedBootstrapOuterReachabilityV1) error {
 	if generation == nil {
-		return errors.New("[D120 bootstrap prepare] generation 缺失")
+		return errors.New("[bootstrap prepare] generation 缺失")
 	}
 	if err := generation.requireRunning(); err != nil {
 		return err
@@ -151,9 +151,9 @@ func (generation *PreparedBootstrapGeneration) requireRunning() error {
 		err := generation.runError
 		generation.mu.Unlock()
 		if err != nil {
-			return fmt.Errorf("[D120 bootstrap prepare] listener generation 已退出: %w", err)
+			return fmt.Errorf("[bootstrap prepare] listener generation 已退出: %w", err)
 		}
-		return errors.New("[D120 bootstrap prepare] listener generation 已停止")
+		return errors.New("[bootstrap prepare] listener generation 已停止")
 	default:
 		return nil
 	}

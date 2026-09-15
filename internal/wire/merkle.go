@@ -28,10 +28,10 @@ func MerkleRoot(canonicalLeaves [][]byte) []byte {
 }
 
 // MerkleInclusionPath 为 RFC 6962 树生成自叶到根的 sibling 序列。调用方必须
-// 先按各 registry 的规范 key 排序；这里不猜业务排序或替调用方去重（D105）。
+// 先按各 registry 的规范 key 排序；这里不猜业务排序或替调用方去重。
 func MerkleInclusionPath(canonicalLeaves [][]byte, index int64) ([][]byte, error) {
 	if len(canonicalLeaves) == 0 || index < 0 || index >= int64(len(canonicalLeaves)) {
-		return nil, errors.New("[D105 Merkle] inclusion path index/tree size 无效")
+		return nil, errors.New("[Merkle] inclusion path index/tree size 无效")
 	}
 	hashes := make([][]byte, len(canonicalLeaves))
 	for i := range canonicalLeaves {
@@ -43,18 +43,18 @@ func MerkleInclusionPath(canonicalLeaves [][]byte, index int64) ([][]byte, error
 // VerifyMerkleInclusion 验证 RFC 6962 inclusion path，并拒绝多余或缺失节点。
 func VerifyMerkleInclusion(canonicalLeaf []byte, index, size int64, auditPath [][]byte, root []byte) error {
 	if index < 0 || size <= 0 || index >= size || len(root) != sha256.Size {
-		return errors.New("[D105 Merkle] leaf index/tree size/root 无效")
+		return errors.New("[Merkle] leaf index/tree size/root 无效")
 	}
 	for _, sibling := range auditPath {
 		if len(sibling) != sha256.Size {
-			return errors.New("[D105 Merkle] audit path hash 长度无效")
+			return errors.New("[Merkle] audit path hash 长度无效")
 		}
 	}
 	hash := MerkleLeafHash(canonicalLeaf)
 	fn, sn, path := index, size-1, 0
 	for sn > 0 {
 		if path >= len(auditPath) {
-			return errors.New("[D105 Merkle] audit path 不完整")
+			return errors.New("[Merkle] audit path 不完整")
 		}
 		sibling := auditPath[path]
 		if fn&1 == 1 || fn == sn {
@@ -71,10 +71,10 @@ func VerifyMerkleInclusion(canonicalLeaf []byte, index, size int64, auditPath []
 		path++
 	}
 	if path != len(auditPath) {
-		return errors.New("[D105 Merkle] audit path 含多余节点")
+		return errors.New("[Merkle] audit path 含多余节点")
 	}
 	if !bytes.Equal(hash, root) {
-		return fmt.Errorf("[D105 Merkle] inclusion root 不匹配")
+		return fmt.Errorf("[Merkle] inclusion root 不匹配")
 	}
 	return nil
 }

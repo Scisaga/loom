@@ -19,7 +19,7 @@ import (
 	"loom/internal/observation"
 )
 
-// §16.1.2：通过真实 Run 回路验证客户端报告缓存只剪掉有可信失败证据的出口，
+// 通过真实 Run 回路验证客户端报告缓存只剪掉有可信失败证据的出口，
 // 不代替本机的成功探测，也不能让坏签名或过期数据减少候选覆盖。
 func TestRunConsumesOnlyTrustedFreshClientObservations(t *testing.T) {
 	for _, evidence := range []string{"trusted-expired", "trusted-recovered", "tampered", "expired"} {

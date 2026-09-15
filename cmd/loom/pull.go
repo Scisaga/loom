@@ -38,7 +38,7 @@ type pullCurrent struct {
 	digest   string
 }
 
-// pull 是节点侧的控制通道(§14.2):自己去分发点取配置,而不是等人来推。
+// pull 是节点侧的控制通道:自己去分发点取配置,而不是等人来推。
 //
 // 六步,每一步都在**信任更少的东西**:
 //
@@ -56,7 +56,7 @@ type pullCurrent struct {
 func cmdPull(args []string) (retErr error) {
 	fs := flag.NewFlagSet("pull", flag.ExitOnError)
 	rolloutPath := fs.String("rollout", rollout.Path,
-		"记 rollout 阶段的地方 —— 只记录,不改变行为(D78)")
+		"记 rollout 阶段的地方 —— 只记录,不改变行为")
 	var mirrorURLs repeatedFlag
 	fs.Var(&mirrorURLs, "url", "分发镜像根地址，可按优先级重复(至少一个)")
 	pubPath := fs.String("pubkey", "/etc/loom/trust/platform.pub", "钉住的平台公钥")
@@ -339,8 +339,7 @@ func cmdPull(args []string) (retErr error) {
 		return nil
 	}
 
-	// 3.6 二进制。**在配置之前** —— 新版读得懂旧配置,旧版读不懂新配置
-	//     (§15.4、D46)。
+	// 3.6 二进制先于配置激活，避免旧代码解析新版配置字段。
 	// 二进制是**内容寻址**的,放在树的顶层跨快照共享。
 	// 回滚到旧快照时旧二进制还在,不用重新下载。
 	enterRec(rollout.Activating)
@@ -351,7 +350,7 @@ func cmdPull(args []string) (retErr error) {
 			rec.Binary = binarySHA(man)
 			saveRec()
 		}
-		// **用新二进制续跑同一个快照,不等下一个定时器**(D80)。
+		// **用新二进制续跑同一个快照,不等下一个定时器**。
 		//
 		// 安全原则没变:继续用当前进程里的**旧代码**去装新配置,正是要
 		// 避免的那种配对。变的只是怎么实现它 —— 以前靠"就此 return,
@@ -377,7 +376,7 @@ func cmdPull(args []string) (retErr error) {
 	if want == "" {
 		// **缺席是歧义的**:可能是被删了,也可能是有人渲染时漏了一个节点。
 		// 对歧义信号采取不可逆动作是危险的 —— 所以这里只报错、只告警,
-		// 停机要靠 manifest 里那条明确的 decommission(§14.4)。
+		// 停机要靠 manifest 里那条明确的 decommission。
 		return fmt.Errorf("这个签名过的快照里没有 %s 的配置包。"+
 			"如果是有意下线,应当先标 decommission 让本机自己停;"+
 			"缺席只当作异常处理,本机维持现状不动", id)
@@ -897,7 +896,7 @@ func (l *nodeDeployLock) Close() error {
 	return l.file.Close()
 }
 
-// decommission 执行一条经过认证的停机指令(§14.4)。
+// decommission 执行一条经过认证的停机指令。
 //
 // 停服务、禁自启,**不销毁任何秘密**。销毁不可逆,而误签一次就全没了 ——
 // 它要停,不要自毁。凭据的轮换是人的事,而且必须做:一台下线的服务器手上

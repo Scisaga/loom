@@ -1,6 +1,6 @@
 package clientruntime
 
-// WindowsHealthPlan 只描述已激活的本机运行面（§16.1），不生成业务探测目标。
+// WindowsHealthPlan 只描述已激活的本机运行面，不生成业务探测目标。
 type WindowsHealthPlan struct{ profile WindowsRuntimeProfile }
 
 func BuildWindowsHealthPlan(body []byte, profile WindowsRuntimeProfile, caPath string) (*WindowsHealthPlan, error) {

@@ -15,7 +15,7 @@ import (
 // 用那条旧事实剪枝。不要在两个渲染器里各写一个时长。
 const observationStale = "10m"
 
-// 本文件渲染**上报者**的配置(§16.1)。它和 Agent 是两个角色:
+// 本文件渲染**上报者**的配置。它和 Agent 是两个角色:
 // Agent 做决策、只在接入节点上;上报者只观测和自检、**每个节点都有**。
 //
 // 服务器上没有 selector 可切,所以不装 Agent —— 但这不等于服务器不需要跑
@@ -31,7 +31,7 @@ const ReportPort = 61802
 // ManifestPath 是 loom hydrate 产出的清单在机器上的位置。
 const ManifestPath = "/etc/loom/report/manifest.json"
 
-const reportUnit = `# 由 loom render 生成 —— 不要手工编辑(§12)
+const reportUnit = `# 由 loom render 生成 —— 不要手工编辑
 [Unit]
 Description=Loom 上报者(隧道健康与配置自检 %s)
 # 隧道接口不在时没有地址可绑。
@@ -199,7 +199,7 @@ func expectedReportRoutes(s *model.SSOT, n *model.Node) []report.ExpectedRoute {
 	return report.ExpectedRoutesForAccess(s, n)
 }
 
-// probeTargets 合并声明与 Service 的具体目标（§4.5、§16.1.2），让服务器观测
+// probeTargets 合并声明与 Service 的具体目标，让服务器观测
 // 覆盖服务选路使用的地址；后缀规则不是可请求主机，不能作为采集目标。
 func probeTargets(s *model.SSOT) []string {
 	var out []string

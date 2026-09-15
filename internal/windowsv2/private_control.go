@@ -30,7 +30,7 @@ func buildPrivateControlContext(state *StateV1, identity *Identity, role, servic
 	now time.Time) (privateControlContext, error) {
 	if state == nil || identity == nil || state.Envelope.Payload.State != "active" ||
 		state.Envelope.Payload.Active == nil || now.IsZero() {
-		return privateControlContext{}, errors.New("[D131 Windows control] active Device/identity/time 不完整")
+		return privateControlContext{}, errors.New("[Windows control] active Device/identity/time 不完整")
 	}
 	identitySPKI := identity.IdentitySPKIDER()
 	defer clear(identitySPKI)
@@ -40,7 +40,7 @@ func buildPrivateControlContext(state *StateV1, identity *Identity, role, servic
 	if err != nil || !ok || publicKey.Curve != elliptic.P256() || hashErr != nil ||
 		identityHash != state.Enrollment.IdentityKeyHash ||
 		identityHash != state.Envelope.Payload.Active.IdentitySPKIHash {
-		return privateControlContext{}, errors.New("[D131 Windows control] DPAPI signer 与 protected Device 不一致")
+		return privateControlContext{}, errors.New("[Windows control] DPAPI signer 与 protected Device 不一致")
 	}
 	certificateDER, err := wire.EnrollmentResultCertificateDER(&state.Enrollment.ResultArtifact)
 	if err != nil {
@@ -49,7 +49,7 @@ func buildPrivateControlContext(state *StateV1, identity *Identity, role, servic
 	certificate, err := x509.ParseCertificate(certificateDER)
 	approvedAt, approvedErr := wire.ParseTimeZ(state.Enrollment.DeviceApprovedAt)
 	if err != nil || approvedErr != nil || !bytes.Equal(certificate.RawSubjectPublicKeyInfo, identitySPKI) {
-		return privateControlContext{}, errors.New("[D131 Windows control] Device certificate/signer 不匹配")
+		return privateControlContext{}, errors.New("[Windows control] Device certificate/signer 不匹配")
 	}
 	if _, err := wire.VerifyDeviceCertificateAt(certificateDER, &state.Enrollment.DeviceProfile,
 		state.Envelope.Payload.DeviceID, identityHash, state.Enrollment.ClaimCore.ClientPlatform,
@@ -69,7 +69,7 @@ func buildPrivateControlContext(state *StateV1, identity *Identity, role, servic
 		credential.ClusterID != state.Envelope.Payload.ClusterID ||
 		credential.DeviceID != state.Envelope.Payload.DeviceID ||
 		wire.ValidateDevicePrivateControlCredentialAtFloor(&credential, state.Floors) != nil {
-		return privateControlContext{}, errors.New("[D131 Windows control] private credential 未绑定 durable authority")
+		return privateControlContext{}, errors.New("[Windows control] private credential 未绑定 durable authority")
 	}
 	services, err := clientv2.SelectPrivateControlServices(&credential.ControlServiceDirectory,
 		role, serviceID, state.Enrollment.DeviceProfile.ProfileID)
@@ -81,7 +81,7 @@ func buildPrivateControlContext(state *StateV1, identity *Identity, role, servic
 		der, decodeErr := base64.RawURLEncoding.DecodeString(encoded)
 		root, parseErr := x509.ParseCertificate(der)
 		if decodeErr != nil || parseErr != nil || !bytes.Equal(root.Raw, der) {
-			return privateControlContext{}, errors.New("[D131 Windows control] internal CA root DER 无效")
+			return privateControlContext{}, errors.New("[Windows control] internal CA root DER 无效")
 		}
 		roots.AddCert(root)
 	}
@@ -91,7 +91,7 @@ func buildPrivateControlContext(state *StateV1, identity *Identity, role, servic
 		der, decodeErr := base64.RawURLEncoding.DecodeString(encoded)
 		certificate, parseErr := x509.ParseCertificate(der)
 		if decodeErr != nil || parseErr != nil || !bytes.Equal(certificate.Raw, der) {
-			return privateControlContext{}, errors.New("[D131 Windows control] client issuer chain DER 无效")
+			return privateControlContext{}, errors.New("[Windows control] client issuer chain DER 无效")
 		}
 		chain = append(chain, der)
 	}
@@ -112,10 +112,10 @@ type DeviceConfigSyncOptions struct {
 }
 
 // SyncDeviceConfig 通过正式 Device mTLS identity 获取 delivery；只有变化的
-// public configs 与 sealed credentials 全部到齐后才推进 LKG（D106、D124、D131）。
+// public configs 与 sealed credentials 全部到齐后才推进 LKG。
 func SyncDeviceConfig(ctx context.Context, options DeviceConfigSyncOptions) (wire.ClientFloorsV2, error) {
 	if ctx == nil || options.Protector == nil {
-		return wire.ClientFloorsV2{}, errors.New("[D131 Windows config] context/protector 缺失")
+		return wire.ClientFloorsV2{}, errors.New("[Windows config] context/protector 缺失")
 	}
 	store, err := OpenState(options.StatePath, options.Protector)
 	if err != nil {
@@ -123,7 +123,7 @@ func SyncDeviceConfig(ctx context.Context, options DeviceConfigSyncOptions) (wir
 	}
 	state := store.Snapshot()
 	if state == nil || state.Envelope.Payload.State != "active" {
-		return store.Floors(), errors.New("[D131 Windows config] active v2 LKG 尚未安装")
+		return store.Floors(), errors.New("[Windows config] active v2 LKG 尚未安装")
 	}
 	identity, err := LoadIdentity(options.IdentityPath, options.Protector)
 	if err != nil {
@@ -224,7 +224,7 @@ func PrepareDeviceReport(options DeviceReportOptions) (wire.DeviceReportEnvelope
 	}
 	state := store.Snapshot()
 	if state == nil || state.Envelope.Payload.State != "active" || state.Envelope.Payload.Active == nil {
-		return wire.DeviceReportEnvelopeV2{}, errors.New("[D131 Windows report] active v2 LKG 尚未安装")
+		return wire.DeviceReportEnvelopeV2{}, errors.New("[Windows report] active v2 LKG 尚未安装")
 	}
 	identity, err := LoadIdentity(options.IdentityPath, options.Protector)
 	if err != nil {
@@ -234,7 +234,7 @@ func PrepareDeviceReport(options DeviceReportOptions) (wire.DeviceReportEnvelope
 	identityHash, err := identity.IdentitySPKIHash()
 	if err != nil || identityHash != state.Enrollment.IdentityKeyHash ||
 		identityHash != state.Envelope.Payload.Active.IdentitySPKIHash {
-		return wire.DeviceReportEnvelopeV2{}, errors.New("[D131 Windows report] signer 与 protected Device 不一致")
+		return wire.DeviceReportEnvelopeV2{}, errors.New("[Windows report] signer 与 protected Device 不一致")
 	}
 	now := options.Now
 	if now == nil {
@@ -266,7 +266,7 @@ func PrepareDeviceReport(options DeviceReportOptions) (wire.DeviceReportEnvelope
 func SubmitDeviceReport(ctx context.Context, options DeviceReportOptions,
 	envelope *wire.DeviceReportEnvelopeV2) error {
 	if ctx == nil || envelope == nil {
-		return errors.New("[D131 Windows report] context/envelope 缺失")
+		return errors.New("[Windows report] context/envelope 缺失")
 	}
 	store, err := OpenState(options.StatePath, options.Protector)
 	if err != nil {
@@ -274,7 +274,7 @@ func SubmitDeviceReport(ctx context.Context, options DeviceReportOptions,
 	}
 	state := store.Snapshot()
 	if state == nil || state.Envelope.Payload.State != "active" {
-		return errors.New("[D131 Windows report] tombstone/inactive Device 禁止上报")
+		return errors.New("[Windows report] tombstone/inactive Device 禁止上报")
 	}
 	identity, err := LoadIdentity(options.IdentityPath, options.Protector)
 	if err != nil {
@@ -294,7 +294,7 @@ func SubmitDeviceReport(ctx context.Context, options DeviceReportOptions,
 	if !ok || !wire.EqualCanonical(envelope.Body.AcceptedFloors, state.Floors) ||
 		wire.VerifyDeviceReport(envelope, public, state.Envelope.Payload.DeviceID,
 			identityHash, instant, 24*time.Hour, 5*time.Minute, options.Schemas) != nil {
-		return errors.New("[D131 Windows report] envelope 与当前 identity/floors/schema 不一致")
+		return errors.New("[Windows report] envelope 与当前 identity/floors/schema 不一致")
 	}
 	control, err := buildPrivateControlContext(state, identity, "device_report", options.ServiceID, instant)
 	if err != nil {

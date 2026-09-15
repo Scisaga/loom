@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// EquivalentTargetURL 只在消费观测时把 HTTP(S) 空路径视为根路径(§16.1.2)。
+// EquivalentTargetURL 只在消费观测时把 HTTP(S) 空路径视为根路径。
 // 保留其余原始字符，尤其是转义路径、查询顺序和空查询；不改写签名正文。
 func EquivalentTargetURL(a, b string) bool {
 	key := func(raw string) string {

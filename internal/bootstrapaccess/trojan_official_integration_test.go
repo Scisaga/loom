@@ -19,7 +19,7 @@ import (
 
 // TestOfficialSingBoxTrojanBootstrapInterop 验证真实 sing-box SOCKS→Trojan/TLS
 // client 与本包 server/ACL/usage 的兼容性。默认单测不依赖宿主二进制；Linux
-// 验收以 LOOM_TROJAN_BOOTSTRAP_EXECUTABLE=/abs/sing-box 显式启用（D131）。
+// 验收以 LOOM_TROJAN_BOOTSTRAP_EXECUTABLE=/abs/sing-box 显式启用。
 func TestOfficialSingBoxTrojanBootstrapInterop(t *testing.T) {
 	executable := os.Getenv("LOOM_TROJAN_BOOTSTRAP_EXECUTABLE")
 	if executable == "" {

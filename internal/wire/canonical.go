@@ -28,10 +28,10 @@ const (
 )
 
 // CanonicalizeStrict 把严格 I-JSON 整数子集编码为 RFC 8785 canonical bytes。
-// 输入歧义在规范化前失败，避免签名者与 reader 对同一字节作不同解释（D104）。
+// 输入歧义在规范化前失败，避免签名者与 reader 对同一字节作不同解释。
 func CanonicalizeStrict(body []byte) ([]byte, error) {
 	if len(body) == 0 || !utf8.Valid(body) {
-		return nil, errors.New("[D104 wire] JSON 必须是非空 UTF-8")
+		return nil, errors.New("[wire] JSON 必须是非空 UTF-8")
 	}
 	if err := validateJSONStringEscapes(body); err != nil {
 		return nil, err
@@ -46,7 +46,7 @@ func CanonicalizeStrict(body []byte) ([]byte, error) {
 		if err == nil {
 			err = fmt.Errorf("多余 JSON token %v", token)
 		}
-		return nil, fmt.Errorf("[D104 wire] JSON 尾部内容无效: %w", err)
+		return nil, fmt.Errorf("[wire] JSON 尾部内容无效: %w", err)
 	}
 	var out bytes.Buffer
 	appendCanonical(&out, value)
@@ -57,7 +57,7 @@ func CanonicalizeStrict(body []byte) ([]byte, error) {
 func MarshalCanonical(value any) ([]byte, error) {
 	body, err := json.Marshal(value)
 	if err != nil {
-		return nil, fmt.Errorf("[D104 wire] JSON 编码失败: %w", err)
+		return nil, fmt.Errorf("[wire] JSON 编码失败: %w", err)
 	}
 	return CanonicalizeStrict(body)
 }
@@ -65,7 +65,7 @@ func MarshalCanonical(value any) ([]byte, error) {
 // DecodeStrict 同时拒绝重复键、非整数数值、未知字段和尾随值。
 func DecodeStrict(body []byte, maximum int, target any) ([]byte, error) {
 	if maximum <= 0 || len(body) == 0 || len(body) > maximum {
-		return nil, fmt.Errorf("[D104 wire] JSON 大小必须在 1..%d bytes", maximum)
+		return nil, fmt.Errorf("[wire] JSON 大小必须在 1..%d bytes", maximum)
 	}
 	canonical, err := CanonicalizeStrict(body)
 	if err != nil {
@@ -74,22 +74,22 @@ func DecodeStrict(body []byte, maximum int, target any) ([]byte, error) {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(target); err != nil {
-		return nil, fmt.Errorf("[D104 wire] schema/字段无效: %w", err)
+		return nil, fmt.Errorf("[wire] schema/字段无效: %w", err)
 	}
 	var trailing any
 	if err := dec.Decode(&trailing); !errors.Is(err, io.EOF) {
 		if err == nil {
 			err = errors.New("存在第二个 JSON value")
 		}
-		return nil, fmt.Errorf("[D104 wire] JSON 尾部内容无效: %w", err)
+		return nil, fmt.Errorf("[wire] JSON 尾部内容无效: %w", err)
 	}
 	return canonical, nil
 }
 
-// Frame 使用 uint32 大端 domain 长度，禁止无边界字符串拼接（D104）。
+// Frame 使用 uint32 大端 domain 长度，禁止无边界字符串拼接。
 func Frame(domain string, canonical []byte) ([]byte, error) {
 	if domain == "" || !utf8.ValidString(domain) || len(domain) > int(^uint32(0)) {
-		return nil, errors.New("[D104 wire] hash/signature domain 无效")
+		return nil, errors.New("[wire] hash/signature domain 无效")
 	}
 	framed := make([]byte, 4+len(domain)+len(canonical))
 	binary.BigEndian.PutUint32(framed[:4], uint32(len(domain)))
@@ -109,7 +109,7 @@ func HashCanonical(domain string, canonical []byte) (string, error) {
 }
 
 // HashBytes 对证书/SPKI 等协议明确指定的原始字节使用同一 typed framing。
-// 它不尝试把 binary payload 当作 JSON 重新规范化（D124）。
+// 它不尝试把 binary payload 当作 JSON 重新规范化。
 func HashBytes(domain string, raw []byte) (string, error) {
 	return HashCanonical(domain, raw)
 }
@@ -126,11 +126,11 @@ func HashObject(domain string, value any) (string, error) {
 // ParseHash 验证规范小写 sha256 摘要并返回 raw bytes。
 func ParseHash(value string) ([]byte, error) {
 	if len(value) != len("sha256:")+sha256.Size*2 || value[:len("sha256:")] != "sha256:" {
-		return nil, errors.New("[D104 wire] hash 必须是规范 sha256:lowercase-hex")
+		return nil, errors.New("[wire] hash 必须是规范 sha256:lowercase-hex")
 	}
 	raw, err := hex.DecodeString(value[len("sha256:"):])
 	if err != nil || "sha256:"+hex.EncodeToString(raw) != value {
-		return nil, errors.New("[D104 wire] hash 必须是规范 sha256:lowercase-hex")
+		return nil, errors.New("[wire] hash 必须是规范 sha256:lowercase-hex")
 	}
 	return raw, nil
 }
@@ -142,11 +142,11 @@ type objectMember struct {
 
 func decodeValue(dec *json.Decoder, depth int) (any, error) {
 	if depth > maxDepth {
-		return nil, errors.New("[D104 wire] JSON 嵌套过深")
+		return nil, errors.New("[wire] JSON 嵌套过深")
 	}
 	token, err := dec.Token()
 	if err != nil {
-		return nil, fmt.Errorf("[D104 wire] JSON 无效: %w", err)
+		return nil, fmt.Errorf("[wire] JSON 无效: %w", err)
 	}
 	switch value := token.(type) {
 	case json.Delim:
@@ -157,14 +157,14 @@ func decodeValue(dec *json.Decoder, depth int) (any, error) {
 			for dec.More() {
 				keyToken, err := dec.Token()
 				if err != nil {
-					return nil, fmt.Errorf("[D104 wire] JSON object key 无效: %w", err)
+					return nil, fmt.Errorf("[wire] JSON object key 无效: %w", err)
 				}
 				key, ok := keyToken.(string)
 				if !ok {
-					return nil, errors.New("[D104 wire] JSON object key 必须是字符串")
+					return nil, errors.New("[wire] JSON object key 必须是字符串")
 				}
 				if _, duplicate := seen[key]; duplicate {
-					return nil, fmt.Errorf("[D104 wire] JSON 含重复字段 %q", key)
+					return nil, fmt.Errorf("[wire] JSON 含重复字段 %q", key)
 				}
 				seen[key] = struct{}{}
 				child, err := decodeValue(dec, depth+1)
@@ -175,7 +175,7 @@ func decodeValue(dec *json.Decoder, depth int) (any, error) {
 			}
 			end, err := dec.Token()
 			if err != nil || end != json.Delim('}') {
-				return nil, errors.New("[D104 wire] JSON object 未正常结束")
+				return nil, errors.New("[wire] JSON object 未正常结束")
 			}
 			sort.Slice(members, func(i, j int) bool { return lessUTF16(members[i].key, members[j].key) })
 			return members, nil
@@ -190,26 +190,26 @@ func decodeValue(dec *json.Decoder, depth int) (any, error) {
 			}
 			end, err := dec.Token()
 			if err != nil || end != json.Delim(']') {
-				return nil, errors.New("[D104 wire] JSON array 未正常结束")
+				return nil, errors.New("[wire] JSON array 未正常结束")
 			}
 			return items, nil
 		default:
-			return nil, fmt.Errorf("[D104 wire] 非法 JSON delimiter %q", value)
+			return nil, fmt.Errorf("[wire] 非法 JSON delimiter %q", value)
 		}
 	case json.Number:
 		lexical := value.String()
 		if bytes.ContainsAny([]byte(lexical), ".eE") {
-			return nil, errors.New("[D104 wire] v2 wire 禁止浮点数")
+			return nil, errors.New("[wire] v2 wire 禁止浮点数")
 		}
 		integer := new(big.Int)
 		if _, ok := integer.SetString(lexical, 10); !ok || !integer.IsInt64() {
-			return nil, errors.New("[D104 wire] 整数超出 int64")
+			return nil, errors.New("[wire] 整数超出 int64")
 		}
 		return integer.Int64(), nil
 	case string, bool, nil:
 		return value, nil
 	default:
-		return nil, fmt.Errorf("[D104 wire] 不支持的 JSON value %T", token)
+		return nil, fmt.Errorf("[wire] 不支持的 JSON value %T", token)
 	}
 }
 
@@ -290,7 +290,7 @@ func lessUTF16(a, b string) bool {
 }
 
 // encoding/json 会把 lone surrogate 替换为 U+FFFD；在 decoder 前扫描才能
-// 保证不同 reader 不会把同一恶意输入归约成相同签名对象（D104）。
+// 保证不同 reader 不会把同一恶意输入归约成相同签名对象。
 func validateJSONStringEscapes(body []byte) error {
 	for i := 0; i < len(body); i++ {
 		if body[i] != '"' {
@@ -303,31 +303,31 @@ func validateJSONStringEscapes(body []byte) error {
 			case '\\':
 				i++
 				if i >= len(body) {
-					return errors.New("[D104 wire] JSON string escape 截断")
+					return errors.New("[wire] JSON string escape 截断")
 				}
 				if body[i] != 'u' {
 					continue
 				}
 				unit, ok := parseHexUnit(body, i+1)
 				if !ok {
-					return errors.New("[D104 wire] JSON unicode escape 无效")
+					return errors.New("[wire] JSON unicode escape 无效")
 				}
 				i += 4
 				if unit >= 0xd800 && unit <= 0xdbff {
 					if i+6 >= len(body) || body[i+1] != '\\' || body[i+2] != 'u' {
-						return errors.New("[D104 wire] JSON high surrogate 缺少配对")
+						return errors.New("[wire] JSON high surrogate 缺少配对")
 					}
 					low, ok := parseHexUnit(body, i+3)
 					if !ok || low < 0xdc00 || low > 0xdfff {
-						return errors.New("[D104 wire] JSON surrogate 配对无效")
+						return errors.New("[wire] JSON surrogate 配对无效")
 					}
 					i += 6
 				} else if unit >= 0xdc00 && unit <= 0xdfff {
-					return errors.New("[D104 wire] JSON lone low surrogate 无效")
+					return errors.New("[wire] JSON lone low surrogate 无效")
 				}
 			}
 		}
-		return errors.New("[D104 wire] JSON string 未结束")
+		return errors.New("[wire] JSON string 未结束")
 	stringDone:
 	}
 	return nil

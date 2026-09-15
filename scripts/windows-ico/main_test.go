@@ -31,16 +31,16 @@ func TestRoundPNGAddsAntialiasedCornersWithoutChangingInterior(t *testing.T) {
 	}
 
 	if alpha := color.NRGBAModel.Convert(decoded.At(0, 0)).(color.NRGBA).A; alpha != 0 {
-		t.Fatalf("[§7.2] 左上角应完全透明，实际 alpha=%d", alpha)
+		t.Fatalf("左上角应完全透明，实际 alpha=%d", alpha)
 	}
 	if alpha := color.NRGBAModel.Convert(decoded.At(1, 1)).(color.NRGBA).A; alpha == 0 || alpha == 255 {
-		t.Fatalf("[§7.2] 圆角边缘应抗锯齿，实际 alpha=%d", alpha)
+		t.Fatalf("圆角边缘应抗锯齿，实际 alpha=%d", alpha)
 	}
 	for _, point := range []image.Point{{5, 5}, {20, 20}, {39, 20}} {
 		got := color.NRGBAModel.Convert(decoded.At(point.X, point.Y)).(color.NRGBA)
 		want := source.NRGBAAt(point.X, point.Y)
 		if got != want {
-			t.Fatalf("[§7.2] 圆角不应改写品牌图内部像素 %v：got=%v want=%v", point, got, want)
+			t.Fatalf("圆角不应改写品牌图内部像素 %v：got=%v want=%v", point, got, want)
 		}
 	}
 }
@@ -57,7 +57,7 @@ func TestRoundedSquareCoverageIsSymmetric(t *testing.T) {
 			}
 			for _, mirror := range mirrors {
 				if mirror != got {
-					t.Fatalf("[§7.2] 圆角遮罩在 (%d,%d) 不对称：%d != %d", x, y, got, mirror)
+					t.Fatalf("圆角遮罩在 (%d,%d) 不对称：%d != %d", x, y, got, mirror)
 				}
 			}
 		}

@@ -46,7 +46,7 @@ type Hysteria2ServerOptions struct {
 }
 
 // Hysteria2Server 提供 bootstrap 的 UDP 主入口，但只开放 HY2 TCP stream；
-// QUIC datagram、隧道内 UDP 和任意目的转发全部禁用（D115、D131）。
+// QUIC datagram、隧道内 UDP 和任意目的转发全部禁用。
 type Hysteria2Server struct {
 	manager          *Manager
 	registry         *CredentialRegistry
@@ -71,7 +71,7 @@ func NewHysteria2Server(manager *Manager, registry *CredentialRegistry,
 		options.IdleTimeout > 5*time.Minute || options.MaximumConcurrentConnections < 1 ||
 		options.MaximumConcurrentConnections > 4096 || options.MaximumStreamsPerConnection < 1 ||
 		options.MaximumStreamsPerConnection > 64 {
-		return nil, errors.New("[D115 bootstrap ingress] Hysteria2 server 配置无效")
+		return nil, errors.New("[bootstrap ingress] Hysteria2 server 配置无效")
 	}
 	base, err := certifiedTLSConfig(options.TLSConfig, options.Listener)
 	if err != nil {
@@ -91,24 +91,24 @@ func NewHysteria2Server(manager *Manager, registry *CredentialRegistry,
 }
 
 // Serve 接管一个已经绑定到 certified HY2/UDP tuple 的 PacketConn。返回时连接已关闭；
-// 调用方不得把同一 UDP tuple 同时交给 WG 或另一 listener（D127、D131）。
+// 调用方不得把同一 UDP tuple 同时交给 WG 或另一 listener。
 func (server *Hysteria2Server) Serve(ctx context.Context, packetConnection net.PacketConn) error {
 	if server == nil || ctx == nil || packetConnection == nil ||
 		!server.listener.matchesLocalAddr(packetConnection.LocalAddr(), "hysteria2") {
-		return errors.New("[D115 bootstrap ingress] Hysteria2 serve 输入不完整")
+		return errors.New("[bootstrap ingress] Hysteria2 serve 输入不完整")
 	}
 	listener, err := quic.Listen(packetConnection, server.tlsConfig, &quic.Config{
 		HandshakeIdleTimeout: server.handshakeTimeout,
 		MaxIdleTimeout:       server.idleTimeout,
 		// HTTP/3 auth 自己占一个 bidirectional stream；额外余量只服务控制帧，
-		// 真正的 HY2 TCP stream 总数仍由 streamCount 硬限制（D131）。
+		// 真正的 HY2 TCP stream 总数仍由 streamCount 硬限制。
 		MaxIncomingStreams: server.maximumStreams + 2,
 		EnableDatagrams:    false,
 		Allow0RTT:          false,
 	})
 	if err != nil {
 		_ = packetConnection.Close()
-		return fmt.Errorf("[D115 bootstrap ingress] Hysteria2 QUIC listener 启动失败: %w", err)
+		return fmt.Errorf("[bootstrap ingress] Hysteria2 QUIC listener 启动失败: %w", err)
 	}
 	stopAccept := context.AfterFunc(ctx, func() {
 		_ = listener.Close()
@@ -125,7 +125,7 @@ func (server *Hysteria2Server) Serve(ctx context.Context, packetConnection net.P
 			if ctx.Err() != nil {
 				return nil
 			}
-			return fmt.Errorf("[D115 bootstrap ingress] Hysteria2 accept 失败: %w", err)
+			return fmt.Errorf("[bootstrap ingress] Hysteria2 accept 失败: %w", err)
 		}
 		select {
 		case server.pending <- struct{}{}:
@@ -166,7 +166,7 @@ func (server *Hysteria2Server) sessionID() (string, error) {
 	_, err := io.ReadFull(server.random, random[:])
 	server.randomMu.Unlock()
 	if err != nil {
-		return "", errors.New("[D131 capability] Hysteria2 session identity 生成失败")
+		return "", errors.New("[capability] Hysteria2 session identity 生成失败")
 	}
 	return "hysteria2-" + fmt.Sprintf("%x", random[:]), nil
 }
@@ -304,19 +304,19 @@ func readHysteria2TCPRequest(reader io.Reader) (string, error) {
 	variableReader := quicvarint.NewReader(reader)
 	addressLength, err := quicvarint.Read(variableReader)
 	if err != nil || addressLength == 0 || addressLength > hysteria2MaxAddressLength {
-		return "", errors.New("[D131 capability] Hysteria2 destination length 无效")
+		return "", errors.New("[capability] Hysteria2 destination length 无效")
 	}
 	address := make([]byte, addressLength)
 	if _, err := io.ReadFull(reader, address); err != nil || !utf8.Valid(address) {
-		return "", errors.New("[D131 capability] Hysteria2 destination 编码无效")
+		return "", errors.New("[capability] Hysteria2 destination 编码无效")
 	}
 	paddingLength, err := quicvarint.Read(variableReader)
 	if err != nil || paddingLength > hysteria2MaxPaddingLength {
-		return "", errors.New("[D131 capability] Hysteria2 padding length 无效")
+		return "", errors.New("[capability] Hysteria2 padding length 无效")
 	}
 	if paddingLength > 0 {
 		if _, err := io.CopyN(io.Discard, reader, int64(paddingLength)); err != nil {
-			return "", errors.New("[D131 capability] Hysteria2 padding 不完整")
+			return "", errors.New("[capability] Hysteria2 padding 不完整")
 		}
 	}
 	return string(address), nil

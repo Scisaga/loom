@@ -1,30 +1,30 @@
 // Package model 是 SSOT 的内存表示。
 //
-// 命名遵循 design.md 附录 B:项目名不向下渗透,内部一律用通用词。
+// 项目名不向下渗透，内部一律用通用词，避免把产品名误当成领域概念。
 package model
 
 // 节点能力由**哪个角色块存在**推导,不是一个单独的 capabilities 列表。
 //
 // 两者本是同一个事实的两次编码:写了 capabilities: [server] 却不给 server
-// 块(或反过来)就是自相矛盾,而那正是 D4 说的"推导值不进结构体"要消灭的
+// 块(或反过来)就是自相矛盾,而那正是"推导值不进结构体"要消灭的
 // 东西。改成角色块之后,把 direction 写在接入节点上**根本无处可写** ——
 // 不是被校验拒绝,是不可表达。
 //
-// 能力仍然是集合(§1.3):一台机器可以同时有 access 与 server 两个块,
+// 能力仍然是集合:一台机器可以同时有 access 与 server 两个块,
 // 比如笔记本自己上网、同时给同网段另一台设备当出口。
 //
-// 这里**没有 target**。目标不是节点(§1),出口是路径上的位置而非节点类型
-// (§1.1)—— 链上最后一台服务器就是这次的出口。
+// 这里**没有 target**。目标不是节点,出口是路径上的位置而非节点类型
+// —— 链上最后一台服务器就是这次的出口。
 
-// Protocol 是隧道协议。协议按跳选择,不做全局统一(§6)。
+// Protocol 是隧道协议。协议按跳选择,不做全局统一。
 type Protocol string
 
 const (
-	// WG 是跨受限链路的默认选择(§6.1)。
+	// WG 是跨受限链路的默认选择。
 	WG Protocol = "wg"
-	// AWG 是 AmneziaWG,需抗 DPI 时替换 WG(§17)。
+	// AWG 是 AmneziaWG,需抗 DPI 时替换 WG。
 	AWG Protocol = "awg"
-	// HY2 是 Hysteria2,用于无约束链路(§6.2)。
+	// HY2 是 Hysteria2,用于无约束链路。
 	HY2 Protocol = "hy2"
 )
 
@@ -36,10 +36,10 @@ func (p Protocol) Valid() bool {
 	return false
 }
 
-// Node 是 Loom 管的一台机器。目标地址不在这里 —— 它不是节点(§1、§9)。
+// Node 是 Loom 管的一台机器。目标地址不在这里 —— 它不是节点。
 //
 // 角色字段分在 Server / Access 两个块里。哪个块存在,就持有哪种能力;
-// 两个都有也合法(§1.3)。这样"把 direction 写在接入节点上"这件事在
+// 两个都有也合法。这样"把 direction 写在接入节点上"这件事在
 // schema 层面就不成立。
 type Node struct {
 	// Drain 为真时:这台机器**照常渲染、隧道照常建**,但**不参与候选枚举**。
@@ -51,7 +51,7 @@ type Node struct {
 	// **它不影响别人到它的隧道** —— 这是有意的:排空期间你仍然要能观测它。
 	Drain bool `yaml:"drain,omitempty"`
 
-	// Paused 暂停纯接入设备的网络访问(§14.4)，保留身份、授权及配置拉取。
+	// Paused 暂停纯接入设备的网络访问，保留身份、授权及配置拉取。
 	// 服务器不再接受它的凭据；本机直连不受影响，恢复不需要重新 Enrollment。
 	Paused bool `yaml:"paused,omitempty"`
 
@@ -83,7 +83,7 @@ type Node struct {
 	// 服务器用它接受上游连接;接入节点通常只用于 SSH 与排障标注。
 	PublicEndpoint string `yaml:"public_endpoint,omitempty"`
 
-	// SSHPort 是 bootstrap 阶段用的 SSH 端口(§14.1)。留空按 22。
+	// SSHPort 是 bootstrap 阶段用的 SSH 端口。留空按 22。
 	SSHPort int `yaml:"ssh_port,omitempty"`
 
 	// Components 是这台机器上该跑哪些版本。为空则用 SSOT 的全局默认。
@@ -91,12 +91,9 @@ type Node struct {
 
 	// DNS 是这台机器本地解析用的服务器,为空则用全局默认。
 	//
-	// **必须显式配,不能依赖系统解析器。** 走代理的流量由出口解析(§7.4 的
-	// socks5h),不经过这里;但**直连**那条候选要本地解析 —— 系统解析器坏掉
-	// 时,表现是"直连候选永远失败",而代理候选一切正常,极难往 DNS 上想。
-	//
-	// 解析器要按机器所在地选:大陆机器用 8.8.8.8 会被污染,境外机器用
-	// 223.5.5.5 又绕远。
+	// 本机或全局必须显式配置解析器，避免依赖机器的全局 DNS 设置。本地直连
+	// 解析与代理出口解析属于不同环节，前者失败时代理候选仍可能可用。
+	// 解析器应依据节点所在网络的实际可达性与解析结果选择，不能仅凭地域推断。
 	DNS []string `yaml:"dns,omitempty"`
 
 	// DistributionURLs 覆盖全网默认分发镜像。按优先级排列；节点会并行读取
@@ -136,37 +133,37 @@ func ValidCountryCode(country string) bool {
 		country[1] >= 'A' && country[1] <= 'Z'
 }
 
-// ServerRole 是"这台机器转发流量"这件事需要的全部字段(§8)。
+// ServerRole 是"这台机器转发流量"这件事需要的全部字段。
 type ServerRole struct {
-	// Direction 约束这个节点在隧道里能扮演什么角色(§2.1)。
+	// Direction 约束这个节点在隧道里能扮演什么角色。
 	Direction Direction `yaml:"direction"`
 
 	// PublicDataIngress 表示这台服务器是否把 sing-box 数据入口开放给公网接入设备。
 	// 它不改变 WireGuard 的发起方向：reverse_only 仍由本机主动维持隧道，但可在
-	// 显式启用后接受已授权客户端直拨 Hysteria2，从而避免代理套代理(§2.3)。
+	// 显式启用后接受已授权客户端直拨 Hysteria2，从而避免代理套代理。
 	PublicDataIngress bool `yaml:"public_data_ingress,omitempty"`
 
-	// InboundPort 是接受上游连接的端口(§8.1)。上游可能是接入节点,
+	// InboundPort 是接受上游连接的端口。上游可能是接入节点,
 	// 也可能是链上的前一台服务器。
 	InboundPort int `yaml:"inbound_port"`
 
-	// InboundProtocol 决定这个 inbound 说什么协议(§6.2.1)。
+	// InboundProtocol 决定这个 inbound 说什么协议。
 	// 留空按 Hysteria2 处理。
 	InboundProtocol InboundProtocol `yaml:"inbound_protocol,omitempty"`
 
 	// EgressCapable 表示这台机器能否作为出口出公网。
-	// 它不是一种节点类型 —— 同一台机器这次是出口,下次可能只是中间一跳(§1.1)。
+	// 它不是一种节点类型 —— 同一台机器这次是出口,下次可能只是中间一跳。
 	EgressCapable bool `yaml:"egress_capable,omitempty"`
 
-	// WGPublicKey 由节点上报。平台永不持有私钥(§13.1)。
+	// WGPublicKey 由节点上报。平台永不持有私钥。
 	WGPublicKey string `yaml:"wg_public_key,omitempty"`
 
 	// SecretGeneration 是本机秘密层的代次,由节点上报。
-	// 快照只记这个数字和公钥,不含私钥本身(§12.1)。
+	// 快照只记这个数字和公钥,不含私钥本身。
 	SecretGeneration int `yaml:"secret_generation,omitempty"`
 }
 
-// AccessRole 是"这台机器接管本机流量"这件事需要的全部字段(§7)。
+// AccessRole 是"这台机器接管本机流量"这件事需要的全部字段。
 type AccessRole struct {
 	Platform    Platform    `yaml:"platform"`
 	Credentials []string    `yaml:"credentials"`
@@ -174,7 +171,7 @@ type AccessRole struct {
 
 	// DefaultDeclaration 是设备级默认出口策略。明确的 Service 规则优先；
 	// managed mixed 或 TUN 上未命中 Service 的流量才使用它。留空继续
-	// fail closed。客户端选择也必须由中控授权并签名，不能本地改写(§7.2)。
+	// fail closed。客户端选择也必须由中控授权并签名，不能本地改写。
 	DefaultDeclaration string `yaml:"default_declaration,omitempty"`
 }
 
@@ -182,7 +179,7 @@ type AccessRole struct {
 func (n *Node) IsServer() bool { return n.Server != nil }
 func (n *Node) IsAccess() bool { return n.Access != nil }
 
-// ComponentVersions 是节点上各组件的版本(§15.4)。
+// ComponentVersions 是节点上各组件的版本。
 //
 // **版本是期望态的一部分。** 版本必须显式钉住,永不使用 latest。
 // 当前 renderer/report 会把期望值下发并核对实际安装值；除 Loom 自身二进制
@@ -211,7 +208,7 @@ type SSOTDefaults struct {
 	// DNS 是节点本地解析用的服务器。见 Node.DNS。
 	DNS []string `yaml:"dns,omitempty"`
 
-	// DistributionURLs 是节点自取配置的镜像列表(§14.2)，按优先级排列。
+	// DistributionURLs 是节点自取配置的镜像列表，按优先级排列。
 	//
 	// **它不需要被信任。** 分发的是带 Ed25519 签名的快照,节点用本地钉住的
 	// 公钥验;改一个字节就装不上去。所以放哪儿、经过谁,都不影响安全性 ——
@@ -307,17 +304,17 @@ func (s *SSOT) VersionsFor(n *Node) ComponentVersions {
 	return v
 }
 
-// MeshEligible 由 direction 推导,不是独立配置项(§2.2)。
+// MeshEligible 由 direction 推导,不是独立配置项。
 //
 // 这只是“目标态可加入 mesh”的资格，不表示生产已经部署 Headscale。
 // 当前两个具备该资格的节点之间走公网 Hysteria2 直拨，不生成常驻 WG；
-// 真正的 mesh 仍是独立可选项(§6.3、§8.3、D29)。
+// 真正的 mesh 仍是独立可选项。
 func (n *Node) MeshEligible() bool { return n.IsServer() && n.Server.Direction != ReverseOnly }
 
 // PubliclyDialable 报告接入设备能否从公网直拨这台服务器的数据入口。
 //
 // direction 只决定 WireGuard 隧道由谁发起。reverse_only 默认仍不暴露公网数据
-// 入口；只有显式 public_data_ingress 才允许已授权客户端直拨(§2.3)。
+// 入口；只有显式 public_data_ingress 才允许已授权客户端直拨。
 func (n *Node) PubliclyDialable() bool {
 	return n.IsServer() && (n.Server.Direction != ReverseOnly || n.Server.PublicDataIngress) &&
 		n.PublicEndpoint != "" && n.Server.InboundPort > 0
@@ -346,7 +343,7 @@ func (s *SSOT) AccessHopAddr(access, target *Node) string {
 // 那是公认的 WireGuard 端口,扫描器直接对着它扫。
 //
 // 但要清楚这只防端口扫描,**不防 DPI**:WireGuard 包本身的指纹(148/92
-// 字节握手、消息类型 1-4)没有任何变化。真要对付那个得上 §17 的 AmneziaWG。
+// 字节握手、消息类型 1-4)没有任何变化。真要对付那个得上 AmneziaWG。
 const (
 	TunnelPortMin = 61617
 	TunnelPortMax = 61799
@@ -377,13 +374,13 @@ func (p InboundProtocol) Or() InboundProtocol {
 // IsUDP 报告该协议是否依赖 UDP 出网。
 func (p InboundProtocol) IsUDP() bool { return p.Or() == Hysteria2 }
 
-// Tunnel 是隧道矩阵中的一条边(§6.3)。
+// Tunnel 是隧道矩阵中的一条边。
 //
 // **只有关系中包含 reverse_only 服务器才需要它。** 两端都能被公网拨号时
 // 当前直接走 Hysteria2，写进这里会被校验器拒绝；Headscale 是未部署的
 // 目标增强项，不能拿来解释当前连通性。
 //
-// 同样没有 initiator 字段 —— 它由两端 direction 推导(§2.2)。
+// 同样没有 initiator 字段 —— 它由两端 direction 推导。
 type Tunnel struct {
 	From     string   `yaml:"from"`
 	To       string   `yaml:"to"`
@@ -411,7 +408,7 @@ type Tunnel struct {
 	// 它是纯历史,不与任何字段矛盾:`listen_port` 是当前事实,这里是曾经。
 	RetiredPorts []int `yaml:"retired_ports,omitempty"`
 
-	// Obfuscation 引用一个 ObfuscationSet(§17)。
+	// Obfuscation 引用一个 ObfuscationSet。
 	Obfuscation string `yaml:"obfuscation,omitempty"`
 }
 
@@ -429,7 +426,7 @@ type LegacyEnrollmentProfile struct {
 // Pair 返回这条隧道的稳定标识,用于报错与排序。
 func (t *Tunnel) Pair() string { return t.From + "→" + t.To }
 
-// SSOT 是唯一事实来源的根(§12)。
+// SSOT 是唯一事实来源的根。
 type SSOT struct {
 	// Defaults 是全网默认值(目前只有组件版本)。
 	Defaults *SSOTDefaults `yaml:"defaults,omitempty"`
@@ -445,7 +442,7 @@ type SSOT struct {
 	// 服务与调度 —— 目标地址活在等价类里,不在 Nodes 里
 	EquivalenceClasses []EquivalenceClass `yaml:"equivalence_classes,omitempty"`
 
-	// Services 是接入端能选择的单位(§4.5)。数据平面按请求的 host 反查
+	// Services 是接入端能选择的单位。数据平面按请求的 host 反查
 	// 服务,接入端因此不需要知道任何拓扑。
 	Services     []Service           `yaml:"services,omitempty"`
 	Declarations []AccessDeclaration `yaml:"declarations,omitempty"`

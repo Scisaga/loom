@@ -66,8 +66,8 @@ func rankOf(o model.Objective, s measure.Summary) rank {
 // 三条规则,优先级从高到低:
 //
 //  1. **当前候选全部失败、而别的候选能用 → 立刻切,不看阈值也不看样本数。**
-//     §5.5 的阻尼是为了防止在两个都能用的候选之间反复横跳,不是为了
-//     让流量继续停在一条已经证明不通的路上。§5.8 的冷启动规则说样本不足的
+//     阻尼是为了防止在两个都能用的候选之间反复横跳,不是为了
+//     让流量继续停在一条已经证明不通的路上。冷启动规则说样本不足的
 //     候选"不参与排序也不被淘汰",管的是选谁,不是要不要离开一具尸体。
 //  2. 当前候选不在候选集里(配置变了 / 首次启动)→ 切到最优的。
 //  3. 否则:在样本数达到 min_samples 的健康候选里排序；失败率降低可切，
@@ -148,7 +148,7 @@ func Decide(d *Decl, current string, sums []measure.Summary) Decision {
 		return dec
 	}
 
-	// 规则 3:两边都能用,比一比 —— 但只有样本够的才有资格当挑战者(§5.8)。
+	// 规则 3:两边都能用,比一比 —— 但只有样本够的才有资格当挑战者。
 	var qualified []measure.Summary
 	for _, s := range healthy {
 		if s.Samples >= d.MinSamples {
@@ -167,7 +167,7 @@ func Decide(d *Decl, current string, sums []measure.Summary) Decision {
 	}
 
 	rb, rc := rankOf(d.Objective, best), rankOf(d.Objective, cur)
-	// §5.5：现任可能因样本不足没进入 qualified，必须再比较失败率。
+	// 现任可能因样本不足没进入 qualified，必须再比较失败率。
 	// 延迟/吞吐阈值只用于相同失败率，不能允许更不可靠的挑战者胜出。
 	if rb.failureRate > rc.failureRate {
 		dec.Reason = fmt.Sprintf("%s 的失败率高于当前候选,保持不动", best.CandidateID)

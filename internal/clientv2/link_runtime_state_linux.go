@@ -37,14 +37,14 @@ type LinuxLinkRuntimeStateV1 struct {
 
 // AcceptLinuxLinkRuntimePlan 要求输入 envelope 已经是 durable Device LKG 的
 // exact 当前值，然后在同一独占锁内以旧 generation floors 生成并
-// 原子提交新 runtime LKG。失败时旧 plan/floors 完全不变（D106、D120、D131）。
+// 原子提交新 runtime LKG。失败时旧 plan/floors 完全不变。
 func AcceptLinuxLinkRuntimePlan(runtimeStatePath, deviceStatePath string,
 	envelope *wire.DeviceViewEnvelopeV2, set, previousSet *wire.ControlSetV1,
 	peerDirectory *wire.ControlPeerDirectoryPrivateObjectV1, artifactRaw []byte,
 	now time.Time) (*LinuxLinkRuntimeStateV1, error) {
 	if runtimeStatePath == "" || deviceStatePath == "" || runtimeStatePath == deviceStatePath ||
 		!filepath.IsAbs(runtimeStatePath) || filepath.Clean(runtimeStatePath) != runtimeStatePath {
-		return nil, errors.New("[D131 Linux runtime] runtime/device state path 无效")
+		return nil, errors.New("[Linux runtime] runtime/device state path 无效")
 	}
 	if err := secureEnrollmentDirectory(filepath.Dir(runtimeStatePath)); err != nil {
 		return nil, err
@@ -65,7 +65,7 @@ func AcceptLinuxLinkRuntimePlan(runtimeStatePath, deviceStatePath string,
 	}
 	trustedEnvelope := deviceStore.Envelope()
 	if envelope == nil || trustedEnvelope == nil || !wire.EqualCanonical(*envelope, *trustedEnvelope) {
-		return nil, errors.New("[D131 Linux runtime] candidate view 不是 durable Device LKG exact 当前值")
+		return nil, errors.New("[Linux runtime] candidate view 不是 durable Device LKG exact 当前值")
 	}
 	trustedSet, trustedPreviousSet := deviceStore.ControlSets()
 	if trustedSet == nil {
@@ -73,18 +73,18 @@ func AcceptLinuxLinkRuntimePlan(runtimeStatePath, deviceStatePath string,
 		trustedSet, trustedPreviousSet = set, previousSet
 	}
 	if trustedSet == nil {
-		return nil, errors.New("[D131 Linux runtime] durable ControlSet 缺失")
+		return nil, errors.New("[Linux runtime] durable ControlSet 缺失")
 	}
 	verifiedFloors, err := wire.VerifyDeviceViewEnvelopeWithPrevious(envelope, trustedSet, trustedPreviousSet)
 	if err == nil && envelope.SignedCurrent.Head.Body.Payload.HeadKind != "bootstrap" {
 		verifiedFloors.BootstrapTransitionHash = deviceStore.Floors().BootstrapTransitionHash
 	}
 	if err != nil || !wire.EqualCanonical(verifiedFloors, deviceStore.Floors()) {
-		return nil, errors.New("[D131 Linux runtime] candidate authority/floors 与 durable Device LKG 不一致")
+		return nil, errors.New("[Linux runtime] candidate authority/floors 与 durable Device LKG 不一致")
 	}
 	installation := deviceStore.Enrollment()
 	if installation == nil {
-		return nil, errors.New("[D124 Linux runtime] durable Device LKG 缺正式 enrollment installation")
+		return nil, errors.New("[Linux runtime] durable Device LKG 缺正式 enrollment installation")
 	}
 
 	current, err := readLinuxLinkRuntimeState(runtimeStatePath)
@@ -131,7 +131,7 @@ func AcceptLinuxLinkRuntimePlan(runtimeStatePath, deviceStatePath string,
 		}
 		for _, floor := range current.GenerationFloors {
 			if minimums[floor.EndpointID] < floor.MinimumListenerGeneration {
-				return nil, errors.New("[D120 Linux runtime] listener generation floor 回退")
+				return nil, errors.New("[Linux runtime] listener generation floor 回退")
 			}
 		}
 		if wire.EqualCanonical(*current, *candidate) {
@@ -149,7 +149,7 @@ func AcceptLinuxLinkRuntimePlan(runtimeStatePath, deviceStatePath string,
 
 func LoadLinuxLinkRuntimeState(path string) (*LinuxLinkRuntimeStateV1, error) {
 	if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
-		return nil, errors.New("[D131 Linux runtime] runtime state path 无效")
+		return nil, errors.New("[Linux runtime] runtime state path 无效")
 	}
 	if err := secureEnrollmentDirectory(filepath.Dir(path)); err != nil {
 		return nil, err
@@ -173,10 +173,10 @@ func readLinuxLinkRuntimeState(path string) (*LinuxLinkRuntimeStateV1, error) {
 	}
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 ||
 		info.Size() < 1 || info.Size() > maximumLinuxLinkRuntimeStateBytes {
-		return nil, errors.New("[D131 Linux runtime] runtime LKG 必须是 0600 有界普通文件")
+		return nil, errors.New("[Linux runtime] runtime LKG 必须是 0600 有界普通文件")
 	}
 	if stat, ok := info.Sys().(*syscall.Stat_t); !ok || int(stat.Uid) != os.Geteuid() {
-		return nil, errors.New("[D131 Linux runtime] runtime LKG owner 不是当前服务账号")
+		return nil, errors.New("[Linux runtime] runtime LKG owner 不是当前服务账号")
 	}
 	body, err := os.ReadFile(path)
 	if err != nil {
@@ -185,7 +185,7 @@ func readLinuxLinkRuntimeState(path string) (*LinuxLinkRuntimeStateV1, error) {
 	var state LinuxLinkRuntimeStateV1
 	canonical, err := wire.DecodeStrict(body, maximumLinuxLinkRuntimeStateBytes, &state)
 	if err != nil || !bytes.Equal(canonical, body) {
-		return nil, errors.New("[D131 Linux runtime] runtime LKG 不是 exact canonical wire")
+		return nil, errors.New("[Linux runtime] runtime LKG 不是 exact canonical wire")
 	}
 	if err := validateLinuxLinkRuntimeState(&state); err != nil {
 		return nil, err
@@ -197,23 +197,23 @@ func validateLinuxLinkRuntimeState(state *LinuxLinkRuntimeStateV1) error {
 	if state == nil || state.Schema != 1 || state.ClusterID == "" || state.DeviceID == "" ||
 		state.Plan.Schema != 1 || state.Plan.ClusterID != state.ClusterID || state.Plan.DeviceID != state.DeviceID ||
 		state.Plan.Actions == nil || state.GenerationFloors == nil {
-		return errors.New("[D131 Linux runtime] runtime LKG header/plan 无效")
+		return errors.New("[Linux runtime] runtime LKG header/plan 无效")
 	}
 	planHash, err := wire.HashObject(domainLinuxLinkRuntimePlan, &state.Plan)
 	if err != nil || planHash != state.PlanHash {
-		return errors.New("[D131 Linux runtime] runtime plan hash 不匹配")
+		return errors.New("[Linux runtime] runtime plan hash 不匹配")
 	}
 	for index, floor := range state.GenerationFloors {
 		if floor.EndpointID == "" || floor.MinimumListenerGeneration < 1 ||
 			(index > 0 && state.GenerationFloors[index-1].EndpointID >= floor.EndpointID) {
-			return errors.New("[D120 Linux runtime] generation floors 无效/未排序")
+			return errors.New("[Linux runtime] generation floors 无效/未排序")
 		}
 	}
 	if state.AuthorityFloors.ClusterID != state.ClusterID || !state.AuthorityFloors.V2Latched {
-		return errors.New("[D106 Linux runtime] runtime authority floors 无效")
+		return errors.New("[Linux runtime] runtime authority floors 无效")
 	}
 	if _, err := wire.AdvanceFloors(wire.ClientFloorsV2{}, state.AuthorityFloors); err != nil {
-		return errors.New("[D106 Linux runtime] runtime authority floors wire 无效")
+		return errors.New("[Linux runtime] runtime authority floors wire 无效")
 	}
 	return nil
 }
@@ -230,7 +230,7 @@ func mergeLinuxEndpointGenerationFloors(floors map[string]int64, bundle wire.Dev
 			}
 			for _, tombstone := range endpoint.ListenerTombstones {
 				if tombstone.ListenerGeneration == 1<<63-1 {
-					return errors.New("[D120 Linux runtime] listener tombstone generation 无法形成后继 floor")
+					return errors.New("[Linux runtime] listener tombstone generation 无法形成后继 floor")
 				}
 				tombstoneFloor := tombstone.ListenerGeneration + 1
 				if tombstoneFloor > minimum {
@@ -249,25 +249,25 @@ func validateLinuxRuntimeAuthorityAdvance(current, candidate wire.ClientFloorsV2
 	if current.ClusterID != candidate.ClusterID || current.BootstrapTransitionHash != candidate.BootstrapTransitionHash ||
 		candidate.AcceptedRecoveryEpoch < current.AcceptedRecoveryEpoch ||
 		candidate.DeviceGeneration < current.DeviceGeneration {
-		return errors.New("[D106 Linux runtime] runtime authority/device floor 回退")
+		return errors.New("[Linux runtime] runtime authority/device floor 回退")
 	}
 	if candidate.AcceptedRecoveryEpoch == current.AcceptedRecoveryEpoch {
 		if candidate.RecoveryStatementHash != current.RecoveryStatementHash ||
 			candidate.RecoveryPolicyHash != current.RecoveryPolicyHash ||
 			candidate.AcceptedControlEpoch < current.AcceptedControlEpoch {
-			return errors.New("[D106 Linux runtime] runtime recovery/control authority 分叉或回退")
+			return errors.New("[Linux runtime] runtime recovery/control authority 分叉或回退")
 		}
 		if candidate.AcceptedControlEpoch == current.AcceptedControlEpoch {
 			if candidate.ControlSetHash != current.ControlSetHash ||
 				candidate.AcceptedControlRevision < current.AcceptedControlRevision ||
 				candidate.AcceptedControlRevision == current.AcceptedControlRevision && candidate.HeadHash != current.HeadHash {
-				return errors.New("[D106 Linux runtime] runtime control Head 分叉或回退")
+				return errors.New("[Linux runtime] runtime control Head 分叉或回退")
 			}
 		}
 	}
 	if candidate.DeviceGeneration == current.DeviceGeneration &&
 		candidate.DeviceViewHash != current.DeviceViewHash {
-		return errors.New("[D106 Linux runtime] runtime Device generation 同序号分叉")
+		return errors.New("[Linux runtime] runtime Device generation 同序号分叉")
 	}
 	return nil
 }

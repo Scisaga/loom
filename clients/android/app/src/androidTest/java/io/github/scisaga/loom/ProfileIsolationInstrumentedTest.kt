@@ -21,7 +21,7 @@ import org.junit.Before
 import org.junit.After
 import androidx.activity.ComponentActivity
 
-/** §7.2：仅使用临时本机配置，不替换真机既有身份，不请求新的业务路径探测。 */
+/** 仅使用临时本机配置，不替换真机既有身份，不请求新的业务路径探测。 */
 class ProfileIsolationInstrumentedTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val catalog get() = ProfileCatalog.get(context)

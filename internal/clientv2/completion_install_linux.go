@@ -34,7 +34,7 @@ type LinuxEnrollmentCompletionInstallV1 struct {
 // InstallLinuxEnrollmentCompletion 先用 opaque completion evidence、本机 stable
 // core/key 与 exact Invite proof 重绑全部输入，再解封 credentials，并把证书、view、
 // floors、credentials 作为一个 canonical 0600 文件提交。只有 durable commit 成功
-// 后才清理 pending 与临时 bootstrap artifacts（D106、D124、D129、D130）。
+// 后才清理 pending 与临时 bootstrap artifacts。
 func InstallLinuxEnrollmentCompletion(input LinuxEnrollmentCompletionInstallV1) (wire.ClientFloorsV2, error) {
 	if err := validateCompletionInstallPaths(input); err != nil {
 		return wire.ClientFloorsV2{}, err
@@ -94,11 +94,11 @@ func InstallLinuxEnrollmentCompletion(input LinuxEnrollmentCompletionInstallV1) 
 	// pending 最后删除：若某个附加清理失败，调用方仍能 exact replay 安装并继续清理。
 	for _, path := range input.TemporaryPaths {
 		if err := removeProtectedEnrollmentTemporary(path, filepath.Dir(input.PendingPath)); err != nil {
-			return floors, fmt.Errorf("[D130 Linux install] 正式状态已提交，但临时 artifact 清理未完成: %w", err)
+			return floors, fmt.Errorf("[Linux install] 正式状态已提交，但临时 artifact 清理未完成: %w", err)
 		}
 	}
 	if err := removeProtectedEnrollmentTemporary(input.PendingPath, filepath.Dir(input.PendingPath)); err != nil {
-		return floors, fmt.Errorf("[D130 Linux install] 正式状态已提交，但 pending 清理未完成: %w", err)
+		return floors, fmt.Errorf("[Linux install] 正式状态已提交，但 pending 清理未完成: %w", err)
 	}
 	return floors, nil
 }
@@ -108,10 +108,10 @@ func validateCompletionInstallPaths(input LinuxEnrollmentCompletionInstallV1) er
 	seen := make(map[string]struct{}, len(paths)+len(input.TemporaryPaths))
 	for _, path := range paths {
 		if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
-			return errors.New("[D130 Linux install] state/identity/pending path 必须是规范绝对路径")
+			return errors.New("[Linux install] state/identity/pending path 必须是规范绝对路径")
 		}
 		if _, duplicate := seen[path]; duplicate {
-			return errors.New("[D130 Linux install] 正式与临时状态 path 禁止复用")
+			return errors.New("[Linux install] 正式与临时状态 path 禁止复用")
 		}
 		seen[path] = struct{}{}
 	}
@@ -119,10 +119,10 @@ func validateCompletionInstallPaths(input LinuxEnrollmentCompletionInstallV1) er
 	for _, path := range input.TemporaryPaths {
 		if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path ||
 			filepath.Dir(path) != pendingDirectory {
-			return errors.New("[D130 Linux install] temporary path 必须位于 pending 的受保护目录")
+			return errors.New("[Linux install] temporary path 必须位于 pending 的受保护目录")
 		}
 		if _, duplicate := seen[path]; duplicate || path == input.PendingPath+".lock" {
-			return errors.New("[D130 Linux install] temporary path 重复或指向 lock/formal state")
+			return errors.New("[Linux install] temporary path 重复或指向 lock/formal state")
 		}
 		seen[path] = struct{}{}
 	}
@@ -135,11 +135,11 @@ func prepareLinuxEnrollmentInstallation(identity *EnrollmentIdentityV1, pending 
 ) (*EnrollmentInstallationV1, error) {
 	if identity == nil || pending == nil || result == nil || result.ResultArtifact == nil ||
 		result.ResultArtifact.InitialDeviceView.Active == nil {
-		return nil, errors.New("[D130 Linux install] result/pending/identity 不完整")
+		return nil, errors.New("[Linux install] result/pending/identity 不完整")
 	}
 	refs := result.ResultArtifact.SecretArtifactRefs
 	if len(refs) != len(envelopes) {
-		return nil, errors.New("[D124 Linux install] sealed envelopes 未 exact 覆盖 result refs")
+		return nil, errors.New("[Linux install] sealed envelopes 未 exact 覆盖 result refs")
 	}
 	identityHash, wrappingHash, _, err := wire.EnrollmentClaimBinaryHashes(&pending.ClaimCore)
 	if err != nil {
@@ -156,14 +156,14 @@ func prepareLinuxEnrollmentInstallation(identity *EnrollmentIdentityV1, pending 
 		return nil, err
 	}
 	if configs == nil || len(configs) != len(result.ResultArtifact.InitialDeviceView.Active.ConfigArtifactRefs) {
-		return nil, errors.New("[D124 Linux install] config artifacts 未 exact 覆盖 initial view refs")
+		return nil, errors.New("[Linux install] config artifacts 未 exact 覆盖 initial view refs")
 	}
 	if err := validateLinuxInstalledConfigs(configs,
 		result.ResultArtifact.InitialDeviceView.Active.ConfigArtifactRefs); err != nil {
 		return nil, err
 	}
 	if err := wire.ValidateDistributionMirrorRefs(mirrors); err != nil {
-		return nil, errors.New("[D124 Linux install] distribution mirrors 无效")
+		return nil, errors.New("[Linux install] distribution mirrors 无效")
 	}
 	certificateDER, err := wire.EnrollmentResultCertificateDER(result.ResultArtifact)
 	if err != nil {
@@ -191,7 +191,7 @@ func installLinuxSecrets(refs []wire.SecretArtifactRefV2,
 	wrappingPrivate *ecdsa.PrivateKey,
 ) ([]InstalledSecretV1, error) {
 	if refs == nil || len(refs) != len(envelopes) || wrappingPrivate == nil {
-		return nil, errors.New("[D124 Linux install] sealed envelopes 未 exact 覆盖 refs")
+		return nil, errors.New("[Linux install] sealed envelopes 未 exact 覆盖 refs")
 	}
 	credentials := make([]InstalledSecretV1, len(refs))
 	totalBytes := 0
@@ -202,7 +202,7 @@ func installLinuxSecrets(refs []wire.SecretArtifactRefV2,
 		}
 		if ref.ClusterID != envelope.Context.ClusterID || ref.Owner.Kind != "device" ||
 			ref.Owner.Device == nil || ref.Owner.Device.DeviceID != deviceID {
-			return nil, errors.New("[D124 Linux install] secret 未绑定当前 Device/cluster")
+			return nil, errors.New("[Linux install] secret 未绑定当前 Device/cluster")
 		}
 		recipient, err := linuxWrappingRecipient(ref, deviceID, wrappingSPKI)
 		if err != nil {
@@ -213,12 +213,12 @@ func installLinuxSecrets(refs []wire.SecretArtifactRefV2,
 			return nil, err
 		}
 		if len(secret) == 0 {
-			return nil, errors.New("[D124 Linux install] 解封 credential 不能为空")
+			return nil, errors.New("[Linux install] 解封 credential 不能为空")
 		}
 		totalBytes += len(secret)
 		if totalBytes > 8<<20 {
 			clear(secret)
-			return nil, errors.New("[D124 Linux install] credentials 超过总预算")
+			return nil, errors.New("[Linux install] credentials 超过总预算")
 		}
 		credentials[index] = InstalledSecretV1{
 			SecretID: ref.SecretID, Purpose: ref.Purpose, Generation: ref.Generation,
@@ -232,7 +232,7 @@ func installLinuxSecrets(refs []wire.SecretArtifactRefV2,
 
 func linuxWrappingRecipient(ref *wire.SecretArtifactRefV2, deviceID, wrappingSPKI string) (wire.SealedBlobRecipientKeyRefV1, error) {
 	if ref == nil || ref.SealedBlob == nil || deviceID == "" || wrappingSPKI == "" {
-		return wire.SealedBlobRecipientKeyRefV1{}, errors.New("[D124 Linux install] wrapping recipient context 无效")
+		return wire.SealedBlobRecipientKeyRefV1{}, errors.New("[Linux install] wrapping recipient context 无效")
 	}
 	var match *wire.SealedBlobRecipientKeyRefV1
 	for index := range ref.SealedBlob.RecipientKeyVersions {
@@ -240,14 +240,14 @@ func linuxWrappingRecipient(ref *wire.SecretArtifactRefV2, deviceID, wrappingSPK
 		if candidate.RecipientID == deviceID && candidate.RecipientKeyProfile == "p256-root-only-pkcs8-ecdh-v1" &&
 			candidate.RecipientPublicKey.PublicKeySPKIDER == wrappingSPKI {
 			if match != nil {
-				return wire.SealedBlobRecipientKeyRefV1{}, errors.New("[D124 Linux install] wrapping recipient 命中多个版本")
+				return wire.SealedBlobRecipientKeyRefV1{}, errors.New("[Linux install] wrapping recipient 命中多个版本")
 			}
 			copy := *candidate
 			match = &copy
 		}
 	}
 	if match == nil {
-		return wire.SealedBlobRecipientKeyRefV1{}, errors.New("[D124 Linux install] secret 未封装给本机 exact wrapping key")
+		return wire.SealedBlobRecipientKeyRefV1{}, errors.New("[Linux install] secret 未封装给本机 exact wrapping key")
 	}
 	return *match, nil
 }

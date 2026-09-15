@@ -44,7 +44,7 @@ const (
 
 // AndroidBootstrapNetwork 由同一个 LoomVpnService 实现。每个 outer socket
 // 必须先 protect 再绑定到冻结的 Android Network；解析也必须走该 underlay，
-// 不能被正式 TUN/FakeIP 接管（Issue #14、D131）。
+// 不能被正式 TUN/FakeIP 接管（Issue #14）。
 type AndroidBootstrapNetwork interface {
 	ProtectAndBindSocket(fd int64) error
 	ResolveHost(host string) (string, error)
@@ -122,7 +122,7 @@ type androidReleasedArtifactsV1 struct {
 
 // NewAndroidV2BootstrapSession 只接受完整通过 Invite/catalog/capability authority
 // 的输入。priorAttempts 来自加密 pending journal，防止进程重启重置客户端预算；
-// ingress 仍会在服务端耐久执行同一上限（D115、D131）。
+// ingress 仍会在服务端耐久执行同一上限。
 func NewAndroidV2BootstrapSession(descriptorJSON, proofBundleJSON, catalogJSON []byte,
 	trustedTime string, priorAttempts int64, network AndroidBootstrapNetwork,
 ) (*AndroidV2BootstrapSession, error) {
@@ -135,11 +135,11 @@ func newAndroidV2BootstrapSession(descriptorJSON, proofBundleJSON, catalogJSON [
 	outerRoots *x509.CertPool,
 ) (*AndroidV2BootstrapSession, error) {
 	if network == nil {
-		return nil, errors.New("[D131 Android] bootstrap Network controller 不能为空")
+		return nil, errors.New("[Android] bootstrap Network controller 不能为空")
 	}
 	underlayIdentity := network.UnderlayIdentity()
 	if underlayIdentity == "" || len(underlayIdentity) > 256 || strings.TrimSpace(underlayIdentity) != underlayIdentity {
-		return nil, errors.New("[D131 Android] frozen underlay identity 无效")
+		return nil, errors.New("[Android] frozen underlay identity 无效")
 	}
 	inputs, err := loadAndroidEnrollmentInputsV2(descriptorJSON, proofBundleJSON, trustedTime)
 	if err != nil {
@@ -167,7 +167,7 @@ func newAndroidV2BootstrapSession(descriptorJSON, proofBundleJSON, catalogJSON [
 	body := verifiedCapability.Body()
 	if err := validateAndroidBootstrapCapabilityMode(body, "initial_claim",
 		catalog.BootstrapIngressSetHash); err != nil {
-		return nil, errors.New("[D131 Android] initial capability 未绑定 catalog/inner TLS TCP")
+		return nil, errors.New("[Android] initial capability 未绑定 catalog/inner TLS TCP")
 	}
 	destination, err := androidBootstrapDestination(body)
 	if err != nil {
@@ -178,7 +178,7 @@ func newAndroidV2BootstrapSession(descriptorJSON, proofBundleJSON, catalogJSON [
 		return nil, err
 	}
 	if priorAttempts < 0 || priorAttempts > body.MaximumConnectionAttempts {
-		return nil, errors.New("[D131 Android] bootstrap 已用 connection attempt 数无效")
+		return nil, errors.New("[Android] bootstrap 已用 connection attempt 数无效")
 	}
 	rootContext, cancel := context.WithCancel(context.Background())
 	dialer := &androidBootstrapDialer{
@@ -207,7 +207,7 @@ func newAndroidV2BootstrapSession(descriptorJSON, proofBundleJSON, catalogJSON [
 
 // NewAndroidV2ResumeSession 只恢复本机已经耐久保存的 stable core/progress。
 // descriptor 不含 token，且必须由 APK platform root、Invite lineage、当前 catalog
-// 与本机 expected transaction 一起验证后才建立 tunnel（D115、D130、D131）。
+// 与本机 expected transaction 一起验证后才建立 tunnel。
 func NewAndroidV2ResumeSession(descriptorJSON, proofBundleJSON, catalogJSON,
 	claimCoreJSON, resumeExpectedJSON, pinnedPlatformKey []byte, progressStatus, trustedTime string,
 	priorAttempts int64, network AndroidBootstrapNetwork,
@@ -222,11 +222,11 @@ func newAndroidV2ResumeSession(descriptorJSON, proofBundleJSON, catalogJSON,
 	priorAttempts int64, network AndroidBootstrapNetwork, outerRoots *x509.CertPool,
 ) (*AndroidV2BootstrapSession, error) {
 	if network == nil {
-		return nil, errors.New("[D131 Android resume] bootstrap Network controller 不能为空")
+		return nil, errors.New("[Android resume] bootstrap Network controller 不能为空")
 	}
 	underlayIdentity := network.UnderlayIdentity()
 	if underlayIdentity == "" || len(underlayIdentity) > 256 || strings.TrimSpace(underlayIdentity) != underlayIdentity {
-		return nil, errors.New("[D131 Android resume] frozen underlay identity 无效")
+		return nil, errors.New("[Android resume] frozen underlay identity 无效")
 	}
 	inputs, err := loadAndroidEnrollmentResumeInputsV1(descriptorJSON, proofBundleJSON, catalogJSON,
 		claimCoreJSON, resumeExpectedJSON, pinnedPlatformKey, progressStatus, trustedTime)
@@ -246,7 +246,7 @@ func newAndroidV2ResumeSession(descriptorJSON, proofBundleJSON, catalogJSON,
 	body := verifiedCapability.Body()
 	if err := validateAndroidBootstrapCapabilityMode(body, "resume_committed_claim",
 		inputs.catalog.BootstrapIngressSetHash); err != nil {
-		return nil, errors.New("[D131 Android resume] capability 未绑定 catalog/inner TLS TCP")
+		return nil, errors.New("[Android resume] capability 未绑定 catalog/inner TLS TCP")
 	}
 	destination, err := androidBootstrapDestination(body)
 	if err != nil {
@@ -257,7 +257,7 @@ func newAndroidV2ResumeSession(descriptorJSON, proofBundleJSON, catalogJSON,
 		return nil, err
 	}
 	if priorAttempts < 0 || priorAttempts > body.MaximumConnectionAttempts {
-		return nil, errors.New("[D131 Android resume] 已用 connection attempt 数无效")
+		return nil, errors.New("[Android resume] 已用 connection attempt 数无效")
 	}
 	rootContext, cancel := context.WithCancel(context.Background())
 	dialer := &androidBootstrapDialer{
@@ -290,7 +290,7 @@ func validateAndroidBootstrapCapabilityMode(body wire.BootstrapTunnelCapabilityB
 ) error {
 	if body.Mode != mode || body.AllowedIngressSetHash != ingressSetHash ||
 		body.AllowedInsideTransport != "tcp" {
-		return errors.New("[D131 Android] capability mode/ingress/inside transport 无效")
+		return errors.New("[Android] capability mode/ingress/inside transport 无效")
 	}
 	return nil
 }
@@ -349,7 +349,7 @@ func (session *AndroidV2BootstrapSession) Preflight(canonicalRequest []byte, tru
 		expected = androidEnrollmentPreflightRequestV2(session.inputs)
 	}
 	if !wire.EqualCanonical(request, expected) {
-		return nil, errors.New("[D129 Android] preflight request 不是已验 Invite 的 exact 投影")
+		return nil, errors.New("[Android] preflight request 不是已验 Invite 的 exact 投影")
 	}
 	body, err := session.postCanonical("/v2/enrollment/preflight", canonicalRequest, []int{http.StatusOK})
 	if err != nil {
@@ -369,7 +369,7 @@ func (session *AndroidV2BootstrapSession) Preflight(canonicalRequest []byte, tru
 }
 
 // Challenge 固定 stable core；网络重试可以取得新 nonce，但不能替换
-// request/body/key/core（D129、D130）。
+// request/body/key/core。
 func (session *AndroidV2BootstrapSession) Challenge(canonicalCore []byte, trustedTime string) ([]byte, error) {
 	session.flowMu.Lock()
 	defer session.flowMu.Unlock()
@@ -378,7 +378,7 @@ func (session *AndroidV2BootstrapSession) Challenge(canonicalCore []byte, truste
 		return nil, err
 	}
 	if session.preflight == nil {
-		return nil, errors.New("[D129 Android] challenge 前尚未完成 token-free preflight")
+		return nil, errors.New("[Android] challenge 前尚未完成 token-free preflight")
 	}
 	var core wire.EnrollmentClaimCoreV2
 	if err := decodeExactAndroidV2(canonicalCore, 4<<20, &core, "Enrollment claim core"); err != nil {
@@ -386,7 +386,7 @@ func (session *AndroidV2BootstrapSession) Challenge(canonicalCore []byte, truste
 	}
 	if session.resume != nil {
 		if !wire.EqualCanonical(core, session.resume.core) {
-			return nil, errors.New("[D130 Android resume] challenge 未复用 protected stable core")
+			return nil, errors.New("[Android resume] challenge 未复用 protected stable core")
 		}
 	} else {
 		if err := validateAndroidEnrollmentClaimCoreV2(session.inputs, *session.preflight, &core); err != nil {
@@ -394,7 +394,7 @@ func (session *AndroidV2BootstrapSession) Challenge(canonicalCore []byte, truste
 		}
 	}
 	if session.core != nil && !wire.EqualCanonical(*session.core, core) {
-		return nil, errors.New("[D130 Android] 同一 pending transaction 禁止替换 stable core")
+		return nil, errors.New("[Android] 同一 pending transaction 禁止替换 stable core")
 	}
 	body, err := session.postCanonical("/v2/enrollment/challenge", canonicalCore, []int{http.StatusOK})
 	if err != nil {
@@ -409,7 +409,7 @@ func (session *AndroidV2BootstrapSession) Challenge(canonicalCore []byte, truste
 	if challenge.ClusterID != core.ClusterID || challenge.InviteID != core.InviteID ||
 		challenge.RequestID != core.RequestID ||
 		challenge.EnrollmentServiceID != serviceID {
-		return nil, errors.New("[D129 Android] challenge 与 stable core/private service 不匹配")
+		return nil, errors.New("[Android] challenge 与 stable core/private service 不匹配")
 	}
 	if _, err := wire.EnrollmentChallengeHash(&challenge, coreHash, now); err != nil {
 		return nil, err
@@ -436,10 +436,10 @@ func (session *AndroidV2BootstrapSession) SubmitClaim(canonicalSubmission []byte
 		return nil, err
 	}
 	if session.preflight == nil || session.core == nil || session.challenge == nil {
-		return nil, errors.New("[D129 Android] claim 顺序无效")
+		return nil, errors.New("[Android] claim 顺序无效")
 	}
 	if session.resume != nil {
-		return nil, errors.New("[D130 Android resume] resume session 禁止提交含 token 的 initial claim")
+		return nil, errors.New("[Android resume] resume session 禁止提交含 token 的 initial claim")
 	}
 	var submission wire.EnrollmentClaimSubmissionV2
 	if err := decodeExactAndroidV2(canonicalSubmission, 4<<20, &submission, "Enrollment claim submission"); err != nil {
@@ -447,7 +447,7 @@ func (session *AndroidV2BootstrapSession) SubmitClaim(canonicalSubmission []byte
 	}
 	if !wire.EqualCanonical(submission.ClaimCore, *session.core) ||
 		!wire.EqualCanonical(submission.Challenge, *session.challenge) {
-		return nil, errors.New("[D130 Android] claim 未复用已固定 core/challenge")
+		return nil, errors.New("[Android] claim 未复用已固定 core/challenge")
 	}
 	if _, err := wire.VerifyEnrollmentClaimSubmission(&submission,
 		&session.inputs.bundle.CertifiedInviteRecord, &session.inputs.bundle.InviteIssuancePolicy,
@@ -480,7 +480,7 @@ func (session *AndroidV2BootstrapSession) ResumePreflightRequest(trustedTime str
 		return nil, err
 	}
 	if session.resume == nil {
-		return nil, errors.New("[D130 Android resume] initial session 没有 resume preflight")
+		return nil, errors.New("[Android resume] initial session 没有 resume preflight")
 	}
 	if err := session.verifyResumeDescriptorAt(now); err != nil {
 		return nil, err
@@ -489,7 +489,7 @@ func (session *AndroidV2BootstrapSession) ResumePreflightRequest(trustedTime str
 }
 
 // PrepareResumePoPBody/AssembleResumeSubmission 把 fresh challenge 的签名边界
-// 留在 Keystore；返回的 submission schema 没有 token 字段（D129、D130）。
+// 留在 Keystore；返回的 submission schema 没有 token 字段。
 func (session *AndroidV2BootstrapSession) PrepareResumePoPBody(trustedTime string) ([]byte, error) {
 	session.flowMu.Lock()
 	defer session.flowMu.Unlock()
@@ -523,7 +523,7 @@ func (session *AndroidV2BootstrapSession) AssembleResumeSubmission(canonicalPoPB
 		return nil, err
 	}
 	if !wire.EqualCanonical(supplied, expected) {
-		return nil, errors.New("[D130 Android resume] PoP body 未绑定当前 fresh challenge")
+		return nil, errors.New("[Android resume] PoP body 未绑定当前 fresh challenge")
 	}
 	submission := wire.EnrollmentResumeSubmissionV1{
 		Schema: 1, ClaimCore: *session.core, Challenge: *session.challenge,
@@ -540,7 +540,7 @@ func (session *AndroidV2BootstrapSession) AssembleResumeSubmission(canonicalPoPB
 }
 
 // SubmitResume 只接受无 token schema，并在返回给 Kotlin 前验证 progress/completion
-// receipt 必须包含 descriptor 所绑定的 transaction state（D130）。
+// receipt 必须包含 descriptor 所绑定的 transaction state。
 func (session *AndroidV2BootstrapSession) SubmitResume(canonicalSubmission []byte,
 	trustedTime string,
 ) ([]byte, error) {
@@ -551,7 +551,7 @@ func (session *AndroidV2BootstrapSession) SubmitResume(canonicalSubmission []byt
 		return nil, err
 	}
 	if session.resume == nil || session.preflight == nil || session.core == nil || session.challenge == nil {
-		return nil, errors.New("[D130 Android resume] submission 顺序无效")
+		return nil, errors.New("[Android resume] submission 顺序无效")
 	}
 	if err := session.verifyResumeDescriptorAt(now); err != nil {
 		return nil, err
@@ -563,7 +563,7 @@ func (session *AndroidV2BootstrapSession) SubmitResume(canonicalSubmission []byt
 	}
 	if !wire.EqualCanonical(submission.ClaimCore, *session.core) ||
 		!wire.EqualCanonical(submission.Challenge, *session.challenge) {
-		return nil, errors.New("[D130 Android resume] submission 未复用 protected core/fresh challenge")
+		return nil, errors.New("[Android resume] submission 未复用 protected core/fresh challenge")
 	}
 	if _, err := wire.VerifyEnrollmentResumeSubmission(&submission,
 		session.resume.descriptor.ResumeTunnelCapability.Body.ResumeBinding,
@@ -595,7 +595,7 @@ func (session *AndroidV2BootstrapSession) SubmitResume(canonicalSubmission []byt
 }
 
 // PrepareResumeInstallationStateWithConfigs 与首次 completion 共用同一原子
-// 安装语义，resume 不得把 config 留成独立、可部分提交的状态（Issue #14、D130）。
+// 安装语义，resume 不得把 config 留成独立、可部分提交的状态（Issue #14）。
 func (session *AndroidV2BootstrapSession) PrepareResumeInstallationStateWithConfigs(
 	installedSecretsJSON, installedConfigsJSON []byte,
 ) ([]byte, error) {
@@ -603,7 +603,7 @@ func (session *AndroidV2BootstrapSession) PrepareResumeInstallationStateWithConf
 	defer session.flowMu.Unlock()
 	if session == nil || session.closed.Load() || session.resume == nil ||
 		len(session.completedResult) == 0 || session.completedEvidence == nil {
-		return nil, errors.New("[D130 Android resume] 尚无可安装的 verified completion")
+		return nil, errors.New("[Android resume] 尚无可安装的 verified completion")
 	}
 	var result wire.EnrollmentClaimResultV2
 	if err := decodeExactAndroidV2(session.completedResult, 32<<20, &result,
@@ -616,7 +616,7 @@ func (session *AndroidV2BootstrapSession) PrepareResumeInstallationStateWithConf
 		return nil, err
 	}
 	if credentials == nil {
-		return nil, errors.New("[D124 Android resume] installed credentials 必须是 canonical array")
+		return nil, errors.New("[Android resume] installed credentials 必须是 canonical array")
 	}
 	var configs []androidInstalledConfigV1
 	if err := decodeExactAndroidV2(installedConfigsJSON, androidMaximumConfigTotalBytes+(4<<20),
@@ -624,7 +624,7 @@ func (session *AndroidV2BootstrapSession) PrepareResumeInstallationStateWithConf
 		return nil, err
 	}
 	if configs == nil {
-		return nil, errors.New("[D124 Android resume] installed configs 必须是 canonical array")
+		return nil, errors.New("[Android resume] installed configs 必须是 canonical array")
 	}
 	if err := session.completedEvidence.VerifyInstallationContext(
 		&result, session.core, session.resume.verified,
@@ -638,7 +638,7 @@ func (session *AndroidV2BootstrapSession) PrepareResumeInstallationStateWithConf
 
 func (session *AndroidV2BootstrapSession) resumePoPBodyAt(now time.Time) (wire.EnrollmentPoPBodyV2, error) {
 	if session.resume == nil || session.preflight == nil || session.core == nil || session.challenge == nil {
-		return wire.EnrollmentPoPBodyV2{}, errors.New("[D130 Android resume] PoP 顺序无效")
+		return wire.EnrollmentPoPBodyV2{}, errors.New("[Android resume] PoP 顺序无效")
 	}
 	if err := session.verifyResumeDescriptorAt(now); err != nil {
 		return wire.EnrollmentPoPBodyV2{}, err
@@ -665,7 +665,7 @@ func (session *AndroidV2BootstrapSession) resumePoPBodyAt(now time.Time) (wire.E
 
 func (session *AndroidV2BootstrapSession) verifyResumeDescriptorAt(now time.Time) error {
 	if session.resume == nil {
-		return errors.New("[D130 Android resume] session mode 无效")
+		return errors.New("[Android resume] session mode 无效")
 	}
 	return wire.VerifyEnrollmentResumeDescriptorBindings(
 		&session.resume.descriptor, session.resume.expected, &session.resume.catalog,
@@ -679,23 +679,23 @@ func (session *AndroidV2BootstrapSession) acceptVerifiedEnrollmentResult(body []
 ) error {
 	if result.Status == "completed" {
 		if completion == nil {
-			return errors.New("[D130 Android] completed claim 缺 verified completion evidence")
+			return errors.New("[Android] completed claim 缺 verified completion evidence")
 		}
 		if len(session.completedResult) != 0 && !bytes.Equal(session.completedResult, body) {
-			return errors.New("[D130 Android] completed result 的 exact replay 发生冲突")
+			return errors.New("[Android] completed result 的 exact replay 发生冲突")
 		}
 		session.completedResult = append(session.completedResult[:0], body...)
 		evidence := *completion
 		session.completedEvidence = &evidence
 	} else if len(session.completedResult) != 0 {
-		return errors.New("[D130 Android] completed transaction 禁止回退为 pending")
+		return errors.New("[Android] completed transaction 禁止回退为 pending")
 	}
 	return nil
 }
 
 // FetchReleasedArtifacts 只使用同一 session 内已经完整验证的 completed result，
 // 并按其中 exact canonical refs 的顺序读取 immutable ciphertext。宿主不能注入
-// 路径、digest 或 result 来扩张 capability tunnel 的读取范围（D124、D130、D131）。
+// 路径、digest 或 result 来扩张 capability tunnel 的读取范围。
 func (session *AndroidV2BootstrapSession) FetchReleasedArtifacts(trustedTime string) ([]byte, error) {
 	session.flowMu.Lock()
 	defer session.flowMu.Unlock()
@@ -703,14 +703,14 @@ func (session *AndroidV2BootstrapSession) FetchReleasedArtifacts(trustedTime str
 		return nil, err
 	}
 	if len(session.completedResult) == 0 {
-		return nil, errors.New("[D124 Android] released artifact fetch 前尚无 verified completed result")
+		return nil, errors.New("[Android] released artifact fetch 前尚无 verified completed result")
 	}
 	var result wire.EnrollmentClaimResultV2
 	if err := decodeExactAndroidV2(session.completedResult, 32<<20, &result, "verified completed result"); err != nil {
 		return nil, err
 	}
 	if result.Status != "completed" || result.ResultArtifact == nil {
-		return nil, errors.New("[D124 Android] verified completed result/artifact 不完整")
+		return nil, errors.New("[Android] verified completed result/artifact 不完整")
 	}
 	refs := result.ResultArtifact.SecretArtifactRefs
 	envelopes := make([]wire.SealedSecretEnvelopeV1, len(refs))
@@ -718,7 +718,7 @@ func (session *AndroidV2BootstrapSession) FetchReleasedArtifacts(trustedTime str
 	for index := range refs {
 		ref := &refs[index]
 		if ref.BackendKind != "sealed_blob" || ref.SealedBlob == nil {
-			return nil, errors.New("[D124 Android] Enrollment result 含不可由 Device 拉取的 secret backend")
+			return nil, errors.New("[Android] Enrollment result 含不可由 Device 拉取的 secret backend")
 		}
 		digest, err := wire.ParseHash(ref.SealedBlob.CiphertextDigest)
 		if err != nil {
@@ -727,11 +727,11 @@ func (session *AndroidV2BootstrapSession) FetchReleasedArtifacts(trustedTime str
 		path := "/v2/enrollment/artifacts/sha256/" + hex.EncodeToString(digest)
 		body, err := session.getCanonical(path)
 		if err != nil {
-			return nil, fmt.Errorf("[D124 Android] sealed artifact[%d] 获取失败: %w", index, err)
+			return nil, fmt.Errorf("[Android] sealed artifact[%d] 获取失败: %w", index, err)
 		}
 		totalBytes += len(body)
 		if totalBytes > 8<<20 {
-			return nil, errors.New("[D124 Android] released artifacts 超过 bootstrap 总预算")
+			return nil, errors.New("[Android] released artifacts 超过 bootstrap 总预算")
 		}
 		var envelope wire.SealedSecretEnvelopeV1
 		if err := decodeExactAndroidV2(body, androidBootstrapHTTPMaximum, &envelope,
@@ -767,11 +767,11 @@ func (session *AndroidV2BootstrapSession) Close() {
 
 func (session *AndroidV2BootstrapSession) readyAt(raw string) (time.Time, error) {
 	if session == nil || session.closed.Load() {
-		return time.Time{}, errors.New("[D131 Android] bootstrap session 已关闭")
+		return time.Time{}, errors.New("[Android] bootstrap session 已关闭")
 	}
 	now, err := wire.ParseTimeZ(raw)
 	if err != nil {
-		return time.Time{}, errors.New("[D131 Android] bootstrap trusted time 无效")
+		return time.Time{}, errors.New("[Android] bootstrap trusted time 无效")
 	}
 	session.setTrustedTime(now)
 	if err := session.dialer.validAt(now); err != nil {
@@ -803,14 +803,14 @@ func (session *AndroidV2BootstrapSession) postCanonical(path string, body []byte
 	defer response.Body.Close()
 	responseBody, readErr := io.ReadAll(io.LimitReader(response.Body, androidBootstrapHTTPMaximum+1))
 	if readErr != nil || len(responseBody) == 0 || len(responseBody) > androidBootstrapHTTPMaximum {
-		return nil, errors.New("[D129 Android] private Enrollment response 读取失败或过大")
+		return nil, errors.New("[Android] private Enrollment response 读取失败或过大")
 	}
 	if !androidContainsInt(statuses, response.StatusCode) {
-		return nil, fmt.Errorf("[D129 Android] private Enrollment 返回 HTTP %d", response.StatusCode)
+		return nil, fmt.Errorf("[Android] private Enrollment 返回 HTTP %d", response.StatusCode)
 	}
 	if response.Header.Get("Content-Type") != "application/json" || response.Header.Get("Content-Encoding") != "" ||
 		len(response.Cookies()) != 0 || response.Request.URL.String() != session.baseURL+path {
-		return nil, errors.New("[D129 Android] private Enrollment response metadata 无效")
+		return nil, errors.New("[Android] private Enrollment response metadata 无效")
 	}
 	return responseBody, nil
 }
@@ -831,14 +831,14 @@ func (session *AndroidV2BootstrapSession) getCanonical(path string) ([]byte, err
 	defer response.Body.Close()
 	responseBody, readErr := io.ReadAll(io.LimitReader(response.Body, androidBootstrapHTTPMaximum+1))
 	if readErr != nil || len(responseBody) == 0 || len(responseBody) > androidBootstrapHTTPMaximum {
-		return nil, errors.New("[D124 Android] sealed artifact response 读取失败或过大")
+		return nil, errors.New("[Android] sealed artifact response 读取失败或过大")
 	}
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("[D124 Android] sealed artifact 返回 HTTP %d", response.StatusCode)
+		return nil, fmt.Errorf("[Android] sealed artifact 返回 HTTP %d", response.StatusCode)
 	}
 	if response.Header.Get("Content-Type") != "application/json" || response.Header.Get("Content-Encoding") != "" ||
 		len(response.Cookies()) != 0 || response.Request.URL.String() != session.baseURL+path {
-		return nil, errors.New("[D124 Android] sealed artifact response metadata 无效")
+		return nil, errors.New("[Android] sealed artifact response metadata 无效")
 	}
 	return responseBody, nil
 }
@@ -874,7 +874,7 @@ func (dialer *androidBootstrapDialer) probe(ctx context.Context, now time.Time) 
 	}
 	if dialer.probed {
 		if len(dialer.viable) == 0 {
-			return androidBootstrapProbePlan{}, errors.New("[D131 Android] 已冻结的 bootstrap probe 无可达 transport")
+			return androidBootstrapProbePlan{}, errors.New("[Android] 已冻结的 bootstrap probe 无可达 transport")
 		}
 		return androidBootstrapPlan(dialer.viable), nil
 	}
@@ -931,7 +931,7 @@ func (dialer *androidBootstrapDialer) probe(ctx context.Context, now time.Time) 
 	})
 	dialer.probed, dialer.viable = true, viable
 	if len(viable) == 0 {
-		return androidBootstrapProbePlan{}, errors.New("[D131 Android] 当前 underlay 没有通过身份验证的 HY2/Trojan transport")
+		return androidBootstrapProbePlan{}, errors.New("[Android] 当前 underlay 没有通过身份验证的 HY2/Trojan transport")
 	}
 	return androidBootstrapPlan(viable), nil
 }
@@ -961,19 +961,19 @@ func (dialer *androidBootstrapDialer) restoreProbe(plan androidBootstrapProbePla
 		return err
 	}
 	if plan.Schema != 1 || len(plan.Viable) == 0 || plan.Selected != plan.Viable[0] {
-		return errors.New("[D131 Android] persisted bootstrap probe plan header 无效")
+		return errors.New("[Android] persisted bootstrap probe plan header 无效")
 	}
 	if dialer.probed {
 		if wire.EqualCanonical(plan, androidBootstrapPlan(dialer.viable)) {
 			return nil
 		}
-		return errors.New("[D131 Android] 同一 session 禁止替换 bootstrap probe plan")
+		return errors.New("[Android] 同一 session 禁止替换 bootstrap probe plan")
 	}
 	byIdentity := make(map[string]androidBootstrapCandidate, len(dialer.candidates))
 	for _, candidate := range dialer.candidates {
 		key := candidate.endpointID + "\x00" + candidate.transport + "\x00" + strconv.FormatInt(candidate.listenerGeneration, 10)
 		if _, duplicate := byIdentity[key]; duplicate {
-			return errors.New("[D131 Android] catalog listener identity 重复")
+			return errors.New("[Android] catalog listener identity 重复")
 		}
 		byIdentity[key] = candidate
 	}
@@ -981,16 +981,16 @@ func (dialer *androidBootstrapDialer) restoreProbe(plan androidBootstrapProbePla
 	var viable []androidBootstrapProbeResult
 	for _, selection := range plan.Viable {
 		if selection.Schema != 1 || selection.ProbeRTTMillis < 1 {
-			return errors.New("[D131 Android] persisted bootstrap selection 无效")
+			return errors.New("[Android] persisted bootstrap selection 无效")
 		}
 		key := selection.EndpointID + "\x00" + selection.Transport + "\x00" + strconv.FormatInt(selection.ListenerGeneration, 10)
 		if _, duplicate := seen[key]; duplicate {
-			return errors.New("[D131 Android] persisted bootstrap selection 重复")
+			return errors.New("[Android] persisted bootstrap selection 重复")
 		}
 		seen[key] = struct{}{}
 		candidate, ok := byIdentity[key]
 		if !ok {
-			return errors.New("[D131 Android] persisted selection 不属于当前已验 catalog")
+			return errors.New("[Android] persisted selection 不属于当前已验 catalog")
 		}
 		raw, err := dialer.network.ResolveHost(candidate.serverName)
 		if err != nil {
@@ -1024,7 +1024,7 @@ func (result androidBootstrapProbeResult) selection() androidBootstrapSelection 
 
 func (dialer *androidBootstrapDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	if network != "tcp" || address != dialer.destination {
-		return nil, errors.New("[D131 Android] bootstrap tunnel 只允许 exact Enrollment TCP tuple")
+		return nil, errors.New("[Android] bootstrap tunnel 只允许 exact Enrollment TCP tuple")
 	}
 	dialer.mu.Lock()
 	defer dialer.mu.Unlock()
@@ -1033,10 +1033,10 @@ func (dialer *androidBootstrapDialer) DialContext(ctx context.Context, network, 
 		return nil, err
 	}
 	if !dialer.probed || len(dialer.viable) == 0 {
-		return nil, errors.New("[D131 Android] capability 出示前尚未完成 transport probe")
+		return nil, errors.New("[Android] capability 出示前尚未完成 transport probe")
 	}
 	if dialer.active != nil {
-		return nil, errors.New("[D131 Android] bootstrap capability 只允许一个并发 session")
+		return nil, errors.New("[Android] bootstrap capability 只允许一个并发 session")
 	}
 	for _, target := range dialer.viable {
 		if dialer.attempts >= dialer.maximumAttempts {
@@ -1044,7 +1044,7 @@ func (dialer *androidBootstrapDialer) DialContext(ctx context.Context, network, 
 		}
 		dialer.attempts++
 		if err := dialer.network.RecordConnectionAttempt(dialer.capabilityID, dialer.attempts); err != nil {
-			return nil, fmt.Errorf("[D131 Android] bootstrap attempt journal 拒绝拨号: %w", err)
+			return nil, fmt.Errorf("[Android] bootstrap attempt journal 拒绝拨号: %w", err)
 		}
 		attemptContext, cancel := context.WithTimeout(ctx, dialer.timeout)
 		var connection net.Conn
@@ -1074,7 +1074,7 @@ func (dialer *androidBootstrapDialer) DialContext(ctx context.Context, network, 
 		dialer.active = limited
 		return limited, nil
 	}
-	return nil, errors.New("[D131 Android] capability attempt 预算内没有可用 HY2/Trojan ingress")
+	return nil, errors.New("[Android] capability attempt 预算内没有可用 HY2/Trojan ingress")
 }
 
 func (dialer *androidBootstrapDialer) connectionAttempts() int64 {
@@ -1094,7 +1094,7 @@ func (dialer *androidBootstrapDialer) closeActive() {
 
 func (dialer *androidBootstrapDialer) validAt(now time.Time) error {
 	if now.IsZero() || now.Before(dialer.notBefore) || !now.Before(dialer.expiresAt) {
-		return errors.New("[D131 Android] bootstrap capability 已过期或尚未生效")
+		return errors.New("[Android] bootstrap capability 已过期或尚未生效")
 	}
 	return nil
 }
@@ -1121,7 +1121,7 @@ func (dialer *androidBootstrapDialer) resolveTargets() ([]androidBootstrapProbeT
 		}
 	}
 	if len(targets) == 0 {
-		return nil, errors.New("[D131 Android] bootstrap FQDN 没有经冻结 underlay 得到授权地址")
+		return nil, errors.New("[Android] bootstrap FQDN 没有经冻结 underlay 得到授权地址")
 	}
 	return targets, nil
 }
@@ -1200,7 +1200,7 @@ func (dialer *androidBootstrapDialer) dialHysteria2(ctx context.Context,
 	if response.StatusCode != androidBootstrapHysteriaAuthOK || response.Header.Get("Hysteria-UDP") != "false" {
 		_ = connection.CloseWithError(0, "")
 		_ = packet.Close()
-		return nil, errors.New("[D131 Android] Hysteria2 capability auth 失败")
+		return nil, errors.New("[Android] Hysteria2 capability auth 失败")
 	}
 	stream, err := connection.OpenStreamSync(ctx)
 	if err != nil {
@@ -1265,12 +1265,12 @@ func androidBootstrapOuterTLS(candidate androidBootstrapCandidate, roots *x509.C
 		Time: func() time.Time { return now },
 		VerifyConnection: func(state tls.ConnectionState) error {
 			if len(state.VerifiedChains) == 0 || len(state.PeerCertificates) == 0 {
-				return errors.New("[D122 Android bootstrap] WebPKI chain 未验证")
+				return errors.New("[Android bootstrap] WebPKI chain 未验证")
 			}
 			digest := sha256.Sum256(state.PeerCertificates[0].RawSubjectPublicKeyInfo)
 			pin := "sha256:" + hex.EncodeToString(digest[:])
 			if !androidContainsString(candidate.spkiPins, pin) {
-				return errors.New("[D122 Android bootstrap] outer TLS SPKI pin 不匹配")
+				return errors.New("[Android bootstrap] outer TLS SPKI pin 不匹配")
 			}
 			return nil
 		},
@@ -1290,7 +1290,7 @@ func androidBootstrapCandidates(catalog *wire.BootstrapEndpointCatalogV1,
 	now time.Time,
 ) ([]androidBootstrapCandidate, error) {
 	if catalog == nil {
-		return nil, errors.New("[D131 Android] bootstrap catalog 不能为空")
+		return nil, errors.New("[Android] bootstrap catalog 不能为空")
 	}
 	var candidates []androidBootstrapCandidate
 	for endpointIndex := range catalog.BootstrapIngressSet.Endpoints {
@@ -1316,7 +1316,7 @@ func androidBootstrapCandidates(catalog *wire.BootstrapEndpointCatalogV1,
 		}
 	}
 	if len(candidates) == 0 {
-		return nil, errors.New("[D131 Android] catalog 没有当前可拨 generation")
+		return nil, errors.New("[Android] catalog 没有当前可拨 generation")
 	}
 	return candidates, nil
 }
@@ -1327,25 +1327,25 @@ func androidBootstrapIdentityPins(refs []string) ([]string, error) {
 	for _, ref := range refs {
 		if strings.HasPrefix(ref, "profile:") {
 			if len(strings.TrimPrefix(ref, "profile:")) == 0 {
-				return nil, errors.New("[D122 Android bootstrap] WebPKI profile ref 无效")
+				return nil, errors.New("[Android bootstrap] WebPKI profile ref 无效")
 			}
 			profileCount++
 			continue
 		}
 		if _, err := wire.ParseHash(ref); err != nil {
-			return nil, errors.New("[D122 Android bootstrap] transport identity ref 不是 SPKI pin")
+			return nil, errors.New("[Android bootstrap] transport identity ref 不是 SPKI pin")
 		}
 		pins = append(pins, ref)
 	}
 	if profileCount != 1 || len(pins) == 0 || len(pins) > 2 {
-		return nil, errors.New("[D122 Android bootstrap] listener 必须有一个 WebPKI profile 与一至两个 SPKI pin")
+		return nil, errors.New("[Android bootstrap] listener 必须有一个 WebPKI profile 与一至两个 SPKI pin")
 	}
 	return pins, nil
 }
 
 func androidBootstrapResolvedAddresses(raw string, families []string) ([]netip.Addr, error) {
 	if raw == "" || len(raw) > 4096 {
-		return nil, errors.New("[D131 Android] underlay resolver 返回为空或过大")
+		return nil, errors.New("[Android] underlay resolver 返回为空或过大")
 	}
 	allowed := make(map[string]bool, len(families))
 	for _, family := range families {
@@ -1356,14 +1356,14 @@ func androidBootstrapResolvedAddresses(raw string, families []string) ([]netip.A
 	for _, value := range strings.Split(raw, "\n") {
 		address, err := netip.ParseAddr(value)
 		if err != nil || address.String() != value || address.IsUnspecified() || address.IsMulticast() {
-			return nil, errors.New("[D131 Android] underlay resolver 返回非规范 unicast IP")
+			return nil, errors.New("[Android] underlay resolver 返回非规范 unicast IP")
 		}
 		family := "ipv6"
 		if address.Is4() {
 			family = "ipv4"
 		}
 		if !allowed[family] {
-			return nil, errors.New("[D131 Android] resolved address family 未经 listener 授权")
+			return nil, errors.New("[Android] resolved address family 未经 listener 授权")
 		}
 		if _, duplicate := seen[address]; duplicate {
 			continue
@@ -1372,7 +1372,7 @@ func androidBootstrapResolvedAddresses(raw string, families []string) ([]netip.A
 		addresses = append(addresses, address)
 	}
 	if len(addresses) == 0 {
-		return nil, errors.New("[D131 Android] underlay resolver 没有可用地址")
+		return nil, errors.New("[Android] underlay resolver 没有可用地址")
 	}
 	sort.Slice(addresses, func(left, right int) bool { return addresses[left].String() < addresses[right].String() })
 	return addresses, nil
@@ -1382,7 +1382,7 @@ func androidBootstrapDestination(body wire.BootstrapTunnelCapabilityBodyV1) (str
 	address, err := netip.ParseAddr(body.AllowedDestinationIP)
 	if err != nil || address.String() != body.AllowedDestinationIP || !address.IsPrivate() ||
 		body.AllowedDestinationPort < 1 || body.AllowedDestinationPort > 65535 {
-		return "", errors.New("[D131 Android] capability Enrollment destination 无效")
+		return "", errors.New("[Android] capability Enrollment destination 无效")
 	}
 	return net.JoinHostPort(address.String(), strconv.Itoa(int(body.AllowedDestinationPort))), nil
 }
@@ -1390,12 +1390,12 @@ func androidBootstrapDestination(body wire.BootstrapTunnelCapabilityBodyV1) (str
 func androidTrojanBootstrapRequest(credential, destination string) ([]byte, error) {
 	host, portText, err := net.SplitHostPort(destination)
 	if err != nil {
-		return nil, errors.New("[D131 Android] Trojan destination 无效")
+		return nil, errors.New("[Android] Trojan destination 无效")
 	}
 	address, err := netip.ParseAddr(host)
 	port, portErr := strconv.ParseUint(portText, 10, 16)
 	if err != nil || portErr != nil || port == 0 {
-		return nil, errors.New("[D131 Android] Trojan destination tuple 无效")
+		return nil, errors.New("[Android] Trojan destination tuple 无效")
 	}
 	digest := sha256.Sum224([]byte(credential))
 	request := make([]byte, hex.EncodedLen(len(digest))+2, 96)
@@ -1431,7 +1431,7 @@ func (connection *androidHysteria2TunnelConn) Write(payload []byte) (int, error)
 		return connection.Stream.Write(payload)
 	}
 	if len(connection.destination) == 0 || len(connection.destination) > 2048 {
-		return 0, errors.New("[D131 Android] Hysteria2 destination 长度无效")
+		return 0, errors.New("[Android] Hysteria2 destination 长度无效")
 	}
 	var request []byte
 	request = quicvarint.Append(request, androidBootstrapHysteriaTCPFrame)
@@ -1483,19 +1483,19 @@ func (connection *androidHysteria2TunnelConn) RemoteAddr() net.Addr {
 func androidReadHysteria2Response(reader io.Reader) error {
 	var status [1]byte
 	if _, err := io.ReadFull(reader, status[:]); err != nil || status[0] != 0 {
-		return errors.New("[D131 Android] Hysteria2 TCP relay 被拒绝")
+		return errors.New("[Android] Hysteria2 TCP relay 被拒绝")
 	}
 	variableReader := quicvarint.NewReader(reader)
 	messageLength, err := quicvarint.Read(variableReader)
 	if err != nil || messageLength > androidBootstrapMaximumMessage {
-		return errors.New("[D131 Android] Hysteria2 response message 无效")
+		return errors.New("[Android] Hysteria2 response message 无效")
 	}
 	if _, err := io.CopyN(io.Discard, reader, int64(messageLength)); err != nil {
 		return err
 	}
 	paddingLength, err := quicvarint.Read(variableReader)
 	if err != nil || paddingLength > androidBootstrapMaximumPadding {
-		return errors.New("[D131 Android] Hysteria2 response padding 无效")
+		return errors.New("[Android] Hysteria2 response padding 无效")
 	}
 	_, err = io.CopyN(io.Discard, reader, int64(paddingLength))
 	return err
@@ -1528,7 +1528,7 @@ func (connection *androidBootstrapLimitedConn) Read(body []byte) (int, error) {
 	count, err := connection.Conn.Read(body)
 	if count > 0 && connection.total.Add(int64(count)) > connection.maximumTotal {
 		_ = connection.Close()
-		return 0, errors.New("[D131 Android] bootstrap capability total byte budget 已耗尽")
+		return 0, errors.New("[Android] bootstrap capability total byte budget 已耗尽")
 	}
 	return count, err
 }
@@ -1536,7 +1536,7 @@ func (connection *androidBootstrapLimitedConn) Read(body []byte) (int, error) {
 func (connection *androidBootstrapLimitedConn) Write(body []byte) (int, error) {
 	if int64(len(body))+connection.total.Load() > connection.maximumTotal {
 		_ = connection.Close()
-		return 0, errors.New("[D131 Android] bootstrap capability total byte budget 已耗尽")
+		return 0, errors.New("[Android] bootstrap capability total byte budget 已耗尽")
 	}
 	count, err := connection.Conn.Write(body)
 	if count > 0 {
@@ -1568,7 +1568,7 @@ func newAndroidPrivateEnrollmentHTTP(dialer *androidBootstrapDialer,
 		MaxIdleConns: 1, MaxConnsPerHost: 1, MaxIdleConnsPerHost: 1,
 		DialTLSContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 			if network != "tcp" || address != expectedAddress {
-				return nil, errors.New("[D131 Android] private Enrollment dial 超出 exact overlay tuple")
+				return nil, errors.New("[Android] private Enrollment dial 超出 exact overlay tuple")
 			}
 			raw, err := dialer.DialContext(ctx, "tcp", expectedAddress)
 			if err != nil {
@@ -1585,7 +1585,7 @@ func newAndroidPrivateEnrollmentHTTP(dialer *androidBootstrapDialer,
 	baseURL := (&url.URL{Scheme: "https", Host: expectedAddress}).String()
 	client := &http.Client{Transport: transport, Timeout: 45 * time.Second,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return errors.New("[D131 Android] private Enrollment 禁止 redirect")
+			return errors.New("[Android] private Enrollment 禁止 redirect")
 		}}
 	return transport, client, baseURL, nil
 }
@@ -1594,7 +1594,7 @@ func verifyAndroidPrivateEnrollmentTLS(state tls.ConnectionState,
 	ref wire.PrivateEnrollmentServiceRefV1, trustedTime time.Time,
 ) error {
 	if trustedTime.IsZero() || state.Version != tls.VersionTLS13 || len(state.PeerCertificates) == 0 {
-		return errors.New("[D131 Android] private Enrollment TLS version/certificate/可信时间无效")
+		return errors.New("[Android] private Enrollment TLS version/certificate/可信时间无效")
 	}
 	leaf := state.PeerCertificates[0]
 	instant := trustedTime.UTC()
@@ -1602,12 +1602,12 @@ func verifyAndroidPrivateEnrollmentTLS(state tls.ConnectionState,
 		!instant.Before(leaf.NotAfter) || leaf.VerifyHostname(ref.OverlayIP) != nil ||
 		len(leaf.UnhandledCriticalExtensions) != 0 ||
 		!androidContainsExtKeyUsage(leaf.ExtKeyUsage, x509.ExtKeyUsageServerAuth) {
-		return errors.New("[D131 Android] Enrollment leaf role/validity/overlay IP SAN 无效")
+		return errors.New("[Android] Enrollment leaf role/validity/overlay IP SAN 无效")
 	}
 	digest := sha256.Sum256(leaf.RawSubjectPublicKeyInfo)
 	pin := "sha256:" + hex.EncodeToString(digest[:])
 	if !androidContainsString(ref.ServerIdentitySPKIPins, pin) {
-		return errors.New("[D131 Android] Enrollment leaf SPKI 不在 certified pin set")
+		return errors.New("[Android] Enrollment leaf SPKI 不在 certified pin set")
 	}
 	return nil
 }

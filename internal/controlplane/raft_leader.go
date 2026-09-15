@@ -16,7 +16,7 @@ type RaftPeer interface {
 }
 
 // StableRaftLeader 只在一次已取得 committed ControlSet 多数的任期内有效；进程
-// 重启后必须重新 campaign，不能从磁盘上的 self-vote 推导仍是 leader（D104）。
+// 重启后必须重新 campaign，不能从磁盘上的 self-vote 推导仍是 leader。
 type StableRaftLeader struct {
 	storage *RaftStorage
 	set     wire.ControlSetV1
@@ -34,7 +34,7 @@ type StableRaftCommitResult struct {
 
 // CampaignStableRaft 先做不落盘的 pre-vote，再 fsync self-vote 并取得稳定配置多数。
 // 已有日志时会立即复制 current-term no-op barrier，确保旧任期 committed prefix 可由
-// 新 leader 推进并恢复；空日志保留 index=1 给 bootstrap Head（D104）。
+// 新 leader 推进并恢复；空日志保留 index=1 给 bootstrap Head。
 func CampaignStableRaft(ctx context.Context, storage *RaftStorage, set wire.ControlSetV1,
 	peers map[string]RaftPeer) (*StableRaftLeader, error) {
 	validated, err := validateStableRaftPeers(storage, set, peers)
@@ -46,7 +46,7 @@ func CampaignStableRaft(ctx context.Context, storage *RaftStorage, set wire.Cont
 	}
 	snapshot := storage.SnapshotRaft()
 	if snapshot.CurrentTerm == int64(^uint64(0)>>1) {
-		return nil, errors.New("[D104 Raft] term 溢出")
+		return nil, errors.New("[Raft] term 溢出")
 	}
 	lastIndex, lastTerm := lastLogCoordinates(snapshot.Log)
 	preVote := VoteRequestV1{Term: snapshot.CurrentTerm + 1, CandidateID: snapshot.MemberID,
@@ -57,11 +57,11 @@ func CampaignStableRaft(ctx context.Context, storage *RaftStorage, set wire.Cont
 		if observeErr != nil {
 			return nil, observeErr
 		}
-		return nil, errors.New("[D104 Raft] pre-vote 观察到更高任期")
+		return nil, errors.New("[Raft] pre-vote 观察到更高任期")
 	}
 	quorum, _ := wire.Quorum(len(set.Members))
 	if granted < quorum {
-		return nil, errors.New("[D104 Raft] pre-vote 未达到 committed ControlSet 多数")
+		return nil, errors.New("[Raft] pre-vote 未达到 committed ControlSet 多数")
 	}
 	vote, err := storage.StartElection()
 	if err != nil {
@@ -73,10 +73,10 @@ func CampaignStableRaft(ctx context.Context, storage *RaftStorage, set wire.Cont
 		if observeErr != nil {
 			return nil, observeErr
 		}
-		return nil, errors.New("[D104 Raft] election 观察到更高任期")
+		return nil, errors.New("[Raft] election 观察到更高任期")
 	}
 	if granted < quorum {
-		return nil, errors.New("[D104 Raft] election 未达到 committed ControlSet 多数")
+		return nil, errors.New("[Raft] election 未达到 committed ControlSet 多数")
 	}
 	leader := &StableRaftLeader{storage: storage, set: set, peers: validated, term: vote.Term}
 	if len(snapshot.Log) > 0 {
@@ -85,7 +85,7 @@ func CampaignStableRaft(ctx context.Context, storage *RaftStorage, set wire.Cont
 			return nil, err
 		}
 		if _, err := leader.replicateThrough(ctx, barrier.Index, barrier.EntryHash); err != nil {
-			return nil, fmt.Errorf("[D104 Raft] current-term barrier 未提交: %w", err)
+			return nil, fmt.Errorf("[Raft] current-term barrier 未提交: %w", err)
 		}
 	}
 	return leader, nil
@@ -96,21 +96,21 @@ func CampaignStableRaft(ctx context.Context, storage *RaftStorage, set wire.Cont
 func (leader *StableRaftLeader) ReplicateHead(ctx context.Context, store *Store,
 	entry wire.HeadEntryV2) (StableRaftCommitResult, error) {
 	if leader == nil || leader.storage == nil || store == nil {
-		return StableRaftCommitResult{}, errors.New("[D104 Raft] leader/control store 未初始化")
+		return StableRaftCommitResult{}, errors.New("[Raft] leader/control store 未初始化")
 	}
 	state := leader.storage.SnapshotRaft()
 	if state.CurrentTerm != leader.term || state.VotedFor != state.MemberID ||
 		entry.Body.Payload.RaftTerm != leader.term {
-		return StableRaftCommitResult{}, errors.New("[D104 Raft] leader 任期已失效或 Head term 不匹配")
+		return StableRaftCommitResult{}, errors.New("[Raft] leader 任期已失效或 Head term 不匹配")
 	}
 	control := store.Snapshot()
 	wantSetHash, _ := wire.ControlSetHash(&leader.set)
 	controlSetHash, _ := wire.ControlSetHash(&control.ControlSet)
 	if wantSetHash != controlSetHash || state.LastApplied != state.CommitIndex || control.Active != nil {
-		return StableRaftCommitResult{}, errors.New("[D104 Raft] 前一 committed Head 尚未 apply/certify，禁止追加下一 Head")
+		return StableRaftCommitResult{}, errors.New("[Raft] 前一 committed Head 尚未 apply/certify，禁止追加下一 Head")
 	}
 	// 同一 leader 在少数派超时后可重发本机尚未 committed 的 exact tail；此时
-	// authority parent 是它之前的 certified Head，而不是 tail 自己（D104）。
+	// authority parent 是它之前的 certified Head，而不是 tail 自己。
 	targetAlreadyLogged := false
 	scanFrom := len(state.Log) - 1
 	entryIndex := entry.Body.Payload.RaftIndex
@@ -131,10 +131,10 @@ func (leader *StableRaftLeader) ReplicateHead(ctx context.Context, store *Store,
 	}
 	if lastHead != nil && (control.CertifiedHead == nil ||
 		!wire.EqualCanonical(*control.CertifiedHead, *lastHead)) {
-		return StableRaftCommitResult{}, errors.New("[D104 Raft] control store 未持有前一 certified Head")
+		return StableRaftCommitResult{}, errors.New("[Raft] control store 未持有前一 certified Head")
 	}
 	if targetAlreadyLogged && entryIndex != int64(len(state.Log)) {
-		return StableRaftCommitResult{}, errors.New("[D104 Raft] 只允许重试 exact uncommitted tail Head")
+		return StableRaftCommitResult{}, errors.New("[Raft] 只允许重试 exact uncommitted tail Head")
 	}
 	if err := leader.storage.AppendLocal(entry); err != nil {
 		return StableRaftCommitResult{}, err
@@ -147,7 +147,7 @@ func (leader *StableRaftLeader) replicateThrough(ctx context.Context, index int6
 	state := leader.storage.SnapshotRaft()
 	if state.CurrentTerm != leader.term || state.VotedFor != state.MemberID || index < 1 ||
 		index > int64(len(state.Log)) || state.Log[index-1].EntryHash != entryHash {
-		return StableRaftCommitResult{}, errors.New("[D104 Raft] replication target/leader term 无效")
+		return StableRaftCommitResult{}, errors.New("[Raft] replication target/leader term 无效")
 	}
 	request := AppendEntriesRequestV1{Term: leader.term, LeaderID: state.MemberID,
 		PrevLogHash: wire.EmptyHashV1, Entries: cloneRaftState(state).Log, LeaderCommit: state.CommitIndex}
@@ -157,14 +157,14 @@ func (leader *StableRaftLeader) replicateThrough(ctx context.Context, index int6
 		if err != nil {
 			return StableRaftCommitResult{}, err
 		}
-		return StableRaftCommitResult{}, errors.New("[D104 Raft] replication 观察到更高任期")
+		return StableRaftCommitResult{}, errors.New("[Raft] replication 观察到更高任期")
 	}
 	commitIndex, err := leader.storage.AdvanceLeaderCommit(matches)
 	if err != nil {
 		return StableRaftCommitResult{}, err
 	}
 	if commitIndex < index {
-		return StableRaftCommitResult{}, errors.New("[D104 Raft] durable replication 未达到 committed ControlSet 多数")
+		return StableRaftCommitResult{}, errors.New("[Raft] durable replication 未达到 committed ControlSet 多数")
 	}
 	known, err := leader.BroadcastCommit(ctx)
 	result := StableRaftCommitResult{Term: leader.term, Index: index, EntryHash: entryHash,
@@ -177,14 +177,14 @@ func (leader *StableRaftLeader) replicateThrough(ctx context.Context, index int6
 }
 
 // BroadcastCommit 发送无 entry 的 post-commit heartbeat。少数 follower 暂时失败
-// 不撤销已提交事实；若观察到更高 term，则耐久 step-down 并返回错误（D104）。
+// 不撤销已提交事实；若观察到更高 term，则耐久 step-down 并返回错误。
 func (leader *StableRaftLeader) BroadcastCommit(ctx context.Context) ([]string, error) {
 	if leader == nil || leader.storage == nil {
-		return nil, errors.New("[D104 Raft] leader 未初始化")
+		return nil, errors.New("[Raft] leader 未初始化")
 	}
 	state := leader.storage.SnapshotRaft()
 	if state.CurrentTerm != leader.term || state.VotedFor != state.MemberID {
-		return nil, errors.New("[D104 Raft] leader 任期已失效")
+		return nil, errors.New("[Raft] leader 任期已失效")
 	}
 	previousIndex, previousTerm := lastLogCoordinates(state.Log)
 	previousHash := wire.EmptyHashV1
@@ -200,7 +200,7 @@ func (leader *StableRaftLeader) BroadcastCommit(ctx context.Context) ([]string, 
 		if err != nil {
 			return nil, err
 		}
-		return nil, errors.New("[D104 Raft] commit broadcast 观察到更高任期")
+		return nil, errors.New("[Raft] commit broadcast 观察到更高任期")
 	}
 	known := []string{state.MemberID}
 	for _, member := range leader.set.Members {
@@ -214,11 +214,11 @@ func (leader *StableRaftLeader) BroadcastCommit(ctx context.Context) ([]string, 
 
 // ApplyCommittedPrefix 严格按 Raft index 重放本机 committed prefix。Head 的
 // recompute 必须幂等；control state 先记录 exact commit reference，随后才推进 last_applied，
-// 因而任一写点崩溃后可安全重跑（D104）。
+// 因而任一写点崩溃后可安全重跑。
 func ApplyCommittedPrefix(ctx context.Context, storage *RaftStorage, store *Store,
 	recompute HeadRecomputer) (int, error) {
 	if storage == nil || store == nil || recompute == nil {
-		return 0, errors.New("[D104 apply] storage/store/recomputer 不能为空")
+		return 0, errors.New("[apply] storage/store/recomputer 不能为空")
 	}
 	applied := 0
 	for {
@@ -230,7 +230,7 @@ func ApplyCommittedPrefix(ctx context.Context, storage *RaftStorage, store *Stor
 			return applied, nil
 		}
 		if raft.LastApplied < 0 || raft.LastApplied >= int64(len(raft.Log)) {
-			return applied, errors.New("[D104 apply] committed prefix 坐标无效")
+			return applied, errors.New("[apply] committed prefix 坐标无效")
 		}
 		record := raft.Log[raft.LastApplied]
 		switch record.Kind {
@@ -238,17 +238,17 @@ func ApplyCommittedPrefix(ctx context.Context, storage *RaftStorage, store *Stor
 			// barrier 不产生应用状态，只推进同一 durable prefix 的 apply 坐标。
 		case RaftRecordHead:
 			if record.Head == nil {
-				return applied, errors.New("[D104 apply] committed Head record 缺 payload")
+				return applied, errors.New("[apply] committed Head record 缺 payload")
 			}
 			control := store.Snapshot()
 			if control.Active != nil && control.Active.Entry.EntryHash != record.EntryHash {
-				return applied, errors.New("[D104 apply] 前一 committed Head 尚未取得 QC，冻结后续 Head")
+				return applied, errors.New("[apply] 前一 committed Head 尚未取得 QC，冻结后续 Head")
 			}
 			alreadyFinished := control.Active == nil && control.CertifiedHead != nil &&
 				control.CertifiedHead.EntryHash == record.EntryHash
 			if !alreadyFinished {
 				if err := recompute(ctx, *record.Head); err != nil {
-					return applied, fmt.Errorf("[D104 apply] deterministic recompute 拒绝 committed Head: %w", err)
+					return applied, fmt.Errorf("[apply] deterministic recompute 拒绝 committed Head: %w", err)
 				}
 				if err := store.Prepare(*record.Head); err != nil {
 					return applied, err
@@ -258,7 +258,7 @@ func ApplyCommittedPrefix(ctx context.Context, storage *RaftStorage, store *Stor
 				}
 			}
 		default:
-			return applied, errors.New("[D104 apply] committed prefix 含未知 record kind")
+			return applied, errors.New("[apply] committed prefix 含未知 record kind")
 		}
 		if err := storage.MarkRaftApplied(record.Index); err != nil {
 			return applied, err
@@ -270,7 +270,7 @@ func ApplyCommittedPrefix(ctx context.Context, storage *RaftStorage, store *Stor
 func validateStableRaftPeers(storage *RaftStorage, set wire.ControlSetV1,
 	peers map[string]RaftPeer) (map[string]RaftPeer, error) {
 	if storage == nil {
-		return nil, errors.New("[D104 Raft] storage 不能为空")
+		return nil, errors.New("[Raft] storage 不能为空")
 	}
 	if err := wire.ValidateControlSet(&set); err != nil {
 		return nil, err
@@ -280,19 +280,19 @@ func validateStableRaftPeers(storage *RaftStorage, set wire.ControlSetV1,
 	storageHash, _ := wire.ControlSetHash(&storage.set)
 	if state.VotingDisabled || storage.jointSet != nil || state.ClusterID != set.ClusterID || wantHash != storageHash ||
 		len(peers) != len(set.Members)-1 {
-		return nil, errors.New("[D104 Raft] peer map 必须精确覆盖 committed ControlSet remotes")
+		return nil, errors.New("[Raft] peer map 必须精确覆盖 committed ControlSet remotes")
 	}
 	result := make(map[string]RaftPeer, len(peers))
 	for _, member := range set.Members {
 		if member.MemberID == state.MemberID {
 			if _, exists := peers[member.MemberID]; exists {
-				return nil, errors.New("[D104 Raft] peer map 不能把本机伪装成 remote")
+				return nil, errors.New("[Raft] peer map 不能把本机伪装成 remote")
 			}
 			continue
 		}
 		peer, exists := peers[member.MemberID]
 		if !exists || peer == nil {
-			return nil, errors.New("[D104 Raft] peer map 缺 committed remote")
+			return nil, errors.New("[Raft] peer map 缺 committed remote")
 		}
 		result[member.MemberID] = peer
 	}

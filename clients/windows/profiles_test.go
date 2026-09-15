@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-// §13.5：测试以同目录临时文件模拟宿主注入的原子写入，故障发生在替换前。
+// 测试以同目录临时文件模拟宿主注入的原子写入，故障发生在替换前。
 func writeConnectionProfileTestFile(path string, body []byte) (retErr error) {
 	file, err := os.CreateTemp(filepath.Dir(path), ".profiles-test-*")
 	if err != nil {
@@ -346,7 +346,7 @@ func TestConnectionProfilesMissingIndexDoesNotHideExistingIdentities(t *testing.
 	if err != nil || !bytes.Equal(body, original) {
 		t.Fatalf("existing profile identity was modified: %v", err)
 	}
-	// §13.5：空目录不代表多身份已存在；没有加入资料时初始化空列表。
+	// 空目录不代表多身份已存在；没有加入资料时初始化空列表。
 	empty := t.TempDir()
 	if err := os.Mkdir(filepath.Join(empty, "profiles"), 0o700); err != nil {
 		t.Fatal(err)

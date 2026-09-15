@@ -35,14 +35,14 @@ func (c *routeControl) apply(ctx context.Context, p clientcore.Preference) error
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-c.done:
-		return errors.New("[§7.2] 数据面已停止")
+		return errors.New("数据面已停止")
 	}
-	// §7.2：请求一旦入队，就等待激活事务的实际结果，不能把超时冒充回滚。
+	// 请求一旦入队，就等待激活事务的实际结果，不能把超时冒充回滚。
 	select {
 	case err := <-req.done:
 		return err
 	case <-c.done:
-		return errors.New("[§7.2] 数据面已停止")
+		return errors.New("数据面已停止")
 	}
 }
 func activeRouteControl(root string) (*routeControl, error) {
@@ -55,7 +55,7 @@ func activeRouteControl(root string) (*routeControl, error) {
 
 func (a *clientActivation) withPreference(p clientcore.Preference) (*clientActivation, error) {
 	if a.Policy == nil {
-		return nil, errors.New("[§5.1] 缺少当前签名 Agent plan")
+		return nil, errors.New("缺少当前签名 Agent plan")
 	}
 	body, cfg, err := a.Policy.Derive(a.BaseConfig, p)
 	if err != nil {
@@ -72,14 +72,14 @@ func (a *clientActivation) withPreference(p clientcore.Preference) (*clientActiv
 
 func applyRouteRequest(ctx context.Context, manager *activationManager, control *routeControl, req routeRequest) error {
 	if manager.active == nil {
-		return errors.New("[§7.2] 数据面未激活")
+		return errors.New("数据面未激活")
 	}
 	old := manager.active.spec
 	next, err := old.withPreference(req.preference)
 	if err != nil {
 		return err
 	}
-	// §12：持久偏好失败也回滚完整配置与 Agent，不能只把 GUI 文案改回去。
+	// 持久偏好失败也回滚完整配置与 Agent，不能只把 GUI 文案改回去。
 	restore, err := old.withPreference(old.Preference)
 	if err != nil {
 		next.clear()

@@ -449,7 +449,7 @@ func TestWindowsInviteChecksEmbeddedDeploymentFingerprintWithoutHTTP(t *testing.
 }
 
 func TestWindowsRejectedJoinDoesNotRetryOrChangePlatform(t *testing.T) {
-	// §9.2：职责由中控邀请固定。旧码或平台不匹配被拒绝后，不能降级为 Linux 或补报 server。
+	// 职责由中控邀请固定。旧码或平台不匹配被拒绝后，不能降级为 Linux 或补报 server。
 	for _, status := range []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusGone} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			var calls atomic.Int32

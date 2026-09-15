@@ -418,7 +418,7 @@ func AttestationErrors(st *Status, now time.Time, maxAge time.Duration, minVersi
 
 const caPath = "/etc/loom/tls/ca.crt"
 
-// §16.1.2：仅转换既有 DTO，签名与外层字段绑定统一由纯 observation 包执行。
+// 仅转换既有 DTO，签名与外层字段绑定统一由纯 observation 包执行。
 func observationPayload(o *Observation) (*observation.Observation, error) {
 	if o == nil {
 		return nil, nil

@@ -3,7 +3,7 @@
 // 它和 Agent 是两个角色,别混:
 //
 //	决策者(internal/agent)  排序、切 selector。每个接入节点恰好一个 ——
-//	                         多一个就是两个互不知情的决策者(D11)。
+//	             多一个就是两个互不知情的决策者。
 //	上报者(本包)            观测、自检、如实说。每个节点都该有,服务器也是。
 //
 // 上报者**不做任何决定**,也不碰 selector。它只回答两个问题:隧道还活着吗、
@@ -31,7 +31,7 @@ type Status struct {
 	Node string `json:"node"`
 	TS   string `json:"ts"`
 
-	// Applied 是本机当前装着的快照 id(§14.2)。
+	// Applied 是本机当前装着的快照 id。
 	//
 	// 有它才能一眼看出全网是不是同一版。没有的话,"某台机器落后了一个版本"
 	// 这件事只能靠逐台 ssh 去查 —— 而落后的那台往往正是出问题的那台。
@@ -42,10 +42,10 @@ type Status struct {
 	// 有它,"远端跑的是哪一版源码"才答得上来 —— 以前只能报一串二进制
 	// 哈希,而哈希对不回 git。它和 Applied 是一对:Applied 说配置是哪
 	// 一版,Version 说读这份配置的程序是哪一版。**两者错配正是发布器
-	// 崩掉的那类故障**(旧二进制读不懂新字段,§15.4)。
+	// 崩掉的那类故障**(旧二进制读不懂新字段)。
 	Version *version.Coordinate `json:"version,omitempty"`
 
-	// Rollout 是这台机器**正在往哪个快照走、走到哪一步了**(D78)。
+	// Rollout 是这台机器**正在往哪个快照走、走到哪一步了**。
 	//
 	// 和 Applied 是一对:Applied 说现在装着哪个(结果),Rollout 说过程。
 	// 一台卡在 activating 的机器 Applied 仍是旧值 —— 只看 Applied 会
@@ -71,7 +71,7 @@ type Status struct {
 	// Learned 是从邻居那里听来的别人的观测,原样转述。
 	Learned []Observation `json:"learned,omitempty"`
 
-	// Rotating 是本机正在同时接受两代的凭据(§13.4)。
+	// Rotating 是本机正在同时接受两代的凭据。
 	//
 	// **过渡窗口是过渡态,不是稳态。** 忘了做第二步的话旧凭据永远有效,
 	// 而轮换的全部意义就是让旧的失效。这个状态会进事件历史,于是"开了
@@ -98,12 +98,11 @@ type Tunnel struct {
 	//
 	// **只看接口在不在会漏掉一整类故障。** wg-quick 的 restart 有 down/up
 	// 竞态,失败后 unit 停在 failed 而接口还在 —— 隧道照常工作,直到下次
-	// 重启机器它不会自己起来。cn-a 和 cn-b 都被这样留过。
+	// 重启机器它不会自己起来，因此接口和 unit 的状态必须分别观测。
 	UnitState string `json:"unit_state,omitempty"`
 	// HandshakeAgeSec 是距上次握手的秒数。-1 表示接口在但从未握手过。
 	HandshakeAgeSec int64 `json:"handshake_age_sec"`
-	// Stale 表示握手年龄超过阈值。发起方设了 PersistentKeepalive=25,
-	// 健康的隧道握手年龄不会超过约 180 秒。
+	// Stale 按配置阈值判断握手观测的新鲜度，不代表端到端业务健康。
 	Stale bool  `json:"stale"`
 	RxByt int64 `json:"rx_bytes"`
 	TxByt int64 `json:"tx_bytes"`
@@ -403,7 +402,7 @@ func parseWGStats(out []byte) (map[string]wgInterfaceStats, []string) {
 			stats[iface] = stat
 			continue
 		}
-		// 一条隧道一个接口(D1),但接口理论上可以有多个 peer:取最近的握手,
+		// 一条隧道一个接口,但接口理论上可以有多个 peer:取最近的握手,
 		// 收发字节相加。
 		if h > stat.LatestHandshake {
 			stat.LatestHandshake = h

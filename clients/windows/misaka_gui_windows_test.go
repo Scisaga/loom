@@ -38,7 +38,7 @@ func TestGUIMisakaFrameRetainsNativeWindowInteractions(t *testing.T) {
 			t.Errorf("%s hit=%d, want %d", hit.name, got, hit.want)
 		}
 	}
-	t.Log("[§7.2] 自绘标题保留拖动与缩放；右侧仅有最小化和关闭，不再返回最大化命中")
+	t.Log("自绘标题保留拖动与缩放；右侧仅有最小化和关闭，不再返回最大化命中")
 }
 
 func TestGUIMisakaInlineRenameUsesKeyboardAndPersistsOnlyOnSave(t *testing.T) {
@@ -90,7 +90,7 @@ func TestGUIMisakaInlineRenameUsesKeyboardAndPersistsOnlyOnSave(t *testing.T) {
 
 func TestGUIMisakaDoubleClickRenameUsesActualListSelection(t *testing.T) {
 	app := newProfileGUITestWindow(t)
-	// §7.2：第二项刚被点击，异步 broker 快照尚未更新；编辑对象仍必须是眼前的第二项。
+	// 第二项刚被点击，异步 broker 快照尚未更新；编辑对象仍必须是眼前的第二项。
 	procSendMessage.Call(app.controls.networkList, portableLBSetCurSel, 1, 0)
 	procSendMessage.Call(app.hwnd, portableWMCommand, uintptr(portableControlNetworkList)|2<<16, app.controls.networkList)
 	if app.skin.renameID != profileGUIFixtureB || profileGUIText(app.controls.profileNameEdit) != "演示网络乙" {
@@ -197,7 +197,7 @@ func TestGUIMisakaCustomCanvasPaintsLightFrameAndSeparateSidebar(t *testing.T) {
 			t.Errorf("%s is not painted: got=%v want=%v", sample.name, got, sample.want)
 		}
 	}
-	// §7.2：父背景绘制成功不代表子控件被打印；连接主按钮与每个服务的路径图都必须有真实像素。
+	// 父背景绘制成功不代表子控件被打印；连接主按钮与每个服务的路径图都必须有真实像素。
 	window := guiWindowRect(t, app.hwnd)
 	button := guiWindowRect(t, app.controls.primaryButton)
 	button.left, button.right = button.left-window.left, button.right-window.left
@@ -259,7 +259,7 @@ func TestGUIMisakaNameInputsKeepNativePasteShortcut(t *testing.T) {
 	if ok, _, err := set.Call(uintptr(unsafe.Pointer(&pressed[0]))); ok == 0 {
 		t.Fatal(err)
 	}
-	// §7.2：只模拟当前测试线程的键盘状态，不读取剪贴板。已加入快照阻止旧错误分支读取真实邀请。
+	// 只模拟当前测试线程的键盘状态，不读取剪贴板。已加入快照阻止旧错误分支读取真实邀请。
 	for _, edit := range []uintptr{app.controls.profileNameEdit, app.controls.draftName} {
 		message := portableMSG{hwnd: edit, msg: portableWMKeyDown, wParam: portableVKV}
 		if handlePortablePasteShortcut(message) {

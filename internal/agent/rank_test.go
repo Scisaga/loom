@@ -57,7 +57,7 @@ func TestColdStartDoesNotSwitchBetweenHealthyCandidates(t *testing.T) {
 	}
 }
 
-// §5.5 的阻尼:小幅领先不足以切。没有它,两条延迟接近的链路会一直互相顶掉。
+// 阻尼:小幅领先不足以切。没有它,两条延迟接近的链路会一直互相顶掉。
 func TestDampingBlocksMarginalImprovement(t *testing.T) {
 	d := decl(model.Latency, 3, 0.2, "a", "b")
 	got := Decide(d, "a", []measure.Summary{
@@ -93,7 +93,7 @@ func TestFailureRateOutranksSpeed(t *testing.T) {
 	}
 }
 
-// §5.5 小于旧 10% 分档的差异也必须优先于速度；现任样本不足不能绕过这一规则。
+// 小于旧 10% 分档的差异也必须优先于速度；现任样本不足不能绕过这一规则。
 func TestFailureRateAlwaysPrecedesObjective(t *testing.T) {
 	for _, objective := range []model.Objective{model.Latency, model.Stability, model.Throughput} {
 		for _, tc := range []struct {

@@ -9,7 +9,7 @@ import (
 	"loom/internal/agent"
 )
 
-// WindowsEntries 从已验证配置的真实 detour 找第一跳；不能从 opaque tag 猜节点（§5.1）。
+// WindowsEntries 从已验证配置的真实 detour 找第一跳；不能从 opaque tag 猜节点。
 // 调用方在启动 TUN 前捕获出口网卡，保证 ping 只走本机到入口这一段。
 func WindowsEntries(body []byte, cfg *agent.Config) ([]agent.ClientEntry, error) {
 	if cfg == nil {
@@ -35,7 +35,7 @@ func WindowsEntries(body []byte, cfg *agent.Config) ([]agent.ClientEntry, error)
 			for {
 				o, ok := byTag[tag]
 				if !ok || seen[tag] {
-					return nil, errors.New("[§5.1] 入口出站缺失或 detour 成环")
+					return nil, errors.New("入口出站缺失或 detour 成环")
 				}
 				seen[tag] = true
 				if o.Type == "hysteria2" || o.Type == "trojan" {
@@ -47,11 +47,11 @@ func WindowsEntries(body []byte, cfg *agent.Config) ([]agent.ClientEntry, error)
 				tag = o.Detour
 			}
 			if address == "" {
-				return nil, errors.New("[§5.1] 授权入口缺少连接地址")
+				return nil, errors.New("授权入口缺少连接地址")
 			}
 			node := c.Chain[0]
 			if old, ok := byNode[node]; ok && old.Address != address {
-				return nil, errors.New("[§5.1] 同一入口映射到不同地址")
+				return nil, errors.New("同一入口映射到不同地址")
 			}
 			byNode[node] = agent.ClientEntry{Node: node, Address: address}
 		}
@@ -65,7 +65,7 @@ func WindowsEntries(body []byte, cfg *agent.Config) ([]agent.ClientEntry, error)
 	return out, nil
 }
 
-// §5.6：renderer 的 NextHopAddr 只可能取隧道地址或同一节点的公网入口地址。
+// renderer 的 NextHopAddr 只可能取隧道地址或同一节点的公网入口地址。
 // 对照实际出站与授权入口即可选择既有度量来源，无需服务端下发另一份拓扑。
 func WindowsRoutingInputs(body []byte, cfg *agent.Config) (agent.ClientOptions, error) {
 	var out agent.ClientOptions
@@ -112,7 +112,7 @@ func WindowsRoutingInputs(body []byte, cfg *agent.Config) (agent.ClientOptions, 
 							carrier = "public-hysteria2"
 						}
 					} else if ip := net.ParseIP(hop.Server); ip != nil && ip.IsPrivate() {
-						// §5.6：反向接入服务器没有可直拨入口；配置里的私有下一跳
+						// 反向接入服务器没有可直拨入口；配置里的私有下一跳
 						// 仍由该来源的已签名邻接观测匹配，不能要求它先成为入口。
 						carrier = "neighbor"
 					}

@@ -28,7 +28,7 @@ type DurableStateV1 struct {
 }
 
 // CertifiedAuthorityVerifier 由 controlplane 注入，必须验证 transition 所引
-// certified head/QC；rotation store 不允许用布尔参数替代 authority（D104、D120）。
+// certified head/QC；rotation store 不允许用布尔参数替代 authority。
 type CertifiedAuthorityVerifier func(intent *IntentV1, current *StateV1, transition *Transition) error
 
 type Store struct {
@@ -40,7 +40,7 @@ type Store struct {
 
 func OpenStore(path string, verify CertifiedAuthorityVerifier) (*Store, error) {
 	if path == "" || verify == nil {
-		return nil, errors.New("[D120 rotation] durable store path/authority verifier 缺失")
+		return nil, errors.New("[rotation] durable store path/authority verifier 缺失")
 	}
 	store := &Store{path: path, verify: verify, state: DurableStateV1{Schema: 1, History: []TransitionRecordV1{}}}
 	body, err := os.ReadFile(path)
@@ -52,7 +52,7 @@ func OpenStore(path string, verify CertifiedAuthorityVerifier) (*Store, error) {
 	}
 	var state DurableStateV1
 	if _, err := wire.DecodeStrict(body, 16<<20, &state); err != nil {
-		return nil, fmt.Errorf("[D120 rotation] durable state 损坏: %w", err)
+		return nil, fmt.Errorf("[rotation] durable state 损坏: %w", err)
 	}
 	if err := validateDurableState(&state, verify); err != nil {
 		return nil, err
@@ -68,14 +68,14 @@ func (s *Store) Snapshot() DurableStateV1 {
 }
 
 // Begin 原子固定 operation、port 与全部 dependency bytes；重启/接管后只会
-// 读回同一 intent，不会因查询最新资源而重新分配（D127）。
+// 读回同一 intent，不会因查询最新资源而重新分配。
 func (s *Store) Begin(intent IntentV1, transition Transition) (StateV1, error) {
 	transition = normalizeTransition(transition)
 	if err := validateAllocationTransition(&transition); err != nil {
 		return StateV1{}, err
 	}
 	if err := s.verify(&intent, nil, &transition); err != nil {
-		return StateV1{}, fmt.Errorf("[D120 rotation] allocation head 未获 certified authority: %w", err)
+		return StateV1{}, fmt.Errorf("[rotation] allocation head 未获 certified authority: %w", err)
 	}
 	result, err := Allocate(intent, transition.CertifiedHeadHash)
 	if err != nil {
@@ -88,7 +88,7 @@ func (s *Store) Begin(intent IntentV1, transition Transition) (StateV1, error) {
 		if wire.EqualCanonical(*s.state.Intent, intent) && wire.EqualCanonical(s.state.History[0].Transition, transition) {
 			return *cloneDurableState(s.state).Current, nil
 		}
-		return StateV1{}, errors.New("[D127 rotation] durable store 已固定另一 rotation intent")
+		return StateV1{}, errors.New("[rotation] durable store 已固定另一 rotation intent")
 	}
 	record, err := newTransitionRecord(1, wire.EmptyHashV1, transition, result)
 	if err != nil {
@@ -107,7 +107,7 @@ func (s *Store) Advance(transition Transition) (StateV1, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.state.Intent == nil || s.state.Current == nil || len(s.state.History) == 0 {
-		return StateV1{}, errors.New("[D120 rotation] rotation 尚未 durable allocate")
+		return StateV1{}, errors.New("[rotation] rotation 尚未 durable allocate")
 	}
 	last := s.state.History[len(s.state.History)-1]
 	// 相同 certified transition 重放只返回 first result；同 head 不能改写 phase/evidence。
@@ -115,10 +115,10 @@ func (s *Store) Advance(transition Transition) (StateV1, error) {
 		if wire.EqualCanonical(last.Transition, transition) {
 			return last.ResultingState, nil
 		}
-		return StateV1{}, errors.New("[D120 rotation] 同一 certified head 对应冲突 transition")
+		return StateV1{}, errors.New("[rotation] 同一 certified head 对应冲突 transition")
 	}
 	if err := s.verify(s.state.Intent, s.state.Current, &transition); err != nil {
-		return StateV1{}, fmt.Errorf("[D120 rotation] transition head 未获 certified authority: %w", err)
+		return StateV1{}, fmt.Errorf("[rotation] transition head 未获 certified authority: %w", err)
 	}
 	result, err := Advance(*s.state.Intent, *s.state.Current, transition)
 	if err != nil {
@@ -152,7 +152,7 @@ func newTransitionRecord(sequence int64, previousHash string, transition Transit
 func validateDurableState(state *DurableStateV1, verify CertifiedAuthorityVerifier) error {
 	if state == nil || state.Schema != 1 || state.History == nil ||
 		(state.Intent == nil) != (state.Current == nil) || (state.Intent == nil) != (len(state.History) == 0) {
-		return errors.New("[D120 rotation] durable state shape 无效")
+		return errors.New("[rotation] durable state shape 无效")
 	}
 	if state.Intent == nil {
 		return nil
@@ -166,7 +166,7 @@ func validateDurableState(state *DurableStateV1, verify CertifiedAuthorityVerifi
 		record := &state.History[i]
 		if record.Schema != 1 || record.Sequence != int64(i+1) || record.PreviousStateHash != previousHash ||
 			!wire.EqualCanonical(record.Transition, normalizeTransition(record.Transition)) {
-			return errors.New("[D120 rotation] transition history sequence/canonical form 无效")
+			return errors.New("[rotation] transition history sequence/canonical form 无效")
 		}
 		if i == 0 {
 			if err := validateAllocationTransition(&record.Transition); err != nil {
@@ -192,12 +192,12 @@ func validateDurableState(state *DurableStateV1, verify CertifiedAuthorityVerifi
 		}
 		hash, err := wire.HashObject(DomainState, replay)
 		if err != nil || hash != record.ResultingStateHash || !wire.EqualCanonical(replay, record.ResultingState) {
-			return errors.New("[D120 rotation] transition history result/hash 无效")
+			return errors.New("[rotation] transition history result/hash 无效")
 		}
 		previousHash = hash
 	}
 	if !wire.EqualCanonical(replay, *state.Current) {
-		return errors.New("[D120 rotation] current state 不等于 history replay 结果")
+		return errors.New("[rotation] current state 不等于 history replay 结果")
 	}
 	return nil
 }
@@ -206,7 +206,7 @@ func validateAllocationTransition(transition *Transition) error {
 	if transition == nil || transition.NextPhase != "allocated" || transition.CertifiedAt == "" || transition.ReaderFloor != 0 ||
 		transition.Guard != nil || transition.Emergency || len(transition.EvidenceRefs) != 0 ||
 		transition.LocalVerificationEvidenceHash != "" || transition.ExternalVerificationEvidenceHash != "" {
-		return errors.New("[D120 rotation] initial allocation transition shape 无效")
+		return errors.New("[rotation] initial allocation transition shape 无效")
 	}
 	if _, err := wire.ParseTimeZ(transition.CertifiedAt); err != nil {
 		return err

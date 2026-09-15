@@ -21,7 +21,7 @@ type androidVerifiedEnrollmentResultV2 struct {
 
 // VerifyAndroidEnrollmentV2ClaimResult 在 Android 相信 pending/completed 状态前，
 // 从 exact Invite Head 重放 progress 或 completion receipt。返回值只包含经过
-// 不透明 verifier 绑定的安装/恢复投影（D115、D130）。
+// 不透明 verifier 绑定的安装/恢复投影。
 func VerifyAndroidEnrollmentV2ClaimResult(descriptorJSON, proofBundleJSON, preflightJSON,
 	claimCoreJSON, resultJSON []byte, trustedTime string,
 ) ([]byte, error) {
@@ -50,7 +50,7 @@ func VerifyAndroidEnrollmentV2ClaimResult(descriptorJSON, proofBundleJSON, prefl
 
 // verifyAndroidEnrollmentV2ClaimResult 是 transport session 与公开 binding 共用的
 // receipt 边界。这样 released artifact fetch 只能由同一个已验证 completed result
-// 解锁，不能由 Kotlin 或任意 result 字段单独授权（D124、D130）。
+// 解锁，不能由 Kotlin 或任意 result 字段单独授权。
 func verifyAndroidEnrollmentV2ClaimResult(inputs androidEnrollmentInputsV2,
 	preflight wire.EnrollmentIntentPreflightResponseV1, core wire.EnrollmentClaimCoreV2,
 	resultJSON []byte, now time.Time,
@@ -90,7 +90,7 @@ func verifyAndroidEnrollmentResultExpected(expected enrollmentv2.EnrollmentProgr
 		for _, required := range requiredTransactionHashes {
 			if required != "" && !verified.IncludesTransactionStateHash(required) {
 				return androidVerifiedEnrollmentResultV2{}, wire.EnrollmentClaimResultV2{}, nil,
-					errors.New("[D130 Android] progress receipt 不包含 resume transaction floor")
+					errors.New("[Android] progress receipt 不包含 resume transaction floor")
 			}
 		}
 		resume := verified.ResumeExpected()
@@ -112,7 +112,7 @@ func verifyAndroidEnrollmentResultExpected(expected enrollmentv2.EnrollmentProgr
 	for _, required := range requiredTransactionHashes {
 		if required != "" && !verified.IncludesTransactionStateHash(required) {
 			return androidVerifiedEnrollmentResultV2{}, wire.EnrollmentClaimResultV2{}, nil,
-				errors.New("[D130 Android] completion receipt 不包含 resume transaction floor")
+				errors.New("[Android] completion receipt 不包含 resume transaction floor")
 		}
 	}
 	if err := verified.VerifyInstallationContext(&result, &expected.ClaimCore, proof); err != nil {
@@ -120,7 +120,7 @@ func verifyAndroidEnrollmentResultExpected(expected enrollmentv2.EnrollmentProgr
 	}
 	if result.ResultArtifact == nil {
 		return androidVerifiedEnrollmentResultV2{}, wire.EnrollmentClaimResultV2{}, nil,
-			errors.New("[D130 Android] verified completion 缺 result artifact")
+			errors.New("[Android] verified completion 缺 result artifact")
 	}
 	envelope, set := verified.DeviceViewEnvelope(), verified.ControlSet()
 	resume := verified.ResumeExpected()

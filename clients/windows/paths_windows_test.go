@@ -167,7 +167,7 @@ func TestWindowsPathsDiscardGenerationChangedDuringRead(t *testing.T) {
 	}
 }
 
-// §16.1：单样本、失败样本和未知候选不能通过统计标签被包装成健康或已完成选优。
+// 单样本、失败样本和未知候选不能通过统计标签被包装成健康或已完成选优。
 func TestWindowsPathsShowProbeCountsAndIncompleteComparison(t *testing.T) {
 	latency := 37
 	health := &clientreport.AgentCandidateHealth{Candidates: 12, RecentSuccess: 1, RecentFailed: 1, Unknown: 9, Stale: 1,
@@ -176,19 +176,19 @@ func TestWindowsPathsShowProbeCountsAndIncompleteComparison(t *testing.T) {
 	row := rows[0]
 	if row.Health != "单次可达" || row.SelectedQuality != "单个成功样本 37 ms" || row.MeasurementSummary != "近期探测 1 次 · 失败 0 · 已测 2/12" ||
 		!strings.Contains(row.Comparison, "9 个未测，1 个已过期") || !strings.Contains(row.Comparison, "比较尚未覆盖全部候选") {
-		t.Fatalf("[§16.1] 单样本或未比较边界失真：%+v", row)
+		t.Fatalf("单样本或未比较边界失真：%+v", row)
 	}
 	if detail := formatWindowsPaths(rows, true); strings.Contains(detail, "P95") || strings.Contains(detail, "最近探测：demo-read-time") || !strings.Contains(detail, "读取时间：demo-read-time") {
-		t.Fatalf("[§16.1] 单样本统计或读回时间失真：%s", detail)
+		t.Fatalf("单样本统计或读回时间失真：%s", detail)
 	}
 	health.SelectedState, health.SelectedSamples, health.SelectedFailures = "degraded", 2, 1
 	row = windowsPathsFromReport(&clientreport.AgentState{Selections: []clientreport.AgentSelection{{Health: health}}})[0]
 	if row.Health != "部分失败" || !strings.Contains(row.MeasurementSummary, "探测 2 次 · 失败 1") || strings.Contains(row.SelectedQuality, "P95") {
-		t.Fatalf("[§16.1] 失败样本不能变成成功延迟分位：%+v", row)
+		t.Fatalf("失败样本不能变成成功延迟分位：%+v", row)
 	}
 }
 
-// §16.1：入口单次结果与服务器估算不能显示为整路径实测或健康绿灯。
+// 入口单次结果与服务器估算不能显示为整路径实测或健康绿灯。
 func TestWindowsPathsDescribeEntryAndServerEvidence(t *testing.T) {
 	reason := "入口与服务器分段观测估算 90 ms；未测整条业务路径"
 	rows := windowsPathsFromReport(&clientreport.AgentState{Selections: []clientreport.AgentSelection{{Declaration: "demo-service", Candidate: "demo-path", Chain: []string{"demo-entry", "demo-exit"}, Reason: reason}}})

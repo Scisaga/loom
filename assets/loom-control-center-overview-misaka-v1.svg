@@ -213,7 +213,7 @@
     <text class="small muted" x="897" y="333">Automatic route</text>
   </g>
 
-  <!-- §6: dialable anchors inside; reverse-only servers outside. -->
+  <!-- dialable anchors inside; reverse-only servers outside. -->
   <ellipse cx="510" cy="478" rx="300" ry="116" fill="none" stroke="#EDF0EE"/>
   <ellipse cx="510" cy="478" rx="146" ry="69" fill="none" stroke="#EDF0EE" stroke-dasharray="3 5"/>
   <g aria-label="Nine persistent WireGuard links">

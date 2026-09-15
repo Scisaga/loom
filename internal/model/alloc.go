@@ -18,11 +18,11 @@ const tunnelBase = "10.99."
 
 // NeedsTunnel 报告两个节点之间该不该有隧道。
 //
-// **恰好一端是 reverse_only 时才需要**(§2.2、§6.3):
+// **恰好一端是 reverse_only 时才需要**:
 //
 //	rev ↔ rev   非法 —— 双方都要发起,无人接受
 //	bi  ↔ rev   需要 —— rev 拨不进去,只能自己拨出来
-//	bi  ↔ bi    不需要 —— 两台都能被公网拨到,直接互拨(D29)
+//	bi ↔ bi  不需要 —— 两台都能被公网拨到,直接互拨
 func NeedsTunnel(a, b *Node) bool {
 	if !a.IsServer() || !b.IsServer() {
 		return false
@@ -53,7 +53,7 @@ func (s *SSOT) TunnelPeersFor(n *Node) []*Node {
 // 渲染时),但"再跑一次结果就变了"是个很讨厌的性质。
 func (s *SSOT) AllocateTunnel(a, b *Node) (fromAddr, toAddr string, port int, err error) {
 	if !NeedsTunnel(a, b) {
-		return "", "", 0, fmt.Errorf("%s 与 %s 之间不需要隧道 —— 两端都能被公网拨到,直接互拨即可(D29)", a.ID, b.ID)
+		return "", "", 0, fmt.Errorf("%s 与 %s 之间不需要隧道 —— 两端都能被公网拨到,直接互拨即可", a.ID, b.ID)
 	}
 	// /24 归 reverse_only 那一端。现有 SSOT 就是这么排的:
 	// edge-a 占 10.99.0.x,edge-b 占 10.99.1.x。

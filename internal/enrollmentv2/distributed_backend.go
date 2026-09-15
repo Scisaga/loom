@@ -15,7 +15,7 @@ const (
 )
 
 // EnrollmentCommitCoordinateV1 由持有当前 Raft leadership 的 sequencer 冻结；
-// operation 中所有时间和日志坐标只能从这里取得，不能由 CA 或 ingress 自选（D104、D130）。
+// operation 中所有时间和日志坐标只能从这里取得，不能由 CA 或 ingress 自选。
 type EnrollmentCommitCoordinateV1 struct {
 	Schema               int    `json:"schema"`
 	ClusterID            string `json:"cluster_id"`
@@ -69,14 +69,14 @@ type PreparedProvisionalV1 struct {
 }
 
 // DurableProvisionalPreparer 隔离 CA/secret 私钥。实现必须先耐久化 exact first-result，
-// 相同 operation ID + coordinate 重试返回逐字节相同制品，冲突则失败关闭（D102、D130）。
+// 相同 operation ID + coordinate 重试返回逐字节相同制品，冲突则失败关闭。
 type DurableProvisionalPreparer interface {
 	PrepareProvisional(context.Context, string, VerifiedClaimAttemptV2, DurableRecord,
 		EnrollmentCommitCoordinateV1) (PreparedProvisionalV1, error)
 }
 
 // DistributedWorkflowBackend 是 Coordinator 的生产分布式实现：它只信任可独立
-// 重验的 quorum、CA first-result 与 certified Head 结果，不接受裸 ack/hash（D129、D130）。
+// 重验的 quorum、CA first-result 与 certified Head 结果，不接受裸 ack/hash。
 type DistributedWorkflowBackend struct {
 	admission    EnrollmentAdmissionQuorum
 	sequencer    EnrollmentOperationSequencer
@@ -92,7 +92,7 @@ func NewDistributedWorkflowBackend(admission EnrollmentAdmissionQuorum,
 	now func() time.Time) (*DistributedWorkflowBackend, error) {
 	if admission == nil || sequencer == nil || provision == nil || readApproval == nil ||
 		approval == nil || now == nil {
-		return nil, errors.New("[D130 Enrollment] distributed workflow dependencies 不完整")
+		return nil, errors.New("[Enrollment] distributed workflow dependencies 不完整")
 	}
 	return &DistributedWorkflowBackend{admission: admission, sequencer: sequencer,
 		provision: provision, readApproval: readApproval, approval: approval, now: now}, nil
@@ -106,7 +106,7 @@ func (backend *DistributedWorkflowBackend) CollectAdmission(ctx context.Context,
 	}
 	if !wire.EqualCanonical(qc.Attestation, attestation) ||
 		wire.VerifyEnrollmentAdmissionQC(&qc, &attempt.material.ControlSet) != nil {
-		return wire.StableEnrollmentAdmissionQCV1{}, errors.New("[D129 Enrollment] admission quorum 返回错误 exact QC")
+		return wire.StableEnrollmentAdmissionQCV1{}, errors.New("[Enrollment] admission quorum 返回错误 exact QC")
 	}
 	return qc, nil
 }
@@ -235,7 +235,7 @@ func (backend *DistributedWorkflowBackend) CollectApproval(ctx context.Context,
 	}
 	if !wire.EqualCanonical(qc.Attestation, attestation) || wire.VerifyEnrollmentApprovalQC(&qc, &set) != nil {
 		return wire.StableEnrollmentApprovalQCV2{}, wire.ControlSetV1{},
-			errors.New("[D130 Enrollment] approval quorum 返回错误 exact QC")
+			errors.New("[Enrollment] approval quorum 返回错误 exact QC")
 	}
 	return qc, set, nil
 }
@@ -244,11 +244,11 @@ func (backend *DistributedWorkflowBackend) CommitCompletion(ctx context.Context,
 	_ VerifiedClaimAttemptV2, record DurableRecord, approval wire.StableEnrollmentApprovalQCV2,
 	operation CompletionOperationV2) (CompletionCertificationV1, error) {
 	if record.ProvisionalCertification == nil || record.ResultArtifact == nil {
-		return CompletionCertificationV1{}, errors.New("[D130 Enrollment] completion 缺 durable issuance/result")
+		return CompletionCertificationV1{}, errors.New("[Enrollment] completion 缺 durable issuance/result")
 	}
 	wantID, err := completionOperationID(record, &approval)
 	if err != nil || operation.OperationID != wantID {
-		return CompletionCertificationV1{}, errors.New("[D130 Enrollment] completion operation ID 不是 exact deterministic ID")
+		return CompletionCertificationV1{}, errors.New("[Enrollment] completion operation ID 不是 exact deterministic ID")
 	}
 	completed, err := Complete(record.State, operation, &approval, &record.ProvisionalCertification.ControlSet)
 	if err != nil {
@@ -277,7 +277,7 @@ func (backend *DistributedWorkflowBackend) CommitCompletion(ctx context.Context,
 		return CompletionCertificationV1{}, err
 	}
 	if result.DeviceViewEnvelope == nil {
-		return CompletionCertificationV1{}, errors.New("[D130 Enrollment] completion sequencer 缺同 Head Device view proof")
+		return CompletionCertificationV1{}, errors.New("[Enrollment] completion sequencer 缺同 Head Device view proof")
 	}
 	certification := CompletionCertificationV1{Schema: 1, Operation: result.Certification,
 		IntermediateHeads:     append([]wire.HeadEntryV2(nil), result.IntermediateHeads...),
@@ -292,7 +292,7 @@ func (backend *DistributedWorkflowBackend) CommitCompletion(ctx context.Context,
 
 func ClaimOperationID(admission *wire.StableEnrollmentAdmissionQCV1) (string, error) {
 	if admission == nil {
-		return "", errors.New("[D130 Enrollment] claim operation ID 缺 admission QC")
+		return "", errors.New("[Enrollment] claim operation ID 缺 admission QC")
 	}
 	qcHash, err := wire.EnrollmentAdmissionQCHash(admission)
 	if err != nil {
@@ -313,7 +313,7 @@ func ClaimOperationID(admission *wire.StableEnrollmentAdmissionQCV1) (string, er
 
 func ProvisionalOperationID(record *DurableRecord) (string, error) {
 	if record == nil || record.State.Status != "reserved" {
-		return "", errors.New("[D130 Enrollment] provisional operation ID 缺 reserved transaction")
+		return "", errors.New("[Enrollment] provisional operation ID 缺 reserved transaction")
 	}
 	return wire.HashObject(DomainProvisionalOperationID, struct {
 		Schema             int    `json:"schema"`
@@ -331,7 +331,7 @@ func validatePreparedProvisional(prepared *PreparedProvisionalV1, operationID st
 		prepared.Operation.IssuedAt != coordinate.CommittedLogicalTime ||
 		prepared.Issuance.Body.IssuanceLogCoordinate.RecoveryEpoch != coordinate.RecoveryEpoch ||
 		prepared.Issuance.Body.IssuanceLogCoordinate.RaftIndex != coordinate.RaftIndex {
-		return errors.New("[D130 Enrollment] provisional first-result 未绑定 sequencer coordinate")
+		return errors.New("[Enrollment] provisional first-result 未绑定 sequencer coordinate")
 	}
 	if err := validateCommitCoordinate(coordinate, record.State.ClusterID); err != nil {
 		return err
@@ -346,7 +346,7 @@ func validatePreparedProvisional(prepared *PreparedProvisionalV1, operationID st
 	reservationQCHash, err := wire.ConfigQCHash(record.ReservationCertification.ConfigQC)
 	if err != nil || prepared.Issuance.Body.ReservationHeadHash != record.ReservationCertification.Head.HeadHash ||
 		prepared.Issuance.Body.ReservationHeadQCHash != reservationQCHash {
-		return errors.New("[D130 Enrollment] provisional first-result 未绑定 reservation Head/QC")
+		return errors.New("[Enrollment] provisional first-result 未绑定 reservation Head/QC")
 	}
 	return nil
 }
@@ -371,7 +371,7 @@ func validateApprovalEvidenceRecord(evidence *EnrollmentApprovalEvidenceV1, reco
 		!equalControlSetTransitionSequences(evidence.ControlSetTransitions, record.ReservationToIssuanceTransitions) ||
 		!wire.EqualCanonical(evidence.Issuance, *record.ProvisionalCertification) ||
 		!wire.EqualCanonical(evidence.ResultArtifact, *record.ResultArtifact) {
-		return errors.New("[D130 Enrollment] approval reader 未返回 exact durable transaction evidence")
+		return errors.New("[Enrollment] approval reader 未返回 exact durable transaction evidence")
 	}
 	return nil
 }
@@ -414,7 +414,7 @@ func cloneControlSetTransitions(values []wire.ControlSetTransitionBundleV1) []wi
 func validateCommitCoordinate(coordinate *EnrollmentCommitCoordinateV1, clusterID string) error {
 	if coordinate == nil || coordinate.Schema != 1 || coordinate.ClusterID != clusterID ||
 		coordinate.RecoveryEpoch < 0 || coordinate.RaftTerm < 1 || coordinate.RaftIndex < 1 {
-		return errors.New("[D104 Raft] enrollment commit coordinate 无效")
+		return errors.New("[Raft] enrollment commit coordinate 无效")
 	}
 	for _, value := range []string{coordinate.PreviousLogEntryHash, coordinate.ParentHeadHash} {
 		if _, err := wire.ParseHash(value); err != nil {

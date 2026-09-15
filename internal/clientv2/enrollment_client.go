@@ -25,7 +25,7 @@ type TunnelDialContext func(context.Context, string, string) (net.Conn, error)
 
 // PrivateEnrollmentClient 只在已经由 capability 限制到 exact Enrollment tuple 的
 // tunnel dialer 上运行。非 nil RootCAs 必须来自已验 internal CA profile；即使提供 CA，exact
-// certified SPKI pin 和 overlay IP SAN 也仍是强制条件（D129、D131）。
+// certified SPKI pin 和 overlay IP SAN 也仍是强制条件。
 type PrivateEnrollmentClient struct {
 	client  *http.Client
 	baseURL string
@@ -39,7 +39,7 @@ func NewPrivateEnrollmentClient(ref wire.PrivateEnrollmentServiceRefV1, roots *x
 		return nil, err
 	}
 	if dial == nil || now == nil || timeout < time.Second || timeout > 5*time.Minute {
-		return nil, errors.New("[D131 client] private Enrollment dialer/可信时间/timeout 无效")
+		return nil, errors.New("[client] private Enrollment dialer/可信时间/timeout 无效")
 	}
 	expectedAddress := net.JoinHostPort(ref.OverlayIP, strconv.FormatInt(ref.TCPPort, 10))
 	tlsConfig := &tls.Config{
@@ -57,7 +57,7 @@ func NewPrivateEnrollmentClient(ref wire.PrivateEnrollmentServiceRefV1, roots *x
 		Proxy: nil, DisableCompression: true, ForceAttemptHTTP2: false,
 		DialTLSContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 			if network != "tcp" || address != expectedAddress {
-				return nil, errors.New("[D131 client] private Enrollment dial 超出 exact overlay tuple")
+				return nil, errors.New("[client] private Enrollment dial 超出 exact overlay tuple")
 			}
 			raw, err := dial(ctx, "tcp", expectedAddress)
 			if err != nil {
@@ -74,7 +74,7 @@ func NewPrivateEnrollmentClient(ref wire.PrivateEnrollmentServiceRefV1, roots *x
 	base := (&url.URL{Scheme: "https", Host: expectedAddress}).String()
 	return &PrivateEnrollmentClient{
 		client: &http.Client{Transport: transport, Timeout: timeout, CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return errors.New("[D131 client] private Enrollment 禁止 redirect")
+			return errors.New("[client] private Enrollment 禁止 redirect")
 		}},
 		baseURL: base, ref: ref, now: now,
 	}, nil
@@ -83,19 +83,19 @@ func NewPrivateEnrollmentClient(ref wire.PrivateEnrollmentServiceRefV1, roots *x
 func verifyPrivateEnrollmentTLS(state tls.ConnectionState, ref wire.PrivateEnrollmentServiceRefV1,
 	roots *x509.CertPool, trustedTime time.Time) error {
 	if trustedTime.IsZero() || state.Version != tls.VersionTLS13 || len(state.PeerCertificates) == 0 {
-		return errors.New("[D131 client] private Enrollment TLS version/certificate/可信时间无效")
+		return errors.New("[client] private Enrollment TLS version/certificate/可信时间无效")
 	}
 	leaf := state.PeerCertificates[0]
 	instant := trustedTime.UTC()
 	if leaf.IsCA || leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 || instant.Before(leaf.NotBefore) || !instant.Before(leaf.NotAfter) ||
 		leaf.VerifyHostname(ref.OverlayIP) != nil || len(leaf.UnhandledCriticalExtensions) != 0 ||
 		!containsExtKeyUsage(leaf.ExtKeyUsage, x509.ExtKeyUsageServerAuth) {
-		return errors.New("[D131 client] Enrollment leaf role/validity/overlay IP SAN 无效")
+		return errors.New("[client] Enrollment leaf role/validity/overlay IP SAN 无效")
 	}
 	digest := sha256.Sum256(leaf.RawSubjectPublicKeyInfo)
 	pin := "sha256:" + hex.EncodeToString(digest[:])
 	if !containsString(ref.ServerIdentitySPKIPins, pin) {
-		return errors.New("[D131 client] Enrollment leaf SPKI 不在 certified pin set")
+		return errors.New("[client] Enrollment leaf SPKI 不在 certified pin set")
 	}
 	if roots == nil {
 		return nil
@@ -108,7 +108,7 @@ func verifyPrivateEnrollmentTLS(state tls.ConnectionState, ref wire.PrivateEnrol
 		DNSName: ref.OverlayIP, Roots: roots, Intermediates: intermediates, CurrentTime: instant,
 		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}); err != nil {
-		return errors.New("[D131 client] Enrollment leaf 不属于 exact internal CA profile")
+		return errors.New("[client] Enrollment leaf 不属于 exact internal CA profile")
 	}
 	return nil
 }
@@ -151,7 +151,7 @@ func (client *PrivateEnrollmentClient) Challenge(ctx context.Context,
 	}
 	if response.ClusterID != core.ClusterID || response.InviteID != core.InviteID || response.RequestID != core.RequestID ||
 		response.EnrollmentServiceID != client.ref.ServiceID {
-		return wire.EnrollmentPoPChallengeV1{}, errors.New("[D129 client] challenge 与 core/private service 不匹配")
+		return wire.EnrollmentPoPChallengeV1{}, errors.New("[client] challenge 与 core/private service 不匹配")
 	}
 	if _, err := wire.EnrollmentChallengeHash(&response, coreHash, client.now().UTC()); err != nil {
 		return wire.EnrollmentPoPChallengeV1{}, err
@@ -170,13 +170,13 @@ func (client *PrivateEnrollmentClient) SubmitClaim(ctx context.Context,
 		return wire.EnrollmentClaimResultV2{}, err
 	}
 	if result.Status != "completed" && len(result.ProgressReceipt) == 0 {
-		return wire.EnrollmentClaimResultV2{}, errors.New("[D130 client] private Enrollment pending 响应缺 progress receipt")
+		return wire.EnrollmentClaimResultV2{}, errors.New("[client] private Enrollment pending 响应缺 progress receipt")
 	}
 	return result, nil
 }
 
 // SubmitResume 使用与 initial claim 相同的私有路径，但 wire schema 不含 token；
-// outer ingress/server 会按已验 capability mode 严格选择解码器（D130）。
+// outer ingress/server 会按已验 capability mode 严格选择解码器。
 func (client *PrivateEnrollmentClient) SubmitResume(ctx context.Context,
 	submission wire.EnrollmentResumeSubmissionV1) (wire.EnrollmentClaimResultV2, error) {
 	var result wire.EnrollmentClaimResultV2
@@ -188,18 +188,18 @@ func (client *PrivateEnrollmentClient) SubmitResume(ctx context.Context,
 		return wire.EnrollmentClaimResultV2{}, err
 	}
 	if result.Status != "completed" && len(result.ProgressReceipt) == 0 {
-		return wire.EnrollmentClaimResultV2{}, errors.New("[D130 client] private Enrollment resume 响应缺 progress receipt")
+		return wire.EnrollmentClaimResultV2{}, errors.New("[client] private Enrollment resume 响应缺 progress receipt")
 	}
 	return result, nil
 }
 
 // FetchReleasedArtifacts 只在 completed receipt 已返回后，按 result ref 的规范顺序
 // 经同一 capability-limited tunnel 读取 ciphertext-addressed envelope。服务端 release
-// authorization 与客户端 exact ref binding 缺一不可（D124、D130、D131）。
+// authorization 与客户端 exact ref binding 缺一不可。
 func (client *PrivateEnrollmentClient) FetchReleasedArtifacts(ctx context.Context,
 	result wire.EnrollmentClaimResultV2) ([]wire.SealedSecretEnvelopeV1, error) {
 	if client == nil || client.client == nil || result.Status != "completed" || result.ResultArtifact == nil {
-		return nil, errors.New("[D124 client] completed result/artifact client 不完整")
+		return nil, errors.New("[client] completed result/artifact client 不完整")
 	}
 	if err := wire.ValidateEnrollmentClaimResult(&result); err != nil {
 		return nil, err
@@ -209,7 +209,7 @@ func (client *PrivateEnrollmentClient) FetchReleasedArtifacts(ctx context.Contex
 	for index := range refs {
 		ref := &refs[index]
 		if ref.BackendKind != "sealed_blob" || ref.SealedBlob == nil {
-			return nil, errors.New("[D124 client] Enrollment result 含不可由 Device 拉取的 secret backend")
+			return nil, errors.New("[client] Enrollment result 含不可由 Device 拉取的 secret backend")
 		}
 		digest, err := wire.ParseHash(ref.SealedBlob.CiphertextDigest)
 		if err != nil {
@@ -218,7 +218,7 @@ func (client *PrivateEnrollmentClient) FetchReleasedArtifacts(ctx context.Contex
 		path := "/v2/enrollment/artifacts/sha256/" + hex.EncodeToString(digest)
 		envelope, err := client.getReleasedArtifact(ctx, path)
 		if err != nil {
-			return nil, fmt.Errorf("[D124 client] sealed artifact[%d] 获取失败: %w", index, err)
+			return nil, fmt.Errorf("[client] sealed artifact[%d] 获取失败: %w", index, err)
 		}
 		if err := wire.VerifySealedSecretBinding(ref, &envelope); err != nil {
 			return nil, err
@@ -242,19 +242,19 @@ func (client *PrivateEnrollmentClient) getReleasedArtifact(ctx context.Context,
 	defer response.Body.Close()
 	body, readErr := io.ReadAll(io.LimitReader(response.Body, maximumPrivateEnrollmentResponse+1))
 	if readErr != nil || len(body) == 0 || len(body) > maximumPrivateEnrollmentResponse {
-		return wire.SealedSecretEnvelopeV1{}, errors.New("[D124 client] sealed artifact response 读取失败或过大")
+		return wire.SealedSecretEnvelopeV1{}, errors.New("[client] sealed artifact response 读取失败或过大")
 	}
 	if response.StatusCode != http.StatusOK {
-		return wire.SealedSecretEnvelopeV1{}, fmt.Errorf("[D124 client] sealed artifact 返回 HTTP %d", response.StatusCode)
+		return wire.SealedSecretEnvelopeV1{}, fmt.Errorf("[client] sealed artifact 返回 HTTP %d", response.StatusCode)
 	}
 	if response.Header.Get("Content-Type") != "application/json" || response.Header.Get("Content-Encoding") != "" ||
 		len(response.Cookies()) != 0 || response.Request.URL.String() != client.baseURL+path {
-		return wire.SealedSecretEnvelopeV1{}, errors.New("[D124 client] sealed artifact response metadata 无效")
+		return wire.SealedSecretEnvelopeV1{}, errors.New("[client] sealed artifact response metadata 无效")
 	}
 	var envelope wire.SealedSecretEnvelopeV1
 	canonical, err := wire.DecodeStrict(body, maximumPrivateEnrollmentResponse, &envelope)
 	if err != nil || !bytes.Equal(canonical, body) {
-		return wire.SealedSecretEnvelopeV1{}, errors.New("[D124 client] sealed artifact response 不是 exact canonical wire")
+		return wire.SealedSecretEnvelopeV1{}, errors.New("[client] sealed artifact response 不是 exact canonical wire")
 	}
 	if err := wire.ValidateSealedSecretEnvelope(&envelope); err != nil {
 		return wire.SealedSecretEnvelopeV1{}, err
@@ -286,18 +286,18 @@ func (client *PrivateEnrollmentClient) postCanonicalAnyStatus(ctx context.Contex
 	defer response.Body.Close()
 	responseBody, readErr := io.ReadAll(io.LimitReader(response.Body, maximumPrivateEnrollmentResponse+1))
 	if readErr != nil || len(responseBody) == 0 || len(responseBody) > maximumPrivateEnrollmentResponse {
-		return errors.New("[D129 client] private Enrollment response 读取失败或过大")
+		return errors.New("[client] private Enrollment response 读取失败或过大")
 	}
 	if !containsInt(expectedStatuses, response.StatusCode) {
-		return fmt.Errorf("[D129 client] private Enrollment 返回 HTTP %d", response.StatusCode)
+		return fmt.Errorf("[client] private Enrollment 返回 HTTP %d", response.StatusCode)
 	}
 	if response.Header.Get("Content-Type") != "application/json" || response.Header.Get("Content-Encoding") != "" ||
 		len(response.Cookies()) != 0 || response.Request.URL.String() != client.baseURL+path {
-		return errors.New("[D129 client] private Enrollment response metadata 无效")
+		return errors.New("[client] private Enrollment response metadata 无效")
 	}
 	canonical, err := wire.DecodeStrict(responseBody, maximumPrivateEnrollmentResponse, target)
 	if err != nil || !bytes.Equal(canonical, responseBody) {
-		return errors.New("[D129 client] private Enrollment response 不是 exact canonical wire")
+		return errors.New("[client] private Enrollment response 不是 exact canonical wire")
 	}
 	return nil
 }

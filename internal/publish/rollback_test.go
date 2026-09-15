@@ -21,7 +21,7 @@ import (
 // 字段**不出现在任何渲染产物里**,SSOT 自己的注释还写着它们"记在这里是
 // 为了 bootstrap 与排障,不是为了被连"。
 //
-// 分发点在设计上是当作已被攻陷来对待的(D32),而签名拦不住这一类风险。
+// 分发点在设计上是当作已被攻陷来对待的,而签名拦不住这一类风险。
 func TestSSOTStaysOutOfDistributionTree(t *testing.T) {
 	tr := build(t, goodSSOT)
 
@@ -110,7 +110,7 @@ func TestArchiveIsContentAddressed(t *testing.T) {
 
 // 回滚的地基:源头与二进制取回来重算一遍,必须还是同一个快照 id。
 //
-// 渲染是纯函数(§12),所以这条等式该成立。它一旦不成立,回滚就会留下一个
+// 渲染是纯函数,所以这条等式该成立。它一旦不成立,回滚就会留下一个
 // **看起来成功、实际没回去**的系统 —— 所以 rollback 每次都会当场重算自证,
 // 而这个测试钉的是自证所依赖的那条等式本身。
 func TestSnapshotIDMatchesBuild(t *testing.T) {
@@ -130,7 +130,7 @@ func TestSnapshotIDMatchesBuild(t *testing.T) {
 		t.Fatalf("自证算出 %s,发布得到 %s —— 回滚会发出与目标不同的配置", id, tr.Snapshot)
 	}
 
-	// 时间与作者不进内容哈希(D14),所以自证路径不给它们也必须一致。
+	// 时间与作者不进内容哈希,所以自证路径不给它们也必须一致。
 	tr2, err := Build([]byte(goodSSOT), key(t), Meta{
 		CreatedAt: "2030-01-01T00:00:00Z", Author: "乙", Binaries: bins,
 	})
@@ -142,7 +142,7 @@ func TestSnapshotIDMatchesBuild(t *testing.T) {
 	}
 }
 
-// 二进制变了,快照 id 必须变(§15.4 的绑定回滚)。
+// 二进制变了,快照 id 必须变(绑定回滚)。
 // 自证同时覆盖源头与二进制,靠的就是这条。
 func TestSnapshotIDTracksBinary(t *testing.T) {
 	a, err := SnapshotID([]byte(goodSSOT), map[string][]byte{"linux/amd64": []byte("甲")})

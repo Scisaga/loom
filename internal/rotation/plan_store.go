@@ -25,7 +25,7 @@ type executionPlanStateV1 struct {
 }
 
 // FrozenExecutionPlanV1 的字段故意不导出；只有 ExecutionPlanStore 的耐久
-// first-result 才能构造 reconciler 接受的 plan capability（D127）。
+// first-result 才能构造 reconciler 接受的 plan capability。
 type FrozenExecutionPlanV1 struct {
 	plan     ExecutionPlanV1
 	planHash string
@@ -47,7 +47,7 @@ type ExecutionPlanStore struct {
 
 func OpenExecutionPlanStore(path string) (*ExecutionPlanStore, error) {
 	if path == "" {
-		return nil, errors.New("[D127 rotation] execution plan store path 不能为空")
+		return nil, errors.New("[rotation] execution plan store path 不能为空")
 	}
 	store := &ExecutionPlanStore{path: path,
 		state: executionPlanStateV1{Schema: 1, Records: []executionPlanRecordV1{}}}
@@ -60,7 +60,7 @@ func OpenExecutionPlanStore(path string) (*ExecutionPlanStore, error) {
 	}
 	var state executionPlanStateV1
 	if _, err := wire.DecodeStrict(body, 16<<20, &state); err != nil {
-		return nil, fmt.Errorf("[D127 rotation] execution plan store 非规范或损坏: %w", err)
+		return nil, fmt.Errorf("[rotation] execution plan store 非规范或损坏: %w", err)
 	}
 	if err := validateExecutionPlanState(&state); err != nil {
 		return nil, err
@@ -72,7 +72,7 @@ func OpenExecutionPlanStore(path string) (*ExecutionPlanStore, error) {
 func (store *ExecutionPlanStore) Freeze(intent IntentV1,
 	plan ExecutionPlanV1) (FrozenExecutionPlanV1, error) {
 	if store == nil {
-		return FrozenExecutionPlanV1{}, errors.New("[D127 rotation] execution plan store 不能为空")
+		return FrozenExecutionPlanV1{}, errors.New("[rotation] execution plan store 不能为空")
 	}
 	if err := ValidateIntent(&intent); err != nil {
 		return FrozenExecutionPlanV1{}, err
@@ -94,7 +94,7 @@ func (store *ExecutionPlanStore) Freeze(intent IntentV1,
 		existing := store.state.Records[index]
 		if existing.IntentHash != intentHash || existing.PlanHash != planHash ||
 			!wire.EqualCanonical(existing.Plan, plan) {
-			return FrozenExecutionPlanV1{}, errors.New("[D127 rotation] rotation ID 已冻结另一 execution plan")
+			return FrozenExecutionPlanV1{}, errors.New("[rotation] rotation ID 已冻结另一 execution plan")
 		}
 		return frozenExecutionPlan(existing.Plan, existing.PlanHash), nil
 	}
@@ -113,30 +113,30 @@ func (store *ExecutionPlanStore) Freeze(intent IntentV1,
 
 func validateExecutionPlanState(state *executionPlanStateV1) error {
 	if state == nil || state.Schema != 1 || state.Records == nil {
-		return errors.New("[D127 rotation] execution plan store schema 无效")
+		return errors.New("[rotation] execution plan store schema 无效")
 	}
 	for index := range state.Records {
 		record := &state.Records[index]
 		if record.RotationID == "" || record.RotationID != record.Plan.RotationID ||
 			index > 0 && state.Records[index-1].RotationID >= record.RotationID {
-			return errors.New("[D127 rotation] execution plans identity/order 无效")
+			return errors.New("[rotation] execution plans identity/order 无效")
 		}
 		if err := ValidateIntent(&record.Intent); err != nil {
 			return err
 		}
 		if record.Intent.RotationID != record.RotationID {
-			return errors.New("[D127 rotation] stored execution intent identity 不匹配")
+			return errors.New("[rotation] stored execution intent identity 不匹配")
 		}
 		intentHash, err := wire.HashObject(DomainIntent, record.Intent)
 		if err != nil || intentHash != record.IntentHash {
-			return errors.New("[D127 rotation] stored execution intent hash 不匹配")
+			return errors.New("[rotation] stored execution intent hash 不匹配")
 		}
 		if err := ValidateExecutionPlan(&record.Intent, &record.Plan); err != nil {
 			return err
 		}
 		planHash, err := wire.HashObject(DomainExecutionPlan, record.Plan)
 		if err != nil || planHash != record.PlanHash {
-			return errors.New("[D127 rotation] stored execution plan hash 不匹配")
+			return errors.New("[rotation] stored execution plan hash 不匹配")
 		}
 	}
 	return nil

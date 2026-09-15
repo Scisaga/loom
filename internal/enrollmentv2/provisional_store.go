@@ -30,7 +30,7 @@ type provisionalFirstResultStateV1 struct {
 }
 
 // DurableProvisionalService 把 CA/result generator 的第一次合法输出原子保存。
-// 文件只位于 control-private 存储，绝不能进入 public distribution（D102、D124、D130）。
+// 文件只位于 control-private 存储，绝不能进入 public distribution。
 type DurableProvisionalService struct {
 	mu       sync.Mutex
 	path     string
@@ -41,7 +41,7 @@ type DurableProvisionalService struct {
 func OpenDurableProvisionalService(path string,
 	generate ProvisionalMaterialGenerator) (*DurableProvisionalService, error) {
 	if path == "" || generate == nil {
-		return nil, errors.New("[D130 Enrollment] provisional store path/generator 不能为空")
+		return nil, errors.New("[Enrollment] provisional store path/generator 不能为空")
 	}
 	service := &DurableProvisionalService{path: path, generate: generate,
 		state: provisionalFirstResultStateV1{Schema: 1, Records: []provisionalFirstResultRecordV1{}}}
@@ -54,7 +54,7 @@ func OpenDurableProvisionalService(path string,
 	}
 	var state provisionalFirstResultStateV1
 	if _, err := wire.DecodeStrict(body, 64<<20, &state); err != nil {
-		return nil, fmt.Errorf("[D130 Enrollment] provisional first-result store 非规范或损坏: %w", err)
+		return nil, fmt.Errorf("[Enrollment] provisional first-result store 非规范或损坏: %w", err)
 	}
 	if err := validateProvisionalFirstResultState(&state); err != nil {
 		return nil, err
@@ -67,7 +67,7 @@ func (service *DurableProvisionalService) PrepareProvisional(ctx context.Context
 	operationID string, attempt VerifiedClaimAttemptV2, record DurableRecord,
 	coordinate EnrollmentCommitCoordinateV1) (PreparedProvisionalV1, error) {
 	if service == nil || operationID == "" {
-		return PreparedProvisionalV1{}, errors.New("[D130 Enrollment] provisional request identity 无效")
+		return PreparedProvisionalV1{}, errors.New("[Enrollment] provisional request identity 无效")
 	}
 	if err := ctx.Err(); err != nil {
 		return PreparedProvisionalV1{}, err
@@ -77,7 +77,7 @@ func (service *DurableProvisionalService) PrepareProvisional(ctx context.Context
 	}
 	wantOperationID, err := ProvisionalOperationID(&record)
 	if err != nil || operationID != wantOperationID {
-		return PreparedProvisionalV1{}, errors.New("[D130 Enrollment] provisional request operation ID 无效")
+		return PreparedProvisionalV1{}, errors.New("[Enrollment] provisional request operation ID 无效")
 	}
 	requestHash, err := provisionalPreparationRequestHash(operationID, &record, &coordinate)
 	if err != nil {
@@ -92,7 +92,7 @@ func (service *DurableProvisionalService) PrepareProvisional(ctx context.Context
 		existing := service.state.Records[index]
 		if existing.RequestHash != requestHash || !wire.EqualCanonical(existing.Coordinate, coordinate) {
 			return PreparedProvisionalV1{},
-				errors.New("[D130 Enrollment] provisional operation ID 已绑定不同 request/coordinate")
+				errors.New("[Enrollment] provisional operation ID 已绑定不同 request/coordinate")
 		}
 		if err := validatePreparedProvisional(&existing.Prepared, operationID, &record, &coordinate); err != nil {
 			return PreparedProvisionalV1{}, err
@@ -159,7 +159,7 @@ func (service *DurableProvisionalService) persistLocked(candidate provisionalFir
 func provisionalPreparationRequestHash(operationID string, record *DurableRecord,
 	coordinate *EnrollmentCommitCoordinateV1) (string, error) {
 	if record == nil || coordinate == nil {
-		return "", errors.New("[D130 Enrollment] provisional request hash input 不完整")
+		return "", errors.New("[Enrollment] provisional request hash input 不完整")
 	}
 	return wire.HashObject(DomainProvisionalPreparationRequest, struct {
 		Schema      int                          `json:"schema"`
@@ -171,12 +171,12 @@ func provisionalPreparationRequestHash(operationID string, record *DurableRecord
 
 func validateProvisionalFirstResultState(state *provisionalFirstResultStateV1) error {
 	if state == nil || state.Schema != 1 || state.Records == nil {
-		return errors.New("[D130 Enrollment] provisional first-result store schema 无效")
+		return errors.New("[Enrollment] provisional first-result store schema 无效")
 	}
 	for index := range state.Records {
 		record := &state.Records[index]
 		if record.OperationID == "" || index > 0 && state.Records[index-1].OperationID >= record.OperationID {
-			return errors.New("[D130 Enrollment] provisional first-results 未按 operation ID 严格排序")
+			return errors.New("[Enrollment] provisional first-results 未按 operation ID 严格排序")
 		}
 		if _, err := wire.ParseHash(record.RequestHash); err != nil {
 			return err
@@ -196,7 +196,7 @@ func validateStoredPreparedProvisional(prepared *PreparedProvisionalV1, operatio
 		prepared.Operation.ClusterID != coordinate.ClusterID ||
 		prepared.Issuance.Body.IssuanceLogCoordinate.RecoveryEpoch != coordinate.RecoveryEpoch ||
 		prepared.Issuance.Body.IssuanceLogCoordinate.RaftIndex != coordinate.RaftIndex {
-		return errors.New("[D130 Enrollment] stored provisional first-result coordinate 无效")
+		return errors.New("[Enrollment] stored provisional first-result coordinate 无效")
 	}
 	if err := validateCommitCoordinate(coordinate, prepared.Operation.ClusterID); err != nil {
 		return err

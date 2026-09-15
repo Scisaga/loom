@@ -29,40 +29,40 @@ type androidEnrollmentResumeInputsV1 struct {
 }
 
 // DecodeAndroidV2ResumeURI/File 只接受显式带外 carrier；resume schema 没有 token，
-// 也不会被当作普通 Invite 自动发现或刷新（D130）。
+// 也不会被当作普通 Invite 自动发现或刷新。
 func DecodeAndroidV2ResumeURI(raw string) ([]byte, error) {
 	if len(raw) <= len(androidV2ResumeURIPrefix) || len(raw) > 1800 ||
 		!strings.HasPrefix(raw, androidV2ResumeURIPrefix) {
-		return nil, errors.New("[D130 Android resume] URI 形状或大小无效")
+		return nil, errors.New("[Android resume] URI 形状或大小无效")
 	}
 	for index := range raw {
 		if raw[index] < 0x21 || raw[index] > 0x7e {
-			return nil, errors.New("[D130 Android resume] URI 必须是无空白 ASCII")
+			return nil, errors.New("[Android resume] URI 必须是无空白 ASCII")
 		}
 	}
 	encoded := strings.TrimPrefix(raw, androidV2ResumeURIPrefix)
 	body, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil || base64.RawURLEncoding.EncodeToString(body) != encoded {
-		return nil, errors.New("[D130 Android resume] descriptor carrier 不是 canonical base64url")
+		return nil, errors.New("[Android resume] descriptor carrier 不是 canonical base64url")
 	}
 	return DecodeAndroidV2ResumeFile(body)
 }
 
 func DecodeAndroidV2ResumeFile(raw []byte) ([]byte, error) {
 	if len(raw) == 0 || len(raw) > 1<<20 {
-		return nil, errors.New("[D130 Android resume] descriptor 大小无效")
+		return nil, errors.New("[Android resume] descriptor 大小无效")
 	}
 	var descriptor wire.EnrollmentResumeDescriptorV1
 	if err := decodeExactAndroidV2(raw, 1<<20, &descriptor, "Enrollment resume descriptor"); err != nil ||
 		descriptor.Schema != 1 {
-		return nil, errors.New("[D130 Android resume] .loom-resume 必须是 exact canonical descriptor")
+		return nil, errors.New("[Android resume] .loom-resume 必须是 exact canonical descriptor")
 	}
 	return append([]byte(nil), raw...), nil
 }
 
 // PrepareAndroidV2ResumeMirrorFetchPlan 在取得 issuer proof 前，只投影用户带外
 // descriptor 明示的 pinned mirrors/content hashes。签名与本机 transaction binding
-// 在下载 proof 后由 loadAndroidEnrollmentResumeInputsV1 完成（D115、D130）。
+// 在下载 proof 后由 loadAndroidEnrollmentResumeInputsV1 完成。
 func PrepareAndroidV2ResumeMirrorFetchPlan(descriptorJSON []byte, trustedTime string) ([]byte, error) {
 	var descriptor wire.EnrollmentResumeDescriptorV1
 	if err := decodeExactAndroidV2(descriptorJSON, 1<<20, &descriptor,
@@ -71,7 +71,7 @@ func PrepareAndroidV2ResumeMirrorFetchPlan(descriptorJSON []byte, trustedTime st
 	}
 	now, err := wire.ParseTimeZ(trustedTime)
 	if err != nil {
-		return nil, errors.New("[D130 Android resume] trusted time 无效")
+		return nil, errors.New("[Android resume] trusted time 无效")
 	}
 	if err := validateAndroidResumeDescriptorUnsigned(&descriptor, now); err != nil {
 		return nil, err
@@ -97,7 +97,7 @@ func VerifyAndroidV2ResumeInviteProof(descriptorJSON, proofBundleJSON,
 	}
 	now, err := wire.ParseTimeZ(trustedTime)
 	if err != nil {
-		return nil, errors.New("[D130 Android resume] trusted time 无效")
+		return nil, errors.New("[Android resume] trusted time 无效")
 	}
 	if _, err := verifyAndroidResumeProof(&descriptor, &bundle, pinnedPlatformKey, now); err != nil {
 		return nil, err
@@ -124,7 +124,7 @@ func VerifyAndroidV2ResumeBootstrapCatalog(descriptorJSON, proofBundleJSON, cata
 	}
 	now, err := wire.ParseTimeZ(trustedTime)
 	if err != nil {
-		return nil, errors.New("[D130 Android resume] trusted time 无效")
+		return nil, errors.New("[Android resume] trusted time 无效")
 	}
 	verified, err := verifyAndroidResumeProof(&descriptor, &bundle, pinnedPlatformKey, now)
 	if err != nil {
@@ -137,7 +137,7 @@ func VerifyAndroidV2ResumeBootstrapCatalog(descriptorJSON, proofBundleJSON, cata
 }
 
 // ValidateAndroidV2ResumeInputs 是宿主写入 EncryptedStore 前的完整边界：除公开
-// proof/catalog 外，还必须绑定本机已验 stable core 与 progress floor（D115、D130）。
+// proof/catalog 外，还必须绑定本机已验 stable core 与 progress floor。
 func ValidateAndroidV2ResumeInputs(descriptorJSON, proofBundleJSON, catalogJSON,
 	claimCoreJSON, resumeExpectedJSON, pinnedPlatformKey []byte, progressStatus, trustedTime string,
 ) error {
@@ -160,7 +160,7 @@ func ValidateAndroidV2PendingProgress(claimCoreJSON []byte, status string,
 
 // AdvanceAndroidV2PendingProgress 只允许 exact replay 或
 // reserved→issued_provisional→completed 的单调推进，稳定 binding 不得被旧
-// ingress 响应改写（D130）。
+// ingress 响应改写。
 func AdvanceAndroidV2PendingProgress(claimCoreJSON []byte, previousStatus string,
 	previousExpectedJSON []byte, candidateStatus string, candidateExpectedJSON []byte,
 ) error {
@@ -189,7 +189,7 @@ func AdvanceAndroidV2PendingProgress(claimCoreJSON []byte, previousStatus string
 		previousStatus == "issued_provisional" && candidateStatus == "completed"
 	if !allowed ||
 		!wire.EqualCanonical(oldStable, nextStable) {
-		return errors.New("[D130 Android] pending progress 回退、分叉或改写 stable binding")
+		return errors.New("[Android] pending progress 回退、分叉或改写 stable binding")
 	}
 	return nil
 }
@@ -200,7 +200,7 @@ func loadAndroidEnrollmentResumeInputsV1(descriptorJSON, proofBundleJSON, catalo
 	var result androidEnrollmentResumeInputsV1
 	now, err := wire.ParseTimeZ(trustedTime)
 	if err != nil {
-		return result, errors.New("[D130 Android resume] trusted time 无效")
+		return result, errors.New("[Android resume] trusted time 无效")
 	}
 	if err := decodeExactAndroidV2(descriptorJSON, 1<<20, &result.descriptor,
 		"Enrollment resume descriptor"); err != nil {
@@ -250,7 +250,7 @@ func loadAndroidEnrollmentResumeInputsV1(descriptorJSON, proofBundleJSON, catalo
 		result.core.BaseRecoveryEpoch != result.head.Body.Payload.RecoveryEpoch ||
 		result.core.BaseControlEpoch != result.head.Body.Payload.ControlEpoch ||
 		result.core.BaseControlSetHash != setHash || result.core.ClientPlatform != "android" {
-		return result, errors.New("[D130 Android resume] pending core 未绑定 exact Invite authority")
+		return result, errors.New("[Android resume] pending core 未绑定 exact Invite authority")
 	}
 	if err := wire.VerifyEnrollmentResumeDescriptorBindings(&result.descriptor, result.expected,
 		&result.catalog, &result.bundle.BootstrapIssuerAuthorizationProof,
@@ -289,7 +289,7 @@ func verifyAndroidEnrollmentResumePreflight(inputs androidEnrollmentResumeInputs
 		intentHash != inputs.core.AcceptedDeviceEnrollmentIntentHash ||
 		!wire.EqualCanonical(response.DeviceEnrollmentIntentCommitment,
 			inputs.bundle.DeviceEnrollmentIntentCommitment) {
-		return response, errors.New("[D130 Android resume] preflight 未恢复 exact committed opening")
+		return response, errors.New("[Android resume] preflight 未恢复 exact committed opening")
 	}
 	return response, nil
 }
@@ -309,14 +309,14 @@ func validateAndroidResumeDescriptorUnsigned(descriptor *wire.EnrollmentResumeDe
 ) error {
 	if descriptor == nil || descriptor.Schema != 1 || descriptor.ClusterID == "" ||
 		descriptor.InviteID == "" || descriptor.RequestID == "" {
-		return errors.New("[D130 Android resume] descriptor identity 无效")
+		return errors.New("[Android resume] descriptor identity 无效")
 	}
 	if err := wire.ValidateCapabilityBody(&descriptor.ResumeTunnelCapability.Body); err != nil {
 		return err
 	}
 	capabilityID, err := wire.CapabilityID(&descriptor.ResumeTunnelCapability.Body)
 	if err != nil || capabilityID != descriptor.ResumeTunnelCapability.CapabilityID {
-		return errors.New("[D130 Android resume] capability ID 无效")
+		return errors.New("[Android resume] capability ID 无效")
 	}
 	body := &descriptor.ResumeTunnelCapability.Body
 	binding := body.ResumeBinding
@@ -334,7 +334,7 @@ func validateAndroidResumeDescriptorUnsigned(descriptor *wire.EnrollmentResumeDe
 		descriptor.AdmissionQCHash != binding.AdmissionQCHash ||
 		descriptor.EnrollmentTransactionStateHash != binding.EnrollmentTransactionStateHash ||
 		now.Before(notBefore) || !now.Before(descriptorExpiry) || descriptorExpiry.After(capabilityExpiry) {
-		return errors.New("[D130 Android resume] descriptor/capability/transaction tuple 无效或已过期")
+		return errors.New("[Android resume] descriptor/capability/transaction tuple 无效或已过期")
 	}
 	for _, hash := range []string{descriptor.ClaimCoreHash, descriptor.ClaimOperationHash,
 		descriptor.AdmissionQCHash, descriptor.EnrollmentTransactionStateHash,
@@ -350,7 +350,7 @@ func verifyAndroidResumeProof(descriptor *wire.EnrollmentResumeDescriptorV1,
 	bundle *wire.InviteProofBundleV2, pinnedPlatformKey []byte, now time.Time,
 ) (wire.VerifiedInviteProofV2, error) {
 	if len(pinnedPlatformKey) != ed25519.PublicKeySize {
-		return wire.VerifiedInviteProofV2{}, errors.New("[D130 Android resume] APK platform trust root 长度无效")
+		return wire.VerifiedInviteProofV2{}, errors.New("[Android resume] APK platform trust root 长度无效")
 	}
 	if err := validateAndroidResumeDescriptorUnsigned(descriptor, now); err != nil {
 		return wire.VerifiedInviteProofV2{}, err
@@ -369,19 +369,19 @@ func verifyAndroidResumeCatalog(descriptor *wire.EnrollmentResumeDescriptorV1,
 	verified wire.VerifiedInviteProofV2, now time.Time, clientProtocol int64,
 ) error {
 	if clientProtocol < 1 {
-		return errors.New("[D130 Android resume] client protocol 无效")
+		return errors.New("[Android resume] client protocol 无效")
 	}
 	catalogHash, err := wire.BootstrapEndpointCatalogHash(catalog)
 	if err != nil || catalogHash != descriptor.BootstrapCatalogHash ||
 		wire.ValidateBootstrapEndpointCatalogAt(catalog, now, clientProtocol) != nil ||
 		catalog.BootstrapIngressSetHash != descriptor.ResumeTunnelCapability.Body.AllowedIngressSetHash ||
 		bundle.BootstrapCatalogHash != descriptor.BootstrapCatalogHash {
-		return errors.New("[D130 Android resume] catalog/hash/ingress binding 无效")
+		return errors.New("[Android resume] catalog/hash/ingress binding 无效")
 	}
 	head, set, previous, ok := verified.AuthorityForHead(catalog.ParentHeadHash)
 	if !ok || wire.VerifyConfigQCAuthority(catalog.ParentHeadHash,
 		catalog.BootstrapIngressSet.ConfigQC, &head, &set, previous) != nil {
-		return errors.New("[D130 Android resume] catalog QC authority 未通过 Invite lineage")
+		return errors.New("[Android resume] catalog QC authority 未通过 Invite lineage")
 	}
 	return nil
 }
@@ -406,17 +406,17 @@ func validateAndroidPendingProgress(core *wire.EnrollmentClaimCoreV2, status str
 ) error {
 	if core == nil || expected == nil ||
 		(status != "reserved" && status != "issued_provisional" && status != "completed") {
-		return errors.New("[D130 Android] pending progress header 无效")
+		return errors.New("[Android] pending progress header 无效")
 	}
 	coreHash, err := wire.EnrollmentClaimCoreHash(core)
 	if err != nil || expected.ClusterID != core.ClusterID || expected.InviteID != core.InviteID ||
 		expected.RequestID != core.RequestID || expected.ClaimCoreHash != coreHash {
-		return errors.New("[D130 Android] pending progress/core binding 无效")
+		return errors.New("[Android] pending progress/core binding 无效")
 	}
 	identityHash, wrappingHash, csrHash, err := wire.EnrollmentClaimBinaryHashes(core)
 	if err != nil || expected.IdentityKeyHash != identityHash || expected.WrappingKeyHash != wrappingHash ||
 		expected.CSRHash != csrHash {
-		return errors.New("[D130 Android] pending progress identity/wrapping/CSR binding 无效")
+		return errors.New("[Android] pending progress identity/wrapping/CSR binding 无效")
 	}
 	for _, hash := range []string{expected.ClaimOperationHash, expected.AdmissionQCHash,
 		expected.EnrollmentTransactionStateHash} {

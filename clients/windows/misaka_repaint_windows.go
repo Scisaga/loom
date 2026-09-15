@@ -27,10 +27,10 @@ func (app *portableGUI) finishMisakaPaint(dc uintptr) {
 }
 
 func (app *portableGUI) misakaPaintFailed(dc uintptr, bounds portableRect, err error) {
-	// §7.2：设备重建失败应可见；限次重绘避免稳定错误变成空转的 WM_PAINT 循环。
+	// 设备重建失败应可见；限次重绘避免稳定错误变成空转的 WM_PAINT 循环。
 	app.skin.paintError = err.Error()
 	app.skin.paintFailures++
-	log.Printf("[§7.2] 自绘窗口: %v", err)
+	log.Printf("自绘窗口: %v", err)
 	if app.skin.paintFailures <= 2 {
 		procSetTimer.Call(app.hwnd, misakaRetryPaintTimer, 50, 0)
 	}

@@ -48,7 +48,7 @@ func TestGUIMisakaNativeContextMenuReflectsConnectionState(t *testing.T) {
 		primary, _, _ := portableUser32.NewProc("GetMenuState").Call(menu, misakaProfileStart, 0)
 		deletion, _, _ := portableUser32.NewProc("GetMenuState").Call(menu, misakaProfileDelete, 0)
 		procDestroyMenu.Call(menu)
-		// §7.2：通过原生 HMENU 状态验收键盘/鼠标共享的操作，不只检查绘制文案。
+		// 通过原生 HMENU 状态验收键盘/鼠标共享的操作，不只检查绘制文案。
 		if got := windows.UTF16ToString(text); got != item.label || (primary&3 == 0) != item.primary || (deletion&3 == 0) != item.deletable {
 			t.Fatalf("状态 %v 的原生菜单错误: %q, primary=%x delete=%x", item.state, got, primary, deletion)
 		}

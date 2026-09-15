@@ -148,7 +148,7 @@ func TestNoCoordinatesPrintsNothing(t *testing.T) {
 	}
 }
 
-// D81 之后,"够不到"不再等于"核不了":带签名的转述节点要被并进版本表。
+// 签名转述让不可达节点也能核对:带签名的转述节点要被并进版本表。
 // 这里只验分流逻辑 —— 签名本身的正确性由 internal/attest 的测试守着。
 func TestFoldAttestedSplitsVerifiableFromNot(t *testing.T) {
 	// 没有 CA 时必须原样返回,不能假装核过了。

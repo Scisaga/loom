@@ -269,7 +269,7 @@ func cmdClientReportV2(args []string) error {
 		*journalPath = filepath.Join(private.stateDirectory, "device-report-journal.json")
 	}
 	if !filepath.IsAbs(*journalPath) || filepath.Clean(*journalPath) != *journalPath {
-		return errors.New("[D131 Linux report] journal 必须是规范绝对路径")
+		return errors.New("[Linux report] journal 必须是规范绝对路径")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), inputs.timeout)
 	defer cancel()
@@ -307,28 +307,28 @@ func cmdClientAcceptV2Runtime(args []string) error {
 		return errors.New("用法: loom client accept-v2-runtime [-apply|-dry-run] [-link-intents <json>] [-runtime-artifact <json>] [-control-peer-directory <json>] [-state-dir <dir>]（旧 LKG 可另给 -control-set）")
 	}
 	if *applyRuntime && *dryRun || *timeout < time.Second || *timeout > 10*time.Minute {
-		return errors.New("[D131 Linux runtime] apply/dry-run/timeout 输入无效")
+		return errors.New("[Linux runtime] apply/dry-run/timeout 输入无效")
 	}
 	if !*applyRuntime && !*dryRun && (*runtimeArtifactPath != "" || *installStatePath != "") {
-		return errors.New("[D131 Linux runtime] runtime-artifact/install-state 仅与 apply 或 dry-run 同用")
+		return errors.New("[Linux runtime] runtime-artifact/install-state 仅与 apply 或 dry-run 同用")
 	}
 	if *applyRuntime && os.Geteuid() != 0 {
-		return errors.New("[D131 Linux runtime] -apply 必须由 root 在目标 Linux 节点执行")
+		return errors.New("[Linux runtime] -apply 必须由 root 在目标 Linux 节点执行")
 	}
 	if *stateDirectory == "" || !filepath.IsAbs(*stateDirectory) || filepath.Clean(*stateDirectory) != *stateDirectory {
-		return errors.New("[D131 Linux runtime] state-dir 必须是规范绝对路径")
+		return errors.New("[Linux runtime] state-dir 必须是规范绝对路径")
 	}
 	if *runtimeStatePath == "" {
 		*runtimeStatePath = filepath.Join(*stateDirectory, "link-runtime-state.json")
 	}
 	if !filepath.IsAbs(*runtimeStatePath) || filepath.Clean(*runtimeStatePath) != *runtimeStatePath {
-		return errors.New("[D131 Linux runtime] runtime-state 必须是规范绝对路径")
+		return errors.New("[Linux runtime] runtime-state 必须是规范绝对路径")
 	}
 	if *installStatePath == "" {
 		*installStatePath = filepath.Join(*stateDirectory, clientv2.LinuxRuntimeInstallStateName)
 	}
 	if !filepath.IsAbs(*installStatePath) || filepath.Clean(*installStatePath) != *installStatePath {
-		return errors.New("[D131 Linux runtime] install-state 必须是规范绝对路径")
+		return errors.New("[Linux runtime] install-state 必须是规范绝对路径")
 	}
 	var set *wire.ControlSetV1
 	if *controlSetPath != "" {
@@ -361,15 +361,15 @@ func cmdClientAcceptV2Runtime(args []string) error {
 	}
 	envelope := deviceStore.Envelope()
 	if envelope == nil {
-		return errors.New("[D131 Linux runtime] durable Device LKG 缺失")
+		return errors.New("[Linux runtime] durable Device LKG 缺失")
 	}
 	if envelope.Payload.State != "active" {
 		if *artifactPath != "" || *runtimeArtifactPath != "" || *peerDirectoryPath != "" ||
 			*controlSetPath != "" || *previousControlSetPath != "" {
-			return errors.New("[D131 Linux runtime] terminal Device 下线不接受 runtime/authority 外部输入")
+			return errors.New("[Linux runtime] terminal Device 下线不接受 runtime/authority 外部输入")
 		}
 		if !*applyRuntime && !*dryRun {
-			return errors.New("[D131 Linux runtime] Device 已 terminal；使用 -dry-run 或 -apply 收敛本机 runtime")
+			return errors.New("[Linux runtime] Device 已 terminal；使用 -dry-run 或 -apply 收敛本机 runtime")
 		}
 		plan, err := clientv2.PrepareLinuxRuntimeDecommission(*installStatePath, statePath)
 		if err != nil {
@@ -453,21 +453,21 @@ func cmdClientUninstallV2Runtime(args []string) error {
 		return errors.New("用法: loom client uninstall-v2-runtime <-apply|-dry-run> [-state-dir <dir>] [-timeout <duration>]")
 	}
 	if *timeout < time.Second || *timeout > 10*time.Minute {
-		return errors.New("[D131 Linux runtime] uninstall timeout 输入无效")
+		return errors.New("[Linux runtime] uninstall timeout 输入无效")
 	}
 	if *applyRuntime && os.Geteuid() != 0 {
-		return errors.New("[D131 Linux runtime] uninstall -apply 必须由 root 在目标 Linux 节点执行")
+		return errors.New("[Linux runtime] uninstall -apply 必须由 root 在目标 Linux 节点执行")
 	}
 	if *stateDirectory == "" || !filepath.IsAbs(*stateDirectory) ||
 		filepath.Clean(*stateDirectory) != *stateDirectory {
-		return errors.New("[D131 Linux runtime] state-dir 必须是规范绝对路径")
+		return errors.New("[Linux runtime] state-dir 必须是规范绝对路径")
 	}
 	if *installStatePath == "" {
 		*installStatePath = filepath.Join(*stateDirectory, clientv2.LinuxRuntimeInstallStateName)
 	}
 	if !filepath.IsAbs(*installStatePath) || filepath.Clean(*installStatePath) != *installStatePath ||
 		filepath.Dir(*installStatePath) != *stateDirectory {
-		return errors.New("[D131 Linux runtime] uninstall install-state 必须位于 state-dir")
+		return errors.New("[Linux runtime] uninstall install-state 必须位于 state-dir")
 	}
 	plan, err := clientv2.PrepareLinuxRuntimeLocalUninstall(*installStatePath)
 	if err != nil {
@@ -507,7 +507,7 @@ func readLinuxPrivateDeviceInputs(flags linuxPrivateDeviceFlags) (linuxPrivateDe
 	if flags.stateDirectory == "" || !filepath.IsAbs(flags.stateDirectory) ||
 		filepath.Clean(flags.stateDirectory) != flags.stateDirectory ||
 		flags.timeout < time.Second || flags.timeout > 5*time.Minute {
-		return linuxPrivateDeviceInputs{}, errors.New("[D131 Linux private] state/timeout 输入无效")
+		return linuxPrivateDeviceInputs{}, errors.New("[Linux private] state/timeout 输入无效")
 	}
 	externalCount := 0
 	for _, value := range []string{flags.directoryPath, flags.pinnedDirectoryHash,
@@ -518,7 +518,7 @@ func readLinuxPrivateDeviceInputs(flags linuxPrivateDeviceFlags) (linuxPrivateDe
 	}
 	if externalCount == 0 {
 		if flags.previousControlSetPath != "" {
-			return linuxPrivateDeviceInputs{}, errors.New("[D131 Linux private] previous ControlSet 缺完整旧安装迁移上下文")
+			return linuxPrivateDeviceInputs{}, errors.New("[Linux private] previous ControlSet 缺完整旧安装迁移上下文")
 		}
 		return linuxPrivateDeviceInputs{
 			statePath:    filepath.Join(flags.stateDirectory, "state.json"),
@@ -527,10 +527,10 @@ func readLinuxPrivateDeviceInputs(flags linuxPrivateDeviceFlags) (linuxPrivateDe
 		}, nil
 	}
 	if externalCount != 4 {
-		return linuxPrivateDeviceInputs{}, errors.New("[D131 Linux private] 旧安装迁移必须同时提供 directory/hash/ControlSet/internal CA")
+		return linuxPrivateDeviceInputs{}, errors.New("[Linux private] 旧安装迁移必须同时提供 directory/hash/ControlSet/internal CA")
 	}
 	if _, err := wire.ParseHash(flags.pinnedDirectoryHash); err != nil {
-		return linuxPrivateDeviceInputs{}, errors.New("[D131 Linux private] directory hash pin 无效")
+		return linuxPrivateDeviceInputs{}, errors.New("[Linux private] directory hash pin 无效")
 	}
 	var directory wire.ControlServiceDirectoryV1
 	if err := readExactLinuxV2JSON(flags.directoryPath, 4<<20, &directory); err != nil {
@@ -575,7 +575,7 @@ func readExactLinuxV2JSON(path string, maximum int64, target any) error {
 		return err
 	}
 	if !bytes.Equal(canonical, body) {
-		return errors.New("[D104 Linux private] 输入不是 exact canonical JSON")
+		return errors.New("[Linux private] 输入不是 exact canonical JSON")
 	}
 	return nil
 }
@@ -586,27 +586,27 @@ func linuxInternalCAPool(body []byte) (*x509.CertPool, error) {
 	remaining := body
 	for len(remaining) != 0 {
 		if !bytes.HasPrefix(remaining, []byte("-----BEGIN CERTIFICATE-----\n")) {
-			return nil, errors.New("[D131 Linux private] internal CA PEM 必须使用 exact canonical encoding")
+			return nil, errors.New("[Linux private] internal CA PEM 必须使用 exact canonical encoding")
 		}
 		block, rest := pem.Decode(remaining)
 		if block == nil || block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
-			return nil, errors.New("[D131 Linux private] internal CA PEM 含非证书或非规范 block")
+			return nil, errors.New("[Linux private] internal CA PEM 含非证书或非规范 block")
 		}
 		consumed := len(remaining) - len(rest)
 		if !bytes.Equal(remaining[:consumed], pem.EncodeToMemory(block)) {
-			return nil, errors.New("[D131 Linux private] internal CA PEM 必须使用 exact canonical encoding")
+			return nil, errors.New("[Linux private] internal CA PEM 必须使用 exact canonical encoding")
 		}
 		certificate, err := x509.ParseCertificate(block.Bytes)
 		if err != nil || !certificate.IsCA || !certificate.BasicConstraintsValid ||
 			certificate.KeyUsage&x509.KeyUsageCertSign == 0 || len(certificate.UnhandledCriticalExtensions) != 0 {
-			return nil, errors.New("[D131 Linux private] internal CA certificate profile 无效")
+			return nil, errors.New("[Linux private] internal CA certificate profile 无效")
 		}
 		roots.AddCert(certificate)
 		count++
 		remaining = rest
 	}
 	if count == 0 {
-		return nil, errors.New("[D131 Linux private] internal CA PEM 为空")
+		return nil, errors.New("[Linux private] internal CA PEM 为空")
 	}
 	return roots, nil
 }
@@ -627,7 +627,7 @@ func addLinuxClientV2Flags(fs *flag.FlagSet, common *linuxClientV2CommonFlags) {
 func (common *linuxClientV2CommonFlags) resolvePaths() error {
 	if common == nil || common.stateDirectory == "" || !filepath.IsAbs(common.stateDirectory) ||
 		filepath.Clean(common.stateDirectory) != common.stateDirectory {
-		return errors.New("[D106 Linux] state-dir 必须是规范绝对路径")
+		return errors.New("[Linux] state-dir 必须是规范绝对路径")
 	}
 	common.paths = linuxClientV2Paths{
 		state:    filepath.Join(common.stateDirectory, "state.json"),
@@ -635,11 +635,11 @@ func (common *linuxClientV2CommonFlags) resolvePaths() error {
 		pending:  filepath.Join(common.stateDirectory, "pending.json"),
 	}
 	if common.secretEnvelopeDirectory != "" && len(common.secretEnvelopes) != 0 {
-		return errors.New("[D124 Linux install] -secret-envelope 与 -secret-envelope-dir 不能同时使用")
+		return errors.New("[Linux install] -secret-envelope 与 -secret-envelope-dir 不能同时使用")
 	}
 	if common.secretEnvelopeDirectory != "" && (!filepath.IsAbs(common.secretEnvelopeDirectory) ||
 		filepath.Clean(common.secretEnvelopeDirectory) != common.secretEnvelopeDirectory) {
-		return errors.New("[D124 Linux install] secret-envelope-dir 必须是规范绝对路径")
+		return errors.New("[Linux install] secret-envelope-dir 必须是规范绝对路径")
 	}
 	return nil
 }
@@ -655,14 +655,14 @@ func linuxClientV2Trust(flags linuxClientV2TrustFlags, required bool) (wire.Invi
 		return wire.InviteProofTrustV2{}, nil
 	}
 	if present != 3 {
-		return wire.InviteProofTrustV2{}, errors.New("[D115 Linux] v1 platform pubkey/key ID/migration anchor 必须成组提供")
+		return wire.InviteProofTrustV2{}, errors.New("[Linux] v1 platform pubkey/key ID/migration anchor 必须成组提供")
 	}
 	publicKey, err := readKey(flags.platformPublicKey, ed25519.PublicKeySize)
 	if err != nil {
 		return wire.InviteProofTrustV2{}, err
 	}
 	if _, err := wire.ParseHash(flags.migrationAnchor); err != nil {
-		return wire.InviteProofTrustV2{}, errors.New("[D115 Linux] v1 migration anchor digest 无效")
+		return wire.InviteProofTrustV2{}, errors.New("[Linux] v1 migration anchor digest 无效")
 	}
 	return wire.InviteProofTrustV2{V1PlatformKey: ed25519.PublicKey(publicKey),
 		V1PlatformKeyID: flags.platformKeyID, V1MigrationAnchorDigest: flags.migrationAnchor}, nil
@@ -679,7 +679,7 @@ func linuxClientV2RequestID(paths linuxClientV2Paths, clusterID, inviteID string
 			return "", err
 		}
 		if pending.ClaimCore.ClusterID != clusterID || pending.ClaimCore.InviteID != inviteID {
-			return "", errors.New("[D130 Linux] existing pending 属于另一个 cluster/Invite")
+			return "", errors.New("[Linux] existing pending 属于另一个 cluster/Invite")
 		}
 		return pending.ClaimCore.RequestID, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -687,7 +687,7 @@ func linuxClientV2RequestID(paths linuxClientV2Paths, clusterID, inviteID string
 	}
 	random := make([]byte, 16)
 	if _, err := io.ReadFull(rand.Reader, random); err != nil {
-		return "", errors.New("[D129 Linux] request ID entropy 不可用")
+		return "", errors.New("[Linux] request ID entropy 不可用")
 	}
 	return "linux-" + hex.EncodeToString(random), nil
 }
@@ -703,7 +703,7 @@ func linuxClientV2Installed(paths linuxClientV2Paths, clusterID, inviteID string
 	}
 	core := installation.ClaimCore
 	if core.ClusterID != clusterID || core.InviteID != inviteID {
-		return false, errors.New("[D130 Linux] existing installation 属于另一个 cluster/Invite")
+		return false, errors.New("[Linux] existing installation 属于另一个 cluster/Invite")
 	}
 	return true, nil
 }
@@ -714,7 +714,7 @@ func finishLinuxClientV2Enrollment(ctx context.Context, common linuxClientV2Comm
 	tunnel *clientv2.LinuxBootstrapTunnelDialer, api *clientv2.PrivateEnrollmentClient) error {
 	selection, ok := tunnel.Selection()
 	if !ok {
-		return errors.New("[D131 Linux bootstrap] Enrollment 未产生真实 ingress 选择")
+		return errors.New("[Linux bootstrap] Enrollment 未产生真实 ingress 选择")
 	}
 	if result.Result.Status != "completed" {
 		fmt.Printf("✓ Linux v2 Enrollment 已安全提交，等待 certified completion\n")
@@ -737,11 +737,11 @@ func finishLinuxClientV2Enrollment(ctx context.Context, common linuxClientV2Comm
 	}
 	wantEnvelopeCount := len(result.Result.ResultArtifact.SecretArtifactRefs)
 	if len(envelopes) != wantEnvelopeCount {
-		return fmt.Errorf("[D124 Linux install] completion 需要 %d 个 exact sealed envelope，得到 %d 个；正式 state 尚未提交",
+		return fmt.Errorf("[Linux install] completion 需要 %d 个 exact sealed envelope，得到 %d 个；正式 state 尚未提交",
 			wantEnvelopeCount, len(envelopes))
 	}
 	if result.Result.ResultArtifact == nil || result.Result.ResultArtifact.InitialDeviceView.Active == nil {
-		return errors.New("[D124 Linux install] completed result 缺 active config refs")
+		return errors.New("[Linux install] completed result 缺 active config refs")
 	}
 	configs, err := clientv2.FetchLinuxDeviceConfigArtifacts(ctx, mirrors,
 		result.Result.ResultArtifact.InitialDeviceView.Active.ConfigArtifactRefs,
@@ -772,7 +772,7 @@ func readLinuxClientV2Envelopes(paths []string, directory string,
 		paths = make([]string, len(refs))
 		for index := range refs {
 			if refs[index].SealedBlob == nil {
-				return nil, errors.New("[D124 Linux install] result ref 不是 sealed blob")
+				return nil, errors.New("[Linux install] result ref 不是 sealed blob")
 			}
 			digest, err := wire.ParseHash(refs[index].SealedBlob.CiphertextDigest)
 			if err != nil {
@@ -789,7 +789,7 @@ func readLinuxClientV2Envelopes(paths []string, directory string,
 		}
 		canonical, err := wire.DecodeStrict(body, 4<<20, &result[index])
 		if err != nil || string(canonical) != string(body) {
-			return nil, fmt.Errorf("[D124 Linux install] sealed envelope[%d] 不是 exact canonical wire", index)
+			return nil, fmt.Errorf("[Linux install] sealed envelope[%d] 不是 exact canonical wire", index)
 		}
 		if err := wire.ValidateSealedSecretEnvelope(&result[index]); err != nil {
 			return nil, err

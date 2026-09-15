@@ -64,7 +64,7 @@ type cngP256Signer struct {
 func createPlatformIdentity(protector clientsecret.Protector, random io.Reader,
 ) (crypto.Signer, []byte, platformIdentityRecord, error) {
 	if random == nil {
-		return nil, nil, platformIdentityRecord{}, errors.New("[D129 Windows CNG] key-name random source 缺失")
+		return nil, nil, platformIdentityRecord{}, errors.New("[Windows CNG] key-name random source 缺失")
 	}
 	machine := windowsIdentityMachineScope(protector)
 	provider, err := openWindowsCNGProvider()
@@ -130,7 +130,7 @@ func createPlatformIdentity(protector clientsecret.Protector, random io.Reader,
 			KeyName: name, MachineScope: machine}
 		return &cngP256Signer{handle: key, public: public}, publicDER, record, nil
 	}
-	return nil, nil, platformIdentityRecord{}, errors.New("[D129 Windows CNG] 无法分配唯一 persisted key 名称")
+	return nil, nil, platformIdentityRecord{}, errors.New("[Windows CNG] 无法分配唯一 persisted key 名称")
 }
 
 func loadPlatformIdentity(state protectedIdentityV1,
@@ -142,7 +142,7 @@ func loadPlatformIdentity(state protectedIdentityV1,
 		return nil, nil, err
 	}
 	if record.MachineScope != windowsIdentityMachineScope(protector) {
-		return nil, nil, errors.New("[D129 Windows CNG] key scope 与 DPAPI scope 不一致")
+		return nil, nil, errors.New("[Windows CNG] key scope 与 DPAPI scope 不一致")
 	}
 	key, err := openWindowsCNGKey(record)
 	if err != nil {
@@ -157,7 +157,7 @@ func loadPlatformIdentity(state protectedIdentityV1,
 	if err != nil || base64.RawURLEncoding.EncodeToString(want) != state.IdentityPublicKeySPKI ||
 		!bytes.Equal(want, publicDER) {
 		freeWindowsCNGObject(key)
-		return nil, nil, errors.New("[D129 Windows CNG] persisted key 与 DPAPI public binding 不一致")
+		return nil, nil, errors.New("[Windows CNG] persisted key 与 DPAPI public binding 不一致")
 	}
 	return &cngP256Signer{handle: key, public: public}, publicDER, nil
 }
@@ -186,10 +186,10 @@ func validateWindowsCNGRecord(record platformIdentityRecord) error {
 	if record.Provider != windowsCNGIdentityProvider || record.PrivateKeyPKCS8 != "" ||
 		len(record.KeyName) != len(windowsCNGKeyPrefix)+32 ||
 		!strings.HasPrefix(record.KeyName, windowsCNGKeyPrefix) {
-		return errors.New("[D129 Windows CNG] persisted key descriptor 无效")
+		return errors.New("[Windows CNG] persisted key descriptor 无效")
 	}
 	if _, err := hex.DecodeString(strings.TrimPrefix(record.KeyName, windowsCNGKeyPrefix)); err != nil {
-		return errors.New("[D129 Windows CNG] persisted key name 无效")
+		return errors.New("[Windows CNG] persisted key name 无效")
 	}
 	return nil
 }
@@ -243,7 +243,7 @@ func exportWindowsCNGP256Public(key uintptr) (ecdsa.PublicKey, []byte, error) {
 		return ecdsa.PublicKey{}, nil, err
 	}
 	if size != 72 {
-		return ecdsa.PublicKey{}, nil, errors.New("[D129 Windows CNG] P-256 public blob 大小无效")
+		return ecdsa.PublicKey{}, nil, errors.New("[Windows CNG] P-256 public blob 大小无效")
 	}
 	body := make([]byte, size)
 	status, _, _ = ncryptExportKey.Call(key, 0, uintptr(unsafe.Pointer(blobType)), 0,
@@ -255,13 +255,13 @@ func exportWindowsCNGP256Public(key uintptr) (ecdsa.PublicKey, []byte, error) {
 	if binary.LittleEndian.Uint32(body[:4]) != bcryptECDSAPublicP256Magic ||
 		binary.LittleEndian.Uint32(body[4:8]) != 32 {
 		clear(body)
-		return ecdsa.PublicKey{}, nil, errors.New("[D129 Windows CNG] public blob magic/length 无效")
+		return ecdsa.PublicKey{}, nil, errors.New("[Windows CNG] public blob magic/length 无效")
 	}
 	public := ecdsa.PublicKey{Curve: elliptic.P256(), X: new(big.Int).SetBytes(body[8:40]),
 		Y: new(big.Int).SetBytes(body[40:72])}
 	clear(body)
 	if !public.Curve.IsOnCurve(public.X, public.Y) {
-		return ecdsa.PublicKey{}, nil, errors.New("[D129 Windows CNG] public point 不在 P-256")
+		return ecdsa.PublicKey{}, nil, errors.New("[Windows CNG] public point 不在 P-256")
 	}
 	publicDER, err := x509.MarshalPKIXPublicKey(&public)
 	if err != nil {
@@ -287,12 +287,12 @@ func (signer *cngP256Signer) Sign(_ io.Reader, digest []byte,
 	options crypto.SignerOpts) ([]byte, error) {
 	if signer == nil || options == nil || options.HashFunc() != crypto.SHA256 ||
 		len(digest) != crypto.SHA256.Size() {
-		return nil, errors.New("[D129 Windows CNG] 只允许 P-256 SHA-256 digest")
+		return nil, errors.New("[Windows CNG] 只允许 P-256 SHA-256 digest")
 	}
 	signer.mu.Lock()
 	defer signer.mu.Unlock()
 	if signer.handle == 0 {
-		return nil, errors.New("[D129 Windows CNG] signer 已关闭")
+		return nil, errors.New("[Windows CNG] signer 已关闭")
 	}
 	var size uint32
 	status, _, _ := ncryptSignHash.Call(signer.handle, 0,
@@ -302,7 +302,7 @@ func (signer *cngP256Signer) Sign(_ io.Reader, digest []byte,
 		return nil, err
 	}
 	if size != 64 {
-		return nil, errors.New("[D129 Windows CNG] P-256 signature 大小无效")
+		return nil, errors.New("[Windows CNG] P-256 signature 大小无效")
 	}
 	raw := make([]byte, size)
 	status, _, _ = ncryptSignHash.Call(signer.handle, 0,
@@ -318,7 +318,7 @@ func (signer *cngP256Signer) Sign(_ io.Reader, digest []byte,
 	clear(raw)
 	if r.Sign() <= 0 || s.Sign() <= 0 || r.Cmp(elliptic.P256().Params().N) >= 0 ||
 		s.Cmp(elliptic.P256().Params().N) >= 0 {
-		return nil, errors.New("[D129 Windows CNG] signature scalar 无效")
+		return nil, errors.New("[Windows CNG] signature scalar 无效")
 	}
 	return asn1.Marshal(struct{ R, S *big.Int }{R: r, S: s})
 }
@@ -348,7 +348,7 @@ type windowsCNGError struct {
 }
 
 func (err *windowsCNGError) Error() string {
-	return fmt.Sprintf("[D129 Windows CNG] %s 失败（status=0x%08x）", err.operation, err.status)
+	return fmt.Sprintf("[Windows CNG] %s 失败（status=0x%08x）", err.operation, err.status)
 }
 
 func windowsCNGStatus(operation string, status uintptr) error {

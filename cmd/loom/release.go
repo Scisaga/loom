@@ -21,8 +21,8 @@ import (
 //
 // 三道检查全在**人按下回车的这一刻**做完,而不是留给发布器在半夜静默失败:
 //
-//  1. 追溯得回 git 吗(D75)—— 脏构建或认不出 commit 的一律拒绝
-//  2. 这台机器上跑得起来吗、读得懂现有配置吗(selfcheck,§15.4)
+// 1. 追溯得回 git 吗—— 脏构建或认不出 commit 的一律拒绝
+// 2. 这台机器上跑得起来吗、读得懂现有配置吗(selfcheck)
 //  3. 理由填了吗 —— 几天后翻到这条记录的人需要知道为什么
 func cmdRelease(args []string) error {
 	fs := flag.NewFlagSet("release", flag.ExitOnError)
@@ -89,7 +89,7 @@ func cmdRelease(args []string) error {
 
 	// 2. 这台机器上跑得起来、读得懂现有配置吗。
 	//
-	// 这一步是 §15.4 的冒烟测试。配对失败的方向不对称:新版通常读得懂
+	// 这一步执行二进制与配置配对的冒烟测试。配对失败的方向不对称:新版通常读得懂
 	// 旧配置,旧版读不懂新配置 —— 而发布器就是这么崩过两次的。
 	checkPath, cleanup, err := stageReleaseCheck(*dir, candidate)
 	if err != nil {

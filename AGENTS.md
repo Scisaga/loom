@@ -2,14 +2,14 @@
 
 先完整阅读本文件，再按 [文档入口](docs/README.md) 选择本任务的规范与操作规程。
 用户在当前对话中的明确要求优先于仓库旧设计、实现和测试；向子任务传递相同的必须实现与明确排除项。
-阅读操作规程不产生新任务或部署授权；历史提示词、验收记录和其他工作区的进展不能改变本次任务范围。
+阅读操作规程不产生新任务或部署授权；验收记录和其他工作区的进展不能改变本次任务范围。
 
 ## 信息归属与阅读入口
 
-- [架构总览](docs/design.md)：术语、不变量和依赖；详细规则由其链接的专题定义。
-- [控制面规范](docs/distributed-control-plane.md)：已批准的 v2 目标及明确标注的迁移输入；不能把目标字段塞进严格 v1 wire schema。
-- [实现对照](docs/implementation.md)：本工作区源码的正常入口、能力与缺口。其他工作区、生产制品和实机验收分别核对，不能相互推导。
-- [决策索引](docs/decisions.md)：只在需要理由时读取具体历史记录；新结论必须同步合入规范，不能靠追加决定覆盖未修正正文。
+- [架构总览](docs/architecture/README.md)：术语、不变量和依赖；详细规则由其链接的专题定义。
+- [控制面规范](docs/protocols/control-plane/README.md)：已批准的 v2 目标及明确标注的迁移输入；不能把目标字段塞进严格 v1 wire schema。
+- [实现对照](docs/development/implementation.md)：本工作区源码的正常入口、能力与缺口。其他工作区、生产制品和实机验收分别核对，不能相互推导。
+- 规则与取舍理由写在同一主题正文，引用使用有意义的标题和直接链接；历史变更通过 Git 查询，不再维护编号索引和旧链接跳转壳。
 - `.env` 保存本机部署参数；SSH 连接资料只由 `.ssh_config` 管理；网络成员与权限以 SSOT / certified authority 为准。
   用法见 [本机配置与部署](docs/operations/local-deployment.md)。配置输入、实际运行状态和历史证据分别记录。
 - 有保留价值的原始部署/验收回执放在忽略的 `deploy/evidence/`，可再生输出放 `out/` / `dist/`。
@@ -35,7 +35,7 @@
 - **实现、接通、部署、验收分别陈述。** 任一必需环节缺失，整项任务仍未完成，不得称“主体完成”、
   “基本完成”或关闭 issue。测试通过不证明生产运行；HTTP 拒绝、端口可达、证书门禁放行不证明正常业务成功。
 - 用户已授权生产迁移/上线时，完成代码后必须在同一任务继续构建、发布、激活和与改动相关的正常流程
-  验收。旧提示词中的“仅提交、不部署”不能撤销当前授权；用户当前明确只要设计、代码或检查时按其范围执行。
+  验收。用户当前明确只要设计、代码或检查时按其范围执行。
   不得未经说明把部署、数据迁移或核心接线另列为“后续工作”后结束任务。
 - **新版替换必须包括存量迁移和旧实现删除。** 保留原网络、身份、密钥和数据，通过受验证的迁移接续；
   新版接管后删除对应旧 handler、路由、反代、配置、启动项、客户端回退及失效文案/测试。
@@ -43,21 +43,21 @@
   的实际旧依赖要列为未完成项，不能作为最终交付。历史证明验证与数据迁移不授权旧业务路径继续可用。
 - 交付证据须对应实际运行的精确提交和制品，核对生效配置，并覆盖正常成功请求、持久结果/客户端生效及
   已替换旧路径消失。只做本次改动所需验收，不借此增加全网轮询、客户端重复探测或无关平台矩阵。
-  真实部署回执只写受保护的 `deploy/evidence/`；源码缺口更新 `docs/implementation.md`，交接给出下一处实际接线工作。
+  真实部署回执只写受保护的 `deploy/evidence/`；源码缺口更新 `docs/development/implementation.md`，交接给出下一处实际接线工作。
 - 遇到缺口继续处理；确实需要外部条件时说明具体阻碍、已经完成的工作和仍未完成的功能，不用宽泛的
-  “待收尾”掩盖核心缺失。更新文档和提示词本身不能代替继续实现。
+  “待收尾”掩盖核心缺失。更新文档本身不能代替继续实现。
 
 ## 执行边界
 
 - 开工前从当前对话提取“必须实现”和“明确排除”。用户排除的方案不得以后台验证、异步补样、兜底或可靠性保障重新加入。
 - 旧框架和测试不构成必须保留的需求；发生冲突时删改偏离部分，保留独立有效修复并及时本地提交。
   不围绕旧排名器、`min_samples`、完整性指标扩大任务；评价必要收益与实际成本，不用抽象可靠性为重复工作辩护。
-- Windows/Android 客户端选路的完整契约由 [观测消费规范](docs/client-observation-reuse.md#客户端消费边界)定义：
+- Windows/Android 客户端选路的完整契约由 [观测消费规范](docs/clients/observations.md#客户端消费边界)定义：
   每个底层网络代复用一份 registry，Direct 不花预算，首次代理模式冻结入口并去重、并行、各至多一次；后段复用现有已验证服务器观测。
   不恢复完整业务路径扫描、预热、挑战者比较、重复采样或启动等待；不扩改服务器测量/签名协议。
 - 缺失、过期、无效观测保持未知；不为健康绿灯填样本，不把分段数据或一次入口延迟称为实测端到端 P50/P95。
   验证实际探测目标、次数、并发与是否阻塞启动，不能为通过旧断言恢复被排除行为。
-- 公网与私有控制服务分离，完整边界见 [控制面规范](docs/distributed-control-plane.md)：公网 Nginx 只承载 fake website 与不可变静态分发；
+- 公网与私有控制服务分离，完整边界见 [控制面规范](docs/protocols/control-plane/README.md)：公网 Nginx 只承载 fake website 与不可变静态分发；
   管理和 Enrollment 按 certified 私有服务与受限 bootstrap 流程执行，不通过公开反代提交 claim。
 - NAT/路由器管理权限不属于开发验收范围。禁止登录网关或用 UPnP/NAT-PMP/供应商 API 改映射；只验证操作者提供的映射和本任务真实流量。
 
@@ -65,12 +65,12 @@
 
 | 任务 | 必须阅读 | 授权与完成边界 |
 |---|---|---|
-| 控制面实现、迁移 | [控制面实施规程](docs/control-plane-implementation-prompt.md) | 沿正常业务链接线；当前任务授权上线时继续发布和验收 |
+| 控制面实现、迁移 | [控制面实施规程](docs/development/control-plane.md) | 沿正常业务链接线；当前任务授权上线时继续发布和验收 |
 | 生产代码发布，包括内嵌 Web UI / favicon | [本机配置与部署](docs/operations/local-deployment.md) | 精确 commit 单次制品、release/publish、SSH/SCP 并行原子激活；不额外全网轮询 |
-| Android 代码、界面或 APK | [Android 交付规程](docs/android-client-delivery-prompt.md)、[ADB 操作边界](docs/operations/android-device.md) | 默认同源码/AAR 的 Debug 与已签名 Release 双包，校验签名及 SBOM；交付 Release 链接并说明实际安装变体 |
-| Windows 加入/报告 | [报告契约](docs/windows-client-reporting.md)、[报告验收](docs/windows-client-reporting-prompt.md) | 复用已有加入身份；不顺手修改 Android/Linux producer；实机结论须有有效客户端报告和中控证据 |
-| 管理员证书 | [证书操作边界](docs/operations/admin-certificates.md)、[控制面操作](docs/control-plane-operations.md) | 完整 P-256 leaf/issuer 链、认证轮换、原交付路径整体替换；区分材料/TLS/Windows Chrome 实机验收 |
-| DNS、Linux 安装、既有 NAT 映射 | [本机配置与部署](docs/operations/local-deployment.md)、[Linux 安装](docs/linux-client-install.md) | SSH 管理与 Enrollment 分离；安装完成与 public listener 就绪分别验收 |
+| Android 代码、界面或 APK | [Android 交付规程](docs/clients/android-delivery.md)、[ADB 操作边界](docs/operations/android-device.md) | 默认同源码/AAR 的 Debug 与已签名 Release 双包，校验签名及 SBOM；交付 Release 链接并说明实际安装变体 |
+| Windows 加入/报告 | [报告契约](docs/clients/windows-reporting.md)、[报告验收](docs/clients/windows-reporting-acceptance.md) | 复用已有加入身份；不顺手修改 Android/Linux producer；实机结论须有有效客户端报告和中控证据 |
+| 管理员证书 | [证书操作边界](docs/operations/admin-certificates.md)、[控制面操作](docs/operations/control-plane.md) | 完整 P-256 leaf/issuer 链、认证轮换、原交付路径整体替换；区分材料/TLS/Windows Chrome 实机验收 |
+| DNS、Linux 安装、既有 NAT 映射 | [本机配置与部署](docs/operations/local-deployment.md)、[Linux 安装](docs/clients/linux-install.md) | SSH 管理与 Enrollment 分离；安装完成与 public listener 就绪分别验收 |
 
 仅文档/原型改动或用户明确限定范围时按该范围执行。Android 蜂窝专项不阻塞 Wi-Fi 主验收；Linux 原生实机当前只要求 amd64，arm64 仍构建和交叉检查。
 
@@ -78,11 +78,11 @@
 
 - 只有接入节点 `access`、服务器节点 `server`，以及不受管的目标地址。出口是路径位置，不是节点类型；不引入 `target` 节点。
 - 项目名不向下渗透：内部用 `node`、`server`、`address`、`path`、`declaration`、`snapshot`、`agent`、`tunnel` 等通用词。
-- 渲染与打包是纯函数（设计 §12）：不读时钟、不引入随机数或外部查询；遍历 map 输出前排序，时间/作者由调用方注入。
+- 渲染与打包是纯函数：不读时钟、不引入随机数或外部查询；遍历 map 输出前排序，时间/作者由调用方注入。
 - 推导字段不进 v1 SSOT 结构体；`KnownFields(true)` 拒绝它们。v1 的 `Tunnel.initiator` 由方向推导，v2 LinkIntent 则显式认证每条边的发起方；不能跨版本套用规则。
 - 不完整实现必须显式报告，不能静默降级；度量不足保持不足，不能把 L4 首字节冒充 L7 指标。
 - 校验字段间算术关系并返回全部发现；服务器窗口/样本校验不能变成客户端新增采样要求。
-- 注释和错误消息用中文，并带设计条款号；注释解释原因，不复述代码。校验发现沿用 `[§条款 分类] ...` 格式。
+- 注释和错误消息用中文，直接说明规则或失败原因；需要展开时链接具体主题。校验发现使用 `[分类] ...`，不依赖章节号或历史决定编号。
 
 ## 构建与检查
 

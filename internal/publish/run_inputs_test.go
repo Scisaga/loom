@@ -2,7 +2,7 @@ package publish
 
 import "testing"
 
-// D77 让"没放行 = 不发二进制"成为合法状态,于是 binSum 可以是空串。
+// "没放行 = 不发二进制"是合法状态,因此 binSum 可以是空串。
 // 原先的守卫 `lastBin != ""` 会**吞掉 "" → sha 这个转换** ——
 // 发布器认了放行,却不重推。实测踩到,肉眼看代码没看出来。
 func TestInputsChanged(t *testing.T) {

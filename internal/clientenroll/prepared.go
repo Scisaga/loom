@@ -51,7 +51,7 @@ type ReadyMaterial struct {
 func GeneratePreparedIdentity(platform, endpoint string, random io.Reader) (PreparedIdentity, error) {
 	var out PreparedIdentity
 	if !supportedEnrollmentPlatform(platform) {
-		return out, fmt.Errorf("[§9.2 加入流程] 不支持的平台 %q", platform)
+		return out, fmt.Errorf("[加入流程] 不支持的平台 %q", platform)
 	}
 	if err := validateEnrollmentEndpoint(endpoint); err != nil {
 		return out, err
@@ -91,34 +91,34 @@ func GeneratePreparedIdentity(platform, endpoint string, random io.Reader) (Prep
 // ValidatePreparedIdentity rejects a modified or cross-platform identity.
 func ValidatePreparedIdentity(identity PreparedIdentity) error {
 	if identity.Schema != Schema || !supportedEnrollmentPlatform(identity.Platform) {
-		return errors.New("[§4.3 设备绑定] 加入身份 schema/platform 无效")
+		return errors.New("[设备绑定] 加入身份 schema/platform 无效")
 	}
 	if err := validateEnrollmentEndpoint(identity.Endpoint); err != nil {
 		return err
 	}
 	if identity.RequestID == "" || len(identity.RequestID) > 128 ||
 		strings.TrimSpace(identity.RequestID) != identity.RequestID || strings.IndexFunc(identity.RequestID, unicode.IsControl) >= 0 {
-		return errors.New("[§4.3 设备绑定] 加入身份 request_id 无效")
+		return errors.New("[设备绑定] 加入身份 request_id 无效")
 	}
 	key, err := parsePrivateKey(identity.PrivateKeyPEM)
 	if err != nil {
 		return err
 	}
 	if len(identity.CSRPEM) == 0 || len(identity.CSRPEM) > 16<<10 {
-		return errors.New("[§4.3 设备绑定] 加入身份 CSR 大小无效")
+		return errors.New("[设备绑定] 加入身份 CSR 大小无效")
 	}
 	block, rest := pem.Decode(identity.CSRPEM)
 	if block == nil || block.Type != "CERTIFICATE REQUEST" || strings.TrimSpace(string(rest)) != "" {
-		return errors.New("[§4.3 设备绑定] 加入身份 CSR 无效")
+		return errors.New("[设备绑定] 加入身份 CSR 无效")
 	}
 	csr, err := x509.ParseCertificateRequest(block.Bytes)
 	if err != nil || csr.CheckSignature() != nil || len(csr.DNSNames)+len(csr.EmailAddresses)+len(csr.IPAddresses)+len(csr.URIs) != 0 {
-		return errors.New("[§4.3 设备绑定] 加入身份 CSR 签名/SAN 无效")
+		return errors.New("[设备绑定] 加入身份 CSR 签名/SAN 无效")
 	}
 	publicKey, ok := csr.PublicKey.(*ecdsa.PublicKey)
 	if !ok || publicKey.Curve != elliptic.P256() || publicKey.X.Cmp(key.X) != 0 || publicKey.Y.Cmp(key.Y) != 0 ||
 		csr.Subject.CommonName != identity.RequestID {
-		return errors.New("[§4.3 设备绑定] 加入身份 key/CSR/request_id 不匹配")
+		return errors.New("[设备绑定] 加入身份 key/CSR/request_id 不匹配")
 	}
 	return nil
 }
@@ -134,7 +134,7 @@ func ClaimPrepared(ctx context.Context, client *http.Client, invite Invite, iden
 		return zero, err
 	}
 	if invite.Endpoint != identity.Endpoint {
-		return zero, errors.New("[§4.3 设备绑定] 加入端点与本机加入身份不一致")
+		return zero, errors.New("[设备绑定] 加入端点与本机加入身份不一致")
 	}
 	token, err := base64.RawURLEncoding.DecodeString(invite.Token)
 	if err != nil || len(token) != 32 || base64.RawURLEncoding.EncodeToString(token) != invite.Token {
@@ -158,9 +158,9 @@ func ClaimPrepared(ctx context.Context, client *http.Client, invite Invite, iden
 	response, err := safeClient.Do(req)
 	if err != nil {
 		if errors.Is(err, errEnrollmentRedirect) {
-			return zero, fmt.Errorf("[§9.2 加入流程] 控制中心加入端点拒绝直连:%w", errEnrollmentRedirect)
+			return zero, fmt.Errorf("[加入流程] 控制中心加入端点拒绝直连:%w", errEnrollmentRedirect)
 		}
-		return zero, &TransientError{cause: fmt.Errorf("[§9.2 加入流程] 提交设备 CSR 的临时网络失败:%w", err)}
+		return zero, &TransientError{cause: fmt.Errorf("[加入流程] 提交设备 CSR 的临时网络失败:%w", err)}
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusAccepted {
@@ -172,17 +172,17 @@ func ClaimPrepared(ctx context.Context, client *http.Client, invite Invite, iden
 	}
 	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
-		return zero, errors.New("[§9.2 加入流程] 控制中心未返回 application/json")
+		return zero, errors.New("[加入流程] 控制中心未返回 application/json")
 	}
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 	if err != nil || len(responseBody) > maxResponseBytes {
-		return zero, errors.New("[§9.2 加入流程] 控制中心响应超出 4 MiB 边界")
+		return zero, errors.New("[加入流程] 控制中心响应超出 4 MiB 边界")
 	}
 	dec := json.NewDecoder(bytes.NewReader(responseBody))
 	dec.DisallowUnknownFields()
 	var result Response
 	if err := dec.Decode(&result); err != nil || dec.Decode(&struct{}{}) != io.EOF {
-		return zero, errors.New("[§9.2 加入流程] 控制中心返回了无法识别的响应")
+		return zero, errors.New("[加入流程] 控制中心返回了无法识别的响应")
 	}
 	if err := validateResponse(result, response.StatusCode); err != nil {
 		return zero, err
@@ -191,7 +191,7 @@ func ClaimPrepared(ctx context.Context, client *http.Client, invite Invite, iden
 }
 
 func enrollmentStatusError(response *http.Response, token string) error {
-	prefix := fmt.Sprintf("[§9.2 加入流程] 控制中心返回 HTTP %d", response.StatusCode)
+	prefix := fmt.Sprintf("[加入流程] 控制中心返回 HTTP %d", response.StatusCode)
 	body, err := io.ReadAll(io.LimitReader(response.Body, 4097))
 	if err != nil || len(body) == 0 || len(body) > 4096 {
 		return errors.New(prefix)
@@ -243,7 +243,7 @@ func supportedEnrollmentPlatform(platform string) bool {
 func validateEnrollmentEndpoint(endpoint string) error {
 	u, err := url.ParseRequestURI(endpoint)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.String() != endpoint {
-		return errors.New("[§9.2 加入流程] 加入身份的控制中心 HTTPS 端点无效")
+		return errors.New("[加入流程] 加入身份的控制中心 HTTPS 端点无效")
 	}
 	return nil
 }

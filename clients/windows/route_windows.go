@@ -37,7 +37,7 @@ func (app *portableGUI) watchRoutePreference(ctx context.Context, sequence uint6
 	}
 }
 
-// §7.2：配置切换时恢复偏好与用户切换串行，避免旧偏好覆盖新选择。
+// 配置切换时恢复偏好与用户切换串行，避免旧偏好覆盖新选择。
 func (app *portableGUI) refreshRoutePreference(ctx context.Context, sequence uint64, lastConfig string) (string, error) {
 	app.routeMu.Lock()
 	defer app.routeMu.Unlock()
@@ -218,7 +218,7 @@ func (app *portableGUI) routeSelectionChanged() {
 	}()
 }
 
-// §7.2：IPC 与本地 GUI 共用签名出口授权；只接受现有三态偏好。
+// IPC 与本地 GUI 共用签名出口授权；只接受现有三态偏好。
 func (app *portableGUI) setRoutePreference(preference clientcore.Preference) error {
 	app.routeMu.Lock()
 	defer app.routeMu.Unlock()

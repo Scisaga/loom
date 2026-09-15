@@ -35,7 +35,7 @@ type bootstrapListenerRuntimeProjectionV1 struct {
 
 // VerifiedBootstrapListenerV1 只由 BuildBootstrapIngressRuntimePlan 从
 // certified catalog、QC、PublicAccessProfile 与 durable rotation ownership
-// 联合产生。字段保持私有，transport server 不能接受手写 listen/name/pin（D127、D131）。
+// 联合产生。字段保持私有，transport server 不能接受手写 listen/name/pin。
 type VerifiedBootstrapListenerV1 struct {
 	projection  bootstrapListenerRuntimeProjectionV1
 	bindingHash string
@@ -87,13 +87,13 @@ func BuildBootstrapIngressRuntimePlan(catalog *wire.BootstrapEndpointCatalogV1,
 	listenerGeneration int64, trustedTime time.Time, serverProtocol int64) (BootstrapIngressRuntimePlanV1, error) {
 	if catalog == nil || parentHead == nil || currentSet == nil || profile == nil || resources == nil ||
 		endpointID == "" || listenerGeneration < 1 || trustedTime.IsZero() || serverProtocol < 2 {
-		return BootstrapIngressRuntimePlanV1{}, errors.New("[D131 bootstrap runtime] authority/identity/可信时间输入不完整")
+		return BootstrapIngressRuntimePlanV1{}, errors.New("[bootstrap runtime] authority/identity/可信时间输入不完整")
 	}
 	if err := wire.ValidateBootstrapEndpointCatalog(catalog); err != nil {
 		return BootstrapIngressRuntimePlanV1{}, err
 	}
 	if serverProtocol < catalog.RequiredClientProtocol {
-		return BootstrapIngressRuntimePlanV1{}, errors.New("[D131 bootstrap runtime] server protocol 低于 catalog reader contract")
+		return BootstrapIngressRuntimePlanV1{}, errors.New("[bootstrap runtime] server protocol 低于 catalog reader contract")
 	}
 	if err := wire.VerifyConfigQCAuthority(catalog.ParentHeadHash, catalog.BootstrapIngressSet.ConfigQC,
 		parentHead, currentSet, previousSet); err != nil {
@@ -106,7 +106,7 @@ func BuildBootstrapIngressRuntimePlan(catalog *wire.BootstrapEndpointCatalogV1,
 		dependency.EndpointSetID != catalog.BootstrapIngressSet.EndpointSetID ||
 		dependency.EndpointID != endpointID || dependency.TargetListenerGeneration < 1 ||
 		dependency.ClusterID != catalog.ClusterID || intent.ClusterID != catalog.ClusterID {
-		return BootstrapIngressRuntimePlanV1{}, errors.New("[D127 bootstrap runtime] catalog 未绑定 exact certified rotation intent")
+		return BootstrapIngressRuntimePlanV1{}, errors.New("[bootstrap runtime] catalog 未绑定 exact certified rotation intent")
 	}
 	profileHash, err := wire.ServerPublicAccessProfileHash(profile, resources)
 	if err != nil {
@@ -115,7 +115,7 @@ func BuildBootstrapIngressRuntimePlan(catalog *wire.BootstrapEndpointCatalogV1,
 	resourcesHash, err := wire.ForwardServerListenerResourcesHash(resources)
 	if err != nil || profileHash != dependency.PublicAccessProfileHash ||
 		resourcesHash != dependency.ForwardListenerResourceGenerationHash {
-		return BootstrapIngressRuntimePlanV1{}, errors.New("[D127 bootstrap runtime] public profile/resources 未绑定 frozen dependencies")
+		return BootstrapIngressRuntimePlanV1{}, errors.New("[bootstrap runtime] public profile/resources 未绑定 frozen dependencies")
 	}
 	endpoint, listener, err := findBootstrapListener(catalog, endpointID, listenerGeneration)
 	if err != nil {
@@ -125,12 +125,12 @@ func BuildBootstrapIngressRuntimePlan(catalog *wire.BootstrapEndpointCatalogV1,
 		profile.ClusterID != catalog.ClusterID || profile.ServerID != endpoint.LogicalServerID ||
 		resources.ClusterID != catalog.ClusterID || resources.ServerID != endpoint.LogicalServerID ||
 		listener.PublicProfileGeneration != profile.Generation || listener.DialTargetFQDN != profile.FQDN {
-		return BootstrapIngressRuntimePlanV1{}, errors.New("[D127 bootstrap runtime] endpoint/listener/profile identity 不完全相等")
+		return BootstrapIngressRuntimePlanV1{}, errors.New("[bootstrap runtime] endpoint/listener/profile identity 不完全相等")
 	}
 	listenerState, tuples, ok := authorized.GenerationTuples(listenerGeneration)
 	if !ok || !listenerStateCompatible(listenerState, listener.PublishedState,
 		dependency.SourceListenerGeneration == nil) {
-		return BootstrapIngressRuntimePlanV1{}, errors.New("[D120 bootstrap runtime] listener generation 当前不拥有可服务 tuple")
+		return BootstrapIngressRuntimePlanV1{}, errors.New("[bootstrap runtime] listener generation 当前不拥有可服务 tuple")
 	}
 	spkiPins, err := bootstrapIdentityPins(listener.TransportIdentityRefs, profile.CertificateProfileRef)
 	if err != nil {
@@ -157,9 +157,9 @@ func findBootstrapListener(catalog *wire.BootstrapEndpointCatalogV1, endpointID 
 				return endpoint, listener, nil
 			}
 		}
-		return nil, nil, errors.New("[D127 bootstrap runtime] endpoint 缺 exact listener generation")
+		return nil, nil, errors.New("[bootstrap runtime] endpoint 缺 exact listener generation")
 	}
-	return nil, nil, errors.New("[D127 bootstrap runtime] certified catalog 缺 exact endpoint")
+	return nil, nil, errors.New("[bootstrap runtime] certified catalog 缺 exact endpoint")
 }
 
 func listenerStateCompatible(runtimeState, publishedState string, initialProvision bool) bool {
@@ -185,12 +185,12 @@ func bootstrapIdentityPins(refs []string, certificateProfile string) ([]string, 
 			continue
 		}
 		if _, err := wire.ParseHash(ref); err != nil {
-			return nil, errors.New("[D122 bootstrap runtime] transport identity ref 未绑定 exact WebPKI profile/SPKI pin")
+			return nil, errors.New("[bootstrap runtime] transport identity ref 未绑定 exact WebPKI profile/SPKI pin")
 		}
 		pins = append(pins, ref)
 	}
 	if !profileSeen || len(pins) == 0 {
-		return nil, errors.New("[D122 bootstrap runtime] listener 缺 exact WebPKI profile 或 SPKI pin")
+		return nil, errors.New("[bootstrap runtime] listener 缺 exact WebPKI profile 或 SPKI pin")
 	}
 	return pins, nil
 }
@@ -207,11 +207,11 @@ func deriveRuntimeBindings(catalog *wire.BootstrapEndpointCatalogV1,
 		pool = resources.HY2LocalUDPPortPool
 	}
 	if len(tuples) == 0 {
-		return nil, errors.New("[D127 bootstrap runtime] generation 没有 frozen bind tuple")
+		return nil, errors.New("[bootstrap runtime] generation 没有 frozen bind tuple")
 	}
 	if profile.DeploymentKind == "nat_mapped" && frozenMappingHash == "" ||
 		profile.DeploymentKind != "nat_mapped" && frozenMappingHash != "" {
-		return nil, errors.New("[D127 bootstrap runtime] deployment kind 与 frozen NAT mapping 不一致")
+		return nil, errors.New("[bootstrap runtime] deployment kind 与 frozen NAT mapping 不一致")
 	}
 	validFrom, validUntil, err := listenerCatalogValidity(catalog, listener)
 	if err != nil {
@@ -228,7 +228,7 @@ func deriveRuntimeBindings(catalog *wire.BootstrapEndpointCatalogV1,
 		address, err := netip.ParseAddr(tuple.Address)
 		if err != nil || address.String() != tuple.Address || tuple.Transport != l4 ||
 			tuple.Port < 1 || tuple.Port > 65535 || index > 0 && tuple == canonicalTuples[index-1] {
-			return nil, errors.New("[D127 bootstrap runtime] frozen bind tuple 非规范或 transport 不匹配")
+			return nil, errors.New("[bootstrap runtime] frozen bind tuple 非规范或 transport 不匹配")
 		}
 	}
 
@@ -250,7 +250,7 @@ func deriveRuntimeBindings(catalog *wire.BootstrapEndpointCatalogV1,
 			}
 		}
 		if len(matches) != 1 {
-			return nil, errors.New("[D103 bootstrap runtime] certified public address/port 必须唯一命中 local listener/NAT mapping")
+			return nil, errors.New("[bootstrap runtime] certified public address/port 必须唯一命中 local listener/NAT mapping")
 		}
 		publicTuple := rotation.Tuple{Transport: l4, Address: publicAddress.String(), Port: listener.PublicPort}
 		publicByLocal[matches[0]] = append(publicByLocal[matches[0]], publicTuple)
@@ -259,7 +259,7 @@ func deriveRuntimeBindings(catalog *wire.BootstrapEndpointCatalogV1,
 	for _, tuple := range canonicalTuples {
 		publicTuples := publicByLocal[tuple]
 		if len(publicTuples) == 0 {
-			return nil, errors.New("[D127 bootstrap runtime] frozen tuple 不服务任何 certified public frontend")
+			return nil, errors.New("[bootstrap runtime] frozen tuple 不服务任何 certified public frontend")
 		}
 		projection := bootstrapListenerRuntimeProjectionV1{
 			Schema: 1, ClusterID: catalog.ClusterID, IngressSetHash: catalog.BootstrapIngressSetHash,
@@ -334,7 +334,7 @@ func listenerCatalogValidity(catalog *wire.BootstrapEndpointCatalogV1,
 		catalogUntil = listenerUntil
 	}
 	if !catalogFrom.Before(catalogUntil) {
-		return "", "", errors.New("[D120 bootstrap runtime] catalog/listener validity 无交集")
+		return "", "", errors.New("[bootstrap runtime] catalog/listener validity 无交集")
 	}
 	return catalogFrom.UTC().Format(time.RFC3339), catalogUntil.UTC().Format(time.RFC3339), nil
 }

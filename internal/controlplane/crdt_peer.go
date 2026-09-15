@@ -37,7 +37,7 @@ type CRDTAntiEntropyResponseV1 struct {
 }
 
 // CRDTObjectVerifier 对每个 immutable object 重放其 kind/schema/签名语义。
-// generic content hash 只能证明 bytes 未变，不能替代 typed 验证（D101、D104）。
+// generic content hash 只能证明 bytes 未变，不能替代 typed 验证。
 type CRDTObjectVerifier func(context.Context, crdt.Object) error
 
 type CRDTAntiEntropyHTTPHandler struct {
@@ -53,7 +53,7 @@ func NewCRDTAntiEntropyHTTPHandler(localMemberID string, store *crdt.Store,
 	verify CRDTObjectVerifier) (*CRDTAntiEntropyHTTPHandler, error) {
 	if localMemberID == "" || store == nil || now == nil || verify == nil ||
 		!controlSetContains(&set, localMemberID) {
-		return nil, errors.New("[D101 CRDT peer] local member/store/time/verifier 配置不完整")
+		return nil, errors.New("[CRDT peer] local member/store/time/verifier 配置不完整")
 	}
 	if err := wire.ValidateControlPeerDirectoryAt(&set, &directory, now()); err != nil {
 		return nil, err
@@ -69,7 +69,7 @@ func NewJointCRDTAntiEntropyHTTPHandler(localMemberID string, store *crdt.Store,
 	now func() time.Time, verify CRDTObjectVerifier) (*CRDTAntiEntropyHTTPHandler, error) {
 	if localMemberID == "" || store == nil || now == nil || verify == nil ||
 		!controlSetContains(&oldSet, localMemberID) && !controlSetContains(&newSet, localMemberID) {
-		return nil, errors.New("[D101 CRDT peer] Joint local member/store/time/verifier 配置不完整")
+		return nil, errors.New("[CRDT peer] Joint local member/store/time/verifier 配置不完整")
 	}
 	if err := validateJointPeerDirectories(&oldSet, &newSet, &oldDirectory, &newDirectory, now()); err != nil {
 		return nil, err
@@ -141,7 +141,7 @@ func verifyCRDTObjects(ctx context.Context, objects []crdt.Object, verify CRDTOb
 			return err
 		}
 		if err := verify(ctx, objects[index]); err != nil {
-			return fmt.Errorf("[D101 CRDT peer] typed object[%d] 验证失败", index)
+			return fmt.Errorf("[CRDT peer] typed object[%d] 验证失败", index)
 		}
 	}
 	return nil
@@ -174,18 +174,18 @@ func NewCRDTAntiEntropyPeerClient(endpointURL, localMemberID, remoteMemberID str
 	certificate tls.Certificate, set wire.ControlSetV1, directory wire.ControlPeerDirectoryV1,
 	store *crdt.Store, now func() time.Time, verify CRDTObjectVerifier) (*CRDTAntiEntropyPeerClient, error) {
 	if store == nil || now == nil || verify == nil {
-		return nil, errors.New("[D101 CRDT peer] client store/time/verifier 配置不完整")
+		return nil, errors.New("[CRDT peer] client store/time/verifier 配置不完整")
 	}
 	if err := validateCRDTPeerEndpoint(endpointURL, remoteMemberID, directory); err != nil {
 		return nil, err
 	}
 	if len(certificate.Certificate) != 1 {
-		return nil, errors.New("[D124 control mTLS] CRDT client certificate 无效")
+		return nil, errors.New("[control mTLS] CRDT client certificate 无效")
 	}
 	memberID, err := wire.ControlPeerMemberForCertificate(&set, &directory,
 		certificate.Certificate[0], now().UTC())
 	if err != nil || memberID != localMemberID {
-		return nil, errors.New("[D124 control mTLS] CRDT client certificate 不属于 local member")
+		return nil, errors.New("[control mTLS] CRDT client certificate 不属于 local member")
 	}
 	tlsConfig, err := NewControlPeerClientTLSConfig(remoteMemberID, certificate, set, directory, now)
 	if err != nil {
@@ -200,19 +200,19 @@ func NewJointCRDTAntiEntropyPeerClient(endpointURL, localMemberID, remoteMemberI
 	oldDirectory, newDirectory wire.ControlPeerDirectoryV1, store *crdt.Store,
 	now func() time.Time, verify CRDTObjectVerifier) (*CRDTAntiEntropyPeerClient, error) {
 	if store == nil || now == nil || verify == nil {
-		return nil, errors.New("[D101 CRDT peer] Joint client store/time/verifier 配置不完整")
+		return nil, errors.New("[CRDT peer] Joint client store/time/verifier 配置不完整")
 	}
 	if validateCRDTPeerEndpoint(endpointURL, remoteMemberID, oldDirectory) != nil &&
 		validateCRDTPeerEndpoint(endpointURL, remoteMemberID, newDirectory) != nil {
-		return nil, errors.New("[D124 control mTLS] CRDT endpoint 不属于 Joint remote member")
+		return nil, errors.New("[control mTLS] CRDT endpoint 不属于 Joint remote member")
 	}
 	if len(certificate.Certificate) != 1 {
-		return nil, errors.New("[D124 control mTLS] Joint CRDT client certificate 无效")
+		return nil, errors.New("[control mTLS] Joint CRDT client certificate 无效")
 	}
 	memberID, err := controlPeerMemberForJointCertificate(&oldSet, &newSet, &oldDirectory,
 		&newDirectory, certificate.Certificate[0], now().UTC())
 	if err != nil || memberID != localMemberID {
-		return nil, errors.New("[D124 control mTLS] Joint CRDT certificate 不属于 local member")
+		return nil, errors.New("[control mTLS] Joint CRDT certificate 不属于 local member")
 	}
 	tlsConfig, err := NewJointControlPeerClientTLSConfig(remoteMemberID, certificate,
 		oldSet, newSet, oldDirectory, newDirectory, now)
@@ -231,14 +231,14 @@ func newCRDTAntiEntropyPeerClient(endpointURL, localMemberID, remoteMemberID str
 		baseURL: endpointURL, store: store, verify: verify, client: &http.Client{
 			Transport: transport, Timeout: 30 * time.Second,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-				return errors.New("[D124 control mTLS] CRDT anti-entropy 禁止 redirect")
+				return errors.New("[control mTLS] CRDT anti-entropy 禁止 redirect")
 			},
 		}}
 }
 
 func (client *CRDTAntiEntropyPeerClient) Sync(ctx context.Context) (CRDTAntiEntropyResultV1, error) {
 	if client == nil || client.store == nil || client.verify == nil || client.client == nil {
-		return CRDTAntiEntropyResultV1{}, errors.New("[D101 CRDT peer] client 未初始化")
+		return CRDTAntiEntropyResultV1{}, errors.New("[CRDT peer] client 未初始化")
 	}
 	objects := client.store.Snapshot()
 	if err := verifyCRDTObjects(ctx, objects, client.verify); err != nil {
@@ -252,7 +252,7 @@ func (client *CRDTAntiEntropyPeerClient) Sync(ctx context.Context) (CRDTAntiEntr
 		SenderRoot: root, Objects: objects}
 	body, err := wire.MarshalCanonical(submitted)
 	if err != nil || len(body) == 0 || len(body) > crdtPeerMaxBody {
-		return CRDTAntiEntropyResultV1{}, errors.New("[D101 CRDT peer] request snapshot 无效或过大")
+		return CRDTAntiEntropyResultV1{}, errors.New("[CRDT peer] request snapshot 无效或过大")
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		client.baseURL+CRDTAntiEntropyPath, bytes.NewReader(body))
@@ -268,25 +268,25 @@ func (client *CRDTAntiEntropyPeerClient) Sync(ctx context.Context) (CRDTAntiEntr
 	defer response.Body.Close()
 	responseBody, readErr := io.ReadAll(io.LimitReader(response.Body, crdtPeerMaxBody+1))
 	if readErr != nil || len(responseBody) == 0 || len(responseBody) > crdtPeerMaxBody {
-		return CRDTAntiEntropyResultV1{}, errors.New("[D101 CRDT peer] response snapshot 读取失败或过大")
+		return CRDTAntiEntropyResultV1{}, errors.New("[CRDT peer] response snapshot 读取失败或过大")
 	}
 	if response.StatusCode != http.StatusOK {
-		return CRDTAntiEntropyResultV1{}, fmt.Errorf("[D101 CRDT peer] peer 返回 HTTP %d", response.StatusCode)
+		return CRDTAntiEntropyResultV1{}, fmt.Errorf("[CRDT peer] peer 返回 HTTP %d", response.StatusCode)
 	}
 	if response.Header.Get("Content-Type") != "application/json" ||
 		response.Header.Get("Content-Encoding") != "" || len(response.Cookies()) != 0 ||
 		response.Request == nil || response.Request.URL.String() != client.baseURL+CRDTAntiEntropyPath {
-		return CRDTAntiEntropyResultV1{}, errors.New("[D101 CRDT peer] response metadata 无效")
+		return CRDTAntiEntropyResultV1{}, errors.New("[CRDT peer] response metadata 无效")
 	}
 	var received CRDTAntiEntropyResponseV1
 	canonical, err := wire.DecodeStrict(responseBody, crdtPeerMaxBody, &received)
 	if err != nil || !bytes.Equal(canonical, responseBody) || received.Schema != 1 ||
 		received.ReceiverMemberID != client.remoteMemberID || received.Objects == nil {
-		return CRDTAntiEntropyResultV1{}, errors.New("[D101 CRDT peer] response wire/member binding 无效")
+		return CRDTAntiEntropyResultV1{}, errors.New("[CRDT peer] response wire/member binding 无效")
 	}
 	wantRoot, err := crdt.SnapshotRoot(received.Objects)
 	if err != nil || wantRoot != received.ReceiverRoot {
-		return CRDTAntiEntropyResultV1{}, errors.New("[D101 CRDT peer] response root 与 exact objects 不匹配")
+		return CRDTAntiEntropyResultV1{}, errors.New("[CRDT peer] response root 与 exact objects 不匹配")
 	}
 	if err := verifyCRDTObjects(ctx, received.Objects, client.verify); err != nil {
 		return CRDTAntiEntropyResultV1{}, err
@@ -318,7 +318,7 @@ func validateCRDTPeerEndpoint(endpointURL, memberID string,
 	parsed, err := url.ParseRequestURI(endpointURL)
 	if err != nil || parsed == nil || parsed.Scheme != "https" || parsed.Path != "" ||
 		parsed.RawQuery != "" || parsed.Fragment != "" || !found {
-		return errors.New("[D124 control mTLS] CRDT endpoint 不属于目标 member")
+		return errors.New("[control mTLS] CRDT endpoint 不属于目标 member")
 	}
 	return nil
 }

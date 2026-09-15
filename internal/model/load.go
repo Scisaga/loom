@@ -11,7 +11,7 @@ import (
 // Load 从 YAML 字节解析 SSOT。
 //
 // 解码是严格的(KnownFields):未知字段直接报错。这不是洁癖 —— 它是
-// §2.2 与 §19 要求的"拒绝手工指定推导值"的实现方式。写下
+// 严格解码拒绝手工指定推导值。写下
 // mesh_eligible: true 或 initiator: from,在这里就会失败,而不是被
 // 静默忽略然后与推导结果不一致。
 func Load(data []byte) (*SSOT, error) {
@@ -36,7 +36,7 @@ func LoadFile(path string) (*SSOT, error) {
 }
 
 // defaults 填充可省略字段。它必须是幂等的且不含随机性 —— 渲染的纯
-// 函数性质从这里就开始(§12.1)。
+// 函数性质从这里就开始。
 func (s *SSOT) defaults() {
 	for i := range s.Tunnels {
 		if s.Tunnels[i].Protocol == "" {
@@ -52,16 +52,16 @@ func (s *SSOT) defaults() {
 		if d.EgressAxis == "" {
 			d.EgressAxis = EgressAny
 		}
-		// §5.8:空候选集的默认行为是拒绝并告警。这个默认必须是安全的
+		// 空候选集的默认行为是拒绝并告警。这个默认必须是安全的
 		// 那一侧 —— 任何自动回退都可能绕过合规约束。
 		if d.Fallback == "" {
 			d.Fallback = FailClosed
 		}
-		// §3.2:实践中 ≤2。
+		// 实践中 ≤2。
 		if d.MaxHops == 0 {
 			d.MaxHops = 2
 		}
 	}
-	// top_n 刻意不设默认:§5.6 没有给出建议值,替使用者猜一个会让
+	// top_n 刻意不设默认:选取数量必须由使用者声明,替使用者猜一个会让
 	// "下发几个候选"这件事变成隐式的。校验器要求模式 B 显式声明。
 }

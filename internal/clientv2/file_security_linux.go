@@ -21,7 +21,7 @@ func secureEnrollmentDirectory(path string) error {
 	}
 	info, err := os.Lstat(path)
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 || !ownedByCurrentUser(info) {
-		return errors.New("[D129 Linux] Enrollment state directory 必须由服务账号持有且权限不宽于 0700")
+		return errors.New("[Linux] Enrollment state directory 必须由服务账号持有且权限不宽于 0700")
 	}
 	return nil
 }
@@ -34,12 +34,12 @@ func openPrivateLock(path string) (*os.File, error) {
 	file := os.NewFile(uintptr(fd), path)
 	if file == nil {
 		_ = unix.Close(fd)
-		return nil, errors.New("[D129 Linux] 无法建立 Enrollment lock handle")
+		return nil, errors.New("[Linux] 无法建立 Enrollment lock handle")
 	}
 	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || !ownedByCurrentUser(info) {
 		_ = file.Close()
-		return nil, errors.New("[D129 Linux] Enrollment lock 必须是服务账号持有的 0600 普通文件")
+		return nil, errors.New("[Linux] Enrollment lock 必须是服务账号持有的 0600 普通文件")
 	}
 	return file, nil
 }

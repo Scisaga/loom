@@ -12,7 +12,7 @@ import (
 	"loom/internal/agent"
 )
 
-// agent 是跑在接入节点上的调参回路(§5.5):按 tuning_period 探测每条候选、
+// agent 是跑在接入节点上的调参回路:按 tuning_period 探测每条候选、
 // 按 objective 排序、带阻尼地切 selector。
 //
 // 它读的是渲染出来的 agent/config.json,**不是 SSOT** —— 节点上不该有全网

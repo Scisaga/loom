@@ -29,13 +29,13 @@ type LinuxDeviceReportJournalV1 struct {
 
 // SendLinuxDeviceReportDurable 在发送前先持久化 exact signed envelope。
 // 进程在 HTTP 响应前后崩溃都只会重放同一 sequence/bytes；
-// 只有 204 成功后才原子推进 next sequence（D131）。
+// 只有 204 成功后才原子推进 next sequence。
 func SendLinuxDeviceReportDurable(ctx context.Context, journalPath string,
 	options LinuxDeviceReportOptions) (wire.DeviceReportEnvelopeV2, error) {
 	if ctx == nil || journalPath == "" || filepath.Clean(journalPath) != journalPath ||
 		!filepath.IsAbs(journalPath) || options.ReportID != "" || options.ReportSequence != 0 ||
 		options.RetryEnvelope != nil {
-		return wire.DeviceReportEnvelopeV2{}, errors.New("[D131 Linux report] durable journal 输入无效")
+		return wire.DeviceReportEnvelopeV2{}, errors.New("[Linux report] durable journal 输入无效")
 	}
 	if err := secureEnrollmentDirectory(filepath.Dir(journalPath)); err != nil {
 		return wire.DeviceReportEnvelopeV2{}, err
@@ -56,7 +56,7 @@ func SendLinuxDeviceReportDurable(ctx context.Context, journalPath string,
 	}
 	current := store.Envelope()
 	if current == nil || current.Payload.Active == nil {
-		return wire.DeviceReportEnvelopeV2{}, errors.New("[D131 Linux report] durable journal 缺 active LKG")
+		return wire.DeviceReportEnvelopeV2{}, errors.New("[Linux report] durable journal 缺 active LKG")
 	}
 	journal, err := readLinuxDeviceReportJournal(journalPath)
 	if errors.Is(err, os.ErrNotExist) {
@@ -67,7 +67,7 @@ func SendLinuxDeviceReportDurable(ctx context.Context, journalPath string,
 		return wire.DeviceReportEnvelopeV2{}, err
 	}
 	if journal.DeviceID != current.Payload.DeviceID {
-		return wire.DeviceReportEnvelopeV2{}, errors.New("[D131 Linux report] journal 属于另一 Device")
+		return wire.DeviceReportEnvelopeV2{}, errors.New("[Linux report] journal 属于另一 Device")
 	}
 
 	var envelope wire.DeviceReportEnvelopeV2
@@ -102,7 +102,7 @@ func SendLinuxDeviceReportDurable(ctx context.Context, journalPath string,
 	}
 	next, err := wire.CheckedAdd(journal.NextSequence, 1)
 	if err != nil {
-		return envelope, errors.New("[D131 Linux report] report sequence 溢出")
+		return envelope, errors.New("[Linux report] report sequence 溢出")
 	}
 	journal.LastAcceptedSequence = journal.NextSequence
 	journal.LastAcceptedEnvelopeHash = envelopeHash
@@ -130,10 +130,10 @@ func readLinuxDeviceReportJournal(path string) (*LinuxDeviceReportJournalV1, err
 	}
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 ||
 		info.Size() < 1 || info.Size() > maximumLinuxDeviceReportJournalBytes {
-		return nil, errors.New("[D131 Linux report] journal 必须是 0600 小型普通文件")
+		return nil, errors.New("[Linux report] journal 必须是 0600 小型普通文件")
 	}
 	if stat, ok := info.Sys().(*syscall.Stat_t); !ok || int(stat.Uid) != os.Geteuid() {
-		return nil, errors.New("[D131 Linux report] journal owner 不是当前服务账号")
+		return nil, errors.New("[Linux report] journal owner 不是当前服务账号")
 	}
 	body, err := os.ReadFile(path)
 	if err != nil {
@@ -142,7 +142,7 @@ func readLinuxDeviceReportJournal(path string) (*LinuxDeviceReportJournalV1, err
 	var journal LinuxDeviceReportJournalV1
 	canonical, err := wire.DecodeStrict(body, maximumLinuxDeviceReportJournalBytes, &journal)
 	if err != nil || !bytes.Equal(canonical, body) {
-		return nil, errors.New("[D131 Linux report] journal 不是 exact canonical wire")
+		return nil, errors.New("[Linux report] journal 不是 exact canonical wire")
 	}
 	if err := validateLinuxDeviceReportJournal(&journal); err != nil {
 		return nil, err
@@ -153,23 +153,23 @@ func readLinuxDeviceReportJournal(path string) (*LinuxDeviceReportJournalV1, err
 func validateLinuxDeviceReportJournal(journal *LinuxDeviceReportJournalV1) error {
 	if journal == nil || journal.Schema != 1 || journal.DeviceID == "" ||
 		journal.LastAcceptedSequence < 0 || journal.NextSequence < 1 {
-		return errors.New("[D131 Linux report] journal header/sequence 无效")
+		return errors.New("[Linux report] journal header/sequence 无效")
 	}
 	wantNext, err := wire.CheckedAdd(journal.LastAcceptedSequence, 1)
 	if err != nil || journal.NextSequence != wantNext {
-		return errors.New("[D131 Linux report] journal sequence 不连续")
+		return errors.New("[Linux report] journal sequence 不连续")
 	}
 	if journal.LastAcceptedSequence == 0 {
 		if journal.LastAcceptedEnvelopeHash != "" {
-			return errors.New("[D131 Linux report] 初始 journal 禁止 last hash")
+			return errors.New("[Linux report] 初始 journal 禁止 last hash")
 		}
 	} else if _, err := wire.ParseHash(journal.LastAcceptedEnvelopeHash); err != nil {
-		return errors.New("[D131 Linux report] journal last hash 无效")
+		return errors.New("[Linux report] journal last hash 无效")
 	}
 	if journal.Pending != nil && (journal.Pending.Schema != 2 ||
 		journal.Pending.Body.DeviceID != journal.DeviceID ||
 		journal.Pending.Body.ReportSequence != journal.NextSequence) {
-		return errors.New("[D131 Linux report] pending envelope 与 journal 序号/Device 不一致")
+		return errors.New("[Linux report] pending envelope 与 journal 序号/Device 不一致")
 	}
 	return nil
 }

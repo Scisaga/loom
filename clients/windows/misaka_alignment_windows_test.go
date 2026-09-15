@@ -26,17 +26,17 @@ func TestGUIMisakaChineseUsesSystemYaHeiInCanvasAndInputs(t *testing.T) {
 	app := newProfileGUITestWindow(t)
 	c := app.skin.canvas
 	var collection *misakaCOMObject
-	if err := misakaHRESULT("[§7.2] 读取系统字体集合", misakaCOMCall(c.writeFactory, 3, uintptr(unsafe.Pointer(&collection)), 0)); err != nil {
+	if err := misakaHRESULT("读取系统字体集合", misakaCOMCall(c.writeFactory, 3, uintptr(unsafe.Pointer(&collection)), 0)); err != nil {
 		t.Fatal(err)
 	}
 	defer misakaRelease(collection)
 	family, _ := windows.UTF16FromString("Microsoft YaHei UI")
 	var index, exists uint32
-	if err := misakaHRESULT("[§7.2] 查询系统字体族", misakaCOMCall(collection, 5, uintptr(unsafe.Pointer(&family[0])), uintptr(unsafe.Pointer(&index)), uintptr(unsafe.Pointer(&exists)))); err != nil {
+	if err := misakaHRESULT("查询系统字体族", misakaCOMCall(collection, 5, uintptr(unsafe.Pointer(&family[0])), uintptr(unsafe.Pointer(&index)), uintptr(unsafe.Pointer(&exists)))); err != nil {
 		t.Fatal(err)
 	}
 	if exists == 0 {
-		t.Fatal("[§7.2] 系统字体集合没有所需的中文无衬线字体")
+		t.Fatal("系统字体集合没有所需的中文无衬线字体")
 	}
 	c.releaseFormats()
 	dc, _ := misakaCanvasTestDC(t, 320, 100)
@@ -51,19 +51,19 @@ func TestGUIMisakaChineseUsesSystemYaHeiInCanvasAndInputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(c.formats) != 2 {
-		t.Fatalf("[§7.2] 同字号的中英文错误复用了字体格式：%d", len(c.formats))
+		t.Fatalf("同字号的中英文错误复用了字体格式：%d", len(c.formats))
 	}
 	families := make(map[string]bool)
 	for _, format := range c.formats {
 		length := misakaCOMCall(format, 20)
 		family := make([]uint16, length+1)
-		if err := misakaHRESULT("[§7.2] 读取实际文字字体", misakaCOMCall(format, 21, uintptr(unsafe.Pointer(&family[0])), uintptr(len(family)))); err != nil {
+		if err := misakaHRESULT("读取实际文字字体", misakaCOMCall(format, 21, uintptr(unsafe.Pointer(&family[0])), uintptr(len(family)))); err != nil {
 			t.Fatal(err)
 		}
 		families[windows.UTF16ToString(family)] = true
 	}
 	if !families["Segoe UI"] || !families["Microsoft YaHei UI"] {
-		t.Fatalf("[§7.2] 实际 DirectWrite 中英文字体未独立选择：%v", families)
+		t.Fatalf("实际 DirectWrite 中英文字体未独立选择：%v", families)
 	}
 	for _, control := range []uintptr{app.controls.profileNameEdit, app.controls.draftName} {
 		font, _, _ := procSendMessage.Call(control, portableWMGetFont, 0, 0)
@@ -72,7 +72,7 @@ func TestGUIMisakaChineseUsesSystemYaHeiInCanvasAndInputs(t *testing.T) {
 		portableGDI32.NewProc("GetTextFaceW").Call(dc, uintptr(len(actualFace)), uintptr(unsafe.Pointer(&actualFace[0])))
 		procSelectObject.Call(dc, old)
 		if face := windows.UTF16ToString(actualFace[:]); face != "Microsoft YaHei UI" {
-			t.Fatalf("[§7.2] 原生名称输入实际字体发生回退：%q", face)
+			t.Fatalf("原生名称输入实际字体发生回退：%q", face)
 		}
 		var logicalFont struct {
 			height, width, escapement, orientation, weight int32
@@ -80,10 +80,10 @@ func TestGUIMisakaChineseUsesSystemYaHeiInCanvasAndInputs(t *testing.T) {
 			face                                           [32]uint16
 		}
 		if size, _, _ := portableGDI32.NewProc("GetObjectW").Call(font, unsafe.Sizeof(logicalFont), uintptr(unsafe.Pointer(&logicalFont))); size != unsafe.Sizeof(logicalFont) {
-			t.Fatal("[§7.2] 读取原生输入字体失败")
+			t.Fatal("读取原生输入字体失败")
 		}
 		if family := windows.UTF16ToString(logicalFont.face[:]); family != "Microsoft YaHei UI" {
-			t.Fatalf("[§7.2] 原生名称输入与自绘中文字体不同：%q", family)
+			t.Fatalf("原生名称输入与自绘中文字体不同：%q", family)
 		}
 	}
 }
@@ -111,14 +111,14 @@ func TestGUIMisakaAddAndPathSymbolsHaveVisibleGeometricCenters(t *testing.T) {
 		portableGDI32.NewProc("GdiFlush").Call()
 		plus := misakaAlignmentInk(pixels, width, button, func(rgb uint32) bool { return rgb == misakaText })
 		if plus.right <= plus.left || absMisakaAlignment(plus.left+plus.right-button.left-button.right) > 1 || absMisakaAlignment(plus.top+plus.bottom-button.top-button.bottom) > 1 {
-			t.Errorf("[§7.2] DPI %d 加号实际像素未在按钮中居中：符号=%+v 按钮=%+v", dpi, plus, button)
+			t.Errorf("DPI %d 加号实际像素未在按钮中居中：符号=%+v 按钮=%+v", dpi, plus, button)
 		}
 		for index := 0; index < 3; index++ {
 			x, y := s(35+int32(index)*60), s(80)
 			area := misakaCenteredRect(x, y, s(20), s(20))
 			ink := misakaAlignmentInk(pixels, width, area, func(rgb uint32) bool { return rgb>>16 < 180 && rgb>>8&255 < 180 && rgb&255 < 180 })
 			if ink.right <= ink.left || absMisakaAlignment(ink.left+ink.right-2*x) > 2 || absMisakaAlignment(ink.top+ink.bottom-2*y) > 2 {
-				t.Errorf("[§7.2] DPI %d 路径位置 %d 的实际图标偏离圆心 (%d,%d)：%+v", dpi, index, x, y, ink)
+				t.Errorf("DPI %d 路径位置 %d 的实际图标偏离圆心 (%d,%d)：%+v", dpi, index, x, y, ink)
 			}
 		}
 	}
@@ -136,12 +136,12 @@ func TestGUIMisakaProfileSelectionHasSquareCornersAndContinuousRail(t *testing.T
 		portableGDI32.NewProc("GdiFlush").Call()
 		for y := r.top; y < r.bottom; y++ {
 			if pixel := misakaCanvasTestPixel(pixels, width, r.left, y); pixel != misakaGreen {
-				t.Fatalf("[§7.2] DPI %d 选中项竖线在 y=%d 中断：%06x", dpi, y, pixel)
+				t.Fatalf("DPI %d 选中项竖线在 y=%d 中断：%06x", dpi, y, pixel)
 			}
 		}
 		for _, point := range []portablePoint{{x: r.left + s(4), y: r.top}, {x: r.right - 1, y: r.top}, {x: r.left + s(4), y: r.bottom - 1}, {x: r.right - 1, y: r.bottom - 1}} {
 			if pixel := misakaCanvasTestPixel(pixels, width, point.x, point.y); pixel != 0xE9F3ED {
-				t.Errorf("[§7.2] DPI %d 选中项边角仍有裁切：(%d,%d)=%06x", dpi, point.x, point.y, pixel)
+				t.Errorf("DPI %d 选中项边角仍有裁切：(%d,%d)=%06x", dpi, point.x, point.y, pixel)
 			}
 		}
 	}
@@ -166,7 +166,7 @@ func TestGUIMisakaPathLabelsStayUnderTheirNodesAtBothEdges(t *testing.T) {
 				area.left, area.right = max(area.left, r.left+1), min(area.right, r.right-1)
 				ink := misakaAlignmentInk(pixels, width, area, func(rgb uint32) bool { return rgb>>16 < 160 && rgb>>8&255 < 160 && rgb&255 < 160 })
 				if ink.right <= ink.left || absMisakaAlignment(ink.left+ink.right-2*x) > 3 {
-					t.Errorf("[§7.2] DPI %d、宽度 %d、路径端点 %d 的文字偏离节点竖轴 %d：%+v", dpi, logicalWidth, index, x, ink)
+					t.Errorf("DPI %d、宽度 %d、路径端点 %d 的文字偏离节点竖轴 %d：%+v", dpi, logicalWidth, index, x, ink)
 				}
 			}
 		}
@@ -196,18 +196,18 @@ func TestGUIMisakaBrandUsesRoundedFullMark(t *testing.T) {
 		for y := s(misakaTitleHeight + 18); y < s(misakaTitleHeight+18)+s(40); y++ {
 			for x := s(16); x < s(16)+s(40); x++ {
 				if misakaCanvasTestPixel(pixels, width, x, y) != misakaCanvasTestPixel(reference, width, x, y) {
-					t.Fatalf("[§7.2] DPI %d 品牌区与既有完整版图标不一致", dpi)
+					t.Fatalf("DPI %d 品牌区与既有完整版图标不一致", dpi)
 				}
 			}
 		}
 		left, top, edge := s(16), s(misakaTitleHeight+18), s(40)-1
 		for _, corner := range []portablePoint{{left, top}, {left + edge, top}, {left, top + edge}, {left + edge, top + edge}} {
 			if got := misakaCanvasTestPixel(pixels, width, corner.x, corner.y); got != misakaSidebar {
-				t.Fatalf("[§7.2] DPI %d 品牌图圆角没有露出侧栏背景：位置=%+v 像素=%06x", dpi, corner, got)
+				t.Fatalf("DPI %d 品牌图圆角没有露出侧栏背景：位置=%+v 像素=%06x", dpi, corner, got)
 			}
 		}
 		if got := misakaCanvasTestPixel(pixels, width, left+s(20), top+s(20)); got == misakaSidebar {
-			t.Fatalf("[§7.2] DPI %d 品牌图中心意外透明", dpi)
+			t.Fatalf("DPI %d 品牌图中心意外透明", dpi)
 		}
 	}
 }
@@ -228,7 +228,7 @@ func TestGUIMisakaInlineEditorDoesNotCoverProfileStatus(t *testing.T) {
 		editor := guiWindowRect(t, app.controls.profileNameEdit)
 		procMisakaMapPoints.Call(0, app.hwnd, uintptr(unsafe.Pointer(&editor)), 2)
 		if editor.bottom >= status.top {
-			t.Fatalf("[§7.2] DPI %d 行内编辑框压住状态行：编辑框=%+v 状态=%+v", dpi, editor, status)
+			t.Fatalf("DPI %d 行内编辑框压住状态行：编辑框=%+v 状态=%+v", dpi, editor, status)
 		}
 		ink := 0
 		for y := status.top; y < status.bottom; y++ {
@@ -238,12 +238,12 @@ func TestGUIMisakaInlineEditorDoesNotCoverProfileStatus(t *testing.T) {
 					ink++
 				}
 				if after.NRGBAAt(int(x), int(y)) != pixel {
-					t.Fatalf("[§7.2] DPI %d 重命名遮挡或改写了连接状态的实际像素", dpi)
+					t.Fatalf("DPI %d 重命名遮挡或改写了连接状态的实际像素", dpi)
 				}
 			}
 		}
 		if ink < 10 {
-			t.Fatalf("[§7.2] DPI %d 状态行没有完整可读的实际文字", dpi)
+			t.Fatalf("DPI %d 状态行没有完整可读的实际文字", dpi)
 		}
 		app.finishMisakaRename(false)
 	}

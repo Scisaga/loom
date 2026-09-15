@@ -3,7 +3,7 @@ package model
 import "strings"
 import "testing"
 
-// TestLoadRejectsDerivedFields 是 §2.2 与 §19"校验器应拒绝手工指定推导值"
+// TestLoadRejectsDerivedFields 覆盖"校验器应拒绝手工指定推导值"
 // 的第一道闸:严格解码让这些键根本无法被写进 SSOT。
 //
 // 如果它们被静默忽略,SSOT 里会留下一个看起来生效、实际不生效的声明 ——
@@ -12,7 +12,7 @@ import "testing"
 // 角色字段分块之后,这道闸同时覆盖了"惰性字段":把 direction 写在
 // access 块里、把 platform 写在 server 块里,都在**解码阶段**就失败,
 // 根本到不了校验器。capabilities 也一样 —— 它由哪个块存在推导,
-// 顶层再写一遍就是重复编码(D19)。
+// 顶层再写一遍就是重复编码。
 func TestLoadRejectsDerivedFields(t *testing.T) {
 	cases := map[string]string{
 		"mesh_eligible": `
@@ -96,7 +96,7 @@ declarations:
 		t.Errorf("protocol 未声明时应默认为 wg,得到 %q", got)
 	}
 	d := &s.Declarations[0]
-	// 两个轴的默认值都落在"最少假设"那一侧(§4)。
+	// 两个轴的默认值都落在"最少假设"那一侧。
 	if d.AddressAxis != FromRequest {
 		t.Errorf("address_axis 默认应为 from_request,得到 %q", d.AddressAxis)
 	}
@@ -141,7 +141,7 @@ func TestDistributionMirrorsKeepLegacyCompatibilityAndNodeOverride(t *testing.T)
 }
 
 // TestMeshEligibleIsDerived:能否进 mesh 由 direction 推导,直接决定
-// 隧道矩阵有多大(§6.3、D13)。
+// 隧道矩阵有多大。
 func TestMeshEligibleIsDerived(t *testing.T) {
 	for _, tc := range []struct {
 		d    Direction
@@ -169,7 +169,7 @@ func TestMeshEligibleIsDerived(t *testing.T) {
 	}
 }
 
-// TestAxesParsing:两个轴的取值解析(§4)。
+// TestAxesParsing:两个轴的取值解析。
 func TestAxesParsing(t *testing.T) {
 	d := &AccessDeclaration{AddressAxis: "class:llm:qwen3@v1", EgressAxis: "pinned:sg-vps"}
 	if got := d.ClassID(); got != "llm:qwen3@v1" {

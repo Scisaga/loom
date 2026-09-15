@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 
 /**
- * #14：Go core 拥有 HY2/Trojan wire，Android 宿主只提供冻结 underlay 的
+ * Go core 拥有 HY2/Trojan wire，Android 宿主只提供冻结 underlay 的
  * DNS、protect/bind 与加密 attempt journal callback。
  */
 internal class AndroidBootstrapNetworkController(
@@ -19,7 +19,7 @@ internal class AndroidBootstrapNetworkController(
     override fun protectAndBindSocket(fd: Long) {
         require(fd in 0..Int.MAX_VALUE.toLong()) { "bootstrap socket fd 无效" }
         val descriptor = fd.toInt()
-        check(service.protect(descriptor)) { "[D131 Android] VpnService.protect bootstrap socket 失败" }
+        check(service.protect(descriptor)) { "[Android] VpnService.protect bootstrap socket 失败" }
         // fromFd 复制 descriptor；关闭副本不会夺走 Go net.Conn 的所有权。
         ParcelFileDescriptor.fromFd(descriptor).use { duplicate ->
             network.bindSocket(duplicate.fileDescriptor)
@@ -27,12 +27,12 @@ internal class AndroidBootstrapNetworkController(
     }
 
     override fun resolveHost(host: String): String {
-        require(host.matches(Regex("[A-Za-z0-9.-]{1,253}"))) { "[D131 Android] bootstrap FQDN 无效" }
+        require(host.matches(Regex("[A-Za-z0-9.-]{1,253}"))) { "[Android] bootstrap FQDN 无效" }
         val addresses = network.getAllByName(host)
             .mapNotNull { it.hostAddress?.substringBefore('%') }
             .distinct()
             .sorted()
-        check(addresses.isNotEmpty()) { "[D131 Android] frozen underlay DNS 没有返回地址" }
+        check(addresses.isNotEmpty()) { "[Android] frozen underlay DNS 没有返回地址" }
         return addresses.joinToString("\n")
     }
 

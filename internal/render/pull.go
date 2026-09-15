@@ -6,7 +6,7 @@ import (
 	"loom/internal/model"
 )
 
-// 本文件渲染节点侧的控制通道(§14.2):定时向分发点取配置、验签、本地填
+// 本文件渲染节点侧的控制通道:定时向分发点取配置、验签、本地填
 // 秘密、安装。
 //
 // 这是设计里一直写着、而实现一直缺的那一半 —— 在它之前,部署只能从工作站
@@ -19,7 +19,7 @@ const (
 	NodeSecretsPath = "/etc/loom/secrets/node.env"
 )
 
-const pullUnit = `# 由 loom render 生成 —— 不要手工编辑(§12)
+const pullUnit = `# 由 loom render 生成 —— 不要手工编辑
 [Unit]
 Description=Loom 取配置(%s)
 After=network-online.target
@@ -33,7 +33,7 @@ UMask=0077
 StateDirectory=loom
 `
 
-const pullTimer = `# 由 loom render 生成 —— 不要手工编辑(§12)
+const pullTimer = `# 由 loom render 生成 —— 不要手工编辑
 [Unit]
 Description=Loom 取配置的节奏(%s)
 
@@ -70,7 +70,7 @@ func renderPull(s *model.SSOT, n *model.Node) ([]File, []Skip) {
 	//
 	// access-a 上有个与 Loom 无关的 WireGuard 接口声明了 `DNS Domain: ~.`,
 	// 把所有域名劫到 8.8.8.8 —— 在境内等于解析不了任何国内域名。那是别人的
-	// 配置,不该去改;但也不该依赖它。每个节点用哪个解析器,SSOT 里有(§7.3.2)。
+	// 配置,不该去改;但也不该依赖它。每个节点用哪个解析器,SSOT 里有。
 	extra := ""
 	if dns := s.DNSFor(n); len(dns) > 0 {
 		extra = " -dns " + dns[0]
@@ -93,5 +93,5 @@ func renderPull(s *model.SSOT, n *model.Node) ([]File, []Skip) {
 //	代价 —— 全网收敛要等一个周期，期间可能处于"新二进制 + 旧配置"。
 //
 // 45 秒 + 15 秒抖动 → 最坏 60 秒发现变化。加上发布器那 30 秒,
-// 纯配置变更端到端 90 秒以内(D80)。
+// 纯配置变更端到端 90 秒以内。
 const pullPeriod = "45s"

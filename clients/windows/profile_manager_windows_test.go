@@ -459,7 +459,7 @@ func TestWindowsProfilesResumeOnlyExistingProtectedJoin(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			owner := &portableGUI{root: t.TempDir(), edition: editionPortableMixed, ctx: ctx, cancel: cancel}
-			// §7.2：旧版本已登记的未加入条目保留原恢复行为；全新根不再生成 legacy。
+			// 旧版本已登记的未加入条目保留原恢复行为；全新根不再生成 legacy。
 			if err := os.Mkdir(filepath.Join(owner.root, "state"), 0o700); err != nil {
 				t.Fatal(err)
 			}

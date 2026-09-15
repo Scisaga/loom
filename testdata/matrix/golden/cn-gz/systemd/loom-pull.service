@@ -1,4 +1,4 @@
-# 由 loom render 生成 —— 不要手工编辑(§12)
+# 由 loom render 生成 —— 不要手工编辑
 [Unit]
 Description=Loom 取配置(cn-gz)
 After=network-online.target

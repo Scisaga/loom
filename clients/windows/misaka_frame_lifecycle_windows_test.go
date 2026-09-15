@@ -20,7 +20,7 @@ func TestMisakaFrameCalculatesBothClientRectForms(t *testing.T) {
 		}{rects: [3]portableRect{want}}
 		procSendMessage.Call(app.hwnd, 0x0083, full, uintptr(unsafe.Pointer(&params)))
 		if params.rects[0] != want {
-			t.Errorf("[§7.2] WM_NCCALCSIZE(%d) 恢复了系统非客户区：got=%+v want=%+v", full, params.rects[0], want)
+			t.Errorf("WM_NCCALCSIZE(%d) 恢复了系统非客户区：got=%+v want=%+v", full, params.rects[0], want)
 		}
 	}
 }
@@ -33,7 +33,7 @@ func misakaAssertVisibleFrame(t *testing.T, app *portableGUI, stage string) {
 			break
 		}
 		if count > 1000 {
-			t.Fatal("[§7.2] 原生窗口消息持续自激，无法完成一次空闲刷新")
+			t.Fatal("原生窗口消息持续自激，无法完成一次空闲刷新")
 		}
 		procTranslateMessage.Call(uintptr(unsafe.Pointer(&message)))
 		procDispatchMessage.Call(uintptr(unsafe.Pointer(&message)))
@@ -43,7 +43,7 @@ func misakaAssertVisibleFrame(t *testing.T, app *portableGUI, stage string) {
 	window := guiWindowRect(t, app.hwnd)
 	if zoomed, _, _ := procMisakaIsZoomed.Call(app.hwnd); zoomed == 0 {
 		if client.right != window.right-window.left || client.bottom != window.bottom-window.top {
-			t.Errorf("[§7.2] %s 后原生标题侵占客户区：window=%+v client=%+v", stage, window, client)
+			t.Errorf("%s 后原生标题侵占客户区：window=%+v client=%+v", stage, window, client)
 		}
 	} else {
 		procMisakaMapPoints.Call(app.hwnd, 0, uintptr(unsafe.Pointer(&client)), 2)
@@ -51,21 +51,21 @@ func misakaAssertVisibleFrame(t *testing.T, app *portableGUI, stage string) {
 		info := misakaMonitorInfo{size: uint32(unsafe.Sizeof(misakaMonitorInfo{}))}
 		procMisakaMonitorInfo.Call(monitor, uintptr(unsafe.Pointer(&info)))
 		if client != info.work {
-			t.Errorf("[§7.2] %s 后最大化客户区不等于显示器工作区：client=%+v work=%+v", stage, client, info.work)
+			t.Errorf("%s 后最大化客户区不等于显示器工作区：client=%+v work=%+v", stage, client, info.work)
 		}
 		procGetClientRect.Call(app.hwnd, uintptr(unsafe.Pointer(&client)))
 	}
-	// §7.2：读取实际可见 HWND 的 DC，不能用 WM_PRINT 的自绘结果遮住
+	// 读取实际可见 HWND 的 DC，不能用 WM_PRINT 的自绘结果遮住
 	// DefWindowProc 已直接写入窗口表面的默认标题。
 	dc, _, _ := portableUser32.NewProc("GetDC").Call(app.hwnd)
 	if dc == 0 {
-		t.Fatal("[§7.2] 无法读取可见测试窗口")
+		t.Fatal("无法读取可见测试窗口")
 	}
 	defer portableUser32.NewProc("ReleaseDC").Call(app.hwnd, dc)
 	for _, y := range []int32{10, 20, 30} {
 		pixel, _, _ := portableGDI32.NewProc("GetPixel").Call(dc, uintptr(client.right/2), uintptr(app.scale(y)))
 		if uint32(pixel) != misakaColorRef(misakaWhite) {
-			t.Errorf("[§7.2] %s 后自绘标题被默认框覆盖：y=%d pixel=%#x", stage, y, pixel)
+			t.Errorf("%s 后自绘标题被默认框覆盖：y=%d pixel=%#x", stage, y, pixel)
 		}
 	}
 }
@@ -86,7 +86,7 @@ func TestMisakaFrameVisibleLifecycle(t *testing.T) {
 	activate := func(hwnd uintptr) {
 		portableUser32.NewProc("SetActiveWindow").Call(hwnd)
 		if got, _, _ := portableUser32.NewProc("GetActiveWindow").Call(); got != hwnd {
-			t.Fatalf("[§7.2] 可见窗口没有实际完成激活：got=%#x want=%#x", got, hwnd)
+			t.Fatalf("可见窗口没有实际完成激活：got=%#x want=%#x", got, hwnd)
 		}
 	}
 	wantStyle := profileGUIStyle(app.hwnd)
@@ -96,18 +96,18 @@ func TestMisakaFrameVisibleLifecycle(t *testing.T) {
 		misakaAssertVisibleFrame(t, app, fmt.Sprintf("第 %d 次激活", index+1))
 		setPortableControlText(app.hwnd, fmt.Sprintf("Loom — demo-window-%d", index))
 		if got := profileGUIText(app.hwnd); got != fmt.Sprintf("Loom — demo-window-%d", index) {
-			t.Fatal("[§7.2] 自绘窗口丢弃了供任务栏与无障碍读取的真实标题")
+			t.Fatal("自绘窗口丢弃了供任务栏与无障碍读取的真实标题")
 		}
 		misakaAssertVisibleFrame(t, app, "更新窗口标题")
 		for _, iconKind := range []uintptr{0, 1} {
 			icon, _, _ := portableUser32.NewProc("LoadIconW").Call(0, 32515)
 			if icon == 0 {
-				t.Fatal("[§7.2] 无法加载原生测试图标")
+				t.Fatal("无法加载原生测试图标")
 			}
 			procSendMessage.Call(app.hwnd, 0x0080, iconKind, icon)
 			got, _, _ := procSendMessage.Call(app.hwnd, 0x007F, iconKind, 0)
 			if got != icon {
-				t.Fatal("[§7.2] 自绘窗口丢弃了供任务栏读取的真实图标")
+				t.Fatal("自绘窗口丢弃了供任务栏读取的真实图标")
 			}
 			misakaAssertVisibleFrame(t, app, "更新窗口图标")
 		}
@@ -116,7 +116,7 @@ func TestMisakaFrameVisibleLifecycle(t *testing.T) {
 			misakaAssertVisibleFrame(t, app, fmt.Sprintf("消息 %#x", message))
 		}
 		if got := profileGUIStyle(app.hwnd); got != wantStyle {
-			t.Fatalf("[§7.2] 消息处理永久改变了窗口样式：got=%#x want=%#x", got, wantStyle)
+			t.Fatalf("消息处理永久改变了窗口样式：got=%#x want=%#x", got, wantStyle)
 		}
 		procMisakaSetStyle.Call(app.hwnd, ^uintptr(15), wantStyle|0x04000000)
 		procSetWindowPos.Call(app.hwnd, 0, 0, 0, 0, 0, 0x0037)
@@ -131,26 +131,26 @@ func TestMisakaFrameVisibleLifecycle(t *testing.T) {
 		misakaAssertVisibleFrame(t, app, "最大化后再次激活")
 		procShowWindow.Call(app.hwnd, 6)
 		if iconic, _, _ := portableUser32.NewProc("IsIconic").Call(app.hwnd); iconic == 0 {
-			t.Fatal("[§7.2] 系统最小化失效")
+			t.Fatal("系统最小化失效")
 		}
 		procShowWindow.Call(app.hwnd, 9)
 		procShowWindow.Call(app.hwnd, 9)
 		portableUser32.NewProc("UpdateWindow").Call(app.hwnd)
 		misakaAssertVisibleFrame(t, app, "最小化后还原")
 	}
-	t.Log("[§7.2] 可见窗口重复激活、标题、图标、主题、合成与样式变更、最大化、最小化和还原通过")
+	t.Log("可见窗口重复激活、标题、图标、主题、合成与样式变更、最大化、最小化和还原通过")
 }
 
 func TestMisakaFrameWithoutDWMNonclientRendering(t *testing.T) {
 	app := newProfileGUITestWindow(t)
 	procShowWindow.Call(app.hwnd, 4)
-	// §7.2：只切换这个合成测试窗口的 DWM 策略，模拟非客户区合成
+	// 只切换这个合成测试窗口的 DWM 策略，模拟非客户区合成
 	// 被禁用后的系统绘制路径；不更改桌面主题或其他窗口。
 	policy := uint32(1)
 	result, _, _ := misakaDWM.NewProc("DwmSetWindowAttribute").Call(app.hwnd, 2,
 		uintptr(unsafe.Pointer(&policy)), unsafe.Sizeof(policy))
 	if int32(result) < 0 {
-		t.Fatalf("[§7.2] 无法设置测试窗口的 DWM 非客户区策略：%#x", result)
+		t.Fatalf("无法设置测试窗口的 DWM 非客户区策略：%#x", result)
 	}
 	portableUser32.NewProc("UpdateWindow").Call(app.hwnd)
 	for index := 0; index < 3; index++ {
@@ -169,7 +169,7 @@ func TestMisakaFrameWithoutDWMNonclientRendering(t *testing.T) {
 func TestMisakaFrameMetadataDoesNotShowHiddenWindow(t *testing.T) {
 	app := newProfileGUITestWindow(t)
 	if profileGUIStyle(app.hwnd)&portableWSVisible != 0 {
-		t.Fatal("[§7.2] 测试窗口应从隐藏状态开始")
+		t.Fatal("测试窗口应从隐藏状态开始")
 	}
 	setPortableControlText(app.hwnd, "Loom — demo-hidden")
 	icon, _, _ := portableUser32.NewProc("LoadIconW").Call(0, 32515)
@@ -178,9 +178,9 @@ func TestMisakaFrameMetadataDoesNotShowHiddenWindow(t *testing.T) {
 		procSendMessage.Call(app.hwnd, message, 0, 0)
 	}
 	if profileGUIStyle(app.hwnd)&portableWSVisible != 0 {
-		t.Fatal("[§7.2] 更新标题、图标或主题意外显示了隐藏到托盘的窗口")
+		t.Fatal("更新标题、图标或主题意外显示了隐藏到托盘的窗口")
 	}
 	if profileGUIText(app.hwnd) != "Loom — demo-hidden" {
-		t.Fatal("[§7.2] 隐藏窗口的真实标题未保存")
+		t.Fatal("隐藏窗口的真实标题未保存")
 	}
 }

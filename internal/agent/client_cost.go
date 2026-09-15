@@ -6,7 +6,7 @@ import (
 	"loom/internal/attest"
 )
 
-// §16.1.2：按签名数据面的实际承载匹配原方向观测；公网与隧道不可混用。
+// 按签名数据面的实际承载匹配原方向观测；公网与隧道不可混用。
 func (c *ObservationCache) clientCost(chain, targets []string, now time.Time, carriers ...[]string) clientCost {
 	out := clientCost{known: len(chain) > 0 && len(targets) > 0}
 	if c == nil || !out.known {
@@ -81,7 +81,7 @@ func (c *ObservationCache) clientCost(chain, targets []string, now time.Time, ca
 }
 
 // clientTargets 只比较已有测量覆盖的目标；一个全网未测地址不能使其他数据失效。
-// §16.1.2：同一声明的所有候选使用相同目标子集，缺失覆盖会写入选择原因。
+// 同一声明的所有候选使用相同目标子集，缺失覆盖会写入选择原因。
 func (c *ObservationCache) clientTargets(targets []string, now time.Time) []string {
 	if c == nil {
 		return nil

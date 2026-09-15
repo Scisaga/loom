@@ -1,6 +1,6 @@
 // Package crdt 保存只增、内容寻址的复制材料。
 // 这里的对象永远不能直接改变权限或渲染输入；effective SSOT 仍只由
-// controlplane 的 committed + certified head 决定（D101、D104）。
+// controlplane 的 committed + certified head 决定。
 package crdt
 
 import (
@@ -47,7 +47,7 @@ type Store struct {
 
 func NewObject(id, kind string, payload []byte) (Object, error) {
 	if !validToken(id, 256) || !validToken(kind, 128) {
-		return Object{}, errors.New("[D101 CRDT] immutable object id/kind 无效")
+		return Object{}, errors.New("[CRDT] immutable object id/kind 无效")
 	}
 	canonical, err := wire.CanonicalizeStrict(payload)
 	if err != nil {
@@ -63,7 +63,7 @@ func NewObject(id, kind string, payload []byte) (Object, error) {
 
 func Open(path string) (*Store, error) {
 	if path == "" {
-		return nil, errors.New("[D101 CRDT] store path 不能为空")
+		return nil, errors.New("[CRDT] store path 不能为空")
 	}
 	store := &Store{path: path, objects: make(map[string]Object)}
 	body, err := os.ReadFile(path)
@@ -75,17 +75,17 @@ func Open(path string) (*Store, error) {
 	}
 	var state diskState
 	if _, err := wire.DecodeStrict(body, 64<<20, &state); err != nil {
-		return nil, fmt.Errorf("[D101 CRDT] store 无效: %w", err)
+		return nil, fmt.Errorf("[CRDT] store 无效: %w", err)
 	}
 	if state.Schema != 1 || !sort.SliceIsSorted(state.Objects, func(i, j int) bool { return state.Objects[i].ID < state.Objects[j].ID }) {
-		return nil, errors.New("[D101 CRDT] store schema/order 无效")
+		return nil, errors.New("[CRDT] store schema/order 无效")
 	}
 	for _, object := range state.Objects {
 		if err := validateObject(object); err != nil {
 			return nil, err
 		}
 		if _, exists := store.objects[object.ID]; exists {
-			return nil, errors.New("[D101 CRDT] store 含重复 logical ID")
+			return nil, errors.New("[CRDT] store 含重复 logical ID")
 		}
 		store.objects[object.ID] = cloneObject(object)
 	}
@@ -102,7 +102,7 @@ func (s *Store) Add(object Object) error {
 		if existing.ObjectID == object.ObjectID && bytes.Equal(existing.Payload, object.Payload) && existing.Kind == object.Kind {
 			return nil
 		}
-		return errors.New("[D101 CRDT] 同一 logical ID 出现不同 bytes，副本已损坏")
+		return errors.New("[CRDT] 同一 logical ID 出现不同 bytes，副本已损坏")
 	}
 	s.objects[object.ID] = cloneObject(object)
 	if err := s.persistLocked(); err != nil {
@@ -130,7 +130,7 @@ func (s *Store) Merge(objects []Object) error {
 			if existing.ObjectID == object.ObjectID && bytes.Equal(existing.Payload, object.Payload) && existing.Kind == object.Kind {
 				continue
 			}
-			return errors.New("[D101 CRDT] 同一 logical ID 出现不同 bytes，整批 merge 已拒绝")
+			return errors.New("[CRDT] 同一 logical ID 出现不同 bytes，整批 merge 已拒绝")
 		}
 		candidate[object.ID] = cloneObject(object)
 	}
@@ -168,10 +168,10 @@ func (s *Store) Root() (string, error) {
 }
 
 // SnapshotRoot 验证并计算规范对象快照的 Merkle root。网络 anti-entropy
-// 必须对收到的完整 snapshot 使用同一函数，不能信任 peer 自报 root（D101）。
+// 必须对收到的完整 snapshot 使用同一函数，不能信任 peer 自报 root。
 func SnapshotRoot(objects []Object) (string, error) {
 	if objects == nil {
-		return "", errors.New("[D101 CRDT] snapshot objects 不能为 null")
+		return "", errors.New("[CRDT] snapshot objects 不能为 null")
 	}
 	leaves := make([][]byte, len(objects))
 	for i := range objects {
@@ -180,7 +180,7 @@ func SnapshotRoot(objects []Object) (string, error) {
 			return "", err
 		}
 		if i > 0 && objects[i-1].ID >= object.ID {
-			return "", errors.New("[D101 CRDT] snapshot 未按 logical ID 严格排序")
+			return "", errors.New("[CRDT] snapshot 未按 logical ID 严格排序")
 		}
 		canonical, err := wire.MarshalCanonical(object)
 		if err != nil {
@@ -193,18 +193,18 @@ func SnapshotRoot(objects []Object) (string, error) {
 
 func validateObject(object Object) error {
 	if object.Schema != 1 || !validToken(object.ID, 256) || !validToken(object.Kind, 128) {
-		return errors.New("[D101 CRDT] immutable object schema/id/kind 无效")
+		return errors.New("[CRDT] immutable object schema/id/kind 无效")
 	}
 	canonical, err := wire.CanonicalizeStrict(object.Payload)
 	if err != nil || !bytes.Equal(canonical, object.Payload) {
-		return errors.New("[D101 CRDT] payload 必须已经是 canonical JSON")
+		return errors.New("[CRDT] payload 必须已经是 canonical JSON")
 	}
 	want, err := wire.HashObject(objectDomain, objectHashInput{Schema: 1, ID: object.ID, Kind: object.Kind, Payload: object.Payload})
 	if err != nil {
 		return err
 	}
 	if object.ObjectID != want {
-		return errors.New("[D101 CRDT] object_id 与 exact bytes 不匹配")
+		return errors.New("[CRDT] object_id 与 exact bytes 不匹配")
 	}
 	return nil
 }

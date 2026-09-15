@@ -73,7 +73,7 @@ func validateAgentStateForConfig(st *AgentState, cfg *Config, now time.Time) []s
 		return out
 	}
 	if st == nil {
-		// §16.4 声明了 Agent 协议组件时，缺失状态由 componentStatuses 唯一
+		// 声明了 Agent 协议组件时，缺失状态由 componentStatuses 唯一
 		// 负责；这里再报“缺少全部 declaration”会把同一根因伪装成两项漂移。
 		// 没有声明协议组件的配置仍由本校验器 fail closed。
 		if cfg.ExpectedComponents.Agent != "" {

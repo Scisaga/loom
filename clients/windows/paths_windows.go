@@ -15,7 +15,7 @@ import (
 	"loom/internal/clientreport"
 )
 
-// §7.3.3：只读显示是实际选路的投影，字符串值避免 GUI 和受限 IPC 共享可变测量对象。
+// 只读显示是实际选路的投影，字符串值避免 GUI 和受限 IPC 共享可变测量对象。
 type windowsPathDisplay struct {
 	Service            string `json:"service"`
 	Candidate          string `json:"candidate,omitempty"`
@@ -44,7 +44,7 @@ type windowsPathReader struct {
 	read   func(context.Context, clientRuntimeState, time.Time) (*clientreport.AgentState, error)
 }
 
-// §5.5、§7.3.3：后台观测只回填当前连接；停机或出口切换立即隐藏上一代路径。
+// 后台观测只回填当前连接；停机或出口切换立即隐藏上一代路径。
 func (app *portableGUI) watchCurrentPaths(ctx context.Context, sequence uint64) {
 	reader := new(windowsPathReader)
 	ticker := time.NewTicker(500 * time.Millisecond)
@@ -84,7 +84,7 @@ func (app *portableGUI) watchCurrentPaths(ctx context.Context, sequence uint64) 
 	}
 }
 
-// §16.1：在后台调用；只 GET 当前 selector，不探测、不重跑决策，也不发送报告。
+// 在后台调用；只 GET 当前 selector，不探测、不重跑决策，也不发送报告。
 func (reader *windowsPathReader) Read(ctx context.Context, root string, now time.Time) []windowsPathDisplay {
 	reader.mu.Lock()
 	defer reader.mu.Unlock()
@@ -113,7 +113,7 @@ func (reader *windowsPathReader) Read(ctx context.Context, root string, now time
 		get = readWindowsPathReport
 	}
 	report, err := get(read, state, now)
-	// §5.5：GET 完成也不能跨过 cancel/join 屏障；重连相同 applied 仍是另一代。
+	// GET 完成也不能跨过 cancel/join 屏障；重连相同 applied 仍是另一代。
 	if ctx.Err() != nil || !state.active() || !sameWindowsPathGeneration(state, control.snapshot()) {
 		return nil
 	}
@@ -195,7 +195,7 @@ func windowsPathsFromReport(report *clientreport.AgentState) []windowsPathDispla
 	return rows
 }
 
-// §7.3.3：显示数据按实际连线定位，不再从中文选路原因中解析数值。
+// 显示数据按实际连线定位，不再从中文选路原因中解析数值。
 func applyWindowsPathMeasurements(row *windowsPathDisplay, measurements []agent.ClientPathMeasurement) {
 	if row.Candidate == "" {
 		return
@@ -284,7 +284,7 @@ func windowsLinkMeasurement(m agent.ClientPathMeasurement) (string, string) {
 	return label, source
 }
 
-// §16.1：次数、失败和覆盖来自已有测量摘要，不能把读取时间冒充最近探测时间。
+// 次数、失败和覆盖来自已有测量摘要，不能把读取时间冒充最近探测时间。
 func windowsPathEvidence(health *clientreport.AgentCandidateHealth) (string, string) {
 	summary := "近期无有效测量"
 	if health.SelectedSamples > 0 {
@@ -315,7 +315,7 @@ func windowsSelectedPathQuality(health *clientreport.AgentCandidateHealth) strin
 	return windowsPathQuality(health.SelectedP50MS, health.SelectedP95MS, health.SelectedKBps)
 }
 
-// §16.1：最低延迟和最高吞吐可能来自不同候选，不将两个独立极值称为“最佳路径”。
+// 最低延迟和最高吞吐可能来自不同候选，不将两个独立极值称为“最佳路径”。
 func windowsMeasuredPathQuality(health *clientreport.AgentCandidateHealth) string {
 	var metrics []string
 	if health.BestP50MS != nil {
@@ -347,7 +347,7 @@ func windowsPathQuality(p50, p95, kbps *int) string {
 	return strings.Join(metrics, " · ")
 }
 
-// §16.1：scope 已由 canonical v5 的 reason 保护；只拆开显示，不新定义上报格式。
+// scope 已由 canonical v5 的 reason 保护；只拆开显示，不新定义上报格式。
 func splitWindowsPathReason(reason string) (string, string) {
 	prefix, scope, ok := strings.Cut(reason, " [decision_scope=")
 	if !ok || len(scope) != 65 || scope[64] != ']' {

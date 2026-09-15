@@ -5,7 +5,7 @@ TEXT ·misakaTextFormatBridgeAddress(SB),NOSPLIT,$0-8
 	MOVD R0, ret+0(FP)
 	RET
 
-// §7.2：仅允许 syscall.SyscallN 从系统栈进入此 Windows ARM64 ABI 桥。
+// 仅允许 syscall.SyscallN 从系统栈进入此 Windows ARM64 ABI 桥。
 // R0 为 COM 方法，R1 指向 misakaTextFormatArgs。
 // 保持 LR 与非易失寄存器不变，重排参数后尾调用目标方法。
 TEXT misakaTextFormatBridge<>(SB),NOSPLIT|NOFRAME,$0

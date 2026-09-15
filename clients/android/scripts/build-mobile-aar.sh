@@ -59,7 +59,7 @@ fi
 git -C "$source_dir" show "$sing_box_commit:go.mod" >"$source_dir/go.mod"
 git -C "$source_dir" show "$sing_box_commit:go.sum" >"$source_dir/go.sum"
 
-# §14.1：从精确共享信任/选路源码生成依赖收敛视图。若直接替换整个根模块，
+# 从精确共享信任/选路源码生成依赖收敛视图。若直接替换整个根模块，
 # 无关的新 x/* 版本会经 MVS 覆盖 sing-box 1.11.4 的依赖并破坏钉住的数据面。
 for generated_dir in "$shared_dir" "$core_dir"; do
     case "$generated_dir" in

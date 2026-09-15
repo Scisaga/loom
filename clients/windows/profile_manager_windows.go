@@ -28,7 +28,7 @@ type windowsProfileDisplay struct {
 	State    portableGUIState `json:"state"`
 }
 
-// §7.2：每份加入身份复用现有运行宿主；切换锁覆盖旧宿主完全退出到新宿主启动。
+// 每份加入身份复用现有运行宿主；切换锁覆盖旧宿主完全退出到新宿主启动。
 // 它只管理用户连接操作，不参与 Agent 探测、排序或 selector 写入。
 type windowsProfileManager struct {
 	mu               sync.Mutex
@@ -257,7 +257,7 @@ func (m *windowsProfileManager) snapshot() portableGUISnapshot {
 	return s
 }
 
-// §7.2：接收请求时就发布取消代次，不能等 goroutine 获得调度后才建立连接意图。
+// 接收请求时就发布取消代次，不能等 goroutine 获得调度后才建立连接意图。
 func (m *windowsProfileManager) prepareConnectLocked(id string) (*windowsProfileConnect, error) {
 	child := m.children[id]
 	if m.closing || m.owner.ctx.Err() != nil || child == nil || child.ctx.Err() != nil || !child.snapshot().joined {
@@ -313,7 +313,7 @@ func (m *windowsProfileManager) runConnect(op *windowsProfileConnect) error {
 	for _, child := range children {
 		stopWindowsProfileAndWait(child)
 	}
-	// §7.2：同一配置仍在断开时也要等旧宿主退出，不能让 startRuntime 的幂等检查吞掉重连。
+	// 同一配置仍在断开时也要等旧宿主退出，不能让 startRuntime 的幂等检查吞掉重连。
 	op.child.mu.RLock()
 	stopping := op.child.stopRequested || op.child.state == guiStopping
 	done := op.child.runDone
@@ -340,7 +340,7 @@ func (m *windowsProfileManager) runConnect(op *windowsProfileConnect) error {
 		op.child.stopRequested = false
 	}
 	op.child.mu.Unlock()
-	// §7.2：只有创建 runCancel 的短操作与取消请求互斥；预检、API 等待均在子宿主后台进行。
+	// 只有创建 runCancel 的短操作与取消请求互斥；预检、API 等待均在子宿主后台进行。
 	m.start(op.child)
 	return nil
 }
@@ -398,7 +398,7 @@ func (m *windowsProfileManager) disconnect(id string) error {
 func (m *windowsProfileManager) runDisconnect(op *windowsProfileDisconnect) error {
 	m.transitionMu.Lock()
 	defer m.transitionMu.Unlock()
-	// §7.2：这里只等待接收请求时捕获的宿主；迟到的断开 worker 不能停止后来新建的连接。
+	// 这里只等待接收请求时捕获的宿主；迟到的断开 worker 不能停止后来新建的连接。
 	for _, done := range op.done {
 		<-done
 	}
@@ -415,7 +415,7 @@ func (m *windowsProfileManager) dispatch(req brokerRequest) error {
 	return m.dispatchWithCompletion(req, nil)
 }
 
-// §7.2：偏好界面的完成通知必须来自实际 worker，入队本身不能作为保存成功。
+// 偏好界面的完成通知必须来自实际 worker，入队本身不能作为保存成功。
 func (m *windowsProfileManager) dispatchWithCompletion(req brokerRequest, complete func()) error {
 	m.mu.Lock()
 	elevating := m.elevationID != ""
@@ -423,11 +423,11 @@ func (m *windowsProfileManager) dispatchWithCompletion(req brokerRequest, comple
 	if elevating {
 		return errors.New("正在请求管理员权限，请等待本次启动完成")
 	}
-	// §7.2：Installed broker 与本地 GUI 一样，新的用户操作清除上次命令错误。
+	// Installed broker 与本地 GUI 一样，新的用户操作清除上次命令错误。
 	m.owner.mu.Lock()
 	m.owner.profileMessage = ""
 	m.owner.mu.Unlock()
-	// §7.2：面板意图在接收时生效，关闭不能落到尚未启动的加入 worker 后面。
+	// 面板意图在接收时生效，关闭不能落到尚未启动的加入 worker 后面。
 	if req.Operation == "add_profile" {
 		err := m.openProfileDraft(req.Name)
 		m.owner.repaint()
@@ -459,7 +459,7 @@ func (m *windowsProfileManager) dispatchWithCompletion(req brokerRequest, comple
 			m.mu.Unlock()
 			return errors.New("出口未获当前签名配置授权，或数据面正在切换")
 		}
-		// §7.2：先发布现有忙状态，Installed 的异步 ACK 才能区分已完成与尚未执行。
+		// 先发布现有忙状态，Installed 的异步 ACK 才能区分已完成与尚未执行。
 		child.routeBusy = true
 		child.mu.Unlock()
 		if m.routeRequests == nil {
@@ -544,7 +544,7 @@ func (m *windowsProfileManager) command(req brokerRequest) error {
 		if closing {
 			return context.Canceled
 		}
-		// §7.2：查看或命名配置不改变运行宿主，也不应等待连接退出。
+		// 查看或命名配置不改变运行宿主，也不应等待连接退出。
 		if req.Operation == "select_profile" {
 			return m.store.Select(req.ProfileID)
 		}
@@ -584,7 +584,7 @@ func (m *windowsProfileManager) command(req brokerRequest) error {
 		return child.setRoutePreference(*req.Preference)
 	case "delete":
 		if child == nil {
-			// §13.5：目录校验失败的条目只能移出索引，不能沿无效路径清理磁盘。
+			// 目录校验失败的条目只能移出索引，不能沿无效路径清理磁盘。
 			return m.store.Remove(req.ProfileID)
 		}
 		s := child.snapshot()
@@ -605,7 +605,7 @@ func (m *windowsProfileManager) command(req brokerRequest) error {
 		delete(m.children, req.ProfileID)
 		m.mu.Unlock()
 		if err != nil && connectionProfilePosition(m.store.Snapshot(), req.ProfileID) >= 0 {
-			// §13.5：删除回滚后使用新的宿主 context，不能保留一个永远无法重连的已取消 child。
+			// 删除回滚后使用新的宿主 context，不能保留一个永远无法重连的已取消 child。
 			restored, restoreErr := m.makeChild(req.ProfileID)
 			if restoreErr == nil {
 				m.mu.Lock()
@@ -637,7 +637,7 @@ func (m *windowsProfileManager) close() {
 	for _, child := range children {
 		child.beginClose()
 	}
-	// §7.2：先取消子宿主，再等排队命令；持 transitionMu 等 worker 会阻塞 worker 自己的退出。
+	// 先取消子宿主，再等排队命令；持 transitionMu 等 worker 会阻塞 worker 自己的退出。
 	m.workers.Wait()
 	m.transitionMu.Lock()
 	defer m.transitionMu.Unlock()
@@ -655,7 +655,7 @@ func (m *windowsProfileManager) close() {
 	}
 }
 
-// §13.5：旧根目录就地保留；删除旧身份也不能清掉其他配置或配置索引。
+// 旧根目录就地保留；删除旧身份也不能清掉其他配置或配置索引。
 func removeWindowsProfileData(base, root string, protector clientsecret.Protector) error {
 	return removeWindowsProfileDataWithCommit(base, root, protector, nil)
 }
@@ -760,7 +760,7 @@ func removeWindowsProfileDataWithCommit(base, root string, protector clientsecre
 		}
 		return errors.Join(append([]error{cause}, restoreErrors...)...)
 	}
-	// §13.5：先同卷暂存身份；索引原子提交失败则恢复原位，不留下已取消且丢失身份的配置。
+	// 先同卷暂存身份；索引原子提交失败则恢复原位，不留下已取消且丢失身份的配置。
 	for i, source := range sources {
 		staged := filepath.Join(staging, fmt.Sprintf("entry-%d", i))
 		if err := os.Rename(source, staged); err != nil {
@@ -804,7 +804,7 @@ func (app *portableGUI) initializeProfiles() {
 	}
 	defer m.close()
 	m.resumePendingProfiles()
-	// §7.2：在界面能发送取消之前登记启动意图，避免取消落在恢复完成与自动连接之间。
+	// 在界面能发送取消之前登记启动意图，避免取消落在恢复完成与自动连接之间。
 	index := m.store.Snapshot()
 	var initial *windowsProfileConnect
 	m.mu.Lock()
@@ -847,7 +847,7 @@ func (m *windowsProfileManager) resumePendingProfiles() {
 	m.mu.Unlock()
 	for _, child := range children {
 		if child.snapshot().joined {
-			// §13.5：已提交 client.json 的事务仍要清掉旧 bearer，保留原身份密钥。
+			// 已提交 client.json 的事务仍要清掉旧 bearer，保留原身份密钥。
 			if err := clearWindowsPendingInvite(child.root, child.protector()); err != nil {
 				child.update(guiError, false, "", "读取已保存加入身份失败："+err.Error())
 			} else {

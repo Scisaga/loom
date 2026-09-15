@@ -8,10 +8,10 @@ import (
 	"time"
 )
 
-// §16.1.2：Windows 没有服务器 report 适配器。必须拒绝观测源配置，不能静默降级。
+// Windows 没有服务器 report 适配器。必须拒绝观测源配置，不能静默降级。
 func validateObservationPlatform(cfg *Config) error {
 	if len(cfg.Peers) > 0 || cfg.SelfReport != "" {
-		return errors.New("[§16.1.2] Windows Agent 不支持服务器观测源")
+		return errors.New("Windows Agent 不支持服务器观测源")
 	}
 	return nil
 }

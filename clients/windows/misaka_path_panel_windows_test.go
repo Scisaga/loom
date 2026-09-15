@@ -8,7 +8,7 @@ import (
 	"unsafe"
 )
 
-// §7.3.3：实际像素应是连续面板与细分隔线，不能残留两张卡片之间的背景空隙。
+// 实际像素应是连续面板与细分隔线，不能残留两张卡片之间的背景空隙。
 func TestGUIMisakaPathsShareOnePanel(t *testing.T) {
 	app := newProfileGUITestWindow(t)
 	const width, height int32 = 1300, 600

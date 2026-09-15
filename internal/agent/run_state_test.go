@@ -211,7 +211,7 @@ func TestCancelledContextPreventsClashRequest(t *testing.T) {
 	}
 }
 
-// §5.5：取消发生在启动时间注入点或文件锁等待期间，也不能开始一次新提交。
+// 取消发生在启动时间注入点或文件锁等待期间，也不能开始一次新提交。
 func TestCancelAtInitializationAndStoreBarrier(t *testing.T) {
 	t.Run("initial state", func(t *testing.T) {
 		root := t.TempDir()

@@ -11,8 +11,8 @@ import (
 	"time"
 )
 
-// clash 是 sing-box 控制端点(§7.3.1)的最小客户端:读 selector 的当前
-// 选择、把它设成别的候选。只用这两个动作 —— 选路的决策者只有一个(D11),
+// clash 是 sing-box 控制端点的最小客户端:读 selector 的当前
+// 选择、把它设成别的候选。只用这两个动作 —— 选路的决策者只有一个,
 // 别的接口不碰。
 type clash struct {
 	base   string
@@ -68,7 +68,7 @@ func (k *clash) Now(ctx context.Context, selector string) (string, error) {
 		return "", err
 	}
 	if r.Type != "Selector" {
-		return "", fmt.Errorf("%s 不是 selector 而是 %s —— 选路的决策者只能有一个(D11)", selector, r.Type)
+		return "", fmt.Errorf("%s 不是 selector 而是 %s —— 选路的决策者只能有一个", selector, r.Type)
 	}
 	return r.Now, nil
 }

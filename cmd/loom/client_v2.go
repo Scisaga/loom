@@ -70,7 +70,7 @@ func readV2RegularFile(path string, maximum int64) ([]byte, error) {
 		return nil, err
 	}
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() < 1 || info.Size() > maximum {
-		return nil, fmt.Errorf("[D105 Linux] %s 必须是 1..%d bytes 普通文件", path, maximum)
+		return nil, fmt.Errorf("[Linux] %s 必须是 1..%d bytes 普通文件", path, maximum)
 	}
 	return os.ReadFile(path)
 }

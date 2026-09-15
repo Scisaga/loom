@@ -37,7 +37,7 @@ type AdmissionVoter struct {
 func NewAdmissionVoter(memberID string, set wire.ControlSetV1, privateKey ed25519.PrivateKey,
 	now func() time.Time, readInvite InviteMaterialReader) (*AdmissionVoter, error) {
 	if memberID == "" || now == nil || readInvite == nil || len(privateKey) != ed25519.PrivateKeySize {
-		return nil, errors.New("[D129 Enrollment peer] voter identity/key/time/reader 配置不完整")
+		return nil, errors.New("[Enrollment peer] voter identity/key/time/reader 配置不完整")
 	}
 	if err := wire.ValidateControlSet(&set); err != nil {
 		return nil, err
@@ -51,7 +51,7 @@ func NewAdmissionVoter(memberID string, set wire.ControlSetV1, privateKey ed2551
 	}
 	keyID, err := wire.ControlKeyID(privateKey.Public().(ed25519.PublicKey))
 	if err != nil || member == nil || keyID != member.EnrollmentKeyID {
-		return nil, errors.New("[D102 keys] voter enrollment key 不属于 committed ControlSet member")
+		return nil, errors.New("[keys] voter enrollment key 不属于 committed ControlSet member")
 	}
 	return &AdmissionVoter{member: *member, privateKey: append(ed25519.PrivateKey(nil), privateKey...),
 		now: now, readInvite: readInvite}, nil
@@ -60,7 +60,7 @@ func NewAdmissionVoter(memberID string, set wire.ControlSetV1, privateKey ed2551
 func (voter *AdmissionVoter) VoteAdmission(ctx context.Context,
 	request EnrollmentAdmissionVoteRequestV1) (wire.ControlEnrollmentSignatureV1, error) {
 	if voter == nil || request.Schema != 1 || request.EnrollmentServiceID == "" {
-		return wire.ControlEnrollmentSignatureV1{}, errors.New("[D129 Enrollment peer] admission vote request header 无效")
+		return wire.ControlEnrollmentSignatureV1{}, errors.New("[Enrollment peer] admission vote request header 无效")
 	}
 	if err := ctx.Err(); err != nil {
 		return wire.ControlEnrollmentSignatureV1{}, err
@@ -68,7 +68,7 @@ func (voter *AdmissionVoter) VoteAdmission(ctx context.Context,
 	core := request.Submission.ClaimCore
 	material, err := voter.readInvite(ctx, core.ClusterID, core.InviteID)
 	if err != nil {
-		return wire.ControlEnrollmentSignatureV1{}, errors.New("[D129 Enrollment peer] certified Invite material 不可用")
+		return wire.ControlEnrollmentSignatureV1{}, errors.New("[Enrollment peer] certified Invite material 不可用")
 	}
 	if err := VerifyPeerAdmissionAttempt(&material, &request.Submission, &request.Attestation,
 		request.EnrollmentServiceID, voter.now().UTC()); err != nil {

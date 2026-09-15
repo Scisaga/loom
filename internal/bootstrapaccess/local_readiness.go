@@ -44,7 +44,7 @@ type BootstrapLocalReadinessEvidenceV1 struct {
 }
 
 // VerifiedBootstrapLocalReadinessV1 只能由 exact opaque runtime plan 的真实
-// local socket handshake 产生；调用方不能用一个格式合法的 hash 构造（D120）。
+// local socket handshake 产生；调用方不能用一个格式合法的 hash 构造。
 type VerifiedBootstrapLocalReadinessV1 struct {
 	evidence BootstrapLocalReadinessEvidenceV1
 	hash     string
@@ -57,13 +57,13 @@ type BootstrapLocalReadinessOptions struct {
 }
 
 // VerifyBootstrapLocalReadiness 对 runtime.Start 已同步 bind 的每个本地 socket
-// 完成无 bearer TLS/QUIC 握手。wildcard bind 只投影为同地址族 loopback，不扩大端口（D120、D122）。
+// 完成无 bearer TLS/QUIC 握手。wildcard bind 只投影为同地址族 loopback，不扩大端口。
 func VerifyBootstrapLocalReadiness(ctx context.Context, runtime *BootstrapIngressRuntime,
 	authorized rotation.AuthorizedRuntimePlanV1,
 	options BootstrapLocalReadinessOptions) (VerifiedBootstrapLocalReadinessV1, error) {
 	if ctx == nil || options.TLSConfig == nil || options.Now == nil ||
 		options.Timeout < time.Second || options.Timeout > 30*time.Second {
-		return VerifiedBootstrapLocalReadinessV1{}, errors.New("[D120 local verify] dependencies/timeout 无效")
+		return VerifiedBootstrapLocalReadinessV1{}, errors.New("[local verify] dependencies/timeout 无效")
 	}
 	if err := ctx.Err(); err != nil {
 		return VerifiedBootstrapLocalReadinessV1{}, err
@@ -81,7 +81,7 @@ func VerifyBootstrapLocalReadiness(ctx context.Context, runtime *BootstrapIngres
 	validFrom, _ := wire.ParseTimeZ(outerPlan.ValidFrom)
 	listenerValidUntil, _ := wire.ParseTimeZ(outerPlan.ValidUntil)
 	if startedAt.Before(validFrom) || !startedAt.Before(listenerValidUntil) {
-		return VerifiedBootstrapLocalReadinessV1{}, errors.New("[D120 local verify] listener 尚未生效或已过期")
+		return VerifiedBootstrapLocalReadinessV1{}, errors.New("[local verify] listener 尚未生效或已过期")
 	}
 	tcpDial := (&net.Dialer{}).DialContext
 	listenUDP := (&net.ListenConfig{}).ListenPacket
@@ -97,7 +97,7 @@ func VerifyBootstrapLocalReadiness(ctx context.Context, runtime *BootstrapIngres
 			options.TLSConfig, tcpDial, listenUDP, options.Timeout)
 		cancel()
 		if err != nil {
-			return VerifiedBootstrapLocalReadinessV1{}, fmt.Errorf("[D120 local verify] local socket handshake 失败: %w", err)
+			return VerifiedBootstrapLocalReadinessV1{}, fmt.Errorf("[local verify] local socket handshake 失败: %w", err)
 		}
 		verified, err := outerProbeResult(dialTuple, probePlan.Transport, state, probePlan.SPKIPins)
 		if err != nil {
@@ -111,7 +111,7 @@ func VerifyBootstrapLocalReadiness(ctx context.Context, runtime *BootstrapIngres
 	}
 	verifiedAt := options.Now().UTC().Truncate(time.Second)
 	if verifiedAt.Before(startedAt) || !verifiedAt.Before(listenerValidUntil) {
-		return VerifiedBootstrapLocalReadinessV1{}, errors.New("[D120 local verify] 完成时间倒退或超出 listener validity")
+		return VerifiedBootstrapLocalReadinessV1{}, errors.New("[local verify] 完成时间倒退或超出 listener validity")
 	}
 	validUntil := verifiedAt.Add(bootstrapLocalReadinessAge)
 	if listenerValidUntil.Before(validUntil) {
@@ -148,7 +148,7 @@ func (verified VerifiedBootstrapLocalReadinessV1) Evidence() BootstrapLocalReadi
 }
 
 // validateAdvertiseTransition 要求 advertise 精确引用刚从 prepared runtime
-// 验出的 local evidence，并限制其只能用于同一 certified state 的短窗口（D120）。
+// 验出的 local evidence，并限制其只能用于同一 certified state 的短窗口。
 func (verified VerifiedBootstrapLocalReadinessV1) validateAdvertiseTransition(
 	authorized rotation.AuthorizedRuntimePlanV1, transition *rotation.Transition) error {
 	intent := authorized.Intent()
@@ -171,11 +171,11 @@ func (verified VerifiedBootstrapLocalReadinessV1) validateAdvertiseTransition(
 		verified.evidence.Transport != intent.FrozenDependencies.Transport ||
 		len(verified.evidence.Results) == 0 ||
 		verified.evidence.ListenerGeneration != state.TargetListenerGeneration {
-		return errors.New("[D120 local verify] advertise transition 未绑定 verified local readiness")
+		return errors.New("[local verify] advertise transition 未绑定 verified local readiness")
 	}
 	wantHash, err := wire.HashObject(domainBootstrapLocalReadiness, verified.evidence)
 	if err != nil || wantHash != verified.hash {
-		return errors.New("[D120 local verify] local readiness evidence/hash 不一致")
+		return errors.New("[local verify] local readiness evidence/hash 不一致")
 	}
 	verifiedAt, err := wire.ParseTimeZ(verified.evidence.VerifiedAt)
 	if err != nil {
@@ -187,13 +187,13 @@ func (verified VerifiedBootstrapLocalReadinessV1) validateAdvertiseTransition(
 	}
 	certifiedAt, err := wire.ParseTimeZ(transition.CertifiedAt)
 	if err != nil || certifiedAt.Before(verifiedAt) || !certifiedAt.Before(validUntil) {
-		return errors.New("[D120 local verify] advertise certification 不在 local readiness 有效窗口")
+		return errors.New("[local verify] advertise certification 不在 local readiness 有效窗口")
 	}
 	return nil
 }
 
 // ValidateBootstrapAdvertiseTransition 把 local 与 external 两份独立证据设为同一
-// advertise 的必要条件；任何一侧的裸 hash 都不能代替 verified artifact（D120）。
+// advertise 的必要条件；任何一侧的裸 hash 都不能代替 verified artifact。
 func ValidateBootstrapAdvertiseTransition(authorized rotation.AuthorizedRuntimePlanV1,
 	transition *rotation.Transition, local VerifiedBootstrapLocalReadinessV1,
 	external VerifiedBootstrapOuterReachabilityV1) error {
@@ -206,7 +206,7 @@ func ValidateBootstrapAdvertiseTransition(authorized rotation.AuthorizedRuntimeP
 func bootstrapLocalDialTuple(binding rotation.Tuple) (rotation.Tuple, error) {
 	address, err := netip.ParseAddr(binding.Address)
 	if err != nil || address.String() != binding.Address {
-		return rotation.Tuple{}, errors.New("[D120 local verify] bind tuple address 无效")
+		return rotation.Tuple{}, errors.New("[local verify] bind tuple address 无效")
 	}
 	dial := binding
 	if address.IsUnspecified() {

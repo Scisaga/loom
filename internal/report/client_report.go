@@ -46,7 +46,7 @@ func newClientReportReceiver(tbl *table, control *Control, now func() time.Time,
 // ServeHTTP 是现有签名 Observation 协议的 NAT 出站传输适配器。它有意不接受
 // 完整 Status 或 learned：公网客户端只能提交由本节点拥有的陈述。成功上报与
 // WireGuard gossip 进入同一张内存表，因而继续复用既有 /status、转述和 UI 链路。
-// §16.1.2 显式 observations=1 才返回已有观测，旧 producer 仍收到空正文 204。
+// 显式 observations=1 才返回已有观测，旧 producer 仍收到空正文 204。
 func (h *clientReportReceiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -107,10 +107,10 @@ func (h *clientReportReceiver) ServeHTTP(w http.ResponseWriter, r *http.Request)
 }
 
 // serveHeartbeat 复用既有 HTTPS report 入口的身份边界，但线正文只有
-// node、ts、signature。证书、健康与观测内容不得进入五秒包（§16.4）。
+// node、ts、signature。证书、健康与观测内容不得进入五秒包。
 func (h *clientReportReceiver) serveHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength > nodepresence.MaxEnvelopeBytes {
-		http.Error(w, "[§16.4 在线心跳] 请求超过大小限制", http.StatusRequestEntityTooLarge)
+		http.Error(w, "[在线心跳] 请求超过大小限制", http.StatusRequestEntityTooLarge)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, nodepresence.MaxEnvelopeBytes)
@@ -139,10 +139,10 @@ func (h *clientReportReceiver) serveHeartbeat(w http.ResponseWriter, r *http.Req
 func writeClientHeartbeatDecodeError(w http.ResponseWriter, err error) {
 	var tooLarge *http.MaxBytesError
 	if errors.As(err, &tooLarge) {
-		http.Error(w, "[§16.4 在线心跳] 请求超过大小限制", http.StatusRequestEntityTooLarge)
+		http.Error(w, "[在线心跳] 请求超过大小限制", http.StatusRequestEntityTooLarge)
 		return
 	}
-	http.Error(w, "[§16.4 在线心跳] 格式错误", http.StatusBadRequest)
+	http.Error(w, "[在线心跳] 格式错误", http.StatusBadRequest)
 }
 
 func (h *clientReportReceiver) acceptHeartbeat(heartbeat nodepresence.Heartbeat, at time.Time) (int, error) {
@@ -165,7 +165,7 @@ func (h *clientReportReceiver) acceptHeartbeat(heartbeat nodepresence.Heartbeat,
 	if node == nil || node.Decommission || node.Access == nil ||
 		(node.Access.Platform != model.WindowsDesktop && node.Access.Platform != model.Android) ||
 		identity.Platform != string(node.Access.Platform) {
-		return http.StatusForbidden, errors.New("[§16.4 在线心跳] 节点不是在役 Windows/Android Device")
+		return http.StatusForbidden, errors.New("[在线心跳] 节点不是在役 Windows/Android Device")
 	}
 	publicKey, err := nodepresence.ParsePublicKey(identity.PublicKey)
 	if err != nil {
@@ -263,7 +263,7 @@ func (h *clientReportReceiver) accept(o *Observation, at time.Time, includeObser
 	return nil, http.StatusNoContent, nil
 }
 
-// observations 复用 §16.1.2 的同一张 gossip 表，不触发测量或创建推荐路径。
+// observations 复用同一张 gossip 表，不触发测量或创建推荐路径。
 // 范围从本次鉴权的 SSOT 候选链推导；只筛选完整 Observation，绝不裁剪签名正文。
 func (h *clientReportReceiver) observations(s *model.SSOT, access *model.Node, ca []byte, at time.Time) []Observation {
 	nodes := s.NodeByID()

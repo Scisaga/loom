@@ -3,7 +3,7 @@ package model
 import "fmt"
 
 // Direction 是节点属性:它约束该节点在一条隧道中能扮演什么角色。
-// 见 design.md §2.1。
+// 公网可达性与拨号意愿共同确定端点的方向约束。
 type Direction string
 
 const (
@@ -31,14 +31,14 @@ func (d Direction) canAccept() bool { return d != ReverseOnly }
 
 // ResolveInitiator 推导一条隧道由哪一端发起。
 //
-// 发起方由两端共同决定,不由单端决定 —— 这是 §2.2 真值表的实现。
+// 发起方由两端共同决定,不由单端决定 —— 这是真值表的实现。
 // 六种组合中有两种非法,此处返回错误而非任选一方:
 //
 //	rev ↔ rev  双方都要发起,无人接受
 //	dir ↔ dir  双方都要被连,无人发起
 //
 // bi ↔ bi 时两端都合法,取 node id 字典序小者发起。这个规则存在的唯一
-// 目的是让渲染保持纯函数性质(§12):同一份 SSOT 必须渲染出同样的字节。
+// 目的是让渲染保持纯函数性质:同一份 SSOT 必须渲染出同样的字节。
 //
 // 返回 true 表示 a 发起、b 接受。
 func ResolveInitiator(aID string, a Direction, bID string, b Direction) (aInitiates bool, err error) {

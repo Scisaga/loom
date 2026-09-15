@@ -63,7 +63,7 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 				v.Warnings = append(v.Warnings, "中控 SSOT 元数据不可用:"+err.Error())
 			}
 		}
-		// §16.4：心跳只在最终 View 上补入独立 presence 时间，不能写回
+		// 心跳只在最终 View 上补入独立 presence 时间，不能写回
 		// Status/Observation，也不能改变观测详情的新鲜度。
 		attachPresenceView(tbl, v)
 		v.TrafficHistoryStatus = trafficHistoryStatus
@@ -161,7 +161,7 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 		mux.Handle("/api/client/report", newClientReportReceiver(tbl, ctl, now, maxAge, logw))
 	}
 	mux.Handle("/presence", newServerPresenceReceiver(tbl, cfg, now))
-	// D132/D133:61802 只保留节点机器接口。浏览器 UI 只有 private HTTPS
+	// 61802 只保留节点机器接口。浏览器 UI 只有 private HTTPS
 	// control listener 一个入口，避免同一套页面同时暴露为明文和 mTLS 两种边界。
 	mux.HandleFunc("/", legacyReportHTTPNotFound)
 
@@ -315,7 +315,7 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 	}
 
 	// 在线心跳与上面的完整 gossip 是两个独立周期；前者不调用 observe，
-	// 不采集也不转写任何节点观测（§16.4）。
+	// 不采集也不转写任何节点观测。
 	wg.Add(1)
 	go func() {
 		defer wg.Done()

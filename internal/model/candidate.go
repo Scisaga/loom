@@ -6,21 +6,21 @@ import (
 	"strings"
 )
 
-// RouteCandidate 是排序、选择与归因的唯一单位(§5.6)。
+// RouteCandidate 是排序、选择与归因的唯一单位。
 //
 // 地址与服务器链不分开排序:经广州最优的地址,经北京未必仍最优。评分的
 // 单位是完整路径,因此这里把两者绑在一起。
 type RouteCandidate struct {
 	Declaration string
 
-	// Service 非空时,这条候选属于某个服务(§4.5)。
+	// Service 非空时,这条候选属于某个服务。
 	//
 	// **服务是选择的单位,不是选择的对象**:服务把一组地址归到一起走同一
-	// 条路,而不是从中挑一个。挑一个是等价类的事(§4.3),那时用 Address。
+	// 条路,而不是从中挑一个。挑一个是等价类的事,那时用 Address。
 	Service string
 
-	// ServerChain 有序。**最后一台就是这次的出口**(§1.1)。
-	// 长度为 0 表示直连 —— 零跳是一等公民(§3.1)。
+	// ServerChain 有序。**最后一台就是这次的出口**。
+	// 长度为 0 表示直连 —— 零跳是一等公民。
 	ServerChain []string
 
 	// Address 是最终地址。地址轴为 from_request 时为空,
@@ -40,7 +40,7 @@ func (c *RouteCandidate) Egress() string {
 func (c *RouteCandidate) Tag() string {
 	key := c.Declaration
 	if c.Service != "" {
-		// 同一条声明治理的多个服务**各自独立选路**(D43),所以 tag 必须
+		// 同一条声明治理的多个服务**各自独立选路**,所以 tag 必须
 		// 带上服务 —— 否则它们会共用一个 selector,又回到"一个候选服务
 		// 所有目标"的老问题。
 		key = c.Service
@@ -77,7 +77,7 @@ type CandidateSkip struct {
 // 别的接入节点没建,就只能经国内中继中转。
 //
 // 这里只做"能否表达"这一层过滤:出口能力、可达性、方向约束。合规、地域、
-// SLA 属于调度层的过滤(§5.1),不在渲染期生效。
+// SLA 属于调度层的过滤,不在渲染期生效。
 func (s *SSOT) EnumerateCandidates(access *Node, d *AccessDeclaration) ([]RouteCandidate, []CandidateSkip) {
 	nodes := s.NodeByID()
 	var skips []CandidateSkip
@@ -111,11 +111,11 @@ func (s *SSOT) candidateAddresses(d *AccessDeclaration, skip func(string, ...any
 	if !ok {
 		return nil, false // 引用错误已由校验器报出
 	}
-	// §4.4:只有 l4_direct 的等价类能由数据平面直接换地址。其余承载方式
+	// 只有 l4_direct 的等价类能由数据平面直接换地址。其余承载方式
 	// 要经 L7 网关或调用方 SDK,而那不是本渲染器的产物。
 	if c.Carrier != L4Direct {
 		skip("等价类 %q 的 carrier 是 %s,换地址不由 L4 完成;"+
-			"该声明在数据平面没有候选,需要 %s 承载(§4.4)", c.ID, c.Carrier, c.Carrier)
+			"该声明在数据平面没有候选,需要 %s 承载", c.ID, c.Carrier, c.Carrier)
 		return nil, false
 	}
 	var out []string
@@ -167,7 +167,7 @@ func (s *SSOT) candidateChains(access *Node, d *AccessDeclaration, nodes map[str
 		return pinned == "" || n.ID == pinned
 	}
 
-	// 零跳:接入节点直接连目标地址。§3.1 —— 直连是一等公民,与多跳同台竞争。
+	// 零跳:接入节点直接连目标地址。直连是一等公民,与多跳同台竞争。
 	// ServerChain 仍保持为空,因为把 access 自己塞进链里会让渲染器真的建立
 	// 一次“连回自己”的 Hysteria/Trojan 连接。若策略把这个混合角色节点列入
 	// allowed_servers,则空链就是它作为本地出口的表达,并非一个漏用的服务器。

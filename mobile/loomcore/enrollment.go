@@ -139,7 +139,7 @@ func validateEnrollmentInvite(invite enrollmentInvite) error {
 }
 
 func invalidEnrollmentInvite() error {
-	return errors.New("[§9.1 加入二维码] 加入码无效；请重新获取，不要复制或记录其原始内容")
+	return errors.New("[加入二维码] 加入码无效；请重新获取，不要复制或记录其原始内容")
 }
 
 // EnrollmentEndpoint extracts the credential-free HTTPS request target from a
@@ -204,22 +204,22 @@ func BuildAndroidClaim(inviteJSON, csrPEM, publicSPKI []byte, requestID string) 
 
 func validateEnrollmentCSR(csrPEM []byte, requestID string, expectedPublicKey *ecdsa.PublicKey) error {
 	if len(csrPEM) == 0 || len(csrPEM) > maxInviteBytes {
-		return errors.New("[§4.3 设备绑定] 加入身份 CSR 大小无效")
+		return errors.New("[设备绑定] 加入身份 CSR 大小无效")
 	}
 	block, rest := pem.Decode(csrPEM)
 	if block == nil || block.Type != "CERTIFICATE REQUEST" || strings.TrimSpace(string(rest)) != "" {
-		return errors.New("[§4.3 设备绑定] 加入身份 CSR 无效")
+		return errors.New("[设备绑定] 加入身份 CSR 无效")
 	}
 	csr, err := x509.ParseCertificateRequest(block.Bytes)
 	if err != nil || csr.CheckSignature() != nil ||
 		len(csr.DNSNames)+len(csr.EmailAddresses)+len(csr.IPAddresses)+len(csr.URIs) != 0 {
-		return errors.New("[§4.3 设备绑定] 加入身份 CSR 签名/SAN 无效")
+		return errors.New("[设备绑定] 加入身份 CSR 签名/SAN 无效")
 	}
 	publicKey, ok := csr.PublicKey.(*ecdsa.PublicKey)
 	if !ok || publicKey.Curve != elliptic.P256() || expectedPublicKey == nil ||
 		publicKey.X.Cmp(expectedPublicKey.X) != 0 || publicKey.Y.Cmp(expectedPublicKey.Y) != 0 ||
 		csr.Subject.CommonName != requestID || len(csr.Subject.Names) != 1 {
-		return errors.New("[§4.3 设备绑定] 加入身份 CSR/request_id 不匹配")
+		return errors.New("[设备绑定] 加入身份 CSR/request_id 不匹配")
 	}
 	return nil
 }
@@ -244,7 +244,7 @@ func ValidateAndroidEnrollmentResponse(inviteJSON, responseJSON, publicSPKI []by
 	}
 	var response enrollmentResponse
 	if err := decodeStrictJSON(responseJSON, maxResponseBytes, &response); err != nil {
-		return nil, errors.New("[§9.2 加入流程] 控制中心返回了无法识别的响应")
+		return nil, errors.New("[加入流程] 控制中心返回了无法识别的响应")
 	}
 	if err := validateEnrollmentResponse(response, statusCode); err != nil {
 		return nil, err
@@ -261,57 +261,57 @@ func ValidateAndroidEnrollmentResponse(inviteJSON, responseJSON, publicSPKI []by
 
 func validateEnrollmentResponse(response enrollmentResponse, statusCode int) error {
 	if response.Schema != enrollmentSchema || !validNodeID(response.ClientID) {
-		return errors.New("[§9.2 加入流程] 加入响应 schema/client_id 无效")
+		return errors.New("[加入流程] 加入响应 schema/client_id 无效")
 	}
 	if _, err := time.Parse(time.RFC3339, response.ClaimedAt); err != nil {
-		return errors.New("[§9.2 加入流程] 加入响应 claimed_at 无效")
+		return errors.New("[加入流程] 加入响应 claimed_at 无效")
 	}
 	switch response.Configuration {
 	case "pending":
 		if statusCode != 202 || response.Status != "provisioning" ||
 			response.Next != "wait_for_configuration" || response.Bootstrap != nil {
-			return errors.New("[§9.2 加入流程] pending 加入响应语义不一致")
+			return errors.New("[加入流程] pending 加入响应语义不一致")
 		}
 	case "ready":
 		if statusCode != 200 || response.Status != "ready" || response.Next != "pull" || response.Bootstrap == nil {
-			return errors.New("[§9.2 加入流程] ready 加入响应语义不一致")
+			return errors.New("[加入流程] ready 加入响应语义不一致")
 		}
 		if response.Bootstrap.NodeID != response.ClientID {
-			return errors.New("[§4.3 设备绑定] ready 加入响应的 client_id 与 node_id 不一致")
+			return errors.New("[设备绑定] ready 加入响应的 client_id 与 node_id 不一致")
 		}
 	default:
-		return errors.New("[§4.5 fail closed] 不识别加入配置状态")
+		return errors.New("[fail closed] 不识别加入配置状态")
 	}
 	return nil
 }
 
 func validateEnrollmentBootstrap(bootstrap *enrollmentBootstrap, clientID string, invite enrollmentInvite, devicePublicKey *ecdsa.PublicKey) error {
 	if bootstrap == nil || !validNodeID(bootstrap.NodeID) || bootstrap.NodeID != clientID {
-		return errors.New("[§4.3 设备绑定] bootstrap 节点 id 无效")
+		return errors.New("[设备绑定] bootstrap 节点 id 无效")
 	}
 	if err := validateDistributionCoordinates(bootstrap.DistributionURLs, bootstrap.DNS); err != nil {
 		return err
 	}
 	if _, err := parseSecretsEnv(bootstrap.SecretsEnv); err != nil {
-		return fmt.Errorf("[§4.2 配置与秘密分离] bootstrap 秘密层无效:%w", err)
+		return fmt.Errorf("[配置与秘密分离] bootstrap 秘密层无效:%w", err)
 	}
 	platformKey, err := decodePlatformPublicKey(bootstrap.PlatformPublicKey)
 	if err != nil {
 		return err
 	}
 	if invite.PlatformKeySHA256 == "" {
-		return errors.New("[§4.3 签名高于传输信任] 加入码缺少平台公钥指纹")
+		return errors.New("[签名高于传输信任] 加入码缺少平台公钥指纹")
 	}
 	digest := sha256.Sum256(platformKey)
 	if !bytes.Equal([]byte(invite.PlatformKeySHA256), []byte(hex.EncodeToString(digest[:]))) {
-		return errors.New("[§4.3 签名高于传输信任] bootstrap 平台公钥与加入码指纹不匹配")
+		return errors.New("[签名高于传输信任] bootstrap 平台公钥与加入码指纹不匹配")
 	}
 	current, err := decodeAndVerifyCurrent([]byte(bootstrap.ReleaseAuthority), platformKey)
 	if err != nil {
-		return fmt.Errorf("[§4.3 签名高于传输信任] bootstrap release authority 无效:%w", err)
+		return fmt.Errorf("[签名高于传输信任] bootstrap release authority 无效:%w", err)
 	}
 	if _, err := current.selectSnapshot(bootstrap.NodeID); err != nil {
-		return fmt.Errorf("[§4.3 设备绑定] signed current 未授权本设备:%w", err)
+		return fmt.Errorf("[设备绑定] signed current 未授权本设备:%w", err)
 	}
 	if err := validateNodeCertificates(bootstrap.CACertPEM, bootstrap.NodeCertPEM, bootstrap.NodeID, devicePublicKey); err != nil {
 		return err
@@ -323,28 +323,28 @@ func validateEnrollmentBootstrap(bootstrap *enrollmentBootstrap, clientID string
 
 func validateDistributionCoordinates(mirrors, dnsEntries []string) error {
 	if len(mirrors) == 0 || len(mirrors) > 8 {
-		return errors.New("[§14.2 节点自取] bootstrap 分发镜像数量无效")
+		return errors.New("[节点自取] bootstrap 分发镜像数量无效")
 	}
 	seen := map[string]bool{}
 	for _, raw := range mirrors {
 		parsed, err := url.ParseRequestURI(raw)
 		if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") ||
 			parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-			return errors.New("[§14.2 节点自取] bootstrap 分发镜像无效")
+			return errors.New("[节点自取] bootstrap 分发镜像无效")
 		}
 		normalized := strings.TrimRight(raw, "/")
 		if seen[normalized] {
-			return errors.New("[§14.2 节点自取] bootstrap 分发镜像重复")
+			return errors.New("[节点自取] bootstrap 分发镜像重复")
 		}
 		seen[normalized] = true
 	}
 	if len(dnsEntries) > 4 {
-		return errors.New("[§7.3.2 DNS] bootstrap DNS 坐标过多")
+		return errors.New("[DNS] bootstrap DNS 坐标过多")
 	}
 	for _, raw := range dnsEntries {
 		address, err := netip.ParseAddr(raw)
 		if err != nil || !address.IsValid() || address.IsUnspecified() {
-			return errors.New("[§7.3.2 DNS] bootstrap DNS 坐标无效")
+			return errors.New("[DNS] bootstrap DNS 坐标无效")
 		}
 	}
 	return nil
@@ -357,7 +357,7 @@ func decodePlatformPublicKey(encoded string) (ed25519.PublicKey, error) {
 		key, err = base64.RawStdEncoding.DecodeString(raw)
 	}
 	if err != nil || len(key) != ed25519.PublicKeySize {
-		return nil, errors.New("[§4.3 签名高于传输信任] bootstrap 平台公钥无效")
+		return nil, errors.New("[签名高于传输信任] bootstrap 平台公钥无效")
 	}
 	return ed25519.PublicKey(key), nil
 }
@@ -377,15 +377,15 @@ func parseP256PublicKey(spki []byte) (*ecdsa.PublicKey, error) {
 func validateNodeCertificates(caPEM, certPEM, nodeID string, devicePublicKey *ecdsa.PublicKey) error {
 	ca, err := parseSingleCertificate([]byte(caPEM))
 	if err != nil || !ca.IsCA {
-		return errors.New("[§9.3 稳态认证] bootstrap CA 证书无效")
+		return errors.New("[稳态认证] bootstrap CA 证书无效")
 	}
 	certificate, err := parseSingleCertificate([]byte(certPEM))
 	if err != nil {
-		return errors.New("[§9.3 稳态认证] bootstrap 节点证书无效")
+		return errors.New("[稳态认证] bootstrap 节点证书无效")
 	}
 	publicKey, ok := certificate.PublicKey.(*ecdsa.PublicKey)
 	if !ok || publicKey.Curve != elliptic.P256() || publicKey.X.Cmp(devicePublicKey.X) != 0 || publicKey.Y.Cmp(devicePublicKey.Y) != 0 {
-		return errors.New("[§4.3 设备绑定] 签发证书与 Android Keystore 公钥不匹配")
+		return errors.New("[设备绑定] 签发证书与 Android Keystore 公钥不匹配")
 	}
 	roots := x509.NewCertPool()
 	roots.AddCert(ca)
@@ -393,7 +393,7 @@ func validateNodeCertificates(caPEM, certPEM, nodeID string, devicePublicKey *ec
 		Roots: roots, DNSName: nodeID + ".node.internal",
 		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}); err != nil {
-		return fmt.Errorf("[§9.3 稳态认证] 节点证书无法回溯到 bootstrap CA:%w", err)
+		return fmt.Errorf("[稳态认证] 节点证书无法回溯到 bootstrap CA:%w", err)
 	}
 	return nil
 }
@@ -415,7 +415,7 @@ func ReportEndpoint(enrollmentEndpoint string) (string, error) {
 	parsed, err := url.Parse(enrollmentEndpoint)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
 		parsed.Path != "/loom-client/enroll" || parsed.RawPath != "" || strings.ContainsAny(enrollmentEndpoint, "?#") {
-		return "", errors.New("[D98 上报] 加入入口必须是无附加参数的 HTTPS /loom-client/enroll")
+		return "", errors.New("[上报] 加入入口必须是无附加参数的 HTTPS /loom-client/enroll")
 	}
 	parsed.Path = "/loom-client/report"
 	return parsed.String(), nil

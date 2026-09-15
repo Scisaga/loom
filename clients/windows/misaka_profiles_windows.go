@@ -47,7 +47,7 @@ func (app *portableGUI) misakaProfile(id string) (windowsProfileDisplay, bool) {
 	return profiles[index], true
 }
 
-// §7.2：鼠标和键盘共用原生菜单；操作绑定点击时的配置 ID，不借用异步 broker 的旧选中项。
+// 鼠标和键盘共用原生菜单；操作绑定点击时的配置 ID，不借用异步 broker 的旧选中项。
 func (app *portableGUI) misakaProfileMenuTarget(lParam uintptr) (string, portablePoint) {
 	var point portablePoint
 	var index uintptr

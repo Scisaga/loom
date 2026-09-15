@@ -10,7 +10,7 @@ import (
 
 // EnrollmentCompletionReceiptV1 是 completed 响应交给 Device 的可重放证明。
 // 它只包含已经进入私有 Enrollment 事务或 certified Head 的材料；token、challenge、
-// PoP signature 与 CSR DER 不会从服务端 durable state 反射回来（D129、D130）。
+// PoP signature 与 CSR DER 不会从服务端 durable state 反射回来。
 type EnrollmentCompletionReceiptV1 struct {
 	Schema                           int                                  `json:"schema"`
 	Invite                           InviteContext                        `json:"invite"`
@@ -92,7 +92,7 @@ func (verified VerifiedEnrollmentCompletionV1) TransactionStateHash() string {
 
 // ResumeExpected 允许 Device 在 completion 已提交、正式状态尚未原子落盘的
 // 崩溃窗中接受管理员显式签发的 exact-bound resume。它不复活 Invite/token，
-// 只投影刚刚由完整 receipt 重放得到的 completed transaction（D130）。
+// 只投影刚刚由完整 receipt 重放得到的 completed transaction。
 func (verified VerifiedEnrollmentCompletionV1) ResumeExpected() wire.EnrollmentResumeExpectedV1 {
 	return verified.resumeExpected
 }
@@ -108,7 +108,7 @@ func (verified VerifiedEnrollmentCompletionV1) IncludesTransactionStateHash(hash
 
 // VerifyInstallationContext 把 completion verifier 的不透明结论重新绑定到客户端
 // 即将落盘的 exact result、stable core 与 Invite proof。安装层不得从 result 或
-// receipt 的公开字段自行拼装一个“已验证”状态（D115、D124、D130）。
+// receipt 的公开字段自行拼装一个“已验证”状态。
 func (verified VerifiedEnrollmentCompletionV1) VerifyInstallationContext(result *wire.EnrollmentClaimResultV2,
 	claimCore *wire.EnrollmentClaimCoreV2, proof wire.VerifiedInviteProofV2) error {
 	if result == nil || claimCore == nil || verified.transactionHash == "" ||
@@ -116,7 +116,7 @@ func (verified VerifiedEnrollmentCompletionV1) VerifyInstallationContext(result 
 		verified.identityKeyHash == "" || verified.wrappingKeyHash == "" ||
 		verified.certifiedInviteHash == "" || verified.baseHeadHash == "" ||
 		verified.baseControlSetHash == "" {
-		return errors.New("[D130 client] completion installation evidence 不完整")
+		return errors.New("[client] completion installation evidence 不完整")
 	}
 	if err := wire.ValidateEnrollmentClaimResult(result); err != nil {
 		return err
@@ -124,25 +124,25 @@ func (verified VerifiedEnrollmentCompletionV1) VerifyInstallationContext(result 
 	resultHash, err := wire.EnrollmentResultArtifactHash(result.ResultArtifact)
 	if err != nil || result.Status != "completed" || result.TransactionStateHash != verified.transactionHash ||
 		result.ResultArtifactHash != verified.resultArtifactHash || resultHash != verified.resultArtifactHash {
-		return errors.New("[D130 client] installation result 未绑定 verified completion")
+		return errors.New("[client] installation result 未绑定 verified completion")
 	}
 	coreHash, err := wire.EnrollmentClaimCoreHash(claimCore)
 	if err != nil || coreHash != verified.claimCoreHash {
-		return errors.New("[D130 client] installation core 未绑定 verified completion")
+		return errors.New("[client] installation core 未绑定 verified completion")
 	}
 	identityHash, wrappingHash, _, err := wire.EnrollmentClaimBinaryHashes(claimCore)
 	if err != nil || identityHash != verified.identityKeyHash || wrappingHash != verified.wrappingKeyHash {
-		return errors.New("[D130 client] installation keys 未绑定 verified completion")
+		return errors.New("[client] installation keys 未绑定 verified completion")
 	}
 	proofHead := proof.Head()
 	proofSet := proof.ControlSet()
 	proofSetHash, err := wire.ControlSetHash(&proofSet)
 	if err != nil || proof.CertifiedInviteRecordHash() != verified.certifiedInviteHash ||
 		proofHead.HeadHash != verified.baseHeadHash || proofSetHash != verified.baseControlSetHash {
-		return errors.New("[D115 client] installation 未延续 exact verified Invite authority")
+		return errors.New("[client] installation 未延续 exact verified Invite authority")
 	}
 	if !wire.EqualCanonical(result.ResultArtifact.InitialDeviceView, verified.envelope.Payload) {
-		return errors.New("[D130 client] installation Device view 未绑定 result artifact")
+		return errors.New("[client] installation Device view 未绑定 result artifact")
 	}
 	return nil
 }
@@ -153,7 +153,7 @@ func completionReceiptForRecord(record *DurableRecord) ([]byte, error) {
 		record.ProvisionalCertification == nil || record.ApprovalQC == nil ||
 		record.ApprovalControlSet == nil || record.CompletionOperation == nil ||
 		record.CompletionCertification == nil || record.CompletionProjection == nil {
-		return nil, errors.New("[D130 Enrollment] completed receipt 缺 durable proof material")
+		return nil, errors.New("[Enrollment] completed receipt 缺 durable proof material")
 	}
 	receipt := EnrollmentCompletionReceiptV1{
 		Schema: 1, Invite: record.Invite, ClaimEvidence: record.ClaimEvidence,
@@ -177,17 +177,17 @@ func completionReceiptForRecord(record *DurableRecord) ([]byte, error) {
 
 // VerifyEnrollmentCompletionReceipt 从客户端已验 Invite Head 开始，重放
 // reservation → issuance → completion 的完整 reducer、Head/QC/inclusion 与 Device view
-// proof。只有返回不透明 evidence 后，客户端才可安装证书或清理 bootstrap secret（D130）。
+// proof。只有返回不透明 evidence 后，客户端才可安装证书或清理 bootstrap secret。
 func VerifyEnrollmentCompletionReceipt(raw []byte, result *wire.EnrollmentClaimResultV2,
 	expected EnrollmentCompletionExpectedV1) (VerifiedEnrollmentCompletionV1, error) {
 	if len(raw) == 0 || result == nil || expected.TrustedTime.IsZero() ||
 		result.Status != "completed" || result.ResultArtifact == nil {
-		return VerifiedEnrollmentCompletionV1{}, errors.New("[D130 client] completion receipt/context 不完整")
+		return VerifiedEnrollmentCompletionV1{}, errors.New("[client] completion receipt/context 不完整")
 	}
 	var receipt EnrollmentCompletionReceiptV1
 	canonical, err := wire.DecodeStrict(raw, 32<<20, &receipt)
 	if err != nil || !bytes.Equal(canonical, raw) || receipt.Schema != 1 {
-		return VerifiedEnrollmentCompletionV1{}, errors.New("[D130 client] completion receipt 不是 exact canonical wire")
+		return VerifiedEnrollmentCompletionV1{}, errors.New("[client] completion receipt 不是 exact canonical wire")
 	}
 	if err := wire.ValidateCertifiedInviteRecord(&expected.Record, &expected.Policy); err != nil {
 		return VerifiedEnrollmentCompletionV1{}, err
@@ -216,7 +216,7 @@ func VerifyEnrollmentCompletionReceipt(raw []byte, result *wire.EnrollmentClaimR
 		expected.ClaimCore.BaseControlEpoch != expected.BaseHead.Body.Payload.ControlEpoch ||
 		expected.ClaimCore.BaseControlSetHash != baseSetHash ||
 		expected.BaseHead.Body.Payload.ControlSetHash != baseSetHash {
-		return VerifiedEnrollmentCompletionV1{}, errors.New("[D130 client] 本机 claim 未绑定已验 Invite authority")
+		return VerifiedEnrollmentCompletionV1{}, errors.New("[client] 本机 claim 未绑定已验 Invite authority")
 	}
 	wantInvite := InviteContext{
 		ClusterID: expected.Record.ClusterID, InviteID: expected.Record.InviteID, Status: "available",
@@ -240,7 +240,7 @@ func VerifyEnrollmentCompletionReceipt(raw []byte, result *wire.EnrollmentClaimR
 		operation.DeviceEnrollmentIntentOpeningHash != openingHash || operation.TokenCommitment != expected.Record.TokenCommitment ||
 		operation.ClaimCoreHash != coreHash || operation.IdentityKeyHash != identityHash ||
 		operation.WrappingKeyHash != wrappingHash || operation.CSRHash != csrHash {
-		return VerifiedEnrollmentCompletionV1{}, errors.New("[D130 client] receipt 未绑定本机 stable claim/core/key")
+		return VerifiedEnrollmentCompletionV1{}, errors.New("[client] receipt 未绑定本机 stable claim/core/key")
 	}
 	reserved, err := Reserve(receipt.Invite, receipt.ClaimOperation, &receipt.AdmissionQC,
 		&receipt.AdmissionControlSet, receipt.ClaimOperation.ReservedAt)
@@ -259,7 +259,7 @@ func VerifyEnrollmentCompletionReceipt(raw []byte, result *wire.EnrollmentClaimR
 	reservedHash, reservedHashErr := TransactionHash(reserved)
 	issuedHash, issuedHashErr := TransactionHash(issued)
 	if reservedHashErr != nil || issuedHashErr != nil {
-		return VerifiedEnrollmentCompletionV1{}, errors.New("[D130 client] receipt 中间 transaction state 不可重放")
+		return VerifiedEnrollmentCompletionV1{}, errors.New("[client] receipt 中间 transaction state 不可重放")
 	}
 	record := DurableRecord{
 		InviteID: receipt.Invite.InviteID, TokenCommitment: receipt.Invite.TokenCommitment,
@@ -292,23 +292,23 @@ func VerifyEnrollmentCompletionReceipt(raw []byte, result *wire.EnrollmentClaimR
 	completedHash, err := TransactionHash(completed)
 	if err != nil || result.TransactionStateHash != completedHash ||
 		receipt.CompletionProjection.CompletedTransactionStateHash != completedHash {
-		return VerifiedEnrollmentCompletionV1{}, errors.New("[D130 client] completed transaction state hash 不可重放")
+		return VerifiedEnrollmentCompletionV1{}, errors.New("[client] completed transaction state hash 不可重放")
 	}
 	claimOperationHash, claimHashErr := wire.HashObject(DomainClaimOperation, receipt.ClaimOperation)
 	admissionQCHash, admissionHashErr := wire.EnrollmentAdmissionQCHash(&receipt.AdmissionQC)
 	if claimHashErr != nil || admissionHashErr != nil ||
 		claimOperationHash != completed.ClaimOperationHash ||
 		admissionQCHash != receipt.ClaimOperation.AdmissionQCHash {
-		return VerifiedEnrollmentCompletionV1{}, errors.New("[D130 client] completed resume binding 不可重放")
+		return VerifiedEnrollmentCompletionV1{}, errors.New("[client] completed resume binding 不可重放")
 	}
 	resultHash, err := wire.EnrollmentResultArtifactHash(result.ResultArtifact)
 	if err != nil || result.ResultArtifactHash != resultHash ||
 		receipt.CompletionProjection.ResultArtifactHash != resultHash {
-		return VerifiedEnrollmentCompletionV1{}, errors.New("[D130 client] completed result artifact 未绑定 receipt")
+		return VerifiedEnrollmentCompletionV1{}, errors.New("[client] completed result artifact 未绑定 receipt")
 	}
 	issuanceTime, err := wire.ParseTimeZ(receipt.ProvisionalCertification.Head.Body.Payload.CommittedLogicalTime)
 	if err != nil || expected.TrustedTime.UTC().Before(issuanceTime) {
-		return VerifiedEnrollmentCompletionV1{}, errors.New("[D102 client] trusted time 早于 certificate issuance Head")
+		return VerifiedEnrollmentCompletionV1{}, errors.New("[client] trusted time 早于 certificate issuance Head")
 	}
 	certificateDER, err := wire.EnrollmentResultCertificateDER(result.ResultArtifact)
 	if err != nil {

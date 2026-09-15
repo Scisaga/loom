@@ -19,7 +19,7 @@ var icmpCreate = icmpDLL.NewProc("IcmpCreateFile")
 var icmpClose = icmpDLL.NewProc("IcmpCloseHandle")
 var icmpSend = icmpDLL.NewProc("IcmpSendEcho2Ex")
 
-// §7.2.1：TUN 启动前只读系统路由，不改路由，也不发送探测包。
+// TUN 启动前只读系统路由，不改路由，也不发送探测包。
 func entrySource(address string) string {
 	var dest windows.SockaddrInet4
 	if ip := net.ParseIP(address).To4(); ip != nil {
@@ -46,7 +46,7 @@ func entrySource(address string) string {
 	return ""
 }
 
-// §5.6：每入口只发一个 ICMP echo；失败保持未知，不重试或降级为业务探测。
+// 每入口只发一个 ICMP echo；失败保持未知，不重试或降级为业务探测。
 // Win32 契约：https://learn.microsoft.com/windows/win32/api/icmpapi/nf-icmpapi-icmpsendecho2ex
 func pingWindowsEntry(ctx context.Context, e agent.ClientEntry) (time.Duration, error) {
 	unknown := errors.New("入口单次 ping 未获响应")

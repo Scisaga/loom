@@ -31,7 +31,7 @@ type brokerRequest struct {
 	Name       string                 `json:"name,omitempty"`
 }
 
-// §13.5：界面只收到显示状态和已授权出口，不传送配置正文、文件路径、API 密码或私钥。
+// 界面只收到显示状态和已授权出口，不传送配置正文、文件路径、API 密码或私钥。
 type brokerSnapshot struct {
 	State             portableGUIState            `json:"state"`
 	Joined            bool                        `json:"joined"`
@@ -63,7 +63,7 @@ func decodeBrokerRequest(body []byte) (brokerRequest, error) {
 		return req, errors.New("服务请求长度无效")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
-	// §13.5：encoding/json 忽略字段大小写；同一字段的不同拼写也不能覆盖操作或邀请。
+	// encoding/json 忽略字段大小写；同一字段的不同拼写也不能覆盖操作或邀请。
 	if err := rejectConnectionProfileDuplicateFields(decoder, 0); err != nil {
 		return req, errors.New("服务请求字段重复或结构无效")
 	}
@@ -215,7 +215,7 @@ func serveBroker(ctx context.Context, pipe windows.Handle, app *portableGUI) err
 			}
 			output, marshalErr := json.Marshal(response)
 			if marshalErr == nil && writePipeMessage(connectionCtx, pipe, output) == nil {
-				// §13.5：读完确认后再断开，避免 DisconnectNamedPipe 丢弃尚未读取的响应。
+				// 读完确认后再断开，避免 DisconnectNamedPipe 丢弃尚未读取的响应。
 				var ack [1]byte
 				_ = pipeBytes(connectionCtx, pipe, ack[:], false)
 			}
@@ -278,7 +278,7 @@ func callInstalledBroker(ctx context.Context, request brokerRequest) (brokerResp
 		return response, err
 	}
 	defer windows.CloseHandle(pipe)
-	// §13.5：先核对 SCM 的 PID，再发送任何一次性加入凭据。
+	// 先核对 SCM 的 PID，再发送任何一次性加入凭据。
 	if err := verifyBrokerServer(pipe); err != nil {
 		return response, errors.New("无法验证 Loom 后台服务身份；请修复安装")
 	}

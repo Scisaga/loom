@@ -216,7 +216,7 @@ func TestClaimNeverReportsBearerFromControlError(t *testing.T) {
 	_, err := Claim(context.Background(), server.Client(), Invite{
 		Endpoint: server.URL, Token: token,
 	}, filepath.Join(t.TempDir(), "state"), nil)
-	if err == nil || strings.Contains(err.Error(), token) || err.Error() != "[§9.2 加入流程] 控制中心返回 HTTP 400" {
+	if err == nil || strings.Contains(err.Error(), token) || err.Error() != "[加入流程] 控制中心返回 HTTP 400" {
 		t.Fatalf("unsafe status error=%v", err)
 	}
 }

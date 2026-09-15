@@ -13,7 +13,7 @@ import (
 // 写进 SSOT 会变成自我引用(SSOT 里记着 SSOT 在哪)。
 const ControlPath = "/etc/loom/control.json"
 
-// Control 让这台机器成为中控:多出改 SSOT 的能力(§14.2.3、D36)。
+// Control 让这台机器成为中控:多出改 SSOT 的能力。
 //
 // 只有一台机器该有它。写操作收敛到一处,是因为任何节点都能到任何节点的
 // 隧道地址 —— 五个写入口意味着一台被拿下就能去动其他四台。

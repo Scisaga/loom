@@ -22,7 +22,7 @@ import (
 )
 
 // ACMEClient 把 RFC 8555 provider I/O 与节点本地可恢复状态机分开；测试 fake
-// 与真实 CA 必须经过同一 order/authz/challenge/finalize 顺序（D103）。
+// 与真实 CA 必须经过同一 order/authz/challenge/finalize 顺序。
 type ACMEClient interface {
 	EnsureAccount(context.Context) error
 	AuthorizeOrder(context.Context, []string) (*acme.Order, error)
@@ -56,21 +56,21 @@ type RFC8555Client struct {
 var _ ACMEClient = (*RFC8555Client)(nil)
 
 // NewRFC8555Client 创建只连 exact ACME directory origin、禁用环境代理与
-// redirect 的生产 adapter；account private key 始终留在本节点（D103、D108）。
+// redirect 的生产 adapter；account private key 始终留在本节点。
 func NewRFC8555Client(config RFC8555Config) (*RFC8555Client, error) {
 	directory, err := parseACMEURL(config.DirectoryURL)
 	if err != nil || config.AccountKeyPath == "" {
-		return nil, errors.New("[D103 ACME] directory URL/account key path 无效")
+		return nil, errors.New("[ACME] directory URL/account key path 无效")
 	}
 	address, err := mail.ParseAddress(config.ContactEmail)
 	if err != nil || address.Address != config.ContactEmail || strings.ContainsAny(config.ContactEmail, "\r\n") {
-		return nil, errors.New("[D103 ACME] account contact 必须是单一规范 email")
+		return nil, errors.New("[ACME] account contact 必须是单一规范 email")
 	}
 	if config.Timeout == 0 {
 		config.Timeout = 30 * time.Second
 	}
 	if config.Timeout < time.Second || config.Timeout > 5*time.Minute {
-		return nil, errors.New("[D103 ACME] HTTP timeout 必须位于 1s..5m")
+		return nil, errors.New("[ACME] HTTP timeout 必须位于 1s..5m")
 	}
 	accountKey, err := loadP256(config.AccountKeyPath)
 	if errors.Is(err, os.ErrNotExist) {
@@ -106,17 +106,17 @@ func (c *RFC8555Client) EnsureAccount(ctx context.Context) error {
 		}
 	}
 	if err != nil {
-		return fmt.Errorf("[D103 ACME] account reconcile 失败: %w", err)
+		return fmt.Errorf("[ACME] account reconcile 失败: %w", err)
 	}
 	if account == nil || account.Status != acme.StatusValid || !sameACMEOrigin(c.origin, account.URI) {
-		return errors.New("[D103 ACME] account 状态或 resource origin 无效")
+		return errors.New("[ACME] account 状态或 resource origin 无效")
 	}
 	return nil
 }
 
 func (c *RFC8555Client) AuthorizeOrder(ctx context.Context, names []string) (*acme.Order, error) {
 	if !validACMENames(names) {
-		return nil, errors.New("[D103 ACME] order DNS identifiers 无效")
+		return nil, errors.New("[ACME] order DNS identifiers 无效")
 	}
 	order, err := c.client.AuthorizeOrder(ctx, acme.DomainIDs(names...))
 	if err != nil {
@@ -130,7 +130,7 @@ func (c *RFC8555Client) AuthorizeOrder(ctx context.Context, names []string) (*ac
 
 func (c *RFC8555Client) GetOrder(ctx context.Context, resourceURL string) (*acme.Order, error) {
 	if !sameACMEOrigin(c.origin, resourceURL) {
-		return nil, errors.New("[D103 ACME] order URL 离开 exact directory origin")
+		return nil, errors.New("[ACME] order URL 离开 exact directory origin")
 	}
 	order, err := c.client.GetOrder(ctx, resourceURL)
 	if err != nil {
@@ -144,7 +144,7 @@ func (c *RFC8555Client) GetOrder(ctx context.Context, resourceURL string) (*acme
 
 func (c *RFC8555Client) GetAuthorization(ctx context.Context, resourceURL string) (*acme.Authorization, error) {
 	if !sameACMEOrigin(c.origin, resourceURL) {
-		return nil, errors.New("[D103 ACME] authorization URL 离开 exact directory origin")
+		return nil, errors.New("[ACME] authorization URL 离开 exact directory origin")
 	}
 	authorization, err := c.client.GetAuthorization(ctx, resourceURL)
 	if err != nil {
@@ -162,14 +162,14 @@ func (c *RFC8555Client) DNS01ChallengeRecord(token string) (string, error) {
 
 func (c *RFC8555Client) Accept(ctx context.Context, challenge *acme.Challenge) (*acme.Challenge, error) {
 	if challenge == nil || challenge.Type != "dns-01" || !sameACMEOrigin(c.origin, challenge.URI) {
-		return nil, errors.New("[D103 ACME] challenge 不属于 exact DNS-01 origin")
+		return nil, errors.New("[ACME] challenge 不属于 exact DNS-01 origin")
 	}
 	return c.client.Accept(ctx, challenge)
 }
 
 func (c *RFC8555Client) WaitAuthorization(ctx context.Context, resourceURL string) (*acme.Authorization, error) {
 	if !sameACMEOrigin(c.origin, resourceURL) {
-		return nil, errors.New("[D103 ACME] authorization URL 离开 exact directory origin")
+		return nil, errors.New("[ACME] authorization URL 离开 exact directory origin")
 	}
 	authorization, err := c.client.WaitAuthorization(ctx, resourceURL)
 	if err != nil {
@@ -183,7 +183,7 @@ func (c *RFC8555Client) WaitAuthorization(ctx context.Context, resourceURL strin
 
 func (c *RFC8555Client) WaitOrder(ctx context.Context, resourceURL string) (*acme.Order, error) {
 	if !sameACMEOrigin(c.origin, resourceURL) {
-		return nil, errors.New("[D103 ACME] order URL 离开 exact directory origin")
+		return nil, errors.New("[ACME] order URL 离开 exact directory origin")
 	}
 	order, err := c.client.WaitOrder(ctx, resourceURL)
 	if err != nil {
@@ -197,18 +197,18 @@ func (c *RFC8555Client) WaitOrder(ctx context.Context, resourceURL string) (*acm
 
 func (c *RFC8555Client) CreateOrderCert(ctx context.Context, finalizeURL string, csr []byte, bundle bool) ([][]byte, string, error) {
 	if !sameACMEOrigin(c.origin, finalizeURL) {
-		return nil, "", errors.New("[D103 ACME] finalize URL 离开 exact directory origin")
+		return nil, "", errors.New("[ACME] finalize URL 离开 exact directory origin")
 	}
 	certificates, certificateURL, err := c.client.CreateOrderCert(ctx, finalizeURL, csr, bundle)
 	if err == nil && !sameACMEOrigin(c.origin, certificateURL) {
-		return nil, "", errors.New("[D103 ACME] certificate URL 离开 exact directory origin")
+		return nil, "", errors.New("[ACME] certificate URL 离开 exact directory origin")
 	}
 	return certificates, certificateURL, err
 }
 
 func (c *RFC8555Client) FetchCert(ctx context.Context, certificateURL string, bundle bool) ([][]byte, error) {
 	if !sameACMEOrigin(c.origin, certificateURL) {
-		return nil, errors.New("[D103 ACME] certificate URL 离开 exact directory origin")
+		return nil, errors.New("[ACME] certificate URL 离开 exact directory origin")
 	}
 	return c.client.FetchCert(ctx, certificateURL, bundle)
 }
@@ -217,20 +217,20 @@ func (c *RFC8555Client) validateOrder(order *acme.Order, names []string) error {
 	if order == nil || !sameACMEOrigin(c.origin, order.URI) ||
 		(order.FinalizeURL != "" && !sameACMEOrigin(c.origin, order.FinalizeURL)) ||
 		(order.CertURL != "" && !sameACMEOrigin(c.origin, order.CertURL)) {
-		return errors.New("[D103 ACME] order resource URL 无效或跨 origin")
+		return errors.New("[ACME] order resource URL 无效或跨 origin")
 	}
 	for _, resourceURL := range order.AuthzURLs {
 		if !sameACMEOrigin(c.origin, resourceURL) {
-			return errors.New("[D103 ACME] authorization URL 离开 exact directory origin")
+			return errors.New("[ACME] authorization URL 离开 exact directory origin")
 		}
 	}
 	if names != nil {
 		if len(order.Identifiers) != len(names) {
-			return errors.New("[D103 ACME] order identifiers 与请求不一致")
+			return errors.New("[ACME] order identifiers 与请求不一致")
 		}
 		for index, identifier := range order.Identifiers {
 			if identifier.Type != "dns" || identifier.Value != names[index] {
-				return errors.New("[D103 ACME] order identifiers 与请求不一致")
+				return errors.New("[ACME] order identifiers 与请求不一致")
 			}
 		}
 	}
@@ -240,11 +240,11 @@ func (c *RFC8555Client) validateOrder(order *acme.Order, names []string) error {
 func (c *RFC8555Client) validateAuthorization(authorization *acme.Authorization) error {
 	if authorization == nil || !sameACMEOrigin(c.origin, authorization.URI) ||
 		authorization.Identifier.Type != "dns" || !wire.ValidFQDN(authorization.Identifier.Value) || authorization.Wildcard {
-		return errors.New("[D103 ACME] authorization identity/resource 无效")
+		return errors.New("[ACME] authorization identity/resource 无效")
 	}
 	for _, challenge := range authorization.Challenges {
 		if challenge == nil || !sameACMEOrigin(c.origin, challenge.URI) {
-			return errors.New("[D103 ACME] challenge resource URL 无效或跨 origin")
+			return errors.New("[ACME] challenge resource URL 无效或跨 origin")
 		}
 	}
 	return nil
@@ -266,7 +266,7 @@ func hardenedACMEHTTPClient(config RFC8555Config, directory *url.URL) (*http.Cli
 	case *http.Transport:
 		transport = configured.Clone()
 	default:
-		return nil, errors.New("[D108 secret] ACME HTTP transport 必须可检查且禁止 credential proxy")
+		return nil, errors.New("[secret] ACME HTTP transport 必须可检查且禁止 credential proxy")
 	}
 	transport.Proxy = nil
 	if transport.TLSClientConfig == nil {
@@ -288,7 +288,7 @@ type sameOriginTransport struct {
 
 func (transport sameOriginTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	if request == nil || request.URL == nil || !sameACMEOrigin(transport.origin, request.URL.String()) {
-		return nil, errors.New("[D108 secret] ACME request 离开 exact directory origin")
+		return nil, errors.New("[secret] ACME request 离开 exact directory origin")
 	}
 	return transport.base.RoundTrip(request)
 }
@@ -297,7 +297,7 @@ func parseACMEURL(raw string) (*url.URL, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
 		parsed.Fragment != "" || parsed.RawQuery != "" || parsed.Path == "" {
-		return nil, errors.New("[D103 ACME] URL 必须是 exact HTTPS resource")
+		return nil, errors.New("[ACME] URL 必须是 exact HTTPS resource")
 	}
 	return parsed, nil
 }

@@ -74,25 +74,25 @@ func VerifyP256Signature(publicKeySPKI, message, signatureDER []byte) error {
 }
 
 // NormalizeP256Signature 把 Android provider 可能返回的 high-S ECDSA 签名
-// 收敛为唯一 canonical DER low-S bytes，并在返回前复验（D129）。
+// 收敛为唯一 canonical DER low-S bytes，并在返回前复验。
 func NormalizeP256Signature(publicKeySPKI, message, signatureDER []byte) ([]byte, error) {
 	parsedKey, err := x509.ParsePKIXPublicKey(publicKeySPKI)
 	publicKey, ok := parsedKey.(*ecdsa.PublicKey)
 	if err != nil || !ok || publicKey.Curve != elliptic.P256() {
-		return nil, errors.New("[D129 Android] identity public key 必须是 P-256 SPKI")
+		return nil, errors.New("[Android] identity public key 必须是 P-256 SPKI")
 	}
 	var signature struct{ R, S *big.Int }
 	rest, err := asn1.Unmarshal(signatureDER, &signature)
 	if err != nil || len(rest) != 0 || signature.R == nil || signature.S == nil || signature.R.Sign() <= 0 || signature.S.Sign() <= 0 {
-		return nil, errors.New("[D129 Android] Keystore ECDSA signature DER 无效")
+		return nil, errors.New("[Android] Keystore ECDSA signature DER 无效")
 	}
 	canonical, err := asn1.Marshal(signature)
 	if err != nil || !bytes.Equal(canonical, signatureDER) {
-		return nil, errors.New("[D129 Android] Keystore ECDSA signature 不是 canonical DER")
+		return nil, errors.New("[Android] Keystore ECDSA signature 不是 canonical DER")
 	}
 	digest := sha256.Sum256(message)
 	if !ecdsa.Verify(publicKey, digest[:], signature.R, signature.S) {
-		return nil, errors.New("[D129 Android] Keystore ECDSA signature 验证失败")
+		return nil, errors.New("[Android] Keystore ECDSA signature 验证失败")
 	}
 	halfOrder := new(big.Int).Rsh(new(big.Int).Set(publicKey.Params().N), 1)
 	if signature.S.Cmp(halfOrder) > 0 {
@@ -118,7 +118,7 @@ func PrepareCSR(requestID string, publicKeySPKI []byte) ([]byte, error) {
 	}
 	publicKey, ok := key.(*ecdsa.PublicKey)
 	if !ok || publicKey.Curve != elliptic.P256() {
-		return nil, errors.New("[§4.3 设备绑定] CSR 公钥必须是 ECDSA P-256")
+		return nil, errors.New("[设备绑定] CSR 公钥必须是 ECDSA P-256")
 	}
 
 	publicKeyRaw, err := rawASN1(publicKeySPKI)
@@ -153,7 +153,7 @@ func AssembleCSR(infoDER, signatureDER []byte) ([]byte, error) {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}), nil
 }
 
-// AssembleCSRDER 为 v2 claim 返回 exact DER；v1 PEM API 仍调用同一验证路径（D129）。
+// AssembleCSRDER 为 v2 claim 返回 exact DER；v1 PEM API 仍调用同一验证路径。
 func AssembleCSRDER(infoDER, signatureDER []byte) ([]byte, error) {
 	info, err := parseCSRInfo(infoDER)
 	if err != nil {
@@ -182,32 +182,32 @@ func AssembleCSRDER(infoDER, signatureDER []byte) ([]byte, error) {
 	}
 	csr, err := x509.ParseCertificateRequest(der)
 	if err != nil || csr.CheckSignature() != nil {
-		return nil, errors.New("[§4.3 设备绑定] 组装后的 CSR 签名无效")
+		return nil, errors.New("[设备绑定] 组装后的 CSR 签名无效")
 	}
 	return der, nil
 }
 
 // VerifyCSRIdentity 在 CSR 离开 Android Keystore callback 后再次钉住 exact
-// identity SPKI。这样 CSR 与后续 PoP 即使由不同宿主步骤触发，也不能悄悄换 key（D129）。
+// identity SPKI。这样 CSR 与后续 PoP 即使由不同宿主步骤触发，也不能悄悄换 key。
 func VerifyCSRIdentity(csrDER, identitySPKI []byte) error {
 	csr, err := x509.ParseCertificateRequest(csrDER)
 	if err != nil || !bytes.Equal(csr.Raw, csrDER) || csr.CheckSignature() != nil {
-		return errors.New("[D129 Android] CSR DER/自签名无效")
+		return errors.New("[Android] CSR DER/自签名无效")
 	}
 	identity, err := x509.ParsePKIXPublicKey(identitySPKI)
 	identityP256, ok := identity.(*ecdsa.PublicKey)
 	if err != nil || !ok || identityP256.Curve != elliptic.P256() ||
 		!identityP256.Curve.IsOnCurve(identityP256.X, identityP256.Y) {
-		return errors.New("[D129 Android] identity SPKI 必须是 P-256")
+		return errors.New("[Android] identity SPKI 必须是 P-256")
 	}
 	canonicalIdentity, err := x509.MarshalPKIXPublicKey(identityP256)
 	if err != nil || !bytes.Equal(canonicalIdentity, identitySPKI) {
-		return errors.New("[D129 Android] identity SPKI 不是 canonical DER")
+		return errors.New("[Android] identity SPKI 不是 canonical DER")
 	}
 	csrKey, ok := csr.PublicKey.(*ecdsa.PublicKey)
 	if !ok || csrKey.Curve != elliptic.P256() ||
 		csrKey.X.Cmp(identityP256.X) != 0 || csrKey.Y.Cmp(identityP256.Y) != 0 {
-		return errors.New("[D129 Android] CSR 与 Keystore identity 不一致")
+		return errors.New("[Android] CSR 与 Keystore identity 不一致")
 	}
 	return nil
 }
@@ -216,17 +216,17 @@ func parseCSRInfo(infoDER []byte) (certificationRequestInfo, error) {
 	var info certificationRequestInfo
 	rest, err := asn1.Unmarshal(infoDER, &info)
 	if err != nil || len(rest) != 0 || info.Version != 0 || len(info.RawAttributes) != 0 {
-		return info, errors.New("[§4.3 设备绑定] CSR 待签名信息无效")
+		return info, errors.New("[设备绑定] CSR 待签名信息无效")
 	}
 	var name pkix.RDNSequence
 	rest, err = asn1.Unmarshal(info.Subject.FullBytes, &name)
 	if err != nil || len(rest) != 0 {
-		return info, errors.New("[§4.3 设备绑定] CSR subject 无效")
+		return info, errors.New("[设备绑定] CSR subject 无效")
 	}
 	var subject pkix.Name
 	subject.FillFromRDNSequence(&name)
 	if err := validateRequestID(subject.CommonName); err != nil || len(subject.Names) != 1 {
-		return info, errors.New("[§4.3 设备绑定] CSR subject 必须只有 request_id")
+		return info, errors.New("[设备绑定] CSR subject 必须只有 request_id")
 	}
 	return info, nil
 }
@@ -243,7 +243,7 @@ func rawASN1(der []byte) (asn1.RawValue, error) {
 func validateRequestID(requestID string) error {
 	if requestID == "" || len(requestID) > 128 || strings.TrimSpace(requestID) != requestID ||
 		strings.IndexFunc(requestID, unicode.IsControl) >= 0 {
-		return errors.New("[§4.3 设备绑定] request_id 无效")
+		return errors.New("[设备绑定] request_id 无效")
 	}
 	return nil
 }

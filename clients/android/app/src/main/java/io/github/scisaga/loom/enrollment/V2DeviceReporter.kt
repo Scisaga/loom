@@ -30,7 +30,7 @@ internal fun requiresV2RouteApplication(current: ManagedProfile, candidate: Mana
 }
 
 /**
- * #14 / D131：pending signed envelope 在网络发送前进入 Keystore-wrapped 原子 journal。
+ * pending signed envelope 在网络发送前进入 Keystore-wrapped 原子 journal。
  * HTTP 响应丢失或进程死亡后只能重放 exact bytes；收到 204 后才推进 sequence。
  */
 internal class V2DeviceReporter(
@@ -51,8 +51,8 @@ internal class V2DeviceReporter(
         val now = Instant.now().toString()
         val plans = stateStore.privateControlPlans("device_config", now)
         val delivery = client.getFirst(plans)
-        val state = checkNotNull(stateStore.current()) { "[D131 Android config] v2 Device state 尚未安装" }
-        val currentProfile = checkNotNull(stateStore.runtimeProfile()) { "[D131 Android config] active state 缺 runtime" }
+        val state = checkNotNull(stateStore.current()) { "[Android config] v2 Device state 尚未安装" }
+        val currentProfile = checkNotNull(stateStore.runtimeProfile()) { "[Android config] active state 缺 runtime" }
         val fetchPlan = Loomcore.prepareAndroidV2PrivateDeviceConfigFetchPlan(
             state,
             delivery,
@@ -78,7 +78,7 @@ internal class V2DeviceReporter(
                 }
                 stateStore.preparePrivateDeliveryWithArtifacts(delivery, configs, credentials)
             }
-            else -> error("[D124 Android config] fetch plan state 无效")
+            else -> error("[Android config] fetch plan state 无效")
         }
         if (configState == "tombstone") {
             stateStore.commitTombstone(next)
@@ -108,7 +108,7 @@ internal class V2DeviceReporter(
     private fun unsealRotatedCredentials(plan: JSONObject, state: ByteArray): ByteArray {
         val refs = plan.getJSONArray("secret_refs")
         val envelopes = plan.getJSONArray("secret_envelopes")
-        check(refs.length() == envelopes.length()) { "[D124 Android config] secret envelope 未 exact 覆盖 refs" }
+        check(refs.length() == envelopes.length()) { "[Android config] secret envelope 未 exact 覆盖 refs" }
         val deviceID = JSONObject(state.decodeToString())
             .getJSONObject("envelope").getJSONObject("payload").getString("device_id")
         val installed = JSONArray()
@@ -126,8 +126,8 @@ internal class V2DeviceReporter(
 
     @Synchronized
     fun sendHealth(profile: ManagedProfile, healthy: Boolean): Long {
-        check(profile.protocol == 2) { "[D131 Android report] v2 reporter 拒绝 v1 profile" }
-        val state = checkNotNull(stateStore.current()) { "[D131 Android report] v2 Device state 尚未安装" }
+        check(profile.protocol == 2) { "[Android report] v2 reporter 拒绝 v1 profile" }
+        val state = checkNotNull(stateStore.current()) { "[Android report] v2 Device state 尚未安装" }
         val now = Instant.now().toString()
         var journal = loadJournal(profile.nodeID) ?: ReportJournal(
             deviceID = profile.nodeID,
@@ -148,12 +148,12 @@ internal class V2DeviceReporter(
 
         // 服务端可能已经提交而本机尚未落盘；回读并比较 pending，禁止并发发送
         // 用同一 sequence 的另一份正文覆盖它。
-        val durable = checkNotNull(loadJournal(profile.nodeID)) { "[D131 Android report] journal 在发送期间消失" }
+        val durable = checkNotNull(loadJournal(profile.nodeID)) { "[Android report] journal 在发送期间消失" }
         check(durable.nextSequence == journal.nextSequence && durable.pending?.contentEquals(envelope) == true) {
-            "[D131 Android report] journal 在发送期间发生分叉"
+            "[Android report] journal 在发送期间发生分叉"
         }
         val envelopeHash = Loomcore.hashCanonicalV2(REPORT_ENVELOPE_HASH_DOMAIN, envelope)
-        check(durable.nextSequence < Long.MAX_VALUE) { "[D131 Android report] sequence 已耗尽" }
+        check(durable.nextSequence < Long.MAX_VALUE) { "[Android report] sequence 已耗尽" }
         persistJournal(
             durable.copy(
                 lastAcceptedSequence = durable.nextSequence,
@@ -182,24 +182,24 @@ internal class V2DeviceReporter(
 
     private fun loadJournal(deviceID: String): ReportJournal? {
         val raw = protected.get(JOURNAL) ?: return null
-        check(raw.contentEquals(Loomcore.canonicalizeV2(raw))) { "[D131 Android report] journal 不是 canonical JSON" }
+        check(raw.contentEquals(Loomcore.canonicalizeV2(raw))) { "[Android report] journal 不是 canonical JSON" }
         val root = JSONObject(raw.decodeToString())
         val allowed = setOf(
             "schema", "device_id", "last_accepted_sequence", "last_accepted_envelope_hash",
             "next_sequence", "pending",
         )
         check(root.keys().asSequence().toSet().let { it.isNotEmpty() && it.all(allowed::contains) }) {
-            "[D131 Android report] journal 含未知字段"
+            "[Android report] journal 含未知字段"
         }
         check(root.getInt("schema") == 1 && root.getString("device_id") == deviceID) {
-            "[D131 Android report] journal 属于另一 Device"
+            "[Android report] journal 属于另一 Device"
         }
         val last = root.getLong("last_accepted_sequence")
         val next = root.getLong("next_sequence")
-        check(last in 0 until Long.MAX_VALUE && next == last + 1) { "[D131 Android report] journal sequence 不连续" }
+        check(last in 0 until Long.MAX_VALUE && next == last + 1) { "[Android report] journal sequence 不连续" }
         val lastHash = root.optString("last_accepted_envelope_hash").takeIf(String::isNotBlank)
-        check((last == 0L) == (lastHash == null)) { "[D131 Android report] journal last hash 状态无效" }
-        lastHash?.let { check(it.startsWith("sha256:") && it.length == 71) { "[D131 Android report] journal hash 无效" } }
+        check((last == 0L) == (lastHash == null)) { "[Android report] journal last hash 状态无效" }
+        lastHash?.let { check(it.startsWith("sha256:") && it.length == 71) { "[Android report] journal hash 无效" } }
         val pending = root.optString("pending").takeIf(String::isNotBlank)?.let(::decodeCanonicalURL)
         return ReportJournal(deviceID, last, lastHash, next, pending)
     }
@@ -215,13 +215,13 @@ internal class V2DeviceReporter(
         journal.pending?.let { value.put("pending", Base64.getUrlEncoder().withoutPadding().encodeToString(it)) }
         val canonical = Loomcore.canonicalizeV2(value.toString().encodeToByteArray())
         protected.put(JOURNAL, canonical)
-        check(protected.get(JOURNAL)?.contentEquals(canonical) == true) { "[D131 Android report] journal 持久化回读不一致" }
+        check(protected.get(JOURNAL)?.contentEquals(canonical) == true) { "[Android report] journal 持久化回读不一致" }
     }
 
     private fun decodeCanonicalURL(value: String): ByteArray {
-        check(value.isNotBlank() && '=' !in value && !value.any(Char::isWhitespace)) { "[D131 Android report] base64url 编码不规范" }
+        check(value.isNotBlank() && '=' !in value && !value.any(Char::isWhitespace)) { "[Android report] base64url 编码不规范" }
         val decoded = Base64.getUrlDecoder().decode(value)
-        check(Base64.getUrlEncoder().withoutPadding().encodeToString(decoded) == value) { "[D131 Android report] base64url 编码不规范" }
+        check(Base64.getUrlEncoder().withoutPadding().encodeToString(decoded) == value) { "[Android report] base64url 编码不规范" }
         return decoded
     }
 

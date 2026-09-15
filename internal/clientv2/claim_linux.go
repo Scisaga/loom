@@ -33,10 +33,10 @@ type PendingProgressV1 struct {
 // OpenOrCreatePendingClaim 保证 CSR/client nonce/core 只生成一次；跨 ingress 重试只重签新 challenge。
 func OpenOrCreatePendingClaim(path string, identity *EnrollmentIdentityV1, input ClaimCoreInputV2) (*PendingClaimV2, error) {
 	if path == "" || filepath.Clean(path) != path || !filepath.IsAbs(path) {
-		return nil, errors.New("[D129 Linux] pending claim path 必须是规范绝对路径")
+		return nil, errors.New("[Linux] pending claim path 必须是规范绝对路径")
 	}
 	if identity == nil {
-		return nil, errors.New("[D129 Linux] enrollment identity 不能为空")
+		return nil, errors.New("[Linux] enrollment identity 不能为空")
 	}
 	if err := secureEnrollmentDirectory(filepath.Dir(path)); err != nil {
 		return nil, err
@@ -79,7 +79,7 @@ func loadPendingClaim(path string, identity *EnrollmentIdentityV1, input ClaimCo
 		return nil, err
 	}
 	if !claimCoreMatchesInput(pending.ClaimCore, input) {
-		return nil, errors.New("[D129 Linux] pending claim 与本次 Invite/authority 不一致")
+		return nil, errors.New("[Linux] pending claim 与本次 Invite/authority 不一致")
 	}
 	if err := validatePendingIdentity(pending, identity); err != nil {
 		return nil, err
@@ -93,7 +93,7 @@ func loadPendingClaim(path string, identity *EnrollmentIdentityV1, input ClaimCo
 // Invite proof and preflight opening are rebound before the claim is reused.
 func LoadPendingClaimForEnrollmentRetry(path string, identity *EnrollmentIdentityV1) (*PendingClaimV2, error) {
 	if path == "" || filepath.Clean(path) != path || !filepath.IsAbs(path) || identity == nil {
-		return nil, errors.New("[D129 Linux] pending/identity retry 输入无效")
+		return nil, errors.New("[Linux] pending/identity retry 输入无效")
 	}
 	if err := secureEnrollmentDirectory(filepath.Dir(path)); err != nil {
 		return nil, err
@@ -118,10 +118,10 @@ func LoadPendingClaimForEnrollmentRetry(path string, identity *EnrollmentIdentit
 }
 
 // LoadPendingClaimForResume 在共享锁下读取已 committed 的本机 claim。resume 必须
-// 已有经 progress receipt 固化的 binding，不能从只有 core 的未提交状态猜测事务（D130）。
+// 已有经 progress receipt 固化的 binding，不能从只有 core 的未提交状态猜测事务。
 func LoadPendingClaimForResume(path string, identity *EnrollmentIdentityV1) (*PendingClaimV2, error) {
 	if path == "" || filepath.Clean(path) != path || !filepath.IsAbs(path) || identity == nil {
-		return nil, errors.New("[D130 Linux resume] pending/identity 输入无效")
+		return nil, errors.New("[Linux resume] pending/identity 输入无效")
 	}
 	if err := secureEnrollmentDirectory(filepath.Dir(path)); err != nil {
 		return nil, err
@@ -143,7 +143,7 @@ func LoadPendingClaimForResume(path string, identity *EnrollmentIdentityV1) (*Pe
 		return nil, err
 	}
 	if pending.Progress == nil {
-		return nil, errors.New("[D130 Linux resume] pending claim 缺 verified progress binding")
+		return nil, errors.New("[Linux resume] pending claim 缺 verified progress binding")
 	}
 	return pending, nil
 }
@@ -154,10 +154,10 @@ func readPendingClaim(path string) (*PendingClaimV2, error) {
 		return nil, err
 	}
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 || info.Size() < 1 || info.Size() > 1<<20 {
-		return nil, errors.New("[D129 Linux] pending claim 必须是 0600 小型普通文件")
+		return nil, errors.New("[Linux] pending claim 必须是 0600 小型普通文件")
 	}
 	if stat, ok := info.Sys().(*syscall.Stat_t); !ok || int(stat.Uid) != os.Geteuid() {
-		return nil, errors.New("[D129 Linux] pending claim owner 不是当前服务账号")
+		return nil, errors.New("[Linux] pending claim owner 不是当前服务账号")
 	}
 	body, err := os.ReadFile(path)
 	if err != nil {
@@ -166,11 +166,11 @@ func readPendingClaim(path string) (*PendingClaimV2, error) {
 	var pending PendingClaimV2
 	canonical, err := wire.DecodeStrict(body, 1<<20, &pending)
 	if err != nil || !bytes.Equal(canonical, body) || pending.Schema != 2 {
-		return nil, errors.New("[D129 Linux] pending claim wire 无效")
+		return nil, errors.New("[Linux] pending claim wire 无效")
 	}
 	coreHash, err := wire.EnrollmentClaimCoreHash(&pending.ClaimCore)
 	if err != nil || coreHash != pending.ClaimCoreHash {
-		return nil, errors.New("[D129 Linux] pending claim core hash 不匹配")
+		return nil, errors.New("[Linux] pending claim core hash 不匹配")
 	}
 	if err := validatePendingProgress(&pending); err != nil {
 		return nil, err
@@ -180,7 +180,7 @@ func readPendingClaim(path string) (*PendingClaimV2, error) {
 
 func validatePendingIdentity(pending *PendingClaimV2, identity *EnrollmentIdentityV1) error {
 	if pending == nil || identity == nil {
-		return errors.New("[D129 Linux] pending/identity context 无效")
+		return errors.New("[Linux] pending/identity context 无效")
 	}
 	identityKey, wrappingKey, err := identity.keys()
 	if err != nil {
@@ -190,14 +190,14 @@ func validatePendingIdentity(pending *PendingClaimV2, identity *EnrollmentIdenti
 	wrappingSPKI, _ := x509.MarshalPKIXPublicKey(&wrappingKey.PublicKey)
 	if pending.ClaimCore.DeviceIdentityPublicKey != base64.RawURLEncoding.EncodeToString(identitySPKI) ||
 		pending.ClaimCore.WrappingPublicKey != base64.RawURLEncoding.EncodeToString(wrappingSPKI) {
-		return errors.New("[D129 Linux] pending claim 不属于当前 identity/wrapping keys")
+		return errors.New("[Linux] pending claim 不属于当前 identity/wrapping keys")
 	}
 	return nil
 }
 
 // RecordPendingProgress 只接受完整 progress receipt verifier 产生的 opaque
 // projection。reserved→issued_provisional 可以前进；同一阶段不同 hash 或倒退永久
-// 失败，防止旧 ingress 响应覆盖较新的 resume binding（D130）。
+// 失败，防止旧 ingress 响应覆盖较新的 resume binding。
 func RecordPendingProgress(path string, identity *EnrollmentIdentityV1, input ClaimCoreInputV2,
 	verified enrollmentv2.VerifiedEnrollmentProgressV1) (*PendingClaimV2, error) {
 	status, expected := verified.Status(), verified.ResumeExpected()
@@ -208,7 +208,7 @@ func recordPendingProgress(path string, identity *EnrollmentIdentityV1, input Cl
 	status string, expected wire.EnrollmentResumeExpectedV1) (*PendingClaimV2, error) {
 	if path == "" || filepath.Clean(path) != path || !filepath.IsAbs(path) || identity == nil ||
 		(status != "reserved" && status != "issued_provisional") {
-		return nil, errors.New("[D130 Linux] pending progress 输入无效")
+		return nil, errors.New("[Linux] pending progress 输入无效")
 	}
 	if err := secureEnrollmentDirectory(filepath.Dir(path)); err != nil {
 		return nil, err
@@ -238,7 +238,7 @@ func recordPendingProgress(path string, identity *EnrollmentIdentityV1, input Cl
 		}
 		if pending.Progress.Status != "reserved" || status != "issued_provisional" ||
 			!sameResumeIdentity(pending.Progress.Expected, expected) {
-			return nil, errors.New("[D130 Linux] pending progress 回退、分叉或改写 stable binding")
+			return nil, errors.New("[Linux] pending progress 回退、分叉或改写 stable binding")
 		}
 	}
 	if err := persistProtectedCanonical(path, &candidate); err != nil {
@@ -256,12 +256,12 @@ func validatePendingProgress(pending *PendingClaimV2) error {
 	if progress.Schema != 1 || (progress.Status != "reserved" && progress.Status != "issued_provisional") ||
 		expected.ClusterID != pending.ClaimCore.ClusterID || expected.InviteID != pending.ClaimCore.InviteID ||
 		expected.RequestID != pending.ClaimCore.RequestID || expected.ClaimCoreHash != pending.ClaimCoreHash {
-		return errors.New("[D130 Linux] pending progress header/core binding 无效")
+		return errors.New("[Linux] pending progress header/core binding 无效")
 	}
 	identityHash, wrappingHash, csrHash, err := wire.EnrollmentClaimBinaryHashes(&pending.ClaimCore)
 	if err != nil || expected.IdentityKeyHash != identityHash || expected.WrappingKeyHash != wrappingHash ||
 		expected.CSRHash != csrHash {
-		return errors.New("[D130 Linux] pending progress identity/wrapping/CSR binding 无效")
+		return errors.New("[Linux] pending progress identity/wrapping/CSR binding 无效")
 	}
 	for _, hash := range []string{expected.ClaimOperationHash, expected.AdmissionQCHash,
 		expected.EnrollmentTransactionStateHash} {

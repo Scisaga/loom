@@ -86,7 +86,7 @@ type StateStore struct {
 
 func OpenState(path string, protector clientsecret.Protector) (*StateStore, error) {
 	if err := validateProtectedPath(path); err != nil || protector == nil {
-		return nil, errors.New("[D106 Windows] v2 state path/protector 无效")
+		return nil, errors.New("[Windows] v2 state path/protector 无效")
 	}
 	store := &StateStore{path: path, protector: protector}
 	state, err := store.load()
@@ -106,7 +106,7 @@ func (store *StateStore) load() (*StateV1, error) {
 		return nil, err
 	}
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return nil, errors.New("[D106 Windows] v2 LKG 必须是普通文件")
+		return nil, errors.New("[Windows] v2 LKG 必须是普通文件")
 	}
 	body, err := clientsecret.ReadLargeProtected(store.path, StatePurpose, store.protector)
 	if err != nil {
@@ -114,12 +114,12 @@ func (store *StateStore) load() (*StateV1, error) {
 	}
 	defer clear(body)
 	if len(body) > maximumStateBytes {
-		return nil, errors.New("[D106 Windows] v2 LKG 超过大小边界")
+		return nil, errors.New("[Windows] v2 LKG 超过大小边界")
 	}
 	var state StateV1
 	canonical, err := wire.DecodeStrict(body, maximumStateBytes, &state)
 	if err != nil || !bytes.Equal(canonical, body) {
-		return nil, errors.New("[D106 Windows] v2 LKG 不是 exact canonical wire")
+		return nil, errors.New("[Windows] v2 LKG 不是 exact canonical wire")
 	}
 	if err := validateState(&state); err != nil {
 		return nil, err
@@ -137,7 +137,7 @@ func (store *StateStore) write(state *StateV1) error {
 	}
 	defer clear(body)
 	if len(body) > maximumStateBytes {
-		return errors.New("[D106 Windows] v2 LKG 超过大小边界")
+		return errors.New("[Windows] v2 LKG 超过大小边界")
 	}
 	if err := clientsecret.WriteLargeProtected(store.path, StatePurpose, body, store.protector); err != nil {
 		return err
@@ -147,7 +147,7 @@ func (store *StateStore) write(state *StateV1) error {
 		return err
 	}
 	if !wire.EqualCanonical(*state, *replayed) {
-		return errors.New("[D106 Windows] v2 LKG 写后回读分叉")
+		return errors.New("[Windows] v2 LKG 写后回读分叉")
 	}
 	store.state = replayed
 	return nil
@@ -202,11 +202,11 @@ type CompletionInstall struct {
 // purpose-bound DPAPI blob 提交；只有写后回读成功才清理 token/capability journal。
 func InstallCompletion(input CompletionInstall) (wire.ClientFloorsV2, error) {
 	if input.Protector == nil || input.Result.Status != "completed" || input.Result.ResultArtifact == nil {
-		return wire.ClientFloorsV2{}, errors.New("[D130 Windows install] completed result/protector 缺失")
+		return wire.ClientFloorsV2{}, errors.New("[Windows install] completed result/protector 缺失")
 	}
 	for _, path := range []string{input.StatePath, input.IdentityPath, input.JournalPath} {
 		if err := validateProtectedPath(path); err != nil {
-			return wire.ClientFloorsV2{}, errors.New("[D130 Windows install] state/identity/journal path 无效")
+			return wire.ClientFloorsV2{}, errors.New("[Windows install] state/identity/journal path 无效")
 		}
 	}
 	identity, err := LoadIdentity(input.IdentityPath, input.Protector)
@@ -230,7 +230,7 @@ func InstallCompletion(input CompletionInstall) (wire.ClientFloorsV2, error) {
 		return wire.ClientFloorsV2{}, journalErr
 	}
 	if journal.Result == nil || !wire.EqualCanonical(*journal.Result, input.Result) {
-		return wire.ClientFloorsV2{}, errors.New("[D130 Windows install] durable journal/result 不匹配")
+		return wire.ClientFloorsV2{}, errors.New("[Windows install] durable journal/result 不匹配")
 	}
 	if err := input.Completion.VerifyInstallationContext(&input.Result, &journal.ClaimCore,
 		input.VerifiedProof); err != nil {
@@ -252,7 +252,7 @@ func InstallCompletion(input CompletionInstall) (wire.ClientFloorsV2, error) {
 	if stateStore.state != nil {
 		if !wire.EqualCanonical(*stateStore.state, state) {
 			stateStore.mu.Unlock()
-			return stateStore.state.Floors, errors.New("[D106 Windows install] v2 latch 已由不同状态占用")
+			return stateStore.state.Floors, errors.New("[Windows install] v2 latch 已由不同状态占用")
 		}
 	} else if err := stateStore.write(&state); err != nil {
 		stateStore.mu.Unlock()
@@ -261,7 +261,7 @@ func InstallCompletion(input CompletionInstall) (wire.ClientFloorsV2, error) {
 	floors := stateStore.state.Floors
 	stateStore.mu.Unlock()
 	if err := journalStore.remove(); err != nil {
-		return floors, fmt.Errorf("[D130 Windows install] 正式 LKG 已提交但 bootstrap journal 清理失败: %w", err)
+		return floors, fmt.Errorf("[Windows install] 正式 LKG 已提交但 bootstrap journal 清理失败: %w", err)
 	}
 	return floors, nil
 }
@@ -271,7 +271,7 @@ func prepareInstallation(identity *Identity, journal *EnrollmentJournalV1,
 	result := &input.Result
 	artifact := result.ResultArtifact
 	if len(artifact.SecretArtifactRefs) != len(input.SecretEnvelopes) {
-		return EnrollmentInstallationV1{}, errors.New("[D124 Windows install] sealed envelopes 未 exact 覆盖 result refs")
+		return EnrollmentInstallationV1{}, errors.New("[Windows install] sealed envelopes 未 exact 覆盖 result refs")
 	}
 	credentials, err := installSecrets(identity, artifact.SecretArtifactRefs,
 		input.SecretEnvelopes, artifact.InitialDeviceView.DeviceID)
@@ -323,7 +323,7 @@ func prepareInitialState(envelope wire.DeviceViewEnvelopeV2, set wire.ControlSet
 ) (StateV1, error) {
 	proofSet, proofHead := proof.ControlSet(), proof.Head()
 	if proof.CertifiedInviteRecordHash() == "" || !wire.EqualCanonical(proofSet, set) {
-		return StateV1{}, errors.New("[D115 Windows] initial ControlSet 未绑定 verified Invite proof")
+		return StateV1{}, errors.New("[Windows] initial ControlSet 未绑定 verified Invite proof")
 	}
 	floors, err := wire.VerifyDeviceViewEnvelope(&envelope, &set)
 	if err != nil {
@@ -333,7 +333,7 @@ func prepareInitialState(envelope wire.DeviceViewEnvelopeV2, set wire.ControlSet
 		envelope.Payload.DeviceGeneration != 1 ||
 		envelope.Payload.DeviceID != installation.ResultArtifact.InitialDeviceView.DeviceID ||
 		envelope.Payload.Active.IdentitySPKIHash != installation.IdentityKeyHash {
-		return StateV1{}, errors.New("[D105 Windows] initial Device view 与 Enrollment identity 不匹配")
+		return StateV1{}, errors.New("[Windows] initial Device view 与 Enrollment identity 不匹配")
 	}
 	if floors.ClusterID != proofHead.Body.Payload.ClusterID ||
 		floors.AcceptedRecoveryEpoch != proofHead.Body.Payload.RecoveryEpoch ||
@@ -343,7 +343,7 @@ func prepareInitialState(envelope wire.DeviceViewEnvelopeV2, set wire.ControlSet
 		floors.ControlSetHash != proofHead.Body.Payload.ControlSetHash ||
 		floors.BootstrapTransitionHash != proofHead.Body.TransitionProofHash ||
 		floors.AcceptedControlRevision < proofHead.Body.Payload.ControlRevision {
-		return StateV1{}, errors.New("[D115 Windows] initial Device view 未延续 Invite authority floors")
+		return StateV1{}, errors.New("[Windows] initial Device view 未延续 Invite authority floors")
 	}
 	setCopy := cloneValue(set)
 	state := StateV1{Schema: 1, Floors: floors, Envelope: cloneValue(envelope),
@@ -358,7 +358,7 @@ func installSecrets(identity *Identity, refs []wire.SecretArtifactRefV2,
 	envelopes []wire.SealedSecretEnvelopeV1, deviceID string,
 ) ([]InstalledSecretV1, error) {
 	if refs == nil || len(refs) != len(envelopes) || identity == nil {
-		return nil, errors.New("[D124 Windows install] sealed envelopes 未 exact 覆盖 refs")
+		return nil, errors.New("[Windows install] sealed envelopes 未 exact 覆盖 refs")
 	}
 	wrappingSPKI := base64.RawURLEncoding.EncodeToString(identity.WrappingSPKIDER())
 	credentials := make([]InstalledSecretV1, len(refs))
@@ -370,7 +370,7 @@ func installSecrets(identity *Identity, refs []wire.SecretArtifactRefV2,
 		}
 		if ref.Owner.Kind != "device" || ref.Owner.Device == nil ||
 			ref.Owner.Device.DeviceID != deviceID || ref.ClusterID != envelope.Context.ClusterID {
-			return nil, errors.New("[D124 Windows install] secret 未绑定当前 Device/cluster")
+			return nil, errors.New("[Windows install] secret 未绑定当前 Device/cluster")
 		}
 		recipient, err := windowsWrappingRecipient(ref, deviceID, wrappingSPKI)
 		if err != nil {
@@ -381,12 +381,12 @@ func installSecrets(identity *Identity, refs []wire.SecretArtifactRefV2,
 			return nil, err
 		}
 		if len(secret) == 0 {
-			return nil, errors.New("[D124 Windows install] 解封 credential 不能为空")
+			return nil, errors.New("[Windows install] 解封 credential 不能为空")
 		}
 		total += len(secret)
 		if total > maximumSecretTotalBytes {
 			clear(secret)
-			return nil, errors.New("[D124 Windows install] credentials 超过总预算")
+			return nil, errors.New("[Windows install] credentials 超过总预算")
 		}
 		credentials[index] = InstalledSecretV1{
 			SecretID: ref.SecretID, Purpose: ref.Purpose, Generation: ref.Generation,
@@ -401,7 +401,7 @@ func installSecrets(identity *Identity, refs []wire.SecretArtifactRefV2,
 func windowsWrappingRecipient(ref *wire.SecretArtifactRefV2, deviceID,
 	wrappingSPKI string) (wire.SealedBlobRecipientKeyRefV1, error) {
 	if ref == nil || ref.SealedBlob == nil || deviceID == "" || wrappingSPKI == "" {
-		return wire.SealedBlobRecipientKeyRefV1{}, errors.New("[D124 Windows install] wrapping recipient context 无效")
+		return wire.SealedBlobRecipientKeyRefV1{}, errors.New("[Windows install] wrapping recipient context 无效")
 	}
 	var match *wire.SealedBlobRecipientKeyRefV1
 	for index := range ref.SealedBlob.RecipientKeyVersions {
@@ -409,25 +409,25 @@ func windowsWrappingRecipient(ref *wire.SecretArtifactRefV2, deviceID,
 		if candidate.RecipientID == deviceID && candidate.RecipientKeyProfile == WrappingKeyProfile &&
 			candidate.RecipientPublicKey.PublicKeySPKIDER == wrappingSPKI {
 			if match != nil {
-				return wire.SealedBlobRecipientKeyRefV1{}, errors.New("[D124 Windows install] wrapping recipient 命中多个版本")
+				return wire.SealedBlobRecipientKeyRefV1{}, errors.New("[Windows install] wrapping recipient 命中多个版本")
 			}
 			copy := *candidate
 			match = &copy
 		}
 	}
 	if match == nil {
-		return wire.SealedBlobRecipientKeyRefV1{}, errors.New("[D124 Windows install] secret 未封装给本机 exact wrapping key")
+		return wire.SealedBlobRecipientKeyRefV1{}, errors.New("[Windows install] secret 未封装给本机 exact wrapping key")
 	}
 	return *match, nil
 }
 
 // FetchConfigArtifacts 只按 certified content-addressed refs 读取公开 mirror；
-// 请求不携带 token、Device certificate 或 credential（D124、D131）。
+// 请求不携带 token、Device certificate 或 credential。
 func FetchConfigArtifacts(ctx context.Context, mirrors []wire.DistributionMirrorRefV1,
 	refs []wire.DeviceConfigArtifactRefV1, fetcher clientv2.MirrorFetcher,
 ) ([]InstalledConfigV1, error) {
 	if ctx == nil || refs == nil || len(refs) > maximumConfigArtifacts {
-		return nil, errors.New("[D124 Windows config] config fetch 输入无效")
+		return nil, errors.New("[Windows config] config fetch 输入无效")
 	}
 	configs := make([]InstalledConfigV1, len(refs))
 	total := 0
@@ -437,11 +437,11 @@ func FetchConfigArtifacts(ctx context.Context, mirrors []wire.DistributionMirror
 			return nil, err
 		}
 		if ref.Platform != "windows-desktop" || ref.SizeBytes > maximumConfigArtifactBytes {
-			return nil, errors.New("[D124 Windows config] config ref 平台或大小无效")
+			return nil, errors.New("[Windows config] config ref 平台或大小无效")
 		}
 		total += int(ref.SizeBytes)
 		if total > maximumConfigTotalBytes {
-			return nil, errors.New("[D124 Windows config] configs 超过总预算")
+			return nil, errors.New("[Windows config] configs 超过总预算")
 		}
 		body, err := fetcher.FetchCanonicalObject(ctx, mirrors, ref.ContentHash,
 			wire.DomainDeviceConfigArtifact, ref.SizeBytes)
@@ -449,7 +449,7 @@ func FetchConfigArtifacts(ctx context.Context, mirrors []wire.DistributionMirror
 			return nil, err
 		}
 		if len(body) != int(ref.SizeBytes) {
-			return nil, errors.New("[D124 Windows config] mirror bytes 与 exact ref size 不匹配")
+			return nil, errors.New("[Windows config] mirror bytes 与 exact ref size 不匹配")
 		}
 		configs[index] = InstalledConfigV1{
 			ArtifactID: ref.ArtifactID, Generation: ref.Generation, Platform: ref.Platform,
@@ -473,7 +473,7 @@ func InstallSecretArtifacts(identity *Identity, refs []wire.SecretArtifactRefV2,
 
 // AcceptDeviceConfigDelivery 从当前 protected Head/ControlSet 重放整个 delivery
 // window，并把 final view、floors、authority 与变化后的 artifacts 一次替换。
-// nil 表示对应 refs 未变化；非 nil 必须 exact 覆盖 final refs（D106、D124、D131）。
+// nil 表示对应 refs 未变化；非 nil 必须 exact 覆盖 final refs。
 func (store *StateStore) AcceptDeviceConfigDelivery(delivery *wire.DeviceConfigDeliveryV1,
 	identity *Identity, configs *[]InstalledConfigV1, credentials *[]InstalledSecretV1,
 ) (wire.ClientFloorsV2, error) {
@@ -487,7 +487,7 @@ func (store *StateStore) AcceptDeviceConfigDeliveryValidated(delivery *wire.Devi
 	validateCandidate func(*StateV1) error,
 ) (wire.ClientFloorsV2, error) {
 	if store == nil || delivery == nil || identity == nil {
-		return wire.ClientFloorsV2{}, errors.New("[D131 Windows config] delivery/store/identity 不完整")
+		return wire.ClientFloorsV2{}, errors.New("[Windows config] delivery/store/identity 不完整")
 	}
 	identityHash, err := identity.IdentitySPKIHash()
 	if err != nil {
@@ -497,7 +497,7 @@ func (store *StateStore) AcceptDeviceConfigDeliveryValidated(delivery *wire.Devi
 	defer store.mu.Unlock()
 	if store.state == nil || store.state.ControlSet == nil ||
 		store.state.Enrollment.IdentityKeyHash != identityHash {
-		return wire.ClientFloorsV2{}, errors.New("[D131 Windows config] protected active identity/authority 缺失")
+		return wire.ClientFloorsV2{}, errors.New("[Windows config] protected active identity/authority 缺失")
 	}
 	current := store.state
 	verified, err := wire.VerifyDeviceConfigDeliveryFromProtected(delivery, &current.Envelope,
@@ -511,18 +511,18 @@ func (store *StateStore) AcceptDeviceConfigDeliveryValidated(delivery *wire.Devi
 	configChanged, secretChanged := artifactRefsChanged(&current.Envelope, &finalEnvelope)
 	if finalEnvelope.Payload.State != "active" {
 		if configs != nil || credentials != nil {
-			return current.Floors, errors.New("[D124 Windows config] tombstone 禁止提交新 artifact")
+			return current.Floors, errors.New("[Windows config] tombstone 禁止提交新 artifact")
 		}
 		installation.Configs = []InstalledConfigV1{}
 		installation.Credentials = []InstalledSecretV1{}
 		installation.CurrentSecretArtifactRefs = []wire.SecretArtifactRefV2{}
 	} else {
 		if finalEnvelope.Payload.Active == nil {
-			return current.Floors, errors.New("[D105 Windows config] active Device view 缺 active payload")
+			return current.Floors, errors.New("[Windows config] active Device view 缺 active payload")
 		}
 		if configChanged {
 			if configs == nil {
-				return current.Floors, errors.New("[D124 Windows config] config refs 已变化但 artifact 未到齐")
+				return current.Floors, errors.New("[Windows config] config refs 已变化但 artifact 未到齐")
 			}
 			if err := validateInstalledConfigs(*configs,
 				finalEnvelope.Payload.Active.ConfigArtifactRefs); err != nil {
@@ -530,11 +530,11 @@ func (store *StateStore) AcceptDeviceConfigDeliveryValidated(delivery *wire.Devi
 			}
 			installation.Configs = cloneValue(*configs)
 		} else if configs != nil {
-			return current.Floors, errors.New("[D124 Windows config] config refs 未变却提交了 artifact")
+			return current.Floors, errors.New("[Windows config] config refs 未变却提交了 artifact")
 		}
 		if secretChanged {
 			if credentials == nil || len(delivery.SecretEnvelopes) != len(finalEnvelope.SecretArtifactRefs) {
-				return current.Floors, errors.New("[D124 Windows config] secret refs 已变化但 credential/envelope 未 exact 到齐")
+				return current.Floors, errors.New("[Windows config] secret refs 已变化但 credential/envelope 未 exact 到齐")
 			}
 			refs, err := decodeSecretArtifactRefs(finalEnvelope.SecretArtifactRefs)
 			if err != nil {
@@ -543,7 +543,7 @@ func (store *StateStore) AcceptDeviceConfigDeliveryValidated(delivery *wire.Devi
 			installation.Credentials = cloneValue(*credentials)
 			installation.CurrentSecretArtifactRefs = refs
 		} else if credentials != nil {
-			return current.Floors, errors.New("[D124 Windows config] secret refs 未变却提交了 credential")
+			return current.Floors, errors.New("[Windows config] secret refs 未变却提交了 credential")
 		}
 	}
 	set := verified.ControlSet()
@@ -566,10 +566,10 @@ func validateCandidateWithoutMutation(candidate *StateV1, validate func(*StateV1
 	}
 	before := cloneValue(*candidate)
 	if err := validate(candidate); err != nil {
-		return fmt.Errorf("[D130 Windows activation] candidate preflight 失败: %w", err)
+		return fmt.Errorf("[Windows activation] candidate preflight 失败: %w", err)
 	}
 	if !wire.EqualCanonical(before, *candidate) {
-		return errors.New("[D130 Windows activation] candidate validator 修改了 certified state")
+		return errors.New("[Windows activation] candidate validator 修改了 certified state")
 	}
 	return nil
 }
@@ -595,7 +595,7 @@ func decodeSecretArtifactRefs(raw []json.RawMessage) ([]wire.SecretArtifactRefV2
 	for index := range raw {
 		canonical, err := wire.DecodeStrict(raw[index], 4<<20, &refs[index])
 		if err != nil || !bytes.Equal(canonical, raw[index]) {
-			return nil, errors.New("[D124 Windows config] secret ref 不是 exact canonical wire")
+			return nil, errors.New("[Windows config] secret ref 不是 exact canonical wire")
 		}
 	}
 	return refs, nil
@@ -604,7 +604,7 @@ func decodeSecretArtifactRefs(raw []json.RawMessage) ([]wire.SecretArtifactRefV2
 func validateInstalledConfigs(configs []InstalledConfigV1,
 	refs []wire.DeviceConfigArtifactRefV1) error {
 	if configs == nil || len(refs) == 0 || len(refs) > maximumConfigArtifacts || len(configs) != len(refs) {
-		return errors.New("[D124 Windows config] installed configs 未 exact 覆盖 Device view refs")
+		return errors.New("[Windows config] installed configs 未 exact 覆盖 Device view refs")
 	}
 	total := 0
 	for index := range refs {
@@ -617,18 +617,18 @@ func validateInstalledConfigs(configs []InstalledConfigV1,
 			installed.Platform != ref.Platform || installed.MediaType != ref.MediaType ||
 			installed.RenderContractID != ref.RenderContractID || installed.SizeBytes != ref.SizeBytes ||
 			installed.ContentHash != ref.ContentHash {
-			return errors.New("[D124 Windows config] installed config 未绑定 exact ref")
+			return errors.New("[Windows config] installed config 未绑定 exact ref")
 		}
 		raw := []byte(installed.Config)
 		canonical, canonicalErr := wire.CanonicalizeStrict(raw)
 		hash, hashErr := wire.DeviceConfigArtifactContentHash(raw)
 		if len(raw) != int(ref.SizeBytes) || canonicalErr != nil || !bytes.Equal(canonical, raw) ||
 			hashErr != nil || hash != ref.ContentHash {
-			return errors.New("[D124 Windows config] installed config bytes/hash 无效")
+			return errors.New("[Windows config] installed config bytes/hash 无效")
 		}
 		total += len(raw)
 		if total > maximumConfigTotalBytes {
-			return errors.New("[D124 Windows config] installed configs 超过总预算")
+			return errors.New("[Windows config] installed configs 超过总预算")
 		}
 	}
 	return nil
@@ -637,7 +637,7 @@ func validateInstalledConfigs(configs []InstalledConfigV1,
 func validateState(state *StateV1) error {
 	if state == nil || state.Schema != 1 || state.ControlSet == nil ||
 		state.Floors.Schema != 2 || !state.Floors.V2Latched {
-		return errors.New("[D106 Windows] v2 LKG schema/latch/ControlSet 无效")
+		return errors.New("[Windows] v2 LKG schema/latch/ControlSet 无效")
 	}
 	verified, err := wire.VerifyDeviceViewEnvelopeWithPrevious(&state.Envelope,
 		state.ControlSet, state.PreviousControlSet)
@@ -645,10 +645,10 @@ func validateState(state *StateV1) error {
 		verified.BootstrapTransitionHash = state.Floors.BootstrapTransitionHash
 	}
 	if err != nil || !wire.EqualCanonical(verified, state.Floors) {
-		return errors.New("[D106 Windows] durable Device view/ControlSet/QC/floors 不可重放")
+		return errors.New("[Windows] durable Device view/ControlSet/QC/floors 不可重放")
 	}
 	if state.Floors.ClusterID != state.Envelope.Payload.ClusterID {
-		return errors.New("[D106 Windows] durable floors cluster 分叉")
+		return errors.New("[Windows] durable floors cluster 分叉")
 	}
 	return validateInstallation(&state.Enrollment, &state.Envelope)
 }
@@ -659,7 +659,7 @@ func validateInstallation(installation *EnrollmentInstallationV1,
 		installation.ClaimCore.ClientPlatform != "windows-desktop" ||
 		installation.Credentials == nil || installation.CurrentSecretArtifactRefs == nil ||
 		installation.Configs == nil || installation.DistributionMirrors == nil {
-		return errors.New("[D130 Windows install] durable installation header 无效")
+		return errors.New("[Windows install] durable installation header 无效")
 	}
 	for _, hash := range []string{installation.ClaimCoreHash, installation.IdentityKeyHash,
 		installation.WrappingKeyHash, installation.TransactionStateHash, installation.ResultArtifactHash,
@@ -675,13 +675,13 @@ func validateInstallation(installation *EnrollmentInstallationV1,
 		initial.DeviceGeneration > envelope.Payload.DeviceGeneration ||
 		initial.DeviceGeneration == envelope.Payload.DeviceGeneration && !wire.EqualCanonical(*initial, envelope.Payload) ||
 		initial.Active.IdentitySPKIHash != installation.IdentityKeyHash {
-		return errors.New("[D130 Windows install] durable initial result/current view lineage 无效")
+		return errors.New("[Windows install] durable initial result/current view lineage 无效")
 	}
 	claimHash, err := wire.EnrollmentClaimCoreHash(&installation.ClaimCore)
 	identityHash, wrappingHash, _, keyErr := wire.EnrollmentClaimBinaryHashes(&installation.ClaimCore)
 	if err != nil || keyErr != nil || claimHash != installation.ClaimCoreHash ||
 		identityHash != installation.IdentityKeyHash || wrappingHash != installation.WrappingKeyHash {
-		return errors.New("[D130 Windows install] durable stable claim/key binding 无效")
+		return errors.New("[Windows install] durable stable claim/key binding 无效")
 	}
 	certificateDER, err := wire.EnrollmentResultCertificateDER(&installation.ResultArtifact)
 	certificateHash, hashErr := wire.DeviceCertificateHash(certificateDER)
@@ -692,22 +692,22 @@ func validateInstallation(installation *EnrollmentInstallationV1,
 		certificateHash != installation.DeviceCertificateHash || profileHash != installation.DeviceProfileHash ||
 		installation.DeviceProfile.ClusterID != envelope.Payload.ClusterID ||
 		installation.DeviceProfile.Status != "active" {
-		return errors.New("[D102 Windows install] durable certificate/profile/hash 无效")
+		return errors.New("[Windows install] durable certificate/profile/hash 无效")
 	}
 	if _, err := wire.VerifyDeviceCertificateAt(certificateDER, &installation.DeviceProfile,
 		initial.DeviceID, installation.IdentityKeyHash, installation.ClaimCore.ClientPlatform,
 		initial.Active.Responsibilities.Values, installation.DeviceIssuance, approvedAt, approvedAt); err != nil {
-		return errors.New("[D102 Windows install] durable Device certificate verification context 无效")
+		return errors.New("[Windows install] durable Device certificate verification context 无效")
 	}
 	certificateIdentityHash, err := wire.HashBytes(wire.DomainEnrollmentIdentitySPKI,
 		certificate.RawSubjectPublicKeyInfo)
 	if err != nil || certificateIdentityHash != installation.IdentityKeyHash {
-		return errors.New("[D102 Windows install] certificate 未绑定 protected identity")
+		return errors.New("[Windows install] certificate 未绑定 protected identity")
 	}
 	refs := installation.CurrentSecretArtifactRefs
 	if len(refs) != len(installation.Credentials) ||
 		envelope.Payload.Active != nil && len(refs) != len(envelope.SecretArtifactRefs) {
-		return errors.New("[D124 Windows install] durable credentials/refs 数量不匹配")
+		return errors.New("[Windows install] durable credentials/refs 数量不匹配")
 	}
 	total := 0
 	for index := range refs {
@@ -723,23 +723,23 @@ func validateInstallation(installation *EnrollmentInstallationV1,
 			envelopeErr != nil || !bytes.Equal(canonicalRef, canonicalEnvelopeRef) ||
 			credential.SecretID != refs[index].SecretID || credential.Purpose != refs[index].Purpose ||
 			credential.Generation != refs[index].Generation || credential.ImmutableRef != refs[index].ImmutableRef {
-			return errors.New("[D124 Windows install] durable credential 未绑定 exact secret ref")
+			return errors.New("[Windows install] durable credential 未绑定 exact secret ref")
 		}
 		secret, decodeErr := base64.RawURLEncoding.DecodeString(credential.SecretBytes)
 		if decodeErr != nil || len(secret) == 0 ||
 			base64.RawURLEncoding.EncodeToString(secret) != credential.SecretBytes ||
 			wire.HashRaw(installedSecretDigestDomain, secret) != credential.SecretDigest {
-			return errors.New("[D124 Windows install] durable credential bytes/digest 无效")
+			return errors.New("[Windows install] durable credential bytes/digest 无效")
 		}
 		total += len(secret)
 		clear(secret)
 		if total > maximumSecretTotalBytes {
-			return errors.New("[D124 Windows install] durable credentials 超过总预算")
+			return errors.New("[Windows install] durable credentials 超过总预算")
 		}
 	}
 	if envelope.Payload.Active == nil {
 		if len(installation.Configs) != 0 || len(installation.Credentials) != 0 || len(refs) != 0 {
-			return errors.New("[D124 Windows install] tombstone 仍保留 runtime artifact/credential")
+			return errors.New("[Windows install] tombstone 仍保留 runtime artifact/credential")
 		}
 	} else if err := validateInstalledConfigs(installation.Configs,
 		envelope.Payload.Active.ConfigArtifactRefs); err != nil {
@@ -752,17 +752,17 @@ func validateInstallation(installation *EnrollmentInstallationV1,
 }
 
 // Credential 返回短生命周期明文副本；调用者使用后必须 clear。tombstone
-// 状态永远不会返回任何 credential（D124、D131）。
+// 状态永远不会返回任何 credential。
 func (state *StateV1) Credential(secretID, purpose string) ([]byte, error) {
 	if state == nil || state.Envelope.Payload.State != "active" || state.Envelope.Payload.Active == nil {
-		return nil, errors.New("[D131 Windows] tombstone/inactive Device 禁止读取 credential")
+		return nil, errors.New("[Windows] tombstone/inactive Device 禁止读取 credential")
 	}
 	var selected *InstalledSecretV1
 	for index := range state.Enrollment.Credentials {
 		candidate := &state.Enrollment.Credentials[index]
 		if candidate.SecretID == secretID && candidate.Purpose == purpose {
 			if selected != nil {
-				return nil, errors.New("[D124 Windows] credential 选择不唯一")
+				return nil, errors.New("[Windows] credential 选择不唯一")
 			}
 			selected = candidate
 		}
@@ -773,21 +773,21 @@ func (state *StateV1) Credential(secretID, purpose string) ([]byte, error) {
 	secret, err := base64.RawURLEncoding.DecodeString(selected.SecretBytes)
 	if err != nil || wire.HashRaw(installedSecretDigestDomain, secret) != selected.SecretDigest {
 		clear(secret)
-		return nil, errors.New("[D124 Windows] credential digest 无效")
+		return nil, errors.New("[Windows] credential digest 无效")
 	}
 	return secret, nil
 }
 
 func (state *StateV1) Config(artifactID string) ([]byte, error) {
 	if state == nil || state.Envelope.Payload.State != "active" || state.Envelope.Payload.Active == nil {
-		return nil, errors.New("[D131 Windows] tombstone/inactive Device 禁止读取 config")
+		return nil, errors.New("[Windows] tombstone/inactive Device 禁止读取 config")
 	}
 	var selected *InstalledConfigV1
 	for index := range state.Enrollment.Configs {
 		candidate := &state.Enrollment.Configs[index]
 		if candidate.ArtifactID == artifactID {
 			if selected != nil {
-				return nil, errors.New("[D124 Windows] config artifact ID 不唯一")
+				return nil, errors.New("[Windows] config artifact ID 不唯一")
 			}
 			selected = candidate
 		}
@@ -800,11 +800,11 @@ func (state *StateV1) Config(artifactID string) ([]byte, error) {
 
 func TrustedTime(now func() time.Time) (time.Time, error) {
 	if now == nil {
-		return time.Time{}, errors.New("[D106 Windows] trusted time source 缺失")
+		return time.Time{}, errors.New("[Windows] trusted time source 缺失")
 	}
 	instant := now().UTC()
 	if instant.IsZero() {
-		return time.Time{}, errors.New("[D106 Windows] trusted time 无效")
+		return time.Time{}, errors.New("[Windows] trusted time 无效")
 	}
 	return instant, nil
 }

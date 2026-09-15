@@ -50,13 +50,13 @@ func generateAdminKey(public crypto.PublicKey) (crypto.Signer, error) {
 			return ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		}
 	}
-	return nil, errors.New("[D104 admin] issuer 必须是 Ed25519 或 P-256")
+	return nil, errors.New("[admin] issuer 必须是 Ed25519 或 P-256")
 }
 
 func parseAdminPrivateKey(encoded []byte) (crypto.Signer, error) {
 	block, trailing := pem.Decode(encoded)
 	if block == nil || block.Type != "PRIVATE KEY" || len(bytes.TrimSpace(trailing)) != 0 {
-		return nil, errors.New("[D104 admin] key 必须是单一 PKCS#8 PEM")
+		return nil, errors.New("[admin] key 必须是单一 PKCS#8 PEM")
 	}
 	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
@@ -70,7 +70,7 @@ func parseAdminPrivateKey(encoded []byte) (crypto.Signer, error) {
 			return key, nil
 		}
 	}
-	return nil, errors.New("[D104 admin] 私钥算法未获支持")
+	return nil, errors.New("[admin] 私钥算法未获支持")
 }
 
 func cmdControlExportAdmin(args []string) error {
@@ -85,14 +85,14 @@ func cmdControlExportAdmin(args []string) error {
 	return exportAdminPKCS12(*dir, time.Now().UTC())
 }
 
-// D132：交付包必须自含完整的兼容链，只包含管理员私钥；历史 Ed25519 包禁止再次交付浏览器。
+// 交付包必须自含完整的兼容链，只包含管理员私钥；历史 Ed25519 包禁止再次交付浏览器。
 func exportAdminPKCS12(dir string, now time.Time) error {
 	info, err := os.Lstat(dir)
 	if err != nil {
 		return err
 	}
 	if !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
-		return errors.New("[D132 admin.p12] 交付目录必须是 owner-only 目录")
+		return errors.New("[admin.p12] 交付目录必须是 owner-only 目录")
 	}
 	leafPEM, err := readOwnerOnlyFile(filepath.Join(dir, controlAdminCertName), 1<<20)
 	if err != nil {
@@ -125,7 +125,7 @@ func exportAdminPKCS12(dir string, now time.Time) error {
 		!leafPublic.Equal(key.Public()) || leaf.IsCA || leaf.KeyUsage != x509.KeyUsageDigitalSignature ||
 		len(leaf.ExtKeyUsage) != 1 || leaf.ExtKeyUsage[0] != x509.ExtKeyUsageClientAuth ||
 		!root.IsCA || root.CheckSignatureFrom(root) != nil || leaf.CheckSignatureFrom(root) != nil {
-		return errors.New("[D132 admin.p12] 必须是匹配私钥的 P-256 clientAuth leaf 与 P-256 签发链；旧 Ed25519 身份须先 rotate-admin")
+		return errors.New("[admin.p12] 必须是匹配私钥的 P-256 clientAuth leaf 与 P-256 签发链；旧 Ed25519 身份须先 rotate-admin")
 	}
 	roots := x509.NewCertPool()
 	roots.AddCert(root)
@@ -159,7 +159,7 @@ func exportAdminPKCS12(dir string, now time.Time) error {
 		"-name", "Loom control administrator", "-passout", "file:"+passwordPath)
 	encoded, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("[D132 admin.p12] OpenSSL 导出失败: %w", err)
+		return fmt.Errorf("[admin.p12] OpenSSL 导出失败: %w", err)
 	}
 	if err := writeBytesAtomic(packagePath, encoded, 0o600); err != nil {
 		return err
@@ -178,7 +178,7 @@ func verifyAdminPKCS12(dir string, leafDER, rootDER []byte) error {
 	// 明文私钥只在子进程管道与内存内验证，不写日志、参数或临时文件。
 	output, err := exec.Command("openssl", "pkcs12", "-in", path, "-passin", "file:"+password, "-noenc").Output()
 	if err != nil {
-		return fmt.Errorf("[D132 admin.p12] MAC/密码/解码验证失败: %w", err)
+		return fmt.Errorf("[admin.p12] MAC/密码/解码验证失败: %w", err)
 	}
 	var certs [][]byte
 	var keys []crypto.Signer
@@ -198,11 +198,11 @@ func verifyAdminPKCS12(dir string, leafDER, rootDER []byte) error {
 			}
 			keys = append(keys, key)
 		default:
-			return errors.New("[D132 admin.p12] 包内出现未声明的 PEM 对象")
+			return errors.New("[admin.p12] 包内出现未声明的 PEM 对象")
 		}
 	}
 	if len(certs) != 2 || len(keys) != 1 || !bytes.Equal(certs[0], leafDER) || !bytes.Equal(certs[1], rootDER) {
-		return errors.New("[D132 admin.p12] 包必须包含 exact leaf + issuer 与仅一把管理员私钥")
+		return errors.New("[admin.p12] 包必须包含 exact leaf + issuer 与仅一把管理员私钥")
 	}
 	leaf, err := x509.ParseCertificate(leafDER)
 	if err != nil {
@@ -210,7 +210,7 @@ func verifyAdminPKCS12(dir string, leafDER, rootDER []byte) error {
 	}
 	public, ok := leaf.PublicKey.(*ecdsa.PublicKey)
 	if !ok || !public.Equal(keys[0].Public()) {
-		return errors.New("[D132 admin.p12] 包内私钥与管理员证书不匹配")
+		return errors.New("[admin.p12] 包内私钥与管理员证书不匹配")
 	}
 	return nil
 }

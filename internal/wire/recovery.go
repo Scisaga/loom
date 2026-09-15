@@ -246,7 +246,7 @@ type EmergencyRecoveryBundleV1 struct {
 }
 
 // VerifiedRecoveryTransitionV1 只能由完整 emergency bundle verifier 构造。
-// 字段保持私有，防止调用方拿一个自报 hash 绕过 recovery floor（D119）。
+// 字段保持私有，防止调用方拿一个自报 hash 绕过 recovery floor。
 type VerifiedRecoveryTransitionV1 struct {
 	clusterID                     string
 	previousRecoveryEpoch         int64
@@ -276,7 +276,7 @@ func ValidateRecoveryPolicy(policy *RecoveryPolicyV1) error {
 		!validIdentifier(policy.PolicyID, 128) || policy.Generation < 1 || policy.Algorithm != "ed25519-multisig-v1" ||
 		policy.CeremonyProfile != "offline-independent-keys-v1" || len(policy.Keys) == 0 ||
 		policy.Threshold < 1 || policy.Threshold > int64(len(policy.Keys)) {
-		return errors.New("[D119 recovery] policy header/threshold 无效")
+		return errors.New("[recovery] policy header/threshold 无效")
 	}
 	if _, err := ParseHash(policy.PrivateKeyCustodyRoot); err != nil {
 		return err
@@ -288,10 +288,10 @@ func ValidateRecoveryPolicy(policy *RecoveryPolicyV1) error {
 		keyID, _ := ControlKeyID(public)
 		if err != nil || key.Algorithm != "ed25519" || key.KeyID != keyID ||
 			i > 0 && policy.Keys[i-1].KeyID >= key.KeyID {
-			return errors.New("[D119 recovery] policy keys 无效/未排序")
+			return errors.New("[recovery] policy keys 无效/未排序")
 		}
 		if _, exists := publicKeys[key.PublicKey]; exists {
-			return errors.New("[D119 recovery] policy public key 重复")
+			return errors.New("[recovery] policy public key 重复")
 		}
 		publicKeys[key.PublicKey] = struct{}{}
 	}
@@ -307,19 +307,19 @@ func RecoveryPolicyHash(policy *RecoveryPolicyV1) (string, error) {
 
 func RecoveryKeyPossessionProofHash(proof *RecoveryKeyPossessionProofV1) (string, error) {
 	if proof == nil {
-		return "", errors.New("[D119 recovery] key PoP 缺失")
+		return "", errors.New("[recovery] key PoP 缺失")
 	}
 	return HashObject(DomainRecoveryKeyPoP, proof)
 }
 
 func NewRecoveryKeyPossessionProof(body RecoveryKeyPossessionProofBodyV1, privateKey ed25519.PrivateKey) (RecoveryKeyPossessionProofV1, error) {
 	if len(privateKey) != ed25519.PrivateKeySize {
-		return RecoveryKeyPossessionProofV1{}, errors.New("[D119 recovery] private key 无效")
+		return RecoveryKeyPossessionProofV1{}, errors.New("[recovery] private key 无效")
 	}
 	public := privateKey.Public().(ed25519.PublicKey)
 	keyID, _ := ControlKeyID(public)
 	if body.Schema != 1 || body.KeyID != keyID || body.PublicKey != base64.RawURLEncoding.EncodeToString(public) {
-		return RecoveryKeyPossessionProofV1{}, errors.New("[D119 recovery] key PoP body/private key 不匹配")
+		return RecoveryKeyPossessionProofV1{}, errors.New("[recovery] key PoP body/private key 不匹配")
 	}
 	canonical, err := MarshalCanonical(body)
 	if err != nil {
@@ -334,7 +334,7 @@ func RecoveryKeyPossessionRoot(policy *RecoveryPolicyV1, proofs []RecoveryKeyPos
 		return "", err
 	}
 	if len(proofs) != len(policy.Keys) {
-		return "", errors.New("[D119 recovery] key PoP 必须恰好覆盖 policy keys")
+		return "", errors.New("[recovery] key PoP 必须恰好覆盖 policy keys")
 	}
 	leaves := make([][]byte, len(proofs))
 	for i := range proofs {
@@ -343,14 +343,14 @@ func RecoveryKeyPossessionRoot(policy *RecoveryPolicyV1, proofs []RecoveryKeyPos
 		if body.Schema != 1 || body.ClusterID != policy.ClusterID || body.PolicyID != policy.PolicyID ||
 			body.PolicyGeneration != policy.Generation || body.KeyID != key.KeyID || body.PublicKey != key.PublicKey ||
 			i > 0 && proofs[i-1].Body.KeyID >= body.KeyID {
-			return "", errors.New("[D119 recovery] key PoP 与 policy 不一一对应")
+			return "", errors.New("[recovery] key PoP 与 policy 不一一对应")
 		}
 		public, _ := decodeRawURL(body.PublicKey, ed25519.PublicKeySize)
 		signature, err := decodeRawURL(proof.Signature, ed25519.SignatureSize)
 		canonical, canonicalErr := MarshalCanonical(*body)
 		message, frameErr := Frame(DomainRecoveryKeyPoPSignature, canonical)
 		if err != nil || canonicalErr != nil || frameErr != nil || !ed25519.Verify(public, message, signature) {
-			return "", errors.New("[D119 recovery] key PoP signature 无效")
+			return "", errors.New("[recovery] key PoP signature 无效")
 		}
 		hash, _ := RecoveryKeyPossessionProofHash(proof)
 		leaf := RecoveryKeyPossessionLeafV1{Schema: 1, KeyID: body.KeyID, RecoveryKeyPoPHash: hash}
@@ -362,7 +362,7 @@ func RecoveryKeyPossessionRoot(policy *RecoveryPolicyV1, proofs []RecoveryKeyPos
 func validateRecoveryBootstrapStatement(statement *RecoveryBootstrapStatementV1) error {
 	if statement == nil || statement.Schema != 1 || statement.StatementType != "bootstrap" ||
 		!validIdentifier(statement.ClusterID, 128) || statement.RecoveryEpoch != 0 || statement.InitialControlEpoch != 0 {
-		return errors.New("[D111 bootstrap] recovery bootstrap statement header 无效")
+		return errors.New("[bootstrap] recovery bootstrap statement header 无效")
 	}
 	return requireCanonicalHashes(statement.RecoveryPolicyHash, statement.InitialRecoveryKeyPoPRoot,
 		statement.InitialControlSetHash, statement.InitialControlPeerDirectoryHash, statement.InitialControlKeyPoPRoot,
@@ -371,13 +371,13 @@ func validateRecoveryBootstrapStatement(statement *RecoveryBootstrapStatementV1)
 
 func validateRecoveryTransitionBody(body *RecoveryTransitionBodyV1) error {
 	if body == nil {
-		return errors.New("[D119 recovery] transition body 缺失")
+		return errors.New("[recovery] transition body 缺失")
 	}
 	nextEpoch, addErr := CheckedAdd(body.PreviousRecoveryEpoch, 1)
 	if body.Schema != 1 || body.StatementType != "emergency" || !validIdentifier(body.ClusterID, 128) ||
 		body.PreviousRecoveryEpoch < 0 || addErr != nil || body.NewRecoveryEpoch != nextEpoch || body.NewControlEpoch != 0 ||
 		!validRecoveryReason(body.Reason) {
-		return errors.New("[D119 recovery] transition body header/epoch 无效")
+		return errors.New("[recovery] transition body header/epoch 无效")
 	}
 	if _, err := ParseTimeZ(body.IssuedAt); err != nil {
 		return err
@@ -421,7 +421,7 @@ func RecoveryStatementHash(statement any) (string, error) {
 			return "", err
 		}
 	default:
-		return "", errors.New("[D119 recovery] statement type 未获协议授权")
+		return "", errors.New("[recovery] statement type 未获协议授权")
 	}
 	return HashObject(DomainRecoveryStatement, statement)
 }
@@ -437,7 +437,7 @@ func validateInitialV2Payload(payload *InitialV2HeadPayloadV1) error {
 	if payload == nil || payload.Schema != 1 || !validIdentifier(payload.ClusterID, 128) || payload.RecoveryEpoch != 0 ||
 		payload.ControlEpoch != 0 || payload.ControlRevision != 1 || payload.RenderContractVersion < 1 ||
 		payload.MinReaderVersion < 2 || payload.MaxClockSkewSeconds < 0 || payload.MaxClockSkewSeconds > 300 {
-		return errors.New("[D111 bootstrap] initial payload 坐标/版本无效")
+		return errors.New("[bootstrap] initial payload 坐标/版本无效")
 	}
 	return requireCanonicalHashes(payload.RecoveryStatementHash, payload.RecoveryPolicyHash, payload.ControlSetHash,
 		payload.ControlPeerDirectoryHash, payload.SnapshotHash, payload.OperationRoot, payload.EffectiveSSOTHash,
@@ -454,7 +454,7 @@ func BootstrapTransitionBodyHash(body *BootstrapTransitionBodyV1ToV2) (string, e
 func validateBootstrapTransitionBody(body *BootstrapTransitionBodyV1ToV2) error {
 	if body == nil || body.Schema != 1 || !validIdentifier(body.ClusterID, 128) || !validIdentifier(body.V1PlatformKeyID, 256) ||
 		body.InitialV2RaftIndex != 1 || body.MinimumReaderVersion < 2 || body.RecoveryBootstrapStatement.ClusterID != body.ClusterID {
-		return errors.New("[D111 bootstrap] transition body header 无效")
+		return errors.New("[bootstrap] transition body header 无效")
 	}
 	if err := validateRecoveryBootstrapStatement(&body.RecoveryBootstrapStatement); err != nil {
 		return err
@@ -467,33 +467,33 @@ func validateBootstrapTransitionBody(body *BootstrapTransitionBodyV1ToV2) error 
 
 func BootstrapTransitionProofHash(proof *BootstrapTransitionProofV1ToV2) (string, error) {
 	if proof == nil || proof.V1PlatformSignature.KeyID != proof.Body.V1PlatformKeyID {
-		return "", errors.New("[D111 bootstrap] transition proof/key ID 无效")
+		return "", errors.New("[bootstrap] transition proof/key ID 无效")
 	}
 	bodyHash, err := BootstrapTransitionBodyHash(&proof.Body)
 	if err != nil || proof.BodyHash != bodyHash {
-		return "", errors.New("[D111 bootstrap] transition body hash 不匹配")
+		return "", errors.New("[bootstrap] transition body hash 不匹配")
 	}
 	if _, err := decodeRawURL(proof.V1PlatformSignature.Signature, ed25519.SignatureSize); err != nil {
-		return "", errors.New("[D111 bootstrap] v1 platform signature 编码无效")
+		return "", errors.New("[bootstrap] v1 platform signature 编码无效")
 	}
 	return HashObject(DomainBootstrapTransitionProof, proof)
 }
 
 func VerifyBootstrapTransitionBundle(bundle *BootstrapTransitionBundleV1ToV2, platformKey ed25519.PublicKey, expectedPlatformKeyID, expectedMigrationAnchorDigest string) (string, error) {
 	if bundle == nil || bundle.Schema != 1 || len(platformKey) != ed25519.PublicKeySize {
-		return "", errors.New("[D111 bootstrap] transition bundle/platform key 无效")
+		return "", errors.New("[bootstrap] transition bundle/platform key 无效")
 	}
 	return verifyBootstrapTransitionBundle(bundle, platformKey, expectedPlatformKeyID, expectedMigrationAnchorDigest, "")
 }
 
 // VerifyBootstrapTransitionBundleFromCheckpoint 供全新 v2 Device 使用二维码内的
-// trusted checkpoint 建立初始信任；checkpoint 必须是 exact initial certified head hash（D111）。
+// trusted checkpoint 建立初始信任；checkpoint 必须是 exact initial certified head hash。
 func VerifyBootstrapTransitionBundleFromCheckpoint(bundle *BootstrapTransitionBundleV1ToV2, expectedInitialHeadHash string) (string, error) {
 	if bundle == nil || bundle.Schema != 1 {
-		return "", errors.New("[D111 bootstrap] transition bundle 无效")
+		return "", errors.New("[bootstrap] transition bundle 无效")
 	}
 	if _, err := ParseHash(expectedInitialHeadHash); err != nil || bundle.InitialHeadEntry.Head.HeadHash != expectedInitialHeadHash {
-		return "", errors.New("[D111 bootstrap] trusted checkpoint 未绑定 initial certified head")
+		return "", errors.New("[bootstrap] trusted checkpoint 未绑定 initial certified head")
 	}
 	return verifyBootstrapTransitionBundle(bundle, nil, "", "", expectedInitialHeadHash)
 }
@@ -505,16 +505,16 @@ func verifyBootstrapTransitionBundle(bundle *BootstrapTransitionBundleV1ToV2, pl
 		publicDigest := "sha256:" + fmt.Sprintf("%x", publicDigestRaw[:])
 		if body.V1PlatformKeyID != expectedPlatformKeyID || body.V1PlatformKeyDigest != publicDigest ||
 			body.V1PlatformKeyDigest != expectedMigrationAnchorDigest || proof.V1PlatformSignature.KeyID != expectedPlatformKeyID {
-			return "", errors.New("[D111 bootstrap] platform key/migration anchor 不匹配")
+			return "", errors.New("[bootstrap] platform key/migration anchor 不匹配")
 		}
 		canonicalBody, _ := MarshalCanonical(*body)
 		message, _ := Frame(DomainBootstrapTransitionSignature, canonicalBody)
 		signature, _ := decodeRawURL(proof.V1PlatformSignature.Signature, ed25519.SignatureSize)
 		if !ed25519.Verify(platformKey, message, signature) {
-			return "", errors.New("[D111 bootstrap] v1 platform transition signature 无效")
+			return "", errors.New("[bootstrap] v1 platform transition signature 无效")
 		}
 	} else if expectedInitialHeadHash == "" {
-		return "", errors.New("[D111 bootstrap] 缺 platform anchor 或 trusted checkpoint")
+		return "", errors.New("[bootstrap] 缺 platform anchor 或 trusted checkpoint")
 	}
 	transitionHash, err := BootstrapTransitionProofHash(proof)
 	if err != nil {
@@ -522,34 +522,34 @@ func verifyBootstrapTransitionBundle(bundle *BootstrapTransitionBundleV1ToV2, pl
 	}
 	policyHash, err := RecoveryPolicyHash(&bundle.InitialRecoveryPolicy)
 	if err != nil || policyHash != body.RecoveryBootstrapStatement.RecoveryPolicyHash || bundle.InitialRecoveryPolicy.ClusterID != body.ClusterID {
-		return "", errors.New("[D111 bootstrap] initial recovery policy hash 不匹配")
+		return "", errors.New("[bootstrap] initial recovery policy hash 不匹配")
 	}
 	recoveryPoPRoot, err := RecoveryKeyPossessionRoot(&bundle.InitialRecoveryPolicy, bundle.InitialRecoveryKeyPossessionProofs)
 	if err != nil || recoveryPoPRoot != body.InitialRecoveryKeyPoPRoot {
-		return "", errors.New("[D111 bootstrap] initial recovery key PoP root 不匹配")
+		return "", errors.New("[bootstrap] initial recovery key PoP root 不匹配")
 	}
 	setHash, err := ControlSetHash(&bundle.InitialControlSet)
 	if err != nil || setHash != body.InitialControlSetHash || bundle.InitialControlSet.ClusterID != body.ClusterID {
-		return "", errors.New("[D111 bootstrap] initial ControlSet hash 不匹配")
+		return "", errors.New("[bootstrap] initial ControlSet hash 不匹配")
 	}
 	controlPoPRoot, err := ControlKeyPossessionRoot(&bundle.InitialControlSet, bundle.InitialControlKeyPossessionProofs)
 	if err != nil || controlPoPRoot != body.InitialControlKeyPoPRoot {
-		return "", errors.New("[D111 bootstrap] initial control key PoP root 不匹配")
+		return "", errors.New("[bootstrap] initial control key PoP root 不匹配")
 	}
 	if err := ValidateRecoveryControlKeySeparation(&bundle.InitialRecoveryPolicy, &bundle.InitialControlSet); err != nil {
 		return "", err
 	}
 	statementHash, err := RecoveryStatementHash(&body.RecoveryBootstrapStatement)
 	if err != nil || statementHash != body.RecoveryStatementHash || !bootstrapRepeatedCommitmentsMatch(body) {
-		return "", errors.New("[D111 bootstrap] recovery statement/repeated commitments 不匹配")
+		return "", errors.New("[bootstrap] recovery statement/repeated commitments 不匹配")
 	}
 	initial := &bundle.InitialHeadEntry
 	payloadHash, err := InitialV2HeadPayloadHash(&initial.InitialPayload)
 	if err != nil || payloadHash != body.InitialV2HeadPayloadHash || !initialPayloadMatchesBootstrap(body, &initial.InitialPayload) {
-		return "", errors.New("[D111 bootstrap] initial payload/transition 不匹配")
+		return "", errors.New("[bootstrap] initial payload/transition 不匹配")
 	}
 	if initial.Schema != 1 || !headMatchesInitialPayload(&initial.Head, &initial.InitialPayload, transitionHash) {
-		return "", errors.New("[D111 bootstrap] initial HeadEntry 与 payload/transition 不匹配")
+		return "", errors.New("[bootstrap] initial HeadEntry 与 payload/transition 不匹配")
 	}
 	if err := VerifyStableHeadQC(&initial.Head, &bundle.InitialControlSet, &initial.ReplicationQC); err != nil {
 		return "", err
@@ -603,10 +603,10 @@ func VerifyBootstrapDeviceFloor(proof *BootstrapDeviceFloorProofV1, expectedDevi
 	if proof == nil || proof.Schema != 1 || proof.Leaf.Schema != 1 || proof.Leaf.DeviceID != expectedDeviceID ||
 		proof.Leaf.V1Generation < minimumGeneration || proof.Leaf.V1SignedCurrentHash != expectedCurrentHash ||
 		proof.Leaf.V1PayloadHash != expectedPayloadHash {
-		return errors.New("[D111 bootstrap] v1 Device floor binding 无效")
+		return errors.New("[bootstrap] v1 Device floor binding 无效")
 	}
 	if !validIdentifier(proof.Leaf.DeviceID, 128) {
-		return errors.New("[D111 bootstrap] v1 Device ID 无效")
+		return errors.New("[bootstrap] v1 Device ID 无效")
 	}
 	if err := requireCanonicalHashes(proof.Leaf.V1SignedCurrentHash, proof.Leaf.V1PayloadHash); err != nil {
 		return err
@@ -628,11 +628,11 @@ func VerifyBootstrapDeviceFloor(proof *BootstrapDeviceFloorProofV1, expectedDevi
 
 func RecoveryTransitionProofHash(proof *RecoveryTransitionProofV1, previousPolicy *RecoveryPolicyV1) (string, error) {
 	if proof == nil || proof.Schema != 1 {
-		return "", errors.New("[D119 recovery] transition proof schema 无效")
+		return "", errors.New("[recovery] transition proof schema 无效")
 	}
 	statementHash, err := RecoveryStatementHash(&proof.Body)
 	if err != nil || statementHash != proof.RecoveryStatementHash {
-		return "", errors.New("[D119 recovery] transition statement hash 不匹配")
+		return "", errors.New("[recovery] transition statement hash 不匹配")
 	}
 	if err := VerifyRecoveryThresholdSignatures(previousPolicy, &proof.Body, DomainRecoveryEmergencySignature, proof.OldPolicyThresholdSignatures); err != nil {
 		return "", err
@@ -645,7 +645,7 @@ func VerifyRecoveryThresholdSignatures(policy *RecoveryPolicyV1, body any, domai
 		return err
 	}
 	if domain == "" || len(signatures) < int(policy.Threshold) || len(signatures) > len(policy.Keys) {
-		return errors.New("[D119 recovery] threshold signatures 数量/domain 无效")
+		return errors.New("[recovery] threshold signatures 数量/domain 无效")
 	}
 	canonical, err := MarshalCanonical(body)
 	if err != nil {
@@ -660,12 +660,12 @@ func VerifyRecoveryThresholdSignatures(policy *RecoveryPolicyV1, body any, domai
 		signature := &signatures[i]
 		encoded, found := keys[signature.KeyID]
 		if !found || i > 0 && signatures[i-1].KeyID >= signature.KeyID {
-			return errors.New("[D119 recovery] threshold signer 未授权/未排序")
+			return errors.New("[recovery] threshold signer 未授权/未排序")
 		}
 		public, _ := decodeRawURL(encoded, ed25519.PublicKeySize)
 		raw, err := decodeRawURL(signature.Signature, ed25519.SignatureSize)
 		if err != nil || !ed25519.Verify(public, message, raw) {
-			return errors.New("[D119 recovery] threshold signature 无效")
+			return errors.New("[recovery] threshold signature 无效")
 		}
 	}
 	return nil
@@ -673,7 +673,7 @@ func VerifyRecoveryThresholdSignatures(policy *RecoveryPolicyV1, body any, domai
 
 func VerifyEmergencyRecoveryBundle(bundle *EmergencyRecoveryBundleV1, previousPolicy *RecoveryPolicyV1, previousHead *HeadEntryV2) (VerifiedRecoveryTransitionV1, error) {
 	if bundle == nil || bundle.Schema != 1 || previousHead == nil || ValidateHeadEntry(previousHead, nil) != nil {
-		return VerifiedRecoveryTransitionV1{}, errors.New("[D119 recovery] emergency bundle/previous head 无效")
+		return VerifiedRecoveryTransitionV1{}, errors.New("[recovery] emergency bundle/previous head 无效")
 	}
 	body := &bundle.TransitionProof.Body
 	oldPolicyHash, err := RecoveryPolicyHash(previousPolicy)
@@ -681,7 +681,7 @@ func VerifyEmergencyRecoveryBundle(bundle *EmergencyRecoveryBundleV1, previousPo
 		previousHead.Body.Payload.ClusterID != body.ClusterID || previousHead.Body.Payload.RecoveryEpoch != body.PreviousRecoveryEpoch ||
 		previousHead.Body.Payload.RecoveryStatementHash != body.PreviousRecoveryStatementHash ||
 		previousHead.Body.Payload.RecoveryPolicyHash != body.PreviousRecoveryPolicyHash {
-		return VerifiedRecoveryTransitionV1{}, errors.New("[D119 recovery] previous lineage/policy binding 不匹配")
+		return VerifiedRecoveryTransitionV1{}, errors.New("[recovery] previous lineage/policy binding 不匹配")
 	}
 	transitionHash, err := RecoveryTransitionProofHash(&bundle.TransitionProof, previousPolicy)
 	if err != nil {
@@ -689,19 +689,19 @@ func VerifyEmergencyRecoveryBundle(bundle *EmergencyRecoveryBundleV1, previousPo
 	}
 	newPolicyHash, err := RecoveryPolicyHash(&bundle.NewRecoveryPolicy)
 	if err != nil || newPolicyHash != body.NewRecoveryPolicyHash || bundle.NewRecoveryPolicy.ClusterID != body.ClusterID {
-		return VerifiedRecoveryTransitionV1{}, errors.New("[D119 recovery] new recovery policy hash/cluster 不匹配")
+		return VerifiedRecoveryTransitionV1{}, errors.New("[recovery] new recovery policy hash/cluster 不匹配")
 	}
 	newPolicyPoP, err := RecoveryKeyPossessionRoot(&bundle.NewRecoveryPolicy, bundle.NewRecoveryKeyPossessionProofs)
 	if err != nil || newPolicyPoP != body.NewPolicyPoPRoot {
-		return VerifiedRecoveryTransitionV1{}, errors.New("[D119 recovery] new recovery key PoP root 不匹配")
+		return VerifiedRecoveryTransitionV1{}, errors.New("[recovery] new recovery key PoP root 不匹配")
 	}
 	newSetHash, err := ControlSetHash(&bundle.NewControlSet)
 	if err != nil || newSetHash != body.NewControlSetHash || bundle.NewControlSet.ClusterID != body.ClusterID {
-		return VerifiedRecoveryTransitionV1{}, errors.New("[D119 recovery] new ControlSet hash/cluster 不匹配")
+		return VerifiedRecoveryTransitionV1{}, errors.New("[recovery] new ControlSet hash/cluster 不匹配")
 	}
 	newControlPoP, err := ControlKeyPossessionRoot(&bundle.NewControlSet, bundle.NewControlKeyPossessionProofs)
 	if err != nil || newControlPoP != body.NewControlKeyPoPRoot {
-		return VerifiedRecoveryTransitionV1{}, errors.New("[D119 recovery] new control key PoP root 不匹配")
+		return VerifiedRecoveryTransitionV1{}, errors.New("[recovery] new control key PoP root 不匹配")
 	}
 	if err := ValidateRecoveryControlKeySeparation(&bundle.NewRecoveryPolicy, &bundle.NewControlSet); err != nil {
 		return VerifiedRecoveryTransitionV1{}, err
@@ -710,7 +710,7 @@ func VerifyEmergencyRecoveryBundle(bundle *EmergencyRecoveryBundleV1, previousPo
 	genesisHash, err := recoveryGenesisPayloadHash(&genesis.GenesisPayload)
 	if err != nil || genesis.Schema != 1 || genesisHash != genesis.GenesisPayloadHash || genesisHash != body.NewLineageGenesisPayloadHash ||
 		!genesisPayloadMatchesTransition(&genesis.GenesisPayload, body) || !headMatchesRecoveryGenesis(&genesis.Head, &genesis.GenesisPayload, &bundle.TransitionProof, transitionHash) {
-		return VerifiedRecoveryTransitionV1{}, errors.New("[D119 recovery] Genesis payload/head/transition 不匹配")
+		return VerifiedRecoveryTransitionV1{}, errors.New("[recovery] Genesis payload/head/transition 不匹配")
 	}
 	if err := VerifyStableHeadQC(&genesis.Head, &bundle.NewControlSet, &genesis.ReplicationQC); err != nil {
 		return VerifiedRecoveryTransitionV1{}, err
@@ -736,7 +736,7 @@ func recoveryGenesisPayloadHash(payload *RecoveryGenesisPayloadV1) (string, erro
 	if payload == nil || payload.Schema != 1 || !validIdentifier(payload.ClusterID, 128) || payload.NewRecoveryEpoch < 1 ||
 		payload.NewControlEpoch != 0 || payload.RenderContractVersion < 1 || payload.MinReaderVersion < 2 ||
 		payload.MaxClockSkewSeconds < 0 || payload.MaxClockSkewSeconds > 300 {
-		return "", errors.New("[D119 recovery] genesis payload header 无效")
+		return "", errors.New("[recovery] genesis payload header 无效")
 	}
 	if err := requireCanonicalHashes(payload.NewRecoveryPolicyHash, payload.NewPolicyPoPRoot, payload.NewControlSetHash,
 		payload.NewControlPeerDirectoryHash, payload.NewControlKeyPoPRoot, payload.ParentRecoveryHeadHash,
@@ -783,7 +783,7 @@ func headMatchesRecoveryGenesis(head *HeadEntryV2, genesis *RecoveryGenesisPaylo
 }
 
 // AdvanceFloorsWithRecovery 只接受完整 bundle verifier 产生的 opaque evidence；并把
-// old floor 与 recovery Genesis 两端逐字段绑定（D119）。
+// old floor 与 recovery Genesis 两端逐字段绑定。
 func AdvanceFloorsWithRecovery(current, candidate ClientFloorsV2, verified VerifiedRecoveryTransitionV1) (ClientFloorsV2, error) {
 	if verified.clusterID == "" || current.ClusterID != verified.clusterID || candidate.ClusterID != verified.clusterID ||
 		current.AcceptedRecoveryEpoch != verified.previousRecoveryEpoch ||
@@ -799,7 +799,7 @@ func AdvanceFloorsWithRecovery(current, candidate ClientFloorsV2, verified Verif
 		candidate.HeadHash != verified.newGenesisHeadHash ||
 		candidate.BootstrapTransitionHash != verified.transitionProofHash &&
 			candidate.BootstrapTransitionHash != current.BootstrapTransitionHash {
-		return current, errors.New("[D119 floor] recovery evidence 与 old floor/Genesis candidate 不匹配")
+		return current, errors.New("[floor] recovery evidence 与 old floor/Genesis candidate 不匹配")
 	}
 	candidate.BootstrapTransitionHash = current.BootstrapTransitionHash
 	return advanceFloors(current, candidate, floorAdvanceAuthority{recovery: true})

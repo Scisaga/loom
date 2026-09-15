@@ -19,25 +19,25 @@ import (
 const MaximumLinuxResumeDescriptorBytes = 1 << 20
 
 // DecodeLinuxResumeDescriptor 只接受 exact canonical `.loom-resume` JSON。签名、
-// authority 和本机 pending binding 在 RunLinuxResumeAttempt 前后完整验证（D130）。
+// authority 和本机 pending binding 在 RunLinuxResumeAttempt 前后完整验证。
 func DecodeLinuxResumeDescriptor(raw []byte) (wire.EnrollmentResumeDescriptorV1, error) {
 	if len(raw) == 0 || len(raw) > MaximumLinuxResumeDescriptorBytes {
-		return wire.EnrollmentResumeDescriptorV1{}, errors.New("[D130 Linux resume] descriptor 大小无效")
+		return wire.EnrollmentResumeDescriptorV1{}, errors.New("[Linux resume] descriptor 大小无效")
 	}
 	var descriptor wire.EnrollmentResumeDescriptorV1
 	canonical, err := wire.DecodeStrict(raw, MaximumLinuxResumeDescriptorBytes, &descriptor)
 	if err != nil || !bytes.Equal(canonical, raw) || descriptor.Schema != 1 {
-		return wire.EnrollmentResumeDescriptorV1{}, errors.New("[D130 Linux resume] descriptor 必须是 exact canonical wire")
+		return wire.EnrollmentResumeDescriptorV1{}, errors.New("[Linux resume] descriptor 必须是 exact canonical wire")
 	}
 	return descriptor, nil
 }
 
 // ReadLinuxResumeDescriptor 支持普通 `.loom-resume` 文件或 path="-" 的标准输入。
-// 文件 carrier 禁止 symlink/device/FIFO；秘密状态仍只从 root-owned pending 目录读取（D129、D130）。
+// 文件 carrier 禁止 symlink/device/FIFO；秘密状态仍只从 root-owned pending 目录读取。
 func ReadLinuxResumeDescriptor(path string, stdin io.Reader) (wire.EnrollmentResumeDescriptorV1, error) {
 	if path == "-" {
 		if stdin == nil {
-			return wire.EnrollmentResumeDescriptorV1{}, errors.New("[D130 Linux resume] stdin 不能为空")
+			return wire.EnrollmentResumeDescriptorV1{}, errors.New("[Linux resume] stdin 不能为空")
 		}
 		raw, err := io.ReadAll(io.LimitReader(stdin, MaximumLinuxResumeDescriptorBytes+1))
 		if err != nil {
@@ -46,7 +46,7 @@ func ReadLinuxResumeDescriptor(path string, stdin io.Reader) (wire.EnrollmentRes
 		return DecodeLinuxResumeDescriptor(raw)
 	}
 	if path == "" || filepath.Clean(path) != path {
-		return wire.EnrollmentResumeDescriptorV1{}, errors.New("[D130 Linux resume] file path 非规范")
+		return wire.EnrollmentResumeDescriptorV1{}, errors.New("[Linux resume] file path 非规范")
 	}
 	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
@@ -55,13 +55,13 @@ func ReadLinuxResumeDescriptor(path string, stdin io.Reader) (wire.EnrollmentRes
 	file := os.NewFile(uintptr(fd), path)
 	if file == nil {
 		_ = unix.Close(fd)
-		return wire.EnrollmentResumeDescriptorV1{}, errors.New("[D130 Linux resume] 无法建立 carrier handle")
+		return wire.EnrollmentResumeDescriptorV1{}, errors.New("[Linux resume] 无法建立 carrier handle")
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 ||
 		info.Size() < 1 || info.Size() > MaximumLinuxResumeDescriptorBytes {
-		return wire.EnrollmentResumeDescriptorV1{}, errors.New("[D130 Linux resume] carrier 必须是有界普通文件")
+		return wire.EnrollmentResumeDescriptorV1{}, errors.New("[Linux resume] carrier 必须是有界普通文件")
 	}
 	raw, err := io.ReadAll(io.LimitReader(file, MaximumLinuxResumeDescriptorBytes+1))
 	if err != nil {
@@ -91,17 +91,17 @@ type LinuxResumeAttemptV1 struct {
 }
 
 // RunLinuxResumeAttempt 在已由 descriptor capability 建立的临时 tunnel 内恢复一次
-// committed transaction。它不读取或发送 Invite token，只重用原 core/key 并签 fresh challenge（D130）。
+// committed transaction。它不读取或发送 Invite token，只重用原 core/key 并签 fresh challenge。
 func RunLinuxResumeAttempt(ctx context.Context,
 	attempt LinuxResumeAttemptV1) (LinuxEnrollmentAttemptResultV2, error) {
 	if attempt.Descriptor == nil || attempt.ProofBundle == nil || attempt.Catalog == nil ||
 		attempt.API == nil || attempt.Now == nil || attempt.IdentityPath == "" ||
 		attempt.PendingPath == "" || attempt.ClientProtocol < 1 {
-		return LinuxEnrollmentAttemptResultV2{}, errors.New("[D130 Linux resume] attempt 输入不完整")
+		return LinuxEnrollmentAttemptResultV2{}, errors.New("[Linux resume] attempt 输入不完整")
 	}
 	now := attempt.Now().UTC()
 	if now.IsZero() {
-		return LinuxEnrollmentAttemptResultV2{}, errors.New("[D130 Linux resume] 可信时间无效")
+		return LinuxEnrollmentAttemptResultV2{}, errors.New("[Linux resume] 可信时间无效")
 	}
 	descriptor := attempt.Descriptor
 	bundle := attempt.ProofBundle
@@ -113,25 +113,25 @@ func RunLinuxResumeAttempt(ctx context.Context,
 		&bundle.InviteIssuancePolicy)
 	if err != nil || recordHash != verifiedProof.CertifiedInviteRecordHash() ||
 		descriptor.ClusterID != bundle.ClusterID || descriptor.InviteID != bundle.InviteID {
-		return LinuxEnrollmentAttemptResultV2{}, errors.New("[D130 Linux resume] proof evidence/descriptor 不匹配")
+		return LinuxEnrollmentAttemptResultV2{}, errors.New("[Linux resume] proof evidence/descriptor 不匹配")
 	}
 	verifiedHead := verifiedProof.Head()
 	verifiedSet := verifiedProof.ControlSet()
 	setHash, err := wire.ControlSetHash(&verifiedSet)
 	if err != nil || !wire.EqualCanonical(verifiedHead, bundle.RecordHead) ||
 		verifiedHead.Body.Payload.ControlSetHash != setHash {
-		return LinuxEnrollmentAttemptResultV2{}, errors.New("[D130 Linux resume] proof evidence Head/ControlSet 不匹配")
+		return LinuxEnrollmentAttemptResultV2{}, errors.New("[Linux resume] proof evidence Head/ControlSet 不匹配")
 	}
 	catalogHash, err := wire.BootstrapEndpointCatalogHash(attempt.Catalog)
 	if err != nil || catalogHash != descriptor.BootstrapCatalogHash ||
 		wire.ValidateBootstrapEndpointCatalogAt(attempt.Catalog, now, attempt.ClientProtocol) != nil ||
 		attempt.Catalog.BootstrapIngressSetHash != descriptor.ResumeTunnelCapability.Body.AllowedIngressSetHash {
-		return LinuxEnrollmentAttemptResultV2{}, errors.New("[D130 Linux resume] catalog/hash/ingress binding 无效")
+		return LinuxEnrollmentAttemptResultV2{}, errors.New("[Linux resume] catalog/hash/ingress binding 无效")
 	}
 	catalogHead, catalogSet, previousSet, ok := verifiedProof.AuthorityForHead(attempt.Catalog.ParentHeadHash)
 	if !ok || wire.VerifyConfigQCAuthority(attempt.Catalog.ParentHeadHash,
 		attempt.Catalog.BootstrapIngressSet.ConfigQC, &catalogHead, &catalogSet, previousSet) != nil {
-		return LinuxEnrollmentAttemptResultV2{}, errors.New("[D130 Linux resume] catalog QC authority 未通过 Invite lineage")
+		return LinuxEnrollmentAttemptResultV2{}, errors.New("[Linux resume] catalog QC authority 未通过 Invite lineage")
 	}
 	identity, err := LoadEnrollmentIdentityForResume(attempt.IdentityPath)
 	if err != nil {
@@ -147,7 +147,7 @@ func RunLinuxResumeAttempt(ctx context.Context,
 		core.DeviceEnrollmentIntentCommitmentHash != bundle.CertifiedInviteRecord.DeviceEnrollmentIntentCommitmentHash ||
 		core.BaseHeadHash != verifiedHead.HeadHash || core.BaseRecoveryEpoch != verifiedHead.Body.Payload.RecoveryEpoch ||
 		core.BaseControlEpoch != verifiedHead.Body.Payload.ControlEpoch || core.BaseControlSetHash != setHash {
-		return LinuxEnrollmentAttemptResultV2{}, errors.New("[D130 Linux resume] pending core 未绑定 exact Invite authority")
+		return LinuxEnrollmentAttemptResultV2{}, errors.New("[Linux resume] pending core 未绑定 exact Invite authority")
 	}
 	if err := wire.VerifyEnrollmentResumeDescriptorBindings(descriptor, pending.Progress.Expected,
 		attempt.Catalog, &bundle.BootstrapIssuerAuthorizationProof,
@@ -177,7 +177,7 @@ func RunLinuxResumeAttempt(ctx context.Context,
 		intentHash != core.AcceptedDeviceEnrollmentIntentHash ||
 		!wire.EqualCanonical(preflight.DeviceEnrollmentIntentCommitment,
 			bundle.DeviceEnrollmentIntentCommitment) {
-		return LinuxEnrollmentAttemptResultV2{}, errors.New("[D130 Linux resume] preflight 未恢复 exact committed opening")
+		return LinuxEnrollmentAttemptResultV2{}, errors.New("[Linux resume] preflight 未恢复 exact committed opening")
 	}
 	challenge, err := attempt.API.Challenge(ctx, core)
 	if err != nil {
@@ -185,7 +185,7 @@ func RunLinuxResumeAttempt(ctx context.Context,
 	}
 	challengeNow := attempt.Now().UTC()
 	if challengeNow.IsZero() {
-		return LinuxEnrollmentAttemptResultV2{}, errors.New("[D130 Linux resume] challenge 可信时间无效")
+		return LinuxEnrollmentAttemptResultV2{}, errors.New("[Linux resume] challenge 可信时间无效")
 	}
 	if err := wire.VerifyEnrollmentResumeDescriptorBindings(descriptor, pending.Progress.Expected,
 		attempt.Catalog, &bundle.BootstrapIssuerAuthorizationProof,
@@ -222,7 +222,7 @@ func RunLinuxResumeAttempt(ctx context.Context,
 	}
 	resultNow := attempt.Now().UTC()
 	if resultNow.IsZero() {
-		return LinuxEnrollmentAttemptResultV2{}, errors.New("[D130 Linux resume] result 可信时间无效")
+		return LinuxEnrollmentAttemptResultV2{}, errors.New("[Linux resume] result 可信时间无效")
 	}
 	identityHash, err := identity.IdentitySPKIHash()
 	if err != nil {
@@ -247,18 +247,18 @@ func RunLinuxResumeAttempt(ctx context.Context,
 			})
 		for _, required := range requiredTransactionFloors {
 			if err == nil && !completion.IncludesTransactionStateHash(required) {
-				err = errors.New("[D130 Linux resume] completion receipt 不包含本机与 descriptor transaction floor")
+				err = errors.New("[Linux resume] completion receipt 不包含本机与 descriptor transaction floor")
 			}
 		}
 	} else {
 		if len(result.ProgressReceipt) == 0 {
-			return LinuxEnrollmentAttemptResultV2{}, errors.New("[D130 Linux resume] pending 响应缺 progress receipt")
+			return LinuxEnrollmentAttemptResultV2{}, errors.New("[Linux resume] pending 响应缺 progress receipt")
 		}
 		progress, err = enrollmentv2.VerifyEnrollmentProgressReceipt(result.ProgressReceipt,
 			&result, proofExpected)
 		for _, required := range requiredTransactionFloors {
 			if err == nil && !progress.IncludesTransactionStateHash(required) {
-				err = errors.New("[D130 Linux resume] progress receipt 不包含本机与 descriptor transaction floor")
+				err = errors.New("[Linux resume] progress receipt 不包含本机与 descriptor transaction floor")
 			}
 		}
 		if err == nil {

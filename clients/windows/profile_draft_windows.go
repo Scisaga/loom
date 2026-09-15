@@ -15,7 +15,7 @@ import (
 	"loom/internal/windowsv2"
 )
 
-// §13.5：草稿快照只给 UI 阶段与可恢复提示，不返回二维码、路径或秘密材料。
+// 草稿快照只给 UI 阶段与可恢复提示，不返回二维码、路径或秘密材料。
 type windowsProfileDraftDisplay struct {
 	State       portableGUIState `json:"state"`
 	Name        string           `json:"name"`
@@ -151,7 +151,7 @@ func (m *windowsProfileManager) prepareProfileDraft(req brokerRequest, expected 
 			return nil, nil, "", err
 		}
 		if retained == nil || retained.ID != expected.ID {
-			return nil, nil, "", errors.New("[§13.5] 加入恢复记录已变化，拒绝重新创建身份")
+			return nil, nil, "", errors.New("加入恢复记录已变化，拒绝重新创建身份")
 		}
 	}
 	profile, err := m.store.BeginDraft(name)
@@ -199,7 +199,7 @@ func (m *windowsProfileManager) joinProfileDraftFor(req brokerRequest, draft *wi
 		var deviceID string
 		deviceID, _, err = windowsJoinedDeviceID(child.root, child.protector())
 		if err == nil && deviceID != result.NodeID {
-			err = errors.New("[§13.5] 已完成加入的身份与配置不一致")
+			err = errors.New("已完成加入的身份与配置不一致")
 		}
 	}
 	if err == nil {
@@ -215,7 +215,7 @@ func (m *windowsProfileManager) joinProfileDraftFor(req brokerRequest, draft *wi
 		if commitErr == nil {
 			m.children[profile.ID] = child
 			m.draft, m.draftVisible = nil, false
-			// §7.2：加入只新增已断开的宿主，不触碰旧连接、Agent 或 LastConnected。
+			// 加入只新增已断开的宿主，不触碰旧连接、Agent 或 LastConnected。
 			return nil
 		}
 		err = commitErr
@@ -242,7 +242,7 @@ func windowsProfileDraftHasIdentity(root string) (bool, error) {
 			return false, err
 		}
 		if !info.Mode().IsRegular() {
-			return false, errors.New("[§13.5] 加入恢复材料必须是普通文件")
+			return false, errors.New("加入恢复材料必须是普通文件")
 		}
 		if err := checkWindowsProfilePath(path); err != nil {
 			return false, err

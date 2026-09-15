@@ -26,7 +26,7 @@ type preparedAndroidV2Runtime struct {
 
 // PrepareAndroidV2Runtime 只从已原子安装且重新校验的 Device state
 // 生成内存态 libbox 运行投影。它不持久 hydrate 后的秘密，也不会把
-// 旧 v1 current 当成 v2 latch 的回退配置（Issue #14、D106、D124）。
+// 旧 v1 current 当成 v2 latch 的回退配置（Issue #14）。
 func PrepareAndroidV2Runtime(stateJSON []byte) ([]byte, error) {
 	state, err := decodeAndroidV2DeviceState(stateJSON)
 	if err != nil {
@@ -35,7 +35,7 @@ func PrepareAndroidV2Runtime(stateJSON []byte) ([]byte, error) {
 	if state.ControlSet == nil || state.Enrollment == nil || state.Enrollment.Configs == nil ||
 		state.Envelope.Payload.State != "active" || state.Envelope.Payload.Active == nil ||
 		!containsAndroidString(state.Envelope.Payload.Active.Responsibilities.Values, "use_loom") {
-		return nil, errors.New("[D131 Android runtime] active Device/ControlSet/installation 不完整")
+		return nil, errors.New("[Android runtime] active Device/ControlSet/installation 不完整")
 	}
 	installed, err := selectAndroidRuntimeConfig(state.Enrollment.Configs)
 	if err != nil {
@@ -55,10 +55,10 @@ func PrepareAndroidV2Runtime(stateJSON []byte) ([]byte, error) {
 		return nil, err
 	}
 	if prepared.Schema != 1 {
-		return nil, errors.New("[D131 Android runtime] prepared runtime schema 无效")
+		return nil, errors.New("[Android runtime] prepared runtime schema 无效")
 	}
 	if prepared.RoutePlan == "" {
-		return nil, errors.New("[D131 Android runtime] android-runtime 缺移动 route plan")
+		return nil, errors.New("[Android runtime] android-runtime 缺移动 route plan")
 	}
 	if err := ValidateAndroidV2RuntimeHost([]byte(prepared.SingBoxConfig)); err != nil {
 		return nil, err
@@ -80,14 +80,14 @@ func selectAndroidRuntimeConfig(configs []androidInstalledConfigV1) (*androidIns
 		if candidate.Platform != "android" ||
 			candidate.MediaType != "application/vnd.loom.config+json" ||
 			candidate.RenderContractID != androidRuntimeRenderContractID {
-			return nil, errors.New("[D131 Android runtime] android-runtime 制品合约无效")
+			return nil, errors.New("[Android runtime] android-runtime 制品合约无效")
 		}
 		if selected == nil || candidate.Generation > selected.Generation {
 			selected = candidate
 		}
 	}
 	if selected == nil {
-		return nil, errors.New("[D131 Android runtime] Device view 缺 android-runtime 制品")
+		return nil, errors.New("[Android runtime] Device view 缺 android-runtime 制品")
 	}
 	return selected, nil
 }
@@ -104,7 +104,7 @@ func androidRuntimeSecrets(credentials []androidInstalledSecretV1) ([]byte, erro
 		}
 	}
 	if len(latest) == 0 {
-		return nil, errors.New("[D124 Android runtime] 缺 data_plane_credential")
+		return nil, errors.New("[Android runtime] 缺 data_plane_credential")
 	}
 	ids := make([]string, 0, len(latest))
 	for id := range latest {
@@ -118,7 +118,7 @@ func androidRuntimeSecrets(credentials []androidInstalledSecretV1) ([]byte, erro
 		if err != nil || !utf8.Valid(decoded) || value == "" || strings.TrimSpace(value) != value ||
 			strings.ContainsAny(value, "\x00\r\n") {
 			clear(decoded)
-			return nil, errors.New("[D124 Android runtime] data plane credential 不是规范单行 UTF-8")
+			return nil, errors.New("[Android runtime] data plane credential 不是规范单行 UTF-8")
 		}
 		builder.WriteString(id)
 		builder.WriteByte('=')

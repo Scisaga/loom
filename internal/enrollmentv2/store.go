@@ -12,7 +12,7 @@ import (
 )
 
 // DurableRecord 保存跨 control 可复制、可独立重验的稳定事务制品；raw token、
-// challenge、CSR 正文和 PoP 签名字节不得越过私有请求验证边界（D129、D130）。
+// challenge、CSR 正文和 PoP 签名字节不得越过私有请求验证边界。
 type DurableRecord struct {
 	InviteID                         string                                `json:"invite_id"`
 	TokenCommitment                  string                                `json:"token_commitment"`
@@ -46,7 +46,7 @@ type durableState struct {
 }
 
 // Store 为 Enrollment reducer 提供原子耐久 CAS。相同稳定 claim 重放返回同一
-// state；同一 Invite/token 的不同 core/key/request 永久冲突（D130）。
+// state；同一 Invite/token 的不同 core/key/request 永久冲突。
 type Store struct {
 	mu    sync.Mutex
 	path  string
@@ -55,7 +55,7 @@ type Store struct {
 
 func OpenStore(path string) (*Store, error) {
 	if path == "" {
-		return nil, errors.New("[D130 Enrollment] transaction store path 不能为空")
+		return nil, errors.New("[Enrollment] transaction store path 不能为空")
 	}
 	store := &Store{path: path, state: durableState{Schema: 6, Records: []DurableRecord{}}}
 	body, err := os.ReadFile(path)
@@ -67,11 +67,11 @@ func OpenStore(path string) (*Store, error) {
 	}
 	var state durableState
 	if _, err := wire.DecodeStrict(body, 32<<20, &state); err != nil {
-		return nil, fmt.Errorf("[D130 Enrollment] transaction store 非规范或损坏: %w", err)
+		return nil, fmt.Errorf("[Enrollment] transaction store 非规范或损坏: %w", err)
 	}
 	if state.Schema == 2 || state.Schema == 3 || state.Schema == 4 || state.Schema == 5 {
 		if len(state.Records) != 0 {
-			return nil, errors.New("[D130 Enrollment] 旧 transaction record 缺完整 Head/ControlSet transition proof，禁止迁移")
+			return nil, errors.New("[Enrollment] 旧 transaction record 缺完整 Head/ControlSet transition proof，禁止迁移")
 		}
 		state.Schema = 6
 		if err := store.persistLocked(state); err != nil {
@@ -140,11 +140,11 @@ func (s *Store) Reserve(invite InviteContext, evidence ClaimPrivateEvidenceV1, o
 			wire.EqualCanonical(existing.ReservationCertification, certification) {
 			return existing.State, nil
 		}
-		return TransactionStateV2{}, errors.New("[D130 Enrollment] 同一 Invite/token 已被不同 request/core/key 耐久预留")
+		return TransactionStateV2{}, errors.New("[Enrollment] 同一 Invite/token 已被不同 request/core/key 耐久预留")
 	}
 	for _, existing := range s.state.Records {
 		if existing.TokenCommitment == invite.TokenCommitment {
-			return TransactionStateV2{}, errors.New("[D130 Enrollment] token commitment 已绑定另一 Invite")
+			return TransactionStateV2{}, errors.New("[Enrollment] token commitment 已绑定另一 Invite")
 		}
 	}
 	candidate := cloneDurableState(s.state)
@@ -175,7 +175,7 @@ func (s *Store) RecordProvisional(operation ProvisionalIssuanceOperationV1,
 	defer s.mu.Unlock()
 	index, found := findRecord(s.state.Records, operation.InviteID)
 	if !found {
-		return TransactionStateV2{}, errors.New("[D130 Enrollment] provisional issuance 缺耐久 reservation")
+		return TransactionStateV2{}, errors.New("[Enrollment] provisional issuance 缺耐久 reservation")
 	}
 	current := s.state.Records[index].State
 	if current.Status == "issued_provisional" || current.Status == "completed" {
@@ -193,7 +193,7 @@ func (s *Store) RecordProvisional(operation ProvisionalIssuanceOperationV1,
 			equalControlSetTransitionSequences(existing.ReservationToIssuanceTransitions, transitions) {
 			return current, nil
 		}
-		return TransactionStateV2{}, errors.New("[D130 Enrollment] 同一 claim 已有不同 provisional first-result")
+		return TransactionStateV2{}, errors.New("[Enrollment] 同一 claim 已有不同 provisional first-result")
 	}
 	next, err := RecordProvisional(current, operation)
 	if err != nil {
@@ -216,16 +216,16 @@ func (s *Store) RecordProvisional(operation ProvisionalIssuanceOperationV1,
 		issuance.Body.ReservationHeadQCHash != reservationQCHash ||
 		issuance.Body.IssuanceLogCoordinate.RecoveryEpoch != certification.Head.Body.Payload.RecoveryEpoch ||
 		issuance.Body.IssuanceLogCoordinate.RaftIndex != certification.Head.Body.Payload.RaftIndex {
-		return TransactionStateV2{}, errors.New("[D130 Enrollment] provisional issuance 未绑定 exact reservation/issuance Head")
+		return TransactionStateV2{}, errors.New("[Enrollment] provisional issuance 未绑定 exact reservation/issuance Head")
 	}
 	previousLeaves := issuanceRegistryLeaves(s.state.Records)
 	previousRoot, err := wire.EnrollmentIssuanceRegistryRoot(previousLeaves)
 	if err != nil || operation.PreviousIssuanceRegistryRoot != previousRoot {
-		return TransactionStateV2{}, errors.New("[D130 Enrollment] provisional issuance previous registry root 非当前 first-result 集合")
+		return TransactionStateV2{}, errors.New("[Enrollment] provisional issuance previous registry root 非当前 first-result 集合")
 	}
 	resultingRoot, err := wire.EnrollmentIssuanceRegistryRoot(append(previousLeaves, operation.IssuanceRegistryLeaf))
 	if err != nil || operation.ResultingIssuanceRegistryRoot != resultingRoot {
-		return TransactionStateV2{}, errors.New("[D130 Enrollment] provisional issuance resulting registry root 非规范结果")
+		return TransactionStateV2{}, errors.New("[Enrollment] provisional issuance resulting registry root 非规范结果")
 	}
 	candidate := cloneDurableState(s.state)
 	candidate.Records[index].State = next
@@ -246,13 +246,13 @@ func (s *Store) RecordProvisional(operation ProvisionalIssuanceOperationV1,
 func (s *Store) Complete(operation CompletionOperationV2, approval *wire.StableEnrollmentApprovalQCV2,
 	set *wire.ControlSetV1, certification CompletionCertificationV1) (TransactionStateV2, error) {
 	if approval == nil || set == nil {
-		return TransactionStateV2{}, errors.New("[D130 Enrollment] completion approval/ControlSet 不能为空")
+		return TransactionStateV2{}, errors.New("[Enrollment] completion approval/ControlSet 不能为空")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	index, found := findRecord(s.state.Records, operation.InviteID)
 	if !found {
-		return TransactionStateV2{}, errors.New("[D130 Enrollment] completion 缺耐久 provisional issuance")
+		return TransactionStateV2{}, errors.New("[Enrollment] completion 缺耐久 provisional issuance")
 	}
 	current := s.state.Records[index].State
 	if current.Status == "completed" {
@@ -266,7 +266,7 @@ func (s *Store) Complete(operation CompletionOperationV2, approval *wire.StableE
 			wire.EqualCanonical(*existing.CompletionCertification, certification) {
 			return current, nil
 		}
-		return TransactionStateV2{}, errors.New("[D130 Enrollment] completed transaction 不接受不同 completion")
+		return TransactionStateV2{}, errors.New("[Enrollment] completed transaction 不接受不同 completion")
 	}
 	next, err := Complete(current, operation, approval, set)
 	if err != nil {
@@ -346,20 +346,20 @@ func cloneDurableState(state durableState) durableState {
 
 func validateDurableState(state *durableState) error {
 	if state == nil || state.Schema != 6 || state.Records == nil {
-		return errors.New("[D130 Enrollment] transaction store schema 无效")
+		return errors.New("[Enrollment] transaction store schema 无效")
 	}
 	seenTokens := make(map[string]struct{}, len(state.Records))
 	for index := range state.Records {
 		record := &state.Records[index]
 		if record.InviteID == "" || record.InviteID != record.State.InviteID || record.InviteID != record.Invite.InviteID ||
 			record.TokenCommitment != record.Invite.TokenCommitment || index > 0 && state.Records[index-1].InviteID >= record.InviteID {
-			return errors.New("[D130 Enrollment] transaction records 未按 Invite ID 严格排序")
+			return errors.New("[Enrollment] transaction records 未按 Invite ID 严格排序")
 		}
 		if _, err := wire.ParseHash(record.TokenCommitment); err != nil {
 			return err
 		}
 		if _, duplicate := seenTokens[record.TokenCommitment]; duplicate {
-			return errors.New("[D130 Enrollment] transaction store 含重复 token commitment")
+			return errors.New("[Enrollment] transaction store 含重复 token commitment")
 		}
 		seenTokens[record.TokenCommitment] = struct{}{}
 		if err := validateDurableRecord(record); err != nil {
@@ -405,17 +405,17 @@ func validateDurableRecord(record *DurableRecord) error {
 			record.CompletionCertification != nil || record.CompletionProjection != nil ||
 			len(record.ReservationToIssuanceHeads) != 0 || len(record.ReservationToIssuanceTransitions) != 0 ||
 			!wire.EqualCanonical(reserved, record.State) {
-			return errors.New("[D130 Enrollment] reserved durable record tagged union 无效")
+			return errors.New("[Enrollment] reserved durable record tagged union 无效")
 		}
 		return nil
 	}
 	if record.State.Status != "issued_provisional" && record.State.Status != "completed" {
-		return errors.New("[D130 Enrollment] durable store 不接受未携 certified abort evidence 的状态")
+		return errors.New("[Enrollment] durable store 不接受未携 certified abort evidence 的状态")
 	}
 	if record.ProvisionalOperation == nil || record.ProvisionalIssuance == nil ||
 		record.DeviceCertificateProfile == nil || record.ResultArtifact == nil ||
 		record.ProvisionalCertification == nil {
-		return errors.New("[D130 Enrollment] issued durable record 缺 provisional stable artifacts")
+		return errors.New("[Enrollment] issued durable record 缺 provisional stable artifacts")
 	}
 	if err := validateProvisionalEvidence(record.ProvisionalOperation, record.ProvisionalIssuance,
 		record.DeviceCertificateProfile, record.ResultArtifact); err != nil {
@@ -436,7 +436,7 @@ func validateDurableRecord(record *DurableRecord) error {
 		record.ProvisionalIssuance.Body.ReservationHeadQCHash != reservationQCHash ||
 		record.ProvisionalIssuance.Body.IssuanceLogCoordinate.RecoveryEpoch != record.ProvisionalCertification.Head.Body.Payload.RecoveryEpoch ||
 		record.ProvisionalIssuance.Body.IssuanceLogCoordinate.RaftIndex != record.ProvisionalCertification.Head.Body.Payload.RaftIndex {
-		return errors.New("[D130 Enrollment] durable provisional 未绑定 exact reservation/issuance Head")
+		return errors.New("[Enrollment] durable provisional 未绑定 exact reservation/issuance Head")
 	}
 	issued, err := RecordProvisional(reserved, *record.ProvisionalOperation)
 	if err != nil {
@@ -446,13 +446,13 @@ func validateDurableRecord(record *DurableRecord) error {
 		if record.ApprovalQC != nil || record.ApprovalControlSet != nil || record.CompletionOperation != nil ||
 			record.CompletionCertification != nil || record.CompletionProjection != nil ||
 			!wire.EqualCanonical(issued, record.State) {
-			return errors.New("[D130 Enrollment] issued durable record tagged union 无效")
+			return errors.New("[Enrollment] issued durable record tagged union 无效")
 		}
 		return nil
 	}
 	if record.ApprovalQC == nil || record.ApprovalControlSet == nil || record.CompletionOperation == nil ||
 		record.CompletionCertification == nil || record.CompletionProjection == nil {
-		return errors.New("[D130 Enrollment] completed durable record 缺 approval/completion stable artifacts")
+		return errors.New("[Enrollment] completed durable record 缺 approval/completion stable artifacts")
 	}
 	if err := validateApprovalAgainstIssuance(record, record.ApprovalQC); err != nil {
 		return err
@@ -462,28 +462,28 @@ func validateDurableRecord(record *DurableRecord) error {
 		return err
 	}
 	if !wire.EqualCanonical(completed, record.State) {
-		return errors.New("[D130 Enrollment] completed durable record 与 stable artifacts 不匹配")
+		return errors.New("[Enrollment] completed durable record 与 stable artifacts 不匹配")
 	}
 	projection, err := validateCompletionCertification(record, record.CompletionOperation,
 		record.CompletionCertification, &completed)
 	if err != nil || !wire.EqualCanonical(projection, *record.CompletionProjection) {
-		return errors.New("[D130 Enrollment] completed durable record 的 consume/activate/release 投影无效")
+		return errors.New("[Enrollment] completed durable record 的 consume/activate/release 投影无效")
 	}
 	return nil
 }
 
 // validateOperationCertification 把 transaction reducer 的每一步绑定到同一个
 // stable ControlSet 下的 exact certified operation leaf；时间只能取承载该 leaf
-// 的 Head logical time，不能由 backend 另报一个看似相同的 anchor（D104、D130）。
+// 的 Head logical time，不能由 backend 另报一个看似相同的 anchor。
 func validateOperationCertification(certification *CertifiedEnrollmentOperationProofV1,
 	operationID, domain string, operation any, set *wire.ControlSetV1, committedAt string) error {
 	if certification == nil || set == nil || certification.PreviousControlSet != nil ||
 		certification.Head.Body.Payload.HeadKind != "ordinary" ||
 		certification.Head.Body.Payload.CommittedLogicalTime != committedAt {
-		return errors.New("[D130 Enrollment] operation certification header/time 无效")
+		return errors.New("[Enrollment] operation certification header/time 无效")
 	}
 	if !wire.EqualCanonical(certification.ControlSet, *set) {
-		return errors.New("[D130 Enrollment] operation certification 使用错误 stable ControlSet")
+		return errors.New("[Enrollment] operation certification 使用错误 stable ControlSet")
 	}
 	objectID, err := wire.HashObject(domain, operation)
 	if err != nil {
@@ -500,7 +500,7 @@ func validateReservationHeadLineage(baseHead *wire.HeadEntryV2, intermediate []w
 	certification *CertifiedEnrollmentOperationProofV1,
 	admission *wire.StableEnrollmentAdmissionQCV1, set *wire.ControlSetV1) error {
 	if baseHead == nil || certification == nil || admission == nil || set == nil {
-		return errors.New("[D130 Enrollment] reservation Head lineage 输入不完整")
+		return errors.New("[Enrollment] reservation Head lineage 输入不完整")
 	}
 	attestation := &admission.Attestation
 	setHash, err := wire.ControlSetHash(set)
@@ -510,14 +510,14 @@ func validateReservationHeadLineage(baseHead *wire.HeadEntryV2, intermediate []w
 		baseHead.Body.Payload.ControlEpoch != attestation.BaseControlEpoch ||
 		baseHead.Body.Payload.ControlSetHash != attestation.BaseControlSetHash ||
 		baseHead.Body.Payload.ControlSetHash != setHash {
-		return errors.New("[D130 Enrollment] reservation base Head 未绑定 admission authority")
+		return errors.New("[Enrollment] reservation base Head 未绑定 admission authority")
 	}
 	if err := wire.ValidateHeadEntry(baseHead, nil); err != nil {
 		return err
 	}
 	if err := VerifyEnrollmentHeadLineage(baseHead, intermediate, transitions,
 		&certification.Head, &certification.ControlSet); err != nil {
-		return errors.New("[D130 Enrollment] base→reservation Head lineage 不连续")
+		return errors.New("[Enrollment] base→reservation Head lineage 不连续")
 	}
 	return nil
 }
@@ -526,7 +526,7 @@ func validateProvisionalEvidence(operation *ProvisionalIssuanceOperationV1,
 	issuance *wire.EnrollmentProvisionalIssuanceV1, profile *wire.DeviceCertificateProfileStateV1,
 	result *wire.EnrollmentResultArtifactV1) error {
 	if operation == nil || issuance == nil || profile == nil || result == nil {
-		return errors.New("[D130 Enrollment] provisional evidence 不完整")
+		return errors.New("[Enrollment] provisional evidence 不完整")
 	}
 	if err := wire.VerifyEnrollmentProvisionalIssuance(issuance, profile); err != nil {
 		return err
@@ -549,7 +549,7 @@ func validateProvisionalEvidence(operation *ProvisionalIssuanceOperationV1,
 		result.ClusterID != body.ClusterID || result.InviteID != body.InviteID || result.RequestID != body.RequestID ||
 		resultHash != body.ResultArtifactHash || certificateHash != body.DeviceCertificateHash ||
 		viewHash != body.InitialDeviceViewHash || result.InitialDeviceView.Active.SecretArtifactRefsRoot != body.SecretArtifactRefsRoot {
-		return errors.New("[D130 Enrollment] provisional operation/envelope/registry leaf exact binding 不匹配")
+		return errors.New("[Enrollment] provisional operation/envelope/registry leaf exact binding 不匹配")
 	}
 	issuedAt, issuedErr := wire.ParseTimeZ(operation.IssuedAt)
 	statusChangedAt, changedErr := wire.ParseTimeZ(profile.StatusChangedAt)
@@ -557,7 +557,7 @@ func validateProvisionalEvidence(operation *ProvisionalIssuanceOperationV1,
 	windowEnd, endErr := wire.ParseTimeZ(profile.ProfileIntent.IssuanceNotAfter)
 	if issuedErr != nil || changedErr != nil || startErr != nil || endErr != nil ||
 		issuedAt.Before(statusChangedAt) || issuedAt.Before(windowStart) || !issuedAt.Before(windowEnd) {
-		return errors.New("[D102 Device CA] provisional issuance logical time 不在 exact active profile window")
+		return errors.New("[Device CA] provisional issuance logical time 不在 exact active profile window")
 	}
 	return nil
 }
@@ -565,7 +565,7 @@ func validateProvisionalEvidence(operation *ProvisionalIssuanceOperationV1,
 func validateApprovalAgainstIssuance(record *DurableRecord, approval *wire.StableEnrollmentApprovalQCV2) error {
 	if record == nil || record.ProvisionalIssuance == nil || record.ProvisionalOperation == nil ||
 		record.ResultArtifact == nil || approval == nil {
-		return errors.New("[D130 Enrollment] approval 缺 exact provisional evidence")
+		return errors.New("[Enrollment] approval 缺 exact provisional evidence")
 	}
 	body := record.ProvisionalIssuance.Body
 	attestation := approval.Attestation
@@ -578,7 +578,7 @@ func validateApprovalAgainstIssuance(record *DurableRecord, approval *wire.Stabl
 		return err
 	}
 	if record.ProvisionalCertification == nil {
-		return errors.New("[D130 Enrollment] approval 缺 issuance Head certification")
+		return errors.New("[Enrollment] approval 缺 issuance Head certification")
 	}
 	issuanceQCHash, err := wire.ConfigQCHash(record.ProvisionalCertification.ConfigQC)
 	if err != nil {
@@ -599,7 +599,7 @@ func validateApprovalAgainstIssuance(record *DurableRecord, approval *wire.Stabl
 		attestation.InitialDeviceViewHash != body.InitialDeviceViewHash ||
 		attestation.SecretArtifactRefsRoot != body.SecretArtifactRefsRoot ||
 		attestation.ResultArtifactHash != body.ResultArtifactHash || resultHash != body.ResultArtifactHash {
-		return errors.New("[D130 Enrollment] approval QC 未逐字段绑定 exact provisional issuance")
+		return errors.New("[Enrollment] approval QC 未逐字段绑定 exact provisional issuance")
 	}
 	return nil
 }
@@ -630,16 +630,16 @@ func validateRegistryHistory(records []DurableRecord) error {
 	leaves := make([]wire.EnrollmentIssuanceRegistryLeafV1, 0, len(issued))
 	for index := range issued {
 		if index > 0 && compareIssuanceCoordinate(issued[index-1].coordinate, issued[index].coordinate) == 0 {
-			return errors.New("[D130 Enrollment] issuance registry 含重复 Raft 坐标")
+			return errors.New("[Enrollment] issuance registry 含重复 Raft 坐标")
 		}
 		previousRoot, err := wire.EnrollmentIssuanceRegistryRoot(leaves)
 		if err != nil || issued[index].operation.PreviousIssuanceRegistryRoot != previousRoot {
-			return errors.New("[D130 Enrollment] issuance registry history previous root 断裂")
+			return errors.New("[Enrollment] issuance registry history previous root 断裂")
 		}
 		leaves = append(leaves, issued[index].operation.IssuanceRegistryLeaf)
 		resultingRoot, err := wire.EnrollmentIssuanceRegistryRoot(leaves)
 		if err != nil || issued[index].operation.ResultingIssuanceRegistryRoot != resultingRoot {
-			return errors.New("[D130 Enrollment] issuance registry history resulting root 断裂")
+			return errors.New("[Enrollment] issuance registry history resulting root 断裂")
 		}
 	}
 	return nil

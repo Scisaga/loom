@@ -162,7 +162,7 @@ internal class ManagedProfileStore(private val context: Context) {
         putV2PendingLocked(pending, allowResumeReplacement = false)
     }
 
-    /** D130：只有用户显式导入并经共享 verifier 验证的 carrier 能替换 resume 窗口。 */
+    /** 只有用户显式导入并经共享 verifier 验证的 carrier 能替换 resume 窗口。 */
     @Synchronized
     fun putV2Resume(pending: V2PendingEnrollment) {
         putV2PendingLocked(pending, allowResumeReplacement = true)

@@ -28,7 +28,7 @@ class DeviceKeyStore(private val namespace: String = "") {
     private val p256WrappingAlias = "loom-device-wrapping-ecdh-v1" + namespace
     private val rsaWrappingAlias = "loom-device-wrapping-rsa2048-decrypt-v1" + namespace
 
-    /** §7.2：只在该配置的任务停止后移除其本机密钥。 */
+    /** 只在该配置的任务停止后移除其本机密钥。 */
     fun deleteIdentity() {
         listOf(identityAlias, p256WrappingAlias, rsaWrappingAlias).forEach { alias ->
             if (keyStore.containsAlias(alias)) keyStore.deleteEntry(alias)
@@ -76,7 +76,7 @@ class DeviceKeyStore(private val namespace: String = "") {
     fun signCanonicalV2(message: ByteArray): ByteArray =
         Loomcore.normalizeP256Signature(ensureIdentity(), message, sign(message))
 
-    /** #14：TLS 只能取得 AndroidKeyStore handle；private key bytes 永远不跨进 Go 或应用存储。 */
+    /** TLS 只能取得 AndroidKeyStore handle；private key bytes 永远不跨进 Go 或应用存储。 */
     internal fun identityPrivateKey(): PrivateKey {
         ensureIdentity()
         val entry = keyStore.getEntry(identityAlias, null) as KeyStore.PrivateKeyEntry
@@ -104,7 +104,7 @@ class DeviceKeyStore(private val namespace: String = "") {
         }
     }
 
-    /** #14：wrapping key 与 identity alias 分离，不能被 Device identity/operation signer 调用。 */
+    /** wrapping key 与 identity alias 分离，不能被 Device identity/operation signer 调用。 */
     fun ensureWrapping(): WrappingPublicKey = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         ensureP256Wrapping()
     } else {
@@ -144,7 +144,7 @@ class DeviceKeyStore(private val namespace: String = "") {
         }
     }
 
-    /** #14：由 AndroidKeyStore 返回的授权用途证明 wrapping alias 没有签名权限。 */
+    /** 由 AndroidKeyStore 返回的授权用途证明 wrapping alias 没有签名权限。 */
     fun wrappingHasSigningPurpose(): Boolean {
         ensureWrapping()
         val alias = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) p256WrappingAlias else rsaWrappingAlias

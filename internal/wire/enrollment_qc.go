@@ -94,13 +94,13 @@ func SignEnrollmentAdmission(body EnrollmentAdmissionAttestationBodyV1, member C
 
 func VerifyEnrollmentAdmissionQC(qc *StableEnrollmentAdmissionQCV1, set *ControlSetV1) error {
 	if qc == nil || set == nil || qc.Schema != 1 || qc.QCType != "stable_enrollment_admission" {
-		return errors.New("[D129 Enrollment] admission QC type/schema 无效")
+		return errors.New("[Enrollment] admission QC type/schema 无效")
 	}
 	if err := ValidateEnrollmentAdmission(&qc.Attestation); err != nil {
 		return err
 	}
 	if qc.Attestation.ClusterID != set.ClusterID {
-		return errors.New("[D129 Enrollment] admission QC cluster 不匹配")
+		return errors.New("[Enrollment] admission QC cluster 不匹配")
 	}
 	return verifyEnrollmentSignatures(DomainEnrollmentAdmissionSignature, qc.Attestation, qc.Signatures, qc.SignerRefs, set)
 }
@@ -121,7 +121,7 @@ func ValidateEnrollmentAdmission(body *EnrollmentAdmissionAttestationBodyV1) err
 	if body == nil || body.Schema != 1 || body.AttestationType != "enrollment_admission" ||
 		!validIdentifier(body.ClusterID, 128) || !validIdentifier(body.InviteID, 128) || !validIdentifier(body.RequestID, 128) ||
 		body.PoPVerificationProfile != "loom-enrollment-server-nonce-detached-v2" || body.BaseRecoveryEpoch < 0 || body.BaseControlEpoch < 0 {
-		return errors.New("[D129 Enrollment] admission attestation header/profile 无效")
+		return errors.New("[Enrollment] admission attestation header/profile 无效")
 	}
 	for _, hash := range []string{body.CertifiedInviteRecordHash, body.DeviceEnrollmentIntentCommitmentHash,
 		body.DeviceEnrollmentIntentOpeningHash, body.TokenCommitment, body.ClaimCoreHash, body.IdentityKeyHash,
@@ -136,7 +136,7 @@ func ValidateEnrollmentAdmission(body *EnrollmentAdmissionAttestationBodyV1) err
 	}
 	retry, err := ParseTimeZ(body.RetryNotAfter)
 	if err != nil || retry.Before(admission) {
-		return errors.New("[D130 Enrollment] retry_not_after 早于 admission_not_after")
+		return errors.New("[Enrollment] retry_not_after 早于 admission_not_after")
 	}
 	return nil
 }
@@ -150,13 +150,13 @@ func SignEnrollmentApproval(body EnrollmentApprovalAttestationBodyV2, member Con
 
 func VerifyEnrollmentApprovalQC(qc *StableEnrollmentApprovalQCV2, set *ControlSetV1) error {
 	if qc == nil || set == nil || qc.Schema != 2 || qc.QCType != "stable_enrollment_approval" {
-		return errors.New("[D130 Enrollment] approval QC type/schema 无效")
+		return errors.New("[Enrollment] approval QC type/schema 无效")
 	}
 	if err := ValidateEnrollmentApproval(&qc.Attestation); err != nil {
 		return err
 	}
 	if qc.Attestation.ClusterID != set.ClusterID {
-		return errors.New("[D130 Enrollment] approval QC cluster 不匹配")
+		return errors.New("[Enrollment] approval QC cluster 不匹配")
 	}
 	return verifyEnrollmentSignatures(DomainEnrollmentApprovalSignature, qc.Attestation, qc.Signatures, qc.SignerRefs, set)
 }
@@ -175,7 +175,7 @@ func EnrollmentApprovalQCHash(qc *StableEnrollmentApprovalQCV2) (string, error) 
 
 func ValidateEnrollmentApproval(body *EnrollmentApprovalAttestationBodyV2) error {
 	if body == nil || body.Schema != 2 || body.AttestationType != "enrollment_approval" || !validIdentifier(body.ClusterID, 128) || !validIdentifier(body.InviteID, 128) || !validIdentifier(body.RequestID, 128) {
-		return errors.New("[D130 Enrollment] approval attestation header 无效")
+		return errors.New("[Enrollment] approval attestation header 无效")
 	}
 	for _, hash := range []string{body.ClaimOperationHash, body.ProvisionalIssuanceOperationHash,
 		body.ProvisionalIssuanceHash, body.IssuanceHeadHash, body.IssuanceHeadQCHash,
@@ -190,11 +190,11 @@ func ValidateEnrollmentApproval(body *EnrollmentApprovalAttestationBodyV2) error
 
 func signEnrollmentPurpose(domain string, body any, member ControlMemberV1, privateKey ed25519.PrivateKey) (ControlEnrollmentSignatureV1, error) {
 	if len(privateKey) != ed25519.PrivateKeySize {
-		return ControlEnrollmentSignatureV1{}, errors.New("[D102 keys] enrollment private key 长度无效")
+		return ControlEnrollmentSignatureV1{}, errors.New("[keys] enrollment private key 长度无效")
 	}
 	keyID, err := ControlKeyID(privateKey.Public().(ed25519.PublicKey))
 	if err != nil || keyID != member.EnrollmentKeyID {
-		return ControlEnrollmentSignatureV1{}, errors.New("[D102 keys] enrollment key 与 member 不匹配")
+		return ControlEnrollmentSignatureV1{}, errors.New("[keys] enrollment key 与 member 不匹配")
 	}
 	canonical, err := MarshalCanonical(body)
 	if err != nil {
@@ -210,7 +210,7 @@ func verifyEnrollmentSignatures(domain string, body any, signatures []ControlEnr
 	}
 	quorum, _ := Quorum(len(set.Members))
 	if len(signatures) < quorum || len(signatures) > len(set.Members) || len(refs) != len(signatures) {
-		return errors.New("[D129 Enrollment] enrollment signatures 未达到 committed ControlSet quorum")
+		return errors.New("[Enrollment] enrollment signatures 未达到 committed ControlSet quorum")
 	}
 	if !sort.SliceIsSorted(signatures, func(i, j int) bool {
 		if signatures[i].MemberID != signatures[j].MemberID {
@@ -218,7 +218,7 @@ func verifyEnrollmentSignatures(domain string, body any, signatures []ControlEnr
 		}
 		return signatures[i].EnrollmentKeyID < signatures[j].EnrollmentKeyID
 	}) {
-		return errors.New("[D129 Enrollment] enrollment signatures 未规范排序")
+		return errors.New("[Enrollment] enrollment signatures 未规范排序")
 	}
 	seen := make(map[string]struct{}, len(signatures))
 	for index, signature := range signatures {
@@ -226,10 +226,10 @@ func verifyEnrollmentSignatures(domain string, body any, signatures []ControlEnr
 		if ref.MemberID != signature.MemberID || ref.EnrollmentKeyID != signature.EnrollmentKeyID ||
 			index > 0 && (refs[index-1].MemberID > ref.MemberID ||
 				refs[index-1].MemberID == ref.MemberID && refs[index-1].EnrollmentKeyID >= ref.EnrollmentKeyID) {
-			return errors.New("[D129 Enrollment] signer refs 必须与 signatures 同序同字段")
+			return errors.New("[Enrollment] signer refs 必须与 signatures 同序同字段")
 		}
 		if _, duplicate := seen[signature.MemberID]; duplicate {
-			return errors.New("[D129 Enrollment] enrollment signer 重复")
+			return errors.New("[Enrollment] enrollment signer 重复")
 		}
 		seen[signature.MemberID] = struct{}{}
 		if err := verifyOneEnrollmentSignature(domain, body, &signature, set); err != nil {
@@ -242,7 +242,7 @@ func verifyEnrollmentSignatures(domain string, body any, signatures []ControlEnr
 func verifyOneEnrollmentSignature(domain string, body any, signature *ControlEnrollmentSignatureV1,
 	set *ControlSetV1) error {
 	if signature == nil {
-		return errors.New("[D129 Enrollment] enrollment signature 不能为空")
+		return errors.New("[Enrollment] enrollment signature 不能为空")
 	}
 	if err := ValidateControlSet(set); err != nil {
 		return err
@@ -255,7 +255,7 @@ func verifyOneEnrollmentSignature(domain string, body any, signature *ControlEnr
 		}
 	}
 	if member == nil || signature.Algorithm != "ed25519" || signature.EnrollmentKeyID != member.EnrollmentKeyID {
-		return errors.New("[D129 Enrollment] enrollment signer/key purpose 无效")
+		return errors.New("[Enrollment] enrollment signer/key purpose 无效")
 	}
 	canonical, err := MarshalCanonical(body)
 	if err != nil {
@@ -264,11 +264,11 @@ func verifyOneEnrollmentSignature(domain string, body any, signature *ControlEnr
 	message, _ := Frame(domain, canonical)
 	public, err := decodeRawURL(member.EnrollmentPublicKey, ed25519.PublicKeySize)
 	if err != nil {
-		return errors.New("[D102 keys] enrollment public key 无效")
+		return errors.New("[keys] enrollment public key 无效")
 	}
 	rawSignature, err := decodeRawURL(signature.Signature, ed25519.SignatureSize)
 	if err != nil || !ed25519.Verify(ed25519.PublicKey(public), message, rawSignature) {
-		return errors.New("[D129 Enrollment] enrollment signature 无效")
+		return errors.New("[Enrollment] enrollment signature 无效")
 	}
 	return nil
 }

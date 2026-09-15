@@ -27,7 +27,7 @@ func TestMisakaCanvasGrayscaleTextKeepsNeutralEdges(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !grayscale {
-				misakaCOMCall(c.target, 34, 1) // §7.2：只在合成 DC 上采集 ClearType 对照，不修改系统设置。
+				misakaCOMCall(c.target, 34, 1) // 只在合成 DC 上采集 ClearType 对照，不修改系统设置。
 			}
 			c.Fill(full, 0xffffff, 0)
 			c.Text("当前选路 Loom 012345", full, 14*dpi/96, 400, 0, 0)
@@ -58,14 +58,14 @@ func TestMisakaCanvasGrayscaleTextKeepsNeutralEdges(t *testing.T) {
 				continue
 			}
 			if chromatic != 0 || solid < 20 || len(shades) < 4 {
-				t.Fatalf("[§7.2] DPI=%d 文字仍有彩边或失去清晰抗锯齿：彩色=%d 实笔=%d 灰阶=%d", dpi, chromatic, solid, len(shades))
+				t.Fatalf("DPI=%d 文字仍有彩边或失去清晰抗锯齿：彩色=%d 实笔=%d 灰阶=%d", dpi, chromatic, solid, len(shades))
 			}
 			if absMisakaAlignment(ink.left-baseline.left) > 2 || absMisakaAlignment(ink.top-baseline.top) > 2 || absMisakaAlignment(ink.right-baseline.right) > 2 || absMisakaAlignment(ink.bottom-baseline.bottom) > 2 {
-				t.Fatalf("[§7.2] 灰度抗锯齿改变文字布局：ClearType=%+v 灰度=%+v", baseline, ink)
+				t.Fatalf("灰度抗锯齿改变文字布局：ClearType=%+v 灰度=%+v", baseline, ink)
 			}
-			t.Logf("[§7.2] DPI=%d ClearType彩边=%d → 灰度彩边=%d，保留%d实笔像素/%d灰阶", dpi, baselineColors, chromatic, solid, len(shades))
+			t.Logf("DPI=%d ClearType彩边=%d → 灰度彩边=%d，保留%d实笔像素/%d灰阶", dpi, baselineColors, chromatic, solid, len(shades))
 		}
-		c.releaseTarget() // §7.2：设备重建后也必须重新应用灰度设置。
+		c.releaseTarget() // 设备重建后也必须重新应用灰度设置。
 	}
 }
 
@@ -97,7 +97,7 @@ func TestMisakaPathNodeOutlineRemainsConcentricAtFractionalDPI(t *testing.T) {
 				for x := int32(0); x < width; x++ {
 					distance := math.Hypot(float64(x-cx)+0.5, float64(y-cy)+0.5)
 					if distance < float64(scale(12)) || distance > float64(scale(34))/2+2 {
-						continue // §7.2：只检查圆环，中心服务器符号不参与圆环对称性判断。
+						continue // 只检查圆环，中心服务器符号不参与圆环对称性判断。
 					}
 					pixel := misakaCanvasTestPixel(pixels, width, x, y)
 					for _, reflected := range []uint32{misakaCanvasTestPixel(pixels, width, 2*cx-1-x, y), misakaCanvasTestPixel(pixels, width, x, 2*cy-1-y)} {
@@ -109,7 +109,7 @@ func TestMisakaPathNodeOutlineRemainsConcentricAtFractionalDPI(t *testing.T) {
 				}
 			}
 			if checked < 100 || maxDifference > 2 {
-				t.Fatalf("[§7.2] DPI=%d fixed=%t 节点边框形成不对称投影：镜像像素=%d 最大通道差=%d", dpi, fixed, checked, maxDifference)
+				t.Fatalf("DPI=%d fixed=%t 节点边框形成不对称投影：镜像像素=%d 最大通道差=%d", dpi, fixed, checked, maxDifference)
 			}
 		}
 	}

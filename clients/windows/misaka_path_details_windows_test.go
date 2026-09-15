@@ -50,7 +50,7 @@ func TestGUIMisakaPathDetailsFollowActualReasonLinesWithoutBlankRow(t *testing.T
 				var item portableRect
 				procSendMessage.Call(app.controls.pathsValue, 0x0198, 0, uintptr(unsafe.Pointer(&item)))
 				if item.bottom-item.top != app.scale(app.misakaPathHeight()) {
-					t.Fatalf("[§7.2] DPI %d 原生行高没有同步原因换行：%+v", dpi, item)
+					t.Fatalf("DPI %d 原生行高没有同步原因换行：%+v", dpi, item)
 				}
 				item = misakaRect(0, 0, item.right-item.left, item.bottom-item.top)
 				dc, pixels := misakaCanvasTestDC(t, item.right, item.bottom)
@@ -65,33 +65,33 @@ func TestGUIMisakaPathDetailsFollowActualReasonLinesWithoutBlankRow(t *testing.T
 				reasonInk, reasonCount := misakaDetailInkBounds(pixels, item.right, place(details.reasonBounds))
 				readInk, readCount := misakaDetailInkBounds(pixels, item.right, place(details.readBounds))
 				if reasonCount < 10 || readCount < 10 {
-					t.Fatalf("[§7.2] DPI %d 原因或读取时间未绘出：原因=%d 读取=%d", dpi, reasonCount, readCount)
+					t.Fatalf("DPI %d 原因或读取时间未绘出：原因=%d 读取=%d", dpi, reasonCount, readCount)
 				}
 				if gap := readInk.top - reasonInk.bottom; gap < 0 || gap > app.scale(18) {
-					t.Errorf("[§7.2] DPI %d 读取与原因的实际字形之间仍有空行或重叠：间距=%d", dpi, gap)
+					t.Errorf("DPI %d 读取与原因的实际字形之间仍有空行或重叠：间距=%d", dpi, gap)
 				}
 				last := readInk
 				if scoped {
 					scopeInk, scopeCount := misakaDetailInkBounds(pixels, item.right, place(details.scopeBounds))
 					if scopeCount < 10 || scopeInk.top-readInk.bottom > app.scale(12) {
-						t.Fatalf("[§7.2] DPI %d 决策范围未紧接读取时间完整绘出", dpi)
+						t.Fatalf("DPI %d 决策范围未紧接读取时间完整绘出", dpi)
 					}
 					last = scopeInk
 					if item.bottom <= withoutScope {
-						t.Fatalf("[§7.2] DPI %d 无scope时仍虚占同样行高", dpi)
+						t.Fatalf("DPI %d 无scope时仍虚占同样行高", dpi)
 					}
 				} else {
 					withoutScope = item.bottom
 				}
 				cardBottom := item.bottom
 				if gap := cardBottom - last.bottom; gap < app.scale(6) || gap > app.scale(28) {
-					t.Errorf("[§7.2] DPI %d 卡片末尾没有按详情内容收紧：尾部空白=%d", dpi, gap)
+					t.Errorf("DPI %d 卡片末尾没有按详情内容收紧：尾部空白=%d", dpi, gap)
 				}
 				if reason == long {
 					endLine := place(details.reasonBounds)
 					endLine.top = endLine.bottom - app.scale(16)
 					if _, count := misakaDetailInkBounds(pixels, item.right, endLine); count < 10 {
-						t.Fatalf("[§7.2] DPI %d 长原因的最后一行被裁切", dpi)
+						t.Fatalf("DPI %d 长原因的最后一行被裁切", dpi)
 					}
 				}
 			}
@@ -115,14 +115,14 @@ func TestGUIMisakaPathDetailsResizeUpdatesNativeRowsAndScrollReach(t *testing.T)
 		if width == 1000 && wide == 0 {
 			wide = height
 		} else if width == 1000 && height != wide || width == 720 && height <= wide {
-			t.Fatalf("[§7.2] 宽度 %d 没有同步详情原生行高：实际=%d 宽窗=%d", width, height, wide)
+			t.Fatalf("宽度 %d 没有同步详情原生行高：实际=%d 宽窗=%d", width, height, wide)
 		}
 		app.scrollMisakaPane(app.skin.scrollMaximum)
 		procSendMessage.Call(app.controls.pathsValue, 0x0198, 0, uintptr(unsafe.Pointer(&item)))
 		procMisakaMapPoints.Call(app.controls.pathsValue, app.skin.pane, uintptr(unsafe.Pointer(&item)), 2)
 		view := misakaViewportClientRect(app.skin.pane)
 		if gap := view.bottom - item.bottom; gap < app.scale(19) || gap > app.scale(21) {
-			t.Fatalf("[§7.2] 宽度 %d 详情末尾不能按正确滚动范围到达：间距=%d", width, gap)
+			t.Fatalf("宽度 %d 详情末尾不能按正确滚动范围到达：间距=%d", width, gap)
 		}
 	}
 }
@@ -146,7 +146,7 @@ func TestGUIMisakaPathDetailsCompactSyntheticCapture(t *testing.T) {
 	captureConfiguredProfileGUIState(t, app, "-detail-long-scope")
 }
 
-// §7.2 / §16.1：使用真实摘要投影验证单样本为中性色，统计和比较边界完整换行。
+// 使用真实摘要投影验证单样本为中性色，统计和比较边界完整换行。
 func TestGUIMisakaPathDetailsRenderLimitedMeasurementEvidence(t *testing.T) {
 	app := newProfileGUITestWindow(t)
 	latency := 37
@@ -172,7 +172,7 @@ func TestGUIMisakaPathDetailsRenderLimitedMeasurementEvidence(t *testing.T) {
 		portableGDI32.NewProc("GdiFlush").Call()
 		badgeX, badgeY := item.right-app.scale(3)-1-app.scale(92)+app.scale(7), 1+app.scale(20)
 		if got := misakaCanvasTestPixel(pixels, item.right, badgeX, badgeY); got != 0xF4F6F5 {
-			t.Fatalf("[§16.1] DPI %d 单样本徽标没有使用中性色：%06x", dpi, got)
+			t.Fatalf("DPI %d 单样本徽标没有使用中性色：%06x", dpi, got)
 		}
 		details := app.misakaPathDetails(app.paths[0], item.right-app.scale(3)-2-app.scale(36))
 		last := details.bestBounds
@@ -180,7 +180,7 @@ func TestGUIMisakaPathDetailsRenderLimitedMeasurementEvidence(t *testing.T) {
 		last.top, last.bottom = last.top+1+app.scale(142), last.bottom+1+app.scale(142)
 		last.top = last.bottom - app.scale(16)
 		if _, count := misakaDetailInkBounds(pixels, item.right, last); count < 10 {
-			t.Fatalf("[§16.1] DPI %d 比较边界最后一行被裁切", dpi)
+			t.Fatalf("DPI %d 比较边界最后一行被裁切", dpi)
 		}
 		if dpi == 144 {
 			captureConfiguredProfileGUIState(t, app, "-measurement-evidence")

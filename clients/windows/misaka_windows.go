@@ -21,7 +21,7 @@ const (
 	misakaControlAuto = 4201 + iota
 	misakaControlFixed
 	misakaControlDirect
-	_ // §7.2：保留后续控件编号；侧栏不再有配置操作按钮。
+	_ // 保留后续控件编号；侧栏不再有配置操作按钮。
 	misakaControlDraftName
 	misakaControlDraftImport
 	misakaControlDraftPaste
@@ -29,7 +29,7 @@ const (
 	misakaControlDraftCancel
 )
 
-// §7.2：标题栏为 36 DIP；正文保留原绘制坐标原点，由视口整体上移。
+// 标题栏为 36 DIP；正文保留原绘制坐标原点，由视口整体上移。
 const (
 	misakaTitleHeight    int32 = 36
 	misakaContentOriginY int32 = 40
@@ -92,7 +92,7 @@ var (
 func init() { misakaSubclassCallback = windows.NewCallback(misakaControlProc) }
 
 func configureMisakaFrame(hwnd uintptr) {
-	// §7.2：仅替换可见边框；窗口仍参与系统移动、缩放、任务栏与贴靠布局。
+	// 仅替换可见边框；窗口仍参与系统移动、缩放、任务栏与贴靠布局。
 	if proc := misakaDWM.NewProc("DwmSetWindowAttribute"); proc.Find() == nil {
 		preference := uint32(2)
 		proc.Call(hwnd, 33, uintptr(unsafe.Pointer(&preference)), unsafe.Sizeof(preference))
@@ -110,19 +110,19 @@ func (app *portableGUI) initializeMisaka() error {
 	for _, hwnd := range app.controls.all() {
 		if result, _, err := procMisakaSetSubclass.Call(hwnd, misakaSubclassCallback, 1, app.hwnd); result == 0 {
 			app.closeMisaka()
-			return fmt.Errorf("[§7.2] 初始化自绘输入控件: %w", err)
+			return fmt.Errorf("初始化自绘输入控件: %w", err)
 		}
 	}
 	info := misakaComboInfo{}
 	info.size = uint32(unsafe.Sizeof(info))
 	if ok, _, err := portableUser32.NewProc("GetComboBoxInfo").Call(app.controls.routeCombo, uintptr(unsafe.Pointer(&info))); ok == 0 || info.list == 0 {
 		app.closeMisaka()
-		return fmt.Errorf("[§7.2] 获取出口弹出列表: %w", err)
+		return fmt.Errorf("获取出口弹出列表: %w", err)
 	}
 	app.skin.route.list = info.list
 	if ok, _, err := procMisakaSetSubclass.Call(info.list, misakaSubclassCallback, 1, app.hwnd); ok == 0 {
 		app.closeMisaka()
-		return fmt.Errorf("[§7.2] 初始化出口列表滚轮: %w", err)
+		return fmt.Errorf("初始化出口列表滚轮: %w", err)
 	}
 	procSendMessage.Call(app.controls.profileNameEdit, 0x00C5, 128, 0) // EM_SETLIMITTEXT：最终按字符数校验。
 	procSendMessage.Call(app.controls.draftName, 0x00C5, 128, 0)
@@ -180,7 +180,7 @@ func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height
 		if app.misakaContentEnd() == end {
 			break
 		}
-		// §7.2：滚动条出现或消失后宽度会变化，按最终宽度重算段落换行与范围。
+		// 滚动条出现或消失后宽度会变化，按最终宽度重算段落换行与范围。
 	}
 	app.syncMisakaPathItemHeight()
 	visible := make(map[uintptr]bool)
@@ -204,7 +204,7 @@ func (app *portableGUI) layoutMisaka(snapshot portableGUISnapshot, width, height
 		move(app.controls.deleteButton, end-s(90), s(57), s(90), s(28))
 	}
 	if !snapshot.joined {
-		// §7.2：未加入配置直接在同一块内容区完成导入，操作和说明不挤进连接摘要。
+		// 未加入配置直接在同一块内容区完成导入，操作和说明不挤进连接摘要。
 		move(app.controls.stateValue, main+s(68), s(115), end-main-s(86), s(30))
 		move(app.controls.message, main+s(68), s(155), end-main-s(86), s(38))
 		move(app.controls.primaryButton, main+s(68), s(213), s(132), s(32))
@@ -331,7 +331,7 @@ func (app *portableGUI) renderMisaka(snapshot portableGUISnapshot, previous *por
 	if previous == nil || previous.state != snapshot.state || len(previous.paths) != len(snapshot.paths) || oldHeight != app.misakaPathsHeight() {
 		app.layoutControls()
 	}
-	// §7.2：观测变化只使对应卡片失效，定时轮询没有任何绘制副作用。
+	// 观测变化只使对应卡片失效，定时轮询没有任何绘制副作用。
 	if previous == nil || !equalProfileDraft(snapshot.profileDraft, previous.profileDraft) ||
 		previous.state != snapshot.state || previous.profileName != snapshot.profileName || previous.routeSelected != snapshot.routeSelected ||
 		previous.joined != snapshot.joined || previous.activeProfileName != snapshot.activeProfileName {
@@ -339,7 +339,7 @@ func (app *portableGUI) renderMisaka(snapshot portableGUISnapshot, previous *por
 	}
 }
 
-// §7.2：每个服务按自身内容计算高度，不能让短详情继承最长服务的留白。
+// 每个服务按自身内容计算高度，不能让短详情继承最长服务的留白。
 func (app *portableGUI) misakaPathHeightAt(index int) int32 {
 	s := app.scale
 	if app.skin == nil || index < 0 || index >= len(app.skin.lastPaths) {
@@ -443,7 +443,7 @@ func (app *portableGUI) positionMisakaRename() {
 	procMisakaMapPoints.Call(app.controls.networkList, app.hwnd, uintptr(unsafe.Pointer(&rect)), 2)
 	rect = app.misakaProfileNameBounds(rect, app.misakaProfileNameFont(true))
 	procMoveWindow.Call(app.controls.profileNameEdit, uintptr(rect.left), uintptr(rect.top), uintptr(rect.right-rect.left), uintptr(rect.bottom-rect.top), 0)
-	procSendMessage.Call(app.controls.profileNameEdit, 0x00D3, 3, 0) // §7.2：原位编辑不增加系统文字边距。
+	procSendMessage.Call(app.controls.profileNameEdit, 0x00D3, 3, 0) // 原位编辑不增加系统文字边距。
 	setPortableControlVisible(app.controls.profileNameEdit, true)
 }
 
@@ -466,7 +466,7 @@ func (app *portableGUI) finishMisakaRename(save bool) bool {
 		}
 		for _, p := range app.snapshot().profiles {
 			if p.ID != id && strings.EqualFold(p.Name, name) {
-				app.profileError(errors.New("[§7.2] 此配置名称已存在"))
+				app.profileError(errors.New("此配置名称已存在"))
 				return false
 			}
 		}

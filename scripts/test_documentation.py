@@ -23,9 +23,10 @@ class DocumentationTest(unittest.TestCase):
             docs = root / "docs"
             docs.mkdir()
             entry = docs / "README.md"
-            guide = docs / "guide.md"
-            orphan = docs / "orphan.md"
-            entry.write_text('# 导航\n[规程](guide.md#旧章节)\n')
+            (docs / "architecture").mkdir()
+            guide = docs / "architecture/guide.md"
+            orphan = docs / "architecture/orphan.md"
+            entry.write_text('# 导航\n[规程](architecture/guide.md#旧章节)\n')
             guide.write_text('# 新章节\n')
             orphan.write_text('# 未引用的规范\n')
             errors = doc.check(root, [entry, guide, orphan])
@@ -57,6 +58,41 @@ class DocumentationTest(unittest.TestCase):
             errors = doc.check(root, [entry, code])
             self.assertTrue(any('已退役' in error for error in errors))
             self.assertTrue(any('代码和产物须归位' in error for error in errors))
+
+    def test_flat_documents_prompts_and_history_cannot_return(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "docs/decisions").mkdir(parents=True)
+            (root / "docs/development").mkdir()
+            entry = root / "docs/README.md"
+            flat = root / "docs/design.md"
+            prompt = root / "docs/development/work-prompt.md"
+            entry.write_text('# 导航\n[架构](design.md)\n[开发](development/work-prompt.md)\n')
+            flat.write_text('# 架构\n')
+            prompt.write_text('# 接续会话\n')
+            errors = doc.check(root, [entry, flat, prompt])
+            self.assertTrue(any('根目录只保留' in error for error in errors))
+            self.assertTrue(any('会话提示词' in error for error in errors))
+            self.assertTrue(any('已退役目录' in error for error in errors))
+
+    def test_semantic_topics_replace_numbered_headings_and_citations(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "docs/architecture").mkdir(parents=True)
+            entry = root / "docs/README.md"
+            guide = root / "docs/architecture/guide.md"
+            entry.write_text('# 导航\n[上报](architecture/guide.md)\n')
+            guide.write_text('# 16.2 上报\n沿用 §16.2 和 D81。\n[](guide.md)\n')
+            errors = doc.check(root, [entry, guide])
+            self.assertTrue(any('标题应按主题' in error for error in errors))
+            self.assertTrue(any('旧编号引用' in error for error in errors))
+            self.assertTrue(any('链接文字为空' in error for error in errors))
+            guide.write_text(
+                '# 上报\n## v2 信任边界\n直接说明规则。\n```text\n'
+                '# 16.2 数据示例\n'
+                'D81\n```\n'
+            )
+            self.assertEqual(doc.check(root, [entry, guide]), [])
 
 
 if __name__ == "__main__":

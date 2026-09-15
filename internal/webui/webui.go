@@ -2,7 +2,7 @@
 //
 // **每个节点都跑一份,但权限不一样。**
 //
-//	看              每个节点都有。因为有转述(§16.1.2),随便打开哪一台看到的
+//	看每个节点都有。因为有转述,随便打开哪一台看到的
 //	                都是整张网,不是它自己那一角。
 //	兼容写          恰好一台 control 节点具备处理能力，并且只通过 private
 //	                HTTPS 对 admin mTLS 验证后选中的 root-only Unix socket 到达。
@@ -44,7 +44,7 @@ type Deps struct {
 
 	// Snapshot 返回当前的全网视图。
 	Snapshot func() View
-	// DeviceChanges 返回一个在 Device identity、期望态或可信运行态变化时（§16.4）
+	// DeviceChanges 返回一个在 Device identity、期望态或可信运行态变化时
 	// 关闭的代际 channel。调用方收到关闭后重新调用即可订阅下一代；这样
 	// 浏览器列表由事件唤醒，不需要用 HTTP 轮询制造额外采集。
 	DeviceChanges func() <-chan struct{}
@@ -105,11 +105,11 @@ type EventView struct {
 	Ongoing bool
 }
 
-// ControlDeps 只有中控需要(§14.2.3、D36)。
+// ControlDeps 只有中控需要。
 //
 // **界面上没有"发布"按钮。** 发布是自动的:改完存盘,发布器 30 秒内校验、
 // 渲染、签名、分发。界面能做的只有改 SSOT —— 于是不存在"对某台机器执行
-// 某某"这种旁路,而那正是 §12 想要的。
+// 某某"这种旁路，以保证配置变更经过同一条 SSOT 提交流程。
 type ControlDeps struct {
 	SSOTPath string
 	// Enrich 用中控本地的 SSOT 给同一份运行态 View 补期望态元数据。
@@ -525,7 +525,7 @@ type NodeView struct {
 	AgeSec     int
 	ObservedAt string
 	// PresenceAt 来自独立最小签名心跳。它只能决定在线租约，不能刷新
-	// ObservedAt 或任何健康、配置和测量事实（§16.4）。
+	// ObservedAt 或任何健康、配置和测量事实。
 	PresenceAt    string
 	Source        string
 	Version       *VersionView
@@ -1783,7 +1783,7 @@ func writeHTML(w http.ResponseWriter, body string) {
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'sha256-"+progressHash+"' 'sha256-"+topologyHash+"' 'sha256-"+deviceEnrollmentHash+"' 'sha256-"+copyValueHash+"' 'sha256-"+deviceInventoryLiveHash+"'; connect-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'")
 	// no-referrer 会让浏览器普通表单 POST 的 Origin 变成 null，导致合法写入
 	// 被 private control 的同源门禁拒绝。same-origin 保留同源表单证据，
-	// 同时禁止向其他 origin 发送 Referer；邀请秘密仍不得进入 URL（D104）。
+	// 同时禁止向其他 origin 发送 Referer；邀请秘密仍不得进入 URL。
 	w.Header().Set("Referrer-Policy", "same-origin")
 	fmt.Fprint(w, body)
 }

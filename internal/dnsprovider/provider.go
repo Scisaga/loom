@@ -1,6 +1,6 @@
 // Package dnsprovider 定义托管 DNS 的 provider-neutral 收敛边界。
 // Provider 只执行已认证调用方给出的 exact RRSet；它不读取 current、也不决定
-// EndpointSet 或 ControlSet，避免 DNS 反向成为 authority（D103、D108、D125）。
+// EndpointSet 或 ControlSet，避免 DNS 反向成为 authority。
 package dnsprovider
 
 import (
@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-var ErrNotFound = errors.New("[D125 DNS] RRSet 不存在")
+var ErrNotFound = errors.New("[DNS] RRSet 不存在")
 
 type RRSet struct {
 	Zone   string   `json:"zone"`
@@ -39,47 +39,47 @@ func Normalize(in RRSet) (RRSet, error) {
 	in.Name = canonicalRecordName(in.Name)
 	in.Type = strings.ToUpper(strings.TrimSpace(in.Type))
 	if in.Zone == "" || in.Name == "" {
-		return RRSet{}, errors.New("[D125 DNS] zone/name 不能为空或包含非法 DNS label")
+		return RRSet{}, errors.New("[DNS] zone/name 不能为空或包含非法 DNS label")
 	}
 	if in.TTL < 60 || in.TTL > 86400 {
-		return RRSet{}, errors.New("[D125 DNS] TTL 必须位于 60..86400 秒")
+		return RRSet{}, errors.New("[DNS] TTL 必须位于 60..86400 秒")
 	}
 	if !oneOf(in.Type, "A", "AAAA", "CNAME", "TXT") {
-		return RRSet{}, fmt.Errorf("[D125 DNS] 不支持 RR type %q", in.Type)
+		return RRSet{}, fmt.Errorf("[DNS] 不支持 RR type %q", in.Type)
 	}
 	if len(in.Values) == 0 || len(in.Values) > 32 {
-		return RRSet{}, errors.New("[D125 DNS] RRSet values 数量必须位于 1..32")
+		return RRSet{}, errors.New("[DNS] RRSet values 数量必须位于 1..32")
 	}
 	values := append([]string(nil), in.Values...)
 	for i := range values {
 		values[i] = strings.TrimSpace(values[i])
 		if values[i] == "" || strings.ContainsAny(values[i], "\r\n") {
-			return RRSet{}, errors.New("[D125 DNS] RR value 为空或含换行")
+			return RRSet{}, errors.New("[DNS] RR value 为空或含换行")
 		}
 		switch in.Type {
 		case "A", "AAAA":
 			address, err := netip.ParseAddr(values[i])
 			if err != nil || address.String() != values[i] || in.Type == "A" && !address.Is4() || in.Type == "AAAA" && !address.Is6() {
-				return RRSet{}, errors.New("[D125 DNS] A/AAAA value 必须是对应地址族的规范 IP")
+				return RRSet{}, errors.New("[DNS] A/AAAA value 必须是对应地址族的规范 IP")
 			}
 		case "CNAME":
 			values[i] = canonicalDNSName(values[i])
 			if values[i] == "" {
-				return RRSet{}, errors.New("[D125 DNS] CNAME value 必须是规范 FQDN")
+				return RRSet{}, errors.New("[DNS] CNAME value 必须是规范 FQDN")
 			}
 		case "TXT":
 			if len(values[i]) > 1024 {
-				return RRSet{}, errors.New("[D125 DNS] TXT value 超过 1024 bytes 边界")
+				return RRSet{}, errors.New("[DNS] TXT value 超过 1024 bytes 边界")
 			}
 		}
 	}
 	if in.Type == "CNAME" && len(values) != 1 {
-		return RRSet{}, errors.New("[D125 DNS] CNAME RRSet 必须恰有一个 value")
+		return RRSet{}, errors.New("[DNS] CNAME RRSet 必须恰有一个 value")
 	}
 	sort.Strings(values)
 	for i := 1; i < len(values); i++ {
 		if values[i] == values[i-1] {
-			return RRSet{}, errors.New("[D125 DNS] RR values 必须唯一")
+			return RRSet{}, errors.New("[DNS] RR values 必须唯一")
 		}
 	}
 	in.Values = values

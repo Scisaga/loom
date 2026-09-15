@@ -1,6 +1,6 @@
 //go:build !windows
 
-// §14.2：管理面快速发布只消费已构建制品，签名发布成功后才并行激活。
+// 管理面快速发布只消费已构建制品，签名发布成功后才并行激活。
 package main
 
 import (
@@ -57,7 +57,7 @@ func main() {
 	}
 }
 
-// §13.3：仅读取白名单赋值；其他应用的凭据既不展开，也不进入子进程环境。
+// 仅读取白名单赋值；其他应用的凭据既不展开，也不进入子进程环境。
 func parseEnv(r io.Reader) (map[string]string, error) {
 	values := make(map[string]string)
 	scanner := bufio.NewScanner(r)
@@ -72,26 +72,26 @@ func parseEnv(r io.Reader) (map[string]string, error) {
 		key, value, ok := strings.Cut(s, "=")
 		key = strings.TrimSpace(key)
 		if !ok || !keyPattern.MatchString(key) {
-			return nil, fmt.Errorf("[§13.3 配置] .env 第 %d 行不是赋值", line)
+			return nil, fmt.Errorf("[配置] .env 第 %d 行不是赋值", line)
 		}
 		if _, known := defaults[key]; !known {
 			if strings.HasPrefix(key, "LOOM_DEPLOY_") || strings.HasPrefix(key, "LOOM_PUBLISH_") {
-				return nil, fmt.Errorf("[§14.2 配置] 未知发布参数 %s", key)
+				return nil, fmt.Errorf("[配置] 未知发布参数 %s", key)
 			}
 			continue
 		}
 		if _, exists := values[key]; exists {
-			return nil, fmt.Errorf("[§14.2 配置] 重复参数 %s", key)
+			return nil, fmt.Errorf("[配置] 重复参数 %s", key)
 		}
 		value = strings.TrimSpace(value)
 		if len(value) > 0 && (value[0] == '\'' || value[0] == '"') {
 			if len(value) < 2 || value[len(value)-1] != value[0] {
-				return nil, fmt.Errorf("[§13.3 配置] .env 第 %d 行引号不完整", line)
+				return nil, fmt.Errorf("[配置] .env 第 %d 行引号不完整", line)
 			}
 			value = value[1 : len(value)-1]
 		}
 		if strings.ContainsAny(value, "$`\x00\r\n") {
-			return nil, fmt.Errorf("[§13.3 配置] 参数 %s 含控制字符或 shell 展开", key)
+			return nil, fmt.Errorf("[配置] 参数 %s 含控制字符或 shell 展开", key)
 		}
 		values[key] = value
 	}
@@ -106,7 +106,7 @@ func loadConfig(path string) (config, error) {
 	}
 	f, err := os.Open(abs)
 	if err != nil {
-		return c, fmt.Errorf("[§13.3 配置] 读取 .env：%w", err)
+		return c, fmt.Errorf("[配置] 读取 .env：%w", err)
 	}
 	defer f.Close()
 	values, err := parseEnv(f)
@@ -135,16 +135,16 @@ func loadConfig(path string) (config, error) {
 	c.hosts, c.local = strings.Fields(values["LOOM_DEPLOY_HOSTS"]), values["LOOM_LOCAL_NODE"]
 	for _, path := range []string{c.sshConfig, c.source, c.releaseDir, c.signingKey, c.history, c.pinDir, c.command} {
 		if path == "" {
-			return c, fmt.Errorf("[§14.2 配置] 发布路径不允许为空")
+			return c, fmt.Errorf("[配置] 发布路径不允许为空")
 		}
 	}
 	if err := json.Unmarshal([]byte(values["LOOM_PUBLISH_OUTPUTS"]), &c.outputs); err != nil || len(c.outputs) == 0 {
-		return c, fmt.Errorf("[§14.2 配置] LOOM_PUBLISH_OUTPUTS 必须是非空 JSON 字符串数组")
+		return c, fmt.Errorf("[配置] LOOM_PUBLISH_OUTPUTS 必须是非空 JSON 字符串数组")
 	}
 	seen, localOutput := map[string]bool{}, false
 	for i, output := range c.outputs {
 		if output == "" {
-			return c, fmt.Errorf("[§14.2 配置] 分发目标不允许为空")
+			return c, fmt.Errorf("[配置] 分发目标不允许为空")
 		}
 		if !strings.HasPrefix(output, "ssh://") {
 			if !filepath.IsAbs(output) {
@@ -154,20 +154,20 @@ func loadConfig(path string) (config, error) {
 			localOutput = true
 		}
 		if _, err := publish.ParseTarget(output, c.sshConfig); err != nil {
-			return c, fmt.Errorf("[§14.2 配置] 分发目标格式非法：%w", err)
+			return c, fmt.Errorf("[配置] 分发目标格式非法：%w", err)
 		}
 		if seen[output] {
-			return c, fmt.Errorf("[§14.2 配置] 重复分发目标")
+			return c, fmt.Errorf("[配置] 重复分发目标")
 		}
 		seen[output], c.outputs[i] = true, output
 	}
 	if !localOutput {
-		return c, fmt.Errorf("[§14.2 配置] 至少配置一个本地分发目录以核对 signed current")
+		return c, fmt.Errorf("[配置] 至少配置一个本地分发目录以核对 signed current")
 	}
 	return c, nil
 }
 
-// §14.2：管理地址只从显式别名取得，SSOT 仅用于校验覆盖范围；不据 direction 选路。
+// 管理地址只从显式别名取得，SSOT 仅用于校验覆盖范围；不据 direction 选路。
 func validateInventory(c config) error {
 	ssot, err := model.LoadFile(c.source)
 	if err != nil {
@@ -197,15 +197,15 @@ func validateInventory(c config) error {
 	seen := map[string]bool{}
 	for _, host := range c.hosts {
 		if !aliasPattern.MatchString(host) || seen[host] || !want[host] || host != c.local && !aliases[host] {
-			return fmt.Errorf("[§14.2 inventory] 节点别名非法、重复、未知或缺少 SSH 配置：%s", host)
+			return fmt.Errorf("[inventory] 节点别名非法、重复、未知或缺少 SSH 配置：%s", host)
 		}
 		seen[host] = true
 	}
 	if len(seen) == 0 || len(seen) != len(want) {
-		return fmt.Errorf("[§14.2 inventory] LOOM_DEPLOY_HOSTS 未精确覆盖当前 Linux/server 节点")
+		return fmt.Errorf("[inventory] LOOM_DEPLOY_HOSTS 未精确覆盖当前 Linux/server 节点")
 	}
 	if c.local != "" && !seen[c.local] {
-		return fmt.Errorf("[§14.2 inventory] LOOM_LOCAL_NODE 不在发布节点中")
+		return fmt.Errorf("[inventory] LOOM_LOCAL_NODE 不在发布节点中")
 	}
 	return nil
 }
@@ -216,17 +216,17 @@ func commandRunner(root string) runner {
 	return func(ctx context.Context, name string, args []string, input string) (string, error) {
 		cmd := exec.CommandContext(ctx, name, args...)
 		cmd.Dir, cmd.Stdin = root, strings.NewReader(input)
-		// §13.3：SSH 可使用既有 agent，DNS token 等无关凭据不进入子进程。
+		// SSH 可使用既有 agent，DNS token 等无关凭据不进入子进程。
 		for _, key := range []string{"PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "SSH_AUTH_SOCK"} {
 			if value, ok := os.LookupEnv(key); ok {
 				cmd.Env = append(cmd.Env, key+"="+value)
 			}
 		}
-		// §15.4：partial clone 缺失对象时必须本地失败，plan 不可隐式 fetch。
+		// partial clone 缺失对象时必须本地失败，plan 不可隐式 fetch。
 		cmd.Env = append(cmd.Env, "GIT_NO_LAZY_FETCH=1")
 		output, err := cmd.CombinedOutput()
 		if err != nil {
-			return string(output), fmt.Errorf("[§14.2 执行] %s 失败：%w\n%s", filepath.Base(name), err, strings.TrimSpace(string(output)))
+			return string(output), fmt.Errorf("[执行] %s 失败：%w\n%s", filepath.Base(name), err, strings.TrimSpace(string(output)))
 		}
 		return string(output), nil
 	}
@@ -234,10 +234,10 @@ func commandRunner(root string) runner {
 
 func validateCoordinate(coordinate version.Coordinate, commit string) error {
 	if !commitPattern.MatchString(commit) || coordinate.Commit != commit || coordinate.Dirty {
-		return fmt.Errorf("[§15.4 制品] 必须来自指定完整 commit 的干净构建")
+		return fmt.Errorf("[制品] 必须来自指定完整 commit 的干净构建")
 	}
 	if coordinate.Platform != "linux/"+runtime.GOARCH {
-		return fmt.Errorf("[§15.4 制品] 当前快速发布要求与构建机同架构的 Linux 制品")
+		return fmt.Errorf("[制品] 当前快速发布要求与构建机同架构的 Linux 制品")
 	}
 	return nil
 }
@@ -257,7 +257,7 @@ func runWith(args []string, output io.Writer, makeRunner func(string) runner, in
 		return err
 	}
 	if fs.NArg() != 0 || !commitPattern.MatchString(*commit) || *binary == "" || strings.TrimSpace(*reason) == "" {
-		return fmt.Errorf("[§15.4 发布] 需要 --commit <完整 commit> --binary <制品> --reason <理由> [--plan]")
+		return fmt.Errorf("[发布] 需要 --commit <完整 commit> --binary <制品> --reason <理由> [--plan]")
 	}
 	c, err := loadConfig(*envPath)
 	if err != nil {
@@ -279,14 +279,14 @@ func runWith(args []string, output io.Writer, makeRunner func(string) runner, in
 	}
 	runCommand := makeRunner(c.root)
 	if _, err := runCommand(context.Background(), "git", []string{"cat-file", "-e", *commit + "^{commit}"}, ""); err != nil {
-		return fmt.Errorf("[§15.4 制品] 本地源码库不能追溯该 commit：%w", err)
+		return fmt.Errorf("[制品] 本地源码库不能追溯该 commit：%w", err)
 	}
 	pub, err := readPublicKey(c.signingKey)
 	if err != nil {
 		return err
 	}
 	if info, err := os.Stat(c.command); err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
-		return fmt.Errorf("[§14.2 发布] LOOM_DEPLOY_COMMAND 必须是可执行文件")
+		return fmt.Errorf("[发布] LOOM_DEPLOY_COMMAND 必须是可执行文件")
 	}
 	if *plan {
 		return json.NewEncoder(output).Encode(struct {
@@ -298,7 +298,7 @@ func runWith(args []string, output io.Writer, makeRunner func(string) runner, in
 			Steps  []string `json:"steps"`
 		}{"plan", *commit, candidate.SHA256, c.hosts, c.local, []string{"loom release", "loom publish（一次）", "核对 signed current 与制品绑定", "并行复制、校验、原子替换、重启现有常驻服务"}})
 	}
-	// §15.4：从已验证字节创建私有稳定副本，后续 release/SCP 不重开原制品路径。
+	// 从已验证字节创建私有稳定副本，后续 release/SCP 不重开原制品路径。
 	if err := os.MkdirAll(c.releaseDir, 0o700); err != nil {
 		return err
 	}
@@ -314,7 +314,7 @@ func runWith(args []string, output io.Writer, makeRunner func(string) runner, in
 	if err := authorize(c, stable, *reason, runCommand); err != nil {
 		return err
 	}
-	// §14.2：release/publish 自己获取这把锁；其返回后重取并复核，直到激活完成
+	// release/publish 自己获取这把锁；其返回后重取并复核，直到激活完成
 	// 都不允许另一笔 release/pin/rollback 改变授权。先取锁再调用 CLI 会自锁。
 	return withActivationLock(publish.LockPath, func() error {
 		if err := verifyPin(c.pinDir, candidate.SHA256); err != nil {
@@ -325,7 +325,7 @@ func runWith(args []string, output io.Writer, makeRunner func(string) runner, in
 			return err
 		}
 		if release == nil || release.SHA256 != candidate.SHA256 || release.Commit != *commit || release.Dirty {
-			return fmt.Errorf("[§15.4 发布] 放行记录与本次制品不符，停止快速发布")
+			return fmt.Errorf("[发布] 放行记录与本次制品不符，停止快速发布")
 		}
 		for _, target := range c.outputs {
 			if !strings.HasPrefix(target, "ssh://") {
@@ -353,7 +353,7 @@ func verifyPin(dir, checksum string) error {
 		return err
 	}
 	if pin != nil && pin.SHA256 != checksum {
-		return fmt.Errorf("[§15.4 发布] 当前 pin 已选择其他制品，停止快速发布")
+		return fmt.Errorf("[发布] 当前 pin 已选择其他制品，停止快速发布")
 	}
 	return nil
 }
@@ -365,7 +365,7 @@ func readPublicKey(path string) (ed25519.PublicKey, error) {
 	}
 	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(body)))
 	if err != nil || len(key) != ed25519.PrivateKeySize {
-		return nil, fmt.Errorf("[§13.3 密钥] 平台签名私钥编码或长度非法")
+		return nil, fmt.Errorf("[密钥] 平台签名私钥编码或长度非法")
 	}
 	return ed25519.PrivateKey(key).Public().(ed25519.PublicKey), nil
 }
@@ -383,7 +383,7 @@ func authorize(c config, stable, reason string, command runner) error {
 	return err
 }
 
-// §14.3、§15.4：Pin 或节点 assignment 可能仍绑定旧版，publish 成功本身不授权直发新版。
+// Pin 或节点 assignment 可能仍绑定旧版，publish 成功本身不授权直发新版。
 func verifyDistribution(root string, hosts []string, candidate publish.BinaryCandidate, pub ed25519.PublicKey) error {
 	body, err := os.ReadFile(filepath.Join(root, "current.json"))
 	if err != nil {
@@ -426,7 +426,7 @@ func verifyDistribution(root string, hosts []string, candidate publish.BinaryCan
 			}
 		}
 		if manifest.ID != id || !matched || !member {
-			return fmt.Errorf("[§15.4 发布] 节点 %s 的 signed current 未绑定本次制品与配置", host)
+			return fmt.Errorf("[发布] 节点 %s 的 signed current 未绑定本次制品与配置", host)
 		}
 	}
 	bin, err := os.ReadFile(filepath.Join(root, "bin", candidate.SHA256))
@@ -434,13 +434,13 @@ func verifyDistribution(root string, hosts []string, candidate publish.BinaryCan
 		return err
 	}
 	if !bytes.Equal(bin, candidate.Body) {
-		return fmt.Errorf("[§15.4 发布] 分发制品与已验证候选不同")
+		return fmt.Errorf("[发布] 分发制品与已验证候选不同")
 	}
 	return nil
 }
 
 func activationScript(temporary, checksum string) string {
-	// §14.2：列表读取失败必须停止；不重启 oneshot，不触发 pull 或收敛轮询。
+	// 列表读取失败必须停止；不重启 oneshot，不触发 pull 或收敛轮询。
 	return fmt.Sprintf(`set -euo pipefail
 candidate='%s'
 trap 'rm -f -- "$candidate"' EXIT
@@ -508,7 +508,7 @@ func activateAll(c config, stable, checksum string, command runner, output io.Wr
 	wg.Wait()
 	if len(failures) != 0 {
 		sort.Strings(failures)
-		return fmt.Errorf("[§14.2 激活] 以下节点命令失败：%s", strings.Join(failures, ", "))
+		return fmt.Errorf("[激活] 以下节点命令失败：%s", strings.Join(failures, ", "))
 	}
 	return nil
 }

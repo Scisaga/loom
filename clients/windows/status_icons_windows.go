@@ -24,7 +24,7 @@ type portableStatusIcons struct {
 
 func loadPortableStatusIcons(size int32) (*portableStatusIcons, error) {
 	if size < 8 || size > 256 {
-		return nil, fmt.Errorf("[§7.2] 连接状态图标尺寸无效：%d", size)
+		return nil, fmt.Errorf("连接状态图标尺寸无效：%d", size)
 	}
 	icons := &portableStatusIcons{}
 	all := []*uintptr{&icons.stopped, &icons.failed}
@@ -100,17 +100,17 @@ func createPortableStatusIcon(size int32, kind int) (uintptr, error) {
 		if bitmap != 0 {
 			procDeleteObject.Call(bitmap)
 		}
-		return 0, fmt.Errorf("[§7.2] 无法创建连接状态图标位图")
+		return 0, fmt.Errorf("无法创建连接状态图标位图")
 	}
 	defer procDeleteObject.Call(bitmap)
 	data := unsafe.Slice((*byte)(pixels), int(size*size*4))
 	paintPortableStatusIcon(data, int(size), kind)
 
-	// §7.2：使用预乘 alpha 和全零 AND 蒙版，状态变化只需替换图标控件，保留透明背景。
+	// 使用预乘 alpha 和全零 AND 蒙版，状态变化只需替换图标控件，保留透明背景。
 	maskData := make([]byte, ((int(size)+15)/16)*2*int(size))
 	mask, _, _ := procCreateBitmap.Call(uintptr(size), uintptr(size), 1, 1, uintptr(unsafe.Pointer(&maskData[0])))
 	if mask == 0 {
-		return 0, fmt.Errorf("[§7.2] 无法创建连接状态图标蒙版")
+		return 0, fmt.Errorf("无法创建连接状态图标蒙版")
 	}
 	defer procDeleteObject.Call(mask)
 	info := portableIconInfo{icon: 1, mask: mask, color: bitmap}
@@ -119,7 +119,7 @@ func createPortableStatusIcon(size int32, kind int) (uintptr, error) {
 	runtime.KeepAlive(maskData)
 	runtime.KeepAlive(info)
 	if icon == 0 {
-		return 0, fmt.Errorf("[§7.2] 无法创建连接状态图标")
+		return 0, fmt.Errorf("无法创建连接状态图标")
 	}
 	return icon, nil
 }

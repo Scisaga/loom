@@ -146,7 +146,7 @@ func TestWindowsAgentPlanIsCoveredBySignedBundle(t *testing.T) {
 	}
 }
 
-// 同样的 SSOT 必须产出同样的快照 id(§12 纯函数)。这是 dry-run、
+// 同样的 SSOT 必须产出同样的快照 id。这是 dry-run、
 // 漂移检测、去重、以及发布器"已是最新就不推"全部的立足点。
 func TestSnapshotIDIsDeterministic(t *testing.T) {
 	a := build(t, goodSSOT)

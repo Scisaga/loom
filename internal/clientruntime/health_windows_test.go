@@ -15,7 +15,7 @@ func TestWindowsHealthMissingPlan(t *testing.T) {
 	}
 }
 
-// §7.2.1：显式选择正在运行的已派生配置，实际请求只读，不修改网卡或已加入身份。
+// 显式选择正在运行的已派生配置，实际请求只读，不修改网卡或已加入身份。
 func TestWindowsHealthLive(t *testing.T) {
 	configPath := os.Getenv("LOOM_HEALTH_RUNTIME_CONFIG")
 	if configPath == "" {

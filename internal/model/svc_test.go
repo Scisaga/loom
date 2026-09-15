@@ -35,7 +35,7 @@ func loadSvc(t *testing.T) *SSOT {
 	return s
 }
 
-// **同一条声明治理的多个服务必须各自独立选路。** 这是 D43 修正的核心:
+// **同一条声明治理的多个服务必须各自独立选路。** 验证这一隔离边界:
 // 共用一个 selector 就又回到"一个候选服务所有目标",而实测没有任何候选
 // 对所有目标都好。
 func TestServicesGetIndependentCandidateSets(t *testing.T) {
@@ -76,7 +76,7 @@ func TestServicesGetIndependentCandidateSets(t *testing.T) {
 	}
 }
 
-// 服务只归组,不选地址 —— 挑地址是等价类的事(§4.3)。
+// 服务只归组,不选地址 —— 挑地址是等价类的事。
 func TestServiceCandidatesHaveNoAddressAxis(t *testing.T) {
 	s := loadSvc(t)
 	acc := s.NodeByID()["acc"]

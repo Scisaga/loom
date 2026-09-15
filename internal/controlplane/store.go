@@ -1,6 +1,6 @@
 // Package controlplane 提供 v2 控制日志在单机/多副本协调层之上的耐久状态边界。
 // Raft transport 负责形成 durable committed prefix；本包只允许 committed entry 经确定性
-// apply/recompute 后收集 replication attestation，避免把落盘或 CRDT arrival 当生效（D104）。
+// apply/recompute 后收集 replication attestation，避免把落盘或 CRDT arrival 当生效。
 package controlplane
 
 import (
@@ -36,7 +36,7 @@ type OperationState struct {
 }
 
 // RaftCommitReferenceV1 是应用状态对本机 durable Raft committed prefix 的精确引用。
-// Raft 自身的 term/log/commitIndex 已证明提交；应用层不得另收一份可伪造的 ack 名单（D104）。
+// Raft 自身的 term/log/commitIndex 已证明提交；应用层不得另收一份可伪造的 ack 名单。
 type RaftCommitReferenceV1 struct {
 	Schema    int    `json:"schema"`
 	ClusterID string `json:"cluster_id"`
@@ -62,7 +62,7 @@ type Store struct {
 
 func Open(path string, set wire.ControlSetV1) (*Store, error) {
 	if path == "" {
-		return nil, errors.New("[D104 Raft] control state path 不能为空")
+		return nil, errors.New("[Raft] control state path 不能为空")
 	}
 	if err := wire.ValidateControlSet(&set); err != nil {
 		return nil, err
@@ -77,7 +77,7 @@ func Open(path string, set wire.ControlSetV1) (*Store, error) {
 	}
 	var state State
 	if _, err := wire.DecodeStrict(body, 16<<20, &state); err != nil {
-		return nil, fmt.Errorf("[D104 Raft] 耐久 control state 无效: %w", err)
+		return nil, fmt.Errorf("[Raft] 耐久 control state 无效: %w", err)
 	}
 	if err := validateState(&state); err != nil {
 		return nil, err
@@ -85,7 +85,7 @@ func Open(path string, set wire.ControlSetV1) (*Store, error) {
 	wantSetHash, _ := wire.ControlSetHash(&set)
 	gotSetHash, _ := wire.ControlSetHash(&state.ControlSet)
 	if wantSetHash != gotSetHash {
-		return nil, errors.New("[D112 ControlSet] 磁盘 ControlSet 与启动参数不一致")
+		return nil, errors.New("[ControlSet] 磁盘 ControlSet 与启动参数不一致")
 	}
 	store.state = state
 	return store, nil
@@ -112,13 +112,13 @@ func (s *Store) Prepare(entry wire.HeadEntryV2) error {
 	}
 	setHash, _ := wire.ControlSetHash(&s.state.ControlSet)
 	if entry.Body.Payload.ControlSetHash != setHash {
-		return errors.New("[D104 Raft] candidate 使用了错误 ControlSet")
+		return errors.New("[Raft] candidate 使用了错误 ControlSet")
 	}
 	if s.state.Active != nil {
 		if s.state.Active.Entry.HeadHash == entry.HeadHash {
 			return nil
 		}
-		return errors.New("[D104 Raft] 前一 HeadEntry 尚未 certified/applied，禁止跳过")
+		return errors.New("[Raft] 前一 HeadEntry 尚未 certified/applied，禁止跳过")
 	}
 	candidate := cloneState(s.state)
 	candidate.Active = &OperationState{Entry: entry, Phase: PhasePending, Signatures: []wire.ControlConfigSignatureV1{}}
@@ -130,10 +130,10 @@ func (s *Store) Prepare(entry wire.HeadEntryV2) error {
 }
 
 // CommitFromRaft 只接受本机 RaftStorage 已耐久提交的 exact log record。quorum 是
-// Raft 推进 commitIndex 时已执行的协议事实，不能由调用者在崩溃后重新拼一组 member ID（D104）。
+// Raft 推进 commitIndex 时已执行的协议事实，不能由调用者在崩溃后重新拼一组 member ID。
 func (s *Store) CommitFromRaft(storage *RaftStorage, entryHash string) error {
 	if storage == nil {
-		return errors.New("[D104 Raft] commit 必须绑定本机 Raft storage")
+		return errors.New("[Raft] commit 必须绑定本机 Raft storage")
 	}
 	raft := storage.SnapshotRaft()
 	control := s.Snapshot()
@@ -144,7 +144,7 @@ func (s *Store) CommitFromRaft(storage *RaftStorage, entryHash string) error {
 	storageSetHash, err := wire.ControlSetHash(&storage.set)
 	if err != nil || storageSetHash != setHash || raft.ClusterID != control.ControlSet.ClusterID ||
 		!controlSetContains(&control.ControlSet, raft.MemberID) {
-		return errors.New("[D104 Raft] control store 与 Raft storage authority 不一致")
+		return errors.New("[Raft] control store 与 Raft storage authority 不一致")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -154,13 +154,13 @@ func (s *Store) CommitFromRaft(storage *RaftStorage, entryHash string) error {
 	}
 	index := active.Entry.Body.Payload.RaftIndex
 	if index < 1 || index > raft.CommitIndex || index > int64(len(raft.Log)) {
-		return errors.New("[D104 Raft] active entry 不在本机 committed prefix")
+		return errors.New("[Raft] active entry 不在本机 committed prefix")
 	}
 	record := raft.Log[index-1]
 	if record.Kind != RaftRecordHead || record.Head == nil || record.Index != index ||
 		record.Term != active.Entry.Body.Payload.RaftTerm || record.EntryHash != entryHash ||
 		!wire.EqualCanonical(*record.Head, active.Entry) {
-		return errors.New("[D104 Raft] committed record 与 active entry 不一致")
+		return errors.New("[Raft] committed record 与 active entry 不一致")
 	}
 	reference := &RaftCommitReferenceV1{Schema: 1, ClusterID: raft.ClusterID,
 		MemberID: raft.MemberID, Term: record.Term, Index: record.Index, EntryHash: record.EntryHash}
@@ -168,10 +168,10 @@ func (s *Store) CommitFromRaft(storage *RaftStorage, entryHash string) error {
 		if active.RaftCommit != nil && wire.EqualCanonical(*active.RaftCommit, *reference) {
 			return nil
 		}
-		return errors.New("[D104 Raft] 已提交 entry 的 Raft reference 不能被改写")
+		return errors.New("[Raft] 已提交 entry 的 Raft reference 不能被改写")
 	}
 	if active.RaftCommit != nil && !wire.EqualCanonical(*active.RaftCommit, *reference) {
-		return errors.New("[D104 Raft] committed entry 的 Raft reference 冲突")
+		return errors.New("[Raft] committed entry 的 Raft reference 冲突")
 	}
 	candidate := cloneState(s.state)
 	candidate.Active.RaftCommit = reference
@@ -192,18 +192,18 @@ func (s *Store) AddAttestation(entryHash string, signature wire.ControlConfigSig
 		return err
 	}
 	if active.Phase == PhasePending {
-		return errors.New("[D104 QC] 未 committed 的 entry 禁止 attestation")
+		return errors.New("[QC] 未 committed 的 entry 禁止 attestation")
 	}
 	for _, existing := range active.Signatures {
 		if existing.MemberID == signature.MemberID {
 			if wire.EqualCanonical(existing, signature) {
 				return nil
 			}
-			return errors.New("[D104 QC] 同一 signer 对同一 entry 给出冲突签名")
+			return errors.New("[QC] 同一 signer 对同一 entry 给出冲突签名")
 		}
 	}
 	if active.Phase != PhaseCommittedNotCertified {
-		return errors.New("[D104 QC] certified 后 signer 集合已冻结，不能改变 QC bytes")
+		return errors.New("[QC] certified 后 signer 集合已冻结，不能改变 QC bytes")
 	}
 	candidate := cloneState(s.state)
 	candidateActive := candidate.Active
@@ -243,7 +243,7 @@ func (s *Store) RecoverCertification(keys map[string]ed25519.PrivateKey) error {
 	}
 	if len(s.state.ControlSet.Members) != 1 {
 		s.mu.Unlock()
-		return errors.New("[D102 keys] 多成员 QC 恢复禁止集中持有 config 私钥")
+		return errors.New("[keys] 多成员 QC 恢复禁止集中持有 config 私钥")
 	}
 	entryHash := s.state.Active.Entry.EntryHash
 	attestation := wire.AttestationForHead(&s.state.Active.Entry)
@@ -276,7 +276,7 @@ func (s *Store) MarkReconciled(entryHash string, evidenceHashes []string) error 
 		return nil
 	}
 	if active.Phase != PhaseCertified {
-		return errors.New("[D108 reconcile] 只有 certified state 能驱动外部副作用")
+		return errors.New("[reconcile] 只有 certified state 能驱动外部副作用")
 	}
 	evidence := append([]string(nil), evidenceHashes...)
 	if err := wire.CanonicalSortHashes(evidence); err != nil {
@@ -303,10 +303,10 @@ func (s *Store) MarkApplied(entryHash string) error {
 		return nil
 	}
 	if active.Phase != PhaseCertified && active.Phase != PhaseReconciled {
-		return errors.New("[D104 apply] 未 certified 的 state 不能标 applied")
+		return errors.New("[apply] 未 certified 的 state 不能标 applied")
 	}
 	// applied 结果已经由 CertifiedHead/QC 保留；同一次原子写清除 active，避免
-	// 崩溃停在“已 applied 但仍阻塞下一 head”的中间文件（D104）。
+	// 崩溃停在“已 applied 但仍阻塞下一 head”的中间文件。
 	candidate := cloneState(s.state)
 	candidate.Active = nil
 	if err := s.persistLocked(candidate); err != nil {
@@ -319,9 +319,9 @@ func (s *Store) MarkApplied(entryHash string) error {
 func (s *Store) active(entryHash string) (*OperationState, error) {
 	if s.state.Active == nil || s.state.Active.Entry.EntryHash != entryHash {
 		if s.state.CertifiedHead != nil && s.state.CertifiedHead.EntryHash == entryHash {
-			return nil, errors.New("[D104 Raft] entry 已完成，不会产生第二个 active result")
+			return nil, errors.New("[Raft] entry 已完成，不会产生第二个 active result")
 		}
-		return nil, errors.New("[D104 Raft] active entry 不存在或 hash 不匹配")
+		return nil, errors.New("[Raft] active entry 不存在或 hash 不匹配")
 	}
 	return s.state.Active, nil
 }
@@ -381,14 +381,14 @@ func cloneState(state State) State {
 
 func validateState(state *State) error {
 	if state.Schema != 2 {
-		return errors.New("[D104 Raft] control state schema 无效")
+		return errors.New("[Raft] control state schema 无效")
 	}
 	if err := wire.ValidateControlSet(&state.ControlSet); err != nil {
 		return err
 	}
 	if state.CertifiedHead != nil {
 		if state.CertifiedQC == nil {
-			return errors.New("[D104 QC] certified head 缺 QC")
+			return errors.New("[QC] certified head 缺 QC")
 		}
 		if err := wire.VerifyStableHeadQC(state.CertifiedHead, &state.ControlSet, state.CertifiedQC); err != nil {
 			return err
@@ -405,10 +405,10 @@ func validateState(state *State) error {
 		return err
 	}
 	if !validPhase(state.Active.Phase) {
-		return errors.New("[D104 Raft] active phase 无效")
+		return errors.New("[Raft] active phase 无效")
 	}
 	if state.Active.Phase == PhasePending && state.Active.RaftCommit != nil {
-		return errors.New("[D104 Raft] pending state 禁止 Raft commit reference")
+		return errors.New("[Raft] pending state 禁止 Raft commit reference")
 	}
 	if state.Active.Phase != PhasePending {
 		commit := state.Active.RaftCommit
@@ -416,12 +416,12 @@ func validateState(state *State) error {
 		if commit == nil || commit.Schema != 1 || commit.ClusterID != state.ControlSet.ClusterID ||
 			!controlSetContains(&state.ControlSet, commit.MemberID) || commit.Term != entry.Body.Payload.RaftTerm ||
 			commit.Index != entry.Body.Payload.RaftIndex || commit.EntryHash != entry.EntryHash {
-			return errors.New("[D104 Raft] committed state 缺 exact Raft commit reference")
+			return errors.New("[Raft] committed state 缺 exact Raft commit reference")
 		}
 	}
 	if state.Active.Phase == PhaseCertified || state.Active.Phase == PhaseReconciled || state.Active.Phase == PhaseApplied {
 		if state.Active.QC == nil || wire.VerifyStableHeadQC(&state.Active.Entry, &state.ControlSet, state.Active.QC) != nil {
-			return errors.New("[D104 QC] certified/reconciled/applied state 缺有效 QC")
+			return errors.New("[QC] certified/reconciled/applied state 缺有效 QC")
 		}
 	}
 	return nil

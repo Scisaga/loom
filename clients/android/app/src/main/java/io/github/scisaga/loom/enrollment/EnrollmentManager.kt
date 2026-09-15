@@ -47,22 +47,22 @@ import javax.net.ssl.SSLException
 enum class EnrollmentPhase { CHECKING, NOT_JOINED, CLAIMING, WAITING, PULLING, READY, TERMINAL, ERROR }
 
 internal class V2TerminalDeviceException(val lifecycleState: String) : IllegalStateException(
-    "[D131 Android runtime] Device 已 $lifecycleState；durable v2 latch 禁止恢复旧配置或 Debug Direct",
+    "[Android runtime] Device 已 $lifecycleState；durable v2 latch 禁止恢复旧配置或 Debug Direct",
 )
 
-/** #14 / D131：durable v2 tombstone 独占运行时决策，不得落回 v1。 */
+/** durable v2 tombstone 独占运行时决策，不得落回 v1。 */
 internal fun <T> selectLatchedRuntime(
     lifecycleState: String?,
     v2Runtime: T?,
     loadLegacy: () -> T?,
 ): T? = when (lifecycleState) {
     null -> {
-        check(v2Runtime == null) { "[D131 Android runtime] 未 latch v2 Device 却存在 v2 runtime" }
+        check(v2Runtime == null) { "[Android runtime] 未 latch v2 Device 却存在 v2 runtime" }
         loadLegacy()
     }
-    "active" -> checkNotNull(v2Runtime) { "[D131 Android runtime] active v2 Device 缺可启动 runtime" }
+    "active" -> checkNotNull(v2Runtime) { "[Android runtime] active v2 Device 缺可启动 runtime" }
     "revoked", "decommissioned" -> throw V2TerminalDeviceException(lifecycleState)
-    else -> error("[D131 Android runtime] v2 Device lifecycle 无效：$lifecycleState")
+    else -> error("[Android runtime] v2 Device lifecycle 无效：$lifecycleState")
 }
 
 data class EnrollmentStatus(
@@ -301,7 +301,7 @@ class EnrollmentManager private constructor(context: Context) {
             ready(it, "已重放签名链并加载最后可用配置")
             return
         }
-        // §7.2：查看配置只恢复本地状态，不启动注册隧道或接管当前连接。
+        // 查看配置只恢复本地状态，不启动注册隧道或接管当前连接。
         if (!continuePending && (store.pending() != null || store.ready() != null)) {
             val pending = store.pending()?.let { runCatching { V2PendingEnrollment.decode(it) }.getOrNull() }
             mutableStatus.value = EnrollmentStatus(
@@ -515,7 +515,7 @@ class EnrollmentManager private constructor(context: Context) {
             store.putV2Pending(pending)
 
             // request ID/nonce 先于 Keystore/CSR 生成落盘；server 一旦见到 core，
-            // 后续所有重试都复用这里的 exact bytes（D129、D130）。
+            // 后续所有重试都复用这里的 exact bytes。
             pending = pending.withStableCoordinates()
             store.putV2Pending(pending)
             val core = pending.claimCore ?: crypto.prepareStableClaimCore(
@@ -975,7 +975,7 @@ class EnrollmentManager private constructor(context: Context) {
     }
 
     private fun terminal(installed: V2InstalledDeviceState) {
-        // D131：清理失败不能遮蔽供 VpnService fail-closed 的终止态信号。
+        // 清理失败不能遮蔽供 VpnService fail-closed 的终止态信号。
         if (isActiveProfile()) runCatching { VpnConnectionPreference(appContext).setDesiredConnected(false) }
         val label = when (installed.lifecycleState) {
             "revoked" -> "已撤权"

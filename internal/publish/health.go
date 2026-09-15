@@ -26,7 +26,7 @@ const HealthPath = "/var/lib/loom/publisher.json"
 // 地方能区分这两件事 —— 要发现它得去翻 journal,而没人会去翻一个显示
 // 正常的服务的日志。
 //
-// 版本坐标(D69)也没覆盖到它:`loom report` 报的是**跑 report 那个二进制**
+// 版本坐标也没覆盖到它:`loom report` 报的是**跑 report 那个二进制**
 // 的 commit,而发布器是另一个进程,可能还持着被换掉的旧 inode。
 //
 // # 两条设计约束
@@ -105,7 +105,7 @@ func ReadHealth(path string) (*Health, error) {
 //
 // 发布器只在 SSOT 变了(或分发点分叉)时才发布。一周不改 SSOT 就一周不发,
 // 那是完全正常的 —— 拿"距上次成功多久"当告警会天天误报,而误报的面板
-// 等于没有面板(D64–D67)。
+// 等于没有面板。
 //
 // 昨天那次故障的真正形状是:**19:43 成功过一次,之后每一次都失败,
 // 而进程一直 active**。所以判据是 LastErrorAt 比 LastSuccess 新 ——

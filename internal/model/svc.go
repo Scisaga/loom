@@ -5,15 +5,15 @@ import (
 	"strings"
 )
 
-// Service 是**接入端能选择的单位**(§4.5)。
+// Service 是**接入端能选择的单位**。
 //
 // 它把一组地址和一条访问声明绑在一起:这些地址都属于同一个服务,因此走同一
 // 条路;而走哪条路由那条声明的 objective 与约束决定。
 //
-// 为什么接入端不能直接指定地址,见 §4.5。三条理由里最硬的一条:能指定任意
+// 接入端不能直接指定地址:能指定任意
 // 地址,一份泄露的接入凭据就能把服务器变成开放代理。
 //
-// **和等价类别混**(§4.3):
+// **和等价类别混**:
 //
 //	等价类        N 个地址**可互换**,数据平面挑一个 → 度量单位是 (链, 地址)
 //	服务地址清单  N 个地址**都要用**,只是归组     → 度量单位是 (链, 服务)
@@ -25,12 +25,12 @@ type Service struct {
 	//
 	// 以 `.` 开头表示后缀匹配(`.openai.com` 匹配 `api.openai.com`)——
 	// 服务的地址清单几乎一定会不全,后缀匹配是最省事的补救。漏掉的那些
-	// 会落到兜底并被上报者记下来(§4.5)。
+	// 会落到兜底并被上报者记下来。
 	Addresses []string `yaml:"addresses"`
 
 	// Declaration 是治理这个服务的访问声明:objective、约束、允许的出口。
 	// 多个服务可以共用一条声明(同样的策略),但**各自独立选路** ——
-	// 这正是 D43 修正的那一点。
+	// 共享调度参数不能让一个服务的观测替另一个服务作决定。
 	Declaration string `yaml:"declaration"`
 }
 
@@ -40,7 +40,7 @@ func (s *Service) Tag() string { return "svc:" + s.ID }
 // Suffix 报告一条地址是不是后缀匹配。
 func IsSuffix(addr string) bool { return strings.HasPrefix(addr, ".") }
 
-// SortedAddresses 返回排序后的地址,渲染必须是纯函数(§12)。
+// SortedAddresses 返回排序后的地址,渲染必须是纯函数。
 func (s *Service) SortedAddresses() []string {
 	out := append([]string(nil), s.Addresses...)
 	sort.Strings(out)

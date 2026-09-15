@@ -66,13 +66,13 @@ func TestPreferencePrivateSelectorRejectionPreservesActiveAutoGeneration(t *test
 	control := &routeControl{persist: func(clientcore.Preference) error { persisted = true; return nil }}
 	err = applyRouteRequest(context.Background(), manager, control, routeRequest{preference: clientcore.Preference{Schema: 1, Mode: clientcore.FixedExit, Exit: "demo-exit"}})
 	if err == nil || !strings.Contains(err.Error(), "独立私网 selector 无法合并到统一上网模式") {
-		t.Fatal("[§7.3] 不支持的固定偏好没有明确拒绝", err)
+		t.Fatal("不支持的固定偏好没有明确拒绝", err)
 	}
 	currentAgent, _ := json.Marshal(manager.active.spec.AgentConfig)
 	if persisted || manager.active != old || manager.active.spec.Preference.Mode != clientcore.Auto || !bytes.Equal(manager.active.spec.Config, config) || !bytes.Equal(currentAgent, agentConfig) {
-		t.Fatal("[§7.3] 拒绝偏好后改变了当前 Auto 配置、Agent generation 或持久偏好")
+		t.Fatal("拒绝偏好后改变了当前 Auto 配置、Agent generation 或持久偏好")
 	}
 	if starts, stops := harness.counts(); starts != 1 || stops != 0 {
-		t.Fatal("[§7.3] 派生失败仍取消或重启了原有 Auto 数据面与 Agent")
+		t.Fatal("派生失败仍取消或重启了原有 Auto 数据面与 Agent")
 	}
 }

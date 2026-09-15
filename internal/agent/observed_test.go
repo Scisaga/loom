@@ -10,7 +10,7 @@ import (
 	"loom/internal/report"
 )
 
-// §16.1.2 只在消费侧比较等价 URL，不能改动原始观测或把缺测推成失败。
+// 只在消费侧比较等价 URL，不能改动原始观测或把缺测推成失败。
 func TestObservedRootURLPruningPreservesOriginalObservation(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	for _, target := range []string{"https://demo.example", "https://demo.example/"} {

@@ -2,7 +2,7 @@
 
 package main
 
-// §7.2：空配置已有自己的入口，不再引导用户另建配置或重复展示缺失身份。
+// 空配置已有自己的入口，不再引导用户另建配置或重复展示缺失身份。
 func (app *portableGUI) paintMisakaJoinPanel(c *misakaCanvas, snapshot portableGUISnapshot) {
 	s := app.scale
 	main, end := s(196), app.misakaContentEnd()

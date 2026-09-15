@@ -18,7 +18,7 @@ func FetchLinuxDeviceConfigArtifacts(ctx context.Context,
 	fetcher MirrorFetcher,
 ) ([]InstalledConfigV1, error) {
 	if ctx == nil || refs == nil || len(refs) > maximumLinuxConfigArtifacts {
-		return nil, errors.New("[D124 Linux config] config fetch 输入无效")
+		return nil, errors.New("[Linux config] config fetch 输入无效")
 	}
 	configs := make([]InstalledConfigV1, len(refs))
 	totalBytes := 0
@@ -28,11 +28,11 @@ func FetchLinuxDeviceConfigArtifacts(ctx context.Context,
 			return nil, err
 		}
 		if ref.Platform != "linux-server" || ref.SizeBytes > maximumLinuxConfigArtifact {
-			return nil, errors.New("[D124 Linux config] config ref 平台或大小无效")
+			return nil, errors.New("[Linux config] config ref 平台或大小无效")
 		}
 		totalBytes += int(ref.SizeBytes)
 		if totalBytes > maximumLinuxConfigTotalBytes {
-			return nil, errors.New("[D124 Linux config] configs 超过总预算")
+			return nil, errors.New("[Linux config] configs 超过总预算")
 		}
 		body, err := fetcher.FetchCanonicalObject(ctx, mirrors, ref.ContentHash,
 			wire.DomainDeviceConfigArtifact, ref.SizeBytes)
@@ -40,7 +40,7 @@ func FetchLinuxDeviceConfigArtifacts(ctx context.Context,
 			return nil, err
 		}
 		if len(body) != int(ref.SizeBytes) {
-			return nil, errors.New("[D124 Linux config] mirror config size 与 exact ref 不匹配")
+			return nil, errors.New("[Linux config] mirror config size 与 exact ref 不匹配")
 		}
 		configs[index] = InstalledConfigV1{
 			ArtifactID: ref.ArtifactID, Generation: ref.Generation, Platform: ref.Platform,
@@ -61,7 +61,7 @@ func LinuxInstalledConfigArtifact(installation *EnrollmentInstallationV1,
 	artifactID string,
 ) ([]byte, error) {
 	if installation == nil || artifactID == "" {
-		return nil, errors.New("[D131 Linux runtime] installed config 上下文缺失")
+		return nil, errors.New("[Linux runtime] installed config 上下文缺失")
 	}
 	var selected *InstalledConfigV1
 	for index := range installation.Configs {
@@ -70,17 +70,17 @@ func LinuxInstalledConfigArtifact(installation *EnrollmentInstallationV1,
 			continue
 		}
 		if selected != nil {
-			return nil, errors.New("[D131 Linux runtime] installed config artifact ID 不唯一")
+			return nil, errors.New("[Linux runtime] installed config artifact ID 不唯一")
 		}
 		selected = candidate
 	}
 	if selected == nil {
-		return nil, errors.New("[D131 Linux runtime] durable state 缺目标 config artifact")
+		return nil, errors.New("[Linux runtime] durable state 缺目标 config artifact")
 	}
 	body := append([]byte(nil), selected.Config...)
 	canonical, err := wire.CanonicalizeStrict(body)
 	if err != nil || !bytes.Equal(canonical, body) {
-		return nil, errors.New("[D131 Linux runtime] installed config 不是 exact canonical wire")
+		return nil, errors.New("[Linux runtime] installed config 不是 exact canonical wire")
 	}
 	return body, nil
 }

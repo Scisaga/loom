@@ -53,24 +53,24 @@ type LinuxLinkRuntimePlanV1 struct {
 
 // BuildLinuxLinkRuntimePlan 只把 current Device view 承诺的 exact artifact
 // 转为本机运行计划。LinkIntent 不能通过本地参数、可拨端口或
-// Device 自报职责产生；control 还必须存在于 Head 绑定的 private peer directory（D105、D131）。
+// Device 自报职责产生；control 还必须存在于 Head 绑定的 private peer directory。
 func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previousSet *wire.ControlSetV1,
 	peerDirectory *wire.ControlPeerDirectoryPrivateObjectV1, artifactRaw []byte,
 	credentials []InstalledSecretV1, now time.Time,
 	minimumGenerations map[string]int64) (LinuxLinkRuntimePlanV1, error) {
 	if envelope == nil || set == nil || now.IsZero() {
-		return LinuxLinkRuntimePlanV1{}, errors.New("[D131 Linux runtime] view/ControlSet/time 缺失")
+		return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] view/ControlSet/time 缺失")
 	}
 	if _, err := wire.VerifyDeviceViewEnvelopeWithPrevious(envelope, set, previousSet); err != nil {
 		return LinuxLinkRuntimePlanV1{}, err
 	}
 	if envelope.Payload.State != "active" || envelope.Payload.Active == nil {
-		return LinuxLinkRuntimePlanV1{}, errors.New("[D131 Linux runtime] tombstone Device 禁止生成新运行计划")
+		return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] tombstone Device 禁止生成新运行计划")
 	}
 	var artifact LinuxLinkIntentArtifactV1
 	canonical, err := wire.DecodeStrict(artifactRaw, 4<<20, &artifact)
 	if err != nil || !bytes.Equal(canonical, artifactRaw) {
-		return LinuxLinkRuntimePlanV1{}, errors.New("[D131 Linux runtime] LinkIntent artifact 不是 exact canonical wire")
+		return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] LinkIntent artifact 不是 exact canonical wire")
 	}
 	if err := validateLinuxLinkIntentArtifact(&artifact, envelope); err != nil {
 		return LinuxLinkRuntimePlanV1{}, err
@@ -100,10 +100,10 @@ func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previou
 	credentialIDs := make(map[string]struct{}, len(credentials))
 	for _, credential := range credentials {
 		if credential.SecretID == "" {
-			return LinuxLinkRuntimePlanV1{}, errors.New("[D131 Linux runtime] installed credential ID 无效")
+			return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] installed credential ID 无效")
 		}
 		if _, duplicate := credentialIDs[credential.SecretID]; duplicate {
-			return LinuxLinkRuntimePlanV1{}, errors.New("[D131 Linux runtime] installed credential ID 重复")
+			return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] installed credential ID 重复")
 		}
 		credentialIDs[credential.SecretID] = struct{}{}
 	}
@@ -114,13 +114,13 @@ func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previou
 	for _, intent := range artifact.LinkIntents {
 		for _, credentialRef := range intent.CredentialRefs {
 			if _, found := credentialIDs[credentialRef]; !found {
-				return LinuxLinkRuntimePlanV1{}, errors.New("[D131 Linux runtime] LinkIntent 引用未安装 credential")
+				return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] LinkIntent 引用未安装 credential")
 			}
 		}
 		touchesFrom := intent.FromDeviceID == artifact.DeviceID
 		touchesTo := intent.To.DeviceID == artifact.DeviceID
 		if !touchesFrom && !touchesTo {
-			return LinuxLinkRuntimePlanV1{}, errors.New("[D131 Linux runtime] artifact 含与本 Device 无关 LinkIntent")
+			return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] artifact 含与本 Device 无关 LinkIntent")
 		}
 		mode := "listen"
 		if intent.Initiator == "from" && touchesFrom || intent.Initiator == "to" && touchesTo {
@@ -139,30 +139,30 @@ func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previou
 		}
 		switch intent.Purpose {
 		case "bootstrap":
-			return LinuxLinkRuntimePlanV1{}, errors.New("[D131 Linux runtime] active Device 禁止恢复 bootstrap LinkIntent")
+			return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] active Device 禁止恢复 bootstrap LinkIntent")
 		case "control_overlay":
 			if !plan.CertifiedControl {
-				return LinuxLinkRuntimePlanV1{}, errors.New("[D131 Linux runtime] 非 certified ControlSet Device 不得运行 control LinkIntent")
+				return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] 非 certified ControlSet Device 不得运行 control LinkIntent")
 			}
 			_, fromFound := memberIDs[intent.FromDeviceID]
 			_, toFound := memberIDs[intent.To.DeviceID]
 			if !fromFound || !toFound {
-				return LinuxLinkRuntimePlanV1{}, errors.New("[D131 Linux runtime] control LinkIntent peer 不在 exact ControlSet directory")
+				return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] control LinkIntent peer 不在 exact ControlSet directory")
 			}
 		case "data_forward":
 			if touchesTo && !plan.ServeForward {
-				return LinuxLinkRuntimePlanV1{}, errors.New("[D131 Linux runtime] 未授权 forward 的 Device 不得监听 data edge")
+				return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] 未授权 forward 的 Device 不得监听 data edge")
 			}
 			if touchesFrom && !plan.ServeForward {
 				if !plan.EnableTUN || !linuxDestinationGranted(envelope.Payload.Active.Grants, intent.To) {
-					return LinuxLinkRuntimePlanV1{}, errors.New("[D131 Linux runtime] use_loom data edge 缺 exact destination grant")
+					return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] use_loom data edge 缺 exact destination grant")
 				}
 			}
 			action.ResolveAtFinalEgress = touchesFrom && linuxEgressGranted(envelope.Payload.Active.Grants, intent.To)
 			for _, endpointID := range intent.ListenerResourceRefs {
 				endpoint, found := endpoints[endpointID]
 				if !found || !containsString(intent.AllowedTransports, endpoint.Transport) {
-					return LinuxLinkRuntimePlanV1{}, errors.New("[D131 Linux runtime] LinkIntent listener 未绑定 Device view endpoint/transport")
+					return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] LinkIntent listener 未绑定 Device view endpoint/transport")
 				}
 				if mode != "dial" {
 					continue
@@ -185,7 +185,7 @@ func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previou
 				}
 			}
 			if mode == "dial" && len(action.DialCandidates) == 0 {
-				return LinuxLinkRuntimePlanV1{}, errors.New("[D131 Linux runtime] dial LinkIntent 没有当前可拨 certified generation")
+				return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] dial LinkIntent 没有当前可拨 certified generation")
 			}
 		}
 		plan.Actions = append(plan.Actions, action)
@@ -198,7 +198,7 @@ func validateLinuxLinkIntentArtifact(artifact *LinuxLinkIntentArtifactV1,
 	if artifact == nil || envelope == nil || artifact.ClusterID != envelope.Payload.ClusterID ||
 		artifact.DeviceID != envelope.Payload.DeviceID || artifact.DeviceGeneration != envelope.Payload.DeviceGeneration ||
 		artifact.AuthorityHeadHash != envelope.SignedCurrent.Head.Body.Payload.ParentHeadHash {
-		return errors.New("[D131 Linux runtime] LinkIntent artifact header/view binding 无效")
+		return errors.New("[Linux runtime] LinkIntent artifact header/view binding 无效")
 	}
 	return wire.ValidateLinuxLinkIntentArtifact(artifact)
 }
@@ -215,7 +215,7 @@ func bindLinuxLinkIntentArtifactRef(artifact *LinuxLinkIntentArtifactV1, raw []b
 			continue
 		}
 		if ref.Generation > artifact.Generation {
-			return errors.New("[D131 Linux runtime] 禁止选择低于 Device view 最新代的 LinkIntent artifact")
+			return errors.New("[Linux runtime] 禁止选择低于 Device view 最新代的 LinkIntent artifact")
 		}
 		if ref.Generation == artifact.Generation && ref.Platform == "linux-server" &&
 			ref.MediaType == "application/vnd.loom.config+json" && ref.RenderContractID == artifact.RenderContractID &&
@@ -224,7 +224,7 @@ func bindLinuxLinkIntentArtifactRef(artifact *LinuxLinkIntentArtifactV1, raw []b
 		}
 	}
 	if matches != 1 {
-		return errors.New("[D131 Linux runtime] LinkIntent artifact 未被 current Device view exact ref 承诺")
+		return errors.New("[Linux runtime] LinkIntent artifact 未被 current Device view exact ref 承诺")
 	}
 	return nil
 }
@@ -237,7 +237,7 @@ func linuxCertifiedControlMembers(set *wire.ControlSetV1,
 	}
 	if err := wire.ValidateControlPeerDirectoryPrivateObject(set, object); err != nil ||
 		object.ControlPeerDirectoryHash != expectedHash {
-		return nil, errors.New("[D131 Linux runtime] private control directory 未绑定 current Head")
+		return nil, errors.New("[Linux runtime] private control directory 未绑定 current Head")
 	}
 	for _, member := range object.Directory.Members {
 		result[member.DeviceID] = member.MemberID
@@ -250,7 +250,7 @@ func linuxAuthorizedDataEndpoints(bundle *wire.DeviceEndpointBundleV1) (map[stri
 	for _, binding := range bundle.DataIngressSets {
 		for _, endpoint := range binding.EndpointSet.Endpoints {
 			if _, duplicate := result[endpoint.EndpointID]; duplicate {
-				return nil, errors.New("[D131 Linux runtime] Device endpoint bundle 跨 set 重复 endpoint ID")
+				return nil, errors.New("[Linux runtime] Device endpoint bundle 跨 set 重复 endpoint ID")
 			}
 			result[endpoint.EndpointID] = endpoint
 		}

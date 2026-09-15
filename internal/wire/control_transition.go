@@ -165,11 +165,11 @@ func validateControlSetTransitionIntent(intent *ControlSetTransitionIntentV1) er
 	if intent == nil || intent.Schema != 1 || !validIdentifier(intent.ClusterID, 128) ||
 		!validIdentifier(intent.TransitionID, 128) || !validIdentifier(intent.OperationID, 128) ||
 		intent.RecoveryEpoch < 0 || intent.OldControlEpoch < 0 || !validRecoveryReason(intent.Reason) {
-		return errors.New("[D112 joint] transition intent header 无效")
+		return errors.New("[joint] transition intent header 无效")
 	}
 	nextEpoch, err := CheckedAdd(intent.OldControlEpoch, 1)
 	if err != nil || intent.TargetControlEpoch != nextEpoch {
-		return errors.New("[D112 joint] target control epoch 必须精确加一")
+		return errors.New("[joint] target control epoch 必须精确加一")
 	}
 	return requireCanonicalHashes(intent.RecoveryStatementHash, intent.RecoveryPolicyHash,
 		intent.OldControlSetHash, intent.OldControlPeerDirectoryHash, intent.NewControlSetHash,
@@ -185,7 +185,7 @@ func ControlSetTransitionIntentHash(intent *ControlSetTransitionIntentV1) (strin
 
 func ControlMembershipApprovalProofHash(proof *ControlMembershipApprovalProofV1) (string, error) {
 	if proof == nil || proof.Schema != 1 {
-		return "", errors.New("[D112 joint] membership approval proof schema 无效")
+		return "", errors.New("[joint] membership approval proof schema 无效")
 	}
 	return HashObject(DomainControlMembershipApproval, proof)
 }
@@ -195,7 +195,7 @@ func SignControlMembershipApproval(intent ControlSetTransitionIntentV1, member C
 		return ControlMembershipSignatureV1{}, err
 	}
 	if len(privateKey) != ed25519.PrivateKeySize || base64.RawURLEncoding.EncodeToString(privateKey.Public().(ed25519.PublicKey)) != member.MembershipPublicKey {
-		return ControlMembershipSignatureV1{}, errors.New("[D112 joint] membership private key 与 member 不匹配")
+		return ControlMembershipSignatureV1{}, errors.New("[joint] membership private key 与 member 不匹配")
 	}
 	canonical, err := MarshalCanonical(intent)
 	if err != nil {
@@ -210,7 +210,7 @@ func SignControlMembershipApproval(intent ControlSetTransitionIntentV1, member C
 
 func VerifyControlMembershipApprovalProof(proof *ControlMembershipApprovalProofV1, oldSet, newSet *ControlSetV1, parent *HeadEntryV2) error {
 	if proof == nil || proof.Schema != 1 || parent == nil || ValidateHeadEntry(parent, nil) != nil {
-		return errors.New("[D112 joint] membership approval proof/parent 无效")
+		return errors.New("[joint] membership approval proof/parent 无效")
 	}
 	if err := ValidateControlSet(oldSet); err != nil {
 		return err
@@ -234,7 +234,7 @@ func VerifyControlMembershipApprovalProof(proof *ControlMembershipApprovalProofV
 		p.RecoveryStatementHash != intent.RecoveryStatementHash || p.RecoveryPolicyHash != intent.RecoveryPolicyHash ||
 		p.ControlEpoch != intent.OldControlEpoch || p.ControlSetHash != intent.OldControlSetHash ||
 		p.ControlPeerDirectoryHash != intent.OldControlPeerDirectoryHash || parent.HeadHash != intent.ParentCertifiedHeadHash {
-		return errors.New("[D112 joint] intent 与 old/new set/parent head 不匹配")
+		return errors.New("[joint] intent 与 old/new set/parent head 不匹配")
 	}
 	if err := VerifyControlKeyPossessionProofs(newSet, proof.NewControlKeyPossessionProofs); err != nil {
 		return err
@@ -251,13 +251,13 @@ func VerifyControlMembershipApprovalProof(proof *ControlMembershipApprovalProofV
 		op.Body.BaseControlSetHash != intent.OldControlSetHash || op.Body.BaseControlRevision != p.ControlRevision ||
 		op.Body.ParentHeadHash != intent.ParentCertifiedHeadHash || op.Body.Reason != intent.Reason ||
 		op.AuthorSignature.Algorithm != "ed25519" {
-		return errors.New("[D112 joint] admin intent operation 未 exact-bind transition")
+		return errors.New("[joint] admin intent operation 未 exact-bind transition")
 	}
 	if _, err := ParseHash(op.AuthorSignature.AdminKeyID); err != nil {
-		return errors.New("[D112 joint] admin intent key ID 无效")
+		return errors.New("[joint] admin intent key ID 无效")
 	}
 	if _, err := decodeRawURL(op.AuthorSignature.Signature, ed25519.SignatureSize); err != nil {
-		return errors.New("[D112 joint] admin intent signature 编码无效")
+		return errors.New("[joint] admin intent signature 编码无效")
 	}
 	return verifyMembershipApprovalSignatures(intent, proof.Signatures, proof.OldSignerRefs, proof.NewSignerRefs, oldSet, newSet)
 }
@@ -273,13 +273,13 @@ func verifyMembershipApprovalSignatures(intent *ControlSetTransitionIntentV1, si
 	message, _ := Frame(DomainControlMembershipSignature, canonical)
 	for i, signature := range signatures {
 		if i > 0 && compareSigner(signatures[i-1].MemberID, signatures[i-1].MembershipKeyID, signature.MemberID, signature.MembershipKeyID) >= 0 {
-			return errors.New("[D112 joint] membership signatures 必须严格排序且不重复")
+			return errors.New("[joint] membership signatures 必须严格排序且不重复")
 		}
 		member, ok := keys[signature.MemberID+"\x00"+signature.MembershipKeyID]
 		public, keyErr := decodeRawURL(member.MembershipPublicKey, ed25519.PublicKeySize)
 		rawSignature, signatureErr := decodeRawURL(signature.Signature, ed25519.SignatureSize)
 		if !ok || signature.Algorithm != "ed25519" || keyErr != nil || signatureErr != nil || !ed25519.Verify(public, message, rawSignature) {
-			return errors.New("[D112 joint] membership approval signature 无效")
+			return errors.New("[joint] membership approval signature 无效")
 		}
 	}
 	used := make(map[string]struct{}, len(signatures))
@@ -290,7 +290,7 @@ func verifyMembershipApprovalSignatures(intent *ControlSetTransitionIntentV1, si
 		return err
 	}
 	if len(used) != len(signatures) {
-		return errors.New("[D112 joint] membership signatures 含未被 old/new 投影引用的额外签名")
+		return errors.New("[joint] membership signatures 含未被 old/new 投影引用的额外签名")
 	}
 	return nil
 }
@@ -298,7 +298,7 @@ func verifyMembershipApprovalSignatures(intent *ControlSetTransitionIntentV1, si
 func verifyMembershipRefs(refs []ControlMembershipSignerRefV1, signatures []ControlMembershipSignatureV1, set *ControlSetV1, used map[string]struct{}) error {
 	quorum, _ := Quorum(len(set.Members))
 	if len(refs) < quorum {
-		return errors.New("[D112 joint] 一侧 membership refs 未达到多数")
+		return errors.New("[joint] 一侧 membership refs 未达到多数")
 	}
 	members := make(map[string]string, len(set.Members))
 	for _, member := range set.Members {
@@ -313,7 +313,7 @@ func verifyMembershipRefs(refs []ControlMembershipSignerRefV1, signatures []Cont
 		_, hasSignature := signed[key]
 		if i > 0 && compareSigner(refs[i-1].MemberID, refs[i-1].MembershipKeyID, ref.MemberID, ref.MembershipKeyID) >= 0 ||
 			members[ref.MemberID] != ref.MembershipKeyID || !hasSignature {
-			return errors.New("[D112 joint] membership refs 未排序、重复或未绑定 signature/set")
+			return errors.New("[joint] membership refs 未排序、重复或未绑定 signature/set")
 		}
 		used[key] = struct{}{}
 	}
@@ -325,11 +325,11 @@ func validateJointControlSetEntryBody(body *JointControlSetEntryBodyV1) error {
 		!validIdentifier(body.TransitionID, 128) || !validIdentifier(body.OperationID, 128) ||
 		body.RecoveryEpoch < 0 || body.OldControlEpoch < 0 || body.RaftTerm < 1 || body.RaftIndex < 1 ||
 		!validRecoveryReason(body.Reason) {
-		return errors.New("[D112 joint] Joint entry header 无效")
+		return errors.New("[joint] Joint entry header 无效")
 	}
 	nextEpoch, err := CheckedAdd(body.OldControlEpoch, 1)
 	if err != nil || body.TargetControlEpoch != nextEpoch {
-		return errors.New("[D112 joint] Joint target control epoch 必须精确加一")
+		return errors.New("[joint] Joint target control epoch 必须精确加一")
 	}
 	if _, err := ParseTimeZ(body.CommittedLogicalTime); err != nil {
 		return err
@@ -361,7 +361,7 @@ func JointConfigAttestationForEntry(body *JointControlSetEntryBodyV1, entryHash 
 
 func SignJointConfigAttestation(attestation JointConfigAttestationBodyV1, member ControlMemberV1, privateKey ed25519.PrivateKey) (ControlConfigSignatureV1, error) {
 	if len(privateKey) != ed25519.PrivateKeySize || base64.RawURLEncoding.EncodeToString(privateKey.Public().(ed25519.PublicKey)) != member.ConfigPublicKey {
-		return ControlConfigSignatureV1{}, errors.New("[D112 joint] config private key 与 member 不匹配")
+		return ControlConfigSignatureV1{}, errors.New("[joint] config private key 与 member 不匹配")
 	}
 	canonical, err := MarshalCanonical(attestation)
 	if err != nil {
@@ -404,13 +404,13 @@ func VerifyJointConfigQC(body *JointControlSetEntryBodyV1, entryHash string, old
 	if oldHashErr != nil || newHashErr != nil || oldSet.ClusterID != newSet.ClusterID ||
 		body.ClusterID != oldSet.ClusterID || body.OldControlSetHash != oldHash || body.NewControlSetHash != newHash ||
 		entryHash != wantHash || qc == nil || qc.Schema != 1 || qc.QCType != "joint_config" {
-		return errors.New("[D112 joint QC] Joint entry/QC binding 无效")
+		return errors.New("[joint QC] Joint entry/QC binding 无效")
 	}
 	want := JointConfigAttestationForEntry(body, entryHash)
 	wantCanonical, _ := MarshalCanonical(want)
 	gotCanonical, err := MarshalCanonical(qc.Attestation)
 	if err != nil || !bytes.Equal(wantCanonical, gotCanonical) {
-		return errors.New("[D112 joint QC] joint attestation 与 entry 不一致")
+		return errors.New("[joint QC] joint attestation 与 entry 不一致")
 	}
 	keys := make(map[string]ControlMemberV1, len(oldSet.Members)+len(newSet.Members))
 	for _, set := range []*ControlSetV1{oldSet, newSet} {
@@ -424,13 +424,13 @@ func VerifyJointConfigQC(body *JointControlSetEntryBodyV1, entryHash string, old
 	message, _ := Frame(DomainJointConfigReplicationAttestation, wantCanonical)
 	for i, signature := range qc.Signatures {
 		if i > 0 && compareSigner(qc.Signatures[i-1].MemberID, qc.Signatures[i-1].ConfigKeyID, signature.MemberID, signature.ConfigKeyID) >= 0 {
-			return errors.New("[D112 joint QC] signatures 必须严格排序且不重复")
+			return errors.New("[joint QC] signatures 必须严格排序且不重复")
 		}
 		member, ok := keys[signature.MemberID+"\x00"+signature.ConfigKeyID]
 		public, keyErr := decodeRawURL(member.ConfigPublicKey, ed25519.PublicKeySize)
 		rawSignature, signatureErr := decodeRawURL(signature.Signature, ed25519.SignatureSize)
 		if !ok || signature.Algorithm != "ed25519" || keyErr != nil || signatureErr != nil || !ed25519.Verify(public, message, rawSignature) {
-			return errors.New("[D112 joint QC] config signature 无效")
+			return errors.New("[joint QC] config signature 无效")
 		}
 	}
 	if err := verifyJointRefs(qc.OldSignerRefs, qc.Signatures, oldSet); err != nil {
@@ -451,7 +451,7 @@ func rejectUnprojectedConfigSignatures(signatures []ControlConfigSignatureV1, ol
 	}
 	for _, signature := range signatures {
 		if _, found := used[signature.MemberID+"\x00"+signature.ConfigKeyID]; !found {
-			return errors.New("[D112 joint QC] signatures 含未被 old/new 投影引用的额外签名")
+			return errors.New("[joint QC] signatures 含未被 old/new 投影引用的额外签名")
 		}
 	}
 	return nil
@@ -463,7 +463,7 @@ func JointConfigQCHash(qc *JointConfigReplicationQCV1) (string, error) {
 
 func JointControlSetProofHash(proof *JointControlSetProofV1, oldSet, newSet *ControlSetV1) (string, error) {
 	if proof == nil || proof.Schema != 1 {
-		return "", errors.New("[D112 joint] Joint proof schema 无效")
+		return "", errors.New("[joint] Joint proof schema 无效")
 	}
 	if err := VerifyJointConfigQC(&proof.JointBody, proof.JointEntryHash, oldSet, newSet, &proof.JointReplicationQC); err != nil {
 		return "", err
@@ -473,7 +473,7 @@ func JointControlSetProofHash(proof *JointControlSetProofV1, oldSet, newSet *Con
 
 func ControlSetTransitionProofHash(proof *ControlSetTransitionProofV1) (string, error) {
 	if proof == nil || proof.Schema != 1 || proof.FinalPayload.Schema != 2 {
-		return "", errors.New("[D112 joint] control transition proof schema 无效")
+		return "", errors.New("[joint] control transition proof schema 无效")
 	}
 	if _, err := ParseHash(proof.JointProofHash); err != nil {
 		return "", err
@@ -486,7 +486,7 @@ func ControlSetTransitionProofHash(proof *ControlSetTransitionProofV1) (string, 
 
 func VerifyControlSetTransitionBundle(bundle *ControlSetTransitionBundleV1, parent *HeadEntryV2) (VerifiedControlSetTransitionV1, error) {
 	if bundle == nil || bundle.Schema != 1 || bundle.Final.Schema != 1 || parent == nil {
-		return VerifiedControlSetTransitionV1{}, errors.New("[D112 joint] transition bundle/parent 无效")
+		return VerifiedControlSetTransitionV1{}, errors.New("[joint] transition bundle/parent 无效")
 	}
 	transitionHash, err := VerifyControlSetFinalCandidate(&bundle.OldControlSet, &bundle.NewControlSet,
 		&bundle.MembershipApprovalProof, &bundle.JointProof, &bundle.Final.Head, parent)
@@ -511,7 +511,7 @@ func VerifyControlSetTransitionBundle(bundle *ControlSetTransitionBundleV1, pare
 
 // VerifyJointControlSetCandidate 是写入 config log 前的 exact 验证边界；它验证
 // membership approval、PoP、parent lineage 与 Raft 坐标，但不把尚未提交的
-// Joint entry 冒充成已经具备 replication QC 的公开 proof（D112）。
+// Joint entry 冒充成已经具备 replication QC 的公开 proof。
 func VerifyJointControlSetCandidate(oldSet, newSet *ControlSetV1,
 	approval *ControlMembershipApprovalProofV1, joint *JointControlSetEntryBodyV1,
 	parent *HeadEntryV2) (string, error) {
@@ -520,7 +520,7 @@ func VerifyJointControlSetCandidate(oldSet, newSet *ControlSetV1,
 	}
 	approvalHash, err := ControlMembershipApprovalProofHash(approval)
 	if err != nil || !jointMatchesIntent(joint, &approval.Intent, approvalHash) {
-		return "", errors.New("[D112 joint] Joint entry 未 exact-bind intent/approval")
+		return "", errors.New("[joint] Joint entry 未 exact-bind intent/approval")
 	}
 	parentTime, _ := ParseTimeZ(parent.Body.Payload.CommittedLogicalTime)
 	jointTime, timeErr := ParseTimeZ(joint.CommittedLogicalTime)
@@ -529,19 +529,19 @@ func VerifyJointControlSetCandidate(oldSet, newSet *ControlSetV1,
 	if timeErr != nil || indexErr != nil || !jointTime.After(parentTime) ||
 		joint.RaftTerm < parent.Body.Payload.RaftTerm || joint.RaftIndex < nextJointIndex ||
 		adjacent != (joint.PreviousLogEntryHash == parent.EntryHash) {
-		return "", errors.New("[D112 joint] Joint entry 未连续绑定 parent/内部 Raft lineage")
+		return "", errors.New("[joint] Joint entry 未连续绑定 parent/内部 Raft lineage")
 	}
 	return JointControlSetEntryHash(joint)
 }
 
 // VerifyControlSetFinalCandidate 供 joint-finalization-only 运行时在追加 Final 前使用。
 // 它要求 Joint 已有 old/new 双多数 QC，并钉住 Final 的 proof hash、连续日志坐标
-// 与不夹带业务状态的 reducer 输出；Final 自身的 joint head QC 在 commit 后另行收集（D112）。
+// 与不夹带业务状态的 reducer 输出；Final 自身的 joint head QC 在 commit 后另行收集。
 func VerifyControlSetFinalCandidate(oldSet, newSet *ControlSetV1,
 	approval *ControlMembershipApprovalProofV1, jointProof *JointControlSetProofV1,
 	final *HeadEntryV2, parent *HeadEntryV2) (string, error) {
 	if final == nil || jointProof == nil {
-		return "", errors.New("[D112 joint] Final candidate/Joint proof 缺失")
+		return "", errors.New("[joint] Final candidate/Joint proof 缺失")
 	}
 	jointEntryHash, err := VerifyJointControlSetCandidate(oldSet, newSet, approval,
 		&jointProof.JointBody, parent)
@@ -549,7 +549,7 @@ func VerifyControlSetFinalCandidate(oldSet, newSet *ControlSetV1,
 		return "", err
 	}
 	if jointProof.JointEntryHash != jointEntryHash {
-		return "", errors.New("[D112 joint] Joint proof entry hash 与 candidate 不一致")
+		return "", errors.New("[joint] Joint proof entry hash 与 candidate 不一致")
 	}
 	jointProofHash, err := JointControlSetProofHash(jointProof, oldSet, newSet)
 	if err != nil {
@@ -561,7 +561,7 @@ func VerifyControlSetFinalCandidate(oldSet, newSet *ControlSetV1,
 		return "", err
 	}
 	if final.Body.TransitionProofHash != transitionHash || ValidateHeadEntry(final, nil) != nil {
-		return "", errors.New("[D112 joint] Final head/transition proof hash 无效")
+		return "", errors.New("[joint] Final head/transition proof hash 无效")
 	}
 	approvalHash, _ := ControlMembershipApprovalProofHash(approval)
 	if err := validateFinalControlSetPayload(&final.Body.Payload, parent, &jointProof.JointBody,
@@ -573,7 +573,7 @@ func VerifyControlSetFinalCandidate(oldSet, newSet *ControlSetV1,
 
 // VerifyAuthorizedControlSetTransitionBundle 供 private control_api/voter 使用；公开
 // proof reader 不持有 admin ACL preimage，只能验证 quorum，而服务端必须额外验证
-// admin mTLS leaf、signature 与 control-membership scope（D104、D112）。
+// admin mTLS leaf、signature 与 control-membership scope。
 func VerifyAuthorizedControlSetTransitionBundle(bundle *ControlSetTransitionBundleV1, parent *HeadEntryV2,
 	parentQC json.RawMessage, previousSet *ControlSetV1, peerCertificateDER []byte, trustedTime time.Time,
 	authorizations []AdminAuthorizationV1, profiles map[string]AdminCertificateProfileV1) (VerifiedControlSetTransitionV1, VerifiedAdminOperationV1, error) {
@@ -606,7 +606,7 @@ func jointMatchesIntent(joint *JointControlSetEntryBodyV1, intent *ControlSetTra
 func validateFinalControlSetPayload(payload *HeadEntryPayloadV2, parent *HeadEntryV2, joint *JointControlSetEntryBodyV1, intent *ControlSetTransitionIntentV1, approvalHash, jointEntryHash, jointProofHash string) error {
 	var context FinalControlSetContextV1
 	if _, err := DecodeStrict(payload.TransitionContext, 16<<10, &context); err != nil {
-		return errors.New("[D112 joint] Final context strict decode 失败")
+		return errors.New("[joint] Final context strict decode 失败")
 	}
 	nextIndex, indexErr := CheckedAdd(joint.RaftIndex, 1)
 	jointTime, jointTimeErr := ParseTimeZ(joint.CommittedLogicalTime)
@@ -625,24 +625,24 @@ func validateFinalControlSetPayload(payload *HeadEntryPayloadV2, parent *HeadEnt
 		context.NewControlEpoch != intent.TargetControlEpoch || context.NewControlSetHash != intent.NewControlSetHash ||
 		context.NewControlPeerDirectoryHash != intent.NewControlPeerDirectoryHash ||
 		context.MembershipApprovalProofHash != approvalHash || context.JointEntryHash != jointEntryHash || context.JointProofHash != jointProofHash {
-		return errors.New("[D112 joint] Final payload/context 未 exact-bind Joint/intent")
+		return errors.New("[joint] Final payload/context 未 exact-bind Joint/intent")
 	}
 	if payload.OperationRoot != p.OperationRoot || payload.DeviceViewsRoot != p.DeviceViewsRoot ||
 		payload.AdminACLRoot != p.AdminACLRoot || payload.CAProfileRoot != p.CAProfileRoot ||
 		payload.BootstrapIssuerRegistryRoot != p.BootstrapIssuerRegistryRoot ||
 		payload.RenderContractVersion != p.RenderContractVersion || payload.MinReaderVersion != p.MinReaderVersion ||
 		payload.MaxClockSkewSeconds != p.MaxClockSkewSeconds {
-		return errors.New("[D112 joint] Final 夹带了非 control projection 状态变更")
+		return errors.New("[joint] Final 夹带了非 control projection 状态变更")
 	}
 	return nil
 }
 
 // VerifyControlSetTransitionMaterialization 供 control voter 在签 Final 前把唯一 reducer
-// 输出注入验证；普通 reader 依靠 Joint QC 验证被认证的两个 hash（D112）。
+// 输出注入验证；普通 reader 依靠 Joint QC 验证被认证的两个 hash。
 func VerifyControlSetTransitionMaterialization(final *HeadEntryV2, expectedSnapshotHash, expectedEffectiveSSOTHash string) error {
 	if final == nil || requireCanonicalHashes(expectedSnapshotHash, expectedEffectiveSSOTHash) != nil ||
 		final.Body.Payload.SnapshotHash != expectedSnapshotHash || final.Body.Payload.EffectiveSSOTHash != expectedEffectiveSSOTHash {
-		return errors.New("[D112 joint] Final materialization hash 与确定性 reducer 输出不匹配")
+		return errors.New("[joint] Final materialization hash 与确定性 reducer 输出不匹配")
 	}
 	return nil
 }
@@ -658,7 +658,7 @@ func AdvanceFloorsWithControl(current, candidate ClientFloorsV2, verified Verifi
 		candidate.HeadHash != verified.finalHeadHash || candidate.AcceptedControlRevision != verified.finalControlRevision ||
 		candidate.BootstrapTransitionHash != verified.transitionProofHash &&
 			candidate.BootstrapTransitionHash != current.BootstrapTransitionHash {
-		return current, errors.New("[D112 floor] control evidence 与 parent/Final floor 不匹配")
+		return current, errors.New("[floor] control evidence 与 parent/Final floor 不匹配")
 	}
 	candidate.BootstrapTransitionHash = current.BootstrapTransitionHash
 	return advanceFloors(current, candidate, floorAdvanceAuthority{control: true})

@@ -28,7 +28,7 @@ func RunWindowsDataPlaneProfile(ctx context.Context, executable string, config [
 	return RunWindowsDataPlaneProfileStarted(ctx, executable, config, runtimeDir, profile, caPath, nil)
 }
 
-// §16.1：只有进程已创建且已受 Job Object 监督，宿主才可以开始启动稳定窗口。
+// 只有进程已创建且已受 Job Object 监督，宿主才可以开始启动稳定窗口。
 func RunWindowsDataPlaneProfileStarted(ctx context.Context, executable string, config []byte, runtimeDir string,
 	profile WindowsRuntimeProfile, caPath string, started func()) (retErr error) {
 	if ctx == nil {

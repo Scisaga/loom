@@ -87,7 +87,7 @@ func PrepareServerEnrollment(configPath, privateKeyPath string, random io.Reader
 func readDeviceConfig(path string) (DeviceConfig, error) {
 	var config DeviceConfig
 	if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
-		return config, fmt.Errorf("[§9.2 加入流程] device-config 必须是绝对且已清理的路径:%q", path)
+		return config, fmt.Errorf("[加入流程] device-config 必须是绝对且已清理的路径:%q", path)
 	}
 	body, err := readRegularFile(path, 64<<10, false)
 	if errors.Is(err, os.ErrNotExist) {
@@ -110,13 +110,13 @@ func readDeviceConfig(path string) (DeviceConfig, error) {
 
 func validateServerConfig(server ServerConfig) error {
 	if !validConfiguredPublicEndpoint(server.PublicEndpoint) {
-		return errors.New("[§8.1 inbound] server.public_endpoint 必须是不带 scheme/端口的公网 IP 或 DNS 名")
+		return errors.New("[inbound] server.public_endpoint 必须是不带 scheme/端口的公网 IP 或 DNS 名")
 	}
 	if server.InboundPort < 1 || server.InboundPort > 65535 {
-		return errors.New("[§8.1 inbound] server.inbound_port 必须在 1-65535")
+		return errors.New("[inbound] server.inbound_port 必须在 1-65535")
 	}
 	if !model.Direction(server.Direction).Valid() {
-		return errors.New("[§2.1 direction] server.direction 必须是 bidirectional、reverse_only 或 direct_only")
+		return errors.New("[direction] server.direction 必须是 bidirectional、reverse_only 或 direct_only")
 	}
 	if server.Country != "" && !model.ValidCountryCode(server.Country) {
 		return errors.New("server.country 必须是两个大写字母")
@@ -138,7 +138,7 @@ func validConfiguredPublicEndpoint(value string) bool {
 
 func loadOrCreateWireGuardKey(path string, random io.Reader) (string, error) {
 	if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
-		return "", fmt.Errorf("[§13.1 私钥边界] wg-key 必须是绝对且已清理的路径:%q", path)
+		return "", fmt.Errorf("[私钥边界] wg-key 必须是绝对且已清理的路径:%q", path)
 	}
 	if random == nil {
 		random = rand.Reader
@@ -150,7 +150,7 @@ func loadOrCreateWireGuardKey(path string, random io.Reader) (string, error) {
 		encoded := strings.TrimSpace(string(body))
 		raw, err = base64.StdEncoding.Strict().DecodeString(encoded)
 		if err != nil || len(raw) != 32 || base64.StdEncoding.EncodeToString(raw) != encoded {
-			return "", errors.New("[§13.1 私钥边界] 已有 WireGuard 私钥格式无效")
+			return "", errors.New("[私钥边界] 已有 WireGuard 私钥格式无效")
 		}
 	case errors.Is(err, os.ErrNotExist):
 		raw = make([]byte, 32)
@@ -170,7 +170,7 @@ func loadOrCreateWireGuardKey(path string, random io.Reader) (string, error) {
 	}
 	privateKey, err := ecdh.X25519().NewPrivateKey(raw)
 	if err != nil {
-		return "", errors.New("[§13.1 私钥边界] WireGuard 私钥无法派生公钥")
+		return "", errors.New("[私钥边界] WireGuard 私钥无法派生公钥")
 	}
 	return base64.StdEncoding.EncodeToString(privateKey.PublicKey().Bytes()), nil
 }

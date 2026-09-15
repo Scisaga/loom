@@ -31,7 +31,7 @@ type MappingPool struct {
 
 // MappingReservationV1 是 control-private 的 NAT tuple 占用 tombstone。
 // rotation 结束后记录不会被删除；normal exit 先进入 quarantined，安全/冲突
-// 封禁进入不可逆 blocked，防止接管者只看当前 listener 后过早复用端口（D120）。
+// 封禁进入不可逆 blocked，防止接管者只看当前 listener 后过早复用端口。
 type MappingReservationV1 struct {
 	Schema                 int    `json:"schema"`
 	RotationID             string `json:"rotation_id"`
@@ -56,7 +56,7 @@ type MappingReservationSetV1 struct {
 
 func (p MappingPool) Validate() error {
 	if !oneOf(p.Transport, "tcp", "udp") || p.PublicAddress == "" || p.LocalAddress == "" || p.Generation < 1 || !portRange(p.PublicPortStart, p.PublicPortEnd) || !portRange(p.LocalPortStart, p.LocalPortEnd) || p.PublicPortEnd-p.PublicPortStart != p.LocalPortEnd-p.LocalPortStart {
-		return errors.New("[D120 NAT] mapping pool transport/range/offset 无效")
+		return errors.New("[NAT] mapping pool transport/range/offset 无效")
 	}
 	return nil
 }
@@ -66,7 +66,7 @@ func (p MappingPool) LocalFor(publicPort int64) (int64, error) {
 		return 0, err
 	}
 	if publicPort < p.PublicPortStart || publicPort > p.PublicPortEnd {
-		return 0, errors.New("[D120 NAT] public port 不在预映射池")
+		return 0, errors.New("[NAT] public port 不在预映射池")
 	}
 	return p.LocalPortStart + publicPort - p.PublicPortStart, nil
 }
@@ -92,7 +92,7 @@ func (p MappingPool) Allocate(occupied []Tuple) (Tuple, Tuple, error) {
 		}
 		return publicTuple, localTuple, nil
 	}
-	return Tuple{}, Tuple{}, errors.New("[D120 NAT] 预映射端口池已耗尽")
+	return Tuple{}, Tuple{}, errors.New("[NAT] 预映射端口池已耗尽")
 }
 
 // NewMappingReservationSet 创建绑定 exact NAT mapping 的空状态。mapping hash
@@ -100,7 +100,7 @@ func (p MappingPool) Allocate(occupied []Tuple) (Tuple, Tuple, error) {
 func NewMappingReservationSet(clusterID string,
 	mapping wire.PortMappingIntentV1) (MappingReservationSetV1, error) {
 	if clusterID == "" {
-		return MappingReservationSetV1{}, errors.New("[D120 NAT] reservation set cluster 不能为空")
+		return MappingReservationSetV1{}, errors.New("[NAT] reservation set cluster 不能为空")
 	}
 	mappingHash, err := wire.PortMappingIntentHash(&mapping)
 	if err != nil {
@@ -125,11 +125,11 @@ func AllocateMappingReservation(intent IntentV1, mapping wire.PortMappingIntentV
 	if intent.FrozenDependencies.PortMappingIntentHash == "" ||
 		intent.FrozenDependencies.PortMappingIntentHash != mappingHash ||
 		intent.ClusterID != current.ClusterID {
-		return MappingReservationSetV1{}, MappingReservationV1{}, errors.New("[D127 NAT] rotation 未绑定 exact mapping reservation set")
+		return MappingReservationSetV1{}, MappingReservationV1{}, errors.New("[NAT] rotation 未绑定 exact mapping reservation set")
 	}
 	at, err := wire.ParseTimeZ(certifiedAt)
 	if err != nil || requireHash(certifiedHeadHash) != nil {
-		return MappingReservationSetV1{}, MappingReservationV1{}, errors.New("[D120 NAT] allocation certified time/head 无效")
+		return MappingReservationSetV1{}, MappingReservationV1{}, errors.New("[NAT] allocation certified time/head 无效")
 	}
 	index := sort.Search(len(current.Reservations), func(index int) bool {
 		return current.Reservations[index].RotationID >= intent.RotationID
@@ -140,7 +140,7 @@ func AllocateMappingReservation(intent IntentV1, mapping wire.PortMappingIntentV
 			existing.State == "in_use" {
 			return cloneMappingReservationSet(current), existing, nil
 		}
-		return MappingReservationSetV1{}, MappingReservationV1{}, errors.New("[D120 NAT] terminal reservation 不可复活或改代")
+		return MappingReservationSetV1{}, MappingReservationV1{}, errors.New("[NAT] terminal reservation 不可复活或改代")
 	}
 	occupied := make([]Tuple, 0, len(current.Reservations)*2)
 	for _, reservation := range current.Reservations {
@@ -184,7 +184,7 @@ func QuarantineMappingReservation(current MappingReservationSetV1,
 }
 
 // BlockMappingReservation 将冲突、管理封禁或滥用 tuple 永久 blocked。首版没有
-// unblock transition；必须升级协议/换 mapping generation 才能重新授权（D120）。
+// unblock transition；必须升级协议/换 mapping generation 才能重新授权。
 func BlockMappingReservation(current MappingReservationSetV1,
 	mapping wire.PortMappingIntentV1, rotationID, certifiedAt,
 	certifiedHeadHash string) (MappingReservationSetV1, error) {
@@ -200,13 +200,13 @@ func transitionMappingReservation(current MappingReservationSetV1,
 	}
 	at, err := wire.ParseTimeZ(certifiedAt)
 	if err != nil || requireHash(certifiedHeadHash) != nil || rotationID == "" {
-		return MappingReservationSetV1{}, errors.New("[D120 NAT] reservation transition authority 无效")
+		return MappingReservationSetV1{}, errors.New("[NAT] reservation transition authority 无效")
 	}
 	index := sort.Search(len(current.Reservations), func(index int) bool {
 		return current.Reservations[index].RotationID >= rotationID
 	})
 	if index == len(current.Reservations) || current.Reservations[index].RotationID != rotationID {
-		return MappingReservationSetV1{}, errors.New("[D120 NAT] reservation 不存在")
+		return MappingReservationSetV1{}, errors.New("[NAT] reservation 不存在")
 	}
 	existing := current.Reservations[index]
 	if existing.State == nextState && existing.LastTransitionAt == certifiedAt &&
@@ -214,19 +214,19 @@ func transitionMappingReservation(current MappingReservationSetV1,
 		return cloneMappingReservationSet(current), nil
 	}
 	if existing.State == "blocked" || existing.State != "in_use" && nextState == "quarantined" {
-		return MappingReservationSetV1{}, errors.New("[D120 NAT] reservation terminal transition 不可逆")
+		return MappingReservationSetV1{}, errors.New("[NAT] reservation terminal transition 不可逆")
 	}
 	allocatedAt, _ := wire.ParseTimeZ(existing.AllocatedAt)
 	if at.Before(allocatedAt) {
-		return MappingReservationSetV1{}, errors.New("[D120 NAT] reservation transition time 早于 allocation")
+		return MappingReservationSetV1{}, errors.New("[NAT] reservation transition time 早于 allocation")
 	}
 	if nextState == "quarantined" {
 		reuseAt, parseErr := wire.ParseTimeZ(reuseNotBefore)
 		if parseErr != nil || reuseAt.Before(at) {
-			return MappingReservationSetV1{}, errors.New("[D120 NAT] reuse_not_before 早于 certified transition")
+			return MappingReservationSetV1{}, errors.New("[NAT] reuse_not_before 早于 certified transition")
 		}
 	} else if nextState != "blocked" || reuseNotBefore != "" {
-		return MappingReservationSetV1{}, errors.New("[D120 NAT] reservation target state 无效")
+		return MappingReservationSetV1{}, errors.New("[NAT] reservation target state 无效")
 	}
 	candidate := cloneMappingReservationSet(current)
 	candidate.Reservations[index].State = nextState
@@ -251,17 +251,17 @@ func validateMappingReservationSet(value *MappingReservationSetV1,
 	mapping *wire.PortMappingIntentV1) error {
 	if value == nil || mapping == nil || value.Schema != 1 || value.ClusterID == "" ||
 		value.Reservations == nil {
-		return errors.New("[D120 NAT] reservation set header 无效")
+		return errors.New("[NAT] reservation set header 无效")
 	}
 	mappingHash, err := wire.PortMappingIntentHash(mapping)
 	if err != nil || value.MappingIntentHash != mappingHash {
-		return errors.New("[D127 NAT] reservation set 未绑定 exact mapping intent")
+		return errors.New("[NAT] reservation set 未绑定 exact mapping intent")
 	}
 	pool := mappingPoolFromIntent(*mapping)
 	for index := range value.Reservations {
 		reservation := &value.Reservations[index]
 		if index > 0 && value.Reservations[index-1].RotationID >= reservation.RotationID {
-			return errors.New("[D120 NAT] reservations 必须按 rotation ID 严格排序且唯一")
+			return errors.New("[NAT] reservations 必须按 rotation ID 严格排序且唯一")
 		}
 		if err := validateMappingReservation(reservation, pool); err != nil {
 			return err
@@ -274,7 +274,7 @@ func validateMappingReservationSet(value *MappingReservationSetV1,
 				continue
 			}
 			if reservationIntervalsOverlap(first, second) {
-				return errors.New("[D120 NAT] 同一 public/local tuple 存在重叠 reservation")
+				return errors.New("[NAT] 同一 public/local tuple 存在重叠 reservation")
 			}
 		}
 	}
@@ -285,7 +285,7 @@ func validateMappingReservation(value *MappingReservationV1, pool MappingPool) e
 	if value == nil || value.Schema != 1 || value.RotationID == "" || value.ListenerGeneration < 1 ||
 		!oneOf(value.State, "in_use", "quarantined", "blocked") ||
 		requireHash(value.LastTransitionHeadHash) != nil {
-		return errors.New("[D120 NAT] mapping reservation identity/state 无效")
+		return errors.New("[NAT] mapping reservation identity/state 无效")
 	}
 	allocatedAt, err := wire.ParseTimeZ(value.AllocatedAt)
 	if err != nil {
@@ -293,24 +293,24 @@ func validateMappingReservation(value *MappingReservationV1, pool MappingPool) e
 	}
 	transitionAt, err := wire.ParseTimeZ(value.LastTransitionAt)
 	if err != nil || transitionAt.Before(allocatedAt) {
-		return errors.New("[D120 NAT] mapping reservation transition time 无效")
+		return errors.New("[NAT] mapping reservation transition time 无效")
 	}
 	if value.PublicTuple.Transport != pool.Transport || value.PublicTuple.Address != pool.PublicAddress ||
 		value.LocalTuple.Transport != pool.Transport || value.LocalTuple.Address != pool.LocalAddress ||
 		value.PublicTuple.Port < pool.PublicPortStart || value.PublicTuple.Port > pool.PublicPortEnd {
-		return errors.New("[D120 NAT] reservation tuple 不属于 frozen mapping")
+		return errors.New("[NAT] reservation tuple 不属于 frozen mapping")
 	}
 	wantLocal, _ := pool.LocalFor(value.PublicTuple.Port)
 	if value.LocalTuple.Port != wantLocal {
-		return errors.New("[D120 NAT] reservation public/local offset 不一致")
+		return errors.New("[NAT] reservation public/local offset 不一致")
 	}
 	if value.State == "quarantined" {
 		reuseAt, err := wire.ParseTimeZ(value.ReuseNotBefore)
 		if err != nil || reuseAt.Before(transitionAt) {
-			return errors.New("[D120 NAT] quarantined reservation deadline 无效")
+			return errors.New("[NAT] quarantined reservation deadline 无效")
 		}
 	} else if value.ReuseNotBefore != "" {
-		return errors.New("[D120 NAT] 非 quarantined reservation 禁止 reuse deadline")
+		return errors.New("[NAT] 非 quarantined reservation 禁止 reuse deadline")
 	}
 	return nil
 }
@@ -352,10 +352,10 @@ func ValidateTupleOwnership(tuples []Tuple) error {
 	})
 	for i, tuple := range ordered {
 		if !oneOf(tuple.Transport, "tcp", "udp") || tuple.Address == "" || tuple.Port < 1 || tuple.Port > 65535 {
-			return errors.New("[D120 resources] listener tuple 无效")
+			return errors.New("[resources] listener tuple 无效")
 		}
 		if i > 0 && tuple == ordered[i-1] {
-			return errors.New("[D120 resources] 同一 L4 tuple 被多个 listener 占用")
+			return errors.New("[resources] 同一 L4 tuple 被多个 listener 占用")
 		}
 	}
 	return nil

@@ -3,29 +3,29 @@
 #
 # 这份 fixture 刻意覆盖:
 #   - 两种 direction 组合(bi↔rev)
-#   - 能进 mesh 的服务器不出现在 tunnels 里(§6.3、D13)
-#   - 两个选择轴的三种组合(§4)
-#   - l4_direct 与 l7_gateway 两种承载(§4.4)
+#   - 能进 mesh 的服务器不出现在 tunnels 里
+#   - 两个选择轴的三种组合
+#   - l4_direct 与 l7_gateway 两种承载
 
-# 组件版本是期望态的一部分,与配置并入同一条收敛回路(§15.4)。
+# 组件版本是期望态的一部分,与配置并入同一条收敛回路。
 # 永不使用 latest —— 自动的是下载,不是升级决策。
 defaults:
   distribution_url: https://control.example.internal/loom/
   dns: [223.5.5.5, 119.29.29.29]   # 必须显式配 —— 系统解析器坏掉时只有
-                                   # 直连候选会失败,极难诊断(§7.4)
+                                   # 直连候选会失败,极难诊断
   components:
     sing_box: 1.11.4
     wireguard: 1.0.20250521
     agent: 0.1.0
 
 nodes:
-  # ---- 国内云机。有公网 IP,能被主动连,因此能进 mesh(§8.3)----
+  # ---- 国内云机。有公网 IP,能被主动连,因此能进 mesh----
   #      它们之间不需要任何隧道条目 —— Headscale 自动分发密钥。
   - id: cn-bj
     city: 北京
     public_endpoint: 203.0.113.10
     components:
-      sing_box: 1.11.5      # 这台先行验证新版(§15.4 分批推进)
+      sing_box: 1.11.5      # 这台先行验证新版（分批推进）
     server:
       direction: bidirectional
       inbound_port: 443
@@ -62,7 +62,7 @@ nodes:
       wg_public_key: Y24tY2QtdGVzdC1rZXkAAAAAAAAAAAAAAAAAAAAAAAA=
 
   # ---- 境外 VPS。被主动拨号会提高被封概率,所以只能它主动连出来。----
-  #      进不了 mesh(§2.2),因此需要手工建隧道矩阵(§6.3)。
+  #      进不了 mesh,因此需要手工建隧道矩阵。
   #      它也拨不到,所以永远不能是链上第一跳 —— 只能由国内云机推给它。
   - id: sg-vps
     city: 新加坡
@@ -83,11 +83,11 @@ nodes:
       egress_capable: true
       wg_public_key: anAtdnBzLXRlc3Qta2V5AAAAAAAAAAAAAAAAAAAAAAA=
 
-  # ---- 接入节点。它们是节点,不是另起一张表的"客户端档案"(§1)。----
+  # ---- 接入节点。它们是节点,不是另起一张表的"客户端档案"。----
   - id: phone
     name: Pixel
     access:
-      platform: android          # 绝大多数 App 不能单独设代理,只能走 TUN(§7.2)
+      platform: android          # 绝大多数 App 不能单独设代理,只能走 TUN
       credentials: [cred-phone]
       default_declaration: sg-fixed
 
@@ -103,15 +103,15 @@ nodes:
   - id: ci-runner
     name: CI 构建机
     access:
-      platform: linux-server     # 只用 mixed,不开 TUN(§7.2)
+      platform: linux-server     # 只用 mixed,不开 TUN
       credentials: [cred-ci]
       mixed_ports:
         - {port: 1080, declaration: best-egress}
 
-# 隧道只覆盖 reverse_only 的服务器(§6.3、D13)。
+# 隧道只覆盖 reverse_only 的服务器。
 # 国内云机之间一条都没有 —— 那是 Headscale 的活。
 tunnels:
-  # 每台境外 VPS 向所有国内云机扇出反连,避免绕行(§6.3)。
+  # 每台境外 VPS 向所有国内云机扇出反连,避免绕行。
   # 端口从保留范围 61610-61699 里挑,刻意不连号 —— 连号本身是个特征。
   - {from: cn-bj, to: sg-vps, listen_port: 61637, from_addr: 10.99.0.1/32, to_addr: 10.99.0.2/32}
   - {from: cn-sh, to: sg-vps, listen_port: 61619, from_addr: 10.99.0.3/32, to_addr: 10.99.0.4/32}
@@ -123,12 +123,12 @@ tunnels:
   - {from: cn-cd, to: jp-vps, listen_port: 61691, from_addr: 10.99.1.7/32, to_addr: 10.99.1.8/32}
 
 # ---------------------------------------------------------------------------
-# 目标地址(§9)。它们不是节点,只活在等价类里。
+# 目标地址。它们不是节点,只活在等价类里。
 # ---------------------------------------------------------------------------
 
 equivalence_classes:
   # 自建推理服务的多机房部署。三个地址共用同一域名、同一 CA、同一套凭据,
-  # 所以契约同构,可以由 L4 直接换(§4.4)。客户端始终请求 llm.internal,
+  # 所以契约同构,可以由 L4 直接换。客户端始终请求 llm.internal,
   # 换的只是它解析到哪个地址;TLS SNI 与证书因此仍然有效。
   - id: llm:qwen3-32b-int8@openai-v1
     output_contract: OpenAI v1 chat/completions,32k 上下文,支持流式
@@ -144,7 +144,7 @@ equivalence_classes:
         access_contract: {domain: llm.internal, cert_ca: loom-internal-ca, credential: "vault:llm/shared", protocol_ver: h2}
 
   # 第三方 API。域名、CA、凭据来源都不同,契约不同构,所以 L4 换不了 ——
-  # 必须由 L7 网关改写(§4.4、§9.2)。渲染时这条会被显式跳过。
+  # 必须由 L7 网关改写。渲染时这条会被显式跳过。
   - id: llm-3p:qwen3-32b@openai-v1
     output_contract: OpenAI v1 chat/completions,供应商声明兼容
     carrier: l7_gateway
@@ -161,7 +161,7 @@ equivalence_classes:
         access_contract: {domain: api.example.org, cert_ca: public-webpki, credential: "vault:llm3p/b", path_prefix: /openai/v1, protocol_ver: h2}
 
 declarations:
-  # 地址随请求走 + 出口钉死。典型用途是账号绑定了固定出口 IP(§4.1)。
+  # 地址随请求走 + 出口钉死。典型用途是账号绑定了固定出口 IP。
   # 出口是 sg-vps,但它拨不到 —— 所以链必然是 [国内云机, sg-vps],两跳。
   - id: sg-fixed
     name: 固定新加坡出口

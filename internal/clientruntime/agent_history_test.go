@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// §5.6：不再写入或复用旧完整路径样本；每个激活代次只有自己的选择状态。
+// 不再写入或复用旧完整路径样本；每个激活代次只有自己的选择状态。
 func TestWindowsClientDoesNotReuseFullPathHistory(t *testing.T) {
 	root := t.TempDir()
 	old := filepath.Join(root, "agent", "measurements-old.jsonl")

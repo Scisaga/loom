@@ -443,7 +443,7 @@ func TestSingBoxReferentialIntegrity(t *testing.T) {
 // TestSingBoxSecretsArePlaceholders 断言渲染层不含任何明文密钥。
 //
 // 明文写进渲染层会让 `loom diff` 把它打到终端、让快照哈希覆盖它、
-// 让配置包在分发链路上处处是明文(§12.1、§18)。
+// 让配置包在分发链路上处处是明文。
 func TestSingBoxSecretsArePlaceholders(t *testing.T) {
 	s, cfgs := configs(t)
 
@@ -673,7 +673,7 @@ func hasEgressRule(c *conf, user string) bool {
 }
 
 // TestServerAdmitsNothingExtra 断言服务器的白名单不宽于它该放行的集合。
-// 准入校验的价值全在于"多出来的不放行"(§8.2)。
+// 准入校验的价值全在于"多出来的不放行"。
 func TestServerAdmitsNothingExtra(t *testing.T) {
 	s, cfgs := configs(t)
 	nodes := s.NodeByID()
@@ -804,7 +804,7 @@ func TestEgressOnlyWhereCapable(t *testing.T) {
 	}
 }
 
-// TestRevokedCredentialNotRendered:吊销后所有服务器上必须不再有这个 user(§18)。
+// TestRevokedCredentialNotRendered:吊销后所有服务器上必须不再有这个 user。
 func TestRevokedCredentialNotRendered(t *testing.T) {
 	s := load(t)
 	found := false
@@ -834,7 +834,7 @@ func TestRevokedCredentialNotRendered(t *testing.T) {
 //
 // route.final 是 block(未匹配一律阻断)。如果 DNS 服务器没有 detour,
 // 查询会走 route 规则、落到 block,sing-box 连解析器都问不到 —— 而症状
-// 只有"直连候选失败",因为走代理的域名是交给出口解析的(§7.4),
+// 只有"直连候选失败",因为走代理的域名是交给出口解析的,
 // 代理候选一切正常。这个 bug 真实发生过。
 func TestDNSHasEscapeFromBlock(t *testing.T) {
 	_, cfgs := configs(t)

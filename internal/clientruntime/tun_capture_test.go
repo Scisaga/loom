@@ -37,7 +37,7 @@ func TestWindowsTUNCapturePreservesSignedPolicy(t *testing.T) {
 				return
 			}
 			if !config.Route.AutoDetectInterface || !config.DNS.ReverseMapping || !isWindowsTUNDNSRule(config.Route.Rules[0]) || !isWindowsTUNSniffRule(config.Route.Rules[1]) {
-				t.Fatal("[§7.2.1] TUN 缺少网卡绑定、DNS 接管或域名识别")
+				t.Fatal("TUN 缺少网卡绑定、DNS 接管或域名识别")
 			}
 			if !reflect.DeepEqual(config.Route.Rules[2:], signed.Route.Rules) || !reflect.DeepEqual(config.Inbounds, signed.Inbounds) {
 				t.Fatal("local capture changed signed traffic rules or listeners")
@@ -123,7 +123,7 @@ func TestWindowsTUNRejectsLocalDomainCaptureInSignedSource(t *testing.T) {
 		body, _ := json.Marshal(config)
 		for _, profile := range []WindowsRuntimeProfile{WindowsInstalledProfile, WindowsPortableTUNProfile, WindowsPortableMixedProfile} {
 			if _, err := DeriveWindowsRuntimeConfig(body, profile, WindowsInstalledCAPath); err == nil {
-				t.Fatal("[§7.2.1] 远端配置越过了本机域名接管的派生边界")
+				t.Fatal("远端配置越过了本机域名接管的派生边界")
 			}
 		}
 	}
@@ -137,7 +137,7 @@ func TestWindowsTUNDomainCapturePreservesCandidateProbeBinding(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := BuildWindowsSelectorPlan(body, agentBody, profile, WindowsInstalledCAPath); err != nil {
-			t.Fatalf("[§7.3.3] %s 域名接管影响了候选探测：%v", profile, err)
+			t.Fatalf("%s 域名接管影响了候选探测：%v", profile, err)
 		}
 		if profile == WindowsPortableMixedProfile {
 			continue
@@ -149,7 +149,7 @@ func TestWindowsTUNDomainCapturePreservesCandidateProbeBinding(t *testing.T) {
 		config.Route.Rules[1].Rules[0].Inbound = []string{"probe-in"}
 		bad, _ := json.Marshal(config)
 		if _, err := BuildWindowsSelectorPlan(bad, agentBody, profile, WindowsInstalledCAPath); err == nil {
-			t.Fatal("[§7.3.3] 将嗅探扩大到候选入口仍被放行")
+			t.Fatal("将嗅探扩大到候选入口仍被放行")
 		}
 	}
 }

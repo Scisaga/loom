@@ -38,7 +38,7 @@ func TestFixtureValidates(t *testing.T) {
 	}
 }
 
-// TestRenderIsPure 是 §12 的核心性质:同样输入必然产生同样输出。
+// TestRenderIsPure 是核心性质:同样输入必然产生同样输出。
 // dry-run diff、漂移检测、回滚三个产物全都依赖它。
 func TestRenderIsPure(t *testing.T) {
 	a, err := Render(load(t))
@@ -65,7 +65,7 @@ func TestRenderIsPure(t *testing.T) {
 
 // TestMatrixShape 断言产物的规模。
 //
-// 隧道矩阵只覆盖 reverse_only 的服务器(§6.3、D13)—— 能进 mesh 的由
+// 隧道矩阵只覆盖 reverse_only 的服务器—— 能进 mesh 的由
 // Headscale 自动分发密钥,一份配置都不渲染。这个断言把那条规则钉住:
 // 一旦有人给能进 mesh 的服务器加了隧道,文件数就对不上。
 func TestMatrixShape(t *testing.T) {
@@ -123,7 +123,7 @@ func TestMatrixShape(t *testing.T) {
 	if units != linuxSingBox {
 		t.Errorf("渲染出 %d 个 sing-box systemd unit,期望 %d(Linux workload)", units, linuxSingBox)
 	}
-	// Linux 节点自己取配置(§14.2):一个 service + 一个 timer。
+	// Linux 节点自己取配置:一个 service + 一个 timer。
 	if want := linuxNodes * 2; pulls != want {
 		t.Errorf("渲染出 %d 个 pull 单元,期望 %d(每个 Linux 节点一个 service + 一个 timer)", pulls, want)
 	}
@@ -146,7 +146,7 @@ func TestMatrixShape(t *testing.T) {
 	}
 
 	// 每台服务器一份 sing-box,每个接入节点一份。目标地址不产生任何
-	// 产物 —— 它不是节点(§1、§9)。
+	// 产物 —— 它不是节点。
 	servers := 0
 	for i := range s.Nodes {
 		if s.Nodes[i].IsServer() {
@@ -163,7 +163,7 @@ func TestMatrixShape(t *testing.T) {
 	for i := range s.Tunnels {
 		t2 := &s.Tunnels[i]
 		if nodes[t2.From].MeshEligible() && nodes[t2.To].MeshEligible() {
-			t.Errorf("隧道 %s 两端都能进 mesh —— 该交给 Headscale(§6.3)", t2.Pair())
+			t.Errorf("隧道 %s 两端都能进 mesh —— 该交给 Headscale", t2.Pair())
 		}
 	}
 }
@@ -349,7 +349,7 @@ credentials:
 
 // TestAccessNodesGetControlAPI:接入节点必须带本地控制端点。
 //
-// selector 是手动开关,自己不会切(D11)。没有这个端点,渲染出的候选集
+// selector 是手动开关,自己不会切。没有这个端点,渲染出的候选集
 // 永远停在 default 上 —— 调度层做完了也落不了地。
 func TestAccessNodesGetControlAPI(t *testing.T) {
 	s := load(t)
@@ -420,7 +420,7 @@ func TestSkipsAreExpected(t *testing.T) {
 
 // TestPairCorrespondence 是这一层真正要买的保险。
 //
-// §20.1:密钥要配对、IP 不能撞、端口要一致、方向由 direction 推导,
+// 密钥要配对、IP 不能撞、端口要一致、方向由 direction 推导,
 // "手工写错一个字符的后果是隧道静默不通"。这个测试对每一条隧道断言
 // 两端逐字段吻合 —— 它不依赖 golden 文本,因此改了模板也依然有效。
 func TestPairCorrespondence(t *testing.T) {
@@ -502,7 +502,7 @@ func TestPairCorrespondence(t *testing.T) {
 				t.Error("发起方缺少 PersistentKeepalive —— reverse_only 隧道靠它存活")
 			}
 
-			// 私钥永不出现在渲染产物里(§13.1)。
+			// 私钥永不出现在渲染产物里。
 			for name, raw := range map[string]string{"接受方": accRaw, "发起方": iniRaw} {
 				if strings.Contains(raw, "PrivateKey") {
 					t.Errorf("%s配置里出现了 PrivateKey —— 私钥属于秘密层,渲染层只写引用", name)

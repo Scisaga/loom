@@ -78,7 +78,7 @@ func TestDecommissionRemovesFromCandidates(t *testing.T) {
 }
 
 // 两个字段都是运维意图,不是推导值 —— 但也都必须能在 YAML 里写。
-// (§D4 说推导值不进结构体;这两个不是推导值。)
+// 推导值不进结构体;这两个字段是用户输入而非推导值。
 func TestDrainAndDecommissionAreDeclarable(t *testing.T) {
 	s, err := Load([]byte(strings.Replace(lifecycleSSOT, "%s", ", drain: true, decommission: true", 1)))
 	if err != nil {

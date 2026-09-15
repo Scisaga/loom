@@ -17,7 +17,7 @@ import (
 	"loom/internal/model"
 )
 
-// §5.5：一个目标的挂起请求只合并相同链路/目标，不能阻塞别的声明，
+// 一个目标的挂起请求只合并相同链路/目标，不能阻塞别的声明，
 // 等待者取消也不能迫使仍有需要的原探测停下来。
 func TestSharedProbesIndependentTargetsAndCancelableWaiters(t *testing.T) {
 	entered := make(chan struct{})

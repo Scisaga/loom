@@ -26,7 +26,7 @@ func BuildWindowsRuntimeArtifact(input WindowsRuntimeProjectionV1) ([]byte, erro
 	refs := append([]string(nil), input.CredentialRefs...)
 	slices.Sort(refs)
 	if !slices.Equal(refs, input.CredentialRefs) {
-		return nil, errors.New("[D124 Windows artifact] credential refs 必须由调用方规范排序")
+		return nil, errors.New("[Windows artifact] credential refs 必须由调用方规范排序")
 	}
 	artifact := wire.WindowsRuntimeArtifactV1{
 		Schema: 1, ClusterID: input.ClusterID, DeviceID: input.DeviceID,

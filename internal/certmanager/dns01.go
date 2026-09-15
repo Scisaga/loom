@@ -18,7 +18,7 @@ type DNS01 struct {
 func (d DNS01) Present(ctx context.Context, fqdn, value string) error {
 	name, err := d.challengeName(fqdn)
 	if err != nil || strings.TrimSpace(value) == "" || strings.ContainsAny(value, "\r\n") {
-		return errors.New("[D103 ACME] DNS-01 challenge 输入无效")
+		return errors.New("[ACME] DNS-01 challenge 输入无效")
 	}
 	values := []string{value}
 	readback, err := d.Provider.Read(ctx, d.Zone, name, "TXT")
@@ -43,7 +43,7 @@ func (d DNS01) Cleanup(ctx context.Context, fqdn, value string) error {
 	}
 	readback, err := d.Provider.Read(ctx, d.Zone, name, "TXT")
 	if errors.Is(err, dnsprovider.ErrNotFound) {
-		// crash 恢复时 TXT 可能已经被上次 cleanup 删除；absent 与 desired cleanup 等价（D103）。
+		// crash 恢复时 TXT 可能已经被上次 cleanup 删除；absent 与 desired cleanup 等价。
 		return nil
 	}
 	if err != nil {
@@ -72,7 +72,7 @@ func (d DNS01) challengeName(fqdn string) (string, error) {
 	zone := strings.ToLower(strings.TrimSuffix(d.Zone, "."))
 	host := strings.ToLower(strings.TrimSuffix(fqdn, "."))
 	if host != zone && !strings.HasSuffix(host, "."+zone) {
-		return "", errors.New("[D103 ACME] FQDN 不属于 managed zone")
+		return "", errors.New("[ACME] FQDN 不属于 managed zone")
 	}
 	relative := strings.TrimSuffix(host, "."+zone)
 	if host == zone {

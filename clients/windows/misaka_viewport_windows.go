@@ -27,18 +27,18 @@ func (app *portableGUI) createMisakaPane(instance uintptr) error {
 	cursor, _, _ := procLoadCursor.Call(0, portableIDCArrow)
 	wc := portableWNDClassEx{size: uint32(unsafe.Sizeof(portableWNDClassEx{})), wndProc: misakaPaneBaseCallback, instance: instance, cursor: cursor, className: class}
 	if atom, _, err := procRegisterClassEx.Call(uintptr(unsafe.Pointer(&wc))); atom == 0 && err != windows.ERROR_CLASS_ALREADY_EXISTS {
-		return fmt.Errorf("[§7.2] 注册右侧滚动视口: %w", err)
+		return fmt.Errorf("注册右侧滚动视口: %w", err)
 	}
 	defer runtime.KeepAlive(wc)
-	// §7.2：右侧只有一个滚动视口；原生子控件共同合成，避免状态切换露出分步绘制。
+	// 右侧只有一个滚动视口；原生子控件共同合成，避免状态切换露出分步绘制。
 	pane, _, err := procCreateWindowEx.Call(0x02010000, uintptr(unsafe.Pointer(class)), 0,
 		portableWSChild|portableWSVisible|portableWSVScroll|0x02000000|0x04000000, 0, 0, 10, 10, app.hwnd, 0, instance, 0)
 	if pane == 0 {
-		return fmt.Errorf("[§7.2] 创建右侧滚动视口: %w", err)
+		return fmt.Errorf("创建右侧滚动视口: %w", err)
 	}
 	app.skin.pane = pane
 	if ok, _, err := procMisakaSetSubclass.Call(pane, misakaSubclassCallback, 1, app.hwnd); ok == 0 {
-		return fmt.Errorf("[§7.2] 初始化右侧滚动视口: %w", err)
+		return fmt.Errorf("初始化右侧滚动视口: %w", err)
 	}
 	return nil
 }
@@ -49,7 +49,7 @@ func (app *portableGUI) misakaContentEnd() int32 {
 	return app.scale(176) + r.right - app.scale(20)
 }
 
-// §7.2：几何没有变化时不发送位置消息；更新仅使旧、新控件位置失效。
+// 几何没有变化时不发送位置消息；更新仅使旧、新控件位置失效。
 func moveMisakaControl(hwnd uintptr, parent uintptr, r portableRect) bool {
 	var old portableRect
 	procMisakaGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&old)))
@@ -89,13 +89,13 @@ func (app *portableGUI) scrollMisakaPane(position int32) {
 	}
 	delta := app.skin.scrollY - next
 	app.skin.scrollY = next
-	// §7.2：滚动只平移已有控件，不重新测量所有服务和详情段落。
+	// 滚动只平移已有控件，不重新测量所有服务和详情段落。
 	if !app.moveMisakaPaneChildren(delta) {
 		app.layoutControls()
 	} else {
 		app.updateMisakaScroll(app.skin.scrollContent)
 	}
-	// §7.2：批量移动结束后同时刷新背景与子控件，清除弹出层和旧位置残影。
+	// 批量移动结束后同时刷新背景与子控件，清除弹出层和旧位置残影。
 	procRedrawWindow.Call(app.skin.pane, 0, 0, portableRDWInvalidate|portableRDWAllChildren|0x0004)
 }
 
@@ -146,7 +146,7 @@ func (app *portableGUI) revealMisakaControl(hwnd uintptr) {
 }
 
 func (app *portableGUI) misakaPaneMessage(hwnd uintptr, message uint32, wParam, lParam uintptr) (uintptr, bool) {
-	if message == 0x0084 { // §7.2：视口及超出视口的长列表不能截获根窗口的缩放边缘。
+	if message == 0x0084 { // 视口及超出视口的长列表不能截获根窗口的缩放边缘。
 		parent, _, _ := portableUser32.NewProc("GetParent").Call(hwnd)
 		if hwnd == app.skin.pane || parent == app.skin.pane {
 			hit, _, _ := procSendMessage.Call(app.hwnd, uintptr(message), wParam, lParam)

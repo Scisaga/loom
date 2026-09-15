@@ -29,7 +29,7 @@ type DeviceReportJournalV1 struct {
 var reportJournalMutex sync.Mutex
 
 // SendDeviceReportDurable 先原子保存 exact signed envelope，再发送；响应前后崩溃
-// 都只会重放相同 report_id/sequence/bytes，成功后才推进 sequence（D131）。
+// 都只会重放相同 report_id/sequence/bytes，成功后才推进 sequence。
 func SendDeviceReportDurable(ctx context.Context, journalPath string,
 	options DeviceReportOptions) (wire.DeviceReportEnvelopeV2, error) {
 	_, envelope, err := sendDeviceReportDurable(ctx, journalPath, options, true)
@@ -38,7 +38,7 @@ func SendDeviceReportDurable(ctx context.Context, journalPath string,
 
 // RetryPendingDeviceReportDurable 只重放已经 durable 的 exact envelope；没有
 // pending 时不创建新报告。宿主在接受新 Device view 前先调用它，避免 floors
-// 前移后把已占用 sequence 变成无法重放的旧签名（D131）。
+// 前移后把已占用 sequence 变成无法重放的旧签名。
 func RetryPendingDeviceReportDurable(ctx context.Context, journalPath string,
 	options DeviceReportOptions) (bool, wire.DeviceReportEnvelopeV2, error) {
 	return sendDeviceReportDurable(ctx, journalPath, options, false)
@@ -49,7 +49,7 @@ func sendDeviceReportDurable(ctx context.Context, journalPath string,
 ) (bool, wire.DeviceReportEnvelopeV2, error) {
 	if ctx == nil || options.Protector == nil || options.ReportID != "" ||
 		options.ReportSequence != 0 || validateProtectedPath(journalPath) != nil {
-		return false, wire.DeviceReportEnvelopeV2{}, errors.New("[D131 Windows report] durable journal 输入无效")
+		return false, wire.DeviceReportEnvelopeV2{}, errors.New("[Windows report] durable journal 输入无效")
 	}
 	reportJournalMutex.Lock()
 	defer reportJournalMutex.Unlock()
@@ -59,7 +59,7 @@ func sendDeviceReportDurable(ctx context.Context, journalPath string,
 	}
 	state := store.Snapshot()
 	if state == nil || state.Envelope.Payload.State != "active" || state.Envelope.Payload.Active == nil {
-		return false, wire.DeviceReportEnvelopeV2{}, errors.New("[D131 Windows report] tombstone/inactive Device 禁止 durable report")
+		return false, wire.DeviceReportEnvelopeV2{}, errors.New("[Windows report] tombstone/inactive Device 禁止 durable report")
 	}
 	journal, err := readDeviceReportJournal(journalPath, options.Protector)
 	if errors.Is(err, os.ErrNotExist) {
@@ -72,7 +72,7 @@ func sendDeviceReportDurable(ctx context.Context, journalPath string,
 		return false, wire.DeviceReportEnvelopeV2{}, err
 	}
 	if journal.DeviceID != state.Envelope.Payload.DeviceID {
-		return false, wire.DeviceReportEnvelopeV2{}, errors.New("[D131 Windows report] journal 属于另一 Device")
+		return false, wire.DeviceReportEnvelopeV2{}, errors.New("[Windows report] journal 属于另一 Device")
 	}
 	var envelope wire.DeviceReportEnvelopeV2
 	if journal.Pending == nil {
@@ -100,7 +100,7 @@ func sendDeviceReportDurable(ctx context.Context, journalPath string,
 	}
 	next, err := wire.CheckedAdd(journal.NextSequence, 1)
 	if err != nil {
-		return true, envelope, errors.New("[D131 Windows report] report sequence 溢出")
+		return true, envelope, errors.New("[Windows report] report sequence 溢出")
 	}
 	journal.LastAcceptedSequence = journal.NextSequence
 	journal.LastAcceptedEnvelopeHash = envelopeHash
@@ -120,12 +120,12 @@ func readDeviceReportJournal(path string,
 	}
 	defer clear(body)
 	if len(body) > maximumReportJournalBytes {
-		return nil, errors.New("[D131 Windows report] journal 超过大小边界")
+		return nil, errors.New("[Windows report] journal 超过大小边界")
 	}
 	var journal DeviceReportJournalV1
 	canonical, err := wire.DecodeStrict(body, maximumReportJournalBytes, &journal)
 	if err != nil || !bytes.Equal(canonical, body) {
-		return nil, errors.New("[D131 Windows report] journal 不是 exact canonical wire")
+		return nil, errors.New("[Windows report] journal 不是 exact canonical wire")
 	}
 	if err := validateDeviceReportJournal(&journal); err != nil {
 		return nil, err
@@ -144,7 +144,7 @@ func writeDeviceReportJournal(path string, journal *DeviceReportJournalV1,
 	}
 	defer clear(body)
 	if len(body) > maximumReportJournalBytes {
-		return errors.New("[D131 Windows report] journal 超过大小边界")
+		return errors.New("[Windows report] journal 超过大小边界")
 	}
 	if err := clientsecret.WriteLargeProtected(path, ReportJournalPurpose, body, protector); err != nil {
 		return err
@@ -154,7 +154,7 @@ func writeDeviceReportJournal(path string, journal *DeviceReportJournalV1,
 		return err
 	}
 	if !wire.EqualCanonical(*journal, *replayed) {
-		return errors.New("[D131 Windows report] journal 写后回读分叉")
+		return errors.New("[Windows report] journal 写后回读分叉")
 	}
 	return nil
 }
@@ -162,23 +162,23 @@ func writeDeviceReportJournal(path string, journal *DeviceReportJournalV1,
 func validateDeviceReportJournal(journal *DeviceReportJournalV1) error {
 	if journal == nil || journal.Schema != 1 || journal.DeviceID == "" ||
 		journal.LastAcceptedSequence < 0 || journal.NextSequence < 1 {
-		return errors.New("[D131 Windows report] journal header/sequence 无效")
+		return errors.New("[Windows report] journal header/sequence 无效")
 	}
 	wanted, err := wire.CheckedAdd(journal.LastAcceptedSequence, 1)
 	if err != nil || wanted != journal.NextSequence {
-		return errors.New("[D131 Windows report] journal sequence 不连续")
+		return errors.New("[Windows report] journal sequence 不连续")
 	}
 	if journal.LastAcceptedSequence == 0 {
 		if journal.LastAcceptedEnvelopeHash != "" {
-			return errors.New("[D131 Windows report] 初始 journal 禁止 last hash")
+			return errors.New("[Windows report] 初始 journal 禁止 last hash")
 		}
 	} else if _, err := wire.ParseHash(journal.LastAcceptedEnvelopeHash); err != nil {
-		return errors.New("[D131 Windows report] journal last hash 无效")
+		return errors.New("[Windows report] journal last hash 无效")
 	}
 	if journal.Pending != nil && (journal.Pending.Schema != 2 ||
 		journal.Pending.Body.DeviceID != journal.DeviceID ||
 		journal.Pending.Body.ReportSequence != journal.NextSequence) {
-		return errors.New("[D131 Windows report] pending envelope 与 journal 序号/Device 不一致")
+		return errors.New("[Windows report] pending envelope 与 journal 序号/Device 不一致")
 	}
 	return nil
 }

@@ -410,7 +410,7 @@ func missingFixedEgressPolicies(ssot *model.SSOT) ([]model.AccessDeclaration, er
 func fixedEgressPolicy(ssot *model.SSOT, node model.Node) (model.AccessDeclaration, error) {
 	policyID := node.ID + "-fixed"
 	if ssot.DeclarationByID()[policyID] != nil {
-		return model.AccessDeclaration{}, fmt.Errorf("§4 出口轴：自动生成的固定出口策略 id %q 已存在", policyID)
+		return model.AccessDeclaration{}, fmt.Errorf("出口轴：自动生成的固定出口策略 id %q 已存在", policyID)
 	}
 
 	var template *model.AccessDeclaration
@@ -424,7 +424,7 @@ func fixedEgressPolicy(ssot *model.SSOT, node model.Node) (model.AccessDeclarati
 		}
 	}
 	if template == nil {
-		return model.AccessDeclaration{}, errors.New("§4.5 服务：无法自动生成固定出口策略，SSOT 中没有带 probe_url 的 from_request 声明可作模板")
+		return model.AccessDeclaration{}, errors.New("服务：无法自动生成固定出口策略，SSOT 中没有带 probe_url 的 from_request 声明可作模板")
 	}
 
 	label := node.City

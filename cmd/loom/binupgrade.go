@@ -17,7 +17,7 @@ import (
 	"loom/internal/snapshot"
 )
 
-// upgradeBinary 按签名过的 manifest 把本机的 Agent 二进制换成配套的那个(§15.4)。
+// upgradeBinary 按签名过的 manifest 把本机的 Agent 二进制换成配套的那个。
 //
 // **顺序是先二进制、后配置。** 配对失败的方向不对称:新版通常读得懂旧配置,
 // 旧版读不懂新配置 —— 发布器就是这么崩过一次的(旧二进制遇到新增字段,

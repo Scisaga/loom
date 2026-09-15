@@ -57,7 +57,7 @@ func multipleInternetServicesFixture(t *testing.T) ([]byte, []byte) {
 			{Inbound: []string{"tun-in", "in-1080"}, Domain: []string{name + ".example"}, Outbound: d.Selector},
 		}, sb.Route.Rules...)
 	}
-	// §7.3：必要运行规则不是业务分流，统一上网路径时必须逐字保留。
+	// 必要运行规则不是业务分流，统一上网路径时必须逐字保留。
 	sb.Route.Rules = append([]singBoxRule{
 		windowsTUNDNSRule(),
 		{Inbound: []string{"tun-in", "in-1080"}, IPCIDR: []string{"10.0.0.0/8"}, Outbound: "dns-out"},
@@ -85,7 +85,7 @@ func TestWindowsFixedInternetDoesNotTreatBroadOrMixedPrefixesAsPrivate(t *testin
 		{[]string{"fc00::/1"}, true, false},
 	} {
 		if touches, private, err := windowsPrivateRouteScope(singBoxRule{IPCIDR: test.prefixes}); err != nil || touches != test.touches || private != test.private {
-			t.Fatalf("[§7.3] private 运行规则识别=%v/%v，预期=%v/%v: %v", touches, private, test.touches, test.private, err)
+			t.Fatalf("private 运行规则识别=%v/%v，预期=%v/%v: %v", touches, private, test.touches, test.private, err)
 		}
 	}
 }
@@ -119,13 +119,13 @@ func TestWindowsFixedExitRejectsIndependentPrivateRoutingWithoutChangingAuto(t *
 				t.Fatal(err)
 			}
 			if _, _, err := plan.Derive(body, clientcore.Preference{Schema: 1, Mode: clientcore.FixedExit, Exit: "demo-exit"}); err == nil {
-				t.Fatal("[§7.3] 固定模式静默停用了必要私网决策或改写了混合规则")
+				t.Fatal("固定模式静默停用了必要私网决策或改写了混合规则")
 			}
 			autoBody, auto, err := plan.Derive(body, clientcore.Preference{Schema: 1, Mode: clientcore.Auto})
 			var restored singBoxConfig
 			_ = json.Unmarshal(autoBody, &restored)
 			if err != nil || !slices.Equal(originalBody, body) || !reflect.DeepEqual(auto, &cfg) || !reflect.DeepEqual(restored, sb) {
-				t.Fatal("[§7.3] 被拒绝的偏好改变了签名配置或原 Auto 的私网 Agent", err)
+				t.Fatal("被拒绝的偏好改变了签名配置或原 Auto 的私网 Agent", err)
 			}
 		})
 	}
@@ -144,12 +144,12 @@ func TestWindowsFixedExitUnifiesServicesAndAutoRestoresSignedRouting(t *testing.
 		t.Fatal(err)
 	}
 	if len(fixed.Declarations) != 1 || len(fixed.Selectors) != 1 || len(fixed.Declarations[0].Candidates) != 2 || !reflect.DeepEqual(fixed.Declarations[0].Targets, plan.config.Declarations[0].Targets) || fixed.Declarations[0].Objective != plan.config.Declarations[0].Objective {
-		t.Fatal("[§7.3] 固定出口仍存在多 Service 决策，或改变了默认上网的真实探测策略")
+		t.Fatal("固定出口仍存在多 Service 决策，或改变了默认上网的真实探测策略")
 	}
 	var derived singBoxConfig
 	_ = json.Unmarshal(fixedBody, &derived)
 	if !reflect.DeepEqual(source.Inbounds, derived.Inbounds) || !reflect.DeepEqual(source.DNS, derived.DNS) || len(source.Route.Rules) != len(derived.Route.Rules) || derived.Route.Final != source.Route.Final {
-		t.Fatal("[§7.3] 统一路径删除了必要的入口、DNS、探测或 fail-closed 边界")
+		t.Fatal("统一路径删除了必要的入口、DNS、探测或 fail-closed 边界")
 	}
 	serviceRules := 0
 	for i, original := range source.Route.Rules {
@@ -157,16 +157,16 @@ func TestWindowsFixedExitUnifiesServicesAndAutoRestoresSignedRouting(t *testing.
 		if slices.Contains(original.Domain, "demo-web.example") || slices.Contains(original.Domain, "demo-api.example") {
 			serviceRules++
 			if rule.Outbound != fixed.Declarations[0].Selector {
-				t.Fatal("[§7.3] 不同 Service 请求仍指向独立 selector")
+				t.Fatal("不同 Service 请求仍指向独立 selector")
 			}
 			original.Outbound = rule.Outbound
 		}
 		if !reflect.DeepEqual(original, rule) {
-			t.Fatal("[§7.3] 业务引用以外的 DNS、private、bootstrap 或 probe 规则被改写")
+			t.Fatal("业务引用以外的 DNS、private、bootstrap 或 probe 规则被改写")
 		}
 	}
 	if serviceRules != 2 || len(plan.ObservationDeclarations(clientcore.Preference{Mode: clientcore.FixedExit})) != 1 {
-		t.Fatal("[§7.3] 固定路径观测仍暴露已停用的 Service 行")
+		t.Fatal("固定路径观测仍暴露已停用的 Service 行")
 	}
 	autoBody, auto, err := plan.Derive(body, clientcore.Preference{Schema: 1, Mode: clientcore.Auto})
 	if err != nil {
@@ -175,7 +175,7 @@ func TestWindowsFixedExitUnifiesServicesAndAutoRestoresSignedRouting(t *testing.
 	var restored singBoxConfig
 	_ = json.Unmarshal(autoBody, &restored)
 	if !reflect.DeepEqual(restored, source) || len(auto.Declarations) != 3 || !reflect.DeepEqual(auto, &plan.config) {
-		t.Fatal("[§7.3] 返回 Auto 未恢复完整签名 Service 规则和策略")
+		t.Fatal("返回 Auto 未恢复完整签名 Service 规则和策略")
 	}
 }
 
@@ -202,12 +202,12 @@ func TestWindowsFixedExitRejectsAmbiguousOrMissingInternetBoundary(t *testing.T)
 			plan, err := validateWindowsAgentPair(body, planBody, "")
 			if err != nil {
 				if name == "missing" {
-					t.Fatal("[§5.8] 缺少默认上网策略仍应允许 Auto 按原规则 fail closed", err)
+					t.Fatal("缺少默认上网策略仍应允许 Auto 按原规则 fail closed", err)
 				}
 				return
 			}
 			if _, _, err := plan.Derive(body, clientcore.Preference{Schema: 1, Mode: clientcore.FixedExit, Exit: "demo-exit"}); err == nil {
-				t.Fatal("[§7.3] 接受了无法唯一界定上网范围的固定出口")
+				t.Fatal("接受了无法唯一界定上网范围的固定出口")
 			}
 		})
 	}
@@ -222,18 +222,18 @@ func TestWindowsFixedInternetAgentChoosesOneActualPrefixForAllServices(t *testin
 	current, puts := network.current, slices.Clone(network.puts)
 	network.mu.Unlock()
 	if len(cfg.Declarations) != 1 || current != "opaque:z@fast" || !slices.Equal(puts, []string{current}) {
-		t.Fatal("[§7.3] 统一上网路径没有根据单次入口探测选择较快入口")
+		t.Fatal("统一上网路径没有根据单次入口探测选择较快入口")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	runtime := &WindowsAgent{ctx: ctx, done: make(chan struct{}), config: cfg, statePath: opts.StatePath}
 	report, err := runtime.Report(ctx, time.Now())
 	if err != nil || len(report.Selections) != 1 || report.Selections[0].Declaration != cfg.Declarations[0].ID || report.Selections[0].Candidate != current || !slices.Equal(report.Selections[0].Chain, []string{"demo-prefix-b", "demo-exit"}) || report.Selections[0].Health == nil || !strings.Contains(report.Selections[0].Reason, "decision_scope=") {
-		t.Fatal("[§16.1] 固定出口报告没有唯一实际路径、质量和切换原因", err)
+		t.Fatal("固定出口报告没有唯一实际路径、质量和切换原因", err)
 	}
 	health := report.Selections[0].Health
 	if health.SelectedState != "unknown" || health.SelectedP50MS != nil || health.SelectedP95MS != nil || health.BestP50MS != nil {
-		t.Fatal("[§16.1] 入口探测冒充完整路径质量")
+		t.Fatal("入口探测冒充完整路径质量")
 	}
 	key, cert, ca := fixedInternetReportIdentity(t, cfg.Node)
 	defer clear(key)
@@ -244,16 +244,16 @@ func TestWindowsFixedInternetAgentChoosesOneActualPrefixForAllServices(t *testin
 	}
 	claim, err := attest.VerifyFresh(observation.Attest, ca, now, time.Minute)
 	if err != nil || claim.CanonicalVersion != 5 || claim.Agent == nil || len(claim.Agent.Selections) != 1 {
-		t.Fatal("[§16.1] 真实统一路径没有通过 canonical v5 验签", err)
+		t.Fatal("真实统一路径没有通过 canonical v5 验签", err)
 	}
 	signed, _ := json.Marshal(claim.Agent)
 	actual, _ := json.Marshal(report)
 	if string(signed) != string(actual) {
-		t.Fatal("[§16.1] 签名没有完整绑定实际单路径、质量、原因和 decision_scope")
+		t.Fatal("签名没有完整绑定实际单路径、质量、原因和 decision_scope")
 	}
 	observation.Attest.Agent.Selections[0].Candidate = "opaque:forged"
 	if _, err := attest.VerifyFresh(observation.Attest, ca, now, time.Minute); err == nil {
-		t.Fatal("[§16.1] 统一路径签名接受了篡改的候选")
+		t.Fatal("统一路径签名接受了篡改的候选")
 	}
 }
 

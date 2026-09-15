@@ -30,17 +30,17 @@ type ResumeAttempt struct {
 }
 
 // RunResumeAttempt 只恢复 DPAPI journal 中已 certified 的 committed transaction。
-// descriptor 在第一个私网请求前 durable 绑定；整条路径不读取也不发送 Invite token（D130）。
+// descriptor 在第一个私网请求前 durable 绑定；整条路径不读取也不发送 Invite token。
 func RunResumeAttempt(ctx context.Context, attempt ResumeAttempt) (EnrollmentAttemptResult, error) {
 	if ctx == nil || attempt.Descriptor == nil || attempt.ProofBundle == nil ||
 		attempt.Catalog == nil || attempt.API == nil || attempt.Protector == nil ||
 		attempt.IdentityPath == "" || attempt.JournalPath == "" ||
 		attempt.ClientProtocol < 1 || attempt.Now == nil {
-		return EnrollmentAttemptResult{}, errors.New("[D130 Windows resume] attempt 输入不完整")
+		return EnrollmentAttemptResult{}, errors.New("[Windows resume] attempt 输入不完整")
 	}
 	now := attempt.Now().UTC()
 	if now.IsZero() {
-		return EnrollmentAttemptResult{}, errors.New("[D130 Windows resume] 可信时间无效")
+		return EnrollmentAttemptResult{}, errors.New("[Windows resume] 可信时间无效")
 	}
 	descriptor, bundle := attempt.Descriptor, attempt.ProofBundle
 	verifiedProof, err := wire.VerifyResumeInviteProofBundle(bundle, descriptor, now, attempt.Trust)
@@ -51,24 +51,24 @@ func RunResumeAttempt(ctx context.Context, attempt ResumeAttempt) (EnrollmentAtt
 		&bundle.InviteIssuancePolicy)
 	if err != nil || recordHash != verifiedProof.CertifiedInviteRecordHash() ||
 		descriptor.ClusterID != bundle.ClusterID || descriptor.InviteID != bundle.InviteID {
-		return EnrollmentAttemptResult{}, errors.New("[D130 Windows resume] proof evidence/descriptor 不匹配")
+		return EnrollmentAttemptResult{}, errors.New("[Windows resume] proof evidence/descriptor 不匹配")
 	}
 	verifiedHead, verifiedSet := verifiedProof.Head(), verifiedProof.ControlSet()
 	setHash, err := wire.ControlSetHash(&verifiedSet)
 	if err != nil || !wire.EqualCanonical(verifiedHead, bundle.RecordHead) ||
 		verifiedHead.Body.Payload.ControlSetHash != setHash {
-		return EnrollmentAttemptResult{}, errors.New("[D130 Windows resume] proof evidence Head/ControlSet 不匹配")
+		return EnrollmentAttemptResult{}, errors.New("[Windows resume] proof evidence Head/ControlSet 不匹配")
 	}
 	catalogHash, err := wire.BootstrapEndpointCatalogHash(attempt.Catalog)
 	if err != nil || catalogHash != descriptor.BootstrapCatalogHash ||
 		wire.ValidateBootstrapEndpointCatalogAt(attempt.Catalog, now, attempt.ClientProtocol) != nil ||
 		attempt.Catalog.BootstrapIngressSetHash != descriptor.ResumeTunnelCapability.Body.AllowedIngressSetHash {
-		return EnrollmentAttemptResult{}, errors.New("[D130 Windows resume] catalog/hash/ingress binding 无效")
+		return EnrollmentAttemptResult{}, errors.New("[Windows resume] catalog/hash/ingress binding 无效")
 	}
 	catalogHead, catalogSet, previousSet, ok := verifiedProof.AuthorityForHead(attempt.Catalog.ParentHeadHash)
 	if !ok || wire.VerifyConfigQCAuthority(attempt.Catalog.ParentHeadHash,
 		attempt.Catalog.BootstrapIngressSet.ConfigQC, &catalogHead, &catalogSet, previousSet) != nil {
-		return EnrollmentAttemptResult{}, errors.New("[D130 Windows resume] catalog QC authority 未通过 Invite lineage")
+		return EnrollmentAttemptResult{}, errors.New("[Windows resume] catalog QC authority 未通过 Invite lineage")
 	}
 
 	identity, err := LoadIdentity(attempt.IdentityPath, attempt.Protector)
@@ -85,7 +85,7 @@ func RunResumeAttempt(ctx context.Context, attempt ResumeAttempt) (EnrollmentAtt
 		return EnrollmentAttemptResult{}, err
 	}
 	if journal.Progress == nil {
-		return EnrollmentAttemptResult{}, errors.New("[D130 Windows resume] 本机没有可恢复的 committed transaction")
+		return EnrollmentAttemptResult{}, errors.New("[Windows resume] 本机没有可恢复的 committed transaction")
 	}
 	core := journal.ClaimCore
 	if core.ClusterID != descriptor.ClusterID || core.InviteID != descriptor.InviteID ||
@@ -95,7 +95,7 @@ func RunResumeAttempt(ctx context.Context, attempt ResumeAttempt) (EnrollmentAtt
 		core.BaseHeadHash != verifiedHead.HeadHash ||
 		core.BaseRecoveryEpoch != verifiedHead.Body.Payload.RecoveryEpoch ||
 		core.BaseControlEpoch != verifiedHead.Body.Payload.ControlEpoch || core.BaseControlSetHash != setHash {
-		return EnrollmentAttemptResult{}, errors.New("[D130 Windows resume] protected core 未绑定 exact Invite authority")
+		return EnrollmentAttemptResult{}, errors.New("[Windows resume] protected core 未绑定 exact Invite authority")
 	}
 	if err := wire.VerifyEnrollmentResumeDescriptorBindings(descriptor, journal.Progress.Expected,
 		attempt.Catalog, &bundle.BootstrapIssuerAuthorizationProof,
@@ -152,7 +152,7 @@ func RunResumeAttempt(ctx context.Context, attempt ResumeAttempt) (EnrollmentAtt
 		!wire.EqualCanonical(preflight.DeviceEnrollmentIntentCommitment,
 			bundle.DeviceEnrollmentIntentCommitment) ||
 		!wire.EqualCanonical(opening, journal.Preflight.DeviceEnrollmentIntentOpening) {
-		return EnrollmentAttemptResult{}, errors.New("[D130 Windows resume] preflight 未恢复 exact committed opening")
+		return EnrollmentAttemptResult{}, errors.New("[Windows resume] preflight 未恢复 exact committed opening")
 	}
 	challenge, err := attempt.API.Challenge(ctx, core)
 	if err != nil {
@@ -160,7 +160,7 @@ func RunResumeAttempt(ctx context.Context, attempt ResumeAttempt) (EnrollmentAtt
 	}
 	challengeNow := attempt.Now().UTC()
 	if challengeNow.IsZero() {
-		return EnrollmentAttemptResult{}, errors.New("[D130 Windows resume] challenge 可信时间无效")
+		return EnrollmentAttemptResult{}, errors.New("[Windows resume] challenge 可信时间无效")
 	}
 	if err := wire.VerifyEnrollmentResumeDescriptorBindings(descriptor, journal.Progress.Expected,
 		attempt.Catalog, &bundle.BootstrapIssuerAuthorizationProof,
@@ -200,7 +200,7 @@ func RunResumeAttempt(ctx context.Context, attempt ResumeAttempt) (EnrollmentAtt
 	}
 	resultNow := attempt.Now().UTC()
 	if resultNow.IsZero() {
-		return EnrollmentAttemptResult{}, errors.New("[D130 Windows resume] result 可信时间无效")
+		return EnrollmentAttemptResult{}, errors.New("[Windows resume] result 可信时间无效")
 	}
 	output := EnrollmentAttemptResult{ClaimCoreHash: journal.ClaimCoreHash,
 		IdentityHash: identityHash, Result: result}
@@ -232,7 +232,7 @@ func RunResumeAttempt(ctx context.Context, attempt ResumeAttempt) (EnrollmentAtt
 			err = recordJournalProgress(journal, output.Progress)
 		}
 	} else {
-		err = errors.New("[D130 Windows resume] pending 响应缺 progress receipt")
+		err = errors.New("[Windows resume] pending 响应缺 progress receipt")
 	}
 	if err != nil {
 		return EnrollmentAttemptResult{}, err
@@ -249,7 +249,7 @@ func bindResumeDescriptor(store *journalStore, journal *EnrollmentJournalV1,
 	identity *Identity, descriptor *wire.EnrollmentResumeDescriptorV1) error {
 	if journal.ResumeDescriptor != nil {
 		if !wire.EqualCanonical(*journal.ResumeDescriptor, *descriptor) {
-			return errors.New("[D130 Windows resume] 已绑定另一份 resume descriptor")
+			return errors.New("[Windows resume] 已绑定另一份 resume descriptor")
 		}
 		return nil
 	}
@@ -264,11 +264,11 @@ func bindResumeDescriptor(store *journalStore, journal *EnrollmentJournalV1,
 
 func requireResumeTransactionFloors(includes func(string) bool, hashes ...string) error {
 	if includes == nil {
-		return errors.New("[D130 Windows resume] receipt floor verifier 缺失")
+		return errors.New("[Windows resume] receipt floor verifier 缺失")
 	}
 	for _, hash := range hashes {
 		if !includes(hash) {
-			return errors.New("[D130 Windows resume] receipt 不包含本机与 descriptor transaction floor")
+			return errors.New("[Windows resume] receipt 不包含本机与 descriptor transaction floor")
 		}
 	}
 	return nil

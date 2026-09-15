@@ -18,7 +18,7 @@ var (
 )
 
 func (app *portableGUI) updateStatusIcon(state portableGUIState) {
-	// §7.2：进度动画仅使独立状态图标失效，不修改文字、控件大小或整个窗口。
+	// 进度动画仅使独立状态图标失效，不修改文字、控件大小或整个窗口。
 	procInvalidateRect.Call(app.controls.stateIcon, 0, 0)
 	animated := portableStatusAnimated(state) || slices.ContainsFunc(app.snapshot().profiles, func(p windowsProfileDisplay) bool { return portableStatusAnimated(p.State) })
 	if animated == app.statusAnimating {
@@ -76,7 +76,7 @@ func (app *portableGUI) renderProfileList(snapshot portableGUISnapshot, previous
 	if !rebuild && !slices.Equal(snapshot.profiles, previous.profiles) {
 		procInvalidateRect.Call(app.controls.networkList, 0, 0)
 	}
-	// §7.2：右键先打开原位编辑时，后到的选中确认不能覆盖用户已经输入的草稿。
+	// 右键先打开原位编辑时，后到的选中确认不能覆盖用户已经输入的草稿。
 	editing := app.skin != nil && app.skin.rename && app.skin.renameID == snapshot.selectedProfile
 	if !editing && (previous == nil || previous.selectedProfile != snapshot.selectedProfile || previous.profileName != snapshot.profileName) {
 		setPortableControlText(app.controls.profileNameEdit, snapshot.profileName)
@@ -97,6 +97,6 @@ func (app *portableGUI) renderProfileDetails(s portableGUISnapshot, previous *po
 	if app.pathsExpanded {
 		button = "收起详情"
 	}
-	// §7.2：路径文字由原生列表项提供，无需再重写 LISTBOX 窗口标题。
+	// 路径文字由原生列表项提供，无需再重写 LISTBOX 窗口标题。
 	setPortableControlText(app.controls.pathsDetailsButton, button)
 }

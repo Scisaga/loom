@@ -37,7 +37,7 @@ type CandidateEvidence struct {
 }
 
 // CertifiedLearnerEvidenceV1 只保存由 active Device identity 与私有目录安装结果
-// 交叉验证后的投影；调用方自报 active=true 不能进入 ledger（D100、D124）。
+// 交叉验证后的投影；调用方自报 active=true 不能进入 ledger。
 type CertifiedLearnerEvidenceV1 struct {
 	MemberID                     string `json:"member_id"`
 	DeviceID                     string `json:"device_id"`
@@ -92,7 +92,7 @@ type MembershipLedgerStateV1 struct {
 }
 
 // MembershipLedger 把 learner→Joint commit/QC→Final commit/QC 的每个安全边界
-// 分别 fsync；进程恢复时不会把本地安装、commit 或未成 quorum 的签名误报为 Final（D112）。
+// 分别 fsync；进程恢复时不会把本地安装、commit 或未成 quorum 的签名误报为 Final。
 type MembershipLedger struct {
 	mu    sync.Mutex
 	path  string
@@ -101,18 +101,18 @@ type MembershipLedger struct {
 
 // CreateMembershipLedger 只接受 control_api 产生的不透明 admin authorization 和
 // authenticateDeviceIdentity 产生的 active Device identity。new voter 的目录、Device、
-// checkpoint 与 exact certified parent 必须在第一次落盘前全部互相绑定（D100、D112、D124）。
+// checkpoint 与 exact certified parent 必须在第一次落盘前全部互相绑定。
 func CreateMembershipLedger(path string, parent wire.SignedCurrentV2, parentPreviousSet *wire.ControlSetV1,
 	oldSet, newSet wire.ControlSetV1, oldDirectory, newDirectory wire.ControlPeerDirectoryPrivateObjectV1,
 	approval wire.ControlMembershipApprovalProofV1, admin wire.VerifiedAdminOperationV1,
 	evidence map[string]CandidateEvidence, identities map[string]VerifiedDeviceIdentityV1,
 	trustedTime time.Time) (*MembershipLedger, error) {
 	if path == "" || trustedTime.IsZero() {
-		return nil, errors.New("[D112 membership ledger] path/可信时间无效")
+		return nil, errors.New("[membership ledger] path/可信时间无效")
 	}
 	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 		if err == nil {
-			return nil, errors.New("[D112 membership ledger] ledger 已存在，必须显式恢复")
+			return nil, errors.New("[membership ledger] ledger 已存在，必须显式恢复")
 		}
 		return nil, err
 	}
@@ -120,7 +120,7 @@ func CreateMembershipLedger(path string, parent wire.SignedCurrentV2, parentPrev
 	scopeHash, err := wire.AdminResourceScopeHash(&scope)
 	if err != nil || admin.HeadHash() != parent.Head.HeadHash || admin.ScopeHash() != scopeHash ||
 		!wire.EqualCanonical(admin.Operation(), approval.AdminIntentOperation) {
-		return nil, errors.New("[D104 membership ledger] 缺 exact control-membership admin authorization")
+		return nil, errors.New("[membership ledger] 缺 exact control-membership admin authorization")
 	}
 	oldObjectHash, err := wire.ControlPeerDirectoryPrivateObjectHash(&oldSet, &oldDirectory)
 	if err != nil {
@@ -154,7 +154,7 @@ func CreateMembershipLedger(path string, parent wire.SignedCurrentV2, parentPrev
 
 func OpenMembershipLedger(path string) (*MembershipLedger, error) {
 	if path == "" {
-		return nil, errors.New("[D112 membership ledger] path 不能为空")
+		return nil, errors.New("[membership ledger] path 不能为空")
 	}
 	body, err := os.ReadFile(path)
 	if err != nil {
@@ -162,11 +162,11 @@ func OpenMembershipLedger(path string) (*MembershipLedger, error) {
 	}
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
-		return nil, errors.New("[D112 membership ledger] ledger 必须是 0600 普通文件")
+		return nil, errors.New("[membership ledger] ledger 必须是 0600 普通文件")
 	}
 	canonical, err := wire.CanonicalizeStrict(body)
 	if err != nil || !bytes.Equal(canonical, body) {
-		return nil, errors.New("[D112 membership ledger] ledger 不是 exact canonical JSON")
+		return nil, errors.New("[membership ledger] ledger 不是 exact canonical JSON")
 	}
 	var state MembershipLedgerStateV1
 	if _, err := wire.DecodeStrict(body, 64<<20, &state); err != nil {
@@ -187,7 +187,7 @@ func (ledger *MembershipLedger) Snapshot() MembershipLedgerStateV1 {
 func (ledger *MembershipLedger) BeginLearners() error {
 	return ledger.update(func(state *MembershipLedgerStateV1) error {
 		if state.Phase != MembershipLedgerCandidate {
-			return errors.New("[D112 learner] 只能从 candidate 进入 learners")
+			return errors.New("[learner] 只能从 candidate 进入 learners")
 		}
 		state.Phase = MembershipLedgerLearners
 		return nil
@@ -197,7 +197,7 @@ func (ledger *MembershipLedger) BeginLearners() error {
 func (ledger *MembershipLedger) MarkLearnerCaughtUp(memberID, checkpointHash string, lastAppliedIndex int64) error {
 	return ledger.update(func(state *MembershipLedgerStateV1) error {
 		if state.Phase != MembershipLedgerLearners {
-			return errors.New("[D112 learner] 只有 learners 阶段能记录 catch-up")
+			return errors.New("[learner] 只有 learners 阶段能记录 catch-up")
 		}
 		if _, err := wire.ParseHash(checkpointHash); err != nil {
 			return err
@@ -210,14 +210,14 @@ func (ledger *MembershipLedger) MarkLearnerCaughtUp(memberID, checkpointHash str
 			}
 			if lastAppliedIndex < parentIndex || lastAppliedIndex < learner.InstalledLogIndex ||
 				learner.CaughtUp && (lastAppliedIndex != learner.CaughtUpThroughIndex || checkpointHash != learner.CheckpointHash) {
-				return errors.New("[D112 learner] catch-up 坐标回退或幂等结果冲突")
+				return errors.New("[learner] catch-up 坐标回退或幂等结果冲突")
 			}
 			learner.CaughtUp = true
 			learner.CaughtUpThroughIndex = lastAppliedIndex
 			learner.CheckpointHash = checkpointHash
 			return nil
 		}
-		return errors.New("[D112 learner] 未知 learner")
+		return errors.New("[learner] 未知 learner")
 	})
 }
 
@@ -232,15 +232,15 @@ func (ledger *MembershipLedger) RecordJointCommitFromRaft(storage *RaftStorage,
 				state.Joint.RaftCommit != nil && wire.EqualCanonical(*state.Joint.RaftCommit, *reference) {
 				return nil
 			}
-			return errors.New("[D112 joint] 已记录的 Joint commit 不能被改写")
+			return errors.New("[joint] 已记录的 Joint commit 不能被改写")
 		}
 		if state.Phase != MembershipLedgerLearners &&
 			!(state.Phase == MembershipLedgerCandidate && len(state.Candidate.Learners) == 0) {
-			return errors.New("[D112 joint] learner gate 尚未完成")
+			return errors.New("[joint] learner gate 尚未完成")
 		}
 		for _, learner := range state.Candidate.Learners {
 			if !learner.CaughtUp {
-				return fmt.Errorf("[D112 learner] %s 尚未 catch-up", learner.MemberID)
+				return fmt.Errorf("[learner] %s 尚未 catch-up", learner.MemberID)
 			}
 		}
 		entryHash, err := wire.VerifyJointControlSetCandidate(&state.Candidate.OldControlSet,
@@ -265,7 +265,7 @@ func (ledger *MembershipLedger) CertifyJoint(signatures []wire.ControlConfigSign
 	return ledger.update(func(state *MembershipLedgerStateV1) error {
 		if state.Joint == nil || state.Phase != MembershipLedgerJointCommittedNotCertified &&
 			state.Phase != MembershipLedgerJointFinalizationOnly {
-			return errors.New("[D112 joint QC] Joint 尚未 durable commit")
+			return errors.New("[joint QC] Joint 尚未 durable commit")
 		}
 		attestation := wire.JointConfigAttestationForEntry(&state.Joint.Body, state.Joint.EntryHash)
 		qc := wire.JointConfigQC(attestation, signatures, &state.Candidate.OldControlSet, &state.Candidate.NewControlSet)
@@ -280,7 +280,7 @@ func (ledger *MembershipLedger) CertifyJoint(signatures []wire.ControlConfigSign
 			return err
 		}
 		if state.Joint.Proof != nil && !wire.EqualCanonical(*state.Joint.Proof, proof) {
-			return errors.New("[D112 joint QC] 已认证 Joint proof 的 bytes 不能改变")
+			return errors.New("[joint QC] 已认证 Joint proof 的 bytes 不能改变")
 		}
 		state.Joint.Proof = &proof
 		state.Phase = MembershipLedgerJointFinalizationOnly
@@ -301,10 +301,10 @@ func (ledger *MembershipLedger) RecordFinalCommitFromRaft(storage *RaftStorage, 
 				state.Final.ExpectedEffectiveSSOTHash == expectedEffectiveSSOTHash {
 				return nil
 			}
-			return errors.New("[D112 Final] 已记录的 Final commit 不能被改写")
+			return errors.New("[Final] 已记录的 Final commit 不能被改写")
 		}
 		if state.Phase != MembershipLedgerJointFinalizationOnly || state.Joint == nil || state.Joint.Proof == nil {
-			return errors.New("[D112 Final] 只能紧接 certified Joint")
+			return errors.New("[Final] 只能紧接 certified Joint")
 		}
 		if _, err := wire.VerifyControlSetFinalCandidate(&state.Candidate.OldControlSet,
 			&state.Candidate.NewControlSet, &state.Candidate.MembershipApprovalProof,
@@ -337,11 +337,11 @@ func (ledger *MembershipLedger) CertifyFinal(signatures []wire.ControlConfigSign
 		if state.Final.QC != nil && wire.EqualCanonical(*state.Final.QC, qc) {
 			return *state.CertifiedBundle, nil
 		}
-		return wire.ControlSetTransitionBundleV1{}, errors.New("[D112 Final QC] 已认证 Final QC bytes 不能改变")
+		return wire.ControlSetTransitionBundleV1{}, errors.New("[Final QC] 已认证 Final QC bytes 不能改变")
 	}
 	if state.Phase != MembershipLedgerFinalCommittedNotCertified || state.Joint == nil ||
 		state.Joint.Proof == nil || state.Final == nil {
-		return wire.ControlSetTransitionBundleV1{}, errors.New("[D112 Final QC] Final 尚未 durable commit")
+		return wire.ControlSetTransitionBundleV1{}, errors.New("[Final QC] Final 尚未 durable commit")
 	}
 	qc := wire.JointHeadQC(&state.Final.Head, signatures, &state.Candidate.OldControlSet, &state.Candidate.NewControlSet)
 	if err := wire.VerifyJointHeadQC(&state.Final.Head, &state.Candidate.OldControlSet,
@@ -402,11 +402,11 @@ func certifyLearners(parent wire.SignedCurrentV2, oldSet, newSet wire.ControlSet
 			identity.IdentityStatus() != "active" || identity.DeviceID() != candidate.DeviceID ||
 			candidate.InstalledHeadHash != parent.Head.HeadHash || candidate.LastLogIndex < 0 ||
 			identity.authority.Head.HeadHash != parent.Head.HeadHash {
-			return nil, fmt.Errorf("[D100 ControlSet] candidate %s 尚非 current active/reachable Device", member.MemberID)
+			return nil, fmt.Errorf("[ControlSet] candidate %s 尚非 current active/reachable Device", member.MemberID)
 		}
 		if candidate.DeviceCertificateHash != identity.CertificateHash() ||
 			candidate.InstalledDirectoryObjectHash != directoryObjectHash {
-			return nil, fmt.Errorf("[D124 learner] candidate %s 未安装 exact identity/directory", member.MemberID)
+			return nil, fmt.Errorf("[learner] candidate %s 未安装 exact identity/directory", member.MemberID)
 		}
 		learners = append(learners, CertifiedLearnerEvidenceV1{MemberID: member.MemberID,
 			DeviceID: candidate.DeviceID, DeviceCertificateHash: candidate.DeviceCertificateHash,
@@ -414,14 +414,14 @@ func certifyLearners(parent wire.SignedCurrentV2, oldSet, newSet wire.ControlSet
 			InstalledLogIndex: candidate.LastLogIndex, InstalledDirectoryObjectHash: directoryObjectHash})
 	}
 	if len(evidence) != len(learners) {
-		return nil, errors.New("[D112 learner] evidence 含非新增 member 或缺失新增 member")
+		return nil, errors.New("[learner] evidence 含非新增 member 或缺失新增 member")
 	}
 	return learners, nil
 }
 
 func validateMembershipLedgerState(state *MembershipLedgerStateV1) error {
 	if state == nil || state.Schema != 2 || !validMembershipLedgerPhase(state.Phase) {
-		return errors.New("[D112 membership ledger] state header/phase 无效")
+		return errors.New("[membership ledger] state header/phase 无效")
 	}
 	if err := validateMembershipLedgerCandidate(&state.Candidate); err != nil {
 		return err
@@ -429,7 +429,7 @@ func validateMembershipLedgerState(state *MembershipLedgerStateV1) error {
 	switch state.Phase {
 	case MembershipLedgerCandidate, MembershipLedgerLearners:
 		if state.Joint != nil || state.Final != nil || state.CertifiedBundle != nil {
-			return errors.New("[D112 membership ledger] pre-Joint state 含未来结果")
+			return errors.New("[membership ledger] pre-Joint state 含未来结果")
 		}
 	case MembershipLedgerJointCommittedNotCertified, MembershipLedgerJointFinalizationOnly,
 		MembershipLedgerFinalCommittedNotCertified, MembershipLedgerFinal:
@@ -439,13 +439,13 @@ func validateMembershipLedgerState(state *MembershipLedgerStateV1) error {
 	}
 	if state.Phase == MembershipLedgerJointCommittedNotCertified {
 		if state.Joint.Proof != nil || state.Final != nil || state.CertifiedBundle != nil {
-			return errors.New("[D112 joint QC] committed-not-certified state 含未来结果")
+			return errors.New("[joint QC] committed-not-certified state 含未来结果")
 		}
 		return nil
 	}
 	if state.Phase == MembershipLedgerJointFinalizationOnly {
 		if state.Joint.Proof == nil || state.Final != nil || state.CertifiedBundle != nil {
-			return errors.New("[D112 joint] finalization-only state 不完整")
+			return errors.New("[joint] finalization-only state 不完整")
 		}
 		return validateMembershipJointProof(state)
 	}
@@ -459,20 +459,20 @@ func validateMembershipLedgerState(state *MembershipLedgerStateV1) error {
 	}
 	if state.Phase == MembershipLedgerFinalCommittedNotCertified {
 		if state.Final.QC != nil || state.CertifiedBundle != nil {
-			return errors.New("[D112 Final QC] committed-not-certified state 含 QC/bundle")
+			return errors.New("[Final QC] committed-not-certified state 含 QC/bundle")
 		}
 		return nil
 	}
 	if state.Phase == MembershipLedgerFinal {
 		if state.Final.QC == nil || state.CertifiedBundle == nil {
-			return errors.New("[D112 Final QC] Final state 缺 QC/bundle")
+			return errors.New("[Final QC] Final state 缺 QC/bundle")
 		}
 		want := wire.ControlSetTransitionBundleV1{Schema: 1, OldControlSet: state.Candidate.OldControlSet,
 			NewControlSet: state.Candidate.NewControlSet, MembershipApprovalProof: state.Candidate.MembershipApprovalProof,
 			JointProof: *state.Joint.Proof, Final: wire.FinalControlSetHeadV1{Schema: 1,
 				Head: state.Final.Head, FinalJointReplicationQC: *state.Final.QC}}
 		if !wire.EqualCanonical(*state.CertifiedBundle, want) {
-			return errors.New("[D112 Final QC] certified bundle 与 ledger fields 不一致")
+			return errors.New("[Final QC] certified bundle 与 ledger fields 不一致")
 		}
 		_, err := wire.VerifyControlSetTransitionBundle(state.CertifiedBundle, &state.Candidate.ParentCurrent.Head)
 		return err
@@ -482,7 +482,7 @@ func validateMembershipLedgerState(state *MembershipLedgerStateV1) error {
 
 func validateMembershipLedgerCandidate(candidate *MembershipLedgerCandidateV1) error {
 	if candidate == nil || candidate.Schema != 1 || candidate.ParentCurrent.Schema != 2 {
-		return errors.New("[D112 membership ledger] candidate schema/current 无效")
+		return errors.New("[membership ledger] candidate schema/current 无效")
 	}
 	validatedAt, err := wire.ParseTimeZ(candidate.ValidatedAt)
 	if err != nil {
@@ -515,12 +515,12 @@ func validateMembershipLedgerCandidate(candidate *MembershipLedgerCandidateV1) e
 		oldDirectory.DirectoryGeneration == int64(^uint64(0)>>1) ||
 		newDirectory.DirectoryGeneration != oldDirectory.DirectoryGeneration+1 ||
 		newDirectory.HidingNonce == oldDirectory.HidingNonce {
-		return errors.New("[D124 private directory] old/new generation、nonce 或 parent binding 无效")
+		return errors.New("[private directory] old/new generation、nonce 或 parent binding 无效")
 	}
 	scope := wire.AdminResourceScopeV1{ScopeKind: "control_membership", ControlMembership: &struct{}{}}
 	scopeHash, _ := wire.AdminResourceScopeHash(&scope)
 	if candidate.AdminScopeHash != scopeHash {
-		return errors.New("[D104 membership ledger] admin scope marker 无效")
+		return errors.New("[membership ledger] admin scope marker 无效")
 	}
 	oldMembers := make(map[string]struct{}, len(candidate.OldControlSet.Members))
 	for _, member := range candidate.OldControlSet.Members {
@@ -533,7 +533,7 @@ func validateMembershipLedgerCandidate(candidate *MembershipLedgerCandidateV1) e
 		}
 	}
 	if len(candidate.Learners) != len(wantLearners) {
-		return errors.New("[D112 learner] learner 集合未 exact-match 新增 members")
+		return errors.New("[learner] learner 集合未 exact-match 新增 members")
 	}
 	directoryMembers := make(map[string]wire.ControlPeerDirectoryMemberV1, len(newDirectory.Members))
 	for _, member := range newDirectory.Members {
@@ -544,7 +544,7 @@ func validateMembershipLedgerCandidate(candidate *MembershipLedgerCandidateV1) e
 		if learner.MemberID != wantLearners[i] || learner.DeviceID != directoryMembers[learner.MemberID].DeviceID ||
 			!learner.OverlayReachable || learner.InstalledHeadHash != parent.HeadHash || learner.InstalledLogIndex < 0 ||
 			learner.InstalledDirectoryObjectHash != candidate.NewDirectoryObjectHash {
-			return errors.New("[D112 learner] learner identity/head/directory 投影无效")
+			return errors.New("[learner] learner identity/head/directory 投影无效")
 		}
 		for _, hash := range []string{learner.DeviceCertificateHash, learner.InstalledHeadHash,
 			learner.InstalledDirectoryObjectHash} {
@@ -554,13 +554,13 @@ func validateMembershipLedgerCandidate(candidate *MembershipLedgerCandidateV1) e
 		}
 		if learner.CaughtUp {
 			if learner.CaughtUpThroughIndex < parent.Body.Payload.RaftIndex || learner.CheckpointHash == "" {
-				return errors.New("[D112 learner] caught-up learner 缺 checkpoint/连续坐标")
+				return errors.New("[learner] caught-up learner 缺 checkpoint/连续坐标")
 			}
 			if _, err := wire.ParseHash(learner.CheckpointHash); err != nil {
 				return err
 			}
 		} else if learner.CaughtUpThroughIndex != 0 || learner.CheckpointHash != "" {
-			return errors.New("[D112 learner] 未 catch-up learner 含完成结果")
+			return errors.New("[learner] 未 catch-up learner 含完成结果")
 		}
 	}
 	return nil
@@ -576,20 +576,20 @@ func validateMembershipDirectory(set *wire.ControlSetV1, object *wire.ControlPee
 	}
 	got, err := wire.ControlPeerDirectoryPrivateObjectHash(set, object)
 	if err != nil || got != wantObjectHash {
-		return errors.New("[D124 private directory] private object hash 不匹配")
+		return errors.New("[private directory] private object hash 不匹配")
 	}
 	return nil
 }
 
 func validateMembershipJoint(state *MembershipLedgerStateV1) error {
 	if state.Joint == nil || state.Joint.RaftCommit == nil {
-		return errors.New("[D112 joint] ledger 缺 Joint commit")
+		return errors.New("[joint] ledger 缺 Joint commit")
 	}
 	entryHash, err := wire.VerifyJointControlSetCandidate(&state.Candidate.OldControlSet,
 		&state.Candidate.NewControlSet, &state.Candidate.MembershipApprovalProof, &state.Joint.Body,
 		&state.Candidate.ParentCurrent.Head)
 	if err != nil || entryHash != state.Joint.EntryHash {
-		return errors.New("[D112 joint] ledger Joint entry/hash 无效")
+		return errors.New("[joint] ledger Joint entry/hash 无效")
 	}
 	return validateMembershipCommitReference(state.Joint.RaftCommit, &state.Candidate.OldControlSet,
 		&state.Candidate.NewControlSet,
@@ -600,7 +600,7 @@ func validateMembershipJointProof(state *MembershipLedgerStateV1) error {
 	if state.Joint == nil || state.Joint.Proof == nil ||
 		!wire.EqualCanonical(state.Joint.Proof.JointBody, state.Joint.Body) ||
 		state.Joint.Proof.JointEntryHash != state.Joint.EntryHash {
-		return errors.New("[D112 joint QC] ledger Joint proof binding 无效")
+		return errors.New("[joint QC] ledger Joint proof binding 无效")
 	}
 	_, err := wire.JointControlSetProofHash(state.Joint.Proof, &state.Candidate.OldControlSet,
 		&state.Candidate.NewControlSet)
@@ -609,7 +609,7 @@ func validateMembershipJointProof(state *MembershipLedgerStateV1) error {
 
 func validateMembershipFinal(state *MembershipLedgerStateV1) error {
 	if state.Final == nil || state.Final.RaftCommit == nil {
-		return errors.New("[D112 Final] ledger 缺 Final commit")
+		return errors.New("[Final] ledger 缺 Final commit")
 	}
 	if _, err := wire.VerifyControlSetFinalCandidate(&state.Candidate.OldControlSet,
 		&state.Candidate.NewControlSet, &state.Candidate.MembershipApprovalProof, state.Joint.Proof,
@@ -630,7 +630,7 @@ func committedMembershipRecordReference(storage *RaftStorage, oldSet, newSet *wi
 	index int64, entryHash, kind string, head *wire.HeadEntryV2,
 	joint *wire.JointControlSetEntryBodyV1) (*RaftCommitReferenceV1, error) {
 	if storage == nil || oldSet == nil || newSet == nil {
-		return nil, errors.New("[D112 joint Raft] commit 必须绑定本机 Raft storage/old ControlSet")
+		return nil, errors.New("[joint Raft] commit 必须绑定本机 Raft storage/old ControlSet")
 	}
 	raft := storage.SnapshotRaft()
 	oldHash, oldErr := wire.ControlSetHash(oldSet)
@@ -639,24 +639,24 @@ func committedMembershipRecordReference(storage *RaftStorage, oldSet, newSet *wi
 		!controlSetContains(oldSet, raft.MemberID) && !controlSetContains(newSet, raft.MemberID) ||
 		index < 1 || index > raft.CommitIndex ||
 		index > int64(len(raft.Log)) {
-		return nil, errors.New("[D112 joint Raft] membership entry 不在本机 committed prefix")
+		return nil, errors.New("[joint Raft] membership entry 不在本机 committed prefix")
 	}
 	record := raft.Log[index-1]
 	if record.Kind != kind || record.Term < 1 || record.Index != index || record.EntryHash != entryHash {
-		return nil, errors.New("[D112 joint Raft] committed membership record 坐标/hash/kind 不匹配")
+		return nil, errors.New("[joint Raft] committed membership record 坐标/hash/kind 不匹配")
 	}
 	switch kind {
 	case RaftRecordJointControlSet:
 		if joint == nil || record.JointControlSet == nil || !wire.EqualCanonical(*record.JointControlSet, *joint) {
-			return nil, errors.New("[D112 joint Raft] committed Joint payload 不匹配")
+			return nil, errors.New("[joint Raft] committed Joint payload 不匹配")
 		}
 	case RaftRecordHead:
 		if head == nil || record.Head == nil || head.Body.Payload.HeadKind != "control_set_final" ||
 			!wire.EqualCanonical(*record.Head, *head) {
-			return nil, errors.New("[D112 joint Raft] committed Final payload 不匹配")
+			return nil, errors.New("[joint Raft] committed Final payload 不匹配")
 		}
 	default:
-		return nil, errors.New("[D112 joint Raft] membership commit record kind 无效")
+		return nil, errors.New("[joint Raft] membership commit record kind 无效")
 	}
 	return &RaftCommitReferenceV1{Schema: 1, ClusterID: raft.ClusterID, MemberID: raft.MemberID,
 		Term: record.Term, Index: record.Index, EntryHash: record.EntryHash}, nil
@@ -668,7 +668,7 @@ func validateMembershipCommitReference(reference *RaftCommitReferenceV1, oldSet,
 		!controlSetContains(oldSet, reference.MemberID) && !controlSetContains(newSet, reference.MemberID) ||
 		reference.Term != term ||
 		reference.Index != index || reference.EntryHash != entryHash {
-		return errors.New("[D112 joint Raft] durable commit reference 无效")
+		return errors.New("[joint Raft] durable commit reference 无效")
 	}
 	return nil
 }
@@ -684,7 +684,7 @@ func canonicalJointMembers(candidate *MembershipLedgerCandidateV1, memberIDs []s
 	}
 	for i, value := range values {
 		if _, exists := union[value]; !exists || i > 0 && values[i-1] == value {
-			return nil, errors.New("[D112 joint] durable ack 含未知或重复 member")
+			return nil, errors.New("[joint] durable ack 含未知或重复 member")
 		}
 	}
 	if err := wire.JointQuorum(&candidate.OldControlSet, &candidate.NewControlSet, values); err != nil {

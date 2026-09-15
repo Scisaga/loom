@@ -51,7 +51,7 @@ func PrepareLinuxRuntimeDeployment(installStatePath, deviceStatePath, runtimeSta
 	linkIntentRaw, runtimeRaw []byte,
 ) (*deploy.Plan, error) {
 	if runtimeStatePath == "" || validateLinuxRuntimeInstallPaths(installStatePath, deviceStatePath) != nil {
-		return nil, errors.New("[D131 Linux runtime] install/device/runtime state path 无效")
+		return nil, errors.New("[Linux runtime] install/device/runtime state path 无效")
 	}
 	if err := secureEnrollmentDirectory(filepath.Dir(installStatePath)); err != nil {
 		return nil, err
@@ -63,7 +63,7 @@ func PrepareLinuxRuntimeDeployment(installStatePath, deviceStatePath, runtimeSta
 	envelope := deviceStore.Envelope()
 	installation := deviceStore.Enrollment()
 	if envelope == nil || installation == nil || envelope.Payload.State != "active" || envelope.Payload.Active == nil {
-		return nil, errors.New("[D131 Linux runtime] active durable Device installation 缺失")
+		return nil, errors.New("[Linux runtime] active durable Device installation 缺失")
 	}
 	runtimeState, err := LoadLinuxLinkRuntimeState(runtimeStatePath)
 	if err != nil {
@@ -71,7 +71,7 @@ func PrepareLinuxRuntimeDeployment(installStatePath, deviceStatePath, runtimeSta
 	}
 	if runtimeState.ClusterID != envelope.Payload.ClusterID || runtimeState.DeviceID != envelope.Payload.DeviceID ||
 		!wire.EqualCanonical(runtimeState.AuthorityFloors, deviceStore.Floors()) {
-		return nil, errors.New("[D131 Linux runtime] runtime plan 不是 current Device LKG")
+		return nil, errors.New("[Linux runtime] runtime plan 不是 current Device LKG")
 	}
 
 	var linkArtifact wire.LinuxLinkIntentArtifactV1
@@ -79,7 +79,7 @@ func PrepareLinuxRuntimeDeployment(installStatePath, deviceStatePath, runtimeSta
 	if err != nil || !bytes.Equal(canonical, linkIntentRaw) ||
 		validateLinuxLinkIntentArtifact(&linkArtifact, envelope) != nil ||
 		bindLinuxLinkIntentArtifactRef(&linkArtifact, linkIntentRaw, envelope.Payload.Active.ConfigArtifactRefs) != nil {
-		return nil, errors.New("[D131 Linux runtime] deploy 未绑定 current exact LinkIntent artifact")
+		return nil, errors.New("[Linux runtime] deploy 未绑定 current exact LinkIntent artifact")
 	}
 	linkHash, err := wire.DeviceConfigArtifactContentHash(linkIntentRaw)
 	if err != nil {
@@ -88,13 +88,13 @@ func PrepareLinuxRuntimeDeployment(installStatePath, deviceStatePath, runtimeSta
 	var runtimeArtifact wire.LinuxRuntimeArtifactV1
 	canonical, err = wire.DecodeStrict(runtimeRaw, maximumLinuxConfigArtifact, &runtimeArtifact)
 	if err != nil || !bytes.Equal(canonical, runtimeRaw) || wire.ValidateLinuxRuntimeArtifact(&runtimeArtifact) != nil {
-		return nil, errors.New("[D131 Linux runtime] runtime artifact 不是 exact canonical wire")
+		return nil, errors.New("[Linux runtime] runtime artifact 不是 exact canonical wire")
 	}
 	if runtimeArtifact.ClusterID != runtimeState.ClusterID || runtimeArtifact.DeviceID != runtimeState.DeviceID ||
 		runtimeArtifact.DeviceGeneration != runtimeState.Plan.DeviceGeneration ||
 		runtimeArtifact.LinkIntentGeneration != runtimeState.Plan.ArtifactGeneration ||
 		runtimeArtifact.LinkIntentContentHash != linkHash {
-		return nil, errors.New("[D131 Linux runtime] runtime artifact 与 accepted plan/LinkIntent 不一致")
+		return nil, errors.New("[Linux runtime] runtime artifact 与 accepted plan/LinkIntent 不一致")
 	}
 	if err := wire.ValidateLinuxRuntimeRedaction(&runtimeArtifact, &linkArtifact); err != nil {
 		return nil, err
@@ -138,7 +138,7 @@ func PrepareLinuxRuntimeDeployment(installStatePath, deviceStatePath, runtimeSta
 	}
 	if previous != nil {
 		if previous.ClusterID != next.ClusterID || previous.DeviceID != next.DeviceID {
-			return nil, errors.New("[D106 Linux runtime] installed runtime identity 分叉")
+			return nil, errors.New("[Linux runtime] installed runtime identity 分叉")
 		}
 		plan.Remove = staleLinuxRuntimeFiles(previous.InstalledFiles, installedFiles)
 		sum := sha256.Sum256(previousBody)
@@ -169,7 +169,7 @@ func PrepareLinuxRuntimeDecommission(installStatePath, deviceStatePath string) (
 	envelope := deviceStore.Envelope()
 	if envelope == nil || (envelope.Payload.State != "revoked" && envelope.Payload.State != "decommissioned") ||
 		envelope.Payload.Active != nil || envelope.Payload.Tombstone == nil {
-		return nil, errors.New("[D131 Linux runtime] 只有 certified Device tombstone 可触发 runtime 下线")
+		return nil, errors.New("[Linux runtime] 只有 certified Device tombstone 可触发 runtime 下线")
 	}
 	plan := &deploy.Plan{Node: envelope.Payload.DeviceID, Files: map[string]string{},
 		Triggers: map[string][]string{}}
@@ -182,7 +182,7 @@ func PrepareLinuxRuntimeDecommission(installStatePath, deviceStatePath string) (
 	}
 	if previous.ClusterID != envelope.Payload.ClusterID || previous.DeviceID != envelope.Payload.DeviceID ||
 		validateLinuxRuntimeAuthorityAdvance(previous.AuthorityFloors, deviceStore.Floors()) != nil {
-		return nil, errors.New("[D106 Linux runtime] tombstone 与 installed runtime authority 分叉")
+		return nil, errors.New("[Linux runtime] tombstone 与 installed runtime authority 分叉")
 	}
 	plan.Remove = append(append([]string(nil), previous.InstalledFiles...), installStatePath)
 	sort.Strings(plan.Remove)
@@ -194,7 +194,7 @@ func PrepareLinuxRuntimeDecommission(installStatePath, deviceStatePath string) (
 // PrepareLinuxRuntimeLocalUninstall 为 root 发起的本机软件卸载生成与 certified
 // tombstone 下线相同的 inventory/CAS 删除事务，但不把本机动作冒充控制面撤权。
 // Device identity、正式 LKG、floors 和报告 journal 都不在 runtime inventory 中，
-// 因而默认保留，重装后仍只能按当前 certified Device view 恢复（D106、D131）。
+// 因而默认保留，重装后仍只能按当前 certified Device view 恢复。
 func PrepareLinuxRuntimeLocalUninstall(installStatePath string) (*deploy.Plan, error) {
 	if err := validateLinuxRuntimeInstallStatePath(installStatePath); err != nil {
 		return nil, err
@@ -225,7 +225,7 @@ func validateLinuxRuntimeInstallPaths(installStatePath, deviceStatePath string) 
 	if deviceStatePath == "" || validateLinuxRuntimeInstallStatePath(installStatePath) != nil ||
 		filepath.Dir(installStatePath) != filepath.Dir(deviceStatePath) ||
 		!filepath.IsAbs(deviceStatePath) || filepath.Clean(deviceStatePath) != deviceStatePath {
-		return errors.New("[D131 Linux runtime] install/device state path 无效")
+		return errors.New("[Linux runtime] install/device state path 无效")
 	}
 	return nil
 }
@@ -233,7 +233,7 @@ func validateLinuxRuntimeInstallPaths(installStatePath, deviceStatePath string) 
 func validateLinuxRuntimeInstallStatePath(installStatePath string) error {
 	if installStatePath == "" || filepath.Base(installStatePath) != LinuxRuntimeInstallStateName ||
 		!filepath.IsAbs(installStatePath) || filepath.Clean(installStatePath) != installStatePath {
-		return errors.New("[D131 Linux runtime] install state path 无效")
+		return errors.New("[Linux runtime] install state path 无效")
 	}
 	return nil
 }
@@ -248,7 +248,7 @@ func bindLinuxRuntimeArtifactRef(artifact *wire.LinuxRuntimeArtifactV1, raw []by
 	matches := 0
 	for _, ref := range refs {
 		if ref.ArtifactID == wire.LinuxRuntimeArtifactID && ref.Generation > artifact.Generation {
-			return errors.New("[D106 Linux runtime] runtime artifact generation 低于 current Device view floor")
+			return errors.New("[Linux runtime] runtime artifact generation 低于 current Device view floor")
 		}
 		if ref.ArtifactID == wire.LinuxRuntimeArtifactID && ref.Generation == artifact.Generation &&
 			ref.Platform == "linux-server" && ref.MediaType == "application/vnd.loom.config+json" &&
@@ -258,14 +258,14 @@ func bindLinuxRuntimeArtifactRef(artifact *wire.LinuxRuntimeArtifactV1, raw []by
 		}
 	}
 	if matches != 1 {
-		return errors.New("[D131 Linux runtime] runtime artifact 未被 current Device view exact ref 承诺")
+		return errors.New("[Linux runtime] runtime artifact 未被 current Device view exact ref 承诺")
 	}
 	return nil
 }
 
 func validateLinuxRuntimeBindings(plan *LinuxLinkRuntimePlanV1, artifact *wire.LinuxRuntimeArtifactV1) error {
 	if plan == nil || artifact == nil {
-		return errors.New("[D131 Linux runtime] plan/artifact 缺失")
+		return errors.New("[Linux runtime] plan/artifact 缺失")
 	}
 	byLink := make(map[string][]wire.LinuxRuntimeBindingV1, len(plan.Actions))
 	for _, binding := range artifact.Bindings {
@@ -276,11 +276,11 @@ func validateLinuxRuntimeBindings(plan *LinuxLinkRuntimePlanV1, artifact *wire.L
 	for _, action := range plan.Actions {
 		bindings := byLink[action.LinkID]
 		if len(bindings) == 0 {
-			return errors.New("[D131 Linux runtime] runtime artifact 未覆盖每条 accepted action")
+			return errors.New("[Linux runtime] runtime artifact 未覆盖每条 accepted action")
 		}
 		if action.Mode == "dial" {
 			if len(bindings) != len(action.DialCandidates) {
-				return errors.New("[D120 Linux runtime] dial bindings 未 exact 覆盖 generation candidates")
+				return errors.New("[Linux runtime] dial bindings 未 exact 覆盖 generation candidates")
 			}
 			candidates := make(map[string]bool, len(action.DialCandidates))
 			for _, candidate := range action.DialCandidates {
@@ -291,13 +291,13 @@ func validateLinuxRuntimeBindings(plan *LinuxLinkRuntimePlanV1, artifact *wire.L
 				if binding.LinkGeneration != action.Generation || binding.Mode != action.Mode ||
 					!candidates[linuxRuntimeEndpointKey(binding.EndpointID, binding.Transport,
 						binding.ListenerGeneration)] {
-					return errors.New("[D120 Linux runtime] dial binding endpoint/generation 分叉")
+					return errors.New("[Linux runtime] dial binding endpoint/generation 分叉")
 				}
 				delete(candidates, linuxRuntimeEndpointKey(binding.EndpointID, binding.Transport,
 					binding.ListenerGeneration))
 			}
 			if len(candidates) != 0 {
-				return errors.New("[D120 Linux runtime] dial bindings 遗漏 generation candidate")
+				return errors.New("[Linux runtime] dial bindings 遗漏 generation candidate")
 			}
 		} else {
 			seenRefs := make(map[string]bool)
@@ -305,13 +305,13 @@ func validateLinuxRuntimeBindings(plan *LinuxLinkRuntimePlanV1, artifact *wire.L
 				if binding.LinkGeneration != action.Generation || binding.Mode != action.Mode ||
 					binding.ListenerGeneration != 0 || !containsString(action.ListenerResourceRefs, binding.EndpointID) ||
 					!containsString(action.AllowedTransports, binding.Transport) {
-					return errors.New("[D131 Linux runtime] listen binding 扩大 accepted action")
+					return errors.New("[Linux runtime] listen binding 扩大 accepted action")
 				}
 				seenRefs[binding.EndpointID] = true
 			}
 			for _, ref := range action.ListenerResourceRefs {
 				if !seenRefs[ref] {
-					return errors.New("[D131 Linux runtime] listen binding 未覆盖 listener resource")
+					return errors.New("[Linux runtime] listen binding 未覆盖 listener resource")
 				}
 			}
 		}
@@ -319,7 +319,7 @@ func validateLinuxRuntimeBindings(plan *LinuxLinkRuntimePlanV1, artifact *wire.L
 			usedPaths[binding.ConfigPath] = true
 			if binding.RuntimeTag != "" {
 				if usedTags[binding.RuntimeTag] {
-					return errors.New("[D131 Linux runtime] runtime tag 被多个 binding 复用")
+					return errors.New("[Linux runtime] runtime tag 被多个 binding 复用")
 				}
 				usedTags[binding.RuntimeTag] = true
 			}
@@ -327,7 +327,7 @@ func validateLinuxRuntimeBindings(plan *LinuxLinkRuntimePlanV1, artifact *wire.L
 		delete(byLink, action.LinkID)
 	}
 	if len(byLink) != 0 {
-		return errors.New("[D131 Linux runtime] runtime artifact 含未知 action binding")
+		return errors.New("[Linux runtime] runtime artifact 含未知 action binding")
 	}
 	files := make(map[string]string, len(artifact.Files))
 	for _, file := range artifact.Files {
@@ -335,27 +335,27 @@ func validateLinuxRuntimeBindings(plan *LinuxLinkRuntimePlanV1, artifact *wire.L
 	}
 	for path := range usedPaths {
 		if _, found := files[path]; !found {
-			return errors.New("[D131 Linux runtime] binding 引用缺失 runtime file")
+			return errors.New("[Linux runtime] binding 引用缺失 runtime file")
 		}
 	}
 	for path := range files {
 		if path == "agent/v2/config.json" || usedPaths[path] {
 			continue
 		}
-		return errors.New("[D131 Linux runtime] runtime artifact 含未绑定 config file")
+		return errors.New("[Linux runtime] runtime artifact 含未绑定 config file")
 	}
 	if plan.EnableTUN || plan.EnableMixed {
 		if _, found := files["sing-box/v2/config.json"]; !found {
-			return errors.New("[D131 Linux runtime] use_loom 缺 sing-box runtime")
+			return errors.New("[Linux runtime] use_loom 缺 sing-box runtime")
 		}
 	}
 	_, hasAgent := files["agent/v2/config.json"]
 	if plan.EnableTUN || plan.EnableMixed {
 		if !hasAgent {
-			return errors.New("[D131 Linux runtime] use_loom 缺 Linux Agent plan")
+			return errors.New("[Linux runtime] use_loom 缺 Linux Agent plan")
 		}
 	} else if hasAgent {
-		return errors.New("[D131 Linux runtime] 非 use_loom runtime 不应启动 Linux Agent")
+		return errors.New("[Linux runtime] 非 use_loom runtime 不应启动 Linux Agent")
 	}
 	return nil
 }
@@ -377,13 +377,13 @@ func hydrateLinuxRuntimeFiles(plan *LinuxLinkRuntimePlanV1, artifact *wire.Linux
 	for _, file := range artifact.Files {
 		for _, ref := range secret.Refs(file.Content) {
 			if !required[ref] {
-				return nil, errors.New("[D124 Linux runtime] runtime file 引用了未获 LinkIntent 授权的 secret")
+				return nil, errors.New("[Linux runtime] runtime file 引用了未获 LinkIntent 授权的 secret")
 			}
 			referenced[ref] = true
 		}
 	}
 	if len(referenced) != len(required) {
-		return nil, errors.New("[D124 Linux runtime] runtime files 未 exact 使用 LinkIntent credentials")
+		return nil, errors.New("[Linux runtime] runtime files 未 exact 使用 LinkIntent credentials")
 	}
 	secrets := make(map[string]string, len(required))
 	for _, credential := range credentials {
@@ -392,26 +392,26 @@ func hydrateLinuxRuntimeFiles(plan *LinuxLinkRuntimePlanV1, artifact *wire.Linux
 		}
 		if credential.Purpose != "data_plane_credential" && credential.Purpose != "tls_private_key" &&
 			credential.Purpose != "control_peer_identity" {
-			return nil, errors.New("[D124 Linux runtime] LinkIntent 引用了错误 purpose credential")
+			return nil, errors.New("[Linux runtime] LinkIntent 引用了错误 purpose credential")
 		}
 		decoded, err := base64.RawURLEncoding.DecodeString(credential.SecretBytes)
 		value := string(decoded)
 		if err != nil || len(decoded) == 0 || !utf8.Valid(decoded) || strings.TrimSpace(value) != value ||
 			strings.ContainsAny(value, "\x00\r\n") || base64.RawURLEncoding.EncodeToString(decoded) != credential.SecretBytes {
 			clear(decoded)
-			return nil, errors.New("[D124 Linux runtime] credential 不是规范单行 UTF-8")
+			return nil, errors.New("[Linux runtime] credential 不是规范单行 UTF-8")
 		}
 		secrets[credential.SecretID] = value
 		clear(decoded)
 	}
 	if len(secrets) != len(required) {
-		return nil, errors.New("[D124 Linux runtime] installed credentials 未覆盖 runtime refs")
+		return nil, errors.New("[Linux runtime] installed credentials 未覆盖 runtime refs")
 	}
 	hydrated := make(map[string]string, len(artifact.Files))
 	for _, file := range artifact.Files {
 		content, missing := secret.Hydrate(file.Content, secrets)
 		if len(missing) != 0 || secret.HasPlaceholder(content) {
-			return nil, errors.New("[D124 Linux runtime] runtime file hydrate 后仍缺 secret")
+			return nil, errors.New("[Linux runtime] runtime file hydrate 后仍缺 secret")
 		}
 		switch file.Path {
 		case "sing-box/v2/config.json", "agent/v2/config.json":
@@ -419,7 +419,7 @@ func hydrateLinuxRuntimeFiles(plan *LinuxLinkRuntimePlanV1, artifact *wire.Linux
 			var object map[string]json.RawMessage
 			if err != nil || !bytes.Equal(canonical, []byte(content)) ||
 				json.Unmarshal([]byte(content), &object) != nil || object == nil {
-				return nil, errors.New("[D131 Linux runtime] hydrated runtime config 不是 strict JSON object")
+				return nil, errors.New("[Linux runtime] hydrated runtime config 不是 strict JSON object")
 			}
 		default:
 			if err := validateLinuxWireGuardConfig(content); err != nil {
@@ -456,21 +456,21 @@ func validateLinuxRuntimeConfigSemantics(plan *LinuxLinkRuntimePlanV1, artifact 
 	var singbox linuxRuntimeSingBoxConfig
 	if body, found := files["sing-box/v2/config.json"]; found {
 		if err := json.Unmarshal([]byte(body), &singbox); err != nil {
-			return errors.New("[D131 Linux runtime] sing-box config 无效")
+			return errors.New("[Linux runtime] sing-box config 无效")
 		}
 	}
 	inbounds, outbounds := make(map[string]linuxRuntimeSingBoxEntry), make(map[string]linuxRuntimeSingBoxEntry)
 	inboundTypes := make(map[string]bool)
 	for _, entry := range singbox.Inbounds {
 		if entry.Tag == "" || inbounds[entry.Tag].Tag != "" {
-			return errors.New("[D131 Linux runtime] sing-box inbound tag 空或重复")
+			return errors.New("[Linux runtime] sing-box inbound tag 空或重复")
 		}
 		inbounds[entry.Tag] = entry
 		inboundTypes[entry.Type] = true
 	}
 	for _, entry := range singbox.Outbounds {
 		if entry.Tag == "" || outbounds[entry.Tag].Tag != "" {
-			return errors.New("[D131 Linux runtime] sing-box outbound tag 空或重复")
+			return errors.New("[Linux runtime] sing-box outbound tag 空或重复")
 		}
 		outbounds[entry.Tag] = entry
 	}
@@ -479,7 +479,7 @@ func validateLinuxRuntimeConfigSemantics(plan *LinuxLinkRuntimePlanV1, artifact 
 			if binding.Mode == "dial" {
 				candidate, found := linuxRuntimeCandidate(plan, binding)
 				if !found || !wireGuardConfigMatchesEndpoint(files[binding.ConfigPath], candidate) {
-					return errors.New("[D120 Linux runtime] WireGuard config 未绑定 dial endpoint generation")
+					return errors.New("[Linux runtime] WireGuard config 未绑定 dial endpoint generation")
 				}
 			}
 			continue
@@ -489,26 +489,26 @@ func validateLinuxRuntimeConfigSemantics(plan *LinuxLinkRuntimePlanV1, artifact 
 			entry, found = outbounds[binding.RuntimeTag]
 		}
 		if !found || entry.Type != strings.ReplaceAll(binding.Transport, "_tls", "") {
-			return errors.New("[D131 Linux runtime] sing-box entry 未绑定 action transport/tag")
+			return errors.New("[Linux runtime] sing-box entry 未绑定 action transport/tag")
 		}
 		if binding.Mode == "dial" {
 			candidate, found := linuxRuntimeCandidate(plan, binding)
 			if !found || entry.Server != candidate.DialTargetFQDN || entry.ServerPort != candidate.PublicPort ||
 				entry.TLS == nil || !entry.TLS.Enabled || entry.TLS.ServerName != candidate.DialTargetFQDN {
-				return errors.New("[D120 Linux runtime] sing-box outbound 未绑定 certified FQDN/port/TLS generation")
+				return errors.New("[Linux runtime] sing-box outbound 未绑定 certified FQDN/port/TLS generation")
 			}
 		}
 	}
 	if plan.EnableTUN && !inboundTypes["tun"] {
-		return errors.New("[D131 Linux runtime] use_loom TUN plan 缺 tun inbound")
+		return errors.New("[Linux runtime] use_loom TUN plan 缺 tun inbound")
 	}
 	if plan.EnableMixed && !inboundTypes["mixed"] {
-		return errors.New("[D131 Linux runtime] use_loom mixed plan 缺 mixed inbound")
+		return errors.New("[Linux runtime] use_loom mixed plan 缺 mixed inbound")
 	}
 	if body, found := files["agent/v2/config.json"]; found {
 		config, err := agent.Load([]byte(body))
 		if err != nil || config.Node != plan.DeviceID {
-			return errors.New("[D131 Linux runtime] Linux Agent config 未绑定本 Device")
+			return errors.New("[Linux runtime] Linux Agent config 未绑定本 Device")
 		}
 	}
 	return nil
@@ -533,7 +533,7 @@ func linuxRuntimeCandidate(plan *LinuxLinkRuntimePlanV1,
 
 func validateLinuxWireGuardConfig(content string) error {
 	if len(content) == 0 || !strings.HasSuffix(content, "\n") {
-		return errors.New("[D131 Linux runtime] WireGuard config 必须是有界换行文本")
+		return errors.New("[Linux runtime] WireGuard config 必须是有界换行文本")
 	}
 	hasInterface, hasPrivateKey, hasPeer, peerHasPublicKey := false, false, false, false
 	section := ""
@@ -545,14 +545,14 @@ func validateLinuxWireGuardConfig(content string) error {
 		switch line {
 		case "[Interface]":
 			if hasInterface || hasPeer {
-				return errors.New("[D131 Linux runtime] WireGuard Interface section 重复或乱序")
+				return errors.New("[Linux runtime] WireGuard Interface section 重复或乱序")
 			}
 			hasInterface = true
 			section = "interface"
 			continue
 		case "[Peer]":
 			if !hasInterface || hasPeer && !peerHasPublicKey {
-				return errors.New("[D131 Linux runtime] WireGuard Peer 缺 PublicKey")
+				return errors.New("[Linux runtime] WireGuard Peer 缺 PublicKey")
 			}
 			hasPeer = true
 			peerHasPublicKey = false
@@ -561,25 +561,25 @@ func validateLinuxWireGuardConfig(content string) error {
 		}
 		key, _, found := strings.Cut(line, "=")
 		if !found || section == "" {
-			return errors.New("[D131 Linux runtime] WireGuard config 行无效")
+			return errors.New("[Linux runtime] WireGuard config 行无效")
 		}
 		switch key := strings.ToLower(strings.TrimSpace(key)); key {
 		case "preup", "postup", "predown", "postdown", "saveconfig":
-			return errors.New("[D131 Linux runtime] WireGuard config 禁止执行 hook/saveconfig")
+			return errors.New("[Linux runtime] WireGuard config 禁止执行 hook/saveconfig")
 		case "privatekey":
 			if section != "interface" || hasPrivateKey {
-				return errors.New("[D131 Linux runtime] WireGuard PrivateKey section/数量无效")
+				return errors.New("[Linux runtime] WireGuard PrivateKey section/数量无效")
 			}
 			hasPrivateKey = true
 		case "publickey":
 			if section != "peer" || peerHasPublicKey {
-				return errors.New("[D131 Linux runtime] WireGuard PublicKey section/数量无效")
+				return errors.New("[Linux runtime] WireGuard PublicKey section/数量无效")
 			}
 			peerHasPublicKey = true
 		}
 	}
 	if !hasInterface || !hasPrivateKey || !hasPeer || !peerHasPublicKey {
-		return errors.New("[D131 Linux runtime] WireGuard config 缺 Interface/PrivateKey/Peer/PublicKey")
+		return errors.New("[Linux runtime] WireGuard config 缺 Interface/PrivateKey/Peer/PublicKey")
 	}
 	return nil
 }
@@ -601,7 +601,7 @@ func linuxRuntimeDeployPlan(deviceID string, hydrated map[string]string) (*deplo
 	for path, content := range hydrated {
 		absolute := render.InstallPath(path)
 		if absolute == "" || !linuxV2RuntimeTarget(path, absolute) {
-			return nil, nil, errors.New("[D131 Linux runtime] runtime config 目标路径越界")
+			return nil, nil, errors.New("[Linux runtime] runtime config 目标路径越界")
 		}
 		plan.Files[absolute] = content
 		switch path {
@@ -733,10 +733,10 @@ func readLinuxRuntimeInstallState(path string) (*LinuxRuntimeInstallStateV1, []b
 	}
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 ||
 		info.Size() < 1 || info.Size() > maximumLinuxRuntimeInstallStateBytes {
-		return nil, nil, errors.New("[D106 Linux runtime] install state 必须是 0600 有界普通文件")
+		return nil, nil, errors.New("[Linux runtime] install state 必须是 0600 有界普通文件")
 	}
 	if stat, ok := info.Sys().(*syscall.Stat_t); !ok || int(stat.Uid) != os.Geteuid() {
-		return nil, nil, errors.New("[D106 Linux runtime] install state owner 无效")
+		return nil, nil, errors.New("[Linux runtime] install state owner 无效")
 	}
 	body, err := os.ReadFile(path)
 	if err != nil {
@@ -745,7 +745,7 @@ func readLinuxRuntimeInstallState(path string) (*LinuxRuntimeInstallStateV1, []b
 	var state LinuxRuntimeInstallStateV1
 	canonical, err := wire.DecodeStrict(body, maximumLinuxRuntimeInstallStateBytes, &state)
 	if err != nil || !bytes.Equal(canonical, body) || validateLinuxRuntimeInstallState(&state) != nil {
-		return nil, nil, errors.New("[D106 Linux runtime] install state 不是 exact canonical LKG")
+		return nil, nil, errors.New("[Linux runtime] install state 不是 exact canonical LKG")
 	}
 	return &state, body, nil
 }
@@ -754,10 +754,10 @@ func validateLinuxRuntimeInstallState(state *LinuxRuntimeInstallStateV1) error {
 	if state == nil || state.Schema != 1 || state.ClusterID == "" || state.DeviceID == "" ||
 		!state.AuthorityFloors.V2Latched || state.AuthorityFloors.ClusterID != state.ClusterID ||
 		state.InstalledFiles == nil {
-		return errors.New("[D106 Linux runtime] install state header/floors 无效")
+		return errors.New("[Linux runtime] install state header/floors 无效")
 	}
 	if _, err := wire.AdvanceFloors(wire.ClientFloorsV2{}, state.AuthorityFloors); err != nil {
-		return errors.New("[D106 Linux runtime] install state floors wire 无效")
+		return errors.New("[Linux runtime] install state floors wire 无效")
 	}
 	for _, hash := range []string{state.RuntimePlanHash, state.RuntimeArtifactHash, state.LinkIntentContentHash} {
 		if _, err := wire.ParseHash(hash); err != nil {
@@ -766,7 +766,7 @@ func validateLinuxRuntimeInstallState(state *LinuxRuntimeInstallStateV1) error {
 	}
 	for index, path := range state.InstalledFiles {
 		if !validLinuxV2InstalledPath(path) || index > 0 && state.InstalledFiles[index-1] >= path {
-			return errors.New("[D106 Linux runtime] installed file inventory 越界/未排序")
+			return errors.New("[Linux runtime] installed file inventory 越界/未排序")
 		}
 	}
 	return nil

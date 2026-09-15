@@ -40,26 +40,26 @@ func newServerPresenceReceiver(tbl *table, cfg *Config, now func() time.Time) *s
 }
 
 // ServeHTTP 是 overlay 内的心跳转发边界。它只接收最小签名心跳数组，绝不
-// 接收 Status、Observation 或可由转发方改写的在线布尔值（§16.4）。
+// 接收 Status、Observation 或可由转发方改写的在线布尔值。
 func (h *serverPresenceReceiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
-		http.Error(w, "[§16.4 在线心跳] 只接受 POST", http.StatusMethodNotAllowed)
+		http.Error(w, "[在线心跳] 只接受 POST", http.StatusMethodNotAllowed)
 		return
 	}
 	if r.URL.RawQuery != "" {
-		http.Error(w, "[§16.4 在线心跳] 不接受查询参数", http.StatusBadRequest)
+		http.Error(w, "[在线心跳] 不接受查询参数", http.StatusBadRequest)
 		return
 	}
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
-		http.Error(w, "[§16.4 在线心跳] 必须使用 application/json", http.StatusUnsupportedMediaType)
+		http.Error(w, "[在线心跳] 必须使用 application/json", http.StatusUnsupportedMediaType)
 		return
 	}
 	if r.ContentLength > serverPresenceMaxBody {
-		http.Error(w, "[§16.4 在线心跳] 转发批次超过大小限制", http.StatusRequestEntityTooLarge)
+		http.Error(w, "[在线心跳] 转发批次超过大小限制", http.StatusRequestEntityTooLarge)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, serverPresenceMaxBody)
@@ -75,7 +75,7 @@ func (h *serverPresenceReceiver) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if len(batch.Heartbeats) == 0 || len(batch.Heartbeats) > nodepresence.MaxBatchEntries {
-		http.Error(w, "[§16.4 在线心跳] 转发条目数量无效", http.StatusBadRequest)
+		http.Error(w, "[在线心跳] 转发条目数量无效", http.StatusBadRequest)
 		return
 	}
 
@@ -87,17 +87,17 @@ func (h *serverPresenceReceiver) ServeHTTP(w http.ResponseWriter, r *http.Reques
 			continue
 		}
 		if seen[heartbeat.Node] || !h.expected[heartbeat.Node] {
-			http.Error(w, "[§16.4 在线心跳] 转发身份未获授权", http.StatusForbidden)
+			http.Error(w, "[在线心跳] 转发身份未获授权", http.StatusForbidden)
 			return
 		}
 		seen[heartbeat.Node] = true
 		publicKey, err := h.table.presencePublicKey(heartbeat.Node)
 		if err != nil {
-			http.Error(w, "[§16.4 在线心跳] 转发身份未获授权", http.StatusForbidden)
+			http.Error(w, "[在线心跳] 转发身份未获授权", http.StatusForbidden)
 			return
 		}
 		if _, err := nodepresence.Verify(heartbeat, publicKey, at, nodepresence.MaximumTransit); err != nil {
-			http.Error(w, "[§16.4 在线心跳] 转发身份未获授权", http.StatusForbidden)
+			http.Error(w, "[在线心跳] 转发身份未获授权", http.StatusForbidden)
 			return
 		}
 		validated = append(validated, heartbeat)
@@ -111,10 +111,10 @@ func (h *serverPresenceReceiver) ServeHTTP(w http.ResponseWriter, r *http.Reques
 func writePresenceDecodeError(w http.ResponseWriter, err error) {
 	var tooLarge *http.MaxBytesError
 	if errors.As(err, &tooLarge) {
-		http.Error(w, "[§16.4 在线心跳] 转发批次超过大小限制", http.StatusRequestEntityTooLarge)
+		http.Error(w, "[在线心跳] 转发批次超过大小限制", http.StatusRequestEntityTooLarge)
 		return
 	}
-	http.Error(w, "[§16.4 在线心跳] 转发格式错误", http.StatusBadRequest)
+	http.Error(w, "[在线心跳] 转发格式错误", http.StatusBadRequest)
 }
 
 func (t *table) presencePublicKey(node string) (*ecdsa.PublicKey, error) {
@@ -126,7 +126,7 @@ func (t *table) presencePublicKey(node string) (*ecdsa.PublicKey, error) {
 	}
 	t.mu.Unlock()
 	if observation == nil || !observationNeedsVerification(observation, 0) {
-		return nil, errors.New("[§16.4 在线心跳] 尚无已验签节点身份")
+		return nil, errors.New("[在线心跳] 尚无已验签节点身份")
 	}
 	encoded, err := clientReportPublicKey(observation)
 	if err != nil {
@@ -146,7 +146,7 @@ func attachPresenceView(tbl *table, view *webui.View) {
 }
 
 // runServerPresence 每五秒只签一次三字段心跳，并把当前仍可转发的签名包沿
-// 既有邻居图传播。完整 gossip/Observation 仍由 GossipPeriod 独立运行（§16.4）。
+// 既有邻居图传播。完整 gossip/Observation 仍由 GossipPeriod 独立运行。
 func runServerPresence(ctx context.Context, cfg *Config, tbl *table, now func() time.Time, logw io.Writer) {
 	ticker := time.NewTicker(nodepresence.Period)
 	defer ticker.Stop()

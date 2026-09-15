@@ -15,7 +15,7 @@ import (
 
 // WindowsUnderlayGeneration 对探测发生前的 Windows 有效网卡、NetworkGuid、
 // unicast 与 gateway 坐标取进程内 opaque digest。digest 不写日志或协议，只用于
-// 判定何时允许下一轮“一入口一个 ICMP”探测（§5.6）。
+// 判定何时允许下一轮“一入口一个 ICMP”探测。
 func WindowsUnderlayGeneration() (string, error) {
 	const flags = windows.GAA_FLAG_INCLUDE_GATEWAYS |
 		windows.GAA_FLAG_SKIP_ANYCAST |
@@ -24,12 +24,12 @@ func WindowsUnderlayGeneration() (string, error) {
 	var size uint32
 	err := windows.GetAdaptersAddresses(windows.AF_UNSPEC, flags, 0, nil, &size)
 	if !errors.Is(err, windows.ERROR_BUFFER_OVERFLOW) || size == 0 {
-		return "", errors.New("[§5.6] 无法读取 Windows underlay generation")
+		return "", errors.New("无法读取 Windows underlay generation")
 	}
 	buffer := make([]byte, size)
 	first := (*windows.IpAdapterAddresses)(unsafe.Pointer(&buffer[0]))
 	if err := windows.GetAdaptersAddresses(windows.AF_UNSPEC, flags, 0, first, &size); err != nil {
-		return "", errors.New("[§5.6] 无法读取 Windows underlay adapters")
+		return "", errors.New("无法读取 Windows underlay adapters")
 	}
 	var rows [][]byte
 	for adapter := first; adapter != nil; adapter = adapter.Next {
@@ -66,7 +66,7 @@ func WindowsUnderlayGeneration() (string, error) {
 		rows = append(rows, row)
 	}
 	if len(rows) == 0 {
-		return "", errors.New("[§5.6] Windows 没有可用的 gateway underlay")
+		return "", errors.New("Windows 没有可用的 gateway underlay")
 	}
 	sort.Slice(rows, func(left, right int) bool { return string(rows[left]) < string(rows[right]) })
 	digest := sha256.New()

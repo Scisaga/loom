@@ -21,7 +21,7 @@ const (
 
 // LinuxRuntimeBindingV1 把一个已认证 LinkIntent action 绑定到 renderer
 // 中的 exact runtime entry。dial binding 逐项覆盖 EndpointSet 当前可拨代；
-// listen binding 的 EndpointID 则是 listener resource ref（D120、D131）。
+// listen binding 的 EndpointID 则是 listener resource ref。
 type LinuxRuntimeBindingV1 struct {
 	LinkID             string `json:"link_id"`
 	LinkGeneration     int64  `json:"link_generation"`
@@ -58,7 +58,7 @@ func ValidateLinuxRuntimeArtifact(artifact *LinuxRuntimeArtifactV1) error {
 		!validIdentifier(artifact.ClusterID, 128) || !validIdentifier(artifact.DeviceID, 128) ||
 		artifact.Bindings == nil || artifact.Files == nil ||
 		len(artifact.Bindings) > maximumLinuxRuntimeBindings || len(artifact.Files) > maximumLinuxRuntimeFiles {
-		return errors.New("[D131 Linux runtime] runtime artifact header/count 无效")
+		return errors.New("[Linux runtime] runtime artifact header/count 无效")
 	}
 	if _, err := ParseHash(artifact.LinkIntentContentHash); err != nil {
 		return err
@@ -70,11 +70,11 @@ func ValidateLinuxRuntimeArtifact(artifact *LinuxRuntimeArtifactV1) error {
 			len(file.Content) > maximumLinuxRuntimeFileBytes || !utf8.ValidString(file.Content) ||
 			strings.IndexByte(file.Content, 0) >= 0 ||
 			(index > 0 && artifact.Files[index-1].Path >= file.Path) {
-			return errors.New("[D131 Linux runtime] runtime files 路径/内容/顺序无效")
+			return errors.New("[Linux runtime] runtime files 路径/内容/顺序无效")
 		}
 		total += len(file.Content)
 		if total > maximumLinuxRuntimeTotalBytes {
-			return errors.New("[D131 Linux runtime] runtime files 超过总预算")
+			return errors.New("[Linux runtime] runtime files 超过总预算")
 		}
 	}
 	for index := range artifact.Bindings {
@@ -87,7 +87,7 @@ func ValidateLinuxRuntimeArtifact(artifact *LinuxRuntimeArtifactV1) error {
 			(binding.Mode == "listen" && binding.ListenerGeneration != 0) ||
 			!validLinuxRuntimeBindingTarget(binding) ||
 			(index > 0 && linuxRuntimeBindingKey(artifact.Bindings[index-1]) >= linuxRuntimeBindingKey(*binding)) {
-			return errors.New("[D131 Linux runtime] runtime bindings 字段/顺序无效")
+			return errors.New("[Linux runtime] runtime bindings 字段/顺序无效")
 		}
 	}
 	return nil
@@ -115,7 +115,7 @@ func ValidateLinuxRuntimeRedaction(runtime *LinuxRuntimeArtifactV1,
 	for _, file := range runtime.Files {
 		for _, ref := range secret.Refs(file.Content) {
 			if !allowed[ref] {
-				return errors.New("[D124 Linux runtime] public runtime 引用未获 LinkIntent 授权的 secret")
+				return errors.New("[Linux runtime] public runtime 引用未获 LinkIntent 授权的 secret")
 			}
 			referenced[ref] = true
 		}
@@ -124,7 +124,7 @@ func ValidateLinuxRuntimeRedaction(runtime *LinuxRuntimeArtifactV1,
 		}
 	}
 	if len(referenced) != len(allowed) {
-		return errors.New("[D124 Linux runtime] public runtime 未 exact 引用 LinkIntent credentials")
+		return errors.New("[Linux runtime] public runtime 未 exact 引用 LinkIntent credentials")
 	}
 	return nil
 }
@@ -135,7 +135,7 @@ func validateLinuxRuntimeRedactedFile(file LinuxRuntimeFileV1) error {
 		var object map[string]any
 		if err != nil || !bytes.Equal(canonical, []byte(file.Content)) ||
 			json.Unmarshal([]byte(file.Content), &object) != nil || object == nil {
-			return errors.New("[D124 Linux runtime] public runtime config 不是 exact JSON object")
+			return errors.New("[Linux runtime] public runtime config 不是 exact JSON object")
 		}
 		return validateLinuxRuntimeJSONSecrets(object)
 	}
@@ -146,10 +146,10 @@ func validateLinuxRuntimeRedactedFile(file LinuxRuntimeFileV1) error {
 		}
 		key, value = strings.ToLower(strings.TrimSpace(key)), strings.TrimSpace(value)
 		if (key == "privatekey" || key == "presharedkey") && !exactLinuxRuntimeSecretRef(value) {
-			return errors.New("[D124 Linux runtime] WireGuard private material 必须是 secret ref")
+			return errors.New("[Linux runtime] WireGuard private material 必须是 secret ref")
 		}
 		if strings.Contains(value, "${secret:") && !exactLinuxRuntimeSecretRef(value) {
-			return errors.New("[D124 Linux runtime] WireGuard secret ref 必须占满字段")
+			return errors.New("[Linux runtime] WireGuard secret ref 必须占满字段")
 		}
 	}
 	return nil
@@ -162,7 +162,7 @@ func validateLinuxRuntimeJSONSecrets(value any) error {
 			if linuxRuntimeSensitiveJSONKey(key) {
 				text, ok := child.(string)
 				if !ok || !exactLinuxRuntimeSecretRef(text) {
-					return errors.New("[D124 Linux runtime] public runtime 敏感字段必须是 secret ref")
+					return errors.New("[Linux runtime] public runtime 敏感字段必须是 secret ref")
 				}
 			}
 			if err := validateLinuxRuntimeJSONSecrets(child); err != nil {
@@ -177,7 +177,7 @@ func validateLinuxRuntimeJSONSecrets(value any) error {
 		}
 	case string:
 		if strings.Contains(current, "${secret:") && !exactLinuxRuntimeSecretRef(current) {
-			return errors.New("[D124 Linux runtime] JSON secret ref 必须占满字段")
+			return errors.New("[Linux runtime] JSON secret ref 必须占满字段")
 		}
 	}
 	return nil

@@ -10,7 +10,7 @@ import (
 )
 
 // JointRaftLeader 只在 committed Joint(old,new) 尚未被 Final 取代的任期内有效。
-// election、no-op barrier 与 Final commit 都必须分别满足 old/new 多数（D112）。
+// election、no-op barrier 与 Final commit 都必须分别满足 old/new 多数。
 type JointRaftLeader struct {
 	storage *RaftStorage
 	oldSet  wire.ControlSetV1
@@ -26,7 +26,7 @@ func (leader *StableRaftLeader) ReplicateJointControlSet(ctx context.Context, le
 	newSet wire.ControlSetV1, unionPeers map[string]RaftPeer,
 	body wire.JointControlSetEntryBodyV1) (*JointRaftLeader, StableRaftCommitResult, error) {
 	if leader == nil || leader.storage == nil || ledger == nil {
-		return nil, StableRaftCommitResult{}, errors.New("[D112 joint Raft] stable leader/ledger 未初始化")
+		return nil, StableRaftCommitResult{}, errors.New("[joint Raft] stable leader/ledger 未初始化")
 	}
 	peers, err := validateJointRaftPeers(leader.storage, leader.set, newSet, unionPeers, false)
 	if err != nil {
@@ -37,11 +37,11 @@ func (leader *StableRaftLeader) ReplicateJointControlSet(ctx context.Context, le
 	if state.CurrentTerm != leader.term || state.VotedFor != state.MemberID ||
 		state.LastApplied != state.CommitIndex || ledgerState.Phase != MembershipLedgerLearners &&
 		!(ledgerState.Phase == MembershipLedgerCandidate && len(ledgerState.Candidate.Learners) == 0) {
-		return nil, StableRaftCommitResult{}, errors.New("[D112 joint Raft] stable leader/ledger 尚未到 Joint append 边界")
+		return nil, StableRaftCommitResult{}, errors.New("[joint Raft] stable leader/ledger 尚未到 Joint append 边界")
 	}
 	for _, learner := range ledgerState.Candidate.Learners {
 		if !learner.CaughtUp {
-			return nil, StableRaftCommitResult{}, fmt.Errorf("[D112 learner] %s 尚未 catch-up", learner.MemberID)
+			return nil, StableRaftCommitResult{}, fmt.Errorf("[learner] %s 尚未 catch-up", learner.MemberID)
 		}
 	}
 	oldHash, _ := wire.ControlSetHash(&leader.set)
@@ -49,7 +49,7 @@ func (leader *StableRaftLeader) ReplicateJointControlSet(ctx context.Context, le
 	newHash, _ := wire.ControlSetHash(&newSet)
 	ledgerNewHash, _ := wire.ControlSetHash(&ledgerState.Candidate.NewControlSet)
 	if oldHash != ledgerOldHash || newHash != ledgerNewHash {
-		return nil, StableRaftCommitResult{}, errors.New("[D112 joint Raft] leader/ledger old/new ControlSet 不一致")
+		return nil, StableRaftCommitResult{}, errors.New("[joint Raft] leader/ledger old/new ControlSet 不一致")
 	}
 	if err := leader.storage.AppendLocalJointControlSet(body, &leader.set, &newSet,
 		&ledgerState.Candidate.MembershipApprovalProof, &ledgerState.Candidate.ParentCurrent.Head); err != nil {
@@ -60,7 +60,7 @@ func (leader *StableRaftLeader) ReplicateJointControlSet(ctx context.Context, le
 	if result.CommitIndex >= body.RaftIndex {
 		_, applyErr := ApplyCommittedMembershipPrefix(ctx, leader.storage, ledger,
 			func(context.Context, wire.HeadEntryV2) (string, string, error) {
-				return "", "", errors.New("[D112 joint apply] Joint 阶段不应 materialize Final")
+				return "", "", errors.New("[joint apply] Joint 阶段不应 materialize Final")
 			})
 		if applyErr != nil {
 			return nil, result, applyErr
@@ -84,7 +84,7 @@ func CampaignJointRaft(ctx context.Context, storage *RaftStorage, oldSet, newSet
 	}
 	state := storage.SnapshotRaft()
 	if state.CurrentTerm == int64(^uint64(0)>>1) {
-		return nil, errors.New("[D112 joint Raft] term 溢出")
+		return nil, errors.New("[joint Raft] term 溢出")
 	}
 	lastIndex, lastTerm := lastLogCoordinates(state.Log)
 	preVote := VoteRequestV1{Term: state.CurrentTerm + 1, CandidateID: state.MemberID,
@@ -95,10 +95,10 @@ func CampaignJointRaft(ctx context.Context, storage *RaftStorage, oldSet, newSet
 		if observeErr != nil {
 			return nil, observeErr
 		}
-		return nil, errors.New("[D112 joint Raft] pre-vote 观察到更高任期")
+		return nil, errors.New("[joint Raft] pre-vote 观察到更高任期")
 	}
 	if err := wire.JointQuorum(&oldSet, &newSet, granted); err != nil {
-		return nil, errors.New("[D112 joint Raft] pre-vote 未同时达到 old/new 多数")
+		return nil, errors.New("[joint Raft] pre-vote 未同时达到 old/new 多数")
 	}
 	vote, err := storage.StartElection()
 	if err != nil {
@@ -110,10 +110,10 @@ func CampaignJointRaft(ctx context.Context, storage *RaftStorage, oldSet, newSet
 		if observeErr != nil {
 			return nil, observeErr
 		}
-		return nil, errors.New("[D112 joint Raft] election 观察到更高任期")
+		return nil, errors.New("[joint Raft] election 观察到更高任期")
 	}
 	if err := wire.JointQuorum(&oldSet, &newSet, granted); err != nil {
-		return nil, errors.New("[D112 joint Raft] election 未同时达到 old/new 多数")
+		return nil, errors.New("[joint Raft] election 未同时达到 old/new 多数")
 	}
 	leader := &JointRaftLeader{storage: storage, oldSet: oldSet, newSet: newSet,
 		peers: peers, term: vote.Term}
@@ -122,7 +122,7 @@ func CampaignJointRaft(ctx context.Context, storage *RaftStorage, oldSet, newSet
 		return nil, err
 	}
 	if _, err := leader.replicateThrough(ctx, barrier.Index, barrier.EntryHash); err != nil {
-		return nil, fmt.Errorf("[D112 joint Raft] current-term barrier 未提交: %w", err)
+		return nil, fmt.Errorf("[joint Raft] current-term barrier 未提交: %w", err)
 	}
 	return leader, nil
 }
@@ -132,14 +132,14 @@ func CampaignJointRaft(ctx context.Context, storage *RaftStorage, oldSet, newSet
 func (leader *JointRaftLeader) ReplicateFinalControlSet(ctx context.Context, ledger *MembershipLedger,
 	head wire.HeadEntryV2, materialize MembershipFinalMaterializer) (StableRaftCommitResult, error) {
 	if leader == nil || leader.storage == nil || ledger == nil || materialize == nil || leader.closed {
-		return StableRaftCommitResult{}, errors.New("[D112 joint Raft] joint leader/ledger/materializer 无效")
+		return StableRaftCommitResult{}, errors.New("[joint Raft] joint leader/ledger/materializer 无效")
 	}
 	state := leader.storage.SnapshotRaft()
 	ledgerState := ledger.Snapshot()
 	if state.CurrentTerm != leader.term || state.VotedFor != state.MemberID ||
 		state.LastApplied != state.CommitIndex || ledgerState.Phase != MembershipLedgerJointFinalizationOnly ||
 		ledgerState.Joint == nil || ledgerState.Joint.Proof == nil {
-		return StableRaftCommitResult{}, errors.New("[D112 joint Raft] 尚未到 certified Joint→Final 边界")
+		return StableRaftCommitResult{}, errors.New("[joint Raft] 尚未到 certified Joint→Final 边界")
 	}
 	snapshotHash, effectiveSSOTHash, err := materialize(ctx, head)
 	if err != nil {
@@ -169,7 +169,7 @@ func (leader *JointRaftLeader) ReplicateFinalControlSet(ctx context.Context, led
 func (leader *JointRaftLeader) replicateThrough(ctx context.Context, index int64,
 	entryHash string) (StableRaftCommitResult, error) {
 	if leader == nil || leader.closed {
-		return StableRaftCommitResult{}, errors.New("[D112 joint Raft] joint leader 已失效")
+		return StableRaftCommitResult{}, errors.New("[joint Raft] joint leader 已失效")
 	}
 	return replicateThroughJoint(ctx, leader.storage, leader.term, leader.oldSet, leader.newSet,
 		leader.peers, index, entryHash)
@@ -181,7 +181,7 @@ func replicateThroughJoint(ctx context.Context, storage *RaftStorage, term int64
 	state := storage.SnapshotRaft()
 	if state.CurrentTerm != term || state.VotedFor != state.MemberID || index < 1 ||
 		index > int64(len(state.Log)) || state.Log[index-1].EntryHash != entryHash {
-		return StableRaftCommitResult{}, errors.New("[D112 joint Raft] replication target/leader term 无效")
+		return StableRaftCommitResult{}, errors.New("[joint Raft] replication target/leader term 无效")
 	}
 	request := AppendEntriesRequestV1{Term: term, LeaderID: state.MemberID,
 		PrevLogHash: wire.EmptyHashV1, Entries: cloneRaftState(state).Log, LeaderCommit: state.CommitIndex}
@@ -191,7 +191,7 @@ func replicateThroughJoint(ctx context.Context, storage *RaftStorage, term int64
 		if err != nil {
 			return StableRaftCommitResult{}, err
 		}
-		return StableRaftCommitResult{}, errors.New("[D112 joint Raft] replication 观察到更高任期")
+		return StableRaftCommitResult{}, errors.New("[joint Raft] replication 观察到更高任期")
 	}
 	commitIndex, err := storage.AdvanceJointLeaderCommit(matches, oldSet, newSet)
 	if err != nil {
@@ -200,7 +200,7 @@ func replicateThroughJoint(ctx context.Context, storage *RaftStorage, term int64
 	result := StableRaftCommitResult{Term: term, Index: index, EntryHash: entryHash,
 		CommitIndex: commitIndex}
 	if commitIndex < index {
-		return result, errors.New("[D112 joint Raft] durable replication 未同时达到 old/new 多数")
+		return result, errors.New("[joint Raft] durable replication 未同时达到 old/new 多数")
 	}
 	known, broadcastErr := broadcastJointCommit(ctx, storage, term, oldSet, newSet, peers)
 	result.CommitKnownMemberIDs = known
@@ -211,7 +211,7 @@ func broadcastJointCommit(ctx context.Context, storage *RaftStorage, term int64,
 	newSet wire.ControlSetV1, peers map[string]RaftPeer) ([]string, error) {
 	state := storage.SnapshotRaft()
 	if state.CurrentTerm != term || state.VotedFor != state.MemberID {
-		return nil, errors.New("[D112 joint Raft] leader 任期已失效")
+		return nil, errors.New("[joint Raft] leader 任期已失效")
 	}
 	previousIndex, previousTerm := lastLogCoordinates(state.Log)
 	previousHash := wire.EmptyHashV1
@@ -227,7 +227,7 @@ func broadcastJointCommit(ctx context.Context, storage *RaftStorage, term int64,
 		if err != nil {
 			return nil, err
 		}
-		return nil, errors.New("[D112 joint Raft] commit broadcast 观察到更高任期")
+		return nil, errors.New("[joint Raft] commit broadcast 观察到更高任期")
 	}
 	known := []string{state.MemberID}
 	for memberID, index := range matches {
@@ -242,7 +242,7 @@ func broadcastJointCommit(ctx context.Context, storage *RaftStorage, term int64,
 func validateJointRaftPeers(storage *RaftStorage, oldSet, newSet wire.ControlSetV1,
 	peers map[string]RaftPeer, requireActive bool) (map[string]RaftPeer, error) {
 	if storage == nil {
-		return nil, errors.New("[D112 joint Raft] storage 不能为空")
+		return nil, errors.New("[joint Raft] storage 不能为空")
 	}
 	if err := wire.ValidateControlSet(&oldSet); err != nil {
 		return nil, err
@@ -255,13 +255,13 @@ func validateJointRaftPeers(storage *RaftStorage, oldSet, newSet wire.ControlSet
 	state := storage.SnapshotRaft()
 	if oldSet.ClusterID != newSet.ClusterID || oldHash != storageHash || state.VotingDisabled ||
 		requireActive && storage.jointSet == nil || !requireActive && storage.jointSet != nil {
-		return nil, errors.New("[D112 joint Raft] storage old/new/joint phase 不一致")
+		return nil, errors.New("[joint Raft] storage old/new/joint phase 不一致")
 	}
 	if storage.jointSet != nil {
 		activeHash, _ := wire.ControlSetHash(storage.jointSet)
 		newHash, _ := wire.ControlSetHash(&newSet)
 		if activeHash != newHash {
-			return nil, errors.New("[D112 joint Raft] active new ControlSet 不匹配")
+			return nil, errors.New("[joint Raft] active new ControlSet 不匹配")
 		}
 	}
 	union := make(map[string]struct{}, len(oldSet.Members)+len(newSet.Members))
@@ -271,19 +271,19 @@ func validateJointRaftPeers(storage *RaftStorage, oldSet, newSet wire.ControlSet
 		}
 	}
 	if _, exists := union[state.MemberID]; !exists || len(peers) != len(union)-1 {
-		return nil, errors.New("[D112 joint Raft] peer map 未 exact-cover Joint union remotes")
+		return nil, errors.New("[joint Raft] peer map 未 exact-cover Joint union remotes")
 	}
 	result := make(map[string]RaftPeer, len(peers))
 	for memberID := range union {
 		if memberID == state.MemberID {
 			if _, exists := peers[memberID]; exists {
-				return nil, errors.New("[D112 joint Raft] peer map 不能包含本机")
+				return nil, errors.New("[joint Raft] peer map 不能包含本机")
 			}
 			continue
 		}
 		peer, exists := peers[memberID]
 		if !exists || peer == nil {
-			return nil, errors.New("[D112 joint Raft] peer map 缺 Joint union remote")
+			return nil, errors.New("[joint Raft] peer map 缺 Joint union remote")
 		}
 		result[memberID] = peer
 	}

@@ -1,7 +1,7 @@
-// Command loom 是 L0 的命令行入口:校验、渲染、diff。
+// Command loom 提供配置校验、渲染、发布和节点运行的命令行入口。
 //
-// 这一层不含任何自动部署(§20.1)—— 生成完文件,人工 scp 过去。
-// 节点自取见 §14.2.2;整份回滚见 rollback(§12.1)。
+// 这一层不含任何自动部署—— 生成完文件,人工 scp 过去。
+// 节点自取见 pull;整份回滚见 rollback。
 package main
 
 import (
@@ -175,7 +175,7 @@ func main() {
 	}
 }
 
-// loadAndValidate 是 §15.1 流程的前两步。渲染永远不跳过校验 —— 校验器
+// loadAndValidate 在渲染前加载并校验输入。渲染永远不跳过校验 —— 校验器
 // 拦住的正是那些"不报错、只是连不上"的配置。
 func loadAndValidate(path string) (*model.SSOT, error) {
 	s, err := model.LoadFile(path)
@@ -412,7 +412,7 @@ func cmdSnapshot(args []string) error {
 		fmt.Fprintf(os.Stderr, "! 跳过 %s:%s\n", sk.Where, sk.Reason)
 	}
 
-	// 时间与作者从这里注入。渲染和打包都不读时钟 —— 否则 §12 的纯函数
+	// 时间与作者从这里注入。渲染和打包都不读时钟 —— 否则纯函数
 	// 性质就没了,dry-run diff 与漂移检测都会失真。
 	m := snapshot.Build(s, res, ssotBytes, snapshot.Meta{
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
@@ -447,7 +447,7 @@ func cmdSnapshot(args []string) error {
 	} else {
 		_ = os.Remove(filepath.Join(*out, sigFile))
 		fmt.Fprintln(os.Stderr,
-			"! 未提供 -key,快照没有签名 —— 节点无法验证它的真实性(§14.3)")
+			"! 未提供 -key,快照没有签名 —— 节点无法验证它的真实性")
 	}
 
 	fmt.Printf("快照 %s(%s)\n", m.ID, signed)
@@ -480,7 +480,7 @@ func cmdVerify(args []string) error {
 
 	var problems []string
 
-	// 一 · 签名。传输通道可以不可信,内容必须可验证(§14.3)。
+	// 一 · 签名。传输通道可以不可信,内容必须可验证。
 	switch sig, sigErr := os.ReadFile(filepath.Join(dir, sigFile)); {
 	case *pubPath == "":
 		fmt.Fprintln(os.Stderr, "! 未提供 -pubkey,跳过签名校验")
@@ -500,7 +500,7 @@ func cmdVerify(args []string) error {
 		}
 	}
 
-	// 二 · 内容。目录里的文件是否还是快照记录的样子 —— 这就是 §15.3 的
+	// 二 · 内容。目录里的文件是否还是快照记录的样子 —— 这就是
 	// 漂移检测在做的比对。
 	onDisk, err := readDir(dir)
 	if err != nil {

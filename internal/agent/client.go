@@ -8,7 +8,7 @@ import (
 	"loom/internal/clientroute"
 )
 
-// ClientEntry 是从已验证数据面按候选链提取的入口，不增加配置协议（§5.1）。
+// ClientEntry 是从已验证数据面按候选链提取的入口，不增加配置协议。
 type ClientEntry struct{ Node, Address, Source string }
 type ClientOptions struct {
 	StatePath              string
@@ -19,7 +19,7 @@ type ClientOptions struct {
 	EntryProbesUnavailable bool
 	Observations           *ObservationCache
 	HopCarriers            map[string][]string
-	// §7.3.3：仅供本地界面保留本轮入口结果，不进入报告协议。
+	// 仅供本地界面保留本轮入口结果，不进入报告协议。
 	OnEntries func([]ClientPathMeasurement)
 }
 
@@ -27,17 +27,17 @@ type ClientOptions struct {
 // 它不进入 Agent 的窗口样本，也不能冒充完整业务路径健康。
 type ClientEntryResult = clientroute.EntryResult
 
-// §5.5.1：保留 Windows 包内测试使用的旧名称；两个客户端宿主实际复用同一表示。
+// 保留 Windows 包内测试使用的旧名称；两个客户端宿主实际复用同一表示。
 type entryResult = ClientEntryResult
 
-// §16.1.2：兼容既有观测缓存测试；运行时决策统一委托给共享 clientroute。
+// 兼容既有观测缓存测试；运行时决策统一委托给共享 clientroute。
 type clientCost struct {
 	known, failed bool
 	ms            float64
 	failureRate   float64
 }
 
-// RunClient 只在启动时对去重入口各探一次；服务器更新只重算，不调用旧 Run（§5.6）。
+// RunClient 只在启动时对去重入口各探一次；服务器更新只重算，不调用旧 Run。
 func RunClient(ctx context.Context, cfg *Config, opts ClientOptions) (retErr error) {
 	defer func() {
 		if ctx.Err() != nil {
@@ -64,7 +64,7 @@ func RunClient(ctx context.Context, cfg *Config, opts ClientOptions) (retErr err
 	}
 	for _, e := range opts.Entries {
 		if !allowed[e.Node] || e.Address == "" {
-			return errors.New("[§5.1] 入口探测超出当前授权候选")
+			return errors.New("入口探测超出当前授权候选")
 		}
 	}
 	if !opts.EntryProbesUnavailable {
@@ -152,7 +152,7 @@ func selectClientRoute(ctx context.Context, cfg *Config, d Decl, k *clash, state
 			return err
 		}
 		if actual != selection.Candidate {
-			return errors.New("[§7.3.1] selector 未应用本次选择")
+			return errors.New("selector 未应用本次选择")
 		}
 	}
 	selection.Candidate = actual
@@ -174,7 +174,7 @@ func DecideClientRoute(d Decl, actual string, entries map[string]ClientEntryResu
 	if err != nil {
 		return Selection{}, err
 	}
-	// §16.1：分段估算不是实测健康/分位数。已有线格式保留 unknown，原因承载分工。
+	// 分段估算不是实测健康/分位数。已有线格式保留 unknown，原因承载分工。
 	h := &CandidateHealth{Candidates: len(d.Candidates), Unknown: len(d.Candidates), SelectedState: healthUnknown}
 	return Selection{Declaration: d.ID, Selector: d.Selector, Candidate: decision.Candidate, Chain: decision.Chain, Reason: decision.Reason, Health: h}, nil
 }

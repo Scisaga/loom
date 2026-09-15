@@ -2,7 +2,7 @@ package model
 
 import "testing"
 
-// TestResolveInitiator 覆盖 §2.2 真值表的全部九个有序组合。
+// TestResolveInitiator 覆盖真值表的全部九个有序组合。
 //
 // 这张表是隧道矩阵正确性的根:发起方分配错了,渲染出的两个文件会
 // 互相矛盾,而 WireGuard 不会报错 —— 它只是不通。

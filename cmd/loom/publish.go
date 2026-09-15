@@ -95,7 +95,7 @@ func cmdPublish(args []string) error {
 	// 的完整收敛路径：运行产物等价判定、整树自愈、节点视角验签、存档和
 	// 每事务 publish.lock 都完全一致。PinDir/ReleaseDir 也与 daemon
 	// 同源：已放行或已钉住的二进制仍进 manifest，手工发配置不能
-	// 偷偷把 §15.4 的版本绑定清空。
+	// 偷偷把版本绑定清空。
 	return publish.Run(context.Background(), publish.Options{
 		SSOTPath: rest[0], Key: ed25519.PrivateKey(privBytes), Target: tgt,
 		Author: *author, VerifyURLs: verifyURLs, DNS: *dns,

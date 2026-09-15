@@ -18,7 +18,7 @@ const (
 )
 
 // ExecutionPlanV1 只描述本机对 frozen intent 的资源落点。端口、WG interface、
-// route table 等一旦进入 plan 就不能在重试时重新探测/分配（D120、D127）。
+// route table 等一旦进入 plan 就不能在重试时重新探测/分配。
 type ExecutionPlanV1 struct {
 	Schema                 int               `json:"schema"`
 	ClusterID              string            `json:"cluster_id"`
@@ -62,7 +62,7 @@ type ReconcileEvidenceV1 struct {
 
 // AuthorizedRuntimePlanV1 是完整重放 certified rotation history 并核对 durable
 // frozen execution plan 后得到的不透明运行凭据。listener driver 只能消费这个值，
-// 不能把磁盘里的 phase 或 tuple JSON 直接当成当前 ownership（D120、D127）。
+// 不能把磁盘里的 phase 或 tuple JSON 直接当成当前 ownership。
 type AuthorizedRuntimePlanV1 struct {
 	intent     IntentV1
 	state      StateV1
@@ -75,13 +75,13 @@ type AuthorizedRuntimePlanV1 struct {
 func AuthorizeRuntimePlan(certified DurableStateV1, frozen FrozenExecutionPlanV1,
 	verify CertifiedAuthorityVerifier) (AuthorizedRuntimePlanV1, error) {
 	if verify == nil {
-		return AuthorizedRuntimePlanV1{}, errors.New("[D120 rotation] runtime authority verifier 缺失")
+		return AuthorizedRuntimePlanV1{}, errors.New("[rotation] runtime authority verifier 缺失")
 	}
 	if err := validateDurableState(&certified, verify); err != nil {
-		return AuthorizedRuntimePlanV1{}, errors.New("[D120 rotation] runtime 拒绝未经 certified replay 的 state")
+		return AuthorizedRuntimePlanV1{}, errors.New("[rotation] runtime 拒绝未经 certified replay 的 state")
 	}
 	if certified.Intent == nil || certified.Current == nil {
-		return AuthorizedRuntimePlanV1{}, errors.New("[D120 rotation] runtime 缺已分配 rotation")
+		return AuthorizedRuntimePlanV1{}, errors.New("[rotation] runtime 缺已分配 rotation")
 	}
 	plan, err := validateFrozenExecutionPlan(certified.Intent, frozen)
 	if err != nil {
@@ -112,7 +112,7 @@ func (authorized AuthorizedRuntimePlanV1) Projection() RuntimeProjectionV1 {
 }
 
 // GenerationTuples 只返回当前 phase 实际拥有的 source/target tuple。retired、
-// revoked、abandoned 或尚未 prepare 的代次不会意外重新获得 listener（D120）。
+// revoked、abandoned 或尚未 prepare 的代次不会意外重新获得 listener。
 func (authorized AuthorizedRuntimePlanV1) GenerationTuples(generation int64) (string, []Tuple, bool) {
 	if authorized.intent.Schema != 1 || authorized.state.Schema != 1 || authorized.plan.Schema != 1 ||
 		authorized.projection.Schema != 1 || generation < 1 {
@@ -141,7 +141,7 @@ type RuntimeDriver interface {
 }
 
 // Reconciler 只消费完整、可重放验证的 durable state；调用方不能传一个伪造的
-// phase 字符串直接触发旧 listener 删除（D120、D127）。
+// phase 字符串直接触发旧 listener 删除。
 type Reconciler struct {
 	driver            RuntimeDriver
 	verify            CertifiedAuthorityVerifier
@@ -152,7 +152,7 @@ type Reconciler struct {
 func NewReconciler(driver RuntimeDriver, verify CertifiedAuthorityVerifier,
 	now func() time.Time, maxObservationAge time.Duration) (*Reconciler, error) {
 	if driver == nil || verify == nil || now == nil || maxObservationAge < time.Second || maxObservationAge > 5*time.Minute {
-		return nil, errors.New("[D120 rotation] runtime reconciler dependencies/observation age 无效")
+		return nil, errors.New("[rotation] runtime reconciler dependencies/observation age 无效")
 	}
 	return &Reconciler{driver: driver, verify: verify, now: now, maxObservationAge: maxObservationAge}, nil
 }
@@ -160,16 +160,16 @@ func NewReconciler(driver RuntimeDriver, verify CertifiedAuthorityVerifier,
 func (reconciler *Reconciler) Reconcile(ctx context.Context, certified DurableStateV1,
 	frozenPlan FrozenExecutionPlanV1) (ReconcileEvidenceV1, error) {
 	if reconciler == nil {
-		return ReconcileEvidenceV1{}, errors.New("[D120 rotation] runtime reconciler 不能为空")
+		return ReconcileEvidenceV1{}, errors.New("[rotation] runtime reconciler 不能为空")
 	}
 	if err := ctx.Err(); err != nil {
 		return ReconcileEvidenceV1{}, err
 	}
 	if err := validateDurableState(&certified, reconciler.verify); err != nil {
-		return ReconcileEvidenceV1{}, errors.New("[D120 rotation] runtime 拒绝未经 certified replay 的 state")
+		return ReconcileEvidenceV1{}, errors.New("[rotation] runtime 拒绝未经 certified replay 的 state")
 	}
 	if certified.Intent == nil || certified.Current == nil {
-		return ReconcileEvidenceV1{}, errors.New("[D120 rotation] runtime 缺已分配 rotation")
+		return ReconcileEvidenceV1{}, errors.New("[rotation] runtime 缺已分配 rotation")
 	}
 	plan, err := validateFrozenExecutionPlan(certified.Intent, frozenPlan)
 	if err != nil {
@@ -202,7 +202,7 @@ func (reconciler *Reconciler) Reconcile(ctx context.Context, certified DurableSt
 			return ReconcileEvidenceV1{}, err
 		}
 		if !wire.EqualCanonical(after.Projection, desired) {
-			return ReconcileEvidenceV1{}, errors.New("[D120 rotation] runtime apply 后未收敛到 certified desired state")
+			return ReconcileEvidenceV1{}, errors.New("[rotation] runtime apply 后未收敛到 certified desired state")
 		}
 	}
 	return newReconcileEvidence(*certified.Current, plan, desired, before, after, changed)
@@ -210,7 +210,7 @@ func (reconciler *Reconciler) Reconcile(ctx context.Context, certified DurableSt
 
 func ValidateExecutionPlan(intent *IntentV1, plan *ExecutionPlanV1) error {
 	if intent == nil {
-		return errors.New("[D120 rotation] execution plan 缺 intent")
+		return errors.New("[rotation] execution plan 缺 intent")
 	}
 	if err := ValidateExecutionPlanShape(plan); err != nil {
 		return err
@@ -218,7 +218,7 @@ func ValidateExecutionPlan(intent *IntentV1, plan *ExecutionPlanV1) error {
 	if plan.ClusterID != intent.ClusterID ||
 		plan.RotationID != intent.RotationID || plan.FrozenDependenciesHash != intent.FrozenDependenciesHash ||
 		(intent.FrozenDependencies.SourceListenerGeneration != nil) != (len(plan.SourceTuples) > 0) {
-		return errors.New("[D120 rotation] execution plan identity/frozen binding 无效")
+		return errors.New("[rotation] execution plan identity/frozen binding 无效")
 	}
 	hasSource := intent.FrozenDependencies.SourceListenerGeneration != nil
 	expectedTransport := "tcp"
@@ -234,7 +234,7 @@ func ValidateExecutionPlan(intent *IntentV1, plan *ExecutionPlanV1) error {
 	}
 	for _, tuple := range all {
 		if tuple.Transport != expectedTransport {
-			return errors.New("[D120 rotation] execution tuple transport 与 frozen listener 不一致")
+			return errors.New("[rotation] execution tuple transport 与 frozen listener 不一致")
 		}
 	}
 	if err := ValidateTupleOwnership(all); err != nil {
@@ -246,10 +246,10 @@ func ValidateExecutionPlan(intent *IntentV1, plan *ExecutionPlanV1) error {
 			plan.WireGuardOverlap.New.Generation != intent.FrozenDependencies.TargetListenerGeneration ||
 			!containsTuple(plan.SourceTuples, plan.WireGuardOverlap.Old.ListenTuple) ||
 			!containsTuple(plan.TargetTuples, plan.WireGuardOverlap.New.ListenTuple) {
-			return errors.New("[D120 WG] execution plan 未绑定独立 old/new overlap")
+			return errors.New("[WG] execution plan 未绑定独立 old/new overlap")
 		}
 	} else if plan.WireGuardOverlap != nil {
-		return errors.New("[D120 rotation] 非 WireGuard plan 禁止 WG overlap")
+		return errors.New("[rotation] 非 WireGuard plan 禁止 WG overlap")
 	}
 	return nil
 }
@@ -258,7 +258,7 @@ func ValidateExecutionPlanShape(plan *ExecutionPlanV1) error {
 	if plan == nil || plan.Schema != 1 || plan.ClusterID == "" || plan.RotationID == "" ||
 		requireHash(plan.FrozenDependenciesHash) != nil || plan.SourceTuples == nil ||
 		plan.TargetTuples == nil || len(plan.TargetTuples) == 0 {
-		return errors.New("[D120 rotation] execution plan shape 无效")
+		return errors.New("[rotation] execution plan shape 无效")
 	}
 	if err := validateCanonicalTuples(plan.SourceTuples); err != nil {
 		return err
@@ -281,7 +281,7 @@ func validateFrozenExecutionPlan(intent *IntentV1,
 	plan := frozen.Plan()
 	planHash, err := ExecutionPlanHash(intent, &plan)
 	if err != nil || frozen.planHash == "" || frozen.planHash != planHash {
-		return ExecutionPlanV1{}, errors.New("[D127 rotation] reconciler 只接受 durable frozen execution plan")
+		return ExecutionPlanV1{}, errors.New("[rotation] reconciler 只接受 durable frozen execution plan")
 	}
 	return plan, nil
 }
@@ -326,7 +326,7 @@ func desiredRuntimeProjection(intent IntentV1, state StateV1,
 	case "revoked":
 		targetState = "revoked"
 	default:
-		return RuntimeProjectionV1{}, errors.New("[D120 rotation] runtime phase 未获支持")
+		return RuntimeProjectionV1{}, errors.New("[rotation] runtime phase 未获支持")
 	}
 	owned := make([]Tuple, 0, len(plan.SourceTuples)+len(plan.TargetTuples))
 	if sourceOwned {
@@ -354,17 +354,17 @@ func validateRuntimeObservation(observation *RuntimeObservationV1, desired *Runt
 		observation.Projection.ExecutionPlanHash != desired.ExecutionPlanHash ||
 		observation.Projection.TargetGeneration != desired.TargetGeneration ||
 		!equalGeneration(observation.Projection.SourceGeneration, desired.SourceGeneration) {
-		return errors.New("[D120 rotation] runtime observation identity/frozen plan binding 无效")
+		return errors.New("[rotation] runtime observation identity/frozen plan binding 无效")
 	}
 	if !oneOf(observation.Projection.SourceState, "absent", "preferred", "advertised", "draining", "retired", "revoked") ||
 		!oneOf(observation.Projection.TargetState, "absent", "prepared", "advertised", "preferred", "draining", "retired", "revoked", "abandoned") ||
 		validateCanonicalTuples(observation.Projection.OwnedTuples) != nil ||
 		ValidateTupleOwnership(observation.Projection.OwnedTuples) != nil {
-		return errors.New("[D120 rotation] runtime observation state/tuple 无效")
+		return errors.New("[rotation] runtime observation state/tuple 无效")
 	}
 	observedAt, err := wire.ParseTimeZ(observation.ObservedAt)
 	if err != nil || observedAt.After(now.Add(30*time.Second)) || now.Sub(observedAt) > maximumAge {
-		return errors.New("[D120 rotation] runtime observation 不新鲜")
+		return errors.New("[rotation] runtime observation 不新鲜")
 	}
 	return nil
 }
@@ -400,7 +400,7 @@ func newReconcileEvidence(state StateV1, plan ExecutionPlanV1, desired RuntimePr
 
 func ReconcileEvidenceHash(evidence *ReconcileEvidenceV1) (string, error) {
 	if evidence == nil || evidence.Schema != 1 || evidence.ClusterID == "" || evidence.RotationID == "" {
-		return "", errors.New("[D120 rotation] reconcile evidence header 无效")
+		return "", errors.New("[rotation] reconcile evidence header 无效")
 	}
 	for _, hash := range []string{evidence.CertifiedStateHash, evidence.ExecutionPlanHash,
 		evidence.DesiredStateHash, evidence.BeforeHash, evidence.AfterHash} {
@@ -409,18 +409,18 @@ func ReconcileEvidenceHash(evidence *ReconcileEvidenceV1) (string, error) {
 		}
 	}
 	if !evidence.Changed && evidence.BeforeHash != evidence.AfterHash {
-		return "", errors.New("[D120 rotation] unchanged evidence 的 before/after 不一致")
+		return "", errors.New("[rotation] unchanged evidence 的 before/after 不一致")
 	}
 	return wire.HashObject(DomainReconcileEvidence, evidence)
 }
 
 func validateCanonicalTuples(tuples []Tuple) error {
 	if tuples == nil {
-		return errors.New("[D120 rotation] tuple list 不能为 null")
+		return errors.New("[rotation] tuple list 不能为 null")
 	}
 	for index := range tuples {
 		if index > 0 && !tupleLess(tuples[index-1], tuples[index]) {
-			return errors.New("[D120 rotation] tuples 必须严格规范排序")
+			return errors.New("[rotation] tuples 必须严格规范排序")
 		}
 	}
 	return ValidateTupleOwnership(tuples)

@@ -13,7 +13,7 @@ import (
 
 func lockStateDir(dir string) (*os.File, error) {
 	if dir == "" || !filepath.IsAbs(dir) || filepath.Clean(dir) != dir {
-		return nil, fmt.Errorf("[§11 安全存储] state-dir 必须是绝对且已清理的路径:%q", dir)
+		return nil, fmt.Errorf("[安全存储] state-dir 必须是绝对且已清理的路径:%q", dir)
 	}
 	if err := secureDir(dir); err != nil {
 		return nil, err
@@ -26,11 +26,11 @@ func lockStateDir(dir string) (*os.File, error) {
 	info, err := lock.Stat()
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
 		lock.Close()
-		return nil, errors.New("[§11 安全存储] 设备加入锁必须是私有普通文件")
+		return nil, errors.New("[安全存储] 设备加入锁必须是私有普通文件")
 	}
 	if stat, ok := info.Sys().(*syscall.Stat_t); ok && stat.Nlink != 1 {
 		lock.Close()
-		return nil, errors.New("[§11 安全存储] 设备加入锁不得有硬链接")
+		return nil, errors.New("[安全存储] 设备加入锁不得有硬链接")
 	}
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
 		lock.Close()
@@ -59,7 +59,7 @@ func secureDir(dir string) error {
 		return err
 	}
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 {
-		return errors.New("[§11 安全存储] 设备身份目录必须是非链接且权限 0700 的目录")
+		return errors.New("[安全存储] 设备身份目录必须是非链接且权限 0700 的目录")
 	}
 	return nil
 }
@@ -71,10 +71,10 @@ func readRegularFile(path string, limit int64, private bool) ([]byte, error) {
 	}
 	if !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 || before.Size() < 0 || before.Size() > limit ||
 		(private && before.Mode().Perm()&0o077 != 0) {
-		return nil, fmt.Errorf("[§11 安全存储] %s 必须是权限正确、有界的普通文件", path)
+		return nil, fmt.Errorf("[安全存储] %s 必须是权限正确、有界的普通文件", path)
 	}
 	if stat, ok := before.Sys().(*syscall.Stat_t); ok && stat.Nlink != 1 {
-		return nil, fmt.Errorf("[§11 安全存储] %s 不得有硬链接", path)
+		return nil, fmt.Errorf("[安全存储] %s 不得有硬链接", path)
 	}
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
@@ -83,11 +83,11 @@ func readRegularFile(path string, limit int64, private bool) ([]byte, error) {
 	defer f.Close()
 	after, err := f.Stat()
 	if err != nil || !after.Mode().IsRegular() || !os.SameFile(before, after) || after.Size() != before.Size() {
-		return nil, fmt.Errorf("[§11 安全存储] %s 在读取期间发生变化", path)
+		return nil, fmt.Errorf("[安全存储] %s 在读取期间发生变化", path)
 	}
 	body, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil || int64(len(body)) != after.Size() || int64(len(body)) > limit {
-		return nil, fmt.Errorf("[§11 安全存储] 读取 %s 失败或超出边界", path)
+		return nil, fmt.Errorf("[安全存储] 读取 %s 失败或超出边界", path)
 	}
 	return body, nil
 }
@@ -99,10 +99,10 @@ func writePrivateAtomic(path string, body []byte, mode os.FileMode) (retErr erro
 	}
 	if info, err := os.Lstat(path); err == nil {
 		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("[§11 安全存储] 拒绝覆盖非普通文件 %s", path)
+			return fmt.Errorf("[安全存储] 拒绝覆盖非普通文件 %s", path)
 		}
 		if stat, ok := info.Sys().(*syscall.Stat_t); ok && stat.Nlink != 1 {
-			return fmt.Errorf("[§11 安全存储] 拒绝覆盖硬链接 %s", path)
+			return fmt.Errorf("[安全存储] 拒绝覆盖硬链接 %s", path)
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err

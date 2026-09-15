@@ -14,7 +14,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// §7.2：画布仅使用系统 Direct2D/DirectWrite DLL，由界面线程持有。
+// 画布仅使用系统 Direct2D/DirectWrite DLL，由界面线程持有。
 // 坐标与字号均为 HDC 的物理像素；调用方先按当前 DPI 缩放。
 type misakaCanvas struct {
 	factory, writeFactory, target *misakaCOMObject
@@ -58,19 +58,19 @@ var (
 
 func newMisakaCanvas() (*misakaCanvas, error) {
 	if err := misakaD2DCreateFactory.Find(); err != nil {
-		return nil, fmt.Errorf("[§7.2] 加载系统 Direct2D: %w", err)
+		return nil, fmt.Errorf("加载系统 Direct2D: %w", err)
 	}
 	if err := misakaDWriteFactory.Find(); err != nil {
-		return nil, fmt.Errorf("[§7.2] 加载系统 DirectWrite: %w", err)
+		return nil, fmt.Errorf("加载系统 DirectWrite: %w", err)
 	}
 	c := &misakaCanvas{brushes: make(map[uint32]*misakaCOMObject), formats: make(map[misakaTextStyle]*misakaCOMObject)}
 	hr, _, _ := misakaD2DCreateFactory.Call(0, uintptr(unsafe.Pointer(&misakaFactoryIID)), 0, uintptr(unsafe.Pointer(&c.factory)))
-	if err := misakaHRESULT("[§7.2] 创建 Direct2D 工厂", hr); err != nil {
+	if err := misakaHRESULT("创建 Direct2D 工厂", hr); err != nil {
 		c.Close()
 		return nil, err
 	}
 	hr, _, _ = misakaDWriteFactory.Call(0, uintptr(unsafe.Pointer(&misakaWriteIID)), uintptr(unsafe.Pointer(&c.writeFactory)))
-	if err := misakaHRESULT("[§7.2] 创建 DirectWrite 工厂", hr); err != nil {
+	if err := misakaHRESULT("创建 DirectWrite 工厂", hr); err != nil {
 		c.Close()
 		return nil, err
 	}
@@ -109,13 +109,13 @@ func (c *misakaCanvas) releaseFormats() {
 
 func (c *misakaCanvas) Begin(dc uintptr, bounds portableRect, dpi int32) error {
 	if c == nil || c.closed {
-		return errors.New("[§7.2] Direct2D 画布已关闭")
+		return errors.New("Direct2D 画布已关闭")
 	}
 	if c.drawing {
-		return errors.New("[§7.2] Direct2D 绘制已开始")
+		return errors.New("Direct2D 绘制已开始")
 	}
 	if dc == 0 || bounds.right <= bounds.left || bounds.bottom <= bounds.top || dpi <= 0 {
-		return errors.New("[§7.2] Direct2D 绘制的 HDC、边界或 DPI 无效")
+		return errors.New("Direct2D 绘制的 HDC、边界或 DPI 无效")
 	}
 	c.err = nil
 	if c.dpi != dpi {
@@ -123,38 +123,38 @@ func (c *misakaCanvas) Begin(dc uintptr, bounds portableRect, dpi int32) error {
 		c.dpi = dpi
 	}
 	if c.target == nil {
-		// §7.2：GDI DC 目标显式使用 BGRA 并忽略透明通道。固定 96 DPI，
+		// GDI DC 目标显式使用 BGRA 并忽略透明通道。固定 96 DPI，
 		// 使绘制单位等于 HDC 物理像素，显示缩放统一由 Win32 界面处理。
 		properties := misakaTargetProperties{format: 87, alpha: 3, dpiX: 96, dpiY: 96}
 		hr := misakaCOMCall(c.factory, 16, uintptr(unsafe.Pointer(&properties)), uintptr(unsafe.Pointer(&c.target)))
-		if err := misakaHRESULT("[§7.2] 创建 Direct2D DC 绘制目标", hr); err != nil {
+		if err := misakaHRESULT("创建 Direct2D DC 绘制目标", hr); err != nil {
 			c.releaseTarget()
 			return err
 		}
 	}
-	if err := misakaHRESULT("[§7.2] 绑定 Direct2D HDC", misakaCOMCall(c.target, 57, dc, uintptr(unsafe.Pointer(&bounds)))); err != nil {
+	if err := misakaHRESULT("绑定 Direct2D HDC", misakaCOMCall(c.target, 57, dc, uintptr(unsafe.Pointer(&bounds)))); err != nil {
 		c.releaseTarget()
 		return err
 	}
 	c.bounds = bounds
 	c.offsetX, c.offsetY = 0, 0
-	// §7.2：自绘内容在合成视口和截图中共用灰度抗锯齿，避免 ClearType 子像素形成彩色字边。
+	// 自绘内容在合成视口和截图中共用灰度抗锯齿，避免 ClearType 子像素形成彩色字边。
 	misakaCOMCall(c.target, 34, 2) // SetTextAntialiasMode(GRAYSCALE)，重建或重新绑定后均保持一致。
-	misakaCOMCall(c.target, 48)    // §7.2：开始本次绘制。
+	misakaCOMCall(c.target, 48)    // 开始本次绘制。
 	c.drawing = true
 	return nil
 }
 
 func (c *misakaCanvas) End() error {
 	if c == nil || c.closed || !c.drawing {
-		return errors.New("[§7.2] Direct2D 绘制尚未开始")
+		return errors.New("Direct2D 绘制尚未开始")
 	}
-	hr := misakaCOMCall(c.target, 49, 0, 0) // §7.2：一次性提交到绑定的 HDC。
+	hr := misakaCOMCall(c.target, 49, 0, 0) // 一次性提交到绑定的 HDC。
 	c.drawing = false
 	if uint32(hr) == misakaRecreateTarget {
 		c.releaseTarget()
 	}
-	return errors.Join(c.err, misakaHRESULT("[§7.2] 提交 Direct2D 绘制", hr))
+	return errors.Join(c.err, misakaHRESULT("提交 Direct2D 绘制", hr))
 }
 
 func (c *misakaCanvas) Fill(rect portableRect, rgb uint32, radius int32) {
@@ -175,7 +175,7 @@ func (c *misakaCanvas) Fill(rect portableRect, rgb uint32, radius int32) {
 	misakaCOMCall(c.target, 19, uintptr(unsafe.Pointer(&rounded)), uintptr(unsafe.Pointer(brush)))
 }
 
-// §7.2：同心圆共享浮点圆心，内外直径取整为不同奇偶数时也不能产生半像素偏移。
+// 同心圆共享浮点圆心，内外直径取整为不同奇偶数时也不能产生半像素偏移。
 func (c *misakaCanvas) Ellipse(x, y, radiusX, radiusY float32, rgb uint32) {
 	if c == nil || !c.canDraw(c.bounds) || radiusX <= 0 || radiusY <= 0 {
 		return
@@ -188,13 +188,13 @@ func (c *misakaCanvas) Ellipse(x, y, radiusX, radiusY float32, rgb uint32) {
 	misakaCOMCall(c.target, 21, uintptr(unsafe.Pointer(&ellipse)), uintptr(unsafe.Pointer(brush)))
 }
 
-// §7.2：单行文字垂直居中，超长时显示省略号，中文回退使用系统字体。
+// 单行文字垂直居中，超长时显示省略号，中文回退使用系统字体。
 // align：0 左对齐、1 居中、2 右对齐。
 func (c *misakaCanvas) Text(text string, rect portableRect, size, weight int32, rgb uint32, align uint32) {
 	c.drawText(text, rect, misakaTextStyle{size: size, weight: weight, align: align}, rgb)
 }
 
-// §7.2：段落在矩形内换行并靠左上对齐，空间不足时显示省略号。
+// 段落在矩形内换行并靠左上对齐，空间不足时显示省略号。
 func (c *misakaCanvas) Paragraph(text string, rect portableRect, size, weight int32, rgb uint32) {
 	c.drawText(text, rect, misakaTextStyle{size: size, weight: weight, wrap: true}, rgb)
 }
@@ -204,15 +204,15 @@ func (c *misakaCanvas) drawText(text string, rect portableRect, style misakaText
 		return
 	}
 	if style.size <= 0 || style.size > 1024 || style.weight < 1 || style.weight > 999 || style.align > 2 {
-		c.err = errors.New("[§7.2] DirectWrite 文字样式无效")
+		c.err = errors.New("DirectWrite 文字样式无效")
 		return
 	}
 	characters, err := windows.UTF16FromString(text)
 	if err != nil {
-		c.err = fmt.Errorf("[§7.2] DirectWrite 文字编码： %w", err)
+		c.err = fmt.Errorf("DirectWrite 文字编码： %w", err)
 		return
 	}
-	// §7.2：Segoe UI 的默认中文回退可能是宋体；中文明确使用系统雅黑界面字体。
+	// Segoe UI 的默认中文回退可能是宋体；中文明确使用系统雅黑界面字体。
 	// 字体族参与格式缓存，不能把同字号的中文与拉丁文字错误地复用成一种格式。
 	style.cjk = misakaTextHasCJK(text)
 	format := c.textFormat(style)
@@ -222,7 +222,7 @@ func (c *misakaCanvas) drawText(text string, rect portableRect, style misakaText
 	}
 	area := c.relativeRect(rect)
 	misakaCOMCall(c.target, 27, uintptr(unsafe.Pointer(&characters[0])), uintptr(len(characters)-1), uintptr(unsafe.Pointer(format)),
-		uintptr(unsafe.Pointer(&area)), uintptr(unsafe.Pointer(brush)), 2, 0) // §7.2：裁剪到文字矩形。
+		uintptr(unsafe.Pointer(&area)), uintptr(unsafe.Pointer(brush)), 2, 0) // 裁剪到文字矩形。
 	runtime.KeepAlive(characters)
 }
 
@@ -240,7 +240,7 @@ func (c *misakaCanvas) canDraw(rect portableRect) bool {
 		return false
 	}
 	if !c.drawing {
-		c.err = errors.New("[§7.2] Direct2D 绘制前必须调用 Begin")
+		c.err = errors.New("Direct2D 绘制前必须调用 Begin")
 		return false
 	}
 	return c.err == nil && rect.right > rect.left && rect.bottom > rect.top
@@ -262,7 +262,7 @@ func (c *misakaCanvas) brush(rgb uint32) *misakaCOMObject {
 	color := misakaColor{r: float32(rgb>>16) / 255, g: float32((rgb>>8)&255) / 255, b: float32(rgb&255) / 255, a: 1}
 	var brush *misakaCOMObject
 	hr := misakaCOMCall(c.target, 8, uintptr(unsafe.Pointer(&color)), 0, uintptr(unsafe.Pointer(&brush)))
-	if c.err = misakaHRESULT("[§7.2] 创建 Direct2D 画刷", hr); c.err != nil {
+	if c.err = misakaHRESULT("创建 Direct2D 画刷", hr); c.err != nil {
 		misakaRelease(brush)
 		return nil
 	}
@@ -288,32 +288,32 @@ func (c *misakaCanvas) textFormat(style misakaTextStyle) *misakaCOMObject {
 	hr := misakaCreateTextFormat(misakaCOMMethod(c.writeFactory, 15), &args)
 	runtime.KeepAlive(family)
 	runtime.KeepAlive(locale)
-	if c.err = misakaHRESULT("[§7.2] 创建 DirectWrite 文字格式", hr); c.err != nil {
+	if c.err = misakaHRESULT("创建 DirectWrite 文字格式", hr); c.err != nil {
 		misakaRelease(format)
 		return nil
 	}
-	align := [...]uintptr{0, 2, 1}[style.align]   // §7.2：左、中、右对齐。
-	paragraph, wrapping := uintptr(2), uintptr(1) // §7.2：垂直居中，不换行。
+	align := [...]uintptr{0, 2, 1}[style.align]   // 左、中、右对齐。
+	paragraph, wrapping := uintptr(2), uintptr(1) // 垂直居中，不换行。
 	if style.wrap {
-		paragraph, wrapping = 0, 0 // §7.2：靠上对齐，允许换行。
+		paragraph, wrapping = 0, 0 // 靠上对齐，允许换行。
 	}
 	for _, option := range [][2]uintptr{{3, align}, {4, paragraph}, {5, wrapping}} {
-		if c.err = misakaHRESULT("[§7.2] 设置 DirectWrite 文字格式", misakaCOMCall(format, option[0], option[1])); c.err != nil {
+		if c.err = misakaHRESULT("设置 DirectWrite 文字格式", misakaCOMCall(format, option[0], option[1])); c.err != nil {
 			misakaRelease(format)
 			return nil
 		}
 	}
 	var ellipsis *misakaCOMObject
 	hr = misakaCOMCall(c.writeFactory, 20, uintptr(unsafe.Pointer(format)), uintptr(unsafe.Pointer(&ellipsis)))
-	if c.err = misakaHRESULT("[§7.2] 创建 DirectWrite 省略号", hr); c.err != nil {
+	if c.err = misakaHRESULT("创建 DirectWrite 省略号", hr); c.err != nil {
 		misakaRelease(ellipsis)
 		misakaRelease(format)
 		return nil
 	}
-	trimming := misakaTrimming{granularity: 1} // §7.2：按字符截断。
+	trimming := misakaTrimming{granularity: 1} // 按字符截断。
 	hr = misakaCOMCall(format, 9, uintptr(unsafe.Pointer(&trimming)), uintptr(unsafe.Pointer(ellipsis)))
-	misakaRelease(ellipsis) // §7.2：文字格式已持有自己的引用。
-	if c.err = misakaHRESULT("[§7.2] 设置 DirectWrite 文字截断", hr); c.err != nil {
+	misakaRelease(ellipsis) // 文字格式已持有自己的引用。
+	if c.err = misakaHRESULT("设置 DirectWrite 文字截断", hr); c.err != nil {
 		misakaRelease(format)
 		return nil
 	}
@@ -321,7 +321,7 @@ func (c *misakaCanvas) textFormat(style misakaTextStyle) *misakaCOMObject {
 	return format
 }
 
-// §7.2：使用指针字段，使 Go 参数在 ARM64 原生 ABI 桥接期间保持存活。
+// 使用指针字段，使 Go 参数在 ARM64 原生 ABI 桥接期间保持存活。
 // 两种支持架构的指针与参数槽宽度均为八字节。
 type misakaTextFormatArgs struct {
 	factory    *misakaCOMObject

@@ -28,7 +28,7 @@ func TestWindowsEntryNativeSinglePing(t *testing.T) {
 	}
 }
 
-// §16.1：健康上报只能接触本机监听，连接后不发送代理协议或业务数据。
+// 健康上报只能接触本机监听，连接后不发送代理协议或业务数据。
 func TestWindowsHealthCheckDoesNotSendBusinessTraffic(t *testing.T) {
 	l, err := net.Listen("tcp4", "127.0.0.1:1080")
 	if err != nil {

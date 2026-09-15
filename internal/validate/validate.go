@@ -1,6 +1,6 @@
 // Package validate 在渲染之前拒绝不一致的 SSOT。
 //
-// 它存在的理由见 design.md §20.1:隧道矩阵两端必须逐字段吻合,写错一个
+// 隧道矩阵两端必须逐字段吻合,写错一个
 // 字符的后果是隧道静默不通 —— 不报错,只是连不上。校验器把这类错误从
 // "两地之间来回比对"降级成一条编译期消息。
 //
@@ -19,9 +19,9 @@ import (
 	"loom/internal/model"
 )
 
-// Finding 是一条校验发现。Rule 对应 design.md 中的条款,便于回溯理由。
+// Finding 是一条校验发现。Rule 是可读的规则分类，Msg 直接说明失败原因。
 type Finding struct {
-	Rule  string // 如 "§2.2 direction"
+	Rule  string // 如 "direction"
 	Where string // 节点 id 或隧道 pair
 	Msg   string
 }
@@ -41,7 +41,7 @@ func Validate(s *model.SSOT) []Finding {
 		checkDistributionURLs(&fs, "defaults", s.Defaults.DistributionURL, s.Defaults.DistributionURLs)
 	}
 	if v := s.AttestationMinVersion(); v != 0 && v != 5 {
-		fs.add("§13.3 签名", "defaults",
+		fs.add("签名", "defaults",
 			"attestation_min_version 只能是 0（兼容阶段）或 5（全网 reader 升级后的强制阶段），收到 %d", v)
 	}
 	idx := checkNodes(s, &fs)
@@ -68,14 +68,14 @@ func checkDistributionURL(fs *findings, where, raw string) {
 	parsed, err := url.ParseRequestURI(raw)
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") ||
 		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		fs.add("§14.2 分发", where,
+		fs.add("分发", where,
 			"distribution_url(s) 分发镜像必须是无凭据、query 和 fragment 的完整 http(s) URL，收到 %q", raw)
 	}
 }
 
 func checkDistributionURLs(fs *findings, where, legacy string, mirrors []string) {
 	if legacy != "" && len(mirrors) > 0 {
-		fs.add("§14.2 分发", where,
+		fs.add("分发", where,
 			"distribution_url 与 distribution_urls 不能同时声明；请把全部镜像放进 distribution_urls")
 	}
 	if legacy != "" {
@@ -85,13 +85,13 @@ func checkDistributionURLs(fs *findings, where, legacy string, mirrors []string)
 	for i, raw := range mirrors {
 		itemWhere := fmt.Sprintf("%s.distribution_urls[%d]", where, i)
 		if raw == "" {
-			fs.add("§14.2 分发", itemWhere, "镜像地址不能为空")
+			fs.add("分发", itemWhere, "镜像地址不能为空")
 			continue
 		}
 		checkDistributionURL(fs, itemWhere, raw)
 		canonical := strings.TrimRight(raw, "/")
 		if seen[canonical] {
-			fs.add("§14.2 分发", itemWhere, "镜像地址重复:%q", raw)
+			fs.add("分发", itemWhere, "镜像地址重复:%q", raw)
 		}
 		seen[canonical] = true
 	}
@@ -121,30 +121,30 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 		where := n.ID
 		if where == "" {
 			where = fmt.Sprintf("nodes[%d]", i)
-			fs.add("§19 schema", where, "节点缺少 id")
+			fs.add("schema", where, "节点缺少 id")
 		} else if !model.ValidNodeID(n.ID) {
-			fs.add("§19 schema", where,
+			fs.add("schema", where,
 				"节点 id %q 格式非法 —— 只能使用 1–63 个小写 ASCII 字母、数字或内连字符，且首尾必须是字母或数字", n.ID)
 		}
 		if _, dup := idx[n.ID]; dup && n.ID != "" {
-			fs.add("§19 schema", where, "节点 id 重复")
+			fs.add("schema", where, "节点 id 重复")
 		}
 		if n.ID != "" {
 			idx[n.ID] = n
 		}
 		checkDistributionURLs(fs, where, n.DistributionURL, n.DistributionURLs)
 		if n.Paused && (!n.IsAccess() || n.IsServer() || n.Decommission) {
-			fs.add("§14.4 暂停", where, "paused 只适用于未下线的纯 use_loom 设备")
+			fs.add("暂停", where, "paused 只适用于未下线的纯 use_loom 设备")
 		}
 		if country := n.Country; country != "" && !model.ValidCountryCode(country) {
-			fs.add("§19 schema", where,
+			fs.add("schema", where,
 				"country %q 格式非法 —— 必须是两个大写 ASCII 字母组成的 ISO 3166-1 alpha-2 代码", country)
 		}
 
 		// 至少要承担一种角色。两种都有是合法的 —— 一台服务器自己也要
-		// 走代理出去是真实需求(§1.3)。
+		// 走代理出去是真实需求。
 		if !n.IsServer() && !n.IsAccess() {
-			fs.add("§1.3 角色", where,
+			fs.add("角色", where,
 				"既没有 server 块也没有 access 块 —— 这个节点不承担任何角色")
 		}
 
@@ -152,7 +152,7 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 		// 都会失败一次,而症状是"这台机器直连坏了",跟真实原因毫不相干。
 		for _, t := range n.ProbeTargets {
 			if !strings.HasPrefix(t, "http://") && !strings.HasPrefix(t, "https://") {
-				fs.add("§16.1 自检", where,
+				fs.add("自检", where,
 					"probe_targets 要写成完整 URL(http:// 或 https://),收到 %q", t)
 			}
 		}
@@ -161,60 +161,60 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 		if isServer {
 			switch {
 			case n.Server.SecretGeneration < 0:
-				fs.add("§13.4 秘密层", where,
+				fs.add("秘密层", where,
 					"secret_generation 不能为负:%d", n.Server.SecretGeneration)
 			case n.Server.SecretGeneration > 1:
-				fs.add("§13.4 秘密层", where,
+				fs.add("秘密层", where,
 					"secret_generation=%d 声明了秘密层轮换，但当前运行时未实现对应代次的部署或核验；"+
 						"拒绝假生效，只能省略(0)或使用第一代(1)", n.Server.SecretGeneration)
 			}
 		}
 		if isServer && !n.Server.Direction.Valid() {
-			fs.add("§2.1 direction", where, "direction 缺失或非法:%q", n.Server.Direction)
+			fs.add("direction", where, "direction 缺失或非法:%q", n.Server.Direction)
 			continue // 后面的规则都依赖 direction 有效
 		}
 
-		// §2.2:reverse_only 只决定 WireGuard 发起方向。公网数据入口仍默认关闭，
+		// reverse_only 只决定 WireGuard 发起方向。公网数据入口仍默认关闭，
 		// 但可显式开放给已授权客户端，不能再从 direction 偷推数据面可达性。
 		if isServer && n.Server.Direction == model.ReverseOnly && n.PublicEndpoint == "" {
-			fs.add("§2.2 相容性", where,
+			fs.add("相容性", where,
 				"reverse_only 的服务器仍需 public_endpoint —— 它主动连出去时,"+
 					"对端要写 Endpoint 指回来的是**对端**的地址,而本机地址用于排障与探测标注")
 		}
 		if isServer && n.Server.PublicDataIngress {
 			if n.PublicEndpoint == "" {
-				fs.add("§2.3 公网数据入口", where,
+				fs.add("公网数据入口", where,
 					"public_data_ingress 已启用,却没有 public_endpoint —— 客户端无处可拨")
 			}
 			if n.Server.InboundPort == 0 {
-				fs.add("§2.3 公网数据入口", where,
+				fs.add("公网数据入口", where,
 					"public_data_ingress 已启用,却没有 inbound_port —— 公网没有数据面监听")
 			}
 		}
 		// inbound_port 只在真有人要连它时才必需。
 		//
 		// 一个节点可以只为了当**隧道端点**而有 server 块 —— 比如接入节点
-		// 与境外机建反连隧道,好把两跳压成一跳(§2.3)。它不接受任何
+		// 与境外机建反连隧道,好把两跳压成一跳。它不接受任何
 		// sing-box 连接,强求 inbound_port 会逼出一个没人用的监听。
 		if by, used := usedAsHop[n.ID]; isServer && n.Server.InboundPort == 0 && used {
-			fs.add("§8.1 inbound", where,
+			fs.add("inbound", where,
 				"被%s的 allowed_servers 引用,却没有 inbound_port —— 无法接受上游连接", by)
 		}
 
 		// 没有解析器时 sing-box 会退回系统解析器 —— 而它坏掉的表现是
 		// "只有直连候选失败",极难诊断。
 		if len(s.DNSFor(n)) == 0 {
-			fs.add("§7.4 DNS", where,
+			fs.add("DNS", where,
 				"没有配置 dns —— sing-box 会退回系统解析器。系统解析器坏掉时"+
 					"只有直连候选会失败,代理候选一切正常(域名交给出口解析),"+
 					"这种不对称极难诊断")
 		}
 
-		// §15.4:版本必须显式钉住,永不使用 latest。自动的是下载,不是
+		// 版本必须显式钉住,永不使用 latest。自动的是下载,不是
 		// 升级决策 —— 上游一次不兼容发布可在一个轮询周期内打挂全部节点。
 		v := s.VersionsFor(n)
 		if v.Tailscale != "" {
-			fs.add("§15.4 版本", where,
+			fs.add("版本", where,
 				"components.tailscale=%q 只有版本坐标，但当前模型没有启用 Tailscale 的 workload 真值，"+
 					"运行时也不会安装或启动它；拒绝用版本字段冒充已启用能力", v.Tailscale)
 		}
@@ -226,9 +226,9 @@ func checkNodes(s *model.SSOT, fs *findings) map[string]*model.Node {
 			name, got := c.name, c.got
 			switch got {
 			case "":
-				fs.add("§15.4 版本", where, "组件 %s 没有钉住版本", name)
+				fs.add("版本", where, "组件 %s 没有钉住版本", name)
 			case "latest":
-				fs.add("§15.4 版本", where,
+				fs.add("版本", where,
 					"组件 %s 的版本是 latest —— 自动的是下载,不是升级决策", name)
 			}
 		}
@@ -277,10 +277,10 @@ func checkTunnels(s *model.SSOT, idx map[string]*model.Node, fs *findings) {
 		where := t.Pair()
 
 		if !t.Protocol.Valid() {
-			fs.add("§6 protocol", where, "未知协议:%q", t.Protocol)
+			fs.add("protocol", where, "未知协议:%q", t.Protocol)
 		}
 		if t.From == t.To {
-			fs.add("§6.3 矩阵", where, "隧道两端是同一个节点")
+			fs.add("矩阵", where, "隧道两端是同一个节点")
 			continue
 		}
 
@@ -289,12 +289,12 @@ func checkTunnels(s *model.SSOT, idx map[string]*model.Node, fs *findings) {
 		// 网络,查不到原因。这条关系不检查就没有任何东西会发现它。
 		for _, rp := range t.RetiredPorts {
 			if rp == t.ListenPort {
-				fs.add("§6 端口", where,
+				fs.add("端口", where,
 					"listen_port %d 同时在 retired_ports 里 —— 退役的端口不该再用回来",
 					rp)
 			}
 			if rp < model.TunnelPortMin || rp > model.TunnelPortMax {
-				fs.add("§6 端口", where,
+				fs.add("端口", where,
 					"retired_ports 里的 %d 不在保留段 %d-%d 内",
 					rp, model.TunnelPortMin, model.TunnelPortMax)
 			}
@@ -306,46 +306,46 @@ func checkTunnels(s *model.SSOT, idx map[string]*model.Node, fs *findings) {
 			key = t.To + "\x00" + t.From
 		}
 		if first, dup := seenPair[key]; dup {
-			fs.add("§6.3 矩阵", where, "与 %s 重复 —— 同一对节点之间只能有一条隧道", first)
+			fs.add("矩阵", where, "与 %s 重复 —— 同一对节点之间只能有一条隧道", first)
 			continue
 		}
 		seenPair[key] = where
 
 		r, err := model.Resolve(t, idx)
 		if err != nil {
-			// Resolve 的失败要么是引用不存在的节点,要么是 §2.2 的非法组合。
-			fs.add("§2.2 direction", where, "%v", err)
+			// Resolve 的失败要么是引用不存在的节点,要么是非法组合。
+			fs.add("direction", where, "%v", err)
 			continue
 		}
 
-		// §6.3 / D13 / D29:隧道矩阵只覆盖包含 reverse_only 端点的关系。
+		// 隧道矩阵只覆盖包含 reverse_only 端点的关系。
 		// 两端都能被公网拨到时，当前直接用 Hysteria2；Headscale 是未来
 		// 可选项，不是拒绝这条隧道所依赖的现有组件。
 		if r.Initiator.MeshEligible() && r.Acceptor.MeshEligible() {
-			fs.add("§6.3 mesh", where,
+			fs.add("mesh", where,
 				"两端(%s=%s, %s=%s)都能被公网拨到,不需要隧道 —— "+
 					"直接用各自的 inbound_port 互拨即可,手工建隧道是白做工。"+
-					"(启用 mesh 之后由 Headscale 自动分发,§8.3)",
+					"(启用 mesh 之后由 Headscale 自动分发)",
 				r.Initiator.ID, r.Initiator.Server.Direction, r.Acceptor.ID, r.Acceptor.Server.Direction)
 		}
 
 		checkAddr(where, "from_addr", t.FromAddr, seenAddr, fs)
 		checkAddr(where, "to_addr", t.ToAddr, seenAddr, fs)
 		if t.FromAddr != "" && t.FromAddr == t.ToAddr {
-			fs.add("§20.1 对应", where, "两端地址相同:%s", t.FromAddr)
+			fs.add("对应", where, "两端地址相同:%s", t.FromAddr)
 		}
 
 		// 端口只在接受方生效。发起方不监听。
 		switch {
 		case t.ListenPort < model.TunnelPortMin || t.ListenPort > model.TunnelPortMax:
-			fs.add("§15.1 端口", where,
+			fs.add("端口", where,
 				"listen_port=%d 不在保留范围 %d-%d 内 —— 低于 61000 会和内核分配给"+
 					"出站连接的临时端口冲突,而 51820 是公认的 WireGuard 端口",
 				t.ListenPort, model.TunnelPortMin, model.TunnelPortMax)
 		default:
 			pk := fmt.Sprintf("%s/%d", r.Acceptor.ID, t.ListenPort)
 			if first, dup := seenPort[pk]; dup {
-				fs.add("§15.1 端口冲突", where,
+				fs.add("端口冲突", where,
 					"接受方 %s 的端口 %d 已被 %s 占用", r.Acceptor.ID, t.ListenPort, first)
 			}
 			seenPort[pk] = where
@@ -353,7 +353,7 @@ func checkTunnels(s *model.SSOT, idx map[string]*model.Node, fs *findings) {
 
 		// 发起方需要写 Endpoint = <接受方公网地址>:<端口>,所以接受方必须可达。
 		if r.Acceptor.PublicEndpoint == "" {
-			fs.add("§20.1 对应", where,
+			fs.add("对应", where,
 				"接受方 %s 缺少 public_endpoint —— 发起方 %s 无处可拨",
 				r.Acceptor.ID, r.Initiator.ID)
 		}
@@ -362,11 +362,11 @@ func checkTunnels(s *model.SSOT, idx map[string]*model.Node, fs *findings) {
 			for _, n := range []*model.Node{r.Initiator, r.Acceptor} {
 				switch {
 				case n.Server.WGPublicKey == "":
-					fs.add("§13.1 密钥", where,
+					fs.add("密钥", where,
 						"节点 %s 缺少 wg_public_key —— 它由节点本地生成并上报,"+
-							"bootstrap 之前拿不到(§13.1)", n.ID)
+							"bootstrap 之前拿不到", n.ID)
 				case !validWGKey(n.Server.WGPublicKey):
-					fs.add("§13.1 密钥", where,
+					fs.add("密钥", where,
 						"节点 %s 的 wg_public_key 不是合法的 WireGuard 公钥"+
 							"(应为 44 字符 base64,解出 32 字节):%q", n.ID, n.Server.WGPublicKey)
 				}
@@ -380,7 +380,7 @@ func checkTunnels(s *model.SSOT, idx map[string]*model.Node, fs *findings) {
 				peer = r.Acceptor.ID
 			}
 			if ifn := model.IfaceName(peer); len(ifn) > model.LinuxIfnameMax {
-				fs.add("§20.1 对应", where,
+				fs.add("对应", where,
 					"节点 %s 上的接口名 %q 超过 %d 字符 —— 缩短节点 id %q",
 					n.ID, ifn, model.LinuxIfnameMax, peer)
 			}
@@ -402,26 +402,26 @@ func validWGKey(s string) bool {
 
 func checkAddr(where, field, addr string, seen map[string]string, fs *findings) {
 	if addr == "" {
-		fs.add("§20.1 对应", where, "%s 为空", field)
+		fs.add("对应", where, "%s 为空", field)
 		return
 	}
 	p, err := netip.ParsePrefix(addr)
 	if err != nil {
-		fs.add("§20.1 对应", where, "%s 不是合法的带掩码地址:%q", field, addr)
+		fs.add("对应", where, "%s 不是合法的带掩码地址:%q", field, addr)
 		return
 	}
 	// 点对点隧道两端各占一个地址。非 /32(或 /128)会让 AllowedIPs 覆盖到
-	// 计划外的范围,是 §20.1 说的"IP 撞了"最常见的形态。
+	// 计划外的范围,会让本无重叠的隧道地址产生冲突。
 	bits := 32
 	if p.Addr().Is6() {
 		bits = 128
 	}
 	if p.Bits() != bits {
-		fs.add("§20.1 对应", where, "%s 应为 /%d 主机地址,当前是 %s", field, bits, addr)
+		fs.add("对应", where, "%s 应为 /%d 主机地址,当前是 %s", field, bits, addr)
 	}
 	norm := p.String()
 	if first, dup := seen[norm]; dup {
-		fs.add("§20.1 对应", where, "%s 地址 %s 已被 %s 占用", field, norm, first)
+		fs.add("对应", where, "%s 地址 %s 已被 %s 占用", field, norm, first)
 		return
 	}
 	seen[norm] = where + "." + field

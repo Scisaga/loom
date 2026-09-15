@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// 按 §7.2.1 只执行固定版本的 check，验证本地接管适配，不创建网卡或改路由。
+// 只执行固定版本的 check，验证本地接管适配，不创建网卡或改路由。
 func TestOfficialWindowsTUNCaptureCheck(t *testing.T) {
 	executable := os.Getenv("LOOM_SING_BOX_EXECUTABLE")
 	caSource := os.Getenv("LOOM_TEST_CA_CERTIFICATE")

@@ -68,7 +68,7 @@ type Observation struct {
 	// 往往就是链路上某一环。
 	//
 	// 签了名之后,转述的是密文不是信任:改一个字就验不过,伪造要 C 的
-	// 私钥。这条正是 D71/D73 那个"版本核不了转述来的节点"的解法。
+	// 私钥，因此不可达节点的版本仍能通过原始签名验证。
 	//
 	// 没有私钥的机器(比如只有 ca.crt 的中控)这里是空的,而空**不等于
 	// 可信**:验不了就是验不了,调用方要当作"没核对过"。
@@ -359,7 +359,7 @@ func firstDNS(dns []string) string {
 	return dns[0]
 }
 
-// 节点签名材料的约定位置(§13.3)。
+// 节点签名材料的约定位置。
 const (
 	nodeKeyPath  = "/etc/loom/tls/node.key"
 	nodeCertPath = "/etc/loom/tls/node.crt"

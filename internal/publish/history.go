@@ -27,14 +27,14 @@ import (
 //
 // 它回答的是 `loom rollback` 的前置问题:**我现在能退到哪儿。**
 // 光有快照 id 列表还不够 —— 还要知道哪些**有源头存档**,因为没有存档的
-// 那些退不了(D61)。所以 Published 与存档目录放在一起,由 `loom snapshots`
+// 那些退不了。所以 Published 与存档目录放在一起,由 `loom snapshots`
 // 交叉核对。
 
 const historyFile = "published.jsonl"
 
 // Published 是一次"发出去的快照变了"。
 type Published struct {
-	// At 是 RFC3339 时间,由调用方注入(§12:包内不读时钟)。
+	// At 是 RFC3339 时间,由调用方注入(包内不读时钟)。
 	At string `json:"at"`
 
 	Snapshot string `json:"snapshot"`

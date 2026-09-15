@@ -57,7 +57,7 @@ func PrepareWindowsCandidate(root, node string, publicKey ed25519.PublicKey, vau
 		return PrepareResult{}, fmt.Errorf("load verified bundle: %w", err)
 	}
 	if len(verified.Files) != 2 || verified.Files["sing-box/config.json"] == "" || verified.Files["agent/config.json"] == "" {
-		return PrepareResult{}, errors.New("[§12] Windows bundle must contain exactly sing-box/config.json and agent/config.json")
+		return PrepareResult{}, errors.New("Windows bundle must contain exactly sing-box/config.json and agent/config.json")
 	}
 	secrets, err := clientsecret.ReadVault(vaultPath, protector)
 	if err != nil {
@@ -73,7 +73,7 @@ func PrepareWindowsCandidate(root, node string, publicKey ed25519.PublicKey, vau
 			return PrepareResult{}, fmt.Errorf("protected secret vault is missing refs: %s", strings.Join(missing, ", "))
 		}
 		if secret.HasPlaceholder(hydrated) {
-			return PrepareResult{}, errors.New("[§12] 配置仍包含秘密占位符")
+			return PrepareResult{}, errors.New("配置仍包含秘密占位符")
 		}
 		files[path] = hydrated
 		for _, ref := range secret.Refs(redacted) {
@@ -146,7 +146,7 @@ func ReadCandidateState(root string, protector clientsecret.Protector) (*Candida
 	return &state, nil
 }
 
-// §12：一个 DPAPI 对象与一个指针原子提交两文件，旧 schema 明确拒绝。
+// 一个 DPAPI 对象与一个指针原子提交两文件，旧 schema 明确拒绝。
 func ReadCandidateBundle(root string, protector clientsecret.Protector) (map[string]string, *CandidateState, error) {
 	state, err := ReadCandidateState(root, protector)
 	if err != nil {
@@ -166,7 +166,7 @@ func ReadCandidateBundle(root string, protector clientsecret.Protector) (map[str
 		return nil, nil, err
 	}
 	if len(files) != 2 {
-		return nil, nil, errors.New("[§12] 双文件 candidate 不完整")
+		return nil, nil, errors.New("双文件 candidate 不完整")
 	}
 	if err := ValidateWindowsSingBox([]byte(files["sing-box/config.json"])); err != nil {
 		return nil, nil, err

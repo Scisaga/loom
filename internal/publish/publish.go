@@ -1,6 +1,6 @@
 // Package publish 把 SSOT 变成一棵可分发的、签了名的树,并送到分发点。
 //
-// 它跑在**中控**上(§14.2.2、D35)—— 签名私钥在哪,发布器就在哪,没得选。
+// 它跑在**中控**上—— 签名私钥在哪,发布器就在哪,没得选。
 // 但中控只在"改变系统"时需要:它挂了,节点照常按最后一个快照运行。
 //
 // **分发出去的树里没有任何凭据**:全是 `${secret:REF}` 占位符,合并发生在
@@ -41,7 +41,7 @@ type Tree struct {
 	Blobs map[string][]byte
 }
 
-// Meta 是发布的外部输入。时间由调用方注入,包内不读时钟(§12、D14)。
+// Meta 是发布的外部输入。时间由调用方注入,包内不读时钟。
 type Meta struct {
 	CreatedAt string
 	Author    string
@@ -117,7 +117,7 @@ func Build(ssotBytes []byte, priv ed25519.PrivateKey, meta Meta) (*Tree, error) 
 //
 // 回滚靠它**自证**:把快照 X 的源头与二进制取回本地之后重算一遍,算出来
 // 必须还是 X。不是的话,说明这个快照里还有别的东西没跟着回去 ——
-// 与其发一份"看起来回滚了"的配置,不如当场报出来(§12 纯函数正是让这条
+// 与其发一份"看起来回滚了"的配置,不如当场报出来(纯函数正是让这条
 // 自证成立的前提)。
 func SnapshotID(ssotBytes []byte, bins map[string][]byte) (string, error) {
 	man, _, _, err := buildManifest(ssotBytes, Meta{Binaries: bins})
@@ -128,7 +128,7 @@ func SnapshotID(ssotBytes []byte, bins map[string][]byte) (string, error) {
 }
 
 // buildManifest 走到"算出 manifest"为止。时间与作者不进内容哈希,
-// 所以自证路径可以不给它们(§12、D14)。
+// 所以自证路径可以不给它们。
 func buildManifest(ssotBytes []byte, meta Meta) (*snapshot.Manifest, *render.Result, map[string][]byte, error) {
 	s, err := model.Load(ssotBytes)
 	if err != nil {

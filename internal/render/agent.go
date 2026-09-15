@@ -10,13 +10,13 @@ import (
 	"loom/internal/model"
 )
 
-// 本文件渲染接入节点上的 Agent 配置(§5.5 的调参回路)。
+// 本文件渲染接入节点上的 Agent 配置(调参回路)。
 //
 // **节点上不放 SSOT。** Agent 要的只是"探测哪些候选、打哪个目标、多久一轮、
 // 什么时候允许切",这些全都能从 SSOT 纯函数导出。把整份 SSOT 铺到每台机器
 // 上,等于把全网拓扑和别人的凭据一起交出去。
 
-const agentUnit = `# 由 loom render 生成 —— 不要手工编辑(§12)
+const agentUnit = `# 由 loom render 生成 —— 不要手工编辑
 [Unit]
 Description=Loom Agent (调参回路 %s)
 # 控制端点和探测入口都在 sing-box 里,它没起来时 Agent 无事可做。
@@ -193,7 +193,7 @@ func renderAgentDeclarations(s *model.SSOT, p *model.Node) ([]agent.Decl, []Skip
 			continue
 		}
 		// 跑不了的 objective 必须在渲染期就说出来,而不是让 Agent 在节点上
-		// 启动失败 —— 那时候人已经不在终端前面了(§12 的"不静默降级")。
+		// 启动失败 —— 那时候人已经不在终端前面了。
 		if ok, why := agent.Supported(d.Objective); !ok {
 			skips = append(skips, Skip{
 				Where:  "agent:" + p.ID + "/" + did,
@@ -202,7 +202,7 @@ func renderAgentDeclarations(s *model.SSOT, p *model.Node) ([]agent.Decl, []Skip
 			continue
 		}
 		// 被端口钉住的声明才有声明级 selector;只治理服务的声明,
-		// 调参落在各个服务上(§4.5)。
+		// 调参落在各个服务上。
 		if pinned[did] {
 			cands, _ := s.EnumerateCandidates(p, d)
 			if len(cands) == 0 {
@@ -219,7 +219,7 @@ func renderAgentDeclarations(s *model.SSOT, p *model.Node) ([]agent.Decl, []Skip
 			out = append(out, ad)
 		}
 
-		// 每个服务独立调参 —— 这正是 D43 修正的那点。
+		// 每个服务独立调参，不能共享实选 selector。
 		for _, svc := range s.ServicesFor(did) {
 			cands, _ := s.EnumerateServiceCandidates(p, d, svc)
 			if len(cands) == 0 {

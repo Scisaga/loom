@@ -8,7 +8,7 @@ import (
 	"loom/internal/ssotedit"
 )
 
-// setDevicePaused 通过同一 SSOT 写锁提交可恢复的暂停(§14.4)。
+// setDevicePaused 通过同一 SSOT 写锁提交可恢复的暂停。
 // registry 只用于拒绝未加入或已吊销身份，不保存第二份暂停事实。
 func setDevicePaused(c *Control, store clientregistry.Store, id string, paused bool) error {
 	id = strings.TrimSpace(id)

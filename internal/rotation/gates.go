@@ -18,7 +18,7 @@ type GateEvidenceV1 struct {
 }
 
 // GateEvidenceReportV1 是自动化只能追加、不能手填布尔值的 gate 输入。
-// D133 后只登记当前实际部署的 Linux/Android；未部署平台不能形成虚假门禁。
+// 只登记当前实际部署的 Linux/Android；未部署平台不能形成虚假门禁。
 type GateEvidenceReportV1 struct {
 	Schema      int              `json:"schema"`
 	ClusterID   string           `json:"cluster_id"`
@@ -27,7 +27,7 @@ type GateEvidenceReportV1 struct {
 }
 
 // GateStatus 是机器可读的两道门禁。每一项都必须由 evidence 派生，不能由调用方
-// 直接声明 Gate 已打开（D120、D133）。
+// 直接声明 Gate 已打开。
 type GateStatus struct {
 	Schema                 int  `json:"schema"`
 	ServerOverlapGuard     bool `json:"server_overlap_guard"`
@@ -40,7 +40,7 @@ type GateStatus struct {
 }
 
 // ActivePlatformsReady 是开始 listener 轮换的非破坏性门禁。破坏性退役还需要
-// Linux/Android 实测、无旧调用方扫描和可恢复备份三类额外证据（D120、D133）。
+// Linux/Android 实测、无旧调用方扫描和可恢复备份三类额外证据。
 func (g GateStatus) ActivePlatformsReady() bool {
 	return g.Schema == 1 && g.ServerOverlapGuard && g.LinuxV2Reader && g.AndroidV2Reader &&
 		g.LinuxAcceptance && g.AndroidAcceptance
@@ -58,7 +58,7 @@ func (g GateStatus) GateB() bool {
 func EvaluateGateEvidence(report *GateEvidenceReportV1) (GateStatus, error) {
 	status := GateStatus{Schema: 1}
 	if report == nil || report.Schema != 1 || report.ClusterID == "" || report.Evidence == nil {
-		return GateStatus{}, errors.New("[D120 gate] evidence report header 无效")
+		return GateStatus{}, errors.New("[gate] evidence report header 无效")
 	}
 	evaluatedAt, err := wire.ParseTimeZ(report.EvaluatedAt)
 	if err != nil {
@@ -67,10 +67,10 @@ func EvaluateGateEvidence(report *GateEvidenceReportV1) (GateStatus, error) {
 	for index := range report.Evidence {
 		evidence := &report.Evidence[index]
 		if index > 0 && report.Evidence[index-1].Component >= evidence.Component {
-			return GateStatus{}, errors.New("[D120 gate] evidence component 必须严格排序且唯一")
+			return GateStatus{}, errors.New("[gate] evidence component 必须严格排序且唯一")
 		}
 		if evidence.Outcome != "passed" && evidence.Outcome != "failed" {
-			return GateStatus{}, errors.New("[D120 gate] evidence outcome 无效")
+			return GateStatus{}, errors.New("[gate] evidence outcome 无效")
 		}
 		if _, err := wire.ParseHash(evidence.ArtifactHash); err != nil {
 			return GateStatus{}, err
@@ -80,7 +80,7 @@ func EvaluateGateEvidence(report *GateEvidenceReportV1) (GateStatus, error) {
 		}
 		observedAt, err := wire.ParseTimeZ(evidence.ObservedAt)
 		if err != nil || observedAt.After(evaluatedAt) {
-			return GateStatus{}, errors.New("[D120 gate] evidence observation time 无效")
+			return GateStatus{}, errors.New("[gate] evidence observation time 无效")
 		}
 		passed := evidence.Outcome == "passed"
 		switch evidence.Component {
@@ -99,7 +99,7 @@ func EvaluateGateEvidence(report *GateEvidenceReportV1) (GateStatus, error) {
 		case "server_overlap_guard":
 			status.ServerOverlapGuard = passed
 		default:
-			return GateStatus{}, errors.New("[D120 gate] evidence component 未获协议授权")
+			return GateStatus{}, errors.New("[gate] evidence component 未获协议授权")
 		}
 	}
 	return status, nil

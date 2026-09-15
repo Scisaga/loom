@@ -67,7 +67,7 @@ func TestReadExactLinuxV2JSONRejectsEquivalentNoncanonicalInput(t *testing.T) {
 func TestLinuxPrivateV2CommandsRequireInstalledCredentialOrCompleteMigrationInputs(t *testing.T) {
 	for _, args := range [][]string{{"sync-v2-view"}, {"report-v2"}} {
 		if err := cmdClient(args); err == nil ||
-			(!strings.Contains(err.Error(), "用法") && !strings.Contains(err.Error(), "[D131 Linux")) {
+			(!strings.Contains(err.Error(), "用法") && !strings.Contains(err.Error(), "[Linux")) {
 			t.Fatalf("%v 缺 installed state/credential 未失败关闭: %v", args, err)
 		}
 	}

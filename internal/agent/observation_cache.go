@@ -13,7 +13,7 @@ import (
 	"loom/internal/observation"
 )
 
-// ObservationCache 接收 §16.1.2 既有报告响应中的服务器观测，只影响探测剪枝，
+// ObservationCache 接收既有报告响应中的服务器观测，只影响探测剪枝，
 // 不拥有 selector，也不能扩展已激活计划的候选集合。
 type ObservationCache struct {
 	mu      sync.Mutex
@@ -40,7 +40,7 @@ func (c *ObservationCache) clientEvidence() clientroute.Evidence {
 
 func NewObservationCache(cfg *Config) (*ObservationCache, error) {
 	if cfg == nil {
-		return nil, errors.New("[§16.1.2] 缺少当前观测授权计划")
+		return nil, errors.New("缺少当前观测授权计划")
 	}
 	maxAge, err := cfg.ObsStale()
 	if err != nil {
@@ -77,7 +77,7 @@ func (c *ObservationCache) Changes() <-chan struct{} {
 	return c.changed
 }
 
-// Updates 供只消费观测的客户端重算选择，不触发主动探测（§16.1.2）。
+// Updates 供只消费观测的客户端重算选择，不触发主动探测。
 func (c *ObservationCache) Updates() <-chan struct{} {
 	if c == nil {
 		return nil
@@ -88,7 +88,7 @@ func (c *ObservationCache) Updates() <-chan struct{} {
 }
 
 // Ingest 先验证完整原对象，再按原来源和原时间去重；接收时间不能延长证据寿命。
-// §16.1.2：一份坏观测不污染其余合法来源，也不把上报成功变成设备故障。
+// 一份坏观测不污染其余合法来源，也不把上报成功变成设备故障。
 func (c *ObservationCache) Ingest(ctx context.Context, raw []json.RawMessage, ca []byte, now time.Time) error {
 	if c == nil {
 		return nil
@@ -100,7 +100,7 @@ func (c *ObservationCache) Ingest(ctx context.Context, raw []json.RawMessage, ca
 	for _, body := range raw {
 		total += len(body)
 		if total > 1<<20 {
-			return errors.New("[§16.1.2] 观测输入超过大小限制")
+			return errors.New("观测输入超过大小限制")
 		}
 	}
 	var accepted []observation.Observation
@@ -152,7 +152,7 @@ func (c *ObservationCache) Ingest(ctx context.Context, raw []json.RawMessage, ca
 		c.changed = make(chan struct{})
 	}
 	if rejected != 0 {
-		return fmt.Errorf("[§16.1.2] 已拒绝 %d 份范围、签名或新鲜度无效的服务器观测", rejected)
+		return fmt.Errorf("已拒绝 %d 份范围、签名或新鲜度无效的服务器观测", rejected)
 	}
 	return nil
 }
@@ -185,7 +185,7 @@ func (c *ObservationCache) unreachableLocked(target string, now time.Time, maxAg
 			continue
 		}
 		for _, reach := range o.Targets {
-			// §16.1.2：缺测或部分失败仍未知/可用，不能被缓存推成出口故障。
+			// 缺测或部分失败仍未知/可用，不能被缓存推成出口故障。
 			if reach.Samples > 0 && reach.Failures == reach.Samples && reach.Error != "" && EquivalentTargetURL(reach.Target, target) {
 				out[node] = reach.Error
 			}

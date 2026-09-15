@@ -148,7 +148,7 @@ class RouteManager private constructor(context: Context) {
         }
     }
 
-    /** §7.3.1：只在 libbox 已启动带认证的回环 API 后调用。 */
+    /** 只在 libbox 已启动带认证的回环 API 后调用。 */
     suspend fun applyToRunning(profile: ManagedProfile) = operation.withLock {
         availableProfile = profile
         val routePlan = profile.routePlan
@@ -276,7 +276,7 @@ class RouteManager private constructor(context: Context) {
         }
     }
 
-    /** #14：只由 process-lifetime registry 在当前底层网络代执行一轮并行入口测量。 */
+    /** 只由 process-lifetime registry 在当前底层网络代执行一轮并行入口测量。 */
     internal suspend fun beginRouteSession(profile: ManagedProfile, source: String, registry: UnderlayProbeRegistry) {
         val plan = profile.routePlan ?: return
         val inputs = Loomcore.androidRoutingInputs(profile.config.encodeToByteArray(), plan.encodeToByteArray())
@@ -302,7 +302,7 @@ class RouteManager private constructor(context: Context) {
         }
     }
 
-    /** §16.1.2：仅在既有签名上报周期返回证据时重算，不新增轮询。 */
+    /** 仅在既有签名上报周期返回证据时重算，不新增轮询。 */
     suspend fun consumeObservations(profile: ManagedProfile, observations: ByteArray?, readError: String? = null) =
         operation.withLock {
             if (runningRecordID != profile.recordID) throw CancellationException("隧道会话已经结束")
@@ -680,7 +680,7 @@ private fun formatRate(bitsPerSecond: Double): String {
     return "%.1f %s".format(java.util.Locale.ROOT, value, unit)
 }
 
-/** §7.3：只解析已验签配置的 detour 链；不根据 tag 名字猜协议。 */
+/** 只解析已验签配置的 detour 链；不根据 tag 名字猜协议。 */
 private fun routeProtocols(profile: ManagedProfile, candidate: String): List<String> = runCatching {
     val plan = profile.routePlan ?: return emptyList()
     val inputs = JSONObject(Loomcore.androidRoutingInputs(profile.config.encodeToByteArray(), plan.encodeToByteArray()).decodeToString())

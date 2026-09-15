@@ -69,7 +69,7 @@ import java.net.NetworkInterface
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 
-// §16.4：完整 Observation 保持原一分钟周期；独立三字段在线心跳每五秒发送。
+// 完整 Observation 保持原一分钟周期；独立三字段在线心跳每五秒发送。
 internal const val ANDROID_FULL_REPORT_INTERVAL_MS = 60_000L
 internal const val ANDROID_PRESENCE_INTERVAL_MS = 5_000L
 
@@ -152,7 +152,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         if (boxService == null) startForeground(NOTIFICATION_ID, foregroundNotification("正在准备…"))
         when (intent?.action) {
             null, SERVICE_INTERFACE -> {
-                // §8.3：sticky 重建与系统 always-on 启动都没有应用自定义 action。
+                // sticky 重建与系统 always-on 启动都没有应用自定义 action。
                 desiredConnected = true
                 desiredProfileId = VpnConnectionPreference(this).profileId().takeIf { ProfileCatalog.get(this).contains(it) }
                     ?: ProfileCatalog.get(this).state.value.selectedId
@@ -207,7 +207,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
             }
             ACTION_V2_TERMINAL -> {
                 if (!matchesActive(intent)) return vpnServiceRestartMode(desiredConnected)
-                // D131：certified tombstone 优先于用户连接意图与 always-on 策略。
+                // certified tombstone 优先于用户连接意图与 always-on 策略。
                 desiredConnected = false
                 runCatching { VpnConnectionPreference(this).setDesiredConnected(false) }
                 scope.launch { stopForV2Tombstone() }
@@ -228,7 +228,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
             }
             else -> stopIdleForeground(startId)
         }
-        // §8.3：连接是用户明确发出的长期请求；主动断开已在返回前清除该请求。
+        // 连接是用户明确发出的长期请求；主动断开已在返回前清除该请求。
         return vpnServiceRestartMode(desiredConnected)
     }
 
@@ -303,7 +303,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         stopIdleForeground(startId)
     }
 
-    /** #14：注册 transport 与正式 TUN 共用这个 VpnService 的 protect 权限。 */
+    /** 注册 transport 与正式 TUN 共用这个 VpnService 的 protect 权限。 */
     internal suspend fun prepareBootstrapNetwork(
         recordAttempt: (String, Long) -> Unit,
     ): AndroidBootstrapNetworkController = lifecycle.withLock {
@@ -469,7 +469,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         activate(config)
         profile?.let { RouteManager.get(profileContext).applyToRunning(it) }
         ensureConnectionWanted()
-        // #14：启动只验证本地 TUN/libbox 成功。业务 DNS/HTTPS 既不属于 transport
+        // 启动只验证本地 TUN/libbox 成功。业务 DNS/HTTPS 既不属于 transport
         // probe，也不能阻塞连接或冒充服务端 observation。
         return ProbeResult.notRunAtActivation()
     }
@@ -564,7 +564,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         }
     }
 
-    /** #14：private config/report 与数据面共用当前 TUN/WG；失败只保留 LKG，不能停数据面。 */
+    /** private config/report 与数据面共用当前 TUN/WG；失败只保留 LKG，不能停数据面。 */
     private fun startV2Reporter(profile: ManagedProfile) {
         reportJob?.cancel()
         presenceJob?.cancel()
@@ -783,7 +783,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
             jobs.filter { it != caller }.forEach { it.cancel() }
             if (cancelReporter) { reportJob = null; presenceJob = null }
             routeJob = null
-            // §7.2：等旧配置的报告、Agent 和 selector 操作退出，才可交接或删除密钥。
+            // 等旧配置的报告、Agent 和 selector 操作退出，才可交接或删除密钥。
             jobs.filter { it != caller }.forEach { it.join() }
             activeManagedProfile = null
             monitors.entries.toList().forEach { (listener, monitor) -> removeUnderlyingMonitor(listener, monitor) }

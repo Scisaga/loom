@@ -8,7 +8,7 @@ import java.util.Base64
 import java.util.UUID
 
 /**
- * #14：一次性 descriptor 与 stable core 只进入 EncryptedStore。每次 outer
+ * 一次性 descriptor 与 stable core 只进入 EncryptedStore。每次 outer
  * connection attempt 必须先原子推进这个 journal，进程重启不能重置预算。
  */
 internal data class V2PendingEnrollment(
@@ -151,7 +151,7 @@ internal data class V2PendingEnrollment(
         )
     }
 
-    /** D130：显式导入可替换旧 resume 窗口，但不能改变本机 transaction floor。 */
+    /** 显式导入可替换旧 resume 窗口，但不能改变本机 transaction floor。 */
     fun withResume(
         descriptor: ByteArray,
         proofBundle: ByteArray,

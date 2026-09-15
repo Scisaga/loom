@@ -18,7 +18,7 @@ import (
 	"loom/internal/version"
 )
 
-// §5.5、§16.1：每次激活拥有自己的 Agent 生命周期和证据目录，退出后不再提供报告。
+// 每次激活拥有自己的 Agent 生命周期和证据目录，退出后不再提供报告。
 type WindowsAgent struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
@@ -35,12 +35,12 @@ type WindowsAgent struct {
 
 func StartWindowsAgent(ctx context.Context, cfg *agent.Config, runtimeDir string, inputs ...agent.ClientOptions) (*WindowsAgent, error) {
 	if ctx == nil || cfg == nil {
-		return nil, errors.New("[§5.5] Agent 生命周期参数不完整")
+		return nil, errors.New("Agent 生命周期参数不完整")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	// §12：宿主重配不能原地修改正在运行的 generation。
+	// 宿主重配不能原地修改正在运行的 generation。
 	encoded, err := json.Marshal(cfg)
 	if err != nil {
 		return nil, err
@@ -88,7 +88,7 @@ func StartWindowsAgent(ctx context.Context, cfg *agent.Config, runtimeDir string
 }
 
 // PathMeasurements 只为当前实际候选组装本地显示数据，不改变 Report 线格式。
-// §7.3.3：不重新读取 selector、不发探测、不把不同承载或不同代次的观测混在一起。
+// 不重新读取 selector、不发探测、不把不同承载或不同代次的观测混在一起。
 func (a *WindowsAgent) PathMeasurements(report *clientreport.AgentState, now time.Time) map[string][]agent.ClientPathMeasurement {
 	out := map[string][]agent.ClientPathMeasurement{}
 	if a == nil || report == nil || a.ctx.Err() != nil || report.Node != a.config.Node {
@@ -120,20 +120,20 @@ func (a *WindowsAgent) PathMeasurements(report *clientreport.AgentState, now tim
 }
 
 // IngestObservations 只接入当前激活代次；Direct 没有 Agent，不消费服务器证据。
-// §16.1.2：拒收原因与设备健康分开，旧代次取消后不得向新回路输送事实。
+// 拒收原因与设备健康分开，旧代次取消后不得向新回路输送事实。
 func (a *WindowsAgent) IngestObservations(raw []json.RawMessage, ca []byte, now time.Time) error {
 	if a == nil {
 		return nil
 	}
 	select {
 	case <-a.done:
-		return errors.New("[§16.1.2] Agent 已退出，不能接收服务器观测")
+		return errors.New("Agent 已退出，不能接收服务器观测")
 	default:
 	}
 	return a.observations.Ingest(a.ctx, raw, ca, now)
 }
 
-// §5.5：调用者必须在停止数据面或下一次激活之前等待这个屏障。
+// 调用者必须在停止数据面或下一次激活之前等待这个屏障。
 func (a *WindowsAgent) Stop() error {
 	if a == nil {
 		return nil
@@ -162,11 +162,11 @@ func selectorReadback(ctx context.Context, cfg *agent.Config, selector string) (
 	defer client.CloseIdleConnections()
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", errors.New("[§7.3.1] Clash API 尚未就绪")
+		return "", errors.New("Clash API 尚未就绪")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("[§7.3.1] Clash API 返回 HTTP %d", resp.StatusCode)
+		return "", fmt.Errorf("Clash API 返回 HTTP %d", resp.StatusCode)
 	}
 	var state struct {
 		Now  string `json:"now"`
@@ -176,12 +176,12 @@ func selectorReadback(ctx context.Context, cfg *agent.Config, selector string) (
 		return "", err
 	}
 	if state.Type != "Selector" {
-		return "", errors.New("[§5.5] 运行时端点不是 selector")
+		return "", errors.New("运行时端点不是 selector")
 	}
 	return state.Now, nil
 }
 
-// §7.3.1：进程存在不代表控制面已就绪；readback 必须属于本次授权集合。
+// 进程存在不代表控制面已就绪；readback 必须属于本次授权集合。
 func WaitWindowsAgentAPI(ctx context.Context, cfg *agent.Config) error {
 	wait, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -198,7 +198,7 @@ func WaitWindowsAgentAPI(ctx context.Context, cfg *agent.Config) error {
 				found = found || c.Tag == actual
 			}
 			if !found {
-				return errors.New("[§5.1] selector 实际值不在当前授权集合")
+				return errors.New("selector 实际值不在当前授权集合")
 			}
 		}
 		if ready {
@@ -212,7 +212,7 @@ func WaitWindowsAgentAPI(ctx context.Context, cfg *agent.Config) error {
 	}
 }
 
-// §16.1：链由当轮 GET 与当前签名 plan 映射；旧状态只在同一实例、同一实际候选且新鲜时补质量。
+// 链由当轮 GET 与当前签名 plan 映射；旧状态只在同一实例、同一实际候选且新鲜时补质量。
 func (a *WindowsAgent) Report(ctx context.Context, now time.Time) (*clientreport.AgentState, error) {
 	if a == nil {
 		return nil, nil
@@ -222,7 +222,7 @@ func (a *WindowsAgent) Report(ctx context.Context, now time.Time) (*clientreport
 	}
 	select {
 	case <-a.done:
-		return nil, errors.New("[§16.1] Agent 已退出")
+		return nil, errors.New("Agent 已退出")
 	default:
 	}
 	read, cancel := context.WithCancel(ctx)
@@ -249,7 +249,7 @@ func (a *WindowsAgent) Report(ctx context.Context, now time.Time) (*clientreport
 			}
 		}
 		if !found {
-			return nil, errors.New("[§16.1] selector 读回值无法映射当前签名 plan")
+			return nil, errors.New("selector 读回值无法映射当前签名 plan")
 		}
 		s := clientreport.AgentSelection{Declaration: d.ID, Selector: d.Selector, Candidate: actual, Chain: chain, UpdatedAt: out.TS, Reason: "unknown：本次 Agent 尚无当前候选的有效测量"}
 		if st != nil && st.Node == a.config.Node {
@@ -263,7 +263,7 @@ func (a *WindowsAgent) Report(ctx context.Context, now time.Time) (*clientreport
 				if err := json.Unmarshal(encoded, &s.Health); err != nil {
 					return nil, err
 				}
-				// §16.1：canonical v5 没有独立 scope 字段；使用已有、受签名保护的 reason，不扩展协议。
+				// canonical v5 没有独立 scope 字段；使用已有、受签名保护的 reason，不扩展协议。
 				s.Reason = old.Reason + " [decision_scope=" + old.DecisionScope + "]"
 			}
 		}
@@ -275,10 +275,10 @@ func (a *WindowsAgent) Report(ctx context.Context, now time.Time) (*clientreport
 	return out, nil
 }
 
-// §7.3.3：Direct 的界面观测同样来自实际 selector；偏好本身不能证明数据面已直连。
+// Direct 的界面观测同样来自实际 selector；偏好本身不能证明数据面已直连。
 func (p *WindowsSelectorPlan) ReadDirectPaths(ctx context.Context, now time.Time) (*clientreport.AgentState, error) {
 	if p == nil || !p.DirectAvailable() {
-		return nil, errors.New("[§7.3.3] 当前签名计划没有完整直连授权")
+		return nil, errors.New("当前签名计划没有完整直连授权")
 	}
 	cfg := p.DirectReadinessConfig()
 	out := &clientreport.AgentState{Node: cfg.Node, TS: now.UTC().Format(time.RFC3339)}
@@ -292,7 +292,7 @@ func (p *WindowsSelectorPlan) ReadDirectPaths(ctx context.Context, now time.Time
 			found = found || candidate.Tag == actual && len(candidate.Chain) == 0
 		}
 		if !found {
-			return nil, errors.New("[§7.3.3] 实际 selector 不属于当前签名直连候选")
+			return nil, errors.New("实际 selector 不属于当前签名直连候选")
 		}
 		out.Selections = append(out.Selections, clientreport.AgentSelection{
 			Declaration: d.ID, Selector: d.Selector, Candidate: actual, UpdatedAt: out.TS,
@@ -305,7 +305,7 @@ func (p *WindowsSelectorPlan) ReadDirectPaths(ctx context.Context, now time.Time
 	return out, nil
 }
 
-// §13.5：随机代次目录继承受保护父目录；重启不把上代证据当成本代状态。
+// 随机代次目录继承受保护父目录；重启不把上代证据当成本代状态。
 func newProtectedAgentDir(runtimeDir string) (string, error) {
 	if err := validateRoot(runtimeDir); err != nil {
 		return "", err

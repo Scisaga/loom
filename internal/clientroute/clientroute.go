@@ -1,4 +1,4 @@
-// Package clientroute 实现 §5.5.1 的平台无关客户端 selector 决策。
+// Package clientroute 实现平台无关客户端 selector 决策。
 // 它只消费每连接代的一次入口结果和既有签名服务器观测，不执行探测或 selector I/O。
 package clientroute
 
@@ -48,7 +48,7 @@ type Cost struct {
 	FailureRate float64
 }
 
-// Evidence 是 §16.1.2 已验证观测的不可变投影。调用方构造前须校验签名、附件、
+// Evidence 是已验证观测的不可变投影。调用方构造前须校验签名、附件、
 // 作用域和新鲜度；每次计算仍按原始 TS 检查时效。
 type Evidence struct {
 	ByNode map[string]observation.Observation
@@ -167,7 +167,7 @@ func Decide(declaration Declaration, actual string, entries map[string]EntryResu
 		}
 	}
 	if current == nil {
-		return Decision{}, errors.New("[§5.1] 实际 selector 不在授权候选内")
+		return Decision{}, errors.New("实际 selector 不在授权候选内")
 	}
 	chosen := *current
 	targets := evidence.Targets(declaration.Targets, now)
@@ -187,7 +187,7 @@ func Decide(declaration Declaration, actual string, entries map[string]EntryResu
 		best = costs[actual]
 		for _, candidate := range declaration.Candidates {
 			cost := costs[candidate.Tag]
-			// §5.5.1：先逐个判断能否相对现任切换，再排序可切集合，避免被阈值
+			// 先逐个判断能否相对现任切换，再排序可切集合，避免被阈值
 			// 拦住的最快候选遮住另一条可立即减少中继的路径。
 			if !improves(candidate, cost, *current, costs[actual], declaration.SwitchThreshold) {
 				continue
@@ -199,7 +199,7 @@ func Decide(declaration Declaration, actual string, entries map[string]EntryResu
 			}
 		}
 	}
-	// §16.1.2：缺少完整后段证据时保留出口，只比较独立测得且不增加中继的首跳，
+	// 缺少完整后段证据时保留出口，只比较独立测得且不增加中继的首跳，
 	// 不为补全证据追加探测。
 	if !best.Known || best.Failed {
 		var fastest time.Duration
@@ -245,7 +245,7 @@ func Decide(declaration Declaration, actual string, entries map[string]EntryResu
 		Chain: append([]string(nil), chosen.Chain...), Reason: reason}, nil
 }
 
-// §5.5.1：失败率相同、估算延迟不增且服务器更少的路径支配现任，阻尼不能保留
+// 失败率相同、估算延迟不增且服务器更少的路径支配现任，阻尼不能保留
 // 这个冗余中继；同跳替换和增加中继仍须达到改善阈值，失败率更低则可直接切换。
 func improves(next Candidate, cost Cost, current Candidate, old Cost, threshold float64) bool {
 	if !cost.Known || cost.Failed {

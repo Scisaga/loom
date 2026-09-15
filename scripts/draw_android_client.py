@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""按 design.md §7.2 / §7.3，还原已安装 Android 三个 Tab 并补充多配置和路径详情。"""
+"""按客户端界面规范，还原已安装 Android 三个 Tab 并补充多配置和路径详情。"""
 
 from html import escape
 from pathlib import Path
@@ -75,7 +75,7 @@ def text_button(x, y, w, label, hint=""):
 
 
 def brand():
-    # §7.2：复用已安装版 ic_loom 的透明图形；仅将这一原型中的图案设为纯黑。
+    # 复用已安装版 ic_loom 的透明图形；仅将这一原型中的图案设为纯黑。
     source = ET.parse(ROOT / "assets/loom-logo-transparent-titanium.svg").getroot()
     ET.register_namespace("", "http://www.w3.org/2000/svg")
     groups = []
@@ -118,7 +118,7 @@ def navigation(selected):
 
 
 def route_diagram():
-    # §7.3：连线表达实际读回的路径；观测未知只影响数值，不抹掉已确认的链路。
+    # 连线表达实际读回的路径；观测未知只影响数值，不抹掉已确认的链路。
     nodes = (
         (468, "phone", "本机", "设备"),
         (546, "server", "demo-a", "入口"),

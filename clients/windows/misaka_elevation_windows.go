@@ -50,7 +50,7 @@ func (app *portableGUI) restartElevatedFor(profileID string) {
 	})
 }
 
-// §7.2：UAC 可以等待用户任意长时间，不能占住窗口线程而触发系统无响应替身窗口。
+// UAC 可以等待用户任意长时间，不能占住窗口线程而触发系统无响应替身窗口。
 func (app *portableGUI) restartElevatedWith(profileID string, actions windowsElevationActions) {
 	app.mu.Lock()
 	if app.elevationPending || app.ctx.Err() != nil || app.edition != editionPortableTUN {
@@ -92,7 +92,7 @@ func (app *portableGUI) restartElevatedWith(profileID string, actions windowsEle
 		var err error
 		saved := false
 		if manager != nil {
-			// §13.5：交接进程锁之前清空已接收的写操作，新进程不能与旧 worker 共写身份。
+			// 交接进程锁之前清空已接收的写操作，新进程不能与旧 worker 共写身份。
 			manager.workers.Wait()
 			previous, err = manager.store.prepareElevation(profileID)
 			saved = err == nil
@@ -112,7 +112,7 @@ func (app *portableGUI) restartElevatedWith(profileID string, actions windowsEle
 		}
 		if released {
 			if lockErr := actions.acquire(); lockErr != nil {
-				// §13.5：另一个进程取得身份所有权后，旧窗口不能再回滚或修改其索引。
+				// 另一个进程取得身份所有权后，旧窗口不能再回滚或修改其索引。
 				child.update(guiError, true, child.snapshot().deviceID, "无法恢复客户端所有权："+lockErr.Error())
 				actions.exit()
 				return
@@ -139,13 +139,13 @@ func (app *portableGUI) restartElevatedWith(profileID string, actions windowsEle
 	}()
 }
 
-// §7.2：新进程恢复 LastConnected；只改左侧 Selected 会启动另一份保存的配置。
+// 新进程恢复 LastConnected；只改左侧 Selected 会启动另一份保存的配置。
 func (store *connectionProfileStore) prepareElevation(id string) (connectionProfileIndex, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	previous := cloneConnectionProfileIndex(store.index)
 	if connectionProfilePosition(previous, id) < 0 {
-		return previous, errors.New("[§7.2] 提权启动的连接配置已不存在")
+		return previous, errors.New("提权启动的连接配置已不存在")
 	}
 	next := cloneConnectionProfileIndex(previous)
 	next.Selected, next.LastConnected = id, id

@@ -93,7 +93,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      # §10.2: reuse platform-signed upstream packages; CI holds no platform private key.
+      # reuse platform-signed upstream packages; CI holds no platform private key.
       - name: Download signed component packages
         env:
           GH_TOKEN: ${{ github.token }}
@@ -236,7 +236,7 @@ jobs:
               '- 加入网络需要管理员提供与客户端内置平台公钥匹配的加入码。\n'
               '- SHA-256 校验值和构建来源见随附清单及 `BUILD-INFO.txt`。\n\n'
               f'[使用说明]({repo_url}/blob/{sha}/clients/windows/README.md) · '
-              f'[Code signing policy]({repo_url}/blob/{sha}/docs/code-signing-policy.md)\n\n'
+              f'[Code signing policy]({repo_url}/blob/{sha}/docs/operations/code-signing.md)\n\n'
               f'源码：[{sha[:7]}]({repo_url}/commit/{sha}) · [GitHub Actions 构建]({run_url})\n'
           )
           PY

@@ -9,9 +9,9 @@
 > listener generations, a bounded set of userspace WireGuard endpoints for certified
 > generation overlap, a bootstrap transition hash, and an irreversible
 > v2 latch. V2 resources are versioned and never extend strict v1 JSON in place. See
-> [the distributed control-plane design](../../docs/distributed-control-plane.md#19-从当前实现迁移).
+> [the distributed control-plane design](../../docs/protocols/control-plane/migration.md#从当前实现迁移).
 > This is a platform development and delivery guide. Protocol rules belong to the linked specifications.
-> Source entry points and gaps are listed in [the implementation map](../../docs/implementation.md);
+> Source entry points and gaps are listed in [the implementation map](../../docs/development/implementation.md);
 > installed artifacts and device results belong to [deployment evidence](../../docs/operations/local-deployment.md).
 
 In the target v2 flow, an already-enrolled administrator reaches **Create Device**
@@ -346,7 +346,7 @@ state, the one-shot entry result, verified server observations, and passive
 feedback from actual connections and handshakes. Production self-checks must not
 send business DNS/HTTPS requests or probe complete paths; reachability outside
 the available evidence remains unknown. Remaining implementation gaps are
-listed in [the implementation map](../../docs/implementation.md); host evidence remains separate.
+listed in [the implementation map](../../docs/development/implementation.md); host evidence remains separate.
 
 ## Reproducible Linux build
 
@@ -360,7 +360,7 @@ native inputs, including small follow-up fixes, and to APK build/update requests
 A successful Debug install does not update `app-release.apk`. Only an explicit
 user restriction permits a single-variant delivery; documentation/prototype-only
 changes do not require rebuilding APKs. Agents must also follow the
-[Android delivery prompt](../../docs/android-client-delivery-prompt.md).
+[Android delivery guide](../../docs/clients/android-delivery.md).
 
 Run from `clients/android`, using the existing deployment signing environment
 and trust anchor described below. Prepare or verify `app/libs/loom-box.aar` as
@@ -511,7 +511,7 @@ must not wait for an entry probe or server observation or send a business
 DNS/HTTPS request as an activation gate. Only a local startup-transaction failure
 may restore the last verified profile; runtime connection/handshake failures
 remain scoped evidence and do not roll back a verified configuration. The current
-implementation gaps are listed in [the implementation map](../../docs/implementation.md). Reports use the same
+implementation gaps are listed in [the implementation map](../../docs/development/implementation.md). Reports use the same
 Keystore key through the existing canonical v5 and self-check v1 contracts;
 the canonical v5 claim also binds the actual selector, candidate and chain.
 Before the v2 latch, Android sends a separate signed presence heartbeat every

@@ -93,7 +93,7 @@ type portableGUI struct {
 	windowDPI           int32
 	controls            portableGUIControls
 	skin                *misakaUI
-	rendered            *portableGUISnapshot // §7.2：仅 UI 线程访问；服务轮询不等于界面变化。
+	rendered            *portableGUISnapshot // 仅 UI 线程访问；服务轮询不等于界面变化。
 	fonts               []uintptr
 	statusIcon          uintptr
 	statusIcons         *portableStatusIcons
@@ -346,7 +346,7 @@ func (app *portableGUI) importJoinInvite(invite clientenroll.Invite) {
 }
 
 func (app *portableGUI) joinInput(source string, invite *clientenroll.Invite) (windowsJoinResult, error) {
-	// §13.5：网络请求期间也刷新等待时长；仅重绘，不增加请求或更改加入状态。
+	// 网络请求期间也刷新等待时长；仅重绘，不增加请求或更改加入状态。
 	ctx, cancel := context.WithCancel(app.ctx)
 	done := make(chan struct{})
 	go func() {
@@ -568,7 +568,7 @@ func (app *portableGUI) stopRuntime() {
 	app.mu.Lock()
 	if app.runCancel == nil {
 		if app.state == guiJoining || app.state == guiLoading {
-			// §13.5：保留服务中的加入事务，但退出 UI 后不能再自动连接。
+			// 保留服务中的加入事务，但退出 UI 后不能再自动连接。
 			app.stopRequested = true
 		}
 		app.mu.Unlock()
@@ -586,7 +586,7 @@ func (app *portableGUI) stopRuntime() {
 
 func (app *portableGUI) deleteLocalDevice(expectedProfile string) {
 	snapshot := app.snapshot()
-	// §7.2：broker 可在菜单点击后更新快照，确认框与删除请求必须绑定原操作对象。
+	// broker 可在菜单点击后更新快照，确认框与删除请求必须绑定原操作对象。
 	if expectedProfile == "" {
 		return
 	}
@@ -679,7 +679,7 @@ func removeWindowsLocalDevice(root string, edition clientEdition) error {
 		return fmt.Errorf("清理 Windows v2 CNG identity: %w", err)
 	}
 	if edition == editionInstalled {
-		// §13.5：保留安装器创建的 ACL 根目录，避免删除后由普通用户抢建。
+		// 保留安装器创建的 ACL 根目录，避免删除后由普通用户抢建。
 		entries, err := os.ReadDir(root)
 		if err != nil {
 			return err
@@ -921,7 +921,7 @@ func showWindowsError(title string, err error) {
 	messageBox(0, title, err.Error(), portableMBOK|portableMBIconError)
 }
 
-// §7.2：外观由轻量绘图层统一绘制，原生控件继续提供输入、焦点和辅助技术语义。
+// 外观由轻量绘图层统一绘制，原生控件继续提供输入、焦点和辅助技术语义。
 
 const (
 	portableWMCreate         = 0x0001
@@ -1409,7 +1409,7 @@ func createPortableWindow(app *portableGUI) (uintptr, error) {
 	iconSmall := loadPortableAppIcon(instance, portableSMCXSmallIcon, portableSMCYSmallIcon, dpi)
 	wndClass := portableWNDClassEx{
 		size:       uint32(unsafe.Sizeof(portableWNDClassEx{})),
-		style:      0, // §7.2：自绘标题只保留最小化与关闭，不注册标题双击最大化。
+		style:      0, // 自绘标题只保留最小化与关闭，不注册标题双击最大化。
 		wndProc:    windows.NewCallback(portableWindowProc),
 		instance:   instance,
 		icon:       icon,
@@ -1539,7 +1539,7 @@ func (app *portableGUI) createControls() error {
 		{&app.controls.pathsHint, 0, "STATIC", "当前选路用于新连接；已有连接可能沿用原路径。", portableSSLeft | portableSSNoPrefix, 0},
 		{&app.controls.interfaceGroup, 0, "BUTTON", "连接: Loom 网络", portableBSGroupBox, 0},
 		{&app.controls.stateCaption, 0, "STATIC", "状态:", portableSSRight | portableSSNoPrefix, 0},
-		{&app.controls.stateIcon, 0, "STATIC", "", 0x000D, portableControlStateIcon}, // §7.2：状态符号独立自绘，保留旁侧原生状态文字。
+		{&app.controls.stateIcon, 0, "STATIC", "", 0x000D, portableControlStateIcon}, // 状态符号独立自绘，保留旁侧原生状态文字。
 		{&app.controls.stateValue, 0, "STATIC", "正在检查", 0x000D, 0},
 		{&app.controls.modeCaption, 0, "STATIC", "模式:", portableSSRight | portableSSNoPrefix, 0},
 		{&app.controls.modeValue, 0, "STATIC", "", portableSSLeft | portableSSNoPrefix, 0},
@@ -1655,7 +1655,7 @@ func (app *portableGUI) updateFonts() error {
 }
 
 func createPortableFont(points, weight, dpi int32) (uintptr, error) {
-	// §7.2：原生输入框与自绘中文使用同一系统字体，避免默认字体回退成宋体。
+	// 原生输入框与自绘中文使用同一系统字体，避免默认字体回退成宋体。
 	return createPortableFontFace(points, weight, dpi, "Microsoft YaHei UI")
 }
 
@@ -1876,7 +1876,7 @@ func (app *portableGUI) renderControls() {
 		bounds.bottom = app.scale(misakaTitleHeight)
 		procInvalidateRect.Call(app.hwnd, uintptr(unsafe.Pointer(&bounds)), 0)
 	}
-	// §7.2：仅在页面、连接状态或出口框可见性变化时布局；尺寸与 DPI 由系统消息处理。
+	// 仅在页面、连接状态或出口框可见性变化时布局；尺寸与 DPI 由系统消息处理。
 	if previous == nil || app.misakaRouteLayoutChanged(snapshot) || previous.state != snapshot.state || previous.joined != snapshot.joined || previous.profilesReady != snapshot.profilesReady ||
 		(previous.profileDraft == nil) != (snapshot.profileDraft == nil) {
 		app.layoutControls()
@@ -2014,7 +2014,7 @@ func (app *portableGUI) removeTrayIcon() {
 	app.trayAdded = false
 }
 
-// §7.2：窗口与托盘优先表示实际连接；浏览另一配置时不能把它标成已连接。
+// 窗口与托盘优先表示实际连接；浏览另一配置时不能把它标成已连接。
 func windowsTitleSnapshot(snapshot portableGUISnapshot) portableGUISnapshot {
 	if snapshot.activeProfile != "" {
 		snapshot.profileName = snapshot.activeProfileName
@@ -2152,7 +2152,7 @@ func (app *portableGUI) presentation(snapshot portableGUISnapshot) (state, messa
 }
 
 func setPortableControlText(hwnd uintptr, value string) {
-	// §7.2：STATIC 的重复 WM_SETTEXT 也会擦除背景，进度更新不能连带闪烁其他字段。
+	// STATIC 的重复 WM_SETTEXT 也会擦除背景，进度更新不能连带闪烁其他字段。
 	length, _, _ := procGetWindowTextLength.Call(hwnd)
 	current := make([]uint16, length+1)
 	procGetWindowText.Call(hwnd, uintptr(unsafe.Pointer(&current[0])), uintptr(len(current)))

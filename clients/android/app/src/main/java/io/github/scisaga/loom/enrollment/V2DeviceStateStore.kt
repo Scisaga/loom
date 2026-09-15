@@ -16,7 +16,7 @@ internal data class V2InstalledDeviceState(
     val runtimeProfile: ManagedProfile?,
 )
 
-/** #14：view 与四组 floor 放进同一个 Keystore-wrapped 原子 blob。首次 latch 与后续更新严格分路。 */
+/** view 与四组 floor 放进同一个 Keystore-wrapped 原子 blob。首次 latch 与后续更新严格分路。 */
 class V2DeviceStateStore(context: Context) {
     private val protected = EncryptedStore(context.applicationContext)
     private val keys = DeviceKeyStore(ProfileContext.keySuffix(context))
@@ -74,7 +74,7 @@ class V2DeviceStateStore(context: Context) {
             else -> error("另一份 v2 Device state 已 latch；completion 不得覆盖")
         }
         // 删除 pending 是提交后的清理；若进程在此之前崩溃，启动时只允许
-        // exact core/result 与 durable installation 匹配后继续清理（D130）。
+        // exact core/result 与 durable installation 匹配后继续清理。
         clearPending()
         return durable
     }
@@ -82,7 +82,7 @@ class V2DeviceStateStore(context: Context) {
     @Synchronized
     fun current(): ByteArray? = protected.get(STATE)?.also(Loomcore::validateAndroidV2DeviceState)
 
-    /** #14 / D131：生命周期与 runtime 必须来自同一个 protected blob；tombstone 仍保持 v2 latch。 */
+    /** 生命周期与 runtime 必须来自同一个 protected blob；tombstone 仍保持 v2 latch。 */
     @Synchronized
     internal fun installed(): V2InstalledDeviceState? = protected.get(STATE)?.let { state ->
         Loomcore.validateAndroidV2DeviceState(state)
@@ -90,7 +90,7 @@ class V2DeviceStateStore(context: Context) {
         val lifecycleState = payload.getString("state")
         val profile = runtimeProfile(state)
         check((lifecycleState == "active") == (profile != null)) {
-            "[D131 Android runtime] Device lifecycle 与 runtime 投影不一致"
+            "[Android runtime] Device lifecycle 与 runtime 投影不一致"
         }
         V2InstalledDeviceState(
             encoded = state,
@@ -101,10 +101,10 @@ class V2DeviceStateStore(context: Context) {
         )
     }
 
-    /** #14 / D131：只从 protected state 投影当前获权的 private overlay replicas。 */
+    /** 只从 protected state 投影当前获权的 private overlay replicas。 */
     @Synchronized
     internal fun privateControlPlans(role: String, trustedTime: String): List<V2PrivateControlPlan> {
-        val state = checkNotNull(protected.get(STATE)) { "[D131 Android control] v2 Device state 尚未安装" }
+        val state = checkNotNull(protected.get(STATE)) { "[Android control] v2 Device state 尚未安装" }
         Loomcore.validateAndroidV2DeviceState(state)
         return V2PrivateControlClient.decodePlans(
             Loomcore.prepareAndroidV2PrivateControlPlans(state, keys.ensureIdentity(), role, trustedTime),
@@ -115,19 +115,19 @@ class V2DeviceStateStore(context: Context) {
     /** Verify a delivery without moving the durable current pointer. */
     @Synchronized
     internal fun preparePrivateDelivery(delivery: ByteArray): ByteArray {
-        val current = checkNotNull(protected.get(STATE)) { "[D131 Android config] v2 Device state 尚未安装" }
+        val current = checkNotNull(protected.get(STATE)) { "[Android config] v2 Device state 尚未安装" }
         return Loomcore.prepareAndroidV2PrivateDeviceConfigUpdate(current, delivery, keys.ensureIdentity())
             .also(Loomcore::validateAndroidV2DeviceState)
     }
 
-    /** #14 / D124：配置与解封凭据先与对应 final view 组成候选，不直接推进 current。 */
+    /** 配置与解封凭据先与对应 final view 组成候选，不直接推进 current。 */
     @Synchronized
     internal fun preparePrivateDeliveryWithArtifacts(
         delivery: ByteArray,
         configs: ByteArray,
         credentials: ByteArray,
     ): ByteArray {
-        val current = checkNotNull(protected.get(STATE)) { "[D131 Android config] v2 Device state 尚未安装" }
+        val current = checkNotNull(protected.get(STATE)) { "[Android config] v2 Device state 尚未安装" }
         return Loomcore.prepareAndroidV2PrivateDeviceConfigUpdateWithArtifacts(
             current,
             delivery,
@@ -145,28 +145,28 @@ class V2DeviceStateStore(context: Context) {
     @Synchronized
     internal fun stageRuntimeCandidate(next: ByteArray): ManagedProfile {
         Loomcore.validateAndroidV2DeviceState(next)
-        val current = checkNotNull(protected.get(STATE)) { "[D131 Android config] v2 Device state 尚未安装" }
+        val current = checkNotNull(protected.get(STATE)) { "[Android config] v2 Device state 尚未安装" }
         if (current.contentEquals(next)) {
             runCatching { protected.remove(CANDIDATE_STATE) }
-            return checkNotNull(runtimeProfile(next)) { "[D131 Android runtime] active state 缺 runtime" }
+            return checkNotNull(runtimeProfile(next)) { "[Android runtime] active state 缺 runtime" }
         }
-        val profile = checkNotNull(runtimeProfile(next)) { "[D131 Android runtime] tombstone 不能进入 runtime candidate" }
+        val profile = checkNotNull(runtimeProfile(next)) { "[Android runtime] tombstone 不能进入 runtime candidate" }
         protected.put(CANDIDATE_STATE, next)
-        val replay = checkNotNull(protected.get(CANDIDATE_STATE)) { "[D131 Android runtime] candidate 未持久保存" }
-        check(replay.contentEquals(next)) { "[D131 Android runtime] candidate 持久化回读不一致" }
-        check(runtimeProfile(replay)?.recordID == profile.recordID) { "[D131 Android runtime] candidate 回读不一致" }
+        val replay = checkNotNull(protected.get(CANDIDATE_STATE)) { "[Android runtime] candidate 未持久保存" }
+        check(replay.contentEquals(next)) { "[Android runtime] candidate 持久化回读不一致" }
+        check(runtimeProfile(replay)?.recordID == profile.recordID) { "[Android runtime] candidate 回读不一致" }
         return profile
     }
 
     /** Move only the exact candidate that has already started successfully. */
     @Synchronized
     internal fun commitRuntimeCandidate(recordID: String): ManagedProfile {
-        val candidate = checkNotNull(protected.get(CANDIDATE_STATE)) { "[D131 Android runtime] candidate 已不存在" }
-        val profile = checkNotNull(runtimeProfile(candidate)) { "[D131 Android runtime] candidate 已变为 tombstone" }
-        check(profile.recordID == recordID) { "[D131 Android runtime] candidate 在启动期间发生变化" }
+        val candidate = checkNotNull(protected.get(CANDIDATE_STATE)) { "[Android runtime] candidate 已不存在" }
+        val profile = checkNotNull(runtimeProfile(candidate)) { "[Android runtime] candidate 已变为 tombstone" }
+        check(profile.recordID == recordID) { "[Android runtime] candidate 在启动期间发生变化" }
         protected.put(STATE, candidate)
-        val replay = checkNotNull(protected.get(STATE)) { "[D131 Android runtime] current 提交失败" }
-        check(replay.contentEquals(candidate)) { "[D131 Android runtime] current 提交回读不一致" }
+        val replay = checkNotNull(protected.get(STATE)) { "[Android runtime] current 提交失败" }
+        check(replay.contentEquals(candidate)) { "[Android runtime] current 提交回读不一致" }
         runCatching { protected.remove(CANDIDATE_STATE) }
         return profile
     }
@@ -193,7 +193,7 @@ class V2DeviceStateStore(context: Context) {
     internal fun commitTombstone(next: ByteArray) {
         Loomcore.validateAndroidV2DeviceState(next)
         val payload = JSONObject(next.decodeToString()).getJSONObject("envelope").getJSONObject("payload")
-        check(payload.getString("state") != "active") { "[D131 Android runtime] active state 不能走 tombstone commit" }
+        check(payload.getString("state") != "active") { "[Android runtime] active state 不能走 tombstone commit" }
         commitExact(next)
         runCatching { protected.remove(CANDIDATE_STATE) }
     }

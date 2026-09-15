@@ -1,8 +1,8 @@
 // Package render 把 SSOT 变成每节点的配置包。
 //
-// 渲染是纯函数(§12):同样的输入必然产生同样的字节。这里不含随机数、
+// 渲染是纯函数:同样的输入必然产生同样的字节。这里不含随机数、
 // 不含当前时间、不做外部查询,map 一律排序后遍历。dry-run diff、漂移
-// 检测和回滚这三个产物全都建立在这个性质上(§12.1)。
+// 检测和回滚这三个产物全都建立在这个性质上。
 package render
 
 import (
@@ -27,8 +27,8 @@ type Bundle struct {
 	Files []File
 }
 
-// Hash 是配置包的内容哈希,用于 §15.3 的漂移检测与 §19 的
-// Snapshot.rendered_bundles。它只覆盖渲染层 —— 秘密层不在其中(§12.1)。
+// Hash 是配置包的内容哈希,用于漂移检测与
+// Snapshot.rendered_bundles。它只覆盖渲染层 —— 秘密层不在其中。
 func (b *Bundle) Hash() string {
 	h := sha256.New()
 	for _, f := range b.Files {
@@ -95,12 +95,12 @@ func Render(s *model.SSOT) (*Result, error) {
 			continue
 		}
 
-		// 混淆参数是接口级的,且"全部置零 = 标准 WireGuard"(§17.2)。
+		// 混淆参数是接口级的,且"全部置零 = 标准 WireGuard"。
 		// 在参数渲染实现之前默默输出一份不带参数的配置,等于让人以为
 		// 开了混淆而实际没开 —— 这必须是硬错误,不是跳过。
 		if t.Obfuscation != "" {
 			return nil, fmt.Errorf(
-				"隧道 %s 引用了混淆参数集 %q,但渲染器尚未实现 §17 参数输出;"+
+				"隧道 %s 引用了混淆参数集 %q,但渲染器尚未实现该参数输出;"+
 					"静默输出无参数配置会退化为标准 WireGuard", t.Pair(), t.Obfuscation)
 		}
 
@@ -110,7 +110,7 @@ func Render(s *model.SSOT) (*Result, error) {
 	}
 
 	// 上报者装在**每个**节点上,服务器也要 —— DDNS 重解析、隧道断连、
-	// 有人手工改配置,这些只有节点自己知道(§16.1)。
+	// 有人手工改配置,这些只有节点自己知道。
 	for i := range s.Nodes {
 		if decommissioned[s.Nodes[i].ID] {
 			continue
@@ -123,7 +123,7 @@ func Render(s *model.SSOT) (*Result, error) {
 		skipped = append(skipped, sk...)
 	}
 
-	// 节点侧的控制通道:自己去分发点取配置(§14.2)。
+	// 节点侧的控制通道:自己去分发点取配置。
 	for i := range s.Nodes {
 		if decommissioned[s.Nodes[i].ID] {
 			continue
@@ -136,7 +136,7 @@ func Render(s *model.SSOT) (*Result, error) {
 		skipped = append(skipped, sk...)
 	}
 
-	// 对端走 DDNS 的发起方需要定时重解析(§12:这也是渲染产物,不该手写)。
+	// 对端走 DDNS 的发起方需要定时重解析(这也是渲染产物,不该手写)。
 	for i := range s.Nodes {
 		if decommissioned[s.Nodes[i].ID] {
 			continue
@@ -150,7 +150,7 @@ func Render(s *model.SSOT) (*Result, error) {
 	}
 
 	// sing-box:一台机器一份配置。同时持有两种能力的机器合并渲染 ——
-	// 分成两份会让后写的静默覆盖先写的(§1.3)。
+	// 分成两份会让后写的静默覆盖先写的。
 	for i := range s.Nodes {
 		n := &s.Nodes[i]
 		if decommissioned[n.ID] {
@@ -240,7 +240,7 @@ func usesLinuxLifecycle(n *model.Node) bool {
 }
 
 // Diff 逐文件比较两次渲染,返回人可读的变更摘要。
-// 这是 §12.1 的第一个产物:部署前看到会改哪些文件。
+// 部署前展示文件级差异,让操作者看到哪些配置会改变。
 func Diff(old, new *Result) string {
 	type key struct{ node, path string }
 	index := func(r *Result) map[key]string {

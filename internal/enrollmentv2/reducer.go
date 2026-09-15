@@ -1,6 +1,6 @@
 // Package enrollmentv2 实现 reservation → provisional issuance → approval →
 // completion 的纯 CAS reducer。token、challenge 和 detached PoP 不进入这里，
-// 只有已由 enrollment-purpose quorum 固化的 admission QC 能授权 reservation（D129、D130）。
+// 只有已由 enrollment-purpose quorum 固化的 admission QC 能授权 reservation。
 package enrollmentv2
 
 import (
@@ -99,10 +99,10 @@ type TransactionStateV2 struct {
 
 func Reserve(invite InviteContext, operation ClaimOperationV2, admission *wire.StableEnrollmentAdmissionQCV1, set *wire.ControlSetV1, committedAt string) (TransactionStateV2, error) {
 	if invite.Status != "available" || invite.ClusterID != operation.ClusterID || invite.InviteID != operation.InviteID || operation.Schema != 2 || operation.OperationID == "" || operation.RequestID == "" {
-		return TransactionStateV2{}, errors.New("[D130 Enrollment] Invite 不可用或 claim identity 不匹配")
+		return TransactionStateV2{}, errors.New("[Enrollment] Invite 不可用或 claim identity 不匹配")
 	}
 	if set == nil {
-		return TransactionStateV2{}, errors.New("[D129 Enrollment] admission ControlSet 不能为空")
+		return TransactionStateV2{}, errors.New("[Enrollment] admission ControlSet 不能为空")
 	}
 	if err := wire.VerifyEnrollmentAdmissionQC(admission, set); err != nil {
 		return TransactionStateV2{}, err
@@ -115,19 +115,19 @@ func Reserve(invite InviteContext, operation ClaimOperationV2, admission *wire.S
 		attestation.CertifiedInviteRecordHash != operation.CertifiedInviteRecordHash || attestation.DeviceEnrollmentIntentCommitmentHash != operation.DeviceEnrollmentIntentCommitmentHash ||
 		attestation.DeviceEnrollmentIntentOpeningHash != operation.DeviceEnrollmentIntentOpeningHash || attestation.TokenCommitment != operation.TokenCommitment ||
 		attestation.ClaimCoreHash != operation.ClaimCoreHash || attestation.IdentityKeyHash != operation.IdentityKeyHash || attestation.WrappingKeyHash != operation.WrappingKeyHash || attestation.CSRHash != operation.CSRHash {
-		return TransactionStateV2{}, errors.New("[D129 Enrollment] claim/admission/invite exact binding 不匹配")
+		return TransactionStateV2{}, errors.New("[Enrollment] claim/admission/invite exact binding 不匹配")
 	}
 	expires, err := wire.ParseTimeZ(invite.ExpiresAt)
 	if err != nil || invite.MaximumReservationRetrySeconds < 0 {
-		return TransactionStateV2{}, errors.New("[D130 Enrollment] Invite expiry/retry policy 无效")
+		return TransactionStateV2{}, errors.New("[Enrollment] Invite expiry/retry policy 无效")
 	}
 	wantRetry, err := checkedAddSeconds(expires, invite.MaximumReservationRetrySeconds)
 	if err != nil || attestation.AdmissionNotAfter != invite.ExpiresAt || attestation.RetryNotAfter != wantRetry || operation.RetryNotAfter != wantRetry {
-		return TransactionStateV2{}, errors.New("[D130 Enrollment] admission/retry deadline 不是 certified policy 的精确结果")
+		return TransactionStateV2{}, errors.New("[Enrollment] admission/retry deadline 不是 certified policy 的精确结果")
 	}
 	commitTime, err := wire.ParseTimeZ(committedAt)
 	if err != nil || commitTime.After(expires) || operation.ReservedAt != committedAt {
-		return TransactionStateV2{}, errors.New("[D130 Enrollment] reservation commit 已晚于 Invite expiry 或时间 anchor 不匹配")
+		return TransactionStateV2{}, errors.New("[Enrollment] reservation commit 已晚于 Invite expiry 或时间 anchor 不匹配")
 	}
 	operationHash, err := wire.HashObject(DomainClaimOperation, operation)
 	if err != nil {
@@ -138,14 +138,14 @@ func Reserve(invite InviteContext, operation ClaimOperationV2, admission *wire.S
 
 func RecordProvisional(current TransactionStateV2, operation ProvisionalIssuanceOperationV1) (TransactionStateV2, error) {
 	if current.Status != "reserved" || operation.Schema != 1 || operation.OperationID == "" || !sameTransaction(current, operation.ClusterID, operation.InviteID, operation.RequestID) {
-		return TransactionStateV2{}, errors.New("[D130 Enrollment] provisional issuance 只能从 exact reserved transaction CAS")
+		return TransactionStateV2{}, errors.New("[Enrollment] provisional issuance 只能从 exact reserved transaction CAS")
 	}
 	currentHash, _ := TransactionHash(current)
 	if operation.ExpectedTransactionStateHash != currentHash || operation.ClaimOperationHash != current.ClaimOperationHash || operation.PreviousIssuanceRegistryRoot == operation.ResultingIssuanceRegistryRoot ||
 		wire.ValidateEnrollmentIssuanceRegistryLeaf(&operation.IssuanceRegistryLeaf) != nil ||
 		operation.IssuanceRegistryLeaf.ClaimOperationHash != operation.ClaimOperationHash ||
 		operation.IssuanceRegistryLeaf.ProvisionalIssuanceHash != operation.ProvisionalIssuanceHash {
-		return TransactionStateV2{}, errors.New("[D130 Enrollment] provisional issuance CAS/registry root 无效")
+		return TransactionStateV2{}, errors.New("[Enrollment] provisional issuance CAS/registry root 无效")
 	}
 	for _, hash := range []string{operation.ProvisionalIssuanceHash, operation.PreviousIssuanceRegistryRoot, operation.ResultingIssuanceRegistryRoot} {
 		if _, err := wire.ParseHash(hash); err != nil {
@@ -169,10 +169,10 @@ func RecordProvisional(current TransactionStateV2, operation ProvisionalIssuance
 
 func Complete(current TransactionStateV2, operation CompletionOperationV2, approval *wire.StableEnrollmentApprovalQCV2, set *wire.ControlSetV1) (TransactionStateV2, error) {
 	if current.Status != "issued_provisional" || operation.Schema != 2 || operation.OperationID == "" || !sameTransaction(current, operation.ClusterID, operation.InviteID, operation.RequestID) {
-		return TransactionStateV2{}, errors.New("[D130 Enrollment] completion 只能从 exact issued_provisional transaction CAS")
+		return TransactionStateV2{}, errors.New("[Enrollment] completion 只能从 exact issued_provisional transaction CAS")
 	}
 	if set == nil {
-		return TransactionStateV2{}, errors.New("[D130 Enrollment] approval ControlSet 不能为空")
+		return TransactionStateV2{}, errors.New("[Enrollment] approval ControlSet 不能为空")
 	}
 	if err := wire.VerifyEnrollmentApprovalQC(approval, set); err != nil {
 		return TransactionStateV2{}, err
@@ -187,7 +187,7 @@ func Complete(current TransactionStateV2, operation CompletionOperationV2, appro
 		attestation.ClaimOperationHash != current.ClaimOperationHash || attestation.ProvisionalIssuanceOperationHash != current.ProvisionalIssuanceOperationHash ||
 		attestation.ProvisionalIssuanceHash != current.ProvisionalIssuanceHash || attestation.ResultingIssuanceRegistryRoot != current.ResultingIssuanceRegistryRoot ||
 		attestation.ResultArtifactHash != operation.ResultArtifactHash {
-		return TransactionStateV2{}, errors.New("[D130 Enrollment] completion/approval exact binding 不匹配")
+		return TransactionStateV2{}, errors.New("[Enrollment] completion/approval exact binding 不匹配")
 	}
 	operationHash, err := wire.HashObject(DomainCompletionOperation, operation)
 	if err != nil {
@@ -203,7 +203,7 @@ func Complete(current TransactionStateV2, operation CompletionOperationV2, appro
 
 func Abort(current TransactionStateV2) (TransactionStateV2, error) {
 	if current.Status != "reserved" && current.Status != "issued_provisional" {
-		return TransactionStateV2{}, errors.New("[D130 Enrollment] 只有未完成 transaction 可 certified abort")
+		return TransactionStateV2{}, errors.New("[Enrollment] 只有未完成 transaction 可 certified abort")
 	}
 	next := current
 	next.Status = "aborted"
@@ -212,7 +212,7 @@ func Abort(current TransactionStateV2) (TransactionStateV2, error) {
 
 func TransactionHash(state TransactionStateV2) (string, error) {
 	if state.Schema != 2 || state.ClusterID == "" || state.InviteID == "" || state.RequestID == "" || !oneOf(state.Status, "reserved", "issued_provisional", "completed", "aborted") {
-		return "", errors.New("[D130 Enrollment] transaction state 无效")
+		return "", errors.New("[Enrollment] transaction state 无效")
 	}
 	return wire.HashObject(DomainTransactionState, state)
 }
@@ -223,11 +223,11 @@ func sameTransaction(state TransactionStateV2, clusterID, inviteID, requestID st
 
 func checkedAddSeconds(value time.Time, seconds int64) (string, error) {
 	if seconds < 0 || seconds > int64((365*24*time.Hour)/time.Second) {
-		return "", errors.New("[D130 Enrollment] reservation retry 秒数越界")
+		return "", errors.New("[Enrollment] reservation retry 秒数越界")
 	}
 	result := value.Add(time.Duration(seconds) * time.Second).UTC().Format(time.RFC3339)
 	if _, err := wire.ParseTimeZ(result); err != nil {
-		return "", fmt.Errorf("[D130 Enrollment] reservation retry 时间越界: %w", err)
+		return "", fmt.Errorf("[Enrollment] reservation retry 时间越界: %w", err)
 	}
 	return result, nil
 }

@@ -5,7 +5,7 @@ import (
 	"loom/internal/version"
 )
 
-// Observation 保持 §16.1 原线格式；纯读取层不依赖 Linux 采集或控制面。
+// Observation 保持原线格式；纯读取层不依赖 Linux 采集或控制面。
 type Observation struct {
 	Node string `json:"node"`
 	TS   string `json:"ts"`
@@ -50,7 +50,7 @@ type Observation struct {
 	// 往往就是链路上某一环。
 	//
 	// 签了名之后,转述的是密文不是信任:改一个字就验不过,伪造要 C 的
-	// 私钥。这条正是 D71/D73 那个"版本核不了转述来的节点"的解法。
+	// 私钥，因此不可达节点的版本仍能通过原始签名验证。
 	//
 	// 没有私钥的机器(比如只有 ca.crt 的中控)这里是空的,而空**不等于
 	// 可信**:验不了就是验不了,调用方要当作"没核对过"。
@@ -97,7 +97,7 @@ type Reach struct {
 // OK 报告这个目标可达。
 func (r *Reach) OK() bool { return r.Error == "" }
 
-// §16.1：状态字段复用原 attest 类型，避免平台间签名字段漂移。
+// 状态字段复用原 attest 类型，避免平台间签名字段漂移。
 type RolloutState = attest.RolloutClaim
 type AgentState = attest.AgentClaim
 type AgentSelection = attest.SelectionClaim

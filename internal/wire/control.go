@@ -21,7 +21,7 @@ const (
 	DomainQuorumCertificate          = "loom-quorum-certificate-v1"
 )
 
-// ControlMemberV1 只携公开 opaque member/key，不泄露 Device 或 peer 拓扑（D124）。
+// ControlMemberV1 只携公开 opaque member/key，不泄露 Device 或 peer 拓扑。
 type ControlMemberV1 struct {
 	Schema                 int    `json:"schema"`
 	ClusterID              string `json:"cluster_id"`
@@ -184,14 +184,14 @@ type JointHeadReplicationQCV1 struct {
 
 func Quorum(memberCount int) (int, error) {
 	if memberCount < 1 {
-		return 0, errors.New("[D100 ControlSet] ControlSet 必须至少有一个成员")
+		return 0, errors.New("[ControlSet] ControlSet 必须至少有一个成员")
 	}
 	return memberCount/2 + 1, nil
 }
 
 func ControlKeyID(publicKey []byte) (string, error) {
 	if len(publicKey) != ed25519.PublicKeySize {
-		return "", errors.New("[D102 key] control public key 必须是 32-byte Ed25519 raw key")
+		return "", errors.New("[key] control public key 必须是 32-byte Ed25519 raw key")
 	}
 	sum := sha256.Sum256(publicKey)
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
@@ -199,7 +199,7 @@ func ControlKeyID(publicKey []byte) (string, error) {
 
 func ValidateControlSet(set *ControlSetV1) error {
 	if set == nil || set.Schema != 1 || !validIdentifier(set.ClusterID, 128) || len(set.Members) == 0 {
-		return errors.New("[D100 ControlSet] schema/cluster/members 无效")
+		return errors.New("[ControlSet] schema/cluster/members 无效")
 	}
 	memberIDs := make(map[string]struct{}, len(set.Members))
 	keyIDs := make(map[string]struct{}, len(set.Members)*3)
@@ -208,13 +208,13 @@ func ValidateControlSet(set *ControlSetV1) error {
 		member := &set.Members[i]
 		if member.Schema != 1 || member.ClusterID != set.ClusterID || !ValidMemberID(member.MemberID) ||
 			member.MinimumControlProtocol < 1 {
-			return fmt.Errorf("[D112 ControlSet] member %d 字段无效", i)
+			return fmt.Errorf("[ControlSet] member %d 字段无效", i)
 		}
 		if i > 0 && set.Members[i-1].MemberID >= member.MemberID {
-			return errors.New("[D112 ControlSet] members 必须按 member_id 严格排序且不重复")
+			return errors.New("[ControlSet] members 必须按 member_id 严格排序且不重复")
 		}
 		if _, found := memberIDs[member.MemberID]; found {
-			return errors.New("[D112 ControlSet] member_id 重复")
+			return errors.New("[ControlSet] member_id 重复")
 		}
 		memberIDs[member.MemberID] = struct{}{}
 		pairs := []struct{ id, key, purpose string }{
@@ -225,17 +225,17 @@ func ValidateControlSet(set *ControlSetV1) error {
 		for _, pair := range pairs {
 			raw, err := decodeRawURL(pair.key, ed25519.PublicKeySize)
 			if err != nil {
-				return fmt.Errorf("[D102 key] member %s 的 %s key 无效: %w", member.MemberID, pair.purpose, err)
+				return fmt.Errorf("[key] member %s 的 %s key 无效: %w", member.MemberID, pair.purpose, err)
 			}
 			wantID, _ := ControlKeyID(raw)
 			if pair.id != wantID {
-				return fmt.Errorf("[D102 key] member %s 的 %s key_id 不匹配", member.MemberID, pair.purpose)
+				return fmt.Errorf("[key] member %s 的 %s key_id 不匹配", member.MemberID, pair.purpose)
 			}
 			if _, found := keyIDs[pair.id]; found {
-				return errors.New("[D102 key] ControlSet 内 key_id 跨成员/用途重复")
+				return errors.New("[key] ControlSet 内 key_id 跨成员/用途重复")
 			}
 			if _, found := publicKeys[pair.key]; found {
-				return errors.New("[D102 key] ControlSet 内 public key 跨成员/用途复用")
+				return errors.New("[key] ControlSet 内 public key 跨成员/用途复用")
 			}
 			keyIDs[pair.id], publicKeys[pair.key] = struct{}{}, struct{}{}
 		}
@@ -269,14 +269,14 @@ func NewHeadEntry(body HeadEntryBodyV2) (HeadEntryV2, error) {
 
 func ValidateHeadEntry(entry *HeadEntryV2, parent *HeadEntryV2) error {
 	if entry == nil || entry.Body.Payload.Schema != 2 {
-		return errors.New("[D104 Raft] HeadEntry schema 无效")
+		return errors.New("[Raft] HeadEntry schema 无效")
 	}
 	payload := &entry.Body.Payload
 	if !validIdentifier(payload.ClusterID, 128) || payload.RecoveryEpoch < 0 || payload.ControlEpoch < 0 ||
 		payload.RaftTerm < 1 || payload.RaftIndex < 1 || payload.ControlRevision != payload.RaftIndex ||
 		payload.RenderContractVersion < 1 || payload.MinReaderVersion < 1 ||
 		payload.MaxClockSkewSeconds < 0 || payload.MaxClockSkewSeconds > 300 {
-		return errors.New("[D104 Raft] HeadEntry 坐标/版本/clock skew 无效")
+		return errors.New("[Raft] HeadEntry 坐标/版本/clock skew 无效")
 	}
 	if _, err := ParseTimeZ(payload.CommittedLogicalTime); err != nil {
 		return err
@@ -296,34 +296,34 @@ func ValidateHeadEntry(entry *HeadEntryV2, parent *HeadEntryV2) error {
 	}
 	wantEntry, err := HashObject(DomainHeadEntry, entry.Body)
 	if err != nil || wantEntry != entry.EntryHash {
-		return errors.New("[D104 Raft] entry_hash 不匹配")
+		return errors.New("[Raft] entry_hash 不匹配")
 	}
 	wantHead, err := HashObject(DomainControlHead, entry.Body)
 	if err != nil || wantHead != entry.HeadHash {
-		return errors.New("[D104 Raft] head_hash 不匹配")
+		return errors.New("[Raft] head_hash 不匹配")
 	}
 	if parent == nil {
 		if payload.HeadKind == "bootstrap" {
 			if payload.RaftIndex != 1 || payload.ControlRevision != 1 ||
 				payload.PreviousLogEntryHash != EmptyHashV1 || payload.ParentHeadHash != EmptyHashV1 {
-				return errors.New("[D111 bootstrap] 初始 head 前项/坐标无效")
+				return errors.New("[bootstrap] 初始 head 前项/坐标无效")
 			}
 		}
 		return nil
 	}
 	if err := ValidateHeadEntry(parent, nil); err != nil {
-		return fmt.Errorf("[D104 Raft] parent 无效: %w", err)
+		return fmt.Errorf("[Raft] parent 无效: %w", err)
 	}
 	if payload.ClusterID != parent.Body.Payload.ClusterID || payload.ParentHeadHash != parent.HeadHash ||
 		payload.RaftIndex <= parent.Body.Payload.RaftIndex ||
 		payload.ControlRevision != payload.RaftIndex ||
 		payload.RaftTerm < parent.Body.Payload.RaftTerm {
-		return errors.New("[D104 Raft] head/entry hash chain 或 term/index 不连续")
+		return errors.New("[Raft] head/entry hash chain 或 term/index 不连续")
 	}
 	// parent 是前一份 certified Head，而 previous_log_entry_hash 指向真实 Raft
-	// 直接前项；两份 Head 间允许存在 current-term barrier 等内部 entry（D104）。
+	// 直接前项；两份 Head 间允许存在 current-term barrier 等内部 entry。
 	if payload.RaftIndex == parent.Body.Payload.RaftIndex+1 && payload.PreviousLogEntryHash != parent.EntryHash {
-		return errors.New("[D104 Raft] 相邻 head 的 previous log hash 不匹配")
+		return errors.New("[Raft] 相邻 head 的 previous log hash 不匹配")
 	}
 	if payload.HeadKind == "ordinary" {
 		previous := &parent.Body.Payload
@@ -333,7 +333,7 @@ func ValidateHeadEntry(entry *HeadEntryV2, parent *HeadEntryV2) error {
 			payload.ControlEpoch != previous.ControlEpoch || payload.ControlSetHash != previous.ControlSetHash ||
 			payload.ControlPeerDirectoryHash != previous.ControlPeerDirectoryHash ||
 			entry.Body.TransitionProofHash != parent.Body.TransitionProofHash {
-			return errors.New("[D104 Raft] ordinary head 不能改变 authority/transition")
+			return errors.New("[Raft] ordinary head 不能改变 authority/transition")
 		}
 	}
 	return nil
@@ -359,12 +359,12 @@ func AttestationForHead(entry *HeadEntryV2) HeadReplicationAttestationBodyV1 {
 
 func SignHeadAttestation(attestation HeadReplicationAttestationBodyV1, member ControlMemberV1, key ed25519.PrivateKey) (ControlConfigSignatureV1, error) {
 	if len(key) != ed25519.PrivateKeySize {
-		return ControlConfigSignatureV1{}, errors.New("[D102 key] config private key 无效")
+		return ControlConfigSignatureV1{}, errors.New("[key] config private key 无效")
 	}
 	public := key.Public().(ed25519.PublicKey)
 	encoded := base64.RawURLEncoding.EncodeToString(public)
 	if encoded != member.ConfigPublicKey {
-		return ControlConfigSignatureV1{}, errors.New("[D102 key] config private key 与 member 不匹配")
+		return ControlConfigSignatureV1{}, errors.New("[key] config private key 与 member 不匹配")
 	}
 	canonical, err := MarshalCanonical(attestation)
 	if err != nil {
@@ -389,20 +389,20 @@ func VerifyStableHeadQC(entry *HeadEntryV2, set *ControlSetV1, qc *StableHeadRep
 	}
 	setHash, _ := ControlSetHash(set)
 	if entry.Body.Payload.ControlSetHash != setHash || qc == nil || qc.Schema != 1 || qc.QCType != "stable_head" {
-		return errors.New("[D104 QC] stable QC/set/head 绑定无效")
+		return errors.New("[QC] stable QC/set/head 绑定无效")
 	}
 	wantAttestation := AttestationForHead(entry)
 	wantCanonical, _ := MarshalCanonical(wantAttestation)
 	gotCanonical, err := MarshalCanonical(qc.Attestation)
 	if err != nil || !bytes.Equal(wantCanonical, gotCanonical) {
-		return errors.New("[D104 QC] attestation 与 HeadEntry 不一致")
+		return errors.New("[QC] attestation 与 HeadEntry 不一致")
 	}
 	if len(qc.Signatures) != len(qc.SignerRefs) {
-		return errors.New("[D104 QC] signature/ref 数量不一致")
+		return errors.New("[QC] signature/ref 数量不一致")
 	}
 	threshold, _ := Quorum(len(set.Members))
 	if len(qc.Signatures) < threshold {
-		return errors.New("[D104 QC] 未达到 committed ControlSet quorum")
+		return errors.New("[QC] 未达到 committed ControlSet quorum")
 	}
 	members := make(map[string]ControlMemberV1, len(set.Members))
 	for _, member := range set.Members {
@@ -411,16 +411,16 @@ func VerifyStableHeadQC(entry *HeadEntryV2, set *ControlSetV1, qc *StableHeadRep
 	message, _ := Frame(DomainHeadReplicationAttestation, wantCanonical)
 	for i, signature := range qc.Signatures {
 		if i > 0 && compareSigner(qc.Signatures[i-1].MemberID, qc.Signatures[i-1].ConfigKeyID, signature.MemberID, signature.ConfigKeyID) >= 0 {
-			return errors.New("[D104 QC] signatures 必须严格排序且不重复")
+			return errors.New("[QC] signatures 必须严格排序且不重复")
 		}
 		ref := qc.SignerRefs[i]
 		if ref.MemberID != signature.MemberID || ref.ConfigKeyID != signature.ConfigKeyID ||
 			(i > 0 && compareSigner(qc.SignerRefs[i-1].MemberID, qc.SignerRefs[i-1].ConfigKeyID, ref.MemberID, ref.ConfigKeyID) >= 0) {
-			return errors.New("[D104 QC] signer refs 必须与 signatures 同序同字段")
+			return errors.New("[QC] signer refs 必须与 signatures 同序同字段")
 		}
 		member, ok := members[signature.MemberID]
 		if !ok || signature.Algorithm != "ed25519" || member.ConfigKeyID != signature.ConfigKeyID {
-			return errors.New("[D102 key] QC signer/key purpose 无效")
+			return errors.New("[key] QC signer/key purpose 无效")
 		}
 		public, err := decodeRawURL(member.ConfigPublicKey, ed25519.PublicKeySize)
 		if err != nil {
@@ -428,7 +428,7 @@ func VerifyStableHeadQC(entry *HeadEntryV2, set *ControlSetV1, qc *StableHeadRep
 		}
 		rawSignature, err := decodeRawURL(signature.Signature, ed25519.SignatureSize)
 		if err != nil || !ed25519.Verify(public, message, rawSignature) {
-			return errors.New("[D104 QC] config attestation 签名无效")
+			return errors.New("[QC] config attestation 签名无效")
 		}
 	}
 	return nil
@@ -437,7 +437,7 @@ func VerifyStableHeadQC(entry *HeadEntryV2, set *ControlSetV1, qc *StableHeadRep
 func VerifyHeadAttestationSignature(entry *HeadEntryV2, signature *ControlConfigSignatureV1,
 	set *ControlSetV1) error {
 	if entry == nil || signature == nil {
-		return errors.New("[D104 QC] head/signature 不能为空")
+		return errors.New("[QC] head/signature 不能为空")
 	}
 	if err := ValidateHeadEntry(entry, nil); err != nil {
 		return err
@@ -447,7 +447,7 @@ func VerifyHeadAttestationSignature(entry *HeadEntryV2, signature *ControlConfig
 	}
 	setHash, _ := ControlSetHash(set)
 	if entry.Body.Payload.ControlSetHash != setHash {
-		return errors.New("[D104 QC] attestation signature 使用错误 ControlSet")
+		return errors.New("[QC] attestation signature 使用错误 ControlSet")
 	}
 	var member *ControlMemberV1
 	for index := range set.Members {
@@ -457,7 +457,7 @@ func VerifyHeadAttestationSignature(entry *HeadEntryV2, signature *ControlConfig
 		}
 	}
 	if member == nil || signature.Algorithm != "ed25519" || member.ConfigKeyID != signature.ConfigKeyID {
-		return errors.New("[D102 key] attestation signer/key purpose 无效")
+		return errors.New("[key] attestation signer/key purpose 无效")
 	}
 	canonical, _ := MarshalCanonical(AttestationForHead(entry))
 	message, _ := Frame(DomainHeadReplicationAttestation, canonical)
@@ -467,7 +467,7 @@ func VerifyHeadAttestationSignature(entry *HeadEntryV2, signature *ControlConfig
 	}
 	rawSignature, err := decodeRawURL(signature.Signature, ed25519.SignatureSize)
 	if err != nil || !ed25519.Verify(public, message, rawSignature) {
-		return errors.New("[D104 QC] config attestation signature 无效")
+		return errors.New("[QC] config attestation signature 无效")
 	}
 	return nil
 }
@@ -521,13 +521,13 @@ func VerifyJointHeadQC(entry *HeadEntryV2, oldSet, newSet *ControlSetV1, qc *Joi
 	}
 	newHash, _ := ControlSetHash(newSet)
 	if oldSet.ClusterID != newSet.ClusterID || entry.Body.Payload.ClusterID != newSet.ClusterID || entry.Body.Payload.ControlSetHash != newHash || qc == nil || qc.Schema != 1 || qc.QCType != "joint_head" {
-		return errors.New("[D112 joint QC] old/new set/head 绑定无效")
+		return errors.New("[joint QC] old/new set/head 绑定无效")
 	}
 	wantAttestation := AttestationForHead(entry)
 	wantCanonical, _ := MarshalCanonical(wantAttestation)
 	gotCanonical, err := MarshalCanonical(qc.Attestation)
 	if err != nil || !bytes.Equal(wantCanonical, gotCanonical) {
-		return errors.New("[D112 joint QC] attestation 与 HeadEntry 不一致")
+		return errors.New("[joint QC] attestation 与 HeadEntry 不一致")
 	}
 	union := make(map[string]ControlMemberV1, len(oldSet.Members)+len(newSet.Members))
 	for _, set := range []*ControlSetV1{oldSet, newSet} {
@@ -538,16 +538,16 @@ func VerifyJointHeadQC(entry *HeadEntryV2, oldSet, newSet *ControlSetV1, qc *Joi
 	message, _ := Frame(DomainHeadReplicationAttestation, wantCanonical)
 	for i, signature := range qc.Signatures {
 		if i > 0 && compareSigner(qc.Signatures[i-1].MemberID, qc.Signatures[i-1].ConfigKeyID, signature.MemberID, signature.ConfigKeyID) >= 0 {
-			return errors.New("[D112 joint QC] signatures 必须严格排序且不重复")
+			return errors.New("[joint QC] signatures 必须严格排序且不重复")
 		}
 		member, ok := union[signature.MemberID+"\x00"+signature.ConfigKeyID]
 		if !ok || signature.Algorithm != "ed25519" || signature.ConfigKeyID != member.ConfigKeyID {
-			return errors.New("[D112 joint QC] signer/key 无效")
+			return errors.New("[joint QC] signer/key 无效")
 		}
 		public, _ := decodeRawURL(member.ConfigPublicKey, ed25519.PublicKeySize)
 		rawSignature, err := decodeRawURL(signature.Signature, ed25519.SignatureSize)
 		if err != nil || !ed25519.Verify(public, message, rawSignature) {
-			return errors.New("[D112 joint QC] signature 无效")
+			return errors.New("[joint QC] signature 无效")
 		}
 	}
 	if err := verifyJointRefs(qc.OldSignerRefs, qc.Signatures, oldSet); err != nil {
@@ -562,7 +562,7 @@ func VerifyJointHeadQC(entry *HeadEntryV2, oldSet, newSet *ControlSetV1, qc *Joi
 func verifyJointRefs(refs []ControlConfigSignerRefV1, signatures []ControlConfigSignatureV1, set *ControlSetV1) error {
 	quorum, _ := Quorum(len(set.Members))
 	if len(refs) < quorum {
-		return errors.New("[D112 joint QC] 一侧 signer refs 未达到 committed set quorum")
+		return errors.New("[joint QC] 一侧 signer refs 未达到 committed set quorum")
 	}
 	members := make(map[string]string, len(set.Members))
 	for _, member := range set.Members {
@@ -575,7 +575,7 @@ func verifyJointRefs(refs []ControlConfigSignerRefV1, signatures []ControlConfig
 	for i, ref := range refs {
 		_, hasSignature := signed[ref.MemberID+"\x00"+ref.ConfigKeyID]
 		if i > 0 && compareSigner(refs[i-1].MemberID, refs[i-1].ConfigKeyID, ref.MemberID, ref.ConfigKeyID) >= 0 || members[ref.MemberID] != ref.ConfigKeyID || !hasSignature {
-			return errors.New("[D112 joint QC] signer refs 未排序、重复或未绑定 signature/set")
+			return errors.New("[joint QC] signer refs 未排序、重复或未绑定 signature/set")
 		}
 	}
 	return nil
@@ -624,19 +624,19 @@ func validIdentifier(value string, maximum int) bool {
 
 func validateTransitionContext(kind string, body []byte) error {
 	if len(body) == 0 {
-		return errors.New("[D104 Raft] transition_context 缺失")
+		return errors.New("[Raft] transition_context 缺失")
 	}
 	switch kind {
 	case "ordinary":
 		var context OrdinaryHeadContextV1
 		if _, err := DecodeStrict(body, 4096, &context); err != nil || context.Schema != 1 || context.Kind != "ordinary" {
-			return errors.New("[D104 Raft] ordinary transition_context 无效")
+			return errors.New("[Raft] ordinary transition_context 无效")
 		}
 		return nil
 	case "bootstrap":
 		var context BootstrapHeadContextV1
 		if _, err := DecodeStrict(body, 4096, &context); err != nil || context.Schema != 1 || context.Kind != kind || requireCanonicalHashes(context.InitialV2HeadPayloadHash) != nil {
-			return errors.New("[D111 bootstrap] bootstrap transition_context 无效")
+			return errors.New("[bootstrap] bootstrap transition_context 无效")
 		}
 		return nil
 	case "control_set_final":
@@ -646,24 +646,24 @@ func validateTransitionContext(kind string, body []byte) error {
 			requireCanonicalHashes(context.OldControlSetHash, context.OldControlPeerDirectoryHash,
 				context.NewControlSetHash, context.NewControlPeerDirectoryHash, context.MembershipApprovalProofHash,
 				context.JointEntryHash, context.JointProofHash) != nil {
-			return errors.New("[D112 joint] FinalControlSet transition_context 无效")
+			return errors.New("[joint] FinalControlSet transition_context 无效")
 		}
 		return nil
 	case "emergency_recovery":
 		var context RecoveryGenesisContextV1
 		if _, err := DecodeStrict(body, 4096, &context); err != nil || context.Schema != 1 || context.Kind != kind || requireCanonicalHashes(context.GenesisPayloadHash) != nil {
-			return errors.New("[D119 recovery] recovery genesis transition_context 无效")
+			return errors.New("[recovery] recovery genesis transition_context 无效")
 		}
 		return nil
 	case "recovery_policy_activation":
 		var context RecoveryPolicyActivationContextV1
 		if _, err := DecodeStrict(body, 4096, &context); err != nil || context.Schema != 1 || context.Kind != kind ||
 			requireCanonicalHashes(context.IntentHash, context.IntentHeadHash, context.IntentQCHash) != nil {
-			return errors.New("[D116 recovery] recovery policy activation context 无效")
+			return errors.New("[recovery] recovery policy activation context 无效")
 		}
 		return nil
 	default:
-		return fmt.Errorf("[D104 Raft] 未知 head_kind %q", kind)
+		return fmt.Errorf("[Raft] 未知 head_kind %q", kind)
 	}
 }
 

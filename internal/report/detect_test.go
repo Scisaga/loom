@@ -127,7 +127,7 @@ func TestEdgeIsRecordedPerObserver(t *testing.T) {
 }
 
 // edge 必须被 events 包认成"有问题的状态",否则它进不了未解决面板 ——
-// 那是 D55 那个"级别靠猜"的 bug 的同一个位置。
+// 级别必须来自事件类型，不能依赖不同模块猜测状态字符串。
 func TestEdgeLevelIsClassifiedByKind(t *testing.T) {
 	bad := events.Event{Kind: "edge", Subject: "demo-c", From: "ok", To: "unreachable"}
 	if !bad.Bad() {

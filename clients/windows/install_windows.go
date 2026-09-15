@@ -25,7 +25,7 @@ func trustedMachineSID(sid *windows.SID) bool {
 	return sid != nil && (sid.IsWellKnown(windows.WinLocalSystemSid) || sid.IsWellKnown(windows.WinBuiltinAdministratorsSid))
 }
 
-// §13.5：机器 DPAPI 不隔离本机用户，必须在读取任何身份/运行文件前核验安装 ACL。
+// 机器 DPAPI 不隔离本机用户，必须在读取任何身份/运行文件前核验安装 ACL。
 func validateMachineDescriptor(sd *windows.SECURITY_DESCRIPTOR) error {
 	owner, _, err := sd.Owner()
 	if err != nil || !trustedMachineSID(owner) {
@@ -48,7 +48,7 @@ func validateMachineDescriptor(sd *windows.SECURITY_DESCRIPTOR) error {
 }
 
 func validateInstalledState(root string) error {
-	// §13.5：不从环境变量、GUI 或 IPC 接受机器状态路径；不跟随目录联接。
+	// 不从环境变量、GUI 或 IPC 接受机器状态路径；不跟随目录联接。
 	for path := root; filepath.Dir(path) != path; path = filepath.Dir(path) {
 		wide, err := windows.UTF16PtrFromString(path)
 		if err != nil {

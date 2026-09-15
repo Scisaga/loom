@@ -26,17 +26,17 @@ func TestGUIMisakaRouteWheelOutsidePopupScrollsPageWithoutSelecting(t *testing.T
 	procSendMessage.Call(app.hwnd, portableWMCommand, misakaControlFixed, app.controls.modeFixed)
 	dropped, _, _ := procSendMessage.Call(app.controls.routeCombo, 0x0157, 0, 0)
 	if dropped == 0 {
-		t.Fatal("[§7.2] 回归前置：出口菜单未打开")
+		t.Fatal("回归前置：出口菜单未打开")
 	}
 	pane := guiWindowRect(t, app.skin.pane)
 	point := misakaWheelPoint(misakaRect(pane.left+app.scale(20), pane.top+app.scale(350), app.scale(40), app.scale(20)))
 	procSendMessage.Call(app.controls.routeCombo, 0x020A, uintptr(uint32(0xff88)<<16), point)
 	if app.skin.scrollY == 0 {
-		t.Error("[§7.2] 鼠标已在页面，焦点仍让出口框吞掉滚轮")
+		t.Error("鼠标已在页面，焦点仍让出口框吞掉滚轮")
 	}
 	dropped, _, _ = procSendMessage.Call(app.controls.routeCombo, 0x0157, 0, 0)
 	if dropped != 0 || app.skin.route.picker || app.skin.route.pending != nil || app.routeSelected != 0 {
-		t.Error("[§7.2] 页面滚动未撤销出口编辑，或误提交出口")
+		t.Error("页面滚动未撤销出口编辑，或误提交出口")
 	}
 }
 
@@ -57,7 +57,7 @@ func TestGUIMisakaScrollDoesNotMeasureRowsAgain(t *testing.T) {
 	})
 	original, _, _ = set.Call(app.controls.pathsValue, ^uintptr(3), callback)
 	if original == 0 {
-		t.Fatal("[§7.2] 无法记录路径列表高度消息")
+		t.Fatal("无法记录路径列表高度消息")
 	}
 	defer set.Call(app.controls.pathsValue, ^uintptr(3), original)
 	start := time.Now()
@@ -66,7 +66,7 @@ func TestGUIMisakaScrollDoesNotMeasureRowsAgain(t *testing.T) {
 	}
 	t.Logf("20 次详情滚动耗时 %s；行高读写 %d", time.Since(start), reads)
 	if reads != 0 {
-		t.Errorf("[§7.2] 纯滚动仍重复访问行高 %d 次", reads)
+		t.Errorf("纯滚动仍重复访问行高 %d 次", reads)
 	}
 }
 
@@ -81,7 +81,7 @@ func TestGUIMisakaRouteWheelInsidePopupKeepsNativeListNavigation(t *testing.T) {
 	procSendMessage.Call(app.hwnd, portableWMCommand, misakaControlFixed, app.controls.modeFixed)
 	list := app.skin.route.list
 	if list == 0 {
-		t.Fatal("[§7.2] 出口原生列表不存在")
+		t.Fatal("出口原生列表不存在")
 	}
 	point := misakaWheelPoint(guiWindowRect(t, list))
 	for _, receiver := range []uintptr{list, app.controls.routeCombo} {
@@ -93,7 +93,7 @@ func TestGUIMisakaRouteWheelInsidePopupKeepsNativeListNavigation(t *testing.T) {
 		after, _, _ := procSendMessage.Call(list, 0x018E, 0, 0)
 		dropped, _, _ := procSendMessage.Call(app.controls.routeCombo, 0x0157, 0, 0)
 		if dropped == 0 || after <= before || app.skin.scrollY != 0 || app.skin.route.pending != nil || app.routeSelected != 0 {
-			t.Fatalf("[§7.2] 菜单内滚轮丢失原生滚动或改变实际选路：菜单=%d 首项=%d→%d 页面=%d", dropped, before, after, app.skin.scrollY)
+			t.Fatalf("菜单内滚轮丢失原生滚动或改变实际选路：菜单=%d 首项=%d→%d 页面=%d", dropped, before, after, app.skin.scrollY)
 		}
 	}
 	pane := guiWindowRect(t, app.skin.pane)
@@ -101,26 +101,26 @@ func TestGUIMisakaRouteWheelInsidePopupKeepsNativeListNavigation(t *testing.T) {
 	procSendMessage.Call(list, 0x020A, uintptr(uint32(0xff88)<<16), point)
 	dropped, _, _ := procSendMessage.Call(app.controls.routeCombo, 0x0157, 0, 0)
 	if dropped != 0 || app.skin.scrollY == 0 || app.skin.route.picker || app.skin.route.pending != nil {
-		t.Fatal("[§7.2] 弹出列表捕获滚轮后，没有按鼠标位置交还页面")
+		t.Fatal("弹出列表捕获滚轮后，没有按鼠标位置交还页面")
 	}
 }
 
 func TestGUIMisakaScrolledPixelsMatchCompleteRepaint(t *testing.T) {
 	app := newMisakaViewportTestWindow(t)
-	// §7.2：只读取本测试窗口的 DC；先验收正常 WM_PAINT，再与完整重绘比较。
+	// 只读取本测试窗口的 DC；先验收正常 WM_PAINT，再与完整重绘比较。
 	procSetWindowPos.Call(app.hwnd, 0, 0, 0, 0, 0, 0x0053)
 	capture := func() []byte {
 		view := misakaViewportClientRect(app.skin.pane)
 		memory, pixels := misakaCanvasTestDC(t, view.right, view.bottom)
 		dc, _, _ := portableUser32.NewProc("GetDC").Call(app.skin.pane)
 		if dc == 0 {
-			t.Fatal("[§7.2] 无法读取测试视口")
+			t.Fatal("无法读取测试视口")
 		}
 		ok, _, _ := portableGDI32.NewProc("BitBlt").Call(memory, 0, 0, uintptr(view.right), uintptr(view.bottom), dc, 0, 0, 0x00CC0020)
 		portableUser32.NewProc("ReleaseDC").Call(app.skin.pane, dc)
 		portableGDI32.NewProc("GdiFlush").Call()
 		if ok == 0 {
-			t.Fatal("[§7.2] 无法复制测试视口")
+			t.Fatal("无法复制测试视口")
 		}
 		return append([]byte(nil), pixels...)
 	}
@@ -144,7 +144,7 @@ func TestGUIMisakaScrolledPixelsMatchCompleteRepaint(t *testing.T) {
 				}
 			}
 			if changed != 0 {
-				t.Errorf("[§7.2] 详情=%v 位置=%d：正常滚动仍有 %d 个像素需要额外刷新", expanded, position, changed)
+				t.Errorf("详情=%v 位置=%d：正常滚动仍有 %d 个像素需要额外刷新", expanded, position, changed)
 			}
 		}
 	}

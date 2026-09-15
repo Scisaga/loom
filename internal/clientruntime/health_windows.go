@@ -11,7 +11,7 @@ import (
 
 var errTUNCapture = errors.New("TUN 接管未生效")
 
-// §16.1：只检查本机监听与托管网卡，不发送 DNS、TLS 或业务请求。
+// 只检查本机监听与托管网卡，不发送 DNS、TLS 或业务请求。
 // healthy 仅说明本机运行面检查通过；业务可用性由 Agent reason 明确保持未测量。
 func CheckWindowsHealth(ctx context.Context, plan *WindowsHealthPlan) []string {
 	if plan == nil {

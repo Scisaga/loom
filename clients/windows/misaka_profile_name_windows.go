@@ -12,13 +12,13 @@ import (
 
 const misakaProfileNameSize = 13
 
-// §7.2：同一名称在浏览和编辑时共用原生字体与排版基线，不能在两套字体度量之间跳动。
+// 同一名称在浏览和编辑时共用原生字体与排版基线，不能在两套字体度量之间跳动。
 func createMisakaProfileNameFont(dpi, weight int32) (uintptr, error) {
 	face, _ := windows.UTF16PtrFromString("Microsoft YaHei UI")
 	height := -misakaProfileNameSize * dpi / 96
 	font, _, err := procCreateFont.Call(uintptr(uint32(height)), 0, 0, 0, uintptr(weight), 0, 0, 0, 1, 0, 0, portableClearType, 0, uintptr(unsafe.Pointer(face)))
 	if font == 0 {
-		return 0, fmt.Errorf("[§7.2] 创建连接配置名称字体：%w", err)
+		return 0, fmt.Errorf("创建连接配置名称字体：%w", err)
 	}
 	return font, nil
 }

@@ -14,7 +14,7 @@ import (
 
 const misakaWMRouteAcknowledged = 0x8005
 
-// §7.2：这只是编辑器状态；按钮高亮与实际选路始终来自宿主确认的快照。
+// 这只是编辑器状态；按钮高亮与实际选路始终来自宿主确认的快照。
 type misakaRouteUI struct {
 	list         uintptr
 	profileID    string
@@ -32,7 +32,7 @@ type misakaComboInfo struct {
 	combo, edit, list uintptr
 }
 
-// §7.2：焦点可留在出口框，滚轮归属仍按鼠标位置判断；导航不能提交偏好。
+// 焦点可留在出口框，滚轮归属仍按鼠标位置判断；导航不能提交偏好。
 func (app *portableGUI) misakaRouteWheel(hwnd, wParam, lParam uintptr) (uintptr, bool) {
 	parent, _, _ := portableUser32.NewProc("GetParent").Call(hwnd)
 	combo, list := app.controls.routeCombo, app.skin.route.list
@@ -90,14 +90,14 @@ func (app *portableGUI) misakaRouteLayoutChanged(snapshot portableGUISnapshot) b
 	return visible != app.misakaRouteVisible(snapshot)
 }
 
-// §7.2：偏好等待与确认只更新局部状态；没有可见性变化时不得重排整个右侧面板。
+// 偏好等待与确认只更新局部状态；没有可见性变化时不得重排整个右侧面板。
 func (app *portableGUI) syncMisakaRouteLayout(snapshot portableGUISnapshot) {
 	if app.misakaRouteLayoutChanged(snapshot) {
 		app.layoutControls()
 	}
 }
 
-// §7.2：必须在布局和快照相等短路之前收敛，避免拿旧编辑状态布局新偏好。
+// 必须在布局和快照相等短路之前收敛，避免拿旧编辑状态布局新偏好。
 func (app *portableGUI) reconcileMisakaRoute(snapshot portableGUISnapshot) bool {
 	if app.skin == nil {
 		return false
@@ -197,7 +197,7 @@ func (app *portableGUI) misakaRouteCommand(id uint16) bool {
 	return true
 }
 
-// §7.2：导航候选不是确认；Esc 必须能撤销整个 Fixed 编辑而不触发任何偏好写入。
+// 导航候选不是确认；Esc 必须能撤销整个 Fixed 编辑而不触发任何偏好写入。
 func (app *portableGUI) misakaRouteNotification(notification uint16) {
 	if app.routeUpdating {
 		return
@@ -300,7 +300,7 @@ func (app *portableGUI) renderMisakaRoutes(snapshot portableGUISnapshot, previou
 	enablePortableControl(app.controls.routeCombo, selectable)
 }
 
-// §7.2：用完整已授权选项构造索引；仅选择变化不重建下拉，避免原生弹出层反复销毁。
+// 用完整已授权选项构造索引；仅选择变化不重建下拉，避免原生弹出层反复销毁。
 func (app *portableGUI) renderMisakaRouteCombo(snapshot portableGUISnapshot) {
 	app.routeUpdating = true
 	defer func() { app.routeUpdating = false }()

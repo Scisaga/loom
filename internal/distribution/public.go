@@ -30,7 +30,7 @@ type NginxInput struct {
 func RenderNginx(input NginxInput) ([]byte, error) {
 	if !wire.ValidFQDN(input.FQDN) || input.PublicPort < 1 || input.PublicPort > 65535 ||
 		!safeAbsolutePath(input.Certificate) || !safeAbsolutePath(input.CertificateKey) || !safeAbsolutePath(input.StaticRoot) {
-		return nil, errors.New("[D131 public surface] Nginx FQDN/port/path 无效")
+		return nil, errors.New("[public surface] Nginx FQDN/port/path 无效")
 	}
 	config := fmt.Sprintf(`server {
     listen %d ssl;
@@ -78,7 +78,7 @@ func ValidatePublicNginx(config []byte) error {
 		"return 30", "proxy_set_header", "auth_request", "cookie",
 	} {
 		if strings.Contains(lower, forbidden) {
-			return fmt.Errorf("[D131 public surface] 公网 Nginx 含禁止能力 %q", forbidden)
+			return fmt.Errorf("[public surface] 公网 Nginx 含禁止能力 %q", forbidden)
 		}
 	}
 	rootLocations := strings.Count(lower, "location = / {")
@@ -90,7 +90,7 @@ func ValidatePublicNginx(config []byte) error {
 		staticLocations != rootLocations || queryGuards != rootLocations+staticLocations ||
 		methodGuards != rootLocations+staticLocations || symlinkGuards != staticLocations ||
 		strings.Count(lower, "location / { return 404; }") != rootLocations {
-		return errors.New("[D131 public surface] Nginx 未固定 GET/HEAD + immutable hash path + default 404")
+		return errors.New("[public surface] Nginx 未固定 GET/HEAD + immutable hash path + default 404")
 	}
 	return nil
 }
@@ -98,7 +98,7 @@ func ValidatePublicNginx(config []byte) error {
 // StaticHandler 让集成测试和不使用 Nginx 的部署共享同一公开 HTTP 语义。
 func StaticHandler(root string) (http.Handler, error) {
 	if !safeAbsolutePath(root) {
-		return nil, errors.New("[D131 public surface] static root 必须是规范绝对路径")
+		return nil, errors.New("[public surface] static root 必须是规范绝对路径")
 	}
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet && request.Method != http.MethodHead {
@@ -141,10 +141,10 @@ func StaticHandler(root string) (http.Handler, error) {
 }
 
 // PublishArtifact 以原始制品 SHA-256 命名并原子落盘；重复发布相同 bytes 幂等，
-// 已存在但内容不同则视为镜像损坏，不能覆盖后继续服务（D131）。
+// 已存在但内容不同则视为镜像损坏，不能覆盖后继续服务。
 func PublishArtifact(root string, body []byte) (string, error) {
 	if !safeAbsolutePath(root) {
-		return "", errors.New("[D131 distribution] static root 必须是规范绝对路径")
+		return "", errors.New("[distribution] static root 必须是规范绝对路径")
 	}
 	digest := sha256.Sum256(body)
 	hexDigest := hex.EncodeToString(digest[:])
@@ -153,10 +153,10 @@ func PublishArtifact(root string, body []byte) (string, error) {
 
 // PublishCanonicalObject 发布由协议 domain 分隔的 exact canonical JSON。
 // URL 使用 typed hash，而不是原始 bytes 的 SHA-256；这与 bootstrap/config
-// reader 的 FetchCanonicalObject 契约一致（D104、D124、D131）。
+// reader 的 FetchCanonicalObject 契约一致。
 func PublishCanonicalObject(root, domain string, body []byte) (string, string, error) {
 	if !safeAbsolutePath(root) {
-		return "", "", errors.New("[D131 distribution] static root 必须是规范绝对路径")
+		return "", "", errors.New("[distribution] static root 必须是规范绝对路径")
 	}
 	typedHash, hexDigest, err := canonicalObjectHash(domain, body)
 	if err != nil {
@@ -171,11 +171,11 @@ func PublishCanonicalObject(root, domain string, body []byte) (string, string, e
 
 func canonicalObjectHash(domain string, body []byte) (string, string, error) {
 	if domain == "" || len(body) == 0 {
-		return "", "", errors.New("[D104 distribution] canonical object domain/body 缺失")
+		return "", "", errors.New("[distribution] canonical object domain/body 缺失")
 	}
 	canonical, err := wire.CanonicalizeStrict(body)
 	if err != nil || !bytes.Equal(canonical, body) {
-		return "", "", errors.New("[D104 distribution] object 不是 exact canonical JSON")
+		return "", "", errors.New("[distribution] object 不是 exact canonical JSON")
 	}
 	typedHash, err := wire.HashCanonical(domain, body)
 	if err != nil {
@@ -194,7 +194,7 @@ func PublishDeviceConfigArtifact(root, artifactID, platform, mediaType, renderCo
 	generation int64, body []byte,
 ) (wire.DeviceConfigArtifactRefV1, string, error) {
 	if !safeAbsolutePath(root) {
-		return wire.DeviceConfigArtifactRefV1{}, "", errors.New("[D131 distribution] static root 必须是规范绝对路径")
+		return wire.DeviceConfigArtifactRefV1{}, "", errors.New("[distribution] static root 必须是规范绝对路径")
 	}
 	typedHash, hexDigest, err := canonicalObjectHash(wire.DomainDeviceConfigArtifact, body)
 	if err != nil {
@@ -217,10 +217,10 @@ func PublishDeviceConfigArtifact(root, artifactID, platform, mediaType, renderCo
 
 func publishAtDigest(root, hexDigest string, body []byte) (string, error) {
 	if !safeAbsolutePath(root) || len(hexDigest) != sha256.Size*2 {
-		return "", errors.New("[D131 distribution] publish root/digest 无效")
+		return "", errors.New("[distribution] publish root/digest 无效")
 	}
 	if _, err := hex.DecodeString(hexDigest); err != nil {
-		return "", errors.New("[D131 distribution] publish digest 无效")
+		return "", errors.New("[distribution] publish digest 无效")
 	}
 	directory := filepath.Join(root, "distribution", "sha256")
 	path := filepath.Join(directory, hexDigest)
@@ -285,14 +285,14 @@ func verifyExistingArtifact(path string, body []byte) error {
 		return err
 	}
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("[D131 distribution] digest path 已被非普通文件占用")
+		return errors.New("[distribution] digest path 已被非普通文件占用")
 	}
 	existing, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
 	if !bytes.Equal(existing, body) {
-		return errors.New("[D131 distribution] digest path 已存在不同内容")
+		return errors.New("[distribution] digest path 已存在不同内容")
 	}
 	return nil
 }

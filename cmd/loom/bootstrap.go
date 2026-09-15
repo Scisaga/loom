@@ -68,7 +68,7 @@ func cmdBootstrapProbeOuter(args []string) error {
 			return err
 		}
 		if same {
-			return errors.New("[D120 external verify] observation 输出不能覆盖 plan、私钥或 CA")
+			return errors.New("[external verify] observation 输出不能覆盖 plan、私钥或 CA")
 		}
 	}
 
@@ -82,7 +82,7 @@ func cmdBootstrapProbeOuter(args []string) error {
 		return err
 	}
 	if !bytes.Equal(planBody, canonicalPlan) {
-		return errors.New("[D104 external verify] probe plan 必须是 exact canonical JSON，不接受空白或等价重编码")
+		return errors.New("[external verify] probe plan 必须是 exact canonical JSON，不接受空白或等价重编码")
 	}
 	planHash, err := bootstrapaccess.BootstrapOuterProbePlanHash(&plan)
 	if err != nil {
@@ -95,11 +95,11 @@ func cmdBootstrapProbeOuter(args []string) error {
 	encodedPrivateKey := strings.TrimSpace(string(privateKeyBody))
 	privateKeyRaw, err := decodeB64(encodedPrivateKey)
 	if err != nil || len(privateKeyRaw) != ed25519.PrivateKeySize || b64(privateKeyRaw) != encodedPrivateKey {
-		return errors.New("[D120 external verify] observer private key 必须是规范 base64 Ed25519 private key")
+		return errors.New("[external verify] observer private key 必须是规范 base64 Ed25519 private key")
 	}
 	privateKey := ed25519.PrivateKey(privateKeyRaw)
 	if !bytes.Equal(ed25519.NewKeyFromSeed(privateKey.Seed()), privateKey) {
-		return errors.New("[D120 external verify] observer private key 自检失败")
+		return errors.New("[external verify] observer private key 自检失败")
 	}
 	roots, err := bootstrapRootCAs(*caPath)
 	if err != nil {
@@ -130,17 +130,17 @@ func cmdBootstrapProbeOuter(args []string) error {
 }
 
 // readBootstrapRegularFile 在打开前后核对同一 inode，避免 plan/trust/key 在
-// 检查后被替换成 symlink；私钥还必须拒绝 group/other 权限（D120、D122）。
+// 检查后被替换成 symlink；私钥还必须拒绝 group/other 权限。
 func readBootstrapRegularFile(path string, maximum int64, private bool) ([]byte, error) {
 	before, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
 	}
 	if !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 || before.Size() < 1 || before.Size() > maximum {
-		return nil, fmt.Errorf("[D120 external verify] %s 必须是 1..%d bytes 非 symlink 普通文件", path, maximum)
+		return nil, fmt.Errorf("[external verify] %s 必须是 1..%d bytes 非 symlink 普通文件", path, maximum)
 	}
 	if private && before.Mode().Perm()&^os.FileMode(0o600) != 0 {
-		return nil, fmt.Errorf("[D122 external verify] observer private key %s 权限必须不宽于 0600", path)
+		return nil, fmt.Errorf("[external verify] observer private key %s 权限必须不宽于 0600", path)
 	}
 	file, err := os.Open(path)
 	if err != nil {
@@ -150,14 +150,14 @@ func readBootstrapRegularFile(path string, maximum int64, private bool) ([]byte,
 	after, err := file.Stat()
 	if err != nil || !after.Mode().IsRegular() || !os.SameFile(before, after) ||
 		after.Size() < 1 || after.Size() > maximum || private && after.Mode().Perm()&^os.FileMode(0o600) != 0 {
-		return nil, fmt.Errorf("[D120 external verify] %s 在安全检查期间被替换或权限无效", path)
+		return nil, fmt.Errorf("[external verify] %s 在安全检查期间被替换或权限无效", path)
 	}
 	body, err := io.ReadAll(io.LimitReader(file, maximum+1))
 	if err != nil {
 		return nil, err
 	}
 	if len(body) < 1 || int64(len(body)) > maximum {
-		return nil, fmt.Errorf("[D120 external verify] %s 大小在读取期间变化", path)
+		return nil, fmt.Errorf("[external verify] %s 大小在读取期间变化", path)
 	}
 	return body, nil
 }
@@ -166,10 +166,10 @@ func bootstrapRootCAs(path string) (*x509.CertPool, error) {
 	if path == "" {
 		roots, err := x509.SystemCertPool()
 		if err != nil {
-			return nil, fmt.Errorf("[D122 external verify] 读取系统 trust store 失败: %w", err)
+			return nil, fmt.Errorf("[external verify] 读取系统 trust store 失败: %w", err)
 		}
 		if roots == nil {
-			return nil, errors.New("[D122 external verify] 系统 trust store 为空")
+			return nil, errors.New("[external verify] 系统 trust store 为空")
 		}
 		return roots, nil
 	}
@@ -183,22 +183,22 @@ func bootstrapRootCAs(path string) (*x509.CertPool, error) {
 	for len(bytes.TrimSpace(rest)) > 0 {
 		trimmed := bytes.TrimSpace(rest)
 		if !bytes.HasPrefix(trimmed, []byte("-----BEGIN CERTIFICATE-----")) {
-			return nil, errors.New("[D122 external verify] CA 文件含非 PEM 内容")
+			return nil, errors.New("[external verify] CA 文件含非 PEM 内容")
 		}
 		block, trailing := pem.Decode(trimmed)
 		if block == nil || block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
-			return nil, errors.New("[D122 external verify] CA 文件必须只含无 header 的 CERTIFICATE PEM blocks")
+			return nil, errors.New("[external verify] CA 文件必须只含无 header 的 CERTIFICATE PEM blocks")
 		}
 		certificate, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {
-			return nil, fmt.Errorf("[D122 external verify] CA certificate 无效: %w", err)
+			return nil, fmt.Errorf("[external verify] CA certificate 无效: %w", err)
 		}
 		roots.AddCert(certificate)
 		count++
 		rest = trailing
 	}
 	if count == 0 {
-		return nil, errors.New("[D122 external verify] CA 文件不含 certificate")
+		return nil, errors.New("[external verify] CA 文件不含 certificate")
 	}
 	return roots, nil
 }

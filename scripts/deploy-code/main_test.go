@@ -74,7 +74,7 @@ func TestInventoryMustCoverEveryCurrentLinuxNode(t *testing.T) {
 	if err := validateInventory(c); err != nil {
 		t.Fatal(err)
 	}
-	// §14.2：本机就地安装无需 SSH Host；取消本机声明后，同一清单必须拒绝。
+	// 本机就地安装无需 SSH Host；取消本机声明后，同一清单必须拒绝。
 	remoteOnly := c
 	remoteOnly.local = ""
 	if err := validateInventory(remoteOnly); err == nil {
@@ -302,7 +302,7 @@ func TestActivationShellChecksHashAndOnlyRestartsRunningDaemons(t *testing.T) {
 			if err := os.WriteFile(candidatePath, candidate.Body, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			// §14.2：仅 systemctl 与安装目标移动由替身接收；SHA-256 校验运行真实工具。
+			// 仅 systemctl 与安装目标移动由替身接收；SHA-256 校验运行真实工具。
 			for name, body := range map[string]string{
 				"systemctl": `#!/bin/sh
 case "$1" in
@@ -455,7 +455,7 @@ func TestAuthorizationChangedBeforeActivationIsRejectedUnderLock(t *testing.T) {
 			if err := verifyDistribution(root, []string{"demo-control"}, candidate, pub); err != nil {
 				t.Fatal(err)
 			}
-			// §15.4：模拟 publish 返回后、激活重新获取锁前完成的另一笔事务。
+			// 模拟 publish 返回后、激活重新获取锁前完成的另一笔事务。
 			if changed == "distribution" {
 				if err := os.WriteFile(filepath.Join(root, "current.json"), []byte("demo-changed-current"), 0o600); err != nil {
 					t.Fatal(err)

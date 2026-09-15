@@ -918,7 +918,7 @@ internal fun RouteModeCard(status: RouteStatus, onSelect: (RouteMode, String) ->
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("流量模式", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-            // §7.3：按实际字体宽度分配三态操作；大字体时整组纵排，标签保持完整单行。
+            // 按实际字体宽度分配三态操作；大字体时整组纵排，标签保持完整单行。
             BoxWithConstraints(Modifier.fillMaxWidth()) {
                 val modeButton: @Composable (Int, Modifier) -> Unit = { index, modifier ->
                     val mode = modes[index]

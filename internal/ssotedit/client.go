@@ -26,7 +26,7 @@ type ClientInput struct {
 }
 
 // ClientPlan 描述将写入 SSOT 的纯声明结果。秘密值不属于这个包；调用方必须
-// 先按 CredentialRefs 生成并预置秘密层，再提交 Content（§12.1、§18）。
+// 先按 CredentialRefs 生成并预置秘密层，再提交 Content。
 type ClientPlan struct {
 	Content            []byte
 	CredentialIDs      []string

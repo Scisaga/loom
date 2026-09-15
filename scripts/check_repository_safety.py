@@ -154,7 +154,7 @@ def broad_ipv6_network_spans(line: str) -> list[tuple[int, int]]:
             interface = ipaddress.IPv6Interface(match.group(0))
         except ValueError:
             continue
-        # §12：只允许前 16 位非零且前缀不超过 16 位的宽网段；容纳边界测试的
+        # 只允许前 16 位非零且前缀不超过 16 位的宽网段；容纳边界测试的
         # 更宽掩码，但不豁免部署子网或含具体主机位的地址。
         if interface.network.prefixlen <= 16 and interface.ip.packed[2:] == bytes(14):
             spans.append(match.span())

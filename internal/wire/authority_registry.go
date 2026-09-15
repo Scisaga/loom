@@ -14,7 +14,7 @@ type CAProfileRegistryLeafV1 struct {
 }
 
 // CAProfileRoot 对每类 profile 的最新代构造统一 registry root；调用方不能
-// 删除 retired/revoked Device state 或用 admin profile hash 冒充 Device state hash（D102）。
+// 删除 retired/revoked Device state 或用 admin profile hash 冒充 Device state hash。
 func CAProfileRoot(adminProfiles []AdminCertificateProfileV1,
 	deviceProfiles []DeviceCertificateProfileStateV1) (string, error) {
 	leaves := make([]CAProfileRegistryLeafV1, 0, len(adminProfiles)+len(deviceProfiles))
@@ -52,10 +52,10 @@ func CAProfileRoot(adminProfiles []AdminCertificateProfileV1,
 		leaf := &leaves[i]
 		if !oneOf(leaf.ProfileKind, "admin_certificate", "device_certificate") ||
 			!validIdentifier(leaf.ProfileID, 128) || leaf.Generation < 1 {
-			return "", errors.New("[D102 CA registry] profile leaf 无效")
+			return "", errors.New("[CA registry] profile leaf 无效")
 		}
 		if i > 0 && leaf.ProfileKind == leaves[i-1].ProfileKind && leaf.ProfileID == leaves[i-1].ProfileID {
-			return "", errors.New("[D102 CA registry] 每类 profile ID 必须只保留最新一代")
+			return "", errors.New("[CA registry] 每类 profile ID 必须只保留最新一代")
 		}
 		canonical[i], _ = MarshalCanonical(leaf)
 	}

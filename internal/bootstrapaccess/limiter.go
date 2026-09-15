@@ -1,6 +1,6 @@
 // Package bootstrapaccess 落实 Bootstrap capability 的运行时计数与精确隧道 ACL。
 // 它只接收 wire verifier 产生的不透明 evidence，不持久化 capability body、token、
-// intent opening、CSR 或 Device identity（D115、D129、D131）。
+// intent opening、CSR 或 Device identity。
 package bootstrapaccess
 
 import (
@@ -45,7 +45,7 @@ type Manager struct {
 
 func Open(path string, now func() time.Time) (*Manager, error) {
 	if path == "" || now == nil {
-		return nil, errors.New("[D131 capability] usage store path/可信时间源缺失")
+		return nil, errors.New("[capability] usage store path/可信时间源缺失")
 	}
 	manager := &Manager{
 		path: path, now: now, state: durableStateV1{Schema: 1, Records: []UsageRecordV1{}},
@@ -59,7 +59,7 @@ func Open(path string, now func() time.Time) (*Manager, error) {
 		return nil, err
 	}
 	if _, err := wire.DecodeStrict(body, 8<<20, &manager.state); err != nil {
-		return nil, fmt.Errorf("[D131 capability] usage store 损坏: %w", err)
+		return nil, fmt.Errorf("[capability] usage store 损坏: %w", err)
 	}
 	if err := validateState(&manager.state); err != nil {
 		return nil, err
@@ -68,15 +68,15 @@ func Open(path string, now func() time.Time) (*Manager, error) {
 }
 
 // OpenSession 在返回前先耐久增加 attempt；崩溃不会恢复次数预算。sessionID 由
-// transport 注入，只用于本进程 fd 生命周期，不进入 durable authority（D131）。
+// transport 注入，只用于本进程 fd 生命周期，不进入 durable authority。
 func (m *Manager) OpenSession(verified wire.VerifiedBootstrapCapabilityV1, sessionID, ingressSetHash string) (*Session, error) {
 	body := verified.Body()
 	capabilityID := verified.CapabilityID()
 	if capabilityID == "" || sessionID == "" || len(sessionID) > 128 {
-		return nil, errors.New("[D131 capability] verified capability/session identity 无效")
+		return nil, errors.New("[capability] verified capability/session identity 无效")
 	}
 	if _, err := wire.ParseHash(ingressSetHash); err != nil || ingressSetHash != body.AllowedIngressSetHash {
-		return nil, errors.New("[D131 capability] capability 不允许当前 ingress set")
+		return nil, errors.New("[capability] capability 不允许当前 ingress set")
 	}
 	notBefore, err := wire.ParseTimeZ(body.NotBefore)
 	if err != nil {
@@ -88,7 +88,7 @@ func (m *Manager) OpenSession(verified wire.VerifiedBootstrapCapabilityV1, sessi
 	}
 	now := m.now().UTC()
 	if now.Before(notBefore) || !now.Before(expires) {
-		return nil, errors.New("[D131 capability] capability 已过期或尚未生效")
+		return nil, errors.New("[capability] capability 已过期或尚未生效")
 	}
 	deadline := now.Add(time.Duration(body.MaximumSessionSeconds) * time.Second)
 	if deadline.After(expires) {
@@ -98,7 +98,7 @@ func (m *Manager) OpenSession(verified wire.VerifiedBootstrapCapabilityV1, sessi
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.sessions[sessionID]; exists {
-		return nil, errors.New("[D131 capability] session ID 正在使用")
+		return nil, errors.New("[capability] session ID 正在使用")
 	}
 	active := int64(0)
 	for _, session := range m.sessions {
@@ -107,7 +107,7 @@ func (m *Manager) OpenSession(verified wire.VerifiedBootstrapCapabilityV1, sessi
 		}
 	}
 	if active >= body.MaximumConcurrentSessions {
-		return nil, errors.New("[D131 capability] concurrent session 上限已达")
+		return nil, errors.New("[capability] concurrent session 上限已达")
 	}
 	index, found := findRecord(m.state.Records, capabilityID)
 	candidate := cloneState(m.state)
@@ -119,7 +119,7 @@ func (m *Manager) OpenSession(verified wire.VerifiedBootstrapCapabilityV1, sessi
 	record := &candidate.Records[index]
 	if record.ExpiresAt != body.ExpiresAt || record.ConnectionAttempts >= body.MaximumConnectionAttempts ||
 		record.TransferredBytes >= body.MaximumTotalBytes {
-		return nil, errors.New("[D131 capability] capability attempt/byte budget 已耗尽或 durable binding 冲突")
+		return nil, errors.New("[capability] capability attempt/byte budget 已耗尽或 durable binding 冲突")
 	}
 	record.ConnectionAttempts++
 	if err := m.persistLocked(candidate); err != nil {
@@ -136,38 +136,38 @@ type Session struct {
 }
 
 // AuthorizeDial 只允许 capability 中的 exact 私有 Enrollment IP:TCP port；
-// DNS、UDP、ICMP、SSH、control_api 与 Internet egress 均没有通配路径（D131）。
+// DNS、UDP、ICMP、SSH、control_api 与 Internet egress 均没有通配路径。
 func (s *Session) AuthorizeDial(network, address string) error {
 	if s == nil || s.manager == nil {
-		return errors.New("[D131 capability] session 无效")
+		return errors.New("[capability] session 无效")
 	}
 	s.manager.mu.Lock()
 	defer s.manager.mu.Unlock()
 	active, ok := s.manager.sessions[s.id]
 	if !ok || !s.manager.now().UTC().Before(active.deadline) {
-		return errors.New("[D131 capability] session 不存在或已超时")
+		return errors.New("[capability] session 不存在或已超时")
 	}
 	if network != "tcp" && network != "tcp4" && network != "tcp6" || active.body.AllowedInsideTransport != "tcp" {
-		return errors.New("[D131 capability] inside transport 只允许 TCP")
+		return errors.New("[capability] inside transport 只允许 TCP")
 	}
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
-		return errors.New("[D131 capability] destination 必须是显式 IP:port")
+		return errors.New("[capability] destination 必须是显式 IP:port")
 	}
 	parsed, err := netip.ParseAddr(host)
 	if err != nil || parsed.String() != host || parsed.String() != active.body.AllowedDestinationIP ||
 		port != fmt.Sprintf("%d", active.body.AllowedDestinationPort) ||
 		network == "tcp4" && !parsed.Is4() || network == "tcp6" && !parsed.Is6() {
-		return errors.New("[D131 capability] destination 超出 exact Enrollment tuple")
+		return errors.New("[capability] destination 超出 exact Enrollment tuple")
 	}
 	return nil
 }
 
 // AddTransferredBytes 同时计入双向流量；超限时立即使 session 失效，调用方必须
-// 关闭对应 transport fd，不能以另一个 session 绕过 durable 总预算（D131）。
+// 关闭对应 transport fd，不能以另一个 session 绕过 durable 总预算。
 func (s *Session) AddTransferredBytes(count int64) error {
 	if s == nil || s.manager == nil || count < 0 {
-		return errors.New("[D131 capability] byte accounting 输入无效")
+		return errors.New("[capability] byte accounting 输入无效")
 	}
 	m := s.manager
 	m.mu.Lock()
@@ -175,17 +175,17 @@ func (s *Session) AddTransferredBytes(count int64) error {
 	active, ok := m.sessions[s.id]
 	if !ok || !m.now().UTC().Before(active.deadline) {
 		delete(m.sessions, s.id)
-		return errors.New("[D131 capability] session 不存在或已超时")
+		return errors.New("[capability] session 不存在或已超时")
 	}
 	index, found := findRecord(m.state.Records, active.capabilityID)
 	if !found {
 		delete(m.sessions, s.id)
-		return errors.New("[D131 capability] durable usage record 丢失")
+		return errors.New("[capability] durable usage record 丢失")
 	}
 	record := m.state.Records[index]
 	if count > active.body.MaximumTotalBytes-record.TransferredBytes {
 		delete(m.sessions, s.id)
-		return errors.New("[D131 capability] total byte budget 已耗尽")
+		return errors.New("[capability] total byte budget 已耗尽")
 	}
 	candidate := cloneState(m.state)
 	candidate.Records[index].TransferredBytes += count
@@ -213,12 +213,12 @@ func (m *Manager) SnapshotUsage() []UsageRecordV1 {
 
 func validateState(state *durableStateV1) error {
 	if state == nil || state.Schema != 1 || state.Records == nil {
-		return errors.New("[D131 capability] usage state schema 无效")
+		return errors.New("[capability] usage state schema 无效")
 	}
 	for index, record := range state.Records {
 		if _, err := wire.ParseHash(record.CapabilityID); err != nil || record.ConnectionAttempts < 0 || record.TransferredBytes < 0 ||
 			index > 0 && state.Records[index-1].CapabilityID >= record.CapabilityID {
-			return errors.New("[D131 capability] usage record identity/order/counter 无效")
+			return errors.New("[capability] usage record identity/order/counter 无效")
 		}
 		if _, err := wire.ParseTimeZ(record.ExpiresAt); err != nil {
 			return err

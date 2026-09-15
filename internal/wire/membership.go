@@ -89,7 +89,7 @@ type ControlKeyPossessionLeafV1 struct {
 }
 
 // ValidateControlPeerDirectory 验证不随本机时钟变化的目录事实。参与 Raft 握手前还必须调用
-// ValidateControlPeerDirectoryAt，以 §7.5 提供的可信时间检查证书有效期（D124）。
+// ValidateControlPeerDirectoryAt，使用调用方提供的可信时间检查证书有效期。
 func ValidateControlPeerDirectory(set *ControlSetV1, directory *ControlPeerDirectoryV1) error {
 	return validateControlPeerDirectory(set, directory, nil)
 }
@@ -98,7 +98,7 @@ func ValidateControlPeerDirectory(set *ControlSetV1, directory *ControlPeerDirec
 // 时间必须由 certified logical time/受信时间源提供，不能在纯验证器中读取本机时钟。
 func ValidateControlPeerDirectoryAt(set *ControlSetV1, directory *ControlPeerDirectoryV1, trustedTime time.Time) error {
 	if trustedTime.IsZero() {
-		return errors.New("[D124 private directory] 可信时间不能为空")
+		return errors.New("[private directory] 可信时间不能为空")
 	}
 	instant := trustedTime.UTC()
 	return validateControlPeerDirectory(set, directory, &instant)
@@ -110,10 +110,10 @@ func validateControlPeerDirectory(set *ControlSetV1, directory *ControlPeerDirec
 	}
 	if directory == nil || directory.Schema != 1 || directory.ClusterID != set.ClusterID ||
 		directory.DirectoryGeneration < 1 || len(directory.Members) != len(set.Members) {
-		return errors.New("[D124 private directory] schema/cluster/generation/member count 无效")
+		return errors.New("[private directory] schema/cluster/generation/member count 无效")
 	}
 	if _, err := decodeRawURL(directory.HidingNonce, 32); err != nil {
-		return errors.New("[D124 private directory] hiding nonce 无效")
+		return errors.New("[private directory] hiding nonce 无效")
 	}
 	devices := make(map[string]struct{}, len(directory.Members))
 	spkis := make(map[string]struct{}, len(directory.Members))
@@ -122,11 +122,11 @@ func validateControlPeerDirectory(set *ControlSetV1, directory *ControlPeerDirec
 	for i := range directory.Members {
 		member := &directory.Members[i]
 		if i > 0 && directory.Members[i-1].MemberID >= member.MemberID {
-			return errors.New("[D124 private directory] members 必须按 member_id 严格排序")
+			return errors.New("[private directory] members 必须按 member_id 严格排序")
 		}
 		if member.Schema != 1 || member.ClusterID != set.ClusterID || member.MemberID != set.Members[i].MemberID ||
 			!validIdentifier(member.DeviceID, 128) || !validIdentifier(member.FaultDomain, 128) || len(member.PeerEndpoints) == 0 {
-			return errors.New("[D124 private directory] member 与 ControlSet 不一一对应")
+			return errors.New("[private directory] member 与 ControlSet 不一一对应")
 		}
 		for _, hash := range []string{member.PeerIdentitySPKIHash, member.PeerIdentityArtifactHash, member.PeerCertificateHash} {
 			if _, err := ParseHash(hash); err != nil {
@@ -135,43 +135,43 @@ func validateControlPeerDirectory(set *ControlSetV1, directory *ControlPeerDirec
 		}
 		certificateDER, err := decodeCanonicalBase64URL(member.PeerCertificateDER)
 		if err != nil {
-			return errors.New("[D124 private directory] peer certificate DER 编码无效")
+			return errors.New("[private directory] peer certificate DER 编码无效")
 		}
 		certificate, err := x509.ParseCertificate(certificateDER)
 		if err != nil || !bytes.Equal(certificate.Raw, certificateDER) {
-			return errors.New("[D124 private directory] peer certificate 必须是单一 strict DER 证书")
+			return errors.New("[private directory] peer certificate 必须是单一 strict DER 证书")
 		}
 		publicKey, ok := certificate.PublicKey.(ed25519.PublicKey)
 		if !ok || len(publicKey) != ed25519.PublicKeySize ||
 			!bytes.Equal(certificate.RawSubject, certificate.RawIssuer) ||
 			certificate.CheckSignature(certificate.SignatureAlgorithm, certificate.RawTBSCertificate, certificate.Signature) != nil {
-			return errors.New("[D124 private directory] peer certificate 必须由所携 Ed25519 key 自签")
+			return errors.New("[private directory] peer certificate 必须由所携 Ed25519 key 自签")
 		}
 		if !certificate.BasicConstraintsValid || certificate.IsCA || certificate.KeyUsage != x509.KeyUsageDigitalSignature ||
 			!exactPeerExtKeyUsage(certificate.ExtKeyUsage) || len(certificate.UnknownExtKeyUsage) != 0 {
-			return errors.New("[D124 private directory] peer certificate CA/KeyUsage/EKU profile 无效")
+			return errors.New("[private directory] peer certificate CA/KeyUsage/EKU profile 无效")
 		}
 		if trustedTime != nil && (trustedTime.Before(certificate.NotBefore) || trustedTime.After(certificate.NotAfter)) {
-			return errors.New("[D124 private directory] peer certificate 在可信时间无效")
+			return errors.New("[private directory] peer certificate 在可信时间无效")
 		}
 		spkiHash, err := HashBytes(DomainControlPeerIdentitySPKI, certificate.RawSubjectPublicKeyInfo)
 		if err != nil || spkiHash != member.PeerIdentitySPKIHash {
-			return errors.New("[D124 private directory] peer SPKI hash 不匹配")
+			return errors.New("[private directory] peer SPKI hash 不匹配")
 		}
 		certificateHash, err := HashBytes(DomainControlPeerCertificate, certificateDER)
 		if err != nil || certificateHash != member.PeerCertificateHash {
-			return errors.New("[D124 private directory] peer certificate hash 不匹配")
+			return errors.New("[private directory] peer certificate hash 不匹配")
 		}
 		if _, duplicate := devices[member.DeviceID]; duplicate {
-			return errors.New("[D124 private directory] Device ID 重复")
+			return errors.New("[private directory] Device ID 重复")
 		}
 		if _, duplicate := spkis[member.PeerIdentitySPKIHash]; duplicate {
-			return errors.New("[D124 private directory] peer SPKI 重复")
+			return errors.New("[private directory] peer SPKI 重复")
 		}
 		devices[member.DeviceID], spkis[member.PeerIdentitySPKIHash] = struct{}{}, struct{}{}
 		for j, endpoint := range member.PeerEndpoints {
 			if j > 0 && member.PeerEndpoints[j-1].EndpointID >= endpoint.EndpointID {
-				return errors.New("[D124 private directory] peer endpoints 必须按 ID 严格排序")
+				return errors.New("[private directory] peer endpoints 必须按 ID 严格排序")
 			}
 			parsed, err := url.ParseRequestURI(endpoint.URL)
 			var port uint64
@@ -182,18 +182,18 @@ func validateControlPeerDirectory(set *ControlSetV1, directory *ControlPeerDirec
 			if err != nil || parsed == nil || parsed.String() != endpoint.URL || parsed.Scheme != "https" || parsed.User != nil ||
 				parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || parsed.Path != "" || parsed.RawPath != "" ||
 				parsed.Hostname() == "" || portErr != nil || port == 0 {
-				return errors.New("[D124 private directory] peer endpoint URL 必须是规范 private mTLS HTTPS origin")
+				return errors.New("[private directory] peer endpoint URL 必须是规范 private mTLS HTTPS origin")
 			}
 			host := parsed.Hostname()
 			address, err := netip.ParseAddr(host)
 			if err != nil || !address.IsPrivate() || address.String() != strings.Trim(host, "[]") {
-				return errors.New("[D124 private directory] peer endpoint 必须使用 private overlay IP")
+				return errors.New("[private directory] peer endpoint 必须使用 private overlay IP")
 			}
 			if _, duplicate := endpoints[endpoint.EndpointID]; duplicate {
-				return errors.New("[D124 private directory] endpoint ID 在目录内重复")
+				return errors.New("[private directory] endpoint ID 在目录内重复")
 			}
 			if _, duplicate := endpointURLs[endpoint.URL]; duplicate {
-				return errors.New("[D124 private directory] endpoint URL 在目录内重复")
+				return errors.New("[private directory] endpoint URL 在目录内重复")
 			}
 			endpoints[endpoint.EndpointID] = struct{}{}
 			endpointURLs[endpoint.URL] = struct{}{}
@@ -234,18 +234,18 @@ func ControlPeerDirectoryHash(set *ControlSetV1, directory *ControlPeerDirectory
 }
 
 // ValidateControlPeerDirectoryPrivateObject 把私有 preimage 与公开 set/directory hash
-// 逐字节绑定；调用方负责在同一私有安装事务中提供 set（D124）。
+// 逐字节绑定；调用方负责在同一私有安装事务中提供 set。
 func ValidateControlPeerDirectoryPrivateObject(set *ControlSetV1, object *ControlPeerDirectoryPrivateObjectV1) error {
 	if object == nil || object.Schema != 1 || object.ClusterID != set.ClusterID || object.Directory.ClusterID != set.ClusterID {
-		return errors.New("[D124 private directory] private object schema/cluster 无效")
+		return errors.New("[private directory] private object schema/cluster 无效")
 	}
 	setHash, err := ControlSetHash(set)
 	if err != nil || setHash != object.ControlSetHash {
-		return errors.New("[D124 private directory] private object ControlSet hash 不匹配")
+		return errors.New("[private directory] private object ControlSet hash 不匹配")
 	}
 	directoryHash, err := ControlPeerDirectoryHash(set, &object.Directory)
 	if err != nil || directoryHash != object.ControlPeerDirectoryHash {
-		return errors.New("[D124 private directory] private object directory hash 不匹配")
+		return errors.New("[private directory] private object directory hash 不匹配")
 	}
 	return nil
 }
@@ -258,14 +258,14 @@ func ControlPeerDirectoryPrivateObjectHash(set *ControlSetV1, object *ControlPee
 }
 
 // ControlPeerMemberForCertificate 把一次 TLS 握手的 exact leaf 解析为唯一 member。
-// 系统 trust store、DNS 名和仅相同 subject 的证书都不会被接受（D124）。
+// 系统 trust store、DNS 名和仅相同 subject 的证书都不会被接受。
 func ControlPeerMemberForCertificate(set *ControlSetV1, directory *ControlPeerDirectoryV1, rawCertificate []byte, trustedTime time.Time) (string, error) {
 	if err := ValidateControlPeerDirectoryAt(set, directory, trustedTime); err != nil {
 		return "", err
 	}
 	certificate, err := x509.ParseCertificate(rawCertificate)
 	if err != nil || !bytes.Equal(certificate.Raw, rawCertificate) {
-		return "", errors.New("[D124 control mTLS] peer leaf DER 无效")
+		return "", errors.New("[control mTLS] peer leaf DER 无效")
 	}
 	certificateHash, _ := HashBytes(DomainControlPeerCertificate, rawCertificate)
 	spkiHash, _ := HashBytes(DomainControlPeerIdentitySPKI, certificate.RawSubjectPublicKeyInfo)
@@ -275,12 +275,12 @@ func ControlPeerMemberForCertificate(set *ControlSetV1, directory *ControlPeerDi
 			continue
 		}
 		if memberID != "" {
-			return "", errors.New("[D124 control mTLS] peer certificate 映射不唯一")
+			return "", errors.New("[control mTLS] peer certificate 映射不唯一")
 		}
 		memberID = member.MemberID
 	}
 	if memberID == "" {
-		return "", errors.New("[D124 control mTLS] peer certificate 不在当前 private directory")
+		return "", errors.New("[control mTLS] peer certificate 不在当前 private directory")
 	}
 	return memberID, nil
 }
@@ -290,7 +290,7 @@ func VerifyControlKeyPossessionProofs(set *ControlSetV1, proofs []ControlKeyPoss
 		return err
 	}
 	if len(proofs) != len(set.Members)*3 {
-		return errors.New("[D116 key PoP] 必须恰好覆盖每个 member 的三类 key")
+		return errors.New("[key PoP] 必须恰好覆盖每个 member 的三类 key")
 	}
 	setHash, _ := ControlSetHash(set)
 	lookup := make(map[string]ControlMemberV1, len(set.Members))
@@ -302,14 +302,14 @@ func VerifyControlKeyPossessionProofs(set *ControlSetV1, proofs []ControlKeyPoss
 		if i > 0 {
 			previous := proofs[i-1].Body
 			if previous.MemberID > body.MemberID || previous.MemberID == body.MemberID && purposeOrder(previous.KeyPurpose) >= purposeOrder(body.KeyPurpose) {
-				return errors.New("[D116 key PoP] proofs 必须按 member/purpose 严格排序")
+				return errors.New("[key PoP] proofs 必须按 member/purpose 严格排序")
 			}
 		}
 		member, ok := lookup[body.MemberID]
 		if !ok || body.Schema != 1 || body.ClusterID != set.ClusterID || body.ControlSetHash != setHash ||
 			!oneOf(body.KeyPurpose, "membership", "config", "enrollment") || signature.Algorithm != "ed25519" ||
 			signature.MemberID != body.MemberID || signature.KeyPurpose != body.KeyPurpose || signature.KeyID != body.KeyID {
-			return errors.New("[D116 key PoP] proof body/signature binding 无效")
+			return errors.New("[key PoP] proof body/signature binding 无效")
 		}
 		var keyID, publicKey string
 		switch body.KeyPurpose {
@@ -321,14 +321,14 @@ func VerifyControlKeyPossessionProofs(set *ControlSetV1, proofs []ControlKeyPoss
 			keyID, publicKey = member.EnrollmentKeyID, member.EnrollmentPublicKey
 		}
 		if body.KeyID != keyID || body.PublicKey != publicKey {
-			return errors.New("[D116 key PoP] proof 与 ControlSet exact key 不匹配")
+			return errors.New("[key PoP] proof 与 ControlSet exact key 不匹配")
 		}
 		rawKey, _ := decodeRawURL(publicKey, ed25519.PublicKeySize)
 		rawSignature, err := decodeRawURL(signature.Signature, ed25519.SignatureSize)
 		canonical, canonicalErr := MarshalCanonical(body)
 		message, frameErr := Frame(DomainControlKeyPoPSignature, canonical)
 		if err != nil || canonicalErr != nil || frameErr != nil || !ed25519.Verify(rawKey, message, rawSignature) {
-			return errors.New("[D116 key PoP] signature 无效")
+			return errors.New("[key PoP] signature 无效")
 		}
 	}
 	return nil
@@ -336,13 +336,13 @@ func VerifyControlKeyPossessionProofs(set *ControlSetV1, proofs []ControlKeyPoss
 
 func ControlKeyPossessionProofHash(proof *ControlKeyPossessionProofV1) (string, error) {
 	if proof == nil {
-		return "", errors.New("[D116 key PoP] proof 缺失")
+		return "", errors.New("[key PoP] proof 缺失")
 	}
 	return HashObject(DomainControlKeyPoP, proof)
 }
 
 // ControlKeyPossessionRoot 先要求恰好覆盖 ControlSet 的三类 key，再以同一
-// member/purpose 顺序计算 RFC 6962 root（D116）。
+// member/purpose 顺序计算 RFC 6962 root。
 func ControlKeyPossessionRoot(set *ControlSetV1, proofs []ControlKeyPossessionProofV1) (string, error) {
 	if err := VerifyControlKeyPossessionProofs(set, proofs); err != nil {
 		return "", err
@@ -369,7 +369,7 @@ func NewControlKeyPossessionProof(body ControlKeyPossessionProofBodyV1, privateK
 	public := privateKey.Public().(ed25519.PublicKey)
 	keyID, err := ControlKeyID(public)
 	if err != nil || keyID != body.KeyID || base64.RawURLEncoding.EncodeToString(public) != body.PublicKey {
-		return ControlKeyPossessionProofV1{}, errors.New("[D116 key PoP] private key 与 proof body 不匹配")
+		return ControlKeyPossessionProofV1{}, errors.New("[key PoP] private key 与 proof body 不匹配")
 	}
 	canonical, err := MarshalCanonical(body)
 	if err != nil {
@@ -393,13 +393,13 @@ func JointQuorum(oldSet, newSet *ControlSetV1, signerMemberIDs []string) error {
 		return err
 	}
 	if oldSet.ClusterID != newSet.ClusterID {
-		return errors.New("[D112 joint] old/new ControlSet cluster 不一致")
+		return errors.New("[joint] old/new ControlSet cluster 不一致")
 	}
 	signers := append([]string(nil), signerMemberIDs...)
 	sort.Strings(signers)
 	for i := range signers {
 		if i > 0 && signers[i-1] == signers[i] {
-			return errors.New("[D112 joint] signer 重复")
+			return errors.New("[joint] signer 重复")
 		}
 	}
 	count := func(set *ControlSetV1) int {
@@ -418,13 +418,13 @@ func JointQuorum(oldSet, newSet *ControlSetV1, signerMemberIDs []string) error {
 	oldQuorum, _ := Quorum(len(oldSet.Members))
 	newQuorum, _ := Quorum(len(newSet.Members))
 	if count(oldSet) < oldQuorum || count(newSet) < newQuorum {
-		return fmt.Errorf("[D112 joint] 未同时达到 old %d/%d 与 new %d/%d 多数", oldQuorum, len(oldSet.Members), newQuorum, len(newSet.Members))
+		return fmt.Errorf("[joint] 未同时达到 old %d/%d 与 new %d/%d 多数", oldQuorum, len(oldSet.Members), newQuorum, len(newSet.Members))
 	}
 	return nil
 }
 
 // ValidateControlSetSuccessorKeySeparation 允许同一 member 在相同 purpose 延续旧 key，
-// 但拒绝跨 purpose 或把既有 voter key 转交给另一 member（D116）。
+// 但拒绝跨 purpose 或把既有 voter key 转交给另一 member。
 func ValidateControlSetSuccessorKeySeparation(oldSet, newSet *ControlSetV1) error {
 	if err := ValidateControlSet(oldSet); err != nil {
 		return err
@@ -433,7 +433,7 @@ func ValidateControlSetSuccessorKeySeparation(oldSet, newSet *ControlSetV1) erro
 		return err
 	}
 	if oldSet.ClusterID != newSet.ClusterID {
-		return errors.New("[D116 key separation] old/new ControlSet cluster 不一致")
+		return errors.New("[key separation] old/new ControlSet cluster 不一致")
 	}
 	type owner struct{ memberID, purpose string }
 	oldOwners := make(map[string]owner, len(oldSet.Members)*3)
@@ -450,14 +450,14 @@ func ValidateControlSetSuccessorKeySeparation(oldSet, newSet *ControlSetV1) erro
 		} {
 			if previous, found := oldOwners[item.publicKey]; found &&
 				(previous.memberID != member.MemberID || previous.purpose != item.purpose) {
-				return errors.New("[D116 key separation] control key 跨 member/purpose 复用")
+				return errors.New("[key separation] control key 跨 member/purpose 复用")
 			}
 		}
 	}
 	return nil
 }
 
-// ValidateRecoveryControlKeySeparation 钉住 recovery 与在线 control authority 的用途隔离（D116）。
+// ValidateRecoveryControlKeySeparation 钉住 recovery 与在线 control authority 的用途隔离。
 func ValidateRecoveryControlKeySeparation(policy *RecoveryPolicyV1, set *ControlSetV1) error {
 	if err := ValidateRecoveryPolicy(policy); err != nil {
 		return err
@@ -466,7 +466,7 @@ func ValidateRecoveryControlKeySeparation(policy *RecoveryPolicyV1, set *Control
 		return err
 	}
 	if policy.ClusterID != set.ClusterID {
-		return errors.New("[D116 key separation] recovery/control cluster 不一致")
+		return errors.New("[key separation] recovery/control cluster 不一致")
 	}
 	controlKeys := make(map[string]struct{}, len(set.Members)*3)
 	for _, member := range set.Members {
@@ -476,7 +476,7 @@ func ValidateRecoveryControlKeySeparation(policy *RecoveryPolicyV1, set *Control
 	}
 	for _, key := range policy.Keys {
 		if _, reused := controlKeys[key.PublicKey]; reused {
-			return errors.New("[D116 key separation] recovery key 与 control authority key 复用")
+			return errors.New("[key separation] recovery key 与 control authority key 复用")
 		}
 	}
 	return nil

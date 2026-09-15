@@ -325,7 +325,7 @@ func cmdSecretsEnsureDerived(args []string) error {
 	return nil
 }
 
-// cmdSecretsRotate 生成一份凭据的下一代(§13.4 第一步)。
+// cmdSecretsRotate 生成一份凭据的下一代(第一步)。
 //
 // 它只动秘密层,**不改 SSOT** —— 因为改 SSOT 会触发发布,而新值必须先在
 // 总表里就位,否则 hydrate 会因为"缺引用"整体失败。顺序反了的话,全网会
@@ -376,7 +376,7 @@ func cmdSecretsRotate(args []string) error {
 	}
 
 	fmt.Printf("✓ 已生成 %s\n\n", nextRef)
-	fmt.Printf("接下来两步,**必须分开发布**(§13.4):\n\n")
+	fmt.Printf("接下来两步,**必须分开发布**:\n\n")
 	fmt.Printf("  第一步 —— 在 SSOT 里把这份凭据改成:\n")
 	fmt.Printf("      generation: %d\n      accept_previous: true\n\n", next)
 	fmt.Printf("    服务器两代都收,客户端换成新的。等全网都取到这一版\n")
@@ -388,7 +388,7 @@ func cmdSecretsRotate(args []string) error {
 	return nil
 }
 
-// cmdSecretsRetire 删掉已经没人引用的旧代(§13.4 第二步)。
+// cmdSecretsRetire 删掉已经没人引用的旧代(第二步)。
 func cmdSecretsRetire(args []string) error {
 	fs := flag.NewFlagSet("secrets retire", flag.ExitOnError)
 	master := fs.String("secrets", "", "总表(必需)")

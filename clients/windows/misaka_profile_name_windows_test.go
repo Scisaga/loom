@@ -45,10 +45,10 @@ func TestGUIMisakaRenameKeepsVisibleGlyphOriginSizeAndWeight(t *testing.T) {
 			plainBounds, plainInk := misakaProfileNameInk(before, area)
 			editBounds, editInk := misakaProfileNameInk(after, area)
 			if plainInk < 10 || plainBounds != editBounds {
-				t.Errorf("[§7.2] DPI %d、名称 %q 进入编辑后实际字形位置或尺寸变化：显示=%+v 编辑=%+v", dpi, name, plainBounds, editBounds)
+				t.Errorf("DPI %d、名称 %q 进入编辑后实际字形位置或尺寸变化：显示=%+v 编辑=%+v", dpi, name, plainBounds, editBounds)
 			}
 			if difference := absMisakaAlignment(int32(plainInk - editInk)); difference > int32(max(3, plainInk/20)) {
-				t.Errorf("[§7.2] DPI %d、名称 %q 进入编辑后实际笔画字重变化：显示=%d 编辑=%d", dpi, name, plainInk, editInk)
+				t.Errorf("DPI %d、名称 %q 进入编辑后实际笔画字重变化：显示=%d 编辑=%d", dpi, name, plainInk, editInk)
 			}
 			app.finishMisakaRename(false)
 		}
@@ -73,7 +73,7 @@ func TestGUIMisakaProfileFocusDoesNotAddUnderline(t *testing.T) {
 			for y := rect.bottom - s(4); y < rect.bottom; y++ {
 				for x := rect.left + s(6); x < rect.right-s(6); x++ {
 					if pixel := misakaCanvasTestPixel(pixels, width, x, y); pixel != 0xE9F3ED {
-						t.Fatalf("[§7.2] DPI %d、焦点 %t 在菜单项底部留下额外横线：(%d,%d)=%06x", dpi, focused, x, y, pixel)
+						t.Fatalf("DPI %d、焦点 %t 在菜单项底部留下额外横线：(%d,%d)=%06x", dpi, focused, x, y, pixel)
 					}
 				}
 			}

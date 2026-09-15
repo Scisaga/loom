@@ -3,8 +3,8 @@
 // 现场同时存在四个互不相干的标识,排障时最容易在这里绕晕:
 //
 //	commit    源码是哪一版        —— 编译时由 Go 自动戳进二进制
-//	binary    分发的是哪一份      —— 内容寻址的 sha256(§15.4)
-//	snapshot  配置是哪一版        —— 见 report.Status.Applied(§14.2)
+//	binary  分发的是哪一份   —— 内容寻址的 sha256
+//	snapshot 配置是哪一版    —— 见 report.Status.Applied
 //	ssot      源头是哪一版        —— 发布器记的那个 sha
 //
 // 本包管前两个,并且把它们**摆在一起**。以前 selfcheck 只印一个写死的

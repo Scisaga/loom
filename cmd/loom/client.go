@@ -171,7 +171,7 @@ func cmdClientPackageWindows(args []string) error {
 		*outPath = filepath.Join("deploy/staging", artifact.Name)
 	}
 	if filepath.Base(*outPath) != artifact.Name {
-		return fmt.Errorf("[§10.2 渲染目标必须显式] 输出文件必须名为 %s，得到 %s", artifact.Name, filepath.Base(*outPath))
+		return fmt.Errorf("[渲染目标必须显式] 输出文件必须名为 %s，得到 %s", artifact.Name, filepath.Base(*outPath))
 	}
 	publicKey := ed25519.PrivateKey(privateKey).Public().(ed25519.PublicKey)
 	outputs := []struct {
@@ -306,7 +306,7 @@ func cmdClientEnroll(args []string) error {
 	}
 	httpClient := netx.Client(*dnsServer, 35*time.Second)
 	httpClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
-		// 307/308 会重发包含 token 的 POST；加入端点必须直达(§11)。
+		// 307/308 会重发包含 token 的 POST；加入端点必须直达。
 		return fmt.Errorf("设备加入 HTTPS 端点不允许重定向")
 	}
 	deadline := time.Now().Add(*wait)
@@ -336,7 +336,7 @@ func cmdClientEnroll(args []string) error {
 			first = false
 		}
 		if *wait == 0 || time.Now().Add(*retry).After(deadline) {
-			return fmt.Errorf("[§9.2 加入流程] 设备仍在 provisioning；identity 已安全保存，请用同一加入码重试，不要重置私钥")
+			return fmt.Errorf("[加入流程] 设备仍在 provisioning；identity 已安全保存，请用同一加入码重试，不要重置私钥")
 		}
 		time.Sleep(*retry)
 	}
@@ -485,7 +485,7 @@ func cmdClientPackage(args []string) error {
 		*outPath = filepath.Join("deploy/staging", artifact.Name)
 	}
 	if filepath.Base(*outPath) != artifact.Name {
-		return fmt.Errorf("[§10.2 渲染目标必须显式] 输出文件必须名为 %s，得到 %s", artifact.Name, filepath.Base(*outPath))
+		return fmt.Errorf("[渲染目标必须显式] 输出文件必须名为 %s，得到 %s", artifact.Name, filepath.Base(*outPath))
 	}
 	if err := checkPackagedLoom(filepath.Dir(*outPath), loomBody); err != nil {
 		return err
@@ -572,10 +572,10 @@ func readRegularClientInput(path string, executable bool) ([]byte, error) {
 		return nil, fmt.Errorf("检查 %s:%w", path, err)
 	}
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("[§10.3 原子安装] %s 必须是非链接的普通文件", path)
+		return nil, fmt.Errorf("[原子安装] %s 必须是非链接的普通文件", path)
 	}
 	if executable && info.Mode().Perm()&0o111 == 0 {
-		return nil, fmt.Errorf("[§15.4 二进制与配置兼容] %s 没有可执行位", path)
+		return nil, fmt.Errorf("[二进制与配置兼容] %s 没有可执行位", path)
 	}
 	body, err := os.ReadFile(path)
 	if err != nil {
@@ -594,11 +594,11 @@ func checkPackagedLoom(stageDir string, body []byte) error {
 	defer cleanup()
 	out, err := selfcheckBinaryCandidate(path, true)
 	if err != nil {
-		return fmt.Errorf("[§15.4 二进制与配置兼容] 包内 Loom selfcheck 失败:%v\n%s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("[二进制与配置兼容] 包内 Loom selfcheck 失败:%v\n%s", err, strings.TrimSpace(string(out)))
 	}
 	out, err = exec.Command(path, "client", "help").CombinedOutput()
 	if err != nil || !strings.Contains(string(out), "client enroll") {
-		return fmt.Errorf("[§15.4 二进制与配置兼容] 包内 Loom 不具备 client enroll:%v\n%s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("[二进制与配置兼容] 包内 Loom 不具备 client enroll:%v\n%s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

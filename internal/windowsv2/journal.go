@@ -17,7 +17,7 @@ const (
 
 // EnrollmentJournalV1 是 token 首次离开进程前的唯一 durable pending。
 // Descriptor/proof/preflight/core 全部按 exact canonical 值绑定；完成安装前保留
-// bootstrap material，正式 LKG 提交后再整体删除（D115、D129、D130）。
+// bootstrap material，正式 LKG 提交后再整体删除。
 type EnrollmentJournalV1 struct {
 	Schema               int                                      `json:"schema"`
 	Descriptor           wire.InviteBootstrapDescriptorV2         `json:"descriptor"`
@@ -84,11 +84,11 @@ func LoadEnrollmentRecovery(identityPath, journalPath string,
 func CleanupInstalledEnrollmentJournal(statePath, identityPath, journalPath string,
 	protector clientsecret.Protector) error {
 	if protector == nil {
-		return errors.New("[D130 Windows cleanup] protector 缺失")
+		return errors.New("[Windows cleanup] protector 缺失")
 	}
 	for _, path := range []string{statePath, identityPath, journalPath} {
 		if err := validateProtectedPath(path); err != nil {
-			return errors.New("[D130 Windows cleanup] state/identity/journal path 无效")
+			return errors.New("[Windows cleanup] state/identity/journal path 无效")
 		}
 	}
 	info, err := os.Lstat(journalPath)
@@ -99,7 +99,7 @@ func CleanupInstalledEnrollmentJournal(statePath, identityPath, journalPath stri
 		return err
 	}
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("[D130 Windows cleanup] enrollment journal 不是普通文件")
+		return errors.New("[Windows cleanup] enrollment journal 不是普通文件")
 	}
 	stateStore, err := OpenState(statePath, protector)
 	if err != nil {
@@ -107,7 +107,7 @@ func CleanupInstalledEnrollmentJournal(statePath, identityPath, journalPath stri
 	}
 	state := stateStore.Snapshot()
 	if state == nil {
-		return errors.New("[D130 Windows cleanup] 正式 v2 LKG 尚未提交")
+		return errors.New("[Windows cleanup] 正式 v2 LKG 尚未提交")
 	}
 	identity, err := LoadIdentity(identityPath, protector)
 	if err != nil {
@@ -126,7 +126,7 @@ func CleanupInstalledEnrollmentJournal(statePath, identityPath, journalPath stri
 		return err
 	}
 	if !installedEnrollmentJournalMatches(state, journal) {
-		return errors.New("[D130 Windows cleanup] completed journal 与正式 LKG 分叉")
+		return errors.New("[Windows cleanup] completed journal 与正式 LKG 分叉")
 	}
 	return journalStore.remove()
 }
@@ -151,7 +151,7 @@ type journalStore struct {
 
 func newJournalStore(path string, protector clientsecret.Protector) (*journalStore, error) {
 	if err := validateProtectedPath(path); err != nil || protector == nil {
-		return nil, errors.New("[D130 Windows] enrollment journal path/protector 无效")
+		return nil, errors.New("[Windows] enrollment journal path/protector 无效")
 	}
 	return &journalStore{path: path, protector: protector}, nil
 }
@@ -163,12 +163,12 @@ func (store *journalStore) load(identity *Identity) (*EnrollmentJournalV1, error
 	}
 	defer clear(body)
 	if len(body) > maximumJournalBytes {
-		return nil, errors.New("[D130 Windows] enrollment journal 超过大小边界")
+		return nil, errors.New("[Windows] enrollment journal 超过大小边界")
 	}
 	var journal EnrollmentJournalV1
 	canonical, err := wire.DecodeStrict(body, maximumJournalBytes, &journal)
 	if err != nil || !bytes.Equal(canonical, body) {
-		return nil, errors.New("[D130 Windows] enrollment journal 不是 exact canonical wire")
+		return nil, errors.New("[Windows] enrollment journal 不是 exact canonical wire")
 	}
 	if err := validateEnrollmentJournal(&journal, identity); err != nil {
 		return nil, err
@@ -186,7 +186,7 @@ func (store *journalStore) write(journal *EnrollmentJournalV1, identity *Identit
 	}
 	defer clear(body)
 	if len(body) > maximumJournalBytes {
-		return errors.New("[D130 Windows] enrollment journal 超过大小边界")
+		return errors.New("[Windows] enrollment journal 超过大小边界")
 	}
 	if err := clientsecret.WriteLargeProtected(store.path, JournalPurpose, body, store.protector); err != nil {
 		return err
@@ -196,7 +196,7 @@ func (store *journalStore) write(journal *EnrollmentJournalV1, identity *Identit
 		return err
 	}
 	if !wire.EqualCanonical(*journal, *replayed) {
-		return errors.New("[D130 Windows] enrollment journal 写后回读分叉")
+		return errors.New("[Windows] enrollment journal 写后回读分叉")
 	}
 	return nil
 }
@@ -210,30 +210,30 @@ func (store *journalStore) remove() error {
 		return err
 	}
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("[D130 Windows] enrollment journal 不是普通文件，拒绝清理")
+		return errors.New("[Windows] enrollment journal 不是普通文件，拒绝清理")
 	}
 	return os.Remove(store.path)
 }
 
 func validateEnrollmentJournal(journal *EnrollmentJournalV1, identity *Identity) error {
 	if journal == nil || identity == nil || journal.Schema != 1 {
-		return errors.New("[D130 Windows] enrollment journal header/identity 无效")
+		return errors.New("[Windows] enrollment journal header/identity 无效")
 	}
 	descriptorHash, err := wire.HashObject(wire.DomainInviteDescriptor, &journal.Descriptor)
 	if err != nil || descriptorHash != journal.DescriptorHash {
-		return errors.New("[D115 Windows] journal descriptor/hash 不匹配")
+		return errors.New("[Windows] journal descriptor/hash 不匹配")
 	}
 	if (journal.ResumeDescriptor == nil) != (journal.ResumeDescriptorHash == "") {
-		return errors.New("[D130 Windows] journal resume descriptor/hash 必须同时存在")
+		return errors.New("[Windows] journal resume descriptor/hash 必须同时存在")
 	}
 	if journal.ResumeDescriptor != nil {
 		resumeHash, hashErr := wire.HashObject(wire.DomainEnrollmentResumeDescriptor,
 			journal.ResumeDescriptor)
 		if hashErr != nil || resumeHash != journal.ResumeDescriptorHash {
-			return errors.New("[D130 Windows] journal resume descriptor/hash 不匹配")
+			return errors.New("[Windows] journal resume descriptor/hash 不匹配")
 		}
 		if journal.Progress == nil {
-			return errors.New("[D130 Windows] 未 committed 的 journal 不得绑定 resume descriptor")
+			return errors.New("[Windows] 未 committed 的 journal 不得绑定 resume descriptor")
 		}
 		resume := journal.ResumeDescriptor
 		expected := journal.Progress.Expected
@@ -241,32 +241,32 @@ func validateEnrollmentJournal(journal *EnrollmentJournalV1, identity *Identity)
 			resume.RequestID != expected.RequestID || resume.ClaimCoreHash != expected.ClaimCoreHash ||
 			resume.ClaimOperationHash != expected.ClaimOperationHash ||
 			resume.AdmissionQCHash != expected.AdmissionQCHash {
-			return errors.New("[D130 Windows] journal resume descriptor 未绑定 pending stable transaction")
+			return errors.New("[Windows] journal resume descriptor 未绑定 pending stable transaction")
 		}
 	}
 	proofHash, err := wire.HashObject(wire.DomainInviteProofBundle, &journal.ProofBundle)
 	if err != nil || proofHash != journal.ProofBundleHash ||
 		proofHash != journal.Descriptor.ProofBundleHash {
-		return errors.New("[D115 Windows] journal Invite proof/hash 不匹配")
+		return errors.New("[Windows] journal Invite proof/hash 不匹配")
 	}
 	coreHash, err := wire.EnrollmentClaimCoreHash(&journal.ClaimCore)
 	if err != nil || coreHash != journal.ClaimCoreHash ||
 		journal.ClaimCore.ClientPlatform != "windows-desktop" {
-		return errors.New("[D129 Windows] journal stable core/hash 无效")
+		return errors.New("[Windows] journal stable core/hash 无效")
 	}
 	identityHash, wrappingHash, _, err := wire.EnrollmentClaimBinaryHashes(&journal.ClaimCore)
 	wantedIdentityHash, identityErr := identity.IdentitySPKIHash()
 	wantedWrappingHash, wrappingErr := identity.WrappingSPKIHash()
 	if err != nil || identityErr != nil || wrappingErr != nil ||
 		identityHash != wantedIdentityHash || wrappingHash != wantedWrappingHash {
-		return errors.New("[D129 Windows] journal core 不属于 protected identity/wrapping keys")
+		return errors.New("[Windows] journal core 不属于 protected identity/wrapping keys")
 	}
 	record := &journal.ProofBundle.CertifiedInviteRecord
 	if journal.Descriptor.ClusterID != record.ClusterID || journal.Descriptor.InviteID != record.InviteID ||
 		journal.ClaimCore.ClusterID != record.ClusterID || journal.ClaimCore.InviteID != record.InviteID ||
 		journal.Descriptor.TokenCommitment != record.TokenCommitment ||
 		journal.ClaimCore.CertifiedInviteRecordHash == "" {
-		return errors.New("[D115 Windows] journal Invite/core identity 分叉")
+		return errors.New("[Windows] journal Invite/core identity 分叉")
 	}
 	preflightRequest := wire.EnrollmentIntentPreflightRequestV1{
 		Schema: 1, ClusterID: record.ClusterID, InviteID: record.InviteID,
@@ -283,7 +283,7 @@ func validateEnrollmentJournal(journal *EnrollmentJournalV1, identity *Identity)
 	if err != nil || intentErr != nil || opening.DeviceEnrollmentIntent.Platform != "windows-desktop" ||
 		openingHash != journal.ClaimCore.DeviceEnrollmentIntentOpeningHash ||
 		intentHash != journal.ClaimCore.AcceptedDeviceEnrollmentIntentHash {
-		return errors.New("[D129 Windows] journal preflight/opening/core binding 无效")
+		return errors.New("[Windows] journal preflight/opening/core binding 无效")
 	}
 	if journal.Progress != nil {
 		if err := validateJournalProgress(journal); err != nil {
@@ -295,7 +295,7 @@ func validateEnrollmentJournal(journal *EnrollmentJournalV1, identity *Identity)
 			return err
 		}
 		if journal.Result.Status != "completed" && len(journal.Result.ProgressReceipt) == 0 {
-			return errors.New("[D130 Windows] journal pending result 缺 progress receipt")
+			return errors.New("[Windows] journal pending result 缺 progress receipt")
 		}
 	}
 	return nil
@@ -310,12 +310,12 @@ func validateJournalProgress(journal *EnrollmentJournalV1) error {
 	if progress.Schema != 1 || (progress.Status != "reserved" && progress.Status != "issued_provisional") ||
 		expected.ClusterID != journal.ClaimCore.ClusterID || expected.InviteID != journal.ClaimCore.InviteID ||
 		expected.RequestID != journal.ClaimCore.RequestID || expected.ClaimCoreHash != journal.ClaimCoreHash {
-		return errors.New("[D130 Windows] journal progress/core binding 无效")
+		return errors.New("[Windows] journal progress/core binding 无效")
 	}
 	identityHash, wrappingHash, csrHash, err := wire.EnrollmentClaimBinaryHashes(&journal.ClaimCore)
 	if err != nil || expected.IdentityKeyHash != identityHash || expected.WrappingKeyHash != wrappingHash ||
 		expected.CSRHash != csrHash {
-		return errors.New("[D130 Windows] journal progress identity/wrapping/CSR binding 无效")
+		return errors.New("[Windows] journal progress identity/wrapping/CSR binding 无效")
 	}
 	for _, hash := range []string{expected.ClaimOperationHash, expected.AdmissionQCHash,
 		expected.EnrollmentTransactionStateHash} {
@@ -346,7 +346,7 @@ func recordJournalProgress(journal *EnrollmentJournalV1,
 		if previous.Status != "reserved" || next.Status != "issued_provisional" ||
 			!wire.EqualCanonical(left, right) {
 			journal.Progress = previous
-			return errors.New("[D130 Windows] enrollment progress 回退、分叉或改写 stable binding")
+			return errors.New("[Windows] enrollment progress 回退、分叉或改写 stable binding")
 		}
 	}
 	return nil

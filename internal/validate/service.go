@@ -10,8 +10,7 @@ import (
 
 // checkService 校验服务与调度模型。
 //
-// 这里实现的是 §19"校验器必须拒绝的矛盾配置"表里依赖等价类与访问声明的
-// 那几条 —— 它们无法在只有拓扑的阶段实现,因此曾长期缺失。
+// 等价类与访问声明需要联合校验访问契约和调度参数，拓扑校验无法覆盖这些关系。
 func checkService(s *model.SSOT, nodes map[string]*model.Node, fs *findings) {
 	classes := checkClasses(s, nodes, fs)
 	decls := checkDeclarations(s, nodes, classes, fs)
@@ -26,55 +25,55 @@ func checkClasses(s *model.SSOT, nodes map[string]*model.Node, fs *findings) map
 		where := "class:" + c.ID
 		if c.ID == "" {
 			where = fmt.Sprintf("equivalence_classes[%d]", i)
-			fs.add("§19 schema", where, "等价类缺少 id")
+			fs.add("schema", where, "等价类缺少 id")
 		}
 		if _, dup := idx[c.ID]; dup && c.ID != "" {
-			fs.add("§19 schema", where, "等价类 id 重复")
+			fs.add("schema", where, "等价类 id 重复")
 		}
 		if c.ID != "" {
 			idx[c.ID] = c
 		}
 
 		if !c.Carrier.Valid() {
-			fs.add("§4.4 carrier", where, "未知 carrier:%q(只能是 l4_direct/l7_gateway/sdk)", c.Carrier)
+			fs.add("carrier", where, "未知 carrier:%q(只能是 l4_direct/l7_gateway/sdk)", c.Carrier)
 		}
 		if !c.ObservationPoint.Valid() {
-			fs.add("§16.2 观测点", where, "未知 observation_point:%q", c.ObservationPoint)
+			fs.add("观测点", where, "未知 observation_point:%q", c.ObservationPoint)
 		}
 		if len(c.Members) == 0 {
-			fs.add("§4.3 等价类", where, "成员为空")
+			fs.add("等价类", where, "成员为空")
 		}
 
 		seenMember := map[string]bool{}
 		for i := range c.Members {
 			m := &c.Members[i]
 			if m.Address == "" {
-				fs.add("§4.3 等价类", where, "成员缺少 address")
+				fs.add("等价类", where, "成员缺少 address")
 				continue
 			}
 			if seenMember[m.Address] {
-				fs.add("§4.3 等价类", where, "成员地址 %q 重复", m.Address)
+				fs.add("等价类", where, "成员地址 %q 重复", m.Address)
 			}
 			seenMember[m.Address] = true
-			// 目标是地址,不是节点(§1)。把节点 id 写进 members 是把模型
+			// 目标是地址,不是节点。把节点 id 写进 members 是把模型
 			// 层次搞混的典型症状,单独报出来。
 			if _, isNode := nodes[m.Address]; isNode {
-				fs.add("§1 目标不是节点", where,
+				fs.add("目标不是节点", where,
 					"成员 %q 是一个节点 id —— members 里应当是**地址**(如 https://…)。"+
-						"目标不是节点,不进拓扑、不参与渲染(§9)", m.Address)
+						"目标不是节点,不进拓扑、不参与渲染", m.Address)
 			}
 		}
 
-		// §19 必拒规则:carrier: l4_direct 但成员 access_contract 不同构。
+		// 必拒规则:carrier: l4_direct 但成员 access_contract 不同构。
 		//
-		// 这是 §4.4 的不变量在校验层的落点。数据平面只做 L4 选路、不改写
+		// 成员访问契约同构是转发前提。数据平面只做 L4 选路、不改写
 		// 连接内容,所以契约不同构时换端点会在 TLS 或鉴权层直接失败 ——
 		// 而那是运行时才会暴露的失败。
 		if c.Carrier == model.L4Direct && len(c.Members) > 1 {
 			base := c.Members[0]
 			for _, m := range c.Members[1:] {
 				if !base.Contract.SameAs(m.Contract) {
-					fs.add("§4.4 契约同构", where,
+					fs.add("契约同构", where,
 						"carrier 是 l4_direct,但成员 %q 与 %q 的 access_contract 不同构 —— "+
 							"L4 换地址会在 TLS 或鉴权层失败,这类成员需要 l7_gateway 承载",
 						m.Address, base.Address)
@@ -98,10 +97,10 @@ func checkDeclarations(
 		where := "decl:" + d.ID
 		if d.ID == "" {
 			where = fmt.Sprintf("declarations[%d]", i)
-			fs.add("§19 schema", where, "访问声明缺少 id")
+			fs.add("schema", where, "访问声明缺少 id")
 		}
 		if _, dup := idx[d.ID]; dup && d.ID != "" {
-			fs.add("§19 schema", where, "访问声明 id 重复")
+			fs.add("schema", where, "访问声明 id 重复")
 		}
 		if d.ID != "" {
 			idx[d.ID] = d
@@ -109,34 +108,34 @@ func checkDeclarations(
 
 		addrOK, egressOK := d.AxesValid()
 		if !addrOK {
-			fs.add("§4 地址轴", where,
+			fs.add("地址轴", where,
 				"address_axis 非法:%q —— 只能是 from_request 或 class:<等价类 id>", d.AddressAxis)
 		}
 		if !egressOK {
-			fs.add("§4 出口轴", where,
+			fs.add("出口轴", where,
 				"egress_axis 非法:%q —— 只能是 any 或 pinned:<节点 id>", d.EgressAxis)
 		}
 		if !d.Objective.Valid() {
-			fs.add("§5.3 objective", where, "未知 objective:%q", d.Objective)
+			fs.add("objective", where, "未知 objective:%q", d.Objective)
 		}
 		if !d.Fallback.Valid() {
-			fs.add("§5.8 fallback", where, "未知 fallback:%q", d.Fallback)
+			fs.add("fallback", where, "未知 fallback:%q", d.Fallback)
 		} else if d.Fallback != model.FailClosed {
-			fs.add("§5.8 fallback", where,
+			fs.add("fallback", where,
 				"fallback=%q 当前运行时未实现，实际行为仍是 fail_closed；"+
 					"拒绝假生效，只能使用 fail_closed", d.Fallback)
 		}
 		if d.MaxHops < 0 {
-			fs.add("§3.2 max_hops", where, "max_hops 不能为负:%d", d.MaxHops)
+			fs.add("max_hops", where, "max_hops 不能为负:%d", d.MaxHops)
 		}
 		if d.ProbeURL == "" {
-			fs.add("§16.2 探测", where,
+			fs.add("探测", where,
 				"没有 probe_url —— 探测目标不代表这条声明承载的流量时,"+
 					"会把根本不通的候选排在第一位(实测:同一条直连候选到 gstatic "+
 					"55ms、到 Cloudflare 超时 10 秒)")
 		}
 		if d.TuningPeriod == "" {
-			fs.add("§5.5 周期", where, "缺少 tuning_period —— 中继轴始终需要度量(§4)")
+			fs.add("周期", where, "缺少 tuning_period —— 中继轴始终需要度量")
 		}
 		checkTuningLoop(fs, where, d, maxCandidates(s, d))
 		// 把声明钉死的出口排空了,这条声明就一个候选都没有 —— 流量直接
@@ -144,24 +143,24 @@ func checkDeclarations(
 		// 真要关,该改 egress_axis 或者删掉声明。
 		if p := d.PinnedEgress(); p != "" {
 			if n, ok := nodes[p]; ok && n.Decommission {
-				fs.add("§14.4 下线", where,
+				fs.add("下线", where,
 					"egress_axis 钉死在 %q,而 %q 已标记下线 —— 这条声明将没有任何候选。"+
 						"下线一台机器之前,先把指向它的声明改掉", p, p)
 			}
 			if n, ok := nodes[p]; ok && n.Drain {
-				fs.add("§5.8 排空", where,
+				fs.add("排空", where,
 					"egress_axis 钉死在 %q,而 %q 已排空(drain)—— 这条声明将没有任何候选,"+
 						"流量会被阻断。迁移时应当先把 egress_axis 改指向新节点,再排空旧的", p, p)
 			}
 		}
 		if len(d.Constraints) > 0 {
-			fs.add("§5.1 约束", where,
+			fs.add("约束", where,
 				"声明了 %d 条 constraints，但当前运行时未实现候选过滤；"+
 					"拒绝假生效", len(d.Constraints))
 		}
 		for _, c := range d.Constraints {
 			if !c.Kind.Valid() {
-				fs.add("§5.1 约束", where, "未知约束类别:%q", c.Kind)
+				fs.add("约束", where, "未知约束类别:%q", c.Kind)
 			}
 		}
 		allowedSet := map[string]bool{}
@@ -169,21 +168,21 @@ func checkDeclarations(
 			allowedSet[r] = true
 			n, ok := nodes[r]
 			if !ok {
-				fs.add("§5.1 约束", where, "allowed_servers 引用了不存在的节点 %q", r)
+				fs.add("约束", where, "allowed_servers 引用了不存在的节点 %q", r)
 				continue
 			}
 			if !n.IsServer() {
-				fs.add("§5.1 约束", where, "allowed_servers 中的 %q 不持有 server 能力", r)
+				fs.add("约束", where, "allowed_servers 中的 %q 不持有 server 能力", r)
 			}
 		}
 
 		checkAxes(d, where, nodes, classes, allowedSet, fs)
 
-		// §19 必拒规则:地址由请求决定却配置了 ranking_period。
+		// 必拒规则:地址由请求决定却配置了 ranking_period。
 		//
 		// 那时地址轴是常量,排序周期无意义。允许它存在会让人以为配了就生效。
 		if d.AddressFromRequest() && d.RankingPeriod != "" {
-			fs.add("§5.5 周期", where,
+			fs.add("周期", where,
 				"address_axis 是 from_request 却配置了 ranking_period=%q —— "+
 					"地址轴已是常量,排序周期无意义;只需 tuning_period", d.RankingPeriod)
 		}
@@ -193,7 +192,7 @@ func checkDeclarations(
 	return idx
 }
 
-// checkAxes 检查两个轴各自的取值是否自洽(§4)。
+// checkAxes 检查两个轴各自的取值是否自洽。
 func checkAxes(
 	d *model.AccessDeclaration,
 	where string,
@@ -204,10 +203,10 @@ func checkAxes(
 ) {
 	if cid := d.ClassID(); cid != "" {
 		if _, ok := classes[cid]; !ok {
-			fs.add("§4 地址轴", where, "address_axis 引用了不存在的等价类 %q", cid)
+			fs.add("地址轴", where, "address_axis 引用了不存在的等价类 %q", cid)
 		}
 		if d.TopN <= 0 {
-			fs.add("§5.6 top_n", where,
+			fs.add("top_n", where,
 				"地址从等价类里选时需要显式声明 top_n(下发给接入节点的候选数)")
 		}
 	}
@@ -219,24 +218,24 @@ func checkAxes(
 	n, ok := nodes[pinned]
 	switch {
 	case !ok:
-		fs.add("§4 出口轴", where, "egress_axis 钉死了不存在的节点 %q", pinned)
+		fs.add("出口轴", where, "egress_axis 钉死了不存在的节点 %q", pinned)
 	case !n.IsServer():
-		fs.add("§4 出口轴", where, "钉死的出口 %q 不持有 server 能力", pinned)
+		fs.add("出口轴", where, "钉死的出口 %q 不持有 server 能力", pinned)
 	case !n.Server.EgressCapable:
-		fs.add("§4 出口轴", where,
+		fs.add("出口轴", where,
 			"钉死的出口 %q 没有 egress_capable —— 它出不了公网", pinned)
 	}
 	// 钉死一个不在允许集合里的出口,是自相矛盾的声明。
 	if len(allowed) > 0 && !allowed[pinned] {
-		fs.add("§5.1 约束", where,
+		fs.add("约束", where,
 			"egress_axis 钉死了 %q,但它不在 allowed_servers 里", pinned)
 	}
 }
 
 // checkObjectiveFeasible 检查目标函数要的量是否真有人产出。
 //
-// §19 必拒规则:objective: ttft 但候选缺少 L7 观测点。
-// §5.3 补注:ttft 与 cost 都不是 L4 能自己测出来的。
+// 必拒规则:objective: ttft 但候选缺少 L7 观测点。
+// 补注:ttft 与 cost 都不是 L4 能自己测出来的。
 func checkObjectiveFeasible(
 	d *model.AccessDeclaration,
 	where string,
@@ -254,14 +253,14 @@ func checkObjectiveFeasible(
 	}
 
 	if d.Objective.NeedsL7() && !c.ObservationPoint.IsL7() {
-		fs.add("§16.2 观测点", where,
+		fs.add("观测点", where,
 			"objective 是 %s,但等价类 %q 的 observation_point 是 l4_tunnel —— "+
 				"tokens/s 与响应结构不是 L4 能被动观测的量;"+
 				"首字节返回时间只是 TTFT 的近似,不能当它用",
 			d.Objective, c.ID)
 	}
 	if d.Objective.NeedsPrice() && c.PriceSource == "" {
-		fs.add("§5.2 声明值", where,
+		fs.add("声明值", where,
 			"objective 是 cost,但等价类 %q 没有 price_source —— 价格是声明值,"+
 				"不会从度量里长出来", c.ID)
 	}
@@ -278,20 +277,20 @@ func checkCredentials(
 		where := "cred:" + c.ID
 		if c.ID == "" {
 			where = fmt.Sprintf("credentials[%d]", i)
-			fs.add("§19 schema", where, "凭据缺少 id")
+			fs.add("schema", where, "凭据缺少 id")
 		}
 		if _, dup := idx[c.ID]; dup && c.ID != "" {
-			fs.add("§19 schema", where, "凭据 id 重复")
+			fs.add("schema", where, "凭据 id 重复")
 		}
 		if c.ID != "" {
 			idx[c.ID] = c
 		}
 
 		if c.SecretRef == "" {
-			fs.add("§13.1 密钥", where, "缺少 secret_ref")
+			fs.add("密钥", where, "缺少 secret_ref")
 		}
 		if c.ExpiresAt != "" {
-			fs.add("§18 凭据", where,
+			fs.add("凭据", where,
 				"expires_at=%q 已声明，但当前运行时未实现按时移除凭据；"+
 					"拒绝假生效", c.ExpiresAt)
 		}
@@ -306,21 +305,21 @@ func checkCredentials(
 			}
 		}
 		if len(owners) > 1 {
-			fs.add("§8.2 凭据", where,
+			fs.add("凭据", where,
 				"被多个接入节点共用(%v)—— 候选集因接入节点而异,共用会让服务器"+
 					"查到错误的那一份", owners)
 		}
 
 		if c.Declaration == "" {
-			fs.add("§8.2 凭据", where, "凭据未绑定访问声明 —— 凭据即访问声明")
+			fs.add("凭据", where, "凭据未绑定访问声明 —— 凭据即访问声明")
 		} else if _, ok := decls[c.Declaration]; !ok {
-			fs.add("§8.2 凭据", where, "引用了不存在的访问声明 %q", c.Declaration)
+			fs.add("凭据", where, "引用了不存在的访问声明 %q", c.Declaration)
 		}
 	}
 	return idx
 }
 
-// checkAccessNodes 校验接入节点特有的字段(§7、§18)。
+// checkAccessNodes 校验接入节点特有的字段。
 func checkAccessNodes(
 	s *model.SSOT,
 	decls map[string]*model.AccessDeclaration,
@@ -331,22 +330,22 @@ func checkAccessNodes(
 		where := p.ID
 
 		if !p.Access.Platform.Valid() {
-			fs.add("§7.2 平台", where, "接入节点缺少或写错 platform:%q", p.Access.Platform)
+			fs.add("平台", where, "接入节点缺少或写错 platform:%q", p.Access.Platform)
 			continue
 		}
 
 		if len(p.Access.Credentials) == 0 {
-			fs.add("§8.2 凭据", where, "接入节点未持有任何凭据")
+			fs.add("凭据", where, "接入节点未持有任何凭据")
 		}
 		authorizedDeclarations := map[string]bool{}
 		for _, id := range p.Access.Credentials {
 			c, ok := creds[id]
 			if !ok {
-				fs.add("§8.2 凭据", where, "引用了不存在的凭据 %q", id)
+				fs.add("凭据", where, "引用了不存在的凭据 %q", id)
 				continue
 			}
 			if c.Revoked() {
-				fs.add("§18 凭据", where, "引用了已吊销的凭据 %q(revoked_at=%s)", id, c.RevokedAt)
+				fs.add("凭据", where, "引用了已吊销的凭据 %q(revoked_at=%s)", id, c.RevokedAt)
 				continue
 			}
 			if c.Declaration != "" {
@@ -354,39 +353,39 @@ func checkAccessNodes(
 			}
 		}
 
-		// §7.2:Android 绝大多数 App 不能单独设代理,因此必须 TUN。
+		// Android 绝大多数 App 不能单独设代理,因此必须 TUN。
 		// 多条声明由中控 Service 匹配,不再要求用端口区分。
 		if p.Access.Platform == model.Android {
 			if len(p.Access.MixedPorts) > 0 {
-				fs.add("§7.2 平台", where,
+				fs.add("平台", where,
 					"Android 不应声明 mixed_ports —— 绝大多数 App 不能单独设代理,只能走 TUN")
 			}
 		}
-		// §7.2 / D94:Windows 的 TUN 与 1080 mixed 是同一个中控托管入口。
+		// Windows 的 TUN 与 1080 mixed 是同一个中控托管入口。
 		// 显式策略端口是 Linux 迁移能力，带到 Windows 会形成第二套客户端模型。
 		if p.Access.Platform == model.WindowsDesktop {
 			if len(p.Access.MixedPorts) != 1 || p.Access.MixedPorts[0].Port != 1080 ||
 				!p.Access.MixedPorts[0].ManagedAutomatic() || p.Access.MixedPorts[0].ExplicitOverride() {
-				fs.add("§7.3 Windows 入口", where,
+				fs.add("Windows 入口", where,
 					"windows-desktop 必须且只能声明一个 services:true 的 1080 mixed；"+
 						"它与 TUN 共用中控规则，不能使用 Linux 声明级端口覆盖")
 			}
 			if p.IsServer() {
-				fs.add("§10.2 渲染目标", where,
+				fs.add("渲染目标", where,
 					"windows-desktop 的 server 生命周期尚未交付；不能把 Linux WireGuard/systemd 产物装到 Windows")
 			}
 		}
 		if p.Access.Platform == model.Android && p.IsServer() {
-			fs.add("§10.2 渲染目标", where,
+			fs.add("渲染目标", where,
 				"Android 的 server 生命周期尚未交付；移动端不能接收 Linux WireGuard/systemd 产物")
 		}
-		// §7.2:Linux 服务器不开 TUN,流量全靠 mixed 端口接管。
+		// Linux 服务器不开 TUN,流量全靠 mixed 端口接管。
 		if p.Access.Platform == model.LinuxServer && len(p.Access.MixedPorts) == 0 {
-			fs.add("§7.2 平台", where,
+			fs.add("平台", where,
 				"linux-server 没有 mixed_ports —— 它不开 TUN,没有端口就接管不到任何流量")
 		}
 
-		// §7.2 / §7.3:设备默认策略复用于 TUN 与 managed mixed,且必须是
+		// 设备默认策略复用于 TUN 与 managed mixed,且必须是
 		// 本设备已经持有凭据的声明。没有默认值时,managed mixed 与 TUN
 		// 都继续 fail closed，不从凭据数量推断隐含默认值。
 		hasManagedInbound := p.Access.Platform.UsesTUN()
@@ -396,20 +395,20 @@ func checkAccessNodes(
 		if p.Access.DefaultDeclaration != "" {
 			defaultDecl, ok := decls[p.Access.DefaultDeclaration]
 			if !ok {
-				fs.add("§7.2 默认出口", where,
+				fs.add("默认出口", where,
 					"default_declaration 引用了不存在的访问声明 %q", p.Access.DefaultDeclaration)
 			} else if !defaultDecl.AddressFromRequest() {
-				fs.add("§4.5 默认出口", where,
+				fs.add("默认出口", where,
 					"default_declaration=%q 的 address_axis 不是 from_request —— "+
 						"设备默认出口只能转发原请求，不能把未匹配流量改写到等价类地址",
 					p.Access.DefaultDeclaration)
 			}
 			if !authorizedDeclarations[p.Access.DefaultDeclaration] {
-				fs.add("§8.2 默认出口", where,
+				fs.add("默认出口", where,
 					"default_declaration=%q,但接入节点没有持有它的有效凭据", p.Access.DefaultDeclaration)
 			}
 			if !hasManagedInbound {
-				fs.add("§7.3 默认出口", where,
+				fs.add("默认出口", where,
 					"声明了 default_declaration,但没有 TUN 或 services:true mixed 承载未匹配流量")
 			}
 		}
@@ -423,15 +422,15 @@ func checkAccessNodes(
 		}
 		for _, mp := range p.Access.MixedPorts {
 			if mp.Port <= 0 || mp.Port > 65535 {
-				fs.add("§7.3 端口", where, "mixed 端口非法:%d", mp.Port)
+				fs.add("端口", where, "mixed 端口非法:%d", mp.Port)
 			}
 			if owner, dup := seenPort[mp.Port]; dup {
-				fs.add("§7.3 端口冲突", where, "mixed 端口 %d 已被%s占用", mp.Port, owner)
+				fs.add("端口冲突", where, "mixed 端口 %d 已被%s占用", mp.Port, owner)
 			}
 			seenPort[mp.Port] = "另一个 mixed 端口"
 			if _, ok := decls[mp.Declaration]; !ok && !mp.ManagedAutomatic() {
-				// 按服务分流的端口不绑声明,由 checkServicePorts 管(§4.5)。
-				fs.add("§7.3 端口", where,
+				// 按服务分流的端口不绑声明,由 checkServicePorts 管。
+				fs.add("端口", where,
 					"端口 %d 绑定了不存在的访问声明 %q", mp.Port, mp.Declaration)
 			}
 		}
@@ -451,38 +450,38 @@ func checkTuningLoop(fs *findings, where string, d *model.AccessDeclaration, max
 	period, perr := time.ParseDuration(d.TuningPeriod)
 	window, werr := time.ParseDuration(d.Window)
 	if d.TuningPeriod != "" && perr != nil {
-		fs.add("§5.5 周期", where, "tuning_period 无法解析:%q", d.TuningPeriod)
+		fs.add("周期", where, "tuning_period 无法解析:%q", d.TuningPeriod)
 	}
 	if d.Window != "" && werr != nil {
-		fs.add("§5.4 窗口", where, "window 无法解析:%q", d.Window)
+		fs.add("窗口", where, "window 无法解析:%q", d.Window)
 	}
 	if d.StaleAfter != "" {
 		st, err := time.ParseDuration(d.StaleAfter)
 		if err != nil {
-			fs.add("§5.8 陈旧", where, "stale_after 无法解析:%q", d.StaleAfter)
+			fs.add("陈旧", where, "stale_after 无法解析:%q", d.StaleAfter)
 		} else if perr == nil && period > 0 && st < period {
 			// 数据比 tuning_period 老就算陈旧的话,每一轮探测完的下一刻
 			// 全部候选都是陈旧的 —— 等于关掉了排序。
-			fs.add("§5.8 陈旧", where,
+			fs.add("陈旧", where,
 				"stale_after=%s 小于 tuning_period=%s —— 每轮探测的结果立刻就过期,排序拿不到任何数据",
 				d.StaleAfter, d.TuningPeriod)
 		}
 	}
 	if d.SwitchThreshold < 0 || d.SwitchThreshold >= 1 {
-		fs.add("§5.5 阻尼", where,
+		fs.add("阻尼", where,
 			"switch_threshold=%v 不在 [0,1) 内 —— 它是相对改善幅度,不是绝对值",
 			d.SwitchThreshold)
 	}
 	if d.MinSamples < 0 {
-		fs.add("§5.4 窗口", where, "min_samples 不能为负:%d", d.MinSamples)
+		fs.add("窗口", where, "min_samples 不能为负:%d", d.MinSamples)
 	}
 	if d.ProbeBudget < 0 {
-		fs.add("§16.2 探测预算", where, "probe_budget 不能为负:%d", d.ProbeBudget)
+		fs.add("探测预算", where, "probe_budget 不能为负:%d", d.ProbeBudget)
 	}
 	if d.ProbeBudget == 1 {
 		// 预算 1 意味着只探当前选中的那条,别的永远轮不到 —— 那不是
 		// "有界探测",那是"关掉了探测"。
-		fs.add("§16.2 探测预算", where,
+		fs.add("探测预算", where,
 			"probe_budget=1 只够探当前选中的那条,其余候选永远轮不到 —— "+
 				"这等于关掉了选优。要关就把 tuning_period 拉长,别用预算 1 假装还在调")
 	}
@@ -492,14 +491,14 @@ func checkTuningLoop(fs *findings, where string, d *model.AccessDeclaration, max
 	// 有探测预算时,一条候选**不是每轮都被探到**。轮换让它平均每
 	// `候选数/预算` 轮才轮到一次,窗口里能攒到的样本数因此要打折。
 	// 不算这一折的话,min_samples 会变成一个永远达不到的门槛 ——
-	// 和 D24 是同一类错误,只是原因从"窗口太短"换成了"预算太小"。
+	// 与窗口过短一样，预算过小也会让样本要求永远无法满足。
 	if d.ProbeBudget > 1 && maxCands > d.ProbeBudget {
 		rounds := int(window / period)
 		// 当前选中的那条每轮必探,其余 budget-1 个名额在 cands-1 条里轮换。
 		perCand := rounds * (d.ProbeBudget - 1) / (maxCands - 1)
 		if perCand < d.MinSamples {
 			need := d.MinSamples * (maxCands - 1) / (d.ProbeBudget - 1)
-			fs.add("§16.2 探测预算", where,
+			fs.add("探测预算", where,
 				"probe_budget=%d、候选最多 %d 条:一条候选平均每 %d 轮才轮到一次,"+
 					"window=%s 里只攒得到约 %d 个样本,达不到 min_samples=%d —— "+
 					"排序永远不会启动。要么把 window 放大到 %s 以上,要么把 "+
@@ -511,7 +510,7 @@ func checkTuningLoop(fs *findings, where string, d *model.AccessDeclaration, max
 	}
 
 	if cap := int(window / period); cap < d.MinSamples {
-		fs.add("§5.4 窗口", where,
+		fs.add("窗口", where,
 			"window=%s 按 tuning_period=%s 采样最多装 %d 个样本,达不到 min_samples=%d —— "+
 				"排序永远不会启动。要么把 window 放大到 %s 以上,要么把 min_samples 调到 %d 以内",
 			d.Window, d.TuningPeriod, cap, d.MinSamples,
@@ -530,7 +529,7 @@ func checkDrain(fs *findings, s *model.SSOT) {
 		t := &s.Tunnels[i]
 		for _, id := range []string{t.From, t.To} {
 			if n, ok := s.NodeByID()[id]; ok && n.Decommission {
-				fs.add("§14.4 下线", "tunnel:"+t.Pair(),
+				fs.add("下线", "tunnel:"+t.Pair(),
 					"%q 已标记下线,却仍有隧道引用它 —— 下线之后应当把相关隧道一并删掉", id)
 			}
 		}
@@ -541,7 +540,7 @@ func checkDrain(fs *findings, s *model.SSOT) {
 		if s.Nodes[i].Drain {
 			drained = append(drained, s.Nodes[i].ID)
 			if !s.Nodes[i].IsServer() {
-				fs.add("§5.8 排空", "node:"+s.Nodes[i].ID,
+				fs.add("排空", "node:"+s.Nodes[i].ID,
 					"drain 只对服务器有意义 —— 接入节点不出现在候选里,排空它什么也不改变")
 			}
 		}
@@ -558,7 +557,7 @@ func checkDrain(fs *findings, s *model.SSOT) {
 		}
 	}
 	if live == 0 {
-		fs.add("§5.8 排空", "全局",
+		fs.add("排空", "全局",
 			"所有能当出口的服务器都被排空了(%s)—— 全网没有任何可用候选",
 			strings.Join(drained, " "))
 	}

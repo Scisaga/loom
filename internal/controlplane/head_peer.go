@@ -53,7 +53,7 @@ type HeadAttestationVoter struct {
 func NewHeadAttestationVoter(storage *RaftStorage, set wire.ControlSetV1, memberID string,
 	privateKey ed25519.PrivateKey, recompute HeadRecomputer) (*HeadAttestationVoter, error) {
 	if storage == nil || memberID == "" || len(privateKey) != ed25519.PrivateKeySize || recompute == nil {
-		return nil, errors.New("[D104 QC peer] storage/member/key/recomputer 配置不完整")
+		return nil, errors.New("[QC peer] storage/member/key/recomputer 配置不完整")
 	}
 	if err := wire.ValidateControlSet(&set); err != nil {
 		return nil, err
@@ -67,13 +67,13 @@ func NewHeadAttestationVoter(storage *RaftStorage, set wire.ControlSetV1, member
 	}
 	keyID, err := wire.ControlKeyID(privateKey.Public().(ed25519.PublicKey))
 	if err != nil || member == nil || keyID != member.ConfigKeyID {
-		return nil, errors.New("[D102 keys] config attestation key 不属于 committed ControlSet member")
+		return nil, errors.New("[keys] config attestation key 不属于 committed ControlSet member")
 	}
 	snapshot := storage.SnapshotRaft()
 	setHash, _ := wire.ControlSetHash(&set)
 	storageSetHash, _ := wire.ControlSetHash(&storage.set)
 	if snapshot.MemberID != memberID || setHash != storageSetHash {
-		return nil, errors.New("[D104 QC peer] voter identity/ControlSet 与 Raft storage 不一致")
+		return nil, errors.New("[QC peer] voter identity/ControlSet 与 Raft storage 不一致")
 	}
 	return &HeadAttestationVoter{storage: storage, set: set, member: *member,
 		privateKey: append(ed25519.PrivateKey(nil), privateKey...), recompute: recompute}, nil
@@ -82,7 +82,7 @@ func NewHeadAttestationVoter(storage *RaftStorage, set wire.ControlSetV1, member
 func (voter *HeadAttestationVoter) VoteHeadAttestation(ctx context.Context,
 	request HeadAttestationVoteRequestV1) (wire.ControlConfigSignatureV1, error) {
 	if voter == nil || request.Schema != 1 || request.RaftIndex < 1 {
-		return wire.ControlConfigSignatureV1{}, errors.New("[D104 QC peer] attestation request header 无效")
+		return wire.ControlConfigSignatureV1{}, errors.New("[QC peer] attestation request header 无效")
 	}
 	if _, err := wire.ParseHash(request.EntryHash); err != nil {
 		return wire.ControlConfigSignatureV1{}, err
@@ -92,16 +92,16 @@ func (voter *HeadAttestationVoter) VoteHeadAttestation(ctx context.Context,
 	}
 	snapshot := voter.storage.SnapshotRaft()
 	if request.RaftIndex > snapshot.CommitIndex || request.RaftIndex > int64(len(snapshot.Log)) {
-		return wire.ControlConfigSignatureV1{}, errors.New("[D104 QC peer] 未 committed entry 禁止 attestation")
+		return wire.ControlConfigSignatureV1{}, errors.New("[QC peer] 未 committed entry 禁止 attestation")
 	}
 	record := snapshot.Log[request.RaftIndex-1]
 	setHash, _ := wire.ControlSetHash(&voter.set)
 	if record.Kind != RaftRecordHead || record.Head == nil || record.EntryHash != request.EntryHash ||
 		record.Head.EntryHash != request.EntryHash || record.Head.Body.Payload.ControlSetHash != setHash {
-		return wire.ControlConfigSignatureV1{}, errors.New("[D104 QC peer] committed entry/hash/ControlSet binding 无效")
+		return wire.ControlConfigSignatureV1{}, errors.New("[QC peer] committed entry/hash/ControlSet binding 无效")
 	}
 	if err := voter.recompute(ctx, *record.Head); err != nil {
-		return wire.ControlConfigSignatureV1{}, errors.New("[D104 QC peer] deterministic recompute 拒绝 committed entry")
+		return wire.ControlConfigSignatureV1{}, errors.New("[QC peer] deterministic recompute 拒绝 committed entry")
 	}
 	return wire.SignHeadAttestation(wire.AttestationForHead(record.Head), voter.member, voter.privateKey)
 }
@@ -116,7 +116,7 @@ type HeadAttestationHTTPHandler struct {
 func NewHeadAttestationHTTPHandler(set wire.ControlSetV1, directory wire.ControlPeerDirectoryV1,
 	now func() time.Time, voter HeadAttestationPeer) (*HeadAttestationHTTPHandler, error) {
 	if now == nil || voter == nil {
-		return nil, errors.New("[D104 QC peer] time/voter 不能为空")
+		return nil, errors.New("[QC peer] time/voter 不能为空")
 	}
 	if err := wire.ValidateControlPeerDirectoryAt(&set, &directory, now()); err != nil {
 		return nil, err
@@ -179,7 +179,7 @@ func NewHeadAttestationPeerClient(endpointURL, remoteMemberID string, certificat
 	parsed, err := url.ParseRequestURI(endpointURL)
 	if err != nil || parsed == nil || parsed.Scheme != "https" || parsed.Path != "" ||
 		parsed.RawQuery != "" || parsed.Fragment != "" || !found {
-		return nil, errors.New("[D124 control mTLS] head attestation endpoint 不属于目标 member")
+		return nil, errors.New("[control mTLS] head attestation endpoint 不属于目标 member")
 	}
 	tlsConfig, err := NewControlPeerClientTLSConfig(remoteMemberID, certificate, set, directory, now)
 	if err != nil {
@@ -190,7 +190,7 @@ func NewHeadAttestationPeerClient(endpointURL, remoteMemberID string, certificat
 	return &HeadAttestationPeerClient{baseURL: endpointURL, client: &http.Client{
 		Transport: transport, Timeout: 30 * time.Second,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return errors.New("[D124 control mTLS] head attestation RPC 禁止 redirect")
+			return errors.New("[control mTLS] head attestation RPC 禁止 redirect")
 		},
 	}}, nil
 }
@@ -215,15 +215,15 @@ func (client *HeadAttestationPeerClient) VoteHeadAttestation(ctx context.Context
 	defer response.Body.Close()
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, headPeerMaxBody+1))
 	if err != nil || len(responseBody) == 0 || len(responseBody) > headPeerMaxBody {
-		return wire.ControlConfigSignatureV1{}, errors.New("[D104 QC peer] response 读取失败或过大")
+		return wire.ControlConfigSignatureV1{}, errors.New("[QC peer] response 读取失败或过大")
 	}
 	if response.StatusCode != http.StatusOK {
-		return wire.ControlConfigSignatureV1{}, fmt.Errorf("[D104 QC peer] peer 返回 HTTP %d", response.StatusCode)
+		return wire.ControlConfigSignatureV1{}, fmt.Errorf("[QC peer] peer 返回 HTTP %d", response.StatusCode)
 	}
 	var result HeadAttestationVoteResponseV1
 	canonical, err := wire.DecodeStrict(responseBody, headPeerMaxBody, &result)
 	if err != nil || !bytes.Equal(canonical, responseBody) || result.Schema != 1 {
-		return wire.ControlConfigSignatureV1{}, errors.New("[D104 QC peer] response wire 无效")
+		return wire.ControlConfigSignatureV1{}, errors.New("[QC peer] response wire 无效")
 	}
 	return result.Signature, nil
 }
@@ -239,13 +239,13 @@ func NewHeadAttestationCollector(set wire.ControlSetV1,
 		return nil, err
 	}
 	if len(peers) != len(set.Members) {
-		return nil, errors.New("[D104 QC peer] collector 必须精确配置 committed ControlSet voters")
+		return nil, errors.New("[QC peer] collector 必须精确配置 committed ControlSet voters")
 	}
 	cloned := make(map[string]HeadAttestationPeer, len(peers))
 	for _, member := range set.Members {
 		peer, ok := peers[member.MemberID]
 		if !ok || peer == nil {
-			return nil, errors.New("[D104 QC peer] collector 缺 committed voter")
+			return nil, errors.New("[QC peer] collector 缺 committed voter")
 		}
 		cloned[member.MemberID] = peer
 	}
@@ -259,7 +259,7 @@ func (collector *HeadAttestationCollector) Collect(ctx context.Context,
 	}
 	setHash, _ := wire.ControlSetHash(&collector.set)
 	if entry.Body.Payload.ControlSetHash != setHash {
-		return wire.StableHeadReplicationQCV1{}, errors.New("[D104 QC peer] candidate entry 使用错误 committed ControlSet")
+		return wire.StableHeadReplicationQCV1{}, errors.New("[QC peer] candidate entry 使用错误 committed ControlSet")
 	}
 	request := HeadAttestationVoteRequestV1{Schema: 1, RaftIndex: entry.Body.Payload.RaftIndex, EntryHash: entry.EntryHash}
 	type result struct {
@@ -292,7 +292,7 @@ func (collector *HeadAttestationCollector) Collect(ctx context.Context,
 	}
 	quorum, _ := wire.Quorum(len(collector.set.Members))
 	if len(signatures) < quorum {
-		return wire.StableHeadReplicationQCV1{}, errors.New("[D104 QC peer] post-commit attestations 未达到 committed ControlSet quorum")
+		return wire.StableHeadReplicationQCV1{}, errors.New("[QC peer] post-commit attestations 未达到 committed ControlSet quorum")
 	}
 	sort.Slice(signatures, func(i, j int) bool {
 		if signatures[i].MemberID != signatures[j].MemberID {
@@ -311,7 +311,7 @@ func (collector *HeadAttestationCollector) Collect(ctx context.Context,
 // canonical quorum bytes，已 certified entry 不会产生第二个结果。
 func (collector *HeadAttestationCollector) CertifyActive(ctx context.Context, store *Store) error {
 	if store == nil {
-		return errors.New("[D104 QC peer] control store 不能为空")
+		return errors.New("[QC peer] control store 不能为空")
 	}
 	state := store.Snapshot()
 	if state.Active == nil {
@@ -321,7 +321,7 @@ func (collector *HeadAttestationCollector) CertifyActive(ctx context.Context, st
 		return nil
 	}
 	if state.Active.Phase != PhaseCommittedNotCertified {
-		return errors.New("[D104 QC peer] pending entry 未完成 Raft commit")
+		return errors.New("[QC peer] pending entry 未完成 Raft commit")
 	}
 	qc, err := collector.Collect(ctx, state.Active.Entry)
 	if err != nil {
@@ -335,7 +335,7 @@ func (collector *HeadAttestationCollector) CertifyActive(ctx context.Context, st
 	certified := store.Snapshot()
 	if certified.Active == nil || certified.Active.Phase != PhaseCertified || certified.Active.QC == nil ||
 		!wire.EqualCanonical(*certified.Active.QC, qc) {
-		return errors.New("[D104 QC peer] durable store 未冻结 exact collected QC")
+		return errors.New("[QC peer] durable store 未冻结 exact collected QC")
 	}
 	return nil
 }

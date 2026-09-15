@@ -19,7 +19,7 @@ import (
 // IP" —— 给固定 IP 的节点也装一个定时器是白跑。
 const reresolveScript = "/usr/share/doc/wireguard-tools/examples/reresolve-dns/reresolve-dns.sh"
 
-const reresolveUnit = `# 由 loom render 生成 —— 不要手工编辑(§12)
+const reresolveUnit = `# 由 loom render 生成 —— 不要手工编辑
 # 需要它是因为这些对端走 DDNS:%s
 [Unit]
 Description=重解析 WireGuard 对端域名(Loom)
@@ -30,7 +30,7 @@ Type=oneshot
 ExecStart=/bin/sh -c 'for c in %s; do [ -f "$c" ] && %s "$c"; done'
 `
 
-const reresolveTimer = `# 由 loom render 生成 —— 不要手工编辑(§12)
+const reresolveTimer = `# 由 loom render 生成 —— 不要手工编辑
 [Unit]
 Description=定时重解析 WireGuard 对端域名(Loom)
 

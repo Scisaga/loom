@@ -715,7 +715,7 @@ func activeEnrollmentProfile(t *testing.T) (wire.DeviceCertificateProfileStateV1
 		ExtensionOrderOIDs: []string{"2.5.29.15", "2.5.29.17", "2.5.29.19", "2.5.29.32", "2.5.29.37"},
 	}
 	// crypto/x509 的实际 extension 顺序是签发契约的一部分；测试 profile 也必须
-	// 从同一签发器输出冻结，不能维护一份可能漂移的手写顺序（D102）。
+	// 从同一签发器输出冻结，不能维护一份可能漂移的手写顺序。
 	discoveryIdentity, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)

@@ -29,24 +29,24 @@ const (
 )
 
 // VerifyPrivateControlDirectory 要求 directory 的 exact hash pin、parent Head、
-// ControlSet 与 config QC 同时成立；directory bytes 不能靠公网 URL 自行授权（D131）。
+// ControlSet 与 config QC 同时成立；directory bytes 不能靠公网 URL 自行授权。
 func VerifyPrivateControlDirectory(directory *wire.ControlServiceDirectoryV1,
 	pinnedDirectoryHash string, head *wire.HeadEntryV2, set, previousSet *wire.ControlSetV1) error {
 	if directory == nil || head == nil || set == nil {
-		return errors.New("[D131 client] private directory authority 不完整")
+		return errors.New("[client] private directory authority 不完整")
 	}
 	if err := wire.ValidateControlServiceDirectory(directory); err != nil {
 		return err
 	}
 	directoryHash, err := wire.ControlServiceDirectoryHash(directory)
 	if err != nil || directoryHash != pinnedDirectoryHash {
-		return errors.New("[D131 client] private directory 与 protected hash pin 不一致")
+		return errors.New("[client] private directory 与 protected hash pin 不一致")
 	}
 	setHash, err := wire.ControlSetHash(set)
 	if err != nil || directory.ClusterID != head.Body.Payload.ClusterID ||
 		directory.ClusterID != set.ClusterID || directory.ParentHeadHash != head.HeadHash ||
 		directory.ControlSetHash != setHash || head.Body.Payload.ControlSetHash != setHash {
-		return errors.New("[D131 client] private directory 未绑定 certified Head/ControlSet")
+		return errors.New("[client] private directory 未绑定 certified Head/ControlSet")
 	}
 	return wire.VerifyConfigQCAuthority(directory.ParentHeadHash, directory.ConfigQC,
 		head, set, previousSet)
@@ -58,7 +58,7 @@ func SelectPrivateControlServices(directory *wire.ControlServiceDirectoryV1, rol
 	serviceID, certificateProfileID string) ([]wire.PrivateControlServiceV1, error) {
 	if directory == nil || (role != "device_config" && role != "device_report") ||
 		certificateProfileID == "" {
-		return nil, errors.New("[D131 client] private service selection 输入无效")
+		return nil, errors.New("[client] private service selection 输入无效")
 	}
 	if err := wire.ValidateControlServiceDirectory(directory); err != nil {
 		return nil, err
@@ -76,7 +76,7 @@ func SelectPrivateControlServices(directory *wire.ControlServiceDirectoryV1, rol
 		selected = append(selected, copy)
 	}
 	if len(selected) == 0 || serviceID != "" && len(selected) != 1 {
-		return nil, errors.New("[D131 client] certified private directory 缺唯一获权目标 service")
+		return nil, errors.New("[client] certified private directory 缺唯一获权目标 service")
 	}
 	return selected, nil
 }
@@ -100,28 +100,28 @@ func NewPrivateDeviceHTTPClient(service wire.PrivateControlServiceV1, expectedRo
 		certificateProfileID == "" || !containsString(service.AuthorizedSubjectProfiles, certificateProfileID) ||
 		!ok || roots == nil || now == nil || timeout < time.Second || timeout > 5*time.Minute ||
 		len(certificateChainDER) == 0 || len(certificateChainDER) > 8 {
-		return nil, errors.New("[D131 client] mTLS identity/profile/internal CA/time/timeout 无效")
+		return nil, errors.New("[client] mTLS identity/profile/internal CA/time/timeout 无效")
 	}
 	leaf, err := x509.ParseCertificate(certificateChainDER[0])
 	if err != nil || !bytes.Equal(leaf.Raw, certificateChainDER[0]) || leaf.IsCA ||
 		leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 ||
 		!containsExtKeyUsage(leaf.ExtKeyUsage, x509.ExtKeyUsageClientAuth) ||
 		len(leaf.UnhandledCriticalExtensions) != 0 {
-		return nil, errors.New("[D131 client] Device certificate profile 无效")
+		return nil, errors.New("[client] Device certificate profile 无效")
 	}
 	instant := now().UTC()
 	if instant.IsZero() || instant.Before(leaf.NotBefore) || !instant.Before(leaf.NotAfter) {
-		return nil, errors.New("[D131 client] Device certificate 已过期或尚未生效")
+		return nil, errors.New("[client] Device certificate 已过期或尚未生效")
 	}
 	publicSPKI, err := x509.MarshalPKIXPublicKey(publicKey)
 	if err != nil || !bytes.Equal(publicSPKI, leaf.RawSubjectPublicKeyInfo) {
-		return nil, errors.New("[D131 client] Device certificate/platform signer 不匹配")
+		return nil, errors.New("[client] Device certificate/platform signer 不匹配")
 	}
 	chain := make([][]byte, len(certificateChainDER))
 	for index := range certificateChainDER {
 		certificate, parseErr := x509.ParseCertificate(certificateChainDER[index])
 		if parseErr != nil || !bytes.Equal(certificate.Raw, certificateChainDER[index]) {
-			return nil, errors.New("[D131 client] Device certificate chain DER 无效")
+			return nil, errors.New("[client] Device certificate chain DER 无效")
 		}
 		chain[index] = append([]byte(nil), certificateChainDER[index]...)
 	}
@@ -144,7 +144,7 @@ func NewPrivateDeviceHTTPClient(service wire.PrivateControlServiceV1, expectedRo
 		Proxy: nil, DisableCompression: true, ForceAttemptHTTP2: false,
 		DialTLSContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 			if network != "tcp" || address != expectedAddress {
-				return nil, errors.New("[D131 client] private service dial 超出 exact overlay tuple")
+				return nil, errors.New("[client] private service dial 超出 exact overlay tuple")
 			}
 			raw, err := dial(ctx, "tcp", expectedAddress)
 			if err != nil {
@@ -162,7 +162,7 @@ func NewPrivateDeviceHTTPClient(service wire.PrivateControlServiceV1, expectedRo
 	return &PrivateDeviceHTTPClient{client: &http.Client{
 		Transport: transport, Timeout: timeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return errors.New("[D131 client] private service 禁止 redirect")
+			return errors.New("[client] private service 禁止 redirect")
 		},
 	}, baseURL: baseURL}, nil
 }
@@ -181,7 +181,7 @@ func verifyPrivateDeviceTLS(state tls.ConnectionState, service wire.PrivateContr
 	roots *x509.CertPool, trustedTime time.Time) error {
 	if trustedTime.IsZero() || roots == nil || state.Version != tls.VersionTLS13 ||
 		len(state.PeerCertificates) == 0 {
-		return errors.New("[D131 client] private service TLS version/certificate/time 无效")
+		return errors.New("[client] private service TLS version/certificate/time 无效")
 	}
 	leaf := state.PeerCertificates[0]
 	instant := trustedTime.UTC()
@@ -189,12 +189,12 @@ func verifyPrivateDeviceTLS(state tls.ConnectionState, service wire.PrivateContr
 		instant.Before(leaf.NotBefore) || !instant.Before(leaf.NotAfter) ||
 		leaf.VerifyHostname(service.OverlayIP) != nil || len(leaf.UnhandledCriticalExtensions) != 0 ||
 		!containsExtKeyUsage(leaf.ExtKeyUsage, x509.ExtKeyUsageServerAuth) {
-		return errors.New("[D131 client] private service leaf role/validity/overlay IP SAN 无效")
+		return errors.New("[client] private service leaf role/validity/overlay IP SAN 无效")
 	}
 	digest := sha256.Sum256(leaf.RawSubjectPublicKeyInfo)
 	pin := "sha256:" + hex.EncodeToString(digest[:])
 	if !containsString(service.SPKIPins, pin) {
-		return errors.New("[D131 client] private service SPKI 不在 certified pin set")
+		return errors.New("[client] private service SPKI 不在 certified pin set")
 	}
 	intermediates := x509.NewCertPool()
 	for _, certificate := range state.PeerCertificates[1:] {
@@ -203,14 +203,14 @@ func verifyPrivateDeviceTLS(state tls.ConnectionState, service wire.PrivateContr
 	if _, err := leaf.Verify(x509.VerifyOptions{DNSName: service.OverlayIP, Roots: roots,
 		Intermediates: intermediates, CurrentTime: instant,
 		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err != nil {
-		return errors.New("[D131 client] private service leaf 不属于 exact internal CA profile")
+		return errors.New("[client] private service leaf 不属于 exact internal CA profile")
 	}
 	return nil
 }
 
 func (client *PrivateDeviceHTTPClient) FetchDeviceConfigDelivery(ctx context.Context) (wire.DeviceConfigDeliveryV1, error) {
 	if client == nil || client.client == nil || ctx == nil {
-		return wire.DeviceConfigDeliveryV1{}, errors.New("[D131 client] private config client/context 缺失")
+		return wire.DeviceConfigDeliveryV1{}, errors.New("[client] private config client/context 缺失")
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		client.baseURL+"/private/v2/device/config", nil)
@@ -220,7 +220,7 @@ func (client *PrivateDeviceHTTPClient) FetchDeviceConfigDelivery(ctx context.Con
 	request.Header.Set("Accept", wire.DeviceConfigDeliveryMediaTypeV1)
 	response, err := client.client.Do(request)
 	if err != nil {
-		return wire.DeviceConfigDeliveryV1{}, fmt.Errorf("[D131 client] private device_config 请求失败: %w", err)
+		return wire.DeviceConfigDeliveryV1{}, fmt.Errorf("[client] private device_config 请求失败: %w", err)
 	}
 	defer response.Body.Close()
 	mediaType, _, mediaErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
@@ -228,16 +228,16 @@ func (client *PrivateDeviceHTTPClient) FetchDeviceConfigDelivery(ctx context.Con
 		mediaType != wire.DeviceConfigDeliveryMediaTypeV1 || response.Header.Get("Content-Encoding") != "" ||
 		response.ContentLength > MaximumPrivateDeviceViewBytes {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-		return wire.DeviceConfigDeliveryV1{}, errors.New("[D131 client] private device_config 响应状态/类型/大小无效")
+		return wire.DeviceConfigDeliveryV1{}, errors.New("[client] private device_config 响应状态/类型/大小无效")
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, MaximumPrivateDeviceViewBytes+1))
 	if err != nil || len(body) == 0 || len(body) > MaximumPrivateDeviceViewBytes {
-		return wire.DeviceConfigDeliveryV1{}, errors.New("[D131 client] private device_config 响应读取/大小无效")
+		return wire.DeviceConfigDeliveryV1{}, errors.New("[client] private device_config 响应读取/大小无效")
 	}
 	var delivery wire.DeviceConfigDeliveryV1
 	canonical, err := wire.DecodeStrict(body, MaximumPrivateDeviceViewBytes, &delivery)
 	if err != nil || !bytes.Equal(canonical, body) {
-		return wire.DeviceConfigDeliveryV1{}, errors.New("[D131 client] private Device delivery 不是 exact canonical wire")
+		return wire.DeviceConfigDeliveryV1{}, errors.New("[client] private Device delivery 不是 exact canonical wire")
 	}
 	return delivery, nil
 }
@@ -245,7 +245,7 @@ func (client *PrivateDeviceHTTPClient) FetchDeviceConfigDelivery(ctx context.Con
 func (client *PrivateDeviceHTTPClient) PostDeviceReport(ctx context.Context,
 	envelope *wire.DeviceReportEnvelopeV2) error {
 	if client == nil || client.client == nil || ctx == nil || envelope == nil {
-		return errors.New("[D131 client] private report client/context/envelope 缺失")
+		return errors.New("[client] private report client/context/envelope 缺失")
 	}
 	body, err := wire.MarshalCanonical(envelope)
 	if err != nil {
@@ -260,7 +260,7 @@ func (client *PrivateDeviceHTTPClient) PostDeviceReport(ctx context.Context,
 	request.Header.Set("Accept", "application/json")
 	response, err := client.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("[D131 client] private device_report 请求失败: %w", err)
+		return fmt.Errorf("[client] private device_report 请求失败: %w", err)
 	}
 	defer response.Body.Close()
 	responseBody, readErr := io.ReadAll(io.LimitReader(response.Body,
@@ -268,7 +268,7 @@ func (client *PrivateDeviceHTTPClient) PostDeviceReport(ctx context.Context,
 	if readErr != nil || len(responseBody) > maximumSharedDeviceReportResponseBytes ||
 		response.StatusCode != http.StatusNoContent || len(responseBody) != 0 ||
 		response.Header.Get("Content-Encoding") != "" {
-		return fmt.Errorf("[D131 client] private device_report 未接受: status=%d", response.StatusCode)
+		return fmt.Errorf("[client] private device_report 未接受: status=%d", response.StatusCode)
 	}
 	return nil
 }

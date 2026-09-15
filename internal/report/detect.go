@@ -30,10 +30,8 @@ type detector struct {
 	details map[string]string
 	// since 是每个状态的已知起点,exact 说这个起点是不是来自一次真实变化。
 	//
-	// **它们跨重启存活**(启动时从 statePath 读回来):时长是面板唯一真正
-	// 新增的信息,而上报者重启是常事。每次重启把时长清零的话,面板在最该
-	// 说话的时候恰好失忆 —— 实测过一次"至少 28 秒",而那条链路已经断了
-	// 10 小时。
+	// 状态起点随 statePath 持久化并在启动时恢复，避免上报者重启缩短面板
+	// 显示的故障持续时间；起点未经真实变化确认时仍需保留不确定性。
 	since map[string]time.Time
 	exact map[string]bool
 	// restored* 是上一次状态文件里的内容,只在播种那一轮用一次。
@@ -185,7 +183,7 @@ func (d *detector) observe(v webui.View, now time.Time) ([]events.Event, error) 
 		// 做事件历史的全部理由,恰恰在这类故障上答不出来。
 		//
 		// **只记通与不通,不记 RTT。** RTT 每轮都在变,记进状态就是每轮
-		// 一条事件;而慢和断该有不同的反应(同 D59 那条超时的形状)。
+		// 一条事件;而慢和断该有不同的反应。
 		for _, e := range n.Edges {
 			state := "ok"
 			if e.Err != "" {

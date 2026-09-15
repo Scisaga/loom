@@ -22,27 +22,27 @@ import (
 	"time"
 )
 
-// §7.2.1：真实 TUN 验证使用隔离网络命名空间；测试只替换操作系统接管范围，
+// 真实 TUN 验证使用隔离网络命名空间；测试只替换操作系统接管范围，
 // Service、默认策略和本机派生 action 仍由正式配置校验与派生函数生成。
 // 运行：LOOM_TUN_ROUTING_EXECUTABLE=/abs/sing-box unshare -Urn <test-binary> -test.run TestOfficialTUNServiceRouting
 func TestOfficialTUNServiceRouting(t *testing.T) {
 	executable := os.Getenv("LOOM_TUN_ROUTING_EXECUTABLE")
 	if executable == "" {
-		t.Skip("[§7.2.1] 设置 LOOM_TUN_ROUTING_EXECUTABLE 并在独立网络命名空间运行真实 TUN 测试")
+		t.Skip("设置 LOOM_TUN_ROUTING_EXECUTABLE 并在独立网络命名空间运行真实 TUN 测试")
 	}
 	mapping, err := os.ReadFile("/proc/self/uid_map")
 	fields := strings.Fields(string(mapping))
 	interfaces, interfaceErr := net.Interfaces()
 	if err != nil || len(fields) != 3 || fields[0] != "0" || fields[1] == "0" || fields[2] != "1" ||
 		interfaceErr != nil || len(interfaces) != 1 || interfaces[0].Name != "lo" {
-		t.Fatal("[§7.2.1] 测试要求无宿主权限、仅有回环接口的独立用户/网络命名空间")
+		t.Fatal("测试要求无宿主权限、仅有回环接口的独立用户/网络命名空间")
 	}
 	if body, err := exec.Command("ip", "link", "set", "lo", "up").CombinedOutput(); err != nil {
-		t.Fatalf("[§7.2.1] 无法启用隔离回环接口：%v %s", err, body)
+		t.Fatalf("无法启用隔离回环接口：%v %s", err, body)
 	}
 	version, err := exec.Command(executable, "version").Output()
 	if err != nil || !strings.Contains(string(version), "sing-box version 1.11.4") {
-		t.Fatalf("[§7.2.1] 测试必须使用既有正式数据面 1.11.4：%v %s", err, version)
+		t.Fatalf("测试必须使用既有正式数据面 1.11.4：%v %s", err, version)
 	}
 	dnsAddress := routingDNSServer(t)
 	httpPort := routingTargetPair(t, false)
@@ -56,7 +56,7 @@ func TestOfficialTUNServiceRouting(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !fixed {
-				// §7.2.1：复现修复前仅 DNS 接管、没有域名映射/识别的原样行为。
+				// 复现修复前仅 DNS 接管、没有域名映射/识别的原样行为。
 				config["dns"].(map[string]any)["reverse_mapping"] = false
 				route := config["route"].(map[string]any)
 				rules := route["rules"].([]any)
@@ -67,7 +67,7 @@ func TestOfficialTUNServiceRouting(t *testing.T) {
 			defer stop()
 			link, err := exec.Command("ip", "-o", "link", "show", "dev", "loom-test-tun").CombinedOutput()
 			if err != nil || !strings.Contains(string(link), " mtu 1280 ") {
-				t.Fatalf("[§7.2.1] TUN MTU 未按配置生效：%v %s", err, link)
+				t.Fatalf("TUN MTU 未按配置生效：%v %s", err, link)
 			}
 			want := "default"
 			if fixed {
@@ -88,7 +88,7 @@ func TestOfficialTUNServiceRouting(t *testing.T) {
 			} {
 				t.Run(probe.name, func(t *testing.T) {
 					if got := routingRequest(t, probe.scheme, probe.host, probe.target, probe.port, probe.mixed); got != probe.want {
-						t.Fatalf("[§7.2.1] 实际请求进入 %q，预期 %q", got, probe.want)
+						t.Fatalf("实际请求进入 %q，预期 %q", got, probe.want)
 					}
 				})
 			}
@@ -99,18 +99,18 @@ func TestOfficialTUNServiceRouting(t *testing.T) {
 			}}
 			addresses, err := resolver.LookupIP(ctx, "ip4", "demo-service.example")
 			if err != nil || len(addresses) != 1 || addresses[0].String() != "192.0.2.17" {
-				t.Fatalf("[§7.2.1] 受管 TUN DNS 查询失败：%v %v", addresses, err)
+				t.Fatalf("受管 TUN DNS 查询失败：%v %v", addresses, err)
 			}
-			// §7.2.1：TLS ClientHello 没有 SNI；唯有此前经过 TUN 的 DNS 证据可恢复域名。
+			// TLS ClientHello 没有 SNI；唯有此前经过 TUN 的 DNS 证据可恢复域名。
 			if got := routingRequest(t, "https", "192.0.2.17", "192.0.2.17", tlsPort, false); got != want {
-				t.Fatalf("[§7.2.1] DNS 映射后的无 SNI 连接进入 %q，预期 %q", got, want)
+				t.Fatalf("DNS 映射后的无 SNI 连接进入 %q，预期 %q", got, want)
 			}
 			addresses, err = resolver.LookupIP(ctx, "ip6", "demo-service.example")
 			if err != nil || len(addresses) != 1 || addresses[0].String() != "2001:db8::17" {
-				t.Fatalf("[§7.2.1] 受管 TUN IPv6 DNS 查询失败：%v %v", addresses, err)
+				t.Fatalf("受管 TUN IPv6 DNS 查询失败：%v %v", addresses, err)
 			}
 			if got := routingRequest(t, "https", "2001:db8::17", "2001:db8::17", tlsPort, false); got != want {
-				t.Fatalf("[§7.2.1] IPv6 DNS 映射后的无 SNI 连接进入 %q，预期 %q", got, want)
+				t.Fatalf("IPv6 DNS 映射后的无 SNI 连接进入 %q，预期 %q", got, want)
 			}
 		})
 	}
@@ -187,7 +187,7 @@ func routingRequest(t *testing.T, scheme, host, target, port string, mixed bool)
 	t.Helper()
 	transport := &http.Transport{
 		DisableKeepAlives: true,
-		// §7.2.1：本测试只判定隔离目标的实际选路；自签名测试站点不验证公网证书。
+		// 本测试只判定隔离目标的实际选路；自签名测试站点不验证公网证书。
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
 	if mixed {
@@ -249,7 +249,7 @@ func runRoutingSingBox(t *testing.T, executable string, body []byte) func() {
 		time.Sleep(20 * time.Millisecond)
 	}
 	stop()
-	t.Fatal("[§7.2.1] 隔离数据面未能启动")
+	t.Fatal("隔离数据面未能启动")
 	return stop
 }
 

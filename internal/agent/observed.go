@@ -14,7 +14,7 @@ import (
 
 // observed 是 Agent 手里的全网观测:观测者 → 它最新那份。
 //
-// 数据来自上报者的转述网络(§16.1.2)。Agent 只读不产 —— 观测是每台机器
+// 数据来自上报者的转述网络。Agent 只读不产 —— 观测是每台机器
 // 量自己那几段的产物,Agent 的活是**用**它。
 type observed struct {
 	mu       sync.Mutex

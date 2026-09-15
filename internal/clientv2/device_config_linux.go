@@ -43,11 +43,11 @@ type LinuxDeviceViewSyncOptions struct {
 
 // SyncLinuxDeviceView 经已安装的正式 Device mTLS identity 访问 certified private
 // device_config endpoint，并在返回后重新验证 QC/Merkle/identity/floors 才提交 LKG。
-// public Nginx、bootstrap capability 和调用方自报 Device ID 都不能进入这条路径（D131）。
+// public Nginx、bootstrap capability 和调用方自报 Device ID 都不能进入这条路径。
 func SyncLinuxDeviceView(ctx context.Context,
 	options LinuxDeviceViewSyncOptions) (wire.ClientFloorsV2, error) {
 	if ctx == nil {
-		return wire.ClientFloorsV2{}, errors.New("[D131 Linux config] context 缺失")
+		return wire.ClientFloorsV2{}, errors.New("[Linux config] context 缺失")
 	}
 	store, err := Open(options.StatePath)
 	if err != nil {
@@ -56,7 +56,7 @@ func SyncLinuxDeviceView(ctx context.Context,
 	current := store.Envelope()
 	installation := store.Enrollment()
 	if current == nil || installation == nil || current.Payload.Active == nil {
-		return store.Floors(), errors.New("[D131 Linux config] 正式 active enrollment/LKG 尚未安装")
+		return store.Floors(), errors.New("[Linux config] 正式 active enrollment/LKG 尚未安装")
 	}
 	currentSet, currentPreviousSet := store.ControlSets()
 	if currentSet == nil {
@@ -91,7 +91,7 @@ func SyncLinuxDeviceView(ctx context.Context,
 	identityHash, err := identity.IdentitySPKIHash()
 	if err != nil || identityHash != installation.IdentityKeyHash ||
 		identityHash != current.Payload.Active.IdentitySPKIHash {
-		return store.Floors(), errors.New("[D131 Linux config] 本机 identity 与 durable installation/view 不一致")
+		return store.Floors(), errors.New("[Linux config] 本机 identity 与 durable installation/view 不一致")
 	}
 	certificateDER, err := wire.EnrollmentResultCertificateDER(&installation.ResultArtifact)
 	if err != nil {
@@ -99,7 +99,7 @@ func SyncLinuxDeviceView(ctx context.Context,
 	}
 	certificateHash, err := wire.DeviceCertificateHash(certificateDER)
 	if err != nil || certificateHash != installation.DeviceCertificateHash {
-		return store.Floors(), errors.New("[D131 Linux config] Device certificate 与 durable installation 不一致")
+		return store.Floors(), errors.New("[Linux config] Device certificate 与 durable installation 不一致")
 	}
 	now := options.Now
 	if now == nil {
@@ -127,7 +127,7 @@ func SyncLinuxDeviceView(ctx context.Context,
 	if finalEnvelope.Payload.State == "active" {
 		if configChanged {
 			if installation.DistributionMirrors == nil {
-				return store.Floors(), errors.New("[D124 Linux config] durable distribution mirrors 缺失")
+				return store.Floors(), errors.New("[Linux config] durable distribution mirrors 缺失")
 			}
 			fetcher := options.MirrorFetcher
 			if fetcher.Timeout == 0 {
@@ -160,24 +160,24 @@ func SyncLinuxDeviceView(ctx context.Context,
 
 // VerifyControlServiceDirectory 要求 root-owned 配置里的 exact directory hash pin，
 // 并另行验证其 parent Head/QC 与 ControlSet。Head QC 本身不承诺
-// directory bytes，因此不能省略 pin 或把它与 config_qc 混为一谈（D131）。
+// directory bytes，因此不能省略 pin 或把它与 config_qc 混为一谈。
 func VerifyControlServiceDirectory(directory *wire.ControlServiceDirectoryV1,
 	pinnedDirectoryHash string, head *wire.HeadEntryV2, set, previousSet *wire.ControlSetV1) error {
 	if directory == nil || head == nil || set == nil {
-		return errors.New("[D131 Linux config] directory authority 不完整")
+		return errors.New("[Linux config] directory authority 不完整")
 	}
 	if err := wire.ValidateControlServiceDirectory(directory); err != nil {
 		return err
 	}
 	directoryHash, err := wire.ControlServiceDirectoryHash(directory)
 	if err != nil || directoryHash != pinnedDirectoryHash {
-		return errors.New("[D131 Linux config] private directory 与 root-owned hash pin 不一致")
+		return errors.New("[Linux config] private directory 与 root-owned hash pin 不一致")
 	}
 	setHash, err := wire.ControlSetHash(set)
 	if err != nil || directory.ClusterID != head.Body.Payload.ClusterID ||
 		directory.ClusterID != set.ClusterID || directory.ParentHeadHash != head.HeadHash ||
 		directory.ControlSetHash != setHash || head.Body.Payload.ControlSetHash != setHash {
-		return errors.New("[D131 Linux config] directory 未绑定本机 certified Head/ControlSet")
+		return errors.New("[Linux config] directory 未绑定本机 certified Head/ControlSet")
 	}
 	if err := wire.VerifyConfigQCAuthority(directory.ParentHeadHash, directory.ConfigQC,
 		head, set, previousSet); err != nil {
@@ -198,7 +198,7 @@ func SelectPrivateControlService(directory *wire.ControlServiceDirectoryV1,
 			continue
 		}
 		if match != nil {
-			return wire.PrivateControlServiceV1{}, errors.New("[D131 Linux config] private service 选择不唯一")
+			return wire.PrivateControlServiceV1{}, errors.New("[Linux config] private service 选择不唯一")
 		}
 		copy := *candidate
 		copy.SPKIPins = append([]string(nil), candidate.SPKIPins...)
@@ -206,7 +206,7 @@ func SelectPrivateControlService(directory *wire.ControlServiceDirectoryV1,
 		match = &copy
 	}
 	if match == nil {
-		return wire.PrivateControlServiceV1{}, errors.New("[D131 Linux config] certified directory 缺目标 private service")
+		return wire.PrivateControlServiceV1{}, errors.New("[Linux config] certified directory 缺目标 private service")
 	}
 	return *match, nil
 }
@@ -225,22 +225,22 @@ func newPrivateDeviceHTTPClient(service wire.PrivateControlServiceV1, expectedRo
 	if service.Role != expectedRole || !containsString([]string{"device_config", "device_report"}, expectedRole) ||
 		identityKey == nil || identityKey.Curve != elliptic.P256() || roots == nil ||
 		now == nil || timeout < time.Second || timeout > 5*time.Minute {
-		return nil, errors.New("[D131 Linux config] mTLS identity/internal CA/time/timeout 无效")
+		return nil, errors.New("[Linux config] mTLS identity/internal CA/time/timeout 无效")
 	}
 	leaf, err := x509.ParseCertificate(certificateDER)
 	if err != nil || !bytes.Equal(leaf.Raw, certificateDER) || leaf.IsCA ||
 		leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 ||
 		!containsExtKeyUsage(leaf.ExtKeyUsage, x509.ExtKeyUsageClientAuth) ||
 		len(leaf.UnhandledCriticalExtensions) != 0 {
-		return nil, errors.New("[D131 Linux config] Device certificate profile 无效")
+		return nil, errors.New("[Linux config] Device certificate profile 无效")
 	}
 	instant := now().UTC()
 	if instant.IsZero() || instant.Before(leaf.NotBefore) || !instant.Before(leaf.NotAfter) {
-		return nil, errors.New("[D131 Linux config] Device certificate 已过期或尚未生效")
+		return nil, errors.New("[Linux config] Device certificate 已过期或尚未生效")
 	}
 	publicSPKI, err := x509.MarshalPKIXPublicKey(&identityKey.PublicKey)
 	if err != nil || !bytes.Equal(publicSPKI, leaf.RawSubjectPublicKeyInfo) {
-		return nil, errors.New("[D131 Linux config] Device certificate/private key 不匹配")
+		return nil, errors.New("[Linux config] Device certificate/private key 不匹配")
 	}
 	expectedAddress := net.JoinHostPort(service.OverlayIP, strconv.FormatInt(service.Port, 10))
 	if dial == nil {
@@ -262,7 +262,7 @@ func newPrivateDeviceHTTPClient(service wire.PrivateControlServiceV1, expectedRo
 		Proxy: nil, DisableCompression: true, ForceAttemptHTTP2: false,
 		DialTLSContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 			if network != "tcp" || address != expectedAddress {
-				return nil, errors.New("[D131 Linux config] private service dial 超出 exact overlay tuple")
+				return nil, errors.New("[Linux config] private service dial 超出 exact overlay tuple")
 			}
 			raw, err := dial(ctx, "tcp", expectedAddress)
 			if err != nil {
@@ -279,13 +279,13 @@ func newPrivateDeviceHTTPClient(service wire.PrivateControlServiceV1, expectedRo
 	baseURL := (&url.URL{Scheme: "https", Host: expectedAddress}).String()
 	return &privateDeviceHTTPClient{client: &http.Client{Transport: transport, Timeout: timeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return errors.New("[D131 Linux config] private service 禁止 redirect")
+			return errors.New("[Linux config] private service 禁止 redirect")
 		}}, baseURL: baseURL}, nil
 }
 
 func (client *privateDeviceHTTPClient) fetchDeviceConfigDelivery(ctx context.Context) (wire.DeviceConfigDeliveryV1, error) {
 	if client == nil || client.client == nil {
-		return wire.DeviceConfigDeliveryV1{}, errors.New("[D131 Linux config] private client 缺失")
+		return wire.DeviceConfigDeliveryV1{}, errors.New("[Linux config] private client 缺失")
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		client.baseURL+"/private/v2/device/config", nil)
@@ -295,23 +295,23 @@ func (client *privateDeviceHTTPClient) fetchDeviceConfigDelivery(ctx context.Con
 	request.Header.Set("Accept", wire.DeviceConfigDeliveryMediaTypeV1)
 	response, err := client.client.Do(request)
 	if err != nil {
-		return wire.DeviceConfigDeliveryV1{}, fmt.Errorf("[D131 Linux config] private device_config 请求失败: %w", err)
+		return wire.DeviceConfigDeliveryV1{}, fmt.Errorf("[Linux config] private device_config 请求失败: %w", err)
 	}
 	defer response.Body.Close()
 	mediaType, _, mediaErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if response.StatusCode != http.StatusOK || mediaErr != nil || mediaType != wire.DeviceConfigDeliveryMediaTypeV1 ||
 		response.Header.Get("Content-Encoding") != "" || response.ContentLength > maximumPrivateDeviceViewBytes {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-		return wire.DeviceConfigDeliveryV1{}, errors.New("[D131 Linux config] private device_config 响应状态/类型/大小无效")
+		return wire.DeviceConfigDeliveryV1{}, errors.New("[Linux config] private device_config 响应状态/类型/大小无效")
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, maximumPrivateDeviceViewBytes+1))
 	if err != nil || len(body) == 0 || len(body) > maximumPrivateDeviceViewBytes {
-		return wire.DeviceConfigDeliveryV1{}, errors.New("[D131 Linux config] private device_config 响应读取/大小无效")
+		return wire.DeviceConfigDeliveryV1{}, errors.New("[Linux config] private device_config 响应读取/大小无效")
 	}
 	var delivery wire.DeviceConfigDeliveryV1
 	canonical, err := wire.DecodeStrict(body, maximumPrivateDeviceViewBytes, &delivery)
 	if err != nil || !bytes.Equal(canonical, body) {
-		return wire.DeviceConfigDeliveryV1{}, errors.New("[D131 Linux config] private Device delivery 不是 exact canonical wire")
+		return wire.DeviceConfigDeliveryV1{}, errors.New("[Linux config] private Device delivery 不是 exact canonical wire")
 	}
 	return delivery, nil
 }
@@ -325,7 +325,7 @@ func (client *privateDeviceHTTPClient) CloseIdleConnections() {
 func verifyPrivateDeviceServiceTLS(state tls.ConnectionState, service wire.PrivateControlServiceV1,
 	roots *x509.CertPool, trustedTime time.Time) error {
 	if trustedTime.IsZero() || roots == nil || state.Version != tls.VersionTLS13 || len(state.PeerCertificates) == 0 {
-		return errors.New("[D131 Linux config] private service TLS version/certificate/time 无效")
+		return errors.New("[Linux config] private service TLS version/certificate/time 无效")
 	}
 	leaf := state.PeerCertificates[0]
 	instant := trustedTime.UTC()
@@ -333,12 +333,12 @@ func verifyPrivateDeviceServiceTLS(state tls.ConnectionState, service wire.Priva
 		instant.Before(leaf.NotBefore) || !instant.Before(leaf.NotAfter) ||
 		leaf.VerifyHostname(service.OverlayIP) != nil || len(leaf.UnhandledCriticalExtensions) != 0 ||
 		!containsExtKeyUsage(leaf.ExtKeyUsage, x509.ExtKeyUsageServerAuth) {
-		return errors.New("[D131 Linux config] private service leaf role/validity/overlay IP SAN 无效")
+		return errors.New("[Linux config] private service leaf role/validity/overlay IP SAN 无效")
 	}
 	digest := sha256.Sum256(leaf.RawSubjectPublicKeyInfo)
 	pin := "sha256:" + hex.EncodeToString(digest[:])
 	if !containsString(service.SPKIPins, pin) {
-		return errors.New("[D131 Linux config] private service SPKI 不在 certified pin set")
+		return errors.New("[Linux config] private service SPKI 不在 certified pin set")
 	}
 	intermediates := x509.NewCertPool()
 	for _, certificate := range state.PeerCertificates[1:] {
@@ -347,7 +347,7 @@ func verifyPrivateDeviceServiceTLS(state tls.ConnectionState, service wire.Priva
 	if _, err := leaf.Verify(x509.VerifyOptions{DNSName: service.OverlayIP, Roots: roots,
 		Intermediates: intermediates, CurrentTime: instant,
 		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err != nil {
-		return errors.New("[D131 Linux config] private service leaf 不属于 exact internal CA profile")
+		return errors.New("[Linux config] private service leaf 不属于 exact internal CA profile")
 	}
 	return nil
 }

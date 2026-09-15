@@ -130,7 +130,7 @@ func BuildBootstrapOuterProbePlan(runtimePlan BootstrapIngressRuntimePlanV1,
 	authorized rotation.AuthorizedRuntimePlanV1) (BootstrapOuterProbePlanV1, error) {
 	bindings := runtimePlan.Bindings()
 	if len(bindings) == 0 {
-		return BootstrapOuterProbePlanV1{}, errors.New("[D120 external verify] bootstrap runtime plan 为空")
+		return BootstrapOuterProbePlanV1{}, errors.New("[external verify] bootstrap runtime plan 为空")
 	}
 	intent := authorized.Intent()
 	dependency := intent.FrozenDependencies
@@ -140,11 +140,11 @@ func BuildBootstrapOuterProbePlan(runtimePlan BootstrapIngressRuntimePlanV1,
 		dependency.EndpointSetID != first.EndpointSetID || dependency.EndpointID != first.EndpointID ||
 		dependency.LogicalServerID != first.LogicalServerID || dependency.Transport != first.Transport ||
 		dependency.TargetListenerGeneration != first.ListenerGeneration {
-		return BootstrapOuterProbePlanV1{}, errors.New("[D120 external verify] runtime plan 与 certified rotation authority 不匹配")
+		return BootstrapOuterProbePlanV1{}, errors.New("[external verify] runtime plan 与 certified rotation authority 不匹配")
 	}
 	ownedState, ownedTuples, ok := authorized.GenerationTuples(first.ListenerGeneration)
 	if !ok || ownedState == "" {
-		return BootstrapOuterProbePlanV1{}, errors.New("[D120 external verify] target generation 尚未获得 runtime ownership")
+		return BootstrapOuterProbePlanV1{}, errors.New("[external verify] target generation 尚未获得 runtime ownership")
 	}
 	owned := make(map[rotation.Tuple]struct{}, len(ownedTuples))
 	for _, tuple := range ownedTuples {
@@ -159,17 +159,17 @@ func BuildBootstrapOuterProbePlan(runtimePlan BootstrapIngressRuntimePlanV1,
 			projection.Transport != first.Transport || projection.ListenerGeneration != first.ListenerGeneration ||
 			projection.ServerName != first.ServerName || projection.ValidFrom != first.ValidFrom ||
 			projection.ValidUntil != first.ValidUntil || !slices.Equal(projection.SPKIPins, first.SPKIPins) {
-			return BootstrapOuterProbePlanV1{}, errors.New("[D120 external verify] runtime bindings 不属于同一 target generation")
+			return BootstrapOuterProbePlanV1{}, errors.New("[external verify] runtime bindings 不属于同一 target generation")
 		}
 		if _, ok := owned[projection.BindTuple]; !ok {
-			return BootstrapOuterProbePlanV1{}, errors.New("[D127 external verify] runtime binding 不在 durable frozen tuple 集合")
+			return BootstrapOuterProbePlanV1{}, errors.New("[external verify] runtime binding 不在 durable frozen tuple 集合")
 		}
 		targets = append(targets, projection.PublicTuples...)
 	}
 	sort.Slice(targets, func(left, right int) bool { return runtimeTupleLess(targets[left], targets[right]) })
 	for index := range targets {
 		if index > 0 && targets[index] == targets[index-1] {
-			return BootstrapOuterProbePlanV1{}, errors.New("[D103 external verify] public probe tuple 被多个 local binding 重复覆盖")
+			return BootstrapOuterProbePlanV1{}, errors.New("[external verify] public probe tuple 被多个 local binding 重复覆盖")
 		}
 	}
 	plan := BootstrapOuterProbePlanV1{
@@ -206,7 +206,7 @@ func RunBootstrapOuterProbe(ctx context.Context, plan *BootstrapOuterProbePlanV1
 	options BootstrapOuterProbeOptions) (SignedBootstrapOuterProbeObservationV1, error) {
 	if ctx == nil || !validProbeIdentifier(options.ObserverID) || len(options.PrivateKey) != ed25519.PrivateKeySize ||
 		options.TLSConfig == nil || options.Now == nil || options.Timeout < time.Second || options.Timeout > 30*time.Second {
-		return SignedBootstrapOuterProbeObservationV1{}, errors.New("[D120 external verify] probe dependencies/timeout 无效")
+		return SignedBootstrapOuterProbeObservationV1{}, errors.New("[external verify] probe dependencies/timeout 无效")
 	}
 	if err := validateBootstrapOuterProbePlan(plan); err != nil {
 		return SignedBootstrapOuterProbeObservationV1{}, err
@@ -222,7 +222,7 @@ func RunBootstrapOuterProbe(ctx context.Context, plan *BootstrapOuterProbePlanV1
 	validFrom, _ := wire.ParseTimeZ(plan.ValidFrom)
 	validUntil, _ := wire.ParseTimeZ(plan.ValidUntil)
 	if startedAt.Before(validFrom) || !startedAt.Before(validUntil) {
-		return SignedBootstrapOuterProbeObservationV1{}, errors.New("[D120 external verify] probe plan 尚未生效或已过期")
+		return SignedBootstrapOuterProbeObservationV1{}, errors.New("[external verify] probe plan 尚未生效或已过期")
 	}
 	tcpDial := options.TCPDial
 	if tcpDial == nil {
@@ -249,7 +249,7 @@ func RunBootstrapOuterProbe(ctx context.Context, plan *BootstrapOuterProbePlanV1
 	}
 	observedAt := options.Now().UTC().Truncate(time.Second)
 	if observedAt.Before(startedAt) || !observedAt.Before(validUntil) {
-		return SignedBootstrapOuterProbeObservationV1{}, errors.New("[D120 external verify] probe 完成时间倒退或超出 listener validity")
+		return SignedBootstrapOuterProbeObservationV1{}, errors.New("[external verify] probe 完成时间倒退或超出 listener validity")
 	}
 	publicKey := options.PrivateKey.Public().(ed25519.PublicKey)
 	keyID, err := bootstrapOuterObserverKeyID(publicKey)
@@ -281,7 +281,7 @@ func VerifyBootstrapOuterReachability(policy *BootstrapOuterEvidencePolicyV1,
 	observations []SignedBootstrapOuterProbeObservationV1,
 	trustedTime time.Time) (VerifiedBootstrapOuterReachabilityV1, error) {
 	if trustedTime.IsZero() {
-		return VerifiedBootstrapOuterReachabilityV1{}, errors.New("[D120 external verify] 可信验证时间缺失")
+		return VerifiedBootstrapOuterReachabilityV1{}, errors.New("[external verify] 可信验证时间缺失")
 	}
 	policyHash, err := BootstrapOuterEvidencePolicyHash(policy)
 	if err != nil {
@@ -289,7 +289,7 @@ func VerifyBootstrapOuterReachability(policy *BootstrapOuterEvidencePolicyV1,
 	}
 	intent := authorized.Intent()
 	if policy.ClusterID != intent.ClusterID || policyHash != intent.FrozenDependencies.EvidencePolicyHash {
-		return VerifiedBootstrapOuterReachabilityV1{}, errors.New("[D127 external verify] observer policy 未绑定 frozen rotation dependency")
+		return VerifiedBootstrapOuterReachabilityV1{}, errors.New("[external verify] observer policy 未绑定 frozen rotation dependency")
 	}
 	plan, err := BuildBootstrapOuterProbePlan(runtimePlan, authorized)
 	if err != nil {
@@ -301,7 +301,7 @@ func VerifyBootstrapOuterReachability(policy *BootstrapOuterEvidencePolicyV1,
 	}
 	if len(observations) < int(policy.MinimumExternalObservers) ||
 		len(observations) > len(policy.Observers) {
-		return VerifiedBootstrapOuterReachabilityV1{}, errors.New("[D120 external verify] observer 数量未满足 frozen policy")
+		return VerifiedBootstrapOuterReachabilityV1{}, errors.New("[external verify] observer 数量未满足 frozen policy")
 	}
 	observerByID := make(map[string]BootstrapOuterObserverV1, len(policy.Observers))
 	for _, observer := range policy.Observers {
@@ -315,11 +315,11 @@ func VerifyBootstrapOuterReachability(policy *BootstrapOuterEvidencePolicyV1,
 	for index := range observations {
 		signed := &observations[index]
 		if index > 0 && observations[index-1].Body.ObserverID >= signed.Body.ObserverID {
-			return VerifiedBootstrapOuterReachabilityV1{}, errors.New("[D120 external verify] observations 必须按 observer ID 严格排序")
+			return VerifiedBootstrapOuterReachabilityV1{}, errors.New("[external verify] observations 必须按 observer ID 严格排序")
 		}
 		observer, ok := observerByID[signed.Body.ObserverID]
 		if !ok {
-			return VerifiedBootstrapOuterReachabilityV1{}, errors.New("[D120 external verify] observation signer 不在 frozen policy")
+			return VerifiedBootstrapOuterReachabilityV1{}, errors.New("[external verify] observation signer 不在 frozen policy")
 		}
 		observedAt, err := verifyBootstrapOuterObservation(signed, observer, &plan, planHash)
 		if err != nil {
@@ -327,7 +327,7 @@ func VerifyBootstrapOuterReachability(policy *BootstrapOuterEvidencePolicyV1,
 		}
 		observationUntil := observedAt.Add(time.Duration(policy.MaximumObservationAgeSeconds) * time.Second)
 		if observedAt.After(verifiedAt) || !verifiedAt.Before(observationUntil) {
-			return VerifiedBootstrapOuterReachabilityV1{}, errors.New("[D120 external verify] observation 来自未来或已过期")
+			return VerifiedBootstrapOuterReachabilityV1{}, errors.New("[external verify] observation 来自未来或已过期")
 		}
 		if observationUntil.Before(evidenceUntil) {
 			evidenceUntil = observationUntil
@@ -336,7 +336,7 @@ func VerifyBootstrapOuterReachability(policy *BootstrapOuterEvidencePolicyV1,
 		cloned = append(cloned, cloneSignedBootstrapOuterObservation(*signed))
 	}
 	if int64(len(failureDomains)) < policy.MinimumExternalFailureDomains || !verifiedAt.Before(evidenceUntil) {
-		return VerifiedBootstrapOuterReachabilityV1{}, errors.New("[D120 external verify] failure-domain 数量或 evidence 有效期不足")
+		return VerifiedBootstrapOuterReachabilityV1{}, errors.New("[external verify] failure-domain 数量或 evidence 有效期不足")
 	}
 	evidence := BootstrapOuterReachabilityEvidenceV1{
 		Schema: 1, ClusterID: plan.ClusterID, RotationID: plan.RotationID,
@@ -370,7 +370,7 @@ func VerifyBootstrapOuterReachabilityEvidence(policy *BootstrapOuterEvidencePoli
 	authorized rotation.AuthorizedRuntimePlanV1, runtimePlan BootstrapIngressRuntimePlanV1,
 	evidence *BootstrapOuterReachabilityEvidenceV1) (VerifiedBootstrapOuterReachabilityV1, error) {
 	if evidence == nil {
-		return VerifiedBootstrapOuterReachabilityV1{}, errors.New("[D120 external verify] stored evidence 缺失")
+		return VerifiedBootstrapOuterReachabilityV1{}, errors.New("[external verify] stored evidence 缺失")
 	}
 	verifiedAt, err := wire.ParseTimeZ(evidence.VerifiedAt)
 	if err != nil {
@@ -382,7 +382,7 @@ func VerifyBootstrapOuterReachabilityEvidence(policy *BootstrapOuterEvidencePoli
 		return VerifiedBootstrapOuterReachabilityV1{}, err
 	}
 	if !wire.EqualCanonical(verified.evidence, *evidence) {
-		return VerifiedBootstrapOuterReachabilityV1{}, errors.New("[D120 external verify] stored evidence 与签名重算结果不一致")
+		return VerifiedBootstrapOuterReachabilityV1{}, errors.New("[external verify] stored evidence 与签名重算结果不一致")
 	}
 	return verified, nil
 }
@@ -398,7 +398,7 @@ func (verified VerifiedBootstrapOuterReachabilityV1) validateAdvertiseTransition
 		transition.LocalVerificationEvidenceHash == transition.ExternalVerificationEvidenceHash ||
 		verified.evidence.ClusterID != intent.ClusterID || verified.evidence.RotationID != intent.RotationID ||
 		verified.evidence.EvidencePolicyHash != intent.FrozenDependencies.EvidencePolicyHash {
-		return errors.New("[D120 external verify] advertise transition 未绑定 verified external evidence")
+		return errors.New("[external verify] advertise transition 未绑定 verified external evidence")
 	}
 	certifiedAt, err := wire.ParseTimeZ(transition.CertifiedAt)
 	if err != nil {
@@ -407,7 +407,7 @@ func (verified VerifiedBootstrapOuterReachabilityV1) validateAdvertiseTransition
 	verifiedAt, _ := wire.ParseTimeZ(verified.evidence.VerifiedAt)
 	validUntil, _ := wire.ParseTimeZ(verified.evidence.ValidUntil)
 	if certifiedAt.Before(verifiedAt) || !certifiedAt.Before(validUntil) {
-		return errors.New("[D120 external verify] advertise certification 不在 evidence 有效窗口")
+		return errors.New("[external verify] advertise certification 不在 evidence 有效窗口")
 	}
 	return nil
 }
@@ -436,14 +436,14 @@ func probeBootstrapOuterTarget(ctx context.Context, plan *BootstrapOuterProbePla
 			if err == nil {
 				err = errors.New("拨号器返回 nil connection")
 			}
-			return tls.ConnectionState{}, fmt.Errorf("[D120 external verify] Trojan public tuple 不可达: %w", err)
+			return tls.ConnectionState{}, fmt.Errorf("[external verify] Trojan public tuple 不可达: %w", err)
 		}
 		connection := tls.Client(raw, config)
 		err = connection.HandshakeContext(ctx)
 		state := connection.ConnectionState()
 		_ = connection.Close()
 		if err != nil {
-			return tls.ConnectionState{}, fmt.Errorf("[D120 external verify] Trojan outer TLS 失败: %w", err)
+			return tls.ConnectionState{}, fmt.Errorf("[external verify] Trojan outer TLS 失败: %w", err)
 		}
 		return state, nil
 	}
@@ -459,7 +459,7 @@ func probeBootstrapOuterTarget(ctx context.Context, plan *BootstrapOuterProbePla
 		if err == nil {
 			err = errors.New("监听器返回 nil packet connection")
 		}
-		return tls.ConnectionState{}, fmt.Errorf("[D120 external verify] HY2 observer UDP socket 创建失败: %w", err)
+		return tls.ConnectionState{}, fmt.Errorf("[external verify] HY2 observer UDP socket 创建失败: %w", err)
 	}
 	defer packetConnection.Close()
 	remote := net.UDPAddrFromAddrPort(netip.AddrPortFrom(parsed, uint16(target.Port)))
@@ -468,7 +468,7 @@ func probeBootstrapOuterTarget(ctx context.Context, plan *BootstrapOuterProbePla
 		HandshakeIdleTimeout: timeout, MaxIdleTimeout: timeout, EnableDatagrams: false, Allow0RTT: false,
 	})
 	if err != nil {
-		return tls.ConnectionState{}, fmt.Errorf("[D120 external verify] Hysteria2 public tuple/QUIC TLS 不可达: %w", err)
+		return tls.ConnectionState{}, fmt.Errorf("[external verify] Hysteria2 public tuple/QUIC TLS 不可达: %w", err)
 	}
 	state := connection.ConnectionState().TLS
 	_ = connection.CloseWithError(0, "")
@@ -478,19 +478,19 @@ func probeBootstrapOuterTarget(ctx context.Context, plan *BootstrapOuterProbePla
 func outerProbeResult(target rotation.Tuple, transport string, state tls.ConnectionState,
 	pins []string) (BootstrapOuterProbeResultV1, error) {
 	if state.Version != tls.VersionTLS13 || len(state.PeerCertificates) == 0 {
-		return BootstrapOuterProbeResultV1{}, errors.New("[D122 external verify] outer transport 未使用 TLS 1.3/certificate")
+		return BootstrapOuterProbeResultV1{}, errors.New("[external verify] outer transport 未使用 TLS 1.3/certificate")
 	}
 	digest := sha256.Sum256(state.PeerCertificates[0].RawSubjectPublicKeyInfo)
 	pin := "sha256:" + hex.EncodeToString(digest[:])
 	if !slices.Contains(pins, pin) {
-		return BootstrapOuterProbeResultV1{}, errors.New("[D122 external verify] leaf SPKI 不在 certified listener pin set")
+		return BootstrapOuterProbeResultV1{}, errors.New("[external verify] leaf SPKI 不在 certified listener pin set")
 	}
 	wantProtocol := ""
 	if transport == "hysteria2" {
 		wantProtocol = http3.NextProtoH3
 	}
 	if state.NegotiatedProtocol != wantProtocol {
-		return BootstrapOuterProbeResultV1{}, errors.New("[D122 external verify] outer transport ALPN 不匹配")
+		return BootstrapOuterProbeResultV1{}, errors.New("[external verify] outer transport ALPN 不匹配")
 	}
 	return BootstrapOuterProbeResultV1{Target: target, TLSVersion: int64(state.Version),
 		NegotiatedProtocol: state.NegotiatedProtocol, LeafSPKIHash: pin}, nil
@@ -503,7 +503,7 @@ func verifyBootstrapOuterObservation(signed *SignedBootstrapOuterProbeObservatio
 		signed.Body.ObserverID != observer.ObserverID || signed.Body.ProbePlanHash != planHash ||
 		signed.Signature.Algorithm != "ed25519" || signed.Signature.ObserverKeyID != observer.ObserverKeyID ||
 		len(signed.Body.Results) != len(plan.Targets) {
-		return time.Time{}, errors.New("[D120 external verify] signed observation identity/coverage 无效")
+		return time.Time{}, errors.New("[external verify] signed observation identity/coverage 无效")
 	}
 	observedAt, err := wire.ParseTimeZ(signed.Body.ObservedAt)
 	if err != nil {
@@ -512,19 +512,19 @@ func verifyBootstrapOuterObservation(signed *SignedBootstrapOuterProbeObservatio
 	validFrom, _ := wire.ParseTimeZ(plan.ValidFrom)
 	validUntil, _ := wire.ParseTimeZ(plan.ValidUntil)
 	if observedAt.Before(validFrom) || !observedAt.Before(validUntil) {
-		return time.Time{}, errors.New("[D120 external verify] observation 不在 listener/catalog validity 内")
+		return time.Time{}, errors.New("[external verify] observation 不在 listener/catalog validity 内")
 	}
 	for index, result := range signed.Body.Results {
 		if result.Target != plan.Targets[index] || result.TLSVersion != int64(tls.VersionTLS13) ||
 			!slices.Contains(plan.SPKIPins, result.LeafSPKIHash) {
-			return time.Time{}, errors.New("[D120 external verify] observation result 未覆盖 exact tuple/TLS identity")
+			return time.Time{}, errors.New("[external verify] observation result 未覆盖 exact tuple/TLS identity")
 		}
 		wantProtocol := ""
 		if plan.Transport == "hysteria2" {
 			wantProtocol = http3.NextProtoH3
 		}
 		if result.NegotiatedProtocol != wantProtocol {
-			return time.Time{}, errors.New("[D120 external verify] observation ALPN 与 transport 不匹配")
+			return time.Time{}, errors.New("[external verify] observation ALPN 与 transport 不匹配")
 		}
 	}
 	publicKey, err := decodeObserverPublicKey(observer.ObserverPublicKey)
@@ -534,7 +534,7 @@ func verifyBootstrapOuterObservation(signed *SignedBootstrapOuterProbeObservatio
 	rawSignature, err := base64.RawURLEncoding.DecodeString(signed.Signature.Signature)
 	if err != nil || len(rawSignature) != ed25519.SignatureSize ||
 		base64.RawURLEncoding.EncodeToString(rawSignature) != signed.Signature.Signature {
-		return time.Time{}, errors.New("[D120 external verify] observer signature encoding 无效")
+		return time.Time{}, errors.New("[external verify] observer signature encoding 无效")
 	}
 	canonical, err := wire.MarshalCanonical(signed.Body)
 	if err != nil {
@@ -542,7 +542,7 @@ func verifyBootstrapOuterObservation(signed *SignedBootstrapOuterProbeObservatio
 	}
 	message, err := wire.Frame(domainBootstrapOuterProbeSignature, canonical)
 	if err != nil || !ed25519.Verify(publicKey, message, rawSignature) {
-		return time.Time{}, errors.New("[D120 external verify] observer signature 无效")
+		return time.Time{}, errors.New("[external verify] observer signature 无效")
 	}
 	return observedAt, nil
 }
@@ -553,7 +553,7 @@ func validateBootstrapOuterProbePlan(plan *BootstrapOuterProbePlanV1) error {
 		!validProbeIdentifier(plan.LogicalServerID) || plan.ListenerGeneration < 1 ||
 		(plan.Transport != "hysteria2" && plan.Transport != "trojan_tls") ||
 		!wire.ValidFQDN(plan.ServerName) || len(plan.SPKIPins) == 0 || len(plan.Targets) == 0 {
-		return errors.New("[D120 external verify] probe plan header 无效")
+		return errors.New("[external verify] probe plan header 无效")
 	}
 	for _, hash := range []string{plan.FrozenDependenciesHash, plan.EndpointSetHash} {
 		if _, err := wire.ParseHash(hash); err != nil {
@@ -562,7 +562,7 @@ func validateBootstrapOuterProbePlan(plan *BootstrapOuterProbePlanV1) error {
 	}
 	for index, pin := range plan.SPKIPins {
 		if _, err := wire.ParseHash(pin); err != nil || index > 0 && plan.SPKIPins[index-1] >= pin {
-			return errors.New("[D122 external verify] probe SPKI pins 非规范")
+			return errors.New("[external verify] probe SPKI pins 非规范")
 		}
 	}
 	validFrom, err := wire.ParseTimeZ(plan.ValidFrom)
@@ -571,7 +571,7 @@ func validateBootstrapOuterProbePlan(plan *BootstrapOuterProbePlanV1) error {
 	}
 	validUntil, err := wire.ParseTimeZ(plan.ValidUntil)
 	if err != nil || !validFrom.Before(validUntil) {
-		return errors.New("[D120 external verify] probe validity 无效")
+		return errors.New("[external verify] probe validity 无效")
 	}
 	wantL4 := "tcp"
 	if plan.Transport == "hysteria2" {
@@ -581,7 +581,7 @@ func validateBootstrapOuterProbePlan(plan *BootstrapOuterProbePlanV1) error {
 		address, err := netip.ParseAddr(target.Address)
 		if err != nil || address.String() != target.Address || target.Transport != wantL4 ||
 			target.Port < 1 || target.Port > 65535 || index > 0 && !runtimeTupleLess(plan.Targets[index-1], target) {
-			return errors.New("[D103 external verify] public probe targets 非规范/错序/重复")
+			return errors.New("[external verify] public probe targets 非规范/错序/重复")
 		}
 	}
 	return nil
@@ -594,14 +594,14 @@ func validateBootstrapOuterEvidencePolicy(policy *BootstrapOuterEvidencePolicyV1
 		policy.MinimumExternalObservers > int64(len(policy.Observers)) || policy.MinimumExternalFailureDomains < 1 ||
 		policy.MinimumExternalFailureDomains > policy.MinimumExternalObservers ||
 		policy.MaximumObservationAgeSeconds < 1 || policy.MaximumObservationAgeSeconds > 3600 {
-		return errors.New("[D120 external verify] evidence policy header/threshold 无效")
+		return errors.New("[external verify] evidence policy header/threshold 无效")
 	}
 	seenKeys := make(map[string]struct{}, len(policy.Observers))
 	domains := make(map[string]struct{}, len(policy.Observers))
 	for index, observer := range policy.Observers {
 		if !validProbeIdentifier(observer.ObserverID) || !validProbeIdentifier(observer.FailureDomain) ||
 			index > 0 && policy.Observers[index-1].ObserverID >= observer.ObserverID {
-			return errors.New("[D120 external verify] observers 必须按 ID 严格排序")
+			return errors.New("[external verify] observers 必须按 ID 严格排序")
 		}
 		publicKey, err := decodeObserverPublicKey(observer.ObserverPublicKey)
 		if err != nil {
@@ -609,16 +609,16 @@ func validateBootstrapOuterEvidencePolicy(policy *BootstrapOuterEvidencePolicyV1
 		}
 		keyID, err := bootstrapOuterObserverKeyID(publicKey)
 		if err != nil || keyID != observer.ObserverKeyID {
-			return errors.New("[D120 external verify] observer key ID/public key 不匹配")
+			return errors.New("[external verify] observer key ID/public key 不匹配")
 		}
 		if _, duplicate := seenKeys[keyID]; duplicate {
-			return errors.New("[D120 external verify] observer public key 重复")
+			return errors.New("[external verify] observer public key 重复")
 		}
 		seenKeys[keyID] = struct{}{}
 		domains[observer.FailureDomain] = struct{}{}
 	}
 	if int64(len(domains)) < policy.MinimumExternalFailureDomains {
-		return errors.New("[D120 external verify] policy failure-domain 不足")
+		return errors.New("[external verify] policy failure-domain 不足")
 	}
 	return nil
 }
@@ -626,14 +626,14 @@ func validateBootstrapOuterEvidencePolicy(policy *BootstrapOuterEvidencePolicyV1
 func decodeObserverPublicKey(encoded string) (ed25519.PublicKey, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil || len(raw) != ed25519.PublicKeySize || base64.RawURLEncoding.EncodeToString(raw) != encoded {
-		return nil, errors.New("[D120 external verify] observer public key encoding 无效")
+		return nil, errors.New("[external verify] observer public key encoding 无效")
 	}
 	return ed25519.PublicKey(raw), nil
 }
 
 func bootstrapOuterObserverKeyID(publicKey ed25519.PublicKey) (string, error) {
 	if len(publicKey) != ed25519.PublicKeySize {
-		return "", errors.New("[D120 external verify] observer Ed25519 public key 长度无效")
+		return "", errors.New("[external verify] observer Ed25519 public key 长度无效")
 	}
 	digest := sha256.Sum256(publicKey)
 	return "sha256:" + hex.EncodeToString(digest[:]), nil

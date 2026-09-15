@@ -21,7 +21,7 @@ import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 
-/** §7.2：仅在操作者显式选择 managedProfile=true 时复用真机已有的正式配置。 */
+/** 仅在操作者显式选择 managedProfile=true 时复用真机已有的正式配置。 */
 class ManagedProfileDeviceInstrumentedTest {
     @get:Rule val compose = createEmptyComposeRule()
 
@@ -48,7 +48,7 @@ class ManagedProfileDeviceInstrumentedTest {
             compose.onNodeWithTag("connection-toggle").performClick()
             waitUntil { VpnRuntime.status.value.phase == ConnectionPhase.CONNECTED && manager.status.value.running }
             assertEquals(before.activeProbeRounds, registry.debugState().activeProbeRounds)
-            // §7.3：候选 tag 是不透明标识；Direct 由已读回候选的空服务器链判定。
+            // 候选 tag 是不透明标识；Direct 由已读回候选的空服务器链判定。
             assertTrue(manager.status.value.currentPaths.isNotEmpty())
             assertTrue(manager.status.value.currentPaths.all { it.serverChain.isEmpty() })
             compose.onNodeWithTag("route-chain-diagram").performScrollTo().assertIsDisplayed()

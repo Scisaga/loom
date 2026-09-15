@@ -166,7 +166,7 @@ func startWindowsReporter(root string, protector clientsecret.Protector, config 
 	return reporter, nil
 }
 
-// §16.1：读本机路径与运行状态；上报不触发业务探测。
+// 读本机路径与运行状态；上报不触发业务探测。
 func (reporter *windowsReporter) sampleReport(ctx context.Context, preferencePath string, at time.Time) (clientRuntimeState, []string, *clientreport.AgentState, bool) {
 	reporter.mu.Lock()
 	state, revision, read := reporter.state, reporter.revision, reporter.readPaths
@@ -192,7 +192,7 @@ func (reporter *windowsReporter) sampleReport(ctx context.Context, preferencePat
 	}
 	if agentState != nil {
 		for _, s := range agentState.Selections {
-			// §5.8：样本不足属于选优证据不足，不能冒充路径已经失败。
+			// 样本不足属于选优证据不足，不能冒充路径已经失败。
 			if s.Health != nil && (s.Health.SelectedState == "failed" || s.Health.SelectedState == "degraded") {
 				problems = append(problems, fmt.Sprintf("路由 %s 探测失败 %d/%d 次", s.Declaration, s.Health.SelectedFailures, s.Health.SelectedSamples))
 			}
@@ -201,7 +201,7 @@ func (reporter *windowsReporter) sampleReport(ctx context.Context, preferencePat
 	return current, problems, agentState, true
 }
 
-// §16.1：本机检查不持有激活锁，切换/停止可取消；结果只属于同一次 active。
+// 本机检查不持有激活锁，切换/停止可取消；结果只属于同一次 active。
 func (reporter *windowsReporter) sampleHealth(ctx context.Context, preferencePath string) (clientRuntimeState, []string, bool) {
 	reporter.mu.Lock()
 	state, revision, check := reporter.state, reporter.revision, reporter.check

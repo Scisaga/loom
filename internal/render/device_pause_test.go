@@ -14,7 +14,7 @@ func TestAccessPauseBlocksServerCredentialsAndResumesExactly(t *testing.T) {
 	if device == nil || device.IsServer() {
 		t.Fatal("fixture needs a pure access device")
 	}
-	// 暂停必须同时拒绝轮换窗口内的两代凭据(§13.4 / §14.4)。
+	// 暂停必须同时拒绝轮换窗口内的两代凭据。
 	s.CredentialByID()["cred-ws-eg"].Generation = 2
 	s.CredentialByID()["cred-ws-eg"].AcceptPrevious = true
 	before, err := Render(s)

@@ -54,7 +54,7 @@ type Release struct {
 	SHA256 string `json:"sha256"`
 	Size   int    `json:"size"`
 
-	// Commit 与 Dirty 来自二进制自己的 VCS 戳(D69)。记在这里是为了
+	// Commit 与 Dirty 来自二进制自己的 VCS 戳。记在这里是为了
 	// "全网跑的是哪个 commit"能从中控这一侧直接答出来,不用逐台问。
 	Commit string `json:"commit,omitempty"`
 	Dirty  bool   `json:"dirty,omitempty"`

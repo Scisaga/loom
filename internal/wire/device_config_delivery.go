@@ -10,7 +10,7 @@ const DeviceConfigDeliveryMediaTypeV1 = "application/vnd.loom.device-config-deli
 // DeviceConfigUpdateV1 是 private device_config 保留窗口中的一个完整 Device
 // certified-head 坐标。authority 变化的那一步必须携对应的唯一 transition bundle；
 // 普通 Head 只携同 authority 签出的 view。recovery policy preimage 可随任一坐标
-// 交付，但必须命中该 Head 已承诺的 hash（D112、D116、D119、D131）。
+// 交付，但必须命中该 Head 已承诺的 hash。
 type DeviceConfigUpdateV1 struct {
 	Schema                      int                               `json:"schema"`
 	Envelope                    DeviceViewEnvelopeV2              `json:"envelope"`
@@ -31,7 +31,7 @@ type DeviceConfigDeliveryV1 struct {
 }
 
 // VerifiedDeviceConfigDeliveryV1 的字段不导出，调用方不能跳过完整 lineage 验证
-// 自行把网络输入包装成可信状态（D105、D112）。
+// 自行把网络输入包装成可信状态。
 type VerifiedDeviceConfigDeliveryV1 struct {
 	floors             ClientFloorsV2
 	envelope           DeviceViewEnvelopeV2
@@ -69,15 +69,15 @@ func (verified VerifiedDeviceConfigDeliveryV1) RecoveryPolicy() *RecoveryPolicyV
 }
 
 // ValidateDeviceConfigDelivery 验证服务端保留的完整更新窗口。首项是窗口锚点，
-// 后续每个 certified Head 都必须能从前一项连续推进；不得只拼一张新集合自签 view（D112）。
+// 后续每个 certified Head 都必须能从前一项连续推进；不得只拼一张新集合自签 view。
 func ValidateDeviceConfigDelivery(delivery *DeviceConfigDeliveryV1) error {
 	if delivery == nil || delivery.Schema != 1 || !validIdentifier(delivery.ClusterID, 128) ||
 		!validIdentifier(delivery.DeviceID, 128) || len(delivery.Updates) == 0 || len(delivery.Updates) > 4096 {
-		return errors.New("[D131 device_config] delivery header/update window 无效")
+		return errors.New("[device_config] delivery header/update window 无效")
 	}
 	first := &delivery.Updates[0]
 	if deviceConfigTransitionCount(first) != 0 {
-		return errors.New("[D112 device_config] delivery 首项必须是已认证窗口锚点")
+		return errors.New("[device_config] delivery 首项必须是已认证窗口锚点")
 	}
 	floors, err := verifyDeviceConfigUpdate(first, delivery.ClusterID, delivery.DeviceID)
 	if err != nil {
@@ -112,7 +112,7 @@ func validateDeviceConfigDeliverySecrets(delivery *DeviceConfigDeliveryV1) error
 	}
 	last := &delivery.Updates[len(delivery.Updates)-1].Envelope
 	if last.Payload.State != "active" || len(last.SecretArtifactRefs) != len(delivery.SecretEnvelopes) {
-		return errors.New("[D124 device_config] sealed envelopes 未 exact 覆盖 final refs")
+		return errors.New("[device_config] sealed envelopes 未 exact 覆盖 final refs")
 	}
 	for index := range delivery.SecretEnvelopes {
 		var ref SecretArtifactRefV2
@@ -121,14 +121,14 @@ func validateDeviceConfigDeliverySecrets(delivery *DeviceConfigDeliveryV1) error
 			ref.ClusterID != delivery.ClusterID || ref.Owner.Kind != "device" ||
 			ref.Owner.Device == nil || ref.Owner.Device.DeviceID != delivery.DeviceID ||
 			VerifySealedSecretBinding(&ref, &delivery.SecretEnvelopes[index]) != nil {
-			return errors.New("[D124 device_config] sealed envelope 未绑定 final exact Device ref")
+			return errors.New("[device_config] sealed envelope 未绑定 final exact Device ref")
 		}
 	}
 	return nil
 }
 
 // VerifyDeviceConfigDeliveryFromProtected 要求 delivery 窗口中存在 protected exact
-// head/floors，然后只重放其后缀。窗口截断越过离线 LKG 时失败关闭并保留原状态（D106、D131）。
+// head/floors，然后只重放其后缀。窗口截断越过离线 LKG 时失败关闭并保留原状态。
 func VerifyDeviceConfigDeliveryFromProtected(delivery *DeviceConfigDeliveryV1,
 	currentEnvelope *DeviceViewEnvelopeV2, currentFloors ClientFloorsV2,
 	currentSet *ControlSetV1, currentPreviousSet *ControlSetV1,
@@ -139,7 +139,7 @@ func VerifyDeviceConfigDeliveryFromProtected(delivery *DeviceConfigDeliveryV1,
 	}
 	if currentEnvelope == nil || currentSet == nil || expectedDeviceID == "" || expectedIdentitySPKIHash == "" ||
 		delivery.DeviceID != expectedDeviceID {
-		return VerifiedDeviceConfigDeliveryV1{}, errors.New("[D131 device_config] protected anchor/identity 不完整")
+		return VerifiedDeviceConfigDeliveryV1{}, errors.New("[device_config] protected anchor/identity 不完整")
 	}
 	verifiedCurrent, err := VerifyDeviceViewEnvelopeWithPrevious(currentEnvelope, currentSet, currentPreviousSet)
 	if err == nil && currentEnvelope.SignedCurrent.Head.Body.Payload.HeadKind != "bootstrap" {
@@ -149,7 +149,7 @@ func VerifyDeviceConfigDeliveryFromProtected(delivery *DeviceConfigDeliveryV1,
 		currentEnvelope.Payload.DeviceID != expectedDeviceID ||
 		currentEnvelope.Payload.State == "active" &&
 			currentEnvelope.Payload.Active.IdentitySPKIHash != expectedIdentitySPKIHash {
-		return VerifiedDeviceConfigDeliveryV1{}, errors.New("[D131 device_config] protected anchor 无法重放")
+		return VerifiedDeviceConfigDeliveryV1{}, errors.New("[device_config] protected anchor 无法重放")
 	}
 	anchor := -1
 	for index := range delivery.Updates {
@@ -165,7 +165,7 @@ func VerifyDeviceConfigDeliveryFromProtected(delivery *DeviceConfigDeliveryV1,
 		}
 	}
 	if anchor < 0 {
-		return VerifiedDeviceConfigDeliveryV1{}, errors.New("[D131 device_config] delivery window 不含 protected exact Head")
+		return VerifiedDeviceConfigDeliveryV1{}, errors.New("[device_config] delivery window 不含 protected exact Head")
 	}
 	floors := currentFloors
 	set := cloneDeviceConfigValue(*currentSet)
@@ -194,7 +194,7 @@ func VerifyDeviceConfigDeliveryFromProtected(delivery *DeviceConfigDeliveryV1,
 		}
 		if update.Envelope.Payload.State == "active" &&
 			update.Envelope.Payload.Active.IdentitySPKIHash != expectedIdentitySPKIHash {
-			return VerifiedDeviceConfigDeliveryV1{}, errors.New("[D105 device_config] update view identity 被替换")
+			return VerifiedDeviceConfigDeliveryV1{}, errors.New("[device_config] update view identity 被替换")
 		}
 		floors, set, previous, envelope, policy, err = advanceDeviceConfigUpdate(
 			floors, set, previous, envelope, update, policy, candidate,
@@ -206,7 +206,7 @@ func VerifyDeviceConfigDeliveryFromProtected(delivery *DeviceConfigDeliveryV1,
 	last := &delivery.Updates[len(delivery.Updates)-1]
 	if last.Envelope.Payload.State == "active" &&
 		last.Envelope.Payload.Active.IdentitySPKIHash != expectedIdentitySPKIHash {
-		return VerifiedDeviceConfigDeliveryV1{}, errors.New("[D105 device_config] final view identity 被替换")
+		return VerifiedDeviceConfigDeliveryV1{}, errors.New("[device_config] final view identity 被替换")
 	}
 	return VerifiedDeviceConfigDeliveryV1{
 		floors: floors, envelope: cloneDeviceConfigValue(last.Envelope),
@@ -217,7 +217,7 @@ func VerifyDeviceConfigDeliveryFromProtected(delivery *DeviceConfigDeliveryV1,
 func verifyDeviceConfigUpdate(update *DeviceConfigUpdateV1, clusterID, deviceID string) (ClientFloorsV2, error) {
 	if update == nil || update.Schema != 1 || update.Envelope.Payload.ClusterID != clusterID ||
 		update.Envelope.Payload.DeviceID != deviceID || deviceConfigTransitionCount(update) > 1 {
-		return ClientFloorsV2{}, errors.New("[D131 device_config] update cluster/Device/schema 无效")
+		return ClientFloorsV2{}, errors.New("[device_config] update cluster/Device/schema 无效")
 	}
 	floors, err := VerifyDeviceViewEnvelopeWithPrevious(&update.Envelope, &update.ControlSet, update.PreviousControlSet)
 	if err != nil {
@@ -245,7 +245,7 @@ func advanceDeviceConfigUpdate(currentFloors ClientFloorsV2, currentSet ControlS
 			!EqualCanonical(bundle.NewControlSet, update.ControlSet) ||
 			!EqualCanonical(bundle.NewRecoveryPolicy, *update.RecoveryPolicy) {
 			return currentFloors, currentSet, currentPreviousSet, currentEnvelope, currentPolicy,
-				errors.New("[D119 device_config] emergency recovery new authority binding 无效")
+				errors.New("[device_config] emergency recovery new authority binding 无效")
 		}
 		transition, err := VerifyEmergencyRecoveryBundle(bundle, currentPolicy,
 			&currentEnvelope.SignedCurrent.Head)
@@ -267,7 +267,7 @@ func advanceDeviceConfigUpdate(currentFloors ClientFloorsV2, currentSet ControlS
 			!EqualCanonical(bundle.NewRecoveryPolicy, *update.RecoveryPolicy) ||
 			!equalOptionalDeviceConfigControlSet(currentPreviousSet, update.PreviousControlSet) {
 			return currentFloors, currentSet, currentPreviousSet, currentEnvelope, currentPolicy,
-				errors.New("[D116 device_config] recovery policy transition authority binding 无效")
+				errors.New("[device_config] recovery policy transition authority binding 无效")
 		}
 		transition, err := VerifyRecoveryPolicyActivationBundle(bundle, currentPolicy,
 			&currentSet, &currentEnvelope.SignedCurrent.Head)
@@ -287,16 +287,16 @@ func advanceDeviceConfigUpdate(currentFloors ClientFloorsV2, currentSet ControlS
 			&currentEnvelope.SignedCurrent.Head) != nil ||
 			update.Envelope.SignedCurrent.Head.Body.Payload.HeadKind != "ordinary" {
 			return currentFloors, currentSet, currentPreviousSet, currentEnvelope, currentPolicy,
-				errors.New("[D131 device_config] 普通 update Head lineage 不连续")
+				errors.New("[device_config] 普通 update Head lineage 不连续")
 		}
 		next, err := AdvanceFloors(currentFloors, candidate)
 		if err != nil || !EqualCanonical(currentSet, update.ControlSet) {
 			return currentFloors, currentSet, currentPreviousSet, currentEnvelope, currentPolicy,
-				errors.New("[D112 device_config] 普通 update 改变了 ControlSet authority")
+				errors.New("[device_config] 普通 update 改变了 ControlSet authority")
 		}
 		if !equalOptionalDeviceConfigControlSet(currentPreviousSet, update.PreviousControlSet) {
 			return currentFloors, currentSet, currentPreviousSet, currentEnvelope, currentPolicy,
-				errors.New("[D112 device_config] 普通 update 的 previous ControlSet 分叉")
+				errors.New("[device_config] 普通 update 的 previous ControlSet 分叉")
 		}
 		policy, err := carryDeviceConfigRecoveryPolicy(currentPolicy, update.RecoveryPolicy, candidate.RecoveryPolicyHash)
 		if err != nil {
@@ -310,7 +310,7 @@ func advanceDeviceConfigUpdate(currentFloors ClientFloorsV2, currentSet ControlS
 			!EqualCanonical(update.ControlSetTransition.NewControlSet, update.ControlSet) ||
 			update.PreviousControlSet == nil || !EqualCanonical(*update.PreviousControlSet, currentSet) {
 			return currentFloors, currentSet, currentPreviousSet, currentEnvelope, currentPolicy,
-				errors.New("[D112 device_config] ControlSet transition old/new/previous binding 无效")
+				errors.New("[device_config] ControlSet transition old/new/previous binding 无效")
 		}
 		transition, err := VerifyControlSetTransitionBundle(update.ControlSetTransition, &currentEnvelope.SignedCurrent.Head)
 		if err != nil {
@@ -350,7 +350,7 @@ func verifiedDeviceConfigRecoveryPolicy(policy *RecoveryPolicyV1, expectedHash s
 	}
 	hash, err := RecoveryPolicyHash(policy)
 	if err != nil || hash != expectedHash {
-		return nil, errors.New("[D119 device_config] recovery policy preimage 未绑定 certified Head")
+		return nil, errors.New("[device_config] recovery policy preimage 未绑定 certified Head")
 	}
 	value := cloneDeviceConfigValue(*policy)
 	return &value, nil
@@ -367,7 +367,7 @@ func carryDeviceConfigRecoveryPolicy(current, candidate *RecoveryPolicyV1,
 		return current, err
 	}
 	if current != nil && !EqualCanonical(*current, *verified) {
-		return current, errors.New("[D119 device_config] 非 recovery update 改写了 recovery policy")
+		return current, errors.New("[device_config] 非 recovery update 改写了 recovery policy")
 	}
 	return verified, nil
 }

@@ -21,7 +21,7 @@ const (
 	brokerPipeBuffer = 64 << 10
 )
 
-// §13.5：只授权安装时指定的用户收发；不给 FILE_CREATE_PIPE_INSTANCE，拒绝远程客户端。
+// 只授权安装时指定的用户收发；不给 FILE_CREATE_PIPE_INSTANCE，拒绝远程客户端。
 func createBrokerPipe(name, operatorSID string) (windows.Handle, error) {
 	sid, err := windows.StringToSid(operatorSID)
 	if err != nil {
@@ -41,7 +41,7 @@ func createBrokerPipe(name, operatorSID string) (windows.Handle, error) {
 		1, brokerPipeBuffer, brokerPipeBuffer, 0, sa)
 }
 
-// §13.5：所有管道 I/O 都可取消；取消后等待内核释放 OVERLAPPED 和缓冲区。
+// 所有管道 I/O 都可取消；取消后等待内核释放 OVERLAPPED 和缓冲区。
 func pipeOperation(ctx context.Context, pipe windows.Handle, start func(*windows.Overlapped) error) (uint32, error) {
 	event, err := windows.CreateEvent(nil, 1, 0, nil)
 	if err != nil {
@@ -125,7 +125,7 @@ func connectBrokerPipe(ctx context.Context, name string) (windows.Handle, error)
 		return 0, err
 	}
 	for {
-		// §13.5：只给身份识别级别，恶意管道不能借客户端令牌执行操作。
+		// 只给身份识别级别，恶意管道不能借客户端令牌执行操作。
 		h, err := windows.CreateFile(p, windows.FILE_GENERIC_READ|windows.FILE_WRITE_DATA|windows.FILE_WRITE_ATTRIBUTES|windows.FILE_WRITE_EA, 0, nil,
 			windows.OPEN_EXISTING, windows.FILE_FLAG_OVERLAPPED|windows.SECURITY_SQOS_PRESENT|windows.SECURITY_IDENTIFICATION, 0)
 		if err == nil {

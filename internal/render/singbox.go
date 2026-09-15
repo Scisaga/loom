@@ -15,10 +15,10 @@ import (
 // 本文件渲染三类节点的 sing-box 配置:接入(客户端档案)、中继、落地目标。
 //
 // 全部用结构体而非 map 序列化 —— 结构体的字段顺序是确定的,map 不是,
-// 而渲染必须是纯函数(§12)。
+// 而渲染必须是纯函数。
 
 // TLS 材料的约定路径。与 WireGuard 私钥同理,渲染层只写引用,文件本身属于
-// 秘密层(§12.1)。
+// 秘密层。
 //
 // 注意这里的 node.key 是 **TLS 私钥**,与 WireGuard 的
 // /etc/wireguard/node.key 是两把不同的钥匙 —— 前者给 Hysteria2 的 QUIC
@@ -127,7 +127,7 @@ type sbRule struct {
 	IPCIDR      []string `json:"ip_cidr,omitempty"`
 	Domain      []string `json:"domain,omitempty"`
 	// DomainSuffix 让服务的地址清单能用后缀兜住子域 —— 清单几乎一定不全,
-	// 这是最省事的补救(§4.5)。
+	// 这是最省事的补救。
 	DomainSuffix []string `json:"domain_suffix,omitempty"`
 	Port         []int    `json:"port,omitempty"`
 	Outbound     string   `json:"outbound,omitempty"`
@@ -142,7 +142,7 @@ type sbRoute struct {
 
 // APIListen 是 sing-box 本地控制端点。
 //
-// selector 是**手动开关**:它自己不测速也不切换(这是 D11 刻意的选择 ——
+// selector 是**手动开关**:它自己不测速也不切换(选路的决策者必须只有一个 ——
 // urltest 会成为第二个互不知情的决策者)。切换由 Agent 通过这个端点做。
 //
 // 没有它,渲染出的 selector 永远停在 default 上 —— 调度层做完了也落不了地。
@@ -171,9 +171,9 @@ type sbDNSServer struct {
 	// Detour 指定这条 DNS 查询走哪个出站。
 	//
 	// **必须显式指定。** 不指定时查询会走 route 规则,而我们的 route.final
-	// 是 block(未匹配一律阻断,§5.8 的 fail_closed) —— 于是 sing-box 连
+	// 是 block(未匹配一律阻断,fail_closed) —— 于是 sing-box 连
 	// 解析器都问不到。症状只有"直连候选失败":走代理的域名是交给出口解析
-	// 的(§7.4),根本不用本地 DNS,所以代理候选一切正常。
+	// 的,根本不用本地 DNS,所以代理候选一切正常。
 	Detour string `json:"detour,omitempty"`
 }
 
@@ -297,16 +297,16 @@ func accessTLSCAPath(platform model.Platform) string {
 // 接入节点
 // ---------------------------------------------------------------------------
 
-// renderAccess 渲染一个接入节点的 sing-box 配置(§7)。
+// renderAccess 渲染一个接入节点的 sing-box 配置。
 //
 // 正常的 mixed 主入口按 host 反查 Service;只有显式 override/兼容入口才
-// 直接绑定访问声明(§7.3)。每条声明有一个 selector,成员是它的全部
-// RouteCandidate(§5.6)。
+// 直接绑定访问声明。每条声明有一个 selector,成员是它的全部
+// RouteCandidate。
 //
-// 用 selector 而不是 urltest 是刻意的:§5.6 要求选路的决策者只有一个。
-// urltest 会按自己的节奏和判据独立选路,与 Agent 的 §5.5 阻尼规则形成两个
-// 互不知情的决策者。selector 的当前选择由 Agent 设置(§5.5.1);Agent 没跑
-// 起来时它停在 default 上,而 default 刻意不取直连(D22)。
+// 使用 selector 以确保只有 Agent 决策选路。
+// urltest 会按自己的节奏和判据独立选路,与 Agent 的阻尼规则形成两个
+// 互不知情的决策者。selector 的当前选择由 Agent 设置;Agent 没跑
+// 起来时它停在 default 上,而 default 刻意不取直连。
 func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 	nodes := s.NodeByID()
 	decls := s.DeclarationByID()
@@ -338,7 +338,7 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 	if p.Access.Platform == model.Android {
 		// 系统 DNS 由 VpnService 指向 TUN 的虚拟 DNS 地址；先劫持 53 端口交给
 		// 签名解析器，再只对尚无反向 DNS 域名的连接嗅探，避免 TLS 无 SNI 时
-		// 清掉已经恢复的 Service 域名（§7.4）。
+		// 清掉已经恢复的 Service 域名。
 		cfg.Route.Rules = append(cfg.Route.Rules,
 			sbRule{Inbound: []string{"tun-in"}, Port: []int{53}, Action: "hijack-dns"},
 			sbRule{Type: "logical", Mode: "and", Rules: []sbRule{
@@ -357,7 +357,7 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 	}
 
 	// 显式覆盖或设备默认策略需要声明级 selector。只治理服务的声明不需要 ——
-	// 那些流量按 host 反查服务,走服务自己的 selector(§4.5)。
+	// 那些流量按 host 反查服务,走服务自己的 selector。
 	pinned, defaultDecl := pinnedDecls(p)
 	managedInbounds := managedAutomaticInbounds(p, ports)
 	byService := len(managedInbounds) > 0
@@ -405,13 +405,13 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 
 		if d.Fallback != model.FailClosed {
 			note("access:"+p.ID+"/"+did,
-				"fallback=%s 尚未在数据平面实现,当前行为等同 fail_closed(§5.8)", d.Fallback)
+				"fallback=%s 尚未在数据平面实现,当前行为等同 fail_closed", d.Fallback)
 		}
 	}
 
-	// 服务:每个服务一个 selector,按 host 反查(§4.5)。
+	// 服务:每个服务一个 selector,按 host 反查。
 	//
-	// 同一条声明治理的多个服务**各自独立选路** —— 这正是 D43 修正的那点:
+	// 同一条声明治理的多个服务**各自独立选路**:
 	// 一个候选服务所有目标,而实测没有任何候选对所有目标都好。
 	var svcRules []sbRule
 	if byService {
@@ -500,7 +500,7 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 // buildChain 生成一条候选所需的全部出站,最后一个的 tag 就是候选本身。
 //
 // 链上每一跳都是普通的代理连接:先连第一台服务器,再让它连第二台,
-// 最后一跳直接连目标地址(§5.6)。没有额外发明的机制。
+// 最后一跳直接连目标地址。没有额外发明的机制。
 func buildChain(
 	s *model.SSOT,
 	access *model.Node,
@@ -554,12 +554,12 @@ func buildChain(
 		if len(c.ServerChain) > 0 {
 			return out
 		}
-		// 零跳直连(§3.1)。
+		// 零跳直连。
 		return append(out, sbOutbound{Type: "direct", Tag: c.Tag()})
 	}
 
 	// 地址从等价类里选:用一个覆盖目的地的 direct 收尾。客户端发出的
-	// TLS SNI 与 Host 原样不动 —— 这正是 §4.4 要求成员契约同构的原因。
+	// TLS SNI 与 Host 原样不动 —— 这正是成员契约同构的原因。
 	addr := findAddress(s, c)
 	return append(out, sbOutbound{
 		Type: "direct", Tag: c.Tag(), Detour: detour,
@@ -583,13 +583,13 @@ func findAddress(s *model.SSOT, c *model.RouteCandidate) *model.ServiceAddress {
 // 服务器
 // ---------------------------------------------------------------------------
 
-// renderServer 渲染一台服务器的 sing-box 配置(§8)。
+// renderServer 渲染一台服务器的 sing-box 配置。
 //
-// **中继与出口不是两种节点,是同一台机器在不同路径上的两种位置**(§1.1)。
+// **中继与出口不是两种节点,是同一台机器在不同路径上的两种位置**。
 // 所以只有这一个渲染函数:同一份配置里既有"转给下一跳"的规则,也有
 // "本机就是出口,直接出去"的规则,按连接的目的地分流。
 //
-// 服务器做准入校验,不做选路(§5.6):白名单之外一律阻断。
+// 服务器做准入校验,不做选路:白名单之外一律阻断。
 func serverInto(cfg *sbConfig, s *model.SSOT, sv *model.Node) {
 	nodes := s.NodeByID()
 	decls := s.DeclarationByID()
@@ -615,7 +615,7 @@ func serverInto(cfg *sbConfig, s *model.SSOT, sv *model.Node) {
 	for i := range creds {
 		c := &creds[i]
 		if c.Revoked() {
-			continue // §18:吊销后所有服务器在下一轮询周期移除该 user
+			continue // 吊销后所有服务器在下一轮询周期移除该 user
 		}
 		d, ok := decls[c.Declaration]
 		if !ok {
@@ -648,7 +648,7 @@ func serverInto(cfg *sbConfig, s *model.SSOT, sv *model.Node) {
 					}
 					continue
 				}
-				// 本机是链末尾 —— 这次它就是出口(§1.1)。
+				// 本机是链末尾 —— 这次它就是出口。
 				r.egress = true
 				if cand.Address != "" {
 					domains[findAddress(s, cand).Host()] = true
@@ -672,7 +672,7 @@ func serverInto(cfg *sbConfig, s *model.SSOT, sv *model.Node) {
 			}
 		}
 		users = append(users, sbUser{Name: c.ID, Password: secretRef(c.Ref())})
-		// 轮换的过渡窗口:同时收上一代(§13.4)。
+		// 轮换的过渡窗口:同时收上一代。
 		//
 		// 分发是最终一致的 —— 节点各自按自己的节奏取配置,顺序还带抖动。
 		// 客户端和服务器不可能在同一刻切换,所以必须有一段两代都收的时间,
@@ -831,7 +831,7 @@ func linkMetricInto(cfg *sbConfig, s *model.SSOT, n *model.Node) {
 // 合并进同一份 —— 两种角色喂的是不相干的逻辑,只在这里汇合。
 //
 // 配置源只有一个(SSOT → 渲染器),所以合并不存在"两个源互相覆盖"的问题。
-// §18 的加入输入只把中控已创建的 Device 与本机身份绑定并引导首次签名配置；
+// 加入输入只把中控已创建的 Device 与本机身份绑定并引导首次签名配置；
 // 它适用于包括服务器在内的所有新 Device，不是另一个配置源。
 func renderSingBox(s *model.SSOT, n *model.Node) (File, []Skip, error) {
 	cfg := &sbConfig{Log: sbLog{Level: "warn"}}
@@ -839,7 +839,7 @@ func renderSingBox(s *model.SSOT, n *model.Node) (File, []Skip, error) {
 
 	// 显式指定解析器,不依赖系统的。系统解析器坏掉时,表现是"直连候选
 	// 永远失败、代理候选一切正常" —— 因为走代理的域名是交给出口解析的
-	// (§7.4),根本不经过本机。这种不对称极难往 DNS 上想。
+	// ,根本不经过本机。这种不对称极难往 DNS 上想。
 	if dns := s.DNSFor(n); len(dns) > 0 {
 		d := &sbDNS{
 			Strategy:       "prefer_ipv4",
@@ -875,7 +875,7 @@ func renderSingBox(s *model.SSOT, n *model.Node) (File, []Skip, error) {
 	if n.IsAccess() {
 		// Android VpnService 会把本进程的普通套接字也纳入默认路由。要求 libbox
 		// 把直连/传输套接字交给平台 protect 回调，否则具名公网入口的启动 DNS
-		// 会在代理建成前绕回自身 TUN（§7.4）。
+		// 会在代理建成前绕回自身 TUN。
 		if n.Access.Platform == model.Android {
 			cfg.Route.AutoDetectInterface = true
 		}
@@ -905,7 +905,7 @@ func renderSingBox(s *model.SSOT, n *model.Node) (File, []Skip, error) {
 	// block 出站两边都要用,收尾时统一加一次。
 	cfg.Outbounds = append(cfg.Outbounds, sbOutbound{Type: "block", Tag: "block"})
 	// 未匹配一律阻断:回落到 direct 会让一条本该受声明约束的连接悄悄绕开
-	// 调度,和 §5.8 的 fail_closed 是同一个道理。
+	// 调度,和 fail_closed 是同一个道理。
 	cfg.Route.Final = "block"
 
 	content, err := encode(cfg)
@@ -946,7 +946,7 @@ func accessDecls(s *model.SSOT, p *model.Node) ([]string, map[string]*model.Cred
 // 重启都回到它,流量就一直打在一条已知不通的路上。
 //
 // 所以默认优先取第一条经过服务器的候选;只有直连一个选项时才用它。这仍是
-// 个静态猜测 —— 真正的选择由 Agent 按实测数据接管(§5.5),这里只保证
+// 个静态猜测 —— 真正的选择由 Agent 按实测数据接管,这里只保证
 // Agent 没跑起来的那段时间里不至于停在最差的一个上。
 func selectorDefault(tags []string) string {
 	for _, t := range tags {

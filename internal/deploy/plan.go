@@ -1,6 +1,6 @@
 // Package deploy 把渲染产物变成一次可验证、可回滚的安装。
 //
-// **主路径是节点自取**(§14.2.2、`loom pull`)。这个包被两边共用:
+// 本包共用于 `loom pull` 和 `loom apply` 的配置安装:
 // 节点自取时在本机执行,`loom apply` 从工作站 ssh 推时在远端执行。
 // **推和拉的语义必须一致** —— 先校验、失败就回滚、装完必须验证,
 // 这些不因传输方式而变。
@@ -76,7 +76,7 @@ type InventoryGuard struct {
 type Unmapped []string
 
 // 重启顺序有依赖:隧道先起来,sing-box 的出站才绑得上;上报者要先于 Agent,
-// 因为 Agent 第一轮就要问它拿全网观测(§16.1.2)。
+// 因为 Agent 第一轮就要问它拿全网观测。
 func restartOrder(s string) int {
 	switch {
 	case strings.HasPrefix(s, "wg-quick@"):
@@ -268,7 +268,7 @@ func (p *Plan) Hash() string {
 // StaleFiles 算出"上次装了、这次不装了"的那些文件。
 //
 // installed 是节点本地自检清单里的绝对路径集合(上一次装了什么),
-// 返回值按字典序,好让脚本输出稳定(§12 纯函数)。
+// 返回值按字典序,好让脚本输出稳定。
 func (p *Plan) StaleFiles(installed []string) []string {
 	var out []string
 	for _, abs := range installed {

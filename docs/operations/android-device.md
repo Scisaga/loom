@@ -1,7 +1,7 @@
 # Android / ADB 真机操作
 
 > 类型：操作边界。适用于设备发现、安装和验收；构建与双包交付见
-> [Android 交付规程](../android-client-delivery-prompt.md)。是否进行安装、停 VPN 或故障注入由当前任务授权决定。
+> [Android 交付规程](../clients/android-delivery.md)。是否进行安装、停 VPN 或故障注入由当前任务授权决定。
 
 - 本环境不得依赖 shell `PATH` 中存在裸 `adb`。先把 ADB 解析为
   `${ANDROID_HOME:-/opt/android-sdk}/platform-tools/adb`，确认该文件可执行，再运行任何

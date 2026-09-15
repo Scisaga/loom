@@ -33,7 +33,7 @@ type EnrollmentPeerHTTPHandler struct {
 func NewEnrollmentPeerHTTPHandler(set wire.ControlSetV1, directory wire.ControlPeerDirectoryV1,
 	now func() time.Time, voter enrollmentv2.AdmissionVotePeer) (*EnrollmentPeerHTTPHandler, error) {
 	if now == nil || voter == nil {
-		return nil, errors.New("[D129 Enrollment peer] time/voter 不能为空")
+		return nil, errors.New("[Enrollment peer] time/voter 不能为空")
 	}
 	if err := wire.ValidateControlPeerDirectoryAt(&set, &directory, now()); err != nil {
 		return nil, err
@@ -96,7 +96,7 @@ func NewEnrollmentPeerClient(endpointURL, remoteMemberID string, certificate tls
 	parsed, err := url.ParseRequestURI(endpointURL)
 	if err != nil || parsed == nil || parsed.Scheme != "https" || parsed.Path != "" ||
 		parsed.RawQuery != "" || parsed.Fragment != "" || !found {
-		return nil, errors.New("[D124 control mTLS] Enrollment peer endpoint 不属于目标 member")
+		return nil, errors.New("[control mTLS] Enrollment peer endpoint 不属于目标 member")
 	}
 	tlsConfig, err := NewControlPeerClientTLSConfig(remoteMemberID, certificate, set, directory, now)
 	if err != nil {
@@ -107,7 +107,7 @@ func NewEnrollmentPeerClient(endpointURL, remoteMemberID string, certificate tls
 	return &EnrollmentPeerClient{baseURL: endpointURL, client: &http.Client{
 		Transport: transport, Timeout: 30 * time.Second,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return errors.New("[D124 control mTLS] Enrollment peer RPC 禁止 redirect")
+			return errors.New("[control mTLS] Enrollment peer RPC 禁止 redirect")
 		},
 	}}, nil
 }
@@ -132,15 +132,15 @@ func (client *EnrollmentPeerClient) VoteAdmission(ctx context.Context,
 	defer response.Body.Close()
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, (64<<10)+1))
 	if err != nil || len(responseBody) == 0 || len(responseBody) > 64<<10 {
-		return wire.ControlEnrollmentSignatureV1{}, errors.New("[D129 Enrollment peer] response 读取失败或过大")
+		return wire.ControlEnrollmentSignatureV1{}, errors.New("[Enrollment peer] response 读取失败或过大")
 	}
 	if response.StatusCode != http.StatusOK {
-		return wire.ControlEnrollmentSignatureV1{}, fmt.Errorf("[D129 Enrollment peer] peer 返回 HTTP %d", response.StatusCode)
+		return wire.ControlEnrollmentSignatureV1{}, fmt.Errorf("[Enrollment peer] peer 返回 HTTP %d", response.StatusCode)
 	}
 	var result enrollmentv2.EnrollmentAdmissionVoteResponseV1
 	canonical, err := wire.DecodeStrict(responseBody, 64<<10, &result)
 	if err != nil || !bytes.Equal(canonical, responseBody) || result.Schema != 1 {
-		return wire.ControlEnrollmentSignatureV1{}, errors.New("[D129 Enrollment peer] response wire 无效")
+		return wire.ControlEnrollmentSignatureV1{}, errors.New("[Enrollment peer] response wire 无效")
 	}
 	return result.Signature, nil
 }
@@ -158,13 +158,13 @@ func NewEnrollmentAdmissionCollector(set wire.ControlSetV1,
 		return nil, err
 	}
 	if len(peers) != len(set.Members) {
-		return nil, errors.New("[D129 Enrollment peer] collector 必须精确配置 committed ControlSet voters")
+		return nil, errors.New("[Enrollment peer] collector 必须精确配置 committed ControlSet voters")
 	}
 	cloned := make(map[string]enrollmentv2.AdmissionVotePeer, len(peers))
 	for _, member := range set.Members {
 		peer, ok := peers[member.MemberID]
 		if !ok || peer == nil {
-			return nil, errors.New("[D129 Enrollment peer] collector 缺 committed voter")
+			return nil, errors.New("[Enrollment peer] collector 缺 committed voter")
 		}
 		cloned[member.MemberID] = peer
 	}
@@ -226,7 +226,7 @@ func (collector *EnrollmentAdmissionCollector) collectAdmissionRequest(ctx conte
 	}
 	quorum, _ := wire.Quorum(len(collector.set.Members))
 	if len(signatures) < quorum {
-		return wire.StableEnrollmentAdmissionQCV1{}, errors.New("[D129 Enrollment peer] admission signatures 未达到 committed ControlSet quorum")
+		return wire.StableEnrollmentAdmissionQCV1{}, errors.New("[Enrollment peer] admission signatures 未达到 committed ControlSet quorum")
 	}
 	sort.Slice(signatures, func(i, j int) bool {
 		if signatures[i].MemberID != signatures[j].MemberID {

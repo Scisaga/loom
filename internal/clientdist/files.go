@@ -49,7 +49,7 @@ func VerifyFiles(archivePath, publicKeyPath string) (Published, error) {
 		publicKey, err = base64.RawStdEncoding.DecodeString(strings.TrimSpace(string(publicBody)))
 	}
 	if err != nil || len(publicKey) != ed25519.PublicKeySize {
-		return out, fmt.Errorf("[§4.3 签名高于传输信任] 带外平台公钥 %s 无效", publicKeyPath)
+		return out, fmt.Errorf("[签名高于传输信任] 带外平台公钥 %s 无效", publicKeyPath)
 	}
 	manifest, err := Verify(archive, checksum, signature, ed25519.PublicKey(publicKey))
 	if err != nil {
@@ -57,7 +57,7 @@ func VerifyFiles(archivePath, publicKeyPath string) (Published, error) {
 	}
 	wantName := "loom-client-linux-" + manifest.Arch + ".tar.gz"
 	if filepath.Base(archivePath) != wantName {
-		return out, fmt.Errorf("[§10.2 渲染目标必须显式] 客户端包文件名是 %q，期望 %q", filepath.Base(archivePath), wantName)
+		return out, fmt.Errorf("[渲染目标必须显式] 客户端包文件名是 %q，期望 %q", filepath.Base(archivePath), wantName)
 	}
 	fields := strings.Fields(string(checksum))
 	if len(fields) != 2 || fields[1] != wantName {
@@ -77,7 +77,7 @@ func readRegularBounded(path string, limit int64) ([]byte, error) {
 		return nil, fmt.Errorf("检查客户端制品 %s:%w", path, err)
 	}
 	if !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 || before.Size() <= 0 || before.Size() > limit {
-		return nil, fmt.Errorf("[§10.3 原子安装] 客户端制品 %s 必须是有界、非链接的普通文件", path)
+		return nil, fmt.Errorf("[原子安装] 客户端制品 %s 必须是有界、非链接的普通文件", path)
 	}
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
@@ -86,10 +86,10 @@ func readRegularBounded(path string, limit int64) ([]byte, error) {
 	defer f.Close()
 	after, err := f.Stat()
 	if err != nil || !after.Mode().IsRegular() || !os.SameFile(before, after) || after.Size() != before.Size() {
-		return nil, fmt.Errorf("[§10.3 原子安装] 客户端制品 %s 在验证期间发生变化", path)
+		return nil, fmt.Errorf("[原子安装] 客户端制品 %s 在验证期间发生变化", path)
 	}
 	if stat, ok := after.Sys().(*syscall.Stat_t); ok && stat.Nlink != 1 {
-		return nil, fmt.Errorf("[§10.3 原子安装] 客户端制品 %s 不得是硬链接", path)
+		return nil, fmt.Errorf("[原子安装] 客户端制品 %s 不得是硬链接", path)
 	}
 	body, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil || int64(len(body)) != after.Size() || int64(len(body)) > limit {

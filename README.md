@@ -13,17 +13,17 @@ Loom 用一份 YAML 配置管理设备、隧道、服务和访问规则，生成
 你可以用 Loom 连接自己的电脑和服务器，访问内网服务，或在多个代理和跨机房服务实例之间选择合适的路径。
 
 > **架构边界：** v1 兼容契约使用指定 control、单签 current 与静态镜像；实际运行到哪一步
-> 由[源码能力对照](docs/implementation.md)说明接线，运行情况按[部署证据](docs/operations/local-deployment.md)核实。目标架构允许任意合格 Device
+> 由[源码能力对照](docs/development/implementation.md)说明接线，运行情况按[部署证据](docs/operations/local-deployment.md)核实。目标架构允许任意合格 Device
 > 承担 `control`，以动态 `ControlSet`、Raft commit + post-commit QC 和 CRDT 副本消除单中控权威，并
 > 管理域名、证书及公网 listener 轮换。目标协议见
-> [分布式控制平面设计](docs/distributed-control-plane.md)，不能据此假定功能已经上线。
+> [分布式控制平面设计](docs/protocols/control-plane/README.md)，不能据此假定功能已经上线。
 
 ## 界面预览
 
 以下静态图只表达信息架构和交互方向；涉及写入时，目标语义是提交 proposal，依次完成
 Raft commit、apply/recompute 与 post-commit QC，并分别显示 `committed_not_certified`、
 `certified`、`reconciled` 和 `applied`。它们是交互原型；页面接线见
-[源码能力对照](docs/implementation.md)，实际部署另以相关验收回执核实。
+[源码能力对照](docs/development/implementation.md)，实际部署另以相关验收回执核实。
 
 <p align="center">
   <img src="assets/loom-control-center-overview-misaka-v1.svg" width="100%" alt="Loom 控制中心总览">
@@ -82,9 +82,9 @@ claim core、CSR 和基于服务端 nonce 的本机 identity-key detached PoP。
 | Android | 扫描二维码或导入 `.loom-invite` 文件 | 系统 VPN、直连、自动选路、固定出口 |
 
 加入码短期有效且只能使用一次。设备加入后会保留本机身份，重启、重连和正常升级无需重新加入。
-Android APK、SBOM 与签名交付方法见[Android 交付规程](docs/android-client-delivery-prompt.md)；实际制品与安装变体由构建/验收回执确认。
+Android APK、SBOM 与签名交付方法见[Android 交付规程](docs/clients/android-delivery.md)；实际制品与安装变体由构建/验收回执确认。
 
-安装和使用步骤见 [Windows 客户端](clients/windows/README.md)、[Linux 客户端安装](docs/linux-client-install.md)和 [Android 客户端](clients/android/README.md)。设备职责、授权和逐链路发起方向的详细说明见 [Device 生命周期与交付架构](docs/device-lifecycle-and-delivery.md)。
+安装和使用步骤见 [Windows 客户端](clients/windows/README.md)、[Linux 客户端安装](docs/clients/linux-install.md)和 [Android 客户端](clients/android/README.md)。设备职责、授权和逐链路发起方向的详细说明见 [Device 生命周期与交付架构](docs/architecture/device-lifecycle.md)。
 
 ## 核心能力
 
@@ -163,7 +163,7 @@ YAML → 单签 snapshot 流程是迁移输入，不等同于上图已实现。
 控制中心由服务端直接渲染，不依赖外部前端资源。目标态下每个合格 control Device 可提供
 同一逻辑界面；读取显示最新 certified head、`committed_not_certified` 诊断状态与本副本新鲜度，
 写入可由任一入口接收并等待 Raft commit 和 quorum attestation。v1 compatibility profile
-则由指定 control 写入；源码入口见[实现对照](docs/implementation.md)，实际运行 profile 从部署记录核对。主要页面包括：
+则由指定 control 写入；源码入口见[实现对照](docs/development/implementation.md)，实际运行 profile 从部署记录核对。主要页面包括：
 
 - **Devices**：创建设备、分配权限、查看在线状态；
 - **Topology / Live paths**：常驻隧道、候选路径和当前选路；
@@ -176,7 +176,7 @@ YAML → 单签 snapshot 流程是迁移输入，不等同于上图已实现。
 publish/reconcile；`committed_not_certified`、`certified` 与各节点 `applied` 是不同状态。
 v1 compatibility 保存路径使用本地 revision/原子替换。设备的安装进度和运行状态可在控制中心查看；程序升级使用 `loom release`。
 
-设备和服务由逻辑控制平面统一管理，普通设备提供本机状态查看。配置格式和权限说明见[设计文档](docs/design.md)。
+设备和服务由逻辑控制平面统一管理，普通设备提供本机状态查看。配置格式和权限说明见[设计文档](docs/architecture/README.md)。
 
 ## 设备、职责与路径
 
@@ -288,6 +288,7 @@ go test ./...
 go vet ./...
 git ls-files --cached --others --exclude-standard -z -- '*.go' | xargs -0 gofmt -l
 python3 scripts/check_repository_safety.py
+python3 scripts/check_documentation.py
 ```
 
 渲染 golden 由测试维护，不要直接编辑：
@@ -302,16 +303,15 @@ go test ./internal/render/ -run TestGolden -update
 
 Loom 自有代码采用 [Apache License 2.0](LICENSE)，版权声明见 [NOTICE](NOTICE)。第三方代码、依赖和随包组件保留各自的许可证。
 
-Windows 发行签名说明见 [Code signing policy](docs/code-signing-policy.md)。
+Windows 发行签名说明见 [Code signing policy](docs/operations/code-signing.md)。
 
 ## 深入阅读
 
 - [文档地图](docs/README.md)：按任务选择规范、源码对照和操作手册。
-- [设计文档](docs/design.md)：模型、不变量、数据平面、控制平面与部署顺序。
-- [分布式控制平面设计](docs/distributed-control-plane.md)：动态 ControlSet、CRDT/QC、加入、域名/证书及公网端口轮换的完整目标协议。
-- [Device 生命周期与交付架构](docs/device-lifecycle-and-delivery.md)：统一 Device、加入协议、授权边界、版本化对象图与分阶段迁移。
-- [客户端接入设计](docs/client-access.md)：Windows、Linux Server、Android 的单入口、设备默认出口、加入网络、分发与升级边界。
-- [Local Network 目标设计](docs/local-network.md)：具名局域网、重复 CIDR、显式 TCP/UDP 访问及 SSOT/授权边界；目前是独立提案。
-- [Linux 客户端安装](docs/linux-client-install.md)：从中控创建 Device 和加入码、下载并校验分发包、完成首次签名拉取。
-- [决策记录](docs/decisions.md)：重要设计选择、被推翻的假设及其证据。
+- [设计文档](docs/architecture/README.md)：模型、不变量、数据平面、控制平面与部署顺序。
+- [分布式控制平面设计](docs/protocols/control-plane/README.md)：动态 ControlSet、CRDT/QC、加入、域名/证书及公网端口轮换的完整目标协议。
+- [Device 生命周期与交付架构](docs/architecture/device-lifecycle.md)：统一 Device、加入协议、授权边界、版本化对象图与分阶段迁移。
+- [客户端接入设计](docs/clients/README.md)：Windows、Linux Server、Android 的单入口、设备默认出口、加入网络、分发与升级边界。
+- [Local Network 目标设计](docs/proposals/local-network.md)：具名局域网、重复 CIDR、显式 TCP/UDP 访问及 SSOT/授权边界；目前是独立提案。
+- [Linux 客户端安装](docs/clients/linux-install.md)：从中控创建 Device 和加入码、下载并校验分发包、完成首次签名拉取。
 - [参考 SSOT](testdata/matrix/ssot.yaml)：覆盖方向约束、双轴选择、服务契约与多平台接入的合成示例。

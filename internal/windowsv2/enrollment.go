@@ -14,7 +14,7 @@ import (
 	"loom/internal/wire"
 )
 
-var ErrResumeRequired = errors.New("[D130 Windows resume] transaction 已提交；必须导入 exact .loom-resume，禁止重发 Invite token")
+var ErrResumeRequired = errors.New("[Windows resume] transaction 已提交；必须导入 exact .loom-resume，禁止重发 Invite token")
 
 type PrivateEnrollmentAPI interface {
 	Preflight(context.Context, wire.EnrollmentIntentPreflightRequestV1, string) (wire.EnrollmentIntentPreflightResponseV1, error)
@@ -54,14 +54,14 @@ type verifiedEnrollmentInputs struct {
 }
 
 // RunEnrollmentAttempt 固定执行 token-free preflight → protected signer/core →
-// fresh challenge → token+PoP。journal 写后回读成功前 token 不会进入请求（D129）。
+// fresh challenge → token+PoP。journal 写后回读成功前 token 不会进入请求。
 func RunEnrollmentAttempt(ctx context.Context, attempt EnrollmentAttempt) (EnrollmentAttemptResult, error) {
 	inputs, err := bindEnrollmentInputs(attempt)
 	if err != nil {
 		return EnrollmentAttemptResult{}, err
 	}
 	if ctx == nil {
-		return EnrollmentAttemptResult{}, errors.New("[D129 Windows] Enrollment context 缺失")
+		return EnrollmentAttemptResult{}, errors.New("[Windows] Enrollment context 缺失")
 	}
 	recordHash, _ := wire.CertifiedInviteRecordHash(&inputs.record, &inputs.policy)
 	preflightRequest := wire.EnrollmentIntentPreflightRequestV1{
@@ -80,7 +80,7 @@ func RunEnrollmentAttempt(ctx context.Context, attempt EnrollmentAttempt) (Enrol
 	}
 	if preflight.DeviceEnrollmentIntentOpening.DeviceEnrollmentIntent.Platform != "windows-desktop" ||
 		!wire.EqualCanonical(preflight.DeviceEnrollmentIntentCommitment, inputs.commitment) {
-		return EnrollmentAttemptResult{}, errors.New("[D129 Windows] preflight intent/platform 与 certified Invite 不匹配")
+		return EnrollmentAttemptResult{}, errors.New("[Windows] preflight intent/platform 与 certified Invite 不匹配")
 	}
 	wrappingProfile, err := selectWindowsWrappingProfile(
 		preflight.DeviceEnrollmentIntentOpening.DeviceEnrollmentIntent.WrappingKeyProfiles)
@@ -166,7 +166,7 @@ func RunEnrollmentAttempt(ctx context.Context, attempt EnrollmentAttempt) (Enrol
 			err = recordJournalProgress(journal, output.Progress)
 		}
 	} else {
-		err = errors.New("[D130 Windows] pending Enrollment result 缺 progress receipt")
+		err = errors.New("[Windows] pending Enrollment result 缺 progress receipt")
 	}
 	if err != nil {
 		return EnrollmentAttemptResult{}, err
@@ -183,23 +183,23 @@ func bindEnrollmentInputs(attempt EnrollmentAttempt) (verifiedEnrollmentInputs, 
 	if attempt.Descriptor == nil || attempt.ProofBundle == nil || attempt.API == nil ||
 		attempt.Protector == nil || attempt.Now == nil || attempt.IdentityPath == "" ||
 		attempt.JournalPath == "" || attempt.RequestID == "" {
-		return verifiedEnrollmentInputs{}, errors.New("[D129 Windows] Enrollment attempt 输入不完整")
+		return verifiedEnrollmentInputs{}, errors.New("[Windows] Enrollment attempt 输入不完整")
 	}
 	now := attempt.Now().UTC()
 	if now.IsZero() {
-		return verifiedEnrollmentInputs{}, errors.New("[D129 Windows] Enrollment 可信时间无效")
+		return verifiedEnrollmentInputs{}, errors.New("[Windows] Enrollment 可信时间无效")
 	}
 	bundle, descriptor := attempt.ProofBundle, attempt.Descriptor
 	recordHash, err := wire.CertifiedInviteRecordHash(&bundle.CertifiedInviteRecord,
 		&bundle.InviteIssuancePolicy)
 	if err != nil || recordHash != attempt.VerifiedProof.CertifiedInviteRecordHash() {
-		return verifiedEnrollmentInputs{}, errors.New("[D115 Windows] proof evidence 与 exact Invite record 不匹配")
+		return verifiedEnrollmentInputs{}, errors.New("[Windows] proof evidence 与 exact Invite record 不匹配")
 	}
 	head, set := attempt.VerifiedProof.Head(), attempt.VerifiedProof.ControlSet()
 	setHash, err := wire.ControlSetHash(&set)
 	if err != nil || head.Body.Payload.ControlSetHash != setHash ||
 		!wire.EqualCanonical(head, bundle.RecordHead) {
-		return verifiedEnrollmentInputs{}, errors.New("[D115 Windows] proof evidence 与 record Head/ControlSet 不匹配")
+		return verifiedEnrollmentInputs{}, errors.New("[Windows] proof evidence 与 record Head/ControlSet 不匹配")
 	}
 	if err := wire.VerifyInviteDescriptorBindings(descriptor, &bundle.CertifiedInviteRecord,
 		&bundle.InviteIssuancePolicy, &bundle.DeviceEnrollmentIntentCommitment,
@@ -221,7 +221,7 @@ func openOrCreateEnrollmentJournal(store *journalStore, identity *Identity,
 		if journal.ClaimCore.RequestID != requestID || !wire.EqualCanonical(journal.Descriptor, inputs.descriptor) ||
 			!wire.EqualCanonical(journal.ProofBundle, inputs.bundle) ||
 			!wire.EqualCanonical(journal.Preflight, preflight) {
-			return nil, errors.New("[D130 Windows] existing journal 与本次 Invite/preflight/request 分叉")
+			return nil, errors.New("[Windows] existing journal 与本次 Invite/preflight/request 分叉")
 		}
 		return journal, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -268,7 +268,7 @@ func verifyCompletedResult(result wire.EnrollmentClaimResultV2, journal *Enrollm
 	inputs verifiedEnrollmentInputs, now time.Time,
 ) (enrollmentv2.VerifiedEnrollmentCompletionV1, error) {
 	if now.IsZero() {
-		return enrollmentv2.VerifiedEnrollmentCompletionV1{}, errors.New("[D130 Windows] completion 可信时间无效")
+		return enrollmentv2.VerifiedEnrollmentCompletionV1{}, errors.New("[Windows] completion 可信时间无效")
 	}
 	return enrollmentv2.VerifyEnrollmentCompletionReceipt(result.CompletionReceipt, &result,
 		enrollmentv2.EnrollmentCompletionExpectedV1{
@@ -284,7 +284,7 @@ func selectWindowsWrappingProfile(profiles []string) (string, error) {
 			return profile, nil
 		}
 	}
-	return "", errors.New("[D130 Windows] intent 未授权 Windows DPAPI/CNG P-256 wrapping profile")
+	return "", errors.New("[Windows] intent 未授权 Windows DPAPI/CNG P-256 wrapping profile")
 }
 
 func NewRequestID(random io.Reader) (string, error) {

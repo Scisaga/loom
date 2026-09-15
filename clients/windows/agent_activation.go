@@ -8,7 +8,7 @@ import (
 	"loom/internal/clientruntime"
 )
 
-// §5.5：Agent 和数据面是一个激活单位；先 cancel/join Agent，才允许停止或替换 sing-box。
+// Agent 和数据面是一个激活单位；先 cancel/join Agent，才允许停止或替换 sing-box。
 func runWindowsAgentActivation(ctx context.Context, a *clientActivation) error {
 	return runAgentDataPlane(ctx, a, clientruntime.RunWindowsDataPlaneProfileStarted)
 }
@@ -90,7 +90,7 @@ func runAgentDataPlane(ctx context.Context, a *clientActivation, start dataPlane
 	case <-a.AgentRuntime.Done():
 		err = a.AgentRuntime.Stop()
 		if err == nil && ctx.Err() == nil {
-			err = errors.New("[§5.5] Agent 意外退出")
+			err = errors.New("Agent 意外退出")
 		}
 		return errors.Join(err, stopPlane())
 	}

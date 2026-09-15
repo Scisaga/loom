@@ -53,7 +53,7 @@ func seedClientServerObservation(t *testing.T, h *clientReportHarness, node stri
 	return o
 }
 
-// §16.1.2 通过同一已认证 POST 转述现有观测；身份、原始目标与签名必须完整保留。
+// 通过同一已认证 POST 转述现有观测；身份、原始目标与签名必须完整保留。
 func TestClientObservationsReuseSignedGossipWithCurrentCandidateScope(t *testing.T) {
 	h := newClientReportHarnessFor(t, "phone", "android")
 	want := seedClientServerObservation(t, &h, "sg-vps")

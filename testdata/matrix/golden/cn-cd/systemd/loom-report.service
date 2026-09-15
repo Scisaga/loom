@@ -1,4 +1,4 @@
-# 由 loom render 生成 —— 不要手工编辑(§12)
+# 由 loom render 生成 —— 不要手工编辑
 [Unit]
 Description=Loom 上报者(隧道健康与配置自检 cn-cd)
 # 隧道接口不在时没有地址可绑。

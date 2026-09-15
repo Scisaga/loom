@@ -29,10 +29,10 @@ type misakaParagraphMetrics struct {
 	bidiDepth, lines                                                   uint32
 }
 
-// §7.2：测量与绘制共用 DirectWrite 格式和可用宽度，不能按字符数猜测正常换行。
+// 测量与绘制共用 DirectWrite 格式和可用宽度，不能按字符数猜测正常换行。
 func (c *misakaCanvas) measureParagraph(text string, width, size int32, weights ...int32) (int32, error) {
 	if c == nil || c.closed || width <= 0 {
-		return 0, errors.New("[§7.2] 段落测量缺少有效画布或宽度")
+		return 0, errors.New("段落测量缺少有效画布或宽度")
 	}
 	previousError := c.err
 	defer func() { c.err = previousError }()
@@ -54,11 +54,11 @@ func (c *misakaCanvas) measureParagraph(text string, width, size int32, weights 
 	hr := misakaCreateTextLayout(misakaCOMMethod(c.writeFactory, 18), &args)
 	runtime.KeepAlive(characters)
 	defer misakaRelease(layout)
-	if err := misakaHRESULT("[§7.2] 创建详情段落测量", hr); err != nil {
+	if err := misakaHRESULT("创建详情段落测量", hr); err != nil {
 		return 0, err
 	}
 	var metrics misakaParagraphMetrics
-	if err := misakaHRESULT("[§7.2] 读取详情段落高度", misakaCOMCall(layout, 60, uintptr(unsafe.Pointer(&metrics)))); err != nil {
+	if err := misakaHRESULT("读取详情段落高度", misakaCOMCall(layout, 60, uintptr(unsafe.Pointer(&metrics)))); err != nil {
 		return 0, err
 	}
 	return max(1, int32(math.Ceil(float64(metrics.height)))), nil
@@ -69,8 +69,8 @@ func (app *portableGUI) misakaDetailParagraphHeight(text string, width, size int
 	if err == nil {
 		return height
 	}
-	// §7.2：系统度量失败时仍保留正文，按保守字符宽度增高，不用空白替代说明。
-	log.Printf("[§7.2] 详情段落测量失败，使用保守高度保留正文：%v", err)
+	// 系统度量失败时仍保留正文，按保守字符宽度增高，不用空白替代说明。
+	log.Printf("详情段落测量失败，使用保守高度保留正文：%v", err)
 	lines := int32(0)
 	for _, line := range strings.Split(text, "\n") {
 		lines += max(1, (int32(utf8.RuneCountInString(line))*size*2+max(1, width)-1)/max(1, width))
@@ -104,7 +104,7 @@ func windowsDetailTime(value string) string {
 	return at.UTC().Format("2006-01-02 15:04:05 UTC")
 }
 
-// §7.2：测量逐段分组，标题与正文使用同一套实际字体度量，间距随 DPI 缩放。
+// 测量逐段分组，标题与正文使用同一套实际字体度量，间距随 DPI 缩放。
 func (app *portableGUI) misakaPathDetails(row windowsPathDisplay, width int32) misakaPathDetailLayout {
 	s := app.scale
 	layout := misakaPathDetailLayout{reason: row.Reason, read: "读取时间：" + windowsDetailTime(row.UpdatedAt)}

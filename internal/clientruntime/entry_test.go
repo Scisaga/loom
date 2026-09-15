@@ -8,7 +8,7 @@ import (
 	"loom/internal/agent"
 )
 
-// §5.1：两个 Service、多个末跳共用一个入口，只产生一个入口地址。
+// 两个 Service、多个末跳共用一个入口，只产生一个入口地址。
 func TestWindowsEntriesFollowActualDetourAndDeduplicate(t *testing.T) {
 	cfg := &agent.Config{Declarations: []agent.Decl{
 		{Candidates: []agent.Cand{{Tag: "opaque-last-a", Chain: []string{"demo-entry", "demo-exit-a"}}, {Tag: "opaque-last-b", Chain: []string{"demo-entry", "demo-exit-b"}}, {Tag: "direct"}}},
@@ -55,7 +55,7 @@ func TestWindowsRoutingUsesTheConfiguredHopCarrier(t *testing.T) {
 			t.Fatalf("inputs=%+v err=%v", inputs, err)
 		}
 	}
-	// 合成私有地址覆盖只能经隧道进入、没有公开第一跳候选的出口（§5.6）。
+	// 合成私有地址覆盖只能经隧道进入、没有公开第一跳候选的出口。
 	cfg.Declarations[0].Candidates = cfg.Declarations[0].Candidates[:1]
 	sb.Outbounds[0].Server = net.IPv4(10, 0, 0, 2).String()
 	body, _ := json.Marshal(sb)

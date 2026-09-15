@@ -17,7 +17,7 @@ import (
 const defaultGandiEndpoint = "https://api.gandi.net/v5/livedns"
 
 // GandiScope 把 provider credential 限制为一个 zone 和显式 record 前缀。
-// 即使 PAT 本身被误配为更宽，adapter 也拒绝越界调用（D108、D125）。
+// 即使 PAT 本身被误配为更宽，adapter 也拒绝越界调用。
 type GandiScope struct {
 	Zone                string
 	AllowedNamePrefixes []string
@@ -38,25 +38,25 @@ func NewGandi(token string, scope GandiScope, client *http.Client) (*Gandi, erro
 func newGandi(endpoint, token string, scope GandiScope, client *http.Client) (*Gandi, error) {
 	scope.Zone = canonicalDNSName(scope.Zone)
 	if strings.TrimSpace(token) == "" || scope.Zone == "" || len(scope.AllowedNamePrefixes) == 0 {
-		return nil, errors.New("[D108 secret] Gandi PAT、zone 与 name scope 都必须显式提供")
+		return nil, errors.New("[secret] Gandi PAT、zone 与 name scope 都必须显式提供")
 	}
 	prefixes := append([]string(nil), scope.AllowedNamePrefixes...)
 	for i := range prefixes {
 		prefixes[i] = canonicalRecordName(prefixes[i])
 		if prefixes[i] == "" {
-			return nil, errors.New("[D125 DNS] Gandi name scope 非法")
+			return nil, errors.New("[DNS] Gandi name scope 非法")
 		}
 	}
 	sort.Strings(prefixes)
 	for i := 1; i < len(prefixes); i++ {
 		if prefixes[i-1] == prefixes[i] {
-			return nil, errors.New("[D125 DNS] Gandi name scope 必须唯一")
+			return nil, errors.New("[DNS] Gandi name scope 必须唯一")
 		}
 	}
 	scope.AllowedNamePrefixes = prefixes
 	if client == nil {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
-		// provider credential 不得被环境代理或跨站 redirect 带离 exact API（D108）。
+		// provider credential 不得被环境代理或跨站 redirect 带离 exact API。
 		transport.Proxy = nil
 		client = &http.Client{Timeout: 15 * time.Second, Transport: transport}
 	}
@@ -69,7 +69,7 @@ func newGandi(endpoint, token string, scope GandiScope, client *http.Client) (*G
 	case *http.Transport:
 		transport = configured.Clone()
 	default:
-		return nil, errors.New("[D108 secret] Gandi client transport 必须可检查且禁止 credential proxy")
+		return nil, errors.New("[secret] Gandi client transport 必须可检查且禁止 credential proxy")
 	}
 	transport.Proxy = nil
 	clientCopy.Transport = transport
@@ -101,7 +101,7 @@ func (g *Gandi) Read(ctx context.Context, zone, name, rrType string) (Readback, 
 	}
 	got, err := Normalize(RRSet{Zone: requestSet.Zone, Name: requestSet.Name, Type: requestSet.Type, TTL: response.RRSetTTL, Values: response.RRSetValues})
 	if err != nil {
-		return Readback{}, fmt.Errorf("[D125 DNS] Gandi readback 非规范: %w", err)
+		return Readback{}, fmt.Errorf("[DNS] Gandi readback 非规范: %w", err)
 	}
 	return Readback{RRSet: got, ObservedAt: g.now().UTC()}, nil
 }
@@ -126,10 +126,10 @@ func (g *Gandi) Replace(ctx context.Context, desired RRSet) (Readback, error) {
 	}
 	readback, err := g.Read(ctx, desired.Zone, desired.Name, desired.Type)
 	if err != nil {
-		return Readback{}, fmt.Errorf("[D108 reconcile] Gandi write 后 readback 失败: %w", err)
+		return Readback{}, fmt.Errorf("[reconcile] Gandi write 后 readback 失败: %w", err)
 	}
 	if !Equal(desired, readback.RRSet) {
-		return Readback{}, errors.New("[D108 reconcile] Gandi readback 与 certified desired RRSet 不一致")
+		return Readback{}, errors.New("[reconcile] Gandi readback 与 certified desired RRSet 不一致")
 	}
 	return readback, nil
 }
@@ -166,7 +166,7 @@ func (g *Gandi) authorize(in RRSet) (RRSet, error) {
 		return RRSet{}, err
 	}
 	if normalized.Zone != g.scope.Zone {
-		return RRSet{}, errors.New("[D108 secret] Gandi adapter 拒绝 scope 外 zone")
+		return RRSet{}, errors.New("[secret] Gandi adapter 拒绝 scope 外 zone")
 	}
 	allowed := false
 	for _, prefix := range g.scope.AllowedNamePrefixes {
@@ -176,7 +176,7 @@ func (g *Gandi) authorize(in RRSet) (RRSet, error) {
 		}
 	}
 	if !allowed {
-		return RRSet{}, errors.New("[D108 secret] Gandi adapter 拒绝 scope 外 record name")
+		return RRSet{}, errors.New("[secret] Gandi adapter 拒绝 scope 外 record name")
 	}
 	return normalized, nil
 }
@@ -204,20 +204,20 @@ func (g *Gandi) do(req *http.Request, out any) error {
 		return ErrNotFound
 	}
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-		return errors.New("[D108 secret] Gandi API redirect 被拒绝")
+		return errors.New("[secret] Gandi API redirect 被拒绝")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("[D125 DNS] Gandi API status %d", resp.StatusCode)
+		return fmt.Errorf("[DNS] Gandi API status %d", resp.StatusCode)
 	}
 	if out != nil {
 		decoder := json.NewDecoder(bytes.NewReader(body))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(out); err != nil {
-			return fmt.Errorf("[D125 DNS] Gandi response 无效: %w", err)
+			return fmt.Errorf("[DNS] Gandi response 无效: %w", err)
 		}
 		var trailing any
 		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-			return errors.New("[D125 DNS] Gandi response 含尾随 JSON")
+			return errors.New("[DNS] Gandi response 含尾随 JSON")
 		}
 	}
 	return nil

@@ -325,7 +325,7 @@ func runtimeProfile(edition clientEdition) (clientruntime.WindowsRuntimeProfile,
 }
 
 func windowsClientCAPath(root string, edition clientEdition) string {
-	// §13.5：每份连接配置读取自己的 CA；运行预检限定机器根和已登记目录形状。
+	// 每份连接配置读取自己的 CA；运行预检限定机器根和已登记目录形状。
 	return filepath.Join(root, "tls", "ca.crt")
 }
 

@@ -65,7 +65,7 @@ def find_confirmation(xml: str) -> tuple[int, int, str]:
     if len(candidates) != 1:
         raise ValueError("screen does not contain one unambiguous enabled install action")
     candidate = candidates.pop()
-    # §7.2：确认按钮自身的倒计时才要求等待；“拒绝 (N)”是厂商的自动拒绝期限。
+    # 确认按钮自身的倒计时才要求等待；“拒绝 (N)”是厂商的自动拒绝期限。
     # 已授权安装仍须匹配 Loom、唯一的启用确认按钮与受信系统窗口。
     countdowns = positive_countdowns
     if countdowns:

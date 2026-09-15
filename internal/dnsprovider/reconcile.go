@@ -20,7 +20,7 @@ const (
 )
 
 // CertifiedRRSetIntentV1 只描述已经由调用方验证过的 certified desired state；
-// provider readback 和解析结果都不能反向构造该 authority（D103、D125）。
+// provider readback 和解析结果都不能反向构造该 authority。
 type CertifiedRRSetIntentV1 struct {
 	Schema                  int    `json:"schema"`
 	ClusterID               string `json:"cluster_id"`
@@ -71,18 +71,18 @@ type Reconciler struct {
 
 func OpenReconciler(path string, provider Provider, resolvers []Resolver, verify AuthorityVerifier) (*Reconciler, error) {
 	if path == "" || provider == nil || verify == nil || len(resolvers) < 2 {
-		return nil, errors.New("[D125 DNS] reconciler path/provider/authority verifier/双 resolver 缺失")
+		return nil, errors.New("[DNS] reconciler path/provider/authority verifier/双 resolver 缺失")
 	}
 	resolverCopy := append([]Resolver(nil), resolvers...)
 	for _, resolver := range resolverCopy {
 		if resolver == nil {
-			return nil, errors.New("[D125 DNS] external resolver 不能为空")
+			return nil, errors.New("[DNS] external resolver 不能为空")
 		}
 	}
 	sort.Slice(resolverCopy, func(i, j int) bool { return resolverCopy[i].ID() < resolverCopy[j].ID() })
 	for i, resolver := range resolverCopy {
 		if !validAuditID(resolver.ID()) || i > 0 && resolverCopy[i-1].ID() == resolver.ID() {
-			return nil, errors.New("[D125 DNS] external resolver ID 无效或重复")
+			return nil, errors.New("[DNS] external resolver ID 无效或重复")
 		}
 	}
 	reconciler := &Reconciler{
@@ -98,14 +98,14 @@ func OpenReconciler(path string, provider Provider, resolvers []Resolver, verify
 	}
 	var state ReconcileStateV1
 	if _, err := wire.DecodeStrict(body, 4<<20, &state); err != nil {
-		return nil, fmt.Errorf("[D125 DNS] reconcile state 损坏: %w", err)
+		return nil, fmt.Errorf("[DNS] reconcile state 损坏: %w", err)
 	}
 	if err := validateReconcileState(&state); err != nil {
 		return nil, err
 	}
 	if state.ActiveIntent != nil {
 		if err := verify(state.ActiveIntent); err != nil {
-			return nil, fmt.Errorf("[D125 DNS] 磁盘 active intent 已失去 certified authority: %w", err)
+			return nil, fmt.Errorf("[DNS] 磁盘 active intent 已失去 certified authority: %w", err)
 		}
 	}
 	reconciler.state = state
@@ -114,7 +114,7 @@ func OpenReconciler(path string, provider Provider, resolvers []Resolver, verify
 
 func ValidateCertifiedRRSetIntent(intent *CertifiedRRSetIntentV1) error {
 	if intent == nil || intent.Schema != 1 || !validAuditID(intent.ClusterID) || !validAuditID(intent.OperationID) {
-		return errors.New("[D125 DNS] certified RRSet intent header 无效")
+		return errors.New("[DNS] certified RRSet intent header 无效")
 	}
 	for _, hash := range []string{intent.CertifiedHeadHash, intent.PublicAccessProfileHash, intent.RRSetHash} {
 		if _, err := wire.ParseHash(hash); err != nil {
@@ -123,11 +123,11 @@ func ValidateCertifiedRRSetIntent(intent *CertifiedRRSetIntentV1) error {
 	}
 	normalized, err := Normalize(intent.RRSet)
 	if err != nil || !equalExactRRSet(normalized, intent.RRSet) {
-		return errors.New("[D125 DNS] intent RRSet 必须已规范化")
+		return errors.New("[DNS] intent RRSet 必须已规范化")
 	}
 	wantHash, err := RRSetHash(normalized)
 	if err != nil || wantHash != intent.RRSetHash {
-		return errors.New("[D125 DNS] intent RRSet hash 与 exact desired bytes 不匹配")
+		return errors.New("[DNS] intent RRSet hash 与 exact desired bytes 不匹配")
 	}
 	return nil
 }
@@ -146,13 +146,13 @@ func (r *Reconciler) Snapshot() ReconcileStateV1 {
 }
 
 // Reconcile 在 provider write+readback 后，还要求两个独立 resolver 返回 exact RRSet；
-// 任一步失败都不替换已验证 LKG，也不把“DNS 已写”误报成 active（D108、D125）。
+// 任一步失败都不替换已验证 LKG，也不把“DNS 已写”误报成 active。
 func (r *Reconciler) Reconcile(ctx context.Context, intent CertifiedRRSetIntentV1) (ReconcileStateV1, error) {
 	if err := ValidateCertifiedRRSetIntent(&intent); err != nil {
 		return ReconcileStateV1{}, err
 	}
 	if err := r.verify(&intent); err != nil {
-		return ReconcileStateV1{}, fmt.Errorf("[D125 DNS] desired state 未获 certified authority: %w", err)
+		return ReconcileStateV1{}, fmt.Errorf("[DNS] desired state 未获 certified authority: %w", err)
 	}
 	intentHash, _ := CertifiedRRSetIntentHash(&intent)
 
@@ -161,7 +161,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, intent CertifiedRRSetIntentV
 	if r.state.ActiveIntent != nil {
 		activeHash, _ := CertifiedRRSetIntentHash(r.state.ActiveIntent)
 		if r.state.ActiveIntent.OperationID == intent.OperationID && activeHash != intentHash {
-			return ReconcileStateV1{}, errors.New("[D125 DNS] 同一 operation ID 禁止改写 desired bytes")
+			return ReconcileStateV1{}, errors.New("[DNS] 同一 operation ID 禁止改写 desired bytes")
 		}
 		if activeHash == intentHash {
 			return cloneReconcileState(r.state), nil
@@ -173,7 +173,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, intent CertifiedRRSetIntentV
 		providerReadback, err = r.provider.Replace(ctx, intent.RRSet)
 	}
 	if err != nil || providerReadback.ObservedAt.IsZero() || !equalExactRRSet(providerReadback.RRSet, intent.RRSet) {
-		return ReconcileStateV1{}, errors.New("[D125 DNS] provider write/readback 未收敛到 exact desired RRSet")
+		return ReconcileStateV1{}, errors.New("[DNS] provider write/readback 未收敛到 exact desired RRSet")
 	}
 	evidence := ReconcileEvidenceV1{
 		Schema: 1, IntentHash: intentHash,
@@ -183,7 +183,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, intent CertifiedRRSetIntentV
 	for _, resolver := range r.resolvers {
 		readback, err := resolver.Resolve(ctx, intent.RRSet.Zone, intent.RRSet.Name, intent.RRSet.Type)
 		if err != nil || readback.ObservedAt.IsZero() || !equalExactRRSet(readback.RRSet, intent.RRSet) {
-			return ReconcileStateV1{}, fmt.Errorf("[D125 DNS] external resolver %s 尚未观察到 exact desired RRSet", resolver.ID())
+			return ReconcileStateV1{}, fmt.Errorf("[DNS] external resolver %s 尚未观察到 exact desired RRSet", resolver.ID())
 		}
 		evidence.ExternalResolvers = append(evidence.ExternalResolvers, observation(resolver.ID(), readback))
 	}
@@ -210,19 +210,19 @@ func validateAndHashEvidence(evidence *ReconcileEvidenceV1, intent *CertifiedRRS
 	intentHash, err := CertifiedRRSetIntentHash(intent)
 	if err != nil || evidence == nil || evidence.Schema != 1 || evidence.IntentHash != intentHash ||
 		evidence.ProviderObservation.ResolverID != "provider" || len(evidence.ExternalResolvers) < 2 {
-		return "", errors.New("[D125 DNS] reconcile evidence header 无效")
+		return "", errors.New("[DNS] reconcile evidence header 无效")
 	}
 	all := append([]ResolverObservationV1{evidence.ProviderObservation}, evidence.ExternalResolvers...)
 	for i := range all {
 		item := &all[i]
 		if item.Schema != 1 || !validAuditID(item.ResolverID) || !equalExactRRSet(item.RRSet, intent.RRSet) {
-			return "", errors.New("[D125 DNS] reconcile observation identity/RRSet 无效")
+			return "", errors.New("[DNS] reconcile observation identity/RRSet 无效")
 		}
 		if _, err := wire.ParseTimeZ(item.ObservedAt); err != nil {
 			return "", err
 		}
 		if i > 1 && all[i-1].ResolverID >= item.ResolverID {
-			return "", errors.New("[D125 DNS] external resolver observations 必须严格排序")
+			return "", errors.New("[DNS] external resolver observations 必须严格排序")
 		}
 	}
 	return wire.HashObject(domainReconcileEvidence, evidence)
@@ -231,14 +231,14 @@ func validateAndHashEvidence(evidence *ReconcileEvidenceV1, intent *CertifiedRRS
 func validateReconcileState(state *ReconcileStateV1) error {
 	if state == nil || state.Schema != 1 || (state.ActiveIntent == nil) != (state.Evidence == nil) ||
 		(state.ActiveIntent == nil) != (state.EvidenceHash == "") {
-		return errors.New("[D125 DNS] reconcile state shape 无效")
+		return errors.New("[DNS] reconcile state shape 无效")
 	}
 	if state.ActiveIntent == nil {
 		return nil
 	}
 	hash, err := validateAndHashEvidence(state.Evidence, state.ActiveIntent)
 	if err != nil || hash != state.EvidenceHash {
-		return errors.New("[D125 DNS] persisted evidence hash 无效")
+		return errors.New("[DNS] persisted evidence hash 无效")
 	}
 	return nil
 }
@@ -292,7 +292,7 @@ func (r *Reconciler) persistLocked(state ReconcileStateV1) error {
 func RRSetHash(set RRSet) (string, error) {
 	normalized, err := Normalize(set)
 	if err != nil || !equalExactRRSet(normalized, set) {
-		return "", errors.New("[D125 DNS] RRSet hash 输入必须已规范化")
+		return "", errors.New("[DNS] RRSet hash 输入必须已规范化")
 	}
 	return wire.HashObject(domainRRSet, set)
 }

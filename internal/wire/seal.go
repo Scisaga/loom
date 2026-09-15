@@ -83,7 +83,7 @@ func RSASealingPolicyV1() SealingPolicyV1 {
 }
 
 // NewSealedSecretContext 只从 proposal 固定坐标、policy 与 recipient set 构造
-// context；随机数和当前时间都不参与权威 identity（D124）。
+// context；随机数和当前时间都不参与权威 identity。
 func NewSealedSecretContext(clusterID, proposalID, secretID, purpose string, owner SecretArtifactOwnerV1, generation int64, policy *SealingPolicyV1, recipients []SealedBlobRecipientKeyRefV1) (SealedSecretContextV1, error) {
 	policyHash, err := SealingPolicyHash(policy)
 	if err != nil {
@@ -110,22 +110,22 @@ func NewSealedSecretContext(clusterID, proposalID, secretID, purpose string, own
 }
 
 // SealSecret 的 entropy 由调用方显式注入；proposal 重试必须复用首次生成的
-// envelope，而不是再次调用本函数（D124）。
+// envelope，而不是再次调用本函数。
 func SealSecret(entropy io.Reader, context SealedSecretContextV1, policy *SealingPolicyV1, recipients []SealedBlobRecipientKeyRefV1, secret []byte) (SealedSecretEnvelopeV1, error) {
 	if entropy == nil || len(secret) == 0 {
-		return SealedSecretEnvelopeV1{}, errors.New("[D124 sealed secret] entropy/secret 缺失")
+		return SealedSecretEnvelopeV1{}, errors.New("[sealed secret] entropy/secret 缺失")
 	}
 	expected, err := NewSealedSecretContext(context.ClusterID, context.ProposalID, context.SecretID, context.Purpose, context.Owner, context.Generation, policy, recipients)
 	if err != nil || !sameSealedContext(context, expected) {
-		return SealedSecretEnvelopeV1{}, errors.New("[D124 sealed secret] context 与 policy/recipient set 不匹配")
+		return SealedSecretEnvelopeV1{}, errors.New("[sealed secret] context 与 policy/recipient set 不匹配")
 	}
 	cek := make([]byte, 32)
 	contentNonce := make([]byte, 12)
 	if _, err := io.ReadFull(entropy, cek); err != nil {
-		return SealedSecretEnvelopeV1{}, errors.New("[D124 sealed secret] 生成 CEK 失败")
+		return SealedSecretEnvelopeV1{}, errors.New("[sealed secret] 生成 CEK 失败")
 	}
 	if _, err := io.ReadFull(entropy, contentNonce); err != nil {
-		return SealedSecretEnvelopeV1{}, errors.New("[D124 sealed secret] 生成 content nonce 失败")
+		return SealedSecretEnvelopeV1{}, errors.New("[sealed secret] 生成 content nonce 失败")
 	}
 	plaintext, err := MarshalCanonical(SealedSecretPlaintextV1{
 		Schema: 1, Context: context, SecretBytes: base64.RawURLEncoding.EncodeToString(secret),
@@ -163,7 +163,7 @@ func SealSecret(entropy io.Reader, context SealedSecretContextV1, policy *Sealin
 			}
 			entry.RSAOAEP = &SealedSecretRSARecipientEnvelopeV1{WrappedCEK: base64.RawURLEncoding.EncodeToString(wrapped)}
 		default:
-			return SealedSecretEnvelopeV1{}, errors.New("[D124 sealed secret] 未知 key wrap kind")
+			return SealedSecretEnvelopeV1{}, errors.New("[sealed secret] 未知 key wrap kind")
 		}
 		envelope.RecipientEnvelopes[i] = entry
 	}
@@ -182,11 +182,11 @@ func sameSealedContext(left, right SealedSecretContextV1) bool {
 func sealCEKForP256(entropy io.Reader, contextHash string, recipient SealedBlobRecipientKeyRefV1, public *ecdsa.PublicKey, cek []byte) (SealedSecretP256RecipientEnvelopeV1, error) {
 	recipientECDH, err := public.ECDH()
 	if err != nil {
-		return SealedSecretP256RecipientEnvelopeV1{}, errors.New("[D124 sealed secret] recipient P-256 key 无效")
+		return SealedSecretP256RecipientEnvelopeV1{}, errors.New("[sealed secret] recipient P-256 key 无效")
 	}
 	ephemeral, err := ecdh.P256().GenerateKey(entropy)
 	if err != nil {
-		return SealedSecretP256RecipientEnvelopeV1{}, errors.New("[D124 sealed secret] 生成 ephemeral P-256 key 失败")
+		return SealedSecretP256RecipientEnvelopeV1{}, errors.New("[sealed secret] 生成 ephemeral P-256 key 失败")
 	}
 	ephemeralDER, err := x509.MarshalPKIXPublicKey(ephemeral.PublicKey())
 	if err != nil {
@@ -202,7 +202,7 @@ func sealCEKForP256(entropy io.Reader, contextHash string, recipient SealedBlobR
 	}
 	nonce := make([]byte, 12)
 	if _, err := io.ReadFull(entropy, nonce); err != nil {
-		return SealedSecretP256RecipientEnvelopeV1{}, errors.New("[D124 sealed secret] 生成 wrap nonce 失败")
+		return SealedSecretP256RecipientEnvelopeV1{}, errors.New("[sealed secret] 生成 wrap nonce 失败")
 	}
 	wrapCanonical, _ := MarshalCanonical(wrapContext)
 	aad, _ := Frame(DomainSealedSecretWrapAAD, wrapCanonical)
@@ -219,22 +219,22 @@ func sealCEKForP256(entropy io.Reader, contextHash string, recipient SealedBlobR
 func deriveRecipientKEK(private *ecdh.PrivateKey, public *ecdh.PublicKey, context RecipientWrapContextV1) ([]byte, error) {
 	shared, err := private.ECDH(public)
 	if err != nil || len(shared) != 32 {
-		return nil, errors.New("[D124 sealed secret] P-256 ECDH shared secret 无效")
+		return nil, errors.New("[sealed secret] P-256 ECDH shared secret 无效")
 	}
 	return DeriveSealedSecretP256KEK(shared, context)
 }
 
 // DeriveSealedSecretP256KEK 接收 profile 对应的软件或 Keystore ECDH 返回的
-// x-coordinate；此函数不接收私钥，HKDF 由共享 wire 实现（D124）。
+// x-coordinate；此函数不接收私钥，HKDF 由共享 wire 实现。
 func DeriveSealedSecretP256KEK(shared []byte, context RecipientWrapContextV1) ([]byte, error) {
 	if len(shared) != 32 || context.Schema != 1 {
-		return nil, errors.New("[D124 sealed secret] P-256 shared secret/wrap context 无效")
+		return nil, errors.New("[sealed secret] P-256 shared secret/wrap context 无效")
 	}
 	if _, err := ParseHash(context.SealedSecretContextHash); err != nil {
 		return nil, err
 	}
 	if !isP256SealingProfile(context.RecipientKey.RecipientKeyProfile) {
-		return nil, errors.New("[D124 sealed secret] P-256 wrapping profile 无效")
+		return nil, errors.New("[sealed secret] P-256 wrapping profile 无效")
 	}
 	if err := validateRecipientKeyRef(&context.RecipientKey, context.RecipientKey.RecipientKeyProfile); err != nil {
 		return nil, err
@@ -255,7 +255,7 @@ func DeriveSealedSecretP256KEK(shared []byte, context RecipientWrapContextV1) ([
 func deriveRecipientKEKForUnseal(private *ecdsa.PrivateKey, public *ecdh.PublicKey, context RecipientWrapContextV1) ([]byte, error) {
 	privateECDH, err := private.ECDH()
 	if err != nil {
-		return nil, errors.New("[D124 sealed secret] local P-256 private key 无效")
+		return nil, errors.New("[sealed secret] local P-256 private key 无效")
 	}
 	return deriveRecipientKEK(privateECDH, public, context)
 }
@@ -263,11 +263,11 @@ func deriveRecipientKEKForUnseal(private *ecdsa.PrivateKey, public *ecdh.PublicK
 func sealAESGCM(key, nonce, plaintext, aad []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, errors.New("[D124 sealed secret] AES-256 key 无效")
+		return nil, errors.New("[sealed secret] AES-256 key 无效")
 	}
 	gcm, err := cipher.NewGCM(block)
 	if err != nil || len(nonce) != gcm.NonceSize() {
-		return nil, errors.New("[D124 sealed secret] AES-GCM nonce 无效")
+		return nil, errors.New("[sealed secret] AES-GCM nonce 无效")
 	}
 	return gcm.Seal(nil, nonce, plaintext, aad), nil
 }
@@ -275,42 +275,42 @@ func sealAESGCM(key, nonce, plaintext, aad []byte) ([]byte, error) {
 func openAESGCM(key, nonce, ciphertext, aad []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, errors.New("[D124 sealed secret] AES-256 key 无效")
+		return nil, errors.New("[sealed secret] AES-256 key 无效")
 	}
 	gcm, err := cipher.NewGCM(block)
 	if err != nil || len(nonce) != gcm.NonceSize() || len(ciphertext) < gcm.Overhead() {
-		return nil, errors.New("[D124 sealed secret] AES-GCM 输入无效")
+		return nil, errors.New("[sealed secret] AES-GCM 输入无效")
 	}
 	plaintext, err := gcm.Open(nil, nonce, ciphertext, aad)
 	if err != nil {
-		return nil, errors.New("[D124 sealed secret] AES-GCM authentication 失败")
+		return nil, errors.New("[sealed secret] AES-GCM authentication 失败")
 	}
 	return plaintext, nil
 }
 
 // UnsealSecretP256 在解密前验证 envelope/context/recipient 的 exact binding，
-// 并在解密后再次核对 plaintext 内嵌 context（D124）。
+// 并在解密后再次核对 plaintext 内嵌 context。
 func UnsealSecretP256(envelope *SealedSecretEnvelopeV1, recipient SealedBlobRecipientKeyRefV1, private *ecdsa.PrivateKey) ([]byte, error) {
 	if err := ValidateSealedSecretEnvelope(envelope); err != nil {
 		return nil, err
 	}
 	if private == nil || !isP256SealingProfile(recipient.RecipientKeyProfile) {
-		return nil, errors.New("[D124 sealed secret] local P-256 recipient key 缺失")
+		return nil, errors.New("[sealed secret] local P-256 recipient key 缺失")
 	}
 	entry := findRecipientEnvelope(envelope.RecipientEnvelopes, recipient)
 	if entry == nil || entry.P256ECDH == nil || entry.KeyWrapKind != "p256_ecdh" {
-		return nil, errors.New("[D124 sealed secret] recipient envelope 不存在/类型不匹配")
+		return nil, errors.New("[sealed secret] recipient envelope 不存在/类型不匹配")
 	}
 	localDER, err := x509.MarshalPKIXPublicKey(&private.PublicKey)
 	if err != nil || base64.RawURLEncoding.EncodeToString(localDER) != recipient.RecipientPublicKey.PublicKeySPKIDER {
-		return nil, errors.New("[D124 sealed secret] local private key 与 recipient SPKI 不匹配")
+		return nil, errors.New("[sealed secret] local private key 与 recipient SPKI 不匹配")
 	}
 	ephemeralDER, _ := decodeCanonicalBase64URL(entry.P256ECDH.EphemeralSPKIDER)
 	ephemeralAny, _ := x509.ParsePKIXPublicKey(ephemeralDER)
 	ephemeralECDSA := ephemeralAny.(*ecdsa.PublicKey)
 	ephemeralECDH, err := ephemeralECDSA.ECDH()
 	if err != nil {
-		return nil, errors.New("[D124 sealed secret] ephemeral ECDH key 无效")
+		return nil, errors.New("[sealed secret] ephemeral ECDH key 无效")
 	}
 	contextHash, _ := SealedSecretContextHash(&envelope.Context)
 	wrapContext := RecipientWrapContextV1{
@@ -327,7 +327,7 @@ func UnsealSecretP256(envelope *SealedSecretEnvelopeV1, recipient SealedBlobReci
 	wrapAAD, _ := Frame(DomainSealedSecretWrapAAD, wrapCanonical)
 	cek, err := openAESGCM(kek, wrapNonce, wrapped, wrapAAD)
 	if err != nil || len(cek) != 32 {
-		return nil, errors.New("[D124 sealed secret] wrapped CEK authentication 失败")
+		return nil, errors.New("[sealed secret] wrapped CEK authentication 失败")
 	}
 	contentNonce, _ := decodeRawURL(envelope.ContentNonce, 12)
 	ciphertext, _ := decodeCanonicalBase64URL(envelope.CiphertextAndTag)
@@ -340,23 +340,23 @@ func UnsealSecretP256(envelope *SealedSecretEnvelopeV1, recipient SealedBlobReci
 	var plaintext SealedSecretPlaintextV1
 	canonical, err := DecodeStrict(plaintextBytes, 32<<20, &plaintext)
 	if err != nil || !bytes.Equal(canonical, plaintextBytes) || plaintext.Schema != 1 || !sameSealedContext(plaintext.Context, envelope.Context) {
-		return nil, errors.New("[D124 sealed secret] plaintext context/canonical wire 无效")
+		return nil, errors.New("[sealed secret] plaintext context/canonical wire 无效")
 	}
 	secret, err := decodeCanonicalBase64URL(plaintext.SecretBytes)
 	if err != nil {
-		return nil, errors.New("[D124 sealed secret] plaintext secret encoding 无效")
+		return nil, errors.New("[sealed secret] plaintext secret encoding 无效")
 	}
 	return secret, nil
 }
 
 // PrepareP256UnsealInputs 对私有 envelope 做全部公开材料校验，再把唯一需要
-// Keystore 私钥的 ECDH 步骤所需输入投影给 Android/Linux host（D124）。
+// Keystore 私钥的 ECDH 步骤所需输入投影给 Android/Linux host。
 func PrepareP256UnsealInputs(envelope *SealedSecretEnvelopeV1, recipientID string, recipientGeneration int64, recipientSPKIDER []byte) (P256UnsealInputsV1, error) {
 	if err := ValidateSealedSecretEnvelope(envelope); err != nil {
 		return P256UnsealInputsV1{}, err
 	}
 	if !validIdentifier(recipientID, 128) || recipientGeneration < 1 || len(recipientSPKIDER) == 0 {
-		return P256UnsealInputsV1{}, errors.New("[D124 sealed secret] expected recipient identity 无效")
+		return P256UnsealInputsV1{}, errors.New("[sealed secret] expected recipient identity 无效")
 	}
 	encodedSPKI := base64.RawURLEncoding.EncodeToString(recipientSPKIDER)
 	var entry *SealedSecretRecipientEnvelopeV1
@@ -364,14 +364,14 @@ func PrepareP256UnsealInputs(envelope *SealedSecretEnvelopeV1, recipientID strin
 		candidate := &envelope.RecipientEnvelopes[i]
 		if candidate.RecipientKey.RecipientID == recipientID && candidate.RecipientKey.RecipientKeyGeneration == recipientGeneration {
 			if entry != nil {
-				return P256UnsealInputsV1{}, errors.New("[D124 sealed secret] recipient identity 命中多个 key version")
+				return P256UnsealInputsV1{}, errors.New("[sealed secret] recipient identity 命中多个 key version")
 			}
 			entry = candidate
 		}
 	}
 	if entry == nil || entry.KeyWrapKind != "p256_ecdh" || entry.P256ECDH == nil ||
 		entry.RecipientKey.RecipientPublicKey.PublicKeySPKIDER != encodedSPKI {
-		return P256UnsealInputsV1{}, errors.New("[D124 sealed secret] envelope 不含本机 exact P-256 wrapping key")
+		return P256UnsealInputsV1{}, errors.New("[sealed secret] envelope 不含本机 exact P-256 wrapping key")
 	}
 	contextHash, _ := SealedSecretContextHash(&envelope.Context)
 	wrapContext := RecipientWrapContextV1{
@@ -392,13 +392,13 @@ func PrepareP256UnsealInputs(envelope *SealedSecretEnvelopeV1, recipientID strin
 }
 
 // PrepareRSAUnsealInputs 只投影 Android API 26–30 exact OAEP 所需字段；CEK
-// 解密仍在仅有 PURPOSE_DECRYPT 的 Keystore alias 内完成（D124）。
+// 解密仍在仅有 PURPOSE_DECRYPT 的 Keystore alias 内完成。
 func PrepareRSAUnsealInputs(envelope *SealedSecretEnvelopeV1, recipientID string, recipientGeneration int64, recipientSPKIDER []byte) (RSAUnsealInputsV1, error) {
 	if err := ValidateSealedSecretEnvelope(envelope); err != nil {
 		return RSAUnsealInputsV1{}, err
 	}
 	if !validIdentifier(recipientID, 128) || recipientGeneration < 1 || len(recipientSPKIDER) == 0 {
-		return RSAUnsealInputsV1{}, errors.New("[D124 sealed secret] expected recipient identity 无效")
+		return RSAUnsealInputsV1{}, errors.New("[sealed secret] expected recipient identity 无效")
 	}
 	encodedSPKI := base64.RawURLEncoding.EncodeToString(recipientSPKIDER)
 	var entry *SealedSecretRecipientEnvelopeV1
@@ -406,14 +406,14 @@ func PrepareRSAUnsealInputs(envelope *SealedSecretEnvelopeV1, recipientID string
 		candidate := &envelope.RecipientEnvelopes[i]
 		if candidate.RecipientKey.RecipientID == recipientID && candidate.RecipientKey.RecipientKeyGeneration == recipientGeneration {
 			if entry != nil {
-				return RSAUnsealInputsV1{}, errors.New("[D124 sealed secret] recipient identity 命中多个 key version")
+				return RSAUnsealInputsV1{}, errors.New("[sealed secret] recipient identity 命中多个 key version")
 			}
 			entry = candidate
 		}
 	}
 	if entry == nil || entry.KeyWrapKind != "rsa_oaep" || entry.RSAOAEP == nil ||
 		entry.RecipientKey.RecipientPublicKey.PublicKeySPKIDER != encodedSPKI {
-		return RSAUnsealInputsV1{}, errors.New("[D124 sealed secret] envelope 不含本机 exact RSA wrapping key")
+		return RSAUnsealInputsV1{}, errors.New("[sealed secret] envelope 不含本机 exact RSA wrapping key")
 	}
 	contextCanonical, _ := MarshalCanonical(envelope.Context)
 	payloadAAD, _ := Frame(DomainSealedSecretPayloadAAD, contextCanonical)
@@ -425,7 +425,7 @@ func PrepareRSAUnsealInputs(envelope *SealedSecretEnvelopeV1, recipientID string
 }
 
 // FinishSealedSecretPlaintext 在 host 解开 AES-GCM 后重新检查 exact JCS 与内嵌
-// context，防止只认证 ciphertext 却忽略 authority 坐标（D124）。
+// context，防止只认证 ciphertext 却忽略 authority 坐标。
 func FinishSealedSecretPlaintext(plaintextBytes []byte, expectedContext SealedSecretContextV1) ([]byte, error) {
 	if err := validateSealedContext(&expectedContext); err != nil {
 		return nil, err
@@ -433,11 +433,11 @@ func FinishSealedSecretPlaintext(plaintextBytes []byte, expectedContext SealedSe
 	var plaintext SealedSecretPlaintextV1
 	canonical, err := DecodeStrict(plaintextBytes, 32<<20, &plaintext)
 	if err != nil || !bytes.Equal(canonical, plaintextBytes) || plaintext.Schema != 1 || !sameSealedContext(plaintext.Context, expectedContext) {
-		return nil, errors.New("[D124 sealed secret] plaintext context/canonical wire 无效")
+		return nil, errors.New("[sealed secret] plaintext context/canonical wire 无效")
 	}
 	secret, err := decodeCanonicalBase64URL(plaintext.SecretBytes)
 	if err != nil {
-		return nil, errors.New("[D124 sealed secret] plaintext secret encoding 无效")
+		return nil, errors.New("[sealed secret] plaintext secret encoding 无效")
 	}
 	return secret, nil
 }
@@ -455,11 +455,11 @@ func findRecipientEnvelope(entries []SealedSecretRecipientEnvelopeV1, recipient 
 // SHA-256 OAEP + MGF1-SHA-1；crypto/rsa 的高层 API 只支持二者同 hash。
 func encryptOAEPWithMGF1SHA1(entropy io.Reader, public *rsa.PublicKey, message []byte) ([]byte, error) {
 	if public == nil || public.N.BitLen() != 2048 || public.E != 65537 {
-		return nil, errors.New("[D124 sealed secret] RSA-OAEP public key profile 无效")
+		return nil, errors.New("[sealed secret] RSA-OAEP public key profile 无效")
 	}
 	k, hLen := public.Size(), sha256.Size
 	if len(message) > k-2*hLen-2 {
-		return nil, errors.New("[D124 sealed secret] RSA-OAEP plaintext 过长")
+		return nil, errors.New("[sealed secret] RSA-OAEP plaintext 过长")
 	}
 	lHash := sha256.Sum256(nil)
 	db := make([]byte, k-hLen-1)
@@ -468,7 +468,7 @@ func encryptOAEPWithMGF1SHA1(entropy io.Reader, public *rsa.PublicKey, message [
 	copy(db[len(db)-len(message):], message)
 	seed := make([]byte, hLen)
 	if _, err := io.ReadFull(entropy, seed); err != nil {
-		return nil, errors.New("[D124 sealed secret] 生成 RSA-OAEP seed 失败")
+		return nil, errors.New("[sealed secret] 生成 RSA-OAEP seed 失败")
 	}
 	dbMask := mgf1SHA1(seed, len(db))
 	for i := range db {
@@ -483,7 +483,7 @@ func encryptOAEPWithMGF1SHA1(entropy io.Reader, public *rsa.PublicKey, message [
 	copy(encoded[1+hLen:], db)
 	value := new(big.Int).SetBytes(encoded)
 	if value.Cmp(public.N) >= 0 {
-		return nil, errors.New("[D124 sealed secret] RSA-OAEP encoded message 越界")
+		return nil, errors.New("[sealed secret] RSA-OAEP encoded message 越界")
 	}
 	value.Exp(value, big.NewInt(int64(public.E)), public.N)
 	return value.FillBytes(make([]byte, k)), nil

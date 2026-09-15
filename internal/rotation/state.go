@@ -1,6 +1,6 @@
 // Package rotation 实现公网 listener 的确定性生命周期 reducer。
 // 它不查询端口、时钟或网络；所有输入必须先进入 certified operation，executor
-// 只能按 reducer 输出幂等收敛外部资源（D120、D127）。
+// 只能按 reducer 输出幂等收敛外部资源。
 package rotation
 
 import (
@@ -150,7 +150,7 @@ func Advance(intent IntentV1, current StateV1, transition Transition) (StateV1, 
 		return StateV1{}, err
 	}
 	if !allowedTransition(current.Phase, transition.NextPhase, transition.Emergency) {
-		return StateV1{}, fmt.Errorf("[D120 rotation] 非法 phase transition %s -> %s", current.Phase, transition.NextPhase)
+		return StateV1{}, fmt.Errorf("[rotation] 非法 phase transition %s -> %s", current.Phase, transition.NextPhase)
 	}
 	if transition.NextPhase == "advertised" {
 		if err := notBefore(at, intent.AdvertiseNotBefore, "advertise"); err != nil {
@@ -159,7 +159,7 @@ func Advance(intent IntentV1, current StateV1, transition Transition) (StateV1, 
 		if requireHash(transition.LocalVerificationEvidenceHash) != nil ||
 			requireHash(transition.ExternalVerificationEvidenceHash) != nil ||
 			transition.LocalVerificationEvidenceHash == transition.ExternalVerificationEvidenceHash {
-			return StateV1{}, errors.New("[D120 rotation] advertise 前必须提交独立的 local/external verify evidence")
+			return StateV1{}, errors.New("[rotation] advertise 前必须提交独立的 local/external verify evidence")
 		}
 	}
 	if transition.NextPhase == "preferred" {
@@ -167,7 +167,7 @@ func Advance(intent IntentV1, current StateV1, transition Transition) (StateV1, 
 			return StateV1{}, err
 		}
 		if transition.ReaderFloor < intent.MinimumReaderFloor {
-			return StateV1{}, errors.New("[D120 rotation] reader floor 未达到 Gate A 要求")
+			return StateV1{}, errors.New("[rotation] reader floor 未达到 Gate A 要求")
 		}
 	}
 	if transition.NextPhase == "draining" {
@@ -175,22 +175,22 @@ func Advance(intent IntentV1, current StateV1, transition Transition) (StateV1, 
 			return StateV1{}, err
 		}
 		if transition.Guard == nil {
-			return StateV1{}, errors.New("[D120 rotation] draining 必须建立 retirement guard")
+			return StateV1{}, errors.New("[rotation] draining 必须建立 retirement guard")
 		}
 	}
 	if transition.NextPhase == "retired" {
 		if transition.Guard == nil {
-			return StateV1{}, errors.New("[D120 rotation] retire 必须携带原 retirement guard")
+			return StateV1{}, errors.New("[rotation] retire 必须携带原 retirement guard")
 		}
 		guardHash, err := ValidateGuard(intent, transition.Guard)
 		if err != nil {
 			return StateV1{}, err
 		}
 		if current.RetirementGuardHash == "" || current.RetirementGuardHash != guardHash {
-			return StateV1{}, errors.New("[D127 rotation] retire guard 与 draining 时冻结的 bytes 不一致")
+			return StateV1{}, errors.New("[rotation] retire guard 与 draining 时冻结的 bytes 不一致")
 		}
 		if transition.ReaderFloor < transition.Guard.MinimumReaderFloor || transition.ReaderFloor < intent.MinimumReaderFloor {
-			return StateV1{}, errors.New("[D120 rotation] retire reader floor 未满足")
+			return StateV1{}, errors.New("[rotation] retire reader floor 未满足")
 		}
 		deadlines := []struct {
 			label string
@@ -210,10 +210,10 @@ func Advance(intent IntentV1, current StateV1, transition Transition) (StateV1, 
 		}
 	}
 	if transition.NextPhase == "revoked" && transition.Emergency && len(transition.EvidenceRefs) == 0 {
-		return StateV1{}, errors.New("[D120 rotation] emergency revoke 必须提交中断/安全事件 evidence")
+		return StateV1{}, errors.New("[rotation] emergency revoke 必须提交中断/安全事件 evidence")
 	}
 	if transition.NextPhase == "abandoned" && current.Phase == "preferred" {
-		return StateV1{}, errors.New("[D127 rotation] target preferred 后不能用普通 cancel 跳过 drain")
+		return StateV1{}, errors.New("[rotation] target preferred 后不能用普通 cancel 跳过 drain")
 	}
 	evidenceRefs := append([]string(nil), transition.EvidenceRefs...)
 	if transition.LocalVerificationEvidenceHash != "" {
@@ -242,7 +242,7 @@ func Advance(intent IntentV1, current StateV1, transition Transition) (StateV1, 
 
 func ValidateIntent(intent *IntentV1) error {
 	if intent == nil || intent.Schema != 1 || intent.ClusterID == "" || intent.RotationID == "" || intent.OperationID == "" || intent.MinimumReaderFloor < 1 {
-		return errors.New("[D120 rotation] intent header 无效")
+		return errors.New("[rotation] intent header 无效")
 	}
 	for _, hash := range []string{intent.BaseHeadHash, intent.ExpectedEndpointSetHash} {
 		if err := requireHash(hash); err != nil {
@@ -253,11 +253,11 @@ func ValidateIntent(intent *IntentV1) error {
 		return err
 	}
 	if intent.ClusterID != intent.FrozenDependencies.ClusterID {
-		return errors.New("[D127 rotation] intent/frozen cluster 不一致")
+		return errors.New("[rotation] intent/frozen cluster 不一致")
 	}
 	want, err := wire.HashObject(DomainFrozenDependencies, intent.FrozenDependencies)
 	if err != nil || want != intent.FrozenDependenciesHash {
-		return errors.New("[D127 rotation] frozen_dependencies_hash 与 exact dependency bytes 不一致")
+		return errors.New("[rotation] frozen_dependencies_hash 与 exact dependency bytes 不一致")
 	}
 	times := make([]time.Time, 0, 5)
 	for _, value := range []string{intent.AdvertiseNotBefore, intent.PreferNotBefore, intent.DrainNotBefore, intent.DrainNotAfter, intent.RetireNotBefore} {
@@ -269,7 +269,7 @@ func ValidateIntent(intent *IntentV1) error {
 	}
 	for i := 1; i < len(times); i++ {
 		if times[i].Before(times[i-1]) {
-			return errors.New("[D120 rotation] lifecycle deadlines 必须单调不减")
+			return errors.New("[rotation] lifecycle deadlines 必须单调不减")
 		}
 	}
 	return nil
@@ -280,10 +280,10 @@ func BuildGuard(intent IntentV1, cutoffHead string, leaves []RetirementDependenc
 		return RetirementGuardV1{}, err
 	}
 	if intent.FrozenDependencies.SourceListenerGeneration == nil || intent.FrozenDependencies.SourceListenerGenerationHash == "" {
-		return RetirementGuardV1{}, errors.New("[D120 rotation] 初次 provision 没有 source generation，不能 drain")
+		return RetirementGuardV1{}, errors.New("[rotation] 初次 provision 没有 source generation，不能 drain")
 	}
 	if err := requireHash(cutoffHead); err != nil {
-		return RetirementGuardV1{}, errors.New("[D120 rotation] retirement reference cutoff head hash 无效")
+		return RetirementGuardV1{}, errors.New("[rotation] retirement reference cutoff head hash 无效")
 	}
 	ordered := append([]RetirementDependencyLeafV1(nil), leaves...)
 	sort.Slice(ordered, func(i, j int) bool {
@@ -296,7 +296,7 @@ func BuildGuard(intent IntentV1, cutoffHead string, leaves []RetirementDependenc
 	maximum := time.Unix(0, 0).UTC()
 	for i, leaf := range ordered {
 		if leaf.Schema != 1 || !allowedLeafKind(leaf.Kind) || requireHash(leaf.ObjectHash) != nil || i > 0 && ordered[i-1].Kind == leaf.Kind && ordered[i-1].ObjectHash == leaf.ObjectHash {
-			return RetirementGuardV1{}, errors.New("[D120 rotation] retirement dependency leaf 无效/重复")
+			return RetirementGuardV1{}, errors.New("[rotation] retirement dependency leaf 无效/重复")
 		}
 		deadline, err := wire.ParseTimeZ(leaf.ReferenceNotAfter)
 		if err != nil {
@@ -329,7 +329,7 @@ func BuildGuard(intent IntentV1, cutoffHead string, leaves []RetirementDependenc
 
 func ValidateGuard(intent IntentV1, guard *RetirementGuardV1) (string, error) {
 	if guard == nil || guard.Schema != 1 || guard.ClusterID != intent.ClusterID || guard.RotationID != intent.RotationID {
-		return "", errors.New("[D120 rotation] retirement guard identity 无效")
+		return "", errors.New("[rotation] retirement guard identity 无效")
 	}
 	want, err := BuildGuard(intent, guard.ReferenceCutoffHeadHash, guard.Dependencies, guard.OfflineGraceNotBefore, guard.QuietNotBefore, guard.BackupRetainUntil)
 	if err != nil {
@@ -338,25 +338,25 @@ func ValidateGuard(intent IntentV1, guard *RetirementGuardV1) (string, error) {
 	wantCanonical, _ := wire.MarshalCanonical(want)
 	gotCanonical, _ := wire.MarshalCanonical(guard)
 	if string(wantCanonical) != string(gotCanonical) {
-		return "", errors.New("[D120 rotation] guard count/root/maximum 与 dependency leaves 不一致")
+		return "", errors.New("[rotation] guard count/root/maximum 与 dependency leaves 不一致")
 	}
 	return wire.HashObject(DomainGuard, guard)
 }
 
 func validateDependencies(dep *FrozenDependenciesV1) error {
 	if dep == nil || dep.Schema != 1 || dep.ClusterID == "" || dep.EndpointSetID == "" || dep.EndpointID == "" || dep.LogicalServerID == "" || dep.TargetListenerGeneration < 1 || !oneOf(dep.EndpointKind, "distribution", "bootstrap", "data") || !oneOf(dep.Transport, "https", "hysteria2", "trojan_tls", "wireguard") {
-		return errors.New("[D127 rotation] frozen dependency identity 无效")
+		return errors.New("[rotation] frozen dependency identity 无效")
 	}
 	if (dep.SourceListenerGeneration == nil) != (dep.SourceListenerGenerationHash == "") {
-		return errors.New("[D127 rotation] source generation/ref 必须同时存在或同时缺失")
+		return errors.New("[rotation] source generation/ref 必须同时存在或同时缺失")
 	}
 	if dep.SourceListenerGeneration != nil && (*dep.SourceListenerGeneration < 1 || *dep.SourceListenerGeneration >= dep.TargetListenerGeneration) {
-		return errors.New("[D127 rotation] source/target generation 无效")
+		return errors.New("[rotation] source/target generation 无效")
 	}
 	if dep.EndpointKind == "distribution" && dep.Transport != "https" ||
 		dep.EndpointKind == "bootstrap" && !oneOf(dep.Transport, "hysteria2", "trojan_tls") ||
 		dep.EndpointKind == "data" && !oneOf(dep.Transport, "hysteria2", "trojan_tls", "wireguard") {
-		return errors.New("[D127 rotation] endpoint kind 与 transport role 不匹配")
+		return errors.New("[rotation] endpoint kind 与 transport role 不匹配")
 	}
 	hashes := []string{
 		dep.LogicalPublicEndpointIntentHash, dep.PublicAccessProfileHash, dep.DNSAddressBindingHash,
@@ -376,7 +376,7 @@ func validateDependencies(dep *FrozenDependenciesV1) error {
 		}
 	}
 	if !sortedUnique(dep.LinkIntentHashes) {
-		return errors.New("[D127 rotation] link_intent_hashes 必须排序且唯一")
+		return errors.New("[rotation] link_intent_hashes 必须排序且唯一")
 	}
 	return nil
 }
@@ -386,15 +386,15 @@ func validateState(intent IntentV1, state StateV1) error {
 	if state.Schema != 1 || state.ClusterID != intent.ClusterID || state.RotationID != intent.RotationID || state.RotationIntentHash != intentHash || state.FrozenDependenciesHash != intent.FrozenDependenciesHash || state.TargetListenerGeneration != intent.FrozenDependencies.TargetListenerGeneration ||
 		(state.SourceListenerGeneration == nil) != (intent.FrozenDependencies.SourceListenerGeneration == nil) ||
 		state.SourceListenerGeneration != nil && *state.SourceListenerGeneration != *intent.FrozenDependencies.SourceListenerGeneration {
-		return errors.New("[D127 rotation] state 与 frozen intent 不匹配")
+		return errors.New("[rotation] state 与 frozen intent 不匹配")
 	}
 	if !oneOf(state.Phase, "allocated", "prepared", "advertised", "preferred", "draining", "retired", "abandoned", "revoked") ||
 		requireHash(state.LastTransitionHeadHash) != nil || requireHash(state.EvidenceRefsRoot) != nil {
-		return errors.New("[D120 rotation] state phase/head/evidence root 无效")
+		return errors.New("[rotation] state phase/head/evidence root 无效")
 	}
 	guardRequired := state.Phase == "draining" || state.Phase == "retired"
 	if guardRequired != (state.RetirementGuardHash != "") || state.RetirementGuardHash != "" && requireHash(state.RetirementGuardHash) != nil {
-		return errors.New("[D120 rotation] state phase 与 retirement guard hash 不一致")
+		return errors.New("[rotation] state phase 与 retirement guard hash 不一致")
 	}
 	return nil
 }
@@ -416,7 +416,7 @@ func notBefore(now time.Time, deadline, label string) error {
 		return err
 	}
 	if now.Before(value) {
-		return fmt.Errorf("[D120 rotation] %s 尚未到达", label)
+		return fmt.Errorf("[rotation] %s 尚未到达", label)
 	}
 	return nil
 }
@@ -427,7 +427,7 @@ func refsRoot(refs []string) (string, error) {
 	canonical := make([][]byte, len(ordered))
 	for i, ref := range ordered {
 		if err := requireHash(ref); err != nil || i > 0 && ordered[i-1] == ref {
-			return "", errors.New("[D120 rotation] evidence refs 必须是排序后唯一 hash set")
+			return "", errors.New("[rotation] evidence refs 必须是排序后唯一 hash set")
 		}
 		canonical[i] = []byte(ref)
 	}

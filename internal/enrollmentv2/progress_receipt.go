@@ -9,7 +9,7 @@ import (
 
 // EnrollmentProgressReceiptV1 给尚未 completed 的客户端一份不含 token 的
 // certified transaction projection，使带外 resume descriptor 可以与本机 pending
-// claim 比较，而不是让客户端相信管理员抄来的裸 hash（D130）。
+// claim 比较，而不是让客户端相信管理员抄来的裸 hash。
 type EnrollmentProgressReceiptV1 struct {
 	Schema                           int                                  `json:"schema"`
 	Invite                           InviteContext                        `json:"invite"`
@@ -61,7 +61,7 @@ func (verified VerifiedEnrollmentProgressV1) IncludesTransactionStateHash(hash s
 
 func progressReceiptForRecord(record *DurableRecord) ([]byte, error) {
 	if record == nil || (record.State.Status != "reserved" && record.State.Status != "issued_provisional") {
-		return nil, errors.New("[D130 Enrollment] progress receipt transaction state 无效")
+		return nil, errors.New("[Enrollment] progress receipt transaction state 无效")
 	}
 	receipt := EnrollmentProgressReceiptV1{
 		Schema: 1, Invite: record.Invite, ClaimEvidence: record.ClaimEvidence,
@@ -73,7 +73,7 @@ func progressReceiptForRecord(record *DurableRecord) ([]byte, error) {
 	}
 	if record.State.Status == "issued_provisional" {
 		if record.ProvisionalOperation == nil || record.ProvisionalCertification == nil {
-			return nil, errors.New("[D130 Enrollment] issued progress receipt 缺 provisional proof")
+			return nil, errors.New("[Enrollment] issued progress receipt 缺 provisional proof")
 		}
 		operation := clonePrivateValue(*record.ProvisionalOperation)
 		certification := clonePrivateValue(*record.ProvisionalCertification)
@@ -86,17 +86,17 @@ func progressReceiptForRecord(record *DurableRecord) ([]byte, error) {
 }
 
 // VerifyEnrollmentProgressReceipt 从本机 claim 与 Invite proof 重放到服务端声明的
-// 当前事务状态，并产生带外 resume 验证所需的全部 exact hash（D129、D130）。
+// 当前事务状态，并产生带外 resume 验证所需的全部 exact hash。
 func VerifyEnrollmentProgressReceipt(raw []byte, result *wire.EnrollmentClaimResultV2,
 	expected EnrollmentProgressExpectedV1) (VerifiedEnrollmentProgressV1, error) {
 	if len(raw) == 0 || result == nil ||
 		(result.Status != "reserved" && result.Status != "issued_provisional") {
-		return VerifiedEnrollmentProgressV1{}, errors.New("[D130 client] progress receipt/context 不完整")
+		return VerifiedEnrollmentProgressV1{}, errors.New("[client] progress receipt/context 不完整")
 	}
 	var receipt EnrollmentProgressReceiptV1
 	canonical, err := wire.DecodeStrict(raw, 32<<20, &receipt)
 	if err != nil || !bytes.Equal(canonical, raw) || receipt.Schema != 1 {
-		return VerifiedEnrollmentProgressV1{}, errors.New("[D130 client] progress receipt 不是 exact canonical wire")
+		return VerifiedEnrollmentProgressV1{}, errors.New("[client] progress receipt 不是 exact canonical wire")
 	}
 	if err := wire.ValidateCertifiedInviteRecord(&expected.Record, &expected.Policy); err != nil {
 		return VerifiedEnrollmentProgressV1{}, err
@@ -125,7 +125,7 @@ func VerifyEnrollmentProgressReceipt(raw []byte, result *wire.EnrollmentClaimRes
 		expected.ClaimCore.BaseControlEpoch != expected.BaseHead.Body.Payload.ControlEpoch ||
 		expected.ClaimCore.BaseControlSetHash != baseSetHash ||
 		expected.BaseHead.Body.Payload.ControlSetHash != baseSetHash {
-		return VerifiedEnrollmentProgressV1{}, errors.New("[D130 client] 本机 claim 未绑定已验 Invite authority")
+		return VerifiedEnrollmentProgressV1{}, errors.New("[client] 本机 claim 未绑定已验 Invite authority")
 	}
 	wantInvite := InviteContext{
 		ClusterID: expected.Record.ClusterID, InviteID: expected.Record.InviteID, Status: "available",
@@ -149,7 +149,7 @@ func VerifyEnrollmentProgressReceipt(raw []byte, result *wire.EnrollmentClaimRes
 		operation.DeviceEnrollmentIntentOpeningHash != openingHash || operation.TokenCommitment != expected.Record.TokenCommitment ||
 		operation.ClaimCoreHash != coreHash || operation.IdentityKeyHash != identityHash ||
 		operation.WrappingKeyHash != wrappingHash || operation.CSRHash != csrHash {
-		return VerifiedEnrollmentProgressV1{}, errors.New("[D130 client] progress receipt 未绑定本机 stable claim/core/key")
+		return VerifiedEnrollmentProgressV1{}, errors.New("[client] progress receipt 未绑定本机 stable claim/core/key")
 	}
 	reserved, err := Reserve(receipt.Invite, receipt.ClaimOperation, &receipt.AdmissionQC,
 		&receipt.AdmissionControlSet, receipt.ClaimOperation.ReservedAt)
@@ -179,11 +179,11 @@ func VerifyEnrollmentProgressReceipt(raw []byte, result *wire.EnrollmentClaimRes
 	if result.Status == "reserved" {
 		if receipt.ProvisionalOperation != nil || receipt.ProvisionalCertification != nil ||
 			len(receipt.ReservationToIssuanceHeads) != 0 || len(receipt.ReservationToIssuanceTransitions) != 0 {
-			return VerifiedEnrollmentProgressV1{}, errors.New("[D130 client] reserved receipt 提前携 provisional proof")
+			return VerifiedEnrollmentProgressV1{}, errors.New("[client] reserved receipt 提前携 provisional proof")
 		}
 	} else {
 		if receipt.ProvisionalOperation == nil || receipt.ProvisionalCertification == nil {
-			return VerifiedEnrollmentProgressV1{}, errors.New("[D130 client] issued receipt 缺 provisional proof")
+			return VerifiedEnrollmentProgressV1{}, errors.New("[client] issued receipt 缺 provisional proof")
 		}
 		state, err = RecordProvisional(reserved, *receipt.ProvisionalOperation)
 		if err != nil {
@@ -209,7 +209,7 @@ func VerifyEnrollmentProgressReceipt(raw []byte, result *wire.EnrollmentClaimRes
 	}
 	stateHash, err := TransactionHash(state)
 	if err != nil || stateHash != result.TransactionStateHash {
-		return VerifiedEnrollmentProgressV1{}, errors.New("[D130 client] progress transaction state hash 不可重放")
+		return VerifiedEnrollmentProgressV1{}, errors.New("[client] progress transaction state hash 不可重放")
 	}
 	claimOperationHash, _ := wire.HashObject(DomainClaimOperation, receipt.ClaimOperation)
 	admissionQCHash, _ := wire.EnrollmentAdmissionQCHash(&receipt.AdmissionQC)

@@ -47,7 +47,7 @@ type verifiedEnrollmentInputs struct {
 
 // RunLinuxEnrollmentAttempt 执行一次已建 capability tunnel 内的完整尝试。调用顺序固定为
 // token-free preflight → 本地 keys/stable core → server challenge → token+detached PoP；
-// 网络重试必须复用 IdentityPath/PendingPath/RequestID（D115、D129、D130、D131）。
+// 网络重试必须复用 IdentityPath/PendingPath/RequestID。
 func RunLinuxEnrollmentAttempt(ctx context.Context, attempt LinuxEnrollmentAttemptV2) (LinuxEnrollmentAttemptResultV2, error) {
 	inputs, err := bindVerifiedEnrollmentInputs(attempt)
 	if err != nil {
@@ -59,24 +59,24 @@ func RunLinuxEnrollmentAttempt(ctx context.Context, attempt LinuxEnrollmentAttem
 func bindVerifiedEnrollmentInputs(attempt LinuxEnrollmentAttemptV2) (verifiedEnrollmentInputs, error) {
 	if attempt.Descriptor == nil || attempt.ProofBundle == nil || attempt.API == nil || attempt.Now == nil ||
 		attempt.IdentityPath == "" || attempt.PendingPath == "" || attempt.RequestID == "" {
-		return verifiedEnrollmentInputs{}, errors.New("[D129 Linux] Enrollment attempt 输入不完整")
+		return verifiedEnrollmentInputs{}, errors.New("[Linux] Enrollment attempt 输入不完整")
 	}
 	now := attempt.Now().UTC()
 	if now.IsZero() {
-		return verifiedEnrollmentInputs{}, errors.New("[D129 Linux] Enrollment 可信时间无效")
+		return verifiedEnrollmentInputs{}, errors.New("[Linux] Enrollment 可信时间无效")
 	}
 	bundle := attempt.ProofBundle
 	descriptor := attempt.Descriptor
 	recordHash, err := wire.CertifiedInviteRecordHash(&bundle.CertifiedInviteRecord, &bundle.InviteIssuancePolicy)
 	if err != nil || recordHash != attempt.VerifiedProof.CertifiedInviteRecordHash() {
-		return verifiedEnrollmentInputs{}, errors.New("[D115 Linux] proof evidence 与 exact Invite record 不匹配")
+		return verifiedEnrollmentInputs{}, errors.New("[Linux] proof evidence 与 exact Invite record 不匹配")
 	}
 	verifiedHead := attempt.VerifiedProof.Head()
 	verifiedSet := attempt.VerifiedProof.ControlSet()
 	setHash, err := wire.ControlSetHash(&verifiedSet)
 	if err != nil || verifiedHead.Body.Payload.ControlSetHash != setHash ||
 		!wire.EqualCanonical(verifiedHead, bundle.RecordHead) {
-		return verifiedEnrollmentInputs{}, errors.New("[D115 Linux] proof evidence 与 record head/ControlSet 不匹配")
+		return verifiedEnrollmentInputs{}, errors.New("[Linux] proof evidence 与 record head/ControlSet 不匹配")
 	}
 	if err := wire.VerifyInviteDescriptorBindings(descriptor, &bundle.CertifiedInviteRecord,
 		&bundle.InviteIssuancePolicy, &bundle.DeviceEnrollmentIntentCommitment,
@@ -107,7 +107,7 @@ func runLinuxEnrollmentAttempt(ctx context.Context, attempt LinuxEnrollmentAttem
 	}
 	if preflight.DeviceEnrollmentIntentOpening.DeviceEnrollmentIntent.Platform != "linux-server" ||
 		!wire.EqualCanonical(preflight.DeviceEnrollmentIntentCommitment, inputs.commitment) {
-		return LinuxEnrollmentAttemptResultV2{}, errors.New("[D129 Linux] preflight intent/platform 与 certified Invite 不匹配")
+		return LinuxEnrollmentAttemptResultV2{}, errors.New("[Linux] preflight intent/platform 与 certified Invite 不匹配")
 	}
 	// 只有完整 token-free preflight 通过后才生成 Device key/CSR。
 	identity, err := OpenOrCreateEnrollmentIdentity(attempt.IdentityPath)

@@ -61,14 +61,14 @@ func (worker *Worker) Run(ctx context.Context) {
 			continue
 		}
 		at := nextTimestamp(time.Now(), previousTS)
-		// §16.1：探测用尽预算后仍须上传失败自检，采集与发送不能共用到期的 context。
+		// 探测用尽预算后仍须上传失败自检，采集与发送不能共用到期的 context。
 		attempt, cancel := context.WithTimeout(ctx, 8*time.Second)
 		observation, err := worker.Sample(attempt, at)
 		cancel()
 		if err == nil && observation == nil {
 			continue
 		} // 尚未激活、切换中或已退出，不刷新旧报告。
-		result := Result{Err: errors.New("[D98 上报] 无法生成可信本机状态")}
+		result := Result{Err: errors.New("[上报] 无法生成可信本机状态")}
 		if err == nil {
 			previousTS = at // 成功构造即推进；发送失败也不能重放这个时间戳。
 			attempt, cancel = context.WithTimeout(ctx, 5*time.Second)
