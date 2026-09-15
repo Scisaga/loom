@@ -3,6 +3,7 @@ package dnsprovider
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -56,8 +57,9 @@ func newGandi(endpoint, token string, scope GandiScope, client *http.Client) (*G
 	scope.AllowedNamePrefixes = prefixes
 	if client == nil {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
-		// provider credential 不得被环境代理或跨站 redirect 带离 exact API。
-		transport.Proxy = nil
+		// Gandi 是公网 HTTPS API；CONNECT 只转发 TLS 密文，不改变记录中的
+		// 节点地址。公网 IP 发现使用独立的直连 client。
+		transport.Proxy = http.ProxyFromEnvironment
 		client = &http.Client{Timeout: 15 * time.Second, Transport: transport}
 	}
 	clientCopy := *client
@@ -69,9 +71,28 @@ func newGandi(endpoint, token string, scope GandiScope, client *http.Client) (*G
 	case *http.Transport:
 		transport = configured.Clone()
 	default:
-		return nil, errors.New("[secret] Gandi client transport 必须可检查且禁止 credential proxy")
+		return nil, errors.New("[secret] Gandi client transport 必须可检查")
 	}
-	transport.Proxy = nil
+	apiURL, err := url.Parse(endpoint)
+	if err != nil || apiURL.Hostname() == "" || apiURL.User != nil || apiURL.RawQuery != "" || apiURL.Fragment != "" ||
+		(apiURL.Scheme != "https" && apiURL.Scheme != "http") {
+		return nil, errors.New("[secret] Gandi API URL 无效")
+	}
+	if transport.TLSClientConfig == nil {
+		transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	} else {
+		transport.TLSClientConfig = transport.TLSClientConfig.Clone()
+	}
+	if transport.TLSClientConfig.InsecureSkipVerify ||
+		(transport.TLSClientConfig.ServerName != "" && transport.TLSClientConfig.ServerName != apiURL.Hostname()) {
+		return nil, errors.New("[secret] Gandi 必须验证 API 原站证书与主机名")
+	}
+	transport.TLSClientConfig.MinVersion = max(transport.TLSClientConfig.MinVersion, tls.VersionTLS12)
+	// CONNECT 握手不携带 API bearer；自定义 TLS dialer 不能绕过以上校验。
+	if transport.DialTLSContext != nil || transport.DialTLS != nil ||
+		transport.ProxyConnectHeader.Get("Authorization") != "" || transport.GetProxyConnectHeader != nil {
+		return nil, errors.New("[secret] Gandi transport 含绕过 TLS 或泄露 bearer 的配置")
+	}
 	clientCopy.Transport = transport
 	clientCopy.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
@@ -193,7 +214,8 @@ func (g *Gandi) authorizeRequest(req *http.Request) {
 func (g *Gandi) do(req *http.Request, out any) error {
 	resp, err := g.client.Do(req)
 	if err != nil {
-		return err
+		// URL errors 可能含代理账号或真实 zone；只向调用方暴露失败层。
+		return errors.New("[DNS] Gandi HTTPS 请求失败，请检查 API DNS、代理和 TLS")
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))

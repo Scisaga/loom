@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"loom/internal/controlplane"
+	"loom/internal/dnsprovider"
 	"loom/internal/webui"
 	"loom/internal/wire"
 )
@@ -58,7 +59,7 @@ const (
 	controlLoopbackIP       = "127.0.0.1"
 )
 
-var controlOperationSchemas = wire.OperationSchemaRegistry{controlPingKind: 1}
+var controlOperationSchemas = wire.OperationSchemaRegistry{controlPingKind: 1, dnsprovider.BindingOperationKind: 1}
 
 type controlDiskConfigV1 struct {
 	Schema          int                                       `json:"schema"`
@@ -111,6 +112,7 @@ type controlBrowserTLSV1 struct {
 type controlOperationRecordV1 struct {
 	Schema        int                                `json:"schema"`
 	Operation     wire.ControlOperationV1            `json:"operation"`
+	Payload       json.RawMessage                    `json:"payload,omitempty"`
 	Leaf          wire.ControlOperationLeafV1        `json:"leaf"`
 	Candidate     wire.HeadEntryV2                   `json:"candidate"`
 	Result        *controlCertifiedOperationResultV1 `json:"result,omitempty"`
@@ -155,6 +157,7 @@ type controlOperationRequestV1 struct {
 	ExpectedHeadHash string                  `json:"expected_head_hash"`
 	RequestID        string                  `json:"request_id"`
 	Operation        wire.ControlOperationV1 `json:"operation"`
+	Payload          json.RawMessage         `json:"payload,omitempty"`
 }
 
 type controlCertifiedOperationResultV1 struct {
@@ -949,19 +952,23 @@ func (runtime *controlRuntime) readAuthority(_ context.Context) (controlplane.Co
 		Profiles: cloneAdminProfiles(runtime.config.AdminProfiles)}, nil
 }
 
-func (runtime *controlRuntime) resolveScope(_ context.Context,
+func (runtime *controlRuntime) resolveScope(ctx context.Context,
 	operation wire.ControlOperationV1) (wire.AdminResourceScopeV1, error) {
-	if operation.Body.Kind != controlPingKind {
-		return wire.AdminResourceScopeV1{}, errors.New("operation reducer 未登记")
+	if err := validateControlPayload(operation, controlplane.OperationPayload(ctx)); err != nil {
+		return wire.AdminResourceScopeV1{}, err
 	}
 	return wire.AdminResourceScopeV1{ScopeKind: "cluster", Cluster: &struct{}{}}, nil
 }
 
-func (runtime *controlRuntime) commitOperation(_ context.Context,
+func (runtime *controlRuntime) commitOperation(ctx context.Context,
 	verified wire.VerifiedAdminOperationV1) (controlplane.CertifiedControlOperationV1, error) {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
 	operation := verified.Operation()
+	payload := controlplane.OperationPayload(ctx)
+	if err := validateControlPayload(operation, payload); err != nil {
+		return controlplane.CertifiedControlOperationV1{}, err
+	}
 	for index := range runtime.journal.Records {
 		record := &runtime.journal.Records[index]
 		if record.Operation.Body.OperationID != operation.Body.OperationID {
@@ -982,8 +989,10 @@ func (runtime *controlRuntime) commitOperation(_ context.Context,
 		state.CertifiedHead.HeadHash != verified.HeadHash() {
 		return controlplane.CertifiedControlOperationV1{}, errors.New("operation base authority 已改变")
 	}
-	if operation.Body.Kind != controlPingKind {
-		return controlplane.CertifiedControlOperationV1{}, errors.New("operation reducer 未实现")
+	if operation.Body.Kind == dnsprovider.BindingOperationKind {
+		if err := runtime.validateDNSBindingUpdateLocked(payload); err != nil {
+			return controlplane.CertifiedControlOperationV1{}, err
+		}
 	}
 	certificateDER, err := authorizedAdminCertificate(runtime.config.Authorizations,
 		operation.Body.AdminCertDigest)
@@ -1027,7 +1036,7 @@ func (runtime *controlRuntime) commitOperation(_ context.Context,
 		return controlplane.CertifiedControlOperationV1{}, err
 	}
 	runtime.journal.Records = append(runtime.journal.Records, controlOperationRecordV1{Schema: 1,
-		Operation: operation, Leaf: leaf, Candidate: candidate})
+		Operation: operation, Payload: payload, Leaf: leaf, Candidate: candidate})
 	if err := runtime.persistJournalLocked(); err != nil {
 		runtime.journal.Records = runtime.journal.Records[:len(runtime.journal.Records)-1]
 		return controlplane.CertifiedControlOperationV1{}, err
@@ -1924,7 +1933,7 @@ func makeAdminAuthority(clusterID string, rootDER, adminDER []byte,
 			Generation: profile.Generation, AdminCertificateProfileHash: profileHash},
 		NotBefore: now.Add(-5 * time.Minute).Format(time.RFC3339),
 		NotAfter:  now.Add(365 * 24 * time.Hour).Format(time.RFC3339), Status: "active",
-		AllowedOperationKinds: []string{controlPingKind}, Capabilities: []string{},
+		AllowedOperationKinds: []string{controlPingKind, dnsprovider.BindingOperationKind}, Capabilities: []string{},
 		Scopes: []wire.AdminResourceScopeV1{{ScopeKind: "cluster", Cluster: &struct{}{}}}}
 	if err := wire.ValidateAdminAuthorizationAt(&authorization, &profile, now); err != nil {
 		return profile, authorization, err

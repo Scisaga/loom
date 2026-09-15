@@ -381,7 +381,7 @@ func TestAccessNodesGetControlAPI(t *testing.T) {
 
 // TestSkipsAreExpected 把"哪些东西没被渲染"钉死。
 //
-// 跳过项是本项目对"静默截断"的防线(见 CLAUDE.md)。不钉住它,新增一个
+// 跳过项是本项目对"静默截断"的防线(见 AGENTS.md)。不钉住它,新增一个
 // 静默跳过不会让任何测试变红。
 func TestSkipsAreExpected(t *testing.T) {
 	res, err := Render(load(t))
