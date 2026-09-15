@@ -29,7 +29,7 @@ sudo loom client export-migration-request \
   -out /path/to/private-channel/device-migration-request.json
 ```
 
-默认读取 `/etc/loom/tls/` 中的原证书、私钥、CA，以及 `/etc/loom/platform-signing.pub`；
+默认读取 `/etc/loom/tls/` 中的原证书、私钥、CA，以及 `/etc/loom/trust/platform.pub`；
 实际路径不同时用命令对应参数指定。命令验证原证书与设备、私钥的绑定，只把原身份复制到
 root-only v2 存储并生成独立 wrapping key；原文件和 floor 不变。重复导出复用同一对 key。
 请求只含公钥、原 floor 与签名，交由管理员按原网络的认证迁移流程处理。

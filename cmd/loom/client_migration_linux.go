@@ -31,7 +31,7 @@ func cmdClientExportMigrationRequest(args []string) error {
 	keyPath := fs.String("identity-key", "/etc/loom/tls/node.key", "原设备 P-256 私钥")
 	certificatePath := fs.String("identity-cert", "/etc/loom/tls/node.crt", "原设备证书")
 	caPath := fs.String("identity-ca", "/etc/loom/tls/ca.crt", "原设备 CA")
-	platformPath := fs.String("platform-pubkey", "/etc/loom/platform-signing.pub", "原平台公钥")
+	platformPath := fs.String("platform-pubkey", "/etc/loom/trust/platform.pub", "原平台公钥")
 	floorPath := fs.String("floor", "", "原 signed pull floor 文件")
 	output := fs.String("out", "", "公共迁移请求文件")
 	if err := fs.Parse(args); err != nil {
@@ -125,7 +125,7 @@ func cmdClientImportMigration(args []string) error {
 	deviceID := fs.String("device", "", "原设备 ID")
 	packagePath := fs.String("file", "", "管理员导出的 certified 原身份迁移包")
 	floorPath := fs.String("floor", "", "原 signed pull floor 文件")
-	platformPath := fs.String("platform-pubkey", "/etc/loom/platform-signing.pub", "原平台公钥")
+	platformPath := fs.String("platform-pubkey", "/etc/loom/trust/platform.pub", "原平台公钥")
 	peerPath := fs.String("control-peer-directory", "", "control 节点的 certified 私有 peer directory")
 	dryRun := fs.Bool("dry-run", false, "验证完整迁移与运行配置，不安装身份或激活服务")
 	timeout := fs.Duration("timeout", 2*time.Minute, "下载与激活各自的超时")
