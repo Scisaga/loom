@@ -10,12 +10,17 @@ import (
 	"loom/internal/wire"
 )
 
-// verifyPingRecord 独立重验管理签名与 parent ACL，并从 parent 重算 no-op Head。
+// verifyAdminOperationRecord 独立重验管理签名与 parent ACL，并按 kind 重算 Head。
 // operation_root 一致只能证明 leaf 集合，不能证明其余根来自正确 reducer（D104）。
-func (runtime *controlRuntime) verifyPingRecord(index int) error {
+func (runtime *controlRuntime) verifyAdminOperationRecord(index int) error {
 	record := &runtime.journal.Records[index]
-	if record.Schema != 1 || record.Operation.Body.Kind != controlPingKind {
+	if record.Schema != 1 || record.AdminRotation != nil || record.Activation != nil || record.Enrollment != nil ||
+		(record.Operation.Body.Kind != controlPingKind && record.Operation.Body.Kind != controlCreateInviteKind) {
 		return errors.New("[D104] 未登记的管理 operation")
+	}
+	if record.Operation.Body.Kind == controlPingKind && (record.Invite != nil || len(record.AdditionalLeaves) != 0) ||
+		record.Operation.Body.Kind == controlCreateInviteKind && (record.Invite == nil || len(record.AdditionalLeaves) != 1) {
+		return errors.New("[D104] 管理 operation union/leaf 不一致")
 	}
 	var parent *wire.HeadEntryV2
 	for _, log := range runtime.storage.SnapshotRaft().Log {
@@ -33,6 +38,14 @@ func (runtime *controlRuntime) verifyPingRecord(index int) error {
 	}
 	profiles, authorizations := initial.AdminProfiles, initial.Authorizations
 	for previous := 0; previous < index; previous++ {
+		if activation := runtime.journal.Records[previous].Activation; activation != nil {
+			if err := runtime.verifyActivationRecord(previous); err != nil {
+				return err
+			}
+			profiles = activation.Application.adminProfiles()
+			authorizations = append([]wire.AdminAuthorizationV1(nil), activation.Application.Authorizations...)
+			continue
+		}
 		rotation := runtime.journal.Records[previous].AdminRotation
 		if rotation == nil {
 			continue
@@ -99,8 +112,28 @@ func (runtime *controlRuntime) verifyPingRecord(index int) error {
 	expected.Payload.ParentHeadHash, expected.Payload.OperationRoot = parent.HeadHash, actual.Payload.OperationRoot
 	expected.Payload.CommittedLogicalTime = actual.Payload.CommittedLogicalTime
 	expected.Payload.TransitionContext = json.RawMessage(`{"schema":1,"kind":"ordinary"}`)
+	if record.Invite != nil {
+		application, err := runtime.applicationBefore(index)
+		if err != nil {
+			return err
+		}
+		next, err := application.reduceInvite(*record.Invite, record.Operation.Body, actual.Payload.CommittedLogicalTime)
+		if err != nil {
+			return err
+		}
+		hash, err := wire.CertifiedInviteRecordHash(&record.Invite.Record, &application.InvitePolicy)
+		if err != nil || !wire.EqualCanonical(record.AdditionalLeaves[0], wire.ControlOperationLeafV1{
+			Schema: 1, OperationID: record.Invite.Record.OperationID, ObjectID: hash}) {
+			return errors.New("[D104 Invite] record leaf 与认证记录不一致")
+		}
+		roots, err := next.roots()
+		if err != nil {
+			return err
+		}
+		controlApplyRoots(&expected, roots)
+	}
 	if !wire.EqualCanonical(expected, actual) {
-		return errors.New("[D104] control_ping 修改了 reducer 不允许修改的 Head 字段")
+		return errors.New("[D104] 管理操作修改了 reducer 不允许修改的 Head 字段")
 	}
 	return wire.ValidateHeadEntry(&record.Candidate, parent)
 }

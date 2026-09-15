@@ -77,8 +77,12 @@ func (runtime *controlRuntime) publishOperationProgressLocked() {
 		} else {
 			phases = []controlplane.Phase{phase}
 		}
+		kind := record.Operation.Body.Kind
+		if record.Enrollment != nil && record.Enrollment.Mutation.Preimage != nil {
+			kind = "enrollment_" + record.Enrollment.Mutation.Preimage.Kind
+		}
 		copy.response.Operations = append(copy.response.Operations, controlOperationProgressV1{
-			RequestID: record.Operation.Body.OperationID, Kind: record.Operation.Body.Kind,
+			RequestID: record.Leaf.OperationID, Kind: kind,
 			Phase: phase, Phases: phases, HeadHash: record.Candidate.HeadHash,
 			RaftIndex: record.Candidate.Body.Payload.RaftIndex, Certified: record.Result != nil,
 		})
@@ -152,10 +156,18 @@ func (runtime *controlRuntime) recoverPendingOperationsLocked() error {
 		if state.Active != nil || state.CertifiedHead == nil || state.CertifiedHead.HeadHash != record.Operation.Body.ParentHeadHash {
 			return errors.New("[D104] pending operation 的 base 已改变，不能隐式改签或丢弃")
 		}
-		if record.AdminRotation != nil {
+		if record.Activation != nil {
+			if err := runtime.verifyActivationRecord(index); err != nil {
+				return err
+			}
+		} else if record.AdminRotation != nil {
 			// 本机维护轮换有独立的旧身份签名、新 key PoP 和权限不变验证；
 			// 它永远不能注册为网络管理 operation（D104、D132）。
 			if err := runtime.verifyAdminRotationRecord(index); err != nil {
+				return err
+			}
+		} else if record.Invite != nil {
+			if err := runtime.verifyAdminOperationRecord(index); err != nil {
 				return err
 			}
 		} else {
@@ -195,6 +207,14 @@ func (runtime *controlRuntime) recoverPendingOperationsLocked() error {
 			logical = state.CertifiedHead.Body.Payload.CommittedLogicalTime
 		}
 		body.Payload.CommittedLogicalTime = logical
+		if record.Activation != nil {
+			var err error
+			body, err = wire.RuntimeActivationHeadBody(&record.Activation.Bundle, raft.CurrentTerm,
+				int64(len(raft.Log))+1, raft.Log[len(raft.Log)-1].EntryHash, logical)
+			if err != nil {
+				return err
+			}
+		}
 		candidate, err := wire.NewHeadEntry(body)
 		if err != nil {
 			return err

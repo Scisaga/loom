@@ -1,0 +1,459 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"sort"
+	"time"
+
+	"loom/internal/controlplane"
+	"loom/internal/enrollmentv2"
+	"loom/internal/wire"
+)
+
+type controlEnrollmentOperationV1 struct {
+	Mutation    enrollmentv2.EnrollmentHeadMutationV1 `json:"mutation"`
+	LineageFrom wire.HeadEntryV2                      `json:"lineage_from"`
+}
+
+func enrollmentMutationInviteID(mutation enrollmentv2.EnrollmentHeadMutationV1) string {
+	if mutation.Preimage == nil {
+		return ""
+	}
+	switch mutation.Preimage.Kind {
+	case "reservation":
+		if mutation.Preimage.Reservation != nil {
+			return mutation.Preimage.Reservation.Operation.InviteID
+		}
+	case "provisional":
+		if mutation.Preimage.Provisional != nil {
+			return mutation.Preimage.Provisional.Record.InviteID
+		}
+	case "completion":
+		if mutation.Preimage.Completion != nil {
+			return mutation.Preimage.Completion.Record.InviteID
+		}
+	}
+	return ""
+}
+
+func (application *controlApplicationV1) reduceEnrollment(mutation enrollmentv2.EnrollmentHeadMutationV1,
+	coordinate enrollmentv2.EnrollmentCommitCoordinateV1, set wire.ControlSetV1) (*controlApplicationV1, error) {
+	if application == nil {
+		return nil, errors.New("[D130 daemon] 私有入网尚未激活")
+	}
+	id := enrollmentMutationInviteID(mutation)
+	inviteIndex := sort.Search(len(application.Invites), func(i int) bool { return application.Invites[i].Record.InviteID >= id })
+	if id == "" || inviteIndex == len(application.Invites) || application.Invites[inviteIndex].Record.InviteID != id {
+		return nil, errors.New("[D130 daemon] 缺当前 certified Invite")
+	}
+	invite := application.Invites[inviteIndex]
+	if invite.Status == "revoked" || invite.Status == "consumed" {
+		return nil, errors.New("[D130 daemon] Invite 已撤销或消费")
+	}
+	index := sort.Search(len(application.Transactions), func(i int) bool { return application.Transactions[i].InviteID >= id })
+	var previous *enrollmentv2.TransactionStateV2
+	if index < len(application.Transactions) && application.Transactions[index].InviteID == id {
+		copy := application.Transactions[index]
+		previous = &copy
+	}
+	if r := mutation.Preimage.Reservation; r != nil {
+		if invite.Status != "available" || !wire.EqualCanonical(r.Material.Record, invite.Record) ||
+			!wire.EqualCanonical(r.Material.Opening, invite.Opening) || !wire.EqualCanonical(r.Material.Commitment, invite.Commitment) ||
+			!wire.EqualCanonical(r.Material.Policy, application.InvitePolicy) ||
+			!wire.EqualCanonical(r.Material.EnrollmentServiceRef, application.EnrollmentService) ||
+			!wire.EqualCanonical(r.Material.ControlSet, set) {
+			return nil, errors.New("[D130 daemon] reservation 替换了当前邀请或 authority")
+		}
+	}
+	next, err := enrollmentv2.ReduceEnrollmentMutation(mutation, previous, coordinate)
+	if err != nil {
+		return nil, err
+	}
+	candidate := controlClone(*application)
+	if r := mutation.Preimage.Provisional; r != nil {
+		var found bool
+		for _, profile := range application.CARegistry.DeviceProfiles {
+			if wire.EqualCanonical(profile, r.Prepared.Profile) && profile.Status == "active" {
+				found = true
+			}
+		}
+		if !found {
+			return nil, errors.New("[D102 daemon] provisional CA 不在当前 active registry")
+		}
+		root, err := wire.EnrollmentIssuanceRegistryRoot(application.IssuanceRegistry)
+		if err != nil || root != r.Prepared.Operation.PreviousIssuanceRegistryRoot {
+			return nil, errors.New("[D130 daemon] provisional issuance registry CAS 冲突")
+		}
+		candidate.IssuanceRegistry = append(candidate.IssuanceRegistry, r.Prepared.Operation.IssuanceRegistryLeaf)
+		sort.Slice(candidate.IssuanceRegistry, func(i, j int) bool {
+			return candidate.IssuanceRegistry[i].ClaimOperationHash < candidate.IssuanceRegistry[j].ClaimOperationHash
+		})
+		root, err = wire.EnrollmentIssuanceRegistryRoot(candidate.IssuanceRegistry)
+		if err != nil || root != r.Prepared.Operation.ResultingIssuanceRegistryRoot {
+			return nil, errors.New("[D130 daemon] provisional issuance registry 重算不一致")
+		}
+	}
+	if r := mutation.Preimage.Completion; r != nil {
+		view := mutation.InitialDeviceView
+		if view == nil || view.Active == nil || len(view.Active.ConfigArtifactRefs) == 0 {
+			return nil, errors.New("[D130 daemon] completion 缺可交付的实际配置制品")
+		}
+		for _, device := range application.Devices {
+			if device.View.DeviceID == view.DeviceID {
+				return nil, errors.New("[D130 daemon] completion 不能覆盖已有 Device")
+			}
+		}
+		candidate.Devices = append(candidate.Devices, controlDeviceStateV1{View: *view, PreviousViewHash: wire.EmptyHashV1,
+			SecretArtifactRefs: append([]wire.SecretArtifactRefV2{}, r.Record.ResultArtifact.SecretArtifactRefs...), EnrollmentInviteID: id})
+		sort.Slice(candidate.Devices, func(i, j int) bool { return candidate.Devices[i].View.DeviceID < candidate.Devices[j].View.DeviceID })
+		candidate.Invites[inviteIndex].Status = "consumed"
+	} else {
+		candidate.Invites[inviteIndex].Status = "reserved"
+	}
+	if previous == nil {
+		candidate.Transactions = append(candidate.Transactions, next)
+		sort.Slice(candidate.Transactions, func(i, j int) bool { return candidate.Transactions[i].InviteID < candidate.Transactions[j].InviteID })
+	} else {
+		candidate.Transactions[index] = next
+	}
+	if _, err := candidate.roots(); err != nil {
+		return nil, err
+	}
+	return &candidate, nil
+}
+
+func controlEnrollmentCoordinate(head wire.HeadEntryV2) enrollmentv2.EnrollmentCommitCoordinateV1 {
+	p := head.Body.Payload
+	return enrollmentv2.EnrollmentCommitCoordinateV1{Schema: 1, ClusterID: p.ClusterID, RecoveryEpoch: p.RecoveryEpoch,
+		RaftTerm: p.RaftTerm, RaftIndex: p.RaftIndex, PreviousLogEntryHash: p.PreviousLogEntryHash,
+		ParentHeadHash: p.ParentHeadHash, CommittedLogicalTime: p.CommittedLogicalTime}
+}
+
+// applicationBefore 从迁移 preimage 和已认证 operation 重算私有状态。它不读取
+// 一份可独立修改的“当前 application.json”，磁盘唯一 authority 仍是原 Head/QC 日志。
+func (runtime *controlRuntime) applicationBefore(limit int) (*controlApplicationV1, error) {
+	var application *controlApplicationV1
+	for i := 0; i < limit; i++ {
+		record := &runtime.journal.Records[i]
+		if activation := record.Activation; activation != nil {
+			if application != nil {
+				return nil, errors.New("[D104 daemon] 重复 application 激活")
+			}
+			copy := controlClone(activation.Application)
+			application = &copy
+		} else if record.Invite != nil {
+			var err error
+			application, err = application.reduceInvite(*record.Invite, record.Operation.Body, record.Candidate.Body.Payload.CommittedLogicalTime)
+			if err != nil {
+				return nil, err
+			}
+		} else if record.Enrollment != nil {
+			var err error
+			application, err = application.reduceEnrollment(record.Enrollment.Mutation, controlEnrollmentCoordinate(record.Candidate), runtime.config.ControlSet)
+			if err != nil {
+				return nil, err
+			}
+		} else if application != nil && record.AdminRotation != nil {
+			var err error
+			application, err = application.reduceAdminRotation(record.AdminRotation.Payload)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if application != nil {
+			roots, err := application.roots()
+			if err != nil {
+				return nil, err
+			}
+			expected := record.Candidate.Body
+			controlApplyRoots(&expected, roots)
+			if !wire.EqualCanonical(expected, record.Candidate.Body) {
+				return nil, errors.New("[D104 daemon] application 重放与 Head 根不一致")
+			}
+		}
+	}
+	return application, nil
+}
+
+func (runtime *controlRuntime) verifyEnrollmentRecord(index int) error {
+	record := &runtime.journal.Records[index]
+	if record.Enrollment == nil || record.Activation != nil || record.AdminRotation != nil || record.Invite != nil || len(record.AdditionalLeaves) != 0 ||
+		!wire.EqualCanonical(record.Leaf, record.Enrollment.Mutation.OperationLeaf) {
+		return errors.New("[D130 daemon] enrollment operation union/leaf 不一致")
+	}
+	application, err := runtime.applicationBefore(index)
+	if err != nil {
+		return err
+	}
+	next, err := application.reduceEnrollment(record.Enrollment.Mutation, controlEnrollmentCoordinate(record.Candidate), runtime.config.ControlSet)
+	if err != nil {
+		return err
+	}
+	parent, heads, err := runtime.enrollmentLineage(record.Enrollment.LineageFrom, record.Candidate.Body.Payload.ParentHeadHash)
+	if err != nil {
+		return err
+	}
+	if err := enrollmentv2.VerifyEnrollmentHeadLineage(&record.Enrollment.LineageFrom, heads, nil, &record.Candidate, &runtime.config.ControlSet); err != nil {
+		return err
+	}
+	expected, actual := parent.Body, record.Candidate.Body
+	expected.Payload.HeadKind = "ordinary"
+	expected.Payload.RaftTerm, expected.Payload.RaftIndex = actual.Payload.RaftTerm, actual.Payload.RaftIndex
+	expected.Payload.ControlRevision, expected.Payload.PreviousLogEntryHash = actual.Payload.RaftIndex, actual.Payload.PreviousLogEntryHash
+	expected.Payload.ParentHeadHash, expected.Payload.OperationRoot = parent.HeadHash, actual.Payload.OperationRoot
+	expected.Payload.CommittedLogicalTime = actual.Payload.CommittedLogicalTime
+	expected.Payload.TransitionContext = json.RawMessage(`{"schema":1,"kind":"ordinary"}`)
+	roots, err := next.roots()
+	if err != nil {
+		return err
+	}
+	controlApplyRoots(&expected, roots)
+	if !wire.EqualCanonical(expected, actual) {
+		return errors.New("[D104 daemon] enrollment 改写了 reducer 外的 Head")
+	}
+	return wire.ValidateHeadEntry(&record.Candidate, &parent)
+}
+
+func (runtime *controlRuntime) enrollmentLineage(from wire.HeadEntryV2, parentHash string) (wire.HeadEntryV2, []wire.HeadEntryV2, error) {
+	found := false
+	heads := []wire.HeadEntryV2{}
+	for _, log := range runtime.storage.SnapshotRaft().Log {
+		if log.Head == nil {
+			continue
+		}
+		if !found {
+			if log.Head.HeadHash != from.HeadHash {
+				continue
+			}
+			if !wire.EqualCanonical(*log.Head, from) {
+				break
+			}
+			found = true
+		} else {
+			heads = append(heads, *log.Head)
+		}
+		if log.Head.HeadHash == parentHash {
+			return *log.Head, heads, nil
+		}
+	}
+	return wire.HeadEntryV2{}, nil, errors.New("[D130 daemon] Enrollment lineage 不属于现有日志")
+}
+
+// CommitEnrollmentOperation 和管理操作共用 runtime.mu、Raft 与累计 operation
+// journal；不存在能绕过管理员事务或覆盖同一 parent 的独立 Enrollment head。
+func (runtime *controlRuntime) CommitEnrollmentOperation(ctx context.Context, operationID string,
+	from *wire.HeadEntryV2, build enrollmentv2.EnrollmentOperationBuilder) (enrollmentv2.EnrollmentOperationCommitResultV1, error) {
+	if from == nil || operationID == "" || build == nil {
+		return enrollmentv2.EnrollmentOperationCommitResultV1{}, errors.New("[D130 daemon] Enrollment builder/base 缺失")
+	}
+	if err := ctx.Err(); err != nil {
+		return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
+	}
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	for i := range runtime.journal.Records {
+		record := &runtime.journal.Records[i]
+		if record.Leaf.OperationID != operationID {
+			continue
+		}
+		if record.Enrollment == nil || !wire.EqualCanonical(record.Enrollment.LineageFrom, *from) {
+			return enrollmentv2.EnrollmentOperationCommitResultV1{}, errors.New("[D130 daemon] operation ID/base 冲突")
+		}
+		if err := runtime.finishCommittedLocked(); err != nil {
+			return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
+		}
+		return runtime.enrollmentResult(i)
+	}
+	for _, record := range runtime.journal.Records {
+		if record.Result == nil {
+			return enrollmentv2.EnrollmentOperationCommitResultV1{}, errors.New("[D104 daemon] 先恢复已有 pending operation")
+		}
+	}
+	state, raft := runtime.store.Snapshot(), runtime.storage.SnapshotRaft()
+	if state.CertifiedHead == nil || state.CertifiedQC == nil || state.Active != nil ||
+		raft.LastApplied != raft.CommitIndex || int64(len(raft.Log)) != raft.CommitIndex || len(raft.Log) == 0 {
+		return enrollmentv2.EnrollmentOperationCommitResultV1{}, errors.New("[D104 daemon] 当前 quorum/prefix 不可写")
+	}
+	if _, _, err := runtime.enrollmentLineage(*from, state.CertifiedHead.HeadHash); err != nil {
+		return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
+	}
+	application, err := runtime.applicationBefore(len(runtime.journal.Records))
+	if err != nil {
+		return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
+	}
+	if application == nil {
+		return enrollmentv2.EnrollmentOperationCommitResultV1{}, errors.New("[D130 daemon] 正式入网状态尚未激活")
+	}
+	parent := state.CertifiedHead
+	body := parent.Body
+	body.Payload.HeadKind = "ordinary"
+	body.Payload.RaftTerm, body.Payload.RaftIndex = raft.CurrentTerm, int64(len(raft.Log))+1
+	body.Payload.ControlRevision, body.Payload.PreviousLogEntryHash = body.Payload.RaftIndex, raft.Log[len(raft.Log)-1].EntryHash
+	body.Payload.ParentHeadHash = parent.HeadHash
+	body.Payload.CommittedLogicalTime = runtime.now().UTC().Truncate(time.Second).Format(time.RFC3339)
+	if body.Payload.CommittedLogicalTime < parent.Body.Payload.CommittedLogicalTime {
+		body.Payload.CommittedLogicalTime = parent.Body.Payload.CommittedLogicalTime
+	}
+	body.Payload.TransitionContext = json.RawMessage(`{"schema":1,"kind":"ordinary"}`)
+	mutation, err := build(controlEnrollmentCoordinate(wire.HeadEntryV2{Body: body}))
+	if err != nil {
+		return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
+	}
+	if mutation.OperationLeaf.OperationID != operationID {
+		return enrollmentv2.EnrollmentOperationCommitResultV1{}, errors.New("[D130 daemon] builder 替换 operation ID")
+	}
+	next, err := application.reduceEnrollment(mutation, controlEnrollmentCoordinate(wire.HeadEntryV2{Body: body}), state.ControlSet)
+	if err != nil {
+		return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
+	}
+	leaves := runtime.operationLeaves(len(runtime.journal.Records))
+	leaves = append(leaves, mutation.OperationLeaf)
+	body.Payload.OperationRoot, err = wire.ControlOperationRoot(leaves)
+	if err != nil {
+		return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
+	}
+	roots, err := next.roots()
+	if err != nil {
+		return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
+	}
+	controlApplyRoots(&body, roots)
+	candidate, err := wire.NewHeadEntry(body)
+	if err != nil {
+		return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
+	}
+	index := len(runtime.journal.Records)
+	runtime.journal.Records = append(runtime.journal.Records, controlOperationRecordV1{Schema: 1,
+		Leaf: mutation.OperationLeaf, Candidate: candidate, Phases: []controlplane.Phase{controlplane.PhasePending},
+		Enrollment: &controlEnrollmentOperationV1{Mutation: controlClone(mutation), LineageFrom: *from}})
+	if err := runtime.verifyCommittedHead(ctx, candidate); err != nil {
+		runtime.journal.Records = runtime.journal.Records[:index]
+		return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
+	}
+	if err := runtime.persistJournalLocked(); err != nil {
+		runtime.journal.Records = runtime.journal.Records[:index]
+		return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
+	}
+	if runtime.checkpoint != nil {
+		if err := runtime.checkpoint(controlplane.PhasePending); err != nil {
+			return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
+		}
+	}
+	if _, err := runtime.leader.ReplicateHead(ctx, runtime.store, candidate); err != nil {
+		return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
+	}
+	if err := runtime.finishCommittedLocked(); err != nil {
+		return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
+	}
+	return runtime.enrollmentResult(index)
+}
+
+func (runtime *controlRuntime) operationLeaves(limit int) []wire.ControlOperationLeafV1 {
+	leaves := make([]wire.ControlOperationLeafV1, 0, limit)
+	for i := 0; i < limit; i++ {
+		leaves = append(leaves, runtime.journal.Records[i].Leaf)
+		leaves = append(leaves, runtime.journal.Records[i].AdditionalLeaves...)
+	}
+	return leaves
+}
+
+func (runtime *controlRuntime) enrollmentResult(index int) (enrollmentv2.EnrollmentOperationCommitResultV1, error) {
+	record := &runtime.journal.Records[index]
+	if record.Enrollment == nil || record.Result == nil {
+		return enrollmentv2.EnrollmentOperationCommitResultV1{}, errors.New("[D130 daemon] operation 尚未 certified")
+	}
+	result := record.Result
+	_, heads, err := runtime.enrollmentLineage(record.Enrollment.LineageFrom, record.Candidate.Body.Payload.ParentHeadHash)
+	if err != nil {
+		return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
+	}
+	response := enrollmentv2.EnrollmentOperationCommitResultV1{Certification: enrollmentv2.CertifiedEnrollmentOperationProofV1{
+		Head: result.Head, ConfigQC: result.ConfigQC, ControlSet: runtime.config.ControlSet,
+		OperationLeaf: result.OperationLeaf, OperationLeafIndex: result.OperationLeafIndex,
+		OperationTreeSize: result.OperationTreeSize, OperationAuditPath: result.OperationAuditPath}, IntermediateHeads: heads}
+	if mutation := record.Enrollment.Mutation; mutation.InitialDeviceView != nil {
+		application, err := runtime.applicationBefore(index + 1)
+		if err != nil {
+			return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
+		}
+		envelope, err := application.deviceEnvelope(mutation.InitialDeviceView.DeviceID, result.Head, result.ConfigQC)
+		if err != nil {
+			return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
+		}
+		if _, err := wire.VerifyDeviceViewEnvelope(&envelope, &runtime.config.ControlSet); err != nil {
+			return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
+		}
+		response.DeviceViewEnvelope = &envelope
+	}
+	return controlClone(response), nil
+}
+
+// 新任期 barrier 会占用下一条日志的 index。已经签出 provisional certificate
+// 的 pending candidate 必须先以原 bytes 恢复到原日志位置，再选举和提交；不能重签。
+func (runtime *controlRuntime) restorePendingEnrollmentBeforeCampaign() error {
+	for i, record := range runtime.journal.Records {
+		if record.Enrollment == nil || record.Result != nil {
+			continue
+		}
+		if err := runtime.verifyEnrollmentRecord(i); err != nil {
+			return err
+		}
+		if err := runtime.storage.AppendLocal(record.Candidate); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (runtime *controlRuntime) reconcileEnrollmentPrefixLocked() error {
+	for i := range runtime.journal.Records {
+		record := &runtime.journal.Records[i]
+		if record.Enrollment == nil || record.Result == nil {
+			continue
+		}
+		if runtime.enrollmentStore == nil {
+			return errors.New("[D130 daemon] 缺耐久 transaction store")
+		}
+		result, err := runtime.enrollmentResult(i)
+		if err != nil {
+			return err
+		}
+		p := record.Enrollment.Mutation.Preimage
+		if p == nil {
+			return errors.New("[D130 daemon] 缺 transaction preimage")
+		}
+		switch p.Kind {
+		case "reservation":
+			r := p.Reservation
+			invite := enrollmentv2.InviteContext{ClusterID: r.Material.Record.ClusterID, InviteID: r.Operation.InviteID,
+				Status: "available", CertifiedInviteRecordHash: r.Operation.CertifiedInviteRecordHash,
+				DeviceEnrollmentIntentCommitmentHash: r.Operation.DeviceEnrollmentIntentCommitmentHash,
+				DeviceEnrollmentIntentOpeningHash:    r.Operation.DeviceEnrollmentIntentOpeningHash,
+				TokenCommitment:                      r.Operation.TokenCommitment, ExpiresAt: r.Material.Record.ExpiresAt,
+				MaximumReservationRetrySeconds: r.Material.Policy.MaximumReservationRetrySeconds}
+			_, err = runtime.enrollmentStore.Reserve(invite, r.Evidence, r.Operation, &r.Admission,
+				&r.Material.ControlSet, record.Enrollment.LineageFrom, result.IntermediateHeads,
+				result.ControlSetTransitions, result.Certification)
+		case "provisional":
+			r := p.Provisional.Prepared
+			_, err = runtime.enrollmentStore.RecordProvisional(r.Operation, r.Issuance, r.Profile, r.Result,
+				result.Certification, result.IntermediateHeads, result.ControlSetTransitions)
+		case "completion":
+			r := p.Completion
+			if result.DeviceViewEnvelope == nil {
+				return errors.New("[D130 daemon] completion 缺同一 Head 的 Device view")
+			}
+			_, err = runtime.enrollmentStore.Complete(r.Operation, &r.Approval, &result.Certification.ControlSet,
+				enrollmentv2.CompletionCertificationV1{Schema: 1, Operation: result.Certification,
+					IntermediateHeads: result.IntermediateHeads, ControlSetTransitions: result.ControlSetTransitions,
+					DeviceViewEnvelope: *result.DeviceViewEnvelope})
+		default:
+			return errors.New("[D130 daemon] 未知 transaction mutation")
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}

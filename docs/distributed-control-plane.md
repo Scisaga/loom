@@ -868,7 +868,8 @@ leader 在完整取得输入并执行严格解码、校验和确定性 candidate
 HeadEntryPayloadV2
   schema = 2
   head_kind                     # ordinary/bootstrap/control_set_final/
-                                # emergency_recovery/recovery_policy_activation
+                                # emergency_recovery/recovery_policy_activation/
+                                # legacy_runtime_activation（仅 §10.3 既有 N=1 日志迁移）
   cluster_id
   recovery_epoch, recovery_statement_hash, recovery_policy_hash
   control_epoch, control_set_hash, control_peer_directory_hash
@@ -901,7 +902,8 @@ HeadEntry 必须冻结，直至该 entry certified 或进入本文定义的 reco
 逐字节继承 parent 的 recovery epoch/statement/policy hash、control epoch/set hash、
 `control_peer_directory_hash` 与 `transition_proof_hash`。只有相应 exact
 ControlSet Final、emergency Genesis、planned RecoveryActivation 或 bootstrap head 可以改变这些
-authority 字段；普通 operation 即使取得 admin 签名也不能。该全局规则先于各业务章节的局部
+authority 字段；已有早期 N=1 日志仅能使用 §10.3 的一次性、双签名 runtime activation。
+普通 operation 即使取得 admin 签名也不能。该全局规则先于各业务章节的局部
 equality，防止普通 head 偷换 authority 或 private-directory commitment。
 `EMPTY_HASH_V1 = "sha256:" + 64 个 ASCII '0'` 是唯一空前项 sentinel：
 `previous_log_entry_hash` 只可在每条新 Raft lineage 的 `raft_index=1` 使用，即初始 `bootstrap` 或
@@ -2100,7 +2102,7 @@ recovery 三元组也必须等于 statement 及其导出 hash。任何 set A/sta
 `BootstrapTransitionBodyV1ToV2.initial_v2_head_payload_hash` 与
 `BootstrapHeadContextV1.initial_v2_head_payload_hash`；任一不同都属于拼接攻击。
 
-完整 bootstrap 交付只能使用上列 `BootstrapTransitionBundleV1ToV2`。验证器必须从所携带的 initial
+首次建立 v2 日志的完整 bootstrap 交付只能使用上列 `BootstrapTransitionBundleV1ToV2`。验证器必须从所携带的 initial
 policy/set bytes 重算两个 hash，分别重算恰好覆盖全部 recovery keys 与全部 member 三用途 keys 的
 PoP root，并与 bootstrap statement/body 重复字段相等；随后才用 initial ControlSet 验初始 head
 QC。只带 v1 transition signature 与若干 public key hash、却没有 exact public key/PoP bytes 的载体
@@ -2127,6 +2129,68 @@ bootstrap 一律 fail closed，不能按时间或下载源择一。
 或等价带外通道交付，不进入公共 distribution mirror、新邀请 QR 或共享
 `BootstrapTransitionBundleV1ToV2`。新 v2 invite 创建的 Device 不在历史 v1 floor 树中，只验
 invite proof bundle 而不伪造空 floor proof。
+
+**已有早期 N=1 控制日志的接续。** 已经存在 certified Head、管理员轮换和 Raft 日志的网络，
+不能重新生成 index=1 的 bootstrap，也不能把早期仅承诺原管理员根证书的恢复对象冒充
+`RecoveryPolicyV1`。该形态使用一次性 `legacy_runtime_activation`，原位追加到既有日志；
+它是迁移证明，不提供旧 Enrollment/config/report 的运行入口。
+
+```text
+LegacyRuntimePolicyV1
+  schema = 1, admin_root              # 原始 Ed25519 自签 CA DER，base64url
+
+RuntimeActivationRootsV1
+  snapshot_hash, effective_ssot_hash, device_views_root
+  admin_acl_root, ca_profile_root, bootstrap_issuer_registry_root
+  render_contract_version            # >= 2
+
+RuntimeActivationStatementV1
+  schema = 1, cluster_id, operation_id
+  parent_head_hash, parent_qc_hash, legacy_recovery_policy_hash
+  v1_platform_key_id, v1_platform_public_key, v1_platform_key_digest
+  new_recovery_epoch = 2, new_recovery_policy_hash, new_recovery_key_pop_root
+  roots: RuntimeActivationRootsV1
+  issued_at, reason
+
+RuntimeActivationProofV1
+  schema = 1, statement: RuntimeActivationStatementV1
+  legacy_policy: LegacyRuntimePolicyV1
+  owner_signature, platform_signature
+
+RuntimeActivationContextV1
+  schema = 1, kind = "legacy_runtime_activation", statement_hash
+
+RuntimeActivationBundleV1
+  schema = 1, proof: RuntimeActivationProofV1
+  parent: HeadEntryV2, parent_qc: StableHeadReplicationQCV1
+  control_set: ControlSetV1
+  recovery_policy: RecoveryPolicyV1
+  recovery_key_possession_proofs[]
+  previous_operation_leaves[]: ControlOperationLeafV1
+  head: HeadEntryV2, config_qc: StableHeadReplicationQCV1
+```
+
+适用条件必须同时成立：原集合恰为 N=1；parent 的 recovery/control epoch 都为 1，render contract
+为 1；原 policy 摘要等于 `H(frame("loom-runtime-recovery-policy-v1", JCS(legacy_policy)))`；
+parent QC 由原集合验证通过。原 owner 根 key 与原 v1 platform key 分别签署同一 statement 的
+`loom-runtime-activation-owner-signature-v1` 和 `loom-runtime-activation-platform-signature-v1`
+frame；当前管理员还必须对 daemon 的 exact base/request 签名。control config key、当前 ping
+权限和服务器持有的任意新 key 都不能代替这两项旧 authority 授权。
+
+statement、proof 的 hash domain 分别为 `loom-runtime-activation-statement-v1`、
+`loom-runtime-activation-proof-v1`。新 policy 的所有 recovery keys 必须提供有效 PoP 并满足
+与 control keys 的用途分离；新 head 的 recovery statement/policy/proof hash 必须逐字段匹配。
+ControlSet、private peer directory commitment、原日志和原 operation leaves 全部保留；
+仅附加 `{schema:1,operation_id,object_id:statement_hash}`，不得删改历史。新 recovery epoch 为 2、
+control epoch 为 0，Raft term/index/前项继承真实日志，不能重置或预留假坐标。daemon 必须从私有
+迁移输入独立重算实际 SSOT、身份、CA、ACL 和 issuer roots，而不是把签名中的 hash 直接当成配置。
+旧式 parent 条件使同一 lineage 无法再次使用该转换。
+
+客户端必须有独立的原 v1 platform key/ID/anchor digest、已信任的 exact parent Head，或现场 QR
+交付的新 checkpoint 之一；提供多个 anchor 时必须全部匹配。bundle 自带公钥不构成信任根。
+这只建立新 authority，**不替代既有 Device 的 floor 验证、身份迁移与配置激活**；这些仍必须按
+本节的防回退要求完成，才能删除对应旧业务路径。新的邀请不制造历史 floor。公开 bundle 只含
+公钥、承诺和 opaque leaves，SSOT、Device 列表、ACL preimage、token 与 intent opening 保持私有。
 
 首次接受完整 v2 head/QC/view proof 时，客户端把 `v2_latched=true`、bootstrap hash 和全部
 floor **原子耐久写入**。latch 前只可接受满足 BootstrapTransition 所声明 floor 的受限 v1
@@ -2333,8 +2397,9 @@ BootstrapEndpointCatalogV1
 
 InviteProofBundleV2                   # public immutable object；无 token/capability
   schema = 2, cluster_id, invite_id
-  bootstrap_transition_bundle
-  authority_transitions[]
+  bootstrap_transition_bundle?       # 与 runtime_activation_bundle 恰好选一
+  runtime_activation_bundle?         # 仅 §10.3 既有早期 N=1 lineage
+  authority_transitions[]            # 连续普通 certified heads 或已定义的 authority transition bundles
   certified_invite_record
   invite_issuance_policy
   device_enrollment_intent_commitment
@@ -2381,6 +2446,13 @@ InviteOfflinePackageV2
   bootstrap_catalog
   proof_bundle
 ~~~
+
+`authority_transitions` 必须保留起始已验证 authority 到 `record_head` parent 的完整 Head 链。
+普通写入使用 exact `CertifiedHeadV1{head,qc}`：kind 必须为 ordinary，逐项验证直接 parent、
+authority 字段不变和当前集合的 config QC；不能只带 Head hash、漏掉中间普通写入或跳过未认证项。
+ControlSet、紧急恢复、计划恢复 policy 使用各自已有的完整 transition bundle，严格 union 不允许
+混合字段。`record_head` 仍必须是最终已验 Head 的直接后继。runtime activation 的旧 parent 可用于
+验证迁移时冻结 catalog 的原 QC，不能因此获得新 recovery epoch 的控制权。
 
 关键摘要固定为：
 

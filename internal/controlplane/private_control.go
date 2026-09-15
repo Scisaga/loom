@@ -58,6 +58,16 @@ type privateControlOperationRequestV1 struct {
 	ExpectedHeadHash string                  `json:"expected_head_hash"`
 	RequestID        string                  `json:"request_id"`
 	Operation        wire.ControlOperationV1 `json:"operation"`
+	Payload          json.RawMessage         `json:"payload,omitempty"`
+}
+
+type operationPayloadKey struct{}
+
+// OperationPayload 返回当前私有请求的原文。resolver/committer 必须按 kind
+// 严格解码并比较签名中的 typed payload hash，不能把此值当作已获授权（D104）。
+func OperationPayload(ctx context.Context) json.RawMessage {
+	payload, _ := ctx.Value(operationPayloadKey{}).(json.RawMessage)
+	return append(json.RawMessage(nil), payload...)
 }
 
 type privateControlOperationResponseV1 struct {
@@ -150,7 +160,8 @@ func (service *PrivateControlService) ServeHTTP(writer http.ResponseWriter, requ
 		writePrivateControlError(writer, http.StatusConflict, "[D104 private control] expected head 已过期")
 		return
 	}
-	scope, err := service.resolveScope(request.Context(), submitted.Operation)
+	ctx := context.WithValue(request.Context(), operationPayloadKey{}, submitted.Payload)
+	scope, err := service.resolveScope(ctx, submitted.Operation)
 	if err != nil {
 		writePrivateControlError(writer, http.StatusBadRequest, "[D104 private control] payload scope 被拒绝")
 		return
@@ -164,7 +175,7 @@ func (service *PrivateControlService) ServeHTTP(writer http.ResponseWriter, requ
 		writePrivateControlError(writer, http.StatusForbidden, "[D104 private control] 管理员授权被拒绝")
 		return
 	}
-	result, err := service.commit(request.Context(), verified)
+	result, err := service.commit(ctx, verified)
 	if err != nil {
 		writePrivateControlError(writer, http.StatusServiceUnavailable, "[D104 private control] quorum 暂不可用")
 		return

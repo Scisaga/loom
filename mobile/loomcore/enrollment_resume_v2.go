@@ -358,7 +358,7 @@ func verifyAndroidResumeProof(descriptor *wire.EnrollmentResumeDescriptorV1,
 	digest := sha256.Sum256(pinnedPlatformKey)
 	trust := wire.InviteProofTrustV2{
 		V1PlatformKey:           append(ed25519.PublicKey(nil), pinnedPlatformKey...),
-		V1PlatformKeyID:         bundle.BootstrapTransitionBundle.TransitionProof.Body.V1PlatformKeyID,
+		V1PlatformKeyID:         bundle.PlatformKeyID(),
 		V1MigrationAnchorDigest: fmt.Sprintf("sha256:%x", digest[:]),
 	}
 	return wire.VerifyResumeInviteProofBundle(bundle, descriptor, now, trust)

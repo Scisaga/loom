@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"loom/internal/controlplane"
+	"loom/internal/enrollmentv2"
 	"loom/internal/webui"
 	"loom/internal/wire"
 )
@@ -59,7 +60,7 @@ const (
 	controlLoopbackIP       = "127.0.0.1"
 )
 
-var controlOperationSchemas = wire.OperationSchemaRegistry{controlPingKind: 1}
+var controlOperationSchemas = wire.OperationSchemaRegistry{controlPingKind: 1, controlCreateInviteKind: 1}
 
 type controlDiskConfigV1 struct {
 	Schema          int                                       `json:"schema"`
@@ -110,13 +111,17 @@ type controlBrowserTLSV1 struct {
 }
 
 type controlOperationRecordV1 struct {
-	Schema        int                                `json:"schema"`
-	Operation     wire.ControlOperationV1            `json:"operation"`
-	Leaf          wire.ControlOperationLeafV1        `json:"leaf"`
-	Candidate     wire.HeadEntryV2                   `json:"candidate"`
-	Result        *controlCertifiedOperationResultV1 `json:"result,omitempty"`
-	AdminRotation *controlAdminRotationV1            `json:"admin_rotation,omitempty"`
-	Phases        []controlplane.Phase               `json:"phases,omitempty"`
+	Schema           int                                `json:"schema"`
+	Operation        wire.ControlOperationV1            `json:"operation"`
+	Leaf             wire.ControlOperationLeafV1        `json:"leaf"`
+	Candidate        wire.HeadEntryV2                   `json:"candidate"`
+	Result           *controlCertifiedOperationResultV1 `json:"result,omitempty"`
+	AdminRotation    *controlAdminRotationV1            `json:"admin_rotation,omitempty"`
+	Activation       *controlRuntimeActivationV1        `json:"activation,omitempty"`
+	Enrollment       *controlEnrollmentOperationV1      `json:"enrollment,omitempty"`
+	Invite           *controlInviteStateV1              `json:"invite,omitempty"`
+	AdditionalLeaves []wire.ControlOperationLeafV1      `json:"additional_leaves,omitempty"`
+	Phases           []controlplane.Phase               `json:"phases,omitempty"`
 }
 
 type controlOperationJournalV1 struct {
@@ -157,6 +162,7 @@ type controlOperationRequestV1 struct {
 	ExpectedHeadHash string                  `json:"expected_head_hash"`
 	RequestID        string                  `json:"request_id"`
 	Operation        wire.ControlOperationV1 `json:"operation"`
+	Payload          json.RawMessage         `json:"payload,omitempty"`
 }
 
 type controlCertifiedOperationResultV1 struct {
@@ -172,22 +178,23 @@ type controlCertifiedOperationResultV1 struct {
 }
 
 type controlRuntime struct {
-	mu         sync.Mutex
-	dir        string
-	config     controlDiskConfigV1
-	journal    controlOperationJournalV1
-	configKey  ed25519.PrivateKey
-	controlTLS tls.Certificate
-	browserTLS tls.Certificate
-	peerTLS    tls.Certificate
-	storage    *controlplane.RaftStorage
-	store      *controlplane.Store
-	leader     *controlplane.StableRaftLeader
-	service    *controlplane.PrivateControlService
-	uiReadOnly http.Handler
-	uiAdmin    http.Handler
-	now        func() time.Time
-	progress   atomic.Pointer[controlOperationReadState]
+	mu              sync.Mutex
+	dir             string
+	config          controlDiskConfigV1
+	journal         controlOperationJournalV1
+	configKey       ed25519.PrivateKey
+	controlTLS      tls.Certificate
+	browserTLS      tls.Certificate
+	peerTLS         tls.Certificate
+	storage         *controlplane.RaftStorage
+	store           *controlplane.Store
+	leader          *controlplane.StableRaftLeader
+	service         *controlplane.PrivateControlService
+	uiReadOnly      http.Handler
+	uiAdmin         http.Handler
+	now             func() time.Time
+	progress        atomic.Pointer[controlOperationReadState]
+	enrollmentStore *enrollmentv2.Store
 	// checkpoint 在每个已耐久化阶段之后调用，用于故障注入验证恢复边界（D104）。
 	checkpoint func(controlplane.Phase) error
 }
@@ -308,14 +315,20 @@ func cmdControlRequest(args []string) error {
 	adminDir := fs.String("admin-dir", "", "包含 endpoint.json 的管理员交付目录")
 	kind := fs.String("kind", controlPingKind, "已登记 operation kind")
 	reason := fs.String("reason", "operator control-plane reachability check", "审计理由")
+	payloadPath := fs.String("payload", "", "root-only 私有业务 payload 文件")
+	requestID := fs.String("request-id", "", "业务请求的稳定 request ID")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 || *adminDir == "" || strings.TrimSpace(*reason) == "" {
 		return errors.New("control request 必须指定 -admin-dir 和非空 -reason")
 	}
-	if *kind != controlPingKind {
-		return fmt.Errorf("当前生产 reducer 只登记 %q；未实现的操作不会被假提交", controlPingKind)
+	if *kind != controlPingKind && *kind != controlCreateInviteKind {
+		return errors.New("control request operation kind 未登记")
+	}
+	if *kind == controlPingKind && (*payloadPath != "" || *requestID != "") ||
+		*kind == controlCreateInviteKind && (*payloadPath == "" || *requestID == "") {
+		return errors.New("创建邀请必须指定 -payload 和 -request-id；control_ping 不接受业务 payload")
 	}
 	endpoint, client, err := loadControlAdminClient(*adminDir)
 	if err != nil {
@@ -326,7 +339,16 @@ func cmdControlRequest(args []string) error {
 	if err != nil {
 		return err
 	}
-	request, err := newControlPingRequest(*adminDir, endpoint, status, *reason, time.Now())
+	var request controlOperationRequestV1
+	if *kind == controlCreateInviteKind {
+		var raw []byte
+		raw, err = readOwnerOnlyFile(*payloadPath, 2<<20)
+		if err == nil {
+			request, err = newControlInviteRequest(*adminDir, endpoint, status, *requestID, raw, *reason)
+		}
+	} else {
+		request, err = newControlPingRequest(*adminDir, endpoint, status, *reason, time.Now())
+	}
 	if err != nil {
 		return err
 	}
@@ -780,6 +802,13 @@ func openControlRuntime(dir string, now func() time.Time) (*controlRuntime, erro
 	runtime := &controlRuntime{dir: dir, config: config, journal: journal,
 		configKey: decodedKeys[1], controlTLS: controlTLS, browserTLS: browserTLS, peerTLS: peerTLS,
 		storage: storage, store: store, now: now}
+	runtime.enrollmentStore, err = enrollmentv2.OpenStore(filepath.Join(dir, "enrollment-transactions.json"))
+	if err != nil {
+		return nil, err
+	}
+	if err := runtime.restorePendingEnrollmentBeforeCampaign(); err != nil {
+		return nil, err
+	}
 	runtime.publishOperationProgressLocked()
 	// A restart never reuses an old leadership assertion. N=1 still campaigns and
 	// commits a current-term barrier before serving writes.
@@ -876,12 +905,15 @@ func (runtime *controlRuntime) finishCommittedLocked() error {
 		if err := runtime.projectAdminRotations(); err != nil {
 			return err
 		}
+		if err := runtime.reconcileEnrollmentPrefixLocked(); err != nil {
+			return err
+		}
 		return runtime.recoverAppliedProgressLocked()
 	}
 	if (state.Active.Phase != controlplane.PhaseCertified && state.Active.Phase != controlplane.PhaseReconciled) || state.Active.QC == nil {
 		return errors.New("N=1 committed Head 未形成 exact QC")
 	}
-	if state.Active.Entry.Body.Payload.HeadKind == "ordinary" {
+	if state.Active.Entry.Body.Payload.HeadKind != "bootstrap" {
 		if err := runtime.finalizeJournalResultLocked(state.Active.Entry, state.Active.QC); err != nil {
 			return err
 		}
@@ -890,7 +922,10 @@ func (runtime *controlRuntime) finishCommittedLocked() error {
 		if err := runtime.recordOperationPhaseLocked(state.Active.Entry.EntryHash, controlplane.PhaseCertified); err != nil {
 			return err
 		}
-		// control_ping 没有外部副作用；空证据表示已完成该操作的全部 reconcile（D108）。
+		if err := runtime.reconcileEnrollmentPrefixLocked(); err != nil {
+			return err
+		}
+		// 私有事务投影已耐久化；ping 本身没有外部副作用（D108、D130）。
 		if err := runtime.store.MarkReconciled(state.Active.Entry.EntryHash, []string{}); err != nil {
 			return err
 		}
@@ -917,10 +952,7 @@ func (runtime *controlRuntime) verifyCommittedHead(_ context.Context, head wire.
 	for index := range runtime.journal.Records {
 		record := &runtime.journal.Records[index]
 		if record.Candidate.EntryHash == head.EntryHash && wire.EqualCanonical(record.Candidate, head) {
-			leaves := make([]wire.ControlOperationLeafV1, index+1)
-			for i := 0; i <= index; i++ {
-				leaves[i] = runtime.journal.Records[i].Leaf
-			}
+			leaves := runtime.operationLeaves(index + 1)
 			root, err := wire.ControlOperationRoot(leaves)
 			if err != nil || root != head.Body.Payload.OperationRoot {
 				return errors.New("operation journal 与 committed Head root 不匹配")
@@ -928,7 +960,13 @@ func (runtime *controlRuntime) verifyCommittedHead(_ context.Context, head wire.
 			if record.AdminRotation != nil {
 				return runtime.verifyAdminRotationRecord(index)
 			}
-			return runtime.verifyPingRecord(index)
+			if record.Activation != nil {
+				return runtime.verifyActivationRecord(index)
+			}
+			if record.Enrollment != nil {
+				return runtime.verifyEnrollmentRecord(index)
+			}
+			return runtime.verifyAdminOperationRecord(index)
 		}
 	}
 	return errors.New("committed ordinary Head 缺 durable operation preimage")
@@ -944,12 +982,9 @@ func (runtime *controlRuntime) finalizeJournalResultLocked(head wire.HeadEntryV2
 		if record.Result != nil {
 			return nil
 		}
-		leaves := make([]wire.ControlOperationLeafV1, index+1)
-		for i := 0; i <= index; i++ {
-			leaves[i] = runtime.journal.Records[i].Leaf
-		}
+		leaves := runtime.operationLeaves(index + 1)
 		leaf, leafIndex, treeSize, path, err := wire.ControlOperationInclusionProof(leaves,
-			record.Operation.Body.OperationID)
+			record.Leaf.OperationID)
 		if err != nil {
 			return err
 		}
@@ -958,7 +993,7 @@ func (runtime *controlRuntime) finalizeJournalResultLocked(head wire.HeadEntryV2
 			return err
 		}
 		record.Result = &controlCertifiedOperationResultV1{Schema: 1, Status: "certified",
-			RequestID: record.Operation.Body.OperationID, Head: head, ConfigQC: encodedQC,
+			RequestID: record.Leaf.OperationID, Head: head, ConfigQC: encodedQC,
 			OperationLeaf: leaf, OperationLeafIndex: leafIndex, OperationTreeSize: treeSize,
 			OperationAuditPath: path}
 		return runtime.persistJournalLocked()
@@ -982,19 +1017,31 @@ func (runtime *controlRuntime) readAuthority(_ context.Context) (controlplane.Co
 		Profiles: cloneAdminProfiles(runtime.config.AdminProfiles)}, nil
 }
 
-func (runtime *controlRuntime) resolveScope(_ context.Context,
+func (runtime *controlRuntime) resolveScope(ctx context.Context,
 	operation wire.ControlOperationV1) (wire.AdminResourceScopeV1, error) {
-	if operation.Body.Kind != controlPingKind {
+	switch operation.Body.Kind {
+	case controlPingKind:
+		if len(controlplane.OperationPayload(ctx)) != 0 {
+			return wire.AdminResourceScopeV1{}, errors.New("control_ping 不接受业务 payload")
+		}
+	case controlCreateInviteKind:
+		if _, err := decodeControlInvitePayload(controlplane.OperationPayload(ctx), operation); err != nil {
+			return wire.AdminResourceScopeV1{}, err
+		}
+	default:
 		return wire.AdminResourceScopeV1{}, errors.New("operation reducer 未登记")
 	}
 	return wire.AdminResourceScopeV1{ScopeKind: "cluster", Cluster: &struct{}{}}, nil
 }
 
-func (runtime *controlRuntime) commitOperation(_ context.Context,
+func (runtime *controlRuntime) commitOperation(ctx context.Context,
 	verified wire.VerifiedAdminOperationV1) (controlplane.CertifiedControlOperationV1, error) {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
 	operation := verified.Operation()
+	if operation.Body.Kind == controlCreateInviteKind {
+		return runtime.commitInviteLocked(ctx, verified)
+	}
 	for index := range runtime.journal.Records {
 		record := &runtime.journal.Records[index]
 		if record.Operation.Body.OperationID != operation.Body.OperationID {
@@ -1040,11 +1087,7 @@ func (runtime *controlRuntime) commitOperation(_ context.Context,
 		return controlplane.CertifiedControlOperationV1{}, err
 	}
 	leaf := wire.ControlOperationLeafV1{Schema: 1, OperationID: operation.Body.OperationID, ObjectID: objectID}
-	leaves := make([]wire.ControlOperationLeafV1, len(runtime.journal.Records)+1)
-	for i := range runtime.journal.Records {
-		leaves[i] = runtime.journal.Records[i].Leaf
-	}
-	leaves[len(leaves)-1] = leaf
+	leaves := append(runtime.operationLeaves(len(runtime.journal.Records)), leaf)
 	operationRoot, err := wire.ControlOperationRoot(leaves)
 	if err != nil {
 		return controlplane.CertifiedControlOperationV1{}, err
@@ -1205,7 +1248,9 @@ func (runtime *controlRuntime) controlHandler() http.Handler {
 				runtime.service.ServeHTTP(writer, request)
 			}
 		default:
-			if strings.HasPrefix(request.URL.Path, controlplane.PrivateControlOperationPath+"/") {
+			if strings.HasPrefix(request.URL.Path, privateControlInvitePrefix) {
+				runtime.serveInviteDelivery(writer, request)
+			} else if strings.HasPrefix(request.URL.Path, controlplane.PrivateControlOperationPath+"/") {
 				runtime.serveOperationProgress(writer, request, false)
 			} else {
 				runtime.serveControlUI(writer, request)
@@ -1548,6 +1593,16 @@ func fetchControlStatus(ctx context.Context, endpoint controlAdminEndpointV1,
 
 func newControlPingRequest(adminDir string, endpoint controlAdminEndpointV1,
 	status controlStatusResponseV1, reason string, now time.Time) (controlOperationRequestV1, error) {
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		return controlOperationRequestV1{}, err
+	}
+	return newControlSignedRequest(adminDir, endpoint, status, controlPingKind,
+		wire.HashRaw("loom-control-ping-payload-v1", nonce), "op-"+hex.EncodeToString(nonce), reason, now)
+}
+
+func newControlSignedRequest(adminDir string, endpoint controlAdminEndpointV1,
+	status controlStatusResponseV1, kind, payloadHash, operationID, reason string, now time.Time) (controlOperationRequestV1, error) {
 	certificatePEM, err := readOwnerOnlyFile(filepath.Join(adminDir, endpoint.AdminCertificate), 1<<20)
 	if err != nil {
 		return controlOperationRequestV1{}, err
@@ -1574,12 +1629,6 @@ func newControlPingRequest(adminDir string, endpoint controlAdminEndpointV1,
 		return controlOperationRequestV1{}, errors.New("admin private key 必须是 PKCS#8 signer")
 	}
 	digest, _ := wire.AdminCertificateDigest(certificate.Raw)
-	nonce := make([]byte, 16)
-	if _, err := rand.Read(nonce); err != nil {
-		return controlOperationRequestV1{}, err
-	}
-	operationID := "op-" + hex.EncodeToString(nonce)
-	payloadHash := wire.HashRaw("loom-control-ping-payload-v1", nonce)
 	instant := now.UTC().Truncate(time.Second)
 	body := wire.ControlOperationBodyV1{Schema: 1, ClusterID: status.ClusterID,
 		OperationID: operationID, AuthorID: endpoint.AdminID, AdminCertDigest: digest,
@@ -1590,7 +1639,7 @@ func newControlPingRequest(adminDir string, endpoint controlAdminEndpointV1,
 		BaseControlEpoch:          status.Head.Body.Payload.ControlEpoch,
 		BaseControlSetHash:        status.Head.Body.Payload.ControlSetHash,
 		BaseControlRevision:       status.Head.Body.Payload.ControlRevision,
-		ParentHeadHash:            status.Head.HeadHash, Kind: controlPingKind, PayloadSchema: 1,
+		ParentHeadHash:            status.Head.HeadHash, Kind: kind, PayloadSchema: 1,
 		PayloadHash: payloadHash, Reason: reason}
 	operation, err := wire.NewControlOperation(body, privateKey, controlOperationSchemas)
 	if err != nil {

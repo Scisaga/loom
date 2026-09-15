@@ -662,6 +662,13 @@ func validateTransitionContext(kind string, body []byte) error {
 			return errors.New("[D116 recovery] recovery policy activation context 无效")
 		}
 		return nil
+	case "legacy_runtime_activation":
+		var context RuntimeActivationContextV1
+		if _, err := DecodeStrict(body, 4096, &context); err != nil || context.Schema != 1 || context.Kind != kind ||
+			requireCanonicalHashes(context.StatementHash) != nil {
+			return errors.New("[D104 runtime activation] 旧 daemon 迁移 context 无效")
+		}
+		return nil
 	default:
 		return fmt.Errorf("[D104 Raft] 未知 head_kind %q", kind)
 	}
