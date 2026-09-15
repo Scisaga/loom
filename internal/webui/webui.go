@@ -1781,6 +1781,9 @@ func writeHTML(w http.ResponseWriter, body string) {
 	deviceInventoryLiveDigest := sha256.Sum256([]byte(deviceInventoryLiveScript))
 	deviceInventoryLiveHash := base64.StdEncoding.EncodeToString(deviceInventoryLiveDigest[:])
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'sha256-"+progressHash+"' 'sha256-"+topologyHash+"' 'sha256-"+deviceEnrollmentHash+"' 'sha256-"+copyValueHash+"' 'sha256-"+deviceInventoryLiveHash+"'; connect-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'")
-	w.Header().Set("Referrer-Policy", "no-referrer")
+	// no-referrer 会让浏览器普通表单 POST 的 Origin 变成 null，导致合法写入
+	// 被 private control 的同源门禁拒绝。same-origin 保留同源表单证据，
+	// 同时禁止向其他 origin 发送 Referer；邀请秘密仍不得进入 URL（D104）。
+	w.Header().Set("Referrer-Policy", "same-origin")
 	fmt.Fprint(w, body)
 }
