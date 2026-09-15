@@ -46,7 +46,8 @@ func runtimeActivationFixture(t *testing.T) (RuntimeActivationBundleV1, InvitePr
 	popRoot, _ := RecoveryKeyPossessionRoot(&policy, pops)
 	platformPublic, platformKey := deterministicEd25519(0x21)
 	platformDigest := sha256.Sum256(platformPublic)
-	statement := RuntimeActivationStatementV1{Schema: 1, ClusterID: set.ClusterID,
+	migrationRoot, _ := RuntimeDeviceMigrationRoot(nil)
+	statement := RuntimeActivationStatementV1{DeviceMigrationRoot: migrationRoot, Schema: 1, ClusterID: set.ClusterID,
 		OperationID: "demo-activation", ParentHeadHash: parent.HeadHash, ParentQCHash: parentQCHash,
 		LegacyRecoveryPolicyHash: legacyHash, V1PlatformKeyID: "demo-platform-key",
 		V1PlatformPublicKey: base64.RawURLEncoding.EncodeToString(platformPublic),

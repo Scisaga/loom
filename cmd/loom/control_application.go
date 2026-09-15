@@ -38,6 +38,7 @@ type controlApplicationV1 struct {
 	Transactions       []enrollmentv2.TransactionStateV2       `json:"transactions"`
 	IssuanceRegistry   []wire.EnrollmentIssuanceRegistryLeafV1 `json:"issuance_registry"`
 	Devices            []controlDeviceStateV1                  `json:"devices"`
+	DeviceMigrations   []wire.RuntimeDeviceMigrationLeafV1     `json:"device_migrations,omitempty"`
 }
 
 type controlInviteStateV1 struct {
@@ -217,6 +218,28 @@ func (application *controlApplicationV1) validate() error {
 	}
 	if _, err := wire.EnrollmentIssuanceRegistryRoot(application.IssuanceRegistry); err != nil {
 		return err
+	}
+	if _, err := wire.RuntimeDeviceMigrationRoot(application.DeviceMigrations); err != nil {
+		return err
+	}
+	for _, migration := range application.DeviceMigrations {
+		if migration.ClusterID != application.ClusterID {
+			return errors.New("[设备迁移] 原身份不属于本网络")
+		}
+		found := false
+		for _, device := range application.Devices {
+			if device.View.DeviceID != migration.DeviceID {
+				continue
+			}
+			if device.EnrollmentInviteID != "" || device.View.Active != nil &&
+				device.View.Active.IdentitySPKIHash != migration.IdentitySPKIHash {
+				return errors.New("[设备迁移] 原身份不能伪造新入网或被替换")
+			}
+			found = true
+		}
+		if !found {
+			return errors.New("[设备迁移] 认证状态丢失原 Device")
+		}
 	}
 	return nil
 }

@@ -373,7 +373,8 @@ func controlInviteRuntime(t *testing.T) (*controlRuntime, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	statement := wire.RuntimeActivationStatementV1{Schema: 1, ClusterID: application.ClusterID, OperationID: "demo-runtime-activation",
+	migrationRoot, _ := wire.RuntimeDeviceMigrationRoot(nil)
+	statement := wire.RuntimeActivationStatementV1{DeviceMigrationRoot: migrationRoot, Schema: 1, ClusterID: application.ClusterID, OperationID: "demo-runtime-activation",
 		ParentHeadHash: parent.HeadHash, ParentQCHash: qcHash, LegacyRecoveryPolicyHash: parent.Body.Payload.RecoveryPolicyHash,
 		V1PlatformKeyID: platformID, V1PlatformPublicKey: base64.RawURLEncoding.EncodeToString(platformPublic), V1PlatformKeyDigest: fmt.Sprintf("sha256:%x", platformDigest),
 		NewRecoveryEpoch: 2, NewRecoveryPolicyHash: policyHash, NewRecoveryKeyPoPRoot: popRoot, Roots: roots,

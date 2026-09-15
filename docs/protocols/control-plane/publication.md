@@ -308,6 +308,7 @@ RuntimeActivationStatementV1
   parent_head_hash, parent_qc_hash, legacy_recovery_policy_hash
   v1_platform_key_id, v1_platform_public_key, v1_platform_key_digest
   new_recovery_epoch = 2, new_recovery_policy_hash, new_recovery_key_pop_root
+  device_migration_root              # 逐设备私有迁移记录的 RFC 6962 根
   roots: RuntimeActivationRootsV1
   issued_at, reason
 
@@ -344,6 +345,25 @@ ControlSet、private peer directory commitment、原日志和原 operation leave
 control epoch 为 0，Raft term/index/前项继承真实日志，不能重置或预留假坐标。daemon 必须从私有
 迁移输入独立重算实际 SSOT、身份、CA、ACL 和 issuer roots，而不是把签名中的 hash 直接当成配置。
 旧式 parent 条件使同一 lineage 无法再次使用该转换。
+
+逐设备迁移记录以 `RuntimeDeviceMigrationLeafV1` 固定 `cluster_id/device_id/platform`、
+原 `BootstrapDeviceFloorLeafV1`、原身份 SPKI hash、wrapping key hash、新证书与 profile hash、
+以及实际 activation 日志中的签发坐标。记录按 Device ID 严格排序、不重复，使用 RFC 6962
+叶/内部节点规则生成 `device_migration_root`，由同一 owner/platform statement 承诺。
+daemon 从完整私有 preimage 重算该根，并以实际迁移日志作为身份起点；不得构造虚假的
+Enrollment reservation、completion 或新 Invite 来代表存量设备。
+
+`RuntimeDeviceMigrationPackageV1` 私有交付相应 inclusion proof、activation bundle、该设备
+的新证书、CA profile/registry、不可变镜像地址和 `DeviceConfigDeliveryV1`。配置窗口首项必须
+属于实际 activation Head，之后沿正式 `device_config` 的连续 Head/QC/Device proof 推进。
+这样，包含私有目录的 Device credential 可以绑定 activation 之后已经存在的同 epoch Head，
+不产生 Head 与密封配置摘要的自引用。迁移包及其逐设备叶不能进入公开 distribution。
+
+客户端先在保留的原平台信任根下验证旧 signed current 和本机防回退下限，再核对迁移承诺；
+`RuntimeDeviceMigrationExpectedV1` 的身份 SPKI、wrapping key 和已验证旧 floor 必须从本机
+受保护状态取得，不能复制包内自报字段。证书仍必须绑定同一 P-256 身份并匹配当前认证 CA
+registry；包内目录不能自行获得 authority。安装时原子保存迁移来源证明、证书、配置、封装
+凭据与四组 v2 floor，回读成功后才启动新版。历史证明和旧密钥存档不恢复任何 v1 业务入口。
 
 客户端必须有独立的原 v1 platform key/ID/anchor digest、已信任的 exact parent Head，或现场 QR
 交付的新 checkpoint 之一；提供多个 anchor 时必须全部匹配。bundle 自带公钥不构成信任根。

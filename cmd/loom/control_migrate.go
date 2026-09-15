@@ -188,6 +188,17 @@ func validateControlMigrationSource(input *controlMigrationInputV1) error {
 			return errors.New("迁移缺少原 SSOT 中的 Device，不能用空网络替代")
 		}
 	}
+	migrations := make(map[string]wire.RuntimeDeviceMigrationLeafV1, len(input.Application.DeviceMigrations))
+	for _, migration := range input.Application.DeviceMigrations {
+		migrations[migration.DeviceID] = migration
+	}
+	for _, node := range ssot.Nodes {
+		if devices[node.ID].View.State == "active" {
+			if _, found := migrations[node.ID]; !found {
+				return errors.New("迁移缺少原 Device 的身份、证书与 floor 承诺")
+			}
+		}
+	}
 	for _, client := range previous.Clients {
 		if client.PublicKey == "" {
 			continue
@@ -209,6 +220,10 @@ func validateControlMigrationSource(input *controlMigrationInputV1) error {
 		hash, err := wire.HashBytes(wire.DomainEnrollmentIdentitySPKI, spki)
 		if err != nil || device.View.Active == nil || device.View.Active.IdentitySPKIHash != hash {
 			return errors.New("迁移改变了已加入 Device 的身份 key")
+		}
+		migration, found := migrations[client.ID]
+		if !found || migration.IdentitySPKIHash != hash || client.Platform != "" && migration.Platform != client.Platform {
+			return errors.New("迁移未保留已加入 Device 的逐设备身份或平台")
 		}
 	}
 	return nil
@@ -263,11 +278,16 @@ func (runtime *controlRuntime) prepareControlMigration(input controlMigrationInp
 	qc, _ := wire.MarshalCanonical(state.CertifiedQC)
 	qcHash, _ := wire.ConfigQCHash(qc)
 	issued := runtime.now().UTC().Truncate(time.Second)
+	migrationRoot, err := wire.RuntimeDeviceMigrationRoot(input.Application.DeviceMigrations)
+	if err != nil {
+		return request, err
+	}
 	operationID := "migration-" + inputHash[len("sha256:"):]
 	statement := wire.RuntimeActivationStatementV1{Schema: 1, ClusterID: runtime.config.ClusterID, OperationID: operationID,
 		ParentHeadHash: state.CertifiedHead.HeadHash, ParentQCHash: qcHash, LegacyRecoveryPolicyHash: state.CertifiedHead.Body.Payload.RecoveryPolicyHash,
 		V1PlatformKeyID: keyID, V1PlatformPublicKey: base64.RawURLEncoding.EncodeToString(public), V1PlatformKeyDigest: fmt.Sprintf("sha256:%x", digest),
-		NewRecoveryEpoch: 2, NewRecoveryPolicyHash: policyHash, NewRecoveryKeyPoPRoot: popRoot, Roots: roots, IssuedAt: issued.Format(time.RFC3339), Reason: reason}
+		NewRecoveryEpoch: 2, NewRecoveryPolicyHash: policyHash, NewRecoveryKeyPoPRoot: popRoot, DeviceMigrationRoot: migrationRoot,
+		Roots: roots, IssuedAt: issued.Format(time.RFC3339), Reason: reason}
 	// 原 owner preimage 由磁盘中的初始 profile 恢复，不能用轮换后的浏览器 issuer 代替。
 	policy, err := runtime.legacyRuntimePolicy()
 	if err != nil {

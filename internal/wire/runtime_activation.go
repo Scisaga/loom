@@ -49,6 +49,7 @@ type RuntimeActivationStatementV1 struct {
 	NewRecoveryEpoch         int64                    `json:"new_recovery_epoch"`
 	NewRecoveryPolicyHash    string                   `json:"new_recovery_policy_hash"`
 	NewRecoveryKeyPoPRoot    string                   `json:"new_recovery_key_pop_root"`
+	DeviceMigrationRoot      string                   `json:"device_migration_root"`
 	Roots                    RuntimeActivationRootsV1 `json:"roots"`
 	IssuedAt                 string                   `json:"issued_at"`
 	Reason                   string                   `json:"reason"`
@@ -96,7 +97,7 @@ func RuntimeActivationStatementHash(statement *RuntimeActivationStatementV1) (st
 	}
 	if err := requireCanonicalHashes(statement.ParentHeadHash, statement.ParentQCHash,
 		statement.LegacyRecoveryPolicyHash, statement.V1PlatformKeyDigest, statement.NewRecoveryPolicyHash,
-		statement.NewRecoveryKeyPoPRoot, statement.Roots.SnapshotHash, statement.Roots.EffectiveSSOTHash,
+		statement.NewRecoveryKeyPoPRoot, statement.DeviceMigrationRoot, statement.Roots.SnapshotHash, statement.Roots.EffectiveSSOTHash,
 		statement.Roots.DeviceViewsRoot, statement.Roots.AdminACLRoot, statement.Roots.CAProfileRoot,
 		statement.Roots.BootstrapIssuerRegistryRoot); err != nil {
 		return "", err

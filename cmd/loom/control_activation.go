@@ -54,6 +54,26 @@ func (runtime *controlRuntime) verifyActivationRecord(index int) error {
 	if !wire.EqualCanonical(roots, statement.Roots) || !wire.EqualCanonical(activation.Application.RecoveryPolicy, bundle.RecoveryPolicy) {
 		return errors.New("[D104 activation] 实际 application 与 owner 签署的迁移不一致")
 	}
+	migrationRoot, err := wire.RuntimeDeviceMigrationRoot(activation.Application.DeviceMigrations)
+	if err != nil || migrationRoot != statement.DeviceMigrationRoot {
+		return errors.New("[设备迁移] 实际逐设备身份/floor 与原 owner 签名不一致")
+	}
+	for _, migration := range activation.Application.DeviceMigrations {
+		if migration.Issuance.RecoveryEpoch != record.Candidate.Body.Payload.RecoveryEpoch ||
+			migration.Issuance.RaftIndex != record.Candidate.Body.Payload.RaftIndex {
+			return errors.New("[设备迁移] 原身份签发坐标未进入实际迁移日志")
+		}
+		profileFound := false
+		for _, profile := range activation.Application.CARegistry.DeviceProfiles {
+			hash, err := wire.DeviceCertificateProfileStateHash(&profile)
+			if err == nil && hash == migration.DeviceCertificateProfileHash && profile.Status == "active" {
+				profileFound = true
+			}
+		}
+		if !profileFound {
+			return errors.New("[设备迁移] 原身份的证书 profile 不属于迁移后的 active CA registry")
+		}
+	}
 	var matchingControl bool
 	for _, service := range activation.Application.Services {
 		if service.Role == "control_api" {
