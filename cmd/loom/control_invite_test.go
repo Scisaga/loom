@@ -521,7 +521,7 @@ func controlInviteDeviceProfile(t *testing.T, runtime *controlRuntime) wire.Devi
 		TargetStatus: "active", IssuerID: "demo-device-ca", IssuerGeneration: 1, IssuerFencingEpoch: 1,
 		IssuanceNotBefore: now.Add(-time.Minute).Format(time.RFC3339), IssuanceNotAfter: now.Add(time.Hour).Format(time.RFC3339),
 		ProfileKind: "loom-device-x509-v1", IssuerCertificateDER: chain[0], IssuerCertificateHash: issuerHash, IssuerChainDER: chain, IssuerChainHash: chainHash,
-		IssuerKeyArtifactHash: wire.HashRaw("demo-secret-v1", []byte("device-ca")), AllowedPlatforms: []string{"linux-server"}, AllowedResponsibilities: []string{"use_loom"},
+		IssuerKeyArtifactHash: wire.HashRaw("demo-secret-v1", []byte("device-ca")), AllowedPlatforms: []string{"windows-desktop", "android", "linux-server"}, AllowedResponsibilities: []string{"use_loom"},
 		ValiditySeconds: 3600, AllowedSubjectKeyAlgorithm: "p256", SignatureAlgorithm: "ed25519", SubjectMode: "empty", SANURIPrefix: "spiffe://demo-cluster.example/device/",
 		KeyUsageBits: []string{"digital_signature"}, RequiredEKUOIDs: []string{"1.3.6.1.5.5.7.3.2"}, RequiredPolicyOIDs: []string{"1.3.6.1.4.1.55555.2"},
 		ExtensionOrderOIDs: []string{"2.5.29.15", "2.5.29.37", "2.5.29.19", "2.5.29.35", "2.5.29.17", "2.5.29.32"}}

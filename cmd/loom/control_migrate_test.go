@@ -99,7 +99,8 @@ func TestControlMigrationRefusesDroppingSourceDevices(t *testing.T) {
 	}
 }
 
-func TestControlMigrationIdentityReaderUsesOriginalCertifiedJournal(t *testing.T) {
+func controlMigratedDeviceRuntime(t *testing.T, change func(*controlApplicationV1, *controlRuntime)) (*controlRuntime, string, wire.RuntimeDeviceMigrationLeafV1, controlCertifiedOperationResultV1) {
+	t.Helper()
 	dir, admin := newAdminRotationFixture(t, true)
 	runtime, err := openControlRuntime(dir, time.Now)
 	if err != nil {
@@ -137,6 +138,9 @@ func TestControlMigrationIdentityReaderUsesOriginalCertifiedJournal(t *testing.T
 		LegacyFloor: wire.BootstrapDeviceFloorLeafV1{Schema: 1, DeviceID: deviceID, V1Generation: 9,
 			V1SignedCurrentHash: hash("signed-current"), V1PayloadHash: hash("payload")}}
 	application.DeviceMigrations = []wire.RuntimeDeviceMigrationLeafV1{migration}
+	if change != nil {
+		change(&application, runtime)
+	}
 	input := controlMigrationInputV1{Schema: 1, Application: application, RecoveryProofs: proofs}
 	inputHash, _ := wire.HashObject("loom-control-migration-input-v1", input)
 	_, private, _ := ed25519.GenerateKey(rand.Reader)
@@ -155,6 +159,12 @@ func TestControlMigrationIdentityReaderUsesOriginalCertifiedJournal(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	return runtime, admin, migration, *result
+}
+
+func TestControlMigrationIdentityReaderUsesOriginalCertifiedJournal(t *testing.T) {
+	runtime, _, migration, result := controlMigratedDeviceRuntime(t, nil)
+	deviceID, identityHash, coordinate := migration.DeviceID, migration.IdentitySPKIHash, migration.Issuance
 	identity, err := runtime.readDeviceIdentityLocked(migration.DeviceCertificateHash)
 	if err != nil || identity.Record.DeviceID != deviceID || identity.Record.IdentitySPKIHash != identityHash ||
 		identity.Record.Issuance != coordinate || len(identity.DeviceConfigUpdates) != 1 || identity.Head.HeadHash != result.Head.HeadHash {
@@ -163,7 +173,7 @@ func TestControlMigrationIdentityReaderUsesOriginalCertifiedJournal(t *testing.T
 	if _, found := runtime.enrollmentStore.SnapshotRecord(deviceID); found {
 		t.Fatal("迁移伪造了 Enrollment 记录")
 	}
-	replayed, err := openControlRuntime(dir, runtime.now)
+	replayed, err := openControlRuntime(runtime.dir, runtime.now)
 	if err != nil {
 		t.Fatal(err)
 	}

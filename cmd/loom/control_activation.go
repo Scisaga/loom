@@ -27,7 +27,7 @@ type controlRuntimeActivationV1 struct {
 func (runtime *controlRuntime) verifyActivationRecord(index int) error {
 	record := runtime.journal.Records[index]
 	activation := record.Activation
-	if activation == nil || record.AdminRotation != nil || record.Enrollment != nil || record.Invite != nil || len(record.AdditionalLeaves) != 0 ||
+	if activation == nil || record.AdminRotation != nil || record.Enrollment != nil || record.Invite != nil || record.DevicePublication != nil || len(record.AdditionalLeaves) != 0 ||
 		record.Operation.Body.Kind != controlActivationKind {
 		return errors.New("[D104 activation] journal union 无效")
 	}

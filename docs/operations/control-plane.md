@@ -129,6 +129,34 @@ sudo systemctl start loom-control.service
 出现“系统层错误/无效数字签名”时，先查 leaf/issuer 算法、完整链与 key 匹配，再看 Windows
 错误码；不通过忽略 HTTPS 错误验收，不要求反复导入/重启来替代诊断。
 
+## 原设备迁移与配置交付
+
+已有设备通过 [客户端迁移](../protocols/control-plane/migration.md) 保留原身份和本机 floor。
+`control migrate` 仍要求经过验证的完整生产 application 输入；客户端的迁移请求不是可直接
+提交的 application。该输入的生成与正式服务接线进度以[实现对照](../development/implementation.md)为准。
+
+原身份已进入认证日志、证书与配置材料已就绪后，通过私有管理员入口导出：
+
+```bash
+loom control export-migration \
+  -admin-dir <offline-admin-directory> -device <device-id> -out <private-output-directory>
+```
+
+生成的 `device.loom-migration` 由客户端正常文件导入入口消费。它绑定原平台、身份、
+wrapping key、旧 signed current 与实际 v2 Head；不能用新邀请替代迁移，也不能清除本机身份重试。
+
+设备后续配置使用 `control publish-device-config`。`<publication-file>` 保存生成器的规范配置、
+密文与真实证据；`<proposal-id>` 必须与生成材料时的 ID 相同：
+
+```bash
+loom control publish-device-config \
+  -admin-dir <offline-admin-directory> -payload <publication-file> \
+  -request-id <proposal-id> -out <private-request-directory>
+```
+
+输出目录以 `0700` 保存发送前的 exact 签名请求和认证回执；重试复用同一目录。
+该操作保留身份、职责和 grants，只推进设备配置代。配置发布回执不代替客户端安装与正常流量验收。
+
 ## 按变更选择验收
 
 读取认证状态：

@@ -385,7 +385,7 @@ func (runtime *controlRuntime) applyAdminRotationRoots(body *wire.HeadEntryBodyV
 func (runtime *controlRuntime) verifyAdminRotationRecord(index int) error {
 	record := runtime.journal.Records[index]
 	rotation := record.AdminRotation
-	if rotation == nil || record.Activation != nil || record.Enrollment != nil || record.Invite != nil || len(record.AdditionalLeaves) != 0 {
+	if rotation == nil || record.Activation != nil || record.Enrollment != nil || record.Invite != nil || record.DevicePublication != nil || len(record.AdditionalLeaves) != 0 {
 		return errors.New("[D104 admin rotation] 缺轮换 preimage")
 	}
 	p := rotation.Payload

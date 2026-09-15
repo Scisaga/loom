@@ -155,6 +155,12 @@ func validateLinuxRuntimeRedactedFile(file LinuxRuntimeFileV1) error {
 	return nil
 }
 
+// ValidatePublicRuntimeJSON 检查各客户端公开配置共用的秘密占位边界。
+// 它只检查公开编码；宿主仍须在验签和解封后验证运行语义。
+func ValidatePublicRuntimeJSON(raw []byte) error {
+	return validateLinuxRuntimeRedactedFile(LinuxRuntimeFileV1{Path: "config.json", Content: string(raw)})
+}
+
 func validateLinuxRuntimeJSONSecrets(value any) error {
 	switch current := value.(type) {
 	case map[string]any:

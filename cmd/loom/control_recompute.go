@@ -15,11 +15,12 @@ import (
 func (runtime *controlRuntime) verifyAdminOperationRecord(index int) error {
 	record := &runtime.journal.Records[index]
 	if record.Schema != 1 || record.AdminRotation != nil || record.Activation != nil || record.Enrollment != nil ||
-		(record.Operation.Body.Kind != controlPingKind && record.Operation.Body.Kind != controlCreateInviteKind) {
+		(record.Operation.Body.Kind != controlPingKind && record.Operation.Body.Kind != controlCreateInviteKind && record.Operation.Body.Kind != controlPublishDeviceKind) {
 		return errors.New("[D104] 未登记的管理 operation")
 	}
-	if record.Operation.Body.Kind == controlPingKind && (record.Invite != nil || len(record.AdditionalLeaves) != 0) ||
-		record.Operation.Body.Kind == controlCreateInviteKind && (record.Invite == nil || len(record.AdditionalLeaves) != 1) {
+	if record.Operation.Body.Kind == controlPingKind && (record.Invite != nil || record.DevicePublication != nil || len(record.AdditionalLeaves) != 0) ||
+		record.Operation.Body.Kind == controlCreateInviteKind && (record.Invite == nil || record.DevicePublication != nil || len(record.AdditionalLeaves) != 1) ||
+		record.Operation.Body.Kind == controlPublishDeviceKind && (record.DevicePublication == nil || record.Invite != nil || len(record.AdditionalLeaves) != 0) {
 		return errors.New("[D104] 管理 operation union/leaf 不一致")
 	}
 	var parent *wire.HeadEntryV2
@@ -125,6 +126,21 @@ func (runtime *controlRuntime) verifyAdminOperationRecord(index int) error {
 		if err != nil || !wire.EqualCanonical(record.AdditionalLeaves[0], wire.ControlOperationLeafV1{
 			Schema: 1, OperationID: record.Invite.Record.OperationID, ObjectID: hash}) {
 			return errors.New("[D104 Invite] record leaf 与认证记录不一致")
+		}
+		roots, err := next.roots()
+		if err != nil {
+			return err
+		}
+		controlApplyRoots(&expected, roots)
+	}
+	if record.DevicePublication != nil {
+		application, err := runtime.applicationBefore(index)
+		if err != nil {
+			return err
+		}
+		next, err := application.reduceDevicePublication(*record.DevicePublication, record.Operation.Body, actual.Payload.CommittedLogicalTime)
+		if err != nil {
+			return err
 		}
 		roots, err := next.roots()
 		if err != nil {

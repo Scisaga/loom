@@ -39,6 +39,7 @@ type controlApplicationV1 struct {
 	IssuanceRegistry   []wire.EnrollmentIssuanceRegistryLeafV1 `json:"issuance_registry"`
 	Devices            []controlDeviceStateV1                  `json:"devices"`
 	DeviceMigrations   []wire.RuntimeDeviceMigrationLeafV1     `json:"device_migrations,omitempty"`
+	ArtifactPolicies   []wire.ArtifactAvailabilityPolicyV1     `json:"artifact_policies,omitempty"`
 }
 
 type controlInviteStateV1 struct {
@@ -151,6 +152,14 @@ func (application *controlApplicationV1) validate() error {
 	}
 	if err := wire.ValidateRecoveryPolicy(&application.RecoveryPolicy); err != nil {
 		return err
+	}
+	for i, policy := range application.ArtifactPolicies {
+		if err := wire.ValidateArtifactAvailabilityPolicy(&policy); err != nil {
+			return err
+		}
+		if policy.ClusterID != application.ClusterID || i > 0 && application.ArtifactPolicies[i-1].PolicyID >= policy.PolicyID {
+			return errors.New("[配置发布] artifact policy 必须属于本网络且按 ID 唯一排序")
+		}
 	}
 	if application.RecoveryPolicy.ClusterID != application.ClusterID || application.InvitePolicy.ClusterID != application.ClusterID {
 		return errors.New("[D104 application] policy cluster 不一致")

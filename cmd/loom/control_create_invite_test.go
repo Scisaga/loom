@@ -114,3 +114,34 @@ func TestControlCreateInviteValidatesRolesAndNameBeforeSavingRequest(t *testing.
 		t.Fatal("非法 UTF-8 名称被接受")
 	}
 }
+
+func TestControlWindowsInviteUsesV2IdentityAndWrappingContract(t *testing.T) {
+	runtime, admin := controlInviteRuntime(t)
+	endpoint, client, _ := progressTestServer(t, runtime, admin)
+	var options controlInviteContextV1
+	if err := fetchControlInviteJSON(context.Background(), endpoint, client, privateControlInviteContextPath, &options); err != nil {
+		t.Fatal(err)
+	}
+	grant := options.Grants[0].Grant
+	out := filepath.Join(t.TempDir(), "delivery")
+	input := controlCreateInviteInputV1{Name: "demo-windows", Platform: "windows-desktop", Responsibilities: []string{"use_loom"}, Grants: []string{grant.Kind + ":" + grant.TargetID}, TTLSeconds: 900}
+	if err := createControlInvite(context.Background(), admin, endpoint, client, input, out, runtime.now); err != nil {
+		t.Fatal(err)
+	}
+	var request controlInviteRequestFileV1
+	if err := readCanonicalFile(filepath.Join(out, "request.json"), 8<<20, &request); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := decodeControlInvitePayload(request.Request.Payload, request.Request.Operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent := payload.Invite.Opening.DeviceEnrollmentIntent
+	if intent.Platform != "windows-desktop" || !wire.EqualCanonical(intent.Responsibilities.Values, []string{"use_loom"}) {
+		t.Fatal("Windows 邀请平台或职责未绑定真实 v2 intent")
+	}
+	input.Responsibilities = []string{"use_loom", "forward"}
+	if err := createControlInvite(context.Background(), admin, endpoint, client, input, filepath.Join(t.TempDir(), "invalid"), runtime.now); err == nil {
+		t.Fatal("Windows 邀请接受了不支持的职责")
+	}
+}

@@ -85,13 +85,32 @@ func IssueReservedDeviceCertificate(input DeviceIssuanceContext, issuerKey crypt
 	if err != nil || identityHash != record.State.IdentityKeyHash {
 		return nil, errors.New("[D129 Device CA] identity key 不匹配已 admission 的 SPKI")
 	}
-	parsed, err := x509.ParsePKIXPublicKey(input.IdentitySPKIDER)
+	return issueDeviceCertificate(profile, intent.DeviceID, intent.Platform, intent.Responsibilities.Values,
+		input.IdentitySPKIDER, identityHash, coordinate.CommittedLogicalTime,
+		wire.IssuanceLogCoordinateV1{RecoveryEpoch: coordinate.RecoveryEpoch, RaftIndex: coordinate.RaftIndex}, issuerKey, random)
+}
+
+// issueDeviceCertificate 只负责 exact profile 的证书材料；调用方必须先验证
+// reservation 或原设备迁移请求。证书本身不授予 Device view/config authority。
+func issueDeviceCertificate(profile wire.DeviceCertificateProfileStateV1, deviceID, platform string,
+	responsibilities []string, identitySPKIDER []byte, identityHash, issuedAtText string,
+	issuance wire.IssuanceLogCoordinateV1, issuerKey crypto.Signer, random io.Reader) ([]byte, error) {
+	if err := wire.ValidateDeviceCertificateProfileState(&profile); err != nil {
+		return nil, err
+	}
+	if profile.Status != "active" {
+		return nil, errors.New("[Device CA] 签发仅允许 active profile")
+	}
+	if _, err := wire.ParseTimeZ(issuedAtText); err != nil {
+		return nil, err
+	}
+	parsed, err := x509.ParsePKIXPublicKey(identitySPKIDER)
 	identity, ok := parsed.(*ecdsa.PublicKey)
 	if err != nil || !ok || identity.Curve != elliptic.P256() {
 		return nil, errors.New("[D102 Device CA] identity 必须是 P-256")
 	}
 	canonicalSPKI, err := x509.MarshalPKIXPublicKey(identity)
-	if err != nil || !bytes.Equal(canonicalSPKI, input.IdentitySPKIDER) {
+	if err != nil || !bytes.Equal(canonicalSPKI, identitySPKIDER) {
 		return nil, errors.New("[D102 Device CA] identity SPKI 不是 canonical DER")
 	}
 	issuerDER, err := base64.RawURLEncoding.DecodeString(profile.ProfileIntent.IssuerCertificateDER)
@@ -106,7 +125,7 @@ func IssueReservedDeviceCertificate(input DeviceIssuanceContext, issuerKey crypt
 	if err != nil || !bytes.Equal(issuerSPKI, issuer.RawSubjectPublicKeyInfo) {
 		return nil, errors.New("[D102 Device CA] signer 不属于当前 profile issuer")
 	}
-	issuedAt, _ := wire.ParseTimeZ(coordinate.CommittedLogicalTime)
+	issuedAt, _ := wire.ParseTimeZ(issuedAtText)
 	from, _ := wire.ParseTimeZ(profile.ProfileIntent.IssuanceNotBefore)
 	until, _ := wire.ParseTimeZ(profile.ProfileIntent.IssuanceNotAfter)
 	if issuedAt.Before(from) || !issuedAt.Before(until) {
@@ -136,7 +155,7 @@ func IssueReservedDeviceCertificate(input DeviceIssuanceContext, issuerKey crypt
 	if serial.Sign() == 0 {
 		serial.SetInt64(1)
 	}
-	uri, err := url.Parse(profile.ProfileIntent.SANURIPrefix + url.PathEscape(intent.DeviceID))
+	uri, err := url.Parse(profile.ProfileIntent.SANURIPrefix + url.PathEscape(deviceID))
 	if err != nil {
 		return nil, err
 	}
@@ -180,9 +199,8 @@ func IssueReservedDeviceCertificate(input DeviceIssuanceContext, issuerKey crypt
 	if err != nil {
 		return nil, err
 	}
-	issuance := wire.IssuanceLogCoordinateV1{RecoveryEpoch: coordinate.RecoveryEpoch, RaftIndex: coordinate.RaftIndex}
-	if _, err := wire.VerifyDeviceCertificateAt(der, &profile, intent.DeviceID, identityHash, intent.Platform,
-		intent.Responsibilities.Values, issuance, issuedAt, issuedAt); err != nil {
+	if _, err := wire.VerifyDeviceCertificateAt(der, &profile, deviceID, identityHash, platform,
+		responsibilities, issuance, issuedAt, issuedAt); err != nil {
 		return nil, err
 	}
 	return der, nil

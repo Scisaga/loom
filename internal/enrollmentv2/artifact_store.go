@@ -53,17 +53,33 @@ func (store *SealedArtifactStore) Put(ref *wire.SecretArtifactRefV2,
 	if err := wire.VerifySealedSecretBinding(ref, envelope); err != nil {
 		return err
 	}
+	return store.PutEnvelope(envelope)
+}
+
+// PutEnvelope 暂存尚未认证的密文，供生成器在签 availability receipt 前进行
+// fsync 与 exact readback。它不创建 ref 或释放授权；业务读取仍须当前认证 ref。
+func (store *SealedArtifactStore) PutEnvelope(envelope *wire.SealedSecretEnvelopeV1) error {
+	if store == nil || envelope == nil {
+		return errors.New("[secret artifact] store/envelope 缺失")
+	}
+	if err := wire.ValidateSealedSecretEnvelope(envelope); err != nil {
+		return err
+	}
 	body, err := wire.MarshalCanonical(envelope)
 	if err != nil || len(body) == 0 || len(body) > maximumSealedArtifactBytes {
 		return errors.New("[secret artifact] canonical envelope 无效或过大")
 	}
-	path, err := store.path(ref.SealedBlob.CiphertextDigest)
+	digest, err := wire.SealedSecretEnvelopeHash(envelope)
+	if err != nil {
+		return err
+	}
+	path, err := store.path(digest)
 	if err != nil {
 		return err
 	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	if existing, readErr := store.read(path, ref.SealedBlob.CiphertextDigest); readErr == nil {
+	if existing, readErr := store.read(path, digest); readErr == nil {
 		existingBody, _ := wire.MarshalCanonical(existing)
 		if !bytes.Equal(existingBody, body) {
 			return errors.New("[secret artifact] 同 ciphertext digest 已有不同 bytes")
@@ -95,7 +111,7 @@ func (store *SealedArtifactStore) Put(ref *wire.SecretArtifactRefV2,
 		if !errors.Is(err, os.ErrExist) {
 			return err
 		}
-		existing, readErr := store.read(path, ref.SealedBlob.CiphertextDigest)
+		existing, readErr := store.read(path, digest)
 		if readErr != nil {
 			return readErr
 		}

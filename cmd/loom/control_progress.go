@@ -185,7 +185,7 @@ func (runtime *controlRuntime) recoverPendingOperationsLocked() error {
 			if err := runtime.verifyAdminRotationRecord(index); err != nil {
 				return err
 			}
-		} else if record.Invite != nil {
+		} else if record.Invite != nil || record.DevicePublication != nil {
 			if err := runtime.verifyAdminOperationRecord(index); err != nil {
 				return err
 			}

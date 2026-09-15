@@ -64,7 +64,7 @@ func cmdControlCreateInvite(args []string) error {
 	adminDir := fs.String("admin-dir", "", "管理员证书与 endpoint 目录")
 	out := fs.String("out", "", "受保护的请求与邀请交付目录；重试使用相同目录")
 	name := fs.String("name", "", "设备显示名称")
-	platform := fs.String("platform", "linux-server", "linux-server 或 android")
+	platform := fs.String("platform", "linux-server", "linux-server、android 或 windows-desktop")
 	responsibilities := fs.String("responsibilities", "use_loom", "逗号分隔的职责")
 	grants := fs.String("grants", "", "逗号分隔的 service:<ID> 或 egress:<ID>")
 	ttl := fs.Duration("ttl", 15*time.Minute, "邀请有效期")
@@ -73,7 +73,7 @@ func cmdControlCreateInvite(args []string) error {
 		return err
 	}
 	if fs.NArg() != 0 || *adminDir == "" || !*list && (*out == "" || strings.TrimSpace(*name) == "") {
-		return errors.New("用法: loom control create-invite -admin-dir <dir> -name <name> -out <dir> [-platform linux-server|android] [-grants service:<ID>,egress:<ID>]；可先加 -list-grants")
+		return errors.New("用法: loom control create-invite -admin-dir <dir> -name <name> -out <dir> [-platform linux-server|android|windows-desktop] [-grants service:<ID>,egress:<ID>]；可先加 -list-grants")
 	}
 	endpoint, client, err := loadControlAdminClient(*adminDir)
 	if err != nil {
@@ -224,9 +224,9 @@ func buildControlInviteRequest(adminDir string, endpoint controlAdminEndpointV1,
 	if err := validateControlInviteContext(endpoint, options); err != nil {
 		return controlOperationRequestV1{}, err
 	}
-	if input.Platform != "linux-server" && input.Platform != "android" || strings.TrimSpace(input.Name) == "" ||
+	if input.Platform != "linux-server" && input.Platform != "android" && input.Platform != "windows-desktop" || strings.TrimSpace(input.Name) == "" ||
 		!utf8.ValidString(input.Name) || utf8.RuneCountInString(input.Name) > 80 ||
-		input.Platform == "android" && !wire.EqualCanonical(input.Responsibilities, []string{"use_loom"}) ||
+		input.Platform != "linux-server" && !wire.EqualCanonical(input.Responsibilities, []string{"use_loom"}) ||
 		input.TTLSeconds < options.Policy.MinimumTTLSeconds || input.TTLSeconds > options.Policy.MaximumTTLSeconds {
 		return controlOperationRequestV1{}, errors.New("设备平台、职责、名称或邀请有效期无效")
 	}
@@ -283,6 +283,8 @@ func buildControlInviteRequest(adminDir string, endpoint controlAdminEndpointV1,
 	wrappingProfiles := []string{"p256-root-only-pkcs8-ecdh-v1"}
 	if input.Platform == "android" {
 		wrappingProfiles = []string{"p256-keystore-ecdh-v1", "rsa2048-keystore-decrypt-v1"}
+	} else if input.Platform == "windows-desktop" {
+		wrappingProfiles = []string{"p256-keystore-ecdh-v1"}
 	}
 	intent := wire.DeviceEnrollmentIntentV1{Schema: 1, ClusterID: cluster, InviteID: inviteID, DeviceID: deviceID,
 		Platform: input.Platform, DeviceCertificateProfileRef: wire.DeviceCertificateProfileRefV1{ProfileID: selected.ProfileID,
