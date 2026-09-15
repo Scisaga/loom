@@ -531,53 +531,6 @@ fieldset {
   font-weight: 600
 }
 
-.topology {
-  width: 100%;
-  min-height: 560px;
-  background: white;
-  border-radius: 8px;
-  border: 1px solid var(--line)
-}
-
-.topology .ring {
-  fill: none;
-  stroke: #e7ece8;
-  stroke-dasharray: 4 6
-}
-
-.topology .edge {
-  stroke: #bac7bf;
-  stroke-width: 1.5;
-  fill: none
-}
-
-.topology .edge.active {
-  stroke: #54a37c
-}
-
-.topology .route {
-  stroke: #367fb0;
-  stroke-width: 3;
-  fill: none
-}
-
-.topology circle.node {
-  fill: #fff;
-  stroke: #9db5a7;
-  stroke-width: 2
-}
-
-.topology text {
-  font-size: 12px;
-  fill: var(--ink);
-  text-anchor: middle
-}
-
-.topology text.metric {
-  font-size: 10px;
-  fill: var(--muted)
-}
-
 #notice {
   position: fixed;
   bottom: 24px;

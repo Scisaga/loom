@@ -1,4 +1,14 @@
 import {
+  icon,
+  platforms
+} from './icons.js';
+import {
+  renderTopology,
+  legend,
+  linkMetric,
+  age
+} from './topology.js';
+import {
   roles,
   esc,
   list,
@@ -15,6 +25,7 @@ import {
 } from './model.js';
 const app = document.querySelector('#app'),
   connection = document.querySelector('#connection');
+let inspectedLink = '';
 let caps = {},
   snapshot = {
     view: {},
@@ -373,59 +384,154 @@ function updateDetail(id) {
 }
 
 function overviewPage() {
-  app.innerHTML = heading('Overview', 'Current network and trusted evidence, updated in place.') + '<div id="overview-stats" class="stats"></div><div class="grid"><section class="card"><h2>Current network</h2>' + table(['Device', 'Health', 'Last observation'], 'overview-nodes') + '</section><section class="card"><h2>Current paths</h2>' + table(['Entry / service', 'Selected path', 'Observation'], 'overview-routes') + '</section></div><div id="overview-warnings"></div><section class="card" id="fleet-history"></section>';
+  app.innerHTML = '<div class="network-heading"><span class="eyebrow">LIVE NETWORK</span><h1>Network overview</h1><p class="dim" id="overview-subtitle"></p></div><div id="overview-health" class="overview-health"></div><div id="overview-stats" class="steps"></div><div id="snapshot-verdict"></div><div class="overview-primary"><section class="card overview-topology-card"><div class="overview-card-head"><h2>Network topology</h2>' + legend + '</div><div id="overview-topology"></div></section><aside class="overview-side"><section class="card overview-compact-card" id="overview-traffic"></section><section class="card overview-compact-card" id="overview-rollout"></section></aside></div><div class="overview-secondary"><section class="card overview-list-card"><div class="sectionhead"><h2>Network devices</h2><a class="tiny" href="/devices" data-nav>All devices →</a></div>' + table(['Name', 'Location', 'Status', 'WG RX / TX · 24h', 'Last seen'], 'overview-nodes') + '</section><section class="card overview-list-card"><div class="sectionhead"><h2>Automatic routing</h2><a class="tiny" href="/routing" data-nav>Decision evidence →</a></div>' + table(['Managed rule', 'Scope', 'Agent-selected path', 'Status'], 'overview-routes') + '</section></div><section class="card overview-events"><div class="sectionhead"><h2>Recent events</h2><a class="tiny" href="/events" data-nav>View all events →</a></div><div id="overview-events"></div></section><div id="overview-warnings"></div><details class="network-history"><summary>Retained WireGuard traffic · detailed time buckets</summary><section class="card" id="fleet-history"></section></details>';
   updateOverview();
+  if (caps.admin) api('/api/control/ui/events').then(value => {
+    if (location.pathname !== '/') return;
+    events = list(value.events);
+    updateOverviewEvents();
+  }).catch(error => setHTML(document.querySelector('#overview-events'), `<p class="muted">${esc(error.message)}</p>`));
+}
+
+function ruleName(v, r) {
+  return list(r.ScopeKind === 'service' ? v.Services : v.Policies).find(s => s.ID === r.ScopeID)?.Name || r.ScopeID || r.Declaration || r.Selector;
+}
+
+function routePath(r) {
+  return list(r.Chain).length ? r.Chain.join(' → ') : `${r.Node} · local exit`;
+}
+
+function networkView() {
+  const v = currentNetwork(snapshot.view),
+    devices = new Map(list(snapshot.inventory.devices).map(d => [d.id, d]));
+  return {
+    ...v,
+    Nodes: v.Nodes.map(n => {
+      const d = devices.get(n.ID);
+      return d ? {
+        ...n,
+        Health: d.data_plane_status === 'online' ? 'healthy' : d.data_plane_status === 'problem' ? 'problem' : 'unknown'
+      } : n;
+    })
+  };
 }
 
 function updateOverview() {
-  updateHistory('fleet-history');
-  const v = currentNetwork(snapshot.view),
-    devices = list(snapshot.inventory.devices).filter(d => d.status !== 'revoked');
+  const v = networkView(),
+    active = v.Nodes.filter(n => !n.Decommission),
+    healthy = active.filter(n => n.Health === 'healthy').length,
+    problems = active.filter(n => n.Health === 'problem').length,
+    unknown = active.length - healthy - problems,
+    carriers = v.Links.filter(l => l.Kind === 'tunnel'),
+    fresh = v.Routes.filter(r => !r.Stale),
+    history = snapshot.traffic?.history,
+    points = historyPoints(history),
+    known = points.filter(p => p.present),
+    total = known.reduce((sum, p) => sum + p.rx + p.tx, 0n),
+    max = known.reduce((sum, p) => p.rx + p.tx > sum ? p.rx + p.tx : sum, 1n),
+    publisher = v.Publisher;
+  const healthClass = problems ? 'bad' : unknown ? 'warn' : 'ok';
+  setHTML(document.querySelector('#overview-subtitle'), `${esc(v.Self||'Current network')} control plane · observed ${esc(age(v.ObservedAt))}`);
+  setHTML(document.querySelector('#overview-health'), `<span class="status-check ${healthClass}">${problems?'!':unknown?'?':'✓'}</span><span>${healthy} 个节点正常${problems?` · ${problems} 个异常`:''}${unknown?` · ${unknown} 个等待可信状态上报`:''}</span>`);
   setHTML(document.querySelector('#overview-stats'), [
-    ['Devices', devices.length || v.Nodes.length],
-    ['Online', caps.admin ? devices.filter(d => d.presence_status === 'live').length : '—'],
-    ['Runtime problems', devices.filter(d => d.data_plane_status === 'problem').length],
-    ['Observed paths', v.Routes.length]
-  ].map(([label, value]) => `<div class="stat"><span class="muted">${label}</span><strong>${value}</strong></div>`).join(''));
-  rows('overview-nodes', v.Nodes, n => n.ID, n => [link('/devices/' + encodeURIComponent(n.ID), n.Name || n.ID), badge(n.Health), time(n.ObservedAt)]);
-  rows('overview-routes', v.Routes, r => r.Node + '|' + r.Selector, r => [`${esc(r.Node)}<small>${esc(r.ScopeID||r.Declaration)}</small>`, esc(list(r.Chain).join(' → ') || r.Candidate), r.Stale ? badge('stale') : time(r.ObservedAt)]);
-  setHTML(document.querySelector('#overview-warnings'), list(snapshot.view.Warnings).map(w => `<p class="note">${esc(w)}</p>`).join(''));
+    ['节点状态', `${healthy} <small>/ ${active.length} 正常</small>`, `${problems} 个异常 · ${unknown} 个等待上报`],
+    ['WireGuard 常驻隧道', `${carriers.filter(l=>l.State==='active').length} / ${carriers.length} <small>已连通</small>`, '仅统计配置中声明的隧道'],
+    ['自动选路决策', `${fresh.length} / ${v.Routes.length} <small>已上报</small>`, '规则生成 · Agent 自动选择'],
+    ['配置快照', esc(short(v.Applied)), `控制面当前版本 · ${esc(age(v.ObservedAt))}`]
+  ].map(([title, value, detail]) => `<div class="step"><span class="label">${title}</span><b>${value}</b><span class="tiny dim">${detail}</span></div>`).join(''));
+  const versions = new Set(active.map(n => n.Applied).filter(Boolean)),
+    missing = active.filter(n => !n.Applied).length;
+  setHTML(document.querySelector('#snapshot-verdict'), versions.size > 1 || missing ? `<aside class="note snapshot-alert"><strong>${versions.size>1?'配置仍在同步':'配置版本证据不完整'}</strong><span>${versions.size} 个已上报版本 · ${missing} 个设备尚未验证</span></aside>` : '');
+  renderTopology(document.querySelector('#overview-topology'), v);
+  const bars = points.slice(-16),
+    barWidth = 220 / Math.max(bars.length, 1);
+  const spark = `<svg class="traffic-spark" viewBox="0 0 220 62" role="img" aria-label="Retained WireGuard traffic buckets"><path d="M0 1H220M0 30H220M0 61H220" stroke="#e2e6e3" fill="none"/>${bars.map((p,i)=>{
+    const height=Number((p.rx+p.tx)*50n/max);return p.present?`<rect x="${i*barWidth+2}" y="${60-height}" width="${Math.max(1,barWidth-4)}" height="${Math.max(1,height)}" fill="#73c39d"><title>${esc(bytes(p.rx+p.tx))} · ${p.resets} resets · ${p.gaps} gaps</title></rect>`:`<path d="M${i*barWidth+barWidth/2} 5v52" stroke="#ccd2ce" stroke-dasharray="2 4"><title>No accepted delta</title></path>`;
+  }).join('')}</svg>`;
+  setHTML(document.querySelector('#overview-traffic'), `<div class="sectionhead"><h2>WireGuard traffic</h2><span class="tiny dim">Retained centrally · last 24h</span></div><div class="traffic-compact-body"><div><div class="label">Last 24h</div><div class="metric">${known.length?bytes(total):'Unavailable'}</div><div class="tiny dim">${known.length} / ${points.length} sampled buckets</div></div><div>${spark}<div class="traffic-compact-scale"><span>Node-interface RX + TX</span><span>now</span></div></div></div>`);
+  const verified = active.filter(n => n.Rollout?.Stage === 'verified').length,
+    applied = active.filter(n => publisher?.LastSnapshot && n.Applied === publisher.LastSnapshot).length,
+    stages = [
+      ['Signed', !!publisher?.LastSnapshot],
+      ['Distributed', !!publisher?.Healthy && !!publisher?.LastSuccess],
+      ['Applied', active.length > 0 && applied === active.length],
+      ['Verified', active.length > 0 && verified === active.length]
+    ];
+  setHTML(document.querySelector('#overview-rollout'), `<div class="sectionhead"><h2>Latest fleet rollout</h2><a class="tiny" href="/releases?tab=deployments" data-nav>Deployments →</a></div>${publisher?`<div class="rollout-summary">Snapshot <b class="mono">${esc(short(publisher.LastSnapshot))}</b><br><span class="dim">${verified} / ${active.length} verified</span></div><div class="rollout-stages">${stages.map(([label,done])=>`<span class="rollout-stage ${done?'done':'pending'}">${label}</span>`).join('')}</div><div class="tiny dim">publisher code ${esc(short(publisher.Commit))} · last success ${esc(age(publisher.LastSuccess))}</div>`:'<p class="muted">Publisher state is unavailable.</p>'}`);
+  const ordered = [...v.Nodes].sort((a, b) => Number(!!b.Self) - Number(!!a.Self) || a.ID.localeCompare(b.ID)).slice(0, 6);
+  rows('overview-nodes', ordered, n => n.ID, n => {
+    const samples = historyPoints(history, n.ID).filter(p => p.present),
+      rx = samples.reduce((sum, p) => sum + p.rx, 0n),
+      tx = samples.reduce((sum, p) => sum + p.tx, 0n);
+    return [link('/devices/' + encodeURIComponent(n.ID), n.ID), esc([n.Country, n.City].filter(Boolean).join(' ') || n.Name || '—'), badge(n.Health), samples.length ? bytes(rx) + ' / ' + bytes(tx) : '—', esc(age(n.ObservedAt))];
+  });
+  rows('overview-routes', v.Routes.slice(0, 5), r => r.Node + '|' + r.Selector, r => [esc(ruleName(v, r)), esc(r.ScopeKind || 'Policy'), esc(routePath(r)), badge(r.Stale ? 'stale' : 'observed')]);
+  setHTML(document.querySelector('#overview-warnings'), problems || unknown ? `<section class="card overview-attention"><div class="sectionhead"><h2>需要关注</h2><a class="tiny" href="/devices" data-nav>查看设备 →</a></div><p>${problems} 个节点异常 · ${unknown} 个节点等待可信观测</p></section>` : '');
+  updateHistory('fleet-history');
+  updateOverviewEvents();
+}
+
+function updateOverviewEvents() {
+  setHTML(document.querySelector('#overview-events'), events.slice(0, 3).map(e => `<div class="overview-event-row"><time>${esc(e.TS?new Date(e.TS).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',hour12:false}):'—')}</time><span class="dot"></span><span class="clip">${esc(e.Detail||`${e.Node} · ${e.Kind} · ${e.From} → ${e.To}`)}</span></div>`).join('') || '<p class="tiny dim">No recent transitions.</p>');
 }
 
 function topologyPage() {
-  app.innerHTML = heading('Topology', 'Declared links form the layout; current paths are read-only overlays.') + '<div class="filters"><label>Highlight entry <select id="topology-entry"><option value="">All entries</option></select></label></div><div id="topology"></div>' + table(['From → to', 'Transport / state', 'Observed latency', 'Traffic / evidence'], 'links-body') + '<section class="card"><h2>Retained WireGuard link traffic · sender TX only</h2><p class="muted">Sum of endpoint TX deltas; receiver RX is not added again.</p>' + table(['Link', 'Accepted TX', 'Sampled buckets', 'Resets / gaps'], 'link-history-body') + '</section>';
-  const select = document.querySelector('#topology-entry');
-  for (const n of currentNetwork(snapshot.view).Nodes) {
-    const o = new Option(n.Name || n.ID, n.ID);
-    select.add(o);
-  }
-  select.value = query().get('entry') || '';
-  select.onchange = () => {
-    const q = query();
-    if (select.value) q.set('entry', select.value);
-    else q.delete('entry');
-    history.replaceState({}, '', '/topology?' + q);
-    updateTopology();
-  };
+  app.innerHTML = '<div class="network-heading"><span class="eyebrow">NETWORK / TOPOLOGY</span><h1>Network topology</h1><p class="dim" id="topology-subtitle"></p></div><div id="topology-summary" class="overview-health"></div><div class="topology-layout"><section class="card topology-stage"><div class="topology-card-head"><div><h2>Topology layers</h2><p class="dim">Declared structure remains visible when trusted observation is missing.</p></div>' + legend + '</div><div id="topology"></div><p class="topology-caption">Candidate edges describe allowable paths. Missing a direct WireGuard edge does not mean there is no path.</p></section><aside class="topology-side"><section class="card topology-status-card" id="topology-status"></section><section class="card topology-traffic-card" id="topology-traffic"></section></aside></div><section class="card topology-edge-card"><div class="edge-panel-head"><h2>Persistent WireGuard edges</h2><span class="dim">24h link bytes = TX deltas from each endpoint; receiver RX is not added again</span></div>' + table(['Edge', '24h TX total / bar', 'Buckets with samples', 'RTT', 'State', 'Latest trusted sample'], 'links-body') + '</section><details id="topology-candidates" class="network-history"><summary>On-demand route hops · configured intent</summary><div id="candidate-links" class="route-hop-list"></div></details>';
+  document.querySelector('#links-body').addEventListener('click', e => {
+    const row = e.target.closest('tr');
+    if (row) {
+      inspectedLink = row.dataset.key;
+      updateTopology();
+    }
+  });
+  document.querySelector('#links-body').addEventListener('keydown', e => {
+    if (['Enter', ' '].includes(e.key)) {
+      e.preventDefault();
+      e.target.closest('tr')?.click();
+    }
+  });
   updateTopology();
 }
 
 function updateTopology() {
-  rows('link-history-body', linkHistory(snapshot.traffic?.history), l => l.key, l => [`${esc(l.from)} ↔ ${esc(l.to)}`, l.buckets ? bytes(l.tx) : 'No accepted delta', String(l.buckets), `${l.resets} / ${l.gaps}`]);
-  const v = currentNetwork(snapshot.view),
-    positions = topologyPositions(v.Nodes.map(n => ({
-      ...n,
-      Responsibilities: list(snapshot.inventory.devices).find(d => d.id === n.ID)?.responsibilities
-    }))),
-    entry = document.querySelector('#topology-entry')?.value;
-  const edge = (from, to, cls) => {
-    const a = positions.get(from),
-      b = positions.get(to);
-    return a && b ? `<path class="${cls}" d="M ${a.x} ${a.y} Q 550 300 ${b.x} ${b.y}"/>` : '';
-  };
-  const svg = `<svg class="topology" viewBox="0 0 1100 600" role="img" aria-label="Current network topology"><ellipse class="ring" cx="550" cy="300" rx="410" ry="220"/><ellipse class="ring" cx="550" cy="300" rx="225" ry="130"/>${v.Links.map(l=>edge(l.From,l.To,'edge '+(l.Kind==='candidate'?'candidate ':'' )+(l.State==='active'?'active':''))).join('')}${v.Routes.filter(r=>!entry||r.Node===entry).flatMap(r=>{const chain=[r.Node,...list(r.Chain).filter((x,i)=>i||x!==r.Node)];return chain.slice(1).map((to,i)=>edge(chain[i],to,'route'));}).join('')}${v.Nodes.map(n=>{const p=positions.get(n.ID);return `<a href="/devices/${encodeURIComponent(n.ID)}" data-nav><circle class="node" cx="${p.x}" cy="${p.y}" r="12"/><text x="${p.x}" y="${p.y+29}">${esc(n.Name||n.ID)}</text><text class="metric" x="${p.x}" y="${p.y+44}">${esc(n.Health||'unknown')}</text></a>`;}).join('')}</svg>`;
-  setHTML(document.querySelector('#topology'), svg);
-  rows('links-body', v.Links, l => l.From + '|' + l.To + '|' + l.Kind, l => [`${esc(l.From)} → ${esc(l.To)}`, `${esc(l.Kind)} · ${badge(l.State)}`, l.Samples > 0 ? `${l.MS} ms · ${l.Samples} samples` : 'Not measured', `${l.RateSamples>0&&l.RateWindowSeconds>0?bytes(BigInt(Math.round(l.RecentTXBytes/l.RateWindowSeconds)))+'/s · WG':'No rate'}<small>${time(l.ObservedAt)} · ${esc(l.Source)}</small>`]);
+  if (!document.querySelector('#topology')) return;
+  const v = networkView(),
+    entry = query().get('entry'),
+    carriers = v.Links.filter(l => l.Kind === 'tunnel'),
+    direct = v.Links.filter(l => l.Kind === 'direct-hy2'),
+    candidates = v.Links.filter(l => l.Kind === 'candidate'),
+    active = carriers.filter(l => l.State === 'active').length,
+    fresh = v.Routes.filter(r => !r.Stale),
+    history = snapshot.traffic?.history,
+    totals = linkHistory(history),
+    key = l => [l.From, l.To].sort().join('|');
+  setHTML(document.querySelector('#topology-subtitle'), `Intent, trusted observations and read-only automatic Agent decisions · observed ${esc(age(v.ObservedAt))}`);
+  setHTML(document.querySelector('#topology-summary'), `<span class="status-check ${active===carriers.length&&active?'ok':'warn'}">${active===carriers.length&&active?'✓':'?'}</span><span>${v.Nodes.length} nodes · ${carriers.length} persistent WireGuard links · ${fresh.length} fresh automatic decisions</span>`);
+  renderTopology(document.querySelector('#topology'), v, v.Routes.filter(r => !entry || r.Node === entry));
+  setHTML(document.querySelector('#topology-status'), `<div class="sectionhead"><h2>Layer status</h2><span class="tiny ${active===carriers.length&&active?'ok':'dim'}">${active===carriers.length&&active?'● ALL OBSERVED':'PARTIAL EVIDENCE'}</span></div><div class="layer-carriers"><div class="label">WIREGUARD CARRIERS</div><div class="metric ${active===carriers.length&&active?'ok':''}">${active} / ${carriers.length} active</div><span class="tiny dim">${carriers.length} declared · current inventory · signed evidence</span></div><div class="topology-status-grid"><div><div class="label">HY2 DIRECT</div><div class="metric">${direct.filter(l=>l.Samples>l.Failures).length} / ${direct.length} sampled</div><div class="tiny dim">Signed single-hop probe</div></div><div><div class="label">ON-DEMAND</div><div class="metric">${candidates.length} possible hops</div><div class="tiny dim">Intent only · no tunnel health</div></div></div><div class="layer-routing"><div class="label">AUTOMATIC ROUTING</div><a href="/routing" data-nav>${fresh.length} / ${v.Routes.length} fresh · Agent-selected · read-only →</a></div>`);
+  if (!carriers.some(l => key(l) === inspectedLink)) inspectedLink = carriers.length ? key(carriers[0]) : '';
+  const max = totals.reduce((sum, l) => l.tx > sum ? l.tx : sum, 1n);
+  rows('links-body', carriers, key, l => {
+    const m = linkMetric(l),
+      total = totals.find(t => t.key === key(l)),
+      ratio = total ? Number(total.tx * 220n / max) : 0;
+    return [`<span class="mono">${esc(l.From)} ↔ ${esc(l.To)}</span>`, `<div class="link-total"><span class="mono">${total?.buckets?bytes(total.tx):'—'}</span><svg viewBox="0 0 230 12" aria-hidden="true"><rect x="0" y="2" width="230" height="8" rx="2" fill="#edf1ee"/>${total?.buckets?`<rect x="0" y="2" width="${ratio}" height="8" rx="2" fill="#73c39d"/>`:''}</svg></div>`, `<span class="mono">${total?.buckets||0} / ${list(history?.buckets).length} · ${total?.resets||0} reset · ${total?.gaps||0} gap</span>`, m.latency, badge(l.State), esc(age(l.ObservedAt))];
+  });
+  for (const row of document.querySelectorAll('#links-body tr')) {
+    row.tabIndex = 0;
+    row.classList.toggle('inspected', row.dataset.key === inspectedLink);
+    row.setAttribute('aria-selected', String(row.dataset.key === inspectedLink));
+  }
+  const selected = carriers.find(l => key(l) === inspectedLink),
+    total = totals.find(l => l.key === inspectedLink),
+    buckets = list(history?.buckets).slice(-16).map(b => list(b.links).find(l => [l.from, l.to].sort().join('|') === inspectedLink)),
+    peak = buckets.reduce((max, l) => l?.samples > 0 && BigInt(l.tx_bytes) > max ? BigInt(l.tx_bytes) : max, 1n),
+    width = 230 / Math.max(buckets.length, 1),
+    endpoints = buckets.reduce((max, l) => Math.max(max, l?.reporting_endpoints || 0), 0);
+  const spark = `<svg class="link-spark" viewBox="0 0 230 80" role="img" aria-label="Selected link TX deltas"><path d="M0 5H230M0 40H230M0 76H230" fill="none" stroke="#e2e6e3"/>${buckets.map((l,i)=>{if(!l?.samples)return `<path d="M${i*width+width/2} 10v62" stroke="#ccd2ce" stroke-dasharray="3 4"><title>No accepted delta</title></path>`;const h=Number(BigInt(l.tx_bytes)*65n/peak);return `<rect x="${i*width+2}" y="${75-h}" width="${Math.max(1,width-4)}" height="${Math.max(1,h)}" fill="#2aa875"><title>${esc(bytes(l.tx_bytes))} · ${l.resets} resets · ${l.gaps} gaps</title></rect>`;}).join('')}</svg>`;
+  setHTML(document.querySelector('#topology-traffic'), `<div class="sectionhead"><h2>Link traffic</h2><span class="tiny ok">Retained · endpoint TX only</span></div><p class="mono tiny">${selected?`Inspecting · ${esc(selected.From)} ↔ ${esc(selected.To)}`:'No persistent link'}</p><div class="link-traffic-body"><div><span class="tiny ok">Endpoint TX total</span><div class="metric">${total?.buckets?bytes(total.tx):'Unavailable'}</div><span class="tiny dim">Reporting endpoints</span><div class="metric">${endpoints}</div></div><div>${spark}<div class="traffic-compact-scale"><span>24h ago</span><span>now</span></div></div></div><span class="tiny dim">Undirected link · no RX double count</span>`);
+  document.querySelector('#topology-candidates').hidden = !candidates.length;
+  setHTML(document.querySelector('#candidate-links'), candidates.map(l => `<div class="route-hop"><span class="mono">${esc(l.From)} ↔ ${esc(l.To)}</span><span class="tiny dim">Available by intent · no continuous RTT or heartbeat</span></div>`).join(''));
 }
 
 function routingPage() {
@@ -550,11 +656,23 @@ async function getPackages() {
 }
 
 function packageCard(p) {
-  return `<article class="card package"><div class="bar"><h3>${esc(p.title||p.filename)}</h3>${tag(p.arch)}</div><p class="muted">${esc(p.variant)} · ${esc(p.version)}</p><div class="artifact-source">Source <span class="mono">${esc(short(p.source_commit))}</span> · ${bytes(p.size)}</div><small>${esc(p.signing||'Platform signature verified')}</small><details class="details"><summary>Checksum and release evidence</summary><p class="digest mono">SHA-256 ${esc(p.sha256)}</p>${list(p.mirrors).map(m=>`<small>${esc(m)}</small>`).join('')}</details><div class="actions"><a class="button primary" href="${esc(p.url)}" download>Download</a>${p.checksum_url?`<a class="button" href="${esc(p.checksum_url)}" download>SHA-256</a>`:''}${p.signature_url?`<a class="button" href="${esc(p.signature_url)}" download>Signature</a>`:''}${p.sbom_url?`<a class="button" href="${esc(p.sbom_url)}" download>SBOM</a>`:''}</div></article>`;
+  const platform = platforms.find(value => value.id === p.platform),
+    title = p.platform === 'windows-desktop' ? p.variant : p.platform === 'android' ? (p.variant === 'debug' ? 'Debug APK' : 'Release APK') : p.title || 'Linux server';
+  return `<article class="card package"><div class="package-heading"><span class="platform-mark ${platform?.icon||''}">${icon(platform?.icon)}</span><div><h3>${esc(title)}</h3><span class="muted">${esc(p.version)}</span></div>${tag(p.arch)}</div><div class="artifact-source">Source <span class="mono">${esc(short(p.source_commit))}</span> · ${bytes(p.size)}</div><small>${esc(p.signing||'Platform signature verified')}</small><details class="details"><summary>Checksum and release evidence</summary><p class="digest mono">SHA-256 ${esc(p.sha256)}</p></details><div class="actions"><a class="button primary" href="${esc(p.url)}" download>${icon('download')}Download</a>${p.checksum_url?`<a class="button" href="${esc(p.checksum_url)}" download>SHA-256</a>`:''}${p.signature_url?`<a class="button" href="${esc(p.signature_url)}" download>Signature</a>`:''}${p.sbom_url?`<a class="button" href="${esc(p.sbom_url)}" download>SBOM</a>`:''}</div></article>`;
 }
 async function releasesPage(epoch) {
-  const deployment = query().get('tab') === 'deployments' || location.pathname === '/deployments';
-  app.innerHTML = heading('Releases', 'Verified client packages and deployment evidence.') + `<div class="tabs"><a href="/releases" data-nav class="${!deployment?'active':''}">Client packages</a><a href="/releases?tab=deployments" data-nav class="${deployment?'active':''}">Deployments</a></div><div id="release-content"></div>`;
+  const deployment = query().get('tab') === 'deployments' || location.pathname === '/deployments',
+    selected = platforms.find(p => p.id === query().get('platform')) || platforms[0];
+  app.innerHTML = heading('Releases', 'Client packages and deployment history.') + `<div class="release-tabs" role="tablist" aria-label="Release platform">${platforms.map(p=>`<a role="tab" aria-selected="${!deployment&&p.id===selected.id}" tabindex="${!deployment&&p.id===selected.id?0:-1}" aria-controls="release-content" href="/releases?platform=${p.id}" data-nav>${icon(p.icon)}${p.label}</a>`).join('')}<a role="tab" aria-selected="${deployment}" tabindex="${deployment?0:-1}" aria-controls="release-content" href="/releases?tab=deployments" data-nav>${icon('releases')}Deployments</a></div><div id="release-content" role="tabpanel"></div>`;
+  const tabs = document.querySelector('.release-tabs');
+  tabs.onkeydown = e => {
+    const items = [...tabs.querySelectorAll('[role=tab]')],
+      index = items.indexOf(e.target);
+    if (index < 0 || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+    e.preventDefault();
+    const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : (index + (e.key === 'ArrowRight' ? 1 : -1) + items.length) % items.length;
+    navigate(items[next].getAttribute('href'));
+  };
   if (deployment) {
     document.querySelector('#release-content').innerHTML = '<section class="card" id="publisher"></section>' + table(['Device', 'Applied configuration', 'Running version', 'Rollout', 'Last report'], 'deployments-body');
     updateDeployments();
@@ -562,9 +680,11 @@ async function releasesPage(epoch) {
   }
   const catalog = await getPackages();
   if (epoch !== routeEpoch) return;
-  const stable = list(catalog.artifacts).filter(p => p.variant !== 'debug'),
-    debug = list(catalog.artifacts).filter(p => p.variant === 'debug');
-  setHTML(document.querySelector('#release-content'), (catalog.error ? `<p class="note">${esc(catalog.error)}</p>` : '') + (catalog.publication?.mirrors ? `<p class="muted">${catalog.publication.mirrors} distribution locations verified at publication · ${time(catalog.publication.verified_at)}</p>` : '') + ['linux-server', 'android', 'windows-desktop'].map(platform => `<section><h2>${platform==='linux-server'?'Linux':platform==='android'?'Android':'Windows'}</h2><div class="grid">${stable.filter(p=>p.platform===platform).map(packageCard).join('')||'<p class="muted">No verified package published.</p>'}</div></section>`).join('') + (debug.length ? `<details class="details"><summary>Developer packages</summary><div class="grid">${debug.map(packageCard).join('')}</div></details>` : ''));
+  const order = ['server', 'release', 'installed', 'portable-tun', 'portable-mixed', 'debug'],
+    artifacts = list(catalog.artifacts).filter(p => p.platform === selected.id).sort((a, b) => order.indexOf(a.variant) - order.indexOf(b.variant) || a.arch.localeCompare(b.arch)),
+    stable = artifacts.filter(p => p.variant !== 'debug'),
+    debug = artifacts.filter(p => p.variant === 'debug');
+  setHTML(document.querySelector('#release-content'), (catalog.error ? `<p class="note">${esc(catalog.error)}</p>` : '') + (catalog.publication?.mirrors ? `<p class="release-publication muted">${catalog.publication.mirrors} distribution locations verified at publication · ${time(catalog.publication.verified_at)}</p>` : '') + `<div class="grid package-grid">${stable.map(packageCard).join('')||'<p class="muted">No verified package published.</p>'}</div>` + (debug.length ? `<details class="details developer-packages"><summary>Developer packages</summary><div class="grid package-grid">${debug.map(packageCard).join('')}</div></details>` : ''));
 }
 
 function updateDeployments() {
@@ -586,6 +706,7 @@ function updatePage() {
 async function render() {
   const epoch = ++routeEpoch,
     path = location.pathname;
+  app.className = path === '/' ? 'network-page page-overview' : path === '/topology' ? 'network-page page-topology' : '';
   for (const a of document.querySelectorAll('nav a')) {
     const active = a.pathname === path || a.pathname === '/releases' && path === '/deployments' || a.pathname === '/devices' && path.startsWith('/devices/');
     if (active) a.setAttribute('aria-current', 'page');
@@ -616,6 +737,10 @@ async function render() {
   }
 }
 bindDeviceActions();
+for (const item of document.querySelectorAll('header nav a')) {
+  const name = item.pathname === '/' ? 'overview' : item.pathname.slice(1);
+  item.insertAdjacentHTML('afterbegin', icon(name));
+}
 try {
   const boot = await api('/api/control/ui');
   caps = boot.capabilities;
