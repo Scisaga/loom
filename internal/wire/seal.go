@@ -61,6 +61,15 @@ func P256SealingPolicyV1() SealingPolicyV1 {
 	}
 }
 
+// P256RootOnlySealingPolicyV1 使用本地受保护软件 wrapping key；独立的
+// profile/hash 明确其保管方式，不将 PKCS#8 文件声称为不可导出 Keystore key。
+func P256RootOnlySealingPolicyV1() SealingPolicyV1 {
+	policy := P256SealingPolicyV1()
+	policy.PolicyID = "sealed-p256-root-only-v1"
+	policy.RecipientKeyProfile = "p256-root-only-pkcs8-ecdh-v1"
+	return policy
+}
+
 func RSASealingPolicyV1() SealingPolicyV1 {
 	return SealingPolicyV1{
 		Schema: 1, PolicyID: "sealed-rsa2048-v1", Generation: 1,
@@ -215,8 +224,8 @@ func deriveRecipientKEK(private *ecdh.PrivateKey, public *ecdh.PublicKey, contex
 	return DeriveSealedSecretP256KEK(shared, context)
 }
 
-// DeriveSealedSecretP256KEK 接收 Keystore ECDH 返回的 x-coordinate；私钥
-// 始终留在硬件/provider 内，HKDF 仍由共享 wire 实现（D124）。
+// DeriveSealedSecretP256KEK 接收 profile 对应的软件或 Keystore ECDH 返回的
+// x-coordinate；此函数不接收私钥，HKDF 由共享 wire 实现（D124）。
 func DeriveSealedSecretP256KEK(shared []byte, context RecipientWrapContextV1) ([]byte, error) {
 	if len(shared) != 32 || context.Schema != 1 {
 		return nil, errors.New("[D124 sealed secret] P-256 shared secret/wrap context 无效")
@@ -224,7 +233,10 @@ func DeriveSealedSecretP256KEK(shared []byte, context RecipientWrapContextV1) ([
 	if _, err := ParseHash(context.SealedSecretContextHash); err != nil {
 		return nil, err
 	}
-	if err := validateRecipientKeyRef(&context.RecipientKey, "p256-keystore-ecdh-v1"); err != nil {
+	if !isP256SealingProfile(context.RecipientKey.RecipientKeyProfile) {
+		return nil, errors.New("[D124 sealed secret] P-256 wrapping profile 无效")
+	}
+	if err := validateRecipientKeyRef(&context.RecipientKey, context.RecipientKey.RecipientKeyProfile); err != nil {
 		return nil, err
 	}
 	if _, err := ParseHash(context.EphemeralSPKIHash); err != nil {
@@ -282,7 +294,7 @@ func UnsealSecretP256(envelope *SealedSecretEnvelopeV1, recipient SealedBlobReci
 	if err := ValidateSealedSecretEnvelope(envelope); err != nil {
 		return nil, err
 	}
-	if private == nil || recipient.RecipientKeyProfile != "p256-keystore-ecdh-v1" {
+	if private == nil || !isP256SealingProfile(recipient.RecipientKeyProfile) {
 		return nil, errors.New("[D124 sealed secret] local P-256 recipient key 缺失")
 	}
 	entry := findRecipientEnvelope(envelope.RecipientEnvelopes, recipient)

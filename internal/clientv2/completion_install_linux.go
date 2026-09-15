@@ -237,7 +237,7 @@ func linuxWrappingRecipient(ref *wire.SecretArtifactRefV2, deviceID, wrappingSPK
 	var match *wire.SealedBlobRecipientKeyRefV1
 	for index := range ref.SealedBlob.RecipientKeyVersions {
 		candidate := &ref.SealedBlob.RecipientKeyVersions[index]
-		if candidate.RecipientID == deviceID && candidate.RecipientKeyProfile == "p256-keystore-ecdh-v1" &&
+		if candidate.RecipientID == deviceID && candidate.RecipientKeyProfile == "p256-root-only-pkcs8-ecdh-v1" &&
 			candidate.RecipientPublicKey.PublicKeySPKIDER == wrappingSPKI {
 			if match != nil {
 				return wire.SealedBlobRecipientKeyRefV1{}, errors.New("[D124 Linux install] wrapping recipient 命中多个版本")
