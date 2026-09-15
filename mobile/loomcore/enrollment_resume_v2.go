@@ -265,18 +265,23 @@ func androidEnrollmentResumePreflightRequest(inputs androidEnrollmentResumeInput
 		Schema: 1, ClusterID: inputs.core.ClusterID, InviteID: inputs.core.InviteID,
 		CertifiedInviteRecordHash: inputs.recordHash,
 		CapabilityID:              inputs.descriptor.ResumeTunnelCapability.CapabilityID,
+		Authorization:             wire.EnrollmentPreflightAuthorizationV1{Mode: "identity_p256_sha256", IdentityPublicKey: inputs.core.DeviceIdentityPublicKey},
 	}
 }
 
 func verifyAndroidEnrollmentResumePreflight(inputs androidEnrollmentResumeInputsV1,
-	body []byte,
+	request wire.EnrollmentIntentPreflightRequestV1, body []byte,
 ) (wire.EnrollmentIntentPreflightResponseV1, error) {
 	var response wire.EnrollmentIntentPreflightResponseV1
 	if err := decodeExactAndroidV2(body, 4<<20, &response,
 		"resume Enrollment preflight response"); err != nil {
 		return response, err
 	}
-	request := androidEnrollmentResumePreflightRequest(inputs)
+	expected := androidEnrollmentResumePreflightRequest(inputs)
+	expected.Authorization.ProofSignature = request.Authorization.ProofSignature
+	if !wire.EqualCanonical(expected, request) || wire.VerifyResumeEnrollmentPreflight(&request, inputs.expected.IdentityKeyHash) != nil {
+		return response, errors.New("[D130 Android resume] preflight 未绑定原设备签名")
+	}
 	commitmentHash := inputs.bundle.CertifiedInviteRecord.DeviceEnrollmentIntentCommitmentHash
 	if err := wire.VerifyEnrollmentIntentPreflight(&response, &request, commitmentHash); err != nil {
 		return response, err

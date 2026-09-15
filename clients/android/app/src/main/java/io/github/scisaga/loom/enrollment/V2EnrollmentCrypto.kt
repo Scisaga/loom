@@ -142,6 +142,12 @@ internal class V2EnrollmentCrypto(
         return Base64.encodeToString(signature, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
     }
 
+    fun signPreflightMessage(exactMessage: ByteArray): String =
+        Base64.encodeToString(
+            keys.signCanonicalV2(exactMessage),
+            Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP,
+        )
+
     /** #14：ref/envelope 先由共享 verifier 绑定，Kotlin 只负责调用不可导出的 wrapping key。 */
     fun unsealSecret(
         canonicalRef: ByteArray,

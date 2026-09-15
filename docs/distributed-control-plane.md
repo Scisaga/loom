@@ -2433,6 +2433,13 @@ EnrollmentIntentPreflightRequestV1
   schema = 1, cluster_id, invite_id
   certified_invite_record_hash
   capability_id
+  authorization: EnrollmentPreflightAuthorizationV1
+
+EnrollmentPreflightAuthorizationV1
+  mode = token_hmac_sha256 | identity_p256_sha256
+  token_mac?                         # initial only；32-byte HMAC-SHA256
+  identity_public_key?               # resume only；原 P-256 SPKI
+  proof_signature?                   # resume only；canonical DER low-S ECDSA
 
 EnrollmentIntentPreflightResponseV1
   schema = 1, cluster_id, invite_id
@@ -2490,8 +2497,16 @@ purpose、allowed transports、发起方、listener/credential refs 和 route sc
 `DeviceEnrollmentIntentCommitmentV1`；因为 commitment 覆盖不公开的 nonce，mirror 无法对低熵
 Device ID、platform、responsibilities 或 grants 做离线字典测试。客户端选定 ingress、建立
 tunnel 并验过 inner TLS 后，先发送不含 token/CSR/key 的
-`EnrollmentIntentPreflightRequestV1`。私有 Enrollment 只向与 capability/record 同一 Invite 的请求
-返回 opening；客户端重算 intent hash、opening hash 和 public commitment hash，逐字节核对
+`EnrollmentIntentPreflightRequestV1`。capability 对 ingress 可见，只授权隧道，不能单独读取 opening。
+初次请求必须提供以原 32-byte token 为 key 的 HMAC-SHA256；消息是
+`frame("loom-enrollment-preflight-authorization-v1", JCS(request_without_mac_or_signature))`，
+其中保留 authorization.mode，删除 token_mac/proof_signature。服务端从独立受保护 token 存储重算，
+先验证该 token 对应 certified token commitment，再以 constant-time 比较 MAC。请求不携 token
+preimage、CSR 或 Device key，MAC 也不能作为 claim token 使用。
+恢复请求使用同一独立 domain 的消息，由原 Device identity key 签名，必须匹配已验 resume capability
+中的 identity hash；不读取过期 token，不接受 initial MAC 替代签名。两类 proof 都绑定 exact cluster、
+Invite record 和 capability ID，且仍受 capability、Invite/transaction 状态与期限限制。缺失、混合或
+无效 proof 均不得返回 opening。客户端重算 intent hash、opening hash 和 public commitment hash，逐字节核对
 cluster/invite/platform，并在发 token 前显示职责与 grants。任一不等立即关闭 tunnel。
 
 二维码不内嵌完整 ingress catalog、Device intent 或 opening。它只携 token、短 capability、

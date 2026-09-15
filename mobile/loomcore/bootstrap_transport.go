@@ -345,8 +345,16 @@ func (session *AndroidV2BootstrapSession) Preflight(canonicalRequest []byte, tru
 	var expected wire.EnrollmentIntentPreflightRequestV1
 	if session.resume != nil {
 		expected = androidEnrollmentResumePreflightRequest(*session.resume)
+		expected.Authorization.ProofSignature = request.Authorization.ProofSignature
+		if err := wire.VerifyResumeEnrollmentPreflight(&request, session.resume.expected.IdentityKeyHash); err != nil {
+			return nil, err
+		}
 	} else {
-		expected = androidEnrollmentPreflightRequestV2(session.inputs)
+		var err error
+		expected, err = androidEnrollmentPreflightRequestV2(session.inputs)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if !wire.EqualCanonical(request, expected) {
 		return nil, errors.New("[D129 Android] preflight request 不是已验 Invite 的 exact 投影")
@@ -357,7 +365,7 @@ func (session *AndroidV2BootstrapSession) Preflight(canonicalRequest []byte, tru
 	}
 	var verified wire.EnrollmentIntentPreflightResponseV1
 	if session.resume != nil {
-		verified, err = verifyAndroidEnrollmentResumePreflight(*session.resume, body)
+		verified, err = verifyAndroidEnrollmentResumePreflight(*session.resume, request, body)
 	} else {
 		verified, err = verifyAndroidEnrollmentPreflightV2(session.inputs, body)
 	}
@@ -472,7 +480,7 @@ func (session *AndroidV2BootstrapSession) SubmitClaim(canonicalSubmission []byte
 	return body, nil
 }
 
-func (session *AndroidV2BootstrapSession) ResumePreflightRequest(trustedTime string) ([]byte, error) {
+func (session *AndroidV2BootstrapSession) ResumePreflightAuthorizationMessage(trustedTime string) ([]byte, error) {
 	session.flowMu.Lock()
 	defer session.flowMu.Unlock()
 	now, err := session.readyAt(trustedTime)
@@ -485,7 +493,29 @@ func (session *AndroidV2BootstrapSession) ResumePreflightRequest(trustedTime str
 	if err := session.verifyResumeDescriptorAt(now); err != nil {
 		return nil, err
 	}
-	return wire.MarshalCanonical(androidEnrollmentResumePreflightRequest(*session.resume))
+	request := androidEnrollmentResumePreflightRequest(*session.resume)
+	return wire.EnrollmentPreflightAuthorizationMessage(&request)
+}
+
+func (session *AndroidV2BootstrapSession) ResumePreflightRequest(signature, trustedTime string) ([]byte, error) {
+	session.flowMu.Lock()
+	defer session.flowMu.Unlock()
+	now, err := session.readyAt(trustedTime)
+	if err != nil {
+		return nil, err
+	}
+	if session.resume == nil {
+		return nil, errors.New("[D130 Android resume] initial session 没有 resume preflight")
+	}
+	if err := session.verifyResumeDescriptorAt(now); err != nil {
+		return nil, err
+	}
+	request := androidEnrollmentResumePreflightRequest(*session.resume)
+	request.Authorization.ProofSignature = signature
+	if err := wire.VerifyResumeEnrollmentPreflight(&request, session.resume.expected.IdentityKeyHash); err != nil {
+		return nil, err
+	}
+	return wire.MarshalCanonical(request)
 }
 
 // PrepareResumePoPBody/AssembleResumeSubmission 把 fresh challenge 的签名边界

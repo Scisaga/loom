@@ -621,7 +621,12 @@ class EnrollmentManager private constructor(context: Context) {
             pending = pending.withResumeSelection(underlayIdentity, selection)
             store.putV2Pending(pending)
 
-            val preflightRequest = session.resumePreflightRequest(Instant.now().toString())
+            val crypto = V2EnrollmentCrypto(keys)
+            val preflightMessage = session.resumePreflightAuthorizationMessage(Instant.now().toString())
+            val preflightRequest = session.resumePreflightRequest(
+                crypto.signPreflightMessage(preflightMessage),
+                Instant.now().toString(),
+            )
             mutableStatus.value = EnrollmentStatus(
                 EnrollmentPhase.CLAIMING,
                 "正在私有隧道内恢复 exact committed opening…",
@@ -633,7 +638,6 @@ class EnrollmentManager private constructor(context: Context) {
             session.challenge(core, Instant.now().toString())
             pending = pending.withResumeConnectionAttempts(session.connectionAttempts())
             store.putV2Pending(pending)
-            val crypto = V2EnrollmentCrypto(keys)
             val pop = session.prepareResumePoPBody(Instant.now().toString())
             val submission = session.assembleResumeSubmission(
                 pop,

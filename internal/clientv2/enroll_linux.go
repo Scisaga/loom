@@ -97,6 +97,10 @@ func runLinuxEnrollmentAttempt(ctx context.Context, attempt LinuxEnrollmentAttem
 		Schema: 1, ClusterID: inputs.record.ClusterID, InviteID: inputs.record.InviteID,
 		CertifiedInviteRecordHash: recordHash, CapabilityID: inputs.descriptor.BootstrapTunnelCapability.CapabilityID,
 	}
+	preflightRequest, err := wire.AuthorizeInitialEnrollmentPreflight(preflightRequest, inputs.descriptor.Token)
+	if err != nil {
+		return LinuxEnrollmentAttemptResultV2{}, err
+	}
 	preflight, err := attempt.API.Preflight(ctx, preflightRequest, inputs.record.DeviceEnrollmentIntentCommitmentHash)
 	if err != nil {
 		return LinuxEnrollmentAttemptResultV2{}, err

@@ -46,6 +46,20 @@ func TestPrivateEnrollmentPreflightChallengeClaimAndReplayBoundary(t *testing.T)
 		CertifiedInviteRecordHash: fixture.capability.Body().CommittedInviteRecordHash,
 		CapabilityID:              fixture.capability.CapabilityID(),
 	}
+	if _, err := fixture.service.Preflight(context.Background(), fixture.capability, &request); err == nil {
+		t.Fatal("只有 ingress capability 的请求读到了 private opening")
+	}
+	wrong, err := wire.AuthorizeInitialEnrollmentPreflight(request, base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x72}, 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.service.Preflight(context.Background(), fixture.capability, &wrong); err == nil {
+		t.Fatal("另一 token 的 proof 读到了 private opening")
+	}
+	request, err = wire.AuthorizeInitialEnrollmentPreflight(request, fixture.token)
+	if err != nil {
+		t.Fatal(err)
+	}
 	response, err := fixture.service.Preflight(context.Background(), fixture.capability, &request)
 	if err != nil {
 		t.Fatal(err)
@@ -150,6 +164,10 @@ func TestPrivateEnrollmentResumesCommittedClaimWithoutTokenAfterInviteExpiry(t *
 	service, err := NewPrivateService("cluster", "enrollment-service", func() time.Time { return resumeNow },
 		bytes.NewReader(bytes.Repeat([]byte{0x42}, 256)), time.Minute, replay,
 		func(context.Context, string, string) (InviteMaterialV2, error) { return material, nil },
+		func(context.Context, wire.CertifiedInviteRecordV2) (string, error) {
+			t.Fatal("resume 读取了过期 token")
+			return "", context.Canceled
+		},
 		func(_ context.Context, attempt VerifiedClaimAttemptV2) (wire.EnrollmentClaimResultV2, error) {
 			processed++
 			if attempt.Submission().Token != "" || attempt.Claim().TokenCommitment() != material.Record.TokenCommitment {
@@ -160,6 +178,33 @@ func TestPrivateEnrollmentResumesCommittedClaimWithoutTokenAfterInviteExpiry(t *
 		})
 	if err != nil {
 		t.Fatal(err)
+	}
+	preflight := wire.EnrollmentIntentPreflightRequestV1{Schema: 1, ClusterID: "cluster", InviteID: "invite",
+		CertifiedInviteRecordHash: body.CommittedInviteRecordHash, CapabilityID: capability.CapabilityID}
+	if _, err := service.Preflight(context.Background(), verifiedCapability, &preflight); err == nil {
+		t.Fatal("resume capability 单独泄漏了 opening")
+	}
+	initialProof, err := wire.AuthorizeInitialEnrollmentPreflight(preflight, fixture.token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Preflight(context.Background(), verifiedCapability, &initialProof); err == nil {
+		t.Fatal("resume 接受 token 证明替代原设备身份")
+	}
+	wrongKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	wrongResume, err := wire.AuthorizeResumeEnrollmentPreflight(preflight, wrongKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Preflight(context.Background(), verifiedCapability, &wrongResume); err == nil {
+		t.Fatal("resume 接受另一设备身份")
+	}
+	preflight, err = wire.AuthorizeResumeEnrollmentPreflight(preflight, fixture.identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Preflight(context.Background(), verifiedCapability, &preflight); err != nil {
+		t.Fatalf("原设备签名不能恢复 opening: %v", err)
 	}
 	challenge, err := service.Challenge(context.Background(), verifiedCapability, &fixture.core)
 	if err != nil {
@@ -185,6 +230,10 @@ func TestPrivateEnrollmentHTTPRequiresVerifiedOuterContextAndInnerTLS(t *testing
 		Schema: 1, ClusterID: "cluster", InviteID: "invite",
 		CertifiedInviteRecordHash: fixture.capability.Body().CommittedInviteRecordHash,
 		CapabilityID:              fixture.capability.CapabilityID(),
+	}
+	value, err := wire.AuthorizeInitialEnrollmentPreflight(value, fixture.token)
+	if err != nil {
+		t.Fatal(err)
 	}
 	body, _ := wire.MarshalCanonical(value)
 	request := httptest.NewRequest(http.MethodPost, "https://10.30.0.1/v2/enrollment/preflight", bytes.NewReader(body))
@@ -232,6 +281,7 @@ func TestPrivateEnrollmentArtifactReleaseRequiresCompletedCapabilityContext(t *t
 		func() time.Time { return fixture.now }, bytes.NewReader(bytes.Repeat([]byte{0x65}, 128)),
 		time.Minute, replay,
 		func(context.Context, string, string) (InviteMaterialV2, error) { return material, nil },
+		func(context.Context, wire.CertifiedInviteRecordV2) (string, error) { return fixture.token, nil },
 		func(context.Context, VerifiedClaimAttemptV2) (wire.EnrollmentClaimResultV2, error) {
 			return wire.EnrollmentClaimResultV2{}, context.Canceled
 		},
@@ -525,6 +575,7 @@ func newPrivateServiceFixture(t *testing.T) privateServiceFixture {
 			}
 			return material, nil
 		},
+		func(context.Context, wire.CertifiedInviteRecordV2) (string, error) { return token, nil },
 		func(_ context.Context, attempt VerifiedClaimAttemptV2) (wire.EnrollmentClaimResultV2, error) {
 			processed++
 			attestation, err := attempt.AdmissionAttestation()

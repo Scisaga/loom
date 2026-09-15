@@ -181,6 +181,9 @@ func privateRuntimeFixture(t *testing.T) (PrivateRuntimeOptions, deviceConfigFix
 		func(context.Context, string, string) (enrollmentv2.InviteMaterialV2, error) {
 			return enrollmentv2.InviteMaterialV2{}, errors.New("demo-no-invite")
 		},
+		func(context.Context, wire.CertifiedInviteRecordV2) (string, error) {
+			return "", errors.New("demo-no-invite")
+		},
 		func(context.Context, enrollmentv2.VerifiedClaimAttemptV2) (wire.EnrollmentClaimResultV2, error) {
 			return wire.EnrollmentClaimResultV2{}, errors.New("demo-no-claim")
 		})

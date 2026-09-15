@@ -167,7 +167,11 @@ func PrepareAndroidEnrollmentV2Preflight(descriptorJSON, proofBundleJSON []byte,
 	if err != nil {
 		return nil, err
 	}
-	return wire.MarshalCanonical(androidEnrollmentPreflightRequestV2(inputs))
+	request, err := androidEnrollmentPreflightRequestV2(inputs)
+	if err != nil {
+		return nil, err
+	}
+	return wire.MarshalCanonical(request)
 }
 
 // VerifyAndroidEnrollmentV2Preflight 必须在 Android 创建 identity/wrapping key
@@ -321,12 +325,12 @@ func loadAndroidEnrollmentInputsV2(descriptorJSON, proofBundleJSON []byte, trust
 	}, nil
 }
 
-func androidEnrollmentPreflightRequestV2(inputs androidEnrollmentInputsV2) wire.EnrollmentIntentPreflightRequestV1 {
-	return wire.EnrollmentIntentPreflightRequestV1{
+func androidEnrollmentPreflightRequestV2(inputs androidEnrollmentInputsV2) (wire.EnrollmentIntentPreflightRequestV1, error) {
+	return wire.AuthorizeInitialEnrollmentPreflight(wire.EnrollmentIntentPreflightRequestV1{
 		Schema: 1, ClusterID: inputs.descriptor.ClusterID, InviteID: inputs.descriptor.InviteID,
 		CertifiedInviteRecordHash: inputs.recordHash,
 		CapabilityID:              inputs.descriptor.BootstrapTunnelCapability.CapabilityID,
-	}
+	}, inputs.descriptor.Token)
 }
 
 func verifyAndroidEnrollmentPreflightV2(inputs androidEnrollmentInputsV2, responseJSON []byte) (wire.EnrollmentIntentPreflightResponseV1, error) {
@@ -334,7 +338,10 @@ func verifyAndroidEnrollmentPreflightV2(inputs androidEnrollmentInputsV2, respon
 	if err := decodeExactAndroidV2(responseJSON, 8<<20, &response, "Enrollment preflight response"); err != nil {
 		return response, err
 	}
-	request := androidEnrollmentPreflightRequestV2(inputs)
+	request, err := androidEnrollmentPreflightRequestV2(inputs)
+	if err != nil {
+		return response, err
+	}
 	expected := inputs.bundle.CertifiedInviteRecord.DeviceEnrollmentIntentCommitmentHash
 	if err := wire.VerifyEnrollmentIntentPreflight(&response, &request, expected); err != nil {
 		return response, err
