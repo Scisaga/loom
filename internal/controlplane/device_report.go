@@ -22,6 +22,7 @@ const (
 )
 
 var ErrDeviceReportSequence = errors.New("[device_report] report sequence 回退或同序号内容冲突")
+var ErrDeviceReportAuthority = errors.New("[device_report] 当前设备授权或配置已变化")
 
 // VerifiedDeviceReportV2 只能由 private Device mTLS、current view/floors 与
 // Device identity low-S signature 全部验证后产生。
@@ -41,6 +42,29 @@ func (verified VerifiedDeviceReportV2) Payload() []byte {
 
 func (verified VerifiedDeviceReportV2) DeviceID() string {
 	return verified.identity.DeviceID()
+}
+
+func (verified VerifiedDeviceReportV2) CertificateHash() string {
+	return verified.identity.CertificateHash()
+}
+
+// 持久 sink 在与控制写入共用的锁内再次验证，避免鉴权完成后发生撤权或配置
+// 推进，却仍把旧权限的报告写成当前状态。opaque report 不能由调用方拼装。
+func RevalidateDeviceReportAuthority(ctx context.Context, verified VerifiedDeviceReportV2,
+	profiles []string, reader DeviceIdentityReader, now time.Time) error {
+	if verified.identity.certificate == nil || reader == nil {
+		return ErrDeviceReportAuthority
+	}
+	identity, err := AuthenticateDeviceIdentity(ctx, verified.identity.certificate.Raw, now, profiles, reader)
+	if err != nil || identity.IdentityStatus() != "active" || identity.DeviceID() != verified.DeviceID() {
+		return ErrDeviceReportAuthority
+	}
+	floors, err := wire.VerifyDeviceViewEnvelopeWithPrevious(&identity.authority.CurrentDeviceView,
+		&identity.authority.ControlSet, identity.authority.PreviousControlSet)
+	if err != nil || !wire.EqualCanonical(floors, verified.Body().AcceptedFloors) {
+		return ErrDeviceReportAuthority
+	}
+	return nil
 }
 
 // DeviceReportCommitter 必须以 (Device ID, certificate hash) 为 key 原子 CAS
@@ -121,7 +145,7 @@ func (service *PrivateDeviceReportService) ServeHTTP(writer http.ResponseWriter,
 		return
 	}
 	trustedTime := service.now().UTC()
-	identity, err := authenticateDeviceIdentity(request.Context(), request.TLS.PeerCertificates[0].Raw,
+	identity, err := AuthenticateDeviceIdentity(request.Context(), request.TLS.PeerCertificates[0].Raw,
 		trustedTime, service.allowedProfiles, service.identities)
 	if err != nil || identity.IdentityStatus() != "active" {
 		writePrivateControlError(writer, http.StatusForbidden, "[device_report] Device identity 被拒绝")
@@ -152,6 +176,10 @@ func (service *PrivateDeviceReportService) ServeHTTP(writer http.ResponseWriter,
 	}
 	verified := VerifiedDeviceReportV2{body: envelope.Body, payload: append([]byte(nil), envelope.Payload...), identity: identity}
 	if err := service.commit(request.Context(), verified); err != nil {
+		if errors.Is(err, ErrDeviceReportAuthority) {
+			writePrivateControlError(writer, http.StatusConflict, "[device_report] 当前授权或配置已变化，请读取当前配置")
+			return
+		}
 		if errors.Is(err, ErrDeviceReportSequence) {
 			writePrivateControlError(writer, http.StatusConflict, "[device_report] report sequence 冲突")
 			return

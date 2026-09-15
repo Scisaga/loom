@@ -79,6 +79,10 @@ func (verified VerifiedDeviceIdentityV1) CertificateHash() string {
 	return verified.record.CertificateHash
 }
 
+func (verified VerifiedDeviceIdentityV1) Responsibilities() []string {
+	return append([]string(nil), verified.record.Responsibilities...)
+}
+
 type PrivateDeviceConfigService struct {
 	localAddress    string
 	allowedProfiles []string
@@ -188,10 +192,10 @@ func equalOptionalControlSet(left, right *wire.ControlSetV1) bool {
 
 func (service *PrivateDeviceConfigService) authenticate(ctx context.Context, certificateDER []byte,
 	trustedTime time.Time) (VerifiedDeviceIdentityV1, error) {
-	return authenticateDeviceIdentity(ctx, certificateDER, trustedTime, service.allowedProfiles, service.identities)
+	return AuthenticateDeviceIdentity(ctx, certificateDER, trustedTime, service.allowedProfiles, service.identities)
 }
 
-func authenticateDeviceIdentity(ctx context.Context, certificateDER []byte, trustedTime time.Time,
+func AuthenticateDeviceIdentity(ctx context.Context, certificateDER []byte, trustedTime time.Time,
 	allowedProfiles []string, identities DeviceIdentityReader) (VerifiedDeviceIdentityV1, error) {
 	certificateHash, err := wire.DeviceCertificateHash(certificateDER)
 	if err != nil {

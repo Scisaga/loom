@@ -59,6 +59,26 @@ func TestPrivateDeviceReportMapsAtomicSequenceConflict(t *testing.T) {
 	}
 }
 
+func TestPrivateDeviceReportRechecksAuthorityBeforeDurableCommit(t *testing.T) {
+	fixture := newDeviceReportFixture(t)
+	reader := fixture.service.identities
+	fixture.service.commit = func(ctx context.Context, report VerifiedDeviceReportV2) error {
+		if err := RevalidateDeviceReportAuthority(ctx, report, fixture.service.allowedProfiles, reader, fixture.service.now()); err != nil {
+			t.Fatal("有效报告无法重验", err)
+		}
+		changed := func(ctx context.Context, hash string) (DeviceIdentityAuthorityV1, error) {
+			authority, err := reader(ctx, hash)
+			authority.Record.IdentityStatus = "revocation_pending"
+			return authority, err
+		}
+		return RevalidateDeviceReportAuthority(ctx, report, fixture.service.allowedProfiles, changed, fixture.service.now())
+	}
+	response := serveDeviceReport(t, fixture, fixture.envelope, "10.50.0.2:7446")
+	if response.Code != http.StatusConflict {
+		t.Fatalf("撤权竞态未拒绝: HTTP %d", response.Code)
+	}
+}
+
 func TestPrivateDeviceReportAuthenticatesSignatureBeforePayloadReader(t *testing.T) {
 	fixture := newDeviceReportFixture(t)
 	tampered := fixture.envelope
@@ -139,7 +159,7 @@ func newDeviceReportFixture(t *testing.T) deviceReportFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, err := authenticateDeviceIdentity(context.Background(), config.leaf.Raw,
+	identity, err := AuthenticateDeviceIdentity(context.Background(), config.leaf.Raw,
 		time.Date(2026, 9, 11, 12, 1, 10, 0, time.UTC), []string{config.record.ProfileRef.ProfileID}, config.identities)
 	if err != nil {
 		t.Fatal(err)

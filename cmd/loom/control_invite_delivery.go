@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/netip"
 	"path/filepath"
 	"strings"
 	"time"
@@ -105,10 +104,6 @@ func (runtime *controlRuntime) inviteDeliveryLocked(inviteID string) (controlInv
 	if err := wire.VerifyBootstrapIssuerAuthorizationProof(&issuerProof, now); err != nil {
 		return delivery, err
 	}
-	issuerKey, err := runtime.bootstrapIssuerKey(issuerProof.Authorization)
-	if err != nil {
-		return delivery, err
-	}
 	token, err := runtime.readInviteToken(material.Record)
 	if err != nil {
 		return delivery, err
@@ -154,38 +149,11 @@ func (runtime *controlRuntime) inviteDeliveryLocked(inviteID string) (controlInv
 	if err != nil {
 		return delivery, err
 	}
-	recordHash, err := wire.CertifiedInviteRecordHash(&material.Record, &material.Policy)
+	capability, err := runtime.initialBootstrapCapabilityLocked(application, material, issuerProof)
 	if err != nil {
 		return delivery, err
 	}
-	active, policy, service := issuerProof.Authorization.Active, material.Policy, material.EnrollmentServiceRef
-	capIssued, err := wire.ParseTimeZ(material.Record.IssuedAt)
-	if err != nil {
-		return delivery, err
-	}
-	// 初始 capability 的 bytes 随 Invite 固定；读取或重试不能刷新有效期/重置预算。
-	capExpiry := capIssued.Add(time.Duration(min(policy.MaximumInitialCapabilityTTLSeconds, active.MaximumCapabilityTTLSeconds)) * time.Second)
-	if expires.Before(capExpiry) {
-		capExpiry = expires
-	}
-	ip, err := netip.ParseAddr(service.OverlayIP)
-	if err != nil {
-		return delivery, err
-	}
-	body := wire.BootstrapTunnelCapabilityBodyV1{Schema: 1, ClusterID: runtime.config.ClusterID, InviteID: inviteID,
-		CommittedInviteRecordHash: recordHash, InviteIssuancePolicyHash: material.Record.InviteIssuancePolicyHash,
-		BootstrapIssuerAuthorizationHash: material.Record.BootstrapIssuerAuthorizationHash, BootstrapIssuerRegistryRoot: issuerProof.RegistryRoot,
-		EnrollmentServiceRefHash: material.Record.EnrollmentServiceRefHash, Mode: "initial_claim", IssuedAt: capIssued.Format(time.RFC3339),
-		NotBefore: capIssued.Format(time.RFC3339), ExpiresAt: capExpiry.Format(time.RFC3339),
-		AllowedIngressSetHash: application.BootstrapCatalog.BootstrapIngressSetHash, AllowedServiceID: service.ServiceID,
-		AllowedDestinationIP: service.OverlayIP, AllowedDestinationPrefixLength: int64(ip.BitLen()), AllowedDestinationPort: service.TCPPort, AllowedInsideTransport: "tcp",
-		MaximumConnectionAttempts: min(policy.BootstrapConnectionAttempts, active.MaximumConnectionAttempts), MaximumConcurrentSessions: 1,
-		MaximumSessionSeconds: min(policy.BootstrapSessionSeconds, active.MaximumSessionSeconds), MaximumTotalBytes: min(policy.BootstrapTotalBytes, active.MaximumTotalBytes),
-		IssuerEpoch: active.IssuerEpoch, IssuerKeyID: active.IssuerKeyID}
-	capability, err := wire.SignBootstrapCapability(body, issuerKey)
-	if err != nil {
-		return delivery, err
-	}
+	service := material.EnrollmentServiceRef
 	descriptor := wire.InviteBootstrapDescriptorV2{Schema: 2, ClusterID: runtime.config.ClusterID, InviteID: inviteID, ExpiresAt: material.Record.ExpiresAt,
 		Token: token.Token, TokenCommitment: material.Record.TokenCommitment, BootstrapTunnelCapability: capability,
 		BootstrapCatalogHash: material.Record.BootstrapCatalogHash, ProofBundleHash: proofHash, EnrollmentServiceRef: service,
