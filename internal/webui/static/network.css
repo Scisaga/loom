@@ -87,10 +87,10 @@ main {max-width:1586px;padding:28px 20px 44px}
 .topology-stage #topology {flex:1;display:flex;align-items:center;min-height:365px}
 .topology-stage .topology {min-height:0;height:auto;width:100%;max-height:400px}
 .topology-caption {font-size:11px;color:var(--dim);margin:9px 0 8px}
-.topology-side {display:grid;grid-template-rows:minmax(270px,1fr) 192px;gap:15px}
+.topology-side {display:grid;grid-template-rows:minmax(270px,1fr) minmax(192px,auto);gap:15px}
 .layer-carriers {padding:10px 0 13px;border-bottom:1px solid var(--line)}
 .topology-status-grid {display:grid;grid-template-columns:1fr 1fr;gap:15px;padding:12px 0 13px;border-bottom:1px solid var(--line)}
-.topology-status-grid .metric {font-size:18px;white-space:nowrap}
+.topology-status-grid .metric {font-size:18px}
 .layer-routing {padding-top:11px}
 .layer-routing a {display:block;margin-top:3px;font-size:12px}
 .topology-traffic-card {padding:11px 18px!important}
@@ -150,7 +150,7 @@ main {max-width:1586px;padding:28px 20px 44px}
   .overview-primary .overview-topology-card {height:330px}
   .overview-secondary {grid-template-columns:1fr}
   .topology-layout {grid-template-columns:1fr}
-  .topology-side {grid-template-columns:1fr 1fr;grid-template-rows:270px}
+  .topology-side {grid-template-columns:1fr 1fr;grid-template-rows:minmax(270px,auto)}
   .step {padding:0 14px}
   .step>.tiny {font-size:9px}
 }
@@ -189,7 +189,69 @@ main {max-width:1586px;padding:28px 20px 44px}
 .topology .node.selected {stroke:#fff;stroke-width:3}
 .page-topology {padding-top:22px}
 .page-topology .overview-health {margin-top:10px;margin-bottom:16px}
-.page-topology .topology-stage {height:478px}
 .page-topology .topology-stage #topology {min-height:0}
 .page-topology .topology-stage .topology {max-height:360px}
 @media(max-width:960px) {.page-topology .topology-stage {height:auto;min-height:440px}}
+
+.device-heading {margin-bottom:18px;align-items:center}
+.device-heading h1 {overflow-wrap:anywhere}
+.device-heading .actions {font-size:12px;flex-shrink:0}
+.device-heading .icon {width:15px;height:15px;margin-right:3px}
+.device-status {height:auto;min-height:82px;padding:12px 0;margin-bottom:15px}
+.device-status .step {padding:0 22px}
+.device-status .step b {white-space:normal;overflow:visible;font-size:16px}
+.device-status .badge {font-size:16px;white-space:normal}
+.device-status .step>.tiny {white-space:normal}
+.device-detail-columns {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:15px}
+.page-device .tags {max-width:none;margin-top:7px}
+.device-section {margin-top:15px}
+.device-section h3 {margin-bottom:7px}
+.device-facts {display:grid;grid-template-columns:140px minmax(0,1fr);gap:11px 18px;margin:18px 0 8px;font-size:12px}
+.device-facts dt {color:var(--dim)}
+.device-facts dd {margin:0;overflow-wrap:anywhere}
+.device-waiting {padding:15px 0 5px}
+.device-waiting p {color:var(--dim);margin:6px 0 0;max-width:58ch}
+.device-grants {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 16px}
+.device-grant {display:flex;align-items:center;gap:8px;padding:7px 0;overflow-wrap:anywhere}
+.device-grant .icon {color:var(--dim);width:14px;height:14px}
+.page-device .device-tunnels,.page-device .device-history {margin-bottom:15px}
+.device-history>svg {width:100%;max-height:135px}
+.device-action-row {display:flex;align-items:center;justify-content:space-between;gap:30px;padding:15px 0;border-bottom:1px solid var(--line)}
+.device-action-row:last-child {padding-bottom:0;border-bottom:0}
+.device-action-row p {font-size:12px;margin:4px 0 0;max-width:95ch}
+.device-action-row button {flex-shrink:0;min-width:158px;font-size:12px}
+.page-enrollment .network-heading {margin-bottom:22px}
+.page-enrollment .enrollment-card {padding:24px}
+.enrollment-columns {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:32px}
+.enrollment-settings {padding-right:32px;border-right:1px solid var(--line)}
+.enrollment-columns .section-description {margin:4px 0 22px;font-size:12px}
+.enrollment-columns .field {margin-bottom:20px;gap:8px}
+.enrollment-columns legend {margin-bottom:8px}
+.enrollment-columns .choice {align-items:center;min-height:62px}
+.enrollment-columns .choice b {font-weight:500}
+.enrollment-columns .choice small {font-size:11px;overflow-wrap:anywhere}
+.enrollment-columns .grant-grid {grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.fixed-responsibility {padding:15px 16px;background:#f6f8f6;border:1px solid var(--line);border-radius:7px;font-size:12px}
+.fixed-responsibility .sectionhead {justify-content:space-between}
+.enrollment-footer {border-top:1px solid var(--line);margin-top:24px;padding-top:18px}
+.enrollment-footer .inline-error:empty {display:none}
+.enrollment-footer .actions>span {margin-left:auto}
+.sr-only {position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+@media(max-width:1100px) {
+  .enrollment-columns {gap:22px}
+  .enrollment-settings {padding-right:22px}
+  .enrollment-columns .grant-grid {grid-template-columns:1fr}
+}
+@media(max-width:700px) {
+  .device-heading {align-items:start;flex-direction:column;gap:14px}
+  .device-detail-columns,.enrollment-columns {grid-template-columns:1fr}
+  .device-status .step {padding:10px 14px}
+  .device-status {padding:0}
+  .device-status .step:nth-last-child(-n+2) {border-bottom:0}
+  .device-facts {grid-template-columns:115px minmax(0,1fr);gap:10px}
+  .device-grants {grid-template-columns:1fr}
+  .device-action-row {align-items:start;flex-direction:column;gap:12px}
+  .page-enrollment .enrollment-card {padding:18px}
+  .enrollment-settings {padding:0 0 22px;border-right:0;border-bottom:1px solid var(--line)}
+  .enrollment-footer .actions>span {margin-left:0;width:100%}
+}

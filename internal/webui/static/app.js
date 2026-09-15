@@ -15,6 +15,7 @@ import {
   short,
   matchesDevice,
   enrollmentInput,
+  deviceActions,
   bytes,
   trafficSample,
   trafficRate,
@@ -80,7 +81,7 @@ async function api(path, body, method = 'POST') {
 }
 async function task(button, fn) {
   if (button?.disabled) return;
-  const before = button?.textContent;
+  const before = button?.innerHTML;
   if (button) {
     button.disabled = true;
     button.textContent = 'Working…';
@@ -92,7 +93,7 @@ async function task(button, fn) {
   } finally {
     if (button?.isConnected) {
       button.disabled = false;
-      button.textContent = before;
+      button.innerHTML = before;
     }
   }
 }
@@ -259,10 +260,11 @@ function bindDeviceActions() {
     if (!b) return;
     const action = b.dataset.deviceAction,
       confirmations = {
-        replace: 'Confirm that the old identity and configuration have been deleted from this device before replacing it?',
+        replace: 'Rejoin this device with a new identity? Only continue if its old local identity has been deleted or lost. The old identity will be revoked and archived now; its network access stops as servers apply the updated configuration. A new device ID and join code will be created with the same name, platform and grants.',
+        renew: 'Create a new join code for this device? The previous code will stop working immediately.',
         delete: 'Remove this device from Loom? Local files on the device will remain.',
         purge: 'Permanently delete this archived record?',
-        discard: 'Discard this pending identity?'
+        discard: 'Delete this device before it joins? Its unused join code will stop working.'
       };
     if (confirmations[action] && !window.confirm(confirmations[action])) return;
     task(b, async () => {
@@ -274,6 +276,7 @@ function bindDeviceActions() {
       if (result.invite?.invite_id) navigate('/devices/invites/' + encodeURIComponent(result.invite.invite_id));
       else {
         await refresh();
+        if (['delete', 'purge', 'discard'].includes(action)) navigate('/devices');
         notify('Device updated');
       }
     });
@@ -283,7 +286,25 @@ async function enrollmentPage(epoch) {
   app.innerHTML = heading('Add Device', 'Create a one-time invitation with its platform and responsibilities.') + '<p>Loading available grants…</p>';
   const options = await api('/api/control/ui/enrollment-options');
   if (epoch !== routeEpoch) return;
-  app.innerHTML = heading('Add Device', 'The invitation fixes platform, responsibilities and destination grants.') + `<section class="card form-card"><form id="enrollment-form"><div class="field"><label for="device-name">Display name</label><input id="device-name" name="name" required placeholder="e.g. build server" maxlength="128"></div><div class="field"><label for="device-platform">Platform</label><select id="device-platform" name="platform"><option value="windows-desktop">Windows</option><option value="android">Android</option><option value="linux-server">Linux</option></select></div><p id="fixed-role">Responsibility: <b>use_loom</b></p><fieldset id="role-choices" class="field" hidden><legend>Responsibilities</legend><div class="choices">${[['use_loom','Use Loom from this device'],['forward','Forward traffic for other devices'],['internet_egress','Offer Internet egress']].map(([v,t])=>`<label class="choice" ${v==='internet_egress'?'id="egress-choice" hidden':''}><input type="checkbox" name="responsibility" value="${v}" ${v==='use_loom'?'checked':''}><span>${v}<small>${t}</small></span></label>`).join('')}</div></fieldset><fieldset id="grant-choices" class="field"><legend>Destination grants</legend><div class="choices">${list(options.destination_grants).map(g=>`<label class="choice"><input type="checkbox" name="destination_grant" value="${esc(g.id)}" checked><span>${esc(g.name||g.id)}<small>${esc(g.id)}</small></span></label>`).join('')||'<p class="warn">No destination grants are available.</p>'}</div></fieldset><div id="direction-choice" class="field" hidden><label for="device-direction">Connection direction</label><select id="device-direction" name="direction" disabled><option value="bidirectional">Can initiate and accept connections</option><option value="reverse_only">Initiates reverse connections only</option><option value="direct_only">Accepts connections only</option></select><small>Direction controls data-plane links. It does not describe SSH access.</small></div><p class="inline-error" id="form-error" role="alert"></p><div class="actions"><button class="primary" type="submit">Create Device</button><a class="button" data-nav href="/devices">Cancel</a></div></form></section>`;
+  app.innerHTML = `<div class="network-heading"><span class="eyebrow">DEVICES / ADD</span><h1>Add Device</h1><p class="dim">Choose the device platform and what it may access. Then use its one-time invitation to join.</p></div>
+    <section class="card enrollment-card"><form id="enrollment-form">
+      <div class="enrollment-columns">
+        <section class="enrollment-settings" aria-labelledby="device-settings-title">
+          <h2 id="device-settings-title">Device settings</h2><p class="dim section-description">Identify the device and choose its responsibilities.</p>
+          <div class="field"><label for="device-name">Display name</label><input id="device-name" name="name" required placeholder="e.g. build server" maxlength="128"></div>
+          <div class="field"><label for="device-platform">Platform</label><select id="device-platform" name="platform"><option value="windows-desktop">Windows</option><option value="android">Android</option><option value="linux-server">Linux</option></select></div>
+          <div id="fixed-role" class="fixed-responsibility"><div class="sectionhead"><b>Use Loom</b>${tag('use_loom')}</div><span class="dim">Connect this device to its permitted destinations.</span></div>
+          <fieldset id="role-choices" class="field" hidden><legend>Responsibilities</legend><div class="choices">${[['use_loom','Use Loom','Connect to permitted destinations'],['forward','Forward traffic','Carry traffic for other devices'],['internet_egress','Internet egress','Allow forwarded traffic to reach the Internet']].map(([v,t,h])=>`<label class="choice" ${v==='internet_egress'?'id="egress-choice" hidden':''}><input type="checkbox" name="responsibility" value="${v}" ${v==='use_loom'?'checked':''}><span><b>${t}</b><small>${h} · ${v}</small></span></label>`).join('')}</div></fieldset>
+          <div id="direction-choice" class="field" hidden><label for="device-direction">Connection direction</label><select id="device-direction" name="direction" disabled><option value="bidirectional">Can initiate and accept connections</option><option value="reverse_only">Initiates reverse connections only</option><option value="direct_only">Accepts connections only</option></select><small>Direction controls data-plane links. It does not describe SSH access.</small></div>
+        </section>
+        <section class="enrollment-access" aria-labelledby="grant-title">
+          <h2 id="grant-title">Destination access</h2><p class="dim section-description" id="grant-description">Select the destinations this device may use.</p>
+          <fieldset id="grant-choices" class="field"><legend class="sr-only">Destination grants</legend><div class="choices grant-grid">${list(options.destination_grants).map(g=>`<label class="choice"><input type="checkbox" name="destination_grant" value="${esc(g.id)}" checked><span><b>${esc(g.name||g.id)}</b><small>${esc(g.id)}</small></span></label>`).join('')||'<p class="warn">No destination grants are available.</p>'}</div></fieldset>
+          <p id="grants-not-needed" class="dim" hidden>Forwarding does not need destination grants. Enable Use Loom if this device also needs to connect to destinations itself.</p>
+        </section>
+      </div>
+      <div class="enrollment-footer"><p class="inline-error" id="form-error" role="alert"></p><div class="actions"><button class="primary" type="submit">Create Device</button><a class="button" data-nav href="/devices">Cancel</a><span class="dim tiny">The invitation fixes this platform, responsibilities and access.</span></div></div>
+    </form></section>`;
   const form = document.querySelector('#enrollment-form');
   const visibility = () => {
     const linux = form.platform.value === 'linux-server',
@@ -305,6 +326,8 @@ async function enrollmentPage(epoch) {
     form.querySelector('#fixed-role').hidden = linux;
     toggle('egress-choice', linux && forward.checked);
     toggle('grant-choices', use.checked);
+    form.querySelector('#grant-description').hidden = !use.checked;
+    form.querySelector('#grants-not-needed').hidden = use.checked;
     toggle('direction-choice', linux && forward.checked);
   };
   form.addEventListener('change', visibility);
@@ -348,39 +371,69 @@ async function invitePage(id, epoch) {
 }
 
 function detailPage(id) {
-  const d = list(snapshot.inventory.devices).find(d => d.id === id),
-    n = node(id);
+  const d = list(snapshot.inventory.devices).find(d => d.id === id), n = node(id);
   if (!d && !n) {
-    app.innerHTML = heading('Device', 'No current device evidence is available.');
+    app.innerHTML = heading('Device', 'No current device evidence is available.', link('/devices', '← Devices'));
     return;
   }
-  app.innerHTML = heading(d?.name || n?.Name || id, id, link('/devices', '← Devices')) + `<div id="device-detail" class="card"></div><section class="card"><h2>WireGuard links</h2>${table(['Peer / interface','Carrier','Handshake','Cumulative RX / TX','Evidence'],'tunnels-body')}</section><section class="card" id="device-history"></section><div id="device-actions" class="actions"></div>`;
+  app.innerHTML = `<div class="heading device-heading"><div class="network-heading"><span class="eyebrow">DEVICES / DETAIL</span><h1>${esc(d?.name || n?.Name || id)}</h1><p id="device-subtitle" class="dim"></p></div><div class="actions">${link('/devices', '← Devices')}${n?.Declared?link('/topology', 'View topology →'):''}</div></div>
+    <div id="device-status" class="steps device-status"></div>
+    <div class="device-detail-columns"><section class="card" id="device-runtime"></section><section class="card" id="device-access"></section></div>
+    <section class="card device-tunnels" id="device-tunnels" hidden><div class="sectionhead"><h2>WireGuard links</h2><span class="dim tiny">Current interface counters</span></div>${table(['Peer / interface','Carrier','Handshake','Cumulative RX / TX','Evidence'],'tunnels-body')}</section>
+    <section class="card device-history" id="device-history" hidden></section>
+    <section class="card device-management" id="device-actions" hidden></section>`;
   updateDetail(id);
 }
 
 function updateDetail(id) {
-  updateHistory('device-history', id);
-  const d = list(snapshot.inventory.devices).find(d => d.id === id),
-    n = node(id);
+  if (!document.querySelector('#device-status')) return;
+  const d = list(snapshot.inventory.devices).find(d => d.id === id), n = node(id);
   if (!d && !n) return;
-  setHTML(document.querySelector('#device-detail'), `<div class="metrics"><div class="metric">Presence<strong>${badge(d?.presence_status)}</strong><small>${time(d?.heartbeat_at)}</small></div><div class="metric">Loom runtime<strong>${badge(d?.data_plane_status||n?.Health)}</strong><small>${time(d?.last_seen_at||n?.ObservedAt)}</small></div><div class="metric">Configuration<strong>${esc(d?.config_state||short(n?.Applied))}</strong></div><div class="metric">Version<strong>${esc(d?.last_seen_at?short(n?.Version?.Commit):'Not reported')}</strong></div></div><hr>${tags(d?.responsibilities||n?.Roles)}<p>Destination grants</p>${tags(d?.destination_grants)}${list(d?.runtime_problems).map(p=>`<p class="note error">${esc(p)}</p>`).join('')}<details class="details"><summary>Evidence and configuration details</summary><pre>${esc(JSON.stringify({source:n?.Source,observed_at:n?.ObservedAt,direction:d?.direction,endpoint:d?.public_endpoint,components:n?.Components,rollout:n?.Rollout},null,2))}</pre></details>`);
-  const counters = list(snapshot.node_traffic?.[id]?.current);
-  rows('tunnels-body', list(n?.Tunnels), t => t.Interface + '|' + t.PeerNode, t => {
+  const responsibilities = list(d?.responsibilities || n?.Roles),
+    platform = platforms.find(p => p.id === d?.platform),
+    trusted = !!d?.last_seen_at,
+    presence = d?.presence_status === 'live' ? 'online' : d?.presence_status || 'unknown';
+  setHTML(document.querySelector('#device-subtitle'), `${platform?icon(platform.icon)+' '+esc(platform.label)+' · ':''}<span class="mono">${esc(id)}</span>`);
+  setHTML(document.querySelector('#device-status'), [
+    ['Membership', badge(d?.membership), d?.claimed_at ? 'Joined ' + age(d.claimed_at) : ['active','paused'].includes(d?.membership) ? 'Existing managed identity' : 'Not joined yet'],
+    ['Presence', badge(presence), d?.heartbeat_at ? 'Heartbeat ' + age(d.heartbeat_at) : 'Waiting for a heartbeat'],
+    ['Loom runtime', badge(d?.data_plane_status || n?.Health), trusted ? 'Observed ' + age(d.last_seen_at) : 'Waiting for a trusted report'],
+    ['Configuration', esc(d?.config_state || 'Not reported'), trusted && n?.Applied ? short(n.Applied) : 'No applied configuration reported']
+  ].map(([label, value, detail]) => `<div class="step"><span class="label">${label}</span><b>${value}</b><span class="tiny dim">${esc(detail)}</span></div>`).join(''));
+  const facts = entries => `<dl class="device-facts">${entries.map(([label, value])=>`<dt>${label}</dt><dd>${value}</dd>`).join('')}</dl>`;
+  const components = trusted ? list(n?.Components) : [];
+  setHTML(document.querySelector('#device-runtime'), `<div class="sectionhead"><h2>Runtime & observation</h2>${trusted?badge(d.data_plane_status):''}</div>
+    ${!trusted?'<div class="device-waiting"><b>No trusted runtime report yet</b><p>Open Loom on this device and connect to the network. Its status and applied configuration will appear here when reported.</p></div>':''}
+    ${facts([['Last heartbeat', time(d?.heartbeat_at)], ['Last observation', time(d?.last_seen_at)], ['Loom version', trusted && n?.Version ? esc(n.Version.Tag || short(n.Version.Commit)) + (n.Version.Dirty ? ' · modified' : '') : 'Not reported']])}
+    ${list(d?.runtime_problems).map(p=>`<p class="note error">${esc(p)}</p>`).join('')}
+    ${components.length?`<div class="device-section"><h3>Component versions</h3><div class="table-wrap"><table><thead><tr><th>Component</th><th>Expected</th><th>Actual</th><th>Result</th></tr></thead><tbody>${components.map(c=>`<tr><td>${esc(c.Name)}</td><td>${esc(c.Expected)}</td><td>${esc(c.Actual)}</td><td>${badge(c.OK?'matched':'problem')}</td></tr>`).join('')}</tbody></table></div></div>`:''}
+    ${trusted?`<details class="details"><summary>Observation details</summary>${facts([['Source', esc(n?.Source || 'Not reported')], ['Code commit', esc(n?.Version?.Commit || 'Not reported')], ['Rollout', esc(n?.Rollout?.Stage || 'Not reported')]])}</details>`:''}`);
+  const grants = list(d?.destination_grants), services = list(snapshot.view.Declarations);
+  setHTML(document.querySelector('#device-access'), `<h2>Network access</h2><div class="device-section"><span class="label">Responsibilities</span>${tags(responsibilities)}</div>
+    ${responsibilities.includes('use_loom')?`<div class="device-section"><div class="sectionhead"><h3>Destination grants</h3><span class="dim tiny">${grants.length} permitted</span></div><div class="device-grants">${grants.map(g=>{const name=services.find(s=>s.ID===g)?.Name;return `<span class="device-grant">${icon('services')}<span>${esc(name||g)}</span></span>`;}).join('')||'<p class="dim">No destination access granted.</p>'}</div></div>`:''}
+    ${responsibilities.includes('forward')?facts([['Connection direction', esc(d?.direction || n?.Direction || 'Not declared')], ['Internet egress', responsibilities.includes('internet_egress')?'Enabled':'Not enabled']]):''}
+    <details class="details"><summary>Device identity</summary>${facts([['Device ID', esc(id)], ['Created', time(d?.created_at)], ['Joined', time(d?.claimed_at)], ['Identity source', esc(d?.identity_source || 'Not indexed')], ...(d?.replaces?[['Previous device', link('/devices/'+encodeURIComponent(d.replaces),d.replaces)]]:[]), ...(d?.replaced_by?[['Replacement device', link('/devices/'+encodeURIComponent(d.replaced_by),d.replaced_by)]]:[])])}</details>`);
+  const counters = list(snapshot.node_traffic?.[id]?.current), tunnels = list(n?.Tunnels);
+  document.querySelector('#device-tunnels').hidden = tunnels.length === 0;
+  rows('tunnels-body', tunnels, t => t.Interface + '|' + t.PeerNode, t => {
     const c = counters.find(c => c.interface === t.Interface && c.peer_node === t.PeerNode);
     return [`${esc(t.PeerNode||'Unknown peer')}<small>${esc(t.Interface)}</small>`, t.CarrierPresent ? badge(t.State) : 'Not observed', t.CarrierPresent ? (t.AgeSec >= 0 ? `${t.AgeSec}s ago` : 'Never') : 'Unknown', c?.trusted ? `${bytes(c.rx_bytes)} / ${bytes(c.tx_bytes)}` : 'Not reported', `${esc(c?.source||'No counters')}<small>${time(c?.observed_at)}</small>`];
   });
-  if (d) {
-    const actions = [];
-    const add = (key, label, condition = true) => {
-      if (caps[key] && condition) actions.push(`<button data-device-action="${key}" data-id="${esc(id)}" class="${['delete','purge','discard'].includes(key)?'danger':''}">${label}</button>`);
-    };
-    add('renew', 'New join code', d.status !== 'revoked');
-    add('replace', 'Replace identity', d.status !== 'revoked');
-    add('delete', 'Remove device', d.status !== 'revoked');
-    add('purge', 'Delete archived record', d.status === 'revoked');
-    add('discard', 'Discard pending identity', d.membership === 'identity only');
-    setHTML(document.querySelector('#device-actions'), actions.join(''));
-  }
+  const hasTraffic = tunnels.length > 0 || counters.some(c=>c.trusted) || historyPoints(snapshot.traffic?.history, id).some(p=>p.present);
+  document.querySelector('#device-history').hidden = !hasTraffic;
+  if (hasTraffic) updateHistory('device-history', id);
+  const allowed = deviceActions(d, caps, n), actions = [];
+  const add = (action, label, description, danger = false) => {
+    if (allowed.includes(action)) actions.push(`<div class="device-action-row"><div><h3>${label}</h3><p class="dim">${description}</p></div><button class="${danger?'danger':''}" data-device-action="${action}" data-id="${esc(id)}">${label}</button></div>`);
+  };
+  add('renew', 'New join code', 'For this device’s first join. Creates a fresh code and invalidates the previous one.');
+  add('replace', 'Rejoin device', 'Use only after the local identity has been deleted or lost, for example after a reinstall. Revokes and archives the old identity, then creates a new device ID and join code with the same name, platform and grants. Existing installations reconnect with their saved identity.');
+  add('delete', 'Remove device', 'Revokes network access as servers apply the updated configuration. Local files on the device are retained.', true);
+  add('discard', 'Delete unjoined device', 'Deletes this unused reservation and its join codes.', true);
+  add('purge', 'Delete archived record', 'Permanently deletes this old record. Any replacement device is kept.', true);
+  const management = document.querySelector('#device-actions');
+  management.hidden = actions.length === 0;
+  setHTML(management, `<h2>Device management</h2>${actions.join('')}`);
 }
 
 function overviewPage() {
@@ -706,7 +759,7 @@ function updatePage() {
 async function render() {
   const epoch = ++routeEpoch,
     path = location.pathname;
-  app.className = path === '/' ? 'network-page page-overview' : path === '/topology' ? 'network-page page-topology' : '';
+  app.className = path === '/devices' && query().get('new') === '1' ? 'network-page page-enrollment' : path.startsWith('/devices/') && !path.startsWith('/devices/invites/') ? 'network-page page-device' : path === '/' ? 'network-page page-overview' : path === '/topology' ? 'network-page page-topology' : '';
   for (const a of document.querySelectorAll('nav a')) {
     const active = a.pathname === path || a.pathname === '/releases' && path === '/deployments' || a.pathname === '/devices' && path.startsWith('/devices/');
     if (active) a.setAttribute('aria-current', 'page');
@@ -774,5 +827,5 @@ function updateHistory(elementID, nodeID = '') {
     ['rx', '#88b99e'],
     ['tx', '#7498b5']
   ].map(([direction, color], side) => `<rect x="${i*step+1+side*step/2}" y="${height-Number(p[direction]*100n/max)}" width="${Math.max(step/2-2,1)}" height="${Math.max(Number(p[direction]*100n/max),1)}" fill="${color}"><title>${esc(p.start)} · ${direction.toUpperCase()} ${bytes(p[direction])}</title></rect>`).join('') : `<rect x="${i*step+1}" y="${height-Number((p.rx+p.tx)*100n/max)}" width="${Math.max(step-2,1)}" height="${Math.max(Number((p.rx+p.tx)*100n/max),1)}" fill="#88b99e"><title>${esc(p.start)} · RX ${bytes(p.rx)} · TX ${bytes(p.tx)}</title></rect>`).join('');
-  setHTML(element, `<h2>${nodeID?'Device':'Fleet'} forwarding · retained time buckets</h2><p><b>${bytes(total)}</b> · ${known.length} / ${points.length} sampled buckets</p>${known.length?`<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="WireGuard traffic by sampled time bucket">${bars}</svg>`:'<p class="muted">No accepted traffic deltas in this window.</p>'}<small>${time(history.window_start)} — ${time(history.window_end)} · bucket ${esc(history.bucket_width)}</small><p class="muted">${nodeID?'RX and TX on this device’s WireGuard interfaces.':'Fleet totals sum node-interface RX + TX across hops; they are not unique application payload volume.'} Missing buckets remain unknown; rejected resets and gaps contribute no bytes.</p><details class="details"><summary>Bucket evidence</summary><div class="table-wrap"><table><thead><tr><th>Time</th><th>RX</th><th>TX</th><th>Resets / gaps</th></tr></thead><tbody>${points.map(p=>`<tr><td>${time(p.start)}</td><td>${p.present?bytes(p.rx):'Unknown'}</td><td>${p.present?bytes(p.tx):'Unknown'}</td><td>${p.resets} / ${p.gaps}<small>Window flags ${p.bucketResets} / ${p.bucketGaps}</small></td></tr>`).join('')}</tbody></table></div></details>`);
+  setHTML(element, `<h2>${nodeID?'Device':'Fleet'} forwarding · retained time buckets</h2><p><b>${known.length?bytes(total):'Unknown'}</b> · ${known.length} / ${points.length} sampled buckets</p>${known.length?`<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="WireGuard traffic by sampled time bucket">${bars}</svg>`:'<p class="muted">No accepted traffic deltas in this window.</p>'}<small>${time(history.window_start)} — ${time(history.window_end)} · bucket ${esc(history.bucket_width)}</small><p class="muted">${nodeID?'RX and TX on this device’s WireGuard interfaces.':'Fleet totals sum node-interface RX + TX across hops; they are not unique application payload volume.'} Missing buckets remain unknown; rejected resets and gaps contribute no bytes.</p><details class="details"><summary>Bucket evidence</summary><div class="table-wrap"><table><thead><tr><th>Time</th><th>RX</th><th>TX</th><th>Resets / gaps</th></tr></thead><tbody>${points.map(p=>`<tr><td>${time(p.start)}</td><td>${p.present?bytes(p.rx):'Unknown'}</td><td>${p.present?bytes(p.tx):'Unknown'}</td><td>${p.resets} / ${p.gaps}<small>Window flags ${p.bucketResets} / ${p.bucketGaps}</small></td></tr>`).join('')}</tbody></table></div></details>`);
 }

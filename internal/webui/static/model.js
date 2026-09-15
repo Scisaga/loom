@@ -18,6 +18,17 @@ export function matchesDevice(device, query) {
   const search = (query.get('q') || '').trim().toLowerCase();
   return `${device.name} ${device.id}`.toLowerCase().includes(search);
 }
+// 加入码只用于未绑定身份；观测状态不能扩大生命周期操作范围。
+export function deviceActions(device, capabilities, node) {
+  if (!device) return [];
+  const unjoined = ['pending', 'invite_expired'].includes(device.status) && !device.claimed_at && !device.key_fingerprint;
+  const joinedAccess = device.identity_source === 'enrollment' && !!device.claimed_at && !!device.key_fingerprint &&
+    ['active', 'paused'].includes(device.membership) && !['revoked', 'provisioning', 'pending'].includes(device.status) && !device.replaced_by &&
+    list(device.responsibilities).length === 1 && device.responsibilities[0] === 'use_loom';
+  const conditions = {renew: unjoined, discard: unjoined, replace: joinedAccess, delete: joinedAccess,
+    purge: device.status === 'revoked' && !node?.Declared};
+  return Object.keys(conditions).filter(action => capabilities[action] && conditions[action]);
+}
 export function enrollmentInput(form) {
   const data = new FormData(form),
     platform = data.get('platform');
