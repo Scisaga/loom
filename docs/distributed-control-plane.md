@@ -3693,6 +3693,14 @@ Emergency recovery 必须产生新 recovery epoch，不得通过恢复旧数据�
 ## 19. 从当前实现迁移
 
 迁移按 M0–M7 进行。每个阶段都可单独验收；目标字段不能提前塞入严格 v1 wire schema。
+阶段完成必须落实本阶段列出的全部功能与完成条件，不能把 wire、reducer 或测试齐全等同于
+daemon 已接入或生产已上线。执行与交接按
+[实施提示词](control-plane-implementation-prompt.md)和 `CLAUDE.md` 的完成判定进行。
+
+每个阶段涉及的功能均须从正常 UI/CLI/客户端入口贯穿实际 daemon、持久状态和生效结果，并在
+已授权的生产迁移中部署验收。对应旧实现随新版替换删除；M7 是全局核对，不是把前面阶段的
+接线、部署和清理拖到最后的理由。存量身份与数据通过迁移保留，不得靠重新 bootstrap、手工改
+Head/ACL、双写或静默回退绕过新协议。当前未完成事项只记录在 `status/current.md`，不改低目标标准。
 
 ### M0 · 协议、不变量与 golden
 
@@ -3709,9 +3717,11 @@ Emergency recovery 必须产生新 recovery epoch，不得通过恢复旧数据�
 - 把现有指定 control 迁移为 N=1、q=1 的 ControlSet；
 - control_api、Raft、Enrollment、config/report 只绑定 overlay IP/internal cert；
 - admin/control/Device/Enrollment EKU 与 listener 分离；
-- 保留 v1 compatibility transport，但目标 API 不再新增公网依赖。
+- 将本阶段对应的现网调用迁入私有通道；新版接管后删除被替换的 v1 transport 与调用路径。
+  切换期间尚存的旧依赖属于未完成项，不能作为最终兼容功能交付。
 
 **完成条件：** 公网扫描无法访问 control 服务；overlay admin 可提交并取得 QC。
+这些边界必须由正式 daemon 的实际服务实现，不能用未挂载路由、空处理器或测试专用 listener 代替。
 
 ### M2 · Reader、静态 distribution 与 bootstrap tunnel
 
@@ -3743,6 +3753,8 @@ Emergency recovery 必须产生新 recovery epoch，不得通过恢复旧数据�
 
 **完成条件：** 任一健康 control 可接续同一 claim/request；不同 key 重放失败；镜像失陷不能伪造
 Device view 或配置 authority。
+正常创建邀请必须进入同一 certified 状态机；客户端完成私有入网、取得可用配置并提交已接受的
+签名报告。证据必须贯穿真实入口和 daemon，不能仅分别调用组件后拼接成“端到端通过”。
 
 ### M5 · 域名、DNS-01、证书与三类公网部署
 

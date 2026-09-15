@@ -4,6 +4,11 @@
 > 平台公钥、既有两签 Observation 和独立 `loom-presence-v1`，不可作为 v2 ControlSet/EndpointSet 的实现规范。
 > 开始分布式迁移时应按独立 v2 issue 和
 > [分布式控制平面设计](distributed-control-plane.md)执行；不得在此任务中顺手改变 wire schema。
+>
+> **当前迁移边界：** 本文是旧 Windows 专项的历史验收说明，不是继续保留 v1 服务端功能的要求。
+> 用户已要求的新功能上线、现网迁移与旧实现删除按
+> [控制面实施提示词](control-plane-implementation-prompt.md)执行。下文“不部署服务端”等专项限制
+> 不撤销当前对话的上线授权；未部署的 Windows 不阻塞当前 Linux/Android 与服务端替换。
 
 请继续 Loom Windows 客户端的正常二维码加入与最小 NAT Device 状态上报验收。
 先检查工作区状态，完整阅读 `docs/windows-client-reporting.md` 和

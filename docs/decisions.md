@@ -3833,9 +3833,10 @@ HMAC Cookie 和 `operator_ref` 配置被删除，调用方也不能用 HTTP head
 导入密码仅保护该文件。`admin-root.crt` 用于验证管理员签发链。所有 Root CA 私钥都留在 root-only
 control 状态，不导入浏览器、不进入 `.p12`。
 
-此入口复用现有 v1 compatibility 的 SSOT/Device/Service 写处理器，因此“证书已放行”只证明访问门禁，
-不证明业务变更已经过 v2 Raft/QC。Gate B 前这些处理器继续保留；只有迁移到登记的 v2 reducer、写入
-expected head/request ID 并返回 certified QC 后，UI 才能把操作显示为 v2 certified。
+此入口引入时复用了 v1 的 SSOT/Device/Service 写处理器，因此“证书已放行”只证明访问门禁，
+不证明业务变更已经过 v2 Raft/QC。新版必须迁入登记的 v2 reducer、绑定 expected head/request ID，
+返回 certified QC 并驱动实际生效后，UI 才能显示相应阶段。原“Gate B 前继续保留”的迁移安排已被
+D138 的交付要求取代：新版接管时删除对应旧处理器，不能以兼容为理由留下未完成的新版业务链路。
 
 ### D133 · 未部署的 Windows 不再阻塞活跃平台迁移或 v1 退役
 
@@ -3940,3 +3941,21 @@ SHA-256(frame) 上的 low-S raw r||s64。旧 Ed25519 profile 保留验证能力�
 
 验收包含旧身份迁移、重启恢复、旧证书失权、错 key/缺链/提权拒绝，以及只允许 P-256 的真实 TLS
 双向认证。Windows 证书链、私钥与 Chrome 实机选证书结果必须另行记录，不能由 Linux 测试推断。
+
+### D138 · 功能交付包括正常流程、生产上线与旧实现删除
+
+**状态：已定（操作者要求，2026-09-15）。**
+
+用户要求新版功能上线替换并删除旧功能。wire、reducer、组件测试或私有门禁完成，均不能代替
+正常业务入口贯穿 daemon、持久状态、客户端消费和生产部署。设计文档列出的完成条件必须逐项
+满足；不能只执行其中的兼容安排，不能把核心接线与部署当成已完成任务的普通“后续收尾”。
+
+新版接管时完成存量迁移并删除对应旧 handler、route、反代、配置、启动项、客户端回退及失效
+文案/测试。D132 的“Gate B 前继续保留”和旧 M1 的保留 v1 transport 条款不再作为保留旧功能的
+依据；M7 是全局清理核对，不延后各功能的实际替换。原网络、身份、密钥和历史数据经受验证的
+迁移接续，禁止 reset/re-bootstrap 或手改 Head/ACL。未部署 Windows 不阻塞现网替换。
+
+实现、接通、部署、验收分别报告；任何必需环节缺失都不得称“主体完成”或关闭 issue。验收使用
+实际运行的精确制品、生效配置和正常成功业务结果；负面拒绝、测试构造器或固定响应不能替代。
+用户已授权上线时继续完成发布激活，不受旧专项提示词“仅提交、不部署”的限制。具体执行规则
+见 `CLAUDE.md` 和[控制面实施提示词](control-plane-implementation-prompt.md)。
