@@ -70,6 +70,7 @@ func publishClientReleases(c config, pub ed25519.PublicKey, output io.Writer) er
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
+				fmt.Fprintf(output, "客户端制品分发失败: %s: %v\n", destination, err)
 				failures = append(failures, fmt.Sprintf("%s: %v", destination, err))
 			} else {
 				fmt.Fprintf(output, "客户端制品分发完成: %s (%d 个包)\n", destination, len(catalog.Artifacts))
@@ -81,7 +82,8 @@ func publishClientReleases(c config, pub ed25519.PublicKey, output io.Writer) er
 		return fmt.Errorf("客户端制品分发失败: %s", strings.Join(failures, "; "))
 	}
 	// 全部分发落盘校验通过后才更新控制节点的可下载目录。
-	pointer, err := os.ReadFile(filepath.Join(c.clientReleases, "current.json"))
+	// 指针绑定本次已验证的目录；复制期间源头发布新一代也不能混用。
+	pointer, err := json.Marshal(map[string]string{"catalog": catalogPath})
 	if err != nil {
 		return err
 	}
