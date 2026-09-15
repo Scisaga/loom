@@ -147,9 +147,28 @@ func (runtime *controlRuntime) recoverPendingOperations() error {
 }
 
 func (runtime *controlRuntime) recoverPendingOperationsLocked() error {
+	if err := runtime.restoreProvisionalResultsLocked(); err != nil {
+		return err
+	}
+	if err := runtime.finishCommittedLocked(); err != nil {
+		return err
+	}
 	for index := range runtime.journal.Records {
 		record := &runtime.journal.Records[index]
 		if record.Result != nil {
+			continue
+		}
+		if record.Enrollment != nil {
+			// Enrollment candidate 内的签发坐标和时间已经进入证书/操作，不能重定位。
+			if err := runtime.verifyEnrollmentRecord(index); err != nil {
+				return err
+			}
+			if _, err := runtime.leader.ReplicateHead(context.Background(), runtime.store, record.Candidate); err != nil {
+				return err
+			}
+			if err := runtime.finishCommittedLocked(); err != nil {
+				return err
+			}
 			continue
 		}
 		state := runtime.store.Snapshot()

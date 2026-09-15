@@ -3,6 +3,7 @@ package enrollmentv2
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -33,6 +34,34 @@ func TestRealDeviceIssuanceFirstResultSurvivesRestartWithoutResigning(t *testing
 	}
 	if calls != 1 || wire.VerifyEnrollmentProvisionalIssuance(&first.Issuance, &first.Profile) != nil {
 		t.Fatal("真实 CA first-result 不可验证")
+	}
+	recovered, err := ReadDurableProvisionalResults(path)
+	if err != nil || len(recovered) != 1 || !wire.EqualCanonical(recovered[0].Prepared, first) ||
+		!wire.EqualCanonical(recovered[0].Reservation, input.Reservation) || !wire.EqualCanonical(recovered[0].Coordinate, input.Coordinate) {
+		t.Fatalf("日志尚未落盘时无法恢复首次签发与原 reservation: %v", err)
+	}
+	// 文件自身被替换或修改不能以“已经签发”为理由跳过 reservation/QC 绑定。
+	stored, err := readProvisionalFirstResults(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored.Records[0].Reservation.ClaimEvidence.Opening.DeviceEnrollmentIntent.DeviceID = "demo-tampered-device"
+	corrupt, _ := wire.MarshalCanonical(stored)
+	badPath := filepath.Join(t.TempDir(), "corrupt-first-results.json")
+	if err := os.WriteFile(badPath, corrupt, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadDurableProvisionalResults(badPath); err == nil {
+		t.Fatal("接受与首次签发请求不符的 reservation")
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadDurableProvisionalResults(path); err == nil {
+		t.Fatal("读取了权限泄漏的 first-result 文件")
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
 	}
 	reopened, err := OpenDurableProvisionalService(path,
 		func(context.Context, string, VerifiedClaimAttemptV2, DurableRecord, EnrollmentCommitCoordinateV1) (PreparedProvisionalV1, error) {

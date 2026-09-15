@@ -75,6 +75,10 @@ func TestControlInviteUsesDaemonAuthorityAndSurvivesRestart(t *testing.T) {
 	}
 	// 后续 ping 和第二个邀请必须保留原邀请的额外 opaque leaf。
 	endpoint, client, address = progressTestServer(t, reopened, adminDir)
+	repeatedResult, err := submitControlOperation(context.Background(), adminDir, endpoint, client, before, request)
+	if err != nil || !wire.EqualCanonical(result, repeatedResult) || len(reopened.journal.Records) != 2 {
+		t.Fatalf("丢失成功响应后的重试没有返回第一次结果: %v", err)
+	}
 	status, _ := fetchControlStatus(context.Background(), endpoint, client)
 	ping, err := newControlPingRequest(adminDir, endpoint, status, "demo-following-ping", runtime.now())
 	if err != nil {

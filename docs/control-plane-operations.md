@@ -209,7 +209,7 @@ Firefox 可在“设置 → 隐私与安全 → 证书 → 查看证书 → 您�
 loom control status -admin-dir <offline-admin-directory>
 ```
 
-提交一次完整写链路验收：
+验证基础日志写链路：
 
 ```bash
 loom control request \
@@ -220,6 +220,24 @@ loom control request \
 
 成功响应必须同时满足 `status=certified`、有效 Head QC 和 operation inclusion proof。错误管理员证书、
 错误 server pin、过期证书、过期 Head 或公网 listener 都应失败关闭。
+
+创建 Device 邀请使用管理员本地签名入口；网络须先具备认证的邀请策略、签发 profile、bootstrap
+catalog 和 `create_invite` ACL。先读取可授权目标，再显式选择：
+
+```bash
+loom control create-invite -admin-dir <offline-admin-directory> -list-grants
+loom control create-invite \
+  -admin-dir <offline-admin-directory> \
+  -name '<device display name>' -platform linux-server \
+  -responsibilities use_loom -grants 'service:<service-id>' \
+  -out <protected-invitation-directory>
+```
+
+命令在 0700 交付目录内先保存 0600 的已签 `request.json`，成功后保存认证结果和
+`invite.loom-invite`、proof、catalog。超时后使用相同参数和同一目录重试；不能删除原请求重新生成。
+服务端只向仍获当前 ACL 授权的管理员返回已提交请求的原结果，不把旧 Head 用于新写入。
+邀请创建不代表 Device 已入网：客户端必须能从已部署的镜像取得对应不可变 proof/catalog，继续完成
+私有 Enrollment、配置激活和报告回读后，才能认定整条流程可用。交付文件与 token 不进入日志或公开镜像。
 
 浏览器的 private HTTPS/admin-mTLS 门禁不等于业务写入已经取得 v2 Raft/QC。每个 SSOT、Device 和
 Service 写操作必须经实际 reducer 提交、认证并驱动相应生效；新版接管后删除对应旧写处理器。

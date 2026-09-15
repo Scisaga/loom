@@ -218,20 +218,7 @@ func (runtime *controlRuntime) serveInviteDelivery(writer http.ResponseWriter, r
 	}
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
-	peer := request.TLS.PeerCertificates[0]
-	digest, err := wire.AdminCertificateDigest(peer.Raw)
-	allowed := false
-	if err == nil && runtime.adminCertificateAuthorizedLocked(peer.Raw) {
-		for _, authorization := range runtime.config.Authorizations {
-			if authorization.AdminCertificateDigest != digest || !containsControlValue(authorization.AllowedOperationKinds, controlCreateInviteKind) {
-				continue
-			}
-			for _, scope := range authorization.Scopes {
-				allowed = allowed || scope.ScopeKind == "cluster"
-			}
-		}
-	}
-	if !allowed {
+	if !runtime.inviteAdminAuthorizedLocked(request.TLS.PeerCertificates[0].Raw) {
 		writeControlRuntimeError(writer, http.StatusForbidden, "[D115 Invite] 管理员无邀请交付权限")
 		return
 	}
@@ -250,4 +237,22 @@ func (runtime *controlRuntime) serveInviteDelivery(writer http.ResponseWriter, r
 	writer.Header().Set("Referrer-Policy", "no-referrer")
 	writer.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = writer.Write(body)
+}
+
+func (runtime *controlRuntime) inviteAdminAuthorizedLocked(certificate []byte) bool {
+	digest, err := wire.AdminCertificateDigest(certificate)
+	if err != nil || !runtime.adminCertificateAuthorizedLocked(certificate) {
+		return false
+	}
+	for _, authorization := range runtime.config.Authorizations {
+		if authorization.AdminCertificateDigest != digest || !containsControlValue(authorization.AllowedOperationKinds, controlCreateInviteKind) {
+			continue
+		}
+		for _, scope := range authorization.Scopes {
+			if scope.ScopeKind == "cluster" {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -201,7 +201,7 @@ type controlRuntime struct {
 
 func cmdControl(args []string) error {
 	if len(args) == 0 {
-		return errors.New("control 需要 bootstrap、enable-loopback、rotate-admin、export-admin、serve、status 或 request")
+		return errors.New("control 需要 bootstrap、enable-loopback、rotate-admin、export-admin、serve、status、create-invite 或 request")
 	}
 	switch args[0] {
 	case "bootstrap":
@@ -218,6 +218,8 @@ func cmdControl(args []string) error {
 		return cmdControlStatus(args[1:])
 	case "request":
 		return cmdControlRequest(args[1:])
+	case "create-invite":
+		return cmdControlCreateInvite(args[1:])
 	default:
 		return fmt.Errorf("未知 control 子命令 %q", args[0])
 	}
@@ -826,7 +828,7 @@ func openControlRuntime(dir string, now func() time.Time) (*controlRuntime, erro
 	}
 	service, err := controlplane.NewPrivateControlService(config.OverlayIP, config.ControlPort,
 		runtime.readAuthority, runtime.resolveScope, runtime.commitOperation,
-		controlOperationSchemas, now)
+		controlOperationSchemas, now, runtime.readCommittedOperation)
 	if err != nil {
 		return nil, err
 	}
@@ -1039,6 +1041,9 @@ func (runtime *controlRuntime) commitOperation(ctx context.Context,
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
 	operation := verified.Operation()
+	if err := runtime.restoreProvisionalResultsLocked(); err != nil {
+		return controlplane.CertifiedControlOperationV1{}, err
+	}
 	if operation.Body.Kind == controlCreateInviteKind {
 		return runtime.commitInviteLocked(ctx, verified)
 	}
@@ -1241,6 +1246,8 @@ func (runtime *controlRuntime) controlHandler() http.Handler {
 		switch request.URL.Path {
 		case privateControlStatus:
 			runtime.serveStatus(writer, request)
+		case privateControlInviteContextPath:
+			runtime.serveInviteContext(writer, request)
 		case controlplane.PrivateControlOperationPath:
 			if request.Method == http.MethodGet {
 				runtime.serveOperationProgress(writer, request, false)
@@ -1695,8 +1702,12 @@ func submitControlOperation(ctx context.Context, adminDir string, endpoint contr
 	if err != nil {
 		return result, err
 	}
+	committedAt, err := wire.ParseTimeZ(result.Head.Body.Payload.CommittedLogicalTime)
+	if err != nil {
+		return result, err
+	}
 	expectedObjectID, err := wire.ControlOperationObjectID(&submitted.Operation,
-		certificate.RawSubjectPublicKeyInfo, time.Now().UTC(), controlOperationSchemas)
+		certificate.RawSubjectPublicKeyInfo, committedAt, controlOperationSchemas)
 	if err != nil {
 		return result, err
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"sort"
 	"time"
 
@@ -11,6 +12,8 @@ import (
 	"loom/internal/enrollmentv2"
 	"loom/internal/wire"
 )
+
+const controlProvisionalResultsName = "enrollment-first-results.json"
 
 type controlEnrollmentOperationV1 struct {
 	Mutation    enrollmentv2.EnrollmentHeadMutationV1 `json:"mutation"`
@@ -253,6 +256,9 @@ func (runtime *controlRuntime) CommitEnrollmentOperation(ctx context.Context, op
 	}
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
+	if err := runtime.restoreProvisionalResultsLocked(); err != nil {
+		return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
+	}
 	for i := range runtime.journal.Records {
 		record := &runtime.journal.Records[i]
 		if record.Leaf.OperationID != operationID {
@@ -263,6 +269,11 @@ func (runtime *controlRuntime) CommitEnrollmentOperation(ctx context.Context, op
 		}
 		if err := runtime.finishCommittedLocked(); err != nil {
 			return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
+		}
+		if record.Result == nil {
+			if err := runtime.recoverPendingOperationsLocked(); err != nil {
+				return enrollmentv2.EnrollmentOperationCommitResultV1{}, err
+			}
 		}
 		return runtime.enrollmentResult(i)
 	}
@@ -392,6 +403,9 @@ func (runtime *controlRuntime) enrollmentResult(index int) (enrollmentv2.Enrollm
 // 新任期 barrier 会占用下一条日志的 index。已经签出 provisional certificate
 // 的 pending candidate 必须先以原 bytes 恢复到原日志位置，再选举和提交；不能重签。
 func (runtime *controlRuntime) restorePendingEnrollmentBeforeCampaign() error {
+	if err := runtime.restoreProvisionalResultsLocked(); err != nil {
+		return err
+	}
 	for i, record := range runtime.journal.Records {
 		if record.Enrollment == nil || record.Result != nil {
 			continue
@@ -400,6 +414,99 @@ func (runtime *controlRuntime) restorePendingEnrollmentBeforeCampaign() error {
 			return err
 		}
 		if err := runtime.storage.AppendLocal(record.Candidate); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CA first-result 的 fsync 先于 journal。重启或下一次写入必须先将已经签发的
+// exact bytes 补回原日志坐标，不能让选举 barrier 或另一项管理操作占用该位置。
+func (runtime *controlRuntime) restoreProvisionalResultsLocked() error {
+	results, err := enrollmentv2.ReadDurableProvisionalResults(filepath.Join(runtime.dir, controlProvisionalResultsName))
+	if err != nil {
+		return err
+	}
+	for _, result := range results {
+		found := false
+		for _, record := range runtime.journal.Records {
+			if record.Leaf.OperationID != result.Prepared.Operation.OperationID {
+				continue
+			}
+			if record.Enrollment == nil || record.Enrollment.Mutation.Preimage == nil ||
+				record.Enrollment.Mutation.Preimage.Provisional == nil ||
+				!wire.EqualCanonical(record.Enrollment.Mutation.Preimage.Provisional.Prepared, result.Prepared) ||
+				!wire.EqualCanonical(record.Enrollment.Mutation.Preimage.Provisional.Record, result.Reservation) ||
+				!wire.EqualCanonical(controlEnrollmentCoordinate(record.Candidate), result.Coordinate) {
+				return errors.New("[D130 daemon] first-result 与 operation journal 冲突")
+			}
+			found = true
+			break
+		}
+		if found {
+			continue
+		}
+		for _, record := range runtime.journal.Records {
+			if record.Result == nil {
+				return errors.New("[D130 daemon] 未入 journal 的 first-result 与另一 pending operation 冲突")
+			}
+		}
+		state, raft := runtime.store.Snapshot(), runtime.storage.SnapshotRaft()
+		coordinate := result.Coordinate
+		if state.CertifiedHead == nil || state.CertifiedQC == nil || state.Active != nil ||
+			state.CertifiedHead.HeadHash != coordinate.ParentHeadHash ||
+			coordinate.RecoveryEpoch != state.CertifiedHead.Body.Payload.RecoveryEpoch ||
+			coordinate.ClusterID != runtime.config.ClusterID || len(raft.Log) == 0 ||
+			int64(len(raft.Log))+1 != coordinate.RaftIndex || raft.Log[len(raft.Log)-1].EntryHash != coordinate.PreviousLogEntryHash ||
+			raft.CurrentTerm != coordinate.RaftTerm {
+			return errors.New("[D130 daemon] first-result 原日志坐标已被改变，禁止重签或隐式迁移")
+		}
+		application, err := runtime.applicationBefore(len(runtime.journal.Records))
+		if err != nil {
+			return err
+		}
+		objectID, err := wire.HashObject(enrollmentv2.DomainProvisionalOperation, result.Prepared.Operation)
+		if err != nil {
+			return err
+		}
+		mutation := enrollmentv2.EnrollmentHeadMutationV1{
+			OperationLeaf: wire.ControlOperationLeafV1{Schema: 1, OperationID: result.Prepared.Operation.OperationID, ObjectID: objectID},
+			Preimage: &enrollmentv2.EnrollmentMutationPreimageV1{Schema: 1, Kind: "provisional",
+				Provisional: &enrollmentv2.EnrollmentProvisionalPreimageV1{Record: result.Reservation, Prepared: result.Prepared}},
+		}
+		next, err := application.reduceEnrollment(mutation, coordinate, state.ControlSet)
+		if err != nil {
+			return err
+		}
+		body := state.CertifiedHead.Body
+		body.Payload.HeadKind = "ordinary"
+		body.Payload.ParentHeadHash = coordinate.ParentHeadHash
+		body.Payload.RaftTerm, body.Payload.RaftIndex, body.Payload.ControlRevision = coordinate.RaftTerm, coordinate.RaftIndex, coordinate.RaftIndex
+		body.Payload.PreviousLogEntryHash, body.Payload.CommittedLogicalTime = coordinate.PreviousLogEntryHash, coordinate.CommittedLogicalTime
+		body.Payload.TransitionContext = json.RawMessage(`{"schema":1,"kind":"ordinary"}`)
+		body.Payload.OperationRoot, err = wire.ControlOperationRoot(append(runtime.operationLeaves(len(runtime.journal.Records)), mutation.OperationLeaf))
+		if err != nil {
+			return err
+		}
+		roots, err := next.roots()
+		if err != nil {
+			return err
+		}
+		controlApplyRoots(&body, roots)
+		candidate, err := wire.NewHeadEntry(body)
+		if err != nil {
+			return err
+		}
+		index := len(runtime.journal.Records)
+		runtime.journal.Records = append(runtime.journal.Records, controlOperationRecordV1{Schema: 1,
+			Leaf: mutation.OperationLeaf, Candidate: candidate, Phases: []controlplane.Phase{controlplane.PhasePending},
+			Enrollment: &controlEnrollmentOperationV1{Mutation: mutation, LineageFrom: result.Reservation.ReservationCertification.Head}})
+		if err := runtime.verifyEnrollmentRecord(index); err != nil {
+			runtime.journal.Records = runtime.journal.Records[:index]
+			return err
+		}
+		if err := runtime.persistJournalLocked(); err != nil {
+			runtime.journal.Records = runtime.journal.Records[:index]
 			return err
 		}
 	}

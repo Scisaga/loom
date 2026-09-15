@@ -53,6 +53,16 @@ type CertifiedControlOperationV1 struct {
 
 type ControlOperationCommitter func(context.Context, wire.VerifiedAdminOperationV1) (CertifiedControlOperationV1, error)
 
+// ReplayReader 只查 exact 已提交 operation，不执行新的写入。Parent/ControlSet
+// 必须来自已验证的本机历史；结果仍由 handler 重验 QC、签名和 inclusion。
+type ControlOperationReplayV1 struct {
+	Parent     wire.HeadEntryV2
+	ControlSet wire.ControlSetV1
+	Result     CertifiedControlOperationV1
+}
+
+type ControlOperationReplayReader func(context.Context, wire.ControlOperationV1) (*ControlOperationReplayV1, error)
+
 type privateControlOperationRequestV1 struct {
 	Schema           int                     `json:"schema"`
 	ExpectedHeadHash string                  `json:"expected_head_hash"`
@@ -94,13 +104,14 @@ type PrivateControlService struct {
 	read         ControlAuthorityReader
 	resolveScope ControlScopeResolver
 	commit       ControlOperationCommitter
+	replay       ControlOperationReplayReader
 	schemas      wire.OperationSchemaRegistry
 	now          func() time.Time
 }
 
 func NewPrivateControlService(overlayIP string, port int64, read ControlAuthorityReader,
 	resolveScope ControlScopeResolver, commit ControlOperationCommitter,
-	schemas wire.OperationSchemaRegistry, now func() time.Time) (*PrivateControlService, error) {
+	schemas wire.OperationSchemaRegistry, now func() time.Time, replay ...ControlOperationReplayReader) (*PrivateControlService, error) {
 	address, err := netip.ParseAddr(overlayIP)
 	if err != nil || address.String() != overlayIP || !address.IsPrivate() || port < 1 || port > 65535 ||
 		read == nil || resolveScope == nil || commit == nil || now == nil || len(schemas) == 0 {
@@ -113,10 +124,17 @@ func NewPrivateControlService(overlayIP string, port int64, read ControlAuthorit
 		}
 		copySchemas[kind] = schema
 	}
-	return &PrivateControlService{
+	if len(replay) > 1 || len(replay) == 1 && replay[0] == nil {
+		return nil, errors.New("[D104 private control] replay reader 配置无效")
+	}
+	service := &PrivateControlService{
 		localAddress: net.JoinHostPort(overlayIP, strconv.FormatInt(port, 10)),
 		read:         read, resolveScope: resolveScope, commit: commit, schemas: copySchemas, now: now,
-	}, nil
+	}
+	if len(replay) == 1 {
+		service.replay = replay[0]
+	}
+	return service, nil
 }
 
 func (service *PrivateControlService) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
@@ -156,7 +174,7 @@ func (service *PrivateControlService) ServeHTTP(writer http.ResponseWriter, requ
 		writePrivateControlError(writer, http.StatusServiceUnavailable, "[D104 private control] authority 暂不可用")
 		return
 	}
-	if submitted.ExpectedHeadHash != snapshot.Head.HeadHash || submitted.ExpectedHeadHash != submitted.Operation.Body.ParentHeadHash {
+	if submitted.ExpectedHeadHash != submitted.Operation.Body.ParentHeadHash {
 		writePrivateControlError(writer, http.StatusConflict, "[D104 private control] expected head 已过期")
 		return
 	}
@@ -167,6 +185,30 @@ func (service *PrivateControlService) ServeHTTP(writer http.ResponseWriter, requ
 		return
 	}
 	trustedTime := service.now().UTC()
+	if submitted.ExpectedHeadHash != snapshot.Head.HeadHash {
+		if service.replay == nil {
+			writePrivateControlError(writer, http.StatusConflict, "[D104 private control] expected head 已过期")
+			return
+		}
+		if err := authorizeOperationReplay(&submitted.Operation, request.TLS.PeerCertificates[0].Raw, &scope, &snapshot, trustedTime); err != nil {
+			writePrivateControlError(writer, http.StatusForbidden, "[D104 private control] 当前管理员无结果读取权限")
+			return
+		}
+		replay, err := service.replay(ctx, submitted.Operation)
+		if err != nil || replay == nil {
+			writePrivateControlError(writer, http.StatusConflict, "[D104 private control] expected head 已过期，缺同一已提交请求")
+			return
+		}
+		committedAt, err := wire.ParseTimeZ(replay.Result.Head.Body.Payload.CommittedLogicalTime)
+		if err != nil || replay.Parent.HeadHash != submitted.ExpectedHeadHash ||
+			verifyCertifiedControlOperation(&replay.Result, &submitted.Operation, request.TLS.PeerCertificates[0],
+				&replay.Parent, &replay.ControlSet, committedAt, service.schemas) != nil {
+			writePrivateControlError(writer, http.StatusInternalServerError, "[D104 private control] 历史提交结果校验失败")
+			return
+		}
+		writeControlOperationResponse(writer, submitted.RequestID, replay.Result)
+		return
+	}
 	verified, err := wire.AuthorizeControlOperationAtHead(&submitted.Operation,
 		request.TLS.PeerCertificates[0].Raw, &scope, trustedTime, service.schemas,
 		&snapshot.Head, snapshot.ConfigQC, &snapshot.ControlSet, snapshot.PreviousControlSet,
@@ -185,8 +227,12 @@ func (service *PrivateControlService) ServeHTTP(writer http.ResponseWriter, requ
 		writePrivateControlError(writer, http.StatusInternalServerError, "[D104 private control] 提交结果校验失败")
 		return
 	}
+	writeControlOperationResponse(writer, submitted.RequestID, result)
+}
+
+func writeControlOperationResponse(writer http.ResponseWriter, requestID string, result CertifiedControlOperationV1) {
 	response := privateControlOperationResponseV1{
-		Schema: 1, Status: "certified", RequestID: submitted.RequestID,
+		Schema: 1, Status: "certified", RequestID: requestID,
 		Head: result.Head, ConfigQC: result.ConfigQC, OperationLeaf: result.OperationLeaf,
 		OperationLeafIndex: result.OperationLeafIndex, OperationTreeSize: result.OperationTreeSize,
 		OperationAuditPath: append([]string(nil), result.OperationAuditPath...),
@@ -201,6 +247,42 @@ func (service *PrivateControlService) ServeHTTP(writer http.ResponseWriter, requ
 	writer.Header().Set("X-Content-Type-Options", "nosniff")
 	writer.WriteHeader(http.StatusOK)
 	_, _ = writer.Write(encoded)
+}
+
+func authorizeOperationReplay(operation *wire.ControlOperationV1, peer []byte, scope *wire.AdminResourceScopeV1,
+	snapshot *ControlAuthoritySnapshotV1, now time.Time) error {
+	if err := wire.VerifyConfigQCAuthority(snapshot.Head.HeadHash, snapshot.ConfigQC, &snapshot.Head,
+		&snapshot.ControlSet, snapshot.PreviousControlSet); err != nil {
+		return err
+	}
+	root, err := wire.AdminACLRoot(snapshot.Authorizations, snapshot.Profiles)
+	if err != nil || root != snapshot.Head.Body.Payload.AdminACLRoot || operation.Body.ClusterID != snapshot.Head.Body.Payload.ClusterID {
+		return errors.New("[D104 replay] current ACL/cluster 无效")
+	}
+	digest, err := wire.AdminCertificateDigest(peer)
+	if err != nil || digest != operation.Body.AdminCertDigest {
+		return errors.New("[D104 replay] 仅允许原操作者读取 exact request")
+	}
+	scopeHash, err := wire.AdminResourceScopeHash(scope)
+	if err != nil {
+		return err
+	}
+	for _, authorization := range snapshot.Authorizations {
+		if authorization.AdminCertificateDigest != digest || authorization.AdminID != operation.Body.AuthorID ||
+			authorization.Status != "active" || !containsString(authorization.AllowedOperationKinds, operation.Body.Kind) {
+			continue
+		}
+		profile, found := snapshot.Profiles[authorization.CertificateProfileRef.ProfileID]
+		if !found || wire.ValidateAdminAuthorizationAt(&authorization, &profile, now) != nil {
+			continue
+		}
+		for _, allowed := range authorization.Scopes {
+			if hash, err := wire.AdminResourceScopeHash(&allowed); err == nil && hash == scopeHash {
+				return nil
+			}
+		}
+	}
+	return errors.New("[D104 replay] 当前 ACL 未授权该操作的 scope")
 }
 
 func (service *PrivateControlService) matchesPrivateListener(request *http.Request) bool {
