@@ -38,7 +38,7 @@ func (runtime *controlRuntime) deviceRuntimeOptions() (*controlplane.PrivateRunt
 		return nil, func() {}, err
 	}
 	closeKeys := func() { clearPrivateRuntimeCertificates(certificates) }
-	_, commit, err := runtime.openDeviceReportSink()
+	store, commit, err := runtime.openDeviceReportSink()
 	if err != nil {
 		closeKeys()
 		return nil, func() {}, err
@@ -46,7 +46,7 @@ func (runtime *controlRuntime) deviceRuntimeOptions() (*controlplane.PrivateRunt
 	return &controlplane.PrivateRuntimeOptions{
 		Services: application.Services, Certificates: certificates,
 		Identities: runtime.readDeviceIdentity, VerifyReport: verifyControlDeviceReportPayload,
-		CommitReport: commit, Observations: runtime.readDeviceReportObservations,
+		CommitReport: commit, Observations: runtime.deviceReportObservations(store),
 		ReportSchemas: controlDeviceReportSchemas, Now: runtime.now,
 	}, closeKeys, nil
 }

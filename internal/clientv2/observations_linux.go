@@ -49,22 +49,9 @@ func LinuxAgentObservationInput(statePath string, deviceID string) ([]json.RawMe
 	if view == nil || view.Payload.Active == nil || installation == nil || view.Payload.DeviceID != deviceID {
 		return nil, nil, errors.New("[Linux 观测] Agent 与当前 installation 身份不一致")
 	}
-	var ca []byte
-	for _, credential := range installation.Credentials {
-		if credential.SecretID != wire.DeviceObservationCASecretIDV1 || credential.Purpose != "device_credential" {
-			continue
-		}
-		if ca != nil {
-			return nil, nil, errors.New("[Linux 观测] 服务器 CA 重复")
-		}
-		decoded, err := base64.RawURLEncoding.DecodeString(credential.SecretBytes)
-		if err != nil || wire.HashRaw("loom-linux-installed-secret-v1", decoded) != credential.SecretDigest || wire.ValidateRuntimeCABundle(string(decoded)) != nil {
-			return nil, nil, errors.New("[Linux 观测] 服务器 CA 材料无效")
-		}
-		ca = decoded
-	}
-	if ca == nil {
-		return nil, nil, errors.New("[Linux 观测] 当前 installation 缺认证服务器 CA")
+	ca, err := linuxObservationCA(installation)
+	if err != nil {
+		return nil, nil, err
 	}
 	path := filepath.Join(filepath.Dir(statePath), LinuxAgentObservationFile)
 	body, err := readPrivateRegularFile(path, wire.MaximumDeviceReportReceiptBytes)
@@ -80,4 +67,28 @@ func LinuxAgentObservationInput(statePath string, deviceID string) ([]json.RawMe
 		return nil, nil, errors.New("[Linux 观测] 本机观测交接文件无效或属于另一设备")
 	}
 	return input.Observations, ca, nil
+}
+
+func linuxObservationCA(installation *DeviceInstallationV1) ([]byte, error) {
+	if installation == nil {
+		return nil, errors.New("[Linux 观测] 缺 installation")
+	}
+	var ca []byte
+	for _, credential := range installation.Credentials {
+		if credential.SecretID != wire.DeviceObservationCASecretIDV1 || credential.Purpose != "device_credential" {
+			continue
+		}
+		if ca != nil {
+			return nil, errors.New("[Linux 观测] 服务器 CA 重复")
+		}
+		decoded, err := base64.RawURLEncoding.DecodeString(credential.SecretBytes)
+		if err != nil || wire.HashRaw("loom-linux-installed-secret-v1", decoded) != credential.SecretDigest || wire.ValidateRuntimeCABundle(string(decoded)) != nil {
+			return nil, errors.New("[Linux 观测] 服务器 CA 材料无效")
+		}
+		ca = decoded
+	}
+	if ca == nil {
+		return nil, errors.New("[Linux 观测] 当前 installation 缺认证服务器 CA")
+	}
+	return ca, nil
 }

@@ -103,11 +103,17 @@ func RunLinuxDeviceDaemon(ctx context.Context, options LinuxDeviceDaemonOptions)
 		}
 		cycle, cancel = context.WithTimeout(ctx, options.Timeout)
 		healthy := applyErr == nil && options.Healthy(cycle, units)
-		payload, err := wire.MarshalCanonical(wire.DeviceHealthPayloadV1{Healthy: healthy, Version: options.Version})
+		kind, payload, err := linuxNodeHealthPayload(options.StateDirectory, options.Version, healthy, options.Now().UTC())
+		observationErr := err
+		if observationErr != nil {
+			fmt.Fprintln(options.Log, "[Linux daemon] 本机观测无效，报告该故障并继续处理既有队列:", observationErr)
+			kind = "health"
+			payload, err = wire.MarshalCanonical(wire.DeviceHealthPayloadV1{Healthy: false, Version: options.Version})
+		}
 		if err == nil {
 			_, err = SendLinuxDeviceReportDurable(cycle, filepath.Join(options.StateDirectory, "device-report-journal.json"), LinuxDeviceReportOptions{
 				StatePath: statePath, IdentityPath: identityPath, Now: options.Now, Timeout: options.Timeout, Dial: options.Dial,
-				Kind: "health", PayloadSchema: 1, Payload: payload, Schemas: wire.DeviceReportSchemaRegistry{"health": 1},
+				Kind: kind, PayloadSchema: 1, Payload: payload, Schemas: linuxDeviceReportSchemas,
 				Observations: func(_ context.Context, raw []json.RawMessage) {
 					if err := persistLinuxAgentObservations(statePath, raw); err != nil {
 						fmt.Fprintln(options.Log, "[Linux daemon] 报告已接收，观测缓存保存失败:", err)
@@ -119,7 +125,7 @@ func RunLinuxDeviceDaemon(ctx context.Context, options LinuxDeviceDaemonOptions)
 			fmt.Fprintln(options.Log, "[Linux daemon] 私有报告失败，保留 exact pending 请求:", err)
 		}
 		if options.Once {
-			return errors.Join(startErr, syncErr, applyErr, err)
+			return errors.Join(startErr, syncErr, applyErr, observationErr, err)
 		}
 		timer := time.NewTimer(options.Interval)
 		select {

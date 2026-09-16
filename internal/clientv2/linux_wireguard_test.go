@@ -23,6 +23,10 @@ func TestOriginalLinuxWireGuardProjectsAndBindsBothCertifiedPeers(t *testing.T) 
 		t.Run(mode, func(t *testing.T) {
 			set, authorityKey := clientControlSet(t)
 			envelope := clientEnvelope(t, &set, authorityKey)
+			envelope.Payload.DeviceID = "demo-node"
+			envelope.Leaf.DeviceID = "demo-node"
+			envelope.Payload.Active.EndpointBundle.DeviceID = "demo-node"
+			envelope.Payload.Active.EndpointBundleHash, _ = wire.DeviceEndpointBundleHash(&envelope.Payload.Active.EndpointBundle)
 			envelope.Payload.Active.Responsibilities = wire.EnrollmentResponsibilitiesV1{Schema: 1, Values: []string{"forward"}}
 			envelope.Payload.Active.ResponsibilitiesHash, _ = wire.HashObject("loom-enrollment-responsibilities-v1", envelope.Payload.Active.Responsibilities)
 			local, err := ecdh.X25519().GenerateKey(rand.Reader)
@@ -53,6 +57,9 @@ func TestOriginalLinuxWireGuardProjectsAndBindsBothCertifiedPeers(t *testing.T) 
 			}
 			if projection.Bindings[0].Mode != mode || opposite.Bindings[0].Mode == mode {
 				t.Fatal("旧方向未固化为相反的 dial/listen")
+			}
+			if projection.Files[0].Path != "wireguard/wg-demo-peer.conf" || opposite.Files[0].Path != "wireguard/wg-demo-node.conf" {
+				t.Fatal("原接口身份改变，会使流量签名与历史断开")
 			}
 			artifact := wire.LinuxLinkIntentArtifactV1{Schema: 1, ClusterID: set.ClusterID, DeviceID: envelope.Payload.DeviceID,
 				DeviceGeneration: envelope.Payload.DeviceGeneration, Generation: 1, RenderContractID: wire.LinuxLinkIntentRenderContract,

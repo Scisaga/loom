@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"loom/internal/model"
 	"loom/internal/secret"
 )
 
@@ -235,11 +236,15 @@ func validLinuxRuntimeBindingTarget(binding *LinuxRuntimeBindingV1) bool {
 }
 
 func validLinuxRuntimeFilePath(path string) bool {
-	return path == "sing-box/v2/config.json" || path == "agent/v2/config.json" ||
+	return path == "sing-box/v2/config.json" || path == "agent/v2/config.json" || path == "report/v2/config.json" ||
 		validLinuxWireGuardConfigPath(path)
 }
 
 func validLinuxWireGuardConfigPath(path string) bool {
+	if strings.HasPrefix(path, "wireguard/wg-") && strings.HasSuffix(path, ".conf") {
+		peer := strings.TrimSuffix(strings.TrimPrefix(path, "wireguard/wg-"), ".conf")
+		return model.ValidNodeID(peer) && len(model.IfaceName(peer)) <= 15
+	}
 	const prefix = "wireguard/lmv2-"
 	const suffix = ".conf"
 	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {

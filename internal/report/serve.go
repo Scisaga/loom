@@ -30,6 +30,10 @@ var linkMetricReflectorBody = make([]byte, linkMetricProbeBytes)
 // 没有认证:能连上隧道内地址,就已经持有 WireGuard 密钥了。再加一层口令
 // 只是多一个要分发和轮换的秘密,换不到实际的隔离。
 func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Writer) error {
+	return ServeWithLocalObservation(ctx, cfg, now, logw, nil)
+}
+
+func ServeWithLocalObservation(ctx context.Context, cfg *Config, now func() time.Time, logw io.Writer, publish func(*Observation) error) error {
 	if len(cfg.Listen) == 0 {
 		return fmt.Errorf("没有监听地址 —— 该节点没有任何隧道内地址,上报接口无处可绑")
 	}
@@ -115,7 +119,9 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 	if ctl != nil {
 		ctl.Node = cfg.Node
 		trafficHistoryStatus = "unavailable"
-		cfg.PublisherHealth = PublisherHealthPath
+		if cfg.RuntimeProfile != "private-v2" {
+			cfg.PublisherHealth = PublisherHealthPath
+		}
 		if controlErr != nil {
 			// 声明了中控角色却配不全,必须看得见。悄悄退化成只读的话,
 			// 人会误以为只是浏览器没有提交管理员证书。
@@ -157,7 +163,7 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 	if trafficStore != nil {
 		defer trafficStore.Close()
 	}
-	if ctl != nil {
+	if ctl != nil && cfg.RuntimeProfile != "private-v2" {
 		mux.Handle("/api/client/report", newClientReportReceiver(tbl, ctl, now, maxAge, logw))
 	}
 	mux.Handle("/presence", newServerPresenceReceiver(tbl, cfg, now))
@@ -241,6 +247,12 @@ func Serve(ctx context.Context, cfg *Config, now func() time.Time, logw io.Write
 		lastTrafficCompact := now().UTC()
 		for {
 			st := gossip(cfg, tbl, now, maxAge)
+			if publish != nil {
+				own, _ := tbl.view(cfg.Node, now(), maxAge)
+				if err := publish(own); err != nil {
+					fmt.Fprintf(logw, "! 本轮观测未交付到 v2 报告队列: %v\n", err)
+				}
+			}
 			// 每轮转述之后比一次:这一轮和上一轮有什么不同。
 			// **只有变化才写下来** —— 状态本身已经在 /status 里了。
 			{

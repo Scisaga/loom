@@ -7,24 +7,39 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"net"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"loom/internal/attest"
 	"loom/internal/clientv2"
 	"loom/internal/controlplane"
 	"loom/internal/enrollmentv2"
+	"loom/internal/observation"
 	"loom/internal/wire"
 )
 
 // 同一 daemon 的实际迁移日志、CA、封装密钥和 report store 经真实 TLS 贯通。
 // 测试只把绑定地址映射至随机 loopback 端口，不伪造 request.TLS 或身份 reader。
 func TestControlDeviceRuntimeUsesCertifiedIdentityAndDurableReport(t *testing.T) {
+	for _, server := range []bool{false, true} {
+		name := "client"
+		if server {
+			name = "server-observation"
+		}
+		t.Run(name, func(t *testing.T) { testControlDeviceRuntimeReports(t, server) })
+	}
+}
+
+func testControlDeviceRuntimeReports(t *testing.T, server bool) {
 	identity, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -38,6 +53,13 @@ func TestControlDeviceRuntimeUsesCertifiedIdentityAndDurableReport(t *testing.T)
 	identityHash, _ := wire.HashBytes(wire.DomainEnrollmentIdentitySPKI, spki)
 	platformHash := wire.HashRaw("demo-platform", []byte("original"))
 	var chain [][]byte
+	var observationCertificate []byte
+	roles, platform := []string{"use_loom"}, "android"
+	wrappingProfile := "p256-keystore-ecdh-v1"
+	if server {
+		roles, platform = []string{"use_loom", "forward"}, "linux-server"
+		wrappingProfile = "p256-root-only-pkcs8-ecdh-v1"
+	}
 	runtime, _, migration, _ := controlMigratedDeviceRuntime(t, func(application *controlApplicationV1, runtime *controlRuntime) {
 		now := runtime.now().UTC().Truncate(time.Second)
 		material, err := openControlSoftwareMaterial(runtime.dir, runtime.config.DeviceID, true)
@@ -56,16 +78,19 @@ func TestControlDeviceRuntimeUsesCertifiedIdentityAndDurableReport(t *testing.T)
 		}
 		defer clearControlSigner(issuer)
 		migration := &application.DeviceMigrations[0]
+		migration.Platform = platform
+		application.Devices[0].View.Active.Responsibilities = wire.EnrollmentResponsibilitiesV1{Schema: 1, Values: roles}
+		application.Devices[0].View.Active.ResponsibilitiesHash, _ = wire.HashObject("loom-enrollment-responsibilities-v1", application.Devices[0].View.Active.Responsibilities)
 		request, err := wire.SignRuntimeDeviceMigrationRequest(wire.RuntimeDeviceMigrationRequestBodyV1{
-			Schema: 1, DeviceID: migration.DeviceID, Platform: "android", PlatformKeyHash: platformHash,
+			Schema: 1, DeviceID: migration.DeviceID, Platform: platform, PlatformKeyHash: platformHash,
 			IdentitySPKIDER: base64.RawURLEncoding.EncodeToString(spki), WrappingSPKIDER: base64.RawURLEncoding.EncodeToString(wrap),
-			WrappingKeyProfile: "p256-keystore-ecdh-v1", LegacyFloor: json.RawMessage(`{"schema":1}`),
+			WrappingKeyProfile: wrappingProfile, LegacyFloor: json.RawMessage(`{"schema":1}`),
 		}, identity)
 		if err != nil {
 			t.Fatal(err)
 		}
 		certificate, err := enrollmentv2.PrepareMigratedDeviceCertificate(request, identityHash, platformHash,
-			profile, []string{"use_loom"}, migration.Issuance, now, issuer, rand.Reader)
+			profile, roles, migration.Issuance, now, issuer, rand.Reader)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -82,6 +107,27 @@ func TestControlDeviceRuntimeUsesCertifiedIdentityAndDurableReport(t *testing.T)
 		migration.DeviceCertificateHash, _ = wire.DeviceCertificateHash(certificate)
 		migration.DeviceCertificateProfileHash, _ = wire.DeviceCertificateProfileStateHash(&profile)
 		application.Devices[0].View.Active.IdentitySPKIHash = identityHash
+		if server {
+			var secrets controlDiskSecretsV1
+			if err := readCanonicalFile(filepath.Join(runtime.dir, controlSecretsName), 8<<20, &secrets); err != nil {
+				t.Fatal(err)
+			}
+			key, err := parsePrivateKeyPKCS8PEM([]byte(secrets.InternalCAPrivateKeyPKCS8PEM))
+			if err != nil {
+				t.Fatal(err)
+			}
+			root, err := x509.ParseCertificate(runtime.controlTLS.Certificate[1])
+			if err != nil {
+				t.Fatal(err)
+			}
+			name := migration.DeviceID + ".node.internal"
+			template := &x509.Certificate{SerialNumber: big.NewInt(9), Subject: pkix.Name{CommonName: name}, DNSNames: []string{name}, NotBefore: root.NotBefore, NotAfter: root.NotAfter, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+			der, err := x509.CreateCertificate(rand.Reader, template, root, identity.Public(), key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			observationCertificate = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+		}
 		ports := map[string]int64{"enroll": runtime.config.ControlPort + 20, "device_config": runtime.config.ControlPort + 21, "device_report": runtime.config.ControlPort + 22}
 		prepared, err := runtime.preparePrivateServiceMaterials("demo-migration", profile.ProfileID, ports, now)
 		if err != nil {
@@ -184,10 +230,48 @@ func TestControlDeviceRuntimeUsesCertifiedIdentityAndDurableReport(t *testing.T)
 				t.Fatal(err)
 			}
 			payload := json.RawMessage(`{"healthy":true,"version":"demo-current-build"}`)
+			kind := "health"
+			if server {
+				kind = "node-health"
+				own := observation.Observation{Node: migration.DeviceID, TS: runtime.now().UTC().Format(time.RFC3339), Applied: wire.HashRaw("demo-runtime", []byte("applied")), Edges: []observation.Edge{{To: "demo-peer", RTTMs: 25, Samples: 1}}}
+				keyPEM, err := privateKeyPKCS8PEM(identity)
+				if err != nil {
+					t.Fatal(err)
+				}
+				own.Attest, err = attest.Sign(attest.Claim{CanonicalVersion: 5, Node: own.Node, TS: own.TS, Applied: own.Applied, MeasurementsSHA256: observation.MeasurementDigest(&own)}, keyPEM, observationCertificate)
+				if err != nil {
+					t.Fatal(err)
+				}
+				payload, err = wire.MarshalCanonical(wire.DeviceNodeHealthPayloadV1{Healthy: true, Version: "demo-current-build", Observation: own})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := runtime.verifyNodeReportObservation(payload, authority, runtime.now()); err != nil {
+					t.Fatal(err)
+				}
+				for _, mutate := range []func(*controlplane.DeviceIdentityAuthorityV1){
+					func(a *controlplane.DeviceIdentityAuthorityV1) {
+						a.CurrentDeviceView.Payload.Active.IdentitySPKIHash = wire.EmptyHashV1
+					},
+					func(a *controlplane.DeviceIdentityAuthorityV1) { a.Record.IdentityStatus = "revocation_pending" },
+					func(a *controlplane.DeviceIdentityAuthorityV1) {
+						a.CurrentDeviceView.Payload.Active.Responsibilities.Values = []string{"use_loom"}
+					},
+				} {
+					changed := controlClone(authority)
+					mutate(&changed)
+					if _, err := runtime.verifyNodeReportObservation(payload, changed, runtime.now()); err == nil {
+						t.Fatal("节点观测绕过当前身份或职责")
+					}
+				}
+				if _, err := runtime.verifyNodeReportObservation(payload, authority, runtime.now().Add(11*time.Minute)); err == nil {
+					t.Fatal("已过期观测仍被用于回执")
+				}
+			}
 			hash, _ := wire.DeviceReportPayloadHash(payload)
 			report, err := wire.SignDeviceReport(wire.DeviceReportBodyV2{Schema: 2, ClusterID: runtime.config.ClusterID, DeviceID: migration.DeviceID,
 				ReportID: []string{"demo-report-one", "demo-report-two"}[attempt], ReportSequence: int64(attempt + 1), GeneratedAt: runtime.now().UTC().Truncate(time.Second).Format(time.RFC3339),
-				AcceptedFloors: floors, Kind: "health", PayloadSchema: 1, PayloadHash: hash}, payload, identity, controlDeviceReportSchemas)
+				AcceptedFloors: floors, Kind: kind, PayloadSchema: 1, PayloadHash: hash}, payload, identity, controlDeviceReportSchemas)
 			if err != nil {
 				t.Fatal(err)
 			}

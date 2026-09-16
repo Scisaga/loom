@@ -83,7 +83,7 @@ func restartOrder(s string) int {
 		return 0
 	case s == "sing-box" || s == "loom-client-v2-sing-box":
 		return 1
-	case s == "loom-report":
+	case s == "loom-report" || s == "loom-client-v2-report":
 		return 2
 	case s == "loom-agent" || s == "loom-client-v2-agent":
 		return 3
@@ -298,6 +298,8 @@ func UnitFor(abs string) string {
 		return "loom-client-v2-agent"
 	case abs == "/etc/loom/report/config.json":
 		return "loom-report"
+	case abs == "/etc/loom/report/v2/config.json" || abs == "/etc/loom/report/v2/manifest.json":
+		return "loom-client-v2-report"
 	case strings.HasPrefix(abs, "/etc/wireguard/") && strings.HasSuffix(abs, ".conf"):
 		iface := strings.TrimSuffix(strings.TrimPrefix(abs, "/etc/wireguard/"), ".conf")
 		return "wg-quick@" + iface

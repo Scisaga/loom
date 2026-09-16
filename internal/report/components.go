@@ -90,7 +90,21 @@ func collectComponentsCachedWith(cfg *Config, now time.Time, run componentComman
 		c.expected == cfg.ExpectedComponents {
 		return append([]ComponentStatus(nil), c.statuses...)
 	}
-	got := collectComponentsWith(cfg.ExpectedComponents, run)
+	probe := run
+	if cfg.RuntimeProfile == "private-v2" {
+		probe = func(name string, args ...string) ([]byte, error) {
+			args = append([]string(nil), args...)
+			if name == "systemctl" {
+				for i := range args {
+					if args[i] == "sing-box.service" {
+						args[i] = "loom-client-v2-sing-box.service"
+					}
+				}
+			}
+			return run(name, args...)
+		}
+	}
+	got := collectComponentsWith(cfg.ExpectedComponents, probe)
 	c.at, c.expected = now, cfg.ExpectedComponents
 	c.statuses = append(c.statuses[:0], got...)
 	return append([]ComponentStatus(nil), got...)

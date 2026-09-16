@@ -8,6 +8,7 @@ import (
 
 	"loom/internal/agent"
 	"loom/internal/model"
+	"loom/internal/report"
 	"loom/internal/secret"
 	"loom/internal/wire"
 )
@@ -203,6 +204,37 @@ func RenderLinuxRuntimeV2(input LinuxRuntimeV2Input) (LinuxRuntimeV2, error) {
 		return result, err
 	}
 	runtime.Files = append(runtime.Files, wire.LinuxRuntimeFileV1{Path: "sing-box/v2/config.json", Content: string(canonical)})
+	if node.Server != nil {
+		observationFiles, _ := renderReport(&source, node)
+		var cfg *report.Config
+		for _, file := range observationFiles {
+			if file.Path == "report/config.json" {
+				cfg, err = report.Load([]byte(file.Content))
+			}
+		}
+		if err != nil || cfg == nil {
+			return result, errors.New("[Linux 配置] 缺原服务器观测计划")
+		}
+		cfg.RuntimeProfile, cfg.Manifest = "private-v2", "/etc/loom/report/v2/manifest.json"
+		cfg.AttestationMinVersion = 5
+		for i, iface := range cfg.Interfaces {
+			mapped, found := wg.InterfaceNames[iface]
+			if !found {
+				return result, errors.New("[Linux 配置] 观测接口缺认证 WireGuard 边")
+			}
+			cfg.Interfaces[i] = mapped
+		}
+		sort.Strings(cfg.Interfaces)
+		body, err := json.Marshal(cfg)
+		if err != nil {
+			return result, err
+		}
+		body, err = wire.NormalizeRuntimeJSON(body)
+		if err != nil {
+			return result, err
+		}
+		runtime.Files = append(runtime.Files, wire.LinuxRuntimeFileV1{Path: "report/v2/config.json", Content: string(body)})
+	}
 	if node.Access != nil {
 		agentFiles, skips := renderAgentPlanScoped(&source, node, scopes[node.ID])
 		result.Runtime.Skipped = append(result.Runtime.Skipped, skips...)

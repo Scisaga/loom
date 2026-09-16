@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -22,6 +23,7 @@ import (
 	"loom/internal/deploy"
 	"loom/internal/model"
 	"loom/internal/render"
+	"loom/internal/report"
 	"loom/internal/secret"
 	"loom/internal/wire"
 )
@@ -33,6 +35,9 @@ const (
 	linuxV2AgentConfigPath               = "/etc/loom/agent/v2/config.json"
 	linuxV2SingBoxUnitPath               = "/etc/systemd/system/loom-client-v2-sing-box.service"
 	linuxV2AgentUnitPath                 = "/etc/systemd/system/loom-client-v2-agent.service"
+	linuxV2ReportConfigPath              = "/etc/loom/report/v2/config.json"
+	linuxV2ReportManifestPath            = "/etc/loom/report/v2/manifest.json"
+	linuxV2ReportUnitPath                = "/etc/systemd/system/loom-client-v2-report.service"
 )
 
 type LinuxRuntimeInstallStateV1 struct {
@@ -345,7 +350,7 @@ func validateLinuxRuntimeBindings(plan *LinuxLinkRuntimePlanV1, artifact *wire.L
 		}
 	}
 	for path := range files {
-		if path == "agent/v2/config.json" || usedPaths[path] || path == "sing-box/v2/config.json" && plan.LocalRuntime != nil {
+		if path == "agent/v2/config.json" || usedPaths[path] || (path == "sing-box/v2/config.json" || path == "report/v2/config.json") && plan.LocalRuntime != nil {
 			continue
 		}
 		return errors.New("[Linux runtime] runtime artifact 含未绑定 config file")
@@ -438,7 +443,7 @@ func hydrateLinuxRuntimeFiles(plan *LinuxLinkRuntimePlanV1, artifact *wire.Linux
 			return nil, errors.New("[Linux runtime] runtime file hydrate 后仍缺 secret")
 		}
 		switch file.Path {
-		case "sing-box/v2/config.json", "agent/v2/config.json":
+		case "sing-box/v2/config.json", "agent/v2/config.json", "report/v2/config.json":
 			canonical, err := wire.NormalizeRuntimeJSON([]byte(content))
 			var object map[string]json.RawMessage
 			if err != nil || !bytes.Equal(canonical, []byte(content)) ||
@@ -520,6 +525,15 @@ func validateLinuxRuntimeConfigSemantics(plan *LinuxLinkRuntimePlanV1, artifact 
 			}
 			for _, action := range plan.Actions {
 				if action.LinkID == binding.LinkID && action.WireGuardPeer != nil {
+					if strings.HasPrefix(binding.ConfigPath, "wireguard/wg-") {
+						peer := action.WireGuardPeer.ListenerDeviceID
+						if peer == plan.DeviceID {
+							peer = action.WireGuardPeer.DialerDeviceID
+						}
+						if binding.ConfigPath != "wireguard/"+model.IfaceName(peer)+".conf" {
+							return errors.New("[Linux runtime] 原 WireGuard 接口名不属于认证对端")
+						}
+					}
 					if err := validateLinuxPeerWireGuardConfig(files[binding.ConfigPath], plan.DeviceID, *action.WireGuardPeer); err != nil {
 						return err
 					}
@@ -576,6 +590,27 @@ func validateLinuxRuntimeConfigSemantics(plan *LinuxLinkRuntimePlanV1, artifact 
 		}
 		if plan.LocalRuntime != nil && (len(config.Peers) != 0 || config.SelfReport != "" || config.PeerPeriod != "") {
 			return errors.New("[Linux runtime] v2 Agent 禁止读取旧 report HTTP 路径")
+		}
+	}
+	if body, found := files["report/v2/config.json"]; found {
+		cfg, err := report.Load([]byte(body))
+		if err != nil || !plan.ServeForward || cfg.Node != plan.DeviceID || cfg.RuntimeProfile != "private-v2" || cfg.Manifest != linuxV2ReportManifestPath || cfg.AttestationMinVersion != 5 {
+			return errors.New("[Linux runtime] 服务器观测未绑定本设备或 v2 运行配置")
+		}
+		interfaces := map[string]bool{}
+		for _, binding := range artifact.Bindings {
+			if binding.Transport == "wireguard" && binding.RuntimeTag == "" {
+				interfaces[strings.TrimSuffix(filepath.Base(binding.ConfigPath), ".conf")] = true
+			}
+		}
+		if len(interfaces) != len(cfg.Interfaces) {
+			return errors.New("[Linux runtime] 观测接口与认证 runtime 不一致")
+		}
+		for _, iface := range cfg.Interfaces {
+			if !interfaces[iface] {
+				return errors.New("[Linux runtime] 观测计划包含未授权接口")
+			}
+			delete(interfaces, iface)
 		}
 	}
 	return nil
@@ -720,6 +755,8 @@ func linuxRuntimeDeployPlan(deviceID, stateDirectory string, hydrated map[string
 			plan.PreCheck = append(plan.PreCheck, "/usr/local/bin/sing-box check -c "+linuxRuntimeStagingPath(absolute))
 		case "agent/v2/config.json":
 			plan.Triggers[absolute] = []string{"loom-client-v2-agent"}
+		case "report/v2/config.json":
+			plan.Triggers[absolute] = []string{"loom-client-v2-report"}
 		default:
 			unit := "wg-quick@" + strings.TrimSuffix(filepath.Base(path), ".conf")
 			plan.Triggers[absolute] = []string{unit}
@@ -739,6 +776,22 @@ func linuxRuntimeDeployPlan(deviceID, stateDirectory string, hydrated map[string
 		plan.Triggers[linuxV2AgentUnitPath] = []string{"loom-client-v2-agent"}
 		plan.Verify = append(plan.Verify, "loom-client-v2-agent")
 	}
+	if _, found := plan.Files[linuxV2ReportConfigPath]; found {
+		plan.Files[linuxV2ReportUnitPath] = linuxV2ReportUnit(stateDirectory, wgUnits)
+		plan.Triggers[linuxV2ReportUnitPath] = []string{"loom-client-v2-report"}
+		plan.Verify = append(plan.Verify, "loom-client-v2-report")
+		manifest := report.Manifest{Node: deviceID, Files: map[string]string{}}
+		for path, content := range plan.Files {
+			hash := sha256.Sum256([]byte(content))
+			manifest.Files[path] = fmt.Sprintf("%x", hash)
+		}
+		body, err := wire.MarshalCanonical(manifest)
+		if err != nil {
+			return nil, nil, err
+		}
+		plan.Files[linuxV2ReportManifestPath] = string(body)
+		plan.Triggers[linuxV2ReportManifestPath] = []string{"loom-client-v2-report"}
+	}
 	sort.Strings(plan.PreCheck)
 	installed := make([]string, 0, len(plan.Files))
 	for path := range plan.Files {
@@ -755,7 +808,10 @@ func linuxV2RuntimeTarget(relative, absolute string) bool {
 	if relative == "agent/v2/config.json" {
 		return absolute == linuxV2AgentConfigPath
 	}
-	return strings.HasPrefix(relative, "wireguard/lmv2-") &&
+	if relative == "report/v2/config.json" {
+		return absolute == linuxV2ReportConfigPath
+	}
+	return strings.HasPrefix(relative, "wireguard/") && validLinuxV2InstalledPath(absolute) &&
 		absolute == "/etc/wireguard/"+strings.TrimPrefix(relative, "wireguard/")
 }
 
@@ -818,6 +874,31 @@ RestartSec=5s
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+`
+}
+
+func linuxV2ReportUnit(stateDirectory string, wgUnits []string) string {
+	dependencies := ""
+	for _, unit := range wgUnits {
+		dependencies += " " + unit + ".service"
+	}
+	return `[Unit]
+Description=Loom server observations for v2 private reports
+After=network-online.target loom-client-v2-sing-box.service` + dependencies + `
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/loom report -c /etc/loom/report/v2/config.json -serve -device-state-dir ` + strconv.Quote(strings.ReplaceAll(stateDirectory, "%", "%%")) + `
+Restart=on-failure
+RestartSec=10s
+UMask=0077
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target
@@ -887,8 +968,13 @@ func validateLinuxRuntimeInstallState(state *LinuxRuntimeInstallStateV1) error {
 
 func validLinuxV2InstalledPath(path string) bool {
 	if path == linuxV2SingBoxConfigPath || path == linuxV2AgentConfigPath ||
-		path == linuxV2SingBoxUnitPath || path == linuxV2AgentUnitPath {
+		path == linuxV2SingBoxUnitPath || path == linuxV2AgentUnitPath ||
+		path == linuxV2ReportConfigPath || path == linuxV2ReportManifestPath || path == linuxV2ReportUnitPath {
 		return true
+	}
+	if strings.HasPrefix(path, "/etc/wireguard/wg-") && strings.HasSuffix(path, ".conf") {
+		peer := strings.TrimSuffix(strings.TrimPrefix(path, "/etc/wireguard/wg-"), ".conf")
+		return model.ValidNodeID(peer) && len(model.IfaceName(peer)) <= 15
 	}
 	const prefix, suffix = "/etc/wireguard/lmv2-", ".conf"
 	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {

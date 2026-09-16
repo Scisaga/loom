@@ -222,8 +222,12 @@ func TestLinuxDaemonRestoresLKGSyncsAndRetriesExactPrivateReport(t *testing.T) {
 	if err != nil || journal.Pending == nil {
 		t.Fatal("没有持久保存原 pending 报告", err)
 	}
-	if err := RunLinuxDeviceDaemon(context.Background(), options); err != nil {
+	// 新观测损坏不能阻止原 pending 报告按相同字节恢复提交。
+	if err := os.WriteFile(filepath.Join(dir, "node-observation.json"), []byte(`{}`), 0600); err != nil {
 		t.Fatal(err)
+	}
+	if err := RunLinuxDeviceDaemon(context.Background(), options); err == nil {
+		t.Fatal("损坏的本机观测未报告错误")
 	}
 	if configCalls != 2 || reportCalls != 2 || !bytes.Equal(bodies[0], bodies[1]) {
 		t.Fatal("重启后未复用 exact 报告或增加额外请求")

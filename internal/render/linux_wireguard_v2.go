@@ -70,16 +70,17 @@ func ProjectExistingLinuxWireGuardV2(source *model.SSOT, clusterID, deviceID, pa
 			To: wire.LinkIntentDestinationV1{DeviceID: tunnel.Acceptor.ID}, Purpose: "data_forward", Initiator: "from",
 			AllowedTransports: []string{"wireguard"}, ListenerResourceRefs: []string{resourceID}, CredentialRefs: []string{LocalWireGuardSecretIDV2},
 			RouteScope: "server-mesh", Generation: 1, ParentHeadHash: parentHash}
-		iface := "lmv2-" + suffix[:10]
-		if usedInterfaces[iface] {
-			return result, errors.New("[Linux 迁移] 原网络隧道重复或接口名摘要冲突")
-		}
-		usedInterfaces[iface] = true
 		peerID := tunnel.Initiator.ID
 		mode, generation := "listen", int64(0)
 		if deviceID == tunnel.Initiator.ID {
 			peerID, mode, generation = tunnel.Acceptor.ID, "dial", 1
 		}
+		// 迁移认证与业务协议无关；保留接口身份，原流量签名和历史索引才能接续。
+		iface := model.IfaceName(peerID)
+		if len(iface) > 15 || usedInterfaces[iface] {
+			return result, errors.New("[Linux 迁移] 原网络接口名越界或重复")
+		}
+		usedInterfaces[iface] = true
 		result.InterfaceNames[model.IfaceName(peerID)] = iface
 		file := wire.LinuxRuntimeFileV1{Path: "wireguard/" + iface + ".conf", Content: renderLinuxPeerWireGuardV2(deviceID, resource, LocalWireGuardSecretIDV2)}
 		result.Files = append(result.Files, file)
