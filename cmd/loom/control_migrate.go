@@ -263,7 +263,7 @@ func validateControlMigrationSource(input *controlMigrationInputV1) error {
 			continue
 		}
 		if client.Status == "revoked" {
-			if device.View.State == "active" {
+			if device.View.State != "revoked" {
 				return errors.New("迁移不得恢复已撤权身份")
 			}
 			continue

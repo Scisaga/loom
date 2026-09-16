@@ -123,6 +123,58 @@ func TestMigrationRefusesReplacedRequestsBeforeAuthorityCommit(t *testing.T) {
 	}
 }
 
+func TestMigrationPreservesRevokedRegistryIdentityOutsideCurrentNetwork(t *testing.T) {
+	runtime, admin, input, platformPath := migrationDeviceInputFixture(t)
+	var registry controlLegacyRegistryV1
+	if err := readCanonicalFile(input.Registry, 4<<20, &registry); err != nil {
+		t.Fatal(err)
+	}
+	original := registry.Clients[0]
+	original.ID, original.Status = "demo-revoked-history", "revoked"
+	registry.Clients = append(registry.Clients, original)
+	raw, err := wire.MarshalCanonical(registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(input.Registry, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	input.Application.LegacyRegistryHash = wire.HashRaw("loom-legacy-registry-migration-v1", raw)
+	dir := t.TempDir()
+	path, output := filepath.Join(dir, "input.json"), filepath.Join(dir, "migration")
+	if err := writeCanonicalAtomic(path, input, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.migrateControlApplication(path, admin, platformPath, output, "demo preserve original revocation"); err != nil {
+		t.Fatal(err)
+	}
+	application, err := runtime.certifiedApplicationLocked()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, device := range application.Devices {
+		if device.View.DeviceID != original.ID {
+			continue
+		}
+		found = true
+		if device.View.State != "revoked" || device.View.Active != nil || device.View.Tombstone == nil ||
+			device.View.Tombstone.Reason != "revoked" || len(device.SecretArtifactRefs) != 0 || device.EnrollmentInviteID != "" {
+			t.Fatal("原撤权身份被恢复或获得凭据")
+		}
+	}
+	if !found || len(application.DeviceMigrations) != len(input.DeviceInputs.Entries) {
+		t.Fatal("丢失原撤权身份或伪造了其迁移证书")
+	}
+	reopened, err := openControlRuntime(runtime.dir, runtime.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reopened.migrateControlApplication(path, admin, platformPath, output, "demo preserve original revocation"); err != nil {
+		t.Fatal("重启不能接续含原撤权记录的迁移", err)
+	}
+}
+
 func migrationDeviceInputFixture(t *testing.T) (*controlRuntime, string, controlMigrationInputV1, string) {
 	t.Helper()
 	dir, admin := newAdminRotationFixture(t, true)

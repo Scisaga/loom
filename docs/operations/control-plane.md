@@ -198,6 +198,7 @@ signed current；Linux 另附原设备证书及原服务器 CA。它从原 regis
 请求签名、平台信任和本机 floor。Device view、原职责与目的授权、真实证书及签发坐标由迁移命令
 在原 Raft 加载后生成，不能同时提供手填 Device view。生成的证书和 current 以内容摘要耐久保存，
 同一输入重试复用第一次迁移请求与回执，不重新签发，也不伪造 Enrollment。
+已移出 SSOT 的旧撤权记录仍从原 registry 生成认证墓碑，不签发证书或配置，也不要求旧设备重新上线。
 这一阶段生成的身份没有运行配置，须经正常配置发布后才能交付客户端使用。
 正常材料入口使用 `prepared` 与 `device_inputs`，`application` 留为零值且不另填恢复证明。
 `control prepare-migration-input -state-dir <original-state-dir> -admin-dir <original-admin-dir>

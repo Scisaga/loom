@@ -215,6 +215,22 @@ func (runtime *controlRuntime) prepareMigrationDevices(input *controlMigrationIn
 			return err
 		}
 	}
+	// 被撤权的旧设备可能已经移出 SSOT，但 registry 中的撤权结果不能丢失，
+	// 也不能要求已撤权设备重新上线签名。只迁入墓碑，不签发身份或配置。
+	for _, client := range registry.Clients {
+		if client.Status != "revoked" {
+			continue
+		}
+		input.Application.Devices = append(input.Application.Devices, controlDeviceStateV1{
+			View: wire.DeviceViewPayloadV2{Schema: 2, ClusterID: input.Application.ClusterID,
+				DeviceID: client.ID, DeviceGeneration: 1, State: "revoked",
+				Tombstone: &wire.DeviceTombstoneViewV1{Reason: "revoked"}},
+			PreviousViewHash: wire.EmptyHashV1,
+		})
+	}
+	sort.Slice(input.Application.Devices, func(i, j int) bool {
+		return input.Application.Devices[i].View.DeviceID < input.Application.Devices[j].View.DeviceID
+	})
 	return validateControlMigrationSource(input)
 }
 
