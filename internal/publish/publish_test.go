@@ -399,6 +399,48 @@ func TestLocalTargetValidatesAndRepairsExistingBlob(t *testing.T) {
 	}
 }
 
+func TestLocalTargetRepairsPublicPermissionsWithoutChangingAncestors(t *testing.T) {
+	private := t.TempDir()
+	if err := os.Chmod(private, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(private, "distribution")
+	body := []byte("approved public package")
+	blob := "bin/" + sha256Bytes(body)
+	catalog := "catalogs/" + strings.Repeat("a", 64) + "/catalog.json"
+	for _, p := range []string{blob, catalog} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, p)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, p), body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := (&localTarget{dir: dir}).Push(&Tree{
+		Blobs: map[string][]byte{blob: body},
+		Files: map[string][]byte{catalog: []byte("verified catalog")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, check := range []struct {
+		path string
+		mode os.FileMode
+	}{
+		{private, 0o700}, {dir, 0o755},
+		{filepath.Join(dir, "bin"), 0o755}, {filepath.Join(dir, blob), 0o644},
+		{filepath.Join(dir, "catalogs"), 0o755}, {filepath.Dir(filepath.Join(dir, catalog)), 0o755},
+		{filepath.Join(dir, catalog), 0o644},
+	} {
+		info, err := os.Stat(check.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != check.mode {
+			t.Errorf("%s 权限为 %o，期望 %o", check.path, got, check.mode)
+		}
+	}
+}
+
 func TestTargetRejectsBlobStoredUnderWrongHash(t *testing.T) {
 	tr := &Tree{
 		Snapshot: "snap",

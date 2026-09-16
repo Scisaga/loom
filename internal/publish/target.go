@@ -245,6 +245,10 @@ func (l *localTarget) Push(t *Tree) error {
 		return fmt.Errorf("打开本地分发根目录:%w", err)
 	}
 	defer syscall.Close(rootFD)
+	// 分发目录由独立 Web 服务读取；只修复已绑定的公开根，不改变上层私有目录。
+	if err := syscall.Fchmod(rootFD, 0o755); err != nil {
+		return fmt.Errorf("设置分发根目录权限:%w", err)
+	}
 	// 大文件先推:manifest 引用它们,而 current.json 最后才指过来。
 	for p, body := range t.Blobs {
 		want, err := expectedBlobSHA(p)
@@ -254,12 +258,26 @@ func (l *localTarget) Push(t *Tree) error {
 		if got := sha256Bytes(body); got != want {
 			return fmt.Errorf("blob %s 的内容实际是 %s,拒绝写入错误的内容寻址路径", p, short(got))
 		}
+		dirFD, err := openRelativeDirNoFollow(rootFD, filepath.Dir(p), true)
+		if err != nil {
+			return err
+		}
+		_ = syscall.Close(dirFD)
 		got, _, err := hashFileAt(rootFD, p)
 		has := err == nil && got == want
 		if err != nil && !errors.Is(err, syscall.ENOENT) {
 			return fmt.Errorf("检查 blob %s:%w", p, err)
 		}
 		if has {
+			f, err := openFileAtNoFollow(rootFD, p)
+			if err != nil {
+				return err
+			}
+			err = f.Chmod(0o644)
+			_ = f.Close()
+			if err != nil {
+				return err
+			}
 			continue
 		}
 		if err := writeAtomicAt(rootFD, p, body, 0o644); err != nil {
@@ -355,6 +373,14 @@ func openRelativeDirNoFollow(rootFD int, rel string, create bool) (int, error) {
 		if openErr != nil {
 			_ = syscall.Close(fd)
 			return -1, fmt.Errorf("打开分发目录段 %q（拒绝符号链接/非目录）:%w", component, openErr)
+		}
+		// mkdir 的 mode 会被调用进程 umask 收紧；重推也修复已有的不可遍历目录。
+		if create {
+			if err := syscall.Fchmod(next, 0o755); err != nil {
+				_ = syscall.Close(next)
+				_ = syscall.Close(fd)
+				return -1, fmt.Errorf("设置分发目录段 %q 权限:%w", component, err)
+			}
 		}
 		_ = syscall.Close(fd)
 		fd = next
