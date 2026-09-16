@@ -19,6 +19,9 @@
 也不等待 #17 完成。后续自动签发产生的证书复用相同安装接口；安装侧继续验证 SAN、完整链、
 有效期、私钥匹配和认证 SPKI。有效证书缺失时报告具体输入错误，不使用测试证书抵扣生产验收。
 
+这里暂缓的是域名管理与证书自动化。[业务由最终出口解析、入口使用独立 underlay 解析](../../clients/routing.md#业务域名由最终网络出口解析)
+是既有数据面要求，继续实现和验收，不转入 #17 等待。
+
 ### 统一的 forward server 公网基线
 
 本章所称 forward server，是 active Device 的 responsibilities 包含 forward；internet_egress

@@ -11,7 +11,8 @@
 |---|---|
 | 产品边界与迁移输入 | [范围](scope.md) |
 | 共同不变量与组件职责 | [共同契约](common.md) |
-| 日常三模式、服务匹配与 DNS | [选路模式](routing.md) |
+| 日常三模式与服务匹配 | [选路模式](routing.md) |
+| 业务使用最终出口 DNS、入口独立解析 | [DNS 归属](routing.md#业务域名由最终网络出口解析) |
 | 网络代探测预算、观测复用与未知数据 | [观测消费](observations.md) |
 | TUN、mixed 与 Windows 发行形态 | [流量接管](traffic.md) |
 | 平台宿主与开发环境 | [平台设计](platforms.md) |
