@@ -131,6 +131,19 @@ sudo systemctl start loom-control.service
 
 ## 原设备迁移与配置交付
 
+先在原控制节点准备将被迁移事务认证的真实 Device CA 与独立私有 TLS 材料：
+
+```bash
+loom control prepare-migration-materials -state-dir <original-state-dir> \
+  -request-id <fixed-migration-request-id> \
+  -enroll-port <private-enrollment-port> -config-port <private-config-port> \
+  -report-port <private-report-port> -out <protected-directory>/materials.json
+```
+
+该命令复用原 internal CA，持久保存独立软件 custody 与封装证据；同请求重试复用原材料。
+输出目录必须为 `0700`。它不打开 Raft、不竞选、不修改原日志，也不启动或认证新服务；
+这份材料仍须进入完整迁移事务。不能把材料准备成功当作设备迁移或生产接入成功。
+
 已有设备通过 [客户端迁移](../protocols/control-plane/migration.md) 保留原身份和本机 floor。
 `control migrate` 仍要求经过验证的完整生产 application 输入；客户端的迁移请求不是可直接
 提交的 application。该输入的生成与正式服务接线进度以[实现对照](../development/implementation.md)为准。
