@@ -263,26 +263,27 @@ func (runtime *controlRuntime) completeDeviceAuthorityLocked(authority controlpl
 	initialHead string) (controlplane.DeviceIdentityAuthorityV1, error) {
 	state := runtime.store.Snapshot()
 	started := false
-	for i, operation := range runtime.journal.Records {
+	_, err := runtime.walkApplications(len(runtime.journal.Records), func(i int, atHead *controlApplicationV1) error {
+		operation := runtime.journal.Records[i]
 		if operation.Result == nil {
-			return controlplane.DeviceIdentityAuthorityV1{}, errors.New("[D104 daemon] Device config lineage 未认证")
+			return errors.New("[D104 daemon] Device config lineage 未认证")
 		}
 		if operation.Result.Head.HeadHash == initialHead {
 			started = true
 		}
 		if !started {
-			continue
-		}
-		atHead, err := runtime.applicationBefore(i + 1)
-		if err != nil {
-			return controlplane.DeviceIdentityAuthorityV1{}, err
+			return nil
 		}
 		view, err := atHead.deviceEnvelope(authority.Record.DeviceID, operation.Result.Head, operation.Result.ConfigQC)
 		if err != nil {
-			return controlplane.DeviceIdentityAuthorityV1{}, err
+			return err
 		}
 		authority.DeviceConfigUpdates = append(authority.DeviceConfigUpdates, wire.DeviceConfigUpdateV1{Schema: 1,
 			Envelope: view, ControlSet: state.ControlSet, RecoveryPolicy: &atHead.RecoveryPolicy})
+		return nil
+	})
+	if err != nil {
+		return controlplane.DeviceIdentityAuthorityV1{}, err
 	}
 	if !started {
 		return controlplane.DeviceIdentityAuthorityV1{}, errors.New("[Device identity] 身份起点不在本机认证日志")

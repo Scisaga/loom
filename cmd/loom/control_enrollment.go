@@ -137,6 +137,13 @@ func controlEnrollmentCoordinate(head wire.HeadEntryV2) enrollmentv2.EnrollmentC
 // applicationBefore 从迁移 preimage 和已认证 operation 重算私有状态。它不读取
 // 一份可独立修改的“当前 application.json”，磁盘唯一 authority 仍是原 Head/QC 日志。
 func (runtime *controlRuntime) applicationBefore(limit int) (*controlApplicationV1, error) {
+	return runtime.walkApplications(limit, nil)
+}
+
+// 连续构造各代 projection，每条操作仍经过 reducer 和 Head 根校验。
+// 配置 lineage 不应为每一个历史 Head 再从日志起点重放一次。
+func (runtime *controlRuntime) walkApplications(limit int,
+	visit func(int, *controlApplicationV1) error) (*controlApplicationV1, error) {
 	var application *controlApplicationV1
 	for i := 0; i < limit; i++ {
 		record := &runtime.journal.Records[i]
@@ -180,6 +187,11 @@ func (runtime *controlRuntime) applicationBefore(limit int) (*controlApplication
 			controlApplyRoots(&expected, roots)
 			if !wire.EqualCanonical(expected, record.Candidate.Body) {
 				return nil, errors.New("[D104 daemon] application 重放与 Head 根不一致")
+			}
+		}
+		if visit != nil {
+			if err := visit(i, application); err != nil {
+				return nil, err
 			}
 		}
 	}
