@@ -75,6 +75,7 @@ const usage = `loom —— 链路与服务调度基础设施的配置渲染器(L
   loom restore  <备份文件> -o <目录>       解开备份到一个目录,不覆盖原位置
   loom client   <enroll|package|verify>     Linux 加入兼容命令与客户端交付
   loom bootstrap probe-outer               从外部执行无 bearer 的 bootstrap transport 探测
+  loom certificate prepare-existing       在原节点准备现有公开证书，不调用 DNS/ACME
   loom device   <decommission|remove|purge-revoked>
                                          回收 access-only Enrollment Device
   loom control  <bootstrap|serve|status|request>
@@ -157,6 +158,8 @@ func main() {
 		err = cmdClient(args)
 	case "bootstrap":
 		err = cmdBootstrap(args)
+	case "certificate":
+		err = cmdCertificate(args)
 	case "device":
 		err = cmdDevice(args)
 	case "control":

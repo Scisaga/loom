@@ -25,6 +25,19 @@
 声明检查、scope、代理和公网地址发现边界见[本机部署说明](local-deployment.md)。
 不能把 SSH 管理地址当作服务公网地址，也不能用 NAT listener 尚未就绪阻止合法 DNS 配置。
 
+## 复用现有公开证书
+
+在证书私钥原属节点运行 `loom certificate prepare-existing -input <请求文件> -artifact-dir <材料目录> -out <绑定文件>`。
+请求为 `certmanager.ExistingCertificateRequestV1`，列出固定请求 ID、原网络与节点、目标 endpoint ID、
+明确授权的域名、身份/证书代，以及节点本地完整链和私钥路径；请求及输出目录须受保护。
+CLI 校验系统 WebPKI 信任、名字、有效期和私钥匹配，以不可变本地材料保存结果。
+既有 wildcard/SAN 只覆盖列出的名字；不把其余名字加入权限。源证书使用 live/archive 符号链接时，
+先解析真实文件再校验；持久私钥和回执缺失或损坏会报错，重试不会重新生成。
+
+此步骤不调用 DNS/ACME，不改变 provider 记录，不签发新公开证书。私钥始终留在原节点，
+控制面只取得公开绑定与证书链。绑定须另经控制事务认证并用于 listener 计划，入口仍须经过
+真实外部验证才能 advertise；材料导入成功不代表端口可达。自动签发/续签属于独立 DNS 工作。
+
 ## 首次初始化
 
 仅全新控制状态使用此步骤。确认目标 Device 已有 control 职责，`<overlay-ip>` 为其实际私有
