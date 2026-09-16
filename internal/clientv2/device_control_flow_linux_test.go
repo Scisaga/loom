@@ -4,9 +4,11 @@ package clientv2
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ecdh"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -62,6 +64,8 @@ func testDeviceControlNativeTransport(t *testing.T, carrier bool) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	serviceCertificate, serviceRoots, _ := privateEnrollmentCertificate(t, time.Now(), host.String())
+	expectedBody := bytes.Repeat([]byte("demo-private-response"), 16384)
 	var received atomic.Int64
 	listeners := make([]net.Listener, 3)
 	services := make([]wire.PrivateControlServiceV1, 0, 2)
@@ -76,9 +80,9 @@ func testDeviceControlNativeTransport(t *testing.T, carrier bool) {
 			if index == 2 {
 				received.Add(1)
 			}
-			_, _ = io.WriteString(w, "demo-private-response")
+			_, _ = w.Write(expectedBody)
 		}), ReadHeaderTimeout: time.Second}
-		go server.Serve(listener)
+		go server.Serve(tls.NewListener(listener, &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, Certificates: []tls.Certificate{serviceCertificate}}))
 		defer server.Close()
 		if i < 2 {
 			role := []string{"device_config", "device_report"}[i]
@@ -168,9 +172,9 @@ func testDeviceControlNativeTransport(t *testing.T, carrier bool) {
 	}
 	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 		return dialer.(proxy.ContextDialer).DialContext(ctx, network, address)
-	}, DisableKeepAlives: true}}
+	}, TLSClientConfig: &tls.Config{RootCAs: serviceRoots, MinVersion: tls.VersionTLS13}, DisableKeepAlives: true}}
 	for i, listener := range listeners {
-		request, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+listener.Addr().String()+"/demo", nil)
+		request, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+listener.Addr().String()+"/demo", nil)
 		response, err := client.Do(request)
 		if i == 2 {
 			if err == nil {
@@ -180,11 +184,11 @@ func testDeviceControlNativeTransport(t *testing.T, carrier bool) {
 			continue
 		}
 		if err != nil {
-			t.Fatalf("私有服务 %d 的真实 WireGuard 请求失败", i)
+			t.Fatalf("私有服务 %d 的真实 WireGuard TLS 请求失败: %s", i, regexp.MustCompile(`(?:[0-9]{1,3}\.){3}[0-9]{1,3}`).ReplaceAllString(err.Error(), "demo-address"))
 		}
 		body, readErr := io.ReadAll(response.Body)
 		response.Body.Close()
-		if readErr != nil || response.StatusCode != 200 || string(body) != "demo-private-response" {
+		if readErr != nil || response.StatusCode != 200 || !bytes.Equal(body, expectedBody) {
 			t.Fatal("私有服务未收到原请求")
 		}
 	}
@@ -196,8 +200,8 @@ func testDeviceControlNativeTransport(t *testing.T, carrier bool) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		client.Transport = &http.Transport{DialContext: dialer.(proxy.ContextDialer).DialContext}
-		request, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+listeners[0].Addr().String()+"/demo", nil)
+		client.Transport = &http.Transport{DialContext: dialer.(proxy.ContextDialer).DialContext, TLSClientConfig: &tls.Config{RootCAs: serviceRoots, MinVersion: tls.VersionTLS13}}
+		request, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+listeners[0].Addr().String()+"/demo", nil)
 		if response, err := client.Do(request); err == nil {
 			response.Body.Close()
 			t.Fatal("仅持有承载凭据绕过 WireGuard 访问了私有服务")

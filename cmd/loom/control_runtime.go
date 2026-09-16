@@ -181,24 +181,25 @@ type controlCertifiedOperationResultV1 struct {
 }
 
 type controlRuntime struct {
-	mu              sync.Mutex
-	dir             string
-	config          controlDiskConfigV1
-	journal         controlOperationJournalV1
-	configKey       ed25519.PrivateKey
-	controlTLS      tls.Certificate
-	browserTLS      tls.Certificate
-	peerTLS         tls.Certificate
-	storage         *controlplane.RaftStorage
-	store           *controlplane.Store
-	leader          *controlplane.StableRaftLeader
-	service         *controlplane.PrivateControlService
-	uiReadOnly      http.Handler
-	uiAdmin         http.Handler
-	now             func() time.Time
-	progress        atomic.Pointer[controlOperationReadState]
-	enrollmentStore *enrollmentv2.Store
-	enrollmentKey   ed25519.PrivateKey
+	mu               sync.Mutex
+	dir              string
+	config           controlDiskConfigV1
+	journal          controlOperationJournalV1
+	applicationCache controlApplicationCache
+	configKey        ed25519.PrivateKey
+	controlTLS       tls.Certificate
+	browserTLS       tls.Certificate
+	peerTLS          tls.Certificate
+	storage          *controlplane.RaftStorage
+	store            *controlplane.Store
+	leader           *controlplane.StableRaftLeader
+	service          *controlplane.PrivateControlService
+	uiReadOnly       http.Handler
+	uiAdmin          http.Handler
+	now              func() time.Time
+	progress         atomic.Pointer[controlOperationReadState]
+	enrollmentStore  *enrollmentv2.Store
+	enrollmentKey    ed25519.PrivateKey
 	// checkpoint 在每个已耐久化阶段之后调用，用于故障注入验证恢复边界（D104）。
 	checkpoint func(controlplane.Phase) error
 }

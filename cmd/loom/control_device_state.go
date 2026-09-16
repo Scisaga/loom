@@ -73,24 +73,15 @@ func (runtime *controlRuntime) readApprovalEvidence(ctx context.Context, cluster
 }
 
 func (runtime *controlRuntime) certifiedApplicationLocked() (*controlApplicationV1, error) {
-	state, raft := runtime.store.Snapshot(), runtime.storage.SnapshotRaft()
-	if state.CertifiedHead == nil || state.CertifiedQC == nil || state.Active != nil ||
-		raft.LastApplied != raft.CommitIndex || int64(len(raft.Log)) != raft.CommitIndex {
-		return nil, errors.New("[D104 daemon] certified application 暂不可读")
-	}
-	for _, record := range runtime.journal.Records {
-		if record.Result == nil {
-			return nil, errors.New("[D104 daemon] 有未恢复的私有事务")
-		}
-	}
-	application, err := runtime.applicationBefore(len(runtime.journal.Records))
+	history, err := runtime.certifiedApplicationsLocked()
 	if err != nil {
 		return nil, err
 	}
-	if application == nil {
+	if len(history) == 0 || history[len(history)-1] == nil {
 		return nil, errors.New("[D131 daemon] 私有业务状态尚未激活")
 	}
-	return application, nil
+	application := controlClone(*history[len(history)-1])
+	return &application, nil
 }
 
 func (runtime *controlRuntime) readDeviceIdentity(ctx context.Context, certificateHash string) (controlplane.DeviceIdentityAuthorityV1, error) {
@@ -111,7 +102,7 @@ func (runtime *controlRuntime) readDeviceIdentityLocked(certificateHash string) 
 }
 
 // 报告只消费当前认证身份，不下载配置历史或解封材料。该投影仍在写锁内从
-// 当前日志重算；一次观测回读中的各设备共用这一份已验证 application。
+// 当前认证日志派生；一次观测回读中的各设备共用这一份已验证 application。
 func (runtime *controlRuntime) readDeviceReportIdentity(ctx context.Context, certificateHash string) (controlplane.DeviceIdentityAuthorityV1, error) {
 	if err := ctx.Err(); err != nil {
 		return controlplane.DeviceIdentityAuthorityV1{}, err
@@ -289,27 +280,27 @@ func (runtime *controlRuntime) completeDeviceAuthorityLocked(authority controlpl
 	initialHead string) (controlplane.DeviceIdentityAuthorityV1, error) {
 	state := runtime.store.Snapshot()
 	started := false
-	_, err := runtime.walkApplications(len(runtime.journal.Records), func(i int, atHead *controlApplicationV1) error {
+	history, err := runtime.certifiedApplicationsLocked()
+	if err != nil {
+		return controlplane.DeviceIdentityAuthorityV1{}, err
+	}
+	for i, atHead := range history {
 		operation := runtime.journal.Records[i]
-		if operation.Result == nil {
-			return errors.New("[D104 daemon] Device config lineage 未认证")
-		}
 		if operation.Result.Head.HeadHash == initialHead {
 			started = true
 		}
 		if !started {
-			return nil
+			continue
+		}
+		if atHead == nil {
+			return controlplane.DeviceIdentityAuthorityV1{}, errors.New("[Device identity] 身份历史缺少认证状态")
 		}
 		view, err := atHead.deviceEnvelope(authority.Record.DeviceID, operation.Result.Head, operation.Result.ConfigQC)
 		if err != nil {
-			return err
+			return controlplane.DeviceIdentityAuthorityV1{}, err
 		}
 		authority.DeviceConfigUpdates = append(authority.DeviceConfigUpdates, wire.DeviceConfigUpdateV1{Schema: 1,
 			Envelope: view, ControlSet: state.ControlSet, RecoveryPolicy: &atHead.RecoveryPolicy})
-		return nil
-	})
-	if err != nil {
-		return controlplane.DeviceIdentityAuthorityV1{}, err
 	}
 	if !started {
 		return controlplane.DeviceIdentityAuthorityV1{}, errors.New("[Device identity] 身份起点不在本机认证日志")
