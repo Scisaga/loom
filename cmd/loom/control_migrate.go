@@ -183,9 +183,15 @@ func validateControlMigrationSource(input *controlMigrationInputV1) error {
 	for _, device := range input.Application.Devices {
 		devices[device.View.DeviceID] = device
 	}
+	deferred := make(map[string]controlDeferredDeviceMigrationV1, len(input.Application.DeferredMigrations))
+	for _, record := range input.Application.DeferredMigrations {
+		deferred[record.DeviceID] = record
+	}
 	for _, node := range ssot.Nodes {
 		if _, found := devices[node.ID]; !found {
-			return errors.New("迁移缺少原 SSOT 中的 Device，不能用空网络替代")
+			if _, retained := deferred[node.ID]; !retained {
+				return errors.New("迁移缺少原 SSOT 中的 Device，不能用空网络替代")
+			}
 		}
 	}
 	migrations := make(map[string]wire.RuntimeDeviceMigrationLeafV1, len(input.Application.DeviceMigrations))
@@ -205,7 +211,14 @@ func validateControlMigrationSource(input *controlMigrationInputV1) error {
 		}
 		device, found := devices[client.ID]
 		if !found {
-			return errors.New("迁移丢失原 registry 中的已加入身份")
+			pending, retained := deferred[client.ID]
+			spki, err := base64.RawStdEncoding.Strict().DecodeString(client.PublicKey)
+			hash, hashErr := wire.HashBytes(wire.DomainEnrollmentIdentitySPKI, spki)
+			if !retained || client.Status == "revoked" || err != nil || hashErr != nil || pending.IdentitySPKIHash != hash || pending.Platform != client.Platform {
+				return errors.New("迁移丢失或替换原 registry 中的已加入身份")
+			}
+			delete(deferred, client.ID)
+			continue
 		}
 		if client.Status == "revoked" {
 			if device.View.State == "active" {
@@ -225,6 +238,9 @@ func validateControlMigrationSource(input *controlMigrationInputV1) error {
 		if !found || migration.IdentitySPKIHash != hash || client.Platform != "" && migration.Platform != client.Platform {
 			return errors.New("迁移未保留已加入 Device 的逐设备身份或平台")
 		}
+	}
+	if len(deferred) != 0 {
+		return errors.New("暂存身份没有对应的原 registry 记录")
 	}
 	return nil
 }

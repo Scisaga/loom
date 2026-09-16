@@ -135,6 +135,11 @@ sudo systemctl start loom-control.service
 `control migrate` 仍要求经过验证的完整生产 application 输入；客户端的迁移请求不是可直接
 提交的 application。该输入的生成与正式服务接线进度以[实现对照](../development/implementation.md)为准。
 
+本次不在用、尚未提供原 key 迁移请求的独立客户端可以在 `deferred_migrations` 中明确保留原
+设备 ID、平台与身份摘要。导入时必须匹配原 SSOT 和 registry；该记录不生成 v2 Device view、
+证书、wrapping key 或 Enrollment 事务，也不授予旧入口继续运行的权限。在用服务器与本次要求
+迁移的客户端仍须完成真实迁移；暂存身份不是迁移成功，不能据此关闭对应客户端验收项。
+
 原身份已进入认证日志、证书与配置材料已就绪后，通过私有管理员入口导出：
 
 ```bash

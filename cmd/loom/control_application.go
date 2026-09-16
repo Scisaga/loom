@@ -39,7 +39,16 @@ type controlApplicationV1 struct {
 	IssuanceRegistry   []wire.EnrollmentIssuanceRegistryLeafV1 `json:"issuance_registry"`
 	Devices            []controlDeviceStateV1                  `json:"devices"`
 	DeviceMigrations   []wire.RuntimeDeviceMigrationLeafV1     `json:"device_migrations,omitempty"`
+	DeferredMigrations []controlDeferredDeviceMigrationV1      `json:"deferred_migrations,omitempty"`
 	ArtifactPolicies   []wire.ArtifactAvailabilityPolicyV1     `json:"artifact_policies,omitempty"`
+}
+
+// 未在用且尚未提供原 key 迁移请求的历史记录只保留原身份，不能伪造
+// wrapping key/floor，也不进入 active Device view 或被当作已完成迁移。
+type controlDeferredDeviceMigrationV1 struct {
+	DeviceID         string `json:"device_id"`
+	Platform         string `json:"platform"`
+	IdentitySPKIHash string `json:"identity_spki_hash"`
 }
 
 type controlInviteStateV1 struct {
@@ -248,6 +257,27 @@ func (application *controlApplicationV1) validate() error {
 		}
 		if !found {
 			return errors.New("[设备迁移] 认证状态丢失原 Device")
+		}
+	}
+	for i, pending := range application.DeferredMigrations {
+		node := legacy.NodeByID()[pending.DeviceID]
+		if node == nil || node.Access == nil || node.Server != nil ||
+			string(node.Access.Platform) != pending.Platform ||
+			i > 0 && application.DeferredMigrations[i-1].DeviceID >= pending.DeviceID {
+			return errors.New("[设备迁移] 暂存身份必须是原网络的独立客户端并按 ID 唯一排序")
+		}
+		if _, err := wire.ParseHash(pending.IdentitySPKIHash); err != nil {
+			return err
+		}
+		for _, device := range application.Devices {
+			if device.View.DeviceID == pending.DeviceID {
+				return errors.New("[设备迁移] 暂存身份不能同时成为 v2 Device")
+			}
+		}
+		for _, invite := range application.Invites {
+			if invite.Opening.DeviceEnrollmentIntent.DeviceID == pending.DeviceID {
+				return errors.New("[设备迁移] 暂存身份不能被新邀请覆盖")
+			}
 		}
 	}
 	return nil
