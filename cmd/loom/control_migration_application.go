@@ -69,7 +69,7 @@ func (runtime *controlRuntime) prepareMigrationApplication(input *controlMigrati
 	if err != nil {
 		return err
 	}
-	application := controlApplicationV1{Schema: 1, ClusterID: prepared.ClusterID,
+	application := controlApplicationV1{Schema: 2, ClusterID: prepared.ClusterID,
 		LegacySSOT: string(source), LegacyRegistryHash: wire.HashRaw("loom-legacy-registry-migration-v1", registry),
 		RecoveryPolicy: prepared.Recovery.Policy, RecoveryCustody: prepared.Recovery.Custody,
 		Authorizations: []wire.AdminAuthorizationV1{admin}, CARegistry: enrollmentv2.CARegistryPreimageV1{

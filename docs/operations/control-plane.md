@@ -43,7 +43,18 @@ CLI 校验系统 WebPKI 信任、名字、有效期和私钥匹配，以不可�
 外部 observer 策略确定性生成 HY2 与独立 Trojan/TLS 计划。计划的地址、端口和证书不会在重试时
 重新分配；原 Head 或输入改变时拒绝覆盖。迁移输入的 `prepared.bootstrap_installation` 承诺完整
 计划，`prepared.bootstrap_catalog` 必须与之相等。计划生成不修改运行服务，尚未完成认证发布时
-不能用它创建新邀请；listener daemon、外部验证结果提交及静态发布的接线仍见实现对照。
+不能用它创建新邀请；外部验证结果提交、capability 更新及静态发布的接线仍见实现对照。
+
+迁移提交后，`loom control export-bootstrap -admin-dir <原交付目录> -device <入口节点> -out <交付文件>`
+经私有管理 API 导出安装部分及 Merkle 证明，不能把完整私有 application 复制到 forward 节点。
+`loom bootstrap serve -bundle <交付文件> -device <原节点>` 用节点保存的原平台公钥验证迁移与部分证明，
+只加载原节点证书，冻结本地端口计划，并启动 HY2/Trojan prepared listeners。它逐个完成真实本机
+TLS/QUIC 握手后保存 readiness 和无 bearer 的 outer probe plan；失败关闭整批，重启不重分配端口。
+初始 prepared 阶段不开放邀请 bearer。外部验证、认证 advertise、capability 更新与客户端成功入网
+必须继续接通和验收，不能把此阶段的握手回执当作加入成功。
+
+服务模板为 `packaging/systemd/loom-bootstrap-v2.service`；节点 `/etc/loom/bootstrap-v2.env` 只提供
+`BOOTSTRAP_BUNDLE` 与 `DEVICE_ID`。材料和配置文件保持受保护，部署命令仍遵守精确制品发布规程。
 
 ## 首次初始化
 

@@ -78,7 +78,8 @@ func TestExistingCertificateCommandProducesReloadablePublicBinding(t *testing.T)
 	if _, err := certmanager.LoadExistingRuntimeCertificate(materials, binding, binding.Identity, roots, now); err != nil {
 		t.Fatal(err)
 	}
-	testBootstrapPreparationFromCertificate(t, binding, roots, now)
+	bootstrapRequest := testBootstrapPreparationFromCertificate(t, binding, roots, now)
+	testCertifiedBootstrapRuntime(t, bootstrapRequest, roots, materials)
 	if err := prepareExistingCertificateCommand(args, roots, now); err != nil {
 		t.Fatal(err)
 	}

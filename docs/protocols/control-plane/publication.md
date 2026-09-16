@@ -409,3 +409,12 @@ publisher 不再是某台中控上的 authority。任一 control 副本都可 ma
 任何合格副本都可接管。
 
 ---
+
+## 私有 application 的部分交付
+
+运行时 application schema 2 将每个顶层命名部分的规范内容摘要组成 RFC 6962 Merkle 树，
+按字段名排序；`ControlApplicationSnapshotV2` 的网络、部分数量与树根进入 Head 的 `snapshot_hash`。
+`ControlApplicationSectionProofV2` 只携所选字段的内容与 inclusion path。节点必须同时验证外部
+信任锚、完整迁移/Head/QC、snapshot 摘要、网络、字段名、内容摘要及 Merkle path。
+不能只验证调用方自报的树根，也不能为了交付一个 listener 计划把 SSOT、邀请 opening 或恢复
+custody 发给 forward 节点。历史 schema 1 的整体对象摘要仅供原有证明和日志重放，不授权旧业务路径。

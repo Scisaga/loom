@@ -111,6 +111,13 @@ func (application *controlApplicationV1) roots() (wire.RuntimeActivationRootsV1,
 		return wire.RuntimeActivationRootsV1{}, err
 	}
 	snapshot, err := wire.HashObject(controlApplicationDomain, application)
+	if application.Schema == 2 {
+		canonical, encodeErr := wire.MarshalCanonical(application)
+		if encodeErr != nil {
+			return wire.RuntimeActivationRootsV1{}, encodeErr
+		}
+		snapshot, err = wire.ControlApplicationSnapshotHashV2(canonical)
+	}
 	if err != nil {
 		return wire.RuntimeActivationRootsV1{}, err
 	}
@@ -147,7 +154,7 @@ func (application *controlApplicationV1) roots() (wire.RuntimeActivationRootsV1,
 }
 
 func (application *controlApplicationV1) validate() error {
-	if application == nil || application.Schema != 1 || application.ClusterID == "" ||
+	if application == nil || (application.Schema != 1 && application.Schema != 2) || application.ClusterID == "" ||
 		application.Invites == nil || application.Transactions == nil || application.IssuanceRegistry == nil ||
 		application.Devices == nil || application.Authorizations == nil || application.CARegistry.AdminProfiles == nil ||
 		application.CARegistry.DeviceProfiles == nil || application.BootstrapIssuers == nil {
@@ -219,6 +226,13 @@ func (application *controlApplicationV1) validate() error {
 		}
 		if !wire.EqualCanonical(application.BootstrapInstallation.Catalog, application.BootstrapCatalog) {
 			return errors.New("bootstrap catalog 不属于已承诺的完整安装计划")
+		}
+		nodes := legacy.NodeByID()
+		for _, listener := range application.BootstrapInstallation.Input.Listeners {
+			node := nodes[listener.Profile.ServerID]
+			if node == nil || node.Server == nil || node.Paused || node.Decommission {
+				return errors.New("bootstrap 安装只能授予原网络中的活动 forward 节点")
+			}
 		}
 	}
 	if err := wire.ValidateDistributionMirrorRefs(application.Mirrors); err != nil {

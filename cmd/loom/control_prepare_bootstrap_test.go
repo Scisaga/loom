@@ -4,15 +4,17 @@ import (
 	"crypto/ed25519"
 	"crypto/x509"
 	"encoding/base64"
+	"strings"
 	"testing"
 	"time"
 
 	"loom/internal/bootstrapaccess"
 	"loom/internal/certmanager"
+	"loom/internal/model"
 	"loom/internal/wire"
 )
 
-func testBootstrapPreparationFromCertificate(t *testing.T, binding certmanager.ExistingCertificateBindingV1, roots *x509.CertPool, now time.Time) {
+func testBootstrapPreparationFromCertificate(t *testing.T, binding certmanager.ExistingCertificateBindingV1, roots *x509.CertPool, now time.Time) controlPrepareBootstrapInputV1 {
 	t.Helper()
 	dir, _ := newAdminRotationFixture(t, false)
 	runtime, err := openControlRuntime(dir, func() time.Time { return now })
@@ -52,6 +54,7 @@ func testBootstrapPreparationFromCertificate(t *testing.T, binding certmanager.E
 		t.Fatal("允许公开绑定扩大证书有效期")
 	}
 	application, _ := controlInviteApplication(t, runtime)
+	bindBootstrapFixtureSource(t, &application, binding.Identity.KeyOwnerDeviceID)
 	application.BootstrapInstallation = &plan
 	application.BootstrapCatalog = plan.Catalog
 	if err := application.validate(); err != nil {
@@ -61,4 +64,20 @@ func testBootstrapPreparationFromCertificate(t *testing.T, binding certmanager.E
 	if err := application.validate(); err == nil {
 		t.Fatal("application 未重算安装计划")
 	}
+	return request
+}
+
+func bindBootstrapFixtureSource(t *testing.T, application *controlApplicationV1, device string) {
+	t.Helper()
+	source, err := model.Load([]byte(application.LegacySSOT))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, node := range source.Nodes {
+		if node.Server != nil {
+			application.LegacySSOT = strings.ReplaceAll(application.LegacySSOT, node.ID, device)
+			return
+		}
+	}
+	t.Fatal("缺 server fixture")
 }

@@ -236,6 +236,8 @@ func cmdControl(args []string) error {
 		return cmdControlPrepareRecovery(args[1:])
 	case "prepare-bootstrap":
 		return cmdControlPrepareBootstrap(args[1:])
+	case "export-bootstrap":
+		return cmdControlExportBootstrap(args[1:])
 	case "export-migration":
 		return cmdControlExportMigration(args[1:])
 	default:
@@ -1303,6 +1305,8 @@ func (runtime *controlRuntime) controlHandler() http.Handler {
 		default:
 			if strings.HasPrefix(request.URL.Path, privateControlMigrationPrefix) {
 				runtime.serveMigrationDelivery(writer, request)
+			} else if strings.HasPrefix(request.URL.Path, privateControlBootstrapPrefix) {
+				runtime.serveBootstrapInstallation(writer, request)
 			} else if strings.HasPrefix(request.URL.Path, privateControlInvitePrefix) {
 				runtime.serveInviteDelivery(writer, request)
 			} else if strings.HasPrefix(request.URL.Path, controlplane.PrivateControlOperationPath+"/") {
