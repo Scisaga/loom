@@ -227,7 +227,7 @@ func leftPadDecimal(value int64, width int) string {
 
 func validLinuxRuntimeBindingTarget(binding *LinuxRuntimeBindingV1) bool {
 	if binding.Transport == "wireguard" {
-		if binding.Mode == "listen" && binding.ConfigPath == "sing-box/v2/config.json" && strings.HasPrefix(binding.RuntimeTag, "device-control-") && validIdentifier(binding.RuntimeTag, 128) {
+		if binding.ConfigPath == "sing-box/v2/config.json" && strings.HasPrefix(binding.RuntimeTag, "device-control-") && validIdentifier(binding.RuntimeTag, 128) {
 			return true
 		}
 		return binding.RuntimeTag == "" && validLinuxWireGuardConfigPath(binding.ConfigPath)

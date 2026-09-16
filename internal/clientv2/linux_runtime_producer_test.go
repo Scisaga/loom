@@ -4,6 +4,7 @@ package clientv2
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/base64"
@@ -25,11 +26,12 @@ func TestLinuxProducerFeedsCertifiedReaderWithoutOldControlPaths(t *testing.T) {
 		if hybrid {
 			name = "combined"
 		}
-		t.Run(name, func(t *testing.T) { testLinuxProducerRuntime(t, hybrid) })
+		t.Run(name, func(t *testing.T) { testLinuxProducerRuntime(t, hybrid, false) })
 	}
+	t.Run("private-control-carrier", func(t *testing.T) { testLinuxProducerRuntime(t, false, true) })
 }
 
-func testLinuxProducerRuntime(t *testing.T, hybrid bool) {
+func testLinuxProducerRuntime(t *testing.T, hybrid, carrier bool) {
 	source, err := model.LoadFile("../../testdata/matrix/ssot.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -119,6 +121,26 @@ func testLinuxProducerRuntime(t *testing.T, hybrid bool) {
 					}
 				}
 			}
+			if carrier && node.Server != nil {
+				var peer *model.Node
+				for i := range source.Nodes {
+					if source.Nodes[i].Server != nil && source.Nodes[i].ID != node.ID {
+						peer = &source.Nodes[i]
+						break
+					}
+				}
+				link := &input.DeviceControlLinks[0]
+				listener := node
+				if node.ID == source.Nodes[0].ID {
+					link.Resource.DialerDeviceID, link.Resource.DialerPublicKey = peer.ID, peer.Server.WGPublicKey
+				} else {
+					listener = *peer
+					link.Resource.ListenerDeviceID, link.Resource.ListenerPublicKey = peer.ID, peer.Server.WGPublicKey
+					link.Resource.DialerDeviceID, link.Resource.DialerPublicKey = node.ID, node.Server.WGPublicKey
+				}
+				link.Carrier = &wire.DeviceControlCarrierV1{Address: listener.PublicEndpoint, Port: int64(listener.Server.InboundPort),
+					TLSServerName: listener.ID + ".node.internal", CredentialRef: wire.DeviceControlCarrierCredentialRef(*link)}
+			}
 			result, err := render.RenderLinuxRuntimeV2(input)
 			if err != nil {
 				t.Fatal(err)
@@ -156,7 +178,8 @@ func testLinuxProducerRuntime(t *testing.T, hybrid bool) {
 			credentials := []InstalledSecretV1{}
 			for _, ref := range result.Runtime.CredentialRefs {
 				values[ref] = "demo-private-value"
-				credentials = append(credentials, InstalledSecretV1{SecretID: ref, Purpose: "data_plane_credential", SecretBytes: base64.RawURLEncoding.EncodeToString([]byte(values[ref]))})
+				credentials = append(credentials, InstalledSecretV1{SecretID: ref, Purpose: "data_plane_credential", SecretBytes: base64.RawURLEncoding.EncodeToString([]byte(values[ref])),
+					SecretDigest: wire.HashRaw("loom-linux-installed-secret-v1", []byte(values[ref]))})
 			}
 			if links.LocalWireGuardKey != nil {
 				values[links.LocalWireGuardKey.SecretID] = privateKeys[node.ID]
@@ -185,13 +208,37 @@ func testLinuxProducerRuntime(t *testing.T, hybrid bool) {
 			if err := validateLinuxRuntimeConfigSemantics(&plan, &artifact, files); err != nil {
 				t.Fatal(err)
 			}
+			if carrier && node.Server != nil && node.ID != source.Nodes[0].ID {
+				installation := &DeviceInstallationV1{Configs: []InstalledConfigV1{{ArtifactID: wire.LinuxLinkIntentArtifactID, Config: result.Links.Content}}, Credentials: credentials}
+				service := input.DeviceControlLinks[0].Services[0]
+				dial, err := installedLinuxDeviceDial(installation, node.ID, service, time.Second)
+				if err != nil || dial == nil {
+					t.Fatal("Linux 私有请求仍会使用主机默认路由", err)
+				}
+				if conn, err := dial(context.Background(), "tcp", "192.0.2.123:443"); err == nil || conn != nil {
+					t.Fatal("代理放行目录外目的")
+				}
+				installation.Credentials = nil
+				if dial, err := installedLinuxDeviceDial(installation, node.ID, service, time.Second); err == nil || dial != nil {
+					t.Fatal("缺凭据时允许主机默认回退")
+				}
+			}
 			if len(input.DeviceControlLinks) > 0 {
-				for _, mutation := range []struct{ before, after string }{
-					{`"allowed_ips":["10.250.0.2/32"]`, `"allowed_ips":["10.0.0.0/8"]`},
+				allowedPrefix := "10.250.0.2/32"
+				if carrier && node.ID != source.Nodes[0].ID {
+					allowedPrefix = "10.250.0.1/32"
+				}
+				mutations := []struct{ before, after string }{
+					{`"allowed_ips":["` + allowedPrefix + `"]`, `"allowed_ips":["10.0.0.0/8"]`},
 					{`"outbound":"device-control-block"`, `"outbound":"device-control-direct"`},
 					{`"ip_cidr":["10.250.0.1/32"]`, `"ip_cidr":["10.0.0.0/8"]`},
 					{`"system":false`, `"system":true`},
-				} {
+				}
+				if carrier && node.ID != source.Nodes[0].ID {
+					mutations = append(mutations, struct{ before, after string }{`"tag":"device-control-demo-carrier"`, `"tag":"demo-unbound-carrier"`},
+						struct{ before, after string }{`"listen":"127.0.0.1","listen_port":61805`, `"listen":"0.0.0.0","listen_port":61805`})
+				}
+				for _, mutation := range mutations {
 					broken := map[string]string{}
 					for path, body := range files {
 						broken[path] = body

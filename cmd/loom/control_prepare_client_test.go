@@ -170,6 +170,66 @@ func controlRenderedClientFixture(t *testing.T, platform model.Platform) (*contr
 	return runtime, admin, migration, input, wrapping
 }
 
+func TestLinuxControlAllocationUsesOriginalNodeKeysAndDedicatedCarrier(t *testing.T) {
+	runtime, _, _, _, _ := controlRenderedClientFixture(t, model.LinuxServer)
+	application, err := runtime.certifiedApplicationLocked()
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := model.Load([]byte(application.LegacySSOT))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var servers []*model.Node
+	for i := range source.Nodes {
+		if source.Nodes[i].Server != nil {
+			servers = append(servers, &source.Nodes[i])
+		}
+	}
+	if len(servers) < 2 {
+		t.Fatal("fixture 缺服务器")
+	}
+	listener, client := servers[0], servers[1]
+	// 此纯分配测试沿用 fixture 中两个服务器的认证平台投影。
+	for _, server := range []*model.Node{listener, client} {
+		migration := controlClone(application.DeviceMigrations[0])
+		migration.DeviceID, migration.Platform = server.ID, "linux-server"
+		application.DeviceMigrations = append(application.DeviceMigrations, migration)
+	}
+	input := controlClientConfigInputV1{Schema: 1, DeviceID: client.ID,
+		ControlTunnel: render.ClientControlTunnelV2{PeerDeviceID: listener.ID, PeerAddress: "10.250.0.1", PeerPort: 51998,
+			PeerPublicKey: listener.Server.WGPublicKey, PrivateKeyRef: render.LocalWireGuardSecretIDV2,
+			PeerTunnelPrefix: "10.250.0.3/32", Address: []string{"10.250.0.2/32"}, MTU: 1280}}
+	link, err := application.prepareDeviceControlLink(input, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if link.Resource.DialerPublicKey != client.Server.WGPublicKey || link.Carrier == nil ||
+		link.Carrier.Address != listener.PublicEndpoint || link.Carrier.CredentialRef != wire.DeviceControlCarrierCredentialRef(link) {
+		t.Fatal("分配未保留原节点公钥或未使用设备专用承载")
+	}
+	if err := application.replaceDeviceControlLink(link); err != nil {
+		t.Fatal(err)
+	}
+	if len(application.deviceControlLinksFor(listener.ID)) != 1 || len(application.deviceControlLinksFor(client.ID)) != 1 {
+		t.Fatal("认证分配未交付两端")
+	}
+	changed := controlClone(link)
+	changed.Carrier.Address = "203.0.113.222"
+	if err := application.validateDeviceControlLink(changed); err == nil {
+		t.Fatal("允许把承载改指另一主机")
+	}
+	changed = controlClone(link)
+	changed.Resource.DialerPublicKey = listener.Server.WGPublicKey
+	if err := application.validateDeviceControlLink(changed); err == nil {
+		t.Fatal("允许替换原节点 WireGuard 公钥")
+	}
+	input.ControlTunnel.PrivateKeyRef = "demo-copied-other-key"
+	if _, err := application.prepareDeviceControlLink(input, 3); err == nil {
+		t.Fatal("允许将远端凭据替代本机原密钥")
+	}
+}
+
 func TestControlClientConfigRendersSealsPublishesAndReplays(t *testing.T) {
 	for _, platform := range []model.Platform{model.Android, model.WindowsDesktop, model.LinuxServer} {
 		t.Run(string(platform), func(t *testing.T) {

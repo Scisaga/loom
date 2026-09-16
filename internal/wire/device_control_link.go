@@ -3,6 +3,7 @@ package wire
 import (
 	"errors"
 	"net/netip"
+	"sort"
 	"strings"
 )
 
@@ -11,6 +12,16 @@ import (
 type DeviceControlLinkV1 struct {
 	Resource LinuxWireGuardResourceV1  `json:"resource"`
 	Services []PrivateControlServiceV1 `json:"services"`
+	Carrier  *DeviceControlCarrierV1   `json:"carrier,omitempty"`
+}
+
+// Carrier 复用承载节点已有 HY2 listener，只授权该设备的私网 WireGuard
+// tuple。它不授予业务转发或探测权限，也不新增公网 listener。
+type DeviceControlCarrierV1 struct {
+	Address       string `json:"address"`
+	Port          int64  `json:"port"`
+	TLSServerName string `json:"tls_server_name"`
+	CredentialRef string `json:"credential_ref"`
 }
 
 func ValidateDeviceControlLink(link *DeviceControlLinkV1) error {
@@ -24,6 +35,13 @@ func ValidateDeviceControlLink(link *DeviceControlLinkV1) error {
 	}
 	if err := ValidateLinuxWireGuardResource(r); err != nil {
 		return err
+	}
+	if carrier := link.Carrier; carrier != nil {
+		ip, err := netip.ParseAddr(carrier.Address)
+		if err != nil && !ValidFQDN(carrier.Address) || err == nil && (ip.String() != carrier.Address || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.Is4In6()) ||
+			carrier.Port < 1 || carrier.Port > 65535 || !ValidFQDN(carrier.TLSServerName) || carrier.CredentialRef != DeviceControlCarrierCredentialRef(*link) {
+			return errors.New("[设备控制链路] 外层承载 tuple、TLS 身份或设备专用凭据无效")
+		}
 	}
 	listener, _ := netip.ParsePrefix(r.ListenerTunnelPrefix)
 	if r.ResourceID != r.LinkID || !strings.HasPrefix(r.ResourceID, "device-control-") {
@@ -69,15 +87,19 @@ type DeviceControlEndpointV1 struct {
 	MTU        int                           `json:"mtu"`
 	Address    []string                      `json:"address"`
 	PrivateKey string                        `json:"private_key"`
-	ListenPort int64                         `json:"listen_port"`
+	ListenPort int64                         `json:"listen_port,omitempty"`
+	Detour     string                        `json:"detour,omitempty"`
 	Peers      []DeviceControlEndpointPeerV1 `json:"peers"`
 }
 type DeviceControlEndpointPeerV1 struct {
+	Address    string   `json:"address,omitempty"`
+	Port       int64    `json:"port,omitempty"`
 	PublicKey  string   `json:"public_key"`
 	AllowedIPs []string `json:"allowed_ips"`
 }
 type DeviceControlRouteV1 struct {
 	Inbound  []string `json:"inbound"`
+	AuthUser []string `json:"auth_user,omitempty"`
 	IPCIDR   []string `json:"ip_cidr,omitempty"`
 	Port     []int64  `json:"port,omitempty"`
 	Outbound string   `json:"outbound"`
@@ -85,6 +107,15 @@ type DeviceControlRouteV1 struct {
 
 const DeviceControlDirectTag = "device-control-direct"
 const DeviceControlBlockTag = "device-control-block"
+const DeviceControlLocalTag = "device-control-local"
+const DeviceControlLocalPort = 61805
+
+func DeviceControlCarrierTag(link DeviceControlLinkV1) string {
+	return link.Resource.ResourceID + "-carrier"
+}
+func DeviceControlCarrierCredentialRef(link DeviceControlLinkV1) string {
+	return DeviceControlCarrierTag(link)
+}
 
 func DeviceControlEndpoint(link DeviceControlLinkV1, key string) DeviceControlEndpointV1 {
 	r := link.Resource
@@ -102,6 +133,48 @@ func DeviceControlRoutes(links []DeviceControlLinkV1) []DeviceControlRouteV1 {
 			routes = append(routes, DeviceControlRouteV1{Inbound: []string{tag}, IPCIDR: []string{netip.PrefixFrom(ip, ip.BitLen()).String()}, Port: []int64{service.Port}, Outbound: DeviceControlDirectTag})
 		}
 		routes = append(routes, DeviceControlRouteV1{Inbound: []string{tag}, Outbound: DeviceControlBlockTag})
+	}
+	return routes
+}
+
+func DeviceControlEndpointForDevice(link DeviceControlLinkV1, device, key string) DeviceControlEndpointV1 {
+	if device == link.Resource.ListenerDeviceID {
+		return DeviceControlEndpoint(link, key)
+	}
+	addresses := map[string]bool{}
+	for _, service := range link.Services {
+		ip, _ := netip.ParseAddr(service.OverlayIP)
+		addresses[netip.PrefixFrom(ip, ip.BitLen()).String()] = true
+	}
+	allowed := make([]string, 0, len(addresses))
+	for address := range addresses {
+		allowed = append(allowed, address)
+	}
+	sort.Strings(allowed)
+	r := link.Resource
+	return DeviceControlEndpointV1{Type: "wireguard", Tag: DeviceControlEndpointTag(link), System: false, MTU: 1280,
+		Address: []string{r.DialerTunnelPrefix}, PrivateKey: key, Detour: DeviceControlCarrierTag(link),
+		Peers: []DeviceControlEndpointPeerV1{{Address: r.EndpointAddress, Port: r.EndpointPort, PublicKey: r.ListenerPublicKey, AllowedIPs: allowed}}}
+}
+
+func DeviceControlRoutesForDevice(links []DeviceControlLinkV1, device string) []DeviceControlRouteV1 {
+	var routes []DeviceControlRouteV1
+	for _, link := range links {
+		if link.Resource.ListenerDeviceID == device {
+			if link.Carrier != nil {
+				ip, _ := netip.ParseAddr(link.Resource.EndpointAddress)
+				routes = append(routes,
+					DeviceControlRouteV1{Inbound: []string{"in"}, AuthUser: []string{link.Resource.ResourceID}, IPCIDR: []string{netip.PrefixFrom(ip, ip.BitLen()).String()}, Port: []int64{link.Resource.EndpointPort}, Outbound: DeviceControlDirectTag},
+					DeviceControlRouteV1{Inbound: []string{"in"}, AuthUser: []string{link.Resource.ResourceID}, Outbound: DeviceControlBlockTag})
+			}
+			routes = append(routes, DeviceControlRoutes([]DeviceControlLinkV1{link})...)
+			continue
+		}
+		for _, service := range link.Services {
+			ip, _ := netip.ParseAddr(service.OverlayIP)
+			routes = append(routes, DeviceControlRouteV1{Inbound: []string{DeviceControlLocalTag}, IPCIDR: []string{netip.PrefixFrom(ip, ip.BitLen()).String()}, Port: []int64{service.Port}, Outbound: DeviceControlEndpointTag(link)})
+		}
+		routes = append(routes, DeviceControlRouteV1{Inbound: []string{DeviceControlLocalTag}, Outbound: DeviceControlBlockTag})
 	}
 	return routes
 }

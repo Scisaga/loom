@@ -112,14 +112,14 @@ func RenderLinuxRuntimeV2(input LinuxRuntimeV2Input) (LinuxRuntimeV2, error) {
 	if err := json.Unmarshal([]byte(file.Content), &config); err != nil {
 		return result, err
 	}
-	if err := addLinuxDeviceControlEndpoints(&config, input.DeviceControlLinks); err != nil {
+	if err := addLinuxDeviceControlEndpoints(&config, input.DeviceControlLinks, input.DeviceID); err != nil {
 		return result, err
 	}
 	for _, inbound := range config.Inbounds {
 		if inbound.Type == "tun" {
 			links.LocalRuntime.AccessMode = "tun"
 		}
-		if inbound.Type == "mixed" && !strings.HasPrefix(inbound.Tag, "hy2-link-") && inbound.Tag != "probe-in" {
+		if inbound.Type == "mixed" && !strings.HasPrefix(inbound.Tag, "hy2-link-") && inbound.Tag != "probe-in" && inbound.Tag != wire.DeviceControlLocalTag {
 			if links.LocalRuntime.AccessMode == "tun" {
 				links.LocalRuntime.AccessMode = "mixed_tun"
 			} else {

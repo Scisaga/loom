@@ -212,6 +212,16 @@ reporter 在网络发送前先把已签 exact envelope 写入
 `/var/lib/loom/client-v2/device-report-journal.json`。请求或进程中断后，下次运行先重放该
 pending bytes；收到 `204` 或验证通过的 exact `200` 回执前不会推进 sequence。
 
+私有通道需要修复时，操作者可显式递送控制面导出的 exact `DeviceConfigDeliveryV1`：
+
+```bash
+sudo loom client sync-v2-view -delivery /secure/device-configuration.json
+sudo loom client accept-v2-runtime -apply
+```
+
+该入口重新验证原身份、protected Head、更新链、密文和制品摘要，原子接续同一 LKG；
+不能指定新信任根或以迁移包覆盖已安装状态。文件递送不替代修复后的私有配置/报告业务验收。
+
 同步 Device view 后，默认使用与 view 原子保存的 `linux-link-intents` exact canonical
 artifact 提交本机 runtime LKG。先验收 runtime LKG 并预览完整安装事务（不安装配置或改动服务）：
 
@@ -253,10 +263,10 @@ credentials 注入；密钥不会进入命令行、公开 artifact 或输出。
 `-apply` 使用同一个部署事务先在 staging 目录执行 `sing-box check`/`wg-quick strip`，再以
 WG → sing-box → Agent 的顺序替换、启动并验证；任一步失败会恢复旧文件和旧 unit 状态。
 installed inventory 以 CAS 保护，删除仅限该 inventory 中的固定 v2 路径。v2 使用
-`/etc/loom/{sing-box,agent}/v2/`、`lmv2-*` WireGuard interface 及
-`loom-client-v2-{sing-box,agent}.service`，不会覆盖或停用 v1 路径。若新旧监听资源冲突，
-v2 启动验证失败并恢复旧状态。当前启动器尚不负责退役 v1；这是完整迁移的缺口，
-新版接管须按[迁移验收](../protocols/control-plane/migration.md#从当前实现迁移)完成对应旧路径清理。
+`/etc/loom/{sing-box,agent,report}/v2/` 与对应 `loom-client-v2-*` 服务，原服务器的
+WireGuard 接口名及密钥保持不变。原身份迁移的安装事务同时绑定旧文件摘要、停用并移除
+旧 pull/publisher/运行服务；失败仍按原事务回滚。该接线不证明某个环境已经完成迁移，
+部署和正常业务证据须单独核对。
 
 Device view 进入 certified `revoked` 或 `decommissioned` tombstone 后，同一命令不再读取已被
 清除的 runtime/secret artifact。`-dry-run` 只展示受影响的旧 v2 inventory；`-apply` 在相同

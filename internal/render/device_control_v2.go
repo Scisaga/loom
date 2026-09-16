@@ -1,6 +1,7 @@
 package render
 
 import (
+	"encoding/json"
 	"errors"
 	"sort"
 
@@ -30,17 +31,30 @@ func addLinuxDeviceControlLinks(projection *LinuxWireGuardProjectionV2, source *
 		}
 		r := link.Resource
 		client, found := input.Views[r.DialerDeviceID]
-		if r.ListenerDeviceID != input.DeviceID || r.ListenerPublicKey != node.Server.WGPublicKey ||
-			!found || client.State != "active" || client.Active == nil || !hasLinuxRole(client.Active.Responsibilities.Values, "use_loom") ||
-			used[r.ResourceID] || ports[r.EndpointPort] || int64(node.Server.InboundPort) == r.EndpointPort ||
+		dial := r.DialerDeviceID == input.DeviceID
+		public := r.ListenerPublicKey
+		if dial {
+			public = r.DialerPublicKey
+		}
+		if !dial && r.ListenerDeviceID != input.DeviceID || public != node.Server.WGPublicKey ||
+			!found || client.State != "active" || client.Active == nil ||
+			!hasLinuxRole(client.Active.Responsibilities.Values, "use_loom") && !(link.Carrier != nil && hasLinuxRole(client.Active.Responsibilities.Values, "forward")) ||
+			used[r.ResourceID] || !dial && (ports[r.EndpointPort] || int64(node.Server.InboundPort) == r.EndpointPort) || dial && link.Carrier == nil ||
 			i > 0 && input.DeviceControlLinks[i-1].Resource.ResourceID >= r.ResourceID {
 			return errors.New("[设备控制链路] 当前身份、原公钥、端口或资源分配冲突")
 		}
-		used[r.ResourceID], ports[r.EndpointPort] = true, true
+		used[r.ResourceID] = true
+		if !dial {
+			ports[r.EndpointPort] = true
+		}
 		projection.Resources = append(projection.Resources, r)
 		projection.LinkIntents = append(projection.LinkIntents, wire.DeviceControlLinkIntent(cluster, r, input.Authority.Head.HeadHash, LocalWireGuardSecretIDV2))
+		mode, generation := "listen", int64(0)
+		if dial {
+			mode, generation = "dial", r.ListenerGeneration
+		}
 		projection.Bindings = append(projection.Bindings, wire.LinuxRuntimeBindingV1{LinkID: r.LinkID, LinkGeneration: r.ListenerGeneration,
-			Mode: "listen", Transport: "wireguard", EndpointID: r.ResourceID, ConfigPath: "sing-box/v2/config.json", RuntimeTag: wire.DeviceControlEndpointTag(link)})
+			Mode: mode, ListenerGeneration: generation, Transport: "wireguard", EndpointID: r.ResourceID, ConfigPath: "sing-box/v2/config.json", RuntimeTag: wire.DeviceControlEndpointTag(link)})
 	}
 	projection.LocalKey = &wire.LinuxLocalWireGuardKeyV1{SecretID: LocalWireGuardSecretIDV2, PublicKey: node.Server.WGPublicKey}
 	sort.Slice(projection.Resources, func(i, j int) bool { return projection.Resources[i].ResourceID < projection.Resources[j].ResourceID })
@@ -49,7 +63,7 @@ func addLinuxDeviceControlLinks(projection *LinuxWireGuardProjectionV2, source *
 	return nil
 }
 
-func addLinuxDeviceControlEndpoints(config *sbConfig, links []wire.DeviceControlLinkV1) error {
+func addLinuxDeviceControlEndpoints(config *sbConfig, links []wire.DeviceControlLinkV1, device string) error {
 	if len(links) == 0 {
 		return nil
 	}
@@ -62,16 +76,57 @@ func addLinuxDeviceControlEndpoints(config *sbConfig, links []wire.DeviceControl
 		}
 	}
 	for _, link := range links {
-		config.Endpoints = append(config.Endpoints, wire.DeviceControlEndpoint(link, secretRef(LocalWireGuardSecretIDV2)))
+		config.Endpoints = append(config.Endpoints, wire.DeviceControlEndpointForDevice(link, device, secretRef(LocalWireGuardSecretIDV2)))
+		if carrier := link.Carrier; carrier != nil {
+			if link.Resource.DialerDeviceID == device {
+				for _, inbound := range config.Inbounds {
+					if inbound.Tag == wire.DeviceControlLocalTag || inbound.ListenPort == wire.DeviceControlLocalPort {
+						return errors.New("[设备控制链路] 本机代理名称或端口冲突")
+					}
+				}
+				config.Inbounds = append(config.Inbounds, sbInbound{Type: "mixed", Tag: wire.DeviceControlLocalTag,
+					Listen: "127.0.0.1", ListenPort: wire.DeviceControlLocalPort,
+					Users: []sbMixedUser{{Username: link.Resource.ResourceID, Password: secretRef(carrier.CredentialRef)}}})
+				config.Outbounds = append(config.Outbounds, sbOutbound{Type: "hysteria2", Tag: wire.DeviceControlCarrierTag(link),
+					Server: carrier.Address, ServerPort: int(carrier.Port), Password: secretRef(carrier.CredentialRef), TLS: clientTLS(carrier.TLSServerName, tlsCAPath)})
+			} else {
+				found := false
+				for i := range config.Inbounds {
+					inbound := &config.Inbounds[i]
+					if inbound.Tag != "in" {
+						continue
+					}
+					if inbound.Type != "hysteria2" || int64(inbound.ListenPort) != carrier.Port {
+						return errors.New("[设备控制链路] 认证承载与现有 HY2 listener 不同")
+					}
+					// 解码后的 Users 为 JSON array；使用同一类型重建后追加专用身份。
+					var users []sbUser
+					raw, err := json.Marshal(inbound.Users)
+					if err != nil || json.Unmarshal(raw, &users) != nil {
+						return errors.New("[设备控制链路] HY2 用户列表无效")
+					}
+					for _, user := range users {
+						if user.Name == link.Resource.ResourceID {
+							return errors.New("[设备控制链路] HY2 专用身份重复")
+						}
+					}
+					inbound.Users = append(users, sbUser{Name: link.Resource.ResourceID, Password: secretRef(carrier.CredentialRef)})
+					found = true
+				}
+				if !found {
+					return errors.New("[设备控制链路] 缺现有 HY2 承载 listener")
+				}
+			}
+		}
 	}
 	config.Outbounds = append(config.Outbounds, sbOutbound{Type: "direct", Tag: wire.DeviceControlDirectTag}, sbOutbound{Type: "block", Tag: wire.DeviceControlBlockTag})
 	var prefix []sbRule
-	for _, rule := range wire.DeviceControlRoutes(links) {
+	for _, rule := range wire.DeviceControlRoutesForDevice(links, device) {
 		ports := make([]int, len(rule.Port))
 		for i, p := range rule.Port {
 			ports[i] = int(p)
 		}
-		prefix = append(prefix, sbRule{Inbound: rule.Inbound, IPCIDR: rule.IPCIDR, Port: ports, Outbound: rule.Outbound})
+		prefix = append(prefix, sbRule{Inbound: rule.Inbound, AuthUser: rule.AuthUser, IPCIDR: rule.IPCIDR, Port: ports, Outbound: rule.Outbound})
 	}
 	config.Route.Rules = append(prefix, config.Route.Rules...)
 	return nil

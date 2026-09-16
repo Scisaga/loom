@@ -119,7 +119,7 @@ func TestPrivateEnrollmentClientPinsInnerTLSAndKeepsPreflightTokenFree(t *testin
 	}
 }
 
-func privateEnrollmentCertificate(t *testing.T, now time.Time, overlayIP string) (tls.Certificate, *x509.CertPool, string) {
+func privateEnrollmentCertificate(t *testing.T, now time.Time, overlayIP string, dnsNames ...string) (tls.Certificate, *x509.CertPool, string) {
 	t.Helper()
 	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	caTemplate := &x509.Certificate{
@@ -137,7 +137,7 @@ func privateEnrollmentCertificate(t *testing.T, now time.Time, overlayIP string)
 	leafTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(2), Subject: pkix.Name{}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
 		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		IPAddresses: []net.IP{ip}, SignatureAlgorithm: x509.ECDSAWithSHA256,
+		IPAddresses: []net.IP{ip}, DNSNames: dnsNames, SignatureAlgorithm: x509.ECDSAWithSHA256,
 	}
 	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, ca, &leafKey.PublicKey, caKey)
 	if err != nil {

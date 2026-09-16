@@ -222,6 +222,57 @@ func TestLinuxDeviceArtifactsCommitAtomicallyWithCertifiedDelivery(t *testing.T)
 	}
 }
 
+func TestLinuxExplicitDeliveryKeepsOriginalIdentityAndRejectsUnanchoredUpdates(t *testing.T) {
+	now := time.Date(2026, 9, 12, 9, 30, 0, 0, time.UTC)
+	statePath, identityPath, set, current, signingKey := installedDeviceConfigStateWithKey(t, now)
+	identity, err := LoadEnrollmentIdentityForResume(identityPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, sealed, secret := linuxDynamicSecretFixture(t, identity, current.Payload.ClusterID, current.Payload.DeviceID, 2)
+	next := advanceClientEnvelopeWithArtifacts(t, current, &set, signingKey, []wire.DeviceConfigArtifactRefV1{}, []wire.SecretArtifactRefV2{ref})
+	delivery := wire.DeviceConfigDeliveryV1{Schema: 1, ClusterID: current.Payload.ClusterID, DeviceID: current.Payload.DeviceID,
+		Updates:         []wire.DeviceConfigUpdateV1{{Schema: 1, Envelope: current, ControlSet: set}, {Schema: 1, Envelope: next, ControlSet: set}},
+		SecretEnvelopes: []wire.SealedSecretEnvelopeV1{sealed}}
+	options := LinuxDeviceViewSyncOptions{StatePath: statePath, IdentityPath: identityPath, Timeout: time.Second,
+		Dial: func(context.Context, string, string) (net.Conn, error) {
+			t.Fatal("显式递送不应访问私有 HTTP")
+			return nil, nil
+		}}
+	before, _ := os.ReadFile(statePath)
+	identityBefore, _ := os.ReadFile(identityPath)
+	for _, change := range []func(*wire.DeviceConfigDeliveryV1){
+		func(d *wire.DeviceConfigDeliveryV1) { d.Updates = d.Updates[1:] },
+		func(d *wire.DeviceConfigDeliveryV1) { d.DeviceID = "demo-another-device" },
+		func(d *wire.DeviceConfigDeliveryV1) { d.SecretEnvelopes = nil },
+	} {
+		copy := cloneStoreValue(delivery)
+		change(&copy)
+		raw, _ := wire.MarshalCanonical(copy)
+		if _, err := ImportLinuxDeviceView(context.Background(), options, raw); err == nil {
+			t.Fatal("接受无原 Head 或未绑定凭据的更新")
+		}
+		after, _ := os.ReadFile(statePath)
+		if !bytes.Equal(before, after) {
+			t.Fatal("失败更新改写了原 LKG")
+		}
+	}
+	raw, _ := wire.MarshalCanonical(delivery)
+	floors, err := ImportLinuxDeviceView(context.Background(), options, raw)
+	if err != nil || floors.DeviceGeneration != 2 {
+		t.Fatal("认证递送未接续原状态", err)
+	}
+	store, err := Open(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := base64.RawURLEncoding.DecodeString(store.Installation().Credentials[0].SecretBytes)
+	identityAfter, _ := os.ReadFile(identityPath)
+	if !bytes.Equal(got, secret) || !bytes.Equal(identityBefore, identityAfter) {
+		t.Fatal("递送未解封配置或改写原身份")
+	}
+}
+
 func linuxDynamicSecretFixture(t *testing.T, identity *EnrollmentIdentityV1,
 	clusterID, deviceID string, generation int64,
 ) (wire.SecretArtifactRefV2, wire.SealedSecretEnvelopeV1, []byte) {

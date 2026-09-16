@@ -216,6 +216,7 @@ func cmdClientSyncV2(args []string) error {
 	fs.SetOutput(io.Discard)
 	var private linuxPrivateDeviceFlags
 	addLinuxPrivateDeviceFlags(fs, &private)
+	deliveryPath := fs.String("delivery", "", "操作者显式递送的认证 DeviceConfigDelivery；仍验证原 LKG 和完整证明")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
 		return errors.New("用法: loom client sync-v2-view [-state-dir <dir>] [-service-id <id>]（旧安装可另给 -directory/-directory-hash/-control-set/-internal-ca）")
 	}
@@ -225,12 +226,22 @@ func cmdClientSyncV2(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), inputs.timeout)
 	defer cancel()
-	floors, err := clientv2.SyncLinuxDeviceView(ctx, clientv2.LinuxDeviceViewSyncOptions{
+	options := clientv2.LinuxDeviceViewSyncOptions{
 		StatePath: inputs.statePath, IdentityPath: inputs.identityPath,
 		Directory: inputs.directory, PinnedDirectoryHash: inputs.pinnedDirectoryHash,
 		ControlSet: inputs.controlSet, PreviousControlSet: inputs.previousControlSet,
 		ServiceID: inputs.serviceID, Roots: inputs.roots, Now: time.Now, Timeout: inputs.timeout,
-	})
+	}
+	var floors wire.ClientFloorsV2
+	if *deliveryPath != "" {
+		body, readErr := readV2RegularFile(*deliveryPath, 32<<20)
+		if readErr != nil {
+			return readErr
+		}
+		floors, err = clientv2.ImportLinuxDeviceView(ctx, options, body)
+	} else {
+		floors, err = clientv2.SyncLinuxDeviceView(ctx, options)
+	}
 	if err != nil {
 		return err
 	}

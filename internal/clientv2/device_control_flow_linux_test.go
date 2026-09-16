@@ -7,8 +7,10 @@ import (
 	"context"
 	"crypto/ecdh"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
@@ -31,6 +33,14 @@ import (
 // 显式提供已安装的真实 sing-box 时执行本机 transport 集成验证；不更改主机
 // 路由、已有 listener 或真实 Device。私有 API 的 mTLS/认证另由 daemon 测试覆盖。
 func TestDeviceControlWireGuardNativeTransport(t *testing.T) {
+	testDeviceControlNativeTransport(t, false)
+}
+
+func TestDeviceControlCarrierNativeTransport(t *testing.T) {
+	testDeviceControlNativeTransport(t, true)
+}
+
+func testDeviceControlNativeTransport(t *testing.T, carrier bool) {
 	binary := os.Getenv("LOOM_TEST_SING_BOX")
 	if binary == "" {
 		t.Skip("需要显式的本机 sing-box 二进制")
@@ -102,9 +112,57 @@ func TestDeviceControlWireGuardNativeTransport(t *testing.T) {
 	}
 	serverConfig := map[string]any{"log": map[string]any{"level": "info", "disabled": false}, "endpoints": []wire.DeviceControlEndpointV1{wire.DeviceControlEndpoint(link, base64.StdEncoding.EncodeToString(serverKey.Bytes()))}, "outbounds": []any{map[string]string{"type": "direct", "tag": wire.DeviceControlDirectTag}, map[string]string{"type": "block", "tag": wire.DeviceControlBlockTag}}, "route": map[string]any{"rules": wire.DeviceControlRoutes([]wire.DeviceControlLinkV1{link}), "final": wire.DeviceControlBlockTag}}
 	clientConfig := map[string]any{"log": map[string]string{"level": "info"}, "inbounds": []any{map[string]any{"type": "mixed", "tag": "demo-socks", "listen": "127.0.0.1", "listen_port": socksPort}}, "endpoints": []any{map[string]any{"type": "wireguard", "tag": "demo-wg", "system": false, "mtu": 1280, "address": []string{link.Resource.DialerTunnelPrefix}, "private_key": base64.StdEncoding.EncodeToString(clientKey.Bytes()), "peers": []any{map[string]any{"address": host.String(), "port": wgPort, "public_key": link.Resource.ListenerPublicKey, "allowed_ips": []string{netip.PrefixFrom(host, 32).String()}}}}}, "outbounds": []any{}, "route": map[string]string{"final": "demo-wg"}}
+	var auth *proxy.Auth
+	var outerOnlyAddress string
+	if carrier {
+		udp, err := net.ListenPacket("udp", net.JoinHostPort(host.String(), "0"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := udp.LocalAddr().(*net.UDPAddr).Port
+		_ = udp.Close()
+		link.Carrier = &wire.DeviceControlCarrierV1{Address: host.String(), Port: int64(port), TLSServerName: "demo-control.example.test", CredentialRef: wire.DeviceControlCarrierCredentialRef(link)}
+		if err := wire.ValidateDeviceControlLink(&link); err != nil {
+			t.Fatal(err)
+		}
+		certificate, _, _ := privateEnrollmentCertificate(t, time.Now(), host.String(), link.Carrier.TLSServerName)
+		dir := t.TempDir()
+		var chain []byte
+		for _, der := range certificate.Certificate {
+			chain = append(chain, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})...)
+		}
+		key, err := x509.MarshalPKCS8PrivateKey(certificate.PrivateKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, body := range map[string][]byte{"certificate.pem": chain, "key.pem": pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key}), "ca.pem": pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Certificate[1]})} {
+			if err := os.WriteFile(filepath.Join(dir, name), body, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		const password = "demo-control-carrier-password"
+		serverConfig["inbounds"] = []any{map[string]any{"type": "hysteria2", "tag": "in", "listen": host.String(), "listen_port": port,
+			"users": []any{map[string]string{"name": link.Resource.ResourceID, "password": password}}, "tls": map[string]any{"enabled": true, "certificate_path": filepath.Join(dir, "certificate.pem"), "key_path": filepath.Join(dir, "key.pem"), "alpn": []string{"h3"}}}}
+		serverConfig["route"] = map[string]any{"rules": wire.DeviceControlRoutesForDevice([]wire.DeviceControlLinkV1{link}, link.Resource.ListenerDeviceID), "final": wire.DeviceControlBlockTag}
+		clientConfig["endpoints"] = []any{wire.DeviceControlEndpointForDevice(link, link.Resource.DialerDeviceID, base64.StdEncoding.EncodeToString(clientKey.Bytes()))}
+		clientConfig["outbounds"] = []any{map[string]any{"type": "hysteria2", "tag": wire.DeviceControlCarrierTag(link), "server": host.String(), "server_port": port, "password": password,
+			"tls": map[string]any{"enabled": true, "server_name": link.Carrier.TLSServerName, "certificate_path": filepath.Join(dir, "ca.pem"), "alpn": []string{"h3"}}}}
+		outerOnly, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		outerOnlyAddress = outerOnly.Addr().String()
+		outerPort := outerOnly.Addr().(*net.TCPAddr).Port
+		_ = outerOnly.Close()
+		users := []any{map[string]string{"username": link.Resource.ResourceID, "password": password}}
+		clientConfig["inbounds"] = []any{map[string]any{"type": "mixed", "tag": "demo-socks", "listen": "127.0.0.1", "listen_port": socksPort, "users": users},
+			map[string]any{"type": "mixed", "tag": "demo-outer-only", "listen": "127.0.0.1", "listen_port": outerPort, "users": users}}
+		clientConfig["route"] = map[string]any{"rules": []any{map[string]any{"inbound": []string{"demo-outer-only"}, "outbound": wire.DeviceControlCarrierTag(link)}}, "final": wire.DeviceControlEndpointTag(link)}
+		auth = &proxy.Auth{User: link.Resource.ResourceID, Password: password}
+	}
 	startNativeControlBox(t, ctx, binary, serverConfig)
 	startNativeControlBox(t, ctx, binary, clientConfig)
-	dialer, err := proxy.SOCKS5("tcp", socksAddress, nil, &net.Dialer{Timeout: 3 * time.Second})
+	dialer, err := proxy.SOCKS5("tcp", socksAddress, auth, &net.Dialer{Timeout: 3 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,6 +190,18 @@ func TestDeviceControlWireGuardNativeTransport(t *testing.T) {
 	}
 	if received.Load() != 0 {
 		t.Fatal("未授权服务收到了请求")
+	}
+	if carrier {
+		dialer, err := proxy.SOCKS5("tcp", outerOnlyAddress, auth, &net.Dialer{Timeout: 3 * time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		client.Transport = &http.Transport{DialContext: dialer.(proxy.ContextDialer).DialContext}
+		request, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+listeners[0].Addr().String()+"/demo", nil)
+		if response, err := client.Do(request); err == nil {
+			response.Body.Close()
+			t.Fatal("仅持有承载凭据绕过 WireGuard 访问了私有服务")
+		}
 	}
 }
 

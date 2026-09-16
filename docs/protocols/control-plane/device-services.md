@@ -54,6 +54,11 @@ payload reader contract、freshness 和 identity signature。sink 以 `(Device I
 随后拒绝其他目的；不能借此取得互联网转发、管理员 API 或 Raft 权限。该分配只授予受限数据链路，
 不授予 ControlSet membership。承载配置仍须单独认证发布并实际安装，客户端配置发布成功不代表通道已可用。
 
+Linux 节点的专用控制链路沿用节点原 WireGuard key，并由相同认证分配固定外层 HY2
+地址、TLS 身份与独立设备凭据。外层只放行该设备的私网 WireGuard tuple，不能直接访问
+内层服务。daemon 经回环认证代理连接配置和报告；失败不回退主机默认路由或旧公开接口。
+该代理不改变节点的 `use_loom` 职责、主机路由或业务探测计划。
+
 隧道两端地址必须与私有服务地址分离；sing-box 会把 endpoint 自身地址映射到 loopback，
 复用地址会改变实际目的，破坏目录绑定。参见 [sing-box endpoint 实现](https://github.com/SagerNet/sing-box/blob/v1.11.4/protocol/wireguard/endpoint.go)。
 

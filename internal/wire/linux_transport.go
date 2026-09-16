@@ -54,15 +54,22 @@ func ValidateLinuxLocalRuntime(artifact *LinuxLinkIntentArtifactV1) error {
 			}
 		}
 		ports := map[int64]bool{}
+		dialers := 0
 		for i, link := range local.DeviceControlLinks {
 			if err := ValidateDeviceControlLink(&link); err != nil {
 				return err
 			}
-			if link.Resource.ListenerDeviceID != artifact.DeviceID || ports[link.Resource.EndpointPort] ||
+			dial := link.Resource.DialerDeviceID == artifact.DeviceID
+			if dial {
+				dialers++
+			}
+			if !dial && link.Resource.ListenerDeviceID != artifact.DeviceID || dial && (link.Carrier == nil || dialers > 1) || !dial && ports[link.Resource.EndpointPort] ||
 				i > 0 && local.DeviceControlLinks[i-1].Resource.ResourceID >= link.Resource.ResourceID {
 				return errors.New("[Linux runtime] 私有控制链路 listener 归属、顺序或端口冲突")
 			}
-			ports[link.Resource.EndpointPort] = true
+			if !dial {
+				ports[link.Resource.EndpointPort] = true
+			}
 			found := false
 			for _, resource := range artifact.WireGuardResources {
 				found = found || EqualCanonical(resource, link.Resource)

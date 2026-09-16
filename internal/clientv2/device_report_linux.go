@@ -136,6 +136,12 @@ func SubmitLinuxDeviceReport(ctx context.Context, options LinuxDeviceReportOptio
 			identityHash, instant, 24*time.Hour, 5*time.Minute, options.Schemas) != nil {
 		return errors.New("[Linux report] envelope 与当前 identity/floors/schema 不一致")
 	}
+	if options.Dial == nil {
+		options.Dial, err = installedLinuxDeviceDial(installation, current.Payload.DeviceID, service, options.Timeout)
+		if err != nil {
+			return err
+		}
+	}
 	client, err := newPrivateDeviceHTTPClient(service, "device_report", certificateDER, identityKey,
 		roots, options.Dial, now, options.Timeout)
 	if err != nil {

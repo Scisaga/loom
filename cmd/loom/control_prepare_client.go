@@ -124,8 +124,16 @@ func (runtime *controlRuntime) prepareClientConfigLocked(request controlPrepareC
 	var controlLink *wire.DeviceControlLinkV1
 	configs := []controlPublishedConfigV1{}
 	if platform == "linux-server" {
+		linksApplication := controlClone(*application)
 		if !wire.EqualCanonical(request.Input.ControlTunnel, render.ClientControlTunnelV2{}) {
-			return empty, errors.New("[配置生成] Linux 从认证网络生成逐边隧道，不接收移动端隧道输入")
+			link, err := application.prepareDeviceControlLink(request.Input, device.View.DeviceGeneration+1)
+			if err != nil {
+				return empty, err
+			}
+			controlLink = &link
+			if err := linksApplication.replaceDeviceControlLink(link); err != nil {
+				return empty, err
+			}
 		}
 		views := map[string]wire.DeviceViewPayloadV2{}
 		for _, current := range application.Devices {
@@ -138,7 +146,7 @@ func (runtime *controlRuntime) prepareClientConfigLocked(request controlPrepareC
 		linux, err := render.RenderLinuxRuntimeV2(render.LinuxRuntimeV2Input{SSOT: ssot, Views: views,
 			Authority: wire.CertifiedHeadV1{Head: *state.CertifiedHead, QC: qc}, DeviceID: device.View.DeviceID,
 			DeviceGeneration: device.View.DeviceGeneration + 1, ArtifactGeneration: artifactGeneration,
-			DeviceControlLinks: application.deviceControlLinksFor(device.View.DeviceID)})
+			DeviceControlLinks: linksApplication.deviceControlLinksFor(device.View.DeviceID)})
 		if err != nil {
 			return empty, err
 		}

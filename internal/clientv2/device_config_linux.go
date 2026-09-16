@@ -84,7 +84,7 @@ func SyncLinuxDeviceView(ctx context.Context,
 	if err != nil {
 		return store.Floors(), err
 	}
-	identityKey, wrappingPrivate, err := identity.keys()
+	identityKey, _, err := identity.keys()
 	if err != nil {
 		return store.Floors(), err
 	}
@@ -105,6 +105,12 @@ func SyncLinuxDeviceView(ctx context.Context,
 	if now == nil {
 		now = time.Now
 	}
+	if options.Dial == nil {
+		options.Dial, err = installedLinuxDeviceDial(installation, current.Payload.DeviceID, service, options.Timeout)
+		if err != nil {
+			return store.Floors(), err
+		}
+	}
 	client, err := newPrivateDeviceHTTPClient(service, "device_config", certificateDER, identityKey,
 		roots, options.Dial, now, options.Timeout)
 	if err != nil {
@@ -115,7 +121,46 @@ func SyncLinuxDeviceView(ctx context.Context,
 	if err != nil {
 		return store.Floors(), err
 	}
-	verified, err := wire.VerifyDeviceConfigDeliveryFromProtected(&delivery, current,
+	return acceptLinuxDeviceDelivery(ctx, options, store, &delivery)
+}
+
+// ImportLinuxDeviceView 用于操作者显式递送认证更新，接续离线设备的原 LKG。
+// 文件仅是 transport；不能指定新 identity、信任根或跳过 protected Head。
+func ImportLinuxDeviceView(ctx context.Context, options LinuxDeviceViewSyncOptions, body []byte) (wire.ClientFloorsV2, error) {
+	var delivery wire.DeviceConfigDeliveryV1
+	canonical, err := wire.DecodeStrict(body, maximumPrivateDeviceViewBytes, &delivery)
+	if err != nil || !bytes.Equal(canonical, body) {
+		return wire.ClientFloorsV2{}, errors.New("[Linux config] 递送更新不是 exact canonical wire")
+	}
+	store, err := Open(options.StatePath)
+	if err != nil {
+		return wire.ClientFloorsV2{}, err
+	}
+	return acceptLinuxDeviceDelivery(ctx, options, store, &delivery)
+}
+
+func acceptLinuxDeviceDelivery(ctx context.Context, options LinuxDeviceViewSyncOptions, store *Store, delivery *wire.DeviceConfigDeliveryV1) (wire.ClientFloorsV2, error) {
+	current, installation := store.Envelope(), store.Installation()
+	currentSet, currentPreviousSet := store.ControlSets()
+	if ctx == nil || current == nil || current.Payload.Active == nil || installation == nil {
+		return store.Floors(), errors.New("[Linux config] 缺原 active 身份、LKG 或 context")
+	}
+	if currentSet == nil {
+		currentSet, currentPreviousSet = &options.ControlSet, options.PreviousControlSet
+	}
+	identity, err := LoadEnrollmentIdentityForResume(options.IdentityPath)
+	if err != nil {
+		return store.Floors(), err
+	}
+	_, wrappingPrivate, err := identity.keys()
+	if err != nil {
+		return store.Floors(), err
+	}
+	identityHash, err := identity.IdentitySPKIHash()
+	if err != nil || identityHash != installation.IdentityKeyHash || identityHash != current.Payload.Active.IdentitySPKIHash {
+		return store.Floors(), errors.New("[Linux config] 递送更新与本机 identity 不符")
+	}
+	verified, err := wire.VerifyDeviceConfigDeliveryFromProtected(delivery, current,
 		store.Floors(), currentSet, currentPreviousSet, current.Payload.DeviceID, identityHash)
 	if err != nil {
 		return store.Floors(), err
@@ -158,7 +203,7 @@ func SyncLinuxDeviceView(ctx context.Context,
 			credentials = &installed
 		}
 	}
-	return store.AcceptDeviceConfigDeliveryWithArtifacts(&delivery, &options.ControlSet,
+	return store.AcceptDeviceConfigDeliveryWithArtifacts(delivery, &options.ControlSet,
 		options.PreviousControlSet, current.Payload.DeviceID, identityHash, configs, credentials)
 }
 
