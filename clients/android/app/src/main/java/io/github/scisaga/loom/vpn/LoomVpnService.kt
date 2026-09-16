@@ -135,6 +135,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
 
     override fun onCreate() {
         super.onCreate()
+        Libbox.registerLocalDNSTransport(AndroidLocalDNSTransport { selectedUnderlyingNetwork })
         BootstrapServiceRegistry.attach(this)
         createNotificationChannel()
         VpnRuntime.transform { it.copy(alwaysOn = alwaysOnEnabled()) }
@@ -498,6 +499,29 @@ class LoomVpnService : VpnService(), PlatformInterface {
         }
         current
     }
+
+    /** 显式文件递送复用在线同步的 verifier、candidate 与本地激活事务。 */
+    internal suspend fun importPrivateConfiguration(profileId: String, delivery: ByteArray): ManagedProfile? =
+        v2Control.withLock {
+            check(profileId == ProfileContext.id(profileContext) && desiredConnected && boxService != null) {
+                "请先连接要更新的配置，再导入认证配置文件"
+            }
+            val current = checkNotNull(activeManagedProfile?.takeIf { it.protocol == 2 })
+            val reporter = V2DeviceReporter(profileContext)
+            val refresh = reporter.prepareConfiguration(delivery)
+            val candidate = refresh.profile
+            if (candidate == null) {
+                stopForV2Tombstone()
+                return@withLock null
+            }
+            val installed = when {
+                refresh.requiresRuntimeActivation -> activateV2RuntimeCandidate(reporter, current, candidate)
+                refresh.staged -> commitV2LiveCandidate(reporter, current, candidate)
+                else -> current
+            }
+            activeManagedProfile = installed
+            installed
+        }
 
     /** Apply route-only changes before advancing floors; authority-only changes need no libbox restart. */
     private suspend fun commitV2LiveCandidate(

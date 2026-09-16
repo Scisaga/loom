@@ -276,6 +276,19 @@ class EnrollmentManager private constructor(context: Context) {
     private suspend fun beginJoinFile(raw: ByteArray) {
         val carrier = runCatching { JSONObject(raw.decodeToString()) }.getOrNull()
         when {
+            carrier?.optInt("schema") == 1 && carrier.has("updates") -> {
+                check(v2StateStore.current() != null) { "尚未加入 v2，不能导入配置更新" }
+                check(isActiveProfile() && VpnRuntime.status.value.phase == ConnectionPhase.CONNECTED) {
+                    "请先连接要更新的配置，再导入认证配置文件"
+                }
+                val service = withTimeout(5_000) { BootstrapServiceRegistry.await() }
+                val profile = service.importPrivateConfiguration(ProfileContext.id(appContext), raw)
+                if (profile == null) {
+                    terminal(checkNotNull(v2StateStore.installed()))
+                } else {
+                    ready(profile, "已验证并激活认证配置更新；原设备身份与版本保护已保留")
+                }
+            }
             carrier?.has("migration") == true -> beginV2Migration(raw)
             carrier?.has("resume_tunnel_capability") == true -> {
                 beginV2Resume(Loomcore.decodeAndroidV2ResumeFile(raw))

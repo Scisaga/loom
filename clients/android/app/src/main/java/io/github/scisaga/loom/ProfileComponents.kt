@@ -41,6 +41,7 @@ internal fun ProfilesCard(
     profiles: ProfileList, vpn: VpnStatus, catalog: ProfileCatalog, onAdd: () -> Unit,
     onConnect: (ConnectionProfile) -> Unit, onRename: (ConnectionProfile) -> Unit,
     onDelete: (ConnectionProfile) -> Unit, join: EnrollmentStatus, onRefresh: () -> Unit,
+    onImportConfiguration: (ConnectionProfile) -> Unit,
 ) {
     Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(20.dp),
         modifier = Modifier.fillMaxWidth().testTag("profiles-card")) {
@@ -79,6 +80,10 @@ internal fun ProfilesCard(
                         DropdownMenu(menu, onDismissRequest = { menu = false }) {
                             DropdownMenuItem(text = { Text(if (connected) "已连接" else "连接") },
                                 enabled = !connected && status.snapshot.isNotEmpty(), onClick = { menu = false; onConnect(profile) })
+                            if (connected && vpn.phase == ConnectionPhase.CONNECTED && status.protocol == 2) {
+                                DropdownMenuItem(text = { Text("导入配置更新") }, modifier = Modifier.testTag("import-config"),
+                                    onClick = { menu = false; onImportConfiguration(profile) })
+                            }
                             DropdownMenuItem(text = { Text("重命名") }, onClick = { menu = false; onRename(profile) })
                             DropdownMenuItem(text = { Text("删除") }, onClick = { menu = false; onDelete(profile) })
                         }

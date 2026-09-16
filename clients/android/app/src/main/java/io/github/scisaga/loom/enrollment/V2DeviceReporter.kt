@@ -52,6 +52,11 @@ internal class V2DeviceReporter(
         val now = wireTime()
         val state = checkNotNull(stateStore.current()) { "[Android config] v2 Device state 尚未安装" }
         val delivery = client.getFirst(state, now)
+        return prepareConfiguration(delivery)
+    }
+
+    fun prepareConfiguration(delivery: ByteArray): V2ConfigurationRefresh {
+        val state = checkNotNull(stateStore.current()) { "[Android config] v2 Device state 尚未安装" }
         val currentProfile = checkNotNull(stateStore.runtimeProfile()) { "[Android config] active state 缺 runtime" }
         val fetchPlan = Loomcore.prepareAndroidV2PrivateDeviceConfigFetchPlan(
             state,

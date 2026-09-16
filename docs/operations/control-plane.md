@@ -235,6 +235,12 @@ loom control export-migration \
 生成的 `device.loom-migration` 由客户端正常文件导入入口消费。它绑定原平台、身份、
 wrapping key、旧 signed current 与实际 v2 Head；不能用新邀请替代迁移，也不能清除本机身份重试。
 
+同一导出目录还提供 `device.loom-config`，包含当前认证的 Device 配置交付响应。已迁入 v2 的
+Android 可在连接状态下从“导入配置更新”递送此文件；这用于控制通道不可达时恢复配置，
+不重复安装迁移身份。文件与在线同步使用相同的原身份、QC、Merkle proof、版本下限和密文
+校验，运行配置本机激活成功后才提交候选。Linux 可用 `client sync-v2-view -delivery` 消费同一
+响应。配置制品仍从已认证的静态镜像读取；文件不携带客户端私钥。
+
 已迁入认证状态的 Linux/Android/Windows 设备可使用 `control publish-client-config`，从当前认证网络
 生成运行配置、封装原 wrapping key 对应的凭据，并提交管理员签名操作：
 

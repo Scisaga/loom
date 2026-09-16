@@ -227,6 +227,7 @@ func ProbeUser(candidateTag string) string {
 type sbDNS struct {
 	Servers          []sbDNSServer `json:"servers"`
 	Rules            []sbDNSRule   `json:"rules,omitempty"`
+	DisableCache     bool          `json:"disable_cache,omitempty"`
 	Strategy         string        `json:"strategy,omitempty"`
 	ReverseMapping   bool          `json:"reverse_mapping,omitempty"`
 	IndependentCache bool          `json:"independent_cache,omitempty"`
@@ -880,6 +881,9 @@ func renderSingBoxWithScopes(s *model.SSOT, n *model.Node, scope *clientAccessSc
 				Tag: fmt.Sprintf("dns%d", i), Address: addr, Detour: dnsOutbound})
 		}
 		if n.IsAccess() && n.Access.Platform == model.Android {
+			// local 的真实答案由 Android 按 Network 缓存；libbox 的同名缓存不能
+			// 跨网络代复用。FakeIP 的独立持久映射仍由 cache_file 保存。
+			d.DisableCache = len(d.Servers) == 1 && d.Servers[0].Address == "local"
 			// 只把来自应用 TUN 的地址查询交给 FakeIP。libbox 自己对公网入口
 			// 的解析没有 tun-in 元数据，仍命中首个真实解析器；独立缓存防止
 			// 两类查询通过相同问题名相互复用答案。

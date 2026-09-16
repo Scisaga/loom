@@ -65,6 +65,7 @@ func TestRenderV2ClientsDeliverConsumablePrivateRuntime(t *testing.T) {
 				ControlTunnel: ClientControlTunnelV2{Address: []string{"10.250.0.2/32"}, PrivateKeyRef: "private-control-wg-key",
 					PeerAddress: "192.0.2.34", PeerPort: 51820, PeerPublicKey: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{19}, 32)),
 					AllowedIPs: []string{"10.250.0.1/32"}, Detour: detour, MTU: 1280}}
+			sourceDNS, _ := json.Marshal(ssot.DNSFor(&node))
 			result, err := RenderClientRuntimeV2(input)
 			if err != nil {
 				t.Fatal(err)
@@ -72,6 +73,10 @@ func TestRenderV2ClientsDeliverConsumablePrivateRuntime(t *testing.T) {
 			repeated, err := RenderClientRuntimeV2(input)
 			if err != nil || !bytes.Equal(repeated.Content, result.Content) {
 				t.Fatal("v2 renderer 非纯函数", err)
+			}
+			afterDNS, _ := json.Marshal(ssot.DNSFor(&node))
+			if !bytes.Equal(sourceDNS, afterDNS) {
+				t.Fatal("移动平台解析器投影修改了认证源网络")
 			}
 			if hash, _ := wire.DeviceConfigArtifactContentHash(result.Content); hash != result.Ref.ContentHash {
 				t.Fatal("制品摘要不匹配")
@@ -99,6 +104,14 @@ func TestRenderV2ClientsDeliverConsumablePrivateRuntime(t *testing.T) {
 				}
 				if err := loomcore.ValidateAndroidV2RuntimeHost([]byte(runtime.SingBoxConfig)); err != nil {
 					t.Fatal(err)
+				}
+				var config sbConfig
+				if err := json.Unmarshal([]byte(runtime.SingBoxConfig), &config); err != nil {
+					t.Fatal(err)
+				}
+				if len(config.DNS.Servers) != 2 || config.DNS.Servers[0].Address != "local" ||
+					config.DNS.Rules[0].Server != androidFakeIPDNSTag || !config.DNS.IndependentCache || !config.DNS.DisableCache {
+					t.Fatal("v2 Android 必须分开底层 Network 解析与最终出口 FakeIP 域名恢复")
 				}
 			} else {
 				var artifact wire.WindowsRuntimeArtifactV1

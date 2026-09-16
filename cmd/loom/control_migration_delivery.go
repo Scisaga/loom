@@ -180,6 +180,9 @@ func cmdControlExportMigration(args []string) error {
 	if err := writeCanonicalAtomic(filepath.Join(*out, "device.loom-migration"), delivery, 0o600); err != nil {
 		return err
 	}
+	if err := writeCanonicalAtomic(filepath.Join(*out, "device.loom-config"), delivery.Configuration, 0o600); err != nil {
+		return err
+	}
 	fmt.Println("✓ 原 Device 的认证迁移文件已导出")
 	return nil
 }

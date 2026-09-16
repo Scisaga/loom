@@ -145,8 +145,8 @@ class MainActivity : ComponentActivity() {
             runCatching {
                 val body = contentResolver.openInputStream(uri)?.use { stream ->
                     readBounded(stream, MAX_INVITE_BYTES)
-                } ?: error("无法读取加入文件")
-                require(body.isNotEmpty() && body.size <= MAX_INVITE_BYTES) { "加入文件必须不超过 1 MiB" }
+                } ?: error("无法读取加入或配置文件")
+                require(body.isNotEmpty() && body.size <= MAX_INVITE_BYTES) { "加入或配置文件必须不超过 1 MiB" }
                 val catalog = ProfileCatalog.get(this@MainActivity)
                 val id = target ?: catalog.create().id
                 EnrollmentManager.get(catalog.context(id)).importInviteFile(body)
@@ -352,7 +352,8 @@ private fun LoomHome(
                         ProfilesCard(profiles, status, catalog, onAdd = requestAdd,
                             onConnect = requestConnection,
                             onRename = { rename = it; renameText = it.name }, onDelete = { delete = it },
-                            join = join, onRefresh = enrollment::refreshConfiguration)
+                            join = join, onRefresh = enrollment::refreshConfiguration,
+                            onImportConfiguration = { profile -> catalog.select(profile.id); onImportFile(profile.id) })
                         Text("已选择：${profiles.selected.name} · 切换查看不会改变连接", color = Muted, fontSize = 12.sp)
                         if (scanning) {
                             InviteScanner(onScanned = { raw ->

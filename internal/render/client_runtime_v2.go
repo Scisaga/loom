@@ -64,7 +64,13 @@ func RenderClientRuntimeV2(input ClientRuntimeV2Input) (ClientRuntimeV2, error) 
 	if err != nil {
 		return result, err
 	}
-	singbox, skips, err := renderSingBoxScoped(input.SSOT, node, scope)
+	// 移动端底层网络随 OS 切换。入口和 Direct 目标使用平台绑定 Network 的
+	// local resolver，不能继承服务器的固定 DNS；业务 FakeIP 仍恢复到最终出口。
+	runtimeNode := *node
+	if node.Access.Platform == model.Android {
+		runtimeNode.DNS = []string{"local"}
+	}
+	singbox, skips, err := renderSingBoxScoped(input.SSOT, &runtimeNode, scope)
 	if err != nil {
 		return result, err
 	}
