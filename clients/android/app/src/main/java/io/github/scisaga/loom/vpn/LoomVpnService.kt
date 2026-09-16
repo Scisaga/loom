@@ -515,11 +515,13 @@ class LoomVpnService : VpnService(), PlatformInterface {
                 var candidate: ManagedProfile? = null
                 var staged = false
                 try {
-                    // 与正常停止共用资源释放；旧 TUN、报告与 Agent 全部退出后才发 HTTP。
-                    closeResources()
-                    activeProfileId = profileId
                     desiredProfileId = profileId
                     desiredConnected = true
+                    // 与正常停止共用资源释放；旧 TUN、报告与 Agent 全部退出后才发 HTTP。
+                    closeResources()
+                    ensureConnectionWanted()
+                    check(desiredProfileId == profileId) { "配置更新期间连接选择已改变" }
+                    activeProfileId = profileId
                     VpnConnectionPreference(this).apply {
                         setProfileId(profileId)
                         setDesiredConnected(true)
@@ -543,12 +545,16 @@ class LoomVpnService : VpnService(), PlatformInterface {
                     val installed = if (staged) reporter.commitConfigurationCandidate(verified) else verified
                     staged = false
                     connected(installed, probe, "已激活认证配置更新 · v2 ${installed.generation}")
+                    // keepalive 原本是非 sticky 的短操作；成功后恢复正常连接的系统重启契约。
+                    startService(Intent(this, LoomVpnService::class.java).setAction(ACTION_CONNECT)
+                        .putExtra(EXTRA_PROFILE_ID, profileId))
                     installed
                 } catch (error: Throwable) {
                     if (staged) candidate?.let {
                         runCatching { reporter.discardConfigurationCandidate(it) }.onFailure(error::addSuppressed)
                     }
                     runCatching { closeResources() }.onFailure(error::addSuppressed)
+                    if (desiredProfileId != profileId) throw error
                     desiredConnected = false
                     VpnConnectionPreference(this).setDesiredConnected(false)
                     VpnRuntime.update(VpnStatus(phase = ConnectionPhase.ERROR, profileId = profileId,

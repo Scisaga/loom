@@ -785,6 +785,9 @@ class EnrollmentManager private constructor(context: Context) {
         try {
             block()
         } catch (cancelled: CancellationException) {
+            runCatching { v2StateStore.runtimeProfile() }.getOrNull()?.let {
+                ready(it, "操作已取消；原设备身份与已安装配置保留")
+            }
             throw cancelled
         } catch (error: Throwable) {
             fail(prefix, error)
