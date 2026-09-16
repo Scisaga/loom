@@ -22,17 +22,18 @@ import (
 // PrivateRuntimeOptions 由 certified application state 投影。每个 listener 使用
 // 独立 server key/profile；业务 reader 在每次请求重验当前 Head，而不是信任启动快照（D131）。
 type PrivateRuntimeOptions struct {
-	Services       []wire.PrivateControlServiceV1
-	Certificates   map[string]tls.Certificate
-	Enrollment     *enrollmentv2.PrivateService
-	AuthorizeRelay enrollmenttransport.Authorizer
-	Identities     DeviceIdentityReader
-	VerifyReport   DeviceReportPayloadVerifier
-	CommitReport   DeviceReportCommitter
-	Observations   DeviceReportObservationReader
-	ReportSchemas  wire.DeviceReportSchemaRegistry
-	Now            func() time.Time
-	Listen         func(context.Context, string, string) (net.Listener, error)
+	Services         []wire.PrivateControlServiceV1
+	Certificates     map[string]tls.Certificate
+	Enrollment       *enrollmentv2.PrivateService
+	AuthorizeRelay   enrollmenttransport.Authorizer
+	Identities       DeviceIdentityReader
+	ReportIdentities DeviceIdentityReader
+	VerifyReport     DeviceReportPayloadVerifier
+	CommitReport     DeviceReportCommitter
+	Observations     DeviceReportObservationReader
+	ReportSchemas    wire.DeviceReportSchemaRegistry
+	Now              func() time.Time
+	Listen           func(context.Context, string, string) (net.Listener, error)
 }
 
 type privateRuntimeServer struct {
@@ -63,6 +64,9 @@ func newPrivateRuntime(options PrivateRuntimeOptions, enrollment bool) (*Private
 	if options.Now == nil || options.Identities == nil || options.VerifyReport == nil || options.CommitReport == nil ||
 		enrollment && (options.Enrollment == nil || options.AuthorizeRelay == nil) {
 		return nil, errors.New("[私有服务] 实际业务依赖不完整")
+	}
+	if options.ReportIdentities == nil {
+		options.ReportIdentities = options.Identities
 	}
 	runtime := &PrivateRuntime{authorize: options.AuthorizeRelay, listen: options.Listen}
 	if runtime.listen == nil {
@@ -127,7 +131,7 @@ func newPrivateRuntime(options PrivateRuntimeOptions, enrollment bool) (*Private
 			handler, err = NewPrivateDeviceConfigService(service, options.Identities, options.Now)
 		case "device_report":
 			var reports *PrivateDeviceReportService
-			reports, err = NewPrivateDeviceReportService(service, options.Identities, options.VerifyReport,
+			reports, err = NewPrivateDeviceReportService(service, options.ReportIdentities, options.VerifyReport,
 				options.CommitReport, options.ReportSchemas, options.Now, 24*time.Hour, 5*time.Minute)
 			if err == nil {
 				reports.SetObservationReader(options.Observations)

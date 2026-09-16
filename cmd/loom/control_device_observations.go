@@ -22,7 +22,11 @@ func (runtime *controlRuntime) deviceReportObservations(store *controlplane.Devi
 		}
 		runtime.mu.Lock()
 		defer runtime.mu.Unlock()
-		identity, err := runtime.readDeviceIdentityLocked(report.CertificateHash())
+		application, err := runtime.certifiedApplicationLocked()
+		if err != nil {
+			return nil, err
+		}
+		identity, err := runtime.readDeviceIdentityAtApplicationLocked(application, report.CertificateHash(), false)
 		if err != nil {
 			return nil, err
 		}
@@ -43,11 +47,11 @@ func (runtime *controlRuntime) deviceReportObservations(store *controlplane.Devi
 			if !allowed[record.DeviceID] || record.Body.Kind != "node-health" {
 				continue
 			}
-			owner, err := runtime.readDeviceIdentityLocked(record.CertificateHash)
+			owner, err := runtime.readDeviceIdentityAtApplicationLocked(application, record.CertificateHash, false)
 			if err != nil {
 				continue
 			}
-			own, err := runtime.verifyNodeReportObservation(record.Payload, owner, runtime.now().UTC())
+			own, err := verifyNodeReportObservationAt(application, record.Payload, owner, runtime.now().UTC())
 			if err != nil {
 				continue
 			}

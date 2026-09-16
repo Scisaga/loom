@@ -43,13 +43,13 @@ func (runtime *controlRuntime) openDeviceReportSink() (*controlplane.DeviceRepor
 			}
 		}
 		reader := func(_ context.Context, hash string) (controlplane.DeviceIdentityAuthorityV1, error) {
-			return runtime.readDeviceIdentityLocked(hash)
+			return runtime.readDeviceIdentityAtApplicationLocked(application, hash, false)
 		}
 		if err := controlplane.RevalidateDeviceReportAuthority(ctx, report, profiles, reader, runtime.now().UTC()); err != nil {
 			return err
 		}
 		if report.Body().Kind == "node-health" {
-			identity, err := runtime.readDeviceIdentityLocked(report.CertificateHash())
+			identity, err := runtime.readDeviceIdentityAtApplicationLocked(application, report.CertificateHash(), false)
 			if err != nil {
 				return err
 			}
@@ -57,7 +57,7 @@ func (runtime *controlRuntime) openDeviceReportSink() (*controlplane.DeviceRepor
 			if err != nil {
 				return err
 			}
-			if _, err := runtime.verifyNodeReportObservation(report.Payload(), identity, generated); err != nil {
+			if _, err := verifyNodeReportObservationAt(application, report.Payload(), identity, generated); err != nil {
 				return err
 			}
 		}
@@ -67,6 +67,14 @@ func (runtime *controlRuntime) openDeviceReportSink() (*controlplane.DeviceRepor
 }
 
 func (runtime *controlRuntime) verifyNodeReportObservation(payload []byte, identity controlplane.DeviceIdentityAuthorityV1, now time.Time) (*observation.Observation, error) {
+	application, err := runtime.certifiedApplicationLocked()
+	if err != nil {
+		return nil, err
+	}
+	return verifyNodeReportObservationAt(application, payload, identity, now)
+}
+
+func verifyNodeReportObservationAt(application *controlApplicationV1, payload []byte, identity controlplane.DeviceIdentityAuthorityV1, now time.Time) (*observation.Observation, error) {
 	decoded, err := wire.DecodeDeviceNodeHealthPayload("node-health", 1, payload)
 	if err != nil {
 		return nil, err
@@ -76,9 +84,8 @@ func (runtime *controlRuntime) verifyNodeReportObservation(payload []byte, ident
 	if identity.Record.IdentityStatus != "active" || active == nil || !containsControlValue(active.Responsibilities.Values, "forward") || own.Node != identity.Record.DeviceID {
 		return nil, errors.New("[节点报告] 原观测不属于当前活动 forward 身份")
 	}
-	application, err := runtime.certifiedApplicationLocked()
-	if err != nil || application == nil || application.ObservationCAPEM == "" {
-		return nil, errors.Join(errors.New("[节点报告] 缺认证迁移的原观测 CA"), err)
+	if application == nil || application.ObservationCAPEM == "" {
+		return nil, errors.New("[节点报告] 缺认证迁移的原观测 CA")
 	}
 	ca := []byte(application.ObservationCAPEM)
 	trusted, err := observation.VerifyObservationAtLeast(own, ca, now, 10*time.Minute, 5)

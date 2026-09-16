@@ -103,11 +103,31 @@ func (runtime *controlRuntime) readDeviceIdentity(ctx context.Context, certifica
 }
 
 func (runtime *controlRuntime) readDeviceIdentityLocked(certificateHash string) (controlplane.DeviceIdentityAuthorityV1, error) {
-	if _, err := wire.ParseHash(certificateHash); err != nil {
-		return controlplane.DeviceIdentityAuthorityV1{}, err
-	}
 	application, err := runtime.certifiedApplicationLocked()
 	if err != nil {
+		return controlplane.DeviceIdentityAuthorityV1{}, err
+	}
+	return runtime.readDeviceIdentityAtApplicationLocked(application, certificateHash, true)
+}
+
+// 报告只消费当前认证身份，不下载配置历史或解封材料。该投影仍在写锁内从
+// 当前日志重算；一次观测回读中的各设备共用这一份已验证 application。
+func (runtime *controlRuntime) readDeviceReportIdentity(ctx context.Context, certificateHash string) (controlplane.DeviceIdentityAuthorityV1, error) {
+	if err := ctx.Err(); err != nil {
+		return controlplane.DeviceIdentityAuthorityV1{}, err
+	}
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	application, err := runtime.certifiedApplicationLocked()
+	if err != nil {
+		return controlplane.DeviceIdentityAuthorityV1{}, err
+	}
+	return runtime.readDeviceIdentityAtApplicationLocked(application, certificateHash, false)
+}
+
+func (runtime *controlRuntime) readDeviceIdentityAtApplicationLocked(application *controlApplicationV1,
+	certificateHash string, configuration bool) (controlplane.DeviceIdentityAuthorityV1, error) {
+	if _, err := wire.ParseHash(certificateHash); err != nil {
 		return controlplane.DeviceIdentityAuthorityV1{}, err
 	}
 	var record enrollmentv2.DurableRecord
@@ -127,7 +147,7 @@ func (runtime *controlRuntime) readDeviceIdentityLocked(certificateHash string) 
 			record, found = candidate, true
 		}
 	}
-	migrated, migrationFound, err := runtime.readMigratedDeviceIdentityLocked(application, certificateHash)
+	migrated, migrationFound, err := runtime.readMigratedDeviceIdentityLocked(application, certificateHash, configuration)
 	if err != nil {
 		return controlplane.DeviceIdentityAuthorityV1{}, err
 	}
@@ -170,12 +190,15 @@ func (runtime *controlRuntime) readDeviceIdentityLocked(certificateHash string) 
 		AdminCertificateProfiles: application.CARegistry.AdminProfiles, DeviceCertificateProfiles: application.CARegistry.DeviceProfiles,
 		CurrentDeviceView: envelope, RecoveryPolicy: &application.RecoveryPolicy,
 	}
-	return runtime.completeDeviceAuthorityLocked(authority, record.CompletionCertification.Operation.Head.HeadHash)
+	if configuration {
+		return runtime.completeDeviceAuthorityLocked(authority, record.CompletionCertification.Operation.Head.HeadHash)
+	}
+	return controlClone(authority), nil
 }
 
 // 迁移身份直接来自原 owner/platform 双签的不可变承诺，不伪造 Enrollment completion。
 func (runtime *controlRuntime) readMigratedDeviceIdentityLocked(application *controlApplicationV1,
-	certificateHash string) (controlplane.DeviceIdentityAuthorityV1, bool, error) {
+	certificateHash string, configuration bool) (controlplane.DeviceIdentityAuthorityV1, bool, error) {
 	var empty controlplane.DeviceIdentityAuthorityV1
 	var migration *wire.RuntimeDeviceMigrationLeafV1
 	for i := range application.DeviceMigrations {
@@ -255,8 +278,11 @@ func (runtime *controlRuntime) readMigratedDeviceIdentityLocked(application *con
 		AdminCertificateProfiles: application.CARegistry.AdminProfiles, DeviceCertificateProfiles: application.CARegistry.DeviceProfiles,
 		CurrentDeviceView: envelope, RecoveryPolicy: &application.RecoveryPolicy,
 	}
-	result, err := runtime.completeDeviceAuthorityLocked(authority, activation.Result.Head.HeadHash)
-	return result, err == nil, err
+	if configuration {
+		result, err := runtime.completeDeviceAuthorityLocked(authority, activation.Result.Head.HeadHash)
+		return result, err == nil, err
+	}
+	return controlClone(authority), true, nil
 }
 
 func (runtime *controlRuntime) completeDeviceAuthorityLocked(authority controlplane.DeviceIdentityAuthorityV1,

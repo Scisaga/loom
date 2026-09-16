@@ -215,6 +215,12 @@ func testControlDeviceRuntimeReports(t *testing.T, server bool) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			reportIdentity, err := runtime.readDeviceReportIdentity(ctx, certificateHash)
+			if err != nil || !wire.EqualCanonical(reportIdentity.Record, authority.Record) ||
+				!wire.EqualCanonical(reportIdentity.CurrentDeviceView, authority.CurrentDeviceView) ||
+				len(reportIdentity.DeviceConfigUpdates) != 0 || len(reportIdentity.DeviceSecretEnvelopes) != 0 {
+				t.Fatal("报告身份必须使用相同当前授权，且不依赖配置历史或密文读取", err)
+			}
 			if len(delivery.Updates) == 0 || !wire.EqualCanonical(delivery.Updates[len(delivery.Updates)-1].Envelope, authority.CurrentDeviceView) {
 				t.Fatal("返回的配置不属于 daemon 当前日志")
 			}
