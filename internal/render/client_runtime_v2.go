@@ -38,6 +38,7 @@ type ClientRuntimeV2Input struct {
 	SingBoxVersion     string
 	ObservationCA      string
 	ControlTunnel      ClientControlTunnelV2
+	ControlCarrier     *wire.DeviceControlCarrierV1
 }
 
 type ClientRuntimeV2 struct {
@@ -73,6 +74,12 @@ func RenderClientRuntimeV2(input ClientRuntimeV2Input) (ClientRuntimeV2, error) 
 	}
 	result.Skipped = append(skips, agentSkips...)
 	sort.Slice(result.Skipped, func(i, j int) bool { return result.Skipped[i].Where < result.Skipped[j].Where })
+	if input.ControlCarrier != nil {
+		singbox.Content, input.ControlTunnel, err = addClientControlCarrier(singbox.Content, input.ControlTunnel, *input.ControlCarrier)
+		if err != nil {
+			return result, err
+		}
+	}
 	singbox.Content, err = addClientControlTunnel(singbox.Content, input.ControlTunnel)
 	if err != nil {
 		return result, err
@@ -125,6 +132,41 @@ func RenderClientRuntimeV2(input ClientRuntimeV2Input) (ClientRuntimeV2, error) 
 		return result, err
 	}
 	return result, wire.ValidateDeviceConfigArtifactRef(&result.Ref)
+}
+
+// 首次入网使用仅能到达本设备 WG tuple 的独立 HY2 凭据，控制通信不依赖
+// 用户选择的业务出口，也不会扩大业务授权或新增入口探测。
+func addClientControlCarrier(content string, tunnel ClientControlTunnelV2, carrier wire.DeviceControlCarrierV1) (string, ClientControlTunnelV2, error) {
+	const tag = "private-control-carrier"
+	ip, ipErr := netip.ParseAddr(carrier.Address)
+	if tunnel.Detour != "" || carrier.Port < 1 || carrier.Port > 65535 || !wire.ValidFQDN(carrier.TLSServerName) ||
+		len(secret.Refs(secretRef(carrier.CredentialRef))) != 1 ||
+		ipErr != nil && !wire.ValidFQDN(carrier.Address) || ipErr == nil && (ip.IsUnspecified() || ip.IsLoopback() || ip.IsMulticast() || ip.Is4In6()) {
+		return "", tunnel, errors.New("[v2 客户端配置] 独立控制承载地址、TLS 身份或凭据引用无效")
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(content), &document); err != nil {
+		return "", tunnel, err
+	}
+	var outbounds []sbOutbound
+	if err := json.Unmarshal(document["outbounds"], &outbounds); err != nil {
+		return "", tunnel, err
+	}
+	for _, outbound := range outbounds {
+		if outbound.Tag == tag {
+			return "", tunnel, errors.New("[v2 客户端配置] 独立控制承载名称冲突")
+		}
+	}
+	outbounds = append(outbounds, sbOutbound{Type: "hysteria2", Tag: tag, Server: carrier.Address, ServerPort: int(carrier.Port),
+		Password: secretRef(carrier.CredentialRef), TLS: clientTLS(carrier.TLSServerName, tlsCAPath)})
+	raw, err := json.Marshal(outbounds)
+	if err != nil {
+		return "", tunnel, err
+	}
+	document["outbounds"] = raw
+	encoded, err := json.Marshal(document)
+	tunnel.Detour = tag
+	return string(encoded), tunnel, err
 }
 
 func addClientControlTunnel(content string, tunnel ClientControlTunnelV2) (string, error) {

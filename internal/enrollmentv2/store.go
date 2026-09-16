@@ -37,6 +37,7 @@ type DurableRecord struct {
 	CompletionOperation              *CompletionOperationV2                `json:"completion_operation,omitempty"`
 	CompletionCertification          *CompletionCertificationV1            `json:"completion_certification,omitempty"`
 	CompletionProjection             *CompletionProjectionV1               `json:"completion_projection,omitempty"`
+	Expiry                           *EnrollmentExpiryEvidenceV1           `json:"expiry,omitempty"`
 	State                            TransactionStateV2                    `json:"state"`
 }
 
@@ -178,7 +179,7 @@ func (s *Store) RecordProvisional(operation ProvisionalIssuanceOperationV1,
 		return TransactionStateV2{}, errors.New("[Enrollment] provisional issuance 缺耐久 reservation")
 	}
 	current := s.state.Records[index].State
-	if current.Status == "issued_provisional" || current.Status == "completed" {
+	if current.Status == "issued_provisional" || current.Status == "completed" || current.Status == "aborted" {
 		operationHash, err := wire.HashObject(DomainProvisionalOperation, operation)
 		existing := s.state.Records[index]
 		if err == nil && current.ProvisionalIssuanceOperationHash == operationHash &&
@@ -380,6 +381,9 @@ func cloneDurableRecord(record DurableRecord) DurableRecord {
 }
 
 func validateDurableRecord(record *DurableRecord) error {
+	if record.Expiry != nil || record.State.Status == "aborted" {
+		return validateExpiryRecord(record)
+	}
 	if err := validateClaimPrivateEvidence(&record.ClaimEvidence, &record.ClaimOperation); err != nil {
 		return err
 	}

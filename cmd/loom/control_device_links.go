@@ -116,7 +116,8 @@ func (application *controlApplicationV1) validateDeviceControlLink(link wire.Dev
 	}
 	if carrier := link.Carrier; carrier != nil {
 		dialer := source.NodeByID()[r.DialerDeviceID]
-		if dialer == nil || dialer.Server == nil || dialer.Server.WGPublicKey != r.DialerPublicKey ||
+		if dialer == nil || dialer.Server != nil && dialer.Server.WGPublicKey != r.DialerPublicKey ||
+			dialer.Server == nil && dialer.Access == nil ||
 			server.Server.InboundProtocol.Or() != model.Hysteria2 || carrier.Address != server.PublicEndpoint || carrier.Port != int64(server.Server.InboundPort) || carrier.TLSServerName != server.ID+".node.internal" {
 			return errors.New("[设备控制链路] 专用承载偏离原网络身份或现有 HY2 listener")
 		}

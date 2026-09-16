@@ -69,6 +69,16 @@ func (application *controlApplicationV1) reduceDevicePublication(publication con
 		operation.ClusterID != application.ClusterID || len(publication.Configs) == 0 || publication.Secrets == nil {
 		return nil, errors.New("[配置发布] 缺当前状态、运行配置或秘密集合")
 	}
+	for _, plan := range application.EnrollmentPlans {
+		if operation.OperationID == plan.OperationID {
+			continue
+		}
+		for _, server := range plan.Servers {
+			if server.DeviceID == publication.DeviceID {
+				return nil, errors.New("[配置发布] 先完成已签发的入网事务，不能覆盖其服务器配置")
+			}
+		}
+	}
 	hash, err := controlDevicePublicationHash(publication)
 	if err != nil || hash != operation.PayloadHash {
 		return nil, errors.New("[配置发布] 管理签名未承诺本次发布")

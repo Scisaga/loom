@@ -342,7 +342,7 @@ func controlSignInviteRequest(t *testing.T, adminDir string, request controlOper
 	return request
 }
 
-func controlInviteRuntime(t *testing.T) (*controlRuntime, string) {
+func controlInviteRuntime(t *testing.T, configure ...func(*controlApplicationV1, *controlRuntime)) (*controlRuntime, string) {
 	t.Helper()
 	dir, adminDir := newAdminRotationFixture(t, true)
 	now := time.Now().UTC().Truncate(time.Second)
@@ -351,6 +351,9 @@ func controlInviteRuntime(t *testing.T) (*controlRuntime, string) {
 		t.Fatal(err)
 	}
 	application, recoveryProofs := controlInviteApplication(t, runtime)
+	for _, change := range configure {
+		change(&application, runtime)
+	}
 	state := runtime.store.Snapshot()
 	parent := *state.CertifiedHead
 	qcRaw, _ := wire.MarshalCanonical(state.CertifiedQC)
@@ -373,7 +376,7 @@ func controlInviteRuntime(t *testing.T) (*controlRuntime, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	migrationRoot, _ := wire.RuntimeDeviceMigrationRoot(nil)
+	migrationRoot, _ := wire.RuntimeDeviceMigrationRoot(application.DeviceMigrations)
 	statement := wire.RuntimeActivationStatementV1{DeviceMigrationRoot: migrationRoot, Schema: 1, ClusterID: application.ClusterID, OperationID: "demo-runtime-activation",
 		ParentHeadHash: parent.HeadHash, ParentQCHash: qcHash, LegacyRecoveryPolicyHash: parent.Body.Payload.RecoveryPolicyHash,
 		V1PlatformKeyID: platformID, V1PlatformPublicKey: base64.RawURLEncoding.EncodeToString(platformPublic), V1PlatformKeyDigest: fmt.Sprintf("sha256:%x", platformDigest),

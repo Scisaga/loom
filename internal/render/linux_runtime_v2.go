@@ -38,6 +38,35 @@ func RenderLinuxRuntimeV2(input LinuxRuntimeV2Input) (LinuxRuntimeV2, error) {
 		view.ClusterID != input.Authority.Head.Body.Payload.ClusterID {
 		return result, errors.New("[Linux 配置] 缺当前认证 Device、authority 或新配置代")
 	}
+	return renderLinuxRuntimeV2(input, view)
+}
+
+// 首次配置使用已预留邀请的职责和授权，不能伪造一个第零代 active Device。
+// 调用方在 completion 前只保存制品；本函数不授予运行或网络访问权限。
+func RenderInitialLinuxRuntimeV2(input LinuxRuntimeV2Input, intent wire.DeviceEnrollmentIntentV1) (LinuxRuntimeV2, error) {
+	if err := wire.ValidateEnrollmentIntent(&intent); err != nil {
+		return LinuxRuntimeV2{}, err
+	}
+	if input.SSOT == nil || intent.Platform != "linux-server" || input.DeviceID != intent.DeviceID ||
+		intent.ClusterID != input.Authority.Head.Body.Payload.ClusterID || input.DeviceGeneration != 1 || input.ArtifactGeneration != 1 {
+		return LinuxRuntimeV2{}, errors.New("[Linux 配置] 首次配置必须绑定预留邀请与第一代制品")
+	}
+	if _, exists := input.Views[intent.DeviceID]; exists {
+		return LinuxRuntimeV2{}, errors.New("[Linux 配置] 首次配置不能覆盖现有 Device")
+	}
+	view := wire.DeviceViewPayloadV2{Schema: 2, ClusterID: intent.ClusterID, DeviceID: intent.DeviceID, DeviceGeneration: 1, State: "active",
+		Active: &wire.DeviceActiveViewV1{Membership: intent.Membership, Responsibilities: intent.Responsibilities, Grants: intent.Grants}}
+	views := make(map[string]wire.DeviceViewPayloadV2, len(input.Views)+1)
+	for id, current := range input.Views {
+		views[id] = current
+	}
+	views[intent.DeviceID] = view
+	input.Views = views
+	return renderLinuxRuntimeV2(input, view)
+}
+
+func renderLinuxRuntimeV2(input LinuxRuntimeV2Input, view wire.DeviceViewPayloadV2) (LinuxRuntimeV2, error) {
+	var result LinuxRuntimeV2
 	// 深拷贝后投影权限，渲染不得修改调用方的认证状态。
 	raw, err := json.Marshal(input.SSOT)
 	if err != nil {

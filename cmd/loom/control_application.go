@@ -47,6 +47,7 @@ type controlApplicationV1 struct {
 	DeferredMigrations    []controlDeferredDeviceMigrationV1              `json:"deferred_migrations,omitempty"`
 	ArtifactPolicies      []wire.ArtifactAvailabilityPolicyV1             `json:"artifact_policies,omitempty"`
 	DeviceControlLinks    []wire.DeviceControlLinkV1                      `json:"device_control_links,omitempty"`
+	EnrollmentPlans       []controlEnrollmentRuntimePlanV1                `json:"enrollment_plans,omitempty"`
 }
 
 // 未在用且尚未提供原 key 迁移请求的历史记录只保留原身份，不能伪造

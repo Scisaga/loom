@@ -101,7 +101,8 @@ func admissionAttestationForVerified(material *InviteMaterialV2, submission *wir
 	}
 	core := submission.ClaimCore
 	result := wire.EnrollmentAdmissionAttestationBodyV1{
-		Schema: 1, AttestationType: "enrollment_admission", ClusterID: core.ClusterID,
+		WireGuardPublicKey: submission.ClaimCore.WireGuardPublicKey,
+		Schema:             1, AttestationType: "enrollment_admission", ClusterID: core.ClusterID,
 		InviteID: core.InviteID, RequestID: core.RequestID,
 		CertifiedInviteRecordHash:            core.CertifiedInviteRecordHash,
 		DeviceEnrollmentIntentCommitmentHash: core.DeviceEnrollmentIntentCommitmentHash,

@@ -95,7 +95,12 @@ func (runtime *controlRuntime) newEnrollmentWorkflow(provision *enrollmentv2.Dur
 			}
 			value, err := runtime.readInviteToken(record)
 			return value.Token, err
-		}, coordinator.ProcessClaim, released)
+		}, func(ctx context.Context, attempt enrollmentv2.VerifiedClaimAttemptV2) (wire.EnrollmentClaimResultV2, error) {
+			if err := runtime.expireEnrollmentTransactions(ctx); err != nil {
+				return wire.EnrollmentClaimResultV2{}, err
+			}
+			return coordinator.ProcessClaim(ctx, attempt)
+		}, released)
 	if err != nil {
 		return nil, err
 	}

@@ -17,6 +17,7 @@ const (
 )
 
 type EnrollmentAdmissionAttestationBodyV1 struct {
+	WireGuardPublicKey                   string `json:"wireguard_public_key,omitempty"`
 	Schema                               int    `json:"schema"`
 	AttestationType                      string `json:"attestation_type"`
 	ClusterID                            string `json:"cluster_id"`
@@ -118,6 +119,11 @@ func EnrollmentAdmissionQCHash(qc *StableEnrollmentAdmissionQCV1) (string, error
 }
 
 func ValidateEnrollmentAdmission(body *EnrollmentAdmissionAttestationBodyV1) error {
+	if body != nil && body.WireGuardPublicKey != "" {
+		if err := validateEnrollmentWireGuardPublic(body.WireGuardPublicKey); err != nil {
+			return err
+		}
+	}
 	if body == nil || body.Schema != 1 || body.AttestationType != "enrollment_admission" ||
 		!validIdentifier(body.ClusterID, 128) || !validIdentifier(body.InviteID, 128) || !validIdentifier(body.RequestID, 128) ||
 		body.PoPVerificationProfile != "loom-enrollment-server-nonce-detached-v2" || body.BaseRecoveryEpoch < 0 || body.BaseControlEpoch < 0 {

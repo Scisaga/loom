@@ -37,6 +37,10 @@ func enrollmentMutationInviteID(mutation enrollmentv2.EnrollmentHeadMutationV1) 
 		if mutation.Preimage.Completion != nil {
 			return mutation.Preimage.Completion.Record.InviteID
 		}
+	case "expiry":
+		if mutation.Preimage.Expiry != nil {
+			return mutation.Preimage.Expiry.Record.InviteID
+		}
 	}
 	return ""
 }
@@ -76,6 +80,22 @@ func (application *controlApplicationV1) reduceEnrollment(mutation enrollmentv2.
 	}
 	candidate := controlClone(*application)
 	if r := mutation.Preimage.Provisional; r != nil {
+		if len(r.Prepared.RuntimePlan) != 0 {
+			plan, err := decodeEnrollmentRuntimePlan(r.Prepared.RuntimePlan)
+			if err != nil {
+				return nil, err
+			}
+			if len(application.EnrollmentPlans) != 0 || plan.Parent.Head.HeadHash != coordinate.ParentHeadHash || plan.PreparedAt != coordinate.CommittedLogicalTime {
+				return nil, errors.New("[首次配置] 存在未完成计划或签发 base 不一致")
+			}
+			if err := wire.VerifyConfigQCAuthority(plan.Parent.Head.HeadHash, plan.Parent.QC, &plan.Parent.Head, &set, nil); err != nil {
+				return nil, err
+			}
+			if _, err := application.applyEnrollmentRuntimePlan(plan, r.Record, r.Prepared.Result.InitialDeviceView, coordinate.CommittedLogicalTime); err != nil {
+				return nil, err
+			}
+			candidate.EnrollmentPlans = append(candidate.EnrollmentPlans, plan)
+		}
 		var found bool
 		for _, profile := range application.CARegistry.DeviceProfiles {
 			if wire.EqualCanonical(profile, r.Prepared.Profile) && profile.Status == "active" {
@@ -108,10 +128,35 @@ func (application *controlApplicationV1) reduceEnrollment(mutation enrollmentv2.
 				return nil, errors.New("[D130 daemon] completion 不能覆盖已有 Device")
 			}
 		}
-		candidate.Devices = append(candidate.Devices, controlDeviceStateV1{View: *view, PreviousViewHash: wire.EmptyHashV1,
-			SecretArtifactRefs: append([]wire.SecretArtifactRefV2{}, r.Record.ResultArtifact.SecretArtifactRefs...), EnrollmentInviteID: id})
+		appliedPlan := false
+		for i, plan := range application.EnrollmentPlans {
+			if plan.InviteID != id {
+				continue
+			}
+			applied, err := application.applyEnrollmentRuntimePlan(plan, r.Record, *view, coordinate.CommittedLogicalTime)
+			if err != nil {
+				return nil, err
+			}
+			candidate = *applied
+			candidate.EnrollmentPlans = append(candidate.EnrollmentPlans[:i], candidate.EnrollmentPlans[i+1:]...)
+			appliedPlan = true
+			break
+		}
+		if !appliedPlan {
+			candidate.Devices = append(candidate.Devices, controlDeviceStateV1{View: *view, PreviousViewHash: wire.EmptyHashV1,
+				SecretArtifactRefs: append([]wire.SecretArtifactRefV2{}, r.Record.ResultArtifact.SecretArtifactRefs...), EnrollmentInviteID: id})
+		}
 		sort.Slice(candidate.Devices, func(i, j int) bool { return candidate.Devices[i].View.DeviceID < candidate.Devices[j].View.DeviceID })
 		candidate.Invites[inviteIndex].Status = "consumed"
+	} else if mutation.Preimage.Expiry != nil {
+		candidate.Invites[inviteIndex].Status = "revoked"
+		plans := candidate.EnrollmentPlans[:0]
+		for _, plan := range candidate.EnrollmentPlans {
+			if plan.InviteID != id {
+				plans = append(plans, plan)
+			}
+		}
+		candidate.EnrollmentPlans = plans
 	} else {
 		candidate.Invites[inviteIndex].Status = "reserved"
 	}
@@ -573,6 +618,10 @@ func (runtime *controlRuntime) reconcileEnrollmentPrefixLocked() error {
 				enrollmentv2.CompletionCertificationV1{Schema: 1, Operation: result.Certification,
 					IntermediateHeads: result.IntermediateHeads, ControlSetTransitions: result.ControlSetTransitions,
 					DeviceViewEnvelope: *result.DeviceViewEnvelope})
+		case "expiry":
+			_, err = runtime.enrollmentStore.Expire(enrollmentv2.EnrollmentExpiryEvidenceV1{
+				Operation: p.Expiry.Operation, Certification: result.Certification,
+				IntermediateHeads: result.IntermediateHeads, ControlSetTransitions: result.ControlSetTransitions})
 		default:
 			return errors.New("[D130 daemon] 未知 transaction mutation")
 		}

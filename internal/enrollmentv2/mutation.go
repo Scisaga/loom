@@ -6,7 +6,7 @@ import (
 	"loom/internal/wire"
 )
 
-// EnrollmentMutationPreimageV1 是全局控制日志的私有输入。三个分支恰有一个；
+// EnrollmentMutationPreimageV1 是全局控制日志的私有输入。各分支恰有一个；
 // 不保存 raw token、CSR、challenge 或 detached PoP。Admission QC 承诺其验签结果。
 type EnrollmentMutationPreimageV1 struct {
 	Schema      int                              `json:"schema"`
@@ -14,6 +14,7 @@ type EnrollmentMutationPreimageV1 struct {
 	Reservation *EnrollmentReservationPreimageV1 `json:"reservation,omitempty"`
 	Provisional *EnrollmentProvisionalPreimageV1 `json:"provisional,omitempty"`
 	Completion  *EnrollmentCompletionPreimageV1  `json:"completion,omitempty"`
+	Expiry      *EnrollmentExpiryPreimageV1      `json:"expiry,omitempty"`
 }
 
 type EnrollmentReservationPreimageV1 struct {
@@ -47,7 +48,7 @@ func ReduceEnrollmentMutation(mutation EnrollmentHeadMutationV1, current *Transa
 		return fail()
 	}
 	branches := 0
-	for _, exists := range []bool{p.Reservation != nil, p.Provisional != nil, p.Completion != nil} {
+	for _, exists := range []bool{p.Reservation != nil, p.Provisional != nil, p.Completion != nil, p.Expiry != nil} {
 		if exists {
 			branches++
 		}
@@ -141,6 +142,19 @@ func ReduceEnrollmentMutation(mutation EnrollmentHeadMutationV1, current *Transa
 			return TransactionStateV2{}, err
 		}
 		objectID, err = wire.HashObject(DomainCompletionOperation, r.Operation)
+	case p.Kind == "expiry" && p.Expiry != nil:
+		r := p.Expiry
+		if current == nil || !wire.EqualCanonical(*current, r.Record.State) || mutation.InitialDeviceView != nil || len(mutation.SecretArtifactRefs) != 0 {
+			return fail()
+		}
+		if err := validateDurableRecord(&r.Record); err != nil {
+			return TransactionStateV2{}, err
+		}
+		state, err = ExpireTransaction(r.Record, r.Operation, coordinate.CommittedLogicalTime)
+		operationID = r.Operation.OperationID
+		if err == nil {
+			objectID, err = wire.HashObject(DomainExpiryOperation, r.Operation)
+		}
 	default:
 		return fail()
 	}

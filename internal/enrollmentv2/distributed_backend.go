@@ -70,6 +70,9 @@ type PreparedProvisionalV1 struct {
 	Issuance  wire.EnrollmentProvisionalIssuanceV1 `json:"issuance"`
 	Profile   wire.DeviceCertificateProfileStateV1 `json:"profile"`
 	Result    wire.EnrollmentResultArtifactV1      `json:"result"`
+	// 由正式控制状态机重算的私有运行计划，与首次签发结果一起耐久保存。
+	// 仅含配置、公开分配和密文引用，不得包含秘密明文或 claim 请求。
+	RuntimePlan json.RawMessage `json:"runtime_plan,omitempty"`
 }
 
 // DurableProvisionalPreparer 隔离 CA/secret 私钥。实现必须先耐久化 exact first-result，

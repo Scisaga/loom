@@ -196,6 +196,7 @@ type controlRuntime struct {
 	service          *controlplane.PrivateControlService
 	uiReadOnly       http.Handler
 	uiAdmin          http.Handler
+	enrollmentPeers  http.Handler
 	now              func() time.Time
 	progress         atomic.Pointer[controlOperationReadState]
 	enrollmentStore  *enrollmentv2.Store
@@ -1060,6 +1061,9 @@ func (runtime *controlRuntime) resolveScope(ctx context.Context,
 
 func (runtime *controlRuntime) commitOperation(ctx context.Context,
 	verified wire.VerifiedAdminOperationV1) (controlplane.CertifiedControlOperationV1, error) {
+	if err := runtime.expireEnrollmentTransactions(ctx); err != nil {
+		return controlplane.CertifiedControlOperationV1{}, err
+	}
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
 	operation := verified.Operation()
@@ -1241,11 +1245,19 @@ func (runtime *controlRuntime) serve() error {
 		return err
 	}
 	controlHandler := runtime.controlHandler()
+	var peerHandler http.Handler = raftHandler
+	if runtime.enrollmentPeers != nil {
+		peers := http.NewServeMux()
+		peers.Handle(controlplane.EnrollmentAdmissionVotePath, runtime.enrollmentPeers)
+		peers.Handle(controlplane.EnrollmentApprovalVotePath, runtime.enrollmentPeers)
+		peers.Handle("/", raftHandler)
+		peerHandler = peers
+	}
 	controlServer := &http.Server{Handler: controlHandler, ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	loopbackServer := &http.Server{Handler: controlHandler, ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
-	raftServer := &http.Server{Handler: raftHandler, ReadHeaderTimeout: 5 * time.Second,
+	raftServer := &http.Server{Handler: peerHandler, ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	deviceContext, cancelDevices := context.WithCancel(context.Background())
 	defer cancelDevices()

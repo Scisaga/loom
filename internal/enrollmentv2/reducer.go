@@ -31,6 +31,7 @@ type InviteContext struct {
 }
 
 type ClaimOperationV2 struct {
+	WireGuardPublicKey                   string `json:"wireguard_public_key,omitempty"`
 	Schema                               int    `json:"schema"`
 	ClusterID                            string `json:"cluster_id"`
 	OperationID                          string `json:"operation_id"`
@@ -114,7 +115,7 @@ func Reserve(invite InviteContext, operation ClaimOperationV2, admission *wire.S
 		operation.TokenCommitment != invite.TokenCommitment || attestation.ClusterID != operation.ClusterID || attestation.InviteID != operation.InviteID || attestation.RequestID != operation.RequestID ||
 		attestation.CertifiedInviteRecordHash != operation.CertifiedInviteRecordHash || attestation.DeviceEnrollmentIntentCommitmentHash != operation.DeviceEnrollmentIntentCommitmentHash ||
 		attestation.DeviceEnrollmentIntentOpeningHash != operation.DeviceEnrollmentIntentOpeningHash || attestation.TokenCommitment != operation.TokenCommitment ||
-		attestation.ClaimCoreHash != operation.ClaimCoreHash || attestation.IdentityKeyHash != operation.IdentityKeyHash || attestation.WrappingKeyHash != operation.WrappingKeyHash || attestation.CSRHash != operation.CSRHash {
+		attestation.ClaimCoreHash != operation.ClaimCoreHash || attestation.IdentityKeyHash != operation.IdentityKeyHash || attestation.WrappingKeyHash != operation.WrappingKeyHash || attestation.CSRHash != operation.CSRHash || attestation.WireGuardPublicKey != operation.WireGuardPublicKey {
 		return TransactionStateV2{}, errors.New("[Enrollment] claim/admission/invite exact binding 不匹配")
 	}
 	expires, err := wire.ParseTimeZ(invite.ExpiresAt)

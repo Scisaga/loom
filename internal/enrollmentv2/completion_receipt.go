@@ -239,7 +239,8 @@ func VerifyEnrollmentCompletionReceipt(raw []byte, result *wire.EnrollmentClaimR
 		operation.DeviceEnrollmentIntentCommitmentHash != expected.Record.DeviceEnrollmentIntentCommitmentHash ||
 		operation.DeviceEnrollmentIntentOpeningHash != openingHash || operation.TokenCommitment != expected.Record.TokenCommitment ||
 		operation.ClaimCoreHash != coreHash || operation.IdentityKeyHash != identityHash ||
-		operation.WrappingKeyHash != wrappingHash || operation.CSRHash != csrHash {
+		operation.WrappingKeyHash != wrappingHash || operation.CSRHash != csrHash ||
+		operation.WireGuardPublicKey != expected.ClaimCore.WireGuardPublicKey {
 		return VerifiedEnrollmentCompletionV1{}, errors.New("[client] receipt 未绑定本机 stable claim/core/key")
 	}
 	reserved, err := Reserve(receipt.Invite, receipt.ClaimOperation, &receipt.AdmissionQC,

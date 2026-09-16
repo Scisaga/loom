@@ -15,11 +15,18 @@ func (runtime *controlRuntime) newDeviceRuntime() (*controlplane.PrivateRuntime,
 	if err != nil || options == nil {
 		return nil, closeKeys, err
 	}
-	deviceRuntime, err := controlplane.NewPrivateDeviceRuntime(*options)
+	workflow, err := runtime.productionEnrollmentWorkflow()
+	if err != nil {
+		closeKeys()
+		return nil, func() {}, err
+	}
+	options.Enrollment, options.AuthorizeRelay = workflow.Service, runtime.authorizeBootstrapRelay
+	deviceRuntime, err := controlplane.NewPrivateRuntime(*options)
 	if err != nil {
 		closeKeys()
 		return nil, func() {}, errors.Join(errors.New("私有 Device 服务初始化失败"), err)
 	}
+	runtime.enrollmentPeers = workflow.Peers
 	return deviceRuntime, closeKeys, nil
 }
 

@@ -14,8 +14,12 @@ func addLinuxDeviceControlLinks(projection *LinuxWireGuardProjectionV2, source *
 		return nil
 	}
 	node := source.NodeByID()[input.DeviceID]
-	if node == nil || node.Server == nil {
-		return errors.New("[设备控制链路] 承载设备缺 forward 运行身份")
+	if node == nil {
+		return errors.New("[设备控制链路] 缺本机运行身份")
+	}
+	localPublic := ""
+	if node.Server != nil {
+		localPublic = node.Server.WGPublicKey
 	}
 	used := map[string]bool{}
 	ports := map[int64]bool{}
@@ -36,13 +40,14 @@ func addLinuxDeviceControlLinks(projection *LinuxWireGuardProjectionV2, source *
 		if dial {
 			public = r.DialerPublicKey
 		}
-		if !dial && r.ListenerDeviceID != input.DeviceID || public != node.Server.WGPublicKey ||
+		if !dial && (r.ListenerDeviceID != input.DeviceID || node.Server == nil) || localPublic != "" && public != localPublic ||
 			!found || client.State != "active" || client.Active == nil ||
 			!hasLinuxRole(client.Active.Responsibilities.Values, "use_loom") && !(link.Carrier != nil && hasLinuxRole(client.Active.Responsibilities.Values, "forward")) ||
-			used[r.ResourceID] || !dial && (ports[r.EndpointPort] || int64(node.Server.InboundPort) == r.EndpointPort) || dial && link.Carrier == nil ||
+			used[r.ResourceID] || !dial && (ports[r.EndpointPort] || node.Server != nil && int64(node.Server.InboundPort) == r.EndpointPort) || dial && link.Carrier == nil ||
 			i > 0 && input.DeviceControlLinks[i-1].Resource.ResourceID >= r.ResourceID {
 			return errors.New("[设备控制链路] 当前身份、原公钥、端口或资源分配冲突")
 		}
+		localPublic = public
 		used[r.ResourceID] = true
 		if !dial {
 			ports[r.EndpointPort] = true
@@ -56,7 +61,7 @@ func addLinuxDeviceControlLinks(projection *LinuxWireGuardProjectionV2, source *
 		projection.Bindings = append(projection.Bindings, wire.LinuxRuntimeBindingV1{LinkID: r.LinkID, LinkGeneration: r.ListenerGeneration,
 			Mode: mode, ListenerGeneration: generation, Transport: "wireguard", EndpointID: r.ResourceID, ConfigPath: "sing-box/v2/config.json", RuntimeTag: wire.DeviceControlEndpointTag(link)})
 	}
-	projection.LocalKey = &wire.LinuxLocalWireGuardKeyV1{SecretID: LocalWireGuardSecretIDV2, PublicKey: node.Server.WGPublicKey}
+	projection.LocalKey = &wire.LinuxLocalWireGuardKeyV1{SecretID: LocalWireGuardSecretIDV2, PublicKey: localPublic}
 	sort.Slice(projection.Resources, func(i, j int) bool { return projection.Resources[i].ResourceID < projection.Resources[j].ResourceID })
 	sort.Slice(projection.LinkIntents, func(i, j int) bool { return projection.LinkIntents[i].LinkID < projection.LinkIntents[j].LinkID })
 	sort.Slice(projection.Bindings, func(i, j int) bool { return projection.Bindings[i].LinkID < projection.Bindings[j].LinkID })
