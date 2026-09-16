@@ -2,11 +2,13 @@ package io.github.scisaga.loom.enrollment
 
 import io.github.scisaga.loom.profiles.ProfileContext
 import android.content.Context
+import android.util.AtomicFile
 import io.github.scisaga.loom.security.EncryptedStore
 import io.github.scisaga.loom.security.DeviceKeyStore
 import io.github.scisaga.libbox.Libbox
 import io.github.scisaga.loomcore.Loomcore
 import org.json.JSONObject
+import java.security.MessageDigest
 
 internal data class V2InstalledDeviceState(
     val encoded: ByteArray,
@@ -20,6 +22,7 @@ internal data class V2InstalledDeviceState(
 class V2DeviceStateStore(context: Context) {
     private val protected = EncryptedStore(context.applicationContext)
     private val keys = DeviceKeyStore(ProfileContext.keySuffix(context))
+    private val runtimeDirectory = libboxWorkingDirectory(context.filesDir)
 
     @Synchronized
     fun acceptInitialFromInvite(
@@ -223,18 +226,45 @@ class V2DeviceStateStore(context: Context) {
         val runtime = JSONObject(Loomcore.prepareAndroidV2Runtime(state).decodeToString())
         check(runtime.getInt("schema") == 1) { "v2 Android runtime projection schema 无效" }
         val headHash = runtime.getString("head_hash")
+        val ca = runtime.optString("observation_ca").encodeToByteArray()
+        val config = runtime.getString("sing_box_config")
         val profile = ManagedProfile(
             nodeID = runtime.getString("device_id"),
             snapshot = headHash,
             generation = runtime.getLong("device_generation"),
-            config = runtime.getString("sing_box_config"),
+            config = bindRuntimeCA(config, ca),
             routePlan = runtime.optString("route_plan").takeIf(String::isNotBlank),
-            caPEM = runtime.optString("observation_ca").encodeToByteArray(),
+            caPEM = ca,
             recordID = "v2:$headHash",
             protocol = 2,
         )
         Libbox.checkConfig(profile.config)
         return profile
+    }
+
+    /** libbox 在进程文件系统预检；CA 独立按内容寻址，不能覆盖仍在使用的配置。 */
+    private fun bindRuntimeCA(config: String, ca: ByteArray): String {
+        if (!config.contains("\"certificate_path\"")) return config
+        check(ca.isNotEmpty()) { "v2 配置引用了尚未认证安装的节点 CA" }
+        val digest = MessageDigest.getInstance("SHA-256").digest(ca)
+            .joinToString("") { "%02x".format(it) }
+        val directory = runtimeDirectory.resolve("tls")
+        check(directory.isDirectory || directory.mkdirs()) { "无法准备本机 CA 目录" }
+        val file = directory.resolve("ca-$digest.crt")
+        val atomic = AtomicFile(file)
+        if (file.exists()) {
+            check(atomic.readFully().contentEquals(ca)) { "已安装 CA 内容与摘要不符" }
+        } else {
+            val output = atomic.startWrite()
+            try {
+                output.write(ca)
+                atomic.finishWrite(output)
+            } catch (error: Throwable) {
+                atomic.failWrite(output)
+                throw error
+            }
+        }
+        return Loomcore.relocateAndroidCA(config.encodeToByteArray(), file.absolutePath).decodeToString()
     }
 
     @Synchronized
