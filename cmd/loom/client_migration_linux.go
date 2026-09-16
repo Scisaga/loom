@@ -108,7 +108,7 @@ func cmdClientExportMigrationRequest(args []string) error {
 		return errors.New("[Linux migration] 原 CA 无效")
 	}
 	if certificate.IsCA || len(certificate.DNSNames) != 1 || certificate.DNSNames[0] != *deviceID+".node.internal" ||
-		certificate.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
+		!originalCertificateAllowsSigning(certificate) {
 		return errors.New("[Linux migration] 原证书不是指定设备的独立签名身份")
 	}
 	// 原服务器曾使用 serverAuth-only leaf。这里只证明原 key 归属；迁移后

@@ -233,7 +233,7 @@ func originalMigrationDeviceIdentity(id, platform string, client clientregistry.
 	if platform == "linux-server" {
 		certificate, err := parseSingleCertificatePEM([]byte(certificatePEM))
 		if err != nil || certificate.IsCA || len(certificate.DNSNames) != 1 || certificate.DNSNames[0] != id+".node.internal" ||
-			certificate.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
+			!originalCertificateAllowsSigning(certificate) {
 			return "", errors.New("原服务器证书未绑定指定设备")
 		}
 		if _, err := certificate.Verify(x509.VerifyOptions{Roots: roots, DNSName: id + ".node.internal", CurrentTime: certificate.NotBefore.Add(time.Second),
@@ -251,6 +251,17 @@ func originalMigrationDeviceIdentity(id, platform string, client clientregistry.
 		return "", errors.New("缺原 registry 身份或原服务器证书")
 	}
 	return wire.HashBytes(wire.DomainEnrollmentIdentitySPKI, public)
+}
+
+// 原证书可能没有 Key Usage 扩展；缺省不限制用途。显式限制了用途的证书
+// 仍须允许签名，不能把缺失扩展与禁止签名混为一谈。只用于原身份迁移验证。
+func originalCertificateAllowsSigning(certificate *x509.Certificate) bool {
+	for _, extension := range certificate.Extensions {
+		if extension.Id.Equal([]int{2, 5, 29, 15}) {
+			return certificate.KeyUsage&x509.KeyUsageDigitalSignature != 0
+		}
+	}
+	return true
 }
 
 // 迁移只投影原能力和凭据授权。临时 drain 不撤销授权；不能把全网资源

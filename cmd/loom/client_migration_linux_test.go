@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"loom/internal/clientmigration"
+	"loom/internal/clientregistry"
 	"loom/internal/clientv2"
 	"loom/internal/enrollmentv2"
 	"loom/internal/publish"
@@ -139,6 +140,30 @@ func TestLinuxMigrationExportUsesOriginalIdentityAndPreservesInputs(t *testing.T
 		err = cmdClient(args)
 		if (usage == x509.ExtKeyUsageServerAuth) != (err == nil) {
 			t.Fatalf("原证书用途验证错误: usage=%v err=%v", usage, err)
+		}
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(issuer)
+	for _, usage := range []x509.KeyUsage{0, x509.KeyUsageDigitalSignature, x509.KeyUsageKeyEncipherment} {
+		template, err := x509.ParseCertificate(certificate)
+		if err != nil {
+			t.Fatal(err)
+		}
+		template.KeyUsage = usage
+		der, err := x509.CreateCertificate(rand.Reader, template, issuer, key.Public(), issuerKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+		if err := os.WriteFile(filepath.Join(dir, "original.crt"), encoded, 0600); err != nil {
+			t.Fatal(err)
+		}
+		want := usage != x509.KeyUsageKeyEncipherment
+		if err := cmdClient(args); (err == nil) != want {
+			t.Fatalf("原身份导出错误解释 Key Usage: usage=%v err=%v", usage, err)
+		}
+		if _, err := originalMigrationDeviceIdentity("demo-server", "linux-server", clientregistry.Client{}, string(encoded), roots); (err == nil) != want {
+			t.Fatalf("控制迁移错误解释 Key Usage: usage=%v err=%v", usage, err)
 		}
 	}
 	if err := os.WriteFile(filepath.Join(dir, "original.crt"), inputs["original.crt"], 0600); err != nil {
