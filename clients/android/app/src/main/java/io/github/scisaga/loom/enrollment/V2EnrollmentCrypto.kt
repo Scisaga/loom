@@ -220,7 +220,7 @@ internal class V2EnrollmentCrypto(
         }
         val key = Loomcore.deriveSealedSecretP256KEKV2(
             normalizedShared,
-            root.getJSONObject("wrap_context").toString().encodeToByteArray(),
+            Loomcore.canonicalizeV2(root.getJSONObject("wrap_context").toString().encodeToByteArray()),
         )
         return try {
             val cek = openAESGCM(
@@ -275,7 +275,8 @@ internal class V2EnrollmentCrypto(
         return try {
             Loomcore.finishSealedSecretPlaintextV2(
                 plaintext,
-                root.getJSONObject("context").toString().encodeToByteArray(),
+                // JSONObject 会重新转义斜线；送回共享 verifier 前恢复唯一 wire 字节。
+                Loomcore.canonicalizeV2(root.getJSONObject("context").toString().encodeToByteArray()),
             )
         } finally {
             plaintext.fill(0)
