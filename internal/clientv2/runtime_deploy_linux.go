@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,6 +20,7 @@ import (
 
 	"loom/internal/agent"
 	"loom/internal/deploy"
+	"loom/internal/model"
 	"loom/internal/render"
 	"loom/internal/secret"
 	"loom/internal/wire"
@@ -386,9 +388,22 @@ func hydrateLinuxRuntimeFiles(plan *LinuxLinkRuntimePlanV1, artifact *wire.Linux
 		return nil, errors.New("[Linux runtime] runtime files 未 exact 使用 LinkIntent credentials")
 	}
 	secrets := make(map[string]string, len(required))
+	if local := plan.LocalWireGuardKey; local != nil {
+		if !required[local.SecretID] {
+			return nil, errors.New("[Linux runtime] 本地 WireGuard key 未被当前 intent 引用")
+		}
+		value, err := loadLinuxLocalWireGuardKey(model.SecretPath, local.PublicKey)
+		if err != nil {
+			return nil, err
+		}
+		secrets[local.SecretID] = value
+	}
 	for _, credential := range credentials {
 		if !required[credential.SecretID] {
 			continue
+		}
+		if _, duplicate := secrets[credential.SecretID]; duplicate {
+			return nil, errors.New("[Linux runtime] sealed credential 不能覆盖本地密钥或另一 credential")
 		}
 		if credential.Purpose != "data_plane_credential" && credential.Purpose != "tls_private_key" &&
 			credential.Purpose != "control_peer_identity" {
@@ -476,6 +491,13 @@ func validateLinuxRuntimeConfigSemantics(plan *LinuxLinkRuntimePlanV1, artifact 
 	}
 	for _, binding := range artifact.Bindings {
 		if binding.Transport == "wireguard" {
+			for _, action := range plan.Actions {
+				if action.LinkID == binding.LinkID && action.WireGuardPeer != nil {
+					if err := validateLinuxPeerWireGuardConfig(files[binding.ConfigPath], plan.DeviceID, *action.WireGuardPeer); err != nil {
+						return err
+					}
+				}
+			}
 			if binding.Mode == "dial" {
 				candidate, found := linuxRuntimeCandidate(plan, binding)
 				if !found || !wireGuardConfigMatchesEndpoint(files[binding.ConfigPath], candidate) {
@@ -585,7 +607,11 @@ func validateLinuxWireGuardConfig(content string) error {
 }
 
 func wireGuardConfigMatchesEndpoint(content string, candidate LinuxLinkDialCandidateV1) bool {
-	want := candidate.DialTargetFQDN + ":" + strconv.FormatInt(candidate.PublicPort, 10)
+	address := candidate.DialTargetFQDN
+	if candidate.PeerAddress != "" {
+		address = candidate.PeerAddress
+	}
+	want := net.JoinHostPort(address, strconv.FormatInt(candidate.PublicPort, 10))
 	for _, line := range strings.Split(content, "\n") {
 		key, value, found := strings.Cut(line, "=")
 		if found && strings.EqualFold(strings.TrimSpace(key), "Endpoint") && strings.TrimSpace(value) == want {

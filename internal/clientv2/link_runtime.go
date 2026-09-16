@@ -18,37 +18,40 @@ type LinuxLinkDialCandidateV1 struct {
 	Transport          string `json:"transport"`
 	ListenerGeneration int64  `json:"listener_generation"`
 	DialTargetFQDN     string `json:"dial_target_fqdn"`
+	PeerAddress        string `json:"peer_address,omitempty"`
 	PublicPort         int64  `json:"public_port"`
 	PublishedState     string `json:"published_state"`
 }
 
 type LinuxLinkRuntimeActionV1 struct {
-	LinkID               string                       `json:"link_id"`
-	Generation           int64                        `json:"generation"`
-	Purpose              string                       `json:"purpose"`
-	Mode                 string                       `json:"mode"`
-	Peer                 wire.LinkIntentDestinationV1 `json:"peer"`
-	AllowedTransports    []string                     `json:"allowed_transports"`
-	ListenerResourceRefs []string                     `json:"listener_resource_refs"`
-	CredentialRefs       []string                     `json:"credential_refs"`
-	RouteScope           string                       `json:"route_scope"`
-	ResolveAtFinalEgress bool                         `json:"resolve_at_final_egress"`
-	DialCandidates       []LinuxLinkDialCandidateV1   `json:"dial_candidates"`
+	LinkID               string                         `json:"link_id"`
+	Generation           int64                          `json:"generation"`
+	Purpose              string                         `json:"purpose"`
+	Mode                 string                         `json:"mode"`
+	Peer                 wire.LinkIntentDestinationV1   `json:"peer"`
+	AllowedTransports    []string                       `json:"allowed_transports"`
+	ListenerResourceRefs []string                       `json:"listener_resource_refs"`
+	CredentialRefs       []string                       `json:"credential_refs"`
+	RouteScope           string                         `json:"route_scope"`
+	ResolveAtFinalEgress bool                           `json:"resolve_at_final_egress"`
+	DialCandidates       []LinuxLinkDialCandidateV1     `json:"dial_candidates"`
+	WireGuardPeer        *wire.LinuxWireGuardResourceV1 `json:"wireguard_peer,omitempty"`
 }
 
 type LinuxLinkRuntimePlanV1 struct {
-	Schema              int                        `json:"schema"`
-	ClusterID           string                     `json:"cluster_id"`
-	DeviceID            string                     `json:"device_id"`
-	DeviceGeneration    int64                      `json:"device_generation"`
-	ArtifactGeneration  int64                      `json:"artifact_generation"`
-	EnableTUN           bool                       `json:"enable_tun"`
-	EnableMixed         bool                       `json:"enable_mixed"`
-	ServeForward        bool                       `json:"serve_forward"`
-	ServeInternetEgress bool                       `json:"serve_internet_egress"`
-	CertifiedControl    bool                       `json:"certified_control"`
-	ControlMemberID     string                     `json:"control_member_id,omitempty"`
-	Actions             []LinuxLinkRuntimeActionV1 `json:"actions"`
+	Schema              int                            `json:"schema"`
+	ClusterID           string                         `json:"cluster_id"`
+	DeviceID            string                         `json:"device_id"`
+	DeviceGeneration    int64                          `json:"device_generation"`
+	ArtifactGeneration  int64                          `json:"artifact_generation"`
+	EnableTUN           bool                           `json:"enable_tun"`
+	EnableMixed         bool                           `json:"enable_mixed"`
+	ServeForward        bool                           `json:"serve_forward"`
+	ServeInternetEgress bool                           `json:"serve_internet_egress"`
+	CertifiedControl    bool                           `json:"certified_control"`
+	ControlMemberID     string                         `json:"control_member_id,omitempty"`
+	Actions             []LinuxLinkRuntimeActionV1     `json:"actions"`
+	LocalWireGuardKey   *wire.LinuxLocalWireGuardKeyV1 `json:"local_wireguard_key,omitempty"`
 }
 
 // BuildLinuxLinkRuntimePlan 只把 current Device view 承诺的 exact artifact
@@ -92,6 +95,7 @@ func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previou
 		ServeForward:        containsString(responsibilities, "forward"),
 		ServeInternetEgress: containsString(responsibilities, "internet_egress"),
 		Actions:             []LinuxLinkRuntimeActionV1{},
+		LocalWireGuardKey:   artifact.LocalWireGuardKey,
 	}
 	memberIDs, err := linuxCertifiedControlMembers(set, peerDirectory,
 		envelope.SignedCurrent.Head.Body.Payload.ControlPeerDirectoryHash)
@@ -102,6 +106,9 @@ func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previou
 		plan.CertifiedControl, plan.ControlMemberID = true, memberID
 	}
 	credentialIDs := make(map[string]struct{}, len(credentials))
+	if artifact.LocalWireGuardKey != nil {
+		credentialIDs[artifact.LocalWireGuardKey.SecretID] = struct{}{}
+	}
 	for _, credential := range credentials {
 		if credential.SecretID == "" {
 			return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] installed credential ID 无效")
@@ -114,6 +121,13 @@ func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previou
 	endpoints, err := linuxAuthorizedDataEndpoints(&envelope.Payload.Active.EndpointBundle)
 	if err != nil {
 		return LinuxLinkRuntimePlanV1{}, err
+	}
+	wireguard := make(map[string]wire.LinuxWireGuardResourceV1, len(artifact.WireGuardResources))
+	for _, resource := range artifact.WireGuardResources {
+		if _, collision := endpoints[resource.ResourceID]; collision {
+			return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] private peer 资源与公开 endpoint ID 冲突")
+		}
+		wireguard[resource.ResourceID] = resource
 	}
 	for _, intent := range artifact.LinkIntents {
 		for _, credentialRef := range intent.CredentialRefs {
@@ -141,6 +155,20 @@ func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previou
 			CredentialRefs:       append([]string(nil), intent.CredentialRefs...), RouteScope: intent.RouteScope,
 			DialCandidates: []LinuxLinkDialCandidateV1{},
 		}
+		if len(intent.ListenerResourceRefs) == 1 {
+			if resource, found := wireguard[intent.ListenerResourceRefs[0]]; found {
+				if resource.ListenerGeneration < minimumGenerations[resource.ResourceID] {
+					return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] peer WireGuard listener 低于已见 generation")
+				}
+				action.WireGuardPeer = &resource
+				if mode == "dial" {
+					action.DialCandidates = append(action.DialCandidates, LinuxLinkDialCandidateV1{
+						EndpointID: resource.ResourceID, LogicalServerID: resource.ListenerDeviceID, Transport: "wireguard",
+						ListenerGeneration: resource.ListenerGeneration, PeerAddress: resource.EndpointAddress,
+						PublicPort: resource.EndpointPort, PublishedState: "preferred"})
+				}
+			}
+		}
 		switch intent.Purpose {
 		case "bootstrap":
 			return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] active Device 禁止恢复 bootstrap LinkIntent")
@@ -163,6 +191,9 @@ func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previou
 				}
 			}
 			action.ResolveAtFinalEgress = touchesFrom && linuxEgressGranted(envelope.Payload.Active.Grants, intent.To)
+			if action.WireGuardPeer != nil {
+				break
+			}
 			for _, endpointID := range intent.ListenerResourceRefs {
 				endpoint, found := endpoints[endpointID]
 				if !found || !containsString(intent.AllowedTransports, endpoint.Transport) {

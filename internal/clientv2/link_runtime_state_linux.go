@@ -108,6 +108,11 @@ func AcceptLinuxLinkRuntimePlan(runtimeStatePath, deviceStatePath string,
 	if err != nil {
 		return nil, err
 	}
+	for _, action := range plan.Actions {
+		if peer := action.WireGuardPeer; peer != nil && peer.ListenerGeneration > minimums[peer.ResourceID] {
+			minimums[peer.ResourceID] = peer.ListenerGeneration
+		}
+	}
 	generationFloors := make([]LinuxEndpointGenerationFloorV1, 0, len(minimums))
 	for endpointID, generation := range minimums {
 		generationFloors = append(generationFloors, LinuxEndpointGenerationFloorV1{

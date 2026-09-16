@@ -45,6 +45,14 @@ Head 的 `control_peer_directory_hash` 绑定的 exact private directory；activ
 新连接只按 preferred→advertised 取当前可拨代，draining/过期/低于已见 floor 的代均不进入计划，
 也不会扫描相邻端口。
 
+服务器之间的 WireGuard 边使用同一 artifact 承诺的 `wireguard_resources`，与公开
+DataIngressEndpoint 分开。每项绑定一条 intent 的 listener/dialer Device、明确 endpoint
+地址和端口、公钥、两端私网主机前缀与 listener generation；不从节点标签或相邻端口补全。
+迁移生产器仅将原网络方向解析一次并固化为这些字段。reader 检查资源归属及 generation floor，
+运行配置必须逐项匹配地址、公钥、AllowedIPs 和方向，不能添加 hook、其他 peer 或更宽路由。
+`local_wireguard_key` 可引用节点原有的固定密钥位置：私钥在节点本地读取并核对认证公钥，
+不会回收至控制面或进入分发制品；sealed credential 不能覆盖这个引用。
+
 Linux 的第二级 `linux-runtime-v1` config artifact 是服务端 renderer 对上述授权计划的确定性投影。
 它必须绑定 exact `linux-link-intents` content hash/generation，并逐项声明
 `link_id/link_generation/mode/transport/endpoint_id/listener_generation/config_path/runtime_tag`；客户端

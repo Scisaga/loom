@@ -28,15 +28,17 @@ const (
 // 当前 Device view 再承诺整个 artifact；后续普通 Head 可继续引用同一内容，
 // 不要求基准是最新 Head 的直接 parent（D105、D131）。
 type LinuxLinkIntentArtifactV1 struct {
-	Schema            int             `json:"schema"`
-	ClusterID         string          `json:"cluster_id"`
-	DeviceID          string          `json:"device_id"`
-	DeviceGeneration  int64           `json:"device_generation"`
-	Generation        int64           `json:"generation"`
-	RenderContractID  string          `json:"render_contract_id"`
-	AuthorityHeadHash string          `json:"authority_head_hash"`
-	Authority         CertifiedHeadV1 `json:"authority"`
-	LinkIntents       []LinkIntentV1  `json:"link_intents"`
+	Schema             int                        `json:"schema"`
+	ClusterID          string                     `json:"cluster_id"`
+	DeviceID           string                     `json:"device_id"`
+	DeviceGeneration   int64                      `json:"device_generation"`
+	Generation         int64                      `json:"generation"`
+	RenderContractID   string                     `json:"render_contract_id"`
+	AuthorityHeadHash  string                     `json:"authority_head_hash"`
+	Authority          CertifiedHeadV1            `json:"authority"`
+	LinkIntents        []LinkIntentV1             `json:"link_intents"`
+	WireGuardResources []LinuxWireGuardResourceV1 `json:"wireguard_resources,omitempty"`
+	LocalWireGuardKey  *LinuxLocalWireGuardKeyV1  `json:"local_wireguard_key,omitempty"`
 }
 
 type LinkIntentDestinationV1 struct {
@@ -290,7 +292,7 @@ func ValidateLinuxLinkIntentArtifact(artifact *LinuxLinkIntentArtifactV1) error 
 			return errors.New("[Linux runtime] LinkIntents 必须绑定 authority parent/本 Device 并按 link_id 严格排序")
 		}
 	}
-	return nil
+	return ValidateLinuxWireGuardResources(artifact)
 }
 
 func ValidateListenerGeneration(generation *ListenerGenerationV2, transport string) error {

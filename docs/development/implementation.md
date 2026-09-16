@@ -35,6 +35,10 @@
 | 客户端制品与发布页 | [签名目录](../../internal/clientrelease)、[构建目录工具](../../scripts/client-releases)、[发布工具](../../scripts/deploy-code)、[下载接口](../../internal/webui/releases.go) | Linux/Android/Windows 使用真实制品元数据、校验和及平台签名目录；部署工具只向配置的 distribution 位置增量复制，并在校验通过后激活控制节点目录。Android OS 签名与 Windows 预览状态分别展示；源码能力不证明某个制品已发布。 |
 | 兼容上报与实时列表 | [报告 handler](../../internal/report/client_report.go)、[presence](../../internal/report/presence.go)、[UI socket](../../internal/report/control_ui_socket.go) | v1 Observation、独立心跳和列表通知路径仍存在；其成功状态不证明 v2 private report/sequence 已运行。 |
 
+Linux 存量 WireGuard 的纯投影已固定逐边资源、方向、地址和公钥，正式 Linux reader/runtime
+可验证并复用原节点本地 key；它仍须与 sing-box/Agent 的完整 Linux 配置生产器及配置发布接通，
+不能从这一部分推断已有完整 Linux 迁移交付。
+
 ## 控制面迁移的下一处实际工作
 
 先通过受验证的存量迁移构造共享 v2 reader 可接受的真实 bootstrap authority，固定初始 epoch、
