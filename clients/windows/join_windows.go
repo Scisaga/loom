@@ -3,59 +3,26 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/ed25519"
-	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"time"
 
 	"golang.org/x/sys/windows"
-
 	"loom/internal/clientcomponent"
-	"loom/internal/clientenroll"
-	"loom/internal/clientjoin"
-	"loom/internal/clientreport"
 	"loom/internal/clientsecret"
-	"loom/internal/clientupdate"
-	"loom/internal/netx"
 	"loom/internal/windowsv2"
 )
 
 const (
-	windowsJoinIdentityPurpose = "network-join-identity-v1"
-	windowsJoinReadyPurpose    = "network-join-ready-v1"
-	windowsJoinRecoveryGrace   = 60 * time.Minute
-	maxWindowsComponent        = 32 << 20
-	bundledWindowsComponent    = "windows-dataplane.zip"
+	maxWindowsComponent     = 32 << 20
+	bundledWindowsComponent = "windows-dataplane.zip"
 )
-
-// windowsJoinOptions is the internal implementation behind the client's
-// "Import QR code" action. It is not a second Device-creation workflow: the
-// one-time join code identifies the Device already created on the control.
-type windowsJoinOptions struct {
-	Root          string
-	Invite        clientenroll.Invite
-	ComponentPath string
-	Client        *http.Client
-	Protector     clientsecret.Protector
-	Random        io.Reader
-	Arch          string
-	PlatformKey   ed25519.PublicKey
-	RetryInterval time.Duration
-	Progress      windowsJoinProgress
-}
 
 // 只传递本地阶段文案，不传递二维码、证书或服务端响应正文。
 type windowsJoinProgress func(string)
@@ -66,17 +33,7 @@ func (progress windowsJoinProgress) report(detail string) {
 	}
 }
 
-type windowsJoinResult struct {
-	NodeID string
-}
-
-type windowsProtectedJoinIdentity struct {
-	Schema        int                           `json:"schema"`
-	JoinCodeHash  string                        `json:"join_code_sha256"`
-	PendingInvite *clientenroll.Invite          `json:"pending_invite,omitempty"`
-	Identity      clientenroll.PreparedIdentity `json:"identity"`
-}
-
+type windowsJoinResult struct{ NodeID string }
 type windowsJoinCommitOptions struct {
 	Root          string
 	ComponentPath string
@@ -87,129 +44,22 @@ type windowsJoinCommitOptions struct {
 }
 
 var errWindowsJoinInputRequired = errors.New("需要导入中控生成的 Device 二维码")
+var errWindowsMigrationRequired = errors.New("此连接需要完成认证迁移后才能使用；原 Device 身份与数据已保留")
 
-// ensureWindowsJoined is the transaction behind the GUI's Import QR action.
-// It binds the Device already created by the control plane and never creates a
-// second Device. An empty source only resumes protected pending state.
-func ensureWindowsJoined(ctx context.Context, root string, protector clientsecret.Protector,
-	source string) (windowsJoinResult, error) {
-	return ensureWindowsJoinedInput(ctx, root, protector, source, nil, nil)
+func ensureWindowsJoined(ctx context.Context, root string, protector clientsecret.Protector, source string) (windowsJoinResult, error) {
+	return ensureWindowsJoinedInput(ctx, root, protector, source, nil)
 }
 
-func ensureWindowsJoinedInput(ctx context.Context, root string, protector clientsecret.Protector,
-	source string, provided *clientenroll.Invite, progress windowsJoinProgress) (windowsJoinResult, error) {
-	hasInput := strings.TrimSpace(source) != "" || provided != nil
-	var v2Carrier windowsv2.EnrollmentCarrier
-	v2Input := false
-	if provided == nil && strings.TrimSpace(source) != "" {
-		if carrier, carrierErr := windowsv2.ReadEnrollmentCarrier(source); carrierErr == nil {
-			v2Carrier, v2Input = carrier, true
-		}
-	}
-	if _, statErr := os.Lstat(windowsV2StatePath(root)); statErr == nil {
-		if hasInput && !v2Input {
-			return windowsJoinResult{}, errors.New("客户端已经加入 v2 网络；不能导入 v1 或另一份 Device 凭据")
-		}
-		return ensureWindowsV2Joined(ctx, root, protector, v2Carrier, progress)
-	} else if !errors.Is(statErr, os.ErrNotExist) {
-		return windowsJoinResult{}, fmt.Errorf("inspect Windows v2 state: %w", statErr)
-	}
-	v2Recovery, recoveryErr := windowsV2RecoveryExists(root)
-	if recoveryErr != nil {
-		return windowsJoinResult{}, recoveryErr
-	}
-	if v2Recovery {
-		if hasInput && !v2Input {
-			return windowsJoinResult{}, errors.New("已有 Windows v2 加入事务；禁止回退到 v1 输入")
-		}
-		return ensureWindowsV2Joined(ctx, root, protector, v2Carrier, progress)
-	}
-	if v2Input {
-		return ensureWindowsV2Joined(ctx, root, protector, v2Carrier, progress)
-	}
-	configPath := filepath.Join(root, "config", "client.json")
-	if config, err := clientupdate.ReadConfig(configPath); err == nil {
-		if hasInput {
-			return windowsJoinResult{}, errors.New("客户端已经加入网络；不能导入另一个 Device 的二维码")
-		}
-		if err := clearWindowsPendingInvite(root, protector); err != nil {
-			return windowsJoinResult{}, fmt.Errorf("清理已完成的加入凭据: %w", err)
-		}
-		_ = os.Remove(windowsJoinReadyPath(root))
-		return windowsJoinResult{NodeID: config.NodeID}, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return windowsJoinResult{}, fmt.Errorf("read joined-device state: %w", err)
-	}
-
-	readyExists := false
-	if info, statErr := os.Lstat(windowsJoinReadyPath(root)); statErr == nil {
-		readyExists = true
-		if hasInput && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
-			return windowsJoinResult{}, errors.New("已有待完成的加入事务；请直接启动客户端完成恢复，不要导入另一张二维码")
-		}
-	} else if !errors.Is(statErr, os.ErrNotExist) {
-		return windowsJoinResult{}, fmt.Errorf("inspect ready join recovery: %w", statErr)
-	}
-	var invite clientenroll.Invite
-	if provided != nil {
-		invite = *provided
-	} else if strings.TrimSpace(source) == "" {
-		pending, err := readWindowsPendingInvite(root, protector)
-		if err == nil {
-			invite = pending
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return windowsJoinResult{}, fmt.Errorf("读取待恢复的加入事务: %w", err)
-		}
-	}
-	if invite.Token == "" && !hasInput && !readyExists {
-		return windowsJoinResult{}, errWindowsJoinInputRequired
-	}
-
-	progress.report("正在读取加入信息并检查发行包…")
-	componentPath, err := bundledWindowsComponentPath()
-	if err != nil {
-		return windowsJoinResult{}, err
-	}
-	platformKey, err := embeddedWindowsPlatformKey()
-	if err != nil {
-		return windowsJoinResult{}, err
-	}
-	commitOptions := windowsJoinCommitOptions{
-		Root: root, ComponentPath: componentPath, Protector: protector,
-		Arch: runtime.GOARCH, PlatformKey: platformKey, Progress: progress,
-	}
-	if result, resumed, err := resumeWindowsJoinAt(commitOptions); err != nil {
-		return windowsJoinResult{}, fmt.Errorf("恢复已验证的加入事务: %w", err)
-	} else if resumed {
-		return result, nil
-	}
-	if invite.Token == "" && !hasInput {
-		return windowsJoinResult{}, errWindowsJoinInputRequired
-	}
-	if provided == nil && invite.Token == "" {
-		invite, err = clientjoin.Read(source, nil)
+func ensureWindowsJoinedInput(ctx context.Context, root string, protector clientsecret.Protector, source string, progress windowsJoinProgress) (windowsJoinResult, error) {
+	var carrier windowsv2.EnrollmentCarrier
+	if strings.TrimSpace(source) != "" {
+		var err error
+		carrier, err = windowsv2.ReadEnrollmentCarrier(source)
 		if err != nil {
 			return windowsJoinResult{}, err
 		}
-	} else if provided != nil {
-		// Clipboard images enter through the same strict invite validation as
-		// file/URI imports, without materializing the bearer secret on disk.
-		if err := clientenroll.ValidateInvite(invite); err != nil {
-			return windowsJoinResult{}, errors.New("加入二维码无效；请在中控为同一个 Device 重新生成")
-		}
 	}
-	joinContext, cancel := context.WithTimeout(ctx, 10*time.Minute)
-	defer cancel()
-	result, err := joinWindowsAt(joinContext, windowsJoinOptions{
-		Root: root, Invite: invite, ComponentPath: componentPath,
-		Client: netx.Client("", 60*time.Second), Protector: protector,
-		Random: rand.Reader, Arch: runtime.GOARCH, PlatformKey: platformKey,
-		RetryInterval: 3 * time.Second, Progress: progress,
-	})
-	if err != nil {
-		return windowsJoinResult{}, err
-	}
-	return result, nil
+	return ensureWindowsV2Joined(ctx, root, protector, carrier, progress)
 }
 
 func embeddedWindowsPlatformKey() (ed25519.PublicKey, error) {
@@ -245,127 +95,6 @@ func bundledWindowsComponentPath() (string, error) {
 	return path, nil
 }
 
-func joinWindowsAt(ctx context.Context, options windowsJoinOptions) (windowsJoinResult, error) {
-	var zero windowsJoinResult
-	if ctx == nil || options.Client == nil || options.Protector == nil || len(options.PlatformKey) != ed25519.PublicKeySize {
-		return zero, errors.New("Windows join dependencies are incomplete")
-	}
-	if options.Root == "" || !filepath.IsAbs(options.Root) || filepath.Clean(options.Root) != options.Root {
-		return zero, fmt.Errorf("Windows state root must be absolute and clean: %q", options.Root)
-	}
-	if options.ComponentPath == "" || !filepath.IsAbs(options.ComponentPath) || filepath.Clean(options.ComponentPath) != options.ComponentPath {
-		return zero, fmt.Errorf("component package path must be absolute and clean: %q", options.ComponentPath)
-	}
-	if options.Arch != "amd64" && options.Arch != "arm64" {
-		return zero, fmt.Errorf("unsupported Windows architecture %q", options.Arch)
-	}
-	if options.Random == nil {
-		options.Random = rand.Reader
-	}
-	if options.RetryInterval <= 0 {
-		options.RetryInterval = 3 * time.Second
-	}
-	mutex, err := acquireWindowsJoinLock()
-	if err != nil {
-		return zero, err
-	}
-	defer mutex.close()
-
-	configPath := filepath.Join(options.Root, "config", "client.json")
-	if err := requireAbsentJoinCommit(configPath); err != nil {
-		return zero, err
-	}
-	commitOptions := windowsJoinCommitOptions{
-		Root: options.Root, ComponentPath: options.ComponentPath, Protector: options.Protector,
-		Arch: options.Arch, PlatformKey: options.PlatformKey, Progress: options.Progress,
-	}
-	componentBody, verified, err := prepareWindowsJoinComponent(commitOptions)
-	if err != nil {
-		return zero, err
-	}
-	defer clear(componentBody)
-	if err := verifyWindowsInviteTrust(options.Invite, options.PlatformKey); err != nil {
-		return zero, err
-	}
-	expiresAt, err := time.Parse(time.RFC3339, options.Invite.ExpiresAt)
-	if err != nil {
-		return zero, errors.New("加入二维码无效；请在中控为同一个 Device 重新生成")
-	}
-	_, identityStatErr := os.Lstat(windowsJoinIdentityPath(options.Root))
-	if identityStatErr != nil && !errors.Is(identityStatErr, os.ErrNotExist) {
-		return zero, fmt.Errorf("inspect protected join identity: %w", identityStatErr)
-	}
-	// Expiry limits the first bearer use. If this process already persisted the
-	// exact QR and private identity, the control plane may allow a separate,
-	// bounded recovery window for a lost pending/ready response.
-	if !time.Now().Before(expiresAt) && errors.Is(identityStatErr, os.ErrNotExist) {
-		return zero, errors.New("加入二维码已过期；请在中控为同一个 Device 重新生成")
-	}
-	options.Progress.report("正在准备本机设备身份…")
-	identity, err := loadOrCreateWindowsIdentity(options.Root, options.Invite, options.Protector, options.Random)
-	if err != nil {
-		return zero, err
-	}
-	defer clearPreparedIdentity(&identity)
-
-	response, err := waitForReadyJoin(ctx, options, identity)
-	if err != nil {
-		return zero, err
-	}
-	defer clearJoinResponse(&response)
-	options.Progress.report("已收到中控配置，正在验证签名和设备证书…")
-	if err := validateWindowsReady(response, identity, options.PlatformKey); err != nil {
-		return zero, err
-	}
-	readyPath := windowsJoinReadyPath(options.Root)
-	if err := clientsecret.WriteJSONProtected(readyPath, windowsJoinReadyPurpose, &response, options.Protector); err != nil {
-		return zero, fmt.Errorf("protect ready join recovery: %w", err)
-	}
-	var durableResponse clientenroll.Response
-	if err := clientsecret.ReadJSONProtected(readyPath, windowsJoinReadyPurpose, &durableResponse, options.Protector); err != nil {
-		return zero, fmt.Errorf("replay protected ready join recovery: %w", err)
-	}
-	defer clearJoinResponse(&durableResponse)
-	return commitWindowsReady(commitOptions, identity, durableResponse, componentBody, verified)
-}
-
-func resumeWindowsJoinAt(options windowsJoinCommitOptions) (windowsJoinResult, bool, error) {
-	var zero windowsJoinResult
-	readyPath := windowsJoinReadyPath(options.Root)
-	info, err := os.Lstat(readyPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return zero, false, nil
-	}
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return zero, false, errors.New("protected ready join recovery is not a regular file")
-	}
-	lock, err := acquireWindowsJoinLock()
-	if err != nil {
-		return zero, false, err
-	}
-	defer lock.close()
-	if err := requireAbsentJoinCommit(filepath.Join(options.Root, "config", "client.json")); err != nil {
-		return zero, false, err
-	}
-	identity, err := readWindowsJoinIdentity(options.Root, options.Protector)
-	if err != nil {
-		return zero, false, fmt.Errorf("read protected join identity for recovery: %w", err)
-	}
-	defer clearPreparedIdentity(&identity)
-	var response clientenroll.Response
-	if err := clientsecret.ReadJSONProtected(readyPath, windowsJoinReadyPurpose, &response, options.Protector); err != nil {
-		return zero, false, fmt.Errorf("read protected ready join recovery: %w", err)
-	}
-	defer clearJoinResponse(&response)
-	componentBody, verified, err := prepareWindowsJoinComponent(options)
-	if err != nil {
-		return zero, false, err
-	}
-	defer clear(componentBody)
-	result, err := commitWindowsReady(options, identity, response, componentBody, verified)
-	return result, true, err
-}
-
 func prepareWindowsJoinComponent(options windowsJoinCommitOptions) ([]byte, *clientcomponent.Verified, error) {
 	if options.Root == "" || !filepath.IsAbs(options.Root) || filepath.Clean(options.Root) != options.Root ||
 		options.ComponentPath == "" || !filepath.IsAbs(options.ComponentPath) || filepath.Clean(options.ComponentPath) != options.ComponentPath ||
@@ -388,368 +117,6 @@ func prepareWindowsJoinComponent(options windowsJoinCommitOptions) ([]byte, *cli
 		return nil, nil, fmt.Errorf("component package architecture is %s, this client is %s", verified.Manifest.Arch, options.Arch)
 	}
 	return body, verified, nil
-}
-
-func verifyWindowsInviteTrust(invite clientenroll.Invite, platformKey ed25519.PublicKey) error {
-	// 在提交一次性凭据前验证现行入口，避免加入成功后才发现无法上报。
-	if _, err := clientreport.Endpoint(invite.Endpoint); err != nil {
-		return errors.New("加入二维码入口无效；请从中控重新创建 Windows Device 二维码")
-	}
-	if invite.PlatformKeySHA256 == "" {
-		return errors.New("加入二维码缺少中控验证指纹；请从中控重新创建 Windows Device 二维码")
-	}
-	digest := sha256.Sum256(platformKey)
-	if !bytes.Equal([]byte(invite.PlatformKeySHA256), []byte(hex.EncodeToString(digest[:]))) {
-		return errors.New("二维码所属中控与此 Windows 客户端发行包不匹配")
-	}
-	return nil
-}
-
-func validateWindowsReady(response clientenroll.Response, identity clientenroll.PreparedIdentity, platformKey ed25519.PublicKey) error {
-	material, err := clientenroll.ValidateReady(response, identity)
-	if err != nil {
-		return fmt.Errorf("validate ready bootstrap: %w", err)
-	}
-	defer clearReadyMaterial(&material)
-	returnedKey, err := decodeWindowsPlatformKey(material.PlatformPublicKey)
-	if err != nil {
-		return err
-	}
-	if !bytes.Equal(returnedKey, platformKey) {
-		return errors.New("control plane platform key does not match this Windows client release")
-	}
-	secrets, err := clientsecret.ParseEnv(string(material.SecretsEnv))
-	if err != nil {
-		return fmt.Errorf("validate bootstrap secrets: %w", err)
-	}
-	clearStringMap(secrets)
-	config := clientupdate.Config{
-		Schema: clientupdate.ConfigSchema, NodeID: material.NodeID,
-		DistributionURLs: append([]string(nil), material.DistributionURLs...), DNS: append([]string(nil), material.DNS...),
-	}
-	if err := config.Validate(); err != nil {
-		return fmt.Errorf("validate portable update coordinates: %w", err)
-	}
-	return nil
-}
-
-func commitWindowsReady(options windowsJoinCommitOptions, identity clientenroll.PreparedIdentity,
-	response clientenroll.Response, componentBody []byte, verified *clientcomponent.Verified) (windowsJoinResult, error) {
-	var zero windowsJoinResult
-	options.Progress.report("正在验证并保存加入配置…")
-	if verified == nil || verified.Manifest.Arch != options.Arch {
-		return zero, errors.New("verified Windows component does not match join commit")
-	}
-	material, err := clientenroll.ValidateReady(response, identity)
-	if err != nil {
-		return zero, fmt.Errorf("validate ready bootstrap: %w", err)
-	}
-	defer clearReadyMaterial(&material)
-	secrets, err := clientsecret.ParseEnv(string(material.SecretsEnv))
-	if err != nil {
-		return zero, fmt.Errorf("validate bootstrap secrets: %w", err)
-	}
-	defer clearStringMap(secrets)
-	platformKey, err := decodeWindowsPlatformKey(material.PlatformPublicKey)
-	if err != nil {
-		return zero, err
-	}
-	if !bytes.Equal(platformKey, options.PlatformKey) {
-		return zero, errors.New("control plane platform key does not match this Windows client release")
-	}
-	config := clientupdate.Config{
-		Schema: clientupdate.ConfigSchema, NodeID: material.NodeID,
-		DistributionURLs: append([]string(nil), material.DistributionURLs...), DNS: append([]string(nil), material.DNS...),
-	}
-	if err := config.Validate(); err != nil {
-		return zero, fmt.Errorf("validate portable update coordinates: %w", err)
-	}
-	configBody, err := json.MarshalIndent(&config, "", "  ")
-	if err != nil {
-		return zero, err
-	}
-	configBody = append(configBody, '\n')
-
-	if _, err := clientcomponent.InstallWindows(options.Root, componentBody, platformKey); err != nil {
-		return zero, fmt.Errorf("install signed Windows data plane: %w", err)
-	}
-	if err := clientsecret.WriteVault(filepath.Join(options.Root, "secrets", "vault.json.dpapi"), secrets, options.Protector); err != nil {
-		return zero, fmt.Errorf("write DPAPI secret vault: %w", err)
-	}
-	for _, file := range []struct {
-		path string
-		body []byte
-	}{
-		{filepath.Join(options.Root, "trust", "platform.pub"), material.PlatformPublicKey},
-		{filepath.Join(options.Root, "tls", "ca.crt"), material.CACertPEM},
-		{filepath.Join(options.Root, "tls", "node.crt"), material.NodeCertPEM},
-		{filepath.Join(options.Root, "state", "expected-current.json"), material.ReleaseAuthority},
-	} {
-		if err := writeWindowsJoinFile(file.path, file.body); err != nil {
-			return zero, fmt.Errorf("write joined-device file %s: %w", file.path, err)
-		}
-	}
-	if _, err := clientupdate.ReadPublicKey(filepath.Join(options.Root, "trust", "platform.pub")); err != nil {
-		return zero, fmt.Errorf("replay installed platform key: %w", err)
-	}
-	replayedSecrets, err := clientsecret.ReadVault(filepath.Join(options.Root, "secrets", "vault.json.dpapi"), options.Protector)
-	if err != nil {
-		return zero, fmt.Errorf("replay installed secret vault: %w", err)
-	}
-	clearStringMap(replayedSecrets)
-	if _, err := clientcomponent.LoadWindows(options.Root, platformKey, options.Arch, verified.Manifest.SingBox.Version); err != nil {
-		return zero, fmt.Errorf("replay installed component slot: %w", err)
-	}
-	configPath := filepath.Join(options.Root, "config", "client.json")
-	if err := requireAbsentJoinCommit(configPath); err != nil {
-		return zero, err
-	}
-	if err := writeWindowsJoinCommit(configPath, configBody); err != nil {
-		return zero, fmt.Errorf("commit joined-device state: %w", err)
-	}
-	if _, err := clientupdate.ReadConfig(configPath); err != nil {
-		return zero, fmt.Errorf("replay joined-device state: %w", err)
-	}
-	if err := clearWindowsPendingInvite(options.Root, options.Protector); err != nil {
-		return zero, fmt.Errorf("clear consumed join recovery credential: %w", err)
-	}
-	_ = os.Remove(windowsJoinReadyPath(options.Root))
-	return windowsJoinResult{NodeID: material.NodeID}, nil
-}
-
-func windowsJoinIdentityPath(root string) string {
-	return filepath.Join(root, "join", "identity.json.dpapi")
-}
-
-func windowsJoinReadyPath(root string) string {
-	return filepath.Join(root, "join", "ready.json.dpapi")
-}
-
-func waitForReadyJoin(ctx context.Context, options windowsJoinOptions, identity clientenroll.PreparedIdentity) (clientenroll.Response, error) {
-	expiresAt, err := time.Parse(time.RFC3339, options.Invite.ExpiresAt)
-	if err != nil {
-		return clientenroll.Response{}, errors.New("加入二维码无效；请在中控为同一个 Device 重新生成")
-	}
-	// The control's exact-replay deadline is anchored to its authoritative
-	// claim/ready timestamps. This local cap is deliberately conservative: it
-	// keeps retrying across the QR's first-use expiry, but never retains an
-	// offline retry loop beyond one additional bounded window.
-	localRecoveryDeadline := expiresAt.Add(windowsJoinRecoveryGrace)
-	options.Progress.report("正在联系中控，等待加入配置…")
-	for {
-		response, err := clientenroll.ClaimPrepared(ctx, options.Client, options.Invite, identity, nil)
-		if err == nil && response.Configuration == "ready" {
-			return response, nil
-		}
-		if err != nil && !clientenroll.IsTransient(err) {
-			return clientenroll.Response{}, err
-		}
-		if err == nil && response.Configuration != "pending" {
-			return clientenroll.Response{}, fmt.Errorf("unexpected join state %q", response.Configuration)
-		}
-		if err == nil {
-			options.Progress.report("中控已确认设备，正在等待配置发布…")
-		} else {
-			options.Progress.report("暂时无法取得中控配置，稍后自动重试…")
-		}
-		if !time.Now().Before(localRecoveryDeadline) {
-			return clientenroll.Response{}, errors.New("Device 加入恢复窗口已过期；请在中控明确处理后重新生成二维码")
-		}
-		timer := time.NewTimer(options.RetryInterval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return clientenroll.Response{}, fmt.Errorf("wait for ready bootstrap: %w", ctx.Err())
-		case <-timer.C:
-		}
-	}
-}
-
-func loadOrCreateWindowsIdentity(root string, invite clientenroll.Invite, protector clientsecret.Protector, random io.Reader) (clientenroll.PreparedIdentity, error) {
-	if err := clientenroll.ValidateInvite(invite); err != nil {
-		return clientenroll.PreparedIdentity{}, err
-	}
-	path := windowsJoinIdentityPath(root)
-	wantedHash := windowsJoinCodeHash(invite.Token)
-	var protected windowsProtectedJoinIdentity
-	err := clientsecret.ReadJSONProtected(path, windowsJoinIdentityPurpose, &protected, protector)
-	if err == nil {
-		if err := validateWindowsJoinIdentity(protected, wantedHash); err != nil {
-			clearPreparedIdentity(&protected.Identity)
-			return clientenroll.PreparedIdentity{}, fmt.Errorf("validate protected join identity: %w", err)
-		}
-		if protected.Identity.Endpoint != invite.Endpoint {
-			clearPreparedIdentity(&protected.Identity)
-			return clientenroll.PreparedIdentity{}, errors.New("protected join identity is bound to another platform or control endpoint")
-		}
-		if protected.PendingInvite != nil {
-			if !sameWindowsInvite(*protected.PendingInvite, invite) {
-				clearPreparedIdentity(&protected.Identity)
-				return clientenroll.PreparedIdentity{}, errors.New("protected join identity belongs to another Device join code")
-			}
-			return protected.Identity, nil
-		}
-		pending := invite
-		protected.PendingInvite = &pending
-		replay, err := persistWindowsJoinIdentity(path, protected, protector)
-		clearPreparedIdentity(&protected.Identity)
-		if err != nil {
-			return clientenroll.PreparedIdentity{}, fmt.Errorf("protect pending join recovery: %w", err)
-		}
-		return replay.Identity, nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return clientenroll.PreparedIdentity{}, fmt.Errorf("read protected join identity: %w", err)
-	}
-	identity, err := clientenroll.GeneratePreparedIdentity(clientenroll.PlatformWindowsDesktop, invite.Endpoint, random)
-	if err != nil {
-		return clientenroll.PreparedIdentity{}, err
-	}
-	pending := invite
-	protected = windowsProtectedJoinIdentity{
-		Schema: 1, JoinCodeHash: wantedHash, PendingInvite: &pending, Identity: identity,
-	}
-	replay, err := persistWindowsJoinIdentity(path, protected, protector)
-	clearPreparedIdentity(&protected.Identity)
-	if err != nil {
-		return clientenroll.PreparedIdentity{}, fmt.Errorf("protect join identity: %w", err)
-	}
-	return replay.Identity, nil
-}
-
-func persistWindowsJoinIdentity(path string, protected windowsProtectedJoinIdentity,
-	protector clientsecret.Protector) (windowsProtectedJoinIdentity, error) {
-	var zero windowsProtectedJoinIdentity
-	if err := clientsecret.WriteJSONProtected(path, windowsJoinIdentityPurpose, &protected, protector); err != nil {
-		return zero, err
-	}
-	var replay windowsProtectedJoinIdentity
-	if err := clientsecret.ReadJSONProtected(path, windowsJoinIdentityPurpose, &replay, protector); err != nil {
-		return zero, fmt.Errorf("replay protected join identity: %w", err)
-	}
-	if err := validateWindowsJoinIdentity(replay, protected.JoinCodeHash); err != nil ||
-		replay.Identity.Endpoint != protected.Identity.Endpoint ||
-		replay.Identity.RequestID != protected.Identity.RequestID ||
-		!sameOptionalWindowsInvite(replay.PendingInvite, protected.PendingInvite) {
-		clearPreparedIdentity(&replay.Identity)
-		if err == nil {
-			err = errors.New("protected join identity changed during replay")
-		}
-		return zero, err
-	}
-	return replay, nil
-}
-
-func readWindowsJoinIdentity(root string, protector clientsecret.Protector) (clientenroll.PreparedIdentity, error) {
-	var protected windowsProtectedJoinIdentity
-	if err := clientsecret.ReadJSONProtected(windowsJoinIdentityPath(root), windowsJoinIdentityPurpose, &protected, protector); err != nil {
-		return clientenroll.PreparedIdentity{}, err
-	}
-	if err := validateWindowsJoinIdentity(protected, ""); err != nil {
-		clearPreparedIdentity(&protected.Identity)
-		return clientenroll.PreparedIdentity{}, err
-	}
-	return protected.Identity, nil
-}
-
-func readWindowsPendingInvite(root string, protector clientsecret.Protector) (clientenroll.Invite, error) {
-	var protected windowsProtectedJoinIdentity
-	if err := clientsecret.ReadJSONProtected(windowsJoinIdentityPath(root), windowsJoinIdentityPurpose, &protected, protector); err != nil {
-		return clientenroll.Invite{}, err
-	}
-	defer clearPreparedIdentity(&protected.Identity)
-	if err := validateWindowsJoinIdentity(protected, ""); err != nil {
-		return clientenroll.Invite{}, err
-	}
-	if protected.PendingInvite == nil {
-		return clientenroll.Invite{}, os.ErrNotExist
-	}
-	return *protected.PendingInvite, nil
-}
-
-func clearWindowsPendingInvite(root string, protector clientsecret.Protector) error {
-	path := windowsJoinIdentityPath(root)
-	var protected windowsProtectedJoinIdentity
-	if err := clientsecret.ReadJSONProtected(path, windowsJoinIdentityPurpose, &protected, protector); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-	defer clearPreparedIdentity(&protected.Identity)
-	if err := validateWindowsJoinIdentity(protected, ""); err != nil {
-		return err
-	}
-	if protected.PendingInvite == nil {
-		return nil
-	}
-	protected.PendingInvite.Token = ""
-	protected.PendingInvite = nil
-	replay, err := persistWindowsJoinIdentity(path, protected, protector)
-	clearPreparedIdentity(&replay.Identity)
-	if err != nil {
-		return err
-	}
-	if replay.PendingInvite != nil {
-		return errors.New("pending join recovery credential remained after cleanup")
-	}
-	return nil
-}
-
-func validateWindowsJoinIdentity(protected windowsProtectedJoinIdentity, wantedHash string) error {
-	decoded, err := hex.DecodeString(protected.JoinCodeHash)
-	if protected.Schema != 1 || err != nil || len(decoded) != sha256.Size ||
-		hex.EncodeToString(decoded) != protected.JoinCodeHash {
-		return errors.New("protected join identity has invalid schema or join-code binding")
-	}
-	if wantedHash != "" && !bytes.Equal([]byte(protected.JoinCodeHash), []byte(wantedHash)) {
-		return errors.New("protected join identity belongs to another Device join code")
-	}
-	if err := clientenroll.ValidatePreparedIdentity(protected.Identity); err != nil {
-		return err
-	}
-	if protected.Identity.Platform != clientenroll.PlatformWindowsDesktop {
-		return errors.New("protected join identity has the wrong platform")
-	}
-	if protected.PendingInvite != nil {
-		if err := clientenroll.ValidateInvite(*protected.PendingInvite); err != nil ||
-			windowsJoinCodeHash(protected.PendingInvite.Token) != protected.JoinCodeHash ||
-			protected.PendingInvite.Endpoint != protected.Identity.Endpoint {
-			return errors.New("protected pending join credential does not match its Device identity")
-		}
-	}
-	return nil
-}
-
-func sameWindowsInvite(left, right clientenroll.Invite) bool {
-	return left.Endpoint == right.Endpoint && left.Token == right.Token && left.ExpiresAt == right.ExpiresAt &&
-		left.PlatformKeySHA256 == right.PlatformKeySHA256
-}
-
-func sameOptionalWindowsInvite(left, right *clientenroll.Invite) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return sameWindowsInvite(*left, *right)
-}
-
-func windowsJoinCodeHash(token string) string {
-	digest := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(digest[:])
-}
-
-func requireAbsentJoinCommit(path string) error {
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("inspect joined-device state: %w", err)
-	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("joined-device state exists but is not a regular file")
-	}
-	return errors.New("客户端已经加入网络；如需更换 Device，必须先明确执行退出网络")
 }
 
 func readWindowsComponent(path string) ([]byte, error) {
@@ -861,44 +228,4 @@ func writeWindowsJoinFileMode(path string, body []byte, replace bool) (retErr er
 		return err
 	}
 	return nil
-}
-
-func clearPreparedIdentity(identity *clientenroll.PreparedIdentity) {
-	if identity == nil {
-		return
-	}
-	clear(identity.PrivateKeyPEM)
-	clear(identity.CSRPEM)
-	identity.PrivateKeyPEM = nil
-	identity.CSRPEM = nil
-}
-
-func clearReadyMaterial(material *clientenroll.ReadyMaterial) {
-	if material == nil {
-		return
-	}
-	for _, body := range [][]byte{
-		material.SecretsEnv, material.PlatformPublicKey,
-		material.ReleaseAuthority, material.CACertPEM, material.NodeCertPEM,
-	} {
-		clear(body)
-	}
-}
-
-func clearJoinResponse(response *clientenroll.Response) {
-	if response == nil || response.Bootstrap == nil {
-		return
-	}
-	response.Bootstrap.SecretsEnv = ""
-	response.Bootstrap.PlatformPublicKey = ""
-	response.Bootstrap.ReleaseAuthority = ""
-	response.Bootstrap.CACertPEM = ""
-	response.Bootstrap.NodeCertPEM = ""
-}
-
-func clearStringMap(values map[string]string) {
-	for key := range values {
-		values[key] = ""
-		delete(values, key)
-	}
 }

@@ -15,7 +15,6 @@ import (
 
 	"golang.org/x/sys/windows"
 	"loom/internal/clientcore"
-	"loom/internal/clientenroll"
 	"loom/internal/clientruntime"
 	"loom/internal/clientsecret"
 	"loom/internal/windowsv2"
@@ -44,8 +43,8 @@ type windowsProfileManager struct {
 	closing          bool
 	start            func(*portableGUI)
 	resume           func(*portableGUI) (windowsJoinResult, error)
-	joinDraft        func(*portableGUI, *clientenroll.Invite) (windowsJoinResult, error)
 	joinDraftV2      func(*portableGUI, string) (windowsJoinResult, error)
+	readJoined       func(string, clientsecret.Protector) (string, bool, error)
 	draft            *windowsProfileDraft
 	draftVisible     bool
 	workers          sync.WaitGroup
@@ -86,12 +85,10 @@ func newWindowsProfileManager(owner *portableGUI) (*windowsProfileManager, error
 		return nil, err
 	}
 	m := &windowsProfileManager{store: store, owner: owner, children: make(map[string]*portableGUI), start: (*portableGUI).startRuntime,
-		resume: func(child *portableGUI) (windowsJoinResult, error) { return child.joinInput("", nil) },
-		joinDraft: func(child *portableGUI, invite *clientenroll.Invite) (windowsJoinResult, error) {
-			return child.joinInput("", invite)
-		},
+		readJoined: windowsJoinedDeviceID,
+		resume:     func(child *portableGUI) (windowsJoinResult, error) { return child.joinInput("") },
 		joinDraftV2: func(child *portableGUI, carrier string) (windowsJoinResult, error) {
-			return child.joinInput(carrier, nil)
+			return child.joinInput(carrier)
 		}}
 	for _, p := range store.Snapshot().Profiles {
 		child, err := m.makeChild(p.ID)
@@ -122,7 +119,7 @@ func (m *windowsProfileManager) makeProfileChild(root string) *portableGUI {
 	ctx, cancel := context.WithCancel(m.owner.ctx)
 	child := &portableGUI{edition: m.owner.edition, root: root, ctx: ctx, cancel: cancel,
 		state: guiNeedsJoin, routeSelected: -1, profileChild: true, hostname: m.owner.hostname}
-	deviceID, windowsV2, err := windowsJoinedDeviceID(root, child.protector())
+	deviceID, windowsV2, err := m.readJoined(root, child.protector())
 	if err == nil {
 		child.joined, child.windowsV2, child.deviceID, child.state = true, windowsV2, deviceID, guiStopped
 		child.detail = "已保存加入身份；尚未连接。"
@@ -157,7 +154,7 @@ func readWindowsLocalSelectorPlan(root string, protector clientsecret.Protector,
 		return nil, err
 	}
 	if state != nil {
-		material, err := windowsv2.PrepareRuntimeMaterial(state)
+		material, err := prepareWindowsV2RuntimeMaterial(root, protector, state)
 		if err != nil {
 			return nil, err
 		}
@@ -179,24 +176,7 @@ func readWindowsLocalSelectorPlan(root string, protector clientsecret.Protector,
 		return clientruntime.BuildWindowsSelectorPlan(runtimeBody, material.AgentConfig,
 			profile, caPath)
 	}
-	files, _, err := clientruntime.ReadCandidateBundle(root, protector)
-	if err != nil {
-		return nil, err
-	}
-	profile, err := runtimeProfile(edition)
-	if err != nil {
-		return nil, err
-	}
-	caPath := filepath.Join(root, "tls", "ca.crt")
-	source, agentBody := []byte(files["sing-box/config.json"]), []byte(files["agent/config.json"])
-	defer clear(source)
-	defer clear(agentBody)
-	runtimeBody, err := clientruntime.DeriveWindowsRuntimeConfig(source, profile, caPath)
-	if err != nil {
-		return nil, err
-	}
-	defer clear(runtimeBody)
-	return clientruntime.BuildWindowsSelectorPlan(runtimeBody, agentBody, profile, caPath)
+	return nil, os.ErrNotExist
 }
 
 func (m *windowsProfileManager) snapshot() portableGUISnapshot {
@@ -561,7 +541,7 @@ func (m *windowsProfileManager) command(req brokerRequest) error {
 	m.mu.Unlock()
 	switch req.Operation {
 	case "join":
-		if child == nil || (req.Invite == nil && req.V2Carrier == "") {
+		if child == nil || req.V2Carrier == "" {
 			return errors.New("请选择连接配置并导入加入二维码")
 		}
 		if _, err := m.store.ResolveRoot(req.ProfileID); err != nil {
@@ -571,11 +551,7 @@ func (m *windowsProfileManager) command(req brokerRequest) error {
 		if child.ctx.Err() != nil || s.joined || (s.state != guiNeedsJoin && s.state != guiError) {
 			return errors.New("当前配置不能导入二维码")
 		}
-		if req.V2Carrier != "" {
-			child.importWindowsV2Carrier(req.V2Carrier)
-		} else {
-			child.importJoinInvite(*req.Invite)
-		}
+		child.importWindowsV2Carrier(req.V2Carrier)
 		return nil
 	case "preference":
 		if child == nil || req.Preference == nil {
@@ -847,12 +823,7 @@ func (m *windowsProfileManager) resumePendingProfiles() {
 	m.mu.Unlock()
 	for _, child := range children {
 		if child.snapshot().joined {
-			// 已提交 client.json 的事务仍要清掉旧 bearer，保留原身份密钥。
-			if err := clearWindowsPendingInvite(child.root, child.protector()); err != nil {
-				child.update(guiError, false, "", "读取已保存加入身份失败："+err.Error())
-			} else {
-				_ = os.Remove(windowsJoinReadyPath(child.root))
-			}
+
 			continue
 		}
 		pending, err := windowsProfileHasJoinRecovery(child)
@@ -867,27 +838,7 @@ func (m *windowsProfileManager) resumePendingProfiles() {
 }
 
 func windowsProfileHasJoinRecovery(child *portableGUI) (bool, error) {
-	if found, err := windowsV2RecoveryExists(child.root); err != nil || found {
-		return found, err
-	}
-	path := windowsJoinReadyPath(child.root)
-	if info, err := os.Lstat(path); err == nil {
-		if !info.Mode().IsRegular() {
-			return false, errors.New("加入恢复材料必须是普通文件")
-		}
-		if err := checkWindowsProfilePath(path); err != nil {
-			return false, err
-		}
-		return true, nil
-	} else if !os.IsNotExist(err) {
-		return false, err
-	}
-	invite, err := readWindowsPendingInvite(child.root, child.protector())
-	invite.Token = ""
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	return err == nil, err
+	return windowsV2RecoveryExists(child.root)
 }
 
 func (app *portableGUI) profileError(err error) {

@@ -11,10 +11,11 @@ import (
 )
 
 func TestLinuxLinkIntentArtifactProducerPublishesExactDeviceRef(t *testing.T) {
-	parent := wire.HashRaw("linux-artifact-test", []byte("parent"))
+	authority, set := linuxArtifactAuthority(t)
+	parent := authority.Head.HeadHash
 	input := LinuxLinkIntentProjectionV1{
 		ClusterID: "demo-cluster", DeviceID: "demo-device", DeviceGeneration: 3,
-		Generation: 4, ParentHeadHash: parent,
+		Generation: 4, ParentHeadHash: parent, Authority: authority, ControlSet: &set,
 		LinkIntents: []wire.LinkIntentV1{{
 			Schema: 1, ClusterID: "demo-cluster", LinkID: "data-a",
 			FromDeviceID: "demo-device", To: wire.LinkIntentDestinationV1{DeviceID: "demo-egress"},
@@ -52,10 +53,11 @@ func TestLinuxLinkIntentArtifactProducerPublishesExactDeviceRef(t *testing.T) {
 }
 
 func TestLinuxLinkIntentArtifactProducerRejectsForeignOrBootstrapEdges(t *testing.T) {
-	parent := wire.HashRaw("linux-artifact-test", []byte("parent"))
+	authority, set := linuxArtifactAuthority(t)
+	parent := authority.Head.HeadHash
 	base := LinuxLinkIntentProjectionV1{
 		ClusterID: "demo-cluster", DeviceID: "demo-device", DeviceGeneration: 1,
-		Generation: 1, ParentHeadHash: parent,
+		Generation: 1, ParentHeadHash: parent, Authority: authority, ControlSet: &set,
 		LinkIntents: []wire.LinkIntentV1{{
 			Schema: 1, ClusterID: "demo-cluster", LinkID: "data-a", FromDeviceID: "foreign-a",
 			To: wire.LinkIntentDestinationV1{DeviceID: "foreign-b"}, Purpose: "data_forward",
@@ -77,10 +79,11 @@ func TestLinuxLinkIntentArtifactProducerRejectsForeignOrBootstrapEdges(t *testin
 }
 
 func TestLinuxRuntimeArtifactProducerBindsExactLinkIntentAndPublishesTypedRef(t *testing.T) {
-	parent := wire.HashRaw("linux-runtime-artifact-test", []byte("parent"))
+	authority, set := linuxArtifactAuthority(t)
+	parent := authority.Head.HeadHash
 	linkRaw, err := BuildLinuxLinkIntentArtifact(LinuxLinkIntentProjectionV1{
 		ClusterID: "demo-cluster", DeviceID: "demo-device", DeviceGeneration: 3,
-		Generation: 4, ParentHeadHash: parent,
+		Generation: 4, ParentHeadHash: parent, Authority: authority, ControlSet: &set,
 		LinkIntents: []wire.LinkIntentV1{{
 			Schema: 1, ClusterID: "demo-cluster", LinkID: "data-a",
 			FromDeviceID: "demo-device", To: wire.LinkIntentDestinationV1{DeviceID: "demo-egress"},
@@ -147,4 +150,29 @@ func TestLinuxRuntimeArtifactProducerBindsExactLinkIntentAndPublishesTypedRef(t 
 	if _, err := BuildLinuxRuntimeArtifact(input); err == nil {
 		t.Fatal("非 exact canonical LinkIntent bytes 被 runtime producer 接受")
 	}
+}
+
+func linuxArtifactAuthority(t *testing.T) (wire.CertifiedHeadV1, wire.ControlSetV1) {
+	t.Helper()
+	set, keys := testControlSet(t, 1)
+	set.ClusterID = "demo-cluster"
+	for i := range set.Members {
+		set.Members[i].ClusterID = set.ClusterID
+	}
+	head := testControlHead(t, &set)
+	body := head.Body
+	body.Payload.ClusterID = set.ClusterID
+	head, err := wire.NewHeadEntry(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature, err := wire.SignHeadAttestation(wire.AttestationForHead(&head), set.Members[0], keys[set.Members[0].MemberID])
+	if err != nil {
+		t.Fatal(err)
+	}
+	qc, err := wire.MarshalCanonical(wire.StableQC(&head, []wire.ControlConfigSignatureV1{signature}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return wire.CertifiedHeadV1{Head: head, QC: qc}, set
 }

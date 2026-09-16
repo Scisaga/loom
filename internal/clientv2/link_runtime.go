@@ -18,37 +18,43 @@ type LinuxLinkDialCandidateV1 struct {
 	Transport          string `json:"transport"`
 	ListenerGeneration int64  `json:"listener_generation"`
 	DialTargetFQDN     string `json:"dial_target_fqdn"`
+	PeerAddress        string `json:"peer_address,omitempty"`
+	TLSServerName      string `json:"tls_server_name,omitempty"`
 	PublicPort         int64  `json:"public_port"`
 	PublishedState     string `json:"published_state"`
 }
 
 type LinuxLinkRuntimeActionV1 struct {
-	LinkID               string                       `json:"link_id"`
-	Generation           int64                        `json:"generation"`
-	Purpose              string                       `json:"purpose"`
-	Mode                 string                       `json:"mode"`
-	Peer                 wire.LinkIntentDestinationV1 `json:"peer"`
-	AllowedTransports    []string                     `json:"allowed_transports"`
-	ListenerResourceRefs []string                     `json:"listener_resource_refs"`
-	CredentialRefs       []string                     `json:"credential_refs"`
-	RouteScope           string                       `json:"route_scope"`
-	ResolveAtFinalEgress bool                         `json:"resolve_at_final_egress"`
-	DialCandidates       []LinuxLinkDialCandidateV1   `json:"dial_candidates"`
+	LinkID               string                         `json:"link_id"`
+	Generation           int64                          `json:"generation"`
+	Purpose              string                         `json:"purpose"`
+	Mode                 string                         `json:"mode"`
+	Peer                 wire.LinkIntentDestinationV1   `json:"peer"`
+	AllowedTransports    []string                       `json:"allowed_transports"`
+	ListenerResourceRefs []string                       `json:"listener_resource_refs"`
+	CredentialRefs       []string                       `json:"credential_refs"`
+	RouteScope           string                         `json:"route_scope"`
+	ResolveAtFinalEgress bool                           `json:"resolve_at_final_egress"`
+	DialCandidates       []LinuxLinkDialCandidateV1     `json:"dial_candidates"`
+	WireGuardPeer        *wire.LinuxWireGuardResourceV1 `json:"wireguard_peer,omitempty"`
+	PeerTransport        *wire.LinuxPeerTransportV1     `json:"peer_transport,omitempty"`
 }
 
 type LinuxLinkRuntimePlanV1 struct {
-	Schema              int                        `json:"schema"`
-	ClusterID           string                     `json:"cluster_id"`
-	DeviceID            string                     `json:"device_id"`
-	DeviceGeneration    int64                      `json:"device_generation"`
-	ArtifactGeneration  int64                      `json:"artifact_generation"`
-	EnableTUN           bool                       `json:"enable_tun"`
-	EnableMixed         bool                       `json:"enable_mixed"`
-	ServeForward        bool                       `json:"serve_forward"`
-	ServeInternetEgress bool                       `json:"serve_internet_egress"`
-	CertifiedControl    bool                       `json:"certified_control"`
-	ControlMemberID     string                     `json:"control_member_id,omitempty"`
-	Actions             []LinuxLinkRuntimeActionV1 `json:"actions"`
+	Schema              int                            `json:"schema"`
+	ClusterID           string                         `json:"cluster_id"`
+	DeviceID            string                         `json:"device_id"`
+	DeviceGeneration    int64                          `json:"device_generation"`
+	ArtifactGeneration  int64                          `json:"artifact_generation"`
+	EnableTUN           bool                           `json:"enable_tun"`
+	EnableMixed         bool                           `json:"enable_mixed"`
+	ServeForward        bool                           `json:"serve_forward"`
+	ServeInternetEgress bool                           `json:"serve_internet_egress"`
+	CertifiedControl    bool                           `json:"certified_control"`
+	ControlMemberID     string                         `json:"control_member_id,omitempty"`
+	Actions             []LinuxLinkRuntimeActionV1     `json:"actions"`
+	LocalWireGuardKey   *wire.LinuxLocalWireGuardKeyV1 `json:"local_wireguard_key,omitempty"`
+	LocalRuntime        *wire.LinuxLocalRuntimeV1      `json:"local_runtime,omitempty"`
 }
 
 // BuildLinuxLinkRuntimePlan 只把 current Device view 承诺的 exact artifact
@@ -75,6 +81,10 @@ func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previou
 	if err := validateLinuxLinkIntentArtifact(&artifact, envelope); err != nil {
 		return LinuxLinkRuntimePlanV1{}, err
 	}
+	if err := wire.VerifyConfigQCAuthority(artifact.AuthorityHeadHash, artifact.Authority.QC,
+		&artifact.Authority.Head, set, previousSet); err != nil {
+		return LinuxLinkRuntimePlanV1{}, err
+	}
 	if err := bindLinuxLinkIntentArtifactRef(&artifact, artifactRaw, envelope.Payload.Active.ConfigArtifactRefs); err != nil {
 		return LinuxLinkRuntimePlanV1{}, err
 	}
@@ -88,6 +98,16 @@ func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previou
 		ServeForward:        containsString(responsibilities, "forward"),
 		ServeInternetEgress: containsString(responsibilities, "internet_egress"),
 		Actions:             []LinuxLinkRuntimeActionV1{},
+		LocalWireGuardKey:   artifact.LocalWireGuardKey,
+		LocalRuntime:        artifact.LocalRuntime,
+	}
+	if local := plan.LocalRuntime; local != nil {
+		if !containsString(responsibilities, "use_loom") && local.AccessMode != "none" ||
+			!plan.ServeForward && len(local.Listeners) > 0 {
+			return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] 本机运行功能超出认证职责")
+		}
+		plan.EnableTUN = local.AccessMode == "tun" || local.AccessMode == "mixed_tun"
+		plan.EnableMixed = local.AccessMode == "mixed" || local.AccessMode == "mixed_tun"
 	}
 	memberIDs, err := linuxCertifiedControlMembers(set, peerDirectory,
 		envelope.SignedCurrent.Head.Body.Payload.ControlPeerDirectoryHash)
@@ -98,6 +118,9 @@ func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previou
 		plan.CertifiedControl, plan.ControlMemberID = true, memberID
 	}
 	credentialIDs := make(map[string]struct{}, len(credentials))
+	if artifact.LocalWireGuardKey != nil {
+		credentialIDs[artifact.LocalWireGuardKey.SecretID] = struct{}{}
+	}
 	for _, credential := range credentials {
 		if credential.SecretID == "" {
 			return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] installed credential ID 无效")
@@ -107,9 +130,30 @@ func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previou
 		}
 		credentialIDs[credential.SecretID] = struct{}{}
 	}
+	if plan.LocalRuntime != nil {
+		for _, ref := range plan.LocalRuntime.CredentialRefs {
+			if _, found := credentialIDs[ref]; !found {
+				return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] 本机运行功能引用未安装 credential")
+			}
+		}
+	}
 	endpoints, err := linuxAuthorizedDataEndpoints(&envelope.Payload.Active.EndpointBundle)
 	if err != nil {
 		return LinuxLinkRuntimePlanV1{}, err
+	}
+	wireguard := make(map[string]wire.LinuxWireGuardResourceV1, len(artifact.WireGuardResources))
+	for _, resource := range artifact.WireGuardResources {
+		if _, collision := endpoints[resource.ResourceID]; collision {
+			return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] private peer 资源与公开 endpoint ID 冲突")
+		}
+		wireguard[resource.ResourceID] = resource
+	}
+	transports := map[string]wire.LinuxPeerTransportV1{}
+	for _, resource := range artifact.PeerTransports {
+		if _, collision := endpoints[resource.ResourceID]; collision {
+			return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] private transport 与公开 endpoint ID 冲突")
+		}
+		transports[resource.ResourceID] = resource
 	}
 	for _, intent := range artifact.LinkIntents {
 		for _, credentialRef := range intent.CredentialRefs {
@@ -137,6 +181,30 @@ func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previou
 			CredentialRefs:       append([]string(nil), intent.CredentialRefs...), RouteScope: intent.RouteScope,
 			DialCandidates: []LinuxLinkDialCandidateV1{},
 		}
+		if len(intent.ListenerResourceRefs) == 1 {
+			if resource, found := transports[intent.ListenerResourceRefs[0]]; found {
+				if resource.ListenerGeneration < minimumGenerations[resource.ResourceID] {
+					return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] 私有传输低于已见 generation")
+				}
+				action.PeerTransport = &resource
+				action.DialCandidates = append(action.DialCandidates, LinuxLinkDialCandidateV1{
+					EndpointID: resource.ResourceID, LogicalServerID: resource.ListenerDeviceID, Transport: resource.Transport,
+					ListenerGeneration: resource.ListenerGeneration, PeerAddress: resource.Address,
+					PublicPort: resource.Port, TLSServerName: resource.TLSServerName, PublishedState: "preferred"})
+			}
+			if resource, found := wireguard[intent.ListenerResourceRefs[0]]; found {
+				if resource.ListenerGeneration < minimumGenerations[resource.ResourceID] {
+					return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] peer WireGuard listener 低于已见 generation")
+				}
+				action.WireGuardPeer = &resource
+				if mode == "dial" {
+					action.DialCandidates = append(action.DialCandidates, LinuxLinkDialCandidateV1{
+						EndpointID: resource.ResourceID, LogicalServerID: resource.ListenerDeviceID, Transport: "wireguard",
+						ListenerGeneration: resource.ListenerGeneration, PeerAddress: resource.EndpointAddress,
+						PublicPort: resource.EndpointPort, PublishedState: "preferred"})
+				}
+			}
+		}
 		switch intent.Purpose {
 		case "bootstrap":
 			return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] active Device 禁止恢复 bootstrap LinkIntent")
@@ -154,11 +222,14 @@ func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previou
 				return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] 未授权 forward 的 Device 不得监听 data edge")
 			}
 			if touchesFrom && !plan.ServeForward {
-				if !plan.EnableTUN || !linuxDestinationGranted(envelope.Payload.Active.Grants, intent.To) {
+				if !(plan.EnableTUN || plan.EnableMixed) || !linuxDestinationGranted(envelope.Payload.Active.Grants, intent.To) {
 					return LinuxLinkRuntimePlanV1{}, errors.New("[Linux runtime] use_loom data edge 缺 exact destination grant")
 				}
 			}
 			action.ResolveAtFinalEgress = touchesFrom && linuxEgressGranted(envelope.Payload.Active.Grants, intent.To)
+			if action.WireGuardPeer != nil || action.PeerTransport != nil {
+				break
+			}
 			for _, endpointID := range intent.ListenerResourceRefs {
 				endpoint, found := endpoints[endpointID]
 				if !found || !containsString(intent.AllowedTransports, endpoint.Transport) {
@@ -196,9 +267,17 @@ func BuildLinuxLinkRuntimePlan(envelope *wire.DeviceViewEnvelopeV2, set, previou
 func validateLinuxLinkIntentArtifact(artifact *LinuxLinkIntentArtifactV1,
 	envelope *wire.DeviceViewEnvelopeV2) error {
 	if artifact == nil || envelope == nil || artifact.ClusterID != envelope.Payload.ClusterID ||
-		artifact.DeviceID != envelope.Payload.DeviceID || artifact.DeviceGeneration != envelope.Payload.DeviceGeneration ||
-		artifact.AuthorityHeadHash != envelope.SignedCurrent.Head.Body.Payload.ParentHeadHash {
-		return errors.New("[Linux runtime] LinkIntent artifact header/view binding 无效")
+		artifact.DeviceID != envelope.Payload.DeviceID || artifact.DeviceGeneration != envelope.Payload.DeviceGeneration {
+		return errors.New("[D131 Linux runtime] LinkIntent artifact header/view binding 无效")
+	}
+	base := artifact.Authority.Head.Body.Payload
+	current := envelope.SignedCurrent.Head.Body.Payload
+	if base.RecoveryEpoch != current.RecoveryEpoch || base.RecoveryStatementHash != current.RecoveryStatementHash ||
+		base.RecoveryPolicyHash != current.RecoveryPolicyHash || base.ControlEpoch != current.ControlEpoch ||
+		base.ControlSetHash != current.ControlSetHash || base.ControlRevision > current.ControlRevision ||
+		base.RaftTerm > current.RaftTerm || base.CommittedLogicalTime > current.CommittedLogicalTime ||
+		(base.ControlRevision == current.ControlRevision && artifact.AuthorityHeadHash != envelope.SignedCurrent.Head.HeadHash) {
+		return errors.New("[D131 Linux runtime] LinkIntent base 超出当前 certified authority 或同坐标分叉")
 	}
 	return wire.ValidateLinuxLinkIntentArtifact(artifact)
 }

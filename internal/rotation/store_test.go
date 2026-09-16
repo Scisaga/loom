@@ -1,6 +1,7 @@
 package rotation
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,55 @@ import (
 
 	"loom/internal/wire"
 )
+
+func TestInitialPreparedRequiresAuthorityAndCannotSkipReachability(t *testing.T) {
+	intent := testIntent(t)
+	intent.FrozenDependencies.SourceListenerGeneration = nil
+	intent.FrozenDependencies.SourceListenerGenerationHash = ""
+	intent.FrozenDependencies.TargetListenerGeneration = 1
+	intent.FrozenDependenciesHash, _ = wire.HashObject(DomainFrozenDependencies, intent.FrozenDependencies)
+	transition := certifiedTransition("prepared", "2026-01-01T00:00:00Z", "demo-certified-installation")
+	transition.EvidenceRefs = nil
+	verify := func(got *IntentV1, current *StateV1, event *Transition) error {
+		if !wire.EqualCanonical(*got, intent) || current != nil || !wire.EqualCanonical(*event, transition) {
+			return errors.New("未经认证的首次安装")
+		}
+		return nil
+	}
+	path := filepath.Join(t.TempDir(), "initial.json")
+	store, err := OpenStore(path, verify)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := store.BeginPrepared(intent, transition)
+	if err != nil || prepared.Phase != "prepared" {
+		t.Fatalf("prepare: %v", err)
+	}
+	reopened, err := OpenStore(path, verify)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := reopened.BeginPrepared(intent, transition)
+	if err != nil || !wire.EqualCanonical(prepared, retry) {
+		t.Fatalf("retry: %v", err)
+	}
+	if _, err := reopened.Advance(certifiedTransition("advertised", transition.CertifiedAt, "demo-not-authorized")); err == nil {
+		t.Fatal("未验证公网入口被 advertise")
+	}
+	if _, err := reopened.BeginPrepared(testIntent(t), transition); err == nil {
+		t.Fatal("用首次准备绕过旧代轮换")
+	}
+	bad := transition
+	bad.NextPhase = "preferred"
+	if _, err := reopened.BeginPrepared(intent, bad); err == nil {
+		t.Fatal("首次部署直接 preferred")
+	}
+	bad = transition
+	bad.CertifiedHeadHash = wire.HashRaw("test-rotation-head-v1", []byte("different"))
+	if _, err := reopened.BeginPrepared(intent, bad); err == nil {
+		t.Fatal("重试接受不同 authority")
+	}
+}
 
 func certifiedTransition(phase, at, label string) Transition {
 	return Transition{NextPhase: phase, CertifiedAt: at, CertifiedHeadHash: wire.HashRaw("test-rotation-head-v1", []byte(label)), EvidenceRefs: []string{}}

@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,6 +46,7 @@ type scriptRunOptions struct {
 	disabledUnits     []string
 	enabledStates     map[string]string
 	activeStates      map[string]string
+	loadStates        map[string]string
 	restartCounts     map[string]string
 	loadConfig        map[string]string
 	crashOnSleep      []string
@@ -83,6 +85,9 @@ func executeScript(t *testing.T, p *Plan, opts scriptRunOptions) scriptRunResult
 	if p.InventoryGuard != nil {
 		assertWithin(t, paths.target(p.InventoryGuard.Path), opts.allowedTargetRoot)
 	}
+	for _, guard := range p.AdditionalInventoryGuards {
+		assertWithin(t, paths.target(guard.Path), opts.allowedTargetRoot)
+	}
 	if opts.beforeRun != nil {
 		opts.beforeRun(paths)
 	}
@@ -118,6 +123,11 @@ func executeScript(t *testing.T, p *Plan, opts scriptRunOptions) scriptRunResult
 			t.Fatal(err)
 		}
 	}
+	for unit, state := range opts.loadStates {
+		if err := os.WriteFile(unitStatePath(unitState, unit, "load-state"), []byte(state+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	loadMap := filepath.Join(stateRoot, "load-config")
 	var loadLines []string
 	for unit, path := range opts.loadConfig {
@@ -145,6 +155,7 @@ inactive="$LOOM_SYSTEMCTL_STATE/$key.inactive"
 disabled="$LOOM_SYSTEMCTL_STATE/$key.disabled"
 enabled_state="$LOOM_SYSTEMCTL_STATE/$key.enabled-state"
 active_state="$LOOM_SYSTEMCTL_STATE/$key.active-state"
+load_state="$LOOM_SYSTEMCTL_STATE/$key.load-state"
 restarts="$LOOM_SYSTEMCTL_STATE/$key.restarts"
 failed_once="$LOOM_SYSTEMCTL_STATE/fail-once"
 if [ -n "${LOOM_SYSTEMCTL_FAIL_OP:-}" ] && [ "$op" = "$LOOM_SYSTEMCTL_FAIL_OP" ] &&
@@ -163,7 +174,11 @@ case "$op" in
     if [ -e "$enabled_state" ]; then cat "$enabled_state"; [ "$(cat "$enabled_state")" = enabled ]; exit $?; fi
     if [ -e "$disabled" ]; then echo disabled; exit 1; fi
     echo enabled ;;
-  show) if [ -e "$restarts" ]; then cat "$restarts"; else echo 0; fi ;;
+  show)
+    case "$*" in
+      *LoadState*) if [ -e "$load_state" ]; then cat "$load_state"; else echo loaded; fi ;;
+      *) if [ -e "$restarts" ]; then cat "$restarts"; else echo 0; fi ;;
+    esac ;;
   stop) : > "$inactive"; printf 'inactive\n' > "$active_state" ;;
   start|restart)
     rm -f "$inactive"; printf 'active\n' > "$active_state"
@@ -521,33 +536,41 @@ func TestConcurrentDeploymentIsRejectedBeforeTouchingTargets(t *testing.T) {
 }
 
 func TestInventoryGuardRejectsConcurrentManifestChangeBeforeTouchingTargets(t *testing.T) {
-	dir := t.TempDir()
-	manifest := filepath.Join(dir, "manifest.json")
-	target := filepath.Join(dir, "app.conf")
-	if err := os.WriteFile(manifest, []byte("new inventory\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(target, []byte("healthy\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	p := &Plan{
-		Node:  "n1",
-		Files: map[string]string{target: "candidate\n"},
-		InventoryGuard: &InventoryGuard{
-			Path:   manifest,
-			SHA256: strings.Repeat("0", 64), // 控制端读完后，清单已被另一轮部署改写。
-		},
-	}
-	r := executeScript(t, p, scriptRunOptions{allowedTargetRoot: dir})
-	if r.err == nil {
-		t.Fatalf("清单乐观锁不匹配时必须失败：\n%s", r.output)
-	}
-	got, err := os.ReadFile(target)
-	if err != nil || string(got) != "healthy\n" {
-		t.Fatalf("清单变化后仍碰了线上目标：%q %v\n%s", got, err, r.output)
-	}
-	if !strings.Contains(r.output, "并发操作中变化") {
-		t.Fatalf("错误没有解释需要重试：\n%s", r.output)
+	for _, additional := range []bool{false, true} {
+		t.Run(fmt.Sprint(additional), func(t *testing.T) {
+			dir := t.TempDir()
+			manifest := filepath.Join(dir, "manifest.json")
+			target := filepath.Join(dir, "app.conf")
+			if err := os.WriteFile(manifest, []byte("new inventory\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(target, []byte("healthy\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			p := &Plan{
+				Node:  "n1",
+				Files: map[string]string{target: "candidate\n"},
+				InventoryGuard: &InventoryGuard{
+					Path:   manifest,
+					SHA256: strings.Repeat("0", 64), // 控制端读完后，清单已被另一轮部署改写。
+				},
+			}
+			if additional {
+				p.AdditionalInventoryGuards = []InventoryGuard{*p.InventoryGuard}
+				p.InventoryGuard = &InventoryGuard{Path: filepath.Join(dir, "new-inventory.json"), Absent: true}
+			}
+			r := executeScript(t, p, scriptRunOptions{allowedTargetRoot: dir})
+			if r.err == nil {
+				t.Fatalf("清单乐观锁不匹配时必须失败：\n%s", r.output)
+			}
+			got, err := os.ReadFile(target)
+			if err != nil || string(got) != "healthy\n" {
+				t.Fatalf("清单变化后仍碰了线上目标：%q %v\n%s", got, err, r.output)
+			}
+			if !strings.Contains(r.output, "并发操作中变化") {
+				t.Fatalf("错误没有解释需要重试：\n%s", r.output)
+			}
+		})
 	}
 }
 
@@ -1153,5 +1176,31 @@ func TestRemoveWithMissingManagedFileAllowsAlreadyOffUnit(t *testing.T) {
 	if observedUnitState(t, r.unitState, unit, "active") != "inactive" ||
 		observedUnitState(t, r.unitState, unit, "enabled") != "disabled" {
 		t.Fatalf("已 off unit 被无端改变:\n%s", r.log)
+	}
+}
+
+func TestInstallHandlesOldSystemdMissingUnitWithoutTreatingLookupFailureAsAbsence(t *testing.T) {
+	for _, load := range []string{"not-found", "loaded", ""} {
+		t.Run("load="+load, func(t *testing.T) {
+			dir := t.TempDir()
+			target := filepath.Join(dir, "app.conf")
+			r := executeScript(t, &Plan{Node: "demo-node", Files: map[string]string{target: "next\n"},
+				Triggers: map[string][]string{target: {"app"}}, Verify: []string{"app"}}, scriptRunOptions{
+				allowedTargetRoot: dir, enabledStates: map[string]string{"app": ""},
+				activeStates: map[string]string{"app": "inactive"}, loadStates: map[string]string{"app": load},
+			})
+			if load == "not-found" {
+				if r.err != nil {
+					t.Fatalf("真实 not-found 未完成正常安装: %v\n%s", r.err, r.output)
+				}
+				if content, err := os.ReadFile(target); err != nil || string(content) != "next\n" {
+					t.Fatal("新配置未安装", err)
+				}
+			} else if r.err == nil {
+				t.Fatal("无法确认 enabled 状态仍替换配置")
+			} else if _, err := os.Stat(target); !os.IsNotExist(err) {
+				t.Fatal("状态未知时改变了线上文件", err)
+			}
+		})
 	}
 }

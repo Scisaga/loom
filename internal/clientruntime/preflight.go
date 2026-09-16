@@ -27,12 +27,13 @@ const (
 )
 
 type singBoxConfig struct {
-	Log          singBoxLog           `json:"log"`
-	DNS          *singBoxDNS          `json:"dns"`
-	Inbounds     []singBoxInbound     `json:"inbounds"`
-	Outbounds    []singBoxOutbound    `json:"outbounds"`
-	Route        singBoxRoute         `json:"route"`
-	Experimental *singBoxExperimental `json:"experimental,omitempty"`
+	Log          singBoxLog                 `json:"log"`
+	DNS          *singBoxDNS                `json:"dns"`
+	Inbounds     []singBoxInbound           `json:"inbounds"`
+	Outbounds    []singBoxOutbound          `json:"outbounds"`
+	Endpoints    []singBoxWireGuardEndpoint `json:"endpoints,omitempty"`
+	Route        singBoxRoute               `json:"route"`
+	Experimental *singBoxExperimental       `json:"experimental,omitempty"`
 }
 
 type singBoxLog struct {
@@ -400,6 +401,10 @@ func validateWindowsSingBox(body []byte, profile WindowsRuntimeProfile, caPath s
 	if !block {
 		return errors.New("Windows config is missing the fail-closed block outbound")
 	}
+	endpointTags, err := validateWindowsWireGuardEndpoints(config.Endpoints, config.Outbounds, config.Route.Rules)
+	if err != nil {
+		return err
+	}
 	for _, outbound := range config.Outbounds {
 		if outbound.Detour != "" && (outbound.Detour == outbound.Tag || !outboundTags[outbound.Detour]) {
 			return fmt.Errorf("outbound %q has an unknown or recursive detour %q", outbound.Tag, outbound.Detour)
@@ -436,7 +441,7 @@ func validateWindowsSingBox(body []byte, profile WindowsRuntimeProfile, caPath s
 		if rule.Type != "" || rule.Mode != "" || len(rule.Rules) != 0 || len(rule.DomainRegex) != 0 || rule.Invert {
 			return fmt.Errorf("路由规则 %d 包含本地接管专用匹配字段", index)
 		}
-		if rule.Outbound == "" || !outboundTags[rule.Outbound] {
+		if rule.Outbound == "" || !outboundTags[rule.Outbound] && !endpointTags[rule.Outbound] {
 			return fmt.Errorf("route rule %d references unknown outbound %q", index, rule.Outbound)
 		}
 		seenManagedTun, seenManagedMixed := false, false

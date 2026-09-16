@@ -99,9 +99,7 @@ func sameClientPackageFileState(a, b []os.FileInfo) bool {
 	return true
 }
 
-type clientProvisionFunc func(client clientregistry.Client, csrPEM string) (*webui.ClientBootstrap, error)
-
-func newClientControlDeps(c *Control, provision clientProvisionFunc, onChange ...func()) *webui.ClientControlDeps {
+func newClientControlDeps(c *Control, onChange ...func()) *webui.ClientControlDeps {
 	if c == nil || strings.TrimSpace(c.ClientRegistryPath) == "" {
 		return nil
 	}
@@ -144,11 +142,7 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc, onChange ..
 		if err != nil {
 			return "", err
 		}
-		paths, err := clientPaths(c)
-		if err != nil {
-			return "", err
-		}
-		key, err := readClientPlatformPublicKey(paths.platformPublic)
+		key, err := readClientPlatformPublicKey(filepath.Join(filepath.Dir(c.SSOTPath), "keys", "platform-signing.pub"))
 		if err != nil {
 			return "", err
 		}
@@ -507,52 +501,6 @@ func newClientControlDeps(c *Control, provision clientProvisionFunc, onChange ..
 				Replaces:          invitedClient.Replaces,
 			}, nil
 		},
-		Claim: func(input webui.ClientClaimInput) (webui.ClientClaimResult, error) {
-			var server *clientregistry.ServerEnrollment
-			if input.Server != nil {
-				server = &clientregistry.ServerEnrollment{
-					PublicEndpoint: input.Server.PublicEndpoint, InboundPort: input.Server.InboundPort,
-					Direction: input.Server.Direction, WGPublicKey: input.Server.WGPublicKey,
-					Country: input.Server.Country, City: input.Server.City, Provider: input.Server.Provider,
-				}
-			}
-			claimed, err := store.Claim(clientregistry.ClaimInput{
-				Token: input.Token, Platform: input.Platform,
-				CSRPEM: input.CSRPEM, RequestID: input.RequestID, Server: server,
-			})
-			if err != nil {
-				return webui.ClientClaimResult{}, err
-			}
-			changed()
-			result := webui.ClientClaimResult{
-				Schema: 1, ClientID: claimed.Client.ID,
-				Status: "provisioning", EnrolledAt: claimed.Client.EnrolledAt,
-				Replay: claimed.Replay, Next: "wait_for_configuration",
-				Configuration: "pending",
-			}
-			if provision == nil {
-				return result, nil
-			}
-			bootstrap, err := provision(claimed.Client, input.CSRPEM)
-			if err != nil {
-				return webui.ClientClaimResult{}, err
-			}
-			if bootstrap == nil {
-				return result, nil
-			}
-			if err := validateClientBootstrap(*bootstrap, claimed.Client.ID); err != nil {
-				return webui.ClientClaimResult{}, err
-			}
-			if _, err := store.MarkReady(claimed.Client.ID); err != nil {
-				return webui.ClientClaimResult{}, err
-			}
-			changed()
-			result.Status = "ready"
-			result.Configuration = "ready"
-			result.Next = "pull"
-			result.Bootstrap = bootstrap
-			return result, nil
-		},
 	}
 	// Pay the full verification cost during control-plane startup instead of on
 	// the first operator request. A missing package is non-fatal and remains a
@@ -674,22 +622,6 @@ func validateDeviceInviteInput(c *Control, input webui.ClientInviteInput) error 
 	for _, grant := range input.DestinationGrants {
 		if !allowed[strings.TrimSpace(grant)] {
 			return fmt.Errorf("destination grant %q is not an available from_request declaration", grant)
-		}
-	}
-	return nil
-}
-
-func validateClientBootstrap(bootstrap webui.ClientBootstrap, clientID string) error {
-	if bootstrap.NodeID != clientID || len(bootstrap.DistributionURLs) == 0 ||
-		strings.TrimSpace(bootstrap.SecretsEnv) == "" || strings.TrimSpace(bootstrap.PlatformPublicKey) == "" ||
-		strings.TrimSpace(bootstrap.ReleaseAuthority) == "" || strings.TrimSpace(bootstrap.CACertPEM) == "" ||
-		strings.TrimSpace(bootstrap.NodeCertPEM) == "" {
-		return fmt.Errorf("client provisioner returned an incomplete bootstrap for %s", clientID)
-	}
-	for _, raw := range bootstrap.DistributionURLs {
-		u, err := url.Parse(strings.TrimSpace(raw))
-		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil || u.Fragment != "" {
-			return fmt.Errorf("client provisioner returned an invalid distribution URL")
 		}
 	}
 	return nil

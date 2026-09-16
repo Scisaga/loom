@@ -12,6 +12,7 @@ import javax.crypto.spec.SecretKeySpec
 /** #14：共享 Go 核心解释 wire；Kotlin callback 只调用不可导出的 Keystore key。 */
 internal class V2EnrollmentCrypto(
     private val keys: DeviceKeyStore = DeviceKeyStore(),
+    private val wireGuardPublicKey: (() -> ByteArray)? = null,
 ) {
     fun identitySubjectPublicKeyInfo(): ByteArray = keys.ensureIdentity()
 
@@ -62,7 +63,8 @@ internal class V2EnrollmentCrypto(
         val identity = keys.ensureIdentity()
         val wrapping = keys.ensureWrapping()
         val csr = keys.createCSRDER(requestID)
-        return Loomcore.prepareAndroidEnrollmentV2ClaimCore(
+        val wireGuard = checkNotNull(wireGuardPublicKey) { "加入前缺本机 WireGuard 密钥存储" }.invoke()
+        return Loomcore.prepareAndroidEnrollmentV2ClaimCoreWithWireGuard(
             canonicalDescriptor,
             canonicalProofBundle,
             canonicalPreflightResponse,
@@ -72,6 +74,7 @@ internal class V2EnrollmentCrypto(
             wrapping.subjectPublicKeyInfo,
             wrapping.profile,
             clientNonce,
+            wireGuard,
             trustedTime,
         )
     }
@@ -141,6 +144,12 @@ internal class V2EnrollmentCrypto(
         val signature = keys.signCanonicalV2(exactMessage)
         return Base64.encodeToString(signature, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
     }
+
+    fun signPreflightMessage(exactMessage: ByteArray): String =
+        Base64.encodeToString(
+            keys.signCanonicalV2(exactMessage),
+            Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP,
+        )
 
     /** #14：ref/envelope 先由共享 verifier 绑定，Kotlin 只负责调用不可导出的 wrapping key。 */
     fun unsealSecret(
@@ -214,7 +223,7 @@ internal class V2EnrollmentCrypto(
         }
         val key = Loomcore.deriveSealedSecretP256KEKV2(
             normalizedShared,
-            root.getJSONObject("wrap_context").toString().encodeToByteArray(),
+            Loomcore.canonicalizeV2(root.getJSONObject("wrap_context").toString().encodeToByteArray()),
         )
         return try {
             val cek = openAESGCM(
@@ -269,7 +278,8 @@ internal class V2EnrollmentCrypto(
         return try {
             Loomcore.finishSealedSecretPlaintextV2(
                 plaintext,
-                root.getJSONObject("context").toString().encodeToByteArray(),
+                // JSONObject 会重新转义斜线；送回共享 verifier 前恢复唯一 wire 字节。
+                Loomcore.canonicalizeV2(root.getJSONObject("context").toString().encodeToByteArray()),
             )
         } finally {
             plaintext.fill(0)

@@ -38,9 +38,4 @@ class LoomVpnServicePolicyTest {
         assertEquals(false, shouldRestoreVpn("unexpected", true, true))
     }
 
-    @Test
-    fun presenceAndObservationKeepIndependentCadences() {
-        assertEquals(5_000L, ANDROID_PRESENCE_INTERVAL_MS)
-        assertEquals(60_000L, ANDROID_FULL_REPORT_INTERVAL_MS)
-    }
 }

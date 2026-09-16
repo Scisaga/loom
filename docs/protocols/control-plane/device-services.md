@@ -48,6 +48,20 @@ payload reader contract、freshness 和 identity signature。sink 以 `(Device I
 证书 EKU、ACL、端口和 handler 必须分别校验。报告失败不停止已安装数据面，配置不可达时继续
 使用 LKG；任何过期 bootstrap capability 都不能充当稳态恢复通道。
 
+普通客户端的稳态 WireGuard 与承载节点必须使用同一认证分配：客户端身份、两端公钥、
+独立隧道地址、私网 listener tuple 及允许访问的 `device_config/device_report` tuple。
+承载侧使用 sing-box userspace endpoint，路由首先按该 endpoint 放行精确服务地址和端口，
+随后拒绝其他目的；不能借此取得互联网转发、管理员 API 或 Raft 权限。该分配只授予受限数据链路，
+不授予 ControlSet membership。承载配置仍须单独认证发布并实际安装，客户端配置发布成功不代表通道已可用。
+
+Linux 节点的专用控制链路沿用节点原 WireGuard key，并由相同认证分配固定外层 HY2
+地址、TLS 身份与独立设备凭据。外层只放行该设备的私网 WireGuard tuple，不能直接访问
+内层服务。daemon 经回环认证代理连接配置和报告；失败不回退主机默认路由或旧公开接口。
+该代理不改变节点的 `use_loom` 职责、主机路由或业务探测计划。
+
+隧道两端地址必须与私有服务地址分离；sing-box 会把 endpoint 自身地址映射到 loopback，
+复用地址会改变实际目的，破坏目录绑定。参见 [sing-box endpoint 实现](https://github.com/SagerNet/sing-box/blob/v1.11.4/protocol/wireguard/endpoint.go)。
+
 Linux 稳态客户端只从已原子安装的 identity/certificate/LKG 组装 Device mTLS，
 且只拨号 private directory 中的 exact overlay tuple。它同时校验 TLS 1.3、internal CA、
 overlay IP SAN 和 SPKI pin。现有 `config_qc` 是 parent Head 的 QC，不单独承诺
@@ -55,8 +69,13 @@ overlay IP SAN 和 SPKI pin。现有 `config_qc` 是 parent Head 的 QC，不单
 exact `control_service_directory_hash`，禁止将目录和其自带 QC 从同一不可信输入中自我证明。
 Device view 只有重新验过 QC/Merkle/identity/floors 后才替换 LKG。报告签名后如果响应丢失，
 重试必须持久化并复用 exact envelope，不得在同一 `report_sequence` 上重新签名。
-Linux reporter 在网络发送前先将 pending envelope 原子写入 0600 journal；只有收到
-`204 No Content` 后才清除 pending 并推进 sequence。因此在请求、服务端 CAS 或客户端落盘边界
-崩溃时，重启只会发送旧 exact bytes，不会用新观测改写已占用序号。
+各平台 reporter 在网络发送前先原子保存 pending envelope。`204 No Content`，或 exact
+绑定原报告的 `200` 回执，才推进最后确认序号。回执可附现有服务器观测；客户端继续按原 CA、
+签名及新鲜度规则验证，TLS 成功不能替代观测验签，也不能为回执追加探测。
+
+pending 不阻塞正常配置刷新。重新验证并持久化的新 Device state 若已覆盖原 floors，或原报告
+已超出 freshness window，客户端保留原签名 envelope、退休原因和当前 floors，消费其已占用
+序号后才能生成下一份报告。退休不表示服务端接受，不改变最后确认序号；不得在同一序号上
+重签新正文。仍适用的 pending 继续 exact 重放，错误响应本身不授权退休或推进配置。
 
 ---

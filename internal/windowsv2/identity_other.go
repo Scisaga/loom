@@ -65,3 +65,26 @@ func destroyPlatformIdentity(record platformIdentityRecord) error {
 	}
 	return nil
 }
+
+// 与 Windows 导入边界相同的测试实现；正式二进制不包含此函数体。
+func importPlatformIdentity(_ clientsecret.Protector, _ io.Reader, original *ecdsa.PrivateKey,
+) (crypto.Signer, []byte, platformIdentityRecord, error) {
+	der, err := x509.MarshalPKCS8PrivateKey(original)
+	if err != nil {
+		return nil, nil, platformIdentityRecord{}, err
+	}
+	defer clear(der)
+	parsed, err := x509.ParsePKCS8PrivateKey(der)
+	if err != nil {
+		return nil, nil, platformIdentityRecord{}, err
+	}
+	key := parsed.(*ecdsa.PrivateKey)
+	publicDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		zeroPrivateKey(key)
+		return nil, nil, platformIdentityRecord{}, err
+	}
+	return &restrictedP256Signer{key: key}, publicDER, platformIdentityRecord{
+		Provider: softwareIdentityProvider, PrivateKeyPKCS8: base64.RawURLEncoding.EncodeToString(der),
+	}, nil
+}

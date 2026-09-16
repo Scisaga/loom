@@ -36,10 +36,8 @@ import io.github.scisaga.loom.MainActivity
 import io.github.scisaga.loom.LoomApplication
 import io.github.scisaga.loom.R
 import io.github.scisaga.loom.enrollment.EnrollmentManager
-import io.github.scisaga.loom.enrollment.HttpTransport
+import io.github.scisaga.loom.enrollment.UnderlyingNetworks
 import io.github.scisaga.loom.enrollment.ManagedProfile
-import io.github.scisaga.loom.enrollment.HealthReporter
-import io.github.scisaga.loom.enrollment.PresenceReporter
 import io.github.scisaga.loom.enrollment.V2DeviceReporter
 import io.github.scisaga.loom.enrollment.V2TerminalDeviceException
 import io.github.scisaga.loom.enrollment.requiresV2RouteApplication
@@ -68,10 +66,6 @@ import java.net.InetAddress
 import java.net.NetworkInterface
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
-
-// 完整 Observation 保持原一分钟周期；独立三字段在线心跳每五秒发送。
-internal const val ANDROID_FULL_REPORT_INTERVAL_MS = 60_000L
-internal const val ANDROID_PRESENCE_INTERVAL_MS = 5_000L
 
 internal data class RankedUnderlying<T>(
     val value: T,
@@ -126,10 +120,8 @@ class LoomVpnService : VpnService(), PlatformInterface {
     private var boxService: BoxService? = null
     @Volatile private var tunnel: ParcelFileDescriptor? = null
     private var reportJob: Job? = null
-    private var presenceJob: Job? = null
     private var routeJob: Job? = null
     @Volatile private var sessionID = 0L
-    private var lastUseEmulatorProxy = false
     @Volatile private var desiredConnected = false
     @Volatile private var selectedUnderlyingNetwork: Network? = null
     @Volatile private var activeManagedProfile: ManagedProfile? = null
@@ -143,6 +135,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
 
     override fun onCreate() {
         super.onCreate()
+        Libbox.registerLocalDNSTransport(AndroidLocalDNSTransport { selectedUnderlyingNetwork })
         BootstrapServiceRegistry.attach(this)
         createNotificationChannel()
         VpnRuntime.transform { it.copy(alwaysOn = alwaysOnEnabled()) }
@@ -170,11 +163,6 @@ class LoomVpnService : VpnService(), PlatformInterface {
                     "emulator proxy fixture is debug-only"
                 }
                 scope.launch { startTunnel(useEmulatorProxy, startId, requested) }
-            }
-            ACTION_RELOAD -> {
-                if (!matchesActive(intent)) return vpnServiceRestartMode(desiredConnected)
-                val candidateID = intent?.getStringExtra(EXTRA_CANDIDATE_ID).orEmpty()
-                scope.launch { reloadTunnel(candidateID, startId) }
             }
             ACTION_REFRESH_V2 -> {
                 if (!matchesActive(intent)) return vpnServiceRestartMode(desiredConnected)
@@ -266,7 +254,6 @@ class LoomVpnService : VpnService(), PlatformInterface {
             if (!desiredConnected || requested != desiredProfileId) return@withLock
             activeProfileId = requested
             VpnConnectionPreference(this).setProfileId(requested)
-            lastUseEmulatorProxy = useEmulatorProxy
             startTunnelLocked(useEmulatorProxy, startId)
         } catch (error: Throwable) {
             desiredConnected = false
@@ -311,7 +298,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
             "请先断开当前连接并完成其他加入事务，再继续加入"
         }
         startForeground(NOTIFICATION_ID, foregroundNotification("正在建立受限注册隧道…"))
-        val network = HttpTransport.underlyingNetworks(this).firstOrNull() ?: run {
+        val network = UnderlyingNetworks.available(this).firstOrNull() ?: run {
             selectedUnderlyingNetwork = null
             stopForegroundCompat()
             stopSelf()
@@ -338,20 +325,6 @@ class LoomVpnService : VpnService(), PlatformInterface {
         }
     }
 
-    private suspend fun reloadTunnel(candidateID: String, startId: Int) = lifecycle.withLock {
-        if (!desiredConnected || candidateID.isBlank()) {
-            stopIdleForeground(startId)
-            return@withLock
-        }
-        val pending = runCatching { EnrollmentManager.get(profileContext).candidateProfile() }.getOrNull()
-        if (pending?.recordID != candidateID) {
-            stopIdleForeground(startId)
-            return@withLock
-        }
-        closeResources()
-        if (desiredConnected) startTunnelLocked(lastUseEmulatorProxy, startId)
-    }
-
     private suspend fun startTunnelLocked(useEmulatorProxy: Boolean, startId: Int) {
         // A queued disconnect may have removed foreground state while a newer
         // connect command was waiting for the lifecycle mutex.
@@ -366,37 +339,13 @@ class LoomVpnService : VpnService(), PlatformInterface {
         updateNotification("正在连接…")
         try {
             val manager = EnrollmentManager.get(profileContext)
-            val candidate = manager.candidateProfile()
-            if (candidate != null) {
-                DeviceKeyStore(ProfileContext.keySuffix(profileContext)).proveBinding()
-                try {
-                    val probe = activateWithoutBusinessProbe(candidate)
-                    ensureConnectionWanted()
-                    val committed = manager.candidateActivated(candidate)
-                    connected(committed, probe, "已验证并激活 snapshot ${committed.snapshot}")
-                    return
-                } catch (cancelled: CancellationException) {
-                    closeResources()
-                    throw cancelled
-                } catch (candidateError: Throwable) {
-                    Log.e(TAG, "candidate activation rejected", candidateError)
-                    closeResources()
-                    ensureConnectionWanted()
-                    val fallback = manager.candidateRejected(candidate, "本地 TUN/libbox 激活失败")
-                        ?: throw candidateError
-                    val (restored, probe) = activateManagedWithFallback(fallback, manager)
-                    ensureConnectionWanted()
-                    connected(restored, probe, "候选失败，沿用 snapshot ${restored.snapshot}")
-                    return
-                }
-            }
-
             val current = manager.currentProfile()
             if (current != null) {
                 DeviceKeyStore(ProfileContext.keySuffix(profileContext)).proveBinding()
-                val (active, probe) = activateManagedWithFallback(current, manager)
+                check(current.protocol == 2) { "正式连接仅支持 v2 配置" }
+                val probe = activateWithoutBusinessProbe(current)
                 ensureConnectionWanted()
-                connected(active, probe, "已激活验签配置 · snapshot ${active.snapshot}")
+                connected(current, probe, "已激活验签配置 · snapshot ${current.snapshot}")
                 return
             }
 
@@ -426,38 +375,6 @@ class LoomVpnService : VpnService(), PlatformInterface {
             if (stopSelfResult(startId)) {
                 desiredConnected = false
                 stopForegroundCompat()
-            }
-        }
-    }
-
-    private suspend fun activateManagedWithFallback(
-        current: ManagedProfile,
-        manager: EnrollmentManager,
-    ): Pair<ManagedProfile, ProbeResult> {
-        try {
-            return current to activateWithoutBusinessProbe(current)
-        } catch (cancelled: CancellationException) {
-            closeResources()
-            throw cancelled
-        } catch (currentError: Throwable) {
-            Log.e(TAG, "active profile rejected", currentError)
-            closeResources()
-            ensureConnectionWanted()
-            val previous = runCatching { manager.previousProfile() }
-                .getOrNull()
-                ?.takeIf { it.recordID != current.recordID }
-                ?: throw currentError
-            return try {
-                val probe = activateWithoutBusinessProbe(previous)
-                val promoted = checkNotNull(manager.promotePrevious()) { "previous 配置在恢复时消失" }
-                promoted to probe
-            } catch (cancelled: CancellationException) {
-                closeResources()
-                throw cancelled
-            } catch (previousError: Throwable) {
-                closeResources()
-                currentError.addSuppressed(previousError)
-                throw currentError
             }
         }
     }
@@ -494,14 +411,11 @@ class LoomVpnService : VpnService(), PlatformInterface {
         profile?.let {
             activeManagedProfile = it
             startRouteSession(it)
-            if (it.protocol == 1) {
-                startReporter(it, probe)
-            } else {
-                VpnRuntime.transform { status ->
-                    status.copy(trustedReport = "v2 Device report 尚未发送")
-                }
-                startV2Reporter(it)
+            check(it.protocol == 2) { "正式连接仅支持 v2 配置" }
+            VpnRuntime.transform { status ->
+                status.copy(trustedReport = "设备状态尚未上报")
             }
+            startV2Reporter(it)
         }
     }
 
@@ -521,54 +435,9 @@ class LoomVpnService : VpnService(), PlatformInterface {
         candidate.start()
     }
 
-    private fun startReporter(profile: ManagedProfile, initialProbe: ProbeResult) {
-        reportJob?.cancel()
-        presenceJob?.cancel()
-        val reporterSession = sessionID
-        reportJob = scope.launch {
-            val reporter = HealthReporter(profileContext)
-            while (isActive && reporterSession == sessionID) {
-                val status = VpnRuntime.status.value
-                if (status.phase != ConnectionPhase.CONNECTED) return@launch
-                val report = runCatching { reporter.send(profile, initialProbe.problems()) }
-                if (!isActive || reporterSession != sessionID) return@launch
-                if (report.isSuccess) {
-                    val result = report.getOrThrow()
-                    VpnRuntime.transform { it.copy(trustedReport = "成功（HTTP ${result.status}）") }
-                    runCatching {
-                        RouteManager.get(profileContext).consumeObservations(
-                            profile,
-                            result.observations,
-                            result.observationError,
-                        )
-                    }.onFailure { error ->
-                        if (error !is CancellationException) {
-                            Log.w(TAG, "Android server observation update failed", error)
-                            RouteManager.get(profileContext).routeUpdateFailed(error)
-                        }
-                    }
-                } else {
-                    VpnRuntime.transform { it.copy(trustedReport = "失败；将重试") }
-                }
-                delay(ANDROID_FULL_REPORT_INTERVAL_MS)
-            }
-        }
-        presenceJob = scope.launch {
-            val reporter = PresenceReporter(profileContext)
-            while (isActive && reporterSession == sessionID) {
-                if (VpnRuntime.status.value.phase != ConnectionPhase.CONNECTED) return@launch
-                runCatching { reporter.send(profile) }
-                if (!isActive || reporterSession != sessionID) return@launch
-                delay(ANDROID_PRESENCE_INTERVAL_MS)
-            }
-        }
-    }
-
     /** private config/report 与数据面共用当前 TUN/WG；失败只保留 LKG，不能停数据面。 */
     private fun startV2Reporter(profile: ManagedProfile) {
         reportJob?.cancel()
-        presenceJob?.cancel()
-        presenceJob = null
         val reporterSession = sessionID
         reportJob = scope.launch {
             val reporter = V2DeviceReporter(profileContext)
@@ -591,7 +460,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
         profile: ManagedProfile,
     ): ManagedProfile? = v2Control.withLock {
         var current = activeManagedProfile?.takeIf { it.protocol == 2 } ?: profile
-        if (!reporter.hasPending(current.nodeID)) {
+        run {
             try {
                 val refresh = reporter.refreshConfiguration()
                 currentCoroutineContext().ensureActive()
@@ -611,9 +480,17 @@ class LoomVpnService : VpnService(), PlatformInterface {
             }
         }
         try {
-            val sequence = reporter.sendHealth(current, healthy = !RouteManager.get(profileContext).status.value.blocked)
+            val accepted = reporter.sendHealth(current, healthy = !RouteManager.get(profileContext).status.value.blocked)
             currentCoroutineContext().ensureActive()
-            VpnRuntime.transform { it.copy(trustedReport = "成功（sequence $sequence，HTTP 204）") }
+            VpnRuntime.transform { it.copy(trustedReport = "成功（sequence ${accepted.sequence}，HTTP ${accepted.response.statusCode}）") }
+            try {
+                accepted.response.observations?.let { RouteManager.get(profileContext).consumeObservations(current, it) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                // 报告已接受；观测验签失败不应使该序号重发，也不追加主动探测。
+                Log.w(TAG, "Android v2 server observations were not adopted", error)
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
@@ -622,6 +499,29 @@ class LoomVpnService : VpnService(), PlatformInterface {
         }
         current
     }
+
+    /** 显式文件递送复用在线同步的 verifier、candidate 与本地激活事务。 */
+    internal suspend fun importPrivateConfiguration(profileId: String, delivery: ByteArray): ManagedProfile? =
+        v2Control.withLock {
+            check(profileId == ProfileContext.id(profileContext) && desiredConnected && boxService != null) {
+                "请先连接要更新的配置，再导入认证配置文件"
+            }
+            val current = checkNotNull(activeManagedProfile?.takeIf { it.protocol == 2 })
+            val reporter = V2DeviceReporter(profileContext)
+            val refresh = reporter.prepareConfiguration(delivery)
+            val candidate = refresh.profile
+            if (candidate == null) {
+                stopForV2Tombstone()
+                return@withLock null
+            }
+            val installed = when {
+                refresh.requiresRuntimeActivation -> activateV2RuntimeCandidate(reporter, current, candidate)
+                refresh.staged -> commitV2LiveCandidate(reporter, current, candidate)
+                else -> current
+            }
+            activeManagedProfile = installed
+            installed
+        }
 
     /** Apply route-only changes before advancing floors; authority-only changes need no libbox restart. */
     private suspend fun commitV2LiveCandidate(
@@ -635,7 +535,13 @@ class LoomVpnService : VpnService(), PlatformInterface {
         val routeChanged = requiresV2RouteApplication(current, candidate)
         try {
             if (routeChanged) RouteManager.get(profileContext).applyToRunning(candidate)
-            val committed = reporter.commitConfigurationCandidate(candidate)
+            val committed = if (routeChanged) {
+                reporter.commitConfigurationCandidate(candidate)
+            } else {
+                RouteManager.get(profileContext).advanceRunningAuthority(current, candidate) {
+                    reporter.commitConfigurationCandidate(candidate)
+                }
+            }
             activeManagedProfile = committed
             if (routeChanged) startRouteSession(committed)
             committed
@@ -777,11 +683,11 @@ class LoomVpnService : VpnService(), PlatformInterface {
         withContext(NonCancellable) {
             sessionID++
             val jobs = buildList {
-                if (cancelReporter) { reportJob?.let(::add); presenceJob?.let(::add) }
+                if (cancelReporter) { reportJob?.let(::add) }
                 routeJob?.let(::add)
             }
             jobs.filter { it != caller }.forEach { it.cancel() }
-            if (cancelReporter) { reportJob = null; presenceJob = null }
+            if (cancelReporter) { reportJob = null }
             routeJob = null
             // 等旧配置的报告、Agent 和 selector 操作退出，才可交接或删除密钥。
             jobs.filter { it != caller }.forEach { it.join() }
@@ -1259,7 +1165,6 @@ class LoomVpnService : VpnService(), PlatformInterface {
         private const val NOTIFICATION_ID = 4101
         private const val V2_CONTROL_ROUND_INTERVAL_MS = 60_000L
         const val ACTION_CONNECT = "io.github.scisaga.loom.action.CONNECT"
-        const val ACTION_RELOAD = "io.github.scisaga.loom.action.RELOAD"
         const val ACTION_REFRESH_V2 = "io.github.scisaga.loom.action.REFRESH_V2"
         const val ACTION_ENROLLMENT_KEEPALIVE = "io.github.scisaga.loom.action.ENROLLMENT_KEEPALIVE"
         const val ACTION_SYNC_SYSTEM_POLICY = "io.github.scisaga.loom.action.SYNC_SYSTEM_POLICY"
@@ -1267,7 +1172,6 @@ class LoomVpnService : VpnService(), PlatformInterface {
         const val ACTION_DISCONNECT = "io.github.scisaga.loom.action.DISCONNECT"
         const val ACTION_DELETE_PROFILE = "io.github.scisaga.loom.action.DELETE_PROFILE"
         const val EXTRA_PROFILE_ID = "io.github.scisaga.loom.extra.PROFILE_ID"
-        const val EXTRA_CANDIDATE_ID = "io.github.scisaga.loom.extra.CANDIDATE_ID"
         const val EXTRA_EMULATOR_PROXY = "io.github.scisaga.loom.extra.EMULATOR_PROXY"
     }
 }

@@ -62,9 +62,9 @@ func prepareAndroidV2PrivateControlPlans(stateJSON, identitySPKIDER []byte,
 	if err != nil {
 		return nil, err
 	}
-	if state.ControlSet == nil || state.Enrollment == nil || state.Envelope.Payload.State != "active" ||
-		state.Envelope.Payload.Active == nil || state.Enrollment.DeviceProfile == nil ||
-		state.Enrollment.DeviceIssuance == nil || state.Enrollment.DeviceApprovedAt == "" {
+	if state.ControlSet == nil || state.material() == nil || state.Envelope.Payload.State != "active" ||
+		state.Envelope.Payload.Active == nil || state.material().DeviceProfile == nil ||
+		state.material().DeviceIssuance == nil || state.material().DeviceApprovedAt == "" {
 		return nil, errors.New("[Android control] active Device/identity/profile 不完整")
 	}
 	now, err := wire.ParseTimeZ(trustedTime)
@@ -75,26 +75,26 @@ func prepareAndroidV2PrivateControlPlans(stateJSON, identitySPKIDER []byte,
 	identity, ok := identityPublic.(*ecdsa.PublicKey)
 	identityHash, hashErr := wire.HashBytes(wire.DomainEnrollmentIdentitySPKI, identitySPKIDER)
 	if err != nil || !ok || identity.Curve != elliptic.P256() || hashErr != nil ||
-		identityHash != state.Enrollment.IdentityKeyHash ||
+		identityHash != state.material().IdentityKeyHash ||
 		identityHash != state.Envelope.Payload.Active.IdentitySPKIHash {
 		return nil, errors.New("[Android control] Keystore identity 与 protected Device 不一致")
 	}
-	certificateDER, err := wire.EnrollmentResultCertificateDER(&state.Enrollment.ResultArtifact)
+	certificateDER, err := state.certificateDER()
 	if err != nil {
 		return nil, err
 	}
 	certificate, err := x509.ParseCertificate(certificateDER)
-	approvedAt, approvedErr := wire.ParseTimeZ(state.Enrollment.DeviceApprovedAt)
+	approvedAt, approvedErr := wire.ParseTimeZ(state.material().DeviceApprovedAt)
 	if err != nil || approvedErr != nil || !bytes.Equal(certificate.RawSubjectPublicKeyInfo, identitySPKIDER) {
 		return nil, errors.New("[Android control] Device certificate/Keystore identity 不匹配")
 	}
-	if _, err := wire.VerifyDeviceCertificateAt(certificateDER, state.Enrollment.DeviceProfile,
-		state.Envelope.Payload.DeviceID, identityHash, state.Enrollment.ClaimCore.ClientPlatform,
-		state.Envelope.Payload.Active.Responsibilities.Values, *state.Enrollment.DeviceIssuance,
+	if _, err := wire.VerifyDeviceCertificateAt(certificateDER, state.material().DeviceProfile,
+		state.Envelope.Payload.DeviceID, identityHash, "android",
+		state.Envelope.Payload.Active.Responsibilities.Values, *state.material().DeviceIssuance,
 		approvedAt, now); err != nil {
 		return nil, err
 	}
-	credential, err := androidPrivateControlCredential(state.Enrollment.Credentials,
+	credential, err := androidPrivateControlCredential(state.material().Credentials,
 		state.Envelope.Payload.ClusterID, state.Envelope.Payload.DeviceID)
 	if err != nil {
 		return nil, err
@@ -106,16 +106,16 @@ func prepareAndroidV2PrivateControlPlans(stateJSON, identitySPKIDER []byte,
 	if err != nil {
 		return nil, err
 	}
-	clientChain := make([]string, 0, 1+len(state.Enrollment.DeviceProfile.ProfileIntent.IssuerChainDER))
+	clientChain := make([]string, 0, 1+len(state.material().DeviceProfile.ProfileIntent.IssuerChainDER))
 	clientChain = append(clientChain, base64.RawURLEncoding.EncodeToString(certificateDER))
-	clientChain = append(clientChain, state.Enrollment.DeviceProfile.ProfileIntent.IssuerChainDER...)
+	clientChain = append(clientChain, state.material().DeviceProfile.ProfileIntent.IssuerChainDER...)
 	path := "/private/v2/device/config"
 	if role == "device_report" {
 		path = "/private/v2/device/report"
 	}
 	plans := make([]androidPrivateControlPlanV1, 0, len(services))
 	for _, service := range services {
-		if !containsAndroidString(service.AuthorizedSubjectProfiles, state.Enrollment.DeviceProfile.ProfileID) {
+		if !containsAndroidString(service.AuthorizedSubjectProfiles, state.material().DeviceProfile.ProfileID) {
 			if serviceID != "" {
 				return nil, errors.New("[Android control] Device certificate profile 未获 service 授权")
 			}

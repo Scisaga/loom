@@ -3,9 +3,11 @@ package windowsv2
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"errors"
 	"os"
 	"sync"
+	"time"
 
 	"loom/internal/clientsecret"
 	"loom/internal/wire"
@@ -22,6 +24,7 @@ type DeviceReportJournalV1 struct {
 	DeviceID                 string                       `json:"device_id"`
 	LastAcceptedSequence     int64                        `json:"last_accepted_sequence"`
 	LastAcceptedEnvelopeHash string                       `json:"last_accepted_envelope_hash,omitempty"`
+	Retired                  *wire.RetiredDeviceReportV1  `json:"retired,omitempty"`
 	NextSequence             int64                        `json:"next_sequence"`
 	Pending                  *wire.DeviceReportEnvelopeV2 `json:"pending,omitempty"`
 }
@@ -29,7 +32,7 @@ type DeviceReportJournalV1 struct {
 var reportJournalMutex sync.Mutex
 
 // SendDeviceReportDurable 先原子保存 exact signed envelope，再发送；响应前后崩溃
-// 都只会重放相同 report_id/sequence/bytes，成功后才推进 sequence。
+// 都只会重放相同 report_id/sequence/bytes；不可继续发送时保留退休记录并消费序号。
 func SendDeviceReportDurable(ctx context.Context, journalPath string,
 	options DeviceReportOptions) (wire.DeviceReportEnvelopeV2, error) {
 	_, envelope, err := sendDeviceReportDurable(ctx, journalPath, options, true)
@@ -37,8 +40,7 @@ func SendDeviceReportDurable(ctx context.Context, journalPath string,
 }
 
 // RetryPendingDeviceReportDurable 只重放已经 durable 的 exact envelope；没有
-// pending 时不创建新报告。宿主在接受新 Device view 前先调用它，避免 floors
-// 前移后把已占用 sequence 变成无法重放的旧签名。
+// pending 时不创建新报告。配置刷新不能被 pending 阻塞；认证新 floors 后保留退休记录。
 func RetryPendingDeviceReportDurable(ctx context.Context, journalPath string,
 	options DeviceReportOptions) (bool, wire.DeviceReportEnvelopeV2, error) {
 	return sendDeviceReportDurable(ctx, journalPath, options, false)
@@ -73,6 +75,40 @@ func sendDeviceReportDurable(ctx context.Context, journalPath string,
 	}
 	if journal.DeviceID != state.Envelope.Payload.DeviceID {
 		return false, wire.DeviceReportEnvelopeV2{}, errors.New("[Windows report] journal 属于另一 Device")
+	}
+	if journal.Pending != nil {
+		identity, err := LoadIdentity(options.IdentityPath, options.Protector)
+		if err != nil {
+			return false, wire.DeviceReportEnvelopeV2{}, err
+		}
+		defer identity.Close()
+		identityHash, err := identity.IdentitySPKIHash()
+		if err != nil {
+			return false, wire.DeviceReportEnvelopeV2{}, err
+		}
+		public, ok := identity.Signer().Public().(*ecdsa.PublicKey)
+		if !ok {
+			return false, wire.DeviceReportEnvelopeV2{}, errors.New("[Windows report] identity 不是 P-256")
+		}
+		now := options.Now
+		if now == nil {
+			now = time.Now
+		}
+		retired, err := wire.RetireObsoleteDeviceReport(journal.Pending, state.Floors, public,
+			journal.DeviceID, identityHash, now(), options.Schemas)
+		if err != nil {
+			return false, wire.DeviceReportEnvelopeV2{}, err
+		}
+		if retired != nil {
+			next, err := wire.CheckedAdd(journal.NextSequence, 1)
+			if err != nil {
+				return false, wire.DeviceReportEnvelopeV2{}, err
+			}
+			journal.Retired, journal.Pending, journal.NextSequence = retired, nil, next
+			if err := writeDeviceReportJournal(journalPath, journal, options.Protector); err != nil {
+				return false, wire.DeviceReportEnvelopeV2{}, err
+			}
+		}
 	}
 	var envelope wire.DeviceReportEnvelopeV2
 	if journal.Pending == nil {
@@ -164,7 +200,11 @@ func validateDeviceReportJournal(journal *DeviceReportJournalV1) error {
 		journal.LastAcceptedSequence < 0 || journal.NextSequence < 1 {
 		return errors.New("[Windows report] journal header/sequence 无效")
 	}
-	wanted, err := wire.CheckedAdd(journal.LastAcceptedSequence, 1)
+	retired, err := wire.RetiredDeviceReportSequence(journal.Retired, journal.DeviceID)
+	if err != nil {
+		return err
+	}
+	wanted, err := wire.CheckedAdd(max(journal.LastAcceptedSequence, retired), 1)
 	if err != nil || wanted != journal.NextSequence {
 		return errors.New("[Windows report] journal sequence 不连续")
 	}

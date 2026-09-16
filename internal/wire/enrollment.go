@@ -196,6 +196,7 @@ type InviteBootstrapDescriptorV2 struct {
 }
 
 type EnrollmentClaimCoreV2 struct {
+	WireGuardPublicKey                   string `json:"wireguard_public_key,omitempty"`
 	Schema                               int    `json:"schema"`
 	ClusterID                            string `json:"cluster_id"`
 	InviteID                             string `json:"invite_id"`
@@ -684,6 +685,11 @@ func EnrollmentClaimCoreHash(core *EnrollmentClaimCoreV2) (string, error) {
 		csr.Subject.CommonName != core.RequestID || len(csr.Subject.Names) != 1 ||
 		len(csr.DNSNames)+len(csr.EmailAddresses)+len(csr.IPAddresses)+len(csr.URIs) != 0 {
 		return "", errors.New("[Enrollment] CSR/identity/request_id/SAN binding 无效")
+	}
+	if core.WireGuardPublicKey != "" {
+		if err := validateEnrollmentWireGuardPublic(core.WireGuardPublicKey); err != nil {
+			return "", err
+		}
 	}
 	return HashObject(DomainEnrollmentClaimCore, core)
 }

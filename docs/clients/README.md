@@ -27,7 +27,7 @@
 |---|---|
 | Android | [双包交付](android-delivery.md)、[ADB 操作](../operations/android-device.md)、[构建与应用说明](../../clients/android/README.md) |
 | Windows | [构建与应用说明](../../clients/windows/README.md)；涉及 v1 报告时读[报告契约](windows-reporting.md)与[报告验收](windows-reporting-acceptance.md) |
-| Linux | [v2 安装](linux-install.md)；仍使用 v1 的迁移输入见[v1 安装契约](../operations/linux-v1-install.md) |
+| Linux | [安装与身份迁移](linux-install.md) |
 
 Device 创建与权限由[生命周期规范](../architecture/device-lifecycle.md)定义；
 [Local Network](../proposals/local-network.md)是独立提案。操作范围和授权以当前任务为准。

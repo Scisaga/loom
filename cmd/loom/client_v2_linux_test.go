@@ -4,11 +4,29 @@ package main
 
 import (
 	"flag"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestLinuxDefaultEnrollmentRejectsLegacyCarrierBeforeCreatingIdentity(t *testing.T) {
+	directory := t.TempDir()
+	invite := filepath.Join(directory, "old.loom-invite")
+	if err := os.WriteFile(invite, []byte(`{"schema":1,"enrollment_url":"https://control.example/enroll","token":"demo-token"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{"enroll", "enroll-v2"} {
+		state := filepath.Join(directory, command)
+		if err := cmdClient([]string{command, "-invite-file", invite, "-state-dir", state}); err == nil {
+			t.Fatal("旧 carrier 被正常入网入口接受")
+		}
+		if _, err := os.Stat(state); !os.IsNotExist(err) {
+			t.Fatalf("拒绝旧 carrier 前创建了身份状态: %v", err)
+		}
+	}
+}
 
 func TestLinuxClientV2CommonFlagsUseParsedStateDirectory(t *testing.T) {
 	var common linuxClientV2CommonFlags

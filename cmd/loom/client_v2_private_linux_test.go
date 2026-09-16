@@ -65,17 +65,19 @@ func TestReadExactLinuxV2JSONRejectsEquivalentNoncanonicalInput(t *testing.T) {
 }
 
 func TestLinuxPrivateV2CommandsRequireInstalledCredentialOrCompleteMigrationInputs(t *testing.T) {
-	for _, args := range [][]string{{"sync-v2-view"}, {"report-v2"}} {
+	// 缺身份测试必须隔离到临时目录；开发机可能已经是正常入网的 Device。
+	stateDirectory := t.TempDir()
+	for _, args := range [][]string{{"sync-v2-view", "-state-dir", stateDirectory}, {"report-v2", "-state-dir", stateDirectory}} {
 		if err := cmdClient(args); err == nil ||
 			(!strings.Contains(err.Error(), "用法") && !strings.Contains(err.Error(), "[Linux")) {
 			t.Fatalf("%v 缺 installed state/credential 未失败关闭: %v", args, err)
 		}
 	}
-	if err := cmdClient([]string{"accept-v2-runtime"}); err == nil ||
+	if err := cmdClient([]string{"accept-v2-runtime", "-state-dir", stateDirectory}); err == nil ||
 		!strings.Contains(err.Error(), "durable Device LKG 缺失") {
 		t.Fatalf("accept-v2-runtime 缺 durable Device LKG 未失败关闭: %v", err)
 	}
-	if err := cmdClient([]string{"accept-v2-runtime", "-apply", "-dry-run"}); err == nil ||
+	if err := cmdClient([]string{"accept-v2-runtime", "-state-dir", stateDirectory, "-apply", "-dry-run"}); err == nil ||
 		!strings.Contains(err.Error(), "apply/dry-run") {
 		t.Fatalf("accept-v2-runtime 同时 apply/dry-run 未失败关闭: %v", err)
 	}

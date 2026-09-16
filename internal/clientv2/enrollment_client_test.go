@@ -10,6 +10,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
 	"io"
@@ -94,6 +95,10 @@ func TestPrivateEnrollmentClientPinsInnerTLSAndKeepsPreflightTokenFree(t *testin
 		CertifiedInviteRecordHash: wire.HashRaw("private-client-test", []byte("record")),
 		CapabilityID:              wire.HashRaw("private-client-test", []byte("capability")),
 	}
+	request, err = wire.AuthorizeInitialEnrollmentPreflight(request, base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x42}, 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
 	result, err := client.Preflight(context.Background(), request, commitmentHash)
 	if err != nil || !wire.EqualCanonical(result.DeviceEnrollmentIntentOpening, opening) {
 		t.Fatalf("preflight result=%#v err=%v", result, err)
@@ -114,7 +119,7 @@ func TestPrivateEnrollmentClientPinsInnerTLSAndKeepsPreflightTokenFree(t *testin
 	}
 }
 
-func privateEnrollmentCertificate(t *testing.T, now time.Time, overlayIP string) (tls.Certificate, *x509.CertPool, string) {
+func privateEnrollmentCertificate(t *testing.T, now time.Time, overlayIP string, dnsNames ...string) (tls.Certificate, *x509.CertPool, string) {
 	t.Helper()
 	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	caTemplate := &x509.Certificate{
@@ -132,7 +137,7 @@ func privateEnrollmentCertificate(t *testing.T, now time.Time, overlayIP string)
 	leafTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(2), Subject: pkix.Name{}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
 		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		IPAddresses: []net.IP{ip}, SignatureAlgorithm: x509.ECDSAWithSHA256,
+		IPAddresses: []net.IP{ip}, DNSNames: dnsNames, SignatureAlgorithm: x509.ECDSAWithSHA256,
 	}
 	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, ca, &leafKey.PublicKey, caKey)
 	if err != nil {

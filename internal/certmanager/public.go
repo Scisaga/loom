@@ -118,10 +118,11 @@ type PublicCertificateManager struct {
 }
 
 type RuntimeCertificate struct {
-	TLSCertificate         tls.Certificate
-	IdentityProjectionHash string
-	CertificateIntentHash  string
-	SPKIPins               []string
+	TLSCertificate                 tls.Certificate
+	IdentityProjectionHash         string
+	CertificateIntentHash          string
+	ExistingCertificateBindingHash string
+	SPKIPins                       []string
 }
 
 func OpenPublicCertificateManager(config PublicCertificateManagerConfig) (*PublicCertificateManager, error) {

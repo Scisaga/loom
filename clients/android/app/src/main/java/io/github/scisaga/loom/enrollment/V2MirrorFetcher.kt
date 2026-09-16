@@ -127,7 +127,7 @@ internal class V2MirrorFetcher(context: Context) {
         check(expectedHash.startsWith("sha256:") && expectedHash.length == 71) { "v2 mirror object hash 无效" }
         val digest = expectedHash.removePrefix("sha256:")
         check(digest.all { it in '0'..'9' || it in 'a'..'f' }) { "v2 mirror digest 不规范" }
-        val networks = HttpTransport.underlyingNetworks(appContext)
+        val networks = UnderlyingNetworks.available(appContext)
         check(networks.isNotEmpty()) { "没有可绑定的已验证底层 Network" }
         var lastFailure: Throwable? = null
         mirrors.forEach { mirror ->

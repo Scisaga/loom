@@ -153,6 +153,10 @@ inbound 并与 transport bootstrap resolver 使用独立缓存；映射和 IPv4/
 不能依赖该隧道最终出口的 DNS。它们使用独立的底层网络（underlay）resolver/cache，按
 signed EndpointSet 拨号并核对 transport identity/pin；不进入业务 FakeIP 缓存。
 Android 的套接字必须由宿主 `protect()` 并按网络代绑定，防止解析请求回到自身 VPN。
+Android v2 运行配置显式选择 `local` 解析器，宿主将其绑定到当前已选择的非 VPN `Network`；
+不继承服务器的固定 DNS 地址，也不使用默认 VPN 网络解析入口。网络切换期间拒绝旧 Network
+返回的结果。真实答案只使用 Android 按 Network 区分的缓存，关闭 libbox 的跨网络答案缓存；
+FakeIP 的持久映射继续保留。该选择只负责本机解析；业务 TUN 的 A/AAAA 仍走独立 FakeIP 与最终出口。
 
 `control_api`、Enrollment、Raft、`device_config` 与 `device_report` 使用 overlay IP 和 internal
 service certificate，不解析公开服务域名，也不经公网 Nginx 反代。但承载 overlay 的外层入口

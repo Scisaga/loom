@@ -69,12 +69,15 @@ func TestBrokerAcceptsExactlyOneBoundedV2Carrier(t *testing.T) {
 	if _, err := decodeBrokerRequest(body); err != nil {
 		t.Fatalf("bounded v2 carrier 被 broker 拒绝: %v", err)
 	}
-	request.Invite = profileDraftInvite()
-	body, _ = json.Marshal(request)
-	if _, err := decodeBrokerRequest(body); err == nil {
-		t.Fatal("broker 同时接受了 v1 Invite 与 v2 carrier")
+	var old map[string]any
+	if err := json.Unmarshal(body, &old); err != nil {
+		t.Fatal(err)
 	}
-	request.Invite = nil
+	old["invite"] = map[string]any{"schema": 1}
+	oldBody, _ := json.Marshal(old)
+	if _, err := decodeBrokerRequest(oldBody); err == nil {
+		t.Fatal("broker accepted removed v1 field")
+	}
 	request.V2Carrier = strings.Repeat("x", 2<<20)
 	body, _ = json.Marshal(request)
 	if _, err := decodeBrokerRequest(body); err == nil {
@@ -102,7 +105,7 @@ func TestBrokerCannotBypassUnavailableProfileIndex(t *testing.T) {
 func TestBrokerProfileDraftUsesBoundedActionsAndDisplayOnlySnapshot(t *testing.T) {
 	for _, req := range []brokerRequest{
 		{Operation: "add_profile"}, {Operation: "cancel_add_profile"}, {Operation: "join_profile"},
-		{Operation: "join_profile", Name: "演示网络", Invite: profileDraftInvite()},
+		{Operation: "join_profile", Name: "演示网络", V2Carrier: profileDraftInvite()},
 	} {
 		body, err := json.Marshal(req)
 		if err != nil {

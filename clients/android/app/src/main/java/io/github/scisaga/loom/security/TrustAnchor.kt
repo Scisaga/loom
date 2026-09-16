@@ -1,16 +1,11 @@
 package io.github.scisaga.loom.security
 
 import io.github.scisaga.loom.BuildConfig
-import io.github.scisaga.loomcore.Loomcore
 import java.security.MessageDigest
 import java.util.Base64
 
 /** The deployment signing key embedded in this exact APK build. */
 internal object TrustAnchor {
-    fun validateEnrollmentInvite(inviteJSON: ByteArray) {
-        Loomcore.validateEnrollmentInvitePlatformKey(inviteJSON, platformPublicKey())
-    }
-
     /**
      * Re-anchor a stored bootstrap in the trust root compiled into the currently
      * running APK. The returned bytes always come from the APK, never from the

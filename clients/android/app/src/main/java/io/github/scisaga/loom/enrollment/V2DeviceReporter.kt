@@ -8,7 +8,6 @@ import io.github.scisaga.loom.security.EncryptedStore
 import io.github.scisaga.loomcore.Loomcore
 import org.json.JSONArray
 import org.json.JSONObject
-import java.time.Instant
 import java.util.Base64
 
 internal data class V2ConfigurationRefresh(
@@ -16,6 +15,8 @@ internal data class V2ConfigurationRefresh(
     val staged: Boolean,
     val requiresRuntimeActivation: Boolean,
 )
+
+internal data class V2ReportAccepted(val sequence: Long, val response: V2ReportResponse)
 
 internal fun requiresV2RuntimeActivation(current: ManagedProfile, candidate: ManagedProfile): Boolean {
     check(current.protocol == 2 && candidate.protocol == 2) { "v2 runtime 比较拒绝其他协议" }
@@ -31,7 +32,7 @@ internal fun requiresV2RouteApplication(current: ManagedProfile, candidate: Mana
 
 /**
  * pending signed envelope 在网络发送前进入 Keystore-wrapped 原子 journal。
- * HTTP 响应丢失或进程死亡后只能重放 exact bytes；收到 204 后才推进 sequence。
+ * HTTP 响应丢失或进程死亡后只能重放 exact bytes；收到有效回执后才推进 sequence。
  */
 internal class V2DeviceReporter(
     context: Context,
@@ -48,9 +49,13 @@ internal class V2DeviceReporter(
 
     /** 配置响应只在共享 verifier 完成 QC/Merkle/floor 检查后进入 protected LKG。 */
     fun refreshConfiguration(): V2ConfigurationRefresh {
-        val now = Instant.now().toString()
-        val plans = stateStore.privateControlPlans("device_config", now)
-        val delivery = client.getFirst(plans)
+        val now = wireTime()
+        val state = checkNotNull(stateStore.current()) { "[Android config] v2 Device state 尚未安装" }
+        val delivery = client.getFirst(state, now)
+        return prepareConfiguration(delivery)
+    }
+
+    fun prepareConfiguration(delivery: ByteArray): V2ConfigurationRefresh {
         val state = checkNotNull(stateStore.current()) { "[Android config] v2 Device state 尚未安装" }
         val currentProfile = checkNotNull(stateStore.runtimeProfile()) { "[Android config] active state 缺 runtime" }
         val fetchPlan = Loomcore.prepareAndroidV2PrivateDeviceConfigFetchPlan(
@@ -125,10 +130,10 @@ internal class V2DeviceReporter(
     }
 
     @Synchronized
-    fun sendHealth(profile: ManagedProfile, healthy: Boolean): Long {
+    fun sendHealth(profile: ManagedProfile, healthy: Boolean): V2ReportAccepted {
         check(profile.protocol == 2) { "[Android report] v2 reporter 拒绝 v1 profile" }
         val state = checkNotNull(stateStore.current()) { "[Android report] v2 Device state 尚未安装" }
-        val now = Instant.now().toString()
+        val now = wireTime()
         var journal = loadJournal(profile.nodeID) ?: ReportJournal(
             deviceID = profile.nodeID,
             lastAcceptedSequence = 0,
@@ -136,6 +141,15 @@ internal class V2DeviceReporter(
             nextSequence = 1,
             pending = null,
         )
+        journal.pending?.let { pending ->
+            val retired = Loomcore.retireAndroidV2DeviceReport(state, keys.ensureIdentity(), pending, now)
+                ?: ByteArray(0)
+            if (retired.isNotEmpty()) {
+                check(journal.nextSequence < Long.MAX_VALUE) { "[Android report] sequence 已耗尽" }
+                journal = journal.copy(retired = retired, nextSequence = journal.nextSequence + 1, pending = null)
+                persistJournal(journal)
+            }
+        }
         val envelope = journal.pending?.also {
             Loomcore.validateAndroidV2DeviceReport(state, keys.ensureIdentity(), it, now)
         } ?: prepareEnvelope(state, journal.nextSequence, now, healthy).also { pending ->
@@ -143,8 +157,7 @@ internal class V2DeviceReporter(
             persistJournal(journal)
         }
 
-        val plans = stateStore.privateControlPlans("device_report", now)
-        client.postFirst(plans, envelope)
+        val response = client.postFirst(state, envelope, now)
 
         // 服务端可能已经提交而本机尚未落盘；回读并比较 pending，禁止并发发送
         // 用同一 sequence 的另一份正文覆盖它。
@@ -162,7 +175,7 @@ internal class V2DeviceReporter(
                 pending = null,
             ),
         )
-        return durable.nextSequence
+        return V2ReportAccepted(durable.nextSequence, response)
     }
 
     private fun prepareEnvelope(state: ByteArray, sequence: Long, now: String, healthy: Boolean): ByteArray {
@@ -186,7 +199,7 @@ internal class V2DeviceReporter(
         val root = JSONObject(raw.decodeToString())
         val allowed = setOf(
             "schema", "device_id", "last_accepted_sequence", "last_accepted_envelope_hash",
-            "next_sequence", "pending",
+            "next_sequence", "pending", "retired",
         )
         check(root.keys().asSequence().toSet().let { it.isNotEmpty() && it.all(allowed::contains) }) {
             "[Android report] journal 含未知字段"
@@ -196,22 +209,35 @@ internal class V2DeviceReporter(
         }
         val last = root.getLong("last_accepted_sequence")
         val next = root.getLong("next_sequence")
-        check(last in 0 until Long.MAX_VALUE && next == last + 1) { "[Android report] journal sequence 不连续" }
+        val retired = root.optJSONObject("retired")?.let {
+            Loomcore.canonicalizeV2(it.toString().encodeToByteArray())
+        }
+        val retiredSequence = retired?.let { value ->
+            JSONObject(value.decodeToString()).getJSONObject("envelope").getJSONObject("body").let { body ->
+                check(body.getString("device_id") == deviceID) { "[Android report] 退休记录属于另一 Device" }
+                body.getLong("report_sequence").also { check(it > 0) }
+            }
+        } ?: 0
+        check(last in 0 until Long.MAX_VALUE && maxOf(last, retiredSequence) < Long.MAX_VALUE && next == maxOf(last, retiredSequence) + 1) { "[Android report] journal sequence 不连续" }
         val lastHash = root.optString("last_accepted_envelope_hash").takeIf(String::isNotBlank)
         check((last == 0L) == (lastHash == null)) { "[Android report] journal last hash 状态无效" }
         lastHash?.let { check(it.startsWith("sha256:") && it.length == 71) { "[Android report] journal hash 无效" } }
         val pending = root.optString("pending").takeIf(String::isNotBlank)?.let(::decodeCanonicalURL)
-        return ReportJournal(deviceID, last, lastHash, next, pending)
+        return ReportJournal(deviceID, last, lastHash, next, pending, retired)
     }
 
     private fun persistJournal(journal: ReportJournal) {
-        check(journal.nextSequence == journal.lastAcceptedSequence + 1)
+        val retiredSequence = journal.retired?.let {
+            JSONObject(it.decodeToString()).getJSONObject("envelope").getJSONObject("body").getLong("report_sequence")
+        } ?: 0
+        check(journal.nextSequence == maxOf(journal.lastAcceptedSequence, retiredSequence) + 1)
         val value = JSONObject()
             .put("schema", 1)
             .put("device_id", journal.deviceID)
             .put("last_accepted_sequence", journal.lastAcceptedSequence)
             .put("next_sequence", journal.nextSequence)
         journal.lastAcceptedEnvelopeHash?.let { value.put("last_accepted_envelope_hash", it) }
+        journal.retired?.let { value.put("retired", JSONObject(it.decodeToString())) }
         journal.pending?.let { value.put("pending", Base64.getUrlEncoder().withoutPadding().encodeToString(it)) }
         val canonical = Loomcore.canonicalizeV2(value.toString().encodeToByteArray())
         protected.put(JOURNAL, canonical)
@@ -231,6 +257,7 @@ internal class V2DeviceReporter(
         val lastAcceptedEnvelopeHash: String?,
         val nextSequence: Long,
         val pending: ByteArray?,
+        val retired: ByteArray? = null,
     )
 
     companion object {

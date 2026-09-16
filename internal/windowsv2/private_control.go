@@ -38,22 +38,22 @@ func buildPrivateControlContext(state *StateV1, identity *Identity, role, servic
 	publicKey, ok := identityPublic.(*ecdsa.PublicKey)
 	identityHash, hashErr := identity.IdentitySPKIHash()
 	if err != nil || !ok || publicKey.Curve != elliptic.P256() || hashErr != nil ||
-		identityHash != state.Enrollment.IdentityKeyHash ||
+		identityHash != state.material().IdentityKeyHash ||
 		identityHash != state.Envelope.Payload.Active.IdentitySPKIHash {
 		return privateControlContext{}, errors.New("[Windows control] DPAPI signer 与 protected Device 不一致")
 	}
-	certificateDER, err := wire.EnrollmentResultCertificateDER(&state.Enrollment.ResultArtifact)
+	certificateDER, err := state.certificateDER()
 	if err != nil {
 		return privateControlContext{}, err
 	}
 	certificate, err := x509.ParseCertificate(certificateDER)
-	approvedAt, approvedErr := wire.ParseTimeZ(state.Enrollment.DeviceApprovedAt)
+	approvedAt, approvedErr := wire.ParseTimeZ(state.material().DeviceApprovedAt)
 	if err != nil || approvedErr != nil || !bytes.Equal(certificate.RawSubjectPublicKeyInfo, identitySPKI) {
 		return privateControlContext{}, errors.New("[Windows control] Device certificate/signer 不匹配")
 	}
-	if _, err := wire.VerifyDeviceCertificateAt(certificateDER, &state.Enrollment.DeviceProfile,
-		state.Envelope.Payload.DeviceID, identityHash, state.Enrollment.ClaimCore.ClientPlatform,
-		state.Envelope.Payload.Active.Responsibilities.Values, state.Enrollment.DeviceIssuance,
+	if _, err := wire.VerifyDeviceCertificateAt(certificateDER, &state.material().DeviceProfile,
+		state.Envelope.Payload.DeviceID, identityHash, "windows-desktop",
+		state.Envelope.Payload.Active.Responsibilities.Values, state.material().DeviceIssuance,
 		approvedAt, now.UTC()); err != nil {
 		return privateControlContext{}, err
 	}
@@ -72,7 +72,7 @@ func buildPrivateControlContext(state *StateV1, identity *Identity, role, servic
 		return privateControlContext{}, errors.New("[Windows control] private credential 未绑定 durable authority")
 	}
 	services, err := clientv2.SelectPrivateControlServices(&credential.ControlServiceDirectory,
-		role, serviceID, state.Enrollment.DeviceProfile.ProfileID)
+		role, serviceID, state.material().DeviceProfile.ProfileID)
 	if err != nil {
 		return privateControlContext{}, err
 	}
@@ -85,9 +85,9 @@ func buildPrivateControlContext(state *StateV1, identity *Identity, role, servic
 		}
 		roots.AddCert(root)
 	}
-	chain := make([][]byte, 0, 1+len(state.Enrollment.DeviceProfile.ProfileIntent.IssuerChainDER))
+	chain := make([][]byte, 0, 1+len(state.material().DeviceProfile.ProfileIntent.IssuerChainDER))
 	chain = append(chain, append([]byte(nil), certificateDER...))
-	for _, encoded := range state.Enrollment.DeviceProfile.ProfileIntent.IssuerChainDER {
+	for _, encoded := range state.material().DeviceProfile.ProfileIntent.IssuerChainDER {
 		der, decodeErr := base64.RawURLEncoding.DecodeString(encoded)
 		certificate, parseErr := x509.ParseCertificate(der)
 		if decodeErr != nil || parseErr != nil || !bytes.Equal(certificate.Raw, der) {
@@ -146,7 +146,7 @@ func SyncDeviceConfig(ctx context.Context, options DeviceConfigSyncOptions) (wir
 	var fetchErr error
 	for _, service := range control.services {
 		client, err := clientv2.NewPrivateDeviceHTTPClient(service, "device_config",
-			state.Enrollment.DeviceProfile.ProfileID, control.chain, identity.Signer(),
+			state.material().DeviceProfile.ProfileID, control.chain, identity.Signer(),
 			control.roots, options.Dial, now, timeout)
 		if err != nil {
 			fetchErr = err
@@ -177,7 +177,7 @@ func SyncDeviceConfig(ctx context.Context, options DeviceConfigSyncOptions) (wir
 			if fetcher.Timeout == 0 {
 				fetcher.Timeout = timeout
 			}
-			installed, err := FetchConfigArtifacts(ctx, state.Enrollment.DistributionMirrors,
+			installed, err := FetchConfigArtifacts(ctx, state.material().DistributionMirrors,
 				finalEnvelope.Payload.Active.ConfigArtifactRefs, fetcher)
 			if err != nil {
 				return store.Floors(), err
@@ -215,6 +215,7 @@ type DeviceReportOptions struct {
 	PayloadSchema  int64
 	Payload        json.RawMessage
 	Schemas        wire.DeviceReportSchemaRegistry
+	Observations   func([]json.RawMessage)
 }
 
 func PrepareDeviceReport(options DeviceReportOptions) (wire.DeviceReportEnvelopeV2, error) {
@@ -232,7 +233,7 @@ func PrepareDeviceReport(options DeviceReportOptions) (wire.DeviceReportEnvelope
 	}
 	defer identity.Close()
 	identityHash, err := identity.IdentitySPKIHash()
-	if err != nil || identityHash != state.Enrollment.IdentityKeyHash ||
+	if err != nil || identityHash != state.material().IdentityKeyHash ||
 		identityHash != state.Envelope.Payload.Active.IdentitySPKIHash {
 		return wire.DeviceReportEnvelopeV2{}, errors.New("[Windows report] signer 与 protected Device 不一致")
 	}
@@ -307,15 +308,19 @@ func SubmitDeviceReport(ctx context.Context, options DeviceReportOptions,
 	var submitErr error
 	for _, service := range control.services {
 		client, err := clientv2.NewPrivateDeviceHTTPClient(service, "device_report",
-			state.Enrollment.DeviceProfile.ProfileID, control.chain, identity.Signer(),
+			state.material().DeviceProfile.ProfileID, control.chain, identity.Signer(),
 			control.roots, options.Dial, now, timeout)
 		if err != nil {
 			submitErr = err
 			continue
 		}
-		submitErr = client.PostDeviceReport(ctx, envelope)
+		var observations []json.RawMessage
+		observations, submitErr = client.PostDeviceReportWithObservations(ctx, envelope)
 		client.CloseIdleConnections()
 		if submitErr == nil {
+			if options.Observations != nil && observations != nil {
+				options.Observations(observations)
+			}
 			return nil
 		}
 	}

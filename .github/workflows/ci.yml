@@ -83,11 +83,11 @@ jobs:
       # Native wire golden、DPAPI/CNG 与 v2 recovery/LKG 必须在 Windows 重放；
       # real QR/TUN/MSI acceptance remains explicitly opt-in on a Windows host.
       - name: Native client tests
-        run: go test -vet=off ./clients/windows ./internal/clientruntime ./internal/clientsecret ./internal/clientjoin ./internal/clientreport ./internal/clientv2 ./internal/windowsv2 ./internal/wire
+        run: go test -vet=off ./clients/windows ./internal/clientruntime ./internal/clientsecret ./internal/clientstatus ./internal/clientv2 ./internal/windowsv2 ./internal/wire
       - name: Native v2 receipt verifier
         run: go test -vet=off ./internal/enrollmentv2 -run '^(TestCoordinator|TestEnrollment|TestApprovalVoter)'
       - name: Vet client packages
-        run: go vet -unsafeptr=false ./clients/windows ./internal/clientruntime ./internal/clientsecret ./internal/clientjoin ./internal/clientreport ./internal/clientv2 ./internal/enrollmentv2 ./internal/windowsv2 ./internal/wire
+        run: go vet -unsafeptr=false ./clients/windows ./internal/clientruntime ./internal/clientsecret ./internal/clientstatus ./internal/clientv2 ./internal/enrollmentv2 ./internal/windowsv2 ./internal/wire
       - name: Compile ARM64 host
         shell: pwsh
         run: |

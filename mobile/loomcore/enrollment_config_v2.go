@@ -61,12 +61,12 @@ func PrepareAndroidV2PrivateDeviceConfigFetchPlan(stateJSON, deliveryJSON,
 		return wire.MarshalCanonical(plan)
 	}
 	plan.State = "active"
-	if configChanged && (state.Enrollment == nil || state.Enrollment.DistributionMirrors == nil) {
+	if configChanged && (state.material() == nil || state.material().DistributionMirrors == nil) {
 		return nil, errors.New("[Android config] durable distribution mirrors 缺失")
 	}
 	if configChanged {
 		plan.Mirrors = append([]wire.DistributionMirrorRefV1(nil),
-			state.Enrollment.DistributionMirrors...)
+			state.material().DistributionMirrors...)
 		plan.Refs = append([]wire.DeviceConfigArtifactRefV1(nil),
 			envelope.Payload.Active.ConfigArtifactRefs...)
 	}

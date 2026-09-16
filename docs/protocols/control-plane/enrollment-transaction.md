@@ -16,6 +16,11 @@ overlay IP SAN 和/或 certified SPKI pin；不得关闭证书验证或接受任
 Windows/Linux 使用各自受保护的不可导出能力，确实无法做到时必须在平台 profile 中明确降级，
 不能把导出私钥伪装成硬件保护。
 
+设备还在本机生成独立的 WireGuard X25519 密钥，公钥进入 stable claim core，由身份 PoP 和
+admission QC 一并认证。私钥只由本机受保护存储保存并在激活时注入运行时；不得进入邀请、
+控制日志或远端封装凭据。缺失或损坏时失败，不能在重试/恢复时生成另一把密钥。新入网必须
+提供该公钥；没有此字段的既存 claim 只允许读取和验证历史事务，不能成为新申请的回退格式。
+
 ~~~text
 EnrollmentClaimCoreV2                  # 幂等核心；不含 token/server nonce/PoP 签名
   schema = 2, cluster_id, invite_id, request_id
@@ -29,6 +34,7 @@ EnrollmentClaimCoreV2                  # 幂等核心；不含 token/server nonc
   device_identity_key_profile
   wrapping_public_key
   wrapping_key_profile
+  wireguard_public_key                 # 本机生成的 X25519 公钥，规范 padded base64
   csr_der
   client_nonce
 
@@ -78,6 +84,7 @@ EnrollmentAdmissionAttestationBodyV1  # 稳定；不含 challenge/signature byte
   device_enrollment_intent_opening_hash
   token_commitment, claim_core_hash
   identity_key_hash, wrapping_key_hash, csr_hash
+  wireguard_public_key                 # admission 绑定本机 WG 公钥
   pop_verification_profile = "loom-enrollment-server-nonce-detached-v2"
   base_recovery_epoch, base_control_epoch, base_control_set_hash, base_head_hash
   admission_not_after, retry_not_after
@@ -94,6 +101,7 @@ EnrollmentClaimOperationV2            # admission-QC-authorized；operation log 
   device_enrollment_intent_commitment_hash, device_enrollment_intent_opening_hash
   token_commitment, claim_core_hash, admission_qc_hash
   identity_key_hash, wrapping_key_hash, csr_hash
+  wireguard_public_key                 # 必须与 admission 及首次配置一致
   reserved_at, retry_not_after
 
 EnrollmentResultArtifactV1            # control-private；completion commit 前禁止释放
@@ -260,7 +268,10 @@ transaction hash 和 sequencer coordinate 为键耐久冻结 first-result；进�
 identity/wrapping keys、client nonce、intent opening 和 base authority 全部不变；只允许 server
 nonce/challenge 和 detached PoP signature 随尝试改变。自动重试仍受 Invite/capability 期限限制。
 超时 reservation/issuance 只可按 certified policy 恢复或 abort，不能由单副本本地释放或改写
-registry root。resume capability 到达时，private Enrollment 先按 binding 读取现有 transaction：
+registry root。认证 reservation 的 `retry_not_after` 到达后，expiry operation 必须绑定
+原 transaction hash、request、Invite 和 deadline，由同一 Raft/QC 提交 `aborted` 与邀请撤销，
+保留 token 占用及签发 registry，只释放未生效的配置计划；期限前拒绝终止，重启重放不生成新结果。
+已完成事务不得走 expiry。resume capability 到达时，private Enrollment 先按 binding 读取现有 transaction：
 completed 直接返回既有 result artifact，reserved/issued_provisional 只继续同一事务，aborted 拒绝；
 三者都不把 token 再做一次 available→reserved CAS。并发不同 core 只有一个能完成
 reservation CAS，失败者不得获知胜者的 Device 材料。

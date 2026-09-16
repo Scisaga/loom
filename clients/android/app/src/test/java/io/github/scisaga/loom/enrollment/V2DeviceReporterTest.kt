@@ -62,9 +62,7 @@ class V2DeviceReporterTest {
         generation = 1,
         config = config,
         routePlan = routePlan,
-        certificatePEM = ByteArray(0),
         caPEM = ByteArray(0),
-        reportEndpoint = "",
         recordID = recordID,
         protocol = 2,
     )

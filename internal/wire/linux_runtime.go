@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"loom/internal/model"
 	"loom/internal/secret"
 )
 
@@ -106,6 +107,11 @@ func ValidateLinuxRuntimeRedaction(runtime *LinuxRuntimeArtifactV1,
 		return err
 	}
 	allowed := make(map[string]bool)
+	if links.LocalRuntime != nil {
+		for _, ref := range links.LocalRuntime.CredentialRefs {
+			allowed[ref] = true
+		}
+	}
 	for _, intent := range links.LinkIntents {
 		for _, ref := range intent.CredentialRefs {
 			allowed[ref] = true
@@ -131,7 +137,7 @@ func ValidateLinuxRuntimeRedaction(runtime *LinuxRuntimeArtifactV1,
 
 func validateLinuxRuntimeRedactedFile(file LinuxRuntimeFileV1) error {
 	if strings.HasSuffix(file.Path, ".json") {
-		canonical, err := CanonicalizeStrict([]byte(file.Content))
+		canonical, err := NormalizeRuntimeJSON([]byte(file.Content))
 		var object map[string]any
 		if err != nil || !bytes.Equal(canonical, []byte(file.Content)) ||
 			json.Unmarshal([]byte(file.Content), &object) != nil || object == nil {
@@ -153,6 +159,12 @@ func validateLinuxRuntimeRedactedFile(file LinuxRuntimeFileV1) error {
 		}
 	}
 	return nil
+}
+
+// ValidatePublicRuntimeJSON 检查各客户端公开配置共用的秘密占位边界。
+// 它只检查公开编码；宿主仍须在验签和解封后验证运行语义。
+func ValidatePublicRuntimeJSON(raw []byte) error {
+	return validateLinuxRuntimeRedactedFile(LinuxRuntimeFileV1{Path: "config.json", Content: string(raw)})
 }
 
 func validateLinuxRuntimeJSONSecrets(value any) error {
@@ -215,17 +227,24 @@ func leftPadDecimal(value int64, width int) string {
 
 func validLinuxRuntimeBindingTarget(binding *LinuxRuntimeBindingV1) bool {
 	if binding.Transport == "wireguard" {
+		if binding.ConfigPath == "sing-box/v2/config.json" && strings.HasPrefix(binding.RuntimeTag, "device-control-") && validIdentifier(binding.RuntimeTag, 128) {
+			return true
+		}
 		return binding.RuntimeTag == "" && validLinuxWireGuardConfigPath(binding.ConfigPath)
 	}
 	return binding.ConfigPath == "sing-box/v2/config.json" && validIdentifier(binding.RuntimeTag, 128)
 }
 
 func validLinuxRuntimeFilePath(path string) bool {
-	return path == "sing-box/v2/config.json" || path == "agent/v2/config.json" ||
+	return path == "sing-box/v2/config.json" || path == "agent/v2/config.json" || path == "report/v2/config.json" ||
 		validLinuxWireGuardConfigPath(path)
 }
 
 func validLinuxWireGuardConfigPath(path string) bool {
+	if strings.HasPrefix(path, "wireguard/wg-") && strings.HasSuffix(path, ".conf") {
+		peer := strings.TrimSuffix(strings.TrimPrefix(path, "wireguard/wg-"), ".conf")
+		return model.ValidNodeID(peer) && len(model.IfaceName(peer)) <= 15
+	}
 	const prefix = "wireguard/lmv2-"
 	const suffix = ".conf"
 	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {

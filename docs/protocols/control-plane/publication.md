@@ -287,6 +287,90 @@ bootstrap 一律 fail closed，不能按时间或下载源择一。
 `BootstrapTransitionBundleV1ToV2`。新 v2 invite 创建的 Device 不在历史 v1 floor 树中，只验
 invite proof bundle 而不伪造空 floor proof。
 
+### 已有单成员控制日志的接续
+
+ 已经存在 certified Head、管理员轮换和 Raft 日志的网络，
+不能重新生成 index=1 的 bootstrap，也不能把早期仅承诺原管理员根证书的恢复对象冒充
+`RecoveryPolicyV1`。该形态使用一次性 `legacy_runtime_activation`，原位追加到既有日志；
+它是迁移证明，不提供旧 Enrollment/config/report 的运行入口。
+
+```text
+LegacyRuntimePolicyV1
+  schema = 1, admin_root              # 原始 Ed25519 自签 CA DER，base64url
+
+RuntimeActivationRootsV1
+  snapshot_hash, effective_ssot_hash, device_views_root
+  admin_acl_root, ca_profile_root, bootstrap_issuer_registry_root
+  render_contract_version            # >= 2
+
+RuntimeActivationStatementV1
+  schema = 1, cluster_id, operation_id
+  parent_head_hash, parent_qc_hash, legacy_recovery_policy_hash
+  v1_platform_key_id, v1_platform_public_key, v1_platform_key_digest
+  new_recovery_epoch = 2, new_recovery_policy_hash, new_recovery_key_pop_root
+  device_migration_root              # 逐设备私有迁移记录的 RFC 6962 根
+  roots: RuntimeActivationRootsV1
+  issued_at, reason
+
+RuntimeActivationProofV1
+  schema = 1, statement: RuntimeActivationStatementV1
+  legacy_policy: LegacyRuntimePolicyV1
+  owner_signature, platform_signature
+
+RuntimeActivationContextV1
+  schema = 1, kind = "legacy_runtime_activation", statement_hash
+
+RuntimeActivationBundleV1
+  schema = 1, proof: RuntimeActivationProofV1
+  parent: HeadEntryV2, parent_qc: StableHeadReplicationQCV1
+  control_set: ControlSetV1
+  recovery_policy: RecoveryPolicyV1
+  recovery_key_possession_proofs[]
+  previous_operation_leaves[]: ControlOperationLeafV1
+  head: HeadEntryV2, config_qc: StableHeadReplicationQCV1
+```
+
+适用条件必须同时成立：原集合恰为 N=1；parent 的 recovery/control epoch 都为 1，render contract
+为 1；原 policy 摘要等于 `H(frame("loom-runtime-recovery-policy-v1", JCS(legacy_policy)))`；
+parent QC 由原集合验证通过。原 owner 根 key 与原 v1 platform key 分别签署同一 statement 的
+`loom-runtime-activation-owner-signature-v1` 和 `loom-runtime-activation-platform-signature-v1`
+frame；当前管理员还必须对 daemon 的 exact base/request 签名。control config key、当前 ping
+权限和服务器持有的任意新 key 都不能代替这两项旧 authority 授权。
+
+statement、proof 的 hash domain 分别为 `loom-runtime-activation-statement-v1`、
+`loom-runtime-activation-proof-v1`。新 policy 的所有 recovery keys 必须提供有效 PoP 并满足
+与 control keys 的用途分离；新 head 的 recovery statement/policy/proof hash 必须逐字段匹配。
+ControlSet、private peer directory commitment、原日志和原 operation leaves 全部保留；
+仅附加 `{schema:1,operation_id,object_id:statement_hash}`，不得删改历史。新 recovery epoch 为 2、
+control epoch 为 0，Raft term/index/前项继承真实日志，不能重置或预留假坐标。daemon 必须从私有
+迁移输入独立重算实际 SSOT、身份、CA、ACL 和 issuer roots，而不是把签名中的 hash 直接当成配置。
+旧式 parent 条件使同一 lineage 无法再次使用该转换。
+
+逐设备迁移记录以 `RuntimeDeviceMigrationLeafV1` 固定 `cluster_id/device_id/platform`、
+原 `BootstrapDeviceFloorLeafV1`、原身份 SPKI hash、wrapping key hash、新证书与 profile hash、
+以及实际 activation 日志中的签发坐标。记录按 Device ID 严格排序、不重复，使用 RFC 6962
+叶/内部节点规则生成 `device_migration_root`，由同一 owner/platform statement 承诺。
+daemon 从完整私有 preimage 重算该根，并以实际迁移日志作为身份起点；不得构造虚假的
+Enrollment reservation、completion 或新 Invite 来代表存量设备。
+
+`RuntimeDeviceMigrationPackageV1` 私有交付相应 inclusion proof、activation bundle、该设备
+的新证书、CA profile/registry、不可变镜像地址和 `DeviceConfigDeliveryV1`。配置窗口首项必须
+属于实际 activation Head，之后沿正式 `device_config` 的连续 Head/QC/Device proof 推进。
+这样，包含私有目录的 Device credential 可以绑定 activation 之后已经存在的同 epoch Head，
+不产生 Head 与密封配置摘要的自引用。迁移包及其逐设备叶不能进入公开 distribution。
+
+客户端先在保留的原平台信任根下验证旧 signed current 和本机防回退下限，再核对迁移承诺；
+`RuntimeDeviceMigrationExpectedV1` 的身份 SPKI、wrapping key 和已验证旧 floor 必须从本机
+受保护状态取得，不能复制包内自报字段。证书仍必须绑定同一 P-256 身份并匹配当前认证 CA
+registry；包内目录不能自行获得 authority。安装时原子保存迁移来源证明、证书、配置、封装
+凭据与四组 v2 floor，回读成功后才启动新版。历史证明和旧密钥存档不恢复任何 v1 业务入口。
+
+客户端必须有独立的原 v1 platform key/ID/anchor digest、已信任的 exact parent Head，或现场 QR
+交付的新 checkpoint 之一；提供多个 anchor 时必须全部匹配。bundle 自带公钥不构成信任根。
+这只建立新 authority，**不替代既有 Device 的 floor 验证、身份迁移与配置激活**；这些仍必须按
+本文的防回退要求完成，才能删除对应旧业务路径。新的邀请不制造历史 floor。公开 bundle 只含
+公钥、承诺和 opaque leaves，SSOT、Device 列表、ACL preimage、token 与 intent opening 保持私有。
+
 首次接受完整 v2 head/QC/view proof 时，客户端把 `v2_latched=true`、bootstrap hash 和全部
 floor **原子耐久写入**。latch 前只可接受满足 BootstrapTransition 所声明 floor 的受限 v1
 配置；latch 后 v1 current、配置、邀请、成员/恢复声明永远不能再成为 authority。迁移期可以
@@ -325,3 +409,12 @@ publisher 不再是某台中控上的 authority。任一 control 副本都可 ma
 任何合格副本都可接管。
 
 ---
+
+## 私有 application 的部分交付
+
+运行时 application schema 2 将每个顶层命名部分的规范内容摘要组成 RFC 6962 Merkle 树，
+按字段名排序；`ControlApplicationSnapshotV2` 的网络、部分数量与树根进入 Head 的 `snapshot_hash`。
+`ControlApplicationSectionProofV2` 只携所选字段的内容与 inclusion path。节点必须同时验证外部
+信任锚、完整迁移/Head/QC、snapshot 摘要、网络、字段名、内容摘要及 Merkle path。
+不能只验证调用方自报的树根，也不能为了交付一个 listener 计划把 SSOT、邀请 opening 或恢复
+custody 发给 forward 节点。历史 schema 1 的整体对象摘要仅供原有证明和日志重放，不授权旧业务路径。

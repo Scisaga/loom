@@ -256,12 +256,14 @@ func TestAndroidEnrollmentInstallationIsSingleReplayableState(t *testing.T) {
 	claimCoreHash, _ := wire.EnrollmentClaimCoreHash(&core)
 	certificateHash, _ := wire.DeviceCertificateHash(certificateDER)
 	installation := &androidEnrollmentInstallationV1{
-		Schema: 1, ClaimCore: core, ClaimCoreHash: claimCoreHash,
-		IdentityKeyHash: identityHash, WrappingKeyHash: wrappingHash,
+		ClaimCore: core, ClaimCoreHash: claimCoreHash,
 		TransactionStateHash: wire.HashRaw("android-install-test", []byte("transaction")),
-		ResultArtifactHash:   artifactHash, DeviceCertificateHash: certificateHash,
-		ResultArtifact: artifact, Credentials: installedSecrets,
-		Configs: []androidInstalledConfigV1{installedConfig},
+		ResultArtifactHash:   artifactHash, ResultArtifact: artifact,
+		androidDeviceInstallationV1: androidDeviceInstallationV1{
+			Schema: 1, IdentityKeyHash: identityHash, WrappingKeyHash: wrappingHash,
+			DeviceCertificateHash: certificateHash, Credentials: installedSecrets,
+			Configs: []androidInstalledConfigV1{installedConfig},
+		},
 	}
 	floors, err := wire.VerifyDeviceViewEnvelope(&envelope, &set)
 	if err != nil {

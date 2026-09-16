@@ -60,10 +60,14 @@ func renderAgent(s *model.SSOT, p *model.Node) ([]File, []Skip) {
 // Linux 的对端观测剪枝依赖 report、节点 CA 路径和 systemd，因此只在 Linux
 // 计划中增补；Windows/Android 包里只放可由平台宿主消费的本地端到端调参输入。
 func renderAgentPlan(s *model.SSOT, p *model.Node) ([]File, []Skip) {
+	return renderAgentPlanScoped(s, p, nil)
+}
+
+func renderAgentPlanScoped(s *model.SSOT, p *model.Node, scope *clientAccessScope) ([]File, []Skip) {
 	if !p.IsAccess() {
 		return nil, nil
 	}
-	declarations, skips := renderAgentDeclarations(s, p)
+	declarations, skips := renderAgentDeclarationsScoped(s, p, scope)
 	cfg := agent.Config{
 		Schema:                agent.ConfigSchema,
 		Node:                  p.ID,
@@ -72,7 +76,7 @@ func renderAgentPlan(s *model.SSOT, p *model.Node) ([]File, []Skip) {
 		Probe:                 ProbeListen,
 		ProbeSecret:           secretRef("probe/" + p.ID),
 		Declarations:          declarations,
-		Selectors:             renderSelectorPlans(s, p),
+		Selectors:             renderSelectorPlansScoped(s, p, scope),
 		ObservationStale:      observationStale,
 		AttestationMinVersion: s.AttestationMinVersion(),
 	}
@@ -114,16 +118,15 @@ func renderAgentPlan(s *model.SSOT, p *model.Node) ([]File, []Skip) {
 
 	if len(cfg.Declarations) == 0 {
 		reason := "没有任何可自动调参的声明；仍交付 selector 计划供客户端三态切换"
-		if usesLinuxLifecycle(p) || len(cfg.Selectors) == 0 {
+		if usesLinuxLifecycle(p) || scope == nil && len(cfg.Selectors) == 0 {
 			reason = "没有任何可调参的声明,不生成 Agent 配置"
 		}
-		skips = append(skips, Skip{
-			Where:  "agent:" + p.ID,
-			Reason: reason,
-		})
+		if scope == nil || len(cfg.Selectors) > 0 {
+			skips = append(skips, Skip{Where: "agent:" + p.ID, Reason: reason})
+		}
 		// Linux 没有循环可跑时不安装空 Agent。移动/桌面客户端仍需要完整
 		// selector 计划承载三态偏好，即使某些 objective 暂不能自动排名。
-		if usesLinuxLifecycle(p) || len(cfg.Selectors) == 0 {
+		if usesLinuxLifecycle(p) || scope == nil && len(cfg.Selectors) == 0 {
 			return nil, skips
 		}
 	}
@@ -142,6 +145,10 @@ func renderAgentPlan(s *model.SSOT, p *model.Node) ([]File, []Skip) {
 // 或探测目标不足而不能进入 Agent 自动排序的声明。顶层模式仍必须能安全地切换这些
 // selector；候选链在这里由 renderer 明示，客户端不得从 opaque tag 猜拓扑。
 func renderSelectorPlans(s *model.SSOT, p *model.Node) []agent.SelectorPlan {
+	return renderSelectorPlansScoped(s, p, nil)
+}
+
+func renderSelectorPlansScoped(s *model.SSOT, p *model.Node, scope *clientAccessScope) []agent.SelectorPlan {
 	declIDs, _ := accessDecls(s, p)
 	declarations := s.DeclarationByID()
 	pinned, _ := pinnedDecls(p)
@@ -168,11 +175,11 @@ func renderSelectorPlans(s *model.SSOT, p *model.Node) []agent.SelectorPlan {
 			continue
 		}
 		if pinned[declarationID] {
-			candidates, _ := s.EnumerateCandidates(p, declaration)
+			candidates, _ := scope.candidates(s, p, declaration)
 			appendPlan("decl:"+declarationID, candidates)
 		}
 		for _, service := range s.ServicesFor(declarationID) {
-			candidates, _ := s.EnumerateServiceCandidates(p, declaration, service)
+			candidates, _ := scope.serviceCandidates(s, p, declaration, service)
 			appendPlan(service.Tag(), candidates)
 		}
 	}
@@ -182,6 +189,10 @@ func renderSelectorPlans(s *model.SSOT, p *model.Node) []agent.SelectorPlan {
 // renderAgentDeclarations 是 Agent 配置与 report.expected_routes 的唯一候选
 // 推导。两份消费者各枚举一次迟早会让“可选路径”和“Agent 真能选的路径”漂移。
 func renderAgentDeclarations(s *model.SSOT, p *model.Node) ([]agent.Decl, []Skip) {
+	return renderAgentDeclarationsScoped(s, p, nil)
+}
+
+func renderAgentDeclarationsScoped(s *model.SSOT, p *model.Node, scope *clientAccessScope) ([]agent.Decl, []Skip) {
 	declIDs, _ := accessDecls(s, p)
 	decls := s.DeclarationByID()
 	pinned, _ := pinnedDecls(p)
@@ -191,6 +202,15 @@ func renderAgentDeclarations(s *model.SSOT, p *model.Node) ([]agent.Decl, []Skip
 		d, ok := decls[did]
 		if !ok {
 			continue
+		}
+		if scope != nil {
+			authorized := pinned[did] && scope.allowsDeclaration(d)
+			for _, service := range s.ServicesFor(did) {
+				authorized = authorized || scope.allowsService(service.ID)
+			}
+			if !authorized {
+				continue
+			}
 		}
 		// 跑不了的 objective 必须在渲染期就说出来,而不是让 Agent 在节点上
 		// 启动失败 —— 那时候人已经不在终端前面了。
@@ -204,7 +224,7 @@ func renderAgentDeclarations(s *model.SSOT, p *model.Node) ([]agent.Decl, []Skip
 		// 被端口钉住的声明才有声明级 selector;只治理服务的声明,
 		// 调参落在各个服务上。
 		if pinned[did] {
-			cands, _ := s.EnumerateCandidates(p, d)
+			cands, _ := scope.candidates(s, p, d)
 			if len(cands) == 0 {
 				continue // 没有候选就没有 selector,Agent 去读会直接报错
 			}
@@ -221,7 +241,7 @@ func renderAgentDeclarations(s *model.SSOT, p *model.Node) ([]agent.Decl, []Skip
 
 		// 每个服务独立调参，不能共享实选 selector。
 		for _, svc := range s.ServicesFor(did) {
-			cands, _ := s.EnumerateServiceCandidates(p, d, svc)
+			cands, _ := scope.serviceCandidates(s, p, d, svc)
 			if len(cands) == 0 {
 				continue
 			}

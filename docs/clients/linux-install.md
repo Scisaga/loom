@@ -6,7 +6,7 @@
 [实现对照](../development/implementation.md)。只有部署具备相应私有服务且交付有效输入时，才可完成以下正常流程。
 命令存在或开发检查通过不表示某环境已具备 v2 入网能力。
 
-当前使用 v1 身份与 signed pull 的部署，维护步骤见[v1 安装手册](../operations/linux-v1-install.md)。
+原 v1 身份通过认证迁移继续使用；安装器和 `client enroll` 只接受 v2 邀请，不再消费旧加入码。
 两代状态与输入不可混用；已加入身份不因文档变更重新生成。管理端职责及 SSH/本地执行的分工见
 [本机部署说明](../operations/local-deployment.md)。
 
@@ -17,6 +17,44 @@
 - 节点能访问 descriptor 的静态 distribution、bootstrap ingress，并经受限隧道到达私有 Enrollment。
   公网 Nginx 不代理 claim；不依赖管理 SSH 是否可达来判断 Enrollment 能否使用。
 - Linux 原生主机验收要求 amd64；arm64 仍构建并做静态/交叉检查，不要求原生机器，也不以 Android ABI 代替。
+
+## 存量设备保留原身份迁移
+
+原设备不重新领取邀请。先在原节点导出原 P-256 身份签名的公共请求：
+
+```bash
+sudo loom client export-migration-request \
+  -device demo-server \
+  -floor /path/to/original/release-floor.json \
+  -out /path/to/private-channel/device-migration-request.json
+```
+
+默认读取 `/etc/loom/tls/` 中的原证书、私钥、CA，以及 `/etc/loom/trust/platform.pub`；
+实际路径不同时用命令对应参数指定。命令验证原证书与设备、私钥的绑定，只把原身份复制到
+root-only v2 存储并生成独立 wrapping key；原文件和 floor 不变。重复导出复用同一对 key。
+请求只含公钥、原 floor 与签名，交由管理员按原网络的认证迁移流程处理。
+
+管理员交付 `control export-migration` 导出的对应设备迁移包后，在原节点执行：
+
+```bash
+sudo loom client import-migration \
+  -device demo-server \
+  -floor /path/to/original/release-floor.json \
+  -file /path/to/private-channel/device-migration.json
+```
+
+导入先验证原平台签名、原身份、floor 与完整迁移证明，再从认证静态镜像下载精确运行制品，
+解封给本机 wrapping key 的凭据。完整 runtime 语义预检通过后，一次保存独立 migration state，
+随后执行正常 `accept-v2-runtime -apply` 事务。control 节点还须用
+`-control-peer-directory` 交付 Head 认证的私有 peer directory。
+
+系统解析器不可用时，首次导入可用 `-dns <既有解析器 IP>` 解析认证镜像的名称。
+后续配置同步复用已安装、已认证的服务器配置中的解析器；不改宿主 DNS 设置或记录，
+镜像的 WebPKI、SNI、SPKI pin 与内容摘要校验保持不变。
+
+`-dry-run` 只验证候选，不保存 migration state 或激活服务。若身份已保存而运行事务失败，错误
+会明确指出这一状态；修复主机条件后运行 `client accept-v2-runtime -apply`，不删身份、不降低
+floor、不重新入网。稳态配置与报告直接消费同一 v2 installation；迁移不会生成虚假的 Enrollment 记录。
 
 ## v2 加入过程
 
@@ -75,13 +113,13 @@ catalog parent Head 对应的 ControlSet 验 config QC；descriptor 自报 hash 
 签名客户端包可直接安装并执行同一条 v2 路径：
 
 ```bash
-sudo ./install.sh --invite-v2-file ../client.loom-invite
+sudo ./install.sh --invite-file ../client.loom-invite
 ```
 
 在 root 身份下从标准输入或普通 exact canonical `.loom-invite` 文件执行初次加入：
 
 ```bash
-sudo loom client enroll-v2 \
+sudo loom client enroll \
   -invite-file /path/from/private-channel/device.loom-invite
 ```
 
@@ -132,6 +170,12 @@ Loom 不会擅自删除调用者提供的文件。
 
 ## v2 稳态 private config 与 report
 
+完成态加入或原身份迁移在安装配置后自动启动 `loom-client-v2.service`。
+该服务运行 `loom client serve-v2`，先恢复本机已验证 LKG，再按正常周期同步私有配置、
+事务应用变更并上报实际 runtime unit 状态；离线不清除原配置，失败报告保持原 exact 请求。
+回执中的原始服务器观测由同机 Agent 验签后使用，不另开网络轮询。
+下面的单次命令用于操作和排障，不代替常驻服务。
+
 Enrollment completion 的 certified Device view 必须承诺并释放
 `secret_id=device-private-control`、`purpose=device_credential` 的 sealed credential；其中把
 `ControlServiceDirectoryV1`、exact ControlSet、directory hash 与 internal CA roots 绑定到
@@ -166,7 +210,17 @@ sudo loom client report-v2 \
 
 reporter 在网络发送前先把已签 exact envelope 写入
 `/var/lib/loom/client-v2/device-report-journal.json`。请求或进程中断后，下次运行先重放该
-pending bytes；收到 `204` 前不会推进 sequence。
+pending bytes；收到 `204` 或验证通过的 exact `200` 回执前不会推进 sequence。
+
+私有通道需要修复时，操作者可显式递送控制面导出的 exact `DeviceConfigDeliveryV1`：
+
+```bash
+sudo loom client sync-v2-view -delivery /secure/device-configuration.json
+sudo loom client accept-v2-runtime -apply
+```
+
+该入口重新验证原身份、protected Head、更新链、密文和制品摘要，原子接续同一 LKG；
+不能指定新信任根或以迁移包覆盖已安装状态。文件递送不替代修复后的私有配置/报告业务验收。
 
 同步 Device view 后，默认使用与 view 原子保存的 `linux-link-intents` exact canonical
 artifact 提交本机 runtime LKG。先验收 runtime LKG 并预览完整安装事务（不安装配置或改动服务）：
@@ -209,10 +263,10 @@ credentials 注入；密钥不会进入命令行、公开 artifact 或输出。
 `-apply` 使用同一个部署事务先在 staging 目录执行 `sing-box check`/`wg-quick strip`，再以
 WG → sing-box → Agent 的顺序替换、启动并验证；任一步失败会恢复旧文件和旧 unit 状态。
 installed inventory 以 CAS 保护，删除仅限该 inventory 中的固定 v2 路径。v2 使用
-`/etc/loom/{sing-box,agent}/v2/`、`lmv2-*` WireGuard interface 及
-`loom-client-v2-{sing-box,agent}.service`，不会覆盖或停用 v1 路径。若新旧监听资源冲突，
-v2 启动验证失败并恢复旧状态。当前启动器尚不负责退役 v1；这是完整迁移的缺口，
-新版接管须按[迁移验收](../protocols/control-plane/migration.md#从当前实现迁移)完成对应旧路径清理。
+`/etc/loom/{sing-box,agent,report}/v2/` 与对应 `loom-client-v2-*` 服务，原服务器的
+WireGuard 接口名及密钥保持不变。原身份迁移的安装事务同时绑定旧文件摘要、停用并移除
+旧 pull/publisher/运行服务；失败仍按原事务回滚。该接线不证明某个环境已经完成迁移，
+部署和正常业务证据须单独核对。
 
 Device view 进入 certified `revoked` 或 `decommissioned` tombstone 后，同一命令不再读取已被
 清除的 runtime/secret artifact。`-dry-run` 只展示受影响的旧 v2 inventory；`-apply` 在相同

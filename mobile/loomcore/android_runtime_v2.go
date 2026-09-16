@@ -22,28 +22,50 @@ type preparedAndroidV2Runtime struct {
 	DeviceGeneration int64  `json:"device_generation"`
 	SingBoxConfig    string `json:"sing_box_config"`
 	RoutePlan        string `json:"route_plan,omitempty"`
+	ObservationCA    string `json:"observation_ca,omitempty"`
 }
 
 // PrepareAndroidV2Runtime 只从已原子安装且重新校验的 Device state
 // 生成内存态 libbox 运行投影。它不持久 hydrate 后的秘密，也不会把
 // 旧 v1 current 当成 v2 latch 的回退配置（Issue #14）。
 func PrepareAndroidV2Runtime(stateJSON []byte) ([]byte, error) {
+	return PrepareAndroidV2RuntimeWithLocalKey(stateJSON, nil)
+}
+
+func PrepareAndroidV2RuntimeWithLocalKey(stateJSON, localWireGuardKey []byte) ([]byte, error) {
 	state, err := decodeAndroidV2DeviceState(stateJSON)
 	if err != nil {
 		return nil, err
 	}
-	if state.ControlSet == nil || state.Enrollment == nil || state.Enrollment.Configs == nil ||
+	if state.ControlSet == nil || state.material() == nil || state.material().Configs == nil ||
 		state.Envelope.Payload.State != "active" || state.Envelope.Payload.Active == nil ||
 		!containsAndroidString(state.Envelope.Payload.Active.Responsibilities.Values, "use_loom") {
 		return nil, errors.New("[Android runtime] active Device/ControlSet/installation 不完整")
 	}
-	installed, err := selectAndroidRuntimeConfig(state.Enrollment.Configs)
+	installed, err := selectAndroidRuntimeConfig(state.material().Configs)
 	if err != nil {
 		return nil, err
 	}
-	secrets, err := androidRuntimeSecrets(state.Enrollment.Credentials)
+	secrets, err := androidRuntimeSecrets(state.material().Credentials)
 	if err != nil {
 		return nil, err
+	}
+	if strings.Contains(string(installed.Config), "${secret:"+wire.LocalWireGuardKeySecretID+"}") {
+		if state.Enrollment == nil {
+			clear(secrets)
+			return nil, errors.New("[Android runtime] 本机 WireGuard 缺原入网 claim 绑定")
+		}
+		if err := wire.VerifyEnrollmentLocalWireGuardKey(&state.Enrollment.ClaimCore, localWireGuardKey); err != nil {
+			clear(secrets)
+			return nil, err
+		}
+		for _, credential := range state.material().Credentials {
+			if credential.SecretID == wire.LocalWireGuardKeySecretID {
+				clear(secrets)
+				return nil, errors.New("[Android runtime] 远端凭据不能覆盖本机 WireGuard 密钥")
+			}
+		}
+		secrets = append(secrets, []byte(wire.LocalWireGuardKeySecretID+"="+base64.StdEncoding.EncodeToString(localWireGuardKey)+"\n")...)
 	}
 	preparedJSON, err := PrepareAndroidRuntime(installed.Config, secrets)
 	clear(secrets)
@@ -63,11 +85,35 @@ func PrepareAndroidV2Runtime(stateJSON []byte) ([]byte, error) {
 	if err := ValidateAndroidV2RuntimeHost([]byte(prepared.SingBoxConfig)); err != nil {
 		return nil, err
 	}
+	ca, err := androidObservationCA(state.material().Credentials)
+	if err != nil {
+		return nil, err
+	}
 	return wire.MarshalCanonical(preparedAndroidV2Runtime{
 		Schema: 1, DeviceID: state.Envelope.Payload.DeviceID,
 		HeadHash: state.Floors.HeadHash, DeviceGeneration: state.Floors.DeviceGeneration,
-		SingBoxConfig: prepared.SingBoxConfig, RoutePlan: prepared.RoutePlan,
+		SingBoxConfig: prepared.SingBoxConfig, RoutePlan: prepared.RoutePlan, ObservationCA: ca,
 	})
+}
+
+func androidObservationCA(credentials []androidInstalledSecretV1) (string, error) {
+	var selected *androidInstalledSecretV1
+	for i := range credentials {
+		credential := &credentials[i]
+		if credential.SecretID == wire.DeviceObservationCASecretIDV1 && credential.Purpose == "device_credential" &&
+			(selected == nil || credential.Generation > selected.Generation) {
+			selected = credential
+		}
+	}
+	// 未授权观测信任锚时保持未知，不能用 control CA 或 HTTP 成功代替验签。
+	if selected == nil {
+		return "", nil
+	}
+	value, err := base64.RawURLEncoding.DecodeString(selected.SecretBytes)
+	if err != nil || wire.ValidateRuntimeCABundle(string(value)) != nil {
+		return "", errors.New("[Android runtime] 服务器观测 CA 无效")
+	}
+	return string(value), nil
 }
 
 func selectAndroidRuntimeConfig(configs []androidInstalledConfigV1) (*androidInstalledConfigV1, error) {

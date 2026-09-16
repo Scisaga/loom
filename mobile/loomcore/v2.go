@@ -31,6 +31,7 @@ type androidV2DeviceState struct {
 	ControlSet         *wire.ControlSetV1               `json:"control_set,omitempty"`
 	PreviousControlSet *wire.ControlSetV1               `json:"previous_control_set,omitempty"`
 	Enrollment         *androidEnrollmentInstallationV1 `json:"enrollment,omitempty"`
+	Migration          *androidMigrationInstallationV1  `json:"migration,omitempty"`
 }
 
 // CanonicalizeV2/HashCanonicalV2 向 Kotlin 暴露同一 Go verifier，避免 Android
@@ -134,7 +135,7 @@ func PrepareV2DeviceStateWithPrevious(envelopeJSON, controlSetJSON, previousCont
 	}
 	return marshalAndroidV2DeviceState(androidV2DeviceState{
 		Schema: 1, Floors: nextFloors, Envelope: envelope, ControlSet: &setCopy,
-		PreviousControlSet: previousCopy, Enrollment: current.Enrollment,
+		PreviousControlSet: previousCopy, Enrollment: current.Enrollment, Migration: current.Migration,
 	})
 }
 
@@ -148,11 +149,11 @@ func PrepareAndroidV2PrivateDeviceViewUpdate(currentStateJSON, envelopeJSON,
 	if err != nil {
 		return nil, err
 	}
-	if current.ControlSet == nil || current.Enrollment == nil {
+	if current.ControlSet == nil || current.material() == nil {
 		return nil, errors.New("[Android config] protected ControlSet/Enrollment 不完整")
 	}
 	identityHash, err := wire.HashBytes(wire.DomainEnrollmentIdentitySPKI, identitySPKIDER)
-	if err != nil || identityHash != current.Enrollment.IdentityKeyHash {
+	if err != nil || identityHash != current.material().IdentityKeyHash {
 		return nil, errors.New("[Android config] Keystore identity 与 protected state 不匹配")
 	}
 	var envelope wire.DeviceViewEnvelopeV2
@@ -207,16 +208,16 @@ func PrepareAndroidV2PrivateDeviceConfigUpdate(currentStateJSON, deliveryJSON,
 			!equalRawAndroidV2(envelope.SecretArtifactRefs, current.Envelope.SecretArtifactRefs)) {
 		return nil, errors.New("[Android config] Device view artifact refs 已变化，必须原子取回后安装")
 	}
-	if envelope.Payload.State != "active" && current.Enrollment != nil {
-		current.Enrollment.Configs = nil
-		current.Enrollment.Credentials = []androidInstalledSecretV1{}
+	if envelope.Payload.State != "active" && current.material() != nil {
+		current.material().Configs = nil
+		current.material().Credentials = []androidInstalledSecretV1{}
 		emptyRefs := []wire.SecretArtifactRefV2{}
-		current.Enrollment.CurrentSecretArtifactRefs = &emptyRefs
+		current.material().CurrentSecretArtifactRefs = &emptyRefs
 	}
 	set := verified.ControlSet()
 	return marshalAndroidV2DeviceState(androidV2DeviceState{
 		Schema: 1, Floors: verified.Floors(), Envelope: envelope, ControlSet: &set,
-		PreviousControlSet: verified.PreviousControlSet(), Enrollment: current.Enrollment,
+		PreviousControlSet: verified.PreviousControlSet(), Enrollment: current.Enrollment, Migration: current.Migration,
 	})
 }
 
@@ -230,7 +231,7 @@ func PrepareAndroidV2PrivateDeviceConfigUpdateWithConfigs(currentStateJSON, deli
 	if err != nil {
 		return nil, err
 	}
-	if current.Enrollment == nil {
+	if current.material() == nil {
 		return nil, errors.New("[Android config] enrollment installation 缺失")
 	}
 	envelope := verified.Envelope()
@@ -239,9 +240,9 @@ func PrepareAndroidV2PrivateDeviceConfigUpdateWithConfigs(currentStateJSON, deli
 		if len(installedConfigsJSON) != 0 {
 			return nil, errors.New("[Android config] tombstone 禁止新 artifact")
 		}
-		current.Enrollment.Credentials = []androidInstalledSecretV1{}
+		current.material().Credentials = []androidInstalledSecretV1{}
 		emptyRefs := []wire.SecretArtifactRefV2{}
-		current.Enrollment.CurrentSecretArtifactRefs = &emptyRefs
+		current.material().CurrentSecretArtifactRefs = &emptyRefs
 	} else {
 		if err := decodeExactAndroidV2(installedConfigsJSON, androidMaximumConfigTotalBytes+(4<<20),
 			&configs, "private installed configs"); err != nil || configs == nil {
@@ -251,11 +252,11 @@ func PrepareAndroidV2PrivateDeviceConfigUpdateWithConfigs(currentStateJSON, deli
 			return nil, errors.New("[Android config] secret refs 已变化，必须先取回并原子解封")
 		}
 	}
-	current.Enrollment.Configs = configs
+	current.material().Configs = configs
 	set := verified.ControlSet()
 	return marshalAndroidV2DeviceState(androidV2DeviceState{
 		Schema: 1, Floors: verified.Floors(), Envelope: envelope, ControlSet: &set,
-		PreviousControlSet: verified.PreviousControlSet(), Enrollment: current.Enrollment,
+		PreviousControlSet: verified.PreviousControlSet(), Enrollment: current.Enrollment, Migration: current.Migration,
 	})
 }
 
@@ -270,7 +271,7 @@ func PrepareAndroidV2PrivateDeviceConfigUpdateWithArtifacts(currentStateJSON, de
 	if err != nil {
 		return nil, err
 	}
-	if current.Enrollment == nil {
+	if current.material() == nil {
 		return nil, errors.New("[Android config] enrollment installation 缺失")
 	}
 	envelope := verified.Envelope()
@@ -278,10 +279,10 @@ func PrepareAndroidV2PrivateDeviceConfigUpdateWithArtifacts(currentStateJSON, de
 		if len(installedConfigsJSON) != 0 || len(installedSecretsJSON) != 0 {
 			return nil, errors.New("[Android config] tombstone 禁止新 artifact")
 		}
-		current.Enrollment.Configs = nil
-		current.Enrollment.Credentials = []androidInstalledSecretV1{}
+		current.material().Configs = nil
+		current.material().Credentials = []androidInstalledSecretV1{}
 		emptyRefs := []wire.SecretArtifactRefV2{}
-		current.Enrollment.CurrentSecretArtifactRefs = &emptyRefs
+		current.material().CurrentSecretArtifactRefs = &emptyRefs
 	} else {
 		if envelope.Payload.Active == nil || current.Envelope.Payload.Active == nil {
 			return nil, errors.New("[Android config] active Device view 缺失")
@@ -297,7 +298,7 @@ func PrepareAndroidV2PrivateDeviceConfigUpdateWithArtifacts(currentStateJSON, de
 				"private installed configs"); err != nil || configs == nil {
 				return nil, errors.New("[Android config] 新 installed configs 不是 canonical array")
 			}
-			current.Enrollment.Configs = configs
+			current.material().Configs = configs
 		} else if len(installedConfigsJSON) != 0 {
 			return nil, errors.New("[Android config] config refs 未变更却提交了 artifact")
 		}
@@ -311,8 +312,8 @@ func PrepareAndroidV2PrivateDeviceConfigUpdateWithArtifacts(currentStateJSON, de
 			if err != nil {
 				return nil, err
 			}
-			current.Enrollment.Credentials = credentials
-			current.Enrollment.CurrentSecretArtifactRefs = cloneAndroidSecretArtifactRefs(refs)
+			current.material().Credentials = credentials
+			current.material().CurrentSecretArtifactRefs = cloneAndroidSecretArtifactRefs(refs)
 		} else if len(installedSecretsJSON) != 0 {
 			return nil, errors.New("[Android config] secret refs 未变更却提交了 credential")
 		}
@@ -320,7 +321,7 @@ func PrepareAndroidV2PrivateDeviceConfigUpdateWithArtifacts(currentStateJSON, de
 	set := verified.ControlSet()
 	return marshalAndroidV2DeviceState(androidV2DeviceState{
 		Schema: 1, Floors: verified.Floors(), Envelope: envelope, ControlSet: &set,
-		PreviousControlSet: verified.PreviousControlSet(), Enrollment: current.Enrollment,
+		PreviousControlSet: verified.PreviousControlSet(), Enrollment: current.Enrollment, Migration: current.Migration,
 	})
 }
 
@@ -345,13 +346,13 @@ func verifyAndroidV2PrivateDeviceConfigDelivery(currentStateJSON, deliveryJSON,
 		return androidV2DeviceState{}, wire.DeviceConfigDeliveryV1{},
 			wire.VerifiedDeviceConfigDeliveryV1{}, err
 	}
-	if current.ControlSet == nil || current.Enrollment == nil {
+	if current.ControlSet == nil || current.material() == nil {
 		return androidV2DeviceState{}, wire.DeviceConfigDeliveryV1{},
 			wire.VerifiedDeviceConfigDeliveryV1{},
 			errors.New("[Android config] protected ControlSet/Enrollment 不完整")
 	}
 	identityHash, err := wire.HashBytes(wire.DomainEnrollmentIdentitySPKI, identitySPKIDER)
-	if err != nil || identityHash != current.Enrollment.IdentityKeyHash {
+	if err != nil || identityHash != current.material().IdentityKeyHash {
 		return androidV2DeviceState{}, wire.DeviceConfigDeliveryV1{},
 			wire.VerifiedDeviceConfigDeliveryV1{},
 			errors.New("[Android config] Keystore identity 与 protected state 不匹配")
@@ -550,6 +551,14 @@ func validateAndroidV2DeviceState(state *androidV2DeviceState) error {
 		}
 		if verifyErr != nil || !wire.EqualCanonical(verifiedFloors, floors) {
 			return errors.New("[Android] protected Device view/ControlSet/QC 不可重放")
+		}
+	}
+	if state.Enrollment != nil && state.Migration != nil {
+		return errors.New("[Android] 加入与迁移证明不能同时存在")
+	}
+	if state.Migration != nil {
+		if err := validateAndroidMigrationInstallation(state.Migration, envelope, state.Floors); err != nil {
+			return err
 		}
 	}
 	if state.Enrollment != nil {

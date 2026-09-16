@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -82,8 +83,25 @@ func TestPrepareLinuxRuntimeDeploymentBindsDurableArtifactsAndBuildsIsolatedTran
 	}
 }
 
+func TestLinuxMigrationPreflightChecksCertifiedRuntimeBeforeIdentityInstall(t *testing.T) {
+	statePath, _, _, _, _ := linuxRuntimeDeploymentFixture(t)
+	store, err := Open(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := cloneStoreValue(*store.state)
+	state.Migration, state.Enrollment = state.Enrollment, nil
+	if err := ValidateLinuxMigrationRuntime(&state, nil, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	state.Migration.Configs = nil
+	if err := ValidateLinuxMigrationRuntime(&state, nil, time.Now().UTC()); err == nil {
+		t.Fatal("缺少实际配置也允许提交迁移身份")
+	}
+}
+
 func TestLinuxRuntimeDeployPlanStartsWireGuardBeforeSingBoxAndAgent(t *testing.T) {
-	plan, installed, err := linuxRuntimeDeployPlan("device-a", map[string]string{
+	plan, installed, err := linuxRuntimeDeployPlan("device-a", t.TempDir(), map[string]string{
 		"wireguard/lmv2-deadbeef00.conf": "[Interface]\n[Peer]\n",
 		"sing-box/v2/config.json":        `{"inbounds":[],"outbounds":[]}`,
 		"agent/v2/config.json":           `{"node":"device-a"}`,
@@ -106,7 +124,8 @@ func TestLinuxRuntimeDeployPlanStartsWireGuardBeforeSingBoxAndAgent(t *testing.T
 	wgCheck := linuxWireGuardPreCheck("/etc/wireguard/lmv2-deadbeef00.conf")
 	if !containsString(plan.PreCheck, wgCheck) ||
 		strings.Contains(wgCheck, "wg-quick strip "+linuxRuntimeStagingPath("/etc/wireguard/lmv2-deadbeef00.conf")) ||
-		!strings.HasSuffix(wgCheck, "wg-quick strip "+deploy.StagingRoot+"lmv2-deadbeef00.conf") {
+		!strings.Contains(wgCheck, `wg-quick strip "$check_dir/lmv2-deadbeef00.conf"`) ||
+		!strings.Contains(wgCheck, `trap 'rm -rf "$check_dir"' EXIT`) {
 		t.Fatalf("WireGuard precheck 未保留合法接口 basename: %q", wgCheck)
 	}
 }
@@ -304,6 +323,7 @@ func linuxRuntimeDeploymentFixture(t *testing.T) (string, string, string, []byte
 		Schema: 1, ClusterID: set.ClusterID, DeviceID: current.Payload.DeviceID,
 		DeviceGeneration: deviceGeneration, Generation: 1,
 		RenderContractID: wire.LinuxLinkIntentRenderContract, AuthorityHeadHash: parent,
+		Authority: wire.CertifiedHeadV1{Head: current.SignedCurrent.Head, QC: current.SignedCurrent.QuorumCertificate},
 		LinkIntents: []wire.LinkIntentV1{{
 			Schema: 1, ClusterID: set.ClusterID, LinkID: "link-a", FromDeviceID: current.Payload.DeviceID,
 			To: wire.LinkIntentDestinationV1{ServiceID: "service-a"}, Purpose: "data_forward",
@@ -431,4 +451,38 @@ func mustLinuxRuntimeJSON(t *testing.T, value any) string {
 		t.Fatal(err)
 	}
 	return string(body)
+}
+
+func TestWireGuardPrecheckUsesPrivateTemporaryCopyAndCleansOnFailure(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(map[bool]string{false: "success", true: "failure"}[fail], func(t *testing.T) {
+			root := t.TempDir()
+			stage := filepath.Join(root, "staging")
+			allowed := filepath.Join(root, "wireguard")
+			if err := os.Mkdir(stage, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(stage, "etc%wireguard%wg-demo-peer.conf"), []byte("demo-private-config\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			stub := filepath.Join(root, "wg-quick")
+			body := "#!/bin/sh\nset -eu\n[ \"$1\" = strip ]\n[ \"$(basename \"$2\")\" = wg-demo-peer.conf ]\n[ ! -L \"$2\" ]\n[ \"$(stat -c %a \"$2\")\" = 600 ]\n[ \"$(cat \"$2\")\" = demo-private-config ]\n"
+			if fail {
+				body += "exit 23\n"
+			}
+			if err := os.WriteFile(stub, []byte(body), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			command := linuxWireGuardPreCheck("/etc/wireguard/wg-demo-peer.conf")
+			command = strings.NewReplacer(deploy.StagingRoot, stage+"/", "/etc/wireguard", allowed, "/usr/bin/wg-quick", stub).Replace(command)
+			output, err := exec.Command("sh", "-c", "umask 077; "+command).CombinedOutput()
+			if (err != nil) != fail {
+				t.Fatalf("预检失败语义丢失: err=%v output=%s", err, output)
+			}
+			entries, err := os.ReadDir(allowed)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("预检留下私钥副本: %v %v", entries, err)
+			}
+		})
+	}
 }

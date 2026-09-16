@@ -160,6 +160,14 @@ func RunLinuxResumeAttempt(ctx context.Context,
 		CertifiedInviteRecordHash: recordHash,
 		CapabilityID:              descriptor.ResumeTunnelCapability.CapabilityID,
 	}
+	identityKey, _, err := identity.keys()
+	if err != nil {
+		return LinuxEnrollmentAttemptResultV2{}, err
+	}
+	preflightRequest, err = wire.AuthorizeResumeEnrollmentPreflight(preflightRequest, identityKey)
+	if err != nil {
+		return LinuxEnrollmentAttemptResultV2{}, err
+	}
 	preflight, err := attempt.API.Preflight(ctx, preflightRequest,
 		bundle.CertifiedInviteRecord.DeviceEnrollmentIntentCommitmentHash)
 	if err != nil {

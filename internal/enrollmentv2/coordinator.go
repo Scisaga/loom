@@ -190,7 +190,8 @@ func claimOperationForAdmission(admission *wire.StableEnrollmentAdmissionQCV1,
 		return ClaimOperationV2{}, err
 	}
 	return ClaimOperationV2{
-		Schema: 2, ClusterID: attestation.ClusterID, OperationID: plan.OperationID,
+		WireGuardPublicKey: attestation.WireGuardPublicKey,
+		Schema:             2, ClusterID: attestation.ClusterID, OperationID: plan.OperationID,
 		InviteID: attestation.InviteID, RequestID: attestation.RequestID,
 		CertifiedInviteRecordHash:            attestation.CertifiedInviteRecordHash,
 		DeviceEnrollmentIntentCommitmentHash: attestation.DeviceEnrollmentIntentCommitmentHash,

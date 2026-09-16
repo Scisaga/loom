@@ -181,7 +181,7 @@ try {
 
     $nativePackages = @(
         './clients/windows', './internal/clientruntime', './internal/clientsecret',
-        './internal/clientjoin', './internal/clientreport', './internal/clientv2',
+        './internal/clientstatus', './internal/clientv2',
         './internal/windowsv2', './internal/wire'
     )
     $crossCompilePackages = $nativePackages + @('./internal/enrollmentv2')

@@ -1,26 +1,16 @@
 # Loom Windows client
 
-> **Protocol contract:** v1 compatibility uses a strict invitation, a single platform-key current,
-> and an enrollment-derived report endpoint. V2 accepts only a certified head and Device view, and
-> adds ControlSet checkpoints/QCs; four durable rollback-floor groups for recovery (including
-> statement and policy hashes), ControlSet, head, and Device view; a compact QR plus immutable
-> bootstrap catalog; purpose-scoped public EndpointSets and a private ControlServiceDirectoryV1;
-> restricted Hysteria2 bootstrap with a formal Trojan/TLS TCP fallback; Hysteria2/Trojan listener
-> overlap; a bootstrap transition hash;
-> WireGuard rotation remains disruptive until a dedicated dual-interface/peer profile is validated; and an
-> irreversible v2 latch. V2 resources are versioned and never extend strict v1 JSON in place. See
-> [the distributed control-plane design](../../docs/protocols/control-plane/migration.md#从当前实现迁移).
-> This is a platform development and delivery guide. Protocol rules belong to the linked specifications.
-> Source entry points and gaps are listed in [the implementation map](../../docs/development/implementation.md);
-> native results and installed artifacts belong to [deployment evidence](../../docs/operations/local-deployment.md).
+The Windows client accepts only v2 enrollment, certified configuration and private reports.
+Its normal GUI, clipboard, Installed broker and reconnect paths share the same v2 host.
+Legacy local identity files remain migration inputs; they never authorize the old
+public enrollment, current-polling or report endpoints. Migration must preserve the
+Device key and rollback state before removing those local inputs.
 
-The source contains a v2 reader and Windows host path alongside pre-latch v1 code.
-A profile that durably commits `protocol_latch=v2` can never fall back to v1.
-Retiring replaced server paths follows the active migration scope and its
-acceptance conditions; an undeployed Windows profile does not authorize keeping
-old server functionality indefinitely.
+Protocol rules belong to [the control-plane specification](../../docs/protocols/control-plane/README.md).
+[The implementation map](../../docs/development/implementation.md) distinguishes
+source wiring from deployment and native acceptance.
 
-In the target v2 flow, an already-enrolled administrator reaches **Create Device**
+In the v2 flow, an already-enrolled administrator reaches **Create Device**
 only over the Loom overlay through the certified private `control_api` service,
 verifies its internal certificate and overlay IP, and authenticates with admin
 mTLS. An unjoined Windows client verifies the compact descriptor's catalog and
@@ -212,10 +202,8 @@ contacting the control, waiting for configuration publication after a `pending`
 response, and verifying/saving the returned bootstrap. The clock keeps updating
 during a slow request; Installed carries the same detail through its existing
 broker status response. A pending response does not mark the client joined or
-start the data plane. The existing three-second retry interval and request/overall
-timeouts are unchanged. These messages explain the wait; they do not shorten
-the control's publication process. Server-side work belongs in the server development
-environment; use the [enrollment diagnostics guide](../../docs/operations/enrollment-diagnostics.md).
+start the data plane. Retry and resume follow the certified transaction deadlines.
+See the [enrollment diagnostics guide](../../docs/operations/enrollment-diagnostics.md).
 
 Internally, the QR import performs an identity handshake: the client creates a
 persistent, non-exportable P-256 identity in the Microsoft CNG software KSP,
@@ -251,7 +239,7 @@ Portable is a delivery choice; TUN and mixed are traffic-capture choices.
 
 Portable editions can open and import a join QR without TUN privileges. Portable
 TUN checks elevation only after the enrollment response has passed its applicable
-v1 verification or v2 certified gate and the joined state is durably saved, immediately
+v2 certified gate and the joined state is durably saved, immediately
 before starting its data plane; its GUI offers a Windows UAC relaunch at that
 boundary. Portable Mixed never
 creates an adapter or changes the route table.
@@ -262,7 +250,7 @@ DPAPI. MSI creates a SYSTEM/Administrators-only state directory. Its local pipe
 allows only the installing Windows user and administrators; the GUI verifies the
 server PID against SCM before sending a QR credential. The service accepts only
 status, profile selection/rename, opening or closing the add panel, joining or
-resuming its draft, the existing profile join, connect, disconnect, authorized
+resuming a v2 transaction, connect, disconnect, authorized
 route preference and local deletion. Profile operations use bounded local
 identifiers and names resolved by the service. Draft snapshots contain only
 display state and progress. These actions use the existing local named pipe;
@@ -352,110 +340,66 @@ merely selecting a different row does not change that choice. An explicitly
 disconnected client stays disconnected. `--build-info` reports the embedded edition,
 architecture, Go/VCS coordinate, and executable hash.
 
-V1 compatibility QR codes include the SHA-256 fingerprint of the deployment platform key.
-The client compares it with its embedded key locally before sending the
-one-time code, so joining does not depend on an extra public trust route. QR codes
-without this fingerprint are rejected; already joined identities remain valid.
-Before native testing, identify the active build and reuse applicable evidence
-through [the deployment guide](../../docs/operations/local-deployment.md).
-
 ## Security and runtime boundaries
 
-- `internal/clientjoin` decodes only bounded QR images, join files, or Loom URIs.
-- The deployment platform public key is embedded in each build as a small,
-  non-secret verification key; it is not a Device credential, connection
-  secret, or control address. A clean first launch does not parse it and simply
-  waits for QR import. Import or recovery then loads this trust anchor. The fixed
-  sidecar is read once and its signature and architecture are checked before a
-  one-time join code is submitted. New invitations carry only the SHA-256
-  fingerprint of that public key, allowing a local comparison before the v1
-  claim POST without adding another network or reverse-proxy dependency. The v2
-  descriptor instead binds the transition/checkpoint, immutable catalog hash,
-  immutable proof-bundle hash, 2–3 token-free mirrors, a bounded private
-  Enrollment service reference, and the separate bootstrap capability. The
-  public proof bundle contains only a hiding commitment to the Device intent;
-  it contains no Device ID, responsibilities, grants, token, or commitment opening.
-- `internal/clientenroll` implements the private wire protocol used behind QR
-  import; it binds an existing Device and is not a user registration command.
-- `internal/clientsecret` protects the join identity, secret vault, and hydrated
-  candidates with edition-appropriate DPAPI scope.
-- The v1 `internal/clientupdate` path verifies signed current state, its generation
-  floor, snapshot signatures, and the Device bundle before activation. The v2
-  reader verifies the certified head, post-commit QC, ControlSet transition,
-  Device inclusion proof, all four durable floor groups, bootstrap transition,
-  irreversible latch, public EndpointSet pins and private service-directory
-  commitment before activation. `committed_not_certified` never becomes current.
-- `internal/clientcomponent` verifies the bundled component signature, hashes,
-  PE architecture, sing-box identity, and Wintun Authenticode before installing
-  an immutable runtime slot.
-- `internal/clientruntime` derives the exact Installed, Portable TUN, or TUN-free
-  Portable Mixed profile and supervises sing-box in a kill-on-close Job Object.
-  TUN profiles enable default-interface binding for underlay sockets and prepend
-  a TUN-only port-53 `hijack-dns` rule. For Auto/fixed-exit business traffic, the
-  resulting FakeIP/domain mapping must restore and carry the FQDN through the
-  selected chain so that the final egress resolver, not the Windows/access-side
-  resolver, chooses A/AAAA. Direct resolves locally. Public distribution/bootstrap/data
-  transport hostnames use a separate protected underlay resolver/cache and never enter business FakeIP;
-  otherwise bootstrap would loop through the tunnel it is trying to create. Merely
-  sending system DNS to a configured resolver does not prove this contract. These
-  local capture settings leave the signed egress rules, selectors and outbounds
-  intact; Portable Mixed receives neither setting. Native compatibility
-  is checked with the bundled sing-box using `TestOfficialWindowsTUNCaptureCheck`
-  (`LOOM_SING_BOX_EXECUTABLE` and `LOOM_TEST_CA_CERTIFICATE`).
-- `internal/clientreport` sends the v1 Observation, including actual Agent evidence, with a v5
-  attestation and self-check v1, using the retained DPAPI identity. After
-  activation it reports the active snapshot every 60 seconds. Before the v2 latch,
-  the v1 destination is the same-origin report URL derived from the validated
-  enrollment URL; redirects are refused, and verified server observations may be
-  returned in a bounded HTTP 200 response with compatibility for an empty HTTP 204.
-  An independent Windows presence worker starts as soon as that registered process
-  runs, sends an immediate `loom-presence-v1` pulse and then sends every five seconds
-  to the exact `presence=1` branch. Its JSON contains only `node`, `ts`, and
-  `signature`, uses the same DPAPI P-256 identity, accepts only an empty HTTP 204,
-  and never reads or refreshes the Observation or WireGuard/Hysteria traffic state.
-  After the latch, only the certified private `device_report` service supplies the
-  exact overlay IP, port, internal certificate profile and Device mTLS policy; no
-  path is inferred from distribution, bootstrap or enrollment.
-  Candidates do not advance
-  `applied`, and stopping the workload stops reports. Self-check checks local
-  runtime listeners and the managed TUN adapter; it sends no business requests.
-  Business reachability remains unmeasured. Server observation errors are
-  separate from local runtime health. See the
-  [reporting contract](../../docs/clients/windows-reporting.md).
-- Before the v2 latch, `config\client.json` remains the v1 joined-state marker.
-  V2 uses one purpose-bound DPAPI LKG at `state\client-v2.json.dpapi`; it commits
-  the verified Device envelope, ControlSet/QC replay context, floors, certificate,
-  secret refs and rendered artifacts together. Content-addressed CA files are
-  published only after candidate validation. A newly added profile becomes
-  selectable only after a subsequent atomic profile-index commit. Failed imports
-  cannot start a partial client, and a ready identity remains recoverable if that
-  index commit fails.
-- Until the join commits, the exact QR credential and generated identity are
-  protected with the edition's DPAPI scope. In v2, retries keep the same
-  token commitment, stable claim-core hash, request ID, identity/CSR and wrapping
-  key; a fresh server nonce may produce a new detached PoP without changing that
-  core. Retry is bounded by the Invite and capability validity. Once the bootstrap
-  capability expires, continuation requires an administrator-delivered, exact-bound
-  resume descriptor for the same pending transaction; it carries no fresh token and
-  cannot reset consumption, attempts, intent, or identity. The legacy one-hour
-  recovery rule applies only to the pre-latch v1 compatibility flow. V2 journals
-  the verified completion before local installation and removes the whole
-  token-bearing enrollment journal only after the DPAPI LKG write has been read
-  back. If the process stops between those two operations, the next active-state
-  load replays the protected LKG, identity and completed result binding before
-  finishing that deletion; a certified terminal state removes any residual
-  enrollment journal before destroying the CNG identity. The v1 compatibility
-  path retains its separate ready journal and scrubs
-  the pending token after `config\client.json` commits. Existing registered
-  profiles retain their startup recovery behavior. A new add-profile draft
-  resumes when the user chooses **继续加入**, using its retained identity.
-- `state\profile-draft.json` stores only a schema, random local profile ID and
-  display name. The invitation and credentials stay in protected per-profile
-  storage. Canceling a draft does not delete a pending or ready identity.
-- A global UI lock prevents two Windows client windows from running at the same
-  time, and the data-plane lock prevents two joined workloads; the latter remains held while
-  an update swaps child data planes, and the final joined-state commit never
-  replaces an existing file.
+- `internal/windowsv2` parses bounded compact QR, `.loom-invite`, `.loom-resume` and migration-file
+  inputs. Invalid carriers fail before any enrollment request. The broker rejects
+  the removed v1 `invite` field, including when a valid v2 carrier is present.
+- The embedded deployment public key verifies the bootstrap transition or existing
+  control-log activation proof. It is a public trust anchor, not a Device credential.
+  The descriptor's mirrors serve immutable catalog/proof objects without a token.
+  A capability is presented only to the selected authenticated bootstrap ingress;
+  the claim token is submitted only over verified inner Enrollment TLS.
+- `internal/clientcomponent` verifies the fixed sidecar's signature, hashes, PE
+  architecture, sing-box identity and Wintun Authenticode before installing an
+  immutable slot. The GUI cannot select arbitrary executables or component paths.
+- Newly enrolled Devices use a non-exportable CNG P-256 identity and separate
+  wrapping key. Purpose-bound DPAPI protects the descriptor, wrapping material,
+  exact pending transaction and installed state using the edition's scope.
+- `state\client-v2.json.dpapi` atomically commits the certified Device view,
+  ControlSet/QC context, all four rollback-floor groups, transition hash,
+  irreversible v2 latch, certificate, secret references and runtime artifacts.
+  A merely committed head without its QC cannot authorize activation.
+- Pending retries keep the same identity, request and claim core. Invite and
+  capability validity bound uncommitted retries; a committed transaction needs an
+  administrator-issued exact-bound resume capability after expiration. The old
+  one-hour automatic recovery path is removed. Successful installation is read
+  back before deleting the token-bearing journal; restart completes that cleanup.
+- The profile index commits only after the v2 state is installed. Canceling an
+  unfinished draft preserves its identity and journal. Opening another profile
+  does not switch the active data plane. Global UI/data-plane locks prevent
+  concurrent hosts from racing the same state.
+- `internal/clientruntime` retains Installed, Portable TUN and Portable Mixed
+  capture modes and supervises sing-box in a kill-on-close Job Object. Only the
+  validated v2 runtime artifact can supply configuration. Public transport DNS
+  remains separate from business FakeIP; Direct resolves locally and proxied
+  business names are carried to the selected egress.
+- Configuration and health reports use only certified private `device_config`
+  and `device_report` services with internal TLS and Device mTLS. No endpoint is
+  derived from an enrollment or distribution URL. The durable report sequence
+  retains an exact pending envelope until accepted. See the
+  [report contract](../../docs/clients/windows-reporting.md).
+- Existing `config\client.json`, legacy identities and verification floors are
+  recognized as migration inputs and preserved. They cannot start an old host,
+  send an old report or retry a consumed legacy invitation. The verified migration
+  installer must complete before that profile can reconnect.
+
+### Migrate an existing profile
+
+Run `loom-windows.exe --migration-request --out device.loom-migration-request`
+from the existing edition, optionally with `--profile <id>`. Installed requires
+its usual administrator context. This exports public keys and the protected
+local version floor, signed by the original identity. It imports that same P-256
+identity into non-exportable CNG storage and retains the original protected files;
+repeating export reuses the same identity and wrapping key.
+
+Import the administrator's certified migration file through the normal file,
+clipboard or broker entry. The installer checks the original platform signature,
+Device identity, local floor, migration proof, certificate, configuration and
+sealed credentials before atomically activating v2. A migration installation is
+stored separately from an Enrollment completion; it does not consume an invite
+or manufacture a claim. Actual server delivery and native Windows acceptance are
+separate requirements, recorded in the [implementation map](../../docs/development/implementation.md).
 
 ## 本地客户端选路目标契约
 
@@ -586,7 +530,7 @@ Opt-in native acceptance tests:
 
 | 目录 | 运行代码 / 文档 | 测试 |
 |---|---|---|
-| `clients/windows` | `README.md`, `activation.go`, `agent_activation.go`, `main_windows.go`, `report_windows.go`, `route_control.go`, `route_windows.go`, `runtime_report.go`, `update_loop.go` | `activation_test.go`, `agent_activation_test.go`, `join_windows_test.go`, `lifecycle_windows_test.go`, `report_windows_test.go` |
-| `internal/clientruntime` | `agent.go`, `agent_paths_other.go`, `agent_paths_windows.go`, `candidate.go`, `selector.go` | `agent_paths_windows_test.go`, `agent_test.go`, `agent_windows_integration_test.go`, `candidate_test.go`, `candidate_windows_test.go`, `selector_test.go` |
-| `internal/clientreport` | `observation.go` | `observation_test.go` |
+| `clients/windows` | `README.md`, `activation.go`, `agent_activation.go`, `main_windows.go`, ``route_control.go`, `route_windows.go`, `runtime_report.go`, `activation_log.go` | `activation_test.go`, `agent_activation_test.go`, `join_windows_test.go`, `lifecycle_windows_test.go`, `v2_runtime_windows_test.go` |
+| `internal/clientruntime` | `agent.go`, `agent_paths_other.go`, `agent_paths_windows.go`, `candidate.go`, `selector.go` | `agent_paths_windows_test.go`, `agent_test.go`, `agent_windows_integration_test.go`, `candidate_test.go`, `selector_test.go` |
+| `internal/clientstatus` | `agent.go` | 由宿主选路与 UI 测试验证 |
 | `internal/agent` | `observed.go`, `observed_windows.go`, `run.go`, `state.go`, `store.go` | `observed_test.go`, `observed_windows_test.go`, `run_state_test.go`, `state_test.go` |

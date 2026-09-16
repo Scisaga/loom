@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 	"loom/internal/wire"
@@ -23,13 +24,14 @@ type LinuxDeviceReportJournalV1 struct {
 	DeviceID                 string                       `json:"device_id"`
 	LastAcceptedSequence     int64                        `json:"last_accepted_sequence"`
 	LastAcceptedEnvelopeHash string                       `json:"last_accepted_envelope_hash,omitempty"`
+	Retired                  *wire.RetiredDeviceReportV1  `json:"retired,omitempty"`
 	NextSequence             int64                        `json:"next_sequence"`
 	Pending                  *wire.DeviceReportEnvelopeV2 `json:"pending,omitempty"`
 }
 
 // SendLinuxDeviceReportDurable 在发送前先持久化 exact signed envelope。
 // 进程在 HTTP 响应前后崩溃都只会重放同一 sequence/bytes；
-// 只有 204 成功后才原子推进 next sequence。
+// 成功回执推进确认；认证配置前移或过期时保留退休记录并消费已占用序号。
 func SendLinuxDeviceReportDurable(ctx context.Context, journalPath string,
 	options LinuxDeviceReportOptions) (wire.DeviceReportEnvelopeV2, error) {
 	if ctx == nil || journalPath == "" || filepath.Clean(journalPath) != journalPath ||
@@ -70,6 +72,31 @@ func SendLinuxDeviceReportDurable(ctx context.Context, journalPath string,
 		return wire.DeviceReportEnvelopeV2{}, errors.New("[Linux report] journal 属于另一 Device")
 	}
 
+	if journal.Pending != nil {
+		_, _, _, key, identityHash, _, err := linuxDeviceReportIdentity(options)
+		if err != nil {
+			return wire.DeviceReportEnvelopeV2{}, err
+		}
+		now := options.Now
+		if now == nil {
+			now = time.Now
+		}
+		retired, err := wire.RetireObsoleteDeviceReport(journal.Pending, store.Floors(), &key.PublicKey,
+			journal.DeviceID, identityHash, now(), options.Schemas)
+		if err != nil {
+			return wire.DeviceReportEnvelopeV2{}, err
+		}
+		if retired != nil {
+			next, err := wire.CheckedAdd(journal.NextSequence, 1)
+			if err != nil {
+				return wire.DeviceReportEnvelopeV2{}, err
+			}
+			journal.Retired, journal.Pending, journal.NextSequence = retired, nil, next
+			if err := persistProtectedCanonical(journalPath, journal); err != nil {
+				return wire.DeviceReportEnvelopeV2{}, err
+			}
+		}
+	}
 	var envelope wire.DeviceReportEnvelopeV2
 	if journal.Pending == nil {
 		payloadHash, err := wire.DeviceReportPayloadHash(options.Payload)
@@ -155,7 +182,11 @@ func validateLinuxDeviceReportJournal(journal *LinuxDeviceReportJournalV1) error
 		journal.LastAcceptedSequence < 0 || journal.NextSequence < 1 {
 		return errors.New("[Linux report] journal header/sequence 无效")
 	}
-	wantNext, err := wire.CheckedAdd(journal.LastAcceptedSequence, 1)
+	retired, err := wire.RetiredDeviceReportSequence(journal.Retired, journal.DeviceID)
+	if err != nil {
+		return err
+	}
+	wantNext, err := wire.CheckedAdd(max(journal.LastAcceptedSequence, retired), 1)
 	if err != nil || journal.NextSequence != wantNext {
 		return errors.New("[Linux report] journal sequence 不连续")
 	}

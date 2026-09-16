@@ -43,6 +43,41 @@ func TestAndroidV2ResumeCarriersAreExact(t *testing.T) {
 	}
 }
 
+func TestAndroidResumePreflightRequiresOriginalKeystoreSignature(t *testing.T) {
+	initial, response := androidEnrollmentCoreFixture(t)
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	spki, _ := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	identityHash, _ := wire.HashBytes(wire.DomainEnrollmentIdentitySPKI, spki)
+	openingHash, _ := wire.IntentOpeningHash(&response.DeviceEnrollmentIntentOpening)
+	intentHash, _ := wire.EnrollmentIntentHash(&response.DeviceEnrollmentIntentOpening.DeviceEnrollmentIntent)
+	inputs := androidEnrollmentResumeInputsV1{bundle: initial.bundle, recordHash: initial.recordHash,
+		core: wire.EnrollmentClaimCoreV2{ClusterID: initial.descriptor.ClusterID, InviteID: initial.descriptor.InviteID,
+			DeviceIdentityPublicKey: base64.RawURLEncoding.EncodeToString(spki), DeviceEnrollmentIntentOpeningHash: openingHash,
+			AcceptedDeviceEnrollmentIntentHash: intentHash}, expected: wire.EnrollmentResumeExpectedV1{IdentityKeyHash: identityHash},
+		descriptor: wire.EnrollmentResumeDescriptorV1{ResumeTunnelCapability: wire.BootstrapTunnelCapabilityV1{
+			CapabilityID: wire.HashRaw("demo-preflight", []byte("resume-capability"))}}}
+	request := androidEnrollmentResumePreflightRequest(inputs)
+	if _, err := wire.EnrollmentPreflightAuthorizationMessage(&request); err != nil {
+		t.Fatal(err)
+	}
+	request, err := wire.AuthorizeResumeEnrollmentPreflight(request, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.RequestHash, err = wire.EnrollmentIntentPreflightRequestHash(&request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := wire.MarshalCanonical(response)
+	if _, err := verifyAndroidEnrollmentResumePreflight(inputs, request, raw); err != nil {
+		t.Fatal(err)
+	}
+	request.Authorization.ProofSignature = ""
+	if _, err := verifyAndroidEnrollmentResumePreflight(inputs, request, raw); err == nil {
+		t.Fatal("Android resume 接受无 Keystore 证明的预取")
+	}
+}
+
 func TestAndroidV2PendingProgressOnlyAdvancesMonotonically(t *testing.T) {
 	core := androidPendingProgressCoreFixture(t)
 	coreJSON, _ := wire.MarshalCanonical(core)

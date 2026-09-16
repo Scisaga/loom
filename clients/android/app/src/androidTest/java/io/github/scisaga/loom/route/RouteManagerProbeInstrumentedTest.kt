@@ -99,6 +99,57 @@ class RouteManagerProbeInstrumentedTest {
         }
     }
 
+    @Test
+    fun authorityRefreshKeepsTheReportSessionAndOutstandingEntryRound() = runBlocking {
+        fixture { test ->
+            test.startDirect()
+            test.select(RouteMode.AUTO)
+            withTimeout(5_000) { test.probeStarted.await() }
+            val next = test.profile.copy(recordID = "v2:demo-new-head", snapshot = "demo-new-head")
+            val applies = test.selector.applies.get()
+            val committed = test.manager.advanceRunningAuthority(test.profile, next) { next }
+            assertEquals(next, committed)
+            assertEquals(applies, test.selector.applies.get())
+            test.manager.consumeObservations(next, null)
+            test.finishProbe.complete(Unit)
+            test.awaitProbeAndUpdates()
+            test.manager.consumeObservations(next, null)
+            assertEquals(1, test.probes.get())
+            assertEquals(1, test.registry.debugState().activeProbeRounds)
+            assertTrue(test.manager.status.value.currentPaths.flatMap { it.links }
+                .any { it.kind == "entry" && it.label == "ping 23 ms" })
+        }
+    }
+
+    @Test
+    fun failedAuthorityCommitKeepsTheExistingReportSession() = runBlocking {
+        fixture { test ->
+            test.startDirect()
+            val next = test.profile.copy(recordID = "v2:demo-new-head", snapshot = "demo-new-head")
+            val result = runCatching {
+                test.manager.advanceRunningAuthority(test.profile, next) { error("demo-persistence-failure") }
+            }
+            assertTrue(result.isFailure)
+            test.manager.consumeObservations(test.profile, null)
+            assertEquals(0, test.probes.get())
+            assertEquals(RouteMode.DIRECT, test.manager.status.value.mode)
+        }
+    }
+
+    @Test
+    fun authorityRefreshBeforeRouteSessionStartsUsesTheCurrentRecord() = runBlocking {
+        fixture { test ->
+            test.registry.observeDefaultNetwork("demo-network", "wlan0")
+            test.manager.applyToRunning(test.profile)
+            val next = test.profile.copy(recordID = "v2:demo-new-head", snapshot = "demo-new-head")
+            test.manager.advanceRunningAuthority(test.profile, next) { next }
+            test.manager.beginRouteSession(test.profile, "wlan0", test.registry)
+            test.manager.consumeObservations(next, null)
+            assertEquals(0, test.probes.get())
+            assertTrue(test.manager.status.value.running)
+        }
+    }
+
     private suspend fun fixture(test: suspend (Fixture) -> Unit) {
         val fixture = Fixture()
         try {
@@ -142,8 +193,8 @@ class RouteManagerProbeInstrumentedTest {
         }, managerScope)
         val profile = ManagedProfile(
             nodeID = "demo-client", snapshot = "demo-snapshot", generation = 1,
-            config = CONFIG, routePlan = PLAN, certificatePEM = byteArrayOf(), caPEM = byteArrayOf(),
-            reportEndpoint = "https://report.example/", recordID = "demo-record",
+            config = CONFIG, routePlan = PLAN, caPEM = byteArrayOf(),
+            recordID = "demo-record", protocol = 2,
         )
 
         suspend fun startDirect() {

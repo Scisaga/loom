@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"loom/internal/agent"
-	"loom/internal/clientreport"
+	"loom/internal/clientstatus"
 	"loom/internal/version"
 )
 
@@ -135,7 +135,7 @@ func runWindowsClientUnderlay(ctx context.Context, cfg *agent.Config, base agent
 
 // PathMeasurements 只为当前实际候选组装本地显示数据，不改变 Report 线格式。
 // 不重新读取 selector、不发探测、不把不同承载或不同代次的观测混在一起。
-func (a *WindowsAgent) PathMeasurements(report *clientreport.AgentState, now time.Time) map[string][]agent.ClientPathMeasurement {
+func (a *WindowsAgent) PathMeasurements(report *clientstatus.AgentState, now time.Time) map[string][]agent.ClientPathMeasurement {
 	out := map[string][]agent.ClientPathMeasurement{}
 	if a == nil || report == nil || a.ctx.Err() != nil || report.Node != a.config.Node {
 		return out
@@ -259,7 +259,7 @@ func WaitWindowsAgentAPI(ctx context.Context, cfg *agent.Config) error {
 }
 
 // 链由当轮 GET 与当前签名 plan 映射；旧状态只在同一实例、同一实际候选且新鲜时补质量。
-func (a *WindowsAgent) Report(ctx context.Context, now time.Time) (*clientreport.AgentState, error) {
+func (a *WindowsAgent) Report(ctx context.Context, now time.Time) (*clientstatus.AgentState, error) {
 	if a == nil {
 		return nil, nil
 	}
@@ -279,7 +279,7 @@ func (a *WindowsAgent) Report(ctx context.Context, now time.Time) (*clientreport
 	if err != nil {
 		return nil, err
 	}
-	out := &clientreport.AgentState{Node: a.config.Node, TS: now.UTC().Format(time.RFC3339), ComponentVersion: version.AgentProtocolVersion}
+	out := &clientstatus.AgentState{Node: a.config.Node, TS: now.UTC().Format(time.RFC3339), ComponentVersion: version.AgentProtocolVersion}
 	for _, d := range a.config.Declarations {
 		actual, err := selectorReadback(read, a.config, d.Selector)
 		if err != nil {
@@ -297,7 +297,7 @@ func (a *WindowsAgent) Report(ctx context.Context, now time.Time) (*clientreport
 		if !found {
 			return nil, errors.New("selector 读回值无法映射当前签名 plan")
 		}
-		s := clientreport.AgentSelection{Declaration: d.ID, Selector: d.Selector, Candidate: actual, Chain: chain, UpdatedAt: out.TS, Reason: "unknown：本次 Agent 尚无当前候选的有效测量"}
+		s := clientstatus.AgentSelection{Declaration: d.ID, Selector: d.Selector, Candidate: actual, Chain: chain, UpdatedAt: out.TS, Reason: "unknown：本次 Agent 尚无当前候选的有效测量"}
 		if st != nil && st.Node == a.config.Node {
 			for _, old := range st.Selections {
 				stale, _ := d.Stale()
@@ -322,12 +322,12 @@ func (a *WindowsAgent) Report(ctx context.Context, now time.Time) (*clientreport
 }
 
 // Direct 的界面观测同样来自实际 selector；偏好本身不能证明数据面已直连。
-func (p *WindowsSelectorPlan) ReadDirectPaths(ctx context.Context, now time.Time) (*clientreport.AgentState, error) {
+func (p *WindowsSelectorPlan) ReadDirectPaths(ctx context.Context, now time.Time) (*clientstatus.AgentState, error) {
 	if p == nil || !p.DirectAvailable() {
 		return nil, errors.New("当前签名计划没有完整直连授权")
 	}
 	cfg := p.DirectReadinessConfig()
-	out := &clientreport.AgentState{Node: cfg.Node, TS: now.UTC().Format(time.RFC3339)}
+	out := &clientstatus.AgentState{Node: cfg.Node, TS: now.UTC().Format(time.RFC3339)}
 	for _, d := range cfg.Declarations {
 		actual, err := selectorReadback(ctx, cfg, d.Selector)
 		if err != nil {
@@ -340,7 +340,7 @@ func (p *WindowsSelectorPlan) ReadDirectPaths(ctx context.Context, now time.Time
 		if !found {
 			return nil, errors.New("实际 selector 不属于当前签名直连候选")
 		}
-		out.Selections = append(out.Selections, clientreport.AgentSelection{
+		out.Selections = append(out.Selections, clientstatus.AgentSelection{
 			Declaration: d.ID, Selector: d.Selector, Candidate: actual, UpdatedAt: out.TS,
 			Reason: "直连模式；不进行 Agent 路径测量",
 		})

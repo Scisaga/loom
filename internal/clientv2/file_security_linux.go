@@ -4,11 +4,42 @@ package clientv2
 
 import (
 	"errors"
+	"io"
 	"os"
 	"syscall"
 
 	"golang.org/x/sys/unix"
 )
+
+func readPrivateRegularFile(path string, maximum int64) ([]byte, error) {
+	return readOwnedRegularFile(path, maximum, false)
+}
+
+func readMigrationManagedFile(path string) ([]byte, error) {
+	return readOwnedRegularFile(path, 4<<20, true)
+}
+
+func readOwnedRegularFile(path string, maximum int64, publicRead bool) ([]byte, error) {
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(fd), path)
+	if file == nil {
+		_ = unix.Close(fd)
+		return nil, errors.New("[Linux] 无法打开受保护文件")
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || (info.Mode().Perm() != 0600 && !(publicRead && info.Mode().Perm() == 0644)) || !ownedByCurrentUser(info) || info.Size() < 1 || info.Size() > maximum {
+		return nil, errors.New("[Linux] 文件必须是当前账号持有、权限受限的有界普通文件")
+	}
+	body, err := io.ReadAll(io.LimitReader(file, maximum+1))
+	if err != nil || int64(len(body)) > maximum {
+		return nil, errors.New("[Linux] 私有文件读取失败或超出大小边界")
+	}
+	return body, nil
+}
 
 func ownedByCurrentUser(info os.FileInfo) bool {
 	stat, ok := info.Sys().(*syscall.Stat_t)

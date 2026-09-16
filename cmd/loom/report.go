@@ -3,14 +3,17 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"loom/internal/report"
+	"loom/internal/wire"
 )
 
 // report 是节点上的上报者:回答"隧道还活着吗"和"配置还是渲染出来的那份吗"。
@@ -23,6 +26,7 @@ func cmdReport(args []string) error {
 	fs := flag.NewFlagSet("report", flag.ExitOnError)
 	cfgPath := fs.String("c", "/etc/loom/report/config.json", "上报者配置(loom render 的产物)")
 	serve := fs.Bool("serve", false, "常驻监听,提供 GET /status")
+	deviceState := fs.String("device-state-dir", "", "v2 宿主的本机状态目录")
 	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
@@ -35,12 +39,42 @@ func cmdReport(args []string) error {
 	if err != nil {
 		return err
 	}
+	if cfg.RuntimeProfile == "private-v2" {
+		if !filepath.IsAbs(*deviceState) || filepath.Clean(*deviceState) != *deviceState {
+			return errors.New("v2 report 必须指定规范的 -device-state-dir")
+		}
+		cfg.AppliedRuntime = func() (string, error) {
+			body, err := readOwnerOnlyFile(filepath.Join(*deviceState, "runtime-install-state.json"), 4<<20)
+			if err != nil {
+				return "", err
+			}
+			var installed struct {
+				Schema              int    `json:"schema"`
+				DeviceID            string `json:"device_id"`
+				RuntimeArtifactHash string `json:"runtime_artifact_hash"`
+			}
+			if err := json.Unmarshal(body, &installed); err != nil || installed.Schema != 1 || installed.DeviceID != cfg.Node {
+				return "", errors.New("本机 v2 激活回执与观测身份不一致")
+			}
+			if _, err := wire.ParseHash(installed.RuntimeArtifactHash); err != nil {
+				return "", err
+			}
+			return installed.RuntimeArtifactHash, nil
+		}
+	} else if *deviceState != "" {
+		return errors.New("只有 v2 观测配置可以向设备宿主交接")
+	}
 
 	if *serve {
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
 		fmt.Printf("Loom 上报者 · 节点 %s\n", cfg.Node)
-		return report.Serve(ctx, cfg, func() time.Time { return time.Now() }, os.Stdout)
+		if *deviceState != "" {
+			return report.ServeWithLocalObservation(ctx, cfg, time.Now, os.Stdout, func(own *report.Observation) error {
+				return report.SaveLocalObservation(filepath.Join(*deviceState, "node-observation.json"), own)
+			})
+		}
+		return report.Serve(ctx, cfg, time.Now, os.Stdout)
 	}
 
 	st := report.Collect(cfg, time.Now())

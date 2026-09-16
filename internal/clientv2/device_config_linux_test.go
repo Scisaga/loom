@@ -222,9 +222,64 @@ func TestLinuxDeviceArtifactsCommitAtomicallyWithCertifiedDelivery(t *testing.T)
 	}
 }
 
+func TestLinuxExplicitDeliveryKeepsOriginalIdentityAndRejectsUnanchoredUpdates(t *testing.T) {
+	now := time.Date(2026, 9, 12, 9, 30, 0, 0, time.UTC)
+	statePath, identityPath, set, current, signingKey := installedDeviceConfigStateWithKey(t, now)
+	identity, err := LoadEnrollmentIdentityForResume(identityPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, sealed, secret := linuxDynamicSecretFixture(t, identity, current.Payload.ClusterID, current.Payload.DeviceID, 2)
+	next := advanceClientEnvelopeWithArtifacts(t, current, &set, signingKey, []wire.DeviceConfigArtifactRefV1{}, []wire.SecretArtifactRefV2{ref})
+	delivery := wire.DeviceConfigDeliveryV1{Schema: 1, ClusterID: current.Payload.ClusterID, DeviceID: current.Payload.DeviceID,
+		Updates:         []wire.DeviceConfigUpdateV1{{Schema: 1, Envelope: current, ControlSet: set}, {Schema: 1, Envelope: next, ControlSet: set}},
+		SecretEnvelopes: []wire.SealedSecretEnvelopeV1{sealed}}
+	options := LinuxDeviceViewSyncOptions{StatePath: statePath, IdentityPath: identityPath, Timeout: time.Second,
+		Dial: func(context.Context, string, string) (net.Conn, error) {
+			t.Fatal("显式递送不应访问私有 HTTP")
+			return nil, nil
+		}}
+	before, _ := os.ReadFile(statePath)
+	identityBefore, _ := os.ReadFile(identityPath)
+	for _, change := range []func(*wire.DeviceConfigDeliveryV1){
+		func(d *wire.DeviceConfigDeliveryV1) { d.Updates = d.Updates[1:] },
+		func(d *wire.DeviceConfigDeliveryV1) { d.DeviceID = "demo-another-device" },
+		func(d *wire.DeviceConfigDeliveryV1) { d.SecretEnvelopes = nil },
+	} {
+		copy := cloneStoreValue(delivery)
+		change(&copy)
+		raw, _ := wire.MarshalCanonical(copy)
+		if _, err := ImportLinuxDeviceView(context.Background(), options, raw); err == nil {
+			t.Fatal("接受无原 Head 或未绑定凭据的更新")
+		}
+		after, _ := os.ReadFile(statePath)
+		if !bytes.Equal(before, after) {
+			t.Fatal("失败更新改写了原 LKG")
+		}
+	}
+	raw, _ := wire.MarshalCanonical(delivery)
+	floors, err := ImportLinuxDeviceView(context.Background(), options, raw)
+	if err != nil || floors.DeviceGeneration != 2 {
+		t.Fatal("认证递送未接续原状态", err)
+	}
+	store, err := Open(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := base64.RawURLEncoding.DecodeString(store.Installation().Credentials[0].SecretBytes)
+	identityAfter, _ := os.ReadFile(identityPath)
+	if !bytes.Equal(got, secret) || !bytes.Equal(identityBefore, identityAfter) {
+		t.Fatal("递送未解封配置或改写原身份")
+	}
+}
+
 func linuxDynamicSecretFixture(t *testing.T, identity *EnrollmentIdentityV1,
 	clusterID, deviceID string, generation int64,
 ) (wire.SecretArtifactRefV2, wire.SealedSecretEnvelopeV1, []byte) {
+	return linuxSealedSecretFixture(t, identity, clusterID, deviceID, generation, "runtime-password", "data_plane_credential", []byte("rotated-linux-secret"))
+}
+
+func linuxSealedSecretFixture(t *testing.T, identity *EnrollmentIdentityV1, clusterID, deviceID string, generation int64, id, purpose string, secret []byte) (wire.SecretArtifactRefV2, wire.SealedSecretEnvelopeV1, []byte) {
 	t.Helper()
 	_, wrappingPrivate, err := identity.keys()
 	if err != nil {
@@ -242,12 +297,11 @@ func linuxDynamicSecretFixture(t *testing.T, identity *EnrollmentIdentityV1,
 	owner := wire.SecretArtifactOwnerV1{Kind: "device",
 		Device: &wire.SecretArtifactDeviceOwnerV1{DeviceID: deviceID}}
 	contextValue, err := wire.NewSealedSecretContext(clusterID, "proposal-rotate",
-		"runtime-password", "data_plane_credential", owner, generation, &policy,
+		id, purpose, owner, generation, &policy,
 		[]wire.SealedBlobRecipientKeyRefV1{recipient})
 	if err != nil {
 		t.Fatal(err)
 	}
-	secret := []byte("rotated-linux-secret")
 	envelope, err := wire.SealSecret(rand.Reader, contextValue, &policy,
 		[]wire.SealedBlobRecipientKeyRefV1{recipient}, secret)
 	if err != nil {
@@ -331,7 +385,7 @@ func TestInstalledLinuxPrivateControlCredentialReplacesOperatorNetworkInputs(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	installation := &EnrollmentInstallationV1{
+	installation := &DeviceInstallationV1{
 		ClaimCore: wire.EnrollmentClaimCoreV2{BaseHeadHash: envelope.SignedCurrent.Head.HeadHash,
 			BaseControlSetHash: setHash},
 		Credentials: []InstalledSecretV1{{
@@ -393,6 +447,7 @@ func TestSendLinuxDeviceReportSignsDurableFloorsOverPinnedMTLSRoute(t *testing.T
 	schemas := wire.DeviceReportSchemaRegistry{"health": 1}
 	requests := 0
 	var reportBodies [][]byte
+	var received []json.RawMessage
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		requests++
 		body, _ := io.ReadAll(request.Body)
@@ -419,8 +474,19 @@ func TestSendLinuxDeviceReportSignsDurableFloorsOverPinnedMTLSRoute(t *testing.T
 			writer.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
+		hash, _ := wire.DeviceReportEnvelopeHash(&report)
+		receipt, err := wire.NewDeviceReportReceipt(report.Body, hash, []json.RawMessage{json.RawMessage(`{"schema":1}`)})
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if request.Header.Get("Accept") != wire.DeviceReportReceiptMediaTypeV1 {
+			t.Error("Linux 未请求正式回执")
+		}
+		encoded, _ := wire.MarshalCanonical(receipt)
 		writer.Header().Set("Cache-Control", "no-store")
-		writer.WriteHeader(http.StatusNoContent)
+		writer.Header().Set("Content-Type", wire.DeviceReportReceiptMediaTypeV1)
+		_, _ = writer.Write(encoded)
 	}))
 	server.TLS = &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
 		Certificates: []tls.Certificate{serverCertificate}, ClientAuth: tls.RequireAnyClientCert,
@@ -452,6 +518,7 @@ func TestSendLinuxDeviceReportSignsDurableFloorsOverPinnedMTLSRoute(t *testing.T
 		Now: func() time.Time { return now }, Timeout: 5 * time.Second,
 		ReportID: "report-linux-device-1-1", ReportSequence: 1,
 		Kind: "health", PayloadSchema: 1, Payload: payload, Schemas: schemas,
+		Observations: func(_ context.Context, observations []json.RawMessage) { received = observations },
 	}
 	report, err := SendLinuxDeviceReport(context.Background(), options)
 	if err == nil || report.Body.ReportSequence != 1 || requests != 1 {
@@ -463,7 +530,7 @@ func TestSendLinuxDeviceReportSignsDurableFloorsOverPinnedMTLSRoute(t *testing.T
 	options.RetryEnvelope = &report
 	retried, err := SendLinuxDeviceReport(context.Background(), options)
 	if err != nil || requests != 2 || !wire.EqualCanonical(report, retried) ||
-		len(reportBodies) != 2 || !bytes.Equal(reportBodies[0], reportBodies[1]) {
+		len(reportBodies) != 2 || !bytes.Equal(reportBodies[0], reportBodies[1]) || len(received) != 1 {
 		t.Fatalf("exact report retry 失败: requests=%d same=%v err=%v",
 			requests, wire.EqualCanonical(report, retried), err)
 	}
@@ -624,7 +691,7 @@ func installedDeviceConfigStateWithKey(t *testing.T, now time.Time) (string, str
 	if err != nil {
 		t.Fatal(err)
 	}
-	installation := &EnrollmentInstallationV1{
+	installation := &DeviceInstallationV1{
 		Schema: 1, ClaimCore: claimCore, ClaimCoreHash: claimCoreHash, IdentityKeyHash: identityHash,
 		WrappingKeyHash: wrappingHash, TransactionStateHash: hash("completed"), ResultArtifactHash: artifactHash,
 		DeviceCertificateHash: certificateHash, ResultArtifact: artifact, Credentials: []InstalledSecretV1{},

@@ -275,15 +275,25 @@ func collectWithWGStats(cfg *Config, now time.Time, stats map[string]wgInterface
 	st := &Status{Node: cfg.Node, TS: now.UTC().Format(time.RFC3339)}
 	vc := version.Self()
 	st.Version = &vc
-	if b, err := os.ReadFile(appliedPath); err == nil {
-		st.Applied = strings.TrimSpace(string(b))
-	}
-	if r, err := rollout.Read(rollout.Path); err != nil {
-		st.Errors = append(st.Errors, "读 rollout 状态:"+err.Error())
-	} else if r != nil {
-		st.Rollout = &RolloutState{
-			Snapshot: r.Snapshot, Stage: string(r.Stage),
-			EnteredAt: r.EnteredAt, LastGood: r.LastGood, Error: r.Error,
+	if cfg.RuntimeProfile == "private-v2" {
+		if cfg.AppliedRuntime == nil {
+			st.Errors = append(st.Errors, "缺 v2 已激活运行配置读取器")
+		} else if applied, err := cfg.AppliedRuntime(); err != nil {
+			st.Errors = append(st.Errors, "读 v2 已激活运行配置:"+err.Error())
+		} else {
+			st.Applied = applied
+		}
+	} else {
+		if b, err := os.ReadFile(appliedPath); err == nil {
+			st.Applied = strings.TrimSpace(string(b))
+		}
+		if r, err := rollout.Read(rollout.Path); err != nil {
+			st.Errors = append(st.Errors, "读 rollout 状态:"+err.Error())
+		} else if r != nil {
+			st.Rollout = &RolloutState{
+				Snapshot: r.Snapshot, Stage: string(r.Stage),
+				EnteredAt: r.EnteredAt, LastGood: r.LastGood, Error: r.Error,
+			}
 		}
 	}
 	if a, err := readAgentState(cfg.AgentState); err != nil {
@@ -331,7 +341,11 @@ func collectWithWGStats(cfg *Config, now time.Time, stats map[string]wgInterface
 		st.Tunnels = append(st.Tunnels, t)
 	}
 
-	st.Rotating = rotatingCreds(singBoxConfigPath)
+	if cfg.RuntimeProfile == "private-v2" {
+		st.Rotating = rotatingCreds("/etc/loom/sing-box/v2/config.json")
+	} else {
+		st.Rotating = rotatingCreds(singBoxConfigPath)
+	}
 
 	if cfg.Manifest != "" {
 		d, err := checkDrift(cfg.Manifest)

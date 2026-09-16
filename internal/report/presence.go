@@ -128,7 +128,7 @@ func (t *table) presencePublicKey(node string) (*ecdsa.PublicKey, error) {
 	if observation == nil || !observationNeedsVerification(observation, 0) {
 		return nil, errors.New("[在线心跳] 尚无已验签节点身份")
 	}
-	encoded, err := clientReportPublicKey(observation)
+	encoded, err := observationPublicKey(observation)
 	if err != nil {
 		return nil, err
 	}

@@ -95,6 +95,15 @@ func TestProtectedIdentityRoundTripAndSignerBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reloaded.Close()
+	if wire.VerifyEnrollmentLocalWireGuardKey(&core, reloaded.wireGuard) != nil {
+		t.Fatal("DPAPI 重载改变了本机 WireGuard key")
+	}
+	corrupt := append([]byte{}, reloaded.wireGuard...)
+	corrupt[8] ^= 0x20
+	if wire.VerifyEnrollmentLocalWireGuardKey(&core, corrupt) == nil {
+		t.Fatal("本机 WireGuard key 替换未被拒绝")
+	}
+	clear(corrupt)
 	reloadedIdentityHash, _ := reloaded.IdentitySPKIHash()
 	reloadedWrappingHash, _ := reloaded.WrappingSPKIHash()
 	if reloadedIdentityHash != identityHash || reloadedWrappingHash != wrappingHash {

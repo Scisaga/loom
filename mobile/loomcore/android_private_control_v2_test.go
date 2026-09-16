@@ -134,15 +134,17 @@ func TestPrepareAndroidV2PrivateControlPlanBindsSealedDirectoryAndKeystoreIdenti
 			SPKIPins: []string{mirrorHash("pin-2")}, HintRank: 1},
 	}
 	installation := &androidEnrollmentInstallationV1{
-		Schema: 1, ClaimCore: core, ClaimCoreHash: claimHash,
-		IdentityKeyHash: identityHash, WrappingKeyHash: expectedWrappingHash,
+		ClaimCore: core, ClaimCoreHash: claimHash,
 		TransactionStateHash: wire.HashRaw("android-private-control-test", []byte("transaction")),
-		ResultArtifactHash:   artifactHash, DeviceCertificateHash: certificateHash,
-		DeviceProfileHash: profileHash, DeviceProfile: &profile, DeviceIssuance: &issuance,
-		DeviceApprovedAt: now.Format(time.RFC3339), ResultArtifact: artifact,
-		Credentials:         []androidInstalledSecretV1{installedSecret},
-		Configs:             []androidInstalledConfigV1{installedConfig},
-		DistributionMirrors: mirrors,
+		ResultArtifactHash:   artifactHash, ResultArtifact: artifact,
+		androidDeviceInstallationV1: androidDeviceInstallationV1{
+			Schema: 1, IdentityKeyHash: identityHash, WrappingKeyHash: expectedWrappingHash,
+			DeviceCertificateHash: certificateHash,
+			DeviceProfileHash:     profileHash, DeviceProfile: &profile, DeviceIssuance: &issuance,
+			DeviceApprovedAt: now.Format(time.RFC3339),
+			Credentials:      []androidInstalledSecretV1{installedSecret},
+			Configs:          []androidInstalledConfigV1{installedConfig}, DistributionMirrors: mirrors,
+		},
 	}
 	floors, err := wire.VerifyDeviceViewEnvelope(&currentEnvelope, &set)
 	if err != nil {

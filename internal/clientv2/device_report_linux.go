@@ -3,21 +3,16 @@
 package clientv2
 
 import (
-	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
-	"net/http"
 	"time"
 
+	"loom/internal/devicehttp"
 	"loom/internal/wire"
 )
-
-const maximumPrivateDeviceReportResponseBytes = 4096
 
 type LinuxDeviceReportOptions struct {
 	StatePath           string
@@ -38,6 +33,7 @@ type LinuxDeviceReportOptions struct {
 	Payload             json.RawMessage
 	Schemas             wire.DeviceReportSchemaRegistry
 	RetryEnvelope       *wire.DeviceReportEnvelopeV2
+	Observations        func(context.Context, []json.RawMessage)
 }
 
 // SendLinuxDeviceReport 只用 durable LKG floors 和 Enrollment identity 签名，
@@ -141,23 +137,33 @@ func SubmitLinuxDeviceReport(ctx context.Context, options LinuxDeviceReportOptio
 			identityHash, instant, 24*time.Hour, 5*time.Minute, options.Schemas) != nil {
 		return errors.New("[Linux report] envelope 与当前 identity/floors/schema 不一致")
 	}
+	if options.Dial == nil {
+		options.Dial, err = installedLinuxDeviceDial(installation, current.Payload.DeviceID, service, options.Timeout)
+		if err != nil {
+			return err
+		}
+	}
 	client, err := newPrivateDeviceHTTPClient(service, "device_report", certificateDER, identityKey,
 		roots, options.Dial, now, options.Timeout)
 	if err != nil {
 		return err
 	}
 	defer client.CloseIdleConnections()
-	return client.postDeviceReport(ctx, envelope)
+	_, observations, err := devicehttp.PostReport(ctx, client.client, client.baseURL, envelope)
+	if err == nil && options.Observations != nil {
+		options.Observations(ctx, observations)
+	}
+	return err
 }
 
 func linuxDeviceReportIdentity(options LinuxDeviceReportOptions) (*Store, *wire.DeviceViewEnvelopeV2,
-	*EnrollmentInstallationV1, *ecdsa.PrivateKey, string, []byte, error) {
+	*DeviceInstallationV1, *ecdsa.PrivateKey, string, []byte, error) {
 	store, err := Open(options.StatePath)
 	if err != nil {
 		return nil, nil, nil, nil, "", nil, err
 	}
 	current := store.Envelope()
-	installation := store.Enrollment()
+	installation := store.Installation()
 	if current == nil || installation == nil || current.Payload.Active == nil {
 		return nil, nil, nil, nil, "", nil, errors.New("[Linux report] 正式 active enrollment/LKG 尚未安装")
 	}
@@ -174,7 +180,7 @@ func linuxDeviceReportIdentity(options LinuxDeviceReportOptions) (*Store, *wire.
 		identityHash != current.Payload.Active.IdentitySPKIHash {
 		return nil, nil, nil, nil, "", nil, errors.New("[Linux report] 本机 identity 与 durable installation/view 不一致")
 	}
-	certificateDER, err := wire.EnrollmentResultCertificateDER(&installation.ResultArtifact)
+	certificateDER, err := installation.certificateDER()
 	if err != nil {
 		return nil, nil, nil, nil, "", nil, err
 	}
@@ -183,37 +189,4 @@ func linuxDeviceReportIdentity(options LinuxDeviceReportOptions) (*Store, *wire.
 		return nil, nil, nil, nil, "", nil, errors.New("[Linux report] Device certificate 与 durable installation 不一致")
 	}
 	return store, current, installation, identityKey, identityHash, certificateDER, nil
-}
-
-func (client *privateDeviceHTTPClient) postDeviceReport(ctx context.Context,
-	envelope *wire.DeviceReportEnvelopeV2) error {
-	if client == nil || client.client == nil || envelope == nil {
-		return errors.New("[Linux report] private client/report 缺失")
-	}
-	body, err := wire.MarshalCanonical(envelope)
-	if err != nil {
-		return err
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		client.baseURL+"/private/v2/device/report", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "application/json")
-	response, err := client.client.Do(request)
-	if err != nil {
-		return fmt.Errorf("[Linux report] private device_report 请求失败: %w", err)
-	}
-	defer response.Body.Close()
-	responseBody, readErr := io.ReadAll(io.LimitReader(response.Body,
-		maximumPrivateDeviceReportResponseBytes+1))
-	if readErr != nil || len(responseBody) > maximumPrivateDeviceReportResponseBytes {
-		return errors.New("[Linux report] private device_report 响应无效或过大")
-	}
-	if response.StatusCode != http.StatusNoContent || len(responseBody) != 0 ||
-		response.Header.Get("Content-Encoding") != "" {
-		return fmt.Errorf("[Linux report] private device_report 未接受: status=%d", response.StatusCode)
-	}
-	return nil
 }

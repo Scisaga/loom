@@ -162,7 +162,18 @@ func TestLinuxLinkRuntimeRejectsLocalResponsibilityOrControlEscalation(t *testin
 func bindRuntimeArtifactToEnvelope(t *testing.T, envelope *wire.DeviceViewEnvelopeV2,
 	set *wire.ControlSetV1, key ed25519.PrivateKey, artifact LinuxLinkIntentArtifactV1) []byte {
 	t.Helper()
-	artifact.AuthorityHeadHash = envelope.SignedCurrent.Head.Body.Payload.ParentHeadHash
+	if artifact.Authority.Head.HeadHash == "" {
+		artifact.Authority = wire.CertifiedHeadV1{Head: envelope.SignedCurrent.Head, QC: append([]byte(nil), envelope.SignedCurrent.QuorumCertificate...)}
+		parent := envelope.SignedCurrent.Head
+		// Create the artifact first and certify its ref only in the succeeding Head.
+		envelope.SignedCurrent.Head.Body.Payload.HeadKind = "ordinary"
+		envelope.SignedCurrent.Head.Body.Payload.ParentHeadHash = parent.HeadHash
+		envelope.SignedCurrent.Head.Body.Payload.PreviousLogEntryHash = parent.EntryHash
+		envelope.SignedCurrent.Head.Body.Payload.RaftIndex++
+		envelope.SignedCurrent.Head.Body.Payload.ControlRevision++
+		envelope.SignedCurrent.Head.Body.Payload.TransitionContext = json.RawMessage(`{"schema":1,"kind":"ordinary"}`)
+	}
+	artifact.AuthorityHeadHash = artifact.Authority.Head.HeadHash
 	for index := range artifact.LinkIntents {
 		artifact.LinkIntents[index].ParentHeadHash = artifact.AuthorityHeadHash
 	}
@@ -209,4 +220,89 @@ func resignRuntimeEnvelope(t *testing.T, envelope *wire.DeviceViewEnvelopeV2,
 
 func runtimePlanHash(value string) string {
 	return wire.HashRaw("linux-runtime-plan-test", []byte(value))
+}
+
+func TestLinuxLinkRuntimeRetainsCertifiedConfigAcrossOrdinaryHeads(t *testing.T) {
+	set, key := clientControlSet(t)
+	envelope := clientEnvelope(t, &set, key)
+	artifact := LinuxLinkIntentArtifactV1{Schema: 1, ClusterID: set.ClusterID,
+		DeviceID: envelope.Payload.DeviceID, DeviceGeneration: envelope.Payload.DeviceGeneration,
+		Generation: 1, RenderContractID: wire.LinuxLinkIntentRenderContract, LinkIntents: []wire.LinkIntentV1{}}
+	raw := bindRuntimeArtifactToEnvelope(t, &envelope, &set, key, artifact)
+	initial := cloneStoreValue(envelope)
+	now := time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC)
+	first, err := BuildLinuxLinkRuntimePlan(&envelope, &set, nil, nil, raw, nil, now, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		parent := envelope.SignedCurrent.Head
+		body := &envelope.SignedCurrent.Head.Body.Payload
+		body.ParentHeadHash, body.PreviousLogEntryHash = parent.HeadHash, parent.EntryHash
+		body.RaftIndex++
+		body.ControlRevision++
+		body.OperationRoot = runtimePlanHash(fmt.Sprintf("demo-operation-%d", i))
+		resignRuntimeEnvelope(t, &envelope, &set, key)
+		if err := wire.ValidateHeadEntry(&envelope.SignedCurrent.Head, &parent); err != nil {
+			t.Fatal(err)
+		}
+		plan, err := BuildLinuxLinkRuntimePlan(&envelope, &set, nil, nil, raw, nil, now, nil)
+		if err != nil || !wire.EqualCanonical(first, plan) {
+			t.Fatalf("ordinary Head invalidated unchanged certified config: %v", err)
+		}
+	}
+	if !wire.EqualCanonical(initial.Payload.Active.ConfigArtifactRefs, envelope.Payload.Active.ConfigArtifactRefs) {
+		t.Fatal("regression fixture must retain exact config refs")
+	}
+}
+
+func TestLinuxLinkRuntimeRejectsCertifiedConfigOutsideCurrentAuthority(t *testing.T) {
+	for _, test := range []string{"missing-qc", "wrong-qc", "future", "same-coordinate-fork", "other-recovery"} {
+		t.Run(test, func(t *testing.T) {
+			set, key := clientControlSet(t)
+			envelope := clientEnvelope(t, &set, key)
+			artifact := LinuxLinkIntentArtifactV1{Schema: 1, ClusterID: set.ClusterID,
+				DeviceID: envelope.Payload.DeviceID, DeviceGeneration: envelope.Payload.DeviceGeneration,
+				Generation: 1, RenderContractID: wire.LinuxLinkIntentRenderContract, LinkIntents: []wire.LinkIntentV1{}}
+			raw := bindRuntimeArtifactToEnvelope(t, &envelope, &set, key, artifact)
+			if _, err := wire.DecodeStrict(raw, 4<<20, &artifact); err != nil {
+				t.Fatal(err)
+			}
+			switch test {
+			case "missing-qc":
+				artifact.Authority.QC = nil
+			case "wrong-qc":
+				artifact.Authority.QC = envelope.SignedCurrent.QuorumCertificate
+			default:
+				body := envelope.SignedCurrent.Head.Body
+				body.Payload.OperationRoot = runtimePlanHash("demo-foreign-operation")
+				if test == "future" {
+					body.Payload.RaftIndex++
+					body.Payload.ControlRevision++
+				}
+				if test == "other-recovery" {
+					body.Payload.RecoveryPolicyHash = runtimePlanHash("demo-other-policy")
+				}
+				head, err := wire.NewHeadEntry(body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				sig, err := wire.SignHeadAttestation(wire.AttestationForHead(&head), set.Members[0], key)
+				if err != nil {
+					t.Fatal(err)
+				}
+				qc, err := wire.MarshalCanonical(wire.StableQC(&head, []wire.ControlConfigSignatureV1{sig}))
+				if err != nil {
+					t.Fatal(err)
+				}
+				artifact.Authority = wire.CertifiedHeadV1{Head: head, QC: qc}
+			}
+			// Even an exact current view ref cannot bypass the base's authority and time constraints.
+			raw = bindRuntimeArtifactToEnvelope(t, &envelope, &set, key, artifact)
+			if _, err := BuildLinuxLinkRuntimePlan(&envelope, &set, nil, nil, raw, nil,
+				time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC), nil); err == nil {
+				t.Fatal("invalid config authority accepted")
+			}
+		})
+	}
 }

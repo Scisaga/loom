@@ -6,53 +6,32 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"sync/atomic"
 	"testing"
-	"time"
 
-	"loom/internal/clientenroll"
-	"loom/internal/clientupdate"
+	"loom/internal/windowsv2"
 )
 
-func profileDraftInvite() *clientenroll.Invite {
-	return &clientenroll.Invite{Endpoint: "https://control.example/loom-client/enroll",
-		Token:     base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x26}, 32)),
-		ExpiresAt: time.Now().Add(time.Minute).Format(time.RFC3339)}
+func profileDraftInvite() string {
+	return `{"schema":2,"cluster_id":"demo-cluster","invite_id":"demo-invite"}`
 }
 
-func writeProfileDraftConfig(t *testing.T, root string) {
+func completeProfileDraftFixture(t *testing.T, child *portableGUI, carrier string) (windowsJoinResult, error) {
 	t.Helper()
-	config := clientupdate.Config{Schema: 1, NodeID: "demo-draft", DistributionURLs: []string{"https://distribution.example/loom"}}
-	body, err := json.Marshal(config)
+	identity, err := windowsv2.OpenOrCreateIdentity(windowsV2IdentityPath(child.root), child.protector(), rand.Reader)
 	if err != nil {
-		t.Fatal(err)
+		return windowsJoinResult{}, err
 	}
-	path := filepath.Join(root, "config", "client.json")
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
+	identity.Close()
+	marker := filepath.Join(child.root, "state", "demo-joined")
+	if err := os.MkdirAll(filepath.Dir(marker), 0700); err != nil {
+		return windowsJoinResult{}, err
 	}
-	if err := os.WriteFile(path, body, 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func completeProfileDraftFixture(t *testing.T, child *portableGUI, invite *clientenroll.Invite) (windowsJoinResult, error) {
-	t.Helper()
-	if invite != nil {
-		identity, err := loadOrCreateWindowsIdentity(child.root, *invite, child.protector(), rand.Reader)
-		if err != nil {
-			return windowsJoinResult{}, err
-		}
-		clearPreparedIdentity(&identity)
-	}
-	writeProfileDraftConfig(t, child.root)
-	if err := clearWindowsPendingInvite(child.root, child.protector()); err != nil {
+	if err := os.WriteFile(marker, []byte("demo-draft"), 0600); err != nil {
 		return windowsJoinResult{}, err
 	}
 	return windowsJoinResult{NodeID: "demo-draft"}, nil
@@ -65,7 +44,7 @@ func TestWindowsProfileDraftCommitsJoinedIdentityWithoutSwitchingActive(t *testi
 	before := m.store.Snapshot()
 	var starts atomic.Int32
 	m.start = func(*portableGUI) { starts.Add(1) }
-	m.joinDraft = func(child *portableGUI, invite *clientenroll.Invite) (windowsJoinResult, error) {
+	m.joinDraftV2 = func(child *portableGUI, invite string) (windowsJoinResult, error) {
 		if !reflect.DeepEqual(before, m.store.Snapshot()) {
 			t.Error("draft appeared in the formal index before join completed")
 		}
@@ -77,7 +56,7 @@ func TestWindowsProfileDraftCommitsJoinedIdentityWithoutSwitchingActive(t *testi
 	if !reflect.DeepEqual(before, m.store.Snapshot()) {
 		t.Fatal("opening the panel changed profiles")
 	}
-	if err := m.dispatch(brokerRequest{Operation: "join_profile", Invite: profileDraftInvite()}); err != nil {
+	if err := m.dispatch(brokerRequest{Operation: "join_profile", V2Carrier: profileDraftInvite()}); err != nil {
 		t.Fatal(err)
 	}
 	m.workers.Wait()
@@ -104,13 +83,13 @@ func TestWindowsProfileDraftCancelRetainsProtectedRecoveryAcrossRestart(t *testi
 	entered := make(chan struct{})
 	var protected []byte
 	var identityPath string
-	m.joinDraft = func(child *portableGUI, invite *clientenroll.Invite) (windowsJoinResult, error) {
-		identity, err := loadOrCreateWindowsIdentity(child.root, *invite, child.protector(), rand.Reader)
+	m.joinDraftV2 = func(child *portableGUI, invite string) (windowsJoinResult, error) {
+		identity, err := windowsv2.OpenOrCreateIdentity(windowsV2IdentityPath(child.root), child.protector(), rand.Reader)
 		if err != nil {
 			return windowsJoinResult{}, err
 		}
-		clearPreparedIdentity(&identity)
-		identityPath = windowsJoinIdentityPath(child.root)
+		identity.Close()
+		identityPath = windowsV2IdentityPath(child.root)
 		protected, err = os.ReadFile(identityPath)
 		if err != nil {
 			return windowsJoinResult{}, err
@@ -122,7 +101,7 @@ func TestWindowsProfileDraftCancelRetainsProtectedRecoveryAcrossRestart(t *testi
 	if err := m.dispatch(brokerRequest{Operation: "add_profile", Name: "demo-recovery"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.dispatch(brokerRequest{Operation: "join_profile", Invite: profileDraftInvite()}); err != nil {
+	if err := m.dispatch(brokerRequest{Operation: "join_profile", V2Carrier: profileDraftInvite()}); err != nil {
 		t.Fatal(err)
 	}
 	waitProfileSignal(t, entered)
@@ -149,6 +128,7 @@ func TestWindowsProfileDraftCancelRetainsProtectedRecoveryAcrossRestart(t *testi
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { cancel(); restarted.close() })
+	restarted.readJoined = readProfileFixtureIdentity
 	view := restarted.snapshot().profileDraft
 	if view == nil || !view.Recoverable || view.Busy {
 		t.Fatalf("restart lost recoverable join: %+v", view)
@@ -158,27 +138,27 @@ func TestWindowsProfileDraftCancelRetainsProtectedRecoveryAcrossRestart(t *testi
 		t.Fatal("draft metadata missing", err)
 	}
 	root, _ := restarted.store.ResolveDraftRoot(draft.ID)
-	original, err := readWindowsJoinIdentity(root, owner.protector())
+	original, err := windowsv2.LoadIdentity(windowsV2IdentityPath(root), owner.protector())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer clearPreparedIdentity(&original)
-	restarted.joinDraft = func(child *portableGUI, invite *clientenroll.Invite) (windowsJoinResult, error) {
-		if invite != nil {
+	defer original.Close()
+	restarted.joinDraftV2 = func(child *portableGUI, invite string) (windowsJoinResult, error) {
+		if invite != "" {
 			t.Error("recovery submitted another invitation")
 		}
-		return completeProfileDraftFixture(t, child, nil)
+		return completeProfileDraftFixture(t, child, "")
 	}
 	if err := restarted.dispatch(brokerRequest{Operation: "join_profile"}); err != nil {
 		t.Fatal(err)
 	}
 	restarted.workers.Wait()
-	retained, err := readWindowsJoinIdentity(root, owner.protector())
+	retained, err := windowsv2.LoadIdentity(windowsV2IdentityPath(root), owner.protector())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer clearPreparedIdentity(&retained)
-	if original.RequestID != retained.RequestID || !bytes.Equal(original.PrivateKeyPEM, retained.PrivateKeyPEM) || len(restarted.store.Snapshot().Profiles) != 2 {
+	defer retained.Close()
+	if !bytes.Equal(original.IdentitySPKIDER(), retained.IdentitySPKIDER()) || len(restarted.store.Snapshot().Profiles) != 2 {
 		t.Fatal("recovery changed identity or did not commit the completed profile")
 	}
 }
@@ -186,8 +166,8 @@ func TestWindowsProfileDraftCancelRetainsProtectedRecoveryAcrossRestart(t *testi
 func TestWindowsProfileDraftReadyIndexFailureRetriesWithoutAnotherClaim(t *testing.T) {
 	m := newProfileManagerFixture(t)
 	var claims atomic.Int32
-	m.joinDraft = func(child *portableGUI, invite *clientenroll.Invite) (windowsJoinResult, error) {
-		if invite != nil {
+	m.joinDraftV2 = func(child *portableGUI, invite string) (windowsJoinResult, error) {
+		if invite != "" {
 			claims.Add(1)
 		}
 		return completeProfileDraftFixture(t, child, invite)
@@ -202,14 +182,14 @@ func TestWindowsProfileDraftReadyIndexFailureRetriesWithoutAnotherClaim(t *testi
 	if err := m.command(brokerRequest{Operation: "add_profile", Name: "demo-retry"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.command(brokerRequest{Operation: "join_profile", Invite: profileDraftInvite()}); err == nil {
+	if err := m.command(brokerRequest{Operation: "join_profile", V2Carrier: profileDraftInvite()}); err == nil {
 		t.Fatal("failed formal index commit reported success")
 	}
 	view := m.snapshot().profileDraft
 	if len(m.store.Snapshot().Profiles) != 1 || view == nil || !view.Recoverable || view.Busy {
 		t.Fatal("failed formal commit lost ready recovery or added a blank profile")
 	}
-	if err := m.command(brokerRequest{Operation: "join_profile", Invite: profileDraftInvite()}); err == nil || claims.Load() != 1 {
+	if err := m.command(brokerRequest{Operation: "join_profile", V2Carrier: profileDraftInvite()}); err == nil || claims.Load() != 1 {
 		t.Fatal("ready recovery accepted a second invite claim")
 	}
 	m.store.writeFile = write
@@ -232,11 +212,11 @@ func TestWindowsProfileDraftCancelInvalidatesQueuedJoinEvenAfterReopen(t *testin
 		t.Fatal(err)
 	}
 	var calls atomic.Int32
-	m.joinDraft = func(*portableGUI, *clientenroll.Invite) (windowsJoinResult, error) {
+	m.joinDraftV2 = func(*portableGUI, string) (windowsJoinResult, error) {
 		calls.Add(1)
 		return windowsJoinResult{}, nil
 	}
-	if err := m.joinProfileDraftFor(brokerRequest{Operation: "join_profile", Invite: profileDraftInvite()}, draft, epoch); !errors.Is(err, context.Canceled) || calls.Load() != 0 {
+	if err := m.joinProfileDraftFor(brokerRequest{Operation: "join_profile", V2Carrier: profileDraftInvite()}, draft, epoch); !errors.Is(err, context.Canceled) || calls.Load() != 0 {
 		t.Fatal("a queued canceled join was resurrected by another panel", err)
 	}
 	if _, err := os.Stat(m.store.draftPath()); !errors.Is(err, os.ErrNotExist) {
@@ -247,7 +227,7 @@ func TestWindowsProfileDraftCancelInvalidatesQueuedJoinEvenAfterReopen(t *testin
 func TestWindowsProfileDraftCancelAfterReadyDoesNotCommit(t *testing.T) {
 	m := newProfileManagerFixture(t)
 	entered := make(chan struct{})
-	m.joinDraft = func(child *portableGUI, invite *clientenroll.Invite) (windowsJoinResult, error) {
+	m.joinDraftV2 = func(child *portableGUI, invite string) (windowsJoinResult, error) {
 		close(entered)
 		<-child.ctx.Done()
 		// 模拟取消与已返回的 ready 落盘竞态；正式索引仍不得越过取消屏障。
@@ -256,7 +236,7 @@ func TestWindowsProfileDraftCancelAfterReadyDoesNotCommit(t *testing.T) {
 	if err := m.dispatch(brokerRequest{Operation: "add_profile", Name: "demo-canceled-ready"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.dispatch(brokerRequest{Operation: "join_profile", Invite: profileDraftInvite()}); err != nil {
+	if err := m.dispatch(brokerRequest{Operation: "join_profile", V2Carrier: profileDraftInvite()}); err != nil {
 		t.Fatal(err)
 	}
 	waitProfileSignal(t, entered)
@@ -281,8 +261,8 @@ func TestWindowsProfileDraftRejectsInvalidInviteWithoutAllocating(t *testing.T) 
 	if err := m.openProfileDraft("demo-input"); err != nil {
 		t.Fatal(err)
 	}
-	for _, invite := range []*clientenroll.Invite{nil, {Endpoint: "https://control.example/loom-client/enroll"}} {
-		if err := m.command(brokerRequest{Operation: "join_profile", Invite: invite}); err == nil {
+	for _, invite := range []string{"", `{"schema":1,"endpoint":"https://control.example/loom-client/enroll"}`} {
+		if err := m.command(brokerRequest{Operation: "join_profile", V2Carrier: invite}); err == nil {
 			t.Fatal("invalid invite reached a join transaction")
 		}
 	}
@@ -298,11 +278,11 @@ func TestWindowsProfileDraftSurvivesLegacyProfileDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	root, _ := m.store.ResolveDraftRoot(draft.ID)
-	identity, err := loadOrCreateWindowsIdentity(root, *profileDraftInvite(), m.owner.protector(), rand.Reader)
+	identity, err := windowsv2.OpenOrCreateIdentity(windowsV2IdentityPath(root), m.owner.protector(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	clearPreparedIdentity(&identity)
+	identity.Close()
 	if err := m.command(brokerRequest{Operation: "delete", ProfileID: legacyConnectionProfile}); err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +294,7 @@ func TestWindowsProfileDraftSurvivesLegacyProfileDeletion(t *testing.T) {
 	if err != nil || retained == nil || retained.ID != draft.ID || len(reopened.Snapshot().Profiles) != 0 {
 		t.Fatal("legacy deletion lost the pending join or rebuilt legacy", err)
 	}
-	if _, err := os.Stat(windowsJoinIdentityPath(root)); err != nil {
+	if _, err := os.Stat(windowsV2IdentityPath(root)); err != nil {
 		t.Fatal("legacy deletion erased another pending identity", err)
 	}
 }

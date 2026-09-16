@@ -82,7 +82,7 @@ func AcceptLinuxLinkRuntimePlan(runtimeStatePath, deviceStatePath string,
 	if err != nil || !wire.EqualCanonical(verifiedFloors, deviceStore.Floors()) {
 		return nil, errors.New("[Linux runtime] candidate authority/floors 与 durable Device LKG 不一致")
 	}
-	installation := deviceStore.Enrollment()
+	installation := deviceStore.Installation()
 	if installation == nil {
 		return nil, errors.New("[Linux runtime] durable Device LKG 缺正式 enrollment installation")
 	}
@@ -107,6 +107,14 @@ func AcceptLinuxLinkRuntimePlan(runtimeStatePath, deviceStatePath string,
 		installation.Credentials, now, minimums)
 	if err != nil {
 		return nil, err
+	}
+	for _, action := range plan.Actions {
+		if peer := action.PeerTransport; peer != nil && peer.ListenerGeneration > minimums[peer.ResourceID] {
+			minimums[peer.ResourceID] = peer.ListenerGeneration
+		}
+		if peer := action.WireGuardPeer; peer != nil && peer.ListenerGeneration > minimums[peer.ResourceID] {
+			minimums[peer.ResourceID] = peer.ListenerGeneration
+		}
 	}
 	generationFloors := make([]LinuxEndpointGenerationFloorV1, 0, len(minimums))
 	for endpointID, generation := range minimums {

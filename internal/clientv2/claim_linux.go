@@ -192,6 +192,16 @@ func validatePendingIdentity(pending *PendingClaimV2, identity *EnrollmentIdenti
 		pending.ClaimCore.WrappingPublicKey != base64.RawURLEncoding.EncodeToString(wrappingSPKI) {
 		return errors.New("[Linux] pending claim 不属于当前 identity/wrapping keys")
 	}
+	if pending.ClaimCore.WireGuardPublicKey != "" {
+		key, err := base64.StdEncoding.Strict().DecodeString(identity.WireGuardPrivateKey)
+		if err != nil {
+			return errors.New("[Linux] pending claim 的本机 WireGuard 密钥损坏")
+		}
+		defer clear(key)
+		if err := wire.VerifyEnrollmentLocalWireGuardKey(&pending.ClaimCore, key); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

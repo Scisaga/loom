@@ -26,6 +26,7 @@ func cmdAgent(args []string) error {
 	dry := fs.Bool("dry-run", false, "照常探测和判断,但不真的切 selector")
 	timeout := fs.Duration("timeout", 8*time.Second, "单次探测超时")
 	retention := fs.Duration("retention", 24*time.Hour, "度量文件保留时长,启动时压实")
+	deviceState := fs.String("device-state-dir", "", "v2 宿主的受保护 installation；消费报告回执中的签名观测")
 
 	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
@@ -55,7 +56,7 @@ func cmdAgent(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	return agent.Run(ctx, cfg, agent.Options{
+	options := agent.Options{
 		MeasurementPath: *mPath,
 		EventsPath:      *ePath,
 		ProbeTimeout:    *timeout,
@@ -63,5 +64,14 @@ func cmdAgent(args []string) error {
 		Once:            *once,
 		DryRun:          *dry,
 		Log:             os.Stdout,
-	})
+	}
+	if *deviceState != "" {
+		cache, closeWatcher, err := startAgentDeviceObservations(ctx, cfg, *deviceState, os.Stderr)
+		if err != nil {
+			return err
+		}
+		defer closeWatcher()
+		options.Observations = cache
+	}
+	return agent.Run(ctx, cfg, options)
 }

@@ -48,6 +48,24 @@ func TestLinuxEnrollmentIdentityIsDurableDistinctAndProducesP256PoP(t *testing.T
 	if err != nil || coreHash == "" {
 		t.Fatalf("core hash=%q err=%v", coreHash, err)
 	}
+	private, err := base64.StdEncoding.Strict().DecodeString(reopened.WireGuardPrivateKey)
+	if err != nil || wire.VerifyEnrollmentLocalWireGuardKey(&core, private) != nil {
+		t.Fatal("重启后本机 WireGuard key 与 claim 不匹配")
+	}
+	private[0] ^= 0x40
+	if wire.VerifyEnrollmentLocalWireGuardKey(&core, private) == nil {
+		t.Fatal("错误本机 WireGuard key 被接受")
+	}
+	clear(private)
+	altered := core
+	altered.WireGuardPublicKey = ""
+	alteredHash, _ := wire.EnrollmentClaimCoreHash(&altered)
+	if alteredHash == coreHash {
+		t.Fatal("claim hash 未绑定本机 WireGuard 公钥")
+	}
+	if _, err := wire.EnrollmentWireGuardPublicKey(&altered); err == nil {
+		t.Fatal("新入网接受了没有 WireGuard key 的历史 claim")
+	}
 	pop := &wire.EnrollmentPoPBodyV2{
 		Schema: 2, ClusterID: core.ClusterID, InviteID: core.InviteID, RequestID: core.RequestID,
 		ClaimCoreHash: coreHash, TokenCommitment: hash("token"), ChallengeHash: hash("challenge"),

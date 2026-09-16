@@ -182,6 +182,25 @@ class RouteManager internal constructor(
         publish(application, true, actualSelections = actual)
     }
 
+    /** Head 更新不改变运行字节；保留当前 selector、入口预算和正在完成的测量。 */
+    internal suspend fun advanceRunningAuthority(
+        current: ManagedProfile,
+        candidate: ManagedProfile,
+        commit: () -> ManagedProfile,
+    ): ManagedProfile = operation.withLock {
+        check(current.protocol == 2 && candidate.protocol == 2 && current.nodeID == candidate.nodeID &&
+            current.config == candidate.config && current.routePlan == candidate.routePlan
+        ) { "认证更新不能替换运行配置或设备身份" }
+        check(runningRecordID == current.recordID && availableProfile?.recordID == current.recordID) {
+            "认证更新的运行会话已经变化"
+        }
+        val committed = commit()
+        check(committed.recordID == candidate.recordID) { "认证提交返回了不同的配置标识" }
+        availableProfile = committed
+        runningRecordID = committed.recordID
+        committed
+    }
+
     fun select(mode: RouteMode, exit: String = "") {
         mutableStatus.value = mutableStatus.value.copy(busy = true, detail = "正在应用路由偏好…")
         scope.launch {
@@ -282,7 +301,10 @@ class RouteManager internal constructor(
         val plan = profile.routePlan ?: return
         val inputs = Loomcore.androidRoutingInputs(profile.config.encodeToByteArray(), plan.encodeToByteArray())
         operation.withLock {
-            if (runningRecordID != profile.recordID) throw CancellationException("隧道会话已经结束")
+            val active = availableProfile
+            if (active == null || runningRecordID != active.recordID || active.nodeID != profile.nodeID ||
+                active.config != profile.config || active.routePlan != profile.routePlan
+            ) throw CancellationException("隧道会话已经结束")
             resetEntrySession()
             runningInputs = inputs
             runningEntries = AndroidEntryProbe.empty(source)
@@ -290,8 +312,8 @@ class RouteManager internal constructor(
             runningProbeSource = source
             val latest = pendingObservations
             pendingObservations = null
-            runRouteTickLocked(profile, latest)
-            scheduleEntryProbeLocked(profile)
+            runRouteTickLocked(active, latest)
+            scheduleEntryProbeLocked(active)
         }
     }
 
@@ -315,17 +337,18 @@ class RouteManager internal constructor(
             try {
                 val measured = pending.await()
                 operation.withLock {
-                    if (runningSession !== session || runningRecordID != profile.recordID ||
+                    val active = availableProfile ?: return@withLock
+                    if (runningSession !== session || runningRecordID != active.recordID ||
                         !registry.isCurrent(measured.generation)
                     ) return@withLock
                     runningEntries = measured.entries
-                    runRouteTickLocked(profile, null)
+                    runRouteTickLocked(active, null)
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Throwable) {
                 operation.withLock {
-                    if (runningSession === session && runningRecordID == profile.recordID) {
+                    if (runningSession === session && runningRecordID == availableProfile?.recordID) {
                         mutableStatus.value = mutableStatus.value.copy(detail = "路由已生效；入口结果暂不可用，沿用当前路径")
                     }
                 }

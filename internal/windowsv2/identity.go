@@ -5,6 +5,7 @@ package windowsv2
 import (
 	"bytes"
 	"crypto"
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -30,6 +31,7 @@ const (
 )
 
 type protectedIdentityV1 struct {
+	WireGuardPrivateKey     string `json:"wireguard_private_key,omitempty"`
 	Schema                  int    `json:"schema"`
 	Platform                string `json:"platform"`
 	ProtectionProfile       string `json:"protection_profile"`
@@ -52,6 +54,7 @@ type platformIdentityRecord struct {
 // Identity 对外只暴露 public material、受限 crypto.Signer 与解封操作。
 // 调用者无法取得 DPAPI 解密后的 identity/wrapping private DER。
 type Identity struct {
+	wireGuard    []byte
 	identity     crypto.Signer
 	wrapping     *ecdsa.PrivateKey
 	identitySPKI []byte
@@ -83,6 +86,54 @@ func OpenOrCreateIdentity(path string, protector clientsecret.Protector, random 
 	if err != nil {
 		return nil, err
 	}
+	return persistPlatformIdentity(path, protector, wrappingKey, identitySigner, identitySPKI, identityRecord)
+}
+
+// ImportIdentity 把原 DPAPI P-256 identity 原样导入 CNG。宿主持有 profile 锁；
+// 已存在不同 v2 identity 时拒绝覆盖。原文件由调用方保留作受保护迁移输入。
+func ImportIdentity(path string, protector clientsecret.Protector, original *ecdsa.PrivateKey,
+	random io.Reader) (*Identity, error) {
+	if err := validateProtectedPath(path); err != nil || protector == nil || original == nil ||
+		original.Curve != elliptic.P256() || !original.Curve.IsOnCurve(original.X, original.Y) {
+		return nil, errors.New("[Windows migration] 原 P-256 身份或存储边界无效")
+	}
+	expected, err := x509.MarshalPKIXPublicKey(&original.PublicKey)
+	if err != nil {
+		return nil, err
+	}
+	existing, err := LoadIdentity(path, protector)
+	if err == nil {
+		if !bytes.Equal(existing.IdentitySPKIDER(), expected) {
+			existing.Close()
+			return nil, errors.New("[Windows migration] 现有 v2 key 与原身份冲突，拒绝替换")
+		}
+		return existing, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	if random == nil {
+		random = rand.Reader
+	}
+	wrapping, err := ecdsa.GenerateKey(elliptic.P256(), random)
+	if err != nil {
+		return nil, err
+	}
+	defer zeroPrivateKey(wrapping)
+	signer, public, record, err := importPlatformIdentity(protector, random, original)
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(public, expected) {
+		closePlatformSigner(signer)
+		_ = destroyPlatformIdentity(record)
+		return nil, errors.New("[Windows migration] CNG 导入改变了原设备身份")
+	}
+	return persistPlatformIdentity(path, protector, wrapping, signer, public, record)
+}
+
+func persistPlatformIdentity(path string, protector clientsecret.Protector, wrappingKey *ecdsa.PrivateKey,
+	identitySigner crypto.Signer, identitySPKI []byte, identityRecord platformIdentityRecord) (*Identity, error) {
 	defer closePlatformSigner(identitySigner)
 	committed := false
 	defer func() {
@@ -96,8 +147,13 @@ func OpenOrCreateIdentity(path string, protector clientsecret.Protector, random 
 	}
 	defer clear(wrappingPKCS8)
 	wrappingSPKI, _ := x509.MarshalPKIXPublicKey(&wrappingKey.PublicKey)
+	wg, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
 	state := protectedIdentityV1{
-		Schema: 1, Platform: "windows-desktop", ProtectionProfile: IdentityProtectionProfile,
+		WireGuardPrivateKey: base64.StdEncoding.EncodeToString(wg.Bytes()),
+		Schema:              1, Platform: "windows-desktop", ProtectionProfile: IdentityProtectionProfile,
 		IdentityProvider:        identityRecord.Provider,
 		IdentityKeyName:         identityRecord.KeyName,
 		IdentityMachineScope:    identityRecord.MachineScope,
@@ -166,7 +222,17 @@ func decodeProtectedIdentity(state protectedIdentityV1,
 		zeroPrivateKey(wrappingKey)
 		return nil, errors.New("[Windows] identity 与 wrapping key 禁止复用")
 	}
-	return &Identity{identity: identitySigner, wrapping: wrappingKey,
+	var wg []byte
+	if state.WireGuardPrivateKey != "" {
+		wg, err = base64.StdEncoding.Strict().DecodeString(state.WireGuardPrivateKey)
+		if err != nil || len(wg) != 32 {
+			closePlatformSigner(identitySigner)
+			zeroPrivateKey(wrappingKey)
+			clear(wg)
+			return nil, errors.New("[Windows] 本机 WireGuard 身份损坏")
+		}
+	}
+	return &Identity{identity: identitySigner, wrapping: wrappingKey, wireGuard: wg,
 		identitySPKI: identitySPKI, wrappingSPKI: wrappingSPKI}, nil
 }
 
@@ -234,13 +300,18 @@ func (identity *Identity) PrepareClaimCore(input ClaimCoreInput, random io.Reade
 	if profile == "" {
 		profile = WrappingKeyProfile
 	}
+	wg, err := ecdh.X25519().NewPrivateKey(identity.wireGuard)
+	if err != nil {
+		return wire.EnrollmentClaimCoreV2{}, "", errors.New("[Windows Enrollment] 本机 WireGuard 身份缺失")
+	}
 	csrDER, err := x509.CreateCertificateRequest(random,
 		&x509.CertificateRequest{Subject: pkix.Name{CommonName: input.RequestID}}, identity.Signer())
 	if err != nil {
 		return wire.EnrollmentClaimCoreV2{}, "", err
 	}
 	core := wire.EnrollmentClaimCoreV2{
-		Schema: 2, ClusterID: input.ClusterID, InviteID: input.InviteID, RequestID: input.RequestID,
+		WireGuardPublicKey: base64.StdEncoding.EncodeToString(wg.PublicKey().Bytes()),
+		Schema:             2, ClusterID: input.ClusterID, InviteID: input.InviteID, RequestID: input.RequestID,
 		CertifiedInviteRecordHash:            input.CertifiedInviteRecordHash,
 		DeviceEnrollmentIntentCommitmentHash: input.DeviceEnrollmentIntentCommitmentHash,
 		DeviceEnrollmentIntentOpeningHash:    input.DeviceEnrollmentIntentOpeningHash,
@@ -341,6 +412,10 @@ func (identity *Identity) unsealSecret(envelope *wire.SealedSecretEnvelopeV1,
 }
 
 func (identity *Identity) Close() {
+	if identity != nil {
+		clear(identity.wireGuard)
+		identity.wireGuard = nil
+	}
 	if identity == nil {
 		return
 	}

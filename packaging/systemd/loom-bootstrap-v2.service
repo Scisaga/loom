@@ -1,0 +1,15 @@
+[Unit]
+Description=Loom certified Bootstrap ingress
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/loom/bootstrap-v2.env
+ExecStart=/usr/local/bin/loom bootstrap serve -bundle ${BOOTSTRAP_BUNDLE} -device ${DEVICE_ID}
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

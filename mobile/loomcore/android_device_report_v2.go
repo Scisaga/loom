@@ -20,6 +20,45 @@ const (
 	maximumAndroidDeviceReportBytes  = 4 << 20
 )
 
+// HTTP/TLS 宿主验证服务身份后调用；确认本次报告的 exact 回执再把原始观测
+// 交给既有 route verifier。这里不测量、不签发服务器观测。
+func AndroidV2ReportReceiptObservations(reportJSON, receiptJSON []byte) ([]byte, error) {
+	var report wire.DeviceReportEnvelopeV2
+	if err := decodeExactAndroidV2(reportJSON, maximumAndroidDeviceReportBytes, &report, "Device report"); err != nil {
+		return nil, err
+	}
+	receipt, err := wire.DecodeDeviceReportReceipt(receiptJSON, &report)
+	if err != nil {
+		return nil, err
+	}
+	return wire.MarshalCanonical(receipt.Observations)
+}
+
+// RetireAndroidV2DeviceReport 只用重新验证的本机 state 退休旧报告，返回空 bytes 表示继续 exact 重试。
+func RetireAndroidV2DeviceReport(stateJSON, identitySPKIDER, reportJSON []byte, trustedTime string) ([]byte, error) {
+	state, identityHash, identity, err := androidDeviceReportContext(stateJSON, identitySPKIDER)
+	if err != nil {
+		return nil, err
+	}
+	instant, err := wire.ParseTimeZ(trustedTime)
+	if err != nil {
+		return nil, err
+	}
+	var envelope wire.DeviceReportEnvelopeV2
+	if err := decodeExactAndroidV2(reportJSON, maximumAndroidDeviceReportBytes, &envelope, "Device report"); err != nil {
+		return nil, err
+	}
+	retired, err := wire.RetireObsoleteDeviceReport(&envelope, state.Floors, identity,
+		state.Envelope.Payload.DeviceID, identityHash, instant, androidDeviceReportSchemas())
+	if err != nil {
+		return nil, err
+	}
+	if retired == nil {
+		return []byte{}, nil
+	}
+	return wire.MarshalCanonical(retired)
+}
+
 type androidDeviceReportDraftV1 struct {
 	Schema         int                     `json:"schema"`
 	Body           wire.DeviceReportBodyV2 `json:"body"`
@@ -155,7 +194,7 @@ func androidDeviceReportContext(stateJSON, identitySPKIDER []byte) (androidV2Dev
 	if err != nil {
 		return androidV2DeviceState{}, "", nil, err
 	}
-	if state.Enrollment == nil || state.Envelope.Payload.State != "active" ||
+	if state.material() == nil || state.Envelope.Payload.State != "active" ||
 		state.Envelope.Payload.Active == nil {
 		return androidV2DeviceState{}, "", nil,
 			errors.New("[Android report] active Device/Enrollment 不完整")
@@ -164,7 +203,7 @@ func androidDeviceReportContext(stateJSON, identitySPKIDER []byte) (androidV2Dev
 	identity, ok := parsed.(*ecdsa.PublicKey)
 	identityHash, hashErr := wire.HashBytes(wire.DomainEnrollmentIdentitySPKI, identitySPKIDER)
 	if err != nil || !ok || identity.Curve != elliptic.P256() || hashErr != nil ||
-		identityHash != state.Enrollment.IdentityKeyHash ||
+		identityHash != state.material().IdentityKeyHash ||
 		identityHash != state.Envelope.Payload.Active.IdentitySPKIHash {
 		return androidV2DeviceState{}, "", nil,
 			errors.New("[Android report] Keystore identity 与 protected Device 不一致")

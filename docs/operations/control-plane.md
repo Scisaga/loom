@@ -25,6 +25,37 @@
 声明检查、scope、代理和公网地址发现边界见[本机部署说明](local-deployment.md)。
 不能把 SSH 管理地址当作服务公网地址，也不能用 NAT listener 尚未就绪阻止合法 DNS 配置。
 
+## 复用现有公开证书
+
+在证书私钥原属节点运行 `loom certificate prepare-existing -input <请求文件> -artifact-dir <材料目录> -out <绑定文件>`。
+请求为 `certmanager.ExistingCertificateRequestV1`，列出固定请求 ID、原网络与节点、目标 endpoint ID、
+明确授权的域名、身份/证书代，以及节点本地完整链和私钥路径；请求及输出目录须受保护。
+CLI 校验系统 WebPKI 信任、名字、有效期和私钥匹配，以不可变本地材料保存结果。
+既有 wildcard/SAN 只覆盖列出的名字；不把其余名字加入权限。源证书使用 live/archive 符号链接时，
+先解析真实文件再校验；持久私钥和回执缺失或损坏会报错，重试不会重新生成。
+
+此步骤不调用 DNS/ACME，不改变 provider 记录，不签发新公开证书。私钥始终留在原节点，
+控制面只取得公开绑定与证书链。绑定须另经控制事务认证并用于 listener 计划，入口仍须经过
+真实外部验证才能 advertise；材料导入成功不代表端口可达。自动签发/续签属于独立 DNS 工作。
+
+管理员随后可运行 `loom control prepare-bootstrap -admin-dir <原交付目录> -input <入口材料文件> -out <私有计划文件>`。
+该命令通过原管理 TLS 读取并验证当前 Head/QC，校验已有证书链，再从完整 profile、端口资源和
+外部 observer 策略确定性生成 HY2 与独立 Trojan/TLS 计划。计划的地址、端口和证书不会在重试时
+重新分配；原 Head 或输入改变时拒绝覆盖。迁移输入的 `prepared.bootstrap_installation` 承诺完整
+计划，`prepared.bootstrap_catalog` 必须与之相等。计划生成不修改运行服务，尚未完成认证发布时
+不能用它创建新邀请；外部验证结果提交、capability 更新及静态发布的接线仍见实现对照。
+
+迁移提交后，`loom control export-bootstrap -admin-dir <原交付目录> -device <入口节点> -out <交付文件>`
+经私有管理 API 导出安装部分及 Merkle 证明，不能把完整私有 application 复制到 forward 节点。
+`loom bootstrap serve -bundle <交付文件> -device <原节点>` 用节点保存的原平台公钥验证迁移与部分证明，
+只加载原节点证书，冻结本地端口计划，并启动 HY2/Trojan prepared listeners。它逐个完成真实本机
+TLS/QUIC 握手后保存 readiness 和无 bearer 的 outer probe plan；失败关闭整批，重启不重分配端口。
+初始 prepared 阶段不开放邀请 bearer。外部验证、认证 advertise、capability 更新与客户端成功入网
+必须继续接通和验收，不能把此阶段的握手回执当作加入成功。
+
+服务模板为 `packaging/systemd/loom-bootstrap-v2.service`；节点 `/etc/loom/bootstrap-v2.env` 只提供
+`BOOTSTRAP_BUNDLE` 与 `DEVICE_ID`。材料和配置文件保持受保护，部署命令仍遵守精确制品发布规程。
+
 ## 首次初始化
 
 仅全新控制状态使用此步骤。确认目标 Device 已有 control 职责，`<overlay-ip>` 为其实际私有
@@ -128,6 +159,126 @@ sudo systemctl start loom-control.service
 
 出现“系统层错误/无效数字签名”时，先查 leaf/issuer 算法、完整链与 key 匹配，再看 Windows
 错误码；不通过忽略 HTTPS 错误验收，不要求反复导入/重启来替代诊断。
+
+## 原设备迁移与配置交付
+
+先在原控制节点准备将被迁移事务认证的真实 Device CA 与独立私有 TLS 材料：
+
+```bash
+loom control prepare-migration-materials -state-dir <original-state-dir> \
+  -request-id <fixed-migration-request-id> \
+  -enroll-port <private-enrollment-port> -config-port <private-config-port> \
+  -report-port <private-report-port> -out <protected-directory>/materials.json
+```
+
+该命令持有与 `control serve` 相同的维护锁，须先停止控制 daemon，准备后恢复原服务。
+它复用原 internal CA，持久保存独立软件 custody 与封装证据；同请求重试复用原材料。
+输出目录必须为 `0700`。它不打开 Raft、不竞选、不修改原日志，也不启动或认证新服务；
+这份材料仍须进入完整迁移事务。不能把材料准备成功当作设备迁移或生产接入成功。
+
+恢复密钥使用与 control state 分离的受保护保管目录，由显式维护命令生成：
+
+```bash
+loom control prepare-recovery -custody-dir <protected-recovery-directory> \
+  -cluster-id <original-cluster-id> -policy-id <recovery-policy-id> \
+  -custodian-id <custodian-id> -request-id <fixed-receipt-request-id> \
+  -out <protected-directory>/recovery-materials.json
+```
+
+单保管人软件模式明确使用一份回执、一个故障域。恢复 key、解封 key 和回执 key 相互独立；
+从耐久密文回读、解封并实际签名后才生成回执。控制日志接收 policy、保管证明和 PoP，
+不接收保管目录中的解封私钥。此命令不证明材料已经复制到离线介质。
+同请求返回原回执；回执超过十五分钟时，用新 request ID 和新输出路径显式刷新，沿用原 key/密文。
+缺失或损坏的保管材料不会自动重建。迁移提交必须验证完整私有保管对象及实际提交时间；
+历史重放使用原提交时间，不以当前时钟否定已经认证的记录。
+
+已有设备通过 [客户端迁移](../protocols/control-plane/migration.md) 保留原身份和本机 floor。
+`control migrate` 输入可附 `device_inputs`：包含按原 Device ID 排序的客户端签名请求、对应原
+signed current；Linux 另附原设备证书及原服务器 CA。它从原 registry/证书独立确认身份，再核对
+请求签名、平台信任和本机 floor。Device view、原职责与目的授权、真实证书及签发坐标由迁移命令
+在原 Raft 加载后生成，不能同时提供手填 Device view。生成的证书和 current 以内容摘要耐久保存，
+同一输入重试复用第一次迁移请求与回执，不重新签发，也不伪造 Enrollment。
+已移出 SSOT 的旧撤权记录仍从原 registry 生成认证墓碑，不签发证书或配置，也不要求旧设备重新上线。
+这一阶段生成的身份没有运行配置，须经正常配置发布后才能交付客户端使用。
+正常材料入口使用 `prepared` 与 `device_inputs`，`application` 留为零值且不另填恢复证明。
+`control prepare-migration-input -state-dir <original-state-dir> -admin-dir <original-admin-dir>
+-input <protected-material-index> -out <protected-migration-input>` 从原管理 TLS 读取 Head/QC，
+将上述材料文件、原逐设备请求、明确的邀请策略与现有 HTTPS mirror 绑定组装为完整输入。
+mirror 必须属于原活动服务器，名称、endpoint、端口和有效期与真实证书绑定；完整
+DistributionEndpointSet 与 mirror refs 由生成器计算。它持久生成独立的受限 Bootstrap issuer，
+重试复用同一 key，不改变原管理员、Device 或平台身份；已有材料不完整时拒绝自动重建。
+该准备命令可与原 daemon 并存，不打开或修改 Raft。输出仍须由 `control migrate` 验证并认证，
+不能因为文件生成成功而宣称静态对象已发布、listener 可用或设备已入网。
+`prepared` 包含 `prepare-migration-materials`、`prepare-recovery` 的完整输出，以及邀请 policy、
+bootstrap catalog/issuer、完整 distribution sets、mirror refs 和明确暂存的历史身份。迁移命令从
+原日志导出管理员的下一代授权，复用原身份、范围和有效期，仅开放本轮需要的非 DNS 操作。
+它验证目录与原 Head/QC、mirror 的 exact set/URL/pin，并回读实际 CA/TLS/issuer 私钥和封装
+存储；不能用只有 hash 的目录、另一套材料或手填 Device 结果代替。
+首次迁移请求保存后，重试复用原组装结果；原 SSOT/registry 的内容改变会被拒绝。
+
+公开安装计划及运行配置仍须来自真实部署输入。组装和认证不证明 public listener 已部署或
+通过外部验证，也不证明新设备已完成 Enrollment；这些接线与配置交付仍见
+[实现对照](../development/implementation.md)。
+
+本次不在用、尚未提供原 key 迁移请求的独立客户端可以在 `deferred_migrations` 中明确保留原
+设备 ID、平台与身份摘要。导入时必须匹配原 SSOT 和 registry；该记录不生成 v2 Device view、
+证书、wrapping key 或 Enrollment 事务，也不授予旧入口继续运行的权限。在用服务器与本次要求
+迁移的客户端仍须完成真实迁移；暂存身份不是迁移成功，不能据此关闭对应客户端验收项。
+
+原身份已进入认证日志、证书与配置材料已就绪后，通过私有管理员入口导出：
+
+```bash
+loom control export-migration \
+  -admin-dir <offline-admin-directory> -device <device-id> -out <private-output-directory>
+```
+
+生成的 `device.loom-migration` 由客户端正常文件导入入口消费。它绑定原平台、身份、
+wrapping key、旧 signed current 与实际 v2 Head；不能用新邀请替代迁移，也不能清除本机身份重试。
+
+同一导出目录还提供 `device.loom-config`，包含当前认证的 Device 配置交付响应。已迁入 v2 的
+Android 可在连接状态下从“导入配置更新”递送此文件；这用于控制通道不可达时恢复配置，
+不重复安装迁移身份。文件与在线同步使用相同的原身份、QC、Merkle proof、版本下限和密文
+校验，运行配置本机激活成功后才提交候选。Linux 可用 `client sync-v2-view -delivery` 消费同一
+响应。配置制品仍从已认证的静态镜像读取；文件不携带客户端私钥。
+
+已迁入认证状态的 Linux/Android/Windows 设备可使用 `control publish-client-config`，从当前认证网络
+生成运行配置、封装原 wrapping key 对应的凭据，并提交管理员签名操作：
+
+```bash
+loom control publish-client-config \
+  -admin-dir <offline-admin-directory> -input <private-client-input> \
+  -request-id <proposal-id> -out <private-request-directory>
+```
+
+`<private-client-input>` 为 `0600` JSON 文件，字段定义见
+[生成入口](../../cmd/loom/control_prepare_client.go)。输入包含设备、原 wrapping 公钥、私有控制
+WireGuard 分配、固定 sing-box 版本、服务器观测 CA 和 exact 数据面凭据；它不接受另一份网络
+或权限清单。控制目的路由从认证服务目录推导。生成所用的本机 artifact reporter 必须已经获得
+当前 authority 授权。原始凭据不写入请求日志，响应丢失时复用输出目录和相同输入。
+
+Android/Windows 的 `control_tunnel` 必须给出 `peer_device_id`、独立的 `peer_tunnel_prefix`、
+私网 `peer_address` / `peer_port`、原承载节点公钥、客户端唯一主机前缀和 MTU 1280。
+准备器从实际客户端私钥导出公钥；管理员签名的发布同时认证承载分配。随后对该 Linux 承载设备
+执行同一配置发布命令，生成对应 userspace WireGuard endpoint 和精确服务放行/默认拒绝规则。
+两端安装完成后再验证配置读取与报告，不把一侧发布当作通道交付。
+
+Linux 的 `control_tunnel` 留为零值；服务器从认证网络和全部当前 Device 权限生成
+`linux-link-intents`、`linux-runtime` 两份配套制品，包括原 WireGuard、sing-box 与 Agent。
+节点原 WireGuard 私钥留在固定本机路径，只在安装时核对公钥并填入；不能把它放入输入凭据。
+Linux Agent 制品不再引用旧 report HTTP 地址。安装完成后由 `loom client serve-v2` 持续同步配置、报告及观测；
+本命令的成功回执只证明认证发布，不证明节点已安装或常驻服务已接管。
+
+已有生成器材料也可使用 `control publish-device-config`。`<publication-file>` 保存规范配置、
+密文与真实证据；`<proposal-id>` 必须与生成材料时的 ID 相同：
+
+```bash
+loom control publish-device-config \
+  -admin-dir <offline-admin-directory> -payload <publication-file> \
+  -request-id <proposal-id> -out <private-request-directory>
+```
+
+输出目录以 `0700` 保存发送前的 exact 签名请求和认证回执；重试复用同一目录。
+该操作保留身份、职责和 grants，只推进设备配置代。配置发布回执不代替客户端安装与正常流量验收。
 
 ## 按变更选择验收
 

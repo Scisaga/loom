@@ -383,7 +383,7 @@ func validateRecipientKeyRef(ref *SealedBlobRecipientKeyRefV1, profile string) e
 			return errors.New("[sealed secret] RSA recipient profile/SPKI 不匹配")
 		}
 	} else {
-		return errors.New("[sealed secret] recipient key profile 未获协议授权")
+		return errors.New("[D124 sealed secret] recipient key profile 未获协议授权")
 	}
 	return nil
 }
@@ -812,7 +812,7 @@ func ValidateSealedSecretEnvelope(envelope *SealedSecretEnvelopeV1) error {
 		case "p256_ecdh":
 			value := entry.P256ECDH
 			if entry.RSAOAEP != nil || value == nil || !isP256SealingProfile(entry.RecipientKey.RecipientKeyProfile) {
-				return errors.New("[sealed secret] P-256 recipient envelope union 无效")
+				return errors.New("[D124 sealed secret] P-256 recipient envelope union 无效")
 			}
 			der, err := decodeCanonicalBase64URL(value.EphemeralSPKIDER)
 			if err != nil {

@@ -45,6 +45,9 @@ type InviteMaterialV2 struct {
 // binding，reader 返回的状态字符串本身不能替代 head/QC/inclusion proof。
 type InviteMaterialReader func(context.Context, string, string) (InviteMaterialV2, error)
 
+// token 只从受保护凭据层读取；不加入 InviteMaterial，避免随副本 mutation 写入日志。
+type InviteTokenReader func(context.Context, wire.CertifiedInviteRecordV2) (string, error)
+
 // VerifiedClaimAttemptV2 只能由 PrivateService 在验 initial token 或 exact resume
 // binding、opening/core、服务端签发 challenge 和 detached PoP 后产生。processor 可以把 initial
 // exact submission 发给 enrollment voters，但不得把其中 token、challenge、CSR 或签名字节写入
@@ -98,7 +101,8 @@ func admissionAttestationForVerified(material *InviteMaterialV2, submission *wir
 	}
 	core := submission.ClaimCore
 	result := wire.EnrollmentAdmissionAttestationBodyV1{
-		Schema: 1, AttestationType: "enrollment_admission", ClusterID: core.ClusterID,
+		WireGuardPublicKey: submission.ClaimCore.WireGuardPublicKey,
+		Schema:             1, AttestationType: "enrollment_admission", ClusterID: core.ClusterID,
 		InviteID: core.InviteID, RequestID: core.RequestID,
 		CertifiedInviteRecordHash:            core.CertifiedInviteRecordHash,
 		DeviceEnrollmentIntentCommitmentHash: core.DeviceEnrollmentIntentCommitmentHash,
@@ -126,6 +130,7 @@ type PrivateService struct {
 	challengeTTL time.Duration
 	replay       *ChallengeReplayStore
 	readInvite   InviteMaterialReader
+	readToken    InviteTokenReader
 	processClaim ClaimProcessor
 	readArtifact ReleasedEnrollmentArtifactReader
 }
@@ -134,12 +139,12 @@ type PrivateService struct {
 // tunnel 内的 completion-authorized immutable artifact 读取；它不会新增公网 role。
 func NewPrivateServiceWithReleasedArtifacts(clusterID, serviceID string, now func() time.Time, random io.Reader,
 	challengeTTL time.Duration, replay *ChallengeReplayStore, readInvite InviteMaterialReader,
-	processClaim ClaimProcessor, readArtifact ReleasedEnrollmentArtifactReader) (*PrivateService, error) {
+	readToken InviteTokenReader, processClaim ClaimProcessor, readArtifact ReleasedEnrollmentArtifactReader) (*PrivateService, error) {
 	if readArtifact == nil {
 		return nil, errors.New("[Enrollment] released artifact reader 不能为空")
 	}
 	service, err := NewPrivateService(clusterID, serviceID, now, random, challengeTTL,
-		replay, readInvite, processClaim)
+		replay, readInvite, readToken, processClaim)
 	if err != nil {
 		return nil, err
 	}
@@ -149,8 +154,8 @@ func NewPrivateServiceWithReleasedArtifacts(clusterID, serviceID string, now fun
 
 func NewPrivateService(clusterID, serviceID string, now func() time.Time, random io.Reader,
 	challengeTTL time.Duration, replay *ChallengeReplayStore, readInvite InviteMaterialReader,
-	processClaim ClaimProcessor) (*PrivateService, error) {
-	if clusterID == "" || serviceID == "" || now == nil || replay == nil || readInvite == nil || processClaim == nil ||
+	readToken InviteTokenReader, processClaim ClaimProcessor) (*PrivateService, error) {
+	if clusterID == "" || serviceID == "" || now == nil || replay == nil || readInvite == nil || readToken == nil || processClaim == nil ||
 		challengeTTL < time.Second || challengeTTL > 2*time.Minute {
 		return nil, errors.New("[Enrollment] private service 配置不完整或 challenge TTL 越界")
 	}
@@ -158,7 +163,7 @@ func NewPrivateService(clusterID, serviceID string, now func() time.Time, random
 		random = rand.Reader
 	}
 	return &PrivateService{clusterID: clusterID, serviceID: serviceID, now: now, random: random,
-		challengeTTL: challengeTTL, replay: replay, readInvite: readInvite, processClaim: processClaim}, nil
+		challengeTTL: challengeTTL, replay: replay, readInvite: readInvite, readToken: readToken, processClaim: processClaim}, nil
 }
 
 func (service *PrivateService) Preflight(ctx context.Context, capability wire.VerifiedBootstrapCapabilityV1,
@@ -174,6 +179,18 @@ func (service *PrivateService) Preflight(ctx context.Context, capability wire.Ve
 		request.CertifiedInviteRecordHash, request.CapabilityID)
 	if err != nil {
 		return wire.EnrollmentIntentPreflightResponseV1{}, err
+	}
+	if capability.Body().Mode == "initial_claim" {
+		token, err := service.readToken(ctx, material.Record)
+		commitment, hashErr := wire.TokenCommitment(material.Record.ClusterID, material.Record.InviteID, token)
+		if err != nil || hashErr != nil || commitment != material.Record.TokenCommitment || wire.VerifyInitialEnrollmentPreflight(request, token) != nil {
+			return wire.EnrollmentIntentPreflightResponseV1{}, errors.New("[D131 Enrollment preflight] 邀请持有证明未通过")
+		}
+	} else {
+		binding := capability.Body().ResumeBinding
+		if binding == nil || wire.VerifyResumeEnrollmentPreflight(request, binding.IdentityKeyHash) != nil {
+			return wire.EnrollmentIntentPreflightResponseV1{}, errors.New("[D130 Enrollment preflight] 原设备身份未通过")
+		}
 	}
 	response := wire.EnrollmentIntentPreflightResponseV1{
 		Schema: 1, ClusterID: request.ClusterID, InviteID: request.InviteID, RequestHash: requestHash,

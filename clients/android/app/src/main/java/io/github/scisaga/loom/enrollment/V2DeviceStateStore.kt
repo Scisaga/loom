@@ -2,11 +2,13 @@ package io.github.scisaga.loom.enrollment
 
 import io.github.scisaga.loom.profiles.ProfileContext
 import android.content.Context
+import android.util.AtomicFile
 import io.github.scisaga.loom.security.EncryptedStore
 import io.github.scisaga.loom.security.DeviceKeyStore
 import io.github.scisaga.libbox.Libbox
 import io.github.scisaga.loomcore.Loomcore
 import org.json.JSONObject
+import java.security.MessageDigest
 
 internal data class V2InstalledDeviceState(
     val encoded: ByteArray,
@@ -20,6 +22,8 @@ internal data class V2InstalledDeviceState(
 class V2DeviceStateStore(context: Context) {
     private val protected = EncryptedStore(context.applicationContext)
     private val keys = DeviceKeyStore(ProfileContext.keySuffix(context))
+    private val wireGuard = io.github.scisaga.loom.security.WireGuardKeyStore(context)
+    private val runtimeDirectory = libboxWorkingDirectory(context.filesDir)
 
     @Synchronized
     fun acceptInitialFromInvite(
@@ -80,6 +84,18 @@ class V2DeviceStateStore(context: Context) {
     }
 
     @Synchronized
+    internal fun installMigration(next: ByteArray): ManagedProfile {
+        Loomcore.validateAndroidV2DeviceState(next)
+        val parsed = JSONObject(next.decodeToString())
+        check(parsed.has("migration") && !parsed.has("enrollment")) { "设备迁移缺少独立认证证明" }
+        val profile = checkNotNull(runtimeProfile(next)) { "迁移包没有可运行的 v2 配置" }
+        val existing = protected.get(STATE)
+        check(existing == null || existing.contentEquals(next)) { "已安装的 v2 身份不能由迁移包覆盖" }
+        if (existing == null) commitExact(next)
+        return profile
+    }
+
+    @Synchronized
     fun current(): ByteArray? = protected.get(STATE)?.also(Loomcore::validateAndroidV2DeviceState)
 
     /** 生命周期与 runtime 必须来自同一个 protected blob；tombstone 仍保持 v2 latch。 */
@@ -98,17 +114,6 @@ class V2DeviceStateStore(context: Context) {
             nodeID = payload.getString("device_id"),
             generation = payload.getLong("device_generation"),
             runtimeProfile = profile,
-        )
-    }
-
-    /** 只从 protected state 投影当前获权的 private overlay replicas。 */
-    @Synchronized
-    internal fun privateControlPlans(role: String, trustedTime: String): List<V2PrivateControlPlan> {
-        val state = checkNotNull(protected.get(STATE)) { "[Android control] v2 Device state 尚未安装" }
-        Loomcore.validateAndroidV2DeviceState(state)
-        return V2PrivateControlClient.decodePlans(
-            Loomcore.prepareAndroidV2PrivateControlPlans(state, keys.ensureIdentity(), role, trustedTime),
-            role,
         )
     }
 
@@ -208,23 +213,51 @@ class V2DeviceStateStore(context: Context) {
         if (persisted.getJSONObject("envelope").getJSONObject("payload").getString("state") != "active") {
             return null
         }
-        val runtime = JSONObject(Loomcore.prepareAndroidV2Runtime(state).decodeToString())
+        val localKey = wireGuard.existing() ?: ByteArray(0)
+        val runtime = try {
+            JSONObject(Loomcore.prepareAndroidV2RuntimeWithLocalKey(state, localKey).decodeToString())
+        } finally { localKey.fill(0) }
         check(runtime.getInt("schema") == 1) { "v2 Android runtime projection schema 无效" }
         val headHash = runtime.getString("head_hash")
+        val ca = runtime.optString("observation_ca").encodeToByteArray()
+        val config = runtime.getString("sing_box_config")
         val profile = ManagedProfile(
             nodeID = runtime.getString("device_id"),
             snapshot = headHash,
             generation = runtime.getLong("device_generation"),
-            config = runtime.getString("sing_box_config"),
+            config = bindRuntimeCA(config, ca),
             routePlan = runtime.optString("route_plan").takeIf(String::isNotBlank),
-            certificatePEM = ByteArray(0),
-            caPEM = ByteArray(0),
-            reportEndpoint = "",
+            caPEM = ca,
             recordID = "v2:$headHash",
             protocol = 2,
         )
         Libbox.checkConfig(profile.config)
         return profile
+    }
+
+    /** libbox 在进程文件系统预检；CA 独立按内容寻址，不能覆盖仍在使用的配置。 */
+    private fun bindRuntimeCA(config: String, ca: ByteArray): String {
+        if (!config.contains("\"certificate_path\"")) return config
+        check(ca.isNotEmpty()) { "v2 配置引用了尚未认证安装的节点 CA" }
+        val digest = MessageDigest.getInstance("SHA-256").digest(ca)
+            .joinToString("") { "%02x".format(it) }
+        val directory = runtimeDirectory.resolve("tls")
+        check(directory.isDirectory || directory.mkdirs()) { "无法准备本机 CA 目录" }
+        val file = directory.resolve("ca-$digest.crt")
+        val atomic = AtomicFile(file)
+        if (file.exists()) {
+            check(atomic.readFully().contentEquals(ca)) { "已安装 CA 内容与摘要不符" }
+        } else {
+            val output = atomic.startWrite()
+            try {
+                output.write(ca)
+                atomic.finishWrite(output)
+            } catch (error: Throwable) {
+                atomic.failWrite(output)
+                throw error
+            }
+        }
+        return Loomcore.relocateAndroidCA(config.encodeToByteArray(), file.absolutePath).decodeToString()
     }
 
     @Synchronized

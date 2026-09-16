@@ -102,7 +102,7 @@ func TestInitialInstallationIsOneDurableUnitAndSurvivesViewAdvance(t *testing.T)
 		t.Fatal(err)
 	}
 	certificateHash, _ := wire.DeviceCertificateHash(certificateDER)
-	installation := &EnrollmentInstallationV1{
+	installation := &DeviceInstallationV1{
 		Schema: 1, ClaimCore: claimCore, IdentityKeyHash: identityHash,
 		WrappingKeyHash: wrappingHash, TransactionStateHash: testInstallHash("transaction"),
 		ResultArtifactHash: resultHash, DeviceCertificateHash: certificateHash,

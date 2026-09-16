@@ -10,7 +10,7 @@ func TestInstalledEnrollmentJournalMatchRequiresExactCompletedClaimAndResult(t *
 	core := wire.EnrollmentClaimCoreV2{Schema: 2, ClusterID: "demo-cluster",
 		InviteID: "demo-invite", RequestID: "demo-request"}
 	artifact := wire.EnrollmentResultArtifactV1{Schema: 1}
-	state := &StateV1{Enrollment: EnrollmentInstallationV1{
+	state := &StateV1{Enrollment: &EnrollmentInstallationV1{
 		ClaimCore: core, ClaimCoreHash: "claim-hash", TransactionStateHash: "transaction-hash",
 		ResultArtifactHash: "artifact-hash", ResultArtifact: artifact,
 	}}

@@ -9,7 +9,9 @@ import (
 
 // Config 是上报者在节点上读到的输入,由 loom render 产出。
 type Config struct {
-	Node string `json:"node"`
+	Node           string                 `json:"node"`
+	RuntimeProfile string                 `json:"runtime_profile,omitempty"`
+	AppliedRuntime func() (string, error) `json:"-"`
 
 	// Listen 是监听地址,**只能是隧道内地址**。上报接口没有自己的认证 ——
 	// 它靠 WireGuard 兜住:能连上这个地址,就已经持有隧道密钥了。绑到公网
@@ -194,6 +196,9 @@ func Load(b []byte) (*Config, error) {
 	}
 	if c.Node == "" {
 		return nil, fmt.Errorf("report 配置缺少 node")
+	}
+	if c.RuntimeProfile != "" && c.RuntimeProfile != "private-v2" {
+		return nil, fmt.Errorf("report runtime_profile 无效")
 	}
 	if c.AttestationMinVersion != 0 && c.AttestationMinVersion != 5 {
 		return nil, fmt.Errorf("attestation_min_version 只能是 0 或 5，收到 %d", c.AttestationMinVersion)

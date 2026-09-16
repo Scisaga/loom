@@ -12,8 +12,6 @@ import (
 
 	"golang.org/x/sys/windows"
 	"loom/internal/clientcore"
-	"loom/internal/clientenroll"
-	"loom/internal/clientjoin"
 	"loom/internal/windowsv2"
 )
 
@@ -59,7 +57,6 @@ type misakaUI struct {
 	rename                                    bool
 	renameID                                  string
 	route                                     misakaRouteUI
-	draftInvite                               *clientenroll.Invite
 	draftV2Carrier                            string
 	draftError                                string
 	inviteLabel                               string
@@ -141,7 +138,7 @@ func (app *portableGUI) closeMisaka() {
 		procDeleteObject.Call(brush)
 	}
 	app.skin.brushes = nil
-	app.skin.draftInvite, app.skin.draftV2Carrier = nil, ""
+	app.skin.draftV2Carrier = ""
 }
 
 func (app *portableGUI) misakaBrush(color uint32) uintptr {
@@ -286,7 +283,7 @@ func (app *portableGUI) renderMisaka(snapshot portableGUISnapshot, previous *por
 		app.layoutControls()
 	}
 	if previous == nil || (previous.profileDraft == nil) != (snapshot.profileDraft == nil) {
-		app.skin.draftInvite, app.skin.draftV2Carrier = nil, ""
+		app.skin.draftV2Carrier = ""
 		app.skin.inviteLabel, app.skin.draftError = "", ""
 		if snapshot.profileDraft != nil {
 			setPortableControlText(app.controls.draftName, snapshot.profileDraft.Name)
@@ -312,7 +309,7 @@ func (app *portableGUI) renderMisaka(snapshot portableGUISnapshot, previous *por
 		enablePortableControl(app.controls.draftImport, !draft.Busy)
 		enablePortableControl(app.controls.draftPaste, !draft.Busy)
 		enablePortableControl(app.controls.draftSubmit, !draft.Busy &&
-			(draft.Recoverable || app.skin.draftInvite != nil || app.skin.draftV2Carrier != ""))
+			(draft.Recoverable || app.skin.draftV2Carrier != ""))
 		label := "加入并保存"
 		if draft.Busy {
 			label = "正在加入…"
@@ -481,16 +478,12 @@ func (app *portableGUI) finishMisakaRename(save bool) bool {
 }
 
 func (app *portableGUI) chooseMisakaInvite(paste bool) {
-	var invite clientenroll.Invite
-	var v2Carrier string
+	var encoded string
 	var err error
 	if paste {
 		var carrier windowsClipboardCarrier
 		carrier, err = readWindowsClipboardCarrier(app.hwnd)
-		if carrier.invite != nil {
-			invite = *carrier.invite
-		}
-		v2Carrier = carrier.v2Carrier
+		encoded = carrier.v2Carrier
 	} else {
 		var source string
 		source, err = openJoinArtifact(app.hwnd)
@@ -498,38 +491,14 @@ func (app *portableGUI) chooseMisakaInvite(paste bool) {
 			return
 		}
 		if err == nil {
-			if carrier, carrierErr := windowsv2.ReadEnrollmentCarrier(source); carrierErr == nil {
-				v2Carrier, err = encodeWindowsV2Carrier(carrier)
-			} else {
-				invite, err = clientjoin.Read(source, nil)
+			var carrier windowsv2.EnrollmentCarrier
+			carrier, err = windowsv2.ReadEnrollmentCarrier(source)
+			if err == nil {
+				encoded, err = encodeWindowsV2Carrier(carrier)
 			}
 		}
 	}
-	if v2Carrier != "" || (err == nil && invite.Token == "") {
-		app.acceptMisakaV2Carrier(v2Carrier, err)
-		return
-	}
-	app.acceptMisakaInvite(invite, err)
-}
-
-func (app *portableGUI) acceptMisakaInvite(invite clientenroll.Invite, err error) {
-	draft := app.snapshot().profileDraft
-	if draft == nil || draft.Busy || draft.Recoverable {
-		return
-	}
-	app.skin.draftError = ""
-	if err != nil {
-		app.skin.draftError = err.Error()
-	} else {
-		app.skin.draftInvite = &invite
-		app.skin.draftV2Carrier = ""
-		app.skin.inviteLabel = "邀请已读取；加入时验证中控信任与身份绑定。"
-		if strings.TrimSpace(misakaControlText(app.controls.draftName)) == "" {
-			setPortableControlText(app.controls.draftName, "Loom 网络")
-		}
-	}
-	app.renderMisaka(app.snapshot(), app.rendered)
-	procInvalidateRect.Call(app.hwnd, 0, 0)
+	app.acceptMisakaV2Carrier(encoded, err)
 }
 
 func (app *portableGUI) acceptMisakaV2Carrier(carrier string, err error) {
@@ -551,9 +520,8 @@ func (app *portableGUI) acceptMisakaV2Carrier(carrier string, err error) {
 		}
 		app.skin.draftError = err.Error()
 	} else {
-		app.skin.draftInvite = nil
 		app.skin.draftV2Carrier = carrier
-		app.skin.inviteLabel = "v2 邀请已读取；加入时重放 authority、QC 与 floor。"
+		app.skin.inviteLabel = "邀请已读取；加入时验证中控签名与设备身份。"
 		if strings.TrimSpace(misakaControlText(app.controls.draftName)) == "" {
 			setPortableControlText(app.controls.draftName, "Loom 网络")
 		}
@@ -584,16 +552,11 @@ func (app *portableGUI) misakaCommand(id uint16) bool {
 			return true
 		}
 		app.skin.draftError = ""
-		invite := app.skin.draftInvite
 		v2Carrier := app.skin.draftV2Carrier
-		if snapshot.profileDraft.Recoverable {
-			invite = nil
-		}
 		app.profileCommand(brokerRequest{Operation: "join_profile", Name: name,
-			Invite: invite, V2Carrier: v2Carrier})
+			V2Carrier: v2Carrier})
 		return true
 	case misakaControlDraftCancel:
-		app.skin.draftInvite = nil
 		app.skin.draftV2Carrier = ""
 		app.profileCommand(brokerRequest{Operation: "cancel_add_profile"})
 		return true

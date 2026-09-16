@@ -148,14 +148,13 @@ Device 详情页的 Runtime evidence 只展示经过现有信任链验证的运�
 加入网络不是单独的“注册客户端”流程，也不是日常连接动作。二维码导入只绑定 certified
 invite 已经创建的 Device，不创建第二条记录。重连、网络切换、更新配置、更新程序和重新
 启动都继续使用现有设备身份，不得再次要求二维码。v2 首次携 token 的内层请求前，客户端验证 bootstrap
-transition/checkpoint；v1 Windows 兼容流程比较二维码部署公钥指纹与发行包内嵌公钥。加入码
+transition/checkpoint。加入码
 一旦成功绑定，v2 控制平面只允许同一 token 与字节完全相同的
 `EnrollmentClaimCoreV2`（包括 request/record/intent 绑定、base floors、平台、
-CSR/identity、wrapping descriptor 和 client nonce）
+CSR/identity、wrapping descriptor、WireGuard 公钥和 client nonce）
 在 invite 与 bootstrap capability 仍有效时幂等重试。新鲜 server nonce 会产生新的 detached
 PoP 签名，但不得改变 stable core 或 `claim_core_hash`。
-Windows Portable v1 兼容契约仍是指定 control 的一小时恢复窗口，并将这组 pending 数据用
-操作用户 DPAPI 保护，在加入提交后清除 token。
+Windows Portable 将 pending 数据用操作用户 DPAPI 保护，在加入提交后清除 token。
 v2 claim 已 commit 但 capability 过期时，管理员必须先经私有
 `ControlServiceDirectoryV1` 中 `role=control_api` 的服务线性化确认 transaction 仍为
 reserved/completed，再一次性生成 `EnrollmentResumeDescriptorV1`。它不含 token，携带

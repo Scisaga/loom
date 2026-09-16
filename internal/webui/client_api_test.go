@@ -1,13 +1,30 @@
 package webui
 
 import (
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestRemovedEnrollmentRoutesAreAbsent(t *testing.T) {
+	handler := Handler(Deps{Admin: true, Snapshot: func() View { return View{} }, Control: &ControlDeps{}})
+	for _, path := range []string{"/api/client/enroll", "/api/device/enroll"} {
+		for _, method := range []string{http.MethodGet, http.MethodPost} {
+			missing := httptest.NewRecorder()
+			handler.ServeHTTP(missing, httptest.NewRequest(method, "/api/demo-missing", nil))
+			request := httptest.NewRequest(method, path, strings.NewReader(`{"token":"demo-retired"}`))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != missing.Code || response.Body.String() != missing.Body.String() ||
+				response.Header().Get("Allow") != missing.Header().Get("Allow") {
+				t.Errorf("旧入网路径 %s %s 没有落到普通未注册路径", method, path)
+			}
+		}
+	}
+}
 
 // A persisted online label must not survive without trusted evidence.
 
@@ -29,101 +46,6 @@ func TestDeviceAPIIsCanonicalAndDoesNotRequireCompatibilityAlias(t *testing.T) {
 		!strings.Contains(request.recorder.Body.String(), `"devices":[{"id":"device-one"`) ||
 		strings.Contains(request.recorder.Body.String(), `"clients"`) {
 		t.Fatalf("canonical device API = %d body=%s", request.recorder.Code, request.recorder.Body.String())
-	}
-}
-
-func TestClientAPIBoundsOperatorAndPublicClaimSurfaces(t *testing.T) {
-	d := Deps{
-		Admin:    true,
-		Now:      func() time.Time { return time.Unix(1_700_000_000, 0) },
-		Snapshot: func() View { return View{} },
-		Control:  &ControlDeps{},
-	}
-	var createdName string
-	var createdInput ClientInviteInput
-	var claimed ClientClaimInput
-	d.Control.Clients = &ClientControlDeps{
-		List: func() (ClientInventory, error) {
-			return ClientInventory{Clients: []ClientView{{ID: "client-one", Status: "provisioning"}}}, nil
-		},
-		CreateInvite: func(input ClientInviteInput) (ClientInviteView, error) {
-			createdName = input.Name
-			createdInput = input
-			return ClientInviteView{
-				InviteID: "invite-one", ClientID: "client-one", ClientName: input.Name,
-				InviteURI: "loom://enroll#opaque", EnrollmentURL: "https://control.example/api/client/enroll",
-				ExpiresAt: "2026-08-31T12:15:00Z",
-			}, nil
-		},
-		Claim: func(input ClientClaimInput) (ClientClaimResult, error) {
-			claimed = input
-			return ClientClaimResult{
-				Schema: 1, ClientID: "client-one", Status: "provisioning",
-				EnrolledAt: "2026-08-31T12:01:00Z", Next: "wait_for_configuration",
-				Configuration: "pending",
-			}, nil
-		},
-		InviteArtifact: func(string) (ClientInviteArtifact, error) {
-			return ClientInviteArtifact{InviteURI: "loom://enroll#opaque", ExpiresAt: "2026-08-31T12:15:00Z"}, nil
-		},
-	}
-	handler := Handler(d)
-	unauthorized := httptest.NewRecorder()
-	readOnly := d
-	readOnly.Admin = false
-	Handler(readOnly).ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/control/clients", nil))
-	if unauthorized.Code != http.StatusForbidden {
-		t.Fatalf("unauthorized clients status=%d", unauthorized.Code)
-	}
-
-	create := authenticatedJSONRequest(t, d, http.MethodPost, "/api/control/client-invites", `{"name":"build server","platform":"linux-server","responsibilities":["forward","internet_egress"],"direction":"reverse_only"}`)
-	handler.ServeHTTP(create.recorder, create.request)
-	if create.recorder.Code != http.StatusCreated || createdName != "build server" || createdInput.Platform != "linux-server" ||
-		createdInput.Direction != "reverse_only" || strings.Join(createdInput.Responsibilities, ",") != "forward,internet_egress" ||
-		!strings.Contains(create.recorder.Body.String(), `"invite_uri":"loom://enroll#opaque"`) ||
-		create.recorder.Header().Get("Cache-Control") != "no-store" {
-		t.Fatalf("create=%d name=%q body=%s headers=%v", create.recorder.Code, createdName, create.recorder.Body.String(), create.recorder.Header())
-	}
-
-	// Claim is intentionally not admin-certificate authenticated. Its random
-	// invitation token is the one-use credential.
-	claim := httptest.NewRequest(http.MethodPost, "/api/client/enroll", strings.NewReader(
-		`{"token":"opaque-token","platform":"linux-server","csr_pem":"CSR","request_id":"install-1","server":{"public_endpoint":"edge.example.net","inbound_port":61698,"direction":"bidirectional","wg_public_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","country":"CN","city":"Beijing","provider":"example"}}`))
-	claim.Header.Set("Content-Type", "application/json")
-	claimResult := httptest.NewRecorder()
-	handler.ServeHTTP(claimResult, claim)
-	if claimResult.Code != http.StatusAccepted || claimed.Token != "opaque-token" ||
-		claimed.CSRPEM != "CSR" || claimed.Server == nil || claimed.Server.PublicEndpoint != "edge.example.net" ||
-		claimed.Server.InboundPort != 61698 || claimed.Server.Direction != "bidirectional" ||
-		!strings.Contains(claimResult.Body.String(), `"configuration":"pending"`) {
-		t.Fatalf("claim=%d input=%+v body=%s", claimResult.Code, claimed, claimResult.Body.String())
-	}
-	d.Control.Clients.Claim = func(ClientClaimInput) (ClientClaimResult, error) {
-		return ClientClaimResult{}, errors.New("SSH failed at private-control-path")
-	}
-	failedClaim := httptest.NewRequest(http.MethodPost, "/api/client/enroll", strings.NewReader(
-		`{"token":"opaque-token","platform":"linux-server","csr_pem":"CSR","request_id":"install-1"}`))
-	failedClaim.Header.Set("Content-Type", "application/json")
-	failedResult := httptest.NewRecorder()
-	handler.ServeHTTP(failedResult, failedClaim)
-	if failedResult.Code != http.StatusInternalServerError ||
-		strings.Contains(failedResult.Body.String(), "private-control-path") ||
-		!strings.Contains(failedResult.Body.String(), "temporarily unavailable") {
-		t.Fatalf("failed claim leaked internal detail: status=%d body=%s", failedResult.Code, failedResult.Body.String())
-	}
-
-	unknown := httptest.NewRequest(http.MethodPost, "/api/client/enroll", strings.NewReader(
-		`{"token":"x","platform":"linux-server","csr_pem":"x","request_id":"r","private_key":"must-not-pass"}`))
-	unknown.Header.Set("Content-Type", "application/json")
-	unknownResult := httptest.NewRecorder()
-	handler.ServeHTTP(unknownResult, unknown)
-	if unknownResult.Code != http.StatusBadRequest {
-		t.Fatalf("unknown field status=%d body=%s", unknownResult.Code, unknownResult.Body.String())
-	}
-	oldProfile := authenticatedJSONRequest(t, d, http.MethodPost, "/api/control/client-invites", `{"name":"old","profile_version":"access-v1"}`)
-	handler.ServeHTTP(oldProfile.recorder, oldProfile.request)
-	if oldProfile.recorder.Code != http.StatusBadRequest {
-		t.Fatalf("old profile API was accepted: status=%d body=%s", oldProfile.recorder.Code, oldProfile.recorder.Body.String())
 	}
 }
 

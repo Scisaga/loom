@@ -132,7 +132,7 @@ func validateCompletionInstallPaths(input LinuxEnrollmentCompletionInstallV1) er
 func prepareLinuxEnrollmentInstallation(identity *EnrollmentIdentityV1, pending *PendingClaimV2,
 	result *wire.EnrollmentClaimResultV2, envelopes []wire.SealedSecretEnvelopeV1,
 	configs []InstalledConfigV1, mirrors []wire.DistributionMirrorRefV1,
-) (*EnrollmentInstallationV1, error) {
+) (*DeviceInstallationV1, error) {
 	if identity == nil || pending == nil || result == nil || result.ResultArtifact == nil ||
 		result.ResultArtifact.InitialDeviceView.Active == nil {
 		return nil, errors.New("[Linux install] result/pending/identity 不完整")
@@ -173,7 +173,7 @@ func prepareLinuxEnrollmentInstallation(identity *EnrollmentIdentityV1, pending 
 	if err != nil {
 		return nil, err
 	}
-	installation := &EnrollmentInstallationV1{
+	installation := &DeviceInstallationV1{
 		Schema: 1, ClaimCore: clonePrivateClientValue(pending.ClaimCore),
 		ClaimCoreHash: pending.ClaimCoreHash, IdentityKeyHash: identityHash,
 		WrappingKeyHash: wrappingHash, TransactionStateHash: result.TransactionStateHash,
