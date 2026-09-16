@@ -77,12 +77,10 @@ v2 消费必须先通过[控制面规范](../protocols/control-plane/README.md)�
 private service directory、四组 durable floor 与不可逆 latch 校验。报告入口使用认证后的
 `device_report` 私有服务，不从 distribution/bootstrap/Enrollment URL 推导，也不退回 v1 authority。
 
-1. 在现有报告周期内显式选择读取模式，并解析有大小上限的完整 Observation 数组；
-   不增加独立轮询/探测周期。Windows 使用 `clientreport.SendWithObservations`，
-   保留 `Send` 的原 204 契约；200 已接受报告但观测正文无效时单独报告读取错误，
-   不篡改设备健康。Android `HealthReporter` 使用相同的 `observations=1`，兼容
-   200 JSON 与旧服务端 204；正文读取错误同样不篡改已接受的设备健康。
-   旧服务器若返回 204，表示上报成功但本轮没有观测数据，不能当成失败证据。
+1. 在现有私有 `device_report` 周期内解析 exact 绑定该报告的 200 回执，取得有大小上限的
+   Observation 数组；204 表示本轮报告已接受但无观测，不增加独立轮询或探测周期。
+   Windows 使用 `windowsv2.DurableReporter`，Android 使用 `V2DeviceReporter`；观测读取失败
+   单独记录，不改写已接受的设备健康，也不调用旧公开报告端点。
 2. 使用已验证加入身份保存的 CA，复用现有 canonical v5 校验与绑定规则。
    Go 共用入口为 `observation.VerifyObservationAtLeast`（服务端原入口委托它），必须检查
    `MeasurementsVerified`；仅调用 `attest.VerifyFresh` 不会绑定外层 Targets/Edges。

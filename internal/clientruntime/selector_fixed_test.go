@@ -2,14 +2,7 @@ package clientruntime
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
-	"encoding/pem"
-	"math/big"
 	"reflect"
 	"slices"
 	"strings"
@@ -17,9 +10,7 @@ import (
 	"time"
 
 	"loom/internal/agent"
-	"loom/internal/attest"
 	"loom/internal/clientcore"
-	"loom/internal/clientreport"
 )
 
 func multipleInternetServicesFixture(t *testing.T) ([]byte, []byte) {
@@ -235,53 +226,4 @@ func TestWindowsFixedInternetAgentChoosesOneActualPrefixForAllServices(t *testin
 	if health.SelectedState != "unknown" || health.SelectedP50MS != nil || health.SelectedP95MS != nil || health.BestP50MS != nil {
 		t.Fatal("入口探测冒充完整路径质量")
 	}
-	key, cert, ca := fixedInternetReportIdentity(t, cfg.Node)
-	defer clear(key)
-	now := time.Now()
-	observation, err := clientreport.BuildWithAgent(cfg.Node, "0123456789ab", nil, report, now, key, cert, ca)
-	if err != nil {
-		t.Fatal(err)
-	}
-	claim, err := attest.VerifyFresh(observation.Attest, ca, now, time.Minute)
-	if err != nil || claim.CanonicalVersion != 5 || claim.Agent == nil || len(claim.Agent.Selections) != 1 {
-		t.Fatal("真实统一路径没有通过 canonical v5 验签", err)
-	}
-	signed, _ := json.Marshal(claim.Agent)
-	actual, _ := json.Marshal(report)
-	if string(signed) != string(actual) {
-		t.Fatal("签名没有完整绑定实际单路径、质量、原因和 decision_scope")
-	}
-	observation.Attest.Agent.Selections[0].Candidate = "opaque:forged"
-	if _, err := attest.VerifyFresh(observation.Attest, ca, now, time.Minute); err == nil {
-		t.Fatal("统一路径签名接受了篡改的候选")
-	}
-}
-
-func fixedInternetReportIdentity(t *testing.T, node string) (keyPEM, certPEM, caPEM []byte) {
-	t.Helper()
-	rootKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now()
-	root := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "demo-fixed-report-ca"}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
-	rootDER, err := x509.CreateCertificate(rand.Reader, root, root, &rootKey.PublicKey, rootKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	leaf := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: node + ".node.internal"}, DNSNames: []string{node + ".node.internal"}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature}
-	leafDER, err := x509.CreateCertificate(rand.Reader, leaf, root, &key.PublicKey, rootKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	private, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer clear(private)
-	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private}), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER}), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: rootDER})
 }
