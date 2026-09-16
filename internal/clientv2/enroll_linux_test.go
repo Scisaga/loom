@@ -27,6 +27,7 @@ type fakePrivateEnrollmentAPI struct {
 	preflightCalls int
 	challengeByte  byte
 	coreHashes     []string
+	submitted      bool
 }
 
 func (fake *fakePrivateEnrollmentAPI) Preflight(_ context.Context, request wire.EnrollmentIntentPreflightRequestV1,
@@ -68,6 +69,7 @@ func (fake *fakePrivateEnrollmentAPI) Challenge(_ context.Context,
 
 func (fake *fakePrivateEnrollmentAPI) SubmitClaim(_ context.Context,
 	submission wire.EnrollmentClaimSubmissionV2) (wire.EnrollmentClaimResultV2, error) {
+	fake.submitted = true
 	verified, err := wire.VerifyEnrollmentClaimSubmission(&submission, &fake.record, &fake.policy,
 		&fake.opening, fake.serviceID, fake.now)
 	if err != nil {
@@ -111,6 +113,23 @@ func TestLinuxEnrollmentOrdersPreflightBeforeKeysAndReusesStableCore(t *testing.
 	}
 	if _, err := LoadPendingClaimForResume(attempt.PendingPath, identity); err == nil {
 		t.Fatal("尚无 verified progress 的 pending claim 被用于 resume")
+	}
+}
+
+func TestLinuxEnrollmentRefreshesTrustedTimeAfterClaimResult(t *testing.T) {
+	attempt, inputs, fake := linuxEnrollmentAttemptFixture(t)
+	afterResult := 0
+	attempt.Now = func() time.Time {
+		if fake.submitted {
+			afterResult++
+		}
+		return fake.now
+	}
+	if _, err := runLinuxEnrollmentAttempt(context.Background(), attempt, inputs); err != nil {
+		t.Fatal(err)
+	}
+	if afterResult == 0 {
+		t.Fatal("Enrollment 结果仍使用 claim 提交前冻结的可信时间")
 	}
 }
 

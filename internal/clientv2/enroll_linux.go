@@ -164,6 +164,10 @@ func runLinuxEnrollmentAttempt(ctx context.Context, attempt LinuxEnrollmentAttem
 	if err := wire.ValidateEnrollmentClaimResult(&result); err != nil {
 		return LinuxEnrollmentAttemptResultV2{}, err
 	}
+	resultNow := attempt.Now().UTC()
+	if resultNow.IsZero() {
+		return LinuxEnrollmentAttemptResultV2{}, errors.New("[Linux] Enrollment result 可信时间无效")
+	}
 	identityHash, err := identity.IdentitySPKIHash()
 	if err != nil {
 		return LinuxEnrollmentAttemptResultV2{}, err
@@ -175,7 +179,7 @@ func runLinuxEnrollmentAttempt(ctx context.Context, attempt LinuxEnrollmentAttem
 			enrollmentv2.EnrollmentCompletionExpectedV1{
 				Record: inputs.record, Policy: inputs.policy,
 				Opening: preflight.DeviceEnrollmentIntentOpening, ClaimCore: pending.ClaimCore,
-				BaseHead: inputs.head, BaseControlSet: inputs.set, TrustedTime: now,
+				BaseHead: inputs.head, BaseControlSet: inputs.set, TrustedTime: resultNow,
 			})
 		if err != nil {
 			return LinuxEnrollmentAttemptResultV2{}, err
