@@ -273,12 +273,15 @@ func (l *localTarget) Push(t *Tree) error {
 			if err != nil {
 				return err
 			}
-			err = f.Chmod(0o644)
+			info, err := f.Stat()
 			_ = f.Close()
 			if err != nil {
 				return err
 			}
-			continue
+			if info.Mode().Perm() == 0o644 {
+				continue
+			}
+			// 缓存文件可能与树外文件硬链接；修复权限也走原子替换，不能 chmod 其 inode。
 		}
 		if err := writeAtomicAt(rootFD, p, body, 0o644); err != nil {
 			return err

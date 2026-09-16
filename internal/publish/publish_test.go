@@ -416,6 +416,10 @@ func TestLocalTargetRepairsPublicPermissionsWithoutChangingAncestors(t *testing.
 			t.Fatal(err)
 		}
 	}
+	retained := filepath.Join(private, "retained-package")
+	if err := os.Link(filepath.Join(dir, blob), retained); err != nil {
+		t.Fatal(err)
+	}
 	if err := (&localTarget{dir: dir}).Push(&Tree{
 		Blobs: map[string][]byte{blob: body},
 		Files: map[string][]byte{catalog: []byte("verified catalog")},
@@ -426,7 +430,7 @@ func TestLocalTargetRepairsPublicPermissionsWithoutChangingAncestors(t *testing.
 		path string
 		mode os.FileMode
 	}{
-		{private, 0o700}, {dir, 0o755},
+		{private, 0o700}, {retained, 0o600}, {dir, 0o755},
 		{filepath.Join(dir, "bin"), 0o755}, {filepath.Join(dir, blob), 0o644},
 		{filepath.Join(dir, "catalogs"), 0o755}, {filepath.Dir(filepath.Join(dir, catalog)), 0o755},
 		{filepath.Join(dir, catalog), 0o644},
