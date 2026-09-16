@@ -10,6 +10,10 @@
    相关[验收记录](local-deployment.md)。其他分支或测试组件不能当作正在运行的服务。
 2. 沿真实流程分段计时：创建邀请、静态分发/catalog 验签、bootstrap 隧道、私有 Enrollment、
    reservation、证书准备、approval/completion、配置获取、实际激活。标明失败或等待的具体步骤。
+   DNS 问题先核对[业务与入口解析的边界](../clients/routing.md#业务域名由最终网络出口解析)：业务
+   FQDN 由最终出口解析，建立外层隧道的入口 FQDN 使用独立 underlay resolver。私有 API 使用
+   overlay IP，仍可能因外层入口解析失败而超时；不能据此推断 Wi-Fi 限制，也不能把 TUN 返回
+   FakeIP 当作入口真实解析成功。
 3. 只优化证据支持的瓶颈；保留身份与数据、认证及提交语义。不提前返回 ready，不减少验证，
    不使用空制品、伪造结果或静默回退旧协议。客户端排查不授权修改路由器/NAT 或追加业务探测。
 4. 服务端修改接入正式 daemon，完成当前授权的发布和相关正常流程验收；新版替换同时移除

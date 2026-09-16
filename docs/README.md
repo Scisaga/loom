@@ -9,7 +9,8 @@
 | 控制面、共识、Enrollment 与迁移 | [控制面规范](protocols/control-plane/README.md)、[实施规程](development/control-plane.md)、[操作手册](operations/control-plane.md) |
 | Device 创建、权限与生命周期 | [Device 生命周期](architecture/device-lifecycle.md) |
 | 客户端接入、选路、平台交付 | [客户端规范与操作](clients/README.md) |
-| 发布、DNS 与本机部署参数 | [本机配置与部署](operations/local-deployment.md) |
+| 业务 DNS 归属与入口解析 | [最终出口 DNS 与独立入口解析](clients/routing.md#业务域名由最终网络出口解析) |
+| 发布、本机部署参数与托管 DNS | [本机配置与部署](operations/local-deployment.md)、[托管域名与证书范围](protocols/control-plane/public-access.md#当前交付范围与独立-dns-工作) |
 | 管理员证书与代码签名 | [管理员证书](operations/admin-certificates.md)、[代码签名](operations/code-signing.md) |
 | 加入网络耗时排查 | [入网排查](operations/enrollment-diagnostics.md) |
 | 评估尚未采用的扩展 | [Local Network](proposals/local-network.md)、[密钥保护强化](proposals/key-protection.md) |

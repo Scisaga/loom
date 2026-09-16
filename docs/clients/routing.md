@@ -2,7 +2,7 @@
 
 [文档地图](../README.md) · [架构入口](../architecture/README.md) · [控制面规范](../protocols/control-plane/README.md) · [实现对照](../development/implementation.md) · [本机部署信息](../operations/local-deployment.md)
 
-**规范范围：v1 客户端入口与宿主。** 本文不能授权继续保留已被 v2 接管的旧业务入口；迁移完成条件见控制面迁移规范。
+**规范范围：客户端日常选路与 DNS。** 三模式和业务 DNS 归属是跨平台数据面约束，在 v2 中继续生效；文中显式标记的 v1 模型仅说明迁移输入，不授权保留旧业务入口。
 
 客户端测量规则的唯一正文：[客户端观测复用](observations.md)。
 
@@ -125,39 +125,17 @@ Agent 通过它切换当前候选。**没有这个端点,渲染出的候选集�
 
 只监听回环,并且带口令:同机的其他进程不该能改你的选路。
 
-## DNS 必须显式配,而且要给它留一条出路
+## 业务域名由最终网络出口解析
 
-sing-box 不配 `dns` 块时会退回系统解析器。这有两个坑,都**只影响直连候选**,
-因而极难诊断 —— 走代理的域名是交给出口解析的([环境变量代理的已知坑](../architecture/agent-runtime.md#环境变量代理的已知坑) 的 `socks5h`),根本
-不经过本机。
-
-**坑一:系统解析器可能是坏的。** access-a 的 systemd-resolved 上游配的是
-`8.8.8.8`,在大陆被污染/超时。表现是"直连候选 100% 失败,代理候选一切正常"。
-解析器要按机器所在地选:大陆机器用境外 DNS 会被污染,境外机器用国内 DNS
-又绕远。
-
-**坑二:`route.final = block` 会把 DNS 查询也拦掉。** 未匹配一律阻断是对的
-([数据不足与候选集为空](../architecture/scheduling.md#数据不足与候选集为空) 的 fail_closed),但 sing-box 自己去问解析器的那个连接也走 route 规则:
-
-```
-outbound/block[block]: blocked connection to 223.5.5.5:53
-dns: lookup failed: operation not permitted
-```
-
-所以 DNS 服务器必须显式指定 `detour`,指向一个专用的直连出站。**它不参与
-选路,存在的唯一目的是让解析器可达。**
-
-业务 DNS 是跨平台不变量，不能只在 Android 特判：
+**业务 DNS 跟随实际出网位置。** 这条规则适用于 Linux、Windows 和 Android，也适用于
+v2 私有控制面迁移后的数据面：
 
 - **Direct** 由接入设备的 underlay/本地 resolver 解析并从本机直连；
 - **Auto / 指定出口** 必须把 FQDN 保留到候选链的最终出口，由该出口自己的受管 resolver
   解析；禁止把接入侧先得到的 A/AAAA 地址沿链转发，否则 CDN/污染结果会绑定错误地域；
 - IP literal 不触发 DNS，也不得被反向改写成域名；
-- `distribution`、公网 bootstrap/data ingress 的 dial hostname 属于传输建立，不是业务目标。
-  它们使用独立 underlay resolver/cache、signed public EndpointSet、transport identity/pin 和
-  防回环保护，不进入 FakeIP 或最终出口业务解析；`control_api`、Enrollment、Raft、
-  `device_config` 与 `device_report` 使用 overlay IP 和 internal service certificate，不要求公网
-  DNS，也不得经公网 Nginx 解析/反代。
+- Auto 选中本地直连路径时，本机就是该请求的最终出口；“出口 DNS”不表示所有模式都使用
+  某一台固定服务器的解析器。
 
 Linux mixed 强制使用 `socks5h://` 或语义等价的远端解析。Windows/Android TUN 使用持久化
 FakeIP 映射或经测试等价的 domain-recovery 机制：只对来自 TUN 的业务 A/AAAA 查询返回
@@ -169,6 +147,29 @@ inbound 并与 transport bootstrap resolver 使用独立缓存；映射和 IPv4/
 默认路由。Windows 必须用等价的双栈路由和域名恢复验收，不能把“系统 DNS 已被 hijack”
 误当成“最终出口已解析”。
 
-> 这两个坑叠在一起的症状是同一个:直连候选失败、代理候选正常。第一次遇到时
-> 很容易归因成"这台机器上不了网" —— 而实际上它直连 baidu 只要 68ms。
-> **排查顺序应当是:先绕过 DNS 用 IP 直连一次,再看是不是解析的问题。**
+### 入口域名使用独立的底层网络解析
+
+`distribution`、公网 bootstrap/data ingress 的 dial hostname 用于建立传输。隧道尚未建立时，
+不能依赖该隧道最终出口的 DNS。它们使用独立的底层网络（underlay）resolver/cache，按
+signed EndpointSet 拨号并核对 transport identity/pin；不进入业务 FakeIP 缓存。
+Android 的套接字必须由宿主 `protect()` 并按网络代绑定，防止解析请求回到自身 VPN。
+
+`control_api`、Enrollment、Raft、`device_config` 与 `device_report` 使用 overlay IP 和 internal
+service certificate，不解析公开服务域名，也不经公网 Nginx 反代。但承载 overlay 的外层入口
+若使用 FQDN，仍依赖上述 underlay 解析；外层解析失败会使私有服务不可达。
+
+节点的解析器必须显式配置；当前渲染器的 `dns-out` 是供该节点实际 DNS 查询使用的专用直连
+出站，避免查询被 `route.final = block` 拦截。接入侧用它解析传输入口和 Direct 目标；服务器
+成为最终出口时用自己的解析器解析业务目标。它不参与候选排名，也不能让代理业务提前在接入侧
+解析。解析器应依据实际可达性选择，不能仅凭节点地域推断网络限制。
+
+### 排查与验收边界
+
+先从实际配置和日志确认失败的是业务目标、外层入口还是私有服务，再检查对应 resolver、
+缓存、detour 与防回环接线。入口域名超时不能证明出口业务 DNS 失败，也不能单凭它断定
+Wi-Fi 限制外部 DNS。TUN 内查询返回 FakeIP 只证明映射生效，不证明真实入口已解析或隧道已通。
+
+业务验收按[跨平台测试矩阵](delivery.md#测试矩阵)确认同一 FQDN 随最终出口获得对应解析结果；
+不新增周期性 DNS 探测、候选重复测量或启动等待。
+[Issue #17 的托管 DNS / DNS-01 工作](../protocols/control-plane/public-access.md#当前交付范围与独立-dns-工作)
+不包含这里的业务解析与入口解析要求；暂停该 issue 不改变这些既有约束。

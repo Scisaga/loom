@@ -171,9 +171,8 @@ type sbDNSServer struct {
 	// Detour 指定这条 DNS 查询走哪个出站。
 	//
 	// **必须显式指定。** 不指定时查询会走 route 规则,而我们的 route.final
-	// 是 block(未匹配一律阻断,fail_closed) —— 于是 sing-box 连
-	// 解析器都问不到。症状只有"直连候选失败":走代理的域名是交给出口解析
-	// 的,根本不用本地 DNS,所以代理候选一切正常。
+	// 是 block(未匹配一律阻断,fail_closed)。这既会阻断本地直连解析，
+	// 也会阻断外层入口 FQDN 的解析；业务 FQDN 则沿链交给最终出口解析。
 	Detour string `json:"detour,omitempty"`
 }
 
@@ -837,9 +836,9 @@ func renderSingBox(s *model.SSOT, n *model.Node) (File, []Skip, error) {
 	cfg := &sbConfig{Log: sbLog{Level: "warn"}}
 	var skips []Skip
 
-	// 显式指定解析器,不依赖系统的。系统解析器坏掉时,表现是"直连候选
-	// 永远失败、代理候选一切正常" —— 因为走代理的域名是交给出口解析的
-	// ,根本不经过本机。这种不对称极难往 DNS 上想。
+	// 每台节点显式使用自己的解析器。接入侧解析直连目标及外层入口，
+	// 代理业务保留 FQDN 到最终出口，由出口的解析器处理；入口解析失败
+	// 仍会阻断代理隧道，不能把所有 DNS 失败都归为直连候选问题。
 	if dns := s.DNSFor(n); len(dns) > 0 {
 		d := &sbDNS{
 			Strategy:       "prefer_ipv4",
