@@ -186,7 +186,7 @@ class LoomVpnService : VpnService(), PlatformInterface {
             ACTION_SYNC_SYSTEM_POLICY -> {
                 val alwaysOn = alwaysOnEnabled()
                 VpnRuntime.transform { it.copy(alwaysOn = alwaysOn) }
-                if (boxService == null) {
+                if (boxService == null && !desiredConnected) {
                     stopIdleForeground(startId)
                 } else {
                     val detail = VpnRuntime.status.value.detail
@@ -500,27 +500,64 @@ class LoomVpnService : VpnService(), PlatformInterface {
         current
     }
 
-    /** 显式文件递送复用在线同步的 verifier、candidate 与本地激活事务。 */
+    /** 修复文件须能脱离旧 VPN 下载；只有新配置实际启动后才提交原有 candidate。 */
     internal suspend fun importPrivateConfiguration(profileId: String, delivery: ByteArray): ManagedProfile? =
         v2Control.withLock {
-            check(profileId == ProfileContext.id(profileContext) && desiredConnected && boxService != null) {
-                "请先连接要更新的配置，再导入认证配置文件"
+            lifecycle.withLock import@ {
+                check(bootstrapSessions == 0 && (boxService == null || profileId == activeProfileId)) {
+                    "请先停止另一配置或完成当前加入事务"
+                }
+                val scoped = ProfileCatalog.get(this).context(profileId)
+                check(EnrollmentManager.get(scoped).currentProfile()?.protocol == 2) {
+                    "此配置尚未完成 v2 加入"
+                }
+                val reporter = V2DeviceReporter(scoped)
+                var candidate: ManagedProfile? = null
+                var staged = false
+                try {
+                    // 与正常停止共用资源释放；旧 TUN、报告与 Agent 全部退出后才发 HTTP。
+                    closeResources()
+                    activeProfileId = profileId
+                    desiredProfileId = profileId
+                    desiredConnected = true
+                    VpnConnectionPreference(this).apply {
+                        setProfileId(profileId)
+                        setDesiredConnected(true)
+                    }
+                    startForeground(NOTIFICATION_ID, foregroundNotification("VPN 已停用，正在下载配置…"))
+                    VpnRuntime.update(VpnStatus(phase = ConnectionPhase.STARTING, profileId = profileId,
+                        detail = "VPN 已停用，正在下载并验证配置更新…", alwaysOn = alwaysOnEnabled()))
+                    val refresh = reporter.prepareConfiguration(delivery)
+                    candidate = refresh.profile
+                    staged = refresh.staged
+                    if (candidate == null) {
+                        stopForV2TombstoneLocked()
+                        return@import null
+                    }
+                    currentCoroutineContext().ensureActive()
+                    ensureConnectionWanted()
+                    check(desiredProfileId == profileId) { "配置更新期间连接选择已改变" }
+                    DeviceKeyStore(ProfileContext.keySuffix(scoped)).proveBinding()
+                    val verified = checkNotNull(candidate)
+                    val probe = activateWithoutBusinessProbe(verified)
+                    val installed = if (staged) reporter.commitConfigurationCandidate(verified) else verified
+                    staged = false
+                    connected(installed, probe, "已激活认证配置更新 · v2 ${installed.generation}")
+                    installed
+                } catch (error: Throwable) {
+                    if (staged) candidate?.let {
+                        runCatching { reporter.discardConfigurationCandidate(it) }.onFailure(error::addSuppressed)
+                    }
+                    runCatching { closeResources() }.onFailure(error::addSuppressed)
+                    desiredConnected = false
+                    VpnConnectionPreference(this).setDesiredConnected(false)
+                    VpnRuntime.update(VpnStatus(phase = ConnectionPhase.ERROR, profileId = profileId,
+                        detail = "配置更新失败，VPN 保持停用；原身份与已安装配置仍保留"))
+                    stopForegroundCompat()
+                    stopSelf()
+                    throw error
+                }
             }
-            val current = checkNotNull(activeManagedProfile?.takeIf { it.protocol == 2 })
-            val reporter = V2DeviceReporter(profileContext)
-            val refresh = reporter.prepareConfiguration(delivery)
-            val candidate = refresh.profile
-            if (candidate == null) {
-                stopForV2Tombstone()
-                return@withLock null
-            }
-            val installed = when {
-                refresh.requiresRuntimeActivation -> activateV2RuntimeCandidate(reporter, current, candidate)
-                refresh.staged -> commitV2LiveCandidate(reporter, current, candidate)
-                else -> current
-            }
-            activeManagedProfile = installed
-            installed
         }
 
     /** Apply route-only changes before advancing floors; authority-only changes need no libbox restart. */

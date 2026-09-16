@@ -116,7 +116,8 @@ class EnrollmentManager private constructor(context: Context) {
         activeJob?.cancel()
         activeJob = scope.launch {
             transaction.withLock {
-                guarded("加入失败") { beginJoinFile(raw) }
+                val configuration = runCatching { JSONObject(raw.decodeToString()).has("updates") }.getOrDefault(false)
+                guarded(if (configuration) "配置更新失败" else "加入失败") { beginJoinFile(raw) }
             }
         }
     }
@@ -278,9 +279,11 @@ class EnrollmentManager private constructor(context: Context) {
         when {
             carrier?.optInt("schema") == 1 && carrier.has("updates") -> {
                 check(v2StateStore.current() != null) { "尚未加入 v2，不能导入配置更新" }
-                check(isActiveProfile() && VpnRuntime.status.value.phase == ConnectionPhase.CONNECTED) {
-                    "请先连接要更新的配置，再导入认证配置文件"
-                }
+                mutableStatus.value = status.value.copy(phase = EnrollmentPhase.PULLING,
+                    detail = "正在停用旧 VPN，下载并验证配置更新…")
+                ContextCompat.startForegroundService(appContext,
+                    Intent(appContext, LoomVpnService::class.java)
+                        .setAction(LoomVpnService.ACTION_ENROLLMENT_KEEPALIVE))
                 val service = withTimeout(5_000) { BootstrapServiceRegistry.await() }
                 val profile = service.importPrivateConfiguration(ProfileContext.id(appContext), raw)
                 if (profile == null) {
@@ -745,6 +748,15 @@ class EnrollmentManager private constructor(context: Context) {
     }
 
     private fun fail(prefix: String, error: Throwable) {
+        // 更新失败不会撤销已安装身份；继续显示 LKG，保留断开状态下再次导入的入口。
+        val current = runCatching { v2StateStore.runtimeProfile() }.getOrNull()
+        if (current != null) {
+            mutableStatus.value = EnrollmentStatus(EnrollmentPhase.ERROR,
+                "$prefix：${error.message ?: error.javaClass.simpleName}",
+                nodeID = current.nodeID, snapshot = current.snapshot, generation = current.generation,
+                protocol = current.protocol)
+            return
+        }
         val pending = try {
             store.pending()
         } catch (_: Throwable) {

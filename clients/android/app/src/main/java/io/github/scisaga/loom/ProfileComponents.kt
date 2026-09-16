@@ -80,7 +80,10 @@ internal fun ProfilesCard(
                         DropdownMenu(menu, onDismissRequest = { menu = false }) {
                             DropdownMenuItem(text = { Text(if (connected) "已连接" else "连接") },
                                 enabled = !connected && status.snapshot.isNotEmpty(), onClick = { menu = false; onConnect(profile) })
-                            if (connected && vpn.phase == ConnectionPhase.CONNECTED && status.protocol == 2) {
+                            if (status.protocol == 2 && status.snapshot.isNotEmpty() &&
+                                status.phase != io.github.scisaga.loom.enrollment.EnrollmentPhase.PULLING &&
+                                vpn.phase !in setOf(ConnectionPhase.STARTING, ConnectionPhase.STOPPING) &&
+                                (vpn.phase != ConnectionPhase.CONNECTED || connected)) {
                                 DropdownMenuItem(text = { Text("导入配置更新") }, modifier = Modifier.testTag("import-config"),
                                     onClick = { menu = false; onImportConfiguration(profile) })
                             }
