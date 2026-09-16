@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 
+	"loom/internal/bootstrapaccess"
 	"loom/internal/enrollmentv2"
 	"loom/internal/model"
 	"loom/internal/validate"
@@ -21,28 +22,29 @@ const (
 // 状态。certification 不进 snapshot preimage，避免 Head/QC 自引用（D104）。
 // 旧 SSOT 作为明确的迁移输入保留；只有 completion 才将新 Device 加入 effective view。
 type controlApplicationV1 struct {
-	Schema             int                                     `json:"schema"`
-	ClusterID          string                                  `json:"cluster_id"`
-	LegacySSOT         string                                  `json:"legacy_ssot"`
-	LegacyRegistryHash string                                  `json:"legacy_registry_hash"`
-	RecoveryPolicy     wire.RecoveryPolicyV1                   `json:"recovery_policy"`
-	RecoveryCustody    wire.RecoveryPrivateCustodyObjectV1     `json:"recovery_custody"`
-	Authorizations     []wire.AdminAuthorizationV1             `json:"authorizations"`
-	CARegistry         enrollmentv2.CARegistryPreimageV1       `json:"ca_registry"`
-	Services           []wire.PrivateControlServiceV1          `json:"services"`
-	EnrollmentService  wire.PrivateEnrollmentServiceRefV1      `json:"enrollment_service"`
-	InvitePolicy       wire.InviteIssuancePolicyV2             `json:"invite_policy"`
-	BootstrapIssuers   []wire.BootstrapIssuerAuthorizationV1   `json:"bootstrap_issuers"`
-	DistributionSets   []wire.DistributionEndpointSetV1        `json:"distribution_sets,omitempty"`
-	BootstrapCatalog   wire.BootstrapEndpointCatalogV1         `json:"bootstrap_catalog"`
-	Mirrors            []wire.DistributionMirrorRefV1          `json:"mirrors"`
-	Invites            []controlInviteStateV1                  `json:"invites"`
-	Transactions       []enrollmentv2.TransactionStateV2       `json:"transactions"`
-	IssuanceRegistry   []wire.EnrollmentIssuanceRegistryLeafV1 `json:"issuance_registry"`
-	Devices            []controlDeviceStateV1                  `json:"devices"`
-	DeviceMigrations   []wire.RuntimeDeviceMigrationLeafV1     `json:"device_migrations,omitempty"`
-	DeferredMigrations []controlDeferredDeviceMigrationV1      `json:"deferred_migrations,omitempty"`
-	ArtifactPolicies   []wire.ArtifactAvailabilityPolicyV1     `json:"artifact_policies,omitempty"`
+	Schema                int                                             `json:"schema"`
+	ClusterID             string                                          `json:"cluster_id"`
+	LegacySSOT            string                                          `json:"legacy_ssot"`
+	LegacyRegistryHash    string                                          `json:"legacy_registry_hash"`
+	RecoveryPolicy        wire.RecoveryPolicyV1                           `json:"recovery_policy"`
+	RecoveryCustody       wire.RecoveryPrivateCustodyObjectV1             `json:"recovery_custody"`
+	Authorizations        []wire.AdminAuthorizationV1                     `json:"authorizations"`
+	CARegistry            enrollmentv2.CARegistryPreimageV1               `json:"ca_registry"`
+	Services              []wire.PrivateControlServiceV1                  `json:"services"`
+	EnrollmentService     wire.PrivateEnrollmentServiceRefV1              `json:"enrollment_service"`
+	InvitePolicy          wire.InviteIssuancePolicyV2                     `json:"invite_policy"`
+	BootstrapIssuers      []wire.BootstrapIssuerAuthorizationV1           `json:"bootstrap_issuers"`
+	DistributionSets      []wire.DistributionEndpointSetV1                `json:"distribution_sets,omitempty"`
+	BootstrapCatalog      wire.BootstrapEndpointCatalogV1                 `json:"bootstrap_catalog"`
+	BootstrapInstallation *bootstrapaccess.InitialBootstrapInstallationV1 `json:"bootstrap_installation,omitempty"`
+	Mirrors               []wire.DistributionMirrorRefV1                  `json:"mirrors"`
+	Invites               []controlInviteStateV1                          `json:"invites"`
+	Transactions          []enrollmentv2.TransactionStateV2               `json:"transactions"`
+	IssuanceRegistry      []wire.EnrollmentIssuanceRegistryLeafV1         `json:"issuance_registry"`
+	Devices               []controlDeviceStateV1                          `json:"devices"`
+	DeviceMigrations      []wire.RuntimeDeviceMigrationLeafV1             `json:"device_migrations,omitempty"`
+	DeferredMigrations    []controlDeferredDeviceMigrationV1              `json:"deferred_migrations,omitempty"`
+	ArtifactPolicies      []wire.ArtifactAvailabilityPolicyV1             `json:"artifact_policies,omitempty"`
 }
 
 // 未在用且尚未提供原 key 迁移请求的历史记录只保留原身份，不能伪造
@@ -210,6 +212,14 @@ func (application *controlApplicationV1) validate() error {
 	}
 	if application.BootstrapCatalog.ClusterID != application.ClusterID {
 		return errors.New("[D131 application] catalog cluster 不一致")
+	}
+	if application.BootstrapInstallation != nil {
+		if err := bootstrapaccess.ValidateInitialBootstrapInstallation(application.BootstrapInstallation); err != nil {
+			return err
+		}
+		if !wire.EqualCanonical(application.BootstrapInstallation.Catalog, application.BootstrapCatalog) {
+			return errors.New("bootstrap catalog 不属于已承诺的完整安装计划")
+		}
 	}
 	if err := wire.ValidateDistributionMirrorRefs(application.Mirrors); err != nil {
 		return err

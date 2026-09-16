@@ -108,6 +108,10 @@ capability，不能重新接收手写的 `listen`、SNI 或 pin。direct 部署�
 声明的地址族且端口属于相应 HY2/Trojan pool；NAT 部署必须逐项命中 frozen
 `PortMappingIntent` 的 public/local offset 与 L4 transport。实际 socket 的 `LocalAddr`、TLS SNI、
 叶证书 SPKI 和 capability registry 的 ingress-set hash 都要在 accept/auth 前与该 capability 精确相等。
+首次部署没有旧 listener 时，一个认证事务可以原子分配并授权 `prepared`，持久历史从该完整
+初始事件重放。它只授予冻结 tuple 的准备权限，不代表已监听或可达；必须继续执行同一套
+local/external 验证和 advertise 事务。有旧代的 rotation 不能使用此入口，也不能直接进入 preferred。
+
 `prepared` listener 可在公开有效期前完成不携 bearer 的 outer self-check；任何携 transport
 credential 的认证只在 catalog 与 listener validity 交集内开放。adapter 必须把同一 generation 的
 全部 certified tuple 当作一个运行批次：全部 bind 成功后才启动 accept，部分失败关闭已建 socket；

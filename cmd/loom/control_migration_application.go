@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 
+	"loom/internal/bootstrapaccess"
 	"loom/internal/enrollmentv2"
 	"loom/internal/wire"
 )
@@ -13,16 +14,17 @@ import (
 // Prepared 输入只携带已有材料的完整 preimage；当前管理员、原 SSOT/registry
 // 与 Head 从原网络读取。调用方不能手填迁移后的 ACL、Device view 或证书坐标。
 type controlMigrationPreparedV1 struct {
-	Schema             int                                   `json:"schema"`
-	ClusterID          string                                `json:"cluster_id"`
-	Materials          controlPreparedMigrationMaterialsV1   `json:"materials"`
-	Recovery           controlRecoveryMaterialV1             `json:"recovery"`
-	InvitePolicy       wire.InviteIssuancePolicyV2           `json:"invite_policy"`
-	BootstrapCatalog   wire.BootstrapEndpointCatalogV1       `json:"bootstrap_catalog"`
-	BootstrapIssuers   []wire.BootstrapIssuerAuthorizationV1 `json:"bootstrap_issuers"`
-	DistributionSets   []wire.DistributionEndpointSetV1      `json:"distribution_sets"`
-	Mirrors            []wire.DistributionMirrorRefV1        `json:"mirrors"`
-	DeferredMigrations []controlDeferredDeviceMigrationV1    `json:"deferred_migrations,omitempty"`
+	Schema                int                                             `json:"schema"`
+	ClusterID             string                                          `json:"cluster_id"`
+	Materials             controlPreparedMigrationMaterialsV1             `json:"materials"`
+	Recovery              controlRecoveryMaterialV1                       `json:"recovery"`
+	InvitePolicy          wire.InviteIssuancePolicyV2                     `json:"invite_policy"`
+	BootstrapCatalog      wire.BootstrapEndpointCatalogV1                 `json:"bootstrap_catalog"`
+	BootstrapInstallation *bootstrapaccess.InitialBootstrapInstallationV1 `json:"bootstrap_installation,omitempty"`
+	BootstrapIssuers      []wire.BootstrapIssuerAuthorizationV1           `json:"bootstrap_issuers"`
+	DistributionSets      []wire.DistributionEndpointSetV1                `json:"distribution_sets"`
+	Mirrors               []wire.DistributionMirrorRefV1                  `json:"mirrors"`
+	DeferredMigrations    []controlDeferredDeviceMigrationV1              `json:"deferred_migrations,omitempty"`
 }
 
 func (runtime *controlRuntime) prepareMigrationApplication(input *controlMigrationInputV1) error {
@@ -74,7 +76,7 @@ func (runtime *controlRuntime) prepareMigrationApplication(input *controlMigrati
 			AdminProfiles: []wire.AdminCertificateProfileV1{profile}, DeviceProfiles: []wire.DeviceCertificateProfileStateV1{materials.DeviceProfile}},
 		Services:     []wire.PrivateControlServiceV1{runtime.config.ControlService},
 		InvitePolicy: prepared.InvitePolicy, BootstrapIssuers: prepared.BootstrapIssuers,
-		BootstrapCatalog: prepared.BootstrapCatalog, DistributionSets: prepared.DistributionSets, Mirrors: prepared.Mirrors,
+		BootstrapCatalog: prepared.BootstrapCatalog, BootstrapInstallation: prepared.BootstrapInstallation, DistributionSets: prepared.DistributionSets, Mirrors: prepared.Mirrors,
 		Invites: []controlInviteStateV1{}, Transactions: []enrollmentv2.TransactionStateV2{},
 		IssuanceRegistry: []wire.EnrollmentIssuanceRegistryLeafV1{}, Devices: []controlDeviceStateV1{},
 		DeferredMigrations: prepared.DeferredMigrations, ArtifactPolicies: []wire.ArtifactAvailabilityPolicyV1{materials.ArtifactPolicy}}

@@ -74,10 +74,27 @@ func (s *Store) Begin(intent IntentV1, transition Transition) (StateV1, error) {
 	if err := validateAllocationTransition(&transition); err != nil {
 		return StateV1{}, err
 	}
+	return s.begin(intent, transition)
+}
+
+// 首次部署可由一个 certified operation 原子分配并授权准备。此入口只适用于
+// 没有旧代的 intent；不授权 advertise，也不能跳过运行时 local/external verify。
+func (s *Store) BeginPrepared(intent IntentV1, transition Transition) (StateV1, error) {
+	transition = normalizeTransition(transition)
+	if transition.NextPhase != "prepared" || intent.FrozenDependencies.SourceListenerGeneration != nil {
+		return StateV1{}, errors.New("[rotation] 原子准备仅允许无旧代的首次部署")
+	}
+	return s.begin(intent, transition)
+}
+
+func (s *Store) begin(intent IntentV1, transition Transition) (StateV1, error) {
+	if err := validateInitialTransition(&intent, &transition); err != nil {
+		return StateV1{}, err
+	}
 	if err := s.verify(&intent, nil, &transition); err != nil {
 		return StateV1{}, fmt.Errorf("[rotation] allocation head 未获 certified authority: %w", err)
 	}
-	result, err := Allocate(intent, transition.CertifiedHeadHash)
+	result, err := initialState(intent, transition)
 	if err != nil {
 		return StateV1{}, err
 	}
@@ -169,14 +186,14 @@ func validateDurableState(state *DurableStateV1, verify CertifiedAuthorityVerifi
 			return errors.New("[rotation] transition history sequence/canonical form 无效")
 		}
 		if i == 0 {
-			if err := validateAllocationTransition(&record.Transition); err != nil {
+			if err := validateInitialTransition(state.Intent, &record.Transition); err != nil {
 				return err
 			}
 			if err := verify(state.Intent, nil, &record.Transition); err != nil {
 				return err
 			}
 			var err error
-			replay, err = Allocate(*state.Intent, record.Transition.CertifiedHeadHash)
+			replay, err = initialState(*state.Intent, record.Transition)
 			if err != nil {
 				return err
 			}
@@ -212,6 +229,29 @@ func validateAllocationTransition(transition *Transition) error {
 		return err
 	}
 	return requireHash(transition.CertifiedHeadHash)
+}
+
+func validateInitialTransition(intent *IntentV1, transition *Transition) error {
+	if intent == nil || transition == nil {
+		return errors.New("[rotation] 首次部署缺 intent 或 transition")
+	}
+	if transition.NextPhase == "allocated" {
+		return validateAllocationTransition(transition)
+	}
+	if transition.NextPhase != "prepared" || intent.FrozenDependencies.SourceListenerGeneration != nil {
+		return errors.New("[rotation] 初始事件只能 allocated 或无旧代的 prepared")
+	}
+	allocation := *transition
+	allocation.NextPhase = "allocated"
+	return validateAllocationTransition(&allocation)
+}
+
+func initialState(intent IntentV1, transition Transition) (StateV1, error) {
+	state, err := Allocate(intent, transition.CertifiedHeadHash)
+	if err != nil || transition.NextPhase == "allocated" {
+		return state, err
+	}
+	return Advance(intent, state, transition)
 }
 
 func (s *Store) persistLocked(state DurableStateV1) error {

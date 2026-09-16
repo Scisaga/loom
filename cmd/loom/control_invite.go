@@ -158,6 +158,9 @@ func (runtime *controlRuntime) persistInviteToken(payload controlCreateInvitePay
 
 func (application *controlApplicationV1) reduceInvite(invite controlInviteStateV1, operation wire.ControlOperationBodyV1,
 	committedAt string) (*controlApplicationV1, error) {
+	if application != nil && application.BootstrapInstallation != nil {
+		return nil, errors.New("Bootstrap 入口仍为私有安装计划，完成监听与外部验证的认证发布后才能创建邀请")
+	}
 	if application == nil || invite.Status != "available" || invite.Record.Generation != 1 ||
 		operation.Kind != controlCreateInviteKind || operation.ClusterID != application.ClusterID ||
 		invite.Record.ClusterID != application.ClusterID || invite.Opening.ClusterID != application.ClusterID ||

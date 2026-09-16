@@ -22,7 +22,7 @@ func TestExistingCertificateCommandProducesReloadablePublicBinding(t *testing.T)
 	if err := os.Chmod(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	now := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +52,7 @@ func TestExistingCertificateCommandProducesReloadablePublicBinding(t *testing.T)
 		t.Fatal(err)
 	}
 	request := certmanager.ExistingCertificateRequestV1{Schema: 1, RequestID: "demo-import", ClusterID: "demo-cluster", DeviceID: "demo-edge",
-		IdentityID: "demo-edge-tls", IdentityGeneration: 1, CertificateGeneration: 1, EndpointIDs: []string{"demo-bootstrap"},
+		IdentityID: "demo-edge-tls", IdentityGeneration: 1, CertificateGeneration: 1, EndpointIDs: []string{"demo-bootstrap-hy2", "demo-bootstrap-tcp"},
 		DNSNames: leaf.DNSNames, IssuerProfileRef: "public-webpki", CertificatePath: filepath.Join(dir, "certificate.pem"), PrivateKeyPath: filepath.Join(dir, "key.pem")}
 	input, out, materials := filepath.Join(dir, "input.json"), filepath.Join(dir, "binding.json"), filepath.Join(dir, "materials")
 	body, err := json.MarshalIndent(request, "", "  ")
@@ -78,6 +78,7 @@ func TestExistingCertificateCommandProducesReloadablePublicBinding(t *testing.T)
 	if _, err := certmanager.LoadExistingRuntimeCertificate(materials, binding, binding.Identity, roots, now); err != nil {
 		t.Fatal(err)
 	}
+	testBootstrapPreparationFromCertificate(t, binding, roots, now)
 	if err := prepareExistingCertificateCommand(args, roots, now); err != nil {
 		t.Fatal(err)
 	}

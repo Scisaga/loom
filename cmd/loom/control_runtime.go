@@ -234,6 +234,8 @@ func cmdControl(args []string) error {
 		return cmdControlPrepareMigrationMaterials(args[1:])
 	case "prepare-recovery":
 		return cmdControlPrepareRecovery(args[1:])
+	case "prepare-bootstrap":
+		return cmdControlPrepareBootstrap(args[1:])
 	case "export-migration":
 		return cmdControlExportMigration(args[1:])
 	default:

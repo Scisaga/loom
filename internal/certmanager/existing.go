@@ -77,6 +77,26 @@ func ExistingCertificateBindingHash(binding *ExistingCertificateBindingV1) (stri
 	return wire.HashObject(domainExistingCertificate, binding)
 }
 
+// 控制端只能验证公开绑定，不持有节点私钥。实际 listener 启动仍须在原节点
+// 调用 LoadExistingRuntimeCertificate 验证本地 key artifact 与匹配私钥。
+func VerifyExistingPublicCertificate(binding ExistingCertificateBindingV1, roots *x509.CertPool, now time.Time) error {
+	if now.IsZero() {
+		return errors.New("[现有 TLS] 缺可信时间")
+	}
+	if _, err := ExistingCertificateBindingHash(&binding); err != nil {
+		return err
+	}
+	canonical, leaf, err := verifyExistingCertificateChain([]byte(binding.CertificateChainPEM), binding.Identity, roots, now)
+	if err != nil {
+		return err
+	}
+	if string(canonical) != binding.CertificateChainPEM || binding.LeafCertificateHash != wire.HashRaw(domainPublicCertificateLeaf, leaf.Raw) ||
+		binding.NotBefore != leaf.NotBefore.UTC().Format(time.RFC3339) || binding.NotAfter != leaf.NotAfter.UTC().Format(time.RFC3339) {
+		return errors.New("[现有 TLS] 公开 leaf、完整链或有效期与绑定不同")
+	}
+	return nil
+}
+
 // roots=nil 使用本机系统 WebPKI roots；测试必须显式提供合成根。指定名字是
 // 此入口的授权子集，可由现有 wildcard/SAN 证书覆盖，不把其余 SAN 自动授权。
 func PrepareExistingCertificate(directory string, request ExistingCertificateRequestV1, roots *x509.CertPool,

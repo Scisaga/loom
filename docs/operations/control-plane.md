@@ -38,6 +38,13 @@ CLI 校验系统 WebPKI 信任、名字、有效期和私钥匹配，以不可�
 控制面只取得公开绑定与证书链。绑定须另经控制事务认证并用于 listener 计划，入口仍须经过
 真实外部验证才能 advertise；材料导入成功不代表端口可达。自动签发/续签属于独立 DNS 工作。
 
+管理员随后可运行 `loom control prepare-bootstrap -admin-dir <原交付目录> -input <入口材料文件> -out <私有计划文件>`。
+该命令通过原管理 TLS 读取并验证当前 Head/QC，校验已有证书链，再从完整 profile、端口资源和
+外部 observer 策略确定性生成 HY2 与独立 Trojan/TLS 计划。计划的地址、端口和证书不会在重试时
+重新分配；原 Head 或输入改变时拒绝覆盖。迁移输入的 `prepared.bootstrap_installation` 承诺完整
+计划，`prepared.bootstrap_catalog` 必须与之相等。计划生成不修改运行服务，尚未完成认证发布时
+不能用它创建新邀请；listener daemon、外部验证结果提交及静态发布的接线仍见实现对照。
+
 ## 首次初始化
 
 仅全新控制状态使用此步骤。确认目标 Device 已有 control 职责，`<overlay-ip>` 为其实际私有

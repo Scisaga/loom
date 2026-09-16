@@ -390,6 +390,10 @@ func (runtime *controlRuntime) serveInviteContext(writer http.ResponseWriter, re
 		writeControlRuntimeError(writer, http.StatusServiceUnavailable, "[D115 Invite] 当前邀请状态不可读")
 		return
 	}
+	if application.BootstrapInstallation != nil {
+		writeControlRuntimeError(writer, http.StatusServiceUnavailable, "Bootstrap 入口尚未完成认证发布")
+		return
+	}
 	state, raft := runtime.store.Snapshot(), runtime.storage.SnapshotRaft()
 	qc, _ := wire.MarshalCanonical(state.CertifiedQC)
 	quorum, _ := wire.Quorum(len(state.ControlSet.Members))
