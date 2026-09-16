@@ -92,6 +92,10 @@ loom bootstrap render-public -bundle <交付文件> -device <原节点> \
 保留已认证结果，以相同输出目录重试，不生成第二个邀请。即使这些源码入口已接通，仍须以精确部署提交、
 公网正常下载和一次真实 Enrollment 成功回读证明生产完成，不能用握手或 404 代替业务验收。
 
+分阶段验收可在 Linux fresh profile 的正常入口增加 `-defer-runtime`：它仍完成真实 Bootstrap、
+私有 Enrollment、sealed artifact/config 下载以及 identity/view/floors 的原子持久化，只暂不修改宿主
+systemd 与数据面。该选项只能证明控制链和客户端回读，不能抵扣 Linux issue 的 runtime、流量或故障矩阵。
+
 服务模板为 `packaging/systemd/loom-bootstrap-v2.service`；节点 `/etc/loom/bootstrap-v2.env` 只提供
 `BOOTSTRAP_BUNDLE` 与 `DEVICE_ID`，其余路径使用上述默认值或在本机 unit override 中显式指定。
 材料和配置文件保持受保护，部署命令仍遵守精确制品发布规程。

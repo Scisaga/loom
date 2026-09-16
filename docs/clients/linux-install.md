@@ -16,6 +16,9 @@
 - 使用正常管理流程交付的有效 v2 Invite/Resume；管理员已入网并能访问私有 control API。
 - 节点能访问 descriptor 的静态 distribution、bootstrap ingress，并经受限隧道到达私有 Enrollment。
   公网 Nginx 不代理 claim；不依赖管理 SSH 是否可达来判断 Enrollment 能否使用。
+- 需要把控制链验收与宿主数据面激活分开时，可在 fresh profile 的 `enroll-v2` 使用
+  `-defer-runtime`。它保留已经认证并原子安装的 identity/view/config/floors，默认行为仍会继续激活
+  runtime；推迟激活不算 Linux runtime 验收完成。
 - Linux 原生主机验收要求 amd64；arm64 仍构建并做静态/交叉检查，不要求原生机器，也不以 Android ABI 代替。
 
 ## 存量设备保留原身份迁移

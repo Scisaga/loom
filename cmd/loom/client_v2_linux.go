@@ -75,11 +75,12 @@ func cmdClientEnrollV2(args []string) error {
 	fs.SetOutput(io.Discard)
 	inviteFile := fs.String("invite-file", "", "exact canonical .loom-invite；- 表示 stdin")
 	inviteURI := fs.String("invite-uri", "", "紧凑 loom://enroll/v2 URI；可能进入 shell history")
+	deferRuntime := fs.Bool("defer-runtime", false, "持久化 identity/view/config/floors，但暂不激活 Linux runtime")
 	var common linuxClientV2CommonFlags
 	addLinuxClientV2Flags(fs, &common)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || (*inviteFile == "") == (*inviteURI == "") ||
 		common.timeout < time.Second {
-		return errors.New("用法: loom client enroll-v2 {-invite-file <file|->|-invite-uri <URI>} [-secret-envelope <file>] [-state-dir <dir>]")
+		return errors.New("用法: loom client enroll-v2 {-invite-file <file|->|-invite-uri <URI>} [-secret-envelope <file>] [-state-dir <dir>] [-defer-runtime]")
 	}
 	if err := common.resolvePaths(); err != nil {
 		return err
@@ -145,7 +146,7 @@ func cmdClientEnrollV2(args []string) error {
 		return err
 	}
 	return finishLinuxClientV2Enrollment(ctx, common, result, verifiedProof,
-		descriptor.DistributionMirrors, tunnel, api)
+		descriptor.DistributionMirrors, tunnel, api, *deferRuntime)
 }
 
 func cmdClientResumeV2(args []string) error {
@@ -208,7 +209,7 @@ func cmdClientResumeV2(args []string) error {
 		return err
 	}
 	return finishLinuxClientV2Enrollment(ctx, common, result, verifiedProof,
-		descriptor.DistributionMirrors, tunnel, api)
+		descriptor.DistributionMirrors, tunnel, api, false)
 }
 
 func cmdClientSyncV2(args []string) error {
@@ -722,7 +723,8 @@ func linuxClientV2Installed(paths linuxClientV2Paths, clusterID, inviteID string
 func finishLinuxClientV2Enrollment(ctx context.Context, common linuxClientV2CommonFlags,
 	result clientv2.LinuxEnrollmentAttemptResultV2, proof wire.VerifiedInviteProofV2,
 	mirrors []wire.DistributionMirrorRefV1,
-	tunnel *clientv2.LinuxBootstrapTunnelDialer, api *clientv2.PrivateEnrollmentClient) error {
+	tunnel *clientv2.LinuxBootstrapTunnelDialer, api *clientv2.PrivateEnrollmentClient,
+	deferRuntime bool) error {
 	selection, ok := tunnel.Selection()
 	if !ok {
 		return errors.New("[Linux bootstrap] Enrollment 未产生真实 ingress 选择")
@@ -774,10 +776,20 @@ func finishLinuxClientV2Enrollment(ctx context.Context, common linuxClientV2Comm
 	fmt.Printf("  floors       recovery=%d control=%d revision=%d device=%d\n",
 		floors.AcceptedRecoveryEpoch, floors.AcceptedControlEpoch,
 		floors.AcceptedControlRevision, floors.DeviceGeneration)
-	if err := cmdClientAcceptV2Runtime([]string{"-state-dir", common.stateDirectory, "-apply", "-timeout", common.timeout.String()}); err != nil {
+	if deferRuntime {
+		fmt.Println("! Linux runtime 激活已显式推迟；正式 identity/view/config/floors 已持久化")
+	}
+	return activateLinuxEnrollmentRuntime(common.stateDirectory, common.timeout, deferRuntime)
+}
+
+func activateLinuxEnrollmentRuntime(stateDirectory string, timeout time.Duration, deferRuntime bool) error {
+	if deferRuntime {
+		return nil
+	}
+	if err := cmdClientAcceptV2Runtime([]string{"-state-dir", stateDirectory, "-apply", "-timeout", timeout.String()}); err != nil {
 		return fmt.Errorf("[Linux install] 身份与配置已保存，runtime 激活失败: %w", err)
 	}
-	return startLinuxClientDaemon(common.stateDirectory, common.timeout)
+	return startLinuxClientDaemon(stateDirectory, timeout)
 }
 
 func readLinuxClientV2Envelopes(paths []string, directory string,

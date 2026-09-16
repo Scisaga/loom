@@ -100,6 +100,15 @@ func TestLinuxClientV2CommandsRejectAmbiguousCarriers(t *testing.T) {
 	}
 }
 
+func TestLinuxEnrollmentCanDeferRuntimeActivation(t *testing.T) {
+	if err := activateLinuxEnrollmentRuntime("relative-invalid-state", time.Second, true); err != nil {
+		t.Fatalf("显式推迟 runtime 时不应触碰宿主状态: %v", err)
+	}
+	if err := activateLinuxEnrollmentRuntime("relative-invalid-state", time.Second, false); err == nil {
+		t.Fatal("默认 Enrollment 没有进入 runtime 激活")
+	}
+}
+
 func TestLinuxClientV2RuntimeUninstallRequiresExplicitModeAndBoundedState(t *testing.T) {
 	if err := cmdClientUninstallV2Runtime(nil); err == nil {
 		t.Fatal("runtime uninstall accepted an implicit destructive mode")

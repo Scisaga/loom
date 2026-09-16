@@ -25,7 +25,8 @@ const clientUsage = `loom client —— 客户端加入与交付
                                                用原设备身份导出本机迁移请求
   loom client import-migration -device <ID> -floor <文件> -file <迁移包>
                                                保留原身份接续 v2 并事务激活本机配置
-  loom client enroll -invite-file <文件>       认证静态分发与 bootstrap 后执行私有 v2 Enrollment
+  loom client enroll -invite-file <文件> [-defer-runtime]
+                                               认证静态分发与 bootstrap 后执行私有 v2 Enrollment
   loom client resume-v2 -resume-file <文件>    Linux v2：用 exact resume descriptor 恢复已提交事务
   loom client accept-v2-view -view <json> -control-set <json>
                                                严格验收 private Device view 并更新 Linux v2 LKG/floors
