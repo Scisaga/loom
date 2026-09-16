@@ -31,8 +31,11 @@ internal class AndroidLocalDNSTransport(private val selectedNetwork: () -> Netwo
     }
 
     override fun exchange(ctx: ExchangeContext, message: ByteArray) {
-        check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) { "[Android DNS] 当前系统不支持原始 DNS 查询" }
-        exchangeRaw(ctx, message)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            exchangeRaw(ctx, message)
+        } else {
+            error("[Android DNS] 当前系统不支持原始 DNS 查询")
+        }
     }
 
     @RequiresApi(Build.VERSION_CODES.Q)
