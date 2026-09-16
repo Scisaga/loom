@@ -1,4 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="127 112 1000 1000">
+<!-- 为 16px 栅格化保留窄小视觉边距，避免图形显得过小。 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="170 130 930 930">
   <title>Loom</title>
   <defs>
     <linearGradient id="background-gradient" x1="0" y1="0" x2="1254" y2="1254"
