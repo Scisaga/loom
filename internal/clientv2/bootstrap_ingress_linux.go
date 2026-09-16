@@ -113,7 +113,7 @@ func OpenLinuxBootstrapIngressAccess(statePath, identityPath, expectedDeviceID,
 		strconv.FormatInt(enrollmentService.TCPPort, 10))
 	networkDialer := &net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second}
 	rawDial := func(ctx context.Context, network, address string) (net.Conn, error) {
-		if network != "tcp" || address != expectedAddress {
+		if !bootstrapEnrollmentTCPNetwork(network) || address != expectedAddress {
 			return nil, errors.New("[bootstrap ingress] Enrollment dial 超出 certified overlay tuple")
 		}
 		return networkDialer.DialContext(ctx, network, address)
@@ -131,6 +131,10 @@ func OpenLinuxBootstrapIngressAccess(statePath, identityPath, expectedDeviceID,
 	return &LinuxBootstrapIngressAccess{config: configClient,
 		dial: TunnelDialContext(enrollmenttransport.Dialer(configureTLS, rawDial)), identity: identityKey,
 		ingressSet: expectedIngressSetHash}, nil
+}
+
+func bootstrapEnrollmentTCPNetwork(network string) bool {
+	return network == "tcp" || network == "tcp4" || network == "tcp6"
 }
 
 func selectBootstrapIngressPrivateServices(directory *wire.ControlServiceDirectoryV1) (string,
