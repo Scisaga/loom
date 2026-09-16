@@ -200,6 +200,14 @@ signed current；Linux 另附原设备证书及原服务器 CA。它从原 regis
 同一输入重试复用第一次迁移请求与回执，不重新签发，也不伪造 Enrollment。
 这一阶段生成的身份没有运行配置，须经正常配置发布后才能交付客户端使用。
 正常材料入口使用 `prepared` 与 `device_inputs`，`application` 留为零值且不另填恢复证明。
+`control prepare-migration-input -state-dir <original-state-dir> -admin-dir <original-admin-dir>
+-input <protected-material-index> -out <protected-migration-input>` 从原管理 TLS 读取 Head/QC，
+将上述材料文件、原逐设备请求、明确的邀请策略与现有 HTTPS mirror 绑定组装为完整输入。
+mirror 必须属于原活动服务器，名称、endpoint、端口和有效期与真实证书绑定；完整
+DistributionEndpointSet 与 mirror refs 由生成器计算。它持久生成独立的受限 Bootstrap issuer，
+重试复用同一 key，不改变原管理员、Device 或平台身份；已有材料不完整时拒绝自动重建。
+该准备命令可与原 daemon 并存，不打开或修改 Raft。输出仍须由 `control migrate` 验证并认证，
+不能因为文件生成成功而宣称静态对象已发布、listener 可用或设备已入网。
 `prepared` 包含 `prepare-migration-materials`、`prepare-recovery` 的完整输出，以及邀请 policy、
 bootstrap catalog/issuer、完整 distribution sets、mirror refs 和明确暂存的历史身份。迁移命令从
 原日志导出管理员的下一代授权，复用原身份、范围和有效期，仅开放本轮需要的非 DNS 操作。
