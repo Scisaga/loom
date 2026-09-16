@@ -100,7 +100,7 @@ func TestLinuxMigrationPreflightChecksCertifiedRuntimeBeforeIdentityInstall(t *t
 }
 
 func TestLinuxRuntimeDeployPlanStartsWireGuardBeforeSingBoxAndAgent(t *testing.T) {
-	plan, installed, err := linuxRuntimeDeployPlan("device-a", map[string]string{
+	plan, installed, err := linuxRuntimeDeployPlan("device-a", t.TempDir(), map[string]string{
 		"wireguard/lmv2-deadbeef00.conf": "[Interface]\n[Peer]\n",
 		"sing-box/v2/config.json":        `{"inbounds":[],"outbounds":[]}`,
 		"agent/v2/config.json":           `{"node":"device-a"}`,

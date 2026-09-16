@@ -225,6 +225,10 @@ func TestLinuxDeviceArtifactsCommitAtomicallyWithCertifiedDelivery(t *testing.T)
 func linuxDynamicSecretFixture(t *testing.T, identity *EnrollmentIdentityV1,
 	clusterID, deviceID string, generation int64,
 ) (wire.SecretArtifactRefV2, wire.SealedSecretEnvelopeV1, []byte) {
+	return linuxSealedSecretFixture(t, identity, clusterID, deviceID, generation, "runtime-password", "data_plane_credential", []byte("rotated-linux-secret"))
+}
+
+func linuxSealedSecretFixture(t *testing.T, identity *EnrollmentIdentityV1, clusterID, deviceID string, generation int64, id, purpose string, secret []byte) (wire.SecretArtifactRefV2, wire.SealedSecretEnvelopeV1, []byte) {
 	t.Helper()
 	_, wrappingPrivate, err := identity.keys()
 	if err != nil {
@@ -242,12 +246,11 @@ func linuxDynamicSecretFixture(t *testing.T, identity *EnrollmentIdentityV1,
 	owner := wire.SecretArtifactOwnerV1{Kind: "device",
 		Device: &wire.SecretArtifactDeviceOwnerV1{DeviceID: deviceID}}
 	contextValue, err := wire.NewSealedSecretContext(clusterID, "proposal-rotate",
-		"runtime-password", "data_plane_credential", owner, generation, &policy,
+		id, purpose, owner, generation, &policy,
 		[]wire.SealedBlobRecipientKeyRefV1{recipient})
 	if err != nil {
 		t.Fatal(err)
 	}
-	secret := []byte("rotated-linux-secret")
 	envelope, err := wire.SealSecret(rand.Reader, contextValue, &policy,
 		[]wire.SealedBlobRecipientKeyRefV1{recipient}, secret)
 	if err != nil {
@@ -393,6 +396,7 @@ func TestSendLinuxDeviceReportSignsDurableFloorsOverPinnedMTLSRoute(t *testing.T
 	schemas := wire.DeviceReportSchemaRegistry{"health": 1}
 	requests := 0
 	var reportBodies [][]byte
+	var received []json.RawMessage
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		requests++
 		body, _ := io.ReadAll(request.Body)
@@ -419,8 +423,19 @@ func TestSendLinuxDeviceReportSignsDurableFloorsOverPinnedMTLSRoute(t *testing.T
 			writer.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
+		hash, _ := wire.DeviceReportEnvelopeHash(&report)
+		receipt, err := wire.NewDeviceReportReceipt(report.Body, hash, []json.RawMessage{json.RawMessage(`{"schema":1}`)})
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if request.Header.Get("Accept") != wire.DeviceReportReceiptMediaTypeV1 {
+			t.Error("Linux 未请求正式回执")
+		}
+		encoded, _ := wire.MarshalCanonical(receipt)
 		writer.Header().Set("Cache-Control", "no-store")
-		writer.WriteHeader(http.StatusNoContent)
+		writer.Header().Set("Content-Type", wire.DeviceReportReceiptMediaTypeV1)
+		_, _ = writer.Write(encoded)
 	}))
 	server.TLS = &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13,
 		Certificates: []tls.Certificate{serverCertificate}, ClientAuth: tls.RequireAnyClientCert,
@@ -452,6 +467,7 @@ func TestSendLinuxDeviceReportSignsDurableFloorsOverPinnedMTLSRoute(t *testing.T
 		Now: func() time.Time { return now }, Timeout: 5 * time.Second,
 		ReportID: "report-linux-device-1-1", ReportSequence: 1,
 		Kind: "health", PayloadSchema: 1, Payload: payload, Schemas: schemas,
+		Observations: func(_ context.Context, observations []json.RawMessage) { received = observations },
 	}
 	report, err := SendLinuxDeviceReport(context.Background(), options)
 	if err == nil || report.Body.ReportSequence != 1 || requests != 1 {
@@ -463,7 +479,7 @@ func TestSendLinuxDeviceReportSignsDurableFloorsOverPinnedMTLSRoute(t *testing.T
 	options.RetryEnvelope = &report
 	retried, err := SendLinuxDeviceReport(context.Background(), options)
 	if err != nil || requests != 2 || !wire.EqualCanonical(report, retried) ||
-		len(reportBodies) != 2 || !bytes.Equal(reportBodies[0], reportBodies[1]) {
+		len(reportBodies) != 2 || !bytes.Equal(reportBodies[0], reportBodies[1]) || len(received) != 1 {
 		t.Fatalf("exact report retry 失败: requests=%d same=%v err=%v",
 			requests, wire.EqualCanonical(report, retried), err)
 	}

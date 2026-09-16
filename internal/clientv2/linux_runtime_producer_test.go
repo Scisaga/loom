@@ -191,7 +191,7 @@ func testLinuxProducerRuntime(t *testing.T, hybrid bool) {
 					}
 				}
 			}
-			deployment, _, err := linuxRuntimeDeployPlan(node.ID, files)
+			deployment, _, err := linuxRuntimeDeployPlan(node.ID, t.TempDir(), files)
 			if err != nil || len(deployment.Verify) == 0 {
 				t.Fatal("实际 deploy plan 缺服务", err)
 			}

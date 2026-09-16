@@ -245,6 +245,9 @@ func cmdClientImportMigration(args []string) error {
 	if err := cmdClientAcceptV2Runtime(runtimeArgs); err != nil {
 		return fmt.Errorf("[Linux migration] 身份和 floors 已保存，运行配置尚未激活；修复后执行 client accept-v2-runtime -apply：%w", err)
 	}
+	if err := startLinuxClientDaemon(*dir, *timeout); err != nil {
+		return fmt.Errorf("[Linux migration] 已保留迁移身份和运行配置，v2 常驻服务激活失败: %w", err)
+	}
 	fmt.Println("✓ 原设备身份已迁移到 v2，运行配置已事务激活")
 	return nil
 }

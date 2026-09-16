@@ -3,21 +3,15 @@
 package clientv2
 
 import (
-	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
-	"net/http"
 	"time"
 
 	"loom/internal/wire"
 )
-
-const maximumPrivateDeviceReportResponseBytes = 4096
 
 type LinuxDeviceReportOptions struct {
 	StatePath           string
@@ -38,6 +32,7 @@ type LinuxDeviceReportOptions struct {
 	Payload             json.RawMessage
 	Schemas             wire.DeviceReportSchemaRegistry
 	RetryEnvelope       *wire.DeviceReportEnvelopeV2
+	Observations        func(context.Context, []json.RawMessage)
 }
 
 // SendLinuxDeviceReport 只用 durable LKG floors 和 Enrollment identity 签名，
@@ -147,7 +142,12 @@ func SubmitLinuxDeviceReport(ctx context.Context, options LinuxDeviceReportOptio
 		return err
 	}
 	defer client.CloseIdleConnections()
-	return client.postDeviceReport(ctx, envelope)
+	shared := &PrivateDeviceHTTPClient{client: client.client, baseURL: client.baseURL}
+	observations, err := shared.PostDeviceReportWithObservations(ctx, envelope)
+	if err == nil && options.Observations != nil {
+		options.Observations(ctx, observations)
+	}
+	return err
 }
 
 func linuxDeviceReportIdentity(options LinuxDeviceReportOptions) (*Store, *wire.DeviceViewEnvelopeV2,
@@ -183,37 +183,4 @@ func linuxDeviceReportIdentity(options LinuxDeviceReportOptions) (*Store, *wire.
 		return nil, nil, nil, nil, "", nil, errors.New("[Linux report] Device certificate 与 durable installation 不一致")
 	}
 	return store, current, installation, identityKey, identityHash, certificateDER, nil
-}
-
-func (client *privateDeviceHTTPClient) postDeviceReport(ctx context.Context,
-	envelope *wire.DeviceReportEnvelopeV2) error {
-	if client == nil || client.client == nil || envelope == nil {
-		return errors.New("[Linux report] private client/report 缺失")
-	}
-	body, err := wire.MarshalCanonical(envelope)
-	if err != nil {
-		return err
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		client.baseURL+"/private/v2/device/report", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "application/json")
-	response, err := client.client.Do(request)
-	if err != nil {
-		return fmt.Errorf("[Linux report] private device_report 请求失败: %w", err)
-	}
-	defer response.Body.Close()
-	responseBody, readErr := io.ReadAll(io.LimitReader(response.Body,
-		maximumPrivateDeviceReportResponseBytes+1))
-	if readErr != nil || len(responseBody) > maximumPrivateDeviceReportResponseBytes {
-		return errors.New("[Linux report] private device_report 响应无效或过大")
-	}
-	if response.StatusCode != http.StatusNoContent || len(responseBody) != 0 ||
-		response.Header.Get("Content-Encoding") != "" {
-		return fmt.Errorf("[Linux report] private device_report 未接受: status=%d", response.StatusCode)
-	}
-	return nil
 }

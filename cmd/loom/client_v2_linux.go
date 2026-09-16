@@ -763,7 +763,10 @@ func finishLinuxClientV2Enrollment(ctx context.Context, common linuxClientV2Comm
 	fmt.Printf("  floors       recovery=%d control=%d revision=%d device=%d\n",
 		floors.AcceptedRecoveryEpoch, floors.AcceptedControlEpoch,
 		floors.AcceptedControlRevision, floors.DeviceGeneration)
-	return nil
+	if err := cmdClientAcceptV2Runtime([]string{"-state-dir", common.stateDirectory, "-apply", "-timeout", common.timeout.String()}); err != nil {
+		return fmt.Errorf("[Linux install] 身份与配置已保存，runtime 激活失败: %w", err)
+	}
+	return startLinuxClientDaemon(common.stateDirectory, common.timeout)
 }
 
 func readLinuxClientV2Envelopes(paths []string, directory string,

@@ -166,6 +166,12 @@ Loom 不会擅自删除调用者提供的文件。
 
 ## v2 稳态 private config 与 report
 
+完成态加入或原身份迁移在安装配置后自动启动 `loom-client-v2.service`。
+该服务运行 `loom client serve-v2`，先恢复本机已验证 LKG，再按正常周期同步私有配置、
+事务应用变更并上报实际 runtime unit 状态；离线不清除原配置，失败报告保持原 exact 请求。
+回执中的原始服务器观测由同机 Agent 验签后使用，不另开网络轮询。
+下面的单次命令用于操作和排障，不代替常驻服务。
+
 Enrollment completion 的 certified Device view 必须承诺并释放
 `secret_id=device-private-control`、`purpose=device_credential` 的 sealed credential；其中把
 `ControlServiceDirectoryV1`、exact ControlSet、directory hash 与 internal CA roots 绑定到
@@ -200,7 +206,7 @@ sudo loom client report-v2 \
 
 reporter 在网络发送前先把已签 exact envelope 写入
 `/var/lib/loom/client-v2/device-report-journal.json`。请求或进程中断后，下次运行先重放该
-pending bytes；收到 `204` 前不会推进 sequence。
+pending bytes；收到 `204` 或验证通过的 exact `200` 回执前不会推进 sequence。
 
 同步 Device view 后，默认使用与 view 原子保存的 `linux-link-intents` exact canonical
 artifact 提交本机 runtime LKG。先验收 runtime LKG 并预览完整安装事务（不安装配置或改动服务）：

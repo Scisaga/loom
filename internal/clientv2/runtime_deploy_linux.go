@@ -113,7 +113,7 @@ func PrepareLinuxRuntimeDeployment(installStatePath, deviceStatePath, runtimeSta
 	if err != nil {
 		return nil, err
 	}
-	plan, installedFiles, err := linuxRuntimeDeployPlan(runtimeState.DeviceID, files)
+	plan, installedFiles, err := linuxRuntimeDeployPlan(runtimeState.DeviceID, filepath.Dir(deviceStatePath), files)
 	if err != nil {
 		return nil, err
 	}
@@ -684,7 +684,10 @@ func wireGuardConfigMatchesEndpoint(content string, candidate LinuxLinkDialCandi
 	return false
 }
 
-func linuxRuntimeDeployPlan(deviceID string, hydrated map[string]string) (*deploy.Plan, []string, error) {
+func linuxRuntimeDeployPlan(deviceID, stateDirectory string, hydrated map[string]string) (*deploy.Plan, []string, error) {
+	if !filepath.IsAbs(stateDirectory) || filepath.Clean(stateDirectory) != stateDirectory || strings.ContainsAny(stateDirectory, "\x00\n\r") {
+		return nil, nil, errors.New("[Linux runtime] 状态目录必须是规范绝对路径")
+	}
 	plan := &deploy.Plan{Node: deviceID, Files: map[string]string{}, Triggers: map[string][]string{}}
 	wgUnits := make([]string, 0)
 	for path, content := range hydrated {
@@ -714,7 +717,7 @@ func linuxRuntimeDeployPlan(deviceID string, hydrated map[string]string) (*deplo
 		plan.Verify = append(plan.Verify, "loom-client-v2-sing-box")
 	}
 	if _, found := plan.Files[linuxV2AgentConfigPath]; found {
-		plan.Files[linuxV2AgentUnitPath] = linuxV2AgentUnit
+		plan.Files[linuxV2AgentUnitPath] = linuxV2AgentUnit(stateDirectory)
 		plan.Triggers[linuxV2AgentUnitPath] = []string{"loom-client-v2-agent"}
 		plan.Verify = append(plan.Verify, "loom-client-v2-agent")
 	}
@@ -782,14 +785,16 @@ WantedBy=multi-user.target
 `
 }
 
-const linuxV2AgentUnit = `[Unit]
+func linuxV2AgentUnit(stateDirectory string) string {
+	quote := func(path string) string { return strconv.Quote(strings.ReplaceAll(path, "%", "%%")) }
+	return `[Unit]
 Description=Loom v2 certified Linux route agent
 After=loom-client-v2-sing-box.service
 Requires=loom-client-v2-sing-box.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/loom agent -c /etc/loom/agent/v2/config.json -m /var/lib/loom/client-v2/measurements.jsonl -events /var/lib/loom/client-v2/events.jsonl
+ExecStart=/usr/local/bin/loom agent -c /etc/loom/agent/v2/config.json -m ` + quote(filepath.Join(stateDirectory, "measurements.jsonl")) + ` -events ` + quote(filepath.Join(stateDirectory, "events.jsonl")) + ` -device-state-dir ` + quote(stateDirectory) + `
 Restart=on-failure
 RestartSec=5s
 UMask=0077
@@ -799,6 +804,7 @@ PrivateTmp=true
 [Install]
 WantedBy=multi-user.target
 `
+}
 
 func staleLinuxRuntimeFiles(previous, current []string) []string {
 	present := make(map[string]bool, len(current))

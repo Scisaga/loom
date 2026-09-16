@@ -37,15 +37,12 @@ const clientUsage = `loom client —— 客户端加入与交付
   loom client resume-v2 -resume-file <文件>    Linux v2：用 exact resume descriptor 恢复已提交事务
   loom client accept-v2-view -view <json> -control-set <json>
                                                严格验收 private Device view 并更新 Linux v2 LKG/floors
-  loom client sync-v2-view -directory <json> -directory-hash <sha256:...>
+  loom client sync-v2-view [-state-dir <目录>]
                                                经 Device mTLS 同步 Linux v2 private view
   loom client report-v2 -payload <json> -kind <kind> -payload-schema <n>
                                                持久化并发送 Linux v2 Device report
-  loom client sync-v2-view -directory <json> -directory-hash <sha256:...>
-      -control-set <json> -internal-ca <pem>    经 Device mTLS 私有通道同步 Linux v2 LKG
-  loom client report-v2 -directory <json> -directory-hash <sha256:...>
-      -control-set <json> -internal-ca <pem> -payload <json> -kind <kind> -payload-schema <n>
-                                               持久化并发送 Linux v2 Device report
+  loom client serve-v2 [-state-dir <目录>] [-once]
+                                               常驻同步、事务激活与持久上报；先恢复已验证 LKG
   loom client accept-v2-runtime [-apply|-dry-run]
                                                验收 certified Linux runtime；可事务安装或预览
   loom client uninstall-v2-runtime <-apply|-dry-run>
@@ -126,6 +123,8 @@ func cmdClient(args []string) error {
 		return cmdClientSyncV2(args[1:])
 	case "report-v2":
 		return cmdClientReportV2(args[1:])
+	case "serve-v2":
+		return cmdClientServeV2(args[1:])
 	case "accept-v2-runtime":
 		return cmdClientAcceptV2Runtime(args[1:])
 	case "uninstall-v2-runtime":

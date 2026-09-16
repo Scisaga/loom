@@ -128,6 +128,7 @@ func controlRenderedClientFixture(t *testing.T, platform model.Platform) (*contr
 	tunnel.AllowedIPs = []string{"10.250.0.1/32"}
 	if platform == model.LinuxServer {
 		input.ControlTunnel = render.ClientControlTunnelV2{}
+		input.Recipient.RecipientKeyProfile = wire.P256RootOnlySealingPolicyV1().RecipientKeyProfile
 		views := map[string]wire.DeviceViewPayloadV2{}
 		for _, device := range application.Devices {
 			views[device.View.DeviceID] = device.View

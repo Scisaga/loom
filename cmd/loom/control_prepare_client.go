@@ -287,7 +287,15 @@ func clientConfigSealingPolicy(application *controlApplicationV1, device control
 		return policy, errors.New("[配置生成] recipient 不是该设备已认证的 wrapping key")
 	}
 	switch recipient.RecipientKeyProfile {
+	case "p256-root-only-pkcs8-ecdh-v1":
+		if platform != "linux-server" {
+			return policy, errors.New("[配置生成] root-only wrapping 仅用于 Linux")
+		}
+		policy = wire.P256RootOnlySealingPolicyV1()
 	case "p256-keystore-ecdh-v1":
+		if platform == "linux-server" {
+			return policy, errors.New("[配置生成] Linux 必须使用原 root-only wrapping profile")
+		}
 		policy = wire.P256SealingPolicyV1()
 	case "rsa2048-keystore-decrypt-v1":
 		if platform != "android" {
