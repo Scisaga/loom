@@ -28,6 +28,7 @@ type ClientControlTunnelV2 struct {
 
 type ClientRuntimeV2Input struct {
 	SSOT               *model.SSOT
+	Grants             *wire.EnrollmentDestinationGrantsV1
 	ClusterID          string
 	DeviceID           string
 	DeviceGeneration   int64
@@ -56,11 +57,15 @@ func RenderClientRuntimeV2(input ClientRuntimeV2Input) (ClientRuntimeV2, error) 
 		(node.Access.Platform != model.Android && node.Access.Platform != model.WindowsDesktop) {
 		return result, errors.New("[v2 客户端配置] 要求有效的 Android/Windows use_loom 设备")
 	}
-	singbox, skips, err := renderSingBox(input.SSOT, node)
+	scope, err := newClientAccessScope(input.SSOT, input.Grants)
 	if err != nil {
 		return result, err
 	}
-	agentFiles, agentSkips := renderAgentPlan(input.SSOT, node)
+	singbox, skips, err := renderSingBoxScoped(input.SSOT, node, scope)
+	if err != nil {
+		return result, err
+	}
+	agentFiles, agentSkips := renderAgentPlanScoped(input.SSOT, node, scope)
 	if len(agentFiles) != 1 || agentFiles[0].Path != "agent/config.json" {
 		return result, errors.New("[v2 客户端配置] 缺同源的客户端选路计划")
 	}

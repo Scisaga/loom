@@ -308,6 +308,10 @@ func accessTLSCAPath(platform model.Platform) string {
 // 互不知情的决策者。selector 的当前选择由 Agent 设置;Agent 没跑
 // 起来时它停在 default 上,而 default 刻意不取直连。
 func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
+	return accessIntoScoped(cfg, s, p, nil)
+}
+
+func accessIntoScoped(cfg *sbConfig, s *model.SSOT, p *model.Node, scope *clientAccessScope) ([]Skip, error) {
 	nodes := s.NodeByID()
 	decls := s.DeclarationByID()
 
@@ -371,10 +375,10 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 		if !ok {
 			continue
 		}
-		if !pinned[did] {
+		if !pinned[did] || !scope.allowsDeclaration(d) {
 			continue // 只治理服务,没有端口钉着它
 		}
-		cands, cskips := s.EnumerateCandidates(p, d)
+		cands, cskips := scope.candidates(s, p, d)
 		for _, cs := range cskips {
 			note("access:"+p.ID+"/"+cs.Declaration, "%s", cs.Reason)
 		}
@@ -417,10 +421,10 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 	if byService {
 		for _, svc := range s.Services {
 			d, ok := decls[svc.Declaration]
-			if !ok || credOf[svc.Declaration] == nil {
+			if !ok || credOf[svc.Declaration] == nil || !scope.allowsService(svc.ID) {
 				continue // 这个接入节点的凭据没覆盖这条声明
 			}
-			cands, cskips := s.EnumerateServiceCandidates(p, d, &svc)
+			cands, cskips := scope.serviceCandidates(s, p, d, &svc)
 			for _, cs := range cskips {
 				note("access:"+p.ID+"/svc:"+svc.ID, "%s", cs.Reason)
 			}
@@ -457,6 +461,10 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 		// 引用一个没生成的 selector 会让 sing-box 直接启动失败。宁可不写
 		// 这条规则 —— 流量落到 final: block,与 fail_closed 一致。
 		if !routable[mp.Declaration] {
+			if !scope.allowsDeclaration(decls[mp.Declaration]) {
+				cfg.Route.Rules = append(cfg.Route.Rules, sbRule{Inbound: []string{fmt.Sprintf("in-%d", mp.Port)}, Outbound: "block"})
+				continue
+			}
 			note("access:"+p.ID,
 				"端口 %d 绑定的声明 %q 没有可用候选,该端口不生成路由规则,流量将被阻断",
 				mp.Port, mp.Declaration)
@@ -474,8 +482,10 @@ func accessInto(cfg *sbConfig, s *model.SSOT, p *model.Node) ([]Skip, error) {
 	// managed mixed 与 TUN 复用同一条规则，不需要为“默认德国”再开一个端口。
 	if len(managedInbounds) > 0 && defaultDecl != "" {
 		if !routable[defaultDecl] {
-			note("access:"+p.ID,
-				"default_declaration %q 没有可用候选,未匹配 Service 的流量将被阻断", defaultDecl)
+			if scope.allowsDeclaration(decls[defaultDecl]) {
+				note("access:"+p.ID,
+					"default_declaration %q 没有可用候选,未匹配 Service 的流量将被阻断", defaultDecl)
+			}
 		} else {
 			cfg.Route.Rules = append(cfg.Route.Rules, sbRule{
 				Inbound: append([]string(nil), managedInbounds...), Outbound: "decl:" + defaultDecl,
@@ -834,6 +844,10 @@ func linkMetricInto(cfg *sbConfig, s *model.SSOT, n *model.Node) {
 // 加入输入只把中控已创建的 Device 与本机身份绑定并引导首次签名配置；
 // 它适用于包括服务器在内的所有新 Device，不是另一个配置源。
 func renderSingBox(s *model.SSOT, n *model.Node) (File, []Skip, error) {
+	return renderSingBoxScoped(s, n, nil)
+}
+
+func renderSingBoxScoped(s *model.SSOT, n *model.Node, scope *clientAccessScope) (File, []Skip, error) {
 	cfg := &sbConfig{Log: sbLog{Level: "warn"}}
 	var skips []Skip
 
@@ -879,7 +893,7 @@ func renderSingBox(s *model.SSOT, n *model.Node) (File, []Skip, error) {
 		if n.Access.Platform == model.Android {
 			cfg.Route.AutoDetectInterface = true
 		}
-		sk, err := accessInto(cfg, s, n)
+		sk, err := accessIntoScoped(cfg, s, n, scope)
 		if err != nil {
 			return File{}, nil, err
 		}

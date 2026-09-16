@@ -87,7 +87,8 @@ func (runtime *controlRuntime) prepareClientConfigLocked(request controlPrepareC
 			device = &application.Devices[i]
 		}
 	}
-	if device == nil || device.View.Active == nil || device.View.State != "active" || device.View.DeviceGeneration == math.MaxInt64 {
+	if device == nil || device.View.Active == nil || device.View.State != "active" || device.View.DeviceGeneration == math.MaxInt64 ||
+		!wire.EqualCanonical(device.View.Active.Responsibilities.Values, []string{"use_loom"}) {
 		return empty, errors.New("[配置生成] 设备未激活、已撤销或配置代耗尽")
 	}
 	platform, err := application.devicePlatform(request.Input.DeviceID)
@@ -138,7 +139,7 @@ func (runtime *controlRuntime) prepareClientConfigLocked(request controlPrepareC
 	if len(request.Input.ControlTunnel.AllowedIPs) != 0 && !wire.EqualCanonical(request.Input.ControlTunnel.AllowedIPs, tunnel.AllowedIPs) {
 		return empty, errors.New("[配置生成] 指定控制路由与认证服务目录不同")
 	}
-	rendered, err := render.RenderClientRuntimeV2(render.ClientRuntimeV2Input{SSOT: ssot, ClusterID: application.ClusterID,
+	rendered, err := render.RenderClientRuntimeV2(render.ClientRuntimeV2Input{SSOT: ssot, Grants: &device.View.Active.Grants, ClusterID: application.ClusterID,
 		DeviceID: device.View.DeviceID, DeviceGeneration: device.View.DeviceGeneration + 1, ArtifactGeneration: artifactGeneration,
 		SingBoxVersion: request.Input.SingBoxVersion, ObservationCA: request.Input.ObservationCA, ControlTunnel: tunnel})
 	if err != nil {

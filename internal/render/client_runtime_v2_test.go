@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"math/big"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -59,7 +60,7 @@ func TestRenderV2ClientsDeliverConsumablePrivateRuntime(t *testing.T) {
 			if detour == "" {
 				t.Fatal("fixture 缺实际代理入口")
 			}
-			input := ClientRuntimeV2Input{SSOT: ssot, ClusterID: "demo-network", DeviceID: node.ID, DeviceGeneration: 2,
+			input := ClientRuntimeV2Input{SSOT: ssot, Grants: allClientRuntimeGrants(ssot), ClusterID: "demo-network", DeviceID: node.ID, DeviceGeneration: 2,
 				ArtifactGeneration: 3, SingBoxVersion: "1.11.4", ObservationCA: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
 				ControlTunnel: ClientControlTunnelV2{Address: []string{"10.250.0.2/32"}, PrivateKeyRef: "private-control-wg-key",
 					PeerAddress: "192.0.2.34", PeerPort: 51820, PeerPublicKey: base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{19}, 32)),
@@ -123,4 +124,20 @@ func TestRenderV2ClientsDeliverConsumablePrivateRuntime(t *testing.T) {
 	if platforms[model.Android] == 0 || platforms[model.WindowsDesktop] == 0 {
 		t.Fatal("缺客户端平台消费验证")
 	}
+}
+
+func allClientRuntimeGrants(ssot *model.SSOT) *wire.EnrollmentDestinationGrantsV1 {
+	grants := &wire.EnrollmentDestinationGrantsV1{Schema: 1, Values: []wire.EnrollmentDestinationGrantV1{}}
+	for _, node := range ssot.Nodes {
+		if node.Server != nil && node.Server.EgressCapable && !node.Decommission {
+			grants.Values = append(grants.Values, wire.EnrollmentDestinationGrantV1{Kind: "egress", TargetID: node.ID})
+		}
+	}
+	for _, service := range ssot.Services {
+		grants.Values = append(grants.Values, wire.EnrollmentDestinationGrantV1{Kind: "service", TargetID: service.ID})
+	}
+	sort.Slice(grants.Values, func(i, j int) bool {
+		return grants.Values[i].Kind+":"+grants.Values[i].TargetID < grants.Values[j].Kind+":"+grants.Values[j].TargetID
+	})
+	return grants
 }

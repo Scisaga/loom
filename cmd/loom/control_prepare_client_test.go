@@ -70,6 +70,17 @@ func controlRenderedClientFixture(t *testing.T, platform model.Platform) (*contr
 			t.Fatal(err)
 		}
 		application.LegacySSOT = string(plan.Content)
+		effective, err := model.Load(plan.Content)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, roles, grants, err := migrationDeviceAuthorization(effective, effective.NodeByID()[application.Devices[0].View.DeviceID])
+		if err != nil {
+			t.Fatal(err)
+		}
+		application.Devices[0].View.Active.Responsibilities, application.Devices[0].View.Active.Grants = roles, grants
+		application.Devices[0].View.Active.ResponsibilitiesHash, _ = wire.HashObject("loom-enrollment-responsibilities-v1", roles)
+		application.Devices[0].View.Active.GrantsHash, _ = wire.HashObject("loom-enrollment-destination-grants-v1", grants)
 	})
 	key, err := enrollmentv2.MaterialAuthorityKey(wrapping.Public())
 	if err != nil {
@@ -92,7 +103,7 @@ func controlRenderedClientFixture(t *testing.T, platform model.Platform) (*contr
 	}
 	tunnel := input.ControlTunnel
 	tunnel.AllowedIPs = []string{"10.250.0.1/32"}
-	rendered, err := render.RenderClientRuntimeV2(render.ClientRuntimeV2Input{SSOT: ssot, ClusterID: application.ClusterID,
+	rendered, err := render.RenderClientRuntimeV2(render.ClientRuntimeV2Input{SSOT: ssot, Grants: &application.Devices[0].View.Active.Grants, ClusterID: application.ClusterID,
 		DeviceID: input.DeviceID, DeviceGeneration: 2, ArtifactGeneration: 1, SingBoxVersion: input.SingBoxVersion,
 		ObservationCA: input.ObservationCA, ControlTunnel: tunnel})
 	if err != nil {
