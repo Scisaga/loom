@@ -64,6 +64,12 @@ func cmdControlPrepareRecovery(args []string) error {
 
 func prepareControlRecovery(dir, clusterID, policyID, custodianID, requestID string, at time.Time) (controlRecoveryMaterialV1, error) {
 	var result controlRecoveryMaterialV1
+	if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir || custodianID == "" {
+		return result, errors.New("恢复保管目录必须是规范绝对路径，并指定保管人")
+	}
+	if _, err := os.Lstat(filepath.Join(dir, controlConfigName)); err == nil || !errors.Is(err, os.ErrNotExist) {
+		return result, errors.New("恢复保管目录不能复用 control state")
+	}
 	proposal, err := wire.RecoveryCustodyProposalID(clusterID, policyID, 1)
 	if err != nil {
 		return result, err

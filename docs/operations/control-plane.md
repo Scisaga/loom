@@ -162,8 +162,14 @@ loom control prepare-recovery -custody-dir <protected-recovery-directory> \
 历史重放使用原提交时间，不以当前时钟否定已经认证的记录。
 
 已有设备通过 [客户端迁移](../protocols/control-plane/migration.md) 保留原身份和本机 floor。
-`control migrate` 仍要求经过验证的完整生产 application 输入；客户端的迁移请求不是可直接
-提交的 application。该输入的生成与正式服务接线进度以[实现对照](../development/implementation.md)为准。
+`control migrate` 输入可附 `device_inputs`：包含按原 Device ID 排序的客户端签名请求、对应原
+signed current；Linux 另附原设备证书及原服务器 CA。它从原 registry/证书独立确认身份，再核对
+请求签名、平台信任和本机 floor。Device view、原职责与目的授权、真实证书及签发坐标由迁移命令
+在原 Raft 加载后生成，不能同时提供手填 Device view。生成的证书和 current 以内容摘要耐久保存，
+同一输入重试复用第一次迁移请求与回执，不重新签发，也不伪造 Enrollment。
+这一阶段生成的身份没有运行配置，须经正常配置发布后才能交付客户端使用。
+完整生产 application 的服务、catalog、public listener 及配置仍须来自经过验证的部署输入；
+客户端请求不是可直接提交的完整 application。接线进度以[实现对照](../development/implementation.md)为准。
 
 本次不在用、尚未提供原 key 迁移请求的独立客户端可以在 `deferred_migrations` 中明确保留原
 设备 ID、平台与身份摘要。导入时必须匹配原 SSOT 和 registry；该记录不生成 v2 Device view、

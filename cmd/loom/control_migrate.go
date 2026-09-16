@@ -27,6 +27,7 @@ type controlMigrationInputV1 struct {
 	Registry       string                              `json:"registry"`
 	Application    controlApplicationV1                `json:"application"`
 	RecoveryProofs []wire.RecoveryKeyPossessionProofV1 `json:"recovery_key_possession_proofs"`
+	DeviceInputs   *controlMigrationDeviceInputsV1     `json:"device_inputs,omitempty"`
 }
 
 type controlMigrationRequestV1 struct {
@@ -97,9 +98,6 @@ func (runtime *controlRuntime) migrateControlApplication(inputPath, adminDir, pl
 	if _, err := wire.DecodeStrict(raw, 64<<20, &input); err != nil {
 		return err
 	}
-	if err := validateControlMigrationSource(&input); err != nil {
-		return err
-	}
 	if input.Application.ClusterID != runtime.config.ClusterID {
 		return errors.New("迁移输入不属于原网络")
 	}
@@ -119,6 +117,19 @@ func (runtime *controlRuntime) migrateControlApplication(inputPath, adminDir, pl
 	var request controlMigrationRequestV1
 	retained, err := readOwnerOnlyFile(requestPath, 64<<20)
 	if errors.Is(err, os.ErrNotExist) {
+		if input.DeviceInputs != nil {
+			key, err := readKey(platformPath, ed25519.PrivateKeySize)
+			if err != nil {
+				return err
+			}
+			public := ed25519.PrivateKey(key).Public().(ed25519.PublicKey)
+			clear(key)
+			if err := runtime.prepareMigrationDevices(&input, public); err != nil {
+				return err
+			}
+		} else if err := validateControlMigrationSource(&input); err != nil {
+			return err
+		}
 		request, err = runtime.prepareControlMigration(input, inputHash, adminDir, platformPath, reason)
 		if err != nil {
 			return err
@@ -132,8 +143,22 @@ func (runtime *controlRuntime) migrateControlApplication(inputPath, adminDir, pl
 	} else {
 		canonical, err := wire.DecodeStrict(retained, 64<<20, &request)
 		if err != nil || !bytes.Equal(canonical, retained) || request.Schema != 1 || request.InputHash != inputHash ||
-			request.Activation.Bundle.Proof.Statement.Reason != reason || !wire.EqualCanonical(request.Activation.Application, input.Application) {
+			request.Activation.Bundle.Proof.Statement.Reason != reason {
 			return errors.New("迁移目录已绑定不同输入；不能覆盖原请求")
+		}
+		expected := controlClone(request.Activation.Application)
+		if input.DeviceInputs != nil {
+			if len(input.Application.Devices) != 0 || len(input.Application.DeviceMigrations) != 0 {
+				return errors.New("逐设备请求不能混用手填迁移结果")
+			}
+			expected.Devices, expected.DeviceMigrations = input.Application.Devices, input.Application.DeviceMigrations
+		}
+		if !wire.EqualCanonical(expected, input.Application) {
+			return errors.New("迁移请求不再对应原 application 输入")
+		}
+		input.Application = request.Activation.Application
+		if err := validateControlMigrationSource(&input); err != nil {
+			return err
 		}
 	}
 	result, err := runtime.activateRuntime(request.Activation, request.Operation)
