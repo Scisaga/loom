@@ -94,7 +94,11 @@ func (p scriptPaths) target(abs string) string {
 }
 
 func (p scriptPaths) preCheck(command string) string {
-	return strings.ReplaceAll(command, StagingRoot, withTrailingSlash(p.stageRoot))
+	command = strings.ReplaceAll(command, StagingRoot, withTrailingSlash(p.stageRoot))
+	if p.targetRoot != "" {
+		command = strings.ReplaceAll(command, "/etc/wireguard", p.target("/etc/wireguard"))
+	}
+	return command
 }
 
 func withTrailingSlash(path string) string {
@@ -136,8 +140,17 @@ func script(p *Plan, runID string, layout scriptPaths) string {
 	// systemctl 的状态不是两个 bool。enabled-runtime、linked、masked、failed
 	// 与 disabled/inactive 的恢复动作完全不同；压成 bool 会在失败回滚时改坏
 	// 原状态。未知/过渡态保留原字符串，并在需要修改它时失败关闭。
-	w("read_unit_state() {")
+	w("read_unit_enabled() {")
 	w("  UNIT_ENABLED=$(systemctl is-enabled \"$1\" 2>/dev/null || :)")
+	// 旧 systemd 对不存在的 unit 只写 stderr；必须另读 LoadState，不能把
+	// D-Bus/权限错误产生的空输出直接当成 not-found。
+	w("  if [ -z \"$UNIT_ENABLED\" ]; then")
+	w("    unit_load=$(systemctl show -p LoadState --value \"$1\" 2>/dev/null || :)")
+	w("    [ \"$unit_load\" != not-found ] || UNIT_ENABLED=not-found")
+	w("  fi")
+	w("}")
+	w("read_unit_state() {")
+	w("  read_unit_enabled \"$1\"")
 	w("  case \"$UNIT_ENABLED\" in")
 	w("    enabled|enabled-runtime|linked|linked-runtime|alias|disabled|static|indirect|generated|transient|masked|masked-runtime|not-found) ;;")
 	w("    *) fail \"无法确认 $1 的 enabled 状态(${UNIT_ENABLED:-空})\" ;;")
@@ -319,7 +332,7 @@ func script(p *Plan, runID string, layout scriptPaths) string {
 	w("    failed|activating|deactivating|reloading|unknown) : ;;")
 	w("    *) unit_failed=1 ;;")
 	w("  esac")
-	w("  got_enabled=$(systemctl is-enabled \"$unit\" 2>/dev/null || :)")
+	w("  read_unit_enabled \"$unit\"; got_enabled=$UNIT_ENABLED")
 	w("  got_active=$(systemctl is-active \"$unit\" 2>/dev/null || :)")
 	w("  [ \"$got_enabled\" = \"$was_enabled\" ] || unit_failed=1")
 	w("  [ \"$got_active\" = \"$was_active\" ] || unit_failed=1")

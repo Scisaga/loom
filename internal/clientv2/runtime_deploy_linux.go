@@ -824,16 +824,15 @@ func linuxRuntimeStagingPath(absolute string) string {
 	return deploy.StagingRoot + strings.ReplaceAll(strings.TrimPrefix(absolute, "/"), "/", "%")
 }
 
-// wg-quick derives the interface name from the config basename even in strip
-// mode. The deploy transaction intentionally flattens staged absolute paths
-// with '%' separators, so passing that encoded filename directly makes every
-// valid Loom interface fail the 15-byte Linux name check. A stage-local alias
-// preserves the certified basename; the deploy lock serializes creation and
-// the transaction cleanup removes the alias on both success and rollback.
+// wg-quick 要求合法接口 basename，发行版 AppArmor 还可能只准读
+// /etc/wireguard。复制到该目录下独立的临时子目录，保留线上配置与安全策略；
+// 子 shell 无论预检成功或失败都删除副本，不把含私钥的输出留在日志里。
 func linuxWireGuardPreCheck(absolute string) string {
 	staged := linuxRuntimeStagingPath(absolute)
-	alias := deploy.StagingRoot + filepath.Base(absolute)
-	return "/bin/ln -s " + staged + " " + alias + " && /usr/bin/wg-quick strip " + alias
+	name := filepath.Base(absolute)
+	return `( mkdir -p -m 700 /etc/wireguard && check_dir=$(mktemp -d /etc/wireguard/.loom-precheck.XXXXXXXXXX) && ` +
+		`trap 'rm -rf "$check_dir"' EXIT && cp ` + staged + ` "$check_dir/` + name + `" && ` +
+		`/usr/bin/wg-quick strip "$check_dir/` + name + `" )`
 }
 
 func linuxV2SingBoxUnit(wgUnits []string) string {
