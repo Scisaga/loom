@@ -16,7 +16,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"mime"
 	"net/http"
 	"strconv"
@@ -188,7 +187,6 @@ type ClientControlDeps struct {
 	SetDevicePaused      func(deviceID string, paused bool) error
 	PurgeRevoked         func(deviceID string) error
 	DiscardPending       func(deviceID string) error
-	Claim                func(ClientClaimInput) (ClientClaimResult, error)
 	InviteArtifact       func(inviteID string) (ClientInviteArtifact, error)
 	LinuxPackage         func() (LinuxClientPackageView, error)
 	DownloadLinuxPackage func() (LinuxClientPackageView, []byte, error)
@@ -280,43 +278,6 @@ type DeviceEnrollmentOptions struct {
 type DeviceDestinationOption struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
-}
-
-type ClientClaimInput struct {
-	Token, Platform, CSRPEM, RequestID string
-	Server                             *DeviceServerClaim
-}
-
-type DeviceServerClaim struct {
-	PublicEndpoint string `json:"public_endpoint"`
-	InboundPort    int    `json:"inbound_port"`
-	Direction      string `json:"direction"`
-	WGPublicKey    string `json:"wg_public_key"`
-	Country        string `json:"country,omitempty"`
-	City           string `json:"city,omitempty"`
-	Provider       string `json:"provider,omitempty"`
-}
-
-type ClientClaimResult struct {
-	Schema        int              `json:"schema"`
-	ClientID      string           `json:"client_id"`
-	Status        string           `json:"status"`
-	EnrolledAt    string           `json:"claimed_at"`
-	Replay        bool             `json:"replay"`
-	Next          string           `json:"next"`
-	Configuration string           `json:"configuration"`
-	Bootstrap     *ClientBootstrap `json:"bootstrap,omitempty"`
-}
-
-type ClientBootstrap struct {
-	NodeID            string   `json:"node_id"`
-	DistributionURLs  []string `json:"distribution_urls"`
-	DNS               []string `json:"dns,omitempty"`
-	SecretsEnv        string   `json:"secrets_env"`
-	PlatformPublicKey string   `json:"platform_public_key"`
-	ReleaseAuthority  string   `json:"release_authority"`
-	CACertPEM         string   `json:"ca_cert_pem"`
-	NodeCertPEM       string   `json:"node_cert_pem"`
 }
 
 type LinuxClientPackageView struct {
@@ -1007,56 +968,6 @@ func Handler(d Deps) http.Handler {
 	})
 	mux.HandleFunc("/api/control/device-invites/", func(w http.ResponseWriter, r *http.Request) {
 		serveRouteAlias(w, r, "/api/control/device-invites/", "/api/control/client-invites/")
-	})
-	mux.HandleFunc("/api/client/enroll", func(w http.ResponseWriter, r *http.Request) {
-		clientJSONHeaders(w)
-		if r.Method != http.MethodPost {
-			w.Header().Set("Allow", "POST")
-			writeJSONError(w, http.StatusMethodNotAllowed, "只接受 POST")
-			return
-		}
-		control := deviceControl(d)
-		if control == nil || control.Claim == nil {
-			// Do not reveal whether an invite exists when this node is not the issuer.
-			writeJSONError(w, http.StatusNotFound, "client join is unavailable")
-			return
-		}
-		var wire struct {
-			Token     string             `json:"token"`
-			Platform  string             `json:"platform"`
-			CSRPEM    string             `json:"csr_pem"`
-			RequestID string             `json:"request_id"`
-			Server    *DeviceServerClaim `json:"server,omitempty"`
-		}
-		if err := decodeClientJSON(w, r, &wire); err != nil {
-			writeJSONError(w, clientDecodeStatus(err), err.Error())
-			return
-		}
-		result, err := control.Claim(ClientClaimInput{
-			Token: wire.Token, Platform: wire.Platform, CSRPEM: wire.CSRPEM, RequestID: wire.RequestID,
-			Server: wire.Server,
-		})
-		if err != nil {
-			status := clientProtocolStatus(err)
-			message := err.Error()
-			if status == http.StatusInternalServerError {
-				// Provisioning errors can contain local paths, SSH targets or other
-				// operator-only diagnostics. The public invitation endpoint exposes
-				// only a retryable boundary, never those internals.
-				message = "client provisioning is temporarily unavailable"
-				log.Printf("client provisioning failed: %v", err)
-			}
-			writeJSONError(w, status, message)
-			return
-		}
-		status := http.StatusOK
-		if result.Configuration == "pending" {
-			status = http.StatusAccepted
-		}
-		writeJSON(w, status, result)
-	})
-	mux.HandleFunc("/api/device/enroll", func(w http.ResponseWriter, r *http.Request) {
-		serveRouteAlias(w, r, "/api/device/enroll", "/api/client/enroll")
 	})
 	mux.HandleFunc("/api/control/default-exit", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")

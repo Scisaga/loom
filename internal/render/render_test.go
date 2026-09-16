@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"loom/internal/model"
-	"loom/internal/report"
 	"loom/internal/secret"
 	"loom/internal/validate"
 	loomcore "loom/mobile/loomcore"
@@ -213,7 +212,7 @@ func TestNonLinuxBundlesExcludeLinuxLifecycle(t *testing.T) {
 	}
 }
 
-func TestAndroidBootstrapSecretRefsExactlyMatchRenderedBundle(t *testing.T) {
+func TestAndroidRuntimeConsumesOnlyRenderedSecretRefs(t *testing.T) {
 	tests := []struct {
 		name string
 		ssot *model.SSOT
@@ -272,10 +271,8 @@ func TestAndroidBootstrapSecretRefsExactlyMatchRenderedBundle(t *testing.T) {
 			actual := append(secret.Refs(content), secret.Refs(agentContent)...)
 			slices.Sort(actual)
 			actual = slices.Compact(actual)
-			node := tc.ssot.NodeByID()[tc.node]
-			bootstrap := report.AndroidBundleSecretRefs(tc.ssot, node)
-			if !slices.Equal(actual, tc.want) || !slices.Equal(bootstrap, actual) {
-				t.Fatalf("rendered refs=%v bootstrap refs=%v want=%v", actual, bootstrap, tc.want)
+			if !slices.Equal(actual, tc.want) {
+				t.Fatalf("rendered refs=%v want=%v", actual, tc.want)
 			}
 			bundleJSON, err := json.Marshal(struct {
 				Owner string            `json:"owner"`
@@ -286,12 +283,12 @@ func TestAndroidBootstrapSecretRefsExactlyMatchRenderedBundle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			vault := make(map[string]string, len(bootstrap))
-			for _, ref := range bootstrap {
+			vault := make(map[string]string, len(actual))
+			for _, ref := range actual {
 				vault[ref] = "test-secret"
 			}
 			if _, err := loomcore.HydrateSingBoxConfig(bundleJSON, secret.Encode(vault, "")); err != nil {
-				t.Fatalf("strict Android hydration rejected exact bootstrap refs: %v", err)
+				t.Fatalf("strict Android hydration rejected exact runtime refs: %v", err)
 			}
 			vault["telemetry/"+tc.node] = "unused-secret"
 			if _, err := loomcore.HydrateSingBoxConfig(bundleJSON, secret.Encode(vault, "")); err == nil ||
