@@ -230,7 +230,7 @@ func (runtime *PrivateRuntime) Start(ctx context.Context) (<-chan error, error) 
 			tlsConfig.ClientAuth = tls.RequireAnyClientCert
 		}
 		server := &http.Server{Handler: service.handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
-			WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
+			WriteTimeout: privateRuntimeWriteTimeout(service.service.Role), IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 		if service.service.Role == "enroll" {
 			server.ConnContext = enrollmenttransport.BindConnection
 		}
@@ -262,4 +262,15 @@ func (runtime *PrivateRuntime) Start(ctx context.Context) (<-chan error, error) 
 		done <- first
 	}()
 	return done, nil
+}
+
+func privateRuntimeWriteTimeout(role string) time.Duration {
+	if role == "enroll" {
+		// 一次认证 claim 会依次提交 reservation、approval 与 completion；慢盘或
+		// 远端 quorum 下可能超过普通 Device API 的 30 秒窗口。最长仍由外层
+		// capability 的 300 秒 session deadline、listener 并发上限和客户端
+		// context 共同约束，不能在结果已提交后先由 HTTP server 截断响应。
+		return 5 * time.Minute
+	}
+	return 30 * time.Second
 }

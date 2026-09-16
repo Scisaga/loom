@@ -221,6 +221,17 @@ func TestPrivateRuntimeRejectsRoleTupleAndKeyReuseRegardlessOfOrder(t *testing.T
 	}
 }
 
+func TestPrivateRuntimeEnrollmentWriteTimeoutCoversCapabilitySession(t *testing.T) {
+	if got := privateRuntimeWriteTimeout("enroll"); got != 5*time.Minute {
+		t.Fatalf("Enrollment write timeout=%s", got)
+	}
+	for _, role := range []string{"device_config", "device_report"} {
+		if got := privateRuntimeWriteTimeout(role); got != 30*time.Second {
+			t.Fatalf("%s write timeout=%s", role, got)
+		}
+	}
+}
+
 func privateRuntimeFixture(t *testing.T) (PrivateRuntimeOptions, deviceConfigFixture, string) {
 	t.Helper()
 	device := newDeviceConfigFixture(t)
